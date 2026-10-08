@@ -137,7 +137,7 @@ class MockAdapter(AgentAdapter):
             return TaskResult(task_id=t.id, agent_id=a.id, ok=False, error="error_max_turns",
                               error_kind="error_max_turns", session_id=f"mock-session-{t.id[-4:]}", cost_usd=0.0)
         if (kind == "step" and "[block]" in own and not t.resume_session_id
-                and "Your earlier blocking question and the PI's answer:" not in t.prompt):
+                and "Your earlier blocking question and its answer:" not in t.prompt):
             structured = {"blocking_decision": "Choose sample group (a) cases or (b) controls."}
         if "[needs-approval]" in own and not t.resume_session_id:
             dec = await self._broker(ctx, "/approval", {"task_id": t.id, "agent_id": a.id, "kind": "tool_permission",

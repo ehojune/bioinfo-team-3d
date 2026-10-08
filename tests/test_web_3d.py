@@ -1,17 +1,21 @@
 """Shared office state and bounded static routes; no new runtime dependencies."""
-import json
 import ast
+import asyncio
+import json
 from pathlib import Path
 import re
 import shutil
 import subprocess
 
 import pytest
+import uvicorn
+import websockets
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from labhq.gateway.server import WEB, create_app
 from labhq.settings import Settings
+from labhq.util import free_port
 
 
 @pytest.fixture
@@ -48,12 +52,36 @@ def test_same_shell_and_data_auth_as_2d(client):
     assert redirect.headers['location'] == '/3d/?token=test-client&demo=1'
     for query in ('', '?token=wrong'):
         with pytest.raises(WebSocketDisconnect) as error:
-            with http.websocket_connect('/ws/client' + query):
-                pass
+            with http.websocket_connect('/ws/client' + query) as ws:
+                ws.receive_text()
         assert error.value.code == 1008
     with http.websocket_connect('/ws/client?token=' + settings.gateway.client_token) as ws:
         assert json.loads(ws.receive_text())['type'] == 'snapshot'
     assert http.get('/api/approvals').status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_wrong_client_token_reaches_a_real_websocket_as_1008(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / 'state')
+    port = free_port()
+    server = uvicorn.Server(uvicorn.Config(create_app(settings), host='127.0.0.1', port=port,
+                                           log_level='warning'))
+    serving = asyncio.create_task(server.serve())
+    try:
+        for _ in range(200):
+            if server.started:
+                break
+            await asyncio.sleep(0.01)
+        assert server.started
+        async with websockets.connect(f'ws://127.0.0.1:{port}/ws/client?token=wrong') as ws:
+            with pytest.raises(websockets.exceptions.ConnectionClosedError) as error:
+                await ws.recv()
+        assert error.value.rcvd.code == 1008
+        assert error.value.rcvd.reason == 'token'
+    finally:
+        server.should_exit = True
+        await serving
 
 
 @pytest.mark.parametrize('path', [

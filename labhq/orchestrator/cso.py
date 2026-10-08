@@ -479,8 +479,9 @@ Your step ({step_id}): {instruction}
 
 Teammates' upstream results are in the context section. Deliver: what you did, key results with file
 paths, caveats and open questions. Do not quietly switch to a weaker method when one fails: keep debugging,
-and if you give it up, say what you tried and why you stopped. If you cannot proceed without a PI decision,
-return JSON with "blocking_decision": "the specific question and choices", written for the PI's phone card:
+and if you give it up, say what you tried and why you stopped. If you cannot proceed without a blocking decision,
+return JSON with "blocking_decision": "the specific question and choices". The CSO answers first; only hard-stop
+questions go to the PI. Write the question so either can answer it:
 at most 700 characters, the question itself in the first sentence, then each choice on its own line starting
 with "- ". Inside the JSON string write each line break as \\n. Do not proceed with the blocked work.
 
@@ -766,10 +767,10 @@ do not redo work that is already done. Finish only what remains, write the decla
 answer in the required format."""
 
 ASK_WAKE_PROMPT = """A blocking question from your previous turn has been answered:
-Your earlier blocking question and the PI's answer:
+Your earlier blocking question and its answer:
 {answers}
 
-Continue the same step in this session. Treat another employee's answer as advice, not as PI approval.
+Continue the same step in this session. Treat an employee's answer as advice, not as PI approval.
 Do not repeat the same question."""
 
 CONSULT_PROMPT = """Answer one blocked employee's question using the request, plan and policy context below.
@@ -969,7 +970,7 @@ ANSWERED_QUESTIONS_HEADING = "PI가 이미 답한 질문 — 다시 묻지 말 �
 
 
 def qa_text(entry: Any) -> str:
-    """A PI answer together with what it answers (older records stored the answer alone)."""
+    """An answer, its source and what it answers (older records stored the answer alone)."""
     if isinstance(entry, dict):
         qs = entry.get("questions") or ([entry["question"]] if entry.get("question") else [])
         details = entry.get("question_details") or []
@@ -977,7 +978,10 @@ def qa_text(entry: Any) -> str:
                                                     if i <= len(details) and isinstance(details[i - 1], dict)
                                                     else [])])
                           for i, q in enumerate(qs, 1))
-        return f"{asked}\nPI answer: {entry.get('answer', '')}" if asked else f"PI answer: {entry.get('answer', '')}"
+        answerer = {"pi": "PI", "cso": "CSO"}.get(str(entry.get("from") or "").lower(),
+                                                      str(entry.get("from") or "PI"))
+        return (f"{asked}\n{answerer} answer: {entry.get('answer', '')}" if asked
+                else f"{answerer} answer: {entry.get('answer', '')}")
     return f"PI answer: {entry}"
 
 
@@ -3118,7 +3122,7 @@ class Orchestrator:
                          ((req_state or {}).get("research_contract") or {}).get("execution_enabled") else None)
         shared_environment_protected = any(
             ENV_LOCK_OUTPUT in step.get("outputs", []) for step in steps)
-        # PI answers to blocking questions survive a gateway restart (the re-run step still needs them).
+        # Answers to blocking questions survive a gateway restart (the re-run step still needs them).
         decisions: dict[str, Any] = dict((req_state or {}).get("step_decisions") or {})
         sem = asyncio.Semaphore(self.cfg.max_parallel_steps)
 
@@ -3178,8 +3182,9 @@ class Orchestrator:
                            f"{json.dumps(step.get('evidence_slots') or [])}. Keep claims and evidence separate. "
                            "Each artifact_refs path is one of your declared outputs (outputs/<name>) or an upstream "
                            "artifact written as <workdir_id>/<path>; evidence citing any other path is refused at CP2. "
-                           "If you cannot proceed without a PI decision, return the same schema with every list "
-                           "empty and the question with its choices in blocking_decision; you re-run with the answer."
+                           "If you cannot proceed without a blocking decision, return the same schema with every "
+                           "list empty and the question with its choices in blocking_decision. The CSO answers first; "
+                           "only hard-stop questions go to the PI. You re-run with the answer."
                            "\n\nCross-field result rules (the JSON schema cannot express these):\n" +
                            RESEARCH_RESULT_FIELD_RULES +
                            "\n\nFrozen protocol, approved by the PI at CP1:\n" + _research_protocol_digest(research_plan) +
@@ -3442,7 +3447,7 @@ class Orchestrator:
                             if req_state is not None:
                                 req_state["pending_questions"] = [question.strip()]
                                 self.hub.save_request(rid)
-                            raise RuntimeError(f"step {sid} still requires a PI decision after its answer")
+                            raise RuntimeError(f"step {sid} still requires a blocking decision after its answer")
                         # Forget the question-only result before waiting (durably): a restart during the wait must
                         # re-run the step, not treat it as done and feed dependents a question.
                         results.pop(sid, None)
@@ -3452,7 +3457,7 @@ class Orchestrator:
                         if not hasattr(self.hub, "store"):  # lightweight unit-test hubs
                             decision = await self.hub.request_approval(
                                 kind="clarify", request_id=rid,
-                                summary=f"Step {sid} needs a PI decision:\n{question.strip()}")
+                                summary=f"Step {sid} needs a blocking decision:\n{question.strip()}")
                             answer = ask_result(decision=decision, **{"from": "pi"})
                             answers = [answer]
                         else:

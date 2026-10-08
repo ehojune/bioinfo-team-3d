@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 10:17 | [`ff9212d`](https://github.com/ehojune/bioinfo-team-3d/pull/504/commits/ff9212d) | 최신 main의 연구 분류·웹 상태 변경을 보존하며 문서와 공통 WebSocket close 판정 충돌을 풀었다 |
+| 10:13 | [`94f2f04`](https://github.com/ehojune/bioinfo-team-3d/pull/504/commits/94f2f04) | 잘못된 웹 token을 accept 뒤 1008로 닫고 두 화면이 공통 경로에서 재시도를 멈추게 했다 |
+| 10:13 | [`565061e`](https://github.com/ehojune/bioinfo-team-3d/pull/504/commits/565061e) | 연구 verifier·CP2·blocking decision·Codex auto 설명과 artifact 거부 사유를 현재 동작에 맞췄다 |
 | 10:10 | [`f0b7b62`](https://github.com/ehojune/bioinfo-team-3d/pull/503/commits/f0b7b62) | 웹 입력창 옆 작업 종류(자동·간단·연구)와 labhq send --work-kind로 PI가 연구 lane을 탈지 직접 고른다(PI 점검 R16). |
 | 09:56 | [`bcefdcf`](https://github.com/ehojune/bioinfo-team-3d/pull/498/commits/bcefdcf) | main(#493·#494)과 합치며 매뉴얼 연구 lane 문단에 접수 규칙 변경과 CP1·CP2 카드 설명을 함께 살려 충돌을 풀었다. |
 | 09:39 | [`d4629a6`](https://github.com/ehojune/bioinfo-team-3d/pull/498/commits/d4629a6) | 계산을 시키는 동사(run·돌려·수행·계산·정규화·군집 등)와 DE 약어도 연구 신호로 두어, 다운로드·메타데이터와 함께여도 분석 요청은 연구로 간다(#498 재리뷰). |

@@ -390,7 +390,7 @@ async def test_blocking_step_waits_then_reruns_before_dependent():
         if kind == "plan":
             return result(task, structured={"steps": STEPS[:2]})
         if kind == "step" and task.meta["step_id"] == "A":
-            if "Your earlier blocking question and the PI's answer:" not in task.prompt:
+            if "Your earlier blocking question and its answer:" not in task.prompt:
                 return result(task, text="blocked", structured={"blocking_decision": "Cases or controls?"},
                               tool_errors=["fixture lookup failed", "shared lookup failed"])
             assert not any(t.meta.get("step_id") == "B" for t in calls)
@@ -421,6 +421,47 @@ async def test_blocking_step_waits_then_reruns_before_dependent():
     appendix = hub.requests["r"]["report_appendix"]
     assert "A: 실패한 조회 — 증거도 부재 증명도 아님 3건" in appendix
     assert "fixture lookup failed" in appendix
+
+
+@pytest.mark.asyncio
+async def test_store_backed_blocking_step_asks_cso_and_labels_its_answer():
+    class Store:
+        def __init__(self):
+            self.rows = {}
+
+        def put(self, kind, key, value):
+            self.rows[(kind, key)] = value
+
+    calls = []
+
+    async def dispatch(task):
+        calls.append(task)
+        if task.meta["kind"] == "plan":
+            return result(task, structured={"steps": STEPS[:1]})
+        if task.meta["kind"] == "step" and "CSO answer: cases" not in task.prompt:
+            return result(task, text="blocked", structured={"blocking_decision": "Cases or controls?"})
+        return result(task, text="done")
+
+    hub = FakeHub(dispatch)
+    hub.s.orchestrator.reviewer_agent = None
+    hub.store = Store()
+    hub.agent_runner = {"worker": "runner"}
+    hub.wait_asks = lambda ids: asyncio.sleep(0, result=[{"from": "cso", "answer": "cases"}])
+    orch = Orchestrator(hub)
+
+    async def answer_ask(ask, origin):
+        assert ask.to == "cso" and origin == "runner"
+
+    orch.answer_ask = answer_ask
+    await orch.run_request("r")
+
+    assert hub.requests["r"]["status"] == "done", {
+        key: hub.requests["r"].get(key) for key in ("status", "error", "report", "report_appendix", "pending_questions")
+    }
+    assert not hub.approvals
+    step_calls = [task for task in calls if task.meta["kind"] == "step"]
+    assert "CSO answer: cases" in step_calls[-1].prompt
+    assert hub.requests["r"]["step_decisions"]["A"]["from"] == "cso"
 
 
 def test_configured_orchestration_agents_are_not_workers():

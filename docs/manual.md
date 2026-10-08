@@ -94,7 +94,7 @@ AlphaGenome API 키가 아직 없으면 마지막에 한 번 묻습니다. Enter
 클러스터가 없으면 `scheduler: none`이고, 무거운 단계는 로컬 CLI로만 돌리며 그럴 수 없는 단계는 CSO가 계획에서 밝힙니다. `ssh_host`·데이터 계정 전환(`submit_prefix`)은 상담이 정하지 않습니다([설정 포인트](#설정-포인트)).
 `--yes`는 기본값을 수락하고 `--dry-run`은 파일 생성 없이 변경과 doctor 점검을 보여 줍니다. 기존 설정은 보존하며 `--force`일 때만 교체합니다.
 Windows에서는 restricted 구역을 빼고, 개인 Codex 지침이 있으면 직원 전용 `CODEX_HOME`을, `~/.claude`가 있으면 Claude 직원 전용 `CLAUDE_CONFIG_DIR`(`~/.labhq/claude-staff`)을 넣고 사람이 실행할 로그인 명령을 안내합니다.
-Codex `bin`이 비어 있거나 `auto`이면 Windows 앱의 최신 폴더(mtime)를 탐지하며 doctor에 경로를 표시합니다. 앱이 없으면 PATH를 사용합니다.
+Codex `bin`이 비어 있거나 `auto`이면 Windows 앱에서 판본이 가장 높은 폴더를 고르고, 판본을 비교할 수 없을 때만 mtime을 씁니다. doctor는 고른 경로를 표시합니다. 앱이 없으면 PATH를 사용합니다.
 
 실행 전 `labhq doctor`로 설정·엔진·직원·계산 도구를 점검하세요. `labhq doctor --json`은 러너 상태 디렉터리에 `capabilities.json`을 쓰고, `--network`를 붙일 때만 공개 데이터 사이트에 접속합니다. 이 manifest의 `runner_capabilities`는 러너가 보고하는 기능과 같은 설정·roster에서 산출한 사실입니다. `research lane` 행은 연구 lane이 끝까지 도는지 알려 줍니다. `research.enabled`만 켜면 CP1 뒤 멈춘다는 warn이 뜨고, `evidence_checkpoint`까지 켜야 CP2·리뷰·보고서로 갑니다. `research` 아래 오타 키는 시작할 때 오류입니다.
 npm의 `.cmd`/`.bat` shim은 여러 줄 prompt를 손상시킬 수 있어 labhq가 표준 npm shim만 Node.js로 풀어 실행합니다.
@@ -572,9 +572,83 @@ bioinfo-agent의 일반 질문과 새 pipeline 생성 여부는 CSO가 답합니
 
 ![연구 lane: CSO 계획 → CP1 계획 승인 → 단계 실행 → CP2 근거 승인 → 리뷰 → claim 앵커 보고서 → labhq verify](media/research-lane.svg)
 
-`research` 설정, 기본 꺼짐. `enabled: true`면 CSO가 요청을 연구와 단순 작업(변환·집계·원문 요약, 출처에 있는 것을 표·목록으로 정리·추출·다운로드)으로 나누고(분석·예측·비교·관계 같은 추론이나 계산 실행(돌려·run 등)이 들어가면 표를 함께 요청해도 연구, 직원 한 명을 직접 지정한 요청은 연구로 명시하지 않는 한 단순 작업, 규칙은 [연구 수행 규약](research_protocol.md) 1절), 연구는 계획(PLAN)을 schema로 검증해 hash로 고정한 뒤 PI 승인(CP1)을 받습니다. 승인 뒤 계획이 바뀌면 다시 승인받습니다. 도메인 규칙은 `active_packs`의 pack(`id@version`)으로 더합니다(예: `active_packs: [single_cell_de@3, bulk_tumor_normal@3]`). `single_cell_de@3`은 단일세포 donor·scale·model을, `bulk_tumor_normal@3`은 벌크 두 조건의 pairing·filter·DE 기준·양성 대조를 판정합니다. 짝의 근거(`pairing_evidence`)는 GEO characteristics·sample title 같은 메타데이터 출처 목록에서만 고르고, 짝이 있다고 하면 출처가 하나 이상 있어야 합니다. 발현 유사도는 근거가 될 수 없습니다(#369). CSO는 `applies_when`이 맞는 pack만 계획에 넣습니다. 두 version 모두 요청 topic으로 적용됩니다(`single_cell_rna_seq`, `bulk_rna_seq`·`microarray_expression`). 기존 `bulk_tumor_normal@1`·`@2`·`single_cell_de@2` 승인 요청은 저장된 version과 hash로 재개합니다. 없어진 version이나 없는 pack 폴더가 설정에 있으면 gateway가 남은 version을 알리고 시작하지 않습니다(#170). 계획의 `protocol.packs`(id·version·sha256)는 CSO가 아니라 labhq가 적용 pack snapshot으로 채우고, CSO prompt에는 pack마다 `pack_values_keys`(field·validator·acceptance 키, acceptance는 rule id)를 보여 줍니다. 계획이 검증에 걸리면 schema·pack 문제를 모두 모아 교정 prompt에 한 번에 넣고, 교정 뒤에도 남으면 CP1 카드 없이 `outcome: plan_invalid`와 남은 문제 목록을 보고서에 적어 끝냅니다(#222). `evidence_checkpoint: true`를 함께 켜면 CP1 뒤 연구 단계가 `result v2` claim·evidence 계약으로 실행되고, CP2 카드에서 PI가 승인·수정 요청·거부를 고릅니다. **수정 요청은 아직 단계를 다시 돌리지 않습니다.** 거부처럼 요청을 끝내고(`evidence_revision_requested`) PI 메모는 기록에만 남으므로, 근거를 보강하려면 새 요청을 보냅니다. 웹 버튼도 `수정 요청(요청 끝남)`입니다. CP2 카드는 claim마다 단계·상태·근거 종류·표시(거부된 근거, 근거 잃음)를 한 줄로 보여 주고 원장 JSON은 접어 둡니다. CP1 카드는 질문·가설·완료 조건 아래에 단계 목록(id·직원·지시 앞부분·산출)을 펼쳐 두고 protocol 전문은 접어 둡니다. 결정은 웹 카드 버튼이나 `labhq approve <id> --choice approve|revise|deny`의 선택값으로만 읽고 메모는 읽지 않습니다. 선택값이 없으면 승인하지 않고 다시 묻습니다(세 번까지). `artifact_refs` 경로가 그 단계가 모은 산출이나 끝난 조상 단계(직접 상위가 아니어도 됨)의 산출(`<workdir_id>/<path>`)이 아니면 그 evidence는 거부되고, 카드와 receipt에 이유가 남습니다. 단계가 끝날 때 원장이 계약을 통과해도 이런 인용이 있으면, 교정 횟수가 남은 동안 한 번 모은 산출 목록을 주고 인용을 고치게 합니다(#485). 이 교정이 실패하거나 모으지 않은 파일만 새로 쓰거나 그대로 두면 단계는 교정 전 결과로 통과하고 CP2가 그 행을 거부합니다. 보고하지 않은 산출 목록에서 `__pycache__` 아래 파일은 뺍니다(관찰 기록에는 남음). 단계가 PI 결정이 필요해 멈추면(`blocking_decision`) 산출·원장 검사 전에 PI에게 묻고, 답을 받아 다시 실행합니다. 연구 요청은 일반 재계획·리뷰·합성에 들어가지 않습니다. 단계의 결과 원장이 교정(`research.result_corrections`, 기본 2회) 뒤에도 계약을 어기면, 잘못된 행(링크·evidence·claim)만 거부하고 나머지로 진행합니다. 거부한 행과 이유는 CP2 카드와 보고서 메타데이터에 남습니다. 예를 들어 실패하거나 0건인 조회를 근거(supports)로 연결했다면 그 링크만 빼고 시도 기록은 남깁니다. 계획 hash·단계·필수 evidence 칸 같은 구조 결함은 거부로 메우지 않고 단계 실패로 봅니다. 단계가 실패하면 `research_failed`로 끝나고, 계획을 바꾸려면 CP1을 다시 받아야 합니다. 연구 계약이 있는 요청을 `research.enabled`를 끈 채 이어 가면 아무것도 보내지 않고 `research_disabled`로 멈춥니다. CP2에서 승인하면 `reviewer_agent`가 claim을 원장·산출 파일과 대조해 한 번 리뷰합니다. P1 지적이 있어 revise면 고정된 계획을 그대로 다시 돌리지 않습니다. 대신 **이어 가기** 카드(`research_continue`)가 뜹니다. 거절하거나 답이 없으면 지금처럼 `research_review_revise`로 끝납니다. 승인하면 CSO가 리뷰 P1 지적과 이전 계획을 받아 새 계획을 쓰고, PI가 새 CP1(새 `plan_sha256`)을 승인한 뒤 바뀐 단계와 새 단계만 실행합니다. 그 뒤 CP2·리뷰·보고서는 같습니다. 이전 단계는 다섯 조건이 모두 맞을 때만 다시 돌리지 않고 결과를 그대로 씁니다: 단계 사양(모든 field)과 질문·scope·protocol·pack 값이 바이트까지 같고, 적용 pack의 sha256(`protocol.packs`·`pack_snapshot`)이 같고, P1 지적이 그 단계를 가리키지 않고, 위 단계가 모두 재사용되고, 새 CP1 승인 직후 기록된 산출 파일의 sha256이 그대로입니다(`labhq verify`와 같은 검사). 같은 `id@version` pack이라도 정의가 바뀌면 단계가 어느 규칙에 기댔는지 모르므로 모든 단계가 다시 돕니다. 하나라도 어긋나면 그 단계와 아래 단계가 다시 돕니다. 재사용한 결과는 새 계획의 `plan_sha256`으로 다시 묶은 사본이라 CP2·보고서·`labhq verify`가 새 계획 하나로 검사하고, 원래 돈 차수·계획·task는 `continuation.reused_from`에 남습니다. CP1·CP2 카드에 재사용·재실행 단계와 이유가 보입니다. 이전 차수의 계획·결과·CP2·리뷰는 `research_contract.rounds`에 남습니다. 이어 가기 횟수는 `research.revise_continuations`(기본 2, 0이면 묻지 않음)로 정하고, 비용은 같은 요청 예산에 쌓입니다. 중간에 gateway가 다시 떠도 답한 카드는 다시 묻지 않습니다. 새 계획이 이전 계획과 바이트까지 같아도(같은 `plan_sha256`) 새 CP1·CP2·리뷰를 다시 받고, 이전 차수의 승인을 쓰지 않습니다. 이어 가기가 단계 실행 전에 끝나면(새 CP1 거절·시간 초과, 계획 실패, 오류) 이전 차수의 계획·hash·CP1 승인·pack snapshot·CP2 receipt·리뷰·결과를 되돌린 채 `research_review_revise`로 끝납니다. 돌지 않은 새 계획은 `continuation.declined_plan`에, 끝난 이유는 `continuation.ended_before_dispatch`에 남습니다. `labhq verify`는 완료 단계 ledger가 고정 계획과 다른 `plan_sha256`에 묶여 있으면 문제로 적습니다. 이어 가기 카드도 다른 결정 카드처럼 `policy.approvals.pi_decision_timeout_s`(기본 7일)가 지나면 시간 초과로 닫힙니다. 이미 끝난 요청은 나중에 이어 갈 수 없으니 새 요청을 냅니다. accept면 CSO가 결론·수치 문장마다 `[[claim:<step_id>/<claim_id>]]`를 단 보고서를 쓰고, labhq가 앵커를 검사해 문제가 없으면 `research_reported`, 있으면 본문 뒤에 "Claim check"를 붙여 `report_incomplete`로 끝냅니다. 실패한 조회는 보고서에 따로 남습니다. 끄면 새 요청은 기존처럼 CP1에서 멈추고, 이미 연구 계약이 있는 요청은 재개할 때 고정된 실행 여부와 CP2 receipt를 그대로 씁니다. 규약은 [`docs/research_protocol.md`](research_protocol.md)(#90).
+### 켜기
 
-### labhq verify
+`research` 설정, 기본 꺼짐.
+도메인 규칙은 `active_packs`의 pack(`id@version`)으로 더합니다(예: `active_packs: [single_cell_de@3, bulk_tumor_normal@3]`).
+`single_cell_de@3`은 단일세포 donor·scale·model을, `bulk_tumor_normal@3`은 벌크 두 조건의 pairing·filter·DE 기준·양성 대조를 판정합니다.
+짝의 근거(`pairing_evidence`)는 GEO characteristics·sample title 같은 메타데이터 출처 목록에서만 고르고, 짝이 있다고 하면 출처가 하나 이상 있어야 합니다.
+발현 유사도는 근거가 될 수 없습니다(#369).
+CSO는 `applies_when`이 맞는 pack만 계획에 넣습니다.
+두 version 모두 요청 topic으로 적용됩니다(`single_cell_rna_seq`, `bulk_rna_seq`·`microarray_expression`).
+기존 `bulk_tumor_normal@1`·`@2`·`single_cell_de@2` 승인 요청은 저장된 version과 hash로 재개합니다.
+없어진 version이나 없는 pack 폴더가 설정에 있으면 gateway가 남은 version을 알리고 시작하지 않습니다(#170).
+연구 계약이 있는 요청을 `research.enabled`를 끈 채 이어 가면 아무것도 보내지 않고 `research_disabled`로 멈춥니다.
+끄면 새 요청은 기존처럼 CP1에서 멈추고, 이미 연구 계약이 있는 요청은 재개할 때 고정된 실행 여부와 CP2 receipt를 그대로 씁니다.
+
+### CP1
+
+`enabled: true`면 CSO가 요청을 연구와 단순 작업으로 나눕니다.
+변환·집계·원문 요약과 출처에 있는 내용을 표·목록으로 정리·추출·다운로드하는 일은 단순 작업입니다.
+분석·예측·비교·관계 같은 추론이나 계산 실행(돌려·run 등)이 들어가면 표를 함께 요청해도 연구입니다.
+직원 한 명을 직접 지정한 요청은 연구로 명시하지 않는 한 단순 작업입니다.
+분류 규칙은 [연구 수행 규약](research_protocol.md) 1절에 있습니다.
+연구는 계획(PLAN)을 schema로 검증해 hash로 고정한 뒤 PI 승인(CP1)을 받습니다.
+승인 뒤 계획이 바뀌면 다시 승인받습니다.
+계획의 `protocol.packs`(id·version·sha256)는 CSO가 아니라 labhq가 적용 pack snapshot으로 채우고, CSO prompt에는 pack마다 `pack_values_keys`(field·validator·acceptance 키, acceptance는 rule id)를 보여 줍니다.
+계획이 검증에 걸리면 schema·pack 문제를 모두 모아 교정 prompt에 한 번에 넣고, 교정 뒤에도 남으면 CP1 카드 없이 `outcome: plan_invalid`와 남은 문제 목록을 보고서에 적어 끝냅니다(#222).
+CP1 카드는 질문·가설·완료 조건 아래에 단계 목록(id·직원·지시 앞부분·산출)을 펼쳐 두고 protocol 전문은 접어 둡니다.
+
+### 단계와 CP2
+
+`evidence_checkpoint: true`를 함께 켜면 CP1 뒤 연구 단계가 `result v2` claim·evidence 계약으로 실행되고, CP2 카드에서 PI가 승인·수정 요청·거부를 고릅니다.
+수정 요청은 아직 단계를 다시 돌리지 않고 거부처럼 요청을 끝냅니다(`evidence_revision_requested`).
+PI 메모는 기록에만 남으므로 근거를 보강하려면 새 요청을 보냅니다.
+웹 버튼도 `수정 요청(요청 끝남)`입니다.
+CP2 카드는 claim마다 단계·상태·근거 종류·표시(거부된 근거, 근거 잃음)를 한 줄로 보여 주고 원장 JSON은 접어 둡니다.
+결정은 웹 카드 버튼이나 `labhq approve <id> --choice approve|revise|deny`의 선택값으로만 읽고 메모는 읽지 않습니다.
+선택값이 없으면 승인하지 않고 다시 묻습니다(세 번까지).
+`artifact_refs` 경로가 그 단계가 모은 산출이나 끝난 조상 단계(직접 상위가 아니어도 됨)의 산출(`<workdir_id>/<path>`)이 아니면 그 evidence는 거부되고, 카드와 receipt에 이유가 남습니다.
+단계가 끝날 때 원장이 계약을 통과해도 이런 인용이 있으면, 교정 횟수가 남은 동안 한 번 모은 산출 목록을 주고 인용을 고치게 합니다(#485).
+이 교정이 실패하거나 모으지 않은 파일만 새로 쓰거나 그대로 두면 단계는 교정 전 결과로 통과하고 CP2가 그 행을 거부합니다.
+보고하지 않은 산출 목록에서 `__pycache__` 아래 파일은 뺍니다(관찰 기록에는 남음).
+단계가 결정이 필요해 멈추면(`blocking_decision`) 산출·원장 검사 전에 CSO가 먼저 답하고, hard-stop 질문만 PI에게 올립니다. 답을 받으면 단계를 다시 실행합니다.
+연구 요청은 일반 재계획·리뷰·합성에 들어가지 않습니다.
+단계의 결과 원장이 교정(`research.result_corrections`, 기본 2회) 뒤에도 계약을 어기면, 잘못된 행(링크·evidence·claim)만 거부하고 나머지로 진행합니다.
+거부한 행과 이유는 CP2 카드와 보고서 메타데이터에 남습니다.
+예를 들어 실패하거나 0건인 조회를 근거(supports)로 연결했다면 그 링크만 빼고 시도 기록은 남깁니다.
+계획 hash·단계·필수 evidence 칸 같은 구조 결함은 거부로 메우지 않고 단계 실패로 봅니다.
+단계가 실패하면 `research_failed`로 끝나고, 계획을 바꾸려면 CP1을 다시 받아야 합니다.
+
+### 리뷰·이어 가기
+
+CP2에서 승인하면 `reviewer_agent`가 claim을 원장·산출 파일과 대조해 한 번 리뷰합니다.
+P1 지적이 있어 revise면 고정된 계획을 그대로 다시 돌리지 않습니다.
+대신 **이어 가기** 카드(`research_continue`)가 뜹니다.
+거절하거나 답이 없으면 지금처럼 `research_review_revise`로 끝납니다.
+승인하면 CSO가 리뷰 P1 지적과 이전 계획을 받아 새 계획을 쓰고, PI가 새 CP1(새 `plan_sha256`)을 승인한 뒤 바뀐 단계와 새 단계만 실행합니다.
+그 뒤 CP2·리뷰·보고서는 같습니다.
+이전 단계는 다섯 조건이 모두 맞을 때만 다시 돌리지 않고 결과를 그대로 씁니다: 단계 사양(모든 field)과 질문·scope·protocol·pack 값이 바이트까지 같고, 적용 pack의 sha256(`protocol.packs`·`pack_snapshot`)이 같고, P1 지적이 그 단계를 가리키지 않고, 위 단계가 모두 재사용되고, 새 CP1 승인 직후 기록된 산출 파일의 sha256이 그대로입니다(`labhq verify`와 같은 검사).
+같은 `id@version` pack이라도 정의가 바뀌면 단계가 어느 규칙에 기댔는지 모르므로 모든 단계가 다시 돕니다.
+하나라도 어긋나면 그 단계와 아래 단계가 다시 돕니다.
+재사용한 결과는 새 계획의 `plan_sha256`으로 다시 묶은 사본이라 CP2·보고서·`labhq verify`가 새 계획 하나로 검사하고, 원래 돈 차수·계획·task는 `continuation.reused_from`에 남습니다.
+CP1·CP2 카드에 재사용·재실행 단계와 이유가 보입니다.
+이전 차수의 계획·결과·CP2·리뷰는 `research_contract.rounds`에 남습니다.
+이어 가기 횟수는 `research.revise_continuations`(기본 2, 0이면 묻지 않음)로 정하고, 비용은 같은 요청 예산에 쌓입니다.
+중간에 gateway가 다시 떠도 답한 카드는 다시 묻지 않습니다.
+새 계획이 이전 계획과 바이트까지 같아도(같은 `plan_sha256`) 새 CP1·CP2·리뷰를 다시 받고, 이전 차수의 승인을 쓰지 않습니다.
+이어 가기가 단계 실행 전에 끝나면(새 CP1 거절·시간 초과, 계획 실패, 오류) 이전 차수의 계획·hash·CP1 승인·pack snapshot·CP2 receipt·리뷰·결과를 되돌린 채 `research_review_revise`로 끝납니다.
+돌지 않은 새 계획은 `continuation.declined_plan`에, 끝난 이유는 `continuation.ended_before_dispatch`에 남습니다.
+`labhq verify`는 완료 단계 ledger가 고정 계획과 다른 `plan_sha256`에 묶여 있으면 문제로 적습니다.
+이어 가기 카드도 다른 결정 카드처럼 `policy.approvals.pi_decision_timeout_s`(기본 7일)가 지나면 시간 초과로 닫힙니다.
+이미 끝난 요청은 나중에 이어 갈 수 없으니 새 요청을 냅니다.
+
+### 보고서·verify
+
+accept면 CSO가 결론·수치 문장마다 `[[claim:<step_id>/<claim_id>]]`를 단 보고서를 쓰고, labhq가 앵커를 검사해 문제가 없으면 `research_reported`, 있으면 본문 뒤에 "Claim check"를 붙여 `report_incomplete`로 끝냅니다.
+실패한 조회는 보고서에 따로 남습니다.
+규약은 [`docs/research_protocol.md`](research_protocol.md)(#90).
+
 
 `labhq verify <request_id>`는 gateway의 요청 기록을 읽고, runner PC의 작업 폴더에서 산출을 같은 규칙(상한까지만 읽기, 링크·junction 안 따라감, 통제 구역 제외)으로 다시 해시해 기록과 비교합니다. 요청 묶음이 있으면 link·junction을 먼저 거부한 뒤 JSON 구조·reference·경로 containment, 요청 ID, MANIFEST 필수 필드 형식, 파일↔`MANIFEST.tsv`↔crate의 size·sha256을 검사합니다. crate가 `File`로 선언한 파일은 MANIFEST status와 상관없이 있는지와 hash를 보고, status가 crate 기록과 다르면 문제로 적습니다(#475). 너무 깊게 중첩된 metadata JSON은 오류로 끝나지 않고 문제로 적습니다. MANIFEST에 기록된 crate·README가 없거나 README를 읽지 못하면 이전 형식으로 간주하지 않습니다. 외부 입력은 `INPUTS.tsv`와 crate에 적힌 hash끼리만 대조하며 원본을 재해시했다고 표시하지 않습니다. crate가 없는 이전 묶음은 기존 판정을 유지합니다. 연구 요청은 보고서 앵커 검사도 다시 돌리고, 보고하지 않은 산출은 경고로 보입니다. 문제가 없으면 exit 0, 불일치·없는 파일·앵커 문제는 1, 요청이나 작업 폴더가 없으면 2입니다. `--bundle out.zip`과 웹 요청 상세의 **감사 번들**은 `README.md`·`claims.json`·`artifacts.json`만 담고 산출 파일은 넣지 않습니다. gateway에 작업 폴더가 없으면 기록만 담고 runner PC의 `labhq verify` 재검사를 안내합니다. 내장 MCP(hpc·ask)의 실패는 isError로 돌아가며 끝에 "이 실패는 증거도 부재 증명도 아닙니다"가 붙습니다. 일반 단계는 Findings·Evidence·Not established·Method changes 블록을 남기며, 모으지 않은 Evidence 경로와 실패한 도구 호출은 거부 대신 최종 보고서 경고로 올라갑니다(#58).
 

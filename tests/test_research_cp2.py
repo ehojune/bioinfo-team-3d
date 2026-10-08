@@ -359,6 +359,9 @@ def test_artifact_refs_bind_only_to_own_or_verified_upstream_outputs():
     # A bare relative path names this step's workspace, where the upstream file is not.
     assert set(refused) == {"e_ghost", "e_escape", "e_bare", "inference"}
     assert refused["inference"] == "derived from refused evidence e_ghost"
+    assert refused["e_ghost"] == ("cites artifact ghost at 'outputs/ghost.tsv'; the file exists but is not a "
+                                  "collected output of this step or an output of a completed upstream step "
+                                  "(파일은 있으나 이 단계의 수집 산출이나 완료된 앞 단계 산출이 아님)")
     assert [row["claim_id"] for row in bound["unsupported_claims"]] == ["lost"]
     assert bound["artifact_sha256"] == {"own": "a" * 64, "up_id": "b" * 64, "up_abs": "b" * 64}
 
