@@ -6,3 +6,6 @@ rows:
 - sha: "565061e"
   at: 2026-10-08 10:13
   text: "연구 verifier·CP2·blocking decision·Codex auto 설명과 artifact 거부 사유를 현재 동작에 맞췄다"
+- sha: "ff9212d"
+  at: 2026-10-08 10:17
+  text: "최신 main의 연구 분류·웹 상태 변경을 보존하며 문서와 공통 WebSocket close 판정 충돌을 풀었다"
