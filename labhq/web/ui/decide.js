@@ -360,10 +360,13 @@ export function displaySummary(approval) {
 function timingText(approval, options) {
   const now = options.now ? options.now() : Date.now() / 1000;
   const waited = Math.max(0, now - Number(approval.created_at || now));
-  const wait = waited < 60 ? `${Math.floor(waited)}초 대기` : `${Math.floor(waited / 60)}분 대기`;
+  // Minutes up to two hours, then hours, then days: a 7-day decision card must not read as 10079분 (R5).
+  const long = s => s < 172800 ? `${Math.floor(s / 3600)}시간` : `${Math.floor(s / 86400)}일`;
+  const wait = waited < 60 ? `${Math.floor(waited)}초 대기` : waited < 7200 ? `${Math.floor(waited / 60)}분 대기`
+    : `${long(waited)} 대기`;
   const left = Math.max(0, Number(approval.timeout_s || 0) - waited);
   const countdown = approval.timeout_s && !NO_TIMEOUT_KINDS.has(approval.kind)
-    ? ` · ${left ? `${Math.ceil(left / 60)}분 남음` : '시간 초과'}` : '';
+    ? ` · ${left ? `${left < 7200 ? `${Math.ceil(left / 60)}분` : long(left)} 남음` : '시간 초과'}` : '';
   const blocked = blockedStepCount(approval, options.requests, options.taskStep);
   return `${wait}${countdown}${blocked ? ` · 하류 ${blocked}단계 멈춤` : ''}`;
 }

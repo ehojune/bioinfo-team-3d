@@ -176,7 +176,7 @@ test('a resume card joins step ids, has no countdown and says what 거절 does (
   assert.equal(p.title.textContent,'중단된 요청 재개');
   assert.equal(p.summary.textContent,'중단된 단계(s2, s3)를 다시 돌릴까요?');
   assert.equal(p.request.textContent,'요청: 새로 받은 WGS 배치 표준 QC');
-  assert.equal(p.timing.textContent,'14239분 대기','the gateway never times a resume card out');
+  assert.equal(p.timing.textContent,'9일 대기','the card has no countdown; a long wait reads in days');
   assert.equal(p.consequence.textContent,'거절하면 이 요청은 실패로 끝납니다.');
   assert.equal(decide.displaySummary({...card,summary:"중단된 단계 ['요청']를 다시 돌릴까요?"}),'중단된 요청을 다시 이어 갈까요?');
   assert.equal(decide.displaySummary({kind:'tool_permission',summary:"['a']"}),"['a']",'other kinds keep their text');

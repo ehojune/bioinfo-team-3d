@@ -57,6 +57,8 @@ a{color:var(--sleep-ink)}
 .conn.live i{background:var(--working)}.conn.demo i{background:var(--sleep)}.conn.offline i,.conn.auth i{background:var(--error)}
 .cost{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
 .note{max-width:1280px;margin:0 auto;padding:0 16px 8px;font-size:13px;color:var(--muted)}
+.runner-off{max-width:1280px;margin:0 auto 8px;padding:6px 16px;font-size:13px;color:var(--error-ink);border-left:3px solid var(--error-ink);box-sizing:border-box}.runner-off[hidden]{display:none}
+.req-actions{margin:6px 0 0}
 .tokenbar{display:none;max-width:1280px;margin:0 auto;padding:0 16px 10px;gap:8px;align-items:center;flex-wrap:wrap}
 .tokenbar.show{display:flex}
 .tokenbar input{min-height:40px;border:1px solid var(--line);border-radius:10px;background:var(--panel);padding:6px 10px;width:min(320px,100%)}
@@ -337,6 +339,7 @@ dialog.sheet::backdrop{background:rgba(17,26,34,.45)}
     <span class="cost" id="cost">사용 비용 $0.00</span>
   </div>
   <p class="note" id="note" hidden>가상의 데이터로 움직이는 데모예요. 게이트웨이에 연결하면 실제 팀의 상태가 보여요.</p>
+  <p class="runner-off" id="runner-off" role="status" hidden>러너 꺼짐 — 터미널에서 <code>labhq runner</code>를 실행하세요. 그동안 보낸 요청은 러너를 기다려요.</p>
   <div class="tokenbar" id="tokenbar">
     <label for="tok">게이트웨이 토큰</label>
     <input id="tok" type="password" autocomplete="off" placeholder="client_token">
@@ -608,6 +611,7 @@ function renderHeader() {
   if (c.lastChild.textContent !== txt) c.lastChild.textContent = txt;
   $('#cost').textContent = LabHQState.totalCostLabel([...S.requests.values()], S.cost);
   $('#note').hidden = MODE !== 'demo';
+  $('#runner-off').hidden = !(MODE !== 'demo' && S.conn === 'live' && S.runnersKnown && !S.runners.size);  // R15
   $('#office').classList.toggle('offline', S.conn === 'offline');
   const n = S.approvals.size;
   const title = `${n ? `(${n}) ` : ''}labhq${INSTANCE ? ` ${INSTANCE}` : ''} 사무실`;
@@ -805,6 +809,7 @@ function renderRequest() {
   const refList = (q.references || []).map(r => `<li class="chip">${esc(REF_KIND[r.kind] || r.kind)} ${esc(r.value)}${r.source === 'pi_profile' ? ' (기본)' : ''}</li>`).join('');
   el.innerHTML = `${pick}<p class="req-text">${esc(q.text)}</p><p class="req-meta"><span>${esc(processingLabel(q))}</span></p>${refList ? `<ul class="req-refs" aria-label="참고 자료">${refList}</ul>` : ''}${assumptionsHTML(q)}${phaseList(q)}<div id="task-board"></div>
 <p class="req-meta">${proj ? `<span>프로젝트 ${esc(proj.name)}</span>` : ''}<span>비용 ${esc(LabHQState.costLabel(q))}</span>${q.costSummary && Object.keys(q.costSummary.by_engine || {}).length ? `<span>${esc(LabHQState.engineCostLabel(q.costSummary))}</span>` : ''}${q.costSummary && q.costSummary.by_agent ? `<span>${esc(LabHQState.agentCostLabel(q.costSummary, nick))}</span>` : ''}<span class="req-status st-${esc(q.status)}">${esc(statusText)}</span></p>
+  ${api?.cancelRequest && (LabHQState.isActiveRequest(q.status) || q.status === 'interrupted') ? `<p class="req-actions"><button class="btn" id="req-cancel" type="button" data-rid="${esc(q.id)}">요청 취소</button></p>` : ''}
   ${pipeline}${gh ? `<ul class="gh">${gh}</ul>` : ''}${notesHTML(q)}${reportHTML(q)}${bundleHTML(q)}${auditHTML(q)}${q.error ? `<p class="empty-note">${esc(q.error)}</p>` : ''}${followupHTML(q)}`;
   if ($('#fu-text')) $('#fu-text').value = fuDrafts.get(q.id) || '';  // a live update keeps this request's draft
   syncTaskBoard($('#task-board'), q, S.stepDetails, { nick,
@@ -854,7 +859,7 @@ function renderTargets() {
 }
 let composerRid = null;
 function renderComposerMode() {
-  const q = S.requests.get(S.current), active = q && q.mode !== 'direct' && ['running', 'waiting_for_runner', 'waiting_quota', 'waiting_login'].includes(q.status);
+  const q = S.requests.get(S.current), active = q && q.mode !== 'direct' && ['running', 'waiting_for_runner', 'waiting_quota', 'waiting_login', 'waiting_pi'].includes(q.status);
   const mode = $('#send-mode');
   mode.hidden = !active;
   if (active && composerRid !== q.id) { composerRid = q.id; mode.value = 'note'; }
@@ -914,7 +919,7 @@ async function send() {
   const input = $('#ask'), text = input.value.trim(), target = $('#target').value, project = $('#project').value;
   if (!text) { toast('무엇을 맡길지 먼저 적어 주세요'); input.focus(); return; }
   const current = S.requests.get(S.current);
-  const noteMode = current && ['running', 'waiting_for_runner', 'waiting_quota', 'waiting_login'].includes(current.status) && $('#send-mode').value === 'note';
+  const noteMode = current && ['running', 'waiting_for_runner', 'waiting_quota', 'waiting_login', 'waiting_pi'].includes(current.status) && $('#send-mode').value === 'note';
   if (noteMode) {
     try { await api.note(current.id, text); input.value = ''; toast('다음 단계에 전할 메모를 보냈어요'); }
     catch (e) { toast(`메모를 보내지 못했어요: ${e.message}`); }
@@ -980,6 +985,13 @@ $('#request').addEventListener('click', async e => {
     try { if (!fillRequestDetail(rid, await api.requestDetail(rid))) toast('전문을 찾지 못했어요'); }
     catch (err) { toast(`전문을 불러오지 못했어요: ${err.message}`); }
     finally { fuLoading.delete(rid); reqKey = ''; schedule(); }
+    return;
+  }
+  if (e.target.id === 'req-cancel') {  // R13: stops its tasks, waits and cards; the report keeps partial results
+    if (!confirm('이 요청을 취소할까요? 도는 작업을 멈추고 남은 단계는 실행하지 않아요. 끝난 단계는 보고서에 남아요.')) return;
+    e.target.disabled = true;
+    try { await api.cancelRequest(e.target.dataset.rid); toast('요청을 취소했어요'); }
+    catch (err) { e.target.disabled = false; toast(`취소하지 못했어요: ${err.message}`); }
     return;
   }
   if (e.target.id !== 'fu-send') return;
@@ -1129,6 +1141,7 @@ function startLive() {
     recruit: s => post('/api/recruit', { paper: s.paper || null, repo: s.repo || null, focus: s.focus || null, request_id: s.request_id || null }),
     contract: (id, action, days) => post(`/api/contracts/${encodeURIComponent(id)}`, { action, days }),
     cancel: id => post(`/api/tasks/${encodeURIComponent(id)}/cancel`, {}),
+    cancelRequest: rid => post(`/api/requests/${encodeURIComponent(rid)}/cancel`, {}),
     resumeQuota: (rid, sid) => post(`/api/requests/${encodeURIComponent(rid)}/steps/${encodeURIComponent(sid)}/resume-quota`, {}),
     history: () => get('/api/approvals/history?limit=50'),
   };
