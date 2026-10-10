@@ -276,3 +276,13 @@ test('what an agent waits for survives a roster update',()=>{
   office.apply({type:'roster.updated',data:{agents:[{id:'biologist',name:'곰',state:'hibernating'}]}});
   assert.equal(office.stateText(office.ag('biologist')),'답 기다리는 중');
 });
+
+test('before the first snapshot the office reads as loading, not as an empty lab at $0.00',()=>{
+  // Web trial 2026-10-08: a reload showed "오늘의 할 일을 기다리는 중" and "사용 비용 $0.00" until the snapshot came.
+  const html=fs.readFileSync(path.join(web,'index.html'),'utf8');
+  assert.match(html,/let snapshotLoaded = MODE === 'demo';/);
+  assert.match(html,/if \(ev\.type === 'snapshot'\) \{ lastSeq = ev\.seq \|\| 0; snapshotLoaded = true; schedule\(\); return; \}/);
+  assert.match(html,/snapshotLoaded \? LabHQState\.totalCostLabel\(\[\.\.\.S\.requests\.values\(\)\], S\.cost\) : '사용 비용 불러오는 중'/);
+  assert.match(html,/snapshotLoaded \? '오늘의 할 일을 기다리는 중' : '사무실 상태를 불러오는 중'/);
+  assert.match(html,/snapshotLoaded \? '지금은 결정할 일이 없어요\. 승인이 필요하면 여기에 바로 떠요\.' : '결정할 일을 불러오는 중'/);
+});
