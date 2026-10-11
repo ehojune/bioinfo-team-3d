@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 02:46 | [`e2a0906`](https://github.com/ehojune/bioinfo-team-3d/pull/520/commits/e2a0906) | labhq init이 #518 템플릿 목록을 그대로 적은 설정도 load 때 백그라운드 셸 도구를 받는다(#520 리뷰). |
+| 02:37 | [`2381232`](https://github.com/ehojune/bioinfo-team-3d/pull/520/commits/2381232) | 승인 게이트가 백그라운드 셸 출력을 읽거나 멈추는 BashOutput·KillShell·TaskOutput·TaskStop을 기본 허용한다(#518 후속). |
 | 02:28 | [`fa17c0b`](https://github.com/ehojune/bioinfo-team-3d/pull/519/commits/fa17c0b) | lock의 실제 OS 판정을 테스트용 sys.platform 값과 분리해 Linux CI에서도 올바른 fcntl 경로를 쓴다. |
 | 02:19 | [`5ae9d5e`](https://github.com/ehojune/bioinfo-team-3d/pull/519/commits/5ae9d5e) | 같은 instance의 up/down을 OS lock으로 직렬화하고 POSIX 종료를 TERM 대기와 KILL 재확인으로 마친다. |
 | 02:12 | [`316e1aa`](https://github.com/ehojune/bioinfo-team-3d/pull/518/commits/316e1aa) | native 위임 도구를 거부하고 Codex 직원의 multi-agent·memory·apps·plugins를 끔 |
