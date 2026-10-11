@@ -503,8 +503,8 @@ class ProjectSettings(BaseModel):
 
 class Settings(BaseModel):
     instance: str | None = None
-    gateway: GatewaySettings = GatewaySettings()
-    runner: RunnerSettings = RunnerSettings()
+    gateway: GatewaySettings = Field(default_factory=GatewaySettings)
+    runner: RunnerSettings = Field(default_factory=RunnerSettings)
     engines: EnginesSettings = EnginesSettings()
     bench: BenchSettings = BenchSettings()
     hpc: HpcSettings = HpcSettings()

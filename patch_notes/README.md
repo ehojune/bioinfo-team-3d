@@ -14,9 +14,15 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 04:50 | [`939291a`](https://github.com/ehojune/bioinfo-team-3d/pull/531/commits/939291a) | Claude와 Codex의 90초 fake MCP 대기 설정과 단일 호출을 직접 검증하고 state env 기본값을 지연 생성했다 |
+| 04:42 | [`21d0a63`](https://github.com/ehojune/bioinfo-team-3d/pull/527/commits/21d0a63) | 최신 main의 웹·CLI 상태 수정을 연구 이어 가기 상태 수정과 함께 보존함 |
+| 04:39 | [`74b8b40`](https://github.com/ehojune/bioinfo-team-3d/pull/529/commits/74b8b40) | 실행 중 취소돼 결과가 비었어도 단계·단독 task가 보내졌던 요청은 묶음을 시도한다. |
 | 04:36 | [`abcf5b6`](https://github.com/ehojune/bioinfo-team-3d/pull/522/commits/abcf5b6) | 리뷰 3차 반영: 납품물 hash를 못 재면 수습에 남기고 재고용 때도 hash 없는 부분을 표시한다. mcp_dir 밖에서 실제 실행되는 서버 폴더도 재며, 캐시 checkout의 origin을 확인할 수 없으면 새로 clone한다(#424). |
+| 04:34 | [`811253a`](https://github.com/ehojune/bioinfo-team-3d/pull/529/commits/811253a) | 단계를 하나도 돌리지 않고 끝난 요청(CP1 수정 요청, 작업 전 거절·취소)은 요청 묶음 경고를 남기지 않는다. |
 | 04:14 | [`51d34ae`](https://github.com/ehojune/bioinfo-team-3d/pull/522/commits/51d34ae) | 리뷰 2차 반영: 수습 파견직은 PI가 activate하기 전에는 CSO 배정·직접 요청·상담·러너 실행에서 빠지고 명단에는 수습으로 보인다. 외부 전송 host는 hostname[:port]만 받아 URL 속 인증값이 계약서·명단에 남지 않는다(#424). |
 | 04:14 | [`ea02a1c`](https://github.com/ehojune/bioinfo-team-3d/pull/528/commits/ea02a1c) | main 병합: 첫 로드 표시와 재현 등급 사유(#524)·재연결 카드 처리(#526)를 함께 둔다. |
+| 04:08 | [`d498deb`](https://github.com/ehojune/bioinfo-team-3d/pull/527/commits/d498deb) | 최신 main의 러너 카드 정리를 이어 가기 상태 수정과 함께 보존함 |
+| 04:05 | [`ed86766`](https://github.com/ehojune/bioinfo-team-3d/pull/527/commits/ed86766) | 연구 이어 가기의 예산·질문·재개·복원·출처 상태와 재사용 prompt를 바로잡음 |
 | 03:57 | [`b0f6b79`](https://github.com/ehojune/bioinfo-team-3d/pull/528/commits/b0f6b79) | 웹은 한도·로그인 대기가 풀려도 열린 결정 카드가 있으면 PI 결정 대기로, 시간 초과 카드는 거절이 아니라 시간 초과로 보이고, CLI는 선택지 있는 직원 질문을 답 없이 승인하지 않는다(#521). |
 | 03:48 | [`9fba5f1`](https://github.com/ehojune/bioinfo-team-3d/pull/524/commits/9fba5f1) | Windows manifest 검증에서 UTF-8 읽기를 명시 |
 | 03:42 | [`7bd1232`](https://github.com/ehojune/bioinfo-team-3d/pull/522/commits/7bd1232) | 리뷰 반영: restricted 작업에서 외부 전송 파견직에게 묻는 상담을 refs 복사 전에 거부하고, skill_source가 바뀌면 캐시를 새로 clone하며, ZIP으로만 온 MCP도 재고용 때 hash를 다시 잰다(#424). |

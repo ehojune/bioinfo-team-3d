@@ -4,6 +4,97 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 단계
+P1 — #276 fake MCP 장시간 대기·교차 세션 inbound 마감
+
+## 한 일
+
+- Claude·Codex adapter가 만든 timeout을 fake CLI에서 기록해 둘 다 1,320초인지, 90초 응답을 timeout·재시도 없이 한 번만 받는지 단언했습니다.
+- Claude 직원의 모든 profile이 `crossSessionInbound: refuse`와 `SendMessage`·`ListAgents` deny를 만드는 기존 test를 확인했습니다.
+- 격리된 전체 test가 찾은 `LABHQ_STATE_DIR` import 시점 캡처를 env-sensitive `default_factory`로 고쳤습니다. MCP 경로 결함은 없었습니다.
+
+## 테스트 결과
+
+- [x] 관련 pytest: 72 passed, 3 skipped
+- [x] state env 회귀: 9 passed
+- [x] Windows 전체 `pytest -q`: 5030 passed, 64 skipped
+- [x] `scripts/check_public.sh`
+- Claude Code 2.1.289: `claude --version`, `claude --help`, `claude agents --help`; 설치본 changelog에서 `crossSessionInbound` 추가·거부 동작을 확인했습니다.
+- 공개 schema `https://json.schemastore.org/claude-code-settings.json`에는 아직 키가 없습니다. 공식 설정 문서도 schema가 최신 CLI보다 늦을 수 있다고 밝힙니다.
+- 공식 문서: https://code.claude.com/docs/en/cross-session-messaging#turn-off-cross-session-messaging
+
+## 바꾼 파일
+
+- `tests/test_long_mcp_call.py`, `tests/fixtures/fake_mcp_client.py`
+- `labhq/settings.py`, `docs/manual.md`
+
+## 막힌 점
+
+- 실제 Codex 장시간 probe는 지시대로 실행하지 않았습니다. #276의 남은 일은 이 probe뿐입니다.
+- CI는 기록 commit push 뒤 확인합니다.
+
+## PI·Claude에게 물을 것
+
+- 없음.
+
+## 확인
+
+- [x] `scripts/check_public.sh` 통과
+- [x] `docs/status/2026-10-12-0451-mcp-long-wait.md`에 같은 보고 추가
+- [x] 실제 CLI 모델 호출·장시간 probe를 실행하지 않음
+
+Refs #276
+
+🤖 Generated with Codex (gpt-5) for the labhq dev lead
+
+## 2026-10-12 · 단계 없이 끝난 요청의 요청 묶음 경고 제거
+
+- 결론: 단계를 하나도 돌리지 않고 끝난 요청(CP1 수정 요청, 작업 전 거절·취소·실패)은 요청 묶음을 만들지 않고 경고도 남기지 않는다. 묶을 것이 없는데 웹·CLI 목록에 "요청 묶음을 만들지 못했습니다: 단계 작업 폴더를 하나도 찾지 못했습니다"가 뜨던 잡음이다.
+- 바뀐 것: `Hub.commit_terminal`이 `results`가 비어 있고 그 요청의 step·direct task가 한 번도 보내지지 않았으면 terminal 기록만 남기고 묶음 시도를 건너뛴다. 실행 중 취소돼 `results`는 비었지만 단계 작업 폴더가 있을 수 있는 요청은 지금처럼 묶음을 시도한다(봇 리뷰). 단계 결과가 하나라도 있으면 지금처럼 묶음을 만들고, 실패하면 경고를 남긴다. manual 요청 묶음 절에 한 문장을 더했다.
+- 실행한 것: trial 실측(CP1 수정 요청 req_d13c37a5df → 새 요청 req_881839f8b7, 둘 다 경고가 남음)에서 발견했다. 새 test 2건(완료·실패)이 main 코드에서, 취소 중 단계 test 1건이 첫 커밋에서 실패하고 이 branch에서 통과한다. 빈 `results`로 묶음 실패를 흉내 내던 기존 test는 단계 결과 하나를 넣어 같은 성질(실패는 경고만, 재시작 때 다시 안 만듦)을 계속 본다. 전체 pytest 5033 passed·64 skipped(Windows).
+- 미해결: 없음.
+- 근거: `labhq/gateway/server.py`, `tests/test_request_bundle.py`.
+
+## 단계
+P2 — #521 연구 lane 상태 4~9
+
+## 한 일
+
+- 마지막 연구 보고 turn에서 처음 예산을 넘으면 카드를 띄우지 않고 초과 기록과 보고서를 남깁니다. 끝난 일에 7일짜리 결정을 요구하지 않는 안을 택했습니다.
+- 확인 질문 카드 상한을 연구 차수마다 세고, 이미 답한 질문은 전체 기록에서 계속 거릅니다.
+- 새 이어 가기 계획 전 재개 카드, 미승인 계획의 취소·재개 거절·만료 복원, 보관된 차수의 Live 출처 재질문을 바로잡았습니다.
+- 이어 가기 prompt의 재사용 조건에 가설 field 세 개를 명시했습니다.
+- `docs/manual.md`의 예산·재개 카드·리뷰/이어 가기 절을 105,355자에서 105,493자로 고쳤습니다.
+
+## 테스트 결과
+- [x] `origin/main` 동작 + 새 회귀: 8 failed, 68 passed
+- [x] 최신 `main` 병합 뒤 관련 회귀: 197 passed
+- [x] 최신 `main` 병합 뒤 웹 표시 회귀: 11 passed
+- [x] 최신 `main` 병합 뒤 Windows 전체 `pytest -q`: 5042 passed, 64 skipped
+
+## 바꾼 파일
+
+- `labhq/orchestrator/cso.py`, `labhq/gateway/server.py`, `labhq/research/continuation.py`
+- `tests/test_research_continue.py`, `tests/test_research_notes_budget.py`, `tests/test_research_report.py`, `tests/test_request_lifecycle.py`
+- `docs/manual.md`
+
+## 막힌 점
+
+없음.
+
+## PI·Claude에게 물을 것
+
+없음.
+
+## 확인
+- [x] `scripts/check_public.sh` 통과
+- [x] `docs/status/2026-10-12-0405-research-state-followups.md`에 같은 보고 추가
+- [x] 추가 PI 확인이 필요한 체크포인트 없음
+
+Refs #521
+
+🤖 Generated with Codex (gpt-5) for the labhq dev lead
+
 ## 결론
 
 #521 웹·CLI 묶음 8건(15·19·20·21·22·23·24·25)을 모두 main에서 재현하고 고쳤습니다. 15와 22는 같은 원인이라 수정 하나로 닫았습니다.

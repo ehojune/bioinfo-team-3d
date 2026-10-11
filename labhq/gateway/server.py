@@ -32,6 +32,7 @@ from ..models import ApprovalRequest, AskRequest, RunnerNotSent, RunnerUnavailab
 from ..recruit.provenance import not_yet_active, probation_refusal
 from ..adapters import enforces_read_only, get_adapter, read_only_refusal
 from ..orchestrator.cso import Orchestrator, _terminal_reports, environment_problem, holds_session, solo_phase
+from ..research import continuation as research_continuation
 from ..research.packs import check_configured_packs
 from ..request_status import is_active_request, is_terminal_request
 from ..settings import Settings
@@ -878,6 +879,12 @@ class Hub:
 
     def commit_terminal(self, rid: str, typ: str, data: dict) -> None:
         """Synchronous checkpoint used by direct callers and tests."""
+        if not self.requests[rid].get("results") and not self._dispatched_work_task(rid):
+            # No step or direct task was ever sent (CP1 수정 요청, cancelled or failed before work): nothing to
+            # bundle, and a "작업 폴더를 찾지 못했습니다" warning would only be noise on the PI's request list. A
+            # request cancelled mid-step can end with empty results but a real workdir, so it still tries (PR #529).
+            self._commit_terminal_record(rid, typ, data)
+            return
         if not self._has_bundle_workdir(rid):
             self._apply_bundle_outcome(rid, data, self._bundle_outcome(rid))
             self._commit_terminal_record(rid, typ, data)
@@ -885,6 +892,10 @@ class Hub:
         self._commit_terminal_record(rid, typ, data)
         self._apply_bundle_outcome(rid, data, self._bundle_outcome(rid))
         self._commit_bundle_record(rid, data)
+
+    def _dispatched_work_task(self, rid: str) -> bool:
+        return any(isinstance(task, Mapping) and task.get("request_id") == rid
+                   and task.get("kind") in ("step", "direct") for task in self.store.all("task").values())
 
     def _has_bundle_workdir(self, rid: str) -> bool:
         results = (self.requests[rid].get("results") or {}).values()
@@ -1043,8 +1054,13 @@ class Hub:
         when = time.strftime("%m-%d %H:%M", time.localtime(float(created))) if created else "접수 시각 모름"
         # A plan whose steps all finished stopped after them (CP2, review, a continue card, the report), not before.
         has_plan = bool(req.get("plan", {}).get("steps"))
+        carried = (req.get("research_contract") or {}).get("continuation") or {}
+        awaiting_continuation_plan = bool(carried and not carried.get("plan_sha256"))
         left = (", ".join(steps) if steps else
-                "없음(단계는 모두 끝났고 그 뒤 검토·결정·보고서부터 이어 갑니다)" if has_plan else "요청 전체")
+                f"이어 가기 {int(carried.get('round') or 2)}차: 새 계획·CP1부터 이어 갑니다"
+                if awaiting_continuation_plan else
+                "없음(단계는 모두 끝났고 그 뒤 검토·결정·보고서부터 이어 갑니다)" if has_plan
+                else "요청 전체")
         approval = ApprovalRequest(kind="resume", request_id=rid,
                                    summary=f"중단된 요청 \"{head}\"({when} 접수)을 다시 이어 갈까요? 남은 단계: {left}",
                                    # has_plan tells the web's empty steps apart: all done, or the whole request (#521).
@@ -1107,6 +1123,7 @@ class Hub:
                             "data": {"id": aid, **answer}})
         req = self.requests.get(rid or "")
         if req is not None and req.get("status") == "interrupted":
+            self._restore_unstarted_continuation(req)
             req.update(status="failed", outcome="resume_timed_out", error=note, finished_at=time.time())
             self.schedule_terminal(rid, "request.failed", {"error": note})
         return True
@@ -2303,6 +2320,7 @@ class Hub:
                             "data": {"id": approval_id, "approved": approved, "note": note, **chosen}})
         if a.get("kind") == "resume" and not approved:
             rid = a["request_id"]
+            self._restore_unstarted_continuation(self.requests[rid])
             self.requests[rid].update(status="failed", error="resume declined", finished_at=time.time())
             self.schedule_terminal(rid, "request.failed", {"error": "resume declined"})
 
@@ -2349,6 +2367,7 @@ class Hub:
                     "cancelled_tasks": list(req.get("cancelled_tasks") or [])}
         if is_terminal_request(status):
             raise ValueError(f"이미 끝난 요청입니다({status})")
+        self._restore_unstarted_continuation(req)
         now = time.time()
         req.update(status="cancelled", outcome="cancelled", error="PI가 요청을 취소했습니다", cancelled_at=now,
                    finished_at=now)
@@ -2405,6 +2424,20 @@ class Hub:
                 "cost_summary": req.get("cost_summary"), "usage": req.get("usage", {}),
                 "usage_known": req.get("usage_known", True)}
         self.schedule_terminal(rid, "request.completed", data)
+
+    @staticmethod
+    def _restore_unstarted_continuation(req: dict) -> bool:
+        """Put the last approved round back before a gateway path writes a terminal continuation record."""
+        if not Orchestrator._continuation_unstarted(req):
+            return False
+        contract = req["research_contract"]
+        carried = contract["continuation"]
+        previous = contract["rounds"][-1]
+        draft = research_continuation.restore_round(req, previous)
+        if draft:
+            carried["declined_plan"] = draft
+        req["results"] = copy.deepcopy(previous.get("results") or {})
+        return True
 
     async def finish_interrupted_cancels(self) -> list[str]:
         """At startup: finish a cancel whose gateway stopped before its terminal record (#521). The wait for the

@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from labhq.evidence.audit import ledger_binding_problems, research_ledgers
+from labhq.evidence.verify import SourceRecord, SourceUpdate, StaticResolver
 from labhq.gateway.server import Hub, SavedResults
 from labhq.models import Task, TaskResult
 from labhq.orchestrator.cso import Orchestrator
@@ -298,6 +299,66 @@ async def test_restart_in_the_middle_of_a_continuation(tmp_path, die_at, after):
 
 
 @pytest.mark.asyncio
+async def test_restart_before_the_new_plan_does_not_reopen_an_archived_rounds_live_source_cp2(tmp_path, monkeypatch):
+    hub = _hub(tmp_path, [CP1, APPROVE, CONTINUE, CP1, APPROVE])
+    hub.s.research.live_source_check = True
+    doi = "10.1021/am300292v"
+    resolver = StaticResolver({("doi", doi): [SourceRecord(id_scheme="doi", id_value=doi)]})
+    monkeypatch.setattr("labhq.orchestrator.cso.LiveSourceResolver", lambda **_kwargs: resolver)
+    original_reply = hub.reply
+    crash = {"second_plan": True}
+
+    async def sourced_reply(task):
+        if (crash["second_plan"] and task.meta["kind"] == "plan"
+                and "Continuation (research round 2)" in task.prompt):
+            raise _Restart()
+        response = await original_reply(task)
+        if task.meta["kind"] == "step" and response.ok:
+            response.structured["evidence"][0]["source"].update(
+                {"id_scheme": "doi", "id_value": doi, "accessed_at": "2026-10-12"})
+        return response
+
+    hub.reply = sourced_reply
+    with pytest.raises(_Restart):
+        await Orchestrator(hub).run_request("r")
+    assert [item["kind"] for item in hub.approvals] == [
+        "research_plan", "research_evidence", "research_continue"]
+    assert Orchestrator._archived_continuation_decision(hub.requests["r"])
+
+    resolver.records[("doi", doi)] = [SourceRecord(
+        id_scheme="doi", id_value=doi,
+        updates=[SourceUpdate(direction="updated_by", update_type="retraction",
+                              related={"id_scheme": "doi", "id_value": "10.1021/acsami.9b11759"})])]
+    crash["second_plan"] = False
+    hub.requests["r"]["status"] = "interrupted"
+    before = len(hub.approvals)
+    await Orchestrator(hub).run_request("r", resume=True)
+
+    assert [item["kind"] for item in hub.approvals[before:]] == ["research_plan", "research_evidence"]
+    contract = hub.requests["r"]["research_contract"]
+    assert contract["round"] == 2 and contract["continuation"]["verified"] is True
+
+
+@pytest.mark.asyncio
+async def test_continuation_clarify_cap_counts_only_the_current_research_round(tmp_path):
+    hub = _hub(tmp_path, [{"approved": True, "note": "round 2 answer"}])
+    req = hub.requests["r"]
+    req["research_contract"] = {"round": 2}
+    req["clarifications"] = [
+        {"questions": ["round 1 question A"], "answer": "A", "research_round": 1},
+        {"questions": ["round 1 question B"], "answer": "B", "research_round": 1},
+    ]
+    candidate = _plan(2)
+    candidate["clarifying_questions"] = ["round 2 question"]
+
+    status, entry = await Orchestrator(hub)._plan_clarification("r", candidate)
+
+    assert status == "answered" and entry["research_round"] == 2
+    assert [item["research_round"] for item in req["clarifications"]] == [1, 1, 2]
+    assert hub.approvals[-1]["kind"] == "clarify"
+
+
+@pytest.mark.asyncio
 async def test_declining_the_continuation_ends_the_request_as_before(tmp_path):
     hub = _hub(tmp_path, [CP1, APPROVE, {"approved": False, "note": "stop here"}])
     await Orchestrator(hub).run_request("r")
@@ -552,6 +613,27 @@ def test_a_changed_hypothesis_re_runs_every_step_since_steps_are_dispatched_with
     carry = continuation.carry_over(previous, new, {}, [])
     assert carry.reuse == [] and set(carry.rerun.values()) == {"question, scope, hypotheses, protocol or pack values changed"}
     assert continuation.carry_over(previous, copy.deepcopy(old), {}, []).reuse == ["s1", "s2"]
+
+
+def test_continuation_plan_prompt_names_every_hypothesis_field_in_the_reuse_rule():
+    prompt = continuation.plan_prompt(valid_plan(), "a" * 64, [], 2)
+    for field in ("brief.primary_hypothesis", "brief.null_or_alternatives",
+                  "brief.distinguishing_observations"):
+        assert field in prompt
+
+
+def test_an_archived_decided_round_does_not_reopen_live_source_cp2_before_the_new_plan():
+    frozen = "a" * 64
+    req = {"research_contract": {
+        "plan_sha256": frozen,
+        "rounds": [{"round": 1, "plan_sha256": frozen}],
+        "round": 2,
+        "continue_decision": {"decision": "approved", "plan_sha256": frozen},
+        "continuation": {"round": 2, "from_plan_sha256": frozen},
+    }}
+    assert Orchestrator._archived_continuation_decision(req)
+    req["research_contract"]["continuation"]["verified"] = True
+    assert not Orchestrator._archived_continuation_decision(req)
 
 
 
