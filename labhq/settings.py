@@ -267,9 +267,11 @@ def _default_bash_ask() -> list[str]:
 def _default_auto_allow() -> list[str]:
     # Known non-delegating tools the approval gate allows without a shell, file or MCP rule. File tools are repeated
     # here so an exported policy is self-explanatory; StructuredOutput and ToolSearch were seen in trial records.
-    # Claude Code's basic reading/planning tools supplied the rest. Unknown tools ask; native delegation always denies.
+    # Claude Code's basic reading/planning tools supplied the rest. BashOutput/KillShell (older Claude Code) and
+    # TaskOutput/TaskStop (newer) only read or stop a background shell the gated Bash call already started.
+    # Unknown tools ask; native delegation always denies.
     return ["Read", "Glob", "Grep", "LS", "WebSearch", "WebFetch", "TodoWrite", "Skill",
-            "StructuredOutput", "ToolSearch"]
+            "StructuredOutput", "ToolSearch", "BashOutput", "KillShell", "TaskOutput", "TaskStop"]
 
 
 class ApprovalRules(BaseModel):
@@ -280,6 +282,21 @@ class ApprovalRules(BaseModel):
     # Cards that decide the request itself (clarify, question, scope, budget, CP1, CP2, continue, resume). The request
     # waits as waiting_pi meanwhile; an unanswered card ends as *_timed_out, never as a deny (PI 점검 R5).
     pi_decision_timeout_s: int = Field(default=7 * 86400, ge=1)
+
+    @field_validator("auto_allow_tools")
+    @classmethod
+    def _upgrade_template_list(cls, value: list[str]) -> list[str]:
+        """A config written by `labhq init` from the #518 template keeps that exact list; it gets the background-shell
+        tools added since (#520 review). A list the PI edited is left as written."""
+        if set(value) == _AUTO_ALLOW_518:
+            return [*value, *(tool for tool in _BACKGROUND_SHELL_TOOLS if tool not in value)]
+        return value
+
+
+# The auto_allow_tools template #518 published, and what #520 added to the default for configs that still carry it.
+_AUTO_ALLOW_518 = frozenset({"Read", "Glob", "Grep", "LS", "WebSearch", "WebFetch", "TodoWrite", "Skill",
+                             "StructuredOutput", "ToolSearch"})
+_BACKGROUND_SHELL_TOOLS = ("BashOutput", "KillShell", "TaskOutput", "TaskStop")
 
 
 class BudgetSettings(BaseModel):

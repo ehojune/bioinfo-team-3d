@@ -390,7 +390,10 @@ def test_a_tool_without_a_rule_asks_instead_of_being_allowed():
     p = PolicySettings()
     monitor = evaluate_tool("Monitor", {"command": "until cat /data/cohort/x; do sleep 2; done"}, p)
     assert monitor.action == "ask" and "auto_allow_tools" in monitor.reason
-    for tool in ("StructuredOutput", "ToolSearch", "WebSearch", "WebFetch", "TodoWrite", "Skill"):
+    # BashOutput/KillShell and TaskOutput/TaskStop only read or stop a background shell the gated Bash started:
+    # asking the PI for each would bury the cards that matter (#518 follow-up).
+    for tool in ("StructuredOutput", "ToolSearch", "WebSearch", "WebFetch", "TodoWrite", "Skill",
+                 "BashOutput", "KillShell", "TaskOutput", "TaskStop"):
         assert evaluate_tool(tool, {}, p).action == "allow", tool
     p.approvals.auto_allow_tools.append("Monitor")
     assert evaluate_tool("Monitor", {"command": "true"}, p).action == "allow"
@@ -416,6 +419,18 @@ def test_example_configs_publish_the_same_non_delegating_auto_allow_list():
     assert configured == PolicySettings().approvals.auto_allow_tools
     assert not {"Task", "Agent", "Workflow", "TeamCreate", "TeamDelete"} & set(configured)
     assert Settings.model_validate(data).policy.approvals.auto_allow_tools == configured
+
+
+def test_a_config_written_from_the_518_template_gets_the_background_shell_tools():
+    """#520 review: `labhq init` wrote the #518 list explicitly, which replaced the newer default on load."""
+    template = ["Read", "Glob", "Grep", "LS", "WebSearch", "WebFetch", "TodoWrite", "Skill", "StructuredOutput",
+                "ToolSearch"]
+    loaded = Settings.model_validate({"policy": {"approvals": {"auto_allow_tools": template}}})
+    assert loaded.policy.approvals.auto_allow_tools == [*template, "BashOutput", "KillShell", "TaskOutput", "TaskStop"]
+    assert evaluate_tool("TaskOutput", {}, loaded.policy).action == "allow"
+    edited = ["Read", "Glob"]  # a list the PI edited stays as written
+    kept = Settings.model_validate({"policy": {"approvals": {"auto_allow_tools": edited}}})
+    assert kept.policy.approvals.auto_allow_tools == edited
 
 
 WINDOWS_STEP = "C:/Users/pi/labhq/work/req/step"
