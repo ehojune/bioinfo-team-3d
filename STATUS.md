@@ -17,6 +17,23 @@
 - 미해결: `recruits_running`도 같은 incarnation 문제를 안고 있다(#521 P2 11·18). 이번 `process` 값을 그대로 쓰면 고쳐지지만 이 PR 범위 밖이라 남긴다.
 - 근거: `labhq/gateway/server.py`, `labhq/runner/daemon.py`, `tests/test_request_lifecycle.py`, `docs/manual.md`.
 
+## 변경
+
+- 요청 묶음의 재현 등급과 근거를 MANIFEST, RO-Crate, verify, 웹·CLI에 표시합니다.
+- 환경 lock을 complete/partial/unavailable로 기록하고 제출한 HPC 잡 스크립트를 hash와 함께 묶습니다.
+- restricted/private 입력은 경로와 hash를 남기지 않으며, 유효한 재실행 receipt가 있을 때만 rerun_verified를 부여합니다.
+
+## 검증
+
+- Windows 전체 pytest: 5017 passed, 63 skipped
+- 관련 pytest: 323 passed, 5 skipped
+- Node test 파일 31개 통과
+- `bash scripts/check_public.sh` 통과
+
+Closes #423
+
+🤖 Generated with Codex (gpt-5) for the labhq dev lead
+
 ## 요약
 
 - direct 응답이 기존 `declare_output_types` 어휘로 실제 `outputs/` 산출의 데이터·형식 종류를 함께 선언합니다.
