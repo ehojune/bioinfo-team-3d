@@ -1289,6 +1289,16 @@ def _earlier_rounds_fallback(contract: dict) -> str:
             "이번 차수에서 어떻게 고쳤는지는 결과 절과 실행 기록을 보세요.\n" + "\n".join(rows))
 
 
+def _before_bench_block(report: str, section: str) -> str:
+    """Add ``section`` at the end of the PI report, before a trailing benchmark result block, which bench scoring
+    requires to stay last (labhq/bench.py; #517 review)."""
+    marker = re.compile(r"<!-- LABHQ_BENCH_RESULT -->.*?<!-- /LABHQ_BENCH_RESULT -->", re.DOTALL)
+    blocks = list(marker.finditer(report))
+    if len(blocks) == 1 and not report[blocks[0].end():].strip():
+        return report[:blocks[0].start()].rstrip() + "\n\n" + section + "\n\n" + blocks[0].group(0)
+    return report.rstrip() + "\n\n" + section
+
+
 def _with_review_reference(report: str, review: dict | None) -> str:
     """Replace model-written review notes with bounded P2/P3 lines at the end of the PI report."""
     reference = _review_reference(review)
@@ -4011,10 +4021,10 @@ class Orchestrator:
             body = _execution_warning_summary(body)
         fallback = "" if EARLIER_ROUNDS_HEADING.search(body) else _earlier_rounds_fallback(contract)
         if fallback:
-            body = body.rstrip() + "\n\n" + fallback
+            body = _before_bench_block(body, fallback)
         body_reference = _review_reference(review)
         if body_reference and not REVIEW_REFERENCE_HEADING.search(body):
-            body = body.rstrip() + "\n\n" + body_reference
+            body = _before_bench_block(body, body_reference)
         # The body keeps only P2 lines and a P3 count, so the record holds every remaining issue verbatim (PR #438).
         open_reference = [issue for issue in (review or {}).get("issues") or []
                           if isinstance(issue, dict) and issue.get("priority") in {"P2", "P3"}]
@@ -5510,7 +5520,7 @@ class Orchestrator:
                     f"\n\nSynthesis failed: {final.error}")
             reference = _review_reference(review)
             if reference and not REVIEW_REFERENCE_HEADING.search(body):
-                body = body.rstrip() + "\n\n" + reference
+                body = _before_bench_block(body, reference)
             report = _append_report_metadata(body, [review_appendix]) if review_appendix else body
             self._finish(rid, report, serialized_results(),
                          ok=final.ok and rid not in self.budget_denials, review=review)
