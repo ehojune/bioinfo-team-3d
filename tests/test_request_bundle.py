@@ -697,6 +697,30 @@ async def test_request_without_any_step_records_no_bundle_warning(tmp_path, term
 
 
 @pytest.mark.asyncio
+async def test_request_cancelled_mid_step_still_attempts_bundle(tmp_path, monkeypatch):
+    # Cancelling during a step can leave results empty while the step task already has a workdir (PR #529 review).
+    hub = Hub(configured(tmp_path))
+    hub.requests["mid"] = {"id": "mid", "text": "request", "mode": "orchestrate", "status": "cancelled",
+                           "report": "body", "results": {}, "plan": {"steps": [{"id": "s1", "depends_on": []}]}}
+    hub.store.put("task", "t-mid", {"request_id": "mid", "kind": "step", "step_id": "s1", "accepted": True})
+    hub.store.put("task", "t-brief", {"request_id": "early", "kind": "briefing"})
+    calls = []
+
+    def fail(*_args):
+        calls.append("called")
+        raise OSError("no workdir")
+
+    monkeypatch.setattr("labhq.request_bundle.build_request_bundle", fail)
+    data = {"ok": False, "report": "body"}
+
+    hub.commit_terminal("mid", "request.cancelled", data)
+
+    assert calls == ["called"] and "no workdir" in data["bundle_warning"]
+    await asyncio_sleep()
+    hub.store.close()
+
+
+@pytest.mark.asyncio
 async def test_incomplete_bundle_status_is_stored_in_bundle_event(tmp_path):
     settings = configured(tmp_path)
     workdir = Path(settings.runner.workspace_root) / "2026-10-04" / "task_incomplete"

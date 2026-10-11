@@ -860,9 +860,10 @@ class Hub:
 
     def commit_terminal(self, rid: str, typ: str, data: dict) -> None:
         """Synchronous checkpoint used by direct callers and tests."""
-        if not self.requests[rid].get("results"):
-            # No step ever ran (CP1 수정 요청, cancelled or failed before work): nothing to bundle, and a
-            # "작업 폴더를 찾지 못했습니다" warning would only be noise on the PI's request list.
+        if not self.requests[rid].get("results") and not self._dispatched_work_task(rid):
+            # No step or direct task was ever sent (CP1 수정 요청, cancelled or failed before work): nothing to
+            # bundle, and a "작업 폴더를 찾지 못했습니다" warning would only be noise on the PI's request list. A
+            # request cancelled mid-step can end with empty results but a real workdir, so it still tries (PR #529).
             self._commit_terminal_record(rid, typ, data)
             return
         if not self._has_bundle_workdir(rid):
@@ -872,6 +873,10 @@ class Hub:
         self._commit_terminal_record(rid, typ, data)
         self._apply_bundle_outcome(rid, data, self._bundle_outcome(rid))
         self._commit_bundle_record(rid, data)
+
+    def _dispatched_work_task(self, rid: str) -> bool:
+        return any(isinstance(task, Mapping) and task.get("request_id") == rid
+                   and task.get("kind") in ("step", "direct") for task in self.store.all("task").values())
 
     def _has_bundle_workdir(self, rid: str) -> bool:
         results = (self.requests[rid].get("results") or {}).values()
