@@ -533,3 +533,59 @@ def test_a_quoted_variable_r_install_meets_the_same_library_rule_as_rscript(tmp_
     for program in ('"$RSCRIPT"', "Rscript"):
         local = f'''{program} -e "install.packages('DESeq2', lib='./.rlib')"'''
         assert denial(tmp_path, local, environment_step=False) is None
+
+
+@pytest.mark.parametrize("environment_step", [True, False])
+@pytest.mark.parametrize("command", [
+    # PR #525 review: a wrapper runs the word after its options as the program, so it is in executable position.
+    'PIP=pip; ACTION=install; nohup "$PIP" "$ACTION" scanpy',
+    'time "$PIP" "$ACTION" scanpy',
+    'sudo -u lab "$PIP" "$ACTION" scanpy',
+    'timeout 600 "$PIP" "$ACTION" scanpy',
+    'nice -n 10 "$PIP" "$ACTION" scanpy',
+    'nohup nice -5 "$PIP" "$ACTION" scanpy',
+    'stdbuf -oL "$PIP" "$ACTION" scanpy',
+    'xargs -n 1 "$PIP" "$ACTION"',
+    'nohup --unknown-option x "$PIP" scanpy',
+    'uv run "$PIP" "$ACTION" scanpy',
+    'conda run -n base "$PIP" "$ACTION" scanpy',
+])
+def test_a_computed_program_after_an_exec_wrapper_is_refused(tmp_path, environment_step, command):
+    assert denial(tmp_path, command, environment_step=environment_step)
+
+
+@pytest.mark.parametrize("environment_step", [True, False])
+@pytest.mark.parametrize("tool,command", [
+    # PR #525 review: before the script path a computed word may be `-m`, a module or `-c`.
+    ("Bash", 'M=-m; MOD=pip; ACTION=install; python "$M" "$MOD" "$ACTION" scanpy'),
+    ("Bash", 'python -u "$M" "$MOD" "$ACTION" scanpy'),
+    ("Bash", 'py -3 "$M" "$MOD" "$ACTION" scanpy'),
+    ("Bash", 'python -Bm "$MOD" "$ACTION" scanpy'),
+    ("Bash", 'python "$SCRIPT" in.tsv'),
+    ("Bash", 'python -c "$CODE"'),
+    ("Bash", 'uv run -m "$MOD" "$ACTION" scanpy'),
+    ("Bash", 'Rscript "$OPTION" "$EXPRESSION"'),
+    ("Bash", 'Rscript -e "$EXPRESSION"'),
+    ("PowerShell", "python $m $mod $action scanpy"),
+])
+def test_a_computed_word_where_an_interpreter_chooses_what_runs_is_refused(
+        tmp_path, environment_step, tool, command):
+    assert denial(tmp_path, command, environment_step=environment_step, tool=tool)
+
+
+@pytest.mark.parametrize("environment_step", [True, False])
+@pytest.mark.parametrize("command", [
+    'nohup python outputs/scripts/de.py "$IN" "$OUT"',
+    'nohup "$PY" script.py',
+    'time python de.py "$IN" "$OUT"',
+    'timeout 600 Rscript de.R "$IN" "$OUT"',
+    'env X="$V" python s.py "$A"',
+    'python -m pytest "$TESTS"',
+    'python -W ignore de.py "$IN"',
+    'python -X importtime de.py "$IN"',
+    '''Rscript -e 'library(DESeq2)' "$IN"''',
+    'uv run --with pandas python s.py "$IN"',
+    'python s.py --column time "$IN" "$OUT"',
+])
+def test_computed_words_after_the_script_or_wrapped_script_stay_allowed(tmp_path, environment_step, command):
+    assert denial(tmp_path, command, environment_step=environment_step) is None

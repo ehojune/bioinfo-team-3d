@@ -1168,13 +1168,90 @@ _BASH_DELETE_WORD = re.compile(r"(?<![\w.-])(?:rm|unlink)(?:\.exe)?(?![\w.-])", 
 _BASH_COMMAND_END = re.compile(r"""(?<![\\'"]);(?!['"])|[|&\n]""")
 _FIND_TEXT = re.compile(r"\\[;()]|'[;()]'|\"[;()]\"")  # find's `\;`, `\(`, `';'` ... are its own words
 _FIND_EXEC = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
-# Recursive deletes the step folder rule never allows: cmd's `rd /s` and `del /s` (also `//s` from Git Bash), and a
-# PowerShell listing that recurses into Remove-Item.
+# cmd's `rd /s` and `del /s` (also `//s` from Git Bash) are recursive deletes the step folder rule never allows.
 _CMD_RECURSIVE_DELETE = re.compile(r"""(?<![\w.-])(?:rd|rmdir|del|erase)(?:\.exe)?(?=[\s'"])[^|;&\n]*?\s/{1,2}s\b""",
                                    re.IGNORECASE)
-_PS_PIPED_RECURSIVE_DELETE = re.compile(
-    r"\b(?:Get-ChildItem|gci|dir|ls)\b[^|;\n]*\s-r(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?\b[^;\n]*"
-    r"\|\s*(?:Remove-Item|rm|ri|del|erase|rd|rmdir)\b", re.IGNORECASE)
+# A PowerShell delete after the first pipe, in a script block too (`| ForEach-Object { Remove-Item $_ }`), deletes what
+# the listing before the pipe found (#525 review).
+_PS_DELETE_WORD = re.compile(r"(?<![\w-])(?:Remove-Item|ri|rm|del|erase|rd|rmdir)(?![\w-])|\.Delete\s*\(", re.IGNORECASE)
+_PS_LISTING_WORD = re.compile(r"(?<![\w-])(?:Get-ChildItem|gci|ls|dir|Get-Item|gi)(?![\w-])", re.IGNORECASE)
+_PS_LISTING_START = re.compile(r"\s*(?:Get-ChildItem|gci|ls|dir)(?![\w-])", re.IGNORECASE)
+# Get-ChildItem parameters: the ones naming the listed folder, the ones taking another value, and switches.
+_GCI_PATH_PARAMETERS = ("-path", "-literalpath")
+_GCI_VALUE_PARAMETERS = ("-filter", "-include", "-exclude", "-depth", "-attributes", "-erroraction", "-errorvariable",
+                         "-warningaction", "-warningvariable", "-informationaction", "-informationvariable",
+                         "-outvariable", "-outbuffer", "-pipelinevariable")
+_GCI_SWITCHES = ("-recurse", "-force", "-name", "-directory", "-file", "-hidden", "-readonly", "-system", "-verbose",
+                 "-debug", "-followsymlink")
+_GCI_ALIASES = {"-r": "-recurse", "-lp": "-literalpath", "-pspath": "-literalpath", "-ad": "-directory", "-af": "-file",
+                "-ah": "-hidden", "-ar": "-readonly", "-as": "-system", "-ea": "-erroraction", "-ev": "-errorvariable",
+                "-wa": "-warningaction", "-wv": "-warningvariable", "-infa": "-informationaction",
+                "-iv": "-informationvariable", "-ov": "-outvariable", "-ob": "-outbuffer", "-pv": "-pipelinevariable",
+                "-vb": "-verbose", "-db": "-debug"}
+
+
+def _gci_parameter(flag: str) -> str | None:
+    """A Get-ChildItem parameter's full name from any unique prefix or alias; None when unknown or ambiguous."""
+    flag = flag.casefold()
+    if flag in _GCI_ALIASES:
+        return _GCI_ALIASES[flag]
+    names = [name for name in (*_GCI_PATH_PARAMETERS, *_GCI_VALUE_PARAMETERS, *_GCI_SWITCHES) if name.startswith(flag)]
+    return names[0] if len(names) == 1 or flag in names else None
+
+
+def _ps_piped_delete(command: str) -> bool:
+    """Whether a PowerShell delete stands after the command's first pipe.
+
+    A quoted string is text there unless something runs text as code (`iex`, `&`, `.Invoke(`), which counts as a
+    delete too since the gate cannot read it.
+    """
+    _head, pipe, tail = command.partition("|")
+    if not pipe:
+        return False
+    if re.search(r"(?<![\w-])(?:Invoke-Expression|iex)(?![\w-])|&|\.Invoke\s*\(", tail, re.IGNORECASE):
+        return True
+    return bool(_PS_DELETE_WORD.search(re.sub(r"'[^']*'|\"[^\"]*\"", "''", tail)))
+
+
+def _ps_piped_delete_inside_step_tmp(command: str, workdir: str | None) -> bool:
+    """A listing piped into a delete meets the `rm -r` rule: one pipeline from one Get-ChildItem whose every folder is
+    literal and below `.tmp`. No folder means the step folder itself; `-FollowSymlink` walks out through links."""
+    if not workdir or re.search(r"[;\n\r]|&&|\|\|", command):
+        return False
+    head, _pipe, tail = command.partition("|")
+    start = _PS_LISTING_START.match(head)
+    if not start or _PS_LISTING_WORD.search(tail):
+        return False  # the items come from elsewhere, or a later stage lists another folder
+    words = head[start.end():].split()
+    paths: list[str] = []
+    i = 0
+    while i < len(words):
+        if not words[i].startswith("-") or words[i] == "-":
+            value = _literal_shell_word(words[i], True)
+            if value is None:
+                return False
+            paths.append(value)
+            i += 1
+            continue
+        flag, colon, raw_value = words[i].partition(":")
+        name = _gci_parameter(flag)
+        if name is None or name == "-followsymlink":
+            return False
+        if name in _GCI_SWITCHES:
+            i += 1
+            continue
+        attached = _literal_shell_word(raw_value, True)
+        if not colon:
+            i += 1
+            if i >= len(words):
+                return False
+            attached = _literal_shell_word(words[i], True)
+        if name in _GCI_PATH_PARAMETERS:
+            if attached is None:
+                return False  # only the listed folder must be literal; `-Filter *.part` may be a pattern
+            paths.append(attached)
+        i += 1
+    return bool(paths) and _targets_below_step_tmp(paths, True, workdir)
 
 
 def _bare(word: str) -> str:
@@ -2097,7 +2174,10 @@ def _evaluate_tool(
                 if not powershell and not all(_find_delete_inside_step_tmp(cmd, find, workdir)
                                               for find in _find_deletes(cmd)):
                     return Decision("ask", f"재귀 삭제 확인 필요: `{cmd[:200]}`")
-                if _CMD_RECURSIVE_DELETE.search(cmd) or powershell and _PS_PIPED_RECURSIVE_DELETE.search(cmd):
+                if _CMD_RECURSIVE_DELETE.search(cmd):
+                    return Decision("ask", f"재귀 삭제 확인 필요: `{cmd[:200]}`")
+                # A listing piped into a delete, in a script block too, meets the same `.tmp` rule (#525 review).
+                if powershell and _ps_piped_delete(cmd) and not _ps_piped_delete_inside_step_tmp(cmd, workdir):
                     return Decision("ask", f"재귀 삭제 확인 필요: `{cmd[:200]}`")
                 continue
             if re.search(pat, cmd, re.IGNORECASE):

@@ -530,3 +530,45 @@ def test_recursive_listings_and_plain_rd_in_powershell_stay_allowed(command):
     decision = evaluate_tool("PowerShell", {"command": command}, _policy(), [WINDOWS_STEP], WINDOWS_STEP,
                              windows=True)
     assert decision.action == "allow"
+
+
+def _decide_powershell_in_windows_step(command):
+    return evaluate_tool("PowerShell", {"command": command}, _policy(), [WINDOWS_STEP], WINDOWS_STEP, windows=True)
+
+
+@pytest.mark.parametrize("command", [
+    # PR #525 review: a delete after the first pipe, in a script block too, removes what the listing found.
+    "Get-ChildItem C:/Users/pi/Documents -Recurse -File | ForEach-Object { Remove-Item $_ -Force }",
+    "gci C:/Users/pi/Documents -r | % { rm $_.FullName }",
+    "gci C:/Users/pi/Documents -r -File | % { $_.Delete() }",
+    'gci C:/Users/pi/Documents -r | % { iex "Remove-Item $_" }',
+    "Get-ChildItem -Recurse | ForEach-Object { Remove-Item $_ }",
+    "Get-ChildItem outputs -Recurse -File | ForEach-Object { Remove-Item $_ }",
+    "Get-ChildItem .tmp -Recurse | ForEach-Object { Remove-Item $_ }; Set-Location ..",
+    "Get-ChildItem .tmp -FollowSymlink -Recurse | Remove-Item",
+    "Get-ChildItem $dir -Recurse | Remove-Item",
+    "Get-Content list.txt | ForEach-Object { Remove-Item $_ }",
+    "Get-ChildItem .tmp | ForEach-Object { Get-ChildItem C:/Users/pi -Recurse } | Remove-Item",
+])
+def test_a_powershell_listing_piped_into_a_delete_asks_outside_step_tmp(command):
+    decision = _decide_powershell_in_windows_step(command)
+    assert decision.action == "ask"
+    assert decision.reason.startswith("재귀 삭제 확인 필요: `")
+
+
+@pytest.mark.parametrize("command", [
+    "Get-ChildItem .tmp -Recurse -File | ForEach-Object { Remove-Item $_ -Force }",
+    "gci -Path .tmp/cache -r | Remove-Item -Force",
+    "Get-ChildItem .tmp -Filter *.part | Remove-Item",
+    "Get-ChildItem -LiteralPath .tmp/a -Recurse -File -ErrorAction SilentlyContinue | % { $_.Delete() }",
+    "Get-ChildItem . -Recurse | Where-Object { $_.Name -like '*rm*' } | Select-Object Name",
+])
+def test_a_powershell_listing_of_step_tmp_piped_into_a_delete_stays_allowed(command):
+    assert _decide_powershell_in_windows_step(command).action == "allow"
+
+
+@pytest.mark.parametrize("command", ["find -- /c/Users/pi/Documents -delete", "find -files0-from list.txt -delete"])
+def test_find_start_paths_given_through_options_ask(command):
+    decision = _decide_in_windows_step(command)
+    assert decision.action == "ask"
+    assert decision.reason.startswith("재귀 삭제 확인 필요: `")
