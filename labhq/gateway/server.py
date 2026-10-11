@@ -1477,9 +1477,10 @@ class Hub:
                 if not req.get("pi_waits"):
                     req.pop("pi_waits", None)
                 await self._publish_hold_status(rid)
-        if resumed:
-            await self.publish({"type": "request.step_resumed", "ts": time.time(), "request_id": rid, "task_id": tid,
-                                "agent_id": result.agent_id, "data": {"step_id": step_id}})
+        # Open pages drop the resume button either way: resumed, or the bound passed and the step goes on as failed.
+        await self.publish({"type": "request.step_resumed" if resumed else "request.step_halt_expired",
+                            "ts": time.time(), "request_id": rid, "task_id": tid, "agent_id": result.agent_id,
+                            "data": {"step_id": step_id}})
         return resumed
 
     async def flush_ask_answers(self, runner_id: str) -> None:

@@ -56,7 +56,7 @@ from .. import vocab as output_vocab
 from ..vocab import declare as output_types
 from .approvals import Broker
 from .codex_sandbox import SandboxWatch
-from .control import HALT_GRACE_S, Controls, steer_prompt
+from .control import HALT_GRACE_S, ControlNotReady, Controls, steer_prompt
 from .hpc_jobs import submit_job
 from .integrity import ReadOnlyWatch, watch_roots
 from .system_ca import CA_ENV, system_ca_pem
@@ -457,18 +457,35 @@ class Runner:
             self._contract_update(msg)
             self._send_roster()
 
+    CONTROL_RETRY_S = (0.2, 1.0)  # waits before the second and third attempt; then the gateway's resend takes over
+
     async def _on_control(self, msg: dict) -> None:
-        """Steer, pause, resume or halt a task (#59 ①). The ack lets the gateway drop its kept copy; a resend after a
-        reconnect carries the same seq, which the control file has already applied."""
+        """Steer, pause, resume or halt a task (#59 ①). Only a request this runner handled is acknowledged: applied, a
+        number it applied before, or one with nothing here to apply to. One that could not be applied (a busy or broken
+        control file) stays unacknowledged after a few bounded tries, so the gateway keeps it and sends it again when
+        this runner reconnects (PR #532 review)."""
         tid = str(msg.get("task_id") or "")
-        try:
-            summary = await self.controls.apply(msg)
-        except (OSError, TimeoutError) as exc:
-            summary = None
-            log.warning("task %s control %s not applied: %s", tid, msg.get("action"), exc)
+        base = dict(task_id=tid, agent_id=self.controls.agent_of(tid) or msg.get("agent_id"),
+                    request_id=self.task_req.get(tid) or msg.get("request_id"))
+        error: Exception | None = None
+        for wait in (0.0, *self.CONTROL_RETRY_S):
+            if wait:
+                await asyncio.sleep(wait)
+            running = self.tasks.get(tid)
+            try:
+                summary = await self.controls.apply(msg, starting=running is not None and not running.done())
+                error = None
+                break
+            except (OSError, TimeoutError, ControlNotReady) as exc:
+                error = exc
+        if error is not None:
+            log.warning("task %s control %s not applied: %s", tid, msg.get("action"), error)
+            await self.emit(Event(type="agent.log", data={"level": "warn", "text": (
+                f"PI 제어({msg.get('action')})를 적용하지 못했어요. 러너가 gateway에 다시 연결되면 다시 받습니다")},
+                **base))
+            return
         if summary is not None:
-            agent_id = self.controls.agent_of(tid) or msg.get("agent_id")
-            base = dict(task_id=tid, agent_id=agent_id, request_id=self.task_req.get(tid) or msg.get("request_id"))
+            base["agent_id"] = self.controls.agent_of(tid) or base["agent_id"]
             await self.emit(Event(type="agent.control", data=summary, **base))
             note = self._control_note(summary)
             if note:

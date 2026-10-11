@@ -323,6 +323,7 @@ dialog.sheet::backdrop{background:rgba(17,26,34,.45)}
 .facts dt{color:var(--muted)}.facts dd{margin:0;overflow-wrap:anywhere}
 .acts{display:flex;flex-wrap:wrap;gap:8px}
 .staff-control{display:grid;gap:8px;margin:10px 0 12px;padding:10px;border:1px solid var(--line);border-radius:12px}
+.staff-control .control-head{margin:0;font-size:13px;color:var(--muted)}
 .staff-control textarea{font:inherit;font-size:16px;border:1px solid var(--line);border-radius:10px;padding:6px 10px;background:var(--panel);color:var(--ink);resize:vertical;min-width:0}
 .activity{list-style:none;margin:0 0 14px;padding:0;font-size:13px;max-height:200px;overflow:auto}
 .activity li{padding:4px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
@@ -437,7 +438,7 @@ dialog.sheet::backdrop{background:rgba(17,26,34,.45)}
 import {answerRequired, decisionChoice, decisionNote, revisedToast, revisionNoteMissing, syncDecisionCards, syncDecisionHistory} from './ui/decide.js';
 import {syncStaffCards} from './ui/strip.js';
 import {syncTaskBoard} from './ui/tasks.js';
-import {controlHtml, controlKey, staffControl} from './ui/control.js';
+import {controlHtml, controlKey, staffControls} from './ui/control.js';
 import {initTabShell} from './ui/shell.js';
 import {KIND_LABELS as REF_KIND, inferReference, syncReferenceChips} from './ui/refs.js';
 (() => {
@@ -1053,14 +1054,16 @@ function renderSheetLogs() {
   const count = $('#sheet-in .trace-count'); if (count) count.textContent = String((a.trace || []).length);
   const spent = $('#sheet-in .sheet-spent'), figure = sheetSpent(a.id); if (spent && spent.textContent !== figure) spent.textContent = figure;
   // #59 ①: the control block follows the task (paused, halted, ended) without wiping a direction being typed.
-  const view = sheetControl(a), box = $('#sheet-in .staff-control-slot');
-  if (box && box.dataset.key !== controlKey(view)) { box.dataset.key = controlKey(view); box.innerHTML = controlHtml(view, esc); }
-  const status = $('#sheet-in .sheet-state'), text = view.status || stateText(a, visual(a));
+  const views = sheetControl(a), box = $('#sheet-in .staff-control-slot');
+  if (box && box.dataset.key !== controlKey(views)) { box.dataset.key = controlKey(views); box.innerHTML = controlHtml(views, esc); }
+  const status = $('#sheet-in .sheet-state'), text = sheetState(a, views);
   if (status && status.textContent !== text) status.textContent = text;
 }
+// One control row per live task of this staff member (PR #532 review); none in demo mode, which has no api.
 function sheetControl(a) {
-  return api?.control ? staffControl(a, S.taskControl.get(a.taskId) || {}) : { taskId: '', status: '', actions: [] };
+  return api?.control ? staffControls(a, tid => S.taskControl.get(tid) || {}) : [];
 }
+const sheetState = (a, views) => (views.length === 1 && views[0].status) || stateText(a, visual(a));
 function openSheet(id) {
   const a = ag(id); if (!a) return;
   const dlg = $('#sheet'), vs = visual(a);
@@ -1068,7 +1071,7 @@ function openSheet(id) {
   const view = dlg.dataset.log === 'trace' ? 'trace' : 'activity';
   const control = sheetControl(a);
   const facts = [
-    ['상태', control.status || stateText(a, vs)], ['지금 하는 일', vs === 'idle' ? '없음' : (a.task || '—')],
+    ['상태', sheetState(a, control)], ['지금 하는 일', vs === 'idle' ? '없음' : (a.task || '—')],
     ['엔진', `${a.engine || '—'}${a.model ? ` / ${a.model}` : ''}`],
     ['소속', isContract(a) ? `파견직, ${contractLeft(a)}` : '정규직'],
   ];
@@ -1104,7 +1107,7 @@ $('#sheet').addEventListener('click', async e => {
   if (act === 'log') { d.dataset.log = btn.dataset.view; openSheet(id); return; }
   if (act === 'assign') { closeSheet(); $('#send-mode').value = 'request'; $('#target').value = id; renderComposerMode(); $('#ask').focus(); toast(`${nick(id)}에게 맡길 내용을 적어 주세요`); return; }
   if (['steer', 'pause', 'resume', 'halt'].includes(act)) {  // #59 ①: acts on the task the sheet shows
-    const task = btn.closest('.staff-control')?.dataset.task, input = $('#steer-text');
+    const row = btn.closest('.staff-control'), task = row?.dataset.task, input = row?.querySelector('textarea.steer-text');
     const text = act === 'steer' ? (input?.value || '').trim() : '';
     if (!task) return;
     if (act === 'steer' && !text) { toast('보낼 방향을 적어 주세요'); input?.focus(); return; }

@@ -29,6 +29,11 @@ from ..store import StateStore
 HALT_GRACE_S = 60.0  # a hooked Claude stops at its next tool call; past this the runner ends the CLI itself
 CARRY_KEEP_S = 2 * 86400  # like a kept task cancel: longer than any runner turn
 HALT_ERROR = "PI가 멈춤(halt): 세션을 보존했습니다. 재개하면 같은 세션으로 이어 갑니다"
+APPLY_LOCK_WAIT_S = 1.0  # the runner's message loop waits on the file lock this long per attempt
+
+
+class ControlNotReady(RuntimeError):
+    """The task was dispatched here but has not opened its control file yet: try again shortly."""
 
 
 def halted_result(result: TaskResult, session_id: str | None = None) -> TaskResult:
@@ -109,19 +114,25 @@ class Controls:
                     waiter.cancel()
         return not live.halt.is_set()
 
-    async def apply(self, message: dict[str, Any]) -> dict[str, Any] | None:
+    async def apply(self, message: dict[str, Any], *, starting: bool = False) -> dict[str, Any] | None:
         """Apply one gateway ``task.control``. Returns the control summary for the agent.control event, or None when
-        the task is not running here and left no session to carry the request."""
+        the task is not here and left no session to carry the request. Raises (OSError, TimeoutError,
+        ControlNotReady) when it could not be applied, so the caller keeps it unacknowledged. ``starting``: the task was
+        dispatched to this runner and has not opened its file yet."""
         task_id, action = str(message.get("task_id") or ""), str(message.get("action") or "")
         text, seq = message.get("text"), message.get("seq")
+        seq = seq if isinstance(seq, int) and not isinstance(seq, bool) else None
         live = self.live.get(task_id)
         if live is None:
-            return self._carry_late(task_id, action, text)
+            if starting:
+                raise ControlNotReady(task_id)
+            return self._carry_late(task_id, action, text, seq)
 
         def change(state: dict[str, Any]) -> bool:
-            return hook.apply_control(state, action, text, seq if isinstance(seq, int) else None)
+            return hook.apply_control(state, action, text, seq)
 
-        applied = await asyncio.to_thread(hook.update_state, live.path, change, create=task_id)
+        applied = await asyncio.to_thread(hook.update_state, live.path, change, create=task_id,
+                                          wait_s=APPLY_LOCK_WAIT_S)
         state = hook.read_state(live.path)
         if applied:
             if action == "pause":
@@ -133,8 +144,9 @@ class Controls:
         return {**hook.summary(state), "action": action, "applied": bool(applied),
                 "mode": "hook" if live.hooks else "next_turn"}
 
-    def _carry_late(self, task_id: str, action: str, text: Any) -> dict[str, Any] | None:
-        """A request for a task that just ended goes to its session's next turn, if it left one."""
+    def _carry_late(self, task_id: str, action: str, text: Any, seq: int | None = None) -> dict[str, Any] | None:
+        """A request for a task that just ended goes to its session's next turn, if it left one. The ended task's record
+        keeps the numbers it applied, so a resend is applied once even after the carry was taken by the next turn."""
         ended = self.store.get("control_ended", task_id)
         session = (ended or {}).get("session_id")
         if not session or action not in ("steer", "pause", "resume"):
@@ -142,13 +154,17 @@ class Controls:
         carry = self.store.get("control_carry", session) or {"steers": [], "paused": False, "dropped": 0}
         state = hook.new_state(task_id)
         state.update(steers=list(carry.get("steers") or []), paused=bool(carry.get("paused")),
-                     dropped=int(carry.get("dropped") or 0))
+                     dropped=int(carry.get("dropped") or 0), applied_seqs=list(ended.get("applied_seqs") or []),
+                     toggle_seq=int(ended.get("toggle_seq") or 0))
         state["next_seq"] = max([0, *(int(s.get("seq") or 0) for s in state["steers"])]) + 1
-        hook.apply_control(state, action, text if isinstance(text, str) else None)
-        self.store.put("control_carry", session, {"steers": state["steers"], "paused": state["paused"],
-                                                   "dropped": state["dropped"], "at": time.time(),
-                                                   "task_id": task_id})
-        return {**hook.summary(state), "action": action, "applied": True, "mode": "next_turn", "ended": True}
+        applied = hook.apply_control(state, action, text if isinstance(text, str) else None, seq)
+        self.store.put("control_ended", task_id, {**ended, "applied_seqs": state["applied_seqs"],
+                                                  "toggle_seq": state["toggle_seq"]})
+        if applied:
+            self.store.put("control_carry", session, {"steers": state["steers"], "paused": state["paused"],
+                                                       "dropped": state["dropped"], "at": time.time(),
+                                                       "task_id": task_id})
+        return {**hook.summary(state), "action": action, "applied": applied, "mode": "next_turn", "ended": True}
 
     def finish(self, task_id: str, session_id: str | None) -> dict[str, Any] | None:
         """Close the task's file. Undelivered messages and a pause stay with the session for its next turn."""
@@ -164,7 +180,9 @@ class Controls:
         now = time.time()
         session = session_id or live.session_id
         if session:
-            self.store.put("control_ended", task_id, {"session_id": session, "at": now})
+            self.store.put("control_ended", task_id, {
+                "session_id": session, "at": now, "applied_seqs": list((state or {}).get("applied_seqs") or []),
+                "toggle_seq": int((state or {}).get("toggle_seq") or 0)})
             if state and (state["steers"] or state["paused"]):
                 self.store.put("control_carry", session, {
                     "steers": state["steers"], "paused": state["paused"],

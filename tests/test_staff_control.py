@@ -116,8 +116,11 @@ def test_a_control_seen_before_is_not_applied_twice():
     state = hook.new_state("t")
     assert hook.apply_control(state, "steer", "한 번만", seq=3)
     assert not hook.apply_control(state, "steer", "한 번만", seq=3)  # the gateway resent it after a reconnect
+    # A lower number that failed earlier still applies once (PR #532 review), but not a toggle older than the last one.
+    assert hook.apply_control(state, "pause", seq=2)
     assert not hook.apply_control(state, "pause", seq=2)
-    assert [s["text"] for s in state["steers"]] == ["한 번만"] and not state["paused"]
+    assert not hook.apply_control(state, "resume", seq=1)
+    assert [s["text"] for s in state["steers"]] == ["한 번만"] and state["paused"]
 
 
 def _hook_process(event, env, payload=POST_PAYLOAD):

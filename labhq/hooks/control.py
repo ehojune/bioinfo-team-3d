@@ -32,6 +32,7 @@ CONTEXT_CHARS = 9000  # one delivery; Claude caps additionalContext at 10,000 ch
 PAUSE_HOLD_S = 300.0  # how long PreToolUse holds one call while paused; Claude's hook timeout is 600 s
 PAUSE_POLL_S = 0.5
 LOCK_WAIT_S = 5.0
+SEQS_KEPT = 200  # gateway control numbers a file remembers, so a resend is applied once
 LOCK_STALE_S = 10.0
 
 PAUSE_REASON = ("PI가 일시 정지함: 지금은 도구를 쓸 수 없습니다. 재개되면 같은 도구를 다시 부르세요. "
@@ -42,7 +43,7 @@ STEER_HEADER = "[PI 방향 수정] 실행 중에 PI가 보낸 지시입니다. �
 
 def new_state(task_id: str = "") -> dict[str, Any]:
     return {"version": 1, "task_id": task_id, "paused": False, "halt": None, "halted_at": None, "steers": [],
-            "next_seq": 1, "dropped": 0, "dropped_told": 0, "delivered": 0, "applied": 0}
+            "next_seq": 1, "dropped": 0, "dropped_told": 0, "delivered": 0, "applied_seqs": [], "toggle_seq": 0}
 
 
 def read_state(path: str | Path) -> dict[str, Any] | None:
@@ -91,10 +92,10 @@ def write_state(path: str | Path, state: dict[str, Any]) -> None:
 
 
 @contextlib.contextmanager
-def locked(path: str | Path) -> Iterator[None]:
+def locked(path: str | Path, wait_s: float = LOCK_WAIT_S) -> Iterator[None]:
     """One writer at a time: the runner applying a gateway message, or one of several parallel tool hooks."""
     lock = Path(path).with_name(Path(path).name + ".lock")
-    deadline = time.monotonic() + LOCK_WAIT_S
+    deadline = time.monotonic() + wait_s
     while True:
         try:
             os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
@@ -116,10 +117,11 @@ def locked(path: str | Path) -> Iterator[None]:
             os.unlink(lock)
 
 
-def update_state(path: str | Path, change: Callable[[dict[str, Any]], Any], *, create: str | None = None) -> Any:
+def update_state(path: str | Path, change: Callable[[dict[str, Any]], Any], *, create: str | None = None,
+                 wait_s: float = LOCK_WAIT_S) -> Any:
     """Apply ``change`` to the file's state under the lock and write it back. ``create`` names the task when the file
-    may not exist yet; without it a missing file is left alone and None returned."""
-    with locked(path):
+    may not exist yet; without it a missing file is left alone and None returned. TimeoutError: the lock stayed busy."""
+    with locked(path, wait_s):
         state = read_state(path)
         if state is None:
             if create is None:
@@ -165,12 +167,19 @@ def take_steers(state: dict[str, Any]) -> tuple[list[dict[str, Any]], int]:
 
 def apply_control(state: dict[str, Any], action: str, text: str | None = None, seq: int | None = None,
                   now: float | None = None) -> bool:
-    """The runner applies one gateway message. A message seen before (``seq`` not above ``applied``) changes nothing,
-    so a resend after a reconnect cannot steer twice. Returns whether it applied."""
+    """The runner applies one gateway message and returns whether it changed the state.
+
+    Each ``seq`` is applied once, so a resend after a reconnect cannot steer twice. A message that failed and comes back
+    after later ones still applies, except a pause or resume older than one already applied: the PI's last toggle wins."""
     if seq is not None:
-        if seq <= int(state.get("applied") or 0):
+        seen = [number for number in state.get("applied_seqs") or [] if isinstance(number, int)]
+        if seq in seen:
             return False
-        state["applied"] = seq
+        state["applied_seqs"] = [*seen, seq][-SEQS_KEPT:]
+        if action in ("pause", "resume"):
+            if seq < int(state.get("toggle_seq") or 0):
+                return False
+            state["toggle_seq"] = seq
     if action == "steer" and text:
         add_steer(state, text, now)
     elif action == "pause":

@@ -123,6 +123,13 @@ const visual = a => a.state === 'done' && now() - (a.stateAt || 0) > 3
 // 'hibernating' covers HPC jobs and unanswered asks (runner agent.status: jobs, asks); a PI question is not HPC.
 const stateText = (a, vs = visual(a)) => vs === 'hibernating' && a.waitFor === 'answer' ? '답 기다리는 중' : STATE_KO[vs];
 const nick = id => { const a = ag(id); return a ? String(a.name || a.id).split(' ')[0] : ({ pi: '나', hpc: 'HPC', github: 'GitHub', system: '시스템' }[id] || id || ''); };
+// Keep a task while it runs, waits, or ended paused or halted (its row still resumes it); drop it once it is over.
+function trackTask(a, tid, state, title, keep = false) {
+  if (!a || !tid) return;
+  const prev = a.tasks.get(tid) || {}, control = S.taskControl.get(tid) || {};
+  if (['done', 'error', 'idle'].includes(state) && !keep && !control.paused && !control.halted) a.tasks.delete(tid);
+  else a.tasks.set(tid, { state, title: title || prev.title || '' });
+}
 function upsertAgent(a) {
   const prev = S.agents.get(a.id) || { state: 'idle', task: '', say: '', tool: '', log: [] };
   const next = { ...prev, ...a }, usage = next.usage || {}, toolCalls = next.toolCalls || 0;
@@ -132,8 +139,9 @@ function upsertAgent(a) {
   // Not part of the replayed state: the trace survives roster updates but stays out of state comparisons.
   Object.defineProperty(next, 'trace', { value: prev.trace || [], writable: true, enumerable: false });
   Object.defineProperty(next, 'waitFor', { value: prev.waitFor || '', writable: true, configurable: true, enumerable: false });
-  // The task the staff member runs now (#59 ①): the staff sheet's control buttons act on it.
-  Object.defineProperty(next, 'taskId', { value: prev.taskId || '', writable: true, configurable: true, enumerable: false });
+  // The staff member's live tasks, task id -> {state, title} (#59 ①): two can run at once, and the staff sheet's
+  // control rows each act on one of them (PR #532 review).
+  Object.defineProperty(next, 'tasks', { value: prev.tasks || new Map(), writable: true, configurable: true, enumerable: false });
   S.agents.set(a.id, next);
 }
 function req(rid) {
@@ -285,8 +293,8 @@ function apply(ev, replay = false) {
       }
       for (const { task } of restored.values()) {
         if (task.control || task.state === 'halted') S.taskControl.set(task.id, { ...(task.control || {}), ...(task.state === 'halted' ? { halted: true } : {}) });
-        const worker = task.agent_id && ag(task.agent_id);
-        if (worker) worker.taskId = task.id;
+        trackTask(task.agent_id && ag(task.agent_id), task.id,
+          task.state === 'running' ? 'working' : task.state === 'halted' ? 'idle' : task.state, '', true);
         const q = S.requests.get(task.request_id);
         if (!q) continue;
         q.steps[task.step_id] = task.state === 'running' ? 'working' : task.state;
@@ -309,7 +317,7 @@ function apply(ev, replay = false) {
     case 'agent.status': {
       const a = ag(id); if (!a) break;
       a.state = d.state || a.state; a.stateAt = ts;
-      if (ev.task_id) a.taskId = ev.task_id;
+      trackTask(a, ev.task_id, d.state || a.state, d.task, Boolean(d.halted));
       // Display only, like usage and trace: kept out of the replayed state the golden hashes compare.
       if (d.state === 'hibernating') Object.defineProperty(a, 'waitFor', { writable: true, configurable: true, enumerable: false,
         value: (d.jobs || []).length ? 'hpc' : (d.asks || []).length ? 'answer' : '' });
@@ -324,12 +332,17 @@ function apply(ev, replay = false) {
     case 'request.step_halted': {
       if (ev.task_id) S.taskControl.set(ev.task_id, { ...(S.taskControl.get(ev.task_id) || {}), halted: true });
       if (rid && d.step_id) req(rid).steps[d.step_id] = 'halted';
-      const a = ag(id); if (a) { if (ev.task_id) a.taskId = ev.task_id; logTo(a, 'PI가 멈췄어요. 재개하면 같은 세션으로 이어 가요', ts); }
+      const a = ag(id); if (a) { trackTask(a, ev.task_id, 'idle', '', true); logTo(a, 'PI가 멈췄어요. 재개하면 같은 세션으로 이어 가요', ts); }
       break;
     }
-    case 'request.step_resumed': {
+    case 'request.step_resumed': case 'request.step_halt_expired': {
+      // Resumed: the next turn is a new task. Expired: the PI did not resume within the bound and the step goes on
+      // as failed. Either way the halted task's resume row goes (PR #532 review).
       if (ev.task_id) S.taskControl.delete(ev.task_id);
-      if (rid && d.step_id) req(rid).steps[d.step_id] = 'working';
+      const a = ag(id); if (a && ev.task_id) a.tasks.delete(ev.task_id);
+      if (rid && d.step_id && t === 'request.step_resumed') req(rid).steps[d.step_id] = 'working';
+      if (rid && d.step_id && t === 'request.step_halt_expired' && req(rid).steps[d.step_id] === 'halted') req(rid).steps[d.step_id] = 'error';
+      if (a && t === 'request.step_halt_expired') logTo(a, '멈춘 단계를 재개 기한 안에 재개하지 않아 실패로 넘어갔어요', ts);
       break;
     }
     case 'agent.tool_error': { const a = ag(id); if (a) logTo(a, `도구 오류: ${d.text}`, ts); break; }
