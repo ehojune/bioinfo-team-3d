@@ -163,7 +163,9 @@ def _input_entities(step_id: str, rows: list[Mapping[str, Any]], action_id: str)
 
 def build_ro_crate(req: Mapping[str, Any], rows: list[Mapping[str, Any]],
                    input_rows: list[Mapping[str, Any]],
-                   run_records: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+                   run_records: Mapping[str, Mapping[str, Any]], grade: str | None = None,
+                   grade_reasons: list[str] | None = None,
+                   rerun_receipt: Mapping[str, str] | None = None) -> dict[str, Any]:
     """Build deterministic JSON-LD from the bundle's final, rewritten inventory."""
     rid = str(req.get("id") or "")
     payload_rows = [row for row in rows
@@ -209,6 +211,20 @@ def build_ro_crate(req: Mapping[str, Any], rows: list[Mapping[str, Any]],
 
     results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
     mentions: list[dict[str, str]] = []
+    if grade:
+        grade_id = "#reproducibility-grade"
+        measured = [{"@id": grade_id + "-value"}]
+        graph.extend([
+            {"@id": grade_id, "@type": "Observation", "name": "labhq reproducibility grade",
+             "measurementTechnique": "labhq request-bundle reproducibility criteria",
+             "variableMeasured": measured},
+            {"@id": grade_id + "-value", "@type": "PropertyValue", "name": "reproducibility grade",
+             "propertyID": "labhq:reproducibilityGrade", "value": grade,
+             "description": "; ".join(grade_reasons or []) or "all criteria for this grade were met"},
+        ])
+        if rerun_receipt:
+            graph[-1]["valueReference"] = _ref(_uri("rerun_receipt.json"))
+        mentions.append(_ref(grade_id))
     software_ids: set[str] = set()
     by_step_inputs: dict[str, list[Mapping[str, Any]]] = {}
     for row in input_rows:
@@ -252,6 +268,25 @@ def build_ro_crate(req: Mapping[str, Any], rows: list[Mapping[str, Any]],
             software_ids.add(software_id)
         graph.append(action)
         mentions.append(_ref(action_id))
+        environment = run.get("environment_record")
+        if isinstance(environment, Mapping):
+            environment_id = f"#environment-{quote(step_id, safe='-._~')}"
+            value_id = environment_id + "-status"
+            status_value: dict[str, Any] = {
+                "@id": value_id, "@type": "PropertyValue", "name": "environment record status",
+                "propertyID": "labhq:environmentRecordStatus", "value": str(environment.get("status") or ""),
+            }
+            if environment.get("reason"):
+                status_value["description"] = str(environment["reason"])
+            if environment.get("sha256"):
+                status_value["valueReference"] = _ref(_uri(f"steps/{step_id}/outputs/env/requirements.lock.txt"))
+            graph.extend([
+                {"@id": environment_id, "@type": "Observation", "name": f"Environment record for {step_id}",
+                 "about": _ref(action_id), "measurementTechnique": "runner post-step bounded sha256",
+                 "variableMeasured": [_ref(value_id)]},
+                status_value,
+            ])
+            mentions.append(_ref(environment_id))
         scan_entities = _input_entities(step_id, by_step_inputs.get(step_id, []), action_id)
         if scan_entities:
             graph.extend(scan_entities)
@@ -268,8 +303,10 @@ def build_ro_crate(req: Mapping[str, Any], rows: list[Mapping[str, Any]],
 
 def write_ro_crate(path: Path, req: Mapping[str, Any], rows: list[Mapping[str, Any]],
                    input_rows: list[Mapping[str, Any]],
-                   run_records: Mapping[str, Mapping[str, Any]]) -> None:
-    crate = build_ro_crate(req, rows, input_rows, run_records)
+                   run_records: Mapping[str, Mapping[str, Any]], grade: str | None = None,
+                   grade_reasons: list[str] | None = None,
+                   rerun_receipt: Mapping[str, str] | None = None) -> None:
+    crate = build_ro_crate(req, rows, input_rows, run_records, grade, grade_reasons, rerun_receipt)
     path.write_text(json.dumps(crate, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
                     encoding="utf-8", newline="\n")
 
@@ -413,7 +450,8 @@ def verify_bundle_copy(root: Path, expected_request_id: str | None = None) -> di
     from .adapters.owned import is_link
 
     report: dict[str, Any] = {"path": str(root), "present": False, "crate": False,
-                              "external_input_hashes": 0, "problems": []}
+                              "external_input_hashes": 0, "grade": None, "grade_reasons": [],
+                              "environment_records": {}, "rerun_receipt": None, "problems": []}
     try:
         if is_link(root) or not root.is_dir():
             return report
@@ -522,6 +560,39 @@ def verify_bundle_copy(root: Path, expected_request_id: str | None = None) -> di
         )
     manifest, manifest_problems = _read_manifest(root)
     problems.extend(manifest_problems)
+    summary = manifest.get(".") or {}
+    grade = str(summary.get("reproducibility_grade") or "")
+    if grade:
+        report["grade"] = grade
+        if grade not in {"documented", "replayable", "rerun_verified"}:
+            problems.append(f"MANIFEST 재현 등급이 올바르지 않습니다: {grade}")
+        for field in ("reproducibility_reasons", "environment_records", "rerun_receipt"):
+            raw = summary.get(field)
+            if raw:
+                try:
+                    report[{"reproducibility_reasons": "grade_reasons"}.get(field, field)] = json.loads(raw)
+                except json.JSONDecodeError:
+                    problems.append(f"MANIFEST {field} JSON이 올바르지 않습니다")
+        grade_value = by_id.get("#reproducibility-grade-value")
+        if not isinstance(grade_value, Mapping) or grade_value.get("value") != grade:
+            problems.append("MANIFEST와 RO-Crate 재현 등급이 다릅니다")
+        for step_id, environment in (report.get("environment_records") or {}).items():
+            value = by_id.get(f"#environment-{quote(str(step_id), safe='-._~')}-status")
+            if (not isinstance(environment, Mapping) or not isinstance(value, Mapping)
+                    or value.get("value") != environment.get("status")
+                    or str(value.get("description") or "") != str(environment.get("reason") or "")):
+                problems.append(f"MANIFEST와 RO-Crate 환경 기록이 다릅니다: {step_id}")
+        if grade == "rerun_verified":
+            if not isinstance(report.get("rerun_receipt"), Mapping):
+                problems.append("rerun_verified 등급에 재실행 receipt가 없습니다")
+            else:
+                try:
+                    receipt = json.loads(_plain_file(root, "rerun_receipt.json").read_text(encoding="utf-8"))
+                except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                    problems.append(f"재실행 receipt를 읽지 못했습니다: {exc}")
+                else:
+                    if receipt != report["rerun_receipt"]:
+                        problems.append("MANIFEST와 재실행 receipt가 다릅니다")
     inventory, inventory_problems = _bundle_inventory(root)
     problems.extend(inventory_problems)
     problems.extend(f"MANIFEST에 등록되지 않은 파일이 있습니다: {relative}"

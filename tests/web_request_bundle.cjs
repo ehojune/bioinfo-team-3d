@@ -14,10 +14,12 @@ office.apply({type: 'request.bundle', request_id: 'r1', data: {bundle_status: 'i
 assert.equal(office.S.requests.get('r1').bundleStatus, 'incomplete');
 assert.equal(office.S.requests.get('r1').bundleWarning, 'copy stopped');
 office.apply({type: 'request.bundle', request_id: 'r1', data: {
-  bundle_path: 'runs/requests/r1', bundle_status: 'complete', bundle_grade: 'documented', bundle_warning: 'crate missing'
+  bundle_path: 'runs/requests/r1', bundle_status: 'complete', bundle_grade: 'documented',
+  bundle_grade_reasons: ['environment missing'], bundle_warning: 'crate missing'
 }});
 assert.equal(office.S.requests.get('r1').bundlePath, 'runs/requests/r1');
 assert.equal(office.S.requests.get('r1').bundleGrade, 'documented');
+assert.deepEqual(office.S.requests.get('r1').bundleGradeReasons, ['environment missing']);
 assert.equal(office.S.requests.get('r1').bundleWarning, 'crate missing');
 
 const restored = global.LabHQState.createOfficeState();
