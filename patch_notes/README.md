@@ -14,11 +14,15 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 05:21 | [`ebc968a`](https://github.com/ehojune/bioinfo-team-3d/pull/530/commits/ebc968a) | main 병합: #527 연구 lane 상태 후속과 server.py 충돌을 풀어 이어 가기 복원 helper와 취소 마무리 helper를 함께 둔다. |
+| 05:07 | [`85bcdf0`](https://github.com/ehojune/bioinfo-team-3d/pull/530/commits/85bcdf0) | main 병합: #522 파견직 채용물 고정과의 import 충돌을 풀고, 그 테스트의 가짜 러너에 채용 turn을 담을 tasks를 더했다. |
+| 04:52 | [`28f0933`](https://github.com/ehojune/bioinfo-team-3d/pull/530/commits/28f0933) | 러너가 붙거나 명단을 바꾸면 러너를 기다리던 단계가 모두 다시 판정해, 처음 켠 gateway에서 첫 직원을 맡지 않는 러너가 먼저 붙어도 24시간 기다리지 않고 바로 이유를 알린다(PR #530 리뷰). |
 | 04:50 | [`939291a`](https://github.com/ehojune/bioinfo-team-3d/pull/531/commits/939291a) | Claude와 Codex의 90초 fake MCP 대기 설정과 단일 호출을 직접 검증하고 state env 기본값을 지연 생성했다 |
 | 04:45 | [`d1d1886`](https://github.com/ehojune/bioinfo-team-3d/pull/525/commits/d1d1886) | 공유 환경 설치 판정이 nohup·sudo·time·uv run 같은 wrapper 뒤의 실행 파일과 python·Rscript의 script 앞 변수를 다시 막는다. PowerShell에서 Get-ChildItem을 pipe로 넘겨 지우는 명령(ForEach-Object 안 포함)도 .tmp 밖이면 묻는다. |
 | 04:42 | [`21d0a63`](https://github.com/ehojune/bioinfo-team-3d/pull/527/commits/21d0a63) | 최신 main의 웹·CLI 상태 수정을 연구 이어 가기 상태 수정과 함께 보존함 |
 | 04:39 | [`74b8b40`](https://github.com/ehojune/bioinfo-team-3d/pull/529/commits/74b8b40) | 실행 중 취소돼 결과가 비었어도 단계·단독 task가 보내졌던 요청은 묶음을 시도한다. |
 | 04:36 | [`abcf5b6`](https://github.com/ehojune/bioinfo-team-3d/pull/522/commits/abcf5b6) | 리뷰 3차 반영: 납품물 hash를 못 재면 수습에 남기고 재고용 때도 hash 없는 부분을 표시한다. mcp_dir 밖에서 실제 실행되는 서버 폴더도 재며, 캐시 checkout의 origin을 확인할 수 없으면 새로 clone한다(#424). |
+| 04:35 | [`541569c`](https://github.com/ehojune/bioinfo-team-3d/pull/530/commits/541569c) | 러너를 다시 시작하면 이전 프로세스의 채용 수가 비고, 취소 기록이나 요청 묶음을 쓰는 동안 labhq down이 기다리며, 취소한 요청의 이어 묻기와 직원 없이 돌아온 러너 대기는 바로 이유를 알린다(#521). |
 | 04:34 | [`811253a`](https://github.com/ehojune/bioinfo-team-3d/pull/529/commits/811253a) | 단계를 하나도 돌리지 않고 끝난 요청(CP1 수정 요청, 작업 전 거절·취소)은 요청 묶음 경고를 남기지 않는다. |
 | 04:14 | [`51d34ae`](https://github.com/ehojune/bioinfo-team-3d/pull/522/commits/51d34ae) | 리뷰 2차 반영: 수습 파견직은 PI가 activate하기 전에는 CSO 배정·직접 요청·상담·러너 실행에서 빠지고 명단에는 수습으로 보인다. 외부 전송 host는 hostname[:port]만 받아 URL 속 인증값이 계약서·명단에 남지 않는다(#424). |
 | 04:14 | [`a824efa`](https://github.com/ehojune/bioinfo-team-3d/pull/525/commits/a824efa) | main을 병합해 #524 재현 등급 기록과 manual 공유 환경 문단 충돌을 풀었다. |
