@@ -15,7 +15,9 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -29,6 +31,10 @@ REPO = Path(__file__).resolve().parents[1]
 ICON = {"cso": "🦉", "chief_of_staff": "🐧", "biologist": "🐻", "data_steward": "🐿️", "lit_scout": "🦊",
         "analyst": "🦝", "engineer": "🐙", "qc_reviewer": "🦔", "sci_reviewer": "🐢", "recruiter": "🦫", "bioinfo-agent": "🦦"}
 STATE_KO = {"working": "작업 중", "waiting": "승인 대기", "hibernating": "HPC 대기(수면)", "done": "완료", "error": "오류"}
+_OPERATION_LOCKS: dict[str, threading.Lock] = {}
+_OPERATION_LOCKS_GUARD = threading.Lock()
+_TERMINATE_GRACE_SECONDS = 10.0
+_TERMINATE_POLL_SECONDS = 0.1
 
 
 def _instance_config(name: str) -> str:
@@ -298,6 +304,78 @@ def _pid_file(s: Settings, role: str) -> Path:
     return _launch_state(s) / f"labhq-{role}.pid"
 
 
+def _operation_lock_file(s: Settings) -> Path:
+    return _launch_state(s) / "labhq-up-down.lock"
+
+
+def _operation_busy() -> None:
+    print("다른 up/down이 진행 중입니다.", file=sys.stderr)
+    raise SystemExit(2)
+
+
+@contextmanager
+def _operation_lock(s: Settings):
+    """Hold one non-blocking up/down lock for this instance across processes and threads."""
+    path = _operation_lock_file(s)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    key = str(path.resolve()).casefold() if sys.platform == "win32" else str(path.resolve())
+    with _OPERATION_LOCKS_GUARD:
+        local_lock = _OPERATION_LOCKS.setdefault(key, threading.Lock())
+    if not local_lock.acquire(blocking=False):
+        _operation_busy()
+
+    handle = None
+    locked = False
+    try:
+        handle = os.fdopen(os.open(path, os.O_RDWR | os.O_CREAT, 0o600), "r+b")
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"\0")
+            handle.flush()
+        handle.seek(0)
+        if sys.platform == "win32":
+            import msvcrt
+
+            try:
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError:
+                _operation_busy()
+        else:
+            import fcntl
+
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                _operation_busy()
+        locked = True
+        record = json.dumps({
+            "pid": os.getpid(),
+            "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        }, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
+        handle.seek(0)
+        handle.write(record)
+        handle.truncate()
+        handle.flush()
+        yield
+    finally:
+        if locked and handle is not None:
+            try:
+                handle.seek(0)
+                if sys.platform == "win32":
+                    import msvcrt
+
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+        if handle is not None:
+            handle.close()
+        local_lock.release()
+
+
 class ProcessIdentityError(RuntimeError):
     pass
 
@@ -453,7 +531,7 @@ def _start_background(s: Settings, role: str, *, popen=None) -> int:
     return int(process.pid)
 
 
-def _up(s: Settings, *, popen=None) -> None:
+def _up_unlocked(s: Settings, *, popen=None) -> None:
     if _default_client_token(s.gateway.client_token):
         print("gateway 시작 거부: gateway.client_token의 change-me 기본값을 바꾸세요.", file=sys.stderr)
         raise SystemExit(2)
@@ -495,7 +573,27 @@ def _up(s: Settings, *, popen=None) -> None:
     print(f"웹 사무실: {_http_base(s)}/  (`{_config_command(s, 'open')}`)")
 
 
-def _terminate_tree(pid: int) -> None:
+def _up(s: Settings, *, popen=None) -> None:
+    with _operation_lock(s):
+        _up_unlocked(s, popen=popen)
+
+
+def _wait_for_process_end(pid: int, created: str, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            current = _process_created(pid)
+        except ProcessIdentityError as exc:
+            raise OSError(str(exc)) from None
+        if current is None or current != created:
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(_TERMINATE_POLL_SECONDS, remaining))
+
+
+def _terminate_tree(pid: int, *, created: str | None = None) -> None:
     if sys.platform == "win32":
         result = subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], capture_output=True, text=True,
                                 timeout=15)
@@ -511,7 +609,22 @@ def _terminate_tree(pid: int) -> None:
     try:
         os.killpg(pid, signal.SIGTERM)
     except ProcessLookupError:
-        pass
+        return
+    if created is None:
+        return
+    if _wait_for_process_end(pid, created, _TERMINATE_GRACE_SECONDS):
+        return
+    try:
+        if _process_created(pid) != created:
+            return
+    except ProcessIdentityError as exc:
+        raise OSError(str(exc)) from None
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    if not _wait_for_process_end(pid, created, _TERMINATE_GRACE_SECONDS):
+        raise OSError(f"SIGKILL 뒤에도 PID {pid} 프로세스가 종료되지 않음")
 
 
 def _stop_background(s: Settings, role: str) -> int | None:
@@ -522,7 +635,7 @@ def _stop_background(s: Settings, role: str) -> int | None:
         _record_problem(role, reason)
     pid = int(record["pid"])
     try:
-        _terminate_tree(pid)
+        _terminate_tree(pid, created=str(record["created"]))
     except OSError as exc:
         print(f"{role} PID {pid}을 종료하지 못했습니다: {exc}", file=sys.stderr)
         raise SystemExit(2) from None
@@ -552,7 +665,7 @@ def _shutdown_readiness(s: Settings) -> dict | str | None:
     return value if isinstance(value, dict) else "unknown"
 
 
-def _down(s: Settings, *, force: bool = False) -> None:
+def _down_unlocked(s: Settings, *, force: bool = False) -> None:
     active = _active_requests(s)
     readiness = _shutdown_readiness(s) if active is not None else "unknown"
     lines = [f"진행 중 요청: {_active_request_line(request)}" for request in active or []]
@@ -589,6 +702,11 @@ def _down(s: Settings, *, force: bool = False) -> None:
             _record_problem(role, reason)
     stopped = [(role, pid) for role in ("runner", "gateway") if (pid := _stop_background(s, role)) is not None]
     print("종료: " + (", ".join(f"{role} PID {pid}" for role, pid in stopped) if stopped else "기록된 프로세스 없음"))
+
+
+def _down(s: Settings, *, force: bool = False) -> None:
+    with _operation_lock(s):
+        _down_unlocked(s, force=force)
 
 
 def _terminal_report(data: dict) -> str:

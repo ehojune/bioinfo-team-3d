@@ -5,6 +5,11 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import signal
+import subprocess
+import sys
+import threading
+import time
 
 import httpx
 import pytest
@@ -151,7 +156,7 @@ def test_up_and_down_manage_only_their_process_records_and_clean_runner_path(tmp
     # No live gateway in tests (#515 review): the readiness answer is given, as the request list is.
     monkeypatch.setattr(cli, "_shutdown_readiness",
                         lambda _settings: {"requests": [], "followups": [], "recruits": 0, "ready": True})
-    monkeypatch.setattr(cli, "_terminate_tree", lambda pid: killed.append(pid))
+    monkeypatch.setattr(cli, "_terminate_tree", lambda pid, **kwargs: killed.append(pid))
     cli._down(settings, force=False)
     assert killed == [4102, 4101]
     assert not cli._pid_file(settings, "gateway").exists() and not cli._pid_file(settings, "runner").exists()
@@ -166,6 +171,100 @@ def test_up_does_not_spawn_when_gateway_and_runner_are_healthy(tmp_path, monkeyp
     cli._up(settings, popen=lambda *args, **kwargs: pytest.fail("unexpected spawn"))
 
 
+def test_two_overlapping_up_calls_start_only_one_instance(tmp_path, monkeypatch, capsys):
+    settings = Settings.load(str(_config(tmp_path)))
+    entered = threading.Event()
+    release = threading.Event()
+    launched = []
+
+    monkeypatch.setattr(cli, "_health", lambda _settings: None)
+    monkeypatch.setattr(cli, "_process_record", lambda _settings, role: ("missing", None, None))
+
+    def start(_settings, role, *, popen=None):
+        launched.append(role)
+        entered.set()
+        assert release.wait(5)
+        return 4301
+
+    monkeypatch.setattr(cli, "_start_background", start)
+    monkeypatch.setattr(cli, "_wait_for_health", lambda *args, **kwargs: {
+        "service": "labhq gateway", "runners": [settings.runner.id],
+    })
+
+    first_error = []
+
+    def first_up():
+        try:
+            cli._up(settings)
+        except BaseException as exc:  # kept for assertion in the test thread
+            first_error.append(exc)
+
+    worker = threading.Thread(target=first_up)
+    worker.start()
+    assert entered.wait(5)
+    try:
+        with pytest.raises(SystemExit) as stopped:
+            cli._up(settings)
+        assert stopped.value.code == 2
+    finally:
+        release.set()
+        worker.join(5)
+
+    assert not worker.is_alive() and first_error == []
+    assert launched == ["gateway"]
+    assert capsys.readouterr().err.strip().splitlines() == ["다른 up/down이 진행 중입니다."]
+
+
+def test_operation_lock_is_exclusive_across_processes(tmp_path, monkeypatch, capsys):
+    config = _config(tmp_path)
+    settings = Settings.load(str(config))
+    holder = subprocess.Popen(
+        [sys.executable, "-c", (
+            "import sys\n"
+            "from labhq import cli\n"
+            "from labhq.settings import Settings\n"
+            "settings = Settings.load(sys.argv[1])\n"
+            "with cli._operation_lock(settings):\n"
+            "    print('locked', flush=True)\n"
+            "    sys.stdin.readline()\n"
+        ), str(config)],
+        cwd=Path(__file__).resolve().parents[1],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert holder.stdout and holder.stdout.readline().strip() == "locked"
+        monkeypatch.setattr(cli, "_health", lambda _settings: {
+            "service": "labhq gateway", "runners": [settings.runner.id],
+        })
+        with pytest.raises(SystemExit) as stopped:
+            cli._up(settings)
+        assert stopped.value.code == 2
+        assert capsys.readouterr().err.strip().splitlines() == ["다른 up/down이 진행 중입니다."]
+    finally:
+        if holder.stdin:
+            holder.stdin.write("\n")
+            holder.stdin.close()
+        holder.wait(timeout=5)
+    assert holder.returncode == 0
+
+
+def test_up_recovers_a_lock_file_left_by_a_dead_process(tmp_path, monkeypatch):
+    settings = Settings.load(str(_config(tmp_path)))
+    lock_path = cli._launch_state(settings) / "labhq-up-down.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.write_text('{"pid":999999,"created_at":"2000-01-01T00:00:00Z"}\n', encoding="utf-8")
+    monkeypatch.setattr(cli, "_health", lambda _settings: {
+        "service": "labhq gateway", "runners": [settings.runner.id],
+    })
+
+    cli._up(settings, popen=lambda *args, **kwargs: pytest.fail("unexpected spawn"))
+
+    assert json.loads(lock_path.read_text(encoding="utf-8"))["pid"] == os.getpid()
+
+
 def _write_process_record(settings, role, pid, created):
     path = cli._pid_file(settings, role)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -178,10 +277,52 @@ def test_a_reused_pid_is_never_terminated_and_its_record_is_removed(tmp_path, mo
     settings = Settings.load(str(_config(tmp_path)))
     path = _write_process_record(settings, "runner", 4242, "old-generation")
     monkeypatch.setattr(cli, "_process_created", lambda pid: "new-generation")
-    monkeypatch.setattr(cli, "_terminate_tree", lambda pid: pytest.fail("must not terminate a reused PID"))
+    monkeypatch.setattr(cli, "_terminate_tree",
+                        lambda pid, **kwargs: pytest.fail("must not terminate a reused PID"))
 
     assert cli._stop_background(settings, "runner") is None
     assert not path.exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process-group termination")
+def test_posix_stop_waits_then_kills_a_term_ignoring_process_before_removing_record(tmp_path, monkeypatch):
+    settings = Settings.load(str(_config(tmp_path)))
+    ready = tmp_path / "ready"
+    process = subprocess.Popen(
+        [sys.executable, "-c", (
+            "import pathlib,signal,time;"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN);"
+            f"pathlib.Path({str(ready)!r}).write_text('ready');"
+            "time.sleep(60)"
+        )],
+        start_new_session=True,
+    )
+    real_killpg = os.killpg
+    try:
+        deadline = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert ready.exists()
+        created = cli._process_created(process.pid)
+        record = _write_process_record(settings, "runner", process.pid, created)
+        monkeypatch.setattr(cli, "_TERMINATE_GRACE_SECONDS", 0.2)
+        signals = []
+
+        def killpg(pid, sent_signal):
+            if sent_signal == signal.SIGKILL:
+                assert record.exists(), "process record was removed before SIGKILL"
+            signals.append(sent_signal)
+            real_killpg(pid, sent_signal)
+
+        monkeypatch.setattr(cli.os, "killpg", killpg)
+        assert cli._stop_background(settings, "runner") == process.pid
+        process.wait(timeout=5)
+        assert signals == [signal.SIGTERM, signal.SIGKILL]
+        assert not record.exists()
+    finally:
+        if process.poll() is None:
+            real_killpg(process.pid, signal.SIGKILL)
+            process.wait(timeout=5)
 
 
 def test_an_unverifiable_process_is_left_untouched(tmp_path, monkeypatch, capsys):
@@ -192,7 +333,8 @@ def test_an_unverifiable_process_is_left_untouched(tmp_path, monkeypatch, capsys
         raise cli.ProcessIdentityError("access denied")
 
     monkeypatch.setattr(cli, "_process_created", denied)
-    monkeypatch.setattr(cli, "_terminate_tree", lambda pid: pytest.fail("must not terminate an unknown process"))
+    monkeypatch.setattr(cli, "_terminate_tree",
+                        lambda pid, **kwargs: pytest.fail("must not terminate an unknown process"))
     with pytest.raises(SystemExit) as stopped:
         cli._stop_background(settings, "runner")
     assert stopped.value.code == 2 and path.exists()
@@ -224,7 +366,7 @@ def test_down_refuses_active_work_and_force_terminates_only_recorded_trees(tmp_p
     }])
     monkeypatch.setattr(cli, "_shutdown_readiness", lambda _settings: "unknown")  # no live gateway in tests
     killed = []
-    monkeypatch.setattr(cli, "_terminate_tree", lambda pid: killed.append(pid))
+    monkeypatch.setattr(cli, "_terminate_tree", lambda pid, **kwargs: killed.append(pid))
 
     with pytest.raises(SystemExit) as stopped:
         cli._down(settings, force=False)
@@ -343,7 +485,7 @@ def test_down_also_refuses_a_running_follow_up_or_recruitment(tmp_path, monkeypa
     _write_process_record(settings, "runner", 4244, "runner-generation")
     monkeypatch.setattr(cli, "_process_created", lambda pid: "runner-generation")
     killed = []
-    monkeypatch.setattr(cli, "_terminate_tree", lambda pid: killed.append(pid))
+    monkeypatch.setattr(cli, "_terminate_tree", lambda pid, **kwargs: killed.append(pid))
 
     def gateway(method, url, **kwargs):
         request = httpx.Request(method, url)
@@ -386,7 +528,7 @@ def test_down_refuses_when_readiness_fails_or_names_a_request_the_list_missed(tm
     _write_process_record(settings, "runner", 4244, "runner-generation")
     monkeypatch.setattr(cli, "_process_created", lambda pid: "runner-generation")
     killed = []
-    monkeypatch.setattr(cli, "_terminate_tree", lambda pid: killed.append(pid))
+    monkeypatch.setattr(cli, "_terminate_tree", lambda pid, **kwargs: killed.append(pid))
     answers = {}
 
     def gateway(method, url, **kwargs):
