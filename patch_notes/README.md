@@ -14,13 +14,19 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 01:57 | [`5e59bf7`](https://github.com/ehojune/bioinfo-team-3d/pull/517/commits/5e59bf7) | 이전 차수 절 제목을 닫는 #이 붙은 ATX 형식으로 써도 인식한다(#517 리뷰). |
+| 01:54 | [`a46a485`](https://github.com/ehojune/bioinfo-team-3d/pull/517/commits/a46a485) | labhq가 PI 보고서에 붙이는 절(이전 차수 대체 절, 리뷰 참고)을 끝의 벤치 결과 블록 앞에 넣는다(#517 리뷰). |
 | 01:38 | [`6d6eb37`](https://github.com/ehojune/bioinfo-team-3d/pull/515/commits/6d6eb37) | 채용 수를 runner 프로세스 단위로 세어 같은 프로세스의 재연결에는 지우지 않고, 보내기 실패에도 되돌리지 않는다(#515 리뷰). |
 | 01:36 | [`70810b5`](https://github.com/ehojune/bioinfo-team-3d/pull/516/commits/70810b5) | 웹 첫 화면의 정적 비용 문구도 '사용 비용 불러오는 중'이라 모듈이 로드되기 전에도 $0.00이 보이지 않는다(#516 리뷰). |
 | 01:34 | [`f8d35c1`](https://github.com/ehojune/bioinfo-team-3d/pull/515/commits/f8d35c1) | labhq down이 readiness 조회 실패(404 외)에는 종료를 거부하고, readiness 응답의 요청도 판정에 넣으며, 채용 수를 runner에 보내기 전에 센다(#515 리뷰). |
+| 01:32 | [`de4a5f4`](https://github.com/ehojune/bioinfo-team-3d/pull/517/commits/de4a5f4) | main(#513)을 합치며 manual 이어 가기 절의 두 수정(보고서 대체 절, 재사용 조건의 가설)을 함께 남겼다. |
 | 01:31 | [`62f61cb`](https://github.com/ehojune/bioinfo-team-3d/pull/516/commits/62f61cb) | 토큰이 없으면 첫 화면이 '토큰을 넣으면 … 불러와요'로 보이고, manual 웹 사무실 절에 첫 스냅샷 전 표시를 적었다(#516 리뷰). |
 | 01:31 | [`cc70a41`](https://github.com/ehojune/bioinfo-team-3d/pull/516/commits/cc70a41) | main(#513)을 합쳤다. |
+| 01:29 | [`44a1452`](https://github.com/ehojune/bioinfo-team-3d/pull/514/commits/44a1452) | main(#513)을 합치며 research_protocol 표의 CP1 행(수정 요청)과 CP2 행(단계 실행 뒤)을 함께 남겼다. |
+| 01:28 | [`e8c8864`](https://github.com/ehojune/bioinfo-team-3d/pull/514/commits/e8c8864) | CP1 수정 요청의 새 요청이 이전 계획 JSON 전체를 받고, 수정 요청 결정 저장 직후 멈춘 요청은 재시작에서 CP1을 다시 묻지 않고 새 요청을 연다(#514 리뷰). |
 | 01:27 | [`52e2970`](https://github.com/ehojune/bioinfo-team-3d/pull/515/commits/52e2970) | labhq down이 끝난 요청의 이어 묻기나 진행 중인 채용이 있으면 --force 없이 종료하지 않는다(gateway /api/shutdown-readiness, #500). |
 | 01:27 | [`6c0035f`](https://github.com/ehojune/bioinfo-team-3d/pull/515/commits/6c0035f) | manual의 down 거부 조건에 이어 묻기·채용을 넣었다. |
+| 01:25 | [`cc4168a`](https://github.com/ehojune/bioinfo-team-3d/pull/517/commits/cc4168a) | 이어 간 연구 보고서에 '이전 차수에서 고친 것' 절이 없으면 labhq가 이전 차수 리뷰 P1·CP2 수정 요청 목록으로 절을 붙인다(#512 리뷰). |
 
 ## 2026-10-11
 
@@ -32,8 +38,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 07:00 | [`e689c6c`](https://github.com/ehojune/bioinfo-team-3d/pull/514/commits/e689c6c) | CP1 수정 요청이 넘겨받은 PI 메모는 새 요청의 메모 상한에 세지 않고, 재시작 경로에서도 이전 요청에 revised_to 링크를 남긴다. |
 | 06:36 | [`5c3daa8`](https://github.com/ehojune/bioinfo-team-3d/pull/513/commits/5c3daa8) | labhq send(대기)·watch가 gateway 꺼짐·토큰 거부 때 traceback 대신 원인 한 줄과 exit 2를 낸다. |
 | 06:36 | [`72c3314`](https://github.com/ehojune/bioinfo-team-3d/pull/513/commits/72c3314) | PI 시험 전 문서 대조로 확인한 21건을 고쳤다: research.enabled와 evidence_checkpoint 차이, CP2 시점, 시간 초과 결과 이름, 개인 경로 기본 목록, 단독 처리 조건, Codex 직원 sandbox 읽기 거부 등. |
+| 06:35 | [`8e662be`](https://github.com/ehojune/bioinfo-team-3d/pull/514/commits/8e662be) | CP1 수정 요청의 새 요청이 승인받지 못한 이전 계획과 메모를 받아 그 계획을 고친다. 새 요청을 열 수 없으면 plan_revision_failed로 메모를 남기고, 재시작에도 두 번 열지 않으며, 넘겨받은 답은 질문 횟수에 세지 않는다. |
+| 06:19 | [`d0f7bc5`](https://github.com/ehojune/bioinfo-team-3d/pull/514/commits/d0f7bc5) | CP1 카드에 수정 요청을 넣었다. 메모와 함께 고르면 지금 요청은 단계 없이 끝나고, 같은 문장·참고 자료·확인 질문 답에 메모를 붙인 새 연구 요청이 열린다(이어 가기 차수에는 없음). |
 
 ## 2026-10-08
 

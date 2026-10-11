@@ -4,6 +4,15 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-12 · 이어 간 연구 보고서의 "이전 차수에서 고친 것" 절을 보장한다
+
+- 결론: #512는 보고서 작성자에게 "이전 차수에서 고친 것" 절을 쓰라고 지시만 했고, 빠뜨려도 확인하지 않았다(#512 리뷰 P2). 이제 그 절이 없으면 labhq가 이전 차수 리뷰 P1과 CP2 수정 요청 목록으로 절을 본문에 붙인다. 절이 없다는 이유로 요청을 `report_incomplete`로 만들지는 않는다(claim 검사는 앵커만 본다).
+- 바뀐 것: `labhq/orchestrator/cso.py` `EARLIER_ROUNDS_HEADING`, `_earlier_rounds_fallback`, `_research_report`에서 리뷰 참고 앞에 붙임. 작성자가 쓴 절(제목 단계 무관)이 있으면 그대로 둔다. `docs/manual.md` 한 줄.
+- 실행한 것: `tests/test_research_continue.py` 종단 test 단언 추가와 새 test 1건이 main 코드에서 실패하고 이 branch에서 통과. 연구 test, 전체 `pytest -q`(Windows) 4982 passed·63 skipped, `scripts/check_public.sh`, `scripts/patch_notes.py check`.
+- 봇 리뷰 P1 고침: 이어 간 벤치에서 대체 절이 `LABHQ_BENCH_RESULT` 블록 뒤에 붙어 채점이 형식 실패가 됐다. `_before_bench_block`으로 대체 절과 리뷰 참고 줄(연구·일반 경로)을 끝의 블록 앞에 넣는다. 새 test 2.
+- 미해결: 없음.
+- 근거: #512 리뷰 인라인 지적(cso.py:3971), `tests/test_research_continue.py`.
+
 ## 2026-10-11 · 웹 첫 화면이 빈 사무실로 보이지 않는다
 
 - 결론: 페이지를 새로 열면 gateway의 첫 스냅샷이 올 때까지 "오늘의 할 일을 기다리는 중", "사용 비용 $0.00", "지금은 결정할 일이 없어요"가 보여 요청이 없는 사무실로 읽혔다(웹 연구 시운전 10-08). 이제 그동안은 "사무실 상태를 불러오는 중", "사용 비용 불러오는 중", "결정할 일을 불러오는 중"이다.
@@ -21,6 +30,18 @@
 - 봇 리뷰 P1 2·P2 1 고침: readiness 조회가 404 외 이유로 실패하면 거부(fail closed), 요청 목록을 읽은 뒤 들어온 요청도 readiness 응답으로 거부, 채용 수를 runner에 보내기 전에 올리고 보내기 실패 시 되돌림. 새 test 2.
 - 미해결: #500의 나머지 두 항목(같은 instance에서 동시에 `up` 두 번, POSIX 종료 대기)은 그대로다. PI는 Windows 터미널 하나에서 `up`을 한 번 쓰므로 드물다. gateway를 다시 시작하면 채용 수를 잊는다(runner는 채용을 계속함). 이 branch는 문서 PR #513 위에 쌓았다(같은 manual 문장).
 - 근거: `labhq/gateway/server.py` `shutdown_readiness`·`recruits_running`, `labhq/cli.py` `_shutdown_blockers`·`_down`.
+
+## 2026-10-09 · CP1 수정 요청: 메모와 이전 계획으로 새 요청이 다시 계획한다
+
+- 결론: CP1 카드에 **수정 요청**이 생겼다. 메모와 함께 고르면 지금 요청은 단계를 돌리지 않고 `plan_revision_requested`(완료)로 끝나고, 같은 요청 문장에 `[CP1 수정 요청 · <id>]` 메모를 붙인 새 연구 요청이 열린다. 새 요청의 계획자는 승인받지 못한 이전 계획과 메모를 받아 그 계획을 고치고, 새 CP1이 뜬다. 지금까지는 승인·거절뿐이라 계획 한 곳이 틀려도 거절하고 요청을 손으로 다시 보내야 했다(웹 연구 시운전 10-08, PI 점검 R10의 남은 항목).
+- 바뀐 것:
+  - `labhq/gateway/server.py`: `create_revised_request`(새 요청: 문장+메모, 요청 자체 참고 자료(query를 뗀 URL은 원문으로 다시 만들어 표시 유지), `default_references`, 확인 질문 답·PI 메모(`inherited` 표시, 새 요청의 질문 횟수·메모 상한에 세지 않음, 메모는 최근 20개), 처음 요청한 예산(`requested_budget_usd`, 새로 모든 요청에 기록), 프로젝트·CSO 모델·route·meta, `revision_of`(이전 계획·hash·메모)). 모두 새 요청의 첫 저장에 들어간다(`create_request(extra=)`). `revised_request_of`가 `meta.revised_from`으로 이미 연 새 요청을 찾아 재시작에도 두 번 열지 않는다.
+  - `labhq/orchestrator/cso.py`: CP1 카드 `detail.revise_allowed`(단계가 돌기 전 첫 CP1에만: 이어 가기 차수·단계 뒤 재승인에는 없음). 메모 없는 수정 요청은 카드를 다시 묻고 세 번 비면 거절처럼 끝난다. 새 요청을 열 수 없으면(설정에서 빠진 프로젝트·CSO 모델·참고 경로) `plan_revision_failed`로 끝나고 보고서에 메모가 남는다. 새 요청의 연구 계획 prompt에 "CP1 revision request" 블록(이전 계획 digest·hash·메모)이 붙는다. 넘겨받은 확인 질문 답은 `MAX_CLARIFY_CARDS`에 세지 않는다.
+  - 웹(2.5D·3D 공통 `labhq/web/ui/decide.js`, `index.html`): `revise_allowed`인 CP1 카드에 수정 요청 버튼, 메모 필수, 결과 안내 한 줄, 보낸 뒤 안내. 승인·거절도 그 카드에서는 choice를 함께 보낸다. CLI: `labhq approve <id> --choice revise --note "…"`(그런 CP1에만).
+  - 문서: `docs/manual.md`(CP1 절), `docs/pi-qa.md`(CP1 계획이 마음에 안 들면), `docs/research_protocol.md`(CP1 행; 실제 화면에 없던 "CP2·3 위임 범위"는 뺐다).
+- 실행한 것: 새 test 13건(`tests/test_research_cp1_revise.py`)과 웹 test 1건(`tests/web_cp2_evidence.cjs`)이 main 코드에서 실패하고 이 branch에서 통과. 전체 `pytest -q`(Windows, 봇 리뷰 수정·main 병합 뒤) 4996 passed·63 skipped. web node test 전체. 리뷰는 Codex 대신 Claude 워크플로로 했다: 관점 4개(재시작·넘겨받는 상태·orchestrator 흐름·웹/CLI) 리뷰와 관점별 반박 검증 → P1 1·P2 13(중복 포함 6갈래) 모두 고침 → 고친 부분 재검증(관점 2) → P2 2 고침. 봇 리뷰 P2 2(이전 계획 step 목록이 8,000자에서 잘림, 결정 저장 직후 멈추면 재시작에서 CP1 재질문) 고침, 새 test 2.
+- 미해결: Codex 리뷰는 사용자 지시로 보류 중이라 draft로 둔다. 새 요청은 이전 요청의 브리핑을 다시 돌린다(비용 소액). 이어 가기 차수의 CP1에서 계획을 고치려면 지금처럼 거절 뒤 새 요청이다.
+- 근거: `tests/test_research_cp1_revise.py`, `labhq/gateway/server.py` `create_revised_request`·`revised_request_of`, `labhq/orchestrator/cso.py` `finish_research_plan`.
 
 ## 2026-10-09 · PI 시험 전 문서 대조 21건과 CLI traceback
 
