@@ -10,6 +10,13 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-10-09
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 06:36 | [`5c3daa8`](https://github.com/ehojune/bioinfo-team-3d/pull/513/commits/5c3daa8) | labhq send(대기)·watch가 gateway 꺼짐·토큰 거부 때 traceback 대신 원인 한 줄과 exit 2를 낸다. |
+| 06:36 | [`72c3314`](https://github.com/ehojune/bioinfo-team-3d/pull/513/commits/72c3314) | PI 시험 전 문서 대조로 확인한 21건을 고쳤다: research.enabled와 evidence_checkpoint 차이, CP2 시점, 시간 초과 결과 이름, 개인 경로 기본 목록, 단독 처리 조건, Codex 직원 sandbox 읽기 거부 등. |
+
 ## 2026-10-08
 
 | 시간 | 커밋 | 주요 변경사항 |
