@@ -336,7 +336,7 @@ dialog.sheet::backdrop{background:rgba(17,26,34,.45)}
     <h1 class="brand">labhq 사무실</h1>
     <span class="conn" id="conn"><i></i><span>연결 중</span></span>
     <a id="view-3d" href="/3d/">3D</a>
-    <span class="cost" id="cost">사용 비용 $0.00</span>
+    <span class="cost" id="cost">사용 비용 불러오는 중</span>
   </div>
   <p class="note" id="note" hidden>가상의 데이터로 움직이는 데모예요. 게이트웨이에 연결하면 실제 팀의 상태가 보여요.</p>
   <p class="runner-off" id="runner-off" role="status" hidden>러너 꺼짐 — 터미널에서 <code>labhq up</code>(또는 <code>labhq runner</code>)을 실행하세요. 그동안 보낸 요청은 러너를 기다려요.</p>
@@ -442,6 +442,10 @@ const BOOT = window.LABHQ_BOOT || { mode: 'demo' };
 const QS = new URLSearchParams(location.search);
 const MODE = (QS.has('demo') || BOOT.mode !== 'live') ? 'demo' : 'live';
 const INSTANCE = BOOT.instance || '';
+// Until the gateway's first snapshot arrives the office is unknown, not empty: no "$0.00" or "waiting for today".
+let snapshotLoaded = MODE === 'demo';
+// Without a token nothing will load until the PI enters one: say that instead of an endless "loading" (#516 review).
+const loadingText = what => S.conn === 'auth' ? `토큰을 넣으면 ${what}을 불러와요` : `${what} 불러오는 중`;
 if (MODE === 'demo') document.getElementById('view-3d').href = BOOT.mode === 'live' ? '/3d/?demo=1' : './lab3d/?demo=1';
 const SPEED = Math.max(0.25, Math.min(40, parseFloat(QS.get('speed') || '1') || 1));
 const $ = (s, r = document) => r.querySelector(s);
@@ -614,7 +618,7 @@ function renderHeader() {
   const txt = { live: '실시간', demo: '데모', connecting: '연결 중', offline: '연결 끊김, 다시 시도하는 중', auth: '토큰을 확인해 주세요' }[S.conn];
   c.className = `conn ${S.conn}`;
   if (c.lastChild.textContent !== txt) c.lastChild.textContent = txt;
-  $('#cost').textContent = LabHQState.totalCostLabel([...S.requests.values()], S.cost);
+  $('#cost').textContent = snapshotLoaded ? LabHQState.totalCostLabel([...S.requests.values()], S.cost) : `사용 비용 · ${loadingText('비용')}`;
   $('#note').hidden = MODE !== 'demo';
   $('#runner-off').hidden = !(MODE !== 'demo' && S.conn === 'live' && S.runnersKnown && !S.runners.size);  // R15
   $('#office').classList.toggle('offline', S.conn === 'offline');
@@ -674,10 +678,10 @@ function processingLabel(q) {
 }
 function renderBoard() {
   const q = S.requests.get(S.current), el = $('#board');
-  const key = q ? JSON.stringify([q.id, q.phase, q.steps, q.text, q.processing]) : 'none';
+  const key = q ? JSON.stringify([q.id, q.phase, q.steps, q.text, q.processing]) : snapshotLoaded ? 'none' : `loading:${S.conn}`;
   if (el.dataset.key === key) return;
   el.dataset.key = key;
-  if (!q) { el.innerHTML = '<p class="board-empty">오늘의 할 일을 기다리는 중</p>'; return; }
+  if (!q) { el.innerHTML = `<p class="board-empty">${snapshotLoaded ? '오늘의 할 일을 기다리는 중' : loadingText('사무실 상태')}</p>`; return; }
   const chips = q.plan.map(s => `<span class="chip st-${q.steps[s.id] || 'pending'}" title="${esc(s.instruction)}">${esc(s.id)} ${esc(nick(s.agent_id))}</span>`).join('');
   el.innerHTML = `<p class="board-title">${esc(short(q.text, 70))} · ${esc(processingLabel(q))}</p>${phaseList(q)}<div class="chips">${chips}</div>`;
 }
@@ -722,7 +726,7 @@ function renderApprovals() {
   $('#engine-holds').replaceChildren(...(holdRows.length ? [holdList] : []));
   syncDecisionCards($('#approvals'), items, sugs, { now, nick, kindLabels: KIND_KO, requests: S.requests,
     taskStep: S.taskStep, avatarHTML: (value, type) => headSVG(type === 'suggestion' ? 'owl' : kindOf(ag(value.agent_id))),
-    emptyText: '지금은 결정할 일이 없어요. 승인이 필요하면 여기에 바로 떠요.' });
+    emptyText: snapshotLoaded ? '지금은 결정할 일이 없어요. 승인이 필요하면 여기에 바로 떠요.' : loadingText('결정할 일') });
   syncDecisionHistory($('#approval-history'), decisionHistory, { kindLabels: KIND_KO, requests: S.requests });
 }
 
@@ -1166,7 +1170,7 @@ function startLive() {
       const ev = JSON.parse(e.data);
       if (ev.type !== 'snapshot' && ev.seq && ev.seq <= lastSeq) return;
       apply(ev);
-      if (ev.type === 'snapshot') { lastSeq = ev.seq || 0; return; }
+      if (ev.type === 'snapshot') { lastSeq = ev.seq || 0; snapshotLoaded = true; schedule(); return; }
       if (ev.seq && ev.seq > lastSeq) lastSeq = ev.seq;
     } catch (err) { console.warn('bad event', err); } };
     ws.onclose = e => {

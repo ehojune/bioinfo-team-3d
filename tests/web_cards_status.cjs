@@ -276,3 +276,18 @@ test('what an agent waits for survives a roster update',()=>{
   office.apply({type:'roster.updated',data:{agents:[{id:'biologist',name:'곰',state:'hibernating'}]}});
   assert.equal(office.stateText(office.ag('biologist')),'답 기다리는 중');
 });
+
+test('before the first snapshot the office reads as loading, not as an empty lab at $0.00',()=>{
+  // Web trial 2026-10-08: a reload showed "오늘의 할 일을 기다리는 중" and "사용 비용 $0.00" until the snapshot came.
+  const html=fs.readFileSync(path.join(web,'index.html'),'utf8');
+  assert.match(html,/let snapshotLoaded = MODE === 'demo';/);
+  // Before the module runs at all, the static markup already says loading (#516 review).
+  assert.match(html,/<span class="cost" id="cost">사용 비용 불러오는 중<\/span>/);
+  assert.match(html,/if \(ev\.type === 'snapshot'\) \{ lastSeq = ev\.seq \|\| 0; snapshotLoaded = true; schedule\(\); return; \}/);
+  // Without a token nothing loads until one is entered, so the text says so (#516 review).
+  assert.match(html,/const loadingText = what => S\.conn === 'auth' \? `토큰을 넣으면 \$\{what\}을 불러와요` : `\$\{what\} 불러오는 중`;/);
+  assert.match(html,/snapshotLoaded \? LabHQState\.totalCostLabel\(\[\.\.\.S\.requests\.values\(\)\], S\.cost\) : `사용 비용 · \$\{loadingText\('비용'\)\}`/);
+  assert.match(html,/snapshotLoaded \? '오늘의 할 일을 기다리는 중' : loadingText\('사무실 상태'\)/);
+  assert.match(html,/snapshotLoaded \? 'none' : `loading:\$\{S\.conn\}`/);
+  assert.match(html,/snapshotLoaded \? '지금은 결정할 일이 없어요\. 승인이 필요하면 여기에 바로 떠요\.' : loadingText\('결정할 일'\)/);
+});
