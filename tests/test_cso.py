@@ -545,6 +545,40 @@ async def test_general_plan_rejects_unavailable_staff_and_replans():
 
 
 @pytest.mark.asyncio
+async def test_a_probation_contract_is_left_out_of_the_cso_roster_until_activated():
+    """#424 review: a hire whose offer_status was a draft stays on probation; the CSO must not plan with it."""
+    calls, state = [], {"activated": False}
+
+    async def dispatch(task):
+        calls.append(task)
+        if task.meta["kind"] == "plan":
+            first = len([t for t in calls if t.meta["kind"] == "plan"]) == 1
+            agent = "c_trial" if first or state["activated"] else "worker"
+            return result(task, structured={"steps": [{
+                "id": "A", "agent_id": agent, "instruction": "analyze", "outputs": [], "depends_on": []}]})
+        assert state["activated"] or task.agent_id != "c_trial", "a probation hire got work"
+        return result(task, text="done")
+
+    hub = FakeHub(dispatch)
+    hub.s.orchestrator.reviewer_agent = None
+    hub.agents["c_trial"] = {"id": "c_trial", "name": "Trial", "role": "[파견] x", "engine": "mock",
+                             "employment": "contract", "contract_status": "probation"}
+    await Orchestrator(hub).run_request("r")
+    plans = [task for task in calls if task.meta["kind"] == "plan"]
+    assert "c_trial" not in plans[0].prompt
+    assert len(plans) == 2 and "unavailable or orchestration agents: ['c_trial']" in plans[1].prompt
+    assert hub.requests["r"]["status"] == "done", hub.requests["r"].get("report")
+
+    calls.clear()
+    state["activated"] = True
+    hub.agents["c_trial"]["contract_status"] = "active"  # after `labhq contract activate`
+    hub.requests["r"] = {"text": "question", "mode": "team", "budget_usd": 10}
+    await Orchestrator(hub).run_request("r")
+    assert "c_trial" in [t for t in calls if t.meta["kind"] == "plan"][0].prompt
+    assert any(t.meta["kind"] == "step" and t.agent_id == "c_trial" for t in calls)
+
+
+@pytest.mark.asyncio
 async def test_blocking_decision_denial_cancels_dispatch():
     async def dispatch(task):
         if task.meta["kind"] == "plan":

@@ -359,7 +359,7 @@ async def test_the_contract_skill_labhq_installs_is_not_a_foreign_instruction_fi
     skill = tmp_path / "paper-skill"
     skill.mkdir()
     (skill / "SKILL.md").write_text("---\nname: paper-skill\n---\n", encoding="utf-8")
-    staff = _staff(contract=ContractInfo(hired_at=0, expires_at=0, skill_dir=str(skill)))
+    staff = _staff(contract=ContractInfo(hired_at=0, expires_at=0, skill_dir=str(skill), status="active"))
     workdir = _workdir(tmp_path)
     runner = _runner(_settings(tmp_path), monkeypatch, staff)
     result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q",
@@ -382,7 +382,7 @@ async def test_a_read_only_run_restores_a_contract_skill_changed_by_an_earlier_s
     skill.mkdir()
     original = "---\nname: paper-skill\n---\n"
     (skill / "SKILL.md").write_text(original, encoding="utf-8")
-    staff = _staff(contract=ContractInfo(hired_at=0, expires_at=0, skill_dir=str(skill)))
+    staff = _staff(contract=ContractInfo(hired_at=0, expires_at=0, skill_dir=str(skill), status="active"))
     workdir = _workdir(tmp_path)
     runner = _runner(_settings(tmp_path), monkeypatch, staff)
 
@@ -409,7 +409,7 @@ async def test_a_read_only_run_replaces_a_link_at_the_contract_skill_destination
     skill.mkdir()
     original = "---\nname: paper-skill\n---\n"
     (skill / "SKILL.md").write_text(original, encoding="utf-8")
-    staff = _staff(contract=ContractInfo(hired_at=0, expires_at=0, skill_dir=str(skill)))
+    staff = _staff(contract=ContractInfo(hired_at=0, expires_at=0, skill_dir=str(skill), status="active"))
     workdir = _workdir(tmp_path)
     runner = _runner(_settings(tmp_path), monkeypatch, staff)
     first = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="write",
@@ -461,7 +461,7 @@ async def test_a_missing_contract_skill_source_removes_stale_copies_and_refuses_
     skill = tmp_path / "paper-skill"
     skill.mkdir()
     (skill / "SKILL.md").write_text("---\nname: paper-skill\n---\n", encoding="utf-8")
-    staff = _staff(contract=ContractInfo(hired_at=0, expires_at=0, skill_dir=str(skill)))
+    staff = _staff(contract=ContractInfo(hired_at=0, expires_at=0, skill_dir=str(skill), status="active"))
     workdir = _workdir(tmp_path)
     runner = _runner(_settings(tmp_path), monkeypatch, staff)
     first = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="write",

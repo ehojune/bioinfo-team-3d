@@ -45,7 +45,7 @@ class Broker:
         self.pending_asks: dict[str, asyncio.Future] = {}
         self.hibernate_asks: dict[str, str] = {}
         self.task_ask_results: dict[str, list[dict]] = {}
-        self.identities: dict[str, dict[str, str | None]] = {}
+        self.identities: dict[str, dict[str, str | bool | None]] = {}
         self._on_approval, self._on_event, self._on_submit = on_approval, on_event, on_submit
         self._on_ask = on_ask
         self._owns_job = owns_job  # without it no job counts as owned, so hpc_cancel refuses all
@@ -58,16 +58,17 @@ class Broker:
         return f"http://127.0.0.1:{self.port}"
 
     def issue_task_token(self, task_id: str, agent_id: str, request_id: str | None, *,
-                         workdir: str | None = None) -> str:
+                         workdir: str | None = None, restricted: bool = False) -> str:
         token = secrets.token_urlsafe(24)
+        # Always present, so a caller's body can never clear it: identity values override the body (#424).
         self.identities[token] = {"task_id": task_id, "agent_id": agent_id, "request_id": request_id,
-                                  "source_workdir": workdir}
+                                  "source_workdir": workdir, "source_restricted": restricted}
         return token
 
     def revoke_task_token(self, token: str) -> None:
         self.identities.pop(token, None)
 
-    def _identity(self, token: str, body: dict) -> dict[str, str | None]:
+    def _identity(self, token: str, body: dict) -> dict[str, str | bool | None]:
         identity = next((value for key, value in self.identities.items() if token_matches(token, key)), None)
         if identity is None:
             raise HTTPException(401, "bad broker token")

@@ -8,6 +8,7 @@ Tokens in the request text steer it: [needs-approval], [hpc], [revise], [recruit
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import re
 
 import httpx
@@ -100,7 +101,9 @@ class MockAdapter(AgentAdapter):
             structured = {"agent_name": f"{slug} 파견연구원", "role_summary": f"{slug} 방법론 자문 (mock)",
                           "kind": "consultant", "mcp_zip": None, "mcp_dir": None, "mcp_command": None,
                           "mcp_args": [], "mcp_env_required": [], "skill_dir": str(skill), "tools": [],
-                          "verification_status": "reviewed", "limitations": ["mock conversion"]}
+                          "verification_status": "reviewed", "limitations": ["mock conversion"],
+                          "source_commit": hashlib.sha1(slug.encode()).hexdigest(), "code_license": "BSD-3-Clause",
+                          "weights_license": None, "external_services": []}
 
         # steer only by this agent's own instruction, not by the overall request quoted in the prompt
         # Real engines retain the instruction in their session; mock uses the step metadata.

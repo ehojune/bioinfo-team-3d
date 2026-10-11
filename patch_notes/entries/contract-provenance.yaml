@@ -1,0 +1,14 @@
+pr: 522
+rows:
+  - sha: "abcf5b6"
+    at: "2026-10-12 04:36"
+    text: "리뷰 3차 반영: 납품물 hash를 못 재면 수습에 남기고 재고용 때도 hash 없는 부분을 표시한다. mcp_dir 밖에서 실제 실행되는 서버 폴더도 재며, 캐시 checkout의 origin을 확인할 수 없으면 새로 clone한다(#424)."
+  - sha: "51d34ae"
+    at: "2026-10-12 04:14"
+    text: "리뷰 2차 반영: 수습 파견직은 PI가 activate하기 전에는 CSO 배정·직접 요청·상담·러너 실행에서 빠지고 명단에는 수습으로 보인다. 외부 전송 host는 hostname[:port]만 받아 URL 속 인증값이 계약서·명단에 남지 않는다(#424)."
+  - sha: "7bd1232"
+    at: "2026-10-12 03:42"
+    text: "리뷰 반영: restricted 작업에서 외부 전송 파견직에게 묻는 상담을 refs 복사 전에 거부하고, skill_source가 바뀌면 캐시를 새로 clone하며, ZIP으로만 온 MCP도 재고용 때 hash를 다시 잰다(#424)."
+  - sha: "2ad1dc3"
+    at: "2026-10-12 03:21"
+    text: "파견직 계약서에 원본 commit·license·외부 전송 대상과 labhq가 잰 skill·MCP hash를 남기고, 외부 전송 파견직은 restricted 입력 단계에서 계획 검증과 러너가 거부한다. 수습은 offer_status를 보고, 재고용 때 hash가 다르면 경고한다(#424)."

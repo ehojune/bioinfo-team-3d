@@ -8,15 +8,31 @@ function statusOf(state, agent = {}) {
     state === 'done' ? '완료' : state === 'error' ? '오류' : state === 'queued' ? '순서 대기' : '대기';
 }
 
+// #424: what a contract hire was built from and where its tools send data; '' for core staff or an older roster.
+export function provenanceText(agent = {}) {
+  const p = agent.contract_provenance;
+  // On probation the hire is on the roster but gets no work until the PI runs `labhq contract activate`.
+  const hold = agent.contract_status === 'probation' ? ['수습(PI 승인 대기)'] : [];
+  if (!p) return hold.join('');
+  const hosts = (p.external_services || []).map(s => s && s.host).filter(Boolean);
+  const parts = [p.source_commit ? `commit ${String(p.source_commit).slice(0, 7)}` : 'commit 미상',
+    p.code_license ? `code ${p.code_license}` : 'license 미상'];
+  if (p.weights_license) parts.push(`weights ${p.weights_license}`);
+  parts.push(hosts.length ? `외부 전송 ${hosts.join(', ')}` : '외부 전송 없음');
+  if ((p.rehire_changed || []).length) parts.push(`재고용 때 바뀜: ${p.rehire_changed.join(', ')}`);
+  return [...hold, ...parts].join(' · ');
+}
+
 function makeCard(agent) {
   const card = doc().createElement('button'); card.type = 'button'; card.className = 'staff-card'; card.dataset.agent = agent.id;
   const top = add(card, 'span', '', 'staff-card-top');
   const name = add(top, 'strong'); const status = add(top, 'em');
   const role = add(card, 'span', '', 'staff-role');
   const tool = add(card, 'span', '', 'staff-tool');
+  const provenance = add(card, 'span', '', 'staff-provenance');
   const gaugeLabel = add(card, 'span', '', 'staff-gauge-label');
   const gauge = add(card, 'progress', '', 'staff-gauge');
-  card._staffParts = { name, status, role, tool, gaugeLabel, gauge };
+  card._staffParts = { name, status, role, tool, provenance, gaugeLabel, gauge };
   return card;
 }
 
@@ -25,6 +41,8 @@ function update(card, agent, options) {
   p.name.textContent = agent.name || agent.id; p.status.textContent = statusOf(state, agent);
   p.role.textContent = agent.role || '역할 미지정';
   p.tool.textContent = `도구 · ${agent.tool ? (options.toolLabel ? options.toolLabel(agent.tool) : agent.tool) : '없음'}`;
+  p.provenance.textContent = provenanceText(agent); p.provenance.hidden = !p.provenance.textContent;
+  p.provenance.title = p.provenance.textContent;
   const turns = Number(agent.usage?.num_turns ?? agent.toolCalls ?? 0), maxTurns = Number(agent.max_turns || 0);
   const now = options.now ? options.now() : Date.now() / 1000;
   const elapsed = state === 'working' ? Math.max(0, now - Number(agent.stateAt || now)) : 0;
