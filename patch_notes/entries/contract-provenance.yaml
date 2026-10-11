@@ -1,5 +1,8 @@
 pr: 522
 rows:
+  - sha: "51d34ae"
+    at: "2026-10-12 04:14"
+    text: "리뷰 2차 반영: 수습 파견직은 PI가 activate하기 전에는 CSO 배정·직접 요청·상담·러너 실행에서 빠지고 명단에는 수습으로 보인다. 외부 전송 host는 hostname[:port]만 받아 URL 속 인증값이 계약서·명단에 남지 않는다(#424)."
   - sha: "7bd1232"
     at: "2026-10-12 03:42"
     text: "리뷰 반영: restricted 작업에서 외부 전송 파견직에게 묻는 상담을 refs 복사 전에 거부하고, skill_source가 바뀌면 캐시를 새로 clone하며, ZIP으로만 온 MCP도 재고용 때 hash를 다시 잰다(#424)."

@@ -12,15 +12,17 @@
 - 재고용: hash를 다시 재서 다르면 `verification.rehire_changed`, `contract.warning` 이벤트(피드 경고), 직원 카드 표시. 재고용 자체는 막지 않습니다.
 - restricted 판정: 요청 본문·참고 경로·프로젝트 폴더, 단계 지시, 선행 단계 지시를 `policy.touches`·`overlaps_restricted`로 봅니다. CSO 계획(일반·연구·재계획)은 `PlanAgentError`로 교정을 받고, 단계 task에는 `restricted_inputs` 판정이 실립니다. 러너는 `external_service_refusal`로 엔진 실행 전에 거부합니다. 오류에는 구역 경로를 넣지 않습니다.
 - 상담(리뷰 P1): 러너가 묻는 작업의 restricted 판정을 ask token(`source_restricted`, 호출자가 못 지움)에 싣습니다. 게이트웨이는 그 판정이나 요청 자체가 restricted면 외부 전송 파견직 상담을 거부하고, 다른 상담 task에는 `restricted_inputs`를 실어 러너가 다시 확인합니다.
+- 수습(리뷰 2차 P1): main에서도 `probation` 파견직은 명단에 남아 CSO가 배정할 수 있었습니다. 문서는 미통과를 "probation 유지 · PI 확인"으로만 적었고, 수습 중 시험 업무를 일부러 허용하는 코드·테스트는 없었습니다. 그래서 의도된 동작이 아닌 누락으로 보고, `active`가 아닌 파견직을 CSO 명단·직접 요청(409)·상담에서 빼고 러너도 거부하게 했습니다. 웹 명단에는 `수습(PI 승인 대기)`로 보입니다. 호스팅 AlphaGenome 예시 계약서(`status: probation`)에는 activate 안내와 `external_services`를 적었고, 러너로 파견직을 돌리던 기존 test 5곳은 계약 상태를 `active`로 명시했습니다(검증 내용은 그대로).
+- host(리뷰 2차 P1): `external_services[].host`는 `hostname[:port]`만 받습니다. 오퍼레터가 URL을 주면 hostname만 남기고 인증·경로·query·fragment는 버리며, 노트에도 원문을 옮기지 않습니다.
 - `setup-paper2agent --commit <40-hex>`·`recruit.skill_commit`: 그 commit을 fetch·checkout하고 다르면 기존 설치를 건드리지 않고 멈춥니다. `recruit.skill_source`가 캐시 checkout의 origin과 다르면 pull하지 않고 옆에 새로 clone해 바꿔 끼웁니다(리뷰 P2). 설치한 commit은 `.labhq-source.json`에 남고 채용 때 `verification.paper2agent_commit`이 됩니다.
 - 웹: 직원 카드에 commit 7자리·license·외부 전송, 채용 피드 한 줄, 채용 제안 카드에 "채용하면 무엇을 남기는지" 안내. CSO 명단에 외부 전송 호스트 표시. `labhq talent` 출력에 commit·외부 전송.
 - `docs/manual.md` 파견직 제도 절, 이벤트 표.
 
 ## 실행한 것
 
-- 새 test(`tests/test_contract_provenance.py` 41개 + 리뷰 반영 13개, `tests/web_contract_provenance.cjs` 3개)는 main에서 실패(Python은 수집 단계 ImportError, node는 3개 모두 실패), 변경 뒤 통과. 리뷰 반영 13개는 직전 head(`cf538de`)에서 11개 실패(나머지 2개는 기존 동작 확인용), 수정 뒤 통과.
+- 새 test(`tests/test_contract_provenance.py` 41개 + 리뷰 반영 13개, `tests/web_contract_provenance.cjs` 3개)는 main에서 실패(Python은 수집 단계 ImportError, node는 3개 모두 실패), 변경 뒤 통과. 리뷰 반영 13개는 직전 head(`cf538de`)에서 11개 실패(나머지 2개는 기존 동작 확인용), 수정 뒤 통과. 2차 반영 20개(test_cso 1개 포함)는 직전 head(`33288c7`)에서 15개 실패(나머지 5개는 정상 host·기존 계약서 확인용), 수정 뒤 통과.
 - 관련 test(e2e mock·registry·paper2agent 설치·strict schema·cso·plugin hash·workspace boundary): 371 passed, 21 skipped.
-- Windows 전체 pytest: 첫 실행 4 failed(plugin hash test가 `_plugin_files`를 인자 하나로 바꿔 끼움, encoding lint, 새 .cjs 미등록). `_folder_files` 분리·`open(path, "rb")`·CI node 목록 등록 뒤 5054 passed, 63 skipped. 리뷰 반영 뒤 5067 passed, 63 skipped. basetemp는 종료 뒤 삭제.
+- Windows 전체 pytest: 첫 실행 4 failed(plugin hash test가 `_plugin_files`를 인자 하나로 바꿔 끼움, encoding lint, 새 .cjs 미등록). `_folder_files` 분리·`open(path, "rb")`·CI node 목록 등록 뒤 5054 passed, 63 skipped. 리뷰 반영 뒤 5067 passed, 63 skipped. 2차 반영 첫 실행은 러너로 수습 파견직을 돌리던 기존 test 8건 실패, 계약 상태를 active로 명시한 뒤 5087 passed, 63 skipped. basetemp는 종료 뒤 삭제.
 - web node test 32개 파일 모두 통과.
 - `bash scripts/check_public.sh`, `python scripts/patch_notes.py check` 통과.
 
