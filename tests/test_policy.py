@@ -1,12 +1,14 @@
 import time
+from pathlib import Path
 
 import pytest
+import yaml
 
 from labhq.policy import (
     claude_rule_path, claude_settings, core_hours, evaluate_tool, hpc_needs_approval,
     mentions_zone, touches, touches_resolved,
 )
-from labhq.settings import DataZone, PolicySettings
+from labhq.settings import DataZone, PolicySettings, Settings
 
 
 def _policy(**kw):
@@ -392,3 +394,25 @@ def test_a_tool_without_a_rule_asks_instead_of_being_allowed():
         assert evaluate_tool(tool, {}, p).action == "allow", tool
     p.approvals.auto_allow_tools.append("Monitor")
     assert evaluate_tool("Monitor", {"command": "true"}, p).action == "allow"
+
+
+@pytest.mark.parametrize("tool", ["Workflow", "TeamCreate", "TeamDelete", "Task", "Agent"])
+def test_native_delegation_tools_are_denied_even_if_configured_for_auto_allow(tool):
+    """#421: native delegation bypasses labhq's approval, event and cost accounting."""
+    p = PolicySettings()
+    p.approvals.auto_allow_tools.append(tool)
+    decision = evaluate_tool(tool, {}, p)
+    assert decision.action == "deny"
+    assert "labhq" in decision.reason
+
+
+def test_example_configs_publish_the_same_non_delegating_auto_allow_list():
+    root = Path(__file__).resolve().parents[1]
+    public = root / "config" / "labhq.example.yaml"
+    packaged = root / "labhq" / "config" / "labhq.example.yaml"
+    assert public.read_bytes() == packaged.read_bytes()
+    data = yaml.safe_load(public.read_text(encoding="utf-8"))
+    configured = data["policy"]["approvals"]["auto_allow_tools"]
+    assert configured == PolicySettings().approvals.auto_allow_tools
+    assert not {"Task", "Agent", "Workflow", "TeamCreate", "TeamDelete"} & set(configured)
+    assert Settings.model_validate(data).policy.approvals.auto_allow_tools == configured
