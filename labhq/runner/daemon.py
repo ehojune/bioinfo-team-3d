@@ -173,6 +173,21 @@ def output_identity(row: dict[str, Any]) -> tuple:
     return (bool(row.get("link")), row.get("size"), row.get("mtime_ns"), row.get("ino"), row.get("ctime_ns"))
 
 
+ENVIRONMENT_LOCK = "outputs/env/requirements.lock.txt"
+
+
+def environment_record(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize the runner-observed environment lock without opening it a second time."""
+    row = next((item for item in rows if item.get("path") == ENVIRONMENT_LOCK), None)
+    if row is None:
+        return {"status": "unavailable", "reason": f"{ENVIRONMENT_LOCK} 없음"}
+    sha256 = row.get("sha256")
+    if isinstance(sha256, str) and re.fullmatch(r"[0-9a-f]{64}", sha256):
+        return {"status": "complete", "sha256": sha256, "size": row.get("size")}
+    return {"status": "partial", "reason": str(row.get("reason") or "sha256를 기록하지 못함"),
+            **({"size": row.get("size")} if row.get("size") is not None else {})}
+
+
 class Runner:
     def __init__(self, settings: Settings):
         self.s = settings
@@ -1132,6 +1147,10 @@ class Runner:
                 """Hash the post-run view off the event loop, before labhq writes RESULT files."""
                 nonlocal output_records, observed_outputs
                 if output_before is None:
+                    records, _note = await asyncio.to_thread(
+                        ws.scan_output_records, zones, self.s.runner.reference_scan_max_entries,
+                        self.s.runner.reference_scan_max_depth, self.s.runner.output_hash_max_bytes)
+                    ws.update_run(task.id, environment_record=environment_record(records))
                     return
                 output_records, note = await asyncio.to_thread(
                     ws.scan_output_records, zones, self.s.runner.reference_scan_max_entries,
@@ -1149,6 +1168,7 @@ class Runner:
                 ]
                 incomplete = "; ".join(dict.fromkeys(output_scan_notes)) or None
                 ws.update_run(task.id, observed_outputs=observed_outputs,
+                              environment_record=environment_record(output_records),
                               **({"observed_outputs_incomplete": incomplete} if incomplete else {}))
 
             engine_settings = claude_deny_private(claude_deny_links(claude_read_only(
@@ -1432,6 +1452,7 @@ class Runner:
         async def record(result: dict) -> None:
             await self._track_job({"task_id": tid, "agent_id": aid, "job_id": result["job_id"],
                                    "name": result["name"], "script": result["script"],
+                                   "script_sha256": result["script_sha256"],
                                    "core_hours": result["core_hours"]})
 
         return await submit_job(self.s, self.scheduler, ws.dir, body, approve, gate, record)
@@ -1444,7 +1465,8 @@ class Runner:
                            "name": body.get("name", ""), "state": "queued", "missing": 0, "terminal": False,
                            "exit_status": None, "submitted_at": time.time(),
                            "scheduler": self.s.hpc.scheduler, "request_id": self.task_req.get(tid or ""),
-                           "workdir": str(ws.dir) if ws else None, "submitted_by_runner": True}
+                           "workdir": str(ws.dir) if ws else None,
+                           "script_sha256": body.get("script_sha256"), "submitted_by_runner": True}
         self.store.put("job", jid, self.jobs[jid])
         if ws:
             ws.append_job({**body, "submitted_at": time.time()})

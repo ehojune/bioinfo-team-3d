@@ -769,6 +769,7 @@ class Hub:
                    "usage": req.get("usage", {}),
                    "usage_known": req.get("usage_known", True), "bundle_path": req.get("bundle_path"),
                    "bundle_status": req.get("bundle_status"), "bundle_grade": req.get("bundle_grade"),
+                   "bundle_grade_reasons": req.get("bundle_grade_reasons") or [],
                    "bundle_warning": req.get("bundle_warning")}
         if environment:
             summary["step_environment"] = environment
@@ -806,6 +807,7 @@ class Hub:
             self.requests[rid]["bundle_path"] = data["bundle_path"] = bundled["path"]
             self.requests[rid]["bundle_status"] = data["bundle_status"] = bundled["status"]
             self.requests[rid]["bundle_grade"] = data["bundle_grade"] = bundled.get("grade")
+            self.requests[rid]["bundle_grade_reasons"] = data["bundle_grade_reasons"] = bundled.get("grade_reasons") or []
             if bundled.get("crate_warning"):
                 warning = str(bundled["crate_warning"])
                 self.requests[rid]["bundle_warning"] = data["bundle_warning"] = warning
@@ -825,9 +827,11 @@ class Hub:
         self.requests[rid].pop("bundle_path", None)
         self.requests[rid].pop("bundle_status", None)
         self.requests[rid].pop("bundle_grade", None)
+        self.requests[rid].pop("bundle_grade_reasons", None)
         data.pop("bundle_path", None)
         data.pop("bundle_status", None)
         data.pop("bundle_grade", None)
+        data.pop("bundle_grade_reasons", None)
         self.requests[rid]["bundle_warning"] = data["bundle_warning"] = warning
         log.warning("request bundle unavailable for %s: %s", rid, warning)
 
@@ -837,7 +841,8 @@ class Hub:
         event = self.store.commit_request_event(
             rid, self.requests[rid],
             {"type": "request.bundle", "ts": time.time(), "request_id": rid,
-             "data": {key: data[key] for key in ("bundle_path", "bundle_status", "bundle_grade", "bundle_warning")
+             "data": {key: data[key] for key in ("bundle_path", "bundle_status", "bundle_grade",
+                                                   "bundle_grade_reasons", "bundle_warning")
                       if key in data}},
             self.s.gateway.event_buffer,
         )
@@ -2554,7 +2559,8 @@ class Hub:
                                                                   "project_id", "plan", "cost_usd", "cost_known",
                                                                   "cost_summary", "usage", "usage_known", "agent_id",
                                                                   "references", "pi_notes", "route", "route_decision",
-                                                                  "bundle_path", "bundle_status", "bundle_grade", "bundle_warning")},
+                                                                  "bundle_path", "bundle_status", "bundle_grade",
+                                                                  "bundle_grade_reasons", "bundle_warning")},
                           # the full list and full answers stay on the request (GET /api/requests/{id})
                           "followups": [snapshot_followup(f) for f in (r.get("followups") or [])[-20:]],
                           "step_status": self.request_summary(r, running)["step_progress"]["steps"],

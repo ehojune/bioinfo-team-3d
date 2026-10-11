@@ -16,7 +16,8 @@ def _render() -> str:
 def test_generic_step_prompt_bytes_stay_at_the_main_baseline():
     # #373 benches A/B: keep artifacts and upstream paths in one block; #423: as inputs/<step id>/ paths, plus an outputs/env/ record.
     assert hashlib.sha256(STEP_PROMPT.encode()).hexdigest() == (
-        "2936883841a6f85736f963b0624e7ec042105f13a482dd3a6604668c0d1ba1a2")
+        "3f42246163bd0c1fa1497fd32e1706da7fbca6e5dfda60b4730c5e710b11f49a")
+    assert "If an HPC job runs the analysis" in STEP_PROMPT
 
 
 def test_generic_step_prompt_requires_the_lightweight_evidence_contract():
@@ -39,7 +40,8 @@ def test_step_prompts_keep_reproducibility_artifacts_out_of_tmp():
 def test_research_step_prompt_bytes_stay_at_the_previous_baseline():
     # #373 benches A/B apply both reproducibility rules to the frozen research lane; #423 inputs/ paths and an outputs/env/ record.
     assert hashlib.sha256(cso.RESEARCH_STEP_PROMPT.encode()).hexdigest() == (
-        "01030bc5547523dced6bdd6e2663935b10371d6022c61bea5ad660daaf2d4dab")
+        "e88d8a951eeb9db9a9d6fa4570ad53654dd3e09fe9e0547bd4f48d053f675a49")
+    assert "If an HPC job runs the analysis" in cso.RESEARCH_STEP_PROMPT
 
 
 def test_step_prompt_forbids_a_silent_fallback_and_asks_why_when_giving_up():
