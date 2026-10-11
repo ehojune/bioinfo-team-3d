@@ -145,6 +145,54 @@ def test_a_runner_record_types_an_orchestrate_output_so_a_later_request_sees_a_c
     assert "raw_counts" not in json.dumps(second) and "counts" not in json.dumps(second)
 
 
+@pytest.mark.parametrize("declared", [True, False], ids=["declared", "type_unknown"])
+def test_two_direct_requests_find_reuse_only_when_the_first_output_has_a_type(tmp_path, declared):
+    first_wd, _ = workspace(tmp_path, "task_direct_a", "analyst", {
+        "outputs/counts.tsv": b"gene\tn\nX\t1\n",
+    })
+    second_wd, _ = workspace(tmp_path, "task_direct_b", "analyst", {
+        "outputs/reused.tsv": b"gene\tn\nX\t1\n",
+    })
+    requests = {
+        "req_direct_a": request_row(
+            "req_direct_a", [], created_at=1.0,
+            text="Read source.tsv and save outputs/counts.tsv."),
+        "req_direct_b": request_row(
+            "req_direct_b", [], created_at=2.0,
+            text="Read counts.tsv and save outputs/reused.tsv."),
+    }
+    for request in requests.values():
+        request.update(mode="direct", plan={"steps": []})
+    requests["req_direct_a"]["references"] = [{"kind": "doi", "value": "10.0000/direct-source"}]
+    tasks = {
+        "task_direct_a": (
+            typed_row("req_direct_a", "task_direct_a", None, "analyst", first_wd,
+                      ["outputs/counts.tsv"], {"outputs/counts.tsv": {"data_type": "raw_counts", "format": "tsv"}})
+            if declared else
+            task_row("req_direct_a", "task_direct_a", None, "analyst", first_wd,
+                     ["outputs/counts.tsv"], kind="direct")
+        ),
+        "task_direct_b": typed_row(
+            "req_direct_b", "task_direct_b", None, "analyst", second_wd, ["outputs/reused.tsv"],
+            {"outputs/reused.tsv": {"data_type": "raw_counts", "format": "tsv"}}),
+    }
+    for task in tasks.values():
+        task["kind"] = task["payload"]["meta"]["kind"] = "direct"
+    _accepted_reference(tasks["task_direct_b"], Path(first_wd) / "outputs")
+    hub = fake_hub(tmp_path, requests, tasks)
+    observed = {}
+    line_for(hub, "req_direct_a", observed)
+    provenance = line_for(hub, "req_direct_b", observed)["provenance"]
+
+    if declared:
+        assert provenance["candidates"] == 1
+        assert provenance["excluded"]["type_unknown"] == 0
+        assert provenance["excluded"]["target_type_unknown"] == 0
+    else:
+        assert provenance["candidates"] == 0
+        assert provenance["excluded"]["type_unknown"] == 1
+
+
 def test_a_declaration_made_under_another_vocabulary_is_never_reinterpreted(tmp_path):
     hub, _ = _typed_pair(tmp_path, version="0" * 64)
     observed: dict = {}

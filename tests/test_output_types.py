@@ -289,6 +289,15 @@ def test_task_result_drops_a_malformed_value_and_keeps_the_result():
         parsed = TaskResult.model_validate({"task_id": "t", "agent_id": "a", "ok": True, "output_types": bad})
         assert parsed.ok and parsed.output_types == {}
     assert "output_types" not in TaskResult(task_id="t", agent_id="a", ok=True).model_dump(mode="json")
+    parsed = TaskResult.model_validate({
+        "task_id": "t", "agent_id": "a", "ok": True,
+        "output_types_stats": {"outputs": "many", "data_declared": True, "format_declared": 2,
+                               "issues": {"unknown_key": 3, "secret": 9}, "vocab": "bad"},
+    })
+    assert parsed.output_types_stats == {
+        "outputs": 0, "data_declared": 0, "format_declared": 2, "issues": {"unknown_key": 3},
+    }
+    assert "output_types_stats" not in TaskResult(task_id="t", agent_id="a", ok=True).model_dump(mode="json")
 
 
 # ---------------------------------------------------------------- one reader for both models

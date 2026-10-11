@@ -3137,6 +3137,11 @@ class Orchestrator:
                                              "output_sha256": {**{path: digest for path, digest in
                                                                   res.output_sha256.items() if path not in rewritten},
                                                                **partial.output_sha256},
+                                             "output_types": {**{path: record for path, record in
+                                                                 res.output_types.items() if path not in rewritten},
+                                                              **partial.output_types},
+                                             "output_types_stats": (partial.output_types_stats or
+                                                                    res.output_types_stats),
                                              "tool_errors": [*res.tool_errors, *partial.tool_errors],
                                              "error": f"{res.error or 'error_max_turns'}; wrap-up: {note}"})
             except BudgetExceeded:
@@ -4478,10 +4483,18 @@ class Orchestrator:
                     self._finish(rid, "연구로 지정한 요청은 직원 한 명에게 직접 보낼 수 없습니다. 팀(CSO)에게 보내면 "
                                  "계획을 세워 CP1 승인을 받습니다.", {}, ok=False)
                     return
-                res = await self.run_step(Task(agent_id=req["agent_id"], request_id=rid, prompt=text,
-                                               budget_usd=req.get("budget_usd"),
-                                               meta={**refs, "kind": "direct", "title": text[:100],
-                                                     "project_dirs": req.get("project_dirs", [])}))
+                vocab = self._output_vocab()
+                res = await self.run_step(Task(
+                    agent_id=req["agent_id"], request_id=rid,
+                    prompt=text + (output_types.direct_prompt_rule(vocab) if vocab else ""),
+                    output_schema=output_types.direct_result_schema() if vocab else None,
+                    budget_usd=req.get("budget_usd"),
+                    meta={**refs, "kind": "direct", "title": text[:100],
+                          "project_dirs": req.get("project_dirs", []),
+                          **({"output_types_vocab": vocab.sha256} if vocab else {})}))
+                if res.output_types_stats:
+                    req["output_types_stats"] = res.output_types_stats
+                    self.hub.save_request(rid)
                 self._finish(rid, res.text, {"direct": res.model_dump(mode="json")},
                              ok=res.ok and rid not in self.budget_denials)
                 return
