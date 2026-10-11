@@ -31,6 +31,7 @@ from ..costs import outcome_unknown_item, request_cost_summary, task_cost_item
 from ..models import ApprovalRequest, AskRequest, RunnerUnavailable, Task, TaskResult, new_id, waiting
 from ..adapters import enforces_read_only, get_adapter, read_only_refusal
 from ..orchestrator.cso import Orchestrator, _terminal_reports, environment_problem, holds_session, solo_phase
+from ..research import continuation as research_continuation
 from ..research.packs import check_configured_packs
 from ..request_status import is_active_request, is_terminal_request
 from ..settings import Settings
@@ -1015,7 +1016,11 @@ class Hub:
         created = req.get("created_at")
         when = time.strftime("%m-%d %H:%M", time.localtime(float(created))) if created else "접수 시각 모름"
         # A plan whose steps all finished stopped after them (CP2, review, a continue card, the report), not before.
+        carried = (req.get("research_contract") or {}).get("continuation") or {}
+        awaiting_continuation_plan = bool(carried and not carried.get("plan_sha256"))
         left = (", ".join(steps) if steps else
+                f"이어 가기 {int(carried.get('round') or 2)}차: 새 계획·CP1부터 이어 갑니다"
+                if awaiting_continuation_plan else
                 "없음(단계는 모두 끝났고 그 뒤 검토·결정·보고서부터 이어 갑니다)" if req.get("plan", {}).get("steps")
                 else "요청 전체")
         approval = ApprovalRequest(kind="resume", request_id=rid,
@@ -1078,6 +1083,7 @@ class Hub:
                             "data": {"id": aid, **answer}})
         req = self.requests.get(rid or "")
         if req is not None and req.get("status") == "interrupted":
+            self._restore_unstarted_continuation(req)
             req.update(status="failed", outcome="resume_timed_out", error=note, finished_at=time.time())
             self.schedule_terminal(rid, "request.failed", {"error": note})
         return True
@@ -2232,6 +2238,7 @@ class Hub:
                             "data": {"id": approval_id, "approved": approved, "note": note, **chosen}})
         if a.get("kind") == "resume" and not approved:
             rid = a["request_id"]
+            self._restore_unstarted_continuation(self.requests[rid])
             self.requests[rid].update(status="failed", error="resume declined", finished_at=time.time())
             self.schedule_terminal(rid, "request.failed", {"error": "resume declined"})
 
@@ -2278,6 +2285,7 @@ class Hub:
                     "cancelled_tasks": list(req.get("cancelled_tasks") or [])}
         if is_terminal_request(status):
             raise ValueError(f"이미 끝난 요청입니다({status})")
+        self._restore_unstarted_continuation(req)
         now = time.time()
         req.update(status="cancelled", outcome="cancelled", error="PI가 요청을 취소했습니다", cancelled_at=now,
                    finished_at=now)
@@ -2323,6 +2331,20 @@ class Hub:
                 "usage_known": req.get("usage_known", True)}
         self.schedule_terminal(rid, "request.completed", data)
         return {"request_id": rid, "status": "cancelled", "already": False, "cancelled_tasks": cancelled}
+
+    @staticmethod
+    def _restore_unstarted_continuation(req: dict) -> bool:
+        """Put the last approved round back before a gateway path writes a terminal continuation record."""
+        if not Orchestrator._continuation_unstarted(req):
+            return False
+        contract = req["research_contract"]
+        carried = contract["continuation"]
+        previous = contract["rounds"][-1]
+        draft = research_continuation.restore_round(req, previous)
+        if draft:
+            carried["declined_plan"] = draft
+        req["results"] = copy.deepcopy(previous.get("results") or {})
+        return True
 
     async def _await_cancelled_results(self, rid: str, cancelled: list[str]) -> None:
         """Give each cancelled turn a short time to report, so its cost is counted; a turn that does not report is

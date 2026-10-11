@@ -142,9 +142,10 @@ async def test_continue_and_cp2_notes_reach_the_continuation_plan_prompt(tmp_pat
 # ---------- R17: the plan's budget_usd is the enforced cap ----------
 
 @pytest.mark.asyncio
-async def test_a_plan_budget_caps_the_request_and_raises_the_budget_card():
+async def test_a_plan_budget_overrun_on_the_finished_report_is_recorded_without_a_card():
     hub = _with_plan(rep._hub(synthesis_usd=2.0), budget_usd=1)
-    await Orchestrator(hub).run_request("r")
+    orch = Orchestrator(hub)
+    await orch.run_request("r")
 
     req = hub.requests["r"]
     cp1 = hub.approvals[0]
@@ -154,8 +155,12 @@ async def test_a_plan_budget_caps_the_request_and_raises_the_budget_card():
     assert "$1.00" in cp1["summary"]
     assert req["budget_usd"] == 1.0
     assert req["research_contract"]["approval"]["budget"]["cap_usd"] == 1.0
-    budget = [item for item in hub.approvals if item["kind"] == "budget"]
-    assert len(budget) == 1 and budget[0]["detail"]["limit_usd"] == 1.0 and budget[0]["detail"]["spent_usd"] == 2.0
+    assert [item["kind"] for item in hub.approvals] == ["research_plan", "research_evidence"]
+    assert req["outcome"] == "research_reported" and req["status"] == "done"
+    assert orch.budget_denials == {}
+    assert orch.budget_outcomes["r"] == [{"spent_usd": 2.0, "limit_usd": 1.0,
+                                           "approved": None, "final_turn": True}]
+    assert "final turn; no further work" in req["report_appendix"]
 
 
 @pytest.mark.asyncio

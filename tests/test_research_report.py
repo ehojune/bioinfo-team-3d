@@ -132,21 +132,21 @@ async def test_contract_refusal_is_kept_in_the_final_report_metadata():
 
 
 @pytest.mark.asyncio
-async def test_budget_denied_after_a_finished_report_keeps_the_report():
-    # The cap is crossed by the report's own cost; the card after it is denied. The report already ran, so it
-    # stays and is checked, and the denial only fails the request (as in the generic synthesis).
+async def test_budget_crossed_by_the_finished_report_records_the_overrun_without_a_card():
+    # The report's own cost crosses the cap after the request has no work left. It is recorded without parking the
+    # completed report on a decision whose approve and deny choices cannot change any later dispatch.
     hub = _hub(synthesis_usd=2.0)
     hub.requests["r"]["budget_usd"] = 1.0
     await Orchestrator(hub).run_request("r")
 
     req = hub.requests["r"]
     assert _kinds(hub) == ["plan", "step", "review", "synthesis"]
-    assert [item["kind"] for item in hub.approvals][-1] == "budget"
+    assert [item["kind"] for item in hub.approvals] == ["research_plan", "research_evidence"]
     assert req["report"].startswith(REPORT) and "stopped: the budget was not approved" not in req["report"]
     assert req["research_contract"]["report_check"] == {"anchors": 1, "problems": []}
-    assert req["outcome"] == "research_reported" and req["status"] == "failed"
+    assert req["outcome"] == "research_reported" and req["status"] == "done"
     assert "failure" not in req["research_contract"]
-    assert "Budget: $2.00 > $1.00; denied." in req["report_appendix"]
+    assert "Budget: $2.00 > $1.00; final turn; no further work." in req["report_appendix"]
 
 
 # ---------- ②③④ the anchor check marks the report incomplete ----------
