@@ -273,3 +273,35 @@ async def test_carried_notes_do_not_use_the_new_requests_note_allowance(tmp_path
     req["status"] = "running"
     entry = await hub.add_note(new, "B의 첫 메모")
     assert entry["text"] == "B의 첫 메모" and len(req["pi_notes"]) == MAX_PI_NOTES + 1
+
+
+@pytest.mark.asyncio
+async def test_a_restart_after_the_revise_was_saved_opens_the_new_request_without_asking_again(tmp_path):
+    """#514 review: the CP1 receipt (choice revise) is saved before the new request opens; a stop in between used to
+    ask CP1 again on restart."""
+    hub = cont._hub(tmp_path, [REVISE])
+
+    def stopped(rid, note):
+        raise RuntimeError("process stopped")  # as if the gateway died while opening the new request
+
+    hub.create_revised_request = stopped
+    await Orchestrator(hub).run_request("r")
+    req = hub.requests["r"]
+    assert req["research_contract"]["approval"]["choice"] == "revise" and len(hub.approvals) == 1
+    req["status"] = "running"
+    req.pop("outcome", None)
+    _with_revise(hub)
+    await Orchestrator(hub).run_request("r")
+    assert len(hub.approvals) == 1 and hub.revised == [("r", NOTE)]  # no second CP1 card
+    assert req["outcome"] == "plan_revision_requested"
+
+
+@pytest.mark.asyncio
+async def test_a_revised_request_gets_every_step_of_a_long_previous_plan(tmp_path):
+    hub = cont._hub(tmp_path, [CP1, cont.APPROVE], reviews=[cont.ACCEPT])
+    steps = [{"id": f"s{i}", "instruction": "x" * 900} for i in range(1, 15)]  # past the reviewer digest's 8,000
+    hub.requests["r"]["revision_of"] = {"request_id": "req_old", "plan_sha256": "b" * 64, "note": NOTE,
+                                        "plan": {"brief": {"question": "old"}, "steps": steps}}
+    await Orchestrator(hub).run_request("r")
+    plan_prompt = next(task for task in hub.calls if task.meta["kind"] == "plan").prompt
+    assert '"id": "s14"' in plan_prompt and "chars clipped" not in plan_prompt.split("CP1 revision request", 1)[1]

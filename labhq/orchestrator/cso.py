@@ -4518,7 +4518,15 @@ class Orchestrator:
                 # on a re-approval after steps ran (a new request would drop their results).
                 can_revise = (not carried and not req.get("results") and approval.get("status") == "approval_required"
                               and callable(getattr(self.hub, "create_revised_request", None)))
-                if approval.get("status") != "approved":
+                # Restarted after the PI chose 수정 요청 on this very plan but before its new request opened: carry the
+                # saved decision out instead of asking CP1 again (#514 review).
+                decided = previous if isinstance(previous, dict) else {}
+                if (can_revise and decided.get("choice") == "revise" and decided.get("target_sha256") == plan_hash
+                        and str(decided.get("note") or "").strip()):
+                    approval = dict(decided)
+                    req["research_contract"]["approval"] = approval
+                    self.hub.save_request(rid)
+                elif approval.get("status") != "approved":
                     # The hash stays in detail.target_sha256; the card shows the plan itself (PI 점검 R10).
                     summary = ("CP1 연구 계획 승인: 고정할 질문·방법·완료/중단 조건·데이터 범위·적용 pack을 "
                                "확인하고 승인하세요." + (" 고칠 점이 있으면 메모와 함께 수정 요청을 고르세요."
@@ -4727,7 +4735,9 @@ class Orchestrator:
                         "Revise that plan: make the change the PI asked for and keep everything else unless the change "
                         "requires otherwise. The new plan goes to a new CP1.\n"
                         f"Previous plan (plan_sha256 {revision.get('plan_sha256')}):\n"
-                        + _research_plan_digest(revision["plan"]))
+                        # Whole: the reviewer's digest clips steps at 8,000 characters, and the note may name a late
+                        # step (#514 review).
+                        + json.dumps(revision["plan"], ensure_ascii=False, sort_keys=True))
                 precedent_job = None
                 precedent_agent = self.cfg.precedent_agent
                 if "analysis_precedents" not in req and precedent_agent:
