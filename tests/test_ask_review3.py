@@ -225,7 +225,7 @@ async def test_runner_ask_only_result_emits_hibernating_status(tmp_path, monkeyp
         assert result.pending_asks == ["ask"] and not result.pending_jobs
         status = [e.data for e in seen if e.type == "agent.status"][-1]
         assert status == {"state": "hibernating", "jobs": [], "asks": ["ask"]}
-        assert waiting_calls.count("run_task") == 2  # state and event payload
+        assert waiting_calls.count("_run_task") == 2  # state and event payload (run_task wraps it for #59)
     finally:
         runner.store.close()
 

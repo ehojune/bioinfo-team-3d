@@ -1,7 +1,7 @@
 const doc = () => globalThis.document;
 function add(parent, tag, text = '', className = '') { const el = doc().createElement(tag); el.textContent = text; if (className) el.className = className; parent.append(el); return el; }
-const STATUS = { pending:'대기', queued:'대기', working:'진행 중', waiting_quota:'한도 대기', waiting_login:'로그인 대기', waiting_facilities_fix:'환경 수정 승인 대기', hibernating:'HPC 대기', revise:'리뷰 반영', error:'실패', failed:'실패', skipped:'건너뜀', done:'완료' };
-const COLUMN = { pending:'waiting', queued:'waiting', working:'working', waiting_quota:'working', waiting_login:'working', waiting_facilities_fix:'working', hibernating:'working', revise:'review', error:'review', failed:'review', skipped:'done', done:'done' };
+const STATUS = { pending:'대기', queued:'대기', working:'진행 중', waiting_quota:'한도 대기', waiting_login:'로그인 대기', waiting_facilities_fix:'환경 수정 승인 대기', hibernating:'HPC 대기', halted:'멈춤 · 재개 가능', revise:'리뷰 반영', error:'실패', failed:'실패', skipped:'건너뜀', done:'완료' };
+const COLUMN = { pending:'waiting', queued:'waiting', working:'working', waiting_quota:'working', waiting_login:'working', waiting_facilities_fix:'working', hibernating:'working', halted:'working', revise:'review', error:'review', failed:'review', skipped:'done', done:'done' };
 
 const pad = n => String(n).padStart(2, '0');
 // Local "MM-DD HH:MM", the same on every browser locale.

@@ -146,7 +146,9 @@ async def test_claude_post_tool_hook_ids_the_nearest_observed_output_write(tmp_p
     [row] = manifest["runs"][result.task_id]["observed_outputs"]
     assert row["tool_use_id"] == "toolu_last"
     assert result.output_tool_use_ids == {"outputs/table.tsv": "toolu_last"}
-    [hook] = seen["claude_settings"]["hooks"]["PostToolUse"]
+    # The steer/halt hook (#59) is another PostToolUse entry; the receipt hook keeps its write-tool matcher.
+    [hook] = [h for h in seen["claude_settings"]["hooks"]["PostToolUse"]
+              if "labhq.hooks.tool_use" in h["hooks"][0]["command"]]
     assert hook["matcher"] == "Write|Edit|Bash|PowerShell" and "labhq.hooks.tool_use" in hook["hooks"][0]["command"]
 
 

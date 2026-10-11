@@ -55,6 +55,9 @@ PI_DECISION_KINDS = frozenset({"clarify", "question", "scope", "budget", "resear
                                "research_continue", "resume"})
 # Runner cards that only inform: no hook waits on them, so their task's result does not close them (#521).
 RUNNER_NOTICE_KINDS = frozenset({"codex_sandbox_setup"})
+# Steer, pause, resume and halt of a running task (#59 ①); a steer message is at most this long.
+CONTROL_ACTIONS = ("steer", "pause", "resume", "halt")
+STEER_MAX_CHARS = 2000
 # How long request cancel waits for the cancelled turns to report, so their cost is counted (R13).
 CANCEL_RESULT_WAIT_S = 10.0
 # Statuses a hold sets and _sync_hold_status may lift again.
@@ -156,6 +159,17 @@ class NoteIn(BaseModel):
         return value.strip()
 
 
+class SteerIn(BaseModel):
+    text: str = Field(max_length=STEER_MAX_CHARS)
+
+    @field_validator("text")
+    @classmethod
+    def not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("steer text is empty")
+        return value.strip()
+
+
 class CodexReviewIn(BaseModel):
     note: str = ""
 
@@ -247,6 +261,9 @@ class Hub:
         self.facilities_timeout_tasks: dict[str, asyncio.Task] = {}
         self.resume_timers: dict[str, asyncio.Task] = {}  # a resume card has no waiter; this ends it (R5)
         self.request_tasks: dict[str, asyncio.Task] = {}  # each request's orchestration, for request cancel (R13)
+        # #59 ①: steps the PI halted, parked until the PI resumes them, and each task's last control state.
+        self.halted_waits: dict[str, asyncio.Event] = {}
+        self.task_controls: dict[str, dict] = self.store.all("task_control_state")
         # Recruitments a runner process is running: {runner_id: {"incarnation", "count"}}. Started here, ended by
         # recruit.done/failed or by a different runner process; a reconnect of the same process keeps them (#515).
         self.recruits_running: dict[str, dict[str, Any]] = {}
@@ -728,12 +745,15 @@ class Hub:
             elif (waiting(entry.get("result") or {}, jobs_finished=tid in self.jobs_done) and
                   (entry.get("step_id") or entry.get("kind")) not in (req.get("results") or {})):
                 state = "hibernating"
+            elif tid in self.halted_waits:  # halted by the PI, parked until resumed (#59 ①)
+                state = "halted"
             else:
                 continue
             step_id = entry.get("step_id") or entry.get("kind")
             task = {"id": tid, "request_id": entry.get("request_id"), "state": state,
                     "step_id": step_id, "agent_id": (entry.get("payload") or {}).get("agent_id"),
-                    "dispatched_at": entry.get("dispatched_at", 0)}
+                    "dispatched_at": entry.get("dispatched_at", 0),
+                    **({"control": self.task_controls[tid]} if tid in self.task_controls else {})}
             key = (task["request_id"], step_id)
             rank = (1 if state == "running" else 0, float(task["dispatched_at"] or 0))
             if key not in selected or rank > selected[key][0]:
@@ -1363,6 +1383,93 @@ class Hub:
                 continue
             await self.send_runner(runner_id, {"type": "task.cancel", "task_id": tid})
 
+    async def control_task(self, tid: str, action: str, text: str | None = None) -> dict:
+        """Send a steer, pause, resume or halt to the task's runner (#59 ①), kept like a cancel until the runner acks it.
+
+        Resume of a step the PI halted releases its park instead (wait_halted); the next turn resumes the session.
+        A steer, pause or resume for a task that has ended goes to its session's next turn (the runner keeps it).
+        KeyError: no such task. ValueError: halt of a task that has ended."""
+        if action not in CONTROL_ACTIONS:
+            raise ValueError(f"unknown control {action!r}")
+        if action == "resume" and tid in self.halted_waits:
+            self.halted_waits[tid].set()
+            return {"task_id": tid, "action": action, "resumed_halted": True, "sent": False}
+        entry = self.store.get("task", tid)
+        runner_id = self.task_runner.get(tid) or (entry or {}).get("runner_id")
+        if not runner_id:
+            raise KeyError(tid)
+        if action == "halt" and entry and entry.get("completed") and not entry.get("abandoned"):
+            raise ValueError("이 작업은 이미 끝나 멈출 것이 없어요")
+        seq = int((self.store.get("task_control_seq", "next") or {}).get("value") or 0) + 1
+        self.store.put("task_control_seq", "next", {"value": seq})
+        message = {"type": "task.control", "id": new_id("ctl"), "seq": seq, "task_id": tid, "action": action,
+                   "agent_id": ((entry or {}).get("payload") or {}).get("agent_id"),
+                   "request_id": (entry or {}).get("request_id"), **({"text": text} if text else {})}
+        self.store.put("task_control", message["id"], {"runner_id": runner_id, "requested_at": time.time(),
+                                                        "message": message})
+        try:
+            await self.send_runner(runner_id, message)
+            sent = True
+        except RunnerUnavailable:
+            sent = False  # kept: sent again when that runner reconnects
+        return {"task_id": tid, "action": action, "sent": sent, "id": message["id"]}
+
+    async def flush_task_controls(self, runner_id: str) -> None:
+        """Resend unacknowledged controls to a reconnected runner, in the order the PI sent them. The runner applies
+        each seq once, so a control it took before the connection dropped is not applied twice."""
+        now = time.time()
+        kept = sorted(self.store.all("task_control").items(),
+                      key=lambda item: int(((item[1] or {}).get("message") or {}).get("seq") or 0))
+        for cid, entry in kept:
+            if entry.get("runner_id") != runner_id:
+                continue
+            message = entry.get("message") or {}
+            task = self.store.get("task", str(message.get("task_id") or ""))
+            # A halt has nothing left to stop once the task ended; the others still reach the session's next turn.
+            finished = bool(task and task.get("completed") and not task.get("abandoned")
+                            and message.get("action") == "halt")
+            if not task or finished or now - float(entry.get("requested_at") or 0) > TASK_CANCEL_KEEP_S:
+                self.store.delete("task_control", cid)
+                continue
+            await self.send_runner(runner_id, message)
+
+    async def wait_halted(self, rid: str, step_id: str, result: TaskResult) -> bool:
+        """Park a step the PI halted until the PI resumes it (POST /api/tasks/{id}/resume) (#59 ①).
+
+        The request waits as ``waiting_pi`` meanwhile, like a PI-decision card. False when that bound passes first."""
+        tid = result.task_id
+        event = self.halted_waits.setdefault(tid, asyncio.Event())
+        req = self.requests.get(rid)
+        parked = req is not None and is_active_request(req.get("status"))
+        key, bound = f"halt:{tid}", self.s.policy.approvals.pi_decision_timeout_s
+        if parked:
+            req.setdefault("pi_waits", {})[key] = {"kind": "halt", "since": time.time(),
+                                                   "deadline_at": time.time() + bound, "task_id": tid,
+                                                   "step_id": step_id}
+        await self.publish({"type": "request.step_halted", "ts": time.time(), "request_id": rid, "task_id": tid,
+                            "agent_id": result.agent_id,
+                            "data": {"step_id": step_id, "session_id": result.session_id}})
+        if parked:
+            await self._publish_hold_status(rid)
+        resumed = False
+        try:
+            await asyncio.wait_for(event.wait(), bound)
+            resumed = True
+        except asyncio.TimeoutError:
+            pass
+        finally:
+            self.halted_waits.pop(tid, None)
+            self.task_controls.pop(tid, None)
+            self.store.delete("task_control_state", tid)
+            if parked and (req.get("pi_waits") or {}).pop(key, None) is not None:
+                if not req.get("pi_waits"):
+                    req.pop("pi_waits", None)
+                await self._publish_hold_status(rid)
+        if resumed:
+            await self.publish({"type": "request.step_resumed", "ts": time.time(), "request_id": rid, "task_id": tid,
+                                "agent_id": result.agent_id, "data": {"step_id": step_id}})
+        return resumed
+
     async def flush_ask_answers(self, runner_id: str) -> None:
         for ask_id, entry in self.store.all("ask").items():
             if (entry.get("origin") == runner_id and entry.get("state") == "resolved"
@@ -1567,6 +1674,11 @@ class Hub:
             return
         if typ == "approval.ack":
             self.store.delete("decision", str(msg["id"]))
+        if typ == "control.ack":
+            self.store.delete("task_control", str(msg.get("id") or ""))
+        if typ == "agent.control" and msg.get("task_id"):  # the staff sheet's paused/halted line survives a reload
+            self.task_controls[msg["task_id"]] = {**(msg.get("data") or {}), "ts": time.time()}
+            self.store.put("task_control_state", msg["task_id"], self.task_controls[msg["task_id"]])
         if typ == "ask.ack":
             entry = self.store.get("ask", str(msg["id"]))
             if entry:
@@ -1578,6 +1690,11 @@ class Hub:
             result = TaskResult.model_validate(msg["data"])
             if tid:
                 self.store.delete("task_cancel", tid)  # the task ended: a kept cancel has nothing left to stop
+                if result.error_kind == "halted":
+                    self.task_controls[tid] = {"paused": False, "halt": True, "halted": True, "ts": time.time()}
+                    self.store.put("task_control_state", tid, self.task_controls[tid])
+                elif self.task_controls.pop(tid, None) is not None:
+                    self.store.delete("task_control_state", tid)
             if (result.pipeline_submission is not None and self.s.policy.bioinfo_agent.pipeline_pr
                     and result.ok and not waiting(result)):
                 self.store.put("pipeline_submission", tid, {
@@ -2687,6 +2804,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             await hub.flush_decisions(runner_id)
             await hub.flush_ask_answers(runner_id)
             await hub.flush_task_cancels(runner_id)
+            await hub.flush_task_controls(runner_id)
             await hub.publish({"type": "runner.online", "ts": time.time(),
                                "data": {"runner_id": runner_id, "agents": len(hello.get("agents", []))}})
             while True:
@@ -2851,6 +2969,30 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         if not await hub.cancel_task(tid):
             raise HTTPException(404)
         return {"ok": True}
+
+    async def _control(tid: str, action: str, text: str | None = None) -> dict:
+        try:
+            return {"ok": True, **await hub.control_task(tid, action, text)}
+        except KeyError:
+            raise HTTPException(404)
+        except ValueError as error:
+            raise HTTPException(409, str(error))
+
+    @app.post("/api/tasks/{tid}/steer", dependencies=[Depends(auth)])
+    async def steer(tid: str, body: SteerIn) -> dict:
+        return await _control(tid, "steer", body.text)
+
+    @app.post("/api/tasks/{tid}/pause", dependencies=[Depends(auth)])
+    async def pause(tid: str) -> dict:
+        return await _control(tid, "pause")
+
+    @app.post("/api/tasks/{tid}/resume", dependencies=[Depends(auth)])
+    async def resume(tid: str) -> dict:
+        return await _control(tid, "resume")
+
+    @app.post("/api/tasks/{tid}/halt", dependencies=[Depends(auth)])
+    async def halt(tid: str) -> dict:
+        return await _control(tid, "halt")
 
     @app.post("/api/requests/{rid}/steps/{step_id}/resume-quota", dependencies=[Depends(auth)])
     async def resume_quota(rid: str, step_id: str) -> dict:

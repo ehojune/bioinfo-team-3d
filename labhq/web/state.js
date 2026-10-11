@@ -95,10 +95,13 @@ Object.defineProperty(S, 'defaultRefs', { value: [], writable: true, enumerable:
 // Connected runner ids (R15), known once a snapshot said so; the page shows 러너 꺼짐 while it is empty.
 Object.defineProperty(S, 'runners', { value: new Set(), writable: true, enumerable: false });
 Object.defineProperty(S, 'runnersKnown', { value: false, writable: true, enumerable: false });
+// #59 ①: each task's steer/pause/halt state (agent.control), for the staff sheet; out of the legacy digests too.
+Object.defineProperty(S, 'taskControl', { value: new Map(), enumerable: false });
 function resetSnapshotState() {
   S.agents.clear(); S.approvals.clear(); S.suggestions = []; S.requests.clear(); S.current = null;
   S.jobs.clear(); S.feed = []; S.cost = 0; S.projects = [];
   S.lastSay = {}; S.taskStep.clear(); S.stepDetails.clear(); S.askDetails.clear(); S.engineHolds.clear(); S.seq = 0; S.doorUntil = 0;
+  S.taskControl.clear();
   S.defaultRefs = [];
 }
 const STATE_KO = { idle: '쉬는 중', queued: '순서 기다림', working: '작업 중', waiting: '승인 기다림',
@@ -126,6 +129,8 @@ function upsertAgent(a) {
   // Not part of the replayed state: the trace survives roster updates but stays out of state comparisons.
   Object.defineProperty(next, 'trace', { value: prev.trace || [], writable: true, enumerable: false });
   Object.defineProperty(next, 'waitFor', { value: prev.waitFor || '', writable: true, configurable: true, enumerable: false });
+  // The task the staff member runs now (#59 ①): the staff sheet's control buttons act on it.
+  Object.defineProperty(next, 'taskId', { value: prev.taskId || '', writable: true, configurable: true, enumerable: false });
   S.agents.set(a.id, next);
 }
 function req(rid) {
@@ -273,6 +278,9 @@ function apply(ev, replay = false) {
         restored.set(key, { task, rank });
       }
       for (const { task } of restored.values()) {
+        if (task.control || task.state === 'halted') S.taskControl.set(task.id, { ...(task.control || {}), ...(task.state === 'halted' ? { halted: true } : {}) });
+        const worker = task.agent_id && ag(task.agent_id);
+        if (worker) worker.taskId = task.id;
         const q = S.requests.get(task.request_id);
         if (!q) continue;
         q.steps[task.step_id] = task.state === 'running' ? 'working' : task.state;
@@ -292,6 +300,7 @@ function apply(ev, replay = false) {
     case 'agent.status': {
       const a = ag(id); if (!a) break;
       a.state = d.state || a.state; a.stateAt = ts;
+      if (ev.task_id) a.taskId = ev.task_id;
       // Display only, like usage and trace: kept out of the replayed state the golden hashes compare.
       if (d.state === 'hibernating') Object.defineProperty(a, 'waitFor', { writable: true, configurable: true, enumerable: false,
         value: (d.jobs || []).length ? 'hpc' : (d.asks || []).length ? 'answer' : '' });
@@ -302,6 +311,18 @@ function apply(ev, replay = false) {
       break;
     }
     case 'agent.tool': { const a = ag(id); if (!a) break; a.tool = d.name; a.toolAt = ts; a.toolCalls = (a.toolCalls || 0) + 1; logTo(a, `도구 ${toolLabel(d.name)} ${short(d.input, 80)}`, ts); break; }
+    case 'agent.control': if (ev.task_id) S.taskControl.set(ev.task_id, { ...d }); break;
+    case 'request.step_halted': {
+      if (ev.task_id) S.taskControl.set(ev.task_id, { ...(S.taskControl.get(ev.task_id) || {}), halted: true });
+      if (rid && d.step_id) req(rid).steps[d.step_id] = 'halted';
+      const a = ag(id); if (a) { if (ev.task_id) a.taskId = ev.task_id; logTo(a, 'PI가 멈췄어요. 재개하면 같은 세션으로 이어 가요', ts); }
+      break;
+    }
+    case 'request.step_resumed': {
+      if (ev.task_id) S.taskControl.delete(ev.task_id);
+      if (rid && d.step_id) req(rid).steps[d.step_id] = 'working';
+      break;
+    }
     case 'agent.tool_error': { const a = ag(id); if (a) logTo(a, `도구 오류: ${d.text}`, ts); break; }
     case 'agent.log': {
       const a = ag(id); if (!a || !d.text) break;
@@ -352,8 +373,9 @@ function apply(ev, replay = false) {
     }
     case 'task.result': {
       const sid = S.taskStep.get(ev.task_id);
+      if (d.error_kind === 'halted' && ev.task_id) S.taskControl.set(ev.task_id, { ...(S.taskControl.get(ev.task_id) || {}), halted: true });
       if (sid && rid) {
-        if (d.ok === false) req(rid).steps[sid] = 'error';
+        if (d.ok === false) req(rid).steps[sid] = d.error_kind === 'halted' ? 'halted' : 'error';
         Object.assign(stepDetail(rid, sid), { task_id: ev.task_id, ok: d.ok, text: d.text || '', error: d.error || '',
           outputs: d.outputs || [], missing_outputs: d.missing_outputs || [] });
       }
