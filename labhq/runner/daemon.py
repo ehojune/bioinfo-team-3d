@@ -45,6 +45,7 @@ from ..private_paths import ENABLED_ENV_VAR as PRIVATE_ENABLED_ENV, ENV_VAR as P
     staff_claude_project_dirs, staff_codex_homes
 from ..pipeline_pr import collect_pipeline_submission, pipeline_rejection
 from ..quota import quota_reset_instant
+from ..recruit.provenance import external_service_refusal, not_yet_active, probation_refusal, restricted_task
 from ..registry import Registry
 from ..settings import MODEL_NAME_PATTERN, Settings, write_staff_config
 from ..store import StateStore
@@ -459,7 +460,11 @@ class Runner:
         elif action == "activate":
             self.registry.activate(msg["agent_id"])
         elif action == "rehire":
-            self.registry.rehire(msg["slug"], days)
+            spec = self.registry.rehire(msg["slug"], days)
+            changed = spec.contract.verification.get("rehire_changed") if spec.contract else None
+            if changed:  # #424: the PI sees it in the feed, not only in the runner log
+                asyncio.get_running_loop().create_task(self.emit(Event(
+                    type="contract.warning", agent_id=spec.id, data={"agent_id": spec.id, "changed": changed})))
 
     async def _recruit(self, msg: dict) -> None:
         from ..recruit.paper2agent import Recruitment
@@ -889,6 +894,10 @@ class Runner:
         agent = self._resolve_agent(task)
         read_only = is_read_only_task(task.meta)
         refusal = read_only_refusal(agent.id, agent.engine) if read_only else None
+        # A contract hire works only once active, and staff that send data to external services never take restricted
+        # inputs (#424); the gateway refuses both first.
+        refusal = (refusal or (probation_refusal(agent.id) if not_yet_active(agent) else None)
+                   or external_service_refusal(agent, task, self.s))
         if refusal:  # the gateway refuses first; this holds for any other sender and after force_engine
             result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=refusal)
             base = dict(task_id=task.id, agent_id=agent.id, request_id=task.request_id)
@@ -1114,7 +1123,8 @@ class Runner:
                 await emit("agent.log", {"level": "warn", "text": (
                     f"{agent.id}: 개인 경로 차단 중에는 셸 명령을 미리 허용하지 않고 승인 게이트로 보냅니다. "
                     "builtin_mcp에 approval이 없어 셸 명령이 모두 거부됩니다")})
-            broker_token = self.broker.issue_task_token(task.id, agent.id, task.request_id, workdir=str(ws.dir))
+            broker_token = self.broker.issue_task_token(task.id, agent.id, task.request_id, workdir=str(ws.dir),
+                                                        restricted=restricted_task(task, self.s))
             env = {
                 "LABHQ_BROKER_URL": self.broker.url, "LABHQ_BROKER_TOKEN": broker_token,
                 "LABHQ_TASK_ID": task.id, "LABHQ_AGENT_ID": agent.id, "LABHQ_WORKDIR": str(ws.dir),

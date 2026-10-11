@@ -146,6 +146,8 @@ def render(ev: dict, login_holds: set[str] | None = None) -> None:
         line = f"🐥 파견직 입사: {ag.get('id')} ({ag.get('name')}) · 수습통과={d.get('passed_probation')}"
     elif t == "recruit.failed":
         line = f"🦫 채용 실패: {d.get('error')}"
+    elif t == "contract.warning":
+        line = f"⚠️ 재고용 {d.get('agent_id')}: {', '.join(d.get('changed') or [])} hash가 채용 때와 다름"
     elif t == "request.completed":
         summary = d.get("cost_summary")
         line = f"🏁 요청 완료 (ok={d.get('ok')}, cost={cost_text(d.get('cost_usd'), d.get('cost_known'), summary)})"
@@ -1195,7 +1197,9 @@ def main(argv: list[str] | None = None) -> None:
     cp.add_argument("target", help="agent id (or talent slug for rehire)")
     cp.add_argument("--days", type=float)
     sub.add_parser("talent", help="list the talent pool (past contract agents)")
-    sub.add_parser("setup-paper2agent", help="install the paper2agent skill for Claude Code and Codex")
+    sp2a = sub.add_parser("setup-paper2agent", help="install the paper2agent skill for Claude Code and Codex")
+    sp2a.add_argument("--commit", help="install exactly this 40-hex Paper2Agent commit (default: recruit.skill_commit, "
+                                       "else the latest HEAD)")
     dp = sub.add_parser("demo", help="offline demo with mock agents (no API keys, no cluster)")
     dp.add_argument("--web", action="store_true", help="keep running and serve the web office")
     dp.add_argument("--phone", action="store_true", help="serve the web office to phones on the same Wi-Fi")
@@ -1500,12 +1504,18 @@ def main(argv: list[str] | None = None) -> None:
         for spec in reg.talent_pool():
             c = spec.contract
             print(f"🐥 {Path(c.talent_dir).name if c and c.talent_dir else spec.id:<24} {spec.name:<24} "
-                  f"{c.kind if c else ''}  paper={c.paper if c else ''}")
+                  f"{c.kind if c else ''}  paper={c.paper if c else ''}"
+                  f"  commit={(c.source_commit or '-')[:7] if c else '-'}"
+                  f"  external={','.join(x.host for x in c.external_services) if c and c.external_services else '-'}")
     elif args.cmd == "setup-paper2agent":
-        from .recruit.paper2agent import install_skill
+        from .recruit.paper2agent import install_skill, installed_commit
 
-        for d in install_skill(s.recruit.skill_source, Path("~/.labhq/cache").expanduser()):
+        pin = args.commit or s.recruit.skill_commit
+        for d in install_skill(s.recruit.skill_source, Path("~/.labhq/cache").expanduser(), commit=pin):
             print(f"installed → {d}")
+        commit = installed_commit()
+        print(f"Paper2Agent commit {commit or 'unknown'}" + ("" if pin else
+              " (not pinned: set recruit.skill_commit or pass --commit to keep this one)"))
     elif args.cmd == "semantics":  # semantics-hook
         from .research.semantics_shadow import run_cli as semantics_cli  # semantics-hook
         raise SystemExit(semantics_cli(args, s))  # semantics-hook

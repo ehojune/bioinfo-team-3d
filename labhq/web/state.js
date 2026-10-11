@@ -518,9 +518,16 @@ function apply(ev, replay = false) {
       const na = d.agent || {};
       if (na.id) { const isNew = !S.agents.has(na.id); upsertAgent(na); if (isNew && !replay) { ag(na.id).arriving = now(); S.doorUntil = now() + 2.2; } }
       S.suggestions = S.suggestions.filter(s => !String(s.repo || s.paper || '').toLowerCase().includes(String(na.id || '').slice(2)));
-      feed({ who: 'recruiter', text: `${na.name || na.id} 입사했어요 (수습 ${d.passed_probation ? '통과' : '진행 중'})` }, ts, rid);
+      const pv = na.contract_provenance, hosts = pv ? (pv.external_services || []).map(s => s && s.host).filter(Boolean) : [];
+      // #424: the commit it was built from and where its tools send data, said once at hiring.
+      const built = pv ? ` · commit ${pv.source_commit ? String(pv.source_commit).slice(0, 7) : '미상'} · ${pv.code_license || 'license 미상'}` +
+        ` · ${hosts.length ? `외부 전송 ${hosts.join(', ')}` : '외부 전송 없음'}` : '';
+      feed({ who: 'recruiter', text: `${na.name || na.id} 입사했어요 (수습 ${d.passed_probation ? '통과' : '진행 중'})${built}` }, ts, rid);
       break;
     }
+    case 'contract.warning':
+      feed({ who: 'recruiter', text: `재고용한 ${d.agent_id || id}: ${(d.changed || []).join(', ')}이(가) 채용 때 hash와 맞지 않아요. 확인한 뒤 맡기세요`, cls: 'alert' }, ts, rid);
+      break;
     case 'recruit.failed': feed({ who: 'recruiter', text: `채용하지 못했어요: ${short(d.error, 120)}`, cls: 'alert' }, ts, rid); break;
     // A status the gateway sets itself: waiting_pi, waiting_for_runner, interrupted, running (R5, R15, #494).
     case 'request.status': { const q = req(rid); if (d.status && !isTerminalRequest(q.status)) q.status = d.status; break; }

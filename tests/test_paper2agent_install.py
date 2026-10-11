@@ -17,6 +17,8 @@ SOURCE = "https://example.org/Paper2Agent.git"
 def _source_skill(cache_dir):
     repo = cache_dir / "Paper2Agent"
     (repo / ".git").mkdir(parents=True)
+    # A real cached checkout names its origin; labhq re-clones one whose origin it cannot verify (PR #522 review).
+    (repo / ".git" / "config").write_text(f'[remote "origin"]\n\turl = {SOURCE}\n', encoding="utf-8")
     skill = repo / "skills" / "paper2agent"
     (skill / "assets").mkdir(parents=True)
     (skill / "SKILL.md").write_text("new skill\n", encoding="utf-8")
