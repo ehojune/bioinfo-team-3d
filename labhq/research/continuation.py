@@ -287,9 +287,12 @@ def plan_prompt(previous_plan: Mapping[str, Any], previous_sha256: str, issues: 
     return (
         f"\n\nContinuation (research round {round_no}). " + why +
         "labhq reuses a previous step's result without running it again only when your plan keeps that step "
-        "byte-identical (same id and every field), keeps brief.question, brief.scope, protocol and pack_values "
-        f"unchanged, {named}and every step it depends on is reused too. Any change to the question, scope, protocol "
-        "or pack values re-runs every step, so change them only when the request or an issue needs it. " + scope +
+        "byte-identical (same id and every field), keeps brief.question, brief.scope, brief.primary_hypothesis, "
+        "brief.null_or_alternatives, brief.distinguishing_observations, protocol and pack_values "
+        f"unchanged, {named}and every step it depends on is reused too. Any change to brief.question, brief.scope, "
+        "brief.primary_hypothesis, brief.null_or_alternatives, brief.distinguishing_observations, protocol or "
+        "pack_values "
+        "re-runs every step, so change them only when the request or an issue needs it. " + scope +
         listed + f"\n\nPrevious frozen plan (plan_sha256 {previous_sha256}):\n{_canonical(previous_plan)}")
 
 

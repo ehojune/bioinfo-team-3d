@@ -1,5 +1,6 @@
 """Request and approval lifecycle for a PI working alone (PI 점검 R2 R5 R13 R15)."""
 import asyncio
+import copy
 import time
 
 import pytest
@@ -7,7 +8,9 @@ import pytest
 from labhq.gateway.server import PI_DECISION_KINDS, Hub
 from labhq.models import ApprovalRequest, Task, TaskResult
 from labhq.orchestrator.cso import BudgetExceeded, Orchestrator
+from labhq.research import continuation
 from labhq.settings import Settings
+from tests.test_research_protocol import valid_plan
 
 
 def _settings(tmp_path):
@@ -734,6 +737,86 @@ def test_a_resume_card_after_every_step_finished_says_no_step_is_left(tmp_path):
     _request(hub, "unplanned", status="interrupted")
     assert hub.new_resume_approval("r").summary.endswith("남은 단계: 없음(단계는 모두 끝났고 그 뒤 검토·결정·보고서부터 이어 갑니다)")
     assert hub.new_resume_approval("unplanned").summary.endswith("남은 단계: 요청 전체")
+
+
+def test_a_resume_card_before_the_continuation_plan_names_the_new_round(tmp_path):
+    hub = Hub(_settings(tmp_path))
+    plan = valid_plan()
+    frozen = "a" * 64
+    _request(hub, "r", status="interrupted", plan=plan,
+             results={step["id"]: {"ok": True} for step in plan["steps"]},
+             research_contract={"plan_sha256": frozen, "round": 2,
+                                "rounds": [{"round": 1, "plan_sha256": frozen}],
+                                "continuation": {"round": 2, "from_plan_sha256": frozen}})
+
+    card = hub.new_resume_approval("r")
+
+    assert card.summary.endswith("남은 단계: 이어 가기 2차: 새 계획·CP1부터 이어 갑니다")
+
+
+def _unstarted_continuation_request(hub, rid="r", *, status="interrupted"):
+    old = valid_plan(steps=2)
+    new = copy.deepcopy(old)
+    new["steps"][0]["instruction"] = "unapproved draft"
+    old_results = {step["id"]: {"ok": True, "task_id": f"old-{step['id']}", "text": "done"}
+                   for step in old["steps"]}
+    req = _request(hub, rid, status=status, plan=old, results=old_results,
+                   budget_usd=7, research_contract={"plan_sha256": "a" * 64, "round": 1,
+                                                    "approval": {"status": "approved"},
+                                                    "checkpoints": {"cp2": {"decision": "approved"}},
+                                                    "review": {"verdict": "revise"}})
+    archived = continuation.archive_round(req, old_results)
+    req["plan"] = new
+    req["results"] = {"s1": {"ok": True, "task_id": "reused-s1"}}
+    req["budget_usd"] = 2
+    req["research_contract"].update(
+        round=2, rounds=[archived], plan_sha256="b" * 64,
+        continuation={"round": 2, "from_plan_sha256": "a" * 64,
+                      "plan_sha256": "b" * 64, "verified": False},
+        approval={"status": "pending"})
+    req["research_contract"]["checkpoints"].pop("cp2", None)
+    hub.save_request(rid)
+    return old, old_results
+
+
+@pytest.mark.asyncio
+async def test_cancel_restores_an_unstarted_continuation_before_writing_its_report(tmp_path):
+    hub = Hub(_settings(tmp_path))
+    old, old_results = _unstarted_continuation_request(hub, status="running")
+
+    await hub.cancel_request("r")
+
+    req = hub.requests["r"]
+    assert req["plan"] == old and req["results"] == old_results and req["budget_usd"] == 7
+    assert "끝난 단계 1개" not in req["report"]
+    assert "끝난 단계 2개" in req["report"]
+
+
+@pytest.mark.asyncio
+async def test_resume_decline_restores_an_unstarted_continuation_before_terminal_record(tmp_path):
+    hub = Hub(_settings(tmp_path))
+    old, old_results = _unstarted_continuation_request(hub)
+    card = hub.new_resume_approval("r")
+
+    await hub.resolve_approval(card.id, False)
+
+    req = hub.requests["r"]
+    assert req["plan"] == old and req["results"] == old_results and req["budget_usd"] == 7
+
+
+@pytest.mark.asyncio
+async def test_resume_timeout_restores_an_unstarted_continuation_before_terminal_record(tmp_path):
+    s = _settings(tmp_path)
+    hub = Hub(s)
+    old, old_results = _unstarted_continuation_request(hub)
+    card = hub.new_resume_approval("r")
+    hub.approvals[card.id]["approval"]["created_at"] = time.time() - s.policy.approvals.pi_decision_timeout_s - 1
+    hub.save_approval(card.id)
+
+    assert await hub.expire_resume_card(card.id)
+
+    req = hub.requests["r"]
+    assert req["plan"] == old and req["results"] == old_results and req["budget_usd"] == 7
 
 
 @pytest.mark.asyncio
