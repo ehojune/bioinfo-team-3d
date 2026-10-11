@@ -471,6 +471,130 @@ async def test_a_card_from_a_runner_that_no_longer_hosts_the_agent_expires(tmp_p
     assert list(restarted.approvals) == [kept["id"]]  # another runner's agent, still away: it may come back
 
 
+def _runner_settings(tmp_path):
+    s = _settings(tmp_path)
+    s.gateway.runner_token = "runner-token"
+    s.runner.state_dir = str(tmp_path / "runner-state")
+    s.runner.workspace_root = str(tmp_path / "runs")
+    s.runner.agents_dir = str(tmp_path / "agents")
+    s.runner.talent_dir = str(tmp_path / "talent")
+    return s
+
+
+def _runner_hello(s):
+    """The hello of one runner process; the next Runner on the same state is that runner restarted."""
+    from labhq.runner.daemon import Runner
+
+    runner = Runner(s)
+    try:
+        return runner.hello()
+    finally:
+        runner.store.close()
+
+
+def test_a_runner_restart_that_keeps_its_incarnation_still_expires_the_old_process_cards(tmp_path):
+    import json
+
+    from fastapi.testclient import TestClient
+
+    from labhq.gateway.server import create_app
+
+    s = _runner_settings(tmp_path)
+    first, restarted = _runner_hello(s), _runner_hello(s)
+    assert first["incarnation"] == restarted["incarnation"]  # kept on disk for task generations
+    assert first["process"] != restarted["process"]
+    app = create_app(s)
+    hub = app.state.hub
+    _request(hub, "r")
+    card = _runner_card()
+
+    with TestClient(app) as client:
+        def connect(hello, frame):
+            with client.websocket_connect(f"/ws/runner?token={s.gateway.runner_token}") as ws:
+                ws.send_text(json.dumps(hello))
+                ws.send_text(json.dumps(frame))
+                assert json.loads(ws.receive_text()) == {"type": "runner.ack", "runner_seq": frame["runner_seq"]}
+
+        connect(first, {"type": "approval.requested", "runner_seq": 1, "task_id": "t1", "agent_id": "worker",
+                        "request_id": "r", "data": card})
+        assert hub.approvals[card["id"]]["origin_process"] == first["process"]
+        connect(first, {"type": "agent.log", "runner_seq": 2, "data": {"text": "reconnected"}})
+        assert card["id"] in hub.approvals  # the same process reconnecting keeps it
+        connect(restarted, {"type": "agent.log", "runner_seq": 3, "data": {"text": "restarted"}})
+
+    assert card["id"] not in hub.approvals and not hub.store.get("approval", card["id"])
+    decision = hub.store.get("approval_decision", card["id"])
+    assert decision["state"] == "expired" and decision["note"] == "러너가 다시 시작되어 닫힘"
+    assert hub.store.get("decision", card["id"]) is None  # the new process never asked; nothing is sent to it
+
+
+@pytest.mark.asyncio
+async def test_a_task_result_closes_the_cards_its_task_left_open(tmp_path):
+    hub = Hub(_settings(tmp_path))
+    _request(hub, "r")
+    ws = CaptureSocket()
+    hub.register_runner("local", ws, ROSTER, "inc", process="p1")
+    left, other = _runner_card(task_id="t1"), _runner_card(task_id="t2")
+    notice = ApprovalRequest(kind="codex_sandbox_setup", summary="Codex sandbox 다시 준비 필요 (확인하면 닫힙니다)",
+                             request_id="r", agent_id="worker", task_id="t1",
+                             timeout_s=7 * 24 * 3600).model_dump(mode="json")
+    for card in (left, other, notice):
+        await hub.on_runner_message("local", {"type": "approval.requested", "data": card})
+
+    ended = TaskResult(task_id="t1", agent_id="worker", ok=False, error="agent exited")
+    await hub.on_runner_message("local", {"type": "task.result", "task_id": "t1", "request_id": "r",
+                                          "data": ended.model_dump(mode="json")})
+    note = "그 작업이 끝나 닫힘"
+    assert left["id"] not in hub.approvals
+    decision = hub.store.get("approval_decision", left["id"])
+    assert decision["state"] == "expired" and decision["note"] == note
+    assert any(e["type"] == "approval.expired" and e["data"] == {"id": left["id"], "note": note} for e in hub.events)
+    # The process that asked is alive: its hook hears no now instead of timing out an hour later.
+    assert {"type": "approval.resolved", "id": left["id"], "approved": False, "note": note} in ws.sent
+    assert set(hub.approvals) == {other["id"], notice["id"]}  # another task's card; a notice nobody waits on
+
+
+@pytest.mark.asyncio
+async def test_an_older_runner_without_a_process_id_keeps_the_incarnation_rule(tmp_path):
+    hub = Hub(_settings(tmp_path))
+    _request(hub, "r")
+    hub.register_runner("local", CaptureSocket(), ROSTER, "first")  # an older runner's hello has no process id
+    card = _runner_card()
+    await hub.on_runner_message("local", {"type": "approval.requested", "data": card})
+    assert await hub.expire_orphan_approvals("local", "first") == []  # it reconnects: kept, as before
+    hub.register_runner("local", CaptureSocket(), ROSTER, "second")
+    assert await hub.expire_orphan_approvals("local", "second") == [card["id"]]  # new incarnation: closed, as before
+
+    asked = _runner_card(task_id="t2")
+    await hub.on_runner_message("local", {"type": "approval.requested", "data": asked})
+    # Updated and restarted on the same state: the process that asked sent no id, the one registering does.
+    hub.register_runner("local", CaptureSocket(), ROSTER, "second", process="p1")
+    assert await hub.expire_orphan_approvals("local", "second", "p1") == [asked["id"]]
+
+
+@pytest.mark.asyncio
+async def test_a_late_answer_for_a_finished_task_does_not_mark_its_agent_working(tmp_path):
+    from labhq.runner.daemon import Runner
+
+    runner = Runner(_runner_settings(tmp_path))
+    live = asyncio.create_task(asyncio.sleep(30))
+    try:
+        finished = asyncio.create_task(asyncio.sleep(0))
+        await finished
+        runner.tasks.update(t_done=finished, t_live=live)
+        loop = asyncio.get_running_loop()
+        for aid, tid in (("appr_done", "t_done"), ("appr_live", "t_live")):
+            runner.broker.pending[aid] = loop.create_future()
+            runner.approval_tasks[aid] = (tid, "worker")
+            await runner._on_message({"type": "approval.resolved", "id": aid, "approved": False, "note": "closed"})
+        sent = runner.store.pending()
+        assert [m["task_id"] for m in sent if m["type"] == "agent.status"] == ["t_live"]
+        assert [m["id"] for m in sent if m["type"] == "approval.ack"] == ["appr_done", "appr_live"]
+    finally:
+        live.cancel()
+        runner.store.close()
+
+
 def test_a_resume_card_names_the_request_its_date_and_the_steps_left(tmp_path):
     hub = Hub(_settings(tmp_path))
     created = time.mktime((2026, 9, 28, 10, 30, 0, 0, 0, -1))

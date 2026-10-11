@@ -117,7 +117,7 @@ CSO는 계획마다 분야 이름표(topic 키)를 적습니다. 키는 PI가 �
 
 <sub>근거: [v0.25 리허설](docs/status/2026-10-04-0458-release-v025.md) 요청 2: PC가 멈춰 labhq가 모두 꺼진 뒤 이어 가기 카드 한 장으로 다시 이어서 리뷰 통과(accept)까지 갔습니다 · [벤치 A 2차](https://github.com/ehojune/bioinfo-team-3d/issues/373#issuecomment-5975156477): labhq 재현성 2 → 4점([#384](https://github.com/ehojune/bioinfo-team-3d/pull/384)), Astra 단독은 같은 보고서가 두 채점에서 4점·3점 · [#389](https://github.com/ehojune/bioinfo-team-3d/pull/389)(요청 묶음)</sub>
 
-<sub>한계: 한도·로그인 대기는 10-05 실제 로그인 만료로 요청 4건이 실패한 뒤 고쳤고, test로만 확인했습니다. 재로그인은 사람이 합니다. 요청 묶음은 같은 PC runner의 산출만 모으며, 넣은 뒤 재현성은 다시 채점하지 않았습니다.</sub>
+<sub>한계: 한도·로그인 대기는 10-05 실제 로그인 만료로 요청 4건이 실패한 뒤 고쳤고, test로만 확인했습니다. 재로그인은 사람이 합니다. 요청 묶음은 같은 PC runner의 산출만 모읍니다. `documented`는 기록만, `replayable`은 스크립트·환경·경로 조건 충족, `rerun_verified`는 별도 재실행 receipt까지 있는 경우입니다.</sub>
 
 </details>
 

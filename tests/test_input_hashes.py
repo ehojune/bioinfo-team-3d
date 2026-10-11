@@ -134,8 +134,8 @@ def test_restricted_and_private_input_roots_are_not_opened(tmp_path, monkeypatch
         100, 8, 1024, 4096, InputHashCache(tmp_path / "state" / "cache.json"))
 
     assert notes == []
-    assert [(row["path"], row["skipped"]) for row in rows] == [
-        ("~/restricted", "restricted"), ("~/private", "private")]
+    assert [(row["path"], row["sha256"], row["skipped"]) for row in rows] == [
+        ("", None, "restricted"), ("", None, "private")]
 
 
 def test_input_directory_link_outside_is_recorded_but_not_followed(tmp_path):
@@ -194,6 +194,50 @@ async def test_runner_records_project_input_hash_in_the_step_manifest(tmp_path, 
     assert record["sha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
     assert record["size"] == source.stat().st_size and record["mtime_ns"] == source.stat().st_mtime_ns
     assert "changed_during_step" not in record
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "lock_text,hash_limit,status,reason",
+    [
+        ("pandas==2.2.2\n", 1024, "complete", None),
+        ("pandas==2.2.2\n", 4, "partial", "output_hash_max_bytes"),
+        (None, 1024, "unavailable", "requirements.lock.txt"),
+    ],
+)
+async def test_runner_records_environment_lock_hash_status(
+        tmp_path, monkeypatch, lock_text, hash_limit, status, reason):
+    settings = Settings()
+    for name in ("state_dir", "workspace_root", "agents_dir", "talent_dir"):
+        setattr(settings.runner, name, str(tmp_path / name))
+    settings.runner.output_hash_max_bytes = hash_limit
+    runner = Runner(settings)
+    agent = AgentSpec(id="worker", name="Worker", role="test", engine=Engine.claude_code)
+    monkeypatch.setattr(runner, "_resolve_agent", lambda _task: agent)
+
+    class Adapter:
+        async def run(self, ctx):
+            if lock_text is not None:
+                target = ctx.workdir / "outputs/env/requirements.lock.txt"
+                target.parent.mkdir(parents=True)
+                target.write_text(lock_text, encoding="utf-8")
+            return TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=True, text="done")
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_args: Adapter())
+    task = Task(id=f"task-env-{status}", request_id="request-env", agent_id=agent.id, prompt="run",
+                meta={"kind": "step", "step_id": "env", "environment_step": True})
+
+    result = await runner.run_task(task)
+    manifest = json.loads((Path(result.workdir) / "manifest.json").read_text(encoding="utf-8"))
+    record = manifest["runs"][task.id]["environment_record"]
+
+    assert record["status"] == status
+    if status == "complete":
+        lock = Path(result.workdir) / "outputs/env/requirements.lock.txt"
+        assert record["sha256"] == hashlib.sha256(lock.read_bytes()).hexdigest()
+        assert "reason" not in record
+    else:
+        assert reason in record["reason"]
 
 
 async def test_input_the_step_rewrites_keeps_its_pre_run_hash_and_is_marked_changed(tmp_path, monkeypatch):
@@ -295,7 +339,7 @@ def test_request_bundle_lists_inputs_and_adds_the_hash_skip_summary(tmp_path):
         "host": platform.node(),
         "runs": {"task-1": {"input_files": [
             {"path": "inputs/s0/table.tsv", "size": 7, "mtime_ns": 10, "sha256": "a" * 64},
-            {"path": "~/private", "size": None, "mtime_ns": None, "sha256": None,
+            {"path": "~/private", "size": None, "mtime_ns": None, "sha256": "b" * 64,
              "skipped": "private"},
         ]}},
     }
@@ -311,5 +355,5 @@ def test_request_bundle_lists_inputs_and_adds_the_hash_skip_summary(tmp_path):
     with (bundle / "INPUTS.tsv").open(encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle, delimiter="\t"))
     assert rows[0]["path"] == "steps/s1/inputs/s0/table.tsv" and rows[0]["sha256"] == "a" * 64
-    assert rows[1]["path"] == "~/private" and rows[1]["skipped"] == "private"
+    assert rows[1]["path"] == "" and rows[1]["sha256"] == "" and rows[1]["skipped"] == "private"
     assert "입력 1개 hash, 1개 생략 (private 1)" in (bundle / "README.md").read_text(encoding="utf-8")

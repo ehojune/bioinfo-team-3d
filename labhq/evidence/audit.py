@@ -384,6 +384,10 @@ def render_verify(report: Mapping[str, Any]) -> str:
                   for line in verification_lines(VerificationReport.model_validate(raw))]
     request_bundle = report.get("request_bundle")
     if request_bundle and request_bundle.get("present"):
+        if request_bundle.get("grade"):
+            reasons = request_bundle.get("grade_reasons") or []
+            lines.append(f"재현 등급: {request_bundle['grade']}"
+                         + (f" ({'; '.join(map(str, reasons))})" if reasons else ""))
         if request_bundle.get("crate"):
             lines.append("요청 묶음 사본: RO-Crate·MANIFEST·파일 대조 "
                          + ("문제 없음" if not request_bundle["problems"]

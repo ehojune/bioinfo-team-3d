@@ -14,6 +14,7 @@ import time
 from collections import Counter
 from contextlib import ExitStack, contextmanager
 from collections.abc import Mapping
+from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterator
 
@@ -34,7 +35,8 @@ TEXT_ONLY = frozenset({".md"})  # .txt is a common data format (counts, variant 
 DOCUMENT_SUFFIXES = frozenset({".md"})
 MANIFEST_FIELDS = (
     "relative_path", "size", "sha256", "step_id", "original_path", "status",
-    "rewritten", "remaining_absolute_paths", "rewritten_files",
+    "rewritten", "remaining_absolute_paths", "rewritten_files", "reproducibility_grade",
+    "reproducibility_reasons", "environment_records", "rerun_receipt",
 )
 INPUT_FIELDS = ("step_id", "path", "size", "mtime_ns", "sha256", "skipped", "cached")
 MANIFEST_MAX_BYTES = 16 * 1024 * 1024
@@ -44,6 +46,7 @@ _WINDOWS_ABS = re.compile(r"(?i)(?<![A-Za-z0-9_])(?:[A-Z]:[\\/])[^\s<>\"'|]+")
 _POSIX_ABS = re.compile(r"(?:^|(?<=[\s=(\[{:>\"'`]))(?P<path>/(?!/|\.\.?/)[^\s<>\"'`|]+)", re.MULTILINE)
 REMOTE_RUNNER_NOTE = "runner가 다른 PC라 묶음을 만들지 않음"
 LINK_SCRIPT = "link_inputs.py"
+RERUN_RECEIPT_FILE = "rerun_receipt.json"
 # Written into the bundle: scripts read upstream files as inputs/<step id>/..., which the runner linked (#423).
 LINK_SCRIPT_BODY = '''"""Link steps/<step>/inputs/<upstream> to steps/<upstream>/outputs (labhq request bundle)."""
 import os
@@ -76,6 +79,28 @@ UNREPORTED_TAG = " (unreported)"
 
 class RemoteRunnerBundle(OSError):
     """The terminal result names a runner workspace that is not on the gateway host."""
+
+
+def _rerun_receipt(req: Mapping[str, Any]) -> dict[str, str] | None:
+    """Return the small path-free receipt shape that may raise a replayable bundle to rerun_verified."""
+    raw = req.get("rerun_receipt")
+    if not isinstance(raw, Mapping) or raw.get("status") != "verified" \
+            or raw.get("request_id") != req.get("id"):
+        return None
+    verified_at = raw.get("verified_at")
+    try:
+        instant = datetime.fromisoformat(str(verified_at).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if instant.tzinfo is None:
+        return None
+    fields = ("source_manifest_sha256", "rerun_manifest_sha256")
+    if any(not re.fullmatch(r"[0-9a-fA-F]{64}", str(raw.get(key) or "")) for key in fields):
+        return None
+    return {"status": "verified", "request_id": str(raw["request_id"]),
+            "verified_at": str(verified_at),
+            "source_manifest_sha256": str(raw["source_manifest_sha256"]).casefold(),
+            "rerun_manifest_sha256": str(raw["rerun_manifest_sha256"]).casefold()}
 
 
 def _sha256(path: Path) -> str:
@@ -182,6 +207,40 @@ def _held_workdir(stack: ExitStack, root: Path,
         raise
     except (OSError, UnicodeError, ValueError) as exc:
         raise RemoteRunnerBundle(REMOTE_RUNNER_NOTE) from exc
+
+
+def _job_scripts(held: HeldDir, workdir: Path) -> list[tuple[str, str]]:
+    """Submitted job scripts recorded by the runner, deduplicated by safe direct-child name."""
+    try:
+        fd = held.open_read_file("jobs.jsonl")
+    except FileNotFoundError:
+        return []
+    with os.fdopen(fd, "rb") as source:
+        raw = source.read(MANIFEST_MAX_BYTES + 1)
+    if len(raw) > MANIFEST_MAX_BYTES:
+        raise OSError("jobs.jsonl too large")
+    expected_parent = os.path.normcase(os.path.abspath(str(workdir / "jobs")))
+    found: dict[str, str] = {}
+    for line in raw.decode("utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(record, Mapping):
+            continue
+        script, sha256 = record.get("script"), record.get("script_sha256")
+        if not isinstance(script, str) or not isinstance(sha256, str) \
+                or not re.fullmatch(r"[0-9a-fA-F]{64}", sha256):
+            continue
+        path = Path(script)
+        if (not path.is_absolute() or path.suffix.casefold() != ".sh"
+                or os.path.normcase(os.path.abspath(str(path.parent))) != expected_parent
+                or not _SAFE_SCRIPT_COMPONENT.fullmatch(path.name)):
+            continue
+        found[path.name] = sha256.casefold()
+    return sorted(found.items())
 
 
 def _copy_held(stream, info: os.stat_result, destination: Path) -> str:
@@ -311,18 +370,20 @@ def _runner_python_command(result: Mapping[str, Any], tasks: Mapping[str, Any],
 
 
 def _grade(rows: list[dict[str, Any]], steps: list[Mapping[str, Any]],
-           rewrite_by_file: Mapping[str, tuple[int, list[str]]], not_copied: int) -> tuple[str, list[str]]:
-    """`replayable` or `documented`, with the reasons for the lower grade (#423, docs/research_protocol.md).
+           rewrite_by_file: Mapping[str, tuple[int, list[str]]], not_copied: int,
+           rerun_receipt: Mapping[str, str] | None = None) -> tuple[str, list[str]]:
+    """Reproducibility grade and reasons (#423, docs/research_protocol.md).
 
     replayable: every recorded output was copied; a step with data outputs ships a script; a step with scripts has an
     environment record (outputs/env/) of its own or from a step it depends on; no copied script keeps an absolute path.
-    `rerun_verified` needs a recorded rerun elsewhere, which nothing writes yet, so it is never given here."""
+    `rerun_verified` additionally needs a validated, recorded rerun receipt."""
     reasons = [f"기록 산출 {not_copied}개 미복사"] if not_copied else []
     files: dict[str, list[PurePosixPath]] = {}
     for row in rows:
         if row["status"] in ("copied", f"copied{UNREPORTED_TAG}"):
-            parts = PurePosixPath(str(row["relative_path"])).parts  # steps/<step>/outputs/...
-            files.setdefault(parts[1], []).append(PurePosixPath(*parts[3:]))
+            parts = PurePosixPath(str(row["relative_path"])).parts
+            if len(parts) >= 4 and parts[0] == "steps" and parts[2] == "outputs":
+                files.setdefault(parts[1], []).append(PurePosixPath(*parts[3:]))
     deps = {str(step.get("id")): [str(dep) for dep in step.get("depends_on") or []] for step in steps}
 
     def lineage(step_id: str) -> set[str]:
@@ -343,14 +404,17 @@ def _grade(rows: list[dict[str, Any]], steps: list[Mapping[str, Any]],
             no_script.append(step_id)
         if scripts and not lineage(step_id) & has_env:
             no_env.append(step_id)
-    absolute = sorted(path for path, (_count, left) in rewrite_by_file.items() if left and "/outputs/scripts/" in path)
+    absolute = sorted(path for path, (_count, left) in rewrite_by_file.items()
+                      if left and ("/outputs/scripts/" in path or "/jobs/" in path))
     if no_script:
         reasons.append("스크립트 없이 데이터 산출만 있는 단계: " + ", ".join(no_script))
     if no_env:
         reasons.append("환경 기록(outputs/env/)이 없는 단계: " + ", ".join(no_env))
     if absolute:
         reasons.append("절대경로가 남은 스크립트: " + ", ".join(absolute))
-    return ("documented" if reasons else "replayable"), reasons
+    if reasons:
+        return "documented", reasons
+    return ("rerun_verified" if rerun_receipt else "replayable"), reasons
 
 
 def _bundle_claims(record: dict[str, Any], results: Mapping[str, Any], copied: set[str]) -> dict[str, Any]:
@@ -373,7 +437,8 @@ def _bundle_claims(record: dict[str, Any], results: Mapping[str, Any], copied: s
 
 
 def _readme(req: Mapping[str, Any], steps: list[Mapping[str, Any]], scripts: list[str],
-            unsafe_scripts: list[str], python_unknown: bool, linked: bool = False, claims: bool = False) -> str:
+            unsafe_scripts: list[str], python_unknown: bool, linked: bool = False, claims: bool = False,
+            job_scripts: list[str] | None = None) -> str:
     lines = [
         "# 요청 묶음", "", f"- 요청: `{req.get('id')}`", "- `report.md`: PI용 본문",
         *(["- `claims.json`: 연구 요청의 단계별 claim·근거 원장과 CP2 기록. 보고서의 `[[claim:<단계>/<claim>]]`은 "
@@ -399,6 +464,8 @@ def _readme(req: Mapping[str, Any], steps: list[Mapping[str, Any]], scripts: lis
     lines += [f"- 이름이 안전하지 않아 명령을 만들지 않음: `{path}`" for path in unsafe_scripts]
     if python_unknown:
         lines.append("- runner가 쓴 python 명령을 확인하지 못함: `python`을 사용")
+    if job_scripts:
+        lines += ["", "## HPC 잡 스크립트", "", *(f"- `{path}`" for path in job_scripts)]
     lines += ["", "묶음은 원본의 사본입니다. `labhq verify`와 claim anchor 검사는 원래 작업 폴더를 기준으로 합니다.", ""]
     return "\n".join(lines)
 
@@ -426,10 +493,12 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
     workdirs: list[tuple[str, Path]] = []
     script_commands: dict[str, dict[str, str]] = {}
     unsafe_scripts: dict[str, set[str]] = {}
+    copied_job_scripts: list[str] = []
     python_unknown = False
     tasks = tasks or {}
     runner_capabilities = runner_capabilities or {}
     results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
+    rerun_receipt = _rerun_receipt(req)
     plan_steps = [step for step in ((req.get("plan") or {}).get("steps") or []) if isinstance(step, Mapping)]
     ordered_ids, ordered_steps = _topological_steps(plan_steps, results)
     max_file_bytes = int(float(settings.runner.bundle_max_file_mb) * 1024 * 1024)
@@ -492,6 +561,39 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
             row["status"] = f"not copied{tag}: changed since run"
         return row
 
+    def copy_job_script(step_id: str, jobs: HeldDir, workdir: Path, name: str,
+                        expected_sha256: str) -> dict[str, Any]:
+        nonlocal copied_bytes, copied_files, total_limit_hit
+        relative = PurePosixPath("steps", step_id, "jobs", name)
+        row = {"relative_path": relative.as_posix(), "size": "", "sha256": "",
+               "step_id": step_id, "original_path": str(workdir / "jobs" / name), "status": "copied",
+               "rewritten": 0, "remaining_absolute_paths": "", "rewritten_files": ""}
+        destination = temp / Path(*relative.parts)
+        try:
+            with _open_recorded_output(jobs, PurePosixPath("jobs", name)) as (stream, info):
+                row["size"] = info.st_size
+                if info.st_size > max_file_bytes:
+                    row["status"] = "not copied: size"
+                elif copied_files >= max_total_files or copied_bytes + info.st_size > max_total_bytes:
+                    row["status"] = "not copied: total limit"
+                    total_limit_hit = True
+                else:
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    current = _copy_held(stream, info, destination)
+                    if current.casefold() != expected_sha256.casefold():
+                        destination.unlink(missing_ok=True)
+                        row["status"] = "not copied: changed since submission"
+                    else:
+                        copied_files += 1
+                        copied_bytes += info.st_size
+                        copied_job_scripts.append(relative.as_posix())
+        except (FileNotFoundError, NotPlainFolder):
+            row["status"] = "not copied: missing"
+        except OSError:
+            destination.unlink(missing_ok=True)
+            row["status"] = "not copied: changed since submission"
+        return row
+
     try:
         found_workdirs = 0
         with ExitStack() as stack:
@@ -526,20 +628,23 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
                         "engine_cli_version": run.get("engine_cli_version"),
                         "started_at": run.get("started_at"),
                         "ended_at": run.get("ended_at"),
+                        "environment_record": run.get("environment_record"),
                     }.items() if value not in (None, "")
                 }
                 records = run.get("input_files") if isinstance(run, Mapping) else None
                 for record in records or []:
                     if not isinstance(record, Mapping) or not isinstance(record.get("path"), str):
                         continue
-                    input_path = record["path"]
+                    protected = str(record.get("skipped") or "").casefold() in {"private", "restricted"}
+                    input_path = "" if protected else record["path"]
                     if input_path == "inputs" or input_path.startswith("inputs/"):
                         input_path = PurePosixPath("steps", step_id, input_path).as_posix()
                     input_rows.append({
                         "step_id": step_id, "path": input_path,
                         "size": "" if record.get("size") is None else record.get("size"),
                         "mtime_ns": "" if record.get("mtime_ns") is None else record.get("mtime_ns"),
-                        "sha256": record.get("sha256") or "", "skipped": record.get("skipped") or "",
+                        "sha256": "" if protected else record.get("sha256") or "",
+                        "skipped": record.get("skipped") or "",
                         "cached": "yes" if record.get("cached") is True else "",
                     })
                 try:
@@ -568,6 +673,20 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
                                for raw in result.get("unreported_outputs") or []
                                if isinstance(raw, str) and raw not in listed
                                and (path := _safe_output_path(raw)) is not None]
+                submitted = _job_scripts(held, workdir)
+                if submitted:
+                    try:
+                        jobs = stack.enter_context(held.child("jobs"))
+                    except (NotPlainFolder, OSError):
+                        jobs = None
+                    for name, expected_sha256 in submitted:
+                        if jobs is None:
+                            rows.append({"relative_path": f"steps/{step_id}/jobs/{name}", "size": "", "sha256": "",
+                                         "step_id": step_id, "original_path": str(workdir / "jobs" / name),
+                                         "status": "not copied: missing", "rewritten": 0,
+                                         "remaining_absolute_paths": "", "rewritten_files": ""})
+                        else:
+                            rows.append(copy_job_script(step_id, jobs, workdir, name, expected_sha256))
             # Files a step wrote without reporting them (a gene-set copy, a figure) can be what its scripts read
             # (#423). They are copied after every recorded output, so they never push one past the total limit.
             for step_id, outputs, workdir, path, python_command in unreported:
@@ -626,8 +745,12 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
         if links:
             (temp / LINK_SCRIPT).write_text(LINK_SCRIPT_BODY.replace("__LINKS__", json.dumps(links, sort_keys=True)),
                                             encoding="utf-8", newline="\n")
+        if rerun_receipt:
+            (temp / RERUN_RECEIPT_FILE).write_text(
+                json.dumps(rerun_receipt, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8", newline="\n")
         (temp / "README.md").write_text(_readme(req, ordered_steps, commands, unsafe, python_unknown, bool(links),
-                                                claims),
+                                                 claims, copied_job_scripts),
                                           encoding="utf-8", newline="\n")
 
         rewritten_files = 0
@@ -641,14 +764,14 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
             rewrite_by_file[relative] = (count, paths)
             remaining.update(paths)
 
-        grade, grade_reasons = _grade(rows, ordered_steps, rewrite_by_file, not_copied)
+        grade, grade_reasons = _grade(rows, ordered_steps, rewrite_by_file, not_copied, rerun_receipt)
         with (temp / "README.md").open("a", encoding="utf-8", newline="\n") as handle:
             handle.write("\n".join(["## 재현 등급", "", f"- `{grade}`", *(f"- {reason}" for reason in grade_reasons),
                                     f"- {input_summary}",
                                     "- `replayable`: 기록 산출이 모두 있고, 데이터를 낸 단계마다 스크립트, 스크립트를 쓴 "
                                     "단계마다 환경 기록이 있으며 스크립트에 절대경로가 없음",
-                                    "- `rerun_verified`는 다른 곳에서 다시 돌린 기록이 있을 때만 줍니다. 아직 그런 기록은 "
-                                    "없습니다.", ""]))
+                                    "- `rerun_verified`는 다른 곳에서 다시 돌린 기록이 있을 때만 줍니다. 유효한 receipt"
+                                    + ("가 있습니다." if rerun_receipt else "는 이 묶음에 없습니다."), ""]))
         bundle_note = ["", "## 요청 묶음 변환", "", f"- 절대경로를 바꾼 파일: {rewritten_files}개",
                        f"- 재현 등급: {grade}" + (f" ({'; '.join(grade_reasons)})" if grade_reasons else "")]
         bundle_note.append(f"- {input_summary}")
@@ -660,8 +783,9 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
             handle.write("\n".join(bundle_note) + "\n")
 
         generated = [temp / "README.md", temp / "report.md", appendix_path, temp / "INPUTS.tsv",
-                     *([temp / "claims.json"] if claims else []),
-                     *([temp / LINK_SCRIPT] if (temp / LINK_SCRIPT).is_file() else [])]
+                      *([temp / "claims.json"] if claims else []),
+                      *([temp / LINK_SCRIPT] if (temp / LINK_SCRIPT).is_file() else []),
+                      *([temp / RERUN_RECEIPT_FILE] if (temp / RERUN_RECEIPT_FILE).is_file() else [])]
         for path in generated:
             relative = path.relative_to(temp).as_posix()
             count, paths = rewrite_by_file.get(relative, (0, []))
@@ -677,7 +801,7 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
         crate_warning = None
         try:
             crate_path = temp / METADATA_FILE
-            write_ro_crate(crate_path, req, rows, input_rows, run_records)
+            write_ro_crate(crate_path, req, rows, input_rows, run_records, grade, grade_reasons, rerun_receipt)
             rows.append({"relative_path": METADATA_FILE, "size": crate_path.stat().st_size,
                          "sha256": _sha256(crate_path), "step_id": "", "original_path": "",
                          "status": "generated", "rewritten": 0, "remaining_absolute_paths": "",
@@ -690,10 +814,16 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
                 relative = path.relative_to(temp).as_posix()
                 row = next(item for item in rows if item["relative_path"] == relative)
                 row.update(size=path.stat().st_size, sha256=_sha256(path))
+        environment_records = {step_id: run["environment_record"] for step_id, run in run_records.items()
+                               if isinstance(run.get("environment_record"), Mapping)}
         rows.append({"relative_path": ".", "size": "", "sha256": "", "step_id": "",
-                     "original_path": "", "status": "summary", "rewritten": "",
-                     "remaining_absolute_paths": " | ".join(sorted(remaining)),
-                     "rewritten_files": rewritten_files})
+                      "original_path": "", "status": "summary", "rewritten": "",
+                      "remaining_absolute_paths": " | ".join(sorted(remaining)),
+                      "rewritten_files": rewritten_files, "reproducibility_grade": grade,
+                      "reproducibility_reasons": json.dumps(grade_reasons, ensure_ascii=False),
+                      "environment_records": json.dumps(environment_records, ensure_ascii=False, sort_keys=True),
+                      "rerun_receipt": json.dumps(rerun_receipt, ensure_ascii=False, sort_keys=True)
+                      if rerun_receipt else ""})
         with (temp / "MANIFEST.tsv").open("w", encoding="utf-8", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=MANIFEST_FIELDS, delimiter="\t", lineterminator="\n")
             writer.writeheader()

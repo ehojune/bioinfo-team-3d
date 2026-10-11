@@ -670,6 +670,8 @@ async def test_terminal_hook_builds_direct_general_research_and_failed_bundles(t
     # The grade reaches the request and its event, so the web shows it next to the path (#423).
     assert data["bundle_grade"] == hub.requests[rid]["bundle_grade"] == hub.events[-1]["data"]["bundle_grade"]
     assert data["bundle_grade"] in ("replayable", "documented")
+    assert data["bundle_grade_reasons"] == hub.requests[rid]["bundle_grade_reasons"]
+    assert data["bundle_grade_reasons"] == hub.events[-1]["data"]["bundle_grade_reasons"]
     await asyncio_sleep()
     hub.store.close()
 
@@ -746,8 +748,11 @@ def test_step_prompts_and_cli_completion_show_bundle(capsys):
                  "collected in one variable block at the top", "never write an absolute path into a script"):
         assert rule in RESEARCH_STEP_PROMPT and rule in STEP_PROMPT
     render({"type": "request.completed", "ts": 1, "data": {
-        "ok": True, "cost_usd": 0, "bundle_path": "C:/runs/requests/r1"}})
-    assert "요청 묶음: C:/runs/requests/r1" in capsys.readouterr().out
+        "ok": True, "cost_usd": 0, "bundle_path": "C:/runs/requests/r1", "bundle_grade": "documented",
+        "bundle_grade_reasons": ["환경 기록 없음"]}})
+    output = capsys.readouterr().out
+    assert "요청 묶음: C:/runs/requests/r1" in output
+    assert "재현 등급: documented (환경 기록 없음)" in output
 
 
 def test_cli_status_shows_recent_bundle(monkeypatch, capsys):
@@ -798,6 +803,81 @@ def test_a_bundle_with_scripts_and_an_inherited_environment_record_is_replayable
     assert (built["grade"], built["grade_reasons"]) == ("replayable", [])
     assert "## 재현 등급\n\n- `replayable`\n" in readme
     assert "`rerun_verified`는 다른 곳에서 다시 돌린 기록이 있을 때만" in readme
+
+
+def test_rerun_verified_requires_a_valid_receipt_and_is_exposed_by_verify(tmp_path):
+    files = {
+        "env": {"outputs/env/requirements.lock.txt": "pandas==2.2.2\n"},
+        "de": {"outputs/scripts/de.py": "import pandas\n", "outputs/de.tsv": "gene\tlogFC\n"},
+    }
+    built, _readme = _graded(tmp_path / "without", files, {"de": ["env"]})
+    assert built["grade"] == "replayable"
+
+    settings = configured(tmp_path / "with")
+    root = Path(settings.runner.workspace_root)
+    results = {}
+    for step_id, outputs in files.items():
+        workdir = root / "2026-10-12" / f"task_{step_id}"
+        for rel, text in outputs.items():
+            write(workdir / rel, text)
+        task_id = f"task-{step_id}"
+        environment = ({"status": "complete", "sha256": digest(workdir / "outputs/env/requirements.lock.txt")}
+                       if step_id == "env" else {"status": "unavailable", "reason": "lock 없음"})
+        write(workdir / "manifest.json", json.dumps({
+            "host": platform.node(), "runs": {task_id: {"environment_record": environment}}}))
+        results[step_id] = {"task_id": task_id, "workdir": str(workdir), "workdir_id": workdir.name,
+                            "outputs": list(outputs),
+                            "output_sha256": {rel: digest(workdir / rel) for rel in outputs}}
+    receipt = {
+        "status": "verified", "request_id": "grade_receipt", "verified_at": "2026-10-12T09:00:00+09:00",
+        "source_manifest_sha256": "a" * 64, "rerun_manifest_sha256": "b" * 64,
+    }
+    request = {"id": "grade_receipt", "report": "ok", "report_appendix": "",
+               "plan": {"steps": [{"id": "env", "depends_on": []}, {"id": "de", "depends_on": ["env"]}]},
+               "results": results, "rerun_receipt": receipt}
+
+    built = build_request_bundle(request, settings)
+    bundle = Path(built["path"])
+    verified = verify_bundle_copy(bundle)
+
+    assert built["grade"] == verified["grade"] == "rerun_verified"
+    assert json.loads((bundle / "rerun_receipt.json").read_text(encoding="utf-8")) == receipt
+    summary = manifest_rows(bundle)["."]
+    assert summary["reproducibility_grade"] == "rerun_verified"
+    assert json.loads(summary["reproducibility_reasons"]) == []
+    assert json.loads(summary["environment_records"])["env"]["status"] == "complete"
+    entities = crate_entities(bundle)
+    assert entities["#environment-env-status"]["value"] == "complete"
+    assert "재현 등급: rerun_verified" in render_verify({
+        "request_id": request["id"], "status": "done", "outcome": None, "files": [],
+        "report_check": None, "unreported_outputs": {}, "source_verification": [],
+        "request_bundle": verified, "reasons": [], "problems": [], "exit_code": 0,
+    })
+
+
+def test_hpc_job_script_is_copied_and_hashed_in_the_bundle(tmp_path):
+    settings = configured(tmp_path)
+    workdir = Path(settings.runner.workspace_root) / "2026-10-12" / "task_hpc"
+    script = workdir / "jobs" / "analysis_20261012.sh"
+    write(script, "#!/bin/bash\npython -m pip freeze > outputs/env/hpc.txt\n")
+    script_hash = digest(script)
+    write(workdir / "jobs.jsonl", json.dumps({
+        "job_id": "fake-1", "script": str(script), "script_sha256": script_hash,
+    }) + "\n")
+    write(workdir / "manifest.json", json.dumps({"host": platform.node()}))
+    output = workdir / "outputs/result.tsv"
+    write(output, "x\n")
+    request = {"id": "hpc_bundle", "report": "ok", "report_appendix": "",
+               "plan": {"steps": [{"id": "hpc", "depends_on": []}]},
+               "results": {"hpc": {"workdir": str(workdir), "workdir_id": workdir.name,
+                                    "outputs": ["outputs/result.tsv"],
+                                    "output_sha256": {"outputs/result.tsv": digest(output)}}}}
+
+    built = build_request_bundle(request, settings)
+    copied = Path(built["path"]) / "steps/hpc/jobs/analysis_20261012.sh"
+
+    assert copied.read_bytes() == script.read_bytes()
+    assert manifest_rows(Path(built["path"]))["steps/hpc/jobs/analysis_20261012.sh"]["sha256"] == script_hash
 
 
 def test_missing_scripts_environment_or_a_kept_absolute_path_lowers_the_grade_with_reasons(tmp_path):

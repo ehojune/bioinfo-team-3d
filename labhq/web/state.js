@@ -144,6 +144,7 @@ function req(rid) {
     Object.defineProperty(q, 'bundlePath', { value: '', writable: true, enumerable: false });
     Object.defineProperty(q, 'bundleStatus', { value: '', writable: true, enumerable: false });
     Object.defineProperty(q, 'bundleGrade', { value: '', writable: true, enumerable: false });
+    Object.defineProperty(q, 'bundleGradeReasons', { value: [], writable: true, enumerable: false });
     Object.defineProperty(q, 'bundleWarning', { value: '', writable: true, enumerable: false });
     Object.defineProperty(q, 'skipWarningsShown', { value: new Set(), writable: true, enumerable: false });  // #446
     Object.defineProperty(q, 'resumeMissing', { value: [], writable: true, enumerable: false });  // R14
@@ -250,7 +251,7 @@ function apply(ev, replay = false) {
         if (r.route_decision && typeof r.route_decision === 'object') q.processing = { ...r.route_decision };
         if (typeof r.report === 'string') q.report = r.report;
         if (typeof r.report_appendix === 'string') q.report_appendix = r.report_appendix;
-        q.bundlePath = r.bundle_path || ''; q.bundleStatus = r.bundle_status || ''; q.bundleGrade = r.bundle_grade || ''; q.bundleWarning = r.bundle_warning || '';
+        q.bundlePath = r.bundle_path || ''; q.bundleStatus = r.bundle_status || ''; q.bundleGrade = r.bundle_grade || ''; q.bundleGradeReasons = r.bundle_grade_reasons || []; q.bundleWarning = r.bundle_warning || '';
         if (r.report_truncated) Object.assign(q, { report_truncated: true, report_chars: r.report_chars });
         if (r.report_appendix_truncated) Object.assign(q, { report_appendix_truncated: true,
           report_appendix_chars: r.report_appendix_chars });
@@ -540,13 +541,13 @@ function apply(ev, replay = false) {
       if (d.report_appendix_truncated) Object.assign(q, { report_appendix_truncated: true,
         report_appendix_chars: d.report_appendix_chars });
       if (d.error) q.error = d.error;
-      q.bundlePath = d.bundle_path || ''; q.bundleStatus = d.bundle_status || ''; q.bundleGrade = d.bundle_grade || ''; q.bundleWarning = d.bundle_warning || '';
+      q.bundlePath = d.bundle_path || ''; q.bundleStatus = d.bundle_status || ''; q.bundleGrade = d.bundle_grade || ''; q.bundleGradeReasons = d.bundle_grade_reasons || []; q.bundleWarning = d.bundle_warning || '';
       feed({ who: 'cso', text: q.status === 'done' ? '최종 보고서를 올렸어요' : q.status === 'cancelled' ? '요청을 취소했어요. 끝난 단계까지 보고서에 남겼어요' : `요청이 실패했어요: ${short(d.error, 100)}`, cls: q.status === 'failed' ? 'alert' : '' }, ts, rid);
       break;
     }
     case 'request.bundle': {
       const q = req(rid);
-      q.bundlePath = d.bundle_path || ''; q.bundleStatus = d.bundle_status || ''; q.bundleGrade = d.bundle_grade || ''; q.bundleWarning = d.bundle_warning || '';
+      q.bundlePath = d.bundle_path || ''; q.bundleStatus = d.bundle_status || ''; q.bundleGrade = d.bundle_grade || ''; q.bundleGradeReasons = d.bundle_grade_reasons || []; q.bundleWarning = d.bundle_warning || '';
       break;
     }
     case 'request.followup': {

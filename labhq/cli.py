@@ -160,9 +160,15 @@ def render(ev: dict, login_holds: set[str] | None = None) -> None:
     elif t == "request.bundle":
         line = (f"📦 요청 묶음: {d['bundle_path']}" if d.get("bundle_path") else
                 f"⚠️ 요청 묶음: {d.get('bundle_warning', '만들지 못함')}")
+        if d.get("bundle_grade"):
+            reasons = "; ".join(map(str, d.get("bundle_grade_reasons") or []))
+            line += f"\n   재현 등급: {d['bundle_grade']}" + (f" ({reasons})" if reasons else "")
     if t in {"request.completed", "request.failed"} and line:
         if d.get("bundle_path"):
             line += f"\n   요청 묶음: {d['bundle_path']}"
+        if d.get("bundle_grade"):
+            reasons = "; ".join(map(str, d.get("bundle_grade_reasons") or []))
+            line += f"\n   재현 등급: {d['bundle_grade']}" + (f" ({reasons})" if reasons else "")
         if d.get("bundle_warning"):
             line += f"\n   경고: {d['bundle_warning']}"
     elif t in ("runner.online", "runner.offline"):
@@ -1382,6 +1388,9 @@ def main(argv: list[str] | None = None) -> None:
                 print(f"  {req['id']} {req.get('status')}")
                 if req.get("bundle_path"):
                     print(f"    요청 묶음: {req['bundle_path']}")
+                if req.get("bundle_grade"):
+                    reasons = "; ".join(map(str, req.get("bundle_grade_reasons") or []))
+                    print(f"    재현 등급: {req['bundle_grade']}" + (f" ({reasons})" if reasons else ""))
                 if req.get("bundle_warning"):
                     print(f"    경고: {req['bundle_warning']}")
         approvals = _api(s, "GET", "/api/approvals")
