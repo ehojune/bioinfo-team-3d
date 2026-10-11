@@ -27,7 +27,7 @@
 - main에서 재현: 네 결함 모두 리뷰가 적은 대로 재현(`evaluate_tool` windows=True, `shared_environment_install_denial` protected=True).
 - 새 test 97건: origin/main 코드에서 66건 실패, 이 branch에서 95건 통과·2건 skip(Windows 일반 계정은 symlink를 못 만들어 link 시작 경로 test 2건 skip). 나머지 29건은 유지 동작을 고정하는 test로 main에서도 통과합니다(`"$PY" script.py "$INPUT"` 거절, `.tmp` 아래 삭제 허용, 작업 폴더 안 다운로드 허용 등).
 - 기존 test는 지우거나 바꾸지 않았습니다. 관련 4개 파일 753 passed·7 skipped.
-- Windows 전체 pytest: 5110 passed, 66 skipped (10분 35초).
+- Windows 전체 pytest: 5110 passed, 66 skipped. main(#520) 병합 뒤 5111 passed, 66 skipped.
 - `bash scripts/check_public.sh`, `python scripts/patch_notes.py check`, `git diff --check` 통과.
 
 ## 미해결
