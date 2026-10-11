@@ -1,0 +1,8 @@
+pr: 524
+rows:
+- sha: e5a56a9
+  at: 2026-10-12 03:27
+  text: "재현 등급과 실행 환경 기록을 요청 묶음 전반에 연결"
+- sha: 9fba5f1
+  at: 2026-10-12 03:48
+  text: "Windows manifest 검증에서 UTF-8 읽기를 명시"

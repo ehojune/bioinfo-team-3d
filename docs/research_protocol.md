@@ -99,7 +99,7 @@ claim은 지지·반박으로 연결한 출처가 모두 `found`일 때만 `veri
 
 조회는 한 번에 최대 `concurrency`(기본 4)개씩 돌고, 조회마다 `research.live_source_timeout_s`(기본 10초), 보고 전체는 `research.live_source_deadline_s`(기본 60초) 안에 끝난다. deadline을 넘긴 출처는 `failed/timeout`이라 미확인이며, 부재(`not_found`)로 적지 않는다. `research.live_source_check`를 켜면 Crossref·doi.org·NCBI를 조회하고, 기본값은 꺼짐이다. 시험과 bench 고정 응답은 `StaticResolver`를 쓴다. artifact 근거는 runner가 관찰한 manifest가 있어야 `found`가 된다.
 - 주요 claim에는 반대 근거·대안 설명·반증 관찰을 둔다. critic은 결함을 찾고 원 담당자가 고친다.
-- 입력·검색식·명령·코드/환경·seed·exit·출력 hash를 기록한다. `documented`, `replayable`, `rerun_verified`를 구별한다.
+- 입력·검색식·명령·코드/환경·seed·exit·출력 hash를 기록한다. `documented`는 기록은 있으나 replay 조건이 빠진 상태, `replayable`은 산출·스크립트·환경·상대경로 조건을 갖춘 상태, `rerun_verified`는 유효한 별도 재실행 receipt까지 있는 상태다.
 - 근거나 방법 revision이 바뀌면 종속 claim·분석·감사·승인을 stale 처리한다. 옛 결과는 이력으로만 둔다.
 
 작성자와 다른 reviewer가 ID·인용 지지·조건·통계·반례·과장·재현 범위를 claim별로 감사한다. reviewer 정체성과 실제 model/vendor를 기록한다. 중대 결함이 남으면 accept할 수 없다.

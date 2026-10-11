@@ -258,6 +258,15 @@ class Hub:
         self.last_runner_rosters: dict[str, dict] = self.store.all("runner_roster")
         self.events: deque = deque(maxlen=settings.gateway.event_buffer)
         self.events.extend(self.store.events_since(max(0, self.store.event_bounds()[1] - settings.gateway.event_buffer)))
+        # No runner is connected to a fresh process. An open page reconnects with `since` and replays events, not a
+        # snapshot, so a runner the old process saw online, or one it may hold from an earlier snapshot, needs a
+        # runner.offline here or the page keeps hiding 러너 꺼짐 (R15, #521). A runner whose last event is that is done.
+        last_seen = {str((ev.get("data") or {}).get("runner_id")): ev["type"] for ev in self.events
+                     if ev.get("type") in {"runner.online", "runner.offline"}}
+        for runner_id in sorted(set(last_seen) | set(self.last_runner_rosters)):
+            if last_seen.get(runner_id) != "runner.offline":
+                self.events.append(self.store.append_event({"type": "runner.offline", "ts": time.time(),
+                    "data": {"runner_id": runner_id, "reason": "gateway_restarted"}}, settings.gateway.event_buffer))
         for aid, entry in list(self.approvals.items()):
             if entry.get("origin") is None and entry["approval"].get("kind") not in {"resume", "facilities_fix"}:
                 self.approvals.pop(aid)
@@ -774,6 +783,7 @@ class Hub:
                    "usage": req.get("usage", {}),
                    "usage_known": req.get("usage_known", True), "bundle_path": req.get("bundle_path"),
                    "bundle_status": req.get("bundle_status"), "bundle_grade": req.get("bundle_grade"),
+                   "bundle_grade_reasons": req.get("bundle_grade_reasons") or [],
                    "bundle_warning": req.get("bundle_warning")}
         if environment:
             summary["step_environment"] = environment
@@ -811,6 +821,7 @@ class Hub:
             self.requests[rid]["bundle_path"] = data["bundle_path"] = bundled["path"]
             self.requests[rid]["bundle_status"] = data["bundle_status"] = bundled["status"]
             self.requests[rid]["bundle_grade"] = data["bundle_grade"] = bundled.get("grade")
+            self.requests[rid]["bundle_grade_reasons"] = data["bundle_grade_reasons"] = bundled.get("grade_reasons") or []
             if bundled.get("crate_warning"):
                 warning = str(bundled["crate_warning"])
                 self.requests[rid]["bundle_warning"] = data["bundle_warning"] = warning
@@ -830,9 +841,11 @@ class Hub:
         self.requests[rid].pop("bundle_path", None)
         self.requests[rid].pop("bundle_status", None)
         self.requests[rid].pop("bundle_grade", None)
+        self.requests[rid].pop("bundle_grade_reasons", None)
         data.pop("bundle_path", None)
         data.pop("bundle_status", None)
         data.pop("bundle_grade", None)
+        data.pop("bundle_grade_reasons", None)
         self.requests[rid]["bundle_warning"] = data["bundle_warning"] = warning
         log.warning("request bundle unavailable for %s: %s", rid, warning)
 
@@ -842,7 +855,8 @@ class Hub:
         event = self.store.commit_request_event(
             rid, self.requests[rid],
             {"type": "request.bundle", "ts": time.time(), "request_id": rid,
-             "data": {key: data[key] for key in ("bundle_path", "bundle_status", "bundle_grade", "bundle_warning")
+             "data": {key: data[key] for key in ("bundle_path", "bundle_status", "bundle_grade",
+                                                   "bundle_grade_reasons", "bundle_warning")
                       if key in data}},
             self.s.gateway.event_buffer,
         )
@@ -1020,16 +1034,19 @@ class Hub:
         created = req.get("created_at")
         when = time.strftime("%m-%d %H:%M", time.localtime(float(created))) if created else "접수 시각 모름"
         # A plan whose steps all finished stopped after them (CP2, review, a continue card, the report), not before.
+        has_plan = bool(req.get("plan", {}).get("steps"))
         carried = (req.get("research_contract") or {}).get("continuation") or {}
         awaiting_continuation_plan = bool(carried and not carried.get("plan_sha256"))
         left = (", ".join(steps) if steps else
                 f"이어 가기 {int(carried.get('round') or 2)}차: 새 계획·CP1부터 이어 갑니다"
                 if awaiting_continuation_plan else
-                "없음(단계는 모두 끝났고 그 뒤 검토·결정·보고서부터 이어 갑니다)" if req.get("plan", {}).get("steps")
+                "없음(단계는 모두 끝났고 그 뒤 검토·결정·보고서부터 이어 갑니다)" if has_plan
                 else "요청 전체")
         approval = ApprovalRequest(kind="resume", request_id=rid,
                                    summary=f"중단된 요청 \"{head}\"({when} 접수)을 다시 이어 갈까요? 남은 단계: {left}",
-                                   detail={"request_text": head, "created_at": created, "steps": steps},
+                                   # has_plan tells the web's empty steps apart: all done, or the whole request (#521).
+                                   detail={"request_text": head, "created_at": created, "steps": steps,
+                                           "has_plan": has_plan},
                                    timeout_s=self.s.policy.approvals.pi_decision_timeout_s)
         self.approvals[approval.id] = {"approval": approval.model_dump(mode="json"), "origin": None}
         self.save_approval(approval.id)
@@ -2603,7 +2620,8 @@ class Hub:
                                                                   "project_id", "plan", "cost_usd", "cost_known",
                                                                   "cost_summary", "usage", "usage_known", "agent_id",
                                                                   "references", "pi_notes", "route", "route_decision",
-                                                                  "bundle_path", "bundle_status", "bundle_grade", "bundle_warning")},
+                                                                  "bundle_path", "bundle_status", "bundle_grade",
+                                                                  "bundle_grade_reasons", "bundle_warning")},
                           # the full list and full answers stay on the request (GET /api/requests/{id})
                           "followups": [snapshot_followup(f) for f in (r.get("followups") or [])[-20:]],
                           "step_status": self.request_summary(r, running)["step_progress"]["steps"],

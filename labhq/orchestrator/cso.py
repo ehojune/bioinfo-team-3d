@@ -499,6 +499,8 @@ If you run scripts, save the version and package list of the interpreter that ra
 """ + OUTPUT_ENV_DIR + """<your step id>.txt (`<that interpreter> --version` and `<that interpreter> -m pip freeze`), unless an
 earlier environment step's lock covers exactly what you used; packages you installed yourself (for example into
 ./.pylib) always go in your own record.
+If an HPC job runs the analysis, put the same version and package-list commands inside its job script so the compute
+environment, not only the runner login environment, writes the record under outputs/env/.
 Use .tmp only for disposable temporary files. In the method details, record the seed and tool and data versions."""
 
 STEP_PROMPT = RESEARCH_STEP_PROMPT + """

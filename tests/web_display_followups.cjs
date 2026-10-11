@@ -26,11 +26,13 @@ const warned = context.bundleHTML({bundlePath: 'C:\\runs\\r1', bundleStatus: 'co
 assert.match(warned, /요청 묶음: <code>C:\\runs\\r1<\/code>/);
 assert.match(warned, /요청 묶음 경고: crate missing/);
 assert.equal(context.bundleHTML({}), '');
-assert.match(html, /q\.bundlePath, q\.bundleStatus, q\.bundleGrade, q\.bundleWarning/, '2.5D re-renders when only the status changes');
+assert.match(html, /q\.bundlePath, q\.bundleStatus, q\.bundleGrade, q\.bundleGradeReasons, q\.bundleWarning/, '2.5D re-renders when only the status changes');
 assert.match(context.bundleHTML({bundlePath: 'r1', bundleStatus: 'complete', bundleGrade: 'documented'}), / · 재현 등급 <strong>documented<\/strong>/);
+assert.match(context.bundleHTML({bundlePath: 'r1', bundleStatus: 'complete', bundleGrade: 'documented',
+  bundleGradeReasons: ['환경 기록 없음']}), /documented<\/strong> \(환경 기록 없음\)/);
 
 // 3D: same information, re-rendered when it changes.
-assert.match(live3d, /q\.assumptions, q\.bundlePath, q\.bundleStatus, q\.bundleGrade, q\.bundleWarning/);
+assert.match(live3d, /q\.assumptions, q\.bundlePath, q\.bundleStatus, q\.bundleGrade, q\.bundleGradeReasons, q\.bundleWarning/);
 assert.match(live3d, /재현 등급 \$\{q\.bundleGrade\}/);
 // An incomplete bundle is the case a lower grade matters most (PR #431 review): both views keep the grade.
 assert.match(context.bundleHTML({bundlePath: 'r1', bundleStatus: 'incomplete', bundleGrade: 'documented'}),

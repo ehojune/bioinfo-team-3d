@@ -438,7 +438,7 @@ class TaskWorkspace:
                 continue
             seen.add(key)
             if reason := inside(lexical):
-                found.append({"path": shown_root, "size": None, "mtime_ns": None,
+                found.append({"path": "", "size": None, "mtime_ns": None,
                               "sha256": None, "skipped": reason})
                 continue
             try:
@@ -461,7 +461,7 @@ class TaskWorkspace:
                     if not top.same_as(real_root):
                         raise OSError("input root changed")
                     if reason := inside(real_root):
-                        found.append({"path": shown_root, "size": None, "mtime_ns": None,
+                        found.append({"path": "", "size": None, "mtime_ns": None,
                                       "sha256": None, "skipped": reason})
                         continue
                 except (OSError, RuntimeError, ValueError):
@@ -550,7 +550,7 @@ class TaskWorkspace:
                         continue  # run folders are outputs, never recorded as inputs
                     if counters["files"] >= max_files:
                         return f"입력 파일이 상한 {max_files}개를 넘어 앞의 {max_files}개만 기록합니다"
-                    found.append({"path": path, "size": None, "mtime_ns": None,
+                    found.append({"path": "", "size": None, "mtime_ns": None,
                                   "sha256": None, "skipped": reason})
                     counters["files"] += 1
                     continue

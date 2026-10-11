@@ -14,7 +14,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 04:14 | [`ea02a1c`](https://github.com/ehojune/bioinfo-team-3d/pull/528/commits/ea02a1c) | main 병합: 첫 로드 표시와 재현 등급 사유(#524)·재연결 카드 처리(#526)를 함께 둔다. |
+| 03:57 | [`b0f6b79`](https://github.com/ehojune/bioinfo-team-3d/pull/528/commits/b0f6b79) | 웹은 한도·로그인 대기가 풀려도 열린 결정 카드가 있으면 PI 결정 대기로, 시간 초과 카드는 거절이 아니라 시간 초과로 보이고, CLI는 선택지 있는 직원 질문을 답 없이 승인하지 않는다(#521). |
+| 03:48 | [`9fba5f1`](https://github.com/ehojune/bioinfo-team-3d/pull/524/commits/9fba5f1) | Windows manifest 검증에서 UTF-8 읽기를 명시 |
 | 03:33 | [`85122d5`](https://github.com/ehojune/bioinfo-team-3d/pull/526/commits/85122d5) | 러너를 다시 시작하면 이전 프로세스가 띄운 도구 권한 카드가 incarnation이 같아도 닫히고, 카드를 띄운 작업이 끝나도 그 카드가 닫힌다(#521). |
+| 03:27 | [`e5a56a9`](https://github.com/ehojune/bioinfo-team-3d/pull/524/commits/e5a56a9) | 재현 등급과 실행 환경 기록을 요청 묶음 전반에 연결 |
 | 03:23 | [`759458d`](https://github.com/ehojune/bioinfo-team-3d/pull/523/commits/759458d) | direct 응답의 실제 산출 종류를 기존 어휘로 기록하고 semantics 재사용 판정에 연결 |
 | 02:46 | [`e2a0906`](https://github.com/ehojune/bioinfo-team-3d/pull/520/commits/e2a0906) | labhq init이 #518 템플릿 목록을 그대로 적은 설정도 load 때 백그라운드 셸 도구를 받는다(#520 리뷰). |
 | 02:37 | [`2381232`](https://github.com/ehojune/bioinfo-team-3d/pull/520/commits/2381232) | 승인 게이트가 백그라운드 셸 출력을 읽거나 멈추는 BashOutput·KillShell·TaskOutput·TaskStop을 기본 허용한다(#518 후속). |

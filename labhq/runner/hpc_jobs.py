@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 from pathlib import Path
 from typing import AsyncContextManager, Awaitable, Callable
 
@@ -50,8 +51,9 @@ async def submit_job(s: Settings, scheduler: Scheduler, workdir: Path, body: dic
         cores = int(body.get("cores", 1))
         mem, walltime = str(body.get("mem") or "4G"), str(body.get("walltime") or "04:00:00")
         ch = core_hours(cores, walltime)
-        text = spath.read_text(encoding="utf-8")
-    except (TypeError, ValueError, OSError) as e:
+        script_bytes = spath.read_bytes()
+        text = script_bytes.decode("utf-8")
+    except (TypeError, ValueError, OSError, UnicodeError) as e:
         return {"error": f"cannot submit {spath.name}: {e}"}
     if s.hpc.scheduler == "slurm" and (option := slurm_cluster_directive(text)):
         return {"error": f"#SBATCH {option}: labhq tracks jobs on the default cluster only; "
@@ -76,7 +78,7 @@ async def submit_job(s: Settings, scheduler: Scheduler, workdir: Path, body: dic
         if not dec.get("approved"):
             return {"submitted": False, "reason": dec.get("note") or "denied by the PI"}
         try:
-            unchanged = _script(workdir, str(spath)) == spath and spath.read_text(encoding="utf-8") == text
+            unchanged = _script(workdir, str(spath)) == spath and spath.read_bytes() == script_bytes
         except OSError:
             unchanged = False
         if not unchanged:  # the PI approved what they were shown, not a later edit
@@ -90,7 +92,8 @@ async def submit_job(s: Settings, scheduler: Scheduler, workdir: Path, body: dic
                                              str(logs / f"{spath.stem}.out"), str(logs / f"{spath.stem}.err"))
         except Exception as e:
             return {"error": str(e)}
-        result = {"submitted": True, "job_id": job_id, "name": name, "script": str(spath), "core_hours": ch}
+        result = {"submitted": True, "job_id": job_id, "name": name, "script": str(spath),
+                  "script_sha256": hashlib.sha256(script_bytes).hexdigest(), "core_hours": ch}
         if record:
             await record(result)
     return result

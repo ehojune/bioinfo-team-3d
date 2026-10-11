@@ -67,6 +67,18 @@ def _normalize_instance_arg(argv: list[str]) -> list[str]:
     return (["--instance", instances[0]] if instances else []) + rest
 
 
+def _question_options(approval: dict) -> list[str]:
+    """A hard-stop question card's options as "a) …" lines, the way the web card letters them (R19, decide.js).
+
+    Up to 12 non-blank options; a letter the employee already wrote ("a) GRCh38") is not doubled (#331)."""
+    detail = approval.get("detail") or {}
+    if approval.get("kind") != "question" or not isinstance(detail, dict) or not isinstance(detail.get("options"), list):
+        return []
+    options = [re.sub(r"^\(?[a-lA-L]\)\s*(?=\S)", "", o.strip())
+               for o in detail["options"] if isinstance(o, str) and o.strip()][:12]
+    return [f"{'abcdefghijkl'[index]}) {option}" for index, option in enumerate(options)]
+
+
 def render(ev: dict, login_holds: set[str] | None = None) -> None:
     t, a, d = ev.get("type"), ev.get("agent_id") or "", ev.get("data") or {}
     ic = ICON.get(a, "🐥" if a.startswith("c_") else "·")
@@ -85,7 +97,11 @@ def render(ev: dict, login_holds: set[str] | None = None) -> None:
     elif t == "approval.requested":
         line = f"📱 승인 요청 [{d.get('kind')}] {d.get('summary')}  (id={d.get('id')})"
     elif t == "approval.resolved":
-        line = f"✅ 승인 결과: {'허가' if d.get('approved') else '거절'} {d.get('note', '')}"
+        # A card nobody answered is not a refusal (R5), and CP1/CP2 수정 요청 is not one either (#521).
+        unanswered = ("시간 초과" if d.get("state") == "timed_out" else
+                      "답 없이 닫힘" if d.get("state") in {"expired", "cancelled"} else "")
+        label = unanswered or ("수정 요청" if d.get("choice") == "revise" else "허가" if d.get("approved") else "거절")
+        line = f"{'⏰' if unanswered else '✅'} 승인 결과: {label} {d.get('note', '')}"
     elif t == "job.submitted":
         line = f"🖥️  HPC 제출 {d.get('job_id')} ({d.get('name')})"
     elif t == "job.state":
@@ -144,9 +160,15 @@ def render(ev: dict, login_holds: set[str] | None = None) -> None:
     elif t == "request.bundle":
         line = (f"📦 요청 묶음: {d['bundle_path']}" if d.get("bundle_path") else
                 f"⚠️ 요청 묶음: {d.get('bundle_warning', '만들지 못함')}")
+        if d.get("bundle_grade"):
+            reasons = "; ".join(map(str, d.get("bundle_grade_reasons") or []))
+            line += f"\n   재현 등급: {d['bundle_grade']}" + (f" ({reasons})" if reasons else "")
     if t in {"request.completed", "request.failed"} and line:
         if d.get("bundle_path"):
             line += f"\n   요청 묶음: {d['bundle_path']}"
+        if d.get("bundle_grade"):
+            reasons = "; ".join(map(str, d.get("bundle_grade_reasons") or []))
+            line += f"\n   재현 등급: {d['bundle_grade']}" + (f" ({reasons})" if reasons else "")
         if d.get("bundle_warning"):
             line += f"\n   경고: {d['bundle_warning']}"
     elif t in ("runner.online", "runner.offline"):
@@ -1366,6 +1388,9 @@ def main(argv: list[str] | None = None) -> None:
                 print(f"  {req['id']} {req.get('status')}")
                 if req.get("bundle_path"):
                     print(f"    요청 묶음: {req['bundle_path']}")
+                if req.get("bundle_grade"):
+                    reasons = "; ".join(map(str, req.get("bundle_grade_reasons") or []))
+                    print(f"    재현 등급: {req['bundle_grade']}" + (f" ({reasons})" if reasons else ""))
                 if req.get("bundle_warning"):
                     print(f"    경고: {req['bundle_warning']}")
         approvals = _api(s, "GET", "/api/approvals")
@@ -1420,6 +1445,8 @@ def main(argv: list[str] | None = None) -> None:
     elif args.cmd == "approvals":
         for a in _api(s, "GET", "/api/approvals"):
             print(f"{a['id']}  [{a['kind']}] {a['summary']}")
+            for option in _question_options(a):
+                print(f"    {option}")
     elif args.cmd == "approve":
         if args.deny and args.choice not in (None, "deny"):
             p.error(f"--deny contradicts --choice {args.choice}")
@@ -1447,6 +1474,12 @@ def main(argv: list[str] | None = None) -> None:
                 lines = [str(pending.get("summary") or "PI 질문에 답해 주세요.")]
             p.exit(2, "clarify 카드는 --note 답변이 필요합니다. 요청은 그대로 유지됩니다.\n질문:\n" +
                    "\n".join(lines) + f'\n예: labhq approve {args.id} --note "1: a, 2: b"\n')
+        # A hard-stop question with options needs a pick, as on the web (R19, #521); --deny still refuses it.
+        options = _question_options(pending or {})
+        if options and not args.deny and not args.note.strip():
+            p.exit(2, "이 직원 질문은 답을 골라 --note로 보내야 합니다. 요청은 그대로 유지됩니다.\n"
+                   f"{(pending or {}).get('summary') or ''}\n선택지:\n" + "\n".join(options) +
+                   f'\n예: labhq approve {args.id} --note "a"\n')
         body = {"approved": args.choice == "approve" if args.choice else not args.deny, "note": args.note}
         if args.choice:
             body["choice"] = args.choice
