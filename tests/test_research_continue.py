@@ -171,6 +171,9 @@ async def test_revise_continues_through_a_new_cp1_and_runs_only_the_changed_step
     assert "Earlier rounds of this request:" in synthesis and P1["problem"] in synthesis
     assert "이전 차수에서 고친 것" in synthesis
     assert "Round 1 review: revise with 1 P1 issue(s):" in req["report_appendix"] and P1["problem"] in req["report_appendix"]
+    # The test writer left the section out, so labhq wrote it from round 1's P1 issues (#512 review), in the body.
+    assert "## 이전 차수에서 고친 것" in req["report"] and P1["problem"] in req["report"]
+    assert req["outcome"] == "research_reported"  # a missing section is not a claim problem
 
 
 @pytest.mark.asyncio
@@ -549,3 +552,40 @@ def test_a_changed_hypothesis_re_runs_every_step_since_steps_are_dispatched_with
     carry = continuation.carry_over(previous, new, {}, [])
     assert carry.reuse == [] and set(carry.rerun.values()) == {"question, scope, hypotheses, protocol or pack values changed"}
     assert continuation.carry_over(previous, copy.deepcopy(old), {}, []).reuse == ["s1", "s2"]
+
+
+
+def test_a_report_that_already_has_the_earlier_rounds_section_keeps_its_own():
+    from labhq.orchestrator.cso import EARLIER_ROUNDS_HEADING, _earlier_rounds_fallback
+
+    contract = {"rounds": [{"round": 1, "review": {"verdict": "revise", "issues": [P1]}},
+                           {"round": 2, "review": None, "cp2": {"decision": "revision_requested", "note": "s2 다시"}}]}
+    section = _earlier_rounds_fallback(contract)
+    assert section.startswith("## 이전 차수에서 고친 것") and EARLIER_ROUNDS_HEADING.search(section)
+    assert f"1차 리뷰 P1 · {P1['step_id']}" in section and "2차 CP2 수정 요청: s2 다시" in section
+    assert _earlier_rounds_fallback({"rounds": []}) == "" and _earlier_rounds_fallback({}) == ""
+    assert EARLIER_ROUNDS_HEADING.search("결론\n\n### 이전 차수에서 고친 것\n- s3 고침")
+    assert EARLIER_ROUNDS_HEADING.search("결론\n\n## 이전 차수에서 고친 것 ##\n- s3 고침")  # #517 review: closing #s
+
+
+BENCH_BLOCK = '<!-- LABHQ_BENCH_RESULT -->\n{"answer": 1}\n<!-- /LABHQ_BENCH_RESULT -->'
+
+
+def test_sections_labhq_adds_go_before_a_trailing_benchmark_block():
+    from labhq.orchestrator.cso import _before_bench_block
+
+    assert _before_bench_block("본문\n\n" + BENCH_BLOCK, "## 추가") == "본문\n\n## 추가\n\n" + BENCH_BLOCK
+    assert _before_bench_block("본문", "## 추가") == "본문\n\n## 추가"
+    # A block that is not last is left where it is (scoring already fails it), and the section goes at the end.
+    assert _before_bench_block(BENCH_BLOCK + "\n뒤 글", "## 추가").endswith("뒤 글\n\n## 추가")
+
+
+@pytest.mark.asyncio
+async def test_a_continued_benchmark_report_keeps_its_result_block_last(tmp_path, monkeypatch):
+    """#517 review: the earlier-rounds section was appended after LABHQ_BENCH_RESULT, which bench scoring rejects."""
+    monkeypatch.setattr(sys.modules[__name__], "REPORT", REPORT + "\n\n" + BENCH_BLOCK)
+    hub = _hub(tmp_path, [CP1, APPROVE, CONTINUE, CP1, APPROVE])
+    await Orchestrator(hub).run_request("r")
+    report = hub.requests["r"]["report"]
+    assert report.rstrip().endswith("<!-- /LABHQ_BENCH_RESULT -->")
+    assert report.index("## 이전 차수에서 고친 것") < report.index("<!-- LABHQ_BENCH_RESULT -->")
