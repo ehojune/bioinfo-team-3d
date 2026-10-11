@@ -12,3 +12,6 @@ rows:
   - sha: "a824efa"
     at: "2026-10-12 04:14"
     text: "main을 병합해 #524 재현 등급 기록과 manual 공유 환경 문단 충돌을 풀었다."
+  - sha: "d1d1886"
+    at: "2026-10-12 04:45"
+    text: "공유 환경 설치 판정이 nohup·sudo·time·uv run 같은 wrapper 뒤의 실행 파일과 python·Rscript의 script 앞 변수를 다시 막는다. PowerShell에서 Get-ChildItem을 pipe로 넘겨 지우는 명령(ForEach-Object 안 포함)도 .tmp 밖이면 묻는다."
