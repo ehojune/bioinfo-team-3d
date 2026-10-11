@@ -3,7 +3,8 @@
 1. 인사팀 (recruiter agent, Claude Code) runs the paper2agent skill in talent/<slug>/build.
 2. It returns a structured "offer letter" (JSON schema below): tools, MCP entry point, skill dir.
 3. Probation: labhq starts the delivered MCP server and lists its tools.
-4. A contract AgentSpec (with expiry) is written to agents/contract/ and mirrored to the talent pool.
+4. A contract AgentSpec (with expiry) is written to agents/contract/ and mirrored to the talent pool, with the
+   source commit, licenses, external services and labhq's own skill/MCP hashes (#424, recruit/provenance.py).
 
 Paper2Agent output (see its SKILL.md): dist/<project>-agent/{skill/<paper>-paper, mcp/<repo>-mcp}
 or dist/<repo>-mcp.zip with a USAGE.md.
@@ -11,7 +12,9 @@ or dist/<repo>-mcp.zip with a USAGE.md.
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 import shutil
 import subprocess
 import tempfile
@@ -19,7 +22,8 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..models import AgentSpec, ContractInfo, Employment, Engine, Event, McpServerSpec, Task
+from ..models import AgentSpec, ContractInfo, Employment, Engine, Event, ExternalService, McpServerSpec, Task
+from . import provenance
 from ..tools._mcpcompat import list_tools
 from ..util import extract_json, short, slugify
 
@@ -48,10 +52,24 @@ OFFER_SCHEMA: dict[str, Any] = {
             "required": ["name", "description"]}},
         "verification_status": {"type": "string"},
         "limitations": {"type": "array", "items": {"type": "string"}},
+        "source_commit": _STR_OR_NULL,
+        "code_license": _STR_OR_NULL,
+        "weights_license": _STR_OR_NULL,
+        "external_services": {"type": "array", "items": {
+            "type": "object", "additionalProperties": False,
+            "properties": {"host": {"type": "string"}, "what_is_sent": {"type": "string"}},
+            "required": ["host", "what_is_sent"]}},
     },
     "required": ["agent_name", "role_summary", "kind", "mcp_zip", "mcp_dir", "mcp_command", "mcp_args",
-                 "mcp_env_required", "skill_dir", "tools", "verification_status", "limitations"],
+                 "mcp_env_required", "skill_dir", "tools", "verification_status", "limitations",
+                 "source_commit", "code_license", "weights_license", "external_services"],
 }
+
+# Paper2Agent's draft states (Paper2Skill strict verification exits 2) and its combined "partial" result: the
+# offer_status words that keep a hire on probation even when its tools list (#424).
+DRAFT_STATUSES = frozenset({"mechanical_failure", "unreviewed", "unresolved_discrepancies", "partial", "blocked",
+                            "failed", "failure"})
+SOURCE_MARKER = ".labhq-source.json"  # which Paper2Agent commit setup-paper2agent installed
 
 CONTRACT_PROMPT = """You are {name}, a contract specialist (파견직) hired into the lab from a published method.
 Source paper: {paper}
@@ -66,6 +84,7 @@ Rules:
 - If the request is outside the method's validated scope (organism, assay, data type), say so and hand it back
   to the CSO instead of improvising.
 - Log every tool call's parameters and versions so the result is reproducible; cite output paths.
+- Your tools send data to: {external}. Never pass restricted, cohort or patient data to them.
 - Known limitations from onboarding:
 {limits}
 """
@@ -80,17 +99,70 @@ def skill_installed(engine: str = "claude_code") -> bool:
     return (skill_path(engine) / "SKILL.md").exists()
 
 
-def install_skill(source: str, cache: Path) -> list[Path]:
-    """Prepare both Paper2Agent copies before replacing either installed skill."""
+def head_commit(repo: Path) -> str | None:
+    """The checkout's HEAD commit, read from .git without running git (detached, a loose ref or packed-refs)."""
+    git = repo / ".git"
+    try:
+        head = (git / "HEAD").read_text(encoding="utf-8").strip()
+        if not head.startswith("ref: "):
+            return provenance.source_commit(head)
+        ref = head[5:].strip()
+        if (git / ref).is_file():
+            return provenance.source_commit((git / ref).read_text(encoding="utf-8"))
+        for line in (git / "packed-refs").read_text(encoding="utf-8").splitlines():
+            parts = line.split()
+            if len(parts) == 2 and parts[1] == ref:
+                return provenance.source_commit(parts[0])
+    except OSError:
+        pass
+    return None
+
+
+def _detached(repo: Path) -> bool:
+    try:
+        return not (repo / ".git" / "HEAD").read_text(encoding="utf-8").startswith("ref: ")
+    except OSError:
+        return False
+
+
+def _checkout(repo: Path, ref: str) -> None:
+    subprocess.run(["git", "-C", str(repo), "fetch", "--depth", "1", "origin", ref], check=True)
+    subprocess.run(["git", "-C", str(repo), "checkout", "--detach", "FETCH_HEAD"], check=True)
+
+
+def installed_commit(engine: str = "claude_code") -> str | None:
+    """The Paper2Agent commit setup-paper2agent recorded in the installed copy, or None."""
+    try:
+        data = json.loads((skill_path(engine) / SOURCE_MARKER).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return provenance.source_commit(data.get("commit")) if isinstance(data, dict) else None
+
+
+def install_skill(source: str, cache: Path, commit: str | None = None) -> list[Path]:
+    """Prepare both Paper2Agent copies before replacing either installed skill.
+
+    With `commit` (recruit.skill_commit or `setup-paper2agent --commit`) exactly that commit is installed; without
+    it the latest HEAD is. Either way the installed commit is written to SOURCE_MARKER in both copies (#424)."""
+    if commit is not None and provenance.source_commit(commit) != commit:
+        raise ValueError("Paper2Agent commit must be a full 40-character lowercase hex commit")
     repo = cache / "Paper2Agent"
-    if (repo / ".git").exists():
-        subprocess.run(["git", "-C", str(repo), "pull", "--ff-only"], check=True)
-    else:
+    if not (repo / ".git").exists():
         cache.mkdir(parents=True, exist_ok=True)
         subprocess.run(["git", "clone", "--depth", "1", source, str(repo)], check=True)
+        if commit:
+            _checkout(repo, commit)
+    elif commit or _detached(repo):  # an earlier pin leaves the checkout detached, where pull cannot run
+        _checkout(repo, commit or "HEAD")
+    else:
+        subprocess.run(["git", "-C", str(repo), "pull", "--ff-only"], check=True)
+    installed = head_commit(repo)
+    if commit and installed != commit:
+        raise RuntimeError(f"Paper2Agent checkout is at commit {installed}, not the pinned {commit}")
     skill = repo / "skills" / "paper2agent"
     if not skill.is_dir() or not (skill / "SKILL.md").is_file():
         raise FileNotFoundError(f"Paper2Agent source skill is missing SKILL.md: {skill}")
+    marker = json.dumps({"source": source, "commit": installed}) + "\n"
     out = [skill_path(engine) for engine in ("claude_code", "codex")]
     staged: list[tuple[Path, Path]] = []
     published: set[Path] = set()
@@ -104,6 +176,7 @@ def install_skill(source: str, cache: Path) -> list[Path]:
             shutil.copytree(skill, stage / "new")
             if not (stage / "new" / "SKILL.md").is_file():
                 raise FileNotFoundError(f"Staged Paper2Agent skill is missing SKILL.md: {stage / 'new'}")
+            (stage / "new" / SOURCE_MARKER).write_text(marker, encoding="utf-8")
         for dst, stage in staged:
             if dst.exists() or dst.is_symlink():
                 dst.rename(stage / "backup")
@@ -159,9 +232,23 @@ def build_prompt(paper: str | None, repo: str | None, focus: str | None, out_dir
         "tested interpreter as mcp_command and the server entry point as mcp_args (absolute paths); names "
         "(never values) of required environment variables; the delivered tools; and verification_status and "
         "limitations exactly as the skill's final report states them. Use null for parts that were not built.",
+        "Also report what the hire is built from and where it sends data: source_commit, the full 40-character "
+        "commit of the code repository you converted (git rev-parse HEAD in its checkout; null without a repo); "
+        "code_license and weights_license as the repository and any model weights state them (null when none or "
+        "not stated); external_services, every host the delivered tools contact at run time with what each one "
+        "receives (empty when the tools run fully locally).",
         "Never write credentials into files or into the offer.",
     ]
     return "\n".join(lines)
+
+
+def probation(kind: str, tools: list[str], skill_dir: str | None, offer_status: Any) -> tuple[bool, str | None]:
+    """Probation passes when the delivered parts work and Paper2Agent's own status is not a draft state (#424)."""
+    if not (bool(skill_dir) if kind == "consultant" else bool(tools)):
+        return False, "no skill delivered" if kind == "consultant" else "MCP server listed no tools"
+    words = set(re.findall(r"[a-z_]+", str(offer_status or "").lower()))
+    draft = sorted(words & DRAFT_STATUSES)
+    return (False, f"offer_status {', '.join(draft)}") if draft else (True, None)
 
 
 class Recruitment:
@@ -208,13 +295,43 @@ class Recruitment:
             except Exception as e:
                 probe_error = f"{type(e).__name__}: {e}"
         assert spec.contract
-        spec.contract.verification = {"offer_status": offer.get("verification_status"), "probe_tools": tools,
-                                      "probe_error": probe_error, "limitations": offer.get("limitations", [])}
-        passed = bool(tools) if spec.contract.kind != "consultant" else bool(spec.contract.skill_dir)
-        spec.contract.status = "active" if passed else "probation"
+        c = spec.contract
+        c.skill_sha256 = provenance.folder_sha256(c.skill_dir)
+        c.mcp_sha256 = provenance.folder_sha256(offer.get("mcp_dir") or offer.get("mcp_zip"))
+        status = offer.get("verification_status")
+        c.verification = {**c.verification, "offer_status": status, "probe_tools": tools,
+                          "probe_error": probe_error, "limitations": offer.get("limitations", [])}
+        if real:
+            c.verification["paper2agent_commit"] = installed_commit(self.s.recruit.contract_engine)
+        passed, reason = probation(c.kind, tools, c.skill_dir, status)
+        if reason:
+            c.verification["probation_reason"] = reason
+        c.status = "active" if passed else "probation"
         path = self.r.registry.save_contract(spec)
         await self._emit("recruit.done", {"agent": spec.summary(), "path": str(path), "passed_probation": passed})
         return spec
+
+    def _provenance(self, offer: dict) -> tuple[dict, list[str]]:
+        """ContractInfo fields from the offer; a malformed value is dropped and noted, never fatal."""
+        notes = []
+        commit = provenance.source_commit(offer.get("source_commit"))
+        if offer.get("source_commit") and not commit:
+            notes.append(f"source_commit is not a full 40-hex commit: {short(offer.get('source_commit'), 60)}")
+        elif self.repo and not commit:
+            notes.append("source_commit missing for a code repository")
+        services = []
+        for raw in offer.get("external_services") or []:
+            try:
+                services.append(ExternalService.model_validate(raw))
+            except ValueError:  # kept, never dropped: a lost declaration would open restricted steps to this hire
+                host = raw.get("host") if isinstance(raw, dict) else raw
+                services.append(ExternalService(host=str(host or "unknown host"), what_is_sent="not stated"))
+                notes.append(f"external_services entry malformed, kept as declared: {short(raw, 80)}")
+        if offer.get("mcp_env_required") and not services:
+            notes.append("mcp_env_required names keys but external_services is empty; check whether the tools call "
+                         "an outside API")
+        licenses = {key: str(offer.get(key) or "").strip() or None for key in ("code_license", "weights_license")}
+        return {"source_commit": commit, "external_services": services, **licenses}, notes
 
     def _to_spec(self, offer: dict, talent: Path) -> AgentSpec:
         skill_dir = None
@@ -234,6 +351,9 @@ class Recruitment:
         kind = offer.get("kind") or ("full" if mcp and skill_dir else "technician" if mcp else "consultant")
         tools_txt = "\n".join(f"- {t.get('name')}: {t.get('description', '')}" for t in offer.get("tools") or []) or "- (skill only)"
         limits = "\n".join(f"- {x}" for x in offer.get("limitations") or []) or "- (none reported)"
+        fields, notes = self._provenance(offer)
+        external = ", ".join(f"{s.host} ({s.what_is_sent})" for s in fields["external_services"]) or \
+            "no external service (declared at hiring)"
         now = time.time()
         return AgentSpec(
             id=f"c_{self.slug}"[:48], name=offer.get("agent_name") or self.slug,
@@ -241,9 +361,10 @@ class Recruitment:
             engine=Engine(self.s.recruit.contract_engine), model=self.s.recruit.contract_model,
             system_prompt=CONTRACT_PROMPT.format(name=offer.get("agent_name"), paper=self.paper, repo=self.repo,
                                                  role=offer.get("role_summary"), server=server, tools=tools_txt,
-                                                 limits=limits),
+                                                 limits=limits, external=external),
             builtin_mcp=["approval", "hpc"], mcp=mcp, employment=Employment.contract,
             contract=ContractInfo(paper=self.paper, repo=self.repo, kind=kind, hired_at=now,
-                                  expires_at=now + self.ttl_days * 86400, skill_dir=skill_dir, talent_dir=str(talent)),
+                                  expires_at=now + self.ttl_days * 86400, skill_dir=skill_dir, talent_dir=str(talent),
+                                  verification={"provenance_notes": notes} if notes else {}, **fields),
             tags=["contract", "paper2agent"],
         )

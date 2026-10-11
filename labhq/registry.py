@@ -6,6 +6,7 @@ to talent_dir/<slug>/contract.yaml (with its skill + MCP build), so rehiring is 
 
 from __future__ import annotations
 
+import logging
 import time
 from pathlib import Path
 
@@ -13,6 +14,8 @@ import yaml
 
 from .models import AgentSpec, Employment
 from .util import atomic_write_text
+
+log = logging.getLogger(__name__)
 
 
 def _dump(spec: AgentSpec) -> str:
@@ -118,7 +121,17 @@ class Registry:
         p = self.talent_dir / slug / "contract.yaml"
         spec = AgentSpec.model_validate(yaml.safe_load(p.read_text(encoding="utf-8")))
         assert spec.contract
+        from .recruit.provenance import provenance_changes
+
+        # The skill and MCP folders are hashed at hiring (#424): a rehire says which ones changed since, and the
+        # roster card shows it until a later rehire finds them back as hired.
+        changed = provenance_changes(spec)
+        verification = {k: v for k, v in spec.contract.verification.items() if k != "rehire_changed"}
+        if changed:
+            verification["rehire_changed"] = changed
+            log.warning("rehire %s: %s changed since hiring (sha256 differs)", spec.id, ", ".join(changed))
         now = time.time()
+        spec.contract.verification = verification
         spec.contract.status = "active"
         spec.contract.hired_at = now
         spec.contract.expires_at = now + days * 86400

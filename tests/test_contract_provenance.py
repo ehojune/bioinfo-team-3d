@@ -1,0 +1,409 @@
+"""파견직 채용물 고정과 외부 전송 선언 (#424): source commit, licenses, labhq's own hashes of the delivered skill and
+MCP folders, external services, offer_status probation, the rehire hash warning, and keeping staff that send data
+to external services off steps whose inputs touch a restricted data zone. No network and no real engine."""
+
+import asyncio
+import json
+import subprocess
+import time
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
+
+import pytest
+import yaml
+
+from labhq.models import AgentSpec, ContractInfo, Employment, Engine, Task, TaskResult
+from labhq.orchestrator.cso import PlanAgentError, format_roster, validate_steps
+from labhq.recruit import paper2agent, provenance
+from labhq.registry import Registry
+from labhq.runner.daemon import Runner
+from labhq.settings import DataZone, Settings
+
+COMMIT = "0123456789abcdef0123456789abcdef01234567"
+ZONE = "/srv/cohort"
+
+
+def _offer(skill_dir: Path | None, **fields) -> dict:
+    offer = {"agent_name": "scanpy 파견", "role_summary": "단일세포 전처리", "kind": "consultant",
+             "mcp_zip": None, "mcp_dir": None, "mcp_command": None, "mcp_args": [], "mcp_env_required": [],
+             "skill_dir": str(skill_dir) if skill_dir else None, "tools": [], "verification_status": "reviewed",
+             "limitations": [], "source_commit": COMMIT, "code_license": "BSD-3-Clause", "weights_license": None,
+             "external_services": [{"host": "api.example.org", "what_is_sent": "gene symbols"}]}
+    return {**offer, **fields}
+
+
+def _skill(path: Path, text: str = "# paper skill\n") -> Path:
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "SKILL.md").write_text(text, encoding="utf-8")
+    return path
+
+
+class _Runner:
+    """What Recruitment uses of the runner: settings, registry, run_task and emit."""
+
+    def __init__(self, tmp_path: Path, offer: dict):
+        self.s = Settings()
+        self.s.runner.force_engine = "mock"
+        self.registry = Registry(tmp_path / "agents", tmp_path / "talent")
+        self.offer, self.events = offer, []
+
+    async def run_task(self, task, workdir_override=None):
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=self.offer)
+
+    async def emit(self, event):
+        self.events.append(event)
+
+
+def _recruit(tmp_path: Path, offer: dict) -> tuple[AgentSpec, _Runner]:
+    runner = _Runner(tmp_path, offer)
+    spec = asyncio.run(paper2agent.Recruitment(runner, {"repo": "https://github.com/scverse/scanpy",
+                                                        "name": "scanpy"}).run())
+    assert spec is not None, [e.data for e in runner.events]
+    return spec, runner
+
+
+# ---------------- contract fields ----------------
+
+def test_a_contract_written_before_424_still_loads_with_empty_provenance(tmp_path):
+    old = {"id": "c_tissue", "name": "TISSUE", "role": "[파견] x", "employment": "contract",
+           "contract": {"repo": "https://github.com/sunericd/TISSUE", "kind": "full", "hired_at": 1.0,
+                        "expires_at": 2.0, "status": "active", "verification": {"offer_status": "reviewed"}}}
+    spec = AgentSpec.model_validate(old)
+    assert spec.contract.source_commit is None and spec.contract.external_services == []
+    assert spec.summary()["contract_provenance"]["external_services"] == []
+
+
+@pytest.mark.parametrize("bad", ["abc1234", COMMIT.upper(), COMMIT + "0", "g" * 40])
+def test_source_commit_must_be_a_full_lowercase_hex_commit(bad):
+    with pytest.raises(ValueError, match="40"):
+        ContractInfo(hired_at=0, expires_at=1, source_commit=bad)
+
+
+def test_offer_schema_asks_for_commit_licenses_and_external_services():
+    props, required = paper2agent.OFFER_SCHEMA["properties"], paper2agent.OFFER_SCHEMA["required"]
+    for key in ("source_commit", "code_license", "weights_license", "external_services"):
+        assert key in props and key in required
+    service = props["external_services"]["items"]
+    assert service["required"] == ["host", "what_is_sent"] and service["additionalProperties"] is False
+    prompt = paper2agent.build_prompt(None, "https://github.com/x/y", None, Path("/tmp/build"))
+    assert "source_commit" in prompt and "external_services" in prompt
+
+
+# ---------------- recruitment ----------------
+
+def test_recruitment_records_commit_licenses_services_and_labhq_hashes(tmp_path):
+    built = _skill(tmp_path / "build" / "dist" / "scanpy-paper")
+    mcp = tmp_path / "build" / "labhq_mcp"
+    (mcp / "src").mkdir(parents=True)
+    (mcp / "src" / "server.py").write_text("print('mcp')\n", encoding="utf-8")
+    spec, runner = _recruit(tmp_path, _offer(built, mcp_dir=str(mcp)))
+    c = spec.contract
+    assert (c.source_commit, c.code_license, c.weights_license) == (COMMIT, "BSD-3-Clause", None)
+    assert [(s.host, s.what_is_sent) for s in c.external_services] == [("api.example.org", "gene symbols")]
+    assert c.skill_sha256 == provenance.folder_sha256(c.skill_dir) and len(c.skill_sha256) == 64
+    assert c.mcp_sha256 == provenance.folder_sha256(mcp) and c.mcp_sha256 != c.skill_sha256
+    saved = yaml.safe_load((tmp_path / "talent" / "scanpy" / "contract.yaml").read_text(encoding="utf-8"))
+    assert saved["contract"]["source_commit"] == COMMIT and saved["contract"]["skill_sha256"] == c.skill_sha256
+    done = next(e for e in runner.events if e.type == "recruit.done")
+    assert done.data["agent"]["contract_provenance"]["external_services"][0]["host"] == "api.example.org"
+    assert "api.example.org" in spec.system_prompt
+
+
+def test_an_invalid_offered_commit_is_dropped_and_noted_not_fatal(tmp_path):
+    built = _skill(tmp_path / "build" / "skill")
+    spec, _ = _recruit(tmp_path, _offer(built, source_commit="abc1234"))
+    assert spec.contract.source_commit is None
+    assert any("source_commit" in note for note in spec.contract.verification["provenance_notes"])
+
+
+def test_a_malformed_external_service_is_kept_so_it_still_blocks_restricted_steps(tmp_path):
+    built = _skill(tmp_path / "build" / "skill")
+    spec, _ = _recruit(tmp_path, _offer(built, external_services=[{"host": "api.example.org"}]))
+    assert [(s.host, s.what_is_sent) for s in spec.contract.external_services] == [("api.example.org", "not stated")]
+    assert provenance.external_hosts(spec) == ["api.example.org"]
+
+
+@pytest.mark.parametrize("status,passed", [
+    ("reviewed", True), ("reviewed_with_limitations", True), ("tested: all tools passed", True),
+    ("unreviewed", False), ("mechanical_failure", False), ("unresolved_discrepancies", False),
+    ("partial: MCP blocked", False),
+])
+def test_probation_uses_the_offer_status_paper2agent_reports(tmp_path, status, passed):
+    built = _skill(tmp_path / "build" / "skill")
+    spec, runner = _recruit(tmp_path, _offer(built, verification_status=status))
+    assert spec.contract.status == ("active" if passed else "probation")
+    done = next(e for e in runner.events if e.type == "recruit.done")
+    assert done.data["passed_probation"] is passed
+    if not passed:
+        assert status.split(":")[0] in spec.contract.verification["probation_reason"]
+
+
+# ---------------- hashes and rehire ----------------
+
+def test_folder_hash_follows_content_and_skips_caches(tmp_path):
+    folder = _skill(tmp_path / "skill")
+    first = provenance.folder_sha256(folder)
+    (folder / "__pycache__").mkdir()
+    (folder / "__pycache__" / "x.pyc").write_bytes(b"\0")
+    (folder / ".venv" / "lib").mkdir(parents=True)
+    (folder / ".venv" / "lib" / "site.py").write_text("x\n", encoding="utf-8")
+    assert provenance.folder_sha256(folder) == first
+    (folder / "SKILL.md").write_text("# changed\n", encoding="utf-8")
+    assert provenance.folder_sha256(folder) != first
+    assert provenance.folder_sha256(tmp_path / "missing") is None and provenance.folder_sha256(None) is None
+
+
+def test_folder_hash_in_a_git_checkout_skips_an_unignored_venv(tmp_path):
+    folder = _skill(tmp_path / "mcp")
+    subprocess.run(["git", "init", "-q", str(folder)], check=True)
+    first = provenance.folder_sha256(folder)
+    (folder / ".venv").mkdir()
+    (folder / ".venv" / "pyvenv.cfg").write_text("home = /usr/bin\n", encoding="utf-8")
+    assert provenance.folder_sha256(folder) == first
+    (folder / "server.py").write_text("print()\n", encoding="utf-8")  # untracked code still counts
+    assert provenance.folder_sha256(folder) != first
+
+
+def _hired(tmp_path: Path) -> tuple[Registry, Path]:
+    skill = _skill(tmp_path / "talent" / "tissue" / "skill" / "tissue-paper")
+    now = time.time()
+    spec = AgentSpec(id="c_tissue", name="TISSUE", role="[파견] x", employment=Employment.contract,
+                     contract=ContractInfo(hired_at=now, expires_at=now + 3600, status="active",
+                                           skill_dir=str(skill), talent_dir=str(tmp_path / "talent" / "tissue"),
+                                           skill_sha256=provenance.folder_sha256(skill)))
+    (tmp_path / "agents" / "core").mkdir(parents=True)
+    reg = Registry(tmp_path / "agents", tmp_path / "talent")
+    reg.save_contract(spec)
+    reg.release("c_tissue")
+    return reg, skill
+
+
+def test_rehire_with_unchanged_hashes_has_no_warning(tmp_path):
+    reg, _ = _hired(tmp_path)
+    spec = reg.rehire("tissue", days=7)
+    assert "rehire_changed" not in spec.contract.verification
+
+
+def test_rehire_warns_when_the_skill_changed_since_hiring(tmp_path, caplog):
+    reg, skill = _hired(tmp_path)
+    (skill / "SKILL.md").write_text("# edited after hiring\n", encoding="utf-8")
+    spec = reg.rehire("tissue", days=7)
+    assert spec.contract.verification["rehire_changed"] == ["skill"]
+    assert spec.summary()["contract_provenance"]["rehire_changed"] == ["skill"]
+    assert "c_tissue" in caplog.text and "skill" in caplog.text
+    (skill / "SKILL.md").write_text("# paper skill\n", encoding="utf-8")  # restored: the warning goes
+    reg.release("c_tissue")
+    assert "rehire_changed" not in reg.rehire("tissue", days=7).contract.verification
+
+
+# ---------------- restricted steps ----------------
+
+def _settings() -> Settings:
+    s = Settings()
+    s.policy.data_zones = [DataZone(path=ZONE, level="restricted")]
+    return s
+
+
+def _roster(external: bool) -> list[dict]:
+    now = time.time()
+    services = [{"host": "api.example.org", "what_is_sent": "sequences"}] if external else []
+    contract = AgentSpec(id="c_tool", name="Tool", role="[파견] x", employment=Employment.contract,
+                         contract=ContractInfo(hired_at=now, expires_at=now + 60, external_services=services))
+    core = AgentSpec(id="analyst", name="Analyst", role="analysis")
+    return [contract.summary(), core.summary()]
+
+
+def _guard(settings, roster, text="공개 데이터 분석", dirs=()):
+    return lambda steps: provenance.external_contract_conflicts(steps, roster, [text], list(dirs), settings)
+
+
+def _steps(first_instruction: str, second_agent: str = "c_tool") -> list[dict]:
+    return [{"id": "s1", "agent_id": "analyst", "instruction": first_instruction, "depends_on": []},
+            {"id": "s2", "agent_id": second_agent, "instruction": "run the paper tool on s1 results",
+             "depends_on": ["s1"]}]
+
+
+def test_plan_refuses_external_contract_staff_downstream_of_a_restricted_input():
+    with pytest.raises(PlanAgentError, match=r"s2 \(c_tool\)"):
+        validate_steps(_steps(f"filter {ZONE}/cohort.vcf"), {"analyst", "c_tool"}, 10,
+                       guard=_guard(_settings(), _roster(True)))
+
+
+@pytest.mark.parametrize("case", ["request", "project_dir"])
+def test_plan_refuses_external_contract_staff_when_the_request_names_a_zone(case):
+    guard = (_guard(_settings(), _roster(True), text=f"{ZONE}/raw.tsv 분석") if case == "request" else
+             _guard(_settings(), _roster(True), dirs=[ZONE + "/project"]))
+    with pytest.raises(PlanAgentError, match="restricted"):
+        validate_steps(_steps("count public genes"), {"analyst", "c_tool"}, 10, guard=guard)
+
+
+@pytest.mark.parametrize("external,second,instruction", [
+    (False, "c_tool", f"filter {ZONE}/cohort.vcf"),  # contract staff without external services
+    (True, "analyst", f"filter {ZONE}/cohort.vcf"),  # restricted work stays with core staff
+    (True, "c_tool", "fetch public GEO counts"),  # no restricted input anywhere
+])
+def test_plan_keeps_steps_that_do_not_mix_external_services_and_restricted_inputs(external, second, instruction):
+    steps, _ = validate_steps(_steps(instruction, second), {"analyst", "c_tool"}, 10,
+                              guard=_guard(_settings(), _roster(external)))
+    assert [s["id"] for s in steps] == ["s1", "s2"]
+
+
+def test_the_cso_roster_names_where_contract_staff_send_data():
+    line = format_roster(_roster(True))
+    assert "api.example.org" in line and "restricted" in line
+
+
+@pytest.fixture
+def spawned(monkeypatch):
+    seen = []
+
+    class _Proc:
+        returncode, stdin = 0, None
+
+        def __init__(self):
+            async def lines(items):
+                for item in items:
+                    yield item
+            self.stdout = lines([b'{"type":"thread.started","thread_id":"t1"}\n',
+                                 b'{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}\n',
+                                 b'{"type":"turn.completed","usage":{}}\n'])
+            self.stderr = lines([])
+
+        async def wait(self):
+            return 0
+
+    async def fake_exec(*cmd, env=None, cwd=None, **kwargs):
+        seen.append(list(cmd))
+        return _Proc()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr("labhq.adapters.base._resolve_command", lambda cmd, env, engine: cmd)
+    return seen
+
+
+def _contract_runner(tmp_path, monkeypatch, external: bool):
+    settings = _settings()
+    for name in ("state_dir", "workspace_root", "agents_dir", "talent_dir"):
+        setattr(settings.runner, name, str(tmp_path / name))
+    settings.engines.codex.env = {"CODEX_HOME": str(tmp_path / "codex-home")}
+    services = [{"host": "api.example.org", "what_is_sent": "sequences"}] if external else []
+    staff = AgentSpec(id="c_tool", name="Tool", role="[파견] x", engine=Engine.codex, builtin_mcp=[],
+                      employment=Employment.contract,
+                      contract=ContractInfo(hired_at=0, expires_at=time.time() + 60, external_services=services))
+    runner = Runner(settings)  # run_forever is not called: Windows refuses restricted zones only there
+    monkeypatch.setattr(runner.registry, "get", lambda _id: staff)
+    return runner
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("meta,prompt", [
+    ({"kind": "step"}, f"read {ZONE}/cohort.vcf"),
+    ({"kind": "step", "restricted_inputs": True}, "use the upstream table"),
+    ({"kind": "direct", "project_dirs": [ZONE]}, "summarize"),
+])
+async def test_the_runner_refuses_external_contract_staff_on_restricted_inputs(
+        tmp_path, monkeypatch, spawned, meta, prompt):
+    runner = _contract_runner(tmp_path, monkeypatch, external=True)
+    result = await runner.run_task(Task(agent_id="c_tool", request_id="r", prompt=prompt, meta=meta))
+    assert not result.ok and "외부 전송" in result.error and "api.example.org" in result.error, result.error
+    assert ZONE not in result.error, "errors reach reports: no zone path"
+    assert spawned == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("external,prompt", [(True, "fetch public GEO counts"), (False, f"read {ZONE}/x.vcf")])
+async def test_the_runner_still_runs_contract_staff_that_do_not_mix_the_two(
+        tmp_path, monkeypatch, spawned, external, prompt):
+    runner = _contract_runner(tmp_path, monkeypatch, external=external)
+    result = await runner.run_task(Task(agent_id="c_tool", request_id="r", prompt=prompt, meta={"kind": "step"}))
+    assert "외부 전송" not in (result.error or "")
+    assert len(spawned) == 1
+
+
+# ---------------- setup-paper2agent pins the converter ----------------
+
+SOURCE = "https://example.org/Paper2Agent.git"
+
+
+@pytest.fixture
+def install(tmp_path, monkeypatch):
+    repo = tmp_path / "cache" / "Paper2Agent"
+    (repo / ".git").mkdir(parents=True)
+    _skill(repo / "skills" / "paper2agent", "new skill\n")
+    destinations = {e: tmp_path / e / "skills" / "paper2agent" for e in ("claude_code", "codex")}
+    monkeypatch.setattr(paper2agent, "skill_path", lambda engine: destinations[engine])
+    run = Mock(return_value=SimpleNamespace(returncode=0))
+    monkeypatch.setattr(paper2agent.subprocess, "run", run)
+    return SimpleNamespace(repo=repo, cache=tmp_path / "cache", destinations=destinations, run=run)
+
+
+def _marker(dst: Path) -> dict:
+    return json.loads((dst / paper2agent.SOURCE_MARKER).read_text(encoding="utf-8"))
+
+
+def test_a_pinned_install_fetches_and_checks_out_that_commit(install):
+    def checkout(cmd, check):
+        if cmd[3:5] == ["checkout", "--detach"]:
+            (install.repo / ".git" / "HEAD").write_text(COMMIT + "\n", encoding="utf-8")
+        return SimpleNamespace(returncode=0)
+
+    install.run.side_effect = checkout
+    paper2agent.install_skill(SOURCE, install.cache, commit=COMMIT)
+    repo = str(install.repo)
+    assert [c.args[0] for c in install.run.call_args_list] == [
+        ["git", "-C", repo, "fetch", "--depth", "1", "origin", COMMIT],
+        ["git", "-C", repo, "checkout", "--detach", "FETCH_HEAD"]]
+    for dst in install.destinations.values():
+        assert _marker(dst) == {"source": SOURCE, "commit": COMMIT}
+        assert (dst / "SKILL.md").read_text(encoding="utf-8") == "new skill\n"
+    assert paper2agent.installed_commit("codex") == COMMIT
+
+
+def test_a_pinned_install_that_lands_elsewhere_changes_nothing(install):
+    (install.repo / ".git" / "HEAD").write_text("f" * 40 + "\n", encoding="utf-8")
+    for dst in install.destinations.values():
+        _skill(dst, "old\n")
+    with pytest.raises(RuntimeError, match="commit"):
+        paper2agent.install_skill(SOURCE, install.cache, commit=COMMIT)
+    for dst in install.destinations.values():
+        assert (dst / "SKILL.md").read_text(encoding="utf-8") == "old\n"
+
+
+@pytest.mark.parametrize("bad", ["main", "abc1234", "-c core.sshCommand=x"])
+def test_a_pin_that_is_not_a_full_commit_never_runs_git(install, bad):
+    with pytest.raises(ValueError, match="40"):
+        paper2agent.install_skill(SOURCE, install.cache, commit=bad)
+    install.run.assert_not_called()
+
+
+@pytest.mark.parametrize("head", ["ref", "packed"])
+def test_an_unpinned_install_records_the_commit_it_installed(install, head):
+    git = install.repo / ".git"
+    (git / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    if head == "ref":
+        (git / "refs" / "heads").mkdir(parents=True)
+        (git / "refs" / "heads" / "main").write_text(COMMIT + "\n", encoding="utf-8")
+    else:
+        (git / "packed-refs").write_text(f"# pack-refs with: peeled\n{COMMIT} refs/heads/main\n", encoding="utf-8")
+    paper2agent.install_skill(SOURCE, install.cache)
+    install.run.assert_called_once_with(["git", "-C", str(install.repo), "pull", "--ff-only"], check=True)
+    assert all(_marker(dst)["commit"] == COMMIT for dst in install.destinations.values())
+
+
+def test_an_unpinned_install_after_a_pin_moves_the_detached_checkout_to_the_latest_head(install):
+    (install.repo / ".git" / "HEAD").write_text(COMMIT + "\n", encoding="utf-8")
+    paper2agent.install_skill(SOURCE, install.cache)
+    repo = str(install.repo)
+    assert [c.args[0] for c in install.run.call_args_list] == [
+        ["git", "-C", repo, "fetch", "--depth", "1", "origin", "HEAD"],
+        ["git", "-C", repo, "checkout", "--detach", "FETCH_HEAD"]]
+
+
+def test_a_git_failure_while_pinning_changes_nothing(install):
+    for dst in install.destinations.values():
+        _skill(dst, "old\n")
+    install.run.side_effect = subprocess.CalledProcessError(128, "git")
+    with pytest.raises(subprocess.CalledProcessError):
+        paper2agent.install_skill(SOURCE, install.cache, commit=COMMIT)
+    assert all((d / "SKILL.md").read_text(encoding="utf-8") == "old\n" for d in install.destinations.values())

@@ -1,10 +1,12 @@
 import asyncio
+import re
 import shutil
 import time
 from pathlib import Path
 
 import pytest
 import uvicorn
+import yaml
 
 from labhq.gateway.server import RequestIn, create_app
 from labhq.runner.daemon import Runner
@@ -198,6 +200,13 @@ async def test_full_lab_flow_with_mock_agents(tmp_path):
             lambda: {"agents": list(hub.agents)},
         )
         assert hub.agents["c_scanpy"]["employment"] == "contract"
+        # #424: the contract keeps the commit and license it was built from and labhq's hash of the skill copy
+        provenance = hub.agents["c_scanpy"]["contract_provenance"]
+        assert re.fullmatch(r"[0-9a-f]{40}", provenance["source_commit"]) and provenance["code_license"]
+        assert re.fullmatch(r"[0-9a-f]{64}", provenance["skill_sha256"]) and provenance["external_services"] == []
+        saved = yaml.safe_load((tmp_path / "talent" / "scanpy" / "contract.yaml").read_text(encoding="utf-8"))
+        assert saved["contract"]["skill_sha256"] == provenance["skill_sha256"]
+        assert saved["contract"]["source_commit"] == provenance["source_commit"]
         rid2 = hub.create_request(RequestIn(text="클러스터링 자문", mode="direct", agent_id="c_scanpy"))
         await _wait_for_request_terminal(hub, rid2, seen, 30)
         assert hub.requests[rid2]["status"] == "done"

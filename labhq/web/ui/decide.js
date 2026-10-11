@@ -386,6 +386,8 @@ export function blockedStepCount(approval, requests, taskStep) {
 // Cards the gateway never times out. None today: a resume card ends after policy.approvals.pi_decision_timeout_s too.
 const NO_TIMEOUT_KINDS = new Set();
 // What 거절 (or CP2 수정 요청) does, only where the gateway or CSO makes that outcome certain (R10, R19).
+// What 채용하기 commits to: the hire's provenance is known only after conversion, so the card says what is recorded (#424).
+const HIRE_RESULT = '채용하면 원본 commit·license·외부 전송 대상을 계약서와 명단 카드에 남겨요. 외부로 데이터를 보내는 파견직은 통제 데이터 단계를 맡지 않아요.';
 const DENY_RESULT = {
   resume: '거절하면 이 요청은 실패로 끝납니다.',
   research_plan: '거절하면 이 요청은 단계를 돌리지 않고 끝납니다. 계획을 고치려면 고칠 점을 넣어 새 요청을 보내세요.',
@@ -443,7 +445,7 @@ function updateCard(row, item, options) {
     : reviseContinues(value) ? '메모(수정 요청이면 고칠 점을 꼭 적어 주세요)'
     : value.kind !== 'clarify' ? '메모(선택)' : p.questions._questions?.length
     ? '덧붙일 말(선택). 거절하면 요청을 멈춥니다.' : '답을 적어 주세요. 거절하면 요청을 멈춥니다.';
-  p.consequence.textContent = !approval ? '' :
+  p.consequence.textContent = !approval ? HIRE_RESULT :
     value.kind === 'research_evidence' && !reviseContinues(value) ? EVIDENCE_REVISE_ENDS :
     value.kind === 'research_plan' && reviseContinues(value) ? DENY_RESULT.research_plan_revise : DENY_RESULT[value.kind] || '';
   p.consequence.hidden = !p.consequence.textContent;

@@ -332,6 +332,15 @@ class RecruitSettings(BaseModel):
     contract_engine: str = "claude_code"
     contract_model: str | None = "sonnet"
     skill_source: str = "https://github.com/jmiao24/Paper2Agent"
+    # setup-paper2agent installs exactly this commit (40 hex); None installs the latest HEAD and records it (#424).
+    skill_commit: str | None = None
+
+    @field_validator("skill_commit")
+    @classmethod
+    def full_skill_commit(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"[0-9a-f]{40}", value):
+            raise ValueError("recruit.skill_commit must be a full 40-character lowercase hex commit")
+        return value
 
 
 # A model name labhq passes to an engine CLI as one argument: no leading '-', so it can never read as a flag.

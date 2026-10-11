@@ -309,7 +309,7 @@ Windows 러너는 직원 Python이 OS 신뢰 저장소도 믿게 합니다. 기�
 | `request.plan` · `request.step_attempt` · `request.step_retry` · `request.step_skipped` · `request.step_done` · `request.review` · `request.completed` | 요청 진행 | 실패한 가지는 skip, 일시적 실패는 최대 2회 시도. 실패 보고서 첫머리는 단계·원인·PI 조치를 세 줄로 알리고, 지시문·출력 전문은 round 기록과 작업 폴더에 남긴다(#331) |
 | `request.step_quota_wait` · `request.step_quota_resumed` | 구독 한도 주차·재개 | `MM-DD HH:MM` reset 시각, 최대 대기 기한(`orchestrator.quota_default_wait_s` 기본 3600초, `quota_max_wait_s` 기본 7일)과 `지금 재개` 버튼(같은 엔진에서 기다리는 단계를 모두 풂) |
 | `request.step_login_wait` · `request.step_login_resumed` · `engine.login_wait` · `engine.login_resumed` | 로그인 주차·재개 | 엔진별 로그인 명령과 `로그인했어요 · 다시 시도` 버튼 |
-| `recruit.suggested` · `recruit.status` · `recruit.done` · `roster.updated` | 파견직 | 입구에 새 병아리, 명패에 만료일 |
+| `recruit.suggested` · `recruit.status` · `recruit.done` · `roster.updated` · `contract.warning` | 파견직 | 입구에 새 병아리, 명패에 만료일, 재고용 hash 경고 |
 | `request.created` · `github.posted` · `github.failed` | 요청 접수, GitHub 보고 | 메신저에 링크 |
 | `request.followup` · `request.followup_done` | 끝난 요청에 이어 묻기와 답 | 작업판의 질문·답 목록 |
 | `request.note` | 실행 중 요청에 보낸 PI 메모 | 요청 카드·작업판에 시각과 함께 표시 |
@@ -475,6 +475,8 @@ flowchart LR
 
 Paper2Agent 설치 갱신은 두 engine의 새 skill 복사를 마친 뒤 설치를 교체합니다. 원본 확인·복사 실패 때는 기존 설치를 유지하고, 교체 실패 때는 복구합니다. 복구까지 실패하면 보존한 백업 경로를 오류에 표시합니다.
 
+`labhq setup-paper2agent --commit <40-hex>`(또는 `recruit.skill_commit`)는 그 commit만 설치합니다. checkout이 다른 commit이면 기존 설치를 건드리지 않고 멈춥니다. 고정하지 않으면 최신 HEAD를 설치하고 그 commit을 출력합니다. 설치한 commit은 skill 폴더의 `.labhq-source.json`에 남고, 채용 때 계약서 `verification.paper2agent_commit`으로 옮겨집니다.
+
 ### 세 가지 유형
 
 | 유형 | 입력 | Paper2Agent 경로 | 할 수 있는 일 |
@@ -488,17 +490,33 @@ Paper2Agent 설치 갱신은 두 engine의 새 skill 복사를 마친 뒤 설치
    폰에 뜨고, PI가 승인하면 `POST /api/recruit`. 여우 헤드헌터는 논문·저장소·튜토리얼 유무·필요 API 키를 조사해 후보를 올립니다.
 2. **변환** — 인사팀이 `talent/<slug>/build`에서 paper2agent 스킬을 실행. `--json-schema`로 오퍼레터 형식을 강제하고
    `--max-budget-usd`로 비용 상한.
-3. **수습** — labhq가 납품된 MCP 서버를 직접 띄워 툴 목록을 확인 (자문형은 스킬 존재 확인). 통과하면 `active`.
+3. **수습** — labhq가 납품된 MCP 서버를 직접 띄워 툴 목록을 확인 (자문형은 스킬 존재 확인). Paper2Agent가 돌려준
+   `offer_status`가 초안 상태(`mechanical_failure`·`unreviewed`·`unresolved_discrepancies`·`partial`·`blocked`)면
+   툴이 떠도 `probation`에 남고 이유가 `verification.probation_reason`에 적힙니다. 둘 다 통과하면 `active`.
 4. **계약서** — `agents/contract/c_<slug>.yaml`. 비밀값은 `${ENV}` 자리표시자만 저장. 명단에 `[파견직]` 태그와 툴 목록이
-   올라가서 CSO가 다음 계획부터 바로 배정합니다.
+   올라가서 CSO가 다음 계획부터 바로 배정합니다. 채용물 고정(#424) 항목도 함께 남습니다.
+
+   | 항목 | 출처 |
+   |---|---|
+   | `source_commit` | 오퍼레터. 40자리 hex가 아니면 버리고 `verification.provenance_notes`에 적음 |
+   | `code_license` · `weights_license` | 오퍼레터 |
+   | `external_services[{host, what_is_sent}]` | 오퍼레터. 도구가 실행 중 접속하는 호스트와 보내는 것 |
+   | `skill_sha256` · `mcp_sha256` | labhq가 직접 계산(`plugin_provenance`와 같은 내용·mode hash). git 밖이면 `.venv`·`__pycache__` 등은 제외 |
+
+   직원 카드와 채용 피드에 commit 앞 7자리·license·외부 전송 호스트가 보입니다. `labhq talent`도 commit과 외부 전송을 출력합니다.
 5. **업무** — 작업공간에 논문 스킬을 설치(`.claude/skills`, `.agents/skills`)하고 논문 MCP를 연결. 계약 프롬프트는
    “검증된 범위 밖이면 즉흥적으로 하지 말고 CSO에 반환”을 규칙으로 둡니다.
 6. **만료·재고용** — 만료된 계약은 로드 시 자동으로 인재풀로 이동. 빌드가 보관되어 있어 `rehire`는 즉시.
+   재고용 때 skill·MCP 폴더 hash를 다시 재서 채용 때와 다르면 `contract.warning` 피드 경고를 띄우고
+   `verification.rehire_changed`와 직원 카드에 표시합니다. 재고용은 막지 않습니다.
 
 ### 주의
 - 변환은 **제3자 코드를 설치·실행**합니다. 가능하면 러너를 컨테이너/VM 또는 전용 계정에서 돌리세요.
   기본값은 `permission_mode: auto` + 위험 명령 폰 승인.
 - paper2agent 스킬은 병렬 서브에이전트를 띄울 수 있는 호스트(Claude Code, Codex)가 필요합니다.
+- `external_services`가 있는 파견직은 입력이 restricted 구역에 닿는 단계를 맡지 않습니다. 요청 본문·참고 경로·프로젝트 폴더,
+  그 단계와 선행 단계의 지시에 restricted 경로가 있으면 그 단계로 봅니다(경로 문자열 판정). CSO 계획은 검증에서 거부돼
+  다시 짜이고, 러너도 엔진을 띄우기 전에 같은 작업을 거부합니다. 선언하지 않은 외부 전송은 막지 못합니다.
 - 수습 통과는 “선택된 툴이 기동·응답한다”는 뜻이지 저장소 전체의 과학적 정확성 보증이 아닙니다.
   중요한 분석 전에는 QC 담당에게 논문 예제 재현을 시키는 것을 권합니다 (로드맵의 정식 수습 평가).
 
