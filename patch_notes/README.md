@@ -14,9 +14,13 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 01:38 | [`6d6eb37`](https://github.com/ehojune/bioinfo-team-3d/pull/515/commits/6d6eb37) | 채용 수를 runner 프로세스 단위로 세어 같은 프로세스의 재연결에는 지우지 않고, 보내기 실패에도 되돌리지 않는다(#515 리뷰). |
 | 01:36 | [`70810b5`](https://github.com/ehojune/bioinfo-team-3d/pull/516/commits/70810b5) | 웹 첫 화면의 정적 비용 문구도 '사용 비용 불러오는 중'이라 모듈이 로드되기 전에도 $0.00이 보이지 않는다(#516 리뷰). |
+| 01:34 | [`f8d35c1`](https://github.com/ehojune/bioinfo-team-3d/pull/515/commits/f8d35c1) | labhq down이 readiness 조회 실패(404 외)에는 종료를 거부하고, readiness 응답의 요청도 판정에 넣으며, 채용 수를 runner에 보내기 전에 센다(#515 리뷰). |
 | 01:31 | [`62f61cb`](https://github.com/ehojune/bioinfo-team-3d/pull/516/commits/62f61cb) | 토큰이 없으면 첫 화면이 '토큰을 넣으면 … 불러와요'로 보이고, manual 웹 사무실 절에 첫 스냅샷 전 표시를 적었다(#516 리뷰). |
 | 01:31 | [`cc70a41`](https://github.com/ehojune/bioinfo-team-3d/pull/516/commits/cc70a41) | main(#513)을 합쳤다. |
+| 01:27 | [`52e2970`](https://github.com/ehojune/bioinfo-team-3d/pull/515/commits/52e2970) | labhq down이 끝난 요청의 이어 묻기나 진행 중인 채용이 있으면 --force 없이 종료하지 않는다(gateway /api/shutdown-readiness, #500). |
+| 01:27 | [`6c0035f`](https://github.com/ehojune/bioinfo-team-3d/pull/515/commits/6c0035f) | manual의 down 거부 조건에 이어 묻기·채용을 넣었다. |
 
 ## 2026-10-11
 
