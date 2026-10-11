@@ -510,7 +510,7 @@ Paper2Agent 설치 갱신은 두 engine의 새 skill 복사를 마친 뒤 설치
 
 HPC 제출(코어·시간 기준), 위험한 셸 명령, 예산 초과, 파견직 채용은 PI가 결정함에서 정합니다. Claude 직원의 파일·셸 호출은 승인 게이트를 거치고, 다른 엔진 직원은 sandbox와 지침에 기댑니다(아래 절과 [알려진 한계](#알려진-한계)). 셸·파일·MCP 규칙이 없는 도구는 `policy.approvals.auto_allow_tools`(기본: Read·Glob·Grep·LS·WebSearch·WebFetch·TodoWrite·Skill·StructuredOutput·ToolSearch, 그리고 이미 승인 게이트를 거친 Bash의 백그라운드 출력을 읽거나 멈추는 BashOutput·KillShell·TaskOutput·TaskStop)에 있을 때만 허용하고, 나머지는 PI에게 묻습니다. 셸 명령을 돌리는 `Monitor`가 그 예입니다. `Task`·`Agent`·`Workflow`·`TeamCreate`·`TeamDelete`는 이 목록에 넣어도 거부합니다(#421).
 재귀 삭제는 연결·파이프·하위 셸이 없는 단일 `rm -r[f]` 또는 `Remove-Item -Recurse [-Force]` 명령이고, 모든 대상이 단계 작업 폴더의 `.tmp` 아래인 리터럴 상대 경로일 때만 허용합니다. `.tmp`나 대상의 상위 폴더가 link·junction이면 PI에게 묻습니다. `rm`은 `--` 앞의 모든 옵션 단어를 봅니다. `rm -f -r`, `rm -v -rf`, `rm --recursive`, 대상 뒤의 `-rf`도 재귀 삭제입니다.
-`find`가 `-delete`, `-exec rm`(`-execdir`·`-ok`, `sh -c` 본문 포함), `| xargs rm`으로 지우면 시작 경로를 봅니다. 연결·하위 셸이 없는 단일 명령이고 모든 시작 경로가 리터럴이며 쓰기 허용 폴더 안일 때만 허용하고, 밖이거나 변수·`..`·`-L`이 있거나 시작 경로가 밖으로 가는 link면 PI에게 묻습니다. cmd의 `rd /s`·`del /s`와 PowerShell `Get-ChildItem -Recurse | Remove-Item`은 언제나 묻습니다.
+`find`가 `-delete`, `-exec rm`(`-execdir`·`-ok`, `sh -c` 본문 포함), `| xargs rm`으로 지우는 것도 같은 규칙입니다. 시작 경로가 모두 `.tmp` 아래 리터럴 상대 경로일 때만 허용하고, 작업 폴더의 다른 곳(증거가 든 `outputs/` 등)은 `rm -rf outputs/x`처럼 PI에게 묻습니다. 시작 경로를 안 쓰면 작업 폴더 전체로 보고, `| xargs rm`은 파이프라서, `-L`은 link를 따라가서 언제나 묻습니다. cmd의 `rd /s`·`del /s`와 PowerShell `Get-ChildItem -Recurse | Remove-Item`은 언제나 묻습니다.
 
 Claude 직원의 맨 `Write`·`Edit`는 작업·project·upstream 폴더의 `Edit(//…/**)` 규칙으로 좁혀 사전 허용합니다. 링크·junction으로 적힌 폴더는 적힌 표기와 실제 경로에 규칙을 하나씩 둡니다(Claude는 둘 다 맞아야 허용). 그 밖 쓰기는 승인 게이트를 거칩니다(#219).
 

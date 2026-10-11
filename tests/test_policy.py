@@ -462,6 +462,15 @@ def _decide_in_windows_step(command):
     "find -L . -delete",
     "cd .. && find . -delete",
     "sudo find . -delete",
+    # One rule for every recursive delete: inside the roots but outside `.tmp` (outputs/ holds evidence) asks, as
+    # `rm -rf outputs/x` does; a pipe or redirection makes it more than one simple command, as it does for rm.
+    "find . -name '*.pyc' -delete",
+    "find -name '*.pyc' -delete",
+    r"find outputs -name '*.part' -exec rm {} \;",
+    f"find {WINDOWS_STEP}/.tmp -delete",
+    "find . -name '*.part' | xargs rm",
+    "find .tmp -name '*.part' | xargs rm",
+    "find .tmp -type f -delete 2>/dev/null",
 ])
 def test_recursive_deletes_in_every_option_form_ask_outside_the_step(command):
     decision = _decide_in_windows_step(command)
@@ -473,26 +482,24 @@ def test_recursive_deletes_in_every_option_form_ask_outside_the_step(command):
     "rm -f -r .tmp/cache",
     "rm -v -rf .tmp/cache",
     "rm --recursive --force .tmp/cache",
-    "find . -name '*.pyc' -delete",
     "find .tmp -type f -delete",
-    r"find outputs -name '*.part' -exec rm {} \;",
-    f"find {WINDOWS_STEP}/.tmp -delete",
-    "find . -name '*.part' | xargs rm",
+    "find .tmp/cache .tmp/parts -name '*.part' -delete",
+    r"find .tmp -name '*.part' -exec rm {} \;",
     "find . -name x -exec grep -l y {} +",
     "docker run --rm -v data:/data img nextflow run x -profile docker",
 ])
-def test_deletes_inside_the_step_and_commands_that_delete_nothing_stay_allowed(command):
+def test_deletes_below_step_tmp_and_commands_that_delete_nothing_stay_allowed(command):
     assert _decide_in_windows_step(command).action == "allow"
 
 
-@pytest.mark.parametrize("start", ["link", "link/"])
+@pytest.mark.parametrize("start", [".tmp/link", ".tmp/link/"])
 def test_a_find_delete_whose_start_is_a_link_out_of_the_step_asks(tmp_path, start):
     outside = tmp_path / "outside"
     outside.mkdir()
     step = tmp_path / "step"
-    step.mkdir()
+    (step / ".tmp").mkdir(parents=True)
     try:
-        (step / "link").symlink_to(outside, target_is_directory=True)
+        (step / ".tmp" / "link").symlink_to(outside, target_is_directory=True)
     except OSError as exc:
         pytest.skip(f"directory symlink unavailable: {exc}")
 

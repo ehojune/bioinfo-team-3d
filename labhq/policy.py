@@ -1089,8 +1089,6 @@ def _plain_delete_path(target: str, powershell: bool, *, relative: bool) -> bool
 
 def _recursive_delete_inside_workdir(command: str, powershell: bool, workdir: str | None) -> bool:
     """Allow one simple recursive delete of literal targets below the step's disposable `.tmp`."""
-    from .adapters.owned import is_link
-
     if not workdir:
         return False
     if any(char in command for char in ";|&()<>`\r\n"):
@@ -1098,8 +1096,6 @@ def _recursive_delete_inside_workdir(command: str, powershell: bool, workdir: st
     text = _blank_non_syntax(command, powershell)
     if text is None:
         return False
-    root = _norm(workdir, expand_vars=False)
-    tmp_root = _norm(posixpath.join(root, ".tmp"), expand_vars=False)
     raw_words = [command[word.start():word.end()] for word in _BARE_WORD.finditer(text)]
     literals = [_literal_shell_word(word, powershell) for word in raw_words]
     if not literals or any(value is None for value in literals):
@@ -1133,7 +1129,15 @@ def _recursive_delete_inside_workdir(command: str, powershell: bool, workdir: st
             targets.append(value)
     if not recursive or not targets:
         return False
+    return _targets_below_step_tmp(targets, powershell, workdir)
 
+
+def _targets_below_step_tmp(targets: Iterable[str], powershell: bool, workdir: str) -> bool:
+    """Whether every delete target is a literal relative path at or below the step's `.tmp`, through no link."""
+    from .adapters.owned import is_link
+
+    root = _norm(workdir, expand_vars=False)
+    tmp_root = _norm(posixpath.join(root, ".tmp"), expand_vars=False)
     physical_root = Path(workdir)
     for target in targets:
         if not _plain_delete_path(target, powershell, relative=True):
@@ -1249,36 +1253,21 @@ def _find_deletes(command: str) -> list[_FindDelete]:
     return found
 
 
-def _find_delete_inside_roots(command: str, find: _FindDelete, roots: list[str], raw_roots: list[str],
-                              workdir: str | None, git_bash: bool) -> bool:
-    """Allow a deleting find only as a plain command whose start paths are literal and inside the write roots."""
-    if find.follows_links:
-        return False  # -L walks through links to wherever they lead
+def _find_delete_inside_step_tmp(command: str, find: _FindDelete, workdir: str | None) -> bool:
+    """A deleting find meets the rule `rm -r` meets: one simple command, every start literal and below `.tmp`.
+
+    No start means `.`, the step folder itself. A pipe (`| xargs rm`), a redirection, `cd` or a substitution makes it
+    more than one simple command, as it does for rm; `-L` walks through links to wherever they lead.
+    """
+    if not workdir or find.follows_links:
+        return False
     plain = _FIND_TEXT.sub("", command)
-    if re.search(r"[;&()\n\r`]|\|\|", plain):
-        return False  # a cd before it, a subshell or a substitution: its working folder is not known
-    for element in plain.split("|"):
-        word = _BASH_FIND_WORD.search(element)
-        if word and element[:word.start()].strip():
-            return False  # `env -C dir find`, `sudo find`: not the find this check reads
-    for raw in find.starts or (".",):
-        value = _literal_shell_word(raw, False)
-        if value is None or not _plain_delete_path(value, False, relative=False):
-            return False
-        if _absolute(value):
-            path = (_git_bash_path(value, os.environ) if git_bash else None) or value
-        elif workdir:
-            path = posixpath.join(_norm(workdir, expand_vars=False), value)
-        else:
-            return False
-        if not any(_inside(_norm(path, expand_vars=False), root) for root in roots):
-            return False
-        if os.path.lexists(path):  # a start path that is a link deletes where the link leads
-            real = _real(path)
-            real_roots = [_real(root) for root in raw_roots]
-            if real is None or not any(r and _inside(real, r) for r in real_roots):
-                return False
-    return True
+    if any(char in plain for char in ";|&()<>`\r\n") or not _BASH_FIND_WORD.match(plain.lstrip()):
+        return False
+    starts = [_literal_shell_word(raw, False) for raw in find.starts] or ["."]
+    if any(start is None for start in starts):
+        return False
+    return _targets_below_step_tmp([str(start) for start in starts], False, workdir)
 
 
 @dataclass
@@ -2104,9 +2093,9 @@ def _evaluate_tool(
                 if ((re.search(pat, cmd, re.IGNORECASE) or not powershell and _recursive_rm(cmd))
                         and not _recursive_delete_inside_workdir(cmd, powershell, workdir)):
                     return Decision("ask", f"재귀 삭제 확인 필요: `{cmd[:200]}`")
-                if not powershell and any(
-                        not _find_delete_inside_roots(cmd, find, roots, list(allowed_roots), workdir, git_bash)
-                        for find in _find_deletes(cmd)):
+                # A deleting find meets the same `.tmp` rule (find -delete, -exec rm, | xargs rm).
+                if not powershell and not all(_find_delete_inside_step_tmp(cmd, find, workdir)
+                                              for find in _find_deletes(cmd)):
                     return Decision("ask", f"재귀 삭제 확인 필요: `{cmd[:200]}`")
                 if _CMD_RECURSIVE_DELETE.search(cmd) or powershell and _PS_PIPED_RECURSIVE_DELETE.search(cmd):
                     return Decision("ask", f"재귀 삭제 확인 필요: `{cmd[:200]}`")
