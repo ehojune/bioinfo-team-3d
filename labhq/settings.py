@@ -267,9 +267,11 @@ def _default_bash_ask() -> list[str]:
 def _default_auto_allow() -> list[str]:
     # Known non-delegating tools the approval gate allows without a shell, file or MCP rule. File tools are repeated
     # here so an exported policy is self-explanatory; StructuredOutput and ToolSearch were seen in trial records.
-    # Claude Code's basic reading/planning tools supplied the rest. Unknown tools ask; native delegation always denies.
+    # Claude Code's basic reading/planning tools supplied the rest. BashOutput/KillShell (older Claude Code) and
+    # TaskOutput/TaskStop (newer) only read or stop a background shell the gated Bash call already started.
+    # Unknown tools ask; native delegation always denies.
     return ["Read", "Glob", "Grep", "LS", "WebSearch", "WebFetch", "TodoWrite", "Skill",
-            "StructuredOutput", "ToolSearch"]
+            "StructuredOutput", "ToolSearch", "BashOutput", "KillShell", "TaskOutput", "TaskStop"]
 
 
 class ApprovalRules(BaseModel):

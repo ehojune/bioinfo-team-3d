@@ -390,7 +390,10 @@ def test_a_tool_without_a_rule_asks_instead_of_being_allowed():
     p = PolicySettings()
     monitor = evaluate_tool("Monitor", {"command": "until cat /data/cohort/x; do sleep 2; done"}, p)
     assert monitor.action == "ask" and "auto_allow_tools" in monitor.reason
-    for tool in ("StructuredOutput", "ToolSearch", "WebSearch", "WebFetch", "TodoWrite", "Skill"):
+    # BashOutput/KillShell and TaskOutput/TaskStop only read or stop a background shell the gated Bash started:
+    # asking the PI for each would bury the cards that matter (#518 follow-up).
+    for tool in ("StructuredOutput", "ToolSearch", "WebSearch", "WebFetch", "TodoWrite", "Skill",
+                 "BashOutput", "KillShell", "TaskOutput", "TaskStop"):
         assert evaluate_tool(tool, {}, p).action == "allow", tool
     p.approvals.auto_allow_tools.append("Monitor")
     assert evaluate_tool("Monitor", {"command": "true"}, p).action == "allow"
