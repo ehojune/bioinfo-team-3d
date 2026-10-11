@@ -2,6 +2,7 @@
 adapter or runner timeout. The fake CLI applies each real CLI's own tool-timeout rule to the config labhq wrote."""
 
 import asyncio
+import json
 import os
 import sys
 import time
@@ -19,7 +20,7 @@ DELAYED_MCP = ROOT / "scripts" / "fake_delayed_mcp.py"
 DELAY_S = 90.0
 
 
-def _runner(tmp_path: Path, engine: Engine, *, time_scale: float) -> tuple[Runner, list, Path]:
+def _runner(tmp_path: Path, engine: Engine, *, time_scale: float) -> tuple[Runner, list, Path, Path]:
     settings = Settings()
     settings.runner.state_dir = str(tmp_path / "state")
     settings.runner.workspace_root = str(tmp_path / "runs")
@@ -29,7 +30,9 @@ def _runner(tmp_path: Path, engine: Engine, *, time_scale: float) -> tuple[Runne
     binary = getattr(settings.engines, engine.value)
     binary.bin = sys.executable
     binary.prefix_args = [str(FAKE_CLI), engine.value, "labhq_ask"]
-    binary.env = {**binary.env, "LABHQ_TEST_TIMEOUT_SCALE": str(time_scale)}
+    timeout_capture = tmp_path / "timeout.json"
+    binary.env = {**binary.env, "LABHQ_TEST_TIMEOUT_SCALE": str(time_scale),
+                  "LABHQ_TEST_TIMEOUT_CAPTURE": str(timeout_capture)}
     if engine == Engine.codex:  # hermetic: the host's ~/.codex/AGENTS.md would refuse the staff session
         (tmp_path / "codex-home").mkdir()
         binary.env["CODEX_HOME"] = str(tmp_path / "codex-home")
@@ -54,18 +57,18 @@ def _runner(tmp_path: Path, engine: Engine, *, time_scale: float) -> tuple[Runne
     runner._resolve_agent = lambda _task: agent
     runner._mcp_servers = delayed
     runner.emit = record
-    return runner, events, calls
+    return runner, events, calls, timeout_capture
 
 
 async def _run_delayed(tmp_path: Path, engine: Engine, *, time_scale: float):
     root = tmp_path / engine.value
     root.mkdir()
-    runner, events, calls = _runner(root, engine, time_scale=time_scale)
+    runner, events, calls, timeout_capture = _runner(root, engine, time_scale=time_scale)
     try:
         task = Task(agent_id=f"slow_{engine.value}", request_id=f"req_{engine.value}", prompt="call slow_answer once")
         started = time.monotonic()
         result = await runner.run_task(task)
-        return result, time.monotonic() - started, events, calls
+        return result, time.monotonic() - started, events, calls, timeout_capture
     finally:
         runner.store.close()
 
@@ -77,11 +80,14 @@ async def _assert_long_calls_finish(tmp_path: Path, *, time_scale: float, outer_
         timeout=outer_timeout,
     )
 
-    for engine, (result, elapsed, events, calls) in zip(engines, runs):
+    for engine, (result, elapsed, events, calls, timeout_capture) in zip(engines, runs):
         kinds = [event.type for event in events]
+        configured = json.loads(timeout_capture.read_text(encoding="utf-8"))
         assert result.ok, f"{engine.value}: {result.error}"
         assert result.text == "LABHQ_DELAY_OK", engine.value
         assert DELAY_S * time_scale <= elapsed < outer_timeout, (engine.value, elapsed)
+        assert configured == {"engine": engine.value, "timeout_s": 1320.0}
+        assert configured["timeout_s"] > DELAY_S > 60  # 60 s is the approval ceiling and Codex client default
         assert len(calls.read_text(encoding="utf-8").splitlines()) == 1, engine.value
         assert kinds.count("agent.tool") == 1 and "agent.tool_error" not in kinds, (engine.value, kinds)
         assert kinds.count("task.result") == 1, (engine.value, kinds)
