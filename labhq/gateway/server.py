@@ -1400,9 +1400,6 @@ class Hub:
                 self._start_ask(AskRequest.model_validate(entry["ask"]), entry.get("origin"))
 
     def set_roster(self, runner_id: str, agents: list[dict], capabilities: dict | None = None) -> None:
-        # What this runner listed before and no longer hosts: a contract that expired while it was off, a removed yaml.
-        dropped = ({a.get("id") for a in (self.last_runner_rosters.get(runner_id) or {}).get("agents", [])} |
-                   {aid for aid, host in self.agent_runner.items() if host == runner_id}) - {a["id"] for a in agents}
         roster = {"agents": agents, "updated_at": time.time()}
         self.last_runner_rosters[runner_id] = roster
         self.store.put("runner_roster", runner_id, roster)
@@ -1428,10 +1425,13 @@ class Hub:
             self.agent_runner[a["id"]] = runner_id
             if runner_id in self.runners:
                 self.agent_online.setdefault(a["id"], asyncio.Event()).set()
-        for aid in dropped:
-            # A step waiting for it looks again (wait_for_runner) and ends now if no runner is left to wait for,
-            # instead of after gateway.runner_wait_s with a false "runner never connected" (#521).
-            self.agent_online.setdefault(str(aid), asyncio.Event()).set()
+        # Every step waiting for a runner looks again (wait_for_runner) and ends now if nothing is left to wait for,
+        # instead of after gateway.runner_wait_s with a false "runner never connected" (#521): an agent this runner
+        # dropped (a contract that expired while it was off), or a first agent that waited only because no runner
+        # was connected and that this runner does not host either (PR #530 review).
+        for req in self.requests.values():
+            for wait in (req.get("runner_waits") or {}).values():
+                self.agent_online.setdefault(str(wait.get("agent_id") or ""), asyncio.Event()).set()
         self._session_state_changed()
 
     def unregister_runner(self, runner_id: str, ws: WebSocket) -> bool:

@@ -989,3 +989,18 @@ async def test_a_first_agent_wait_after_a_gateway_restart_ends_when_its_runner_c
     await _until(lambda: hub.requests[rid]["status"] == "failed", timeout=2)
     text = hub.requests[rid].get("report", "") + hub.requests[rid].get("error", "")
     assert "curator 직원을 맡은 곳이 없습니다" in text and "연결되지 않아" not in text
+
+
+@pytest.mark.asyncio
+async def test_a_first_agent_wait_on_a_fresh_gateway_ends_when_a_runner_without_it_connects(tmp_path):
+    """PR #530 review: no saved roster, so the request waited only because no runner was connected. The first runner
+    hosts other staff; nothing dropped from its roster, yet the wait has nothing left to wait for."""
+    from labhq.gateway.server import RequestIn
+
+    hub = Hub(_settings(tmp_path))
+    rid = hub.create_request(RequestIn(text="표 정리", mode="direct", agent_id="curator"))
+    await _until(lambda: hub.requests[rid]["status"] == "waiting_for_runner")
+    hub.register_runner("lab", CaptureSocket(), ROSTER, "inc", process="p1")
+    await _until(lambda: hub.requests[rid]["status"] == "failed", timeout=2)
+    text = hub.requests[rid].get("report", "") + hub.requests[rid].get("error", "")
+    assert "curator 직원을 맡은 곳이 없습니다" in text and "연결되지 않아" not in text
