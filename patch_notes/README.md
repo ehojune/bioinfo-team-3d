@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 02:28 | [`fa17c0b`](https://github.com/ehojune/bioinfo-team-3d/pull/519/commits/fa17c0b) | lock의 실제 OS 판정을 테스트용 sys.platform 값과 분리해 Linux CI에서도 올바른 fcntl 경로를 쓴다. |
+| 02:19 | [`5ae9d5e`](https://github.com/ehojune/bioinfo-team-3d/pull/519/commits/5ae9d5e) | 같은 instance의 up/down을 OS lock으로 직렬화하고 POSIX 종료를 TERM 대기와 KILL 재확인으로 마친다. |
 | 02:12 | [`316e1aa`](https://github.com/ehojune/bioinfo-team-3d/pull/518/commits/316e1aa) | native 위임 도구를 거부하고 Codex 직원의 multi-agent·memory·apps·plugins를 끔 |
 | 01:57 | [`5e59bf7`](https://github.com/ehojune/bioinfo-team-3d/pull/517/commits/5e59bf7) | 이전 차수 절 제목을 닫는 #이 붙은 ATX 형식으로 써도 인식한다(#517 리뷰). |
 | 01:54 | [`a46a485`](https://github.com/ehojune/bioinfo-team-3d/pull/517/commits/a46a485) | labhq가 PI 보고서에 붙이는 절(이전 차수 대체 절, 리뷰 참고)을 끝의 벤치 결과 블록 앞에 넣는다(#517 리뷰). |

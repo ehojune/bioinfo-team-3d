@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-12 · up/down 동시 실행과 POSIX 종료를 안전하게 처리한다 (#500)
+
+- 결론: 같은 instance의 `labhq up`·`down`을 state 폴더의 OS lock으로 직렬화하고, POSIX 종료는 프로세스 신원이 사라질 때까지 기다린 뒤 필요하면 SIGKILL한다.
+- 바뀐 것: Windows `msvcrt.locking`, POSIX `fcntl.flock` 기반 non-blocking lock과 같은 process의 thread lock을 추가했다. POSIX `_terminate_tree`는 기록된 생성 시각이 같은 process에 SIGTERM을 보내고 10초 뒤에도 남으면 SIGKILL한 다음 재확인한다. `docs/manual.md`에 두 동작을 적었다.
+- 실행한 것: 새 Windows 회귀는 main 코드에서 2 failed·1 skipped였고 수정 뒤 `tests/test_cli_launch.py` 28 passed·1 skipped다. Windows 전체 `pytest -q`는 4989 passed·64 skipped다. 첫 CI 3.12에서 test용 `sys.platform` 값이 lock의 OS 판정까지 바꾼 결함을 확인해 `os.name`으로 고쳤다. `scripts/check_public.sh`, `scripts/patch_notes.py check`, `scripts/notes_index.py --validate`, `git diff --check`도 통과했다.
+- 미해결: 없음. 봇 리뷰 판단과 병합은 총괄에게 넘긴다.
+- 근거: `labhq/cli.py`, `tests/test_cli_launch.py`, `docs/manual.md`.
+
 ## 2026-10-12 · 승인 게이트의 native 위임과 Codex 확장 기능 차단
 
 ## 결론
