@@ -1,0 +1,5 @@
+pr: 519
+rows:
+  - sha: "5ae9d5e"
+    at: "2026-10-12 02:19"
+    text: "같은 instance의 up/down을 OS lock으로 직렬화하고 POSIX 종료를 TERM 대기와 KILL 재확인으로 마친다."
