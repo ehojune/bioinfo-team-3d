@@ -53,6 +53,8 @@ TASK_CANCEL_KEEP_S = 2 * 86400
 # timeout, the request waits as waiting_pi meanwhile, and an unanswered card ends as *_timed_out, never as a deny.
 PI_DECISION_KINDS = frozenset({"clarify", "question", "scope", "budget", "research_plan", "research_evidence",
                                "research_continue", "resume"})
+# Runner cards that only inform: no hook waits on them, so their task's result does not close them (#521).
+RUNNER_NOTICE_KINDS = frozenset({"codex_sandbox_setup"})
 # How long request cancel waits for the cancelled turns to report, so their cost is counted (R13).
 CANCEL_RESULT_WAIT_S = 10.0
 # Statuses a hold sets and _sync_hold_status may lift again.
@@ -215,6 +217,8 @@ class Hub:
         self.event_lock = asyncio.Lock()
         self.runners: dict[str, WebSocket] = {}
         self.runner_incarnations: dict[str, str | None] = {}
+        # Per runner process (hello "process"): the incarnation is kept on disk across restarts, this is not (#521).
+        self.runner_processes: dict[str, str | None] = {}
         self.runner_locks: dict[str, asyncio.Lock] = {}
         self.runner_agents: dict[str, list[dict]] = {}
         self.runner_capabilities: dict[str, dict] = {}
@@ -1187,7 +1191,8 @@ class Hub:
 
     # ----- runners -----
     def register_runner(self, runner_id: str, ws: WebSocket, agents: list[dict],
-                        incarnation: str | None = None, capabilities: dict | None = None) -> None:
+                        incarnation: str | None = None, capabilities: dict | None = None,
+                        process: str | None = None) -> None:
         old = self.runners.get(runner_id)
         if old is not None and old is not ws and hasattr(old, "close"):
             async def close_old() -> None:
@@ -1204,6 +1209,7 @@ class Hub:
         if incarnation and started.get("incarnation") and started["incarnation"] != incarnation:
             self.recruits_running.pop(runner_id, None)  # a new runner process: the old one's recruitments died with it
         self.runner_incarnations[runner_id] = incarnation
+        self.runner_processes[runner_id] = process
         self.runner_locks.setdefault(runner_id, asyncio.Lock())
         self.set_roster(runner_id, agents, capabilities)
         hosted_agents = {a["id"] for a in agents}
@@ -1262,7 +1268,8 @@ class Hub:
         self._session_state_changed()
         return result
 
-    def _orphan_reason(self, entry: dict, runner_id: str, incarnation: str | None, hosted: set[str]) -> str | None:
+    def _orphan_reason(self, entry: dict, runner_id: str, incarnation: str | None, hosted: set[str],
+                       process: str | None = None) -> str | None:
         """Why a runner card can no longer be answered, judged when ``runner_id`` registers, or None (R2)."""
         origin = entry.get("origin")
         if not origin:
@@ -1272,6 +1279,10 @@ class Hub:
         if task is not None and task.get("abandoned"):
             return "그 작업이 끝났거나 결과를 알 수 없게 되어 닫힘"
         if origin == runner_id:
+            # The incarnation survives a restart, so only the process id tells a restart from a reconnect (#521).
+            # A card saved before cards carried it, or two older runners without one, fall to the incarnation rule.
+            if "origin_process" in entry and entry["origin_process"] != process:
+                return "러너가 다시 시작되어 닫힘"
             asked_by = entry.get("origin_incarnation")
             if incarnation and asked_by and asked_by != incarnation:
                 return "러너가 다시 시작되어 닫힘"
@@ -1283,14 +1294,26 @@ class Hub:
             return f"{approval.get('agent_id')} 직원이 다른 러너({runner_id})로 옮겨 닫힘"
         return None
 
-    async def expire_orphan_approvals(self, runner_id: str, incarnation: str | None) -> list[str]:
+    async def expire_orphan_approvals(self, runner_id: str, incarnation: str | None,
+                                      process: str | None = None) -> list[str]:
         """At runner registration, close cards whose asking process is gone: the runner restarted, the agent now
         lives on this runner, or the card's task was abandoned. The old process is not told; it is gone."""
         hosted = {a.get("id") for a in self.runner_agents.get(runner_id, [])}
         closed = []
         for aid, entry in list(self.approvals.items()):
-            reason = self._orphan_reason(entry, runner_id, incarnation, hosted)
+            reason = self._orphan_reason(entry, runner_id, incarnation, hosted, process)
             if reason and await self.close_approval(aid, reason, notify_runner=False):
+                closed.append(aid)
+        return closed
+
+    async def close_task_cards(self, tid: str) -> list[str]:
+        """A task that reported its result asks nothing more: close the runner cards it left open (R2, #521).
+        The asking process may still be alive, so its hook hears no now instead of at its own timeout."""
+        closed = []
+        for aid, entry in list(self.approvals.items()):
+            card = entry["approval"]
+            if (entry.get("origin") and card.get("task_id") == tid and card.get("kind") not in RUNNER_NOTICE_KINDS
+                    and await self.close_approval(aid, "그 작업이 끝나 닫힘")):
                 closed.append(aid)
         return closed
 
@@ -1381,6 +1404,7 @@ class Hub:
         if self.runners.get(runner_id) is ws:
             self.runners.pop(runner_id, None)  # keep roster + pending futures: the runner will reconnect
             self.runner_incarnations.pop(runner_id, None)
+            self.runner_processes.pop(runner_id, None)
             for aid, host in self.agent_runner.items():
                 if host == runner_id:
                     self.agent_online.setdefault(aid, asyncio.Event()).clear()
@@ -1587,6 +1611,8 @@ class Hub:
             fut = self.futures.pop(msg.get("task_id") or "", None)
             if fut and not fut.done():
                 fut.set_result(result)
+            if tid:
+                await self.close_task_cards(tid)
         elif typ == "approval.requested" and (self.requests.get(msg["data"].get("request_id") or "") or {}).get(
                 "status") == "cancelled":
             # A card queued before request cancel arrives after it: the hook hears no, the PI sees nothing (R13).
@@ -1605,7 +1631,8 @@ class Hub:
             a = msg["data"]
             # The asking process: a card outlives neither it nor the agent's move to another runner (R2).
             self.approvals[a["id"]] = {"approval": a, "origin": runner_id,
-                                       "origin_incarnation": self.runner_incarnations.get(runner_id)}
+                                       "origin_incarnation": self.runner_incarnations.get(runner_id),
+                                       "origin_process": self.runner_processes.get(runner_id)}
             self.save_approval(a["id"])
         elif typ == "approval.timed_out":
             aid = str((msg.get("data") or {}).get("id") or "")
@@ -2647,10 +2674,10 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         try:
             hello = json.loads(await ws.receive_text())
             runner_id = hello["runner_id"]
-            incarnation = hello.get("incarnation")
+            incarnation, process = hello.get("incarnation"), hello.get("process")
             hub.register_runner(runner_id, ws, hello.get("agents", []), incarnation,
-                                hello.get("capabilities"))
-            await hub.expire_orphan_approvals(runner_id, incarnation)
+                                hello.get("capabilities"), process)
+            await hub.expire_orphan_approvals(runner_id, incarnation, process)
             await hub.flush_decisions(runner_id)
             await hub.flush_ask_answers(runner_id)
             await hub.flush_task_cancels(runner_id)
