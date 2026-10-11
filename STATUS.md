@@ -4,6 +4,15 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-11 · 웹 첫 화면이 빈 사무실로 보이지 않는다
+
+- 결론: 페이지를 새로 열면 gateway의 첫 스냅샷이 올 때까지 "오늘의 할 일을 기다리는 중", "사용 비용 $0.00", "지금은 결정할 일이 없어요"가 보여 요청이 없는 사무실로 읽혔다(웹 연구 시운전 10-08). 이제 그동안은 "사무실 상태를 불러오는 중", "사용 비용 불러오는 중", "결정할 일을 불러오는 중"이다.
+- 바뀐 것: `labhq/web/index.html` `snapshotLoaded`(데모는 처음부터 참, live는 첫 snapshot 이벤트에서 참). 상태 reducer(`state.js`)는 그대로라 2.5D·3D 공유 상태와 golden hash가 바뀌지 않는다.
+- 실행한 것: `tests/web_cards_status.cjs`에 처리 경로 test 1건(main 코드에서 실패). web node test 전체, `tests/test_web.py`·`tests/test_web_3d.py`, inline module `node --check`, 전체 `pytest -q`(Windows) 4979 passed·63 skipped, `scripts/check_public.sh`, `scripts/patch_notes.py check`.
+- 봇 리뷰 P2 2건 고침: 토큰이 없거나 틀리면 스냅샷이 오지 않아 "불러오는 중"이 끝나지 않았다 → "토큰을 넣으면 … 불러와요". `docs/manual.md` 웹 사무실 절에 첫 스냅샷 전 표시를 적었다.
+- 미해결: 3D 사무실(`lab3d`)은 첫 연결 전에 "roster를 기다립니다"를 이미 보여 고칠 것이 없다. Codex 리뷰는 사용자 지시로 보류 중이라 draft로 둔다.
+- 근거: `labhq/web/index.html`(open() → ws.onmessage, renderHeader, board, decisions).
+
 ## 2026-10-09 · PI 시험 전 문서 대조 21건과 CLI traceback
 
 - 결론: PI가 읽는 문서(README, `docs/pi-qa.md`, `docs/manual.md`, `docs/research_protocol.md`, 예제 설정)를 현재 코드와 대조해 확인된 23건 중 21건을 고쳤다. PI 시험을 막는 항목은 없었다(혼동 5, 사소 18). 대조 중 찾은 코드 결함 하나(`labhq send` 대기·`watch`의 traceback)도 고쳤다.
