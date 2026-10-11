@@ -79,7 +79,7 @@ PI가 묻고 개발 총괄이 답한 것과 PI가 내린 결정을 모았습니�
 ### 카드에 바로 답하지 못하면 요청이 실패하나? (10-08)
 
 - 실패하지 않습니다. 확인 질문·직원 질문·예산·범위·CP1·CP2·이어 가기·재개 카드는 7일 동안 기다리고, 그동안 요청은 `waiting_pi`(PI 결정 대기)로 멈춰 있습니다. 돌아와서 카드에 답하면 이어 갑니다.
-- 7일이 지나면 요청은 `*_timed_out`(예: `evidence_timed_out`)으로 끝납니다. 거절과 다른 기록이라 보고서와 감사에서 구분됩니다. 기한은 `policy.approvals.pi_decision_timeout_s`로 바꿉니다.
+- 7일이 지나면 확인 질문·범위·CP1·CP2·재개 카드는 요청을 `*_timed_out`(예: `evidence_timed_out`)으로 끝냅니다. 예산 카드는 일반 요청을 `budget_timed_out`, 연구 요청을 `research_failed`로 끝냅니다. 이어 가기 카드는 새 CP1을 열지 않고 `research_review_revise`로 끝납니다. 직원 질문은 직원에게 "답 없음"으로 전하고 요청은 계속됩니다. 어느 쪽이든 거절과 다른 기록이라 보고서와 감사에서 구분됩니다. 기한은 `policy.approvals.pi_decision_timeout_s`로 바꿉니다.
 - 도구 권한 같은 gate 카드는 그대로 `policy.approvals.timeout_s`(1시간)가 지나면 닫힙니다. 그 단계만 거절로 처리됩니다.
 
 ### CP2에서 근거가 부족하면 어떻게 고치게 하나? (10-08)

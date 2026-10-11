@@ -492,7 +492,7 @@ class Settings(BaseModel):
     annot: AnnotSettings = AnnotSettings()
     dev_log: DevLogSettings = DevLogSettings()
     projects: list[ProjectSettings] = []
-    semantics: Any = None  # semantics-hook: off | shadow, read only by labhq.research.semantics_shadow (#150)
+    semantics: Any = None  # semantics-hook: off | shadow | ab, read only by labhq.research.semantics_shadow (#150)
     config_path: str | None = None
     # Set only in the staff copy (write_staff_config): the folder its relative paths still resolve from.
     config_base: str | None = None
