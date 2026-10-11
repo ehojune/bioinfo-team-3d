@@ -98,6 +98,9 @@ def _codex_events(name: str, text: str | None) -> list[dict]:
 def main() -> None:
     engine, name, argv = sys.argv[1], sys.argv[2], sys.argv[3:]
     command, args, env, timeout_s = (_claude if engine == "claude_code" else _codex)(argv, name)
+    capture = os.environ.get("LABHQ_TEST_TIMEOUT_CAPTURE")
+    if capture:
+        Path(capture).write_text(json.dumps({"engine": engine, "timeout_s": timeout_s}), encoding="utf-8")
     text = asyncio.run(_call(command, args, env, timeout_s))
     if engine == "claude_code":
         events = _claude_events(name, text)
