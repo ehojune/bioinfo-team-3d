@@ -265,9 +265,10 @@ def _default_bash_ask() -> list[str]:
 
 
 def _default_auto_allow() -> list[str]:
-    # Tools the approval gate allows without a shell, file or MCP rule. Anything else asks the PI (#421): Monitor, for
-    # one, runs a shell command the Bash checks never see. StructuredOutput and ToolSearch: seen in trial records.
-    return ["Read", "Glob", "Grep", "LS", "WebSearch", "WebFetch", "TodoWrite", "Task", "Agent", "Skill",
+    # Known non-delegating tools the approval gate allows without a shell, file or MCP rule. File tools are repeated
+    # here so an exported policy is self-explanatory; StructuredOutput and ToolSearch were seen in trial records.
+    # Claude Code's basic reading/planning tools supplied the rest. Unknown tools ask; native delegation always denies.
+    return ["Read", "Glob", "Grep", "LS", "WebSearch", "WebFetch", "TodoWrite", "Skill",
             "StructuredOutput", "ToolSearch"]
 
 

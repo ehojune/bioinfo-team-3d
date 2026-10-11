@@ -15,10 +15,10 @@ async def _emit(kind, data):
     pass
 
 
-def _command(engine, tmp_path, settings=None, env=None, claude_settings=None, tools=()):
+def _command(engine, tmp_path, settings=None, env=None, claude_settings=None, tools=(), agent_id="a"):
     settings = settings or Settings()
-    agent = AgentSpec(id="a", name="A", role="test", engine=Engine(engine), builtin_mcp=[], tools=list(tools))
-    ctx = RunContext(task=Task(agent_id="a", prompt="x"), agent=agent, workdir=tmp_path, settings=settings,
+    agent = AgentSpec(id=agent_id, name="A", role="test", engine=Engine(engine), builtin_mcp=[], tools=list(tools))
+    ctx = RunContext(task=Task(agent_id=agent_id, prompt="x"), agent=agent, workdir=tmp_path, settings=settings,
                      mcp_servers=[], env=env or {}, emit=_emit, prompt="x",
                      claude_settings=claude_settings or {})
     return get_adapter(agent.engine, settings).build_command(ctx)
@@ -447,9 +447,20 @@ def test_labhq_ask_keeps_its_own_longer_mcp_timeout(tmp_path, engine):
         assert f"mcp_servers.labhq_hpc.tool_timeout_sec={generic}" in cmd
 
 
-def test_claude_staff_that_lists_a_sub_agent_tool_keeps_both_names(tmp_path):
-    # PR #425 review: sub-agents run outside labhq's approvals and accounting, so only a staff member that lists Agent
-    # (recruiter's Paper2Agent conversion) or its older name Task keeps them; orchestration tools stay denied.
-    deny = _settings_arg(_command("claude_code", tmp_path, tools=["Read", "Agent"]))["permissions"]["deny"]
+def test_claude_recruiter_that_lists_agent_keeps_both_sub_agent_names(tmp_path):
+    # PR #425 review: only the configured recruiter may use Paper2Agent's parallel sub-agents.
+    deny = _settings_arg(_command("claude_code", tmp_path, tools=["Read", "Agent"],
+                                  agent_id="recruiter"))["permissions"]["deny"]
     assert "Agent" not in deny and "Task" not in deny
     assert deny == ["Workflow", "TeamCreate", "TeamDelete", "SendMessage", "ListAgents"]
+
+
+def test_claude_non_recruiter_cannot_enable_agent_by_listing_it(tmp_path):
+    deny = _settings_arg(_command("claude_code", tmp_path, tools=["Read", "Agent"]))["permissions"]["deny"]
+    assert deny == STAFF_DENY
+
+
+def test_codex_writable_staff_disables_delegation_memory_apps_and_plugins(tmp_path):
+    cmd = _command("codex", tmp_path)
+    disabled = [cmd[i + 1] for i, arg in enumerate(cmd) if arg == "--disable"]
+    assert disabled == ["multi_agent", "memories", "apps", "plugins"]

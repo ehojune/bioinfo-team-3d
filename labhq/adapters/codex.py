@@ -22,15 +22,12 @@ from .owned import read_owned, write_owned
 
 # Staff tool names that mean "web". Codex has no per-tool rules for them; its native search turns on instead.
 WEB_TOOLS = {"WebSearch", "WebFetch"}
-# Features a read-only task turns off: each runs code or acts outside the `-s read-only` sandbox (hooks run shell
-# commands, plugins bring hooks and MCP servers, apps are remote connector tools, computer/browser use drive the
-# desktop). Names checked against `codex features list` on codex-cli 0.159.2; an unknown name is a CLI error, so a
-# Codex that lacks one fails the read-only run instead of running it with that feature on.
-READ_ONLY_DISABLED_FEATURES = ("hooks", "plugins", "apps", "computer_use", "browser_use")
-# Off for every staff run (#421): multi_agent starts sub-agents outside labhq's step accounting, and memories carry one
-# request's notes into the next through the shared staff CODEX_HOME. Checked against `codex features list` on the
-# codex-cli this PC runs (2026-10-05); an unknown name fails the run, as above.
-STAFF_DISABLED_FEATURES = ("multi_agent", "memories")
+# Features a read-only task additionally turns off because they run code or drive the desktop outside `-s read-only`.
+READ_ONLY_DISABLED_FEATURES = ("hooks", "computer_use", "browser_use")
+# Off for every staff run (#421): native sub-agents, cross-request memory, remote connector tools and plugins all act
+# outside labhq's step accounting or configured MCP/tool boundary. Names checked with `codex features list` on
+# codex-cli 0.160.1 (2026-10-12). Unknown names are CLI errors, so an older CLI fails closed.
+STAFF_DISABLED_FEATURES = ("multi_agent", "memories", "apps", "plugins")
 ELEVATED_SETUP_ERROR = (
     "Codex elevated sandbox setup is required for the staff CODEX_HOME. An unattended run cannot safely "
     "launch its administrator setup helper. Initialize that CODEX_HOME interactively before unattended work; "

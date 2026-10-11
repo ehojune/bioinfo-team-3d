@@ -826,10 +826,12 @@ def test_too_many_path_candidates_ask_instead_of_passing_a_link_into_a_zone(tmp_
     assert evaluate_tool("Bash", {"command": f"cat {repeated}"}, policy, allowed_roots=[ws], workdir=ws).action == "allow"
     write = {"file_path": str(workdir / "notes.md"), "content": decoys}
     assert evaluate_tool("Write", write, policy, allowed_roots=[ws], workdir=ws).action == "allow"
-    for tool, tool_input in [("Task", {"prompt": decoys}), ("WebFetch", {"url": "https://example.org", "prompt": decoys})]:
-        assert evaluate_tool(tool, tool_input, policy, allowed_roots=[ws], workdir=ws).action == "allow", tool
+    assert evaluate_tool("Task", {"prompt": decoys}, policy,
+                         allowed_roots=[ws], workdir=ws).action == "deny"
+    assert evaluate_tool("WebFetch", {"url": "https://example.org", "prompt": decoys}, policy,
+                         allowed_roots=[ws], workdir=ws).action == "allow"
     many_paths = {"paths": [f"d{i}.txt" for i in range(MAX_RESOLVED_CANDIDATES + 1)]}
-    assert evaluate_tool("Task", many_paths, policy, allowed_roots=[ws], workdir=ws).action == "ask"
+    assert evaluate_tool("WebFetch", many_paths, policy, allowed_roots=[ws], workdir=ws).action == "ask"
     # Decoys that name nothing in the workdir cost no resolution, so the link behind them is still followed.
     absent = " ".join(f"none{i}.txt" for i in range(MAX_RESOLVED_CANDIDATES + 1))
     decision = evaluate_tool("Bash", {"command": f"cat {absent} ref/link/raw.tsv"}, policy, allowed_roots=[ws], workdir=ws)

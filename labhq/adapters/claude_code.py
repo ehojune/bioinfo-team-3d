@@ -273,10 +273,11 @@ class ClaudeCodeAdapter(AgentAdapter):
         permissions = dict(settings.get("permissions") or {})
         deny = list(permissions.get("deny") or [])
         # Orchestration tools start agents labhq neither approves nor counts (#421, from the #316 open-science review):
-        # a staff member works its own step. Sub-agents (Agent, and its older name Task) stay only for a staff member
-        # that lists one in its tools — recruiter's Paper2Agent conversion (PR #425 review).
+        # a staff member works its own step. Sub-agents (Agent, and its older name Task) stay only for the configured
+        # recruiter when it declares one — Paper2Agent's parallel conversion (docs/manual.md; PR #425 review).
         declared = {str(tool).split("(")[0] for tool in a.tools}
-        sub_agents = [] if declared & {"Agent", "Task"} else ["Agent", "Task"]
+        recruiter_sub_agents = a.id == self.settings.recruit.agent_id and bool(declared & {"Agent", "Task"})
+        sub_agents = [] if recruiter_sub_agents else ["Agent", "Task"]
         permissions["deny"] = list(dict.fromkeys([*deny, *sub_agents, "Workflow", "TeamCreate", "TeamDelete",
                                                   "SendMessage", "ListAgents"]))
         settings["permissions"] = permissions

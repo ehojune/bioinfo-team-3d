@@ -21,6 +21,10 @@ from .settings import BASH_RECURSIVE_DELETE_PATTERN, SCHEDULER_JOB_COMMANDS, Pol
 
 READ_LIKE = {"Read", "Glob", "Grep", "LS", "NotebookRead"}
 WRITE_LIKE = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
+# Claude Code native delegation starts workers outside labhq's task, approval, event and cost accounting. These names
+# come from Claude Code's Agent/Task compatibility pair and team/workflow tools; they are never made safe by adding
+# them to policy.approvals.auto_allow_tools. The recruiter pre-approves Agent in its CLI command instead (#421).
+NATIVE_DELEGATION_TOOLS = {"Task", "Agent", "Workflow", "TeamCreate", "TeamDelete"}
 
 # Lexical prompts for common PowerShell hazards; this is not a command sandbox.
 POWERSHELL_RECURSIVE_DELETE_PATTERN = (
@@ -1840,6 +1844,8 @@ def _evaluate_tool(
     allowed_roots: Iterable[str] = (),
     workdir: str | None = None,
 ) -> Decision:
+    if tool_name in NATIVE_DELEGATION_TOOLS:
+        return Decision("deny", f"{tool_name} starts native delegation outside labhq accounting; use labhq orchestration")
     if tool_name in WRITE_LIKE:
         write_path = tool_input.get("file_path") or tool_input.get("notebook_path")
         if write_path and _drive_relative(write_path):

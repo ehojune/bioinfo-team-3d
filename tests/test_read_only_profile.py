@@ -189,8 +189,9 @@ async def test_codex_read_only_command_turns_off_hooks_plugins_and_user_config(t
     assert not any(arg.startswith("mcp_servers.") for arg in cmd) and ctx.mcp_servers == []
     await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"}))
     writable = seen[1][1]
-    # #421: a writable run turns off only sub-agents and cross-run memory, not the read-only set
-    assert [writable[i + 1] for i, arg in enumerate(writable) if arg == "--disable"] == ["multi_agent", "memories"]
+    # #421: writable staff also lose remote connector and plugin tools; read-only adds its wider desktop/code set.
+    assert [writable[i + 1] for i, arg in enumerate(writable) if arg == "--disable"] == [
+        "multi_agent", "memories", "apps", "plugins"]
     assert "--dangerously-bypass-approvals-and-sandbox" in writable
 
 
