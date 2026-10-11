@@ -14,7 +14,9 @@ from pathlib import Path
 import pytest
 
 from labhq.adapters import owned as owned_module
+from labhq.gateway.server import RequestIn, create_app
 from labhq.models import AgentSpec, Engine, Task, TaskResult
+from labhq.orchestrator.cso import Orchestrator
 from labhq.research import semantics_shadow as shadow
 from labhq.runner import workspace as workspace_module
 from labhq.runner.daemon import Runner
@@ -66,6 +68,54 @@ async def test_a_direct_run_reports_the_files_it_left_in_outputs(tmp_path, monke
     again = await runner.run_task(_direct("task-2", workdir=first.workdir))
     assert again.outputs == first.outputs
     assert (Path(first.workdir) / "outputs" / "RESULT_task-1.md").exists()
+
+
+@pytest.mark.asyncio
+async def test_direct_result_declares_collected_output_types_when_the_option_is_on(tmp_path, monkeypatch):
+    runner = _runner(tmp_path, monkeypatch, lambda _wd: None)
+    runner.s.plan.declare_output_types = True
+    seen = []
+
+    class TypedAdapter:
+        async def run(self, ctx):
+            seen.append(ctx.task)
+            assert ctx.before_spawn() is None
+            _files(Path(ctx.workdir), {"outputs/counts.tsv": "gene\tn\nX\t1\n"})
+            return TaskResult(
+                task_id=ctx.task.id, agent_id="worker", ok=True, text="structured response",
+                structured={"response": "direct answer", "output_types": [
+                    {"name": "outputs/counts.tsv", "data_type": "raw_counts", "format": "tsv"},
+                ]})
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_args: TypedAdapter())
+    hub = create_app(runner.s).state.hub
+    hub.agents["worker"] = AgentSpec(
+        id="worker", name="Worker", role="test", engine=Engine.claude_code, builtin_mcp=[]
+    ).model_dump(mode="json")
+
+    async def dispatch(task):
+        return await runner.run_task(task)
+
+    monkeypatch.setattr(hub, "dispatch", dispatch)
+    rid = hub.create_request(RequestIn(text="save outputs/counts.tsv", mode="direct", agent_id="worker"))
+    await Orchestrator(hub).run_request(rid)
+
+    assert seen[0].output_schema["title"] == "DirectResult"
+    assert "raw_counts" in seen[0].prompt
+    result = hub.requests[rid]["results"]["direct"]
+    assert result["text"] == hub.requests[rid]["report"] == "direct answer"
+    assert result["outputs"] == ["outputs/counts.tsv"]
+    assert result["output_sha256"]["outputs/counts.tsv"]
+    assert result["output_types"]["outputs/counts.tsv"] == {
+        "v": 1,
+        "vocab": result["output_types"]["outputs/counts.tsv"]["vocab"],
+        "data_type": {"value": "raw_counts", "basis": "declared", "source": "staff"},
+        "format": {"value": "tsv", "basis": "declared", "source": "staff"},
+    }
+    assert hub.requests[rid]["output_types_stats"] == {
+        "outputs": 1, "data_declared": 1, "format_declared": 1, "issues": {},
+        "vocab": result["output_types"]["outputs/counts.tsv"]["vocab"],
+    }
 
 
 def _junction(link: Path, target: Path) -> None:
@@ -340,10 +390,13 @@ async def test_two_direct_requests_need_input_and_target_declarations_beyond_a_s
                         project_id="shadowproj", request={"mode": "direct", "agent_id": "data_steward"})
     hub, (first, second) = lab["hub"], lab["rids"]
     assert hub.requests[first]["results"]["direct"]["outputs"] == ["outputs/artifact.txt"]
+    direct_tasks = [row for row in hub.store.all("task").values() if row.get("kind") == "direct"]
+    assert all((row.get("payload") or {}).get("output_schema") is None for row in direct_tasks)
+    assert all("output_types_vocab" not in ((row.get("payload") or {}).get("meta") or {}) for row in direct_tasks)
     lines = {line["request_id"]: line for line in lab["lines"] if line["type"] == "request"}
     assert set(lines) == {first, second} and lines[second]["lane"] == "direct"
     assert lines[first]["hash"]["observed_new"] == 1
-    # Nothing in the live path declares a type yet (#221 할 일 2): the earlier output stays type_unknown.
+    # The option is off, so the live path declares no type and the earlier output stays type_unknown.
     live = lines[second]["provenance"]
     assert live["history_artifacts"] == 1 and live["candidates"] == 0
     assert live["excluded"]["type_unknown"] == 1

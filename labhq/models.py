@@ -188,6 +188,7 @@ class TaskResult(BaseModel):
     missing_outputs: list[str] = []
     # output relpath -> type record (labhq.vocab.declare.runner_records); only for collected outputs (#221)
     output_types: dict[str, Any] = {}
+    output_types_stats: dict[str, Any] = {}
     output_sha256: dict[str, str] = {}
     output_tool_use_ids: dict[str, str] = {}
     unreported_outputs: list[str] = []
@@ -229,6 +230,12 @@ class TaskResult(BaseModel):
         from .vocab.declare import bounded_records
         return bounded_records(value) if value is not None else {}
 
+    @field_validator("output_types_stats", mode="before")
+    @classmethod
+    def bounded_output_type_stats(cls, value: Any) -> dict[str, Any]:
+        from .vocab.declare import bounded_stats
+        return bounded_stats(value)
+
     @model_serializer(mode="wrap")
     def _drop_empty_internal_fields(self, handler: Any) -> dict[str, Any]:
         # Results without declarations, a gateway handoff or a quota reset serialize exactly as before those
@@ -237,6 +244,8 @@ class TaskResult(BaseModel):
         if isinstance(data, dict):
             if not data.get("output_types"):
                 data.pop("output_types", None)
+            if not data.get("output_types_stats"):
+                data.pop("output_types_stats", None)
             if not data.get("output_sha256"):
                 data.pop("output_sha256", None)
             if not data.get("output_tool_use_ids"):

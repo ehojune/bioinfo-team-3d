@@ -1347,7 +1347,34 @@ class Runner:
                                                   "reason": reason}
         if "output_types_vocab" in task.meta:  # the gateway asked for type records (#221): collected outputs only
             try:
-                result.output_types = output_types.runner_records(found, task.meta, output_vocab.current())
+                type_meta = task.meta
+                current_vocab = output_vocab.current()
+                direct_result = (result.structured if isinstance(result.structured, dict)
+                                 and (task.meta.get("kind") == "direct"
+                                      or task.meta.get("collect_direct_outputs") is True) else None)
+                if direct_result is not None:
+                    response = direct_result.get("response")
+                    if isinstance(response, str):
+                        result.text = response
+                    entries, issues = (output_types.normalize_entries(
+                        found, direct_result.get("output_types"), current_vocab)
+                        if current_vocab is not None and current_vocab.sha256 == task.meta.get("output_types_vocab")
+                        else ([], {}))
+                    type_meta = {
+                        "output_types_vocab": task.meta.get("output_types_vocab"),
+                        "output_types": output_types.meta_declarations(entries),
+                        "output_types_source": "staff",
+                    }
+                    result.output_types_stats = {
+                        **output_types.stats(found, entries, issues),
+                        "vocab": task.meta.get("output_types_vocab"),
+                    }
+                    result.structured = {
+                        "response": result.text,
+                        "output_types": [{key: value for key, value in entry.items() if key != "vocab"}
+                                         for entry in entries],
+                    }
+                result.output_types = output_types.runner_records(found, type_meta, current_vocab)
             except Exception:
                 result.output_types = {}
                 await emit("agent.log", {"level": "warn", "text": "output type records unavailable; result kept"})

@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import vocab as output_vocab
+from ..evidence.claims import normalize_artifact_path
 from ..policy import _inside, _norm
 from ..util import atomic_write_text
 from ..vocab import declare as output_types
@@ -360,7 +361,9 @@ def _light_request(req: Mapping[str, Any]) -> dict:
         plan_copy: Any = plan  # validated as a ResearchPlan by the provenance model
     else:
         plan_copy = {"steps": [_light_step(s) for s in plan.get("steps") or [] if isinstance(s, dict)]}
-    results = {sid: {k: r.get(k) for k in ("task_id", "agent_id", "ok", "status", "outputs", "workdir_id", "workdir")}
+    results = {sid: {k: (output_types.bounded_records(r.get(k)) if k == "output_types" else r.get(k))
+                     for k in ("task_id", "agent_id", "ok", "status", "outputs", "workdir_id",
+                               "workdir", "output_types")}
                for sid, r in (req.get("results") or {}).items() if isinstance(r, dict)}
     contract = req.get("research_contract") if isinstance(req.get("research_contract"), dict) else {}
     light = {"id": req.get("id"), "project_id": req.get("project_id"), "mode": req.get("mode"),
@@ -1056,7 +1059,7 @@ def _mentioned_names(req: Mapping[str, Any]) -> set[str]:
     return {m.group(1) for m in _INPUT_NAME.finditer(text[:100_000])}
 
 
-def _output_names(req: Mapping[str, Any]) -> set[str]:
+def _output_names(req: Mapping[str, Any], tasks: Mapping[str, Any] | None = None) -> set[str]:
     plan = req.get("plan") if isinstance(req.get("plan"), Mapping) else {}
     found: set[str] = set()
     for step in plan.get("steps") or []:
@@ -1066,10 +1069,19 @@ def _output_names(req: Mapping[str, Any]) -> set[str]:
         values += [entry.get("name") for entry in step.get("output_types") or [] if isinstance(entry, Mapping)]
         found.update(Path(value.replace("\\", "/")).name.casefold()
                      for value in values if isinstance(value, str))
+    if req.get("mode") == "direct":
+        rid = req.get("id")
+        for task in (tasks or {}).values():
+            result = task.get("result") if isinstance(task, Mapping) else None
+            if task.get("request_id") != rid or not isinstance(result, Mapping):
+                continue
+            found.update(Path(value.replace("\\", "/")).name.casefold()
+                         for value in result.get("outputs") or [] if isinstance(value, str))
     return found
 
 
-def _target_types(req: Mapping[str, Any], vocab: Any) -> set[str]:
+def _target_types(req: Mapping[str, Any], vocab: Any,
+                  tasks: Mapping[str, Any] | None = None) -> set[str]:
     """Declared types of outputs the PI named, not incidental plan-added reports or QC files."""
     if vocab is None:
         return set()
@@ -1086,6 +1098,28 @@ def _target_types(req: Mapping[str, Any], vocab: Any) -> set[str]:
             if (isinstance(name, str) and Path(name.replace("\\", "/")).name.casefold() in named
                     and vocab.is_key("data", key)):
                 found.add(key)
+    if req.get("mode") == "direct":
+        rid = req.get("id")
+        final = (req.get("results") or {}).get("direct")
+
+        def add_result(result: Mapping[str, Any], meta: Mapping[str, Any]) -> None:
+            typed = output_types.read(meta, result, vocab, normalize=normalize_artifact_path)
+            for raw in result.get("outputs") or []:
+                if not isinstance(raw, str) or Path(raw.replace("\\", "/")).name.casefold() not in named:
+                    continue
+                field = (typed.get(normalize_artifact_path(raw)) or {}).get("data_type")
+                if field is not None and field.basis != "unknown" and vocab.is_key("data", field.value):
+                    found.add(field.value)
+        if isinstance(final, Mapping) and final.get("output_types"):
+            add_result(final, {})
+        else:
+            for task in (tasks or {}).values():
+                if task.get("request_id") != rid:
+                    continue
+                result = task.get("result") if isinstance(task.get("result"), Mapping) else {}
+                payload = task.get("payload") if isinstance(task.get("payload"), Mapping) else {}
+                meta = payload.get("meta") if isinstance(payload.get("meta"), Mapping) else {}
+                add_result(result, meta)
     return found
 
 
@@ -1129,7 +1163,7 @@ def _accepted_file_hashes(records: Any, requests: Mapping[str, Any], reader: Rea
         if not isinstance(request, str) or not isinstance(run, Mapping):
             continue
         req = requests.get(request) or {}
-        outputs = _output_names(req)
+        outputs = _output_names(req, records.tasks)
         names = {name for name in _mentioned_names(req) if name.casefold() not in outputs}
         for root in run.get("reference_dirs") or []:
             if not isinstance(root, str) or not root:
@@ -1320,7 +1354,7 @@ def compute_provenance(snap: Mapping[str, Any], reader: Reader, observed: dict[s
         input_cache: dict[str, set[str] | None] = {}
         current_inputs = _root_inputs(rid, direct_inputs, ancestry, input_cache)
         vocab = output_vocab.current()
-        targets = _target_types(snap["requests"].get(rid) or {}, vocab)
+        targets = _target_types(snap["requests"].get(rid) or {}, vocab, snap["tasks"])
         check()
         incomplete = bool(invalid or snap.get("history_truncated") or snap.get("tasks_truncated")
                           or len(p.edges) > MAX_EDGES or reader.budget.exhausted)
