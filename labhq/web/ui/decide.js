@@ -164,12 +164,19 @@ export function answerRequired(approval) {
   return approval?.kind === 'clarify' || (approval?.kind === 'question' && clarifyQuestions(approval).length > 0);
 }
 // CP2 수정 요청 re-plans from its note through a new CP1, so it needs one unless the continuation cap is reached (R10).
+// CP1 수정 요청 opens a new request from its note; a continuation round's CP1 has none (detail.revise_allowed).
 export function reviseContinues(approval) {
+  if (approval?.kind === 'research_plan') return approval?.detail?.revise_allowed === true;
   return approval?.kind === 'research_evidence' && approval?.detail?.revise_continues !== false;
 }
 export function revisionNoteMissing(approval, choice, note) {
   return choice === 'revise' && reviseContinues(approval) && !String(note || '').trim()
     ? '수정 요청에는 고칠 점을 메모에 적어 주세요. 그 메모로 새 계획을 세웁니다.' : '';
+}
+// What 수정 요청 does, for the toast after it is sent.
+export function revisedToast(approval) {
+  if (approval?.kind === 'research_plan') return '수정 요청을 보냈어요. 메모를 넣은 새 요청으로 계획을 다시 받아요';
+  return reviseContinues(approval) ? '수정 요청을 보냈어요. 새 계획으로 CP1을 다시 받아요' : '수정 요청을 보냈어요. 이 요청은 끝나요';
 }
 
 function renderQuestions(container, approval) {
@@ -248,7 +255,8 @@ const EVIDENCE_LABELS = { refused_rows: '계약에 맞지 않아 뺀 근거',
   refused_evidence: '거부된 evidence (승인 대상 아님)', unsupported_claims: '근거를 잃은 claim',
   results: '단계별 claim·evidence 원장' };
 export function decisionChoice(approval, act) {
-  if (approval?.kind !== 'research_evidence') return null;
+  // CP1 sends a choice only where 수정 요청 exists, so an older gateway reads approve/deny exactly as before.
+  if (approval?.kind !== 'research_evidence' && !(approval?.kind === 'research_plan' && reviseContinues(approval))) return null;
   return { approve: 'approve', revise: 'revise', deny: 'deny' }[act] || null;
 }
 
@@ -283,7 +291,7 @@ function renderDetail(container, kind, detail, approval = null) {
     kind === 'research_evidence' ? ['choices', 'gate', 'revise_continues'] :
     kind === 'research_continue' ? ['gate'] :
     kind === 'resume' ? ['request_text'] :  // the summary already quotes it
-    kind === 'research_plan' && typeof detail?.plan_canonical === 'string' ? ['gate', 'pack_applicability', 'warnings', 'protocol_revision', 'packs'] :
+    kind === 'research_plan' && typeof detail?.plan_canonical === 'string' ? ['gate', 'pack_applicability', 'warnings', 'protocol_revision', 'packs', 'revise_allowed'] :
     kind === 'question' && clarifyQuestions(approval).length ? ['options'] : [];
   const entries = detail !== null && typeof detail === 'object' && !Array.isArray(detail) ?
     [...preferred.filter(key => Object.hasOwn(detail, key)), ...Object.keys(detail).filter(key => !preferred.includes(key) && !shown.includes(key))]
@@ -381,6 +389,7 @@ const NO_TIMEOUT_KINDS = new Set();
 const DENY_RESULT = {
   resume: '거절하면 이 요청은 실패로 끝납니다.',
   research_plan: '거절하면 이 요청은 단계를 돌리지 않고 끝납니다. 계획을 고치려면 고칠 점을 넣어 새 요청을 보내세요.',
+  research_plan_revise: '수정 요청은 메모를 넣은 새 요청으로 계획을 다시 세워 새 CP1을 받습니다. 거절하면 이 요청은 단계를 돌리지 않고 끝납니다.',
   research_evidence: '수정 요청은 메모로 새 계획을 세워 새 CP1을 받고 바뀐 단계만 다시 돌립니다. 거부하면 요청이 끝납니다.',
   question: '거절하면 직원에게 "진행 불가"로 전합니다.',
 };
@@ -435,15 +444,17 @@ function updateCard(row, item, options) {
     : value.kind !== 'clarify' ? '메모(선택)' : p.questions._questions?.length
     ? '덧붙일 말(선택). 거절하면 요청을 멈춥니다.' : '답을 적어 주세요. 거절하면 요청을 멈춥니다.';
   p.consequence.textContent = !approval ? '' :
-    value.kind === 'research_evidence' && !reviseContinues(value) ? EVIDENCE_REVISE_ENDS : DENY_RESULT[value.kind] || '';
+    value.kind === 'research_evidence' && !reviseContinues(value) ? EVIDENCE_REVISE_ENDS :
+    value.kind === 'research_plan' && reviseContinues(value) ? DENY_RESULT.research_plan_revise : DENY_RESULT[value.kind] || '';
   p.consequence.hidden = !p.consequence.textContent;
   const evidence = approval && value.kind === 'research_evidence';
+  const planRevise = approval && value.kind === 'research_plan' && reviseContinues(value);  // CP1 수정 요청
   const scope = approval && value.kind === 'scope';  // out-of-scope request: run it or stop (#36)
   const answers = approval && clarifyQuestions(value).length > 0;
   p.approve.textContent = item.type === 'suggestion' ? '채용하기' : evidence ? '증거 승인' : value.kind === 'clarify' || (value.kind === 'question' && answers) ? '답하고 진행' : scope ? '진행' : '승인';
   p.deny.textContent = item.type === 'suggestion' ? '나중에' : evidence ? '거부' : scope ? '중단' : '거절';
   // CP2 수정 요청 re-plans through a new CP1 until the continuation cap, then ends the request like 거부 (R10).
-  p.revise.textContent = reviseContinues(value) ? '수정 요청' : '수정 요청(요청 끝남)'; p.revise.hidden = !evidence;
+  p.revise.textContent = reviseContinues(value) ? '수정 요청' : '수정 요청(요청 끝남)'; p.revise.hidden = !(evidence || planRevise);
   p.approve.dataset.act = item.type === 'suggestion' ? 'hire' : 'approve';
   p.revise.dataset.act = 'revise';
   p.deny.dataset.act = item.type === 'suggestion' ? 'later' : 'deny';
