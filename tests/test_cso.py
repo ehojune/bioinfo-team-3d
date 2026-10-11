@@ -591,6 +591,7 @@ def test_runner_reports_effective_compute_capabilities():
     runner.registry = SimpleNamespace(agents={agent.id: agent}, roster=lambda: [agent.summary()])
     runner.ws_root = Path(".")
     runner.incarnation = "test"
+    runner.process = "test-process"
     runner.engine_versions = {"mock": "unreported"}
     runner.local_software = {"r": {"available": False, "version": None}}
     hello = runner.hello()
@@ -1374,7 +1375,7 @@ async def test_runner_records_declared_artifact_and_reuses_workspace(tmp_path):
     assert resumed.workdir == produced.workdir
     assert (Path(resumed.workdir) / "outputs" / "artifact.txt").read_text() == "mock artifact\n"
     assert (Path(resumed.workdir) / f"TASK_{second.id}.md").exists()
-    assert second.id in (Path(resumed.workdir) / "manifest.json").read_text()
+    assert second.id in (Path(resumed.workdir) / "manifest.json").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("name,expected", [

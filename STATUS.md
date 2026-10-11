@@ -4,6 +4,57 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-12 · 러너를 다시 시작한 뒤 남는 도구 권한 카드를 닫는다 (#521)
+
+- 결론: runner는 incarnation을 디스크에 두고 재시작해도 같은 값을 쓴다. 그래서 이전 프로세스가 띄운 카드가 R2 판정을 빠져나가 스냅샷에 계속 남았고, 승인해도 아무 일이 없었다. 이제 재시작과 재연결은 프로세스마다 새로 만드는 `process` 값으로 가린다. 카드를 띄운 task가 결과를 보내도 그 카드를 닫는다.
+- 바뀐 것:
+  - `runner.hello`에 `process`(Runner마다 uuid4, 저장하지 않음)를 싣는다. gateway는 runner 카드에 `origin_process`로 남기고 `_orphan_reason`에서 붙는 프로세스와 비교한다. incarnation은 지금처럼 task 세대 판정에 쓴다.
+  - 호환: `process`가 없는 이전 러너끼리, 그리고 이 변경 전에 저장된 카드는 지금의 incarnation 규칙을 그대로 따른다.
+  - 보강: 카드의 task가 `task.result`를 보내면 그 카드를 기존 expired 경로로 닫는다(note "그 작업이 끝나 닫힘"). 살아 있는 runner에도 거절이 가서 hook이 timeout까지 기다리지 않는다. 알림만 하는 `codex_sandbox_setup` 카드는 남긴다.
+  - runner: 끝난 task의 카드에 늦게 온 답이 직원 상태를 `working`으로 되돌리지 않는다. daemon 변경은 4줄이다.
+  - `docs/manual.md` R2 문단.
+- 실행한 것: main(d083828c)에서 재현 스크립트로 확인했다. 같은 state로 Runner를 두 번 만들면 incarnation이 같고, 재등록 뒤 `expire_orphan_approvals`는 `[]`, `task.result` 뒤에도 카드가 남았다. 새 test 4개(같은 incarnation 재시작은 websocket 경유, 같은 프로세스 재연결 유지, task.result로 닫힘, 이전 러너 호환·업그레이드, 늦은 답의 상태)는 main 코드에서 4 failed, 이 branch에서 통과한다. Windows 전체 `pytest -q` 5020 passed·64 skipped. `scripts/check_public.sh`, `scripts/patch_notes.py check` 통과.
+- 미해결: `recruits_running`도 같은 incarnation 문제를 안고 있다(#521 P2 11·18). 이번 `process` 값을 그대로 쓰면 고쳐지지만 이 PR 범위 밖이라 남긴다.
+- 근거: `labhq/gateway/server.py`, `labhq/runner/daemon.py`, `tests/test_request_lifecycle.py`, `docs/manual.md`.
+
+## 변경
+
+- 요청 묶음의 재현 등급과 근거를 MANIFEST, RO-Crate, verify, 웹·CLI에 표시합니다.
+- 환경 lock을 complete/partial/unavailable로 기록하고 제출한 HPC 잡 스크립트를 hash와 함께 묶습니다.
+- restricted/private 입력은 경로와 hash를 남기지 않으며, 유효한 재실행 receipt가 있을 때만 rerun_verified를 부여합니다.
+
+## 검증
+
+- Windows 전체 pytest: 5017 passed, 63 skipped
+- 관련 pytest: 323 passed, 5 skipped
+- Node test 파일 31개 통과
+- `bash scripts/check_public.sh` 통과
+
+Closes #423
+
+🤖 Generated with Codex (gpt-5) for the labhq dev lead
+
+## 요약
+
+- direct 응답이 기존 `declare_output_types` 어휘로 실제 `outputs/` 산출의 데이터·형식 종류를 함께 선언합니다.
+- runner가 기존 파일 상한·허용 구역·정규 파일 검사 뒤 해시와 종류 기록을 남기며, 요청 묶음·RO-Crate·`labhq verify`의 기존 direct 산출 경로를 그대로 씁니다.
+- 두 번째 direct 요청의 재사용 후보는 첫 산출에 종류 선언이 있을 때만 잡히고, 없으면 `type_unknown`을 유지합니다.
+
+## 검증
+
+- `origin/main` + 새 회귀검사: 2 failed, 52 passed, 2 skipped
+- 관련 semantics·bundle·verify 회귀: 721 passed, 6 skipped
+- Windows 전체 pytest: 5020 passed, 64 skipped
+- `bash scripts/check_public.sh`: 통과
+
+## 문서
+
+- `docs/manual.md`: 104,097자 → 105,268자(+1,171자)
+
+Closes #221
+
+🤖 Generated with Codex (gpt-5) for the labhq dev lead
+
 ## 2026-10-12 · 승인 게이트: 백그라운드 셸 도구 기본 허용 (#518 후속)
 
 - 결론: #518 뒤 분류되지 않은 도구는 PI에게 묻는다. Claude 직원이 백그라운드로 돌린 Bash의 출력을 읽거나 멈추는 도구(BashOutput·KillShell, 새 판 TaskOutput·TaskStop)도 그렇게 돼, 긴 분석에서 의미 없는 카드가 쌓일 수 있었다. 이 넷을 기본 허용 목록에 넣었다. 셸 명령 자체는 이미 Bash 게이트를 거쳤다.

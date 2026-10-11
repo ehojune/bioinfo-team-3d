@@ -15,7 +15,7 @@ from labhq.research.contract import (RESEARCH_PLAN_SCHEMA, RESEARCH_RESULT_SCHEM
                                      ResearchResult, research_plan_schema)
 from labhq.research.review import RESEARCH_REVIEW_SCHEMA
 from labhq.util import openai_strict_schema, strip_optional_nulls
-from labhq.vocab.declare import ENTRY_SCHEMA
+from labhq.vocab.declare import ENTRY_SCHEMA, direct_result_schema
 from labhq.settings import Settings
 
 
@@ -56,6 +56,7 @@ def _schema_keys(value, *, schema_node=True):
     PLAN_SCHEMA, plan_schema(True), replan_schema(False), replan_schema(True), REVIEW_SCHEMA,
     RESEARCH_PLAN_SCHEMA, research_plan_schema(True, ENTRY_SCHEMA), RESEARCH_RESULT_SCHEMA,
     RESEARCH_STEP_SCHEMA, RESEARCH_LANE_REVIEW_SCHEMA, RESEARCH_REVIEW_SCHEMA, OFFER_SCHEMA,
+    direct_result_schema(),
 ])
 def test_every_engine_output_schema_converts_to_openai_strict_without_mutation(schema):
     original = copy.deepcopy(schema)
@@ -73,6 +74,7 @@ def test_every_engine_output_schema_converts_to_openai_strict_without_mutation(s
     PLAN_SCHEMA, plan_schema(True), replan_schema(False), replan_schema(True), REVIEW_SCHEMA,
     RESEARCH_PLAN_SCHEMA, research_plan_schema(True, ENTRY_SCHEMA), RESEARCH_RESULT_SCHEMA,
     RESEARCH_STEP_SCHEMA, RESEARCH_LANE_REVIEW_SCHEMA, RESEARCH_REVIEW_SCHEMA, OFFER_SCHEMA,
+    direct_result_schema(),
 ])
 def test_engine_output_schema_omits_unsupported_type_constraints(schema):
     assert UNSUPPORTED_TYPE_CONSTRAINTS.isdisjoint(_schema_keys(openai_strict_schema(schema)))

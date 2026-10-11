@@ -18,6 +18,7 @@ Declarations are hints for the shadow models. Nothing here grants, approves, dis
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
@@ -135,6 +136,23 @@ def stats(outputs: Iterable[str], entries: Iterable[Mapping[str, Any]], issues: 
             "issues": {k: int(issues[k]) for k in ISSUES if issues.get(k)}}
 
 
+def bounded_stats(value: Any) -> dict[str, Any]:
+    """A runner's fixed-count summary; unknown keys and unbounded values never cross into request state."""
+    if not isinstance(value, Mapping):
+        return {}
+
+    def count(item: Any) -> int:
+        return min(max(item, 0), MAX_RECORDS) if isinstance(item, int) and not isinstance(item, bool) else 0
+
+    out = {key: count(value.get(key)) for key in ("outputs", "data_declared", "format_declared")}
+    raw_issues = value.get("issues") if isinstance(value.get("issues"), Mapping) else {}
+    out["issues"] = {key: count(raw_issues.get(key)) for key in ISSUES if count(raw_issues.get(key))}
+    version = value.get("vocab")
+    if isinstance(version, str) and re.fullmatch(r"[0-9a-f]{64}", version):
+        out["vocab"] = version
+    return out
+
+
 def add_stats(total: dict | None, step: Mapping[str, Any]) -> dict:
     total = dict(total or {"outputs": 0, "data_declared": 0, "format_declared": 0, "issues": {}})
     for key in ("outputs", "data_declared", "format_declared"):
@@ -166,11 +184,30 @@ def prompt_rule(vocab: Vocab) -> str:
             + ", ".join(vocab.keys("format")) + ". Leave a field out when unsure; other names are ignored.")
 
 
+def direct_prompt_rule(vocab: Vocab) -> str:
+    """A direct employee declares only files it actually left under outputs/, alongside its normal answer."""
+    return ("\n\nReturn the normal answer in response. In output_types, list only files you actually saved under "
+            "outputs/ whose kind you know, using {name, data_type, format}. Use only these keys. data_type: "
+            + ", ".join(vocab.keys("data")) + ". format: " + ", ".join(vocab.keys("format"))
+            + ". Use [] when unsure; declarations do not replace writing the files.")
+
+
 ENTRY_SCHEMA: dict[str, Any] = {
     "type": "array", "items": {
         "type": "object", "additionalProperties": False,
         "properties": {"name": {"type": "string"}, "data_type": {"type": "string"}, "format": {"type": "string"}},
-        "required": ["name"]}}
+    "required": ["name"]}}
+
+
+def direct_result_schema() -> dict[str, Any]:
+    return {
+        "title": "DirectResult", "type": "object", "additionalProperties": False,
+        "properties": {
+            "response": {"type": "string"},
+            "output_types": {**json.loads(json.dumps(ENTRY_SCHEMA)), "maxItems": MAX_ENTRIES},
+        },
+        "required": ["response", "output_types"],
+    }
 
 
 def with_output_types(step_schema: Mapping[str, Any]) -> dict[str, Any]:
@@ -195,16 +232,17 @@ def runner_records(collected: Iterable[str], meta: Mapping[str, Any], vocab: Voc
     the gateway checked them against its vocabulary); a format is inferred only under the same version."""
     version = meta.get("output_types_vocab")
     declared = meta.get("output_types") if isinstance(meta.get("output_types"), Mapping) else {}
+    source = meta.get("output_types_source") if meta.get("output_types_source") in ("plan", "staff") else "plan"
     out: dict[str, dict] = {}
     for rel in list(dict.fromkeys(collected))[:MAX_RECORDS]:
         given = declared.get(rel) if isinstance(declared.get(rel), Mapping) else {}
         record: dict[str, Any] = {"v": 1, "vocab": version if isinstance(version, str) else None}
         data = given.get("data_type")
-        record["data_type"] = (_field_record(data, "declared", "plan") if isinstance(data, str) and len(data) <= MAX_KEY
+        record["data_type"] = (_field_record(data, "declared", source) if isinstance(data, str) and len(data) <= MAX_KEY
                                else _unknown_record("not_declared"))
         fmt = given.get("format")
         if isinstance(fmt, str) and len(fmt) <= MAX_KEY:
-            record["format"] = _field_record(fmt, "declared", "plan")
+            record["format"] = _field_record(fmt, "declared", source)
         elif vocab is None:
             record["format"] = _unknown_record("no_vocab")
         elif vocab.sha256 != version:

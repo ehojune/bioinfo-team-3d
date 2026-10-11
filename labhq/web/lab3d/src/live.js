@@ -85,7 +85,7 @@ export function startLiveOffice(onState) {
       const status = globalThis.LabHQState.requestStatusText(q, S.approvals);  // R14: never a raw status
       const key = JSON.stringify([q.text, q.status, status, q.phase, q.plan, q.steps, q.processing, q.review, q.error, q.report,
         q.report_appendix, q.report_truncated, q.report_appendix_truncated, q.followups, q.piNotes,
-        q.assumptions, q.bundlePath, q.bundleStatus, q.bundleGrade, q.bundleWarning, loadingAnswers.has(q.id)]);
+        q.assumptions, q.bundlePath, q.bundleStatus, q.bundleGrade, q.bundleGradeReasons, q.bundleWarning, loadingAnswers.has(q.id)]);
       const prior = oldRows.get(q.id);
       if (prior?.dataset.renderKey === key) { rows.push(prior); continue; }
       const row = document.createElement('article'); row.dataset.requestId = q.id; row.dataset.renderKey = key; rows.push(row);
@@ -124,7 +124,8 @@ export function startLiveOffice(onState) {
         }
       }
       if (q.bundlePath) {
-        const grade = q.bundleGrade ? ` · 재현 등급 ${q.bundleGrade}(이유는 묶음 README)` : '';
+        const reasons = (q.bundleGradeReasons || []).join('; ');
+        const grade = q.bundleGrade ? ` · 재현 등급 ${q.bundleGrade}${reasons ? ` (${reasons})` : ''}` : '';
         text(row, 'p', q.bundleStatus === 'incomplete'
           ? `요청 묶음(불완전): ${q.bundlePath} · 빠진 파일은 실행 기록과 MANIFEST.tsv에 있어요${grade}`
           : `요청 묶음: ${q.bundlePath}${grade}`);

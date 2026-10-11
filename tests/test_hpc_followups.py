@@ -1,5 +1,6 @@
 """Issue #172: PR #171 follow-ups. Fake schedulers and a fake broker only; no cluster is contacted."""
 
+import hashlib
 import json
 import subprocess
 from subprocess import CompletedProcess
@@ -228,6 +229,7 @@ async def test_runner_submit_owns_the_id_its_own_scheduler_call_returned(tmp_pat
         (call,) = runner.scheduler._run.calls
         assert call[0] == "sbatch" and call[-1] == str(script)
         assert runner.jobs["4100"]["submitted_by_runner"] and "5200" not in runner.jobs
+        assert runner.jobs["4100"]["script_sha256"] == hashlib.sha256(script.read_bytes()).hexdigest()
         for job_id, owned in (("4100", True), ("4100_2", True), ("5200", False)):
             assert (await _post(runner, token, "/jobs/owned", {"job_id": job_id})).json() == {"owned": owned}
         stranger = runner.broker.issue_task_token("t3", "analyst", "r3")

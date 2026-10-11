@@ -173,6 +173,21 @@ def output_identity(row: dict[str, Any]) -> tuple:
     return (bool(row.get("link")), row.get("size"), row.get("mtime_ns"), row.get("ino"), row.get("ctime_ns"))
 
 
+ENVIRONMENT_LOCK = "outputs/env/requirements.lock.txt"
+
+
+def environment_record(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize the runner-observed environment lock without opening it a second time."""
+    row = next((item for item in rows if item.get("path") == ENVIRONMENT_LOCK), None)
+    if row is None:
+        return {"status": "unavailable", "reason": f"{ENVIRONMENT_LOCK} 없음"}
+    sha256 = row.get("sha256")
+    if isinstance(sha256, str) and re.fullmatch(r"[0-9a-f]{64}", sha256):
+        return {"status": "complete", "sha256": sha256, "size": row.get("size")}
+    return {"status": "partial", "reason": str(row.get("reason") or "sha256를 기록하지 못함"),
+            **({"size": row.get("size")} if row.get("size") is not None else {})}
+
+
 class Runner:
     def __init__(self, settings: Settings):
         self.s = settings
@@ -181,6 +196,7 @@ class Runner:
         self.incarnation = saved_incarnation["id"] if saved_incarnation else uuid.uuid4().hex
         if not saved_incarnation:
             self.store.put("runner_meta", "incarnation", {"id": self.incarnation})
+        self.process = uuid.uuid4().hex  # never saved: tells the gateway a restart from a reconnect (#521)
         self.registry = Registry(settings.path(settings.runner.agents_dir), settings.path(settings.runner.talent_dir),
                                  settings.path(settings.runner.contract_dir) if settings.runner.contract_dir else None)
         self.ws_root = settings.path(settings.runner.workspace_root)
@@ -385,7 +401,7 @@ class Runner:
 
     def hello(self) -> dict:
         return {"type": "runner.hello", "runner_id": self.s.runner.id,
-                "incarnation": self.incarnation, "agents": self.roster(),
+                "incarnation": self.incarnation, "process": self.process, "agents": self.roster(),
                 "capabilities": self.capabilities()}
 
     # ---------------- gateway → runner ----------------
@@ -415,7 +431,8 @@ class Runner:
         elif typ == "approval.resolved":
             if self.broker.resolve(msg["id"], bool(msg.get("approved")), msg.get("note", "")):
                 task_id, agent_id = self.approval_tasks.pop(msg["id"], (None, None))
-                if task_id:
+                run = self.tasks.get(task_id or "")
+                if task_id and not (run and run.done()):  # an answer after the task ended must not revive it
                     await self.emit(Event(type="agent.status", task_id=task_id, agent_id=agent_id,
                                           request_id=self.task_req.get(task_id), data={"state": "working"}))
             self.send({"type": "approval.ack", "id": msg["id"]})
@@ -1132,6 +1149,10 @@ class Runner:
                 """Hash the post-run view off the event loop, before labhq writes RESULT files."""
                 nonlocal output_records, observed_outputs
                 if output_before is None:
+                    records, _note = await asyncio.to_thread(
+                        ws.scan_output_records, zones, self.s.runner.reference_scan_max_entries,
+                        self.s.runner.reference_scan_max_depth, self.s.runner.output_hash_max_bytes)
+                    ws.update_run(task.id, environment_record=environment_record(records))
                     return
                 output_records, note = await asyncio.to_thread(
                     ws.scan_output_records, zones, self.s.runner.reference_scan_max_entries,
@@ -1149,6 +1170,7 @@ class Runner:
                 ]
                 incomplete = "; ".join(dict.fromkeys(output_scan_notes)) or None
                 ws.update_run(task.id, observed_outputs=observed_outputs,
+                              environment_record=environment_record(output_records),
                               **({"observed_outputs_incomplete": incomplete} if incomplete else {}))
 
             engine_settings = claude_deny_private(claude_deny_links(claude_read_only(
@@ -1347,7 +1369,34 @@ class Runner:
                                                   "reason": reason}
         if "output_types_vocab" in task.meta:  # the gateway asked for type records (#221): collected outputs only
             try:
-                result.output_types = output_types.runner_records(found, task.meta, output_vocab.current())
+                type_meta = task.meta
+                current_vocab = output_vocab.current()
+                direct_result = (result.structured if isinstance(result.structured, dict)
+                                 and (task.meta.get("kind") == "direct"
+                                      or task.meta.get("collect_direct_outputs") is True) else None)
+                if direct_result is not None:
+                    response = direct_result.get("response")
+                    if isinstance(response, str):
+                        result.text = response
+                    entries, issues = (output_types.normalize_entries(
+                        found, direct_result.get("output_types"), current_vocab)
+                        if current_vocab is not None and current_vocab.sha256 == task.meta.get("output_types_vocab")
+                        else ([], {}))
+                    type_meta = {
+                        "output_types_vocab": task.meta.get("output_types_vocab"),
+                        "output_types": output_types.meta_declarations(entries),
+                        "output_types_source": "staff",
+                    }
+                    result.output_types_stats = {
+                        **output_types.stats(found, entries, issues),
+                        "vocab": task.meta.get("output_types_vocab"),
+                    }
+                    result.structured = {
+                        "response": result.text,
+                        "output_types": [{key: value for key, value in entry.items() if key != "vocab"}
+                                         for entry in entries],
+                    }
+                result.output_types = output_types.runner_records(found, type_meta, current_vocab)
             except Exception:
                 result.output_types = {}
                 await emit("agent.log", {"level": "warn", "text": "output type records unavailable; result kept"})
@@ -1432,6 +1481,7 @@ class Runner:
         async def record(result: dict) -> None:
             await self._track_job({"task_id": tid, "agent_id": aid, "job_id": result["job_id"],
                                    "name": result["name"], "script": result["script"],
+                                   "script_sha256": result["script_sha256"],
                                    "core_hours": result["core_hours"]})
 
         return await submit_job(self.s, self.scheduler, ws.dir, body, approve, gate, record)
@@ -1444,7 +1494,8 @@ class Runner:
                            "name": body.get("name", ""), "state": "queued", "missing": 0, "terminal": False,
                            "exit_status": None, "submitted_at": time.time(),
                            "scheduler": self.s.hpc.scheduler, "request_id": self.task_req.get(tid or ""),
-                           "workdir": str(ws.dir) if ws else None, "submitted_by_runner": True}
+                           "workdir": str(ws.dir) if ws else None,
+                           "script_sha256": body.get("script_sha256"), "submitted_by_runner": True}
         self.store.put("job", jid, self.jobs[jid])
         if ws:
             ws.append_job({**body, "submitted_at": time.time()})
