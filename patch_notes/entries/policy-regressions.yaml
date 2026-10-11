@@ -1,0 +1,17 @@
+pr: 525
+rows:
+  - sha: "ee1d8d1"
+    at: "2026-10-12 03:30"
+    text: "승인 게이트가 변수 섞인 curl·wget 출력 경로와 묶은 옵션을 다시 쓰기 허용 폴더와 대조하고, rm의 모든 재귀 옵션과 find -delete를 재귀 삭제로 본다. 공유 환경 설치 판정은 분석 명령의 변수 인자 둘을 설치로 보지 않고, 따옴표로 감싼 변수 Rscript의 R 설치 호출은 lib= 규칙으로 본다."
+  - sha: "b9fa70b"
+    at: "2026-10-12 03:45"
+    text: "main을 병합해 #520의 백그라운드 셸 도구 기본 허용과 manual·test 충돌을 풀었다."
+  - sha: "1846e04"
+    at: "2026-10-12 04:02"
+    text: "find -delete·-exec rm·| xargs rm도 rm -r과 같은 규칙으로, 시작 경로가 모두 .tmp 아래일 때만 묻지 않는다. outputs/ 등 작업 폴더의 다른 곳은 묻는다."
+  - sha: "a824efa"
+    at: "2026-10-12 04:14"
+    text: "main을 병합해 #524 재현 등급 기록과 manual 공유 환경 문단 충돌을 풀었다."
+  - sha: "d1d1886"
+    at: "2026-10-12 04:45"
+    text: "공유 환경 설치 판정이 nohup·sudo·time·uv run 같은 wrapper 뒤의 실행 파일과 python·Rscript의 script 앞 변수를 다시 막는다. PowerShell에서 Get-ChildItem을 pipe로 넘겨 지우는 명령(ForEach-Object 안 포함)도 .tmp 밖이면 묻는다."

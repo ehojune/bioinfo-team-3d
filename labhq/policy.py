@@ -343,8 +343,11 @@ def _word_value(word: str) -> str:
     return word
 
 
-def _literal_shell_word(word: str, powershell: bool) -> str | None:
-    """Return a shell word's literal value, or None when expansion can change it."""
+def _shell_word_prefix(word: str, powershell: bool) -> tuple[str, bool]:
+    """The literal text a shell word starts with, and whether that text is the whole word.
+
+    The prefix stops where expansion (a variable, substitution or glob) or an unterminated quote begins.
+    """
     value: list[str] = []
     i = 0
     while i < len(word):
@@ -354,7 +357,7 @@ def _literal_shell_word(word: str, powershell: bool) -> str | None:
             while True:
                 end = word.find("'", i)
                 if end < 0:
-                    return None
+                    return "".join(value), False
                 value.append(word[i:end])
                 if powershell and end + 1 < len(word) and word[end + 1] == "'":
                     value.append("'")
@@ -375,7 +378,7 @@ def _literal_shell_word(word: str, powershell: bool) -> str | None:
                     i += 1
                     break
                 if ch in "$`":
-                    return None
+                    return "".join(value), False
                 if not powershell and ch == "\\" and i + 1 < len(word) and word[i + 1] in '$`"\\':
                     value.append(word[i + 1])
                     i += 2
@@ -383,19 +386,25 @@ def _literal_shell_word(word: str, powershell: bool) -> str | None:
                 value.append(ch)
                 i += 1
             else:
-                return None
+                return "".join(value), False
             continue
         if quote in "$`*?[]{}":
-            return None
+            return "".join(value), False
         if not powershell and quote == "\\":
             if i + 1 >= len(word):
-                return None
+                return "".join(value), False
             value.append(word[i + 1])
             i += 2
             continue
         value.append(quote)
         i += 1
-    return "".join(value)
+    return "".join(value), True
+
+
+def _literal_shell_word(word: str, powershell: bool) -> str | None:
+    """Return a shell word's literal value, or None when expansion can change it."""
+    value, complete = _shell_word_prefix(word, powershell)
+    return value if complete else None
 
 
 def _sed_delimited_end(script: str, start: int, delimiter: str) -> int | None:
@@ -687,19 +696,41 @@ _WGET_LONG_VALUES = frozenset({
     "--accept", "--directory-prefix", "--header", "--input-file", "--limit-rate", "--output-document",
     "--output-file", "--post-data", "--post-file", "--reject", "--timeout", "--tries", "--user-agent", "--wait",
 })
+# Options whose value names a file or folder the download command writes: the outside-roots check reads every one.
+_CURL_OUTPUT_LONGS = frozenset({
+    "--output", "--output-dir", "--dump-header", "--cookie-jar", "--trace", "--trace-ascii", "--stderr",
+    "--libcurl", "--etag-save", "--hsts", "--alt-svc",
+})
+_WGET_OUTPUT_LONGS = frozenset({
+    "--output-document", "--directory-prefix", "--output-file", "--append-output", "--save-cookies",
+})
+
+
+@dataclass(frozen=True)
+class _DownloadOptions:
+    short_switches: frozenset[str]
+    short_values: frozenset[str]
+    output_shorts: frozenset[str]
+    long_switches: frozenset[str]
+    long_values: frozenset[str]
+    output_longs: frozenset[str]
+
+
+_DOWNLOAD_OPTIONS = {
+    "curl": _DownloadOptions(frozenset("sSLfIOkqgNi"), frozenset("oAbcdDeEFHmrTuUwxXyYz"), frozenset("ocD"),
+                             _CURL_LONG_SWITCHES, _CURL_LONG_VALUES, _CURL_OUTPUT_LONGS),
+    "wget": _DownloadOptions(frozenset("qcNS"), frozenset("OPoaiUTtwQAR"), frozenset("OPoa"),
+                             _WGET_LONG_SWITCHES, _WGET_LONG_VALUES, _WGET_OUTPUT_LONGS),
+}
 
 
 def _download_options_known(name: str, args: list[str], powershell: bool) -> bool:
     """Prove every option form understood; operands with a literal non-option prefix may still contain expansion."""
     values: list[str | None] = [_literal_shell_word(arg, powershell) for arg in args]
-    long_switches, long_values = ((_CURL_LONG_SWITCHES, _CURL_LONG_VALUES) if name == "curl"
-                                  else (_WGET_LONG_SWITCHES, _WGET_LONG_VALUES))
-    short_switches, short_values = ((frozenset("sSLfIOkqgNi"), frozenset("oAbcdDeEFHmrTuUwxXyYz"))
-                                     if name == "curl"
-                                     else (frozenset("qcNS"), frozenset("OPoiUTtwQAR")))
-    output_longs = ({"--output", "--output-dir"} if name == "curl"
-                    else {"--output-document", "--directory-prefix"})
-    output_shorts = {"o"} if name == "curl" else {"O", "P"}
+    spec = _DOWNLOAD_OPTIONS[name]
+    long_switches, long_values = spec.long_switches, spec.long_values
+    short_switches, short_values = spec.short_switches, spec.short_values
+    output_longs, output_shorts = spec.output_longs, spec.output_shorts
     i = 0
     options = True
     while i < len(args):
@@ -883,38 +914,90 @@ def _ps_writer_targets(args: list[str]) -> Iterator[str]:
             i += 2
 
 
+def _download_output_long(flag: str, spec: _DownloadOptions) -> bool:
+    """Whether a long option names an output file, abbreviations included (getopt takes unique prefixes)."""
+    if flag in spec.output_longs:
+        return True
+    if flag in spec.long_switches or flag in spec.long_values or len(flag) < 3:
+        return False
+    return any(name.startswith(flag) for name in spec.output_longs)
+
+
 def _download_write_targets(name: str, args: list[str], powershell: bool) -> Iterator[str]:
-    values = [_literal_shell_word(arg, powershell) for arg in args]
+    """Every path a curl/wget call writes, as the literal text it starts with.
+
+    An operand with expansion (`-o "C:/x/$f"`, `-O /abs/${s}.bat`) keeps its literal prefix, so an absolute
+    destination still meets the outside-roots check, as cp and tee do. Short options cluster (`-fsSLo /x`,
+    `-qO /x`) and take attached values; a cluster with an unknown letter still reports a later output letter.
+    """
+    spec = _DOWNLOAD_OPTIONS[name]
+    words = [_shell_word_prefix(arg, powershell) for arg in args]
     i = 0
-    while i < len(values):
-        word = values[i]
-        if word is None:
+    while i < len(words):
+        text, complete = words[i]
+        following = words[i + 1][0] if i + 1 < len(words) else None
+        if not text.startswith("-") or text == "-":
             i += 1
             continue
-        fold = word.casefold()
-        if name == "curl":
-            if word in {"-o", "--output", "--output-dir"}:
-                if i + 1 < len(values) and values[i + 1] is not None:
-                    yield values[i + 1]
-                i += 2
-                continue
-            if fold.startswith(("--output=", "--output-dir=")):
-                yield word.split("=", 1)[1]
-            elif word.startswith("-o") and len(word) > 2:
-                yield word[2:]
-            elif word in {"-O", "--remote-name"}:
+        if text.startswith("--"):
+            flag, equal, attached = text.partition("=")
+            if name == "curl" and flag == "--remote-name":
                 yield "."
-        else:
-            if word in {"-O", "-P"} or fold in {"--output-document", "--directory-prefix"}:
-                if i + 1 < len(values) and values[i + 1] is not None:
-                    yield values[i + 1]
-                i += 2
+            elif _download_output_long(flag, spec):
+                if equal:
+                    yield attached
+                elif complete and following is not None:
+                    yield following
+                    i += 1
+            elif flag in spec.long_values and not equal and complete:
+                i += 1  # the option's own value, not a path it writes
+            i += 1
+            continue
+        j, takes_next = 1, False
+        while j < len(text):
+            letter, rest = text[j], text[j + 1:]
+            if name == "curl" and letter == "O":
+                yield "."
+            if letter in spec.short_switches:
+                j += 1
                 continue
-            if fold.startswith(("--output-document=", "--directory-prefix=")):
-                yield word.split("=", 1)[1]
-            elif word.startswith(("-O", "-P")) and len(word) > 2:
-                yield word[2:]
-        i += 1
+            if letter in spec.short_values:
+                if letter in spec.output_shorts and rest:
+                    yield rest
+                takes_next = not rest and complete
+                if takes_next and letter in spec.output_shorts and following is not None:
+                    yield following
+                break
+            # An unknown letter may take the rest as its value; an output letter after it may still be one.
+            later = [k for k in range(j + 1, len(text)) if text[k] in spec.output_shorts]
+            if later:
+                attached = text[later[0] + 1:]
+                if attached:
+                    yield attached
+                elif following is not None:
+                    yield following
+            break
+        else:
+            if not complete and following is not None:
+                yield following  # the cluster continues in an expansion that may end in an output letter
+        i += 2 if takes_next else 1
+
+
+# Windows PowerShell's `curl` and `wget` are aliases of Invoke-WebRequest, so they are read both ways.
+_PS_DOWNLOADERS = frozenset({"invoke-webrequest", "iwr", "invoke-restmethod", "irm", "curl", "wget"})
+
+
+def _ps_download_targets(args: list[str]) -> Iterator[str]:
+    """Invoke-WebRequest/RestMethod `-OutFile` values, any unique-or-not prefix of the name, as literal prefixes."""
+    for i, raw in enumerate(args):
+        text, _complete = _shell_word_prefix(raw, True)
+        flag, colon, attached = text.partition(":")
+        if len(flag) < 2 or not "-outfile".startswith(flag.casefold()):
+            continue
+        if colon:
+            yield attached
+        elif i + 1 < len(args):
+            yield _shell_word_prefix(args[i + 1], True)[0]
 
 
 def _named_write_targets(raw_words: list[str], powershell: bool = False) -> Iterator[str]:
@@ -931,8 +1014,12 @@ def _named_write_targets(raw_words: list[str], powershell: bool = False) -> Iter
             yield from parsed.writes
             yield from parsed.in_place_inputs
         return
+    if powershell and name in _PS_DOWNLOADERS:
+        yield from _ps_download_targets(raw_words[1:])
     if plain_name in {"curl", "wget"}:
         yield from _download_write_targets(plain_name, raw_words[1:], powershell)
+        return
+    if name in _PS_DOWNLOADERS:
         return
     if name == "tee":  # bash tee writes every file argument; in PowerShell tee is Tee-Object
         yield from (word for word in words[1:] if not word.startswith("-"))
@@ -1002,8 +1089,6 @@ def _plain_delete_path(target: str, powershell: bool, *, relative: bool) -> bool
 
 def _recursive_delete_inside_workdir(command: str, powershell: bool, workdir: str | None) -> bool:
     """Allow one simple recursive delete of literal targets below the step's disposable `.tmp`."""
-    from .adapters.owned import is_link
-
     if not workdir:
         return False
     if any(char in command for char in ";|&()<>`\r\n"):
@@ -1011,8 +1096,6 @@ def _recursive_delete_inside_workdir(command: str, powershell: bool, workdir: st
     text = _blank_non_syntax(command, powershell)
     if text is None:
         return False
-    root = _norm(workdir, expand_vars=False)
-    tmp_root = _norm(posixpath.join(root, ".tmp"), expand_vars=False)
     raw_words = [command[word.start():word.end()] for word in _BARE_WORD.finditer(text)]
     literals = [_literal_shell_word(word, powershell) for word in raw_words]
     if not literals or any(value is None for value in literals):
@@ -1033,9 +1116,11 @@ def _recursive_delete_inside_workdir(command: str, powershell: bool, workdir: st
                 if folded not in {"-recurse", "-force"}:
                     return False
                 recursive = recursive or folded == "-recurse"
+            elif folded in {"--recursive", "--force", "--verbose"}:
+                recursive = recursive or folded == "--recursive"
             else:
-                flags = folded.lstrip("-")
-                if not flags or not set(flags) <= {"r", "f"}:
+                flags = folded[1:]
+                if not flags or not set(flags) <= {"r", "f", "v"}:
                     return False
                 recursive = recursive or "r" in flags
         else:
@@ -1044,7 +1129,15 @@ def _recursive_delete_inside_workdir(command: str, powershell: bool, workdir: st
             targets.append(value)
     if not recursive or not targets:
         return False
+    return _targets_below_step_tmp(targets, powershell, workdir)
 
+
+def _targets_below_step_tmp(targets: Iterable[str], powershell: bool, workdir: str) -> bool:
+    """Whether every delete target is a literal relative path at or below the step's `.tmp`, through no link."""
+    from .adapters.owned import is_link
+
+    root = _norm(workdir, expand_vars=False)
+    tmp_root = _norm(posixpath.join(root, ".tmp"), expand_vars=False)
     physical_root = Path(workdir)
     for target in targets:
         if not _plain_delete_path(target, powershell, relative=True):
@@ -1063,6 +1156,195 @@ def _recursive_delete_inside_workdir(command: str, powershell: bool, workdir: st
             except OSError:
                 return False
     return True
+
+
+# A bash command word, wherever it stands: not `--rm`, `x-rm` or `perm`, but `/bin/rm`, `\rm`, `'rm'`, `$(rm`.
+# Any case: Git Bash finds `RM.exe` on a case-insensitive drive.
+_BASH_RM_WORD = re.compile(r"""(?<![\w.-])rm(?:\.exe)?(?=[\s'"]|$)""", re.IGNORECASE)
+_BASH_FIND_WORD = re.compile(r"""(?<![\w.-])find(?:\.exe)?(?=[\s'"]|$)""", re.IGNORECASE)
+_BASH_DELETE_WORD = re.compile(r"(?<![\w.-])(?:rm|unlink)(?:\.exe)?(?![\w.-])", re.IGNORECASE)
+# Where one simple command ends; find's own `\;` and `';'` do not end it. Parentheses do not either, so a word like
+# `$(pwd)` stays one word and the words after it are still read.
+_BASH_COMMAND_END = re.compile(r"""(?<![\\'"]);(?!['"])|[|&\n]""")
+_FIND_TEXT = re.compile(r"\\[;()]|'[;()]'|\"[;()]\"")  # find's `\;`, `\(`, `';'` ... are its own words
+_FIND_EXEC = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
+# cmd's `rd /s` and `del /s` (also `//s` from Git Bash) are recursive deletes the step folder rule never allows.
+_CMD_RECURSIVE_DELETE = re.compile(r"""(?<![\w.-])(?:rd|rmdir|del|erase)(?:\.exe)?(?=[\s'"])[^|;&\n]*?\s/{1,2}s\b""",
+                                   re.IGNORECASE)
+# A PowerShell delete after the first pipe, in a script block too (`| ForEach-Object { Remove-Item $_ }`), deletes what
+# the listing before the pipe found (#525 review).
+_PS_DELETE_WORD = re.compile(r"(?<![\w-])(?:Remove-Item|ri|rm|del|erase|rd|rmdir)(?![\w-])|\.Delete\s*\(", re.IGNORECASE)
+_PS_LISTING_WORD = re.compile(r"(?<![\w-])(?:Get-ChildItem|gci|ls|dir|Get-Item|gi)(?![\w-])", re.IGNORECASE)
+_PS_LISTING_START = re.compile(r"\s*(?:Get-ChildItem|gci|ls|dir)(?![\w-])", re.IGNORECASE)
+# Get-ChildItem parameters: the ones naming the listed folder, the ones taking another value, and switches.
+_GCI_PATH_PARAMETERS = ("-path", "-literalpath")
+_GCI_VALUE_PARAMETERS = ("-filter", "-include", "-exclude", "-depth", "-attributes", "-erroraction", "-errorvariable",
+                         "-warningaction", "-warningvariable", "-informationaction", "-informationvariable",
+                         "-outvariable", "-outbuffer", "-pipelinevariable")
+_GCI_SWITCHES = ("-recurse", "-force", "-name", "-directory", "-file", "-hidden", "-readonly", "-system", "-verbose",
+                 "-debug", "-followsymlink")
+_GCI_ALIASES = {"-r": "-recurse", "-lp": "-literalpath", "-pspath": "-literalpath", "-ad": "-directory", "-af": "-file",
+                "-ah": "-hidden", "-ar": "-readonly", "-as": "-system", "-ea": "-erroraction", "-ev": "-errorvariable",
+                "-wa": "-warningaction", "-wv": "-warningvariable", "-infa": "-informationaction",
+                "-iv": "-informationvariable", "-ov": "-outvariable", "-ob": "-outbuffer", "-pv": "-pipelinevariable",
+                "-vb": "-verbose", "-db": "-debug"}
+
+
+def _gci_parameter(flag: str) -> str | None:
+    """A Get-ChildItem parameter's full name from any unique prefix or alias; None when unknown or ambiguous."""
+    flag = flag.casefold()
+    if flag in _GCI_ALIASES:
+        return _GCI_ALIASES[flag]
+    names = [name for name in (*_GCI_PATH_PARAMETERS, *_GCI_VALUE_PARAMETERS, *_GCI_SWITCHES) if name.startswith(flag)]
+    return names[0] if len(names) == 1 or flag in names else None
+
+
+def _ps_piped_delete(command: str) -> bool:
+    """Whether a PowerShell delete stands after the command's first pipe.
+
+    A quoted string is text there unless something runs text as code (`iex`, `&`, `.Invoke(`), which counts as a
+    delete too since the gate cannot read it.
+    """
+    _head, pipe, tail = command.partition("|")
+    if not pipe:
+        return False
+    if re.search(r"(?<![\w-])(?:Invoke-Expression|iex)(?![\w-])|&|\.Invoke\s*\(", tail, re.IGNORECASE):
+        return True
+    return bool(_PS_DELETE_WORD.search(re.sub(r"'[^']*'|\"[^\"]*\"", "''", tail)))
+
+
+def _ps_piped_delete_inside_step_tmp(command: str, workdir: str | None) -> bool:
+    """A listing piped into a delete meets the `rm -r` rule: one pipeline from one Get-ChildItem whose every folder is
+    literal and below `.tmp`. No folder means the step folder itself; `-FollowSymlink` walks out through links."""
+    if not workdir or re.search(r"[;\n\r]|&&|\|\|", command):
+        return False
+    head, _pipe, tail = command.partition("|")
+    start = _PS_LISTING_START.match(head)
+    if not start or _PS_LISTING_WORD.search(tail):
+        return False  # the items come from elsewhere, or a later stage lists another folder
+    words = head[start.end():].split()
+    paths: list[str] = []
+    i = 0
+    while i < len(words):
+        if not words[i].startswith("-") or words[i] == "-":
+            value = _literal_shell_word(words[i], True)
+            if value is None:
+                return False
+            paths.append(value)
+            i += 1
+            continue
+        flag, colon, raw_value = words[i].partition(":")
+        name = _gci_parameter(flag)
+        if name is None or name == "-followsymlink":
+            return False
+        if name in _GCI_SWITCHES:
+            i += 1
+            continue
+        attached = _literal_shell_word(raw_value, True)
+        if not colon:
+            i += 1
+            if i >= len(words):
+                return False
+            attached = _literal_shell_word(words[i], True)
+        if name in _GCI_PATH_PARAMETERS:
+            if attached is None:
+                return False  # only the listed folder must be literal; `-Filter *.part` may be a pattern
+            paths.append(attached)
+        i += 1
+    return bool(paths) and _targets_below_step_tmp(paths, True, workdir)
+
+
+def _bare(word: str) -> str:
+    """A word with its quotes and backslashes dropped, for reading option letters lexically."""
+    return re.sub(r"""\\(.)|["']""", lambda m: m.group(1) or "", word)
+
+
+def _simple_command_words(command: str, start: int) -> tuple[list[str], re.Match | None]:
+    """The whitespace-split words from `start` to the end of that simple command, and the match that ends it."""
+    end = _BASH_COMMAND_END.search(command, start)
+    return command[start:end.start() if end else len(command)].split(), end
+
+
+def _recursive_rm(command: str) -> bool:
+    """Whether a bash `rm` asks for recursion in any of its option words (#17).
+
+    GNU rm reads options anywhere before `--`, so `rm -f -r`, `rm -v -rf`, `rm --recursive` and `rm x -r` are all
+    recursive; the pattern in settings sees only the first cluster. The scan is lexical, as that pattern is: a
+    quoted `sh -c 'rm -f -r x'` counts too.
+    """
+    for match in _BASH_RM_WORD.finditer(command):
+        for word in _simple_command_words(command, match.end())[0]:
+            value = _bare(word)
+            if value == "--":
+                break
+            if value.startswith("--"):
+                flag = value.split("=", 1)[0]
+                if len(flag) > 2 and "--recursive".startswith(flag):
+                    return True
+            elif value.startswith("-") and any(letter in "rR" for letter in value[1:]):
+                return True
+    return False
+
+
+@dataclass(frozen=True)
+class _FindDelete:
+    starts: tuple[str, ...]  # raw words; none means `.`
+    follows_links: bool
+
+
+def _find_deletes(command: str) -> list[_FindDelete]:
+    """Each bash find that deletes what it finds (#17).
+
+    A find deletes with `-delete`, with `-exec`/`-execdir`/`-ok`/`-okdir` running rm or unlink (also inside a
+    quoted `sh -c` body), or when its output is piped to `xargs ... rm`.
+    """
+    found: list[_FindDelete] = []
+    for match in _BASH_FIND_WORD.finditer(command):
+        words, end = _simple_command_words(command, match.end())
+        deletes = follows = False
+        for index, word in enumerate(words):
+            value = _bare(word).rstrip(")")  # `$(find . -delete)`
+            if value == "-delete":
+                deletes = True
+            elif value in {"-L", "-follow"}:
+                follows = True
+            elif value in _FIND_EXEC:
+                tail = words[index + 1:]
+                close = next((k for k, w in enumerate(tail) if _bare(w) in {";", "+"}), len(tail))
+                deletes = deletes or any(_BASH_DELETE_WORD.search(w) for w in tail[:close])
+        if not deletes and end and end.group() == "|":
+            piped = re.split(r"[;&\n]|\|\|", command[end.end():], maxsplit=1)[0]
+            deletes = bool(re.search(r"(?<![\w.-])xargs\b", piped) and _BASH_DELETE_WORD.search(piped))
+        if not deletes:
+            continue
+        k = 0
+        while k < len(words) and re.fullmatch(r"-[HP]|-O\d*", _bare(words[k])):
+            k += 1
+        if k < len(words) and _bare(words[k]) == "-D":
+            k += 2
+        starts = []
+        while k < len(words) and not _bare(words[k]).startswith(("-", "(", "!", ")", ",")):
+            starts.append(words[k])
+            k += 1
+        found.append(_FindDelete(tuple(starts), follows))
+    return found
+
+
+def _find_delete_inside_step_tmp(command: str, find: _FindDelete, workdir: str | None) -> bool:
+    """A deleting find meets the rule `rm -r` meets: one simple command, every start literal and below `.tmp`.
+
+    No start means `.`, the step folder itself. A pipe (`| xargs rm`), a redirection, `cd` or a substitution makes it
+    more than one simple command, as it does for rm; `-L` walks through links to wherever they lead.
+    """
+    if not workdir or find.follows_links:
+        return False
+    plain = _FIND_TEXT.sub("", command)
+    if any(char in plain for char in ";|&()<>`\r\n") or not _BASH_FIND_WORD.match(plain.lstrip()):
+        return False
+    starts = [_literal_shell_word(raw, False) for raw in find.starts] or ["."]
+    if any(start is None for start in starts):
+        return False
+    return _targets_below_step_tmp([str(start) for start in starts], False, workdir)
 
 
 @dataclass
@@ -1875,21 +2157,31 @@ def _evaluate_tool(
         cmd = str(tool_input.get("command", ""))
         if hit:
             return Decision("ask", f"{tool_name} touches restricted zone {hit}: `{cmd[:200]}`")
-        patterns = (policy.approvals.bash_ask_patterns if tool_name == "Bash"
-                    else POWERSHELL_ASK_PATTERNS)
-        for pat in patterns:
-            if re.search(pat, cmd, re.IGNORECASE):
-                delete_pattern = (BASH_RECURSIVE_DELETE_PATTERN if tool_name == "Bash"
-                                  else POWERSHELL_RECURSIVE_DELETE_PATTERN)
-                if pat == delete_pattern:
-                    if _recursive_delete_inside_workdir(cmd, tool_name == "PowerShell", workdir):
-                        continue
-                    return Decision("ask", f"재귀 삭제 확인 필요: `{cmd[:200]}`")
-                return Decision("ask", f"위험 명령 확인 필요: `{cmd[:200]}`")
+        powershell = tool_name == "PowerShell"
+        patterns = policy.approvals.bash_ask_patterns if not powershell else POWERSHELL_ASK_PATTERNS
+        delete_pattern = POWERSHELL_RECURSIVE_DELETE_PATTERN if powershell else BASH_RECURSIVE_DELETE_PATTERN
         roots = [_norm(r) for r in allowed_roots if r]
         # Claude's Bash on Windows is Git Bash: /c/Users/... is C:/Users/..., the folder the roots name (12th mock
         # trial: a write into the staff member's own .tmp asked the PI). A path it cannot map stays as written.
         git_bash = tool_name == "Bash" and any(re.match(r"^[a-z]:/", root) for root in roots)
+        for pat in patterns:
+            if pat == delete_pattern:
+                # The pattern sees only rm's first option cluster; every option word counts (#17).
+                if ((re.search(pat, cmd, re.IGNORECASE) or not powershell and _recursive_rm(cmd))
+                        and not _recursive_delete_inside_workdir(cmd, powershell, workdir)):
+                    return Decision("ask", f"재귀 삭제 확인 필요: `{cmd[:200]}`")
+                # A deleting find meets the same `.tmp` rule (find -delete, -exec rm, | xargs rm).
+                if not powershell and not all(_find_delete_inside_step_tmp(cmd, find, workdir)
+                                              for find in _find_deletes(cmd)):
+                    return Decision("ask", f"재귀 삭제 확인 필요: `{cmd[:200]}`")
+                if _CMD_RECURSIVE_DELETE.search(cmd):
+                    return Decision("ask", f"재귀 삭제 확인 필요: `{cmd[:200]}`")
+                # A listing piped into a delete, in a script block too, meets the same `.tmp` rule (#525 review).
+                if powershell and _ps_piped_delete(cmd) and not _ps_piped_delete_inside_step_tmp(cmd, workdir):
+                    return Decision("ask", f"재귀 삭제 확인 필요: `{cmd[:200]}`")
+                continue
+            if re.search(pat, cmd, re.IGNORECASE):
+                return Decision("ask", f"위험 명령 확인 필요: `{cmd[:200]}`")
         for target in _shell_write_targets(cmd, powershell=tool_name == "PowerShell"):
             if git_bash and _absolute(target) and not _drive_relative(target):
                 target = _git_bash_path(target, os.environ) or target
