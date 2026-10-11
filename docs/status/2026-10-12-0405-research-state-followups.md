@@ -11,8 +11,8 @@ P2 — #521 연구 lane 상태 4~9
 
 ## 테스트 결과
 - [x] `origin/main` 동작 + 새 회귀: 8 failed, 68 passed
-- [x] 관련 회귀: 191 passed
-- [x] Windows 전체 `pytest -q`: 5029 passed, 64 skipped
+- [x] 최신 `main` 병합 뒤 관련 회귀: 195 passed
+- [x] 최신 `main` 병합 뒤 Windows 전체 `pytest -q`: 5033 passed, 64 skipped
 - [x] UI 변경 없음
 
 ## 바꾼 파일
