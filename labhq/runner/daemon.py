@@ -181,6 +181,7 @@ class Runner:
         self.incarnation = saved_incarnation["id"] if saved_incarnation else uuid.uuid4().hex
         if not saved_incarnation:
             self.store.put("runner_meta", "incarnation", {"id": self.incarnation})
+        self.process = uuid.uuid4().hex  # never saved: tells the gateway a restart from a reconnect (#521)
         self.registry = Registry(settings.path(settings.runner.agents_dir), settings.path(settings.runner.talent_dir),
                                  settings.path(settings.runner.contract_dir) if settings.runner.contract_dir else None)
         self.ws_root = settings.path(settings.runner.workspace_root)
@@ -385,7 +386,7 @@ class Runner:
 
     def hello(self) -> dict:
         return {"type": "runner.hello", "runner_id": self.s.runner.id,
-                "incarnation": self.incarnation, "agents": self.roster(),
+                "incarnation": self.incarnation, "process": self.process, "agents": self.roster(),
                 "capabilities": self.capabilities()}
 
     # ---------------- gateway → runner ----------------
@@ -415,7 +416,8 @@ class Runner:
         elif typ == "approval.resolved":
             if self.broker.resolve(msg["id"], bool(msg.get("approved")), msg.get("note", "")):
                 task_id, agent_id = self.approval_tasks.pop(msg["id"], (None, None))
-                if task_id:
+                run = self.tasks.get(task_id or "")
+                if task_id and not (run and run.done()):  # an answer after the task ended must not revive it
                     await self.emit(Event(type="agent.status", task_id=task_id, agent_id=agent_id,
                                           request_id=self.task_req.get(task_id), data={"state": "working"}))
             self.send({"type": "approval.ack", "id": msg["id"]})
