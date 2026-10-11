@@ -9,3 +9,6 @@ rows:
   - sha: "1846e04"
     at: "2026-10-12 04:02"
     text: "find -delete·-exec rm·| xargs rm도 rm -r과 같은 규칙으로, 시작 경로가 모두 .tmp 아래일 때만 묻지 않는다. outputs/ 등 작업 폴더의 다른 곳은 묻는다."
+  - sha: "a824efa"
+    at: "2026-10-12 04:14"
+    text: "main을 병합해 #524 재현 등급 기록과 manual 공유 환경 문단 충돌을 풀었다."
