@@ -282,7 +282,10 @@ test('before the first snapshot the office reads as loading, not as an empty lab
   const html=fs.readFileSync(path.join(web,'index.html'),'utf8');
   assert.match(html,/let snapshotLoaded = MODE === 'demo';/);
   assert.match(html,/if \(ev\.type === 'snapshot'\) \{ lastSeq = ev\.seq \|\| 0; snapshotLoaded = true; schedule\(\); return; \}/);
-  assert.match(html,/snapshotLoaded \? LabHQState\.totalCostLabel\(\[\.\.\.S\.requests\.values\(\)\], S\.cost\) : '사용 비용 불러오는 중'/);
-  assert.match(html,/snapshotLoaded \? '오늘의 할 일을 기다리는 중' : '사무실 상태를 불러오는 중'/);
-  assert.match(html,/snapshotLoaded \? '지금은 결정할 일이 없어요\. 승인이 필요하면 여기에 바로 떠요\.' : '결정할 일을 불러오는 중'/);
+  // Without a token nothing loads until one is entered, so the text says so (#516 review).
+  assert.match(html,/const loadingText = what => S\.conn === 'auth' \? `토큰을 넣으면 \$\{what\}을 불러와요` : `\$\{what\} 불러오는 중`;/);
+  assert.match(html,/snapshotLoaded \? LabHQState\.totalCostLabel\(\[\.\.\.S\.requests\.values\(\)\], S\.cost\) : `사용 비용 · \$\{loadingText\('비용'\)\}`/);
+  assert.match(html,/snapshotLoaded \? '오늘의 할 일을 기다리는 중' : loadingText\('사무실 상태'\)/);
+  assert.match(html,/snapshotLoaded \? 'none' : `loading:\$\{S\.conn\}`/);
+  assert.match(html,/snapshotLoaded \? '지금은 결정할 일이 없어요\. 승인이 필요하면 여기에 바로 떠요\.' : loadingText\('결정할 일'\)/);
 });
