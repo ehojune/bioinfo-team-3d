@@ -1266,7 +1266,7 @@ def _review_reference(review: dict | None) -> str:
 
 # Any heading level: a model that wrote "# 리뷰 참고" kept its copy beside labhq's (bench C t6, #373).
 REVIEW_REFERENCE_HEADING = re.compile(r"(?m)^#{1,6}[ \t]*리뷰 참고[ \t]*$")
-EARLIER_ROUNDS_HEADING = re.compile(r"(?m)^#{1,6}[ \t]*이전 차수에서 고친 것[ \t]*$")
+EARLIER_ROUNDS_HEADING = re.compile(r"(?m)^#{1,6}[ \t]*이전 차수에서 고친 것[ \t]*#*[ \t]*$")  # ATX closing #s too
 
 
 def _earlier_rounds_fallback(contract: dict) -> str:

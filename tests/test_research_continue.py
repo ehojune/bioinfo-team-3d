@@ -565,6 +565,7 @@ def test_a_report_that_already_has_the_earlier_rounds_section_keeps_its_own():
     assert f"1차 리뷰 P1 · {P1['step_id']}" in section and "2차 CP2 수정 요청: s2 다시" in section
     assert _earlier_rounds_fallback({"rounds": []}) == "" and _earlier_rounds_fallback({}) == ""
     assert EARLIER_ROUNDS_HEADING.search("결론\n\n### 이전 차수에서 고친 것\n- s3 고침")
+    assert EARLIER_ROUNDS_HEADING.search("결론\n\n## 이전 차수에서 고친 것 ##\n- s3 고침")  # #517 review: closing #s
 
 
 BENCH_BLOCK = '<!-- LABHQ_BENCH_RESULT -->\n{"answer": 1}\n<!-- /LABHQ_BENCH_RESULT -->'
