@@ -537,37 +537,49 @@ def _active_request_line(request: dict) -> str:
     return f"{request.get('id', '?')} ({request.get('status', '?')}) {short(request.get('text'), 80)}{suffix}"
 
 
-def _shutdown_blockers(s: Settings) -> list[str] | None:
-    """Follow-ups on finished requests and recruitments `down` would cut off (#500); None when the gateway cannot say
-    (an older gateway without the endpoint, or no answer), so the request check alone decides as before."""
+def _shutdown_readiness(s: Settings) -> dict | str | None:
+    """The gateway's shutdown readiness (#500): its active requests, follow-ups still running on finished requests
+    and recruitments. None for an older gateway without the endpoint (HTTP 404); "unknown" for any other failure,
+    which `down` refuses like an unknown request list (#515 review: fail closed)."""
     import httpx
 
     try:
         value = _api(s, "GET", "/api/shutdown-readiness", raw_errors=True)
+    except httpx.HTTPStatusError as exc:
+        return None if exc.response.status_code == 404 else "unknown"
     except (httpx.HTTPError, ValueError):
-        return None
-    if not isinstance(value, dict):
-        return None
-    lines = [f"진행 중 이어 묻기: {row.get('request_id')} · {short(row.get('text'), 60)}"
-             for row in value.get("followups") or [] if isinstance(row, dict)]
-    if value.get("recruits"):
-        lines.append(f"진행 중 채용: {value['recruits']}건")
-    return lines
+        return "unknown"
+    return value if isinstance(value, dict) else "unknown"
 
 
 def _down(s: Settings, *, force: bool = False) -> None:
     active = _active_requests(s)
-    blockers = _shutdown_blockers(s) if active is not None else None
-    if active or blockers:
-        for request in active or []:
-            print(f"진행 중 요청: {_active_request_line(request)}", file=sys.stderr)
-        for line in blockers or []:
+    readiness = _shutdown_readiness(s) if active is not None else "unknown"
+    lines = [f"진행 중 요청: {_active_request_line(request)}" for request in active or []]
+    if isinstance(readiness, dict):
+        # One answer decides: a request submitted after the request list was read is in it too (#515 review).
+        listed = {request.get("id") for request in active or []}
+        lines += [f"진행 중 요청: {row.get('id')} ({row.get('status')}) {short(row.get('text'), 80)}"
+                  for row in readiness.get("requests") or [] if isinstance(row, dict) and row.get("id") not in listed]
+        lines += [f"진행 중 이어 묻기: {row.get('request_id')} · {short(row.get('text'), 60)}"
+                  for row in readiness.get("followups") or [] if isinstance(row, dict)]
+        if readiness.get("recruits"):
+            lines.append(f"진행 중 채용: {readiness['recruits']}건")
+        if readiness.get("ready") is False and not lines:
+            lines.append("진행 중 작업: gateway가 아직 끝나지 않은 일이 있다고 답했습니다")
+        busy: bool | None = bool(lines)
+    elif readiness is None:  # an older gateway without the endpoint: the request list decides, as before
+        busy = bool(active)
+    else:  # no answer: known active requests still refuse, otherwise it is unknown
+        busy = True if active else None
+    if busy:
+        for line in lines:
             print(line, file=sys.stderr)
         if not force:
             print(f"종료를 거부했습니다. 계속하려면 `{_config_command(s, 'down --force')}`를 쓰세요.",
                   file=sys.stderr)
             raise SystemExit(2)
-    elif active is None and not force:
+    elif busy is None and not force:
         print(f"진행 중 작업을 확인할 수 없어 종료하지 않았습니다. 계속하려면 "
               f"`{_config_command(s, 'down --force')}`를 쓰세요.", file=sys.stderr)
         raise SystemExit(2)

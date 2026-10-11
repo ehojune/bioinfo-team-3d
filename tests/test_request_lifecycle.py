@@ -590,3 +590,25 @@ async def test_shutdown_readiness_names_follow_ups_and_recruitments_outside_acti
     assert hub.shutdown_readiness()["ready"] is False and hub.shutdown_readiness()["recruits"] == 1
     await hub.on_runner_message("lab", {"type": "recruit.done", "ts": 1.0, "data": {"agent": {"id": "c_x"}}})
     assert hub.shutdown_readiness() == {"requests": [], "followups": [], "recruits": 0, "ready": True}
+
+
+@pytest.mark.asyncio
+async def test_a_recruitment_that_fails_while_it_is_being_sent_is_not_left_running(tmp_path, monkeypatch):
+    """#515 review: count before sending, so a recruit.failed handled during send_runner finds the count."""
+    from fastapi.testclient import TestClient
+    from labhq.gateway.server import create_app
+
+    s = _settings(tmp_path)
+    app = create_app(s)
+    hub = app.state.hub
+    hub.agent_runner[s.recruit.agent_id] = "lab"
+
+    async def send(runner_id, msg):
+        await hub.on_runner_message("lab", {"type": "recruit.failed", "ts": 1.0, "data": {"error": "no skill"}})
+
+    monkeypatch.setattr(hub, "send_runner", send)
+    with TestClient(app) as client:
+        response = client.post("/api/recruit", json={"repo": "example/tool"},
+                               headers={"Authorization": f"Bearer {s.gateway.client_token}"})
+    assert response.status_code == 200
+    assert hub.shutdown_readiness()["recruits"] == 0 and hub.shutdown_readiness()["ready"] is True

@@ -219,6 +219,7 @@ def test_down_refuses_active_work_and_force_terminates_only_recorded_trees(tmp_p
         "id": "req_busy", "status": "running", "text": "분석 중",
         "step_progress": {"steps": {"download": "done", "analysis": "hibernating"}},
     }])
+    monkeypatch.setattr(cli, "_shutdown_readiness", lambda _settings: "unknown")  # no live gateway in tests
     killed = []
     monkeypatch.setattr(cli, "_terminate_tree", lambda pid: killed.append(pid))
 
@@ -372,3 +373,34 @@ def test_down_also_refuses_a_running_follow_up_or_recruitment(tmp_path, monkeypa
     _write_process_record(settings, "runner", 4244, "runner-generation")  # the forced down removed the record
     cli._down(settings, force=False)
     assert killed == [4244]
+
+
+
+def test_down_refuses_when_readiness_fails_or_names_a_request_the_list_missed(tmp_path, monkeypatch, capsys):
+    """#515 review: a readiness error other than an old gateway's 404 refuses (fail closed), and the readiness
+    answer's own requests count, so a request submitted after the list was read is not cut off."""
+    settings = Settings.load(str(_config(tmp_path)))
+    _write_process_record(settings, "runner", 4244, "runner-generation")
+    monkeypatch.setattr(cli, "_process_created", lambda pid: "runner-generation")
+    killed = []
+    monkeypatch.setattr(cli, "_terminate_tree", lambda pid: killed.append(pid))
+    answers = {}
+
+    def gateway(method, url, **kwargs):
+        request = httpx.Request(method, url)
+        if "/api/requests" in url:
+            return httpx.Response(200, json=[], request=request)
+        status, body = answers["readiness"]
+        return httpx.Response(status, json=body, request=request)
+
+    monkeypatch.setattr(httpx, "request", gateway)
+    for status in (500, 503):
+        answers["readiness"] = (status, {"detail": "boom"})
+        with pytest.raises(SystemExit) as stopped:
+            cli._down(settings, force=False)
+        assert stopped.value.code == 2 and killed == [] and "확인할 수 없어" in capsys.readouterr().err
+    answers["readiness"] = (200, {"requests": [{"id": "req_new", "status": "running", "text": "방금 보낸 요청"}],
+                                  "followups": [], "recruits": 0, "ready": False})
+    with pytest.raises(SystemExit) as stopped:
+        cli._down(settings, force=False)
+    assert stopped.value.code == 2 and killed == [] and "req_new" in capsys.readouterr().err

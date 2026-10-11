@@ -2778,8 +2778,13 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         rid = hub.agent_runner.get(settings.recruit.agent_id)
         if not rid:
             raise HTTPException(409, f"no runner hosts the recruiter agent {settings.recruit.agent_id!r}")
-        await hub.send_runner(rid, {"type": "recruit.start", **body.model_dump()})
+        # Counted before sending: a runner that fails at once may report recruit.failed before send_runner returns.
         hub.recruits_running[rid] = hub.recruits_running.get(rid, 0) + 1
+        try:
+            await hub.send_runner(rid, {"type": "recruit.start", **body.model_dump()})
+        except Exception:
+            hub.recruits_running[rid] = max(0, hub.recruits_running.get(rid, 1) - 1)
+            raise
         return {"ok": True, "runner_id": rid}
 
     @app.post("/api/contracts/{agent_id}", dependencies=[Depends(auth)])
