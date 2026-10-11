@@ -201,8 +201,8 @@ def _installation_syntax(segment: str, tool_name: str = "Bash") -> bool:
             return True
         if executable in {"conda", "mamba", "micromamba"} and "create" in words[i + 1:]:
             return True
-        if executable in _R and _R_CALL.search(segment):
-            return True
+        if (executable in _R or _nonliteral_word(word)) and _R_CALL.search(segment):
+            return True  # a computed program word may be R
     # An unknown executable/wrapper with an install operand cannot receive an unscoped exception.
     return _has_install(words) or not valid and bool(re.search(r"\binstall\b", segment, re.IGNORECASE))
 
@@ -229,16 +229,18 @@ def _quoted_scalar_expansion(word: str, tool_name: str) -> bool:
 
 def _dynamic_installer_syntax(token: str, args: list[str], *, executable_position: bool = True,
                               tool_name: str = "Bash") -> bool:
-    """Fail closed when an installer selector is computed instead of literal."""
+    """Fail closed when an installer selector is computed instead of literal.
+
+    A computed word may be any program only where a program is named: the command's own executable. A computed
+    word among another program's arguments (`python de.py "$IN" "$OUT"`, `cp "$A" "$B"`) is data unless a
+    literal install verb follows it (#3 of the v0.5.0 cross review).
+    """
     executable = executable_basename(token)
     folded = [arg.casefold() for arg in args]
     install_like = any(arg in {"install", "create"} for arg in folded)
     if _nonliteral_word(token):
-        return (
-            executable_position and not _quoted_scalar_expansion(token, tool_name) or
-            install_like or
-            bool(args and any(_nonliteral_word(arg) for arg in args))
-        )
+        return install_like or executable_position and (
+            not _quoted_scalar_expansion(token, tool_name) or any(_nonliteral_word(arg) for arg in args))
     if executable_position and tool_name == "PowerShell" and token.startswith("("):
         return True
     if executable in {"eval", "invoke-expression", "iex"}:
@@ -804,6 +806,9 @@ def _shared_environment_install_denial(tool_name: str, command: str, *, environm
         executable = executable_basename(token)
         if _dynamic_installer_syntax(token, args, tool_name=tool_name):
             return _ENVIRONMENT_DENIAL
+        # A quoted variable naming the program (`"$RSCRIPT" -e "install.packages(..)"`) may be R: its install
+        # calls meet the library rules a literal Rscript meets (#16 of the v0.5.0 cross review).
+        r_program = executable in _R or _nonliteral_word(token) and bool(_R_CALL.search(segment))
         nested = _nested_shell_body(executable, args, understood, cwd)
         if nested is not None:
             body, nested_tool, extractable, unconditional, positional, nested_cwd = nested
@@ -834,7 +839,7 @@ def _shared_environment_install_denial(tool_name: str, command: str, *, environm
         detected_install = _python_install(executable, args)
         r_cmd_args = _r_cmd_install(executable, args)
         manager_create = environment_step and executable in {"conda", "mamba", "micromamba"} and "create" in args
-        if ((not understood or not detected_install and not manager_create and executable not in _R) and
+        if ((not understood or not detected_install and not manager_create and not r_program) and
                 not (understood and executable in _DATA_COMMANDS | _LOCATION_COMMANDS)):
             if _installation_syntax(segment, tool_name):
                 return _ENVIRONMENT_DENIAL
@@ -867,7 +872,7 @@ def _shared_environment_install_denial(tool_name: str, command: str, *, environm
                 return ("Only the environment step may modify the shared Python environment. Install the extra "
                         "package in this step with `python -m pip install --target ./.pylib ...` and record "
                         "`python -m pip freeze --path ./.pylib` in outputs/env/<step>.txt.")
-        calls = list(_r_calls(segment)) if executable in _R else []
+        calls = list(_r_calls(segment)) if r_program else []
         current_environment = _R_ENV_LIBRARY.findall(segment)
         if calls:
             environment = [*pending_r_environment, *current_environment]

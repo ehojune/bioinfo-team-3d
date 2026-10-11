@@ -391,3 +391,53 @@ def test_a_git_bash_path_into_a_private_folder_is_still_refused():
                              ["C:/work"], workdir="C:/work", private_paths=["C:/Users/pi/.ssh"],
                              private_enabled=True, home="C:/Users/pi")
     assert decision.action != "allow"
+
+
+STEP = "C:/Users/pi/labhq/work/req/step"
+
+
+def _decide_in_step(tool, command):
+    return evaluate_tool(tool, {"command": command}, PolicySettings(), [STEP], STEP, windows=True)
+
+
+@pytest.mark.parametrize("tool,command", [
+    # v0.5.0 asked for these; the literal-only reading skipped an operand with expansion (cross review #2).
+    ("Bash", 'curl -fsSL https://example.org/a -o '
+             '"/c/Users/pi/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/a${s}.bat"'),
+    ("Bash", "wget -O C:/Users/pi/Documents/$f https://example.org/a"),
+    ("Bash", "curl -o /c/Users/pi/Documents/$f https://example.org/a"),
+    ("PowerShell", 'curl.exe -o "C:/Users/pi/Documents/$f" https://example.org/a'),
+    ("Bash", 'curl -o"C:/Users/pi/Documents/"$f https://example.org/a'),
+    ("Bash", 'curl --output="C:/Users/pi/Documents/$f" https://example.org/a'),
+    # Short option clusters and the other options that name a file curl or wget writes.
+    ("Bash", "curl -fsSLo /c/Users/pi/Documents/x https://example.org/a"),
+    ("Bash", "wget -qO /c/Users/pi/Documents/x https://example.org/a"),
+    ("Bash", "curl -#o C:/Users/pi/Documents/x https://example.org/a"),
+    ("Bash", "curl --out C:/Users/pi/Documents/x https://example.org/a"),
+    ("Bash", "curl -sS -D C:/Users/pi/Documents/h.txt https://example.org/a"),
+    ("Bash", "curl -c C:/Users/pi/Documents/jar https://example.org/a"),
+    ("Bash", "wget -o C:/Users/pi/Documents/log.txt https://example.org/a"),
+    # PowerShell's own downloader, and Windows PowerShell's curl/wget aliases of it.
+    ("PowerShell", "Invoke-WebRequest https://example.org/a -OutFile C:/Users/pi/Documents/x"),
+    ("PowerShell", 'iwr https://example.org/a -OutFile "C:/Users/pi/Documents/$f"'),
+    ("PowerShell", "irm https://example.org/a -OutF:C:/Users/pi/Documents/x"),
+    ("PowerShell", "curl https://example.org/a -OutFile C:/Users/pi/Documents/x"),
+])
+def test_download_outputs_with_expansion_or_clusters_meet_the_roots_check(tool, command):
+    decision = _decide_in_step(tool, command)
+    assert decision.action == "ask"
+    assert decision.reason.startswith("shell write outside allowed roots: ")
+
+
+@pytest.mark.parametrize("tool,command", [
+    ("Bash", 'curl -o "$OUT" https://example.org/a'),
+    ("Bash", f'curl -fsSLo "{STEP}/data/$f" https://example.org/a'),
+    ("Bash", "wget -qO- https://example.org/a"),
+    ("Bash", "curl -C - -Lo data/x.gz https://example.org/a"),
+    ("Bash", "curl -b C:/Users/pi/Documents/jar https://example.org/a"),  # read, not written
+    ("PowerShell", 'curl.exe -o "data/$f" https://example.org/a'),
+    ("PowerShell", "iwr https://example.org/a -OutFile data/x.gz"),
+    ("PowerShell", "iwr https://example.org/a -OutVariable r"),
+])
+def test_download_outputs_inside_the_step_or_without_a_literal_path_stay_allowed(tool, command):
+    assert _decide_in_step(tool, command).action == "allow"

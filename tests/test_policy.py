@@ -416,3 +416,95 @@ def test_example_configs_publish_the_same_non_delegating_auto_allow_list():
     assert configured == PolicySettings().approvals.auto_allow_tools
     assert not {"Task", "Agent", "Workflow", "TeamCreate", "TeamDelete"} & set(configured)
     assert Settings.model_validate(data).policy.approvals.auto_allow_tools == configured
+
+
+WINDOWS_STEP = "C:/Users/pi/labhq/work/req/step"
+
+
+def _decide_in_windows_step(command):
+    return evaluate_tool("Bash", {"command": command}, _policy(), [WINDOWS_STEP], WINDOWS_STEP, windows=True)
+
+
+@pytest.mark.parametrize("command", [
+    # rm reads options anywhere before `--`; only the first cluster was read (cross review #17).
+    "rm -f -r C:/Users/pi/Documents",
+    "rm -v -rf C:/Users/pi/Documents",
+    "rm --recursive --force C:/Users/pi/Documents",
+    "rm --rec C:/Users/pi/Documents",
+    "rm C:/Users/pi/Documents -rf",
+    "RM -f -R C:/Users/pi/Documents",
+    "sh -c 'rm -f -r C:/Users/pi/Documents'",
+    "rm -f -r results/",
+    # A find that deletes outside the write roots, or from a start the gate cannot place.
+    "find C:/Users/pi/Documents -delete",
+    "find /c/Users/pi/Documents -name '*.docx' -exec rm {} +",
+    r"find C:/Users/pi/Documents -type f -execdir rm -f {} \;",
+    r"""find C:/Users/pi/Documents -exec sh -c 'rm "$1"' _ {} \;""",
+    "find C:/Users/pi/Documents -type f | xargs rm -f",
+    "find ../ -delete",
+    'find "$D" -delete',
+    "find $(pwd) -delete",
+    "find -L . -delete",
+    "cd .. && find . -delete",
+    "sudo find . -delete",
+])
+def test_recursive_deletes_in_every_option_form_ask_outside_the_step(command):
+    decision = _decide_in_windows_step(command)
+    assert decision.action == "ask"
+    assert decision.reason.startswith("재귀 삭제 확인 필요: `")
+
+
+@pytest.mark.parametrize("command", [
+    "rm -f -r .tmp/cache",
+    "rm -v -rf .tmp/cache",
+    "rm --recursive --force .tmp/cache",
+    "find . -name '*.pyc' -delete",
+    "find .tmp -type f -delete",
+    r"find outputs -name '*.part' -exec rm {} \;",
+    f"find {WINDOWS_STEP}/.tmp -delete",
+    "find . -name '*.part' | xargs rm",
+    "find . -name x -exec grep -l y {} +",
+    "docker run --rm -v data:/data img nextflow run x -profile docker",
+])
+def test_deletes_inside_the_step_and_commands_that_delete_nothing_stay_allowed(command):
+    assert _decide_in_windows_step(command).action == "allow"
+
+
+@pytest.mark.parametrize("start", ["link", "link/"])
+def test_a_find_delete_whose_start_is_a_link_out_of_the_step_asks(tmp_path, start):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    step = tmp_path / "step"
+    step.mkdir()
+    try:
+        (step / "link").symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"directory symlink unavailable: {exc}")
+
+    decision = evaluate_tool("Bash", {"command": f"find {start} -delete"}, _policy(),
+                             allowed_roots=[str(step)], workdir=str(step))
+    assert decision.action == "ask"
+
+
+@pytest.mark.parametrize("tool,command", [
+    ("Bash", "cmd //c rd //s //q C:/Users/pi/Documents"),
+    ("PowerShell", "cmd /c rmdir /S /Q C:/Users/pi/Documents"),
+    ("PowerShell", 'cmd /c "del /s /q C:/Users/pi/Documents/*.docx"'),
+    ("PowerShell", "Get-ChildItem C:/Users/pi/Documents -Recurse | Remove-Item -Force"),
+    ("PowerShell", "gci C:/Users/pi/Documents -r -File | Where-Object Length -gt 0 | rm"),
+])
+def test_cmd_and_piped_powershell_recursive_deletes_ask(tool, command):
+    decision = evaluate_tool(tool, {"command": command}, _policy(), [WINDOWS_STEP], WINDOWS_STEP, windows=True)
+    assert decision.action == "ask"
+    assert decision.reason.startswith("재귀 삭제 확인 필요: `")
+
+
+@pytest.mark.parametrize("command", [
+    "Get-ChildItem . -Recurse -Filter *.csv | Select-Object Name",
+    "Get-ChildItem -Recurse | Measure-Object",
+    "rd .tmp/empty",
+])
+def test_recursive_listings_and_plain_rd_in_powershell_stay_allowed(command):
+    decision = evaluate_tool("PowerShell", {"command": command}, _policy(), [WINDOWS_STEP], WINDOWS_STEP,
+                             windows=True)
+    assert decision.action == "allow"

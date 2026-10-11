@@ -485,3 +485,51 @@ def test_powershell_parentheses_do_not_undo_an_r_library_change(tmp_path, enviro
     install below must stay refused as on main."""
     command = "$env:R_LIBS_USER='./.rlib'; ($env:R_LIBS_USER='/tmp/shared'); Rscript -e \"install.packages('a')\""
     assert denial(tmp_path, command, environment_step=environment_step, tool="PowerShell")
+
+
+@pytest.mark.parametrize("environment_step", [True, False])
+@pytest.mark.parametrize("tool,command", [
+    # Cross review #3: v0.5.0 allowed these, main refused them as installs.
+    ("Bash", 'python outputs/scripts/de.py "$IN" "$OUT"'),
+    ("Bash", 'IN=counts.tsv; OUT=de.tsv; python outputs/scripts/de.py "$IN" "$OUT"'),
+    ("Bash", 'for f in inputs/*.tsv; do python s.py "$f" "${f%.tsv}.out"; done'),
+    ("Bash", 'cp "$A" "$B"'),
+    ("Bash", 'python de.py --in "$IN" --out "$OUT"'),
+    ("Bash", 'samtools sort -o "$OUT" "$IN"'),
+    ("PowerShell", "python de.py $in $out"),
+])
+def test_computed_arguments_of_an_analysis_command_are_not_installs(tmp_path, environment_step, tool, command):
+    assert denial(tmp_path, command, environment_step=environment_step, tool=tool) is None
+
+
+@pytest.mark.parametrize("environment_step", [True, False])
+@pytest.mark.parametrize("command", [
+    'X=1 "$PIP" "$ACTION" scanpy',
+    'if "$PIP" "$ACTION" scanpy; then :; fi',
+    'nohup "$PIP" install scanpy',
+    '"$PY" script.py "$INPUT"',  # a quoted executable takes literal arguments only (manual)
+])
+def test_computed_words_where_a_program_is_named_stay_refused(tmp_path, environment_step, command):
+    assert denial(tmp_path, command, environment_step=environment_step)
+
+
+@pytest.mark.parametrize("environment_step", [True, False])
+@pytest.mark.parametrize("tool,command", [
+    # Cross review #16: a quoted variable naming Rscript hid the R install call; v0.5.0 refused these.
+    ("Bash", '''RSCRIPT="/c/Program Files/R/R-4.4.1/bin/Rscript.exe"; "$RSCRIPT" -e "install.packages('DESeq2')"'''),
+    ("Bash", '''"$RSCRIPT" -e "BiocManager::install('DESeq2')"'''),
+    ("Bash", '''"${RSCRIPT}" -e "remotes::install_github('a/b')"'''),
+    ("PowerShell", '''& "$rscript" -e "install.packages('DESeq2')"'''),
+    ("Bash", '''nohup "$RSCRIPT" -e "install.packages('DESeq2')"'''),
+])
+def test_a_quoted_variable_interpreter_with_an_r_install_call_is_read_as_r(
+        tmp_path, environment_step, tool, command):
+    assert denial(tmp_path, command, environment_step=environment_step, tool=tool)
+
+
+def test_a_quoted_variable_r_install_meets_the_same_library_rule_as_rscript(tmp_path):
+    shared = '''"$RSCRIPT" -e "install.packages('DESeq2')"'''
+    assert "shared R library" in denial(tmp_path, shared, environment_step=False)
+    for program in ('"$RSCRIPT"', "Rscript"):
+        local = f'''{program} -e "install.packages('DESeq2', lib='./.rlib')"'''
+        assert denial(tmp_path, local, environment_step=False) is None
