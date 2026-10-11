@@ -66,6 +66,29 @@ class CliSpec(BaseModel):
     env: dict[str, str] = {}
 
 
+# A bare hostname or IP, optionally :port. Never a URL: a scheme, user:password@, path, query or fragment could carry
+# a credential into the contract YAML, roster events and web cards (#424, PR #522 review).
+SERVICE_HOST = re.compile(r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*"
+                          r"|\[[0-9a-f:.]+\])(?::[0-9]{1,5})?")
+
+
+class ExternalService(BaseModel):
+    host: str
+    what_is_sent: str
+
+    @field_validator("host")
+    @classmethod
+    def bare_host(cls, value: str) -> str:
+        host = value.strip().lower()
+        port = host.rsplit(":", 1)[1] if re.search(r":[0-9]+$", host) else None
+        if not SERVICE_HOST.fullmatch(host) or (port is not None and not 0 < int(port) < 65536):
+            raise ValueError("external_services host must be a bare hostname or host:port, not a URL")
+        return host
+
+
+SOURCE_COMMIT = re.compile(r"[0-9a-f]{40}")
+
+
 class ContractInfo(BaseModel):
     paper: str | None = None  # DOI / URL / local PDF
     repo: str | None = None
@@ -76,6 +99,32 @@ class ContractInfo(BaseModel):
     skill_dir: str | None = None
     talent_dir: str | None = None
     verification: dict[str, Any] = {}
+    # What the hire was built from and where its tools send data (#424). A contract saved before these fields
+    # loads with the defaults. The two hashes are labhq's own (recruit/provenance.py), never the offer's.
+    source_commit: str | None = None  # full commit of the converted code repository
+    code_license: str | None = None
+    weights_license: str | None = None
+    external_services: list[ExternalService] = []
+    skill_sha256: str | None = None
+    mcp_sha256: str | None = None
+    mcp_path: str | None = None  # the MCP folder or ZIP mcp_sha256 was taken from; a rehire hashes it again
+    # The server tree mcp_args actually runs when it lies outside mcp_path (an extracted ZIP, PR #522 review).
+    mcp_entry_path: str | None = None
+    mcp_entry_sha256: str | None = None
+
+    @field_validator("source_commit")
+    @classmethod
+    def full_commit(cls, value: str | None) -> str | None:
+        if value is not None and not SOURCE_COMMIT.fullmatch(value):
+            raise ValueError("source_commit must be a full 40-character lowercase hex commit")
+        return value
+
+    def provenance(self) -> dict[str, Any]:
+        return {"source_commit": self.source_commit, "code_license": self.code_license,
+                "weights_license": self.weights_license,
+                "external_services": [s.model_dump() for s in self.external_services],
+                "skill_sha256": self.skill_sha256, "mcp_sha256": self.mcp_sha256,
+                "rehire_changed": list(self.verification.get("rehire_changed") or [])}
 
 
 class AgentSpec(BaseModel):
@@ -141,6 +190,7 @@ class AgentSpec(BaseModel):
             "employment": self.employment.value,
             "expires_at": self.contract.expires_at if self.contract else None,
             "contract_status": self.contract.status if self.contract else None,
+            "contract_provenance": self.contract.provenance() if self.contract else None,
             "mcp": [m.name for m in self.mcp],
             "builtin_mcp": self.builtin_mcp,
             "sandbox": self.sandbox,
@@ -312,6 +362,9 @@ class AskRequest(BaseModel):
     refs: list[str] = Field(default_factory=list, max_length=20)
     # Set by the runner's capability token, never trusted from the MCP caller (#86).
     source_workdir: str | None = None
+    # Also from the token: the asking task's inputs touch a restricted zone, so no staff that send data out may
+    # answer it (#424). The question and its refs come from that task.
+    source_restricted: bool = False
     wait: Literal["short", "hibernate"] = "short"
     created_at: float = Field(default_factory=time.time)
 

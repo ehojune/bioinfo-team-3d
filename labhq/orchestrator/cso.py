@@ -43,6 +43,8 @@ from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARC
                                  validate_research_result, with_pack_refs)
 from ..research import continuation as research_continuation
 from ..security import redact_tokens
+from ..recruit.provenance import (consult_refusal, external_contract_conflicts, external_hosts, not_yet_active,
+                                  probation_refusal, restricted_input_steps, touches_restricted)
 from ..research.packs import (assess_pack_applicability, configured_packs, normalize_pack_keys, pack_refs,
                               pack_snapshot, packs_for_snapshot, render_pack_catalog, render_pack_review,
                               select_applied_packs, select_legacy_applied_packs)
@@ -1032,6 +1034,9 @@ def format_roster(agents: list[dict]) -> str:
     for a in agents:
         tag = " [파견직]" if a.get("employment") == "contract" else ""
         tools = f" · tools: {', '.join(a['mcp'])}" if a.get("mcp") else ""
+        hosts = external_hosts(a)
+        if hosts:
+            tag += f" [sends data to {', '.join(hosts)}; never on restricted-zone inputs]"
         allowed = a.get("tools") or []
         builtin = a.get("builtin_tools")
         if a.get("engine") == "codex":
@@ -1165,6 +1170,10 @@ class PlanOutputsError(ValueError):
 
 class PlanAgentError(ValueError):
     """A plan assigned work to staff outside the current worker roster."""
+
+
+EXTERNAL_CONTRACT_RULE = ("contract staff that send data to external services cannot take steps whose inputs touch a "
+                          "restricted data zone; give those steps to core staff")
 
 
 def unavailable_plan_agents(steps: Any, known: set[str], excluded: frozenset[str] | set[str]) -> list[str]:
@@ -1631,13 +1640,15 @@ def _normalize_plan_outputs(plan: Any) -> tuple[Any, list[str]]:
 def validate_steps(raw: list[dict], known: set[str], max_steps: int,
                    excluded: frozenset[str] | set[str] = ORCHESTRATION_ROLES, *,
                    vocab: output_vocab.Vocab | None = None, stats: dict | None = None,
-                   reject_excess: bool = False) -> tuple[list[dict], list[str]]:
+                   reject_excess: bool = False,
+                   guard: Callable[[list[dict]], list[str]] | None = None) -> tuple[list[dict], list[str]]:
     """Steps ready to dispatch, plus warnings. With ``vocab`` (plan.declare_output_types on), each step's
     ``output_types`` is normalized against its final outputs and per-request counts go into ``stats``; without it,
     any ``output_types`` the CSO sent is dropped and the steps are exactly what they were before #221.
 
     A fresh CSO plan is cut to ``max_steps``. A stored plan passes ``reject_excess``: cutting it would drop steps
-    the request already promised, so a plan over the limit raises instead (#282)."""
+    the request already promised, so a plan over the limit raises instead (#282). ``guard`` names steps the
+    roster may not take as planned (contract staff that send data out on restricted inputs, #424)."""
     if reject_excess and len(raw) > max_steps:
         raise ValueError(f"stored plan has {len(raw)} steps; maximum is {max_steps}; "
                          "raise orchestrator.max_steps to resume it")
@@ -1719,6 +1730,9 @@ def validate_steps(raw: list[dict], known: set[str], max_steps: int,
                 queue.append(c)
     if visited != len(steps):
         raise ValueError("plan has a dependency cycle")
+    conflicts = guard(steps) if guard else []
+    if conflicts:
+        raise PlanAgentError(EXTERNAL_CONTRACT_RULE + f": {conflicts}")
     return steps, warnings
 
 
@@ -2271,6 +2285,26 @@ class Orchestrator:
         plan = getattr(self.hub.s, "plan", None)
         return output_vocab.current() if getattr(plan, "declare_output_types", False) else None
 
+    def _request_inputs(self, rid: str) -> tuple[list[str], list[str]]:
+        """The request text and folders every step of it reads, for the restricted-input rule (#424)."""
+        req = self.hub.requests.get(rid) or {}
+        return [str(req.get("text") or "")], [*(req.get("project_dirs") or []), *reference_dirs(req.get("references"))]
+
+    def _external_guard(self, rid: str) -> Callable[[list[dict]], list[str]] | None:
+        """validate_steps guard: contract staff that send data out stay off restricted-input steps (#424)."""
+        settings = getattr(self.hub, "s", None)
+        if settings is None or not any(z.level == "restricted" for z in settings.policy.data_zones):
+            return None
+        texts, dirs = self._request_inputs(rid)
+        return lambda steps: external_contract_conflicts(steps, list(self.hub.agents.values()), texts, dirs, settings)
+
+    def _request_restricted(self, rid: str | None) -> bool:
+        """The request's own text, references or project folders touch a restricted zone (#424)."""
+        if not rid or not self._external_guard(rid):
+            return False
+        texts, dirs = self._request_inputs(rid)
+        return touches_restricted(texts, dirs, self.hub.s)
+
     def _lab_scope(self) -> str:
         scope = str(getattr(getattr(self.hub.s, "lab", None), "scope", None) or "").strip()
         return scope or DEFAULT_LAB_SCOPE
@@ -2559,6 +2593,18 @@ class Orchestrator:
             await self.hub.resolve_ask(ask, runner_id, ask_result(
                 reason=refusal, **{"from": "labhq", "routed_to": routed}))
             return
+        # The question and refs come from the asking task: restricted inputs there never reach staff that send data
+        # out (#424). The runner's token says so; the request's own text and folders count as well.
+        restricted = ask.source_restricted or self._request_restricted(ask.request_id)
+        hosts = external_hosts(self.hub.agents.get(routed) or {})
+        if not_yet_active(self.hub.agents.get(routed) or {}):
+            await self.hub.resolve_ask(ask, runner_id, ask_result(
+                reason=probation_refusal(routed), **{"from": "labhq", "routed_to": routed}))
+            return
+        if restricted and hosts:
+            await self.hub.resolve_ask(ask, runner_id, ask_result(
+                reason=consult_refusal(hosts), **{"from": "labhq", "routed_to": routed}))
+            return
 
         # A task workdir belongs to its runner's filesystem. The gateway only forwards it when the
         # consult will run on that same runner; the runner validates the path and refs before launch.
@@ -2605,6 +2651,7 @@ class Orchestrator:
                     resume_session_id=session_id if self.hub.supports_resume(routed) else None,
                     meta={"kind": "consult", "ask_id": ask.id, "title": f"{ask.agent_id} 질의 답변",
                           "agent_overrides": overrides,
+                          **({"restricted_inputs": True} if restricted else {}),
                           **({**({"source_workdir": source_workdir} if source_workdir else {}),
                               "consult_refs": refs} if refs else {}),
                           **({"workdir": workdir} if workdir else {}),
@@ -3324,6 +3371,11 @@ class Orchestrator:
         # Answers to blocking questions survive a gateway restart (the re-run step still needs them).
         decisions: dict[str, Any] = dict((req_state or {}).get("step_decisions") or {})
         sem = asyncio.Semaphore(self.cfg.max_parallel_steps)
+        # Ancestors' instructions count as inputs; the runner sees only this step's text, so it gets the verdict (#424).
+        restricted: set[str] = set()
+        if self._external_guard(rid):
+            texts, dirs = self._request_inputs(rid)
+            restricted = restricted_input_steps(steps, [request, *texts], dirs, self.hub.s)
 
         async def skip(sid: str, reason: str, upstream_ids: list[str] | None = None) -> None:
             previous = results.get(sid)
@@ -3451,6 +3503,7 @@ class Orchestrator:
                               "outputs": step.get("outputs", []),
                               "environment_step": ENV_LOCK_OUTPUT in step.get("outputs", []),
                               "shared_environment_protected": shared_environment_protected,
+                               **({"restricted_inputs": True} if step["id"] in restricted else {}),
                                **({"general_result_contract": True} if not research_plan else {}),
                                **self._type_meta(step),
                                **({"finish_turns": self.hub.s.research.finish_turns} if research_plan else {}),
@@ -4523,7 +4576,8 @@ class Orchestrator:
                              ok=res.ok and rid not in self.budget_denials)
                 return
 
-            all_agents = list(self.hub.agents.values())
+            # A contract hire on probation stays on the web roster as 수습 but is not offered to the CSO (#424).
+            all_agents = [a for a in self.hub.agents.values() if not not_yet_active(a)]
             known = {a["id"] for a in all_agents}
             # The configured orchestration agents, not only the default ids, stay out of the worker roster.
             orchestration = set(ORCHESTRATION_ROLES) | {
@@ -5032,6 +5086,10 @@ class Orchestrator:
                         if bad_agents:
                             problems.append(f"research plan uses unavailable or orchestration agents: {bad_agents}; "
                                             f"use roster ids {workers}")
+                        guard = self._external_guard(rid)
+                        conflicts = guard(drafted) if guard and isinstance(drafted, list) else []
+                        if conflicts:
+                            problems.append(f"{EXTERNAL_CONTRACT_RULE}: {conflicts}")
                         problems.extend(checklist_errors(candidate, checklist_catalog,
                                                          req.get("analysis_precedents")))
                         return problems
@@ -5129,7 +5187,8 @@ class Orchestrator:
                                 plan = normalize_plan_topics(plan, topic_vocab, strict=False)
                             plan = normalize_plan_keys(plan, {}, checklist_catalog)
                             steps, step_warnings = validate_steps(plan.get("steps") or [], known, self.cfg.max_steps,
-                                                                  orchestration, vocab=vocab, stats=type_stats)
+                                                                  orchestration, vocab=vocab, stats=type_stats,
+                                                                  guard=self._external_guard(rid))
                             precedent_state = req.get("analysis_precedents") or {}
                             warnings = list(dict.fromkeys([
                                 *(plan.get("warnings") or []), *step_warnings,
@@ -5384,7 +5443,7 @@ class Orchestrator:
                                          f"maximum is {self.cfg.max_steps}")
                     type_stats: dict = {}
                     merged, warnings = validate_steps(kept + raw, known, self.cfg.max_steps, orchestration,
-                                                      vocab=vocab, stats=type_stats)
+                                                      vocab=vocab, stats=type_stats, guard=self._external_guard(rid))
                     # A kept step already ran. A dependency inferred from its old instruction on a new step is not
                     # one it ran with, so it keeps the dependencies it had and the inference warning is dropped.
                     for step in merged:

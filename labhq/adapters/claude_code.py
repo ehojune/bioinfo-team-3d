@@ -108,6 +108,28 @@ def _git(path: Path, *args: str) -> bytes | None:
         return None
 
 
+# Skipped in a contract hire's folder hash (_folder_files): caches and environments an install adds (#424).
+UNHASHED_DIRS = frozenset({".git", "__pycache__", ".venv", "venv", "node_modules", ".mypy_cache", ".pytest_cache"})
+
+
+def _folder_files(path: Path) -> tuple[set[Path], str | None]:
+    """_plugin_files for a folder that is not a plugin, such as a contract hire's skill or MCP server (#424).
+
+    Git-listed files as there, else every file. UNHASHED_DIRS are skipped either way: a delivered MCP folder may
+    be a checkout whose `.venv` is not git-ignored."""
+    listed = _git(path, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+    names = [n for n in (listed or b"").decode("utf-8", "surrogateescape").split("\0")
+             if n and not UNHASHED_DIRS & set(n.split("/"))]
+    if names:
+        commit = (_git(path, "rev-parse", "HEAD") or b"").decode().strip() or None
+        return {(path / n) for n in names if (path / n).is_file()}, commit
+    found: set[Path] = set()
+    for folder, dirs, files in os.walk(path):  # links to folders are not followed
+        dirs[:] = [d for d in dirs if d not in UNHASHED_DIRS]
+        found.update(Path(folder) / f for f in files if (Path(folder) / f).is_file())
+    return found, None
+
+
 def _plugin_files(path: Path) -> tuple[set[Path], str | None]:
     """Files whose content defines the plugin's behaviour, and the git commit when there is one.
 
@@ -137,10 +159,19 @@ def _plugin_files(path: Path) -> tuple[set[Path], str | None]:
     return files, None
 
 
-def plugin_provenance(name: str, path: Path) -> dict:
+def _file_sha256(path: Path) -> bytes:
+    """Read in 1 MiB chunks: a delivered MCP folder may hold model weights larger than memory."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.digest()
+
+
+def plugin_provenance(name: str, path: Path, every_file: bool = False) -> dict:
     """Name, declared version, git commit and a content-and-mode hash (no local path)."""
     root = path.resolve()
-    files, commit = _plugin_files(path)
+    files, commit = _folder_files(path) if every_file else _plugin_files(path)
     staged = _git(path, "ls-files", "--stage", "-z")  # paths relative to the plugin, as above
     index_modes = {}
     if staged is not None:
@@ -160,7 +191,7 @@ def plugin_provenance(name: str, path: Path) -> dict:
         index_mode = index_modes.get(relative, work_mode)
         h.update(relative.encode("utf-8") + b"\0" + index_mode.encode("ascii") + b"\0" +
                  work_mode.encode("ascii") + b"\0")
-        h.update(hashlib.sha256(f.read_bytes()).digest())
+        h.update(_file_sha256(f))
     return {"name": name, "version": (read_plugin_manifest(path) or {}).get("version"), "commit": commit,
             "sha256": h.hexdigest()}
 

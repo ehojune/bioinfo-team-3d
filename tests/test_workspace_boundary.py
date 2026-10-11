@@ -333,7 +333,7 @@ async def test_a_link_above_the_contract_skill_copy_refuses_the_run_and_stays(tm
     skill = tmp_path / "paper-skill"
     skill.mkdir()
     (skill / "SKILL.md").write_text("---\nname: paper-skill\n---\n", encoding="utf-8")
-    staff = _staff(contract=ContractInfo(hired_at=0, expires_at=0, skill_dir=str(skill)))
+    staff = _staff(contract=ContractInfo(hired_at=0, expires_at=0, skill_dir=str(skill), status="active"))
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "keep.txt").write_text("the PI's folder\n", encoding="utf-8")

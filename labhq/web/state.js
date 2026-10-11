@@ -5,6 +5,9 @@ const short = (s, n) => { s = String(s ?? '').replace(/\s+/g, ' ').trim(); retur
 const isContract = a => !!a && (a.employment === 'contract' || String(a.id).startsWith('c_'));
 const ACTIVE_REQUEST_STATES = new Set(['running', 'waiting_for_runner', 'waiting_quota', 'waiting_login', 'waiting_facilities_fix', 'waiting_pi']);
 const TERMINAL_REQUEST_STATES = new Set(['done', 'failed', 'cancelled', 'rejected']);
+// Cards that park an active request as waiting_pi (server.py PI_DECISION_KINDS). A resume card is one too, but its
+// request is interrupted, not parked.
+const PI_DECISION_KINDS = new Set(['clarify', 'question', 'scope', 'budget', 'research_plan', 'research_evidence', 'research_continue']);
 const isActiveRequest = status => ACTIVE_REQUEST_STATES.has(status);
 const isTerminalRequest = status => TERMINAL_REQUEST_STATES.has(status);
 const websocketCloseAction = code => code === 1008
@@ -182,12 +185,15 @@ function endApproval(id, effects) {
   effects.push({ type: 'toast.clear', approval_id: id });
 }
 // The gateway sends no request status event for quota: the request waits exactly while one of its steps does.
+// Its ranking (server.py _sync_hold_status) puts an open PI-decision card below those holds, and lifting one sends
+// no status event either, so a request with such a card falls back to waiting_pi, not running (#521).
 function syncHoldStatus(q) {
   const states = Object.values(q.steps);
   if (states.includes('waiting_login') && !isTerminalRequest(q.status)) q.status = 'waiting_login';
   else if (states.includes('waiting_quota') && !isTerminalRequest(q.status)) q.status = 'waiting_quota';
   else if (states.includes('waiting_facilities_fix') && !isTerminalRequest(q.status)) q.status = 'waiting_facilities_fix';
-  else if (['waiting_login', 'waiting_quota', 'waiting_facilities_fix'].includes(q.status)) q.status = 'running';
+  else if (['waiting_login', 'waiting_quota', 'waiting_facilities_fix'].includes(q.status))
+    q.status = [...S.approvals.values()].some(a => a.request_id === q.id && PI_DECISION_KINDS.has(a.kind)) ? 'waiting_pi' : 'running';
 }
 // A resumed request leaves the 'done' phase a snapshot gave it while it was interrupted (R14).
 function reopen(q, status) {
@@ -296,7 +302,10 @@ function apply(ev, replay = false) {
     }
     case 'roster.updated': syncRoster(d.agents || [], replay); break;
     case 'runner.online': S.runners.add(String(d.runner_id)); feed({ who: 'system', text: `러너 연결됨 (${d.runner_id})` }, ts); break;
-    case 'runner.offline': S.runners.delete(String(d.runner_id)); feed({ who: 'system', text: `러너 연결 끊김 (${d.runner_id})`, cls: 'alert' }, ts); break;
+    // reason gateway_restarted: logged by a restarted gateway for a runner the old process saw online (#521).
+    case 'runner.offline': S.runners.delete(String(d.runner_id)); feed(d.reason === 'gateway_restarted'
+      ? { who: 'system', text: `게이트웨이가 다시 시작돼 러너 연결을 기다려요 (${d.runner_id})` }
+      : { who: 'system', text: `러너 연결 끊김 (${d.runner_id})`, cls: 'alert' }, ts); break;
     case 'agent.status': {
       const a = ag(id); if (!a) break;
       a.state = d.state || a.state; a.stateAt = ts;
@@ -401,7 +410,11 @@ function apply(ev, replay = false) {
       // An approved resume card puts the request in waiting_for_runner at once (server.py), again without a status event.
       const resumed = pending?.kind === 'resume' && d.approved && (pending.request_id || rid);
       if (resumed && S.requests.has(resumed)) { const q = req(resumed); q.resumeMissing = []; reopen(q, 'waiting_for_runner'); }
-      feed({ who: 'pi', text: d.approved ? '승인했어요' : `${d.choice === 'revise' ? '수정을 요청했어요' : '거절했어요'}${d.note ? ` (${short(d.note, 60)})` : ''}` }, ts, rid); break; }
+      // A card nobody answered is not the PI's refusal (R5, #521): it timed out or was closed.
+      const unanswered = d.state === 'timed_out' ? '시간 초과로 닫혔어요' : ['expired', 'cancelled'].includes(d.state) ? '답 없이 닫혔어요' : '';
+      const note = d.note ? ` (${short(d.note, 60)})` : '';
+      feed(unanswered ? { who: 'system', text: `${unanswered}${note}` }
+        : { who: 'pi', text: d.approved ? '승인했어요' : `${d.choice === 'revise' ? '수정을 요청했어요' : '거절했어요'}${note}` }, ts, rid); break; }
     case 'job.submitted': S.jobs.set(String(d.job_id), { id: String(d.job_id), name: d.name, state: 'queued', agent: id, ts }); feed({ who: id, text: `HPC 작업 제출: ${d.name || ''} (${d.job_id})` }, ts, rid); break;
     case 'job.state': {
       const j = S.jobs.get(String(d.job_id)) || { id: String(d.job_id), name: d.name, agent: id };
@@ -527,9 +540,16 @@ function apply(ev, replay = false) {
       const na = d.agent || {};
       if (na.id) { const isNew = !S.agents.has(na.id); upsertAgent(na); if (isNew && !replay) { ag(na.id).arriving = now(); S.doorUntil = now() + 2.2; } }
       S.suggestions = S.suggestions.filter(s => !String(s.repo || s.paper || '').toLowerCase().includes(String(na.id || '').slice(2)));
-      feed({ who: 'recruiter', text: `${na.name || na.id} 입사했어요 (수습 ${d.passed_probation ? '통과' : '진행 중'})` }, ts, rid);
+      const pv = na.contract_provenance, hosts = pv ? (pv.external_services || []).map(s => s && s.host).filter(Boolean) : [];
+      // #424: the commit it was built from and where its tools send data, said once at hiring.
+      const built = pv ? ` · commit ${pv.source_commit ? String(pv.source_commit).slice(0, 7) : '미상'} · ${pv.code_license || 'license 미상'}` +
+        ` · ${hosts.length ? `외부 전송 ${hosts.join(', ')}` : '외부 전송 없음'}` : '';
+      feed({ who: 'recruiter', text: `${na.name || na.id} 입사했어요 (수습 ${d.passed_probation ? '통과' : '진행 중'})${built}` }, ts, rid);
       break;
     }
+    case 'contract.warning':
+      feed({ who: 'recruiter', text: `재고용한 ${d.agent_id || id}: ${(d.changed || []).join(', ')}이(가) 채용 때 hash와 맞지 않아요. 확인한 뒤 맡기세요`, cls: 'alert' }, ts, rid);
+      break;
     case 'recruit.failed': feed({ who: 'recruiter', text: `채용하지 못했어요: ${short(d.error, 120)}`, cls: 'alert' }, ts, rid); break;
     // A status the gateway sets itself: waiting_pi, waiting_for_runner, interrupted, running (R5, R15, #494).
     case 'request.status': { const q = req(rid); if (d.status && !isTerminalRequest(q.status)) q.status = d.status; break; }

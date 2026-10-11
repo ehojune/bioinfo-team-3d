@@ -29,6 +29,7 @@ from ..login import login_command
 from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..costs import outcome_unknown_item, request_cost_summary, task_cost_item
 from ..models import ApprovalRequest, AskRequest, RunnerUnavailable, Task, TaskResult, new_id, waiting
+from ..recruit.provenance import not_yet_active, probation_refusal
 from ..adapters import enforces_read_only, get_adapter, read_only_refusal
 from ..orchestrator.cso import Orchestrator, _terminal_reports, environment_problem, holds_session, solo_phase
 from ..research.packs import check_configured_packs
@@ -274,6 +275,15 @@ class Hub:
         self.last_runner_rosters: dict[str, dict] = self.store.all("runner_roster")
         self.events: deque = deque(maxlen=settings.gateway.event_buffer)
         self.events.extend(self.store.events_since(max(0, self.store.event_bounds()[1] - settings.gateway.event_buffer)))
+        # No runner is connected to a fresh process. An open page reconnects with `since` and replays events, not a
+        # snapshot, so a runner the old process saw online, or one it may hold from an earlier snapshot, needs a
+        # runner.offline here or the page keeps hiding 러너 꺼짐 (R15, #521). A runner whose last event is that is done.
+        last_seen = {str((ev.get("data") or {}).get("runner_id")): ev["type"] for ev in self.events
+                     if ev.get("type") in {"runner.online", "runner.offline"}}
+        for runner_id in sorted(set(last_seen) | set(self.last_runner_rosters)):
+            if last_seen.get(runner_id) != "runner.offline":
+                self.events.append(self.store.append_event({"type": "runner.offline", "ts": time.time(),
+                    "data": {"runner_id": runner_id, "reason": "gateway_restarted"}}, settings.gateway.event_buffer))
         for aid, entry in list(self.approvals.items()):
             if entry.get("origin") is None and entry["approval"].get("kind") not in {"resume", "facilities_fix"}:
                 self.approvals.pop(aid)
@@ -1044,12 +1054,14 @@ class Hub:
         created = req.get("created_at")
         when = time.strftime("%m-%d %H:%M", time.localtime(float(created))) if created else "접수 시각 모름"
         # A plan whose steps all finished stopped after them (CP2, review, a continue card, the report), not before.
+        has_plan = bool(req.get("plan", {}).get("steps"))
         left = (", ".join(steps) if steps else
-                "없음(단계는 모두 끝났고 그 뒤 검토·결정·보고서부터 이어 갑니다)" if req.get("plan", {}).get("steps")
-                else "요청 전체")
+                "없음(단계는 모두 끝났고 그 뒤 검토·결정·보고서부터 이어 갑니다)" if has_plan else "요청 전체")
         approval = ApprovalRequest(kind="resume", request_id=rid,
                                    summary=f"중단된 요청 \"{head}\"({when} 접수)을 다시 이어 갈까요? 남은 단계: {left}",
-                                   detail={"request_text": head, "created_at": created, "steps": steps},
+                                   # has_plan tells the web's empty steps apart: all done, or the whole request (#521).
+                                   detail={"request_text": head, "created_at": created, "steps": steps,
+                                           "has_plan": has_plan},
                                    timeout_s=self.s.policy.approvals.pi_decision_timeout_s)
         self.approvals[approval.id] = {"approval": approval.model_dump(mode="json"), "origin": None}
         self.save_approval(approval.id)
@@ -2863,6 +2875,8 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     async def create_request(body: RequestIn) -> dict:
         if body.mode == "direct" and not hub.knows_agent(body.agent_id):
             raise HTTPException(404, f"unknown agent {body.agent_id!r}")
+        if body.mode == "direct" and not_yet_active(hub.agents.get(body.agent_id or "") or {}):
+            raise HTTPException(409, probation_refusal(str(body.agent_id)))  # still on probation (#424)
         try:
             return {"request_id": hub.create_request(body)}
         except KeyError as e:

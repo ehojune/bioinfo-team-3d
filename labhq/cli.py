@@ -67,6 +67,18 @@ def _normalize_instance_arg(argv: list[str]) -> list[str]:
     return (["--instance", instances[0]] if instances else []) + rest
 
 
+def _question_options(approval: dict) -> list[str]:
+    """A hard-stop question card's options as "a) …" lines, the way the web card letters them (R19, decide.js).
+
+    Up to 12 non-blank options; a letter the employee already wrote ("a) GRCh38") is not doubled (#331)."""
+    detail = approval.get("detail") or {}
+    if approval.get("kind") != "question" or not isinstance(detail, dict) or not isinstance(detail.get("options"), list):
+        return []
+    options = [re.sub(r"^\(?[a-lA-L]\)\s*(?=\S)", "", o.strip())
+               for o in detail["options"] if isinstance(o, str) and o.strip()][:12]
+    return [f"{'abcdefghijkl'[index]}) {option}" for index, option in enumerate(options)]
+
+
 def render(ev: dict, login_holds: set[str] | None = None) -> None:
     t, a, d = ev.get("type"), ev.get("agent_id") or "", ev.get("data") or {}
     ic = ICON.get(a, "🐥" if a.startswith("c_") else "·")
@@ -85,7 +97,11 @@ def render(ev: dict, login_holds: set[str] | None = None) -> None:
     elif t == "approval.requested":
         line = f"📱 승인 요청 [{d.get('kind')}] {d.get('summary')}  (id={d.get('id')})"
     elif t == "approval.resolved":
-        line = f"✅ 승인 결과: {'허가' if d.get('approved') else '거절'} {d.get('note', '')}"
+        # A card nobody answered is not a refusal (R5), and CP1/CP2 수정 요청 is not one either (#521).
+        unanswered = ("시간 초과" if d.get("state") == "timed_out" else
+                      "답 없이 닫힘" if d.get("state") in {"expired", "cancelled"} else "")
+        label = unanswered or ("수정 요청" if d.get("choice") == "revise" else "허가" if d.get("approved") else "거절")
+        line = f"{'⏰' if unanswered else '✅'} 승인 결과: {label} {d.get('note', '')}"
     elif t == "job.submitted":
         line = f"🖥️  HPC 제출 {d.get('job_id')} ({d.get('name')})"
     elif t == "job.state":
@@ -130,6 +146,8 @@ def render(ev: dict, login_holds: set[str] | None = None) -> None:
         line = f"🐥 파견직 입사: {ag.get('id')} ({ag.get('name')}) · 수습통과={d.get('passed_probation')}"
     elif t == "recruit.failed":
         line = f"🦫 채용 실패: {d.get('error')}"
+    elif t == "contract.warning":
+        line = f"⚠️ 재고용 {d.get('agent_id')}: {', '.join(d.get('changed') or [])} hash가 채용 때와 다름"
     elif t == "request.completed":
         summary = d.get("cost_summary")
         line = f"🏁 요청 완료 (ok={d.get('ok')}, cost={cost_text(d.get('cost_usd'), d.get('cost_known'), summary)})"
@@ -1201,7 +1219,9 @@ def main(argv: list[str] | None = None) -> None:
     cp.add_argument("target", help="agent id (or talent slug for rehire)")
     cp.add_argument("--days", type=float)
     sub.add_parser("talent", help="list the talent pool (past contract agents)")
-    sub.add_parser("setup-paper2agent", help="install the paper2agent skill for Claude Code and Codex")
+    sp2a = sub.add_parser("setup-paper2agent", help="install the paper2agent skill for Claude Code and Codex")
+    sp2a.add_argument("--commit", help="install exactly this 40-hex Paper2Agent commit (default: recruit.skill_commit, "
+                                       "else the latest HEAD)")
     dp = sub.add_parser("demo", help="offline demo with mock agents (no API keys, no cluster)")
     dp.add_argument("--web", action="store_true", help="keep running and serve the web office")
     dp.add_argument("--phone", action="store_true", help="serve the web office to phones on the same Wi-Fi")
@@ -1453,6 +1473,8 @@ def main(argv: list[str] | None = None) -> None:
     elif args.cmd == "approvals":
         for a in _api(s, "GET", "/api/approvals"):
             print(f"{a['id']}  [{a['kind']}] {a['summary']}")
+            for option in _question_options(a):
+                print(f"    {option}")
     elif args.cmd == "approve":
         if args.deny and args.choice not in (None, "deny"):
             p.error(f"--deny contradicts --choice {args.choice}")
@@ -1480,6 +1502,12 @@ def main(argv: list[str] | None = None) -> None:
                 lines = [str(pending.get("summary") or "PI 질문에 답해 주세요.")]
             p.exit(2, "clarify 카드는 --note 답변이 필요합니다. 요청은 그대로 유지됩니다.\n질문:\n" +
                    "\n".join(lines) + f'\n예: labhq approve {args.id} --note "1: a, 2: b"\n')
+        # A hard-stop question with options needs a pick, as on the web (R19, #521); --deny still refuses it.
+        options = _question_options(pending or {})
+        if options and not args.deny and not args.note.strip():
+            p.exit(2, "이 직원 질문은 답을 골라 --note로 보내야 합니다. 요청은 그대로 유지됩니다.\n"
+                   f"{(pending or {}).get('summary') or ''}\n선택지:\n" + "\n".join(options) +
+                   f'\n예: labhq approve {args.id} --note "a"\n')
         body = {"approved": args.choice == "approve" if args.choice else not args.deny, "note": args.note}
         if args.choice:
             body["choice"] = args.choice
@@ -1500,12 +1528,18 @@ def main(argv: list[str] | None = None) -> None:
         for spec in reg.talent_pool():
             c = spec.contract
             print(f"🐥 {Path(c.talent_dir).name if c and c.talent_dir else spec.id:<24} {spec.name:<24} "
-                  f"{c.kind if c else ''}  paper={c.paper if c else ''}")
+                  f"{c.kind if c else ''}  paper={c.paper if c else ''}"
+                  f"  commit={(c.source_commit or '-')[:7] if c else '-'}"
+                  f"  external={','.join(x.host for x in c.external_services) if c and c.external_services else '-'}")
     elif args.cmd == "setup-paper2agent":
-        from .recruit.paper2agent import install_skill
+        from .recruit.paper2agent import install_skill, installed_commit
 
-        for d in install_skill(s.recruit.skill_source, Path("~/.labhq/cache").expanduser()):
+        pin = args.commit or s.recruit.skill_commit
+        for d in install_skill(s.recruit.skill_source, Path("~/.labhq/cache").expanduser(), commit=pin):
             print(f"installed → {d}")
+        commit = installed_commit()
+        print(f"Paper2Agent commit {commit or 'unknown'}" + ("" if pin else
+              " (not pinned: set recruit.skill_commit or pass --commit to keep this one)"))
     elif args.cmd == "semantics":  # semantics-hook
         from .research.semantics_shadow import run_cli as semantics_cli  # semantics-hook
         raise SystemExit(semantics_cli(args, s))  # semantics-hook

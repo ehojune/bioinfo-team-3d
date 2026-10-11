@@ -114,6 +114,50 @@ def test_clarify_without_a_note_keeps_the_request_and_prints_the_question(tmp_pa
     assert "분석군은?" in error and '--note "1: a, 2: b"' in error and "요청은 그대로 유지" in error
 
 
+QUESTION_CARD = {"id": "appr_hs", "kind": "question", "summary": "Hard stop (reference): 어느 genome?",
+                 "detail": {"ask_id": "ask_1", "from": "bioinfo-agent", "options": ["a) GRCh38", "GRCh37", " "]}}
+
+
+def test_a_question_card_with_options_needs_an_answer_and_shows_the_options(tmp_path, monkeypatch, capsys):
+    # #521: the web refuses 승인 without a pick (R19); the CLI sent approved=true with an empty note instead.
+    config = _config(tmp_path)
+    calls = []
+
+    def request(method, url, **kwargs):
+        calls.append((method, kwargs.get("json")))
+        return httpx.Response(200, json=[QUESTION_CARD] if method == "GET" else {"ok": True},
+                              request=httpx.Request(method, url))
+
+    monkeypatch.setattr(httpx, "request", request)
+    with pytest.raises(SystemExit) as stopped:
+        cli.main(["-c", str(config), "approve", "appr_hs"])
+    assert stopped.value.code == 2 and [method for method, _ in calls] == ["GET"]
+    error = capsys.readouterr().err
+    assert "a) GRCh38" in error and "b) GRCh37" in error and "c)" not in error
+    assert 'labhq approve appr_hs --note "a"' in error
+    cli.main(["-c", str(config), "approvals"])
+    out = capsys.readouterr().out
+    assert "appr_hs  [question] Hard stop (reference): 어느 genome?" in out
+    assert "a) GRCh38" in out and "b) GRCh37" in out
+    calls.clear()
+    cli.main(["-c", str(config), "approve", "appr_hs", "--note", "a"])
+    cli.main(["-c", str(config), "approve", "appr_hs", "--deny"])
+    assert [body for method, body in calls if method == "POST"] == [
+        {"approved": True, "note": "a"}, {"approved": False, "note": ""}]
+
+
+def test_watch_shows_a_revise_choice_and_a_timeout_apart_from_a_refusal(capsys):
+    # #521: CP1 --choice revise read "거절" in watch/send, and a timed-out card read as the PI's refusal.
+    for data in ({"id": "a", "approved": False, "note": "s2에 민감도 분석 추가", "choice": "revise"},
+                 {"id": "b", "approved": False, "note": "timed out", "state": "timed_out"},
+                 {"id": "c", "approved": False, "note": "closed", "state": "expired"},
+                 {"id": "d", "approved": False, "note": ""}, {"id": "e", "approved": True, "note": ""}):
+        cli.render({"type": "approval.resolved", "ts": 1, "data": data})
+    lines = [line.split(" ", 1)[1].strip() for line in capsys.readouterr().out.splitlines()]
+    assert lines == ["✅ 승인 결과: 수정 요청 s2에 민감도 분석 추가", "⏰ 승인 결과: 시간 초과 timed out",
+                     "⏰ 승인 결과: 답 없이 닫힘 closed", "✅ 승인 결과: 거절", "✅ 승인 결과: 허가"]
+
+
 def test_up_and_down_manage_only_their_process_records_and_clean_runner_path(tmp_path, monkeypatch, capsys):
     settings = Settings.load(str(_config(tmp_path)))
     monkeypatch.setattr(cli, "_health", lambda _settings: None)
