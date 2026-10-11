@@ -1,0 +1,4 @@
+rows:
+  - sha: "2ad1dc3"
+    at: "2026-10-12 03:21"
+    text: "파견직 계약서에 원본 commit·license·외부 전송 대상과 labhq가 잰 skill·MCP hash를 남기고, 외부 전송 파견직은 restricted 입력 단계에서 계획 검증과 러너가 거부한다. 수습은 offer_status를 보고, 재고용 때 hash가 다르면 경고한다(#424)."
