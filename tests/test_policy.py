@@ -419,3 +419,15 @@ def test_example_configs_publish_the_same_non_delegating_auto_allow_list():
     assert configured == PolicySettings().approvals.auto_allow_tools
     assert not {"Task", "Agent", "Workflow", "TeamCreate", "TeamDelete"} & set(configured)
     assert Settings.model_validate(data).policy.approvals.auto_allow_tools == configured
+
+
+def test_a_config_written_from_the_518_template_gets_the_background_shell_tools():
+    """#520 review: `labhq init` wrote the #518 list explicitly, which replaced the newer default on load."""
+    template = ["Read", "Glob", "Grep", "LS", "WebSearch", "WebFetch", "TodoWrite", "Skill", "StructuredOutput",
+                "ToolSearch"]
+    loaded = Settings.model_validate({"policy": {"approvals": {"auto_allow_tools": template}}})
+    assert loaded.policy.approvals.auto_allow_tools == [*template, "BashOutput", "KillShell", "TaskOutput", "TaskStop"]
+    assert evaluate_tool("TaskOutput", {}, loaded.policy).action == "allow"
+    edited = ["Read", "Glob"]  # a list the PI edited stays as written
+    kept = Settings.model_validate({"policy": {"approvals": {"auto_allow_tools": edited}}})
+    assert kept.policy.approvals.auto_allow_tools == edited
