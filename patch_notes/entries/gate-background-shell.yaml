@@ -1,0 +1,4 @@
+rows:
+  - sha: "2381232"
+    at: "2026-10-12 02:37"
+    text: "승인 게이트가 백그라운드 셸 출력을 읽거나 멈추는 BashOutput·KillShell·TaskOutput·TaskStop을 기본 허용한다(#518 후속)."
