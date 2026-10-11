@@ -318,7 +318,7 @@ def _operation_lock(s: Settings):
     """Hold one non-blocking up/down lock for this instance across processes and threads."""
     path = _operation_lock_file(s)
     path.parent.mkdir(parents=True, exist_ok=True)
-    key = str(path.resolve()).casefold() if sys.platform == "win32" else str(path.resolve())
+    key = str(path.resolve()).casefold() if os.name == "nt" else str(path.resolve())
     with _OPERATION_LOCKS_GUARD:
         local_lock = _OPERATION_LOCKS.setdefault(key, threading.Lock())
     if not local_lock.acquire(blocking=False):
@@ -333,7 +333,7 @@ def _operation_lock(s: Settings):
             handle.write(b"\0")
             handle.flush()
         handle.seek(0)
-        if sys.platform == "win32":
+        if os.name == "nt":
             import msvcrt
 
             try:
@@ -361,7 +361,7 @@ def _operation_lock(s: Settings):
         if locked and handle is not None:
             try:
                 handle.seek(0)
-                if sys.platform == "win32":
+                if os.name == "nt":
                     import msvcrt
 
                     msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
