@@ -591,6 +591,7 @@ def test_runner_reports_effective_compute_capabilities():
     runner.registry = SimpleNamespace(agents={agent.id: agent}, roster=lambda: [agent.summary()])
     runner.ws_root = Path(".")
     runner.incarnation = "test"
+    runner.process = "test-process"
     runner.engine_versions = {"mock": "unreported"}
     runner.local_software = {"r": {"available": False, "version": None}}
     hello = runner.hello()
