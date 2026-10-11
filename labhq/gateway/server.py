@@ -243,8 +243,9 @@ class Hub:
         self.facilities_timeout_tasks: dict[str, asyncio.Task] = {}
         self.resume_timers: dict[str, asyncio.Task] = {}  # a resume card has no waiter; this ends it (R5)
         self.request_tasks: dict[str, asyncio.Task] = {}  # each request's orchestration, for request cancel (R13)
-        # Recruitments a runner is running (started here, ended by recruit.done/failed or a new runner process).
-        self.recruits_running: dict[str, int] = {}
+        # Recruitments a runner process is running: {runner_id: {"incarnation", "count"}}. Started here, ended by
+        # recruit.done/failed or by a different runner process; a reconnect of the same process keeps them (#515).
+        self.recruits_running: dict[str, dict[str, Any]] = {}
         self.cancel_result_wait_s = CANCEL_RESULT_WAIT_S
         self.approvals: dict[str, dict] = self.store.all("approval")
         self.requests: dict[str, dict] = self.store.all("request")
@@ -700,8 +701,9 @@ class Hub:
         followups = [{"request_id": rid, "followup_id": entry.get("id"), "text": entry.get("text")}
                      for rid, req in self.requests.items() for entry in req.get("followups") or []
                      if entry.get("status") == "running"]
-        return {"requests": requests, "followups": followups, "recruits": sum(self.recruits_running.values()),
-                "ready": not (requests or followups or any(self.recruits_running.values()))}
+        recruits = sum(int(entry.get("count") or 0) for entry in self.recruits_running.values())
+        return {"requests": requests, "followups": followups, "recruits": recruits,
+                "ready": not (requests or followups or recruits)}
 
     def running_tasks(self, tasks: Mapping[str, dict] | None = None) -> list[dict]:
         """Accepted tasks of running requests, including steps waiting for jobs or ask answers.
@@ -1197,7 +1199,9 @@ class Hub:
         if incarnation:
             self.store.runner_incarnation(runner_id, incarnation)
         self.runners[runner_id] = ws
-        if self.runner_incarnations.get(runner_id) != incarnation:
+        started = self.recruits_running.get(runner_id) or {}
+        # unregister_runner drops runner_incarnations on every disconnect, so compare with the process that started them.
+        if incarnation and started.get("incarnation") and started["incarnation"] != incarnation:
             self.recruits_running.pop(runner_id, None)  # a new runner process: the old one's recruitments died with it
         self.runner_incarnations[runner_id] = incarnation
         self.runner_locks.setdefault(runner_id, asyncio.Lock())
@@ -1655,8 +1659,9 @@ class Hub:
                 self.store.put("task", tid, {**task, "accepted": True, "runner_id": runner_id,
                                                "runner_incarnation": self.runner_incarnations.get(runner_id)})
                 self._session_state_changed()
-        if typ in ("recruit.done", "recruit.failed") and self.recruits_running.get(runner_id):
-            self.recruits_running[runner_id] -= 1
+        entry = self.recruits_running.get(runner_id) if typ in ("recruit.done", "recruit.failed") else None
+        if entry and entry.get("count"):
+            entry["count"] -= 1
         await self.publish(msg, runner_id=runner_id, runner_seq=runner_seq)
         if pipeline_event is not None:
             await self.publish(pipeline_event)
@@ -2779,12 +2784,11 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         if not rid:
             raise HTTPException(409, f"no runner hosts the recruiter agent {settings.recruit.agent_id!r}")
         # Counted before sending: a runner that fails at once may report recruit.failed before send_runner returns.
-        hub.recruits_running[rid] = hub.recruits_running.get(rid, 0) + 1
-        try:
-            await hub.send_runner(rid, {"type": "recruit.start", **body.model_dump()})
-        except Exception:
-            hub.recruits_running[rid] = max(0, hub.recruits_running.get(rid, 1) - 1)
-            raise
+        # Not rolled back when sending raises: the frame may still have reached the runner (as Hub.dispatch assumes);
+        # recruit.done/failed or a new runner process clears it, and `down --force` overrides meanwhile (#515 review).
+        entry = hub.recruits_running.setdefault(rid, {"incarnation": hub.runner_incarnations.get(rid), "count": 0})
+        entry["count"] += 1
+        await hub.send_runner(rid, {"type": "recruit.start", **body.model_dump()})
         return {"ok": True, "runner_id": rid}
 
     @app.post("/api/contracts/{agent_id}", dependencies=[Depends(auth)])

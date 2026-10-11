@@ -148,6 +148,9 @@ def test_up_and_down_manage_only_their_process_records_and_clean_runner_path(tmp
                       "config": settings.config_path}
     killed = []
     monkeypatch.setattr(cli, "_active_requests", lambda _settings: [])
+    # No live gateway in tests (#515 review): the readiness answer is given, as the request list is.
+    monkeypatch.setattr(cli, "_shutdown_readiness",
+                        lambda _settings: {"requests": [], "followups": [], "recruits": 0, "ready": True})
     monkeypatch.setattr(cli, "_terminate_tree", lambda pid: killed.append(pid))
     cli._down(settings, force=False)
     assert killed == [4102, 4101]

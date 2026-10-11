@@ -586,7 +586,7 @@ async def test_shutdown_readiness_names_follow_ups_and_recruitments_outside_acti
         "followups": [{"request_id": "done", "followup_id": "fu_1", "text": "그림 다시"}]}
     hub.requests["done"]["followups"][0]["status"] = "done"
     assert hub.shutdown_readiness()["ready"] is True
-    hub.recruits_running["lab"] = 1
+    hub.recruits_running["lab"] = {"incarnation": "inc-1", "count": 1}
     assert hub.shutdown_readiness()["ready"] is False and hub.shutdown_readiness()["recruits"] == 1
     await hub.on_runner_message("lab", {"type": "recruit.done", "ts": 1.0, "data": {"agent": {"id": "c_x"}}})
     assert hub.shutdown_readiness() == {"requests": [], "followups": [], "recruits": 0, "ready": True}
@@ -611,4 +611,22 @@ async def test_a_recruitment_that_fails_while_it_is_being_sent_is_not_left_runni
         response = client.post("/api/recruit", json={"repo": "example/tool"},
                                headers={"Authorization": f"Bearer {s.gateway.client_token}"})
     assert response.status_code == 200
+    assert hub.shutdown_readiness()["recruits"] == 0 and hub.shutdown_readiness()["ready"] is True
+
+
+
+def test_a_runner_reconnect_keeps_its_recruitments_and_a_new_process_clears_them(tmp_path):
+    """#515 review: unregister_runner drops runner_incarnations on every disconnect, so a reconnect of the same runner
+    process used to clear a recruitment that was still running."""
+    from unittest.mock import MagicMock
+
+    hub = Hub(_settings(tmp_path))
+    hub.recruits_running["lab"] = {"incarnation": "inc-1", "count": 1}
+    first, second, third = MagicMock(), MagicMock(), MagicMock()
+    hub.register_runner("lab", first, [], incarnation="inc-1")
+    hub.unregister_runner("lab", first)
+    hub.register_runner("lab", second, [], incarnation="inc-1")  # the same process reconnects
+    assert hub.shutdown_readiness()["recruits"] == 1
+    hub.unregister_runner("lab", second)
+    hub.register_runner("lab", third, [], incarnation="inc-2")  # a new runner process
     assert hub.shutdown_readiness()["recruits"] == 0 and hub.shutdown_readiness()["ready"] is True
