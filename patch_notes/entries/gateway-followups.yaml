@@ -9,3 +9,6 @@ rows:
   - sha: "85bcdf0"
     at: "2026-10-12 05:07"
     text: "main 병합: #522 파견직 채용물 고정과의 import 충돌을 풀고, 그 테스트의 가짜 러너에 채용 turn을 담을 tasks를 더했다."
+  - sha: "ebc968a"
+    at: "2026-10-12 05:21"
+    text: "main 병합: #527 연구 lane 상태 후속과 server.py 충돌을 풀어 이어 가기 복원 helper와 취소 마무리 helper를 함께 둔다."
