@@ -359,6 +359,49 @@ async def test_continuation_clarify_cap_counts_only_the_current_research_round(t
 
 
 @pytest.mark.asyncio
+async def test_untagged_clarifications_count_against_the_current_round(tmp_path):
+    """PR #527 review P2: answers saved before rounds were tagged carry no ``research_round``. Read as round 1, a
+    request resumed in round 2 could open two more cards in a round that had already used them."""
+    hub = _hub(tmp_path, [{"approved": True, "note": "a third card"}])
+    req = hub.requests["r"]
+    req["research_contract"] = {"round": 2}
+    req["clarifications"] = [{"questions": ["question A"], "answer": "A"},
+                             {"questions": ["question B"], "answer": "B"},
+                             {"questions": ["inherited question"], "answer": "C", "inherited": True}]
+    orch = Orchestrator(hub)
+    candidate = _plan(2)
+    candidate["clarifying_questions"] = ["question A"]
+    assert await orch._plan_clarification("r", candidate) == ("done", None)  # answered ones still filter
+
+    candidate = _plan(2)
+    candidate["clarifying_questions"] = ["new question"]
+    assert await orch._plan_clarification("r", candidate) == ("limit", None)
+    assert hub.approvals == []
+
+
+@pytest.mark.asyncio
+async def test_a_round_one_card_before_cp1_is_tagged_so_round_two_keeps_its_own_cards(tmp_path):
+    """Round 1 asks before its contract exists, so its answers carry the round from the research intake; untagged
+    would now count against round 2."""
+    hub = _hub(tmp_path, [{"approved": True, "note": answer} for answer in ("A", "B", "C")])
+    req = hub.requests["r"]
+    req["intake"] = {"work_kind": "research"}
+    orch = Orchestrator(hub)
+    for question in ("question A", "question B"):
+        candidate = _plan(1)
+        candidate["clarifying_questions"] = [question]
+        assert (await orch._plan_clarification("r", candidate))[0] == "answered"
+    assert [item["research_round"] for item in req["clarifications"]] == [1, 1]
+
+    req["research_contract"] = {"round": 2}
+    candidate = _plan(2)
+    candidate["clarifying_questions"] = ["question C"]
+    status, entry = await orch._plan_clarification("r", candidate)
+    assert status == "answered" and entry["research_round"] == 2
+    assert [item["kind"] for item in hub.approvals] == ["clarify"] * 3
+
+
+@pytest.mark.asyncio
 async def test_declining_the_continuation_ends_the_request_as_before(tmp_path):
     hub = _hub(tmp_path, [CP1, APPROVE, {"approved": False, "note": "stop here"}])
     await Orchestrator(hub).run_request("r")
