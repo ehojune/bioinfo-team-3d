@@ -290,7 +290,7 @@ function renderDetail(container, kind, detail, approval = null) {
   const shown = kind === 'clarify' && Array.isArray(detail?.questions) ? ['questions', 'assumptions'] :
     kind === 'research_evidence' ? ['choices', 'gate', 'revise_continues'] :
     kind === 'research_continue' ? ['gate'] :
-    kind === 'resume' ? ['request_text'] :  // the summary already quotes it
+    kind === 'resume' ? ['request_text', 'has_plan'] :  // the summary already quotes it; has_plan only picks the steps wording
     kind === 'research_plan' && typeof detail?.plan_canonical === 'string' ? ['gate', 'pack_applicability', 'warnings', 'protocol_revision', 'packs', 'revise_allowed'] :
     kind === 'question' && clarifyQuestions(approval).length ? ['options'] : [];
   const entries = detail !== null && typeof detail === 'object' && !Array.isArray(detail) ?
@@ -310,7 +310,8 @@ function renderDetail(container, kind, detail, approval = null) {
     else if (kind === 'research_continue' && key === 'p1_issues') renderReviewIssues(list, detail.p1_issues);
     else if (kind === 'resume' && key === 'created_at') detailEntry(list, labels[key], receivedAt(detail.created_at), {raw: true});
     else if (kind === 'resume' && key === 'steps' && Array.isArray(detail.steps))
-      detailEntry(list, labels[key], detail.steps.join(', ') || '없음', {raw: true});
+      // No plan (a direct request, or a stop before planning) reruns the whole request; a card saved before has_plan reads 없음 (#521).
+      detailEntry(list, labels[key], detail.steps.join(', ') || (detail.has_plan === false ? '요청 전체' : '없음'), {raw: true});
     else if (kind === 'research_evidence' && key === 'results') {
       renderEvidenceTable(list, detail);
       detailEntry(list, '원장 JSON 전체', value, {raw: true, fold: true,

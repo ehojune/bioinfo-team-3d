@@ -290,4 +290,8 @@ test('before the first snapshot the office reads as loading, not as an empty lab
   assert.match(html,/snapshotLoaded \? '오늘의 할 일을 기다리는 중' : loadingText\('사무실 상태'\)/);
   assert.match(html,/snapshotLoaded \? 'none' : `loading:\$\{S\.conn\}`/);
   assert.match(html,/snapshotLoaded \? '지금은 결정할 일이 없어요\. 승인이 필요하면 여기에 바로 떠요\.' : loadingText\('결정할 일'\)/);
+  // #521: the request panel too, and it redraws once the snapshot or the token arrives.
+  const renderRequest=html.slice(html.indexOf('function renderRequest()'),html.indexOf('function renderStaff()'));
+  assert.match(renderRequest,/: snapshotLoaded \? 'none' : `loading:\$\{S\.conn\}`;/);
+  assert.match(renderRequest,/if \(!q\) \{ el\.innerHTML = `<p class="empty-note">\$\{snapshotLoaded \? '아직 요청이 없어요\. 아래 입력창에 적으면 CSO가 팀에 나눠 맡겨요\.' : loadingText\('요청'\)\}<\/p>`; return; \}/);
 });

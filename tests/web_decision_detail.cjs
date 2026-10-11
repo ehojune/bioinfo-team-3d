@@ -123,6 +123,17 @@ test('resume card shows the received time as a date and the steps left as a list
   assert.ok(left.detail.textContent.includes('남은 단계s2, s3'));
 });
 
+test('a resume card for a request without a plan says the whole request reruns, not that nothing is left (#521)',async()=>{
+  const created=new Date(2026,9,8,11,33).getTime()/1000;
+  const direct=await card('resume',{request_text:'표 정리',created_at:created,steps:[],has_plan:false});
+  const text=direct.detail.textContent;
+  assert.ok(text.includes('남은 단계요청 전체'),text);
+  assert.ok(!text.includes('없음'),text);
+  assert.ok(!text.includes('has_plan'),'the flag only picks the wording');
+  const finished=await card('resume',{created_at:created,steps:[],has_plan:true});
+  assert.ok(finished.detail.textContent.includes('남은 단계없음'),finished.detail.textContent);
+});
+
 test('budget card shows dollar amounts to the cent under Korean names, including the cap 승인 sets',async()=>{
   const c=await card('budget',{spent_usd:25.860455119999997,limit_usd:30,requested_budget_usd:60,unknown_count:1,unknown_reserve_usd:5});
   const text=c.detail.textContent;

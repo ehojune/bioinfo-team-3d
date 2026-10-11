@@ -482,7 +482,43 @@ def test_a_resume_card_names_the_request_its_date_and_the_steps_left(tmp_path):
     assert card.summary.startswith('중단된 요청 "새로 받은 WGS 배치 표준 QC')
     assert "(09-28 10:30 접수)" in card.summary and card.summary.endswith("남은 단계: s2, s3")
     assert "[" not in card.summary
-    assert card.detail == {"request_text": card.detail["request_text"], "created_at": created, "steps": ["s2", "s3"]}
+    assert card.detail == {"request_text": card.detail["request_text"], "created_at": created, "steps": ["s2", "s3"],
+                           "has_plan": True}
+
+
+def test_a_resume_card_tells_a_request_without_a_plan_from_one_whose_steps_all_finished(tmp_path):
+    # #521: both send steps=[]; the web detail read 남은 단계 없음 for a direct request that reruns whole.
+    hub = Hub(_settings(tmp_path))
+    _request(hub, "direct", status="interrupted", mode="direct")
+    _request(hub, "finished", status="interrupted", plan={"steps": [{"id": "s1"}]}, results={"s1": {"ok": True}})
+    direct, finished = hub.new_resume_approval("direct"), hub.new_resume_approval("finished")
+    assert direct.summary.endswith("남은 단계: 요청 전체")
+    assert (direct.detail["steps"], direct.detail["has_plan"]) == ([], False)
+    assert finished.summary.endswith("남은 단계: 없음(단계는 모두 끝났고 그 뒤 검토·결정·보고서부터 이어 갑니다)")
+    assert (finished.detail["steps"], finished.detail["has_plan"]) == ([], True)
+
+
+def test_a_restarted_gateway_logs_runner_offline_for_runners_the_old_process_saw_online(tmp_path):
+    # #521: an open page reconnects with `since` and replays events, not a snapshot. Without this event it keeps
+    # the runner it saw online and hides 러너 꺼짐 although no runner came back.
+    s = _settings(tmp_path)
+    hub = Hub(s)
+    for runner_id in ("lab", "hpc", "old"):
+        hub.set_roster(runner_id, [])
+    hub.store.append_event({"type": "runner.online", "ts": 1.0, "data": {"runner_id": "lab"}}, s.gateway.event_buffer)
+    hub.store.append_event({"type": "runner.online", "ts": 2.0, "data": {"runner_id": "hpc"}}, s.gateway.event_buffer)
+    hub.store.append_event({"type": "runner.offline", "ts": 3.0, "data": {"runner_id": "hpc"}}, s.gateway.event_buffer)
+    seq = hub.store.event_bounds()[1]
+    restarted = Hub(s)
+    logged = [e for e in restarted.store.events_since(seq) if e["type"].startswith("runner.")]
+    # "old" left no event within the stored window: a page may still hold it from an earlier snapshot.
+    assert sorted((e["type"], e["data"]["runner_id"], e["data"]["reason"]) for e in logged) == [
+        ("runner.offline", "lab", "gateway_restarted"), ("runner.offline", "old", "gateway_restarted")]
+    assert all(e in restarted.events for e in logged)
+    seq = restarted.store.event_bounds()[1]
+    Hub(s)
+    assert [e for e in restarted.store.events_since(seq) if e["type"].startswith("runner.")] == [], \
+        "a second restart has nothing new to tell"
 
 
 # ----- what an open page needs without a reload (#494) -----
