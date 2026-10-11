@@ -860,6 +860,11 @@ class Hub:
 
     def commit_terminal(self, rid: str, typ: str, data: dict) -> None:
         """Synchronous checkpoint used by direct callers and tests."""
+        if not self.requests[rid].get("results"):
+            # No step ever ran (CP1 수정 요청, cancelled or failed before work): nothing to bundle, and a
+            # "작업 폴더를 찾지 못했습니다" warning would only be noise on the PI's request list.
+            self._commit_terminal_record(rid, typ, data)
+            return
         if not self._has_bundle_workdir(rid):
             self._apply_bundle_outcome(rid, data, self._bundle_outcome(rid))
             self._commit_terminal_record(rid, typ, data)
