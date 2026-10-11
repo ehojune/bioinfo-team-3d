@@ -1266,6 +1266,27 @@ def _review_reference(review: dict | None) -> str:
 
 # Any heading level: a model that wrote "# 리뷰 참고" kept its copy beside labhq's (bench C t6, #373).
 REVIEW_REFERENCE_HEADING = re.compile(r"(?m)^#{1,6}[ \t]*리뷰 참고[ \t]*$")
+EARLIER_ROUNDS_HEADING = re.compile(r"(?m)^#{1,6}[ \t]*이전 차수에서 고친 것[ \t]*$")
+
+
+def _earlier_rounds_fallback(contract: dict) -> str:
+    """The "이전 차수에서 고친 것" section labhq writes when the report writer left it out (#512 review): the PI still
+    sees what each earlier round was asked to fix. The claim check reads anchors only, so a missing section is not a
+    report problem and does not fail the request."""
+    rows: list[str] = []
+    for archived in contract.get("rounds") or []:
+        if not isinstance(archived, dict):
+            continue
+        number = archived.get("round")
+        rows += [f"- {number}차 리뷰 P1 · {issue.get('step_id') or '-'}: {short(str(issue.get('problem') or ''), 200)}"
+                 for issue in research_continuation.p1_issues(archived.get("review"))]
+        receipt = archived.get("cp2") or {}
+        if receipt.get("decision") == "revision_requested" and receipt.get("note"):
+            rows.append(f"- {number}차 CP2 수정 요청: {short(str(receipt['note']), 200)}")
+    if not rows:
+        return ""
+    return ("## 이전 차수에서 고친 것\n보고서 작성자가 이 절을 쓰지 않아 labhq가 이전 차수의 지적만 옮겼습니다. "
+            "이번 차수에서 어떻게 고쳤는지는 결과 절과 실행 기록을 보세요.\n" + "\n".join(rows))
 
 
 def _with_review_reference(report: str, review: dict | None) -> str:
@@ -3988,6 +4009,9 @@ class Orchestrator:
                         "\n".join(_problem_lines(check["problems"], "- "))] if check["problems"] else [])
         if check["problems"]:
             body = _execution_warning_summary(body)
+        fallback = "" if EARLIER_ROUNDS_HEADING.search(body) else _earlier_rounds_fallback(contract)
+        if fallback:
+            body = body.rstrip() + "\n\n" + fallback
         body_reference = _review_reference(review)
         if body_reference and not REVIEW_REFERENCE_HEADING.search(body):
             body = body.rstrip() + "\n\n" + body_reference
