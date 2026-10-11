@@ -6,3 +6,6 @@ rows:
   - sha: "6c0035f"
     at: "2026-10-12 01:27"
     text: "manual의 down 거부 조건에 이어 묻기·채용을 넣었다."
+  - sha: "f8d35c1"
+    at: "2026-10-12 01:34"
+    text: "labhq down이 readiness 조회 실패(404 외)에는 종료를 거부하고, readiness 응답의 요청도 판정에 넣으며, 채용 수를 runner에 보내기 전에 센다(#515 리뷰)."
