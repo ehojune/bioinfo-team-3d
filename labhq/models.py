@@ -21,6 +21,10 @@ class RunnerUnavailable(ConnectionError):
     """A runner is offline or its WebSocket could not send a message."""
 
 
+class RunnerNotSent(RunnerUnavailable):
+    """The message provably never left: the runner was offline, or its connection was replaced before sending."""
+
+
 class Engine(str, Enum):
     claude_code = "claude_code"
     codex = "codex"

@@ -760,7 +760,7 @@ function dagSVG(q) {
   return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="작업 순서도">${edges}${nodes}</svg>`;
 }
 /* follow-ups (#36): a finished request takes more questions in the same CSO session; it is not a new request */
-const FINISHED = ['done', 'failed', 'cancelled', 'rejected'];
+const FOLLOWUP_STATUSES = ['done', 'failed', 'rejected'];  // a cancelled request runs no more turns (#521)
 const fuDrafts = new Map();  // request id -> half-typed follow-up; a draft never follows the selector to another request
 // #126: a snapshot holds the head of a long answer; the PI opens the rest from the gateway on demand
 const fuLoading = new Set();
@@ -772,7 +772,7 @@ function followupHTML(q) {
       : f.status === 'done' ? `<pre class="fu-a">${esc(f.answer)}${f.answer_truncated ? '…' : ''}</pre>${fullAnswerHTML(q, f)}`
       : `<p class="fu-err">${esc(f.error || '답을 받지 못했어요')}</p>`}</li>`).join('');
   const busy = (q.followups || []).some(f => f.status === 'running');
-  const form = FINISHED.includes(q.status) && api?.followup ? `<div class="fu-in"><label class="sr" for="fu-text">이어 묻기</label>
+  const form = FOLLOWUP_STATUSES.includes(q.status) && api?.followup ? `<div class="fu-in"><label class="sr" for="fu-text">이어 묻기</label>
 <textarea id="fu-text" data-rid="${esc(q.id)}" rows="2" placeholder="이 결과에 대해 더 물어보기. 같은 CSO 세션이 이어서 답해요"></textarea>
 <button class="btn" id="fu-send" type="button"${busy ? ' disabled' : ''}>이어 묻기</button></div>` : '';
   return list || form ? `<section class="followups" aria-label="이어 묻기">${list ? `<ol>${list}</ol>` : ''}${form}</section>` : '';

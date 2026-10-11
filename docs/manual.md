@@ -112,7 +112,7 @@ Codex 직원 로그인 격리는 [알려진 한계](#알려진-한계)의 전용
 
 Windows wrapper는 `.venv\Scripts\python.exe`를 직접 실행하므로 venv 활성화나 PowerShell ExecutionPolicy 변경이 필요 없습니다. `up`은 gateway와 runner를 분리된 background process로 띄우고 state 폴더에 로그와 생성 시각을 포함한 프로세스 기록을 남깁니다. 같은 instance의 `up`·`down`은 state 폴더 lock으로 직렬화되며, 다른 명령이 진행 중이면 exit 2입니다. POSIX에서는 `./labhq.sh`를 씁니다.
 
-`down`은 진행 중이거나 대기 중인 요청(PI 결정 대기 포함), 끝난 요청에서 돌고 있는 이어 묻기, 진행 중인 채용(`labhq recruit`)이 있거나 인증된 상태를 확인할 수 없으면 exit 2로 거부합니다(gateway `/api/shutdown-readiness`, #500). 중단을 감수할 때만 `down --force`를 쓰며, 신원이 맞는 runner 프로세스 트리와 gateway만 종료합니다. POSIX는 SIGTERM 뒤 최대 10초 기다리고, 남아 있으면 SIGKILL한 뒤 종료를 확인하고 기록을 지웁니다.
+`down`은 진행 중이거나 대기 중인 요청(PI 결정 대기 포함), 끝난 요청에서 돌고 있는 이어 묻기, 진행 중인 채용(`labhq recruit`), 아직 기록을 쓰는 끝난 요청(취소 보고서를 쓰기 전이거나 요청 묶음을 복사하는 중, `마무리 중인 요청`)이 있거나 인증된 상태를 확인할 수 없으면 exit 2로 거부합니다(gateway `/api/shutdown-readiness`, #500·#521). 채용 수는 러너 프로세스 기준이라, 러너를 다시 시작하면 이전 프로세스의 채용은 빠집니다(`runner.hello`의 `process`). 중단을 감수할 때만 `down --force`를 쓰며, 신원이 맞는 runner 프로세스 트리와 gateway만 종료합니다. POSIX는 SIGTERM 뒤 최대 10초 기다리고, 남아 있으면 SIGKILL한 뒤 종료를 확인하고 기록을 지웁니다.
 
 **PC를 다시 켰을 때**
 
@@ -125,7 +125,7 @@ cd <labhq 저장소>
 설정 경로가 없거나 gateway client token이 `change-me` 기본값이면 시작하지 않습니다. `open`과 다른 API 명령은 gateway가 꺼졌거나 HTTP 오류가 나면 traceback 대신 한 줄과 exit 2를 돌려줍니다.
 오프라인 데모를 폰으로 보려면 PC와 폰이 같은 Wi-Fi에 있어야 합니다([웹 사무실](#웹-사무실)).
 게이트웨이는 요청·승인·이벤트를 로컬에 저장하므로 상태 디렉터리를 유지할 수 있는 VM이나 집 PC에서 돌립니다
-(러너는 재접속 루프로 대기). 러너가 하나도 연결되지 않았거나 필요한 직원의 러너가 꺼져 있으면, 새 요청과 진행 중 단계는 실패하지 않고 `waiting_for_runner`로 기다렸다가 러너가 붙으면 이어 갑니다(PI 점검 R15). 아무것도 보내지 않은 상태라 비용도 없습니다. `gateway.runner_wait_s`(기본 86400초)를 넘기면 "labhq up(또는 labhq runner)으로 러너를 켠 뒤 다시 보내세요"라는 한국어 이유로 끝납니다. 어느 러너도 맡은 적 없는 직원은 기다리지 않고 바로 실패합니다. `GET /api/health`의 `runner_online`, `labhq status`의 러너 줄, 웹 상단의 **러너 꺼짐** 띠가 연결 여부를 보여 줍니다. gateway가 다시 시작되면 이전 프로세스가 연결돼 있다고 본 러너마다 `runner.offline`(`reason: gateway_restarted`)을 남기므로, 새로고침 없이 다시 붙은 페이지도 러너가 돌아올 때까지 이 띠를 보입니다. 가장 간단한 구성은 게이트웨이 머신과 폰에 Tailscale을 켜고 tailnet 주소로 접속하는 것.
+(러너는 재접속 루프로 대기). 러너가 하나도 연결되지 않았거나 필요한 직원의 러너가 꺼져 있으면, 새 요청과 진행 중 단계는 실패하지 않고 `waiting_for_runner`로 기다렸다가 러너가 붙으면 이어 갑니다(PI 점검 R15). 아무것도 보내지 않은 상태라 비용도 없습니다. `gateway.runner_wait_s`(기본 86400초)를 넘기면 "labhq up(또는 labhq runner)으로 러너를 켠 뒤 다시 보내세요"라는 한국어 이유로 끝납니다. 어느 러너도 맡은 적 없는 직원은 기다리지 않고 바로 실패합니다. 기다리던 러너가 그 직원 없이 다시 붙으면(꺼져 있는 동안 계약이 끝났거나 yaml을 지운 경우) 기다림을 바로 끝내고 "연결된 러너 중 그 직원을 맡은 곳이 없다"고 알립니다(#521). `GET /api/health`의 `runner_online`, `labhq status`의 러너 줄, 웹 상단의 **러너 꺼짐** 띠가 연결 여부를 보여 줍니다. gateway가 다시 시작되면 이전 프로세스가 연결돼 있다고 본 러너마다 `runner.offline`(`reason: gateway_restarted`)을 남기므로, 새로고침 없이 다시 붙은 페이지도 러너가 돌아올 때까지 이 띠를 보입니다. 가장 간단한 구성은 게이트웨이 머신과 폰에 Tailscale을 켜고 tailnet 주소로 접속하는 것.
 공개 인터넷에 열어야 한다면 TLS 프록시(Caddy 등) 뒤에 두고 토큰을 반드시 교체하세요.
 
 ## 웹 사무실
@@ -149,9 +149,9 @@ cd <labhq 저장소>
 - 뒷벽 **화이트보드**: 지금 요청과 단계(브리핑 → 계획 → 실행 → 리뷰 → 보고), 스텝별 진행
 - **서버 랙**: 최근 HPC 작업 8개의 불빛, **입구**: 파견직이 들어올 때 문이 열리고 걸어 들어옴
 - 오른쪽(폰에서는 하단 탭): **결정** 탭(결정할 일·메모·대기 시간·이력), step별 시도·산출물·리뷰를 보는 **작업판**, **사내 메신저**, HPC 작업 목록
-- 끝난 요청의 **작업판** 아래 **이어 묻기**: 새 요청을 만들지 않고 팀 요청은 CSO, direct·단독 요청은 맡았던 직원이 같은 세션·작업 폴더에서 보고서·산출물을 읽고 답합니다. 읽기 전용이라 새 분석이 필요하면 새 요청을 권합니다. 그 세션을 만든 runner가 아닌 다른 runner가 지금 같은 직원 id를 맡고 있으면 이어 묻기는 이유를 밝히고 거절하고(작업 폴더가 그 PC에 있음), 상담은 새 세션으로 엽니다. 읽기 전용은 엔진이 강제해야 해서(Claude plan 모드·읽기 도구만, Codex `-s read-only`) `engine: cli`·Gemini·Antigravity 직원에게는 이어 묻기와 상담을 보내지 않고 이유를 돌려줍니다. 이어 묻기·상담은 직원 설정에서 지우는 방식이 아니라 러너의 읽기 전용 허용 목록으로 돌고(MCP·plugin·hook 없음), 실행 중 파일이 바뀌면 실패로 처리합니다([알려진 한계](#알려진-한계)). 접속할 때 받는 snapshot에는 긴 답의 앞 2,000자만 실리고, **전문 보기**를 누르면 그 요청의 전체 답을 불러옵니다(2.5D·3D).
+- 끝난 요청의 **작업판** 아래 **이어 묻기**: 새 요청을 만들지 않고 팀 요청은 CSO, direct·단독 요청은 맡았던 직원이 같은 세션·작업 폴더에서 보고서·산출물을 읽고 답합니다. 읽기 전용이라 새 분석이 필요하면 새 요청을 권합니다. 취소한 요청은 더 이상 turn을 돌리지 않으므로 이어 묻기를 받지 않습니다(#521). 그 세션을 만든 runner가 아닌 다른 runner가 지금 같은 직원 id를 맡고 있으면 이어 묻기는 이유를 밝히고 거절하고(작업 폴더가 그 PC에 있음), 상담은 새 세션으로 엽니다. 읽기 전용은 엔진이 강제해야 해서(Claude plan 모드·읽기 도구만, Codex `-s read-only`) `engine: cli`·Gemini·Antigravity 직원에게는 이어 묻기와 상담을 보내지 않고 이유를 돌려줍니다. 이어 묻기·상담은 직원 설정에서 지우는 방식이 아니라 러너의 읽기 전용 허용 목록으로 돌고(MCP·plugin·hook 없음), 실행 중 파일이 바뀌면 실패로 처리합니다([알려진 한계](#알려진-한계)). 접속할 때 받는 snapshot에는 긴 답의 앞 2,000자만 실리고, **전문 보기**를 누르면 그 요청의 전체 답을 불러옵니다(2.5D·3D).
 
-**요청 취소**(PI 점검 R13): 끝나지 않은 요청(진행·대기·중단됨)은 요청 줄의 **요청 취소** 버튼, `labhq cancel <요청 ID>`, `POST /api/requests/{id}/cancel`로 멈춥니다. 도는 작업마다 runner에 중단을 보내고, 한도·로그인 대기와 그 요청의 카드(재개 카드 포함)를 닫은 뒤 상태를 `cancelled`로 바꾸고 끝난 단계와 산출 경로를 적은 짧은 보고서를 남깁니다. 다시 시작되지 않습니다. HPC에 이미 낸 작업은 클러스터에서 확인합니다. 단계 카드의 **작업 취소**는 그 단계만 멈춥니다.
+**요청 취소**(PI 점검 R13): 끝나지 않은 요청(진행·대기·중단됨)은 요청 줄의 **요청 취소** 버튼, `labhq cancel <요청 ID>`, `POST /api/requests/{id}/cancel`로 멈춥니다. 도는 작업마다 runner에 중단을 보내고, 한도·로그인 대기와 그 요청의 카드(재개 카드 포함)를 닫은 뒤 상태를 `cancelled`로 바꾸고 끝난 단계와 산출 경로를 적은 짧은 보고서를 남깁니다. 다시 시작되지 않습니다. 보고서를 쓰기 전에 gateway가 멈추면 다음 시작 때 마저 쓰며, 그때까지 결과를 보내지 않은 작업의 비용은 미집계로 남깁니다(#521). HPC에 이미 낸 작업은 클러스터에서 확인합니다. 단계 카드의 **작업 취소**는 그 단계만 멈춥니다.
 
 **실행 중 메모:** 진행 중인 CSO 요청을 고르면 아래 입력창이 기본으로 **이 요청에 메모**가 됩니다(**새 요청**으로 바꿀 수 있음). 메모는 현재 turn을 끊지 않고 이후에 시작하는 계획·재계획·단계·재개·수정·review·최종 보고서에 전달되며, 요청 카드와 3D 요청 보드에 보낸 시각과 함께 남습니다. 연구 lane은 CP1 전 계획에 메모를 반영하지만 CP1 뒤에는 동결 계획을 바꾸지 않고 참고만 합니다. 한 직원에게 바로 맡긴 direct 요청에는 다음 turn이 없으므로 메모를 받지 않으며, 끝난 뒤 **이어 묻기**를 씁니다. CLI는 `labhq note <request_id> "text"`입니다.
 - CSO 확인 질문은 질문마다 선택지 버튼과 자유 입력칸으로 답합니다. 답한 질문은 다시 묻지 않으며, 새 질문이 생기면 카드가 한 번 더 뜹니다(요청당 최대 2장). 모든 질문에 답해야 **답하고 진행**이 보내지고, 2.5D·3D가 같은 카드를 씁니다. 직원의 hard-stop 질문(`직원 질문 · PI 확인`, 설치·데이터 구역·삭제 등)도 선택지가 있으면 같은 버튼으로 하나를 골라야 보내집니다
@@ -189,7 +189,7 @@ labhq approvals              # 대기 중 승인 → labhq approve <id> [--deny 
 labhq approve <clarify-id> --note "1: a, 2: b"  # 질문 카드는 답이 없으면 보내지 않고 요청을 유지
 labhq approve <question-id> --note "a"          # 선택지가 있는 직원 질문도 같음. 선택지는 approvals와 거절 메시지에 a) b) …로 나옴
 labhq verify <request_id>    # runner PC에서 산출 sha256과 보고서 claim 앵커를 다시 검사(--json, --bundle audit.zip)
-labhq recruit --repo https://github.com/scverse/scanpy --focus "Preprocessing and clustering" --ttl 14
+labhq recruit --repo https://github.com/scverse/scanpy --focus "Preprocessing and clustering" --ttl 14   # 채용 담당 러너가 꺼져 있으면 보내지 않고 409
 labhq talent                 # 인재풀
 labhq contract extend c_scanpy --days 14    # extend | release | activate | rehire
 ```

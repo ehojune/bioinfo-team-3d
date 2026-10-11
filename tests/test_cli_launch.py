@@ -565,6 +565,33 @@ def test_down_also_refuses_a_running_follow_up_or_recruitment(tmp_path, monkeypa
 
 
 
+def test_down_names_a_finished_request_whose_record_is_still_being_written(tmp_path, monkeypatch, capsys):
+    """#521: a cancel waiting for its turns, or a bundle copied after the terminal record, is lost by a forced stop."""
+    settings = Settings.load(str(_config(tmp_path)))
+    _write_process_record(settings, "runner", 4244, "runner-generation")
+    monkeypatch.setattr(cli, "_process_created", lambda pid: "runner-generation")
+    killed = []
+    monkeypatch.setattr(cli, "_terminate_tree", lambda pid, **kwargs: killed.append(pid))
+
+    def gateway(method, url, **kwargs):
+        request = httpx.Request(method, url)
+        if "/api/requests" in url:
+            return httpx.Response(200, json=[], request=request)
+        return httpx.Response(200, request=request, json={
+            "requests": [], "followups": [], "recruits": 0, "ready": False,
+            "finishing": [{"id": "req_c", "status": "cancelled", "text": "t", "stage": "cancel"},
+                          {"id": "req_b", "status": "done", "text": "t", "stage": "bundle"}]})
+
+    monkeypatch.setattr(httpx, "request", gateway)
+    with pytest.raises(SystemExit) as stopped:
+        cli._down(settings, force=False)
+    error = capsys.readouterr().err
+    assert stopped.value.code == 2 and killed == []
+    assert "마무리 중인 요청: req_c · 취소 기록을 쓰는 중" in error
+    assert "마무리 중인 요청: req_b · 요청 묶음을 복사하는 중" in error
+    assert "gateway가 아직 끝나지 않은 일이 있다고" not in error
+
+
 def test_down_refuses_when_readiness_fails_or_names_a_request_the_list_missed(tmp_path, monkeypatch, capsys):
     """#515 review: a readiness error other than an old gateway's 404 refuses (fail closed), and the readiness
     answer's own requests count, so a request submitted after the list was read is not cut off."""
