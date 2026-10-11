@@ -92,6 +92,7 @@ class ContractInfo(BaseModel):
     external_services: list[ExternalService] = []
     skill_sha256: str | None = None
     mcp_sha256: str | None = None
+    mcp_path: str | None = None  # the MCP folder or ZIP mcp_sha256 was taken from; a rehire hashes it again
 
     @field_validator("source_commit")
     @classmethod
@@ -334,6 +335,9 @@ class AskRequest(BaseModel):
     refs: list[str] = Field(default_factory=list, max_length=20)
     # Set by the runner's capability token, never trusted from the MCP caller (#86).
     source_workdir: str | None = None
+    # Also from the token: the asking task's inputs touch a restricted zone, so no staff that send data out may
+    # answer it (#424). The question and its refs come from that task.
+    source_restricted: bool = False
     wait: Literal["short", "hibernate"] = "short"
     created_at: float = Field(default_factory=time.time)
 

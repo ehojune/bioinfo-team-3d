@@ -43,7 +43,8 @@ from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARC
                                  validate_research_result, with_pack_refs)
 from ..research import continuation as research_continuation
 from ..security import redact_tokens
-from ..recruit.provenance import external_contract_conflicts, external_hosts, restricted_input_steps
+from ..recruit.provenance import (consult_refusal, external_contract_conflicts, external_hosts, restricted_input_steps,
+                                  touches_restricted)
 from ..research.packs import (assess_pack_applicability, configured_packs, normalize_pack_keys, pack_refs,
                               pack_snapshot, packs_for_snapshot, render_pack_catalog, render_pack_review,
                               select_applied_packs, select_legacy_applied_packs)
@@ -2292,6 +2293,13 @@ class Orchestrator:
         texts, dirs = self._request_inputs(rid)
         return lambda steps: external_contract_conflicts(steps, list(self.hub.agents.values()), texts, dirs, settings)
 
+    def _request_restricted(self, rid: str | None) -> bool:
+        """The request's own text, references or project folders touch a restricted zone (#424)."""
+        if not rid or not self._external_guard(rid):
+            return False
+        texts, dirs = self._request_inputs(rid)
+        return touches_restricted(texts, dirs, self.hub.s)
+
     def _lab_scope(self) -> str:
         scope = str(getattr(getattr(self.hub.s, "lab", None), "scope", None) or "").strip()
         return scope or DEFAULT_LAB_SCOPE
@@ -2580,6 +2588,14 @@ class Orchestrator:
             await self.hub.resolve_ask(ask, runner_id, ask_result(
                 reason=refusal, **{"from": "labhq", "routed_to": routed}))
             return
+        # The question and refs come from the asking task: restricted inputs there never reach staff that send data
+        # out (#424). The runner's token says so; the request's own text and folders count as well.
+        restricted = ask.source_restricted or self._request_restricted(ask.request_id)
+        hosts = external_hosts(self.hub.agents.get(routed) or {})
+        if restricted and hosts:
+            await self.hub.resolve_ask(ask, runner_id, ask_result(
+                reason=consult_refusal(hosts), **{"from": "labhq", "routed_to": routed}))
+            return
 
         # A task workdir belongs to its runner's filesystem. The gateway only forwards it when the
         # consult will run on that same runner; the runner validates the path and refs before launch.
@@ -2626,6 +2642,7 @@ class Orchestrator:
                     resume_session_id=session_id if self.hub.supports_resume(routed) else None,
                     meta={"kind": "consult", "ask_id": ask.id, "title": f"{ask.agent_id} 질의 답변",
                           "agent_overrides": overrides,
+                          **({"restricted_inputs": True} if restricted else {}),
                           **({**({"source_workdir": source_workdir} if source_workdir else {}),
                               "consult_refs": refs} if refs else {}),
                           **({"workdir": workdir} if workdir else {}),

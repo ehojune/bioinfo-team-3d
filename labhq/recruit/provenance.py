@@ -49,9 +49,10 @@ def provenance_changes(spec: AgentSpec) -> list[str]:
     c = spec.contract
     if c is None:
         return []
-    mcp_dir = next((m.cwd for m in spec.mcp if m.cwd), None)
+    # The target the hash was taken from; a contract saved before mcp_path existed falls back to the server cwd.
+    mcp_target = c.mcp_path or next((m.cwd for m in spec.mcp if m.cwd), None)
     changed = []
-    for name, recorded, path in (("skill", c.skill_sha256, c.skill_dir), ("mcp", c.mcp_sha256, mcp_dir)):
+    for name, recorded, path in (("skill", c.skill_sha256, c.skill_dir), ("mcp", c.mcp_sha256, mcp_target)):
         if recorded and path and folder_sha256(path) != recorded:
             changed.append(name)
     return changed
@@ -87,17 +88,27 @@ def _refusal(hosts: list[str]) -> str:
             "정규직에게 맡기세요 (#424)")
 
 
+def consult_refusal(hosts: list[str]) -> str:
+    return (f"외부 전송 파견직({', '.join(hosts)})에게는 통제 데이터 구역을 입력으로 쓰는 작업에서 질문할 수 없습니다. "
+            "정규직이나 CSO에게 물으세요 (#424)")
+
+
+def restricted_task(task: Task, settings: "Settings") -> bool:
+    """Whether a task's inputs touch a restricted zone: the planner's verdict (a step's ancestors, or the asking
+    task of a consult), its own text, or a folder it opens. The runner puts this on the task's ask token too."""
+    meta = task.meta
+    return bool(meta.get("restricted_inputs")) or touches_restricted(
+        [task.prompt, task.context, meta.get("request"), meta.get("instruction")],
+        [*(meta.get("project_dirs") or []), *(meta.get("reference_dirs") or []), meta.get("source_workdir")],
+        settings)
+
+
 def external_service_refusal(agent: AgentSpec, task: Task, settings: "Settings") -> str | None:
     """The runner's check before the engine starts. No zone path in the text: errors reach reports."""
     hosts = external_hosts(agent)
-    if not hosts:
+    if not hosts or not restricted_task(task, settings):
         return None
-    meta = task.meta
-    if meta.get("restricted_inputs") or touches_restricted(
-            [task.prompt, task.context, meta.get("request"), meta.get("instruction")],
-            [*(meta.get("project_dirs") or []), *(meta.get("reference_dirs") or [])], settings):
-        return _refusal(hosts)
-    return None
+    return consult_refusal(hosts) if task.meta.get("kind") == "consult" else _refusal(hosts)
 
 
 def restricted_input_steps(steps: list[dict], texts: list[Any], dirs: list[Any], settings: "Settings") -> set[str]:

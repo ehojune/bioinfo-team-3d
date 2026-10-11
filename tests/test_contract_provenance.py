@@ -407,3 +407,189 @@ def test_a_git_failure_while_pinning_changes_nothing(install):
     with pytest.raises(subprocess.CalledProcessError):
         paper2agent.install_skill(SOURCE, install.cache, commit=COMMIT)
     assert all((d / "SKILL.md").read_text(encoding="utf-8") == "old\n" for d in install.destinations.values())
+
+
+# ---------------- PR #522 review: asks, a changed skill source, a ZIP-only MCP ----------------
+
+def _ask_hub(tmp_path):
+    from labhq.gateway.server import create_app
+
+    settings = _settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = create_app(settings).state.hub
+    external = _roster(True)[0]
+    plain = {**_roster(False)[0], "id": "c_plain"}
+    hub.agents = {"c_tool": external, "c_plain": plain}
+    hub.agent_runner = {"c_tool": "runner", "c_plain": "runner"}
+    hub.requests["r"] = {"id": "r", "text": "공개 데이터 분석", "status": "running"}
+    calls = []
+
+    async def dispatch(task):
+        calls.append(task)
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text="answer")
+
+    hub.dispatch = dispatch
+    return hub, calls
+
+
+def _ask(to: str, restricted: bool, tmp_path):
+    from labhq.models import AskRequest
+
+    return AskRequest(task_id="source", agent_id="analyst", request_id="r", to=to, question="이 표를 해석해 줄래요?",
+                      why_blocked="방법 확인", refs=["outputs/table.tsv"], source_workdir=str(tmp_path / "runs" / "src"),
+                      source_restricted=restricted)
+
+
+@pytest.mark.asyncio
+async def test_a_restricted_task_cannot_consult_an_external_service_contract(tmp_path):
+    hub, calls = _ask_hub(tmp_path)
+    ask = _ask("colleague:c_tool", True, tmp_path)
+    try:
+        await hub.orchestrator.answer_ask(ask, "runner")
+        answer = hub.store.get("ask", ask.id)["answer"]
+        assert calls == [], "no consult task, so no ref is staged into the contract worker's workspace"
+        assert "외부 전송" in answer["reason"] and "api.example.org" in answer["reason"]
+        assert ZONE not in answer["reason"]
+    finally:
+        hub.store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_request_that_names_a_zone_cannot_consult_an_external_service_contract(tmp_path):
+    hub, calls = _ask_hub(tmp_path)
+    hub.requests["r"]["text"] = f"{ZONE}/cohort.vcf 분석"
+    ask = _ask("colleague:c_tool", False, tmp_path)
+    try:
+        await hub.orchestrator.answer_ask(ask, "runner")
+        assert calls == [] and "외부 전송" in hub.store.get("ask", ask.id)["answer"]["reason"]
+    finally:
+        hub.store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("to,restricted", [("colleague:c_plain", True), ("colleague:c_tool", False)])
+async def test_other_consults_run_as_before_and_carry_the_verdict(tmp_path, to, restricted):
+    hub, calls = _ask_hub(tmp_path)
+    ask = _ask(to, restricted, tmp_path)
+    try:
+        await hub.orchestrator.answer_ask(ask, "runner")
+        [consult] = calls
+        assert consult.meta["consult_refs"] == ["outputs/table.tsv"]
+        assert consult.meta.get("restricted_inputs", False) is restricted, "the runner rechecks with this verdict"
+    finally:
+        hub.store.close()
+
+
+@pytest.mark.asyncio
+async def test_the_broker_token_sets_source_restricted_and_a_caller_cannot_clear_it(tmp_path):
+    import httpx
+
+    from labhq.runner.approvals import Broker
+
+    seen = []
+
+    async def record(body):
+        seen.append(body)
+
+    broker = Broker(0, record, record, record, record)
+    token = broker.issue_task_token("t", "analyst", "r", workdir=str(tmp_path), restricted=True)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=broker.app), base_url="http://broker") as client:
+        response = await client.post("/ask", headers={"X-Labhq-Token": token}, json={
+            "to": "colleague:c_tool", "question": "q?", "why_blocked": "b", "wait": "hibernate",
+            "source_restricted": False})
+    assert response.status_code == 200 and seen[0].source_restricted is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("meta,restricted", [
+    ({"kind": "step", "project_dirs": [ZONE + "/project"]}, True),
+    ({"kind": "step", "restricted_inputs": True}, True),
+    ({"kind": "step"}, False),
+])
+async def test_the_runner_puts_the_task_verdict_on_its_ask_token(tmp_path, monkeypatch, spawned, meta, restricted):
+    runner = _contract_runner(tmp_path, monkeypatch, external=False)
+    issued = []
+    original = runner.broker.issue_task_token
+
+    def capture(*args, **kwargs):
+        issued.append(kwargs.get("restricted"))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(runner.broker, "issue_task_token", capture)
+    await runner.run_task(Task(agent_id="c_tool", request_id="r", prompt="summarize the table", meta=meta))
+    assert issued == [restricted]
+
+
+@pytest.mark.asyncio
+async def test_the_runner_refuses_a_restricted_consult_before_staging_refs(tmp_path, monkeypatch, spawned):
+    runner = _contract_runner(tmp_path, monkeypatch, external=True)
+    staged = []
+    monkeypatch.setattr(runner, "_stage_consult_refs", lambda task, ws: staged.append(task) or (task, None))
+    task = Task(agent_id="c_tool", request_id="r", prompt="표를 해석해 주세요",
+                meta={"kind": "consult", "restricted_inputs": True, "source_workdir": str(tmp_path / "src"),
+                      "consult_refs": ["outputs/table.tsv"]})
+    result = await runner.run_task(task)
+    assert not result.ok and "질문할 수 없습니다" in result.error
+    assert staged == [] and spawned == []
+
+
+def _git_config(repo: Path, url: str) -> None:
+    (repo / ".git" / "config").write_text(f'[core]\n\tbare = false\n[remote "origin"]\n\turl = {url}\n'
+                                          '\tfetch = +refs/heads/*:refs/remotes/origin/*\n', encoding="utf-8")
+
+
+def test_a_changed_skill_source_is_cloned_fresh_not_pulled_from_the_old_origin(install):
+    _git_config(install.repo, "https://example.org/Old.git")
+    (install.repo / "old-only.txt").write_text("old checkout\n", encoding="utf-8")
+
+    def clone(cmd, check):
+        assert cmd[:4] == ["git", "clone", "--depth", "1"] and cmd[4] == SOURCE
+        new = Path(cmd[5])
+        (new / ".git").mkdir(parents=True)
+        _git_config(new, SOURCE)
+        (new / ".git" / "HEAD").write_text(COMMIT + "\n", encoding="utf-8")
+        _skill(new / "skills" / "paper2agent", "fresh skill\n")
+        return SimpleNamespace(returncode=0)
+
+    install.run.side_effect = clone
+    paper2agent.install_skill(SOURCE, install.cache)
+    assert install.run.call_count == 1, "no pull from the old origin"
+    assert paper2agent.origin_url(install.repo) == SOURCE and not (install.repo / "old-only.txt").exists()
+    assert not list(install.cache.glob(".Paper2Agent-*")), "the swap folder is cleaned up"
+    for dst in install.destinations.values():
+        assert (dst / "SKILL.md").read_text(encoding="utf-8") == "fresh skill\n"
+        assert _marker(dst) == {"source": SOURCE, "commit": COMMIT}
+
+
+def test_a_failed_clone_of_a_changed_source_keeps_the_old_checkout_and_installs(install):
+    _git_config(install.repo, "https://example.org/Old.git")
+    for dst in install.destinations.values():
+        _skill(dst, "old\n")
+    install.run.side_effect = subprocess.CalledProcessError(128, "git")
+    with pytest.raises(subprocess.CalledProcessError):
+        paper2agent.install_skill(SOURCE, install.cache)
+    assert paper2agent.origin_url(install.repo) == "https://example.org/Old.git"
+    assert (install.repo / "skills" / "paper2agent" / "SKILL.md").read_text(encoding="utf-8") == "new skill\n"
+    assert all((d / "SKILL.md").read_text(encoding="utf-8") == "old\n" for d in install.destinations.values())
+    assert not list(install.cache.glob(".Paper2Agent-*"))
+
+
+def test_the_same_source_spelled_differently_still_pulls(install):
+    _git_config(install.repo, SOURCE.removesuffix(".git") + "/")
+    paper2agent.install_skill(SOURCE, install.cache)
+    install.run.assert_called_once_with(["git", "-C", str(install.repo), "pull", "--ff-only"], check=True)
+
+
+def test_a_zip_only_mcp_is_hashed_recorded_and_rechecked_on_rehire(tmp_path):
+    built = _skill(tmp_path / "build" / "skill")
+    archive = tmp_path / "build" / "dist" / "scanpy-mcp.zip"
+    archive.parent.mkdir(parents=True)
+    archive.write_bytes(b"PK\x03\x04 first build")
+    spec, runner = _recruit(tmp_path, _offer(built, mcp_zip=str(archive)))
+    c = spec.contract
+    assert c.mcp_path == str(archive) and c.mcp_sha256 == provenance.folder_sha256(archive)
+    runner.registry.release(spec.id)
+    assert "rehire_changed" not in runner.registry.rehire("scanpy", days=7).contract.verification
+    archive.write_bytes(b"PK\x03\x04 rebuilt")
+    runner.registry.release(spec.id)
+    assert runner.registry.rehire("scanpy", days=7).contract.verification["rehire_changed"] == ["mcp"]

@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
 import time
@@ -118,6 +120,55 @@ def head_commit(repo: Path) -> str | None:
     return None
 
 
+def origin_url(repo: Path) -> str | None:
+    """remote.origin.url from .git/config, read without running git; None when it cannot be read."""
+    try:
+        text = (repo / ".git" / "config").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    in_origin = False
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line.startswith("["):
+            in_origin = bool(re.fullmatch(r'\[remote\s+"origin"\]', line))
+        elif in_origin and "=" in line:
+            key, value = line.split("=", 1)
+            if key.strip().lower() == "url":
+                return value.strip()
+    return None
+
+
+def same_source(a: str, b: str) -> bool:
+    def norm(url: str) -> str:
+        return url.strip().rstrip("/").removesuffix(".git").rstrip("/").casefold()
+    return norm(a) == norm(b)
+
+
+def _remove_tree(path: Path) -> None:
+    for folder, _dirs, files in os.walk(path):  # git keeps object files read-only, which Windows will not delete
+        for name in files:
+            try:
+                os.chmod(os.path.join(folder, name), stat.S_IREAD | stat.S_IWRITE)
+            except OSError:
+                pass
+    shutil.rmtree(path, ignore_errors=True)
+
+
+def _replace_clone(source: str, repo: Path) -> None:
+    """Clone `source` beside the cached checkout and swap it in; a failed clone leaves the old one as it was."""
+    work = Path(tempfile.mkdtemp(prefix=".Paper2Agent-", dir=repo.parent))
+    try:
+        subprocess.run(["git", "clone", "--depth", "1", source, str(work / "new")], check=True)
+        repo.rename(work / "old")
+        try:
+            (work / "new").rename(repo)
+        except OSError:
+            (work / "old").rename(repo)
+            raise
+    finally:
+        _remove_tree(work)
+
+
 def _detached(repo: Path) -> bool:
     try:
         return not (repo / ".git" / "HEAD").read_text(encoding="utf-8").startswith("ref: ")
@@ -147,9 +198,15 @@ def install_skill(source: str, cache: Path, commit: str | None = None) -> list[P
     if commit is not None and provenance.source_commit(commit) != commit:
         raise ValueError("Paper2Agent commit must be a full 40-character lowercase hex commit")
     repo = cache / "Paper2Agent"
+    origin = origin_url(repo) if (repo / ".git").exists() else None
     if not (repo / ".git").exists():
         cache.mkdir(parents=True, exist_ok=True)
         subprocess.run(["git", "clone", "--depth", "1", source, str(repo)], check=True)
+        if commit:
+            _checkout(repo, commit)
+    elif origin and not same_source(origin, source):  # recruit.skill_source changed: never pull the old origin
+        _replace_clone(source, repo)
+        origin = source
         if commit:
             _checkout(repo, commit)
     elif commit or _detached(repo):  # an earlier pin leaves the checkout detached, where pull cannot run
@@ -162,7 +219,7 @@ def install_skill(source: str, cache: Path, commit: str | None = None) -> list[P
     skill = repo / "skills" / "paper2agent"
     if not skill.is_dir() or not (skill / "SKILL.md").is_file():
         raise FileNotFoundError(f"Paper2Agent source skill is missing SKILL.md: {skill}")
-    marker = json.dumps({"source": source, "commit": installed}) + "\n"
+    marker = json.dumps({"source": origin or source, "commit": installed}) + "\n"  # where it really came from
     out = [skill_path(engine) for engine in ("claude_code", "codex")]
     staged: list[tuple[Path, Path]] = []
     published: set[Path] = set()
@@ -297,7 +354,9 @@ class Recruitment:
         assert spec.contract
         c = spec.contract
         c.skill_sha256 = provenance.folder_sha256(c.skill_dir)
-        c.mcp_sha256 = provenance.folder_sha256(offer.get("mcp_dir") or offer.get("mcp_zip"))
+        mcp_target = offer.get("mcp_dir") or offer.get("mcp_zip")  # a ZIP-only delivery is hashed as the file
+        c.mcp_sha256 = provenance.folder_sha256(mcp_target)
+        c.mcp_path = str(mcp_target) if c.mcp_sha256 else None
         status = offer.get("verification_status")
         c.verification = {**c.verification, "offer_status": status, "probe_tools": tools,
                           "probe_error": probe_error, "limitations": offer.get("limitations", [])}

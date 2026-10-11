@@ -45,7 +45,7 @@ from ..private_paths import ENABLED_ENV_VAR as PRIVATE_ENABLED_ENV, ENV_VAR as P
     staff_claude_project_dirs, staff_codex_homes
 from ..pipeline_pr import collect_pipeline_submission, pipeline_rejection
 from ..quota import quota_reset_instant
-from ..recruit.provenance import external_service_refusal
+from ..recruit.provenance import external_service_refusal, restricted_task
 from ..registry import Registry
 from ..settings import MODEL_NAME_PATTERN, Settings, write_staff_config
 from ..store import StateStore
@@ -1104,7 +1104,8 @@ class Runner:
                 await emit("agent.log", {"level": "warn", "text": (
                     f"{agent.id}: 개인 경로 차단 중에는 셸 명령을 미리 허용하지 않고 승인 게이트로 보냅니다. "
                     "builtin_mcp에 approval이 없어 셸 명령이 모두 거부됩니다")})
-            broker_token = self.broker.issue_task_token(task.id, agent.id, task.request_id, workdir=str(ws.dir))
+            broker_token = self.broker.issue_task_token(task.id, agent.id, task.request_id, workdir=str(ws.dir),
+                                                        restricted=restricted_task(task, self.s))
             env = {
                 "LABHQ_BROKER_URL": self.broker.url, "LABHQ_BROKER_TOKEN": broker_token,
                 "LABHQ_TASK_ID": task.id, "LABHQ_AGENT_ID": agent.id, "LABHQ_WORKDIR": str(ws.dir),
