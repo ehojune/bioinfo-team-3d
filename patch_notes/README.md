@@ -14,12 +14,16 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 04:36 | [`abcf5b6`](https://github.com/ehojune/bioinfo-team-3d/pull/522/commits/abcf5b6) | 리뷰 3차 반영: 납품물 hash를 못 재면 수습에 남기고 재고용 때도 hash 없는 부분을 표시한다. mcp_dir 밖에서 실제 실행되는 서버 폴더도 재며, 캐시 checkout의 origin을 확인할 수 없으면 새로 clone한다(#424). |
+| 04:14 | [`51d34ae`](https://github.com/ehojune/bioinfo-team-3d/pull/522/commits/51d34ae) | 리뷰 2차 반영: 수습 파견직은 PI가 activate하기 전에는 CSO 배정·직접 요청·상담·러너 실행에서 빠지고 명단에는 수습으로 보인다. 외부 전송 host는 hostname[:port]만 받아 URL 속 인증값이 계약서·명단에 남지 않는다(#424). |
 | 04:14 | [`ea02a1c`](https://github.com/ehojune/bioinfo-team-3d/pull/528/commits/ea02a1c) | main 병합: 첫 로드 표시와 재현 등급 사유(#524)·재연결 카드 처리(#526)를 함께 둔다. |
 | 03:57 | [`b0f6b79`](https://github.com/ehojune/bioinfo-team-3d/pull/528/commits/b0f6b79) | 웹은 한도·로그인 대기가 풀려도 열린 결정 카드가 있으면 PI 결정 대기로, 시간 초과 카드는 거절이 아니라 시간 초과로 보이고, CLI는 선택지 있는 직원 질문을 답 없이 승인하지 않는다(#521). |
 | 03:48 | [`9fba5f1`](https://github.com/ehojune/bioinfo-team-3d/pull/524/commits/9fba5f1) | Windows manifest 검증에서 UTF-8 읽기를 명시 |
+| 03:42 | [`7bd1232`](https://github.com/ehojune/bioinfo-team-3d/pull/522/commits/7bd1232) | 리뷰 반영: restricted 작업에서 외부 전송 파견직에게 묻는 상담을 refs 복사 전에 거부하고, skill_source가 바뀌면 캐시를 새로 clone하며, ZIP으로만 온 MCP도 재고용 때 hash를 다시 잰다(#424). |
 | 03:33 | [`85122d5`](https://github.com/ehojune/bioinfo-team-3d/pull/526/commits/85122d5) | 러너를 다시 시작하면 이전 프로세스가 띄운 도구 권한 카드가 incarnation이 같아도 닫히고, 카드를 띄운 작업이 끝나도 그 카드가 닫힌다(#521). |
 | 03:27 | [`e5a56a9`](https://github.com/ehojune/bioinfo-team-3d/pull/524/commits/e5a56a9) | 재현 등급과 실행 환경 기록을 요청 묶음 전반에 연결 |
 | 03:23 | [`759458d`](https://github.com/ehojune/bioinfo-team-3d/pull/523/commits/759458d) | direct 응답의 실제 산출 종류를 기존 어휘로 기록하고 semantics 재사용 판정에 연결 |
+| 03:21 | [`2ad1dc3`](https://github.com/ehojune/bioinfo-team-3d/pull/522/commits/2ad1dc3) | 파견직 계약서에 원본 commit·license·외부 전송 대상과 labhq가 잰 skill·MCP hash를 남기고, 외부 전송 파견직은 restricted 입력 단계에서 계획 검증과 러너가 거부한다. 수습은 offer_status를 보고, 재고용 때 hash가 다르면 경고한다(#424). |
 | 02:46 | [`e2a0906`](https://github.com/ehojune/bioinfo-team-3d/pull/520/commits/e2a0906) | labhq init이 #518 템플릿 목록을 그대로 적은 설정도 load 때 백그라운드 셸 도구를 받는다(#520 리뷰). |
 | 02:37 | [`2381232`](https://github.com/ehojune/bioinfo-team-3d/pull/520/commits/2381232) | 승인 게이트가 백그라운드 셸 출력을 읽거나 멈추는 BashOutput·KillShell·TaskOutput·TaskStop을 기본 허용한다(#518 후속). |
 | 02:28 | [`fa17c0b`](https://github.com/ehojune/bioinfo-team-3d/pull/519/commits/fa17c0b) | lock의 실제 OS 판정을 테스트용 sys.platform 값과 분리해 Linux CI에서도 올바른 fcntl 경로를 쓴다. |
