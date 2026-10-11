@@ -512,7 +512,7 @@ function apply(ev, replay = false) {
       break;
     }
     case 'contract.warning':
-      feed({ who: 'recruiter', text: `재고용한 ${d.agent_id || id}의 ${(d.changed || []).join(', ')}이(가) 채용 때와 달라요. 확인한 뒤 맡기세요`, cls: 'alert' }, ts, rid);
+      feed({ who: 'recruiter', text: `재고용한 ${d.agent_id || id}: ${(d.changed || []).join(', ')}이(가) 채용 때 hash와 맞지 않아요. 확인한 뒤 맡기세요`, cls: 'alert' }, ts, rid);
       break;
     case 'recruit.failed': feed({ who: 'recruiter', text: `채용하지 못했어요: ${short(d.error, 120)}`, cls: 'alert' }, ts, rid); break;
     // A status the gateway sets itself: waiting_pi, waiting_for_runner, interrupted, running (R5, R15, #494).

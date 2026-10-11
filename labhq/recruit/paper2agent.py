@@ -204,7 +204,8 @@ def install_skill(source: str, cache: Path, commit: str | None = None) -> list[P
         subprocess.run(["git", "clone", "--depth", "1", source, str(repo)], check=True)
         if commit:
             _checkout(repo, commit)
-    elif origin and not same_source(origin, source):  # recruit.skill_source changed: never pull the old origin
+    elif origin is None or not same_source(origin, source):
+        # recruit.skill_source changed, or the origin cannot be read: never pull from an origin not verified as source
         _replace_clone(source, repo)
         origin = source
         if commit:
@@ -356,13 +357,18 @@ class Recruitment:
         c.skill_sha256 = provenance.folder_sha256(c.skill_dir)
         mcp_target = offer.get("mcp_dir") or offer.get("mcp_zip")  # a ZIP-only delivery is hashed as the file
         c.mcp_sha256 = provenance.folder_sha256(mcp_target)
-        c.mcp_path = str(mcp_target) if c.mcp_sha256 else None
+        c.mcp_path = str(mcp_target) if mcp_target else None
+        c.mcp_entry_path = provenance.mcp_entry_tree(offer)  # what actually runs, when outside mcp_dir
+        c.mcp_entry_sha256 = provenance.folder_sha256(c.mcp_entry_path)
         status = offer.get("verification_status")
         c.verification = {**c.verification, "offer_status": status, "probe_tools": tools,
                           "probe_error": probe_error, "limitations": offer.get("limitations", [])}
         if real:
             c.verification["paper2agent_commit"] = installed_commit(self.s.recruit.contract_engine)
         passed, reason = probation(c.kind, tools, c.skill_dir, status)
+        unhashed = provenance.missing_hashes(spec)
+        if passed and unhashed:  # a delivered part labhq cannot hash could change unseen: the PI checks it first
+            passed, reason = False, f"provenance hash failed: {', '.join(unhashed)}"
         if reason:
             c.verification["probation_reason"] = reason
         c.status = "active" if passed else "probation"

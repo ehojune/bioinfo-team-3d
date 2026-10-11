@@ -108,6 +108,9 @@ class ContractInfo(BaseModel):
     skill_sha256: str | None = None
     mcp_sha256: str | None = None
     mcp_path: str | None = None  # the MCP folder or ZIP mcp_sha256 was taken from; a rehire hashes it again
+    # The server tree mcp_args actually runs when it lies outside mcp_path (an extracted ZIP, PR #522 review).
+    mcp_entry_path: str | None = None
+    mcp_entry_sha256: str | None = None
 
     @field_validator("source_commit")
     @classmethod

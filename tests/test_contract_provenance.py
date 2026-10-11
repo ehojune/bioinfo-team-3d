@@ -332,6 +332,7 @@ SOURCE = "https://example.org/Paper2Agent.git"
 def install(tmp_path, monkeypatch):
     repo = tmp_path / "cache" / "Paper2Agent"
     (repo / ".git").mkdir(parents=True)
+    (repo / ".git" / "config").write_text(f'[remote "origin"]\n\turl = {SOURCE}\n', encoding="utf-8")
     _skill(repo / "skills" / "paper2agent", "new skill\n")
     destinations = {e: tmp_path / e / "skills" / "paper2agent" for e in ("claude_code", "codex")}
     monkeypatch.setattr(paper2agent, "skill_path", lambda engine: destinations[engine])
@@ -688,3 +689,78 @@ async def test_a_direct_request_to_a_probation_contract_is_refused_but_it_stays_
         assert {a["id"]: a["contract_status"] for a in roster.json()}["c_tool"] == "probation"
     finally:
         hub.store.close()
+
+
+# ---------------- PR #522 review round 3: unhashable parts, the server that runs, an unverified origin ----------------
+
+def test_a_delivered_part_labhq_cannot_hash_keeps_the_hire_on_probation(tmp_path, monkeypatch):
+    built = _skill(tmp_path / "build" / "skill")
+    real = provenance.folder_sha256
+    monkeypatch.setattr(provenance, "folder_sha256",
+                        lambda path: None if path and Path(path).name == "skill" else real(path))
+    spec, runner = _recruit(tmp_path, _offer(built))
+    assert spec.contract.skill_sha256 is None and spec.contract.status == "probation"
+    assert spec.contract.verification["probation_reason"] == "provenance hash failed: skill"
+    assert next(e for e in runner.events if e.type == "recruit.done").data["passed_probation"] is False
+
+
+def test_a_rehire_flags_a_delivered_part_without_a_recorded_hash(tmp_path):
+    reg, skill = _hired(tmp_path)
+    spec = reg.rehire("tissue", days=1)
+    spec.contract.skill_sha256 = None  # e.g. hired before #424, or hashing failed at hiring
+    reg.save_contract(spec)
+    reg.release(spec.id)
+    assert reg.rehire("tissue", days=7).contract.verification["rehire_changed"] == ["skill(hash 없음)"]
+
+
+def test_the_extracted_server_mcp_args_runs_is_hashed_and_rechecked_on_rehire(tmp_path, monkeypatch):
+    async def tools(server):
+        return ["cluster"]
+
+    monkeypatch.setattr(paper2agent, "list_tools", tools)
+    built = _skill(tmp_path / "build" / "skill")
+    archive = tmp_path / "build" / "dist" / "scanpy-mcp.zip"
+    archive.parent.mkdir(parents=True)
+    archive.write_bytes(b"PK\x03\x04 build")
+    server = tmp_path / "extracted" / "scanpy_mcp"
+    server.mkdir(parents=True)
+    (server / "server.py").write_text("from tools import run\n", encoding="utf-8")
+    (server / "tools.py").write_text("def run(): return 1\n", encoding="utf-8")
+    spec, runner = _recruit(tmp_path, _offer(built, kind="full", mcp_zip=str(archive), mcp_command="python",
+                                             mcp_args=[str(server / "server.py")]))
+    c = spec.contract
+    assert c.status == "active" and c.mcp_entry_path == str(server.resolve())
+    assert c.mcp_entry_sha256 == provenance.folder_sha256(server)
+    (server / "tools.py").write_text("def run(): return 2\n", encoding="utf-8")  # the ZIP is unchanged
+    runner.registry.release(spec.id)
+    assert runner.registry.rehire("scanpy", days=7).contract.verification["rehire_changed"] == ["mcp"]
+
+
+def test_an_entry_inside_mcp_dir_is_covered_by_the_folder_hash(tmp_path):
+    mcp = tmp_path / "labhq_mcp"
+    (mcp / "src").mkdir(parents=True)
+    (mcp / "src" / "server.py").write_text("print()\n", encoding="utf-8")
+    assert provenance.mcp_entry_tree({"mcp_dir": str(mcp), "mcp_args": [str(mcp / "src" / "server.py")]}) is None
+    assert provenance.mcp_entry_tree({"mcp_args": ["-m", "relative.module"]}) is None
+    data = tmp_path / "reference_data"
+    data.mkdir()
+    assert provenance.mcp_entry_tree({"mcp_args": ["--data", str(data)]}) is None, "a data folder is not hashed"
+    assert provenance.mcp_entry_tree({"mcp_args": ["run", "--directory", str(data), "server"]}) == str(data.resolve())
+
+
+def test_a_cached_checkout_whose_origin_cannot_be_read_is_cloned_fresh(install):
+    (install.repo / ".git" / "config").unlink()
+
+    def clone(cmd, check):
+        new = Path(cmd[5])
+        (new / ".git").mkdir(parents=True)
+        _git_config(new, SOURCE)
+        _skill(new / "skills" / "paper2agent", "verified skill\n")
+        return SimpleNamespace(returncode=0)
+
+    install.run.side_effect = clone
+    paper2agent.install_skill(SOURCE, install.cache)
+    assert [c.args[0][:5] for c in install.run.call_args_list] == [["git", "clone", "--depth", "1", SOURCE]]
+    assert paper2agent.origin_url(install.repo) == SOURCE
+    for dst in install.destinations.values():
+        assert _marker(dst)["source"] == SOURCE and (dst / "SKILL.md").read_text(encoding="utf-8") == "verified skill\n"

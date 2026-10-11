@@ -44,18 +44,59 @@ def folder_sha256(path: str | Path | None) -> str | None:
         return None
 
 
-def provenance_changes(spec: AgentSpec) -> list[str]:
-    """Which recorded hashes ("skill", "mcp") the folders no longer match; a folder that is gone counts."""
+UNHASHED = "(hash 없음)"
+
+
+def _hashed_parts(spec: AgentSpec) -> list[tuple[str, str | None, str | None]]:
+    """(part, recorded hash, path) for every delivered part labhq can hash. A contract saved before mcp_path existed
+    falls back to its stdio server's cwd; a hosted (http) server has no local files to hash."""
     c = spec.contract
     if c is None:
         return []
-    # The target the hash was taken from; a contract saved before mcp_path existed falls back to the server cwd.
-    mcp_target = c.mcp_path or next((m.cwd for m in spec.mcp if m.cwd), None)
-    changed = []
-    for name, recorded, path in (("skill", c.skill_sha256, c.skill_dir), ("mcp", c.mcp_sha256, mcp_target)):
-        if recorded and path and folder_sha256(path) != recorded:
-            changed.append(name)
+    mcp_target = c.mcp_path or next((m.cwd for m in spec.mcp if m.cwd and m.type == "stdio"), None)
+    return [("skill", c.skill_sha256, c.skill_dir), ("mcp", c.mcp_sha256, mcp_target),
+            ("mcp", c.mcp_entry_sha256, c.mcp_entry_path)]
+
+
+def missing_hashes(spec: AgentSpec) -> list[str]:
+    """Delivered parts whose hash could not be taken (unreadable file, link out of the folder, missing folder)."""
+    return list(dict.fromkeys(name for name, recorded, path in _hashed_parts(spec) if path and not recorded))
+
+
+def provenance_changes(spec: AgentSpec) -> list[str]:
+    """Delivered parts that no longer match their recorded hash ("skill", "mcp"); a folder that is gone counts.
+
+    A part with no recorded hash is never skipped: it is listed as "skill(hash 없음)", since nothing shows it is
+    what was hired."""
+    changed: list[str] = []
+    for name, recorded, path in _hashed_parts(spec):
+        if not path:
+            continue
+        label = f"{name}{UNHASHED}" if not recorded else name if folder_sha256(path) != recorded else None
+        if label and label not in changed:
+            changed.append(label)
     return changed
+
+
+def mcp_entry_tree(offer: dict) -> str | None:
+    """The server tree an offer's mcp_args runs when it lies outside mcp_dir: the folder of the first existing
+    absolute file argument (its sibling modules run too), else a `--directory`/`--project` folder (uv). Other folder
+    arguments are skipped: they may be data. None when mcp_dir already holds it."""
+    mcp_dir = Path(offer["mcp_dir"]).resolve() if offer.get("mcp_dir") else None
+    args = [str(a) for a in offer.get("mcp_args") or []]
+    files = [Path(a) for a in args]
+    dirs = [Path(a) for flag, a in zip(args, args[1:]) if flag in ("--directory", "--project")]
+    for path, want_file in [*((p, True) for p in files), *((p, False) for p in dirs)]:
+        try:
+            if not path.is_absolute() or not (path.is_file() if want_file else path.is_dir()):
+                continue
+            tree = (path.parent if want_file else path).resolve()
+        except (OSError, ValueError):
+            continue
+        if mcp_dir and (tree == mcp_dir or mcp_dir in tree.parents):
+            return None
+        return str(tree)
+    return None
 
 
 def service_host(raw: Any) -> tuple[str, str | None]:
