@@ -44,6 +44,9 @@ test('a contract staff card shows commit, licenses and external services; a core
   assert.match(strip.provenanceText({contract_provenance:{...provenance,external_services:[],code_license:null,rehire_changed:['skill']}}),
     /commit 0123456 · license 미상 · 외부 전송 없음 · 재고용 때 바뀜: skill/);
   assert.equal(strip.provenanceText({id:'old',employment:'contract'}),'','a roster entry from an older runner shows nothing');
+  // PR #522 review: a probation hire stays visible as 수습 but gets no work until activated.
+  assert.match(strip.provenanceText({contract_status:'probation',contract_provenance:provenance}),/^수습\(PI 승인 대기\) · commit 0123456/);
+  assert.equal(strip.provenanceText({employment:'contract',contract_status:'probation'}),'수습(PI 승인 대기)');
 });
 
 test('the hiring feed line names the commit and where the hire sends data (#424)',()=>{

@@ -29,6 +29,7 @@ from ..login import login_command
 from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..costs import outcome_unknown_item, request_cost_summary, task_cost_item
 from ..models import ApprovalRequest, AskRequest, RunnerUnavailable, Task, TaskResult, new_id, waiting
+from ..recruit.provenance import not_yet_active, probation_refusal
 from ..adapters import enforces_read_only, get_adapter, read_only_refusal
 from ..orchestrator.cso import Orchestrator, _terminal_reports, environment_problem, holds_session, solo_phase
 from ..research.packs import check_configured_packs
@@ -2712,6 +2713,8 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     async def create_request(body: RequestIn) -> dict:
         if body.mode == "direct" and not hub.knows_agent(body.agent_id):
             raise HTTPException(404, f"unknown agent {body.agent_id!r}")
+        if body.mode == "direct" and not_yet_active(hub.agents.get(body.agent_id or "") or {}):
+            raise HTTPException(409, probation_refusal(str(body.agent_id)))  # still on probation (#424)
         try:
             return {"request_id": hub.create_request(body)}
         except KeyError as e:

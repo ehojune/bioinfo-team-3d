@@ -12,7 +12,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable
 
-from ..models import SOURCE_COMMIT, AgentSpec, Task
+from ..models import SOURCE_COMMIT, AgentSpec, ExternalService, Task
 
 if TYPE_CHECKING:
     from ..settings import Settings
@@ -56,6 +56,42 @@ def provenance_changes(spec: AgentSpec) -> list[str]:
         if recorded and path and folder_sha256(path) != recorded:
             changed.append(name)
     return changed
+
+
+def service_host(raw: Any) -> tuple[str, str | None]:
+    """A declared host as a bare host[:port], and a note when something else had to be dropped.
+
+    The note never repeats the raw value: a URL may carry user:password@, a key in its query or a token in its path.
+    A declaration is never dropped (that would open restricted steps), so an unreadable one becomes unknown.invalid."""
+    from urllib.parse import urlsplit
+
+    text = str(raw or "").strip()
+    try:
+        return ExternalService(host=text, what_is_sent="-").host, None
+    except ValueError:
+        pass
+    try:
+        parts = urlsplit(text if "://" in text else "//" + text)
+        host = parts.hostname or ""
+        if parts.port:
+            host += f":{parts.port}"
+        host = ExternalService(host=host, what_is_sent="-").host
+    except ValueError:
+        host = "unknown.invalid"
+    return host, (f"external_services host was not a bare hostname; stored {host} only "
+                  "(scheme, credentials, path, query and fragment are never kept)")
+
+
+def not_yet_active(agent: AgentSpec | dict) -> bool:
+    """A contract hire the PI has not activated (probation): on the roster as 수습, but given no work."""
+    if isinstance(agent, AgentSpec):
+        return agent.contract is not None and agent.contract.status != "active"
+    return agent.get("employment") == "contract" and agent.get("contract_status") not in (None, "active")
+
+
+def probation_refusal(agent_id: str) -> str:
+    return (f"수습 중인 파견직 {agent_id}은 PI가 `labhq contract activate {agent_id}`로 승인하기 전에는 일을 맡을 수 "
+            "없습니다 (#424)")
 
 
 def external_hosts(agent: AgentSpec | dict) -> list[str]:

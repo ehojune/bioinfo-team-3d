@@ -205,11 +205,12 @@ def _settings() -> Settings:
     return s
 
 
-def _roster(external: bool) -> list[dict]:
+def _roster(external: bool, status: str = "active") -> list[dict]:
     now = time.time()
     services = [{"host": "api.example.org", "what_is_sent": "sequences"}] if external else []
     contract = AgentSpec(id="c_tool", name="Tool", role="[파견] x", employment=Employment.contract,
-                         contract=ContractInfo(hired_at=now, expires_at=now + 60, external_services=services))
+                         contract=ContractInfo(hired_at=now, expires_at=now + 60, external_services=services,
+                                               status=status))
     core = AgentSpec(id="analyst", name="Analyst", role="analysis")
     return [contract.summary(), core.summary()]
 
@@ -282,7 +283,7 @@ def spawned(monkeypatch):
     return seen
 
 
-def _contract_runner(tmp_path, monkeypatch, external: bool):
+def _contract_runner(tmp_path, monkeypatch, external: bool, status: str = "active"):
     settings = _settings()
     for name in ("state_dir", "workspace_root", "agents_dir", "talent_dir"):
         setattr(settings.runner, name, str(tmp_path / name))
@@ -290,7 +291,8 @@ def _contract_runner(tmp_path, monkeypatch, external: bool):
     services = [{"host": "api.example.org", "what_is_sent": "sequences"}] if external else []
     staff = AgentSpec(id="c_tool", name="Tool", role="[파견] x", engine=Engine.codex, builtin_mcp=[],
                       employment=Employment.contract,
-                      contract=ContractInfo(hired_at=0, expires_at=time.time() + 60, external_services=services))
+                      contract=ContractInfo(hired_at=0, expires_at=time.time() + 60, external_services=services,
+                                            status=status))
     runner = Runner(settings)  # run_forever is not called: Windows refuses restricted zones only there
     monkeypatch.setattr(runner.registry, "get", lambda _id: staff)
     return runner
@@ -593,3 +595,96 @@ def test_a_zip_only_mcp_is_hashed_recorded_and_rechecked_on_rehire(tmp_path):
     archive.write_bytes(b"PK\x03\x04 rebuilt")
     runner.registry.release(spec.id)
     assert runner.registry.rehire("scanpy", days=7).contract.verification["rehire_changed"] == ["mcp"]
+
+
+# ---------------- PR #522 review round 2: probation gets no work, hosts are bare hostnames ----------------
+
+@pytest.mark.parametrize("host", ["api.example.org", "API.Example.org", "api.example.org:8443", "10.0.0.5:9000",
+                                  "[2001:db8::1]:443"])
+def test_a_bare_host_or_host_port_is_kept(host):
+    from labhq.models import ExternalService
+
+    assert ExternalService(host=host, what_is_sent="x").host == host.lower()
+
+
+@pytest.mark.parametrize("host", ["https://api.example.org?key=SECRET", "user:pass@api.example.org",
+                                  "api.example.org/v1/token-abc", "api.example.org#frag", "api.example.org:99999",
+                                  "api example.org", ""])
+def test_a_url_or_credential_shaped_host_is_rejected_by_the_contract(host):
+    from labhq.models import ExternalService
+
+    with pytest.raises(ValueError, match="bare hostname"):
+        ExternalService(host=host, what_is_sent="x")
+    with pytest.raises(ValueError):
+        ContractInfo(hired_at=0, expires_at=1, external_services=[{"host": host, "what_is_sent": "x"}])
+
+
+@pytest.mark.parametrize("raw,stored", [
+    ("https://user:SECRET@api.example.org:8443/v1?key=SECRET#x", "api.example.org:8443"),
+    ("https://api.example.org?key=SECRET", "api.example.org"),
+    ("not a host at all ?key=SECRET", "unknown.invalid"),
+])
+def test_recruitment_keeps_only_the_hostname_and_never_the_secret(tmp_path, raw, stored):
+    built = _skill(tmp_path / "build" / "skill")
+    spec, runner = _recruit(tmp_path, _offer(built, external_services=[{"host": raw, "what_is_sent": "ids"}]))
+    assert [s.host for s in spec.contract.external_services] == [stored]
+    saved = (tmp_path / "talent" / "scanpy" / "contract.yaml").read_text(encoding="utf-8")
+    events = json.dumps([e.data for e in runner.events], ensure_ascii=False)
+    assert "SECRET" not in saved and "SECRET" not in events and "SECRET" not in spec.system_prompt
+    assert any("bare hostname" in note for note in spec.contract.verification["provenance_notes"])
+
+
+def test_a_contract_saved_without_external_services_still_loads(tmp_path):
+    (tmp_path / "agents" / "contract").mkdir(parents=True)
+    (tmp_path / "agents" / "core").mkdir(parents=True)
+    (tmp_path / "agents" / "contract" / "c_old.yaml").write_text(yaml.safe_dump({
+        "id": "c_old", "name": "Old", "role": "[파견] x", "employment": "contract",
+        "contract": {"kind": "consultant", "hired_at": time.time(), "expires_at": time.time() + 3600,
+                     "status": "active"}}), encoding="utf-8")
+    reg = Registry(tmp_path / "agents", tmp_path / "talent")
+    reg.load()
+    assert reg.get("c_old").contract.external_services == []
+
+
+@pytest.mark.asyncio
+async def test_the_runner_gives_a_probation_contract_no_work(tmp_path, monkeypatch, spawned):
+    runner = _contract_runner(tmp_path, monkeypatch, external=False, status="probation")
+    result = await runner.run_task(Task(agent_id="c_tool", request_id="r", prompt="fetch public GEO counts",
+                                        meta={"kind": "direct"}))
+    assert not result.ok and "수습" in result.error and "contract activate" in result.error
+    assert spawned == []
+
+
+@pytest.mark.asyncio
+async def test_a_probation_contract_answers_no_consult(tmp_path):
+    hub, calls = _ask_hub(tmp_path)
+    hub.agents["c_plain"] = {**_roster(False, status="probation")[0], "id": "c_plain"}
+    ask = _ask("colleague:c_plain", False, tmp_path)
+    try:
+        await hub.orchestrator.answer_ask(ask, "runner")
+        assert calls == [] and "수습" in hub.store.get("ask", ask.id)["answer"]["reason"]
+    finally:
+        hub.store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_direct_request_to_a_probation_contract_is_refused_but_it_stays_on_the_roster(tmp_path):
+    import httpx
+
+    from labhq.gateway.server import create_app
+
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    app = create_app(settings)
+    hub = app.state.hub
+    hub.agents = {"c_tool": _roster(False, status="probation")[0], "c_ok": {**_roster(False)[0], "id": "c_ok"}}
+    headers = {"Authorization": f"Bearer {settings.gateway.client_token}"}
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gw") as client:
+            refused = await client.post("/api/requests", headers=headers,
+                                        json={"text": "자문", "mode": "direct", "agent_id": "c_tool"})
+            roster = await client.get("/api/agents", headers=headers)
+        assert refused.status_code == 409 and "수습" in refused.json()["detail"]
+        assert {a["id"]: a["contract_status"] for a in roster.json()}["c_tool"] == "probation"
+    finally:
+        hub.store.close()

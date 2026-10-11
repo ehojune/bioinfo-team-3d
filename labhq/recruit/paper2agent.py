@@ -380,12 +380,15 @@ class Recruitment:
             notes.append("source_commit missing for a code repository")
         services = []
         for raw in offer.get("external_services") or []:
-            try:
-                services.append(ExternalService.model_validate(raw))
-            except ValueError:  # kept, never dropped: a lost declaration would open restricted steps to this hire
-                host = raw.get("host") if isinstance(raw, dict) else raw
-                services.append(ExternalService(host=str(host or "unknown host"), what_is_sent="not stated"))
-                notes.append(f"external_services entry malformed, kept as declared: {short(raw, 80)}")
+            # Kept, never dropped: a lost declaration would open restricted steps to this hire. The raw entry is not
+            # echoed into a note, since a URL host may carry a credential.
+            entry = raw if isinstance(raw, dict) else {"host": raw}
+            host, note = provenance.service_host(entry.get("host"))
+            sent = str(entry.get("what_is_sent") or "").strip()
+            services.append(ExternalService(host=host, what_is_sent=sent or "not stated"))
+            notes += [note] if note else []
+            if not sent:
+                notes.append(f"external_services {host}: what_is_sent not stated")
         if offer.get("mcp_env_required") and not services:
             notes.append("mcp_env_required names keys but external_services is empty; check whether the tools call "
                          "an outside API")

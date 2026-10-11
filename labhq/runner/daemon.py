@@ -45,7 +45,7 @@ from ..private_paths import ENABLED_ENV_VAR as PRIVATE_ENABLED_ENV, ENV_VAR as P
     staff_claude_project_dirs, staff_codex_homes
 from ..pipeline_pr import collect_pipeline_submission, pipeline_rejection
 from ..quota import quota_reset_instant
-from ..recruit.provenance import external_service_refusal, restricted_task
+from ..recruit.provenance import external_service_refusal, not_yet_active, probation_refusal, restricted_task
 from ..registry import Registry
 from ..settings import MODEL_NAME_PATTERN, Settings, write_staff_config
 from ..store import StateStore
@@ -877,8 +877,10 @@ class Runner:
         agent = self._resolve_agent(task)
         read_only = is_read_only_task(task.meta)
         refusal = read_only_refusal(agent.id, agent.engine) if read_only else None
-        # Staff that send data to external services never take restricted inputs (#424); the plan guard is first.
-        refusal = refusal or external_service_refusal(agent, task, self.s)
+        # A contract hire works only once active, and staff that send data to external services never take restricted
+        # inputs (#424); the gateway refuses both first.
+        refusal = (refusal or (probation_refusal(agent.id) if not_yet_active(agent) else None)
+                   or external_service_refusal(agent, task, self.s))
         if refusal:  # the gateway refuses first; this holds for any other sender and after force_engine
             result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=refusal)
             base = dict(task_id=task.id, agent_id=agent.id, request_id=task.request_id)

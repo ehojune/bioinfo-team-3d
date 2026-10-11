@@ -600,6 +600,7 @@ function ago(ts) {
   return `${Math.round(s / 86400)}일 전`;
 }
 function contractLeft(a) {
+  if (a.contract_status === 'probation') return '수습 · PI 승인 대기';  // no work until activated (#424)
   if (!a.expires_at) return '파견직';
   const days = Math.ceil((a.expires_at - now()) / 86400);
   return days > 0 ? `계약 ${days}일 남음` : '계약 만료';

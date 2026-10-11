@@ -43,8 +43,8 @@ from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARC
                                  validate_research_result, with_pack_refs)
 from ..research import continuation as research_continuation
 from ..security import redact_tokens
-from ..recruit.provenance import (consult_refusal, external_contract_conflicts, external_hosts, restricted_input_steps,
-                                  touches_restricted)
+from ..recruit.provenance import (consult_refusal, external_contract_conflicts, external_hosts, not_yet_active,
+                                  probation_refusal, restricted_input_steps, touches_restricted)
 from ..research.packs import (assess_pack_applicability, configured_packs, normalize_pack_keys, pack_refs,
                               pack_snapshot, packs_for_snapshot, render_pack_catalog, render_pack_review,
                               select_applied_packs, select_legacy_applied_packs)
@@ -2592,6 +2592,10 @@ class Orchestrator:
         # out (#424). The runner's token says so; the request's own text and folders count as well.
         restricted = ask.source_restricted or self._request_restricted(ask.request_id)
         hosts = external_hosts(self.hub.agents.get(routed) or {})
+        if not_yet_active(self.hub.agents.get(routed) or {}):
+            await self.hub.resolve_ask(ask, runner_id, ask_result(
+                reason=probation_refusal(routed), **{"from": "labhq", "routed_to": routed}))
+            return
         if restricted and hosts:
             await self.hub.resolve_ask(ask, runner_id, ask_result(
                 reason=consult_refusal(hosts), **{"from": "labhq", "routed_to": routed}))
@@ -4535,7 +4539,8 @@ class Orchestrator:
                              ok=res.ok and rid not in self.budget_denials)
                 return
 
-            all_agents = list(self.hub.agents.values())
+            # A contract hire on probation stays on the web roster as 수습 but is not offered to the CSO (#424).
+            all_agents = [a for a in self.hub.agents.values() if not not_yet_active(a)]
             known = {a["id"] for a in all_agents}
             # The configured orchestration agents, not only the default ids, stay out of the worker roster.
             orchestration = set(ORCHESTRATION_ROLES) | {

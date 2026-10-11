@@ -66,9 +66,24 @@ class CliSpec(BaseModel):
     env: dict[str, str] = {}
 
 
+# A bare hostname or IP, optionally :port. Never a URL: a scheme, user:password@, path, query or fragment could carry
+# a credential into the contract YAML, roster events and web cards (#424, PR #522 review).
+SERVICE_HOST = re.compile(r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*"
+                          r"|\[[0-9a-f:.]+\])(?::[0-9]{1,5})?")
+
+
 class ExternalService(BaseModel):
     host: str
     what_is_sent: str
+
+    @field_validator("host")
+    @classmethod
+    def bare_host(cls, value: str) -> str:
+        host = value.strip().lower()
+        port = host.rsplit(":", 1)[1] if re.search(r":[0-9]+$", host) else None
+        if not SERVICE_HOST.fullmatch(host) or (port is not None and not 0 < int(port) < 65536):
+            raise ValueError("external_services host must be a bare hostname or host:port, not a URL")
+        return host
 
 
 SOURCE_COMMIT = re.compile(r"[0-9a-f]{40}")

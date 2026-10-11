@@ -11,14 +11,16 @@ function statusOf(state, agent = {}) {
 // #424: what a contract hire was built from and where its tools send data; '' for core staff or an older roster.
 export function provenanceText(agent = {}) {
   const p = agent.contract_provenance;
-  if (!p) return '';
+  // On probation the hire is on the roster but gets no work until the PI runs `labhq contract activate`.
+  const hold = agent.contract_status === 'probation' ? ['수습(PI 승인 대기)'] : [];
+  if (!p) return hold.join('');
   const hosts = (p.external_services || []).map(s => s && s.host).filter(Boolean);
   const parts = [p.source_commit ? `commit ${String(p.source_commit).slice(0, 7)}` : 'commit 미상',
     p.code_license ? `code ${p.code_license}` : 'license 미상'];
   if (p.weights_license) parts.push(`weights ${p.weights_license}`);
   parts.push(hosts.length ? `외부 전송 ${hosts.join(', ')}` : '외부 전송 없음');
   if ((p.rehire_changed || []).length) parts.push(`재고용 때 바뀜: ${p.rehire_changed.join(', ')}`);
-  return parts.join(' · ');
+  return [...hold, ...parts].join(' · ');
 }
 
 function makeCard(agent) {

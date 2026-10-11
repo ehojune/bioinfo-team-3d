@@ -493,6 +493,8 @@ Paper2Agent 설치 갱신은 두 engine의 새 skill 복사를 마친 뒤 설치
 3. **수습** — labhq가 납품된 MCP 서버를 직접 띄워 툴 목록을 확인 (자문형은 스킬 존재 확인). Paper2Agent가 돌려준
    `offer_status`가 초안 상태(`mechanical_failure`·`unreviewed`·`unresolved_discrepancies`·`partial`·`blocked`)면
    툴이 떠도 `probation`에 남고 이유가 `verification.probation_reason`에 적힙니다. 둘 다 통과하면 `active`.
+   `probation` 파견직은 명단·직원 카드에 `수습(PI 승인 대기)`로 보이지만 CSO 배정·직접 요청·상담에서 빠지고 러너도 실행을
+   거부합니다. PI가 `labhq contract activate c_<slug>`로 승인하면 일을 맡습니다.
 4. **계약서** — `agents/contract/c_<slug>.yaml`. 비밀값은 `${ENV}` 자리표시자만 저장. 명단에 `[파견직]` 태그와 툴 목록이
    올라가서 CSO가 다음 계획부터 바로 배정합니다. 채용물 고정(#424) 항목도 함께 남습니다.
 
@@ -500,7 +502,7 @@ Paper2Agent 설치 갱신은 두 engine의 새 skill 복사를 마친 뒤 설치
    |---|---|
    | `source_commit` | 오퍼레터. 40자리 hex가 아니면 버리고 `verification.provenance_notes`에 적음 |
    | `code_license` · `weights_license` | 오퍼레터 |
-   | `external_services[{host, what_is_sent}]` | 오퍼레터. 도구가 실행 중 접속하는 호스트와 보내는 것 |
+   | `external_services[{host, what_is_sent}]` | 오퍼레터. 도구가 실행 중 접속하는 호스트와 보내는 것. host는 `hostname[:port]`만 받고, URL로 오면 hostname만 남기고 나머지(인증·경로·query)는 버림 |
    | `skill_sha256` · `mcp_sha256` · `mcp_path` | labhq가 직접 계산(`plugin_provenance`와 같은 내용·mode hash). `.venv`·`__pycache__` 등은 제외. MCP가 ZIP으로만 오면 그 파일을 재고, 잰 대상은 `mcp_path`에 남김 |
 
    직원 카드와 채용 피드에 commit 앞 7자리·license·외부 전송 호스트가 보입니다. `labhq talent`도 commit과 외부 전송을 출력합니다.
