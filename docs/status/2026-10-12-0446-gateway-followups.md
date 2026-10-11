@@ -8,8 +8,8 @@
   - 취소한 요청의 이어 묻기(10): gateway가 409로 거절하고 웹은 입력창을 숨긴다. 취소한 요청은 모든 turn을 거절해서 이어 묻기가 늘 실패로 끝났다.
   - 취소 기록 창(12): 요청에 `cancelling`을 두고 terminal record와 같은 commit에서 지운다. 그동안 `/api/shutdown-readiness`의 `finishing`(stage `cancel`)에 올라 `labhq down`이 거부한다. 그 전에 gateway가 멈추면 다음 시작 때 보고서와 terminal record를 마저 쓰고, 그때까지 결과를 보내지 않은 turn은 미집계로 센다.
   - 요청 묶음 복사(14): 끝나지 않은 `terminal_tasks`도 `finishing`(stage `bundle`)에 올린다. CLI는 두 경우를 `마무리 중인 요청:` 줄로 보여 준다. 이 키를 모르는 이전 CLI도 `ready: false`라 거부한다.
-  - 러너 대기(13): 러너가 맡던 직원 없이 다시 붙으면 그 직원을 기다리던 단계가 다시 판정한다. 기다릴 러너가 없으면 24시간을 채우지 않고 "연결된 러너 중 X 직원을 맡은 곳이 없습니다"로 바로 끝난다. 요청의 첫 직원(CSO·direct) 대기도 같다.
+  - 러너 대기(13): 러너가 붙거나 명단을 바꾸면 러너를 기다리던 단계가 모두 다시 판정한다. 기다릴 러너가 없으면 24시간을 채우지 않고 "연결된 러너 중 X 직원을 맡은 곳이 없습니다"로 바로 끝난다. 러너가 맡던 직원 없이 다시 붙은 경우와, 저장된 명단이 없는 gateway에서 러너가 없어 기다리던 첫 직원(CSO·direct)을 맡지 않는 러너가 먼저 붙은 경우가 해당한다(뒤엣것은 PR #530 리뷰 P2).
   - `docs/manual.md`: down, 러너 대기, 이어 묻기, 요청 취소, recruit 줄.
-- 실행한 것: 새 test 10개(lifecycle 8·CLI 1·web 1)와 readiness 결과를 통째로 비교하는 기존 test 1개(`finishing` 추가)가 main 코드에서 실패하고 이 branch에서 통과했다. 전체 `pytest -q`(Windows) 5043 passed·64 skipped. `scripts/check_public.sh`, `scripts/patch_notes.py check` 통과.
-- 미해결: 시작할 때 끊긴 요청 묶음을 다시 만드는 것(14의 선택 항목)은 하지 않았다. 묶음 정보가 없는 옛 요청까지 다시 복사하지 않으려면 별도 표시가 필요하다. 강제 종료(`down --force`)나 crash 때는 여전히 묶음이 빠질 수 있다.
+- 실행한 것: 새 test 11개(lifecycle 9·CLI 1·web 1)와 readiness 결과를 통째로 비교하는 기존 test 1개(`finishing` 추가)가 main 코드에서 실패하고 이 branch에서 통과했다. 전체 `pytest -q`(Windows) 5044 passed·64 skipped. `scripts/check_public.sh`, `scripts/patch_notes.py check` 통과.
+- 미해결: 시작할 때 끊긴 요청 묶음을 다시 만드는 것(14의 선택 항목)은 하지 않았다. 묶음 정보가 없는 옛 요청까지 다시 복사하지 않으려면 별도 표시가 필요하다. 강제 종료(`down --force`)나 crash 때는 여전히 묶음이 빠질 수 있다. 처음 켠 gateway에서 다른 직원만 맡은 러너가 먼저 붙으면, 그 직원을 맡을 러너가 뒤에 붙을 예정이어도 첫 요청은 바로 끝난다. 맡은 러너가 없는 직원은 바로 실패한다는 R15 판정과 같다.
 - 근거: `labhq/gateway/server.py`, `labhq/models.py`, `labhq/recruit/paper2agent.py`, `labhq/cli.py`, `labhq/web/index.html`, `tests/test_request_lifecycle.py`, `tests/test_cli_launch.py`, `tests/web_followup.cjs`, `docs/manual.md`.
