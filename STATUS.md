@@ -4,6 +4,27 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 요약
+
+- direct 응답이 기존 `declare_output_types` 어휘로 실제 `outputs/` 산출의 데이터·형식 종류를 함께 선언합니다.
+- runner가 기존 파일 상한·허용 구역·정규 파일 검사 뒤 해시와 종류 기록을 남기며, 요청 묶음·RO-Crate·`labhq verify`의 기존 direct 산출 경로를 그대로 씁니다.
+- 두 번째 direct 요청의 재사용 후보는 첫 산출에 종류 선언이 있을 때만 잡히고, 없으면 `type_unknown`을 유지합니다.
+
+## 검증
+
+- `origin/main` + 새 회귀검사: 2 failed, 52 passed, 2 skipped
+- 관련 semantics·bundle·verify 회귀: 721 passed, 6 skipped
+- Windows 전체 pytest: 5020 passed, 64 skipped
+- `bash scripts/check_public.sh`: 통과
+
+## 문서
+
+- `docs/manual.md`: 104,097자 → 105,268자(+1,171자)
+
+Closes #221
+
+🤖 Generated with Codex (gpt-5) for the labhq dev lead
+
 ## 2026-10-12 · 승인 게이트: 백그라운드 셸 도구 기본 허용 (#518 후속)
 
 - 결론: #518 뒤 분류되지 않은 도구는 PI에게 묻는다. Claude 직원이 백그라운드로 돌린 Bash의 출력을 읽거나 멈추는 도구(BashOutput·KillShell, 새 판 TaskOutput·TaskStop)도 그렇게 돼, 긴 분석에서 의미 없는 카드가 쌓일 수 있었다. 이 넷을 기본 허용 목록에 넣었다. 셸 명령 자체는 이미 Bash 게이트를 거쳤다.

@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 03:23 | [`759458d`](https://github.com/ehojune/bioinfo-team-3d/pull/523/commits/759458d) | direct 응답의 실제 산출 종류를 기존 어휘로 기록하고 semantics 재사용 판정에 연결 |
 | 02:46 | [`e2a0906`](https://github.com/ehojune/bioinfo-team-3d/pull/520/commits/e2a0906) | labhq init이 #518 템플릿 목록을 그대로 적은 설정도 load 때 백그라운드 셸 도구를 받는다(#520 리뷰). |
 | 02:37 | [`2381232`](https://github.com/ehojune/bioinfo-team-3d/pull/520/commits/2381232) | 승인 게이트가 백그라운드 셸 출력을 읽거나 멈추는 BashOutput·KillShell·TaskOutput·TaskStop을 기본 허용한다(#518 후속). |
 | 02:28 | [`fa17c0b`](https://github.com/ehojune/bioinfo-team-3d/pull/519/commits/fa17c0b) | lock의 실제 OS 판정을 테스트용 sys.platform 값과 분리해 Linux CI에서도 올바른 fcntl 경로를 쓴다. |
