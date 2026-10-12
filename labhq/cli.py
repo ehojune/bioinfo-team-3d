@@ -695,10 +695,28 @@ def _shutdown_readiness(s: Settings) -> dict | str | None:
 
 
 def _gateway_is_local(s: Settings) -> bool:
+    """Only call a gateway remote when its URL resolves away from this PC.
+
+    The bind host is not its identity (a local TLS proxy may use any name).
+    Failed address discovery is ambiguous, so a responding gateway must still
+    make `down` report that it could not stop an unrecorded process.
+    """
     from urllib.parse import urlsplit
 
-    host = urlsplit(s.gateway.url).hostname or ""
-    return host in LOOPBACK_HOSTS or host == s.gateway.host
+    host = (urlsplit(s.gateway.url).hostname or "").lower().rstrip(".")
+    machine = socket.gethostname().lower().rstrip(".")
+    if not host or host in LOOPBACK_HOSTS or host in {machine, "0.0.0.0", "::"}:
+        return True
+    try:
+        local_addresses = {ipaddress.ip_address(row[4][0].split("%")[0])
+                           for row in socket.getaddrinfo(machine, None)}
+        target_addresses = {ipaddress.ip_address(row[4][0].split("%")[0])
+                            for row in socket.getaddrinfo(host, None)}
+    except (OSError, ValueError):
+        return True
+    if not local_addresses or not target_addresses:
+        return True
+    return bool(local_addresses & target_addresses) or any(address.is_loopback for address in target_addresses)
 
 
 def _unrecorded_process_still_running(s: Settings, *, timeout: float) -> str | None:

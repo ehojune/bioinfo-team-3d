@@ -730,6 +730,33 @@ def _quiet_down(monkeypatch) -> None:
     monkeypatch.setattr(cli, "_DOWN_RECHECK_SECONDS", 0.0)
 
 
+@pytest.mark.parametrize("host", ["workstation", "192.0.2.15", "proxy.example", "unknown.example"])
+def test_down_checks_url_identity_for_a_wildcard_bound_gateway(tmp_path, monkeypatch, capsys, host):
+    settings = Settings.load(str(_config(tmp_path)))
+    settings.gateway.host = "0.0.0.0"
+    settings.gateway.url = f"wss://{host}:8787"
+    monkeypatch.setattr(cli.socket, "gethostname", lambda: "workstation")
+
+    def addresses(name, port):
+        if name == "unknown.example":
+            raise cli.socket.gaierror("not resolved")
+        return [(cli.socket.AF_INET, cli.socket.SOCK_STREAM, 6, "", ("192.0.2.15", 0))]
+
+    monkeypatch.setattr(cli.socket, "getaddrinfo", addresses)
+    _quiet_down(monkeypatch)
+    monkeypatch.setattr(cli, "_health", lambda _: {"service": "labhq gateway", "runners": []})
+    with pytest.raises(SystemExit) as stopped:
+        cli._down(settings)
+    assert stopped.value.code == 2
+    assert "PID 기록이 없어 종료하지 못했습니다" in capsys.readouterr().err
+
+
+def test_gateway_unknown_local_interfaces_are_conservative(tmp_path, monkeypatch):
+    settings = _remote_gateway_settings(tmp_path)
+    monkeypatch.setattr(cli.socket, "getaddrinfo", lambda *args: (_ for _ in ()).throw(cli.socket.gaierror()))
+    assert cli._gateway_is_local(settings)
+
+
 def test_down_on_a_runner_only_pc_is_not_blamed_for_the_gateway_on_the_other_pc(tmp_path, monkeypatch, capsys):
     settings = _remote_gateway_settings(tmp_path)
     _write_process_record(settings, "runner", 4244, "runner-generation")

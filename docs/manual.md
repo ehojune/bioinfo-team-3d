@@ -117,6 +117,8 @@ Windows wrapper는 `.venv\Scripts\python.exe`를 직접 실행하므로 venv 활
 
 **PC를 다시 켰을 때**
 
+gateway의 로컬 여부는 URL hostname과 이 PC 주소로 판단합니다. `0.0.0.0` bind와 TLS proxy를 함께 써도 확인하며, 주소를 확인하지 못하면 로컬 가능성으로 봅니다.
+
 ```powershell
 cd <labhq 저장소>
 .\labhq -c config\labhq.yaml up

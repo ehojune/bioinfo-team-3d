@@ -11,6 +11,7 @@
 
 ## 확인
 
+- 봇 P1 후속: bind 주소 대신 URL hostname과 이 PC hostname·인터페이스 주소를 비교합니다. 주소 확인 실패는 로컬 가능성으로 보고 응답 중이면 exit 2입니다. 회귀 5건은 수정 전 실패, 관련 test는 51 passed·1 skipped입니다.
 - 새 test 15건: `tests/test_cli_launch.py` 9건(taskkill 2건, Windows 전용 디코딩 1건, `down` 6건), `tests/test_cli_bundle_wait.py` 6건(실제 `Hub.schedule_terminal`이 커밋하는 이벤트 순서로 `send`·`watch`를 구동). 수정 전 `labhq/cli.py`로 돌리면 11건이 실패합니다. 동작 때문에 실패하는 것은 4건(taskkill 인자·None 처리 1, 기록 없는 gateway 1, 묶음 대기 `send`·`watch` 2)이고 나머지 7건은 새 상수가 없어 먼저 실패합니다.
 - 전체 pytest(Windows, `--basetemp`, xdist 없음): 5466 passed, 66 skipped, 8분 50초.
 - 기존 `test_down_refuses_active_work_and_force_terminates_only_recorded_trees`가 이 PC의 실제 8787 gateway에 닿아 401로 실패해서 `_health`를 막았습니다.
