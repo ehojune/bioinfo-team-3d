@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 14:08 | [`7fa7718`](https://github.com/ehojune/bioinfo-team-3d/pull/536/commits/7fa7718) | Windows CI의 cp1252 console에서도 단계와 실패 출력을 UTF-8 한 줄로 보존한다 |
+| 14:02 | [`6f496fc`](https://github.com/ehojune/bioinfo-team-3d/pull/536/commits/6f496fc) | README 설치 절을 더 짧게 고쳐 전체와 해당 절의 바이트 수를 종전보다 줄인다 |
+| 13:40 | [`956485f`](https://github.com/ehojune/bioinfo-team-3d/pull/536/commits/956485f) | 새 clone과 venv에서 mock 요청·묶음·verify·정리까지 검사하고 Windows CI에서 돌린다 |
 | 13:37 | [`c087aaf`](https://github.com/ehojune/bioinfo-team-3d/pull/537/commits/c087aaf) | 묶음 대기 표시로 중단된 요청 묶음을 시작 때 한 번 복구 |
 | 13:36 | [`9b8c6a3`](https://github.com/ehojune/bioinfo-team-3d/pull/537/commits/9b8c6a3) | gateway 중단 뒤 요청 묶음 복구 회귀 5건을 추가 |
 | 05:43 | [`3e0c34d`](https://github.com/ehojune/bioinfo-team-3d/pull/534/commits/3e0c34d) | 연구 lane #527 후속: 기다리는 마지막 보고서 turn의 예산 면제, 차수 없는 예전 확인 질문 답, gateway 이어 가기 되돌리기 판정을 바로잡음 |
