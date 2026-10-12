@@ -6,3 +6,6 @@ rows:
 - sha: 6f496fc
   at: 2026-10-12 14:02
   text: "README 설치 절을 더 짧게 고쳐 전체와 해당 절의 바이트 수를 종전보다 줄인다"
+- sha: 7fa7718
+  at: 2026-10-12 14:08
+  text: "Windows CI의 cp1252 console에서도 단계와 실패 출력을 UTF-8 한 줄로 보존한다"
