@@ -48,7 +48,9 @@ def test_ask_contract_and_hard_stops_are_code_enforced():
     assert hard_stop_kind(ask.model_copy(update={"question": "새 package를 설치해도 되나요?"})) == "installation"
     assert hard_stop_kind(ask.model_copy(update={"question": "통제 데이터 구역 원본을 읽어도 되나요?"})) == "data_zone"
     assert hard_stop_kind(ask.model_copy(update={"question": "예산 상한을 넘겨 계속할까요?"})) == "budget_cap"
-    assert hard_stop_kind(ask.model_copy(update={"question": "요청 범위 밖 분석을 추가할까요?"})) == "out_of_scope"
+    assert hard_stop_kind(ask.model_copy(update={"question": "요청 범위 밖 분석을 추가할까요?"})) is None
+    assert hard_stop_kind(ask.model_copy(update={"question": "요청 범위 밖 분석을 추가할까요?"}),
+                          ["out_of_scope"]) == "out_of_scope"
     assert hard_stop_kind(ask.model_copy(update={"question": "결과 폴더를 재귀 삭제할까요?"})) == "destructive"
     assert hard_stop_kind(ask.model_copy(update={"question": "May I cross the restricted data zone?"})) == "data_zone"
     assert hard_stop_kind(ask.model_copy(update={"question": "The cost cap was exceeded; continue?"})) == "budget_cap"
@@ -57,6 +59,35 @@ def test_ask_contract_and_hard_stops_are_code_enforced():
         AskRequest(task_id="t", agent_id="a", to="cso", question="x" * 701, why_blocked="blocked")
     with pytest.raises(ValueError):
         AskRequest(task_id="t", agent_id="a", to="unknown", question="x", why_blocked="blocked")
+
+
+@pytest.mark.parametrize("question", [
+    "Which output format should the DE table use, TSV or CSV?",
+    "Should I drop the 3 low-quality samples before DE?",
+    "outputs/de.tsv exists from the previous attempt; overwrite it?",
+])
+def test_ordinary_method_and_output_questions_are_not_destructive_hard_stops(question):
+    ask = AskRequest(task_id="task_a", agent_id="analyst", request_id="req_a", to="cso",
+                     question=question, why_blocked="The analysis method needs a choice")
+    assert hard_stop_kind(ask) is None
+
+
+@pytest.mark.asyncio
+async def test_routine_cso_question_keeps_the_short_wait_instead_of_hibernating(monkeypatch):
+    import labhq.runner.approvals as approvals
+
+    async def noop(_request):
+        return None
+
+    monkeypatch.setitem(approvals.ASK_WAIT_SECONDS, "cso", 0.2)
+    broker = Broker(0, noop, noop, noop, on_ask=noop)
+    ask = AskRequest(task_id="task_a", agent_id="analyst", request_id="req_a", to="cso",
+                     question="Which output format should the table use?", why_blocked="A method choice is needed")
+    waiting = asyncio.create_task(broker.request_ask(ask))
+    await asyncio.sleep(0.02)
+    assert not waiting.done()
+    assert broker.resolve_ask(ask.id, {"status": "answered", "answer": "TSV"})
+    assert (await waiting)["answer"] == "TSV"
 
 
 @pytest.mark.parametrize(

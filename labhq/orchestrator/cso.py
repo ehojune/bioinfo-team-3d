@@ -1021,6 +1021,13 @@ def merged_turn(first: TaskResult, later: TaskResult) -> TaskResult:
     })
 
 
+def merged_workspace_rerun(first: TaskResult | None, later: TaskResult) -> TaskResult:
+    """Keep unreported files when another task id reuses the same step folder."""
+    if first and first.workdir and later.workdir == first.workdir:
+        return merged_turn(first, later)
+    return later
+
+
 def reference_meta(request: dict | None) -> dict[str, list[str]]:
     """Path references travel as read-only directories; the runner re-checks them against its roots."""
     dirs = reference_dirs((request or {}).get("references"))
@@ -2540,9 +2547,7 @@ class Orchestrator:
                 "from": "labhq", "routed_to": "cso", "remaining_asks": 0}))
             return
 
-        hard_stops = (self.hub.s.policy.bioinfo_agent.hard_stops
-                      if ask.agent_id == "bioinfo-agent" else None)
-        stop = hard_stop_kind(ask, hard_stops)
+        stop = hard_stop_kind(ask, self.hub.s.policy.bioinfo_agent.hard_stops)
         requested = ask.to
         # Who this ask went to before a gateway restart. The roster lacks that employee until its
         # runner reconnects, and the runner may still be answering it (#113).
@@ -2948,10 +2953,11 @@ class Orchestrator:
                     previous_workdir = res.workdir or previous_workdir
                     if res.session_id and self.hub.supports_resume(current.agent_id):
                         previous_session = res.session_id
+                    res = merged_workspace_rerun(previous_result, res)
                     if kind == "environment":  # the record the step result, its event and the report show (#35)
                         res = res.model_copy(update={"environment": environment_problem(res, engine)})
                 if res.tool_errors:
-                    tool_errors.extend(res.tool_errors)
+                    tool_errors = list(dict.fromkeys([*tool_errors, *res.tool_errors]))
                 if tool_errors:  # a retry that succeeds keeps the earlier attempts' failed lookups (PR #363 review)
                     res = res.model_copy(update={"tool_errors": list(tool_errors)})
                 # Audit even failed/exceptional attempts. Keep answered asks across
@@ -3029,9 +3035,10 @@ class Orchestrator:
                                  **({"workdir": res.workdir} if res.workdir else {})},
                         "resume_session_id": res.session_id if can_resume else None,
                     })
-                    res = await dispatch_with_retry(current, max_attempts)
+                    earlier = res
+                    res = merged_workspace_rerun(earlier, await dispatch_with_retry(current, max_attempts))
                     tool_errors.extend(res.tool_errors)
-                    res = res.model_copy(update={"tool_errors": list(tool_errors)})
+                    res = res.model_copy(update={"tool_errors": list(dict.fromkeys(tool_errors))})
                     continue
                 recovered = getattr(self.hub, "login_recovered", None)
                 if recovered is not None:
@@ -3070,9 +3077,11 @@ class Orchestrator:
                              **({"workdir": res.workdir} if res.workdir else {})},
                     "resume_session_id": res.session_id if can_resume else None,
                 })
-                res = await dispatch_with_retry(current, max_attempts)  # its first gate rechecks the budget
+                earlier = res
+                res = merged_workspace_rerun(
+                    earlier, await dispatch_with_retry(current, max_attempts))  # its first gate rechecks the budget
                 tool_errors.extend(res.tool_errors)
-                res = res.model_copy(update={"tool_errors": list(tool_errors)})
+                res = res.model_copy(update={"tool_errors": list(dict.fromkeys(tool_errors))})
 
         res = await dispatch_turn(task, max_attempts=task.meta.get("max_attempts"), start=initial_attempt)
         read_only = is_read_only_task(task.meta)
@@ -3517,6 +3526,7 @@ class Orchestrator:
                     "context": ""})
             async with sem:
                 outcome = await self.run_step(task)
+                outcome = merged_workspace_rerun(previous, outcome)
                 if decision and previous and previous.tool_errors:
                     outcome = outcome.model_copy(update={"tool_errors": list(dict.fromkeys([
                         *previous.tool_errors, *outcome.tool_errors,

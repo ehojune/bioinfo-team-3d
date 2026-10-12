@@ -183,6 +183,36 @@ def test_plain_noninstall_commands_remain_allowed(tmp_path, command):
     assert denial(tmp_path, command) is None
 
 
+@pytest.mark.parametrize("command", [
+    '$py = ".\\.venv\\Scripts\\python.exe"; & $py scripts\\de.py',
+    '$env:PYTHONIOENCODING = "utf-8"; python scripts\\de.py',
+    "$ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest https://example.org/x -OutFile data\\x.gz",
+    '$out = "outputs\\de"; python scripts\\a.py --out $out',
+    '$df = Import-Csv outputs\\x.csv; $df.Count',
+    '$env:PYTHONPATH = ".\\.pylib"; python scripts\\de.py',
+])
+def test_powershell_assignments_without_installers_remain_allowed(tmp_path, command):
+    assert denial(tmp_path, command, environment_step=False, tool="PowerShell") is None
+
+
+@pytest.mark.parametrize("command", [
+    "PYTHONPATH=./.pylib:$PYTHONPATH python scripts/de.py",
+    'PYTHONPATH="$PWD/.pylib" python scripts/de.py',
+])
+def test_documented_bash_pythonpath_prefix_remains_allowed(tmp_path, command):
+    assert denial(tmp_path, command, environment_step=False) is None
+
+
+@pytest.mark.parametrize("command", [
+    '$installer = "pip"; & $installer install scanpy',
+    '$command = "pip install scanpy"; Invoke-Expression $command',
+    '$py = ".\\.venv\\Scripts\\python.exe"; & $py -m pip install scanpy',
+])
+def test_powershell_assignments_cannot_hide_installers(tmp_path, command):
+    message = denial(tmp_path, command, environment_step=False, tool="PowerShell")
+    assert message and "Only the environment step" in message
+
+
 def test_consumers_still_require_their_own_fixed_library(tmp_path):
     assert denial(tmp_path, "pip install --target ./.pylib scanpy", environment_step=False) is None
     assert denial(tmp_path, "pip install --target ./other scanpy", environment_step=False)

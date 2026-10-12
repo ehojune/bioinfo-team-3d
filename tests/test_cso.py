@@ -392,9 +392,12 @@ async def test_blocking_step_waits_then_reruns_before_dependent():
         if kind == "step" and task.meta["step_id"] == "A":
             if "Your earlier blocking question and its answer:" not in task.prompt:
                 return result(task, text="blocked", structured={"blocking_decision": "Cases or controls?"},
+                              workdir="runs/A", unreported_outputs=["outputs/scripts/prepare.py"],
                               tool_errors=["fixture lookup failed", "shared lookup failed"])
             assert not any(t.meta.get("step_id") == "B" for t in calls)
-            return result(task, text="done", tool_errors=["shared lookup failed", "second lookup failed"])
+            return result(task, text="done", workdir="runs/A",
+                          unreported_outputs=["outputs/figure.png"],
+                          tool_errors=["shared lookup failed", "second lookup failed"])
         return result(task, text="done")
 
     hub = FakeHub(dispatch)
@@ -418,6 +421,7 @@ async def test_blocking_step_waits_then_reruns_before_dependent():
     assert decision["previous_result"]["structured"] == {"blocking_decision": "Cases or controls?"}
     assert decision["previous_result"]["tool_errors"] == ["fixture lookup failed", "shared lookup failed"]
     assert shared["A"].tool_errors == ["fixture lookup failed", "shared lookup failed", "second lookup failed"]
+    assert shared["A"].unreported_outputs == ["outputs/figure.png", "outputs/scripts/prepare.py"]
     appendix = hub.requests["r"]["report_appendix"]
     assert "A: 실패한 조회 — 증거도 부재 증명도 아님 3건" in appendix
     assert "fixture lookup failed" in appendix
@@ -1259,11 +1263,12 @@ async def test_retry_reuses_workdir_and_dependent_receives_artifact_paths():
         calls.append(task)
         sid = task.meta["step_id"]
         if sid == "A" and len([x for x in calls if x.meta["step_id"] == "A"]) == 1:
-            return result(task, ok=False, error="timeout", workdir="runs/A")
+            return result(task, ok=False, error="timeout", workdir="runs/A",
+                          unreported_outputs=["outputs/scripts/prepare.py", "outputs/table.tsv"])
         if sid == "A":
             assert task.meta["workdir"] == "runs/A"
             return result(task, text="done", workdir="runs/A", workdir_id="A",
-                          outputs=["outputs/table.tsv"])
+                          outputs=["outputs/table.tsv"], unreported_outputs=["outputs/figure.png"])
         assert task.meta["upstream_dirs"] == ["runs/A"]
         assert task.meta["upstream_steps"] == {"A": "runs/A"}
         assert '"workdir_id": "A"' in task.context
@@ -1279,6 +1284,7 @@ async def test_retry_reuses_workdir_and_dependent_receives_artifact_paths():
     outcomes = {}
     await Orchestrator(hub).run_dag("r", "question", steps, outcomes)
     assert outcomes["A"].ok and outcomes["B"].ok
+    assert outcomes["A"].unreported_outputs == ["outputs/figure.png", "outputs/scripts/prepare.py"]
     assert calls[0].id != calls[1].id
 
 
@@ -1787,7 +1793,12 @@ async def test_review_replan_uses_max_replans_not_failure_cap():
                             "request": "revise in place"}]
                 if revise else []}
 
-    hub = replan_hub(original, lambda task: result(task, text="analysis done"),
+    def on_step(task):
+        outputs = (["outputs/figure.png"] if task.meta["revision"] else
+                   ["outputs/env/analysis.txt", "outputs/scripts/analysis.py"])
+        return result(task, text="analysis done", workdir="runs/analysis", unreported_outputs=outputs)
+
+    hub = replan_hub(original, on_step,
                      lambda task: pytest.fail("review revise must not use the failure cap"),
                      max_replans=0, max_failure_replans=1, on_review=on_review)
     await Orchestrator(hub).run_request("r")
@@ -1795,6 +1806,8 @@ async def test_review_replan_uses_max_replans_not_failure_cap():
     assert hub.requests["r"]["status"] == "done"
     assert not kinds(hub, "replan")
     assert step_ids(hub) == ["analysis", "analysis"]
+    assert hub.requests["r"]["results"]["analysis"]["unreported_outputs"] == [
+        "outputs/env/analysis.txt", "outputs/figure.png", "outputs/scripts/analysis.py"]
 
 
 @pytest.mark.asyncio

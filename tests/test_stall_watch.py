@@ -192,6 +192,11 @@ async def test_started_mcp_call_without_completion_is_not_ended(tmp_path, monkey
 
     assert result.ok, result.error
     assert killed == []
+    logs = [(e["data"].get("level"), e["data"].get("text", "")) for e in runner.store.pending()
+            if e["type"] == "agent.log"]
+    assert any(level == "debug" and "PI 카드 응답을 기다리는 중이라 끊지 않습니다" in text
+               for level, text in logs)
+    assert not any("끊고 다시 시도" in text or "단계를 취소" in text for _level, text in logs)
 
 
 @pytest.mark.asyncio
