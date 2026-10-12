@@ -14,7 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 16:23 | [`ea321fa`](https://github.com/ehojune/bioinfo-team-3d/pull/541/commits/ea321fa) | 최신 main 웹·CLI 변경을 합치고 manual의 직접 요청 보내기와 원본 overwrite 승인 설명을 함께 보존한다. |
+| 16:20 | [`c3c94a5`](https://github.com/ehojune/bioinfo-team-3d/pull/541/commits/c3c94a5) | 원본·입력·불명확한 overwrite는 PI 승인으로 돌리고 명시한 outputs 산출 재생성만 예외로 둔다. |
 | 16:01 | [`a5623a8`](https://github.com/ehojune/bioinfo-team-3d/pull/540/commits/a5623a8) | down이 URL 주소로 로컬 gateway를 판정하고 주소 확인 실패도 종료 미확인으로 알린다. |
+| 15:47 | [`e988fa4`](https://github.com/ehojune/bioinfo-team-3d/pull/541/commits/e988fa4) | PI 시운전 실행 경로의 질문·환경·대기·산출 보존 결함 4건을 고침 |
 | 15:47 | [`688759b`](https://github.com/ehojune/bioinfo-team-3d/pull/542/commits/688759b) | 시운전 전 웹 결함 4건을 고쳤다: 직접 맡긴 요청이 처리: 직접 맡김으로 보이고 3D 요청 행이 한글 단계 이름을 쓴다, CP1 승인을 기다리는 연구 요청이 실행이 아니라 계획으로 보인다, 직접 요청을 고른 채 보내기가 새 요청으로 간다, 성공이 아닌 연구 종료에 사유가 붙는다(report_incomplete 포함). |
 | 15:32 | [`b5f41c1`](https://github.com/ehojune/bioinfo-team-3d/pull/540/commits/b5f41c1) | 시운전 전 CLI 결함 3건을 고친다: down이 taskkill 한글 출력을 OEM으로 읽고, up 밖에서 시작한 gateway가 답하면 exit 2로 알리며, send·watch가 요청 묶음 경로와 재현 등급을 기다려 출력한다. |
 | 15:16 | [`7abdd1e`](https://github.com/ehojune/bioinfo-team-3d/pull/539/commits/7abdd1e) | 완료 신호를 기다리는 test에 60~120초 바깥 상한을 다시 둬, 회귀 때 CI가 멈추지 않고 실패로 끝난다. |
