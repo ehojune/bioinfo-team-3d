@@ -4,6 +4,155 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 단계
+P2 — #527 봇이 남긴 연구 lane 후속 3건
+
+## 한 일
+
+| 항목 | main 재현 | 수정 |
+|---|---|---|
+| 1. 마지막 보고서 turn이 `pending_asks`·`pending_jobs`를 내면 "final turn; no further work" 기록 뒤 wake 전에 예산 카드가 또 뜸 | 재현(기록 3줄, 첫 줄이 final turn) | 마지막 단계의 끝난 turn은 바로 판정하지 않는다. 기다리는 turn이면 다음 wake turn의 gate가 카드를 띄우고, 면제 기록은 wake·마무리까지 끝난 뒤 `run_step` 끝에서 한 번 남긴다. 질문이 거절돼 끝나는 경로도 같은 끝을 지난다. |
+| 2. 차수가 없는 예전 continuation 확인 질문 답이 1차로 세져 2차 이상 재개 때 카드 두 장을 더 열 수 있음 | 재현(`answered`, 카드 열림) | 차수 없는 답은 지금 차수 상한에 센다. 1차 답은 contract 전이라 차수가 안 적혔으므로 research intake면 `research_round: 1`을 적는다. 답한 질문 거르기는 전체 기록 그대로. |
+| 3. 새 CP1 뒤 `continuation.verified=True` 저장과 첫 dispatch 사이에 gateway가 멈추면 취소·재개 거절·시간 초과 때 되돌리기를 건너뜀 | 재현(3경로 모두 새 계획이 남음) | gateway는 task ledger에 그 차수(`research_round`)의 단계 task가 있는지로 판정한다. 1차 단계 task는 세지 않는다. 처리 중인 orchestrator 경로는 지금처럼 `verified`를 쓴다. |
+
+## 테스트 결과
+
+- [x] 새 test 9개(파라미터 포함): main에서 6개 실패, 수정 뒤 통과. 나머지 3개는 dispatch된 차수를 되돌리지 않는지 지키는 guard.
+- [x] 관련 파일 5개: 131 passed
+- [x] Windows 전체 `pytest -q`(모의 e2e 포함): 5134 passed, 64 skipped (`--basetemp`·`LABHQ_STATE_DIR`는 %TEMP% 아래, 끝나고 지움)
+- [x] `scripts/check_public.sh`
+- [x] `python scripts/patch_notes.py check --base origin/main --head HEAD`
+
+## 바꾼 파일
+
+- `labhq/orchestrator/cso.py`, `labhq/gateway/server.py`
+- `tests/test_research_notes_budget.py`, `tests/test_research_continue.py`, `tests/test_request_lifecycle.py`
+- `docs/manual.md`(승인·예산, 이어 가기 절)
+
+## 막힌 점
+
+- 없음. CI는 push 뒤 확인합니다.
+
+## PI·Claude에게 물을 것
+
+- 없음.
+
+## 확인
+
+- [x] `docs/status/2026-10-12-0543-research-state-followups-2.md`에 같은 보고 추가
+- [x] 실제 labhq 인스턴스 실행·재시작 없음
+
+Refs #521
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+## 단계
+P1 — #276 fake MCP 장시간 대기·교차 세션 inbound 마감
+
+## 한 일
+
+- Claude·Codex adapter가 만든 timeout을 fake CLI에서 기록해 둘 다 1,320초인지, 90초 응답을 timeout·재시도 없이 한 번만 받는지 단언했습니다.
+- Claude 직원의 모든 profile이 `crossSessionInbound: refuse`와 `SendMessage`·`ListAgents` deny를 만드는 기존 test를 확인했습니다.
+- 격리된 전체 test가 찾은 `LABHQ_STATE_DIR` import 시점 캡처를 env-sensitive `default_factory`로 고쳤습니다. MCP 경로 결함은 없었습니다.
+
+## 테스트 결과
+
+- [x] 관련 pytest: 72 passed, 3 skipped
+- [x] state env 회귀: 9 passed
+- [x] Windows 전체 `pytest -q`: 5030 passed, 64 skipped
+- [x] `scripts/check_public.sh`
+- Claude Code 2.1.289: `claude --version`, `claude --help`, `claude agents --help`; 설치본 changelog에서 `crossSessionInbound` 추가·거부 동작을 확인했습니다.
+- 공개 schema `https://json.schemastore.org/claude-code-settings.json`에는 아직 키가 없습니다. 공식 설정 문서도 schema가 최신 CLI보다 늦을 수 있다고 밝힙니다.
+- 공식 문서: https://code.claude.com/docs/en/cross-session-messaging#turn-off-cross-session-messaging
+
+## 바꾼 파일
+
+- `tests/test_long_mcp_call.py`, `tests/fixtures/fake_mcp_client.py`
+- `labhq/settings.py`, `docs/manual.md`
+
+## 막힌 점
+
+- 실제 Codex 장시간 probe는 지시대로 실행하지 않았습니다. #276의 남은 일은 이 probe뿐입니다.
+- CI는 기록 commit push 뒤 확인합니다.
+
+## PI·Claude에게 물을 것
+
+- 없음.
+
+## 확인
+
+- [x] `scripts/check_public.sh` 통과
+- [x] `docs/status/2026-10-12-0451-mcp-long-wait.md`에 같은 보고 추가
+- [x] 실제 CLI 모델 호출·장시간 probe를 실행하지 않음
+
+Refs #276
+
+🤖 Generated with Codex (gpt-5) for the labhq dev lead
+
+## 2026-10-12 · gateway 수명주기 후속 묶음 (#521)
+
+- 결론: #521 "gateway 수명주기"의 P2 6건(교차 검토 10·11·12·13·14·18)과 #526 리뷰의 채용 task 지적을 고쳤다. 7건 모두 main에서 test로 먼저 재현했다. 같은 묶음의 웹 상태 표시(`state.js:184`)는 이번 범위가 아니다.
+- 바뀐 것:
+  - 채용 수(11·18): `recruits_running`이 채용을 시작한 러너의 `process`를 기억하고, 다른 `process`가 붙으면 비운다. incarnation은 재시작해도 같아서 지금까지는 `labhq down`이 gateway를 다시 켤 때까지 "진행 중 채용"으로 거부했다. `process`를 보내지 않는 이전 러너는 지금의 incarnation 규칙을 따른다(#526과 같은 호환 규칙).
+  - 꺼진 러너에 보낸 채용(18): 보내지 않은 것이 확실하면(`RunnerNotSent`: 연결 없음, 보내기 전에 연결 교체) 세지 않고 409로 답한다. 보내다 실패한 경우는 전처럼 센다.
+  - 러너의 채용 turn(#526 리뷰): 채용 변환 turn을 러너의 `tasks`에 넣는다. 끝난 뒤 늦게 온 승인 답이 recruiter를 `working`으로 되돌리지 않는다.
+  - 취소한 요청의 이어 묻기(10): gateway가 409로 거절하고 웹은 입력창을 숨긴다. 취소한 요청은 모든 turn을 거절해서 이어 묻기가 늘 실패로 끝났다.
+  - 취소 기록 창(12): 요청에 `cancelling`을 두고 terminal record와 같은 commit에서 지운다. 그동안 `/api/shutdown-readiness`의 `finishing`(stage `cancel`)에 올라 `labhq down`이 거부한다. 그 전에 gateway가 멈추면 다음 시작 때 보고서와 terminal record를 마저 쓰고, 그때까지 결과를 보내지 않은 turn은 미집계로 센다.
+  - 요청 묶음 복사(14): 끝나지 않은 `terminal_tasks`도 `finishing`(stage `bundle`)에 올린다. CLI는 두 경우를 `마무리 중인 요청:` 줄로 보여 준다. 이 키를 모르는 이전 CLI도 `ready: false`라 거부한다.
+  - 러너 대기(13): 러너가 붙거나 명단을 바꾸면 러너를 기다리던 단계가 모두 다시 판정한다. 기다릴 러너가 없으면 24시간을 채우지 않고 "연결된 러너 중 X 직원을 맡은 곳이 없습니다"로 바로 끝난다. 러너가 맡던 직원 없이 다시 붙은 경우와, 저장된 명단이 없는 gateway에서 러너가 없어 기다리던 첫 직원(CSO·direct)을 맡지 않는 러너가 먼저 붙은 경우가 해당한다(뒤엣것은 PR #530 리뷰 P2).
+  - `docs/manual.md`: down, 러너 대기, 이어 묻기, 요청 취소, recruit 줄.
+- 실행한 것: 새 test 11개(lifecycle 9·CLI 1·web 1)와 readiness 결과를 통째로 비교하는 기존 test 1개(`finishing` 추가)가 main 코드에서 실패하고 이 branch에서 통과했다. main(#522·#527)을 병합한 head에서 전체 `pytest -q`(Windows) 5135 passed·64 skipped. 병합 충돌은 #522와 import 두 줄, #527과 `server.py` helper 자리 하나였고, #522 테스트의 가짜 러너에 `tasks`를 더했다. `scripts/check_public.sh`, `scripts/patch_notes.py check` 통과.
+- 미해결: 시작할 때 끊긴 요청 묶음을 다시 만드는 것(14의 선택 항목)은 하지 않았다. 묶음 정보가 없는 옛 요청까지 다시 복사하지 않으려면 별도 표시가 필요하다. 강제 종료(`down --force`)나 crash 때는 여전히 묶음이 빠질 수 있다. 처음 켠 gateway에서 다른 직원만 맡은 러너가 먼저 붙으면, 그 직원을 맡을 러너가 뒤에 붙을 예정이어도 첫 요청은 바로 끝난다. 맡은 러너가 없는 직원은 바로 실패한다는 R15 판정과 같다.
+- 근거: `labhq/gateway/server.py`, `labhq/models.py`, `labhq/recruit/paper2agent.py`, `labhq/cli.py`, `labhq/web/index.html`, `tests/test_request_lifecycle.py`, `tests/test_cli_launch.py`, `tests/web_followup.cjs`, `docs/manual.md`.
+
+## 2026-10-12 · 단계 없이 끝난 요청의 요청 묶음 경고 제거
+
+- 결론: 단계를 하나도 돌리지 않고 끝난 요청(CP1 수정 요청, 작업 전 거절·취소·실패)은 요청 묶음을 만들지 않고 경고도 남기지 않는다. 묶을 것이 없는데 웹·CLI 목록에 "요청 묶음을 만들지 못했습니다: 단계 작업 폴더를 하나도 찾지 못했습니다"가 뜨던 잡음이다.
+- 바뀐 것: `Hub.commit_terminal`이 `results`가 비어 있고 그 요청의 step·direct task가 한 번도 보내지지 않았으면 terminal 기록만 남기고 묶음 시도를 건너뛴다. 실행 중 취소돼 `results`는 비었지만 단계 작업 폴더가 있을 수 있는 요청은 지금처럼 묶음을 시도한다(봇 리뷰). 단계 결과가 하나라도 있으면 지금처럼 묶음을 만들고, 실패하면 경고를 남긴다. manual 요청 묶음 절에 한 문장을 더했다.
+- 실행한 것: trial 실측(CP1 수정 요청 req_d13c37a5df → 새 요청 req_881839f8b7, 둘 다 경고가 남음)에서 발견했다. 새 test 2건(완료·실패)이 main 코드에서, 취소 중 단계 test 1건이 첫 커밋에서 실패하고 이 branch에서 통과한다. 빈 `results`로 묶음 실패를 흉내 내던 기존 test는 단계 결과 하나를 넣어 같은 성질(실패는 경고만, 재시작 때 다시 안 만듦)을 계속 본다. 전체 pytest 5033 passed·64 skipped(Windows).
+- 미해결: 없음.
+- 근거: `labhq/gateway/server.py`, `tests/test_request_bundle.py`.
+
+## 단계
+P2 — #521 연구 lane 상태 4~9
+
+## 한 일
+
+- 마지막 연구 보고 turn에서 처음 예산을 넘으면 카드를 띄우지 않고 초과 기록과 보고서를 남깁니다. 끝난 일에 7일짜리 결정을 요구하지 않는 안을 택했습니다.
+- 확인 질문 카드 상한을 연구 차수마다 세고, 이미 답한 질문은 전체 기록에서 계속 거릅니다.
+- 새 이어 가기 계획 전 재개 카드, 미승인 계획의 취소·재개 거절·만료 복원, 보관된 차수의 Live 출처 재질문을 바로잡았습니다.
+- 이어 가기 prompt의 재사용 조건에 가설 field 세 개를 명시했습니다.
+- `docs/manual.md`의 예산·재개 카드·리뷰/이어 가기 절을 105,355자에서 105,493자로 고쳤습니다.
+
+## 테스트 결과
+- [x] `origin/main` 동작 + 새 회귀: 8 failed, 68 passed
+- [x] 최신 `main` 병합 뒤 관련 회귀: 197 passed
+- [x] 최신 `main` 병합 뒤 웹 표시 회귀: 11 passed
+- [x] 최신 `main` 병합 뒤 Windows 전체 `pytest -q`: 5042 passed, 64 skipped
+
+## 바꾼 파일
+
+- `labhq/orchestrator/cso.py`, `labhq/gateway/server.py`, `labhq/research/continuation.py`
+- `tests/test_research_continue.py`, `tests/test_research_notes_budget.py`, `tests/test_research_report.py`, `tests/test_request_lifecycle.py`
+- `docs/manual.md`
+
+## 막힌 점
+
+없음.
+
+## PI·Claude에게 물을 것
+
+없음.
+
+## 확인
+- [x] `scripts/check_public.sh` 통과
+- [x] `docs/status/2026-10-12-0405-research-state-followups.md`에 같은 보고 추가
+- [x] 추가 PI 확인이 필요한 체크포인트 없음
+
+Refs #521
+
+🤖 Generated with Codex (gpt-5) for the labhq dev lead
+
 ## 결론
 
 #521 웹·CLI 묶음 8건(15·19·20·21·22·23·24·25)을 모두 main에서 재현하고 고쳤습니다. 15와 22는 같은 원인이라 수정 하나로 닫았습니다.
@@ -54,6 +203,54 @@
 - 실행한 것: main(d083828c)에서 재현 스크립트로 확인했다. 같은 state로 Runner를 두 번 만들면 incarnation이 같고, 재등록 뒤 `expire_orphan_approvals`는 `[]`, `task.result` 뒤에도 카드가 남았다. 새 test 4개(같은 incarnation 재시작은 websocket 경유, 같은 프로세스 재연결 유지, task.result로 닫힘, 이전 러너 호환·업그레이드, 늦은 답의 상태)는 main 코드에서 4 failed, 이 branch에서 통과한다. Windows 전체 `pytest -q` 5020 passed·64 skipped. `scripts/check_public.sh`, `scripts/patch_notes.py check` 통과.
 - 미해결: `recruits_running`도 같은 incarnation 문제를 안고 있다(#521 P2 11·18). 이번 `process` 값을 그대로 쓰면 고쳐지지만 이 PR 범위 밖이라 남긴다.
 - 근거: `labhq/gateway/server.py`, `labhq/runner/daemon.py`, `tests/test_request_lifecycle.py`, `docs/manual.md`.
+
+## 2026-10-12 · v0.5.0 이후 교차 리뷰 #2 #3 #16 #17 — 승인 게이트·공유 환경 설치 판정 회귀
+
+## 결론
+
+교차 리뷰가 확인한 결함 4건을 고쳤습니다. 결함마다 사례 하나가 아니라 그 부류를 닫는 구조 변경 하나씩입니다.
+
+| 리뷰 | 등급 | 닫은 부류 | 변경 |
+|---|---|---|---|
+| #2 | P1 (v0.5.0 대비 회귀) | 다운로드 명령의 쓰기 경로가 쓰기 허용 폴더 검사에 닿지 않는 경우 | curl·wget 옵션을 표 하나로 읽는 walker. 출력 operand는 변수 앞 리터럴 부분(`-o "C:/x/$f"` → `C:/x/`)으로 검사. 묶은 짧은 옵션(`-fsSLo`, `-qO`), 붙여 쓴 값, `=` 형식, getopt 약어(`--out`), 파일을 쓰는 다른 옵션(curl `-D`·`-c`·`--trace` 등, wget `-o`·`-a`), PowerShell `Invoke-WebRequest`·`Invoke-RestMethod` `-OutFile`(Windows PowerShell의 `curl`·`wget` 별칭 포함) |
+| #3 | P1 | 다른 프로그램의 인자 자리에 있는 변수를 설치 선택자로 보는 경우 | "변수 인자가 있으면 설치" 규칙을 실행 파일 자리에만 둠. 인자 자리 변수는 리터럴 설치 동사(`install`·`create`)가 뒤따를 때만 설치. 실행 파일 자리는 wrapper(`nohup`·`sudo`·`time`·`timeout`·`nice`·`stdbuf`·`xargs`·`env`·`command`·`exec`·`uv run`·`conda run`)의 옵션을 건너뛴 다음 단어까지 포함하고(모르는 옵션이면 변수가 있을 때 거절), python·Rscript는 script 경로 앞의 변수, 변수로 시작하는 `-c`·`-e` 코드, `-m` 뒤 변수, 설치 module 뒤 변수를 거절(리뷰 2차) |
+| #16 | P2 | 프로그램 이름이 변수라서 R 설치 호출을 놓치는 경우 | 따옴표로 감싼 변수 실행 파일이 R 설치 호출을 받으면 R로 보고 Rscript와 같은 `lib=` 규칙 적용. wrapper 뒤 인자 자리의 변수도 R일 수 있는 것으로 봄 |
+| #17 | P2 | lexical 정규식이 못 보는 재귀 삭제 | rm의 `--` 앞 모든 옵션 단어(`-f -r`, `-v -rf`, `--recursive`, 대상 뒤 `-rf`)를 보고 기존 `.tmp` 규칙으로 보냄. `find -delete`·`-exec rm`(`sh -c` 본문 포함)·`\| xargs rm`도 같은 규칙(단일 명령, 시작 경로가 모두 `.tmp` 아래 리터럴 상대 경로). `outputs/` 등 작업 폴더의 다른 곳은 `rm -rf outputs/x`처럼 질문. cmd `rd /s`·`del /s`는 언제나 질문. PowerShell은 첫 pipe 뒤(script block 포함)의 Remove-Item 계열·`.Delete()`를 재귀 삭제로 보고, pipe 앞 `Get-ChildItem`의 폴더가 모두 `.tmp` 아래 리터럴일 때만 허용(리뷰 2차) |
+
+## 바뀐 것
+
+- `labhq/policy.py`
+  - `_shell_word_prefix`: shell word의 리터럴 앞부분과 완결 여부. `_literal_shell_word`는 이 위의 얇은 wrapper라 동작이 같습니다.
+  - `_DOWNLOAD_OPTIONS` 표와 `_download_write_targets` 재작성. `_download_options_known`도 같은 표를 씁니다. 모르는 글자가 낀 묶음은 그 뒤 출력 글자의 값을 보고합니다(과보고는 허용 폴더 밖 절대경로일 때만 질문이 됨).
+  - `_ps_download_targets`: `-OutFile`의 모든 prefix.
+  - `_recursive_rm`, `_find_deletes`, `_find_delete_inside_step_tmp`, `_CMD_RECURSIVE_DELETE`, `_ps_piped_delete`·`_ps_piped_delete_inside_step_tmp`. rm·find·PowerShell pipe 삭제는 대상 검사 `_targets_below_step_tmp`(기존 `_recursive_delete_inside_workdir`에서 떼어 냄)를 같이 씁니다. 설정의 `BASH_RECURSIVE_DELETE_PATTERN`은 바꾸지 않았고, 이 pattern이 `bash_ask_patterns`에 있을 때만 새 검사도 돕니다(설정에서 빼면 재귀 삭제 검사 전체가 꺼지는 기존 의미 유지).
+  - `.tmp` 재귀 삭제 허용이 `-v`·`--recursive`·`--force`·`--verbose`도 받습니다. 새로 재귀로 잡히는 `rm -v -rf .tmp/x`가 질문으로 바뀌지 않게 하려는 것입니다.
+- `labhq/environment_install.py`: `_dynamic_installer_syntax`의 비리터럴 인자 조항을 실행 파일 자리로 한정. 주 루프에 `r_program`(R 실행 파일 또는 R 설치 호출을 받는 변수 실행 파일). `_installation_syntax`의 R 검사가 변수 단어도 R 후보로 봅니다. `_EXEC_WRAPPERS`·`_RUN_SUBCOMMANDS` 표와 `_wrapped_program_is_computed`(wrapper 옵션을 건너뛰고 실행 파일 규칙을 재귀 적용), `_python_selects_computed`, `_rscript_selects_computed`.
+- `docs/manual.md`: 공유 환경 설치 문단, 승인 게이트의 재귀 삭제 문단, 셸 쓰기 검사 항목.
+
+## 실행한 것
+
+- main에서 재현: 네 결함 모두 리뷰가 적은 대로 재현(`evaluate_tool` windows=True, `shared_environment_install_denial` protected=True).
+- 새 test 102건: origin/main 코드에서 73건 실패, 이 branch에서 100건 통과·2건 skip(Windows 일반 계정은 symlink를 못 만들어 `.tmp/link` 시작 경로 test 2건 skip). 나머지 27건은 유지 동작을 고정하는 test로 main에서도 통과합니다(`"$PY" script.py "$INPUT"` 거절, `.tmp` 아래 삭제 허용, 작업 폴더 안 다운로드 허용 등).
+- 리뷰 2차(139d027의 P1 세 건) test 82건: 139d027 코드에서 51건 실패(wrapper 22·interpreter 20·PowerShell pipe 삭제 9), 이 branch에서 82건 통과. find `--`·`-files0-from`은 139d027에서도 이미 질문해서 고정 test만 더했습니다.
+- 기존 test는 지우거나 바꾸지 않았습니다. 관련 5개 파일 851 passed·7 skipped.
+- Windows 전체 pytest(리뷰 2차 반영 뒤): 5212 passed, 66 skipped.
+- `bash scripts/check_public.sh`, `python scripts/patch_notes.py check`, `git diff --check` 통과.
+
+## 미해결
+
+- `~`로 시작하는 쓰기 경로(`cp a ~/x`, `echo x > ~/.bashrc`, `curl -o ~/x`)는 쓰기 허용 폴더 검사를 받지 않습니다. v0.5.0에도 있던 결함이고 #521에서 다룹니다.
+- python·Rscript의 script 경로가 변수인 반복문(`for f in s/*.py; do python "$f"; done`)도 이제 거절합니다. 변수가 `-m`·`-c`가 될 수 있어서이고, script 경로를 리터럴로 쓰면 통과합니다.
+- 재귀 삭제 검사는 여전히 lexical입니다. `echo "rm -f -r x"`, `git rm --cached -r x`처럼 지우지 않는 명령도 질문할 수 있고, 미리 허용된 셸(`Bash(python *)` 등) 안의 삭제는 게이트를 거치지 않습니다.
+
+## 근거
+
+- `labhq/policy.py`
+- `labhq/environment_install.py`
+- `tests/test_shell_write_quotes.py`
+- `tests/test_policy.py`
+- `tests/test_environment_install.py`
+- `docs/manual.md`
 
 ## 변경
 

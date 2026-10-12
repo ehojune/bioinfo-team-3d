@@ -14,13 +14,29 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 05:43 | [`3e0c34d`](https://github.com/ehojune/bioinfo-team-3d/pull/534/commits/3e0c34d) | 연구 lane #527 후속: 기다리는 마지막 보고서 turn의 예산 면제, 차수 없는 예전 확인 질문 답, gateway 이어 가기 되돌리기 판정을 바로잡음 |
+| 05:21 | [`ebc968a`](https://github.com/ehojune/bioinfo-team-3d/pull/530/commits/ebc968a) | main 병합: #527 연구 lane 상태 후속과 server.py 충돌을 풀어 이어 가기 복원 helper와 취소 마무리 helper를 함께 둔다. |
+| 05:07 | [`85bcdf0`](https://github.com/ehojune/bioinfo-team-3d/pull/530/commits/85bcdf0) | main 병합: #522 파견직 채용물 고정과의 import 충돌을 풀고, 그 테스트의 가짜 러너에 채용 turn을 담을 tasks를 더했다. |
+| 04:52 | [`28f0933`](https://github.com/ehojune/bioinfo-team-3d/pull/530/commits/28f0933) | 러너가 붙거나 명단을 바꾸면 러너를 기다리던 단계가 모두 다시 판정해, 처음 켠 gateway에서 첫 직원을 맡지 않는 러너가 먼저 붙어도 24시간 기다리지 않고 바로 이유를 알린다(PR #530 리뷰). |
+| 04:50 | [`939291a`](https://github.com/ehojune/bioinfo-team-3d/pull/531/commits/939291a) | Claude와 Codex의 90초 fake MCP 대기 설정과 단일 호출을 직접 검증하고 state env 기본값을 지연 생성했다 |
+| 04:45 | [`d1d1886`](https://github.com/ehojune/bioinfo-team-3d/pull/525/commits/d1d1886) | 공유 환경 설치 판정이 nohup·sudo·time·uv run 같은 wrapper 뒤의 실행 파일과 python·Rscript의 script 앞 변수를 다시 막는다. PowerShell에서 Get-ChildItem을 pipe로 넘겨 지우는 명령(ForEach-Object 안 포함)도 .tmp 밖이면 묻는다. |
+| 04:42 | [`21d0a63`](https://github.com/ehojune/bioinfo-team-3d/pull/527/commits/21d0a63) | 최신 main의 웹·CLI 상태 수정을 연구 이어 가기 상태 수정과 함께 보존함 |
+| 04:39 | [`74b8b40`](https://github.com/ehojune/bioinfo-team-3d/pull/529/commits/74b8b40) | 실행 중 취소돼 결과가 비었어도 단계·단독 task가 보내졌던 요청은 묶음을 시도한다. |
 | 04:36 | [`abcf5b6`](https://github.com/ehojune/bioinfo-team-3d/pull/522/commits/abcf5b6) | 리뷰 3차 반영: 납품물 hash를 못 재면 수습에 남기고 재고용 때도 hash 없는 부분을 표시한다. mcp_dir 밖에서 실제 실행되는 서버 폴더도 재며, 캐시 checkout의 origin을 확인할 수 없으면 새로 clone한다(#424). |
+| 04:35 | [`541569c`](https://github.com/ehojune/bioinfo-team-3d/pull/530/commits/541569c) | 러너를 다시 시작하면 이전 프로세스의 채용 수가 비고, 취소 기록이나 요청 묶음을 쓰는 동안 labhq down이 기다리며, 취소한 요청의 이어 묻기와 직원 없이 돌아온 러너 대기는 바로 이유를 알린다(#521). |
+| 04:34 | [`811253a`](https://github.com/ehojune/bioinfo-team-3d/pull/529/commits/811253a) | 단계를 하나도 돌리지 않고 끝난 요청(CP1 수정 요청, 작업 전 거절·취소)은 요청 묶음 경고를 남기지 않는다. |
 | 04:14 | [`51d34ae`](https://github.com/ehojune/bioinfo-team-3d/pull/522/commits/51d34ae) | 리뷰 2차 반영: 수습 파견직은 PI가 activate하기 전에는 CSO 배정·직접 요청·상담·러너 실행에서 빠지고 명단에는 수습으로 보인다. 외부 전송 host는 hostname[:port]만 받아 URL 속 인증값이 계약서·명단에 남지 않는다(#424). |
+| 04:14 | [`a824efa`](https://github.com/ehojune/bioinfo-team-3d/pull/525/commits/a824efa) | main을 병합해 #524 재현 등급 기록과 manual 공유 환경 문단 충돌을 풀었다. |
 | 04:14 | [`ea02a1c`](https://github.com/ehojune/bioinfo-team-3d/pull/528/commits/ea02a1c) | main 병합: 첫 로드 표시와 재현 등급 사유(#524)·재연결 카드 처리(#526)를 함께 둔다. |
+| 04:08 | [`d498deb`](https://github.com/ehojune/bioinfo-team-3d/pull/527/commits/d498deb) | 최신 main의 러너 카드 정리를 이어 가기 상태 수정과 함께 보존함 |
+| 04:05 | [`ed86766`](https://github.com/ehojune/bioinfo-team-3d/pull/527/commits/ed86766) | 연구 이어 가기의 예산·질문·재개·복원·출처 상태와 재사용 prompt를 바로잡음 |
+| 04:02 | [`1846e04`](https://github.com/ehojune/bioinfo-team-3d/pull/525/commits/1846e04) | find -delete·-exec rm·| xargs rm도 rm -r과 같은 규칙으로, 시작 경로가 모두 .tmp 아래일 때만 묻지 않는다. outputs/ 등 작업 폴더의 다른 곳은 묻는다. |
 | 03:57 | [`b0f6b79`](https://github.com/ehojune/bioinfo-team-3d/pull/528/commits/b0f6b79) | 웹은 한도·로그인 대기가 풀려도 열린 결정 카드가 있으면 PI 결정 대기로, 시간 초과 카드는 거절이 아니라 시간 초과로 보이고, CLI는 선택지 있는 직원 질문을 답 없이 승인하지 않는다(#521). |
 | 03:48 | [`9fba5f1`](https://github.com/ehojune/bioinfo-team-3d/pull/524/commits/9fba5f1) | Windows manifest 검증에서 UTF-8 읽기를 명시 |
+| 03:45 | [`b9fa70b`](https://github.com/ehojune/bioinfo-team-3d/pull/525/commits/b9fa70b) | main을 병합해 #520의 백그라운드 셸 도구 기본 허용과 manual·test 충돌을 풀었다. |
 | 03:42 | [`7bd1232`](https://github.com/ehojune/bioinfo-team-3d/pull/522/commits/7bd1232) | 리뷰 반영: restricted 작업에서 외부 전송 파견직에게 묻는 상담을 refs 복사 전에 거부하고, skill_source가 바뀌면 캐시를 새로 clone하며, ZIP으로만 온 MCP도 재고용 때 hash를 다시 잰다(#424). |
 | 03:33 | [`85122d5`](https://github.com/ehojune/bioinfo-team-3d/pull/526/commits/85122d5) | 러너를 다시 시작하면 이전 프로세스가 띄운 도구 권한 카드가 incarnation이 같아도 닫히고, 카드를 띄운 작업이 끝나도 그 카드가 닫힌다(#521). |
+| 03:30 | [`ee1d8d1`](https://github.com/ehojune/bioinfo-team-3d/pull/525/commits/ee1d8d1) | 승인 게이트가 변수 섞인 curl·wget 출력 경로와 묶은 옵션을 다시 쓰기 허용 폴더와 대조하고, rm의 모든 재귀 옵션과 find -delete를 재귀 삭제로 본다. 공유 환경 설치 판정은 분석 명령의 변수 인자 둘을 설치로 보지 않고, 따옴표로 감싼 변수 Rscript의 R 설치 호출은 lib= 규칙으로 본다. |
 | 03:27 | [`e5a56a9`](https://github.com/ehojune/bioinfo-team-3d/pull/524/commits/e5a56a9) | 재현 등급과 실행 환경 기록을 요청 묶음 전반에 연결 |
 | 03:23 | [`759458d`](https://github.com/ehojune/bioinfo-team-3d/pull/523/commits/759458d) | direct 응답의 실제 산출 종류를 기존 어휘로 기록하고 semantics 재사용 판정에 연결 |
 | 03:21 | [`2ad1dc3`](https://github.com/ehojune/bioinfo-team-3d/pull/522/commits/2ad1dc3) | 파견직 계약서에 원본 commit·license·외부 전송 대상과 labhq가 잰 skill·MCP hash를 남기고, 외부 전송 파견직은 restricted 입력 단계에서 계획 검증과 러너가 거부한다. 수습은 offer_status를 보고, 재고용 때 hash가 다르면 경고한다(#424). |

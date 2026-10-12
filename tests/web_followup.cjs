@@ -37,6 +37,9 @@ test('the 2.5D request view asks follow-ups through the gateway', () => {
   assert.match(html, /fuDrafts\.get\(q\.id\)/);
   assert.match(html, /rid = box\.dataset\.rid/);
   assert.doesNotMatch(html, /text = box\.value\.trim\(\), rid = S\.current/);
+  // #521: the gateway refuses a follow-up on a cancelled request, so its view offers none.
+  assert.match(html, /const FOLLOWUP_STATUSES = \['done', 'failed', 'rejected'\];/);
+  assert.match(html, /const form = FOLLOWUP_STATUSES\.includes\(q\.status\) && api\?\.followup/);
   const live = fs.readFileSync(path.join(web, 'lab3d/src/live.js'), 'utf8');
   assert.match(live, /q\.followups/);
 });

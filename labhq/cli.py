@@ -693,8 +693,8 @@ def _active_request_line(request: dict) -> str:
 
 
 def _shutdown_readiness(s: Settings) -> dict | str | None:
-    """The gateway's shutdown readiness (#500): its active requests, follow-ups still running on finished requests
-    and recruitments. None for an older gateway without the endpoint (HTTP 404); "unknown" for any other failure,
+    """The gateway's shutdown readiness (#500): its active requests, follow-ups still running on finished requests,
+    recruitments and finished requests still being recorded (#521). None for an older gateway without the endpoint (HTTP 404); "unknown" for any other failure,
     which `down` refuses like an unknown request list (#515 review: fail closed)."""
     import httpx
 
@@ -720,6 +720,10 @@ def _down_unlocked(s: Settings, *, force: bool = False) -> None:
                   for row in readiness.get("followups") or [] if isinstance(row, dict)]
         if readiness.get("recruits"):
             lines.append(f"진행 중 채용: {readiness['recruits']}건")
+        # A finished request whose record is still being written (#521): a forced stop loses its report or bundle.
+        lines += [f"마무리 중인 요청: {row.get('id')} · "
+                  f"{'취소 기록을 쓰는 중' if row.get('stage') == 'cancel' else '요청 묶음을 복사하는 중'}"
+                  for row in readiness.get("finishing") or [] if isinstance(row, dict)]
         if readiness.get("ready") is False and not lines:
             lines.append("진행 중 작업: gateway가 아직 끝나지 않은 일이 있다고 답했습니다")
         busy: bool | None = bool(lines)

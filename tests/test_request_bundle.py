@@ -677,6 +677,50 @@ async def test_terminal_hook_builds_direct_general_research_and_failed_bundles(t
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("terminal, status", [("request.completed", "done"), ("request.failed", "failed")])
+async def test_request_without_any_step_records_no_bundle_warning(tmp_path, terminal, status):
+    # A request ended before any step ran (CP1 수정 요청, early cancel or failure) has nothing to bundle; the
+    # PI's request list must not show "요청 묶음을 만들지 못했습니다" for it.
+    hub = Hub(configured(tmp_path))
+    hub.requests["early"] = {"id": "early", "text": "request", "mode": "orchestrate", "status": status,
+                             "report": "body", "results": {}, "plan": {"steps": [{"id": "s1", "depends_on": []}]}}
+    data = {"ok": terminal == "request.completed", "report": "body"}
+
+    assert hub.schedule_terminal("early", terminal, data) is None
+
+    assert "bundle_warning" not in data and "bundle_warning" not in hub.requests["early"]
+    assert "bundle_path" not in hub.requests["early"]
+    assert hub.events[-1]["type"] == terminal
+    assert not any(event["type"] == "request.bundle" for event in hub.store.events_since(0))
+    await asyncio_sleep()
+    hub.store.close()
+
+
+@pytest.mark.asyncio
+async def test_request_cancelled_mid_step_still_attempts_bundle(tmp_path, monkeypatch):
+    # Cancelling during a step can leave results empty while the step task already has a workdir (PR #529 review).
+    hub = Hub(configured(tmp_path))
+    hub.requests["mid"] = {"id": "mid", "text": "request", "mode": "orchestrate", "status": "cancelled",
+                           "report": "body", "results": {}, "plan": {"steps": [{"id": "s1", "depends_on": []}]}}
+    hub.store.put("task", "t-mid", {"request_id": "mid", "kind": "step", "step_id": "s1", "accepted": True})
+    hub.store.put("task", "t-brief", {"request_id": "early", "kind": "briefing"})
+    calls = []
+
+    def fail(*_args):
+        calls.append("called")
+        raise OSError("no workdir")
+
+    monkeypatch.setattr("labhq.request_bundle.build_request_bundle", fail)
+    data = {"ok": False, "report": "body"}
+
+    hub.commit_terminal("mid", "request.cancelled", data)
+
+    assert calls == ["called"] and "no workdir" in data["bundle_warning"]
+    await asyncio_sleep()
+    hub.store.close()
+
+
+@pytest.mark.asyncio
 async def test_incomplete_bundle_status_is_stored_in_bundle_event(tmp_path):
     settings = configured(tmp_path)
     workdir = Path(settings.runner.workspace_root) / "2026-10-04" / "task_incomplete"
@@ -719,8 +763,9 @@ async def test_bundle_failure_is_warning_only_and_restart_does_not_rebuild(tmp_p
     settings = configured(tmp_path)
     hub = Hub(settings)
     rid = "req_warning"
+    # A step result exists (so a bundle is attempted); requests with no step at all skip the bundle entirely.
     hub.requests[rid] = {"id": rid, "text": "request", "mode": "direct", "status": "done",
-                         "report": "body", "report_appendix": "appendix", "results": {}}
+                         "report": "body", "report_appendix": "appendix", "results": {"direct": {"ok": True}}}
     calls = []
 
     def fail(*_args):

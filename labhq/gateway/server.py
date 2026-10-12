@@ -12,7 +12,7 @@ import logging
 import mimetypes
 import time
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Literal
 
@@ -28,10 +28,11 @@ from ..integrations.rounds import RoundRecorder, environment_snapshot
 from ..login import login_command
 from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..costs import outcome_unknown_item, request_cost_summary, task_cost_item
-from ..models import ApprovalRequest, AskRequest, RunnerUnavailable, Task, TaskResult, new_id, waiting
+from ..models import ApprovalRequest, AskRequest, RunnerNotSent, RunnerUnavailable, Task, TaskResult, new_id, waiting
 from ..recruit.provenance import not_yet_active, probation_refusal
 from ..adapters import enforces_read_only, get_adapter, read_only_refusal
 from ..orchestrator.cso import Orchestrator, _terminal_reports, environment_problem, holds_session, solo_phase
+from ..research import continuation as research_continuation
 from ..research.packs import check_configured_packs
 from ..request_status import is_active_request, is_terminal_request
 from ..settings import Settings
@@ -265,8 +266,9 @@ class Hub:
         # #59 ①: steps the PI halted, parked until the PI resumes them, and each task's last control state.
         self.halted_waits: dict[str, asyncio.Event] = {}
         self.task_controls: dict[str, dict] = self.store.all("task_control_state")
-        # Recruitments a runner process is running: {runner_id: {"incarnation", "count"}}. Started here, ended by
-        # recruit.done/failed or by a different runner process; a reconnect of the same process keeps them (#515).
+        # Recruitments a runner process is running: {runner_id: {"incarnation", "process", "count"}}. Started here,
+        # ended by recruit.done/failed or by a different runner process; a reconnect of the same process keeps them
+        # (#515). The incarnation survives a restart, so the process id decides when the runner sends one (#521).
         self.recruits_running: dict[str, dict[str, Any]] = {}
         self.cancel_result_wait_s = CANCEL_RESULT_WAIT_S
         self.approvals: dict[str, dict] = self.store.all("approval")
@@ -726,15 +728,22 @@ class Hub:
 
     def shutdown_readiness(self) -> dict:
         """What `labhq down` would cut off (#500): active requests, follow-ups still running on finished requests (a
-        finished request is not active, so the request list missed them) and recruitments the runner is running."""
+        finished request is not active, so the request list missed them), recruitments the runner is running, and
+        finished requests whose record is still being written (#521): a cancel waiting for its turns to report, or
+        a request bundle being copied after the terminal record. A forced stop loses that record."""
         requests = [{"id": rid, "status": req.get("status"), "text": req.get("text")}
                     for rid, req in self.requests.items() if is_active_request(req.get("status"))]
         followups = [{"request_id": rid, "followup_id": entry.get("id"), "text": entry.get("text")}
                      for rid, req in self.requests.items() for entry in req.get("followups") or []
                      if entry.get("status") == "running"]
         recruits = sum(int(entry.get("count") or 0) for entry in self.recruits_running.values())
-        return {"requests": requests, "followups": followups, "recruits": recruits,
-                "ready": not (requests or followups or recruits)}
+        finishing = [{"id": rid, "status": req.get("status"), "text": req.get("text"), "stage": "cancel"}
+                     for rid, req in self.requests.items() if req.get("cancelling") is not None]
+        finishing += [{"id": rid, "status": (self.requests.get(rid) or {}).get("status"),
+                       "text": (self.requests.get(rid) or {}).get("text"), "stage": "bundle"}
+                      for rid, task in self.terminal_tasks.items() if not task.done()]
+        return {"requests": requests, "followups": followups, "recruits": recruits, "finishing": finishing,
+                "ready": not (requests or followups or recruits or finishing)}
 
     def running_tasks(self, tasks: Mapping[str, dict] | None = None) -> list[dict]:
         """Accepted tasks of running requests, including steps waiting for jobs or ask answers.
@@ -890,6 +899,12 @@ class Hub:
 
     def commit_terminal(self, rid: str, typ: str, data: dict) -> None:
         """Synchronous checkpoint used by direct callers and tests."""
+        if not self.requests[rid].get("results") and not self._dispatched_work_task(rid):
+            # No step or direct task was ever sent (CP1 수정 요청, cancelled or failed before work): nothing to
+            # bundle, and a "작업 폴더를 찾지 못했습니다" warning would only be noise on the PI's request list. A
+            # request cancelled mid-step can end with empty results but a real workdir, so it still tries (PR #529).
+            self._commit_terminal_record(rid, typ, data)
+            return
         if not self._has_bundle_workdir(rid):
             self._apply_bundle_outcome(rid, data, self._bundle_outcome(rid))
             self._commit_terminal_record(rid, typ, data)
@@ -897,6 +912,10 @@ class Hub:
         self._commit_terminal_record(rid, typ, data)
         self._apply_bundle_outcome(rid, data, self._bundle_outcome(rid))
         self._commit_bundle_record(rid, data)
+
+    def _dispatched_work_task(self, rid: str) -> bool:
+        return any(isinstance(task, Mapping) and task.get("request_id") == rid
+                   and task.get("kind") in ("step", "direct") for task in self.store.all("task").values())
 
     def _has_bundle_workdir(self, rid: str) -> bool:
         results = (self.requests[rid].get("results") or {}).values()
@@ -1055,8 +1074,13 @@ class Hub:
         when = time.strftime("%m-%d %H:%M", time.localtime(float(created))) if created else "접수 시각 모름"
         # A plan whose steps all finished stopped after them (CP2, review, a continue card, the report), not before.
         has_plan = bool(req.get("plan", {}).get("steps"))
+        carried = (req.get("research_contract") or {}).get("continuation") or {}
+        awaiting_continuation_plan = bool(carried and not carried.get("plan_sha256"))
         left = (", ".join(steps) if steps else
-                "없음(단계는 모두 끝났고 그 뒤 검토·결정·보고서부터 이어 갑니다)" if has_plan else "요청 전체")
+                f"이어 가기 {int(carried.get('round') or 2)}차: 새 계획·CP1부터 이어 갑니다"
+                if awaiting_continuation_plan else
+                "없음(단계는 모두 끝났고 그 뒤 검토·결정·보고서부터 이어 갑니다)" if has_plan
+                else "요청 전체")
         approval = ApprovalRequest(kind="resume", request_id=rid,
                                    summary=f"중단된 요청 \"{head}\"({when} 접수)을 다시 이어 갈까요? 남은 단계: {left}",
                                    # has_plan tells the web's empty steps apart: all done, or the whole request (#521).
@@ -1119,6 +1143,7 @@ class Hub:
                             "data": {"id": aid, **answer}})
         req = self.requests.get(rid or "")
         if req is not None and req.get("status") == "interrupted":
+            self._restore_unstarted_continuation(rid, req)
             req.update(status="failed", outcome="resume_timed_out", error=note, finished_at=time.time())
             self.schedule_terminal(rid, "request.failed", {"error": note})
         return True
@@ -1243,7 +1268,10 @@ class Hub:
         self.runners[runner_id] = ws
         started = self.recruits_running.get(runner_id) or {}
         # unregister_runner drops runner_incarnations on every disconnect, so compare with the process that started them.
-        if incarnation and started.get("incarnation") and started["incarnation"] != incarnation:
+        # The incarnation survives a restart, so the process id decides (#521); an entry started by a runner that sent
+        # none (None == None) falls to the incarnation rule, as for cards.
+        if (("process" in started and started["process"] != process) or
+                (incarnation and started.get("incarnation") and started["incarnation"] != incarnation)):
             self.recruits_running.pop(runner_id, None)  # a new runner process: the old one's recruitments died with it
         self.runner_incarnations[runner_id] = incarnation
         self.runner_processes[runner_id] = process
@@ -1523,6 +1551,13 @@ class Hub:
             self.agent_runner[a["id"]] = runner_id
             if runner_id in self.runners:
                 self.agent_online.setdefault(a["id"], asyncio.Event()).set()
+        # Every step waiting for a runner looks again (wait_for_runner) and ends now if nothing is left to wait for,
+        # instead of after gateway.runner_wait_s with a false "runner never connected" (#521): an agent this runner
+        # dropped (a contract that expired while it was off), or a first agent that waited only because no runner
+        # was connected and that this runner does not host either (PR #530 review).
+        for req in self.requests.values():
+            for wait in (req.get("runner_waits") or {}).values():
+                self.agent_online.setdefault(str(wait.get("agent_id") or ""), asyncio.Event()).set()
         self._session_state_changed()
 
     def unregister_runner(self, runner_id: str, ws: WebSocket) -> bool:
@@ -1557,9 +1592,14 @@ class Hub:
         return (f"러너가 {span} 안에 연결되지 않아 {agent_id} 작업을 보내지 못했습니다. labhq up(또는 labhq runner)으로 "
                 "러너를 켠 뒤 같은 요청을 다시 보내세요(gateway.runner_wait_s).")
 
-    async def wait_for_runner(self, task: Task) -> bool:
+    @staticmethod
+    def _no_runner_hosts(agent_id: str) -> str:
+        return f"연결된 러너 중 {agent_id} 직원을 맡은 곳이 없습니다 (no runner hosts agent {agent_id!r})"
+
+    async def wait_for_runner(self, task: Task, *, first: bool = False) -> bool:
         """Park the task's request as waiting_for_runner until a runner hosting the agent connects, at most
-        gateway.runner_wait_s. Nothing was sent yet, so nothing is uncertain or spent."""
+        gateway.runner_wait_s. Nothing was sent yet, so nothing is uncertain or spent. False also when a roster
+        change leaves no runner to wait for (#521): the caller then reports that no runner hosts the agent."""
         rid = task.request_id or ""
         req = self.requests[rid]
         now = time.time()
@@ -1573,7 +1613,8 @@ class Hub:
                                      "message": f"러너가 꺼져 있어 기다립니다. labhq up(또는 labhq runner)으로 켜면 "
                                                 f"{task.agent_id} 작업부터 이어 갑니다."}})
         try:
-            return await self.wait_agent_online(task.agent_id, bound)
+            return await self.wait_agent_online(task.agent_id, bound,
+                                                still_waiting=lambda: self._waits_for_runner(task, first=first))
         finally:
             before = req.get("status")
             waits = req.get("runner_waits") or {}
@@ -1584,12 +1625,15 @@ class Hub:
                     req["status"] = "running"
             await self._publish_hold_status(rid, before)  # open pages see the request move on
 
-    async def wait_agent_online(self, agent_id: str, timeout_s: float) -> bool:
+    async def wait_agent_online(self, agent_id: str, timeout_s: float,
+                                still_waiting: Callable[[], bool] | None = None) -> bool:
         signal = self.agent_online.setdefault(agent_id, asyncio.Event())
         deadline = asyncio.get_running_loop().time() + timeout_s
         while True:
             if self.agent_runner.get(agent_id) in self.runners:
                 return True
+            if still_waiting is not None and not still_waiting():
+                return False
             signal.clear()
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
@@ -1602,11 +1646,11 @@ class Hub:
     async def send_runner(self, runner_id: str, msg: dict) -> None:
         ws = self.runners.get(runner_id)
         if ws is None:
-            raise RunnerUnavailable(f"runner {runner_id} is offline")
+            raise RunnerNotSent(f"runner {runner_id} is offline")
         payload = json.dumps(msg, ensure_ascii=False, default=str)
         async with self.runner_locks[runner_id]:
             if self.runners.get(runner_id) is not ws:
-                raise RunnerUnavailable(f"runner {runner_id} connection was replaced")
+                raise RunnerNotSent(f"runner {runner_id} connection was replaced")
             try:
                 await ws.send_text(payload)
             except Exception as exc:
@@ -1875,15 +1919,15 @@ class Hub:
             if (self.requests.get(task.request_id or "") or {}).get("status") == "cancelled":
                 return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
                                   error="request cancelled")
-            if not arrived:
+            if not arrived and self._waits_for_runner(task):
                 return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
                                   error_kind="runner_offline", error=self._runner_wait_failure(task.agent_id))
+            # Not arrived and nothing left to wait for: a runner came back without the agent (#521), below.
         rid = self.agent_runner.get(task.agent_id)
         if not rid:
             # Nothing was sent, so nothing was spent: a real $0, not an unaccounted cost (#270).
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
-                              error=f"연결된 러너 중 {task.agent_id} 직원을 맡은 곳이 없습니다 "
-                                    f"(no runner hosts agent {task.agent_id!r})")
+                              error=self._no_runner_hosts(task.agent_id))
         refused = self._session_pin_refusal(task, rid)
         if refused:
             return refused
@@ -2394,6 +2438,7 @@ class Hub:
                             "data": {"id": approval_id, "approved": approved, "note": note, **chosen}})
         if a.get("kind") == "resume" and not approved:
             rid = a["request_id"]
+            self._restore_unstarted_continuation(rid, self.requests[rid])
             self.requests[rid].update(status="failed", error="resume declined", finished_at=time.time())
             self.schedule_terminal(rid, "request.failed", {"error": "resume declined"})
 
@@ -2440,6 +2485,7 @@ class Hub:
                     "cancelled_tasks": list(req.get("cancelled_tasks") or [])}
         if is_terminal_request(status):
             raise ValueError(f"이미 끝난 요청입니다({status})")
+        self._restore_unstarted_continuation(rid, req)
         now = time.time()
         req.update(status="cancelled", outcome="cancelled", error="PI가 요청을 취소했습니다", cancelled_at=now,
                    finished_at=now)
@@ -2447,6 +2493,9 @@ class Hub:
         req.pop("runner_waits", None)
         quota = req.pop("quota_waits", None) or {}
         login = req.pop("login_waits", None) or {}
+        # Kept until the terminal record commits (#521): `labhq down` waits for it, and a gateway that dies first
+        # leaves it for the next start to finish (finish_interrupted_cancels). cancelled is not an active status.
+        req["cancelling"] = {"quota_steps": sorted(quota)}
         for fix in (req.get("facilities_fixes") or {}).values():
             if fix.get("status") in {"waiting", "approved"}:
                 fix["status"] = "cancelled"
@@ -2468,6 +2517,8 @@ class Hub:
                 waiter.cancel()
             if (not entry.get("completed") or entry.get("abandoned")) and await self.cancel_task(tid):
                 cancelled.append(tid)
+        req["cancelled_tasks"] = cancelled
+        self.save_request(rid)  # a restart before the terminal record still reports these
         for aid, entry in list(self.approvals.items()):
             if entry["approval"].get("request_id") == rid:
                 await self.close_approval(aid, "요청 취소로 닫힘")
@@ -2476,21 +2527,65 @@ class Hub:
         if unwinding:
             await asyncio.wait(unwinding, timeout=5)  # let them unwind before the terminal record
         await self._await_cancelled_results(rid, cancelled)
-        req["cancelled_tasks"] = cancelled
-        report, appendix = self._cancel_report(req, cancelled, quota)
+        self._finish_cancel(rid)
+        return {"request_id": rid, "status": "cancelled", "already": False, "cancelled_tasks": cancelled}
+
+    def _finish_cancel(self, rid: str) -> None:
+        """Write a cancelled request's report and terminal record. ``cancelling`` leaves in that same commit."""
+        req = self.requests[rid]
+        pending = req.pop("cancelling", None) or {}
+        report, appendix = self._cancel_report(req, list(req.get("cancelled_tasks") or []),
+                                               dict.fromkeys(pending.get("quota_steps") or []))
         req.update(report=report, report_appendix=appendix)
         data = {"ok": False, "status": "cancelled", "error": req["error"], **_terminal_reports(rid, report, appendix),
                 "cost_usd": req.get("cost_usd", 0), "cost_known": req.get("cost_known", True),
                 "cost_summary": req.get("cost_summary"), "usage": req.get("usage", {}),
                 "usage_known": req.get("usage_known", True)}
         self.schedule_terminal(rid, "request.completed", data)
-        return {"request_id": rid, "status": "cancelled", "already": False, "cancelled_tasks": cancelled}
 
-    async def _await_cancelled_results(self, rid: str, cancelled: list[str]) -> None:
+    def _round_dispatched(self, rid: str, req: dict) -> bool:
+        """Whether a step task of the request's current research round is in the task ledger (#90).
+
+        A round's tasks carry ``research_round`` from round 2 on; the ledger keeps every dispatched task."""
+        round_no = int((req.get("research_contract") or {}).get("round") or 1)
+        return any(entry.get("request_id") == rid and entry.get("step_id") and
+                   int(((entry.get("payload") or {}).get("meta") or {}).get("research_round") or 1) == round_no
+                   for entry in self.store.all("task").values())
+
+    def _restore_unstarted_continuation(self, rid: str, req: dict) -> bool:
+        """Put the last approved round back before a gateway path writes a terminal continuation record.
+
+        Judged by the task ledger, not ``continuation.verified``: the gateway can stop after the new CP1 saved that
+        flag and before the first step went out (PR #527 review)."""
+        if not (req.get("research_contract") or {}).get("continuation"):
+            return False  # no continuation round, so no ledger read on every cancel
+        if not Orchestrator._continuation_unstarted(req, self._round_dispatched(rid, req)):
+            return False
+        contract = req["research_contract"]
+        carried = contract["continuation"]
+        previous = contract["rounds"][-1]
+        draft = research_continuation.restore_round(req, previous)
+        if draft:
+            carried["declined_plan"] = draft
+        req["results"] = copy.deepcopy(previous.get("results") or {})
+        return True
+
+    async def finish_interrupted_cancels(self) -> list[str]:
+        """At startup: finish a cancel whose gateway stopped before its terminal record (#521). The wait for the
+        cancelled turns died with that gateway, so a turn that has not reported is counted as unaccounted now."""
+        finished = []
+        for rid, req in list(self.requests.items()):
+            if req.get("status") == "cancelled" and req.get("cancelling") is not None:
+                await self._await_cancelled_results(rid, list(req.get("cancelled_tasks") or []), wait_s=0)
+                self._finish_cancel(rid)
+                finished.append(rid)
+        return finished
+
+    async def _await_cancelled_results(self, rid: str, cancelled: list[str], wait_s: float | None = None) -> None:
         """Give each cancelled turn a short time to report, so its cost is counted; a turn that does not report is
         counted as unaccounted, never as $0 (#270)."""
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + self.cancel_result_wait_s
+        deadline = loop.time() + (self.cancel_result_wait_s if wait_s is None else wait_s)
         def silent() -> list[str]:
             return [tid for tid in cancelled
                     if not ((self.store.get("task", tid) or {}).get("completed") and
@@ -2628,6 +2723,8 @@ class Hub:
         req = self.requests[rid]
         if not is_terminal_request(req.get("status")):
             raise ValueError(f"request is {req.get('status')}; ask a follow-up after it finishes")
+        if req.get("status") == "cancelled":  # every turn of a cancelled request is refused, so it could only fail
+            raise ValueError("취소한 요청에는 이어 묻기를 보낼 수 없습니다. 새 요청을 보내세요")
         if any(f.get("status") == "running" for f in req.get("followups") or []):
             raise ValueError("a follow-up for this request is still running")
         if req.get("followup_agent_id"):
@@ -2675,9 +2772,11 @@ class Hub:
         probe = Task(agent_id=str(first or ""), request_id=rid, prompt="")
         if (first and self.agent_runner.get(first) not in self.runners and
                 self._waits_for_runner(probe, first=True)):
-            if not await self.wait_for_runner(probe):
+            if not await self.wait_for_runner(probe, first=True):
                 if self.requests[rid].get("status") != "cancelled":
-                    reason = self._runner_wait_failure(first)
+                    # A runner that came back without the agent ends the wait early; that is not a timeout (#521).
+                    reason = (self._runner_wait_failure(first) if self._waits_for_runner(probe, first=True)
+                              else self._no_runner_hosts(first))
                     self.orchestrator._finish(rid, reason, {}, ok=False, error=reason)
                 return
             if self.requests[rid].get("status") == "cancelled":
@@ -2779,6 +2878,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     @app.on_event("startup")
     async def recover_terminal_deliveries() -> None:
         hub.recover_terminal_deliveries()
+        await hub.finish_interrupted_cancels()
         await hub.expire_stale_resume_cards()
         for rid, request in hub.requests.items():
             if is_terminal_request(request.get("status")):
@@ -3028,11 +3128,18 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         if not rid:
             raise HTTPException(409, f"no runner hosts the recruiter agent {settings.recruit.agent_id!r}")
         # Counted before sending: a runner that fails at once may report recruit.failed before send_runner returns.
-        # Not rolled back when sending raises: the frame may still have reached the runner (as Hub.dispatch assumes);
+        # Not rolled back when sending fails mid-frame: it may still have reached the runner (as Hub.dispatch assumes);
         # recruit.done/failed or a new runner process clears it, and `down --force` overrides meanwhile (#515 review).
-        entry = hub.recruits_running.setdefault(rid, {"incarnation": hub.runner_incarnations.get(rid), "count": 0})
+        entry = hub.recruits_running.setdefault(rid, {"incarnation": hub.runner_incarnations.get(rid),
+                                                      "process": hub.runner_processes.get(rid), "count": 0})
         entry["count"] += 1
-        await hub.send_runner(rid, {"type": "recruit.start", **body.model_dump()})
+        try:
+            await hub.send_runner(rid, {"type": "recruit.start", **body.model_dump()})
+        except RunnerNotSent:
+            entry["count"] = max(0, entry["count"] - 1)  # the frame never left: nothing runs (#521)
+            raise HTTPException(409, f"채용 담당({settings.recruit.agent_id})의 러너({rid})가 꺼져 있거나 다시 연결하는 "
+                                     "중이라 채용 요청을 보내지 못했습니다. labhq up(또는 labhq runner)으로 켠 뒤 "
+                                     "다시 보내세요") from None
         return {"ok": True, "runner_id": rid}
 
     @app.post("/api/contracts/{agent_id}", dependencies=[Depends(auth)])

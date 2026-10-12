@@ -1,5 +1,6 @@
 """Request and approval lifecycle for a PI working alone (PI 점검 R2 R5 R13 R15)."""
 import asyncio
+import copy
 import time
 
 import pytest
@@ -7,7 +8,9 @@ import pytest
 from labhq.gateway.server import PI_DECISION_KINDS, Hub
 from labhq.models import ApprovalRequest, Task, TaskResult
 from labhq.orchestrator.cso import BudgetExceeded, Orchestrator
+from labhq.research import continuation
 from labhq.settings import Settings
+from tests.test_research_protocol import valid_plan
 
 
 def _settings(tmp_path):
@@ -736,20 +739,160 @@ def test_a_resume_card_after_every_step_finished_says_no_step_is_left(tmp_path):
     assert hub.new_resume_approval("unplanned").summary.endswith("남은 단계: 요청 전체")
 
 
+def test_a_resume_card_before_the_continuation_plan_names_the_new_round(tmp_path):
+    hub = Hub(_settings(tmp_path))
+    plan = valid_plan()
+    frozen = "a" * 64
+    _request(hub, "r", status="interrupted", plan=plan,
+             results={step["id"]: {"ok": True} for step in plan["steps"]},
+             research_contract={"plan_sha256": frozen, "round": 2,
+                                "rounds": [{"round": 1, "plan_sha256": frozen}],
+                                "continuation": {"round": 2, "from_plan_sha256": frozen}})
+
+    card = hub.new_resume_approval("r")
+
+    assert card.summary.endswith("남은 단계: 이어 가기 2차: 새 계획·CP1부터 이어 갑니다")
+
+
+def _unstarted_continuation_request(hub, rid="r", *, status="interrupted"):
+    old = valid_plan(steps=2)
+    new = copy.deepcopy(old)
+    new["steps"][0]["instruction"] = "unapproved draft"
+    old_results = {step["id"]: {"ok": True, "task_id": f"old-{step['id']}", "text": "done"}
+                   for step in old["steps"]}
+    req = _request(hub, rid, status=status, plan=old, results=old_results,
+                   budget_usd=7, research_contract={"plan_sha256": "a" * 64, "round": 1,
+                                                    "approval": {"status": "approved"},
+                                                    "checkpoints": {"cp2": {"decision": "approved"}},
+                                                    "review": {"verdict": "revise"}})
+    archived = continuation.archive_round(req, old_results)
+    req["plan"] = new
+    req["results"] = {"s1": {"ok": True, "task_id": "reused-s1"}}
+    req["budget_usd"] = 2
+    req["research_contract"].update(
+        round=2, rounds=[archived], plan_sha256="b" * 64,
+        continuation={"round": 2, "from_plan_sha256": "a" * 64,
+                      "plan_sha256": "b" * 64, "verified": False},
+        approval={"status": "pending"})
+    req["research_contract"]["checkpoints"].pop("cp2", None)
+    hub.save_request(rid)
+    return old, old_results
+
+
+@pytest.mark.asyncio
+async def test_cancel_restores_an_unstarted_continuation_before_writing_its_report(tmp_path):
+    hub = Hub(_settings(tmp_path))
+    old, old_results = _unstarted_continuation_request(hub, status="running")
+
+    await hub.cancel_request("r")
+
+    req = hub.requests["r"]
+    assert req["plan"] == old and req["results"] == old_results and req["budget_usd"] == 7
+    assert "끝난 단계 1개" not in req["report"]
+    assert "끝난 단계 2개" in req["report"]
+
+
+@pytest.mark.asyncio
+async def test_resume_decline_restores_an_unstarted_continuation_before_terminal_record(tmp_path):
+    hub = Hub(_settings(tmp_path))
+    old, old_results = _unstarted_continuation_request(hub)
+    card = hub.new_resume_approval("r")
+
+    await hub.resolve_approval(card.id, False)
+
+    req = hub.requests["r"]
+    assert req["plan"] == old and req["results"] == old_results and req["budget_usd"] == 7
+
+
+@pytest.mark.asyncio
+async def test_resume_timeout_restores_an_unstarted_continuation_before_terminal_record(tmp_path):
+    s = _settings(tmp_path)
+    hub = Hub(s)
+    old, old_results = _unstarted_continuation_request(hub)
+    card = hub.new_resume_approval("r")
+    hub.approvals[card.id]["approval"]["created_at"] = time.time() - s.policy.approvals.pi_decision_timeout_s - 1
+    hub.save_approval(card.id)
+
+    assert await hub.expire_resume_card(card.id)
+
+    req = hub.requests["r"]
+    assert req["plan"] == old and req["results"] == old_results and req["budget_usd"] == 7
+
+
+def _ledger_task(hub, tid, step_id, research_round=None):
+    """A finished step task in the gateway task ledger; ``research_round`` is absent in round 1 (#90)."""
+    meta = {"kind": "step", "step_id": step_id, **({"research_round": research_round} if research_round else {})}
+    hub.store.put("task", tid, {"request_id": "r", "step_id": step_id, "kind": "step", "completed": True,
+                                "payload": {"id": tid, "agent_id": "worker", "request_id": "r", "meta": meta}})
+
+
+async def _end_interrupted_continuation(hub, s, path):
+    if path == "cancel":
+        await hub.cancel_request("r")
+        return
+    card = hub.new_resume_approval("r")
+    if path == "decline":
+        await hub.resolve_approval(card.id, False)
+        return
+    hub.approvals[card.id]["approval"]["created_at"] = time.time() - s.policy.approvals.pi_decision_timeout_s - 1
+    hub.save_approval(card.id)
+    assert await hub.expire_resume_card(card.id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["cancel", "decline", "timeout"])
+async def test_a_continuation_stopped_between_its_reuse_check_and_first_dispatch_is_restored(tmp_path, path):
+    """PR #527 review P2: the gateway stopped after the new CP1 saved ``continuation.verified`` but before any step
+    task went out. No step of round 2 is in the task ledger, so ending the request puts round 1 back."""
+    s = _settings(tmp_path)
+    hub = Hub(s)
+    old, old_results = _unstarted_continuation_request(hub)
+    hub.requests["r"]["research_contract"]["continuation"]["verified"] = True
+    hub.save_request("r")
+    for step in old["steps"]:  # round 1's own step tasks do not start round 2
+        _ledger_task(hub, f"old-{step['id']}", step["id"])
+
+    await _end_interrupted_continuation(hub, s, path)
+
+    req = hub.requests["r"]
+    assert req["plan"] == old and req["results"] == old_results and req["budget_usd"] == 7
+    assert req["research_contract"]["round"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["cancel", "decline", "timeout"])
+async def test_a_continuation_whose_step_task_went_out_is_not_rolled_back(tmp_path, path):
+    s = _settings(tmp_path)
+    hub = Hub(s)
+    old, _old_results = _unstarted_continuation_request(hub)
+    req = hub.requests["r"]
+    req["research_contract"]["continuation"]["verified"] = True
+    new_plan, reused = copy.deepcopy(req["plan"]), copy.deepcopy(req["results"])
+    hub.save_request("r")
+    _ledger_task(hub, "round2-s2", "s2", research_round=2)
+
+    await _end_interrupted_continuation(hub, s, path)
+
+    req = hub.requests["r"]
+    assert req["plan"] == new_plan != old and req["results"] == reused and req["budget_usd"] == 2
+    assert req["research_contract"]["round"] == 2
+
+
 @pytest.mark.asyncio
 async def test_shutdown_readiness_names_follow_ups_and_recruitments_outside_active_requests(tmp_path):
     hub = Hub(_settings(tmp_path))
     _request(hub, "done", status="done", followups=[{"id": "fu_1", "text": "그림 다시", "status": "running"},
                                                     {"id": "fu_0", "text": "끝난 것", "status": "done"}])
     assert hub.shutdown_readiness() == {
-        "requests": [], "recruits": 0, "ready": False,
+        "requests": [], "recruits": 0, "finishing": [], "ready": False,
         "followups": [{"request_id": "done", "followup_id": "fu_1", "text": "그림 다시"}]}
     hub.requests["done"]["followups"][0]["status"] = "done"
     assert hub.shutdown_readiness()["ready"] is True
     hub.recruits_running["lab"] = {"incarnation": "inc-1", "count": 1}
     assert hub.shutdown_readiness()["ready"] is False and hub.shutdown_readiness()["recruits"] == 1
     await hub.on_runner_message("lab", {"type": "recruit.done", "ts": 1.0, "data": {"agent": {"id": "c_x"}}})
-    assert hub.shutdown_readiness() == {"requests": [], "followups": [], "recruits": 0, "ready": True}
+    assert hub.shutdown_readiness() == {"requests": [], "followups": [], "recruits": 0, "finishing": [],
+                                        "ready": True}
 
 
 @pytest.mark.asyncio
@@ -790,3 +933,216 @@ def test_a_runner_reconnect_keeps_its_recruitments_and_a_new_process_clears_them
     hub.unregister_runner("lab", second)
     hub.register_runner("lab", third, [], incarnation="inc-2")  # a new runner process
     assert hub.shutdown_readiness()["recruits"] == 0 and hub.shutdown_readiness()["ready"] is True
+
+
+# ----- #521: gateway lifecycle follow-ups -----
+
+def _recruiter_roster(s):
+    return [{"id": s.recruit.agent_id, "name": "채용 담당", "role": "test", "engine": "mock"}]
+
+
+@pytest.mark.asyncio
+async def test_a_runner_restart_that_keeps_its_incarnation_clears_the_old_process_recruitments(tmp_path):
+    """#521 P2 11·18: the incarnation is kept on disk, so only the per-process id tells a restart from a reconnect."""
+    import httpx
+
+    from labhq.gateway.server import create_app
+
+    s = _settings(tmp_path)
+    app = create_app(s)
+    hub = app.state.hub
+    roster = _recruiter_roster(s)
+    auth = {"Authorization": f"Bearer {s.gateway.client_token}"}
+    first = CaptureSocket()
+    hub.register_runner("lab", first, roster, "inc", process="p1")
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gw") as client:
+        response = await client.post("/api/recruit", headers=auth, json={"repo": "example/tool"})
+    assert response.status_code == 200 and any(m.get("type") == "recruit.start" for m in first.sent)
+    assert hub.shutdown_readiness()["recruits"] == 1
+
+    hub.unregister_runner("lab", first)
+    again = CaptureSocket()
+    hub.register_runner("lab", again, roster, "inc", process="p1")  # the same process reconnects
+    assert hub.shutdown_readiness()["recruits"] == 1
+    hub.unregister_runner("lab", again)
+    hub.register_runner("lab", CaptureSocket(), roster, "inc", process="p2")  # restarted: same incarnation
+    assert hub.shutdown_readiness()["recruits"] == 0 and hub.shutdown_readiness()["ready"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_recruitment_asked_while_the_runner_is_offline_is_refused_not_counted(tmp_path):
+    """#521 P2 18: the frame provably never left, so nothing is running and `down` must not wait for it."""
+    import httpx
+
+    from labhq.gateway.server import create_app
+
+    s = _settings(tmp_path)
+    app = create_app(s)
+    hub = app.state.hub
+    ws = CaptureSocket()
+    hub.register_runner("lab", ws, _recruiter_roster(s), "inc", process="p1")
+    hub.unregister_runner("lab", ws)  # agent_runner still names the runner; it may come back
+    auth = {"Authorization": f"Bearer {s.gateway.client_token}"}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gw") as client:
+        response = await client.post("/api/recruit", headers=auth, json={"repo": "example/tool"})
+    assert response.status_code == 409 and "꺼져" in response.json()["detail"]
+    assert hub.shutdown_readiness()["recruits"] == 0 and hub.shutdown_readiness()["ready"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_late_answer_after_a_recruitment_turn_does_not_mark_the_recruiter_working(tmp_path):
+    """PR #526 review: a recruitment turn runs outside task.dispatch, so the runner did not know it had ended."""
+    from labhq.recruit.paper2agent import Recruitment
+    from labhq.runner.daemon import Runner
+
+    s = _runner_settings(tmp_path)
+    s.runner.force_engine = "mock"  # skips the paper2agent skill check
+    runner = Runner(s)
+    loop = asyncio.get_running_loop()
+    turns = []
+
+    async def run_task(task, workdir_override=None):
+        turns.append(task.id)
+        runner.broker.pending["appr_r"] = loop.create_future()
+        runner.approval_tasks["appr_r"] = (task.id, s.recruit.agent_id)  # a card the turn left open
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error="no offer letter")
+
+    runner.run_task = run_task
+    try:
+        assert await Recruitment(runner, {"repo": "example/tool"}).run() is None
+        await runner._on_message({"type": "approval.resolved", "id": "appr_r", "approved": False, "note": "closed"})
+        sent = runner.store.pending()
+        assert turns and not [m for m in sent if m["type"] == "agent.status" and m.get("task_id") == turns[0]]
+        assert [m["id"] for m in sent if m["type"] == "approval.ack"] == ["appr_r"]
+    finally:
+        runner.store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_follow_up_on_a_cancelled_request_is_refused_up_front(tmp_path):
+    """#521 P2 10: every turn of a cancelled request is refused, so its follow-up could only fail."""
+    hub = Hub(_settings(tmp_path))
+    hub.register_runner("local", CaptureSocket(), ROSTER, "inc")
+    _request(hub, "r", status="cancelled")
+    _request(hub, "done", status="done")
+    with pytest.raises(ValueError, match="취소한 요청"):
+        hub.start_followup("r", "부분 결과만 설명해 주세요")
+    assert not hub.requests["r"].get("followups")
+    entry = hub.start_followup("done", "그 표는 어디 있나요?")  # a finished request still takes one
+    assert entry["status"] == "running"
+    await _until(lambda: hub.requests["done"]["followups"][0]["status"] != "running" or hub.store.all("task"))
+
+
+@pytest.mark.asyncio
+async def test_a_cancel_still_being_recorded_holds_down_and_a_restart_finishes_it(tmp_path):
+    """#521 P2 12: status is cancelled before the turns report and the terminal record is written; `down` in that
+    window used to pass, and a restart skipped the request because cancelled is not active."""
+    from fastapi.testclient import TestClient
+
+    from labhq.gateway.server import RequestIn, create_app
+
+    s = _team_settings(tmp_path)
+    hub = Hub(s)
+    ws = CaptureSocket()
+    hub.register_runner("local", ws, ROSTER, "inc")
+    rid = hub.create_request(RequestIn(text="공개 데이터 QC 요약"))
+    await _until(lambda: any(m.get("type") == "task.dispatch" for m in ws.sent))
+    plan_task = next(m["task"]["id"] for m in ws.sent if m.get("type") == "task.dispatch")
+    cancelling = asyncio.create_task(hub.cancel_request(rid))
+    await _until(lambda: {"type": "task.cancel", "task_id": plan_task} in ws.sent)
+    await _until(lambda: hub.requests[rid].get("cancelled_tasks"))  # now waiting for the turn to report
+    readiness = hub.shutdown_readiness()
+    assert readiness["ready"] is False and readiness["requests"] == []
+    assert [(row["id"], row["stage"]) for row in readiness["finishing"]] == [(rid, "cancel")]
+
+    cancelling.cancel()  # the gateway dies before the terminal record
+    with pytest.raises(asyncio.CancelledError):
+        await cancelling
+    assert not [e for e in hub.store.events_since(0) if e["type"] == "request.completed"]
+    app = create_app(s)
+    with TestClient(app):
+        pass  # startup finishes the cancel the old process left half written
+    req = app.state.hub.requests[rid]
+    assert req["status"] == "cancelled" and "취소했습니다" in req["report"] and "cancelling" not in req
+    assert req["cancelled_tasks"] == [plan_task] and req["cost_known"] is False  # the turn never reported
+    final = [e for e in app.state.hub.store.events_since(0)
+             if e["type"] == "request.completed" and e["request_id"] == rid]
+    assert len(final) == 1 and final[0]["data"]["status"] == "cancelled"
+    assert app.state.hub.shutdown_readiness()["ready"] is True
+    restarted = Hub(s)
+    await restarted.finish_interrupted_cancels()  # once only
+    assert len([e for e in restarted.store.events_since(0) if e["type"] == "request.completed"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_bundle_still_being_copied_holds_down(tmp_path, monkeypatch):
+    """#521 P2 14: the bundle is copied after the terminal record, and `labhq down` (taskkill /F on Windows) lost it."""
+    import threading
+
+    hub = Hub(_settings(tmp_path))
+    _request(hub, "r", status="done", results={"s1": {"ok": True, "workdir_id": "w1"}})
+    release = threading.Event()
+
+    def slow_bundle(rid, request=None, tasks=None, runner_capabilities=None):
+        release.wait(5)
+        return {"warning": "묶음 없음"}
+
+    monkeypatch.setattr(hub, "_bundle_outcome", slow_bundle)
+    copying = hub.schedule_terminal("r", "request.completed", {"ok": True, "status": "done"})
+    readiness = hub.shutdown_readiness()
+    assert readiness["ready"] is False and [(row["id"], row["stage"]) for row in readiness["finishing"]] == [
+        ("r", "bundle")]
+    release.set()
+    await asyncio.wait_for(copying, 5)
+    assert hub.shutdown_readiness()["ready"] is True and hub.shutdown_readiness()["finishing"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_runner_that_comes_back_without_the_agent_ends_the_wait_at_once(tmp_path):
+    """#521 P2 13: the agent's contract expired (or its yaml went) while the runner was off; the step waited 24 h and
+    then blamed a runner that had connected."""
+    hub = Hub(_settings(tmp_path))
+    curator = {"id": "curator", "name": "c", "role": "t", "engine": "mock"}
+    first = CaptureSocket()
+    hub.register_runner("lab", first, [*ROSTER, curator], "inc", process="p1")
+    hub.unregister_runner("lab", first)
+    _request(hub, "r")
+    step = asyncio.create_task(hub.dispatch(Task(agent_id="curator", request_id="r", prompt="표 정리")))
+    await _until(lambda: hub.requests["r"]["status"] == "waiting_for_runner")
+    hub.register_runner("lab", CaptureSocket(), ROSTER, "inc", process="p2")
+    outcome = await asyncio.wait_for(step, 2)
+    assert not outcome.ok and "no runner hosts agent 'curator'" in outcome.error and outcome.cost_usd == 0
+    assert outcome.error_kind != "runner_offline" and "연결되지 않아" not in outcome.error
+    assert hub.requests["r"]["status"] == "running" and "runner_waits" not in hub.requests["r"]
+
+
+@pytest.mark.asyncio
+async def test_a_first_agent_wait_after_a_gateway_restart_ends_when_its_runner_comes_back_without_it(tmp_path):
+    """#521 P2 13, the request's first agent on a fresh gateway: it waits on the stored roster, not agent_runner."""
+    s = _settings(tmp_path)
+    curator = {"id": "curator", "name": "c", "role": "t", "engine": "mock"}
+    Hub(s).set_roster("lab", [*ROSTER, curator])  # what the runner hosted before the gateway restarted
+    hub = Hub(s)
+    from labhq.gateway.server import RequestIn
+
+    rid = hub.create_request(RequestIn(text="표 정리", mode="direct", agent_id="curator"))
+    await _until(lambda: hub.requests[rid]["status"] == "waiting_for_runner")
+    hub.register_runner("lab", CaptureSocket(), ROSTER, "inc", process="p1")
+    await _until(lambda: hub.requests[rid]["status"] == "failed", timeout=2)
+    text = hub.requests[rid].get("report", "") + hub.requests[rid].get("error", "")
+    assert "curator 직원을 맡은 곳이 없습니다" in text and "연결되지 않아" not in text
+
+
+@pytest.mark.asyncio
+async def test_a_first_agent_wait_on_a_fresh_gateway_ends_when_a_runner_without_it_connects(tmp_path):
+    """PR #530 review: no saved roster, so the request waited only because no runner was connected. The first runner
+    hosts other staff; nothing dropped from its roster, yet the wait has nothing left to wait for."""
+    from labhq.gateway.server import RequestIn
+
+    hub = Hub(_settings(tmp_path))
+    rid = hub.create_request(RequestIn(text="표 정리", mode="direct", agent_id="curator"))
+    await _until(lambda: hub.requests[rid]["status"] == "waiting_for_runner")
+    hub.register_runner("lab", CaptureSocket(), ROSTER, "inc", process="p1")
+    await _until(lambda: hub.requests[rid]["status"] == "failed", timeout=2)
+    text = hub.requests[rid].get("report", "") + hub.requests[rid].get("error", "")
+    assert "curator 직원을 맡은 곳이 없습니다" in text and "연결되지 않아" not in text

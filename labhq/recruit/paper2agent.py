@@ -12,6 +12,7 @@ or dist/<repo>-mcp.zip with a USAGE.md.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -337,7 +338,11 @@ class Recruitment:
             meta={"kind": "recruit", "slug": self.slug, "title": f"파견직 채용 변환: {self.slug}",
                   "agent_overrides": {"permission_mode": self.s.recruit.permission_mode}},
         )
-        result = await self.r.run_task(task, workdir_override=build)
+        # Tracked like a dispatched task: a card answer that arrives after this turn ended must not mark the
+        # recruiter working again (PR #526 review, #521).
+        turn = asyncio.ensure_future(self.r.run_task(task, workdir_override=build))
+        self.r.tasks[task.id] = turn
+        result = await turn
         offer = result.structured if isinstance(result.structured, dict) else extract_json(result.text)
         if not result.ok or not isinstance(offer, dict):
             await self._emit("recruit.failed", {"error": result.error or "no offer letter", "text": short(result.text, 500)})

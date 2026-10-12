@@ -1,0 +1,5 @@
+pr: 531
+rows:
+- sha: 939291a
+  at: "2026-10-12 04:50"
+  text: "Claude와 Codex의 90초 fake MCP 대기 설정과 단일 호출을 직접 검증하고 state env 기본값을 지연 생성했다"

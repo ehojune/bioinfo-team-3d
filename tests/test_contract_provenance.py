@@ -40,13 +40,13 @@ def _skill(path: Path, text: str = "# paper skill\n") -> Path:
 
 
 class _Runner:
-    """What Recruitment uses of the runner: settings, registry, run_task and emit."""
+    """What Recruitment uses of the runner: settings, registry, run_task, tasks (#521) and emit."""
 
     def __init__(self, tmp_path: Path, offer: dict):
         self.s = Settings()
         self.s.runner.force_engine = "mock"
         self.registry = Registry(tmp_path / "agents", tmp_path / "talent")
-        self.offer, self.events = offer, []
+        self.offer, self.events, self.tasks = offer, [], {}
 
     async def run_task(self, task, workdir_override=None):
         return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=self.offer)
