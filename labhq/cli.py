@@ -1147,6 +1147,8 @@ def main(argv: list[str] | None = None) -> None:
     doctor = sub.add_parser("doctor", help="check runner capabilities without starting agents")
     doctor.add_argument("--json", action="store_true", help="write state_dir/capabilities.json")
     doctor.add_argument("--network", action="store_true", help="check public data source reachability")
+    doctor.add_argument("--canary", metavar="AGENT_ID|all",
+                        help="make paid engine calls to check result/accounting/session/resume/cancel")
     sp = sub.add_parser("send")
     sp.add_argument("text")
     sp.add_argument("--agent", help="direct mode: send to one agent")
@@ -1309,10 +1311,14 @@ def main(argv: list[str] | None = None) -> None:
         p.exit(2, f"labhq: {exc}\n")
 
     if args.cmd == "doctor":
-        from .doctor import collect, render, save
+        from .doctor import collect, render, run_canaries, save
 
         requested = args.config or os.environ.get("LABHQ_CONFIG")
         result = collect(s, requested_config=requested, network=args.network)
+        if args.canary:
+            result["checks"].extend(run_canaries(s, args.canary))
+            result["summary"] = {status: sum(row["status"] == status for row in result["checks"])
+                                 for status in ("ok", "warn", "fail", "skip")}
         if args.json:
             try:
                 save(result, s)

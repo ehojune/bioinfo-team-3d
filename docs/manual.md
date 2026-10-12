@@ -99,6 +99,15 @@ Codex `bin`이 비어 있거나 `auto`이면 Windows 앱에서 판본이 가장 
 
 실행 전 `labhq doctor`로 설정·엔진·직원·계산 도구를 점검하세요. `labhq doctor --json`은 러너 상태 디렉터리에 `capabilities.json`을 쓰고, `--network`를 붙일 때만 공개 데이터 사이트에 접속합니다. 이 manifest의 `runner_capabilities`는 러너가 보고하는 기능과 같은 설정·roster에서 산출한 사실입니다. `research lane` 행은 연구 lane이 끝까지 도는지 알려 줍니다. `research.enabled`만 켜면 CP1 뒤 멈춘다는 warn이 뜨고, `evidence_checkpoint`까지 켜야 CP2·리뷰·보고서로 갑니다. `research` 아래 오타 키는 시작할 때 오류입니다.
 doctor는 roster가 쓰는 엔진만 검사하고, 생략한 네트워크·dry-run 로그인 검사는 한 줄로 묶습니다. fail이 하나라도 있거나, 활성 직원이 없거나, roster 엔진 실행 파일이 하나라도 없으면 끝에 `실행 준비: 아니오`와 이유를 표시합니다. 다른 warn은 준비 여부를 바꾸지 않습니다.
+
+직원 모델도 함께 봅니다. Claude는 `haiku`·`sonnet`·`opus` 별칭과 `claude-<family>-<version>` 형식을 검사합니다. Codex는 직원 전용 `CODEX_HOME/models_cache.json`이 있을 때만 그 안의 slug와 대조하고, 파일이 없으면 skip합니다. 최소 CLI는 아래와 같습니다. 더 낮으면 adapter의 격리·결과 계약을 보장할 수 없어 fail, 판본을 읽지 못하면 warn입니다.
+
+| 엔진 | 최소 판본 | 이 판본에서 확인한 의존 기능 |
+|---|---:|---|
+| Claude Code | 2.1.282 | stream-json result·usage, `--resume`, `--permission-prompt-tool`, hook/settings JSON 격리 |
+| Codex | 0.160.1 | `exec --json` result·usage, `exec resume`, hooks·plugins·apps 차단 feature 이름 |
+
+`labhq doctor --canary <agent_id|all>`은 명시할 때만 실제 모델을 부릅니다. 직원마다 짧은 고정 답변, 같은 session의 resume, 시작 직후 cancel까지 세 호출을 하므로 비용이 듭니다. result, 비용·token 보고(엔진이 비용을 안 주면 unknown), session id, resume, cancel을 각각 pass/fail로 표시하며 `--json` manifest에도 넣습니다. CI와 일반 `doctor`는 canary 경로를 부르지 않습니다.
 npm의 `.cmd`/`.bat` shim은 여러 줄 prompt를 손상시킬 수 있어 labhq가 표준 npm shim만 Node.js로 풀어 실행합니다.
 풀 수 없는 shim은 거부합니다. Windows에서 직접 지정하려면 `engines.<engine>.bin`과 `prefix_args`를 쓰세요(설치된 package 경로 확인).
 
