@@ -983,7 +983,10 @@ class AgentAdapter(ABC):
                     return
                 if not warned and warn_limit > 0 and quiet >= warn_limit:
                     minutes = max(1, int(quiet // 60))
-                    if await pending_uac_prompts():
+                    if tool_activity.active:
+                        await report_block("tool-active", "debug",
+                                           "PI 카드 응답을 기다리는 중이라 끊지 않습니다")
+                    elif await pending_uac_prompts():
                         reported_block = "uac"
                         retry_note = ((" UAC가 사라진 뒤 실행 중인 명령이 없으면 labhq가 끊고 다시 시도합니다. "
                                        "연구 lane에서 단계를 취소하면 요청이 실패로 끝납니다")
@@ -1018,7 +1021,7 @@ class AgentAdapter(ABC):
                         await report_block("stream-unknown", "warn", "CLI 출력 스트림의 도구 호출 상태를 해석할 수 없어 무응답 종료를 보류합니다")
                         return
                     if tool_activity.active:
-                        await report_block("tool-active", "warn", "CLI 출력 스트림에 완료되지 않은 도구 호출이 있어 무응답 종료를 보류합니다")
+                        await report_block("tool-active", "debug", "PI 카드 응답을 기다리는 중이라 끊지 않습니다")
                         await asyncio.sleep(max(0.01, min(30.0, retry_limit / 4)))
                         continue
                     idle = await asyncio.to_thread(_idle_process_tree, proc.pid, ctx.mcp_servers)

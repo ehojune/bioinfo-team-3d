@@ -29,6 +29,9 @@ _R_ENV_ONLY = re.compile(
 _ENVIRONMENT_DENIAL = (
     "The environment step may install only into its own workspace. Create a local .venv and use its "
     "interpreter explicitly, or use a workspace-local --target, conda --prefix, or uv pip --python path.")
+_CONSUMER_DENIAL = (
+    "Only the environment step may modify the shared environment. A consumer step may run analysis commands or "
+    "install an extra Python package only into ./.pylib (R: ./.rlib).")
 _INSTALL_REDIRECT_ENV = re.compile(
     r"\b(?:PIP_(?:TARGET|PREFIX|ROOT|USER|PYTHON|CONFIG_FILE)|UV_(?:PROJECT_ENVIRONMENT|PYTHON|SYSTEM_PYTHON)|"
     r"CONDA_PREFIX|PYTHONHOME|PYTHONPATH|VIRTUAL_ENV)\s*=", re.IGNORECASE)
@@ -64,6 +67,14 @@ _POWERSHELL_OPTIONS = {
     "-sta": "flag",
 }
 _CMD_FLAGS = re.compile(r"/(?:[dqas]|[auefv]:(?:on|off))$", re.IGNORECASE)
+_POWERSHELL_ASSIGNMENT = re.compile(
+    r"^\s*\$(?P<name>(?:env:)?[A-Za-z_]\w*)\s*=\s*(?P<value>.+?)\s*$", re.IGNORECASE)
+_POWERSHELL_VALUE_EXPRESSION = re.compile(
+    r"^\s*\$(?:env:)?[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+\s*$", re.IGNORECASE)
+
+
+def _scope_denial(environment_step: bool) -> str:
+    return _ENVIRONMENT_DENIAL if environment_step else _CONSUMER_DENIAL
 
 
 def executable_basename(token: str) -> str:
@@ -196,7 +207,8 @@ def _installation_syntax(segment: str, tool_name: str = "Bash") -> bool:
     for i, word in enumerate(words):
         executable = executable_basename(word.strip("({)}"))
         if _dynamic_installer_syntax(
-                word, words[i + 1:], executable_position=i == 0, tool_name=tool_name):
+                word, words[i + 1:], executable_position=i == 0 and not re.fullmatch(r"[A-Za-z_]\w*=.*", word),
+                tool_name=tool_name):
             return True
         if _python_install(executable, words[i + 1:]):
             return True
@@ -1058,6 +1070,7 @@ def _shared_environment_install_denial(tool_name: str, command: str, *, environm
     group_stack: list[tuple[str, Path | None, int, bool, list[str]]] = []
     install_environment_override = False
     pending_r_environment: list[str] = []
+    powershell_values: dict[str, str] = {}
     segments = list(_segments(command, tool_name))
     control_flow = any(re.match(r"\s*[({]*\s*(?:if|elif|else|then|while|until|for|do|case|switch|foreach)\b", part)
                        for part in segments)
@@ -1076,7 +1089,7 @@ def _shared_environment_install_denial(tool_name: str, command: str, *, environm
         if segment in {")", "}"}:
             if not group_stack or group_stack[-1][0] != segment:
                 if _installer_name_visible(command):
-                    return _ENVIRONMENT_DENIAL
+                    return _scope_denial(environment_step)
                 continue
             _, saved_cwd, stack_length, restores_state, saved_r_environment = group_stack.pop()
             if restores_state:
@@ -1087,17 +1100,35 @@ def _shared_environment_install_denial(tool_name: str, command: str, *, environm
         # A data command can still execute substitutions; literal single-quoted text remains data.
         if (_shell_expands(segment, tool_name) and
                 re.search(r"\b(?:install|create)\b", segment, re.IGNORECASE)):
-            return _ENVIRONMENT_DENIAL
+            return _scope_denial(environment_step)
         # PowerShell assignments and shell exports can redirect a later command in the same tool call.
         install_environment_override |= bool(_INSTALL_REDIRECT_ENV.search(segment))
         r_environment = _R_ENV_LIBRARY.findall(segment)
         if r_environment and _R_ENV_ONLY.fullmatch(segment):
             pending_r_environment = r_environment
             continue
+        assignment = _POWERSHELL_ASSIGNMENT.fullmatch(segment) if tool_name == "PowerShell" else None
+        if assignment:
+            value = assignment.group("value")
+            if _installation_syntax(value, tool_name):
+                return _scope_denial(environment_step)
+            words, valid = _literal_words(value, tool_name)
+            name = assignment.group("name").casefold()
+            if valid and len(words) == 1 and not _nonliteral_word(words[0]):
+                powershell_values[name] = words[0]
+            else:
+                powershell_values.pop(name, None)
+            continue
+        if tool_name == "PowerShell" and _POWERSHELL_VALUE_EXPRESSION.fullmatch(segment):
+            continue
         token, args, understood = _shell_invocation(segment, tool_name)
+        variable = re.fullmatch(r"\$(?:\{)?((?:env:)?[A-Za-z_]\w*)(?:\})?", token, re.IGNORECASE)
+        resolved_variable = bool(variable and variable.group(1).casefold() in powershell_values)
+        if resolved_variable and variable:
+            token = powershell_values[variable.group(1).casefold()]
         executable = executable_basename(token)
         if _dynamic_installer_syntax(token, args, tool_name=tool_name):
-            return _ENVIRONMENT_DENIAL
+            return _scope_denial(environment_step)
         # A quoted variable naming the program (`"$RSCRIPT" -e "install.packages(..)"`) may be R: its install
         # calls meet the library rules a literal Rscript meets (#16 of the v0.5.0 cross review).
         r_program = executable in _R or _nonliteral_word(token) and bool(_R_CALL.search(segment))
@@ -1105,12 +1136,12 @@ def _shared_environment_install_denial(tool_name: str, command: str, *, environm
         if nested is not None:
             body, nested_tool, extractable, unconditional, positional, nested_cwd = nested
             if unconditional:
-                return _ENVIRONMENT_DENIAL
+                return _scope_denial(environment_step)
             if not extractable or depth >= _NESTED_SHELL_DEPTH:
                 candidate = segment if not extractable else body or segment
                 if (_installer_name_visible(candidate) or
                         not extractable and _installation_syntax(segment, tool_name)):
-                    return _ENVIRONMENT_DENIAL
+                    return _scope_denial(environment_step)
                 continue
             if positional:
                 body, positional_candidates = _positional_commands(body, positional)
@@ -1133,8 +1164,9 @@ def _shared_environment_install_denial(tool_name: str, command: str, *, environm
         manager_create = environment_step and executable in {"conda", "mamba", "micromamba"} and "create" in args
         if ((not understood or not detected_install and not manager_create and not r_program) and
                 not (understood and executable in _DATA_COMMANDS | _LOCATION_COMMANDS)):
-            if _installation_syntax(segment, tool_name):
-                return _ENVIRONMENT_DENIAL
+            syntax_segment = " ".join([token, *args]) if resolved_variable else segment
+            if _installation_syntax(syntax_segment, tool_name):
+                return _scope_denial(environment_step)
         if executable in {"pushd", "push-location"}:
             cwd_stack.append(cwd)
         if executable in {"popd", "pop-location"}:
@@ -1186,5 +1218,5 @@ def _shared_environment_install_denial(tool_name: str, command: str, *, environm
         else:
             pending_r_environment = []
     if group_stack and _installer_name_visible(command):
-        return _ENVIRONMENT_DENIAL
+        return _scope_denial(environment_step)
     return None
