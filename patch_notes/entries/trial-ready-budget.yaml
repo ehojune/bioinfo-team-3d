@@ -6,3 +6,6 @@ rows:
 - sha: c788a10
   at: 2026-10-12 16:14
   text: 예산 상한 설명과 회귀·전체 테스트 결과를 기록하고 manual 과거 사례를 덜어낸다.
+- sha: e53fd57
+  at: 2026-10-12 16:22
+  text: 두 연구 계획 prompt의 budget_usd를 CP1 이후 추가 집행액으로 정의하고 fingerprint를 맞춘다.
