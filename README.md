@@ -192,7 +192,8 @@ POSIX에서는 `python3 -m venv .venv`, `./.venv/bin/python -m pip install -e ".
 .\labhq -c config\labhq.yaml doctor
 ```
 
-`labhq init`은 HPC와 bioinfo-agent 경로를 묻습니다. 직원 전용 로그인 폴더가 필요하면 사람이 칠 로그인 명령도 알려 줍니다.
+`labhq init`은 HPC·bioinfo-agent 경로와 선택 사항인 AlphaGenome 키를 묻습니다. 키가 없으면 Enter를 누르세요. 직원 전용 로그인 폴더가 필요하면 사람이 칠 로그인 명령도 알려 줍니다.
+설치만 격리된 mock으로 점검하려면 `python scripts/clean_install_check.py`를 실행합니다. 새 임시 clone·venv에서 요청과 `verify`까지 확인하며 실제 모델은 부르지 않습니다.
 
 ### 3. 띄우기
 
