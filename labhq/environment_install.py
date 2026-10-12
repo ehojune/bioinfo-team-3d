@@ -280,36 +280,37 @@ _RUN_SUBCOMMANDS: dict[str, _WrapperSpec] = {
 }
 
 
-def _wrapped_program_index(wrapper: str, args: list[str], spec: _WrapperSpec) -> int | None:
-    """Where in `args` the program a wrapper runs stands (len(args) when none does); None when an option the spec
-    does not list may take the next word, so the program is not known."""
+def _wrapped_program(wrapper: str, args: list[str], spec: _WrapperSpec) -> tuple[str, int]:
+    """Skip a wrapper's options: ("program", where in `args` the program it runs stands, len(args) when none does),
+    ("module", where `uv run -m` stands) or ("unknown", where an option the spec does not list stands; it may take
+    the next word, so the program is not known)."""
     values, flags, positionals = spec
     i = 0
     while i < len(args):
         word = args[i]
         if _nonliteral_word(word) or not word.startswith("-") or word == "-" and "-" not in flags:
             if re.fullmatch(r"[A-Za-z_]\w*=.*", word):
-                i += 1
+                i += 1  # `env X=1`, `sudo X="$V"`: an assignment, not the program
                 continue
             if positionals:
-                positionals -= 1
+                positionals -= 1  # `timeout 600`: the duration
                 i += 1
                 continue
-            return i
+            return "program", i
         if word == "--":
-            return i + 1
+            return "program", i + 1
         if wrapper == "uv" and word in {"-m", "--module"}:
-            return None  # a module, read by _python_selects_computed
+            return "module", i
         name = word.split("=", 1)[0]
         if name in values:
             i += 1 if "=" in word else 2
         elif name in flags or wrapper == "nice" and re.fullmatch(r"-\d+", word):
             i += 1
         elif not word.startswith("--") and word[:2] in values:
-            i += 1
+            i += 1  # `-n10`, `-oL`: the value is attached
         else:
-            return None
-    return i
+            return "unknown", i
+    return "program", min(i, len(args))
 
 
 def _program_positions(words: list[str]) -> set[int] | None:
@@ -327,53 +328,25 @@ def _program_positions(words: list[str]) -> set[int] | None:
         executable = executable_basename(word.strip("({)}"))
         args = words[i + 1:]
         if executable in _EXEC_WRAPPERS and not _nonliteral_word(word):
-            spec = _EXEC_WRAPPERS[executable]
+            spec, skip = _EXEC_WRAPPERS[executable], 0
         elif executable in _RUN_SUBCOMMANDS and _first_operand(args).casefold() == "run":
-            spec = _RUN_SUBCOMMANDS[executable]
-            skip = args.index(_first_operand(args)) + 1
-            index = _wrapped_program_index(executable, args[skip:], spec)
-            if index is None:
-                return None
-            i += 1 + skip + index
-            continue
+            spec, skip = _RUN_SUBCOMMANDS[executable], args.index(_first_operand(args)) + 1
         else:
             return positions
-        index = _wrapped_program_index(executable, args, spec)
-        if index is None:
+        kind, index = _wrapped_program(executable, args[skip:], spec)
+        if kind != "program":
             return None
-        i += 1 + index
+        i += 1 + skip + index
     return positions
 
 
 def _wrapped_program_is_computed(wrapper: str, args: list[str], spec: _WrapperSpec, tool_name: str) -> bool:
     """Skip a wrapper's options and judge the program it runs as an executable in its own right."""
-    values, flags, positionals = spec
-    i = 0
-    while i < len(args):
-        word = args[i]
-        if _nonliteral_word(word) or not word.startswith("-") or word == "-" and "-" not in flags:
-            if re.fullmatch(r"[A-Za-z_]\w*=.*", word):
-                i += 1  # `env X=1`, `sudo X="$V"`: an assignment, not the program
-                continue
-            if positionals:
-                positionals -= 1  # `timeout 600`: the duration
-                i += 1
-                continue
-            break
-        if word == "--":
-            i += 1
-            break
-        if wrapper == "uv" and word in {"-m", "--module"}:
-            return _python_selects_computed(["-m", *args[i + 1:]])
-        name = word.split("=", 1)[0]
-        if name in values:
-            i += 1 if "=" in word else 2
-        elif name in flags or wrapper == "nice" and re.fullmatch(r"-\d+", word):
-            i += 1
-        elif not word.startswith("--") and word[:2] in values:
-            i += 1  # `-n10`, `-oL`: the value is attached
-        else:
-            return any(_nonliteral_word(arg) for arg in args[i:])
+    kind, i = _wrapped_program(wrapper, args, spec)
+    if kind == "module":
+        return _python_selects_computed(["-m", *args[i + 1:]])
+    if kind == "unknown":
+        return any(_nonliteral_word(arg) for arg in args[i:])
     if i >= len(args):
         return False
     return _dynamic_installer_syntax(args[i], args[i + 1:], executable_position=True, tool_name=tool_name)

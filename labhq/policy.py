@@ -2480,12 +2480,13 @@ def _evaluate_tool(
                 if git_bash and _absolute(target) and not _drive_relative(target):
                     target = _git_bash_path(target, os.environ) or target
                 if _drive_relative(target):
-                    return Decision("ask", f"drive-relative shell write destination: {written}")
+                    return Decision("ask", f"drive-relative shell write destination: {target}")
                 if written.startswith("~") and not _absolute(target):
                     return Decision("ask", f"shell write destination starts with a `~` the gate cannot expand: "
                                            f"{written}")
                 if _absolute(target) and not any(_inside(_norm(target), root) for root in roots):
-                    return Decision("ask", f"shell write outside allowed roots: {written}")
+                    shown = f"{written} (= {target})" if written.startswith("~") else target
+                    return Decision("ask", f"shell write outside allowed roots: {shown}")
         return Decision("allow")
 
     if tool_name.startswith("mcp__"):
