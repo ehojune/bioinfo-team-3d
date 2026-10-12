@@ -527,6 +527,18 @@ def test_a_quoted_variable_interpreter_with_an_r_install_call_is_read_as_r(
     assert denial(tmp_path, command, environment_step=environment_step, tool=tool)
 
 
+@pytest.mark.parametrize("environment_step", [True, False])
+@pytest.mark.parametrize("tool,command", [
+    # #533: an R call in another program's arguments is data; only a word where a program is named may be R.
+    ("Bash", '''python wrapper.py "$INPUT" "install.packages('x')"'''),
+    ("Bash", '''python wrapper.py R "install.packages('x')"'''),
+    ("Bash", '''nohup python wrapper.py "$INPUT" "BiocManager::install('x')"'''),
+    ("PowerShell", '''python wrapper.py $input "install.packages('x')"'''),
+])
+def test_an_r_install_call_among_another_programs_arguments_is_data(tmp_path, environment_step, tool, command):
+    assert denial(tmp_path, command, environment_step=environment_step, tool=tool) is None
+
+
 def test_a_quoted_variable_r_install_meets_the_same_library_rule_as_rscript(tmp_path):
     shared = '''"$RSCRIPT" -e "install.packages('DESeq2')"'''
     assert "shared R library" in denial(tmp_path, shared, environment_step=False)

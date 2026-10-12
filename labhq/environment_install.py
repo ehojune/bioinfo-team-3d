@@ -192,6 +192,7 @@ def _installation_syntax(segment: str, tool_name: str = "Bash") -> bool:
     words, valid = _literal_words(segment, tool_name)
     if words and executable_basename(words[0]) in _DATA_COMMANDS:
         return False  # printed text and filename arguments are data, not shell invocations
+    programs = _program_positions(words)
     for i, word in enumerate(words):
         executable = executable_basename(word.strip("({)}"))
         if _dynamic_installer_syntax(
@@ -201,8 +202,11 @@ def _installation_syntax(segment: str, tool_name: str = "Bash") -> bool:
             return True
         if executable in {"conda", "mamba", "micromamba"} and "create" in words[i + 1:]:
             return True
-        if (executable in _R or _nonliteral_word(word)) and _R_CALL.search(segment):
-            return True  # a computed program word may be R
+        # A word where a program is named may be R, computed (`"$RSCRIPT"`) or literal; another program's arguments
+        # (`python wrapper.py "$IN" "install.packages('x')"`) are data (#533).
+        if (programs is None or i in programs) and (executable in _R or _nonliteral_word(word)) and \
+                _R_CALL.search(segment):
+            return True
     # An unknown executable/wrapper with an install operand cannot receive an unscoped exception.
     return _has_install(words) or not valid and bool(re.search(r"\binstall\b", segment, re.IGNORECASE))
 
@@ -274,6 +278,71 @@ _RUN_SUBCOMMANDS: dict[str, _WrapperSpec] = {
                       "--no-env-file", "--script", "-s"}), 0),
     "conda": _CONDA_RUN, "mamba": _CONDA_RUN, "micromamba": _CONDA_RUN,
 }
+
+
+def _wrapped_program_index(wrapper: str, args: list[str], spec: _WrapperSpec) -> int | None:
+    """Where in `args` the program a wrapper runs stands (len(args) when none does); None when an option the spec
+    does not list may take the next word, so the program is not known."""
+    values, flags, positionals = spec
+    i = 0
+    while i < len(args):
+        word = args[i]
+        if _nonliteral_word(word) or not word.startswith("-") or word == "-" and "-" not in flags:
+            if re.fullmatch(r"[A-Za-z_]\w*=.*", word):
+                i += 1
+                continue
+            if positionals:
+                positionals -= 1
+                i += 1
+                continue
+            return i
+        if word == "--":
+            return i + 1
+        if wrapper == "uv" and word in {"-m", "--module"}:
+            return None  # a module, read by _python_selects_computed
+        name = word.split("=", 1)[0]
+        if name in values:
+            i += 1 if "=" in word else 2
+        elif name in flags or wrapper == "nice" and re.fullmatch(r"-\d+", word):
+            i += 1
+        elif not word.startswith("--") and word[:2] in values:
+            i += 1
+        else:
+            return None
+    return i
+
+
+def _program_positions(words: list[str]) -> set[int] | None:
+    """Indexes of `words` where a program is named: the first word after assignments, `&`, `.` and shell keywords, and
+    the program each exec wrapper (`nohup`, `sudo -u x`, `uv run`, ...) runs after its options. None when a wrapper's
+    options are not understood, so any later word may be the program."""
+    positions: set[int] = set()
+    i = 0
+    while i < len(words):
+        word = words[i]
+        if word in {"&", "."} or word.casefold() in _SHELL_PREFIXES or re.fullmatch(r"[A-Za-z_]\w*=.*", word):
+            i += 1
+            continue
+        positions.add(i)
+        executable = executable_basename(word.strip("({)}"))
+        args = words[i + 1:]
+        if executable in _EXEC_WRAPPERS and not _nonliteral_word(word):
+            spec = _EXEC_WRAPPERS[executable]
+        elif executable in _RUN_SUBCOMMANDS and _first_operand(args).casefold() == "run":
+            spec = _RUN_SUBCOMMANDS[executable]
+            skip = args.index(_first_operand(args)) + 1
+            index = _wrapped_program_index(executable, args[skip:], spec)
+            if index is None:
+                return None
+            i += 1 + skip + index
+            continue
+        else:
+            return positions
+        index = _wrapped_program_index(executable, args, spec)
+        if index is None:
+            return None
+        i += 1 + index
+    return positions
 
 
 def _wrapped_program_is_computed(wrapper: str, args: list[str], spec: _WrapperSpec, tool_name: str) -> bool:

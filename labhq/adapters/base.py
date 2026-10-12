@@ -467,6 +467,10 @@ class RunContext:
     private_enabled: bool = False
     # Folders inside an active path that this Claude task may read (its project folder in the staff config folder).
     private_open_reads: list[str] = field(default_factory=list)
+    # Links in an open project folder that lead into a restricted zone (#132). Claude's deny rules compare the path as
+    # written, so while any is set Claude pre-approves no shell command and no outside read either: another spelling
+    # of the link (8.3 `DATA~1`, a case variant) reaches the gate, which compares real paths (#178).
+    denied_links: list[str] = field(default_factory=list)
     # A request with one shared environment sends non-owner install-capable shell rules through approval.
     shared_environment_protected: bool = False
     environment_step: bool = False

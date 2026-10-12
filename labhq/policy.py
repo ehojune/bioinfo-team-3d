@@ -1173,7 +1173,29 @@ _CMD_RECURSIVE_DELETE = re.compile(r"""(?<![\w.-])(?:rd|rmdir|del|erase)(?:\.exe
                                    re.IGNORECASE)
 # A PowerShell delete after the first pipe, in a script block too (`| ForEach-Object { Remove-Item $_ }`), deletes what
 # the listing before the pipe found (#525 review).
-_PS_DELETE_WORD = re.compile(r"(?<![\w-])(?:Remove-Item|ri|rm|del|erase|rd|rmdir)(?![\w-])|\.Delete\s*\(", re.IGNORECASE)
+_PS_DELETE_CMDLETS = frozenset({"remove-item", "ri", "rm", "del", "erase", "rd", "rmdir"})
+# .NET deletes: `$_.Delete()`, `[IO.Directory]::Delete(p, $true)`, `[IO.File]::Delete(p)`, `...DeleteDirectory(p)`.
+_PS_METHOD_DELETE = re.compile(r"(?:\.|::)\s*Delete\w*\s*\(", re.IGNORECASE)
+_PS_DELETE_WORD = re.compile(r"(?<![\w-])(?:Remove-Item|ri|rm|del|erase|rd|rmdir)(?![\w-])|(?:\.|::)\s*Delete\w*\s*\(",
+                             re.IGNORECASE)
+_PS_RUNS_TEXT = re.compile(r"(?<![\w-])(?:Invoke-Expression|iex)(?![\w-])|&|\.Invoke\s*\(|\[\s*scriptblock\s*\]",
+                           re.IGNORECASE)
+# The pipeline object a delete may name: the item the listing found, as itself or its path.
+_PS_PIPELINE_ITEM = frozenset({"$_", "$psitem", "$_.fullname", "$psitem.fullname", "$_.pspath", "$psitem.pspath"})
+_PS_ITEM_METHOD_DELETE = re.compile(r"\$(?:_|psitem)\s*\.\s*Delete\s*\(\s*(?:\$true|\$false)?\s*\)", re.IGNORECASE)
+# Remove-Item parameters: the ones naming what is deleted, the ones taking another value, and switches.
+_RI_PATH_PARAMETERS = ("-path", "-literalpath")
+_RI_VALUE_PARAMETERS = ("-filter", "-include", "-exclude", "-erroraction", "-warningaction", "-informationaction")
+_RI_SWITCHES = ("-recurse", "-force", "-whatif", "-confirm", "-verbose", "-debug")
+_RI_ALIASES = {"-lp": "-literalpath", "-pspath": "-literalpath", "-ea": "-erroraction", "-wa": "-warningaction",
+               "-infa": "-informationaction", "-vb": "-verbose", "-db": "-debug", "-wi": "-whatif", "-cf": "-confirm"}
+# Stages that pass the listed items on unchanged. Select-Object only with these: -Property and -ExpandProperty make
+# new objects, and a calculated property can name any path.
+_PS_FILTERS = frozenset({"where-object", "where", "?"})
+_PS_SORTS = frozenset({"sort-object", "sort"})
+_PS_SELECTS = frozenset({"select-object", "select"})
+_PS_SELECT_COUNTS = frozenset({"-first", "-last", "-skip", "-skiplast", "-index"})
+_PS_FOREACH = frozenset({"foreach-object", "%", "foreach"})
 _PS_LISTING_WORD = re.compile(r"(?<![\w-])(?:Get-ChildItem|gci|ls|dir|Get-Item|gi)(?![\w-])", re.IGNORECASE)
 _PS_LISTING_START = re.compile(r"\s*(?:Get-ChildItem|gci|ls|dir)(?![\w-])", re.IGNORECASE)
 # Get-ChildItem parameters: the ones naming the listed folder, the ones taking another value, and switches.
@@ -1208,20 +1230,150 @@ def _ps_piped_delete(command: str) -> bool:
     _head, pipe, tail = command.partition("|")
     if not pipe:
         return False
-    if re.search(r"(?<![\w-])(?:Invoke-Expression|iex)(?![\w-])|&|\.Invoke\s*\(", tail, re.IGNORECASE):
+    if _PS_RUNS_TEXT.search(tail):
         return True
     return bool(_PS_DELETE_WORD.search(re.sub(r"'[^']*'|\"[^\"]*\"", "''", tail)))
 
 
+def _ps_stages(text: str) -> list[str] | None:
+    """`text` split at its top-level pipes (not inside quotes, braces or parentheses); None when one is left open."""
+    stages: list[str] = []
+    depth = start = i = 0
+    quote = ""
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            if ch == quote and text[i + 1:i + 2] == quote:
+                i += 1  # a doubled quote is a literal quote
+            elif ch == quote:
+                quote = ""
+            elif ch == "`" and quote == '"':
+                i += 1
+        elif ch in "'\"":
+            quote = ch
+        elif ch == "`":
+            i += 1
+        elif ch in "({[":
+            depth += 1
+        elif ch in ")}]":
+            depth -= 1
+            if depth < 0:
+                return None
+        elif ch == "|" and not depth:
+            stages.append(text[start:i].strip())
+            start = i + 1
+        i += 1
+    if quote or depth:
+        return None
+    return [*stages, text[start:].strip()]
+
+
+def _ps_parameter(flag: str, aliases: Mapping[str, str], *groups: tuple[str, ...]) -> str | None:
+    """A cmdlet parameter's full name from any unique prefix or alias; None when unknown or ambiguous."""
+    flag = flag.casefold()
+    if flag in aliases:
+        return aliases[flag]
+    names = [name for group in groups for name in group if name.startswith(flag)]
+    return names[0] if len(names) == 1 or flag in names else None
+
+
+def _ps_item_delete(text: str, *, piped: bool) -> bool:
+    """Whether `text` deletes only the pipeline object: `$_.Delete()`/`$_.Delete($true)`, or one Remove-Item (any
+    alias) whose every path is the pipeline object. With no path it deletes its pipeline input, which counts only
+    where it is a pipeline stage (`piped`)."""
+    if _PS_ITEM_METHOD_DELETE.fullmatch(text.strip()):
+        return True
+    if any(char in text for char in "(){}[]@,;&`\"'") or _PS_METHOD_DELETE.search(text):
+        return False  # only the plain forms are read; `$(...)`, arrays and quoted paths are not
+    words = text.split()
+    name = words[0].casefold().rsplit("\\", 1)[-1] if words else ""
+    if name not in _PS_DELETE_CMDLETS or (words[0].count("\\") and
+                                          words[0].casefold().rsplit("\\", 1)[0] != "microsoft.powershell.management"):
+        return False
+    paths: list[str] = []
+    i = 1
+    while i < len(words):
+        word = words[i]
+        if not word.startswith("-") or word == "-":
+            paths.append(word)
+            i += 1
+            continue
+        flag, colon, attached = word.partition(":")
+        parameter = _ps_parameter(flag, _RI_ALIASES, _RI_PATH_PARAMETERS, _RI_VALUE_PARAMETERS, _RI_SWITCHES)
+        if parameter is None:
+            return False
+        if parameter in _RI_SWITCHES:
+            if colon and attached.casefold() not in {"$true", "$false"}:
+                return False
+            i += 1
+            continue
+        value = attached if colon else (words[i + 1] if i + 1 < len(words) else None)
+        if not value:
+            return False
+        if parameter in _RI_PATH_PARAMETERS:
+            paths.append(value)
+        elif "$" in value:
+            return False
+        i += 1 if colon else 2
+    if not paths:
+        return piped
+    return all(path.casefold() in _PS_PIPELINE_ITEM for path in paths)
+
+
+def _ps_passes_items_on(stage: str) -> bool:
+    """Whether a stage between the listing and the delete passes the listed items on unchanged: Where-Object (a
+    script block, or a property filter) with no delete inside, Sort-Object by property, and Select-Object counts."""
+    words = stage.split()
+    name = words[0].casefold() if words else ""
+    rest = stage[len(words[0]):].strip() if words else ""
+    blanked = re.sub(r"'[^']*'|\"[^\"]*\"", "''", rest)
+    if _PS_DELETE_WORD.search(blanked) or _PS_RUNS_TEXT.search(rest):
+        return False
+    if name in _PS_FILTERS:
+        return bool(rest) and (re.fullmatch(r"\{.*\}", rest, re.DOTALL) is not None
+                               or not any(char in blanked for char in "(){}$@"))
+    if name in _PS_SORTS:
+        return not any(char in blanked for char in "(){}$@")
+    if name in _PS_SELECTS:
+        args = words[1:]
+        return (len(args) % 2 == 0 and all(_ps_parameter(flag, {}, tuple(_PS_SELECT_COUNTS)) is not None
+                                           and count.isdigit() for flag, count in zip(args[::2], args[1::2])))
+    return False
+
+
+def _ps_pipeline_deletes_only_items(tail: str) -> bool:
+    """Whether what follows a listing's first pipe deletes the listed items and nothing else (#533).
+
+    The stages before the last must pass the items on unchanged (`_ps_passes_items_on`), and the last must delete the
+    pipeline object: Remove-Item with no path or with `$_`/`$PSItem` (`.FullName`, `.PSPath`), or ForEach-Object whose
+    script block is exactly one such delete or `$_.Delete(...)`. A delete of any other path, a stage that makes new
+    objects (`% { 'C:/x' }`, a calculated property) and text run as code are not read, so they ask.
+    """
+    stages = _ps_stages(tail)
+    if not stages or not all(stages):
+        return False
+    *middle, last = stages
+    if not all(_ps_passes_items_on(stage) for stage in middle):
+        return False
+    words = last.split()
+    if words and words[0].casefold() in _PS_FOREACH:
+        block = last[len(words[0]):].strip()
+        if not (block.startswith("{") and block.endswith("}") and _ps_stages(block[1:-1]) == [block[1:-1].strip()]):
+            return False
+        return _ps_item_delete(block[1:-1], piped=False)
+    return _ps_item_delete(last, piped=True)
+
+
 def _ps_piped_delete_inside_step_tmp(command: str, workdir: str | None) -> bool:
     """A listing piped into a delete meets the `rm -r` rule: one pipeline from one Get-ChildItem whose every folder is
-    literal and below `.tmp`. No folder means the step folder itself; `-FollowSymlink` walks out through links."""
+    literal and below `.tmp`, and whose later stages delete only the items it lists. No folder means the step folder
+    itself; `-FollowSymlink` walks out through links."""
     if not workdir or re.search(r"[;\n\r]|&&|\|\|", command):
         return False
     head, _pipe, tail = command.partition("|")
     start = _PS_LISTING_START.match(head)
-    if not start or _PS_LISTING_WORD.search(tail):
-        return False  # the items come from elsewhere, or a later stage lists another folder
+    if not start or _PS_LISTING_WORD.search(tail) or not _ps_pipeline_deletes_only_items(tail):
+        return False  # the items come from elsewhere, a later stage lists another folder, or deletes another path
     words = head[start.end():].split()
     paths: list[str] = []
     i = 0
@@ -1265,16 +1417,62 @@ def _simple_command_words(command: str, start: int) -> tuple[list[str], re.Match
     return command[start:end.start() if end else len(command)].split(), end
 
 
+_BRACE_EXPANSION = re.compile(r"\{[^{}]*(?:,|\.\.)[^{}]*\}")
+
+
+def _rm_word(word: str) -> tuple[str, bool]:
+    """A word read lexically after `rm`: its leading literal text, and whether an expansion follows that text.
+
+    `$'-rf'`, `"$OPT"`, `` `cmd` `` and a brace list (`{-r,x}`) are expansions; a glob is not (it expands to names). A
+    quote left open is the lexical scan's own edge (`sh -c 'rm x'`), not more of the word (#533).
+    """
+    value: list[str] = []
+    i = 0
+    while i < len(word):
+        ch = word[i]
+        if ch == "'":
+            end = word.find("'", i + 1)
+            if end < 0:
+                break
+            value.append(word[i + 1:end])
+            i = end + 1
+        elif ch == '"':
+            j = i + 1
+            while j < len(word) and word[j] != '"':
+                if word[j] in "$`":
+                    return "".join(value), True
+                if word[j] == "\\" and j + 1 < len(word):
+                    j += 1
+                value.append(word[j])
+                j += 1
+            if j >= len(word):
+                break
+            i = j + 1
+        elif ch in "$`" or (ch == "{" and _BRACE_EXPANSION.match(word, i)):
+            return "".join(value), True
+        elif ch == "\\" and i + 1 < len(word):
+            value.append(word[i + 1])
+            i += 2
+        else:
+            value.append(ch)
+            i += 1
+    return "".join(value), False
+
+
 def _recursive_rm(command: str) -> bool:
-    """Whether a bash `rm` asks for recursion in any of its option words (#17).
+    """Whether a bash `rm` asks for recursion in any of its option words (#17), or may (#533).
 
     GNU rm reads options anywhere before `--`, so `rm -f -r`, `rm -v -rf`, `rm --recursive` and `rm x -r` are all
     recursive; the pattern in settings sees only the first cluster. The scan is lexical, as that pattern is: a
-    quoted `sh -c 'rm -f -r x'` counts too.
+    quoted `sh -c 'rm -f -r x'` counts too. A word the gate cannot read as literal text may be an option, `-r` among
+    them: one that starts with an expansion (`$'-rf'`, `"$OPT"`) or an option followed by one (`-f"$X"`) counts as
+    recursive. After `--` every word is a target.
     """
     for match in _BASH_RM_WORD.finditer(command):
         for word in _simple_command_words(command, match.end())[0]:
-            value = _bare(word)
+            value, expands = _rm_word(word)
+            if expands and (not value or value.startswith("-")):
+                return True
             if value == "--":
                 break
             if value.startswith("--"):
@@ -1290,18 +1488,57 @@ def _recursive_rm(command: str) -> bool:
 class _FindDelete:
     starts: tuple[str, ...]  # raw words; none means `.`
     follows_links: bool
+    targets: tuple[str, ...] = ()  # literal paths an `-exec rm` payload names besides the found item `{}`
+    unreadable: bool = False  # a payload that may delete what the gate cannot read (#533)
+
+
+_FOUND = "\x00found"  # find's `{}` while a payload is read: the found path, never an expansion
+
+
+def _find_payload(action: str, words: list[str]) -> tuple[str, list[str]]:
+    """What one `-exec`/`-execdir`/`-ok`/`-okdir` payload deletes: ("none" | "delete" | "unreadable", other targets).
+
+    The payload is read as one literal simple command. A computed program (`$CMD`, `$'rm'`) may be rm, and a program
+    that runs other code (`sh -c '...'`, `xargs rm`, `env rm`) with a delete word in it hides what it deletes: both
+    are unreadable. A literal rm/unlink deletes `{}` and its other targets, which must be literal too; `-execdir`
+    runs in each found item's folder, so there only `{}` is read (#533).
+    """
+    literals = [_literal_shell_word(word.replace("{}", _FOUND), False) for word in words]
+    if not literals:
+        return "none", []
+    if literals[0] is None:
+        return "unreadable", []
+    program = re.split(r"[\\/]", literals[0])[-1].casefold()
+    program = program[:-4] if program.endswith(".exe") else program
+    if program not in {"rm", "unlink"}:
+        return ("unreadable" if any(_BASH_DELETE_WORD.search(word) for word in words) else "none"), []
+    if any(value is None for value in literals):
+        return "unreadable", []
+    targets: list[str] = []
+    after_options = False
+    for value in literals[1:]:
+        if not after_options and value == "--":
+            after_options = True
+        elif not after_options and value.startswith("-") and value != "-":
+            continue
+        elif value != _FOUND:
+            if _FOUND in str(value) or action in {"-execdir", "-okdir"}:
+                return "unreadable", []
+            targets.append(str(value))
+    return "delete", targets
 
 
 def _find_deletes(command: str) -> list[_FindDelete]:
     """Each bash find that deletes what it finds (#17).
 
-    A find deletes with `-delete`, with `-exec`/`-execdir`/`-ok`/`-okdir` running rm or unlink (also inside a
-    quoted `sh -c` body), or when its output is piped to `xargs ... rm`.
+    A find deletes with `-delete`, with `-exec`/`-execdir`/`-ok`/`-okdir` running rm or unlink, or when its output
+    is piped to `xargs ... rm`. A payload the gate cannot read may delete anything, so it counts too (#533).
     """
     found: list[_FindDelete] = []
     for match in _BASH_FIND_WORD.finditer(command):
         words, end = _simple_command_words(command, match.end())
-        deletes = follows = False
+        deletes = follows = unreadable = False
+        targets: list[str] = []
         for index, word in enumerate(words):
             value = _bare(word).rstrip(")")  # `$(find . -delete)`
             if value == "-delete":
@@ -1311,7 +1548,10 @@ def _find_deletes(command: str) -> list[_FindDelete]:
             elif value in _FIND_EXEC:
                 tail = words[index + 1:]
                 close = next((k for k, w in enumerate(tail) if _bare(w) in {";", "+"}), len(tail))
-                deletes = deletes or any(_BASH_DELETE_WORD.search(w) for w in tail[:close])
+                kind, named = _find_payload(value, tail[:close])
+                deletes = deletes or kind != "none"
+                unreadable = unreadable or kind == "unreadable"
+                targets += named
         if not deletes and end and end.group() == "|":
             piped = re.split(r"[;&\n]|\|\|", command[end.end():], maxsplit=1)[0]
             deletes = bool(re.search(r"(?<![\w.-])xargs\b", piped) and _BASH_DELETE_WORD.search(piped))
@@ -1326,7 +1566,7 @@ def _find_deletes(command: str) -> list[_FindDelete]:
         while k < len(words) and not _bare(words[k]).startswith(("-", "(", "!", ")", ",")):
             starts.append(words[k])
             k += 1
-        found.append(_FindDelete(tuple(starts), follows))
+        found.append(_FindDelete(tuple(starts), follows, tuple(targets), unreadable))
     return found
 
 
@@ -1334,9 +1574,10 @@ def _find_delete_inside_step_tmp(command: str, find: _FindDelete, workdir: str |
     """A deleting find meets the rule `rm -r` meets: one simple command, every start literal and below `.tmp`.
 
     No start means `.`, the step folder itself. A pipe (`| xargs rm`), a redirection, `cd` or a substitution makes it
-    more than one simple command, as it does for rm; `-L` walks through links to wherever they lead.
+    more than one simple command, as it does for rm; `-L` walks through links to wherever they lead. An `-exec rm`
+    payload's own targets meet the same rule, and a payload the gate cannot read never passes (#533).
     """
-    if not workdir or find.follows_links:
+    if not workdir or find.follows_links or find.unreadable:
         return False
     plain = _FIND_TEXT.sub("", command)
     if any(char in plain for char in ";|&()<>`\r\n") or not _BASH_FIND_WORD.match(plain.lstrip()):
@@ -1344,7 +1585,7 @@ def _find_delete_inside_step_tmp(command: str, find: _FindDelete, workdir: str |
     starts = [_literal_shell_word(raw, False) for raw in find.starts] or ["."]
     if any(start is None for start in starts):
         return False
-    return _targets_below_step_tmp([str(start) for start in starts], False, workdir)
+    return _targets_below_step_tmp([*(str(start) for start in starts), *find.targets], False, workdir)
 
 
 @dataclass
@@ -1958,7 +2199,7 @@ def evaluate_tool(
     # Every check reads a Git Bash command with its drive paths spelled the Windows way, zones and private paths
     # included: converting only the write targets let `cp /c/<zone>/raw /c/<root>/out` through (PR #364 review).
     checked = git_bash_command(tool_name, judged, allowed_roots, windows)
-    decision = _evaluate_tool(tool_name, checked, policy, allowed_roots, workdir)
+    decision = _evaluate_tool(tool_name, checked, policy, allowed_roots, workdir, environ=environ, windows=windows)
     # On with no active path (PR #327) still runs the registry check; a non-empty list alone also means on.
     private_paths = list(private_paths)
     private = (_private_decision(tool_name, checked, private_paths, workdir, home, environ, list(private_open_reads))
@@ -2119,13 +2360,58 @@ def _glob_base(pattern: str) -> str:
     return base or (pattern[:1] if pattern[:1] in "/\\" else "")
 
 
+def _shell_homes(powershell: bool, environ: Mapping[str, str], windows: bool) -> list[str]:
+    """Every folder a shell may mean by `~` in a write destination; empty when none is known.
+
+    Bash reads HOME; Git Bash sets it from USERPROFILE (older builds from HOMEDRIVE+HOMEPATH) when it is unset.
+    PowerShell's FileSystem home is $HOME: USERPROFILE on Windows, where Windows PowerShell 5.1 may use
+    HOMEDRIVE+HOMEPATH instead, and HOME elsewhere. Where the shell may take either, both are judged.
+    """
+    lookup = {key.casefold(): value for key, value in environ.items()} if windows else dict(environ)
+
+    def get(name: str) -> str:
+        return lookup.get(name.casefold() if windows else name) or ""
+
+    drive_home = get("HOMEDRIVE") + get("HOMEPATH") if get("HOMEDRIVE") and get("HOMEPATH") else ""
+    if powershell:
+        homes = [get("USERPROFILE"), drive_home] if windows else [get("HOME")]
+    elif get("HOME"):
+        homes = [get("HOME")]
+    else:
+        homes = [get("USERPROFILE"), drive_home] if windows else []
+    found = []
+    for home in homes:
+        if home and windows and not powershell:
+            home = _git_bash_path(home, environ) or home  # HOME may be spelled `/c/Users/x`
+        if home:
+            found.append(home)
+    return list(dict.fromkeys(found))
+
+
+def _tilde_targets(target: str, powershell: bool, environ: Mapping[str, str], windows: bool) -> list[str]:
+    """A `~` write destination spelled from each home the shell may use; empty when it cannot be expanded.
+
+    Only `~` alone or before a separator (`/`, and `\\` in PowerShell) is a home. `~user`, `~+`, `~-` and `~\\x` in
+    bash name another user's home, the current or previous folder, or a quoted tilde: the gate does not read them.
+    """
+    rest = target[1:]
+    if rest and not (rest[0] == "/" or powershell and rest[0] == "\\"):
+        return []
+    return [home.rstrip("/\\") + "/" + rest.lstrip("/\\") for home in _shell_homes(powershell, environ, windows)]
+
+
 def _evaluate_tool(
     tool_name: str,
     tool_input: dict[str, Any],
     policy: PolicySettings,
     allowed_roots: Iterable[str] = (),
     workdir: str | None = None,
+    *,
+    environ: Mapping[str, str] | None = None,
+    windows: bool | None = None,
 ) -> Decision:
+    environ = os.environ if environ is None else environ
+    windows = os.name == "nt" if windows is None else windows
     if tool_name in NATIVE_DELEGATION_TOOLS:
         return Decision("deny", f"{tool_name} starts native delegation outside labhq accounting; use labhq orchestration")
     if tool_name in WRITE_LIKE:
@@ -2176,19 +2462,30 @@ def _evaluate_tool(
                     return Decision("ask", f"재귀 삭제 확인 필요: `{cmd[:200]}`")
                 if _CMD_RECURSIVE_DELETE.search(cmd):
                     return Decision("ask", f"재귀 삭제 확인 필요: `{cmd[:200]}`")
-                # A listing piped into a delete, in a script block too, meets the same `.tmp` rule (#525 review).
-                if powershell and _ps_piped_delete(cmd) and not _ps_piped_delete_inside_step_tmp(cmd, workdir):
+                # A listing piped into a delete, in a script block too, meets the same `.tmp` rule (#525 review). A
+                # .NET delete (`.Delete($true)`, `[IO.Directory]::Delete(p, $true)`) names no literal path, so it
+                # passes only as `$_.Delete()` in such a pipeline (#533).
+                if (powershell and (_ps_piped_delete(cmd) or _PS_METHOD_DELETE.search(cmd))
+                        and not _ps_piped_delete_inside_step_tmp(cmd, workdir)):
                     return Decision("ask", f"재귀 삭제 확인 필요: `{cmd[:200]}`")
                 continue
             if re.search(pat, cmd, re.IGNORECASE):
                 return Decision("ask", f"위험 명령 확인 필요: `{cmd[:200]}`")
-        for target in _shell_write_targets(cmd, powershell=tool_name == "PowerShell"):
-            if git_bash and _absolute(target) and not _drive_relative(target):
-                target = _git_bash_path(target, os.environ) or target
-            if _drive_relative(target):
-                return Decision("ask", f"drive-relative shell write destination: {target}")
-            if _absolute(target) and not any(_inside(_norm(target), root) for root in roots):
-                return Decision("ask", f"shell write outside allowed roots: {target}")
+        for written in _shell_write_targets(cmd, powershell=tool_name == "PowerShell"):
+            # A `~` destination is the shell's home (#521): judged there, or asked when it cannot be expanded.
+            expanded = _tilde_targets(written, powershell, environ, windows) if written.startswith("~") else [written]
+            if not expanded:
+                return Decision("ask", f"shell write destination starts with a `~` the gate cannot expand: {written}")
+            for target in expanded:
+                if git_bash and _absolute(target) and not _drive_relative(target):
+                    target = _git_bash_path(target, os.environ) or target
+                if _drive_relative(target):
+                    return Decision("ask", f"drive-relative shell write destination: {written}")
+                if written.startswith("~") and not _absolute(target):
+                    return Decision("ask", f"shell write destination starts with a `~` the gate cannot expand: "
+                                           f"{written}")
+                if _absolute(target) and not any(_inside(_norm(target), root) for root in roots):
+                    return Decision("ask", f"shell write outside allowed roots: {written}")
         return Decision("allow")
 
     if tool_name.startswith("mcp__"):
