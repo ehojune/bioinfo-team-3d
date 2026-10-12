@@ -58,6 +58,20 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: pytest -q --durations=15  # the 15 slowest tests, to find what to speed up
 
+  clean-install:
+    # Separate Windows rehearsal: a fresh clone/venv, mock request, bundle, verify, and cleanup.
+    needs: changes
+    if: needs.changes.outputs.skip != 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python scripts/clean_install_check.py
+
   ro-crate-validator:
     needs: changes
     if: needs.changes.outputs.skip != 'true'

@@ -85,6 +85,7 @@ POSIX에서는 `./labhq.sh init`, `./labhq.sh -c config/labhq.yaml doctor`를 �
 
 `labhq init`은 예시 설정을 복사해 gateway token을 무작위로 만들고 HPC·bioinfo-agent 경로를 묻습니다.
 AlphaGenome API 키가 아직 없으면 마지막에 한 번 묻습니다. Enter로 건너뛸 수 있고, 키 보관은 [공개 자원 조회 도구](#공개-자원-조회-도구)에 있습니다.
+`python scripts/clean_install_check.py`는 임시 HOME의 새 clone·venv에서 init → doctor → mock 요청 → 요청 묶음 → verify → down을 검사하고 모두 지웁니다. 실제 직원 CLI 로그인이나 모델 호출은 하지 않습니다.
 한 PC에서 여러 연구소를 띄우려면 `labhq init --instance <이름>`을 실행한 뒤 각 명령에 같은
 `--instance <이름>`을 붙이세요. 설정·state·runs·talent·포트·token이 인스턴스별로 나뉩니다.
 엔진 로그인과 사용량 한도는 모든 인스턴스가 공유합니다.
@@ -896,7 +897,7 @@ Claude baseline은 자기 arm의 파일 쓰기·단순 명령을 허용합니다
 | v0.5 | PI가 자기 공개 데이터로 로컬에서 연구한다 | 연구 lane 2건을 CP2 승인·보고서까지 완주하고 `labhq verify`가 문제 없음(exit 0) | **2026-10-08 선언.** 근거: 실제 CLI로 연구 요청 2건이 CP1 → 12단계 → CP2 → 리뷰 accept → claim 앵커 보고서까지 갔고 `labhq verify`가 exit 0이었다. 10차 모의 시운전(GSE10072, 앵커 58·문제 0)과 v0.5 시운전 8차(GSE19804 60쌍 + 검증 GSE32863, claim 22·근거 31·거부 1, 앵커 48·문제 0, 산출 67개 hash 일치, RO-Crate·MANIFEST 대조 통과). 두 번째 요청의 1~7차는 실제 요청에서만 드러난 결함으로 멈췄고 모두 고쳤다(#467 #470 #474 #476 #478 #480 #483 #486). 연구 lane은 `evidence_checkpoint`를 켜면 CP2 승인 뒤 리뷰와 claim 앵커를 검사한 보고서까지 간다. 단계 근거가 수집 안 된 파일을 인용하면 CP2 전에 한 번 고치게 한다(#487). 요청 묶음은 RO-Crate(Process Run Crate)와 MANIFEST로 기술하고 `labhq verify`가 사본을 대조한다(#471). 패키지가 필요한 요청은 계획 첫머리 환경 단계만 공유 environment에 설치하고, 뒤 단계의 추가 설치는 자기 폴더로 격리한다(#344, #456). revise 뒤에는 PI가 새 CP1로 이어 갈 수 있고 바뀐 단계만 다시 돈다(코드·test; 두 요청 모두 리뷰가 accept여서 실제 CLI 미실측). CP3·CP4는 없다. pack은 `single_cell_de@3`과 `bulk_tumor_normal@3` 둘. topic별 근거 논문은 43 topic 모두 30편 이상, 모두 1286편([목록](reference/topic_papers.md)) | 이어 가기 실측, PI 본인 시운전 결과를 #435에 붙이기 |
 | v0.75 | PI가 HPC에서 **공개** 데이터로 연구한다 | 클러스터 러너로 공개 데이터 분석 잡 1건 이상을 내고 끝까지 받아 보고서에 넣는다 | Slurm은 가짜 fixture로만 확인했다. 실제 HPC 접근 방식이 정해지기 전에는 분석 잡을 내지 않는다 | HPC 접근 방식 PI 결정([HANDOFF](../HANDOFF.md) 결정 대기 1), Linux 클러스터 러너, 실제 제출 |
 | v0.9 | PI가 통제 데이터로 연구한다(HPC 위) | 통제 데이터 연구 1건을 끝내고, 원본이 클러스터 밖이나 LLM 대화로 나가지 않았음을 감사 기록으로 보인다 | Windows 러너는 restricted 구역이 있으면 뜨지 않는다. topic별 근거 논문은 43 topic 모두 30편 이상 | 러너 계정 분리, 통제 데이터 시험 |
-| v0.95 | 다른 연구자가 문서만 보고 설치해 공개 데이터로 한 건을 끝낸다 | 개발자 개입 없이 설치·doctor fail 0·요청 1건 완주 | `labhq init`·doctor와 Windows 러너 전용 계정 절차서가 있다 | 설치·온보딩 문서, 계정 분리 자동화 |
+| v0.95 | 다른 연구자가 문서만 보고 설치해 공개 데이터로 한 건을 끝낸다 | 개발자 개입 없이 설치·doctor fail 0·요청 1건 완주 | Windows 새 clone·venv에서 mock 요청·묶음·verify·down까지 자동 리허설한다. `labhq init`·doctor와 Windows 러너 전용 계정 절차서가 있다 | 실제 외부 연구자 완주, 계정 분리 자동화 |
 | v1 | 다른 일반 연구자가 자기 통제 데이터로 연구 문제를 두 개까지 푼다 | 연구 문제 2건 완주 | 없음 | v0.9·v0.95 위에서 진행 |
 | v1.25 | 연구를 넘어 논문을 쓴다 | 원고 초안 1편. 그림·인용이 claim 앵커로 산출물에 이어진다 | 없음 | 원고, 인용, 그림 |
 
