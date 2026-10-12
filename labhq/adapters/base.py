@@ -487,6 +487,9 @@ class RunContext:
     # after halt_grace_s (0 for engines without hooks) run() ends the CLI, keeping the session id.
     halt: asyncio.Event | None = None
     halt_grace_s: float = 0.0
+    # Runner hooks: the CLI process started (its prompt reached the engine), and the engine reported its session id.
+    on_started: Callable[[], None] | None = None
+    on_session: Callable[[str], None] | None = None
 
     @property
     def meta_dir(self) -> Path:
@@ -898,6 +901,8 @@ class AgentAdapter(ABC):
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False,
                               error=f"could not start executable {cmd[0]!r}: {detail}")
         ctx.started_command = launcher
+        if ctx.on_started:
+            ctx.on_started()
         st = RunState()
         tool_activity = _ToolActivity(self.engine)
         stderr_tail: deque[str] = deque(maxlen=60)
@@ -906,8 +911,10 @@ class AgentAdapter(ABC):
 
         last_output = time.monotonic()
 
+        reported_session: str | None = None
+
         async def read_out() -> None:
-            nonlocal last_output
+            nonlocal last_output, reported_session
             assert proc.stdout
             async for raw in proc.stdout:
                 last_output = time.monotonic()
@@ -920,6 +927,9 @@ class AgentAdapter(ABC):
                 except Exception as e:  # never let one odd line kill the run
                     tool_activity.unreadable()
                     await ctx.emit("agent.log", {"level": "debug", "text": f"[unparsed] {short(line)} ({e})"})
+                if st.session_id and st.session_id != reported_session and ctx.on_session:
+                    reported_session = st.session_id
+                    ctx.on_session(st.session_id)
                 if st.stop_reason and proc.returncode is None:
                     reason, st.stop_reason = st.stop_reason, None
                     await ctx.emit("agent.log", {"level": "warn", "text": reason})

@@ -6,6 +6,7 @@ import pytest
 from labhq.gateway.server import Hub
 from labhq.hooks import control as hook
 from labhq.models import TaskResult
+from labhq.runner.control import carry_key
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
 
@@ -78,18 +79,21 @@ async def test_a_resent_steer_for_an_ended_task_is_carried_once(tmp_path):
     runner.controls.start("t1", "worker", hooks=False, session_id=None)
     await runner._on_message(_msg("t1", "steer", 5, "chr1만 보세요"))
     runner.controls.finish("t1", "sess-1")
-    assert [s["text"] for s in runner.store.get("control_carry", "sess-1")["steers"]] == ["chr1만 보세요"]
+    carried = lambda: runner.store.get("control_carry", carry_key("worker", "sess-1"))  # noqa: E731
+    assert [s["text"] for s in carried()["steers"]] == ["chr1만 보세요"]
 
     # The ack was lost and the gateway resends the same control after the task ended.
     await runner._on_message(_msg("t1", "steer", 5, "chr1만 보세요"))
-    assert [s["text"] for s in runner.store.get("control_carry", "sess-1")["steers"]] == ["chr1만 보세요"]
+    assert [s["text"] for s in carried()["steers"]] == ["chr1만 보세요"]
     assert len(_acks(runner)) == 2  # a known duplicate is acknowledged
 
-    # The next turn takes the carry; a later resend still does not bring the steer back.
+    # The next turn's CLI starts with the steer; a later resend still does not bring it back.
     steers, _dropped, _paused = runner.controls.start("t2", "worker", hooks=False, session_id="sess-1")
     assert [s["text"] for s in steers] == ["chr1만 보세요"]
+    runner.controls.started("t2")
+    assert carried() is None
     await runner._on_message(_msg("t1", "steer", 5, "chr1만 보세요"))
-    assert runner.store.get("control_carry", "sess-1") is None
+    assert carried() is None
 
 
 @pytest.mark.asyncio
@@ -116,6 +120,6 @@ async def test_a_halt_nobody_resumes_tells_open_pages_it_expired(tmp_path):
     halted = TaskResult(task_id="t1", agent_id="worker", ok=False, error_kind="halted", session_id="sess-1")
     assert await hub.wait_halted("r", "A", halted) is False
     [expired] = [e for e in hub.events if e["type"] == "request.step_halt_expired"]
-    assert expired["task_id"] == "t1" and expired["agent_id"] == "worker" and expired["data"] == {"step_id": "A"}
+    assert expired["task_id"] == "t1" and expired["agent_id"] == "worker" and expired["data"] == {"step_id": "A", "reason": "timed_out"}
     assert not [e for e in hub.events if e["type"] == "request.step_resumed"]
     assert hub.requests["r"]["status"] == "running" and not hub.halted_waits and "t1" not in hub.task_controls

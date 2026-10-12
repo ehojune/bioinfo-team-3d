@@ -19,6 +19,7 @@ from labhq.gateway.server import Hub, create_app
 from labhq.hooks import control as hook
 from labhq.models import AgentSpec, Engine, RunnerUnavailable, Task, TaskResult
 from labhq.orchestrator.cso import Orchestrator, failure_kind
+from labhq.runner.control import carry_key
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
 
@@ -172,6 +173,8 @@ def _runner(tmp_path, monkeypatch, run, engine=Engine.claude_code) -> Runner:
 
     class FakeCli:
         async def run(self, ctx):
+            if ctx.on_started:  # what AgentAdapter.run does once the CLI process exists
+                ctx.on_started()
             return await run(ctx)
 
     monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_args: FakeCli())
@@ -219,7 +222,7 @@ async def test_a_hooked_claude_run_reads_steer_from_a_runner_file_outside_its_wo
     assert controls[0]["mode"] == "hook" and controls[0]["steers_pending"] == 1 and controls[0]["applied"]
     assert controls[1]["applied"] is False
     assert [ack["id"] for ack in _sent(runner, "control.ack")] == ["ctl-1", "ctl-1"]
-    assert runner.store.get("control_carry", "s1") is None  # nothing left for the next turn
+    assert runner.store.get("control_carry", carry_key("worker", "s1")) is None  # nothing left for the next turn
 
 
 @pytest.mark.asyncio
@@ -236,7 +239,7 @@ async def test_codex_gets_a_steer_at_the_start_of_the_next_resume_prompt(tmp_pat
     runner = _runner(tmp_path, monkeypatch, run, engine=Engine.codex)
     await runner.run_task(_task("turn-1"))
     assert "QC 기준" not in prompts[0]
-    assert runner.store.get("control_carry", "thr-1")["steers"][0]["text"] == "QC 기준을 0.9로 올리세요"
+    assert runner.store.get("control_carry", carry_key("worker", "thr-1"))["steers"][0]["text"] == "QC 기준을 0.9로 올리세요"
     note = [e["data"]["text"] for e in _sent(runner, "agent.log") if "방향 수정" in e["data"].get("text", "")]
     assert note and "다음 turn" in note[0]
 
@@ -244,7 +247,7 @@ async def test_codex_gets_a_steer_at_the_start_of_the_next_resume_prompt(tmp_pat
     task_block = prompts[1].split("</task>")[0]
     assert "[PI 방향 수정]" in task_block and "QC 기준을 0.9로 올리세요" in task_block
     assert task_block.index("QC 기준") < task_block.index("표를 만드세요")
-    assert runner.store.get("control_carry", "thr-1") is None  # delivered once
+    assert runner.store.get("control_carry", carry_key("worker", "thr-1")) is None  # delivered once
 
     # A steer that arrives after its turn ended still reaches the session's next turn.
     await runner._on_message(_control_msg("turn-2", "steer", 2, "늦게 온 지시"))

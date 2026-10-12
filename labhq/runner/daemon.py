@@ -69,6 +69,15 @@ CONSULT_REFS_MAX_TOTAL_BYTES = 32 * 1024 * 1024
 CONSULT_REF_COPY_CHUNK = 1024 * 1024
 
 
+@contextlib.asynccontextmanager
+async def _holding(semaphore: asyncio.Semaphore):
+    """Release a slot `Runner._slot_or_halt` already took."""
+    try:
+        yield
+    finally:
+        semaphore.release()
+
+
 def labhq_mcp_timeout_s(settings: Settings) -> int:
     """How long a staff CLI may wait on one labhq MCP call: the longest approval or ask wait, plus 120 s for the
     tool's own work. Claude gets it as each server's `timeout` and MCP_TOOL_TIMEOUT, Codex as `tool_timeout_sec`."""
@@ -257,6 +266,11 @@ class Runner:
             self.store.put("accepted_task", tid, {**entry, "state": "finished"})
 
     def _interrupted_result(self, tid: str, agent_id: str) -> TaskResult:
+        halted = self.controls.recovered_halts.get(tid)
+        if halted is not None:  # the PI halted it before this runner stopped: park it, do not fail it (#59 ①)
+            from .control import HALT_ERROR
+            return TaskResult(task_id=tid, agent_id=agent_id, ok=False, error_kind="halted", error=HALT_ERROR,
+                              session_id=halted.get("session_id"))
         jobs = [job for job in self.jobs.values() if job.get("task_id") == tid]
         if jobs:
             return TaskResult(task_id=tid, agent_id=agent_id, ok=True,
@@ -511,9 +525,9 @@ class Runner:
                     "일시 정지를 받았어요. 이 엔진은 실행 중에 멈출 수 없어서 이번 turn은 계속하고 다음 turn을 보내지 않습니다")
         if action == "resume":
             return "재개했어요"
-        if action == "halt":
+        if action == "halt":  # "stopped" is said by whoever actually stops it (adapter, queued or held turn)
             return ("멈춤을 받았어요. 다음 도구 호출에서 세션을 보존한 채 멈춥니다" if hooked else
-                    "멈춤을 받았어요. 세션 id를 남기고 프로세스를 끝냅니다")
+                    "멈춤을 받았어요. 멈추면 따로 알립니다")
         return None
 
     def _contract_update(self, msg: dict) -> None:
@@ -955,6 +969,32 @@ class Runner:
             return {}
         return {name: str(target) for name in CA_ENV}
 
+    @staticmethod
+    async def _slot_or_halt(semaphore: asyncio.Semaphore, halt: asyncio.Event | None) -> bool:
+        """Take a run slot, or give up the moment the PI halts the waiting task. True holds the slot."""
+        if halt is None:
+            await semaphore.acquire()
+            return True
+        acquire, stop = asyncio.ensure_future(semaphore.acquire()), asyncio.ensure_future(halt.wait())
+
+        def drop() -> None:
+            if not acquire.done():
+                acquire.cancel()  # a waiting acquire leaves the queue; a woken one hands its slot on
+            elif not acquire.cancelled() and acquire.exception() is None:
+                semaphore.release()
+
+        try:
+            await asyncio.wait({acquire, stop}, return_when=asyncio.FIRST_COMPLETED)
+        except BaseException:
+            stop.cancel()
+            drop()
+            raise
+        stop.cancel()
+        if acquire.done() and not acquire.cancelled() and acquire.exception() is None and not halt.is_set():
+            return True
+        drop()
+        return False
+
     async def run_task(self, task: Task, workdir_override: Path | None = None) -> TaskResult:
         result: TaskResult | None = None
         try:
@@ -1030,7 +1070,17 @@ class Runner:
                                          "action": "resume", "applied": True})
         consult = task.meta.get("kind") == "consult"
         semaphore = self.consult_sem if consult else self.sem
-        async with semaphore:
+        if not await self._slot_or_halt(semaphore, self.controls.halt_event(task.id)):
+            # Halted while it waited for a run slot: it never started, so it parks now (PR #532 review).
+            self.event_buffers.pop(task.id, None)
+            result = self.controls.halted(task.id, TaskResult(
+                task_id=task.id, agent_id=agent.id, ok=False, error_kind="halted",
+                error="halted before the turn started", session_id=task.resume_session_id))
+            await emit("agent.log", {"level": "info", "text": "실행 순서를 기다리던 turn을 시작하기 전에 멈췄어요"})
+            await emit("agent.status", {"state": "idle", "halted": True})
+            await emit("task.result", result.model_dump(mode="json"))
+            return result
+        async with _holding(semaphore):
             await emit("agent.status", {"state": "working", "task": task.meta.get("title") or short(task.prompt, 120)})
             zones = self._zones()
             preclean_started: float | None = None
@@ -1310,6 +1360,8 @@ class Runner:
                 before_spawn=before_spawn,
                 halt=self.controls.halt_event(task.id),
                 halt_grace_s=HALT_GRACE_S if hooked else 0.0,
+                on_started=lambda: self.controls.started(task.id),
+                on_session=lambda session: self.controls.note_session(task.id, session),
             )
             # External folders exposed to this step are its reproducibility inputs. Upstream outputs use the same
             # inputs/<step> spelling the bundle restores; other runner paths use ~/... under the runner account.

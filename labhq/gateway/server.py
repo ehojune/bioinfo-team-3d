@@ -1491,12 +1491,15 @@ class Hub:
                             "data": {"step_id": step_id, "session_id": result.session_id}})
         if parked:
             await self._publish_hold_status(rid)
-        resumed = False
+        resumed, reason = False, "timed_out"
         try:
             await asyncio.wait_for(event.wait(), bound)
             resumed = True
         except asyncio.TimeoutError:
             pass
+        except asyncio.CancelledError:
+            reason = "cancelled"  # request cancel stopped the orchestration
+            raise
         finally:
             self.halted_waits.pop(tid, None)
             self.task_controls.pop(tid, None)
@@ -1505,10 +1508,11 @@ class Hub:
                 if not req.get("pi_waits"):
                     req.pop("pi_waits", None)
                 await self._publish_hold_status(rid)
-        # Open pages drop the resume button either way: resumed, or the bound passed and the step goes on as failed.
-        await self.publish({"type": "request.step_resumed" if resumed else "request.step_halt_expired",
-                            "ts": time.time(), "request_id": rid, "task_id": tid, "agent_id": result.agent_id,
-                            "data": {"step_id": step_id}})
+            # Open pages drop the resume button whatever ended the wait: resumed, the bound passed and the step goes
+            # on as failed, or the request was cancelled (PR #532 review).
+            await self.publish({"type": "request.step_resumed" if resumed else "request.step_halt_expired",
+                                "ts": time.time(), "request_id": rid, "task_id": tid, "agent_id": result.agent_id,
+                                "data": {"step_id": step_id, **({} if resumed else {"reason": reason})}})
         return resumed
 
     async def flush_ask_answers(self, runner_id: str) -> None:
@@ -1750,6 +1754,8 @@ class Hub:
                 if result.error_kind == "halted":
                     self.task_controls[tid] = {"paused": False, "halt": True, "halted": True, "ts": time.time()}
                     self.store.put("task_control_state", tid, self.task_controls[tid])
+                elif waiting(result):
+                    pass  # an HPC or answer wait keeps its pause: the wake turn still waits for resume (PR #532 review)
                 elif self.task_controls.pop(tid, None) is not None:
                     self.store.delete("task_control_state", tid)
             if (result.pipeline_submission is not None and self.s.policy.bioinfo_agent.pipeline_pr

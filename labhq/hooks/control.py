@@ -42,8 +42,11 @@ STEER_HEADER = "[PI 방향 수정] 실행 중에 PI가 보낸 지시입니다. �
 
 
 def new_state(task_id: str = "") -> dict[str, Any]:
+    """``agent_id``/``session_id`` name the session carry a restarted runner returns this file's leftovers to;
+    ``prompt_steers`` are the carried steer ids this turn's prompt holds, consumed once the CLI starts."""
     return {"version": 1, "task_id": task_id, "paused": False, "halt": None, "halted_at": None, "steers": [],
-            "next_seq": 1, "dropped": 0, "dropped_told": 0, "delivered": 0, "applied_seqs": [], "toggle_seq": 0}
+            "next_seq": 1, "dropped": 0, "dropped_told": 0, "delivered": 0, "applied_seqs": [], "toggle_seq": 0,
+            "agent_id": "", "session_id": None, "prompt_steers": []}
 
 
 def read_state(path: str | Path) -> dict[str, Any] | None:
@@ -132,9 +135,11 @@ def update_state(path: str | Path, change: Callable[[dict[str, Any]], Any], *, c
         return outcome
 
 
-def add_steer(state: dict[str, Any], text: str, now: float | None = None) -> None:
+def add_steer(state: dict[str, Any], text: str, now: float | None = None, steer_id: str | None = None) -> None:
+    """``steer_id`` (the gateway control number) lets a carry merge the same message from two files once."""
     state["steers"].append({"seq": state["next_seq"], "text": str(text)[:STEER_CHARS],
-                            "at": time.time() if now is None else now})
+                            "at": time.time() if now is None else now,
+                            "id": steer_id or f"local-{state['task_id']}-{state['next_seq']}"})
     state["next_seq"] += 1
     over = len(state["steers"]) - STEER_LIMIT
     if over > 0:
@@ -181,7 +186,7 @@ def apply_control(state: dict[str, Any], action: str, text: str | None = None, s
                 return False
             state["toggle_seq"] = seq
     if action == "steer" and text:
-        add_steer(state, text, now)
+        add_steer(state, text, now, f"ctl-{seq}" if seq is not None else None)
     elif action == "pause":
         state["paused"] = True
     elif action == "resume":
