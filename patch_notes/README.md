@@ -16,9 +16,12 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 |---|---|---|
 | 14:08 | [`7fa7718`](https://github.com/ehojune/bioinfo-team-3d/pull/536/commits/7fa7718) | Windows CI의 cp1252 console에서도 단계와 실패 출력을 UTF-8 한 줄로 보존한다 |
 | 14:02 | [`6f496fc`](https://github.com/ehojune/bioinfo-team-3d/pull/536/commits/6f496fc) | README 설치 절을 더 짧게 고쳐 전체와 해당 절의 바이트 수를 종전보다 줄인다 |
+| 14:00 | [`2002b27`](https://github.com/ehojune/bioinfo-team-3d/pull/535/commits/2002b27) | 공유 환경 판정이 uv·conda·pixi·poetry 같은 실행기의 전역 옵션을 표로 건너뛰어 run이 실행하는 프로그램을 찾고, 표에 없는 옵션이나 모르는 실행기면 뒤 단어를 모두 프로그램 자리로 본다. 재귀 삭제 규칙은 실제 rm에만 걸어 docker rm·지금 트리의 git rm·따옴표로 감싼 변수 하나를 지우는 rm은 묻지 않고, PowerShell 출력 문자열 속 .Delete( 글자는 삭제로 보지 않는다. |
 | 13:40 | [`956485f`](https://github.com/ehojune/bioinfo-team-3d/pull/536/commits/956485f) | 새 clone과 venv에서 mock 요청·묶음·verify·정리까지 검사하고 Windows CI에서 돌린다 |
 | 13:37 | [`c087aaf`](https://github.com/ehojune/bioinfo-team-3d/pull/537/commits/c087aaf) | 묶음 대기 표시로 중단된 요청 묶음을 시작 때 한 번 복구 |
 | 13:36 | [`9b8c6a3`](https://github.com/ehojune/bioinfo-team-3d/pull/537/commits/9b8c6a3) | gateway 중단 뒤 요청 묶음 복구 회귀 5건을 추가 |
+| 12:59 | [`c5c9010`](https://github.com/ehojune/bioinfo-team-3d/pull/535/commits/c5c9010) | 공유 환경 판정에서 wrapper 뒤 프로그램 자리를 찾는 코드를 하나로 합치고, ~ 쓰기를 묻는 사유에 펼친 경로를 함께 보인다. |
+| 12:57 | [`b75a0d3`](https://github.com/ehojune/bioinfo-team-3d/pull/535/commits/b75a0d3) | 승인 게이트가 find -exec payload·rm 옵션 단어·PowerShell pipe 뒤 삭제를 리터럴로 읽을 수 없으면 묻고, ~로 시작하는 셸 쓰기 대상을 그 셸의 home으로 펼쳐 허용 폴더와 대조한다. 공유 환경 R 설치 판정은 프로그램 자리 단어에만 걸고, 통제 구역 링크가 있는 project 폴더를 연 Claude 단계는 링크의 다른 표기(8.3 이름·대소문자)도 게이트로 보낸다. |
 | 05:43 | [`3e0c34d`](https://github.com/ehojune/bioinfo-team-3d/pull/534/commits/3e0c34d) | 연구 lane #527 후속: 기다리는 마지막 보고서 turn의 예산 면제, 차수 없는 예전 확인 질문 답, gateway 이어 가기 되돌리기 판정을 바로잡음 |
 | 05:21 | [`ebc968a`](https://github.com/ehojune/bioinfo-team-3d/pull/530/commits/ebc968a) | main 병합: #527 연구 lane 상태 후속과 server.py 충돌을 풀어 이어 가기 복원 helper와 취소 마무리 helper를 함께 둔다. |
 | 05:07 | [`85bcdf0`](https://github.com/ehojune/bioinfo-team-3d/pull/530/commits/85bcdf0) | main 병합: #522 파견직 채용물 고정과의 import 충돌을 풀고, 그 테스트의 가짜 러너에 채용 turn을 담을 tasks를 더했다. |
