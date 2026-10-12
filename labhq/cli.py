@@ -35,6 +35,9 @@ _OPERATION_LOCKS: dict[str, threading.Lock] = {}
 _OPERATION_LOCKS_GUARD = threading.Lock()
 _TERMINATE_GRACE_SECONDS = 10.0
 _TERMINATE_POLL_SECONDS = 0.1
+_DOWN_RECHECK_SECONDS = 3.0
+_BUNDLE_WAIT_SECONDS = 60.0
+_BUNDLE_POLL_SECONDS = 3.0
 
 
 def _instance_config(name: str) -> str:
@@ -619,15 +622,17 @@ def _wait_for_process_end(pid: int, created: str, timeout: float) -> bool:
 
 def _terminate_tree(pid: int, *, created: str | None = None) -> None:
     if sys.platform == "win32":
-        result = subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], capture_output=True, text=True,
-                                timeout=15)
+        # taskkill writes in the OEM code page (cp949 on Korean Windows) while labhq.cmd sets PYTHONUTF8=1: a bare
+        # text=True decodes as UTF-8, kills both reader threads with a traceback and returns None (trial-ready 2026-10-12).
+        result = subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], capture_output=True,
+                                encoding="oem", errors="replace", timeout=15)
         if result.returncode:
             try:
                 missing = _process_created(pid) is None
             except ProcessIdentityError:
                 missing = False
             if not missing:
-                detail = " ".join((result.stderr or result.stdout).split())
+                detail = " ".join(((result.stderr or "") + " " + (result.stdout or "")).split())
                 raise OSError(detail or f"taskkill exit {result.returncode}")
         return
     try:
@@ -689,6 +694,37 @@ def _shutdown_readiness(s: Settings) -> dict | str | None:
     return value if isinstance(value, dict) else "unknown"
 
 
+def _gateway_is_local(s: Settings) -> bool:
+    from urllib.parse import urlsplit
+
+    host = urlsplit(s.gateway.url).hostname or ""
+    return host in LOOPBACK_HOSTS or host == s.gateway.host
+
+
+def _unrecorded_process_still_running(s: Settings, *, timeout: float) -> str | None:
+    """After `down` stopped what it had records for: what still answers, or None.
+
+    A gateway on this PC that still answers was started outside `up`. A gateway on another PC is not ours to stop
+    (a runner-only PC), so there only this config's runner id still being connected counts. After a stop, the closing
+    socket gets up to `timeout` seconds."""
+    local = _gateway_is_local(s)
+    deadline = time.monotonic() + timeout
+    while True:
+        health = _health(s)
+        if health is None or (not local and s.runner.id not in (health.get("runners") or [])):
+            return None
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.2)
+    if local:
+        return (f"`up`이 아닌 방법으로 시작한 gateway/runner가 아직 실행 중입니다({_http_base(s)}). "
+                "PID 기록이 없어 종료하지 못했습니다. 그 프로세스를 직접 끈 뒤 "
+                f"`{_config_command(s, 'up')}`으로 다시 시작하세요.")
+    return (f"`up`이 아닌 방법으로 시작한 runner({s.runner.id})가 gateway({_http_base(s)})에 아직 연결되어 있습니다. "
+            "PID 기록이 없어 종료하지 못했습니다. 그 프로세스를 직접 끈 뒤 "
+            f"`{_config_command(s, 'up')}`으로 다시 시작하세요.")
+
+
 def _down_unlocked(s: Settings, *, force: bool = False) -> None:
     active = _active_requests(s)
     readiness = _shutdown_readiness(s) if active is not None else "unknown"
@@ -729,7 +765,16 @@ def _down_unlocked(s: Settings, *, force: bool = False) -> None:
         if state == "unknown":
             _record_problem(role, reason)
     stopped = [(role, pid) for role in ("runner", "gateway") if (pid := _stop_background(s, role)) is not None]
-    print("종료: " + (", ".join(f"{role} PID {pid}" for role, pid in stopped) if stopped else "기록된 프로세스 없음"))
+    if stopped:
+        print("종료: " + ", ".join(f"{role} PID {pid}" for role, pid in stopped))
+    # A gateway or runner started outside `up` (a script, another shell) has no process record, so nothing above
+    # stopped it. Say so instead of "기록된 프로세스 없음" with exit 0, or `up` reuses it as if it were fresh.
+    running = _unrecorded_process_still_running(s, timeout=_DOWN_RECHECK_SECONDS if stopped else 0)
+    if running:
+        print(running, file=sys.stderr)
+        raise SystemExit(2)
+    if not stopped:
+        print("종료: 기록된 프로세스 없음")
 
 
 def _down(s: Settings, *, force: bool = False) -> None:
@@ -784,6 +829,69 @@ def _verify(s: Settings, request_id: str, *, as_json: bool, bundle: str | None) 
     return report["exit_code"]
 
 
+_BUNDLE_FIELDS = ("bundle_path", "bundle_status", "bundle_grade", "bundle_grade_reasons", "bundle_warning")
+
+
+def _request_record(s: Settings, request_id: str) -> dict | None:
+    """The gateway's record of one request, or None when it cannot be read right now."""
+    import httpx
+    from urllib.parse import quote
+
+    try:
+        record = _api(s, "GET", f"/api/requests/{quote(request_id, safe='')}", raw_errors=True)
+    except (httpx.HTTPError, ValueError):
+        return None
+    return record if isinstance(record, dict) else None
+
+
+async def _wait_for_bundle(s: Settings, ws, terminal: dict, login_holds: set[str], *,
+                           timeout: float | None = None) -> None:
+    """Print the request bundle path and grade after a terminal event, then let the caller return.
+
+    The gateway commits request.completed/failed before it builds the bundle (`Hub.schedule_terminal`), so those
+    fields arrive in a later request.bundle event; returning at the terminal event never showed them. A request
+    that never ran a step has no bundle and nothing pending, so it returns at once. Bounded: a bundle still being
+    copied after `timeout` seconds is left to `labhq status`."""
+    request_id = terminal.get("request_id")
+    data = terminal.get("data") or {}
+    if not request_id or data.get("bundle_path") or data.get("bundle_warning"):
+        return  # render() already printed them
+    import websockets
+
+    deadline = time.monotonic() + (_BUNDLE_WAIT_SECONDS if timeout is None else timeout)
+    connected = True
+    while True:
+        record = _request_record(s, request_id)
+        if record is not None:
+            if record.get("bundle_path") or record.get("bundle_warning"):
+                render({"type": "request.bundle", "ts": time.time(), "request_id": request_id,
+                        "data": {key: record[key] for key in _BUNDLE_FIELDS if key in record}}, login_holds)
+                return
+            if not record.get("bundle_pending"):
+                return  # no bundle is being built
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            print(f"요청 묶음을 아직 만드는 중입니다. 끝나면 `{_config_command(s, 'status')}`에 경로가 나옵니다.",
+                  flush=True)
+            return
+        wait = min(_BUNDLE_POLL_SECONDS, remaining)
+        if not connected:
+            await asyncio.sleep(wait)
+            continue
+        try:
+            raw = await asyncio.wait_for(ws.recv(), wait)
+        except asyncio.TimeoutError:
+            continue  # poll the record again: a missed event must not cost the whole wait
+        except websockets.ConnectionClosed:
+            connected = False
+            continue
+        ev = json.loads(raw)
+        if ev.get("request_id") == request_id and ev.get("type") != "snapshot":
+            render(ev, login_holds)
+            if ev.get("type") == "request.bundle":
+                return
+
+
 async def _watch(s: Settings, request_id: str | None = None) -> None:
     import websockets
 
@@ -800,6 +908,7 @@ async def _watch(s: Settings, request_id: str | None = None) -> None:
             render(ev, login_holds)
             if request_id and ev.get("request_id") == request_id and ev["type"] in ("request.completed", "request.failed"):
                 print("\n" + _terminal_report(ev["data"]))
+                await _wait_for_bundle(s, ws, ev, login_holds)
                 return
 
 
@@ -819,6 +928,7 @@ async def _send_and_wait(s: Settings, body: dict) -> None:
             render(ev, login_holds)
             if ev["type"] in ("request.completed", "request.failed"):
                 print("\n" + _terminal_report(ev["data"]))
+                await _wait_for_bundle(s, ws, ev, login_holds)
                 return
 
 
