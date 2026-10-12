@@ -436,9 +436,10 @@ Contract rules:
 - Freeze analysis unit, selection/exclusion, comparators, metrics, validation, resources, stop/approval
   conditions, data boundaries, and statistics applicability before execution. Every not_applicable item needs a reason.
   Applicable statistics needs estimand, analysis_unit, and primary_outcomes.
-- `budget_usd` (optional number): the most this whole request may spend in USD, earlier rounds included. On CP1
-  approval it becomes the enforced cap (never above the lab's per-request cap); spending past it waits for a PI
-  budget card. Write the same figure in protocol.resource_limits. Leave it out when you cannot estimate it.
+- `budget_usd` (optional number): the additional execution budget in USD after this plan's CP1 approval.
+  Exclude briefing, clarification, planning and all earlier-round spending already incurred. On approval labhq adds
+  that spending to this budget and clamps the total to the configured request cap; exceeding it waits for a PI
+  budget card. Write this additional amount in protocol.resource_limits. Leave it out when you cannot estimate it.
 - Each step declares phase, claim_ids, input_refs, outputs, checks, evidence_slots, and depends_on. Every output is
   inside that step's own workspace outputs/ folder, written as outputs/<name>, and the instruction uses that exact
   path. Never declare an absolute path, home path, `..`, or a file at the workspace root.{output_types_rule}{topics_rule}

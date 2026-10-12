@@ -401,6 +401,10 @@ def test_an_approved_plan_frozen_without_budget_resumes_as_approved():
 
 def test_research_plan_prompt_asks_for_a_numeric_budget():
     assert "budget_usd" in cso.RESEARCH_PLAN_PROMPT and "budget_usd" in cso.RESEARCH_CP2_PLAN_PROMPT
+    for prompt in (cso.RESEARCH_PLAN_PROMPT, cso.RESEARCH_CP2_PLAN_PROMPT):
+        assert "additional execution budget" in prompt
+        assert "all earlier-round spending already incurred" in prompt
+        assert "the most this whole request may spend" not in prompt
 
 
 # ---------- PR #499 review ----------
