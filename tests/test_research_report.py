@@ -164,6 +164,8 @@ async def test_report_whose_anchors_do_not_check_out_is_incomplete(report, artif
 
     req = hub.requests["r"]
     assert req["outcome"] == "report_incomplete" and req["status"] == "failed"
+    # The office feed prints this after "요청이 실패했어요: "; it was empty (web trial readiness 2026-10-12).
+    assert "claim 검사" in req["error"]
     check = req["research_contract"]["report_check"]
     assert check["anchors"] == report.count("[[claim:")
     assert any(problem in line for line in check["problems"])
@@ -237,6 +239,7 @@ async def test_review_revise_ends_the_request_without_a_report():
     req = hub.requests["r"]
     assert _kinds(hub) == ["plan", "step", "review"]
     assert req["outcome"] == "research_review_revise" and req["status"] == "failed"
+    assert "리뷰가 수정을 요구" in req["error"]
     report = req["report"]
     assert report.index("the file has no effect column") < report.index("wording")  # P1 before P3
     assert "new CP1 approval" in report
