@@ -123,12 +123,16 @@ const visual = a => a.state === 'done' && now() - (a.stateAt || 0) > 3
 // 'hibernating' covers HPC jobs and unanswered asks (runner agent.status: jobs, asks); a PI question is not HPC.
 const stateText = (a, vs = visual(a)) => vs === 'hibernating' && a.waitFor === 'answer' ? '답 기다리는 중' : STATE_KO[vs];
 const nick = id => { const a = ag(id); return a ? String(a.name || a.id).split(' ')[0] : ({ pi: '나', hpc: 'HPC', github: 'GitHub', system: '시스템' }[id] || id || ''); };
-// Keep a task while it runs, waits, or ended paused or halted (its row still resumes it); drop it once it is over.
-function trackTask(a, tid, state, title, keep = false) {
+// A staff member's task rows: kept while the task runs, waits for HPC or an answer, is halted, or holds its paused
+// step; removed on its terminal event, as a reload would (PR #532 review).
+function trackTask(a, tid, state, title, keep = false, rid = '', sid = '') {
   if (!a || !tid) return;
   const prev = a.tasks.get(tid) || {}, control = S.taskControl.get(tid) || {};
-  if (['done', 'error', 'idle'].includes(state) && !keep && !control.paused && !control.halted) a.tasks.delete(tid);
-  else a.tasks.set(tid, { state, title: title || prev.title || '' });
+  if (['done', 'error', 'idle'].includes(state) && !keep && !control.halted) a.tasks.delete(tid);
+  else a.tasks.set(tid, { state, title: title || prev.title || '', rid: rid || prev.rid || '', sid: sid || prev.sid || '' });
+}
+function dropTask(a, tid) {
+  if (a && tid && !(S.taskControl.get(tid) || {}).halted) { a.tasks.delete(tid); S.taskControl.delete(tid); }
 }
 function upsertAgent(a) {
   const prev = S.agents.get(a.id) || { state: 'idle', task: '', say: '', tool: '', log: [] };
@@ -294,7 +298,8 @@ function apply(ev, replay = false) {
       for (const { task } of restored.values()) {
         if (task.control || task.state === 'halted') S.taskControl.set(task.id, { ...(task.control || {}), ...(task.state === 'halted' ? { halted: true } : {}) });
         trackTask(task.agent_id && ag(task.agent_id), task.id,
-          task.state === 'running' ? 'working' : task.state === 'halted' ? 'idle' : task.state, '', true);
+          task.state === 'running' ? 'working' : ['halted', 'paused'].includes(task.state) ? 'idle' : task.state, '', true,
+          task.request_id, task.step_id);
         const q = S.requests.get(task.request_id);
         if (!q) continue;
         q.steps[task.step_id] = task.state === 'running' ? 'working' : task.state;
@@ -317,7 +322,7 @@ function apply(ev, replay = false) {
     case 'agent.status': {
       const a = ag(id); if (!a) break;
       a.state = d.state || a.state; a.stateAt = ts;
-      trackTask(a, ev.task_id, d.state || a.state, d.task, Boolean(d.halted));
+      trackTask(a, ev.task_id, d.state || a.state, d.task, Boolean(d.halted), rid, S.taskStep.get(ev.task_id));
       // Display only, like usage and trace: kept out of the replayed state the golden hashes compare.
       if (d.state === 'hibernating') Object.defineProperty(a, 'waitFor', { writable: true, configurable: true, enumerable: false,
         value: (d.jobs || []).length ? 'hpc' : (d.asks || []).length ? 'answer' : '' });
@@ -328,7 +333,26 @@ function apply(ev, replay = false) {
       break;
     }
     case 'agent.tool': { const a = ag(id); if (!a) break; a.tool = d.name; a.toolAt = ts; a.toolCalls = (a.toolCalls || 0) + 1; logTo(a, `도구 ${toolLabel(d.name)} ${short(d.input, 80)}`, ts); break; }
-    case 'agent.control': if (ev.task_id) S.taskControl.set(ev.task_id, { ...d }); break;
+    case 'agent.control': {
+      // Merged, never replaced: a steer or pause to a halted task keeps it halted until resumed or expired.
+      if (ev.task_id) {
+        const prev = S.taskControl.get(ev.task_id) || {};
+        S.taskControl.set(ev.task_id, { ...prev, ...d, halted: Boolean(prev.halted || d.halted) });
+      }
+      if ((d.undelivered || []).length) {  // the step ended before a turn could take these
+        const text = `전달 못 한 방향 수정 ${d.undelivered.length}개: ${short(d.undelivered.join(' / '), 160)}`;
+        const a = ag(id); if (a) logTo(a, text, ts);
+        feed({ who: id || 'system', text, cls: 'alert' }, ts, rid);
+      }
+      break;
+    }
+    case 'request.step_paused': {  // the step's next turn waits for the PI; its last task's row resumes it
+      if (ev.task_id) S.taskControl.set(ev.task_id, { ...(S.taskControl.get(ev.task_id) || {}), paused: true });
+      trackTask(ag(id), ev.task_id, 'idle', '', true, rid, d.step_id);
+      if (rid && d.step_id) req(rid).steps[d.step_id] = 'paused';
+      break;
+    }
+    case 'request.step_unpaused': dropTask(ag(id), ev.task_id); break;
     case 'request.step_halted': {
       if (ev.task_id) S.taskControl.set(ev.task_id, { ...(S.taskControl.get(ev.task_id) || {}), halted: true });
       if (rid && d.step_id) req(rid).steps[d.step_id] = 'halted';
@@ -388,6 +412,9 @@ function apply(ev, replay = false) {
     }
     case 'task.dispatched': {
       onDispatch(ev);
+      // A new turn of the step supersedes the staff member's earlier row for it (an HPC wait, a held pause).
+      const worker = ag(id), sid = d.step_id || d.kind;
+      if (worker && rid && sid) for (const [tid, row] of [...worker.tasks]) if (tid !== ev.task_id && row.rid === rid && row.sid === sid) dropTask(worker, tid);
       if (rid && d.step_id) Object.assign(stepDetail(rid, d.step_id), {
         task_id: ev.task_id, attempts: Math.max(stepDetail(rid, d.step_id).attempts || 0, Number(d.attempt) || 1),
       });
@@ -396,6 +423,7 @@ function apply(ev, replay = false) {
     case 'task.result': {
       const sid = S.taskStep.get(ev.task_id);
       if (d.error_kind === 'halted' && ev.task_id) S.taskControl.set(ev.task_id, { ...(S.taskControl.get(ev.task_id) || {}), halted: true });
+      else if (!(d.pending_jobs || []).length && !(d.pending_asks || []).length) dropTask(ag(id), ev.task_id);  // over
       if (sid && rid) {
         if (d.ok === false) req(rid).steps[sid] = d.error_kind === 'halted' ? 'halted' : 'error';
         Object.assign(stepDetail(rid, sid), { task_id: ev.task_id, ok: d.ok, text: d.text || '', error: d.error || '',

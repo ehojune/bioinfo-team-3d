@@ -247,7 +247,7 @@ class Runner:
         self.local_software: dict | None = None  # bounded doctor probes, once before the first hello
         self.codex_sandbox = SandboxWatch()  # elevated setup still fits this Codex (#328)
         # Steer, pause and halt files (#59 ①): runner state, outside every staff write root.
-        self.controls = Controls(settings.path(settings.runner.state_dir) / "control", self.store)
+        self.controls = Controls(settings.path(settings.runner.state_dir) / "control")
         self._finish_interrupted_tasks()
 
     def _finish_interrupted_tasks(self) -> None:
@@ -266,11 +266,6 @@ class Runner:
             self.store.put("accepted_task", tid, {**entry, "state": "finished"})
 
     def _interrupted_result(self, tid: str, agent_id: str) -> TaskResult:
-        halted = self.controls.recovered_halts.get(tid)
-        if halted is not None:  # the PI halted it before this runner stopped: park it, do not fail it (#59 ①)
-            from .control import HALT_ERROR
-            return TaskResult(task_id=tid, agent_id=agent_id, ok=False, error_kind="halted", error=HALT_ERROR,
-                              session_id=halted.get("session_id"))
         jobs = [job for job in self.jobs.values() if job.get("task_id") == tid]
         if jobs:
             return TaskResult(task_id=tid, agent_id=agent_id, ok=True,
@@ -474,10 +469,9 @@ class Runner:
     CONTROL_RETRY_S = (0.2, 1.0)  # waits before the second and third attempt; then the gateway's resend takes over
 
     async def _on_control(self, msg: dict) -> None:
-        """Steer, pause, resume or halt a task (#59 ①). Only a request this runner handled is acknowledged: applied, a
-        number it applied before, or one with nothing here to apply to. One that could not be applied (a busy or broken
-        control file) stays unacknowledged after a few bounded tries, so the gateway keeps it and sends it again when
-        this runner reconnects (PR #532 review)."""
+        """Steer, pause, resume or halt a task this runner holds (#59 ①). A control for a task it does not hold, or one
+        it could not apply after a few bounded tries, is answered with ``control.nack``: the gateway keeps it on the step
+        for the next dispatch, so nothing is acknowledged that was not applied (PR #532 review)."""
         tid = str(msg.get("task_id") or "")
         base = dict(task_id=tid, agent_id=self.controls.agent_of(tid) or msg.get("agent_id"),
                     request_id=self.task_req.get(tid) or msg.get("request_id"))
@@ -492,20 +486,19 @@ class Runner:
                 break
             except (OSError, TimeoutError, ControlNotReady) as exc:
                 error = exc
-        if error is not None:
-            log.warning("task %s control %s not applied: %s", tid, msg.get("action"), error)
-            await self.emit(Event(type="agent.log", data={"level": "warn", "text": (
-                f"PI 제어({msg.get('action')})를 적용하지 못했어요. 러너가 gateway에 다시 연결되면 다시 받습니다")},
-                **base))
+        if error is not None or summary is None:
+            reason = "unknown task" if error is None else f"not applied: {type(error).__name__}"
+            if error is not None:
+                log.warning("task %s control %s not applied: %s", tid, msg.get("action"), error)
+            self.send({"type": "control.nack", "task_id": tid, "action": msg.get("action"),
+                       "steer_id": (msg.get("steer") or {}).get("id") if isinstance(msg.get("steer"), dict) else None,
+                       "reason": reason})
             return
-        if summary is not None:
-            base["agent_id"] = self.controls.agent_of(tid) or base["agent_id"]
-            await self.emit(Event(type="agent.control", data=summary, **base))
-            note = self._control_note(summary)
-            if note:
-                await self.emit(Event(type="agent.log", data={"level": "info", "text": note}, **base))
-        if msg.get("id"):
-            self.send({"type": "control.ack", "id": msg["id"], "task_id": tid})
+        base["agent_id"] = self.controls.agent_of(tid) or base["agent_id"]
+        await self.emit(Event(type="agent.control", data=summary, **base))
+        note = self._control_note(summary)
+        if note:
+            await self.emit(Event(type="agent.log", data={"level": "info", "text": note}, **base))
 
     @staticmethod
     def _control_note(summary: dict) -> str | None:
@@ -513,16 +506,16 @@ class Runner:
         action, hooked = summary.get("action"), summary.get("mode") == "hook"
         if not summary.get("applied"):
             return None
-        if summary.get("ended"):
-            return {"steer": "방향 수정을 받았어요. 이 작업은 끝나서 같은 세션의 다음 turn 앞에 붙입니다",
-                    "pause": "일시 정지를 받았어요. 이 작업은 끝나서 같은 세션의 다음 turn을 보내지 않습니다",
-                    "resume": "재개를 받았어요"}.get(action)
         if action == "steer":
+            if not summary.get("started"):
+                return "방향 수정을 받았어요. 시작할 때 프롬프트 앞에 붙입니다"
             return ("방향 수정을 받았어요. 다음 도구 호출이 끝나면 전달합니다" if hooked else
-                    "방향 수정을 받았어요. 이 엔진은 실행 중 전달이 안 돼서 다음 turn 앞에 붙입니다")
+                    "방향 수정을 받았어요. 이 엔진은 실행 중에 전달할 수 없어 이 turn이 끝나면 같은 단계의 다음 turn에 붙입니다")
         if action == "pause":
+            if not summary.get("started"):
+                return "일시 정지를 받았어요. 재개할 때까지 이 turn을 시작하지 않습니다"
             return ("일시 정지했어요. 다음 도구 호출부터 재개할 때까지 막습니다" if hooked else
-                    "일시 정지를 받았어요. 이 엔진은 실행 중에 멈출 수 없어서 이번 turn은 계속하고 다음 turn을 보내지 않습니다")
+                    "일시 정지를 받았어요. 이 엔진은 실행 중에 멈출 수 없어서 이번 turn은 계속하고 같은 단계의 다음 turn을 보내지 않습니다")
         if action == "resume":
             return "재개했어요"
         if action == "halt":  # "stopped" is said by whoever actually stops it (adapter, queued or held turn)
@@ -567,7 +560,8 @@ class Runner:
             res = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error=err)
             base = dict(task_id=task.id, agent_id=task.agent_id, request_id=task.request_id)
             await self.emit(Event(type="agent.status", data={"state": "error", "error": short(err, 200)}, **base))
-            await self.emit(Event(type="task.result", data=res.model_dump(mode="json"), **base))
+            await self.emit(Event(type="task.result", data={**res.model_dump(mode="json"),
+                                                            "control": self.controls.finish(task.id)}, **base))
             if isinstance(e, asyncio.CancelledError):
                 raise
 
@@ -996,14 +990,6 @@ class Runner:
         return False
 
     async def run_task(self, task: Task, workdir_override: Path | None = None) -> TaskResult:
-        result: TaskResult | None = None
-        try:
-            result = await self._run_task(task, workdir_override)
-            return result
-        finally:  # what the PI sent and the run did not take stays with the session's next turn (#59 ①)
-            self.controls.finish(task.id, (result.session_id if result else None) or task.resume_session_id)
-
-    async def _run_task(self, task: Task, workdir_override: Path | None = None) -> TaskResult:
         agent = self._resolve_agent(task)
         read_only = is_read_only_task(task.meta)
         refusal = read_only_refusal(agent.id, agent.engine) if read_only else None
@@ -1021,10 +1007,9 @@ class Runner:
             agent = read_only_profile(agent)
         # Hooks run only in a writable Claude run; a read-only one turns every hook off (claude_code.READ_ONLY_FLAGS).
         hooked = agent.engine == Engine.claude_code and not read_only
-        carried, carried_dropped, start_paused = self.controls.start(task.id, agent.id, hooks=hooked,
-                                                                     session_id=task.resume_session_id)
-        if carried:  # steer messages the session's previous turn did not take: this turn starts with them
-            task = task.model_copy(update={"prompt": steer_prompt(carried, carried_dropped) + "\n\n" + task.prompt})
+        # The step's undelivered steers come with the dispatch; they go into the prompt when the CLI starts.
+        self.controls.start(task.id, agent.id, hooks=hooked, session_id=task.resume_session_id,
+                            steers=task.meta.get("steers") or [], dropped=task.meta.get("steer_dropped") or 0)
         override = workdir_override or (Path(task.meta["workdir"]) if task.meta.get("workdir") else None)
         workspace_dir = Path(override) if override else self.ws_root / time.strftime("%Y-%m-%d") / f"{task.id}_{agent.id}"
         reused = os.path.lexists(workspace_dir)
@@ -1042,6 +1027,8 @@ class Runner:
         breaker = Breaker()
 
         async def emit(typ: str, data: dict) -> None:
+            if typ == "task.result":  # the last event: which steers were delivered, for the gateway's step (#59 ①)
+                data = {**data, "control": self.controls.finish(task.id)}
             if typ == "agent.tool_error" and task.meta.get("general_result_contract"):
                 first = str(data.get("text") or "tool failed").splitlines()[0].strip() or "tool failed"
                 tool_errors.append(short(first, 200))
@@ -1053,34 +1040,36 @@ class Runner:
                                           data=body))
 
         await emit("agent.status", {"state": "queued"})
-        if start_paused:  # the PI paused this session: its next turn waits for resume (#59 ①)
-            mode = "hook" if hooked else "next_turn"
-            await emit("agent.control", {"paused": True, "halt": False, "halted": False, "held": True, "mode": mode,
-                                         "action": "pause", "applied": True})
-            await emit("agent.log", {"level": "info", "text": "일시 정지 중이라 이 turn을 시작하지 않고 재개를 기다립니다"})
-            if not await self.controls.wait_resumed(task.id):
-                self.event_buffers.pop(task.id, None)
-                result = self.controls.halted(task.id, TaskResult(
-                    task_id=task.id, agent_id=agent.id, ok=False, error_kind="halted",
-                    error="halted before the turn started", session_id=task.resume_session_id))
-                await emit("agent.status", {"state": "idle", "halted": True})
-                await emit("task.result", result.model_dump(mode="json"))
-                return result
-            await emit("agent.control", {"paused": False, "halt": False, "halted": False, "held": False, "mode": mode,
-                                         "action": "resume", "applied": True})
         consult = task.meta.get("kind") == "consult"
         semaphore = self.consult_sem if consult else self.sem
-        if not await self._slot_or_halt(semaphore, self.controls.halt_event(task.id)):
-            # Halted while it waited for a run slot: it never started, so it parks now (PR #532 review).
+        # Not started until the PI lets it: a pause holds it before and after it waits for a run slot, and a halt while
+        # it waits parks it without starting the CLI (PR #532 review).
+        halted_before_start = False
+        while True:
+            if self.controls.paused(task.id):
+                await emit("agent.log", {"level": "info", "text": "일시 정지 중이라 이 turn을 시작하지 않고 재개를 기다립니다"})
+            if not await self.controls.wait_ready(task.id) or not await self._slot_or_halt(
+                    semaphore, self.controls.halt_event(task.id)):
+                halted_before_start = True
+                break
+            if not self.controls.paused(task.id):
+                break
+            semaphore.release()  # paused while it waited for the slot: give the slot back and hold
+        if halted_before_start:
             self.event_buffers.pop(task.id, None)
             result = self.controls.halted(task.id, TaskResult(
                 task_id=task.id, agent_id=agent.id, ok=False, error_kind="halted",
                 error="halted before the turn started", session_id=task.resume_session_id))
-            await emit("agent.log", {"level": "info", "text": "실행 순서를 기다리던 turn을 시작하기 전에 멈췄어요"})
+            await emit("agent.log", {"level": "info", "text": "시작하기 전에 멈췄어요. 받은 방향 수정은 같은 단계의 다음 turn에 남깁니다"})
             await emit("agent.status", {"state": "idle", "halted": True})
             await emit("task.result", result.model_dump(mode="json"))
             return result
         async with _holding(semaphore):
+            steers, dropped = self.controls.take_prompt_steers(task.id)
+            if steers:  # the PI's direction changes waiting now: the CLI starts with them
+                task = task.model_copy(update={"prompt": steer_prompt(steers, dropped) + "\n\n" + task.prompt})
+                if ws:
+                    ws.task = task
             await emit("agent.status", {"state": "working", "task": task.meta.get("title") or short(task.prompt, 120)})
             zones = self._zones()
             preclean_started: float | None = None
@@ -1361,7 +1350,6 @@ class Runner:
                 halt=self.controls.halt_event(task.id),
                 halt_grace_s=HALT_GRACE_S if hooked else 0.0,
                 on_started=lambda: self.controls.started(task.id),
-                on_session=lambda session: self.controls.note_session(task.id, session),
             )
             # External folders exposed to this step are its reproducibility inputs. Upstream outputs use the same
             # inputs/<step> spelling the bundle restores; other runner paths use ~/... under the runner account.

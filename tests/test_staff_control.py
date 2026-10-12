@@ -19,7 +19,6 @@ from labhq.gateway.server import Hub, create_app
 from labhq.hooks import control as hook
 from labhq.models import AgentSpec, Engine, RunnerUnavailable, Task, TaskResult
 from labhq.orchestrator.cso import Orchestrator, failure_kind
-from labhq.runner.control import carry_key
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
 
@@ -113,15 +112,14 @@ def test_halt_stops_claude_before_and_after_a_tool_and_keeps_queued_steers(tmp_p
     assert state["halted_at"] and [s["text"] for s in state["steers"]] == ["다음 turn에 전달"]
 
 
-def test_a_control_seen_before_is_not_applied_twice():
+def test_a_steer_the_file_already_has_is_not_applied_twice():
     state = hook.new_state("t")
-    assert hook.apply_control(state, "steer", "한 번만", seq=3)
-    assert not hook.apply_control(state, "steer", "한 번만", seq=3)  # the gateway resent it after a reconnect
-    # A lower number that failed earlier still applies once (PR #532 review), but not a toggle older than the last one.
-    assert hook.apply_control(state, "pause", seq=2)
-    assert not hook.apply_control(state, "pause", seq=2)
-    assert not hook.apply_control(state, "resume", seq=1)
-    assert [s["text"] for s in state["steers"]] == ["한 번만"] and state["paused"]
+    assert hook.apply_control(state, "steer", "한 번만", "steer-1")
+    assert not hook.apply_control(state, "steer", "한 번만", "steer-1")  # the gateway sent it again
+    state["prompt_steers"], state["steers"] = ["steer-1"], []
+    assert not hook.apply_control(state, "steer", "한 번만", "steer-1")  # already in the prompt
+    assert hook.apply_control(state, "pause") and state["paused"]
+    assert hook.apply_control(state, "resume") and not state["paused"]  # the step's state as last sent
 
 
 def _hook_process(event, env, payload=POST_PAYLOAD):
@@ -181,18 +179,23 @@ def _runner(tmp_path, monkeypatch, run, engine=Engine.claude_code) -> Runner:
     return runner
 
 
-def _task(tid="task-1", session=None) -> Task:
+def _task(tid="task-1", session=None, steers=None) -> Task:
     return Task(id=tid, request_id="r1", agent_id="worker", prompt="표를 만드세요", resume_session_id=session,
-                meta={"kind": "step", "step_id": "s1"})
+                meta={"kind": "step", "step_id": "s1", **({"steers": steers} if steers else {})})
 
 
-def _control_msg(tid, action, seq, text=None):
-    return {"type": "task.control", "id": f"ctl-{seq}", "seq": seq, "task_id": tid, "action": action,
-            "agent_id": "worker", **({"text": text} if text else {})}
+def _control_msg(tid, action, steer_id=None, text=None):
+    return {"type": "task.control", "task_id": tid, "action": action, "agent_id": "worker",
+            **({"steer": {"id": steer_id, "text": text}} if steer_id else {})}
 
 
 def _sent(runner, kind):
     return [event for event in runner.store.pending() if event["type"] == kind]
+
+
+def _report(runner, tid):
+    [result] = [e["data"] for e in _sent(runner, "task.result") if e["task_id"] == tid]
+    return result["control"]
 
 
 @pytest.mark.asyncio
@@ -202,8 +205,8 @@ async def test_a_hooked_claude_run_reads_steer_from_a_runner_file_outside_its_wo
     async def run(ctx):
         path = Path(ctx.env[hook.CONTROL_ENV])
         seen.update(path=path, workdir=Path(ctx.workdir), hooks=ctx.claude_settings["hooks"])
-        await runner._on_message(_control_msg("task-1", "steer", 1, "범위를 chr1로 좁히세요"))
-        await runner._on_message(_control_msg("task-1", "steer", 1, "범위를 chr1로 좁히세요"))  # a resend
+        await runner._on_message(_control_msg("task-1", "steer", "steer-1", "범위를 chr1로 좁히세요"))
+        await runner._on_message(_control_msg("task-1", "steer", "steer-1", "범위를 chr1로 좁히세요"))  # a resend
         seen["delivered"] = hook.post_tool_use(path)
         return TaskResult(task_id=ctx.task.id, agent_id="worker", ok=True, text="done", session_id="s1")
 
@@ -221,67 +224,35 @@ async def test_a_hooked_claude_run_reads_steer_from_a_runner_file_outside_its_wo
     controls = [event["data"] for event in _sent(runner, "agent.control")]
     assert controls[0]["mode"] == "hook" and controls[0]["steers_pending"] == 1 and controls[0]["applied"]
     assert controls[1]["applied"] is False
-    assert [ack["id"] for ack in _sent(runner, "control.ack")] == ["ctl-1", "ctl-1"]
-    assert runner.store.get("control_carry", carry_key("worker", "s1")) is None  # nothing left for the next turn
+    assert _sent(runner, "control.nack") == []
+    assert _report(runner, "task-1") == {"delivered": ["steer-1"], "undelivered": [], "paused": False}
 
 
 @pytest.mark.asyncio
-async def test_codex_gets_a_steer_at_the_start_of_the_next_resume_prompt(tmp_path, monkeypatch):
+async def test_codex_starts_with_the_steps_steers_and_reports_a_mid_turn_steer_undelivered(tmp_path, monkeypatch):
     prompts = []
 
     async def run(ctx):
         assert hook.CONTROL_ENV not in ctx.env and "hooks" not in ctx.claude_settings  # Codex runs no hooks
         prompts.append(CodexAdapter(ctx.settings).compose_prompt(ctx))
-        if ctx.task.id == "turn-1":
-            await runner._on_message(_control_msg("turn-1", "steer", 1, "QC 기준을 0.9로 올리세요"))
+        await runner._on_message(_control_msg(ctx.task.id, "steer", "steer-2", "그림도 그리세요"))
         return TaskResult(task_id=ctx.task.id, agent_id="worker", ok=True, text="done", session_id="thr-1")
 
     runner = _runner(tmp_path, monkeypatch, run, engine=Engine.codex)
-    await runner.run_task(_task("turn-1"))
-    assert "QC 기준" not in prompts[0]
-    assert runner.store.get("control_carry", carry_key("worker", "thr-1"))["steers"][0]["text"] == "QC 기준을 0.9로 올리세요"
+    await runner.run_task(_task("turn-1", steers=[{"id": "steer-1", "text": "QC 기준을 0.9로 올리세요"}]))
+    task_block = prompts[0].split("</task>")[0]
+    assert "[PI 방향 수정]" in task_block and task_block.index("QC 기준") < task_block.index("표를 만드세요")
     note = [e["data"]["text"] for e in _sent(runner, "agent.log") if "방향 수정" in e["data"].get("text", "")]
     assert note and "다음 turn" in note[0]
-
-    await runner.run_task(_task("turn-2", session="thr-1"))
-    task_block = prompts[1].split("</task>")[0]
-    assert "[PI 방향 수정]" in task_block and "QC 기준을 0.9로 올리세요" in task_block
-    assert task_block.index("QC 기준") < task_block.index("표를 만드세요")
-    assert runner.store.get("control_carry", carry_key("worker", "thr-1")) is None  # delivered once
-
-    # A steer that arrives after its turn ended still reaches the session's next turn.
-    await runner._on_message(_control_msg("turn-2", "steer", 2, "늦게 온 지시"))
-    await runner.run_task(_task("turn-3", session="thr-1"))
-    assert "늦게 온 지시" in prompts[2]
-
-
-@pytest.mark.asyncio
-async def test_a_paused_session_does_not_start_its_next_turn_until_resumed(tmp_path, monkeypatch):
-    started = []
-
-    async def run(ctx):
-        started.append(ctx.task.id)
-        if ctx.task.id == "turn-1":
-            await runner._on_message(_control_msg("turn-1", "pause", 1))
-        return TaskResult(task_id=ctx.task.id, agent_id="worker", ok=True, text="done", session_id="thr-1")
-
-    runner = _runner(tmp_path, monkeypatch, run, engine=Engine.codex)
-    await runner.run_task(_task("turn-1"))
-    second = asyncio.create_task(runner.run_task(_task("turn-2", session="thr-1")))
-    await asyncio.sleep(0.2)
-    assert started == ["turn-1"] and not second.done()
-    held = [e["data"] for e in _sent(runner, "agent.control") if e["task_id"] == "turn-2"]
-    assert held == [{"paused": True, "halt": False, "halted": False, "held": True, "mode": "next_turn",
-                     "action": "pause", "applied": True}]
-    await runner._on_message(_control_msg("turn-2", "resume", 2))
-    result = await asyncio.wait_for(second, 5)
-    assert result.ok and started == ["turn-1", "turn-2"]
+    # The gateway puts the undelivered one back on the step for its next turn.
+    assert _report(runner, "turn-1") == {"delivered": ["steer-1"],
+                                         "undelivered": [{"id": "steer-2", "text": "그림도 그리세요"}], "paused": False}
 
 
 @pytest.mark.asyncio
 async def test_halt_through_the_hook_ends_the_run_as_halted_with_its_session(tmp_path, monkeypatch):
     async def run(ctx):
-        await runner._on_message(_control_msg(ctx.task.id, "halt", 1))
+        await runner._on_message(_control_msg(ctx.task.id, "halt"))
         assert ctx.halt.is_set() and ctx.halt_grace_s > 0
         assert hook.post_tool_use(ctx.env[hook.CONTROL_ENV]) == {"continue": False, "stopReason": hook.HALT_REASON}
         return TaskResult(task_id=ctx.task.id, agent_id="worker", ok=True, text="stopped", session_id="s-halt")
@@ -333,6 +304,8 @@ def _hub(tmp_path) -> Hub:
     hub = Hub(settings)
     hub.store.put("task", "t1", {"request_id": "r", "runner_id": "pc-a", "payload": {"agent_id": "worker"},
                                  "accepted": True, "step_id": "s1", "dispatched_at": 1.0})
+    hub.requests["r"] = {"id": "r", "text": "work", "mode": "team", "budget_usd": 10, "status": "running"}
+    hub.save_request("r")
     return hub
 
 
@@ -342,9 +315,12 @@ def test_control_api_needs_the_pi_token_and_reaches_the_runner(tmp_path, monkeyp
     settings.gateway.client_token = "pi-token"
     app = create_app(settings)
     hub = app.state.hub
-    hub.store.put("task", "t1", {"request_id": "r", "runner_id": "pc-a", "payload": {"agent_id": "worker"}})
+    hub.requests["r"] = {"id": "r", "text": "work", "mode": "team", "status": "running"}
+    hub.store.put("task", "t1", {"request_id": "r", "runner_id": "pc-a", "payload": {"agent_id": "worker"},
+                                 "step_id": "s1"})
     hub.store.put("task", "done", {"request_id": "r", "runner_id": "pc-a", "completed": True, "result": {"ok": True},
-                                   "payload": {"agent_id": "worker"}})
+                                   "payload": {"agent_id": "worker"}, "step_id": "s0"})
+    hub.requests["r"]["results"] = {"s0": {"ok": True}}
     sent = []
 
     async def send_runner(runner_id, message):
@@ -365,17 +341,16 @@ def test_control_api_needs_the_pi_token_and_reaches_the_runner(tmp_path, monkeyp
         assert client.post("/api/tasks/t1/steer", json={"text": "   "}, headers=pi).status_code == 422
         assert client.post("/api/tasks/nope/halt", headers=pi).status_code == 404
         assert client.post("/api/tasks/done/halt", headers=pi).status_code == 409  # nothing left to stop
-        # An ended task's session can still take a steer or pause for its next turn (the runner keeps it).
-        assert client.post("/api/tasks/done/pause", headers=pi).status_code == 200
+        assert client.post("/api/tasks/done/pause", headers=pi).status_code == 409  # its step has ended
     messages = [message for _runner, message in sent]
-    assert [(m["task_id"], m["action"], m.get("text"), m["seq"]) for m in messages] == [
-        ("t1", "steer", "chr1만 보세요", 1), ("t1", "pause", None, 2), ("done", "pause", None, 3)]
+    assert [(m["task_id"], m["action"], (m.get("steer") or {}).get("text")) for m in messages] == [
+        ("t1", "steer", "chr1만 보세요"), ("t1", "pause", None)]
     assert all(m["type"] == "task.control" and m["agent_id"] == "worker" for m in messages)
     assert {runner for runner, _message in sent} == {"pc-a"}
 
 
 @pytest.mark.asyncio
-async def test_controls_kept_while_the_runner_is_away_are_resent_in_order_until_acked(tmp_path):
+async def test_a_reconnected_runner_gets_the_state_of_the_tasks_it_accepted(tmp_path):
     hub = _hub(tmp_path)
     sent, online = [], {"pc-a": False}
 
@@ -391,27 +366,24 @@ async def test_controls_kept_while_the_runner_is_away_are_resent_in_order_until_
     await hub.flush_task_controls("pc-b")
     assert sent == []
     await hub.flush_task_controls("pc-a")
-    assert [(m["action"], m.get("text")) for m in sent] == [("steer", "첫 지시"), ("pause", None), ("steer", "둘째 지시")]
-    await hub.on_runner_message("pc-a", {"type": "control.ack", "id": sent[0]["id"]}, None, None)
-    sent.clear()
-    await hub.flush_task_controls("pc-a")
-    assert [m["action"] for m in sent] == ["pause", "steer"]  # only what the runner has not acknowledged
-
-    # The task ended meanwhile: a kept halt has nothing to stop; the rest still go to the session's next turn.
-    online["pc-a"] = False
-    await hub.control_task("t1", "halt")
-    online["pc-a"] = True
+    assert [(m["action"], (m.get("steer") or {}).get("text")) for m in sent] == [
+        ("pause", None), ("steer", "첫 지시"), ("steer", "둘째 지시")]
+    # The task ended meanwhile: it gets nothing, and its undelivered steers wait on the step.
     hub.store.put("task", "t1", {**hub.store.get("task", "t1"), "completed": True, "result": {"ok": True}})
+    await hub.on_runner_message("pc-a", {"type": "task.result", "request_id": "r", "task_id": "t1",
+                                         "data": {"task_id": "t1", "agent_id": "worker", "ok": True,
+                                                  "control": {"delivered": [sent[1]["steer"]["id"]],
+                                                              "undelivered": [], "paused": True}}}, None, None)
     sent.clear()
     await hub.flush_task_controls("pc-a")
-    assert [m["action"] for m in sent] == ["pause", "steer"]
-    assert sorted(entry["message"]["action"] for entry in hub.store.all("task_control").values()) == ["pause", "steer"]
+    assert sent == []
+    state = hub._step(hub.step_key("r", "s1", None, "t1"))
+    assert [s["text"] for s in state["steers"]] == ["둘째 지시"] and state["paused"] is True
 
 
 @pytest.mark.asyncio
 async def test_the_snapshot_keeps_a_tasks_control_state(tmp_path):
     hub = _hub(tmp_path)
-    hub.requests["r"] = {"id": "r", "status": "running", "mode": "team"}
     await hub.on_runner_message("pc-a", {"type": "agent.control", "task_id": "t1", "agent_id": "worker",
                                          "data": {"paused": True, "mode": "hook"}}, None, None)
     [task] = hub.snapshot()["data"]["running_tasks"]
@@ -423,8 +395,6 @@ async def test_the_snapshot_keeps_a_tasks_control_state(tmp_path):
 async def test_a_halted_step_parks_until_the_pi_resumes_it_on_the_same_session(tmp_path):
     hub = _hub(tmp_path)
     hub.agents = {"worker": {"id": "worker", "engine": "claude_code"}}
-    hub.requests["r"] = {"id": "r", "text": "work", "mode": "team", "budget_usd": 10, "status": "running"}
-    hub.save_request("r")
     calls = []
 
     async def dispatch(task):
@@ -467,6 +437,7 @@ def test_cli_task_control_posts_the_staff_sheet_call(monkeypatch):
     assert "방향 수정" in cli.task_control(settings, "steer", "t/1", "chr1만")
     assert "러너가 꺼져" in (monkeypatch.setattr(cli, "_api", lambda *a, **k: {"sent": False})
                              or cli.task_control(settings, "halt", "t1"))
+    assert "다음 turn" in cli.task_control(settings, "steer", "t1", "다음에")
     assert calls == [("POST", "/api/tasks/t%2F1/steer", {"json": {"text": "chr1만"}})]
     with pytest.raises(SystemExit):
         cli.task_control(settings, "steer", "t1", "  ")

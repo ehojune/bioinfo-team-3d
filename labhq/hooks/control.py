@@ -12,7 +12,9 @@ https://code.claude.com/docs/en/hooks (PreToolUse decision control, PostToolUse 
 - halt: PreToolUse or PostToolUse returns ``{"continue": false, "stopReason": ...}``. Claude stops; the session stays
   on disk, so the next turn resumes it with --resume.
 
-The runner uses the same functions to write the file. Standard library only: the hook starts on every tool call.
+The runner uses the same functions to write the file, always under its lock. The gateway owns what outlives a task
+(labhq.gateway.server step controls); this file lives only while the runner holds the task. Standard library only: the
+hook starts on every tool call.
 """
 
 from __future__ import annotations
@@ -32,7 +34,6 @@ CONTEXT_CHARS = 9000  # one delivery; Claude caps additionalContext at 10,000 ch
 PAUSE_HOLD_S = 300.0  # how long PreToolUse holds one call while paused; Claude's hook timeout is 600 s
 PAUSE_POLL_S = 0.5
 LOCK_WAIT_S = 5.0
-SEQS_KEPT = 200  # gateway control numbers a file remembers, so a resend is applied once
 LOCK_STALE_S = 10.0
 
 PAUSE_REASON = ("PI가 일시 정지함: 지금은 도구를 쓸 수 없습니다. 재개되면 같은 도구를 다시 부르세요. "
@@ -42,11 +43,10 @@ STEER_HEADER = "[PI 방향 수정] 실행 중에 PI가 보낸 지시입니다. �
 
 
 def new_state(task_id: str = "") -> dict[str, Any]:
-    """``agent_id``/``session_id`` name the session carry a restarted runner returns this file's leftovers to;
-    ``prompt_steers`` are the carried steer ids this turn's prompt holds, consumed once the CLI starts."""
+    """``steers`` wait for delivery; ``prompt_steers`` went into the turn's prompt and count as delivered once the CLI
+    starts; ``delivered_ids`` reached Claude (hook) or a started CLI. The runner reports the three to the gateway."""
     return {"version": 1, "task_id": task_id, "paused": False, "halt": None, "halted_at": None, "steers": [],
-            "next_seq": 1, "dropped": 0, "dropped_told": 0, "delivered": 0, "applied_seqs": [], "toggle_seq": 0,
-            "agent_id": "", "session_id": None, "prompt_steers": []}
+            "next_seq": 1, "dropped": 0, "dropped_told": 0, "delivered": 0, "prompt_steers": [], "delivered_ids": []}
 
 
 def read_state(path: str | Path) -> dict[str, Any] | None:
@@ -135,6 +135,22 @@ def update_state(path: str | Path, change: Callable[[dict[str, Any]], Any], *, c
         return outcome
 
 
+def locked_state(path: str | Path) -> dict[str, Any] | None:
+    """Read the file under its lock (the runner; the hook's polling read relies on the atomic replace instead)."""
+    with locked(path):
+        return read_state(path)
+
+
+def remove_state(path: str | Path) -> dict[str, Any] | None:
+    """Read the file and delete it under its lock: nothing can land in it after this, and a writer that comes later
+    finds no file (update_state without ``create``)."""
+    with locked(path):
+        state = read_state(path)
+        with contextlib.suppress(OSError):
+            os.unlink(path)
+        return state
+
+
 def add_steer(state: dict[str, Any], text: str, now: float | None = None, steer_id: str | None = None) -> None:
     """``steer_id`` (the gateway control number) lets a carry merge the same message from two files once."""
     state["steers"].append({"seq": state["next_seq"], "text": str(text)[:STEER_CHARS],
@@ -165,28 +181,26 @@ def take_steers(state: dict[str, Any]) -> tuple[list[dict[str, Any]], int]:
         taken.append(steer)
     del state["steers"][:len(taken)]
     state["delivered"] += len(taken)
+    state["delivered_ids"] = [*state.get("delivered_ids", []), *(steer.get("id") for steer in taken)]
     dropped = max(0, int(state["dropped"]) - int(state["dropped_told"]))
     state["dropped_told"] = state["dropped"]
     return taken, dropped
 
 
-def apply_control(state: dict[str, Any], action: str, text: str | None = None, seq: int | None = None,
-                  now: float | None = None) -> bool:
-    """The runner applies one gateway message and returns whether it changed the state.
+def known_steer(state: dict[str, Any], steer_id: str) -> bool:
+    return (steer_id in state.get("prompt_steers", []) or steer_id in state.get("delivered_ids", [])
+            or any(steer.get("id") == steer_id for steer in state["steers"]))
 
-    Each ``seq`` is applied once, so a resend after a reconnect cannot steer twice. A message that failed and comes back
-    after later ones still applies, except a pause or resume older than one already applied: the PI's last toggle wins."""
-    if seq is not None:
-        seen = [number for number in state.get("applied_seqs") or [] if isinstance(number, int)]
-        if seq in seen:
-            return False
-        state["applied_seqs"] = [*seen, seq][-SEQS_KEPT:]
-        if action in ("pause", "resume"):
-            if seq < int(state.get("toggle_seq") or 0):
-                return False
-            state["toggle_seq"] = seq
+
+def apply_control(state: dict[str, Any], action: str, text: str | None = None, steer_id: str | None = None,
+                  dropped: int = 0, now: float | None = None) -> bool:
+    """The runner applies one gateway message and returns whether it changed the state. A steer is known by the
+    gateway's id, so a resend is applied once; pause and resume carry the step's state, so the last one sent wins."""
     if action == "steer" and text:
-        add_steer(state, text, now, f"ctl-{seq}" if seq is not None else None)
+        if steer_id and known_steer(state, steer_id):
+            return False
+        add_steer(state, text, now, steer_id)
+        state["dropped"] += max(0, int(dropped or 0))
     elif action == "pause":
         state["paused"] = True
     elif action == "resume":

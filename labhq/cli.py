@@ -230,7 +230,8 @@ def task_control(s: Settings, action: str, task_id: str, text: str | None = None
                json={"text": text} if action == "steer" else {})
     if out.get("resumed_halted"):
         return f"{task_id}: 멈췄던 작업을 재개합니다 · 같은 세션으로 다음 turn을 보냅니다"
-    where = "" if out.get("sent", True) else " · 러너가 꺼져 있어 다시 연결되면 전달합니다"
+    where = ("" if out.get("sent", True) else " · 러너가 꺼져 있어 다시 연결되면 전달합니다" if action == "halt"
+             else " · 같은 단계의 다음 turn에 적용합니다")
     return f"{task_id}: {TASK_CONTROL_DONE[action]}{where}"
 
 
