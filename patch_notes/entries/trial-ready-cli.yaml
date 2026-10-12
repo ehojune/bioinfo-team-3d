@@ -1,5 +1,9 @@
 pr: 540
 rows:
-- sha: "b5f41c1"
-  at: "2026-10-12 15:32"
-  text: "시운전 전 CLI 결함 3건을 고친다: down이 taskkill 한글 출력을 OEM으로 읽고, up 밖에서 시작한 gateway가 답하면 exit 2로 알리며, send·watch가 요청 묶음 경로와 재현 등급을 기다려 출력한다."
+- sha: b5f41c1
+  at: 2026-10-12 15:32
+  text: '시운전 전 CLI 결함 3건을 고친다: down이 taskkill 한글 출력을 OEM으로 읽고, up 밖에서 시작한 gateway가
+    답하면 exit 2로 알리며, send·watch가 요청 묶음 경로와 재현 등급을 기다려 출력한다.'
+- sha: a5623a8
+  at: 2026-10-12 16:01
+  text: down이 URL 주소로 로컬 gateway를 판정하고 주소 확인 실패도 종료 미확인으로 알린다.
