@@ -4,6 +4,40 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 결론
+
+gateway가 terminal commit 뒤 묶음을 만들기 전에 강제 종료되거나 crash해도, 다음 시작 때 그 요청의 묶음을 한 번 다시 만듭니다.
+
+## 바뀐 것
+
+- terminal request row에 `bundle_pending`을 같은 commit으로 저장하고 `request.bundle` commit에서 지웁니다.
+- 시작 때 표시가 남은 요청만 기존 worker 경로로 복구합니다. 실패도 warning을 한 번 기록한 뒤 표시를 지웁니다.
+- 기존 임시·대상 폴더 정리 규칙을 재사용하며, 복구 중 요청은 shutdown readiness의 `finishing`에 남습니다.
+- `docs/manual.md` 요청 묶음 절: 110,906자 → 111,021자(+115자).
+
+## 실행한 것
+
+- origin/main + 새 회귀 3건(a·d·e): 3 failed
+- 새 회귀 5건: 5 passed
+- `tests/test_request_bundle.py`: 98 passed, 2 skipped
+- `tests/test_request_lifecycle.py`: 54 passed
+- Windows 전체 `pytest -q`: 5,331 passed, 66 skipped
+- `scripts/check_public.sh`: 통과
+
+## 미해결
+
+- 없음. CI는 기록 commit push 뒤 확인합니다.
+
+## 근거
+
+- `labhq/gateway/server.py`
+- `tests/test_request_bundle.py`
+- `docs/manual.md`
+
+Refs #521
+
+🤖 Generated with Codex (gpt-5) for the labhq dev lead
+
 ## 단계
 P2 — #527 봇이 남긴 연구 lane 후속 3건
 

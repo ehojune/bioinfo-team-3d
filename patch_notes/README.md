@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 13:37 | [`c087aaf`](https://github.com/ehojune/bioinfo-team-3d/pull/537/commits/c087aaf) | 묶음 대기 표시로 중단된 요청 묶음을 시작 때 한 번 복구 |
+| 13:36 | [`9b8c6a3`](https://github.com/ehojune/bioinfo-team-3d/pull/537/commits/9b8c6a3) | gateway 중단 뒤 요청 묶음 복구 회귀 5건을 추가 |
 | 05:43 | [`3e0c34d`](https://github.com/ehojune/bioinfo-team-3d/pull/534/commits/3e0c34d) | 연구 lane #527 후속: 기다리는 마지막 보고서 turn의 예산 면제, 차수 없는 예전 확인 질문 답, gateway 이어 가기 되돌리기 판정을 바로잡음 |
 | 05:21 | [`ebc968a`](https://github.com/ehojune/bioinfo-team-3d/pull/530/commits/ebc968a) | main 병합: #527 연구 lane 상태 후속과 server.py 충돌을 풀어 이어 가기 복원 helper와 취소 마무리 helper를 함께 둔다. |
 | 05:07 | [`85bcdf0`](https://github.com/ehojune/bioinfo-team-3d/pull/530/commits/85bcdf0) | main 병합: #522 파견직 채용물 고정과의 import 충돌을 풀고, 그 테스트의 가짜 러너에 채용 turn을 담을 tasks를 더했다. |
