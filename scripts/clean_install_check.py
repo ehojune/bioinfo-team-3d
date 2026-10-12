@@ -14,6 +14,11 @@ import tempfile
 from pathlib import Path
 
 
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
+
 class CheckFailure(RuntimeError):
     def __init__(self, stage: str, detail: str):
         super().__init__(detail)
@@ -101,6 +106,7 @@ def _isolated_env(root: Path, checkout: Path) -> dict[str, str]:
             "TMP": str(scratch),
             "TMPDIR": str(scratch),
             "PYTHONUTF8": "1",
+            "PYTHONIOENCODING": "utf-8",
         }
     )
     if os.name == "nt":
