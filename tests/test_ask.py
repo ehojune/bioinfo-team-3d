@@ -72,6 +72,20 @@ def test_ordinary_method_and_output_questions_are_not_destructive_hard_stops(que
     assert hard_stop_kind(ask) is None
 
 
+@pytest.mark.parametrize("question", [
+    "Overwrite the source FASTQ files?",
+    "Overwrite raw reads using outputs/de.tsv?",
+    "Overwrite the input files?",
+    "Overwrite these files?",
+    "Overwrite outputs/../original.tsv?",
+    "원본 파일을 덮어쓸까요?",
+])
+def test_source_and_unknown_overwrite_still_require_the_pi(question):
+    ask = AskRequest(task_id="task_a", agent_id="analyst", request_id="req_a", to="cso",
+                     question=question, why_blocked="A file already exists")
+    assert hard_stop_kind(ask, []) == "destructive"
+
+
 @pytest.mark.asyncio
 async def test_routine_cso_question_keeps_the_short_wait_instead_of_hibernating(monkeypatch):
     import labhq.runner.approvals as approvals

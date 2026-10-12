@@ -40,6 +40,9 @@ P2 — PI 시운전 전 실행 경로 결함 4건
 Refs #435
 
 ## 남은 지적
-없음
+- P2: 일반 tool call이 멈춰도 PI 카드 대기로 분류돼 stall 경고가 숨겨질 수 있습니다.
+
+## P1 후속
+- 원본·입력·불명확한 overwrite는 PI gate로 유지하고 명시한 `outputs/` 재생성만 예외입니다. 회귀 6건 수정 전 실패, 관련 34 passed.
 
 🤖 Generated with Codex (gpt-5) for the labhq dev lead

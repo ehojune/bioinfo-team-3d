@@ -412,6 +412,13 @@ def hard_stop_kind(ask: AskRequest, allowed: Iterable[str] | None = None) -> str
     # Deletion and similarly destructive operations are an intrinsic PI gate, not an optional routing policy.
     enabled.add("destructive")
     for kind, patterns in HARD_STOP_PATTERNS.items():
+        if kind == "destructive" and re.search(r"\boverwr(?:ite|ites|iting|itten)\b|덮어[쓰쓸]|덮어쓰기", text):
+            # Only explicitly named task outputs may be regenerated without PI.
+            # Mentioning an output alongside raw/source inputs is not an exception.
+            outputs = re.findall(r"(?<![\w/\\])(?:\./)?outputs[/\\][^\s?;]+", text)
+            source = re.search(r"\b(?:raw|source|inputs?|original)\b|원본|입력", text)
+            if source or not outputs or any(".." in re.split(r"[/\\]", path) for path in outputs):
+                return kind
         if kind in enabled and any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns):
             return kind
     return None
