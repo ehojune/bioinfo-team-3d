@@ -6,3 +6,6 @@ rows:
 - sha: c3c94a5
   at: 2026-10-12 16:20
   text: 원본·입력·불명확한 overwrite는 PI 승인으로 돌리고 명시한 outputs 산출 재생성만 예외로 둔다.
+- sha: ea321fa
+  at: 2026-10-12 16:23
+  text: 최신 main 웹·CLI 변경을 합치고 manual의 직접 요청 보내기와 원본 overwrite 승인 설명을 함께 보존한다.
