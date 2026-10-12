@@ -185,15 +185,14 @@ POSIX에서는 `python3 -m venv .venv`, `./.venv/bin/python -m pip install -e ".
 
 ### 2. 설치와 설정
 
-필요한 것: Python 3.10 이상, Git, 직원으로 쓸 CLI(Claude Code·Codex)의 설치와 로그인. npm으로 설치한 CLI는 Node.js도 필요합니다.
+전제: Python 3.10+, Git, 직원 CLI(Claude Code·Codex) 설치·로그인. npm CLI는 Node.js도 필요합니다.
 
 ```bash
 .\labhq init
 .\labhq -c config\labhq.yaml doctor
 ```
 
-`labhq init`은 HPC·bioinfo-agent 경로와 선택 사항인 AlphaGenome 키를 묻습니다. 키가 없으면 Enter를 누르세요. 직원 전용 로그인 폴더가 필요하면 사람이 칠 로그인 명령도 알려 줍니다.
-설치만 격리된 mock으로 점검하려면 `python scripts/clean_install_check.py`를 실행합니다. 새 임시 clone·venv에서 요청과 `verify`까지 확인하며 실제 모델은 부르지 않습니다.
+`init`은 HPC·bioinfo-agent 경로와 AlphaGenome 키도 묻습니다(없으면 Enter). 실제 모델을 부르지 않는 격리 설치 검사는 `python scripts/clean_install_check.py`입니다.
 
 ### 3. 띄우기
 
