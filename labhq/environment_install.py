@@ -192,6 +192,7 @@ def _installation_syntax(segment: str, tool_name: str = "Bash") -> bool:
     words, valid = _literal_words(segment, tool_name)
     if words and executable_basename(words[0]) in _DATA_COMMANDS:
         return False  # printed text and filename arguments are data, not shell invocations
+    programs = _program_positions(words)
     for i, word in enumerate(words):
         executable = executable_basename(word.strip("({)}"))
         if _dynamic_installer_syntax(
@@ -201,8 +202,11 @@ def _installation_syntax(segment: str, tool_name: str = "Bash") -> bool:
             return True
         if executable in {"conda", "mamba", "micromamba"} and "create" in words[i + 1:]:
             return True
-        if (executable in _R or _nonliteral_word(word)) and _R_CALL.search(segment):
-            return True  # a computed program word may be R
+        # A word where a program is named may be R, computed (`"$RSCRIPT"`) or literal; another program's arguments
+        # (`python wrapper.py "$IN" "install.packages('x')"`) are data (#533).
+        if (programs is None or i in programs) and (executable in _R or _nonliteral_word(word)) and \
+                _R_CALL.search(segment):
+            return True
     # An unknown executable/wrapper with an install operand cannot receive an unscoped exception.
     return _has_install(words) or not valid and bool(re.search(r"\binstall\b", segment, re.IGNORECASE))
 
@@ -264,20 +268,57 @@ _EXEC_WRAPPERS: dict[str, _WrapperSpec] = {
 _CONDA_RUN: _WrapperSpec = (frozenset({"-n", "--name", "-p", "--prefix", "--cwd"}),
                             frozenset({"--no-capture-output", "--live-stream", "-v", "--verbose", "--dev",
                                        "--debug-wrapper-scripts"}), 0)
-_RUN_SUBCOMMANDS: dict[str, _WrapperSpec] = {
-    "uv": (frozenset({"--with", "--with-editable", "--with-requirements", "--python", "-p", "--project", "--directory",
-                      "--env-file", "--extra", "--group", "--only-group", "--package", "--index", "--index-url",
-                      "--extra-index-url", "--default-index", "--find-links", "-f", "-w", "--config-file",
-                      "--cache-dir"}),
-           frozenset({"--no-project", "--isolated", "--frozen", "--locked", "-q", "--quiet", "-v", "--verbose",
-                      "--no-sync", "--active", "--all-extras", "--no-dev", "--offline", "--refresh", "--exact",
-                      "--no-env-file", "--script", "-s"}), 0),
-    "conda": _CONDA_RUN, "mamba": _CONDA_RUN, "micromamba": _CONDA_RUN,
+_UV_RUN: _WrapperSpec = (
+    frozenset({"--with", "--with-editable", "--with-requirements", "--python", "-p", "--project", "--directory",
+               "--env-file", "--extra", "--group", "--only-group", "--package", "--index", "--index-url",
+               "--extra-index-url", "--default-index", "--find-links", "-f", "-w", "--config-file", "--cache-dir"}),
+    frozenset({"--no-project", "--isolated", "--frozen", "--locked", "-q", "--quiet", "-v", "--verbose", "--no-sync",
+               "--active", "--all-extras", "--no-dev", "--offline", "--refresh", "--exact", "--no-env-file", "--script",
+               "-s"}), 0)
+_UVX: _WrapperSpec = (
+    frozenset({"--from", "--with", "--with-editable", "--with-requirements", "--python", "-p", "--index",
+               "--index-url", "--extra-index-url", "--default-index", "--find-links", "-f", "--config-file",
+               "--cache-dir", "--directory", "--project"}),
+    frozenset({"-q", "--quiet", "-v", "--verbose", "--isolated", "--offline", "--refresh", "-n", "--no-cache"}), 0)
+_NO_OPTIONS: _WrapperSpec = (frozenset(), frozenset(), 0)
+# Launchers with global options before a subcommand: (global options taking a value, global flags, the subcommands
+# that run a program, each with its own option spec). `()` means the launcher runs the program itself (`uvx`, `npx`).
+# An option not listed here may take the next word, so the subcommand is not known and the caller fails closed
+# (PR #535 review: `uv --project foo run Rscript` hid Rscript behind `foo`).
+_Launcher = tuple[frozenset[str], frozenset[str], dict[tuple[str, ...], _WrapperSpec]]
+_CONDA_LAUNCHER: _Launcher = (
+    frozenset({"-n", "--name", "-p", "--prefix", "-r", "--root-prefix", "--rc-file"}),
+    frozenset({"-v", "-vv", "-vvv", "-q", "--quiet", "--verbose", "--debug", "--json", "--no-plugins", "-y", "--yes"}),
+    {("run",): _CONDA_RUN})
+_LAUNCHERS: dict[str, _Launcher] = {
+    "uv": (frozenset({"--project", "--directory", "--config-file", "--cache-dir", "--color", "--python-preference",
+                      "--allow-insecure-host"}),
+           frozenset({"-q", "--quiet", "-v", "--verbose", "-n", "--no-cache", "--offline", "--native-tls",
+                      "--no-native-tls", "--no-progress", "--no-config", "--managed-python", "--no-managed-python",
+                      "--no-python-downloads", "--preview", "--no-preview"}),
+           {("run",): _UV_RUN, ("tool", "run"): _UVX}),
+    "uvx": (_UVX[0], _UVX[1], {(): _NO_OPTIONS}),
+    "conda": _CONDA_LAUNCHER, "mamba": _CONDA_LAUNCHER, "micromamba": _CONDA_LAUNCHER,
+    "pixi": (frozenset({"--color", "--manifest-path"}),
+             frozenset({"-v", "-vv", "-vvv", "-q", "--quiet", "--verbose", "--no-progress"}),
+             {("run",): (frozenset({"--manifest-path", "-e", "--environment", "--color"}),
+                         frozenset({"--frozen", "--locked", "--clean-env", "--force-activate", "-v", "-q"}), 0),
+              ("exec",): (frozenset({"-s", "--spec", "-c", "--channel"}), frozenset({"--force-reinstall"}), 0)}),
+    "poetry": (frozenset({"-P", "--project", "-C", "--directory"}),
+               frozenset({"-v", "-vv", "-vvv", "-q", "--quiet", "--verbose", "-n", "--no-interaction", "--ansi",
+                          "--no-ansi", "--no-plugins", "--no-cache"}),
+               {("run",): _NO_OPTIONS}),
+    "npx": (frozenset({"-p", "--package"}), frozenset({"-y", "--yes", "--no", "-q", "--quiet"}), {(): _NO_OPTIONS}),
+    "pnpm": (frozenset({"-C", "--dir", "-F", "--filter"}),
+             frozenset({"-s", "--silent", "-r", "--recursive", "-w", "--workspace-root"}),
+             {("dlx",): (frozenset({"--package"}), frozenset(), 0), ("exec",): _NO_OPTIONS}),
 }
 
 
-def _wrapped_program_is_computed(wrapper: str, args: list[str], spec: _WrapperSpec, tool_name: str) -> bool:
-    """Skip a wrapper's options and judge the program it runs as an executable in its own right."""
+def _wrapped_program(wrapper: str, args: list[str], spec: _WrapperSpec) -> tuple[str, int]:
+    """Skip a wrapper's options: ("program", where in `args` the program it runs stands, len(args) when none does),
+    ("module", where `uv run -m` stands) or ("unknown", where an option the spec does not list stands; it may take
+    the next word, so the program is not known)."""
     values, flags, positionals = spec
     i = 0
     while i < len(args):
@@ -290,12 +331,11 @@ def _wrapped_program_is_computed(wrapper: str, args: list[str], spec: _WrapperSp
                 positionals -= 1  # `timeout 600`: the duration
                 i += 1
                 continue
-            break
+            return "program", i
         if word == "--":
-            i += 1
-            break
+            return "program", i + 1
         if wrapper == "uv" and word in {"-m", "--module"}:
-            return _python_selects_computed(["-m", *args[i + 1:]])
+            return "module", i
         name = word.split("=", 1)[0]
         if name in values:
             i += 1 if "=" in word else 2
@@ -304,7 +344,108 @@ def _wrapped_program_is_computed(wrapper: str, args: list[str], spec: _WrapperSp
         elif not word.startswith("--") and word[:2] in values:
             i += 1  # `-n10`, `-oL`: the value is attached
         else:
-            return any(_nonliteral_word(arg) for arg in args[i:])
+            return "unknown", i
+    return "program", min(i, len(args))
+
+
+def _launched_program(launcher: str, args: list[str]) -> tuple[str, int]:
+    """Read a launcher's global options and subcommand: what `_wrapped_program` says of the program a run-like
+    subcommand runs (its index counted in `args`), ("unknown", i) when an option not in the table or a computed word
+    stands before the subcommand, or ("other", i) with `args[i]` the subcommand when it runs no program."""
+    values, flags, runs = _LAUNCHERS[launcher]
+    i = 0
+    while i < len(args):
+        word = args[i]
+        if _nonliteral_word(word):
+            return "unknown", i
+        if not word.startswith("-") or word == "-":
+            break
+        name = word.split("=", 1)[0]
+        if name in values:
+            i += 1 if "=" in word else 2
+        elif name in flags:
+            i += 1
+        elif not name.startswith("--") and len(name) > 2 and name[:2] in values:
+            i += 1  # `-nbase`: the value is attached
+        else:
+            return "unknown", i
+    folded = tuple(arg.casefold() for arg in args)
+    for words, spec in sorted(runs.items(), key=lambda item: -len(item[0])):
+        if folded[i:i + len(words)] == words and (words or i < len(args)):
+            kind, index = _wrapped_program(launcher, args[i + len(words):], spec)
+            return kind, i + len(words) + index
+    return "other", min(i, len(args))
+
+
+def _python_program_takes_rest(args: list[str]) -> bool:
+    """Whether Python runs a script path, `-c` code or stdin, so the words after it are that program's arguments.
+    Not for `-m` (a module may run any program) or a computed word before the script (it may be `-m`)."""
+    i = 0
+    while i < len(args):
+        word = args[i]
+        if _nonliteral_word(word):
+            return False
+        if word == "-" or not word.startswith("-"):
+            return True
+        if word == "--":
+            return i + 1 >= len(args) or not _nonliteral_word(args[i + 1])
+        if word.startswith("--"):
+            i += 2 if word == "--check-hash-based-pycs" else 1
+            continue
+        letters = word[1:]
+        for k, letter in enumerate(letters):
+            if letter == "m":
+                return False
+            if letter == "c":
+                return True
+            if letter in "WX":
+                i += 0 if letters[k + 1:] else 1  # the warning or -X option value
+                break
+        i += 1
+    return True
+
+
+def _program_positions(words: list[str]) -> set[int] | None:
+    """Indexes of `words` where a program is named: the first word after assignments, `&`, `.` and shell keywords, and
+    the program each exec wrapper (`nohup`, `sudo -u x`) or launcher (`uv --project p run`, `conda run`, `pixi run`)
+    runs after its options. The words after a Python script or `-c` code, an R program, a data command or a computed
+    program are arguments. None when that cannot be told (an option not understood, `python -m`, any other program,
+    which may run its arguments), so every later word may be a program."""
+    positions: set[int] = set()
+    i = 0
+    while i < len(words):
+        word = words[i]
+        if word in {"&", "."} or word.casefold() in _SHELL_PREFIXES or re.fullmatch(r"[A-Za-z_]\w*=.*", word):
+            i += 1
+            continue
+        positions.add(i)
+        executable = executable_basename(word.strip("({)}"))
+        args = words[i + 1:]
+        if _nonliteral_word(word) or executable in _R or executable in _DATA_COMMANDS | _LOCATION_COMMANDS:
+            return positions
+        if executable in _EXEC_WRAPPERS:
+            kind, index = _wrapped_program(executable, args, _EXEC_WRAPPERS[executable])
+        elif executable in _LAUNCHERS:
+            kind, index = _launched_program(executable, args)
+            if kind == "other":
+                return positions
+        elif _PYTHON.fullmatch(executable):
+            return positions if _python_program_takes_rest(args) else None
+        else:
+            return None
+        if kind != "program":
+            return None
+        i += 1 + index
+    return positions
+
+
+def _wrapped_program_is_computed(wrapper: str, args: list[str], spec: _WrapperSpec, tool_name: str) -> bool:
+    """Skip a wrapper's options and judge the program it runs as an executable in its own right."""
+    kind, i = _wrapped_program(wrapper, args, spec)
+    if kind == "module":
+        return _python_selects_computed(["-m", *args[i + 1:]])
+    if kind == "unknown":
+        return any(_nonliteral_word(arg) for arg in args[i:])
     if i >= len(args):
         return False
     return _dynamic_installer_syntax(args[i], args[i + 1:], executable_position=True, tool_name=tool_name)
@@ -394,21 +535,25 @@ def _dynamic_installer_syntax(token: str, args: list[str], *, executable_positio
         return executable_position and _wrapped_program_is_computed(executable, args, _EXEC_WRAPPERS[executable],
                                                                     tool_name)
     first = _first_operand(args)
-    if executable in _RUN_SUBCOMMANDS and first.casefold() == "run":
-        return _wrapped_program_is_computed(executable, args[args.index(first) + 1:], _RUN_SUBCOMMANDS[executable],
-                                            tool_name)
-    if _PIP.fullmatch(executable) or executable in {"conda", "mamba", "micromamba"}:
+    if executable in _LAUNCHERS:
+        # The program a run-like subcommand runs is named in its own right; global options are read first (#535).
+        kind, i = _launched_program(executable, args)
+        if kind == "program":
+            return i < len(args) and _dynamic_installer_syntax(args[i], args[i + 1:], executable_position=True,
+                                                               tool_name=tool_name)
+        if kind == "module":
+            return _python_selects_computed(["-m", *args[i + 1:]])
+        if kind == "unknown":
+            return any(_nonliteral_word(arg) for arg in args[i:])
+        if executable == "uv" and i < len(args) and args[i].casefold() == "pip":
+            return _nonliteral_word(_first_operand(args[i + 1:]))
+        return False
+    if _PIP.fullmatch(executable):
         return _nonliteral_word(first)
     if _PYTHON.fullmatch(executable):
         return _python_selects_computed(args)
     if executable == "rscript":
         return _rscript_selects_computed(args)
-    if executable == "uv":
-        try:
-            pip_index = next(i for i, arg in enumerate(folded) if arg == "pip")
-        except StopIteration:
-            return _nonliteral_word(first)
-        return _nonliteral_word(_first_operand(args[pip_index + 1:]))
     if executable == "r":
         selectors = [arg for arg in args if not arg.startswith("-")][:2]
         return any(_nonliteral_word(arg) for arg in selectors)
