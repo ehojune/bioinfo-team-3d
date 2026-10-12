@@ -62,15 +62,17 @@ def test_a_steer_reaches_claude_once_as_additional_context(tmp_path):
     assert failed["hookEventName"] == "PostToolUseFailure" and "실패한 도구 뒤에도" in failed["additionalContext"]
 
 
-def test_the_steer_queue_keeps_the_newest_twenty_and_says_how_many_it_dropped(tmp_path):
-    path = _control(tmp_path)
+def test_the_file_delivers_every_steer_it_got_and_tells_the_gateways_drop_count(tmp_path):
+    # The gateway caps what waits on a step; the runner's file keeps all it was sent (PR #532 verification).
+    path = _control(tmp_path, dropped=5)
     _steer(path, *(f"msg-{n}" for n in range(25)))
     state = hook.read_state(path)
-    assert [s["text"] for s in state["steers"]] == [f"msg-{n}" for n in range(5, 25)]
-    assert state["dropped"] == 5
+    assert [s["text"] for s in state["steers"]] == [f"msg-{n}" for n in range(25)]
     text = hook.post_tool_use(path)["hookSpecificOutput"]["additionalContext"]
-    assert "msg-5" in text and "msg-24" in text and "msg-4\n" not in text and "5개" in text
+    assert "msg-0" in text and "msg-24" in text and "5개" in text
     assert hook.post_tool_use(path) is None
+    _steer(path, "drop 없음")
+    assert "버렸습니다" not in hook.post_tool_use(path)["hookSpecificOutput"]["additionalContext"]
 
     # Long messages go over several tool calls, each under Claude's 10,000-character cap, each exactly once.
     _steer(path, *(f"long-{n}-" + "x" * 1990 for n in range(20)))
@@ -303,7 +305,7 @@ def _hub(tmp_path) -> Hub:
     settings.orchestrator.step_retry_backoff_s = 0
     hub = Hub(settings)
     hub.store.put("task", "t1", {"request_id": "r", "runner_id": "pc-a", "payload": {"agent_id": "worker"},
-                                 "accepted": True, "step_id": "s1", "dispatched_at": 1.0})
+                                 "accepted": True, "step_id": "s1", "kind": "step", "dispatched_at": 1.0})
     hub.requests["r"] = {"id": "r", "text": "work", "mode": "team", "budget_usd": 10, "status": "running"}
     hub.save_request("r")
     return hub
@@ -317,9 +319,9 @@ def test_control_api_needs_the_pi_token_and_reaches_the_runner(tmp_path, monkeyp
     hub = app.state.hub
     hub.requests["r"] = {"id": "r", "text": "work", "mode": "team", "status": "running"}
     hub.store.put("task", "t1", {"request_id": "r", "runner_id": "pc-a", "payload": {"agent_id": "worker"},
-                                 "step_id": "s1"})
+                                 "step_id": "s1", "kind": "step"})
     hub.store.put("task", "done", {"request_id": "r", "runner_id": "pc-a", "completed": True, "result": {"ok": True},
-                                   "payload": {"agent_id": "worker"}, "step_id": "s0"})
+                                   "payload": {"agent_id": "worker"}, "step_id": "s0", "kind": "step"})
     hub.requests["r"]["results"] = {"s0": {"ok": True}}
     sent = []
 
@@ -377,7 +379,7 @@ async def test_a_reconnected_runner_gets_the_state_of_the_tasks_it_accepted(tmp_
     sent.clear()
     await hub.flush_task_controls("pc-a")
     assert sent == []
-    state = hub._step(hub.step_key("r", "s1", None, "t1"))
+    state = hub._step(hub.step_key("r", "s1", "step", "t1"))
     assert [s["text"] for s in state["steers"]] == ["둘째 지시"] and state["paused"] is True
 
 
@@ -415,7 +417,7 @@ async def test_a_halted_step_parks_until_the_pi_resumes_it_on_the_same_session(t
     assert len(calls) == 1 and halted_id in hub.halted_waits
     assert hub.requests["r"]["status"] == "waiting_pi"
     hub.store.put("task", halted_id, {"request_id": "r", "runner_id": "pc-a", "accepted": True, "completed": True,
-                                      "step_id": "A", "payload": {"agent_id": "worker"},
+                                      "step_id": "A", "kind": "step", "payload": {"agent_id": "worker"},
                                       "result": {"ok": False, "error_kind": "halted"}})
     assert [t["state"] for t in hub.running_tasks() if t["id"] == halted_id] == ["halted"]
 

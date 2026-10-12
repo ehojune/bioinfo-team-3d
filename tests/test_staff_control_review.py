@@ -38,7 +38,7 @@ def _hub(tmp_path) -> Hub:
     settings.gateway.state_dir = str(tmp_path / "gateway")
     hub = Hub(settings)
     hub.store.put("task", "t1", {"request_id": "r", "runner_id": "pc-a", "payload": {"agent_id": "worker"},
-                                 "accepted": True, "step_id": "A", "dispatched_at": 1.0})
+                                 "accepted": True, "step_id": "A", "kind": "step", "dispatched_at": 1.0})
     hub.requests["r"] = {"id": "r", "text": "work", "mode": "team", "status": "running"}
     hub.save_request("r")
     return hub
@@ -78,8 +78,15 @@ async def test_a_control_the_runner_could_not_apply_is_nacked_and_its_steer_stay
     [nack] = _sent(runner, "control.nack")
     assert nack["reason"].startswith("not applied") and nack["action"] == "steer"
     await hub.on_runner_message("pc-a", nack, None, None)
-    [steer] = hub._step(hub.step_key("r", "A", None, "t1"))["steers"]
-    assert steer["text"] == "chr1만 보세요" and steer["task"] is None  # waiting for the step's next dispatch
+    key = hub.step_key("r", "A", "step", "t1")
+    [steer] = hub._step(key)["steers"]
+    assert steer["text"] == "chr1만 보세요"  # kept on the step, still meant for the live turn
+    # The turn ends without delivering it: it waits for the step's next dispatch.
+    await hub.on_runner_message("pc-a", {"type": "task.result", "request_id": "r", "task_id": "t1", "data": {
+        "task_id": "t1", "agent_id": "worker", "ok": True, "text": "done",
+        "control": {"delivered": [], "undelivered": [], "paused": False}}}, None, None)
+    [steer] = hub._step(key)["steers"]
+    assert steer["task"] is None
 
 
 @pytest.mark.asyncio

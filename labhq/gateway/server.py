@@ -64,6 +64,10 @@ RUNNER_NOTICE_KINDS = frozenset({"codex_sandbox_setup"})
 CONTROL_ACTIONS = ("steer", "pause", "resume", "halt")
 STEER_MAX_CHARS = 2000
 HALTED_ERROR = "PI가 멈춤(halt): 세션을 보존했습니다. 재개하면 같은 세션으로 이어 갑니다"
+# Only a plan step's turns and a direct request's turn take controls; consults, follow-ups, reviews and the rest share
+# no step that a control could wait on (PR #532 verification).
+NOT_CONTROLLABLE = "이 작업({kind})은 실행 중 제어를 받지 않습니다. 방향·정지·멈춤은 계획 단계 작업과 직접 맡긴 작업에만 됩니다"
+HALT_WHILE_WAITING = "HPC 잡·질문 대기 중에는 멈출 수 없습니다 — 일시 정지를 쓰세요"
 # How long request cancel waits for the cancelled turns to report, so their cost is counted (R13).
 CANCEL_RESULT_WAIT_S = 10.0
 # Statuses a hold sets and _sync_hold_status may lift again.
@@ -776,7 +780,7 @@ class Hub:
             else:
                 continue
             step_id = entry.get("step_id") or entry.get("kind")
-            task = {"id": tid, "request_id": entry.get("request_id"), "state": state,
+            task = {"id": tid, "request_id": entry.get("request_id"), "state": state, "kind": entry.get("kind"),
                     "step_id": step_id, "agent_id": (entry.get("payload") or {}).get("agent_id"),
                     "dispatched_at": entry.get("dispatched_at", 0),
                     **({"control": self.task_controls[tid]} if tid in self.task_controls else {})}
@@ -789,6 +793,7 @@ class Hub:
             if key not in selected and wait.get("task_id"):
                 selected[key] = ((0, 0.0), {"id": wait["task_id"], "request_id": wait.get("request_id"),
                                             "state": "paused", "step_id": wait.get("step_id"),
+                                            "kind": wait.get("kind"),
                                             "agent_id": wait.get("agent_id"), "dispatched_at": wait.get("since", 0),
                                             "control": {"paused": True}})
         return [selected[key][1] for key in sorted(selected, key=lambda k: (str(k[0]), str(k[1])))]
@@ -1447,12 +1452,25 @@ class Hub:
     def _entry_step(self, tid: str, entry: dict) -> str:
         return self.step_key(entry.get("request_id"), entry.get("step_id"), entry.get("kind"), tid)
 
+    @staticmethod
+    def controllable(kind: str | None, step_id: str | None, request_id: str | None) -> bool:
+        """A plan step's turn (kind step with its step id) or a direct request's turn, inside a request."""
+        return bool(request_id) and (kind == "direct" or (kind == "step" and bool(step_id)))
+
+    def _turn_waits(self, tid: str, entry: dict) -> bool:
+        """The turn submitted HPC jobs or asked a question that is not answered yet."""
+        if entry.get("jobs_submitted"):
+            return True
+        return any((ask.get("ask") or {}).get("task_id") == tid and ask.get("state") != "resolved"
+                   for ask in self.store.all("ask").values())
+
     def _step(self, key: str) -> dict:
         state = self.store.get("step_control", key) or {}
         return {"steers": [dict(steer) for steer in state.get("steers") or [] if isinstance(steer, dict)],
                 "paused": bool(state.get("paused")), "dropped": int(state.get("dropped") or 0),
                 "dropped_told": int(state.get("dropped_told") or 0), "agent_id": state.get("agent_id"),
-                "last_task": state.get("last_task")}
+                "last_task": state.get("last_task"), "ops": int(state.get("ops") or 0),
+                "pause_op": int(state.get("pause_op") or 0), "halt_op": int(state.get("halt_op") or 0)}
 
     def _save_step(self, key: str, state: dict) -> None:
         if state["steers"] or state["paused"] or state.get("last_task"):
@@ -1487,6 +1505,17 @@ class Hub:
         except RunnerUnavailable:
             return False  # sent again with the task's state when its runner reconnects or the task is re-sent
 
+    @staticmethod
+    def _cap_steers(state: dict) -> None:
+        """At most STEER_LIMIT steers wait for a turn; the oldest waiting ones go first and are counted. Steers already
+        given to a turn that is out now do not count: it may have delivered them (PR #532 verification)."""
+        waiting_ids = [steer["id"] for steer in state["steers"] if not steer.get("task")]
+        over = len(waiting_ids) - STEER_LIMIT
+        if over > 0:
+            dropped = set(waiting_ids[:over])
+            state["steers"] = [steer for steer in state["steers"] if steer["id"] not in dropped]
+            state["dropped"] += over
+
     def _steer_message(self, state: dict, steer: dict) -> dict:
         dropped = max(0, state["dropped"] - state["dropped_told"])
         state["dropped_told"] = state["dropped"]
@@ -1511,18 +1540,32 @@ class Hub:
         KeyError: no such task. ValueError: halt of a finished task, or any request to a step that has ended."""
         if action not in CONTROL_ACTIONS:
             raise ValueError(f"unknown control {action!r}")
+        entry = self.store.get("task", tid)
+        if not entry and tid not in self.halted_waits:
+            raise KeyError(tid)
+        entry = entry or {}
+        if entry and not self.controllable(entry.get("kind"), entry.get("step_id"), entry.get("request_id")):
+            raise ValueError(NOT_CONTROLLABLE.format(kind=entry.get("kind") or "?"))
+        key = self._entry_step(tid, entry)
         if action == "resume" and tid in self.halted_waits:
+            state = self._step(key)
+            # A resume after a halt also lifts a pause that came before the halt; one sent after it stays.
+            if state["paused"] and int(state.get("pause_op") or 0) < int(state.get("halt_op") or 0):
+                state["paused"] = False
+                self._save_step(key, state)
             self.halted_waits[tid].set()
             return {"task_id": tid, "action": action, "resumed_halted": True, "sent": False, "queued": False}
-        entry = self.store.get("task", tid)
-        if not entry:
-            raise KeyError(tid)
         live = not entry.get("completed") or bool(entry.get("abandoned"))
-        key = self._entry_step(tid, entry)
         if action == "halt":
             if not live:
                 raise ValueError("이 작업은 이미 끝나 멈출 것이 없어요")
+            if self._turn_waits(tid, entry):
+                raise ValueError(HALT_WHILE_WAITING)
             self.store.put("task", tid, {**entry, "halt_requested": True})  # kept until its result comes back
+            state = self._step(key)
+            state["ops"] = int(state.get("ops") or 0) + 1
+            state["halt_op"] = state["ops"]
+            self._save_step(key, state)
             sent = await self._push(tid, {"action": "halt"})
             await self._publish_control(tid, entry, {"action": "halt", "halt": True, "source": "gateway",
                                                      "sent": sent})
@@ -1537,14 +1580,13 @@ class Hub:
         if action == "steer":
             steer = {"id": new_id("steer"), "text": text or "", "at": time.time(), "task": target}
             state["steers"].append(steer)
-            over = len(state["steers"]) - STEER_LIMIT
-            if over > 0:
-                del state["steers"][:over]
-                state["dropped"] += over
+            self._cap_steers(state)
             if target:
                 message = self._steer_message(state, steer)
         elif action == "pause":
             state["paused"] = True
+            state["ops"] = int(state.get("ops") or 0) + 1
+            state["pause_op"] = state["ops"]
             message = {"action": "pause"}
         else:
             state["paused"] = False
@@ -1589,6 +1631,8 @@ class Hub:
 
     def _attach_steers(self, task: Task) -> Task:
         """The step's undelivered steers go with this turn (in its payload, so a re-send carries them too)."""
+        if not self.controllable(task.meta.get("kind"), task.meta.get("step_id"), task.request_id):
+            return task
         key = self.step_key(task.request_id, task.meta.get("step_id"), task.meta.get("kind"), task.id)
         state = self._step(key)
         state["last_task"] = task.id
@@ -1621,6 +1665,7 @@ class Hub:
                 steer["task"] = None
             kept.append(steer)
         state["steers"] = kept
+        self._cap_steers(state)
         self._save_step(key, state)
 
     def _release_steers(self, task: Task) -> None:
@@ -1632,6 +1677,8 @@ class Hub:
     async def _wait_step_resumed(self, task: Task) -> TaskResult | None:
         """Hold the step's next turn while the PI keeps it paused. None: send it. A result: the PI-decision bound passed
         first, and nothing was sent."""
+        if not self.controllable(task.meta.get("kind"), task.meta.get("step_id"), task.request_id):
+            return None
         key = self.step_key(task.request_id, task.meta.get("step_id"), task.meta.get("kind"), task.id)
         if not self._step(key)["paused"]:
             return None
@@ -1642,6 +1689,7 @@ class Hub:
         wait_key, bound = f"pause:{key}", self.s.policy.approvals.pi_decision_timeout_s
         last_task = self._step(key)["last_task"]
         self.step_pause_waits[key] = {"request_id": rid, "step_id": sid, "agent_id": task.agent_id,
+                                      "kind": task.meta.get("kind"),
                                       "task_id": last_task, "since": time.time()}
         if parked:
             req.setdefault("pi_waits", {})[wait_key] = {"kind": "pause", "since": time.time(),
@@ -1955,7 +2003,10 @@ class Hub:
         if typ == "control.nack":  # the runner does not hold that task: its steer waits for the step's next turn
             tid = str(msg.get("task_id") or "")
             entry = self.store.get("task", tid)
-            if entry and msg.get("action") == "steer" and msg.get("steer_id"):
+            live = bool(entry) and (not entry.get("completed") or bool(entry.get("abandoned")))
+            # A live task the runner has not received yet (the control overtook its dispatch) keeps the steer: it is
+            # sent again when the runner accepts the task. An ended one gives it back to the step.
+            if entry and not live and msg.get("action") == "steer" and msg.get("steer_id"):
                 key = self._entry_step(tid, entry)
                 state = self._step(key)
                 for steer in state["steers"]:
@@ -1978,7 +2029,28 @@ class Hub:
             tid = msg.get("task_id") or ""
             task = self.store.get("task", tid) if tid else None
             result = TaskResult.model_validate(msg["data"])
-            if task and task.get("halt_requested") and not result.ok and result.error_kind != "halted" \
+            halt_at_wait = bool(task) and waiting(result) and (result.error_kind == "halted"
+                                                              or bool(task.get("halt_requested")))
+            if halt_at_wait:
+                # The turn ended into HPC jobs or a question when the halt came: the jobs, the asks and the wake turn
+                # stay, and the halt becomes a pause of the step, so the wake turn waits for the PI (PR #532).
+                if result.error_kind == "halted":
+                    result = result.model_copy(update={"ok": True, "error_kind": None, "error": None})
+                    msg = {**msg, "data": result.model_dump(mode="json")}
+                key = self._entry_step(tid, task)
+                state = self._step(key)
+                state["paused"] = True
+                state["ops"] = int(state.get("ops") or 0) + 1
+                state["pause_op"] = state["ops"]
+                state["last_task"] = state["last_task"] or tid
+                self._save_step(key, state)
+                await self._publish_control(tid, task, {"action": "halt_as_pause", "paused": True, "halt": False,
+                                                        "source": "gateway"})
+                await self.publish({"type": "agent.log", "ts": time.time(), "task_id": tid,
+                                    "agent_id": (task.get("payload") or {}).get("agent_id"), "request_id": rid,
+                                    "data": {"level": "alert", "text": "HPC 잡·질문을 기다리는 중이라 멈추지 않고 일시 정지했어요. "
+                                                                       "재개하면 대기 뒤 turn이 이어집니다"}})
+            elif task and task.get("halt_requested") and not result.ok and result.error_kind != "halted" \
                     and not waiting(result):
                 # The PI halted it and it ended without finishing (a runner restart, a kill): park it, do not fail it.
                 result = result.model_copy(update={"error_kind": "halted",
@@ -2108,6 +2180,12 @@ class Hub:
                 self.store.put("task", tid, {**task, "accepted": True, "runner_id": runner_id,
                                                "runner_incarnation": self.runner_incarnations.get(runner_id)})
                 self._session_state_changed()
+                if self.controllable(task.get("kind"), task.get("step_id"), task.get("request_id")):
+                    await self._push_task_state(tid)  # a control that overtook the dispatch, once more
+        elif typ == "job.submitted" and msg.get("task_id"):
+            task = self.store.get("task", msg["task_id"])
+            if task and not task.get("jobs_submitted"):
+                self.store.put("task", msg["task_id"], {**task, "jobs_submitted": True})
         entry = self.recruits_running.get(runner_id) if typ in ("recruit.done", "recruit.failed") else None
         if entry and entry.get("count"):
             entry["count"] -= 1

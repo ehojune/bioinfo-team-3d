@@ -6,7 +6,7 @@ which reads that file and consumes what it delivers. No network. Hook contract:
 https://code.claude.com/docs/en/hooks (PreToolUse decision control, PostToolUse decision control, JSON output).
 
 - steer: a PostToolUse hook returns ``hookSpecificOutput.additionalContext`` once; delivered messages leave the file.
-  The queue keeps the newest ``STEER_LIMIT`` and counts what it dropped.
+  The gateway caps what waits on a step (``STEER_LIMIT``) and passes on the count it dropped.
 - pause: PreToolUse holds the call while paused, up to ``PAUSE_HOLD_S``, then denies it. A deny holds even when a
   permission rule or the approval gate would allow the tool.
 - halt: PreToolUse or PostToolUse returns ``{"continue": false, "stopReason": ...}``. Claude stops; the session stays
@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 CONTROL_ENV = "LABHQ_CONTROL_FILE"
-STEER_LIMIT = 20  # queued messages kept; the oldest go first
+STEER_LIMIT = 20  # steers a gateway step keeps waiting for a turn; the oldest go first (the file keeps all it gets)
 STEER_CHARS = 2000  # one message, as the gateway accepts it
 CONTEXT_CHARS = 9000  # one delivery; Claude caps additionalContext at 10,000 characters
 PAUSE_HOLD_S = 300.0  # how long PreToolUse holds one call while paused; Claude's hook timeout is 600 s
@@ -157,10 +157,6 @@ def add_steer(state: dict[str, Any], text: str, now: float | None = None, steer_
                             "at": time.time() if now is None else now,
                             "id": steer_id or f"local-{state['task_id']}-{state['next_seq']}"})
     state["next_seq"] += 1
-    over = len(state["steers"]) - STEER_LIMIT
-    if over > 0:
-        del state["steers"][:over]
-        state["dropped"] += over
 
 
 def steer_text(steers: list[dict[str, Any]], dropped: int = 0) -> str:

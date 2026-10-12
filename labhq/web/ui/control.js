@@ -3,13 +3,15 @@
 // a task the PI halted (resume only); and, without halt, for a turn that ended into an HPC wait or a pause, whose next
 // turn of the same session takes the request.
 const RUNNING = new Set(['queued', 'working', 'waiting']);
+// A plan step's turn or a direct request's turn; consults, follow-ups, reviews and the rest take no control.
+const CONTROLLABLE = new Set(['step', 'direct']);
 export const CONTROL_LABELS = { steer: '방향 보내기', pause: '일시 정지', resume: '재개', halt: '멈추기' };
 
 // task: {taskId, state, title}; control: that task's agent.control state.
 export function staffControl(task, control = {}) {
   const taskId = task?.taskId || '', title = task?.title || '';
   const none = { taskId, title, status: '', actions: [] };
-  if (!taskId) return none;
+  if (!taskId || (task.kind && !CONTROLLABLE.has(task.kind))) return none;
   if (control.halted) return { taskId, title, status: '멈춤 · 재개 가능', actions: ['resume'] };
   const status = control.paused ? '일시 정지됨' : '', toggle = control.paused ? 'resume' : 'pause';
   if (RUNNING.has(task.state)) return { taskId, title, status, actions: ['steer', toggle, 'halt'] };

@@ -54,6 +54,7 @@ class Live:
     halt: asyncio.Event = field(default_factory=asyncio.Event)
     resumed: asyncio.Event = field(default_factory=asyncio.Event)
     started: bool = False  # the CLI process exists: steers in its prompt were delivered
+    committed: bool = False  # past the last pause check and the prompt is built: this turn will start
 
 
 class Controls:
@@ -141,7 +142,7 @@ class Controls:
                 live.resumed.set()
             if action == "halt":
                 live.halt.set()
-        return {**summary, "action": action, "applied": bool(applied), "started": live.started,
+        return {**summary, "action": action, "applied": bool(applied), "started": live.committed,
                 "mode": "hook" if live.hooks else "next_turn"}
 
     def take_prompt_steers(self, task_id: str) -> tuple[list[dict[str, Any]], int]:
@@ -149,6 +150,8 @@ class Controls:
         live = self.live.get(task_id)
         if live is None:
             return [], 0
+
+        live.committed = True  # from here a pause or steer reaches this turn only through the hook, or the next turn
 
         def take(state: dict[str, Any]) -> tuple[list[dict[str, Any]], int]:
             steers = list(state["steers"])

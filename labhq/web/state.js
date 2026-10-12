@@ -100,11 +100,13 @@ Object.defineProperty(S, 'runners', { value: new Set(), writable: true, enumerab
 Object.defineProperty(S, 'runnersKnown', { value: false, writable: true, enumerable: false });
 // #59 ①: each task's steer/pause/halt state (agent.control), for the staff sheet; out of the legacy digests too.
 Object.defineProperty(S, 'taskControl', { value: new Map(), enumerable: false });
+// Each task's kind from its dispatch (#59 ①): only step and direct turns get a control row.
+Object.defineProperty(S, 'taskKind', { value: new Map(), enumerable: false });
 function resetSnapshotState() {
   S.agents.clear(); S.approvals.clear(); S.suggestions = []; S.requests.clear(); S.current = null;
   S.jobs.clear(); S.feed = []; S.cost = 0; S.projects = [];
   S.lastSay = {}; S.taskStep.clear(); S.stepDetails.clear(); S.askDetails.clear(); S.engineHolds.clear(); S.seq = 0; S.doorUntil = 0;
-  S.taskControl.clear();
+  S.taskControl.clear(); S.taskKind.clear();
   S.defaultRefs = [];
 }
 const STATE_KO = { idle: '쉬는 중', queued: '순서 기다림', working: '작업 중', waiting: '승인 기다림',
@@ -129,7 +131,8 @@ function trackTask(a, tid, state, title, keep = false, rid = '', sid = '') {
   if (!a || !tid) return;
   const prev = a.tasks.get(tid) || {}, control = S.taskControl.get(tid) || {};
   if (['done', 'error', 'idle'].includes(state) && !keep && !control.halted) a.tasks.delete(tid);
-  else a.tasks.set(tid, { state, title: title || prev.title || '', rid: rid || prev.rid || '', sid: sid || prev.sid || '' });
+  else a.tasks.set(tid, { state, title: title || prev.title || '', rid: rid || prev.rid || '', sid: sid || prev.sid || '',
+    kind: S.taskKind.get(tid) || prev.kind || '' });
 }
 function dropTask(a, tid) {
   if (a && tid && !(S.taskControl.get(tid) || {}).halted) { a.tasks.delete(tid); S.taskControl.delete(tid); }
@@ -205,7 +208,9 @@ function syncHoldStatus(q) {
   else if (states.includes('waiting_quota') && !isTerminalRequest(q.status)) q.status = 'waiting_quota';
   else if (states.includes('waiting_facilities_fix') && !isTerminalRequest(q.status)) q.status = 'waiting_facilities_fix';
   else if (['waiting_login', 'waiting_quota', 'waiting_facilities_fix'].includes(q.status))
-    q.status = [...S.approvals.values()].some(a => a.request_id === q.id && PI_DECISION_KINDS.has(a.kind)) ? 'waiting_pi' : 'running';
+    // A paused or halted step holds the request for the PI too, with no card (PR #532 verification).
+    q.status = states.includes('paused') || states.includes('halted') ||
+      [...S.approvals.values()].some(a => a.request_id === q.id && PI_DECISION_KINDS.has(a.kind)) ? 'waiting_pi' : 'running';
 }
 // A resumed request leaves the 'done' phase a snapshot gave it while it was interrupted (R14).
 function reopen(q, status) {
@@ -230,6 +235,7 @@ function onDispatch(ev) {
   const d = ev.data || {}, id = ev.agent_id, rid = ev.request_id, q = rid ? req(rid) : null, a = ag(id);
   if (a) a.task = d.title || short(stripPrompt(d.prompt), 60);
   if (d.step_id) S.taskStep.set(ev.task_id, d.step_id);
+  if (d.kind && ev.task_id) S.taskKind.set(ev.task_id, d.kind);
   if (q) {
     const ph = { briefing: 'briefing', plan: 'plan', review: 'review', synthesis: 'report', direct: 'execute' }[d.kind];
     if (ph) q.phase = ph;
@@ -297,6 +303,7 @@ function apply(ev, replay = false) {
       }
       for (const { task } of restored.values()) {
         if (task.control || task.state === 'halted') S.taskControl.set(task.id, { ...(task.control || {}), ...(task.state === 'halted' ? { halted: true } : {}) });
+        if (task.kind) S.taskKind.set(task.id, task.kind);
         trackTask(task.agent_id && ag(task.agent_id), task.id,
           task.state === 'running' ? 'working' : ['halted', 'paused'].includes(task.state) ? 'idle' : task.state, '', true,
           task.request_id, task.step_id);
@@ -366,7 +373,8 @@ function apply(ev, replay = false) {
       const a = ag(id); if (a && ev.task_id) a.tasks.delete(ev.task_id);
       if (rid && d.step_id && t === 'request.step_resumed') req(rid).steps[d.step_id] = 'working';
       if (rid && d.step_id && t === 'request.step_halt_expired' && req(rid).steps[d.step_id] === 'halted') req(rid).steps[d.step_id] = 'error';
-      if (a && t === 'request.step_halt_expired') logTo(a, '멈춘 단계를 재개 기한 안에 재개하지 않아 실패로 넘어갔어요', ts);
+      if (a && t === 'request.step_halt_expired') logTo(a, d.reason === 'cancelled' ? '요청을 취소해 멈춘 단계를 닫았어요'
+        : '멈춘 단계를 재개 기한 안에 재개하지 않아 실패로 넘어갔어요', ts);
       break;
     }
     case 'agent.tool_error': { const a = ag(id); if (a) logTo(a, `도구 오류: ${d.text}`, ts); break; }
@@ -597,6 +605,8 @@ function apply(ev, replay = false) {
     case 'request.runner_wait': feed({ who: 'system', text: d.message || '러너를 기다려요', cls: 'alert' }, ts, rid); break;
     case 'request.completed': case 'request.failed': {
       const q = req(rid);
+      // The request is over (done, failed or cancelled): no step of it takes a control any more.
+      for (const a of S.agents.values()) for (const [tid, row] of [...a.tasks]) if (row.rid === rid) { a.tasks.delete(tid); S.taskControl.delete(tid); }
       q.status = d.status === 'cancelled' ? 'cancelled' : t === 'request.completed' && d.ok !== false ? 'done' : 'failed'; q.phase = 'done';
       if (typeof d.cost_usd === 'number' && Number.isFinite(d.cost_usd) && d.cost_usd >= 0) {
         S.cost += d.cost_usd - q.cost; q.cost = d.cost_usd;
