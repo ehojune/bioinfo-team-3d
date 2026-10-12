@@ -780,8 +780,9 @@ class Hub:
             else:
                 continue
             step_id = entry.get("step_id") or entry.get("kind")
-            task = {"id": tid, "request_id": entry.get("request_id"), "state": state, "kind": entry.get("kind"),
+            task = {"id": tid, "request_id": entry.get("request_id"), "state": state,
                     "step_id": step_id, "agent_id": (entry.get("payload") or {}).get("agent_id"),
+                    **({"kind": entry["kind"]} if entry.get("kind") else {}),  # the web shows control rows by kind
                     "dispatched_at": entry.get("dispatched_at", 0),
                     **({"control": self.task_controls[tid]} if tid in self.task_controls else {})}
             key = (task["request_id"], step_id)
