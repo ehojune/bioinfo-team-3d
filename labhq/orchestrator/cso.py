@@ -436,9 +436,10 @@ Contract rules:
 - Freeze analysis unit, selection/exclusion, comparators, metrics, validation, resources, stop/approval
   conditions, data boundaries, and statistics applicability before execution. Every not_applicable item needs a reason.
   Applicable statistics needs estimand, analysis_unit, and primary_outcomes.
-- `budget_usd` (optional number): the most this whole request may spend in USD, earlier rounds included. On CP1
-  approval it becomes the enforced cap (never above the lab's per-request cap); spending past it waits for a PI
-  budget card. Write the same figure in protocol.resource_limits. Leave it out when you cannot estimate it.
+- `budget_usd` (optional number): the additional execution budget in USD after this plan's CP1 approval.
+  Exclude briefing, clarification, planning and all earlier-round spending already incurred. On approval labhq adds
+  that spending to this budget and clamps the total to the configured request cap; exceeding it waits for a PI
+  budget card. Write this additional amount in protocol.resource_limits. Leave it out when you cannot estimate it.
 - Each step declares phase, claim_ids, input_refs, outputs, checks, evidence_slots, and depends_on. Every output is
   inside that step's own workspace outputs/ folder, written as outputs/<name>, and the instruction uses that exact
   path. Never declare an absolute path, home path, `..`, or a file at the workspace root.{output_types_rule}{topics_rule}
@@ -908,18 +909,26 @@ CONTINUE_NOTE_RULE = ("The PI wrote these on the previous round's cards. Use the
                       "PI approves the new plan at its own CP1.")
 
 
+def _plan_cap_sum(budget: dict[str, Any]) -> str:
+    """The two parts of an approved plan's cap, in the words the CP1 card and the staff prompts share."""
+    return (f"계획 예산 ${float(budget.get('plan_budget_usd') or 0):.2f} + "
+            f"계획까지 쓴 ${float(budget.get('spent_before_plan_usd') or 0):.2f}")
+
+
 def _budget_line(budget: dict[str, Any]) -> str:
-    """The CP1 card's one line on the cap its approval enforces (PI 점검 R17)."""
+    """The CP1 card's one line on the cap its approval enforces (PI 점검 R17): the plan's budget_usd on top of what
+    the request spent up to this CP1, never above the configured cap."""
     origin = {"request": "요청 예산", "policy": "정책 per_request_usd"}
     cap, planned = float(budget.get("cap_usd") or 0), budget.get("plan_budget_usd")
     if not cap:
         return "집행 상한 없음(정책 per_request_usd 0)."
     if planned is None:
         return f"집행 상한 ${cap:.2f}({origin.get(budget.get('source'), '요청 예산')}, 계획에 budget_usd 없음)."
+    total = float(planned) + float(budget.get("spent_before_plan_usd") or 0)
     if budget.get("source") == "plan":
-        return f"집행 상한 ${cap:.2f}(계획 budget_usd). 넘으면 예산 카드가 뜹니다."
-    return (f"집행 상한 ${cap:.2f}(계획 budget_usd ${float(planned):.2f}가 "
-            f"{origin.get(budget.get('source'), '요청 예산')}보다 커서 줄임).")
+        return f"집행 상한 ${cap:.2f}({_plan_cap_sum(budget)}). 넘으면 예산 카드가 뜹니다."
+    return (f"집행 상한 ${cap:.2f}({origin.get(budget.get('source'), '요청 예산')} ${cap:.2f}에 맞춰 줄임: "
+            f"{_plan_cap_sum(budget)} = ${total:.2f}).")
 
 
 def research_cp2_notes(contract: dict) -> list[tuple[str, str]]:
@@ -3329,13 +3338,16 @@ class Orchestrator:
                 if block:
                     raise BudgetExceeded(reason)
 
-    def _research_budget(self, req: dict, plan: dict) -> tuple[dict[str, Any], str]:
+    def _research_budget(self, rid: str, req: dict, plan: dict) -> tuple[dict[str, Any], str]:
         """The spending cap a CP1 approval of ``plan`` enforces (PI 점검 R17), and where its configured cap came from.
 
-        The configured cap is the request's own budget, else policy per_request_usd. It is fixed when a plan budget is
-        first applied (``research_contract.budget_cap``), so a later round's plan is held to it and not to an earlier
-        round's plan budget. A plan budget above it is cut to it. A plan without ``budget_usd`` keeps the request's
-        current cap; the card shows that cap either way."""
+        The plan's budget_usd is what execution may spend, so the cap is what the request has spent by this CP1 (the
+        briefing, precedent, clarify and planning turns, and an earlier round's work in a continuation) plus that
+        budget (trial 2026-10-12: a $3.00 plan cut the cap to $3.00 while $3.16 was already spent, and a budget card
+        opened 4 minutes after approval). The configured cap is the request's own budget, else policy per_request_usd.
+        It is fixed when a plan budget is first applied (``research_contract.budget_cap``), so a later round's plan is
+        held to it and not to an earlier round's plan budget, and it stays the hard ceiling: a cap above it is cut to
+        it. A plan without ``budget_usd`` keeps the request's current cap; the card shows that cap either way."""
         policy = float(self.hub.s.policy.budget.per_request_usd or 0)
         own = float(req.get("budget_usd") or 0)
         fixed = (req.get("research_contract") or {}).get("budget_cap") or {}
@@ -3348,11 +3360,12 @@ class Orchestrator:
             return {"cap_usd": own or policy, "source": "request" if own else "policy",
                     "configured_cap_usd": configured}, source
         planned = float(planned)
-        if configured and configured < planned:
-            return {"plan_budget_usd": planned, "cap_usd": configured, "source": source,
-                    "configured_cap_usd": configured}, source
-        return {"plan_budget_usd": planned, "cap_usd": planned, "source": "plan",
-                "configured_cap_usd": configured}, source
+        spent = round(self.cost.get(rid, 0.0), 4)
+        budget = {"plan_budget_usd": planned, "spent_before_plan_usd": spent, "cap_usd": round(spent + planned, 4),
+                  "source": "plan", "configured_cap_usd": configured}
+        if configured and configured < budget["cap_usd"]:
+            budget.update(cap_usd=configured, source=source)
+        return budget, source
 
     def _spending_cap_line(self, rid: str) -> str:
         """The cap ``_check_budget`` enforces now, for research step and review prompts (#499): staff otherwise read
@@ -3361,10 +3374,15 @@ class Orchestrator:
         cap = float(req.get("budget_usd") or self.hub.s.policy.budget.per_request_usd or 0)
         if not cap:
             return ""
-        approved = (((req.get("research_contract") or {}).get("approval") or {}).get("budget") or {}).get("cap_usd")
-        origin = ("the plan's budget_usd approved at CP1" if approved == cap else
-                  f"CP1 approved ${float(approved):.2f}; the PI raised it on a budget card" if approved else
-                  "the lab's request cap; the plan states no budget_usd")
+        plan_budget = ((req.get("research_contract") or {}).get("approval") or {}).get("budget") or {}
+        approved = plan_budget.get("cap_usd")
+        if approved == cap and "spent_before_plan_usd" in plan_budget:  # older approvals had the plan budget alone
+            clamped = plan_budget.get("source") != "plan"
+            origin = f"{_plan_cap_sum(plan_budget)}{'가 설정 상한을 넘어 상한으로 줄임' if clamped else ''}, CP1 승인"
+        else:
+            origin = ("the plan's budget_usd approved at CP1" if approved == cap else
+                      f"CP1 approved ${float(approved):.2f}; the PI raised it on a budget card" if approved else
+                      "the lab's request cap; the plan states no budget_usd")
         return (f"\n\nEnforced spending cap for this request: ${cap:.2f} ({origin}). It is the cap labhq enforces, "
                 "whatever amount protocol.resource_limits states; spending past it waits for a PI budget card.")
 
@@ -4693,7 +4711,7 @@ class Orchestrator:
                         summary = (f"이어 가기 {carried.get('round')}차 계획({source}). 재사용: "
                                    f"{', '.join(carried.get('reuse') or []) or '없음'} · 다시 실행: "
                                    f"{', '.join(carried.get('rerun') or {}) or '없음'}. ") + summary
-                    budget, configured_source = self._research_budget(req, plan)
+                    budget, configured_source = self._research_budget(rid, req, plan)
                     budget_line = _budget_line(budget)  # kept whole: the web shows the summary, not detail.budget
 
                     async def ask_cp1(prefix: str = "") -> dict:
@@ -4727,8 +4745,10 @@ class Orchestrator:
                         approval["choice"] = "revise"
                     approval.update(request_id=rid, protocol_revision=plan["protocol"]["revision"])
                     if approval.get("approved") and "plan_budget_usd" in budget:
-                        # PI 점검 R17: the plan's budget becomes the enforced cap, in the save that records CP1, and
-                        # only here: a resume of an approved plan keeps a cap the PI raised on a budget card since.
+                        # PI 점검 R17: the plan's budget on top of what is spent now becomes the enforced cap, in the
+                        # save that records CP1, and only here: a resume of an approved plan keeps a cap the PI raised
+                        # on a budget card since. Counted again at approval, not as the card showed it.
+                        budget, configured_source = self._research_budget(rid, req, plan)
                         approval["budget"] = budget
                         req["budget_usd"] = budget["cap_usd"]
                         req["research_contract"].setdefault("budget_cap", {
