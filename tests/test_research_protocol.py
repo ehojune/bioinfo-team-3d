@@ -840,6 +840,9 @@ async def test_cp2_records_approve_revision_or_rejection(cp2, outcome, status):
     assert hub.requests["r"]["outcome"] == outcome
     assert hub.requests["r"]["status"] == status
     assert hub.requests["r"]["research_contract"]["checkpoints"]["cp2"]["decision"] == outcome.removeprefix("evidence_")
+    # A CP2 ending that is not a success says why in the office feed line; an approval has no error.
+    error = hub.requests["r"].get("error")
+    assert (error is None) if status == "done" else ("CP2" in error), error
 
 
 @pytest.mark.asyncio
