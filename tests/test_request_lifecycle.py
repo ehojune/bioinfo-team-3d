@@ -819,6 +819,65 @@ async def test_resume_timeout_restores_an_unstarted_continuation_before_terminal
     assert req["plan"] == old and req["results"] == old_results and req["budget_usd"] == 7
 
 
+def _ledger_task(hub, tid, step_id, research_round=None):
+    """A finished step task in the gateway task ledger; ``research_round`` is absent in round 1 (#90)."""
+    meta = {"kind": "step", "step_id": step_id, **({"research_round": research_round} if research_round else {})}
+    hub.store.put("task", tid, {"request_id": "r", "step_id": step_id, "kind": "step", "completed": True,
+                                "payload": {"id": tid, "agent_id": "worker", "request_id": "r", "meta": meta}})
+
+
+async def _end_interrupted_continuation(hub, s, path):
+    if path == "cancel":
+        await hub.cancel_request("r")
+        return
+    card = hub.new_resume_approval("r")
+    if path == "decline":
+        await hub.resolve_approval(card.id, False)
+        return
+    hub.approvals[card.id]["approval"]["created_at"] = time.time() - s.policy.approvals.pi_decision_timeout_s - 1
+    hub.save_approval(card.id)
+    assert await hub.expire_resume_card(card.id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["cancel", "decline", "timeout"])
+async def test_a_continuation_stopped_between_its_reuse_check_and_first_dispatch_is_restored(tmp_path, path):
+    """PR #527 review P2: the gateway stopped after the new CP1 saved ``continuation.verified`` but before any step
+    task went out. No step of round 2 is in the task ledger, so ending the request puts round 1 back."""
+    s = _settings(tmp_path)
+    hub = Hub(s)
+    old, old_results = _unstarted_continuation_request(hub)
+    hub.requests["r"]["research_contract"]["continuation"]["verified"] = True
+    hub.save_request("r")
+    for step in old["steps"]:  # round 1's own step tasks do not start round 2
+        _ledger_task(hub, f"old-{step['id']}", step["id"])
+
+    await _end_interrupted_continuation(hub, s, path)
+
+    req = hub.requests["r"]
+    assert req["plan"] == old and req["results"] == old_results and req["budget_usd"] == 7
+    assert req["research_contract"]["round"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["cancel", "decline", "timeout"])
+async def test_a_continuation_whose_step_task_went_out_is_not_rolled_back(tmp_path, path):
+    s = _settings(tmp_path)
+    hub = Hub(s)
+    old, _old_results = _unstarted_continuation_request(hub)
+    req = hub.requests["r"]
+    req["research_contract"]["continuation"]["verified"] = True
+    new_plan, reused = copy.deepcopy(req["plan"]), copy.deepcopy(req["results"])
+    hub.save_request("r")
+    _ledger_task(hub, "round2-s2", "s2", research_round=2)
+
+    await _end_interrupted_continuation(hub, s, path)
+
+    req = hub.requests["r"]
+    assert req["plan"] == new_plan != old and req["results"] == reused and req["budget_usd"] == 2
+    assert req["research_contract"]["round"] == 2
+
+
 @pytest.mark.asyncio
 async def test_shutdown_readiness_names_follow_ups_and_recruitments_outside_active_requests(tmp_path):
     hub = Hub(_settings(tmp_path))

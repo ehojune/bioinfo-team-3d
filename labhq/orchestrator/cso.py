@@ -2257,9 +2257,13 @@ class Orchestrator:
         # Answers a CP1 수정 요청 carried over from the old request filter questions but used none of this one's cards.
         contract = req.get("research_contract") or {}
         research_round = int(contract.get("round") or 1)
+        # Round 1 asks before its contract exists, so the research intake marks it. An answer saved before rounds
+        # were tagged may belong to this round, so it counts here: a resumed round never gets two more cards
+        # (PR #527 review).
+        tagged = bool(contract) or (req.get("intake") or {}).get("work_kind") == "research"
         if len([entry for entry in req.get("clarifications") or []
                 if isinstance(entry, dict) and not entry.get("inherited")
-                and (not contract or int(entry.get("research_round") or 1) == research_round)
+                and (not contract or int(entry.get("research_round") or research_round) == research_round)
                 ]) >= MAX_CLARIFY_CARDS:
             return "limit", None
         detail = {"questions": details}
@@ -2273,7 +2277,7 @@ class Orchestrator:
         if not decision.get("approved") or not str(decision.get("note") or "").strip():
             return "unanswered", None
         entry = {"questions": list(req["pending_questions"]), "answer": str(decision["note"]).strip()}
-        if contract:
+        if tagged:
             entry["research_round"] = research_round
         if has_structure(details) or any(question.get("id") for question in details):
             entry["question_details"] = details
@@ -2804,6 +2808,7 @@ class Orchestrator:
         rid = task.request_id or ""
         initial_attempt = first_attempt
         engine = str((self.hub.agents.get(task.agent_id) or {}).get("engine") or "")
+        final_step = bool(task.meta.get("final_budget_turn"))  # nothing runs after this step but its own turns
 
         def quota_deadline() -> float:
             req = self.hub.requests[rid]
@@ -2960,9 +2965,10 @@ class Orchestrator:
                     update = ASK_WAKE_PROMPT.format(answers=outcome["answer"])
                     if update not in retry_answers:
                         retry_answers.append(update)
-                await self._check_budget(
-                    rid, block=False,
-                    final_turn=bool(kind is None and task.meta.get("final_budget_turn")))
+                # A finished turn of the last step is judged once run_step knows no wake turn follows it: one that
+                # still waits on an answer or job is not final, and the next turn's gate decides (PR #527 review).
+                if not (kind is None and final_step):
+                    await self._check_budget(rid, block=False)
                 previous_result = res
                 if kind is None:
                     return res
@@ -3211,7 +3217,8 @@ class Orchestrator:
                 answers = await self.hub.wait_asks(res.pending_asks)
                 outcome = read_ask_results(answers)
                 if outcome["status"] == "rejected":
-                    return rejected_step(res, outcome["reason"])
+                    res = rejected_step(res, outcome["reason"])
+                    break
                 prompts.append(ASK_WAKE_PROMPT.format(answers=outcome["answer"]))
             if res.pending_jobs:
                 info = await self.hub.wait_jobs(res.task_id)
@@ -3238,6 +3245,8 @@ class Orchestrator:
                          f"pending asks: {res.pending_asks}; pending jobs: {res.pending_jobs}",
                 "pending_asks": [], "pending_jobs": [], "blocking_decision": None,
             })
+        if final_step:  # every turn of the last step has run: an overrun now is recorded, not asked about
+            await self._check_budget(rid, block=False, final_turn=True)
         return res
 
     async def _check_budget(self, rid: str, *, block: bool = True, final_turn: bool = False) -> None:
@@ -5718,11 +5727,17 @@ class Orchestrator:
                 await self._emit(rid, "request.failed", failed)
 
     @staticmethod
-    def _continuation_unstarted(req: dict) -> bool:
-        """A continuation round is on and none of its steps has been dispatched (its reuse is not verified yet)."""
+    def _continuation_unstarted(req: dict, dispatched: bool | None = None) -> bool:
+        """A continuation round is on and none of its steps has been dispatched.
+
+        ``dispatched`` is the gateway task ledger's answer for this round's step tasks. Without it, a reuse check not
+        yet done stands in: it runs right before the first dispatch in this process. A gateway that stopped between
+        the two must ask the ledger (PR #527 review)."""
         contract = req.get("research_contract") or {}
         carried = contract.get("continuation") or {}
-        return bool(carried and not carried.get("verified") and contract.get("rounds"))
+        if not (carried and contract.get("rounds")):
+            return False
+        return not dispatched if dispatched is not None else not carried.get("verified")
 
     @staticmethod
     def _archived_continuation_decision(req: dict) -> bool:

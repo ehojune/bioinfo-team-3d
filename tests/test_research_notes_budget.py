@@ -164,6 +164,43 @@ async def test_a_plan_budget_overrun_on_the_finished_report_is_recorded_without_
 
 
 @pytest.mark.asyncio
+async def test_a_report_turn_that_waits_for_an_answer_is_not_the_final_turn_until_its_wake_ends():
+    """PR #527 review P2: the first report turn returned a question and ran over the cap; the record said "final
+    turn; no further work" and then a budget card opened before the wake turn. The card is the one decision for
+    that overrun, and the exemption is judged on the turn that really ends the step."""
+    hub = _with_plan(rep._hub(), budget_usd=1)
+    reply = hub.reply
+    synthesis = []
+
+    async def asking_report(task):
+        if task.meta["kind"] != "synthesis":
+            return await reply(task)
+        synthesis.append(task)
+        if len(synthesis) == 1:
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, pending_asks=["ask_scope"],
+                              cost_usd=2.0)
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text=rep.REPORT, cost_usd=1.0)
+
+    async def wait_asks(ids):
+        assert ids == ["ask_scope"]
+        return [{"answer": "donor level", "from": "pi", "status": "answered"}]
+
+    hub.reply, hub.wait_asks = asking_report, wait_asks
+    _answer(hub, [CP1, {"approved": True, "choice": "approve", "note": ""}], budget=True)
+    orch = Orchestrator(hub)
+    await orch.run_request("r")
+
+    req = hub.requests["r"]
+    assert len(synthesis) == 2 and req["outcome"] == "research_reported"
+    assert [item["kind"] for item in hub.approvals] == ["research_plan", "research_evidence", "budget"]
+    assert orch.budget_outcomes["r"] == [{"spent_usd": 2.0, "limit_usd": 1.0, "approved": True},
+                                         {"spent_usd": 3.0, "limit_usd": 2.0, "approved": None, "final_turn": True}]
+    appendix = req["report_appendix"]
+    assert appendix.count("final turn; no further work") == 1
+    assert appendix.index("$2.00 > $1.00; approved") < appendix.index("$3.00 > $2.00; final turn")
+
+
+@pytest.mark.asyncio
 async def test_a_plan_without_budget_keeps_todays_cap_and_shows_it():
     hub = rep._hub(synthesis_usd=2.0)
     await Orchestrator(hub).run_request("r")

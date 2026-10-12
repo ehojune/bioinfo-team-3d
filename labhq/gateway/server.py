@@ -1123,7 +1123,7 @@ class Hub:
                             "data": {"id": aid, **answer}})
         req = self.requests.get(rid or "")
         if req is not None and req.get("status") == "interrupted":
-            self._restore_unstarted_continuation(req)
+            self._restore_unstarted_continuation(rid, req)
             req.update(status="failed", outcome="resume_timed_out", error=note, finished_at=time.time())
             self.schedule_terminal(rid, "request.failed", {"error": note})
         return True
@@ -2320,7 +2320,7 @@ class Hub:
                             "data": {"id": approval_id, "approved": approved, "note": note, **chosen}})
         if a.get("kind") == "resume" and not approved:
             rid = a["request_id"]
-            self._restore_unstarted_continuation(self.requests[rid])
+            self._restore_unstarted_continuation(rid, self.requests[rid])
             self.requests[rid].update(status="failed", error="resume declined", finished_at=time.time())
             self.schedule_terminal(rid, "request.failed", {"error": "resume declined"})
 
@@ -2367,7 +2367,7 @@ class Hub:
                     "cancelled_tasks": list(req.get("cancelled_tasks") or [])}
         if is_terminal_request(status):
             raise ValueError(f"이미 끝난 요청입니다({status})")
-        self._restore_unstarted_continuation(req)
+        self._restore_unstarted_continuation(rid, req)
         now = time.time()
         req.update(status="cancelled", outcome="cancelled", error="PI가 요청을 취소했습니다", cancelled_at=now,
                    finished_at=now)
@@ -2425,10 +2425,23 @@ class Hub:
                 "usage_known": req.get("usage_known", True)}
         self.schedule_terminal(rid, "request.completed", data)
 
-    @staticmethod
-    def _restore_unstarted_continuation(req: dict) -> bool:
-        """Put the last approved round back before a gateway path writes a terminal continuation record."""
-        if not Orchestrator._continuation_unstarted(req):
+    def _round_dispatched(self, rid: str, req: dict) -> bool:
+        """Whether a step task of the request's current research round is in the task ledger (#90).
+
+        A round's tasks carry ``research_round`` from round 2 on; the ledger keeps every dispatched task."""
+        round_no = int((req.get("research_contract") or {}).get("round") or 1)
+        return any(entry.get("request_id") == rid and entry.get("step_id") and
+                   int(((entry.get("payload") or {}).get("meta") or {}).get("research_round") or 1) == round_no
+                   for entry in self.store.all("task").values())
+
+    def _restore_unstarted_continuation(self, rid: str, req: dict) -> bool:
+        """Put the last approved round back before a gateway path writes a terminal continuation record.
+
+        Judged by the task ledger, not ``continuation.verified``: the gateway can stop after the new CP1 saved that
+        flag and before the first step went out (PR #527 review)."""
+        if not (req.get("research_contract") or {}).get("continuation"):
+            return False  # no continuation round, so no ledger read on every cancel
+        if not Orchestrator._continuation_unstarted(req, self._round_dispatched(rid, req)):
             return False
         contract = req["research_contract"]
         carried = contract["continuation"]
