@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 15:16 | [`7abdd1e`](https://github.com/ehojune/bioinfo-team-3d/pull/539/commits/7abdd1e) | 완료 신호를 기다리는 test에 60~120초 바깥 상한을 다시 둬, 회귀 때 CI가 멈추지 않고 실패로 끝난다. |
+| 15:04 | [`2217a18`](https://github.com/ehojune/bioinfo-team-3d/pull/539/commits/2217a18) | 로그인 재시도 test를 두 번째 dispatch 완료 event로 동기화 |
+| 14:39 | [`1da9abb`](https://github.com/ehojune/bioinfo-team-3d/pull/539/commits/1da9abb) | quota·stall·mock-lab test를 실제시간 상한 대신 완료 event와 task로 동기화 |
 | 14:08 | [`7fa7718`](https://github.com/ehojune/bioinfo-team-3d/pull/536/commits/7fa7718) | Windows CI의 cp1252 console에서도 단계와 실패 출력을 UTF-8 한 줄로 보존한다 |
 | 14:02 | [`6f496fc`](https://github.com/ehojune/bioinfo-team-3d/pull/536/commits/6f496fc) | README 설치 절을 더 짧게 고쳐 전체와 해당 절의 바이트 수를 종전보다 줄인다 |
 | 14:00 | [`2002b27`](https://github.com/ehojune/bioinfo-team-3d/pull/535/commits/2002b27) | 공유 환경 판정이 uv·conda·pixi·poetry 같은 실행기의 전역 옵션을 표로 건너뛰어 run이 실행하는 프로그램을 찾고, 표에 없는 옵션이나 모르는 실행기면 뒤 단어를 모두 프로그램 자리로 본다. 재귀 삭제 규칙은 실제 rm에만 걸어 docker rm·지금 트리의 git rm·따옴표로 감싼 변수 하나를 지우는 rm은 묻지 않고, PowerShell 출력 문자열 속 .Delete( 글자는 삭제로 보지 않는다. |
