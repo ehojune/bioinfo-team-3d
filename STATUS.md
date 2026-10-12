@@ -4,6 +4,102 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 결론
+
+오늘 19:00 PI 시운전 전에 CLI 결함 3건을 고쳤습니다. `labhq down`의 한글 Windows 추적 출력(점검 1·15, 같은 결함), 기록 없는 gateway를 두고 성공으로 끝나던 `down`(2), `send`·`watch <id>`가 요청 묶음을 출력하지 않던 것(12)입니다. 3건 모두 수정 전 코드에서 실패하는 test를 붙였습니다.
+
+## 바뀐 것
+
+- `down`의 `taskkill`을 `encoding="oem", errors="replace"`로 읽습니다. `PYTHONUTF8=1`인 한글 Windows에서 UnicodeDecodeError 추적이 두 번 나오던 것이 사라지고, `taskkill`이 실패해도 stderr·stdout이 None이라 메시지 조립이 깨지지 않습니다.
+- `down`은 기록된 프로세스를 멈춘 뒤 gateway가 아직 답하는지 다시 봅니다(종료 직후 최대 3초 기다림). `up` 밖에서 시작해 PID 기록이 없는 gateway·runner가 답하면 "`up`이 아닌 방법으로 시작한 gateway/runner가 아직 실행 중"이라고 알리고 exit 2로 끝냅니다. 전에는 `종료: 기록된 프로세스 없음`과 exit 0이어서 다음 `up`이 그 프로세스를 그대로 썼습니다. gateway가 다른 PC에 있는 runner 전용 PC에서는 이 설정의 runner id가 아직 연결돼 있을 때만 실패로 봅니다.
+- `send`와 `watch <id>`는 끝났다는 이벤트 뒤에 오는 `request.bundle`(또는 요청 기록의 묶음 필드)을 최대 60초 기다려 `요청 묶음:`과 `재현 등급:`을 출력하고 끝납니다. gateway는 끝났다는 기록을 먼저 저장하고 묶음을 나중에 만들기 때문입니다. 요청 기록에 `bundle_pending`이 없으면(단계를 돌리지 않은 요청) 기다리지 않고, 60초가 지나면 `labhq status`로 보라고 알립니다.
+- `docs/manual.md`의 `down`과 `send`·`watch` 설명을 고쳤습니다.
+
+## 확인
+
+- 봇 P1 후속: bind 주소 대신 URL hostname과 이 PC hostname·인터페이스 주소를 비교합니다. 주소 확인 실패는 로컬 가능성으로 보고 응답 중이면 exit 2입니다. 회귀 5건은 수정 전 실패, 관련 test는 51 passed·1 skipped입니다.
+- 새 test 15건: `tests/test_cli_launch.py` 9건(taskkill 2건, Windows 전용 디코딩 1건, `down` 6건), `tests/test_cli_bundle_wait.py` 6건(실제 `Hub.schedule_terminal`이 커밋하는 이벤트 순서로 `send`·`watch`를 구동). 수정 전 `labhq/cli.py`로 돌리면 11건이 실패합니다. 동작 때문에 실패하는 것은 4건(taskkill 인자·None 처리 1, 기록 없는 gateway 1, 묶음 대기 `send`·`watch` 2)이고 나머지 7건은 새 상수가 없어 먼저 실패합니다.
+- 전체 pytest(Windows, `--basetemp`, xdist 없음): 5466 passed, 66 skipped, 8분 50초.
+- 기존 `test_down_refuses_active_work_and_force_terminates_only_recorded_trees`가 이 PC의 실제 8787 gateway에 닿아 401로 실패해서 `_health`를 막았습니다.
+- `scripts/check_public.sh`, `git diff --check`: 통과.
+
+## 미해결
+
+- 없음. 오늘 밤 8787 instance가 `instances.ps1`로 떠 있으면 PID 기록이 없어 `down`이 이제 exit 2로 알리기만 하고 멈추지는 못합니다. `up`으로 시작한 instance에서만 `down`이 멈춥니다.
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+## 결론
+
+오늘 19:00 PI 시운전 전에 웹 결함 4건을 고쳤다. 새 회귀 test가 네 건 모두 main 코드에서 실패하고 이 branch에서 통과한다.
+
+## 바뀐 것
+
+1. 직접 맡김 표시: 직접 맡긴 요청은 "처리: 직접 맡김"으로 보인다. 경로 결정 없이 끝난 요청(계획 단계 실패 등)은 처리 표시를 뺀다. 3D 요청 행은 영어 phase 대신 2.5D와 같은 한글 단계 이름을 쓰고, 끝난 요청은 상태(완료·실패)만 보인다. 라벨은 `state.js`(`processingLabel`·`phaseLabel`) 한 곳이다.
+2. CP1 대기 단계: `request.plan`은 phase를 `plan`으로 두고, `step_id`가 있는 dispatch가 `execute`로 넘긴다. 스냅숏은 리뷰가 없고 시작한 단계도 없으면 `plan`으로 읽는다.
+3. 직접 요청 중 보내기: `send()`가 `renderComposerMode`와 같은 `mode !== 'direct'` 검사를 한다. 직접 맡긴 요청을 고른 채 보내기를 누르면 새 요청으로 간다(전에는 메모를 보내 409).
+4. 연구 종료 사유: `report_incomplete`, 리뷰 revise·해석 실패, 보고서 작성 실패, 예산 거부, CP2 거절·수정 요청·시간 초과·판독 불가에 사유 한 줄(`cso.py`의 `RESEARCH_END_ERRORS`)을 붙인다. 사유가 비면 `state.js`가 중립 문구를 보인다.
+5. `docs/manual.md`의 화이트보드·직접 요청 보내기·연구 종료 사유 설명을 맞췄다. `web_state_hashes.json`은 request.plan 직후 phase가 바뀐 한 항목(인덱스 5)만 갱신했고, `web_solo_route.cjs`는 state.js로 옮겨 간 라벨을 동작으로 확인하게 고쳤다.
+
+## 실행한 것
+
+- `tests/web_trial_ready.cjs`(CI 목록 `tests/test_web_3d.py`에 추가): 네 결함 모두 main 코드에서 실패, 이 branch에서 통과. 3D 요청 행은 live.js를 그대로 불러 DOM stub로, `send()`는 index.html에서 잘라 vm으로 실행한다.
+- pytest 단언 3곳 추가(`test_research_report.py` 2곳, `test_research_protocol.py` CP2 표): main의 `cso.py`에서 실패, 이 branch에서 통과.
+- Node test 33개 전부 통과. 전체 pytest 통과(exit 0, 8분 42초). `scripts/check_public.sh`, `git diff --check` 통과.
+- index.html을 정적 서버로 띄워 demo 모드가 콘솔 오류 없이 그려지는 것까지 확인했다. 요청 흐름은 Node harness로만 확인했다.
+
+## 미해결
+
+- 3D 화이트보드(`lab3d/src/office.js`)의 `status · phase` 줄은 영어 키 그대로다(이번 점검 항목 밖).
+- 리뷰 revise 뒤 새 CP1을 기다리는 중에 새로고침하면 스냅숏에 리뷰가 남아 `execute`로 읽는다(실시간 경로는 `plan`).
+- 연구가 아닌 `ok=False` 종료 중 사유를 주지 않는 경로(브리핑 실패 등)는 중립 문구가 나온다.
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+## 결론
+
+같은 SHA 재실행에서 사라진 Windows CI flake 4개를 실제시간 제한 대신 event·task 완료 동기화로 바꿨습니다.
+
+## 바뀐 것
+
+| test | CI 실패 횟수 | OS | 증상 |
+|---|---:|---|---|
+| `test_restart_recovery_holds_only_the_step_on_the_limited_engine` | 1 | Windows | 바깥 `wait_for(1s)`가 `TimeoutError`; run 38170211095 재실행 통과 |
+| `test_temporary_process_snapshot_failure_is_rechecked` | 1 | Windows | 바깥 `wait_for(2s)`가 `TimeoutError`; run 38156419427 재실행 통과 |
+| `test_the_lab_records_the_same_with_actions_on[shadow]` | 1 | Windows | terminal status 60초 polling timeout; run 37668212634 재실행 통과 |
+| `test_every_cso_and_direct_turn_kind_waits_for_login[briefing]` | 1 | Windows | 바깥 `wait_for(1s)` 안에 retry가 못 끝남; run 37700811619 재실행 통과 |
+
+- quota test는 독립 단계 완료 event와 recovery task를 직접 기다립니다.
+- stall test는 mock kill 완료 event 뒤 runner task 결과를 확인합니다.
+- mock lab은 request orchestration task를 기다린 뒤 terminal status를 단언합니다.
+- login test는 두 번째 dispatch event 뒤 runner task 결과를 확인합니다.
+- `test_login_retry_expiry_ends_notice_and_next_failure_notifies_again` 2건은 PR #459에서 이미 수정돼 제외했습니다.
+- reused workspace 사례는 단독 25회 실패 0이고 해당 CI 로그가 공유 temp 오염이라 수정하지 않았습니다.
+
+## 실행한 것
+
+- 8개 CPU job 부하, 수정 전: 각 test 30회, 실패 0/30(로컬에서는 미재현)
+- 같은 부하, 수정 후: 각 test 30회, 실패 0/30
+- 관련 test: 65 passed, 1 skipped
+- `tests/test_login_wait.py`: 45 passed
+- Windows 전체 `pytest -q`: 5331 passed, 66 skipped(두 번째 격리 run; 첫 run은 다른 lane pytest와 겹쳐 11건 실패, 해당 11건 단독 재실행은 통과)
+- `scripts/check_public.sh`: 통과
+
+## 미해결
+
+- current head Windows 전체 pytest와 CI는 기록 commit 뒤 확인합니다.
+- 남은 지적: 없음.
+
+## 근거
+
+- `tests/test_quota_wait.py`
+- `tests/test_stall_watch.py`
+- `tests/semantics_shadow_lab.py`
+- `tests/test_login_wait.py`
+- `HANDOFF.md`
+
+🤖 Generated with Codex (gpt-5) for the labhq dev lead
+
 # v0.95 깨끗한 설치 리허설
 
 ## 결론

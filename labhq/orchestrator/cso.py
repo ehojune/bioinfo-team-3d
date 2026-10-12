@@ -480,6 +480,19 @@ RESEARCH_CP2_RULE = (
 RESEARCH_CP2_PLAN_PROMPT = RESEARCH_PLAN_PROMPT.replace(RESEARCH_CP1_ONLY_RULE, RESEARCH_CP2_RULE)
 # CP2 cards an answer without a readable choice gets before the request ends as not approved.
 CP2_MAX_ASKS = 3
+# One readable reason per research ending that is not a success. The office feed prints it after "요청이 실패했어요: ",
+# so a request that ends with a report (report_incomplete) or at a PI card (CP2) no longer shows an empty reason.
+RESEARCH_END_ERRORS = {
+    "report_incomplete": "보고서는 나왔지만 claim 검사에서 문제가 있어요(실행 기록 참고)",
+    "research_reported": "예산 승인을 받지 못해 보고서를 완료로 보지 않았어요",
+    "research_review_revise": "리뷰가 수정을 요구했고 이어 가지 않아 요청이 끝났어요(실행 기록 참고)",
+    "research_review_unparsed": "연구 리뷰 결과를 읽지 못해 요청이 끝났어요(실행 기록 참고)",
+    "research_failed": "연구가 끝까지 가지 못했어요(실행 기록 참고)",
+    "evidence_rejected": "CP2에서 근거를 거절해 요청이 끝났어요",
+    "evidence_revision_requested": "CP2에서 수정을 요청했지만 새 계획으로 이어지지 않아 요청이 끝났어요",
+    "evidence_timed_out": "CP2 카드에 기한 안에 답이 없어 근거를 승인하지 않고 끝냈어요",
+    "evidence_unreadable": "CP2 카드의 선택을 읽지 못해 근거를 승인하지 않고 끝냈어요",
+}
 
 RESEARCH_STEP_PROMPT = """Overall request (context only): {request}
 
@@ -3990,7 +4003,8 @@ class Orchestrator:
                        "report did not run.")
         if source_audit:
             report = _append_report_metadata(report, [source_audit])
-        self._finish(rid, report, serialized(), ok=decided == "approved")
+        self._finish(rid, report, serialized(), ok=decided == "approved",
+                     error=None if decided == "approved" else RESEARCH_END_ERRORS.get(f"evidence_{decided}"))
 
     async def _research_report(self, rid: str, text: str, steps: list[dict], results: dict[str, TaskResult], n: int,
                                serialized: Callable[[], dict[str, dict]], packs: dict, cp2_report: str,
@@ -4013,18 +4027,21 @@ class Orchestrator:
         lookup_section = [f"{FAILED_LOOKUP_TITLE}:\n" + "\n".join(failed_lookup_lines(lookups))] if lookups else []
         cp2_notes = research_cp2_notes(contract)  # PI 점검 R11: the notes reach the reviewer and the report writer
 
-        def end(outcome: str, report: str, ok: bool, review: dict | None, failure: dict | None = None) -> None:
+        def end(outcome: str, report: str, ok: bool, review: dict | None, failure: dict | None = None,
+                error: str | None = None) -> None:
             if failure is not None:
                 contract["failure"] = {"steps": [], "plan_sha256": plan_hash, **failure}
             req["outcome"] = outcome
             self.hub.save_request(rid)
             if lookup_section:
                 report = _execution_warning_summary(report)
-            self._finish(rid, _append_report_metadata(report, lookup_section), serialized(), ok=ok, review=review)
+            self._finish(rid, _append_report_metadata(report, lookup_section), serialized(), ok=ok, review=review,
+                         error=None if ok else error or RESEARCH_END_ERRORS.get(outcome))
 
         def budget_denied(stage: str, review: dict | None) -> None:
             end("research_failed", cp2_report + f"\n\nResearch {stage} stopped: the budget was not approved.",
-                False, review, {"stage": stage, "budget": self.budget_denials[rid]})
+                False, review, {"stage": stage, "budget": self.budget_denials[rid]},
+                error="예산 승인을 받지 못해 연구를 멈췄어요")
 
         stored = contract.get("review") or {}
         review: dict = {}
@@ -4104,7 +4121,8 @@ class Orchestrator:
                 budget_denied("synthesis", review)
             else:
                 end("research_failed", cp2_report + f"\n\nSynthesis failed: {final.error}", False, review,
-                    {"stage": "synthesis", "error": final.error or "unknown error"})
+                    {"stage": "synthesis", "error": final.error or "unknown error"},
+                    error=f"보고서 작성에 실패했어요: {short(final.error or '원인을 알 수 없어요', 120)}")
             return
         # A report that finished keeps its text and check even if the budget card after it was denied; the denial
         # only fails the request, as in the generic synthesis (run_step: a completed attempt keeps its result).

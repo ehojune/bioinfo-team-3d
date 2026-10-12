@@ -381,12 +381,12 @@ async def test_restart_recovery_holds_only_the_step_on_the_limited_engine(tmp_pa
     restored.dispatch = dispatch
     restored.orchestrator.run_request = run_request
     recovery = asyncio.create_task(restored.resume_quota_request("r"))
-    await asyncio.wait_for(independent_done.wait(), 1)
+    await asyncio.wait_for(independent_done.wait(), 60)
     assert outcome["B"].ok and calls == ["B"]
     assert restored.requests["r"]["status"] == "waiting_quota"
     assert restored.request_summary(restored.requests["r"])["step_progress"]["steps"]["A"] == "waiting_quota"
     await restored.force_quota_resume("r", "A")
-    await asyncio.wait_for(recovery, 1)
+    await asyncio.wait_for(recovery, 60)
     assert outcome["A"].ok and calls == ["B", "A"]
     assert "quota_waits" not in restored.requests["r"]
 

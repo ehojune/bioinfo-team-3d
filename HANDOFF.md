@@ -34,7 +34,7 @@
 | PI에게 물을 때 | 지금 무엇이 일어나고, 각 선택이 PI에게 무엇을 바꾸는지를 먼저 한 줄씩 쓴다. 비슷한 말(개발 기록 저장소 vs 프로젝트별 저장소)은 구분해 쓴다 |
 | PI 창구 감시 | 창구는 고정 issue #435. 세션 시작·문맥 요약 뒤·PI가 채팅을 떠날 때 창구 감시를 켠다. 10-06 새벽 감시가 꺼진 채 결정 요청을 올려 PI 댓글 둘을 1시간 넘게 늦게 봤다 |
 | Windows Codex sandbox | Codex 위임 전에 UAC 승인 창(`consent.exe`)이 떠 있는지 본다. 떠 있으면 Codex 셸이 실패가 아니라 무기한 멈춰 토큰만 쓴다(10-06, #382). 승인은 PI만 한다 |
-| CI 실패가 이상할 때 | Linux job 셋이 같은 시각에 step 없이 실패하면 GitHub runner 미배정이다(check-run 요약 "not acquired by Runner"). 로그가 없으니 요약부터 보고 실패 job만 다시 돌린다 |
+| CI 실패가 이상할 때 | Linux job 셋이 같은 시각에 step 없이 실패하면 GitHub runner 미배정이다(check-run 요약 "not acquired by Runner"). 로그가 없으니 요약부터 보고 실패 job만 다시 돌린다. test flake는 같은 SHA 재실행 성공을 확인하고 실제시간 제한 대신 event·task 완료를 기다린다 |
 
 ## 작업 큐 (2026-10-06 갱신)
 

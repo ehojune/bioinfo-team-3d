@@ -18,6 +18,16 @@ const REQUEST_STATUS_KO = { running: '진행 중', waiting_for_runner: '러너 �
   waiting_login: '로그인 대기', waiting_facilities_fix: '환경 수정 승인 대기', waiting_pi: 'PI 결정 대기',
   interrupted: '중단됨', done: '완료', failed: '실패', cancelled: '취소됨', rejected: '거부됨' };
 const requestStatusLabel = status => REQUEST_STATUS_KO[status] || String(status || '상태 모름');
+// How a request is handled, for the 2.5D board and the 3D request row. A direct request never gets a route decision;
+// a request that is no longer active and has none (failed before routing) shows no label, not "결정 중".
+function processingLabel(q) {
+  const p = q.processing || {};
+  if (q.mode === 'direct') return '처리: 직접 맡김';
+  if (p.fallback) return '처리: 단독 실패 → 팀';
+  if (p.mode === 'solo') return `처리: 단독(${p.agent_id})`;
+  if (p.mode === 'team') return '처리: 팀';
+  return isActiveRequest(q.status) ? '처리: 결정 중' : '';
+}
 // The status with what the PI can do about it: resume an interrupted request, or which runner is still missing.
 function requestStatusText(q, approvals) {
   if (!q) return '';
@@ -113,6 +123,8 @@ const GH_KO = { issue: 'GitHub에 이 요청의 이슈를 열었어요', plan: '
   report: '보고서를 저장소에 커밋했어요', final: '이슈에 최종 보고를 올리고 닫았어요', recruit: '이슈에 파견직 합류를 기록했어요',
   pr: 'PR을 열었어요', codex_review: 'PR에 "@codex review" 코멘트를 남겼어요' };
 const PHASES = [['briefing', '브리핑'], ['plan', '계획'], ['execute', '실행'], ['review', '리뷰'], ['report', '보고']];
+// The same Korean names the 2.5D phase list shows; the internal key never reaches the PI.
+const phaseLabel = q => q.phase === 'done' ? '완료' : (PHASES.find(([key]) => key === q.phase) || [])[1] || String(q.phase);
 
 const ag = id => S.agents.get(id);
 const visual = a => a.state === 'done' && now() - (a.stateAt || 0) > 3
@@ -216,7 +228,8 @@ function onDispatch(ev) {
   if (q) {
     const ph = { briefing: 'briefing', plan: 'plan', review: 'review', synthesis: 'report', direct: 'execute' }[d.kind];
     if (ph) q.phase = ph;
-    if (d.step_id) q.steps[d.step_id] = 'working';
+    // A planned research request waits at CP1 in 계획; it is in 실행 once a step is dispatched.
+    if (d.step_id) { q.steps[d.step_id] = 'working'; q.phase = 'execute'; }
   }
   const wake = /HPC 결과/.test(d.title || '');
   let m = null;
@@ -264,8 +277,11 @@ function apply(ev, replay = false) {
         for (const [sid, detail] of Object.entries(r.step_details || {})) Object.assign(stepDetail(r.id, sid), detail);
         if (r.review) q.review = r.review;
         // recent_events may no longer hold a long request's plan event: a planned active request is past briefing.
-        if (isActiveRequest(r.status) && q.phase === 'briefing' && q.plan.length)
-          q.phase = r.review && r.review.verdict !== 'revise' ? 'review' : 'execute';
+        // With no step started and no review yet it is still in 계획, waiting for the PI to approve the plan (CP1).
+        if (isActiveRequest(r.status) && (q.phase === 'briefing' || q.phase === 'plan') && q.plan.length) {
+          const started = Object.values(q.steps).some(status => status !== 'pending');
+          q.phase = r.review ? (r.review.verdict !== 'revise' ? 'review' : 'execute') : started ? 'execute' : 'plan';
+        }
         if (r.pipeline_pr) setPipelinePr(q, r.pipeline_pr);  // the stored status outlives the replayed events
         if (!isActiveRequest(r.status)) q.phase = 'done';
       }
@@ -409,7 +425,7 @@ function apply(ev, replay = false) {
       break;
     }
     case 'request.plan': {
-      const q = req(rid); setPlan(q, d); q.phase = 'execute';
+      const q = req(rid); setPlan(q, d); q.phase = 'plan';  // 실행 starts with the first dispatched step (onDispatch)
       feed({ who: 'cso', text: `계획을 세웠어요: ${(d.steps || []).length}단계${(d.recruit || []).length ? ', 파견직 채용 제안 1건' : ''}` }, ts, rid);
       // #446: each topic checklist item the plan could not do reaches the PI with its reason, one line each.
       // A re-plan re-sends the whole list; only a warning not shown before for this request is posted.
@@ -549,7 +565,12 @@ function apply(ev, replay = false) {
         report_appendix_chars: d.report_appendix_chars });
       if (d.error) q.error = d.error;
       q.bundlePath = d.bundle_path || ''; q.bundleStatus = d.bundle_status || ''; q.bundleGrade = d.bundle_grade || ''; q.bundleGradeReasons = d.bundle_grade_reasons || []; q.bundleWarning = d.bundle_warning || '';
-      feed({ who: 'cso', text: q.status === 'done' ? '최종 보고서를 올렸어요' : q.status === 'cancelled' ? '요청을 취소했어요. 끝난 단계까지 보고서에 남겼어요' : `요청이 실패했어요: ${short(d.error, 100)}`, cls: q.status === 'failed' ? 'alert' : '' }, ts, rid);
+      // The gateway sends a reason; when it did not, say what is known instead of ending the line on a colon.
+      const why = short(d.error, 100);
+      const failedText = why ? `요청이 실패했어요: ${why}` : d.report
+        ? '요청을 완료로 보지 않았어요. 보고서와 실행 기록에서 이유를 확인하세요'
+        : '요청이 끝까지 가지 못했어요. 실행 기록을 보세요';
+      feed({ who: 'cso', text: q.status === 'done' ? '최종 보고서를 올렸어요' : q.status === 'cancelled' ? '요청을 취소했어요. 끝난 단계까지 보고서에 남겼어요' : failedText, cls: q.status === 'failed' ? 'alert' : '' }, ts, rid);
       break;
     }
     case 'request.bundle': {
@@ -634,9 +655,9 @@ function toolLabel(name) {
     Skill: '스킬 실행', Agent: '서브에이전트', edit: '파일 수정', web_search: '웹 검색' }[n]) || n;
 }
 
-return { S, apply, ag, visual, stateText, nick, req, setPlan, feed, fillFollowups, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES };
+return { S, apply, ag, visual, stateText, nick, req, setPlan, feed, fillFollowups, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES, phaseLabel };
 }
 root.LabHQState = { createOfficeState, costLabel, engineCostLabel, agentCostLabel, agentSpentLabel, totalCostLabel,
-  isActiveRequest, isTerminalRequest, REQUEST_STATUS_KO, requestStatusLabel, requestStatusText,
+  isActiveRequest, isTerminalRequest, REQUEST_STATUS_KO, requestStatusLabel, requestStatusText, processingLabel,
   websocketCloseAction };
 })(globalThis);

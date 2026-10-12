@@ -2,7 +2,7 @@ import {answerRequired, revisionNoteMissing, syncDecisionCards} from '../../ui/d
 
 // DOM controls and transport stay outside the shared event reducer.
 export function startLiveOffice(onState) {
-  const {S, apply, visual, fillRequestDetail, KIND_KO} = globalThis.LabHQState.createOfficeState();
+  const {S, apply, visual, fillRequestDetail, KIND_KO, phaseLabel} = globalThis.LabHQState.createOfficeState();
   const $ = id => document.getElementById(id);
   const params = new URLSearchParams(location.search);
   const readToken = () => { try { return localStorage.getItem('labhq_token') || ''; } catch { return ''; } };
@@ -90,10 +90,9 @@ export function startLiveOffice(onState) {
       if (prior?.dataset.renderKey === key) { rows.push(prior); continue; }
       const row = document.createElement('article'); row.dataset.requestId = q.id; row.dataset.renderKey = key; rows.push(row);
       text(row, 'strong', q.text || q.id);
-      const route = q.processing?.fallback ? '처리: 단독 실패 → 팀'
-        : q.processing?.mode === 'solo' ? `처리: 단독(${q.processing.agent_id})`
-        : q.processing?.mode === 'team' ? '처리: 팀' : '처리: 결정 중';
-      text(row, 'p', `${status} · ${q.phase} · ${route}`);
+      // Same labels as the 2.5D board. A finished request says 완료/실패 in its status already, so no phase then.
+      text(row, 'p', [status, q.phase === 'done' ? '' : phaseLabel(q), globalThis.LabHQState.processingLabel(q)]
+        .filter(Boolean).join(' · '));
       const audit = text(row, 'a', '감사 번들');
       audit.href = `/api/requests/${encodeURIComponent(q.id)}/audit-bundle`;
       audit.onclick = event => { event.preventDefault(); downloadAuditBundle(q.id); };
