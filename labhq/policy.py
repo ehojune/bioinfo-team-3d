@@ -1235,6 +1235,13 @@ def _ps_piped_delete(command: str) -> bool:
     return bool(_PS_DELETE_WORD.search(re.sub(r"'[^']*'|\"[^\"]*\"", "''", tail)))
 
 
+def _ps_method_delete(command: str) -> bool:
+    """Whether a PowerShell command calls a .NET delete. Text a data command only prints or writes (`Write-Output
+    '$_.Delete()'`) is blanked first, as the write check does; where that split is unsure the raw text counts (#535)."""
+    text = _blank_non_syntax(command, True)
+    return bool(_PS_METHOD_DELETE.search(command if text is None else text))
+
+
 def _ps_stages(text: str) -> list[str] | None:
     """`text` split at its top-level pipes (not inside quotes, braces or parentheses); None when one is left open."""
     stages: list[str] = []
@@ -1459,28 +1466,119 @@ def _rm_word(word: str) -> tuple[str, bool]:
     return "".join(value), False
 
 
+# Programs that run the words after them as a command line, so an `rm` there is a real rm (#535 follow-up).
+_RUNS_COMMAND_LINE = _EXECUTES_ARGUMENTS | frozenset({
+    "command", "builtin", "stdbuf", "setsid", "doas", "busybox", "ionice", "taskset", "chrt", "flock", "srun",
+    "mpirun", "mpiexec", "unshare", "nsenter", "chroot", "runuser", "strace", "ltrace", "valgrind", "unbuffer"})
+# Where a simple command can start, read lexically. An opening quote right before the word counts too (`_rm_runs`).
+_COMMAND_START = frozenset(";|&\n(`{'\"")
+_REDIRECTION_WORD = re.compile(r"(?:\d+|&)?(?:>>?|<|>&|<&|&>>?)(.*)")
+_GIT_VALUE_OPTIONS = frozenset({"-c", "--namespace", "--super-prefix", "--config-env"})
+
+
+def _git_rm_reaches_another_tree(options: list[str], assignments: list[str]) -> bool | None:
+    """`git <options> rm`: True when the options or the environment may point git at another tree (`-C`, `--git-dir`,
+    `--work-tree`, `core.worktree`, GIT_DIR/GIT_WORK_TREE) or a computed word may, False when it removes files in the
+    current tree. None when `rm` is not the subcommand but another one's argument (`git log --grep rm`)."""
+    if any(re.match(r"GIT_(?:DIR|WORK_TREE)=", word) for word in assignments) or \
+            any("core.worktree" in _bare(word).casefold() for word in options):
+        return True
+    k = 0
+    while k < len(options):
+        word, value = options[k], _bare(options[k])
+        if "$" in word or "`" in word:
+            return True
+        if not value.startswith("-"):
+            return None
+        name = value.split("=", 1)[0]
+        if name in {"-C", "--git-dir", "--work-tree"} or value.startswith("-C"):
+            return True
+        k += 2 if name in _GIT_VALUE_OPTIONS and "=" not in value else 1
+    return False
+
+
+def _rm_runs(command: str, match: re.Match) -> str:
+    """How a lexical `rm` word runs: "rm" for a filesystem rm, "elsewhere" for a `git rm` that may reach another tree,
+    "" for another program's argument (`docker rm "$id"`, `git rm -r x` in the current tree).
+
+    The rm is a filesystem rm when it starts a simple command (after assignments, keywords and redirections), or
+    follows a computed program or one that runs a command line (`sudo`, `xargs`, `find`, `sh`, ...).
+    """
+    start = match.start()
+    while start and not command[start - 1].isspace() and command[start - 1] not in _COMMAND_START:
+        start -= 1
+    name = re.split(r"[\\/]", _bare(command[start:match.end()]))[-1].lstrip("!").casefold()
+    if name not in {"rm", "rm.exe"}:
+        return ""  # `X=rm`: an assignment's value
+    if start and command[start - 1] in "'\"":
+        return "rm"  # it opens quoted text, which may be run (`sh -c 'rm ..'`)
+    head = start
+    while head and command[head - 1] not in _COMMAND_START - {"'", '"'}:
+        head -= 1
+    words: list[str] = []
+    assignments: list[str] = []
+    before = command[head:start].split()
+    k = 0
+    while k < len(before):
+        word = before[k]
+        redirection = _REDIRECTION_WORD.fullmatch(word)
+        if redirection:
+            k += 1 if redirection.group(1) else 2
+        elif not words and _BASH_ASSIGNMENT.match(word):
+            assignments.append(word)
+            k += 1
+        elif not words and word in _BASH_KEYWORDS:
+            k += 1
+        else:
+            words.append(word)
+            k += 1
+    if not words:
+        return "rm"
+    program = re.split(r"[\\/]", _bare(words[0]))[-1].casefold()
+    program = program[:-4] if program.endswith(".exe") else program
+    if "$" in words[0] or "`" in words[0] or program in _RUNS_COMMAND_LINE:
+        return "rm"
+    if program == "git" and _git_rm_reaches_another_tree(words[1:], assignments):
+        return "elsewhere"
+    return ""
+
+
 def _recursive_rm(command: str) -> bool:
     """Whether a bash `rm` asks for recursion in any of its option words (#17), or may (#533).
 
     GNU rm reads options anywhere before `--`, so `rm -f -r`, `rm -v -rf`, `rm --recursive` and `rm x -r` are all
     recursive; the pattern in settings sees only the first cluster. The scan is lexical, as that pattern is: a
-    quoted `sh -c 'rm -f -r x'` counts too. A word the gate cannot read as literal text may be an option, `-r` among
-    them: one that starts with an expansion (`$'-rf'`, `"$OPT"`) or an option followed by one (`-f"$X"`) counts as
-    recursive. After `--` every word is a target.
+    quoted `sh -c 'rm -f -r x'` counts too, but `docker rm` and `git rm` are not filesystem rms (`_rm_runs`). A word
+    the gate cannot read as literal text may be an option, `-r` among them: one that starts with an expansion
+    (`$'-rf'`, `"$OPT"`) or an option followed by one (`-f"$X"`) counts as recursive, except one double-quoted word
+    that is the only operand (`rm -f "$f"`): one word is one option cluster with nothing to delete, or one file.
+    After `--` every word is a target. A `git rm` that may reach another tree counts too.
     """
     for match in _BASH_RM_WORD.finditer(command):
+        runs = _rm_runs(command, match)
+        if runs == "elsewhere":
+            return True
+        if runs != "rm":
+            continue
+        computed: list[str] = []
+        operands = 0
         for word in _simple_command_words(command, match.end())[0]:
             value, expands = _rm_word(word)
             if expands and (not value or value.startswith("-")):
-                return True
-            if value == "--":
+                computed.append(word)
+            elif value == "--":
                 break
-            if value.startswith("--"):
+            elif value.startswith("--"):
                 flag = value.split("=", 1)[0]
                 if len(flag) > 2 and "--recursive".startswith(flag):
                     return True
-            elif value.startswith("-") and any(letter in "rR" for letter in value[1:]):
-                return True
+            elif value.startswith("-") and len(value) > 1:
+                if any(letter in "rR" for letter in value[1:]):
+                    return True
+            elif value:
+                operands += 1
+        if computed and not (len(computed) == 1 and not operands and re.fullmatch(r'"[^"]*"', computed[0])):
+            return True
     return False
 
 
@@ -2452,9 +2550,10 @@ def _evaluate_tool(
         git_bash = tool_name == "Bash" and any(re.match(r"^[a-z]:/", root) for root in roots)
         for pat in patterns:
             if pat == delete_pattern:
-                # The pattern sees only rm's first option cluster; every option word counts (#17).
-                if ((re.search(pat, cmd, re.IGNORECASE) or not powershell and _recursive_rm(cmd))
-                        and not _recursive_delete_inside_workdir(cmd, powershell, workdir)):
+                # The pattern sees only rm's first option cluster; every option word of a real rm counts (#17), and
+                # `docker rm` or `git rm` in its own tree is not one (#535 follow-up).
+                recursive = _recursive_rm(cmd) if not powershell else re.search(pat, cmd, re.IGNORECASE)
+                if recursive and not _recursive_delete_inside_workdir(cmd, powershell, workdir):
                     return Decision("ask", f"재귀 삭제 확인 필요: `{cmd[:200]}`")
                 # A deleting find meets the same `.tmp` rule (find -delete, -exec rm, | xargs rm).
                 if not powershell and not all(_find_delete_inside_step_tmp(cmd, find, workdir)
@@ -2465,7 +2564,7 @@ def _evaluate_tool(
                 # A listing piped into a delete, in a script block too, meets the same `.tmp` rule (#525 review). A
                 # .NET delete (`.Delete($true)`, `[IO.Directory]::Delete(p, $true)`) names no literal path, so it
                 # passes only as `$_.Delete()` in such a pipeline (#533).
-                if (powershell and (_ps_piped_delete(cmd) or _PS_METHOD_DELETE.search(cmd))
+                if (powershell and (_ps_piped_delete(cmd) or _ps_method_delete(cmd))
                         and not _ps_piped_delete_inside_step_tmp(cmd, workdir)):
                     return Decision("ask", f"재귀 삭제 확인 필요: `{cmd[:200]}`")
                 continue

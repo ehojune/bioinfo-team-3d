@@ -539,6 +539,40 @@ def test_an_r_install_call_among_another_programs_arguments_is_data(tmp_path, en
     assert denial(tmp_path, command, environment_step=environment_step, tool=tool) is None
 
 
+@pytest.mark.parametrize("environment_step", [True, False])
+@pytest.mark.parametrize("command", [
+    # PR #535 review: a launcher's global options come before its subcommand (`uv --project foo run`); the program
+    # the subcommand runs is named in its own right.
+    '''uv --project foo run Rscript -e "install.packages('x')"''',
+    '''uv --directory d run Rscript -e "install.packages('x')"''',
+    'uv --project foo run "$PIP" "$ACTION" scanpy',
+    '''conda -n base run Rscript -e "install.packages('x')"''',
+    'micromamba -r /opt/mm run -n base "$PIP" "$ACTION" scanpy',
+    'conda -n base "$ACTION" scanpy',
+    '''uv tool run --from x Rscript -e "install.packages('x')"''',
+    'uvx --from x "$PIP" "$ACTION" scanpy',
+    '''pixi run Rscript -e "install.packages('x')"''',
+    '''poetry -C d run Rscript -e "install.packages('x')"''',
+    'pnpm --dir d dlx "$PIP" install scanpy',
+    # An option the table does not list, or a launcher the module does not know: every later word may be the program.
+    '''uv --frobnicate x run Rscript -e "install.packages('x')"''',
+    'uv --frobnicate x run "$PIP" "$ACTION" scanpy',
+    '''pdm run Rscript -e "install.packages('x')"''',
+])
+def test_a_launcher_names_its_program_after_global_options_or_fails_closed(tmp_path, environment_step, command):
+    assert denial(tmp_path, command, environment_step=environment_step)
+
+
+@pytest.mark.parametrize("environment_step", [True, False])
+@pytest.mark.parametrize("command", [
+    '''uv --project foo run python wrapper.py "$IN" "install.packages('x')"''',
+    'conda -n base run python s.py "$IN"',
+    'uv --project foo run python s.py "$IN" "$OUT"',
+])
+def test_a_launched_analysis_script_keeps_its_computed_arguments(tmp_path, environment_step, command):
+    assert denial(tmp_path, command, environment_step=environment_step) is None
+
+
 def test_a_quoted_variable_r_install_meets_the_same_library_rule_as_rscript(tmp_path):
     shared = '''"$RSCRIPT" -e "install.packages('DESeq2')"'''
     assert "shared R library" in denial(tmp_path, shared, environment_step=False)

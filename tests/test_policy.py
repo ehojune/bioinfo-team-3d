@@ -523,6 +523,34 @@ def test_find_payloads_and_rm_options_the_gate_cannot_read_ask(command):
     assert decision.reason.startswith("재귀 삭제 확인 필요: `")
 
 
+@pytest.mark.parametrize("command", [
+    # #535 follow-up: only a real rm meets the recursive-delete rule; `docker rm` is another program's subcommand.
+    'docker rm "$id"', "docker rm -f $(docker ps -aq)",
+    # `git rm` removes files in the current tree only, as `git add` writes there.
+    'git rm "$f"', 'git rm -r "$d"', "git rm -r --cached outputs/old", "git log --grep rm -r",
+    # One double-quoted computed word as the only operand: one option cluster with nothing to delete, or one file.
+    'rm -f "$f"', 'rm "$tmp"', 'rm -fv "${out}.tmp"',
+])
+def test_rm_words_that_cannot_delete_recursively_stay_allowed(command):
+    assert _decide_in_windows_step(command).action == "allow"
+
+
+@pytest.mark.parametrize("command", [
+    # A git rm the options or environment may point at another tree.
+    "git -C C:/Users/pi/repo rm notes.txt", "git --work-tree=C:/Users/pi rm -r Documents",
+    'git --git-dir "$G" rm f', 'git "$OPT" rm f', "GIT_WORK_TREE=C:/Users/pi git rm Documents/x",
+    "git -c core.worktree=C:/Users/pi rm Documents/x", "git -c alias.x='!rm -rf C:/Users/pi/Documents' x",
+    # Computed words rm may read as options, and real rms after a wrapper, a computed program or a redirection.
+    'rm -f "$a" "$b"', "rm -f $f", 'rm -f "$f" C:/Users/pi/x', 'rm C:/Users/pi/x "$f"', 'rm -r "$f"',
+    "sudo rm -rf C:/Users/pi/Documents", '"$RUNNER" rm -rf C:/Users/pi/Documents',
+    "2>/dev/null rm -rf C:/Users/pi/Documents",
+])
+def test_git_rm_into_another_tree_and_unreadable_rm_operands_ask(command):
+    decision = _decide_in_windows_step(command)
+    assert decision.action == "ask"
+    assert decision.reason.startswith("재귀 삭제 확인 필요: `")
+
+
 @pytest.mark.parametrize("start", [".tmp/link", ".tmp/link/"])
 def test_a_find_delete_whose_start_is_a_link_out_of_the_step_asks(tmp_path, start):
     outside = tmp_path / "outside"
@@ -621,6 +649,16 @@ def test_a_powershell_delete_that_may_reach_another_path_asks(command):
     decision = _decide_powershell_in_windows_step(command)
     assert decision.action == "ask"
     assert decision.reason.startswith("재귀 삭제 확인 필요: `")
+
+
+@pytest.mark.parametrize("command", [
+    # PR #535 review: a .NET delete spelled inside text a data command prints or writes is not a call.
+    "Write-Output '$_.Delete()'", """Set-Content notes.txt '[IO.File]::Delete("x")'""",
+])
+def test_a_dotnet_delete_inside_a_powershell_data_string_is_text(command):
+    assert _decide_powershell_in_windows_step(command).action == "allow"
+    # Text run as code is still read as a delete.
+    assert _decide_powershell_in_windows_step(f"iex {command.split(' ', 1)[1]}").action == "ask"
 
 
 OUTSIDE_HOME = {"HOME": "/home/pi", "USERPROFILE": "C:\\Users\\pi"}
