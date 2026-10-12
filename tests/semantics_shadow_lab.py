@@ -82,7 +82,7 @@ async def run_lab(tmp: Path, semantics: Any, texts: list[str], *, project_id: st
                                                **(request or {})))
             running = hub.request_tasks.get(rid)
             if running is not None:
-                await running
+                await asyncio.wait_for(running, 120)  # bound a deadlock without timing the run (PR #539 review)
             assert is_terminal_request(hub.requests[rid]["status"])
             rids.append(rid)
         if hub.semantics_shadow is not None:

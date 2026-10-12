@@ -409,8 +409,8 @@ async def test_every_cso_and_direct_turn_kind_waits_for_login(tmp_path, kind):
     hub.dispatch = dispatch
     running = asyncio.create_task(Orchestrator(hub).run_step(
         Task(agent_id="worker", request_id="r", prompt=kind, meta={"kind": kind})))
-    await retried.wait()
-    result = await running
+    await asyncio.wait_for(retried.wait(), 60)
+    result = await asyncio.wait_for(running, 60)
     assert result.ok and [task.meta["kind"] for task in calls] == [kind, kind]
 
 

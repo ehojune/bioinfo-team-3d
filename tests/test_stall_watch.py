@@ -370,8 +370,8 @@ async def test_temporary_process_snapshot_failure_is_rechecked(tmp_path, monkeyp
 
     running = asyncio.create_task(
         runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"})))
-    await killed_event.wait()
-    result = await running
+    await asyncio.wait_for(killed_event.wait(), 60)
+    result = await asyncio.wait_for(running, 60)
 
     assert snapshots >= 4
     assert killed == [41073]
