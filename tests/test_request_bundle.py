@@ -36,6 +36,23 @@ def configured(tmp_path: Path) -> Settings:
     return settings
 
 
+def pending_bundle_fixture(tmp_path: Path, rid: str) -> tuple[Settings, dict, dict]:
+    settings = configured(tmp_path)
+    workdir = Path(settings.runner.workspace_root) / "2026-10-12" / f"task_{rid}"
+    output = workdir / "outputs" / "answer.txt"
+    write(workdir / "manifest.json", json.dumps({"host": platform.node()}))
+    write(output, "answer\n")
+    result = {"task_id": f"task-{rid}", "agent_id": "analyst", "ok": True,
+              "workdir": str(workdir), "workdir_id": workdir.name,
+              "outputs": ["outputs/answer.txt"],
+              "output_sha256": {"outputs/answer.txt": digest(output)}}
+    request = {"id": rid, "text": "request", "mode": "direct", "status": "done",
+               "report": "body", "report_appendix": "", "results": {"direct": result},
+               "plan": {"steps": []}}
+    task = {"request_id": rid, "kind": "direct", "completed": True, "result": result}
+    return settings, request, task
+
+
 def write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
@@ -633,6 +650,150 @@ async def test_scheduled_bundle_uses_one_worker_without_blocking_loop(tmp_path, 
 
 
 @pytest.mark.asyncio
+async def test_pending_bundle_survives_forced_stop_and_rebuilds_on_restart(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from labhq.gateway.server import create_app
+
+    settings, request, ledger = pending_bundle_fixture(tmp_path, "forced")
+    hub = Hub(settings)
+    hub.requests["forced"] = request
+    hub.store.put("task", "task-forced", ledger)
+
+    copying = hub.schedule_terminal("forced", "request.completed", {"ok": True})
+    assert hub.store.get("request", "forced")["bundle_pending"] is True
+    copying.cancel()  # model `down --force`: the terminal commit landed but the worker never started
+    with pytest.raises(asyncio.CancelledError):
+        await copying
+    hub.store.close()
+
+    app = create_app(settings)
+    with TestClient(app):
+        pass  # startup schedules the marked request; shutdown waits for that worker
+    restored = app.state.hub
+
+    saved = restored.store.get("request", "forced")
+    assert "bundle_pending" not in saved
+    assert Path(saved["bundle_path"], "steps", "direct", "outputs", "answer.txt").read_text(
+        encoding="utf-8") == "answer\n"
+    assert [event["type"] for event in restored.store.events_since(0)].count("request.bundle") == 1
+    restored.store.close()
+
+
+@pytest.mark.asyncio
+async def test_restart_ignores_old_terminal_request_without_bundle_marker(tmp_path, monkeypatch):
+    settings, request, ledger = pending_bundle_fixture(tmp_path, "old")
+    hub = Hub(settings)
+    hub.requests["old"] = request
+    hub.save_request("old")
+    hub.store.put("task", "task-old", ledger)
+    hub.store.close()
+    calls = []
+
+    def unexpected(*_args):
+        calls.append("called")
+        raise AssertionError("old requests must not be bundled at startup")
+
+    monkeypatch.setattr(request_bundle_module, "build_request_bundle", unexpected)
+    restored = Hub(settings)
+
+    assert restored.recover_pending_bundles() == []
+    assert calls == [] and restored.terminal_tasks == {}
+    restored.store.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_pending_bundle_warns_once_and_is_not_retried(tmp_path, monkeypatch, caplog):
+    settings, request, ledger = pending_bundle_fixture(tmp_path, "failed_pending")
+    request["bundle_pending"] = True
+    hub = Hub(settings)
+    hub.requests["failed_pending"] = request
+    hub.save_request("failed_pending")
+    hub.store.put("task", "task-failed-pending", ledger)
+    hub.store.close()
+    calls = []
+
+    def fail(*_args):
+        calls.append("called")
+        raise OSError("disk full")
+
+    monkeypatch.setattr(request_bundle_module, "build_request_bundle", fail)
+    caplog.set_level("WARNING")
+    restored = Hub(settings)
+    assert restored.recover_pending_bundles() == ["failed_pending"]
+    await asyncio.wait_for(restored.terminal_tasks["failed_pending"], 5)
+    assert calls == ["called"]
+    assert "bundle_pending" not in restored.store.get("request", "failed_pending")
+    assert "disk full" in restored.requests["failed_pending"]["bundle_warning"]
+    assert sum("request bundle unavailable for failed_pending" in record.getMessage()
+               for record in caplog.records) == 1
+    restored.store.close()
+
+    again = Hub(settings)
+    assert again.recover_pending_bundles() == []
+    assert calls == ["called"]
+    again.store.close()
+
+
+@pytest.mark.asyncio
+async def test_recovered_bundle_replaces_partial_temp_and_target_dirs(tmp_path):
+    settings, request, ledger = pending_bundle_fixture(tmp_path, "partial")
+    request["bundle_pending"] = True
+    hub = Hub(settings)
+    hub.requests["partial"] = request
+    hub.save_request("partial")
+    hub.store.put("task", "task-partial", ledger)
+    hub.store.close()
+    requests_root = Path(settings.runner.workspace_root) / "requests"
+    write(requests_root / "partial" / "stale-target.txt", "stale\n")
+    write(requests_root / ".partial.tmp" / "stale-temp.txt", "stale\n")
+
+    restored = Hub(settings)
+    assert restored.recover_pending_bundles() == ["partial"]
+    await asyncio.wait_for(restored.terminal_tasks["partial"], 5)
+
+    target = requests_root / "partial"
+    assert not (target / "stale-target.txt").exists()
+    assert not (requests_root / ".partial.tmp").exists()
+    assert (target / "steps" / "direct" / "outputs" / "answer.txt").is_file()
+    restored.store.close()
+
+
+@pytest.mark.asyncio
+async def test_recovered_bundle_is_finishing_until_worker_completes(tmp_path, monkeypatch):
+    settings, request, ledger = pending_bundle_fixture(tmp_path, "readiness")
+    request["bundle_pending"] = True
+    hub = Hub(settings)
+    hub.requests["readiness"] = request
+    hub.save_request("readiness")
+    hub.store.put("task", "task-readiness", ledger)
+    hub.store.close()
+    started = asyncio.Event()
+    release = threading.Event()
+    loop = asyncio.get_running_loop()
+
+    def slow_bundle(*_args):
+        loop.call_soon_threadsafe(started.set)
+        assert release.wait(5)
+        return {"path": str(tmp_path / "rebuilt"), "status": "complete"}
+
+    monkeypatch.setattr(request_bundle_module, "build_request_bundle", slow_bundle)
+    restored = Hub(settings)
+    assert restored.recover_pending_bundles() == ["readiness"]
+    try:
+        await asyncio.wait_for(started.wait(), 2)
+        readiness = restored.shutdown_readiness()
+        assert readiness["ready"] is False
+        assert [(row["id"], row["stage"]) for row in readiness["finishing"]] == [
+            ("readiness", "bundle")]
+    finally:
+        release.set()
+    await asyncio.wait_for(restored.terminal_tasks["readiness"], 5)
+    assert restored.shutdown_readiness()["ready"] is True
+    restored.store.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("mode, research, terminal", [
     ("direct", False, "request.completed"),
     ("orchestrate", False, "request.completed"),
@@ -689,6 +850,7 @@ async def test_request_without_any_step_records_no_bundle_warning(tmp_path, term
     assert hub.schedule_terminal("early", terminal, data) is None
 
     assert "bundle_warning" not in data and "bundle_warning" not in hub.requests["early"]
+    assert "bundle_pending" not in hub.requests["early"]
     assert "bundle_path" not in hub.requests["early"]
     assert hub.events[-1]["type"] == terminal
     assert not any(event["type"] == "request.bundle" for event in hub.store.events_since(0))
