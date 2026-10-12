@@ -1,0 +1,5 @@
+pr: 538
+rows:
+- sha: f2bf8ed
+  at: 2026-10-12 15:02
+  text: "doctor에 유료 엔진 canary와 직원 모델·CLI 최소 판본 검사를 추가"
