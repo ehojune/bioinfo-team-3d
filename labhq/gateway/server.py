@@ -860,6 +860,7 @@ class Hub:
 
     def _commit_bundle_record(self, rid: str, data: dict) -> None:
         """Checkpoint the post-terminal bundle outcome with exactly one separate event."""
+        self.requests[rid].pop("bundle_pending", None)
         self.requests[rid]["updated_at"] = time.time()
         event = self.store.commit_request_event(
             rid, self.requests[rid],
@@ -889,6 +890,7 @@ class Hub:
             self._apply_bundle_outcome(rid, data, self._bundle_outcome(rid))
             self._commit_terminal_record(rid, typ, data)
             return
+        self.requests[rid]["bundle_pending"] = True
         self._commit_terminal_record(rid, typ, data)
         self._apply_bundle_outcome(rid, data, self._bundle_outcome(rid))
         self._commit_bundle_record(rid, data)
@@ -910,7 +912,15 @@ class Hub:
         if not self._has_bundle_workdir(rid):
             self.commit_terminal(rid, typ, data)
             return None
+        self.requests[rid]["bundle_pending"] = True
         self._commit_terminal_record(rid, typ, data)
+        return self._schedule_bundle(rid, data)
+
+    def _schedule_bundle(self, rid: str, data: dict) -> asyncio.Task:
+        """Build one pending bundle in a worker, both after terminal commit and after restart."""
+        prior = self.terminal_tasks.get(rid)
+        if prior is not None:
+            return prior
         request = copy.deepcopy(self.requests[rid])
         tasks = copy.deepcopy(self.store.all("task"))
         runner_capabilities = copy.deepcopy(self.runner_capabilities)
@@ -919,6 +929,15 @@ class Hub:
         self.terminal_tasks[rid] = task
         task.add_done_callback(self._terminal_task_done)
         return task
+
+    def recover_pending_bundles(self) -> list[str]:
+        """At startup, retry only bundles whose terminal commit explicitly left a pending marker."""
+        recovered = []
+        for rid, request in list(self.requests.items()):
+            if request.get("bundle_pending") is True:
+                self._schedule_bundle(rid, {})
+                recovered.append(rid)
+        return recovered
 
     @staticmethod
     def _terminal_task_done(task: asyncio.Task) -> None:
@@ -2761,6 +2780,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     async def recover_terminal_deliveries() -> None:
         hub.recover_terminal_deliveries()
         await hub.finish_interrupted_cancels()
+        hub.recover_pending_bundles()
         await hub.expire_stale_resume_cards()
         for rid, request in hub.requests.items():
             if is_terminal_request(request.get("status")):
