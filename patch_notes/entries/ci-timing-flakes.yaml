@@ -1,0 +1,8 @@
+pr: 539
+rows:
+- sha: 1da9abb
+  at: 2026-10-12 14:39
+  text: "quota·stall·mock-lab test를 실제시간 상한 대신 완료 event와 task로 동기화"
+- sha: 2217a18
+  at: 2026-10-12 15:04
+  text: "로그인 재시도 test를 두 번째 dispatch 완료 event로 동기화"
