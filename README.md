@@ -181,7 +181,9 @@ py -3 -m venv .venv
 .\labhq demo --web
 ```
 
-POSIX에서는 `python3 -m venv .venv`, `./.venv/bin/python -m pip install -e ".[dev]"`, `./labhq.sh demo --web`을 씁니다. 8787이 사용 중이면 demo가 빈 port를 고릅니다.
+POSIX에서는 `python3 -m venv .venv`, `./.venv/bin/python -m pip install -e ".[dev]"`, `./labhq.sh demo --web`을 씁니다.
+실제 사무실이 떠 있어도 데모는 다른 빈 port를 고릅니다. 터미널에 출력된 데모 주소만 여세요.
+데모 화면에는 `데모(mock)` 표시와 안내 띠가 보이며 요청 하나가 약 15~30초 동안 진행됩니다.
 
 ### 2. 설치와 설정
 

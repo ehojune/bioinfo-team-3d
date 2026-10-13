@@ -2709,6 +2709,7 @@ class Hub:
         }
         return {"type": "snapshot", "schema_version": 1, "seq": self.store.event_bounds()[1],
                 "ts": time.time(), "data": {
+            **({"demo_status": self.demo_status} if getattr(self, "demo_status", None) is not None else {}),
             "agents": list(self.agents.values()),
             "runners": list(self.runners),
             "approvals": [e["approval"] for e in self.approvals.values()],
@@ -2770,9 +2771,12 @@ class Hub:
         return details
 
 
-def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | None = None) -> FastAPI:
+def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | None = None,
+               *, demo: bool = False) -> FastAPI:
     check_configured_packs(settings)  # before any state opens: a stale pack key stops the start (#170)
     hub = Hub(settings, github_transport)
+    if demo:
+        hub.demo_status = {"phase": "starting", "remaining_s": 0}
     app = FastAPI(title="labhq gateway", version="0.1.0", default_response_class=UTF8JSONResponse)
     app.state.hub = hub
 
@@ -3053,7 +3057,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     @app.get("/", response_class=HTMLResponse)
     async def office() -> HTMLResponse:
         html = (WEB / "index.html").read_text(encoding="utf-8")
-        boot_data = {"mode": "live"}
+        boot_data = {"mode": "live", **({"demo": True} if demo else {})}
         if settings.instance:
             boot_data["instance"] = settings.instance
         boot = f'<script>window.LABHQ_BOOT={json.dumps(boot_data, separators=(",", ":"))}</script>'
@@ -3070,7 +3074,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     @app.get("/3d/", response_class=HTMLResponse)
     async def office3d() -> HTMLResponse:
         html = (WEB / "lab3d" / "index.html").read_text(encoding="utf-8")
-        boot_data = {"mode": "live"}
+        boot_data = {"mode": "live", **({"demo": True} if demo else {})}
         if settings.instance:
             boot_data["instance"] = settings.instance
         boot = f'<script>window.LABHQ_BOOT={json.dumps(boot_data, separators=(",", ":"))}</script>'

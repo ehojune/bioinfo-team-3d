@@ -5,16 +5,19 @@ export function startLiveOffice(onState) {
   const {S, apply, visual, fillRequestDetail, KIND_KO, phaseLabel} = globalThis.LabHQState.createOfficeState();
   const $ = id => document.getElementById(id);
   const params = new URLSearchParams(location.search);
-  const readToken = () => { try { return localStorage.getItem('labhq_token') || ''; } catch { return ''; } };
-  const saveToken = value => { try { localStorage.setItem('labhq_token', value); } catch {} };
+  const demo = globalThis.LABHQ_BOOT?.demo === true;
+  const tokenKey = globalThis.LabHQState.officeStorageKey(globalThis.LABHQ_BOOT, 'labhq_token');
+  const readToken = () => { try { return localStorage.getItem(tokenKey) || ''; } catch { return ''; } };
+  const saveToken = value => { try { localStorage.setItem(tokenKey, value); } catch {} };
   let token = params.get('token') || readToken(), lastSeq = 0, ws, retry, backoff = 1000;
   if (params.has('token')) {
     saveToken(token); params.delete('token');
     history.replaceState(null, '', location.pathname + (params.size ? `?${params}` : ''));
   }
   document.body.classList.add('live-mode');
+  if (demo) document.body.classList.add('gateway-demo');
   $('live-panel').hidden = false; $('demo-2d').hidden = true;
-  document.querySelector('.demo').textContent = 'LIVE';
+  document.querySelector('.demo').textContent = demo ? '데모(mock)' : 'LIVE';
   $('state').disabled = true; $('randomize').hidden = true;
   const pending = new Set(), loadingAnswers = new Set();
   let noticeApproval = null;  // #184: the approval whose request the notice shows, cleared when it ends
@@ -51,7 +54,9 @@ export function startLiveOffice(onState) {
     const el = document.createElement(tag); el.textContent = value; parent.append(el); return el;
   }
   function render() {
-    $('connection').textContent = {live:'실시간', connecting:'연결 중', offline:'연결 끊김 · 재시도 중', auth:'토큰 확인 필요'}[S.conn];
+    $('connection').textContent = globalThis.LabHQState.connectionLabel(S.conn, demo);
+    $('demo-banner').hidden = !demo;
+    if (demo) $('demo-banner').textContent = globalThis.LabHQState.demoBannerText(S.demoStatus);
     $('token-form').hidden = S.conn !== 'auth' && S.conn !== 'offline';
     $('approval-count').textContent = S.approvals.size + S.engineHolds.size;
     const holdRows = [...S.engineHolds.values()].map(hold => {

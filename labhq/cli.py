@@ -975,8 +975,8 @@ async def _run_runner_with_interrupts(runner) -> None:
 
 
 # ---------------- demo (no API keys, no cluster) ----------------
-def _approval_delay(phone: bool, approve_timeout: float) -> float:
-    return approve_timeout if phone else 0.3
+def _approval_delay(phone: bool, approve_timeout: float, web: bool = False) -> float:
+    return approve_timeout if phone else 1.0 if web else 0.3
 
 
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
@@ -984,18 +984,39 @@ WILDCARD_HOSTS = ("0.0.0.0", "::", "")
 
 
 def _port_available(host: str, port: int) -> bool:
-    family = socket.AF_INET6 if ":" in host else socket.AF_INET
-    bind_host = host or ("::" if family == socket.AF_INET6 else "0.0.0.0")
-    try:
-        with socket.socket(family, socket.SOCK_STREAM) as sock:
-            sock.bind((bind_host, port))
-        return True
-    except OSError:
-        return False
+    # Windows can allow the same port on different addresses. A successful
+    # wildcard bind alone says nothing about the loopback server the runner dials.
+    import errno
+
+    for address in ("127.0.0.1", "::1"):
+        try:
+            with socket.create_connection((address, port), timeout=0.15):
+                return False
+        except OSError:
+            pass
+    for address in dict.fromkeys((host or "0.0.0.0", "127.0.0.1", "0.0.0.0", "::1", "::")):
+        family = socket.AF_INET6 if ":" in address else socket.AF_INET
+        try:
+            with socket.socket(family, socket.SOCK_STREAM) as sock:
+                if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+                sock.bind((address, port))
+        except OSError as exc:
+            # Optional IPv6 probes must not disable demos on IPv4-only systems.
+            if address != host and family == socket.AF_INET6 and exc.errno in (
+                    errno.EAFNOSUPPORT, errno.EPROTONOSUPPORT, errno.EADDRNOTAVAIL):
+                continue
+            return False
+    return True
 
 
 def _demo_web_port(host: str, preferred: int) -> int:
-    return preferred if _port_available(host, preferred) else free_port()
+    candidate = preferred
+    for _ in range(100):
+        if _port_available(host, candidate):
+            return candidate
+        candidate = free_port()
+    raise RuntimeError("데모에 쓸 빈 포트를 찾지 못했습니다")
 
 
 def _demo_token(exposed: bool, current: str) -> str:
@@ -1138,7 +1159,7 @@ def _tap_publish(publish, after):
     return tap
 
 
-def _demo_settings(tmp: Path) -> Settings:
+def _demo_settings(tmp: Path, web: bool = False) -> Settings:
     s = Settings()
     s.gateway.state_dir = str(tmp / "state" / "gateway")
     s.runner.state_dir = str(tmp / "state" / "runner")
@@ -1146,9 +1167,21 @@ def _demo_settings(tmp: Path) -> Settings:
     s.runner.talent_dir = str(tmp / "talent")
     s.runner.agents_dir = str(tmp / "agents")
     s.runner.force_engine = "mock"
+    s.runner.mock_delay_s = 2.0 if web else 0.05
     s.runner.job_poll_s = 1
     s.hpc.scheduler = "mock"
     return s
+
+
+async def _demo_status(hub, phase: str, remaining: int = 0) -> None:
+    hub.demo_status = {"phase": phase, "remaining_s": remaining}
+    await hub.publish({"type": "demo.status", "data": hub.demo_status})
+
+
+async def _demo_countdown(hub, seconds: int = 8) -> None:
+    for remaining in range(seconds, 0, -1):
+        await _demo_status(hub, "waiting", remaining)
+        await asyncio.sleep(1)
 
 
 async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
@@ -1160,10 +1193,11 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
 
     tmp = Path(tempfile.mkdtemp(prefix="labhq-demo-"))
     shutil.copytree(REPO / "agents", tmp / "agents")
-    s = _demo_settings(tmp)
+    s = _demo_settings(tmp, web=web)
     gport = _demo_web_port(host, port) if web else free_port()
     dial = _demo_dial_host(host)
     s.gateway.port, s.gateway.url = gport, f"ws://{dial}:{gport}"
+    s.gateway.host = host
     exposed = phone or host not in LOOPBACK_HOSTS
     # Both default tokens are public; on the LAN anyone could otherwise join as a client or replace the runner.
     s.gateway.client_token = _demo_token(exposed, s.gateway.client_token)
@@ -1172,7 +1206,7 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
     s.policy.approvals.timeout_s = math.ceil(approve_timeout) + 30 if phone else 60
     s.runner.broker_port = free_port()
 
-    app = create_app(s)
+    app = create_app(s, demo=True)
     hub = app.state.hub
     publish = hub.publish
 
@@ -1180,7 +1214,7 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
         render(ev)
         if ev.get("type") == "approval.requested":
             asyncio.get_running_loop().create_task(_demo_auto_approve(
-                hub, ev["data"]["id"], _approval_delay(phone, approve_timeout), phone))
+                hub, ev["data"]["id"], _approval_delay(phone, approve_timeout, web=web), phone))
 
     hub.publish = _tap_publish(publish, after)
     from .security import gateway_log_config
@@ -1203,6 +1237,10 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
     try:
         await until(lambda: len(hub.agents) >= 5, 15)
         if web:
+            if gport != port:
+                url_host = (_demo_url_hosts(host) or [dial])[0]
+                print(f"{port}은 실행 중인 서비스가 쓰고 있어 데모는 "
+                      f"http://{url_host}:{gport}/?token={s.gateway.client_token} 에서 엽니다 — 이 주소만 여세요")
             if phone:
                 addresses = _demo_url_hosts(host)
                 if not addresses:
@@ -1217,6 +1255,7 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
             texts = ["공개 폐선암 scRNA-seq에서 CD276 고발현 세포유형 찾고 QC까지 [hpc] [needs-approval] [revise] [recruit]",
                      "새로 받은 WGS 배치 표준 QC [hpc] [needs-approval]"]
             for i in range(10**6):
+                await _demo_status(hub, "running")
                 rid = hub.create_request(RequestIn(text=texts[i % 2]))
                 await until(lambda: is_terminal_request(hub.requests[rid]["status"]),
                             max(120, approve_timeout + 60) if phone else 120)
@@ -1225,7 +1264,7 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
                     await hub.send_runner(s.runner.id, {"type": "recruit.start", "repo": "https://github.com/scverse/scanpy",
                                                         "focus": "Preprocessing and clustering", "ttl_days": 14,
                                                         "request_id": rid})
-                await asyncio.sleep(8)
+                await _demo_countdown(hub)
         print(f"\n=== 정규직 {len(hub.agents)}명 출근 · 오케스트레이션 요청 ===\n")
         rid = hub.create_request(RequestIn(
             text="공개 폐선암 scRNA-seq에서 CD276(B7-H3) 고발현 세포유형 찾고 QC까지 [hpc] [needs-approval] [revise] [recruit]"))
@@ -1248,6 +1287,7 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
         await asyncio.sleep(0.3)
         for t in tasks:
             t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 # ---------------- entry point ----------------

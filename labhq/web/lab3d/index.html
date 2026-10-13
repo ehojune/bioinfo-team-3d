@@ -37,8 +37,14 @@
     body.live-mode .demo{font-size:9px}body.live-mode .legend{display:none}
     @media(max-width:760px){body.live-mode{height:100dvh;display:flex;flex-direction:column;overflow:auto}body.live-mode header{position:relative;left:auto;right:auto;top:auto;margin:12px 16px;padding-bottom:8px;flex:none}body.live-mode .intro,body.live-mode .scene-note,body.live-mode .hint,body.live-mode .gallery-caption{display:none}body.live-mode .view-tools{position:relative;top:auto;right:auto;justify-content:center;flex:none}body.live-mode #stage,body.live-mode.gallery-mode #stage{position:relative;inset:auto;height:260px;min-height:200px;flex:1 0 200px}body.live-mode #panel,body.live-mode.gallery-mode #panel{position:relative;inset:auto;width:auto;margin:6px 16px;flex:none}body.live-mode #live-panel{position:relative;inset:auto;width:auto;margin:6px 16px;max-height:260px;flex:none;order:5}body.live-mode footer{position:relative;inset:auto;margin:0 16px;flex:none;order:6}body.live-mode #approval-chip{position:relative;inset:auto;align-self:center;flex:none}body.live-mode #skin-notice{position:relative;inset:auto;margin:4px 16px}#demo-2d{left:18px;top:66px}}
   </style>
+  <style>
+    #demo-banner{position:fixed;z-index:20;top:0;left:0;right:0;margin:0;padding:8px 16px;background:#fff3ce;color:#654c20;font-size:12px;overflow-wrap:anywhere}
+    #demo-banner[hidden]{display:none}body.gateway-demo header{top:64px}
+    @media(max-width:760px){body.gateway-demo #demo-banner{position:relative;flex:none}body.gateway-demo header{top:auto}}
+  </style>
 </head>
 <body>
+  <p id="demo-banner" role="status" hidden></p>
   <section id="live-panel" aria-label="실시간 요청과 승인" hidden>
     <div class="live-top"><a id="view-2d" href="/">2.5D 사무실</a><span id="connection" role="status">연결 중</span></div>
     <form id="token-form" hidden><label for="token">게이트웨이 토큰</label><input id="token" type="password" autocomplete="off"><button>연결</button><small>설정 파일의 gateway.client_token 값이에요. 이 PC라면 터미널에서 <code>labhq open --3d</code>를 실행하면 토큰을 넣은 채 열려요.</small></form>
