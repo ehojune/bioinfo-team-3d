@@ -20,7 +20,7 @@ from typing import Any, Literal
 
 import httpx
 import yaml
-from fastapi import Request, Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, Request, Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field, field_validator
 
@@ -44,6 +44,7 @@ from ..settings import Settings
 from ..security import token_matches
 from ..store import StateStore
 from ..util import short
+from .shutdown import ShutdownIn, WebShutdown
 
 log = logging.getLogger(__name__)
 # #126: a snapshot goes to every client on each connect, so a long follow-up answer travels as its head only.
@@ -3388,6 +3389,8 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         hub.demo_status = {"phase": "starting", "remaining_s": 0}
     app = FastAPI(title="labhq gateway", version="0.1.0", default_response_class=UTF8JSONResponse)
     app.state.hub = hub
+    shutdown = WebShutdown(settings, hub)
+    app.state.shutdown = shutdown
 
     visibility_checked = False
 
@@ -3432,6 +3435,12 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     def auth(authorization: str = Header(default="")) -> None:
         if not token_matches(authorization.removeprefix("Bearer ").strip(), settings.gateway.client_token):
             raise HTTPException(401, "bad client token")
+
+    @app.middleware("http")
+    async def refuse_new_work_while_stopping(request: Request, call_next):
+        if shutdown.status == "stopping" and request.method not in {"GET", "HEAD", "OPTIONS"}:
+            return UTF8JSONResponse({"detail": "종료 중입니다. 새 요청을 받지 않습니다."}, status_code=409)
+        return await call_next(request)
 
     @app.websocket("/ws/runner")
     async def ws_runner(ws: WebSocket, token: str = "") -> None:
@@ -3487,6 +3496,8 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
                 try:
                     msg = json.loads(await ws.receive_text())
                 except ValueError:
+                    continue
+                if shutdown.status == "stopping":
                     continue
                 if msg.get("type") == "approval.resolve":  # phone taps 승인/거절
                     try:
@@ -3714,6 +3725,16 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     @app.get("/api/shutdown-readiness", dependencies=[Depends(auth)])
     async def shutdown_readiness() -> dict:
         return hub.shutdown_readiness()
+
+    @app.post("/api/shutdown", dependencies=[Depends(auth)], status_code=202)
+    async def stop_office(body: ShutdownIn, background: BackgroundTasks) -> dict:
+        result = shutdown.prepare(body)
+        background.add_task(shutdown.run, body.force)
+        return result
+
+    @app.get("/api/shutdown", dependencies=[Depends(auth)])
+    async def shutdown_status() -> dict:
+        return {"status": shutdown.status}
 
     @app.get("/api/health")
     async def health() -> dict:

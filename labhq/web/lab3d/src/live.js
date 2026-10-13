@@ -1,4 +1,5 @@
 import {answerRequired, revisionNoteMissing, syncReviewCards, syncDecisionCards, syncDecisionHistory, createHistoryVisibility} from '../../ui/decide.js';
+import {bindShutdown} from '../../ui/shutdown.js';
 
 // DOM controls and transport stay outside the shared event reducer.
 export function startLiveOffice(onState) {
@@ -11,6 +12,7 @@ export function startLiveOffice(onState) {
   const readToken = () => { try { return localStorage.getItem(tokenKey) || ''; } catch { return ''; } };
   const saveToken = value => { try { localStorage.setItem(tokenKey, value); } catch {} };
   let token = params.get('token') || readToken(), lastSeq = 0, ws, retry, backoff = 1000;
+  bindShutdown($('shutdown'), {token: () => token});
   if (params.has('token')) {
     saveToken(token); params.delete('token');
     history.replaceState(null, '', location.pathname + (params.size ? `?${params}` : ''));

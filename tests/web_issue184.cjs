@@ -66,7 +66,8 @@ test('every way an approval ends clears its notice in the reducer, 3D and 2.5D',
 
   const decide = fs.readFileSync(path.join(root, 'ui/decide.js'), 'utf8');
   const decideUrl = 'data:text/javascript;base64,' + Buffer.from(decide).toString('base64');
-  const source = fs.readFileSync(path.join(root, 'lab3d/src/live.js'), 'utf8').replace("'../../ui/decide.js'", `'${decideUrl}'`);
+  const source = fs.readFileSync(path.join(root, 'lab3d/src/live.js'), 'utf8').replace("'../../ui/decide.js'", `'${decideUrl}'`)
+    .replace("'../../ui/shutdown.js'", "'data:text/javascript;base64," + Buffer.from(fs.readFileSync(path.join(root, 'ui/shutdown.js'), 'utf8')).toString('base64') + "'");
   const {startLiveOffice} = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
   startLiveOffice(() => {});
   const ws = sockets[0]; ws.readyState = 1; ws.onopen();
