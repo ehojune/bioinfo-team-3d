@@ -402,7 +402,9 @@ async def test_two_direct_requests_need_input_and_target_declarations_beyond_a_s
     assert live["history_artifacts"] == 1 and live["candidates"] == 0
     assert live["excluded"]["type_unknown"] == 1
     # A source type alone is insufficient: direct mode has neither a target type nor an input identity.
-    tid, row = next((k, v) for k, v in hub.store.all("task").items() if v.get("request_id") == first)
+    # The editor also belongs to this request; only its direct task declares the source output type.
+    tid, row = next((k, v) for k, v in hub.store.all("task").items()
+                    if v.get("request_id") == first and v.get("kind") == "direct")
     row["payload"]["meta"]["output_types"] = {"outputs/artifact.txt": "raw_counts"}
     hub.store.put("task", tid, row)
     observed: dict = {}

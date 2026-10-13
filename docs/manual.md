@@ -482,8 +482,8 @@ Codex 직원은 `tools`에 `WebSearch`나 `WebFetch`가 있으면 `web_search="l
 | 종류 | 이름 | 무엇 | 쓰는 직원 | 출처 |
 |---|---|---|---|---|
 | 내장 MCP | labhq_annot | 공개 자원 조회: Ensembl VEP·gnomAD·ClinVar·ChIP-Atlas·ENCODE cCRE·GTEx, API 키가 있으면 변이 효과 예측 모델 (판본 기록·캐시) | [analyst](../agents/core/analyst.yaml), [bioinfo-agent](../agents/core/bioinfo-agent.yaml), [biologist](../agents/core/biologist.yaml), [lit_scout](../agents/core/lit_scout.yaml) | [runner](../labhq/runner/daemon.py) · [직원 설정](../agents/core/) |
-| 내장 MCP | labhq_approval | PI 승인 요청 | [analyst](../agents/core/analyst.yaml), [bioinfo-agent](../agents/core/bioinfo-agent.yaml), [biologist](../agents/core/biologist.yaml), [chief_of_staff](../agents/core/chief_of_staff.yaml), [cso](../agents/core/cso.yaml), [data_steward](../agents/core/data_steward.yaml), [qc_reviewer](../agents/core/qc_reviewer.yaml), [recruiter](../agents/core/recruiter.yaml) | [runner](../labhq/runner/daemon.py) · [직원 설정](../agents/core/) |
-| 내장 MCP | labhq_ask | 막히면 CSO·시설팀·동료·PI에게 묻고 같은 세션으로 이어 가기 (CSO 먼저, 위험한 것만 PI) | [analyst](../agents/core/analyst.yaml), [bioinfo-agent](../agents/core/bioinfo-agent.yaml), [biologist](../agents/core/biologist.yaml), [chief_of_staff](../agents/core/chief_of_staff.yaml), [cso](../agents/core/cso.yaml), [data_steward](../agents/core/data_steward.yaml), [engineer](../agents/core/engineer.yaml), [facilities](../agents/core/facilities.yaml), [lit_scout](../agents/core/lit_scout.yaml), [qc_reviewer](../agents/core/qc_reviewer.yaml), [recruiter](../agents/core/recruiter.yaml), [sci_reviewer](../agents/core/sci_reviewer.yaml) | [runner](../labhq/runner/daemon.py) · [직원 설정](../agents/core/) |
+| 내장 MCP | labhq_approval | PI 승인 요청 | [analyst](../agents/core/analyst.yaml), [bioinfo-agent](../agents/core/bioinfo-agent.yaml), [biologist](../agents/core/biologist.yaml), [chief_of_staff](../agents/core/chief_of_staff.yaml), [cso](../agents/core/cso.yaml), [data_steward](../agents/core/data_steward.yaml), [editor](../agents/core/editor.yaml), [qc_reviewer](../agents/core/qc_reviewer.yaml), [recruiter](../agents/core/recruiter.yaml) | [runner](../labhq/runner/daemon.py) · [직원 설정](../agents/core/) |
+| 내장 MCP | labhq_ask | 막히면 CSO·시설팀·동료·PI에게 묻고 같은 세션으로 이어 가기 (CSO 먼저, 위험한 것만 PI) | [analyst](../agents/core/analyst.yaml), [bioinfo-agent](../agents/core/bioinfo-agent.yaml), [biologist](../agents/core/biologist.yaml), [chief_of_staff](../agents/core/chief_of_staff.yaml), [cso](../agents/core/cso.yaml), [data_steward](../agents/core/data_steward.yaml), [editor](../agents/core/editor.yaml), [engineer](../agents/core/engineer.yaml), [facilities](../agents/core/facilities.yaml), [lit_scout](../agents/core/lit_scout.yaml), [qc_reviewer](../agents/core/qc_reviewer.yaml), [recruiter](../agents/core/recruiter.yaml), [sci_reviewer](../agents/core/sci_reviewer.yaml) | [runner](../labhq/runner/daemon.py) · [직원 설정](../agents/core/) |
 | 내장 MCP | labhq_hpc | HPC 제출·감시 (scheduler가 none이 아닐 때) | [analyst](../agents/core/analyst.yaml), [bioinfo-agent](../agents/core/bioinfo-agent.yaml), [data_steward](../agents/core/data_steward.yaml), [engineer](../agents/core/engineer.yaml), [qc_reviewer](../agents/core/qc_reviewer.yaml) | [runner](../labhq/runner/daemon.py) · [직원 설정](../agents/core/) |
 | 외부 MCP | ChEMBL | 화합물·생물활성 검색 | [biologist](../agents/core/biologist.yaml), [lit_scout](../agents/core/lit_scout.yaml) | [Claude for Life Sciences](https://www.anthropic.com/news/healthcare-life-sciences) · [MCP](https://hcls.mcp.claude.com/chembl/mcp) · [직원 설정](../agents/core/) |
 | 외부 MCP | ClinicalTrials.gov | 임상시험 검색 | [biologist](../agents/core/biologist.yaml), [lit_scout](../agents/core/lit_scout.yaml) | [Claude for Life Sciences](https://www.anthropic.com/news/healthcare-life-sciences) · [MCP](https://hcls.mcp.claude.com/clinical_trials/mcp) · [직원 설정](../agents/core/) |
@@ -494,7 +494,7 @@ Codex 직원은 `tools`에 `WebSearch`나 `WebFetch`가 있으면 `web_search="l
 | skill | Paper2Agent | 논문·코드를 파견직으로 변환 (setup-paper2agent 필요) | [recruiter](../agents/core/recruiter.yaml) | [Paper2Agent](https://github.com/jmiao24/Paper2Agent) · [직원 설정](../agents/core/) · [채용 코드](../labhq/recruit/paper2agent.py) |
 | skill | bioinfo:bioinfo-analyze | 실행 전 존재 확인 (required_skills) | [bioinfo-agent](../agents/core/bioinfo-agent.yaml) | [직원 설정](../agents/core/) |
 | 엔진 기능 | Claude Code | 직원 실행 엔진 | [analyst](../agents/core/analyst.yaml), [bioinfo-agent](../agents/core/bioinfo-agent.yaml), [biologist](../agents/core/biologist.yaml), [chief_of_staff](../agents/core/chief_of_staff.yaml), [cso](../agents/core/cso.yaml), [data_steward](../agents/core/data_steward.yaml), [qc_reviewer](../agents/core/qc_reviewer.yaml), [recruiter](../agents/core/recruiter.yaml) | [직원 설정](../agents/core/) |
-| 엔진 기능 | Codex | 직원 실행 엔진 | [engineer](../agents/core/engineer.yaml), [facilities](../agents/core/facilities.yaml), [lit_scout](../agents/core/lit_scout.yaml), [sci_reviewer](../agents/core/sci_reviewer.yaml) | [직원 설정](../agents/core/) |
+| 엔진 기능 | Codex | 직원 실행 엔진 | [editor](../agents/core/editor.yaml), [engineer](../agents/core/engineer.yaml), [facilities](../agents/core/facilities.yaml), [lit_scout](../agents/core/lit_scout.yaml), [sci_reviewer](../agents/core/sci_reviewer.yaml) | [직원 설정](../agents/core/) |
 | 엔진 기능 | Codex 웹 검색 | WebSearch / WebFetch → web_search="live" | [lit_scout](../agents/core/lit_scout.yaml), [sci_reviewer](../agents/core/sci_reviewer.yaml) | [adapter](../labhq/adapters/codex.py) · [직원 설정](../agents/core/) |
 <!-- integrations:end -->
 
@@ -673,6 +673,37 @@ Claude 직원의 맨 `Write`·`Edit`는 작업·project·upstream 폴더의 `Edi
 resume 비용·Codex 토큰은 호출별 증분으로 합산합니다(#82). 원 누적값은 runner run 기록에 남기며, 재개 기준값이 없으면 해당 증분은 미집계로 표시합니다. 요청 비용 요약은 엔진별(`by_engine`)에 더해 직원별(`by_agent`)로도 나뉘어 웹 요청 줄에 "누가 얼마"로 보입니다. 직원 정보가 없던 예전 기록에는 직원별 줄이 없습니다.
 
 ## 프로젝트별 GitHub 보고
+
+### 결과 저장 위치
+
+연구 요청은 브리핑 뒤, CP1 전에 **이 결과를 어디에 남길까요?**를 묻습니다. 확인 질문이 있으면 한 카드에 함께 나옵니다.
+
+| 선택 | 남기는 곳 |
+|---|---|
+| 로컬만 (기본) | 요청 묶음 옆 `requests/<요청 id>-editor/` 폴더 |
+| 새 GitHub 저장소 | 제안된 이름을 고치고 공개·비공개 선택. 게시 승인 뒤 생성하며 이미 있으면 사용 |
+| 기존 GitHub 저장소 | `소유자/저장소` 입력. 공개 저장소에는 공개를 골라야 게시 |
+
+`--project`로 정했거나 그 요청에서 이어진 계획 수정은 다시 묻지 않습니다. 일반 요청은 `github.ask_storage: true`일 때 묻습니다.
+토큰은 게이트웨이의 `github.token_env` 환경 변수에서 읽습니다. 토큰·권한이 없으면 안내 후 로컬로 진행합니다. 카드에 토큰을 입력하지 않습니다.
+
+### 편집자와 정리본 확인
+
+비버 편집자(`editor`, 가벼운 Codex 모델)가 끝난 요청의 README를 쉬운 말로 다듬습니다.
+정리본은 README·결과 보고서·진행 기록·재현 방법·출처로 구성됩니다. 보고된 그림·표·실행 파일은 링크로 연결합니다.
+텍스트는 기존 게시 검사로 비밀값·개인 경로를 가립니다. 통제 데이터가 걸린 요청은 편집자에게 보내거나 게시하지 않습니다.
+원본 입력과 미보고 파일은 제외합니다. 파일당 1 MB·합계 5 MB 안에서 옮기며, 정리본만으로 재실행된다고 보장하지 않습니다.
+
+보고서의 **검토 완료**(실패는 **확인 완료**) 뒤, **편집자 정리본 확인** 카드에서 문서·그림을 확인하고 **확인했어요 · 올리기**를 누르면
+`labhq/results/<요청 id>/`에 게시합니다. **로컬에만 남기기**를 누르면 GitHub에 쓰지 않습니다.
+`github.auto_publish_results: true`는 게시 카드를 생략하되 보고서 검토 완료까지 기다립니다. 서버도 검토 전 게시 승인을 거부합니다.
+재시작하면 저장된 정리본으로 게시 승인만 복구합니다. 공개 게시를 금지한 공개 프로젝트는 로컬에 남깁니다.
+그림 안의 글자나 원본 파일의 개인정보는 PI가 확인해야 합니다.
+편집자가 연결되지 않았거나 초안 작성에 실패하면 기록으로 만든 기본 정리본을 씁니다. 게시 실패는 연구 결과를 바꾸지 않습니다.
+
+다음 단계: Notion 저장은 나중에 추가합니다.
+
+### 등록한 프로젝트의 진행 보고
 
 팀은 안에서 사내 메신저(웹 사무실의 이벤트 흐름)로 소통하고, 동시에 **각 프로젝트의 GitHub 저장소에 진행 상황을 올립니다.**
 요청에 프로젝트를 지정하면(`--project`, 웹 입력창의 프로젝트 선택):
