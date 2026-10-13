@@ -242,6 +242,13 @@ BRIEFING_PROMPT = """Prepare a briefing (≤400 words) for the CSO on this resea
 field context, recent developments (search the web if available), which datasets exist and how they can be
 accessed (public vs controlled access, DUA constraints), and feasibility risks.
 
+Current runner capabilities (sanitized summary):
+{capabilities}
+
+Use only this summary for compute feasibility. Separate reported scheduler, tool, and environment facts from
+unknowns. Treat scheduler=none, labhq_hpc=no, and tool=no as unavailable; treat unknown or a missing capability
+report as unknown, never as available. Do not add a numeric feasibility score or grade.
+
 If the request reanalyzes a public GEO, SRA or ArrayExpress accession, or a named cohort, open the original study
 full text at PMC or the publisher. In at most five lines summarize preprocessing and normalization, paired or
 repeated-measures handling, covariates and batch, the statistical model and thresholds, and validation. If the full
@@ -333,6 +340,8 @@ def format_capabilities(roster: list[dict], runner_capabilities: dict | None = N
         for a in roster
     ]
     capabilities = runner_capabilities if isinstance(runner_capabilities, dict) else {}
+    if lines and not capabilities:
+        lines.append("- runner capability report: unknown (no current runner capability report; do not infer resources)")
     for runner_id in sorted({a.get("runner_id") for a in roster if a.get("runner_id")}):
         runner = capabilities.get(runner_id) if isinstance(capabilities.get(runner_id), dict) else {}
         lines.append(f"- runner {runner_id} local software: {_format_local_software(runner.get('local_software'))}")
@@ -4906,7 +4915,8 @@ class Orchestrator:
                 briefing = ""
                 cos = self.cfg.chief_of_staff_agent
                 brief_job = (self._step_task(rid, self.run_step(Task(
-                    agent_id=cos, request_id=rid, prompt=BRIEFING_PROMPT.format(request=text),
+                    agent_id=cos, request_id=rid,
+                    prompt=BRIEFING_PROMPT.format(request=text, capabilities=capabilities or "No workers available"),
                     meta={**refs, "kind": "briefing", "request": text, "title": "CSO용 브리핑 준비"})))
                              if cos and cos in known and not continuation else None)
                 # A continuation's plan prompt carries the revised plan and the reviewer's P1 issues (#90), or the
