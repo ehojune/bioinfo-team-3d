@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 17:13 | [`373c9a0`](https://github.com/ehojune/bioinfo-team-3d/pull/555/commits/373c9a0) | MCP probe 실패를 exit 1로 판정하고 실제 Codex 90초 호출을 1회 완료로 검증 |
 | 16:42 | [`f49ef6e`](https://github.com/ehojune/bioinfo-team-3d/pull/552/commits/f49ef6e) | 비서실장 브리핑에 runner 역량 요약을 전달하고 미확인 자원 해석을 막음 |
 | 16:35 | [`e2703f1`](https://github.com/ehojune/bioinfo-team-3d/pull/551/commits/e2703f1) | 참고 문헌·프로젝트 17개를 한영 문서로 모으고 README 더 읽기에 연결 |
 | 16:29 | [`08bd9a5`](https://github.com/ehojune/bioinfo-team-3d/pull/550/commits/08bd9a5) | semantics report에서 손상된 중첩 count 행을 제외·집계하고 이전 schema와 정상 합계를 보존 |
