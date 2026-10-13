@@ -813,6 +813,10 @@ def _data_command(name: str, args: list[str], powershell: bool) -> str | None:
     if base == "sed":
         parsed = _sed_command(args, powershell)
         return "data" if parsed is not None and parsed.text_is_data else None
+    if powershell and base == 'new-item':
+        # Only the literal directory form seen in the trial. Do not trust provider/value creation.
+        return ('data' if len(values) == 4 and [v.casefold() for v in values[:3]] ==
+                ['-itemtype', 'directory', '-force'] and not values[3].startswith('-') else None)
     if base in {"curl", "wget"}:
         return "data" if _download_options_known(base, args, powershell) else None
     return "data" if base in (_PS_DATA_COMMANDS if powershell else _DATA_COMMANDS) else None
@@ -2291,6 +2295,7 @@ def evaluate_tool(
     private_enabled: bool = False,
     home: str | None = None,
     private_open_reads: Iterable[str] = (),
+    read_only: bool = False,
 ) -> Decision:
     allowed_roots = list(allowed_roots)
     judged = claude_write_input(tool_name, tool_input, workdir, allowed_roots, windows=windows, environ=environ)
@@ -2305,9 +2310,44 @@ def evaluate_tool(
     # Only ever stricter: a deny stays a deny, and an ask is not turned into an allow.
     if private and decision.action != "deny" and (private.action == "deny" or decision.action == "allow"):
         decision = private
+    if read_only:
+        if tool_name in WRITE_LIKE:
+            path = judged.get("file_path") or judged.get("notebook_path")
+            if not own_output_write(path, workdir):
+                decision = Decision("deny", "Read-only task may write only its own outputs/ and .tmp/ (no links)")
+        elif tool_name not in READ_LIKE:
+            decision = Decision("deny", "Read-only task permits only reading and scoped file writes")
+        if decision.action == "ask":
+            decision = Decision("deny", decision.reason)
     if judged is not tool_input:
         decision.updated_input = judged
     return decision
+
+
+def own_output_write(path: object, workdir: str | None) -> bool:
+    """Both spelling and real target must stay in this task's plain output/temp directory."""
+    if not isinstance(path, str) or not path or not workdir:
+        return False
+    from .adapters.owned import is_link
+
+    try:
+        root = Path(workdir).resolve()
+        target = Path(os.path.abspath(os.path.join(str(root), path)))
+        for name in ("outputs", ".tmp"):
+            allowed = root / name
+            if target == allowed or not target.is_relative_to(allowed):
+                continue
+            if not target.resolve().is_relative_to(allowed):
+                return False
+            for part in (target, *target.parents):
+                if part == root:
+                    break
+                if os.path.lexists(part) and (is_link(part) or (part.is_file() and part.stat().st_nlink > 1)):
+                    return False
+            return True
+    except (OSError, ValueError, RuntimeError):
+        pass
+    return False
 
 
 # `/c/` where a path starts: after a space, quote, `=`, `>`, `(` ... and never inside a word, URL or other path.
@@ -2542,6 +2582,10 @@ def _evaluate_tool(
         if hit:
             return Decision("ask", f"{tool_name} touches restricted zone {hit}: `{cmd[:200]}`")
         powershell = tool_name == "PowerShell"
+        # Reuse the conservative #525/#535 syntax scanner: only proven data is blanked.
+        # Executed strings, substitutions and unknown interpreters still use the raw command.
+        ps_syntax = _blank_non_syntax(cmd, True) if powershell else None
+        delete_text = ps_syntax if ps_syntax is not None else cmd
         patterns = policy.approvals.bash_ask_patterns if not powershell else POWERSHELL_ASK_PATTERNS
         delete_pattern = POWERSHELL_RECURSIVE_DELETE_PATTERN if powershell else BASH_RECURSIVE_DELETE_PATTERN
         roots = [_norm(r) for r in allowed_roots if r]
@@ -2552,19 +2596,19 @@ def _evaluate_tool(
             if pat == delete_pattern:
                 # The pattern sees only rm's first option cluster; every option word of a real rm counts (#17), and
                 # `docker rm` or `git rm` in its own tree is not one (#535 follow-up).
-                recursive = _recursive_rm(cmd) if not powershell else re.search(pat, cmd, re.IGNORECASE)
+                recursive = _recursive_rm(cmd) if not powershell else re.search(pat, delete_text, re.IGNORECASE)
                 if recursive and not _recursive_delete_inside_workdir(cmd, powershell, workdir):
                     return Decision("ask", f"재귀 삭제 확인 필요: `{cmd[:200]}`")
                 # A deleting find meets the same `.tmp` rule (find -delete, -exec rm, | xargs rm).
                 if not powershell and not all(_find_delete_inside_step_tmp(cmd, find, workdir)
                                               for find in _find_deletes(cmd)):
                     return Decision("ask", f"재귀 삭제 확인 필요: `{cmd[:200]}`")
-                if _CMD_RECURSIVE_DELETE.search(cmd):
+                if _CMD_RECURSIVE_DELETE.search(delete_text):
                     return Decision("ask", f"재귀 삭제 확인 필요: `{cmd[:200]}`")
                 # A listing piped into a delete, in a script block too, meets the same `.tmp` rule (#525 review). A
                 # .NET delete (`.Delete($true)`, `[IO.Directory]::Delete(p, $true)`) names no literal path, so it
                 # passes only as `$_.Delete()` in such a pipeline (#533).
-                if (powershell and (_ps_piped_delete(cmd) or _ps_method_delete(cmd))
+                if (powershell and (_ps_piped_delete(delete_text) or _ps_method_delete(delete_text))
                         and not _ps_piped_delete_inside_step_tmp(cmd, workdir)):
                     return Decision("ask", f"재귀 삭제 확인 필요: `{cmd[:200]}`")
                 continue

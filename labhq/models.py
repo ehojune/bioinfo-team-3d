@@ -354,6 +354,16 @@ class ApprovalRequest(BaseModel):
     detail: dict[str, Any] = {}
     created_at: float = Field(default_factory=time.time)
     timeout_s: int = 3600
+    pi_summary: str = ''
+    pi_reason: str = ''
+    pi_outcome: str = ''
+
+    @model_validator(mode='after')
+    def explain_for_pi(self) -> 'ApprovalRequest':
+        from .pi_text import approval_copy
+        for key, value in approval_copy(self.kind, self.summary, self.detail).items():
+            setattr(self, key, value)
+        return self
 
 
 class AskRequest(BaseModel):

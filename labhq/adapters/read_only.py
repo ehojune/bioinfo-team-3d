@@ -11,11 +11,11 @@ from pathlib import Path, PurePath
 from ..models import AgentSpec
 from .owned import case_sensitive_directory, is_link as _is_link
 
-# Consults and follow-ups answer from existing work; they never write or submit. Their run is an allowlist, not
+# Reviews, consults and follow-ups read existing work and write only their own outputs/temp. Their run is an allowlist, not
 # the staff spec minus a list of risky fields: MCP servers, plugins (and their hooks), pre-approved tools and CLI
 # templates all run outside the engine's sandbox or plan mode, and a field added to AgentSpec later would be a new
 # channel nobody removed (#36). `read_only_profile` keeps who the staff member is and switches everything else off.
-READ_ONLY_FIELDS = {"sandbox": "read-only", "permission_mode": "plan", "builtin_tools": "Read,Glob,Grep",
+READ_ONLY_FIELDS = {"sandbox": "workspace-write", "permission_mode": "default", "builtin_tools": "Read,Glob,Grep,Write,Edit",
                     "tools": [], "builtin_mcp": [], "mcp": [], "plugin_dirs": [],
                     "allow_skills": False, "required_skills": [], "cli": None, "can_orchestrate": False}
 # Identity, persona, limits and denials: none of these lets the CLI run anything. project_dirs stay readable;
@@ -23,7 +23,7 @@ READ_ONLY_FIELDS = {"sandbox": "read-only", "permission_mode": "plan", "builtin_
 READ_ONLY_KEEPS = ("id", "name", "role", "character", "engine", "model", "effort", "system_prompt", "project_dirs",
                    "disallowed_tools", "max_turns", "max_budget_usd", "employment", "contract", "tags")
 # The marker consults and follow-ups carry in task meta. The runner never applies it: it rebuilds the profile.
-READ_ONLY_OVERRIDES = copy.deepcopy(READ_ONLY_FIELDS)
+READ_ONLY_OVERRIDES = {**copy.deepcopy(READ_ONLY_FIELDS), "sandbox": "read-only"}
 # What a read-only run takes from `engines.<engine>.env` (#145): where the CLI keeps its login and settings, the
 # credentials it signs in with, and how it reaches the API. The rest is left out, since a variable can change what
 # the CLI loads: on Claude 2.1.282 CLAUDE_CODE_PLUGIN_DIRS loaded a plugin whose hooks and MCP stayed off only because
@@ -78,9 +78,12 @@ def _folded(text: str, case_sensitive: bool | None = None) -> str:
     return text.casefold() if insensitive else text
 
 
-def is_read_only_task(meta: dict | None) -> bool:
+def is_read_only_task(meta: dict | None, agent: AgentSpec | None = None) -> bool:
     meta = meta or {}
-    return (meta.get("kind") in {"consult", "followup"}
+    return (meta.get("kind") in {"consult", "followup", "review"}
+            or (agent is not None and (agent.sandbox == "read-only" or agent.permission_mode == "plan"))
+            or (agent is not None and bool(agent.builtin_tools) and set(agent.builtin_tools.split(","))
+                <= {"Read", "Glob", "Grep", "WebSearch", "WebFetch"})
             or (meta.get("agent_overrides") or {}).get("sandbox") == "read-only")
 
 
@@ -94,12 +97,23 @@ def read_only_profile(agent: AgentSpec) -> AgentSpec:
     if unclassified:
         raise RuntimeError(f"read-only profile does not classify AgentSpec fields: {sorted(unclassified)}")
     kept = {name: copy.deepcopy(getattr(agent, name)) for name in READ_ONLY_KEEPS}
-    return AgentSpec(**kept, **copy.deepcopy(READ_ONLY_FIELDS))
+    fields = copy.deepcopy(READ_ONLY_FIELDS)
+    if agent.engine == "claude_code":
+        fields["builtin_mcp"] = ["approval"]
+    elif agent.engine == "codex":
+        fields["tools"] = [t for t in agent.tools if t in {"WebSearch", "WebFetch"}]
+    if agent.id == "facilities":
+        # Diagnosis is supplied as context; this staff member needs no execution or write tools.
+        fields.update(sandbox="read-only", builtin_tools="", builtin_mcp=[], tools=[])
+        kept["project_dirs"] = []
+    return AgentSpec(**kept, **fields)
 
 
 def read_only_mismatch(agent: AgentSpec, mcp_servers: list) -> str | None:
-    """Why a run marked read-only must not start: its agent is not exactly the profile, or MCP servers are wired."""
-    if mcp_servers or agent != read_only_profile(agent):
+    """Refuse a non-profile agent or any MCP server except the runner's scoped Claude permission gate."""
+    allowed = agent.engine == "claude_code" and all(
+        s.name == "labhq_approval" and s.args == ["-m", "labhq.tools.approval_mcp"] for s in mcp_servers)
+    if (mcp_servers and not allowed) or agent != read_only_profile(agent):
         return "read-only run refused: the agent is not the read-only profile"
     return None
 

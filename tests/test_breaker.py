@@ -1,7 +1,134 @@
+import json
+from types import SimpleNamespace
+
+import pytest
+
+from labhq.adapters import get_adapter
+from labhq.adapters.base import RunState
 from labhq.models import AgentSpec, Engine, Task, TaskResult
 from labhq.runner.breaker import Breaker, trip_text
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
+from labhq.util import tool_input_fingerprint
+
+
+def raw_call(route, value):
+    if route == "claude_code":
+        return {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "shell", "input": value}]}}
+    if route == "antigravity":
+        return {"event": "step_update", "step_update": {"step_type": "tool", "state": "ACTIVE",
+                "tool_name": "shell", "tool_info": {"parameters": value}}}
+    items = {
+        "codex_shell": {"type": "command_execution", "command": value},
+        "codex_mcp": {"type": "mcp_tool_call", "server": "test", "tool": "search", "arguments": value},
+        "codex_edit": {"type": "file_change", "changes": [{"path": value}]},
+        "codex_web": {"type": "web_search", "action": {"query": value}},
+    }
+    return {"type": "item.completed" if route in ("codex_edit", "codex_web") else "item.started",
+            "item": items[route]}
+
+
+ROUTES = ["claude_code", "antigravity", "codex_shell", "codex_mcp", "codex_edit", "codex_web"]
+
+
+async def replay_calls(route, values):
+    events, trips = [], []
+    breaker = Breaker()
+
+    async def emit(kind, data):
+        events.append((kind, data))
+        trip = breaker.observe(kind, data)
+        if trip:
+            trips.append(trip)
+
+    adapter = get_adapter("codex" if route.startswith("codex_") else route, Settings())
+    state = RunState()
+    for value in values:
+        await adapter.handle_line(json.dumps(raw_call(route, value)), state, SimpleNamespace(emit=emit))
+    return events, trips
+
+
+@pytest.mark.parametrize("route", ROUTES)
+async def test_adapter_different_tails_after_450_characters_do_not_trip(route):
+    events, trips = await replay_calls(route, ["x" * 450 + f" tail-{i}" for i in range(8)])
+    assert len(events) == 8
+    assert len({data["input"] for _, data in events}) == 1, "the UI previews still coincide"
+    assert trips == [], "different raw calls must not trip just because their previews coincide"
+    assert len({data["input_fingerprint"] for _, data in events}) == 8
+    for _, data in events:
+        assert len(data["input_fingerprint"]) == 64
+        assert "tail-" not in json.dumps(data), "only the hash, not extra raw input, is transmitted"
+
+
+@pytest.mark.parametrize("route", ROUTES)
+async def test_adapter_same_long_input_trips_once(route):
+    _, trips = await replay_calls(route, ["x" * 450 + " identical tail"] * 12)
+    assert len(trips) == 1
+    assert trips[0]["count"] == 8 and trips[0]["mode"] == "shadow"
+
+
+@pytest.mark.parametrize("route", ROUTES)
+async def test_adapter_string_whitespace_is_part_of_identity(route):
+    _, trips = await replay_calls(route, ["echo 'a b'", "echo 'a  b'"] * 6)
+    assert trips == []
+
+
+@pytest.mark.parametrize("route", ["claude_code", "antigravity", "codex_mcp"])
+async def test_adapter_json_key_order_does_not_change_identity(route):
+    a = {"query": "a  b", "options": {"limit": 5, "sort": "date"}}
+    b = {"options": {"sort": "date", "limit": 5}, "query": "a  b"}
+    _, trips = await replay_calls(route, [a, b] * 6)
+    assert len(trips) == 1 and trips[0]["count"] == 8
+
+
+@pytest.mark.parametrize("route", ["claude_code", "antigravity", "codex_shell", "codex_mcp", "codex_web"])
+@pytest.mark.parametrize("value", [None, ""])
+async def test_adapter_unreported_input_never_trips(route, value):
+    events, trips = await replay_calls(route, [value] * 12)
+    assert trips == []
+    assert all(data["input_fingerprint"] is None for _, data in events)
+
+
+@pytest.mark.parametrize("value", [{}, [], False, 0, " "])
+def test_reported_empty_or_false_values_have_an_identity(value):
+    assert tool_input_fingerprint("shell", value) is not None
+
+
+def test_fingerprint_keeps_tool_name_whitespace_and_4096_character_policy():
+    fingerprint = tool_input_fingerprint
+    assert fingerprint("Read", "same") != fingerprint("Write", "same")
+    assert fingerprint("shell", "a\nb") != fingerprint("shell", "a b")
+    assert fingerprint("shell", {"command": "a\nb"}) != fingerprint("shell", {"command": "a b"})
+    assert fingerprint("shell", "x" * 4095 + "a") != fingerprint("shell", "x" * 4095 + "b")
+    assert fingerprint("shell", "x" * 4096 + "a") == fingerprint("shell", "x" * 4096 + "b")
+
+
+@pytest.mark.parametrize("legacy", [
+    {"input": "x" * 399 + "…"},
+    {"input": "same prefix", "input_truncated": True},
+    {"input": ""},
+    {},
+])
+def test_unknown_or_legacy_truncated_input_breaks_the_repeat_streak(legacy):
+    breaker = Breaker()
+    for _ in range(7):
+        assert breaker.observe(*tool()) is None
+    for _ in range(12):
+        assert breaker.observe("agent.tool", {"name": "shell", **legacy}) is None
+    for _ in range(7):
+        assert breaker.observe(*tool()) is None
+    assert breaker.observe(*tool())["count"] == 8
+
+
+def test_unknown_inputs_still_count_failed_calls_once_each():
+    breaker = Breaker()
+    trips = []
+    for _ in range(5):
+        assert breaker.observe("agent.tool", {"name": "shell", "input_fingerprint": None}) is None
+        trips.extend(breaker.observe("agent.tool_error", {"text": "line"}) for _ in range(3))
+    assert [trip for trip in trips if trip] == [
+        {"signal": "tool_errors", "count": 5, "tool": "shell", "mode": "shadow"}]
 
 
 def tool(name="shell", text="ls outputs"):
@@ -70,7 +197,8 @@ async def test_runner_reports_a_looping_agent_without_stopping_it(tmp_path, monk
     class Looping:
         async def run(self, ctx):
             for _ in range(10):
-                await ctx.emit("agent.tool", {"name": "shell", "input": "cat missing.txt"})
+                await ctx.emit("agent.tool", {"name": "shell", "input": "cat missing.txt",
+                                             "input_fingerprint": tool_input_fingerprint("shell", "cat missing.txt")})
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=True, text="done anyway")
 
     monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *args: Looping())

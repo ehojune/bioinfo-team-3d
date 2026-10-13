@@ -244,7 +244,7 @@ test('both offices use the shared labels, guards and request lookup',()=>{
   const live=fs.readFileSync(path.join(web,'lab3d/src/live.js'),'utf8');
   assert.doesNotMatch(html,/q\.status === 'done' \? '완료' : '실패'/,'no status falls through to 실패');
   assert.match(html,/LabHQState\.requestStatusText\(q, S\.approvals\)/);
-  assert.match(html,/LabHQState\.requestStatusLabel\(r\.status\)/);
+  assert.match(html,/LabHQState\.requestStatusText\(r, S\.approvals\)/);
   assert.match(html,/li\.dataset\.kind === 'question' && act === 'approve' && !note && answerRequired\(/);
   assert.match(html,/\.evidence-table/);
   assert.match(live,/requestStatusText\(q, S\.approvals\)/);
@@ -289,7 +289,7 @@ test('before the first snapshot the office reads as loading, not as an empty lab
   assert.match(html,/snapshotLoaded \? LabHQState\.totalCostLabel\(\[\.\.\.S\.requests\.values\(\)\], S\.cost\) : `사용 비용 · \$\{loadingText\('비용'\)\}`/);
   assert.match(html,/snapshotLoaded \? '오늘의 할 일을 기다리는 중' : loadingText\('사무실 상태'\)/);
   assert.match(html,/snapshotLoaded \? 'none' : `loading:\$\{S\.conn\}`/);
-  assert.match(html,/snapshotLoaded \? '지금은 결정할 일이 없어요\. 승인이 필요하면 여기에 바로 떠요\.' : loadingText\('결정할 일'\)/);
+  assert.match(html,/snapshotLoaded \? \(reviews.length \? '추가 승인 대기는 없어요\.' : '지금은 결정할 일이 없어요\. 승인이 필요하면 여기에 바로 떠요\.'\) : loadingText\('결정할 일'\)/);
   // #521: the request panel too, and it redraws once the snapshot or the token arrives.
   const renderRequest=html.slice(html.indexOf('function renderRequest()'),html.indexOf('function renderStaff()'));
   assert.match(renderRequest,/: snapshotLoaded \? 'none' : `loading:\$\{S\.conn\}`;/);

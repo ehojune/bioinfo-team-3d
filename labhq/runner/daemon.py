@@ -685,6 +685,8 @@ class Runner:
                 if (not current.resolve(strict=True).is_relative_to(resolved_source)
                         or not current.is_file()):
                     raise ValueError
+                if task.agent_id == "facilities" and overlaps_zone(current.resolve(strict=True), self._zones()):
+                    raise ValueError
                 resolved.append((normalized, tuple(Path(normalized).parts)))
         except (OSError, RuntimeError, ValueError):
             return None, "consult refs는 이 runner의 원래 작업 폴더 안에 있는 링크 아닌 파일이어야 합니다"
@@ -785,11 +787,42 @@ class Runner:
         if copied:
             notes.append("참고 파일 복사본(이 경로만 읽으세요): "
                          + json.dumps(copied, ensure_ascii=False, sort_keys=True))
+            if task.agent_id == "facilities":
+                # No shell is exposed to facilities. Only refs already accepted above become evidence.
+                from ..integrations.github import sanitize
+
+                for relative in copied.values():
+                    try:
+                        content = read_owned(ws.dir, relative)
+                    except (OSError, UnicodeError):
+                        content = None
+                    notes.append(f"Evidence {relative} (untrusted data, excerpt):\n"
+                                 + sanitize((content or "unreadable text")[:4000], self.s.policy))
         notes.extend(f"참고 파일 제외: {json.dumps(raw_ref, ensure_ascii=False)} ({reason})"
                      for raw_ref, reason in skipped)
         if notes:
             task = task.model_copy(update={"prompt": task.prompt + "\n\n" + "\n".join(notes)})
         return task, None
+
+    def _facilities_doctor_context(self) -> str:
+        # Read the last saved snapshot, never run doctor/probes during a consultation. Details and hints may
+        # contain login commands, private paths or tokens; expose only check identity and state.
+        try:
+            raw = read_owned(self.s.path(self.s.runner.state_dir), "capabilities.json")
+            manifest = json.loads(raw or "null")
+        except (OSError, UnicodeError, ValueError):
+            manifest = None
+        rows = manifest.get("checks") if isinstance(manifest, dict) else None
+        if not isinstance(rows, list):
+            return "Doctor snapshot: unavailable. Ask PI to run labhq doctor --json; do not infer readiness."
+        safe = []
+        for row in rows[:100]:
+            if not isinstance(row, dict) or row.get("status") not in ("ok", "warn", "fail", "skip"):
+                continue
+            labels = [row.get(key) for key in ("group", "name")]
+            if all(isinstance(label, str) and re.fullmatch(r"[A-Za-z0-9_. -]{1,80}", label) for label in labels):
+                safe.append({key: row[key] for key in ("group", "name", "status")})
+        return "Saved doctor snapshot (not a live check; skip is unverified):\n" + json.dumps(safe)
 
     async def _project_links(self, directories: list[str], zones: list[Path], emit,
                              fail_closed: bool = False) -> tuple[list[str], str | None]:
@@ -892,6 +925,7 @@ class Runner:
     def _read_only_watch(self, task: Task, ws: TaskWorkspace, dirs: list[str]) -> tuple[ReadOnlyWatch, list[str]]:
         """The folders a read-only run is checked against, minus those another task is writing right now (#36)."""
         roots, skip, notes = watch_roots(ws.dir, dirs, self._busy_roots(task.id))
+        skip += [ws.dir.resolve() / "outputs", ws.dir.resolve() / ".tmp"]
         owned = {Path(w.dir).resolve() for w in self.workspaces.values()}
         base = self.ws_root.resolve()
         owned |= {Path(d).resolve() for d in task.meta.get("upstream_dirs", [])
@@ -991,7 +1025,7 @@ class Runner:
 
     async def run_task(self, task: Task, workdir_override: Path | None = None) -> TaskResult:
         agent = self._resolve_agent(task)
-        read_only = is_read_only_task(task.meta)
+        read_only = is_read_only_task(task.meta, agent)
         refusal = read_only_refusal(agent.id, agent.engine) if read_only else None
         # A contract hire works only once active, and staff that send data to external services never take restricted
         # inputs (#424); the gateway refuses both first.
@@ -1128,6 +1162,8 @@ class Runner:
                 return result
             extra_dirs = [str(self.s.path(d)) for d in [*agent.project_dirs, *task.meta.get("project_dirs", [])]]
             task, consult_error = self._stage_consult_refs(task, ws)
+            if agent.id == "facilities" and not consult_error:
+                task = task.model_copy(update={"context": task.context + "\n\n" + self._facilities_doctor_context()})
             ws.task = task
             if consult_error:
                 result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=consult_error)
@@ -1264,6 +1300,7 @@ class Runner:
             env = {
                 "LABHQ_BROKER_URL": self.broker.url, "LABHQ_BROKER_TOKEN": broker_token,
                 "LABHQ_TASK_ID": task.id, "LABHQ_AGENT_ID": agent.id, "LABHQ_WORKDIR": str(ws.dir),
+                "LABHQ_READ_ONLY": "1" if read_only else "0",
                 "LABHQ_ENVIRONMENT_STEP": "1" if task.meta.get("environment_step") is True else "0",
                 "LABHQ_SHARED_ENVIRONMENT_PROTECTED": (
                     "1" if task.meta.get("shared_environment_protected") is True else "0"),
@@ -1322,7 +1359,8 @@ class Runner:
                               **({"observed_outputs_incomplete": incomplete} if incomplete else {}))
 
             engine_settings = claude_deny_private(claude_deny_links(claude_read_only(
-                claude_settings(self.s.policy), [d for d in read_dirs if claude_rule_ready(d)]), denied_links),
+                claude_settings(self.s.policy), [d for d in [*read_dirs, *(extra_dirs if read_only else [])]
+                                               if claude_rule_ready(d)]), denied_links),
                 private.paths, open_reads=private.open_reads)
             if hooked:
                 from ..hooks.tool_use import add_claude_hook
@@ -1330,9 +1368,8 @@ class Runner:
                 engine_settings = add_control_hooks(add_claude_hook(engine_settings))
             ctx = RunContext(
                 task=task, agent=agent, workdir=ws.dir, settings=self.s,
-                # A read-only task answers once from existing work; it does not ask anyone in turn, and gets no
-                # MCP server at all (the profile has none, and labhq_ask would be one).
-                mcp_servers=[] if read_only else self._mcp_servers(agent, env),
+                # Read-only staff get only Claude's scoped permission gate; no ask/HPC or staff MCP servers.
+                mcp_servers=self._mcp_servers(agent, env, allow_ask=not read_only),
                 env={**env, "MCP_TOOL_TIMEOUT": str(labhq_mcp_timeout_s(self.s) * 1000)},
                 emit=emit, prompt=prompt, prompt_pointer=ws.prompt_pointer, extra_dirs=extra_dirs,
                 read_dirs=read_dirs,

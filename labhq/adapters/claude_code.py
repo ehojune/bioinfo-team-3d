@@ -17,7 +17,7 @@ import subprocess
 from pathlib import Path, PurePath
 
 from ..policy import claude_allowed_tools
-from ..util import event_preview, short, tool_input_summary
+from ..util import event_preview, short, tool_input_fingerprint, tool_input_summary
 from .base import (AgentAdapter, role_footer, RunContext, RunState, SHELL_TOOLS, child_config_dirs, expand_env,
                    note_command_ok, note_failed_output, record_model_id, wrap_cwd)
 from .owned import case_sensitive_directory, is_link
@@ -198,7 +198,7 @@ def plugin_provenance(name: str, path: Path, every_file: bool = False) -> dict:
 
 class ClaudeCodeAdapter(AgentAdapter):
     engine = "claude_code"
-    enforces_read_only = True  # plan mode, --tools Read,Glob,Grep, no settings file, disableAllHooks, no plugin
+    enforces_read_only = True  # file tools + scoped permission gate, no user hooks/plugins or shell
 
     def engine_env(self) -> dict[str, str]:
         # Claude Code documents this as disabling run_in_background, automatic backgrounding and Ctrl+B.
@@ -389,6 +389,8 @@ class ClaudeCodeAdapter(AgentAdapter):
                     if block.get("name") in SHELL_TOOLS and block.get("id"):
                         st.shell_calls.add(block["id"])
                     await ctx.emit("agent.tool", {"id": block.get("id"), "name": block.get("name"),
+                                                 "input_fingerprint": tool_input_fingerprint(
+                                                     block.get("name"), block.get("input")),
                                                  "summary": tool_input_summary(block.get("input")),
                                                  **event_preview("input", block.get("input"), 400)})
         elif typ == "user":

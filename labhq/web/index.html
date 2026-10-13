@@ -236,6 +236,7 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
 .msg b i{font-style:normal;color:var(--muted)}
 .msg p{margin:1px 0 0;font-size:14px;line-height:1.45;overflow-wrap:anywhere}
 .msg time{font-size:12px;color:var(--muted);white-space:nowrap}
+.pi-prose{white-space:pre-wrap;overflow-wrap:anywhere}
 .msg.alert p{color:var(--wait-ink)}
 .job{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--line);font-size:14px}
 .job small{color:var(--muted)}
@@ -381,6 +382,7 @@ dialog.sheet::backdrop{background:rgba(17,26,34,.45)}
     <section class="panel" data-tab="decisions" aria-labelledby="h-ap">
       <h2 id="h-ap">결정할 일 <span class="n" id="ap-count"></span></h2>
       <div id="engine-holds"></div>
+      <div id="review-cards"></div>
       <div id="approvals"></div>
       <div id="approval-history" aria-label="결정 이력"></div>
     </section>
@@ -439,7 +441,7 @@ dialog.sheet::backdrop{background:rgba(17,26,34,.45)}
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script src="./state.js"></script>
 <script type="module">
-import {answerRequired, decisionChoice, decisionNote, revisedToast, revisionNoteMissing, syncDecisionCards, syncDecisionHistory, createHistoryVisibility, expandableText, syncExpandableText} from './ui/decide.js';
+import {answerRequired, decisionChoice, decisionNote, revisedToast, revisionNoteMissing, syncReviewCards, syncDecisionCards, syncDecisionHistory, createHistoryVisibility, expandableText, syncExpandableText} from './ui/decide.js';
 import {syncStaffCards} from './ui/strip.js';
 import {syncTaskBoard} from './ui/tasks.js';
 import {controlHtml, controlKey, staffControls} from './ui/control.js';
@@ -472,6 +474,7 @@ const showTab = initTabShell($('#cc-tabs'), $('#command-center'), 'decisions');
 // #57 ⑧: the office props are tab entrances — the board opens the task board (or 결정 while decisions wait),
 // the HPC rack opens HPC, the door opens the messenger.
 function openPropTab(e) {
+  if (e.target.closest('[data-open-review]')) return;
   const prop = e.target.closest('[data-tab-link]'); if (!prop) return;
   if (e.type === 'keydown') { if (e.key !== 'Enter' && e.key !== ' ') return; e.preventDefault(); }
   showTab(prop.dataset.tabLink);
@@ -490,17 +493,8 @@ const FUR = {
   octopus: ['#B46AB8', '#D3A0D6'], hedgehog: ['#7C5D47', '#E9D5B7'], turtle: ['#9CC27F', '#C9DFB6'],
   beaver: ['#8C5A3B', '#C99A77'], otter: ['#7E5C4B', '#D8BFA9'], chick: ['#F2C84B', '#F7DC86'],
 };
-const CHAR_OF = { cso: 'owl', chief_of_staff: 'penguin', biologist: 'bear', data_steward: 'squirrel', lit_scout: 'fox',
-  analyst: 'raccoon', engineer: 'octopus', qc_reviewer: 'hedgehog', sci_reviewer: 'turtle', recruiter: 'beaver',
-  'bioinfo-agent': 'otter' };
 const isContract = a => !!a && (a.employment === 'contract' || String(a.id).startsWith('c_'));
-function kindOf(a) {
-  if (!a) return 'chick';
-  if (CHAR_OF[a.id]) return CHAR_OF[a.id];
-  const c = a.character === 'paper-hat-chick' ? 'chick' : a.character;
-  if (FUR[c]) return c;
-  return isContract(a) ? 'chick' : 'otter';
-}
+function kindOf(a) { return LabHQState.staffCharacter(a); }
 const SPIKES = (() => {
   const pts = [];
   for (let i = 0, deg = 150; deg <= 390; deg += 12, i++) {
@@ -552,6 +546,7 @@ function eyes(kind) {
   return `<g class="eyes-open">${open}</g><g class="eyes-closed"><path d="M41 38.5q3 2.4 6 0M53 38.5q3 2.4 6 0" fill="none" stroke="${lid}" stroke-width="1.5" stroke-linecap="round"/></g>`;
 }
 function charArt(kind) {
+  if (kind === 'neutral') return '<circle cx="50" cy="34" r="20" fill="#89939d"/><text x="50" y="41" text-anchor="middle" fill="white" font-size="22">?</text>';
   const [fur, pale] = FUR[kind] || FUR.otter, p = PARTS[kind] || {};
   const fill = s => (s || '').replace(/FUR/g, fur).replace(/PALE/g, pale);
   const body = p.shell
@@ -624,7 +619,7 @@ function bubble(a, vs) {
     if (a.tool && now() - (a.toolAt || 0) < 20) return toolLabel(a.tool);
     return '작업 중';
   }
-  if (vs === 'hibernating') return stateText(a, vs);  // HPC job or an unanswered question (#511 review)
+  if (['hibernating', 'waiting', 'done'].includes(vs)) return stateText(a, vs);  // HPC job or an unanswered question (#511 review)
   return { queued: '순서 기다림', waiting: '승인 기다려요', hibernating: 'HPC 기다리는 중', done: '완료!', error: '문제가 생겼어요' }[vs] || '';
 }
 function renderHeader() {
@@ -690,12 +685,12 @@ const processingLabel = LabHQState.processingLabel;  // shared with the 3D reque
 function renderBoard() {
   const q = S.requests.get(S.current), el = $('#board');
   const resume = LabHQState.requestResumeLabel(q);
-  const key = q ? JSON.stringify([q.id, q.phase, q.steps, q.text, q.processing, resume]) : snapshotLoaded ? 'none' : `loading:${S.conn}`;
+  const key = q ? JSON.stringify([q.id, q.phase, q.steps, q.text, q.processing, resume, q.pi_review_pending, q.pi_reviewed_at]) : snapshotLoaded ? 'none' : `loading:${S.conn}`;
   if (el.dataset.key === key) return;
   el.dataset.key = key;
   if (!q) { el.innerHTML = `<p class="board-empty">${snapshotLoaded ? '오늘의 할 일을 기다리는 중' : loadingText('사무실 상태')}</p>`; return; }
   const chips = q.plan.map(s => `<span class="chip st-${q.steps[s.id] || 'pending'}" title="${esc(s.instruction)}">${esc(s.id)} ${esc(nick(s.agent_id))}</span>`).join('');
-  el.innerHTML = `<p class="board-title">${[esc(short(q.text, 70)), esc(processingLabel(q))].filter(Boolean).join(' · ')}</p>${resume ? `<p class="req-meta">${esc(resume)}</p>` : ''}${phaseList(q)}<div class="chips">${chips}</div>`;
+  el.innerHTML = `<p class="board-title">${[esc(short(q.text, 70)), esc(processingLabel(q))].filter(Boolean).join(' · ')}</p>${resume ? `<p class="req-meta">${esc(resume)}</p>` : ''}${phaseList(q)}<div class="chips">${chips}</div>${LabHQState.needsPiReview(q) ? `<p>✓ ${esc(LabHQState.requestStatusText(q))}</p><button class="btn go" style="font-size:1.1em;padding:10px 18px" data-open-review="${esc(q.id)}">${q.status === 'done' ? '보고서 열기' : '결과·이유 보기'}</button>` : ''}`;
 }
 function renderRack() {
   const jobs = [...S.jobs.values()].sort((a, b) => (b.ts || 0) - (a.ts || 0)).slice(0, 8);
@@ -715,7 +710,9 @@ function renderDoor() { $('#door').classList.toggle('open', now() < S.doorUntil)
 
 function renderApprovals() {
   const items = [...S.approvals.values()], sugs = S.suggestions, holds = [...S.engineHolds.values()];
-  const total = items.length + sugs.length + holds.length;
+  const reviews = [...S.requests.values()].filter(LabHQState.needsPiReview);
+  const total = items.length + sugs.length + holds.length + reviews.length;
+  syncReviewCards($('#review-cards'), reviews, {onOpen:openReview, onDone:finishReview, disabled:() => !api?.reviewDone});
   $('#ap-count').textContent = total ? `${total}건` : '';
   const board = $('#board');  // #57 ⑧: waiting decisions make the board blink and lead to 결정
   board.classList.toggle('alert', total > 0);
@@ -737,8 +734,8 @@ function renderApprovals() {
   const holdList = document.createElement('div'); holdList.className = 'list'; holdList.replaceChildren(...holdRows);
   $('#engine-holds').replaceChildren(...(holdRows.length ? [holdList] : []));
   syncDecisionCards($('#approvals'), items, sugs, { now, nick, kindLabels: KIND_KO, requests: S.requests,
-    taskStep: S.taskStep, avatarHTML: (value, type) => headSVG(type === 'suggestion' ? 'owl' : kindOf(ag(value.agent_id))),
-    emptyText: snapshotLoaded ? '지금은 결정할 일이 없어요. 승인이 필요하면 여기에 바로 떠요.' : loadingText('결정할 일') });
+    taskStep: S.taskStep, avatarHTML: (value, type) => headSVG(type === 'suggestion' ? 'owl' : kindOf(ag(value.agent_id) || {id:value.agent_id})),
+    emptyText: snapshotLoaded ? (reviews.length ? '추가 승인 대기는 없어요.' : '지금은 결정할 일이 없어요. 승인이 필요하면 여기에 바로 떠요.') : loadingText('결정할 일') });
   syncDecisionHistory($('#approval-history'), decisionHistory, { kindLabels: KIND_KO, requests: S.requests,
     visibility: historyVisibility, onOpenRequest: id => { officeState.selectRequest(id); reqKey = ''; renderRequest(); schedule(); showTab('tasks'); $('#request').scrollIntoView({block: 'start'}); } });
 }
@@ -821,13 +818,13 @@ function renderRequest() {
   // The status line also names a waiting resume card or the runners a resume still needs (R14).
   const statusText = q ? LabHQState.requestStatusText(q, S.approvals) : '';
   const all = LabHQState.sortRequests(S.requests.values());
-  const key = q ? JSON.stringify([S.requests.size, staffNames, statusText, all.map(r => [r.id, r.status, r.text]), q.id, q.phase, q.status, q.steps, details, q.github.length, q.pipelinePr, q.report, q.report_appendix, q.bundlePath, q.bundleStatus, q.bundleGrade, q.bundleGradeReasons, q.bundleWarning, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes, q.processing]) : snapshotLoaded ? 'none' : `loading:${S.conn}`;
+  const key = q ? JSON.stringify([S.requests.size, staffNames, statusText, all.map(r => [r.id, r.status, r.text, r.pi_review_pending, r.pi_reviewed_at]), q.id, q.phase, q.status, q.steps, details, q.github.length, q.pipelinePr, q.report, q.report_appendix, q.bundlePath, q.bundleStatus, q.bundleGrade, q.bundleGradeReasons, q.bundleWarning, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes, q.processing]) : snapshotLoaded ? 'none' : `loading:${S.conn}`;
   if (key === reqKey) return;
   reqKey = key;
   // Before the first snapshot no request is known yet, which is not the same as none (#521).
   if (!q) { el.innerHTML = `<p class="empty-note">${snapshotLoaded ? '아직 요청이 없어요. 아래 입력창에 적으면 CSO가 팀에 나눠 맡겨요.' : loadingText('요청')}</p>`; return; }
   const pick = all.length > 1 ? `<p class="req-pick"><label class="sr" for="req-sel">요청 고르기</label><select id="req-sel">${all.map(r =>
-    `<option value="${esc(r.id)}"${r.id === q.id ? ' selected' : ''}>${esc(short(r.text || r.id, 40))} (${esc(LabHQState.requestStatusLabel(r.status))})</option>`).join('')}</select></p>` : '';
+    `<option value="${esc(r.id)}"${r.id === q.id ? ' selected' : ''}>${esc(short(r.text || r.id, 40))} (${esc(LabHQState.requestStatusText(r, S.approvals))})</option>`).join('')}</select></p>` : '';
   const proj = S.projects.find(p => p.id === q.project_id);
   const gh = q.github.filter(g => safeUrl(g.url)).map(g => `<li><a href="${esc(g.url)}" target="_blank" rel="noopener">${esc({ issue: `이슈 #${g.number}`, report: '보고서 커밋', final: '최종 코멘트', plan: '계획 코멘트', review: '리뷰 코멘트', recruit: '채용 기록', pr: 'PR', pipeline_pr: 'bioinfo-agent pipeline PR', codex_review: 'Codex 리뷰 요청' }[g.kind] || g.kind)}</a></li>`).join('');
   const pipeline = q.pipelinePr && q.pipelinePr.status !== 'open' ? `<p class="empty-note">pipeline PR ${q.pipelinePr.status === 'pending' ? '대기' : '거부'}: ${esc(q.pipelinePr.reason || '')}</p>` : '';
@@ -835,7 +832,7 @@ function renderRequest() {
   el.innerHTML = `${pick}<p class="req-text">${esc(q.text)}</p><p class="req-meta">${processingLabel(q) ? `<span>${esc(processingLabel(q))}</span>` : ''}</p>${refList ? `<ul class="req-refs" aria-label="참고 자료">${refList}</ul>` : ''}${assumptionsHTML(q)}${phaseList(q)}<div id="task-board"></div>
 <p class="req-meta">${proj ? `<span>프로젝트 ${esc(proj.name)}</span>` : ''}<span>비용 ${esc(LabHQState.costLabel(q))}</span>${q.costSummary && Object.keys(q.costSummary.by_engine || {}).length ? `<span>${esc(LabHQState.engineCostLabel(q.costSummary))}</span>` : ''}${q.costSummary && q.costSummary.by_agent ? `<span>${esc(LabHQState.agentCostLabel(q.costSummary, nick))}</span>` : ''}<span class="req-status st-${esc(q.status)}">${esc(statusText)}</span></p>
   ${api?.cancelRequest && (LabHQState.isActiveRequest(q.status) || q.status === 'interrupted') ? `<p class="req-actions"><button class="btn" id="req-cancel" type="button" data-rid="${esc(q.id)}">요청 취소</button></p>` : ''}
-  ${pipeline}${gh ? `<ul class="gh">${gh}</ul>` : ''}${notesHTML(q)}${reportHTML(q)}${bundleHTML(q)}${auditHTML(q)}${q.error ? `<p class="empty-note">${esc(q.error)}</p>` : ''}${followupHTML(q)}`;
+  ${pipeline}${gh ? `<ul class="gh">${gh}</ul>` : ''}${notesHTML(q)}${reportHTML(q)}${LabHQState.needsPiReview(q) ? `<p><button class="btn go" data-review-done="${esc(q.id)}">${q.status === 'done' ? '검토 완료' : '확인 완료'}</button></p>` : ''}${bundleHTML(q)}${auditHTML(q)}${q.error ? `<p class="empty-note">${esc(q.error)}</p>` : ''}${followupHTML(q)}`;
   if ($('#fu-text')) $('#fu-text').value = fuDrafts.get(q.id) || '';  // a live update keeps this request's draft
   syncTaskBoard($('#task-board'), q, S.stepDetails, { nick,
     onCancel: api?.cancel ? id => api.cancel(id).then(() => toast('취소 요청을 보냈어요')).catch(err => toast(`취소하지 못했어요: ${err.message}`)) : null,
@@ -846,13 +843,13 @@ function renderStaff() {
 }
 let feedKey = '';
 function avatar(who) {
-  const a = ag(who);
+  const a = ag(who) || (LabHQState.STAFF_NAMES[String(who).toLowerCase()] || String(who).startsWith('c_') ? {id:who} : null);
   if (a) return headSVG(kindOf(a));
   return `<span class="glyph">${esc({ pi: '나', hpc: 'HPC', github: 'GH', system: 'SYS' }[who] || '?')}</span>`;
 }
 function renderFeed() {
   const items = S.feed.slice(0, 40);
-  const key = items.length + ':' + (items[0] ? items[0].ts + items[0].text : '') + ':' + Math.floor(now() / 30);
+  const key = items.length + ':' + (items[0] ? items[0].ts + items[0].text : '') + ':' + Math.floor(now() / 30) + ':' + [...S.agents.values()].map(a => a.id + a.name + a.character).join();
   if (key === feedKey) return;
   feedKey = key;
   const list = $('#feed'), old = list._rows || new Map(), next = new Map();
@@ -861,13 +858,15 @@ function renderFeed() {
     if (!row) {
       row = document.createElement('li'); row.className = `msg ${m.cls || ''}`;
       row.innerHTML = `<span class="av">${avatar(m.who)}</span><div><b>${esc(nick(m.who))}${m.to ? ` <i>→ ${esc(nick(m.to))}</i>` : ''}</b><div class="message-text"></div></div><time></time>`;
-      expandableText(row.querySelector('.message-text'), m.fullText ?? m.text, {limit: 150, summary: m.text,
+      expandableText(row.querySelector('.message-text'), m.fullText ?? m.text, {pi: true, limit: 150, summary: m.text,
         fold: m.fullText != null && m.fullText !== m.text, truncated: m.truncated, cutChars: m.cutChars});
       if (safeUrl(m.url)) {
         const link = document.createElement('a'); link.href = m.url; link.target = '_blank'; link.rel = 'noopener'; link.textContent = '열기';
         row.querySelector('.message-text').append(link);
       }
     }
+    row.querySelector('.av').innerHTML = avatar(m.who);
+    row.querySelector('b').textContent = nick(m.who) + (m.to ? ` → ${nick(m.to)}` : '');
     row.querySelector('time').textContent = ago(m.ts); next.set(m, row); return row;
   });
   if (!items.length) list.innerHTML = '<li class="empty-note">팀이 주고받는 말이 여기에 쌓여요.</li>';
@@ -916,6 +915,30 @@ function renderComposerMode() {
 
 /* ---------------- interactions ---------------- */
 let api = null;
+async function openReview(rid) {
+  officeState.selectRequest(rid); reqKey = ''; renderRequest(); showTab('tasks');
+  $('#request').scrollIntoView({block:'start'});
+  if (api?.requestDetail) {
+    try {
+      const detail = await api.requestDetail(rid); fillRequestDetail(rid, detail);
+      reqKey = ''; schedule();
+    } catch (err) { toast(`보고서를 불러오지 못했어요: ${err.message}`); }
+  }
+}
+async function finishReview(rid) {
+  if (!api?.reviewDone) return;
+  try {
+    const result = await api.reviewDone(rid);
+    officeState.apply({type:'request.reviewed', request_id:rid, data:result});
+    reqKey = ''; schedule(); toast('검토·확인을 마쳤어요');
+  } catch (err) { toast(`검토 완료를 기록하지 못했어요: ${err.message}`); }
+}
+document.addEventListener('click', e => {
+  const open = e.target.closest('[data-open-review]');
+  if (open) { e.stopPropagation(); openReview(open.dataset.openReview); }
+  const done = e.target.closest('[data-review-done]');
+  if (done) finishReview(done.dataset.reviewDone);
+});
 let toastTimer = 0, toastApproval = null;  // #184: a toast raised by an approval goes when that approval ends
 function refreshHistory() {
   if (!api?.history) return;
@@ -1235,6 +1258,7 @@ function startLive() {
     contract: (id, action, days) => post(`/api/contracts/${encodeURIComponent(id)}`, { action, days }),
     cancel: id => post(`/api/tasks/${encodeURIComponent(id)}/cancel`, {}),
     control: (id, action, text) => post(`/api/tasks/${encodeURIComponent(id)}/${action}`, action === 'steer' ? { text } : {}),
+    reviewDone: rid => post(`/api/requests/${encodeURIComponent(rid)}/review-done`, {}),
     cancelRequest: rid => post(`/api/requests/${encodeURIComponent(rid)}/cancel`, {}),
     resumeQuota: (rid, sid) => post(`/api/requests/${encodeURIComponent(rid)}/steps/${encodeURIComponent(sid)}/resume-quota`, {}),
     history: () => get('/api/approvals/history?limit=50'),

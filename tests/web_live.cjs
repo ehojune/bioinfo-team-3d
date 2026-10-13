@@ -55,7 +55,9 @@ const source = fs.readFileSync(path.join(root,'lab3d/src/live.js'),'utf8').repla
   event({type:'approval.requested',seq:12,data:{id:'a1',summary:'<img src=x>',kind:'tool_permission',
     created_at:clock,detail:{tool_name:'Bash',input:JSON.stringify({command:'printf "<example>"',args:['--example']})}}});
   let row=element('approvals').children[0].children[0];
-  assert.equal(row._decisionParts.summary.textContent,'<img src=x>','untrusted text is never HTML');
+  assert.match(textIn(row._decisionParts.summary),/직원이 도구를 실행/);
+  assert.ok(textIn(row._decisionParts.detail).includes('<img src=x>'),'untrusted source is retained as literal text in details');
+  assert.equal(row._decisionParts.detail.children.some(child=>child.tagName==='IMG'),false);
   assert.match(textIn(row._decisionParts.detail),/Bash/);
   assert.match(textIn(row._decisionParts.detail),/printf.*<example>/s,'3D retains tool command input');
   assert.equal(intervals.length,1,'3D starts one periodic decision-card clock');

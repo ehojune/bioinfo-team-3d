@@ -26,10 +26,12 @@ from pydantic import BaseModel, Field, field_validator
 from ..integrations.github import ProjectReporter
 from ..intake import MAX_REFERENCES, Reference, effective_references
 from ..integrations.rounds import RoundRecorder, environment_snapshot
+from ..integrations.visibility import dev_log_visibility
 from ..login import login_command
 from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..costs import outcome_unknown_item, request_cost_summary, task_cost_item
 from ..models import ApprovalRequest, AskRequest, RunnerNotSent, RunnerUnavailable, Task, TaskResult, new_id, waiting
+from ..pi_text import with_approval_copy
 from ..recruit.provenance import not_yet_active, probation_refusal
 from ..adapters import enforces_read_only, get_adapter, read_only_refusal
 from ..hooks.control import STEER_LIMIT
@@ -364,6 +366,26 @@ class Hub:
     def save_request(self, rid: str) -> None:
         self.requests[rid]["updated_at"] = time.time()
         self.store.put("request", rid, self.requests[rid])
+
+    def review_done(self, rid: str) -> dict:
+        """PI acknowledgment is independent of execution and never blocks another request."""
+        req = self.requests[rid]
+        if not is_terminal_request(req.get("status")) or req.get("cancelling"):
+            raise ValueError("보고서가 끝난 요청만 검토 완료로 표시합니다")
+        if not req.get("pi_reviewed_at"):
+            at = time.time()
+            updated = copy.deepcopy(req)
+            updated.update(pi_review_pending=False, pi_reviewed_at=at, updated_at=at)
+            audit = {"actor": "pi", "at": at, "outcome": req["status"]}
+            updated.setdefault("pi_review_audit", []).append(audit)
+            event = self.store.commit_request_event(rid, updated,
+                {"type": "request.reviewed", "ts": at, "request_id": rid,
+                 "data": {**audit, "pi_reviewed_at": at, "pi_review_pending": False}}, self.s.gateway.event_buffer)
+            req.update(updated)
+            self.events.append(event)
+            self.pending_committed.append((event, tuple(self.clients)))
+            asyncio.get_running_loop().create_task(self._send_committed_event())
+        return {"request_id": rid, "pi_review_pending": False, "pi_reviewed_at": req["pi_reviewed_at"]}
 
     def quota_hold(self, engine: str) -> dict | None:
         """The account-wide hold for an engine, derived from durable per-request waits."""
@@ -841,6 +863,8 @@ class Hub:
                    "bundle_warning": req.get("bundle_warning")}
         if environment:
             summary["step_environment"] = environment
+        summary.update(pi_review_pending=is_terminal_request(req.get("status")) and not req.get("pi_reviewed_at")
+                       and not req.get("cancelling", False), pi_reviewed_at=req.get("pi_reviewed_at"))
         return summary
 
     def clear_step_jobs(self, rid: str, step_id: str) -> None:
@@ -999,6 +1023,8 @@ class Hub:
     def _commit_terminal_record(self, rid: str, typ: str, data: dict) -> None:
         # Failure never changes the request outcome, and terminal requests loaded after a restart do not pass this
         # checkpoint again.
+        self.requests[rid].update(pi_review_pending=True, pi_reviewed_at=None)
+        data = {**data, "pi_review_pending": True, "pi_reviewed_at": None}
         event = self.store.commit_terminal(rid, self.requests[rid],
                                            {"type": typ, "ts": time.time(), "request_id": rid,
                                             "data": copy.deepcopy(data)},
@@ -1991,6 +2017,8 @@ class Hub:
 
     # ----- events -----
     async def publish(self, ev: dict, runner_id: str | None = None, runner_seq: int | None = None) -> None:
+        if ev.get('type') == 'approval.requested':
+            ev = {**ev, 'data': with_approval_copy(ev.get('data') or {})}
         async with self.event_lock:
             await self._flush_committed_events()
             durable_report = (self.reporter.enabled() and bool(ev.get("request_id")) and
@@ -2189,7 +2217,8 @@ class Hub:
                 pass  # kept: sent again when that runner reconnects
             msg = {**msg, "type": "approval.expired", "data": {"id": a["id"], "note": note}}
         elif typ == "approval.requested":
-            a = msg["data"]
+            a = with_approval_copy(msg["data"])
+            msg = {**msg, 'data': a}
             # The asking process: a card outlives neither it nor the agent's move to another runner (R2).
             self.approvals[a["id"]] = {"approval": a, "origin": runner_id,
                                        "origin_incarnation": self.runner_incarnations.get(runner_id),
@@ -3235,6 +3264,9 @@ class Hub:
                           # the full list and full answers stay on the request (GET /api/requests/{id})
                           "followups": [snapshot_followup(f) for f in (r.get("followups") or [])[-20:]],
                           "step_status": self.request_summary(r, running)["step_progress"]["steps"],
+                          "pi_review_pending": is_terminal_request(r.get("status")) and not r.get("pi_reviewed_at") and not r.get("cancelling", False),
+                          "pi_reviewed_at": r.get("pi_reviewed_at"),
+                          "error": short(r.get("error") or "", 2000),
                           "step_details": self.request_step_details(r.get("id", ""), r, tasks),
                           **({} if r.get("id") in recent_terminals else snapshot_reports(r)),
                           **({"pipeline_pr": pipeline_prs[r["id"]]} if r.get("id") in pipeline_prs else {}),
@@ -3293,6 +3325,24 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         hub.demo_status = {"phase": "starting", "remaining_s": 0}
     app = FastAPI(title="labhq gateway", version="0.1.0", default_response_class=UTF8JSONResponse)
     app.state.hub = hub
+
+    visibility_checked = False
+
+    @app.on_event("startup")
+    async def check_dev_log_visibility() -> None:
+        nonlocal visibility_checked
+        if visibility_checked:
+            return
+        visibility_checked = True
+        visibility = await dev_log_visibility(settings, github_transport)
+        if visibility not in {"public", "unknown"}:
+            return
+        message = ("dev_log 저장소가 public입니다. 이미 게시한 기록도 노출될 수 있으니 비공개 설정을 확인하세요."
+                   if visibility == "public" else
+                   "dev_log 저장소의 private 여부를 확인하지 못했습니다(unknown). 토큰·접근 권한·연결을 확인하세요.")
+        log.warning("%s", message)
+        await hub.publish({"type": "agent.log", "agent_id": settings.orchestrator.cso_agent,
+                           "data": {"level": "warn", "code": "dev_log_visibility", "text": message}})
 
     @app.on_event("startup")
     async def recover_terminal_deliveries() -> None:
@@ -3411,7 +3461,9 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             raise HTTPException(422, "invalid status")
         if not 1 <= limit <= 200:
             raise HTTPException(422, "limit must be 1..200")
-        requests = sorted(hub.requests.values(), key=lambda r: r.get("created_at", 0), reverse=True)
+        requests = sorted(hub.requests.values(), key=lambda r: (
+            is_terminal_request(r.get("status")) and bool(r.get("pi_reviewed_at")),
+            -float(r.get("updated_at") or r.get("created_at") or 0)))
         chosen = [r for r in requests if status == "all" or (status == "running" and is_active_request(r.get("status")))
                   or r.get("status") == status][:limit]
         running = hub.running_tasks() if chosen else []  # one ledger read for the whole list
@@ -3429,6 +3481,15 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             raise HTTPException(409, "project has no repo or GitHub token is not set")
         c = await gh.request_codex_review(proj.repo, number, body.note, settings.github.codex_mention)
         return {"ok": True, "url": c.get("html_url")}
+
+    @app.post("/api/requests/{rid}/review-done", dependencies=[Depends(auth)])
+    async def review_done(rid: str) -> dict:
+        if rid not in hub.requests:
+            raise HTTPException(404)
+        try:
+            return hub.review_done(rid)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
 
     @app.post("/api/requests/{rid}/followup", dependencies=[Depends(auth)])
     async def followup(rid: str, body: FollowupIn) -> dict:

@@ -7,18 +7,23 @@ tool errors in a row. Nothing here has side effects; the runner turns a trip int
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..util import tool_input_fingerprint
+
 REPEAT_LIMIT = 8  # the same tool call (name + input) back to back
 ERROR_LIMIT = 5  # tool calls in a row that each failed
-INPUT_CHARS = 4096
 
 
-def _call_key(data: dict[str, Any]) -> str:
-    text = f"{data.get('name') or ''}\0{str(data.get('input') or '')[:INPUT_CHARS]}"
-    return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
+def _call_key(data: dict[str, Any]) -> str | None:
+    if "input_fingerprint" in data:
+        return data["input_fingerprint"]
+    value = data.get("input")
+    # Old adapters only sent previews (some predate truncation metadata). Do not infer identity from a prefix.
+    if data.get("input_truncated") or (isinstance(value, str) and value.endswith("…")):
+        return None
+    return tool_input_fingerprint(data.get("name"), value)
 
 
 @dataclass
@@ -37,7 +42,7 @@ class Breaker:
         if kind == "agent.tool":
             # A call whose input the engine did not report cannot be told apart from the next, so it never counts
             # as a repeat (PR #414 review: Codex MCP calls without arguments).
-            key = _call_key(data) if data.get("input") not in (None, "") else None
+            key = _call_key(data)
             self._repeats = self._repeats + 1 if key is not None and key == self._last_call else int(key is not None)
             self._last_call, self._last_tool = key, str(data.get("name") or "")
             # Engines report failures but not successes: a tool call that follows one without an error ends the

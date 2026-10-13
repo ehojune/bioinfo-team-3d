@@ -371,7 +371,9 @@ def _command_too_long(cmd: list[str]) -> tuple[int, int, str] | None:
     return None
 
 
-ROLE_FOOTER = """
+from ..pi_text import PI_TEXT_RULE
+
+ROLE_FOOTER = PI_TEXT_RULE + """
 ## Lab rules (all agents)
 - Work inside your task workspace; write deliverables to ./outputs/ and cite their paths.
 - Heavy compute or anything touching restricted data goes through the labhq_hpc tools, never inline.
@@ -433,9 +435,10 @@ def private_paths_section(labels: list[str] | tuple[str, ...], saved_output_open
 
 
 def role_footer(ctx: "RunContext") -> str:
-    """ROLE_FOOTER, the write rules unless the task is read-only, and this task's personal-path section."""
+    """Common rules, the task's write boundary, and its personal-path section."""
     return (ROLE_FOOTER + (GENERAL_RESULT_RULES if ctx.task.meta.get("general_result_contract") else "") +
-            ("" if ctx.read_only else WORKSPACE_WRITE_RULES) +
+            ("\nWrite only in your own task's outputs/ and .tmp/. Inputs, upstream results, other tasks and project "
+             "sources are read-only.\n" if ctx.read_only else WORKSPACE_WRITE_RULES) +
             private_paths_section(ctx.private_labels, bool(ctx.private_open_reads)))
 
 

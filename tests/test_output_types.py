@@ -28,8 +28,9 @@ CANARY = "CANARY-7f3a-secret"
 # question rule. #420 adds 23 approved topics, so the topic rule this test renders grows. Off still adds nothing
 # related to output types. #458 makes the environment owner's venv interpreter explicit; the exact digest below
 # changes for that planned behavior while output-type declarations still add nothing when off.
+# #557 adds the shared Korean PI prose rule to card questions; the schema and output-type switch stay unchanged.
 PLAN_SCHEMA_SHA = "a70326fd571c005ce9e956fcf7fe3a6217cf489f4aba3c780a03a40ca68bb284"
-PLAN_PROMPT_SHA = "0da961910ac7d9fddf13a1f0c077fa31f6a97f3741368b3101224cad4baa9c29"
+PLAN_PROMPT_SHA = "7278457f52a1aaa4e3e6e330c5ade51622a9446c86aedac0934ee68220b466de"
 PROMPT_ARGS = dict(request="REQ", roster="ROSTER", capabilities="CAPS", briefing="BRIEF", max_steps=3,
                    question_rule=QUESTION_RULE, lab_scope="LAB", topics_rule=topics.prompt_rule(V))
 

@@ -396,7 +396,7 @@ class RoundRecorder:
         self.queue.put_nowait((rid, generation))
 
     async def _may_post(self, gh: GitHubClient) -> bool:
-        """Visibility right now. Every write is preceded by this call; nothing else awaits in between."""
+        """Recheck before every write; the startup diagnostic never authorizes publication."""
         meta = await gh._req("GET", f"/repos/{self.s.dev_log.repo}")
         private = bool(meta.get("private") is True or meta.get("visibility") in {"private", "internal"})
         if not private and not self.s.dev_log.allow_public:

@@ -20,6 +20,7 @@ from ..environment_install import shared_environment_install_denial
 from ..private_paths import gate_private_paths, resolve_private_paths
 from ..settings import Settings
 from ..util import short
+from ..pi_text import PI_TEXT_RULE
 from ._mcpcompat import NOT_EVIDENCE, make_server
 
 S = Settings.load(os.environ.get("LABHQ_CONFIG"))
@@ -29,13 +30,14 @@ TASK = os.environ.get("LABHQ_TASK_ID")
 AGENT = os.environ.get("LABHQ_AGENT_ID")
 WORKDIR_INPUT = os.environ.get("LABHQ_WORKDIR", ".")
 WORKDIR = str(Path(WORKDIR_INPUT).resolve())
+READ_ONLY = os.environ.get("LABHQ_READ_ONLY") == "1"
 ENVIRONMENT_STEP = os.environ.get("LABHQ_ENVIRONMENT_STEP") == "1"
 SHARED_ENVIRONMENT_PROTECTED = os.environ.get("LABHQ_SHARED_ENVIRONMENT_PROTECTED") == "1"
 EXTRA_ROOTS = [p for p in os.environ.get("LABHQ_EXTRA_ROOTS", "").split(os.pathsep) if p]
 # The runner sets this task's list (possibly empty) and switch; without them the gate works both out itself.
 PRIVATE = gate_private_paths(os.environ, lambda: resolve_private_paths(S, [WORKDIR_INPUT, WORKDIR, *EXTRA_ROOTS]))
 
-server = make_server("labhq-approval", instructions="Permission gate for tool calls (policy + PI approval).")
+server = make_server("labhq-approval", instructions="Permission gate for tool calls (policy + PI approval)." + PI_TEXT_RULE)
 
 
 def _allow(tool_input: dict) -> str:
@@ -68,14 +70,15 @@ async def approval_prompt(tool_name: str, input: dict[str, Any] | None = None,
     d = evaluate_tool(tool_name, input or {}, S.policy,
                       allowed_roots=[WORKDIR_INPUT, WORKDIR, *EXTRA_ROOTS], workdir=WORKDIR,
                       private_paths=PRIVATE.paths, private_enabled=PRIVATE.enabled,
-                      private_open_reads=PRIVATE.open_reads)
+                      private_open_reads=PRIVATE.open_reads, read_only=READ_ONLY)
     # A respelled write path (#219) is what was judged and what the PI sees, so Claude must write that one.
     tool_input = d.updated_input or input or {}
     if d.action == "allow":
         return _allow(tool_input)
     if d.action == "deny":
         return _deny(d.reason)
-    detail = {"tool_name": tool_name, "input": short(tool_input, 1500)}
+    detail = {"tool_name": tool_name, "input": short(tool_input, 1500),
+              "tool_input": tool_input, "policy_reason": d.reason}
     path = (tool_input.get("file_path") or tool_input.get("notebook_path")) if tool_name in WRITE_LIKE else None
     if isinstance(path, str):
         detail["path"] = path  # in full: `input` is cut at 1,500 characters
