@@ -9,3 +9,9 @@ rows:
 - sha: "9c3f268"
   at: 2026-10-13 17:37
   text: plugin·recruiter skill만 읽기로 열고 Claude 설정·CODEX_HOME의 형제 파일 보호를 유지
+- sha: "94deac0"
+  at: 2026-10-13 18:22
+  text: doctor의 Paper2Agent pin 복구와 Codex recruiter roster 로딩 수정
+- sha: "3695d43"
+  at: 2026-10-13 18:34
+  text: recruiter adapter의 skill 허용을 기존 plugin 격리 검사에 반영
