@@ -4,7 +4,7 @@ The agent is described by a command template (AgentSpec.cli). labhq writes the t
 command in the task workspace, and reads stdout.
 
 With `output: jsonl`, each stdout line may be a labhq event (anything else is treated as a log line):
-  {"type": "status", "state": "working"}                     → drives the office animation
+  {"type": "status", "state": "working", "session_id": "..."} → animation; optional early session id
   {"type": "log", "text": "aligning sample 3/12"}             → speech bubble + messenger
   {"type": "tool", "name": "bwa-mem2", "input": {...}}        → tool icon
   {"type": "usage", "cost_usd": 0.12, "tokens": {...}}
@@ -85,7 +85,9 @@ class CliAdapter(AgentAdapter):
             return
         typ = ev["type"]
         record_model_id(st, ctx, ev.get("model_id") or ev.get("model"))
-        if typ == "status":
+        if typ in ("status", "started"):
+            if isinstance(ev.get("session_id"), str) and ev["session_id"]:
+                st.session_id = ev["session_id"]
             await ctx.emit("agent.status", {"state": ev.get("state", "working"), "task": ev.get("task")})
         elif typ == "log":
             st.text_parts.append(str(ev.get("text", "")) + "\n")

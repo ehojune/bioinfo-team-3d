@@ -1426,6 +1426,19 @@ class Runner:
 
             # Hash before the CLI starts (PR #442 review): writable inputs (project and upstream folders) may change.
             input_files, input_notes = await scan_inputs()
+
+            async def wait_ready() -> bool:
+                """Refresh inputs after preparation/pause, before the adapter's spawn baseline."""
+                nonlocal input_files, input_notes
+                while await self.controls.wait_ready(task.id):
+                    input_files, input_notes = await scan_inputs()
+                    # Hashing yields to the control loop. A new pause needs another wait and fresh scan.
+                    live = self.controls.live.get(task.id)
+                    if live is None or live.resumed.is_set():
+                        return live is None or not live.halt.is_set()
+                return False
+
+            ctx.wait_ready = wait_ready
             ws.update_run(task.id, started_at=time.time(), runner_id=self.s.runner.id,
                           engine=agent.engine.value, model=agent.model,
                           engine_cli_version=(self.engine_versions or {}).get(agent.engine.value),

@@ -6,6 +6,83 @@
 
 ## 결론
 
+승인 복구 후보가 없는 environment 실패를 시설팀이 요청·논리 단계당 한 번 진단합니다. 원 실패와 hint는 유지합니다.
+
+## 바뀐 것
+
+- 기존 allowlist 복구 우선. consult·복구 실패·거절·timeout·재실패에는 진단을 추가하지 않습니다.
+- ask를 저장해 재시작·재연결 중복을 막고 기존 상한·예산·read-only 제한과 저장된 기한을 적용합니다.
+- 서명·오류 발췌·doctor 요약만 사용합니다. 원 요청·계획·세션을 넘기거나 LLM 답변을 실행하지 않습니다.
+- 기준 `60ffb1b`, 선행 FACILITY35 #567 포함. CP490 순서는 총괄 결정으로 해제됐습니다.
+
+## 확인
+
+- 새 회귀: 기준 코드에서 1 failed → 구현 후 통과. 관련 테스트 305 passed. 최종 코드 커밋의 새 테스트 31 passed.
+- Windows 전체 pytest: 미실행(UNVERIFIED). 다른 레인의 전체 실행 때문에 10분 대기 후 중단했습니다. 동시 전체 실행 금지를 지켜 총괄에게 인계합니다.
+- 공개 검사·diff 검사 통과. 레인 전용 임시 폴더 삭제는 자동 승인 검토의 blocked by policy로 차단돼 정리를 인계합니다. manual 121,424→121,751자.
+
+## 남은 지적
+
+- 실제 설치·모델 호출·PI/trial 시운전은 수행하지 않았습니다. 봇 리뷰 요청·판단·병합은 총괄에게 넘깁니다.
+
+Refs #35
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
+PR #568의 P1(4257865735)을 `03c3415`에서 수정했다. 준비 중 정지했다 재개하면 CLI 실행 직전에 입력 hash를 갱신한다.
+
+## 바뀐 것
+
+- spawn 직전 pause gate를 유지하고 project·upstream 입력을 다시 스캔한다. gate를 앞으로 옮길 때 생기는 준비 중 pause 누락을 피한다.
+- 스캔 중 새 pause가 들어오면 다시 기다린 뒤 스캔한다. 실행 중 입력 변경은 갱신한 hash를 보존하고 `changed_during_step`으로 표시한다.
+- PR의 기존 세션 id·재개 안내·steer 재전송·빠른 재개 보존 수정도 유지한다.
+
+## 확인
+
+- 회귀 4건: `7363c30`에서 모두 실패, 수정 후 통과. 실제 합성 CLI가 읽은 내용과 manifest hash를 비교한다.
+- 관련 pytest: **61 passed**. Windows 전체: **5,993 passed, 66 skipped**(11분 53초).
+- 공개 검사 통과. 패치노트·목차 원본·diff 검사 후 push한다. CI는 최종 head의 각 job을 확인한다.
+
+## 미해결
+
+- basetemp 한 폴더의 삭제가 자동 승인 검토에서 `blocked by policy`로 차단됐다. 경로는 로컬 보고에 남긴다.
+- 리뷰 요청·병합·PI/trial 실행과 재시작은 하지 않는다.
+
+Refs #59
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
+Windows CI에서 진행 중인 데모 요청을 30초 `wait_for`가 취소하던 테스트를 완료 신호로 동기화했습니다. 제품 코드 변경은 없습니다.
+
+## 바뀐 것
+
+- 같은 파일의 서버 준비·runner 등록 폴링을 실제 startup·등록 이벤트로 대체했습니다.
+- CLI에만 clock/sleep 대역을 주고 요청 task를 기다립니다. 실제 서버·runner·URL 경고·done 검증은 유지합니다.
+- 비종료 상태로 끝난 요청은 즉시 실패하며 교착 검출용 바깥 상한은 120초입니다.
+
+## 검증
+
+- CPU 점유 프로세스 4개와 pytest를 동일 코어에 고정: 수정 전 실패 0/5(로컬 미재현), 최종 수정 후 실패 0/30.
+- 관련 파일 14 passed. CI 실패 근거: runs 38363193704·38383002690의 첫 실행 로그.
+- Windows 전체: **6015 passed, 66 skipped**. 첫 실행의 Node shim 오류 42건은 기존 node.exe를 PATH에 지정해 해소했고 전체를 다시 실행했습니다.
+- 포트 8787·55921 접근 차단. TEMP 아래 basetemp 한 폴더 사용 후 삭제 확인.
+- 공개 검사·patch-notes·notes-index·diff 검사 통과.
+- [CI run 38390129364](https://github.com/ehojune/bioinfo-team-3d/actions/runs/38390129364) (`f068eea`): changes·patch-notes·pytest 3.10·3.12·Windows·slow·clean-install·ro-crate-validator 성공, readme 조건부 skip.
+
+## 미해결
+
+- 자동 봇 지적 판단과 병합은 개발 총괄이 이어받습니다.
+
+Refs #539
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
 PR #569에서 PI 글 규칙, 승인 설명 세 필드, 원문 펼침을 추가했다. PowerShell here-string의 삭제 예문이 승인 경고를 만드는 오탐을 수정했다. Refs #557.
 
 ## 바뀐 것
@@ -47,6 +124,38 @@ PR #569에서 PI 글 규칙, 승인 설명 세 필드, 원문 펼침을 추가�
 - 복합 명령의 비서실장 별도 요약과 임의 영어 답변의 자동 번역은 미구현이다. 한국어 안내를 번역 결과로 표시하지 않는다.
 - 시운전 원문 전체를 받으면 해당 카드의 오탐 여부를 따로 확정해야 한다.
 - 임시 폴더 삭제가 자동 승인 검토에서 `blocked by policy`로 거부됐다. 후속 검증은 같은 임시 루트의 새 하위 경로에서 실행하며 정리 완료로 보고하지 않는다.
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
+PR #532의 미확인 지적 네 건을 main `3359c6e`에서 재현하고 수정했다.
+
+## 바뀐 것
+
+| 지적 | 수정 | main → branch |
+|---|---|---|
+| P1 4244965036 | CLI 준비 뒤 spawn 직전에 pause/halt를 다시 확인 | 2 실패 → 통과 |
+| P1 4244965042 | CLI 초기 이벤트의 session id 수신. 없으면 결과·로그에 같은 세션 재개 불가 안내 | 2 실패 → 통과 |
+| P2 4244965047 | dispatch 알림과 task frame 사이에 온 steer도 frame 뒤 재전송 | 1 실패 → 통과 |
+| P2 4255659855 | halted 결과 공개 후 waiter 등록 전 resume을 저장하고 대기 진입 시 반영 | 1 실패 → 통과 |
+
+세션 id가 없을 때 원래 지시·이전 결과를 재개 프롬프트로 넘기는 기존 동작은 main에서도 통과했다. 해당 경로는 유지했다. 기존 수락 시 재전송 테스트는 frame 직후 재전송까지 정확히 검사하도록 갱신했다.
+
+## 확인
+
+- 새 회귀: main 6 failed / 1 passed, 수정 후 관련 테스트 60 passed.
+- Node: 41개 CJS 파일 통과. 공개 검사·diff 검사 통과.
+- Windows 전체 pytest: **5,989 passed, 66 skipped**. basetemp 한 폴더를 사용하고 삭제했다.
+- 첫 전체 실행의 웹 테스트 41건은 개인 Node shim이 격리된 홈에서 실행 파일을 찾지 못해 실패했다. 설치된 `node.exe`를 테스트 프로세스 PATH 앞에 둔 뒤 41건과 전체 suite가 통과했다. 코드·홈 격리는 그대로다.
+- 코드 검증 CI(`718b59e`): changes·patch-notes·pytest 3.10·3.12·Windows·slow·clean-install·ro-crate-validator 성공, readme 조건부 skip. [실행 기록](https://github.com/ehojune/bioinfo-team-3d/actions/runs/38383182304). 최종 기록 커밋의 CI 결과는 PR checks에서 확인한다.
+- 매뉴얼 직원 제어 절과 브랜치 패치노트·상태 기록 갱신.
+
+## 남은 지적
+
+- 실제 직원 CLI 실측은 하지 않았다. PR #532에서 수용한 gateway 재시작 시 halt park 소실 등의 한계는 그대로다.
+
+Refs #59
 
 🤖 Generated with Codex (gpt-6) for the labhq dev lead
 
