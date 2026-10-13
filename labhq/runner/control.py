@@ -37,8 +37,11 @@ class ControlNotReady(RuntimeError):
 
 def halted_result(result: TaskResult, session_id: str | None = None) -> TaskResult:
     """Not a failure to retry or repair: the PI stopped it and can resume it."""
-    return result.model_copy(update={"ok": False, "error_kind": "halted", "error": HALT_ERROR, "environment": None,
-                                     "session_id": result.session_id or session_id})
+    session_id = result.session_id or session_id
+    note = (HALT_ERROR if session_id else
+            "PI가 멈춤(halt): 같은 세션 재개 불가. 세션 id가 없어 재개 turn에 원래 지시와 이전 결과를 전달합니다")
+    return result.model_copy(update={"ok": False, "error_kind": "halted", "error": note, "environment": None,
+                                     "session_id": session_id})
 
 
 def steer_prompt(steers: list[dict[str, Any]], dropped: int = 0) -> str:

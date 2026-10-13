@@ -228,14 +228,15 @@ async def test_a_steer_that_overtakes_the_first_dispatch_frame_is_sent_again_onc
     hub.publish = publish
     run = asyncio.create_task(hub.dispatch(_step("t1")))
     await _wait_frame(ws, "task.dispatch", "t1")
-    [early] = _frames(ws, "task.control", "t1")
+    [early, after_frame] = _frames(ws, "task.control", "t1")
     steer_id = early["steer"]["id"]
+    assert after_frame["steer"]["id"] == steer_id  # resend immediately after dispatch, even before acceptance
     # The runner does not hold t1 yet: it NACKs, then accepts the task that follows.
     await hub.on_runner_message("pc-a", {"type": "control.nack", "task_id": "t1", "action": "steer",
                                          "steer_id": steer_id, "reason": "unknown task"}, None, None)
     await hub.on_runner_message("pc-a", {"type": "task.accepted", "task_id": "t1", "request_id": "r"}, None, None)
     order = [f["type"] for f in ws.frames if (f.get("task_id") or (f.get("task") or {}).get("id")) == "t1"]
-    assert order == ["task.control", "task.dispatch", "task.control"]
+    assert order == ["task.control", "task.dispatch", "task.control", "task.control"]
     assert _frames(ws, "task.control", "t1")[-1]["steer"]["id"] == steer_id
     await _result(hub, "t1", control={"delivered": [steer_id], "undelivered": [], "paused": False})
     await run

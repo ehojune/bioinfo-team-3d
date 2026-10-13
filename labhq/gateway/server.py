@@ -1574,13 +1574,18 @@ class Hub:
         if not self._step_alive(entry):
             raise ValueError("이 단계는 끝나서 전달할 수 없어요")
         key = self._entry_step(tid, entry)
-        if action == "resume" and tid in self.halted_waits:
+        stored_halt = ((entry.get("result") or {}).get("error_kind") == "halted"
+                       and not entry.get("halt_wait_finished"))
+        if action == "resume" and (tid in self.halted_waits or stored_halt):
             state = self._step(key)
             # A resume after a halt also lifts a pause that came before the halt; one sent after it stays.
             if state["paused"] and int(state.get("pause_op") or 0) < int(state.get("halt_op") or 0):
                 state["paused"] = False
                 self._save_step(key, state)
-            self.halted_waits[tid].set()
+            if tid in self.halted_waits:
+                self.halted_waits[tid].set()
+            else:  # result is visible, but the orchestrator has not registered its waiter yet
+                self.store.put("task", tid, {**entry, "halt_resume_requested": True})
             return {"task_id": tid, "action": action, "resumed_halted": True, "sent": False, "queued": False}
         live = not entry.get("completed") or bool(entry.get("abandoned"))
         if action == "halt":
@@ -1773,6 +1778,8 @@ class Hub:
         The request waits as ``waiting_pi`` meanwhile, like a PI-decision card. False when that bound passes first."""
         tid = result.task_id
         event = self.halted_waits.setdefault(tid, asyncio.Event())
+        if (self.store.get("task", tid) or {}).get("halt_resume_requested"):
+            event.set()
         req = self.requests.get(rid)
         parked = req is not None and is_active_request(req.get("status"))
         key, bound = f"halt:{tid}", self.s.policy.approvals.pi_decision_timeout_s
@@ -1796,6 +1803,10 @@ class Hub:
             raise
         finally:
             self.halted_waits.pop(tid, None)
+            entry = self.store.get("task", tid)
+            if entry:
+                entry.pop("halt_resume_requested", None)
+                self.store.put("task", tid, {**entry, "halt_wait_finished": True})
             self.task_controls.pop(tid, None)
             self.store.delete("task_control_state", tid)
             if parked and (req.get("pi_waits") or {}).pop(key, None) is not None:
@@ -2350,7 +2361,7 @@ class Hub:
                                      "title": task.meta.get("title"), "prompt": task.prompt[:300]}})
         try:
             await self.send_runner(rid, {"type": "task.dispatch", "task": task.model_dump(mode="json")})
-            await self._push_task_state(task.id, steers=False)  # a halt or pause sent while it was being stored
+            await self._push_task_state(task.id)  # includes steers sent after payload attachment, before the frame
         except RunnerUnavailable:
             # The frame may already have reached the runner. Keep its identity and let
             # the runner's accepted-task ledger deduplicate the resend.

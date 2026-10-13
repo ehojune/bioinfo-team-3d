@@ -1348,6 +1348,7 @@ class Runner:
                 read_only=read_only,
                 # Again after prepare(): the adapter's own files (Codex AGENTS.md) are not the agent's writes.
                 before_spawn=before_spawn,
+                wait_ready=lambda: self.controls.wait_ready(task.id),
                 halt=self.controls.halt_event(task.id),
                 halt_grace_s=HALT_GRACE_S if hooked else 0.0,
                 on_started=lambda: self.controls.started(task.id),

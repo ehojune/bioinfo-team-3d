@@ -484,6 +484,8 @@ class RunContext:
     # Runner hook, called after prepare() wrote the adapter's files and just before the CLI starts. A non-empty
     # return refuses the run (the read-only file check could not take its baseline).
     before_spawn: Callable[[], str | None] | None = None
+    # Recheck PI pause/halt after all preparation, immediately before the spawn baseline.
+    wait_ready: Callable[[], Awaitable[bool]] | None = None
     # Set by run(), runner-local: the launcher it started (executable plus prefix args, resolved) and whether the
     # engine reported a shell command that exited 0. The Codex sandbox record reads both (#328).
     started_command: list[str] | None = None
@@ -885,6 +887,9 @@ class AgentAdapter(ABC):
         await ctx.emit("agent.log", {"level": "debug", "text": f"$ {ctx.agent.engine.value} ({len(cmd)} args)"})
 
         payload = self.stdin_payload(ctx)
+        if ctx.wait_ready and not await ctx.wait_ready():
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error_kind="halted",
+                              error="halted before the CLI started", session_id=ctx.task.resume_session_id)
         refused = ctx.before_spawn() if ctx.before_spawn else None
         if refused:
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error=refused)
@@ -1094,9 +1099,14 @@ class AgentAdapter(ABC):
                 return
             st.error_kind = "halted"
             st.error = "halted by the PI"
+            session_note = ("세션 id는 남겨 두었고, 재개하면 같은 세션으로 이어 갑니다"
+                            if st.session_id or ctx.task.resume_session_id else
+                            "같은 세션 재개 불가: 세션 id를 받지 못했습니다. 재개 turn에 원래 지시와 이전 결과를 전달합니다")
+            if not (st.session_id or ctx.task.resume_session_id):
+                st.error += ": " + session_note
             await ctx.emit("agent.log", {"level": "warn", "text": (
-                "PI가 멈춤을 요청해 labhq가 프로세스 트리를 끝냈습니다. 세션 id는 남겨 두었고, 재개하면 같은 세션으로 "
-                "이어 갑니다" + (f" (도구 hook이 {ctx.halt_grace_s:g}s 안에 멈추지 못함)" if ctx.halt_grace_s > 0 else ""))})
+                "PI가 멈춤을 요청해 labhq가 프로세스 트리를 끝냈습니다. " + session_note
+                + (f" (도구 hook이 {ctx.halt_grace_s:g}s 안에 멈추지 못함)" if ctx.halt_grace_s > 0 else ""))})
             await self._kill(proc)
 
         drain = asyncio.gather(feed_stdin(), read_out(), read_err(), proc.wait())
