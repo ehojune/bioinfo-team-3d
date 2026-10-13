@@ -1,4 +1,4 @@
-import {answerRequired, revisionNoteMissing, syncDecisionCards} from '../../ui/decide.js';
+import {answerRequired, revisionNoteMissing, syncDecisionCards, syncDecisionHistory, createHistoryVisibility} from '../../ui/decide.js';
 
 // DOM controls and transport stay outside the shared event reducer.
 export function startLiveOffice(onState) {
@@ -17,6 +17,15 @@ export function startLiveOffice(onState) {
   document.querySelector('.demo').textContent = 'LIVE';
   $('state').disabled = true; $('randomize').hidden = true;
   const pending = new Set(), loadingAnswers = new Set();
+  const historyVisibility = createHistoryVisibility(`live:${globalThis.LABHQ_BOOT?.instance || ''}`);
+  let decisionHistory = [];
+  async function refreshHistory() {
+    try {
+      const response = await fetch('/api/approvals/history?limit=50', {headers:{Authorization:`Bearer ${token}`}});
+      if (!response.ok) return;
+      decisionHistory = await response.json(); render();
+    } catch {}
+  }
   let noticeApproval = null;  // #184: the approval whose request the notice shows, cleared when it ends
   const notice = (value, approvalId = null) => { $('live-notice').textContent = value; noticeApproval = approvalId; };
   // #126: a snapshot holds the head of a long follow-up answer; the full request comes from the gateway on demand.
@@ -77,6 +86,10 @@ export function startLiveOffice(onState) {
           : {type:'approval.resolve', id:a.id, approved, note}));
         pending.add(a.id); render();
       }});
+    if ($('approval-history')) syncDecisionHistory($('approval-history'), decisionHistory, {
+      kindLabels: KIND_KO, requests: S.requests, visibility: historyVisibility,
+      onOpenRequest: id => { const row = [...$('requests').children].find(row => row.dataset.requestId === id); row?.scrollIntoView({block:'start'}); },
+    });
     const requests = $('requests'), oldRows = new Map([...requests.children]
       .filter(row => row.dataset?.requestId).map(row => [row.dataset.requestId, row]));
     const rows = [];
@@ -153,7 +166,7 @@ export function startLiveOffice(onState) {
     if (!token) { S.conn = 'auth'; render(); return; }
     S.conn = 'connecting'; render();
     ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/client?token=${encodeURIComponent(token)}${lastSeq ? `&since=${lastSeq}` : ''}`);
-    ws.onopen = () => { S.conn = 'live'; backoff = 1000; render(); };
+    ws.onopen = () => { S.conn = 'live'; backoff = 1000; refreshHistory(); render(); };
     ws.onmessage = event => {
       try {
         const ev = JSON.parse(event.data);
@@ -167,6 +180,7 @@ export function startLiveOffice(onState) {
         if (ev.type === 'snapshot') { lastSeq = ev.seq || 0; pending.clear(); }
         else if (ev.seq && ev.seq > lastSeq) lastSeq = ev.seq;
         for (const id of pending) if (!S.approvals.has(id)) pending.delete(id);
+        if (ev.type === 'approval.resolved') refreshHistory();
         render();
       } catch (error) { console.warn('bad event', error); }
     };

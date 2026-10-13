@@ -20,7 +20,7 @@ from typing import Any, Awaitable, Callable
 from ..facilities import signatures as env_signatures
 from ..models import AgentSpec, McpServerSpec, Task, TaskResult
 from ..settings import Settings
-from ..util import extract_json, merge_staff_env, short, without_windows_app_aliases
+from ..util import event_preview, extract_json, merge_staff_env, short, without_windows_app_aliases
 from .owned import OwnedPathError, plain_directory, write_owned
 from .read_only import (labhq_workspace_paths, read_only_engine_env, read_only_launch_error, read_only_mismatch,
                         read_only_workspace_error)
@@ -916,7 +916,8 @@ class AgentAdapter(ABC):
                     await self.handle_line(line, st, ctx)
                 except Exception as e:  # never let one odd line kill the run
                     tool_activity.unreadable()
-                    await ctx.emit("agent.log", {"level": "debug", "text": f"[unparsed] {short(line)} ({e})"})
+                    await ctx.emit("agent.log", {**event_preview("text", line), "level": "debug",
+                                                  "text": f"[unparsed] {short(line)} ({e})"})
                 if st.stop_reason and proc.returncode is None:
                     reason, st.stop_reason = st.stop_reason, None
                     await ctx.emit("agent.log", {"level": "warn", "text": reason})

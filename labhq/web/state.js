@@ -175,12 +175,27 @@ function setPlan(q, plan) {
   if (plan.processing && typeof plan.processing === 'object') q.processing = { ...plan.processing };
   for (const s of q.plan) if (!q.steps[s.id]) q.steps[s.id] = 'pending';
 }
-function logTo(a, text, ts) { a.log.push({ ts, text: short(text, 240) }); if (a.log.length > 40) a.log.shift(); }
-// #57 ⑥: thinking and debug lines stay out of the feed and activity, in their own ring buffer for the staff sheet.
-function traceTo(a, level, text, ts) {
-  a.trace.push({ ts, level, text: short(text, 400) }); if (a.trace.length > 60) a.trace.shift();
+function receivedText(row, text, metadata = {}) {
+  Object.defineProperties(row, {
+    fullText: {value: String(text ?? ''), enumerable: false},
+    truncated: {value: Boolean(metadata.text_truncated || metadata.input_truncated), enumerable: false},
+    cutChars: {value: metadata.text_limit ?? metadata.input_limit ?? [...String(metadata.text ?? metadata.input ?? text ?? '')].length, enumerable: false},
+  });
+  return row;
 }
-function feed(item, ts, rid) { S.feed.unshift({ ...item, ts: ts || now(), rid }); if (S.feed.length > 120) S.feed.length = 120; }
+function logTo(a, text, ts, metadata = {}) {
+  a.log.push(receivedText({ts, text: metadata.previewText || short(text, 240)}, text, metadata));
+  if (a.log.length > 40) a.log.shift();
+}
+// #57 ⑥: thinking and debug lines stay out of the feed and activity, in their own ring buffer for the staff sheet.
+function traceTo(a, level, text, ts, metadata = {}) {
+  a.trace.push(receivedText({ ts, level, text: short(text, 400) }, text, metadata)); if (a.trace.length > 60) a.trace.shift();
+}
+function feed(item, ts, rid) {
+  const {fullText, truncated, cutText, ...preview} = item;
+  S.feed.unshift(receivedText({...preview, ts: ts || now(), rid}, fullText ?? item.text, {text_truncated: truncated, text: cutText ?? fullText ?? item.text}));
+  if (S.feed.length > 120) S.feed.length = 120;
+}
 function stripPrompt(p) {
   const m = /Your step \(([^)]+)\):\s*([\s\S]*?)(?:\n\n|$)/.exec(p || '');
   return m ? `${m[1]}: ${m[2]}` : (p || '');
@@ -235,9 +250,9 @@ function onDispatch(ev) {
   let m = null;
   if (d.kind === 'briefing') m = { who: 'cso', to: id, text: '착수 브리핑 부탁해요' };
   else if (d.kind === 'review') m = { who: 'cso', to: id, text: '결과 검토 부탁해요' };
-  else if (d.kind === 'direct') m = { who: 'pi', to: id, text: short(d.title || d.prompt, 110) };
+  else if (d.kind === 'direct') m = { who: 'pi', to: id, text: short(d.title || d.prompt, 110), fullText: d.title || d.prompt };
   else if (wake) m = { who: 'hpc', to: id, text: '작업이 끝났어요. 이어서 해 주세요' };
-  else if (d.kind === 'step' || !d.kind) m = { who: 'cso', to: id, text: short(d.title || stripPrompt(d.prompt), 110) };
+  else if (d.kind === 'step' || !d.kind) m = { who: 'cso', to: id, text: short(d.title || stripPrompt(d.prompt), 110), fullText: d.title || stripPrompt(d.prompt) };
   if (m) feed(m, ev.ts, rid);
 }
 function setPipelinePr(q, d) {
@@ -326,27 +341,29 @@ function apply(ev, replay = false) {
       if (d.state === 'done' && !replay) effects.push({ type: 'renderAfter', ms: 3200 });
       break;
     }
-    case 'agent.tool': { const a = ag(id); if (!a) break; a.tool = d.name; a.toolAt = ts; a.toolCalls = (a.toolCalls || 0) + 1; logTo(a, `도구 ${toolLabel(d.name)} ${short(d.input, 80)}`, ts); break; }
-    case 'agent.tool_error': { const a = ag(id); if (a) logTo(a, `도구 오류: ${d.text}`, ts); break; }
+    case 'agent.tool': { const a = ag(id); if (!a) break; a.tool = d.name; a.toolAt = ts; a.toolCalls = (a.toolCalls || 0) + 1;
+      const input = typeof d.input === 'string' ? d.input : JSON.stringify(d.input ?? '');
+      logTo(a, `도구 ${toolLabel(d.name)} ${input}`, ts, {...d, previewText: `도구 ${toolLabel(d.name)} ${short(d.input, 80)}`}); break; }
+    case 'agent.tool_error': { const a = ag(id); if (a) logTo(a, `도구 오류: ${d.text}`, ts, d); break; }
     case 'agent.log': {
       const a = ag(id); if (!a || !d.text) break;
-      if (d.level === 'debug' || d.level === 'thinking') { traceTo(a, d.level, d.text, ts); break; }
-      a.say = d.text; a.sayAt = ts; logTo(a, d.text, ts);
+      if (d.level === 'debug' || d.level === 'thinking') { traceTo(a, d.level, d.text, ts, d); break; }
+      a.say = d.text; a.sayAt = ts; logTo(a, d.text, ts, d);
       // An alert (a read-only run changed files) always reaches the feed, never throttled with ordinary talk.
       // R21: it also raises a toast, so a hold the PI must clear on the PC (UAC) is seen outside the messenger.
       if (d.level === 'alert') {
-        feed({ who: id, text: short(d.text, 300), cls: 'alert' }, ts, rid);
+        feed({ who: id, text: short(d.text, 300), fullText: d.text, truncated: d.text_truncated, cls: 'alert' }, ts, rid);
         if (!replay) effects.push({ type: 'toast', text: `${nick(id)}: ${short(d.text, 90)}` });
         break;
       }
-      if (!S.lastSay[id] || ts - S.lastSay[id] > 6) { S.lastSay[id] = ts; feed({ who: id, text: short(d.text, 150) }, ts, rid); }
+      if (!S.lastSay[id] || ts - S.lastSay[id] > 6) { S.lastSay[id] = ts; feed({ who: id, text: short(d.text, 150), fullText: d.text, truncated: d.text_truncated }, ts, rid); }
       break;
     }
     case 'agent.ask': {
       S.askDetails.set(d.id, { ...d, agent_id: d.agent_id || id });
       if (S.askDetails.size > 120) S.askDetails.delete(S.askDetails.keys().next().value);
       feed({ who: d.agent_id || id, to: String(d.to || '').replace(/^colleague:/, ''),
-        text: `질문: ${short(d.question, 150)}` }, ts, rid);
+        text: `질문: ${short(d.question, 150)}`, fullText: `질문: ${d.question || ''}` }, ts, rid);
       break;
     }
     case 'agent.answer': {
@@ -355,6 +372,7 @@ function apply(ev, replay = false) {
       const question = d.question || ask.question;
       feed({ who: d.from || id, to: d.to || ask.agent_id,
         text: `${rejected ? '거절' : '답변'}: ${short(rejected ? d.reason : d.answer, 130)}${question ? ` (질문: ${short(question, 70)})` : ''}`,
+        fullText: `${rejected ? '거절' : '답변'}: ${(rejected ? d.reason : d.answer) || ''}${question ? ` (질문: ${question})` : ''}`,
         cls: rejected ? 'alert' : '' }, ts, rid);
       break;
     }
@@ -395,7 +413,7 @@ function apply(ev, replay = false) {
       if (resumeOf && S.requests.has(resumeOf) && !isTerminalRequest(S.requests.get(resumeOf).status)) {
         req(resumeOf).status = 'interrupted';
       }
-      feed({ who: d.agent_id || id || 'cso', text: `승인 요청: ${short(d.summary, 130)}`, cls: 'alert' }, ts, rid);
+      feed({ who: d.agent_id || id || 'cso', text: `승인 요청: ${short(d.summary, 130)}`, fullText: `승인 요청: ${d.summary || ''}`, cls: 'alert' }, ts, rid);
       if (!replay) effects.push({ type: 'toast', text: `승인 요청이 왔어요: ${short(d.summary, 50)}`, approval_id: d.id });
       break;
     }
@@ -407,8 +425,10 @@ function apply(ev, replay = false) {
       // A card nobody answered is not the PI's refusal (R5, #521): it timed out or was closed.
       const unanswered = d.state === 'timed_out' ? '시간 초과로 닫혔어요' : ['expired', 'cancelled'].includes(d.state) ? '답 없이 닫혔어요' : '';
       const note = d.note ? ` (${short(d.note, 60)})` : '';
-      feed(unanswered ? { who: 'system', text: `${unanswered}${note}` }
-        : { who: 'pi', text: d.approved ? '승인했어요' : `${d.choice === 'revise' ? '수정을 요청했어요' : '거절했어요'}${note}` }, ts, rid); break; }
+      const fullNote = d.note ? ` (${d.note})` : '';
+      feed(unanswered ? { who: 'system', text: `${unanswered}${note}`, fullText: `${unanswered}${fullNote}` }
+        : { who: 'pi', text: d.approved ? '승인했어요' : `${d.choice === 'revise' ? '수정을 요청했어요' : '거절했어요'}${note}`,
+          fullText: d.approved ? '승인했어요' : `${d.choice === 'revise' ? '수정을 요청했어요' : '거절했어요'}${fullNote}` }, ts, rid); break; }
     case 'job.submitted': S.jobs.set(String(d.job_id), { id: String(d.job_id), name: d.name, state: 'queued', agent: id, ts }); feed({ who: id, text: `HPC 작업 제출: ${d.name || ''} (${d.job_id})` }, ts, rid); break;
     case 'job.state': {
       const j = S.jobs.get(String(d.job_id)) || { id: String(d.job_id), name: d.name, agent: id };
@@ -421,7 +441,7 @@ function apply(ev, replay = false) {
       Object.assign(q, { text: d.text, mode: d.mode, project_id: d.project_id, status: 'running', phase: d.mode === 'direct' ? 'execute' : 'briefing', created_at: ts });
       q.references = d.references || [];
       S.current = rid;
-      feed({ who: 'pi', text: `새 요청: ${short(d.text, 130)}` }, ts, rid);
+      feed({ who: 'pi', text: `새 요청: ${short(d.text, 130)}`, fullText: `새 요청: ${d.text || ''}` }, ts, rid);
       break;
     }
     case 'request.plan': {
@@ -432,7 +452,7 @@ function apply(ev, replay = false) {
       for (const w of d.warnings || []) {
         if (typeof w !== 'string' || !w.startsWith('점검 못 함 ') || q.skipWarningsShown.has(w)) continue;
         q.skipWarningsShown.add(w);
-        feed({ who: 'cso', text: short(w, 300), cls: 'alert' }, ts, rid);
+        feed({ who: 'cso', text: short(w, 300), fullText: w, cls: 'alert' }, ts, rid);
       }
       break;
     }
@@ -501,8 +521,8 @@ function apply(ev, replay = false) {
       S.engineHolds.delete(d.engine);
       break;
     }
-    case 'request.questions': feed({ who: 'cso', text: `확인이 필요해요: ${short((d.questions || []).join(' / '), 150)}`, cls: 'alert' }, ts, rid); break;
-    case 'request.facilities_fix': { const detail = stepDetail(rid, d.step_id), status = d.status || (d.ok ? 'succeeded' : 'failed'); detail.facilities_fix = { ...d, status }; const label = status === 'applied' ? '환경 수정 적용' : status === 'succeeded' ? '환경 수정 성공' : '환경 수정 실패'; feed({ who: 'facilities', text: `${label}: ${short((status === 'failed' ? d.error : d.action) || d.fix_id || '', 120)}`, cls: status === 'failed' ? 'alert' : '' }, ts, rid); break; }
+    case 'request.questions': feed({ who: 'cso', text: `확인이 필요해요: ${short((d.questions || []).join(' / '), 150)}`, fullText: `확인이 필요해요: ${(d.questions || []).join(' / ')}`, cls: 'alert' }, ts, rid); break;
+    case 'request.facilities_fix': { const detail = stepDetail(rid, d.step_id), status = d.status || (d.ok ? 'succeeded' : 'failed'); detail.facilities_fix = { ...d, status }; const label = status === 'applied' ? '환경 수정 적용' : status === 'succeeded' ? '환경 수정 성공' : '환경 수정 실패'; feed({ who: 'facilities', text: `${label}: ${short((status === 'failed' ? d.error : d.action) || d.fix_id || '', 120)}`, fullText: `${label}: ${(status === 'failed' ? d.error : d.action) || d.fix_id || ''}`, cls: status === 'failed' ? 'alert' : '' }, ts, rid); break; }
     case 'request.step_done': { const q = req(rid), detail = stepDetail(rid, d.step_id); q.steps[d.step_id] = d.ok === false ? 'error' : 'done'; Object.assign(detail, { attempts: d.attempts || detail.attempts, error: d.reason || detail.error }); if (d.ok === false && d.environment) detail.environment = d.environment; else delete detail.environment; if (d.facilities_fix) detail.facilities_fix = d.facilities_fix; delete detail.quota_resume_at; delete detail.quota_engine; delete detail.quota_deadline_at; delete detail.login_resume_at; delete detail.login_engine; delete detail.login_reason; syncHoldStatus(q); break; }
     case 'request.step_skipped': { const q = req(rid); q.steps[d.step_id] = 'skipped'; stepDetail(rid, d.step_id).error = d.reason || ''; syncHoldStatus(q); break; }
     case 'request.review': {
@@ -514,14 +534,16 @@ function apply(ev, replay = false) {
       feed({ who: 'sci_reviewer', text: unparsed ? '리뷰 판정 실패. PI 확인이 필요해요'
         : d.verdict === 'revise' ? `수정 요청: ${short(((d.issues || [])[0] || {}).problem || '', 90)}`
         : d.verdict === 'accept' ? `통과. 질문 부합 ${sc.addresses_question}/5, 근거 ${sc.evidence}/5, 철저성 ${sc.thoroughness}/5`
-        : '리뷰 판정 실패. PI 확인이 필요해요', cls: unparsed ? 'alert' : '' }, ts, rid);
+        : '리뷰 판정 실패. PI 확인이 필요해요',
+        fullText: !unparsed && d.verdict === 'revise' ? `수정 요청: ${((d.issues || [])[0] || {}).problem || ''}` : undefined,
+        cls: unparsed ? 'alert' : '' }, ts, rid);
       break;
     }
     case 'recruit.suggested': {
       const key = d.repo || d.paper;
       const hired = [...S.agents.values()].some(a => isContract(a) && key && String(key).toLowerCase().includes(String(a.id).slice(2)));
       if (!hired && !S.suggestions.some(s => (s.repo || s.paper) === key)) S.suggestions.push({ ...d, request_id: rid, id: `sug_${++S.seq}` });
-      feed({ who: 'cso', text: `파견직 채용을 제안해요: ${short(key, 70)}` }, ts, rid);
+      feed({ who: 'cso', text: `파견직 채용을 제안해요: ${short(key, 70)}`, fullText: `파견직 채용을 제안해요: ${key || ''}` }, ts, rid);
       break;
     }
     case 'recruit.status': {
@@ -544,7 +566,7 @@ function apply(ev, replay = false) {
     case 'contract.warning':
       feed({ who: 'recruiter', text: `재고용한 ${d.agent_id || id}: ${(d.changed || []).join(', ')}이(가) 채용 때 hash와 맞지 않아요. 확인한 뒤 맡기세요`, cls: 'alert' }, ts, rid);
       break;
-    case 'recruit.failed': feed({ who: 'recruiter', text: `채용하지 못했어요: ${short(d.error, 120)}`, cls: 'alert' }, ts, rid); break;
+    case 'recruit.failed': feed({ who: 'recruiter', text: `채용하지 못했어요: ${short(d.error, 120)}`, fullText: `채용하지 못했어요: ${d.error || ''}`, cls: 'alert' }, ts, rid); break;
     // A status the gateway sets itself: waiting_pi, waiting_for_runner, interrupted, running (R5, R15, #494).
     case 'request.status': { const q = req(rid); if (d.status && !isTerminalRequest(q.status)) q.status = d.status; break; }
     case 'request.runner_wait': feed({ who: 'system', text: d.message || '러너를 기다려요', cls: 'alert' }, ts, rid); break;
@@ -570,7 +592,8 @@ function apply(ev, replay = false) {
       const failedText = why ? `요청이 실패했어요: ${why}` : d.report
         ? '요청을 완료로 보지 않았어요. 보고서와 실행 기록에서 이유를 확인하세요'
         : '요청이 끝까지 가지 못했어요. 실행 기록을 보세요';
-      feed({ who: 'cso', text: q.status === 'done' ? '최종 보고서를 올렸어요' : q.status === 'cancelled' ? '요청을 취소했어요. 끝난 단계까지 보고서에 남겼어요' : failedText, cls: q.status === 'failed' ? 'alert' : '' }, ts, rid);
+      feed({ who: 'cso', text: q.status === 'done' ? '최종 보고서를 올렸어요' : q.status === 'cancelled' ? '요청을 취소했어요. 끝난 단계까지 보고서에 남겼어요' : failedText,
+        fullText: q.status === 'failed' && d.error ? `요청이 실패했어요: ${d.error}` : undefined, cls: q.status === 'failed' ? 'alert' : '' }, ts, rid);
       break;
     }
     case 'request.bundle': {
@@ -581,13 +604,13 @@ function apply(ev, replay = false) {
     case 'request.followup': {
       const q = req(rid), entry = { id: d.id, text: d.text, agent_id: d.agent_id, status: 'running', asked_at: ts };
       q.followups = [...q.followups.filter(f => f.id !== d.id), entry];
-      feed({ who: 'pi', to: d.agent_id || 'cso', text: `이어 묻기: ${short(d.text, 130)}` }, ts, rid);
+      feed({ who: 'pi', to: d.agent_id || 'cso', text: `이어 묻기: ${short(d.text, 130)}`, fullText: `이어 묻기: ${d.text || ''}` }, ts, rid);
       break;
     }
     case 'request.note': {
       const q = req(rid), entry = { id: d.id, text: d.text, at: d.at || ts };
       q.piNotes = [...q.piNotes.filter(note => note.id !== entry.id), entry];
-      feed({ who: 'pi', to: 'cso', text: `실행 중 메모: ${short(d.text, 130)}` }, ts, rid);
+      feed({ who: 'pi', to: 'cso', text: `실행 중 메모: ${short(d.text, 130)}`, fullText: `실행 중 메모: ${d.text || ''}` }, ts, rid);
       break;
     }
     case 'request.followup_done': {
@@ -600,16 +623,18 @@ function apply(ev, replay = false) {
       if (d.cost_known === false) q.costKnown = false;
       applyCostSummary(q, d.cost_summary);
       feed({ who: entry.agent_id || 'cso', to: 'pi', text: d.ok ? `답변: ${short(d.answer, 130)}` : `이어 묻기에 답하지 못했어요: ${short(d.error, 100)}`,
+        fullText: d.ok ? `답변: ${d.answer || ''}` : `이어 묻기에 답하지 못했어요: ${d.error || ''}`, truncated: d.answer_truncated, cutText: d.answer,
         cls: d.ok ? '' : 'alert' }, ts, rid);
       break;
     }
     case 'github.posted': { const q = req(rid); q.github.push({ kind: d.kind, url: d.url, number: d.number }); feed({ who: 'github', text: GH_KO[d.kind] || 'GitHub에 업데이트했어요', url: d.url }, ts, rid); break; }
-    case 'github.failed': feed({ who: 'github', text: `GitHub 업데이트 실패: ${short(d.error, 110)}`, cls: 'alert' }, ts, rid); break;
+    case 'github.failed': feed({ who: 'github', text: `GitHub 업데이트 실패: ${short(d.error, 110)}`, fullText: `GitHub 업데이트 실패: ${d.error || ''}`, cls: 'alert' }, ts, rid); break;
     case 'pipeline.pr': {
       setPipelinePr(req(rid), d);
       feed({ who: 'github', text: d.status === 'open' ? `새 pipeline PR을 열었어요: ${d.name}`
         : d.status === 'pending' ? `새 pipeline PR 대기: ${short(d.reason, 100)}`
         : `새 pipeline PR 거부: ${short(d.reason, 100)}`,
+        fullText: d.status === 'open' ? undefined : `새 pipeline PR ${d.status === 'pending' ? '대기' : '거부'}: ${d.reason || ''}`,
         cls: d.status === 'open' ? '' : 'alert', url: d.url || undefined }, ts, rid);
       break;
     }

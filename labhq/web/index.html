@@ -200,6 +200,8 @@ a{color:var(--sleep-ink)}
 .decision-history-group h3{margin:8px 0 2px;font-size:12px;color:var(--ink)}.decision-history-group ol{margin:0;padding-left:20px}
 .decision-history li{padding:3px 0}.decision-history strong,.decision-history span,.decision-history small{display:block}.decision-history strong{color:var(--ink)}
 .decision-history-more{margin-top:8px}
+.expandable-text{min-width:0;max-width:100%}.expandable-text summary{cursor:pointer;overflow-wrap:anywhere}.expandable-text summary:focus-visible{outline:3px solid var(--focus);outline-offset:2px}.expandable-text pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:4px 0;font:inherit}
+.decision-hide{margin-left:8px;padding:2px 8px}.decision-report{margin-left:8px}.decision-history time{display:inline-block;margin-right:8px}
 .btn{border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:6px 14px;font-weight:500;cursor:pointer;min-height:40px}
 .btn.primary{background:var(--ink);border-color:var(--ink);color:var(--paper)}
 .btn.go{background:var(--working);border-color:var(--working);color:#fff}
@@ -431,7 +433,7 @@ dialog.sheet::backdrop{background:rgba(17,26,34,.45)}
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script src="./state.js"></script>
 <script type="module">
-import {answerRequired, decisionChoice, decisionNote, revisedToast, revisionNoteMissing, syncDecisionCards, syncDecisionHistory} from './ui/decide.js';
+import {answerRequired, decisionChoice, decisionNote, revisedToast, revisionNoteMissing, syncDecisionCards, syncDecisionHistory, createHistoryVisibility, expandableText} from './ui/decide.js';
 import {syncStaffCards} from './ui/strip.js';
 import {syncTaskBoard} from './ui/tasks.js';
 import {initTabShell} from './ui/shell.js';
@@ -471,6 +473,7 @@ function openPropTab(e) {
 $('#office .wall').addEventListener('click', openPropTab);
 $('#office .wall').addEventListener('keydown', openPropTab);
 let decisionHistory = [];
+const historyVisibility = createHistoryVisibility(`${MODE}:${INSTANCE}`);
 
 /* ---------------- staff art: original chibi animals ---------------- */
 const FUR = {
@@ -724,7 +727,8 @@ function renderApprovals() {
   syncDecisionCards($('#approvals'), items, sugs, { now, nick, kindLabels: KIND_KO, requests: S.requests,
     taskStep: S.taskStep, avatarHTML: (value, type) => headSVG(type === 'suggestion' ? 'owl' : kindOf(ag(value.agent_id))),
     emptyText: snapshotLoaded ? '지금은 결정할 일이 없어요. 승인이 필요하면 여기에 바로 떠요.' : loadingText('결정할 일') });
-  syncDecisionHistory($('#approval-history'), decisionHistory, { kindLabels: KIND_KO, requests: S.requests });
+  syncDecisionHistory($('#approval-history'), decisionHistory, { kindLabels: KIND_KO, requests: S.requests,
+    visibility: historyVisibility, onOpenRequest: id => { S.current = id; reqKey = ''; renderRequest(); showTab('tasks'); $('#request').scrollIntoView({block: 'start'}); } });
 }
 
 function dagSVG(q) {
@@ -839,9 +843,24 @@ function renderFeed() {
   const key = items.length + ':' + (items[0] ? items[0].ts + items[0].text : '') + ':' + Math.floor(now() / 30);
   if (key === feedKey) return;
   feedKey = key;
-  $('#feed').innerHTML = items.length ? items.map(m => `<li class="msg ${m.cls || ''}"><span class="av">${avatar(m.who)}</span>
-<div><b>${esc(nick(m.who))}${m.to ? ` <i>→ ${esc(nick(m.to))}</i>` : ''}</b><p>${esc(m.text)}${safeUrl(m.url) ? ` <a href="${esc(m.url)}" target="_blank" rel="noopener">열기</a>` : ''}</p></div>
-<time>${ago(m.ts)}</time></li>`).join('') : '<li class="empty-note">팀이 주고받는 말이 여기에 쌓여요.</li>';
+  const list = $('#feed'), old = list._rows || new Map(), next = new Map();
+  const rows = items.map(m => {
+    let row = old.get(m);
+    if (!row) {
+      row = document.createElement('li'); row.className = `msg ${m.cls || ''}`;
+      row.innerHTML = `<span class="av">${avatar(m.who)}</span><div><b>${esc(nick(m.who))}${m.to ? ` <i>→ ${esc(nick(m.to))}</i>` : ''}</b><div class="message-text"></div></div><time></time>`;
+      expandableText(row.querySelector('.message-text'), m.fullText ?? m.text, {limit: 150, summary: m.text,
+        fold: m.fullText != null && m.fullText !== m.text, truncated: m.truncated, cutChars: m.cutChars});
+      if (safeUrl(m.url)) {
+        const link = document.createElement('a'); link.href = m.url; link.target = '_blank'; link.rel = 'noopener'; link.textContent = '열기';
+        row.querySelector('.message-text').append(link);
+      }
+    }
+    row.querySelector('time').textContent = ago(m.ts); next.set(m, row); return row;
+  });
+  if (!items.length) list.innerHTML = '<li class="empty-note">팀이 주고받는 말이 여기에 쌓여요.</li>';
+  else if (rows.some((row, i) => list.children[i] !== row) || rows.length !== list.children.length) list.replaceChildren(...rows);
+  list._rows = next;
 }
 let jobsKey = '';
 function renderJobs() {
@@ -1028,11 +1047,6 @@ $('#staff-toggle').addEventListener('click', () => {
 });
 
 // The trace view lists every kept line (the reducer keeps 60); render() refreshes an open sheet's list (#409 review).
-function sheetLogs(a, view) {
-  return view === 'trace'
-    ? (a.trace || []).slice().reverse().map(l => `<li class="trace"><time>${ago(l.ts)}</time><b>${l.level === 'thinking' ? '생각' : '디버그'}</b> ${esc(l.text)}</li>`).join('') || '<li>생각·디버그 기록이 없어요.</li>'
-    : a.log.slice().reverse().slice(0, 14).map(l => `<li><time>${ago(l.ts)}</time>${esc(l.text)}</li>`).join('') || '<li>아직 기록이 없어요.</li>';
-}
 // The staff member's spending over the requests on screen; render() keeps an open sheet's figure live (#417 review).
 function sheetSpent(id) {
   const spent = LabHQState.agentSpentLabel([...S.requests.values()], id);
@@ -1041,8 +1055,23 @@ function sheetSpent(id) {
 function renderSheetLogs() {
   const dlg = $('#sheet'), a = dlg.open || dlg.hasAttribute('open') ? ag(dlg.dataset.agent) : null;
   const list = a && $('#sheet-in ul.activity'); if (!list) return;
-  const html = sheetLogs(a, list.dataset.view);
-  if (list.innerHTML !== html) list.innerHTML = html;
+  const trace = list.dataset.view === 'trace';
+  const items = trace ? (a.trace || []).slice().reverse() : a.log.slice().reverse().slice(0, 14);
+  const old = list._rows || new Map(), next = new Map();
+  const rows = items.map(l => {
+    let row = old.get(l);
+    if (!row) {
+      row = document.createElement('li'); if (trace) row.className = 'trace';
+      row.append(document.createElement('time'));
+      if (trace) { const label = document.createElement('b'); label.textContent = l.level === 'thinking' ? '생각' : '디버그'; row.append(label); }
+      expandableText(row, l.fullText ?? l.text, {limit: trace ? 400 : 240, summary: l.text,
+        fold: l.fullText != null && l.fullText !== l.text, truncated: l.truncated, cutChars: l.cutChars});
+    }
+    row.querySelector('time').textContent = ago(l.ts); next.set(l, row); return row;
+  });
+  if (!items.length) list.innerHTML = `<li>${trace ? '생각·디버그 기록이 없어요.' : '아직 기록이 없어요.'}</li>`;
+  else if (rows.some((row, i) => list.children[i] !== row) || rows.length !== list.children.length) list.replaceChildren(...rows);
+  list._rows = next;
   const count = $('#sheet-in .trace-count'); if (count) count.textContent = String((a.trace || []).length);
   const spent = $('#sheet-in .sheet-spent'), figure = sheetSpent(a.id); if (spent && spent.textContent !== figure) spent.textContent = figure;
 }
@@ -1072,10 +1101,11 @@ function openSheet(id) {
   $('#sheet-in').innerHTML = `<div class="sheet-head"><svg viewBox="18 2 64 72" aria-hidden="true">${charArt(kindOf(a))}</svg><div><h2>${esc(a.name)}</h2><p class="role">${esc(a.role || '')}</p></div></div>
 <dl class="facts">${facts.map(([k, v]) => `<dt>${esc(k)}</dt><dd${k === '쓴 비용' ? ' class="sheet-spent"' : ''}>${esc(v)}</dd>`).join('')}</dl>
 <div class="log-view" role="group" aria-label="기록 보기"><button type="button" class="btn" data-act="log" data-view="activity" aria-pressed="${view === 'activity'}">활동</button><button type="button" class="btn" data-act="log" data-view="trace" aria-pressed="${view === 'trace'}">생각·디버그 <span class="trace-count">${(a.trace || []).length}</span></button></div>
-<ul class="activity" data-view="${view}">${sheetLogs(a, view)}</ul>
+<ul class="activity" data-view="${view}"></ul>
 <div class="acts">${acts.join('')}</div>`;
   dlg.dataset.agent = id;
   if (typeof dlg.showModal === 'function') { if (!dlg.open) dlg.showModal(); } else dlg.setAttribute('open', '');
+  renderSheetLogs();
 }
 function closeSheet() { const d = $('#sheet'); if (typeof d.close === 'function' && d.open) d.close(); else d.removeAttribute('open'); }
 $('#sheet').addEventListener('click', async e => {
