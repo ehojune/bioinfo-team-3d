@@ -8,9 +8,9 @@
 
 ## 검증
 - main 기준 신규 테스트: result_storage 모듈 부재로 실패. 구현 후 신규 10 passed(모의 요청 → 가짜 GitHub 포함).
-- 관련 회귀 56 passed, 연구 CP1 포함 16 passed. 전체 Node 파일 통과.
+- 최종 관련 회귀 163 passed, 1 skipped. 실제 node.exe로 웹 42개 파일을 모두 실행했습니다.
 - 공개 검사·문서 생성 검사·diff 검사 통과.
-- Windows 전체 pytest 실행 중. CI는 push 뒤 확인해 갱신합니다.
+- Windows 전체 pytest 재실행 중(Node 경로 교정·직원 수/스킨/웹 CI 등록 보완 후). CI는 현재 head로 확인해 갱신합니다.
 
 ## 남은 지적
 - 실제 GitHub 저장소 생성·게시, PI/trial 실행, Notion은 수행하지 않았습니다.
