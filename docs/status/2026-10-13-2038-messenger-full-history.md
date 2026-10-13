@@ -1,6 +1,6 @@
 ## 결론
 
-#560의 15번: 2.5D 메신저에서 위로 스크롤하면 저장된 첫 기록까지 조회합니다.
+PR #572 · #560의 15번: 2.5D 메신저에서 위로 스크롤하면 저장된 첫 기록까지 조회합니다.
 
 ## 바뀐 것
 
@@ -11,10 +11,12 @@
 
 ## 확인
 
+- CI(`902d96a`): changes·patch-notes·pytest 3.10·3.12·Windows·slow·clean-install·ro-crate-validator 성공, readme 조건부 생략. [실행 기록](https://github.com/ehojune/bioinfo-team-3d/actions/runs/38393753895).
+
 - 새 회귀 테스트: origin/main에서 Python 4건·Node 3건 실패, branch에서 통과.
-- 관련 Python 73건, Node 전체 44개 파일 통과. Windows 전체 pytest: 실행 대기(동시에 시작한 다른 레인의 전체 검사와 겹쳐 이 실행을 1%에서 중단, 통과 판정 아님).
+- 관련 Python 73건, 공통 웹 실행 검사 69 passed·1 skipped, Node 전체 44개 파일 통과. Windows 전체 pytest: 6,065 passed·66 skipped(12분 13초).
 - Chrome 합성 기록 125건: 40→80→120→125건, 첫 메시지·끝 표시·새로고침 후 재조회 확인.
-- 공개 검사·diff 검사 통과. 패치노트·목차 검사는 기록 커밋에서 확인합니다.
+- 공개 검사·diff 검사 통과. 패치노트·목차 검사도 통과했습니다.
 
 ## CSO가 보는 범위
 
@@ -24,6 +26,7 @@
 ## 남은 지적
 
 - 업그레이드 전에 이벤트 상한으로 이미 삭제된 메시지는 복구되지 않습니다. 기존 DB에는 남아 있는 이벤트만 처음 한 번 옮깁니다.
+- 임시 basetemp 삭제는 자동 승인 검토의 `blocked by policy`로 차단됐습니다. 삭제 완료로 판정하지 않습니다.
 - 봇 판단과 병합은 개발 총괄에게 넘깁니다.
 
 Refs #560
