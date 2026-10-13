@@ -1,7 +1,7 @@
 # gateway 종료 진단
 
 - 권고: 종료 원인은 미확인. 진단 장치를 배포한 뒤 다음 종료의 PID·시각·fault·exit를 맞춰 본다.
-- branch: `gateway-exit-diagnostics`. 기존 인스턴스·설정·시스템은 변경하지 않았다.
+- PR: [#547](https://github.com/ehojune/bioinfo-team-3d/pull/547), branch: `gateway-exit-diagnostics`. 기존 인스턴스·설정·시스템은 변경하지 않았다.
 
 ## 조사 결과
 
@@ -22,7 +22,8 @@
 - gateway·runner에 faulthandler, sys.excepthook, asyncio 예외 handler, atexit, 지원 signal 기록과 heartbeat 추가. 기존 signal handler와 runner의 두 번 Ctrl+C 규칙을 보존한다.
 - `up`은 기존 stdout/stderr 파일 전달을 유지하고 unbuffered·초기 faulthandler를 켠다.
 - `status`·`doctor`는 PID 기록을 보존하며 프로세스 없음과 마지막 heartbeat·exit를 표시한다.
-- 새 회귀: main `70f5b72`에서 4 failed. branch 관련 검사 107 passed·1 skipped. 전체 Windows 검사와 CI 결과는 PR 검증 절에 기록한다.
+- 새 회귀: main `70f5b72`에서 4 failed. branch 관련 검사 107 passed·1 skipped.
+- 첫 Windows 전체 검사는 5,538 passed·66 skipped·encoding 검사 1 failed. encoding·바이너리 모드를 고친 뒤 관련 11 passed. 전체 재검사와 CI 결과는 PR 검증 절에 기록한다.
 - 다음 종료 때 볼 파일: `gateway.state_dir/logs/{gateway,runner}-diagnostics.jsonl`, `{gateway,runner}-fault.log`, `{gateway,runner}.log`. 상세 사용법은 [manual](../manual.md).
 
 남은 지적: 외부 강제 종료는 프로세스 내부 hook으로 종료 코드를 얻지 못한다. 이번 작업은 자동 재시작·상주 감시자를 추가하지 않는다.
