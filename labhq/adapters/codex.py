@@ -15,7 +15,7 @@ import json
 import os
 from pathlib import Path
 
-from ..util import event_preview, openai_strict_schema, short, strip_optional_nulls, tool_input_summary
+from ..util import event_preview, openai_strict_schema, short, strip_optional_nulls, tool_input_fingerprint, tool_input_summary
 from .base import (AgentAdapter, role_footer, child_config_dirs, RunContext, RunState, expand_env, note_command_ok,
                    note_failed_output, record_model_id, wrap_cwd)
 from .owned import read_owned, write_owned
@@ -168,7 +168,7 @@ def elevated_home_problem(home: Path, accounts: dict[str, float | None] | None) 
 
 class CodexAdapter(AgentAdapter):
     engine = "codex"
-    enforces_read_only = True  # -s read-only, no MCP, hooks/plugins/apps off, no user config
+    enforces_read_only = True  # only own outputs/temp writable; no MCP, hooks/plugins/apps or user config
 
     def prepare(self, ctx: RunContext) -> None:
         write_owned(ctx.workdir, "AGENTS.md", ctx.agent.system_prompt.strip() + "\n" + role_footer(ctx))
@@ -243,6 +243,16 @@ class CodexAdapter(AgentAdapter):
         """`-s <mode>`, or with private paths to refuse a permission profile that extends the same built-in mode.
         Codex profiles and `-s` do not compose: a run takes one or the other."""
         sandbox = ctx.agent.sandbox
+        if ctx.read_only or sandbox == "read-only":
+            # Start with read access only: unlike :workspace this grants neither cwd nor global temp writes.
+            # Adding these two roots produces a scoped workspace-write sandbox, including for resumed sessions.
+            filesystem = {str(ctx.workdir.resolve() / name): "write" for name in ("outputs", ".tmp")}
+            filesystem.update({path: "deny" for path in self.deny_read_paths(ctx)})
+            filesystem.update({str(self.settings.path(z.path)): "deny"
+                               for z in self.settings.policy.data_zones if z.level == "restricted"})
+            profile = {"extends": ":read-only", "filesystem": filesystem}
+            return ["-c", f"default_permissions={_toml(STAFF_PROFILE)}",
+                    "-c", f"permissions.{STAFF_PROFILE}={_toml(profile)}", "-c", 'approval_policy="never"']
         parent = PROFILE_PARENTS.get(sandbox)
         deny = self.deny_read_paths(ctx) if parent else []
         if not deny:
@@ -269,7 +279,7 @@ class CodexAdapter(AgentAdapter):
             flags += ["-c", f'model_reasoning_effort="{a.effort}"']
         web_search = "live" if any(t.split("(")[0] in WEB_TOOLS for t in a.tools) else "disabled"
         flags += ["-c", f'web_search="{web_search}"']
-        for d in ctx.extra_dirs:
+        for d in ([] if ctx.read_only or a.sandbox == "read-only" else ctx.extra_dirs):
             flags += ["--add-dir", d]
         if t.output_schema:
             flags += ["--output-schema", str(ctx.meta_dir / "output_schema.json")]
@@ -326,7 +336,9 @@ class CodexAdapter(AgentAdapter):
             elif it == "command_execution":
                 exit_code = item.get("exit_code")
                 if typ == "item.started":
-                    await ctx.emit("agent.tool", {"id": item.get("id"), "name": "shell", **event_preview("input", item.get("command"), 300)})
+                    await ctx.emit("agent.tool", {"id": item.get("id"), "name": "shell",
+                                                 "input_fingerprint": tool_input_fingerprint("shell", item.get("command")),
+                                                 **event_preview("input", item.get("command"), 300)})
                 elif exit_code == 0 and not isinstance(exit_code, bool):
                     st.commands_ran = True  # the sandbox started a command (#328)
                     note_command_ok(st)
@@ -338,6 +350,7 @@ class CodexAdapter(AgentAdapter):
                     await ctx.emit("agent.tool_error", {**event_preview("text", message, 400)})
             elif it == "mcp_tool_call" and typ == "item.started":
                 call = {"id": item.get("id"), "name": f"mcp:{item.get('server')}.{item.get('tool')}"}
+                call["input_fingerprint"] = tool_input_fingerprint(call["name"], item.get("arguments"))
                 if item.get("arguments") is not None:  # tells calls apart, e.g. for the runaway detector
                     call["summary"] = tool_input_summary(item["arguments"])
                     call.update(event_preview("input", json.dumps(item["arguments"], ensure_ascii=False, sort_keys=True,
@@ -360,12 +373,14 @@ class CodexAdapter(AgentAdapter):
             elif it == "file_change" and typ == "item.completed":
                 changes = item.get("changes") or []
                 await ctx.emit("agent.tool", {"name": "edit", "completed": True,
+                                               "input_fingerprint": tool_input_fingerprint("edit", item.get("changes")),
                                                "summary": ", ".join(str(c.get("path", "")) for c in changes if isinstance(c, dict))[:160],
                                                **event_preview("input", changes, 300)})
             elif it == "web_search" and typ == "item.completed":
                 action = item.get("action") or {}
                 query = action.get("query") if isinstance(action, dict) else None
                 await ctx.emit("agent.tool", {"name": "web_search", "completed": True,
+                                               "input_fingerprint": tool_input_fingerprint("web_search", query or item.get("query")),
                                                **event_preview("input", query or item.get("query"), 200)})
         elif typ == "turn.completed":
             st.result_seen = True

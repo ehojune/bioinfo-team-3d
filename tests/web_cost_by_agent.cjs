@@ -14,7 +14,7 @@ const summary = {by_agent: {
   cso: {actual_usd: 0.4, estimated_usd: 0, unknown_count: 0},
   unknown: {actual_usd: 0, estimated_usd: 0.2, unknown_count: 0}}};
 assert.equal(agentCostLabel(summary, id => names[id]),
-  '너구리 확인 $0.10 + 미집계 1건 · 부엉이 확인 $0.40 · 직원 기록 없음 추정 $0.20');
+  '너구리 확인 $0.10 + 미집계된 비용 1건 · 부엉이 확인 $0.40 · 직원 기록 없음 추정 $0.20');
 assert.equal(agentCostLabel({by_engine: {}}), '', 'an older summary without by_agent adds nothing');
 
 const {agentSpentLabel} = context.LabHQState;

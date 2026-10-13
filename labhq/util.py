@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import re
@@ -123,8 +124,21 @@ def short(obj: Any, n: int = 300) -> str:
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
+TOOL_INPUT_CHARS = 4096
+
+
+def tool_input_fingerprint(name: str | None, value: Any) -> str | None:
+    """Hash raw tool input before display clipping; preserve string whitespace and sort JSON keys."""
+    if value is None or value == "":
+        return None  # the engine did not report an input
+    canonical = value if isinstance(value, str) else json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    text = f"{name or ''}\0{canonical[:TOOL_INPUT_CHARS]}"
+    return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
+
+
 def event_preview(field: str, obj: Any, n: int = 300) -> dict:
-    """Keep existing event limits and tell the browser when the server clipped a field."""
+    """Display only: whitespace is collapsed. Fingerprint raw tool input before calling this."""
     value = short(obj, n)
     whole = short(obj, 2**63 - 1)
     if len(whole) <= n:

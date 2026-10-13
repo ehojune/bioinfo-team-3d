@@ -592,7 +592,9 @@ STEP_OUTPUTS_RULE = ("\n\nDeclared outputs: save each at exactly this path in yo
 
 RESEARCH_RESULT_FIELD_RULES = "\n".join(f"- {rule}" for rule in RESULT_CONTRACT_FIELD_RULES)
 
-REVIEW_PROMPT = """You are the scientific reviewer. Evaluate the team's work on the request below with three
+REVIEW_PROMPT = """Write only in your own outputs/ and .tmp/; never edit reviewed files or inputs.
+Save the final JSON to outputs/review.json and return the same JSON as your final answer.
+You are the scientific reviewer. Evaluate the team's work on the request below with three
 criteria scored 1–5: addresses_question, evidence (how well conclusions are supported), thoroughness.
 List concrete issues per step_id with a priority and a specific revision request. Priority P1 means fixing the issue
 would change a conclusion; P2 means the conclusion stays the same but its evidence or wording is weak; P3 is minor.
@@ -685,7 +687,9 @@ REVIEW_REFERENCE_NOTE = (
     "one line per P2 issue and the P3 count, so do not write that section or repeat those issues elsewhere.")
 
 # The research lane after CP2 approval (#58 ③⑤). SYNTH_PROMPT and REVIEW_PROMPT above stay the generic ones.
-RESEARCH_REVIEW_PROMPT = """You are the scientific reviewer of a research request that ran under a frozen,
+RESEARCH_REVIEW_PROMPT = """Write only in your own outputs/ and .tmp/; never edit reviewed files or inputs.
+Save the final JSON to outputs/review.json and return the same JSON as your final answer.
+You are the scientific reviewer of a research request that ran under a frozen,
 PI-approved plan; the PI approved its evidence at CP2. Check every claim against its evidence ledger. Where the
 readable files below can be opened, read them and compare what they contain with what each claim says.
 
@@ -809,7 +813,7 @@ Continue the same step in this session. Treat an employee's answer as advice, no
 Do not repeat the same question."""
 
 CONSULT_PROMPT = """Answer one blocked employee's question using the request, plan and policy context below.
-This is a read-only, one-answer consult. Do not call labhq_ask and do not approve installations,
+Write only in your own outputs/ and .tmp/; existing work stays read-only. Answer once. Do not call labhq_ask or approve installations,
 destructive work, restricted-data access, budget overruns or work outside the request.
 When bioinfo-agent asks whether to build a missing reusable pipeline, answer that it should build it.
 
@@ -826,7 +830,7 @@ Plan: {plan}"""
 
 
 FOLLOWUP_PROMPT = """The PI asks a follow-up question about this finished request. Answer from the work already done:
-this request's report, its output files and your earlier session. This is read-only: do not start new
+this request's report, its output files and your earlier session. Write only in your own outputs/ and .tmp/; do not start new
 analyses, HPC jobs, installations or hires. If answering needs new work, say which request the PI should send.
 
 Original request: {request}
@@ -1085,6 +1089,7 @@ def format_roster(agents: list[dict]) -> str:
                 allowed and not any(x.startswith(("Write", "Edit", "Bash")) for x in allowed)) else "write-capable"
         lines.append(f"- {a['id']}{tag}: {a['name']} – {a['role']} "
                      f"({a['engine']}/{a.get('model') or 'default'}); {access}; "
+                     f"{'own outputs/ and .tmp/ writable; ' if access == 'read-only' else ''}"
                      f"tools={allowed or builtin or 'default'}; denied={a.get('disallowed_tools') or []}; "
                      f"labhq_hpc={'yes' if a.get('hpc_tools') else 'no'}; "
                      f"{'labhq_annot=yes (VEP, gnomAD, ClinVar, ChIP-Atlas, ENCODE cCRE, GTEx lookups; AlphaGenome when its key is set); ' if 'annot' in (a.get('builtin_mcp') or []) else ''}"
@@ -2778,11 +2783,15 @@ class Orchestrator:
                     prompt=FOLLOWUP_PROMPT.format(
                         request=clip((req.get("text") or "") + render_references(req.get("references")), 4000),
                         report=clip(req.get("report") or "(no report)", 6000), history=history,
-                        question=entry["text"]),
+                        question=entry["text"]) + (
+                            f"\nPrevious workspace (read-only): {workdir}\n"
+                            "Paths in earlier answers are relative to that workspace. Save new files only in this "
+                            "task's own outputs/ and .tmp/." if workdir else ""),
                     meta={**reference_meta(req), "kind": "followup", "followup_id": fid,
                           "title": f"이어 묻기: {entry['text'][:80]}", "request": req.get("text") or "",
-                          "agent_overrides": dict(READ_ONLY_OVERRIDES), "upstream_dirs": list(dict.fromkeys(outputs)),
-                          **({"workdir": workdir} if workdir else {}), **pin})
+                          "agent_overrides": dict(READ_ONLY_OVERRIDES),
+                          "upstream_dirs": list(dict.fromkeys([*outputs, *([workdir] if workdir else [])])),
+                          **({"source_workdir": workdir} if workdir else {}), **pin})
         self.cost[rid] = max(self.cost.get(rid, 0.0), float(req.get("cost_usd") or 0))
         self._seed_cost(rid, req)
         try:
@@ -3350,8 +3359,9 @@ class Orchestrator:
             # What each answer does, so the PI need not read detail.requested_budget_usd (trial 2026-10-08).
             then = f" 승인하면 상한을 ${raised:.2f}로 올리고, 거절하면 새 작업을 보내지 않습니다."
             summary = (f"예산 초과: ${spent:.2f}{pending} / ${limit:.2f} — 계속 진행할까요?{then}" if over else
-                       f"예산 판정 불가: 집계 ${spent:.2f}{pending}(건당 ${reserve:.2f}로 보면 ${bound:.2f}) / "
-                       f"상한 ${limit:.2f} — 계속 진행할까요?{then}")
+                       f"지금까지 ${spent:.2f} 썼고, 비용을 아직 모르는 작업이 {unknown}건 있어 "
+                       f"상한 ${limit:.2f}를 넘을 수 있습니다 "
+                       f"(모르는 작업을 건당 ${reserve:.2f}로 잡으면 ${bound:.2f}).{then}")
             try:
                 detail = {"spent_usd": spent, "limit_usd": limit, "requested_budget_usd": raised,
                           **({"unknown_count": unknown, "unknown_reserve_usd": reserve} if unknown else {})}
@@ -4126,7 +4136,7 @@ class Orchestrator:
                 reply = await self.run_step(Task(
                     agent_id=reviewer, request_id=rid, output_schema=RESEARCH_LANE_REVIEW_SCHEMA,
                     prompt=prompt if parse_attempt == 1 else prompt + RESEARCH_REVIEW_RETRY,
-                    meta={**refs, "kind": "review", "parse_attempt": parse_attempt, "request": text,
+                    meta={**refs, "kind": "review", "outputs": ["outputs/review.json"], "parse_attempt": parse_attempt, "request": text,
                           "title": "연구 리뷰"}))
                 if rid in self.budget_denials:
                     budget_denied("review", None)
@@ -4571,7 +4581,7 @@ class Orchestrator:
                 prompt=REVIEW_PROMPT.format(request=text, results=result.text) +
                        plan_review_context(req.get("plan"), topic_checklists.load(),
                                            req.get("analysis_precedents")),
-                meta={**refs, "kind": "review", "revision": 0, "request": text,
+                meta={**refs, "kind": "review", "outputs": ["outputs/review.json"], "revision": 0, "request": text,
                       "title": "단독 결과 과학 리뷰"}))
             parsed = reviewed.structured if valid_review(reviewed.structured) else extract_json(reviewed.text)
             review = with_p1_verdict(parsed) if reviewed.ok and valid_review(parsed) else {
@@ -5655,7 +5665,7 @@ class Orchestrator:
                         prompt=prompt if parse_attempt == 1 else prompt +
                         '\n\nReturn ONLY a JSON object with verdict exactly "accept" or "revise", scores, and issues. '
                         'Every issue must include step_id, priority, problem, and request. Do not add prose.',
-                        meta={**refs, "kind": "review", "revision": rev, "parse_attempt": parse_attempt,
+                        meta={**refs, "kind": "review", "outputs": ["outputs/review.json"], "revision": rev, "parse_attempt": parse_attempt,
                               "request": text, "title": f"과학 리뷰 #{rev}"}))
                     if rid in self.budget_denials:
                         self._finish(rid, self.report_results(steps, results, n), serialized_results(), ok=False,

@@ -6,6 +6,118 @@
 
 ## 결론
 
+요청은 보고서 작성 뒤 PI 검토·확인으로 마무리합니다. 검토 대기 요청은 자동 타이틀 선택과 목록 정렬에서 미완료로 취급합니다.
+
+## 바뀐 것
+
+- 화이트보드 완료 표시·보고서 열기, 알림 한 번, 직원 완료 표시와 결정 탭 검토 카드를 연결했습니다.
+- 웹·`labhq review-done <id>`가 PI 확인 시각·감사 기록·이벤트를 한 번만 저장합니다. 실행 결과는 보존합니다.
+- 실패·취소·거부는 결과 확인 카드로 표시합니다. 카드에는 기한·자동 승인이 없고 실행 중 목록과 분리해 다른 작업을 막지 않습니다. 기존 종료 요청도 PI 확인 기록이 없으면 카드가 나타납니다.
+- 질문 대기와 실제 PI 승인 대기를 구분하고 시설팀·CSO 등 메신저 이름을 표시합니다.
+- 늦은 roster에도 카드 그림을 갱신합니다. 직원 id 대소문자를 맞추고 모르는 직원은 중립 그림, `c_` 파견직은 병아리로 표시합니다.
+- 예산 카드를 문장으로 풀고 2.5D·3D·CLI 비용을 `미집계된 비용`으로 통일했습니다. 매뉴얼에 요청 수명을 추가했습니다.
+
+## 실행한 것
+
+- 새 회귀: main에서 Node 10건·pytest 5건 실패, 수정본에서 모두 통과.
+- 전체 Node 42개 파일 통과. 수정 확인 Python 143 passed·1 skipped.
+- Windows 전체 pytest: 5,916 passed, 66 skipped.
+- 공개 검사·diff 검사 통과. 테스트 state·TEMP 분리, 기존 서비스 포트 차단. PI·trial 인스턴스와 store는 건드리지 않았습니다.
+
+## 미해결
+
+자동 봇 리뷰 판단과 병합은 개발 총괄이 이어받습니다.
+
+Refs #435
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
+앞 450자가 같고 끝이 다른 도구 호출 8개가 같은 preview로 잘려 폭주 경고를 내던 오탐을 고쳤다(#59 ②).
+
+## 바뀐 것
+
+- Claude·Codex·Antigravity의 여섯 tool 경로가 preview 전에 도구 이름과 canonical 입력 앞 4,096자를 SHA-256으로 계산한다.
+- JSON 키 순서를 정렬하고 문자열 공백을 보존한다. 추가 원본 전송은 없으며 입력 미보고·잘린 legacy 이벤트는 반복 횟수를 끊는다.
+- 단일 trip·연속 오류 판정·shadow 동작을 유지한다. manual 안전 장치·한계 절을 갱신했다(118,441 → 118,899자).
+- 기준 `afbcd2e`: 선행 #532 직원 제어·#548 실행 상태 표시를 보존했다.
+
+## 실행한 것
+
+- 새 오탐 회귀 6건: 기준 main에서 6 failed, 수정 후 통과.
+- 관련 pytest: 114 passed, 1 skipped. JSON 키 순서·공백·입력 미보고·4,096자 경계·multi-line error·runner shadow 유지·실측 스트림 포함.
+- Windows 전체 pytest 1회: 5,948 passed, 66 skipped, 2 failed. Codex fixture는 새 hash 필드 기대값을 추가한 뒤 위 관련 검사에서 통과. 나머지는 semantics 내부 테스트의 `disabled.json` PermissionError이며 단독 재검사에서 1 passed로 재현되지 않았다.
+- 공개 검사·diff 검사 통과.
+
+## 미해결
+
+- canonical 입력 앞 4,096자 이후 차이는 기존 정책대로 구별하지 못한다.
+- 최종 Windows 전체 통과 판정은 CI 결과를 확인한다. 로컬 전체 1회 결과를 통과로 세지 않았다.
+- 레인 임시 폴더 삭제는 실행 환경의 정책으로 차단돼 정리를 인계한다.
+- 리뷰 판단·병합은 개발 총괄에게 인계한다.
+
+Refs #59
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
+요청별 그림자 비교 보기를 추가하고, 다른 설정 파일로 실행 중인 서버를 `up`이 정상으로 받아들이던 결함을 고쳤다.
+
+## 바뀐 것
+
+- `semantics report --request <id>`: 저장된 그림자와 현재 단계·보고 산출·승인 결정을 한국어 평문/JSON으로 비교한다. 없거나 손상된 기록은 알리고 재계산하지 않는다.
+- 일반 요청도 ab 기록 대상이다. 재시작·재개도 같은 종료 hook을 쓴다. 실제 누락은 다른 checkout의 off 설정으로 실행한 정황이며, 오늘 병합된 보고 집계 수정과는 무관하다.
+- `up`은 서버가 응답하더라도 실행 설정 불일치를 검사한다. 살아 있는 다른 설정의 PID 기록도 보존한다.
+
+## 실행한 것
+
+- main 11845c0에서 최초 새 회귀 7건 실패. 수정 후 관련 327 passed, 1 skipped; 기능 제거·최종 요청별 회귀 15 passed.
+- CI c637146 ([run 38374699725](https://github.com/ehojune/bioinfo-team-3d/actions/runs/38374699725)): changes·patch-notes·pytest 3.10·3.12·Windows·slow·clean-install·ro-crate-validator 성공, readme 조건부 생략. Windows 전체 5,952 passed·34 skipped.
+- 공개·패치노트·목차 검사 통과. manual 의미 모델 절 갱신(118,283 → 118,701자).
+
+## 미해결
+
+- 로컬 전체 pytest는 다른 레인의 전체 검사가 연속 실행돼 시작하지 못했다. 직렬 실행 대기를 종료하고 draft로 인계한다.
+- 올바른 ab 설정의 기록 생성은 main에서도 정상이다. 'main에서 기록 생성 자체가 실패'하는 결함은 재현하지 못했다. 설정 충돌과 요청별 보기 부재를 재현했다.
+- 임시 테스트 폴더 삭제가 실행 환경의 자동 승인 검토에서 거부됐다(blocked by policy). 우회 삭제하지 않았다.
+- PI 설정·상태·인스턴스를 바꾸지 않았다. 실행 설정 선택은 총괄이 확인해야 한다. 과거 미관측 그림자는 복원하지 않는다. 웹 칸은 추가하지 않았다.
+
+Refs #559
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
+읽기 전용 직원도 자기 task의 `outputs/`·`.tmp/`에 파일을 저장합니다. 검토 대상과 앞 단계 산출물은 계속 보호합니다.
+
+## 바뀐 것
+
+- Claude: Write·Edit를 승인 게이트로 보내 자기 산출·임시 파일만 승인 없이 허용합니다. 셸과 직원 MCP는 열지 않습니다.
+- Codex: 읽기 기본 권한에 두 쓰기 루트만 추가한 workspace-write profile을 씁니다. 프로젝트 `--add-dir`와 승인 승격은 끕니다.
+- 리뷰·상담·이어 묻기와 역할별 읽기 제한에 같은 정책을 적용합니다. 이어 묻기는 세션을 유지하고 새 작업 폴더에 씁니다.
+- 리뷰는 `outputs/review.json`과 최종 JSON 응답을 함께 남깁니다. 기존 산출 수집과 모의 리뷰어도 맞췄습니다.
+- 매뉴얼 권한 표·안전 장치 설명을 갱신했습니다(118,283 → 118,352자).
+
+## 검증
+
+- 새 회귀 17건: `origin/main` 11845c0에서 17 failed, branch에서 전부 통과.
+- 관련 pytest: 146 passed·1 skipped. 입력·앞 단계·다른 task·프로젝트·통제 구역과 링크·하드링크 쓰기 거부, 검토 대상 변경 감지, 새 폴더·기존 세션 유지 확인.
+- Windows 전체 pytest: 5,896 passed·66 skipped (모의 e2e 포함, 10분 9초).
+- `scripts/check_public.sh`, `git diff --check`: 통과.
+- Codex는 sandbox 인자·쓰기 루트 구성, Claude는 실제 승인 함수까지 검사했습니다. 실제 직원 CLI·PI/trial instance는 실행하지 않았습니다.
+
+## 남은 지적
+
+- Gemini·Antigravity·CLI는 읽기 전용 task의 쓰기 경계를 강제하지 못해 기존 실행 거부를 유지합니다.
+
+Refs #435
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
 홈·state 격리와 dry-run 정리 도구를 추가한 PR #554의 P1(4256352456)을 `d38535f`에서 수정했다. 실제 사용자 `.labhq` 설정을 파일 조회 전에 차단한다.
 
 ## 바뀐 것

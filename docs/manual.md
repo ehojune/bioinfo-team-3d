@@ -145,6 +145,10 @@ cd <labhq 저장소>
 
 ## 웹 사무실
 
+보고서가 끝나면 **보고서 검토 대기**로 바뀌고 화이트보드의 완료 표시·**보고서 열기**, 알림 한 번, 직원 완료 표시와 결정 탭의 **보고서 검토** 카드가 나타납니다. 실패·취소는 **결과 확인 대기**로 표시합니다. PI 검토 전 요청도 끝나지 않은 요청으로 정렬하며 처음 열 때의 자동 선택에 포함합니다. 직접 고른 요청은 그대로 유지합니다.
+
+보고서를 읽은 뒤 **검토 완료**(실패·취소는 **확인 완료**)를 누르면 마무리됩니다. 검토 카드에는 기한·자동 승인이 없으며 다른 요청을 막지 않습니다. 직원끼리 묻고 답하는 동안은 **답 기다리는 중**, 실제 PI 결정 카드가 있을 때만 승인 대기를 표시합니다.
+
 같은 Wi-Fi의 폰에서 체험하려면 `labhq demo --web --phone`을 실행하고 출력된 `/3d` URL을 엽니다. 승인은 폰에서 누르거나 기본 120초 뒤 자동 처리됩니다.
 `/`는 2.5D, `/3d`는 3D 사무실입니다. 두 화면은 빌드 없이 `state.js` reducer와 `/ws/client`를 공유하며 같은 client token으로 연결합니다.
 다시 열면 이 브라우저에서 마지막으로 보던 요청을 복원합니다(데모·라이브·instance별 저장). 없으면 끝나지 않은 요청 중 최근 활동한 것을 고르고, 모두 끝났으면 가장 최근 활동한 요청을 엽니다. 작업판 목록도 진행·대기 요청을 위에, 완료·실패 요청을 아래에 두고 상태를 표시합니다. 새 실행 요청은 자동으로 열지만 끝난 요청이 들어와도 직접 고른 화면은 유지합니다. 화이트보드의 **이어서 진행 중**은 재개 이벤트가 있거나 접속 당시 이미 실행 중이던 요청에 표시됩니다.
@@ -168,7 +172,7 @@ cd <labhq 저장소>
 - 지난 결정마다 로컬 날짜·시각과 **요청 보고서** 링크(보고서가 있을 때)를 보여 줍니다. **×**는 이 브라우저의 목록에서만 숨기며 gateway 결정·감사 기록은 보존합니다. 숨김은 모드·인스턴스별 localStorage에 저장하고, 저장이 막히면 현재 페이지에서만 유지합니다. 대기 카드에는 ×가 없습니다.
 - 직원 **활동·생각/디버그**, 메신저와 결정 detail의 긴 줄은 접힌 줄이나 **…**를 눌러 펼치고 다시 눌러 접습니다. 키보드 Enter·Space도 같습니다. 받은 원문만 펼치며 서버가 잘랐다고 알린 줄에는 **(서버에서 N자로 잘림)**을 붙입니다.
 - 실행 중인 task가 있으면 직원 시트와 2.5D·3D에 쉬는 중으로 표시하지 않습니다. 재연결해도 task·도구·대기를 복원합니다. 명령·파일 경로는 한 줄로 읽고 입력 원문은 펼칩니다. 출력 중단 경고와 runner 연결 끊김은 실행 표시보다 먼저 나옵니다.
-- 끝난 요청의 **작업판** 아래 **이어 묻기**: 새 요청을 만들지 않고 팀 요청은 CSO, direct·단독 요청은 맡았던 직원이 같은 세션·작업 폴더에서 보고서·산출물을 읽고 답합니다. 읽기 전용이라 새 분석이 필요하면 새 요청을 권합니다. 취소한 요청은 더 이상 turn을 돌리지 않으므로 이어 묻기를 받지 않습니다(#521). 그 세션을 만든 runner가 아닌 다른 runner가 지금 같은 직원 id를 맡고 있으면 이어 묻기는 이유를 밝히고 거절하고(작업 폴더가 그 PC에 있음), 상담은 새 세션으로 엽니다. 읽기 전용은 엔진이 강제해야 해서(Claude plan 모드·읽기 도구만, Codex `-s read-only`) `engine: cli`·Gemini·Antigravity 직원에게는 이어 묻기와 상담을 보내지 않고 이유를 돌려줍니다. 이어 묻기·상담은 직원 설정에서 지우는 방식이 아니라 러너의 읽기 전용 허용 목록으로 돌고(MCP·plugin·hook 없음), 실행 중 파일이 바뀌면 실패로 처리합니다([알려진 한계](#알려진-한계)). 접속할 때 받는 snapshot에는 긴 답의 앞 2,000자만 실리고, **전문 보기**를 누르면 그 요청의 전체 답을 불러옵니다(2.5D·3D).
+- 끝난 요청의 **작업판** 아래 **이어 묻기**: 새 요청을 만들지 않고 팀 요청은 CSO, direct·단독 요청은 맡았던 직원이 같은 세션에서 앞선 보고서·산출물을 읽고 새 작업 폴더에 답을 씁니다. 읽기 전용이라 새 분석이 필요하면 새 요청을 권합니다. 취소한 요청은 더 이상 turn을 돌리지 않으므로 이어 묻기를 받지 않습니다(#521). 그 세션을 만든 runner가 아닌 다른 runner가 지금 같은 직원 id를 맡고 있으면 이어 묻기는 이유를 밝히고 거절하고(작업 폴더가 그 PC에 있음), 상담은 새 세션으로 엽니다. 읽기 전용은 엔진이 강제해야 해서(Claude 파일 도구·승인 게이트, Codex 쓰기 루트 제한) `engine: cli`·Gemini·Antigravity 직원에게는 이어 묻기와 상담을 보내지 않고 이유를 돌려줍니다. 이어 묻기·상담은 직원 설정에서 지우는 방식이 아니라 러너의 읽기 전용 허용 목록으로 돌고(승인 게이트 외 MCP·plugin·hook 없음), 허용 폴더 밖 파일이 바뀌면 실패로 처리합니다([알려진 한계](#알려진-한계)). 접속할 때 받는 snapshot에는 긴 답의 앞 2,000자만 실리고, **전문 보기**를 누르면 그 요청의 전체 답을 불러옵니다(2.5D·3D).
 
 **요청 취소**(PI 점검 R13): 끝나지 않은 요청(진행·대기·중단됨)은 요청 줄의 **요청 취소** 버튼, `labhq cancel <요청 ID>`, `POST /api/requests/{id}/cancel`로 멈춥니다. 도는 작업마다 runner에 중단을 보내고, 한도·로그인 대기와 그 요청의 카드(재개 카드 포함)를 닫은 뒤 상태를 `cancelled`로 바꾸고 끝난 단계와 산출 경로를 적은 짧은 보고서를 남깁니다. 다시 시작되지 않습니다. 보고서를 쓰기 전에 gateway가 멈추면 다음 시작 때 마저 쓰며, 그때까지 결과를 보내지 않은 작업의 비용은 미집계로 남깁니다(#521). HPC에 이미 낸 작업은 클러스터에서 확인합니다. 단계 카드의 **작업 취소**는 그 단계만 멈춥니다.
 
@@ -239,6 +243,10 @@ labhq contract extend c_scanpy --days 14    # extend | release | activate | rehi
 `labhq send`(기다리는 기본 동작)와 `labhq watch <request_id>`는 요청이 끝났다는 줄과 보고서 뒤에, 이어서 오는 요청 묶음 경로와 재현 등급(`요청 묶음:`·`재현 등급:`)까지 출력하고 끝납니다. gateway는 끝났다는 기록을 먼저 저장한 뒤 묶음을 만들기 때문에 이 정보는 별도 `request.bundle` 이벤트로 늦게 오며, CLI는 그 이벤트(또는 요청 기록의 묶음 필드)를 최대 60초 기다립니다. 단계를 하나도 돌리지 않아 묶음이 없는 요청은 기다리지 않고, 60초 안에 끝나지 않으면 "요청 묶음을 아직 만드는 중"이라고 알리고 끝나며 경로는 나중에 `labhq status`에 나옵니다.
 
 `labhq codex-review`는 [프로젝트별 GitHub 보고](#프로젝트별-github-보고)에, bench·semantics 명령은 [비교 bench](#비교-bench)와 [의미 모델과 온톨로지](#의미-모델과-온톨로지)에 있습니다.
+
+### 요청 수명과 PI 검토
+
+실행과 보고서 작성 → **보고서 검토 대기** → PI **검토 완료** 순서입니다. 실패·취소·거부도 결과와 이유를 확인한 뒤 마무리합니다. CLI에서는 `labhq review-done <request_id>`를 씁니다. `status`에 검토 대기가 보이며 `send`·`watch`는 보고서 출력 후 종료합니다. gateway는 실행 결과를 보존하고 PI 확인 시각(`pi_reviewed_at`)·감사 기록·`request.reviewed` 이벤트를 함께 저장합니다. 다시 눌러도 중복 기록하지 않습니다.
 
 ### 단독 처리
 
@@ -421,7 +429,7 @@ runner PC에 무언가 없어서 실패한 단계는 `environment` 실패입니�
 | 🦝 너구리 분석가 | `analyst` | 분석 설계·실행 | Claude Code / opus | — | HPC* |
 | 🐙 문어 엔지니어 | `engineer` | 파이프라인·도구·테스트 | Codex / gpt-5.6-sol | workspace-write | 웹 disabled·HPC* |
 | 🦔 고슴도치 Data QC | `qc_reviewer` | PASS/WARN/FAIL QC | Claude Code / sonnet | — | HPC* |
-| 🐢 거북이 과학 리뷰어 | `sci_reviewer` | 3기준 교차 리뷰 | Codex / gpt-6-astra | read-only | live 웹 |
+| 🐢 거북이 과학 리뷰어 | `sci_reviewer` | 3기준 교차 리뷰 | Codex / gpt-6-astra | 자기 outputs/·.tmp/만 쓰기 | live 웹 |
 | 🦫 비버 인사팀 | `recruiter` | Paper2Agent 변환·검증 | Claude Code / opus | — | Skill·Agent |
 | 🐥 파견직 | `c_<slug>` | 논문의 방법 적용 | Claude Code / sonnet | — | 논문 MCP·skill |
 
@@ -576,6 +584,10 @@ Paper2Agent 설치 갱신은 두 engine의 새 skill 복사를 마친 뒤 설치
 
 ![승인 게이트: 직원의 파일·셸 접근이 게이트를 거쳐 허용, PI 확인, 거부로 나뉜다. 데이터 구역은 public·internal·restricted](media/approval-gate.svg)
 
+### 폭주 감지 (그림자)
+
+같은 도구·입력 8회 또는 실패한 도구 호출 5회가 연속되면 신호별로 한 번 경고합니다. 직원은 계속 실행됩니다. Claude·Codex·Antigravity는 preview 전에 도구 이름과 원본 입력의 SHA-256 fingerprint를 계산합니다. JSON 키 순서는 정렬하고 문자열 공백은 보존합니다. 이벤트에는 기존 preview와 hash만 보냅니다. 입력 미보고나 fingerprint 없는 잘린 preview는 반복 횟수에서 제외하고 연속 횟수를 끊습니다. 한 호출의 오류 여러 줄은 실패 한 번으로 셉니다.
+
 ### 승인 게이트와 쓰기 범위
 
 HPC 제출(코어·시간 기준), 위험한 셸 명령, 예산 초과, 파견직 채용은 PI가 결정함에서 정합니다. Claude 직원의 파일·셸 호출은 승인 게이트를 거치고, 다른 엔진 직원은 sandbox와 지침에 기댑니다(아래 절과 [알려진 한계](#알려진-한계)). 셸·파일·MCP 규칙이 없는 도구는 `policy.approvals.auto_allow_tools`(기본: Read·Glob·Grep·LS·WebSearch·WebFetch·TodoWrite·Skill·StructuredOutput·ToolSearch, 그리고 이미 승인 게이트를 거친 Bash의 백그라운드 출력을 읽거나 멈추는 BashOutput·KillShell·TaskOutput·TaskStop)에 있을 때만 허용하고, 나머지는 PI에게 묻습니다. 셸 명령을 돌리는 `Monitor`가 그 예입니다. `Task`·`Agent`·`Workflow`·`TeamCreate`·`TeamDelete`는 이 목록에 넣어도 거부합니다(#421).
@@ -644,7 +656,7 @@ resume 비용·Codex 토큰은 호출별 증분으로 합산합니다(#82). 원 
 텍스트는 기존 게시 검사로 비밀값·개인 경로를 가립니다. 통제 데이터가 걸린 요청은 편집자에게 보내거나 게시하지 않습니다.
 원본 입력과 미보고 파일은 제외합니다. 파일당 1 MB·합계 5 MB 안에서 옮기며, 정리본만으로 재실행된다고 보장하지 않습니다.
 
-웹의 **편집자 정리본 확인** 카드에서 문서와 그림을 확인하고 **확인했어요 · 올리기**를 누르면
+보고서의 **검토 완료**(실패는 **확인 완료**) 뒤, **편집자 정리본 확인** 카드에서 문서·그림을 확인하고 **확인했어요 · 올리기**를 누르면
 `labhq/results/<요청 id>/`에 게시합니다. **로컬에만 남기기**를 누르면 GitHub에 쓰지 않습니다.
 `github.auto_publish_results: true`는 검토 카드를 생략합니다. 그림 안의 글자나 원본 파일의 개인정보는 PI가 확인해야 합니다.
 편집자가 연결되지 않았거나 초안 작성에 실패하면 기록으로 만든 기본 정리본을 씁니다. 게시 실패는 연구 결과를 바꾸지 않습니다.
@@ -787,7 +799,11 @@ accept면 CSO가 결론·수치 문장마다 `[[claim:<step_id>/<claim_id>]]`를
 3. 요청이 끝나면 그림자가 단계마다 입력–방법 맞춤을 세고 이번 결과를 지도에 더합니다.
 
 데이터 원본·경로·요청 본문은 기록에 들어가지 않고, 통제 구역 파일은 hash도 읽지 않습니다. 다만 request ID와 hash는 남으니 `state_dir`을 공개 위치에 두지 않습니다.
-보는 법: `labhq semantics report`(요청 수·두 모델 지표·A/B arm 비교·자동 off 이력). 켜고 끄는 값, 자동 off 조건, 액션 층(A1·A2), 지우는 법은 [설정 포인트](#설정-포인트)의 산출 데이터 종류 선언·의미 모델 그림자 항목에, 한계는 [알려진 한계](#알려진-한계)에 있습니다.
+보는 법: `labhq semantics report`는 전체 집계, `labhq semantics report --request req_...`는 요청 하나의 비교입니다(`--json` 지원). 켜고 끄는 값과 자동 중단 조건은 [설정 포인트](#설정-포인트), 한계는 [알려진 한계](#알려진-한계)를 봅니다.
+
+요청별 보기는 저장된 그림자의 입력–방법 판정·산출 종류·재사용 후보·경고·행동 판단과 실제 단계·보고된 산출·승인 결정을 평문으로 보여 줍니다. 기록이 없으면 그대로 알리며 재계산으로 채우지 않습니다. 입력 종류별 목록은 기존 그림자 기록에 없어 확인 불가로 표시합니다. 파일 내용 검증은 하지 않습니다.
+
+일반·단독 요청도 `shadow`와 `ab`에서 종료 시 기록합니다. 연구 요청만 A/B 계획 참고를 받으며, 재시작 뒤 재개해 끝난 요청도 같은 종료 경로를 씁니다. epoch는 `semantics enable`로 새로 열 때만 바뀝니다. 다른 설정 파일로 뜬 gateway가 같은 상태 폴더를 쓰면 요청별 보기가 불일치를 알리고 `labhq up`도 성공으로 처리하지 않습니다. 현재 설정이나 PID 기록만으로 과거 설정을 단정하지는 않습니다.
 
 report는 중첩 집계의 구조와 개수(0 이상의 정수)를 확인합니다. 손상된 요청 행은 통째로 제외하고 JSON의 `broken_lines`와 텍스트의 `깨진 줄`에 셉니다. 이전 판본의 선택 필드 부재와 worker가 남긴 `declarations: null`은 허용하며 소수 지연값도 보존합니다. 저장 로그는 바꾸지 않습니다.
 
@@ -880,6 +896,7 @@ Claude baseline은 자기 arm의 파일 쓰기·단순 명령을 허용합니다
 
 첫 실행 때 확인할 것도 여기 있습니다.
 
+- 폭주 감지는 canonical 입력 앞 4,096자만 비교하므로 그 뒤의 차이는 구별하지 못합니다. 원본 fingerprint가 없는 legacy 이벤트는 잘리지 않은 입력만 비교합니다. 경고만 하는 그림자 모드이며 자동 중단은 아직 없습니다(#59 ②).
 - runner와 직원 CLI의 PATH에서는 Windows Store·Python Install Manager 실행 별칭 폴더를 뺍니다. doctor가 PATH의 `python3` 별칭을 찾으면 Windows 앱 실행 별칭에서 끄는 법을 경고합니다.
 - Windows는 직원 CLI 명령줄을 32,000자로 제한합니다. 긴 프롬프트는 작업 폴더의 TASK 파일로 넘기고, 그래도 넘치면(조상 단계가 많아 폴더별 규칙이 늘어난 경우 등) Claude 직원의 `--settings`를 작업 폴더 옆 `.labhq-settings/<task>.json` 파일로 넘깁니다. 직원의 쓰기 규칙은 자기 작업 폴더만 덮으므로 이 파일은 셸 쓰기 게이트를 거치지 않고는 고칠 수 없습니다. 그래도 넘치면 단계가 이유와 함께 실패합니다.
 - 읽기 전용 workspace 지시 파일 차단은 adapter에 등록된 Claude Code·Codex 이름을 판정합니다. Windows·macOS에서는 대소문자를 무시하고 비교합니다(`claude.md`도 `CLAUDE.md`, #190). 새 CLI가 다른 이름을 도입하면 목록을 갱신해야 합니다.
@@ -903,14 +920,14 @@ Claude baseline은 자기 arm의 파일 쓰기·단순 명령을 허용합니다
     - 실행 중 첫 "sandbox setup required"에서 Codex 프로세스 트리를 끝냅니다. 다음 셸 명령마다 승인 창이 또 뜨는 것을 막습니다.
     - doctor는 runner 계정의 Codex 홈(`$CODEX_HOME`, 없으면 `~/.codex`)이 직원 홈이 아닌데 config.toml이 elevated이거나 그 키가 없으면 warn을 냅니다.
   - agy: 전역 지침을 읽지 않았습니다(실측). 사용자 `settings.json` 권한과 MCP는 끌 옵션이 없습니다.
-- 이어 묻기·상담은 허용 목록 profile로 돕니다(`labhq/adapters/read_only.py`). 직원의 이름·역할·지침·모델·한도·`project_dirs`·금지 도구(`disallowed_tools`)만 가져오고, 보낸 쪽 override는 보지 않습니다. `isolate_user_config: false`여도 격리합니다.
-  - Claude: plan 모드, `Read,Glob,Grep`, MCP 없음, plugin·`extra_args` 없음, `--setting-sources ""`(작업 폴더의 `.claude/settings.json`도 안 읽음), `disableAllHooks`. 수정 전 명령에서는 작업 폴더와 plugin의 SessionStart·Stop hook이 plan 모드를 거치지 않고 돌았습니다(실측 `claude_read_only_*.jsonl`, 2.1.282).
-  - Codex: `-s read-only`, MCP 없음, `--ignore-user-config --ignore-rules`, `--disable`로 hooks·plugins·apps·computer_use·browser_use를 끕니다. 쓰기 실행에서도 multi_agent·memories·apps·plugins는 꺼집니다. 이름은 codex-cli 0.160.1에서 확인했고, 모르는 이름이면 CLI가 오류를 내서 실행되지 않습니다.
+- 리뷰·이어 묻기·상담은 자기 `outputs/`·`.tmp/`에만 씁니다. `inputs/`(링크 포함)·앞 단계 산출·다른 task·프로젝트·통제 구역은 고치지 못합니다. 리뷰 JSON은 `outputs/review.json`에 저장하고 최종 응답에도 반환합니다. 허용 목록 profile로 돕니다(`labhq/adapters/read_only.py`). 직원의 이름·역할·지침·모델·한도·`project_dirs`·금지 도구(`disallowed_tools`)와 Codex 웹 검색만 가져오고, 보낸 쪽 override는 보지 않습니다. `isolate_user_config: false`여도 격리합니다.
+  - Claude: Read·Glob·Grep·Write·Edit만 열고 모든 쓰기를 승인 게이트로 보냅니다. 자기 `outputs/`·`.tmp/`의 일반 파일만 승인 없이 허용하며 링크·하드링크·그 밖의 쓰기는 거부합니다. 사용자 설정·plugin·hook은 끄고 승인 MCP만 연결합니다.
+  - Codex: 읽기 기본 권한에 자기 `outputs/`·`.tmp/` 쓰기 루트만 더한 workspace-write profile을 씁니다. cwd·전역 임시 폴더·프로젝트에는 쓰기 권한을 주지 않습니다. MCP·사용자 설정·hooks·plugins·apps·computer_use·browser_use·multi_agent·memories는 끄고 native 웹 검색은 유지합니다.
   - `engines.<engine>.prefix_args`에 옵션(`-`로 시작, 환경변수 전개 뒤 기준)이 있으면 실행하지 않습니다. prefix_args는 모든 인자 앞에 붙어서, 실측(codex-cli 0.159.2)에서 `exec` 앞의 `--dangerously-bypass-approvals-and-sandbox`가 `-s read-only`를 넘어 파일을 썼습니다. prefix_args에는 script 경로만 두고 옵션은 `extra_args`에 두세요(읽기 전용 실행은 뺍니다).
   - `engines.<engine>.env`에서는 로그인·설정 위치·API 접속 변수(`CLAUDE_CONFIG_DIR`·`CODEX_HOME`·API key·Bedrock·Vertex·proxy·CA·`PATH`·`HOME`, 목록은 `READ_ONLY_ENV_KEEP`)만 씁니다. `CLAUDE_CODE_PLUGIN_DIRS`·`NODE_OPTIONS` 같은 나머지는 빼고 뺀 이름(값은 빼고)을 작업 피드에 남깁니다. 실측(Claude 2.1.282)에서 env로 준 plugin이 읽기 전용 명령에도 실렸습니다(#145).
   - 작업 폴더의 지침 파일: 앞선 쓰기 실행이 남긴 파일이 역할 지침을 바꾸지 못하게 합니다(#147). Codex는 작업 폴더의 `AGENTS.override.md`를 labhq가 쓰는 `AGENTS.md`보다 먼저 읽어서, 그 파일이 있으면 이어 묻기든 일반 단계든 Codex 실행을 거부합니다. 읽기 전용 실행은 엔진이 지침·설정으로 읽는데 끌 플래그가 없는 것(Claude의 `AGENTS.md`·`AGENTS.override.md`, Codex의 `.agents/` 중 labhq가 설치한 계약 skill 밖의 것과 `.codex/`)이 있으면 거부합니다. 계약 skill 사본은 원본과 같을 때만 labhq 것으로 보고(#165), 그 위 폴더(`.agents`·`.claude/skills` 등)가 링크면 지우지 않고 실행을 거부합니다(#190). `.codex/`의 project config(notify·MCP·hooks)는 sandbox 밖에서 돕니다. 실측(codex-cli 0.159.2)에서 신뢰되지 않은 작업 폴더에서는 안 읽혔고, 신뢰된 `runner.workspace_root` 아래는 재지 않았습니다(#148). Claude의 작업 폴더 `CLAUDE.md`·`CLAUDE.local.md`·`.claude/CLAUDE.md`·`.claude/rules`는 하위 폴더 것까지 `claudeMdExcludes`로 뺍니다(Claude는 하위 폴더 파일을 읽을 때 그 폴더의 CLAUDE.md를 싣습니다). 파일은 지우지 않고, 옮길지는 PI가 정합니다.
   - 사후 확인: 러너가 실행 전후로 작업 폴더와 쓰기 가능한 project·upstream·참고 폴더를 링크를 따라가지 않고 나열해 비교합니다(종류·크기·mtime, POSIX는 ctime). 바뀌면 결과를 실패로 하고 PI 피드에 경고를 띄우며 manifest `read_only_changes`에 남깁니다. 되돌리지는 않습니다. 항목이 `runner.read_only_check_max_entries`(50,000)를 넘거나 읽을 수 없는 폴더가 있으면 실행하지 않습니다.
-  - 한계: Windows에는 ctime이 없어 크기를 그대로 두고 mtime을 되돌린 수정은 못 봅니다. 같은 러너에서 다른 작업이 쓰던 폴더의 변경은 비교에서 빼고 이유를 남기며, 다른 러너나 프로세스가 쓴 것은 실패로 잡힙니다. labhq가 쓰는 `.labhq/`·`manifest.json`·`events.jsonl`과 감시 폴더 밖(홈 등)은 보지 않습니다. Claude 관리 정책(managed settings)의 hook은 끌 수 없습니다.
+  - 한계: Windows에는 ctime이 없어 크기를 그대로 두고 mtime을 되돌린 수정은 못 봅니다. 같은 러너에서 다른 작업이 쓰던 폴더의 변경은 비교에서 빼고 이유를 남기며, 다른 러너나 프로세스가 쓴 것은 실패로 잡힙니다. 자기 `outputs/`·`.tmp/`와 labhq가 쓰는 `.labhq/`·`manifest.json`·`events.jsonl`과 감시 폴더 밖(홈 등)은 보지 않습니다. Claude 관리 정책(managed settings)의 hook은 끌 수 없습니다.
 - Windows는 명령줄을 32,767자까지만 받습니다. 직원 CLI 명령이 32,000자를 넘으면 adapter가 prompt 대신 작업 폴더의 TASK 파일을 가리키는 짧은 prompt를 넘기고, 그래도 넘으면 실행 전에 길이를 적고 거부합니다. 전에는 이 실패가 `executable not found`로 보였습니다(연구 계획 재계획, #222).
 - labhq MCP 호출은 승인·질의의 가장 긴 대기에 120초를 더해 기다립니다. Claude에는 서버별 `timeout`과 `MCP_TOOL_TIMEOUT`, Codex에는 `tool_timeout_sec`(기본 60초)를 넘깁니다. fake clock test는 두 adapter의 1,320초 설정으로 90초 응답을 한 번만 받는지 봅니다. 실제 Claude 2.1.282와 Codex 0.162.0-alpha.17.2에서도 90초 호출이 끝났습니다(#276).
 - `scripts/probe_inbound_mcp.py`는 summary·진단을 남기고, `ok`·정확한 marker·서버/도구 호출 각 1회·tool error 0일 때만 exit 0입니다. Claude inbound는 sender 성공과 거부 통지·로그(refuse), 큐 기록(accept/unset)도 검사합니다. `--no-sender`는 MCP 검사만 합니다.

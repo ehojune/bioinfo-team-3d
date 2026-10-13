@@ -101,10 +101,12 @@ async def test_claude_read_only_command_loads_no_plugin_and_no_hook(tmp_path, mo
     assert "--disable-slash-commands" in cmd
     settings = json.loads(cmd[cmd.index("--settings") + 1])
     assert settings["disableAllHooks"] is True and settings["autoMemoryEnabled"] is False
-    assert cmd[cmd.index("--permission-mode") + 1] == "plan" and cmd[cmd.index("--tools") + 1] == "Read,Glob,Grep"
-    assert "--allowedTools" not in cmd and "--permission-prompt-tool" not in cmd and "--strict-mcp-config" in cmd
+    assert cmd[cmd.index("--permission-mode") + 1] == "default"
+    assert cmd[cmd.index("--tools") + 1] == "Read,Glob,Grep,Write,Edit"
+    assert "--allowedTools" not in cmd and "--permission-prompt-tool" in cmd and "--strict-mcp-config" in cmd
     servers = json.loads(Path(cmd[cmd.index("--mcp-config") + 1]).read_text(encoding="utf-8"))
-    assert servers == {"mcpServers": {}}
+    assert set(servers["mcpServers"]) == {"labhq_approval"}
+    assert servers["mcpServers"]["labhq_approval"]["env"]["LABHQ_READ_ONLY"] == "1"
     assert ctx.read_only and ctx.agent.plugin_dirs == [] and not ctx.agent.allow_skills
     assert ctx.agent.system_prompt == "You are the worker.", "the staff member's persona is kept"
 
@@ -140,7 +142,8 @@ async def test_read_only_profile_ignores_whatever_the_sender_overrides(tmp_path,
     from labhq.adapters import read_only_profile
     for ctx, cmd in seen:
         assert ctx.agent == read_only_profile(staff), "built from the registry spec, not from the sender"
-        assert ctx.mcp_servers == [] and "Bash" not in cmd[cmd.index("--tools") + 1]
+        assert [s.name for s in ctx.mcp_servers] == ["labhq_approval"]
+        assert "Bash" not in cmd[cmd.index("--tools") + 1]
         assert "bypassPermissions" not in cmd and "--plugin-dir" not in cmd
 
 
@@ -181,7 +184,9 @@ async def test_codex_read_only_command_turns_off_hooks_plugins_and_user_config(t
     result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta=meta))
     assert result.ok, result.error
     ctx, cmd = seen[0]
-    assert cmd[cmd.index("-s") + 1] == "read-only"
+    assert "-s" not in cmd and 'approval_policy="never"' in cmd
+    profile = next(arg for arg in cmd if arg.startswith("permissions.labhq_staff="))
+    assert 'extends = ":read-only"' in profile and profile.count('= "write"') == 2
     assert "--ignore-user-config" in cmd and "--ignore-rules" in cmd
     disabled = [cmd[i + 1] for i, arg in enumerate(cmd) if arg == "--disable"]
     assert {"hooks", "plugins", "apps", "multi_agent", "memories"} <= set(disabled)
@@ -241,11 +246,11 @@ def _events(runner, kind):
 async def test_read_only_run_that_writes_its_workspace_fails_and_alerts_the_pi(tmp_path, monkeypatch, kind):
     runner = _runner(tmp_path)
     workdir = tmp_path / "runs" / "earlier_step"
-    (workdir / "outputs").mkdir(parents=True)
-    (workdir / "outputs" / "table.tsv").write_text("a\t1\n", encoding="utf-8")
+    (workdir / "inputs").mkdir(parents=True)
+    (workdir / "inputs" / "table.tsv").write_text("a\t1\n", encoding="utf-8")
 
     def hook_writes(ctx):  # what a plugin's Stop hook did in the probe, outside the engine's own tools
-        (ctx.workdir / "outputs" / "table.tsv").write_text("a\t2\n", encoding="utf-8")
+        (ctx.workdir / "inputs" / "table.tsv").write_text("a\t2\n", encoding="utf-8")
         (ctx.workdir / "canary.txt").write_text("x", encoding="utf-8")
 
     seen = []
@@ -253,7 +258,7 @@ async def test_read_only_run_that_writes_its_workspace_fails_and_alerts_the_pi(t
     result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q",
                                         meta={"kind": kind, "workdir": str(workdir)}))
     assert result.ok is False and "읽기 전용" in result.error and "(read-only policy)" in result.error
-    assert "+ workdir/canary.txt" in result.error and "~ workdir/outputs/table.tsv" in result.error
+    assert "+ workdir/canary.txt" in result.error and "~ workdir/inputs/table.tsv" in result.error
     assert str(tmp_path) not in result.error, "labels, not local paths: errors reach reports"
     from labhq.orchestrator.cso import failure_kind
     assert failure_kind(result) == "terminal", "never retried: a retry would run the same channel again"
@@ -261,7 +266,7 @@ async def test_read_only_run_that_writes_its_workspace_fails_and_alerts_the_pi(t
     assert alerts and "canary.txt" in alerts[0]["data"]["text"]
     manifest = json.loads((workdir / "manifest.json").read_text(encoding="utf-8"))
     run = next(iter(manifest["runs"].values()))
-    assert run["read_only_changes"] == ["+ workdir/canary.txt", "~ workdir/outputs/table.tsv"]
+    assert run["read_only_changes"] == ["+ workdir/canary.txt", "~ workdir/inputs/table.tsv"]
     assert Path(run["read_only_roots"]["workdir"]) == workdir.resolve()
     assert (workdir / "canary.txt").exists(), "nothing is undone; the PI decides"
 

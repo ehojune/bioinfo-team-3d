@@ -1,8 +1,8 @@
-import {answerRequired, revisionNoteMissing, syncDecisionCards, syncDecisionHistory, createHistoryVisibility} from '../../ui/decide.js';
+import {answerRequired, revisionNoteMissing, syncReviewCards, syncDecisionCards, syncDecisionHistory, createHistoryVisibility} from '../../ui/decide.js';
 
 // DOM controls and transport stay outside the shared event reducer.
 export function startLiveOffice(onState) {
-  const {S, apply, selectRequest, visual, stateText, currentTask, fillRequestDetail, KIND_KO, phaseLabel} = globalThis.LabHQState.createOfficeState({
+  const {S, apply, selectRequest, visual, stateText, currentTask, fillRequestDetail, nick, KIND_KO, phaseLabel} = globalThis.LabHQState.createOfficeState({
     focusStorage: globalThis.LabHQState.createRequestFocusStorage(globalThis.LABHQ_BOOT)});
   const $ = id => document.getElementById(id);
   const params = new URLSearchParams(location.search);
@@ -33,13 +33,13 @@ export function startLiveOffice(onState) {
   let noticeApproval = null;  // #184: the approval whose request the notice shows, cleared when it ends
   const notice = (value, approvalId = null) => { $('live-notice').textContent = value; noticeApproval = approvalId; };
   // #126: a snapshot holds the head of a long follow-up answer; the full request comes from the gateway on demand.
-  async function loadFullAnswers(rid) {
+  async function loadFullAnswers(rid, quiet = false) {
     if (loadingAnswers.has(rid)) return;
     loadingAnswers.add(rid); render();
     try {
       const response = await fetch(`/api/requests/${encodeURIComponent(rid)}`, {headers:{Authorization:`Bearer ${token}`}});
       if (!response.ok) throw new Error(String(response.status));
-      if (!fillRequestDetail(rid, await response.json())) notice('전문을 찾지 못했어요.');
+      if (!fillRequestDetail(rid, await response.json()) && !quiet) notice('전문을 찾지 못했어요.');
     } catch (error) { notice(`전문을 불러오지 못했어요: ${error.message}`); }
     finally { loadingAnswers.delete(rid); render(); }
   }
@@ -63,12 +63,27 @@ export function startLiveOffice(onState) {
   function text(parent, tag, value) {
     const el = document.createElement(tag); el.textContent = value; parent.append(el); return el;
   }
+  async function reviewDone(rid) {
+    try {
+      const response = await fetch(`/api/requests/${encodeURIComponent(rid)}/review-done`,
+        {method:'POST', headers:{Authorization:`Bearer ${token}`}});
+      if (!response.ok) throw new Error(String(response.status));
+      apply({type:'request.reviewed', request_id:rid, data:await response.json()});
+      render(); notice('검토·확인을 마쳤어요');
+    } catch (error) { notice(`기록하지 못했어요: ${error.message}`); }
+  }
+  function openReview(rid) {
+    selectRequest(rid); render();
+    [...$('requests').children].find(row => row.dataset.requestId === rid)?.scrollIntoView({block:'start'});
+    loadFullAnswers(rid, true);
+  }
   function render() {
     $('connection').textContent = globalThis.LabHQState.connectionLabel(S.conn, demo);
     $('demo-banner').hidden = !demo;
     if (demo) $('demo-banner').textContent = globalThis.LabHQState.demoBannerText(S.demoStatus);
     $('token-form').hidden = S.conn !== 'auth' && S.conn !== 'offline';
-    $('approval-count').textContent = S.approvals.size + S.engineHolds.size;
+    $('approval-count').textContent = S.approvals.size + S.engineHolds.size + [...S.requests.values()].filter(globalThis.LabHQState.needsPiReview).length;
+    syncReviewCards($('review-cards'), S.requests.values(), {onOpen:openReview, onDone:reviewDone, disabled:() => S.conn !== 'live'});
     const holdRows = [...S.engineHolds.values()].map(hold => {
       const row = document.createElement('article');
       text(row, 'strong', `로그인 대기 · ${hold.engine}`);
@@ -78,7 +93,7 @@ export function startLiveOffice(onState) {
     });
     $('login-holds').replaceChildren(...holdRows);
     syncDecisionCards($('approvals'), S.approvals.values(), [], { tagName:'article', listTag:'div', kindLabels:KIND_KO,
-      requests:S.requests, emptyText:'대기 승인 없음', disabled:a => S.conn !== 'live' || pending.has(a.id),
+      nick, requests:S.requests, emptyText:'대기 승인 없음', disabled:a => S.conn !== 'live' || pending.has(a.id),
       onDecision:(a, approved, note, _type, choice, storage) => {
         if (!ws || ws.readyState !== 1 || pending.has(a.id)) return;
         // Structured questions compose their answer in decide.js; an unanswered one yields ''.
@@ -126,6 +141,10 @@ export function startLiveOffice(onState) {
       for (const step of q.plan) text(row, 'p', `${step.id} · ${step.instruction || ''} · ${q.steps[step.id] || 'pending'}`);
       if (q.review?.status === 'review_unparsed') text(row, 'p', '리뷰 판정 실패. PI 확인이 필요해요');
       if (q.error) text(row, 'p', q.error);
+      if (globalThis.LabHQState.needsPiReview(q)) {
+        const done = text(row, 'button', q.status === 'done' ? '검토 완료' : '확인 완료');
+        done.onclick = () => reviewDone(q.id);
+      }
       if (q.report) {
         text(row, 'h4', 'PI용 보고서');
         text(row, 'pre', q.report + (q.report_truncated ? '…' : ''));

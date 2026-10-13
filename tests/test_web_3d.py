@@ -151,6 +151,7 @@ def test_package_data_includes_office_assets():
     ('web_live.cjs', 'reconnect and replay gap: OK'),
     ('web_demo_separation.cjs', 'fail 0'),
     ('web_resume_focus.cjs', 'fail 0'),
+    ('web_done_review.cjs', 'fail 0'),
     ('web_command_center.cjs', 'keyed decisions, staff strip and tabs: OK'),
     ('web_decision_detail.cjs', 'fail 0'),
     ('web_expand_history.cjs', 'fail 0'),

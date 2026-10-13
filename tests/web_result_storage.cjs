@@ -36,3 +36,22 @@ test('both offices pass structured storage choices',()=>{
   assert.match(fs.readFileSync(path.join(web,'index.html'),'utf8'),/storageChoice\(li\)/);
   assert.match(fs.readFileSync(path.join(web,'lab3d/src/live.js'),'utf8'),/if \(storage\) decision\.storage = storage/);
 });
+
+test('publishing waits for PI review and preserves the editor preview',async()=>{
+  const ui=await mod, host=new Element();
+  const request={pi_review_pending:true,pi_reviewed_at:null};
+  const requests=new Map([['r',request]]);
+  const card={id:'publish',kind:'result_publish',request_id:'r',detail:{documents:{'README.md':'Editor draft'}}};
+  const [row]=ui.syncDecisionCards(host,[card],[],{requests});
+  assert.equal(row._decisionParts.approve.disabled,true);
+  assert.equal(row._decisionParts.deny.disabled,false);
+  assert.match(row.textContent,/Editor draft/);
+  assert.match(row.textContent,/보고서 검토·확인을 완료/);
+  request.pi_review_pending=false; request.pi_reviewed_at=100;
+  const [reviewed]=ui.syncDecisionCards(host,[card],[],{requests});
+  assert.equal(reviewed,row);
+  assert.equal(reviewed._decisionParts.approve.disabled,false);
+  assert.match(reviewed.textContent,/Editor draft/);
+  ui.syncDecisionCards(host,[card],[],{requests,disabled:()=>true});
+  assert.equal(reviewed._decisionParts.approve.disabled,true);
+});

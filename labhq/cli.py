@@ -23,7 +23,7 @@ from pathlib import Path
 
 from .costs import cost_detail, cost_text
 from .facilities.signatures import problem_text
-from .request_status import is_terminal_request, request_status_label
+from .request_status import is_terminal_request, request_status_label, request_display_label
 from .settings import Settings
 from .test_guard import guard_test_path
 from .util import atomic_write_text, free_port, short, without_windows_app_aliases
@@ -511,7 +511,7 @@ def _process_record(s: Settings, role: str, *, cleanup: bool = True) -> tuple[st
         return "stale", None, None
     valid = (isinstance(record, dict) and isinstance(record.get("pid"), int)
              and record.get("pid", 0) > 0 and record.get("role") == role
-             and isinstance(record.get("created"), str) and record.get("config") == s.config_path)
+             and isinstance(record.get("created"), str))
     if not valid:
         try:
             if cleanup:
@@ -530,6 +530,8 @@ def _process_record(s: Settings, role: str, *, cleanup: bool = True) -> tuple[st
         except OSError as exc:
             return "unknown", record, f"stale 기록을 지울 수 없음: {exc}"
         return "stale", record, None
+    if record.get("config") != s.config_path:
+        return "unknown", record, "다른 설정 파일로 실행 중입니다. 실행할 때 쓴 설정 파일을 확인하세요."
     return "alive", record, None
 
 
@@ -621,6 +623,12 @@ def _up_unlocked(s: Settings, *, popen=None) -> None:
     if _default_client_token(s.gateway.client_token):
         print("gateway 시작 거부: gateway.client_token의 change-me 기본값을 바꾸세요.", file=sys.stderr)
         raise SystemExit(2)
+    # A healthy server can share the port and state directory while using another config (#559).
+    # Do not silently claim the requested settings are active, or delete the other process's record.
+    for role in ("gateway", "runner"):
+        state, _record, reason = _process_record(s, role)
+        if state == "unknown":
+            _record_problem(role, reason)
     health = _health(s)
     if health is None:
         state, _record, reason = _process_record(s, "gateway")
@@ -1374,6 +1382,8 @@ def main(argv: list[str] | None = None) -> None:
     op.add_argument("--3d", dest="three_d", action="store_true", help="open the 3D office instead of 2.5D")
     sub.add_parser("runner")
     sub.add_parser("agents")
+    review = sub.add_parser("review-done", help="mark a finished report reviewed (or failure acknowledged)")
+    review.add_argument("id")
     sub.add_parser("status", help="show runners, running requests and pending approvals")
     doctor = sub.add_parser("doctor", help="check runner capabilities without starting agents")
     doctor.add_argument("--json", action="store_true", help="write state_dir/capabilities.json")
@@ -1481,6 +1491,7 @@ def main(argv: list[str] | None = None) -> None:
     sem_report = sem_sub.add_parser("report", help="requests, both models, auto-off history, removal proposal")  # semantics-hook
     sem_report.add_argument("--json", action="store_true")  # semantics-hook
     sem_report.add_argument("--today", help="YYYY-MM-DD (default: today)")  # semantics-hook
+    sem_report.add_argument("--request", dest="request_id", help="compare one request's shadow with its progress")  # semantics-hook
     sem_sub.add_parser("enable", help="show why semantics turned off and open a new epoch")  # semantics-hook
     sem_mark = sem_sub.add_parser("mark", help="mark a reuse candidate ref (sem:<8 hex>)")  # semantics-hook
     sem_mark.add_argument("request_id")  # semantics-hook
@@ -1622,7 +1633,7 @@ def main(argv: list[str] | None = None) -> None:
         print(f"진행 중 요청: {len(running)}")
         for req in running:
             progress = req["step_progress"]
-            held = "" if req.get("status") == "running" else f" [{request_status_label(req.get('status'))}]"
+            held = "" if req.get("status") == "running" else f" [{request_display_label(req)}]"
             print(f"  {req['id']} {progress['done']}/{progress['total']} {req['text']}{held}")
             environment = req.get("step_environment") or {}
             for sid, state in progress["steps"].items():
@@ -1633,6 +1644,13 @@ def main(argv: list[str] | None = None) -> None:
                 print(f"    비용: {cost_text(req.get('cost_usd'), req.get('cost_known'), summary)}"
                       + (f" {cost_detail(summary)}" if summary else ""))
         recent = _api(s, "GET", "/api/requests?status=all&limit=20")
+        reviews = [req for req in recent if req.get("pi_review_pending")]
+        if reviews:
+            print(f"PI 검토·확인 대기: {len(reviews)}")
+            for req in reviews:
+                print(f"  {req['id']} [{request_display_label(req)}] {req.get('text', '')}")
+                print(f"    비용: {cost_text(req.get('cost_usd'), req.get('cost_known'), req.get('cost_summary'))}")
+                print(f"    확인 후: labhq review-done {req['id']}")
         # Running requests show their environment problems above, beside the step.
         shown = {req["id"] for req in running}
         problems = [(req["id"], sid, problem_text(found)) for req in recent if req.get("id") not in shown
@@ -1659,6 +1677,9 @@ def main(argv: list[str] | None = None) -> None:
         print(f"승인 대기: {len(approvals)}")
         for approval in approvals:
             print(f"  {approval['id']} [{approval['kind']}] {approval['summary']}")
+    elif args.cmd == "review-done":
+        result = _api(s, "POST", f"/api/requests/{args.id}/review-done", json={})
+        print(f"{args.id}: 검토·확인 완료 ({result['pi_reviewed_at']})")
     elif args.cmd == "agents":
         for a in _api(s, "GET", "/api/agents"):
             kind = f"파견 ~{datetime.fromtimestamp(a['expires_at']):%m-%d}" if a.get("expires_at") else "정규"

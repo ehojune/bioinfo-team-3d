@@ -2291,6 +2291,7 @@ def evaluate_tool(
     private_enabled: bool = False,
     home: str | None = None,
     private_open_reads: Iterable[str] = (),
+    read_only: bool = False,
 ) -> Decision:
     allowed_roots = list(allowed_roots)
     judged = claude_write_input(tool_name, tool_input, workdir, allowed_roots, windows=windows, environ=environ)
@@ -2305,9 +2306,44 @@ def evaluate_tool(
     # Only ever stricter: a deny stays a deny, and an ask is not turned into an allow.
     if private and decision.action != "deny" and (private.action == "deny" or decision.action == "allow"):
         decision = private
+    if read_only:
+        if tool_name in WRITE_LIKE:
+            path = judged.get("file_path") or judged.get("notebook_path")
+            if not own_output_write(path, workdir):
+                decision = Decision("deny", "Read-only task may write only its own outputs/ and .tmp/ (no links)")
+        elif tool_name not in READ_LIKE:
+            decision = Decision("deny", "Read-only task permits only reading and scoped file writes")
+        if decision.action == "ask":
+            decision = Decision("deny", decision.reason)
     if judged is not tool_input:
         decision.updated_input = judged
     return decision
+
+
+def own_output_write(path: object, workdir: str | None) -> bool:
+    """Both spelling and real target must stay in this task's plain output/temp directory."""
+    if not isinstance(path, str) or not path or not workdir:
+        return False
+    from .adapters.owned import is_link
+
+    try:
+        root = Path(workdir).resolve()
+        target = Path(os.path.abspath(os.path.join(str(root), path)))
+        for name in ("outputs", ".tmp"):
+            allowed = root / name
+            if target == allowed or not target.is_relative_to(allowed):
+                continue
+            if not target.resolve().is_relative_to(allowed):
+                return False
+            for part in (target, *target.parents):
+                if part == root:
+                    break
+                if os.path.lexists(part) and (is_link(part) or (part.is_file() and part.stat().st_nlink > 1)):
+                    return False
+            return True
+    except (OSError, ValueError, RuntimeError):
+        pass
+    return False
 
 
 # `/c/` where a path starts: after a space, quote, `=`, `>`, `(` ... and never inside a word, URL or other path.

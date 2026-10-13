@@ -892,6 +892,7 @@ class Runner:
     def _read_only_watch(self, task: Task, ws: TaskWorkspace, dirs: list[str]) -> tuple[ReadOnlyWatch, list[str]]:
         """The folders a read-only run is checked against, minus those another task is writing right now (#36)."""
         roots, skip, notes = watch_roots(ws.dir, dirs, self._busy_roots(task.id))
+        skip += [ws.dir.resolve() / "outputs", ws.dir.resolve() / ".tmp"]
         owned = {Path(w.dir).resolve() for w in self.workspaces.values()}
         base = self.ws_root.resolve()
         owned |= {Path(d).resolve() for d in task.meta.get("upstream_dirs", [])
@@ -991,7 +992,7 @@ class Runner:
 
     async def run_task(self, task: Task, workdir_override: Path | None = None) -> TaskResult:
         agent = self._resolve_agent(task)
-        read_only = is_read_only_task(task.meta)
+        read_only = is_read_only_task(task.meta, agent)
         refusal = read_only_refusal(agent.id, agent.engine) if read_only else None
         # A contract hire works only once active, and staff that send data to external services never take restricted
         # inputs (#424); the gateway refuses both first.
@@ -1261,6 +1262,7 @@ class Runner:
             env = {
                 "LABHQ_BROKER_URL": self.broker.url, "LABHQ_BROKER_TOKEN": broker_token,
                 "LABHQ_TASK_ID": task.id, "LABHQ_AGENT_ID": agent.id, "LABHQ_WORKDIR": str(ws.dir),
+                "LABHQ_READ_ONLY": "1" if read_only else "0",
                 "LABHQ_ENVIRONMENT_STEP": "1" if task.meta.get("environment_step") is True else "0",
                 "LABHQ_SHARED_ENVIRONMENT_PROTECTED": (
                     "1" if task.meta.get("shared_environment_protected") is True else "0"),
@@ -1319,7 +1321,8 @@ class Runner:
                               **({"observed_outputs_incomplete": incomplete} if incomplete else {}))
 
             engine_settings = claude_deny_private(claude_deny_links(claude_read_only(
-                claude_settings(self.s.policy), [d for d in read_dirs if claude_rule_ready(d)]), denied_links),
+                claude_settings(self.s.policy), [d for d in [*read_dirs, *(extra_dirs if read_only else [])]
+                                               if claude_rule_ready(d)]), denied_links),
                 private.paths, open_reads=private.open_reads)
             if hooked:
                 from ..hooks.tool_use import add_claude_hook
@@ -1327,9 +1330,8 @@ class Runner:
                 engine_settings = add_control_hooks(add_claude_hook(engine_settings))
             ctx = RunContext(
                 task=task, agent=agent, workdir=ws.dir, settings=self.s,
-                # A read-only task answers once from existing work; it does not ask anyone in turn, and gets no
-                # MCP server at all (the profile has none, and labhq_ask would be one).
-                mcp_servers=[] if read_only else self._mcp_servers(agent, env),
+                # Read-only staff get only Claude's scoped permission gate; no ask/HPC or staff MCP servers.
+                mcp_servers=self._mcp_servers(agent, env, allow_ask=not read_only),
                 env={**env, "MCP_TOOL_TIMEOUT": str(labhq_mcp_timeout_s(self.s) * 1000)},
                 emit=emit, prompt=prompt, prompt_pointer=ws.prompt_pointer, extra_dirs=extra_dirs,
                 read_dirs=read_dirs,

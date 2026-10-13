@@ -198,7 +198,7 @@ def _parts(actual: float, estimated: float, unknown: int, digits: int = 2) -> st
     if estimated > 0:
         parts.append(f"추정 {_usd(estimated, digits)}")
     if unknown:
-        parts.append(f"미집계 {unknown}건")
+        parts.append(f"미집계된 비용 {unknown}건")
     return " + ".join(parts)
 
 
@@ -238,5 +238,5 @@ def cost_text(cost_usd: Any, cost_known: Any, summary: dict | None = None) -> st
         return format_cost(summary)
     known = float(cost_usd or 0)
     if cost_known is False:
-        return f"{_usd(known) + ' + ' if known else ''}비용 미집계"
+        return f"{_usd(known) + ' + ' if known else ''}미집계된 비용"
     return _usd(known)

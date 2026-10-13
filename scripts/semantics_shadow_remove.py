@@ -31,6 +31,7 @@ ACTIONS_OWNED = [
 ]
 OWNED = [
     "labhq/research/semantics_shadow.py",
+    "labhq/research/semantics_request_report.py",
     "labhq/research/semantics_objects.py",
     "labhq/research/semantics_input_fit.py",
     "labhq/research/semantics_input_fit.yaml",
@@ -42,6 +43,7 @@ OWNED = [
     "tests/test_semantics_shadow_hash.py",
     "tests/test_semantics_shadow_breaker.py",
     "tests/test_semantics_shadow_report.py",
+    "tests/test_semantics_request_report.py",
     "tests/test_semantics_ab.py",
     "tests/test_semantics_shadow_remove.py",
     "tests/test_semantics_input_fit.py",
