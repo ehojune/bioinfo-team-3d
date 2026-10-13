@@ -30,6 +30,7 @@ from ..login import login_command
 from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..costs import outcome_unknown_item, request_cost_summary, task_cost_item
 from ..models import ApprovalRequest, AskRequest, RunnerNotSent, RunnerUnavailable, Task, TaskResult, new_id, waiting
+from ..pi_text import with_approval_copy
 from ..recruit.provenance import not_yet_active, probation_refusal
 from ..adapters import enforces_read_only, get_adapter, read_only_refusal
 from ..hooks.control import STEER_LIMIT
@@ -2015,6 +2016,8 @@ class Hub:
 
     # ----- events -----
     async def publish(self, ev: dict, runner_id: str | None = None, runner_seq: int | None = None) -> None:
+        if ev.get('type') == 'approval.requested':
+            ev = {**ev, 'data': with_approval_copy(ev.get('data') or {})}
         async with self.event_lock:
             await self._flush_committed_events()
             durable_report = (self.reporter.enabled() and bool(ev.get("request_id")) and
@@ -2213,7 +2216,8 @@ class Hub:
                 pass  # kept: sent again when that runner reconnects
             msg = {**msg, "type": "approval.expired", "data": {"id": a["id"], "note": note}}
         elif typ == "approval.requested":
-            a = msg["data"]
+            a = with_approval_copy(msg["data"])
+            msg = {**msg, 'data': a}
             # The asking process: a card outlives neither it nor the agent's move to another runner (R2).
             self.approvals[a["id"]] = {"approval": a, "origin": runner_id,
                                        "origin_incarnation": self.runner_incarnations.get(runner_id),

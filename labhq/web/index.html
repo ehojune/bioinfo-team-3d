@@ -857,7 +857,7 @@ function renderFeed() {
     if (!row) {
       row = document.createElement('li'); row.className = `msg ${m.cls || ''}`;
       row.innerHTML = `<span class="av">${avatar(m.who)}</span><div><b>${esc(nick(m.who))}${m.to ? ` <i>→ ${esc(nick(m.to))}</i>` : ''}</b><div class="message-text"></div></div><time></time>`;
-      expandableText(row.querySelector('.message-text'), m.fullText ?? m.text, {limit: 150, summary: m.text,
+      expandableText(row.querySelector('.message-text'), m.fullText ?? m.text, {pi: true, limit: 150, summary: m.text,
         fold: m.fullText != null && m.fullText !== m.text, truncated: m.truncated, cutChars: m.cutChars});
       if (safeUrl(m.url)) {
         const link = document.createElement('a'); link.href = m.url; link.target = '_blank'; link.rel = 'noopener'; link.textContent = '열기';

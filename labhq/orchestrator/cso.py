@@ -21,6 +21,7 @@ from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..artifact_policy import (OUTPUT_ENV_DIR, OUTPUT_REFERENCE_DIR, OUTPUT_SCRIPTS_DIR,
                                unreported_warning_paths)
 from ..costs import cost_detail, format_cost, task_cost_item
+from ..pi_text import PI_TEXT_RULE
 from ..evidence.claims import RESULT_CONTRACT_FIELD_RULES
 from ..evidence.report_check import (FAILED_LOOKUP_TITLE, anchor, check_report, claim_rows, failed_lookup_lines,
                                      failed_lookups)
@@ -289,7 +290,7 @@ Request: {request}"""
 
 # Plan and re-plan questions of the general lane go to the PI's phone card. Nothing validates their length, so
 # both prompts carry the same rule.
-PI_CARD_QUESTION_RULE = "Each question must fit the PI's phone card: at most 700 characters, the question itself first."
+PI_CARD_QUESTION_RULE = "Each question must fit the PI's phone card: at most 700 characters, the question itself first." + PI_TEXT_RULE
 # One environment per request (2nd mock trial 2026-10-03): steps that each built a venv duplicated installs, and
 # a later step could not add a package to another step's environment.
 ENV_LOCK_OUTPUT = OUTPUT_ENV_DIR + "requirements.lock.txt"

@@ -371,7 +371,9 @@ def _command_too_long(cmd: list[str]) -> tuple[int, int, str] | None:
     return None
 
 
-ROLE_FOOTER = """
+from ..pi_text import PI_TEXT_RULE
+
+ROLE_FOOTER = PI_TEXT_RULE + """
 ## Lab rules (all agents)
 - Work inside your task workspace; write deliverables to ./outputs/ and cite their paths.
 - Heavy compute or anything touching restricted data goes through the labhq_hpc tools, never inline.

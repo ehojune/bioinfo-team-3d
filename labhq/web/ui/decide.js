@@ -1,5 +1,31 @@
 const doc = () => globalThis.document;
 
+export function plainPiText(value) {
+  return String(value ?? '').replace(/```[^\n]*\n[\s\S]*?(?:```|$)|~~~[^\n]*\n[\s\S]*?(?:~~~|$)/g, '')
+    .replace(/^\s*(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s*)/gm, '')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)').replace(/\*\*|__|`/g, '')
+    .split('\n').filter(line => !/^[\s|:\-]+$/.test(line))
+    .map(line => line.includes('|') ? line.replace(/^\s*\||\|\s*$/g, '').split('|').map(s=>s.trim()).join(' · ') : line)
+    .join('\n').trim();
+}
+
+// Display only. Keep source and decision values intact, including numbers and option indices.
+export function piText(parent, value, options = {}) {
+  const raw = String(options.original ?? value ?? ''), plain = plainPiText(value);
+  const codeLine = /^\s*(?:\$[\w]+\s*=|import\s+\w+|from\s+\w+\s+import|(?:const|let|var|def|function|class)\s|print\s*\(|(?:Remove-Item|New-Item|Get-Content|python|powershell|rm|mkdir)\s|[\[{]\s*["'])/mi;
+  const code = /```|~~~/.test(raw) || codeLine.test(raw);
+  const english = /[A-Za-z]{3}/.test(plain) && !/[가-힣]/.test(plain);
+  const prose = code ? plain.split('\n').filter(line => /[가-힣]/.test(line) && !codeLine.test(line) && !/[;{}=]/.test(line)).join('\n') : plain;
+  const shown = english ? '직원이 영어로 보낸 내용입니다. 자세히에서 원문을 확인해 주세요.' :
+    prose || (code ? '명령이나 코드가 포함된 내용입니다. 자세히에서 확인해 주세요.' : '');
+  const preview = options.limit ? short(shown, options.limit) : shown;
+  add(parent, options.tag || 'span', preview);
+  if (code || english || preview !== shown || options.truncated) {
+    return expandableText(parent, raw, {...options, pi: false, fold: true, summary: '자세히'});
+  }
+  return parent;
+}
+
 function add(parent, tag, text = '', className = '') {
   const el = doc().createElement(tag);
   el.textContent = text;
@@ -10,6 +36,7 @@ function add(parent, tag, text = '', className = '') {
 
 // Native summary provides click, Enter and Space activation; only received text is used.
 export function expandableText(parent, value, options = {}) {
+  if (options.pi) return piText(parent, value, options);
   const text = String(value ?? ''), limit = options.limit ?? 240;
   const preview = text.replace(/\s+/g, ' ').trim();
   const cut = options.truncated ? ` (서버에서 ${options.cutChars ?? [...text].length}자로 잘림)` : '';
@@ -71,7 +98,7 @@ function detailEntry(list, key, value, options = {}) {
   const text = options.raw ? String(value) : detailValue(value);
   if (options.fold || text.length > 500 || text.split('\n').length > 8) {
     expandableText(cell, text, {...options, fold: true, limit: 120});
-  } else add(cell, 'pre', text + (options.truncated ? ` (서버에서 ${[...text].length}자로 잘림)` : ''));
+  } else piText(cell, text, options);
 }
 
 const short = (s, n) => { s = String(s ?? '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
@@ -233,12 +260,12 @@ function renderQuestions(container, approval) {
   container._answers = questions.map((question, index) => {
     const answer = { choice: null, free: null };
     const block = add(container, 'fieldset', '', 'clarify-q');
-    add(block, 'legend', `${index + 1}. ${question.question}`);
+    piText(add(block, 'legend'), `${index + 1}. ${question.question}`);
     if (question.depth) add(block, 'small', `깊이 약 ${question.depth}분`, 'clarify-depth');
     if (question.options.length) {
       const group = add(block, 'div', '', 'clarify-options');
       const buttons = question.options.map((option, choice) => {
-        const button = add(group, 'button', `${LETTERS[choice]}) ${option}`, 'btn opt');
+        const button = add(group, 'button', `${LETTERS[choice]}) ${plainPiText(option)}`, 'btn opt');
         button.type = 'button'; button.ariaPressed = 'false';
         button.onclick = () => {
           answer.choice = answer.choice === choice ? null : choice;
@@ -319,7 +346,27 @@ function receivedAt(seconds) {
   return Number.isFinite(date.getTime()) && seconds != null ?
     `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}` : String(seconds ?? '');
 }
-function renderDetail(container, kind, detail, approval = null) {
+export function renderDetail(container, kind, detail, approval = null) {
+  if (['tool_permission', 'hpc_submit', 'budget', 'recruit'].includes(kind)) {
+    const signature = JSON.stringify([kind, detail, approval?.summary, approval?.pi_reason, approval?.pi_outcome]);
+    if (container._detailSignature === signature) return;
+    container._detailSignature = signature;
+    container.replaceChildren(); container.hidden = false;
+    piText(add(container, 'p'), approval?.pi_reason || '실행 전에 PI의 확인이 필요합니다.');
+    piText(add(container, 'p'), approval?.pi_outcome || '승인하면 제안된 작업을 진행합니다.');
+    const fold = expandableText(container, '', {fold: true, summary: '자세히', truncated: detail?.input_truncated});
+    // The existing field labels and exact received strings remain accessible inside one closed fold.
+    fold.replaceChildren(fold.children[0]);
+    const list = add(fold, 'dl', '', 'approval-detail');
+    for (const [key, value] of Object.entries(detail || {})) {
+      add(list, 'dt', DETAIL_LABELS[kind]?.[key] || key);
+      const cell = add(list, 'dd');
+      add(cell, 'pre', kind === 'budget' && key.endsWith('_usd') && Number.isFinite(Number(value))
+        ? `$${Number(value).toFixed(2)}` : detailValue(value));
+    }
+    if (approval?.summary) add(fold, 'pre', approval.summary);
+    return;
+  }
   const preferred = kind === 'tool_permission' ? ['tool_name', 'input'] :
     kind === 'hpc_submit' ? ['queue', 'script_path', 'script_preview', 'cores', 'mem', 'walltime', 'resources'] :
     kind === 'facilities_fix' ? ['action', 'reason', 'signature_id', 'command'] :
@@ -442,6 +489,7 @@ const DENY_RESULT = {
 const EVIDENCE_REVISE_ENDS = '이어 가기 상한에 닿아 수정 요청과 거부는 둘 다 이 요청을 끝냅니다. 근거를 보강하려면 새 요청을 보내세요.';
 // The gateway writes resume step ids as a Python list ("['s2', 's3']"); the card joins them (R19).
 export function displaySummary(approval) {
+  if (approval?.pi_summary) return plainPiText(approval.pi_summary);
   const text = String(approval?.summary ?? '');
   const d = approval?.detail;
   if (approval?.kind === 'budget' && Number(d?.unknown_count) > 0 && Number.isFinite(Number(d?.spent_usd)) && Number.isFinite(Number(d?.limit_usd))) {
@@ -451,7 +499,7 @@ export function displaySummary(approval) {
       (d.unknown_reserve_usd != null ? ` (모르는 작업을 건당 ${amount(d.unknown_reserve_usd)}로 잡으면 ${amount(bound)}).` : '.') +
       (d.requested_budget_usd != null ? ` 승인하면 상한을 ${amount(d.requested_budget_usd)}로 올리고, 거절하면 새 작업을 보내지 않습니다.` : '');
   }
-  if (approval?.kind !== 'resume') return text;
+  if (approval?.kind !== 'resume') return plainPiText(text);
   const ids = inner => [...inner.matchAll(/'([^']*)'/g)].map(match => match[1]);
   const whole = /^중단된 단계 \[([^\]]*)\]를 다시 돌릴까요\?$/.exec(text);
   if (whole) {
@@ -490,8 +538,12 @@ function updateCard(row, item, options) {
   const request = approval && value.request_id && options.requests?.get ? options.requests.get(value.request_id) : null;
   syncExpandableText(p.request, request?.text ? `요청: ${request.text}` : '', {limit: 90});
   p.request.hidden = !p.request.textContent;
-  p.summary.textContent = item.type === 'suggestion' ? value.repo || value.paper || value.id : displaySummary(value) || value.id;
-  renderDetail(p.detail, value.kind, item.type === 'suggestion' ? value.reason : value.detail, approval ? value : null);
+  syncExpandableText(p.summary, item.type === 'suggestion' ? '필요한 일을 맡길 직원을 추가하려 합니다.' :
+    value.kind === 'tool_permission' && !value.pi_summary ? '직원이 도구를 실행하려 합니다. 작업 내용은 자세히에서 확인해 주세요.' : displaySummary(value) || value.id,
+    {pi: true, ...(value.pi_summary || value.kind === 'tool_permission' ? {} : {original: value.summary})});
+  renderDetail(p.detail, item.type === 'suggestion' ? 'recruit' : value.kind,
+    item.type === 'suggestion' ? {reason: value.reason, repo: value.repo, paper: value.paper} : value.detail,
+    approval ? value : {pi_reason: plainPiText(value.reason), pi_outcome: HIRE_RESULT});
   renderQuestions(p.questions, approval ? value : null);
   renderAssumptions(p.assumptions, approval ? value : null);
   p.timing.textContent = approval ? timingText(value, options) : '';
