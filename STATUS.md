@@ -4,6 +4,69 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 결론
+
+완료 요청을 현재 instance에서 키워드로 검색한다. `labhq recall "유전자"`와 client token으로 인증한 `GET /api/knowledge/search`는 최대 5건·본문 합계 2,000자를 돌려준다.
+
+## 바뀐 것
+
+- gateway 전용 SQLite 색인과 terminal 트랜잭션의 재처리 표식. 단일 worker가 checkpoint부터 25건씩 backfill한다.
+- 한국어 3자 이상 FTS5 trigram, 2자·미지원 환경은 최근 색인 2,000건의 literal LIKE 검색.
+- 쓰기·검색 시 restricted marker, private reference·비밀값 가림. 현재 정책으로 재검사하고 판정 불가 자료는 제외한다.
+- 요청 요약·step 상태·오류 분류·출처만 사용한다. 원본 로그·산출 파일·reference_original을 읽지 않는다.
+- doctor에 색인 수·마지막 성공·fallback을 표시하고 매뉴얼에 사용법을 추가했다.
+
+## 확인
+
+- 기준 main `f6d4fdf`: 새 회귀 **11 failed**. branch: **11 passed**, 라운드 기록 포함 focused **39 passed**.
+- Windows 전체 pytest: **6,082 passed, 66 skipped** (719.26초).
+- 공개 검사·diff 검사 통과. PR #574 패치노트·상태 원본 검사는 기록 커밋에서 수행한다.
+
+## 남은 지적
+
+- prompt 자동 주입·reflection·registry는 후속 범위다. 자료 전체를 읽거나 실패 원인을 새로 추론하지 않으며 오류 메타데이터가 없으면 `unknown`으로 남긴다.
+- PI/trial 실행·설정·배포, 리뷰 요청·인라인 답글·병합은 하지 않았다.
+
+Refs #60
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
+PR #566의 지정 지적 5건을 수정했다. 정리본은 확정된 요청 묶음 옆에 저장하며 PI 검토 완료 뒤 게시한다. Refs #558.
+
+## 바뀐 것
+
+- 새 정리본: `requests/<id>-editor/`. MANIFEST·RO-Crate를 다시 만들지 않아 원래 묶음을 그대로 검증한다.
+- HTTP·WebSocket 승인과 업로드 진입점에서 PI 검토를 확인한다. 자동 게시도 검토 완료 뒤 진행한다.
+- 재시작하면 저장된 문서·이미지로 게시 승인만 복구한다. 편집자는 다시 실행하지 않는다.
+- 공개 게시를 금지한 공개 프로젝트는 local로 상속한다.
+- Contents API 경로와 Markdown 링크에 한글·공백·특수문자를 인코딩한다.
+
+## 확인
+
+- 수정 전 회귀 8건 모두 실패. 수정 후 관련 Python 155 passed·2 skipped, Node 44개 파일 통과.
+- CRLF 초안 복구도 수정 전 실패를 재현했고 바이트 읽기로 보완한 뒤 관련 회귀 10건이 통과했다.
+- 묶음 생성 전후 바이트 동일·verify exit 0, 저장된 초안의 내용·mtime 보존, 검토 전 승인 거부를 확인했다.
+- Windows 전체: 6,123 passed·66 skipped (12분 36초). 게시 카드 수명·semantics 재확인 55건도 통과했다.
+- 코드 포함 head `ec66bf8`의 [CI](https://github.com/ehojune/bioinfo-team-3d/actions/runs/38398260303): changes·patch-notes·pytest 3.10·3.12·Windows·slow·clean-install·ro-crate-validator 성공, readme 조건부 생략.
+- 공개·패치노트·목차 검사 통과. 임시 테스트 폴더 삭제는 자동 승인 검토에서 차단되어 경로를 로컬 보고에 남겼다.
+- 실제 결과 저장소 생성·업로드, PI/trial 실행·재시작, 리뷰 요청, 병합은 수행하지 않았다.
+
+## 남은 지적
+
+- 4257278189: 편집자 호출 예외 때 기본 정리본 보존.
+- 4257278194: terminal 이후 편집자 비용과 완료 기록 불일치.
+- 4257405941: 질문 대기 비활성화 시 기본 저장 선택 누락.
+- 4257405952: 편집자가 빠뜨린 기본 문서 링크 보존.
+- 4257405959: 잘못된 저장소 입력 뒤 3D 카드 재활성화.
+- 4257499944: 취소된 요청의 정리본 생성.
+- 4257697760: 저장 선택 approval의 원자적 선점.
+- 4257806565: 여러 파일의 원자적 게시·부분 실패 복구.
+- 4257806570: approval snapshot의 image base64 분리.
+
+기존 한국어 placeholder 지적 4257278201은 현재 브랜치에 이미 반영되어 이번 수정에서 제외했다.
+
 ## 변경
 
 PR #553의 Paper2Agent 직원 설치 기능을 main `1b3b0cb`와 병합했다. 충돌한 doctor 인자에는 Paper2Agent 검사·수정 옵션과 GitHub 연결 검사 옵션을 모두 남겼다.
@@ -142,6 +205,28 @@ Refs #539
 
 ## 결론
 
+PR #566에 main `1b3b0cb`를 병합했다. 두 화면의 저장 위치 카드와 검토 흐름을 보존하고 PI 검토·확인 완료 뒤 게시 버튼을 활성화한다. 시설팀과 편집자를 함께 등록하고 배지·직원 표를 갱신했다.
+
+## 확인
+
+- 최신 main 재병합 뒤 관련 Python 307 passed, 3 skipped. Node 44개 파일 통과.
+- 정규직 13명·3D 등록 14개 검증 갱신 뒤 관련 112 passed, 1 skipped.
+- CI에서 편집자 task를 고르던 기존 회귀를 direct task 선택으로 수정. 관련 29 passed, 2 skipped; 검증 조건은 유지.
+- Windows 전체 pytest: 6,026 passed, 66 skipped (11분, 첫 merge 직후).
+- Node 실행 파일을 PATH 앞에 두어 격리 홈에서 실행 경로가 끊기지 않게 했다.
+- 공개·패치노트·목차·diff 검사 통과. 현재 head CI 결과는 PR checks에 기록한다.
+
+## 미해결
+
+- 임시 폴더 삭제는 자동 승인 검토의 `blocked by policy`로 차단됐다.
+- 리뷰 요청·PR 병합·PI/trial 실행은 하지 않는다.
+
+Refs #558
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
 PR #569에서 PI 글 규칙, 승인 설명 세 필드, 원문 펼침을 추가했다. PowerShell here-string의 삭제 예문이 승인 경고를 만드는 오탐을 수정했다. Refs #557.
 
 ## 바뀐 것
@@ -251,6 +336,45 @@ Refs #59
 - 실제 Codex 상담과 기존 설치 적용은 PI·총괄의 후속 단계입니다. 봇 리뷰 판단·병합은 총괄에게 넘깁니다.
 
 Refs #35
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+연구 요청의 저장 위치를 CP1 전에 고르고, 편집자가 만든 로컬 정리본을 웹에서 확인한 뒤 GitHub에 게시합니다. 확인 질문이 있으면 저장 위치를 같은 카드에 넣습니다.
+
+## 변경
+- 로컬 기본 / 새 저장소(공개·비공개) / 기존 저장소. 프로젝트 지정·재개 시 중복 질문 없음.
+- editor 정규직과 README·진행 기록·재현 방법·출처·그림·표 정리본.
+- 기존 redaction 재사용. 통제 입력 요청은 로컬 유지. 웹 검토 후 게시 또는 자동 게시 설정.
+- 두 웹 화면·편집자 3D 표시·매뉴얼. Notion은 다음 단계.
+
+## 검증
+- Windows 전체: **5,951 passed, 66 skipped** (11분 16초). 모의 요청부터 가짜 GitHub 게시까지 포함.
+- 관련 회귀: 163 passed, 1 skipped. 웹 Node 42개 파일 모두 실행.
+- 신규 테스트는 main 기준 모듈 부재로 실패했고 구현 후 10 passed.
+- 공개 검사·문서 생성 검사·patch-notes·notes-index·diff 검사 통과.
+
+## CI와 인계
+현재 PR은 main과 충돌(DIRTY)합니다. 현재 head의 CI는 생성되지 않았으며 이전 head의 결과를 통과 근거로 쓰지 않습니다.
+
+| job | 현재 head 결과 |
+|---|---|
+| changes | 미생성 |
+| patch-notes | 미생성 |
+| readme | 미생성 |
+| pytest (3.10) | 미생성 |
+| pytest (3.12) | 미생성 |
+| pytest-windows | 미생성 |
+| clean-install | 미생성 |
+| ro-crate-validator | 미생성 |
+| pytest-slow | 미생성 |
+
+## 남은 지적
+- 임시 테스트 폴더 `pt-store558`·`pt-store558-full` 삭제는 자동 승인 검토의 `blocked by policy`로 차단되어 남아 있습니다.
+- 지시서의 역할 분담에 따라 main 충돌 해소와 그 뒤 CI 확인은 총괄에게 넘깁니다. 완료 조건 중 현재 head CI는 미충족입니다.
+- 그림 안의 개인정보는 PI가 검토합니다. 원본 입력·미보고 산출은 게시 대상에서 제외합니다.
+- 실제 GitHub 저장소 생성·게시, PI/trial 실행, Notion, 리뷰 요청·지적 대응·병합은 수행하지 않았습니다.
+
+Refs #558
 
 🤖 Generated with Codex (gpt-6) for the labhq dev lead
 

@@ -14,20 +14,30 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 21:33 | [`6e90068`](https://github.com/ehojune/bioinfo-team-3d/pull/566/commits/6e90068) | 초안 복구 때 CRLF 줄바꿈까지 그대로 보존하고 회귀로 확인 |
+| 21:24 | [`9c00f99`](https://github.com/ehojune/bioinfo-team-3d/pull/566/commits/9c00f99) | 게시 카드 수명 테스트에 요청 종료·PI 검토 완료 조건 반영 |
+| 21:04 | [`63e2bbe`](https://github.com/ehojune/bioinfo-team-3d/pull/574/commits/63e2bbe) | 완료 요청을 가린 로컬 색인으로 검색하는 recall API·CLI와 checkpoint 재처리·doctor를 추가 |
+| 21:04 | [`e1402f9`](https://github.com/ehojune/bioinfo-team-3d/pull/566/commits/e1402f9) | 정리본을 감사 묶음 밖에 저장하고 PI 검토·초안 복구·공개 금지 상속·산출 경로 인코딩 보완 |
 | 20:56 | [`32b5823`](https://github.com/ehojune/bioinfo-team-3d/pull/572/commits/32b5823) | 메신저 Node 회귀 테스트를 pytest의 CI 실행 목록에 등록 |
 | 20:46 | [`cfb53ea`](https://github.com/ehojune/bioinfo-team-3d/pull/572/commits/cfb53ea) | CSO 확인 질문과 PI 승인·답변 알림도 메신저 기록에 유지 |
+| 20:31 | [`9d1dff8`](https://github.com/ehojune/bioinfo-team-3d/pull/566/commits/9d1dff8) | 시설팀·편집자를 함께 보존한 정규직 13명과 3D 등록 14개 검증 갱신 |
 | 20:28 | [`f912336`](https://github.com/ehojune/bioinfo-team-3d/pull/553/commits/f912336) | 최신 main의 doctor GitHub 연결 검사와 Paper2Agent 설치·pin 옵션 및 홈 guard를 함께 보존 |
 | 20:25 | [`680c5d0`](https://github.com/ehojune/bioinfo-team-3d/pull/572/commits/680c5d0) | 메신저 기록 보관·PI 조회 API·위로 스크롤한 이전 기록 연결 |
+| 20:23 | [`01b28f2`](https://github.com/ehojune/bioinfo-team-3d/pull/566/commits/01b28f2) | 최신 main의 시설팀과 편집자를 함께 등록하고 직원 수·문서 충돌 해소 |
 | 20:17 | [`85383f4`](https://github.com/ehojune/bioinfo-team-3d/pull/571/commits/85383f4) | 미해결 environment 실패를 시설팀이 한 번 진단하고 재시작·재귀 호출을 차단 |
 | 20:14 | [`03c3415`](https://github.com/ehojune/bioinfo-team-3d/pull/568/commits/03c3415) | 준비 중 정지 뒤 재개하면 CLI 실행 직전에 project·upstream 입력 해시를 갱신 |
 | 20:11 | [`28d7291`](https://github.com/ehojune/bioinfo-team-3d/pull/570/commits/28d7291) | 데모 테스트의 시간 폴링을 완료 신호로 바꾸고 부하 30회 실패 0을 확인 |
+| 19:58 | [`b447d78`](https://github.com/ehojune/bioinfo-team-3d/pull/566/commits/b447d78) | 편집자 추가 뒤 직접 실행 산출 테스트가 direct task만 검사하도록 수정 |
 | 19:45 | [`dfcead0`](https://github.com/ehojune/bioinfo-team-3d/pull/569/commits/dfcead0) | PI 메신저 미리보기의 목록 줄바꿈을 2.5D와 3D에서 보존했다. |
+| 19:44 | [`cf5867f`](https://github.com/ehojune/bioinfo-team-3d/pull/566/commits/cf5867f) | 최신 main 충돌 해소와 PI 검토 완료 뒤 편집자 정리본 게시 연결 |
 | 19:37 | [`207ab78`](https://github.com/ehojune/bioinfo-team-3d/pull/569/commits/207ab78) | PI 승인 설명과 평문 표시를 추가하고 PowerShell here-string 삭제 예문의 오탐을 수정했다. |
 | 19:27 | [`94fdb5f`](https://github.com/ehojune/bioinfo-team-3d/pull/567/commits/94fdb5f) | 시설팀 추가로 바뀐 Codex 직원 수와 모델 목록을 배지 테스트에 반영 |
 | 19:16 | [`cb564bf`](https://github.com/ehojune/bioinfo-team-3d/pull/553/commits/cb564bf) | 최신 main의 테스트 홈 guard와 Paper2Agent 직원 설치·설정 경로 검사를 함께 보존 |
+| 19:11 | [`50b526f`](https://github.com/ehojune/bioinfo-team-3d/pull/566/commits/50b526f) | 편집자 3D 표시·직원 수 검증·웹 CI 연결과 긴 표 파일 보존 보완 |
 | 19:10 | [`37084b1`](https://github.com/ehojune/bioinfo-team-3d/pull/567/commits/37084b1) | 시설팀 직원을 읽기 전용 상담에 연결하고 진단 근거와 세션 재사용을 검증 |
 | 19:01 | [`2d69340`](https://github.com/ehojune/bioinfo-team-3d/pull/556/commits/2d69340) | 최신 main 병합: dev_log 공개 여부 진단·startup 경고와 사용자 홈 접근 guard 보존 |
 | 19:01 | [`92876b5`](https://github.com/ehojune/bioinfo-team-3d/pull/568/commits/92876b5) | 직원 제어의 spawn 전 정지 확인, 초기 세션 id와 재개 안내, steer 재전송과 빠른 재개 유실 보완 |
+| 18:59 | [`962deb0`](https://github.com/ehojune/bioinfo-team-3d/pull/566/commits/962deb0) | 저장 위치 카드·편집자 로컬 초안·웹 검토 뒤 GitHub 게시 흐름과 모의 회귀 추가 |
 | 18:35 | [`23a7d0e`](https://github.com/ehojune/bioinfo-team-3d/pull/565/commits/23a7d0e) | 보고서 완료 뒤 PI 검토·확인을 기록하고 타이틀 유지, 질문 대기·직원 이름과 그림·비용 문구를 수정 |
 | 18:34 | [`3695d43`](https://github.com/ehojune/bioinfo-team-3d/pull/553/commits/3695d43) | recruiter adapter의 skill 허용을 기존 plugin 격리 검사에 반영 |
 | 18:22 | [`94deac0`](https://github.com/ehojune/bioinfo-team-3d/pull/553/commits/94deac0) | doctor의 Paper2Agent pin 복구와 Codex recruiter roster 로딩 수정 |
