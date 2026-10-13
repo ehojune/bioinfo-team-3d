@@ -5,6 +5,14 @@ from labhq.adapters import codex as codex_mod
 from labhq.settings import DataZone, Settings
 
 
+@pytest.fixture(autouse=True)
+def _ready_paper2agent(monkeypatch):
+    # These tests isolate the other doctor checks; real install/fix/visibility is covered in
+    # test_paper2agent_required.py with a temporary staff home and the actual collect() path.
+    monkeypatch.setattr(doctor, "_paper2agent_row", lambda *a, **kw: doctor._row(
+        "staff", "paper2agent", "ok", "test installation ready", ""))
+
+
 def _settings(tmp_path):
     agents = tmp_path / "agents" / "core"
     agents.mkdir(parents=True)

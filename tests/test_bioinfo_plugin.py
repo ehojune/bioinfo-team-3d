@@ -55,6 +55,10 @@ def test_core_agent_skill_exception_is_scoped(tmp_path, monkeypatch):
             assert "--disable-slash-commands" not in cmd
             settings = json.loads(cmd[cmd.index("--settings") + 1])
             assert settings["autoMemoryEnabled"] is False and settings["claudeMdExcludes"]
+        elif agent.id == "recruiter":
+            from labhq.recruit.paper2agent import skill_path
+            assert cmd[cmd.index("--plugin-dir") + 1] == str(skill_path("claude_code", ctx.settings).parent.parent)
+            assert "--disable-slash-commands" not in cmd
         else:
             assert "--plugin-dir" not in cmd and "--disable-slash-commands" in cmd
 

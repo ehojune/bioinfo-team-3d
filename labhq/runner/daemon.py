@@ -1237,9 +1237,11 @@ class Runner:
                     *(self.s.path(p.local_dir) for p in self.s.projects if p.local_dir),
                     *plugin_keep_dirs(self.s, agent.plugin_dirs, ws.dir),
                     *staff_codex_homes(self.s, ws.dir, agent.engine == Engine.codex)]
-            if task.meta.get("kind") == "recruit":  # the recruiter reads the Paper2Agent skill's own files
+            if agent.id == self.s.recruit.agent_id or task.meta.get("kind") == "recruit":
                 from ..recruit.paper2agent import skill_path
-                keep.append(skill_path(self.s.recruit.contract_engine))
+                if agent.engine in (Engine.claude_code, Engine.codex):
+                    skill = skill_path(agent.engine.value, self.s)
+                    keep.append(skill.parent.parent if agent.engine == Engine.claude_code else skill)
             # A Claude task reads back the long tool output Claude saved in the staff config folder (#298 ⑤).
             open_reads = staff_claude_project_dirs(self.s, ws.dir) if agent.engine == Engine.claude_code else []
             private = resolve_private_paths(self.s, keep, open_reads=open_reads, cwd=ws.dir)

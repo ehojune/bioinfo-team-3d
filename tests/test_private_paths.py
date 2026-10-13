@@ -505,7 +505,7 @@ async def test_runner_gives_claude_the_ask_rules_and_keeps_the_paper2agent_skill
     skill = home / ".claude" / "skills" / "paper2agent"
     skill.mkdir(parents=True)
     monkeypatch.setattr(private_paths, "host_home", lambda: str(home))
-    monkeypatch.setattr("labhq.recruit.paper2agent.skill_path", lambda engine: skill)
+    monkeypatch.setattr("labhq.recruit.paper2agent.skill_path", lambda engine, settings=None: skill)
     settings = _runner_settings(tmp_path, ["~/.claude", "~/.ssh"])
     runner, seen = _capture_runner(settings, monkeypatch)
     assert (await runner.run_task(Task(id="t1", agent_id="worker", request_id="r", prompt="q"))).ok
