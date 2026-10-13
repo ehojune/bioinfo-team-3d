@@ -13,10 +13,12 @@
 
 - `7b38dd9`에서 새 테스트 9건 중 7건 실패·2건 통과. 수정 후 관련 테스트 162 passed·3 skipped.
 - Windows 전체 pytest 최종: **5648 passed·66 skipped**, 692 warnings. 첫 실행의 plugin 기대값 실패를 수정했고 semantics 기록 실패는 재실행에서 통과했다.
-- 공개 검사·diff 검사 통과. 패치노트·목차 검증과 최종 head CI는 PR checks에서 확인한다.
+- 공개·diff·패치노트·목차 검사 통과.
+- push 후 PR은 `CONFLICTING`, 현재 head의 CI checks는 0건이다. changes·patch-notes·pytest 3.10/3.12·pytest-windows·pytest-slow·clean-install·ro-crate-validator·readme 모두 미실행이다. 이전 head의 CI 성공은 이번 결과에 포함하지 않는다.
 
 ## 남은 지적
 
+- main 충돌 해소와 CI 확인은 총괄에게 넘긴다. 이번 위임 범위에서는 충돌을 풀지 않았다.
 - 이번 pytest 임시 폴더 삭제는 실행 정책이 차단했다.
 - 실제 직원 CLI·PI·trial은 실행하지 않았다. 임시 홈과 모의 설치로 검증했다.
 
