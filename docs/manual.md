@@ -386,6 +386,8 @@ Claude Code나 Codex 로그인이 만료되면 요청은 `waiting_login`에서 �
 
 runner PC에 무언가 없어서 실패한 단계는 `environment` 실패입니다(#35). 웹 작업판·보고서·`labhq status`에 "환경 문제: 원인 — 할 일"을 보여 주고, 단계 결과와 이벤트에 서명 `id`·`cause`·`hint`를 남깁니다.
 
+직원은 `labhq_ask(to="facilities")`로 시설팀에 진단을 묻습니다. 시설팀은 저장된 doctor 검사명·상태와 허용된 오류 파일 발췌만 보고 원인·근거·PI가 할 일을 답합니다. snapshot은 실시간 검사가 아니며 `skip`은 미확인입니다. 셸·설치·HPC·plugin·외부 MCP는 쓰지 않고, 권한·정책 결정만 CSO나 PI에게 넘깁니다. 이 상담은 자동 실패 진단·canary를 실행하지 않습니다.
+
 | 서명 | 무엇 |
 |---|---|
 | `python_module_missing` | `ModuleNotFoundError`, `No module named` |
@@ -423,11 +425,14 @@ runner PC에 무언가 없어서 실패한 단계는 `environment` 실패입니�
 | 🦔 고슴도치 Data QC | `qc_reviewer` | PASS/WARN/FAIL QC | Claude Code / sonnet | — | HPC* |
 | 🐢 거북이 과학 리뷰어 | `sci_reviewer` | 3기준 교차 리뷰 | Codex / gpt-6-astra | 자기 outputs/·.tmp/만 쓰기 | live 웹 |
 | 🦫 비버 인사팀 | `recruiter` | Paper2Agent 변환·검증 | Claude Code / opus | — | Skill·Agent |
+| 🐹 시설팀 | `facilities` | 환경 오류 진단·PI 조치 안내 | Codex / gpt-6-sol | read-only | 전달된 진단 근거만 |
 | 🐥 파견직 | `c_<slug>` | 논문의 방법 적용 | Claude Code / sonnet | — | 논문 MCP·skill |
 
 엔진·모델·도구는 `agents/core/*.yaml`에서 직원별로 바꿉니다. (예: `engine: codex`, `model: gpt-6-luna`)
 Codex 직원은 `tools`에 `WebSearch`나 `WebFetch`가 있으면 `web_search="live"`, 없으면 `"disabled"`를 명시합니다.
 `HPC*`는 scheduler가 `none`이 아닐 때만 배선됩니다.
+
+기존 설치는 업데이트 뒤 `runner.agents_dir/core/`에 새 `facilities.yaml`만 추가하세요. 기존 roster는 덮어쓰지 않습니다. PI가 `labhq doctor --json`으로 직원 엔진 준비를 확인하고 작업이 끝난 뒤 runner를 다시 시작하면 등록됩니다. 엔진 준비 검사에 실패한 직원은 roster에서 빠집니다.
 
 ### 연결된 도구
 
@@ -439,7 +444,7 @@ Codex 직원은 `tools`에 `WebSearch`나 `WebFetch`가 있으면 `web_search="l
 |---|---|---|---|---|
 | 내장 MCP | labhq_annot | 공개 자원 조회: Ensembl VEP·gnomAD·ClinVar·ChIP-Atlas·ENCODE cCRE·GTEx, API 키가 있으면 변이 효과 예측 모델 (판본 기록·캐시) | [analyst](../agents/core/analyst.yaml), [bioinfo-agent](../agents/core/bioinfo-agent.yaml), [biologist](../agents/core/biologist.yaml), [lit_scout](../agents/core/lit_scout.yaml) | [runner](../labhq/runner/daemon.py) · [직원 설정](../agents/core/) |
 | 내장 MCP | labhq_approval | PI 승인 요청 | [analyst](../agents/core/analyst.yaml), [bioinfo-agent](../agents/core/bioinfo-agent.yaml), [biologist](../agents/core/biologist.yaml), [chief_of_staff](../agents/core/chief_of_staff.yaml), [cso](../agents/core/cso.yaml), [data_steward](../agents/core/data_steward.yaml), [qc_reviewer](../agents/core/qc_reviewer.yaml), [recruiter](../agents/core/recruiter.yaml) | [runner](../labhq/runner/daemon.py) · [직원 설정](../agents/core/) |
-| 내장 MCP | labhq_ask | 막히면 CSO·시설팀·동료·PI에게 묻고 같은 세션으로 이어 가기 (CSO 먼저, 위험한 것만 PI) | [analyst](../agents/core/analyst.yaml), [bioinfo-agent](../agents/core/bioinfo-agent.yaml), [biologist](../agents/core/biologist.yaml), [chief_of_staff](../agents/core/chief_of_staff.yaml), [cso](../agents/core/cso.yaml), [data_steward](../agents/core/data_steward.yaml), [engineer](../agents/core/engineer.yaml), [lit_scout](../agents/core/lit_scout.yaml), [qc_reviewer](../agents/core/qc_reviewer.yaml), [recruiter](../agents/core/recruiter.yaml), [sci_reviewer](../agents/core/sci_reviewer.yaml) | [runner](../labhq/runner/daemon.py) · [직원 설정](../agents/core/) |
+| 내장 MCP | labhq_ask | 막히면 CSO·시설팀·동료·PI에게 묻고 같은 세션으로 이어 가기 (CSO 먼저, 위험한 것만 PI) | [analyst](../agents/core/analyst.yaml), [bioinfo-agent](../agents/core/bioinfo-agent.yaml), [biologist](../agents/core/biologist.yaml), [chief_of_staff](../agents/core/chief_of_staff.yaml), [cso](../agents/core/cso.yaml), [data_steward](../agents/core/data_steward.yaml), [engineer](../agents/core/engineer.yaml), [facilities](../agents/core/facilities.yaml), [lit_scout](../agents/core/lit_scout.yaml), [qc_reviewer](../agents/core/qc_reviewer.yaml), [recruiter](../agents/core/recruiter.yaml), [sci_reviewer](../agents/core/sci_reviewer.yaml) | [runner](../labhq/runner/daemon.py) · [직원 설정](../agents/core/) |
 | 내장 MCP | labhq_hpc | HPC 제출·감시 (scheduler가 none이 아닐 때) | [analyst](../agents/core/analyst.yaml), [bioinfo-agent](../agents/core/bioinfo-agent.yaml), [data_steward](../agents/core/data_steward.yaml), [engineer](../agents/core/engineer.yaml), [qc_reviewer](../agents/core/qc_reviewer.yaml) | [runner](../labhq/runner/daemon.py) · [직원 설정](../agents/core/) |
 | 외부 MCP | ChEMBL | 화합물·생물활성 검색 | [biologist](../agents/core/biologist.yaml), [lit_scout](../agents/core/lit_scout.yaml) | [Claude for Life Sciences](https://www.anthropic.com/news/healthcare-life-sciences) · [MCP](https://hcls.mcp.claude.com/chembl/mcp) · [직원 설정](../agents/core/) |
 | 외부 MCP | ClinicalTrials.gov | 임상시험 검색 | [biologist](../agents/core/biologist.yaml), [lit_scout](../agents/core/lit_scout.yaml) | [Claude for Life Sciences](https://www.anthropic.com/news/healthcare-life-sciences) · [MCP](https://hcls.mcp.claude.com/clinical_trials/mcp) · [직원 설정](../agents/core/) |
@@ -450,7 +455,7 @@ Codex 직원은 `tools`에 `WebSearch`나 `WebFetch`가 있으면 `web_search="l
 | skill | Paper2Agent | 논문·코드를 파견직으로 변환 (setup-paper2agent 필요) | [recruiter](../agents/core/recruiter.yaml) | [Paper2Agent](https://github.com/jmiao24/Paper2Agent) · [직원 설정](../agents/core/) · [채용 코드](../labhq/recruit/paper2agent.py) |
 | skill | bioinfo:bioinfo-analyze | 실행 전 존재 확인 (required_skills) | [bioinfo-agent](../agents/core/bioinfo-agent.yaml) | [직원 설정](../agents/core/) |
 | 엔진 기능 | Claude Code | 직원 실행 엔진 | [analyst](../agents/core/analyst.yaml), [bioinfo-agent](../agents/core/bioinfo-agent.yaml), [biologist](../agents/core/biologist.yaml), [chief_of_staff](../agents/core/chief_of_staff.yaml), [cso](../agents/core/cso.yaml), [data_steward](../agents/core/data_steward.yaml), [qc_reviewer](../agents/core/qc_reviewer.yaml), [recruiter](../agents/core/recruiter.yaml) | [직원 설정](../agents/core/) |
-| 엔진 기능 | Codex | 직원 실행 엔진 | [engineer](../agents/core/engineer.yaml), [lit_scout](../agents/core/lit_scout.yaml), [sci_reviewer](../agents/core/sci_reviewer.yaml) | [직원 설정](../agents/core/) |
+| 엔진 기능 | Codex | 직원 실행 엔진 | [engineer](../agents/core/engineer.yaml), [facilities](../agents/core/facilities.yaml), [lit_scout](../agents/core/lit_scout.yaml), [sci_reviewer](../agents/core/sci_reviewer.yaml) | [직원 설정](../agents/core/) |
 | 엔진 기능 | Codex 웹 검색 | WebSearch / WebFetch → web_search="live" | [lit_scout](../agents/core/lit_scout.yaml), [sci_reviewer](../agents/core/sci_reviewer.yaml) | [adapter](../labhq/adapters/codex.py) · [직원 설정](../agents/core/) |
 <!-- integrations:end -->
 
@@ -793,7 +798,7 @@ report는 중첩 집계의 구조와 개수(0 이상의 정수)를 확인합니�
 - **직원** (`agents/core/*.yaml`): `engine`, `model`, `effort`(Claude Code·Codex만), `tools`(사전 허용), `builtin_mcp`(`approval`, `hpc`, `annot`),
   `permission_mode`, `project_dirs`.
   쓰기 범위는 [승인 게이트와 쓰기 범위](#승인-게이트와-쓰기-범위)에 있습니다.
-  `labhq_ask`는 모든 MCP 지원 직원에게 자동으로 붙습니다. 대상은 `cso`, `facilities`, `colleague:<agent_id>`, `pi`입니다. `facilities`가 roster에 없으면 CSO가 답하되, 재시작 전에 `facilities`가 받던 질의는 그 runner 재접속을 `gateway.resume_wait_s`까지 기다려 같은 상담을 이어받습니다(#113).
+  `labhq_ask`는 MCP 지원 직원에게 자동으로 붙으며 읽기 전용 상담에서는 꺼집니다. 대상은 `cso`, `facilities`, `colleague:<agent_id>`, `pi`입니다. `facilities` 질문은 메신저의 "시설팀"이 받고 요청 안에서 자기 상담 session을 이어 씁니다. 시설팀이 roster에 없으면 CSO가 답하되, 재시작 전에 시설팀이 받던 질의는 runner 재접속을 `gateway.resume_wait_s`까지 기다립니다(#113). 재접속하지 못하면 CSO로 넘깁니다.
 - **엔진 실행 파일** (`engines`): `claude_code`, `codex`, `gemini`, `antigravity`의 `bin`, `prefix_args`, `extra_args`, `env`.
   Claude·Codex의 `isolate_user_config`(기본 켜짐)는 PI 개인 CLI 설정을 직원 세션에서 뺍니다([알려진 한계](#알려진-한계)). 러너를 띄운 세션의 `CLAUDE_*`·`CODEX_*` 변수는 빼고(Claude는 `CLAUDE_CONFIG_DIR`·로그인 변수, Codex는 `CODEX_HOME`·`CODEX_API_KEY`·`CODEX_CA_CERTIFICATE`만 남김, #146) 그 위에 `engines.*.env`와 task env를 얹습니다. Gemini·Antigravity에는 이 옵션이 없습니다. Codex의 `windows_sandbox`는 Windows에서 다시 넣는 샌드박스 모드입니다. 모르는 키는 오류로 거부합니다.
   Antigravity는 MCP가 없고 `permission_mode: default`는 `--sandbox`, `auto`는 `--sandbox --dangerously-skip-permissions`입니다.

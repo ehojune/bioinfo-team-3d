@@ -815,7 +815,7 @@ Do not repeat the same question."""
 CONSULT_PROMPT = """Answer one blocked employee's question using the request, plan and policy context below.
 Write only in your own outputs/ and .tmp/; existing work stays read-only. Answer once. Do not call labhq_ask or approve installations,
 destructive work, restricted-data access, budget overruns or work outside the request.
-When bioinfo-agent asks whether to build a missing reusable pipeline, answer that it should build it.
+{scope_advice}
 
 From: {sender}
 Question: {question}
@@ -2666,12 +2666,22 @@ class Orchestrator:
                           if ask.refs and not same_runner else "")
         request = self.hub.requests.get(ask.request_id or "", {})
         prompt = CONSULT_PROMPT.format(
+            scope_advice=("Diagnose environment failures only." if routed == "facilities" else
+                          "When bioinfo-agent asks whether to build a missing reusable pipeline, "
+                          "answer that it should build it."),
             sender=ask.agent_id, question=ask.question, why_blocked=ask.why_blocked,
             tried=json.dumps(ask.tried, ensure_ascii=False), options=json.dumps(ask.options, ensure_ascii=False),
             refs=json.dumps(refs, ensure_ascii=False), reference_note=reference_note,
             request=clip(request.get("text") or "", 4000), plan=clip(json.dumps(request.get("plan") or {},
                                                                                  ensure_ascii=False), 6000),
         )
+        if routed == "facilities":
+            prompt += ("\n\nFacilities diagnosis only: use the supplied doctor snapshot and permitted error evidence. "
+                       "Do not build a pipeline, run tools or write files. Reply briefly with cause, evidence and "
+                       "what PI should do. Answer environment questions yourself; only authority, scope or policy "
+                       "decisions belong to CSO/PI. Omit raw logs, tokens and personal paths.")
+            if not same_runner:
+                prompt += "\nThe doctor snapshot describes your runner, not necessarily the blocked employee's host."
         overrides = dict(READ_ONLY_OVERRIDES)
         async with self._consult_lock(ask.request_id, routed):
             # After a gateway restart the runner may still be running this ask's consult.

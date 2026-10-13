@@ -102,6 +102,10 @@ def read_only_profile(agent: AgentSpec) -> AgentSpec:
         fields["builtin_mcp"] = ["approval"]
     elif agent.engine == "codex":
         fields["tools"] = [t for t in agent.tools if t in {"WebSearch", "WebFetch"}]
+    if agent.id == "facilities":
+        # Diagnosis is supplied as context; this staff member needs no execution or write tools.
+        fields.update(sandbox="read-only", builtin_tools="", builtin_mcp=[], tools=[])
+        kept["project_dirs"] = []
     return AgentSpec(**kept, **fields)
 
 
