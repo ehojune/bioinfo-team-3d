@@ -72,7 +72,7 @@ async def test_restart_reuses_saved_draft_without_editor(tmp_path, monkeypatch):
     editor = AsyncMock(return_value=SimpleNamespace(ok=True, structured={"readme": "original edition"}))
     monkeypatch.setattr(hub.orchestrator, "run_step", editor)
     monkeypatch.setattr("labhq.result_storage.edition_assets", lambda *args: (
-        {"steps/s1/outputs/table.tsv": "gene\tvalue\nA\t1\n"},
+        {"steps/s1/outputs/table.tsv": "gene\tvalue\r\nA\t1\r\n"},
         {"steps/s1/outputs/plot.png": b"original-image"}))
     reached = asyncio.Event()
     original = {}

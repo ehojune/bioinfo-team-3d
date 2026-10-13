@@ -228,7 +228,7 @@ class ResultStorage:
                         if path.suffix.lower() in _IMAGE_OUTPUTS:
                             images[name] = path.read_bytes()
                         else:
-                            docs[name] = path.read_text(encoding="utf-8")
+                            docs[name] = path.read_bytes().decode("utf-8")
                 if "README.md" not in docs:
                     raise ValueError("missing editor README")
             else:
