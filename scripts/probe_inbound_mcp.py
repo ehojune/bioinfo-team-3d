@@ -155,7 +155,8 @@ async def _probe(args: argparse.Namespace, out: Path) -> dict:
     _tee(adapter, stream)
     summary: dict = {"engine": engine.value, "cli_version": _version(shutil.which(binary.bin) or binary.bin),
                      "model": args.model or "CLI default", "delay_s": args.delay,
-                     "approval_timeout_s": args.approval_timeout, "labhq_mcp_timeout_s": timeout_s}
+                     "approval_timeout_s": args.approval_timeout, "labhq_mcp_timeout_s": timeout_s,
+                     "task_timeout_s": settings.runner.task_timeout_s}
     with tempfile.TemporaryDirectory(prefix="labhq-276-") as scratch:
         workdir = Path(scratch) / "staff"
         workdir.mkdir()
@@ -189,6 +190,21 @@ async def _probe(args: argparse.Namespace, out: Path) -> dict:
     return summary
 
 
+def _passed(summary: dict, args: argparse.Namespace) -> bool:
+    if not (summary.get("ok") is True and summary.get("text_is_marker") is True
+            and summary.get("server_calls") == 1 and summary.get("slow_answer_calls") == 1
+            and summary.get("tool_errors") == 0):
+        return False
+    if args.engine != "claude_code" or args.no_sender:
+        return True
+    sender = summary.get("sender") or {}
+    refuse = args.inbound == "refuse"
+    return (sender.get("exit_code") == 0 and bool(sender.get("tool_results"))
+            and sender.get("refused_notice") is refuse
+            and summary.get("refusal_logged") is refuse
+            and summary.get("message_queued") is (not refuse))
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Real-CLI probe: delayed labhq MCP call and inbound refusal (#276)")
     p.add_argument("engine", choices=["claude_code", "codex"])
@@ -209,6 +225,7 @@ def main() -> None:
     summary = asyncio.run(_probe(args, out))
     (out / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
     print(json.dumps(summary, ensure_ascii=False))
+    raise SystemExit(0 if _passed(summary, args) else 1)
 
 
 if __name__ == "__main__":

@@ -153,6 +153,7 @@ cd <labhq 저장소>
 
 같은 Wi-Fi의 폰에서 체험하려면 `labhq demo --web --phone`을 실행하고 출력된 `/3d` URL을 엽니다. 승인은 폰에서 누르거나 기본 120초 뒤 자동 처리됩니다.
 `/`는 2.5D, `/3d`는 3D 사무실입니다. 두 화면은 빌드 없이 `state.js` reducer와 `/ws/client`를 공유하며 같은 client token으로 연결합니다.
+다시 열면 이 브라우저에서 마지막으로 보던 요청을 복원합니다(데모·라이브·instance별 저장). 없으면 끝나지 않은 요청 중 최근 활동한 것을 고르고, 모두 끝났으면 가장 최근 활동한 요청을 엽니다. 작업판 목록도 진행·대기 요청을 위에, 완료·실패 요청을 아래에 두고 상태를 표시합니다. 새 실행 요청은 자동으로 열지만 끝난 요청이 들어와도 직접 고른 화면은 유지합니다. 화이트보드의 **이어서 진행 중**은 재개 이벤트가 있거나 접속 당시 이미 실행 중이던 요청에 표시됩니다.
 2.5D는 gateway의 첫 스냅샷이 오기 전에는 비용·사무실 판·결정 탭·요청 카드를 "불러오는 중"으로 보이고, 토큰이 없으면 "토큰을 넣으면 … 불러와요"로 보입니다. 빈 사무실이나 $0.00으로 보이지 않게 하려는 것입니다.
 - 2.5D: 오른쪽 Command Center의 결정·작업판·메신저·HPC 탭과 아래 직원 카드 줄. 폰에서는 탭이 화면 아래에 고정되고 직원 줄은 접혀 있습니다. 결정 이력은 요청별로 묶어 최근 10건부터 보여 줍니다. 가로 1000px 이상에서는 사무실·Command Center·직원 줄·입력창이 서로 겹치지 않게 한 화면을 나눠 쓰고, 사무실과 Command Center는 각자 안에서 스크롤합니다.
 - 3D: 실제 roster·상태 표지·요청 보드·메모가 있는 DOM 승인/거절. 이름표는 각 직원 머리 위에 뜹니다. 완료 표시는 3초 뒤 대기로 돌아가며 승인 대기 시간은 계속 갱신됩니다. "승인 요청이 왔어요" 알림은 그 승인이 승인·거절·시간 초과·재시작으로 끝나면 지워집니다(2.5D 알림도 같음). 재연결은 `since`, 이벤트 공백은 snapshot으로 복구합니다.
@@ -161,9 +162,9 @@ cd <labhq 저장소>
 
 | 상태 | 사무실에서 | 색 (게놈 브라우저 염기색에서 따옴) |
 |---|---|---|
-| 작업 중 | 타이핑, 모니터 켜짐, 말풍선에 쓰는 도구나 방금 한 말 | 초록 (A) |
-| 승인 기다림 | 손 들기, 느낌표 | 호박색 (G) |
-| HPC 기다리는 중 · 답 기다리는 중 | 눈 감고 zZ, 서버 랙 불빛 깜빡임. 직원이 HPC job이 아니라 질문(CSO·동료·PI)의 답을 기다리면 "답 기다리는 중" | 파랑 (C) |
+| 생각하는 중 · 명령 실행 중 | 타이핑, 모니터 켜짐. 명령은 실행 시간을 분 단위로 표시 | 초록 (A) |
+| PI 결정 기다리는 중 · 차례 기다리는 중 | 손 들기·느낌표 또는 대기 움직임 | 호박색 (G) |
+| HPC 작업 기다리는 중 · 답 기다리는 중 | 호흡·말풍선, 서버 랙 불빛 깜빡임 | 파랑 (C) |
 | 문제 발생 | 흔들림, 땀방울 | 빨강 (T) |
 | 완료 | 폴짝, 체크 표시 | — |
 
@@ -172,6 +173,7 @@ cd <labhq 저장소>
 - 오른쪽(폰에서는 하단 탭): **결정** 탭(결정할 일·메모·대기 시간·이력), step별 시도·산출물·리뷰를 보는 **작업판**, **사내 메신저**, HPC 작업 목록
 - 지난 결정마다 로컬 날짜·시각과 **요청 보고서** 링크(보고서가 있을 때)를 보여 줍니다. **×**는 이 브라우저의 목록에서만 숨기며 gateway 결정·감사 기록은 보존합니다. 숨김은 모드·인스턴스별 localStorage에 저장하고, 저장이 막히면 현재 페이지에서만 유지합니다. 대기 카드에는 ×가 없습니다.
 - 직원 **활동·생각/디버그**, 메신저와 결정 detail의 긴 줄은 접힌 줄이나 **…**를 눌러 펼치고 다시 눌러 접습니다. 키보드 Enter·Space도 같습니다. 받은 원문만 펼치며 서버가 잘랐다고 알린 줄에는 **(서버에서 N자로 잘림)**을 붙입니다.
+- 실행 중인 task가 있으면 직원 시트와 2.5D·3D에 쉬는 중으로 표시하지 않습니다. 재연결해도 task·도구·대기를 복원합니다. 명령·파일 경로는 한 줄로 읽고 입력 원문은 펼칩니다. 출력 중단 경고와 runner 연결 끊김은 실행 표시보다 먼저 나옵니다.
 - 끝난 요청의 **작업판** 아래 **이어 묻기**: 새 요청을 만들지 않고 팀 요청은 CSO, direct·단독 요청은 맡았던 직원이 같은 세션·작업 폴더에서 보고서·산출물을 읽고 답합니다. 읽기 전용이라 새 분석이 필요하면 새 요청을 권합니다. 취소한 요청은 더 이상 turn을 돌리지 않으므로 이어 묻기를 받지 않습니다(#521). 그 세션을 만든 runner가 아닌 다른 runner가 지금 같은 직원 id를 맡고 있으면 이어 묻기는 이유를 밝히고 거절하고(작업 폴더가 그 PC에 있음), 상담은 새 세션으로 엽니다. 읽기 전용은 엔진이 강제해야 해서(Claude plan 모드·읽기 도구만, Codex `-s read-only`) `engine: cli`·Gemini·Antigravity 직원에게는 이어 묻기와 상담을 보내지 않고 이유를 돌려줍니다. 이어 묻기·상담은 직원 설정에서 지우는 방식이 아니라 러너의 읽기 전용 허용 목록으로 돌고(MCP·plugin·hook 없음), 실행 중 파일이 바뀌면 실패로 처리합니다([알려진 한계](#알려진-한계)). 접속할 때 받는 snapshot에는 긴 답의 앞 2,000자만 실리고, **전문 보기**를 누르면 그 요청의 전체 답을 불러옵니다(2.5D·3D).
 
 **요청 취소**(PI 점검 R13): 끝나지 않은 요청(진행·대기·중단됨)은 요청 줄의 **요청 취소** 버튼, `labhq cancel <요청 ID>`, `POST /api/requests/{id}/cancel`로 멈춥니다. 도는 작업마다 runner에 중단을 보내고, 한도·로그인 대기와 그 요청의 카드(재개 카드 포함)를 닫은 뒤 상태를 `cancelled`로 바꾸고 끝난 단계와 산출 경로를 적은 짧은 보고서를 남깁니다. 다시 시작되지 않습니다. 보고서를 쓰기 전에 gateway가 멈추면 다음 시작 때 마저 쓰며, 그때까지 결과를 보내지 않은 작업의 비용은 미집계로 남깁니다(#521). HPC에 이미 낸 작업은 클러스터에서 확인합니다. 단계 카드의 **작업 취소**는 그 단계만 멈춥니다.
@@ -273,7 +275,7 @@ orchestrator:
 
 요청은 위 순서로 흐릅니다. 연구로 분류된 요청은 [연구 lane](#연구-lane과-검증)을 따릅니다.
 
-비서실장은 400단어 안에서 브리핑합니다. 공개 GEO·SRA·ArrayExpress accession이나 이름 있는 cohort의 재분석이면 PMC 또는 출판사 본문을 열고, 전처리·정규화, 짝·반복측정, 공변량·batch, 통계 모형·임계값, 검증을 5줄 안에 요약합니다. 본문을 못 열었으면 그대로 밝힙니다. 원 연구 Methods는 참고일 뿐이며, 현재 질문과 맞는 선택만 다시 씁니다.
+비서실장은 400단어 안에서 브리핑합니다. 계획과 같은 runner capability 요약을 받아 scheduler·도구·환경의 현재 보고와 unknown을 구분하고, `none`·`no`는 사용 불가, unknown은 미확인으로 적습니다. 공개 GEO·SRA·ArrayExpress accession이나 이름 있는 cohort의 재분석이면 PMC 또는 출판사 본문을 열고, 전처리·정규화, 짝·반복측정, 공변량·batch, 통계 모형·임계값, 검증을 5줄 안에 요약합니다. 본문을 못 열었으면 그대로 밝힙니다. 원 연구 Methods는 참고일 뿐이며, 현재 질문과 맞는 선택만 다시 씁니다.
 
 CSO는 설치·예산·통제 데이터·HPC 같은 권한/비용/접근, PI만 아는 질병·코호트·시료 범위, 분석 깊이만 묻습니다. 깊이 질문은 시간·비용을 적은 권장안을 첫 선택지로 둡니다. 공개 데이터셋, 모형, 필터, 대조, 방법은 CSO가 정하고 일반 계획의 **가정**에 이유와 함께 남깁니다. 가정은 웹·`labhq watch`·최종 보고서의 방법 요약에서 보이며, 실행 중에는 [메모](#웹-사무실)로 바꿀 수 있습니다. 연구 lane은 같은 질문 기준을 쓰되 가정을 동결 protocol에 기록합니다.
 
@@ -766,9 +768,13 @@ accept면 CSO가 결론·수치 문장마다 `[[claim:<step_id>/<claim_id>]]`를
 데이터 원본·경로·요청 본문은 기록에 들어가지 않고, 통제 구역 파일은 hash도 읽지 않습니다. 다만 request ID와 hash는 남으니 `state_dir`을 공개 위치에 두지 않습니다.
 보는 법: `labhq semantics report`(요청 수·두 모델 지표·A/B arm 비교·자동 off 이력). 켜고 끄는 값, 자동 off 조건, 액션 층(A1·A2), 지우는 법은 [설정 포인트](#설정-포인트)의 산출 데이터 종류 선언·의미 모델 그림자 항목에, 한계는 [알려진 한계](#알려진-한계)에 있습니다.
 
+report는 중첩 집계의 구조와 개수(0 이상의 정수)를 확인합니다. 손상된 요청 행은 통째로 제외하고 JSON의 `broken_lines`와 텍스트의 `깨진 줄`에 셉니다. 이전 판본의 선택 필드 부재와 worker가 남긴 `declarations: null`은 허용하며 소수 지연값도 보존합니다. 저장 로그는 바꾸지 않습니다.
+
 ## 설정 포인트
 
-설정 파일(`config/labhq.yaml`)의 항목입니다. 안전 관련 항목은 [안전 장치](#안전-장치), 연구 규약은 [연구 lane](#연구-lane과-검증)에 있습니다.
+설정 파일(`config/labhq.yaml`)의 항목입니다. 안전 관련 항목은 [안전 장치](#안전-장치), 연구 규약은 [연구 lane](#연구-lane과-검증)에 있습니다. pytest는 홈을 임시 폴더로 격리하며 명시한 설정·instance·cache·skill·doctor 경로도 실제 사용자 `.labhq`를 가리키면 파일 조회 전에 거부합니다.
+
+테스트 요청 정리는 `python scripts/purge_test_requests.py --database <gateway.sqlite3>`로 후보만 확인합니다. 기본 표지는 정확한 문구 `save outputs/counts.tsv`·agent `worker`·mode `direct` 세 가지입니다. 삭제는 gateway를 끈 유지보수 시간에만 `--apply --gateway-stopped --config <설정> --backup <새 파일>`을 붙입니다. 먼저 SQLite 백업을 만들고 일치한 요청과 이벤트만 지웁니다. 데모 문구는 자동 선택하지 않습니다.
 
 - **Live 출처 검사** (`research.live_source_check`, 기본 `false`): 켜면 CP2 카드 전과 `labhq verify`에서 Crossref·doi.org·NCBI를 확인합니다. 이어 가기를 결정해 보관한 차수는 새 계획 전 재시작에서 다시 묻지 않습니다. `labhq verify`는 각 단계가 인용한 자기 산출물과 계획상 모든 조상 단계 산출물의 hash도 다시 확인합니다. `research.live_source_contact`는 API User-Agent·mailto에 넣을 관리자 email이며 기본값은 빈 문자열입니다.
 - **상태** (`gateway.state_dir`, `runner.state_dir`): 기본 `~/.labhq/state`. SQLite WAL에 요청·비용·승인·잡을 저장합니다. 재개 승인 뒤 필요한 runner를 기다리되(`gateway.resume_wait_s`, 기본 300초), 수락된 task 완료에는 연결 대기 제한을 적용하지 않습니다. 완료된 direct 요청·DAG·제어 단계와 리뷰 수정 횟수를 이어서 처리합니다. 이어받는 task는 재개 전에 보낸 것뿐이고, 재개 뒤 새로 보낸 호출(clarify 답 뒤 재계획 등)은 같은 단계라도 새로 돕니다. 불확실 task는 같은 runner 세대에만 재전송하고, 추적 중인 HPC job은 재제출 없이 wake로 잇습니다. 재개 뒤 다시 route된 질의는 runner 재접속을 기다려 그 질의의 상담을 이어받고, 이어받을 수 없으면 새 session·workdir에서 다시 묻습니다(#93). CSO 계획·최종 보고서와 이어 묻기는 같은 session·workdir를 쥔 이전 task(재시작으로 답을 잃은 상담, interrupted가 된 이어 묻기)가 지금 runner 세대에서 도는 동안 기다렸다가 그 turn에서 잇고, 끝났는지 모르면 새 session·workdir로 엽니다(#112, #144).
@@ -885,7 +891,8 @@ Claude baseline은 자기 arm의 파일 쓰기·단순 명령을 허용합니다
   - 사후 확인: 러너가 실행 전후로 작업 폴더와 쓰기 가능한 project·upstream·참고 폴더를 링크를 따라가지 않고 나열해 비교합니다(종류·크기·mtime, POSIX는 ctime). 바뀌면 결과를 실패로 하고 PI 피드에 경고를 띄우며 manifest `read_only_changes`에 남깁니다. 되돌리지는 않습니다. 항목이 `runner.read_only_check_max_entries`(50,000)를 넘거나 읽을 수 없는 폴더가 있으면 실행하지 않습니다.
   - 한계: Windows에는 ctime이 없어 크기를 그대로 두고 mtime을 되돌린 수정은 못 봅니다. 같은 러너에서 다른 작업이 쓰던 폴더의 변경은 비교에서 빼고 이유를 남기며, 다른 러너나 프로세스가 쓴 것은 실패로 잡힙니다. labhq가 쓰는 `.labhq/`·`manifest.json`·`events.jsonl`과 감시 폴더 밖(홈 등)은 보지 않습니다. Claude 관리 정책(managed settings)의 hook은 끌 수 없습니다.
 - Windows는 명령줄을 32,767자까지만 받습니다. 직원 CLI 명령이 32,000자를 넘으면 adapter가 prompt 대신 작업 폴더의 TASK 파일을 가리키는 짧은 prompt를 넘기고, 그래도 넘으면 실행 전에 길이를 적고 거부합니다. 전에는 이 실패가 `executable not found`로 보였습니다(연구 계획 재계획, #222).
-- labhq MCP 호출은 승인·질의의 가장 긴 대기에 120초를 더한 만큼 기다립니다. Claude에는 서버별 `timeout`과 `MCP_TOOL_TIMEOUT`, Codex에는 `tool_timeout_sec`(기본 60초)로 넘깁니다. fake clock test는 두 adapter가 만든 1,320초 설정으로 90초 응답을 재시도 없이 한 번만 받는지 봅니다. 실제 Claude 2.1.282에서도 90초 호출이 끝났고, 실제 Codex 장시간 probe는 아직 돌리지 않았습니다(`scripts/probe_inbound_mcp.py`, #276).
+- labhq MCP 호출은 승인·질의의 가장 긴 대기에 120초를 더해 기다립니다. Claude에는 서버별 `timeout`과 `MCP_TOOL_TIMEOUT`, Codex에는 `tool_timeout_sec`(기본 60초)를 넘깁니다. fake clock test는 두 adapter의 1,320초 설정으로 90초 응답을 한 번만 받는지 봅니다. 실제 Claude 2.1.282와 Codex 0.162.0-alpha.17.2에서도 90초 호출이 끝났습니다(#276).
+- `scripts/probe_inbound_mcp.py`는 summary·진단을 남기고, `ok`·정확한 marker·서버/도구 호출 각 1회·tool error 0일 때만 exit 0입니다. Claude inbound는 sender 성공과 거부 통지·로그(refuse), 큐 기록(accept/unset)도 검사합니다. `--no-sender`는 MCP 검사만 합니다.
 - 직원 CLI가 마지막 turn 이벤트를 낸 뒤 `runner.exit_grace_s`(기본 45초) 안에 끝나지 않으면 받은 결과를 지키고 프로세스 트리를 끝냅니다(#330). 무응답 경고 뒤에는 자동 재시도 시각을 알리며, 연구 lane에서 단계를 직접 취소하면 요청이 실패로 끝난다고 밝힙니다(#433). 긴 하위 명령·모르는 하위 프로세스·UAC 대기 중에는 끝내지 않습니다. Windows process command line이나 POSIX process tree를 읽지 못해도 경고만 남깁니다. `/proc`도 호환 `ps`도 없는 POSIX가 알려진 한계입니다(#473). Codex의 MCP server env 중 이미 가진 값은 명령줄 대신 `env_vars`로 이름만 넘깁니다.
 - 직원은 여러 agent를 띄우는 도구를 쓰지 못합니다. Claude는 `Workflow`·`TeamCreate`·`TeamDelete`·`Task`·`Agent`를 거부합니다. 예외는 `agents/core/recruiter.yaml`에서 `Agent`를 미리 허용한 recruiter뿐이며, Paper2Agent 변환 중 병렬 sub-agent에 씁니다. Codex는 모든 실행에서 `multi_agent`·`memories`·`apps`·`plugins`를 끕니다. labhq가 승인·집계하지 못하는 agent와 도구, 다른 요청의 기억이 섞이는 것을 막기 위해서입니다(#421).
 - Claude 직원은 `SendMessage`·`ListAgents`를 쓰지 못하고, `crossSessionInbound: refuse`라 PI의 다른 Claude 세션이 보낸 메시지도 받지 않습니다. bench의 Claude arm도 같습니다. [Claude 공식 문서](https://code.claude.com/docs/en/cross-session-messaging#turn-off-cross-session-messaging)와 설치본 2.1.289에서 지원을 확인했습니다. `--settings`보다 높은 managed settings만 이 값을 느슨하게 바꿀 수 있습니다.

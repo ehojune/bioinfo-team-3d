@@ -6,12 +6,15 @@ import json
 import sqlite3
 from pathlib import Path
 
+from .test_guard import guard_test_path
+
 
 SCHEMA_VERSION = 1
 
 
 class StateStore:
     def __init__(self, path: Path):
+        guard_test_path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path, timeout=5, check_same_thread=False)
         version = self.db.execute("PRAGMA user_version").fetchone()[0]

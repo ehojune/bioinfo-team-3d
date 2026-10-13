@@ -2,6 +2,8 @@
 
 시작 전에 `HANDOFF.md`와 `STATUS.md`를 읽는다.
 
+- pytest는 `tests/conftest.py`가 홈·캐시·state를 임시 경로로 격리한다. 별도 설정도 tmp를 쓰고 사용자 `.labhq` 접근 guard를 우회하지 않는다.
+
 - 문서는 읽는 사람별로 나뉜다: `README.md`(처음 써 보는 사람), `docs/manual.md`(깊이 보려는 사람), `docs/pi-qa.md`(PI), 이 파일과 `HANDOFF.md`(개발). 동작을 바꾸면 manual의 해당 절을 고친다.
 - 작업 순서는 HANDOFF.md의 작업 큐를, PI 확인이 필요한 것은 그 파일의 "결정 대기"를 따른다. 개발 총괄은 Claude와 Codex가 번갈아 맡는다.
 - 단계마다 브랜치에서 작업하고 PR을 연다. main에 직접 push하지 않는다. PI 위임(2026-09-28, 2026-10-01): 병합은 개발 총괄(Claude 또는 Codex, 번갈아 맡음)이 판단한다. 자동 병합 워크플로는 껐다.

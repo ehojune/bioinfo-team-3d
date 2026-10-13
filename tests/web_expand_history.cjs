@@ -110,7 +110,7 @@ test('decision detail uses the shared fold and preserves an open history line ac
 test('both offices wire report navigation and share history visibility; 2.5D sheets and messenger use received text',()=>{
   const html=fs.readFileSync(path.join(root,'index.html'),'utf8'),live=fs.readFileSync(path.join(root,'lab3d/src/live.js'),'utf8');
   assert.match(html,/createHistoryVisibility\(`\$\{MODE\}:\$\{INSTANCE\}`\)/);
-  assert.match(html,/onOpenRequest:[\s\S]*?S.current = id[\s\S]*?showTab\('tasks'\)/);
+  assert.match(html,/onOpenRequest:[\s\S]*?officeState.selectRequest\(id\)[\s\S]*?showTab\('tasks'\)/);
   assert.match(html,/expandableText\(row, l.fullText/);assert.match(html,/expandableText\(row.querySelector\('.message-text'\), m.fullText/);
   assert.match(live,/createHistoryVisibility\(`live:/);assert.match(live,/syncDecisionHistory/);
   assert.match(live,/\/api\/approvals\/history\?limit=50/);assert.match(live,/onOpenRequest/);

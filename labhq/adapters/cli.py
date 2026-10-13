@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 
 from ..models import CliSpec
-from ..util import event_preview, short
+from ..util import event_preview, short, tool_input_summary
 from .base import (AgentAdapter, role_footer, RunContext, RunState, expand_env, record_model_id,
                    token_counts, wrap_cwd)
 
@@ -91,7 +91,11 @@ class CliAdapter(AgentAdapter):
             st.text_parts.append(str(ev.get("text", "")) + "\n")
             await ctx.emit("agent.log", {**event_preview("text", ev.get("text"), 2000)})
         elif typ == "tool":
-            await ctx.emit("agent.tool", {"name": ev.get("name"), **event_preview("input", ev.get("input"), 400)})
+            await ctx.emit("agent.tool", {"id": ev.get("id"), "name": ev.get("name"),
+                                         "summary": tool_input_summary(ev.get("input")),
+                                         **event_preview("input", ev.get("input"), 400)})
+        elif typ == "tool_result":
+            await ctx.emit("agent.tool_result", {"id": ev.get("id")})
         elif typ == "usage":
             st.cost_usd = ev.get("cost_usd", st.cost_usd)
             raw = ev.get("tokens")

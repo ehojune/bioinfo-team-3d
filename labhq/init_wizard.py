@@ -16,6 +16,7 @@ from . import doctor, hpc_consult
 from .adapters.base import _resolve_command
 from .runner.codex_sandbox import codex_command, powershell_executable, setup_hint
 from .settings import HpcSettings, Settings
+from .test_guard import guard_test_path
 from .tools import annot_keys
 from .tools.scheduler import COMMANDS as SCHEDULER_COMMANDS, Scheduler
 from .util import free_port
@@ -180,7 +181,10 @@ def _login_command(settings: Settings) -> str:
 
 def _used_instance_ports() -> set[int]:
     used: set[int] = set()
-    for path in (Path.home() / ".labhq").glob("*/labhq.yaml"):
+    root = Path.home() / ".labhq"
+    guard_test_path(root)
+    for path in root.glob("*/labhq.yaml"):
+        guard_test_path(path)
         try:
             data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
             used.update(int(value) for value in (
@@ -201,6 +205,7 @@ def _unused_port(used: set[int]) -> int:
 def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
         force: bool = False, instance: str | None = None) -> dict:
     target = Path(config or os.environ.get("LABHQ_CONFIG") or "config/labhq.yaml").resolve()
+    guard_test_path(target)
     if instance:
         print("주의: 엔진 로그인과 사용량 한도는 모든 labhq 인스턴스가 공유합니다.")
         if force:

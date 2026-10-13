@@ -9,6 +9,19 @@ from labhq.models import ApprovalRequest
 from labhq.settings import Settings
 
 
+def test_snapshot_preserves_request_activity_for_initial_focus(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = create_app(settings).state.hub
+    hub.requests["older"] = {"id": "older", "text": "Continue work", "status": "running",
+                             "created_at": 10, "updated_at": 90}
+    hub.requests["newer"] = {"id": "newer", "text": "Finished work", "status": "done",
+                             "created_at": 80, "updated_at": 80}
+    rows = {row["id"]: row for row in hub.snapshot()["data"]["requests"]}
+    assert rows["older"]["updated_at"] == 90
+    assert rows["newer"]["updated_at"] == 80
+
+
 def test_office_page_manifest_and_stale_approval(tmp_path):
     s = Settings()
     s.gateway.state_dir = str(tmp_path / "state")

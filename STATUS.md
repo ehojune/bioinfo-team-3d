@@ -6,6 +6,227 @@
 
 ## 결론
 
+홈·state 격리와 dry-run 정리 도구를 추가한 PR #554의 P1(4256352456)을 `d38535f`에서 수정했다. 실제 사용자 `.labhq` 설정을 파일 조회 전에 차단한다.
+
+## 바뀐 것
+
+- `Settings.load`의 명시 경로·`LABHQ_CONFIG`, staff 설정 복사.
+- instance 경로·포트 탐색, init·bench 설정 확인.
+- Paper2Agent cache·skill·설치 출처, 자식 CLI 설정 경로.
+- doctor의 roster·설정 소유자 조회와 Codex 설정·marker 읽기. 기존 store guard도 유지한다.
+
+## 확인
+
+- 합성 홈 회귀 17건: 이전 head `590a41d`에서 모두 실패, 수정 후 통과. 격리 파일 전체 23 passed.
+- 관련 테스트 187 passed. 이후 추가한 자식 설정 경로는 격리 테스트와 전체 suite로 확인한다.
+- Windows 전체: **5646 passed, 66 skipped, 1 failed**(11분 40초). 실패는 `test_semantics_shadow_breaker.py::test_a_stuck_worker_turns_it_off_and_its_late_result_is_dropped`의 `disabled.json` 읽기 PermissionError다. 해당 파일만 재실행해 **50 passed**. 전체 통과로 판정하지 않는다.
+- 공개 검사·patch-notes·notes-index·diff 검사를 수행했다. basetemp는 `%TEMP%/pt-testisofix` 한 폴더를 사용했다.
+
+## 미해결
+
+- 전체 suite의 Windows PermissionError 1건은 범위 밖이므로 수정하지 않았다. CI는 push 뒤 현재 head의 PR checks를 기준으로 총괄이 확인한다.
+- basetemp 삭제가 자동 승인 검토의 `blocked by policy`로 차단됐다. 리뷰 요청·병합은 하지 않는다.
+
+Refs #545, #221
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
+웹을 다시 열면 마지막으로 보던 요청을 복원합니다. 저장된 선택이 없으면 끝나지 않은 요청 중 최근 활동한 것을 엽니다.
+
+## 바뀐 것
+
+- 요청 선택을 데모·라이브·instance별로 기억하며 2.5D·3D가 같은 reducer 값을 씁니다.
+- 진행·대기 요청을 완료·실패 요청보다 위에 놓고 상태를 표시합니다. 직접 고른 요청은 끝난 요청의 유입이나 snapshot 재생으로 바뀌지 않습니다.
+- 화이트보드에 재개 이벤트 또는 접속 당시 실행 상태를 근거로 `이어서 진행 중`을 표시합니다.
+- snapshot에 `updated_at`을 포함하고 웹 사무실 매뉴얼을 갱신했습니다.
+
+## 실행한 것
+
+- 새 Node 회귀 6건: origin/main에서 6 failed, 수정본에서 6 passed.
+- Node 전체 41개 파일 통과. 관련 Python 77 passed·1 skipped.
+- Windows 전체 pytest: 5,637 passed·66 skipped. 임시 state·TEMP를 분리하고 기존 서비스 포트 접속을 차단했습니다.
+- 공개 검사·diff 검사 통과.
+
+## 미해결
+
+- 자동 봇 리뷰 판단과 병합은 개발 총괄이 이어받습니다.
+
+Refs #435
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
+PR #554: pytest가 사용자 gateway에 요청을 남기지 않도록 홈·state를 격리했다. 정리 도구는 실제 store에서 실행하지 않았다.
+
+## 바뀐 것
+
+- 수집 전·test별 HOME/USERPROFILE/AppData/XDG 격리와 사용자 `.labhq` 접근 guard. subprocess에도 적용.
+- `test_direct_outputs.py`의 gateway tmp 누락 수정. 현재 demo test의 tmp 경로 확인 추가.
+- `scripts/purge_test_requests.py`: dry-run 기본. 정확한 문구·agent·mode가 일치한 요청과 이벤트만 선택하며 apply는 gateway 종료 확인과 새 SQLite 백업을 요구한다.
+
+## 확인
+
+- 합성 사용자 홈으로 재현한 guard 회귀: 수정 전 2 failed → 수정 후 통과.
+- Windows 전체: **5,630 passed, 66 skipped**. 실제 Node 실행 파일을 테스트 프로세스 PATH에 넣어 사용자 AppData에 의존하는 래퍼를 피했다.
+- 읽기 전용 SQLite 전후: 요청 **47→47**, test 문구 **38→38·4→4·4→4**. 증가 모두 0.
+- mtime 변경 1건은 state 아래에 있었다. PI가 실행 중이므로 파일 무변경을 주장하지 않고 요청 건수로 판정했다.
+- 공개 검사·Python 3.10 문법 검사 통과. CI 결과는 PR checks에 기록한다.
+
+## 미해결
+
+- 데모 문구 8건의 과거 유입 출처는 미확정. 현재 demo test는 tmp gateway를 사용한다.
+- 검증된 basetemp 삭제는 자동 승인 검토의 `blocked by policy`로 차단돼 폴더가 남았다.
+- 실제 purge·PI/trial 제어·설정 변경·리뷰 요청·병합은 하지 않았다.
+
+Refs #545, #221
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
+실패 MCP probe가 exit 1을 반환한다. 실제 Codex 90초 지연 호출도 재시도 없이 한 번 완료돼 #276의 남은 실측을 채웠다.
+
+## 바뀐 것
+
+- summary·진단을 보존하고 `ok`·정확한 marker·서버/도구 호출 각 1회·tool error 0을 모두 검사한다.
+- Claude inbound는 sender 성공, refuse의 거부 통지·로그, accept/unset의 큐 기록을 별도로 판정한다. `--no-sender`는 MCP만 검사한다.
+- task timeout을 summary에 기록하고 매뉴얼의 MCP·inbound 설명을 갱신했다.
+- 개발 기준 `f0cbb32`: triage `70f5b72` 이후 #547·#532·#551·#552 반영. 해당 probe 파일에 선행 변경은 없다.
+
+## 실행한 것
+
+| 검사 | 결과 |
+|---|---|
+| 새 회귀 29건 | 기준 코드 29 failed → branch 통과 |
+| 관련 pytest | 37 passed, 1 skipped |
+| Windows 전체 pytest | 5,648 passed, 66 skipped (554.79초) |
+| 실제 Codex | 0.162.0-alpha.17.2 · 기존 직원 모델 gpt-5.6-sol · 105.4초 · exit 0 |
+| 실제 호출 | 지연 90초 · 승인 60초 · MCP 1,320초 · task 1,800초 · 서버/도구 각 1회 · error 0 |
+| 공개 검사 | 통과 |
+
+전용 설정·임시 작업 폴더와 기존 직원 인증으로 한 번 실행했다. workspace-write/elevated 격리를 유지했고 PI·trial gateway/runner에는 연결하지 않았다. raw stream·개인 경로는 로컬에만 보관한다. Claude 실제 inbound는 #286의 기존 근거이며 이번 실행은 Codex다.
+
+## 남은 지적
+
+- #286의 sender launcher 지원 범위(P2)는 그대로다. 봇 리뷰 판단과 병합은 총괄이 이어받는다.
+
+Fixes #276
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+# runner capability 브리핑
+
+- 권고: 브리핑이 계획과 같은 정제 요약을 받아 현재 계산 자원의 한계부터 적는다.
+- PR: [#552](https://github.com/ehojune/bioinfo-team-3d/pull/552), branch: `briefing-runner-capabilities`.
+
+## 변경
+
+- `scheduler=none`·`labhq_hpc=no`·도구 `no`는 사용 불가, `unknown`·보고 부재는 미확인으로 안내한다.
+- raw capability manifest 대신 기존 `format_capabilities` 결과만 브리핑에 넣는다. 별도 doctor·원격 조회·모델 호출은 없다.
+- 비서실장이 없으면 기존 계획 경로를 그대로 탄다.
+
+## 검증
+
+- 새 회귀 2건: 기준 코드에서 2 failed, branch에서 2 passed.
+- `tests/test_cso.py`: 203 passed.
+- Windows 전체 pytest: 5619 passed, 66 skipped.
+- 공개 검사와 diff 검사 통과. 전용 TEMP·state·basetemp는 검사 뒤 삭제했다.
+- 개발 기준 `e219c68`; triage 기준 `70f5b72` 이후 관련 경로 선행 변경 `a428dba`·`1903c15`를 확인했다.
+
+## 미해결
+
+- 없음. CI·자동 리뷰 판정과 병합은 총괄에게 넘긴다.
+
+Refs #36
+
+🤖 Generated with Codex (gpt-5.6-sol) for the labhq dev lead
+
+## 결론
+
+참고 자료 17개를 한·영 문서로 모으고 README의 더 읽기 표에서 연결한다.
+
+## 바뀐 것
+
+- `docs/references.md`·`docs/references.en.md`: 같은 17행 표, 공식 URL과 저장소 근거 링크, 채택·검토 구분.
+- topic 논문 1,286편은 기존 목록으로 연결한다.
+- README가 이미 길어 표를 분리했다: 한국어 15,199 → 15,272자(+73), 영어 22,754 → 22,874자(+120); 새 표 문서는 각각 2,997자·4,369자다.
+- 문서만 변경했다.
+
+## 실행한 것
+
+- `pytest -q tests/test_integrations.py tests/test_patch_notes.py tests/test_notes_index.py`: 56 passed.
+- 새 문서의 내부 파일·앵커와 한·영 17행 일치를 확인했다.
+- `scripts/integrations.py --check`, `scripts/notes_index.py --validate`, `scripts/check_public.sh`, `git diff --check` 통과.
+- PR #551의 문서 커밋을 패치노트에 기록하고 `scripts/patch_notes.py check --base origin/main --head HEAD`를 통과했다(기록 전용 커밋은 저장소 규칙상 행 제외).
+- 전체 pytest는 CI에서 실행하며 job 결과는 작업 완료 보고에 남긴다.
+
+## 미해결
+
+없음. 리뷰 판단·병합은 개발 총괄이 이어받는다.
+
+Refs #316, Refs #64, Refs #41
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
+긴 명령을 실행하는 직원이 쉬는 중으로 보이던 결함을 고쳤습니다. 최근 200개 이벤트에서 상태가 빠지면 작업판만 running task를 복원하고 직원은 idle로 남던 것이 원인입니다.
+
+## 바뀐 것
+
+- 작업 원장에 도구 시작·종료·대기·경고를 보존합니다. 공유 reducer가 순서 대기·후속 답변까지 복원합니다.
+- 직원 시트·카드·2.5D·3D에 명령 실행 시간, 생각 중, PI 결정·HPC·질문·차례 대기를 표시합니다. stall·runner 연결 경고가 우선합니다.
+- 활동 줄은 명령·파일 경로를 한 줄로 표시하고 원문은 기존 펼침에 남깁니다. main의 직원 제어와 일시 정지·멈춤 표시도 보존했습니다.
+- manual 웹 사무실 절을 갱신했습니다.
+
+## 실행한 것
+
+- main `e219c68`에서 새 pytest 15건·Node 17건 실패. 수정본은 pytest 15건·Node 18건 모두 통과.
+- Windows 전체 pytest: **5,633 passed · 66 skipped**. 전체 Node: **40개 파일 통과**.
+- 합성 snapshot을 띄운 Chrome에서 직원 시트·명령 펼침·카드·3D 상태 문구 확인. main 통합 뒤 직원 시트 재확인.
+- 공개 검사·diff 검사·패치노트·목차 검사 통과.
+
+## 미해결
+
+- 로컬 pytest 임시 폴더 정리는 자동 승인 검토가 차단해 남았습니다.
+- 자동 봇 리뷰 판단과 병합은 개발 총괄이 이어받습니다.
+
+Refs #435
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
+손상된 중첩 count가 있어도 semantics report는 정상 요청을 요약하고 제외한 행을 `broken_lines`에 센다.
+
+## 바뀐 것
+
+- `types`·`declarations`와 report가 더하는 count의 구조·0 이상 정수를 읽기 경계에서 검사한다. 손상 값을 0으로 바꾸지 않는다.
+- 이전 선택 필드 부재, worker의 `declarations: null`, 소수 지연·비용을 보존한다. JSON·텍스트 CLI와 arm·판본·input-fit 합계를 검증했다.
+- 매뉴얼 해당 절 갱신(117,845 → 118,032자). selector·worker·A/B 배정·breaker·저장 로그·활성 설정 변경 없음.
+- 착수 기준 `e219c68`: triage 기준 이후 #547·#532와 생성 목차 반영.
+
+## 실행한 것
+
+- 합성 JSONL의 손상 count 두 종류: 새 CLI 회귀 4건이 main에서 실패하고 수정 후 통과.
+- report pytest: 275 passed. Windows 전체 pytest: 5861 passed, 66 skipped, 692 warnings(8분 47초). skipped는 통과에 포함하지 않았다.
+- 레인 전용 임시 폴더로 TEMP·TMP·TMPDIR·state·basetemp 격리. 공개 검사·diff 검사 통과.
+
+## 미해결
+
+- CI는 PR head 결과로 확인한다. 리뷰 요청·병합은 총괄에게 인계한다.
+- 로컬 임시 폴더 삭제가 도구 정책으로 차단돼 정리를 인계한다.
+- 합성 재현이며 운영 로그 손상을 확인한 결과는 아니다.
+
+Refs #150
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
+## 결론
+
 PR #532의 3차 검증에서 새 결함 3건을 고쳤다. main(#540~#545 포함)을 병합했다. 로컬 전체 검증은 통과했으며 ready로 전환한다. 병합은 총괄이 현재 head의 [CI 결과](https://github.com/ehojune/bioinfo-team-3d/pull/532/checks)를 보고 판단한다.
 
 ## 바뀐 것

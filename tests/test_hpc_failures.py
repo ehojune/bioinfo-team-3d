@@ -89,8 +89,9 @@ async def test_hpc_failures_reach_agent_tool_error(tmp_path, scenario, tool, arg
                       "server": "labhq_hpc", "tool": tool, "status": "completed", "result": payload}}
         state = RunState()
         await get_adapter(engine, settings).handle_line(json.dumps(stream), state, ctx)
-        assert [kind for kind, _ in events] == ["agent.tool_error"]
-        assert detail in events[0][1]["text"]
+        assert [kind for kind, _ in events] == ["agent.tool_result", "agent.tool_error"]
+        assert events[0][1] == {"id": None}
+        assert detail in events[1][1]["text"]
         assert state.error is None  # the model can recover from an ordinary tool error
 
 
@@ -134,7 +135,8 @@ async def test_codex_completed_mcp_error_result_is_visible(tmp_path, error_key):
     stream = {"type": "item.completed", "item": {"type": "mcp_tool_call", "status": "completed",
               "result": {error_key: True, "content": [{"type": "text", "text": "fixture qstat failed"}]}}}
     await get_adapter(agent.engine, settings).handle_line(json.dumps(stream), RunState(), ctx)
-    assert events == [("agent.tool_error", {"text": "fixture qstat failed"})]
+    assert events == [("agent.tool_result", {"id": None}),
+                      ("agent.tool_error", {"text": "fixture qstat failed"})]
 
 
 @pytest.mark.parametrize("scheduler", ["sge", "pbs"])

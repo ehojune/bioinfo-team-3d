@@ -671,6 +671,68 @@ def test_cso_capabilities_include_each_runner_local_software_and_unknown():
     assert "private-user" not in text
 
 
+@pytest.mark.asyncio
+async def test_briefing_receives_the_planners_sanitized_runner_capabilities():
+    from labhq.orchestrator.cso import format_capabilities
+
+    async def dispatch(task):
+        if task.meta["kind"] == "briefing":
+            return result(task, text="brief")
+        if task.meta["kind"] == "plan":
+            return result(task, structured={"steps": []})
+        return result(task, text="done")
+
+    hub = FakeHub(dispatch)
+    hub.s.orchestrator.chief_of_staff_agent = "chief_of_staff"
+    hub.s.orchestrator.reviewer_agent = None
+    hub.s.orchestrator.precedent_agent = None
+    hub.agents["chief_of_staff"] = {
+        "id": "chief_of_staff", "name": "Chief", "role": "briefing", "engine": "mock"}
+    hub.agents["worker"].update(
+        runner_id="runner-a", scheduler="none", hpc_tools=False, compute_backends=["local CLI"])
+    hub.runner_capabilities = {"runner-a": {
+        "scheduler": "none", "hpc_tools": False, "compute_backends": ["local CLI"],
+        "local_software": {
+            "r": {"available": False, "version": None},
+            "python": {"version": "3.12.7", "packages": {}},
+            "tools": {"docker": False, "nextflow": False, "java": False, "wsl": False},
+            "private_path": r"C:\Users\private-user\environment",
+        },
+    }}
+
+    await Orchestrator(hub).run_request("r")
+
+    briefings = [task for task in hub.calls if task.meta["kind"] == "briefing"]
+    plans = [task for task in hub.calls if task.meta["kind"] == "plan"]
+    assert len(briefings) == len(plans) == 1
+    expected = format_capabilities([hub.agents["worker"]], hub.runner_capabilities)
+    assert expected in briefings[0].prompt and expected in plans[0].prompt
+    assert "scheduler=none" in briefings[0].prompt
+    assert "docker=no" in briefings[0].prompt and "gseapy=unknown" in briefings[0].prompt
+    assert "never as available" in briefings[0].prompt
+    assert "numeric feasibility score or grade" in briefings[0].prompt
+    assert "private-user" not in briefings[0].prompt
+
+
+@pytest.mark.asyncio
+async def test_missing_capabilities_and_unconfigured_chief_keep_the_plan_path():
+    async def dispatch(task):
+        if task.meta["kind"] == "plan":
+            return result(task, structured={"steps": []})
+        return result(task, text="done")
+
+    hub = FakeHub(dispatch)
+    hub.s.orchestrator.reviewer_agent = None
+    hub.s.orchestrator.precedent_agent = None
+
+    await Orchestrator(hub).run_request("r")
+
+    assert not [task for task in hub.calls if task.meta["kind"] == "briefing"]
+    plans = [task for task in hub.calls if task.meta["kind"] == "plan"]
+    assert len(plans) == 1
+    assert "runner capability report: unknown" in plans[0].prompt
+
+
 def test_environment_rule_uses_binary_wheels_and_falls_back_without_asking_pi():
     from labhq.orchestrator.cso import ENV_STEP_RULE, PLAN_PROMPT, REPLAN_PROMPT, RESEARCH_PLAN_PROMPT
 
