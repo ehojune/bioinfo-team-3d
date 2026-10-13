@@ -15,6 +15,7 @@ export const ROSTER=[
   {id:'qc_reviewer',name:'고슴도치 Data QC',species:'고슴도치',role:'PASS / WARN / FAIL 판정',prop:'QC 판정 도장',fur:'#A28763',seat:[5.65,-3.9],state:'error'},
   {id:'sci_reviewer',name:'거북 과학 리뷰어',species:'거북',role:'질문 · 근거 · 철저성 검토',prop:'세 탭 리뷰 문서',fur:'#8FAD7C',seat:[-5.6,3.1],state:'queued'},
   {id:'recruiter',name:'비버 인사팀',species:'비버',role:'Paper2Agent 변환 · 검증',prop:'오퍼레터',fur:'#A38061',seat:[5.65,-.4],state:'done'},
+  {id:'facilities',name:'시설팀',species:'햄스터',role:'환경 오류 진단',prop:'점검표',fur:'#C5A678',seat:[-7.75,3.1],state:'queued'},
   {id:'contract',name:'병아리 파견직',species:'병아리',role:'논문의 방법 적용',prop:'논문을 접은 종이모자',fur:'#DFC46E',seat:[5.65,3.1],state:'queued'},
 ];
 
@@ -105,6 +106,9 @@ export function makeCharacter(s,parent,def,index){
     s.cyl(body,fur,[0,1.72,.25],[.17,.42,.17],[.45,0,0]);
     s.ball(body,cream,[0,1.25,.33],[.31,.35,.075]);
     s.bar(body,C.wood,[-.25,1.28,.385],[.25,1.28,.385],.018);
+  }else if(id==='facilities'){
+    roundEars(.38,.30,.14);muzzle(.29,.18,.34);
+    for(const side of [-1,1])s.ball(head,cream,[side*.31,-.12,.30],[.18,.15,.13]);
   }else if(id==='recruiter'){
     roundEars(.41,.28,.135);muzzle(.32,.20,.35);
     for(const side of [-1,1])s.box(head,C.white,[side*.066,-.30,.47],[.108,.17,.065]);

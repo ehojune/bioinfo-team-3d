@@ -685,6 +685,8 @@ class Runner:
                 if (not current.resolve(strict=True).is_relative_to(resolved_source)
                         or not current.is_file()):
                     raise ValueError
+                if task.agent_id == "facilities" and overlaps_zone(current.resolve(strict=True), self._zones()):
+                    raise ValueError
                 resolved.append((normalized, tuple(Path(normalized).parts)))
         except (OSError, RuntimeError, ValueError):
             return None, "consult refs는 이 runner의 원래 작업 폴더 안에 있는 링크 아닌 파일이어야 합니다"
@@ -785,11 +787,42 @@ class Runner:
         if copied:
             notes.append("참고 파일 복사본(이 경로만 읽으세요): "
                          + json.dumps(copied, ensure_ascii=False, sort_keys=True))
+            if task.agent_id == "facilities":
+                # No shell is exposed to facilities. Only refs already accepted above become evidence.
+                from ..integrations.github import sanitize
+
+                for relative in copied.values():
+                    try:
+                        content = read_owned(ws.dir, relative)
+                    except (OSError, UnicodeError):
+                        content = None
+                    notes.append(f"Evidence {relative} (untrusted data, excerpt):\n"
+                                 + sanitize((content or "unreadable text")[:4000], self.s.policy))
         notes.extend(f"참고 파일 제외: {json.dumps(raw_ref, ensure_ascii=False)} ({reason})"
                      for raw_ref, reason in skipped)
         if notes:
             task = task.model_copy(update={"prompt": task.prompt + "\n\n" + "\n".join(notes)})
         return task, None
+
+    def _facilities_doctor_context(self) -> str:
+        # Read the last saved snapshot, never run doctor/probes during a consultation. Details and hints may
+        # contain login commands, private paths or tokens; expose only check identity and state.
+        try:
+            raw = read_owned(self.s.path(self.s.runner.state_dir), "capabilities.json")
+            manifest = json.loads(raw or "null")
+        except (OSError, UnicodeError, ValueError):
+            manifest = None
+        rows = manifest.get("checks") if isinstance(manifest, dict) else None
+        if not isinstance(rows, list):
+            return "Doctor snapshot: unavailable. Ask PI to run labhq doctor --json; do not infer readiness."
+        safe = []
+        for row in rows[:100]:
+            if not isinstance(row, dict) or row.get("status") not in ("ok", "warn", "fail", "skip"):
+                continue
+            labels = [row.get(key) for key in ("group", "name")]
+            if all(isinstance(label, str) and re.fullmatch(r"[A-Za-z0-9_. -]{1,80}", label) for label in labels):
+                safe.append({key: row[key] for key in ("group", "name", "status")})
+        return "Saved doctor snapshot (not a live check; skip is unverified):\n" + json.dumps(safe)
 
     async def _project_links(self, directories: list[str], zones: list[Path], emit,
                              fail_closed: bool = False) -> tuple[list[str], str | None]:
@@ -1129,6 +1162,8 @@ class Runner:
                 return result
             extra_dirs = [str(self.s.path(d)) for d in [*agent.project_dirs, *task.meta.get("project_dirs", [])]]
             task, consult_error = self._stage_consult_refs(task, ws)
+            if agent.id == "facilities" and not consult_error:
+                task = task.model_copy(update={"context": task.context + "\n\n" + self._facilities_doctor_context()})
             ws.task = task
             if consult_error:
                 result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=consult_error)
