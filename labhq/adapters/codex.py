@@ -259,7 +259,12 @@ class CodexAdapter(AgentAdapter):
         deny = self.deny_read_paths(ctx) if parent else []
         if not deny:
             return ["-s", sandbox]
-        profile = {"extends": parent, "filesystem": {path: "deny" for path in deny}}
+        from ..private_paths import inside_any
+
+        # Specific read roots reopen only the skill/plugin subtree inside a denied config home.
+        filesystem = {path: "read" for path in ctx.private_open_reads if inside_any(path, deny)}
+        filesystem.update({path: "deny" for path in deny})
+        profile = {"extends": parent, "filesystem": filesystem}
         return ["-c", f"default_permissions={_toml(STAFF_PROFILE)}",
                 "-c", f"permissions.{STAFF_PROFILE}={_toml(profile)}"]
 

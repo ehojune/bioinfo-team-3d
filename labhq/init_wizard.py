@@ -319,7 +319,9 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
             print("Claude 직원 로그인은 직접 실행하세요(새 창에서): " + doctor.claude_login_command(_is_windows()))
     if not yes and not dry_run:
         _alphagenome_key(settings)
-    result = doctor.collect(settings, dry_run=dry_run, require_roster=True)
+    # Initial config creation also precedes the clean-install mock setup. Installation is an explicit
+    # doctor --fix step; init must stay offline and must not write skills into the user's home.
+    result = doctor.collect(settings, dry_run=dry_run, require_roster=True, require_paper2agent=False)
     print(doctor.render(result))
     summary = result["summary"]
     print(f"doctor: ok {summary['ok']}, warn {summary['warn']}, fail {summary['fail']}")

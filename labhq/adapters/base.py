@@ -418,7 +418,7 @@ WORKSPACE_WRITE_RULES = (
 def private_paths_section(labels: list[str] | tuple[str, ...], saved_output_open: bool = False) -> str:
     """The staff rule for PI personal paths (policy.private_paths). Only `~` and role labels: role files and
     prompts can reach round records and public reports, so no absolute home path goes in. `saved_output_open`:
-    a Claude task whose own project folder in the staff config folder is open for reading (#298 ⑤)."""
+    a task with read-only exceptions for plugin/skill files or its own Claude saved output."""
     if not labels:
         return ""
     lines = ["", "## PI 개인 파일 (모든 직원)",
@@ -427,8 +427,8 @@ def private_paths_section(labels: list[str] | tuple[str, ...], saved_output_open
              '- 작업에 꼭 필요해 보이면 손대기 전에 labhq_ask(to="cso")로 묻습니다.',
              "- 대상: " + ", ".join(f"`{label}`" for label in labels)]
     if saved_output_open:
-        lines.append("- Claude가 긴 도구 출력을 따로 저장한 파일(직원 설정 폴더 `projects/` 아래 이 작업 몫)은 Read로 다시 읽을 수 "
-                     "있습니다. 그 폴더의 다른 파일은 열지 않습니다.")
+        lines.append("- 이 작업에 읽기로 열린 plugin·skill 또는 Claude의 작업별 저장 출력은 Read로 다시 읽을 수 있습니다. "
+                     "상위 폴더의 다른 파일과 쓰기는 허용하지 않습니다.")
     elif "~/.claude" in labels:
         lines.append("- 긴 명령 출력은 작업 폴더 안 파일로 남겨 읽습니다. Claude가 `~/.claude` 아래에 따로 저장한 긴 출력은 다시 열리지 않을 수 있습니다.")
     return "\n".join(lines) + "\n"

@@ -94,15 +94,73 @@ Rules:
 """
 
 
-def skill_path(engine: str) -> Path:
-    base = "~/.claude/skills/paper2agent" if engine == "claude_code" else "~/.agents/skills/paper2agent"
-    return Path(base).expanduser()
+def skill_path(engine: str, settings=None) -> Path:
+    """Staff-owned install; Claude loads this dedicated plugin only for the recruiter."""
+    from ..adapters.base import expand_env
+
+    if engine not in ("claude_code", "codex"):
+        raise ValueError("Paper2Agent recruiter requires claude_code or codex")
+    key = "CLAUDE_CONFIG_DIR" if engine == "claude_code" else "CODEX_HOME"
+    env = expand_env(getattr(settings.engines, engine).env) if settings else {}
+    raw = env.get(key) or str(Path.home() / ".labhq" / ("claude-staff" if engine == "claude_code" else "codex-staff"))
+    home = Path(raw).expanduser()
+    if not home.is_absolute():
+        raise ValueError(f"Set engines.{engine}.env.{key} to an absolute staff directory")
+    if engine == "claude_code":
+        home /= "labhq-paper2agent"
+    path = home / "skills" / "paper2agent"
+    personal = [Path.home() / name for name in (".claude", ".codex", ".agents")]
+    if any(path.resolve() == p.resolve() or p.resolve() in path.resolve().parents for p in personal):
+        raise ValueError(f"Set engines.{engine}.env.{key} to a separate staff directory")
+    return path
 
 
-def skill_installed(engine: str = "claude_code") -> bool:
-    path = skill_path(engine) / "SKILL.md"
-    guard_test_path(path)
-    return path.exists()
+def skill_installed(engine: str = "claude_code", settings=None) -> bool:
+    path = skill_path(engine, settings) if settings else skill_path(engine)
+    guard_test_path(path / "SKILL.md")
+    return (path / "SKILL.md").is_file()
+
+
+def recruiter_engine(settings, recruiter) -> str:
+    if settings.runner.force_engine == "mock":
+        return "mock"
+    if recruiter is None:
+        raise ValueError("recruiter is missing from the roster")
+    return settings.runner.force_engine or recruiter.engine.value
+
+
+def setup_paper2agent(settings, commit: str | None = None) -> list[Path]:
+    """Shared CLI/doctor fix path, without changing staff or PI configuration."""
+    from ..doctor import _roster
+
+    recruiter = next((a for a in _roster(settings) if a.id == settings.recruit.agent_id), None)
+    engine = recruiter_engine(settings, recruiter)
+    if engine == "mock":
+        return []
+    dst = skill_path(engine, settings)
+    if engine == "codex":
+        from ..adapters.base import expand_env
+        if not expand_env(settings.engines.codex.env).get("CODEX_HOME"):
+            raise ValueError("Set engines.codex.env.CODEX_HOME to the staff login directory")
+    out = install_skill(settings.recruit.skill_source, Path.home() / ".labhq" / "cache",
+                        commit=commit or settings.recruit.skill_commit, destinations=[dst])
+    if engine == "claude_code":
+        manifest = dst.parent.parent / ".claude-plugin" / "plugin.json"
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text('{"name":"labhq-paper2agent"}\n', encoding="utf-8")
+    # Only old copies with labhq's valid provenance marker belong to us. Never follow directory links.
+    from ..adapters.owned import is_link
+    for old in (Path.home() / ".claude/skills/paper2agent", Path.home() / ".agents/skills/paper2agent"):
+        if not old.is_dir() or any(is_link(p) for p in (old, *old.parents)):
+            continue
+        try:
+            marker = json.loads((old / SOURCE_MARKER).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if (isinstance(marker, dict) and isinstance(marker.get("source"), str)
+                and marker["source"] and provenance.source_commit(marker.get("commit"))):
+            shutil.rmtree(old)
+    return out
 
 
 def head_commit(repo: Path) -> str | None:
@@ -187,18 +245,19 @@ def _checkout(repo: Path, ref: str) -> None:
     subprocess.run(["git", "-C", str(repo), "checkout", "--detach", "FETCH_HEAD"], check=True)
 
 
-def installed_commit(engine: str = "claude_code") -> str | None:
+def installed_commit(engine: str = "claude_code", settings=None) -> str | None:
     """The Paper2Agent commit setup-paper2agent recorded in the installed copy, or None."""
-    path = skill_path(engine) / SOURCE_MARKER
-    guard_test_path(path)
     try:
+        path = (skill_path(engine, settings) if settings else skill_path(engine)) / SOURCE_MARKER
+        guard_test_path(path)
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     return provenance.source_commit(data.get("commit")) if isinstance(data, dict) else None
 
 
-def install_skill(source: str, cache: Path, commit: str | None = None) -> list[Path]:
+def install_skill(source: str, cache: Path, commit: str | None = None,
+                  *, destinations: list[Path] | None = None) -> list[Path]:
     """Prepare both Paper2Agent copies before replacing either installed skill.
 
     With `commit` (recruit.skill_commit or `setup-paper2agent --commit`) exactly that commit is installed; without
@@ -208,7 +267,7 @@ def install_skill(source: str, cache: Path, commit: str | None = None) -> list[P
     repo = cache / "Paper2Agent"
     guard_test_path(cache)
     guard_test_path(repo / ".git")
-    out = [skill_path(engine) for engine in ("claude_code", "codex")]
+    out = destinations if destinations is not None else [skill_path(engine) for engine in ("claude_code", "codex")]
     for dst in out:
         guard_test_path(dst)
     origin = origin_url(repo) if (repo / ".git").exists() else None
@@ -337,8 +396,10 @@ class Recruitment:
         talent = self.r.registry.talent_dir / self.slug
         build = talent / "build"
         build.mkdir(parents=True, exist_ok=True)
-        real = not self.s.runner.force_engine
-        if real and not skill_installed(self.s.recruit.contract_engine):
+        recruiter = self.r.registry.agents.get(self.s.recruit.agent_id)
+        engine = recruiter_engine(self.s, recruiter)
+        real = engine != "mock"
+        if real and not skill_installed(engine, self.s):
             await self._emit("recruit.failed", {"error": "paper2agent skill not installed — run `labhq setup-paper2agent`"})
             return None
 
@@ -380,7 +441,7 @@ class Recruitment:
         c.verification = {**c.verification, "offer_status": status, "probe_tools": tools,
                           "probe_error": probe_error, "limitations": offer.get("limitations", [])}
         if real:
-            c.verification["paper2agent_commit"] = installed_commit(self.s.recruit.contract_engine)
+            c.verification["paper2agent_commit"] = installed_commit(engine, self.s)
         passed, reason = probation(c.kind, tools, c.skill_dir, status)
         unhashed = provenance.missing_hashes(spec)
         if passed and unhashed:  # a delivered part labhq cannot hash could change unseen: the PI checks it first

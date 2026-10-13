@@ -206,7 +206,11 @@ class ClaudeCodeAdapter(AgentAdapter):
         return {"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1", **super().engine_env()}
 
     def _plugin_dirs(self, ctx: RunContext, env: dict[str, str]) -> list[str]:
-        return [expand_env({"dir": raw}, env)["dir"] for raw in ctx.agent.plugin_dirs]
+        directories = [expand_env({"dir": raw}, env)["dir"] for raw in ctx.agent.plugin_dirs]
+        if ctx.agent.id == self.settings.recruit.agent_id and not ctx.read_only:
+            from ..recruit.paper2agent import skill_path
+            directories.append(str(skill_path("claude_code", self.settings).parent.parent))
+        return directories
 
     def _settings_file(self, ctx: RunContext, value: str) -> Path:
         """The --settings JSON as a file, for a command line that would overflow (Windows, 32,000 units).
@@ -238,7 +242,12 @@ class ClaudeCodeAdapter(AgentAdapter):
         # Errors name the configured entry (e.g. ${BIOINFO_AGENT_DIR}), never the resolved path: they reach
         # task results, the final report and project GitHub updates.
         found: dict[str, Path] = {}
-        for raw, directory in zip(ctx.agent.plugin_dirs, self._plugin_dirs(ctx, env)):
+        try:
+            directories = self._plugin_dirs(ctx, env)
+        except ValueError as exc:
+            return str(exc)
+        labels = [*ctx.agent.plugin_dirs, "Paper2Agent (labhq setup-paper2agent)"]
+        for raw, directory in zip(labels, directories):
             for var in PLUGIN_VAR.findall(raw):
                 if not env.get(var):
                     return f"{var} is not set"
@@ -325,9 +334,10 @@ class ClaudeCodeAdapter(AgentAdapter):
             settings["claudeMdExcludes"] += workspace_memory_excludes(ctx.workdir)
             settings["disableAllHooks"] = True
         elif b.isolate_user_config:
-            cmd += SKILL_ISOLATION_FLAGS if a.allow_skills else ISOLATION_FLAGS
+            skills = a.allow_skills or a.id == self.settings.recruit.agent_id
+            cmd += SKILL_ISOLATION_FLAGS if skills else ISOLATION_FLAGS
             settings.update(user_config_isolation(self.staff_env(ctx), ctx.workdir))
-            if a.allow_skills:
+            if skills:
                 # A skill-enabled member takes instructions only from labhq and its pinned plugin. A reused
                 # workspace (HPC wake-up) could otherwise carry memory files a previous run wrote.
                 settings["claudeMdExcludes"] += workspace_memory_excludes(ctx.workdir)

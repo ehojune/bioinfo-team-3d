@@ -302,7 +302,7 @@ def private_paths_rule(path: Path) -> str:
 
 
 @pytest.mark.asyncio
-async def test_runner_leaves_codex_home_open_to_a_codex_task(tmp_path, monkeypatch):
+async def test_runner_keeps_codex_home_private_to_a_codex_task(tmp_path, monkeypatch):
     home = _home(tmp_path)
     monkeypatch.setattr(private_paths, "host_home", lambda: str(home))
     (home / ".codex").mkdir()
@@ -313,14 +313,14 @@ async def test_runner_leaves_codex_home_open_to_a_codex_task(tmp_path, monkeypat
     monkeypatch.delenv("CODEX_HOME", raising=False)
     runner, seen = _capture_runner(settings, monkeypatch, engine=Engine.codex)
     assert (await runner.run_task(Task(id="t1", agent_id="worker", request_id="r", prompt="q"))).ok
-    assert seen["ctx"].private_labels == ["~/.ssh"]
+    assert seen["ctx"].private_labels == ["~/.codex", "~/.ssh"]
     runner2, seen2 = _capture_runner(settings, monkeypatch, engine=Engine.claude_code)
     assert (await runner2.run_task(Task(id="t2", agent_id="worker", request_id="r", prompt="q"))).ok
     assert seen2["ctx"].private_labels == ["~/.codex", "~/.ssh"]  # Claude staff never need the Codex login
 
 
 @pytest.mark.asyncio
-async def test_runner_closes_configured_codex_home_to_claude_but_not_codex(tmp_path, monkeypatch):
+async def test_runner_closes_configured_codex_home_to_both_engines(tmp_path, monkeypatch):
     home = _home(tmp_path)
     monkeypatch.setattr(private_paths, "host_home", lambda: str(home))
     monkeypatch.setattr(private_paths, "_labhq_entries", REAL_LABHQ_ENTRIES)
@@ -347,7 +347,7 @@ async def test_runner_closes_configured_codex_home_to_claude_but_not_codex(tmp_p
 
     codex_runner, codex_seen = _capture_runner(settings, monkeypatch, engine=Engine.codex)
     assert (await codex_runner.run_task(Task(id="codex", agent_id="worker", request_id="r", prompt="q"))).ok
-    assert not private_paths.inside_any(str(auth), codex_seen["ctx"].env[ENV_VAR].split(os.pathsep))
+    assert private_paths.inside_any(str(auth), codex_seen["ctx"].env[ENV_VAR].split(os.pathsep))
 
 
 # ---------------- doctor ----------------
@@ -505,7 +505,7 @@ async def test_runner_gives_claude_the_ask_rules_and_keeps_the_paper2agent_skill
     skill = home / ".claude" / "skills" / "paper2agent"
     skill.mkdir(parents=True)
     monkeypatch.setattr(private_paths, "host_home", lambda: str(home))
-    monkeypatch.setattr("labhq.recruit.paper2agent.skill_path", lambda engine: skill)
+    monkeypatch.setattr("labhq.recruit.paper2agent.skill_path", lambda engine, settings=None: skill)
     settings = _runner_settings(tmp_path, ["~/.claude", "~/.ssh"])
     runner, seen = _capture_runner(settings, monkeypatch)
     assert (await runner.run_task(Task(id="t1", agent_id="worker", request_id="r", prompt="q"))).ok
@@ -514,7 +514,8 @@ async def test_runner_gives_claude_the_ask_rules_and_keeps_the_paper2agent_skill
     assert "Bash(*.ssh*)" in ctx.claude_settings["permissions"]["ask"]
     recruit = Task(id="t2", agent_id="worker", request_id="r", prompt="q", meta={"kind": "recruit"})
     assert (await runner.run_task(recruit)).ok
-    assert seen["ctx"].private_labels == ["~/.ssh"]  # the skill's files sit under ~/.claude
+    assert seen["ctx"].private_labels == ["~/.claude", "~/.ssh"]
+    assert seen["ctx"].private_open_reads == [str(skill)]
 
 
 # ---------------- review of PR #324, round 3: shell and outside reads always reach the gate ----------------
@@ -699,8 +700,9 @@ def test_plugin_dirs_expand_with_the_claude_engine_env(tmp_path, monkeypatch):
     elsewhere = str(tmp_path / "elsewhere")
     assert private_paths.plugin_keep_dirs(settings, ["${BIOINFO_AGENT_DIR}"],
                                           task_env={"BIOINFO_AGENT_DIR": elsewhere}) == [elsewhere]
-    found = resolve_private_paths(settings, keep, home=str(home))
-    assert found.labels == ("~/.ssh",) and found.skipped == ("~/.claude",)
+    found = resolve_private_paths(settings, open_reads=keep, home=str(home))
+    assert found.labels == ("~/.claude", "~/.ssh") and found.skipped == ()
+    assert str(plugin) in found.open_reads
 
 
 def test_doctor_expands_plugin_dirs_with_the_claude_engine_env(tmp_path, monkeypatch):
@@ -715,7 +717,7 @@ def test_doctor_expands_plugin_dirs_with_the_claude_engine_env(tmp_path, monkeyp
         encoding="utf-8")
     settings.engines.claude_code.env = {"BIOINFO_AGENT_DIR": str(plugin)}
     row = _doctor_row(settings, monkeypatch)
-    assert row["detail"] == "1 active; skipped, holds a work folder: ~/.claude"
+    assert row["detail"] == "2 active"
 
 
 @pytest.mark.asyncio

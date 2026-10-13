@@ -100,6 +100,29 @@ def test_default_hub_refuses_unisolated_home(tmp_path, monkeypatch):
     assert not (home / ".labhq").exists()
 
 
+@pytest.mark.parametrize("engine,key", [("claude_code", "CLAUDE_CONFIG_DIR"), ("codex", "CODEX_HOME")])
+@pytest.mark.parametrize("entry", ["skill_installed", "installed_commit", "install_skill"])
+def test_paper2agent_configured_staff_path_is_guarded(tmp_path, monkeypatch, engine, key, entry):
+    from labhq.recruit import paper2agent
+
+    home = tmp_path / "operator"
+    staff = home / ".labhq" / "staff"
+    monkeypatch.setenv("LABHQ_TEST_REAL_HOME", str(home))
+    settings = Settings.model_validate({"engines": {engine: {"bin": engine, "env": {key: str(staff)}}}})
+
+    def unexpected_io(*args, **kwargs):
+        pytest.fail("Paper2Agent reached file I/O or git before guarding the staff path")
+
+    monkeypatch.setattr(paper2agent.subprocess, "run", unexpected_io)
+    for method in ("is_file", "exists", "read_text", "mkdir"):
+        monkeypatch.setattr(Path, method, unexpected_io)
+    with pytest.raises(RuntimeError, match="pytest.*operator"):
+        if entry == "install_skill":
+            paper2agent.install_skill("unused", tmp_path / "cache", destinations=[staff / "skills/paper2agent"])
+        else:
+            getattr(paper2agent, entry)(engine, settings)
+
+
 def test_explicit_store_path_is_guarded_before_mkdir(tmp_path, monkeypatch):
     monkeypatch.setenv("LABHQ_TEST_REAL_HOME", str(tmp_path / "operator"))
     path = tmp_path / "operator" / ".labhq" / "state" / "gateway.sqlite3"
