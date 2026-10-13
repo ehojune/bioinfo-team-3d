@@ -149,6 +149,7 @@ def test_package_data_includes_office_assets():
 @pytest.mark.parametrize('filename,marker', [
     ('web_state.cjs', 'isolation and bounds: OK'),
     ('web_live.cjs', 'reconnect and replay gap: OK'),
+    ('web_demo_separation.cjs', 'fail 0'),
     ('web_command_center.cjs', 'keyed decisions, staff strip and tabs: OK'),
     ('web_decision_detail.cjs', 'fail 0'),
     ('web_expand_history.cjs', 'fail 0'),

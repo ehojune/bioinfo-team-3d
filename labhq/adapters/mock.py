@@ -38,7 +38,7 @@ class MockAdapter(AgentAdapter):
         kind = t.meta.get("kind", "step")
         request = t.meta.get("request", "") + " " + t.prompt
         await ctx.emit("agent.status", {"state": "working", "model": "mock"})
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(self.settings.runner.mock_delay_s)
         structured = None
         text = f"[mock:{a.id}] {kind} 완료 — {t.prompt.splitlines()[0][:80]}"
 

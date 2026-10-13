@@ -2,6 +2,19 @@
 (function (root) {
 'use strict';
 const short = (s, n) => { s = String(s ?? '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
+function officeStorageKey(boot, key) {
+  return boot?.demo === true ? `labhq_demo:${key}` : key;
+}
+function connectionLabel(conn, demo = false) {
+  return {live: demo ? '데모(mock)' : '실시간', demo: '데모(mock)', connecting: '연결 중',
+    offline: '연결 끊김 · 재시도 중', auth: '토큰을 확인해 주세요'}[conn] || '';
+}
+function demoBannerText(status) {
+  const base = '데모입니다 — 실제 요청은 labhq up으로 띄운 사무실에서';
+  const progress = status?.phase === 'waiting' ? `다음 데모 요청까지 ${status.remaining_s}초`
+    : status?.phase === 'running' ? 'mock 요청 진행 중' : 'mock 데모 준비 중';
+  return `${base} · ${progress}`;
+}
 const isContract = a => !!a && (a.employment === 'contract' || String(a.id).startsWith('c_'));
 const ACTIVE_REQUEST_STATES = new Set(['running', 'waiting_for_runner', 'waiting_quota', 'waiting_login', 'waiting_facilities_fix', 'waiting_pi']);
 const TERMINAL_REQUEST_STATES = new Set(['done', 'failed', 'cancelled', 'rejected']);
@@ -108,6 +121,7 @@ Object.defineProperty(S, 'defaultRefs', { value: [], writable: true, enumerable:
 // Connected runner ids (R15), known once a snapshot said so; the page shows 러너 꺼짐 while it is empty.
 Object.defineProperty(S, 'runners', { value: new Set(), writable: true, enumerable: false });
 Object.defineProperty(S, 'runnersKnown', { value: false, writable: true, enumerable: false });
+Object.defineProperty(S, 'demoStatus', { value: null, writable: true, enumerable: false });
 function resetSnapshotState() {
   S.agents.clear(); S.approvals.clear(); S.suggestions = []; S.requests.clear(); S.current = null;
   S.jobs.clear(); S.feed = []; S.cost = 0; S.projects = [];
@@ -271,6 +285,7 @@ function apply(ev, replay = false) {
       S.projects = d.projects || [];
       S.defaultRefs = d.default_references || [];
       (d.recent_events || []).forEach(e => apply(e, true));
+      S.demoStatus = d.demo_status || null;
       (d.engine_holds || []).forEach(hold => S.engineHolds.set(hold.engine, {...hold}));
       if (Array.isArray(d.runners)) { S.runners = new Set(d.runners.map(String)); S.runnersKnown = true; }
       for (const r of d.requests || []) {
@@ -374,6 +389,10 @@ function apply(ev, replay = false) {
         text: `${rejected ? '거절' : '답변'}: ${short(rejected ? d.reason : d.answer, 130)}${question ? ` (질문: ${short(question, 70)})` : ''}`,
         fullText: `${rejected ? '거절' : '답변'}: ${(rejected ? d.reason : d.answer) || ''}${question ? ` (질문: ${question})` : ''}`,
         cls: rejected ? 'alert' : '' }, ts, rid);
+      break;
+    }
+    case 'demo.status': {
+      S.demoStatus = {...d};
       break;
     }
     case 'agent.usage': {
@@ -684,5 +703,5 @@ return { S, apply, ag, visual, stateText, nick, req, setPlan, feed, fillFollowup
 }
 root.LabHQState = { createOfficeState, costLabel, engineCostLabel, agentCostLabel, agentSpentLabel, totalCostLabel,
   isActiveRequest, isTerminalRequest, REQUEST_STATUS_KO, requestStatusLabel, requestStatusText, processingLabel,
-  websocketCloseAction };
+  websocketCloseAction, officeStorageKey, connectionLabel, demoBannerText };
 })(globalThis);

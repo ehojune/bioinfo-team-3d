@@ -57,6 +57,7 @@ a{color:var(--sleep-ink)}
 .conn.live i{background:var(--working)}.conn.demo i{background:var(--sleep)}.conn.offline i,.conn.auth i{background:var(--error)}
 .cost{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
 .note{max-width:1280px;margin:0 auto;padding:0 16px 8px;font-size:13px;color:var(--muted)}
+.note:not([hidden]){padding:10px 16px;background:#fff3ce;color:#654c20;border-bottom:1px solid #e4cc91}
 .runner-off{max-width:1280px;margin:0 auto 8px;padding:6px 16px;font-size:13px;color:var(--error-ink);border-left:3px solid var(--error-ink);box-sizing:border-box}.runner-off[hidden]{display:none}
 .req-actions{margin:6px 0 0}
 .tokenbar{display:none;max-width:1280px;margin:0 auto;padding:0 16px 10px;gap:8px;align-items:center;flex-wrap:wrap}
@@ -340,7 +341,7 @@ dialog.sheet::backdrop{background:rgba(17,26,34,.45)}
     <a id="view-3d" href="/3d/">3D</a>
     <span class="cost" id="cost">사용 비용 불러오는 중</span>
   </div>
-  <p class="note" id="note" hidden>가상의 데이터로 움직이는 데모예요. 게이트웨이에 연결하면 실제 팀의 상태가 보여요.</p>
+  <p class="note" id="note" role="status" hidden></p>
   <p class="runner-off" id="runner-off" role="status" hidden>러너 꺼짐 — 터미널에서 <code>labhq up</code>(또는 <code>labhq runner</code>)을 실행하세요. 그동안 보낸 요청은 러너를 기다려요.</p>
   <div class="tokenbar" id="tokenbar">
     <label for="tok">게이트웨이 토큰</label>
@@ -443,6 +444,7 @@ import {KIND_LABELS as REF_KIND, inferReference, syncReferenceChips} from './ui/
 const BOOT = window.LABHQ_BOOT || { mode: 'demo' };
 const QS = new URLSearchParams(location.search);
 const MODE = (QS.has('demo') || BOOT.mode !== 'live') ? 'demo' : 'live';
+const IS_DEMO = BOOT.demo === true || MODE === 'demo';
 const INSTANCE = BOOT.instance || '';
 // Until the gateway's first snapshot arrives the office is unknown, not empty: no "$0.00" or "waiting for today".
 let snapshotLoaded = MODE === 'demo';
@@ -455,8 +457,8 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const short = (s, n) => { s = String(s ?? '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
 const now = () => Date.now() / 1000;
 const store = {
-  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
-  set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* storage unavailable */ } },
+  get(k) { try { return localStorage.getItem(LabHQState.officeStorageKey({demo: IS_DEMO}, k)); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(LabHQState.officeStorageKey({demo: IS_DEMO}, k), v); } catch (e) { /* storage unavailable */ } },
 };
 const raf = window.requestAnimationFrame ? window.requestAnimationFrame.bind(window) : (f => setTimeout(f, 16));
 const safeUrl = u => (typeof u === 'string' && /^https?:\/\//.test(u)) ? u : null;
@@ -619,11 +621,12 @@ function bubble(a, vs) {
 }
 function renderHeader() {
   const c = $('#conn');
-  const txt = { live: '실시간', demo: '데모', connecting: '연결 중', offline: '연결 끊김, 다시 시도하는 중', auth: '토큰을 확인해 주세요' }[S.conn];
+  const txt = LabHQState.connectionLabel(S.conn, IS_DEMO);
   c.className = `conn ${S.conn}`;
   if (c.lastChild.textContent !== txt) c.lastChild.textContent = txt;
   $('#cost').textContent = snapshotLoaded ? LabHQState.totalCostLabel([...S.requests.values()], S.cost) : `사용 비용 · ${loadingText('비용')}`;
-  $('#note').hidden = MODE !== 'demo';
+  $('#note').hidden = !IS_DEMO;
+  if (IS_DEMO) $('#note').textContent = LabHQState.demoBannerText(S.demoStatus);
   $('#runner-off').hidden = !(MODE !== 'demo' && S.conn === 'live' && S.runnersKnown && !S.runners.size);  // R15
   $('#office').classList.toggle('offline', S.conn === 'offline');
   const n = S.approvals.size;

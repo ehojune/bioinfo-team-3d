@@ -475,7 +475,7 @@ def test_doctor_warns_when_python3_is_a_windows_app_alias(monkeypatch):
 
 
 def test_demo_web_chooses_a_free_port_when_8787_is_busy(monkeypatch):
-    monkeypatch.setattr(cli, "_port_available", lambda host, port: False)
+    monkeypatch.setattr(cli, "_port_available", lambda host, port: port != 8787)
     monkeypatch.setattr(cli, "free_port", lambda: 54321)
     assert cli._demo_web_port("127.0.0.1", 8787) == 54321
 
