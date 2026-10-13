@@ -646,6 +646,12 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
     private = _doctor_private(settings, agents, forced)
     rows.append(_private_paths_row(private))
     rows.append(_alphagenome_row(settings))
+    from .knowledge.recall import health as recall_health
+    recall = recall_health(settings)
+    rows.append(_row("knowledge", "local recall", "ok" if recall["available"] else "warn",
+                     f"count={recall['count']}; last_success={recall['last_success'] or 'never'}; "
+                     f"fallback={recall['fallback'] if recall['fallback'] is not None else 'unknown'}",
+                     "Start this instance's gateway to build or retry its local index."))
     claude_staff = _claude_staff_row(settings, agents, forced, private, login_codes.get("claude_code"))
     if claude_staff:
         rows.append(claude_staff)
