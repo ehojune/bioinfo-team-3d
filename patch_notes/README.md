@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 18:35 | [`23a7d0e`](https://github.com/ehojune/bioinfo-team-3d/pull/565/commits/23a7d0e) | 보고서 완료 뒤 PI 검토·확인을 기록하고 타이틀 유지, 질문 대기·직원 이름과 그림·비용 문구를 수정 |
 | 18:20 | [`3cf6134`](https://github.com/ehojune/bioinfo-team-3d/pull/564/commits/3cf6134) | 실측 Codex 스트림의 전체 이벤트 기대값에 정확한 입력 fingerprint 추가 |
 | 17:58 | [`bf08bfb`](https://github.com/ehojune/bioinfo-team-3d/pull/562/commits/bf08bfb) | 읽기 전용 직원의 자기 outputs·임시 폴더 쓰기를 허용하고 검토 대상 보호·새 이어 묻기 폴더를 검증 |
 | 17:57 | [`d38535f`](https://github.com/ehojune/bioinfo-team-3d/pull/554/commits/d38535f) | 설정·instance·staff·cache·skill·doctor 읽기 전 사용자 홈 guard 적용, 회귀 17건 추가 |
