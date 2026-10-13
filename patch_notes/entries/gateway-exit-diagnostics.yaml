@@ -1,0 +1,8 @@
+pr: 547
+rows:
+- sha: 'd727a5f'
+  at: 2026-10-13 15:45
+  text: gateway·runner 종료 진단과 heartbeat를 기록하고 상태 조회에서 죽은 프로세스의 PID 기록을 보존
+- sha: '90c5e8c'
+  at: 2026-10-13 15:50
+  text: 진단 파일의 ASCII encoding과 바이너리 읽기 모드를 명시해 text I/O 검사를 통과
