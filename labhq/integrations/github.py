@@ -19,7 +19,7 @@ import os
 import re
 import time
 from typing import TYPE_CHECKING, Any, Callable, Iterable
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
 import httpx
 
@@ -349,6 +349,7 @@ class GitHubClient:
 
     async def put_file(self, repo: str, path: str, content: str, message: str, branch: str) -> dict:
         path, content = self.clean(path), self.clean(content)  # branch is a ref, not published text
+        path = quote(path, safe="/")
         sha = None
         r = await self.http.get(f"/repos/{repo}/contents/{path}", params={"ref": branch})
         if r.status_code == 200:
@@ -368,7 +369,7 @@ class GitHubClient:
 
     async def put_image(self, repo: str, path: str, content: bytes, branch: str) -> dict:
         """An image from a reviewed result edition; text files use put_file's cleaner."""
-        endpoint = f"/repos/{repo}/contents/{path}"
+        endpoint = f"/repos/{repo}/contents/{quote(path, safe='/')}"
         existing = await self.http.get(endpoint, params={"ref": branch})
         if existing.status_code not in {200, 404}:
             raise GitHubHTTPError("GET", endpoint, existing)

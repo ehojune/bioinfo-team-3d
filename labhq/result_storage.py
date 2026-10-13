@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+from urllib.parse import quote
 
 from .integrations.github import GitHubClient, GitHubHTTPError, publish_clean, sanitize, root_zone_restricted
 from .models import Task
@@ -128,7 +129,8 @@ class ResultStorage:
             return True
         project = self.s.project(req.get("project_id"))
         if project:
-            req["result_storage"] = {"mode": "existing" if project.repo else "local", "repo": project.repo,
+            can_publish = project.repo and (project.visibility != "public" or project.allow_public_reports)
+            req["result_storage"] = {"mode": "existing" if can_publish else "local", "repo": project.repo,
                 "visibility": project.visibility, "allow_public": project.allow_public_reports,
                 "branch": project.branch, "status": "selected"}
             self.hub.save_request(rid)
@@ -212,44 +214,66 @@ class ResultStorage:
                     restricted_paths(self.s.policy)):
                 saved.update(status="local", warning="통제 데이터가 포함된 요청은 로컬 묶음에만 남깁니다.")
                 return
-            docs = draft_documents(req, self.s)
-            assets, images = edition_assets(req, self.s)
-            links = "\n".join(f"- [{name}]({name})" for name in [*assets, *images])
-            if links:
-                docs["README.md"] += "\n## 그림·표·실행 파일\n\n" + links + "\n"
-                docs["REPRODUCE.md"] += "\n\n## 포함한 파일\n\n" + links + "\n"
-            bundle_readme = self.s.path(self.s.runner.workspace_root) / "requests" / rid / "README.md"
-            if plain_path(bundle_readme) and bundle_readme.is_file():
-                docs["REPRODUCE.md"] += "\n\n" + clean_document(bundle_readme.read_text(encoding="utf-8"), self.s, req)
-            if "editor" in self.hub.agents:
-                result = await self.hub.orchestrator.run_step(Task(
-                    agent_id="editor", request_id=rid,
-                    prompt="다음 기록만 써서 README를 정리하세요.\n" + json.dumps(docs, ensure_ascii=False),
-                    output_schema={"type": "object", "properties": {"readme": {"type": "string"}},
-                                   "required": ["readme"], "additionalProperties": False},
-                    meta={"kind": "result_editor", "title": "결과를 저장소용으로 정리",
-                          "agent_overrides": {"sandbox": "read-only"}}))
-                readme = (result.structured or {}).get("readme") if result.ok else None
-                if isinstance(readme, str) and readme.strip():
-                    docs["README.md"] = clean_document(readme, self.s, req)
-                    if links:
-                        docs["README.md"] += "\n## 그림·표·실행 파일\n\n" + links + "\n"
-            docs.update(assets)
-            target = self.s.path(self.s.runner.workspace_root) / "requests" / rid / "editor"
-            if not plain_path(target):
-                raise ValueError("linked editor directory")
-            target.mkdir(parents=True, exist_ok=True)
-            for name, body in {**docs, **images}.items():
-                path = target / name
-                if not plain_path(path):
-                    raise ValueError("linked editor file")
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(body if isinstance(body, bytes) else body.encode("utf-8"))
-            saved.update(draft_path=str(target), status="draft")
-            self.hub.save_request(rid)
+            if saved.get("status") == "draft":
+                # Resume the exact on-disk edition the PI was reviewing, without another paid task.
+                target = Path(saved["draft_path"])
+                if not plain_path(target) or not target.is_dir():
+                    raise ValueError("missing or linked editor directory")
+                docs, images = {}, {}
+                for path in target.rglob("*"):
+                    if not plain_path(path):
+                        raise ValueError("linked editor file")
+                    if path.is_file():
+                        name = path.relative_to(target).as_posix()
+                        if path.suffix.lower() in _IMAGE_OUTPUTS:
+                            images[name] = path.read_bytes()
+                        else:
+                            docs[name] = path.read_text(encoding="utf-8")
+                if "README.md" not in docs:
+                    raise ValueError("missing editor README")
+            else:
+                docs = draft_documents(req, self.s)
+                assets, images = edition_assets(req, self.s)
+                links = "\n".join(f"- [{name}]({quote(name, safe='/')})" for name in [*assets, *images])
+                if links:
+                    docs["README.md"] += "\n## 그림·표·실행 파일\n\n" + links + "\n"
+                    docs["REPRODUCE.md"] += "\n\n## 포함한 파일\n\n" + links + "\n"
+                bundle_readme = self.s.path(self.s.runner.workspace_root) / "requests" / rid / "README.md"
+                if plain_path(bundle_readme) and bundle_readme.is_file():
+                    docs["REPRODUCE.md"] += "\n\n" + clean_document(bundle_readme.read_text(encoding="utf-8"), self.s, req)
+                if "editor" in self.hub.agents:
+                    result = await self.hub.orchestrator.run_step(Task(
+                        agent_id="editor", request_id=rid,
+                        prompt="다음 기록만 써서 README를 정리하세요.\n" + json.dumps(docs, ensure_ascii=False),
+                        output_schema={"type": "object", "properties": {"readme": {"type": "string"}},
+                                       "required": ["readme"], "additionalProperties": False},
+                        meta={"kind": "result_editor", "title": "결과를 저장소용으로 정리",
+                              "agent_overrides": {"sandbox": "read-only"}}))
+                    saved = req["result_storage"]  # PI review may replace the persisted request fields while we wait.
+                    readme = (result.structured or {}).get("readme") if result.ok else None
+                    if isinstance(readme, str) and readme.strip():
+                        docs["README.md"] = clean_document(readme, self.s, req)
+                        if links:
+                            docs["README.md"] += "\n## 그림·표·실행 파일\n\n" + links + "\n"
+                docs.update(assets)
+                # The audit bundle's MANIFEST and RO-Crate are already sealed.
+                target = self.s.path(self.s.runner.workspace_root) / "requests" / f"{rid}-editor"
+                if not plain_path(target):
+                    raise ValueError("linked editor directory")
+                target.mkdir(parents=True, exist_ok=True)
+                for name, body in {**docs, **images}.items():
+                    path = target / name
+                    if not plain_path(path):
+                        raise ValueError("linked editor file")
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(body if isinstance(body, bytes) else body.encode("utf-8"))
+                saved.update(draft_path=str(target), status="draft")
+                self.hub.save_request(rid)
             if saved.get("mode") == "local":
                 saved["status"] = "local"
                 return
+            if self.s.github.auto_publish_results and not req.get("pi_reviewed_at"):
+                return  # review_done schedules this saved draft again.
             if not self.s.github.auto_publish_results:
                 decision = await self.hub.request_approval(kind="result_publish", request_id=rid,
                     summary=f"편집한 결과를 {saved.get('repo')}에 올릴까요?",
@@ -257,6 +281,7 @@ class ResultStorage:
                             "images": {name: "data:" + _IMAGE_OUTPUTS[Path(name).suffix.lower()] + ";base64," +
                                        base64.b64encode(body).decode("ascii") for name, body in images.items()},
                             "visibility": saved.get("visibility"), "local_draft": str(target)})
+                saved = req["result_storage"]
                 if not decision.get("approved"):
                     saved["status"] = "declined"
                     return
@@ -273,6 +298,8 @@ class ResultStorage:
                                     "data": {"result_storage": saved}})
 
     async def upload(self, rid, docs, images=None):
+        if not self.hub.requests[rid].get("pi_reviewed_at"):
+            raise ValueError("보고서 검토 완료 뒤 게시해 주세요.")
         saved = self.hub.requests[rid]["result_storage"]
         gh = self.client()
         if gh is None:

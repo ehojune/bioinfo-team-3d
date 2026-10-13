@@ -386,6 +386,7 @@ class Hub:
                 {"type": "request.reviewed", "ts": at, "request_id": rid,
                  "data": {**audit, "pi_reviewed_at": at, "pi_review_pending": False}}, self.s.gateway.event_buffer)
             req.update(updated)
+            self.result_storage.schedule(rid)
             self.events.append(event)
             self.pending_committed.append((event, tuple(self.clients)))
             asyncio.get_running_loop().create_task(self._send_committed_event())
@@ -2899,6 +2900,10 @@ class Hub:
     async def resolve_approval(self, approval_id: str, approved: bool, note: str = "",
                                choice: str | None = None, storage: dict | None = None) -> None:
         pending = self.approvals.get(approval_id)
+        if pending and approved and pending["approval"].get("kind") == "result_publish":
+            req = self.requests.get(pending["approval"].get("request_id")) or {}
+            if not req.get("pi_reviewed_at"):
+                raise ValueError("보고서 검토 완료 뒤 게시해 주세요.")
         if pending and (pending["approval"].get("detail") or {}).get("storage"):
             rid = pending["approval"]["request_id"]
             storage = await self.result_storage.select(rid, storage if approved and storage else {"mode": "local"})

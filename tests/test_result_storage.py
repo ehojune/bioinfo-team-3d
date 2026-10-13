@@ -86,7 +86,8 @@ async def test_new_repo_and_upload_only_after_review(tmp_path, monkeypatch, exis
     service = ResultStorage(hub, fake_github(calls, exists=exists))
     await service.select("req_test", {"mode": "new", "repo": "study", "visibility": "private"})
     assert not any(method in {"POST", "PUT"} for method, _, _ in calls)
-    hub.requests["req_test"].update(status="done", report="Observed difference; mechanism remains unknown.")
+    hub.requests["req_test"].update(status="done", pi_reviewed_at=1,
+                                    report="Observed difference; mechanism remains unknown.")
     async def approve(**kw):
         assert kw["kind"] == "result_publish"
         assert "README.md" in kw["detail"]["documents"]
@@ -180,6 +181,8 @@ async def test_mock_request_reaches_editor_and_fake_github(tmp_path, monkeypatch
         if ev.get("type") == "approval.requested":
             card = ev["data"]
             cards.append(card)
+            if card["kind"] == "result_publish":
+                hub.review_done(card["request_id"])
             storage = {"mode": "new", "repo": "study", "visibility": "private"} if card.get("detail", {}).get("storage") else None
             asyncio.create_task(hub.resolve_approval(card["id"], True, "ok", storage=storage))
     hub.publish = tap
