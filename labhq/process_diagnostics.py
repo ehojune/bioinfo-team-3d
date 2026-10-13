@@ -41,7 +41,7 @@ def _resources() -> dict:
             if psapi.GetProcessMemoryInfo(handle, ctypes.byref(memory), memory.cb):
                 result["rss_bytes"] = memory.WorkingSetSize
         elif Path("/proc/self/statm").exists():
-            result["rss_bytes"] = int(Path("/proc/self/statm").read_text().split()[1]) * os.sysconf("SC_PAGE_SIZE")
+            result["rss_bytes"] = int(Path("/proc/self/statm").read_text(encoding="ascii").split()[1]) * os.sysconf("SC_PAGE_SIZE")
     except (OSError, ValueError, AttributeError):
         pass  # Unsupported counters stay explicitly null.
     return result
@@ -175,7 +175,7 @@ def latest_records(logs: Path, role: str, pid: int) -> dict:
     """Read a bounded tail and ignore earlier processes, including previous starts of a reused PID."""
     latest = {}
     try:
-        with (logs / f"{role}-diagnostics.jsonl").open("rb") as source:
+        with (logs / f"{role}-diagnostics.jsonl").open(mode="rb") as source:
             size = source.seek(0, 2)
             source.seek(max(0, size - 65536))
             lines = source.read().splitlines()
