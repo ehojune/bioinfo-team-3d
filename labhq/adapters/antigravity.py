@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 
-from ..util import event_preview, short
+from ..util import event_preview, short, tool_input_summary
 from .base import (AgentAdapter, role_footer, RunContext, RunState, SHELL_TOOLS, note_command_ok,
                    note_failed_output, record_model_id)
 
@@ -60,8 +60,11 @@ class AntigravityAdapter(AgentAdapter):
                             await ctx.emit("agent.log", {**event_preview("text", part, 2000)})
             elif data.get("step_type") == "tool":
                 info = data.get("tool_info") or {}
+                if data.get("state") in {"DONE", "ERROR"}:
+                    await ctx.emit("agent.tool_result", {"id": data.get("step_id")})
                 if data.get("state") == "ACTIVE":
-                    await ctx.emit("agent.tool", {"name": data.get("tool_name"),
+                    await ctx.emit("agent.tool", {"id": data.get("step_id"), "name": data.get("tool_name"),
+                                                  "summary": tool_input_summary(info.get("parameters")),
                                                   **event_preview("input", info.get("parameters"), 400)})
                 elif data.get("state") == "DONE" and data.get("tool_name") in SHELL_TOOLS:
                     note_command_ok(st)

@@ -134,6 +134,7 @@ a{color:var(--sleep-ink)}
   .char,.paw,.paw-up,.m-bang,.m-z text,.code rect,.door-panel{transform-box:fill-box}
   .char{transform-origin:50% 100%}
   .st-idle .char{animation:breathe 3.4s ease-in-out infinite}
+  .st-queued .char{animation:breathe 2.8s ease-in-out infinite}
   .st-working .char{animation:bob .8s ease-in-out infinite}
   .st-working .paw-l{animation:type .34s ease-in-out infinite}
   .st-working .paw-r{animation:type .34s ease-in-out .17s infinite}
@@ -434,7 +435,7 @@ dialog.sheet::backdrop{background:rgba(17,26,34,.45)}
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script src="./state.js"></script>
 <script type="module">
-import {answerRequired, decisionChoice, decisionNote, revisedToast, revisionNoteMissing, syncDecisionCards, syncDecisionHistory, createHistoryVisibility, expandableText} from './ui/decide.js';
+import {answerRequired, decisionChoice, decisionNote, revisedToast, revisionNoteMissing, syncDecisionCards, syncDecisionHistory, createHistoryVisibility, expandableText, syncExpandableText} from './ui/decide.js';
 import {syncStaffCards} from './ui/strip.js';
 import {syncTaskBoard} from './ui/tasks.js';
 import {initTabShell} from './ui/shell.js';
@@ -580,7 +581,7 @@ const headSVG = kind => `<svg viewBox="24 8 52 50" aria-hidden="true" focusable=
 
 /* ---------------- state ---------------- */
 const officeState = LabHQState.createOfficeState({mode: MODE, now});
-const { S, ag, visual, stateText, nick, req, setPlan, feed, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES } = officeState;
+const { S, ag, visual, stateText, currentTask, currentTool, toolInputLine, nick, req, setPlan, feed, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES } = officeState;
 function apply(ev, replay = false) {
   for (const effect of officeState.apply(ev, replay)) {
     if (effect.type === 'toast') toast(effect.text, effect.approval_id);
@@ -611,6 +612,7 @@ function contractLeft(a) {
   return days > 0 ? `계약 ${days}일 남음` : '계약 만료';
 }
 function bubble(a, vs) {
+  if ([...S.activeTasks.values()].some(t => t.agent_id === a.id)) return short(stateText(a, vs), 42);
   if (vs === 'working') {
     if (a.say && now() - (a.sayAt || 0) < 5) return short(a.say, 22);
     if (a.tool && now() - (a.toolAt || 0) < 20) return toolLabel(a.tool);
@@ -833,7 +835,7 @@ function renderRequest() {
     onQuotaResume: api?.resumeQuota ? sid => api.resumeQuota(q.id, sid).then(() => toast('한도 대기를 풀었어요')).catch(err => toast(`재개하지 못했어요: ${err.message}`)) : null });
 }
 function renderStaff() {
-  syncStaffCards($('#staff-strip'), S.agents.values(), { visual, toolLabel, now });
+  syncStaffCards($('#staff-strip'), S.agents.values(), { visual, stateText, currentTool, toolLabel, now });
 }
 let feedKey = '';
 function avatar(who) {
@@ -1076,6 +1078,14 @@ function renderSheetLogs() {
   else if (rows.some((row, i) => list.children[i] !== row) || rows.length !== list.children.length) list.replaceChildren(...rows);
   list._rows = next;
   const count = $('#sheet-in .trace-count'); if (count) count.textContent = String((a.trace || []).length);
+  const status = $('#sheet-in .sheet-status'); if (status) status.textContent = stateText(a);
+  const task = $('#sheet-in .sheet-task'); if (task) task.textContent = visual(a) === 'idle' ? '없음' : (currentTask(a) || '—');
+  const command = $('#sheet-in .sheet-command'), tool = currentTool(a);
+  if (command) {
+    command.hidden = !tool;
+    syncExpandableText(command, tool ? (typeof tool.input === 'string' ? tool.input : JSON.stringify(tool.input ?? '')) : '',
+      {limit: 120, summary: tool?.summary || toolInputLine(tool?.input), fold: Boolean(tool), truncated: tool?.input_truncated, cutChars: tool?.input_limit});
+  }
   const spent = $('#sheet-in .sheet-spent'), figure = sheetSpent(a.id); if (spent && spent.textContent !== figure) spent.textContent = figure;
 }
 function openSheet(id) {
@@ -1084,7 +1094,7 @@ function openSheet(id) {
   if (dlg.dataset.agent !== id) dlg.dataset.log = 'activity';
   const view = dlg.dataset.log === 'trace' ? 'trace' : 'activity';
   const facts = [
-    ['상태', stateText(a, vs)], ['지금 하는 일', vs === 'idle' ? '없음' : (a.task || '—')],
+    ['상태', stateText(a, vs)], ['지금 하는 일', vs === 'idle' ? '없음' : (currentTask(a) || '—')],
     ['엔진', `${a.engine || '—'}${a.model ? ` / ${a.model}` : ''}`],
     ['소속', isContract(a) ? `파견직, ${contractLeft(a)}` : '정규직'],
   ];
@@ -1102,7 +1112,8 @@ function openSheet(id) {
   if (isContract(a)) acts.push('<button type="button" class="btn" data-act="extend">계약 14일 연장</button>', '<button type="button" class="btn" data-act="release">계약 종료</button>');
   acts.push('<button type="button" class="btn" data-act="close">닫기</button>');
   $('#sheet-in').innerHTML = `<div class="sheet-head"><svg viewBox="18 2 64 72" aria-hidden="true">${charArt(kindOf(a))}</svg><div><h2>${esc(a.name)}</h2><p class="role">${esc(a.role || '')}</p></div></div>
-<dl class="facts">${facts.map(([k, v]) => `<dt>${esc(k)}</dt><dd${k === '쓴 비용' ? ' class="sheet-spent"' : ''}>${esc(v)}</dd>`).join('')}</dl>
+<dl class="facts">${facts.map(([k, v]) => `<dt>${esc(k)}</dt><dd${k === '쓴 비용' ? ' class="sheet-spent"' : k === '상태' ? ' class="sheet-status"' : k === '지금 하는 일' ? ' class="sheet-task"' : ''}>${esc(v)}</dd>`).join('')}</dl>
+<div class="sheet-command" aria-label="실행 중인 도구 입력"></div>
 <div class="log-view" role="group" aria-label="기록 보기"><button type="button" class="btn" data-act="log" data-view="activity" aria-pressed="${view === 'activity'}">활동</button><button type="button" class="btn" data-act="log" data-view="trace" aria-pressed="${view === 'trace'}">생각·디버그 <span class="trace-count">${(a.trace || []).length}</span></button></div>
 <ul class="activity" data-view="${view}"></ul>
 <div class="acts">${acts.join('')}</div>`;

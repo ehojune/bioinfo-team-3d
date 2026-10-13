@@ -122,11 +122,13 @@ Object.defineProperty(S, 'defaultRefs', { value: [], writable: true, enumerable:
 Object.defineProperty(S, 'runners', { value: new Set(), writable: true, enumerable: false });
 Object.defineProperty(S, 'runnersKnown', { value: false, writable: true, enumerable: false });
 Object.defineProperty(S, 'demoStatus', { value: null, writable: true, enumerable: false });
+Object.defineProperty(S, 'activeTasks', { value: new Map(), enumerable: false });
 function resetSnapshotState() {
   S.agents.clear(); S.approvals.clear(); S.suggestions = []; S.requests.clear(); S.current = null;
   S.jobs.clear(); S.feed = []; S.cost = 0; S.projects = [];
   S.lastSay = {}; S.taskStep.clear(); S.stepDetails.clear(); S.askDetails.clear(); S.engineHolds.clear(); S.seq = 0; S.doorUntil = 0;
   S.defaultRefs = [];
+  S.activeTasks.clear();
 }
 const STATE_KO = { idle: '쉬는 중', queued: '순서 기다림', working: '작업 중', waiting: '승인 기다림',
   hibernating: 'HPC 기다리는 중', done: '완료', error: '문제 발생' };
@@ -141,10 +143,69 @@ const PHASES = [['briefing', '브리핑'], ['plan', '계획'], ['execute', '실�
 const phaseLabel = q => q.phase === 'done' ? '완료' : (PHASES.find(([key]) => key === q.phase) || [])[1] || String(q.phase);
 
 const ag = id => S.agents.get(id);
-const visual = a => a.state === 'done' && now() - (a.stateAt || 0) > 3
-  ? 'idle' : STATE_KO[a.state] ? a.state : 'idle';
+// A queued consultation must not hide the command already occupying this employee.
+const taskPriority = t => ({error: 5, working: 4, running: 4, waiting: 3, queued: 2, hibernating: 1})[t.activity?.state || t.state] || 4;
+const activeTask = a => [...S.activeTasks.values()].filter(t => t.agent_id === a.id)
+  .sort((x, y) => taskPriority(y) - taskPriority(x) || (y.dispatched_at || 0) - (x.dispatched_at || 0))[0];
+const currentTask = a => activeTask(a)?.title || activeTask(a)?.activity?.task || a.task || activeTask(a)?.step_id || activeTask(a)?.id || '';
+const currentTool = a => Object.values(activeTask(a)?.activity?.tools || {}).sort((x, y) => y.at - x.at)[0];
+const warning = a => activeTask(a)?.activity?.warning ||
+  (activeTask(a) && S.runnersKnown && a.runner_id && !S.runners.has(String(a.runner_id)) ? 'runner 연결 끊김' : '');
+const taskState = a => {
+  const t = activeTask(a); if (!t) return '';
+  if ([...S.approvals.values()].some(p => p.agent_id === a.id && (!p.task_id || p.task_id === t.id))) return 'waiting';
+  const state = t.activity?.state || t.state;
+  return ['queued', 'waiting', 'hibernating', 'error'].includes(state) ? state : 'working';
+};
+const visual = a => warning(a) ? 'error' : taskState(a) || (a.state === 'done' && now() - (a.stateAt || 0) > 3
+  ? 'idle' : STATE_KO[a.state] ? a.state : 'idle');
 // 'hibernating' covers HPC jobs and unanswered asks (runner agent.status: jobs, asks); a PI question is not HPC.
-const stateText = (a, vs = visual(a)) => vs === 'hibernating' && a.waitFor === 'answer' ? '답 기다리는 중' : STATE_KO[vs];
+const stateText = (a, vs = visual(a)) => {
+  if (warning(a)) return warning(a);
+  const t = activeTask(a), activity = t?.activity || {}, tool = currentTool(a);
+  if (t) {
+    if (vs === 'queued') return '차례 기다리는 중';
+    if (vs === 'waiting') return activity.ask ? '답 기다리는 중' : 'PI 결정 기다리는 중';
+    if (vs === 'hibernating') return (activity.jobs || []).length ? 'HPC 작업 기다리는 중' : '답 기다리는 중';
+    if (vs === 'working') return tool ? `${/Bash|PowerShell|shell|command_execution/i.test(tool.name) ? '명령' : '도구'} 실행 중 · ${Math.max(0, Math.floor((now() - tool.at) / 60))}분째` : '생각하는 중';
+  }
+  return vs === 'hibernating' && a.waitFor === 'answer' ? '답 기다리는 중' : STATE_KO[vs];
+};
+function toolInputLine(input) {
+  let value = input;
+  if (typeof value === 'string') { try { value = JSON.parse(value); } catch (_) { /* a shell string */ } }
+  if (value && typeof value === 'object') value = value.command ?? value.file_path ?? value.path ?? value.query ?? value.pattern ?? value.description ?? Object.keys(value).join(', ');
+  return String(value ?? '').replace(/\s+/g, ' ').trim();
+}
+function trackActivity(ev) {
+  const d = ev.data || {}, tid = ev.task_id;
+  if (!tid) return;
+  if (ev.type === 'task.dispatched') S.activeTasks.set(tid, {id: tid, agent_id: ev.agent_id,
+    request_id: ev.request_id, title: d.title || short(stripPrompt(d.prompt), 60), dispatched_at: ev.ts,
+    state: 'queued', activity: {state: 'queued', tools: {}}});
+  const t = S.activeTasks.get(tid); if (!t) return;
+  const activity = t.activity ||= {}, ts = ev.ts || now();
+  if (ev.type === 'agent.status') {
+    if (!['done', 'idle'].includes(d.state)) {
+      Object.assign(activity, d); activity.ask = d.ask || ''; activity.approval = d.approval || '';
+      activity.jobs = d.jobs || []; activity.asks = d.asks || [];
+      if (d.state === 'working') delete activity.warning;
+    }
+  } else if (ev.type === 'agent.tool') {
+    if (['queued', 'waiting'].includes(activity.state)) activity.state = 'working';
+    activity.tools ||= {}; if (!d.completed) activity.tools[d.id || 'legacy'] = {...d, at: ts}; delete activity.warning;
+  } else if (ev.type === 'agent.tool_result') {
+    delete (activity.tools || {})[d.id || 'legacy']; delete activity.warning;
+    activity.state = 'working'; activity.ask = ''; activity.approval = '';
+  } else if (ev.type === 'agent.log') {
+    if (['warn', 'alert'].includes(d.level)) activity.warning = d.text;
+    else if (!['debug', 'thinking'].includes(d.level)) delete activity.warning;
+  } else if (ev.type === 'task.result') {
+    if ((d.pending_jobs || []).length || (d.pending_asks || []).length) {
+      t.state = 'hibernating'; t.activity = {state: 'hibernating', jobs: d.pending_jobs || [], asks: d.pending_asks || []};
+    } else S.activeTasks.delete(tid);
+  }
+}
 const nick = id => { const a = ag(id); return a ? String(a.name || a.id).split(' ')[0] : ({ pi: '나', hpc: 'HPC', github: 'GitHub', system: '시스템' }[id] || id || ''); };
 function upsertAgent(a) {
   const prev = S.agents.get(a.id) || { state: 'idle', task: '', say: '', tool: '', log: [] };
@@ -277,6 +338,7 @@ function setPipelinePr(q, d) {
 function apply(ev, replay = false) {
   const effects = [];
   const t = ev.type, d = ev.data || {}, id = ev.agent_id, rid = ev.request_id, ts = ev.ts || now();
+  trackActivity(ev);
   switch (t) {
     case 'snapshot': {
       const pendingBefore = [...S.approvals.keys()];
@@ -316,6 +378,12 @@ function apply(ev, replay = false) {
         if (!isActiveRequest(r.status)) q.phase = 'done';
       }
       const restored = new Map();
+      const staffTasks = d.staff_tasks || d.running_tasks;
+      if (Array.isArray(staffTasks)) {
+        S.activeTasks.clear();
+        for (const task of staffTasks) S.activeTasks.set(task.id, {...task,
+          activity: {...(task.activity || {}), tools: {...(task.activity?.tools || {})}}});
+      }
       for (const task of d.running_tasks || []) {
         if (!task.request_id || !task.step_id) continue;
         const key = `${task.request_id}:${task.step_id}`, previous = restored.get(key);
@@ -358,7 +426,7 @@ function apply(ev, replay = false) {
     }
     case 'agent.tool': { const a = ag(id); if (!a) break; a.tool = d.name; a.toolAt = ts; a.toolCalls = (a.toolCalls || 0) + 1;
       const input = typeof d.input === 'string' ? d.input : JSON.stringify(d.input ?? '');
-      logTo(a, `도구 ${toolLabel(d.name)} ${input}`, ts, {...d, previewText: `도구 ${toolLabel(d.name)} ${short(d.input, 80)}`}); break; }
+      logTo(a, `도구 ${toolLabel(d.name)} ${input}`, ts, {...d, previewText: `도구 ${toolLabel(d.name)} ${short(d.summary || toolInputLine(d.input), 80)}`}); break; }
     case 'agent.tool_error': { const a = ag(id); if (a) logTo(a, `도구 오류: ${d.text}`, ts, d); break; }
     case 'agent.log': {
       const a = ag(id); if (!a || !d.text) break;
@@ -590,6 +658,7 @@ function apply(ev, replay = false) {
     case 'request.status': { const q = req(rid); if (d.status && !isTerminalRequest(q.status)) q.status = d.status; break; }
     case 'request.runner_wait': feed({ who: 'system', text: d.message || '러너를 기다려요', cls: 'alert' }, ts, rid); break;
     case 'request.completed': case 'request.failed': {
+      for (const [tid, task] of S.activeTasks) if (task.request_id === rid) S.activeTasks.delete(tid);
       const q = req(rid);
       q.status = d.status === 'cancelled' ? 'cancelled' : t === 'request.completed' && d.ok !== false ? 'done' : 'failed'; q.phase = 'done';
       if (typeof d.cost_usd === 'number' && Number.isFinite(d.cost_usd) && d.cost_usd >= 0) {
@@ -699,7 +768,7 @@ function toolLabel(name) {
     Skill: '스킬 실행', Agent: '서브에이전트', edit: '파일 수정', web_search: '웹 검색' }[n]) || n;
 }
 
-return { S, apply, ag, visual, stateText, nick, req, setPlan, feed, fillFollowups, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES, phaseLabel };
+return { S, apply, ag, visual, stateText, currentTask, currentTool, toolInputLine, nick, req, setPlan, feed, fillFollowups, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES, phaseLabel };
 }
 root.LabHQState = { createOfficeState, costLabel, engineCostLabel, agentCostLabel, agentSpentLabel, totalCostLabel,
   isActiveRequest, isTerminalRequest, REQUEST_STATUS_KO, requestStatusLabel, requestStatusText, processingLabel,

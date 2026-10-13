@@ -38,9 +38,11 @@ function makeCard(agent) {
 
 function update(card, agent, options) {
   const p = card._staffParts, state = options.visual ? options.visual(agent) : agent.state || 'idle';
-  p.name.textContent = agent.name || agent.id; p.status.textContent = statusOf(state, agent);
+  const status = options.stateText ? options.stateText(agent, state) : statusOf(state, agent);
+  p.name.textContent = agent.name || agent.id; p.status.textContent = status;
   p.role.textContent = agent.role || '역할 미지정';
-  p.tool.textContent = `도구 · ${agent.tool ? (options.toolLabel ? options.toolLabel(agent.tool) : agent.tool) : '없음'}`;
+  const tool = options.currentTool ? options.currentTool(agent)?.name : agent.tool;
+  p.tool.textContent = `도구 · ${tool ? (options.toolLabel ? options.toolLabel(tool) : tool) : '없음'}`;
   p.provenance.textContent = provenanceText(agent); p.provenance.hidden = !p.provenance.textContent;
   p.provenance.title = p.provenance.textContent;
   const turns = Number(agent.usage?.num_turns ?? agent.toolCalls ?? 0), maxTurns = Number(agent.max_turns || 0);
@@ -50,7 +52,7 @@ function update(card, agent, options) {
   if (maxTurns > 0) { p.gaugeLabel.textContent = `턴 · ${turns}/${maxTurns}`; p.gauge.max = maxTurns; p.gauge.value = Math.min(turns, maxTurns); }
   else { p.gaugeLabel.textContent = timeout ? `경과 · ${Math.floor(elapsed)}초/${timeout}초` : `경과 · ${Math.floor(elapsed)}초/제한 미상`; p.gauge.max = timeout || 1; p.gauge.value = timeout ? Math.min(elapsed, timeout) : 0; }
   card.className = `staff-card staff-${state}`;
-  card.setAttribute('aria-label', `${agent.name || agent.id}, ${statusOf(state, agent)}, ${p.tool.textContent}, ${p.gaugeLabel.textContent}`);
+  card.setAttribute('aria-label', `${agent.name || agent.id}, ${status}, ${p.tool.textContent}, ${p.gaugeLabel.textContent}`);
 }
 
 export function syncStaffCards(container, agents, options = {}) {

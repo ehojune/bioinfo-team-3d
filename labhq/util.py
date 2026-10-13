@@ -10,6 +10,14 @@ from pathlib import Path
 from typing import Any
 
 
+def tool_input_summary(value: Any) -> str:
+    """A readable tool input head, taken before JSON previews are truncated."""
+    if isinstance(value, dict):
+        value = next((value[key] for key in ("command", "file_path", "path", "query", "pattern", "description")
+                      if key in value), ", ".join(value))
+    return " ".join(str(value or "").split())[:160]
+
+
 CLAUDE_ENV_PASSTHROUGH = frozenset({
     "CLAUDE_CONFIG_DIR",
     "CLAUDE_CODE_OAUTH_TOKEN",

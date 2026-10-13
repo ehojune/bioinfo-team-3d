@@ -753,6 +753,11 @@ class Hub:
             task = {"id": tid, "request_id": entry.get("request_id"), "state": state,
                     "step_id": step_id, "agent_id": (entry.get("payload") or {}).get("agent_id"),
                     "dispatched_at": entry.get("dispatched_at", 0)}
+            task["activity"] = ({"state": "hibernating",
+                "jobs": (entry.get("result") or {}).get("pending_jobs", []),
+                "asks": (entry.get("result") or {}).get("pending_asks", [])}
+                if state == "hibernating" else entry.get("activity") or {})
+            task["title"] = ((entry.get("payload") or {}).get("meta") or {}).get("title", "")
             key = (task["request_id"], step_id)
             rank = (1 if state == "running" else 0, float(task["dispatched_at"] or 0))
             if key not in selected or rank > selected[key][0]:
@@ -1636,6 +1641,42 @@ class Hub:
             await self.send_runner(runner_id, {"type": "runner.ack", "runner_seq": runner_seq})
             return
         typ = msg.get("type")
+        # Keep current staff activity in the task ledger: the 200-event snapshot window
+        # can evict a tool start while a quiet command is still running.
+        if typ in {"agent.status", "agent.tool", "agent.tool_result", "agent.log"}:
+            tid = msg.get("task_id")
+            task = self.store.get("task", tid) if tid else None
+            if task and not task.get("completed"):
+                activity = dict(task.get("activity") or {})
+                data = msg.get("data") or {}
+                if typ == "agent.status":
+                    activity.update(data)
+                    for key in ("ask", "approval", "jobs", "asks"):
+                        activity[key] = data.get(key)
+                    if data.get("state") == "working":
+                        activity.pop("warning", None)
+                elif typ == "agent.tool":
+                    if activity.get("state") in {None, "queued", "waiting"}:
+                        activity["state"] = "working"
+                    tools = dict(activity.get("tools") or {})
+                    if not data.get("completed"):
+                        tools[data.get("id") or "legacy"] = {**data, "at": msg.get("ts") or time.time()}
+                    activity["tools"] = tools
+                    activity.pop("warning", None)
+                elif typ == "agent.tool_result":
+                    tools = dict(activity.get("tools") or {})
+                    tools.pop(data.get("id") or "legacy", None)
+                    activity["tools"] = tools
+                    activity["state"] = "working"
+                    activity.pop("ask", None)
+                    activity.pop("approval", None)
+                    activity.pop("warning", None)
+                elif data.get("level") in {"warn", "alert"}:
+                    activity["warning"] = data.get("text")
+                elif data.get("level") not in {"debug", "thinking"}:
+                    activity.pop("warning", None)
+                if activity != (task.get("activity") or {}):
+                    self.store.put("task", tid, {**task, "activity": activity})
         if typ == "runner.roster":
             self.set_roster(runner_id, msg.get("agents", []), msg.get("capabilities"))
             await self.publish({"type": "roster.updated", "ts": time.time(), "data": {"agents": list(self.agents.values())}})
@@ -2701,6 +2742,18 @@ class Hub:
         # Read the task ledger once for every request below; one read per request stalled the loop (2026-10-08).
         tasks = self.store.all("task")
         running = self.running_tasks(tasks)
+        # Staff can also be queued, consulting, or answering a finished request.
+        # Keep this separate from the request board's accepted-step selection.
+        staff_tasks = {task["id"]: task for task in running}
+        for tid, entry in tasks.items():
+            if entry.get("completed"):
+                continue
+            payload = entry.get("payload") or {}
+            staff_tasks[tid] = {"id": tid, "request_id": entry.get("request_id"),
+                "agent_id": payload.get("agent_id"), "step_id": entry.get("step_id") or entry.get("kind"),
+                "title": (payload.get("meta") or {}).get("title", ""),
+                "state": "running" if entry.get("accepted") else "queued",
+                "dispatched_at": entry.get("dispatched_at", 0), "activity": entry.get("activity") or {}}
         pipeline_prs = self.pipeline_prs()
         recent_events = list(self.events)[-200:]
         recent_terminals = {
@@ -2731,6 +2784,7 @@ class Hub:
                          for p in self.s.projects],
             "default_references": [r.model_dump() for r in self.s.pi_profile.references],
             "running_tasks": running,
+            "staff_tasks": list(staff_tasks.values()),
             "engine_holds": self.engine_login_holds(),
             "recent_events": [snapshot_event(e) for e in recent_events],
         }}
