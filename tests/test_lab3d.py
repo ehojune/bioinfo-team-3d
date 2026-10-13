@@ -113,8 +113,8 @@ def test_vendor_version_and_sha256():
 def test_skin_ids_match_core_agents():
     ids = {yaml.safe_load(p.read_text(encoding='utf-8'))['id'] for p in (ROOT / 'agents/core').glob('*.yaml')}
     skins = manifest('SKINS')
-    assert len(ids) == 12
-    assert len(skins) == 13
+    assert len(ids) == 13
+    assert len(skins) == 14
     assert {s['id'] for s in skins} == ids | {'contract'}
     assert all(s['type'] == 'procedural' for s in skins)
     for model in manifest('MODEL_SKINS'):
