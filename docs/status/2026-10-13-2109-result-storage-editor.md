@@ -13,6 +13,7 @@ PR #566의 지정 지적 5건을 수정했다. 정리본은 확정된 요청 묶
 ## 확인
 
 - 수정 전 회귀 8건 모두 실패. 수정 후 관련 Python 155 passed·2 skipped, Node 44개 파일 통과.
+- CRLF 초안 복구도 수정 전 실패를 재현했고 바이트 읽기로 보완한 뒤 관련 회귀 10건이 통과했다.
 - 묶음 생성 전후 바이트 동일·verify exit 0, 저장된 초안의 내용·mtime 보존, 검토 전 승인 거부를 확인했다.
 - 첫 Windows 전체: 6,121 passed·66 skipped·2 failed. 게시 카드 수명 테스트의 준비 상태를 수정했다. semantics의 PermissionError는 코드 변경 없이 재확인에서 통과했다.
 - 실패 관련 재확인 55 passed. Windows 전체 재실행은 다른 전체 테스트 종료 후 진행한다. 공개 검사 통과, CI는 push 뒤 확인한다.
