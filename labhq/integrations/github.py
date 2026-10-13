@@ -27,6 +27,7 @@ from ..costs import cost_detail, cost_text
 from ..intake import mask_published_references, public_url, url_pattern
 from ..pipeline_pr import pipeline_rejection
 from ..policy import _PathTextScan, _scan_mentions_zone, _scan_path_text, restricted_paths
+from ..research import final_checkpoint as cp4
 from ..settings import PolicySettings, ProjectSettings, Settings
 from ..util import clip, short
 
@@ -402,7 +403,7 @@ def _cost_line(cost_usd, cost_known, summary: dict | None) -> str:
 
 class ProjectReporter:
     HANDLED = {"request.created", "request.plan", "request.review", "recruit.done",
-               "request.completed", "request.failed", "pipeline.ready"}
+               "request.completed", "request.failed", "request.reviewed", "pipeline.ready"}
 
     def __init__(self, hub: "Hub", settings: Settings, transport: httpx.AsyncBaseTransport | None = None):
         self.hub, self.s, self.transport = hub, settings, transport
@@ -573,6 +574,25 @@ class ProjectReporter:
         rid = ev["request_id"]
         if ev["type"] == "pipeline.ready":
             return await self._handle_pipeline(ev)
+        typ, d = ev["type"], ev.get("data") or {}
+        req = self.hub.requests.get(rid) or {}
+        if typ == "request.reviewed":
+            receipt = d.get("receipt") or {}
+            if not cp4.enabled(req) or receipt.get("gate") != "research_final":
+                return  # ordinary PI acknowledgment is not another terminal delivery
+            if receipt != (req.get("research_contract") or {}).get("final_receipt"):
+                return  # a superseded decision must not publish changed content
+            if receipt.get("decision") == "accepted":
+                if cp4.receipt_errors(req):
+                    return
+                typ = "request.completed"
+            else:
+                typ = "request.failed"
+        elif typ in {"request.completed", "request.failed"} and cp4.enabled(req):
+            if req.get("status") == "review_pending" or d.get("status") == "review_pending":
+                return  # discard old pre-CP4 deliveries recovered after an upgrade
+            if cp4.receipt_errors(req):
+                typ = "request.failed"
         proj = self.project_of(rid)
         if not proj or not proj.repo or root_zone_restricted(self.s.policy):
             return
@@ -584,9 +604,6 @@ class ProjectReporter:
         gh = self.client()
         if gh is None:
             return False  # keep a terminal delivery until credentials are available
-        typ, d = ev["type"], ev.get("data") or {}
-        req = self.hub.requests.get(rid) or {}
-
         if typ == "request.created":
             if not proj.issues:
                 return

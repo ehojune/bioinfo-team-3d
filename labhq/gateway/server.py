@@ -414,16 +414,18 @@ class Hub:
         updated.update(pi_review_pending=reviewed_at is None, pi_reviewed_at=reviewed_at, updated_at=at)
         audit = {"actor": receipt["decider"], "at": at, "outcome": updated["status"], "receipt": receipt}
         updated.setdefault("pi_review_audit", []).append(audit)
-        updated["bundle_pending"] = self._has_bundle_workdir(rid)
+        updated["bundle_pending"] = bool(req.get("bundle_path") or req.get("bundle_pending")
+                                         or self._has_bundle_workdir(rid))
         data = {"request_id": rid, "status": updated["status"], "pi_review_pending": reviewed_at is None,
                 "pi_reviewed_at": reviewed_at, "final_checkpoint": cp4.summary(updated)}
-        event = self.store.commit_request_event(rid, updated,
+        event = self.store.commit_terminal(rid, updated,
             {"type": "request.reviewed", "ts": at, "request_id": rid, "data": {**audit, **data}},
             self.s.gateway.event_buffer)
         req.update(updated)
         self.events.append(event)
         self.pending_committed.append((event, tuple(self.clients)))
         asyncio.get_running_loop().create_task(self._send_committed_event())
+        self._queue_terminal_delivery(event)
         timer = self.final_review_timers.pop(rid, None)
         if timer and timer is not asyncio.current_task():
             timer.cancel()
@@ -1104,7 +1106,9 @@ class Hub:
         if cp4.enabled(self.requests[rid]):
             data.update(status=self.requests[rid]["status"], final_checkpoint=cp4.summary(self.requests[rid]))
         self.recover_final_reviews()
-        event = self.store.commit_terminal(rid, self.requests[rid],
+        review_pending = cp4.enabled(self.requests[rid]) and self.requests[rid].get("status") == "review_pending"
+        commit = self.store.commit_request_event if review_pending else self.store.commit_terminal
+        event = commit(rid, self.requests[rid],
                                            {"type": typ, "ts": time.time(), "request_id": rid,
                                             "data": copy.deepcopy(data)},
                                            self.s.gateway.event_buffer)
@@ -1121,7 +1125,8 @@ class Hub:
         # A client joining after this checkpoint replays it from SQLite.
         self.pending_committed.append((event, tuple(self.clients)))
         asyncio.get_running_loop().create_task(self._send_committed_event())
-        self._queue_terminal_delivery(event)
+        if not review_pending:
+            self._queue_terminal_delivery(event)
         if getattr(self, "semantics_shadow", None) is not None:  # semantics-hook: after the request ended
             self.semantics_shadow.after_request(rid)  # semantics-hook: copies rows, queues, never raises
 

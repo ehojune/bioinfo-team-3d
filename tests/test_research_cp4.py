@@ -290,3 +290,94 @@ async def test_existing_review_endpoint_requires_matching_cp4_target(tmp_path):
         assert result.status_code == 200 and result.json()['status'] == 'done'
     stored = hub.store.get('request', 'r')
     assert stored['pi_reviewed_at'] == stored['research_contract']['final_receipt']['decided_at']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('decision', [None, 'accepted', 'rejected', 'timed_out'])
+async def test_github_terminal_delivery_waits_for_cp4_and_recovers(tmp_path, decision):
+    from labhq.settings import ProjectSettings
+    from tests.test_github_reporter import fake_github
+
+    fake = await draft_hub()
+    hub = persisted(tmp_path, fake.requests['r'])
+    hub.s.projects = [ProjectSettings(id='demo', repo='o/p')]
+    hub.requests['r']['project_id'] = 'demo'
+    hub.store.put('github_issue', 'r', {'number': 7})
+    hub.reporter.issues['r'] = 7
+    calls = []
+    hub.reporter.transport = fake_github(calls)
+    # Use the real terminal checkpoint reached by Orchestrator._finish.
+    hub._commit_terminal_record('r', 'request.completed', {'ok': True})
+    await hub.reporter.drain()
+    try:
+        if decision is None:
+            assert not calls
+            assert not hub.store.all('terminal_delivery')
+            # Previously queued draft events must also stay silent after upgrade/restart.
+            await hub.reporter.handle(next(e for e in hub.events if e['type'] == 'request.completed'))
+            assert not calls
+            return
+        calls.clear()
+        # Crash after the durable decision but before its delivery is queued.
+        hub.reporter.submit = lambda event: None
+        hub.review_done('r', decision=decision, **target(hub.requests['r']))
+        restored = Hub(hub.s, github_transport=fake_github(calls))
+        restored.recover_terminal_deliveries()
+        try:
+            await restored.reporter.drain()
+            comments = [body['body'] for method, path, body in calls if path.endswith('/comments')]
+            assert len(comments) == 1
+            assert comments[0].startswith('🏁 완료' if decision == 'accepted' else '💥 실패')
+            assert sum(method == 'PUT' for method, _, _ in calls) == (2 if decision == 'accepted' else 0)
+            assert sum(method == 'PATCH' for method, _, _ in calls) == (1 if decision == 'accepted' else 0)
+            assert not restored.store.all('terminal_delivery')
+            before = list(calls)
+            restored.recover_terminal_deliveries()
+            await restored.reporter.drain()
+            assert calls == before
+        finally:
+            if restored.reporter.worker:
+                restored.reporter.worker.cancel()
+    finally:
+        for timer in hub.final_review_timers.values():
+            timer.cancel()
+        if hub.reporter.worker:
+            hub.reporter.worker.cancel()
+
+
+@pytest.mark.asyncio
+async def test_cp4_accept_rebuilds_existing_report_only_bundle(tmp_path, monkeypatch):
+    from labhq.evidence.verify import final_bundle_problems
+    from tests.test_request_bundle import configured
+
+    fake = await draft_hub()
+    req = copy.deepcopy(fake.requests['r'])
+    for result in req['results'].values():
+        result.pop('workdir_id', None)
+        result.pop('workdir', None)
+    hub = Hub(configured(tmp_path))
+    hub.requests['r'] = req
+    # Imported report-only bundle: exercise the receipt refresh, not source discovery.
+    folder = tmp_path / 'bundle'
+    folder.mkdir()
+    def bundle_outcome(rid, request=None, *args):
+        contract = (request or req)['research_contract']
+        record = {'request_id': rid, 'contract_version': 2,
+                  'draft': contract['final_draft'], 'receipt': contract.get('final_receipt')}
+        (folder / 'final_checkpoint.json').write_text(json.dumps(record), encoding='utf-8')
+        return {'bundle': {'path': str(folder), 'status': 'complete'}}
+    monkeypatch.setattr(hub, '_bundle_outcome', bundle_outcome)
+    hub.schedule_terminal('r', 'request.completed', {'ok': True})
+    assert not json.loads((folder / 'final_checkpoint.json').read_text(encoding='utf-8'))['receipt']
+    hub.review_done('r', **target(req))
+    try:
+        assert req['bundle_pending'] is True
+        await asyncio.sleep(0)  # let the scheduled refresh register its bundle task
+        await hub.terminal_tasks['r']
+        record = json.loads((folder / 'final_checkpoint.json').read_text(encoding='utf-8'))
+        assert record['receipt']['decision'] == 'accepted'
+        assert not final_bundle_problems(record)
+        assert not hub.store.get('request', 'r').get('bundle_pending')
+    finally:
+        for timer in hub.final_review_timers.values():
+            timer.cancel()

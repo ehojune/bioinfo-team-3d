@@ -781,8 +781,8 @@ accept면 CSO가 결론·수치 문장마다 `[[claim:<step_id>/<claim_id>]]`를
 - 리뷰 accept와 보고서 검사를 통과한 초안을 기존 **보고서 검토 대기** 카드에서 검토합니다. **검토 완료**가 CP4 수용이며 별도 카드는 없습니다.
 - CLI는 `status`에 표시된 `review-done <id> --revision <n> --sha256 <hash>`를 씁니다. 거부는 `--reject`를 붙입니다.
 - 본문·감사·claim hash와 receipt가 맞아야 `done`입니다. 거부·기한 초과·취소·내용 변경은 완료가 아닙니다. 기한은 초안 저장 시 `policy.approvals.pi_decision_timeout_s`로 고정합니다.
-- 재시작은 저장 초안과 유효 receipt를 재사용합니다. CP4 수정·재합성은 지원하지 않습니다. 수용은 게시·전송·HPC 실행 권한이 아닙니다.
-- 요청 묶음의 `final_checkpoint.json`은 경로 치환 전 초안과 receipt를 보존합니다. `claims.json`에 같은 hash를 연결하고 `verify`가 누락·불일치를 검사합니다. 옛 묶음은 기존 판정을 유지합니다.
+- 재시작은 저장 초안과 유효 receipt를 재사용합니다. CP4 수정·재합성은 지원하지 않습니다. 이미 설정한 GitHub 보고·issue 종료는 수용 뒤에 진행하며 거부·만료는 실패로 알리고 issue를 열어 둡니다. 수용 자체는 새 게시·전송·HPC 권한을 부여하지 않습니다.
+- 요청 묶음의 `final_checkpoint.json`은 경로 치환 전 초안과 receipt를 보존합니다. 결정 뒤에는 기존 묶음도 갱신합니다. `claims.json`에 같은 hash를 연결하고 `verify`가 누락·불일치를 검사합니다. 옛 묶음은 기존 판정을 유지합니다.
 
 ## 의미 모델과 온톨로지
 
