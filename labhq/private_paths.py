@@ -317,8 +317,8 @@ def resolve_private_paths(settings: Settings, keep: Iterable[str | os.PathLike |
                           home: str | None = None, open_reads: Iterable[str] = (),
                           cwd: str | os.PathLike | None = None) -> PrivatePaths:
     """The entries that exist and contain no folder in `keep` (task workdir, workspace root, reference and
-    project folders, plugin folders, the staff CODEX_HOME). An entry that contains one is skipped, not split.
-    `open_reads` (a Claude task's own project folder in the staff config folder) is carried through: an entry
+    project folders). An entry that contains one is skipped, not split. Plugin/skill paths belong in
+    `open_reads`, alongside a Claude task's own project folder in the staff config folder: an entry
     holding one stays active, and only that folder opens, for reading."""
     if settings.policy.private_paths == []:
         return PrivatePaths(enabled=False)
@@ -348,8 +348,13 @@ def resolve_private_paths(settings: Settings, keep: Iterable[str | os.PathLike |
             paths.extend(short_spellings(spelled))
     paths = [p for i, p in enumerate(paths)
              if _fold(p, _case_insensitive(p)) not in {_fold(q, _case_insensitive(p)) for q in paths[:i]}]
+    reads = []
+    for folder in open_reads:
+        if folder:
+            reads.append(os.path.abspath(str(folder)))
+            reads.append(os.path.realpath(str(folder)))
     return PrivatePaths(tuple(dict.fromkeys(paths)), tuple(dict.fromkeys(labels)), tuple(dict.fromkeys(skipped)),
-                        open_reads=tuple(dict.fromkeys(str(p) for p in open_reads if p)))
+                        open_reads=tuple(dict.fromkeys(reads)))
 
 
 def open_read_allowed(path: str, open_reads: Iterable[str]) -> bool:
@@ -377,7 +382,7 @@ def gate_private_paths(environ: Mapping[str, str], resolve: Callable[[], Private
 
 def plugin_keep_dirs(settings: Settings, plugin_dirs: Iterable[str], cwd: str | os.PathLike | None = None,
                      task_env: Mapping[str, str] | None = None) -> list[str]:
-    """Plugin folders as the Claude adapter expands them (`_plugin_dirs`): `${VAR}` from the runner env, then
+    """Plugin read roots (never `keep`) as the Claude adapter expands them: `${VAR}` from the runner env, then
     engines.claude_code.env, then the task env, so a variable set only for staff still finds the folder."""
     from .adapters.base import expand_env
 
@@ -389,16 +394,6 @@ def plugin_keep_dirs(settings: Settings, plugin_dirs: Iterable[str], cwd: str | 
             directory = os.path.join(str(cwd), directory)
         out.append(directory)
     return out
-
-
-def staff_codex_homes(settings: Settings, cwd: Path, codex_task: bool) -> list[Path]:
-    """The CODEX_HOME a staff Codex task must use; another engine never needs this login folder open."""
-    from .adapters.base import child_config_dirs, expand_env
-
-    if not codex_task:
-        return []
-    configured = expand_env(settings.engines.codex.env)
-    return child_config_dirs({**os.environ, **configured}, cwd, "CODEX_HOME", ".codex")
 
 
 def shell_needles(paths: Iterable[str], home: str | None = None) -> list[str]:

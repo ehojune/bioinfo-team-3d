@@ -22,7 +22,7 @@ from .adapters import adapter_preflight_error, get_adapter
 from .models import AgentSpec, Engine
 from . import private_paths as private_path_module
 from .private_paths import (PrivatePaths, configured_claude_config_dir, in_pi_claude, inside_any,
-                            plugin_keep_dirs, resolve_private_paths, staff_claude_config_dir, staff_codex_homes)
+                            plugin_keep_dirs, resolve_private_paths, staff_claude_config_dir)
 from .recruit import paper2agent
 from .runner.daemon import check_data_boundary, check_job_group
 from .runner import codex_sandbox
@@ -223,12 +223,10 @@ PRIVATE_PATHS_HINT = "See docs/manual.md 'PI 개인 경로' (policy.private_path
 
 def _doctor_private(settings: Settings, agents: list[AgentSpec], forced: Engine | None) -> PrivatePaths:
     workspace = settings.path(settings.runner.workspace_root)
-    codex = forced == Engine.codex or (forced is None and any(a.engine == Engine.codex for a in agents))
     keep = [workspace, *(settings.path(r) for r in settings.runner.reference_roots),
-            *(settings.path(p.local_dir) for p in settings.projects if p.local_dir),
-            *(d for a in agents for d in plugin_keep_dirs(settings, a.plugin_dirs, workspace)),
-            *staff_codex_homes(settings, workspace, codex)]
-    return resolve_private_paths(settings, keep, cwd=workspace)
+            *(settings.path(p.local_dir) for p in settings.projects if p.local_dir)]
+    reads = [d for a in agents for d in plugin_keep_dirs(settings, a.plugin_dirs, workspace)]
+    return resolve_private_paths(settings, keep, open_reads=reads, cwd=workspace)
 
 
 def _private_paths_row(private: PrivatePaths) -> dict:

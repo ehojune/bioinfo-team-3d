@@ -43,7 +43,7 @@ from ..policy import (SHELL_TOOLS, claude_deny_links, claude_deny_private, claud
                       claude_settings, rule_tool)
 from ..private_paths import ENABLED_ENV_VAR as PRIVATE_ENABLED_ENV, ENV_VAR as PRIVATE_PATHS_ENV, \
     OPEN_READS_ENV_VAR as PRIVATE_OPEN_READS_ENV, plugin_keep_dirs, resolve_private_paths, \
-    staff_claude_project_dirs, staff_codex_homes
+    staff_claude_project_dirs
 from ..pipeline_pr import collect_pipeline_submission, pipeline_rejection
 from ..quota import quota_reset_instant
 from ..recruit.provenance import external_service_refusal, not_yet_active, probation_refusal, restricted_task
@@ -1234,16 +1234,17 @@ class Runner:
             # PI personal paths (policy.private_paths): one that holds a folder this task works in is left open.
             keep = [ws.dir, self.ws_root, *extra_dirs, *read_dirs,
                     *(self.s.path(r) for r in self.s.runner.reference_roots),
-                    *(self.s.path(p.local_dir) for p in self.s.projects if p.local_dir),
-                    *plugin_keep_dirs(self.s, agent.plugin_dirs, ws.dir),
-                    *staff_codex_homes(self.s, ws.dir, agent.engine == Engine.codex)]
+                    *(self.s.path(p.local_dir) for p in self.s.projects if p.local_dir)]
+            # Loading code never exempts its containing config/login folder from protection.
+            open_reads = plugin_keep_dirs(self.s, agent.plugin_dirs, ws.dir)
             if agent.id == self.s.recruit.agent_id or task.meta.get("kind") == "recruit":
                 from ..recruit.paper2agent import skill_path
                 if agent.engine in (Engine.claude_code, Engine.codex):
                     skill = skill_path(agent.engine.value, self.s)
-                    keep.append(skill.parent.parent if agent.engine == Engine.claude_code else skill)
+                    open_reads.append(str(skill))
             # A Claude task reads back the long tool output Claude saved in the staff config folder (#298 ⑤).
-            open_reads = staff_claude_project_dirs(self.s, ws.dir) if agent.engine == Engine.claude_code else []
+            if agent.engine == Engine.claude_code:
+                open_reads.extend(staff_claude_project_dirs(self.s, ws.dir))
             private = resolve_private_paths(self.s, keep, open_reads=open_reads, cwd=ws.dir)
             for label in private.skipped:
                 if label not in self.private_skip_warned:
