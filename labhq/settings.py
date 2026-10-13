@@ -12,6 +12,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .intake import Reference
+from .test_guard import guard_test_path
 
 
 class GatewaySettings(BaseModel):
@@ -545,6 +546,7 @@ class Settings(BaseModel):
     def path(self, p: str) -> Path:
         """Expand ~ and $VARS; relative paths are relative to the config file (or cwd)."""
         q = Path(os.path.expandvars(os.path.expanduser(p)))
+        guard_test_path(q if q.is_absolute() else self.base_dir() / q)
         if q.is_absolute():
             return q
         return (self.base_dir() / q).resolve()

@@ -15,6 +15,8 @@
 
 ## 작업 방식 — 규칙(CLAUDE.md·AGENTS.md)에 더해 겪어서 안 것
 
+- test 홈·state는 `tests/conftest.py`가 격리한다. subprocess에도 격리 환경을 넘기고 사용자 `.labhq` 접근 guard를 우회하지 않는다.
+
 | 무엇 | 어떻게 |
 |---|---|
 | PR 한 개의 흐름 | 브랜치 → 코드 커밋 → push·PR 열기(패치노트 링크에 PR 번호가 필요) → `patch_notes/entries/<branch>.yaml`·`docs/status/` 기록 커밋 → CI(pytest 3.10·3.12·Windows, patch-notes) → squash 병합 |
