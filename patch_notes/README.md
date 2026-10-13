@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 19:45 | [`dfcead0`](https://github.com/ehojune/bioinfo-team-3d/pull/569/commits/dfcead0) | PI 메신저 미리보기의 목록 줄바꿈을 2.5D와 3D에서 보존했다. |
+| 19:37 | [`207ab78`](https://github.com/ehojune/bioinfo-team-3d/pull/569/commits/207ab78) | PI 승인 설명과 평문 표시를 추가하고 PowerShell here-string 삭제 예문의 오탐을 수정했다. |
 | 19:27 | [`94fdb5f`](https://github.com/ehojune/bioinfo-team-3d/pull/567/commits/94fdb5f) | 시설팀 추가로 바뀐 Codex 직원 수와 모델 목록을 배지 테스트에 반영 |
 | 19:10 | [`37084b1`](https://github.com/ehojune/bioinfo-team-3d/pull/567/commits/37084b1) | 시설팀 직원을 읽기 전용 상담에 연결하고 진단 근거와 세션 재사용을 검증 |
 | 19:01 | [`2d69340`](https://github.com/ehojune/bioinfo-team-3d/pull/556/commits/2d69340) | 최신 main 병합: dev_log 공개 여부 진단·startup 경고와 사용자 홈 접근 guard 보존 |
