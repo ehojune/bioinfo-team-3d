@@ -985,7 +985,7 @@ async def test_unknown_cost_is_held_at_the_per_task_budget_and_blocks_the_next_t
 
     assert third.ok and len(hub.approvals) == 1  # 3 x $4 = $12 may pass the $10 cap
     approval = hub.approvals[0]
-    assert "예산 판정 불가" in approval["summary"] and "미집계 3건" in approval["summary"]
+    assert "비용을 아직 모르는 작업이 3건" in approval["summary"] and "건당 $" in approval["summary"]
     # The card says what 승인 and 거절 do (trial 2026-10-08), with the cap 승인 sets.
     assert approval["summary"].endswith("승인하면 상한을 $20.00로 올리고, 거절하면 새 작업을 보내지 않습니다.")
     assert approval["detail"] == {"spent_usd": 0, "limit_usd": 10, "requested_budget_usd": 20,
@@ -1084,8 +1084,8 @@ async def test_report_keeps_confirmed_estimated_and_unaccounted_costs_apart():
     orch._finish("r", "Narrative", {"A": {"status": "done"}}, ok=True)
     report = hub.requests["r"]["report_appendix"]
 
-    assert ("비용: 확인 $1.00 + 추정 $0.50 + 미집계 1건 "
-            "(claude_code 확인 $1.00 · codex 추정 $0.50 + 미집계 1건); 추정은") in report
+    assert ("비용: 확인 $1.00 + 추정 $0.50 + 미집계된 비용 1건 "
+            "(claude_code 확인 $1.00 · codex 추정 $0.50 + 미집계된 비용 1건); 추정은") in report
     assert "청구액이 아닙니다" in report and "$0.00" not in report
     assert "Budget: $1.50 + 미집계 1건 / $10.00; denied." in report
 

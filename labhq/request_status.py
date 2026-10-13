@@ -14,6 +14,12 @@ def request_status_label(status: object) -> str:
     return REQUEST_STATUS_KO.get(str(status), str(status or "상태 모름"))
 
 
+def request_display_label(request: dict) -> str:
+    if request.get("pi_review_pending"):
+        return "보고서 검토 대기" if request.get("status") == "done" else "결과 확인 대기"
+    return request_status_label(request.get("status"))
+
+
 def is_active_request(status: object) -> bool:
     return status in ACTIVE_REQUEST_STATES
 
