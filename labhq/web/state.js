@@ -5,6 +5,14 @@ const short = (s, n) => { s = String(s ?? '').replace(/\s+/g, ' ').trim(); retur
 function officeStorageKey(boot, key) {
   return boot?.demo === true ? `labhq_demo:${key}` : key;
 }
+// Storage belongs to the browser origin, demo/live mode and gateway instance; never store request text.
+function createRequestFocusStorage(boot, storage = () => root.localStorage) {
+  const key = officeStorageKey(boot, `labhq_current_request:${boot?.instance || ''}`);
+  return {
+    get() { try { return JSON.parse(storage().getItem(key) || 'null'); } catch { return null; } },
+    set(value) { try { storage().setItem(key, JSON.stringify(value)); } catch {} },
+  };
+}
 function connectionLabel(conn, demo = false) {
   return {live: demo ? '데모(mock)' : '실시간', demo: '데모(mock)', connecting: '연결 중',
     offline: '연결 끊김 · 재시도 중', auth: '토큰을 확인해 주세요'}[conn] || '';
@@ -31,6 +39,13 @@ const REQUEST_STATUS_KO = { running: '진행 중', waiting_for_runner: '러너 �
   waiting_login: '로그인 대기', waiting_facilities_fix: '환경 수정 승인 대기', waiting_pi: 'PI 결정 대기',
   interrupted: '중단됨', done: '완료', failed: '실패', cancelled: '취소됨', rejected: '거부됨' };
 const requestStatusLabel = status => REQUEST_STATUS_KO[status] || String(status || '상태 모름');
+const requestActivity = q => Math.max(Number(q.updated_at) || 0, Number(q.created_at) || 0);
+function sortRequests(requests) {
+  return [...requests].sort((a, b) => Number(isTerminalRequest(a.status)) - Number(isTerminalRequest(b.status)) ||
+    requestActivity(b) - requestActivity(a) || (Number(b.created_at) || 0) - (Number(a.created_at) || 0) ||
+    String(a.id).localeCompare(String(b.id)));
+}
+const requestResumeLabel = q => q?.resumed && q.status === 'running' ? '이어서 진행 중' : '';
 // How a request is handled, for the 2.5D board and the 3D request row. A direct request never gets a route decision;
 // a request that is no longer active and has none (failed before routing) shows no label, not "결정 중".
 function processingLabel(q) {
@@ -105,7 +120,8 @@ function applyCostSummary(q, summary) {
   if (!summary || typeof summary !== 'object') return;
   q.costSummary = summary; q.costKnown = !(Number(summary.unknown_count) > 0);
 }
-function createOfficeState({mode = 'live', now = () => Date.now() / 1000} = {}) {
+function createOfficeState({mode = 'live', now = () => Date.now() / 1000, focusStorage = null} = {}) {
+let preferred = focusStorage?.get() || null;
 const S = {
   agents: new Map(), approvals: new Map(), suggestions: [], requests: new Map(), current: null,
   jobs: new Map(), feed: [], cost: 0, conn: mode === 'demo' ? 'demo' : 'connecting', projects: [],
@@ -262,6 +278,8 @@ function upsertAgent(a) {
 function req(rid) {
   if (!S.requests.has(rid)) {
     const q = { id: rid, text: '', steps: {}, plan: [], github: [], cost: 0, costKnown: true, phase: 'briefing', status: 'running', created_at: now() };
+    Object.defineProperty(q, 'updated_at', { value: 0, writable: true, enumerable: false });
+    Object.defineProperty(q, 'resumed', { value: false, writable: true, enumerable: false });
     Object.defineProperty(q, 'references', { value: [], writable: true, enumerable: false });
     Object.defineProperty(q, 'followups', { value: [], writable: true, enumerable: false });
     Object.defineProperty(q, 'piNotes', { value: [], writable: true, enumerable: false });
@@ -341,9 +359,17 @@ function reopen(q, status) {
   q.status = status;
   if (q.phase === 'done') q.phase = q.mode === 'direct' || q.plan.length ? 'execute' : 'briefing';
 }
+function selectRequest(id, manual = true) {
+  if (!S.requests.has(id)) return;
+  S.current = id;
+  preferred = {id, manual};
+  focusStorage?.set(preferred);
+}
 function pickCurrent() {
-  const all = [...S.requests.values()].sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
-  S.current = (all.find(r => isActiveRequest(r.status)) || all[0] || {}).id || null;
+  const saved = preferred && S.requests.has(preferred.id) ? preferred : null;
+  const id = saved?.id || sortRequests(S.requests.values())[0]?.id;
+  if (id) selectRequest(id, saved?.manual || false);
+  else { S.current = null; preferred = null; focusStorage?.set(null); }
 }
 function syncRoster(list, replay) {
   const ids = new Set(list.map(a => a.id));
@@ -386,6 +412,8 @@ function apply(ev, replay = false) {
   switch (t) {
     case 'snapshot': {
       const pendingBefore = [...S.approvals.keys()];
+      // Reconnection keeps a view selected even by older UI consumers that assign S.current directly.
+      if (S.current && S.current !== preferred?.id) preferred = {id:S.current, manual:true};
       resetSnapshotState();
       (d.agents || []).forEach(upsertAgent);
       S.projects = d.projects || [];
@@ -397,6 +425,9 @@ function apply(ev, replay = false) {
       for (const r of d.requests || []) {
         const q = req(r.id);
         Object.assign(q, { text: r.text, status: r.status, mode: r.mode, project_id: r.project_id, created_at: r.created_at, cost: r.cost_usd || 0, costKnown: r.cost_known !== false });
+        q.updated_at = Math.max(q.updated_at, Number(r.updated_at) || 0);
+        // With a trimmed event history, running in the initial snapshot still means work is continuing.
+        q.resumed = q.resumed || r.status === 'running';
         if (r.route_decision && typeof r.route_decision === 'object') q.processing = { ...r.route_decision };
         if (typeof r.report === 'string') q.report = r.report;
         if (typeof r.report_appendix === 'string') q.report_appendix = r.report_appendix;
@@ -617,9 +648,9 @@ function apply(ev, replay = false) {
     case 'jobs.finished': feed({ who: 'hpc', text: `작업이 끝나서 ${nick(id)}를 깨웠어요` }, ts, rid); break;
     case 'request.created': {
       const q = req(rid);
-      Object.assign(q, { text: d.text, mode: d.mode, project_id: d.project_id, status: 'running', phase: d.mode === 'direct' ? 'execute' : 'briefing', created_at: ts });
+      Object.assign(q, { text: d.text, mode: d.mode, project_id: d.project_id, status: d.status || 'running', phase: isTerminalRequest(d.status) ? 'done' : d.mode === 'direct' ? 'execute' : 'briefing', created_at: ts });
       q.references = d.references || [];
-      S.current = rid;
+      if (!replay && !(preferred?.manual && S.requests.has(S.current) && isTerminalRequest(q.status))) selectRequest(rid, false);
       feed({ who: 'pi', text: `새 요청: ${short(d.text, 130)}`, fullText: `새 요청: ${d.text || ''}` }, ts, rid);
       break;
     }
@@ -651,7 +682,7 @@ function apply(ev, replay = false) {
       break;
     }
     case 'request.resumed': {
-      const q = req(rid); q.resumeMissing = []; reopen(q, 'running');
+      const q = req(rid); q.resumeMissing = []; q.resumed = true; reopen(q, 'running');
       feed({ who: 'system', text: '중단된 요청을 다시 이어 가요' }, ts, rid);
       break;
     }
@@ -822,6 +853,10 @@ function apply(ev, replay = false) {
     }
     default: break;
   }
+  if (rid && S.requests.has(rid)) {
+    const q = S.requests.get(rid);
+    q.updated_at = Math.max(q.updated_at, Number(ev.ts) || 0);
+  }
   return effects;
 }
 // #126: a snapshot carries only the head of a long follow-up answer. The full request
@@ -862,9 +897,9 @@ function toolLabel(name) {
     Skill: '스킬 실행', Agent: '서브에이전트', edit: '파일 수정', web_search: '웹 검색' }[n]) || n;
 }
 
-return { S, apply, ag, visual, stateText, currentTask, currentTool, toolInputLine, nick, req, setPlan, feed, fillFollowups, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES, phaseLabel };
+return { S, apply, selectRequest, ag, visual, stateText, currentTask, currentTool, toolInputLine, nick, req, setPlan, feed, fillFollowups, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES, phaseLabel };
 }
 root.LabHQState = { createOfficeState, costLabel, engineCostLabel, agentCostLabel, agentSpentLabel, totalCostLabel,
   isActiveRequest, isTerminalRequest, REQUEST_STATUS_KO, requestStatusLabel, requestStatusText, processingLabel,
-  websocketCloseAction, officeStorageKey, connectionLabel, demoBannerText };
+  websocketCloseAction, officeStorageKey, createRequestFocusStorage, sortRequests, requestActivity, requestResumeLabel, connectionLabel, demoBannerText };
 })(globalThis);
