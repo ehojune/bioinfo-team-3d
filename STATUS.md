@@ -6,6 +6,32 @@
 
 ## 결론
 
+웹을 다시 열면 마지막으로 보던 요청을 복원합니다. 저장된 선택이 없으면 끝나지 않은 요청 중 최근 활동한 것을 엽니다.
+
+## 바뀐 것
+
+- 요청 선택을 데모·라이브·instance별로 기억하며 2.5D·3D가 같은 reducer 값을 씁니다.
+- 진행·대기 요청을 완료·실패 요청보다 위에 놓고 상태를 표시합니다. 직접 고른 요청은 끝난 요청의 유입이나 snapshot 재생으로 바뀌지 않습니다.
+- 화이트보드에 재개 이벤트 또는 접속 당시 실행 상태를 근거로 `이어서 진행 중`을 표시합니다.
+- snapshot에 `updated_at`을 포함하고 웹 사무실 매뉴얼을 갱신했습니다.
+
+## 실행한 것
+
+- 새 Node 회귀 6건: origin/main에서 6 failed, 수정본에서 6 passed.
+- Node 전체 41개 파일 통과. 관련 Python 77 passed·1 skipped.
+- Windows 전체 pytest: 5,637 passed·66 skipped. 임시 state·TEMP를 분리하고 기존 서비스 포트 접속을 차단했습니다.
+- 공개 검사·diff 검사 통과.
+
+## 미해결
+
+- 자동 봇 리뷰 판단과 병합은 개발 총괄이 이어받습니다.
+
+Refs #435
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
 실패 MCP probe가 exit 1을 반환한다. 실제 Codex 90초 지연 호출도 재시도 없이 한 번 완료돼 #276의 남은 실측을 채웠다.
 
 ## 바뀐 것
