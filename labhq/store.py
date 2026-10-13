@@ -16,6 +16,7 @@ MESSENGER_TYPES = (
     "agent.ask", "agent.answer", "request.created", "request.followup",
     "request.followup_done", "request.note", "request.completed", "request.failed",
     "github.posted", "github.failed",
+    "request.questions", "approval.requested", "approval.resolved",
 )
 
 
@@ -102,7 +103,8 @@ class StateStore:
             data = {k: v for k, v in body.get("data", {}).items()
                     if k in {"text", "level", "text_truncated", "text_chars", "question", "answer",
                              "reason", "status", "from", "to", "agent_id", "id", "ask_id", "ok",
-                             "error", "answer_truncated", "answer_chars", "url", "kind"}}
+                             "error", "answer_truncated", "answer_chars", "url", "kind",
+                             "questions", "pi_summary", "summary", "approved", "note", "state", "choice"}}
             if body.get("type") == "request.followup_done" and not data.get("agent_id"):
                 request = self.get("request", body.get("request_id")) or {}
                 previous = next((f for f in request.get("followups", []) if f.get("id") == data.get("id")), {})

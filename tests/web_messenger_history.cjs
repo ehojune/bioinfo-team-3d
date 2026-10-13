@@ -73,6 +73,9 @@ test('projection excludes tool/debug events and keeps questions, answers and rep
   assert.match(messageFromEvent({...event(1),type:'agent.ask',data:{question:'why',to:'cso'}}).text,/why/);
   assert.match(messageFromEvent({...event(2),type:'agent.answer',data:{answer:'because',question:'why'}}).text,/because.*why/);
   assert.match(messageFromEvent({...event(3),type:'request.completed',request_id:'r',data:{}}).text,/보고서/);
+  assert.match(messageFromEvent({...event(4),type:'request.questions',data:{questions:['which input?']}}).text,/which input/);
+  assert.match(messageFromEvent({...event(5),type:'approval.resolved',data:{approved:true,note:'answer'}}).text,/승인.*answer/);
+  assert.equal(messageFromEvent({...event(6),type:'approval.resolved',data:{state:'timed_out'}}).who,'system');
   const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
   assert.match(html,/bindHistoryViewport\(messenger/);
   assert.match(html,/api\/messenger/);

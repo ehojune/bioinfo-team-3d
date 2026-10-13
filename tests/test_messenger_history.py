@@ -55,7 +55,8 @@ def test_history_auth_filter_types_and_cap(history):
     assert client.get("/api/messenger").status_code == 401
     assert client.get("/api/messenger", headers={"Authorization": "Bearer history-runner"}).status_code == 401
     for typ in ("agent.ask", "agent.answer", "request.created", "request.followup",
-                "request.followup_done", "request.note", "request.completed", "request.failed"):
+                "request.followup_done", "request.note", "request.completed", "request.failed",
+                "request.questions", "approval.requested", "approval.resolved"):
         append(store, typ, "two")
     for typ in ("agent.output", "agent.thinking", "task.result", "agent.tool"):
         append(store, typ, "two")
@@ -64,7 +65,7 @@ def test_history_auth_filter_types_and_cap(history):
     for _ in range(205):
         append(store)
     page = get(client, "?request_id=two&limit=200").json()
-    assert len(page["events"]) == 8 and not page["has_more"]
+    assert len(page["events"]) == 11 and not page["has_more"]
     assert all(e["request_id"] == "two" for e in page["events"])
     assert len(get(client, "?limit=200").json()["events"]) == 200
     assert get(client, "?request_id=missing").json()["events"] == []

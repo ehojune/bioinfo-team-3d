@@ -15,6 +15,12 @@ export function messageFromEvent(ev) {
     case 'request.created': Object.assign(m, {who:'pi', text:`새 요청: ${d.text || ''}`}); break;
     case 'request.followup': Object.assign(m, {who:'pi', to:d.agent_id || 'cso', text:`이어 묻기: ${d.text || ''}`}); break;
     case 'request.note': Object.assign(m, {who:'pi', to:'cso', text:`실행 중 메모: ${d.text || ''}`}); break;
+    case 'request.questions': Object.assign(m, {who:'cso', text:`확인이 필요해요: ${(d.questions || []).join(' / ')}`, cls:'alert'}); break;
+    case 'approval.requested': Object.assign(m, {who:d.agent_id || m.who, text:`승인 요청: ${d.pi_summary || d.summary || ''}`, cls:'alert'}); break;
+    case 'approval.resolved': {
+      const closed = d.state === 'timed_out' ? '시간 초과로 닫혔어요' : ['expired','cancelled'].includes(d.state) ? '답 없이 닫혔어요' : '';
+      Object.assign(m, {who:closed ? 'system' : 'pi', text:(closed || (d.approved ? '승인했어요' : d.choice === 'revise' ? '수정을 요청했어요' : '거절했어요')) + (d.note ? ` (${d.note})` : '')}); break;
+    }
     case 'github.posted': Object.assign(m, {who:'github', text:'GitHub에 업데이트했어요', url:d.url}); break;
     case 'github.failed': Object.assign(m, {who:'github', text:`GitHub 업데이트 실패: ${d.error || ''}`, cls:'alert'}); break;
     case 'request.followup_done':
