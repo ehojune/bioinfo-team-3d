@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import copy
+import hashlib
 import json
 import logging
 import mimetypes
@@ -2657,7 +2658,19 @@ class Hub:
             entry = self.store.get("ask", ask.id) or {}
             self.store.put("ask", ask.id, {**entry, "state": "working"})
             try:
-                await self.orchestrator.answer_ask(ask, runner_id)
+                if entry.get("facilities_diagnosis"):
+                    remaining = max(0, float(entry["deadline_at"]) - time.time())
+                    await asyncio.wait_for(self.orchestrator.answer_ask(ask, runner_id), remaining)
+                else:
+                    await self.orchestrator.answer_ask(ask, runner_id)
+            except asyncio.TimeoutError as exc:
+                if entry.get("facilities_diagnosis"):
+                    for tid, prior in self.consult_attempts(ask.id, "facilities"):
+                        if not prior.get("completed"):
+                            await self.cancel_task(tid)
+                await self.resolve_ask(ask, runner_id, ask_result(
+                    reason="시설팀 진단 시간 초과" if entry.get("facilities_diagnosis") else f"질의 처리 실패: {exc}",
+                    **{"from": "labhq"}))
             except Exception as exc:
                 await self.resolve_ask(ask, runner_id, ask_result(
                     reason=f"질의 처리 실패: {exc}", **{"from": "labhq"}))
@@ -2700,6 +2713,45 @@ class Hub:
                 and entry.get("state") == "resolved" and entry.get("answer")]
 
     # ----- approvals -----
+    async def request_facilities_diagnosis(self, task: Task, result: TaskResult, key: str) -> None:
+        """Claim one automatic ask per request/logical turn before any asynchronous work."""
+        from ..facilities.signatures import diagnosis_evidence
+
+        rid = task.request_id or ""
+        req = self.requests.get(rid, {})
+        if (not is_active_request(req.get("status")) or req.get("cancelling") or
+                key in (req.get("facilities_fixes") or {})):
+            return
+        ask_id = "ask_diag_" + hashlib.sha256(f"{rid}\0{key}".encode()).hexdigest()[:24]
+        entry = self.store.get("ask", ask_id)
+        if entry is None:
+            # An offline/missing facility must not turn this optional diagnosis into a CSO call or runner wait.
+            runner = self.agent_runner.get("facilities")
+            available = "facilities" in self.agents and runner in self.runners
+            ask = AskRequest(id=ask_id, task_id=result.task_id, request_id=rid, agent_id=task.agent_id,
+                             to="facilities", question="Diagnose this environment failure; provide advice only.",
+                             why_blocked=diagnosis_evidence(result.environment, result.error, result.tool_errors),
+                             source_restricted=bool(task.meta.get("restricted_inputs")))
+            scope = ((rid, "direct") if task.meta.get("kind") == "direct" else
+                     (rid, "step", task.meta["step_id"]) if task.meta.get("step_id") else
+                     (rid, "task", task.id))
+            entry = {"ask": ask.model_dump(mode="json"), "origin": None, "scope": scope,
+                     "facilities_diagnosis": True,
+                     "deadline_at": time.time() + self.s.runner.task_timeout_s,
+                     "state": "pending" if available else "resolved"}
+            if not available:
+                entry["answer"] = ask_result(reason="시설팀이 없거나 offline입니다", **{"from": "labhq"})
+            self.store.put("ask", ask_id, entry)
+        req.setdefault("facilities_diagnoses", {})[key] = ask_id
+        self.save_request(rid)
+        if entry.get("state") == "resolved":
+            return
+        ask = AskRequest.model_validate(entry["ask"])
+        self._start_ask(ask, None)
+        running = self.ask_tasks.get(ask_id)
+        if running:
+            await running
+
     async def request_approval(self, kind: str, summary: str, request_id: str | None = None,
                                detail: dict | None = None, timeout_s: int | None = None) -> dict:
         """Open a gateway card and wait for the PI.

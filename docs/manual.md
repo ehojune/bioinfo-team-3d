@@ -420,7 +420,9 @@ runner PC에 무언가 없어서 실패한 단계는 `environment` 실패입니�
 - 실패한 명령 출력이나 CLI stderr에서만 찾은 서명은 약한 증거입니다. 단계 오류가 따로 설명하면(timeout, rate limit, 5xx, 권한 거부, 취소, turn 한도 등) 그쪽을 따릅니다. 산출물이 빠졌으면 `Next:`는 산출물을 먼저 말합니다.
 - 건너뛴 단계(`skipped`)는 위 단계의 오류를 옮겨 적을 뿐이라 따로 환경 문제로 세지 않습니다.
 - 서명의 `fix`가 `labhq/facilities/fixes.yaml` allowlist를 가리키면 `facilities_fix` 카드가 "이 단계 전용 폴더에 <이름> 설치 후 한 번 다시 실행"을 묻습니다. 승인 뒤 같은 workdir·sandbox에서 원 단계를 한 번만 다시 돌리며, session resume이 가능하면 이어 씁니다.
-- 자동 설치 후보는 `labhq/facilities/packages.yaml`의 검증된 Python import→PyPI distribution·R package→CRAN/Bioconductor 표만 씁니다. 표에 없는 이름은 환경 hint만 보이고 승인 카드는 만들지 않습니다.
+- 자동 설치 후보는 `labhq/facilities/packages.yaml`의 검증된 Python import→PyPI distribution·R package→CRAN/Bioconductor 표만 씁니다. 표에 없는 이름은 승인 카드를 만들지 않습니다.
+- 승인 복구 후보가 없는 `environment` 실패는 시설팀에 한 번만 진단을 묻습니다. 서명·필요한 오류 발췌·저장된 doctor 요약만 읽고 조언을 답합니다. 원 요청·계획·대화 세션은 넘기지 않으며 답변으로 명령을 실행하거나 allowlist를 넓히지 않습니다.
+- 진단 여부는 요청·논리 단계별로 저장합니다. 재시작은 기존 상담 결과만 회수하며 불명확한 결과를 다시 실행하지 않습니다. ask 상한·예산·진단 기한을 지키고 시설팀 부재·offline·취소·예산 부족이면 원 실패와 hint를 보존합니다. 상담·복구 자체의 실패, 승인 거절·시간 초과, 복구 후 재실패는 추가 진단하지 않습니다.
 - Python은 그 단계 interpreter로 `-m pip install --target ./.pylib <검증된 distribution>`을 실행하고 `./.pylib`을 import 경로 맨 앞에 둡니다. R은 CRAN이면 `install.packages()`, Bioconductor면 `BiocManager::install()`을 `./.rlib`에 실행합니다. runner는 직원 산출물이나 작업 폴더 안 실행 파일을 실행하지 않으며 패키지를 직접 설치하지 않습니다. 버전·URL·경로·옵션은 거부합니다.
 - `disk_full`만 runner가 직접 작업 폴더의 임시 캐시를 비웁니다. event·`manifest.json`보다 먼저 정리하고, 앞선 기록은 메모리에 두었다가 정리 뒤 씁니다.
 - 재시작 뒤 승인·거절·시간 초과는 모두 저장된 결정을 소비하며 원 요청을 재개합니다. 거절·시간 초과·수정 실패·두 번째 환경 실패는 원래 `environment` 실패로 끝납니다. 연구 계획 hash와 예산 gate는 바꾸지 않습니다.
