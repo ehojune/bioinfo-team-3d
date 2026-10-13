@@ -16,6 +16,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 |---|---|---|
 | 16:42 | [`f49ef6e`](https://github.com/ehojune/bioinfo-team-3d/pull/552/commits/f49ef6e) | 비서실장 브리핑에 runner 역량 요약을 전달하고 미확인 자원 해석을 막음 |
 | 16:35 | [`e2703f1`](https://github.com/ehojune/bioinfo-team-3d/pull/551/commits/e2703f1) | 참고 문헌·프로젝트 17개를 한영 문서로 모으고 README 더 읽기에 연결 |
+| 16:22 | [`5d0c6f6`](https://github.com/ehojune/bioinfo-team-3d/pull/548/commits/5d0c6f6) | 최신 main을 병합하고 일시 정지·멈춤 제어와 실행 상태·경고 우선순위를 함께 보존 |
+| 16:15 | [`24c3131`](https://github.com/ehojune/bioinfo-team-3d/pull/548/commits/24c3131) | 긴 명령·대기 상태를 작업 원장과 공유 reducer에서 복원하고 도구 입력을 한 줄로 표시 |
 | 15:50 | [`90c5e8c`](https://github.com/ehojune/bioinfo-team-3d/pull/547/commits/90c5e8c) | 진단 파일의 ASCII encoding과 바이너리 읽기 모드를 명시해 text I/O 검사를 통과 |
 | 15:45 | [`d727a5f`](https://github.com/ehojune/bioinfo-team-3d/pull/547/commits/d727a5f) | gateway·runner 종료 진단과 heartbeat를 기록하고 상태 조회에서 죽은 프로세스의 PID 기록을 보존 |
 | 15:43 | [`99bf4bc`](https://github.com/ehojune/bioinfo-team-3d/pull/532/commits/99bf4bc) | 직원 제어 3차 검증: 연결 중단 중 재개 누락, 전송 중 단계 상태 덮어쓰기, 종료 요청의 늦은 제어 허용을 고쳤다. 새 회귀 21건은 이전 head에서 실패하고 수정 후 통과했다(#59). |
