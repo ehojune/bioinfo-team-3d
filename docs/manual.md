@@ -576,6 +576,10 @@ Paper2Agent 설치 갱신은 두 engine의 새 skill 복사를 마친 뒤 설치
 
 ![승인 게이트: 직원의 파일·셸 접근이 게이트를 거쳐 허용, PI 확인, 거부로 나뉜다. 데이터 구역은 public·internal·restricted](media/approval-gate.svg)
 
+### 폭주 감지 (그림자)
+
+같은 도구·입력 8회 또는 실패한 도구 호출 5회가 연속되면 신호별로 한 번 경고합니다. 직원은 계속 실행됩니다. Claude·Codex·Antigravity는 preview 전에 도구 이름과 원본 입력의 SHA-256 fingerprint를 계산합니다. JSON 키 순서는 정렬하고 문자열 공백은 보존합니다. 이벤트에는 기존 preview와 hash만 보냅니다. 입력 미보고나 fingerprint 없는 잘린 preview는 반복 횟수에서 제외하고 연속 횟수를 끊습니다. 한 호출의 오류 여러 줄은 실패 한 번으로 셉니다.
+
 ### 승인 게이트와 쓰기 범위
 
 HPC 제출(코어·시간 기준), 위험한 셸 명령, 예산 초과, 파견직 채용은 PI가 결정함에서 정합니다. Claude 직원의 파일·셸 호출은 승인 게이트를 거치고, 다른 엔진 직원은 sandbox와 지침에 기댑니다(아래 절과 [알려진 한계](#알려진-한계)). 셸·파일·MCP 규칙이 없는 도구는 `policy.approvals.auto_allow_tools`(기본: Read·Glob·Grep·LS·WebSearch·WebFetch·TodoWrite·Skill·StructuredOutput·ToolSearch, 그리고 이미 승인 게이트를 거친 Bash의 백그라운드 출력을 읽거나 멈추는 BashOutput·KillShell·TaskOutput·TaskStop)에 있을 때만 허용하고, 나머지는 PI에게 묻습니다. 셸 명령을 돌리는 `Monitor`가 그 예입니다. `Task`·`Agent`·`Workflow`·`TeamCreate`·`TeamDelete`는 이 목록에 넣어도 거부합니다(#421).
@@ -851,6 +855,7 @@ Claude baseline은 자기 arm의 파일 쓰기·단순 명령을 허용합니다
 
 첫 실행 때 확인할 것도 여기 있습니다.
 
+- 폭주 감지는 canonical 입력 앞 4,096자만 비교하므로 그 뒤의 차이는 구별하지 못합니다. 원본 fingerprint가 없는 legacy 이벤트는 잘리지 않은 입력만 비교합니다. 경고만 하는 그림자 모드이며 자동 중단은 아직 없습니다(#59 ②).
 - runner와 직원 CLI의 PATH에서는 Windows Store·Python Install Manager 실행 별칭 폴더를 뺍니다. doctor가 PATH의 `python3` 별칭을 찾으면 Windows 앱 실행 별칭에서 끄는 법을 경고합니다.
 - Windows는 직원 CLI 명령줄을 32,000자로 제한합니다. 긴 프롬프트는 작업 폴더의 TASK 파일로 넘기고, 그래도 넘치면(조상 단계가 많아 폴더별 규칙이 늘어난 경우 등) Claude 직원의 `--settings`를 작업 폴더 옆 `.labhq-settings/<task>.json` 파일로 넘깁니다. 직원의 쓰기 규칙은 자기 작업 폴더만 덮으므로 이 파일은 셸 쓰기 게이트를 거치지 않고는 고칠 수 없습니다. 그래도 넘치면 단계가 이유와 함께 실패합니다.
 - 읽기 전용 workspace 지시 파일 차단은 adapter에 등록된 Claude Code·Codex 이름을 판정합니다. Windows·macOS에서는 대소문자를 무시하고 비교합니다(`claude.md`도 `CLAUDE.md`, #190). 새 CLI가 다른 이름을 도입하면 목록을 갱신해야 합니다.
