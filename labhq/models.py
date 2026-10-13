@@ -264,6 +264,9 @@ class TaskResult(BaseModel):
     environment: dict[str, str] | None = None
     # One PI-approved facilities repair attempted before this step's single rerun (#35 stage 3).
     facilities_fix: dict[str, Any] | None = None
+    # Which of the step's steer messages this turn delivered and which it did not, and whether it ended paused (#59 ①).
+    # The runner reports it; the gateway puts the undelivered ones back on the step for its next turn.
+    control: dict[str, Any] | None = None
 
     @field_validator("environment", mode="before")
     @classmethod

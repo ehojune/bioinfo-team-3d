@@ -14,6 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 15:50 | [`90c5e8c`](https://github.com/ehojune/bioinfo-team-3d/pull/547/commits/90c5e8c) | 진단 파일의 ASCII encoding과 바이너리 읽기 모드를 명시해 text I/O 검사를 통과 |
+| 15:45 | [`d727a5f`](https://github.com/ehojune/bioinfo-team-3d/pull/547/commits/d727a5f) | gateway·runner 종료 진단과 heartbeat를 기록하고 상태 조회에서 죽은 프로세스의 PID 기록을 보존 |
+| 15:43 | [`99bf4bc`](https://github.com/ehojune/bioinfo-team-3d/pull/532/commits/99bf4bc) | 직원 제어 3차 검증: 연결 중단 중 재개 누락, 전송 중 단계 상태 덮어쓰기, 종료 요청의 늦은 제어 허용을 고쳤다. 새 회귀 21건은 이전 head에서 실패하고 수정 후 통과했다(#59). |
+| 15:35 | [`bd2a3f5`](https://github.com/ehojune/bioinfo-team-3d/pull/532/commits/bd2a3f5) | main(#540~#545 포함)을 병합하고 직원 제어와 웹 전체 로그·데모 상태의 충돌을 함께 보존해 풀었다. |
 | 14:21 | [`0889537`](https://github.com/ehojune/bioinfo-team-3d/pull/545/commits/0889537) | 데모 웹 회귀 테스트를 CI의 Node 실행 목록에 등록한다 |
 | 14:18 | [`942537b`](https://github.com/ehojune/bioinfo-team-3d/pull/545/commits/942537b) | 데모 포트·runner 연결·웹 표시·진행 속도·기록을 라이브와 분리한다 |
 | 14:03 | [`1ac7879`](https://github.com/ehojune/bioinfo-team-3d/pull/544/commits/1ac7879) | 웹 긴 줄 펼침·서버 잘림 표시와 결정 시각·보고서 링크·브라우저 숨김을 추가하고 데모 store 격리를 검증 |
@@ -31,20 +35,28 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 15:47 | [`e988fa4`](https://github.com/ehojune/bioinfo-team-3d/pull/541/commits/e988fa4) | PI 시운전 실행 경로의 질문·환경·대기·산출 보존 결함 4건을 고침 |
 | 15:47 | [`688759b`](https://github.com/ehojune/bioinfo-team-3d/pull/542/commits/688759b) | 시운전 전 웹 결함 4건을 고쳤다: 직접 맡긴 요청이 처리: 직접 맡김으로 보이고 3D 요청 행이 한글 단계 이름을 쓴다, CP1 승인을 기다리는 연구 요청이 실행이 아니라 계획으로 보인다, 직접 요청을 고른 채 보내기가 새 요청으로 간다, 성공이 아닌 연구 종료에 사유가 붙는다(report_incomplete 포함). |
 | 15:32 | [`b5f41c1`](https://github.com/ehojune/bioinfo-team-3d/pull/540/commits/b5f41c1) | 시운전 전 CLI 결함 3건을 고친다: down이 taskkill 한글 출력을 OEM으로 읽고, up 밖에서 시작한 gateway가 답하면 exit 2로 알리며, send·watch가 요청 묶음 경로와 재현 등급을 기다려 출력한다. |
+| 15:29 | [`cdbca07`](https://github.com/ehojune/bioinfo-team-3d/pull/532/commits/cdbca07) | 웹이 제어 줄을 고를 수 있게 snapshot의 실행 중 작업에 작업 종류를 싣는다. 종류가 없는 작업은 전과 같다(#59). |
+| 15:19 | [`c14107e`](https://github.com/ehojune/bioinfo-team-3d/pull/532/commits/c14107e) | 직원 제어는 계획 단계 작업과 직접 맡긴 작업에만 되고, 상담·이어 묻기 같은 작업은 거절한다. HPC 잡·질문 대기 중에는 멈추기 대신 일시 정지를 쓰라고 하고, 대기에 들어가며 받은 멈춤은 잡과 대기 뒤 turn을 남긴 채 일시 정지가 된다(#59). |
 | 15:16 | [`7abdd1e`](https://github.com/ehojune/bioinfo-team-3d/pull/539/commits/7abdd1e) | 완료 신호를 기다리는 test에 60~120초 바깥 상한을 다시 둬, 회귀 때 CI가 멈추지 않고 실패로 끝난다. |
 | 15:04 | [`2217a18`](https://github.com/ehojune/bioinfo-team-3d/pull/539/commits/2217a18) | 로그인 재시도 test를 두 번째 dispatch 완료 event로 동기화 |
 | 14:39 | [`1da9abb`](https://github.com/ehojune/bioinfo-team-3d/pull/539/commits/1da9abb) | quota·stall·mock-lab test를 실제시간 상한 대신 완료 event와 task로 동기화 |
+| 14:25 | [`0c34544`](https://github.com/ehojune/bioinfo-team-3d/pull/532/commits/0c34544) | 직원 제어 재설계: 방향·정지·멈춤은 작업이 아니라 단계에 걸리고 gateway가 쓰일 때까지 보관한다. 끝난 작업 줄에서 보내도 같은 단계의 지금 turn에 가고, 아직 시작하지 않은 turn은 정지와 방향을 받은 뒤 시작하며, 단계가 끝날 때 쓰이지 않은 방향은 알린다(#59). |
 | 14:08 | [`7fa7718`](https://github.com/ehojune/bioinfo-team-3d/pull/536/commits/7fa7718) | Windows CI의 cp1252 console에서도 단계와 실패 출력을 UTF-8 한 줄로 보존한다 |
 | 14:02 | [`6f496fc`](https://github.com/ehojune/bioinfo-team-3d/pull/536/commits/6f496fc) | README 설치 절을 더 짧게 고쳐 전체와 해당 절의 바이트 수를 종전보다 줄인다 |
 | 14:00 | [`2002b27`](https://github.com/ehojune/bioinfo-team-3d/pull/535/commits/2002b27) | 공유 환경 판정이 uv·conda·pixi·poetry 같은 실행기의 전역 옵션을 표로 건너뛰어 run이 실행하는 프로그램을 찾고, 표에 없는 옵션이나 모르는 실행기면 뒤 단어를 모두 프로그램 자리로 본다. 재귀 삭제 규칙은 실제 rm에만 걸어 docker rm·지금 트리의 git rm·따옴표로 감싼 변수 하나를 지우는 rm은 묻지 않고, PowerShell 출력 문자열 속 .Delete( 글자는 삭제로 보지 않는다. |
 | 13:40 | [`956485f`](https://github.com/ehojune/bioinfo-team-3d/pull/536/commits/956485f) | 새 clone과 venv에서 mock 요청·묶음·verify·정리까지 검사하고 Windows CI에서 돌린다 |
 | 13:37 | [`c087aaf`](https://github.com/ehojune/bioinfo-team-3d/pull/537/commits/c087aaf) | 묶음 대기 표시로 중단된 요청 묶음을 시작 때 한 번 복구 |
 | 13:36 | [`9b8c6a3`](https://github.com/ehojune/bioinfo-team-3d/pull/537/commits/9b8c6a3) | gateway 중단 뒤 요청 묶음 복구 회귀 5건을 추가 |
+| 13:36 | [`4f880ca`](https://github.com/ehojune/bioinfo-team-3d/pull/532/commits/4f880ca) | 리뷰 2차: 방향·정지·멈춤은 쓰일 때까지 runner 상태 폴더에 남아 runner를 다시 띄워도 이어지고, 이어 받기는 직원·세션 단위다. 실행 순서를 기다리던 turn은 멈추기를 누르면 시작하지 않고 바로 멈추고, 요청 취소로 끝난 멈춤도 화면의 재개 버튼이 사라진다(#59). |
 | 12:59 | [`c5c9010`](https://github.com/ehojune/bioinfo-team-3d/pull/535/commits/c5c9010) | 공유 환경 판정에서 wrapper 뒤 프로그램 자리를 찾는 코드를 하나로 합치고, ~ 쓰기를 묻는 사유에 펼친 경로를 함께 보인다. |
 | 12:57 | [`b75a0d3`](https://github.com/ehojune/bioinfo-team-3d/pull/535/commits/b75a0d3) | 승인 게이트가 find -exec payload·rm 옵션 단어·PowerShell pipe 뒤 삭제를 리터럴로 읽을 수 없으면 묻고, ~로 시작하는 셸 쓰기 대상을 그 셸의 home으로 펼쳐 허용 폴더와 대조한다. 공유 환경 R 설치 판정은 프로그램 자리 단어에만 걸고, 통제 구역 링크가 있는 project 폴더를 연 Claude 단계는 링크의 다른 표기(8.3 이름·대소문자)도 게이트로 보낸다. |
+| 12:51 | [`92e046a`](https://github.com/ehojune/bioinfo-team-3d/pull/532/commits/92e046a) | main 병합. gateway Hub 초기화의 채용 수 주석 충돌만 풀었다. |
+| 05:49 | [`15bbd6a`](https://github.com/ehojune/bioinfo-team-3d/pull/532/commits/15bbd6a) | 리뷰 반영: 적용하지 못한 제어는 받았다고 답하지 않아 재연결 때 다시 오고, 다시 온 제어는 끝난 작업에서도 한 번만 적용된다. 한 직원이 작업 둘을 동시에 하면 시트에 작업마다 제어 줄이 생기고, 재개 기한이 지난 멈춤은 열린 화면에서도 재개 버튼이 사라진다(#59). |
 | 05:43 | [`3e0c34d`](https://github.com/ehojune/bioinfo-team-3d/pull/534/commits/3e0c34d) | 연구 lane #527 후속: 기다리는 마지막 보고서 turn의 예산 면제, 차수 없는 예전 확인 질문 답, gateway 이어 가기 되돌리기 판정을 바로잡음 |
 | 05:21 | [`ebc968a`](https://github.com/ehojune/bioinfo-team-3d/pull/530/commits/ebc968a) | main 병합: #527 연구 lane 상태 후속과 server.py 충돌을 풀어 이어 가기 복원 helper와 취소 마무리 helper를 함께 둔다. |
+| 05:11 | [`b8f4a19`](https://github.com/ehojune/bioinfo-team-3d/pull/532/commits/b8f4a19) | main 병합. 매뉴얼 CLI 예시와 node test 목록의 충돌만 풀었다. |
 | 05:07 | [`85bcdf0`](https://github.com/ehojune/bioinfo-team-3d/pull/530/commits/85bcdf0) | main 병합: #522 파견직 채용물 고정과의 import 충돌을 풀고, 그 테스트의 가짜 러너에 채용 turn을 담을 tasks를 더했다. |
+| 04:59 | [`d5da996`](https://github.com/ehojune/bioinfo-team-3d/pull/532/commits/d5da996) | 실행 중인 직원에게 웹 상세 시트·labhq task·REST로 방향을 보내고, 일시 정지·재개하고, 세션을 남긴 채 멈출 수 있다. Claude는 도구 hook으로 바로, 다른 엔진은 다음 turn에서 받는다(#59). |
 | 04:52 | [`28f0933`](https://github.com/ehojune/bioinfo-team-3d/pull/530/commits/28f0933) | 러너가 붙거나 명단을 바꾸면 러너를 기다리던 단계가 모두 다시 판정해, 처음 켠 gateway에서 첫 직원을 맡지 않는 러너가 먼저 붙어도 24시간 기다리지 않고 바로 이유를 알린다(PR #530 리뷰). |
 | 04:50 | [`939291a`](https://github.com/ehojune/bioinfo-team-3d/pull/531/commits/939291a) | Claude와 Codex의 90초 fake MCP 대기 설정과 단일 호출을 직접 검증하고 state env 기본값을 지연 생성했다 |
 | 04:45 | [`d1d1886`](https://github.com/ehojune/bioinfo-team-3d/pull/525/commits/d1d1886) | 공유 환경 설치 판정이 nohup·sudo·time·uv run 같은 wrapper 뒤의 실행 파일과 python·Rscript의 script 앞 변수를 다시 막는다. PowerShell에서 Get-ChildItem을 pipe로 넘겨 지우는 명령(ForEach-Object 안 포함)도 .tmp 밖이면 묻는다. |

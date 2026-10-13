@@ -113,6 +113,42 @@ test('staff tasks restore followup activity independently of the request board',
   assert.equal(o.stateText(o.ag('analyst')), '명령 실행 중 · 9분째');
   assert.equal(o.currentTask(o.ag('analyst')), 'Followup');
 });
+
+test('staff controls override busy text while warnings still take priority', () => {
+  const {o, event, a} = office();
+  event('agent.tool', {id: 'b', name: 'Bash', input: 'sleep 900'});
+  event('agent.control', {paused: true});
+  assert.equal(o.stateText(a), '일시 정지됨');
+  assert.equal(o.visual(a), 'waiting');
+  assert.equal(o.currentTool(a), null);
+  event('agent.log', {level: 'warn', text: '출력이 없습니다'});
+  assert.equal(o.stateText(a), '출력이 없습니다');
+  event('agent.control', {paused: false});
+  event('agent.tool_result', {id: 'b'});
+  assert.equal(o.stateText(a), '생각하는 중');
+  event('task.result', {ok: false, error_kind: 'halted'});
+  assert.equal(o.stateText(a), '멈춤 · 재개 가능');
+  event('request.step_halt_expired');
+  assert.equal(o.S.activeTasks.size, 0);
+});
+
+test('snapshot restores paused and halted tasks without claiming they are thinking', () => {
+  const {o} = office();
+  for (const [state, label] of [['paused', '일시 정지됨'], ['halted', '멈춤 · 재개 가능']]) {
+    o.apply({type: 'snapshot', data: {agents: [{id: 'analyst'}],
+      running_tasks: [{id: 't', agent_id: 'analyst', state, control: {[state]: true}}]}});
+    assert.equal(o.stateText(o.ag('analyst')), label);
+  }
+});
+
+test('a new turn removes the prior hibernating task of the same step', () => {
+  const {o} = office();
+  const send = (type, task_id, data) => o.apply({type, task_id, request_id: 'r', agent_id: 'analyst', data});
+  send('task.dispatched', 'old', {step_id: 's'});
+  send('task.result', 'old', {pending_jobs: ['j']});
+  send('task.dispatched', 'new', {step_id: 's'});
+  assert.equal(o.S.activeTasks.has('old'), false);
+});
 test('a completed request and authoritative snapshot remove stale busy tasks', () => {
   const {o, event, a} = office();
   o.S.activeTasks.get('t').request_id = 'req';

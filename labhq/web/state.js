@@ -121,12 +121,17 @@ Object.defineProperty(S, 'defaultRefs', { value: [], writable: true, enumerable:
 // Connected runner ids (R15), known once a snapshot said so; the page shows 러너 꺼짐 while it is empty.
 Object.defineProperty(S, 'runners', { value: new Set(), writable: true, enumerable: false });
 Object.defineProperty(S, 'runnersKnown', { value: false, writable: true, enumerable: false });
+// #59 ①: each task's steer/pause/halt state (agent.control), for the staff sheet; out of the legacy digests too.
+Object.defineProperty(S, 'taskControl', { value: new Map(), enumerable: false });
+// Each task's kind from its dispatch (#59 ①): only step and direct turns get a control row.
+Object.defineProperty(S, 'taskKind', { value: new Map(), enumerable: false });
 Object.defineProperty(S, 'demoStatus', { value: null, writable: true, enumerable: false });
 Object.defineProperty(S, 'activeTasks', { value: new Map(), enumerable: false });
 function resetSnapshotState() {
   S.agents.clear(); S.approvals.clear(); S.suggestions = []; S.requests.clear(); S.current = null;
   S.jobs.clear(); S.feed = []; S.cost = 0; S.projects = [];
   S.lastSay = {}; S.taskStep.clear(); S.stepDetails.clear(); S.askDetails.clear(); S.engineHolds.clear(); S.seq = 0; S.doorUntil = 0;
+  S.taskControl.clear(); S.taskKind.clear();
   S.defaultRefs = [];
   S.activeTasks.clear();
 }
@@ -143,16 +148,22 @@ const PHASES = [['briefing', '브리핑'], ['plan', '계획'], ['execute', '실�
 const phaseLabel = q => q.phase === 'done' ? '완료' : (PHASES.find(([key]) => key === q.phase) || [])[1] || String(q.phase);
 
 const ag = id => S.agents.get(id);
+const controlledState = t => {
+  if (!t) return '';
+  const c = S.taskControl.get(t.id) || t.control || {};
+  return c.halted || t.state === 'halted' ? 'halted' : c.paused || t.state === 'paused' ? 'paused' : '';
+};
 // A queued consultation must not hide the command already occupying this employee.
-const taskPriority = t => ({error: 5, working: 4, running: 4, waiting: 3, queued: 2, hibernating: 1})[t.activity?.state || t.state] || 4;
+const taskPriority = t => controlledState(t) ? 1 : ({error: 5, working: 4, running: 4, waiting: 3, queued: 2, hibernating: 1})[t.activity?.state || t.state] || 4;
 const activeTask = a => [...S.activeTasks.values()].filter(t => t.agent_id === a.id)
   .sort((x, y) => taskPriority(y) - taskPriority(x) || (y.dispatched_at || 0) - (x.dispatched_at || 0))[0];
 const currentTask = a => activeTask(a)?.title || activeTask(a)?.activity?.task || a.task || activeTask(a)?.step_id || activeTask(a)?.id || '';
-const currentTool = a => Object.values(activeTask(a)?.activity?.tools || {}).sort((x, y) => y.at - x.at)[0];
+const currentTool = a => controlledState(activeTask(a)) ? null : Object.values(activeTask(a)?.activity?.tools || {}).sort((x, y) => y.at - x.at)[0];
 const warning = a => activeTask(a)?.activity?.warning ||
   (activeTask(a) && S.runnersKnown && a.runner_id && !S.runners.has(String(a.runner_id)) ? 'runner 연결 끊김' : '');
 const taskState = a => {
   const t = activeTask(a); if (!t) return '';
+  if (controlledState(t)) return 'waiting';
   if ([...S.approvals.values()].some(p => p.agent_id === a.id && (!p.task_id || p.task_id === t.id))) return 'waiting';
   const state = t.activity?.state || t.state;
   return ['queued', 'waiting', 'hibernating', 'error'].includes(state) ? state : 'working';
@@ -164,6 +175,8 @@ const stateText = (a, vs = visual(a)) => {
   if (warning(a)) return warning(a);
   const t = activeTask(a), activity = t?.activity || {}, tool = currentTool(a);
   if (t) {
+    if (controlledState(t) === 'halted') return '멈춤 · 재개 가능';
+    if (controlledState(t) === 'paused') return '일시 정지됨';
     if (vs === 'queued') return '차례 기다리는 중';
     if (vs === 'waiting') return activity.ask ? '답 기다리는 중' : 'PI 결정 기다리는 중';
     if (vs === 'hibernating') return (activity.jobs || []).length ? 'HPC 작업 기다리는 중' : '답 기다리는 중';
@@ -180,9 +193,21 @@ function toolInputLine(input) {
 function trackActivity(ev) {
   const d = ev.data || {}, tid = ev.task_id;
   if (!tid) return;
+  if (ev.type === 'task.dispatched' && ev.request_id && (d.step_id || d.kind)) {
+    for (const [oldId, old] of S.activeTasks) if (oldId !== tid && old.request_id === ev.request_id &&
+      old.step_id === (d.step_id || d.kind)) S.activeTasks.delete(oldId);
+  }
   if (ev.type === 'task.dispatched') S.activeTasks.set(tid, {id: tid, agent_id: ev.agent_id,
-    request_id: ev.request_id, title: d.title || short(stripPrompt(d.prompt), 60), dispatched_at: ev.ts,
+    request_id: ev.request_id, step_id: d.step_id || d.kind, title: d.title || short(stripPrompt(d.prompt), 60), dispatched_at: ev.ts,
     state: 'queued', activity: {state: 'queued', tools: {}}});
+  if (['request.step_resumed', 'request.step_halt_expired', 'request.step_unpaused'].includes(ev.type)) {
+    S.activeTasks.delete(tid); return;
+  }
+  if (['request.step_paused', 'request.step_halted'].includes(ev.type)) {
+    const previous = S.activeTasks.get(tid) || {};
+    S.activeTasks.set(tid, {...previous, id: tid, agent_id: ev.agent_id, request_id: ev.request_id,
+      step_id: d.step_id, state: ev.type === 'request.step_paused' ? 'paused' : 'halted', activity: {}});
+  }
   const t = S.activeTasks.get(tid); if (!t) return;
   const activity = t.activity ||= {}, ts = ev.ts || now();
   if (ev.type === 'agent.status') {
@@ -201,12 +226,25 @@ function trackActivity(ev) {
     if (['warn', 'alert'].includes(d.level)) activity.warning = d.text;
     else if (!['debug', 'thinking'].includes(d.level)) delete activity.warning;
   } else if (ev.type === 'task.result') {
-    if ((d.pending_jobs || []).length || (d.pending_asks || []).length) {
+    if (d.error_kind === 'halted') { t.state = 'halted'; t.activity = {}; }
+    else if ((d.pending_jobs || []).length || (d.pending_asks || []).length) {
       t.state = 'hibernating'; t.activity = {state: 'hibernating', jobs: d.pending_jobs || [], asks: d.pending_asks || []};
     } else S.activeTasks.delete(tid);
   }
 }
 const nick = id => { const a = ag(id); return a ? String(a.name || a.id).split(' ')[0] : ({ pi: '나', hpc: 'HPC', github: 'GitHub', system: '시스템' }[id] || id || ''); };
+// A staff member's task rows: kept while the task runs, waits for HPC or an answer, is halted, or holds its paused
+// step; removed on its terminal event, as a reload would (PR #532 review).
+function trackTask(a, tid, state, title, keep = false, rid = '', sid = '') {
+  if (!a || !tid) return;
+  const prev = a.tasks.get(tid) || {}, control = S.taskControl.get(tid) || {};
+  if (['done', 'error', 'idle'].includes(state) && !keep && !control.halted) a.tasks.delete(tid);
+  else a.tasks.set(tid, { state, title: title || prev.title || '', rid: rid || prev.rid || '', sid: sid || prev.sid || '',
+    kind: S.taskKind.get(tid) || prev.kind || '' });
+}
+function dropTask(a, tid) {
+  if (a && tid && !(S.taskControl.get(tid) || {}).halted) { a.tasks.delete(tid); S.taskControl.delete(tid); }
+}
 function upsertAgent(a) {
   const prev = S.agents.get(a.id) || { state: 'idle', task: '', say: '', tool: '', log: [] };
   const next = { ...prev, ...a }, usage = next.usage || {}, toolCalls = next.toolCalls || 0;
@@ -216,6 +254,9 @@ function upsertAgent(a) {
   // Not part of the replayed state: the trace survives roster updates but stays out of state comparisons.
   Object.defineProperty(next, 'trace', { value: prev.trace || [], writable: true, enumerable: false });
   Object.defineProperty(next, 'waitFor', { value: prev.waitFor || '', writable: true, configurable: true, enumerable: false });
+  // The staff member's live tasks, task id -> {state, title} (#59 ①): two can run at once, and the staff sheet's
+  // control rows each act on one of them (PR #532 review).
+  Object.defineProperty(next, 'tasks', { value: prev.tasks || new Map(), writable: true, configurable: true, enumerable: false });
   S.agents.set(a.id, next);
 }
 function req(rid) {
@@ -290,7 +331,9 @@ function syncHoldStatus(q) {
   else if (states.includes('waiting_quota') && !isTerminalRequest(q.status)) q.status = 'waiting_quota';
   else if (states.includes('waiting_facilities_fix') && !isTerminalRequest(q.status)) q.status = 'waiting_facilities_fix';
   else if (['waiting_login', 'waiting_quota', 'waiting_facilities_fix'].includes(q.status))
-    q.status = [...S.approvals.values()].some(a => a.request_id === q.id && PI_DECISION_KINDS.has(a.kind)) ? 'waiting_pi' : 'running';
+    // A paused or halted step holds the request for the PI too, with no card (PR #532 verification).
+    q.status = states.includes('paused') || states.includes('halted') ||
+      [...S.approvals.values()].some(a => a.request_id === q.id && PI_DECISION_KINDS.has(a.kind)) ? 'waiting_pi' : 'running';
 }
 // A resumed request leaves the 'done' phase a snapshot gave it while it was interrupted (R14).
 function reopen(q, status) {
@@ -315,6 +358,7 @@ function onDispatch(ev) {
   const d = ev.data || {}, id = ev.agent_id, rid = ev.request_id, q = rid ? req(rid) : null, a = ag(id);
   if (a) a.task = d.title || short(stripPrompt(d.prompt), 60);
   if (d.step_id) S.taskStep.set(ev.task_id, d.step_id);
+  if (d.kind && ev.task_id) S.taskKind.set(ev.task_id, d.kind);
   if (q) {
     const ph = { briefing: 'briefing', plan: 'plan', review: 'review', synthesis: 'report', direct: 'execute' }[d.kind];
     if (ph) q.phase = ph;
@@ -393,6 +437,11 @@ function apply(ev, replay = false) {
         restored.set(key, { task, rank });
       }
       for (const { task } of restored.values()) {
+        if (task.control || task.state === 'halted') S.taskControl.set(task.id, { ...(task.control || {}), ...(task.state === 'halted' ? { halted: true } : {}) });
+        if (task.kind) S.taskKind.set(task.id, task.kind);
+        trackTask(task.agent_id && ag(task.agent_id), task.id,
+          task.state === 'running' ? 'working' : ['halted', 'paused'].includes(task.state) ? 'idle' : task.state, '', true,
+          task.request_id, task.step_id);
         const q = S.requests.get(task.request_id);
         if (!q) continue;
         q.steps[task.step_id] = task.state === 'running' ? 'working' : task.state;
@@ -415,6 +464,7 @@ function apply(ev, replay = false) {
     case 'agent.status': {
       const a = ag(id); if (!a) break;
       a.state = d.state || a.state; a.stateAt = ts;
+      trackTask(a, ev.task_id, d.state || a.state, d.task, Boolean(d.halted), rid, S.taskStep.get(ev.task_id));
       // Display only, like usage and trace: kept out of the replayed state the golden hashes compare.
       if (d.state === 'hibernating') Object.defineProperty(a, 'waitFor', { writable: true, configurable: true, enumerable: false,
         value: (d.jobs || []).length ? 'hpc' : (d.asks || []).length ? 'answer' : '' });
@@ -427,6 +477,43 @@ function apply(ev, replay = false) {
     case 'agent.tool': { const a = ag(id); if (!a) break; a.tool = d.name; a.toolAt = ts; a.toolCalls = (a.toolCalls || 0) + 1;
       const input = typeof d.input === 'string' ? d.input : JSON.stringify(d.input ?? '');
       logTo(a, `도구 ${toolLabel(d.name)} ${input}`, ts, {...d, previewText: `도구 ${toolLabel(d.name)} ${short(d.summary || toolInputLine(d.input), 80)}`}); break; }
+    case 'agent.control': {
+      // Merged, never replaced: a steer or pause to a halted task keeps it halted until resumed or expired.
+      if (ev.task_id) {
+        const prev = S.taskControl.get(ev.task_id) || {};
+        S.taskControl.set(ev.task_id, { ...prev, ...d, halted: Boolean(prev.halted || d.halted) });
+      }
+      if ((d.undelivered || []).length) {  // the step ended before a turn could take these
+        const text = `전달 못 한 방향 수정 ${d.undelivered.length}개: ${short(d.undelivered.join(' / '), 160)}`;
+        const a = ag(id); if (a) logTo(a, text, ts);
+        feed({ who: id || 'system', text, cls: 'alert' }, ts, rid);
+      }
+      break;
+    }
+    case 'request.step_paused': {  // the step's next turn waits for the PI; its last task's row resumes it
+      if (ev.task_id) S.taskControl.set(ev.task_id, { ...(S.taskControl.get(ev.task_id) || {}), paused: true });
+      trackTask(ag(id), ev.task_id, 'idle', '', true, rid, d.step_id);
+      if (rid && d.step_id) req(rid).steps[d.step_id] = 'paused';
+      break;
+    }
+    case 'request.step_unpaused': dropTask(ag(id), ev.task_id); break;
+    case 'request.step_halted': {
+      if (ev.task_id) S.taskControl.set(ev.task_id, { ...(S.taskControl.get(ev.task_id) || {}), halted: true });
+      if (rid && d.step_id) req(rid).steps[d.step_id] = 'halted';
+      const a = ag(id); if (a) { trackTask(a, ev.task_id, 'idle', '', true); logTo(a, 'PI가 멈췄어요. 재개하면 같은 세션으로 이어 가요', ts); }
+      break;
+    }
+    case 'request.step_resumed': case 'request.step_halt_expired': {
+      // Resumed: the next turn is a new task. Expired: the PI did not resume within the bound and the step goes on
+      // as failed. Either way the halted task's resume row goes (PR #532 review).
+      if (ev.task_id) S.taskControl.delete(ev.task_id);
+      const a = ag(id); if (a && ev.task_id) a.tasks.delete(ev.task_id);
+      if (rid && d.step_id && t === 'request.step_resumed') req(rid).steps[d.step_id] = 'working';
+      if (rid && d.step_id && t === 'request.step_halt_expired' && req(rid).steps[d.step_id] === 'halted') req(rid).steps[d.step_id] = 'error';
+      if (a && t === 'request.step_halt_expired') logTo(a, d.reason === 'cancelled' ? '요청을 취소해 멈춘 단계를 닫았어요'
+        : '멈춘 단계를 재개 기한 안에 재개하지 않아 실패로 넘어갔어요', ts);
+      break;
+    }
     case 'agent.tool_error': { const a = ag(id); if (a) logTo(a, `도구 오류: ${d.text}`, ts, d); break; }
     case 'agent.log': {
       const a = ag(id); if (!a || !d.text) break;
@@ -475,6 +562,9 @@ function apply(ev, replay = false) {
     }
     case 'task.dispatched': {
       onDispatch(ev);
+      // A new turn of the step supersedes the staff member's earlier row for it (an HPC wait, a held pause).
+      const worker = ag(id), sid = d.step_id || d.kind;
+      if (worker && rid && sid) for (const [tid, row] of [...worker.tasks]) if (tid !== ev.task_id && row.rid === rid && row.sid === sid) dropTask(worker, tid);
       if (rid && d.step_id) Object.assign(stepDetail(rid, d.step_id), {
         task_id: ev.task_id, attempts: Math.max(stepDetail(rid, d.step_id).attempts || 0, Number(d.attempt) || 1),
       });
@@ -482,8 +572,10 @@ function apply(ev, replay = false) {
     }
     case 'task.result': {
       const sid = S.taskStep.get(ev.task_id);
+      if (d.error_kind === 'halted' && ev.task_id) S.taskControl.set(ev.task_id, { ...(S.taskControl.get(ev.task_id) || {}), halted: true });
+      else if (!(d.pending_jobs || []).length && !(d.pending_asks || []).length) dropTask(ag(id), ev.task_id);  // over
       if (sid && rid) {
-        if (d.ok === false) req(rid).steps[sid] = 'error';
+        if (d.ok === false) req(rid).steps[sid] = d.error_kind === 'halted' ? 'halted' : 'error';
         Object.assign(stepDetail(rid, sid), { task_id: ev.task_id, ok: d.ok, text: d.text || '', error: d.error || '',
           outputs: d.outputs || [], missing_outputs: d.missing_outputs || [] });
       }
@@ -660,6 +752,8 @@ function apply(ev, replay = false) {
     case 'request.completed': case 'request.failed': {
       for (const [tid, task] of S.activeTasks) if (task.request_id === rid) S.activeTasks.delete(tid);
       const q = req(rid);
+      // The request is over (done, failed or cancelled): no step of it takes a control any more.
+      for (const a of S.agents.values()) for (const [tid, row] of [...a.tasks]) if (row.rid === rid) { a.tasks.delete(tid); S.taskControl.delete(tid); }
       q.status = d.status === 'cancelled' ? 'cancelled' : t === 'request.completed' && d.ok !== false ? 'done' : 'failed'; q.phase = 'done';
       if (typeof d.cost_usd === 'number' && Number.isFinite(d.cost_usd) && d.cost_usd >= 0) {
         S.cost += d.cost_usd - q.cost; q.cost = d.cost_usd;

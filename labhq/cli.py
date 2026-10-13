@@ -219,6 +219,25 @@ def _api_error_detail(response) -> str:
     return json.dumps(detail, ensure_ascii=False, separators=(",", ":")) if detail is not None else ""
 
 
+TASK_CONTROL_DONE = {"steer": "방향 수정을 보냈습니다", "pause": "일시 정지를 보냈습니다", "resume": "재개를 보냈습니다",
+                     "halt": "멈춤을 보냈습니다"}
+
+
+def task_control(s: Settings, action: str, task_id: str, text: str | None = None) -> str:
+    """`labhq task steer|pause|resume|halt`: the same REST call as the staff sheet's buttons (#59 ①)."""
+    from urllib.parse import quote
+
+    if action == "steer" and not (text or "").strip():
+        raise SystemExit("labhq task steer <task_id> \"<방향 수정>\" — 보낼 내용을 적어 주세요")
+    out = _api(s, "POST", f"/api/tasks/{quote(task_id, safe='')}/{action}",
+               json={"text": text} if action == "steer" else {})
+    if out.get("resumed_halted"):
+        return f"{task_id}: 멈췄던 작업을 재개합니다 · 같은 세션으로 다음 turn을 보냅니다"
+    where = ("" if out.get("sent", True) else " · 러너가 꺼져 있어 다시 연결되면 전달합니다" if action == "halt"
+             else " · 같은 단계의 다음 turn에 적용합니다")
+    return f"{task_id}: {TASK_CONTROL_DONE[action]}{where}"
+
+
 def _api(s: Settings, method: str, path: str, *, raw_errors: bool = False, **kw):
     import httpx
 
@@ -471,7 +490,7 @@ def _process_created(pid: int) -> str | None:
     return f"ps:{created}"
 
 
-def _process_record(s: Settings, role: str) -> tuple[str, dict | None, str | None]:
+def _process_record(s: Settings, role: str, *, cleanup: bool = True) -> tuple[str, dict | None, str | None]:
     """Return alive/missing/stale/unknown. Stale records are removed without touching a process."""
     path = _pid_file(s, role)
     try:
@@ -482,7 +501,8 @@ def _process_record(s: Settings, role: str) -> tuple[str, dict | None, str | Non
         return "unknown", None, f"프로세스 기록을 읽을 수 없음: {exc}"
     except (ValueError, TypeError):
         try:
-            path.unlink(missing_ok=True)
+            if cleanup:
+                path.unlink(missing_ok=True)
         except OSError as exc:
             return "unknown", None, f"잘못된 프로세스 기록을 지울 수 없음: {exc}"
         return "stale", None, None
@@ -491,7 +511,8 @@ def _process_record(s: Settings, role: str) -> tuple[str, dict | None, str | Non
              and isinstance(record.get("created"), str) and record.get("config") == s.config_path)
     if not valid:
         try:
-            path.unlink(missing_ok=True)
+            if cleanup:
+                path.unlink(missing_ok=True)
         except OSError as exc:
             return "unknown", record if isinstance(record, dict) else None, f"stale 기록을 지울 수 없음: {exc}"
         return "stale", None, None
@@ -501,11 +522,44 @@ def _process_record(s: Settings, role: str) -> tuple[str, dict | None, str | Non
         return "unknown", record, str(exc)
     if created is None or created != record["created"]:
         try:
-            path.unlink(missing_ok=True)
+            if cleanup:
+                path.unlink(missing_ok=True)
         except OSError as exc:
             return "unknown", record, f"stale 기록을 지울 수 없음: {exc}"
         return "stale", record, None
     return "alive", record, None
+
+
+def _local_process_diagnostics(s: Settings) -> list[dict]:
+    from .process_diagnostics import latest_records
+
+    rows = []
+    logs = _launch_state(s) / "logs"
+    for role in ("gateway", "runner"):
+        state, record, problem = _process_record(s, role, cleanup=False)
+        if state == "missing":
+            continue  # Remote/foreground daemons need no local PID record.
+        detail = f"{role}: "
+        if state == "unknown":
+            detail += f"프로세스 신원 확인 불가 — {problem}"
+        elif record:
+            latest = latest_records(logs, role, record["pid"])
+            exited = latest.get("exit")
+            detail += f"PID {record['pid']} " + ("실행 중" if state == "alive" else
+                "프로세스 없음(비정상 종료 의심)" if not exited else "프로세스 없음(종료 기록 있음)")
+            heartbeat = latest.get("heartbeat")
+            if heartbeat:
+                detail += (f"; heartbeat {heartbeat.get('time')} RSS={heartbeat.get('rss_bytes')}"
+                           f" handles={heartbeat.get('handles')}")
+            else:
+                detail += "; heartbeat 기록 없음"
+            detail += (f"; exit {exited.get('time')} reason={exited.get('reason')} code={exited.get('code')}"
+                       if exited else "; exit 기록 없음")
+        else:
+            detail += "잘못된 PID 기록"
+        rows.append({"group": "process", "name": role, "status": "ok" if state == "alive" else "warn",
+                     "detail": detail, "hint": "state/logs의 diagnostics.jsonl·fault.log·일반 로그를 확인하세요."})
+    return rows
 
 
 def _record_problem(role: str, reason: str | None) -> None:
@@ -520,6 +574,8 @@ def _start_background(s: Settings, role: str, *, popen=None) -> int:
     logs.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
     env["PYTHONUTF8"] = "1"
+    env["PYTHONUNBUFFERED"] = "1"
+    env["PYTHONFAULTHANDLER"] = "1"  # Also cover interpreter/import failures before role hooks install.
     if role == "runner":
         env = without_windows_app_aliases(env)
     command = [sys.executable, "-m", "labhq.cli"]
@@ -950,7 +1006,9 @@ async def _send_and_wait(s: Settings, body: dict) -> None:
                 return
 
 
-async def _run_runner_with_interrupts(runner) -> None:
+async def _run_runner_with_interrupts(runner, diagnostics=None) -> None:
+    if diagnostics:
+        diagnostics.attach_loop()
     previous = signal.getsignal(signal.SIGINT)
     last_warning = 0.0
 
@@ -961,6 +1019,8 @@ async def _run_runner_with_interrupts(runner) -> None:
         jobs = [jid for jid, job in getattr(runner, "jobs", {}).items() if not job.get("terminal")]
         now = time.monotonic()
         if not (active or jobs) or (last_warning and now - last_warning <= 10):
+            if diagnostics:
+                diagnostics.note_signal(_signum)
             raise KeyboardInterrupt
         last_warning = now
         print(f"진행 중인 task {len(active)}개, 감시 중인 HPC job {len(jobs)}개: {', '.join(active + jobs)}. "
@@ -1336,6 +1396,10 @@ def main(argv: list[str] | None = None) -> None:
     note.add_argument("text")
     cancel = sub.add_parser("cancel", help="cancel a request: stop its tasks, waits and cards, keep partial results")
     cancel.add_argument("request_id")
+    task_p = sub.add_parser("task", help="steer, pause, resume or halt one running task (#59)")
+    task_p.add_argument("action", choices=("steer", "pause", "resume", "halt"))
+    task_p.add_argument("task_id")
+    task_p.add_argument("text", nargs="?", help="steer: the direction change for the staff member (2,000 characters)")
     resume = sub.add_parser("resume", help="retry a step waiting for quota or engine login")
     resume.add_argument("request_id")
     resume.add_argument("step_id")
@@ -1493,23 +1557,35 @@ def main(argv: list[str] | None = None) -> None:
         if result["summary"]["fail"]:
             raise SystemExit(1)
     elif args.cmd == "gateway":
-        import uvicorn
+        from .process_diagnostics import ProcessDiagnostics
 
-        from .gateway.server import create_app
+        with ProcessDiagnostics(_launch_state(s) / "logs", "gateway") as diagnostics:
+            import uvicorn
 
-        from .security import gateway_log_config
+            from .gateway.server import create_app
 
-        try:
-            app = create_app(s)
-        except ValueError as exc:  # e.g. a retired research pack version (#170)
-            p.exit(1, f"gateway: {exc}\n")
-        if _default_client_token(s.gateway.client_token):
-            p.exit(2, "gateway: gateway.client_token의 change-me 기본값을 바꾸세요.\n")
-        # The web office asks for the client token; say how to get in without printing it (PI visit 2026-10-04).
-        print(f"웹 사무실: {_http_base(s)}/  (다른 창에서 `{_config_command(s, 'open')}`을 실행하세요)",
-              flush=True)
-        uvicorn.run(app, host=s.gateway.host, port=s.gateway.port, log_level="info",
-                    log_config=gateway_log_config())
+            from .security import gateway_log_config
+
+            try:
+                app = create_app(s)
+            except ValueError as exc:  # e.g. a retired research pack version (#170)
+                p.exit(1, f"gateway: {exc}\n")
+            if _default_client_token(s.gateway.client_token):
+                p.exit(2, "gateway: gateway.client_token의 change-me 기본값을 바꾸세요.\n")
+            # The web office asks for the client token; say how to get in without printing it (PI visit 2026-10-04).
+            print(f"웹 사무실: {_http_base(s)}/  (다른 창에서 `{_config_command(s, 'open')}`을 실행하세요)",
+                  flush=True)
+            @app.on_event("startup")
+            async def install_loop_diagnostics():
+                diagnostics.attach_loop()
+
+            try:
+                uvicorn.run(app, host=s.gateway.host, port=s.gateway.port, log_level="info",
+                            log_config=gateway_log_config())
+            finally:
+                error = sys.exc_info()[1]
+                diagnostics.write("uvicorn_end", reason=diagnostics.reason if error is None else type(error).__name__,
+                                  code=getattr(error, "code", 1) if error is not None else diagnostics.code)
     elif args.cmd == "up":
         _up(s)
     elif args.cmd == "down":
@@ -1521,14 +1597,19 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit(2)
         print(_open_web_office(s, args.config or os.environ.get("LABHQ_CONFIG"), three_d=args.three_d))
     elif args.cmd == "runner":
-        from .runner.daemon import Runner
+        from .process_diagnostics import ProcessDiagnostics
 
-        clean = without_windows_app_aliases(dict(os.environ))
-        path_key = next((key for key in clean if key.casefold() == "path"), None)
-        if path_key:
-            os.environ[path_key] = clean[path_key]
-        asyncio.run(_run_runner_with_interrupts(Runner(s)))
+        with ProcessDiagnostics(_launch_state(s) / "logs", "runner") as diagnostics:
+            from .runner.daemon import Runner
+
+            clean = without_windows_app_aliases(dict(os.environ))
+            path_key = next((key for key in clean if key.casefold() == "path"), None)
+            if path_key:
+                os.environ[path_key] = clean[path_key]
+            asyncio.run(_run_runner_with_interrupts(Runner(s), diagnostics))
     elif args.cmd == "status":
+        for row in _local_process_diagnostics(s):
+            print(row["detail"])
         health = _api(s, "GET", "/api/health")
         print("러너: " + (", ".join(health["runners"]) or
                          f"없음 — `{_config_command(s, 'up')}`로 켜야 요청이 진행됩니다"))
@@ -1608,6 +1689,8 @@ def main(argv: list[str] | None = None) -> None:
         print(f"{out['request_id']}: 이미 취소된 요청입니다" if out.get("already") else
               f"{out['request_id']}: 취소했습니다 · 멈춘 작업 {len(out.get('cancelled_tasks') or [])}개 · "
               "부분 결과는 보고서에 있습니다")
+    elif args.cmd == "task":
+        print(task_control(s, args.action, args.task_id, args.text))
     elif args.cmd == "resume":
         print(_api(s, "POST", f"/api/requests/{args.request_id}/steps/{args.step_id}/resume-quota", json={}))
     elif args.cmd == "watch":

@@ -115,6 +115,16 @@ Codex 직원 로그인 격리는 [알려진 한계](#알려진-한계)의 전용
 
 Windows wrapper는 `.venv\Scripts\python.exe`를 직접 실행하므로 venv 활성화나 PowerShell ExecutionPolicy 변경이 필요 없습니다. `up`은 gateway와 runner를 분리된 background process로 띄우고 state 폴더에 로그와 생성 시각을 포함한 프로세스 기록을 남깁니다. 같은 instance의 `up`·`down`은 state 폴더 lock으로 직렬화되며, 다른 명령이 진행 중이면 exit 2입니다. POSIX에서는 `./labhq.sh`를 씁니다.
 
+**예고 없이 꺼졌을 때:** `status`는 연결을 시도하기 전에, `doctor`는 네트워크 없이 로컬 PID 기록과 마지막 heartbeat·exit를 보여 줍니다. 조회는 PID 기록을 지우지 않습니다. 프로세스가 없고 exit도 없으면 `비정상 종료 의심`입니다. 아래 파일은 설정의 `gateway.state_dir/logs/`에 gateway·runner별로 쌓입니다(직접 실행한 경우도 동일).
+
+| 다음 종료 때 볼 파일 | 내용 |
+|---|---|
+| `<role>-diagnostics.jsonl` | UTC 시각·PID·부모 PID, 시작, 10분 간격 heartbeat(RSS bytes·Windows handle 수), 예외 종류, signal, uvicorn 종료, exit reason/code |
+| `<role>-fault.log` | faulthandler의 native fault traceback, 잡히지 않은 Python 예외의 호출 스택 |
+| `<role>.log` | `up` 자식의 버퍼링을 끈 stdout/stderr, uvicorn·runner 일반 로그 |
+
+지원하지 않는 자원 값은 `null`입니다. 예외 메시지·설정은 진단 JSON에 넣지 않습니다. heartbeat는 프로세스 생존 기록이며 gateway 응답 여부를 보장하지 않습니다. 강제 종료·`os._exit()`에서는 exit hook이 실행되지 않으므로 마지막 heartbeat와 같은 시각의 Windows Application/System 이벤트를 함께 봅니다([Python atexit](https://docs.python.org/3/library/atexit.html)). native fault 기록도 모든 외부 종료를 잡지는 못합니다([faulthandler](https://docs.python.org/3/library/faulthandler.html)). 현재 실행 중인 인스턴스에는 다음 시작부터 적용됩니다.
+
 `down`은 진행 중이거나 대기 중인 요청(PI 결정 대기 포함), 끝난 요청에서 돌고 있는 이어 묻기, 진행 중인 채용(`labhq recruit`), 아직 기록을 쓰는 끝난 요청(취소 보고서를 쓰기 전이거나 요청 묶음을 복사하는 중, `마무리 중인 요청`)이 있거나 인증된 상태를 확인할 수 없으면 exit 2로 거부합니다(gateway `/api/shutdown-readiness`, #500·#521). 채용 수는 러너 프로세스 기준이라, 러너를 다시 시작하면 이전 프로세스의 채용은 빠집니다(`runner.hello`의 `process`). 중단을 감수할 때만 `down --force`를 쓰며, 신원이 맞는 runner 프로세스 트리와 gateway만 종료합니다. POSIX는 SIGTERM 뒤 최대 10초 기다리고, 남아 있으면 SIGKILL한 뒤 종료를 확인하고 기록을 지웁니다. 기록된 프로세스를 멈춘 뒤에는 gateway가 아직 답하는지 한 번 더 확인합니다(종료 직후 최대 3초 기다림). 스크립트나 다른 창처럼 `up` 밖에서 시작해 PID 기록이 없는 gateway·runner가 계속 답하면(gateway가 다른 PC에 있으면 이 설정의 runner id가 아직 연결돼 있을 때만) `종료`로 끝내지 않고 "`up`이 아닌 방법으로 시작한 gateway/runner가 아직 실행 중"이라고 알리며 exit 2로 끝납니다. 그 프로세스는 `down`이 멈추지 못하니 직접 끈 뒤 `up`을 다시 실행하세요. 멈출 것이 아무것도 없고 gateway도 답하지 않을 때만 `종료: 기록된 프로세스 없음`을 출력하고 exit 0입니다. Windows에서는 `taskkill`의 한글 출력을 OEM 코드 페이지로 읽어, `PYTHONUTF8=1`이어도 종료 때 UnicodeDecodeError 추적이 나오지 않습니다.
 
 **PC를 다시 켰을 때**
@@ -177,6 +187,28 @@ cd <labhq 저장소>
 폰에서는 Safari로 열고 **공유 → 홈 화면에 추가**하면 앱처럼 전체 화면으로 뜹니다. 게이트웨이와 폰에 Tailscale을 켜 두면
 밖에서도 안전하게 접속됩니다. iOS 네이티브 앱은 같은 WebSocket 프로토콜을 쓰는 SwiftUI(또는 Expo) 앱으로 로드맵에 있습니다.
 
+### 직원 제어
+
+실행 중인 직원의 상세 시트에 **방향 보내기**(입력칸, 2,000자), **일시 정지**/**재개**, **멈추기** 버튼이 뜹니다(#59). 한 직원이 작업 둘을 동시에 하면 작업마다 줄이 따로 생깁니다. 같은 동작은 `labhq task steer|pause|resume|halt <task_id> ["방향"]`와 `POST /api/tasks/{id}/steer|pause|resume|halt`(PI 토큰)로도 됩니다. 취소와 달리 세션을 버리지 않습니다.
+
+요청은 작업(task)이 아니라 그 작업이 속한 **단계**에 걸립니다. 단계의 HPC 대기 뒤 turn, 재시도, 멈춤 뒤 재개 turn이 모두 같은 단계입니다. 계획 단계 작업과 직접 맡긴 작업만 받습니다. 상담·이어 묻기·리뷰·브리핑·선행 연구·채용 같은 작업은 API·CLI가 409로 거절하고 시트에 줄이 없습니다.
+
+| 동작 | Claude (쓰기 가능한 실행) | Codex·Gemini·Antigravity·`engine: cli`, 읽기 전용 Claude |
+|---|---|---|
+| 방향 보내기 | 다음 도구 호출이 끝나면 한 번 전달(PostToolUse `additionalContext`) | 이번 turn에는 닿지 않고, 같은 단계의 다음 turn 프롬프트 앞에 붙음 |
+| 일시 정지 | 다음 도구 호출을 최대 5분 붙잡고, 그때도 정지 중이면 "PI가 일시 정지함"으로 거부(PreToolUse deny). 승인 게이트가 자동 허용하는 도구도 막힘 | 이번 turn은 계속하고, 같은 단계의 다음 turn을 재개할 때까지 보내지 않음 |
+| 재개 | 정지를 풂. 멈춘 단계는 다음 turn을 보냄 | 같음 |
+| 멈추기 | 다음 도구 호출 앞뒤에서 `{"continue": false}`로 멈춤. 60초 안에 멈추지 못하면 runner가 프로세스를 끝냄 | 바로 프로세스를 끝냄 |
+| HPC 잡·질문 대기가 걸린 turn | 멈추기는 거절("일시 정지를 쓰세요"). 대기에 들어가며 받은 멈춤은 그 단계의 일시 정지가 되고, 잡·질문과 대기 뒤 turn은 남음 | 같음 |
+| 아직 시작하지 않은 turn(실행 순서·정지 대기) | 정지는 시작을 막고, 방향은 시작할 때 프롬프트 앞에 붙고, 멈추기는 시작하지 않고 바로 `halted`로 끝냄 | 같음 |
+
+- **제어는 어디에 남나**: 쓰일 때까지 gateway가 단계마다 보관합니다(방향 대기열, 정지 표시, 멈춤 요청). 방향은 hook이 전달하거나 그 방향을 담은 프롬프트로 CLI가 시작될 때, 정지는 재개할 때, 멈춤은 `halted` 결과가 나올 때 쓰인 것으로 봅니다. 기한으로 지우지 않습니다. runner는 지금 맡은 작업에만 적용하고(`runner.state_dir/control/<task>.json`, 직원 쓰기 범위 밖, 모든 읽기·쓰기는 파일 잠금 아래), 작업이 끝나면 전달하지 못한 방향을 `task.result`로 돌려줘 gateway가 그 단계에 다시 둡니다. 맡지 않은 작업의 제어는 `control.nack`으로 돌려보내고, gateway는 작업을 다시 보낸 뒤에 제어를 보냅니다. 단계가 끝날 때까지 쓰이지 않은 방향은 직원 기록과 메신저에 "전달 못 한 방향 수정"으로 알립니다.
+- 방향은 단계마다 20개까지 쌓이고, 넘치면 오래된 것부터 버리고 버린 수를 다음 전달에 함께 알립니다.
+- 연결이 끊긴 동안 재개해도 재연결 때 runner의 정지가 풀립니다. 요청이나 단계가 끝나면 남은 실행 작업에도 제어를 보내지 않습니다.
+- 멈춘 결과는 실패가 아니라 `halted`이고 session id를 남깁니다. 단계는 재시도·환경 수정 없이 PI 재개를 기다리고(요청은 `PI 결정 대기`, 상한 `pi_decision_timeout_s`), 재개하면 같은 세션으로 이어 갑니다. 멈추기 전에 걸어 둔 일시 정지도 함께 풀리고, 멈춘 뒤 다시 일시 정지했으면 남습니다. 그동안 보낸 방향은 재개 turn 앞에 붙습니다. 작업판에는 `멈춤 · 재개 가능`으로 보이고, 상한이 지나거나 요청을 취소하면 재개 버튼이 사라집니다. 멈춤을 보낸 뒤 runner가 꺼져 작업이 끊겨도 실패 대신 `halted`로 끝납니다. 정지된 단계가 다음 turn을 기다리는 동안에도 요청은 `PI 결정 대기`이고, 마지막 작업 줄에서 재개합니다.
+- 세션을 이어 쓰지 못하는 Gemini·Antigravity는 재개 turn이 새 세션으로 시작하고, 그때 원래 지시와 이전 결과를 다시 받습니다.
+- Claude hook은 도구 호출마다 Python을 한 번 띄웁니다. 정지 중 붙잡힌 도구 호출은 무응답 경고를 낼 수 있지만 끊지는 않습니다.
+
 ## 명령줄(CLI)
 
 웹 사무실 입력창 옆 **작업 종류**(자동 판단·간단한 일·연구)는 연구 lane이 켜져 있을 때 이 요청을 CP1·CP2로 보낼지 정합니다. 자동이면 [접수 규칙](research_protocol.md)이 정하고, 연구는 팀(CSO)으로만 보낼 수 있습니다. 웹 사무실에서 하는 일은 명령줄로도 됩니다. 설정은 `LABHQ_CONFIG`(또는 `--instance <이름>`)로 고릅니다.
@@ -192,6 +224,7 @@ labhq send --plan-only "같은 roster로 분석 계획만 작성"               
 labhq send --plan-only --cso-model gpt-6-astra "같은 요청의 계획 비교"     # 이 요청의 CSO 모델만 변경
 labhq note req_123 "표도 함께 만들어 주세요"                            # 실행 중 요청의 다음 단계부터 전달
 labhq cancel req_123         # 요청 취소: 도는 작업 중단, 대기·카드 정리, 부분 결과 보고서. 두 번 해도 같음
+labhq task steer task_123 "chr1만 보세요"   # 실행 중 직원 제어: steer | pause | resume | halt (#59)
 labhq watch                  # 실시간 이벤트. 승인 결과는 허가·거절·수정 요청·시간 초과로 나눠 적음
 labhq approvals              # 대기 중 승인 → labhq approve <id> [--deny --note "..."], CP2는 --choice approve|revise|deny(revise는 --note 필수)
 labhq approve <clarify-id> --note "1: a, 2: b"  # 질문 카드는 답이 없으면 보내지 않고 요청을 유지
@@ -331,7 +364,7 @@ Windows 러너는 직원 Python이 OS 신뢰 저장소도 믿게 합니다. 기�
 | `request.continued` | 연구 리뷰 revise 뒤 PI가 이어 가기를 승인했거나 CP2에서 수정 요청을 골라 새 계획으로 넘어감(`round`, CP2면 `trigger: cp2_revise`) | CP1·CP2·이어 가기 카드의 `이어 가기 차수` 칸 |
 
 REST (Bearer `client_token`): `GET /api/agents`, `GET|POST /api/requests` (`status`, `limit`; 본문 `references`·`default_references`. direct 요청의 직원은 연결된 runner·저장된 runner roster·`runner.agents_dir` 중 한 곳에 있으면 받아서 runner를 기다리고, 어디에도 없으면 404), `GET /api/requests/{id}`, `POST /api/requests/{id}/notes` (`{"text"}`, 미종료 요청만, 2,000자·20개), `POST /api/requests/{id}/followup` (`{"text"}`, 끝난 요청만, 한 번에 하나),
-`GET|POST /api/approvals[/{id}]`, `POST /api/tasks/{id}/cancel`, `POST /api/requests/{id}/steps/{step}/resume-quota`, `POST /api/recruit`, `POST /api/contracts/{agent_id}`,
+`GET|POST /api/approvals[/{id}]`, `POST /api/tasks/{id}/cancel`, `POST /api/tasks/{id}/steer|pause|resume|halt` ([직원 제어](#직원-제어)), `POST /api/requests/{id}/steps/{step}/resume-quota`, `POST /api/recruit`, `POST /api/contracts/{agent_id}`,
 `GET /api/projects`, `GET /api/approvals/history`, `POST /api/projects/{id}/prs/{n}/codex-review`, `GET /api/events`, `GET /api/health`. 폰은 `/ws/client`로 스냅샷+이벤트를 받고 `{"type":"approval.resolve",...}`로 바로 승인할 수 있습니다.
 
 task 취소(`POST /api/tasks/{id}/cancel`)는 task 기록의 runner로 보냅니다(gateway를 다시 띄운 뒤에도). runner가 끊겨 있으면 취소를 보관했다가 그 runner가 다시 연결될 때 보내고, task가 끝나거나 버려지면 지웁니다. 일찍 끝나는 요청의 선행 연구 조사도 같은 경로로 멈춥니다.
@@ -912,7 +945,7 @@ Claude baseline은 자기 arm의 파일 쓰기·단순 명령을 허용합니다
 | v1.25 | 연구를 넘어 논문을 쓴다 | 원고 초안 1편. 그림·인용이 claim 앵커로 산출물에 이어진다 | 없음 | 원고, 인용, 그림 |
 
 버전에 묶인 장기 과제:
-- v0.75 — 실행 중 직원 제어(steer·pause·halt)와 폭주 차단기(#59). 감지는 그림자로 먼저 들어갔습니다: runner가 같은 도구·입력 8번 연속이나 실패한 도구 호출 5번 연속을 보면 `agent.breaker` 이벤트와 피드 경고를 한 번 내고, 직원은 멈추지 않습니다
+- v0.75 — 실행 중 직원 제어(steer·pause·halt)와 폭주 차단기(#59). 직원 제어는 들어갔습니다([직원 제어](#직원-제어)). 차단기 감지는 그림자로 먼저 들어갔습니다: runner가 같은 도구·입력 8번 연속이나 실패한 도구 호출 5번 연속을 보면 `agent.breaker` 이벤트와 피드 경고를 한 번 내고, 직원은 멈추지 않습니다
 - v1 — 요청 간 기억·프로젝트 메모리(#60), 인사고과(평가 세트)와 정식 수습 평가(논문 예제 재현)
 
 버전 밖:

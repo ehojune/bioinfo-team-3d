@@ -434,6 +434,9 @@ def local_software_summary(python_executable: str) -> dict:
 def collect(settings: Settings, *, requested_config: str | None = None, network: bool = False,
             dry_run: bool = False, require_roster: bool = False) -> dict:
     rows: list[dict] = []
+    from .cli import _local_process_diagnostics
+
+    rows.extend(_local_process_diagnostics(settings))
     config = settings.config_path
     if requested_config and not config:
         rows.append(_row("config", "file", "fail", "configured file missing", "Set --config to an existing YAML file."))

@@ -206,6 +206,7 @@ a{color:var(--sleep-ink)}
 .decision-hide{margin-left:8px;padding:2px 8px}.decision-report{margin-left:8px}.decision-history time{display:inline-block;margin-right:8px}
 .btn{border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:6px 14px;font-weight:500;cursor:pointer;min-height:40px}
 .btn.primary{background:var(--ink);border-color:var(--ink);color:var(--paper)}
+.btn.warn{border-color:var(--error);color:var(--error-ink)}
 .btn.go{background:var(--working);border-color:var(--working);color:#fff}
 .btn:disabled{opacity:.5;cursor:default}
 .req-pick{margin:0 0 6px}
@@ -325,6 +326,9 @@ dialog.sheet::backdrop{background:rgba(17,26,34,.45)}
 .facts{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:14px 0;font-size:14px}
 .facts dt{color:var(--muted)}.facts dd{margin:0;overflow-wrap:anywhere}
 .acts{display:flex;flex-wrap:wrap;gap:8px}
+.staff-control{display:grid;gap:8px;margin:10px 0 12px;padding:10px;border:1px solid var(--line);border-radius:12px}
+.staff-control .control-head{margin:0;font-size:13px;color:var(--muted)}
+.staff-control textarea{font:inherit;font-size:16px;border:1px solid var(--line);border-radius:10px;padding:6px 10px;background:var(--panel);color:var(--ink);resize:vertical;min-width:0}
 .activity{list-style:none;margin:0 0 14px;padding:0;font-size:13px;max-height:200px;overflow:auto}
 .activity li{padding:4px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
 .activity time{color:var(--muted);margin-right:8px}
@@ -438,6 +442,7 @@ dialog.sheet::backdrop{background:rgba(17,26,34,.45)}
 import {answerRequired, decisionChoice, decisionNote, revisedToast, revisionNoteMissing, syncDecisionCards, syncDecisionHistory, createHistoryVisibility, expandableText, syncExpandableText} from './ui/decide.js';
 import {syncStaffCards} from './ui/strip.js';
 import {syncTaskBoard} from './ui/tasks.js';
+import {controlHtml, controlKey, staffControls} from './ui/control.js';
 import {initTabShell} from './ui/shell.js';
 import {KIND_LABELS as REF_KIND, inferReference, syncReferenceChips} from './ui/refs.js';
 (() => {
@@ -1078,7 +1083,6 @@ function renderSheetLogs() {
   else if (rows.some((row, i) => list.children[i] !== row) || rows.length !== list.children.length) list.replaceChildren(...rows);
   list._rows = next;
   const count = $('#sheet-in .trace-count'); if (count) count.textContent = String((a.trace || []).length);
-  const status = $('#sheet-in .sheet-status'); if (status) status.textContent = stateText(a);
   const task = $('#sheet-in .sheet-task'); if (task) task.textContent = visual(a) === 'idle' ? '없음' : (currentTask(a) || '—');
   const command = $('#sheet-in .sheet-command'), tool = currentTool(a);
   if (command) {
@@ -1087,14 +1091,25 @@ function renderSheetLogs() {
       {limit: 120, summary: tool?.summary || toolInputLine(tool?.input), fold: Boolean(tool), truncated: tool?.input_truncated, cutChars: tool?.input_limit});
   }
   const spent = $('#sheet-in .sheet-spent'), figure = sheetSpent(a.id); if (spent && spent.textContent !== figure) spent.textContent = figure;
+  // #59 ①: the control block follows the task (paused, halted, ended) without wiping a direction being typed.
+  const views = sheetControl(a), box = $('#sheet-in .staff-control-slot');
+  if (box && box.dataset.key !== controlKey(views)) { box.dataset.key = controlKey(views); box.innerHTML = controlHtml(views, esc); }
+  const status = $('#sheet-in .sheet-state'), text = sheetState(a, views);
+  if (status && status.textContent !== text) status.textContent = text;
 }
+// One control row per live task of this staff member (PR #532 review); none in demo mode, which has no api.
+function sheetControl(a) {
+  return api?.control ? staffControls(a, tid => S.taskControl.get(tid) || {}) : [];
+}
+const sheetState = (a, views) => visual(a) === 'error' ? stateText(a) : (views.length === 1 && views[0].status) || stateText(a, visual(a));
 function openSheet(id) {
   const a = ag(id); if (!a) return;
   const dlg = $('#sheet'), vs = visual(a);
   if (dlg.dataset.agent !== id) dlg.dataset.log = 'activity';
   const view = dlg.dataset.log === 'trace' ? 'trace' : 'activity';
+  const control = sheetControl(a);
   const facts = [
-    ['상태', stateText(a, vs)], ['지금 하는 일', vs === 'idle' ? '없음' : (currentTask(a) || '—')],
+    ['상태', sheetState(a, control)], ['지금 하는 일', vs === 'idle' ? '없음' : (currentTask(a) || '—')],
     ['엔진', `${a.engine || '—'}${a.model ? ` / ${a.model}` : ''}`],
     ['소속', isContract(a) ? `파견직, ${contractLeft(a)}` : '정규직'],
   ];
@@ -1112,8 +1127,9 @@ function openSheet(id) {
   if (isContract(a)) acts.push('<button type="button" class="btn" data-act="extend">계약 14일 연장</button>', '<button type="button" class="btn" data-act="release">계약 종료</button>');
   acts.push('<button type="button" class="btn" data-act="close">닫기</button>');
   $('#sheet-in').innerHTML = `<div class="sheet-head"><svg viewBox="18 2 64 72" aria-hidden="true">${charArt(kindOf(a))}</svg><div><h2>${esc(a.name)}</h2><p class="role">${esc(a.role || '')}</p></div></div>
-<dl class="facts">${facts.map(([k, v]) => `<dt>${esc(k)}</dt><dd${k === '쓴 비용' ? ' class="sheet-spent"' : k === '상태' ? ' class="sheet-status"' : k === '지금 하는 일' ? ' class="sheet-task"' : ''}>${esc(v)}</dd>`).join('')}</dl>
+<dl class="facts">${facts.map(([k, v]) => `<dt>${esc(k)}</dt><dd${k === '쓴 비용' ? ' class="sheet-spent"' : k === '상태' ? ' class="sheet-state"' : k === '지금 하는 일' ? ' class="sheet-task"' : ''}>${esc(v)}</dd>`).join('')}</dl>
 <div class="sheet-command" aria-label="실행 중인 도구 입력"></div>
+<div class="staff-control-slot" data-key="${esc(controlKey(control))}">${controlHtml(control, esc)}</div>
 <div class="log-view" role="group" aria-label="기록 보기"><button type="button" class="btn" data-act="log" data-view="activity" aria-pressed="${view === 'activity'}">활동</button><button type="button" class="btn" data-act="log" data-view="trace" aria-pressed="${view === 'trace'}">생각·디버그 <span class="trace-count">${(a.trace || []).length}</span></button></div>
 <ul class="activity" data-view="${view}"></ul>
 <div class="acts">${acts.join('')}</div>`;
@@ -1130,6 +1146,20 @@ $('#sheet').addEventListener('click', async e => {
   if (act === 'close') return closeSheet();
   if (act === 'log') { d.dataset.log = btn.dataset.view; openSheet(id); return; }
   if (act === 'assign') { closeSheet(); $('#send-mode').value = 'request'; $('#target').value = id; renderComposerMode(); $('#ask').focus(); toast(`${nick(id)}에게 맡길 내용을 적어 주세요`); return; }
+  if (['steer', 'pause', 'resume', 'halt'].includes(act)) {  // #59 ①: acts on the task the sheet shows
+    const row = btn.closest('.staff-control'), task = row?.dataset.task, input = row?.querySelector('textarea.steer-text');
+    const text = act === 'steer' ? (input?.value || '').trim() : '';
+    if (!task) return;
+    if (act === 'steer' && !text) { toast('보낼 방향을 적어 주세요'); input?.focus(); return; }
+    try {
+      const out = await api.control(task, act, text);
+      if (act === 'steer' && input) input.value = '';
+      toast(out?.resumed_halted ? '멈췄던 작업을 재개해요' : { steer: '방향 수정을 보냈어요', pause: '일시 정지를 보냈어요',
+        resume: '재개를 보냈어요', halt: '멈춤을 보냈어요' }[act] + (out && out.sent === false
+          ? (act === 'halt' ? ' · 러너가 연결되면 전달해요' : ' · 같은 단계의 다음 turn에 적용해요') : ''));
+    } catch (err) { toast(`보내지 못했어요: ${err.message}`); }
+    return;
+  }
   try { await api.contract(id, act, 14); toast(act === 'extend' ? '계약을 14일 연장했어요' : '계약을 종료했어요'); closeSheet(); }
   catch (err) { toast(`처리하지 못했어요: ${err.message}`); }
 });
@@ -1202,6 +1232,7 @@ function startLive() {
     recruit: s => post('/api/recruit', { paper: s.paper || null, repo: s.repo || null, focus: s.focus || null, request_id: s.request_id || null }),
     contract: (id, action, days) => post(`/api/contracts/${encodeURIComponent(id)}`, { action, days }),
     cancel: id => post(`/api/tasks/${encodeURIComponent(id)}/cancel`, {}),
+    control: (id, action, text) => post(`/api/tasks/${encodeURIComponent(id)}/${action}`, action === 'steer' ? { text } : {}),
     cancelRequest: rid => post(`/api/requests/${encodeURIComponent(rid)}/cancel`, {}),
     resumeQuota: (rid, sid) => post(`/api/requests/${encodeURIComponent(rid)}/steps/${encodeURIComponent(sid)}/resume-quota`, {}),
     history: () => get('/api/approvals/history?limit=50'),
