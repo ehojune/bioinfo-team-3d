@@ -2,7 +2,8 @@ import {answerRequired, revisionNoteMissing, syncDecisionCards, syncDecisionHist
 
 // DOM controls and transport stay outside the shared event reducer.
 export function startLiveOffice(onState) {
-  const {S, apply, visual, stateText, currentTask, fillRequestDetail, KIND_KO, phaseLabel} = globalThis.LabHQState.createOfficeState();
+  const {S, apply, selectRequest, visual, stateText, currentTask, fillRequestDetail, KIND_KO, phaseLabel} = globalThis.LabHQState.createOfficeState({
+    focusStorage: globalThis.LabHQState.createRequestFocusStorage(globalThis.LABHQ_BOOT)});
   const $ = id => document.getElementById(id);
   const params = new URLSearchParams(location.search);
   const demo = globalThis.LABHQ_BOOT?.demo === true;
@@ -93,13 +94,13 @@ export function startLiveOffice(onState) {
       }});
     if ($('approval-history')) syncDecisionHistory($('approval-history'), decisionHistory, {
       kindLabels: KIND_KO, requests: S.requests, visibility: historyVisibility,
-      onOpenRequest: id => { const row = [...$('requests').children].find(row => row.dataset.requestId === id); row?.scrollIntoView({block:'start'}); },
+      onOpenRequest: id => { selectRequest(id); render(); const row = [...$('requests').children].find(row => row.dataset.requestId === id); row?.scrollIntoView({block:'start'}); },
     });
     const requests = $('requests'), oldRows = new Map([...requests.children]
       .filter(row => row.dataset?.requestId).map(row => [row.dataset.requestId, row]));
     const rows = [];
     if (!S.requests.size) text({append: row => rows.push(row)}, 'p', '요청 없음');
-    for (const q of [...S.requests.values()].reverse()) {
+    for (const q of globalThis.LabHQState.sortRequests(S.requests.values())) {
       const status = globalThis.LabHQState.requestStatusText(q, S.approvals);  // R14: never a raw status
       const key = JSON.stringify([q.text, q.status, status, q.phase, q.plan, q.steps, q.processing, q.review, q.error, q.report,
         q.report_appendix, q.report_truncated, q.report_appendix_truncated, q.followups, q.piNotes,

@@ -3226,7 +3226,7 @@ class Hub:
             "agents": list(self.agents.values()),
             "runners": list(self.runners),
             "approvals": [e["approval"] for e in self.approvals.values()],
-            "requests": [{**{k: v for k, v in r.items() if k in ("id", "text", "status", "mode", "created_at",
+            "requests": [{**{k: v for k, v in r.items() if k in ("id", "text", "status", "mode", "created_at", "updated_at",
                                                                   "project_id", "plan", "cost_usd", "cost_known",
                                                                   "cost_summary", "usage", "usage_known", "agent_id",
                                                                   "references", "pi_notes", "route", "route_decision",
