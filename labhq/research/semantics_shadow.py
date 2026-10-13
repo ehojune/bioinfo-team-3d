@@ -2256,35 +2256,51 @@ WORKSPACE_STATES = ("ok", "remote", "zone_excluded", "not_regular", "missing")
 
 
 def _number(value: Any) -> bool:
-    return value is None or (isinstance(value, (int, float)) and math.isfinite(value))
+    return value is None or (type(value) in (int, float) and value >= 0 and math.isfinite(value))
+
+
+def _count(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
 def _counts(value: Any, keys: Iterable[str] | None = None) -> bool:
-    """None, or an object whose values (only `keys`, when given) are finite numbers."""
-    if value is None:
-        return True
-    return isinstance(value, Mapping) and all(_number(v) for k, v in value.items() if keys is None or k in keys)
+    """An object of nonnegative integer counts; absent optional fields are supplied as {}."""
+    return isinstance(value, Mapping) and all(_count(v) for k, v in value.items() if keys is None or k in keys)
+
+
+def _type_counts(value: Any) -> bool:
+    return (isinstance(value, Mapping)
+            and all(isinstance(cells, Mapping) and all(_counts(basis) for basis in cells.values())
+                    for cells in value.values()))
+
+
+def _declaration_counts(value: Any) -> bool:
+    # The worker writes null when the request has no declaration statistics.
+    return value is None or (_counts(value, DECLARATION_COUNTS) and _counts(value.get("issues", {})))
 
 
 def readable_request(line: Mapping[str, Any]) -> bool:
-    """Every field the report adds up, in the shape the worker writes it. A row left by a torn write or an older
-    schema is a broken line, so one bad row does not end the report."""
+    """Validate report inputs before aggregation; older schemas may omit optional fields.
+
+    Reject the whole malformed row rather than coercing its counts to zero.
+    """
     models = [line.get("provenance"), line.get("objects"), line.get("hash")]
     if not all(m is None or isinstance(m, Mapping) for m in models):
         return False
     prov, objs, hashes = (m or {} for m in models)
     return (isinstance(line.get("rows"), (Mapping, type(None)))  # the action section reads it (#259)
-            and all(_number(line.get(k)) for k in ("ms", "snapshot_ms", "busy_skipped"))
-            and _number(line.get("cost_usd")) and _number(line.get("offered"))
+            and all(_number(line.get(k)) for k in ("ms", "snapshot_ms", "cost_usd"))
+            and all(_count(line.get(k, 0)) for k in ("busy_skipped", "offered"))
             and line.get("arm") in (None, "advisory", "shadow")
             and isinstance(line.get("referenced"), (bool, type(None)))
             and isinstance(line.get("cost_known"), (bool, type(None)))
             and all(_number(m.get("ms")) for m in (prov, objs))
-            and all(_number(prov.get(k)) for k in ("candidates", "unknown_ratio"))
-            and _counts(prov.get("excluded")) and _counts(prov.get("lineage"), ("gaps",))
-            and _counts(objs.get("objects"))
-            and all(_number(objs.get(k)) for k in ("link_total", "unresolved", "pending_jobs"))
-            and _counts(hashes, HASH_COUNTS) and _counts(hashes.get("workspaces"), WORKSPACE_STATES)
+            and _count(prov.get("candidates", 0)) and _number(prov.get("unknown_ratio"))
+            and _counts(prov.get("excluded", {})) and _counts(prov.get("lineage", {}), ("gaps",))
+            and _type_counts(prov.get("types", {})) and _declaration_counts(prov.get("declarations"))
+            and _counts(objs.get("objects", {}))
+            and all(_count(objs.get(k, 0)) for k in ("link_total", "unresolved", "pending_jobs"))
+            and _counts(hashes, HASH_COUNTS) and _counts(hashes.get("workspaces", {}), WORKSPACE_STATES)
             and isinstance(line.get("input_fit", {}), Mapping)
             and set(line.get("input_fit", {})) <= set(semantics_input_fit.VERDICTS)
             and all(isinstance(v, int) and not isinstance(v, bool) and v >= 0
