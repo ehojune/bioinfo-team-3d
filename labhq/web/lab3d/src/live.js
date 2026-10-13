@@ -2,7 +2,7 @@ import {answerRequired, revisionNoteMissing, syncDecisionCards, syncDecisionHist
 
 // DOM controls and transport stay outside the shared event reducer.
 export function startLiveOffice(onState) {
-  const {S, apply, visual, fillRequestDetail, KIND_KO, phaseLabel} = globalThis.LabHQState.createOfficeState();
+  const {S, apply, visual, stateText, currentTask, fillRequestDetail, KIND_KO, phaseLabel} = globalThis.LabHQState.createOfficeState();
   const $ = id => document.getElementById(id);
   const params = new URLSearchParams(location.search);
   const demo = globalThis.LABHQ_BOOT?.demo === true;
@@ -163,7 +163,7 @@ export function startLiveOffice(onState) {
       }
     }
     requests.replaceChildren(...rows);
-    onState(S, visual);
+    onState(S, visual, stateText, currentTask);
   }
   function open() {
     clearTimeout(retry);
@@ -198,6 +198,6 @@ export function startLiveOffice(onState) {
   $('token-form').addEventListener('submit', event => {
     event.preventDefault(); token = $('token').value.trim(); saveToken(token); lastSeq = 0; open();
   });
-  setInterval(() => { if (S.approvals.size) render(); }, 1000);
+  setInterval(() => { if (S.approvals.size || S.activeTasks.size) render(); }, 1000);
   open();
 }

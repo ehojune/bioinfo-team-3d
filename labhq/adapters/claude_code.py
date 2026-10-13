@@ -17,7 +17,7 @@ import subprocess
 from pathlib import Path, PurePath
 
 from ..policy import claude_allowed_tools
-from ..util import event_preview, short
+from ..util import event_preview, short, tool_input_summary
 from .base import (AgentAdapter, role_footer, RunContext, RunState, SHELL_TOOLS, child_config_dirs, expand_env,
                    note_command_ok, note_failed_output, record_model_id, wrap_cwd)
 from .owned import case_sensitive_directory, is_link
@@ -378,11 +378,14 @@ class ClaudeCodeAdapter(AgentAdapter):
                 elif block.get("type") == "tool_use":
                     if block.get("name") in SHELL_TOOLS and block.get("id"):
                         st.shell_calls.add(block["id"])
-                    await ctx.emit("agent.tool", {"name": block.get("name"), **event_preview("input", block.get("input"), 400)})
+                    await ctx.emit("agent.tool", {"id": block.get("id"), "name": block.get("name"),
+                                                 "summary": tool_input_summary(block.get("input")),
+                                                 **event_preview("input", block.get("input"), 400)})
         elif typ == "user":
             for block in (ev.get("message") or {}).get("content") or []:
                 if not isinstance(block, dict) or block.get("type") != "tool_result":
                     continue
+                await ctx.emit("agent.tool_result", {"id": block.get("tool_use_id")})
                 if block.get("is_error"):
                     note_failed_output(st, block.get("content"))
                     await ctx.emit("agent.tool_error", {**event_preview("text", block.get("content"), 400)})

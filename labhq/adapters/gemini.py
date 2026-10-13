@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 
-from ..util import event_preview, short
+from ..util import event_preview, short, tool_input_summary
 from .base import (AgentAdapter, role_footer, RunContext, RunState, SHELL_TOOLS, expand_env, note_command_ok,
                    note_failed_output, record_model_id, wrap_cwd)
 from .owned import write_owned
@@ -58,6 +58,8 @@ class GeminiAdapter(AgentAdapter):
     async def handle_line(self, line: str, st: RunState, ctx: RunContext) -> None:
         ev = json.loads(line)
         typ = ev.get("type")
+        if typ == "tool_result":
+            await ctx.emit("agent.tool_result", {"id": ev.get("tool_id")})
         if typ == "init":
             st.session_id = ev.get("session_id")
             record_model_id(st, ctx, ev.get("model"))
@@ -70,7 +72,9 @@ class GeminiAdapter(AgentAdapter):
         elif typ == "tool_use":
             if ev.get("tool_name") in SHELL_TOOLS and ev.get("tool_id"):
                 st.shell_calls.add(ev["tool_id"])
-            await ctx.emit("agent.tool", {"name": ev.get("tool_name"), **event_preview("input", ev.get("parameters"), 400)})
+            await ctx.emit("agent.tool", {"id": ev.get("tool_id"), "name": ev.get("tool_name"),
+                                         "summary": tool_input_summary(ev.get("parameters")),
+                                         **event_preview("input", ev.get("parameters"), 400)})
         elif typ == "tool_result" and ev.get("status") not in (None, "success"):
             note_failed_output(st, ev.get("output") or ev.get("error"))
             await ctx.emit("agent.tool_error", {**event_preview("text", ev.get("output") or ev.get("error"), 400)})

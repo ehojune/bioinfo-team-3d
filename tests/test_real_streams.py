@@ -70,7 +70,7 @@ async def test_captured_stream(tmp_path, engine, case, exit_code, ok, text, erro
         assert result.cost_known is False
     if case == "codex_web_search":
         search = next(data for kind, data in events if kind == "agent.tool")
-        assert search == {"name": "web_search",
+        assert search == {"name": "web_search", "completed": True,
                           "input": "site:github.com/nf-core/sarek/releases latest nf-core sarek release"}
     if case == "agy_simple":
         assert result.usage["total_tokens"] == 18681
