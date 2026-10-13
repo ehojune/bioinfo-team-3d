@@ -29,6 +29,7 @@ TASK = os.environ.get("LABHQ_TASK_ID")
 AGENT = os.environ.get("LABHQ_AGENT_ID")
 WORKDIR_INPUT = os.environ.get("LABHQ_WORKDIR", ".")
 WORKDIR = str(Path(WORKDIR_INPUT).resolve())
+READ_ONLY = os.environ.get("LABHQ_READ_ONLY") == "1"
 ENVIRONMENT_STEP = os.environ.get("LABHQ_ENVIRONMENT_STEP") == "1"
 SHARED_ENVIRONMENT_PROTECTED = os.environ.get("LABHQ_SHARED_ENVIRONMENT_PROTECTED") == "1"
 EXTRA_ROOTS = [p for p in os.environ.get("LABHQ_EXTRA_ROOTS", "").split(os.pathsep) if p]
@@ -68,7 +69,7 @@ async def approval_prompt(tool_name: str, input: dict[str, Any] | None = None,
     d = evaluate_tool(tool_name, input or {}, S.policy,
                       allowed_roots=[WORKDIR_INPUT, WORKDIR, *EXTRA_ROOTS], workdir=WORKDIR,
                       private_paths=PRIVATE.paths, private_enabled=PRIVATE.enabled,
-                      private_open_reads=PRIVATE.open_reads)
+                      private_open_reads=PRIVATE.open_reads, read_only=READ_ONLY)
     # A respelled write path (#219) is what was judged and what the PI sees, so Claude must write that one.
     tool_input = d.updated_input or input or {}
     if d.action == "allow":

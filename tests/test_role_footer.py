@@ -33,9 +33,11 @@ def test_writing_staff_get_the_temp_folder_and_relative_path_rules(tmp_path):
     assert footer == ROLE_FOOTER + WORKSPACE_WRITE_RULES  # nothing else is configured
 
 
-def test_read_only_staff_do_not_get_the_write_rules(tmp_path):
+def test_read_only_staff_get_only_the_scoped_write_rules(tmp_path):
     footer = role_footer(_ctx(tmp_path, Engine.codex, read_only=True))
-    assert footer == ROLE_FOOTER
+    assert footer.startswith(ROLE_FOOTER)
+    assert "Write only in your own task's outputs/ and .tmp/" in footer
+    assert "sources are read-only" in footer
     assert TEMP_RULE not in footer and PATH_RULE not in footer and WAIT_RULE not in footer
 
 

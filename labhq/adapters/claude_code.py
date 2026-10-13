@@ -198,7 +198,7 @@ def plugin_provenance(name: str, path: Path, every_file: bool = False) -> dict:
 
 class ClaudeCodeAdapter(AgentAdapter):
     engine = "claude_code"
-    enforces_read_only = True  # plan mode, --tools Read,Glob,Grep, no settings file, disableAllHooks, no plugin
+    enforces_read_only = True  # file tools + scoped permission gate, no user hooks/plugins or shell
 
     def engine_env(self) -> dict[str, str]:
         # Claude Code documents this as disabling run_in_background, automatic backgrounding and Ctrl+B.

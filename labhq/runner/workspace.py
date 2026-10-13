@@ -192,7 +192,7 @@ class TaskWorkspace:
     def __init__(self, root: Path, task: Task, agent: AgentSpec, override: Path | None = None):
         self.dir = Path(override) if override else Path(root) / time.strftime("%Y-%m-%d") / f"{task.id}_{agent.id}"
         self.dir.mkdir(parents=True, exist_ok=True)
-        for sub in ("outputs", "jobs/logs", ".labhq"):  # never through a link an earlier run left (#165)
+        for sub in ("outputs", ".tmp", "jobs/logs", ".labhq"):  # never through a link an earlier run left (#165)
             if plain_directory(self.dir, sub) is None:
                 raise OwnedPathError(f"labhq does not write in {sub}: it is a link or not a folder in the workspace")
         self.task, self.agent = task, agent

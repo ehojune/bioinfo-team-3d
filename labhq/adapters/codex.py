@@ -168,7 +168,7 @@ def elevated_home_problem(home: Path, accounts: dict[str, float | None] | None) 
 
 class CodexAdapter(AgentAdapter):
     engine = "codex"
-    enforces_read_only = True  # -s read-only, no MCP, hooks/plugins/apps off, no user config
+    enforces_read_only = True  # only own outputs/temp writable; no MCP, hooks/plugins/apps or user config
 
     def prepare(self, ctx: RunContext) -> None:
         write_owned(ctx.workdir, "AGENTS.md", ctx.agent.system_prompt.strip() + "\n" + role_footer(ctx))
@@ -243,6 +243,16 @@ class CodexAdapter(AgentAdapter):
         """`-s <mode>`, or with private paths to refuse a permission profile that extends the same built-in mode.
         Codex profiles and `-s` do not compose: a run takes one or the other."""
         sandbox = ctx.agent.sandbox
+        if ctx.read_only or sandbox == "read-only":
+            # Start with read access only: unlike :workspace this grants neither cwd nor global temp writes.
+            # Adding these two roots produces a scoped workspace-write sandbox, including for resumed sessions.
+            filesystem = {str(ctx.workdir.resolve() / name): "write" for name in ("outputs", ".tmp")}
+            filesystem.update({path: "deny" for path in self.deny_read_paths(ctx)})
+            filesystem.update({str(self.settings.path(z.path)): "deny"
+                               for z in self.settings.policy.data_zones if z.level == "restricted"})
+            profile = {"extends": ":read-only", "filesystem": filesystem}
+            return ["-c", f"default_permissions={_toml(STAFF_PROFILE)}",
+                    "-c", f"permissions.{STAFF_PROFILE}={_toml(profile)}", "-c", 'approval_policy="never"']
         parent = PROFILE_PARENTS.get(sandbox)
         deny = self.deny_read_paths(ctx) if parent else []
         if not deny:
@@ -269,7 +279,7 @@ class CodexAdapter(AgentAdapter):
             flags += ["-c", f'model_reasoning_effort="{a.effort}"']
         web_search = "live" if any(t.split("(")[0] in WEB_TOOLS for t in a.tools) else "disabled"
         flags += ["-c", f'web_search="{web_search}"']
-        for d in ctx.extra_dirs:
+        for d in ([] if ctx.read_only or a.sandbox == "read-only" else ctx.extra_dirs):
             flags += ["--add-dir", d]
         if t.output_schema:
             flags += ["--output-schema", str(ctx.meta_dir / "output_schema.json")]
