@@ -72,12 +72,15 @@ async def prepare_plan(plan: dict, precedents: dict, roster: list[dict], rid: st
         task = Task(agent_id=settings.recruit.agent_id, request_id=rid, prompt="Prepare paper advice",
                     budget_usd=settings.recruit.max_budget_usd,
                     meta={"kind": "paper_skill", "paper_skill": selected, "max_attempts": 1,
+                          "step_id": "paper_skill_" + hashlib.sha256(selected["paper_id"].encode()).hexdigest()[:24],
                           "title": f"참고 논문 스킬: {selected['title']}"})
         try:
             result = await run(task)
             receipt = result.structured if result.ok and isinstance(result.structured, dict) else {}
             if receipt.get("status") not in {"ready", "reused", "failed", "unavailable"}:
                 receipt = {"status": "failed", "error": result.error or "Paper2Skill 변환 실패"}
+            if receipt.get("status") in {"ready", "reused"} and receipt.get("paper_id") != selected["paper_id"]:
+                receipt = {"status": "failed", "error": "Paper2Skill 논문 ID 불일치"}
         except Exception as exc:
             receipt = {"status": "failed", "error": f"Paper2Skill 변환 실패 ({type(exc).__name__})"}
         rows.append({**receipt, **selected})

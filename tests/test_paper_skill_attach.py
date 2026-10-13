@@ -214,6 +214,30 @@ async def test_attachment_scope_rejects_wrong_request_employee_or_step(runner, f
 
 
 @pytest.mark.asyncio
+async def test_two_papers_have_distinct_restart_keys_and_keep_their_own_receipts():
+    from labhq.recruit.paper_skills import prepare_plan
+    from labhq.gateway.server import Hub
+    tasks = []
+
+    async def convert(task):
+        tasks.append(task)
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                          structured={"status": "ready", "paper_id": "pmid:12345678"})
+
+    plan = {"steps": [{"id": "s1", "agent_id": "worker"}],
+            "paper_skills": [SELECTED, {**SELECTED, "paper_id": "PMID:87654321"}]}
+    precedents = {**PRECEDENTS, "papers": [*PRECEDENTS["papers"],
+                  {"title": "Another method", "citations": ["PMID:87654321"]}]}
+    out = await prepare_plan(plan, precedents, [{"id": "worker"}], "r", Settings(), convert)
+    first = tasks[0]
+    prior = {"request_id": "r", "kind": "paper_skill", "step_id": first.meta["step_id"],
+             "payload": first.model_dump(mode="json")}
+    assert Hub._matches_recovery(first, prior)
+    assert not Hub._matches_recovery(tasks[1], prior)
+    assert out["paper_skill_results"][1]["status"] == "failed"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("hold", ["login", "quota"])
 async def test_optional_paper_conversion_does_not_park_on_staff_account_hold(hold):
     async def dispatch(task):
