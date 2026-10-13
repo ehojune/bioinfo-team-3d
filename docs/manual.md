@@ -106,7 +106,7 @@ doctor는 roster가 쓰는 엔진만 검사하고, 생략한 네트워크·dry-r
 |---|---|---|
 | Paper2Agent | recruiter가 없거나 skill을 못 읽으면 fail. mock·데모는 skip | `labhq doctor --fix` |
 
-`--fix`는 Paper2Agent를 설치한 뒤 다시 검사합니다. 다운로드에 실패하면 네트워크·source/ref 확인 안내와 fail을 남깁니다. 별도 설정 파일을 쓴다면 같은 `-c <config>`를 붙이세요.
+`--fix`는 Paper2Agent를 설치한 뒤 다시 검사합니다. 다운로드에 실패하면 네트워크·source/ref 확인 안내와 fail을 남깁니다. 별도 설정 파일을 쓴다면 같은 `-c <config>`를 붙이세요. `init`은 설치 검사를 미루며 skill을 내려받지 않습니다. 이후 실제 직원 실행 전에는 `doctor --fix`를 실행하세요.
 npm의 `.cmd`/`.bat` shim은 여러 줄 prompt를 손상시킬 수 있어 labhq가 표준 npm shim만 Node.js로 풀어 실행합니다.
 풀 수 없는 shim은 거부합니다. Windows에서 직접 지정하려면 `engines.<engine>.bin`과 `prefix_args`를 쓰세요(설치된 package 경로 확인).
 

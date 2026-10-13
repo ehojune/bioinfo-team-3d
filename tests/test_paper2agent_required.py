@@ -77,6 +77,17 @@ def test_missing_skill_is_failure(case):
     assert row(s)["hint"] == "labhq doctor --fix"
 
 
+def test_init_defers_install_but_standalone_doctor_still_requires_it(case, monkeypatch):
+    s, _ = case
+    setup = Mock(side_effect=AssertionError("init must not install"))
+    monkeypatch.setattr(p2a, "setup_paper2agent", setup)
+    result = doctor.collect(s, dry_run=True, require_paper2agent=False)
+    assert next(r for r in result["checks"] if r["name"] == "paper2agent")["status"] == "skip"
+    assert result["summary"]["fail"] == 0
+    assert row(s)["status"] == "fail"
+    setup.assert_not_called()
+
+
 def test_installed_but_hidden_skill_is_failure(case):
     s, _ = case
     p2a.setup_paper2agent(s)

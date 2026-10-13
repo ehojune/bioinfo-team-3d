@@ -464,7 +464,8 @@ def _paper2agent_row(settings: Settings, agents: list[AgentSpec], fix: bool = Fa
 
 
 def collect(settings: Settings, *, requested_config: str | None = None, network: bool = False,
-            dry_run: bool = False, require_roster: bool = False, fix: bool = False) -> dict:
+            dry_run: bool = False, require_roster: bool = False, fix: bool = False,
+            require_paper2agent: bool = True) -> dict:
     rows: list[dict] = []
     from .cli import _local_process_diagnostics
 
@@ -557,7 +558,8 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
     if not agents:
         rows.append(_row("staff", "roster", "fail" if require_roster else "warn",
                          "no active agents found", "Set runner.agents_dir."))
-    paper_row = _paper2agent_row(settings, agents, fix=fix and not dry_run)
+    paper_row = (_paper2agent_row(settings, agents, fix=fix and not dry_run) if require_paper2agent else
+                 _row("staff", "paper2agent", "skip", "installation deferred during init", "labhq doctor --fix"))
     forced = None
     invalid_force = False
     if settings.runner.force_engine:
@@ -642,7 +644,8 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
             agent = agent.model_copy(update={"engine": forced})
         engine = agent.engine.value
         ready = available.get(engine, engine == "mock")
-        plugin = engine == "claude_code" and (agent.plugin_dirs or agent.required_skills)
+        plugin = engine == "claude_code" and (agent.plugin_dirs or agent.required_skills
+                                              or agent.id == settings.recruit.agent_id)
         try:
             error = _adapter_check(settings, agent)
         except OSError:
