@@ -14,7 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 18:20 | [`3cf6134`](https://github.com/ehojune/bioinfo-team-3d/pull/564/commits/3cf6134) | 실측 Codex 스트림의 전체 이벤트 기대값에 정확한 입력 fingerprint 추가 |
 | 17:57 | [`d38535f`](https://github.com/ehojune/bioinfo-team-3d/pull/554/commits/d38535f) | 설정·instance·staff·cache·skill·doctor 읽기 전 사용자 홈 guard 적용, 회귀 17건 추가 |
+| 17:56 | [`c07ece2`](https://github.com/ehojune/bioinfo-team-3d/pull/564/commits/c07ece2) | 폭주 감지에서 원본 입력 fingerprint를 preview와 분리하고 잘린 legacy 이벤트를 제외 |
 | 17:21 | [`3fba886`](https://github.com/ehojune/bioinfo-team-3d/pull/561/commits/3fba886) | 웹 요청 선택을 브라우저별로 복원하고 미완료·최근 활동 순서와 이어서 진행 표시를 공유 |
 | 17:21 | [`8ded85f`](https://github.com/ehojune/bioinfo-team-3d/pull/554/commits/8ded85f) | test 홈·state를 격리하고 사용자 저장소 guard와 백업 우선 dry-run 정리 도구 추가 |
 | 17:13 | [`373c9a0`](https://github.com/ehojune/bioinfo-team-3d/pull/555/commits/373c9a0) | MCP probe 실패를 exit 1로 판정하고 실제 Codex 90초 호출을 1회 완료로 검증 |
