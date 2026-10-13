@@ -1,4 +1,4 @@
-"""#36 PR A: a finished request takes follow-up questions in the same CSO session and workspace."""
+"""#36 PR A: a finished request takes follow-up questions in the same CSO session with a fresh answer workspace."""
 
 import asyncio
 import json
@@ -61,16 +61,16 @@ def answer(text="Cohort A had more donors", session="cso-2", ok=True, error=None
 
 
 @pytest.mark.asyncio
-async def test_followup_resumes_the_cso_session_in_its_workspace_read_only():
+async def test_followup_resumes_session_with_a_fresh_writable_answer_workspace():
     hub = FakeHub(answer())
     hub.ask("Why cohort A?")
     await Orchestrator(hub).run_followup("r", "fu_1")
     task = hub.calls[0]
     assert task.agent_id == "cso" and task.resume_session_id == "cso-1"
-    assert task.meta["kind"] == "followup" and task.meta["workdir"] == "/w/cso"
+    assert task.meta["kind"] == "followup" and task.meta["source_workdir"] == "/w/cso" and "workdir" not in task.meta
     assert task.meta["agent_overrides"]["sandbox"] == "read-only"
     assert task.meta["agent_overrides"]["builtin_mcp"] == [] and task.meta["agent_overrides"]["mcp"] == []
-    assert task.meta["upstream_dirs"] == ["/w/s1"] and task.meta["reference_dirs"] == ["/srv/refs/yuan"]
+    assert task.meta["upstream_dirs"] == ["/w/s1", "/w/cso"] and task.meta["reference_dirs"] == ["/srv/refs/yuan"]
     assert "PI follow-up question: Why cohort A?" in task.prompt and "Final report: cohort A wins" in task.prompt
     req = hub.requests["r"]
     entry = req["followups"][0]
@@ -170,7 +170,7 @@ async def test_direct_request_followup_resumes_that_agents_last_session(tmp_path
         if hub.requests["r"]["followups"][0]["status"] != "running":
             break
         await asyncio.sleep(0.01)
-    assert calls[0].resume_session_id == "w-1" and calls[0].meta["workdir"] == str(tmp_path / "w")
+    assert calls[0].resume_session_id == "w-1" and calls[0].meta["source_workdir"] == str(tmp_path / "w")
     assert hub.requests["r"]["followups"][0]["answer"] == "Axis is log10"
     assert "cso_session_id" not in hub.requests["r"]
 
@@ -202,7 +202,7 @@ async def test_solo_request_followup_uses_solo_session_when_cso_is_offline(tmp_p
             break
         await asyncio.sleep(0.01)
     assert entry["agent_id"] == "solo" and entry["status"] == "done"
-    assert calls[0].resume_session_id == "solo-1" and calls[0].meta["workdir"] == workdir
+    assert calls[0].resume_session_id == "solo-1" and calls[0].meta["source_workdir"] == workdir
 
 
 def test_team_fallback_followup_still_requires_cso(tmp_path):
@@ -355,7 +355,7 @@ async def test_runner_gives_followups_no_ask_tool(tmp_path, monkeypatch):
     monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_args: Adapter())
     await runner.run_task(Task(agent_id="cso", prompt="q", meta={"kind": "followup"}))
     await runner.run_task(Task(agent_id="cso", prompt="q", meta={"kind": "plan"}))
-    assert seen["servers"] == [[], ["labhq_ask"]]
+    assert seen["servers"] == [["labhq_approval"], ["labhq_ask"]]
 
 
 def test_read_only_capability_is_decided_per_engine_in_one_place():
@@ -424,7 +424,7 @@ async def test_runner_never_runs_a_read_only_task_on_an_engine_that_cannot_enfor
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("engine", [Engine.claude_code, Engine.codex])
-async def test_runner_gives_a_read_only_task_no_mcp_server_or_write_tool_of_its_own(tmp_path, monkeypatch, engine):
+async def test_runner_removes_staff_mcp_and_keeps_only_the_scoped_write_gate(tmp_path, monkeypatch, engine):
     settings = Settings()
     for name in ("state_dir", "workspace_root", "agents_dir", "talent_dir"):
         setattr(settings.runner, name, str(tmp_path / name))
@@ -445,9 +445,11 @@ async def test_runner_gives_a_read_only_task_no_mcp_server_or_write_tool_of_its_
     for kind in ("followup", "consult", "step"):
         await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": kind}))
     for ctx in seen[:2]:
-        assert ctx.mcp_servers == [] and ctx.agent.mcp == [] and ctx.agent.tools == []
-        assert ctx.agent.sandbox == "read-only" and ctx.agent.permission_mode == "plan"
-        assert ctx.agent.builtin_tools == "Read,Glob,Grep" and not ctx.use_permission_tool
+        assert [s.name for s in ctx.mcp_servers] == (["labhq_approval"] if engine == Engine.claude_code else [])
+        assert ctx.agent.mcp == [] and ctx.agent.tools == []
+        assert ctx.agent.sandbox == "workspace-write" and ctx.agent.permission_mode == "default"
+        assert ctx.agent.builtin_tools == "Read,Glob,Grep,Write,Edit"
+        assert ctx.use_permission_tool == (engine == Engine.claude_code)
     assert "notes_writer" in [s.name for s in seen[2].mcp_servers], "an ordinary step keeps the agent's servers"
 
 
@@ -488,8 +490,10 @@ async def test_followup_end_to_end_with_mock_runner(tmp_path):
         task = next(v for v in hub.store.all("task").values()
                     if (v.get("payload") or {}).get("meta", {}).get("followup_id") == entry["id"])
         assert task["payload"]["resume_session_id"] == session
-        assert task["payload"]["meta"]["workdir"] == workdir
-        assert task["result"]["workdir"] == workdir, "the follow-up ran in the request's CSO workspace"
+        assert task["payload"]["meta"]["source_workdir"] == workdir
+        assert "workdir" not in task["payload"]["meta"]
+        assert task["result"]["workdir"] != workdir, "the follow-up cannot overwrite the CSO output folder"
+        assert (Path(task["result"]["workdir"]) / "outputs").is_dir()
         assert "(깨어나서)" in entry["answer"]
         assert hub.requests[rid]["status"] == "done"
     finally:
@@ -555,7 +559,7 @@ async def followup_running_then_restart(settings, workdir):
     first.start_followup("r", "Why cohort A?")
     await _within(lambda: followup_frames(socket))
     running = followup_frames(socket)[0]
-    assert running["resume_session_id"] == "cso-1" and running["meta"]["workdir"] == workdir
+    assert running["resume_session_id"] == "cso-1" and running["meta"]["source_workdir"] == workdir and "workdir" not in running["meta"]
     await first.on_runner_message("local", {"type": "task.accepted", "task_id": running["id"], "request_id": "r"})
     lost = [t for t in asyncio.all_tasks() if getattr(t.get_coro(), "__qualname__", "") == "Orchestrator.run_followup"]
     for task in lost:
@@ -590,7 +594,7 @@ async def test_followup_after_restart_waits_for_the_interrupted_one_still_runnin
         await _within(lambda: followup_frames(socket))
         follow = followup_frames(socket)[0]
         assert follow["resume_session_id"] == "cso-2", "the interrupted turn is the latest one in the session"
-        assert follow["meta"]["workdir"] == workdir
+        assert follow["meta"]["source_workdir"] == workdir and "workdir" not in follow["meta"]
         await hub.on_runner_message("local", result_frame(follow["id"], "Cohen's d was 0.4", "cso-3"))
         await _within(lambda: hub.requests["r"]["followups"][-1]["status"] != "running")
         assert hub.requests["r"]["followups"][-1]["answer"] == "Cohen's d was 0.4"

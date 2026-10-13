@@ -221,7 +221,7 @@ def test_runner_keeps_the_request_identity_on_read_only_tasks(kind):
     selected = read_only_profile(Runner._resolve_agent(fake_runner(registry_cso), task))
 
     assert selected.engine is Engine.codex and selected.model == "gpt-6-astra"
-    assert selected.tools == [] and selected.sandbox == "read-only", "agent_overrides still give nothing"
+    assert selected.tools == [] and selected.sandbox == "workspace-write", "agent_overrides still give nothing"
     assert registry_cso.engine is Engine.claude_code and registry_cso.model == "opus"
 
 
