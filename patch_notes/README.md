@@ -14,7 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 20:56 | [`32b5823`](https://github.com/ehojune/bioinfo-team-3d/pull/572/commits/32b5823) | 메신저 Node 회귀 테스트를 pytest의 CI 실행 목록에 등록 |
+| 20:46 | [`cfb53ea`](https://github.com/ehojune/bioinfo-team-3d/pull/572/commits/cfb53ea) | CSO 확인 질문과 PI 승인·답변 알림도 메신저 기록에 유지 |
 | 20:28 | [`f912336`](https://github.com/ehojune/bioinfo-team-3d/pull/553/commits/f912336) | 최신 main의 doctor GitHub 연결 검사와 Paper2Agent 설치·pin 옵션 및 홈 guard를 함께 보존 |
+| 20:25 | [`680c5d0`](https://github.com/ehojune/bioinfo-team-3d/pull/572/commits/680c5d0) | 메신저 기록 보관·PI 조회 API·위로 스크롤한 이전 기록 연결 |
 | 20:17 | [`85383f4`](https://github.com/ehojune/bioinfo-team-3d/pull/571/commits/85383f4) | 미해결 environment 실패를 시설팀이 한 번 진단하고 재시작·재귀 호출을 차단 |
 | 20:14 | [`03c3415`](https://github.com/ehojune/bioinfo-team-3d/pull/568/commits/03c3415) | 준비 중 정지 뒤 재개하면 CLI 실행 직전에 project·upstream 입력 해시를 갱신 |
 | 20:11 | [`28d7291`](https://github.com/ehojune/bioinfo-team-3d/pull/570/commits/28d7291) | 데모 테스트의 시간 폴링을 완료 신호로 바꾸고 부하 30회 실패 0을 확인 |
