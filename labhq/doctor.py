@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -17,9 +18,9 @@ from urllib.request import Request, urlopen
 
 import yaml
 
-from .adapters.base import _resolve_command, codex_app_choice, expand_env
-from .adapters import adapter_preflight_error, get_adapter
-from .models import AgentSpec, Engine
+from .adapters.base import RunContext, _resolve_command, codex_app_choice, expand_env, version_key
+from .adapters import adapter_preflight_error, get_adapter, read_only_profile
+from .models import AgentSpec, Engine, Task
 from . import private_paths as private_path_module
 from .private_paths import (PrivatePaths, configured_claude_config_dir, in_pi_claude, inside_any,
                             plugin_keep_dirs, resolve_private_paths, staff_claude_config_dir, staff_codex_homes)
@@ -43,6 +44,26 @@ LOCAL_PYTHON_PACKAGES = {
     "statsmodels": "statsmodels", "scikit-learn": "sklearn", "gseapy": "gseapy", "pydeseq2": "pydeseq2",
 }
 LOCAL_TOOLS = ("docker", "nextflow", "java", "wsl")
+
+# These are the oldest versions on which the complete adapter contract below was measured, not a claim that each
+# individual flag first appeared there. Older CLIs fail doctor because silently losing an isolation or accounting
+# feature is less safe than asking the operator to update.
+ENGINE_CLI_REQUIREMENTS = {
+    "claude_code": {
+        "minimum": "2.1.282",
+        "reason": "stream-json result/usage, --resume, --permission-prompt-tool, and hook/settings JSON isolation",
+    },
+    "codex": {
+        "minimum": "0.160.1",
+        "reason": "exec --json result/usage, exec resume, and the hooks/plugins/apps disable feature names",
+    },
+}
+CLAUDE_MODEL_ALIASES = frozenset({"haiku", "sonnet", "opus"})
+CLAUDE_MODEL_ID = re.compile(r"claude-(?:haiku|sonnet|opus)-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*")
+CANARY_PROMPT = "Reply exactly LABHQ_CANARY_OK."
+CANARY_CANCEL_PROMPT = "LABHQ_CANARY_CANCEL: wait until cancelled."
+CANARY_EXPECTED = "LABHQ_CANARY_OK"
+CANARY_START_TIMEOUT_S = 30
 
 
 def _safe_path(path: str | Path) -> str:
@@ -216,6 +237,68 @@ def _roster(settings: Settings) -> list[AgentSpec]:
 
 def _adapter_check(settings: Settings, agent: AgentSpec) -> str | None:
     return adapter_preflight_error(settings, agent)
+
+
+def _minimum_version_row(name: str, code: int | None, raw: str, *, dry_run: bool) -> dict | None:
+    requirement = ENGINE_CLI_REQUIREMENTS.get(name)
+    if not requirement:
+        return None
+    minimum = requirement["minimum"]
+    hint = f"Update {name} to >= {minimum}; required for {requirement['reason']}."
+    if dry_run:
+        return _row("engine", f"{name} version", "skip", f">= {minimum} not probed (dry-run)", hint)
+    parsed = version_key(raw) if code == 0 else None
+    if parsed is None:
+        return _row("engine", f"{name} version", "warn", f"unrecognized; required >= {minimum}", hint)
+    if parsed < version_key(minimum):
+        return _row("engine", f"{name} version", "fail", f"{_version(raw)} < {minimum}", hint)
+    return _row("engine", f"{name} version", "ok", f"{_version(raw)} >= {minimum}", "")
+
+
+def _codex_models(settings: Settings) -> tuple[set[str] | None, str, str]:
+    """Return (slugs, status, detail); never fall back to the PI's default Codex home."""
+    env = expand_env(settings.engines.codex.env, os.environ)
+    configured = env.get("CODEX_HOME")
+    if not configured:
+        return None, "skip", "CODEX_HOME not configured; model list skipped"
+    cache = Path(os.path.expandvars(os.path.expanduser(configured))) / "models_cache.json"
+    if not cache.is_file():
+        return None, "skip", "models_cache.json absent; model list skipped"
+    try:
+        if cache.stat().st_size > 32 * 1024 * 1024:
+            return None, "warn", "models_cache.json is too large to inspect"
+        data = json.loads(cache.read_text(encoding="utf-8"))
+        models = data.get("models") if isinstance(data, dict) else None
+        if not isinstance(models, list):
+            raise ValueError("models is not a list")
+        slugs = {item.get("slug") for item in models if isinstance(item, dict) and isinstance(item.get("slug"), str)}
+        if not slugs:
+            raise ValueError("model list is empty")
+        return slugs, "ok", f"models_cache.json: {len(slugs)} models"
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+        return None, "warn", "models_cache.json could not be parsed"
+
+
+def _model_row(settings: Settings, agent: AgentSpec) -> dict:
+    name = f"{agent.id} model"
+    if not agent.model:
+        return _row("staff", name, "skip", f"{agent.engine.value}: CLI default", "Set model in the agent YAML to pin it.")
+    if agent.engine == Engine.claude_code:
+        valid = agent.model in CLAUDE_MODEL_ALIASES or bool(CLAUDE_MODEL_ID.fullmatch(agent.model))
+        return _row("staff", name, "ok" if valid else "warn",
+                    f"claude_code: {agent.model}; " + ("known alias/id format" if valid else "unknown alias/id format"),
+                    "Use haiku, sonnet, opus, or a claude-<family>-<version> model id.")
+    if agent.engine == Engine.codex:
+        slugs, status, detail = _codex_models(settings)
+        if slugs is None:
+            return _row("staff", name, status, f"codex: {agent.model}; {detail}",
+                        "Run the staff Codex once to populate CODEX_HOME/models_cache.json, then rerun doctor.")
+        valid = agent.model in slugs
+        return _row("staff", name, "ok" if valid else "warn",
+                    f"codex: {agent.model}; {detail}; " + ("found" if valid else "not found"),
+                    "Choose a slug present in the staff CODEX_HOME models_cache.json.")
+    return _row("staff", name, "skip", f"{agent.engine.value}: model catalog check unavailable",
+                "Check this engine's model list locally.")
 
 
 PRIVATE_PATHS_HINT = "See docs/manual.md 'PI 개인 경로' (policy.private_paths)."
@@ -579,8 +662,17 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
             if choice and choice["path"] == resolved[0]:
                 detail += (f"; auto: 앱 폴더 {choice['folder']} 선택 (codex.exe 있는 폴더 {choice['candidates']}개 중 " +
                            ("판본이 가장 높은 폴더)" if choice["by"] == "version" else "판본 비교 불가, 가장 최근 폴더)"))
-        rows.append(_row("engine", name, "skip" if dry_run else "ok" if code == 0 else "warn", detail,
-                         "Check the executable and prefix_args if version fails."))
+        minimum_row = _minimum_version_row(name, code, raw, dry_run=dry_run)
+        status = "skip" if dry_run else "ok" if code == 0 else "warn"
+        hint = "Check the executable and prefix_args if version fails."
+        if minimum_row:
+            rank = {"ok": 0, "skip": 1, "warn": 2, "fail": 3}
+            if rank[minimum_row["status"]] > rank[status]:
+                status = minimum_row["status"]
+            detail += f"; minimum {minimum_row['detail']}"
+            if minimum_row["status"] != "ok":
+                hint = minimum_row["hint"]
+        rows.append(_row("engine", name, status, detail, hint))
         if dry_run:
             continue
         if name in LOGIN:
@@ -605,6 +697,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
         if forced:
             agent = agent.model_copy(update={"engine": forced})
         engine = agent.engine.value
+        rows.append(_model_row(settings, agent))
         ready = available.get(engine, engine == "mock")
         plugin = engine == "claude_code" and (agent.plugin_dirs or agent.required_skills)
         try:
@@ -685,6 +778,146 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
             "readiness": {"ready": not readiness_reasons, "reasons": readiness_reasons},
             "summary": {status: sum(r["status"] == status for r in rows)
                         for status in ("ok", "warn", "fail", "skip")}}
+
+
+async def _canary_call(settings: Settings, agent: AgentSpec, workdir: Path, prompt: str, *,
+                       resume_session_id: str | None = None, resume_baseline: dict | None = None):
+    events: list[tuple[str, dict]] = []
+    recorded: dict = {}
+
+    async def emit(kind: str, data: dict) -> None:
+        events.append((kind, data))
+
+    task = Task(agent_id=agent.id, prompt=prompt, resume_session_id=resume_session_id, budget_usd=0.25,
+                meta={"kind": "followup", "doctor_canary": True})
+    ctx = RunContext(task=task, agent=agent, workdir=workdir, settings=settings, mcp_servers=[], env={},
+                     emit=emit, prompt=prompt, read_only=True, resume_baseline=resume_baseline,
+                     record_run=lambda **fields: recorded.update(fields))
+    result = await get_adapter(agent.engine, settings).run(ctx)
+    return result, events, recorded
+
+
+async def _canary_cancel(settings: Settings, agent: AgentSpec, workdir: Path) -> bool:
+    started = asyncio.Event()
+
+    async def emit(kind: str, _data: dict) -> None:
+        if kind == "agent.status":
+            started.set()
+
+    task = Task(agent_id=agent.id, prompt=CANARY_CANCEL_PROMPT, budget_usd=0.25,
+                meta={"kind": "followup", "doctor_canary": True})
+    ctx = RunContext(task=task, agent=agent, workdir=workdir, settings=settings, mcp_servers=[], env={},
+                     emit=emit, prompt=CANARY_CANCEL_PROMPT, read_only=True)
+    running = asyncio.create_task(get_adapter(agent.engine, settings).run(ctx))
+    waiting = asyncio.create_task(started.wait())
+    try:
+        done, _ = await asyncio.wait({running, waiting}, timeout=CANARY_START_TIMEOUT_S,
+                                     return_when=asyncio.FIRST_COMPLETED)
+        if waiting not in done or not started.is_set() or running.done():
+            if not running.done():
+                running.cancel()
+                await asyncio.gather(running, return_exceptions=True)
+            return False
+        requested = running.cancel()
+        try:
+            await running
+        except asyncio.CancelledError:
+            return requested
+        return False
+    finally:
+        waiting.cancel()
+        await asyncio.gather(waiting, return_exceptions=True)
+
+
+def _canary_row(agent_id: str, check: str, passed: bool, detail: str) -> dict:
+    return _row("canary", f"{agent_id}: {check}", "ok" if passed else "fail",
+                f"{'pass' if passed else 'fail'}; {detail}",
+                "Fix the engine/model/login and rerun this explicit canary.")
+
+
+async def _agent_canary(settings: Settings, agent: AgentSpec) -> list[dict]:
+    adapter = get_adapter(agent.engine, settings)
+    checks = ("result", "cost/tokens", "session", "resume", "cancel")
+    if not adapter.enforces_read_only or not adapter.supports_resume:
+        return [_canary_row(agent.id, check, False, f"{agent.engine.value} cannot enforce this canary contract")
+                for check in checks]
+
+    canary_settings = settings.model_copy(deep=True)
+    canary_settings.runner.task_timeout_s = max(1, min(settings.runner.task_timeout_s, 120))
+    canary_settings.runner.stall_warn_s = 0
+    canary_settings.runner.stall_retry_s = 0
+    prepared = agent.model_copy(update={"system_prompt": "Return only the requested canary text.",
+                                        "max_turns": 1, "max_budget_usd": 0.25})
+    prepared = read_only_profile(prepared)
+    try:
+        with tempfile.TemporaryDirectory(prefix="labhq-canary-") as scratch:
+            root = Path(scratch)
+            initial_dir = root / "initial"
+            resume_dir = root / "resume"
+            cancel_dir = root / "cancel"
+            for directory in (initial_dir, resume_dir, cancel_dir):
+                directory.mkdir()
+            initial, initial_events, baseline = await _canary_call(
+                canary_settings, prepared, initial_dir, CANARY_PROMPT)
+            usage_events = [data for kind, data in initial_events if kind == "agent.usage"]
+            exact = initial.ok and initial.text.strip() == CANARY_EXPECTED and bool(usage_events)
+            rows = [_canary_row(agent.id, "result", exact,
+                                "result event and exact reply received" if exact else "result event or exact reply missing")]
+
+            usage = usage_events[-1] if usage_events else {}
+            accounting = bool(usage_events) and "cost_known" in usage and "usage_known" in usage
+            cost = f"${initial.cost_usd:.6f}" if initial.cost_known and initial.cost_usd is not None else "unknown"
+            tokens = sum(value for value in initial.usage.values() if isinstance(value, int) and not isinstance(value, bool))
+            rows.append(_canary_row(agent.id, "cost/tokens", accounting,
+                                    f"cost={cost}, tokens={tokens if initial.usage_known else 'unknown'}"))
+
+            session = bool(initial.session_id)
+            rows.append(_canary_row(agent.id, "session", session,
+                                    "session id received" if session else "session id missing"))
+            if session:
+                resumed, resumed_events, _ = await _canary_call(
+                    canary_settings, prepared, resume_dir, CANARY_PROMPT,
+                    resume_session_id=initial.session_id, resume_baseline=baseline)
+                resumed_ok = (resumed.ok and resumed.session_id == initial.session_id
+                              and resumed.text.strip() == CANARY_EXPECTED
+                              and any(kind == "agent.usage" for kind, _ in resumed_events))
+            else:
+                resumed_ok = False
+            rows.append(_canary_row(agent.id, "resume", resumed_ok,
+                                    "same session completed" if resumed_ok else "resume did not complete in the same session"))
+            cancelled = await _canary_cancel(canary_settings, prepared, cancel_dir)
+            rows.append(_canary_row(agent.id, "cancel", cancelled,
+                                    "running adapter call cancelled" if cancelled else "cancellation was not observed"))
+            return rows
+    except Exception:  # noqa: BLE001 - a paid diagnostic must become failed rows, never crash doctor
+        return [_canary_row(agent.id, check, False, "canary execution failed") for check in checks]
+
+
+async def _run_canaries(settings: Settings, selector: str) -> list[dict]:
+    try:
+        agents = _roster(settings)
+    except (OSError, ValueError, yaml.YAMLError):
+        return [_canary_row(selector, "selection", False, "roster could not be read")]
+    selected = agents if selector == "all" else [agent for agent in agents if agent.id == selector]
+    if not selected:
+        return [_canary_row(selector, "selection", False, "active agent not found")]
+    forced = None
+    if settings.runner.force_engine:
+        try:
+            forced = Engine(settings.runner.force_engine)
+        except ValueError:
+            return [_canary_row(selector, "selection", False, "runner.force_engine is invalid")]
+    rows: list[dict] = []
+    for agent in selected:
+        if forced:
+            agent = agent.model_copy(update={"engine": forced})
+        rows.extend(await _agent_canary(settings, agent))
+    return rows
+
+
+def run_canaries(settings: Settings, selector: str) -> list[dict]:
+    """Run paid engine calls only for an explicit ``doctor --canary`` request."""
+    return asyncio.run(_run_canaries(settings, selector))
 
 
 def render(manifest: dict) -> str:

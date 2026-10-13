@@ -92,7 +92,7 @@ def test_doctor_checks_only_roster_engines_and_prints_readiness(tmp_path, monkey
         return [str(executable)]
 
     monkeypatch.setattr(doctor, "_resolve_command", resolve)
-    monkeypatch.setattr(doctor, "_probe", lambda argv, env: (0, "version 1.2.3"))
+    monkeypatch.setattr(doctor, "_probe", lambda argv, env: (0, "version 2.1.289"))
     monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: None)
 
     result = doctor.collect(settings)
@@ -195,7 +195,7 @@ def test_doctor_uses_runner_resolution_and_prefix_args(tmp_path, monkeypatch):
 
     (tmp_path / "node.exe").touch()
     monkeypatch.setattr(doctor, "_resolve_command", resolve)
-    monkeypatch.setattr(doctor, "_probe", lambda argv, env: (0, "version 1.2.3"))
+    monkeypatch.setattr(doctor, "_probe", lambda argv, env: (0, "version 2.1.289"))
     monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: None)
     doctor.collect(settings)
     assert ("claude_code", ["node", "cli.js"]) in calls
