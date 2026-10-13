@@ -75,6 +75,12 @@ class StateStore:
         row = self.db.execute("SELECT body FROM state WHERE kind=? AND key=?", (kind, key)).fetchone()
         return json.loads(row[0]) if row else None
 
+    def page(self, kind: str, after: str = "", limit: int = 25) -> list[tuple[str, dict]]:
+        """Bounded keyset scan; recall must not load the task/event ledger."""
+        return [(key, json.loads(body)) for key, body in self.db.execute(
+            "SELECT key, body FROM state WHERE kind=? AND key>? ORDER BY key LIMIT ?",
+            (kind, after, max(1, min(limit, 100))))]
+
     def append_event(self, body: dict, limit: int, runner_id: str | None = None,
                      runner_seq: int | None = None, reporter_delivery: bool = False) -> dict:
         with self.db:
@@ -136,6 +142,8 @@ class StateStore:
             self.db.execute("INSERT OR REPLACE INTO state VALUES ('request', ?, ?)",
                             (rid, json.dumps(request, ensure_ascii=False, default=str)))
             event = self._insert_event(event, limit)
+            self.db.execute("INSERT OR REPLACE INTO state VALUES ('knowledge_pending', ?, ?)",
+                            (rid, json.dumps({"seq": event["seq"]})))
             self.db.execute("INSERT OR REPLACE INTO state VALUES ('terminal_delivery', ?, ?)",
                             (str(event["seq"]), json.dumps(event, ensure_ascii=False, default=str)))
         return event

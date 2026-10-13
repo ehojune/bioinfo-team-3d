@@ -471,6 +471,8 @@ class AnnotSettings(BaseModel):
 
 
 class GitHubSettings(BaseModel):
+    ask_storage: bool = False  # general requests opt in; research requests always ask
+    auto_publish_results: bool = False  # otherwise review the editor draft in the web office
     token_env: str = "GITHUB_TOKEN"  # token is read from this env var on the gateway host, never from YAML
     api_url: str = "https://api.github.com"
     dashboard_url: str | None = None  # link back to the web office in issue comments

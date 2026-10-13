@@ -11,6 +11,7 @@ from pydantic import (BaseModel, ConfigDict, Field, ValidationError, field_valid
                       model_validator)
 
 from ..intake import ClarifyingQuestion
+from ..recruit.paper_skills import PaperSkillSelection
 from ..vocab.declare import MAX_ENTRIES, MAX_KEY, MAX_NAME
 from .packs import field_value_problem
 from ..evidence.claims import (STATUS_NEEDS, Claim, Evidence, EvidenceLink, ledger_errors,
@@ -279,6 +280,8 @@ class ResearchPlan(StrictModel):
     clarifying_questions: list[str | ClarifyingQuestion]
     steps: list[ResearchStep] = Field(min_length=1)
     recruit: list[RecruitProposal]
+    paper_skills: list[PaperSkillSelection] = Field(default_factory=list, max_length=2)
+    paper_skill_results: list[dict[str, Any]] = Field(default_factory=list, max_length=2)
     notes: str
 
     @field_validator("budget_usd", mode="before")
@@ -311,7 +314,8 @@ class ResearchPlan(StrictModel):
     def _drop_empty_topic_metadata(self, handler: Any) -> dict[str, Any]:
         # Plans frozen before topic routing must keep their canonical JSON and plan hash.
         data = handler(self)
-        for field in ("topics", "pack_applicability", "warnings", "checklist", "suggested_next"):
+        for field in ("topics", "pack_applicability", "warnings", "checklist", "suggested_next",
+                      "paper_skills", "paper_skill_results"):
             if not data.get(field):
                 data.pop(field, None)
         if data.get("budget_usd") is None:  # plans frozen before R17 keep their plan_sha256
@@ -415,7 +419,7 @@ def _without(schema: dict[str, Any], definition: str, fields: tuple[str, ...], d
 # The engine-facing schemas stay those of main before #221: declarations are offered only when switched on.
 RESEARCH_PLAN_SCHEMA: dict[str, Any] = _without(ResearchPlan.model_json_schema(), "ResearchStep", ("output_types",),
                                                 ("OutputTypeEntry", "PackApplicabilityRecord"))
-for _system_field in ("pack_applicability", "warnings"):
+for _system_field in ("pack_applicability", "warnings", "paper_skill_results"):
     RESEARCH_PLAN_SCHEMA["properties"].pop(_system_field, None)
     if _system_field in RESEARCH_PLAN_SCHEMA.get("required", []):
         RESEARCH_PLAN_SCHEMA["required"].remove(_system_field)

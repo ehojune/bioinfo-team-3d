@@ -60,7 +60,7 @@ TASK_CANCEL_KEEP_S = 2 * 86400
 # Cards that decide the request itself (PI 점검 R5). They wait policy.approvals.pi_decision_timeout_s instead of the gate
 # timeout, the request waits as waiting_pi meanwhile, and an unanswered card ends as *_timed_out, never as a deny.
 PI_DECISION_KINDS = frozenset({"clarify", "question", "scope", "budget", "research_plan", "research_evidence",
-                               "research_continue", "resume"})
+                               "research_continue", "resume", "result_storage", "result_publish"})
 # Runner cards that only inform: no hook waits on them, so their task's result does not close them (#521).
 RUNNER_NOTICE_KINDS = frozenset({"codex_sandbox_setup"})
 # Steer, pause, resume and halt of a running task (#59 ①); a steer message is at most this long. The gateway keeps each
@@ -194,6 +194,7 @@ DECISION_CHOICES = ("approve", "revise", "deny")
 class DecisionIn(BaseModel):
     approved: bool
     note: str = ""
+    storage: dict | None = None
     # CP2 evidence review reads only this; the note never decides (#90). Other approvals ignore it.
     choice: Literal["approve", "revise", "deny"] | None = None
 
@@ -242,6 +243,8 @@ class Hub:
     def __init__(self, settings: Settings, github_transport: httpx.AsyncBaseTransport | None = None):
         self.s = settings
         self.store = StateStore(settings.path(settings.gateway.state_dir) / "gateway.sqlite3")
+        from ..knowledge.recall import KnowledgeRecall
+        self.knowledge = KnowledgeRecall(self)
         self.event_lock = asyncio.Lock()
         self.runners: dict[str, WebSocket] = {}
         self.runner_incarnations: dict[str, str | None] = {}
@@ -356,6 +359,8 @@ class Hub:
                                                             settings.gateway.event_buffer))
         self.orchestrator = Orchestrator(self)
         self.reporter = ProjectReporter(self, settings, github_transport)
+        from ..result_storage import ResultStorage
+        self.result_storage = ResultStorage(self, github_transport)
         self.rounds = RoundRecorder(self, github_transport)
         self.semantics_shadow = None  # semantics-hook
         if _semantics_wanted(getattr(settings, "semantics", None)):  # semantics-hook: any spelling of off never imports it
@@ -384,6 +389,7 @@ class Hub:
                 {"type": "request.reviewed", "ts": at, "request_id": rid,
                  "data": {**audit, "pi_reviewed_at": at, "pi_review_pending": False}}, self.s.gateway.event_buffer)
             req.update(updated)
+            self.result_storage.schedule(rid)
             self.events.append(event)
             self.pending_committed.append((event, tuple(self.clients)))
             asyncio.get_running_loop().create_task(self._send_committed_event())
@@ -932,6 +938,7 @@ class Hub:
     def _commit_bundle_record(self, rid: str, data: dict) -> None:
         """Checkpoint the post-terminal bundle outcome with exactly one separate event."""
         self.requests[rid].pop("bundle_pending", None)
+        self.result_storage.schedule(rid)
         self.requests[rid]["updated_at"] = time.time()
         event = self.store.commit_request_event(
             rid, self.requests[rid],
@@ -1023,6 +1030,8 @@ class Hub:
         self._commit_bundle_record(rid, data)
 
     def _commit_terminal_record(self, rid: str, typ: str, data: dict) -> None:
+        if not self.requests[rid].get("bundle_pending"):
+            self.result_storage.schedule(rid)
         # Failure never changes the request outcome, and terminal requests loaded after a restart do not pass this
         # checkpoint again.
         self.requests[rid].update(pi_review_pending=True, pi_reviewed_at=None)
@@ -1031,6 +1040,7 @@ class Hub:
                                            {"type": typ, "ts": time.time(), "request_id": rid,
                                             "data": copy.deepcopy(data)},
                                            self.s.gateway.event_buffer)
+        self.knowledge.notify()
         self.events.append(event)
         self._restart_request_asks(rid)
         asyncio.get_running_loop().create_task(self._close_step_controls(rid))  # nothing more is sent for it (#59 ①)
@@ -2892,13 +2902,23 @@ class Hub:
                                      "error": record.get("error")}})
 
     async def resolve_approval(self, approval_id: str, approved: bool, note: str = "",
-                               choice: str | None = None) -> None:
+                               choice: str | None = None, storage: dict | None = None) -> None:
+        pending = self.approvals.get(approval_id)
+        if pending and approved and pending["approval"].get("kind") == "result_publish":
+            req = self.requests.get(pending["approval"].get("request_id")) or {}
+            if not req.get("pi_reviewed_at"):
+                raise ValueError("보고서 검토 완료 뒤 게시해 주세요.")
+        if pending and (pending["approval"].get("detail") or {}).get("storage"):
+            rid = pending["approval"]["request_id"]
+            storage = await self.result_storage.select(rid, storage if approved and storage else {"mode": "local"})
         self._cancel_facilities_timeout(approval_id)
         self._cancel_resume_timer(approval_id)
         entry = self.approvals.pop(approval_id, None)
         if entry is None:
             raise KeyError(approval_id)
         chosen = {"choice": choice} if choice in DECISION_CHOICES else {}
+        if storage is not None:
+            chosen["storage"] = storage
         self.store.delete("approval", approval_id)
         self.store.put("approval_decision", approval_id,
                        {"approval": entry["approval"], "origin": entry["origin"], "approved": approved,
@@ -3157,6 +3177,8 @@ class Hub:
         originals = [{"value": r.value, "original": r.original} for r in body.references if r.original]
         req["environment"] = environment_snapshot(self)
         self.requests[rid] = req
+        if proj:
+            self.result_storage.inherited(rid)
         if originals:
             self.store.put("reference_original", rid, {"references": originals})
         self.save_request(rid)
@@ -3324,7 +3346,7 @@ class Hub:
                                                                   "cost_summary", "usage", "usage_known", "agent_id",
                                                                   "references", "pi_notes", "route", "route_decision",
                                                                   "bundle_path", "bundle_status", "bundle_grade",
-                                                                  "bundle_grade_reasons", "bundle_warning")},
+                                                                  "bundle_grade_reasons", "bundle_warning", "result_storage")},
                           # the full list and full answers stay on the request (GET /api/requests/{id})
                           "followups": [snapshot_followup(f) for f in (r.get("followups") or [])[-20:]],
                           "step_status": self.request_summary(r, running)["step_progress"]["steps"],
@@ -3412,6 +3434,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
 
     @app.on_event("startup")
     async def recover_terminal_deliveries() -> None:
+        hub.knowledge.start()
         hub.recover_terminal_deliveries()
         await hub.finish_interrupted_cancels()
         hub.recover_pending_bundles()
@@ -3419,15 +3442,19 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         for rid, request in hub.requests.items():
             if is_terminal_request(request.get("status")):
                 hub._restart_request_asks(rid)
+                if not request.get("bundle_pending"):
+                    hub.result_storage.schedule(rid)
             elif request.get("status") in {"waiting_quota", "waiting_login", "waiting_facilities_fix"}:
                 hub.track_request(rid, hub.resume_held_request(rid))
 
     @app.on_event("shutdown")
     async def warn_running_on_shutdown() -> None:
+        await hub.result_storage.close()
         loop = asyncio.get_running_loop()
         local_tasks = [task for task in hub.terminal_tasks.values() if task.get_loop() is loop]
         if local_tasks:
             await asyncio.gather(*local_tasks, return_exceptions=True)
+        await hub.knowledge.stop()
         running = [r["id"] for r in hub.requests.values() if is_active_request(r.get("status"))]
         if running:
             log.warning("gateway shutdown with running requests: %s", ", ".join(running))
@@ -3502,7 +3529,9 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
                 if msg.get("type") == "approval.resolve":  # phone taps 승인/거절
                     try:
                         await hub.resolve_approval(str(msg.get("id")), bool(msg.get("approved")), msg.get("note", ""),
-                                                   msg.get("choice"))  # an unknown choice is dropped there
+                                                   msg.get("choice"), msg.get("storage"))
+                    except ValueError as exc:
+                        await ws.send_text(json.dumps({"type": "error", "error": str(exc)}, ensure_ascii=False))
                     except KeyError:  # already decided elsewhere (another device, timeout) — keep the socket
                         await ws.send_text(json.dumps({"type": "approval.stale", "ts": time.time(),
                                                        "data": {"id": msg.get("id")}},
@@ -3511,6 +3540,12 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             pass
         finally:
             hub.clients.discard(ws)
+
+    @app.get("/api/knowledge/search", dependencies=[Depends(auth)])
+    async def knowledge_search(q: str) -> list[dict]:
+        if not 2 <= len(q.strip()) <= 200:
+            raise HTTPException(422, "query must contain 2 to 200 characters")
+        return hub.knowledge.search(q)
 
     @app.get("/api/agents", dependencies=[Depends(auth)])
     async def agents() -> list[dict]:
@@ -3620,9 +3655,11 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     @app.post("/api/approvals/{aid}", dependencies=[Depends(auth)])
     async def decide(aid: str, body: DecisionIn) -> dict:
         try:
-            await hub.resolve_approval(aid, body.approved, body.note, body.choice)
+            await hub.resolve_approval(aid, body.approved, body.note, body.choice, body.storage)
         except KeyError:
             raise HTTPException(404, "no such pending approval")
+        except ValueError as exc:
+            raise HTTPException(422, str(exc))
         return {"ok": True}
 
     @app.post("/api/requests/{rid}/cancel", dependencies=[Depends(auth)])

@@ -274,6 +274,17 @@ labhq contract extend c_scanpy --days 14    # extend | release | activate | rehi
 
 `labhq codex-review`는 [프로젝트별 GitHub 보고](#프로젝트별-github-보고)에, bench·semantics 명령은 [비교 bench](#비교-bench)와 [의미 모델과 온톨로지](#의미-모델과-온톨로지)에 있습니다.
 
+### 과거 요청 검색
+
+`labhq recall "유전자"`로 현재 instance의 완료·실패·취소·거부 요청을 찾습니다. `--instance NAME`도 지원합니다.
+client token으로 인증한 `GET /api/knowledge/search?q=유전자`와 같은 결과이며 최대 5건, 본문 합계 2,000자입니다.
+
+- 검색어는 2~200자의 문자 그대로입니다. 3자 이상은 SQLite FTS5 trigram, 2자 또는 trigram 미지원 환경은 최근 색인 2,000건의 LIKE 검색을 씁니다.
+- gateway만 자기 `state_dir/knowledge.sqlite3`에 요청 ID·가린 요청 요약·step 상태·`failure_kind`·요청 출처를 씁니다. 로그·산출 파일·원본 reference는 검색 자료가 아닙니다.
+- restricted 문장은 marker로 바꾸고 private reference·비밀값은 가립니다. 형식을 판정하지 못한 자료는 제외하며 검색 시에도 현재 가림 규칙을 적용합니다.
+- 시작 시 과거 요청을 25건씩 처리하고 checkpoint부터 이어 갑니다. 새 완료 요청은 재처리해도 한 건으로 남습니다. 색인 실패는 요청 완료를 바꾸지 않으며 30초 뒤 또는 다음 완료 때 재시도합니다.
+- `labhq doctor`의 `local recall` 행은 색인 수·마지막 성공 시각·LIKE fallback 여부를 보여 줍니다. 검색 결과의 prompt 자동 주입·reflection·registry는 아직 없습니다.
+
 ### 요청 수명과 PI 검토
 
 실행과 보고서 작성 → **보고서 검토 대기** → PI **검토 완료** 순서입니다. 실패·취소·거부도 결과와 이유를 확인한 뒤 마무리합니다. CLI에서는 `labhq review-done <request_id>`를 씁니다. `status`에 검토 대기가 보이며 `send`·`watch`는 보고서 출력 후 종료합니다. gateway는 실행 결과를 보존하고 PI 확인 시각(`pi_reviewed_at`)·감사 기록·`request.reviewed` 이벤트를 함께 저장합니다. 다시 눌러도 중복 기록하지 않습니다.
@@ -485,8 +496,8 @@ Codex 직원은 `tools`에 `WebSearch`나 `WebFetch`가 있으면 `web_search="l
 | 종류 | 이름 | 무엇 | 쓰는 직원 | 출처 |
 |---|---|---|---|---|
 | 내장 MCP | labhq_annot | 공개 자원 조회: Ensembl VEP·gnomAD·ClinVar·ChIP-Atlas·ENCODE cCRE·GTEx, API 키가 있으면 변이 효과 예측 모델 (판본 기록·캐시) | [analyst](../agents/core/analyst.yaml), [bioinfo-agent](../agents/core/bioinfo-agent.yaml), [biologist](../agents/core/biologist.yaml), [lit_scout](../agents/core/lit_scout.yaml) | [runner](../labhq/runner/daemon.py) · [직원 설정](../agents/core/) |
-| 내장 MCP | labhq_approval | PI 승인 요청 | [analyst](../agents/core/analyst.yaml), [bioinfo-agent](../agents/core/bioinfo-agent.yaml), [biologist](../agents/core/biologist.yaml), [chief_of_staff](../agents/core/chief_of_staff.yaml), [cso](../agents/core/cso.yaml), [data_steward](../agents/core/data_steward.yaml), [qc_reviewer](../agents/core/qc_reviewer.yaml), [recruiter](../agents/core/recruiter.yaml) | [runner](../labhq/runner/daemon.py) · [직원 설정](../agents/core/) |
-| 내장 MCP | labhq_ask | 막히면 CSO·시설팀·동료·PI에게 묻고 같은 세션으로 이어 가기 (CSO 먼저, 위험한 것만 PI) | [analyst](../agents/core/analyst.yaml), [bioinfo-agent](../agents/core/bioinfo-agent.yaml), [biologist](../agents/core/biologist.yaml), [chief_of_staff](../agents/core/chief_of_staff.yaml), [cso](../agents/core/cso.yaml), [data_steward](../agents/core/data_steward.yaml), [engineer](../agents/core/engineer.yaml), [facilities](../agents/core/facilities.yaml), [lit_scout](../agents/core/lit_scout.yaml), [qc_reviewer](../agents/core/qc_reviewer.yaml), [recruiter](../agents/core/recruiter.yaml), [sci_reviewer](../agents/core/sci_reviewer.yaml) | [runner](../labhq/runner/daemon.py) · [직원 설정](../agents/core/) |
+| 내장 MCP | labhq_approval | PI 승인 요청 | [analyst](../agents/core/analyst.yaml), [bioinfo-agent](../agents/core/bioinfo-agent.yaml), [biologist](../agents/core/biologist.yaml), [chief_of_staff](../agents/core/chief_of_staff.yaml), [cso](../agents/core/cso.yaml), [data_steward](../agents/core/data_steward.yaml), [editor](../agents/core/editor.yaml), [qc_reviewer](../agents/core/qc_reviewer.yaml), [recruiter](../agents/core/recruiter.yaml) | [runner](../labhq/runner/daemon.py) · [직원 설정](../agents/core/) |
+| 내장 MCP | labhq_ask | 막히면 CSO·시설팀·동료·PI에게 묻고 같은 세션으로 이어 가기 (CSO 먼저, 위험한 것만 PI) | [analyst](../agents/core/analyst.yaml), [bioinfo-agent](../agents/core/bioinfo-agent.yaml), [biologist](../agents/core/biologist.yaml), [chief_of_staff](../agents/core/chief_of_staff.yaml), [cso](../agents/core/cso.yaml), [data_steward](../agents/core/data_steward.yaml), [editor](../agents/core/editor.yaml), [engineer](../agents/core/engineer.yaml), [facilities](../agents/core/facilities.yaml), [lit_scout](../agents/core/lit_scout.yaml), [qc_reviewer](../agents/core/qc_reviewer.yaml), [recruiter](../agents/core/recruiter.yaml), [sci_reviewer](../agents/core/sci_reviewer.yaml) | [runner](../labhq/runner/daemon.py) · [직원 설정](../agents/core/) |
 | 내장 MCP | labhq_hpc | HPC 제출·감시 (scheduler가 none이 아닐 때) | [analyst](../agents/core/analyst.yaml), [bioinfo-agent](../agents/core/bioinfo-agent.yaml), [data_steward](../agents/core/data_steward.yaml), [engineer](../agents/core/engineer.yaml), [qc_reviewer](../agents/core/qc_reviewer.yaml) | [runner](../labhq/runner/daemon.py) · [직원 설정](../agents/core/) |
 | 외부 MCP | ChEMBL | 화합물·생물활성 검색 | [biologist](../agents/core/biologist.yaml), [lit_scout](../agents/core/lit_scout.yaml) | [Claude for Life Sciences](https://www.anthropic.com/news/healthcare-life-sciences) · [MCP](https://hcls.mcp.claude.com/chembl/mcp) · [직원 설정](../agents/core/) |
 | 외부 MCP | ClinicalTrials.gov | 임상시험 검색 | [biologist](../agents/core/biologist.yaml), [lit_scout](../agents/core/lit_scout.yaml) | [Claude for Life Sciences](https://www.anthropic.com/news/healthcare-life-sciences) · [MCP](https://hcls.mcp.claude.com/clinical_trials/mcp) · [직원 설정](../agents/core/) |
@@ -497,7 +508,7 @@ Codex 직원은 `tools`에 `WebSearch`나 `WebFetch`가 있으면 `web_search="l
 | skill | Paper2Agent | 논문·코드를 파견직으로 변환 (setup-paper2agent 필요) | [recruiter](../agents/core/recruiter.yaml) | [Paper2Agent](https://github.com/jmiao24/Paper2Agent) · [직원 설정](../agents/core/) · [채용 코드](../labhq/recruit/paper2agent.py) |
 | skill | bioinfo:bioinfo-analyze | 실행 전 존재 확인 (required_skills) | [bioinfo-agent](../agents/core/bioinfo-agent.yaml) | [직원 설정](../agents/core/) |
 | 엔진 기능 | Claude Code | 직원 실행 엔진 | [analyst](../agents/core/analyst.yaml), [bioinfo-agent](../agents/core/bioinfo-agent.yaml), [biologist](../agents/core/biologist.yaml), [chief_of_staff](../agents/core/chief_of_staff.yaml), [cso](../agents/core/cso.yaml), [data_steward](../agents/core/data_steward.yaml), [qc_reviewer](../agents/core/qc_reviewer.yaml), [recruiter](../agents/core/recruiter.yaml) | [직원 설정](../agents/core/) |
-| 엔진 기능 | Codex | 직원 실행 엔진 | [engineer](../agents/core/engineer.yaml), [facilities](../agents/core/facilities.yaml), [lit_scout](../agents/core/lit_scout.yaml), [sci_reviewer](../agents/core/sci_reviewer.yaml) | [직원 설정](../agents/core/) |
+| 엔진 기능 | Codex | 직원 실행 엔진 | [editor](../agents/core/editor.yaml), [engineer](../agents/core/engineer.yaml), [facilities](../agents/core/facilities.yaml), [lit_scout](../agents/core/lit_scout.yaml), [sci_reviewer](../agents/core/sci_reviewer.yaml) | [직원 설정](../agents/core/) |
 | 엔진 기능 | Codex 웹 검색 | WebSearch / WebFetch → web_search="live" | [lit_scout](../agents/core/lit_scout.yaml), [sci_reviewer](../agents/core/sci_reviewer.yaml) | [adapter](../labhq/adapters/codex.py) · [직원 설정](../agents/core/) |
 <!-- integrations:end -->
 
@@ -583,6 +594,15 @@ flowchart LR
 | 풀패키지 `full` | 둘 다 | 둘 다 | 위 전부 |
 
 ### 작동 방식
+선행 연구의 지식은 채용 없이 이번 요청에 먼저 씁니다(#549 C).
+
+- CSO는 방법이 직접 맞는 논문을 최대 2편 골라 계획 `paper_skills`에 DOI/PMID·선정 이유·담당 단계를 적습니다. 코드·데이터가 있는 논문을 우선합니다.
+- CP1 전에 recruiter가 Paper2Skill 자문형으로 변환합니다. 같은 논문의 인재풀 스킬은 hash 확인 후 재사용하며 수습·계약은 만들지 않습니다. 비용은 `recruit.max_budget_usd`, 시간은 기존 `runner.task_timeout_s`를 따릅니다.
+- 지정 단계의 정규직에게만 임시 스킬을 노출하고 매 실행 뒤 제거합니다. CP1에는 `참고 논문 스킬: 제목 → 직원`, 보고서 부록과 묶음 `paper_skills.json`에는 논문 ID·Paper2Agent commit·skill hash·장착 단계가 남습니다.
+- 변환·hash 확인·장착 실패는 경고로 남기고 계속합니다. doctor가 Paper2Agent 설치 실패를 보고하면 계획에 `스킬 장착 불가(Paper2Agent 미설치)`를 적고 건너뜁니다. 다른 러너의 로컬 인재풀은 전달하지 않으며 장착 경고를 남깁니다.
+
+별도 직원을 채용하는 흐름은 다음과 같습니다.
+
 1. **채용 요청** — CSO 계획의 `recruit` 필드(“팀에 이 방법 가진 사람이 없다”)가 `recruit.suggested` 이벤트로
    폰에 뜨고, PI가 승인하면 `POST /api/recruit`. 여우 헤드헌터는 논문·저장소·튜토리얼 유무·필요 API 키를 조사해 후보를 올립니다.
 2. **변환** — 인사팀이 `talent/<slug>/build`에서 paper2agent 스킬을 실행. `--json-schema`로 오퍼레터 형식을 강제하고
@@ -676,6 +696,37 @@ Claude 직원의 맨 `Write`·`Edit`는 작업·project·upstream 폴더의 `Edi
 resume 비용·Codex 토큰은 호출별 증분으로 합산합니다(#82). 원 누적값은 runner run 기록에 남기며, 재개 기준값이 없으면 해당 증분은 미집계로 표시합니다. 요청 비용 요약은 엔진별(`by_engine`)에 더해 직원별(`by_agent`)로도 나뉘어 웹 요청 줄에 "누가 얼마"로 보입니다. 직원 정보가 없던 예전 기록에는 직원별 줄이 없습니다.
 
 ## 프로젝트별 GitHub 보고
+
+### 결과 저장 위치
+
+연구 요청은 브리핑 뒤, CP1 전에 **이 결과를 어디에 남길까요?**를 묻습니다. 확인 질문이 있으면 한 카드에 함께 나옵니다.
+
+| 선택 | 남기는 곳 |
+|---|---|
+| 로컬만 (기본) | 요청 묶음 옆 `requests/<요청 id>-editor/` 폴더 |
+| 새 GitHub 저장소 | 제안된 이름을 고치고 공개·비공개 선택. 게시 승인 뒤 생성하며 이미 있으면 사용 |
+| 기존 GitHub 저장소 | `소유자/저장소` 입력. 공개 저장소에는 공개를 골라야 게시 |
+
+`--project`로 정했거나 그 요청에서 이어진 계획 수정은 다시 묻지 않습니다. 일반 요청은 `github.ask_storage: true`일 때 묻습니다.
+토큰은 게이트웨이의 `github.token_env` 환경 변수에서 읽습니다. 토큰·권한이 없으면 안내 후 로컬로 진행합니다. 카드에 토큰을 입력하지 않습니다.
+
+### 편집자와 정리본 확인
+
+비버 편집자(`editor`, 가벼운 Codex 모델)가 끝난 요청의 README를 쉬운 말로 다듬습니다.
+정리본은 README·결과 보고서·진행 기록·재현 방법·출처로 구성됩니다. 보고된 그림·표·실행 파일은 링크로 연결합니다.
+텍스트는 기존 게시 검사로 비밀값·개인 경로를 가립니다. 통제 데이터가 걸린 요청은 편집자에게 보내거나 게시하지 않습니다.
+원본 입력과 미보고 파일은 제외합니다. 파일당 1 MB·합계 5 MB 안에서 옮기며, 정리본만으로 재실행된다고 보장하지 않습니다.
+
+보고서의 **검토 완료**(실패는 **확인 완료**) 뒤, **편집자 정리본 확인** 카드에서 문서·그림을 확인하고 **확인했어요 · 올리기**를 누르면
+`labhq/results/<요청 id>/`에 게시합니다. **로컬에만 남기기**를 누르면 GitHub에 쓰지 않습니다.
+`github.auto_publish_results: true`는 게시 카드를 생략하되 보고서 검토 완료까지 기다립니다. 서버도 검토 전 게시 승인을 거부합니다.
+재시작하면 저장된 정리본으로 게시 승인만 복구합니다. 공개 게시를 금지한 공개 프로젝트는 로컬에 남깁니다.
+그림 안의 글자나 원본 파일의 개인정보는 PI가 확인해야 합니다.
+편집자가 연결되지 않았거나 초안 작성에 실패하면 기록으로 만든 기본 정리본을 씁니다. 게시 실패는 연구 결과를 바꾸지 않습니다.
+
+다음 단계: Notion 저장은 나중에 추가합니다.
+
+### 등록한 프로젝트의 진행 보고
 
 팀은 안에서 사내 메신저(웹 사무실의 이벤트 흐름)로 소통하고, 동시에 **각 프로젝트의 GitHub 저장소에 진행 상황을 올립니다.**
 요청에 프로젝트를 지정하면(`--project`, 웹 입력창의 프로젝트 선택):

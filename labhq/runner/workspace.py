@@ -297,6 +297,57 @@ class TaskWorkspace:
                 _remove_entry(fresh)
         return None
 
+    def install_paper_skills(self, rows: list[dict], runner_id: str) -> tuple[Path | None, list[str]]:
+        """Only this task's named employee loads the copies; the runner removes them after the turn."""
+        from ..recruit.provenance import folder_sha256
+
+        self._paper_skill_copies = []
+        receipts = []
+        warnings = []
+        plugin = self.dir / ".labhq-paper-skills"
+        installed = False
+        for row in rows:
+            if (row.get("request_id") != self.task.request_id or row.get("agent_id") != self.agent.id
+                    or row.get("step_id") != self.task.meta.get("step_id")
+                    or row.get("runner_id") != runner_id or self.agent.contract):
+                warnings.append("논문 스킬 장착 범위 불일치")
+                continue
+            digest = row.get("skill_sha256")
+            src = Path(row.get("skill_dir") or "")
+            if not digest or not (src / "SKILL.md").is_file() or folder_sha256(src) != digest:
+                warnings.append("논문 스킬 hash 불일치: " + str(row.get("paper_id")))
+                continue
+            name = "paper-" + hashlib.sha256(str(row.get("paper_id")).encode()).hexdigest()[:24]
+            destinations = []
+            try:
+                for base in (".labhq-paper-skills/skills", ".agents/skills"):
+                    parent = plain_directory(self.dir, PurePath(base))
+                    if parent is None:
+                        raise ValueError("논문 스킬 폴더가 링크이거나 폴더가 아님")
+                    dst = parent / name
+                    _remove_entry(dst)
+                    destinations.append(dst)
+                    shutil.copytree(src, dst)
+                    if folder_sha256(dst) != digest:
+                        raise ValueError("논문 스킬 복사 hash 불일치")
+                write_owned(plugin, ".claude-plugin/plugin.json", '{"name":"labhq-paper-skills"}\n')
+                self._paper_skill_copies.extend(destinations)
+                receipts.append({k: row.get(k) for k in ("paper_id", "paper2agent_commit", "skill_sha256")})
+                installed = True
+            except (OSError, ValueError, OwnedPathError) as exc:
+                for dst in destinations:
+                    _remove_entry(dst)
+                warnings.append(f"논문 스킬 장착 실패 ({type(exc).__name__})")
+        self.update_run(self.task.id, paper_skills=receipts, paper_skill_warnings=warnings)
+        return (plugin if installed else None), warnings
+
+    def clear_paper_skills(self) -> None:
+        for dst in getattr(self, "_paper_skill_copies", []):
+            # Check the parent again: a task may replace it with a link during the turn.
+            if plain_directory(self.dir, dst.parent.relative_to(self.dir)) is not None:
+                _remove_entry(dst)
+        self._paper_skill_copies = []
+
     def _append(self, name: str, line: str) -> None:
         try:
             append_owned(self.dir, name, line)
@@ -335,7 +386,8 @@ class TaskWorkspace:
             return {}
         if not isinstance(data, dict):
             return {}
-        keep = ("started_at", "ended_at", "engine", "model", "model_id", "engine_cli_version", "plugins", "turns")
+        keep = ("started_at", "ended_at", "engine", "model", "model_id", "engine_cli_version", "plugins", "turns",
+                "paper_skills", "paper_skill_warnings")
         runs = {tid: {k: run[k] for k in keep if k in run}
                 for tid, run in (data.get("runs") or {}).items() if isinstance(run, dict)}
         return {"engine": data.get("engine"), "model": data.get("model"), "runs": runs}
