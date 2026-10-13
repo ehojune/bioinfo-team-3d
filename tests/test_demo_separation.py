@@ -7,6 +7,7 @@ import re
 import shutil
 import socket
 from contextlib import contextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -20,6 +21,33 @@ from labhq.gateway.server import create_app
 from labhq.models import AgentSpec, ApprovalRequest, Engine, Task
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
+
+
+DEADLOCK_TIMEOUT = 120
+
+
+@pytest.fixture
+def demo_signals(monkeypatch):
+    """Observe real startup/roster completion without polling the event loop."""
+    from labhq.gateway.server import Hub
+
+    started, joined = asyncio.Event(), asyncio.Event()
+    server_class, publish = uvicorn.Server, Hub.publish
+
+    class SignallingServer(server_class):
+        async def startup(self, sockets=None):
+            await super().startup(sockets=sockets)
+            assert self.started
+            started.set()
+
+    async def published(hub, event, *args, **kwargs):
+        await publish(hub, event, *args, **kwargs)
+        if event.get("type") in {"runner.online", "roster.updated"} and len(hub.agents) >= 5:
+            joined.set()
+
+    monkeypatch.setattr(uvicorn, "Server", SignallingServer)
+    monkeypatch.setattr(Hub, "publish", published)
+    return SimpleNamespace(started=started, joined=joined)
 
 
 @contextmanager
@@ -117,7 +145,7 @@ def test_demo_boot_and_decisions_stay_out_of_live_state(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("host", ["0.0.0.0", "::", "127.0.0.1"])
-async def test_runner_dials_the_demo_server_when_live_port_is_busy(tmp_path, host):
+async def test_runner_dials_the_demo_server_when_live_port_is_busy(tmp_path, host, demo_signals):
     if host == "::":
         try:
             with listener("::1"):
@@ -137,16 +165,10 @@ async def test_runner_dials_the_demo_server_when_live_port_is_busy(tmp_path, hos
         serving = asyncio.create_task(server.serve())
         running = None
         try:
-            async def ready():
-                while not server.started:
-                    await asyncio.sleep(0.01)
-            await asyncio.wait_for(ready(), 5)
+            await asyncio.wait_for(demo_signals.started.wait(), DEADLOCK_TIMEOUT)
             running = asyncio.create_task(runner.run_forever())
-
-            async def joined():
-                while len(app.state.hub.agents) < 5:
-                    await asyncio.sleep(0.01)
-            await asyncio.wait_for(joined(), 10)
+            await asyncio.wait_for(demo_signals.joined.wait(), DEADLOCK_TIMEOUT)
+            assert len(app.state.hub.agents) >= 5
             assert s.runner.id in app.state.hub.runners
             assert app.state.hub.demo_status["phase"] == "starting"
         finally:
@@ -155,7 +177,7 @@ async def test_runner_dials_the_demo_server_when_live_port_is_busy(tmp_path, hos
                 running.cancel()
                 await asyncio.gather(running, return_exceptions=True)
             server.should_exit = True
-            await asyncio.wait_for(serving, 5)
+            await asyncio.wait_for(serving, DEADLOCK_TIMEOUT)
             app.state.hub.store.close()
             runner.store.close()
 
@@ -193,7 +215,8 @@ async def test_countdown_is_visible_in_reconnecting_snapshot(tmp_path, monkeypat
         hub.store.close()
 
 
-async def test_web_demo_command_uses_selected_server_and_warns_about_changed_url(tmp_path, monkeypatch, capsys):
+async def test_web_demo_command_uses_selected_server_and_warns_about_changed_url(
+        tmp_path, monkeypatch, capsys, demo_signals):
     from labhq.gateway import server as gateway
     from labhq.runner import daemon
 
@@ -209,13 +232,23 @@ async def test_web_demo_command_uses_selected_server_and_warns_about_changed_url
     def settings(path, web=False):
         assert web
         result = settings_factory(path, web=web)
-        result.runner.mock_delay_s = 0.05  # real pacing is checked separately without waiting
+        result.runner.mock_delay_s = 0  # real pacing is checked separately without waiting
         return result
 
     def app(settings, **kwargs):
         assert settings.path(settings.gateway.state_dir).is_relative_to(demo_dir)
         assert settings.path(settings.runner.state_dir).is_relative_to(demo_dir)
         captured["app"] = app_factory(settings, **kwargs)
+        hub = captured["app"].state.hub
+        create_request = hub.create_request
+
+        def request(body):
+            rid = create_request(body)
+            captured["request_id"] = rid
+            captured["request_task"] = hub.request_tasks[rid]
+            return rid
+
+        monkeypatch.setattr(hub, "create_request", request)
         return captured["app"]
 
     class DemoRunner(Runner):
@@ -224,9 +257,34 @@ async def test_web_demo_command_uses_selected_server_and_warns_about_changed_url
             captured["runner"] = self
 
     async def finished(hub):
+        await captured["request_task"]
         assert hub.runners and any(r["status"] == "done" for r in hub.requests.values())
         raise DemoFinished
 
+    async def advance(delay):
+        # Replace only the CLI's waits, never asyncio.sleep globally: uvicorn,
+        # websocket delivery and the runner still use their real event loop.
+        if delay == 0.05:  # server startup
+            await demo_signals.started.wait()
+        elif delay == 0.1:  # CLI's until(): roster first, then orchestration
+            if "request_task" in captured:
+                await captured["request_task"]
+                hub = captured["app"].state.hub
+                # A task returning without a terminal result is a regression,
+                # not a reason to spin on an already-completed task forever.
+                assert cli.is_terminal_request(hub.requests[captured["request_id"]]["status"])
+            else:
+                await demo_signals.joined.wait()
+        else:  # approval/UI pacing and the shutdown grace period
+            assert delay in {0.3, 1.0, 3}
+            await asyncio.sleep(0)
+
+    # Freeze only the CLI's polling deadline. The real outer watchdog below
+    # still fails a missing signal, hung request or shutdown after 120 seconds.
+    monkeypatch.setattr(cli, "time", SimpleNamespace(time=lambda: 0))
+    monkeypatch.setattr(cli, "asyncio", SimpleNamespace(
+        sleep=advance, create_task=asyncio.create_task,
+        get_running_loop=asyncio.get_running_loop, gather=asyncio.gather))
     monkeypatch.setattr(cli, "_demo_settings", settings)
     monkeypatch.setattr(cli, "_demo_countdown", finished)
     monkeypatch.setattr(gateway, "create_app", app)
@@ -236,7 +294,7 @@ async def test_web_demo_command_uses_selected_server_and_warns_about_changed_url
         with listener() as live:
             port = live.getsockname()[1]
             with pytest.raises(DemoFinished):
-                await asyncio.wait_for(cli._demo(web=True, host="0.0.0.0", port=port), 30)
+                await asyncio.wait_for(cli._demo(web=True, host="0.0.0.0", port=port), DEADLOCK_TIMEOUT)
             runner = captured["runner"]
             assert runner.s.gateway.port != port
             assert runner.s.gateway.url == f"ws://127.0.0.1:{runner.s.gateway.port}"
