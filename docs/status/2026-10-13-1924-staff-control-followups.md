@@ -17,8 +17,9 @@ PR #532의 미확인 지적 네 건을 main `3359c6e`에서 재현하고 수정�
 
 - 새 회귀: main 6 failed / 1 passed, 수정 후 관련 테스트 60 passed.
 - Node: 41개 CJS 파일 통과. 공개 검사·diff 검사 통과.
-- Windows 전체 pytest: 대기 중.
-- CI: PR 생성 뒤 현재 head 기준으로 기록.
+- Windows 전체 pytest: **5,989 passed, 66 skipped**. basetemp 한 폴더를 사용하고 삭제했다.
+- 첫 전체 실행의 웹 테스트 41건은 개인 Node shim이 격리된 홈에서 실행 파일을 찾지 못해 실패했다. 설치된 `node.exe`를 테스트 프로세스 PATH 앞에 둔 뒤 41건과 전체 suite가 통과했다. 코드·홈 격리는 그대로다.
+- 코드 검증 CI(`718b59e`): changes·patch-notes·pytest 3.10·3.12·Windows·slow·clean-install·ro-crate-validator 성공, readme 조건부 skip. [실행 기록](https://github.com/ehojune/bioinfo-team-3d/actions/runs/38383182304). 최종 기록 커밋의 CI 결과는 PR checks에서 확인한다.
 - 매뉴얼 직원 제어 절과 브랜치 패치노트·상태 기록 갱신.
 
 ## 남은 지적
