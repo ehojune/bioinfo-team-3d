@@ -5,7 +5,8 @@ PR #566에 main `3ee0d64`를 병합했다. 두 화면의 저장 위치 카드와
 ## 확인
 
 - 관련 Python 102 passed, 1 skipped. Node 43개 파일 통과.
-- Windows 전체 pytest: 6,026 passed, 66 skipped (11분).
+- CI에서 편집자 task를 고르던 기존 회귀를 direct task 선택으로 수정. 관련 29 passed, 2 skipped; 검증 조건은 유지.
+- Windows 전체 pytest: 6,026 passed, 66 skipped (11분, merge 직후).
 - Node 실행 파일을 PATH 앞에 두어 격리 홈에서 실행 경로가 끊기지 않게 했다.
 - 공개·패치노트·목차·diff 검사 통과. 현재 head CI 결과는 PR checks에 기록한다.
 
