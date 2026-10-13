@@ -2555,7 +2555,8 @@ class Orchestrator:
         ).hexdigest()
         entries = self.hub.store.all("ask")
         current = entries.get(ask.id) or {}
-        scope = self._ask_scope(ask.model_dump())
+        automatic = bool(current.get("facilities_diagnosis"))
+        scope = tuple(current["scope"]) if automatic else self._ask_scope(ask.model_dump())
         self.hub.store.put("ask", ask.id, {"ask": ask.model_dump(mode="json"), "origin": runner_id,
                                            **current, "signature": signature, "scope": scope})
         for other_id, entry in entries.items():
@@ -2586,12 +2587,20 @@ class Orchestrator:
                 "from": "labhq", "routed_to": "cso", "remaining_asks": 0}))
             return
 
-        stop = hard_stop_kind(ask, self.hub.s.policy.bioinfo_agent.hard_stops)
+        stop = None if automatic else hard_stop_kind(ask, self.hub.s.policy.bioinfo_agent.hard_stops)
         requested = ask.to
         # Who this ask went to before a gateway restart. The roster lacks that employee until its
         # runner reconnects, and the runner may still be answering it (#113).
         previous = current.get("routed_to")
         status = self.hub.requests.get(ask.request_id or "", {}).get("status")
+        if automatic:
+            host = self.hub.agent_runner.get("facilities")
+            req = self.hub.requests.get(ask.request_id or "", {})
+            if (req.get("cancelling") or host not in self.hub.runners or
+                    "facilities" not in self.hub.agents or not self._diagnosis_budget_available(ask.request_id)):
+                await self.hub.resolve_ask(ask, runner_id, ask_result(
+                    reason="시설팀 진단을 시작할 수 없습니다(취소·offline·예산)", **{"from": "labhq"}))
+                return
         seen_agent = getattr(self.hub, "has_seen_agent", lambda _agent_id: False)
         if stop:
             routed = "pi"
@@ -2676,6 +2685,9 @@ class Orchestrator:
                                                                                  ensure_ascii=False), 6000),
         )
         if routed == "facilities":
+            if automatic:
+                # No research request, plan, paths, artifacts or prior conversation enters automatic diagnosis.
+                prompt = ask.question + "\n" + ask.why_blocked
             prompt += ("\n\nFacilities diagnosis only: use the supplied doctor snapshot and permitted error evidence. "
                        "Do not build a pipeline, run tools or write files. Reply briefly with cause, evidence and "
                        "what PI should do. Answer environment questions yourself; only authority, scope or policy "
@@ -2688,16 +2700,20 @@ class Orchestrator:
             # Adopt its result; when its outcome is unknown, isolate the new consult.
             adopt = getattr(self.hub, "adopt_consult", None)
             prior, result = await adopt(ask.id, routed) if adopt else (0, None)
+            if automatic and prior and result is None:
+                await self.hub.resolve_ask(ask, runner_id, ask_result(
+                    reason="이전 시설팀 진단 결과를 확인할 수 없어 다시 실행하지 않습니다", **{"from": "labhq"}))
+                return
             first_attempt = 1
             if result is not None:
                 self._count_adopted_cost(ask.request_id, result.task_id)
-                if failure_kind(result) == "transient" and prior < self.cfg.step_max_attempts:
+                if not automatic and failure_kind(result) == "transient" and prior < self.cfg.step_max_attempts:
                     result, first_attempt = None, prior + 1  # only the retries that are left
             elif prior:
                 first_attempt = min(prior, self.cfg.step_max_attempts)  # its outcome was never observed
             if result is None:
                 session_id, workdir = self._last_agent_session(ask.request_id, routed)
-                if requested.startswith("colleague:"):
+                if automatic or requested.startswith("colleague:"):
                     session_id, workdir = None, None
                 if routed == self.cfg.cso_agent:
                     session_id = request.get("cso_session_id") or session_id
@@ -2712,6 +2728,7 @@ class Orchestrator:
                     resume_session_id=session_id if self.hub.supports_resume(routed) else None,
                     meta={"kind": "consult", "ask_id": ask.id, "title": f"{ask.agent_id} 질의 답변",
                           "agent_overrides": overrides,
+                          **({"facilities_diagnosis": True, "max_attempts": 1} if automatic else {}),
                           **({"restricted_inputs": True} if restricted else {}),
                           **({**({"source_workdir": source_workdir} if source_workdir else {}),
                               "consult_refs": refs} if refs else {}),
@@ -2955,8 +2972,15 @@ class Orchestrator:
             retry_answers = []
             tool_errors: list[str] = []
             for attempt in range(first_attempt, limit + 1):
-                await self._check_budget(rid)
+                if current.meta.get("facilities_diagnosis"):
+                    if not self._diagnosis_budget_available(rid):
+                        raise BudgetExceeded("facilities diagnosis budget exhausted")
+                else:
+                    await self._check_budget(rid)
                 login_hold = getattr(self.hub, "login_hold", lambda _engine: None)(engine)
+                if current.meta.get("facilities_diagnosis") and login_hold:
+                    return TaskResult(task_id=current.id, agent_id=current.agent_id, ok=False,
+                                      error="facilities engine login required")
                 if login_hold:
                     deadline = login_deadline(current)
                     if not await self.hub.wait_login(rid, key, engine,
@@ -2967,6 +2991,8 @@ class Orchestrator:
                         return await login_failure(current, "engine login wait exceeded the configured maximum")
                     await self._check_budget(rid)
                 hold = getattr(self.hub, "quota_hold", lambda _engine: None)(engine)
+                if current.meta.get("facilities_diagnosis") and hold:
+                    return quota_failure(current, "facilities engine quota unavailable")
                 if hold:
                     deadline = quota_deadline()
                     if not await self.hub.wait_quota(rid, key, engine,
@@ -2991,7 +3017,8 @@ class Orchestrator:
                 await self._emit(rid, "request.step_attempt", {"step_id": key, "attempt": attempt})
                 offline = False
                 try:
-                    dispatched = with_pi_notes(attempt_task, self.hub.requests.get(rid) or {})
+                    dispatched = (attempt_task if current.meta.get("facilities_diagnosis") else
+                                  with_pi_notes(attempt_task, self.hub.requests.get(rid) or {}))
                     res = await self.hub.dispatch(dispatched)
                 except asyncio.CancelledError:
                     raise
@@ -3026,7 +3053,7 @@ class Orchestrator:
                         retry_answers.append(update)
                 # A finished turn of the last step is judged once run_step knows no wake turn follows it: one that
                 # still waits on an answer or job is not final, and the next turn's gate decides (PR #527 review).
-                if not (kind is None and final_step):
+                if not current.meta.get("facilities_diagnosis") and not (kind is None and final_step):
                     await self._check_budget(rid, block=False)
                 previous_result = res
                 if kind is None:
@@ -3055,6 +3082,8 @@ class Orchestrator:
             """Every turn of the step, wake and wrap-up included, parks on a subscription quota and resumes."""
             current = turn
             res = await dispatch_with_retry(current, max_attempts, start)
+            if current.meta.get("facilities_diagnosis"):
+                return res  # diagnosis itself never parks on login/quota or invokes another recovery
             tool_errors = list(res.tool_errors)
             while True:
                 if res.error_kind == "halted":  # #59 ①: parked until the PI resumes, then the same session goes on
@@ -3156,6 +3185,8 @@ class Orchestrator:
                 res = res.model_copy(update={"tool_errors": list(dict.fromkeys(tool_errors))})
 
         res = await dispatch_turn(task, max_attempts=task.meta.get("max_attempts"), start=initial_attempt)
+        if task.meta.get("facilities_diagnosis"):
+            return res  # one consult turn, even if a malformed reply claims pending jobs/questions
         read_only = is_read_only_task(task.meta)
         environment = None if res.ok else environment_problem(res, engine)
         propose = facility_fixes.proposal(environment, res.error, res.tool_errors)
@@ -3233,6 +3264,11 @@ class Orchestrator:
                         "facilities_fix": final_record,
                         "tool_errors": list(dict.fromkeys([*res.tool_errors, *retried.tool_errors])),
                     })
+        diagnose = getattr(self.hub, "request_facilities_diagnosis", None)
+        if (environment and not propose and not read_only and not res.facilities_fix and
+                task.meta.get("kind") in {"step", "direct"} and not task.meta.get("facilities_rerun") and
+                callable(diagnose)):
+            await diagnose(task, res, turn_key(task))
         overrides = task.meta.get("agent_overrides") or {}
         # A read-only task (consult, follow-up) has nothing to save, and a wrap-up must never lift its limits.
         turn_limit = int(overrides.get("max_turns") or (self.hub.agents.get(task.agent_id) or {}).get("max_turns") or 0)
@@ -3441,6 +3477,20 @@ class Orchestrator:
         """What an unaccounted task is assumed to have spent for the cap (#270): the per-task budget, else the cap."""
         per_task = self.hub.s.policy.budget.per_task_usd
         return float(per_task) if per_task and per_task > 0 else float(limit)
+
+    def _diagnosis_budget_available(self, rid: str) -> bool:
+        """Optional diagnosis never opens a budget card; include durable costs before restart recovery seeds them."""
+        req = self.hub.requests.get(rid, {})
+        limit = req.get("budget_usd") or self.hub.s.policy.budget.per_request_usd
+        if rid in self.budget_denials:
+            return False
+        if not limit:
+            return True
+        unknown = {tid for tid, item in (req.get("cost_items") or {}).items() if item.get("status") == "unknown"}
+        unknown.update(self.cost_unknown.get(rid) or ())
+        count = max(len(unknown), int(req.get("cost_known") is False))
+        spent = max(self.cost.get(rid, 0), float(req.get("cost_usd") or 0))
+        return spent + count * self._unknown_reserve(limit) < limit
 
     def _budget_bound(self, rid: str, limit: float) -> tuple[float, int, float]:
         """Counted dollars, unaccounted tasks, and the total the cap is judged on: never $0 for an unknown task."""

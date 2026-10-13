@@ -175,3 +175,26 @@ def problem_text(record: dict | None) -> str:
     cause = record.get("cause") or record.get("id") or ""
     hint = record.get("hint") or ""
     return f"환경 문제: {cause} — {hint}" if hint else f"환경 문제: {cause}"
+
+
+def diagnosis_evidence(record: dict | None, error: str | None, tool_errors: Iterable[str] = ()) -> str:
+    """Only the known signature and its matched error fragment, never a log or a sender-authored hint."""
+    sig = by_id(str((record or {}).get("id") or ""))
+    if sig is None:
+        return "Environment signature unavailable."
+    fragment = ""
+    for text in (error or "", *tool_errors):
+        found = sig.pattern.search(_lines(str(text)))
+        if found:
+            # Command signatures can include arbitrary quoted paths/arguments; keep their canonical cause only.
+            fragment = found.group(0).strip() if sig.id not in {"command_not_found", "python_module_missing"} else ""
+            if sig.id == "python_module_missing":
+                fragment = "No module named"
+            break
+    # Keep only the fixed error phrase, excluding arguments captured by a broad signature.
+    if sig.id == "r_package_missing":
+        fragment = "there is no package called" if fragment else ""
+    elif sig.id == "network_name_resolution":
+        fragment = next((phrase for phrase in ("Could not resolve host", "getaddrinfo failed",
+                        "getaddrinfo ENOTFOUND", "getaddrinfo EAI_AGAIN", "ProxyError") if phrase in fragment), "")
+    return f"Signature: {sig.id}\nCause: {sig.cause}" + (f"\nError: {fragment[:300]}" if fragment else "")
