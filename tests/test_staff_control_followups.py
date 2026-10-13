@@ -1,7 +1,9 @@
 """PR #532 outstanding comments: deterministic control ordering at the real boundaries."""
 import asyncio
+import hashlib
 import json
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -11,8 +13,61 @@ from labhq.models import AgentSpec, CliSpec, Engine, TaskResult
 from labhq.orchestrator.cso import Orchestrator
 from labhq.runner.daemon import Runner
 from labhq.runner.control import halted_result
+from labhq.runner.workspace import portable_input_path
 from labhq.settings import Settings
 from test_staff_control_scope import _entry, _gateway, _result, _step
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("input_kind", ["project", "upstream"])
+@pytest.mark.parametrize("rewrite", [False, True])
+async def test_4257865735_resume_hashes_the_input_the_cli_reads(tmp_path, monkeypatch, input_kind, rewrite):
+    root = tmp_path / input_kind
+    folder = root / "outputs" if input_kind == "upstream" else root
+    folder.mkdir(parents=True)
+    source = folder / "input.txt"
+    source.write_text("before pause", encoding="utf8")
+    settings = Settings()
+    for name in ("state_dir", "workspace_root", "agents_dir", "talent_dir"):
+        setattr(settings.runner, name, str(tmp_path / name))
+    runner = Runner(settings)
+    script = "from pathlib import Path; p = Path(" + repr(str(source)) + "); print(p.read_text())"
+    if rewrite:
+        script += "; p.write_text('changed by CLI')"
+    agent = AgentSpec(id="worker", name="Worker", role="test", engine=Engine.cli, builtin_mcp=[],
+                      cli=CliSpec(command=[sys.executable, "-c", script]))
+    monkeypatch.setattr(runner, "_resolve_agent", lambda _: agent)
+    task = _step("t1")
+    task.meta["project_dirs"] = [str(root)]
+    if input_kind == "upstream":
+        task.meta["upstream_steps"] = {"source": str(root)}
+    paused = asyncio.Event()
+    real_emit = runner.emit
+
+    async def emit(event):
+        await real_emit(event)
+        if event.type == "agent.log" and event.data.get("text", "").startswith("$ cli"):
+            await runner._on_message({"type": "task.control", "task_id": task.id, "action": "pause"})
+            paused.set()
+
+    monkeypatch.setattr(runner, "emit", emit)
+    running = asyncio.create_task(runner.run_task(task))
+    try:
+        await asyncio.wait_for(paused.wait(), 10)
+        source.write_text("after resume", encoding="utf8")
+        await runner._on_message({"type": "task.control", "task_id": task.id, "action": "resume"})
+        result = await asyncio.wait_for(running, 10)
+        assert result.ok and result.text.strip() == "after resume"
+        manifest = json.loads((Path(result.workdir) / "manifest.json").read_text(encoding="utf8"))
+        [record] = manifest["runs"][task.id]["input_files"]
+        assert record["path"] == ("inputs/source/input.txt" if input_kind == "upstream"
+                                  else portable_input_path(source.resolve()))
+        assert record["sha256"] == hashlib.sha256(b"after resume").hexdigest()
+        assert record.get("changed_during_step", False) is rewrite
+    finally:
+        if not running.done():
+            running.cancel()
+        await asyncio.gather(running, return_exceptions=True)
 
 
 @pytest.mark.asyncio
