@@ -1,0 +1,5 @@
+pr: 550
+rows:
+- sha: '08bd9a5'
+  at: 2026-10-13 16:29
+  text: semantics report에서 손상된 중첩 count 행을 제외·집계하고 이전 schema와 정상 합계를 보존
