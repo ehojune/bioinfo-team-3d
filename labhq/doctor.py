@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -29,6 +30,7 @@ from .runner import codex_sandbox
 from .runner.versions import _probe, _version
 from .research.packs import check_configured_packs
 from .settings import Settings
+from .integrations.visibility import dev_log_visibility
 from .test_guard import guard_test_path
 from .tools.scheduler import COMMANDS as SCHEDULER_COMMANDS
 from .util import is_windows_app_alias_dir, parent_claude_markers
@@ -436,7 +438,7 @@ def local_software_summary(python_executable: str) -> dict:
 
 
 def collect(settings: Settings, *, requested_config: str | None = None, network: bool = False,
-            dry_run: bool = False, require_roster: bool = False) -> dict:
+            dry_run: bool = False, require_roster: bool = False, github_transport=None) -> dict:
     rows: list[dict] = []
     from .cli import _local_process_diagnostics
 
@@ -516,8 +518,13 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
                      "Check hpc.user and hpc.job_group membership for the runner and job accounts."))
     if settings.dev_log.enabled:
         repo = settings.dev_log.repo or "로컬만 사용(dev_log.repo 미설정)"
-        status = "ok" if settings.dev_log.repo else "warn"
-        detail = f"{repo}; 종료: v1.0, #40 bench 뒤 20 rounds 새 교훈 없음, 또는 보고 채널 이전 (#69)"
+        visibility = "unknown"
+        if settings.dev_log.repo:
+            # collect is synchronous, including callers that already own an event loop.
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                visibility = pool.submit(asyncio.run, dev_log_visibility(settings, github_transport)).result()
+        status = "ok" if visibility == "private" else "warn"
+        detail = f"{repo}; visibility: {visibility}; 종료: v1.0, #40 bench 뒤 20 rounds 새 교훈 없음, 또는 보고 채널 이전 (#69)"
         rows.append(_row("config", "dev log", status, detail,
                          "dev_log.repo에 비공개 기록 저장소를 지정하세요."))
 

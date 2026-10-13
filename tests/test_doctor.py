@@ -325,10 +325,14 @@ def test_doctor_names_missing_codex_elevated_setup_without_starting_it(tmp_path,
 
 
 def test_doctor_shows_enabled_dev_log_target_and_exit_conditions(tmp_path, monkeypatch):
+    import httpx
+
     settings = _settings(tmp_path)
     settings.dev_log.repo = "records/private"
+    monkeypatch.setenv(settings.github.token_env, "test-token")
     monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: None)
-    result = doctor.collect(settings)
+    result = doctor.collect(settings, github_transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"private": True})))
     row = next(r for r in result["checks"] if r["name"] == "dev log")
     assert row["status"] == "ok"
     assert "records/private" in row["detail"]
