@@ -3,3 +3,6 @@ rows:
 - sha: '207ab78'
   at: 2026-10-13 19:37
   text: PI 승인 설명과 평문 표시를 추가하고 PowerShell here-string 삭제 예문의 오탐을 수정했다.
+- sha: 'dfcead0'
+  at: 2026-10-13 19:45
+  text: PI 메신저 미리보기의 목록 줄바꿈을 2.5D와 3D에서 보존했다.
