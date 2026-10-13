@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 15:50 | [`90c5e8c`](https://github.com/ehojune/bioinfo-team-3d/pull/547/commits/90c5e8c) | 진단 파일의 ASCII encoding과 바이너리 읽기 모드를 명시해 text I/O 검사를 통과 |
+| 15:45 | [`d727a5f`](https://github.com/ehojune/bioinfo-team-3d/pull/547/commits/d727a5f) | gateway·runner 종료 진단과 heartbeat를 기록하고 상태 조회에서 죽은 프로세스의 PID 기록을 보존 |
 | 14:21 | [`0889537`](https://github.com/ehojune/bioinfo-team-3d/pull/545/commits/0889537) | 데모 웹 회귀 테스트를 CI의 Node 실행 목록에 등록한다 |
 | 14:18 | [`942537b`](https://github.com/ehojune/bioinfo-team-3d/pull/545/commits/942537b) | 데모 포트·runner 연결·웹 표시·진행 속도·기록을 라이브와 분리한다 |
 | 14:03 | [`1ac7879`](https://github.com/ehojune/bioinfo-team-3d/pull/544/commits/1ac7879) | 웹 긴 줄 펼침·서버 잘림 표시와 결정 시각·보고서 링크·브라우저 숨김을 추가하고 데모 store 격리를 검증 |
