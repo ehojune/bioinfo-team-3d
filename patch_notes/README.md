@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 14:21 | [`0889537`](https://github.com/ehojune/bioinfo-team-3d/pull/545/commits/0889537) | 데모 웹 회귀 테스트를 CI의 Node 실행 목록에 등록한다 |
+| 14:18 | [`942537b`](https://github.com/ehojune/bioinfo-team-3d/pull/545/commits/942537b) | 데모 포트·runner 연결·웹 표시·진행 속도·기록을 라이브와 분리한다 |
 | 14:03 | [`1ac7879`](https://github.com/ehojune/bioinfo-team-3d/pull/544/commits/1ac7879) | 웹 긴 줄 펼침·서버 잘림 표시와 결정 시각·보고서 링크·브라우저 숨김을 추가하고 데모 store 격리를 검증 |
 
 ## 2026-10-12
