@@ -18,3 +18,6 @@ rows:
 - sha: "cb564bf"
   at: 2026-10-13 19:16
   text: 최신 main의 테스트 홈 guard와 Paper2Agent 직원 설치·설정 경로 검사를 함께 보존
+- sha: "f912336"
+  at: 2026-10-13 20:28
+  text: 최신 main의 doctor GitHub 연결 검사와 Paper2Agent 설치·pin 옵션 및 홈 guard를 함께 보존
