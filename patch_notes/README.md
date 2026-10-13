@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 16:42 | [`f49ef6e`](https://github.com/ehojune/bioinfo-team-3d/pull/552/commits/f49ef6e) | 비서실장 브리핑에 runner 역량 요약을 전달하고 미확인 자원 해석을 막음 |
 | 16:35 | [`e2703f1`](https://github.com/ehojune/bioinfo-team-3d/pull/551/commits/e2703f1) | 참고 문헌·프로젝트 17개를 한영 문서로 모으고 README 더 읽기에 연결 |
 | 15:50 | [`90c5e8c`](https://github.com/ehojune/bioinfo-team-3d/pull/547/commits/90c5e8c) | 진단 파일의 ASCII encoding과 바이너리 읽기 모드를 명시해 text I/O 검사를 통과 |
 | 15:45 | [`d727a5f`](https://github.com/ehojune/bioinfo-team-3d/pull/547/commits/d727a5f) | gateway·runner 종료 진단과 heartbeat를 기록하고 상태 조회에서 죽은 프로세스의 PID 기록을 보존 |
