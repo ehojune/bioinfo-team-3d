@@ -439,7 +439,7 @@ dialog.sheet::backdrop{background:rgba(17,26,34,.45)}
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script src="./state.js"></script>
 <script type="module">
-import {answerRequired, decisionChoice, decisionNote, revisedToast, revisionNoteMissing, syncDecisionCards, syncDecisionHistory, createHistoryVisibility, expandableText, syncExpandableText} from './ui/decide.js';
+import {answerRequired, decisionChoice, decisionNote, storageChoice, revisedToast, revisionNoteMissing, syncDecisionCards, syncDecisionHistory, createHistoryVisibility, expandableText, syncExpandableText} from './ui/decide.js';
 import {syncStaffCards} from './ui/strip.js';
 import {syncTaskBoard} from './ui/tasks.js';
 import {controlHtml, controlKey, staffControls} from './ui/control.js';
@@ -1004,7 +1004,7 @@ $('#approvals').addEventListener('click', async e => {
       const approval = S.approvals.get(li.dataset.id), missing = revisionNoteMissing(approval, act, note);
       if (missing) { toast(missing); ans.focus(); btn.disabled = false; return; }
       // CP2 evidence review sends its approve/revise/deny choice; the note never decides it (#90).
-      await api.approve(li.dataset.id, act === 'approve', note, decisionChoice(approval || { kind: li.dataset.kind }, act));
+      await api.approve(li.dataset.id, act === 'approve', note, decisionChoice(approval || { kind: li.dataset.kind }, act), storageChoice(li));
       toast(act === 'approve' ? (li.dataset.kind === 'clarify' ? '답을 보냈어요' : '승인했어요') : act === 'revise' ? revisedToast(approval) : '거절했어요');
     }
     else {
@@ -1226,8 +1226,8 @@ function startLive() {
     followup: (rid, text) => post(`/api/requests/${encodeURIComponent(rid)}/followup`, { text }),
     requestDetail: rid => get(`/api/requests/${encodeURIComponent(rid)}`),
     auditBundle: rid => getBlob(`/api/requests/${encodeURIComponent(rid)}/audit-bundle`),
-    approve: async (id, ok, note = '', choice = null) => {
-      const decision = choice ? { approved: ok, note, choice } : { approved: ok, note };
+    approve: async (id, ok, note = '', choice = null, storage = null) => {
+      const decision = { approved: ok, note, ...(choice ? {choice} : {}), ...(storage ? {storage} : {}) };
       if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'approval.resolve', id, ...decision }));
       else await post(`/api/approvals/${encodeURIComponent(id)}`, decision);
     },

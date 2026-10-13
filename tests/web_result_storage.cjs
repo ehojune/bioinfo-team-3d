@@ -1,0 +1,38 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const {test} = require('node:test');
+class Element {
+  constructor(tag='div') {this.tagName=tag.toUpperCase();this.children=[];this.dataset={};this.value='';this._text='';}
+  set textContent(value) {this._text=String(value);this.children=[];}
+  get textContent() {return this._text+this.children.map(n=>n.textContent).join('');}
+  set innerHTML(value) {throw Error('must use textContent');}
+  append(...nodes) {this.children.push(...nodes);}
+  replaceChildren(...nodes) {this.children=[];this.append(...nodes);}
+}
+global.document={createElement:tag=>new Element(tag)};
+const web=path.join(__dirname,'../labhq/web');
+const source=fs.readFileSync(path.join(web,'ui/decide.js'),'utf8');
+const mod=import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+test('local default and editable private new repository survive redraw',async()=>{
+  const ui=await mod, host=new Element();
+  const card={id:'s1',kind:'result_storage',detail:{storage:{github_available:true,suggested_name:'study'}}};
+  const [row]=ui.syncDecisionCards(host,[card]);
+  assert.equal(ui.storageChoice(row).mode,'local');
+  const box=row._decisionParts.storage;
+  box._mode.value='new';box._mode.onchange();box._repo.value='my-study';
+  ui.syncDecisionCards(host,[card]);
+  assert.deepEqual(ui.storageChoice(row),{mode:'new',repo:'my-study',visibility:'private'});
+});
+test('missing token disables GitHub choices and clarify keeps one card',async()=>{
+  const ui=await mod, host=new Element();
+  const [row]=ui.syncDecisionCards(host,[{id:'s2',kind:'clarify',detail:{questions:['Which study?'],
+    storage:{github_available:false,warning:'토큰 설정 필요'}}}]);
+  assert.equal(host.children.length,1);
+  assert.equal(row._decisionParts.storage._mode.children[1].disabled,true);
+  assert.match(row.textContent,/토큰 설정 필요/);
+});
+test('both offices pass structured storage choices',()=>{
+  assert.match(fs.readFileSync(path.join(web,'index.html'),'utf8'),/storageChoice\(li\)/);
+  assert.match(fs.readFileSync(path.join(web,'lab3d/src/live.js'),'utf8'),/storage \? \{storage\}/);
+});

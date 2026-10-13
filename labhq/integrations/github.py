@@ -365,6 +365,21 @@ class GitHubClient:
     async def repo_info(self, repo: str) -> dict:
         return await self._req("GET", f"/repos/{repo}")
 
+    async def put_image(self, repo: str, path: str, content: bytes, branch: str) -> dict:
+        """An image from a reviewed result edition; text files use put_file's cleaner."""
+        endpoint = f"/repos/{repo}/contents/{path}"
+        existing = await self.http.get(endpoint, params={"ref": branch})
+        if existing.status_code not in {200, 404}:
+            raise GitHubHTTPError("GET", endpoint, existing)
+        payload = {"message": "연구 결과 그림", "branch": branch,
+                   "content": base64.b64encode(content).decode("ascii")}
+        if existing.status_code == 200:
+            payload["sha"] = existing.json()["sha"]
+        response = await self.http.put(endpoint, json=payload)
+        if response.status_code >= 400:
+            raise GitHubHTTPError("PUT", endpoint, response)
+        return response.json()
+
     async def branch_sha(self, repo: str, branch: str) -> str:
         ref = await self._req("GET", f"/repos/{repo}/git/ref/heads/{branch}")
         return str((ref.get("object") or {}).get("sha") or "")

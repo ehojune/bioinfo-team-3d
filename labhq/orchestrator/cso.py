@@ -1106,7 +1106,7 @@ def _reaches(steps: list[dict], start: str, target: str) -> bool:
     return False
 
 
-ORCHESTRATION_ROLES = frozenset({"cso", "chief_of_staff", "sci_reviewer"})
+ORCHESTRATION_ROLES = frozenset({"cso", "chief_of_staff", "sci_reviewer", "editor"})
 MAX_CLARIFY_CARDS = 2
 ANSWERED_QUESTIONS_HEADING = "PI가 이미 답한 질문 — 다시 묻지 말 것"
 
@@ -2280,6 +2280,14 @@ class Orchestrator:
         req = self.hub.requests[rid]
         details = unanswered_questions(candidate.get("clarifying_questions"), req.get("clarifications"))
         candidate["clarifying_questions"] = details
+        storage_service = getattr(self.hub, "result_storage", None)
+        storage = await storage_service.card(rid) if storage_service else None
+        if storage and not details:
+            decision = await self.hub.request_approval(
+                kind="result_storage", request_id=rid, summary="이 결과를 어디에 남길까요?",
+                detail={"storage": storage})
+            if not req.get("result_storage"):
+                await storage_service.select(rid, decision.get("storage") or {"mode": "local"})
         if not details:
             req["pending_questions"] = []
             req.pop("pending_question_details", None)
@@ -2308,11 +2316,15 @@ class Orchestrator:
                 ]) >= MAX_CLARIFY_CARDS:
             return "limit", None
         detail = {"questions": details}
+        if storage:
+            detail["storage"] = storage
         assumptions = normalize_assumptions(candidate.get("assumptions"))
         if assumptions:
             detail["assumptions"] = assumptions
         decision = await self.hub.request_approval(
             kind="clarify", request_id=rid, summary=questions_summary(details), detail=detail)
+        if storage and not req.get("result_storage"):
+            await storage_service.select(rid, decision.get("storage") or {"mode": "local"})
         if decision.get("state") == "timed_out":  # no answer within the bound is not a deny (R5)
             return "timed_out", None
         if not decision.get("approved") or not str(decision.get("note") or "").strip():
@@ -4640,6 +4652,7 @@ class Orchestrator:
                     self._finish(rid, "연구로 지정한 요청은 직원 한 명에게 직접 보낼 수 없습니다. 팀(CSO)에게 보내면 "
                                  "계획을 세워 CP1 승인을 받습니다.", {}, ok=False)
                     return
+                await self._plan_clarification(rid, {})
                 vocab = self._output_vocab()
                 res = await self.run_step(Task(
                     agent_id=req["agent_id"], request_id=rid,
