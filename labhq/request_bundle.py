@@ -725,6 +725,11 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
             appendix += f"\n\n- 요청 묶음 상태: incomplete (기록 산출 {not_copied}개 미복사; MANIFEST.tsv 확인)"
         (temp / "report.md").write_text(report, encoding="utf-8", newline="\n")
         (temp / "report_appendix.md").write_text(appendix, encoding="utf-8", newline="\n")
+        from .recruit.paper_skills import records as paper_skill_records
+        paper_records = paper_skill_records(req.get("plan") or {}, results)
+        if paper_records:
+            (temp / "paper_skills.json").write_text(json.dumps(paper_records, ensure_ascii=False, indent=2),
+                                                  encoding="utf-8", newline="\n")
         # The report's claim anchors resolve against these ledgers; without them a colleague holding only the bundle
         # could not follow a number to its evidence (readiness R24, 2026-10-08).
         contract = req.get("research_contract")
@@ -783,6 +788,7 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
             handle.write("\n".join(bundle_note) + "\n")
 
         generated = [temp / "README.md", temp / "report.md", appendix_path, temp / "INPUTS.tsv",
+                      *([temp / "paper_skills.json"] if paper_records else []),
                       *([temp / "claims.json"] if claims else []),
                       *([temp / LINK_SCRIPT] if (temp / LINK_SCRIPT).is_file() else []),
                       *([temp / RERUN_RECEIPT_FILE] if (temp / RERUN_RECEIPT_FILE).is_file() else [])]

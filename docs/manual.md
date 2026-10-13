@@ -580,6 +580,15 @@ flowchart LR
 | 풀패키지 `full` | 둘 다 | 둘 다 | 위 전부 |
 
 ### 작동 방식
+선행 연구의 지식은 채용 없이 이번 요청에 먼저 씁니다(#549 C).
+
+- CSO는 방법이 직접 맞는 논문을 최대 2편 골라 계획 `paper_skills`에 DOI/PMID·선정 이유·담당 단계를 적습니다. 코드·데이터가 있는 논문을 우선합니다.
+- CP1 전에 recruiter가 Paper2Skill 자문형으로 변환합니다. 같은 논문의 인재풀 스킬은 hash 확인 후 재사용하며 수습·계약은 만들지 않습니다. 비용은 `recruit.max_budget_usd`, 시간은 기존 `runner.task_timeout_s`를 따릅니다.
+- 지정 단계의 정규직에게만 임시 스킬을 노출하고 매 실행 뒤 제거합니다. CP1에는 `참고 논문 스킬: 제목 → 직원`, 보고서 부록과 묶음 `paper_skills.json`에는 논문 ID·Paper2Agent commit·skill hash·장착 단계가 남습니다.
+- 변환·hash 확인·장착 실패는 경고로 남기고 계속합니다. doctor가 Paper2Agent 설치 실패를 보고하면 계획에 `스킬 장착 불가(Paper2Agent 미설치)`를 적고 건너뜁니다. 다른 러너의 로컬 인재풀은 전달하지 않으며 장착 경고를 남깁니다.
+
+별도 직원을 채용하는 흐름은 다음과 같습니다.
+
 1. **채용 요청** — CSO 계획의 `recruit` 필드(“팀에 이 방법 가진 사람이 없다”)가 `recruit.suggested` 이벤트로
    폰에 뜨고, PI가 승인하면 `POST /api/recruit`. 여우 헤드헌터는 논문·저장소·튜토리얼 유무·필요 API 키를 조사해 후보를 올립니다.
 2. **변환** — 인사팀이 `talent/<slug>/build`에서 paper2agent 스킬을 실행. `--json-schema`로 오퍼레터 형식을 강제하고
