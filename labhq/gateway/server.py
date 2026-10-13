@@ -241,6 +241,8 @@ class Hub:
     def __init__(self, settings: Settings, github_transport: httpx.AsyncBaseTransport | None = None):
         self.s = settings
         self.store = StateStore(settings.path(settings.gateway.state_dir) / "gateway.sqlite3")
+        from ..knowledge.recall import KnowledgeRecall
+        self.knowledge = KnowledgeRecall(self)
         self.event_lock = asyncio.Lock()
         self.runners: dict[str, WebSocket] = {}
         self.runner_incarnations: dict[str, str | None] = {}
@@ -1030,6 +1032,7 @@ class Hub:
                                            {"type": typ, "ts": time.time(), "request_id": rid,
                                             "data": copy.deepcopy(data)},
                                            self.s.gateway.event_buffer)
+        self.knowledge.notify()
         self.events.append(event)
         self._restart_request_asks(rid)
         asyncio.get_running_loop().create_task(self._close_step_controls(rid))  # nothing more is sent for it (#59 ①)
@@ -3409,6 +3412,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
 
     @app.on_event("startup")
     async def recover_terminal_deliveries() -> None:
+        hub.knowledge.start()
         hub.recover_terminal_deliveries()
         await hub.finish_interrupted_cancels()
         hub.recover_pending_bundles()
@@ -3425,6 +3429,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         local_tasks = [task for task in hub.terminal_tasks.values() if task.get_loop() is loop]
         if local_tasks:
             await asyncio.gather(*local_tasks, return_exceptions=True)
+        await hub.knowledge.stop()
         running = [r["id"] for r in hub.requests.values() if is_active_request(r.get("status"))]
         if running:
             log.warning("gateway shutdown with running requests: %s", ", ".join(running))
@@ -3500,6 +3505,12 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             pass
         finally:
             hub.clients.discard(ws)
+
+    @app.get("/api/knowledge/search", dependencies=[Depends(auth)])
+    async def knowledge_search(q: str) -> list[dict]:
+        if not 2 <= len(q.strip()) <= 200:
+            raise HTTPException(422, "query must contain 2 to 200 characters")
+        return hub.knowledge.search(q)
 
     @app.get("/api/agents", dependencies=[Depends(auth)])
     async def agents() -> list[dict]:

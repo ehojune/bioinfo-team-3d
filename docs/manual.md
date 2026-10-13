@@ -260,6 +260,17 @@ labhq contract extend c_scanpy --days 14    # extend | release | activate | rehi
 
 `labhq codex-review`는 [프로젝트별 GitHub 보고](#프로젝트별-github-보고)에, bench·semantics 명령은 [비교 bench](#비교-bench)와 [의미 모델과 온톨로지](#의미-모델과-온톨로지)에 있습니다.
 
+### 과거 요청 검색
+
+`labhq recall "유전자"`로 현재 instance의 완료·실패·취소·거부 요청을 찾습니다. `--instance NAME`도 지원합니다.
+client token으로 인증한 `GET /api/knowledge/search?q=유전자`와 같은 결과이며 최대 5건, 본문 합계 2,000자입니다.
+
+- 검색어는 2~200자의 문자 그대로입니다. 3자 이상은 SQLite FTS5 trigram, 2자 또는 trigram 미지원 환경은 최근 색인 2,000건의 LIKE 검색을 씁니다.
+- gateway만 자기 `state_dir/knowledge.sqlite3`에 요청 ID·가린 요청 요약·step 상태·`failure_kind`·요청 출처를 씁니다. 로그·산출 파일·원본 reference는 검색 자료가 아닙니다.
+- restricted 문장은 marker로 바꾸고 private reference·비밀값은 가립니다. 형식을 판정하지 못한 자료는 제외하며 검색 시에도 현재 가림 규칙을 적용합니다.
+- 시작 시 과거 요청을 25건씩 처리하고 checkpoint부터 이어 갑니다. 새 완료 요청은 재처리해도 한 건으로 남습니다. 색인 실패는 요청 완료를 바꾸지 않으며 30초 뒤 또는 다음 완료 때 재시도합니다.
+- `labhq doctor`의 `local recall` 행은 색인 수·마지막 성공 시각·LIKE fallback 여부를 보여 줍니다. 검색 결과의 prompt 자동 주입·reflection·registry는 아직 없습니다.
+
 ### 요청 수명과 PI 검토
 
 실행과 보고서 작성 → **보고서 검토 대기** → PI **검토 완료** 순서입니다. 실패·취소·거부도 결과와 이유를 확인한 뒤 마무리합니다. CLI에서는 `labhq review-done <request_id>`를 씁니다. `status`에 검토 대기가 보이며 `send`·`watch`는 보고서 출력 후 종료합니다. gateway는 실행 결과를 보존하고 PI 확인 시각(`pi_reviewed_at`)·감사 기록·`request.reviewed` 이벤트를 함께 저장합니다. 다시 눌러도 중복 기록하지 않습니다.

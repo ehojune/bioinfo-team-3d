@@ -90,6 +90,27 @@ def record_sources(hub: "Hub") -> dict[str, dict[str, list[dict]]]:
     return grouped
 
 
+def step_status(result: dict, dispatched: bool = False) -> str:
+    """Shared record/recall status without opening runner artifacts."""
+    if result.get("missing_outputs"):
+        return "INCOMPLETE"
+    return result.get("status") or ("done" if result.get("ok") else
+                                    "failed" if result else "running" if dispatched else "not_run")
+
+
+def metadata_failure_kind(result: dict) -> str | None:
+    """Classify saved error metadata only; never inspect result text or CLI logs."""
+    if result.get("failure_kind"):
+        return result["failure_kind"]
+    if not result or result.get("ok") or result.get("status") == "done":
+        return None
+    if not any(result.get(key) for key in ("error", "error_kind", "environment", "quota_reset_at")):
+        return "unknown"
+    fields = {key: result[key] for key in ("error", "error_kind", "environment", "quota_reset_at", "pending_jobs")
+              if key in result}
+    return failure_kind(TaskResult(task_id="recall", agent_id="recall", ok=False, **fields))
+
+
 def build_record(hub: "Hub", rid: str, sources: dict[str, dict[str, list[dict]]] | None = None) -> dict:
     req = hub.requests[rid]
     if sources is None:
@@ -139,10 +160,7 @@ def build_record(hub: "Hub", rid: str, sources: dict[str, dict[str, list[dict]]]
         classified = None
         if result.get("error") and result.get("task_id") and result.get("agent_id"):
             classified = failure_kind(TaskResult.model_validate(result))
-        status = result.get("status") or ("done" if result.get("ok") else
-                                          "failed" if result else "running" if matching else "not_run")
-        if result.get("missing_outputs"):
-            status = "INCOMPLETE"
+        status = step_status(result, bool(matching))
         steps.append({"id": sid, "agent_id": step.get("agent_id"), "depends_on": step.get("depends_on") or [],
                       "outputs_expected": step.get("outputs") or [], "status": status,
                       "attempts": result.get("attempts") or max((int(t.get("attempt") or 1) for t in matching), default=0),
