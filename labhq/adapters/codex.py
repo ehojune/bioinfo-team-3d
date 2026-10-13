@@ -15,7 +15,7 @@ import json
 import os
 from pathlib import Path
 
-from ..util import event_preview, openai_strict_schema, short, strip_optional_nulls, tool_input_summary
+from ..util import event_preview, openai_strict_schema, short, strip_optional_nulls, tool_input_fingerprint, tool_input_summary
 from .base import (AgentAdapter, role_footer, child_config_dirs, RunContext, RunState, expand_env, note_command_ok,
                    note_failed_output, record_model_id, wrap_cwd)
 from .owned import read_owned, write_owned
@@ -326,7 +326,9 @@ class CodexAdapter(AgentAdapter):
             elif it == "command_execution":
                 exit_code = item.get("exit_code")
                 if typ == "item.started":
-                    await ctx.emit("agent.tool", {"id": item.get("id"), "name": "shell", **event_preview("input", item.get("command"), 300)})
+                    await ctx.emit("agent.tool", {"id": item.get("id"), "name": "shell",
+                                                 "input_fingerprint": tool_input_fingerprint("shell", item.get("command")),
+                                                 **event_preview("input", item.get("command"), 300)})
                 elif exit_code == 0 and not isinstance(exit_code, bool):
                     st.commands_ran = True  # the sandbox started a command (#328)
                     note_command_ok(st)
@@ -338,6 +340,7 @@ class CodexAdapter(AgentAdapter):
                     await ctx.emit("agent.tool_error", {**event_preview("text", message, 400)})
             elif it == "mcp_tool_call" and typ == "item.started":
                 call = {"id": item.get("id"), "name": f"mcp:{item.get('server')}.{item.get('tool')}"}
+                call["input_fingerprint"] = tool_input_fingerprint(call["name"], item.get("arguments"))
                 if item.get("arguments") is not None:  # tells calls apart, e.g. for the runaway detector
                     call["summary"] = tool_input_summary(item["arguments"])
                     call.update(event_preview("input", json.dumps(item["arguments"], ensure_ascii=False, sort_keys=True,
@@ -360,12 +363,14 @@ class CodexAdapter(AgentAdapter):
             elif it == "file_change" and typ == "item.completed":
                 changes = item.get("changes") or []
                 await ctx.emit("agent.tool", {"name": "edit", "completed": True,
+                                               "input_fingerprint": tool_input_fingerprint("edit", item.get("changes")),
                                                "summary": ", ".join(str(c.get("path", "")) for c in changes if isinstance(c, dict))[:160],
                                                **event_preview("input", changes, 300)})
             elif it == "web_search" and typ == "item.completed":
                 action = item.get("action") or {}
                 query = action.get("query") if isinstance(action, dict) else None
                 await ctx.emit("agent.tool", {"name": "web_search", "completed": True,
+                                               "input_fingerprint": tool_input_fingerprint("web_search", query or item.get("query")),
                                                **event_preview("input", query or item.get("query"), 200)})
         elif typ == "turn.completed":
             st.result_seen = True
