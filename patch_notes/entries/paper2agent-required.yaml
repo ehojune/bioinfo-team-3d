@@ -15,3 +15,6 @@ rows:
 - sha: "3695d43"
   at: 2026-10-13 18:34
   text: recruiter adapter의 skill 허용을 기존 plugin 격리 검사에 반영
+- sha: "cb564bf"
+  at: 2026-10-13 19:16
+  text: 최신 main의 테스트 홈 guard와 Paper2Agent 직원 설치·설정 경로 검사를 함께 보존
