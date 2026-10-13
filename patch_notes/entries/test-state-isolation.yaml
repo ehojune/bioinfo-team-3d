@@ -1,0 +1,5 @@
+pr: 554
+rows:
+- sha: '8ded85f'
+  at: 2026-10-13 17:21
+  text: test 홈·state를 격리하고 사용자 저장소 guard와 백업 우선 dry-run 정리 도구 추가
