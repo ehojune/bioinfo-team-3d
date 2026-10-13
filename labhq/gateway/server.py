@@ -1566,6 +1566,8 @@ class Hub:
         entry = entry or {}
         if entry and not self.controllable(entry.get("kind"), entry.get("step_id"), entry.get("request_id")):
             raise ValueError(NOT_CONTROLLABLE.format(kind=entry.get("kind") or "?"))
+        if not self._step_alive(entry):
+            raise ValueError("이 단계는 끝나서 전달할 수 없어요")
         key = self._entry_step(tid, entry)
         if action == "resume" and tid in self.halted_waits:
             state = self._step(key)
@@ -1590,8 +1592,6 @@ class Hub:
             await self._publish_control(tid, entry, {"action": "halt", "halt": True, "source": "gateway",
                                                      "sent": sent})
             return {"task_id": tid, "action": action, "sent": sent, "queued": not sent}
-        if not live and not self._step_alive(entry):
-            raise ValueError("이 단계는 끝나서 전달할 수 없어요")
         state = self._step(key)
         state["agent_id"] = state["agent_id"] or (entry.get("payload") or {}).get("agent_id")
         state["last_task"] = state["last_task"] or tid  # the row a paused step is resumed from
@@ -1632,13 +1632,19 @@ class Hub:
             await self._push(tid, {"action": "halt"})
         key = self._entry_step(tid, entry)
         state = self._step(key)
-        if state["paused"]:
-            await self._push(tid, {"action": "pause"})
+        # Send both values: a resume sent while disconnected must clear the runner's old pause on reconnect.
+        if state["paused"] or state["pause_op"]:
+            await self._push(tid, {"action": "pause" if state["paused"] else "resume"})
         if steers:
-            for steer in state["steers"]:
-                if steer.get("task") == tid:
-                    await self._push(tid, self._steer_message(state, steer))
-            self._save_step(key, state)
+            for steer_id in [s["id"] for s in self._step(key)["steers"] if s.get("task") == tid]:
+                # Every send yields. Re-read the queue, and commit before sending, so a concurrent control, result,
+                # or step closure is never overwritten by the snapshot this flush started with.
+                state = self._step(key)
+                steer = next((s for s in state["steers"] if s["id"] == steer_id and s.get("task") == tid), None)
+                if steer is not None:
+                    message = self._steer_message(state, steer)
+                    self._save_step(key, state)
+                    await self._push(tid, message)
 
     async def flush_task_controls(self, runner_id: str) -> None:
         """On reconnect, only tasks the runner has accepted get their controls. A task not delivered yet gets them from
