@@ -1,0 +1,5 @@
+pr: 569
+rows:
+- sha: '207ab78'
+  at: 2026-10-13 19:37
+  text: PI 승인 설명과 평문 표시를 추가하고 PowerShell here-string 삭제 예문의 오탐을 수정했다.
