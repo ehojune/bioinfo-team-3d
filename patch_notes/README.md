@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 20:17 | [`85383f4`](https://github.com/ehojune/bioinfo-team-3d/pull/571/commits/85383f4) | 미해결 environment 실패를 시설팀이 한 번 진단하고 재시작·재귀 호출을 차단 |
 | 20:14 | [`03c3415`](https://github.com/ehojune/bioinfo-team-3d/pull/568/commits/03c3415) | 준비 중 정지 뒤 재개하면 CLI 실행 직전에 project·upstream 입력 해시를 갱신 |
 | 20:11 | [`28d7291`](https://github.com/ehojune/bioinfo-team-3d/pull/570/commits/28d7291) | 데모 테스트의 시간 폴링을 완료 신호로 바꾸고 부하 30회 실패 0을 확인 |
 | 19:45 | [`dfcead0`](https://github.com/ehojune/bioinfo-team-3d/pull/569/commits/dfcead0) | PI 메신저 미리보기의 목록 줄바꿈을 2.5D와 3D에서 보존했다. |
