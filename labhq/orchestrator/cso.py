@@ -51,6 +51,7 @@ from ..research.packs import (assess_pack_applicability, configured_packs, norma
                               select_applied_packs, select_legacy_applied_packs)
 from ..util import clip, extract_json, input_relpath, output_relpath, short
 from .. import vocab as output_vocab
+from ..recruit import paper_skills
 from ..vocab import declare as output_types
 from ..vocab import public_resources, topic_checklists
 from ..vocab import topics as topic_types
@@ -92,6 +93,7 @@ PLAN_SCHEMA: dict[str, Any] = {
             "properties": {"paper": {"type": "string"}, "repo": {"type": "string"},
                            "focus": {"type": "string"}, "reason": {"type": "string"}},
             "required": ["paper", "repo", "focus", "reason"]}},
+        "paper_skills": paper_skills.SELECTION_SCHEMA,
         "notes": {"type": "string"},
     },
     "required": ["scope", "topics", "clarifying_questions", "steps", "recruit", "notes"],
@@ -148,7 +150,8 @@ def route_decision(plan: Any, solo_agent: str | None, roster: list[dict], *, req
     """Resolve an optional general-plan hint to a durable execution mode; every uncertain case stays team."""
     planned = plan.get("route") if isinstance(plan, dict) else None
     roster_ids = {agent.get("id") for agent in roster if isinstance(agent, dict)}
-    solo = bool(not research and requested != "team" and planned == "solo" and solo_agent in roster_ids)
+    solo = bool(not research and requested != "team" and planned == "solo" and solo_agent in roster_ids
+                and not (plan or {}).get("paper_skill_results"))
     return {"mode": "solo" if solo else "team", "planned": planned if planned in {"team", "solo"} else "team",
             "requested": requested if requested in {"auto", "team"} else "auto",
             **({"agent_id": solo_agent} if solo else {})}
@@ -263,6 +266,7 @@ PRECEDENT_SCHEMA: dict[str, Any] = {
         "papers": {"type": "array", "maxItems": 4, "items": {
             "type": "object", "additionalProperties": False,
             "properties": {"title": {"type": "string"},
+                           "repo": {"type": "string"}, "data_url": {"type": "string"},
                            "citations": {"type": "array", "items": {"type": "string"}}},
             "required": ["title", "citations"]}},
         "required": {"type": "array", "items": {
@@ -285,6 +289,8 @@ this request. Look across the analysis branch, not only at the original study. E
 required and analyses commonly added as recommendations. For every item give analysis, why, and citations using a
 PMID, DOI, or direct URL. Verify the sources rather than relying on search-result titles or snippets. If you cannot
 find something, say so in limitations; never invent it. Return only the structured JSON.
+For each paper include its DOI/PMID when available and optional repo/data_url links when verified, so the CSO can
+prefer a method with accessible code or data for a request-scoped Paper2Skill.
 
 Request: {request}"""
 
@@ -408,6 +414,7 @@ Rules:
 - """ + ENV_STEP_RULE + """
 - If no roster member covers a required method, add a contract hire to `recruit` (paper + code repo +
   focus) and plan the step for whoever is closest; the PI decides whether to hire.
+- """ + paper_skills.PLAN_RULE + """
 - {question_rule} """ + PI_CARD_QUESTION_RULE + """
 - """ + ASSUMPTIONS_RULE + """
 - The original study's methods are reference, not a template: the request may ask a different question of the same
@@ -421,7 +428,7 @@ Rules:
 
 PI's request: {request}"""
 
-RESEARCH_PLAN_PROMPT = """Create a frozen research contract for the PI's request. Do not execute or analyze.
+RESEARCH_PLAN_PROMPT = paper_skills.PLAN_RULE + "\n\n" + """Create a frozen research contract for the PI's request. Do not execute or analyze.
 
 Team roster (use these agent ids exactly, never an orchestration role):
 {roster}
@@ -1903,7 +1910,9 @@ def analysis_precedents_text(record: Any) -> str:
     if record.get("status") != "ok":
         return "Analysis precedents:\n- unavailable; continue without precedent requirements."
     lines = ["Analysis precedents:", "Papers:"]
-    lines.extend(f"- {row.get('title')}: {_citations(row)}" for row in record.get("papers") or [])
+    lines.extend(f"- {row.get('title')}: {_citations(row)}" +
+                 "".join(f"; {key}: {row[key]}" for key in ("repo", "data_url") if row.get(key))
+                 for row in record.get("papers") or [])
     lines.append("Required analyses (answer each id in `checklist`; if one cannot be done, say why):")
     lines.extend(f"- {row.get('id')}: {row.get('analysis')} — {row.get('why')} [{_citations(row)}]"
                  for row in record.get("required") or [])
@@ -2885,6 +2894,7 @@ class Orchestrator:
         initial_attempt = first_attempt
         engine = str((self.hub.agents.get(task.agent_id) or {}).get("engine") or "")
         final_step = bool(task.meta.get("final_budget_turn"))  # nothing runs after this step but its own turns
+        optional_support = bool(task.meta.get("facilities_diagnosis") or task.meta.get("kind") == "paper_skill")
 
         def quota_deadline() -> float:
             req = self.hub.requests[rid]
@@ -2973,13 +2983,13 @@ class Orchestrator:
             retry_answers = []
             tool_errors: list[str] = []
             for attempt in range(first_attempt, limit + 1):
-                if current.meta.get("facilities_diagnosis"):
+                if optional_support:
                     if not self._diagnosis_budget_available(rid):
                         raise BudgetExceeded("facilities diagnosis budget exhausted")
                 else:
                     await self._check_budget(rid)
                 login_hold = getattr(self.hub, "login_hold", lambda _engine: None)(engine)
-                if current.meta.get("facilities_diagnosis") and login_hold:
+                if optional_support and login_hold:
                     return TaskResult(task_id=current.id, agent_id=current.agent_id, ok=False,
                                       error="facilities engine login required")
                 if login_hold:
@@ -2992,7 +3002,7 @@ class Orchestrator:
                         return await login_failure(current, "engine login wait exceeded the configured maximum")
                     await self._check_budget(rid)
                 hold = getattr(self.hub, "quota_hold", lambda _engine: None)(engine)
-                if current.meta.get("facilities_diagnosis") and hold:
+                if optional_support and hold:
                     return quota_failure(current, "facilities engine quota unavailable")
                 if hold:
                     deadline = quota_deadline()
@@ -3054,7 +3064,7 @@ class Orchestrator:
                         retry_answers.append(update)
                 # A finished turn of the last step is judged once run_step knows no wake turn follows it: one that
                 # still waits on an answer or job is not final, and the next turn's gate decides (PR #527 review).
-                if not current.meta.get("facilities_diagnosis") and not (kind is None and final_step):
+                if not optional_support and not (kind is None and final_step):
                     await self._check_budget(rid, block=False)
                 previous_result = res
                 if kind is None:
@@ -3083,7 +3093,7 @@ class Orchestrator:
             """Every turn of the step, wake and wrap-up included, parks on a subscription quota and resumes."""
             current = turn
             res = await dispatch_with_retry(current, max_attempts, start)
-            if current.meta.get("facilities_diagnosis"):
+            if optional_support:
                 return res  # diagnosis itself never parks on login/quota or invokes another recovery
             tool_errors = list(res.tool_errors)
             while True:
@@ -3186,6 +3196,8 @@ class Orchestrator:
                 res = res.model_copy(update={"tool_errors": list(dict.fromkeys(tool_errors))})
 
         res = await dispatch_turn(task, max_attempts=task.meta.get("max_attempts"), start=initial_attempt)
+        if task.meta.get("kind") == "paper_skill":
+            return res  # optional advice never adds wake/wrap-up turns or delays CP1 on a failed conversion
         if task.meta.get("facilities_diagnosis"):
             return res  # one consult turn, even if a malformed reply claims pending jobs/questions
         read_only = is_read_only_task(task.meta)
@@ -3637,6 +3649,8 @@ class Orchestrator:
                         resume_session_id=session_id if can_resume else None,
                         meta={**reference_meta(self.hub.requests.get(rid)),
                               "kind": "step", "step_id": step["id"], "request": request,
+                              "paper_skills": paper_skills.attachments(
+                                  self.hub.requests.get(rid, {}).get("plan") or {}, step["id"], step["agent_id"], rid),
                               "instruction": step["instruction"],
                               "revision": self.hub.requests.get(rid, {}).get("pending_revisions", {})
                               .get(step["id"], {}).get("revision", 0),
@@ -4807,6 +4821,9 @@ class Orchestrator:
                     summary = ("CP1 연구 계획 승인: 고정할 질문·방법·완료/중단 조건·데이터 범위·적용 pack을 "
                                "확인하고 승인하세요." + (" 고칠 점이 있으면 메모와 함께 수정 요청을 고르세요."
                                                       if can_revise else ""))
+                    paper_line = paper_skills.card_text(plan)
+                    if paper_line:
+                        summary = paper_line + "\n" + summary
                     if reuse_pending:
                         source = ("CP2 수정 요청 반영" if carried.get("trigger") == "cp2_revise"
                                   else "리뷰 P1 반영")
@@ -4825,6 +4842,7 @@ class Orchestrator:
                                     "plan_canonical": canonical_plan_json(plan),
                                     "pack_applicability": plan.get("pack_applicability") or {},
                                     "warnings": plan.get("warnings") or [],
+                                    "paper_skills": paper_skills.records(plan),
                                     "protocol_revision": plan["protocol"]["revision"],
                                     "packs": plan["protocol"]["packs"],
                                     "scope_status": plan["intake"]["scope_status"],
@@ -5325,8 +5343,6 @@ class Orchestrator:
                         if plan is None:
                             return
                     req["plan"] = validated.model_dump(mode="json")
-                    if continuation:  # saved below with the plan, so a restart sees both or neither
-                        self._adopt_continuation_plan(rid, req["plan"], active_pack_hashes)
                     if vocab is not None:
                         req["output_types_stats"] = {**type_stats, "vocab": vocab.sha256}
                     warnings: list[str] = []
@@ -5400,6 +5416,11 @@ class Orchestrator:
                     scope = scope_verdict(plan) or req.get("scope_first")
                     if scope:
                         req["scope_check"] = scope
+                req["plan"] = await paper_skills.prepare_plan(
+                    req["plan"], req.get("analysis_precedents") or {}, roster, rid, self.hub.s,
+                    lambda task: self._step_task(rid, self.run_step(task)))
+                if research_lane and continuation:
+                    self._adopt_continuation_plan(rid, req["plan"], active_pack_hashes)
                 decision, created = self._ensure_route_decision(req, roster, research=research_lane)
                 self.hub.save_request(rid)
                 if created:
@@ -5965,6 +5986,9 @@ class Orchestrator:
             error = error or str(req["clarification_failure"])
         report = _with_review_reference(report, review)
         metadata = []
+        paper_record = paper_skills.appendix(req.get("plan") or {}, results)
+        if paper_record:
+            metadata.append(paper_record)
         route = req.get("route_decision") or {}
         if route.get("fallback"):
             metadata.append("처리 방식: 단독 실패 → 팀" +

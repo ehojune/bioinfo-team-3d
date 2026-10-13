@@ -1024,6 +1024,28 @@ class Runner:
         return False
 
     async def run_task(self, task: Task, workdir_override: Path | None = None) -> TaskResult:
+        from ..recruit.paper_skills import PaperSkillBuild
+
+        build = None
+        if task.meta.get("kind") == "paper_skill":
+            try:
+                build = PaperSkillBuild(self, task)
+                task, workdir_override, cached = await asyncio.to_thread(build.prepare)
+            except Exception as exc:
+                cached = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                                    structured={"status": "failed", "error": f"Paper2Skill 준비 실패 ({type(exc).__name__})"})
+            if cached is not None:
+                await self.emit(Event(type="task.result", task_id=task.id, agent_id=task.agent_id,
+                                      request_id=task.request_id, data=cached.model_dump(mode="json")))
+                return cached
+        try:
+            return await self._run_task(task, workdir_override, paper_skill_build=build)
+        finally:
+            ws = self.workspaces.get(task.id)
+            if ws is not None and task.meta.get("paper_skills"):
+                ws.clear_paper_skills()
+
+    async def _run_task(self, task: Task, workdir_override: Path | None = None, *, paper_skill_build=None) -> TaskResult:
         agent = self._resolve_agent(task)
         read_only = is_read_only_task(task.meta, agent)
         refusal = read_only_refusal(agent.id, agent.engine) if read_only else None
@@ -1240,6 +1262,16 @@ class Runner:
             # Reference tables the prompt names by file (topic checklists, #420), written before TASK.md.
             for name in ws.write_reference_files(task.meta.get("workspace_files")):
                 await emit("agent.log", {"level": "warn", "text": f"참고 파일 거부: {name}"})
+            if task.meta.get("paper_skills"):
+                plugin, skill_warnings = ws.install_paper_skills(task.meta["paper_skills"], self.s.runner.id)
+                if plugin:
+                    agent = agent.model_copy(update={"allow_skills": True,
+                                                     "plugin_dirs": [*agent.plugin_dirs, str(plugin)]})
+                for note in skill_warnings:
+                    await emit("agent.log", {"level": "warn", "text": note})
+                task = ws.task = task.model_copy(update={"context": task.context + "\n\n" + (
+                    "Use the request's paper advice in .agents/skills/paper-*/SKILL.md; cite the paper when used."
+                    if plugin else "논문 스킬 장착 불가; 제공된 선행 연구 요약으로 계속하세요.")})
             prompt = ws.write_task_md()
             if agent.contract and agent.contract.skill_dir:
                 skill_error = ws.install_skill(Path(agent.contract.skill_dir))
@@ -1603,6 +1635,8 @@ class Runner:
             except Exception:
                 result.output_types = {}
                 await emit("agent.log", {"level": "warn", "text": "output type records unavailable; result kept"})
+        if paper_skill_build is not None:
+            result = await asyncio.to_thread(paper_skill_build.finish, result)
         try:
             for name in (f"RESULT_{task.id}.md", "RESULT.md"):  # never through a link the agent made (#165)
                 write_owned(ws.dir, f"outputs/{name}", result.text or "")
@@ -1615,6 +1649,8 @@ class Runner:
                       usage=result.usage, usage_known=result.usage_known,
                       session_id=result.session_id, pending_jobs=pending)
         result.provenance = ws.provenance()
+        if task.meta.get("paper_skills"):
+            ws.clear_paper_skills()  # before task.result can release a dependent step
         if tool_errors:
             result.tool_errors = [*result.tool_errors, *tool_errors]
         if not result.ok and result.quota_reset_at is None:  # only this machine knows the CLI's zone
