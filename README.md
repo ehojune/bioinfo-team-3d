@@ -259,6 +259,7 @@ GitHub URL·DOI·데이터 경로는 **참고** 버튼으로 붙입니다.
 | [매뉴얼](docs/manual.md) | 명령줄, 설정, 안전 장치, 연구 lane, 알려진 한계까지 깊이 보려는 사람 |
 | [PI Q&A](docs/pi-qa.md) | PI가 물은 것과 답, 내린 결정 |
 | [연구 수행 규약](docs/research_protocol.md) | 연구 lane의 계약과 checkpoint |
+| [참고 자료 (References)](docs/references.md) | 설계·구현·도구 연결에 참고한 문헌과 프로젝트 |
 | [어휘·topic·점검표](docs/vocabulary.md) | topic이 무엇인지, topic별 점검표, 핵심 단어(어휘 키)를 표로 보려는 사람 |
 | [패치노트](patch_notes/README.md) | 바뀐 내용 |
 | [AGENTS.md](AGENTS.md) · [HANDOFF.md](HANDOFF.md) | 이 저장소를 개발하는 에이전트 |

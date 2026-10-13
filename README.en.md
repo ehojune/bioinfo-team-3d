@@ -259,6 +259,7 @@ Each version has pass criteria, and meeting them moves it on to the next version
 | [Manual](docs/manual.md) | Readers who want depth: command line, config, safety measures, the research lane, known limits |
 | [PI Q&A](docs/pi-qa.md) | What the PI asked, the answers, and the decisions made |
 | [Research protocol](docs/research_protocol.md) | The research lane's contract and checkpoints |
+| [References](docs/references.en.md) | Literature and projects used for design, implementation, and tool connections |
 | [Vocabulary, topics, checklists](docs/vocabulary.md) (Korean) | Readers who want tables of what each topic is, its checklist, and the key vocabulary terms |
 | [Patch notes](patch_notes/README.md) | What changed |
 | [AGENTS.md](AGENTS.md) · [HANDOFF.md](HANDOFF.md) | Agents developing this repository |
