@@ -85,7 +85,7 @@ test('both offices forward the CP2 choice to the gateway',()=>{
   const html=fs.readFileSync(path.join(web,'index.html'),'utf8');
   const live=fs.readFileSync(path.join(web,'lab3d/src/live.js'),'utf8');
   // The whole card goes in, so CP1 sends 수정 요청 only where detail.revise_allowed offers it.
-  assert.match(html,/api\.approve\(li\.dataset\.id, act === 'approve', note, decisionChoice\(approval \|\| \{ kind: li\.dataset\.kind \}, act\)\)/);
+  assert.match(html,/api\.approve\(li\.dataset\.id, act === 'approve', note, decisionChoice\(approval \|\| \{ kind: li\.dataset\.kind \}, act\), storageChoice\(li\)\)/);
   assert.match(html,/choice \? \{ approved: ok, note, choice \} : \{ approved: ok, note \}/);
   assert.match(live,/choice \? \{type:'approval\.resolve', id:a\.id, approved, note, choice\}/);
   // Both refuse an empty-note revise before anything is sent (R10).

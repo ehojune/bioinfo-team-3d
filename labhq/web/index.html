@@ -1227,7 +1227,8 @@ function startLive() {
     requestDetail: rid => get(`/api/requests/${encodeURIComponent(rid)}`),
     auditBundle: rid => getBlob(`/api/requests/${encodeURIComponent(rid)}/audit-bundle`),
     approve: async (id, ok, note = '', choice = null, storage = null) => {
-      const decision = { approved: ok, note, ...(choice ? {choice} : {}), ...(storage ? {storage} : {}) };
+      const decision = choice ? { approved: ok, note, choice } : { approved: ok, note };
+      if (storage) decision.storage = storage;
       if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'approval.resolve', id, ...decision }));
       else await post(`/api/approvals/${encodeURIComponent(id)}`, decision);
     },

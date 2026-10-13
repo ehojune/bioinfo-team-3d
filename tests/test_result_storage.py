@@ -126,6 +126,8 @@ def test_editor_documents_remove_secrets_and_personal_paths(tmp_path, monkeypatc
     assert "synthetic-private-token" not in joined
     assert "alice" not in joined
     assert "report.md" in docs["README.md"]
+    table = "gene\tvalue\n" + "A\t2\n" * 20_000
+    assert clean_document(table, hub.s, req) == table  # files are not GitHub comments; never truncate rows
 
 
 async def test_clarify_and_storage_share_one_card(tmp_path, monkeypatch):

@@ -205,7 +205,7 @@ def sanitize(text: str, policy: PolicySettings, extra_secrets: list[str] | tuple
     return clip(out, limit) if limit else out
 
 
-def publish_clean(text: str, settings: Settings, requests: Iterable[dict]) -> str:
+def publish_clean(text: str, settings: Settings, requests: Iterable[dict], limit: int | None = MAX_BODY) -> str:
     """The one cleaner for every text labhq posts: project reports and round records (#130).
 
     Zones and secrets go first: a reference that is part of a zone path (`/refs` in `/srv/refs/vault`) would
@@ -215,7 +215,8 @@ def publish_clean(text: str, settings: Settings, requests: Iterable[dict]) -> st
     requests = list(requests)
     out = strip_reference_url_queries(text or "", requests)  # before sanitize rewrites the query
     out = sanitize(out, settings.policy, [settings.gateway.client_token, settings.gateway.runner_token], limit=None)
-    return clip(mask_published_references(out, settings, requests), MAX_BODY)
+    out = mask_published_references(out, settings, requests)
+    return clip(out, limit) if limit else out
 
 
 def codex_comment(body: str, mention: str = "@codex") -> str:

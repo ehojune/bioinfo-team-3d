@@ -163,10 +163,11 @@ function syncLive(S, visual, stateText, currentTask) {
     s.remove(room);
     let extras=0;
     roster=agents.map(a=>{
-      const known=ROSTER.find(def=>def.id===a.id&&def.id!=='contract');
+      const known=ROSTER.find(def=>def.id===a.id&&def.id!=='contract') || (a.id==='editor'
+        ? {...ROSTER.find(def=>def.id==='recruiter'),id:'editor',archetype:'recruiter',seat:[7.75,2.8]} : null);
       const base=known||ROSTER.find(def=>def.id==='contract');
       const extra=known?null:extras++;
-      return {...base,id:a.id,name:a.name||a.id,role:a.role||'',task:a.task||'',archetype:base.id,
+      return {...base,id:a.id,name:a.name||a.id,role:a.role||'',task:a.task||'',archetype:base.archetype||base.id,
         state:pose(visual(a)),seat:known?base.seat:extra===0?base.seat:[7.75,-3.8+(extra-1)*2.2],
         extraContract:extra!==null&&extra>0,badge:extra===null?null:{letter:String.fromCharCode(65+extra),color:C.sage}};
     });

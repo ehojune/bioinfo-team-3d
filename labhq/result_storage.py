@@ -68,7 +68,7 @@ def edition_assets(req, settings):
 
 def clean_document(text: str, settings, req: dict) -> str:
     text = sanitize(text, settings.policy, [os.environ.get(settings.github.token_env, "")], limit=None)
-    text = publish_clean(text, settings, [req])
+    text = publish_clean(text, settings, [req], limit=None)
     text = _WINDOWS_ABS.sub("<local-path>", text)
     text = _POSIX_ABS.sub("<local-path>", text)
     return _ASSIGNMENT.sub(r"\1<redacted-secret>", _PRIVATE_PATH.sub("<local-path>", text))

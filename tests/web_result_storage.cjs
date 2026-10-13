@@ -34,5 +34,5 @@ test('missing token disables GitHub choices and clarify keeps one card',async()=
 });
 test('both offices pass structured storage choices',()=>{
   assert.match(fs.readFileSync(path.join(web,'index.html'),'utf8'),/storageChoice\(li\)/);
-  assert.match(fs.readFileSync(path.join(web,'lab3d/src/live.js'),'utf8'),/storage \? \{storage\}/);
+  assert.match(fs.readFileSync(path.join(web,'lab3d/src/live.js'),'utf8'),/if \(storage\) decision\.storage = storage/);
 });

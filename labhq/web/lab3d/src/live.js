@@ -88,7 +88,10 @@ export function startLiveOffice(onState) {
         const missing = revisionNoteMissing(a, choice, note);
         if (missing) { notice(missing); return; }
         // CP2 evidence review carries its approve/revise/deny choice; the note never decides it (#90).
-        ws.send(JSON.stringify({type:'approval.resolve', id:a.id, approved, note, ...(choice ? {choice} : {}), ...(storage ? {storage} : {})}));
+        const decision = choice ? {type:'approval.resolve', id:a.id, approved, note, choice}
+          : {type:'approval.resolve', id:a.id, approved, note};
+        if (storage) decision.storage = storage;
+        ws.send(JSON.stringify(decision));
         pending.add(a.id); render();
       }});
     if ($('approval-history')) syncDecisionHistory($('approval-history'), decisionHistory, {
