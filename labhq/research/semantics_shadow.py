@@ -2590,6 +2590,11 @@ def run_cli(args: argparse.Namespace, settings: Any) -> int:
         return 1
     try:
         if args.semantics_cmd == "report":
+            if getattr(args, "request_id", None):
+                from .semantics_request_report import build_request_report, render_request_report
+                rep = build_request_report(settings, args.request_id)
+                print(json.dumps(rep, ensure_ascii=False, indent=2) if args.json else render_request_report(rep))
+                return 0
             today = date.fromisoformat(args.today) if args.today else None
             rep = build_report(paths, today, configured(settings))
             _actions_report(rep, paths, settings)  # semantics-hook: actions

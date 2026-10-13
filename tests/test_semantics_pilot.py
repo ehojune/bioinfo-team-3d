@@ -648,7 +648,8 @@ def _imported_names(path):
 
 
 SHADOW_MODULES = {"labhq/research/semantics.py", "labhq/research/semantics_shadow.py",
-                  "labhq/research/semantics_objects.py"}  # the model and its #150 shadow worker
+                  "labhq/research/semantics_objects.py",
+                  "labhq/research/semantics_request_report.py"}  # model, shadow worker and read-only report
 
 
 def test_existing_modules_reach_the_model_only_through_a_lazy_marked_hook():

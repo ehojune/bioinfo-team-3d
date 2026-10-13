@@ -511,7 +511,7 @@ def _process_record(s: Settings, role: str, *, cleanup: bool = True) -> tuple[st
         return "stale", None, None
     valid = (isinstance(record, dict) and isinstance(record.get("pid"), int)
              and record.get("pid", 0) > 0 and record.get("role") == role
-             and isinstance(record.get("created"), str) and record.get("config") == s.config_path)
+             and isinstance(record.get("created"), str))
     if not valid:
         try:
             if cleanup:
@@ -530,6 +530,8 @@ def _process_record(s: Settings, role: str, *, cleanup: bool = True) -> tuple[st
         except OSError as exc:
             return "unknown", record, f"stale 기록을 지울 수 없음: {exc}"
         return "stale", record, None
+    if record.get("config") != s.config_path:
+        return "unknown", record, "다른 설정 파일로 실행 중입니다. 실행할 때 쓴 설정 파일을 확인하세요."
     return "alive", record, None
 
 
@@ -621,6 +623,12 @@ def _up_unlocked(s: Settings, *, popen=None) -> None:
     if _default_client_token(s.gateway.client_token):
         print("gateway 시작 거부: gateway.client_token의 change-me 기본값을 바꾸세요.", file=sys.stderr)
         raise SystemExit(2)
+    # A healthy server can share the port and state directory while using another config (#559).
+    # Do not silently claim the requested settings are active, or delete the other process's record.
+    for role in ("gateway", "runner"):
+        state, _record, reason = _process_record(s, role)
+        if state == "unknown":
+            _record_problem(role, reason)
     health = _health(s)
     if health is None:
         state, _record, reason = _process_record(s, "gateway")
@@ -1483,6 +1491,7 @@ def main(argv: list[str] | None = None) -> None:
     sem_report = sem_sub.add_parser("report", help="requests, both models, auto-off history, removal proposal")  # semantics-hook
     sem_report.add_argument("--json", action="store_true")  # semantics-hook
     sem_report.add_argument("--today", help="YYYY-MM-DD (default: today)")  # semantics-hook
+    sem_report.add_argument("--request", dest="request_id", help="compare one request's shadow with its progress")  # semantics-hook
     sem_sub.add_parser("enable", help="show why semantics turned off and open a new epoch")  # semantics-hook
     sem_mark = sem_sub.add_parser("mark", help="mark a reuse candidate ref (sem:<8 hex>)")  # semantics-hook
     sem_mark.add_argument("request_id")  # semantics-hook
