@@ -20,6 +20,14 @@ test('PI prose removes headings, emphasis and table syntax; keeps gene identifie
   assert.equal(plainPiText('# **결론**\n- `TP53` 확인\n- BRCA_1 유지'), '결론\nTP53 확인\nBRCA_1 유지');
   assert.equal(plainPiText('| 항목 | 결과 |\n| --- | --- |\n| 표본 | 2 |'), '항목 · 결과\n표본 · 2');
 });
+test('messenger previews preserve list line breaks in both offices',async()=>{
+  const {piText}=await mod, parent=new Element();
+  piText(parent,'# 결과\n- 첫 표\n- 두 번째 표',{limit:150});
+  assert.equal(parent.children[0].textContent,'결과\n첫 표\n두 번째 표');
+  assert.equal(parent.children[0].className,'pi-prose');
+  for (const file of ['index.html','lab3d/index.html'])
+    assert.match(fs.readFileSync(path.join(root,file),'utf8'),/\.pi-prose\{[^}]*white-space:pre-wrap/);
+});
 test('messenger code remains exact only inside closed details with Korean label', async()=>{
   const {piText}=await mod, parent=new Element();
   const raw='## **확인**\n```python\nprint("<unsafe>")\n```';

@@ -18,8 +18,8 @@ export function piText(parent, value, options = {}) {
   const prose = code ? plain.split('\n').filter(line => /[가-힣]/.test(line) && !codeLine.test(line) && !/[;{}=]/.test(line)).join('\n') : plain;
   const shown = english ? '직원이 영어로 보낸 내용입니다. 자세히에서 원문을 확인해 주세요.' :
     prose || (code ? '명령이나 코드가 포함된 내용입니다. 자세히에서 확인해 주세요.' : '');
-  const preview = options.limit ? short(shown, options.limit) : shown;
-  add(parent, options.tag || 'span', preview);
+  const preview = options.limit && shown.length > options.limit ? shown.slice(0, options.limit - 1) + '…' : shown;
+  add(parent, options.tag || 'span', preview, 'pi-prose');
   if (code || english || preview !== shown || options.truncated) {
     return expandableText(parent, raw, {...options, pi: false, fold: true, summary: '자세히'});
   }
