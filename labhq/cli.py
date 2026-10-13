@@ -1399,6 +1399,7 @@ def main(argv: list[str] | None = None) -> None:
     doctor = sub.add_parser("doctor", help="check runner capabilities without starting agents")
     doctor.add_argument("--json", action="store_true", help="write state_dir/capabilities.json")
     doctor.add_argument("--network", action="store_true", help="check public data source reachability")
+    doctor.add_argument("--fix", action="store_true", help="install missing Paper2Agent for the recruiter and recheck")
     sp = sub.add_parser("send")
     sp.add_argument("text")
     sp.add_argument("--agent", help="direct mode: send to one agent")
@@ -1571,7 +1572,7 @@ def main(argv: list[str] | None = None) -> None:
         from .doctor import collect, render, save
 
         requested = args.config or os.environ.get("LABHQ_CONFIG")
-        result = collect(s, requested_config=requested, network=args.network)
+        result = collect(s, requested_config=requested, network=args.network, fix=args.fix)
         if args.json:
             try:
                 save(result, s)
@@ -1807,12 +1808,13 @@ def main(argv: list[str] | None = None) -> None:
                   f"  commit={(c.source_commit or '-')[:7] if c else '-'}"
                   f"  external={','.join(x.host for x in c.external_services) if c and c.external_services else '-'}")
     elif args.cmd == "setup-paper2agent":
-        from .recruit.paper2agent import install_skill, installed_commit
+        from .recruit.paper2agent import setup_paper2agent, SOURCE_MARKER
 
         pin = args.commit or s.recruit.skill_commit
-        for d in install_skill(s.recruit.skill_source, Path("~/.labhq/cache").expanduser(), commit=pin):
+        installed = setup_paper2agent(s, commit=pin)
+        for d in installed:
             print(f"installed → {d}")
-        commit = installed_commit()
+        commit = json.loads((installed[0] / SOURCE_MARKER).read_text(encoding="utf-8")).get("commit") if installed else None
         print(f"Paper2Agent commit {commit or 'unknown'}" + ("" if pin else
               " (not pinned: set recruit.skill_commit or pass --commit to keep this one)"))
     elif args.cmd == "semantics":  # semantics-hook

@@ -14,26 +14,36 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 20:56 | [`32b5823`](https://github.com/ehojune/bioinfo-team-3d/pull/572/commits/32b5823) | 메신저 Node 회귀 테스트를 pytest의 CI 실행 목록에 등록 |
+| 20:46 | [`cfb53ea`](https://github.com/ehojune/bioinfo-team-3d/pull/572/commits/cfb53ea) | CSO 확인 질문과 PI 승인·답변 알림도 메신저 기록에 유지 |
+| 20:28 | [`f912336`](https://github.com/ehojune/bioinfo-team-3d/pull/553/commits/f912336) | 최신 main의 doctor GitHub 연결 검사와 Paper2Agent 설치·pin 옵션 및 홈 guard를 함께 보존 |
+| 20:25 | [`680c5d0`](https://github.com/ehojune/bioinfo-team-3d/pull/572/commits/680c5d0) | 메신저 기록 보관·PI 조회 API·위로 스크롤한 이전 기록 연결 |
 | 20:17 | [`85383f4`](https://github.com/ehojune/bioinfo-team-3d/pull/571/commits/85383f4) | 미해결 environment 실패를 시설팀이 한 번 진단하고 재시작·재귀 호출을 차단 |
 | 20:14 | [`03c3415`](https://github.com/ehojune/bioinfo-team-3d/pull/568/commits/03c3415) | 준비 중 정지 뒤 재개하면 CLI 실행 직전에 project·upstream 입력 해시를 갱신 |
 | 20:11 | [`28d7291`](https://github.com/ehojune/bioinfo-team-3d/pull/570/commits/28d7291) | 데모 테스트의 시간 폴링을 완료 신호로 바꾸고 부하 30회 실패 0을 확인 |
 | 19:45 | [`dfcead0`](https://github.com/ehojune/bioinfo-team-3d/pull/569/commits/dfcead0) | PI 메신저 미리보기의 목록 줄바꿈을 2.5D와 3D에서 보존했다. |
 | 19:37 | [`207ab78`](https://github.com/ehojune/bioinfo-team-3d/pull/569/commits/207ab78) | PI 승인 설명과 평문 표시를 추가하고 PowerShell here-string 삭제 예문의 오탐을 수정했다. |
 | 19:27 | [`94fdb5f`](https://github.com/ehojune/bioinfo-team-3d/pull/567/commits/94fdb5f) | 시설팀 추가로 바뀐 Codex 직원 수와 모델 목록을 배지 테스트에 반영 |
+| 19:16 | [`cb564bf`](https://github.com/ehojune/bioinfo-team-3d/pull/553/commits/cb564bf) | 최신 main의 테스트 홈 guard와 Paper2Agent 직원 설치·설정 경로 검사를 함께 보존 |
 | 19:10 | [`37084b1`](https://github.com/ehojune/bioinfo-team-3d/pull/567/commits/37084b1) | 시설팀 직원을 읽기 전용 상담에 연결하고 진단 근거와 세션 재사용을 검증 |
 | 19:01 | [`2d69340`](https://github.com/ehojune/bioinfo-team-3d/pull/556/commits/2d69340) | 최신 main 병합: dev_log 공개 여부 진단·startup 경고와 사용자 홈 접근 guard 보존 |
 | 19:01 | [`92876b5`](https://github.com/ehojune/bioinfo-team-3d/pull/568/commits/92876b5) | 직원 제어의 spawn 전 정지 확인, 초기 세션 id와 재개 안내, steer 재전송과 빠른 재개 유실 보완 |
 | 18:35 | [`23a7d0e`](https://github.com/ehojune/bioinfo-team-3d/pull/565/commits/23a7d0e) | 보고서 완료 뒤 PI 검토·확인을 기록하고 타이틀 유지, 질문 대기·직원 이름과 그림·비용 문구를 수정 |
+| 18:34 | [`3695d43`](https://github.com/ehojune/bioinfo-team-3d/pull/553/commits/3695d43) | recruiter adapter의 skill 허용을 기존 plugin 격리 검사에 반영 |
+| 18:22 | [`94deac0`](https://github.com/ehojune/bioinfo-team-3d/pull/553/commits/94deac0) | doctor의 Paper2Agent pin 복구와 Codex recruiter roster 로딩 수정 |
 | 18:20 | [`3cf6134`](https://github.com/ehojune/bioinfo-team-3d/pull/564/commits/3cf6134) | 실측 Codex 스트림의 전체 이벤트 기대값에 정확한 입력 fingerprint 추가 |
 | 18:01 | [`f964487`](https://github.com/ehojune/bioinfo-team-3d/pull/556/commits/f964487) | direct 요청의 outputs/ 산출 경로와 최대 200개 기록 상한 설명 복원 |
 | 17:58 | [`bf08bfb`](https://github.com/ehojune/bioinfo-team-3d/pull/562/commits/bf08bfb) | 읽기 전용 직원의 자기 outputs·임시 폴더 쓰기를 허용하고 검토 대상 보호·새 이어 묻기 폴더를 검증 |
 | 17:57 | [`d38535f`](https://github.com/ehojune/bioinfo-team-3d/pull/554/commits/d38535f) | 설정·instance·staff·cache·skill·doctor 읽기 전 사용자 홈 guard 적용, 회귀 17건 추가 |
 | 17:56 | [`c07ece2`](https://github.com/ehojune/bioinfo-team-3d/pull/564/commits/c07ece2) | 폭주 감지에서 원본 입력 fingerprint를 preview와 분리하고 잘린 legacy 이벤트를 제외 |
 | 17:52 | [`37c91b2`](https://github.com/ehojune/bioinfo-team-3d/pull/563/commits/37c91b2) | 그림자 요청별 비교와 다른 설정으로 실행 중인 서버의 충돌 안내를 추가한다 |
+| 17:37 | [`9c3f268`](https://github.com/ehojune/bioinfo-team-3d/pull/553/commits/9c3f268) | plugin·recruiter skill만 읽기로 열고 Claude 설정·CODEX_HOME의 형제 파일 보호를 유지 |
 | 17:21 | [`3fba886`](https://github.com/ehojune/bioinfo-team-3d/pull/561/commits/3fba886) | 웹 요청 선택을 브라우저별로 복원하고 미완료·최근 활동 순서와 이어서 진행 표시를 공유 |
 | 17:21 | [`8ded85f`](https://github.com/ehojune/bioinfo-team-3d/pull/554/commits/8ded85f) | test 홈·state를 격리하고 사용자 저장소 guard와 백업 우선 dry-run 정리 도구 추가 |
 | 17:20 | [`acf36a7`](https://github.com/ehojune/bioinfo-team-3d/pull/556/commits/acf36a7) | doctor·gateway 시작 시 개발 기록 저장소의 private 여부를 조회하고 public·unknown을 경고 |
 | 17:13 | [`373c9a0`](https://github.com/ehojune/bioinfo-team-3d/pull/555/commits/373c9a0) | MCP probe 실패를 exit 1로 판정하고 실제 Codex 90초 호출을 1회 완료로 검증 |
+| 16:55 | [`4f327b5`](https://github.com/ehojune/bioinfo-team-3d/pull/553/commits/4f327b5) | init은 Paper2Agent 설치 검사를 미뤄 오프라인 초기화와 mock clean-install 순서를 유지 |
+| 16:43 | [`d471047`](https://github.com/ehojune/bioinfo-team-3d/pull/553/commits/d471047) | Paper2Agent를 직원 설정에 설치하고 격리된 recruiter 연결·doctor 필수 검사와 자동 수정을 추가 |
 | 16:42 | [`f49ef6e`](https://github.com/ehojune/bioinfo-team-3d/pull/552/commits/f49ef6e) | 비서실장 브리핑에 runner 역량 요약을 전달하고 미확인 자원 해석을 막음 |
 | 16:35 | [`e2703f1`](https://github.com/ehojune/bioinfo-team-3d/pull/551/commits/e2703f1) | 참고 문헌·프로젝트 17개를 한영 문서로 모으고 README 더 읽기에 연결 |
 | 16:29 | [`08bd9a5`](https://github.com/ehojune/bioinfo-team-3d/pull/550/commits/08bd9a5) | semantics report에서 손상된 중첩 count 행을 제외·집계하고 이전 schema와 정상 합계를 보존 |

@@ -49,12 +49,17 @@ def test_core_agent_skill_exception_is_scoped(tmp_path, monkeypatch):
             continue
         ctx = _ctx(tmp_path / agent.id, agent)
         cmd = get_adapter(agent.engine, ctx.settings).build_command(ctx)
-        assert cmd[cmd.index("--setting-sources") + 1] == ("local" if agent.allow_skills else "project,local")
+        skills_enabled = agent.allow_skills or agent.id == ctx.settings.recruit.agent_id
+        assert cmd[cmd.index("--setting-sources") + 1] == ("local" if skills_enabled else "project,local")
         if agent.id == "bioinfo-agent":
             assert cmd[cmd.index("--plugin-dir") + 1] == str(plugin)
             assert "--disable-slash-commands" not in cmd
             settings = json.loads(cmd[cmd.index("--settings") + 1])
             assert settings["autoMemoryEnabled"] is False and settings["claudeMdExcludes"]
+        elif agent.id == "recruiter":
+            from labhq.recruit.paper2agent import skill_path
+            assert cmd[cmd.index("--plugin-dir") + 1] == str(skill_path("claude_code", ctx.settings).parent.parent)
+            assert "--disable-slash-commands" not in cmd
         else:
             assert "--plugin-dir" not in cmd and "--disable-slash-commands" in cmd
 

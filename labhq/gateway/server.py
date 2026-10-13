@@ -20,7 +20,7 @@ from typing import Any, Literal
 
 import httpx
 import yaml
-from fastapi import Request, Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Request, Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field, field_validator
 
@@ -3786,6 +3786,12 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             raise HTTPException(404)
         await hub.send_runner(rid, {"type": "contract.update", "agent_id": agent_id, **body.model_dump()})
         return {"ok": True}
+
+    @app.get("/api/messenger", dependencies=[Depends(auth)])
+    async def messenger(before: int | None = Query(default=None, ge=1, le=9223372036854775807),
+                        limit: int = Query(default=40, ge=1, le=200),
+                        request_id: str | None = None) -> dict:
+        return hub.store.messenger_history(before, limit, request_id)
 
     @app.get("/api/events", dependencies=[Depends(auth)])
     async def events(limit: int = 200, since: int | None = None) -> list[dict]:

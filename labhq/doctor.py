@@ -23,8 +23,8 @@ from .adapters import adapter_preflight_error, get_adapter
 from .models import AgentSpec, Engine
 from . import private_paths as private_path_module
 from .private_paths import (PrivatePaths, configured_claude_config_dir, in_pi_claude, inside_any,
-                            plugin_keep_dirs, resolve_private_paths, staff_claude_config_dir, staff_codex_homes)
-from .recruit.paper2agent import skill_installed
+                            plugin_keep_dirs, resolve_private_paths, staff_claude_config_dir)
+from .recruit import paper2agent
 from .runner.daemon import check_data_boundary, check_job_group
 from .runner import codex_sandbox
 from .runner.versions import _probe, _version
@@ -229,12 +229,10 @@ PRIVATE_PATHS_HINT = "See docs/manual.md 'PI 개인 경로' (policy.private_path
 
 def _doctor_private(settings: Settings, agents: list[AgentSpec], forced: Engine | None) -> PrivatePaths:
     workspace = settings.path(settings.runner.workspace_root)
-    codex = forced == Engine.codex or (forced is None and any(a.engine == Engine.codex for a in agents))
     keep = [workspace, *(settings.path(r) for r in settings.runner.reference_roots),
-            *(settings.path(p.local_dir) for p in settings.projects if p.local_dir),
-            *(d for a in agents for d in plugin_keep_dirs(settings, a.plugin_dirs, workspace)),
-            *staff_codex_homes(settings, workspace, codex)]
-    return resolve_private_paths(settings, keep, cwd=workspace)
+            *(settings.path(p.local_dir) for p in settings.projects if p.local_dir)]
+    reads = [d for a in agents for d in plugin_keep_dirs(settings, a.plugin_dirs, workspace)]
+    return resolve_private_paths(settings, keep, open_reads=reads, cwd=workspace)
 
 
 def _private_paths_row(private: PrivatePaths) -> dict:
@@ -437,8 +435,45 @@ def local_software_summary(python_executable: str) -> dict:
     }
 
 
+def _paper2agent_row(settings: Settings, agents: list[AgentSpec], fix: bool = False) -> dict:
+    hint = "labhq doctor --fix"
+    recruiter = next((a for a in agents if a.id == settings.recruit.agent_id), None)
+    if settings.runner.force_engine == "mock" or (agents and all(a.engine == Engine.mock for a in agents)
+                                                 and not settings.runner.force_engine):
+        return _row("staff", "paper2agent", "skip", "mock/demo engines", "")
+    try:
+        engine = paper2agent.recruiter_engine(settings, recruiter)
+        if engine == "mock":
+            return _row("staff", "paper2agent", "skip", "mock recruiter", "")
+        path = paper2agent.skill_path(engine, settings)
+        def ready():
+            if not paper2agent.skill_installed(engine, settings):
+                return False
+            if (settings.recruit.skill_commit is not None
+                    and paper2agent.installed_commit(engine, settings) != settings.recruit.skill_commit):
+                return False
+            if engine == "claude_code":
+                from .adapters.claude_code import read_plugin_manifest
+                return (read_plugin_manifest(path.parent.parent) or {}).get("name") == "labhq-paper2agent"
+            from .adapters.base import expand_env
+            return bool(expand_env(settings.engines.codex.env).get("CODEX_HOME"))
+        if not ready() and fix:
+            paper2agent.setup_paper2agent(settings)
+        visible = ready()
+        return _row("staff", "paper2agent", "ok" if visible else "fail",
+                    "installed and configured visible to recruiter" if visible else
+                    "not installed, not visible to recruiter, or configured commit does not match",
+                    hint)
+    except subprocess.CalledProcessError:
+        detail = "setup-paper2agent git download failed (network unavailable or source/ref inaccessible)"
+    except (OSError, ValueError, RuntimeError) as exc:
+        detail = f"setup-paper2agent: {exc}" if isinstance(exc, ValueError) else f"setup-paper2agent failed ({type(exc).__name__})"
+    return _row("staff", "paper2agent", "fail", detail, hint)
+
+
 def collect(settings: Settings, *, requested_config: str | None = None, network: bool = False,
-            dry_run: bool = False, require_roster: bool = False, github_transport=None) -> dict:
+            dry_run: bool = False, require_roster: bool = False, fix: bool = False,
+            require_paper2agent: bool = True, github_transport=None) -> dict:
     rows: list[dict] = []
     from .cli import _local_process_diagnostics
 
@@ -536,6 +571,8 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
     if not agents:
         rows.append(_row("staff", "roster", "fail" if require_roster else "warn",
                          "no active agents found", "Set runner.agents_dir."))
+    paper_row = (_paper2agent_row(settings, agents, fix=fix and not dry_run) if require_paper2agent else
+                 _row("staff", "paper2agent", "skip", "installation deferred during init", "labhq doctor --fix"))
     forced = None
     invalid_force = False
     if settings.runner.force_engine:
@@ -620,7 +657,8 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
             agent = agent.model_copy(update={"engine": forced})
         engine = agent.engine.value
         ready = available.get(engine, engine == "mock")
-        plugin = engine == "claude_code" and (agent.plugin_dirs or agent.required_skills)
+        plugin = engine == "claude_code" and (agent.plugin_dirs or agent.required_skills
+                                              or agent.id == settings.recruit.agent_id)
         try:
             error = _adapter_check(settings, agent)
         except OSError:
@@ -649,16 +687,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
     claude_staff = _claude_staff_row(settings, agents, forced, private, login_codes.get("claude_code"))
     if claude_staff:
         rows.append(claude_staff)
-    try:
-        paper = skill_installed(settings.recruit.contract_engine)
-    except OSError:
-        paper = False
-    recruiter = next((a for a in agents if a.id == settings.recruit.agent_id), None)
-    visible = bool(recruiter and not settings.engines.claude_code.isolate_user_config)
-    rows.append(_row("staff", "paper2agent", "ok" if paper and visible else "warn",
-                     "installed and configured visible" if paper and visible else
-                     ("installed but recruiter session may hide user skills" if paper else "not installed"),
-                     "Run labhq setup-paper2agent and enable recruiter skill visibility."))
+    rows.append(paper_row)
 
     scheduler = settings.hpc.scheduler
     if scheduler in SCHEDULER_COMMANDS:

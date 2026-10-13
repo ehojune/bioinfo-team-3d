@@ -1,0 +1,23 @@
+pr: 553
+rows:
+- sha: "d471047"
+  at: 2026-10-13 16:43
+  text: Paper2Agent를 직원 설정에 설치하고 격리된 recruiter 연결·doctor 필수 검사와 자동 수정을 추가
+- sha: "4f327b5"
+  at: 2026-10-13 16:55
+  text: init은 Paper2Agent 설치 검사를 미뤄 오프라인 초기화와 mock clean-install 순서를 유지
+- sha: "9c3f268"
+  at: 2026-10-13 17:37
+  text: plugin·recruiter skill만 읽기로 열고 Claude 설정·CODEX_HOME의 형제 파일 보호를 유지
+- sha: "94deac0"
+  at: 2026-10-13 18:22
+  text: doctor의 Paper2Agent pin 복구와 Codex recruiter roster 로딩 수정
+- sha: "3695d43"
+  at: 2026-10-13 18:34
+  text: recruiter adapter의 skill 허용을 기존 plugin 격리 검사에 반영
+- sha: "cb564bf"
+  at: 2026-10-13 19:16
+  text: 최신 main의 테스트 홈 guard와 Paper2Agent 직원 설치·설정 경로 검사를 함께 보존
+- sha: "f912336"
+  at: 2026-10-13 20:28
+  text: 최신 main의 doctor GitHub 연결 검사와 Paper2Agent 설치·pin 옵션 및 홈 guard를 함께 보존

@@ -4,6 +4,65 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 변경
+
+PR #553의 Paper2Agent 직원 설치 기능을 main `1b3b0cb`와 병합했다. 충돌한 doctor 인자에는 Paper2Agent 검사·수정 옵션과 GitHub 연결 검사 옵션을 모두 남겼다.
+
+- 직원 전용 설치, plugin·skill 읽기 예외, 설치 commit pin, Codex recruiter 조건부 필드를 보존했다.
+- 사용자 홈 접근 guard와 main의 기여 동의·기타 변경을 보존했다.
+- 병합 커밋 `f912336`의 패치노트 SHA는 따옴표로 감싼 7자리 문자열이다.
+
+## 검증
+
+- 관련 테스트: 427 passed, 1 skipped.
+- Windows 전체 pytest: 6097 passed, 66 skipped (751.84초).
+- pytest 임시 폴더 삭제 완료.
+- 공개·diff·패치노트·목차 검사를 수행하며, 원격 CI 결과는 PR checks에 기록한다.
+
+## 남은 지적
+
+- 전체 테스트는 통과했지만 subprocess 출력 디코딩의 thread warning이 1건 있었다. 이번 충돌 해소 범위에서는 수정하지 않았다.
+- 실제 직원 CLI·PI·trial 실행, 리뷰 요청 댓글, PR 병합은 하지 않았다.
+
+Refs #549
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
+PR #572 · #560의 15번: 2.5D 메신저에서 위로 스크롤하면 저장된 첫 기록까지 조회합니다.
+
+## 바뀐 것
+
+- PI 전용 `GET /api/messenger`: 전체·요청별 조회, 이전 방향 seq 커서, 기본 40·최대 200건.
+- SQLite `messenger_events`에 질문·답·직원 메시지·보고 알림을 보관합니다. 재전송 버퍼와 직원 log/feed 상한은 유지합니다.
+- 불러오는 중·재시도·처음 표시, 페이지 중복 제거, 스크롤 위치 유지. 3D는 변경하지 않았습니다.
+- `docs/manual.md`의 웹 사무실·API 설명을 갱신했습니다.
+
+## 확인
+
+- CI(`902d96a`): changes·patch-notes·pytest 3.10·3.12·Windows·slow·clean-install·ro-crate-validator 성공, readme 조건부 생략. [실행 기록](https://github.com/ehojune/bioinfo-team-3d/actions/runs/38393753895).
+
+- 새 회귀 테스트: origin/main에서 Python 4건·Node 3건 실패, branch에서 통과.
+- 관련 Python 73건, 공통 웹 실행 검사 69 passed·1 skipped, Node 전체 44개 파일 통과. Windows 전체 pytest: 6,065 passed·66 skipped(12분 13초).
+- Chrome 합성 기록 125건: 40→80→120→125건, 첫 메시지·끝 표시·새로고침 후 재조회 확인.
+- 공개 검사·diff 검사 통과. 패치노트·목차 검사도 통과했습니다.
+
+## CSO가 보는 범위
+
+메신저 전체가 자동으로 전달되지는 않습니다. 직원 질문은 질문·시도·선택지·참조와 해당 요청(4,000자)·계획(6,000자), PI 이어 묻기는 해당 요청·보고서(6,000자)·최근 완료 답변 3건을 받으며 재개한 해당 직원 세션의 맥락도 사용합니다.
+근거: `labhq/orchestrator/cso.py`의 `answer_ask`, `run_followup`; 질문·답 저장은 gateway SQLite `state(kind='ask')`, PI 이어 묻기는 `state(kind='request').followups`입니다.
+
+## 남은 지적
+
+- 업그레이드 전에 이벤트 상한으로 이미 삭제된 메시지는 복구되지 않습니다. 기존 DB에는 남아 있는 이벤트만 처음 한 번 옮깁니다.
+- 임시 basetemp 삭제는 자동 승인 검토의 `blocked by policy`로 차단됐습니다. 삭제 완료로 판정하지 않습니다.
+- 봇 판단과 병합은 개발 총괄에게 넘깁니다.
+
+Refs #560
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
 ## 결론
 
 승인 복구 후보가 없는 environment 실패를 시설팀이 요청·논리 단계당 한 번 진단합니다. 원 실패와 hint는 유지합니다.
@@ -159,6 +218,15 @@ Refs #59
 
 🤖 Generated with Codex (gpt-6) for the labhq dev lead
 
+# PR #553 main 충돌 해소
+
+- main `6150223`을 merge commit `cb564bf`로 반영했다.
+- 직원 전용 설치·open_reads·pin 검사·Codex recruiter 조건부 필드와 main의 홈 격리 guard를 보존했다. 설정 경로와 명시한 설치 대상도 I/O 전에 검사한다.
+- 관련 165 passed·3 skipped, 추가 홈 보호 회귀 6건 포함. Windows 전체 재실행은 5977 passed·66 skipped(704.45초), 공개·diff 검사 통과.
+- 첫 전체 실행의 41건 실패는 홈 격리 후 로컬 Node shim이 실행 파일을 찾지 못한 경우다. 기존 node.exe 경로를 테스트 PATH 앞에 넣어 웹 66 passed·1 skipped와 전체 통과를 확인했다. guard는 유지했다.
+- CI 최종 결과는 PR #553 본문에 기록한다. 리뷰 요청·PR 병합·실제 직원 실행은 하지 않았다.
+- pytest 임시 폴더 정리는 완료하지 못했다. 남은 경로는 로컬 인계 기록에 남겼다.
+
 ## 결론
 
 `labhq_ask(to="facilities")`를 시설팀 직원이 받습니다. Codex gpt-6-sol·read-only로 진단만 답하고 요청 안에서 자기 상담 session을 이어 씁니다.
@@ -213,6 +281,34 @@ Refs #35
 Refs #435
 
 🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
+#549 D: Paper2Agent를 직원 설정에 설치하고 doctor가 설치·가시성·고정 commit을 검사한다. PR #553의 2차 지적 P1·P2를 수정했다.
+
+## 바뀐 것
+
+- Claude는 recruiter에만 plugin을 연결하고 Codex는 실제 recruiter 엔진과 직원 CODEX_HOME을 따른다. 상위 설정 폴더 보호를 유지한다.
+- `94deac0`: 설정한 pin과 설치본의 `.labhq-source.json` commit이 다르면 doctor fail. `--fix`가 설정한 commit을 설치하고 재검사한다. pin이 없으면 기존 동작을 유지한다.
+- recruiter YAML의 `allow_skills`를 제거하고 기존 Claude adapter 처리를 사용한다. 엔진을 codex로 바꿔도 roster를 읽는다.
+- `3695d43`: 기존 plugin 테스트도 recruiter의 adapter 허용을 반영한다. 격리·plugin·skill 활성화 검사는 유지한다.
+
+## 실행한 것
+
+- `7b38dd9`에서 새 테스트 9건 중 7건 실패·2건 통과. 수정 후 관련 테스트 162 passed·3 skipped.
+- Windows 전체 pytest 최종: **5648 passed·66 skipped**, 692 warnings. 첫 실행의 plugin 기대값 실패를 수정했고 semantics 기록 실패는 재실행에서 통과했다.
+- 공개·diff·패치노트·목차 검사 통과.
+- push 후 PR은 `CONFLICTING`, 현재 head의 CI checks는 0건이다. changes·patch-notes·pytest 3.10/3.12·pytest-windows·pytest-slow·clean-install·ro-crate-validator·readme 모두 미실행이다. 이전 head의 CI 성공은 이번 결과에 포함하지 않는다.
+
+## 남은 지적
+
+- main 충돌 해소와 CI 확인은 총괄에게 넘긴다. 이번 위임 범위에서는 충돌을 풀지 않았다.
+- 이번 pytest 임시 폴더 삭제는 실행 정책이 차단했다.
+- 실제 직원 CLI·PI·trial은 실행하지 않았다. 임시 홈과 모의 설치로 검증했다.
+
+Refs #549
+
+🤖 Generated with Codex (model slug unavailable) for the labhq dev lead
 
 ## 결론
 
@@ -384,6 +480,34 @@ Refs #435
 
 ## 결론
 
+PR #553 보안 P1: plugin·recruiter skill을 열어도 상위 설정 폴더는 계속 보호한다.
+
+## 바뀐 것
+
+- runner·doctor의 plugin 경로를 `keep`에서 `open_reads`로 옮겼다.
+- `CODEX_HOME` 전체 예외를 없앴다. Codex elevated profile은 홈을 deny하고 skill만 read로 연다.
+- Claude의 작업별 저장 출력 읽기는 유지한다. 형제 로그인·history·다른 task·settings·todos는 Read 거부, Bash 승인 대상이다.
+- MCP 경로는 `keep`에 추가하지 않는다. 계약 skill은 작업 폴더로 복사하므로 상위 보호 폴더를 열지 않는다.
+
+## 검증
+
+- 새 회귀 10건: `0257229`에서 모두 실패, 수정 뒤 모두 통과. Read/Bash·두 엔진·일반 plugin·recruiter를 검사했다.
+- 관련 pytest: 317 passed·1 skipped. skill 읽기 허용과 쓰기 거부도 확인했다.
+- Windows 전체 pytest: **5639 passed·66 skipped**, 692 warnings.
+- Codex profile의 하위 경로 예외는 [공식 permissions 규칙](https://developers.openai.com/codex/permissions)에 맞췄다.
+- 공개 검사·diff 검사 통과. 최종 CI는 PR checks에서 확인한다.
+
+## 미해결
+
+- 전용 pytest 임시 폴더 삭제는 실행 정책에 막혀 남았다.
+- 실제 직원 CLI·PI·trial은 실행하지 않았다. Codex 검증은 생성한 permission profile까지다.
+
+Refs #549
+
+🤖 Generated with Codex (model slug unavailable) for the labhq dev lead
+
+## 결론
+
 PR #554: pytest가 사용자 gateway에 요청을 남기지 않도록 홈·state를 격리했다. 정리 도구는 실제 store에서 실행하지 않았다.
 
 ## 바뀐 것
@@ -472,6 +596,35 @@ Refs #69
 Fixes #276
 
 🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
+#549 D: Paper2Agent를 직원 설정에 설치하고 독립 `doctor`의 필수 검사로 바꿉니다.
+
+## 바뀐 것
+
+- Claude: 직원 `CLAUDE_CONFIG_DIR/labhq-paper2agent/skills/paper2agent`에 설치하고 recruiter에만 plugin을 연결합니다. 미설정 시 `~/.labhq/claude-staff`를 쓰며 개인 설정 격리를 유지합니다.
+- Codex: recruiter의 실제 엔진과 직원 `CODEX_HOME/skills/paper2agent`를 따릅니다. 계약할 직원의 엔진과 구분합니다.
+- 미설치·가시성 오류는 fail. `labhq doctor --fix`는 setup과 같은 함수로 설치 후 재검사하며 다운로드 실패 이유를 표시합니다. commit 고정 규칙은 유지합니다.
+- `init`은 설치 검사를 미룹니다. mock·데모 doctor는 skip하므로 clean-install의 초기화 순서를 유지합니다.
+- 옛 개인 경로의 사본은 `.labhq-source.json`에 source·유효한 commit이 있을 때만 정리합니다. 사용자 사본과 링크는 보존합니다.
+
+## 검증
+
+- 새 회귀 테스트 11개: origin/main `e219c68`에서 실패, branch에서 통과. init 예외 테스트 1개 추가.
+- Windows 전체 pytest: **5629 passed, 66 skipped**. `%TEMP%/pt-p2asetup` 삭제 확인.
+- 관련 테스트 436 passed·4 skipped, init 수정 후 관련 테스트 120 passed.
+- `scripts/check_public.sh`, `integrations.py --check`, `notes_index.py --validate` 통과. PR 패치노트 검사 후 push.
+- CI는 PR checks에서 확인합니다. PI·trial 실행·설정과 실제 사용자 skill 폴더는 변경하지 않았습니다.
+
+## 남은 지적
+
+- Codex는 기존 로그인·Windows sandbox의 CODEX_HOME을 공유하므로 같은 홈의 다른 Codex 직원도 skill을 봅니다.
+- 실제 직원 CLI의 skill 로딩은 실행하지 않았습니다. 임시 홈 설치·plugin preflight·실행 명령으로 검증했습니다.
+
+Refs #549
+
+🤖 Generated with Codex (model slug unavailable) for the labhq dev lead
 
 # runner capability 브리핑
 

@@ -11,6 +11,20 @@ from .test_guard import guard_test_path
 
 SCHEMA_VERSION = 1
 
+# Only conversation and report notifications, never tool output or debug traces.
+MESSENGER_TYPES = (
+    "agent.ask", "agent.answer", "request.created", "request.followup",
+    "request.followup_done", "request.note", "request.completed", "request.failed",
+    "github.posted", "github.failed",
+    "request.questions", "approval.requested", "approval.resolved",
+)
+
+
+def messenger_event(body: dict) -> bool:
+    return body.get("type") in MESSENGER_TYPES or (
+        body.get("type") == "agent.log" and bool(body.get("data", {}).get("text"))
+        and body.get("data", {}).get("level") not in {"debug", "thinking"})
+
 
 class StateStore:
     def __init__(self, path: Path):
@@ -32,6 +46,14 @@ class StateStore:
                     CREATE TABLE runner_cursor (runner_id TEXT PRIMARY KEY, seq INTEGER NOT NULL);
                 """)
                 self.db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+        # Additive archive: replay retention remains unchanged. Older installations
+        # can backfill only the events still retained at their first upgrade.
+        if not self.db.execute("SELECT 1 FROM sqlite_master WHERE name='messenger_events'").fetchone():
+            with self.db:
+                self.db.execute("CREATE TABLE messenger_events (seq INTEGER PRIMARY KEY, request_id TEXT, body TEXT NOT NULL)")
+                self.db.execute("CREATE INDEX messenger_request_seq ON messenger_events(request_id, seq)")
+                for (raw,) in self.db.execute("SELECT body FROM events ORDER BY seq"):
+                    self._archive_message(json.loads(raw))
 
     def close(self) -> None:
         self.db.close()
@@ -70,9 +92,43 @@ class StateStore:
         body = {**body, "schema_version": SCHEMA_VERSION, "seq": cursor.lastrowid}
         self.db.execute("UPDATE events SET body=? WHERE seq=?",
                         (json.dumps(body, ensure_ascii=False, default=str), cursor.lastrowid))
+        self._archive_message(body)
         self.db.execute("DELETE FROM events WHERE seq <= (SELECT COALESCE(MAX(seq), 0) - ? FROM events)",
                         (max(1, limit),))
         return body
+
+    def _archive_message(self, body: dict) -> None:
+        if messenger_event(body):
+            # Reports have their own request endpoint; this archive holds the notification.
+            data = {k: v for k, v in body.get("data", {}).items()
+                    if k in {"text", "level", "text_truncated", "text_chars", "question", "answer",
+                             "reason", "status", "from", "to", "agent_id", "id", "ask_id", "ok",
+                             "error", "answer_truncated", "answer_chars", "url", "kind",
+                             "questions", "pi_summary", "summary", "approved", "note", "state", "choice"}}
+            if body.get("type") == "request.followup_done" and not data.get("agent_id"):
+                request = self.get("request", body.get("request_id")) or {}
+                previous = next((f for f in request.get("followups", []) if f.get("id") == data.get("id")), {})
+                data["agent_id"] = previous.get("agent_id")
+            archived = {**body, "data": data}
+            self.db.execute("INSERT OR IGNORE INTO messenger_events VALUES (?, ?, ?)",
+                            (body["seq"], body.get("request_id"), json.dumps(archived, ensure_ascii=False, default=str)))
+
+    def messenger_history(self, before: int | None = None, limit: int = 40,
+                          request_id: str | None = None) -> dict:
+        limit = max(1, min(limit, 200))
+        sql, args = "SELECT body FROM messenger_events WHERE 1=1", []
+        if before is not None:
+            sql += " AND seq < ?"
+            args.append(before)
+        if request_id is not None:
+            sql += " AND request_id = ?"
+            args.append(request_id)
+        rows = [json.loads(row[0]) for row in self.db.execute(
+            sql + " ORDER BY seq DESC LIMIT ?", (*args, limit + 1))]
+        more = len(rows) > limit
+        events = list(reversed(rows[:limit]))
+        return {"events": events, "has_more": more,
+                "next_before": events[0]["seq"] if more else None}
 
     def commit_terminal(self, rid: str, request: dict, event: dict, limit: int) -> dict:
         """Checkpoint terminal state, event and reporter delivery in one transaction."""

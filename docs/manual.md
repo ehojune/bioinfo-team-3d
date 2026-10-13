@@ -109,6 +109,12 @@ Codex `bin`이 비어 있거나 `auto`이면 Windows 앱에서 판본이 가장 
 
 실행 전 `labhq doctor`로 설정·엔진·직원·계산 도구를 점검하세요. `labhq doctor --json`은 러너 상태 디렉터리에 `capabilities.json`을 쓰고, `--network`를 붙일 때만 공개 데이터 사이트에 접속합니다. 이 manifest의 `runner_capabilities`는 러너가 보고하는 기능과 같은 설정·roster에서 산출한 사실입니다. `research lane` 행은 연구 lane이 끝까지 도는지 알려 줍니다. `research.enabled`만 켜면 CP1 뒤 멈춘다는 warn이 뜨고, `evidence_checkpoint`까지 켜야 CP2·리뷰·보고서로 갑니다. `research` 아래 오타 키는 시작할 때 오류입니다.
 doctor는 roster가 쓰는 엔진만 검사하고, 생략한 네트워크·dry-run 로그인 검사는 한 줄로 묶습니다. fail이 하나라도 있거나, 활성 직원이 없거나, roster 엔진 실행 파일이 하나라도 없으면 끝에 `실행 준비: 아니오`와 이유를 표시합니다. 다른 warn은 준비 여부를 바꾸지 않습니다.
+
+| doctor 항목 | 판정 | 고치는 명령 |
+|---|---|---|
+| Paper2Agent | recruiter·skill이 없거나 설정한 commit과 설치본이 다르면 fail. mock·데모는 skip | `labhq doctor --fix` |
+
+`--fix`는 설정한 `recruit.skill_commit`에 맞춰 Paper2Agent를 설치한 뒤 다시 검사합니다. 다운로드에 실패하면 네트워크·source/ref 확인 안내와 fail을 남깁니다. 별도 설정 파일을 쓴다면 같은 `-c <config>`를 붙이세요. `init`은 설치 검사를 미루며 skill을 내려받지 않습니다. 이후 실제 직원 실행 전에는 `doctor --fix`를 실행하세요.
 npm의 `.cmd`/`.bat` shim은 여러 줄 prompt를 손상시킬 수 있어 labhq가 표준 npm shim만 Node.js로 풀어 실행합니다.
 풀 수 없는 shim은 거부합니다. Windows에서 직접 지정하려면 `engines.<engine>.bin`과 `prefix_args`를 쓰세요(설치된 package 경로 확인).
 
@@ -152,6 +158,8 @@ cd <labhq 저장소>
 공개 인터넷에 열어야 한다면 TLS 프록시(Caddy 등) 뒤에 두고 토큰을 반드시 교체하세요.
 
 ## 웹 사무실
+
+2.5D 메신저는 최근 40건을 열고, 위로 스크롤하면 이전 기록을 40건씩 이어 붙입니다. 불러오는 중에는 안내를, 마지막에는 **처음입니다**를 표시합니다. 새로고침해도 저장된 기록을 다시 조회합니다. 직원 활동·feed의 메모리 상한과 별개로 질문·답·직원 메시지·보고 알림을 보관하며 도구 출력·생각·디버그는 제외합니다. 업그레이드 전에 보관 상한으로 삭제된 이벤트는 복구되지 않습니다.
 
 보고서가 끝나면 **보고서 검토 대기**로 바뀌고 화이트보드의 완료 표시·**보고서 열기**, 알림 한 번, 직원 완료 표시와 결정 탭의 **보고서 검토** 카드가 나타납니다. 실패·취소는 **결과 확인 대기**로 표시합니다. PI 검토 전 요청도 끝나지 않은 요청으로 정렬하며 처음 열 때의 자동 선택에 포함합니다. 직접 고른 요청은 그대로 유지합니다.
 
@@ -388,6 +396,8 @@ task 취소(`POST /api/tasks/{id}/cancel`)는 task 기록의 runner로 보냅니
 
 모든 게이트웨이 이벤트에는 `schema_version: 1`과 재시작 후에도 이어지는 `seq`가 붙습니다. `/ws/client?since=<seq>`와 `/api/events?since=<seq>`는 이후 이벤트를 재전송합니다. 보관 상한을 지난 `since`에는 `replay_gap` 스냅샷으로 화면 상태를 교체합니다.
 
+메신저 조회는 `GET /api/messenger`에 PI Bearer `client_token`이 필요합니다. `request_id`를 생략하면 전체 요청, 지정하면 해당 요청만 조회합니다. `limit`은 기본 40·최대 200(범위 밖은 422), `before`는 이전 응답의 `next_before`를 넣습니다. 응답 `{events, has_more, next_before}`의 이벤트는 페이지 안에서 과거→최근 순서이며, 커서는 해당 `seq`를 제외한 더 오래된 기록을 가리킵니다. 이벤트 재전송 버퍼와 별도 SQLite `messenger_events`에 보관하므로 gateway를 다시 열어도 유지됩니다. 보고 알림에는 보고서 본문을 중복 저장하지 않습니다.
+
 ### 로그인 대기
 
 Claude Code나 Codex 로그인이 만료되면 요청은 `waiting_login`에서 멈춥니다. 같은 엔진의 요청은 하나의 대기를 공유하며, 로그인 안내 카드도 한 번만 뜹니다.
@@ -544,7 +554,9 @@ flowchart LR
   H[호스팅 논문 MCP<br/>HF Spaces] -->|변환 없이 즉시| W
 ```
 
-Paper2Agent 설치 갱신은 두 engine의 새 skill 복사를 마친 뒤 설치를 교체합니다. 원본 확인·복사 실패 때는 기존 설치를 유지하고, 교체 실패 때는 복구합니다. 복구까지 실패하면 보존한 백업 경로를 오류에 표시합니다.
+`labhq setup-paper2agent`는 recruiter의 실제 엔진에 맞춰 설치합니다. Claude는 직원 `CLAUDE_CONFIG_DIR`(미설정 시 `~/.labhq/claude-staff`) 아래 `labhq-paper2agent/skills/paper2agent`에 두고 recruiter에만 plugin으로 연결합니다. 개인 설정 격리는 유지합니다. Codex는 설정된 직원 `CODEX_HOME/skills/paper2agent`를 쓰며 같은 홈의 Codex 직원도 봅니다. 로그인·Windows sandbox를 공유하는 기존 홈을 유지하므로 recruiter 전용 Codex 홈은 만들지 않습니다.
+
+새 skill 복사 뒤 설치를 교체하고 실패하면 기존 설치를 복구합니다. 복구 실패 시 백업 경로를 표시합니다. 옛 `~/.claude/skills/paper2agent`·`~/.agents/skills/paper2agent`는 `.labhq-source.json`에 source와 유효한 commit이 있는 labhq 사본만 정리하며 사용자 사본·링크는 보존합니다.
 
 `labhq setup-paper2agent --commit <40-hex>`(또는 `recruit.skill_commit`)는 그 commit만 설치합니다. checkout이 다른 commit이면 기존 설치를 건드리지 않고 멈춥니다. 고정하지 않으면 최신 HEAD를 설치하고 그 commit을 출력합니다. `recruit.skill_source`를 바꾸면 캐시 checkout의 origin과 비교해, 다르거나 origin을 읽을 수 없으면 pull하지 않고 옆에 새로 clone한 뒤 바꿔 끼웁니다(clone 실패 때 옛 checkout 유지). 설치한 commit은 skill 폴더의 `.labhq-source.json`에 남고, 채용 때 계약서 `verification.paper2agent_commit`으로 옮겨집니다.
 
@@ -618,10 +630,10 @@ Claude 직원의 맨 `Write`·`Edit`는 작업·project·upstream 폴더의 `Edi
 ### PI 개인 경로
 
 `policy.private_paths`. gateway·runner·직원 CLI는 기본으로 PI 계정에서 돕니다(PI 결정 2026-10-03). PI 개인 파일은 Claude 직원에게 세 겹, Windows elevated sandbox의 Codex 직원에게 두 겹, 다른 엔진 직원에게는 지침 한 겹으로 막습니다. 키가 없으면 기본 목록을 쓰고 `[]`이면 끕니다. 목록을 직접 쓰면 기본 목록은 빠지니 필요한 항목을 다시 적습니다.
-- 기본 목록: `~/.ssh`·`~/.aws`·`~/.azure`·`~/.gnupg`·`~/.docker`·`~/.kube`·`~/.config/gh`·`~/.config/gcloud`·`~/.git-credentials`·`~/.netrc`·`~/.claude`·`~/.claude.json`·`~/.codex`·`~/.gemini`·`~/.env`, Chrome·Edge·Firefox 프로필(Windows `AppData` 아래, Linux `~/.config/google-chrome`·`~/.config/microsoft-edge`·`~/.mozilla`), runner가 읽은 설정 파일, gateway 상태 폴더, `engines.claude_code.env.CLAUDE_CONFIG_DIR`(Claude 직원 설정 폴더), `engines.codex.env.CODEX_HOME`(직원 Codex 로그인 폴더, 설정했을 때. Codex 직원 자신에게는 열림), AlphaGenome 키 파일(`annot.alphagenome_key_file`, 있을 때).
+- 기본 목록: `~/.ssh`·`~/.aws`·`~/.azure`·`~/.gnupg`·`~/.docker`·`~/.kube`·`~/.config/gh`·`~/.config/gcloud`·`~/.git-credentials`·`~/.netrc`·`~/.claude`·`~/.claude.json`·`~/.codex`·`~/.gemini`·`~/.env`, Chrome·Edge·Firefox 프로필(Windows `AppData` 아래, Linux `~/.config/google-chrome`·`~/.config/microsoft-edge`·`~/.mozilla`), runner가 읽은 설정 파일, gateway 상태 폴더, `engines.claude_code.env.CLAUDE_CONFIG_DIR`(Claude 직원 설정 폴더), `engines.codex.env.CODEX_HOME`(직원 Codex 로그인 폴더, 설정했을 때), AlphaGenome 키 파일(`annot.alphagenome_key_file`, 있을 때).
 - gateway 설정을 따로 둔 파일(`client_token`이 든 gateway.yaml 등)은 기본 목록에 없습니다. `policy.private_paths`에 직접 넣으세요.
 - 개인 경로가 켜져 있으면(막을 경로가 하나도 남지 않아도 켜진 것이고, `[]`만 끕니다) 레지스트리에 손대는 Claude 셸 명령은 키와 상관없이 모두 PI 승인으로 갑니다(`HKCU\Environment`에 PI `GITHUB_TOKEN`이 있습니다. `reg`·`HKCU:`/`HKLM:`·`Registry::`·레지스트리 PSDrive·`winreg`·`Microsoft.Win32`·`StdRegProv`·`GetEnvironmentVariable(…, 'User')`, 줄 이어쓰기도 이어 붙여 봅니다). 커밋 메시지나 grep 패턴에 이 단어가 들어가도 묻는데, 받아들인 오탐입니다. 표기 목록은 `labhq/private_paths.py`의 `REGISTRY_ACCESS`입니다.
-- 없는 경로는 조용히 건너뜁니다. 작업 폴더·`workspace_root`·참고·프로젝트·plugin 폴더·직원 `CODEX_HOME`을 담거나 그와 같은 경로는 그 task에서 빼고 doctor `private paths` 행과 작업 로그에 남깁니다. `labhq recruit` 변환 task는 Paper2Agent skill(`~/.claude/skills/paper2agent`)을 읽어야 해서 `~/.claude`가 빠집니다.
+- 없는 경로는 조용히 건너뜁니다. 작업 폴더·`workspace_root`·참고·프로젝트 폴더를 담거나 그와 같은 경로는 그 task에서 빼고 doctor `private paths` 행과 작업 로그에 남깁니다. plugin과 recruiter의 Paper2Agent skill은 해당 경로만 읽기로 엽니다. 상위 `CLAUDE_CONFIG_DIR`·`CODEX_HOME`의 로그인·history·다른 task·settings·todos는 계속 보호합니다(Read 거부, Claude Bash는 PI 승인). Codex Windows elevated profile도 홈을 deny하고 skill 경로만 read로 엽니다.
 - Claude는 긴 도구 출력(MCP 결과 포함)을 설정 폴더의 `projects/<작업 폴더 slug>/`에 저장했다가 다시 읽습니다. 그래서 Claude 직원은 전용 설정 폴더(`CLAUDE_CONFIG_DIR`)를 쓰고, 그 안에서 그 task 몫의 `projects/<slug>/`만 읽기로 열립니다. 로그인 파일·history·다른 task 폴더와 쓰기는 막히고, PI `~/.claude`는 통째로 막힙니다.
 - 로그인은 PI가 한 번 합니다: `CLAUDE_CONFIG_DIR="$HOME/.labhq/claude-staff" claude` 뒤 `/login`(Windows `$env:CLAUDE_CONFIG_DIR = Join-Path $HOME '.labhq/claude-staff'; claude`). 미설정이면 doctor `claude staff config`가 warn, PI `~/.claude`나 그 안을 가리키면 fail입니다.
 

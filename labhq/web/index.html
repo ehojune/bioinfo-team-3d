@@ -175,6 +175,8 @@ a{color:var(--sleep-ink)}
 .panel h2{margin:0 0 8px;font:600 16px/1.3 var(--ui);display:flex;align-items:baseline;gap:8px}
 .panel h2 .n{font:500 13px var(--ui);color:var(--muted)}
 .list{list-style:none;margin:0;padding:0}
+#feed-history{max-height:55vh;overflow:auto;overflow-anchor:none}
+#feed-history-status{display:block;margin:0 auto 8px}
 .empty-note{color:var(--muted);font-size:14px;margin:0}
 .ap{border:1px solid var(--wait);background:var(--wait-bg);border-radius:12px;padding:10px 12px;display:grid;grid-template-columns:36px minmax(0,1fr);gap:2px 10px}
 .ap+.ap{margin-top:8px}
@@ -392,7 +394,10 @@ dialog.sheet::backdrop{background:rgba(17,26,34,.45)}
     </section>
     <section class="panel" data-tab="feed" aria-labelledby="h-feed" hidden>
       <h2 id="h-feed">사내 메신저</h2>
+      <div id="feed-history" tabindex="0" aria-label="메신저 기록">
+      <button type="button" class="btn" id="feed-history-status" aria-live="polite"></button>
       <ul class="list" id="feed"></ul>
+      </div>
     </section>
     <section class="panel" data-tab="jobs" aria-labelledby="h-jobs" hidden>
       <h2 id="h-jobs">HPC 작업</h2>
@@ -446,6 +451,7 @@ import {syncStaffCards} from './ui/strip.js';
 import {syncTaskBoard} from './ui/tasks.js';
 import {controlHtml, controlKey, staffControls} from './ui/control.js';
 import {initTabShell} from './ui/shell.js';
+import {createMessenger, bindHistoryViewport} from './ui/messenger.js';
 import {KIND_LABELS as REF_KIND, inferReference, syncReferenceChips} from './ui/refs.js';
 (() => {
 'use strict';
@@ -583,7 +589,12 @@ const headSVG = kind => `<svg viewBox="24 8 52 50" aria-hidden="true" focusable=
 const officeState = LabHQState.createOfficeState({mode: MODE, now,
   focusStorage: LabHQState.createRequestFocusStorage({demo: IS_DEMO, instance: INSTANCE})});
 const { S, ag, visual, stateText, currentTask, currentTool, toolInputLine, nick, req, setPlan, feed, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES } = officeState;
+const messenger = createMessenger({fetchPage: before => api.messenger(before)});
 function apply(ev, replay = false) {
+  if (MODE === 'live') {
+    if (ev.type === 'snapshot') { messenger.reset(); messenger.loadOlder(); }
+    else messenger.ingest(ev);
+  }
   for (const effect of officeState.apply(ev, replay)) {
     if (effect.type === 'toast') toast(effect.text, effect.approval_id);
     if (effect.type === 'toast.clear' && toastApproval && toastApproval === effect.approval_id) hideToast();
@@ -847,8 +858,8 @@ function avatar(who) {
   if (a) return headSVG(kindOf(a));
   return `<span class="glyph">${esc({ pi: '나', hpc: 'HPC', github: 'GH', system: 'SYS' }[who] || '?')}</span>`;
 }
-function renderFeed() {
-  const items = S.feed.slice(0, 40);
+function renderFeedRows() {
+  const items = MODE === 'live' ? messenger.items : S.feed.slice(0, 40);
   const key = items.length + ':' + (items[0] ? items[0].ts + items[0].text : '') + ':' + Math.floor(now() / 30) + ':' + [...S.agents.values()].map(a => a.id + a.name + a.character).join();
   if (key === feedKey) return;
   feedKey = key;
@@ -873,6 +884,12 @@ function renderFeed() {
   else if (rows.some((row, i) => list.children[i] !== row) || rows.length !== list.children.length) list.replaceChildren(...rows);
   list._rows = next;
 }
+const syncMessenger = bindHistoryViewport(messenger, $('#feed-history'), $('#feed-history-status'), renderFeedRows);
+messenger.onChange = reason => { feedKey = ''; syncMessenger(reason); };
+$('#feed-history-status').hidden = MODE !== 'live';
+$('#cc-tabs').addEventListener('click', () => renderFeed());
+$('#door').addEventListener('click', () => renderFeed());
+function renderFeed() { if (MODE === 'live') syncMessenger('render'); else renderFeedRows(); }
 let jobsKey = '';
 function renderJobs() {
   const jobs = [...S.jobs.values()].sort((a, b) => (b.ts || 0) - (a.ts || 0)).slice(0, 10);
@@ -1246,6 +1263,7 @@ function startLive() {
   };
   let ws = null, backoff = 1000;
   api = {
+    messenger: before => get(`/api/messenger?limit=40${before == null ? '' : `&before=${before}`}`),
     request: body => post('/api/requests', body),
     note: (rid, text) => post(`/api/requests/${encodeURIComponent(rid)}/notes`, { text }),
     followup: (rid, text) => post(`/api/requests/${encodeURIComponent(rid)}/followup`, { text }),
