@@ -443,6 +443,14 @@ const EVIDENCE_REVISE_ENDS = '이어 가기 상한에 닿아 수정 요청과 �
 // The gateway writes resume step ids as a Python list ("['s2', 's3']"); the card joins them (R19).
 export function displaySummary(approval) {
   const text = String(approval?.summary ?? '');
+  const d = approval?.detail;
+  if (approval?.kind === 'budget' && Number(d?.unknown_count) > 0 && Number.isFinite(Number(d?.spent_usd)) && Number.isFinite(Number(d?.limit_usd))) {
+    const amount = value => `$${Number(value).toFixed(2)}`;
+    const bound = Number(d.spent_usd) + Number(d.unknown_count) * Number(d.unknown_reserve_usd || 0);
+    return `지금까지 ${amount(d.spent_usd)} 썼고, 비용을 아직 모르는 작업이 ${d.unknown_count}건 있어 상한 ${amount(d.limit_usd)}를 넘을 수 있습니다` +
+      (d.unknown_reserve_usd != null ? ` (모르는 작업을 건당 ${amount(d.unknown_reserve_usd)}로 잡으면 ${amount(bound)}).` : '.') +
+      (d.requested_budget_usd != null ? ` 승인하면 상한을 ${amount(d.requested_budget_usd)}로 올리고, 거절하면 새 작업을 보내지 않습니다.` : '');
+  }
   if (approval?.kind !== 'resume') return text;
   const ids = inner => [...inner.matchAll(/'([^']*)'/g)].map(match => match[1]);
   const whole = /^중단된 단계 \[([^\]]*)\]를 다시 돌릴까요\?$/.exec(text);
@@ -469,6 +477,10 @@ function timingText(approval, options) {
 
 function updateCard(row, item, options) {
   const value = item.value, p = row._decisionParts;
+  if (options.avatarHTML && row.children[0]?.className === 'who') {
+    const html = options.avatarHTML(value, item.type);
+    if (row.children[0].innerHTML !== html) row.children[0].innerHTML = html;
+  }
   row.dataset.kind = value.kind || item.type;
   const labels = options.kindLabels || {};
   const approval = item.type === 'approval';
@@ -532,6 +544,31 @@ export function syncDecisionCards(container, approvals, suggestions = [], option
     placeRows(list, rows);
     if (container.children.length !== 1 || container.children[0] !== list) container.replaceChildren(list);
   }
+  return rows;
+}
+
+// Acknowledgments are not approvals: no timer, denial or blocked steps.
+export function syncReviewCards(container, requests, options = {}) {
+  const existing = new Map([...container.children].map(row => [row.dataset.reviewRequest, row]));
+  const rows = [...requests].filter(q => globalThis.LabHQState.needsPiReview(q)).map(q => {
+    const key = JSON.stringify([q.text, q.status, options.disabled?.(q) || false]);
+    const prior = existing.get(q.id);
+    if (prior?.dataset.reviewKey === key) return prior;
+    const row = doc().createElement('article'); row.className = 'ap';
+    row.dataset.reviewRequest = q.id; row.dataset.reviewKey = key;
+    const body = add(row, 'div');
+    add(body, 'strong', globalThis.LabHQState.reviewLabel(q), 'kind');
+    add(body, 'p', q.text || q.id, 'sum');
+    add(body, 'p', q.status === 'done' ? '작업 완료 · 보고서를 검토해 주세요.' : '요청 종료 · 결과와 이유를 확인해 주세요.', 'decision-meta');
+    const actions = add(body, 'div', '', 'acts');
+    const open = add(actions, 'button', q.status === 'done' ? '보고서 열기' : '결과·이유 보기', 'btn go');
+    open.type = 'button'; open.onclick = () => options.onOpen?.(q.id);
+    const done = add(actions, 'button', q.status === 'done' ? '검토 완료' : '확인 완료', 'btn');
+    done.type = 'button'; done.disabled = options.disabled?.(q) || false;
+    done.onclick = () => options.onDone?.(q.id);
+    return row;
+  });
+  placeRows(container, rows);
   return rows;
 }
 

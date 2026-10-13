@@ -23,7 +23,7 @@ from pathlib import Path
 
 from .costs import cost_detail, cost_text
 from .facilities.signatures import problem_text
-from .request_status import is_terminal_request, request_status_label
+from .request_status import is_terminal_request, request_status_label, request_display_label
 from .settings import Settings
 from .util import atomic_write_text, free_port, short, without_windows_app_aliases
 
@@ -1371,6 +1371,8 @@ def main(argv: list[str] | None = None) -> None:
     op.add_argument("--3d", dest="three_d", action="store_true", help="open the 3D office instead of 2.5D")
     sub.add_parser("runner")
     sub.add_parser("agents")
+    review = sub.add_parser("review-done", help="mark a finished report reviewed (or failure acknowledged)")
+    review.add_argument("id")
     sub.add_parser("status", help="show runners, running requests and pending approvals")
     doctor = sub.add_parser("doctor", help="check runner capabilities without starting agents")
     doctor.add_argument("--json", action="store_true", help="write state_dir/capabilities.json")
@@ -1617,7 +1619,7 @@ def main(argv: list[str] | None = None) -> None:
         print(f"진행 중 요청: {len(running)}")
         for req in running:
             progress = req["step_progress"]
-            held = "" if req.get("status") == "running" else f" [{request_status_label(req.get('status'))}]"
+            held = "" if req.get("status") == "running" else f" [{request_display_label(req)}]"
             print(f"  {req['id']} {progress['done']}/{progress['total']} {req['text']}{held}")
             environment = req.get("step_environment") or {}
             for sid, state in progress["steps"].items():
@@ -1628,6 +1630,13 @@ def main(argv: list[str] | None = None) -> None:
                 print(f"    비용: {cost_text(req.get('cost_usd'), req.get('cost_known'), summary)}"
                       + (f" {cost_detail(summary)}" if summary else ""))
         recent = _api(s, "GET", "/api/requests?status=all&limit=20")
+        reviews = [req for req in recent if req.get("pi_review_pending")]
+        if reviews:
+            print(f"PI 검토·확인 대기: {len(reviews)}")
+            for req in reviews:
+                print(f"  {req['id']} [{request_display_label(req)}] {req.get('text', '')}")
+                print(f"    비용: {cost_text(req.get('cost_usd'), req.get('cost_known'), req.get('cost_summary'))}")
+                print(f"    확인 후: labhq review-done {req['id']}")
         # Running requests show their environment problems above, beside the step.
         shown = {req["id"] for req in running}
         problems = [(req["id"], sid, problem_text(found)) for req in recent if req.get("id") not in shown
@@ -1654,6 +1663,9 @@ def main(argv: list[str] | None = None) -> None:
         print(f"승인 대기: {len(approvals)}")
         for approval in approvals:
             print(f"  {approval['id']} [{approval['kind']}] {approval['summary']}")
+    elif args.cmd == "review-done":
+        result = _api(s, "POST", f"/api/requests/{args.id}/review-done", json={})
+        print(f"{args.id}: 검토·확인 완료 ({result['pi_reviewed_at']})")
     elif args.cmd == "agents":
         for a in _api(s, "GET", "/api/agents"):
             kind = f"파견 ~{datetime.fromtimestamp(a['expires_at']):%m-%d}" if a.get("expires_at") else "정규"

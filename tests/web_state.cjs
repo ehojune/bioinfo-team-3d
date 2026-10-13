@@ -211,23 +211,23 @@ assert.equal(failedCosts.req('failed').costKnown,false);
     {id:'estimated', status:'done', cost_usd:0.2, cost_known:true, cost_summary:estimated},
     {id:'legacy', status:'done', cost_usd:0.4, cost_known:false},
   ]}});
-  assert.equal(costLabel(view.req('mixed')), '확인 $1.00 + 추정 $0.50 + 미집계 1건');
-  assert.equal(costLabel(view.req('unknown')), '미집계 2건', 'unknown-only is not $0');
-  assert.equal(costLabel(view.req('legacy')), '$0.40 + 비용 미집계');
+  assert.equal(costLabel(view.req('mixed')), '확인 $1.00 + 추정 $0.50 + 미집계된 비용 1건');
+  assert.equal(costLabel(view.req('unknown')), '미집계된 비용 2건', 'unknown-only is not $0');
+  assert.equal(costLabel(view.req('legacy')), '$0.40 + 미집계된 비용');
   assert.equal(view.req('unknown').costKnown, false);
   assert.equal(view.req('estimated').costKnown, true);
   const engines = engineCostLabel(view.req('mixed').costSummary);
-  assert.match(engines, /^claude_code 확인 \$1\.00 · codex 추정 \$0\.50 \+ 미집계 1건; 추정은 API 가격표 환산/);
+  assert.match(engines, /^claude_code 확인 \$1\.00 · codex 추정 \$0\.50 \+ 미집계된 비용 1건; 추정은 API 가격표 환산/);
   assert.match(engines, /가격표 오래됨: codex gpt-6\.1-sol \(2026-10-02 확인\)/);
-  assert.equal(totalCostLabel([...view.S.requests.values()], view.S.cost), '사용 비용 $2.10 (추정 $0.70 포함) + 미집계 3건 이상');
+  assert.equal(totalCostLabel([...view.S.requests.values()], view.S.cost), '사용 비용 $2.10 (추정 $0.70 포함) + 미집계된 비용 3건 이상');
   view.apply({type:'request.followup_done', request_id:'unknown', data:{id:'f', ok:true, answer:'a', cost_usd:0.1,
     cost_known:true, cost_summary:{...estimated, estimated_usd:0.1, subtotal_usd:0.1}}});
   assert.equal(costLabel(view.req('unknown')), '추정 $0.10', 'a follow-up summary replaces the request summary');
   assert.ok(!Object.keys(view.req('mixed')).includes('costSummary'), 'state snapshots stay comparable');
   // A live cost the stored summary does not hold yet replaces the stale summary with the running total.
   view.apply({type:'agent.usage', request_id:'estimated', data:{tokens:{input_tokens:5}, cost_known:false}});
-  assert.equal(costLabel(view.req('estimated')), '$0.20 + 비용 미집계', 'running Codex task is not shown as settled');
+  assert.equal(costLabel(view.req('estimated')), '$0.20 + 미집계된 비용', 'running Codex task is not shown as settled');
   view.apply({type:'agent.usage', request_id:'mixed', data:{cost_usd:0.25}});
-  assert.equal(costLabel(view.req('mixed')), '$1.75 + 비용 미집계', 'live amount is not hidden behind the old summary');
+  assert.equal(costLabel(view.req('mixed')), '$1.75 + 미집계된 비용', 'live amount is not hidden behind the old summary');
 }
 console.log(`${events.length} legacy event states, replay reset, effects, isolation and bounds: OK`);

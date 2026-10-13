@@ -365,6 +365,26 @@ class Hub:
         self.requests[rid]["updated_at"] = time.time()
         self.store.put("request", rid, self.requests[rid])
 
+    def review_done(self, rid: str) -> dict:
+        """PI acknowledgment is independent of execution and never blocks another request."""
+        req = self.requests[rid]
+        if not is_terminal_request(req.get("status")) or req.get("cancelling"):
+            raise ValueError("보고서가 끝난 요청만 검토 완료로 표시합니다")
+        if not req.get("pi_reviewed_at"):
+            at = time.time()
+            updated = copy.deepcopy(req)
+            updated.update(pi_review_pending=False, pi_reviewed_at=at, updated_at=at)
+            audit = {"actor": "pi", "at": at, "outcome": req["status"]}
+            updated.setdefault("pi_review_audit", []).append(audit)
+            event = self.store.commit_request_event(rid, updated,
+                {"type": "request.reviewed", "ts": at, "request_id": rid,
+                 "data": {**audit, "pi_reviewed_at": at, "pi_review_pending": False}}, self.s.gateway.event_buffer)
+            req.update(updated)
+            self.events.append(event)
+            self.pending_committed.append((event, tuple(self.clients)))
+            asyncio.get_running_loop().create_task(self._send_committed_event())
+        return {"request_id": rid, "pi_review_pending": False, "pi_reviewed_at": req["pi_reviewed_at"]}
+
     def quota_hold(self, engine: str) -> dict | None:
         """The account-wide hold for an engine, derived from durable per-request waits."""
         waits = [entry for req in self.requests.values() for entry in (req.get("quota_waits") or {}).values()
@@ -841,6 +861,8 @@ class Hub:
                    "bundle_warning": req.get("bundle_warning")}
         if environment:
             summary["step_environment"] = environment
+        summary.update(pi_review_pending=is_terminal_request(req.get("status")) and not req.get("pi_reviewed_at")
+                       and not req.get("cancelling", False), pi_reviewed_at=req.get("pi_reviewed_at"))
         return summary
 
     def clear_step_jobs(self, rid: str, step_id: str) -> None:
@@ -999,6 +1021,8 @@ class Hub:
     def _commit_terminal_record(self, rid: str, typ: str, data: dict) -> None:
         # Failure never changes the request outcome, and terminal requests loaded after a restart do not pass this
         # checkpoint again.
+        self.requests[rid].update(pi_review_pending=True, pi_reviewed_at=None)
+        data = {**data, "pi_review_pending": True, "pi_reviewed_at": None}
         event = self.store.commit_terminal(rid, self.requests[rid],
                                            {"type": typ, "ts": time.time(), "request_id": rid,
                                             "data": copy.deepcopy(data)},
@@ -3235,6 +3259,9 @@ class Hub:
                           # the full list and full answers stay on the request (GET /api/requests/{id})
                           "followups": [snapshot_followup(f) for f in (r.get("followups") or [])[-20:]],
                           "step_status": self.request_summary(r, running)["step_progress"]["steps"],
+                          "pi_review_pending": is_terminal_request(r.get("status")) and not r.get("pi_reviewed_at") and not r.get("cancelling", False),
+                          "pi_reviewed_at": r.get("pi_reviewed_at"),
+                          "error": short(r.get("error") or "", 2000),
                           "step_details": self.request_step_details(r.get("id", ""), r, tasks),
                           **({} if r.get("id") in recent_terminals else snapshot_reports(r)),
                           **({"pipeline_pr": pipeline_prs[r["id"]]} if r.get("id") in pipeline_prs else {}),
@@ -3411,7 +3438,9 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             raise HTTPException(422, "invalid status")
         if not 1 <= limit <= 200:
             raise HTTPException(422, "limit must be 1..200")
-        requests = sorted(hub.requests.values(), key=lambda r: r.get("created_at", 0), reverse=True)
+        requests = sorted(hub.requests.values(), key=lambda r: (
+            is_terminal_request(r.get("status")) and bool(r.get("pi_reviewed_at")),
+            -float(r.get("updated_at") or r.get("created_at") or 0)))
         chosen = [r for r in requests if status == "all" or (status == "running" and is_active_request(r.get("status")))
                   or r.get("status") == status][:limit]
         running = hub.running_tasks() if chosen else []  # one ledger read for the whole list
@@ -3429,6 +3458,15 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             raise HTTPException(409, "project has no repo or GitHub token is not set")
         c = await gh.request_codex_review(proj.repo, number, body.note, settings.github.codex_mention)
         return {"ok": True, "url": c.get("html_url")}
+
+    @app.post("/api/requests/{rid}/review-done", dependencies=[Depends(auth)])
+    async def review_done(rid: str) -> dict:
+        if rid not in hub.requests:
+            raise HTTPException(404)
+        try:
+            return hub.review_done(rid)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
 
     @app.post("/api/requests/{rid}/followup", dependencies=[Depends(auth)])
     async def followup(rid: str, body: FollowupIn) -> dict:

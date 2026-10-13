@@ -3338,8 +3338,9 @@ class Orchestrator:
             # What each answer does, so the PI need not read detail.requested_budget_usd (trial 2026-10-08).
             then = f" 승인하면 상한을 ${raised:.2f}로 올리고, 거절하면 새 작업을 보내지 않습니다."
             summary = (f"예산 초과: ${spent:.2f}{pending} / ${limit:.2f} — 계속 진행할까요?{then}" if over else
-                       f"예산 판정 불가: 집계 ${spent:.2f}{pending}(건당 ${reserve:.2f}로 보면 ${bound:.2f}) / "
-                       f"상한 ${limit:.2f} — 계속 진행할까요?{then}")
+                       f"지금까지 ${spent:.2f} 썼고, 비용을 아직 모르는 작업이 {unknown}건 있어 "
+                       f"상한 ${limit:.2f}를 넘을 수 있습니다 "
+                       f"(모르는 작업을 건당 ${reserve:.2f}로 잡으면 ${bound:.2f}).{then}")
             try:
                 detail = {"spent_usd": spent, "limit_usd": limit, "requested_budget_usd": raised,
                           **({"unknown_count": unknown, "unknown_reserve_usd": reserve} if unknown else {})}
