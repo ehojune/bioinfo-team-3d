@@ -409,6 +409,9 @@ async def test_runner_attaches_pipeline_files_only_when_the_gateway_asks(tmp_pat
 
     monkeypatch.setattr(runner, "_resolve_agent", lambda _task: agent)
     monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_args: Adapter())
+    if not enabled:
+        monkeypatch.setattr("labhq.runner.daemon.collect_pipeline_submission",
+                            lambda *_args, **_kwargs: pytest.fail("pipeline content collected without consent"))
     meta = {"kind": "direct", **({"pipeline_pr": True} if enabled else {})}
     result = await runner.run_task(Task(id="t", request_id="r", agent_id=agent.id, prompt="build", meta=meta))
     if enabled and outcome == "ok":

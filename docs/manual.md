@@ -94,6 +94,7 @@ PowerShell:
 POSIX에서는 `./labhq.sh init`, `./labhq.sh -c config/labhq.yaml doctor`를 씁니다.
 
 `labhq init`은 예시 설정을 복사해 gateway token을 무작위로 만들고 HPC·bioinfo-agent 경로를 묻습니다.
+새 설정에서는 pipeline 코드의 공개 PR 기여 동의도 묻습니다. `y`(대소문자 무관)만 동의이며 Enter·`--yes`·그 밖의 답은 끔입니다.
 AlphaGenome API 키가 아직 없으면 마지막에 한 번 묻습니다. Enter로 건너뛸 수 있고, 키 보관은 [공개 자원 조회 도구](#공개-자원-조회-도구)에 있습니다.
 `python scripts/clean_install_check.py`는 임시 HOME의 새 clone·venv에서 init → doctor → mock 요청 → 요청 묶음 → verify → down을 검사하고 모두 지웁니다. 실제 직원 CLI 로그인이나 모델 호출은 하지 않습니다.
 한 PC에서 여러 연구소를 띄우려면 `labhq init --instance <이름>`을 실행한 뒤 각 명령에 같은
@@ -541,6 +542,9 @@ Codex 직원은 `tools`에 `WebSearch`나 `WebFetch`가 있으면 `web_search="l
 지원 여부로 고릅니다(#39). 첫 실험(#27)에서는 bioinfo-agent가 배정되지 않고 읽기 전용 리뷰어에게 쓰기 작업이 갔습니다.
 
 ### bioinfo-agent 연결하기
+
+`init`에서 공개 기여에 동의하면 `policy.bioinfo_agent.pipeline_pr: true`로 저장합니다. 기존 동의값과 대상은 `--force`에서도 보존하며, 바꾸려면 설정을 직접 고치세요. 거절하면 pipeline 내용 수집·전송과 GitHub 호출을 하지 않습니다.
+현재 fork 자동 생성은 지원하지 않아 공개 upstream 쓰기 권한이 필요합니다. 권한이 없으면 `pipeline PR 대기`로 남습니다.
 러너 환경변수 `BIOINFO_AGENT_DIR`에 bioinfo Claude Code plugin 디렉터리를 지정합니다. 실행 전에
 plugin 이름(`bioinfo`)과 `required_skills`의 skill이 실제로 있는지 확인하고, 없으면 시작하지 않습니다(오류에는 경로를 싣지 않음).
 CLI를 띄우기 전에 plugin 이름·version·내용 해시를 run manifest의 `plugins`에 남깁니다. 이 직원만 `--plugin-dir`로
