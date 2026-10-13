@@ -639,8 +639,8 @@ function apply(ev, replay = false) {
       if (resumeOf && S.requests.has(resumeOf) && !isTerminalRequest(S.requests.get(resumeOf).status)) {
         req(resumeOf).status = 'interrupted';
       }
-      feed({ who: d.agent_id || id || 'cso', text: `승인 요청: ${short(d.summary, 130)}`, fullText: `승인 요청: ${d.summary || ''}`, cls: 'alert' }, ts, rid);
-      if (!replay) effects.push({ type: 'toast', text: `승인 요청이 왔어요: ${short(d.summary, 50)}`, approval_id: d.id });
+      feed({ who: d.agent_id || id || 'cso', text: `승인 요청: ${short(d.pi_summary || d.summary, 130)}`, fullText: `승인 요청: ${d.pi_summary || d.summary || ''}`, cls: 'alert' }, ts, rid);
+      if (!replay) effects.push({ type: 'toast', text: `승인 요청이 왔어요: ${short(d.pi_summary || '작업 내용을 확인해 주세요.', 50)}`, approval_id: d.id });
       break;
     }
     case 'approval.expired': case 'approval.stale': endApproval(d.id, effects); break;

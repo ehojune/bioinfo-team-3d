@@ -11,7 +11,7 @@ require(path.join(root, 'state.js'));
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 
 const json = value => JSON.parse(JSON.stringify(value));
-const ask = id => ({type: 'approval.requested', agent_id: 'cso', data: {id, kind: 'tool_permission', summary: `Example ${id}`}});
+const ask = id => ({type: 'approval.requested', agent_id: 'cso', data: {id, kind: 'tool_permission', summary: `Example ${id}`, pi_summary: `작업 ${id} 확인`}});
 const ENDINGS = [['approval.resolved', {approved: true}], ['approval.resolved', {approved: false, note: 'no'}],
   ['approval.resolved', {approved: false, note: 'timed out', state: 'timed_out'}], ['approval.expired', {}], ['approval.stale', {}]];
 
@@ -54,7 +54,7 @@ async function importSkins() {
 
 test('every way an approval ends clears its notice in the reducer, 3D and 2.5D', async () => {
   const office = global.LabHQState.createOfficeState({now: () => 10});
-  assert.deepEqual(json(office.apply(ask('a1'))), [{type: 'toast', text: '승인 요청이 왔어요: Example a1', approval_id: 'a1'}]);
+  assert.deepEqual(json(office.apply(ask('a1'))), [{type: 'toast', text: '승인 요청이 왔어요: 작업 a1 확인', approval_id: 'a1'}]);
   for (const [end, data] of ENDINGS) {
     office.apply(ask('a1'));
     assert.deepEqual(json(office.apply({type: end, data: {id: 'a1', ...data}})), [{type: 'toast.clear', approval_id: 'a1'}], end);
@@ -76,13 +76,13 @@ test('every way an approval ends clears its notice in the reducer, 3D and 2.5D',
   event({type: 'snapshot', data: {agents: [{id: 'cso'}], requests: [], approvals: []}});
   for (const [end, data] of ENDINGS.slice(0, 4)) {
     event(ask('b1'));
-    assert.equal(notice(), '승인 요청이 왔어요: Example b1');
+    assert.equal(notice(), '승인 요청이 왔어요: 작업 b1 확인');
     event({type: end, data: {id: 'b1', ...data}});
     assert.equal(notice(), '', `${end} clears the 3D notice`);
   }
   event(ask('b2')); event(ask('b3'));
   event({type: 'approval.resolved', data: {id: 'b2', approved: true}});
-  assert.equal(notice(), '승인 요청이 왔어요: Example b3', 'an older approval ending keeps the newer notice');
+  assert.equal(notice(), '승인 요청이 왔어요: 작업 b3 확인', 'an older approval ending keeps the newer notice');
   event({type: 'approval.stale', data: {id: 'b3'}});
   assert.equal(notice(), '이미 끝난 승인 요청입니다.');
   event(ask('b4'));
