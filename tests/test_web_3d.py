@@ -192,6 +192,7 @@ def test_package_data_includes_office_assets():
     ('web_staff_control_scope.cjs', 'staff control scope web tests passed'),
     ('web_contract_provenance.cjs', 'fail 0'),
     ('web_trial_ready.cjs', 'trial readiness web tests passed'),
+    ('web_shutdown.cjs', 'fail 0'),
 ])
 def test_office_in_node(filename, marker):
     node = shutil.which('node')
