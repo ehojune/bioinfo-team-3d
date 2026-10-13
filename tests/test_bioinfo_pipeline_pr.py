@@ -51,7 +51,7 @@ def test_no_github_credential_reaches_staff_whatever_its_name(tmp_path, monkeypa
         ("어느 표본군을 쓰나요?", False),
         ("nf-core에 없습니다. 새 파이프라인을 만들까요?", False),
         ("요청 범위 밖 분석을 추가할까요?", False),
-        ("결과 폴더를 재귀 삭제할까요?", False),
+        ("결과 폴더를 재귀 삭제할까요?", True),
         ("통제 데이터 구역 원본을 읽어도 되나요?", True),
         ("예산 상한을 넘겨 계속할까요?", True),
         ("새 프로그램을 설치해도 되나요?", True),
@@ -78,6 +78,35 @@ async def test_bioinfo_questions_go_to_cso_except_three_hard_stops(tmp_path, que
         await hub.orchestrator.answer_ask(ask, "runner")
         assert routed == (["pi"] if pi else ["cso"])
         assert hub.store.get("ask", ask.id)["answer"]["routed_to"] == ("pi" if pi else "cso")
+    finally:
+        hub.store.close()
+
+
+@pytest.mark.parametrize("question", [
+    "Which output format should the DE table use, TSV or CSV?",
+    "Should I drop the 3 low-quality samples before DE?",
+    "outputs/de.tsv exists from the previous attempt; overwrite it?",
+])
+async def test_ordinary_staff_questions_reach_the_cso(tmp_path, question):
+    hub = Hub(settings(tmp_path))
+    hub.agents = {"cso": {"engine": "mock"}}
+    hub.requests["r"] = {"id": "r", "text": "analysis", "status": "running"}
+    routed = []
+
+    async def dispatch(task):
+        routed.append("cso")
+        return TaskResult(task_id=task.id, agent_id="cso", ok=True, text="진행하세요")
+
+    async def approval(**_kwargs):
+        routed.append("pi")
+        return {"approved": True, "note": "승인"}
+
+    hub.dispatch, hub.request_approval = dispatch, approval
+    ask = AskRequest(task_id="t", agent_id="analyst", request_id="r", to="cso",
+                     question=question, why_blocked="분석 방법을 정해야 합니다")
+    try:
+        await hub.orchestrator.answer_ask(ask, "runner")
+        assert routed == ["cso"]
     finally:
         hub.store.close()
 

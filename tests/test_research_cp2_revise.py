@@ -17,6 +17,7 @@ from tests.test_research_cp2 import CP1
 
 NOTE = "s2 효과 열을 donor 단위로 다시 계산하고 민감도 분석을 붙여 주세요."
 REVISE = {"approved": False, "choice": "revise", "note": NOTE}
+GRANT = {"approved": True, "note": ""}  # a budget card
 BARE_REVISE = {"approved": False, "choice": "revise", "note": "  "}
 
 
@@ -208,22 +209,25 @@ async def test_restart_in_the_middle_of_a_cp2_revise_continuation(tmp_path, die,
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("decisions", "kinds", "outcome"), [
-    ([CP1, REVISE, CP1], ["research_plan", "research_evidence", "research_plan", "budget"],
+    ([CP1, REVISE, GRANT, CP1], ["research_plan", "research_evidence", "budget", "research_plan", "budget"],
      "evidence_revision_requested"),
-    ([CP1, cont.APPROVE, cont.CONTINUE, CP1],
-     ["research_plan", "research_evidence", "research_continue", "research_plan", "budget"], "research_review_revise"),
+    ([CP1, cont.APPROVE, cont.CONTINUE, GRANT, CP1],
+     ["research_plan", "research_evidence", "research_continue", "budget", "research_plan", "budget"],
+     "research_review_revise"),
 ])
 async def test_a_rolled_back_round_restores_the_previous_spending_cap(tmp_path, decisions, kinds, outcome):
-    """PR #499 review: round 2's CP1 lowered the cap to $1, the budget card for the $4 already spent was denied, and
-    the request went back to round 1. Its $5 cap must come back with its plan and CP1 receipt."""
+    """PR #499 review: round 2's CP1 set a cap below the $4 already spent, the budget card was denied, and the request
+    went back to round 1. Its cap must come back with its plan and CP1 receipt. The cap is the plan's budget on top of
+    the spend so far, up to the configured $3.50: round 1 is $2 + $1 = $3. Round 2's planning ran past that $3 and the
+    PI granted a card (GRANT); its CP1 then cuts $4 + $1 to the configured $3.50, below the $4 spent."""
     hub = cont._hub(tmp_path, [*decisions, {"approved": False, "note": ""}], reviews=[cont.REVISE])
+    hub.requests["r"]["budget_usd"] = 3.5
     reply = hub.reply
 
     async def costed(task):
         result = await reply(task)
         if task.meta["kind"] == "plan" and isinstance(result.structured, dict):
-            budget = 1 if "Continuation (research round 2)" in task.prompt else 5
-            result = result.model_copy(update={"structured": {**result.structured, "budget_usd": budget}})
+            result = result.model_copy(update={"structured": {**result.structured, "budget_usd": 1}})
         return result.model_copy(update={"cost_usd": 2.0 if task.meta["kind"] == "plan" else 0.0,
                                          "cost_known": True})
 
@@ -234,11 +238,11 @@ async def test_a_rolled_back_round_restores_the_previous_spending_cap(tmp_path, 
     contract = req["research_contract"]
     first, = contract["rounds"]
     assert _kinds(hub) == kinds
-    assert hub.approvals[-1]["detail"]["limit_usd"] == 1.0
+    assert hub.approvals[-1]["detail"]["limit_usd"] == 3.5
     assert req["outcome"] == outcome
     assert contract["continuation"]["ended_before_dispatch"]["outcome"] == "research_failed"
-    assert first["budget_usd"] == 5.0
-    assert contract["approval"]["budget"]["cap_usd"] == 5.0 and req["budget_usd"] == 5.0
+    assert first["budget_usd"] == 3.0
+    assert contract["approval"]["budget"]["cap_usd"] == 3.0 and req["budget_usd"] == 3.0
 
 
 @pytest.mark.asyncio

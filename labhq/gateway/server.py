@@ -900,6 +900,7 @@ class Hub:
 
     def _commit_bundle_record(self, rid: str, data: dict) -> None:
         """Checkpoint the post-terminal bundle outcome with exactly one separate event."""
+        self.requests[rid].pop("bundle_pending", None)
         self.requests[rid]["updated_at"] = time.time()
         event = self.store.commit_request_event(
             rid, self.requests[rid],
@@ -929,6 +930,7 @@ class Hub:
             self._apply_bundle_outcome(rid, data, self._bundle_outcome(rid))
             self._commit_terminal_record(rid, typ, data)
             return
+        self.requests[rid]["bundle_pending"] = True
         self._commit_terminal_record(rid, typ, data)
         self._apply_bundle_outcome(rid, data, self._bundle_outcome(rid))
         self._commit_bundle_record(rid, data)
@@ -950,7 +952,15 @@ class Hub:
         if not self._has_bundle_workdir(rid):
             self.commit_terminal(rid, typ, data)
             return None
+        self.requests[rid]["bundle_pending"] = True
         self._commit_terminal_record(rid, typ, data)
+        return self._schedule_bundle(rid, data)
+
+    def _schedule_bundle(self, rid: str, data: dict) -> asyncio.Task:
+        """Build one pending bundle in a worker, both after terminal commit and after restart."""
+        prior = self.terminal_tasks.get(rid)
+        if prior is not None:
+            return prior
         request = copy.deepcopy(self.requests[rid])
         tasks = copy.deepcopy(self.store.all("task"))
         runner_capabilities = copy.deepcopy(self.runner_capabilities)
@@ -959,6 +969,15 @@ class Hub:
         self.terminal_tasks[rid] = task
         task.add_done_callback(self._terminal_task_done)
         return task
+
+    def recover_pending_bundles(self) -> list[str]:
+        """At startup, retry only bundles whose terminal commit explicitly left a pending marker."""
+        recovered = []
+        for rid, request in list(self.requests.items()):
+            if request.get("bundle_pending") is True:
+                self._schedule_bundle(rid, {})
+                recovered.append(rid)
+        return recovered
 
     @staticmethod
     def _terminal_task_done(task: asyncio.Task) -> None:
@@ -3144,6 +3163,7 @@ class Hub:
         }
         return {"type": "snapshot", "schema_version": 1, "seq": self.store.event_bounds()[1],
                 "ts": time.time(), "data": {
+            **({"demo_status": self.demo_status} if getattr(self, "demo_status", None) is not None else {}),
             "agents": list(self.agents.values()),
             "runners": list(self.runners),
             "approvals": [e["approval"] for e in self.approvals.values()],
@@ -3205,9 +3225,12 @@ class Hub:
         return details
 
 
-def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | None = None) -> FastAPI:
+def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | None = None,
+               *, demo: bool = False) -> FastAPI:
     check_configured_packs(settings)  # before any state opens: a stale pack key stops the start (#170)
     hub = Hub(settings, github_transport)
+    if demo:
+        hub.demo_status = {"phase": "starting", "remaining_s": 0}
     app = FastAPI(title="labhq gateway", version="0.1.0", default_response_class=UTF8JSONResponse)
     app.state.hub = hub
 
@@ -3215,6 +3238,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     async def recover_terminal_deliveries() -> None:
         hub.recover_terminal_deliveries()
         await hub.finish_interrupted_cancels()
+        hub.recover_pending_bundles()
         await hub.expire_stale_resume_cards()
         for rid, request in hub.requests.items():
             if is_terminal_request(request.get("status")):
@@ -3512,7 +3536,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     @app.get("/", response_class=HTMLResponse)
     async def office() -> HTMLResponse:
         html = (WEB / "index.html").read_text(encoding="utf-8")
-        boot_data = {"mode": "live"}
+        boot_data = {"mode": "live", **({"demo": True} if demo else {})}
         if settings.instance:
             boot_data["instance"] = settings.instance
         boot = f'<script>window.LABHQ_BOOT={json.dumps(boot_data, separators=(",", ":"))}</script>'
@@ -3529,7 +3553,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     @app.get("/3d/", response_class=HTMLResponse)
     async def office3d() -> HTMLResponse:
         html = (WEB / "lab3d" / "index.html").read_text(encoding="utf-8")
-        boot_data = {"mode": "live"}
+        boot_data = {"mode": "live", **({"demo": True} if demo else {})}
         if settings.instance:
             boot_data["instance"] = settings.instance
         boot = f'<script>window.LABHQ_BOOT={json.dumps(boot_data, separators=(",", ":"))}</script>'

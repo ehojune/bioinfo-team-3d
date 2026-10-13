@@ -10,10 +10,38 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-10-13
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 14:21 | [`0889537`](https://github.com/ehojune/bioinfo-team-3d/pull/545/commits/0889537) | 데모 웹 회귀 테스트를 CI의 Node 실행 목록에 등록한다 |
+| 14:18 | [`942537b`](https://github.com/ehojune/bioinfo-team-3d/pull/545/commits/942537b) | 데모 포트·runner 연결·웹 표시·진행 속도·기록을 라이브와 분리한다 |
+| 14:03 | [`1ac7879`](https://github.com/ehojune/bioinfo-team-3d/pull/544/commits/1ac7879) | 웹 긴 줄 펼침·서버 잘림 표시와 결정 시각·보고서 링크·브라우저 숨김을 추가하고 데모 store 격리를 검증 |
+
 ## 2026-10-12
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 16:23 | [`ea321fa`](https://github.com/ehojune/bioinfo-team-3d/pull/541/commits/ea321fa) | 최신 main 웹·CLI 변경을 합치고 manual의 직접 요청 보내기와 원본 overwrite 승인 설명을 함께 보존한다. |
+| 16:22 | [`e53fd57`](https://github.com/ehojune/bioinfo-team-3d/pull/543/commits/e53fd57) | 두 연구 계획 prompt의 budget_usd를 CP1 이후 추가 집행액으로 정의하고 fingerprint를 맞춘다. |
+| 16:20 | [`c3c94a5`](https://github.com/ehojune/bioinfo-team-3d/pull/541/commits/c3c94a5) | 원본·입력·불명확한 overwrite는 PI 승인으로 돌리고 명시한 outputs 산출 재생성만 예외로 둔다. |
+| 16:14 | [`c788a10`](https://github.com/ehojune/bioinfo-team-3d/pull/543/commits/c788a10) | 예산 상한 설명과 회귀·전체 테스트 결과를 기록하고 manual 과거 사례를 덜어낸다. |
+| 16:01 | [`a5623a8`](https://github.com/ehojune/bioinfo-team-3d/pull/540/commits/a5623a8) | down이 URL 주소로 로컬 gateway를 판정하고 주소 확인 실패도 종료 미확인으로 알린다. |
+| 15:49 | [`94d2fe8`](https://github.com/ehojune/bioinfo-team-3d/pull/543/commits/94d2fe8) | CP1 집행 상한을 계획까지 쓴 비용과 계획 예산의 합으로 정하고 설정 상한을 넘지 않게 한다. |
+| 15:47 | [`e988fa4`](https://github.com/ehojune/bioinfo-team-3d/pull/541/commits/e988fa4) | PI 시운전 실행 경로의 질문·환경·대기·산출 보존 결함 4건을 고침 |
+| 15:47 | [`688759b`](https://github.com/ehojune/bioinfo-team-3d/pull/542/commits/688759b) | 시운전 전 웹 결함 4건을 고쳤다: 직접 맡긴 요청이 처리: 직접 맡김으로 보이고 3D 요청 행이 한글 단계 이름을 쓴다, CP1 승인을 기다리는 연구 요청이 실행이 아니라 계획으로 보인다, 직접 요청을 고른 채 보내기가 새 요청으로 간다, 성공이 아닌 연구 종료에 사유가 붙는다(report_incomplete 포함). |
+| 15:32 | [`b5f41c1`](https://github.com/ehojune/bioinfo-team-3d/pull/540/commits/b5f41c1) | 시운전 전 CLI 결함 3건을 고친다: down이 taskkill 한글 출력을 OEM으로 읽고, up 밖에서 시작한 gateway가 답하면 exit 2로 알리며, send·watch가 요청 묶음 경로와 재현 등급을 기다려 출력한다. |
+| 15:16 | [`7abdd1e`](https://github.com/ehojune/bioinfo-team-3d/pull/539/commits/7abdd1e) | 완료 신호를 기다리는 test에 60~120초 바깥 상한을 다시 둬, 회귀 때 CI가 멈추지 않고 실패로 끝난다. |
+| 15:04 | [`2217a18`](https://github.com/ehojune/bioinfo-team-3d/pull/539/commits/2217a18) | 로그인 재시도 test를 두 번째 dispatch 완료 event로 동기화 |
+| 14:39 | [`1da9abb`](https://github.com/ehojune/bioinfo-team-3d/pull/539/commits/1da9abb) | quota·stall·mock-lab test를 실제시간 상한 대신 완료 event와 task로 동기화 |
+| 14:08 | [`7fa7718`](https://github.com/ehojune/bioinfo-team-3d/pull/536/commits/7fa7718) | Windows CI의 cp1252 console에서도 단계와 실패 출력을 UTF-8 한 줄로 보존한다 |
+| 14:02 | [`6f496fc`](https://github.com/ehojune/bioinfo-team-3d/pull/536/commits/6f496fc) | README 설치 절을 더 짧게 고쳐 전체와 해당 절의 바이트 수를 종전보다 줄인다 |
+| 14:00 | [`2002b27`](https://github.com/ehojune/bioinfo-team-3d/pull/535/commits/2002b27) | 공유 환경 판정이 uv·conda·pixi·poetry 같은 실행기의 전역 옵션을 표로 건너뛰어 run이 실행하는 프로그램을 찾고, 표에 없는 옵션이나 모르는 실행기면 뒤 단어를 모두 프로그램 자리로 본다. 재귀 삭제 규칙은 실제 rm에만 걸어 docker rm·지금 트리의 git rm·따옴표로 감싼 변수 하나를 지우는 rm은 묻지 않고, PowerShell 출력 문자열 속 .Delete( 글자는 삭제로 보지 않는다. |
+| 13:40 | [`956485f`](https://github.com/ehojune/bioinfo-team-3d/pull/536/commits/956485f) | 새 clone과 venv에서 mock 요청·묶음·verify·정리까지 검사하고 Windows CI에서 돌린다 |
+| 13:37 | [`c087aaf`](https://github.com/ehojune/bioinfo-team-3d/pull/537/commits/c087aaf) | 묶음 대기 표시로 중단된 요청 묶음을 시작 때 한 번 복구 |
+| 13:36 | [`9b8c6a3`](https://github.com/ehojune/bioinfo-team-3d/pull/537/commits/9b8c6a3) | gateway 중단 뒤 요청 묶음 복구 회귀 5건을 추가 |
+| 12:59 | [`c5c9010`](https://github.com/ehojune/bioinfo-team-3d/pull/535/commits/c5c9010) | 공유 환경 판정에서 wrapper 뒤 프로그램 자리를 찾는 코드를 하나로 합치고, ~ 쓰기를 묻는 사유에 펼친 경로를 함께 보인다. |
+| 12:57 | [`b75a0d3`](https://github.com/ehojune/bioinfo-team-3d/pull/535/commits/b75a0d3) | 승인 게이트가 find -exec payload·rm 옵션 단어·PowerShell pipe 뒤 삭제를 리터럴로 읽을 수 없으면 묻고, ~로 시작하는 셸 쓰기 대상을 그 셸의 home으로 펼쳐 허용 폴더와 대조한다. 공유 환경 R 설치 판정은 프로그램 자리 단어에만 걸고, 통제 구역 링크가 있는 project 폴더를 연 Claude 단계는 링크의 다른 표기(8.3 이름·대소문자)도 게이트로 보낸다. |
 | 05:43 | [`3e0c34d`](https://github.com/ehojune/bioinfo-team-3d/pull/534/commits/3e0c34d) | 연구 lane #527 후속: 기다리는 마지막 보고서 turn의 예산 면제, 차수 없는 예전 확인 질문 답, gateway 이어 가기 되돌리기 판정을 바로잡음 |
 | 05:21 | [`ebc968a`](https://github.com/ehojune/bioinfo-team-3d/pull/530/commits/ebc968a) | main 병합: #527 연구 lane 상태 후속과 server.py 충돌을 풀어 이어 가기 복원 helper와 취소 마무리 helper를 함께 둔다. |
 | 05:07 | [`85bcdf0`](https://github.com/ehojune/bioinfo-team-3d/pull/530/commits/85bcdf0) | main 병합: #522 파견직 채용물 고정과의 import 충돌을 풀고, 그 테스트의 가짜 러너에 채용 turn을 담을 tasks를 더했다. |

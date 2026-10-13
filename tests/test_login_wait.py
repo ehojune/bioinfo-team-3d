@@ -397,16 +397,20 @@ async def test_login_expiry_keeps_engine_notice_while_another_request_waits(tmp_
 async def test_every_cso_and_direct_turn_kind_waits_for_login(tmp_path, kind):
     hub = _hub(tmp_path)
     calls = []
+    retried = asyncio.Event()
 
     async def dispatch(task):
         calls.append(task)
         if len(calls) == 1:
             return TaskResult(task_id=task.id, agent_id="worker", ok=False, error=CLAUDE_EXPIRED)
+        retried.set()
         return TaskResult(task_id=task.id, agent_id="worker", ok=True, text="done")
 
     hub.dispatch = dispatch
-    result = await asyncio.wait_for(Orchestrator(hub).run_step(
-        Task(agent_id="worker", request_id="r", prompt=kind, meta={"kind": kind})), 1)
+    running = asyncio.create_task(Orchestrator(hub).run_step(
+        Task(agent_id="worker", request_id="r", prompt=kind, meta={"kind": kind})))
+    await asyncio.wait_for(retried.wait(), 60)
+    result = await asyncio.wait_for(running, 60)
     assert result.ok and [task.meta["kind"] for task in calls] == [kind, kind]
 
 

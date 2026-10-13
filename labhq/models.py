@@ -401,14 +401,27 @@ HARD_STOP_PATTERNS = {
                    r"(?:budget|cost).{0,12}(cap|limit|exceed|overrun)"),
     "out_of_scope": (r"범위.{0,6}(밖|외|초과)", r"요청.{0,8}(밖|외)", r"out.of.scope", r"scope.{0,8}(expand|outside)"),
     "installation": (r"설치", r"\binstall(?:ation|ing)?\b", r"\b(?:pip|conda|npm|apt)\s+install\b"),
-    "destructive": (r"(재귀 )?삭제", r"파괴", r"\brm\s+-[a-z]*r[a-z]*f\b", r"\b(drop|format|overwrite|destroy|delete)\b"),
+    "destructive": (r"(재귀 )?삭제", r"파괴", r"\brm\s+-[a-z]*r[a-z]*f\b",
+                    r"\b(?:destroy|delete)\b", r"\bdrop\s+(?:table|database)\b",
+                    r"\bformat\s+(?:disk|drive|volume)\b"),
 }
+
+DEFAULT_HARD_STOPS = ("data_zone", "budget_cap", "installation")
 
 
 def hard_stop_kind(ask: AskRequest, allowed: Iterable[str] | None = None) -> str | None:
     text = "\n".join([ask.question, ask.why_blocked, *ask.tried, *ask.options]).casefold()
-    enabled = set(HARD_STOP_PATTERNS) if allowed is None else set(allowed)
+    enabled = set(DEFAULT_HARD_STOPS if allowed is None else allowed)
+    # Deletion and similarly destructive operations are an intrinsic PI gate, not an optional routing policy.
+    enabled.add("destructive")
     for kind, patterns in HARD_STOP_PATTERNS.items():
+        if kind == "destructive" and re.search(r"\boverwr(?:ite|ites|iting|itten)\b|덮어[쓰쓸]|덮어쓰기", text):
+            # Only explicitly named task outputs may be regenerated without PI.
+            # Mentioning an output alongside raw/source inputs is not an exception.
+            outputs = re.findall(r"(?<![\w/\\])(?:\./)?outputs[/\\][^\s?;]+", text)
+            source = re.search(r"\b(?:raw|source|inputs?|original)\b|원본|입력", text)
+            if source or not outputs or any(".." in re.split(r"[/\\]", path) for path in outputs):
+                return kind
         if kind in enabled and any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns):
             return kind
     return None

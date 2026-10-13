@@ -20,7 +20,7 @@ from typing import Any, Awaitable, Callable
 from ..facilities import signatures as env_signatures
 from ..models import AgentSpec, McpServerSpec, Task, TaskResult
 from ..settings import Settings
-from ..util import extract_json, merge_staff_env, short, without_windows_app_aliases
+from ..util import event_preview, extract_json, merge_staff_env, short, without_windows_app_aliases
 from .owned import OwnedPathError, plain_directory, write_owned
 from .read_only import (labhq_workspace_paths, read_only_engine_env, read_only_launch_error, read_only_mismatch,
                         read_only_workspace_error)
@@ -467,6 +467,10 @@ class RunContext:
     private_enabled: bool = False
     # Folders inside an active path that this Claude task may read (its project folder in the staff config folder).
     private_open_reads: list[str] = field(default_factory=list)
+    # Links in an open project folder that lead into a restricted zone (#132). Claude's deny rules compare the path as
+    # written, so while any is set Claude pre-approves no shell command and no outside read either: another spelling
+    # of the link (8.3 `DATA~1`, a case variant) reaches the gate, which compares real paths (#178).
+    denied_links: list[str] = field(default_factory=list)
     # A request with one shared environment sends non-owner install-capable shell rules through approval.
     shared_environment_protected: bool = False
     environment_step: bool = False
@@ -930,7 +934,8 @@ class AgentAdapter(ABC):
                     await self.handle_line(line, st, ctx)
                 except Exception as e:  # never let one odd line kill the run
                     tool_activity.unreadable()
-                    await ctx.emit("agent.log", {"level": "debug", "text": f"[unparsed] {short(line)} ({e})"})
+                    await ctx.emit("agent.log", {**event_preview("text", line), "level": "debug",
+                                                  "text": f"[unparsed] {short(line)} ({e})"})
                 if st.stop_reason and proc.returncode is None:
                     reason, st.stop_reason = st.stop_reason, None
                     await ctx.emit("agent.log", {"level": "warn", "text": reason})
@@ -997,7 +1002,10 @@ class AgentAdapter(ABC):
                     return
                 if not warned and warn_limit > 0 and quiet >= warn_limit:
                     minutes = max(1, int(quiet // 60))
-                    if await pending_uac_prompts():
+                    if tool_activity.active:
+                        await report_block("tool-active", "debug",
+                                           "PI 카드 응답을 기다리는 중이라 끊지 않습니다")
+                    elif await pending_uac_prompts():
                         reported_block = "uac"
                         retry_note = ((" UAC가 사라진 뒤 실행 중인 명령이 없으면 labhq가 끊고 다시 시도합니다. "
                                        "연구 lane에서 단계를 취소하면 요청이 실패로 끝납니다")
@@ -1032,7 +1040,7 @@ class AgentAdapter(ABC):
                         await report_block("stream-unknown", "warn", "CLI 출력 스트림의 도구 호출 상태를 해석할 수 없어 무응답 종료를 보류합니다")
                         return
                     if tool_activity.active:
-                        await report_block("tool-active", "warn", "CLI 출력 스트림에 완료되지 않은 도구 호출이 있어 무응답 종료를 보류합니다")
+                        await report_block("tool-active", "debug", "PI 카드 응답을 기다리는 중이라 끊지 않습니다")
                         await asyncio.sleep(max(0.01, min(30.0, retry_limit / 4)))
                         continue
                     idle = await asyncio.to_thread(_idle_process_tree, proc.pid, ctx.mcp_servers)

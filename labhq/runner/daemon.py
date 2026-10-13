@@ -825,7 +825,7 @@ class Runner:
                     names = ", ".join(link.relative_to(path).as_posix() for link in links[:5])
                     await emit("agent.log", {"level": "warn", "text": (
                         f"프로젝트 폴더 {path.name}의 링크 {len(links)}개가 통제 데이터 구역으로 이어지거나 풀 수 없습니다: "
-                        f"{names}. Claude는 그 경로를 읽고 쓰지 못하게 막지만 다른 엔진과 미리 허용된 셸 명령은 막지 못합니다")})
+                        f"{names}. Claude는 그 경로를 막고 다른 표기와 셸 명령은 승인 게이트로 보내지만 다른 엔진은 막지 못합니다")})
                 if incomplete:
                     await emit("agent.log", {"level": "warn", "text": (
                         f"프로젝트 폴더 {path.name}의 링크를 다 확인하지 못했습니다({incomplete}). "
@@ -1339,6 +1339,7 @@ class Runner:
                 private_paths=list(private.paths),
                 private_enabled=private.enabled,
                 private_open_reads=list(private.open_reads),
+                denied_links=list(denied_links),
                 shared_environment_protected=task.meta.get("shared_environment_protected") is True,
                 environment_step=task.meta.get("environment_step") is True,
                 use_permission_tool="approval" in agent.builtin_mcp,

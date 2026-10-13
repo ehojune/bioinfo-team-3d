@@ -149,8 +149,10 @@ def test_package_data_includes_office_assets():
 @pytest.mark.parametrize('filename,marker', [
     ('web_state.cjs', 'isolation and bounds: OK'),
     ('web_live.cjs', 'reconnect and replay gap: OK'),
+    ('web_demo_separation.cjs', 'fail 0'),
     ('web_command_center.cjs', 'keyed decisions, staff strip and tabs: OK'),
     ('web_decision_detail.cjs', 'fail 0'),
+    ('web_expand_history.cjs', 'fail 0'),
     ('web_issue126.cjs', 'full answer on demand in 2.5D and 3D: OK'),
     ('web_issue184.cjs', 'fail 0'),
     ('web_decision_focus.cjs', 'fail 0'),
@@ -184,6 +186,7 @@ def test_package_data_includes_office_assets():
     ('web_staff_control_steps.cjs', 'staff control step web tests passed'),
     ('web_staff_control_scope.cjs', 'staff control scope web tests passed'),
     ('web_contract_provenance.cjs', 'fail 0'),
+    ('web_trial_ready.cjs', 'trial readiness web tests passed'),
 ])
 def test_office_in_node(filename, marker):
     node = shutil.which('node')

@@ -4,6 +4,381 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 결론
+
+PI 시운전에서 데모가 실제 사무실과 같은 port를 쓰던 결함을 고쳤습니다. 웹 데모의 표시·진행 속도·결정 기록도 분리했습니다.
+
+## 바뀐 것
+
+- 원하는 port에 loopback 응답이 있거나 IPv4·IPv6 bind 검사 중 하나라도 실패하면 다른 빈 port를 고르고 한국어로 주소를 안내합니다. runner도 그 데모 서버에 연결합니다.
+- 데모 BOOT에 `demo: true`를 넣고 2.5D·3D에 `데모(mock)`와 상단 안내 띠를 표시합니다. 브라우저 저장 키를 라이브와 나눕니다.
+- 웹 mock 단계는 2초, 자동 승인은 1초 뒤 진행합니다. 요청 사이에는 남은 시간을 표시하며 CLI·일반 test 지연과 폰 승인 대기는 유지합니다.
+- README·manual의 데모 절에 실제 사무실과 함께 여는 법을 안내했습니다.
+
+## 실행한 것
+
+- main helper에서 주소 충돌 회귀 3건 실패, 수정본의 새 Python test 14건 통과.
+- Windows 전체 pytest: 5,517 passed · 66 skipped (mock e2e 포함).
+- `for f in tests/*.cjs; do node --test "$f"; done`: 34개 파일 통과.
+- 빈 port의 실제 웹 데모: 요청 29.10·22.90·29.56초. Chrome에서 2.5D·3D 표시와 대기 안내 확인.
+- 공개 검사·diff 검사·패치노트·목차 검사 통과. pytest 임시·상태는 한 TEMP 폴더에 격리하고 8787 socket 통신을 차단했습니다.
+
+## 미해결
+
+- 없음. 자동 봇 리뷰 판단과 병합은 개발 총괄이 이어받습니다.
+
+Refs #435
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
+긴 줄 펼침과 지난 결정 정리를 구현했습니다. 받은 원문과 gateway 결정·감사 기록은 보존합니다.
+
+## 바뀐 것
+
+| 항목 | 결과 |
+|---|---|
+| 펼쳐 보기 | 활동·생각/디버그·메신저·결정 detail의 공통 펼침. Enter·Space·aria-expanded 지원. 서버 제한은 기존대로 유지하고 잘림 표시 추가 |
+| 결정 기록 | 로컬 시각·보고서가 있는 요청의 링크·× 숨김. 2.5D·3D 공유. localStorage를 골라 서버 기록 변경 없이 화면만 정리하며 저장 실패에도 현재 페이지에서 동작 |
+| 데모 기록 | 실제 store로 유입되는 코드 경로 없음. CLI 데모 문구이며 임시 store 격리 테스트 통과. 스크린샷의 접속 인스턴스는 미확인 |
+
+## 실행한 것
+
+- origin/main `4268ffa`: 새 Node 회귀 6건 실패, adapter pytest 11건 실패, Node CI wrapper pytest 1건 실패.
+- branch: Node 34개 파일 전부 통과. 관련 pytest 190 passed·2 skipped. Windows 전체 pytest 5515 passed·66 skipped(9분 20초, 경고 646건).
+- Chrome QA: 명령 끝부분·키보드 펼침/접기·aria-expanded·서버 400자 표시·보고서 이동·새로고침 뒤 숨김 유지 확인.
+- public·patch-notes·notes-index·diff 검사 통과. pytest 임시·상태 폴더는 TEMP 아래 한 폴더를 쓰고 삭제.
+- CI [run 38349965660](https://github.com/ehojune/bioinfo-team-3d/actions/runs/38349965660), 검증 head `9bf9fa3`: `changes`·`patch-notes`·`pytest (3.10)`·`pytest (3.12)`·`pytest-windows`·`clean-install`·`ro-crate-validator`·`pytest-slow` 성공. `readme` 조건부 skip.
+
+## 미해결
+
+- PI·trial을 조회·실행·재시작하거나 설정을 바꾸지 않았으므로 스크린샷의 접속 주소는 확정하지 않았습니다.
+- 전체 pytest에서 subprocess UTF-8 경고 1건이 나왔으나 실패는 없었습니다. 이 웹 변경 범위 밖입니다.
+
+근거: `docs/reference/web-expand-history.md`, `tests/web_expand_history.cjs`, `tests/test_event_preview.py`, `tests/test_demo_phone.py`.
+
+Refs #57, Refs #435
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
+CP1 승인 시 집행 상한을 승인까지 쓴 비용 + 계획 예산으로 정한다. 요청 예산(없으면 정책 상한)을 넘으면 그 상한으로 자른다. 이어 가기 차수도 같은 규칙이다.
+
+## 바뀐 것
+
+- 승인 budget에 `spent_before_plan_usd`를 기록하고 승인 직전에 다시 집계한다.
+- CP1 카드·직원 prompt에 계획 예산과 계획까지 쓴 비용을 함께 표시한다.
+- 계획 prompt 두 종류도 `budget_usd`를 CP1 이후 추가 집행액으로 정의한다(봇 P1 수정).
+- `docs/manual.md` 예산 절과 연구 protocol 설명을 맞췄다. manual 과거 사례 한 문장을 덜었다(112,104 → 112,023자).
+
+## 실행한 것
+
+- 새 회귀 5건: main의 cso 코드에서 모두 실패, 변경 코드에서 관련 pytest 39 passed.
+- prompt 설명·fingerprint 포함 관련 pytest: 53 passed.
+- 전체 pytest: 5,447 passed·66 skipped·10 failed. 실패는 CLI stream·MCP probe·semantics subprocess 로그 검사이며 예산 관련 실패는 없다. 실패 파일 재실행에서도 일부 재현됐다.
+- 공개 검사·diff 검사 통과. 병합은 GitHub CI 결과로 판정한다.
+
+## 미해결
+
+- 로컬 전체 suite의 위 10건은 이번 예산 변경 범위 밖이다.
+
+Refs #435
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
+## 결론
+
+오늘 19:00 PI 시운전 전에 CLI 결함 3건을 고쳤습니다. `labhq down`의 한글 Windows 추적 출력(점검 1·15, 같은 결함), 기록 없는 gateway를 두고 성공으로 끝나던 `down`(2), `send`·`watch <id>`가 요청 묶음을 출력하지 않던 것(12)입니다. 3건 모두 수정 전 코드에서 실패하는 test를 붙였습니다.
+
+## 바뀐 것
+
+- `down`의 `taskkill`을 `encoding="oem", errors="replace"`로 읽습니다. `PYTHONUTF8=1`인 한글 Windows에서 UnicodeDecodeError 추적이 두 번 나오던 것이 사라지고, `taskkill`이 실패해도 stderr·stdout이 None이라 메시지 조립이 깨지지 않습니다.
+- `down`은 기록된 프로세스를 멈춘 뒤 gateway가 아직 답하는지 다시 봅니다(종료 직후 최대 3초 기다림). `up` 밖에서 시작해 PID 기록이 없는 gateway·runner가 답하면 "`up`이 아닌 방법으로 시작한 gateway/runner가 아직 실행 중"이라고 알리고 exit 2로 끝냅니다. 전에는 `종료: 기록된 프로세스 없음`과 exit 0이어서 다음 `up`이 그 프로세스를 그대로 썼습니다. gateway가 다른 PC에 있는 runner 전용 PC에서는 이 설정의 runner id가 아직 연결돼 있을 때만 실패로 봅니다.
+- `send`와 `watch <id>`는 끝났다는 이벤트 뒤에 오는 `request.bundle`(또는 요청 기록의 묶음 필드)을 최대 60초 기다려 `요청 묶음:`과 `재현 등급:`을 출력하고 끝납니다. gateway는 끝났다는 기록을 먼저 저장하고 묶음을 나중에 만들기 때문입니다. 요청 기록에 `bundle_pending`이 없으면(단계를 돌리지 않은 요청) 기다리지 않고, 60초가 지나면 `labhq status`로 보라고 알립니다.
+- `docs/manual.md`의 `down`과 `send`·`watch` 설명을 고쳤습니다.
+
+## 확인
+
+- 봇 P1 후속: bind 주소 대신 URL hostname과 이 PC hostname·인터페이스 주소를 비교합니다. 주소 확인 실패는 로컬 가능성으로 보고 응답 중이면 exit 2입니다. 회귀 5건은 수정 전 실패, 관련 test는 51 passed·1 skipped입니다.
+- 새 test 15건: `tests/test_cli_launch.py` 9건(taskkill 2건, Windows 전용 디코딩 1건, `down` 6건), `tests/test_cli_bundle_wait.py` 6건(실제 `Hub.schedule_terminal`이 커밋하는 이벤트 순서로 `send`·`watch`를 구동). 수정 전 `labhq/cli.py`로 돌리면 11건이 실패합니다. 동작 때문에 실패하는 것은 4건(taskkill 인자·None 처리 1, 기록 없는 gateway 1, 묶음 대기 `send`·`watch` 2)이고 나머지 7건은 새 상수가 없어 먼저 실패합니다.
+- 전체 pytest(Windows, `--basetemp`, xdist 없음): 5466 passed, 66 skipped, 8분 50초.
+- 기존 `test_down_refuses_active_work_and_force_terminates_only_recorded_trees`가 이 PC의 실제 8787 gateway에 닿아 401로 실패해서 `_health`를 막았습니다.
+- `scripts/check_public.sh`, `git diff --check`: 통과.
+
+## 미해결
+
+- 없음. 오늘 밤 8787 instance가 `instances.ps1`로 떠 있으면 PID 기록이 없어 `down`이 이제 exit 2로 알리기만 하고 멈추지는 못합니다. `up`으로 시작한 instance에서만 `down`이 멈춥니다.
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+## 결론
+
+오늘 19:00 PI 시운전 전에 웹 결함 4건을 고쳤다. 새 회귀 test가 네 건 모두 main 코드에서 실패하고 이 branch에서 통과한다.
+
+## 바뀐 것
+
+1. 직접 맡김 표시: 직접 맡긴 요청은 "처리: 직접 맡김"으로 보인다. 경로 결정 없이 끝난 요청(계획 단계 실패 등)은 처리 표시를 뺀다. 3D 요청 행은 영어 phase 대신 2.5D와 같은 한글 단계 이름을 쓰고, 끝난 요청은 상태(완료·실패)만 보인다. 라벨은 `state.js`(`processingLabel`·`phaseLabel`) 한 곳이다.
+2. CP1 대기 단계: `request.plan`은 phase를 `plan`으로 두고, `step_id`가 있는 dispatch가 `execute`로 넘긴다. 스냅숏은 리뷰가 없고 시작한 단계도 없으면 `plan`으로 읽는다.
+3. 직접 요청 중 보내기: `send()`가 `renderComposerMode`와 같은 `mode !== 'direct'` 검사를 한다. 직접 맡긴 요청을 고른 채 보내기를 누르면 새 요청으로 간다(전에는 메모를 보내 409).
+4. 연구 종료 사유: `report_incomplete`, 리뷰 revise·해석 실패, 보고서 작성 실패, 예산 거부, CP2 거절·수정 요청·시간 초과·판독 불가에 사유 한 줄(`cso.py`의 `RESEARCH_END_ERRORS`)을 붙인다. 사유가 비면 `state.js`가 중립 문구를 보인다.
+5. `docs/manual.md`의 화이트보드·직접 요청 보내기·연구 종료 사유 설명을 맞췄다. `web_state_hashes.json`은 request.plan 직후 phase가 바뀐 한 항목(인덱스 5)만 갱신했고, `web_solo_route.cjs`는 state.js로 옮겨 간 라벨을 동작으로 확인하게 고쳤다.
+
+## 실행한 것
+
+- `tests/web_trial_ready.cjs`(CI 목록 `tests/test_web_3d.py`에 추가): 네 결함 모두 main 코드에서 실패, 이 branch에서 통과. 3D 요청 행은 live.js를 그대로 불러 DOM stub로, `send()`는 index.html에서 잘라 vm으로 실행한다.
+- pytest 단언 3곳 추가(`test_research_report.py` 2곳, `test_research_protocol.py` CP2 표): main의 `cso.py`에서 실패, 이 branch에서 통과.
+- Node test 33개 전부 통과. 전체 pytest 통과(exit 0, 8분 42초). `scripts/check_public.sh`, `git diff --check` 통과.
+- index.html을 정적 서버로 띄워 demo 모드가 콘솔 오류 없이 그려지는 것까지 확인했다. 요청 흐름은 Node harness로만 확인했다.
+
+## 미해결
+
+- 3D 화이트보드(`lab3d/src/office.js`)의 `status · phase` 줄은 영어 키 그대로다(이번 점검 항목 밖).
+- 리뷰 revise 뒤 새 CP1을 기다리는 중에 새로고침하면 스냅숏에 리뷰가 남아 `execute`로 읽는다(실시간 경로는 `plan`).
+- 연구가 아닌 `ok=False` 종료 중 사유를 주지 않는 경로(브리핑 실패 등)는 중립 문구가 나온다.
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+## 단계
+P2 — PI 시운전 전 실행 경로 결함 4건
+
+## 한 일
+
+| 항목 | main 재현 | 수정 |
+|---|---|---|
+| 7 · 직원 질문 hard stop | 평범한 format·표본 drop·결과 overwrite 질문이 destructive로 PI에게 감 | 모든 직원에 정책 목록을 적용하고 실제 삭제·파괴만 고유 PI gate로 유지 |
+| 8 · 환경 설치 오판 | PowerShell 대입 6형태와 문서의 Bash PYTHONPATH 2형태가 거부됨 | installer 없는 대입·환경 접두사는 건너뛰고, 대입에 숨긴 installer는 계속 fail closed |
+| 10 · PI 카드 대기 경고 | 열린 MCP 승인 호출에도 중단·재시도 경고가 표시됨 | PI 카드 대기는 debug로만 기록하고 종료·취소 경고를 생략 |
+| 11 · 같은 폴더 재실행 산출 | retry·결정 재실행·review revise가 앞 `unreported_outputs`를 잃음 | 같은 workdir의 결과를 합치고 새 정식 outputs와 겹친 항목은 제외 |
+
+`docs/manual.md`는 191,351 → 192,125 bytes(+774)로 네 동작만 보완했습니다.
+
+## 테스트 결과
+- [x] 추가 회귀의 main 상태: 23 failed, 6 passed
+- [x] 수정 뒤 같은 회귀: 29 passed
+- [x] 관련 pytest 5개 파일: 798 passed, 1 skipped
+- [x] Windows 전체 `pytest -q`(모의 e2e 포함): 5468 passed, 67 skipped
+- [x] Node CJS 32개, `scripts/check_public.sh`, `git diff --check`: 통과
+- [ ] GitHub Actions: 기록 commit push 뒤 확인
+- [x] UI 변경 없음
+
+## 바꾼 파일
+- `labhq/models.py`, `labhq/orchestrator/cso.py`, `labhq/environment_install.py`, `labhq/adapters/base.py`
+- `tests/test_ask.py`, `tests/test_bioinfo_pipeline_pr.py`, `tests/test_environment_install.py`, `tests/test_stall_watch.py`, `tests/test_cso.py`
+- `docs/manual.md`
+
+## 막힌 점
+없음
+
+## PI·Claude에게 물을 것
+없음
+
+## 확인
+- [x] `scripts/check_public.sh` 통과
+- [x] `docs/status/`와 branch patch note 추가
+- [x] 체크포인트 아님
+
+Refs #435
+
+## 남은 지적
+- P2: 일반 tool call이 멈춰도 PI 카드 대기로 분류돼 stall 경고가 숨겨질 수 있습니다.
+
+## P1 후속
+- 원본·입력·불명확한 overwrite는 PI gate로 유지하고 명시한 `outputs/` 재생성만 예외입니다. 회귀 6건 수정 전 실패, 관련 34 passed.
+
+🤖 Generated with Codex (gpt-5) for the labhq dev lead
+
+## 결론
+
+같은 SHA 재실행에서 사라진 Windows CI flake 4개를 실제시간 제한 대신 event·task 완료 동기화로 바꿨습니다.
+
+## 바뀐 것
+
+| test | CI 실패 횟수 | OS | 증상 |
+|---|---:|---|---|
+| `test_restart_recovery_holds_only_the_step_on_the_limited_engine` | 1 | Windows | 바깥 `wait_for(1s)`가 `TimeoutError`; run 38170211095 재실행 통과 |
+| `test_temporary_process_snapshot_failure_is_rechecked` | 1 | Windows | 바깥 `wait_for(2s)`가 `TimeoutError`; run 38156419427 재실행 통과 |
+| `test_the_lab_records_the_same_with_actions_on[shadow]` | 1 | Windows | terminal status 60초 polling timeout; run 37668212634 재실행 통과 |
+| `test_every_cso_and_direct_turn_kind_waits_for_login[briefing]` | 1 | Windows | 바깥 `wait_for(1s)` 안에 retry가 못 끝남; run 37700811619 재실행 통과 |
+
+- quota test는 독립 단계 완료 event와 recovery task를 직접 기다립니다.
+- stall test는 mock kill 완료 event 뒤 runner task 결과를 확인합니다.
+- mock lab은 request orchestration task를 기다린 뒤 terminal status를 단언합니다.
+- login test는 두 번째 dispatch event 뒤 runner task 결과를 확인합니다.
+- `test_login_retry_expiry_ends_notice_and_next_failure_notifies_again` 2건은 PR #459에서 이미 수정돼 제외했습니다.
+- reused workspace 사례는 단독 25회 실패 0이고 해당 CI 로그가 공유 temp 오염이라 수정하지 않았습니다.
+
+## 실행한 것
+
+- 8개 CPU job 부하, 수정 전: 각 test 30회, 실패 0/30(로컬에서는 미재현)
+- 같은 부하, 수정 후: 각 test 30회, 실패 0/30
+- 관련 test: 65 passed, 1 skipped
+- `tests/test_login_wait.py`: 45 passed
+- Windows 전체 `pytest -q`: 5331 passed, 66 skipped(두 번째 격리 run; 첫 run은 다른 lane pytest와 겹쳐 11건 실패, 해당 11건 단독 재실행은 통과)
+- `scripts/check_public.sh`: 통과
+
+## 미해결
+
+- current head Windows 전체 pytest와 CI는 기록 commit 뒤 확인합니다.
+- 남은 지적: 없음.
+
+## 근거
+
+- `tests/test_quota_wait.py`
+- `tests/test_stall_watch.py`
+- `tests/semantics_shadow_lab.py`
+- `tests/test_login_wait.py`
+- `HANDOFF.md`
+
+🤖 Generated with Codex (gpt-5) for the labhq dev lead
+
+# v0.95 깨끗한 설치 리허설
+
+## 결론
+
+PR #536에서 새 Windows clone·venv의 설치부터 mock 요청, 보고서·요청 묶음, `verify`, 종료·정리까지 자동화했습니다. 리허설 차이 3건을 찾아 3건 모두 고쳤고 CI 전체가 통과했습니다.
+
+## 바뀐 것
+
+- `scripts/clean_install_check.py`: 임시 HOME·state·빈 포트·mock 직원으로 전 과정을 검사하고 삭제
+- README·manual: 빠진 질문과 격리 설치 검사 명령, v0.95 현재 상태 보정
+- `.github/workflows/test.yml`: 기존 suite와 병렬인 Windows `clean-install` job 추가
+
+## 리허설 차이
+
+| 단계 | 문서가 말한 것 | 실제 | 고침 |
+|---|---|---|---|
+| `labhq init` | HPC·bioinfo-agent 경로를 질문 | 선택형 AlphaGenome 키 질문도 나옴 | README에 Enter로 생략한다고 명시; 검사 `labhq init` 단계가 질문 수를 고정 |
+| 설치 완주 | 명령을 따로 실행 | mock으로 요청·묶음·검증까지 반복할 검사 없음 | `clean_install_check.py`의 요청·묶음·`verify`·`down` 단계와 Windows CI 추가 |
+| Windows CI 출력 | 실패 단계와 출력을 한 줄로 표시 | cp1252 console에서 한글 단계명 출력이 실패 | stdout·stderr·자식 출력을 UTF-8로 고정하고 encoding 회귀 test 추가 |
+
+## 확인
+
+- 수동 리허설과 자동 검사 통과. `doctor` fail 0·실행 준비 예, `verify` exit 0
+- PI 홈과 본 checkout 설정 mtime: 전후 동일
+- README: 전체 23,938 → 23,931 bytes, 설치 절 420 → 413 bytes
+- 관련 pytest: 114 passed, 1 skipped; README test: 33 passed
+- Windows 전체 pytest: 첫 실행 5,325 passed·66 skipped·Windows manifest 교체 flake 1건; 실패 test 재실행 1 passed; 전체 재실행 5,326 passed·66 skipped
+- cp1252 강제 clean install·encoding 회귀 test: 통과
+- `scripts/check_public.sh`, `git diff --check`: 통과
+- CI run 38206716903: changes·patch-notes·clean-install·pytest 3.10·3.12·Windows·slow·ro-crate-validator 성공; README 전용 job 조건부 skip
+
+## 미해결
+
+- 없음
+
+Refs #300
+
+🤖 Generated with Codex (gpt-5) for the labhq dev lead
+
+## 결론
+
+gateway가 terminal commit 뒤 묶음을 만들기 전에 강제 종료되거나 crash해도, 다음 시작 때 그 요청의 묶음을 한 번 다시 만듭니다.
+
+## 바뀐 것
+
+- terminal request row에 `bundle_pending`을 같은 commit으로 저장하고 `request.bundle` commit에서 지웁니다.
+- 시작 때 표시가 남은 요청만 기존 worker 경로로 복구합니다. 실패도 warning을 한 번 기록한 뒤 표시를 지웁니다.
+- 기존 임시·대상 폴더 정리 규칙을 재사용하며, 복구 중 요청은 shutdown readiness의 `finishing`에 남습니다.
+- `docs/manual.md` 요청 묶음 절: 110,906자 → 111,021자(+115자).
+
+## 실행한 것
+
+- origin/main + 새 회귀 3건(a·d·e): 3 failed
+- 새 회귀 5건: 5 passed
+- `tests/test_request_bundle.py`: 98 passed, 2 skipped
+- `tests/test_request_lifecycle.py`: 54 passed
+- Windows 전체 `pytest -q`: 5,331 passed, 66 skipped
+- `scripts/check_public.sh`: 통과
+
+## 미해결
+
+- 없음. CI는 기록 commit push 뒤 확인합니다.
+
+## 근거
+
+- `labhq/gateway/server.py`
+- `tests/test_request_bundle.py`
+- `docs/manual.md`
+
+Refs #521
+
+🤖 Generated with Codex (gpt-5) for the labhq dev lead
+
+## 단계
+P1·P2 — 승인 게이트 경로 판정 후속: #533(PR #525 봇 지적 3건), #521의 `~` 쓰기 경로, #178. 봇 리뷰 1회차(P1 1·P2 1)와 오탐 3건 반영.
+
+## 한 일
+
+같은 부류의 더 좁은 변형이 이어지던 곳이라 사례 대신 부류를 닫았습니다. 리터럴로 다 읽을 수 없는 삭제 payload·대상·`~` 표기는 PI에게 묻고, 읽을 수 있으면 같은 `.tmp` 규칙을 적용합니다.
+
+| 항목 | main 재현 | 수정 |
+|---|---|---|
+| #533 P1 find payload | 재현: `find .tmp -exec rm $'-rf' /outside \;`, `-exec rm -f /outside`, `-exec $CMD {}`, `rm $'-rf' /x` 허용 | `-exec`·`-ok` payload는 리터럴 `rm`·`unlink` 한 명령으로만 읽고 `{}` 밖 대상도 `.tmp` 규칙으로 본다. 변수 명령, `$'..'` 단어, `sh -c 'rm ..'`·`env rm` 같은 감싼 삭제, `{}.bak`, `-execdir`의 `{}` 밖 대상은 묻는다. `rm`의 `--` 앞 단어가 확장으로 시작하면(`$'-rf'`, `"$OPT"`, `-f"$X"`, `{-r,x}`) 재귀 삭제로 본다. |
+| #533 P1 PowerShell script block | 재현: `gci .tmp \| % { [IO.DirectoryInfo]::new('C:/outside').Delete($true) }`, `\| % { 'C:/x' } \| Remove-Item`, `\| % { iex $code }` 허용 | pipe 뒤를 문법으로 읽는다. 중간 단계는 항목을 그대로 넘기는 `Where-Object`·`Sort-Object`·`Select-Object -First` 등, 마지막은 경로 없는 `Remove-Item`이거나 `$_`·`$PSItem`만 지우는 `Remove-Item`·`$_.Delete()`. 그 밖은 묻는다. pipe 밖 .NET 삭제(`[IO.Directory]::Delete(..)`, `(Get-Item x).Delete($true)`)도 묻는다. |
+| #533 P2 R 판정 범위 | 재현: `python wrapper.py "$INPUT" "install.packages('x')"` 거부 | R 호출 판정은 프로그램 자리 단어에만 건다: 첫 단어, `&` 뒤, wrapper(`nohup`·`sudo -u x`)와 실행기(`uv run`·`conda run`·`pixi run` 등)가 실행하는 단어. Python script·`-c` 뒤는 인자. 모르는 프로그램이면 모든 단어를 본다. |
+| #521 `~` 쓰기 대상 | 재현: `cp a ~/x`, `> ~/.bashrc`, `curl -o ~/x`, `tee ~/x`, `Set-Content ~/x` 허용 | 쓰기 대상의 `~`를 Bash는 `HOME`(없으면 `USERPROFILE`·`HOMEDRIVE`+`HOMEPATH`), PowerShell은 Windows에서 `USERPROFILE`·`HOMEDRIVE`+`HOMEPATH`로 펼쳐 모두 허용 폴더 안일 때만 허용. `~user`·`~+`·`~-`, home을 모를 때는 묻는다. 읽기 경로는 그대로. |
+| #178 링크의 다른 표기 | 재현: `policy.private_paths: []`이면 통제 구역 링크가 있어도 맨 `Read`·셸 규칙을 미리 허용해, `DATA~1/raw.tsv`는 거부 규칙을 비껴 게이트를 거치지 않음 | 그런 링크가 있는 Claude 단계는 개인 경로 차단처럼 셸 규칙을 빼고 읽기를 작업 폴더 `Read(//폴더/**)`로 좁힌다(실측 `claude_read_scope_alias.json`: 링크로 폴더 밖에 닿는 읽기는 사전 허용되지 않음). 게이트는 실제 경로로 비교한다. Windows 11 실측 test에서 junction의 8.3 이름·대소문자 표기 모두 Read 거부·셸 승인 요청(8.3이 꺼진 볼륨은 skip). |
+
+### 리뷰 1회차 (a7cfd20 → 2002b27)
+
+| 지적 | 수정 |
+|---|---|
+| P1: `uv --project foo run Rscript -e "install.packages('x')"`에서 `foo`를 subcommand로 읽어 Rscript를 놓침 | 실행기 표(`uv`·`uvx`·`conda`·`mamba`·`micromamba`·`pixi`·`poetry`·`npx`·`pnpm`)로 전역 옵션을 건너뛰어 subcommand와 그 프로그램을 찾는다. 표에 없는 옵션이 subcommand 앞에 있거나 subcommand가 변수면 뒤 단어를 모두 프로그램 자리로 본다. 공유 환경의 변수 프로그램 판정(`uv --project p run "$PIP" "$ACTION"`)도 같은 표를 쓴다. |
+| P2: `Write-Output '$_.Delete()'` 같은 출력 문자열을 .NET 삭제로 읽음 | 쓰기 판정과 같은 quote-aware 처리로 data 명령의 따옴표 안을 빼고 찾는다. 판정이 불확실하면(`iex` 등) 원문을 본다. |
+| 오탐: `docker rm "$id"`, `git rm "$f"`, `rm -f "$f"`가 승인 카드를 띄움 | 재귀 삭제 규칙은 실제 실행 파일이 rm일 때만 본다(명령 맨 앞, `sudo`·`xargs`·`find`·`sh` 같은 실행기나 변수 프로그램 뒤). `git rm`은 지금 트리 안이면 허용하고 `-C`·`--git-dir`·`--work-tree`·`core.worktree`·`GIT_DIR`·`GIT_WORK_TREE`가 있거나 앞 단어가 변수면 묻는다. 큰따옴표 변수 하나가 유일한 대상인 `rm`은 허용한다. |
+
+## 테스트 결과
+
+- [x] 새 test 119개(파라미터 포함). 1차 59개는 main에서 45개 실패, 리뷰 반영분 60개는 a7cfd20에서 42개 실패, 수정 뒤 모두 통과. 나머지 32개는 guard(허용 형태 유지, 계속 묻는 형태, 8.3·대소문자 실측 2개).
+- [x] 기존 허용 test(분석 명령, `.tmp` 정리) 그대로 통과. 약하게 바꾼 test 없음.
+- [x] Windows 전체 `pytest -q`(모의 e2e 포함): 5445 passed, 66 skipped (`--basetemp`·`LABHQ_STATE_DIR`는 %TEMP% 아래 한 폴더, 끝나고 지움)
+- [x] `scripts/check_public.sh`
+- [x] `python scripts/patch_notes.py check --base origin/main --head HEAD`
+
+## 바꾼 파일
+
+- `labhq/policy.py`, `labhq/environment_install.py`, `labhq/adapters/base.py`, `labhq/adapters/claude_code.py`, `labhq/runner/daemon.py`
+- `tests/test_policy.py`, `tests/test_environment_install.py`, `tests/test_project_link_spellings.py`(새)
+- `docs/manual.md`(승인 게이트와 쓰기 범위, 공유 환경 문단, 알려진 한계의 #178 문단)
+
+## 바뀌는 동작 (main 대비)
+
+- 새로 묻는 것:
+  - `rm` 옵션 자리의 읽을 수 없는 단어: `rm $'-rf' x`, `rm -f $f`(따옴표 없음), `rm -f "$a" "$b"`, `rm "$f" x`
+  - `.tmp` 밖을 지우거나 읽을 수 없는 `find -exec` 삭제
+  - PowerShell에서 pipe 뒤 다른 경로 삭제, pipe 밖 .NET 삭제
+  - home이 허용 폴더 밖일 때 `~`로 시작하는 셸 쓰기 대상
+  - `git rm`에 `-C`·`--git-dir`·`--work-tree`·`core.worktree`·`GIT_DIR`·`GIT_WORK_TREE`가 있거나 앞 단어가 변수일 때
+- 공유 환경에서 새로 거부하는 것: 표에 없는 실행기 옵션이나 모르는 실행기 뒤의 R·pip 설치 호출
+- 새로 묻지 않는 것:
+  - 지금 트리 안의 `git rm -r x`
+  - 다른 프로그램의 `rm` 인자: `docker rm "$id"`, `echo rm -rf x`
+  - `python wrapper.py "$IN" "install.packages('x')"`
+- 그대로: `rm -f "$f"`(큰따옴표 변수 하나가 유일한 대상), `rm -f -- "$f"`, `.tmp` 정리, 분석 명령
+- Claude 단계: 통제 구역 링크가 있는 project 폴더를 열면 셸 명령마다 게이트를 거친다. 개인 경로 차단이 켜진 기본 설정에서는 이미 그렇다.
+- 한계: 감싼 본문에 삭제 단어가 없는 `find ... -exec sh -c '...'`는 예전처럼 허용(최상위 `sh -c`와 같은 어휘 판정).
+
+## 막힌 점
+
+- 없음. 독립 코드 리뷰는 돌리지 않음(Codex 일일 상한으로 Claude가 대신 맡은 레인).
+
+## PI·Claude에게 물을 것
+
+- 없음.
+
+## 확인
+
+- [x] `docs/status/2026-10-12-1324-policy-path-followups.md`에 같은 보고 추가
+- [x] 실제 labhq 인스턴스 실행·재시작 없음
+
+Closes #533
+Closes #178
+Refs #521
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
 ## 단계
 P2 — #527 봇이 남긴 연구 lane 후속 3건
 

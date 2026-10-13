@@ -124,10 +124,12 @@ def _snapshot(*children):
     return [base._ProcessInfo(41073, 1, "codex.exe", "codex exec"), *children]
 
 
-def _fake_kill(monkeypatch, killed):
+def _fake_kill(monkeypatch, killed, completed=None):
     async def kill(proc):
         killed.append(proc.pid)
         proc.end()
+        if completed is not None:
+            completed.set()
 
     monkeypatch.setattr(base.AgentAdapter, "_kill", staticmethod(kill))
 
@@ -192,6 +194,11 @@ async def test_started_mcp_call_without_completion_is_not_ended(tmp_path, monkey
 
     assert result.ok, result.error
     assert killed == []
+    logs = [(e["data"].get("level"), e["data"].get("text", "")) for e in runner.store.pending()
+            if e["type"] == "agent.log"]
+    assert any(level == "debug" and "PI 카드 응답을 기다리는 중이라 끊지 않습니다" in text
+               for level, text in logs)
+    assert not any("끊고 다시 시도" in text or "단계를 취소" in text for _level, text in logs)
 
 
 @pytest.mark.asyncio
@@ -359,14 +366,17 @@ async def test_temporary_process_snapshot_failure_is_rechecked(tmp_path, monkeyp
         return None if snapshots <= 2 else _snapshot()
 
     killed = []
+    killed_event = asyncio.Event()
     monkeypatch.setattr(base, "pending_uac_prompts", no_prompts)
     monkeypatch.setattr(base, "_process_snapshot", snapshot)
-    _fake_kill(monkeypatch, killed)
+    _fake_kill(monkeypatch, killed, killed_event)
     runner = _runner(tmp_path, monkeypatch, quiet=60, stall_warn_s=0.02, stall_retry_s=0.04,
                      finish=False, session_first=True)
 
-    result = await asyncio.wait_for(
-        runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"})), 2)
+    running = asyncio.create_task(
+        runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"})))
+    await asyncio.wait_for(killed_event.wait(), 60)
+    result = await asyncio.wait_for(running, 60)
 
     assert snapshots >= 4
     assert killed == [41073]

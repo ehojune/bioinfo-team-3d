@@ -1,22 +1,34 @@
-import {answerRequired, revisionNoteMissing, syncDecisionCards} from '../../ui/decide.js';
+import {answerRequired, revisionNoteMissing, syncDecisionCards, syncDecisionHistory, createHistoryVisibility} from '../../ui/decide.js';
 
 // DOM controls and transport stay outside the shared event reducer.
 export function startLiveOffice(onState) {
-  const {S, apply, visual, fillRequestDetail, KIND_KO} = globalThis.LabHQState.createOfficeState();
+  const {S, apply, visual, fillRequestDetail, KIND_KO, phaseLabel} = globalThis.LabHQState.createOfficeState();
   const $ = id => document.getElementById(id);
   const params = new URLSearchParams(location.search);
-  const readToken = () => { try { return localStorage.getItem('labhq_token') || ''; } catch { return ''; } };
-  const saveToken = value => { try { localStorage.setItem('labhq_token', value); } catch {} };
+  const demo = globalThis.LABHQ_BOOT?.demo === true;
+  const tokenKey = globalThis.LabHQState.officeStorageKey(globalThis.LABHQ_BOOT, 'labhq_token');
+  const readToken = () => { try { return localStorage.getItem(tokenKey) || ''; } catch { return ''; } };
+  const saveToken = value => { try { localStorage.setItem(tokenKey, value); } catch {} };
   let token = params.get('token') || readToken(), lastSeq = 0, ws, retry, backoff = 1000;
   if (params.has('token')) {
     saveToken(token); params.delete('token');
     history.replaceState(null, '', location.pathname + (params.size ? `?${params}` : ''));
   }
   document.body.classList.add('live-mode');
+  if (demo) document.body.classList.add('gateway-demo');
   $('live-panel').hidden = false; $('demo-2d').hidden = true;
-  document.querySelector('.demo').textContent = 'LIVE';
+  document.querySelector('.demo').textContent = demo ? '데모(mock)' : 'LIVE';
   $('state').disabled = true; $('randomize').hidden = true;
   const pending = new Set(), loadingAnswers = new Set();
+  const historyVisibility = createHistoryVisibility(`live:${globalThis.LABHQ_BOOT?.instance || ''}`);
+  let decisionHistory = [];
+  async function refreshHistory() {
+    try {
+      const response = await fetch('/api/approvals/history?limit=50', {headers:{Authorization:`Bearer ${token}`}});
+      if (!response.ok) return;
+      decisionHistory = await response.json(); render();
+    } catch {}
+  }
   let noticeApproval = null;  // #184: the approval whose request the notice shows, cleared when it ends
   const notice = (value, approvalId = null) => { $('live-notice').textContent = value; noticeApproval = approvalId; };
   // #126: a snapshot holds the head of a long follow-up answer; the full request comes from the gateway on demand.
@@ -51,7 +63,9 @@ export function startLiveOffice(onState) {
     const el = document.createElement(tag); el.textContent = value; parent.append(el); return el;
   }
   function render() {
-    $('connection').textContent = {live:'실시간', connecting:'연결 중', offline:'연결 끊김 · 재시도 중', auth:'토큰 확인 필요'}[S.conn];
+    $('connection').textContent = globalThis.LabHQState.connectionLabel(S.conn, demo);
+    $('demo-banner').hidden = !demo;
+    if (demo) $('demo-banner').textContent = globalThis.LabHQState.demoBannerText(S.demoStatus);
     $('token-form').hidden = S.conn !== 'auth' && S.conn !== 'offline';
     $('approval-count').textContent = S.approvals.size + S.engineHolds.size;
     const holdRows = [...S.engineHolds.values()].map(hold => {
@@ -77,6 +91,10 @@ export function startLiveOffice(onState) {
           : {type:'approval.resolve', id:a.id, approved, note}));
         pending.add(a.id); render();
       }});
+    if ($('approval-history')) syncDecisionHistory($('approval-history'), decisionHistory, {
+      kindLabels: KIND_KO, requests: S.requests, visibility: historyVisibility,
+      onOpenRequest: id => { const row = [...$('requests').children].find(row => row.dataset.requestId === id); row?.scrollIntoView({block:'start'}); },
+    });
     const requests = $('requests'), oldRows = new Map([...requests.children]
       .filter(row => row.dataset?.requestId).map(row => [row.dataset.requestId, row]));
     const rows = [];
@@ -90,10 +108,9 @@ export function startLiveOffice(onState) {
       if (prior?.dataset.renderKey === key) { rows.push(prior); continue; }
       const row = document.createElement('article'); row.dataset.requestId = q.id; row.dataset.renderKey = key; rows.push(row);
       text(row, 'strong', q.text || q.id);
-      const route = q.processing?.fallback ? '처리: 단독 실패 → 팀'
-        : q.processing?.mode === 'solo' ? `처리: 단독(${q.processing.agent_id})`
-        : q.processing?.mode === 'team' ? '처리: 팀' : '처리: 결정 중';
-      text(row, 'p', `${status} · ${q.phase} · ${route}`);
+      // Same labels as the 2.5D board. A finished request says 완료/실패 in its status already, so no phase then.
+      text(row, 'p', [status, q.phase === 'done' ? '' : phaseLabel(q), globalThis.LabHQState.processingLabel(q)]
+        .filter(Boolean).join(' · '));
       const audit = text(row, 'a', '감사 번들');
       audit.href = `/api/requests/${encodeURIComponent(q.id)}/audit-bundle`;
       audit.onclick = event => { event.preventDefault(); downloadAuditBundle(q.id); };
@@ -154,7 +171,7 @@ export function startLiveOffice(onState) {
     if (!token) { S.conn = 'auth'; render(); return; }
     S.conn = 'connecting'; render();
     ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/client?token=${encodeURIComponent(token)}${lastSeq ? `&since=${lastSeq}` : ''}`);
-    ws.onopen = () => { S.conn = 'live'; backoff = 1000; render(); };
+    ws.onopen = () => { S.conn = 'live'; backoff = 1000; refreshHistory(); render(); };
     ws.onmessage = event => {
       try {
         const ev = JSON.parse(event.data);
@@ -168,6 +185,7 @@ export function startLiveOffice(onState) {
         if (ev.type === 'snapshot') { lastSeq = ev.seq || 0; pending.clear(); }
         else if (ev.seq && ev.seq > lastSeq) lastSeq = ev.seq;
         for (const id of pending) if (!S.approvals.has(id)) pending.delete(id);
+        if (ev.type === 'approval.resolved') refreshHistory();
         render();
       } catch (error) { console.warn('bad event', error); }
     };

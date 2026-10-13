@@ -436,9 +436,10 @@ Contract rules:
 - Freeze analysis unit, selection/exclusion, comparators, metrics, validation, resources, stop/approval
   conditions, data boundaries, and statistics applicability before execution. Every not_applicable item needs a reason.
   Applicable statistics needs estimand, analysis_unit, and primary_outcomes.
-- `budget_usd` (optional number): the most this whole request may spend in USD, earlier rounds included. On CP1
-  approval it becomes the enforced cap (never above the lab's per-request cap); spending past it waits for a PI
-  budget card. Write the same figure in protocol.resource_limits. Leave it out when you cannot estimate it.
+- `budget_usd` (optional number): the additional execution budget in USD after this plan's CP1 approval.
+  Exclude briefing, clarification, planning and all earlier-round spending already incurred. On approval labhq adds
+  that spending to this budget and clamps the total to the configured request cap; exceeding it waits for a PI
+  budget card. Write this additional amount in protocol.resource_limits. Leave it out when you cannot estimate it.
 - Each step declares phase, claim_ids, input_refs, outputs, checks, evidence_slots, and depends_on. Every output is
   inside that step's own workspace outputs/ folder, written as outputs/<name>, and the instruction uses that exact
   path. Never declare an absolute path, home path, `..`, or a file at the workspace root.{output_types_rule}{topics_rule}
@@ -480,6 +481,19 @@ RESEARCH_CP2_RULE = (
 RESEARCH_CP2_PLAN_PROMPT = RESEARCH_PLAN_PROMPT.replace(RESEARCH_CP1_ONLY_RULE, RESEARCH_CP2_RULE)
 # CP2 cards an answer without a readable choice gets before the request ends as not approved.
 CP2_MAX_ASKS = 3
+# One readable reason per research ending that is not a success. The office feed prints it after "요청이 실패했어요: ",
+# so a request that ends with a report (report_incomplete) or at a PI card (CP2) no longer shows an empty reason.
+RESEARCH_END_ERRORS = {
+    "report_incomplete": "보고서는 나왔지만 claim 검사에서 문제가 있어요(실행 기록 참고)",
+    "research_reported": "예산 승인을 받지 못해 보고서를 완료로 보지 않았어요",
+    "research_review_revise": "리뷰가 수정을 요구했고 이어 가지 않아 요청이 끝났어요(실행 기록 참고)",
+    "research_review_unparsed": "연구 리뷰 결과를 읽지 못해 요청이 끝났어요(실행 기록 참고)",
+    "research_failed": "연구가 끝까지 가지 못했어요(실행 기록 참고)",
+    "evidence_rejected": "CP2에서 근거를 거절해 요청이 끝났어요",
+    "evidence_revision_requested": "CP2에서 수정을 요청했지만 새 계획으로 이어지지 않아 요청이 끝났어요",
+    "evidence_timed_out": "CP2 카드에 기한 안에 답이 없어 근거를 승인하지 않고 끝냈어요",
+    "evidence_unreadable": "CP2 카드의 선택을 읽지 못해 근거를 승인하지 않고 끝냈어요",
+}
 
 RESEARCH_STEP_PROMPT = """Overall request (context only): {request}
 
@@ -897,18 +911,26 @@ CONTINUE_NOTE_RULE = ("The PI wrote these on the previous round's cards. Use the
                       "PI approves the new plan at its own CP1.")
 
 
+def _plan_cap_sum(budget: dict[str, Any]) -> str:
+    """The two parts of an approved plan's cap, in the words the CP1 card and the staff prompts share."""
+    return (f"계획 예산 ${float(budget.get('plan_budget_usd') or 0):.2f} + "
+            f"계획까지 쓴 ${float(budget.get('spent_before_plan_usd') or 0):.2f}")
+
+
 def _budget_line(budget: dict[str, Any]) -> str:
-    """The CP1 card's one line on the cap its approval enforces (PI 점검 R17)."""
+    """The CP1 card's one line on the cap its approval enforces (PI 점검 R17): the plan's budget_usd on top of what
+    the request spent up to this CP1, never above the configured cap."""
     origin = {"request": "요청 예산", "policy": "정책 per_request_usd"}
     cap, planned = float(budget.get("cap_usd") or 0), budget.get("plan_budget_usd")
     if not cap:
         return "집행 상한 없음(정책 per_request_usd 0)."
     if planned is None:
         return f"집행 상한 ${cap:.2f}({origin.get(budget.get('source'), '요청 예산')}, 계획에 budget_usd 없음)."
+    total = float(planned) + float(budget.get("spent_before_plan_usd") or 0)
     if budget.get("source") == "plan":
-        return f"집행 상한 ${cap:.2f}(계획 budget_usd). 넘으면 예산 카드가 뜹니다."
-    return (f"집행 상한 ${cap:.2f}(계획 budget_usd ${float(planned):.2f}가 "
-            f"{origin.get(budget.get('source'), '요청 예산')}보다 커서 줄임).")
+        return f"집행 상한 ${cap:.2f}({_plan_cap_sum(budget)}). 넘으면 예산 카드가 뜹니다."
+    return (f"집행 상한 ${cap:.2f}({origin.get(budget.get('source'), '요청 예산')} ${cap:.2f}에 맞춰 줄임: "
+            f"{_plan_cap_sum(budget)} = ${total:.2f}).")
 
 
 def research_cp2_notes(contract: dict) -> list[tuple[str, str]]:
@@ -1021,6 +1043,13 @@ def merged_turn(first: TaskResult, later: TaskResult) -> TaskResult:
         "workdir": later.workdir or first.workdir,
         "workdir_id": later.workdir_id or first.workdir_id,
     })
+
+
+def merged_workspace_rerun(first: TaskResult | None, later: TaskResult) -> TaskResult:
+    """Keep unreported files when another task id reuses the same step folder."""
+    if first and first.workdir and later.workdir == first.workdir:
+        return merged_turn(first, later)
+    return later
 
 
 def reference_meta(request: dict | None) -> dict[str, list[str]]:
@@ -2543,9 +2572,7 @@ class Orchestrator:
                 "from": "labhq", "routed_to": "cso", "remaining_asks": 0}))
             return
 
-        hard_stops = (self.hub.s.policy.bioinfo_agent.hard_stops
-                      if ask.agent_id == "bioinfo-agent" else None)
-        stop = hard_stop_kind(ask, hard_stops)
+        stop = hard_stop_kind(ask, self.hub.s.policy.bioinfo_agent.hard_stops)
         requested = ask.to
         # Who this ask went to before a gateway restart. The roster lacks that employee until its
         # runner reconnects, and the runner may still be answering it (#113).
@@ -2951,10 +2978,11 @@ class Orchestrator:
                     previous_workdir = res.workdir or previous_workdir
                     if res.session_id and self.hub.supports_resume(current.agent_id):
                         previous_session = res.session_id
+                    res = merged_workspace_rerun(previous_result, res)
                     if kind == "environment":  # the record the step result, its event and the report show (#35)
                         res = res.model_copy(update={"environment": environment_problem(res, engine)})
                 if res.tool_errors:
-                    tool_errors.extend(res.tool_errors)
+                    tool_errors = list(dict.fromkeys([*tool_errors, *res.tool_errors]))
                 if tool_errors:  # a retry that succeeds keeps the earlier attempts' failed lookups (PR #363 review)
                     res = res.model_copy(update={"tool_errors": list(tool_errors)})
                 # Audit even failed/exceptional attempts. Keep answered asks across
@@ -3051,9 +3079,10 @@ class Orchestrator:
                                  **({"workdir": res.workdir} if res.workdir else {})},
                         "resume_session_id": res.session_id if can_resume else None,
                     })
-                    res = await dispatch_with_retry(current, max_attempts)
+                    earlier = res
+                    res = merged_workspace_rerun(earlier, await dispatch_with_retry(current, max_attempts))
                     tool_errors.extend(res.tool_errors)
-                    res = res.model_copy(update={"tool_errors": list(tool_errors)})
+                    res = res.model_copy(update={"tool_errors": list(dict.fromkeys(tool_errors))})
                     continue
                 recovered = getattr(self.hub, "login_recovered", None)
                 if recovered is not None:
@@ -3092,9 +3121,11 @@ class Orchestrator:
                              **({"workdir": res.workdir} if res.workdir else {})},
                     "resume_session_id": res.session_id if can_resume else None,
                 })
-                res = await dispatch_with_retry(current, max_attempts)  # its first gate rechecks the budget
+                earlier = res
+                res = merged_workspace_rerun(
+                    earlier, await dispatch_with_retry(current, max_attempts))  # its first gate rechecks the budget
                 tool_errors.extend(res.tool_errors)
-                res = res.model_copy(update={"tool_errors": list(tool_errors)})
+                res = res.model_copy(update={"tool_errors": list(dict.fromkeys(tool_errors))})
 
         res = await dispatch_turn(task, max_attempts=task.meta.get("max_attempts"), start=initial_attempt)
         read_only = is_read_only_task(task.meta)
@@ -3329,13 +3360,16 @@ class Orchestrator:
                 if block:
                     raise BudgetExceeded(reason)
 
-    def _research_budget(self, req: dict, plan: dict) -> tuple[dict[str, Any], str]:
+    def _research_budget(self, rid: str, req: dict, plan: dict) -> tuple[dict[str, Any], str]:
         """The spending cap a CP1 approval of ``plan`` enforces (PI 점검 R17), and where its configured cap came from.
 
-        The configured cap is the request's own budget, else policy per_request_usd. It is fixed when a plan budget is
-        first applied (``research_contract.budget_cap``), so a later round's plan is held to it and not to an earlier
-        round's plan budget. A plan budget above it is cut to it. A plan without ``budget_usd`` keeps the request's
-        current cap; the card shows that cap either way."""
+        The plan's budget_usd is what execution may spend, so the cap is what the request has spent by this CP1 (the
+        briefing, precedent, clarify and planning turns, and an earlier round's work in a continuation) plus that
+        budget (trial 2026-10-12: a $3.00 plan cut the cap to $3.00 while $3.16 was already spent, and a budget card
+        opened 4 minutes after approval). The configured cap is the request's own budget, else policy per_request_usd.
+        It is fixed when a plan budget is first applied (``research_contract.budget_cap``), so a later round's plan is
+        held to it and not to an earlier round's plan budget, and it stays the hard ceiling: a cap above it is cut to
+        it. A plan without ``budget_usd`` keeps the request's current cap; the card shows that cap either way."""
         policy = float(self.hub.s.policy.budget.per_request_usd or 0)
         own = float(req.get("budget_usd") or 0)
         fixed = (req.get("research_contract") or {}).get("budget_cap") or {}
@@ -3348,11 +3382,12 @@ class Orchestrator:
             return {"cap_usd": own or policy, "source": "request" if own else "policy",
                     "configured_cap_usd": configured}, source
         planned = float(planned)
-        if configured and configured < planned:
-            return {"plan_budget_usd": planned, "cap_usd": configured, "source": source,
-                    "configured_cap_usd": configured}, source
-        return {"plan_budget_usd": planned, "cap_usd": planned, "source": "plan",
-                "configured_cap_usd": configured}, source
+        spent = round(self.cost.get(rid, 0.0), 4)
+        budget = {"plan_budget_usd": planned, "spent_before_plan_usd": spent, "cap_usd": round(spent + planned, 4),
+                  "source": "plan", "configured_cap_usd": configured}
+        if configured and configured < budget["cap_usd"]:
+            budget.update(cap_usd=configured, source=source)
+        return budget, source
 
     def _spending_cap_line(self, rid: str) -> str:
         """The cap ``_check_budget`` enforces now, for research step and review prompts (#499): staff otherwise read
@@ -3361,10 +3396,15 @@ class Orchestrator:
         cap = float(req.get("budget_usd") or self.hub.s.policy.budget.per_request_usd or 0)
         if not cap:
             return ""
-        approved = (((req.get("research_contract") or {}).get("approval") or {}).get("budget") or {}).get("cap_usd")
-        origin = ("the plan's budget_usd approved at CP1" if approved == cap else
-                  f"CP1 approved ${float(approved):.2f}; the PI raised it on a budget card" if approved else
-                  "the lab's request cap; the plan states no budget_usd")
+        plan_budget = ((req.get("research_contract") or {}).get("approval") or {}).get("budget") or {}
+        approved = plan_budget.get("cap_usd")
+        if approved == cap and "spent_before_plan_usd" in plan_budget:  # older approvals had the plan budget alone
+            clamped = plan_budget.get("source") != "plan"
+            origin = f"{_plan_cap_sum(plan_budget)}{'가 설정 상한을 넘어 상한으로 줄임' if clamped else ''}, CP1 승인"
+        else:
+            origin = ("the plan's budget_usd approved at CP1" if approved == cap else
+                      f"CP1 approved ${float(approved):.2f}; the PI raised it on a budget card" if approved else
+                      "the lab's request cap; the plan states no budget_usd")
         return (f"\n\nEnforced spending cap for this request: ${cap:.2f} ({origin}). It is the cap labhq enforces, "
                 "whatever amount protocol.resource_limits states; spending past it waits for a PI budget card.")
 
@@ -3539,6 +3579,7 @@ class Orchestrator:
                     "context": ""})
             async with sem:
                 outcome = await self.run_step(task)
+                outcome = merged_workspace_rerun(previous, outcome)
                 if decision and previous and previous.tool_errors:
                     outcome = outcome.model_copy(update={"tool_errors": list(dict.fromkeys([
                         *previous.tool_errors, *outcome.tool_errors,
@@ -4002,7 +4043,8 @@ class Orchestrator:
                        "report did not run.")
         if source_audit:
             report = _append_report_metadata(report, [source_audit])
-        self._finish(rid, report, serialized(), ok=decided == "approved")
+        self._finish(rid, report, serialized(), ok=decided == "approved",
+                     error=None if decided == "approved" else RESEARCH_END_ERRORS.get(f"evidence_{decided}"))
 
     async def _research_report(self, rid: str, text: str, steps: list[dict], results: dict[str, TaskResult], n: int,
                                serialized: Callable[[], dict[str, dict]], packs: dict, cp2_report: str,
@@ -4025,18 +4067,21 @@ class Orchestrator:
         lookup_section = [f"{FAILED_LOOKUP_TITLE}:\n" + "\n".join(failed_lookup_lines(lookups))] if lookups else []
         cp2_notes = research_cp2_notes(contract)  # PI 점검 R11: the notes reach the reviewer and the report writer
 
-        def end(outcome: str, report: str, ok: bool, review: dict | None, failure: dict | None = None) -> None:
+        def end(outcome: str, report: str, ok: bool, review: dict | None, failure: dict | None = None,
+                error: str | None = None) -> None:
             if failure is not None:
                 contract["failure"] = {"steps": [], "plan_sha256": plan_hash, **failure}
             req["outcome"] = outcome
             self.hub.save_request(rid)
             if lookup_section:
                 report = _execution_warning_summary(report)
-            self._finish(rid, _append_report_metadata(report, lookup_section), serialized(), ok=ok, review=review)
+            self._finish(rid, _append_report_metadata(report, lookup_section), serialized(), ok=ok, review=review,
+                         error=None if ok else error or RESEARCH_END_ERRORS.get(outcome))
 
         def budget_denied(stage: str, review: dict | None) -> None:
             end("research_failed", cp2_report + f"\n\nResearch {stage} stopped: the budget was not approved.",
-                False, review, {"stage": stage, "budget": self.budget_denials[rid]})
+                False, review, {"stage": stage, "budget": self.budget_denials[rid]},
+                error="예산 승인을 받지 못해 연구를 멈췄어요")
 
         stored = contract.get("review") or {}
         review: dict = {}
@@ -4116,7 +4161,8 @@ class Orchestrator:
                 budget_denied("synthesis", review)
             else:
                 end("research_failed", cp2_report + f"\n\nSynthesis failed: {final.error}", False, review,
-                    {"stage": "synthesis", "error": final.error or "unknown error"})
+                    {"stage": "synthesis", "error": final.error or "unknown error"},
+                    error=f"보고서 작성에 실패했어요: {short(final.error or '원인을 알 수 없어요', 120)}")
             return
         # A report that finished keeps its text and check even if the budget card after it was denied; the denial
         # only fails the request, as in the generic synthesis (run_step: a completed attempt keeps its result).
@@ -4687,7 +4733,7 @@ class Orchestrator:
                         summary = (f"이어 가기 {carried.get('round')}차 계획({source}). 재사용: "
                                    f"{', '.join(carried.get('reuse') or []) or '없음'} · 다시 실행: "
                                    f"{', '.join(carried.get('rerun') or {}) or '없음'}. ") + summary
-                    budget, configured_source = self._research_budget(req, plan)
+                    budget, configured_source = self._research_budget(rid, req, plan)
                     budget_line = _budget_line(budget)  # kept whole: the web shows the summary, not detail.budget
 
                     async def ask_cp1(prefix: str = "") -> dict:
@@ -4721,8 +4767,10 @@ class Orchestrator:
                         approval["choice"] = "revise"
                     approval.update(request_id=rid, protocol_revision=plan["protocol"]["revision"])
                     if approval.get("approved") and "plan_budget_usd" in budget:
-                        # PI 점검 R17: the plan's budget becomes the enforced cap, in the save that records CP1, and
-                        # only here: a resume of an approved plan keeps a cap the PI raised on a budget card since.
+                        # PI 점검 R17: the plan's budget on top of what is spent now becomes the enforced cap, in the
+                        # save that records CP1, and only here: a resume of an approved plan keeps a cap the PI raised
+                        # on a budget card since. Counted again at approval, not as the card showed it.
+                        budget, configured_source = self._research_budget(rid, req, plan)
                         approval["budget"] = budget
                         req["budget_usd"] = budget["cap_usd"]
                         req["research_contract"].setdefault("budget_cap", {

@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 
 from ..models import CliSpec
-from ..util import short
+from ..util import event_preview, short
 from .base import (AgentAdapter, role_footer, RunContext, RunState, expand_env, record_model_id,
                    token_counts, wrap_cwd)
 
@@ -81,7 +81,7 @@ class CliAdapter(AgentAdapter):
                 ev = None
         if not isinstance(ev, dict) or "type" not in ev:
             st.text_parts.append(line + "\n")
-            await ctx.emit("agent.log", {"text": short(line, 2000)})
+            await ctx.emit("agent.log", {**event_preview("text", line, 2000)})
             return
         typ = ev["type"]
         record_model_id(st, ctx, ev.get("model_id") or ev.get("model"))
@@ -89,9 +89,9 @@ class CliAdapter(AgentAdapter):
             await ctx.emit("agent.status", {"state": ev.get("state", "working"), "task": ev.get("task")})
         elif typ == "log":
             st.text_parts.append(str(ev.get("text", "")) + "\n")
-            await ctx.emit("agent.log", {"text": short(ev.get("text"), 2000)})
+            await ctx.emit("agent.log", {**event_preview("text", ev.get("text"), 2000)})
         elif typ == "tool":
-            await ctx.emit("agent.tool", {"name": ev.get("name"), "input": short(ev.get("input"), 400)})
+            await ctx.emit("agent.tool", {"name": ev.get("name"), **event_preview("input", ev.get("input"), 400)})
         elif typ == "usage":
             st.cost_usd = ev.get("cost_usd", st.cost_usd)
             raw = ev.get("tokens")
@@ -107,4 +107,4 @@ class CliAdapter(AgentAdapter):
             if ev.get("ok") is False:
                 st.error = ev.get("error") or "agent reported failure"
         else:
-            await ctx.emit("agent.log", {"text": short(ev, 400), "level": "debug"})
+            await ctx.emit("agent.log", {**event_preview("text", ev, 400), "level": "debug"})

@@ -409,6 +409,7 @@ def test_down_refuses_active_work_and_force_terminates_only_recorded_trees(tmp_p
         "step_progress": {"steps": {"download": "done", "analysis": "hibernating"}},
     }])
     monkeypatch.setattr(cli, "_shutdown_readiness", lambda _settings: "unknown")  # no live gateway in tests
+    monkeypatch.setattr(cli, "_health", lambda _settings: None)  # `down` re-checks the gateway after stopping
     killed = []
     monkeypatch.setattr(cli, "_terminate_tree", lambda pid, **kwargs: killed.append(pid))
 
@@ -474,7 +475,7 @@ def test_doctor_warns_when_python3_is_a_windows_app_alias(monkeypatch):
 
 
 def test_demo_web_chooses_a_free_port_when_8787_is_busy(monkeypatch):
-    monkeypatch.setattr(cli, "_port_available", lambda host, port: False)
+    monkeypatch.setattr(cli, "_port_available", lambda host, port: port != 8787)
     monkeypatch.setattr(cli, "free_port", lambda: 54321)
     assert cli._demo_web_port("127.0.0.1", 8787) == 54321
 
@@ -620,3 +621,159 @@ def test_down_refuses_when_readiness_fails_or_names_a_request_the_list_missed(tm
     with pytest.raises(SystemExit) as stopped:
         cli._down(settings, force=False)
     assert stopped.value.code == 2 and killed == [] and "req_new" in capsys.readouterr().err
+
+
+def test_taskkill_output_is_decoded_as_oem_and_a_failure_without_text_still_raises_oserror(monkeypatch):
+    """Trial-ready 2026-10-12: labhq.cmd sets PYTHONUTF8=1, taskkill answers in cp949, and a bare text=True killed both
+    reader threads with UnicodeDecodeError tracebacks and returned None, so the failure message code hit None.split()."""
+    seen = {}
+
+    def fake_run(command, **kwargs):
+        seen.update(kwargs)
+        return subprocess.CompletedProcess(command, 1, stdout=None, stderr=None)  # what a failed decode leaves
+
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(cli, "_process_created", lambda pid: "alive")
+    with pytest.raises(OSError, match="taskkill exit 1"):
+        cli._terminate_tree(4242)
+    assert seen["encoding"] == "oem" and seen["errors"] == "replace" and not seen.get("text")
+
+
+def test_taskkill_failure_text_survives_when_one_stream_is_empty(monkeypatch):
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    monkeypatch.setattr(cli.subprocess, "run", lambda command, **kwargs: subprocess.CompletedProcess(
+        command, 128, stdout="", stderr="오류: 프로세스를 찾을 수 없습니다."))
+    monkeypatch.setattr(cli, "_process_created", lambda pid: "alive")
+    with pytest.raises(OSError, match="프로세스를 찾을 수 없습니다"):
+        cli._terminate_tree(4242)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the OEM code page is a Windows thing")
+def test_oem_decoding_never_raises_on_bytes_that_are_not_utf8():
+    result = subprocess.run([sys.executable, "-c", "import sys; sys.stdout.buffer.write(bytes([0xbc, 0xba, 0xb0]))"],
+                            capture_output=True, encoding="oem", errors="replace", timeout=30)
+    assert isinstance(result.stdout, str) and result.stdout
+
+
+def test_down_does_not_report_success_while_an_unrecorded_gateway_still_answers(tmp_path, monkeypatch, capsys):
+    """Trial-ready 2026-10-12: a gateway started by a script has no PID record; `down` printed `기록된 프로세스 없음`
+    with exit 0 while it kept serving, and the next `up` reused it."""
+    settings = Settings.load(str(_config(tmp_path)))
+    monkeypatch.setattr(cli, "_active_requests", lambda _settings: [])
+    monkeypatch.setattr(cli, "_shutdown_readiness",
+                        lambda _settings: {"requests": [], "followups": [], "recruits": 0, "ready": True})
+    monkeypatch.setattr(cli, "_health", lambda _settings: {"service": "labhq gateway", "runners": [settings.runner.id]})
+    monkeypatch.setattr(cli, "_terminate_tree", lambda pid, **kwargs: pytest.fail("nothing was recorded"))
+    with pytest.raises(SystemExit) as stopped:
+        cli._down(settings, force=False)
+    captured = capsys.readouterr()
+    assert stopped.value.code == 2
+    assert "`up`이 아닌 방법으로 시작한 gateway/runner가 아직 실행 중" in captured.err and "종료하지 못했습니다" in captured.err
+    assert "종료:" not in captured.out
+
+
+def test_down_names_what_it_stopped_and_still_fails_when_another_gateway_keeps_answering(tmp_path, monkeypatch, capsys):
+    settings = Settings.load(str(_config(tmp_path)))
+    _write_process_record(settings, "runner", 4244, "runner-generation")
+    _write_process_record(settings, "gateway", 4245, "gateway-generation")
+    monkeypatch.setattr(cli, "_process_created", lambda pid: {4244: "runner-generation", 4245: "gateway-generation"}[pid])
+    monkeypatch.setattr(cli, "_active_requests", lambda _settings: [])
+    monkeypatch.setattr(cli, "_shutdown_readiness",
+                        lambda _settings: {"requests": [], "followups": [], "recruits": 0, "ready": True})
+    monkeypatch.setattr(cli, "_health", lambda _settings: {"service": "labhq gateway", "runners": []})
+    monkeypatch.setattr(cli, "_DOWN_RECHECK_SECONDS", 0.0)
+    killed = []
+    monkeypatch.setattr(cli, "_terminate_tree", lambda pid, **kwargs: killed.append(pid))
+    with pytest.raises(SystemExit) as stopped:
+        cli._down(settings, force=False)
+    captured = capsys.readouterr()
+    assert stopped.value.code == 2 and killed == [4244, 4245]
+    assert "종료: runner PID 4244, gateway PID 4245" in captured.out
+    assert "`up`이 아닌 방법으로 시작한" in captured.err
+
+
+def test_down_with_nothing_running_still_says_there_was_nothing_to_stop(tmp_path, monkeypatch, capsys):
+    settings = Settings.load(str(_config(tmp_path)))
+    monkeypatch.setattr(cli, "_active_requests", lambda _settings: [])
+    monkeypatch.setattr(cli, "_shutdown_readiness",
+                        lambda _settings: {"requests": [], "followups": [], "recruits": 0, "ready": True})
+    monkeypatch.setattr(cli, "_health", lambda _settings: None)
+    cli._down(settings, force=False)
+    assert capsys.readouterr().out.strip() == "종료: 기록된 프로세스 없음"
+
+
+def test_down_waits_briefly_for_a_stopped_gateway_to_stop_answering(tmp_path, monkeypatch, capsys):
+    settings = Settings.load(str(_config(tmp_path)))
+    _write_process_record(settings, "gateway", 4245, "gateway-generation")
+    monkeypatch.setattr(cli, "_process_created", lambda pid: "gateway-generation")
+    monkeypatch.setattr(cli, "_active_requests", lambda _settings: [])
+    monkeypatch.setattr(cli, "_shutdown_readiness",
+                        lambda _settings: {"requests": [], "followups": [], "recruits": 0, "ready": True})
+    answers = iter([{"service": "labhq gateway", "runners": []}, None])  # the socket closes a moment after the kill
+    monkeypatch.setattr(cli, "_health", lambda _settings: next(answers))
+    monkeypatch.setattr(cli, "_terminate_tree", lambda pid, **kwargs: None)
+    cli._down(settings, force=False)
+    assert capsys.readouterr().out.strip() == "종료: gateway PID 4245"
+
+
+def _remote_gateway_settings(tmp_path) -> Settings:
+    settings = Settings.load(str(_config(tmp_path)))
+    settings.gateway.url = "ws://10.20.30.40:8787"  # a gateway on another PC: this PC only runs the runner
+    return settings
+
+
+def _quiet_down(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_active_requests", lambda _settings: [])
+    monkeypatch.setattr(cli, "_shutdown_readiness",
+                        lambda _settings: {"requests": [], "followups": [], "recruits": 0, "ready": True})
+    monkeypatch.setattr(cli, "_DOWN_RECHECK_SECONDS", 0.0)
+
+
+@pytest.mark.parametrize("host", ["workstation", "192.0.2.15", "proxy.example", "unknown.example"])
+def test_down_checks_url_identity_for_a_wildcard_bound_gateway(tmp_path, monkeypatch, capsys, host):
+    settings = Settings.load(str(_config(tmp_path)))
+    settings.gateway.host = "0.0.0.0"
+    settings.gateway.url = f"wss://{host}:8787"
+    monkeypatch.setattr(cli.socket, "gethostname", lambda: "workstation")
+
+    def addresses(name, port):
+        if name == "unknown.example":
+            raise cli.socket.gaierror("not resolved")
+        return [(cli.socket.AF_INET, cli.socket.SOCK_STREAM, 6, "", ("192.0.2.15", 0))]
+
+    monkeypatch.setattr(cli.socket, "getaddrinfo", addresses)
+    _quiet_down(monkeypatch)
+    monkeypatch.setattr(cli, "_health", lambda _: {"service": "labhq gateway", "runners": []})
+    with pytest.raises(SystemExit) as stopped:
+        cli._down(settings)
+    assert stopped.value.code == 2
+    assert "PID 기록이 없어 종료하지 못했습니다" in capsys.readouterr().err
+
+
+def test_gateway_unknown_local_interfaces_are_conservative(tmp_path, monkeypatch):
+    settings = _remote_gateway_settings(tmp_path)
+    monkeypatch.setattr(cli.socket, "getaddrinfo", lambda *args: (_ for _ in ()).throw(cli.socket.gaierror()))
+    assert cli._gateway_is_local(settings)
+
+
+def test_down_on_a_runner_only_pc_is_not_blamed_for_the_gateway_on_the_other_pc(tmp_path, monkeypatch, capsys):
+    settings = _remote_gateway_settings(tmp_path)
+    _write_process_record(settings, "runner", 4244, "runner-generation")
+    monkeypatch.setattr(cli, "_process_created", lambda pid: "runner-generation")
+    _quiet_down(monkeypatch)
+    monkeypatch.setattr(cli, "_health", lambda _settings: {"service": "labhq gateway", "runners": ["lab-pc"]})
+    monkeypatch.setattr(cli, "_terminate_tree", lambda pid, **kwargs: None)
+    cli._down(settings, force=False)  # the gateway keeps answering, but it is not ours and our runner is gone
+    assert capsys.readouterr().out.strip() == "종료: runner PID 4244"
+
+
+def test_down_on_a_runner_only_pc_fails_when_its_own_unrecorded_runner_is_still_connected(tmp_path, monkeypatch, capsys):
+    settings = _remote_gateway_settings(tmp_path)
+    _quiet_down(monkeypatch)
+    monkeypatch.setattr(cli, "_health",
+                        lambda _settings: {"service": "labhq gateway", "runners": [settings.runner.id]})
+    with pytest.raises(SystemExit) as stopped:
+        cli._down(settings, force=False)
+    assert stopped.value.code == 2
+    assert f"runner({settings.runner.id})가 gateway" in capsys.readouterr().err

@@ -35,6 +35,9 @@ _OPERATION_LOCKS: dict[str, threading.Lock] = {}
 _OPERATION_LOCKS_GUARD = threading.Lock()
 _TERMINATE_GRACE_SECONDS = 10.0
 _TERMINATE_POLL_SECONDS = 0.1
+_DOWN_RECHECK_SECONDS = 3.0
+_BUNDLE_WAIT_SECONDS = 60.0
+_BUNDLE_POLL_SECONDS = 3.0
 
 
 def _instance_config(name: str) -> str:
@@ -638,15 +641,17 @@ def _wait_for_process_end(pid: int, created: str, timeout: float) -> bool:
 
 def _terminate_tree(pid: int, *, created: str | None = None) -> None:
     if sys.platform == "win32":
-        result = subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], capture_output=True, text=True,
-                                timeout=15)
+        # taskkill writes in the OEM code page (cp949 on Korean Windows) while labhq.cmd sets PYTHONUTF8=1: a bare
+        # text=True decodes as UTF-8, kills both reader threads with a traceback and returns None (trial-ready 2026-10-12).
+        result = subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], capture_output=True,
+                                encoding="oem", errors="replace", timeout=15)
         if result.returncode:
             try:
                 missing = _process_created(pid) is None
             except ProcessIdentityError:
                 missing = False
             if not missing:
-                detail = " ".join((result.stderr or result.stdout).split())
+                detail = " ".join(((result.stderr or "") + " " + (result.stdout or "")).split())
                 raise OSError(detail or f"taskkill exit {result.returncode}")
         return
     try:
@@ -708,6 +713,55 @@ def _shutdown_readiness(s: Settings) -> dict | str | None:
     return value if isinstance(value, dict) else "unknown"
 
 
+def _gateway_is_local(s: Settings) -> bool:
+    """Only call a gateway remote when its URL resolves away from this PC.
+
+    The bind host is not its identity (a local TLS proxy may use any name).
+    Failed address discovery is ambiguous, so a responding gateway must still
+    make `down` report that it could not stop an unrecorded process.
+    """
+    from urllib.parse import urlsplit
+
+    host = (urlsplit(s.gateway.url).hostname or "").lower().rstrip(".")
+    machine = socket.gethostname().lower().rstrip(".")
+    if not host or host in LOOPBACK_HOSTS or host in {machine, "0.0.0.0", "::"}:
+        return True
+    try:
+        local_addresses = {ipaddress.ip_address(row[4][0].split("%")[0])
+                           for row in socket.getaddrinfo(machine, None)}
+        target_addresses = {ipaddress.ip_address(row[4][0].split("%")[0])
+                            for row in socket.getaddrinfo(host, None)}
+    except (OSError, ValueError):
+        return True
+    if not local_addresses or not target_addresses:
+        return True
+    return bool(local_addresses & target_addresses) or any(address.is_loopback for address in target_addresses)
+
+
+def _unrecorded_process_still_running(s: Settings, *, timeout: float) -> str | None:
+    """After `down` stopped what it had records for: what still answers, or None.
+
+    A gateway on this PC that still answers was started outside `up`. A gateway on another PC is not ours to stop
+    (a runner-only PC), so there only this config's runner id still being connected counts. After a stop, the closing
+    socket gets up to `timeout` seconds."""
+    local = _gateway_is_local(s)
+    deadline = time.monotonic() + timeout
+    while True:
+        health = _health(s)
+        if health is None or (not local and s.runner.id not in (health.get("runners") or [])):
+            return None
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.2)
+    if local:
+        return (f"`up`이 아닌 방법으로 시작한 gateway/runner가 아직 실행 중입니다({_http_base(s)}). "
+                "PID 기록이 없어 종료하지 못했습니다. 그 프로세스를 직접 끈 뒤 "
+                f"`{_config_command(s, 'up')}`으로 다시 시작하세요.")
+    return (f"`up`이 아닌 방법으로 시작한 runner({s.runner.id})가 gateway({_http_base(s)})에 아직 연결되어 있습니다. "
+            "PID 기록이 없어 종료하지 못했습니다. 그 프로세스를 직접 끈 뒤 "
+            f"`{_config_command(s, 'up')}`으로 다시 시작하세요.")
+
+
 def _down_unlocked(s: Settings, *, force: bool = False) -> None:
     active = _active_requests(s)
     readiness = _shutdown_readiness(s) if active is not None else "unknown"
@@ -748,7 +802,16 @@ def _down_unlocked(s: Settings, *, force: bool = False) -> None:
         if state == "unknown":
             _record_problem(role, reason)
     stopped = [(role, pid) for role in ("runner", "gateway") if (pid := _stop_background(s, role)) is not None]
-    print("종료: " + (", ".join(f"{role} PID {pid}" for role, pid in stopped) if stopped else "기록된 프로세스 없음"))
+    if stopped:
+        print("종료: " + ", ".join(f"{role} PID {pid}" for role, pid in stopped))
+    # A gateway or runner started outside `up` (a script, another shell) has no process record, so nothing above
+    # stopped it. Say so instead of "기록된 프로세스 없음" with exit 0, or `up` reuses it as if it were fresh.
+    running = _unrecorded_process_still_running(s, timeout=_DOWN_RECHECK_SECONDS if stopped else 0)
+    if running:
+        print(running, file=sys.stderr)
+        raise SystemExit(2)
+    if not stopped:
+        print("종료: 기록된 프로세스 없음")
 
 
 def _down(s: Settings, *, force: bool = False) -> None:
@@ -803,6 +866,69 @@ def _verify(s: Settings, request_id: str, *, as_json: bool, bundle: str | None) 
     return report["exit_code"]
 
 
+_BUNDLE_FIELDS = ("bundle_path", "bundle_status", "bundle_grade", "bundle_grade_reasons", "bundle_warning")
+
+
+def _request_record(s: Settings, request_id: str) -> dict | None:
+    """The gateway's record of one request, or None when it cannot be read right now."""
+    import httpx
+    from urllib.parse import quote
+
+    try:
+        record = _api(s, "GET", f"/api/requests/{quote(request_id, safe='')}", raw_errors=True)
+    except (httpx.HTTPError, ValueError):
+        return None
+    return record if isinstance(record, dict) else None
+
+
+async def _wait_for_bundle(s: Settings, ws, terminal: dict, login_holds: set[str], *,
+                           timeout: float | None = None) -> None:
+    """Print the request bundle path and grade after a terminal event, then let the caller return.
+
+    The gateway commits request.completed/failed before it builds the bundle (`Hub.schedule_terminal`), so those
+    fields arrive in a later request.bundle event; returning at the terminal event never showed them. A request
+    that never ran a step has no bundle and nothing pending, so it returns at once. Bounded: a bundle still being
+    copied after `timeout` seconds is left to `labhq status`."""
+    request_id = terminal.get("request_id")
+    data = terminal.get("data") or {}
+    if not request_id or data.get("bundle_path") or data.get("bundle_warning"):
+        return  # render() already printed them
+    import websockets
+
+    deadline = time.monotonic() + (_BUNDLE_WAIT_SECONDS if timeout is None else timeout)
+    connected = True
+    while True:
+        record = _request_record(s, request_id)
+        if record is not None:
+            if record.get("bundle_path") or record.get("bundle_warning"):
+                render({"type": "request.bundle", "ts": time.time(), "request_id": request_id,
+                        "data": {key: record[key] for key in _BUNDLE_FIELDS if key in record}}, login_holds)
+                return
+            if not record.get("bundle_pending"):
+                return  # no bundle is being built
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            print(f"요청 묶음을 아직 만드는 중입니다. 끝나면 `{_config_command(s, 'status')}`에 경로가 나옵니다.",
+                  flush=True)
+            return
+        wait = min(_BUNDLE_POLL_SECONDS, remaining)
+        if not connected:
+            await asyncio.sleep(wait)
+            continue
+        try:
+            raw = await asyncio.wait_for(ws.recv(), wait)
+        except asyncio.TimeoutError:
+            continue  # poll the record again: a missed event must not cost the whole wait
+        except websockets.ConnectionClosed:
+            connected = False
+            continue
+        ev = json.loads(raw)
+        if ev.get("request_id") == request_id and ev.get("type") != "snapshot":
+            render(ev, login_holds)
+            if ev.get("type") == "request.bundle":
+                return
+
+
 async def _watch(s: Settings, request_id: str | None = None) -> None:
     import websockets
 
@@ -819,6 +945,7 @@ async def _watch(s: Settings, request_id: str | None = None) -> None:
             render(ev, login_holds)
             if request_id and ev.get("request_id") == request_id and ev["type"] in ("request.completed", "request.failed"):
                 print("\n" + _terminal_report(ev["data"]))
+                await _wait_for_bundle(s, ws, ev, login_holds)
                 return
 
 
@@ -838,6 +965,7 @@ async def _send_and_wait(s: Settings, body: dict) -> None:
             render(ev, login_holds)
             if ev["type"] in ("request.completed", "request.failed"):
                 print("\n" + _terminal_report(ev["data"]))
+                await _wait_for_bundle(s, ws, ev, login_holds)
                 return
 
 
@@ -866,8 +994,8 @@ async def _run_runner_with_interrupts(runner) -> None:
 
 
 # ---------------- demo (no API keys, no cluster) ----------------
-def _approval_delay(phone: bool, approve_timeout: float) -> float:
-    return approve_timeout if phone else 0.3
+def _approval_delay(phone: bool, approve_timeout: float, web: bool = False) -> float:
+    return approve_timeout if phone else 1.0 if web else 0.3
 
 
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
@@ -875,18 +1003,39 @@ WILDCARD_HOSTS = ("0.0.0.0", "::", "")
 
 
 def _port_available(host: str, port: int) -> bool:
-    family = socket.AF_INET6 if ":" in host else socket.AF_INET
-    bind_host = host or ("::" if family == socket.AF_INET6 else "0.0.0.0")
-    try:
-        with socket.socket(family, socket.SOCK_STREAM) as sock:
-            sock.bind((bind_host, port))
-        return True
-    except OSError:
-        return False
+    # Windows can allow the same port on different addresses. A successful
+    # wildcard bind alone says nothing about the loopback server the runner dials.
+    import errno
+
+    for address in ("127.0.0.1", "::1"):
+        try:
+            with socket.create_connection((address, port), timeout=0.15):
+                return False
+        except OSError:
+            pass
+    for address in dict.fromkeys((host or "0.0.0.0", "127.0.0.1", "0.0.0.0", "::1", "::")):
+        family = socket.AF_INET6 if ":" in address else socket.AF_INET
+        try:
+            with socket.socket(family, socket.SOCK_STREAM) as sock:
+                if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+                sock.bind((address, port))
+        except OSError as exc:
+            # Optional IPv6 probes must not disable demos on IPv4-only systems.
+            if address != host and family == socket.AF_INET6 and exc.errno in (
+                    errno.EAFNOSUPPORT, errno.EPROTONOSUPPORT, errno.EADDRNOTAVAIL):
+                continue
+            return False
+    return True
 
 
 def _demo_web_port(host: str, preferred: int) -> int:
-    return preferred if _port_available(host, preferred) else free_port()
+    candidate = preferred
+    for _ in range(100):
+        if _port_available(host, candidate):
+            return candidate
+        candidate = free_port()
+    raise RuntimeError("데모에 쓸 빈 포트를 찾지 못했습니다")
 
 
 def _demo_token(exposed: bool, current: str) -> str:
@@ -1029,7 +1178,7 @@ def _tap_publish(publish, after):
     return tap
 
 
-def _demo_settings(tmp: Path) -> Settings:
+def _demo_settings(tmp: Path, web: bool = False) -> Settings:
     s = Settings()
     s.gateway.state_dir = str(tmp / "state" / "gateway")
     s.runner.state_dir = str(tmp / "state" / "runner")
@@ -1037,9 +1186,21 @@ def _demo_settings(tmp: Path) -> Settings:
     s.runner.talent_dir = str(tmp / "talent")
     s.runner.agents_dir = str(tmp / "agents")
     s.runner.force_engine = "mock"
+    s.runner.mock_delay_s = 2.0 if web else 0.05
     s.runner.job_poll_s = 1
     s.hpc.scheduler = "mock"
     return s
+
+
+async def _demo_status(hub, phase: str, remaining: int = 0) -> None:
+    hub.demo_status = {"phase": phase, "remaining_s": remaining}
+    await hub.publish({"type": "demo.status", "data": hub.demo_status})
+
+
+async def _demo_countdown(hub, seconds: int = 8) -> None:
+    for remaining in range(seconds, 0, -1):
+        await _demo_status(hub, "waiting", remaining)
+        await asyncio.sleep(1)
 
 
 async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
@@ -1051,10 +1212,11 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
 
     tmp = Path(tempfile.mkdtemp(prefix="labhq-demo-"))
     shutil.copytree(REPO / "agents", tmp / "agents")
-    s = _demo_settings(tmp)
+    s = _demo_settings(tmp, web=web)
     gport = _demo_web_port(host, port) if web else free_port()
     dial = _demo_dial_host(host)
     s.gateway.port, s.gateway.url = gport, f"ws://{dial}:{gport}"
+    s.gateway.host = host
     exposed = phone or host not in LOOPBACK_HOSTS
     # Both default tokens are public; on the LAN anyone could otherwise join as a client or replace the runner.
     s.gateway.client_token = _demo_token(exposed, s.gateway.client_token)
@@ -1063,7 +1225,7 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
     s.policy.approvals.timeout_s = math.ceil(approve_timeout) + 30 if phone else 60
     s.runner.broker_port = free_port()
 
-    app = create_app(s)
+    app = create_app(s, demo=True)
     hub = app.state.hub
     publish = hub.publish
 
@@ -1071,7 +1233,7 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
         render(ev)
         if ev.get("type") == "approval.requested":
             asyncio.get_running_loop().create_task(_demo_auto_approve(
-                hub, ev["data"]["id"], _approval_delay(phone, approve_timeout), phone))
+                hub, ev["data"]["id"], _approval_delay(phone, approve_timeout, web=web), phone))
 
     hub.publish = _tap_publish(publish, after)
     from .security import gateway_log_config
@@ -1094,6 +1256,10 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
     try:
         await until(lambda: len(hub.agents) >= 5, 15)
         if web:
+            if gport != port:
+                url_host = (_demo_url_hosts(host) or [dial])[0]
+                print(f"{port}은 실행 중인 서비스가 쓰고 있어 데모는 "
+                      f"http://{url_host}:{gport}/?token={s.gateway.client_token} 에서 엽니다 — 이 주소만 여세요")
             if phone:
                 addresses = _demo_url_hosts(host)
                 if not addresses:
@@ -1108,6 +1274,7 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
             texts = ["공개 폐선암 scRNA-seq에서 CD276 고발현 세포유형 찾고 QC까지 [hpc] [needs-approval] [revise] [recruit]",
                      "새로 받은 WGS 배치 표준 QC [hpc] [needs-approval]"]
             for i in range(10**6):
+                await _demo_status(hub, "running")
                 rid = hub.create_request(RequestIn(text=texts[i % 2]))
                 await until(lambda: is_terminal_request(hub.requests[rid]["status"]),
                             max(120, approve_timeout + 60) if phone else 120)
@@ -1116,7 +1283,7 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
                     await hub.send_runner(s.runner.id, {"type": "recruit.start", "repo": "https://github.com/scverse/scanpy",
                                                         "focus": "Preprocessing and clustering", "ttl_days": 14,
                                                         "request_id": rid})
-                await asyncio.sleep(8)
+                await _demo_countdown(hub)
         print(f"\n=== 정규직 {len(hub.agents)}명 출근 · 오케스트레이션 요청 ===\n")
         rid = hub.create_request(RequestIn(
             text="공개 폐선암 scRNA-seq에서 CD276(B7-H3) 고발현 세포유형 찾고 QC까지 [hpc] [needs-approval] [revise] [recruit]"))
@@ -1139,6 +1306,7 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
         await asyncio.sleep(0.3)
         for t in tasks:
             t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 # ---------------- entry point ----------------

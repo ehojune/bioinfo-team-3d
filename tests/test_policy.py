@@ -487,9 +487,68 @@ def test_recursive_deletes_in_every_option_form_ask_outside_the_step(command):
     r"find .tmp -name '*.part' -exec rm {} \;",
     "find . -name x -exec grep -l y {} +",
     "docker run --rm -v data:/data img nextflow run x -profile docker",
+    # #533: an rm payload's literal targets below .tmp pass; an operand after `--`, a glob and a later brace list
+    # cannot be options.
+    "find .tmp -name '*.part' -exec rm -f -- {} +",
+    r"find .tmp -name '*.part' -exec rm -f .tmp/stale.lock {} \;",
+    'rm -f -- "$f"',
+    "rm -f *.log out.{bam,bai}",
+    'echo "rm"',
 ])
 def test_deletes_below_step_tmp_and_commands_that_delete_nothing_stay_allowed(command):
     assert _decide_in_windows_step(command).action == "allow"
+
+
+@pytest.mark.parametrize("command", [
+    # #533: a find payload whose delete the gate cannot read, or that deletes outside .tmp, asks.
+    r"find .tmp -exec rm $'-rf' /outside \;",
+    r"find .tmp -exec rm -f /outside \;",
+    r"find .tmp -exec rm -f ../x {} \;",
+    r"find .tmp -exec $CMD {} \;",
+    r'find .tmp -exec "$RM" -f {} +',
+    r"find .tmp -exec env rm -f C:/Users/pi/Documents/x \;",
+    r"find .tmp -execdir rm -f x \;",
+    r"find .tmp -exec rm {}.bak \;",
+    r'find .tmp -ok rm -- "$X" \;',
+    # An rm option word the gate cannot read may be `-r`.
+    "rm $'-rf' C:/Users/pi/Documents",
+    'rm "$OPT" C:/Users/pi/Documents',
+    'rm -f"$X" C:/Users/pi/Documents',
+    "rm {-r,-f} C:/Users/pi/Documents",
+    "rm `printf -- -rf` C:/Users/pi/Documents",
+])
+def test_find_payloads_and_rm_options_the_gate_cannot_read_ask(command):
+    decision = _decide_in_windows_step(command)
+    assert decision.action == "ask"
+    assert decision.reason.startswith("재귀 삭제 확인 필요: `")
+
+
+@pytest.mark.parametrize("command", [
+    # #535 follow-up: only a real rm meets the recursive-delete rule; `docker rm` is another program's subcommand.
+    'docker rm "$id"', "docker rm -f $(docker ps -aq)",
+    # `git rm` removes files in the current tree only, as `git add` writes there.
+    'git rm "$f"', 'git rm -r "$d"', "git rm -r --cached outputs/old", "git log --grep rm -r",
+    # One double-quoted computed word as the only operand: one option cluster with nothing to delete, or one file.
+    'rm -f "$f"', 'rm "$tmp"', 'rm -fv "${out}.tmp"',
+])
+def test_rm_words_that_cannot_delete_recursively_stay_allowed(command):
+    assert _decide_in_windows_step(command).action == "allow"
+
+
+@pytest.mark.parametrize("command", [
+    # A git rm the options or environment may point at another tree.
+    "git -C C:/Users/pi/repo rm notes.txt", "git --work-tree=C:/Users/pi rm -r Documents",
+    'git --git-dir "$G" rm f', 'git "$OPT" rm f', "GIT_WORK_TREE=C:/Users/pi git rm Documents/x",
+    "git -c core.worktree=C:/Users/pi rm Documents/x", "git -c alias.x='!rm -rf C:/Users/pi/Documents' x",
+    # Computed words rm may read as options, and real rms after a wrapper, a computed program or a redirection.
+    'rm -f "$a" "$b"', "rm -f $f", 'rm -f "$f" C:/Users/pi/x', 'rm C:/Users/pi/x "$f"', 'rm -r "$f"',
+    "sudo rm -rf C:/Users/pi/Documents", '"$RUNNER" rm -rf C:/Users/pi/Documents',
+    "2>/dev/null rm -rf C:/Users/pi/Documents",
+])
+def test_git_rm_into_another_tree_and_unreadable_rm_operands_ask(command):
+    decision = _decide_in_windows_step(command)
+    assert decision.action == "ask"
+    assert decision.reason.startswith("재귀 삭제 확인 필요: `")
 
 
 @pytest.mark.parametrize("start", [".tmp/link", ".tmp/link/"])
@@ -562,9 +621,92 @@ def test_a_powershell_listing_piped_into_a_delete_asks_outside_step_tmp(command)
     "Get-ChildItem .tmp -Filter *.part | Remove-Item",
     "Get-ChildItem -LiteralPath .tmp/a -Recurse -File -ErrorAction SilentlyContinue | % { $_.Delete() }",
     "Get-ChildItem . -Recurse | Where-Object { $_.Name -like '*rm*' } | Select-Object Name",
+    # #533: filters that pass the listed items on unchanged keep the pipeline readable.
+    "Get-ChildItem .tmp -File | Where-Object { $_.Length -gt 0 } | Sort-Object Length | Select-Object -First 3 "
+    "| Remove-Item -Confirm:$false",
+    "gci .tmp -r | ? Length -gt 0 | % { $PSItem.Delete($true) }",
 ])
 def test_a_powershell_listing_of_step_tmp_piped_into_a_delete_stays_allowed(command):
     assert _decide_powershell_in_windows_step(command).action == "allow"
+
+
+@pytest.mark.parametrize("command", [
+    # #533: after a listing of .tmp, a delete of another path, a stage that makes new objects, or text run as code.
+    "Get-ChildItem .tmp | % { [System.IO.DirectoryInfo]::new('C:/outside').Delete($true) }",
+    "Get-ChildItem .tmp | ForEach-Object { [System.IO.Directory]::Delete('C:/outside', $true) }",
+    "Get-ChildItem .tmp | % { Remove-Item C:/outside }",
+    "Get-ChildItem .tmp | Remove-Item -Path C:/outside",
+    "Get-ChildItem .tmp | % { 'C:/outside' } | Remove-Item",
+    "Get-ChildItem .tmp | Select-Object @{n='PSPath';e={'C:/outside'}} | Remove-Item",
+    "Get-ChildItem .tmp | % { iex $code }",
+    "Get-ChildItem .tmp | Where-Object { [IO.File]::Delete('C:/x') } | Remove-Item",
+    "Get-ChildItem .tmp | % { Remove-Item $_; Remove-Item C:/x }",
+    # A .NET delete names no literal path anywhere else either.
+    "[System.IO.Directory]::Delete('C:/Users/pi/Documents', $true)",
+    "(Get-Item C:/Users/pi/Documents).Delete($true)",
+])
+def test_a_powershell_delete_that_may_reach_another_path_asks(command):
+    decision = _decide_powershell_in_windows_step(command)
+    assert decision.action == "ask"
+    assert decision.reason.startswith("재귀 삭제 확인 필요: `")
+
+
+@pytest.mark.parametrize("command", [
+    # PR #535 review: a .NET delete spelled inside text a data command prints or writes is not a call.
+    "Write-Output '$_.Delete()'", """Set-Content notes.txt '[IO.File]::Delete("x")'""",
+])
+def test_a_dotnet_delete_inside_a_powershell_data_string_is_text(command):
+    assert _decide_powershell_in_windows_step(command).action == "allow"
+    # Text run as code is still read as a delete.
+    assert _decide_powershell_in_windows_step(f"iex {command.split(' ', 1)[1]}").action == "ask"
+
+
+OUTSIDE_HOME = {"HOME": "/home/pi", "USERPROFILE": "C:\\Users\\pi"}
+
+
+@pytest.mark.parametrize("command", [
+    # #521: a write destination starting with `~` is the shell's home, outside the write roots here.
+    "cp a ~/x", "echo x > ~/.bashrc", "curl -o ~/x https://example.org/x", "echo x | tee -a ~/x", "cp a ~",
+])
+def test_a_tilde_write_destination_is_judged_at_the_shell_home(command):
+    decision = evaluate_tool("Bash", {"command": command}, _policy(), ["/work/step"], "/work/step",
+                             windows=False, environ=OUTSIDE_HOME)
+    assert decision.action == "ask" and "outside allowed roots" in decision.reason
+    inside = evaluate_tool("Bash", {"command": command}, _policy(), ["/work/step"], "/work/step",
+                           windows=False, environ={"HOME": "/work/step"})
+    assert inside.action == "allow"
+
+
+@pytest.mark.parametrize("command,environ", [
+    ("cp a ~root/x", OUTSIDE_HOME), ("cp a ~+/x", OUTSIDE_HOME), ("echo x > ~-/x", OUTSIDE_HOME),
+    ("cp a ~/x", {}),  # no HOME: nothing to expand to
+])
+def test_a_tilde_write_destination_the_gate_cannot_expand_asks(command, environ):
+    decision = evaluate_tool("Bash", {"command": command}, _policy(), ["/work/step"], "/work/step",
+                             windows=False, environ=environ)
+    assert decision.action == "ask" and "cannot expand" in decision.reason
+
+
+@pytest.mark.parametrize("command", [
+    "Set-Content ~/x 'a'", r"'a' > ~\x", "Invoke-WebRequest https://example.org/x -OutFile ~/x",
+])
+def test_a_powershell_tilde_write_is_judged_at_every_home_the_shell_may_use(command):
+    root = "C:/Users/pi/labhq/work/step"
+    outside = {"USERPROFILE": "C:\\Users\\pi"}
+    assert evaluate_tool("PowerShell", {"command": command}, _policy(), [root], root, windows=True,
+                         environ=outside).action == "ask"
+    # Windows PowerShell 5.1 may take HOMEDRIVE+HOMEPATH instead of USERPROFILE: both must be inside.
+    split = {"USERPROFILE": root, "HOMEDRIVE": "H:", "HOMEPATH": "\\"}
+    assert evaluate_tool("PowerShell", {"command": command}, _policy(), [root], root, windows=True,
+                         environ=split).action == "ask"
+    assert evaluate_tool("PowerShell", {"command": command}, _policy(), [root], root, windows=True,
+                         environ={"USERPROFILE": root}).action == "allow"
+
+
+@pytest.mark.parametrize("command", ["cat ~/notes.txt > out.txt", "cp ~/a out.txt", "ls ~"])
+def test_tilde_read_paths_are_unchanged(command):
+    assert evaluate_tool("Bash", {"command": command}, _policy(), ["/work/step"], "/work/step",
+                         windows=False, environ=OUTSIDE_HOME).action == "allow"
 
 
 @pytest.mark.parametrize("command", ["find -- /c/Users/pi/Documents -delete", "find -files0-from list.txt -delete"])

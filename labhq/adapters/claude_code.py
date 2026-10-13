@@ -17,7 +17,7 @@ import subprocess
 from pathlib import Path, PurePath
 
 from ..policy import claude_allowed_tools
-from ..util import short
+from ..util import event_preview, short
 from .base import (AgentAdapter, role_footer, RunContext, RunState, SHELL_TOOLS, child_config_dirs, expand_env,
                    note_command_ok, note_failed_output, record_model_id, wrap_cwd)
 from .owned import case_sensitive_directory, is_link
@@ -347,7 +347,8 @@ class ClaudeCodeAdapter(AgentAdapter):
             cmd += ["--add-dir", d]
         # Bare Write/Edit become Edit rules for the task's write roots, so an outside write reaches the gate (#219).
         # With PI personal paths active, shell rules go and reads narrow to the task's folders (PR #324 review).
-        on = ctx.private_enabled or bool(ctx.private_paths)  # on with no active path too (PR #327)
+        # On with no active path too (PR #327), and while a project link into a zone is denied by rule (#178).
+        on = ctx.private_enabled or bool(ctx.private_paths) or bool(ctx.denied_links)
         # The task's own project folder in the staff config folder is read-only: Read rules, no Edit rule (#298 ⑤).
         read_roots = [ctx.workdir, *ctx.extra_dirs, *ctx.read_dirs, *ctx.private_open_reads] if on else None
         allowed = [*claude_allowed_tools(
@@ -372,19 +373,19 @@ class ClaudeCodeAdapter(AgentAdapter):
             for block in (ev.get("message") or {}).get("content") or []:
                 if block.get("type") == "text" and block.get("text"):
                     st.text_parts.append(block["text"])
-                    await ctx.emit("agent.log", {"text": short(block["text"], 2000),
+                    await ctx.emit("agent.log", {**event_preview("text", block["text"], 2000),
                                                  "subagent": bool(ev.get("parent_tool_use_id"))})
                 elif block.get("type") == "tool_use":
                     if block.get("name") in SHELL_TOOLS and block.get("id"):
                         st.shell_calls.add(block["id"])
-                    await ctx.emit("agent.tool", {"name": block.get("name"), "input": short(block.get("input"), 400)})
+                    await ctx.emit("agent.tool", {"name": block.get("name"), **event_preview("input", block.get("input"), 400)})
         elif typ == "user":
             for block in (ev.get("message") or {}).get("content") or []:
                 if not isinstance(block, dict) or block.get("type") != "tool_result":
                     continue
                 if block.get("is_error"):
                     note_failed_output(st, block.get("content"))
-                    await ctx.emit("agent.tool_error", {"text": short(block.get("content"), 400)})
+                    await ctx.emit("agent.tool_error", {**event_preview("text", block.get("content"), 400)})
                 elif block.get("tool_use_id") in st.shell_calls:
                     note_command_ok(st)
         elif typ == "result":

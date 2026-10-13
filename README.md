@@ -181,18 +181,20 @@ py -3 -m venv .venv
 .\labhq demo --web
 ```
 
-POSIX에서는 `python3 -m venv .venv`, `./.venv/bin/python -m pip install -e ".[dev]"`, `./labhq.sh demo --web`을 씁니다. 8787이 사용 중이면 demo가 빈 port를 고릅니다.
+POSIX에서는 `python3 -m venv .venv`, `./.venv/bin/python -m pip install -e ".[dev]"`, `./labhq.sh demo --web`을 씁니다.
+실제 사무실이 떠 있어도 데모는 다른 빈 port를 고릅니다. 터미널에 출력된 데모 주소만 여세요.
+데모 화면에는 `데모(mock)` 표시와 안내 띠가 보이며 요청 하나가 약 15~30초 동안 진행됩니다.
 
 ### 2. 설치와 설정
 
-필요한 것: Python 3.10 이상, Git, 직원으로 쓸 CLI(Claude Code·Codex)의 설치와 로그인. npm으로 설치한 CLI는 Node.js도 필요합니다.
+전제: Python 3.10+, Git, 직원 CLI(Claude Code·Codex) 설치·로그인. npm CLI는 Node.js도 필요합니다.
 
 ```bash
 .\labhq init
 .\labhq -c config\labhq.yaml doctor
 ```
 
-`labhq init`은 HPC와 bioinfo-agent 경로를 묻습니다. 직원 전용 로그인 폴더가 필요하면 사람이 칠 로그인 명령도 알려 줍니다.
+`init`은 HPC·bioinfo-agent 경로와 AlphaGenome 키도 묻습니다(없으면 Enter). 실제 모델을 부르지 않는 격리 설치 검사는 `python scripts/clean_install_check.py`입니다.
 
 ### 3. 띄우기
 
