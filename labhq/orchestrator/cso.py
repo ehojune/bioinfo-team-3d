@@ -191,6 +191,7 @@ def replan_schema(declare: bool) -> dict[str, Any]:
     Scope is judged once, on the first plan; a re-plan neither returns nor re-asks it (#36)."""
     schema = json.loads(json.dumps(plan_schema(declare)))
     schema["properties"].pop("scope")
+    schema["properties"].pop("paper_skills")  # new paper conversions belong before the first plan/CP1
     schema["properties"]["drop"] = {"type": "array", "items": {"type": "string"}}
     schema["required"] = [*(key for key in schema["required"] if key != "scope"), "drop"]
     return schema
