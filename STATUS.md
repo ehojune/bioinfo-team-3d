@@ -4,6 +4,39 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 결론
+
+PR #532의 3차 검증에서 새 결함 3건을 고쳤다. main(#540~#545 포함)을 병합했다. 로컬 전체 검증은 통과했으며 ready로 전환한다. 병합은 총괄이 현재 head의 [CI 결과](https://github.com/ehojune/bioinfo-team-3d/pull/532/checks)를 보고 판단한다.
+
+## 바뀐 것
+
+| 관점 | 결함과 수정 |
+|---|---|
+| 수명 | 연결 중단 중 보낸 재개가 runner의 정지를 풀지 못했다. 재연결 때 정지 해제도 보낸다. |
+| 동시성 | 제어 전송 뒤 오래된 상태를 저장해 새 방향·정지·결과·단계 종료를 덮어썼다. 전송마다 최신 상태를 읽고 저장을 전송 전에 끝낸다. |
+| 경계 | 종료 요청도 작업 결과가 아직 없으면 제어를 받았다. 네 제어 모두 요청·단계의 생존 여부를 먼저 확인한다. |
+
+- merge `bd2a3f5`: 웹 reducer 충돌 두 곳을 풀고 직원 제어·demo 상태·전체 도구 로그를 함께 보존했다.
+- 수정 `99bf4bc`: 회귀 테스트 21개와 매뉴얼 한 줄을 추가했다. 3D 디자인 변경은 없다.
+
+## 실행한 것
+
+- 새 회귀 21개: 이전 PR head `85f100e`의 gateway 코드에서 모두 실패, 수정 후 통과.
+- 기존 제어 테스트 포함: 74 passed.
+- Windows 전체 `pytest -q`: 5608 passed, 66 skipped(10분 52초). `%TEMP%` 아래 basetemp 한 폴더를 썼고 종료 후 삭제했다.
+- `for f in tests/*.cjs; do node --test "$f"; done`: 39개 파일 모두 통과(2.5D·3D 공유 상태 포함).
+- 공개 검사·patch-notes check·notes-index validate·diff 검사 통과. merge와 수정 커밋의 패치노트 행을 기록했다.
+- PI·trial 실행·재시작·설정 변경, 본 checkout 쓰기, 리뷰 요청·인라인 답글, PR 병합은 하지 않았다.
+
+## 미해결
+
+- 기존 수용 한계는 유지: 실제 Claude halt/resume 실측 없음, hook 실행 비용·정지 중 무응답 경고, gateway 재시작 시 PI 대기 중단, 불확실한 dispatch의 방향 중복 가능성.
+- 전체 suite의 `test_packaged_resource_works_outside_repository`에서 UTF-8 subprocess reader thread 경고 1건이 나왔다. 테스트는 통과했고 직원 제어 범위 밖이라 수정하지 않았다.
+
+Refs #59
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
 # gateway 종료 진단
 
 - 권고: 종료 원인은 미확인. 진단 장치를 배포한 뒤 다음 종료의 PID·시각·fault·exit를 맞춰 본다.
@@ -450,6 +483,23 @@ P2 — #527 봇이 남긴 연구 lane 후속 3건
 Refs #521
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+## 2026-10-12 · 실행 중 직원 제어: 방향 바꾸기·일시 정지·멈추기 (#59 ①)
+
+- 결론: 오늘 PI 시험(19:00) 뒤, 세 번째 검증을 거쳐 병합한다. 그때까지 draft로 둔다. PI가 실행 중인 직원에게 방향을 보내고, 일시 정지·재개하고, 세션을 남긴 채 멈출 수 있다. 요청은 작업이 아니라 그 작업의 단계에 걸리고, gateway가 쓰일 때까지 보관한다. 계획 단계 작업과 직접 맡긴 작업만 받는다. 쓰기 가능한 Claude 실행은 도구 hook으로 바로, 다른 엔진은 같은 단계의 다음 turn에서 받는다. 멈춘 단계는 실패가 아니라 `halted`로 남아 PI 재개를 기다리고, 재개하면 같은 세션으로 이어 간다. 2절 폭주 차단기는 건드리지 않았다.
+- 바뀐 것:
+  - gateway(`labhq/gateway/server.py`): `POST /api/tasks/{id}/steer|pause|resume|halt`(PI 토큰, 방향 2,000자). (request, step)마다 방향 대기열(20개, 넘치면 오래된 것부터 버리고 수를 셈), 정지 표시, 작업별 멈춤 요청을 store에 둔다. 기한으로 지우지 않는다. 다음 dispatch에 남은 방향을 싣고(`meta.steers`), 정지 중에는 그 단계의 다음 turn을 보내지 않는다(요청은 `waiting_pi`, `request.step_paused`). 끝난 작업 줄에서 보낸 제어는 같은 단계의 지금 turn에 간다. 재연결 때는 받은 작업에만 보내고, 아직 못 받은 작업은 작업을 먼저 보낸 뒤 보낸다. 멈춤을 보낸 작업이 runner 재시작 등으로 끊기면 `halted`로 바꾼다. 멈춘 단계는 PI 재개(`/resume`)까지 park하고, 대기가 끝나는 모든 경우(재개·기한·요청 취소)에 화면에 알린다. 단계가 끝날 때 쓰이지 않은 방향은 `agent.control`(undelivered)로 알린다.
+  - runner(`labhq/runner/control.py`, `daemon.py`): turn 간 상태와 기한 정리가 없다. 맡은 작업(실행 중·실행 순서 대기·시작 전 정지)에만 적용하고, 맡지 않은 작업은 `control.nack`. 제어 파일(`runner.state_dir/control/<task>.json`, 직원 쓰기 범위 밖)의 모든 읽기·쓰기는 파일 잠금 아래이고, `finish()`도 잠금 아래에서 읽고 지운다. 시작 전 turn은 정지가 풀릴 때까지 시작하지 않고, 기다리던 방향을 프롬프트 앞에 붙이며(Claude도 같다. hook으로만 주면 도구를 쓰지 않는 turn에는 닿지 않는다), 멈추면 CLI 없이 `halted`. 작업이 끝나면 전달한 방향과 못 한 방향을 `task.result.control`로 보고한다. 이전 프로세스가 남긴 파일은 합치지 않고 지운다.
+  - hook(`labhq/hooks/control.py`, 표준 라이브러리만): PreToolUse는 멈춤이면 `{"continue": false}`, 정지 중이면 최대 5분 붙잡은 뒤 "PI가 일시 정지함"으로 deny. PostToolUse·PostToolUseFailure는 멈춤이면 `continue: false`, 아니면 방향을 `additionalContext`로 한 번 전달한다(9,000자 이하로 나눔).
+  - adapter: 멈춤은 hook 실행이면 60초 유예 뒤, 아니면 바로 프로세스를 끝내고 session id를 남긴다. CLI 시작 기록이 실패하면 프로세스를 끝낸다.
+  - 범위(2차 검증): 계획 단계 작업(kind step + step id)과 direct 작업만 받는다. 상담·이어 묻기·리뷰·브리핑·선행 연구·채용 등은 API·CLI가 409와 한국어 안내로 거절하고 웹에 줄이 없으며, 그 dispatch는 단계 대기열·정지를 보지 않는다. HPC 잡·질문 대기가 걸린 turn의 멈추기는 409("일시 정지를 쓰세요"). 대기에 들어가며 받은 멈춤은 잡·질문과 대기 뒤 turn을 남긴 채 그 단계의 일시 정지가 된다. 멈춘 뒤 재개하면 멈추기 전에 걸린 일시 정지도 풀고, 멈춘 뒤 다시 건 일시 정지는 남긴다. dispatch보다 먼저 간 방향은 NACK 뒤 작업 수락 때 한 번 더 보낸다. 대기열 상한은 아직 turn에 주지 않은 방향만 센다. 실행 슬롯을 잡은 뒤 받은 정지는 이번 turn은 계속한다고 알린다. 웹은 요청이 끝나면 줄을 닫고, 정지·멈춘 단계가 있으면 waiting_pi를 유지하며, 취소로 닫힌 멈춤은 취소라고 적는다.
+  - CLI `labhq task steer|pause|resume|halt <id> [text]`. 웹 직원 상세 시트에 작업마다 제어 줄(방향 입력·일시 정지/재개·멈추기). halted는 재개·만료·취소 이벤트로만 지우고, 끝난 작업 줄은 종료 이벤트에서 지워 새로고침 화면과 같다. 정지된 단계는 마지막 작업 줄에서 재개한다.
+  - `docs/manual.md` 직원 제어 절(엔진별 표, 제어가 남는 곳).
+  - 기존 test 2곳: `test_observed_outputs`는 PostToolUse 항목을 명령으로 골라 보고, `test_web_3d` 목록에 새 node test를 넣었다.
+- 리뷰 경과: 봇 리뷰 1차(P1 1·P2 3)·2차(P1 1·P2 4), 검증 워크플로 16건, 재검증 18건을 반영했다. 재검증 18건은 범위를 좁혀(단계·direct만) 닫았다. 검증 16건은 대부분 runner의 turn 간 carry와 기한 정리에서 나와, carry를 없애고 단계 상태를 gateway로 옮겼다.
+- 실행한 것: hook 계약은 공식 문서로 확인했다(https://code.claude.com/docs/en/hooks 의 PreToolUse·PostToolUse decision control, JSON output `continue`/`stopReason`, matcher, timeout 600초; 재개는 https://code.claude.com/docs/en/headless). 실제 `claude -p`는 부르지 않았다. test: `tests/test_staff_control.py`(hook·runner·gateway·CLI 17), `tests/test_staff_control_review.py`(리뷰 1·2차 5), `tests/test_staff_control_steps.py`(검증 항목별 13), `tests/test_staff_control_scope.py`(재검증 18), node `web_staff_control.cjs`·`web_staff_control_tasks.cjs`·`web_staff_control_steps.cjs`·`web_staff_control_scope.cjs`. 검증 항목 test 13개와 `web_staff_control_steps.cjs`는 4fdf454에서, 재검증 test 18개와 `web_staff_control_scope.cjs`는 81bd6da에서 모두 실패한다(경합 test 하나는 API가 바뀌어 실패). Windows 전체 `pytest -q` 5383 passed·66 skipped, `for f in tests/*.cjs; do node --test "$f"; done` 36개 통과, `scripts/check_public.sh`, `scripts/patch_notes.py check` 통과.
+- 미해결: (1) 실제 Claude에서 `continue: false` 뒤 같은 session id로 resume하는 실측은 하지 않았다(문서 근거만). (2) hook은 도구 호출마다 Python을 두 번(Pre·Post) 띄운다. 이 PC에서 한 번에 약 0.2초. (3) 정지 중 붙잡힌 도구 호출은 무응답 경고를 낼 수 있다. (4) gateway 재시작 때 멈춘 단계의 park와 정지 대기는 다른 PI 대기처럼 사라지고 요청은 `중단됨`이 된다(단계의 방향 대기열은 store에 남는다). (5) 전달이 불확실한 dispatch(runner 연결이 끊긴 채 기한을 넘김)의 방향은 단계로 돌아가 두 번 전달될 수 있다(잃지는 않는다).
+- 근거: `labhq/gateway/server.py`, `labhq/runner/control.py`, `labhq/runner/daemon.py`, `labhq/hooks/control.py`, `labhq/adapters/base.py`, `labhq/orchestrator/cso.py`, `labhq/web/state.js`, `labhq/web/ui/control.js`, `tests/test_staff_control.py`, `tests/test_staff_control_review.py`, `tests/test_staff_control_steps.py`, `tests/test_staff_control_scope.py`, `tests/web_staff_control_steps.cjs`, `tests/web_staff_control_scope.cjs`, `docs/manual.md`.
 
 ## 단계
 P1 — #276 fake MCP 장시간 대기·교차 세션 inbound 마감
