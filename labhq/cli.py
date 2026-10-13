@@ -25,6 +25,7 @@ from .costs import cost_detail, cost_text
 from .facilities.signatures import problem_text
 from .request_status import is_terminal_request, request_status_label
 from .settings import Settings
+from .test_guard import guard_test_path
 from .util import atomic_write_text, free_port, short, without_windows_app_aliases
 
 REPO = Path(__file__).resolve().parents[1]
@@ -43,7 +44,9 @@ _BUNDLE_POLL_SECONDS = 3.0
 def _instance_config(name: str) -> str:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", name):
         raise ValueError("--instance must use 1-64 letters, numbers, underscores or hyphens")
-    return str(Path.home() / ".labhq" / name / "labhq.yaml")
+    path = Path.home() / ".labhq" / name / "labhq.yaml"
+    guard_test_path(path)
+    return str(path)
 
 
 def _normalize_instance_arg(argv: list[str]) -> list[str]:
@@ -1526,6 +1529,8 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.cmd == "bench":
         requested = args.config or os.environ.get("LABHQ_CONFIG")
+        if requested:
+            guard_test_path(Path(requested))
         if requested and not Path(requested).is_file():
             p.exit(2, f"labhq: 설정 파일이 없습니다: {requested}\n")
         from .bench import run_cli

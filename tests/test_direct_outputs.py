@@ -26,6 +26,7 @@ from tests.semantics_shadow_lab import line_for, run_lab
 
 def _runner(tmp_path, monkeypatch, write, settings=None):
     settings = settings or Settings()
+    settings.gateway.state_dir = str(tmp_path / "gateway-state")
     for name in ("state_dir", "workspace_root", "agents_dir", "talent_dir"):
         setattr(settings.runner, name, str(tmp_path / name))
     runner = Runner(settings)
