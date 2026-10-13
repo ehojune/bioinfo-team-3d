@@ -247,6 +247,8 @@ class CodexAdapter(AgentAdapter):
             # Start with read access only: unlike :workspace this grants neither cwd nor global temp writes.
             # Adding these two roots produces a scoped workspace-write sandbox, including for resumed sessions.
             filesystem = {str(ctx.workdir.resolve() / name): "write" for name in ("outputs", ".tmp")}
+            if ctx.agent.id == "facilities":
+                filesystem = {}
             filesystem.update({path: "deny" for path in self.deny_read_paths(ctx)})
             filesystem.update({str(self.settings.path(z.path)): "deny"
                                for z in self.settings.policy.data_zones if z.level == "restricted"})
@@ -273,6 +275,8 @@ class CodexAdapter(AgentAdapter):
                 flags += ["-c", f"windows.sandbox={_toml(b.windows_sandbox)}"]
         for feature in (*STAFF_DISABLED_FEATURES, *(READ_ONLY_DISABLED_FEATURES if ctx.read_only else ())):
             flags += ["--disable", feature]
+        if ctx.read_only and a.id == "facilities":
+            flags += ["--disable", "shell_tool", "--disable", "unified_exec"]
         if a.model:
             flags += ["-m", a.model]
         if a.effort:

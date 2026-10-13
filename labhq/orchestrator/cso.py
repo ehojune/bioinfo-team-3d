@@ -21,6 +21,7 @@ from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..artifact_policy import (OUTPUT_ENV_DIR, OUTPUT_REFERENCE_DIR, OUTPUT_SCRIPTS_DIR,
                                unreported_warning_paths)
 from ..costs import cost_detail, format_cost, task_cost_item
+from ..pi_text import PI_TEXT_RULE
 from ..evidence.claims import RESULT_CONTRACT_FIELD_RULES
 from ..evidence.report_check import (FAILED_LOOKUP_TITLE, anchor, check_report, claim_rows, failed_lookup_lines,
                                      failed_lookups)
@@ -289,7 +290,7 @@ Request: {request}"""
 
 # Plan and re-plan questions of the general lane go to the PI's phone card. Nothing validates their length, so
 # both prompts carry the same rule.
-PI_CARD_QUESTION_RULE = "Each question must fit the PI's phone card: at most 700 characters, the question itself first."
+PI_CARD_QUESTION_RULE = "Each question must fit the PI's phone card: at most 700 characters, the question itself first." + PI_TEXT_RULE
 # One environment per request (2nd mock trial 2026-10-03): steps that each built a venv duplicated installs, and
 # a later step could not add a package to another step's environment.
 ENV_LOCK_OUTPUT = OUTPUT_ENV_DIR + "requirements.lock.txt"
@@ -815,7 +816,7 @@ Do not repeat the same question."""
 CONSULT_PROMPT = """Answer one blocked employee's question using the request, plan and policy context below.
 Write only in your own outputs/ and .tmp/; existing work stays read-only. Answer once. Do not call labhq_ask or approve installations,
 destructive work, restricted-data access, budget overruns or work outside the request.
-When bioinfo-agent asks whether to build a missing reusable pipeline, answer that it should build it.
+{scope_advice}
 
 From: {sender}
 Question: {question}
@@ -2678,12 +2679,22 @@ class Orchestrator:
                           if ask.refs and not same_runner else "")
         request = self.hub.requests.get(ask.request_id or "", {})
         prompt = CONSULT_PROMPT.format(
+            scope_advice=("Diagnose environment failures only." if routed == "facilities" else
+                          "When bioinfo-agent asks whether to build a missing reusable pipeline, "
+                          "answer that it should build it."),
             sender=ask.agent_id, question=ask.question, why_blocked=ask.why_blocked,
             tried=json.dumps(ask.tried, ensure_ascii=False), options=json.dumps(ask.options, ensure_ascii=False),
             refs=json.dumps(refs, ensure_ascii=False), reference_note=reference_note,
             request=clip(request.get("text") or "", 4000), plan=clip(json.dumps(request.get("plan") or {},
                                                                                  ensure_ascii=False), 6000),
         )
+        if routed == "facilities":
+            prompt += ("\n\nFacilities diagnosis only: use the supplied doctor snapshot and permitted error evidence. "
+                       "Do not build a pipeline, run tools or write files. Reply briefly with cause, evidence and "
+                       "what PI should do. Answer environment questions yourself; only authority, scope or policy "
+                       "decisions belong to CSO/PI. Omit raw logs, tokens and personal paths.")
+            if not same_runner:
+                prompt += "\nThe doctor snapshot describes your runner, not necessarily the blocked employee's host."
         overrides = dict(READ_ONLY_OVERRIDES)
         async with self._consult_lock(ask.request_id, routed):
             # After a gateway restart the runner may still be running this ask's consult.

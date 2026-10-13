@@ -584,8 +584,8 @@ async def test_mock_engine_ask_routes_without_deadlock_and_pi_hibernates(tmp_pat
         await _until(lambda: hub.requests[facilities_request]["status"] != "running")
         facilities_answer = next(e for e in seen if e.get("type") == "agent.answer" and
                                  e.get("request_id") == facilities_request)
-        assert facilities_answer["data"]["from"] == "cso"
-        assert facilities_answer["data"]["routed_to"] == "cso"
+        assert facilities_answer["data"]["from"] == "facilities"
+        assert facilities_answer["data"]["routed_to"] == "facilities"
 
         colleague_request = hub.create_request(RequestIn(
             text="[ask:colleague:data_steward] manifest 위치", mode="direct", agent_id="analyst"))

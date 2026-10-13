@@ -17,6 +17,7 @@ export const SKINS = [
   {"id":"sci_reviewer","type":"procedural"},
   {"id":"recruiter","type":"procedural"},
   {"id":"editor","type":"procedural"},
+  {"id":"facilities","type":"procedural"},
   {"id":"contract","type":"procedural"}
 ];
 export const MODEL_SKINS = [

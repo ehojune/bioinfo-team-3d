@@ -6,6 +6,79 @@
 
 ## 결론
 
+PR #569에서 PI 글 규칙, 승인 설명 세 필드, 원문 펼침을 추가했다. PowerShell here-string의 삭제 예문이 승인 경고를 만드는 오탐을 수정했다. Refs #557.
+
+## 바뀐 것
+
+- 직원 공통 지침·CSO 카드·비서실장·승인 MCP에 쉬운 한국어와 ‘무엇 → 왜 → 결과’ 순서를 명시했다.
+- 도구·HPC·예산·채용 카드에 `pi_summary`, `pi_reason`, `pi_outcome`을 채운다. 원문과 승인 동작은 보존한다.
+- 단순 파일·폴더 명령은 규칙으로 설명한다. 복합 명령은 직원의 한국어 설명을 쓰거나 확인이 필요하다고 알린다. 안전 범위를 추측하지 않는다.
+- 메신저·카드의 제목·굵게·표 기호를 제거하고 코드를 접는다. 영어 원문은 한국어 안내 뒤 펼침에 보존한다.
+- #525·#535의 보수적인 구문 판독을 재사용한다. 실행 문자열·치환·알 수 없는 프로그램은 기존처럼 원문을 검사한다.
+
+## 확인
+
+- main `a709945`: 새 회귀 Python 8건·웹 7건 실패. 기존 판정 유지 사례 3건 통과.
+- 관련 Python 383 passed, 7 skipped. Node CJS 43개 파일 통과.
+- Chrome 합성 화면: 기본 상태에서 원문 숨김, ‘자세히’에서 명령·코드 원문 확인. PI·trial 인스턴스는 실행하지 않았다.
+- Windows 전체 pytest: 6017 passed, 66 skipped(11분 42초, 모의 e2e 포함). 전체 실행은 동시에 하나만 돌렸다.
+- 코드 head `fc9ee27`의 [CI](https://github.com/ehojune/bioinfo-team-3d/actions/runs/38385563298): changes·patch-notes·pytest 3.10·3.12·Windows·slow·clean-install·ro-crate-validator 성공, readme 조건부 생략.
+- 첫 전체 실행은 47 failed, 5969 passed, 66 skipped였다. 프롬프트 기준값·질문 규칙·새 Node 테스트 등록을 고쳤다. Node 42건은 격리 홈을 참조한 사용자 shim 문제여서 테스트 세션의 PATH에 실제 실행 파일 경로를 지정했다.
+
+## 오탐 판단
+
+- `New-Item -ItemType Directory -Force .tmp` 단독은 기존에도 허용된다.
+- here-string 안의 `Remove-Item results -Recurse`를 파일에 쓰는 합성 사례는 기존에 재귀 삭제로 잘못 판정됐다. 수정 뒤 허용된다.
+- 뒤에 실제 삭제가 있거나 here-string을 실행하는 경우는 계속 승인을 요구한다.
+- #557에는 시운전 명령의 앞부분만 있다. 실제 카드 뒤에 삭제가 있었는지는 이 자료로 확정하지 못했다.
+
+## humanizer 검토
+
+| 방식 | 비용·지연 | 품질·권고 |
+|---|---|---|
+| 매 메시지에 외부 humanizer | 메시지마다 진단·재작성 모델 호출 추가 | 문체 점검에는 유용하나 명령 의미를 검증하지 못한다. 상시 적용하지 않는다. |
+| 공통 글 규칙 + 규칙 설명 | 추가 모델 호출 없음 | 숫자·원문을 보존하고 같은 입력을 일관되게 표시한다. 이 PR의 기본 방식. |
+| 비서실장 추가 요약 | 부족한 설명마다 모델 호출·응답 대기 추가 | 복합 명령의 의도를 풀기 쉽지만 추측 위험이 있다. 현재 직원은 Sonnet 사전 브리핑 담당이며 별도 번역 호출은 넣지 않았다. |
+
+권고: 규칙과 직원의 기존 답변에서 설명을 만들고, humanizer는 최종 보고서 표본 점검에만 쓴다. 호출 비용·지연 수치는 측정하지 않았다.
+
+## 남은 지적
+
+- 복합 명령의 비서실장 별도 요약과 임의 영어 답변의 자동 번역은 미구현이다. 한국어 안내를 번역 결과로 표시하지 않는다.
+- 시운전 원문 전체를 받으면 해당 카드의 오탐 여부를 따로 확정해야 한다.
+- 임시 폴더 삭제가 자동 승인 검토에서 `blocked by policy`로 거부됐다. 후속 검증은 같은 임시 루트의 새 하위 경로에서 실행하며 정리 완료로 보고하지 않는다.
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
+`labhq_ask(to="facilities")`를 시설팀 직원이 받습니다. Codex gpt-6-sol·read-only로 진단만 답하고 요청 안에서 자기 상담 session을 이어 씁니다.
+
+## 바뀐 것
+
+- doctor 검사명·상태와 검증된 오류 파일 발췌를 전달합니다. 셸·쓰기·설치·HPC·plugin·외부 MCP는 열지 않습니다.
+- 기존 엔진 준비 검사, 미등록·미접속 시 CSO fallback, 제한된 refs·force_engine 경계를 유지합니다.
+- 메신저 이름은 시설팀이며 3D roster와 기존 설치 적용 절차를 갱신했습니다. 자동 실패 진단·canary는 범위 밖입니다.
+- 기준 `9eeed31`: 선행 #564·#552와 #562 변경을 보존했습니다.
+
+## 확인
+
+- 새 회귀 6건: 기준 코드에서 실패 → branch에서 통과. fallback·refs 검증을 포함한 관련 테스트 129 passed.
+- 배지 직원 수 고정값을 갱신한 뒤 관련 테스트 43 passed.
+- Node 메신저·직원 표시 검사 2개와 Chrome 아트랩 확인, 공개·integrations·diff 검사 통과.
+- 로컬 Windows 전체 pytest는 실행 슬롯을 확보하지 못해 미실행입니다. 로컬 전체 검증과 임시 폴더 정리를 총괄에게 인계합니다. CI 결과는 PR checks에서 별도로 확인합니다.
+- manual 119,658→120,345자; 한·영 README는 직원 배지 갱신으로 각각 22자 증가.
+
+## 남은 지적
+
+- 실제 Codex 상담과 기존 설치 적용은 PI·총괄의 후속 단계입니다. 봇 리뷰 판단·병합은 총괄에게 넘깁니다.
+
+Refs #35
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
 요청은 보고서 작성 뒤 PI 검토·확인으로 마무리합니다. 검토 대기 요청은 자동 타이틀 선택과 목록 정렬에서 미완료로 취급합니다.
 
 ## 바뀐 것
@@ -31,6 +104,37 @@
 Refs #435
 
 🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
+dev_log 저장소의 private 여부를 doctor·gateway 시작 시 확인한다. CI에서 실패한 direct 요청의 기록 경로 설명을 복원했다.
+
+## 바뀐 것
+
+- GitHubClient·token_env·api_url로 공개 여부를 조회한다(전체 5초 제한). public·unknown은 경고하며 gateway PI 로그에는 인스턴스마다 한 번 알린다.
+- 쓰기 직전 visibility guard·allow_public·#69 종료 조건은 유지한다.
+- manual 라운드 기록 절에 direct 요청의 `outputs/` 산출 경로와 최대 200개 상한을 명시했다. 기존 dev_log 설명과 테스트는 유지했다(118,501→118,533자).
+
+## 실행한 것
+
+- 기존 기능 관련 테스트: 104 passed.
+- 문서 수정 후 `tests/test_direct_outputs.py`: 19 passed·2 skipped.
+- Windows 전체 `pytest -q`: 5,902 passed·66 skipped. 다른 전체 suite가 끝난 뒤 단독 실행했다.
+- 공개 검사·diff·패치노트·기록 목차 검사 통과.
+
+## 미해결
+
+- 전용 임시 폴더 삭제는 경로 확인 후에도 자동 승인 검토가 `blocked by policy`로 거부했다. 정리 미완료.
+- 실제 dev_log 저장소 조회·PI/trial 인스턴스 실행은 하지 않았다.
+- CI 최종 결과 확인 뒤 리뷰 판단·병합은 총괄이 이어받는다.
+
+Refs #69
+
+## 남은 지적
+
+없음.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
 
 ## 결론
 
@@ -196,6 +300,37 @@ PR #554: pytest가 사용자 gateway에 요청을 남기지 않도록 홈·state
 Refs #545, #221
 
 🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
+dev_log가 켜져 있고 repo가 있으면 doctor·gateway 시작 시 private 여부를 확인한다. public·unknown은 경고하며 게시 권한은 바꾸지 않는다.
+
+## 바뀐 것
+
+- GitHubClient·token_env·api_url을 쓰는 GET 조회에 전체 5초 제한을 둔다.
+- gateway는 event loop를 막지 않고 실행 인스턴스마다 PI 로그에 한 번 경고한다.
+- 쓰기 직전 visibility guard·allow_public·#69 종료 조건을 유지한다.
+- 기준 11845c0: triage 뒤 #547·#532·#551·#552·#548·#550 반영. manual 해당 문단 갱신(118,283→118,501자).
+
+## 실행한 것
+
+- 새 테스트를 main 코드에 적용: 17 failed·2 passed. 구현 뒤 관련 테스트: 104 passed.
+- 공개 검사·git diff --check·patch-notes·notes-index 검사 통과.
+
+## 미해결
+
+- 로컬 Windows 전체 pytest는 다른 레인의 전체 suite가 연이어 실행 중이어서 중복 실행 금지 규칙에 따라 미실행이다. 완료 조건 미충족.
+- 레인 전용 임시 폴더 삭제는 도구 정책 거부로 미완료다.
+- 실제 dev_log 저장소 조회·PI/trial 인스턴스 실행은 하지 않았다.
+- 봇 리뷰 판단·병합은 총괄이 이어받는다.
+
+Refs #69
+
+## 남은 지적
+
+없음.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
 
 ## 결론
 

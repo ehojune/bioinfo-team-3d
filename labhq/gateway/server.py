@@ -26,10 +26,12 @@ from pydantic import BaseModel, Field, field_validator
 from ..integrations.github import ProjectReporter
 from ..intake import MAX_REFERENCES, Reference, effective_references
 from ..integrations.rounds import RoundRecorder, environment_snapshot
+from ..integrations.visibility import dev_log_visibility
 from ..login import login_command
 from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..costs import outcome_unknown_item, request_cost_summary, task_cost_item
 from ..models import ApprovalRequest, AskRequest, RunnerNotSent, RunnerUnavailable, Task, TaskResult, new_id, waiting
+from ..pi_text import with_approval_copy
 from ..recruit.provenance import not_yet_active, probation_refusal
 from ..adapters import enforces_read_only, get_adapter, read_only_refusal
 from ..hooks.control import STEER_LIMIT
@@ -2021,6 +2023,8 @@ class Hub:
 
     # ----- events -----
     async def publish(self, ev: dict, runner_id: str | None = None, runner_seq: int | None = None) -> None:
+        if ev.get('type') == 'approval.requested':
+            ev = {**ev, 'data': with_approval_copy(ev.get('data') or {})}
         async with self.event_lock:
             await self._flush_committed_events()
             durable_report = (self.reporter.enabled() and bool(ev.get("request_id")) and
@@ -2219,7 +2223,8 @@ class Hub:
                 pass  # kept: sent again when that runner reconnects
             msg = {**msg, "type": "approval.expired", "data": {"id": a["id"], "note": note}}
         elif typ == "approval.requested":
-            a = msg["data"]
+            a = with_approval_copy(msg["data"])
+            msg = {**msg, 'data': a}
             # The asking process: a card outlives neither it nor the agent's move to another runner (R2).
             self.approvals[a["id"]] = {"approval": a, "origin": runner_id,
                                        "origin_incarnation": self.runner_incarnations.get(runner_id),
@@ -3334,6 +3339,24 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         hub.demo_status = {"phase": "starting", "remaining_s": 0}
     app = FastAPI(title="labhq gateway", version="0.1.0", default_response_class=UTF8JSONResponse)
     app.state.hub = hub
+
+    visibility_checked = False
+
+    @app.on_event("startup")
+    async def check_dev_log_visibility() -> None:
+        nonlocal visibility_checked
+        if visibility_checked:
+            return
+        visibility_checked = True
+        visibility = await dev_log_visibility(settings, github_transport)
+        if visibility not in {"public", "unknown"}:
+            return
+        message = ("dev_log 저장소가 public입니다. 이미 게시한 기록도 노출될 수 있으니 비공개 설정을 확인하세요."
+                   if visibility == "public" else
+                   "dev_log 저장소의 private 여부를 확인하지 못했습니다(unknown). 토큰·접근 권한·연결을 확인하세요.")
+        log.warning("%s", message)
+        await hub.publish({"type": "agent.log", "agent_id": settings.orchestrator.cso_agent,
+                           "data": {"level": "warn", "code": "dev_log_visibility", "text": message}})
 
     @app.on_event("startup")
     async def recover_terminal_deliveries() -> None:

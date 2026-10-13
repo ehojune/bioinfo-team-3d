@@ -1,0 +1,114 @@
+"""Display copy only: never used to grant permission or change the submitted command."""
+from __future__ import annotations
+
+import re
+import json
+
+
+PI_TEXT_RULE = """
+PI가 읽는 승인 카드 사유·질문·메신저 답·보고 알림은 쉬운 한국어 평문으로 씁니다.
+순서는 무엇을 하려는지 → 왜 → 승인하면/끝나면 무슨 결과입니다.
+마크다운 제목(#), 굵게(**), 백틱(`), 표와 코드 원문은 쓰지 않습니다. 목록은 줄바꿈으로 나눕니다.
+영어 엔진 출력도 뜻을 확인해 한국어로 설명합니다. 명령·코드 원문은 별도 상세 필드나 산출 파일에 둡니다.
+모르는 목적·영향 범위·결과는 추측하지 않습니다. 확인한 사실과 직원의 예상은 구분합니다.
+JSON 출력 계약의 키·형식은 유지하고 PI에게 보이는 문자열 값에 이 규칙을 적용합니다.
+"""
+
+
+def plain_text(value: object) -> str:
+    text = re.sub(r'```[^\n]*\n[\s\S]*?(?:```|$)|~~~[^\n]*\n[\s\S]*?(?:~~~|$)', '', str(value or ''))
+    text = re.sub(r'^\s*(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s*)', '', text, flags=re.M)
+    text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'\1 (\2)', text)
+    text = text.replace('**', '').replace('__', '').replace('`', '')
+    lines = []
+    for line in text.splitlines():
+        if re.fullmatch(r'[\s|:\-]+', line):
+            continue
+        lines.append(' · '.join(p.strip() for p in line.strip('|').split('|')) if '|' in line else line)
+    return '\n'.join(lines).strip()
+
+
+def korean_text(value: object, fallback: str) -> str:
+    text = plain_text(value)
+    return text if re.search('[가-힣]', text) else fallback
+
+
+def tool_description(detail: dict) -> str:
+    """Describe literal operations; compound/opaque scripts retain an explicit scope caveat."""
+    data = detail.get('tool_input')
+    if not isinstance(data, dict):
+        data = detail.get('input') if isinstance(detail.get('input'), dict) else {}
+    if not data and isinstance(detail.get('input'), str):
+        try:
+            parsed = json.loads(detail['input'])
+            data = parsed if isinstance(parsed, dict) else {}
+        except (ValueError, TypeError):
+            pass
+    tool = str(detail.get('tool_name', ''))
+    path = data.get('file_path') or data.get('notebook_path') or detail.get('path')
+    if path and tool in {'Read', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit'}:
+        verb = '읽으려' if tool == 'Read' else '수정하려' if tool != 'Write' else '쓰려'
+        return f'{plain_text(path)} 파일을 {verb} 합니다.'
+    command = str(data.get('command') or '')
+    # Only describe a complete, simple literal command. A regex hit inside a script is not its effect.
+    if command and not re.search(r'[;|\n\r$`{}()<>]', command):
+        words = re.findall(r'"[^"]*"|\x27[^\x27]*\x27|\S+', command)
+        words = [w.strip('\"\x27') for w in words]
+        name = words[0].lower() if words else ''
+        args = words[1:]
+        if name == 'new-item' and len(args) == 4 and [a.lower() for a in args[:3]] == ['-itemtype', 'directory', '-force']:
+            return f'{plain_text(args[3])} 폴더를 만들려 합니다.'
+        if name in {'mkdir', 'get-content', 'cat'} and len(args) == 1 and not args[0].startswith('-'):
+            return f'{plain_text(args[0])}' + (' 폴더를 만들려 합니다.' if name == 'mkdir' else ' 파일을 읽으려 합니다.')
+        if name in {'remove-item', 'rm'} and len(args) == 2:
+            flags = {'-recurse', '-rf', '-r'}
+            targets = [w for w in args if w.lower() not in flags]
+            if len(targets) == 1 and not targets[0].startswith('-'):
+                return f'{plain_text(targets[0])} 폴더와 안의 파일을 지우려 합니다.'
+    described = korean_text(data.get('description'), '')
+    if described:
+        return f'직원 설명: {described}\n실제 명령과 작업 범위는 자세히에서 확인해 주세요.'
+    return '직원이 도구를 실행하려 합니다. 여러 명령이나 스크립트의 전체 작업 범위는 자세히에서 확인해 주세요.'
+
+
+def approval_copy(kind: str, summary: str, detail: dict) -> dict[str, str]:
+    """Stable Korean explanation for old and new producers; source fields are left intact."""
+    if kind == 'tool_permission':
+        one = tool_description(detail)
+        reason = '자동으로 허용하는 범위를 벗어나 실행 전에 확인이 필요합니다.'
+        policy_reason = str(detail.get('policy_reason') or summary)
+        if '재귀 삭제' in policy_reason:
+            reason = '폴더 안의 파일까지 지우는 명령이 감지됐습니다. 실제 삭제 대상은 원문에서 확인해 주세요.'
+        outcome = '승인하면 이 도구 호출을 한 번 허용합니다. 거절하면 실행하지 않습니다.'
+    elif kind == 'hpc_submit':
+        one = '계산 서버에 작업을 보내려 합니다.'
+        reason = korean_text(detail.get('reason'), '서버 자원을 쓰는 작업이라 실행 전에 확인이 필요합니다.')
+        if detail.get('cores') and detail.get('walltime'):
+            one += f" 처리 장치 {detail['cores']}개를 최대 {detail['walltime']} 동안 요청합니다."
+        outcome = '승인하면 작업을 제출합니다. 결과는 서버 작업이 끝난 뒤 확인합니다.'
+    elif kind == 'budget':
+        one = '작업을 계속하기 위해 비용 상한을 확인하려 합니다.'
+        reason = '지금 상한으로는 다음 작업을 보내기 어렵거나 아직 집계되지 않은 비용이 있습니다.'
+        spent, limit = detail.get('spent_usd'), detail.get('limit_usd')
+        if isinstance(spent, (int, float)) and isinstance(limit, (int, float)):
+            reason = f'지금까지 ${spent:.2f} 썼고 현재 상한은 ${limit:.2f}입니다.'
+            if detail.get('unknown_count'):
+                reason += f" 아직 비용을 모르는 작업이 {detail['unknown_count']}건 있어 추가 비용을 고려해야 합니다."
+            else:
+                reason += ' 다음 작업을 보내려면 상한을 높여야 합니다.'
+        amount = detail.get('requested_budget_usd')
+        outcome = (f'승인하면 비용 상한을 ${amount:.2f}로 올립니다.' if isinstance(amount, (int, float)) else
+                   '승인하면 카드에 제시된 비용 범위로 작업을 이어 갑니다.') + ' 거절하면 새 작업을 보내지 않습니다.'
+    elif kind == 'recruit':
+        one = '필요한 일을 맡길 직원을 추가하려 합니다.'
+        reason = korean_text(detail.get('reason'), '현재 직원만으로 맡기기 어려운 일이 있습니다.')
+        outcome = '승인하면 제안된 직원의 준비를 시작합니다. 준비가 끝나야 일을 맡깁니다.'
+    else:
+        one = korean_text(summary, '다음 작업을 진행하기 전에 확인이 필요합니다.')
+        reason = korean_text(detail.get('why_blocked') or detail.get('reason'), '진행 방향을 정하려면 PI의 답이 필요합니다.')
+        outcome = '선택한 답을 직원에게 전달합니다.'
+    return dict(pi_summary=one, pi_reason=reason, pi_outcome=outcome)
+
+
+def with_approval_copy(card: dict) -> dict:
+    return {**card, **approval_copy(str(card.get('kind', '')), str(card.get('summary', '')), card.get('detail') or {})}

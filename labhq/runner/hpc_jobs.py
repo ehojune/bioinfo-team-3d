@@ -71,6 +71,7 @@ async def submit_job(s: Settings, scheduler: Scheduler, workdir: Path, body: dic
             "kind": "hpc_submit",
             "summary": f"HPC 제출: {name} · {cores} cores · {mem} · {walltime} (~{ch:.1f} core-h){outside}",
             "detail": {"reason": str(body.get("reason") or ""), "script_path": str(spath),
+                       "cores": cores, "mem": mem, "walltime": walltime,
                        "script_preview": "\n".join(text.splitlines()[:40]), "queue": queue,
                        **({"script_preview_truncated": True, "script_preview_chars": len(text)}
                           if len(text.splitlines()) > 40 else {}),
