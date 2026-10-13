@@ -110,8 +110,8 @@ def test_mixed_costs_keep_engine_subtotals_and_unknown_count_separate():
     assert summary["by_engine"]["codex"]["estimated_usd"] == pytest.approx(3.0)
     assert summary["by_engine"]["gemini"]["unknown_count"] == 1
     assert summary["prices"][0]["model"] == "gpt-6.1-sol" and summary["prices"][0]["catalog_version"]
-    assert format_cost(summary) == "확인 $1.25 + 추정 $3.00 + 미집계 1건"
-    assert format_engines(summary) == "claude_code 확인 $1.25 · codex 추정 $3.00 · gemini 미집계 1건"
+    assert format_cost(summary) == "확인 $1.25 + 추정 $3.00 + 미집계된 비용 1건"
+    assert format_engines(summary) == "claude_code 확인 $1.25 · codex 추정 $3.00 · gemini 미집계된 비용 1건"
 
 
 def test_unknown_only_is_never_shown_as_zero_dollars():
@@ -119,9 +119,9 @@ def test_unknown_only_is_never_shown_as_zero_dollars():
                             cost_usd=None, cost_known=False, task_id="u")
     summary = aggregate_costs({"u": unknown})
 
-    assert format_cost(summary) == "미집계 1건"
+    assert format_cost(summary) == "미집계된 비용 1건"
     assert "$0" not in cost_text(0, False, summary)
-    assert cost_text(0, False) == "비용 미집계" and cost_text(1.5, False) == "$1.50 + 비용 미집계"
+    assert cost_text(0, False) == "미집계된 비용" and cost_text(1.5, False) == "$1.50 + 미집계된 비용"
     assert cost_text(0, True) == "$0.00"
     assert format_cost(aggregate_costs({})) == "확인 $0.00"
 

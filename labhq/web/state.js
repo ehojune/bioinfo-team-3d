@@ -23,6 +23,12 @@ function demoBannerText(status) {
     : status?.phase === 'running' ? 'mock 요청 진행 중' : 'mock 데모 준비 중';
   return `${base} · ${progress}`;
 }
+const STAFF_NAMES = {cso:'CSO(부엉이)', chief_of_staff:'비서실장', biologist:'생물학자', data_steward:'데이터 관리자', lit_scout:'문헌 조사원', analyst:'분석가', engineer:'엔지니어', qc_reviewer:'품질 리뷰어', sci_reviewer:'과학 리뷰어', recruiter:'채용 담당', facilities:'시설팀', colleague:'동료 직원', 'bioinfo-agent':'생물정보 직원', pi:'나', hpc:'HPC', github:'GitHub', system:'시스템'};
+const STAFF_CHARACTERS = {cso:'owl', chief_of_staff:'penguin', biologist:'bear', data_steward:'squirrel', lit_scout:'fox', analyst:'raccoon', engineer:'octopus', qc_reviewer:'hedgehog', sci_reviewer:'turtle', recruiter:'beaver', 'bioinfo-agent':'otter'};
+function staffCharacter(a) {
+  const id = String(a?.id || '').toLowerCase();
+  return STAFF_CHARACTERS[id] || (id.startsWith('c_') ? 'chick' : a?.character && a.character !== 'paper-hat-chick' && a.character !== 'chick' ? a.character : 'neutral');
+}
 const isContract = a => !!a && (a.employment === 'contract' || String(a.id).startsWith('c_'));
 const ACTIVE_REQUEST_STATES = new Set(['running', 'waiting_for_runner', 'waiting_quota', 'waiting_login', 'waiting_facilities_fix', 'waiting_pi']);
 const TERMINAL_REQUEST_STATES = new Set(['done', 'failed', 'cancelled', 'rejected']);
@@ -39,9 +45,11 @@ const REQUEST_STATUS_KO = { running: '진행 중', waiting_for_runner: '러너 �
   waiting_login: '로그인 대기', waiting_facilities_fix: '환경 수정 승인 대기', waiting_pi: 'PI 결정 대기',
   interrupted: '중단됨', done: '완료', failed: '실패', cancelled: '취소됨', rejected: '거부됨' };
 const requestStatusLabel = status => REQUEST_STATUS_KO[status] || String(status || '상태 모름');
+const needsPiReview = q => !!q && isTerminalRequest(q.status) && q.pi_review_pending === true && !q.pi_reviewed_at;
+const reviewLabel = q => q.status === 'done' ? '보고서 검토' : '결과 확인';
 const requestActivity = q => Math.max(Number(q.updated_at) || 0, Number(q.created_at) || 0);
 function sortRequests(requests) {
-  return [...requests].sort((a, b) => Number(isTerminalRequest(a.status)) - Number(isTerminalRequest(b.status)) ||
+  return [...requests].sort((a, b) => Number(isTerminalRequest(a.status) && !needsPiReview(a)) - Number(isTerminalRequest(b.status) && !needsPiReview(b)) ||
     requestActivity(b) - requestActivity(a) || (Number(b.created_at) || 0) - (Number(a.created_at) || 0) ||
     String(a.id).localeCompare(String(b.id)));
 }
@@ -59,6 +67,7 @@ function processingLabel(q) {
 // The status with what the PI can do about it: resume an interrupted request, or which runner is still missing.
 function requestStatusText(q, approvals) {
   if (!q) return '';
+  if (needsPiReview(q)) return `${reviewLabel(q)} 대기`;
   const label = requestStatusLabel(q.status);
   if (q.status === 'interrupted') {
     const card = [...(approvals ? approvals.values() : [])].some(a => a && a.kind === 'resume' && a.request_id === q.id);
@@ -74,14 +83,14 @@ function costParts(actual, estimated, unknown) {
   const parts = [];
   if (actual > 0 || !(estimated > 0 || unknown)) parts.push(`확인 ${usd(actual)}`);
   if (estimated > 0) parts.push(`추정 ${usd(estimated)}`);
-  if (unknown) parts.push(`미집계 ${unknown}건`);
+  if (unknown) parts.push(`미집계된 비용 ${unknown}건`);
   return parts.join(' + ');
 }
 const summaryParts = s => costParts(Number(s.actual_usd) || 0, Number(s.estimated_usd) || 0, Number(s.unknown_count) || 0);
 function costLabel(q) {
   if (q && q.costSummary) return summaryParts(q.costSummary);
   const cost = Number(q && q.cost) || 0;
-  return q && q.costKnown === false ? `${cost ? usd(cost) + ' + ' : ''}비용 미집계` : usd(cost);
+  return q && q.costKnown === false ? `${cost ? usd(cost) + ' + ' : ''}미집계된 비용` : usd(cost);
 }
 function engineCostLabel(summary) {
   if (!summary || !summary.by_engine) return '';
@@ -114,7 +123,7 @@ function totalCostLabel(requests, total) {
     else if (q.costKnown === false) legacyUnknown = true;
   }
   return `사용 비용 ${usd(total)}${estimated > 0 ? ` (추정 ${usd(estimated)} 포함)` : ''}` +
-    (unknown ? ` + 미집계 ${unknown}건${legacyUnknown ? ' 이상' : ''}` : legacyUnknown ? ' + 비용 미집계' : '');
+    (unknown ? ` + 미집계된 비용 ${unknown}건${legacyUnknown ? ' 이상' : ''}` : legacyUnknown ? ' + 미집계된 비용' : '');
 }
 function applyCostSummary(q, summary) {
   if (!summary || typeof summary !== 'object') return;
@@ -163,7 +172,9 @@ const PHASES = [['briefing', '브리핑'], ['plan', '계획'], ['execute', '실�
 // The same Korean names the 2.5D phase list shows; the internal key never reaches the PI.
 const phaseLabel = q => q.phase === 'done' ? '완료' : (PHASES.find(([key]) => key === q.phase) || [])[1] || String(q.phase);
 
-const ag = id => S.agents.get(id);
+const ag = id => S.agents.get(String(id || '').toLowerCase());
+const hasPiDecision = a => [...S.approvals.values()].some(p => String(p.agent_id || '').toLowerCase() === a.id);
+const completedForReview = a => [...S.requests.values()].some(q => needsPiReview(q) && (q.agent_id === a.id || q.plan.some(s => s.agent_id === a.id) || a.id === 'cso'));
 const controlledState = t => {
   if (!t) return '';
   const c = S.taskControl.get(t.id) || t.control || {};
@@ -182,9 +193,10 @@ const taskState = a => {
   if (controlledState(t)) return 'waiting';
   if ([...S.approvals.values()].some(p => p.agent_id === a.id && (!p.task_id || p.task_id === t.id))) return 'waiting';
   const state = t.activity?.state || t.state;
+  if (state === 'waiting') return 'hibernating';
   return ['queued', 'waiting', 'hibernating', 'error'].includes(state) ? state : 'working';
 };
-const visual = a => warning(a) ? 'error' : taskState(a) || (a.state === 'done' && now() - (a.stateAt || 0) > 3
+const visual = a => warning(a) ? 'error' : taskState(a) || (hasPiDecision(a) ? 'waiting' : completedForReview(a) ? 'done' : a.state === 'waiting' ? (a.waitFor === 'answer' ? 'hibernating' : 'idle') : a.state === 'done' && now() - (a.stateAt || 0) > 3
   ? 'idle' : STATE_KO[a.state] ? a.state : 'idle');
 // 'hibernating' covers HPC jobs and unanswered asks (runner agent.status: jobs, asks); a PI question is not HPC.
 const stateText = (a, vs = visual(a)) => {
@@ -198,6 +210,7 @@ const stateText = (a, vs = visual(a)) => {
     if (vs === 'hibernating') return (activity.jobs || []).length ? 'HPC 작업 기다리는 중' : '답 기다리는 중';
     if (vs === 'working') return tool ? `${/Bash|PowerShell|shell|command_execution/i.test(tool.name) ? '명령' : '도구'} 실행 중 · ${Math.max(0, Math.floor((now() - tool.at) / 60))}분째` : '생각하는 중';
   }
+  if (vs === 'done' && completedForReview(a)) return '작업 끝 · PI 검토 대기';
   return vs === 'hibernating' && a.waitFor === 'answer' ? '답 기다리는 중' : STATE_KO[vs];
 };
 function toolInputLine(input) {
@@ -248,7 +261,7 @@ function trackActivity(ev) {
     } else S.activeTasks.delete(tid);
   }
 }
-const nick = id => { const a = ag(id); return a ? String(a.name || a.id).split(' ')[0] : ({ pi: '나', hpc: 'HPC', github: 'GitHub', system: '시스템' }[id] || id || ''); };
+const nick = id => { const key = String(id || '').toLowerCase(), a = ag(key); return ({cso:STAFF_NAMES.cso, facilities:STAFF_NAMES.facilities}[key]) || (a?.name && a.name !== a.id ? String(a.name).split(' ')[0] : STAFF_NAMES[key] || (key.startsWith('c_') ? '파견 직원' : id ? '직원' : '')); };
 // A staff member's task rows: kept while the task runs, waits for HPC or an answer, is halted, or holds its paused
 // step; removed on its terminal event, as a reload would (PR #532 review).
 function trackTask(a, tid, state, title, keep = false, rid = '', sid = '') {
@@ -278,6 +291,7 @@ function upsertAgent(a) {
 function req(rid) {
   if (!S.requests.has(rid)) {
     const q = { id: rid, text: '', steps: {}, plan: [], github: [], cost: 0, costKnown: true, phase: 'briefing', status: 'running', created_at: now() };
+    for (const key of ['pi_review_pending', 'pi_reviewed_at', 'agent_id']) Object.defineProperty(q, key, {value:null, writable:true, enumerable:false});
     Object.defineProperty(q, 'updated_at', { value: 0, writable: true, enumerable: false });
     Object.defineProperty(q, 'resumed', { value: false, writable: true, enumerable: false });
     Object.defineProperty(q, 'references', { value: [], writable: true, enumerable: false });
@@ -425,11 +439,13 @@ function apply(ev, replay = false) {
       for (const r of d.requests || []) {
         const q = req(r.id);
         Object.assign(q, { text: r.text, status: r.status, mode: r.mode, project_id: r.project_id, created_at: r.created_at, cost: r.cost_usd || 0, costKnown: r.cost_known !== false });
+        q.pi_review_pending = r.pi_review_pending === true; q.pi_reviewed_at = r.pi_reviewed_at || null; q.agent_id = r.agent_id || '';
         q.updated_at = Math.max(q.updated_at, Number(r.updated_at) || 0);
         // With a trimmed event history, running in the initial snapshot still means work is continuing.
         q.resumed = q.resumed || r.status === 'running';
         if (r.route_decision && typeof r.route_decision === 'object') q.processing = { ...r.route_decision };
         if (typeof r.report === 'string') q.report = r.report;
+        if (typeof r.error === 'string' && r.error) q.error = r.error;
         if (typeof r.report_appendix === 'string') q.report_appendix = r.report_appendix;
         q.bundlePath = r.bundle_path || ''; q.bundleStatus = r.bundle_status || ''; q.bundleGrade = r.bundle_grade || ''; q.bundleGradeReasons = r.bundle_grade_reasons || []; q.bundleWarning = r.bundle_warning || '';
         if (r.report_truncated) Object.assign(q, { report_truncated: true, report_chars: r.report_chars });
@@ -497,8 +513,8 @@ function apply(ev, replay = false) {
       a.state = d.state || a.state; a.stateAt = ts;
       trackTask(a, ev.task_id, d.state || a.state, d.task, Boolean(d.halted), rid, S.taskStep.get(ev.task_id));
       // Display only, like usage and trace: kept out of the replayed state the golden hashes compare.
-      if (d.state === 'hibernating') Object.defineProperty(a, 'waitFor', { writable: true, configurable: true, enumerable: false,
-        value: (d.jobs || []).length ? 'hpc' : (d.asks || []).length ? 'answer' : '' });
+      if (['hibernating', 'waiting', 'working', 'idle', 'done'].includes(d.state)) Object.defineProperty(a, 'waitFor', { writable: true, configurable: true, enumerable: false,
+        value: (d.jobs || []).length ? 'hpc' : d.ask || (d.asks || []).length ? 'answer' : '' });
       if (d.task) a.task = d.task;
       if (d.state === 'done' || d.state === 'idle') a.tool = '';
       if (d.error) { a.error = d.error; logTo(a, `오류: ${d.error}`, ts); }
@@ -649,6 +665,7 @@ function apply(ev, replay = false) {
     case 'request.created': {
       const q = req(rid);
       Object.assign(q, { text: d.text, mode: d.mode, project_id: d.project_id, status: d.status || 'running', phase: isTerminalRequest(d.status) ? 'done' : d.mode === 'direct' ? 'execute' : 'briefing', created_at: ts });
+      q.agent_id = d.agent_id || '';
       q.references = d.references || [];
       if (!replay && !(preferred?.manual && S.requests.has(S.current) && isTerminalRequest(q.status))) selectRequest(rid, false);
       feed({ who: 'pi', text: `새 요청: ${short(d.text, 130)}`, fullText: `새 요청: ${d.text || ''}` }, ts, rid);
@@ -780,12 +797,15 @@ function apply(ev, replay = false) {
     // A status the gateway sets itself: waiting_pi, waiting_for_runner, interrupted, running (R5, R15, #494).
     case 'request.status': { const q = req(rid); if (d.status && !isTerminalRequest(q.status)) q.status = d.status; break; }
     case 'request.runner_wait': feed({ who: 'system', text: d.message || '러너를 기다려요', cls: 'alert' }, ts, rid); break;
+    case 'request.reviewed': { const q = req(rid); q.pi_review_pending = false; q.pi_reviewed_at = d.pi_reviewed_at; break; }
     case 'request.completed': case 'request.failed': {
       for (const [tid, task] of S.activeTasks) if (task.request_id === rid) S.activeTasks.delete(tid);
-      const q = req(rid);
+      const q = req(rid), wasPending = needsPiReview(q);
       // The request is over (done, failed or cancelled): no step of it takes a control any more.
       for (const a of S.agents.values()) for (const [tid, row] of [...a.tasks]) if (row.rid === rid) { a.tasks.delete(tid); S.taskControl.delete(tid); }
       q.status = d.status === 'cancelled' ? 'cancelled' : t === 'request.completed' && d.ok !== false ? 'done' : 'failed'; q.phase = 'done';
+      q.pi_review_pending = d.pi_review_pending === true; q.pi_reviewed_at = d.pi_reviewed_at || null;
+      if (!replay && needsPiReview(q) && !wasPending) effects.push({type:'toast', text:`${q.status === 'done' ? '보고서가 준비됐어요' : '요청이 끝났어요'} · ${reviewLabel(q)} 대기`});
       if (typeof d.cost_usd === 'number' && Number.isFinite(d.cost_usd) && d.cost_usd >= 0) {
         S.cost += d.cost_usd - q.cost; q.cost = d.cost_usd;
       }
@@ -877,7 +897,8 @@ function fillFollowups(rid, request) {
 function fillRequestDetail(rid, request) {
   const q = S.requests.get(rid);
   let filled = fillFollowups(rid, request);
-  if (q?.report_truncated && typeof request?.report === 'string') {
+  if (q && typeof request?.error === 'string' && q.error !== request.error) { q.error = request.error; filled++; }
+  if (q && typeof request?.report === 'string' && (q.report_truncated || q.report !== request.report)) {
     q.report = request.report;
     delete q.report_truncated; delete q.report_chars;
     filled++;
@@ -901,5 +922,5 @@ return { S, apply, selectRequest, ag, visual, stateText, currentTask, currentToo
 }
 root.LabHQState = { createOfficeState, costLabel, engineCostLabel, agentCostLabel, agentSpentLabel, totalCostLabel,
   isActiveRequest, isTerminalRequest, REQUEST_STATUS_KO, requestStatusLabel, requestStatusText, processingLabel,
-  websocketCloseAction, officeStorageKey, createRequestFocusStorage, sortRequests, requestActivity, requestResumeLabel, connectionLabel, demoBannerText };
+  needsPiReview, reviewLabel, staffCharacter, STAFF_NAMES, websocketCloseAction, officeStorageKey, createRequestFocusStorage, sortRequests, requestActivity, requestResumeLabel, connectionLabel, demoBannerText };
 })(globalThis);

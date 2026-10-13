@@ -33,6 +33,7 @@ for (const [data, label] of [
   [{state: 'hibernating', asks: ['q']}, '답 기다리는 중'],
 ]) test(label, () => {
   const {o, event, a} = office();
+  if (data.approval) o.S.approvals.set(data.approval, {id:data.approval, agent_id:a.id});
   event('agent.status', data);
   assert.notEqual(o.visual(a), 'idle');
   assert.equal(o.stateText(a), label);
@@ -52,7 +53,7 @@ test('snapshot restores question and approval waits', () => {
   for (const [activity, label] of [[{state: 'waiting', ask: 'q'}, '답 기다리는 중'],
     [{state: 'waiting', approval: 'p'}, 'PI 결정 기다리는 중'],
     [{state: 'hibernating', jobs: ['j']}, 'HPC 작업 기다리는 중']]) {
-    o.apply({type: 'snapshot', data: {agents: [{id: 'analyst'}], running_tasks: [{id: 't', agent_id: 'analyst', state: 'running', activity}]}});
+    o.apply({type: 'snapshot', data: {agents: [{id: 'analyst'}], approvals: activity.approval ? [{id:activity.approval,agent_id:'analyst'}] : [], running_tasks: [{id: 't', agent_id: 'analyst', state: 'running', activity}]}});
     assert.equal(o.stateText(o.ag('analyst')), label);
   }
 });
