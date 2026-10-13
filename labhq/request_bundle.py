@@ -728,11 +728,20 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
         # The report's claim anchors resolve against these ledgers; without them a colleague holding only the bundle
         # could not follow a number to its evidence (readiness R24, 2026-10-08).
         contract = req.get("research_contract")
+        final_checkpoint = isinstance(contract, Mapping) and contract.get("final_checkpoint") is True
+        if final_checkpoint:
+            (temp / "final_checkpoint.json").write_text(json.dumps({
+                "contract_version": contract.get("schema_version"), "request_id": req.get("id"),
+                "draft": contract.get("final_draft"), "receipt": contract.get("final_receipt")},
+                ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")
         claims = isinstance(contract, Mapping) and bool(contract.get("plan_sha256"))
         if claims:
             copied_paths = {str(row["relative_path"]) for row in rows if str(row.get("status", "")).startswith("copied")}
             record = _bundle_claims(claims_record(req, report_check=contract.get("report_check")), results,
                                     copied_paths)
+            if final_checkpoint and isinstance(record.get("final_draft"), dict):
+                # The canonical pre-rewrite text lives in final_checkpoint.json.
+                record["final_draft"].pop("content", None)
             (temp / "claims.json").write_text(json.dumps(record, ensure_ascii=False, indent=2, default=str),
                                               encoding="utf-8", newline="\n")
         commands =[command for step_id in ordered_ids
@@ -757,6 +766,8 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
         remaining: set[str] = set()
         rewrite_by_file: dict[str, tuple[int, list[str]]] = {}
         for path in sorted(p for p in temp.rglob("*") if p.is_file() and p.suffix.casefold() in TEXT_SUFFIXES):
+            if path == temp / "final_checkpoint.json":
+                continue  # hash-bound PI draft: portable report.md may rewrite paths, this record never does
             count, paths = _rewrite_text(path, workdirs)
             if count:
                 rewritten_files += 1
@@ -784,6 +795,7 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
 
         generated = [temp / "README.md", temp / "report.md", appendix_path, temp / "INPUTS.tsv",
                       *([temp / "claims.json"] if claims else []),
+                      *([temp / "final_checkpoint.json"] if final_checkpoint else []),
                       *([temp / LINK_SCRIPT] if (temp / LINK_SCRIPT).is_file() else []),
                       *([temp / RERUN_RECEIPT_FILE] if (temp / RERUN_RECEIPT_FILE).is_file() else [])]
         for path in generated:

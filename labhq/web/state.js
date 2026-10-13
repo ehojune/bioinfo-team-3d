@@ -31,7 +31,7 @@ function staffCharacter(a) {
 }
 const isContract = a => !!a && (a.employment === 'contract' || String(a.id).startsWith('c_'));
 const ACTIVE_REQUEST_STATES = new Set(['running', 'waiting_for_runner', 'waiting_quota', 'waiting_login', 'waiting_facilities_fix', 'waiting_pi']);
-const TERMINAL_REQUEST_STATES = new Set(['done', 'failed', 'cancelled', 'rejected']);
+const TERMINAL_REQUEST_STATES = new Set(['done', 'failed', 'cancelled', 'rejected', 'review_pending']);
 // Cards that park an active request as waiting_pi (server.py PI_DECISION_KINDS). A resume card is one too, but its
 // request is interrupted, not parked.
 const PI_DECISION_KINDS = new Set(['clarify', 'question', 'scope', 'budget', 'research_plan', 'research_evidence', 'research_continue']);
@@ -43,10 +43,10 @@ const websocketCloseAction = code => code === 1008
 // One label per gateway request status (R14). An unknown status shows as itself, never as 실패.
 const REQUEST_STATUS_KO = { running: '진행 중', waiting_for_runner: '러너 기다림', waiting_quota: '한도 대기',
   waiting_login: '로그인 대기', waiting_facilities_fix: '환경 수정 승인 대기', waiting_pi: 'PI 결정 대기',
-  interrupted: '중단됨', done: '완료', failed: '실패', cancelled: '취소됨', rejected: '거부됨' };
+  interrupted: '중단됨', done: '완료', failed: '실패', cancelled: '취소됨', rejected: '거부됨', review_pending: '보고서 검토 대기' };
 const requestStatusLabel = status => REQUEST_STATUS_KO[status] || String(status || '상태 모름');
 const needsPiReview = q => !!q && isTerminalRequest(q.status) && q.pi_review_pending === true && !q.pi_reviewed_at;
-const reviewLabel = q => q.status === 'done' ? '보고서 검토' : '결과 확인';
+const reviewLabel = q => ['done', 'review_pending'].includes(q.status) ? '보고서 검토' : '결과 확인';
 const requestActivity = q => Math.max(Number(q.updated_at) || 0, Number(q.created_at) || 0);
 function sortRequests(requests) {
   return [...requests].sort((a, b) => Number(isTerminalRequest(a.status) && !needsPiReview(a)) - Number(isTerminalRequest(b.status) && !needsPiReview(b)) ||
@@ -291,7 +291,7 @@ function upsertAgent(a) {
 function req(rid) {
   if (!S.requests.has(rid)) {
     const q = { id: rid, text: '', steps: {}, plan: [], github: [], cost: 0, costKnown: true, phase: 'briefing', status: 'running', created_at: now() };
-    for (const key of ['pi_review_pending', 'pi_reviewed_at', 'agent_id']) Object.defineProperty(q, key, {value:null, writable:true, enumerable:false});
+    for (const key of ['pi_review_pending', 'pi_reviewed_at', 'agent_id', 'final_checkpoint']) Object.defineProperty(q, key, {value:null, writable:true, enumerable:false});
     Object.defineProperty(q, 'updated_at', { value: 0, writable: true, enumerable: false });
     Object.defineProperty(q, 'resumed', { value: false, writable: true, enumerable: false });
     Object.defineProperty(q, 'references', { value: [], writable: true, enumerable: false });
@@ -440,6 +440,7 @@ function apply(ev, replay = false) {
         const q = req(r.id);
         Object.assign(q, { text: r.text, status: r.status, mode: r.mode, project_id: r.project_id, created_at: r.created_at, cost: r.cost_usd || 0, costKnown: r.cost_known !== false });
         q.pi_review_pending = r.pi_review_pending === true; q.pi_reviewed_at = r.pi_reviewed_at || null; q.agent_id = r.agent_id || '';
+        q.final_checkpoint = r.final_checkpoint || null;
         q.updated_at = Math.max(q.updated_at, Number(r.updated_at) || 0);
         // With a trimmed event history, running in the initial snapshot still means work is continuing.
         q.resumed = q.resumed || r.status === 'running';
@@ -797,13 +798,14 @@ function apply(ev, replay = false) {
     // A status the gateway sets itself: waiting_pi, waiting_for_runner, interrupted, running (R5, R15, #494).
     case 'request.status': { const q = req(rid); if (d.status && !isTerminalRequest(q.status)) q.status = d.status; break; }
     case 'request.runner_wait': feed({ who: 'system', text: d.message || '러너를 기다려요', cls: 'alert' }, ts, rid); break;
-    case 'request.reviewed': { const q = req(rid); q.pi_review_pending = false; q.pi_reviewed_at = d.pi_reviewed_at; break; }
+    case 'request.reviewed': { const q = req(rid); q.pi_review_pending = d.pi_review_pending === true; q.pi_reviewed_at = d.pi_reviewed_at; if (d.status) q.status = d.status; if (d.final_checkpoint) q.final_checkpoint = d.final_checkpoint; break; }
     case 'request.completed': case 'request.failed': {
       for (const [tid, task] of S.activeTasks) if (task.request_id === rid) S.activeTasks.delete(tid);
       const q = req(rid), wasPending = needsPiReview(q);
       // The request is over (done, failed or cancelled): no step of it takes a control any more.
       for (const a of S.agents.values()) for (const [tid, row] of [...a.tasks]) if (row.rid === rid) { a.tasks.delete(tid); S.taskControl.delete(tid); }
-      q.status = d.status === 'cancelled' ? 'cancelled' : t === 'request.completed' && d.ok !== false ? 'done' : 'failed'; q.phase = 'done';
+      q.status = isTerminalRequest(d.status) ? d.status : t === 'request.completed' && d.ok !== false ? 'done' : 'failed'; q.phase = 'done';
+      q.final_checkpoint = d.final_checkpoint || null;
       q.pi_review_pending = d.pi_review_pending === true; q.pi_reviewed_at = d.pi_reviewed_at || null;
       if (!replay && needsPiReview(q) && !wasPending) effects.push({type:'toast', text:`${q.status === 'done' ? '보고서가 준비됐어요' : '요청이 끝났어요'} · ${reviewLabel(q)} 대기`});
       if (typeof d.cost_usd === 'number' && Number.isFinite(d.cost_usd) && d.cost_usd >= 0) {
@@ -825,7 +827,7 @@ function apply(ev, replay = false) {
       const failedText = why ? `요청이 실패했어요: ${why}` : d.report
         ? '요청을 완료로 보지 않았어요. 보고서와 실행 기록에서 이유를 확인하세요'
         : '요청이 끝까지 가지 못했어요. 실행 기록을 보세요';
-      feed({ who: 'cso', text: q.status === 'done' ? '최종 보고서를 올렸어요' : q.status === 'cancelled' ? '요청을 취소했어요. 끝난 단계까지 보고서에 남겼어요' : failedText,
+      feed({ who: 'cso', text: q.status === 'review_pending' ? '최종 초안을 검토해 주세요 (CP4)' : q.status === 'done' ? '최종 보고서를 올렸어요' : q.status === 'cancelled' ? '요청을 취소했어요. 끝난 단계까지 보고서에 남겼어요' : failedText,
         fullText: q.status === 'failed' && d.error ? `요청이 실패했어요: ${d.error}` : undefined, cls: q.status === 'failed' ? 'alert' : '' }, ts, rid);
       break;
     }

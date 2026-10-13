@@ -599,11 +599,13 @@ export function syncDecisionCards(container, approvals, suggestions = [], option
   return rows;
 }
 
-// Acknowledgments are not approvals: no timer, denial or blocked steps.
+// CP4 uses this same report card; its target travels with the PI's decision.
 export function syncReviewCards(container, requests, options = {}) {
   const existing = new Map([...container.children].map(row => [row.dataset.reviewRequest, row]));
   const rows = [...requests].filter(q => globalThis.LabHQState.needsPiReview(q)).map(q => {
-    const key = JSON.stringify([q.text, q.status, options.disabled?.(q) || false]);
+    const final = q.status === 'review_pending' ? q.final_checkpoint : null;
+    const reportReady = q.status === 'done' || !!final;
+    const key = JSON.stringify([q.text, q.status, final, options.disabled?.(q) || false]);
     const prior = existing.get(q.id);
     if (prior?.dataset.reviewKey === key) return prior;
     const row = doc().createElement('article'); row.className = 'ap';
@@ -611,13 +613,18 @@ export function syncReviewCards(container, requests, options = {}) {
     const body = add(row, 'div');
     add(body, 'strong', globalThis.LabHQState.reviewLabel(q), 'kind');
     add(body, 'p', q.text || q.id, 'sum');
-    add(body, 'p', q.status === 'done' ? '작업 완료 · 보고서를 검토해 주세요.' : '요청 종료 · 결과와 이유를 확인해 주세요.', 'decision-meta');
+    add(body, 'p', final ? 'CP4 · 최종 초안을 검토해 주세요. 수용은 게시·전송·실행 승인이 아닙니다.' : reportReady ? '작업 완료 · 보고서를 검토해 주세요.' : '요청 종료 · 결과와 이유를 확인해 주세요.', 'decision-meta');
+    if (final) add(body, 'p', `초안 ${final.revision} · ${final.target_sha256} · 기한 ${new Date(final.deadline_at * 1000).toLocaleString()}`, 'decision-meta');
     const actions = add(body, 'div', '', 'acts');
-    const open = add(actions, 'button', q.status === 'done' ? '보고서 열기' : '결과·이유 보기', 'btn go');
+    const open = add(actions, 'button', reportReady ? '보고서 열기' : '결과·이유 보기', 'btn go');
     open.type = 'button'; open.onclick = () => options.onOpen?.(q.id);
-    const done = add(actions, 'button', q.status === 'done' ? '검토 완료' : '확인 완료', 'btn');
+    const done = add(actions, 'button', reportReady ? '검토 완료' : '확인 완료', 'btn');
     done.type = 'button'; done.disabled = options.disabled?.(q) || false;
-    done.onclick = () => options.onDone?.(q.id);
+    done.onclick = () => options.onDone?.(q.id, final ? {decision:'accepted', revision:final.revision, target_sha256:final.target_sha256} : {});
+    if (final) {
+      const deny = add(actions, 'button', '수용 거부', 'btn'); deny.type = 'button'; deny.disabled = done.disabled;
+      deny.onclick = () => options.onDone?.(q.id, {decision:'rejected', revision:final.revision, target_sha256:final.target_sha256});
+    }
     return row;
   });
   placeRows(container, rows);

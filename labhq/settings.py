@@ -449,6 +449,7 @@ class ResearchSettings(BaseModel):
 
     enabled: bool = False
     evidence_checkpoint: bool = False  # execute approved research steps and stop at CP2
+    final_checkpoint: bool = False  # PI report review accepts a frozen final draft (CP4)
     live_source_check: bool = False  # Crossref/NCBI verification before CP2 and in labhq verify
     live_source_contact: str = ""  # optional maintainer email for API User-Agent/mailto etiquette
     live_source_timeout_s: float = Field(default=10.0, gt=0)

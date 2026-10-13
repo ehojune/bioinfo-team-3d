@@ -156,11 +156,19 @@ def render(ev: dict, login_holds: set[str] | None = None) -> None:
         line = f"⚠️ 재고용 {d.get('agent_id')}: {', '.join(d.get('changed') or [])} hash가 채용 때와 다름"
     elif t == "request.completed":
         summary = d.get("cost_summary")
-        line = f"🏁 요청 완료 (ok={d.get('ok')}, cost={cost_text(d.get('cost_usd'), d.get('cost_known'), summary)})"
+        label = "보고서 검토 대기 (CP4)" if d.get("status") == "review_pending" else "요청 완료"
+        line = f"🏁 {label} (ok={d.get('ok')}, cost={cost_text(d.get('cost_usd'), d.get('cost_known'), summary)})"
+        if d.get("status") == "review_pending" and (final := d.get("final_checkpoint")):
+            line += (f"\n   검토 후: labhq review-done {ev.get('request_id')} --revision {final['revision']}"
+                     f" --sha256 {final['target_sha256']} (거부: --reject)")
         if summary and (summary.get("estimated_usd") or summary.get("unknown_count") or summary.get("warnings")):
             line += f"\n   {cost_detail(summary)}"
     elif t == "request.failed":
         line = f"💥 요청 실패: {d.get('error')}"
+    elif t == "request.reviewed":
+        final = d.get("final_checkpoint") or {}
+        decision = (final.get("receipt") or {}).get("decision")
+        line = f"보고서 검토: {decision or '확인 완료'} · {request_status_label(d.get('status'))}"
     elif t == "request.status":
         line = f"⏸ {ev.get('request_id')} 상태: {request_status_label(d.get('status'))}"
     elif t == "request.runner_wait":
@@ -1384,6 +1392,9 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("agents")
     review = sub.add_parser("review-done", help="mark a finished report reviewed (or failure acknowledged)")
     review.add_argument("id")
+    review.add_argument("--revision", type=int, help="CP4 draft revision shown in the report card")
+    review.add_argument("--sha256", help="CP4 target hash shown in the report card")
+    review.add_argument("--reject", action="store_true", help="reject this CP4 draft")
     sub.add_parser("status", help="show runners, running requests and pending approvals")
     doctor = sub.add_parser("doctor", help="check runner capabilities without starting agents")
     doctor.add_argument("--json", action="store_true", help="write state_dir/capabilities.json")
@@ -1650,7 +1661,11 @@ def main(argv: list[str] | None = None) -> None:
             for req in reviews:
                 print(f"  {req['id']} [{request_display_label(req)}] {req.get('text', '')}")
                 print(f"    비용: {cost_text(req.get('cost_usd'), req.get('cost_known'), req.get('cost_summary'))}")
-                print(f"    확인 후: labhq review-done {req['id']}")
+                final = req.get("final_checkpoint")
+                target = f" --revision {final['revision']} --sha256 {final['target_sha256']}" if final else ""
+                print(f"    확인 후: labhq review-done {req['id']}{target}")
+                if final:
+                    print("    CP4 수용 거부: 같은 명령에 --reject 추가. 수용은 게시·전송·실행 승인이 아닙니다.")
         # Running requests show their environment problems above, beside the step.
         shown = {req["id"] for req in running}
         problems = [(req["id"], sid, problem_text(found)) for req in recent if req.get("id") not in shown
@@ -1678,7 +1693,10 @@ def main(argv: list[str] | None = None) -> None:
         for approval in approvals:
             print(f"  {approval['id']} [{approval['kind']}] {approval['summary']}")
     elif args.cmd == "review-done":
-        result = _api(s, "POST", f"/api/requests/{args.id}/review-done", json={})
+        target = ({"revision": args.revision, "target_sha256": args.sha256,
+                   "decision": "rejected" if args.reject else "accepted"}
+                  if args.revision is not None or args.sha256 or args.reject else {})
+        result = _api(s, "POST", f"/api/requests/{args.id}/review-done", json=target)
         print(f"{args.id}: 검토·확인 완료 ({result['pi_reviewed_at']})")
     elif args.cmd == "agents":
         for a in _api(s, "GET", "/api/agents"):
