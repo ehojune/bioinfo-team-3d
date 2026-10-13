@@ -29,6 +29,7 @@ from ..models import AgentSpec, ContractInfo, Employment, Engine, Event, Externa
 from . import provenance
 from ..tools._mcpcompat import list_tools
 from ..util import extract_json, short, slugify
+from ..test_guard import guard_test_path
 
 if TYPE_CHECKING:
     from ..runner.daemon import Runner
@@ -99,12 +100,15 @@ def skill_path(engine: str) -> Path:
 
 
 def skill_installed(engine: str = "claude_code") -> bool:
-    return (skill_path(engine) / "SKILL.md").exists()
+    path = skill_path(engine) / "SKILL.md"
+    guard_test_path(path)
+    return path.exists()
 
 
 def head_commit(repo: Path) -> str | None:
     """The checkout's HEAD commit, read from .git without running git (detached, a loose ref or packed-refs)."""
     git = repo / ".git"
+    guard_test_path(git)
     try:
         head = (git / "HEAD").read_text(encoding="utf-8").strip()
         if not head.startswith("ref: "):
@@ -123,6 +127,7 @@ def head_commit(repo: Path) -> str | None:
 
 def origin_url(repo: Path) -> str | None:
     """remote.origin.url from .git/config, read without running git; None when it cannot be read."""
+    guard_test_path(repo / ".git" / "config")
     try:
         text = (repo / ".git" / "config").read_text(encoding="utf-8")
     except OSError:
@@ -184,8 +189,10 @@ def _checkout(repo: Path, ref: str) -> None:
 
 def installed_commit(engine: str = "claude_code") -> str | None:
     """The Paper2Agent commit setup-paper2agent recorded in the installed copy, or None."""
+    path = skill_path(engine) / SOURCE_MARKER
+    guard_test_path(path)
     try:
-        data = json.loads((skill_path(engine) / SOURCE_MARKER).read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     return provenance.source_commit(data.get("commit")) if isinstance(data, dict) else None
@@ -199,6 +206,11 @@ def install_skill(source: str, cache: Path, commit: str | None = None) -> list[P
     if commit is not None and provenance.source_commit(commit) != commit:
         raise ValueError("Paper2Agent commit must be a full 40-character lowercase hex commit")
     repo = cache / "Paper2Agent"
+    guard_test_path(cache)
+    guard_test_path(repo / ".git")
+    out = [skill_path(engine) for engine in ("claude_code", "codex")]
+    for dst in out:
+        guard_test_path(dst)
     origin = origin_url(repo) if (repo / ".git").exists() else None
     if not (repo / ".git").exists():
         cache.mkdir(parents=True, exist_ok=True)
@@ -222,7 +234,6 @@ def install_skill(source: str, cache: Path, commit: str | None = None) -> list[P
     if not skill.is_dir() or not (skill / "SKILL.md").is_file():
         raise FileNotFoundError(f"Paper2Agent source skill is missing SKILL.md: {skill}")
     marker = json.dumps({"source": origin or source, "commit": installed}) + "\n"  # where it really came from
-    out = [skill_path(engine) for engine in ("claude_code", "codex")]
     staged: list[tuple[Path, Path]] = []
     published: set[Path] = set()
     backups: set[Path] = set()

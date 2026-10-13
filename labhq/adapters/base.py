@@ -20,6 +20,7 @@ from typing import Any, Awaitable, Callable
 from ..facilities import signatures as env_signatures
 from ..models import AgentSpec, McpServerSpec, Task, TaskResult
 from ..settings import Settings
+from ..test_guard import guard_test_path
 from ..util import event_preview, extract_json, merge_staff_env, short, without_windows_app_aliases
 from .owned import OwnedPathError, plain_directory, write_owned
 from .read_only import (labhq_workspace_paths, read_only_engine_env, read_only_launch_error, read_only_mismatch,
@@ -755,9 +756,13 @@ def child_config_dirs(env: dict[str, str], cwd: Path, var: str, default_name: st
     raw = env.get(var)
     if raw:
         p = Path(os.path.expanduser(raw))
-        return [p if p.is_absolute() else cwd / p]
-    homes = [Path(h) for h in (env.get("HOME"), env.get("USERPROFILE")) if h] or [Path.home()]
-    return list(dict.fromkeys(h / default_name for h in homes))
+        paths = [p if p.is_absolute() else cwd / p]
+    else:
+        homes = [Path(h) for h in (env.get("HOME"), env.get("USERPROFILE")) if h] or [Path.home()]
+        paths = list(dict.fromkeys(h / default_name for h in homes))
+    for path in paths:
+        guard_test_path(path)
+    return paths
 
 
 class AgentAdapter(ABC):
