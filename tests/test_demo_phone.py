@@ -42,6 +42,27 @@ def test_demo_settings_keep_every_path_in_tmp(tmp_path, monkeypatch):
     assert settings.runner.force_engine == "mock" and settings.hpc.scheduler == "mock"
 
 
+def test_demo_decisions_never_enter_live_history(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from labhq.gateway.server import create_app
+
+    live_settings = Settings()
+    live_settings.gateway.state_dir = str(tmp_path / "live-state")
+    monkeypatch.setenv("LABHQ_STATE_DIR", live_settings.gateway.state_dir)
+    demo_settings = cli._demo_settings(tmp_path / "demo")
+    demo_app = create_app(demo_settings)
+    demo_app.state.hub.store.put("approval_decision", "demo", {
+        "approval": {"id": "demo", "kind": "tool_permission", "summary": "Bash: rm -rf tmp/ (mock)"},
+        "approved": True, "note": "demo timeout auto-approve", "decided_at": 100,
+    })
+    live_app = create_app(live_settings)
+    for app, settings, count in [(demo_app, demo_settings, 1), (live_app, live_settings, 0)]:
+        with TestClient(app) as client:
+            history = client.get("/api/approvals/history", headers={
+                "Authorization": f"Bearer {settings.gateway.client_token}"}).json()
+            assert len(history) == count
+
+
 @pytest.mark.parametrize(
     ("args", "web", "phone", "host"),
     [([], False, False, "127.0.0.1"),

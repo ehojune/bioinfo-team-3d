@@ -115,6 +115,15 @@ def short(obj: Any, n: int = 300) -> str:
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
+def event_preview(field: str, obj: Any, n: int = 300) -> dict:
+    """Keep existing event limits and tell the browser when the server clipped a field."""
+    value = short(obj, n)
+    whole = short(obj, 2**63 - 1)
+    if len(whole) <= n:
+        return {field: value}
+    return {field: value, f"{field}_truncated": True, f"{field}_chars": len(whole), f"{field}_limit": n}
+
+
 def clip(text: str | None, n: int) -> str:
     """Keep head and tail of long text (tails usually hold the conclusion)."""
     if not text:

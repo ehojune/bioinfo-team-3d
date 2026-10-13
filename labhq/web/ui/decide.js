@@ -8,6 +8,51 @@ function add(parent, tag, text = '', className = '') {
   return el;
 }
 
+// Native summary provides click, Enter and Space activation; only received text is used.
+export function expandableText(parent, value, options = {}) {
+  const text = String(value ?? ''), limit = options.limit ?? 240;
+  const preview = text.replace(/\s+/g, ' ').trim();
+  const cut = options.truncated ? ` (서버에서 ${options.cutChars ?? [...text].length}자로 잘림)` : '';
+  if (!options.fold && preview.length <= limit && text.split('\n').length <= 8) {
+    return add(parent, options.tag || 'span', text + cut);
+  }
+  const fold = add(parent, 'details', '', 'expandable-text');
+  fold.open = Boolean(options.open);
+  const summary = add(fold, 'summary', (options.summary || short(preview, limit)) + cut);
+  const expanded = () => summary.setAttribute?.('aria-expanded', String(Boolean(fold.open)));
+  fold.ontoggle = expanded; expanded();
+  add(fold, 'pre', text);
+  if (cut) add(fold, 'small', cut.trim());
+  return fold;
+}
+
+// Do not replace unchanged controls: an open line and keyboard focus survive refreshes.
+export function syncExpandableText(parent, value, options = {}) {
+  const key = JSON.stringify([value, options]);
+  if (parent._expandableKey === key) return;
+  parent._expandableKey = key;
+  parent.replaceChildren(); expandableText(parent, value, options);
+}
+
+export function createHistoryVisibility(scope, storage) {
+  const key = `labhq_hidden_decisions:${scope}`;
+  let hidden = new Set();
+  const getStorage = () => storage === undefined ? globalThis.localStorage : storage;
+  try {
+    const saved = JSON.parse(getStorage()?.getItem(key) || '[]');
+    if (Array.isArray(saved)) hidden = new Set(saved.filter(id => typeof id === 'string'));
+  } catch {}
+  const id = item => String(item.approval?.id || item.approval_id ||
+    JSON.stringify([item.request_id, item.decided_at, item.approval?.summary]));
+  return {
+    has: item => hidden.has(id(item)),
+    hide(item) {
+      hidden.add(id(item));
+      try { getStorage()?.setItem(key, JSON.stringify([...hidden])); } catch {}
+    },
+  };
+}
+
 function detailValue(value) {
   // The permission broker may send input as a serialized JSON string.
   if (typeof value === 'string') {
@@ -25,11 +70,8 @@ function detailEntry(list, key, value, options = {}) {
   const cell = add(list, 'dd');
   const text = options.raw ? String(value) : detailValue(value);
   if (options.fold || text.length > 500 || text.split('\n').length > 8) {
-    const fold = add(cell, 'details');
-    fold.open = Boolean(options.open);
-    add(fold, 'summary', options.summary || `전체 보기 (${text.length}자) · ${text.slice(0, 120)}…`);
-    add(fold, 'pre', text);
-  } else add(cell, 'pre', text);
+    expandableText(cell, text, {...options, fold: true, limit: 120});
+  } else add(cell, 'pre', text + (options.truncated ? ` (서버에서 ${[...text].length}자로 잘림)` : ''));
 }
 
 const short = (s, n) => { s = String(s ?? '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
@@ -47,7 +89,7 @@ function renderResearchPlan(list, canonical) {
   detailEntry(list, '완료 조건', bullets(brief.completion_conditions), {raw: true});
   detailEntry(list, '단계', steps.map(step => {
     const outputs = Array.isArray(step.outputs) ? step.outputs.join(', ') : '';
-    return `${step.id} · ${step.agent_id || '미배정'} · ${short(step.instruction, 120)}${outputs ? `\n    산출: ${outputs}` : ''}`;
+    return `${step.id} · ${step.agent_id || '미배정'} · ${step.instruction || ''}${outputs ? `\n    산출: ${outputs}` : ''}`;
   }).join('\n') || '(없음)', {raw: true, fold: steps.length > 0, open: true, summary: `단계 ${steps.length}개 (id · 직원 · 지시 앞부분 · 산출)`});
   detailEntry(list, '중단 조건', bullets(protocol.stop_conditions), {raw: true});
   detailEntry(list, '자원 상한', bullets(protocol.resource_limits), {raw: true});
@@ -320,7 +362,7 @@ function renderDetail(container, kind, detail, approval = null) {
       detailEntry(list, labels[key], value, {raw: true, fold: true, summary: `산출 파일 hash (${Object.keys(detail.artifact_sha256 || {}).length}개)`});
     else if (kind === 'budget' && key.endsWith('_usd') && Number.isFinite(Number(detail[key])))
       detailEntry(list, labels[key] || key, `$${Number(detail[key]).toFixed(2)}`, {raw: true});  // not 25.860455119999997
-    else detailEntry(list, labels[key] || key, value, {raw: true});
+    else detailEntry(list, labels[key] || key, value, {raw: true, truncated: Boolean(detail[`${key}_truncated`])});
   }
 }
 
@@ -434,7 +476,7 @@ function updateCard(row, item, options) {
   p.who.textContent = options.nick ? options.nick(value.agent_id) || 'CSO' : value.agent_id || 'CSO';
   // Parallel CP1/CP2 cards look alike; the request text tells them apart (data already in the web state).
   const request = approval && value.request_id && options.requests?.get ? options.requests.get(value.request_id) : null;
-  p.request.textContent = request?.text ? `요청: ${short(request.text, 90)}` : '';
+  syncExpandableText(p.request, request?.text ? `요청: ${request.text}` : '', {limit: 90});
   p.request.hidden = !p.request.textContent;
   p.summary.textContent = item.type === 'suggestion' ? value.repo || value.paper || value.id : displaySummary(value) || value.id;
   renderDetail(p.detail, value.kind, item.type === 'suggestion' ? value.reason : value.detail, approval ? value : null);
@@ -506,9 +548,17 @@ function placeRows(list, rows) {
 }
 
 export function syncDecisionHistory(container, history, options = {}) {
-  const items = Array.from(history || []);
+  const all = Array.from(history || []);
+  const visibility = options.visibility || (container._historyVisibility ||= createHistoryVisibility(options.scope || 'live'));
+  const items = all.filter(item => !visibility.has(item));
   const pageSize = Math.max(1, Number(options.pageSize) || 10);
   if (!Number.isFinite(container._historyShown) || container._historyShown < pageSize) container._historyShown = pageSize;
+  const key = JSON.stringify([items, container._historyShown, items.map(item => {
+    const request = options.requests?.get?.(item.approval?.request_id || item.request_id);
+    return [request?.text, request?.report];
+  })]);
+  if (container._historyKey === key) return;
+  container._historyKey = key;
   const visible = items.slice(0, container._historyShown);
   const root = doc().createElement('div'); root.className = 'decision-history';
   const groups = new Map();
@@ -520,8 +570,8 @@ export function syncDecisionHistory(container, history, options = {}) {
   for (const [requestId, values] of groups) {
     const group = doc().createElement('section'); group.className = 'decision-history-group'; group.dataset.requestId = requestId;
     const request = options.requests?.get?.(requestId);
-    const label = request?.text ? String(request.text).replace(/\s+/g, ' ').slice(0, 44) : requestId === 'other' ? '기타 요청' : `요청 ${requestId}`;
-    add(group, 'h3', label);
+    const label = request?.text || (requestId === 'other' ? '기타 요청' : `요청 ${requestId}`);
+    expandableText(add(group, 'h3'), label, {limit: 44});
     const list = add(group, 'ol');
     for (const item of values) {
       const approval = item.approval || {};
@@ -529,8 +579,24 @@ export function syncDecisionHistory(container, history, options = {}) {
       const outcome = item.state === 'timed_out' ? '시간 초과' : item.state === 'expired' ? '만료' : item.approved ? '승인' :
         item.choice === 'revise' ? '수정 요청' : '거절';
       add(row, 'strong', `${outcome} · ${(options.kindLabels || {})[approval.kind] || approval.kind || '결정'}`);
-      add(row, 'span', displaySummary(approval) || approval.id || '');
-      if (item.note) add(row, 'small', item.note);
+      const at = new Date(Number(item.decided_at) * 1000);
+      if (item.decided_at != null && Number.isFinite(at.getTime())) {
+        const pad = n => String(n).padStart(2, '0');
+        const time = add(row, 'time', `${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())}`);
+        time.dateTime = at.toISOString();
+      }
+      expandableText(row, displaySummary(approval) || approval.id || '', {limit: 240});
+      if (item.note) expandableText(row, item.note, {limit: 160, tag: 'small'});
+      if (request?.report) {
+        const link = add(row, 'a', '요청 보고서', 'decision-report');
+        link.href = `#request-${encodeURIComponent(requestId)}`;
+        if (options.onOpenRequest) link.onclick = event => { event.preventDefault(); options.onOpenRequest(requestId); };
+      }
+      if (!['open', 'pending'].includes(item.state)) {
+        const hide = add(row, 'button', '×', 'decision-hide'); hide.type = 'button';
+        hide.setAttribute?.('aria-label', '이 결정 목록에서 숨기기');
+        hide.onclick = () => { visibility.hide(item); syncDecisionHistory(container, all, {...options, visibility}); };
+      }
     }
     root.append(group);
   }
@@ -539,7 +605,7 @@ export function syncDecisionHistory(container, history, options = {}) {
   if (visible.length < items.length) {
     const more = doc().createElement('button'); more.type = 'button'; more.className = 'btn decision-history-more';
     more.textContent = `더 보기 (${items.length - visible.length}건)`;
-    more.onclick = () => { container._historyShown += pageSize; syncDecisionHistory(container, items, options); };
+    more.onclick = () => { container._historyShown += pageSize; syncDecisionHistory(container, all, {...options, visibility}); };
     children.push(more);
   }
   container.replaceChildren(...children);

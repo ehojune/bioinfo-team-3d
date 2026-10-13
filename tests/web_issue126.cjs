@@ -68,7 +68,7 @@ const intervals = []; global.setInterval = callback => { intervals.push(callback
 const sockets = [];
 global.WebSocket = class { constructor(url) { this.url = url; this.readyState = 0; sockets.push(this); } send() {} close() {} };
 const fetched = [];
-global.fetch = async (url, options) => { fetched.push([url, options.headers.Authorization]); return {ok: true, json: async () => detail}; };
+global.fetch = async (url, options) => { fetched.push([url, options.headers.Authorization]); return {ok: true, json: async () => url.startsWith('/api/approvals/history') ? [] : detail}; };
 const decide = fs.readFileSync(path.join(root, 'ui/decide.js'), 'utf8');
 const decideUrl = 'data:text/javascript;base64,' + Buffer.from(decide).toString('base64');
 const source = fs.readFileSync(path.join(root, 'lab3d/src/live.js'), 'utf8').replace("'../../ui/decide.js'", `'${decideUrl}'`);
@@ -87,7 +87,7 @@ const source = fs.readFileSync(path.join(root, 'lab3d/src/live.js'), 'utf8').rep
   assert.equal(nodes().filter(n => n.tagName === 'BUTTON' && n.textContent === '전문 보기').at(-1), answerButton,
     'the approval clock render keeps the request button node and its in-progress click');
   await answerButton.onclick();
-  assert.deepEqual(fetched, [['/api/requests/r1', 'Bearer test-client']]);
+  assert.deepEqual(fetched, [['/api/approvals/history?limit=50', 'Bearer test-client'], ['/api/requests/r1', 'Bearer test-client']]);
   assert.equal(line(), `이어 묻기: Long? → ${FULL}`);
   assert.equal(nodes().some(n => n.tagName === 'BUTTON' && n.textContent === '전문 보기'), false);
   console.log('snapshot answer head, full answer on demand in 2.5D and 3D: OK');
