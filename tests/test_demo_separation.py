@@ -213,6 +213,8 @@ async def test_web_demo_command_uses_selected_server_and_warns_about_changed_url
         return result
 
     def app(settings, **kwargs):
+        assert settings.path(settings.gateway.state_dir).is_relative_to(demo_dir)
+        assert settings.path(settings.runner.state_dir).is_relative_to(demo_dir)
         captured["app"] = app_factory(settings, **kwargs)
         return captured["app"]
 

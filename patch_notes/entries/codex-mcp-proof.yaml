@@ -1,0 +1,5 @@
+pr: 555
+rows:
+- sha: '373c9a0'
+  at: 2026-10-13 17:13
+  text: MCP probe 실패를 exit 1로 판정하고 실제 Codex 90초 호출을 1회 완료로 검증

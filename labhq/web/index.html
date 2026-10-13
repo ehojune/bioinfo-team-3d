@@ -585,7 +585,8 @@ const EMPTY_SEAT = `<svg viewBox="0 0 100 104" aria-hidden="true" focusable="fal
 const headSVG = kind => `<svg viewBox="24 8 52 50" aria-hidden="true" focusable="false">${charArt(kind)}</svg>`;
 
 /* ---------------- state ---------------- */
-const officeState = LabHQState.createOfficeState({mode: MODE, now});
+const officeState = LabHQState.createOfficeState({mode: MODE, now,
+  focusStorage: LabHQState.createRequestFocusStorage({demo: IS_DEMO, instance: INSTANCE})});
 const { S, ag, visual, stateText, currentTask, currentTool, toolInputLine, nick, req, setPlan, feed, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES } = officeState;
 function apply(ev, replay = false) {
   for (const effect of officeState.apply(ev, replay)) {
@@ -688,12 +689,13 @@ function phaseList(q) {
 const processingLabel = LabHQState.processingLabel;  // shared with the 3D request row
 function renderBoard() {
   const q = S.requests.get(S.current), el = $('#board');
-  const key = q ? JSON.stringify([q.id, q.phase, q.steps, q.text, q.processing]) : snapshotLoaded ? 'none' : `loading:${S.conn}`;
+  const resume = LabHQState.requestResumeLabel(q);
+  const key = q ? JSON.stringify([q.id, q.phase, q.steps, q.text, q.processing, resume]) : snapshotLoaded ? 'none' : `loading:${S.conn}`;
   if (el.dataset.key === key) return;
   el.dataset.key = key;
   if (!q) { el.innerHTML = `<p class="board-empty">${snapshotLoaded ? '오늘의 할 일을 기다리는 중' : loadingText('사무실 상태')}</p>`; return; }
   const chips = q.plan.map(s => `<span class="chip st-${q.steps[s.id] || 'pending'}" title="${esc(s.instruction)}">${esc(s.id)} ${esc(nick(s.agent_id))}</span>`).join('');
-  el.innerHTML = `<p class="board-title">${[esc(short(q.text, 70)), esc(processingLabel(q))].filter(Boolean).join(' · ')}</p>${phaseList(q)}<div class="chips">${chips}</div>`;
+  el.innerHTML = `<p class="board-title">${[esc(short(q.text, 70)), esc(processingLabel(q))].filter(Boolean).join(' · ')}</p>${resume ? `<p class="req-meta">${esc(resume)}</p>` : ''}${phaseList(q)}<div class="chips">${chips}</div>`;
 }
 function renderRack() {
   const jobs = [...S.jobs.values()].sort((a, b) => (b.ts || 0) - (a.ts || 0)).slice(0, 8);
@@ -738,7 +740,7 @@ function renderApprovals() {
     taskStep: S.taskStep, avatarHTML: (value, type) => headSVG(type === 'suggestion' ? 'owl' : kindOf(ag(value.agent_id))),
     emptyText: snapshotLoaded ? '지금은 결정할 일이 없어요. 승인이 필요하면 여기에 바로 떠요.' : loadingText('결정할 일') });
   syncDecisionHistory($('#approval-history'), decisionHistory, { kindLabels: KIND_KO, requests: S.requests,
-    visibility: historyVisibility, onOpenRequest: id => { S.current = id; reqKey = ''; renderRequest(); showTab('tasks'); $('#request').scrollIntoView({block: 'start'}); } });
+    visibility: historyVisibility, onOpenRequest: id => { officeState.selectRequest(id); reqKey = ''; renderRequest(); schedule(); showTab('tasks'); $('#request').scrollIntoView({block: 'start'}); } });
 }
 
 function dagSVG(q) {
@@ -818,14 +820,14 @@ function renderRequest() {
   const staffNames = q && q.costSummary && q.costSummary.by_agent ? Object.keys(q.costSummary.by_agent).map(nick) : [];
   // The status line also names a waiting resume card or the runners a resume still needs (R14).
   const statusText = q ? LabHQState.requestStatusText(q, S.approvals) : '';
-  const key = q ? JSON.stringify([S.requests.size, staffNames, statusText, [...S.requests.values()].map(r => r.status), q.id, q.phase, q.status, q.steps, details, q.github.length, q.pipelinePr, q.report, q.report_appendix, q.bundlePath, q.bundleStatus, q.bundleGrade, q.bundleGradeReasons, q.bundleWarning, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes, q.processing]) : snapshotLoaded ? 'none' : `loading:${S.conn}`;
+  const all = LabHQState.sortRequests(S.requests.values());
+  const key = q ? JSON.stringify([S.requests.size, staffNames, statusText, all.map(r => [r.id, r.status, r.text]), q.id, q.phase, q.status, q.steps, details, q.github.length, q.pipelinePr, q.report, q.report_appendix, q.bundlePath, q.bundleStatus, q.bundleGrade, q.bundleGradeReasons, q.bundleWarning, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes, q.processing]) : snapshotLoaded ? 'none' : `loading:${S.conn}`;
   if (key === reqKey) return;
   reqKey = key;
   // Before the first snapshot no request is known yet, which is not the same as none (#521).
   if (!q) { el.innerHTML = `<p class="empty-note">${snapshotLoaded ? '아직 요청이 없어요. 아래 입력창에 적으면 CSO가 팀에 나눠 맡겨요.' : loadingText('요청')}</p>`; return; }
-  const all = [...S.requests.values()].sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
   const pick = all.length > 1 ? `<p class="req-pick"><label class="sr" for="req-sel">요청 고르기</label><select id="req-sel">${all.map(r =>
-    `<option value="${esc(r.id)}"${r.id === q.id ? ' selected' : ''}>${esc(short(r.text || r.id, 40))}${r.status === 'done' || r.status === 'failed' ? '' : ` (${esc(LabHQState.requestStatusLabel(r.status))})`}</option>`).join('')}</select></p>` : '';
+    `<option value="${esc(r.id)}"${r.id === q.id ? ' selected' : ''}>${esc(short(r.text || r.id, 40))} (${esc(LabHQState.requestStatusLabel(r.status))})</option>`).join('')}</select></p>` : '';
   const proj = S.projects.find(p => p.id === q.project_id);
   const gh = q.github.filter(g => safeUrl(g.url)).map(g => `<li><a href="${esc(g.url)}" target="_blank" rel="noopener">${esc({ issue: `이슈 #${g.number}`, report: '보고서 커밋', final: '최종 코멘트', plan: '계획 코멘트', review: '리뷰 코멘트', recruit: '채용 기록', pr: 'PR', pipeline_pr: 'bioinfo-agent pipeline PR', codex_review: 'Codex 리뷰 요청' }[g.kind] || g.kind)}</a></li>`).join('');
   const pipeline = q.pipelinePr && q.pipelinePr.status !== 'open' ? `<p class="empty-note">pipeline PR ${q.pipelinePr.status === 'pending' ? '대기' : '거부'}: ${esc(q.pipelinePr.reason || '')}</p>` : '';
@@ -1012,7 +1014,7 @@ $('#approvals').addEventListener('click', async e => {
     }
   } catch (err) { btn.disabled = false; toast(`처리하지 못했어요: ${err.message}`); }
 });
-$('#request').addEventListener('change', e => { if (e.target.id === 'req-sel') { S.current = e.target.value; schedule(); } });
+$('#request').addEventListener('change', e => { if (e.target.id === 'req-sel') { officeState.selectRequest(e.target.value); schedule(); } });
 $('#request').addEventListener('input', e => { if (e.target.id === 'fu-text') fuDrafts.set(e.target.dataset.rid, e.target.value); });
 $('#request').addEventListener('click', async e => {
   if (e.target.classList?.contains('audit-bundle')) {

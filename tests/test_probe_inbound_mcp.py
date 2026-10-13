@@ -48,7 +48,9 @@ def test_probe_runs_one_delayed_call_through_the_adapter(tmp_path, monkeypatch, 
     out = tmp_path / "out"
     monkeypatch.setattr("sys.argv", ["probe_inbound_mcp.py", engine, "--output-dir", str(out), "--delay", "2",
                                      "--approval-timeout", "1", "--no-sender"])
-    probe.main()
+    with pytest.raises(SystemExit) as exit_info:
+        probe.main()
+    assert exit_info.value.code == 0
 
     summary = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert summary == json.loads((out / "summary.json").read_text(encoding="utf-8"))
@@ -58,6 +60,68 @@ def test_probe_runs_one_delayed_call_through_the_adapter(tmp_path, monkeypatch, 
     assert 2 <= summary["elapsed_s"] < 60
     assert "inbound" not in summary and "sender" not in summary
     assert (out / "staff.raw.jsonl").read_text(encoding="utf-8").strip()
+
+
+@pytest.mark.parametrize("changes,exit_code", [
+    ({}, 0),
+    ({"ok": False, "error": "task timed out"}, 1),
+    ({"text_is_marker": False}, 1),
+    ({"server_calls": 0}, 1),
+    ({"server_calls": 2}, 1),
+    ({"slow_answer_calls": 0}, 1),
+    ({"slow_answer_calls": 2}, 1),
+    ({"tool_errors": 1}, 1),
+])
+def test_probe_main_exit_and_diagnostics(tmp_path, monkeypatch, capsys, changes, exit_code):
+    summary = {"ok": True, "text_is_marker": True, "error": None,
+               "server_calls": 1, "slow_answer_calls": 1, "tool_errors": 0, **changes}
+
+    async def fake_probe(args, out):
+        (out / "staff.raw.jsonl").write_text("diagnostic\n", encoding="utf-8")
+        return summary
+
+    monkeypatch.setattr(probe, "_probe", fake_probe)
+    monkeypatch.setattr(sys, "argv", ["probe", "codex", "--output-dir", str(tmp_path)])
+    with pytest.raises(SystemExit) as exit_info:
+        probe.main()
+    assert exit_info.value.code == exit_code
+    assert json.loads(capsys.readouterr().out) == summary
+    assert json.loads((tmp_path / "summary.json").read_text(encoding="utf-8")) == summary
+    assert (tmp_path / "staff.raw.jsonl").read_text(encoding="utf-8") == "diagnostic\n"
+
+
+@pytest.mark.parametrize("inbound", ["refuse", "accept", "unset"])
+@pytest.mark.parametrize("fault", [None, "missing_sender", "sender_exit", "missing_result",
+                                  "wrong_notice", "wrong_log", "conflicting_log"])
+def test_probe_main_checks_inbound_evidence(tmp_path, monkeypatch, inbound, fault):
+    refuse = inbound == "refuse"
+    summary = {"ok": True, "text_is_marker": True, "server_calls": 1,
+               "slow_answer_calls": 1, "tool_errors": 0, "inbound": inbound,
+               "message_queued": not refuse, "refusal_logged": refuse,
+               "sender": {"exit_code": 0, "tool_results": ["queued"], "refused_notice": refuse}}
+    if fault == "missing_sender":
+        summary.pop("sender")
+    elif fault == "sender_exit":
+        summary["sender"]["exit_code"] = 1
+    elif fault == "missing_result":
+        summary["sender"]["tool_results"] = []
+    elif fault == "wrong_notice":
+        summary["sender"]["refused_notice"] = not refuse
+    elif fault == "wrong_log":
+        summary["refusal_logged" if refuse else "message_queued"] = False
+    elif fault == "conflicting_log":
+        summary["message_queued" if refuse else "refusal_logged"] = True
+
+    async def fake_probe(args, out):
+        return summary
+
+    monkeypatch.setattr(probe, "_probe", fake_probe)
+    monkeypatch.setattr(sys, "argv", ["probe", "claude_code", "--inbound", inbound,
+                                     "--output-dir", str(tmp_path)])
+    with pytest.raises(SystemExit) as exit_info:
+        probe.main()
+    assert exit_info.value.code == (0 if fault is None else 1)
+    assert json.loads((tmp_path / "summary.json").read_text(encoding="utf-8")) == summary
 
 
 @pytest.mark.parametrize("inbound,expected", [("accept", "accept"), ("unset", None)])

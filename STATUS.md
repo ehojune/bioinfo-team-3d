@@ -4,6 +4,176 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 결론
+
+앞 450자가 같고 끝이 다른 도구 호출 8개가 같은 preview로 잘려 폭주 경고를 내던 오탐을 고쳤다(#59 ②).
+
+## 바뀐 것
+
+- Claude·Codex·Antigravity의 여섯 tool 경로가 preview 전에 도구 이름과 canonical 입력 앞 4,096자를 SHA-256으로 계산한다.
+- JSON 키 순서를 정렬하고 문자열 공백을 보존한다. 추가 원본 전송은 없으며 입력 미보고·잘린 legacy 이벤트는 반복 횟수를 끊는다.
+- 단일 trip·연속 오류 판정·shadow 동작을 유지한다. manual 안전 장치·한계 절을 갱신했다(118,441 → 118,899자).
+- 기준 `afbcd2e`: 선행 #532 직원 제어·#548 실행 상태 표시를 보존했다.
+
+## 실행한 것
+
+- 새 오탐 회귀 6건: 기준 main에서 6 failed, 수정 후 통과.
+- 관련 pytest: 114 passed, 1 skipped. JSON 키 순서·공백·입력 미보고·4,096자 경계·multi-line error·runner shadow 유지·실측 스트림 포함.
+- Windows 전체 pytest 1회: 5,948 passed, 66 skipped, 2 failed. Codex fixture는 새 hash 필드 기대값을 추가한 뒤 위 관련 검사에서 통과. 나머지는 semantics 내부 테스트의 `disabled.json` PermissionError이며 단독 재검사에서 1 passed로 재현되지 않았다.
+- 공개 검사·diff 검사 통과.
+
+## 미해결
+
+- canonical 입력 앞 4,096자 이후 차이는 기존 정책대로 구별하지 못한다.
+- 최종 Windows 전체 통과 판정은 CI 결과를 확인한다. 로컬 전체 1회 결과를 통과로 세지 않았다.
+- 레인 임시 폴더 삭제는 실행 환경의 정책으로 차단돼 정리를 인계한다.
+- 리뷰 판단·병합은 개발 총괄에게 인계한다.
+
+Refs #59
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
+읽기 전용 직원도 자기 task의 `outputs/`·`.tmp/`에 파일을 저장합니다. 검토 대상과 앞 단계 산출물은 계속 보호합니다.
+
+## 바뀐 것
+
+- Claude: Write·Edit를 승인 게이트로 보내 자기 산출·임시 파일만 승인 없이 허용합니다. 셸과 직원 MCP는 열지 않습니다.
+- Codex: 읽기 기본 권한에 두 쓰기 루트만 추가한 workspace-write profile을 씁니다. 프로젝트 `--add-dir`와 승인 승격은 끕니다.
+- 리뷰·상담·이어 묻기와 역할별 읽기 제한에 같은 정책을 적용합니다. 이어 묻기는 세션을 유지하고 새 작업 폴더에 씁니다.
+- 리뷰는 `outputs/review.json`과 최종 JSON 응답을 함께 남깁니다. 기존 산출 수집과 모의 리뷰어도 맞췄습니다.
+- 매뉴얼 권한 표·안전 장치 설명을 갱신했습니다(118,283 → 118,352자).
+
+## 검증
+
+- 새 회귀 17건: `origin/main` 11845c0에서 17 failed, branch에서 전부 통과.
+- 관련 pytest: 146 passed·1 skipped. 입력·앞 단계·다른 task·프로젝트·통제 구역과 링크·하드링크 쓰기 거부, 검토 대상 변경 감지, 새 폴더·기존 세션 유지 확인.
+- Windows 전체 pytest: 5,896 passed·66 skipped (모의 e2e 포함, 10분 9초).
+- `scripts/check_public.sh`, `git diff --check`: 통과.
+- Codex는 sandbox 인자·쓰기 루트 구성, Claude는 실제 승인 함수까지 검사했습니다. 실제 직원 CLI·PI/trial instance는 실행하지 않았습니다.
+
+## 남은 지적
+
+- Gemini·Antigravity·CLI는 읽기 전용 task의 쓰기 경계를 강제하지 못해 기존 실행 거부를 유지합니다.
+
+Refs #435
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
+홈·state 격리와 dry-run 정리 도구를 추가한 PR #554의 P1(4256352456)을 `d38535f`에서 수정했다. 실제 사용자 `.labhq` 설정을 파일 조회 전에 차단한다.
+
+## 바뀐 것
+
+- `Settings.load`의 명시 경로·`LABHQ_CONFIG`, staff 설정 복사.
+- instance 경로·포트 탐색, init·bench 설정 확인.
+- Paper2Agent cache·skill·설치 출처, 자식 CLI 설정 경로.
+- doctor의 roster·설정 소유자 조회와 Codex 설정·marker 읽기. 기존 store guard도 유지한다.
+
+## 확인
+
+- 합성 홈 회귀 17건: 이전 head `590a41d`에서 모두 실패, 수정 후 통과. 격리 파일 전체 23 passed.
+- 관련 테스트 187 passed. 이후 추가한 자식 설정 경로는 격리 테스트와 전체 suite로 확인한다.
+- Windows 전체: **5646 passed, 66 skipped, 1 failed**(11분 40초). 실패는 `test_semantics_shadow_breaker.py::test_a_stuck_worker_turns_it_off_and_its_late_result_is_dropped`의 `disabled.json` 읽기 PermissionError다. 해당 파일만 재실행해 **50 passed**. 전체 통과로 판정하지 않는다.
+- 공개 검사·patch-notes·notes-index·diff 검사를 수행했다. basetemp는 `%TEMP%/pt-testisofix` 한 폴더를 사용했다.
+
+## 미해결
+
+- 전체 suite의 Windows PermissionError 1건은 범위 밖이므로 수정하지 않았다. CI는 push 뒤 현재 head의 PR checks를 기준으로 총괄이 확인한다.
+- basetemp 삭제가 자동 승인 검토의 `blocked by policy`로 차단됐다. 리뷰 요청·병합은 하지 않는다.
+
+Refs #545, #221
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
+웹을 다시 열면 마지막으로 보던 요청을 복원합니다. 저장된 선택이 없으면 끝나지 않은 요청 중 최근 활동한 것을 엽니다.
+
+## 바뀐 것
+
+- 요청 선택을 데모·라이브·instance별로 기억하며 2.5D·3D가 같은 reducer 값을 씁니다.
+- 진행·대기 요청을 완료·실패 요청보다 위에 놓고 상태를 표시합니다. 직접 고른 요청은 끝난 요청의 유입이나 snapshot 재생으로 바뀌지 않습니다.
+- 화이트보드에 재개 이벤트 또는 접속 당시 실행 상태를 근거로 `이어서 진행 중`을 표시합니다.
+- snapshot에 `updated_at`을 포함하고 웹 사무실 매뉴얼을 갱신했습니다.
+
+## 실행한 것
+
+- 새 Node 회귀 6건: origin/main에서 6 failed, 수정본에서 6 passed.
+- Node 전체 41개 파일 통과. 관련 Python 77 passed·1 skipped.
+- Windows 전체 pytest: 5,637 passed·66 skipped. 임시 state·TEMP를 분리하고 기존 서비스 포트 접속을 차단했습니다.
+- 공개 검사·diff 검사 통과.
+
+## 미해결
+
+- 자동 봇 리뷰 판단과 병합은 개발 총괄이 이어받습니다.
+
+Refs #435
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
+PR #554: pytest가 사용자 gateway에 요청을 남기지 않도록 홈·state를 격리했다. 정리 도구는 실제 store에서 실행하지 않았다.
+
+## 바뀐 것
+
+- 수집 전·test별 HOME/USERPROFILE/AppData/XDG 격리와 사용자 `.labhq` 접근 guard. subprocess에도 적용.
+- `test_direct_outputs.py`의 gateway tmp 누락 수정. 현재 demo test의 tmp 경로 확인 추가.
+- `scripts/purge_test_requests.py`: dry-run 기본. 정확한 문구·agent·mode가 일치한 요청과 이벤트만 선택하며 apply는 gateway 종료 확인과 새 SQLite 백업을 요구한다.
+
+## 확인
+
+- 합성 사용자 홈으로 재현한 guard 회귀: 수정 전 2 failed → 수정 후 통과.
+- Windows 전체: **5,630 passed, 66 skipped**. 실제 Node 실행 파일을 테스트 프로세스 PATH에 넣어 사용자 AppData에 의존하는 래퍼를 피했다.
+- 읽기 전용 SQLite 전후: 요청 **47→47**, test 문구 **38→38·4→4·4→4**. 증가 모두 0.
+- mtime 변경 1건은 state 아래에 있었다. PI가 실행 중이므로 파일 무변경을 주장하지 않고 요청 건수로 판정했다.
+- 공개 검사·Python 3.10 문법 검사 통과. CI 결과는 PR checks에 기록한다.
+
+## 미해결
+
+- 데모 문구 8건의 과거 유입 출처는 미확정. 현재 demo test는 tmp gateway를 사용한다.
+- 검증된 basetemp 삭제는 자동 승인 검토의 `blocked by policy`로 차단돼 폴더가 남았다.
+- 실제 purge·PI/trial 제어·설정 변경·리뷰 요청·병합은 하지 않았다.
+
+Refs #545, #221
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
+실패 MCP probe가 exit 1을 반환한다. 실제 Codex 90초 지연 호출도 재시도 없이 한 번 완료돼 #276의 남은 실측을 채웠다.
+
+## 바뀐 것
+
+- summary·진단을 보존하고 `ok`·정확한 marker·서버/도구 호출 각 1회·tool error 0을 모두 검사한다.
+- Claude inbound는 sender 성공, refuse의 거부 통지·로그, accept/unset의 큐 기록을 별도로 판정한다. `--no-sender`는 MCP만 검사한다.
+- task timeout을 summary에 기록하고 매뉴얼의 MCP·inbound 설명을 갱신했다.
+- 개발 기준 `f0cbb32`: triage `70f5b72` 이후 #547·#532·#551·#552 반영. 해당 probe 파일에 선행 변경은 없다.
+
+## 실행한 것
+
+| 검사 | 결과 |
+|---|---|
+| 새 회귀 29건 | 기준 코드 29 failed → branch 통과 |
+| 관련 pytest | 37 passed, 1 skipped |
+| Windows 전체 pytest | 5,648 passed, 66 skipped (554.79초) |
+| 실제 Codex | 0.162.0-alpha.17.2 · 기존 직원 모델 gpt-5.6-sol · 105.4초 · exit 0 |
+| 실제 호출 | 지연 90초 · 승인 60초 · MCP 1,320초 · task 1,800초 · 서버/도구 각 1회 · error 0 |
+| 공개 검사 | 통과 |
+
+전용 설정·임시 작업 폴더와 기존 직원 인증으로 한 번 실행했다. workspace-write/elevated 격리를 유지했고 PI·trial gateway/runner에는 연결하지 않았다. raw stream·개인 경로는 로컬에만 보관한다. Claude 실제 inbound는 #286의 기존 근거이며 이번 실행은 Codex다.
+
+## 남은 지적
+
+- #286의 sender launcher 지원 범위(P2)는 그대로다. 봇 리뷰 판단과 병합은 총괄이 이어받는다.
+
+Fixes #276
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
 # runner capability 브리핑
 
 - 권고: 브리핑이 계획과 같은 정제 요약을 받아 현재 계산 자원의 한계부터 적는다.

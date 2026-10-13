@@ -12,6 +12,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .intake import Reference
+from .test_guard import guard_test_path
 
 
 class GatewaySettings(BaseModel):
@@ -545,6 +546,7 @@ class Settings(BaseModel):
     def path(self, p: str) -> Path:
         """Expand ~ and $VARS; relative paths are relative to the config file (or cwd)."""
         q = Path(os.path.expandvars(os.path.expanduser(p)))
+        guard_test_path(q if q.is_absolute() else self.base_dir() / q)
         if q.is_absolute():
             return q
         return (self.base_dir() / q).resolve()
@@ -553,6 +555,8 @@ class Settings(BaseModel):
     def load(cls, path: str | None = None) -> "Settings":
         path = path or os.environ.get("LABHQ_CONFIG")
         data: dict = {}
+        if path:
+            guard_test_path(Path(path))
         if path and not Path(path).is_file():
             raise FileNotFoundError(f"설정 파일이 없습니다: {path}")
         if path:
@@ -588,6 +592,8 @@ def write_staff_config(settings: Settings, directory: Path) -> str | None:
         return None
     import tempfile
 
+    guard_test_path(Path(settings.config_path))
+    guard_test_path(directory)
     data = yaml.safe_load(Path(settings.config_path).read_text(encoding="utf-8")) or {}
     if not isinstance(data, dict):
         raise ValueError("config is not a mapping")

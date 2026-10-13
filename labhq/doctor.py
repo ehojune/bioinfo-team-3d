@@ -31,6 +31,7 @@ from .runner.versions import _probe, _version
 from .research.packs import check_configured_packs
 from .settings import Settings
 from .integrations.visibility import dev_log_visibility
+from .test_guard import guard_test_path
 from .tools.scheduler import COMMANDS as SCHEDULER_COMMANDS
 from .util import is_windows_app_alias_dir, parent_claude_markers
 
@@ -182,6 +183,7 @@ def _same_account(current: str, expected: str) -> bool:
 
 def _config_owner_is_current_user(path: Path) -> bool | None:
     """Return an OS-backed owner comparison, or None when the OS cannot supply it."""
+    guard_test_path(path)
     if os.name == "nt":
         return _windows_config_owner_is_current_user(path)
     try:
@@ -205,9 +207,11 @@ def _roster(settings: Settings) -> list[AgentSpec]:
     base = settings.path(settings.runner.agents_dir)
     agents = {}
     for kind in ("core", "contract"):
+        guard_test_path(base / kind)
         for path in sorted((base / kind).glob("*.yaml")):
             if path.name.startswith("_"):
                 continue
+            guard_test_path(path)
             spec = AgentSpec.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")) or {})
             if spec.contract and (spec.contract.status in ("expired", "archived") or
                                   time.time() > spec.contract.expires_at):

@@ -49,8 +49,14 @@ def test_elevated_windows_run_denies_private_paths_through_a_profile(tmp_path, w
     assert "-s" not in cmd, "a permission profile and -s do not compose"
     assert default == ['default_permissions="labhq_staff"']
     value = profile[0].split("=", 1)[1]
-    assert value == ('{extends = "' + parent + '", filesystem = {"C:/Users/pi/.ssh" = "deny", '
-                     '"C:/Users/pi/.claude" = "deny"}}')
+    assert value.startswith('{extends = "' + parent + '", filesystem = {')
+    assert '"C:/Users/pi/.ssh" = "deny"' in value and '"C:/Users/pi/.claude" = "deny"' in value
+    if read_only:
+        for name in ("outputs", ".tmp"):
+            assert json.dumps(str((tmp_path / "wd" / name).resolve())) + ' = "write"' in value
+        assert value.count('= "write"') == 2
+    else:
+        assert value.count('= "write"') == 0
     if sys.version_info >= (3, 11):
         import tomllib
         assert tomllib.loads("p = " + value)["p"]["filesystem"]["C:/Users/pi/.claude"] == "deny"

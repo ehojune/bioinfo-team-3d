@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import re
 
 import httpx
@@ -163,5 +164,7 @@ class MockAdapter(AgentAdapter):
         if t.resume_session_id:
             text += " · (깨어나서) 작업 결과 확인 후 마무리"
 
+        if kind == "review" and structured is not None:
+            (ctx.workdir / "outputs" / "review.json").write_text(json.dumps(structured), encoding="utf-8")
         return TaskResult(task_id=t.id, agent_id=a.id, ok=True, text=text, structured=structured,
                           session_id=f"mock-session-{t.id[-4:]}", cost_usd=0.0)
