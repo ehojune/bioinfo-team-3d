@@ -443,6 +443,9 @@ def _paper2agent_row(settings: Settings, agents: list[AgentSpec], fix: bool = Fa
         def ready():
             if not paper2agent.skill_installed(engine, settings):
                 return False
+            if (settings.recruit.skill_commit is not None
+                    and paper2agent.installed_commit(engine, settings) != settings.recruit.skill_commit):
+                return False
             if engine == "claude_code":
                 from .adapters.claude_code import read_plugin_manifest
                 return (read_plugin_manifest(path.parent.parent) or {}).get("name") == "labhq-paper2agent"
@@ -452,7 +455,8 @@ def _paper2agent_row(settings: Settings, agents: list[AgentSpec], fix: bool = Fa
             paper2agent.setup_paper2agent(settings)
         visible = ready()
         return _row("staff", "paper2agent", "ok" if visible else "fail",
-                    "installed and configured visible to recruiter" if visible else "not installed or not visible to recruiter",
+                    "installed and configured visible to recruiter" if visible else
+                    "not installed, not visible to recruiter, or configured commit does not match",
                     hint)
     except subprocess.CalledProcessError:
         detail = "setup-paper2agent git download failed (network unavailable or source/ref inaccessible)"

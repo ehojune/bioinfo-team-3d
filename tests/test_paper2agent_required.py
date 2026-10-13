@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
+import yaml
 
 from labhq import cli, doctor
 from labhq.adapters import get_adapter
@@ -47,7 +48,8 @@ def case(tmp_path, monkeypatch):
 
 
 def row(s, **kwargs):
-    return next(r for r in doctor.collect(s, dry_run=True, **kwargs)["checks"] if r["name"] == "paper2agent")
+    return next(r for r in doctor.collect(s, dry_run=not kwargs.get("fix", False), **kwargs)["checks"]
+                if r["name"] == "paper2agent")
 
 
 def test_isolated_install_is_visible_only_in_claude_recruiter_command(case, tmp_path):
@@ -159,3 +161,70 @@ def test_personal_config_is_rejected(case):
     s.engines.claude_code.env["CLAUDE_CONFIG_DIR"] = str(home / ".claude")
     with pytest.raises(ValueError, match="separate staff"):
         p2a.setup_paper2agent(s)
+
+
+@pytest.mark.parametrize("engine", ["claude_code", "codex"])
+def test_doctor_reinstalls_changed_pin(case, monkeypatch, engine):
+    s, home = case
+    s.runner.force_engine = engine
+    p2a.setup_paper2agent(s)
+    assert p2a.installed_commit(engine, s) == "a" * 40
+    s.recruit.skill_commit = "b" * 40
+    assert row(s)["status"] == "fail"
+    # Fake git checkout already contains B; setup must replace the installed A.
+    (home / ".labhq/cache/Paper2Agent/.git/HEAD").write_text("b" * 40, encoding="utf-8")
+    setup = Mock(wraps=p2a.setup_paper2agent)
+    monkeypatch.setattr(p2a, "setup_paper2agent", setup)
+    result = row(s, fix=True)
+    assert result["status"] == "ok", result
+    setup.assert_called_once_with(s)
+    assert p2a.installed_commit(engine, s) == "b" * 40
+
+
+@pytest.mark.parametrize("marker", [None, "{", '{}', '{"commit": "invalid"}'])
+def test_doctor_requires_pin_marker_only_when_pinned(case, marker):
+    s, _ = case
+    p2a.setup_paper2agent(s)
+    path = p2a.skill_path("claude_code", s) / p2a.SOURCE_MARKER
+    if marker is None:
+        path.unlink()
+    else:
+        path.write_text(marker, encoding="utf-8")
+    assert row(s)["status"] == "ok"
+    s.recruit.skill_commit = "a" * 40
+    assert row(s)["status"] == "fail"
+
+
+def test_matching_pin_does_not_reinstall(case, monkeypatch):
+    s, _ = case
+    p2a.setup_paper2agent(s)
+    s.recruit.skill_commit = "a" * 40
+    setup = Mock(side_effect=AssertionError("matching pin must not reinstall"))
+    monkeypatch.setattr(p2a, "setup_paper2agent", setup)
+    assert row(s, fix=True)["status"] == "ok"
+    setup.assert_not_called()
+
+
+@pytest.mark.parametrize("engine", ["claude_code", "codex"])
+def test_shipped_recruiter_supports_actual_engine(case, tmp_path, engine):
+    s, home = case
+    source = Path(__file__).resolve().parents[1] / "agents/core/recruiter.yaml"
+    spec = yaml.safe_load(source.read_text(encoding="utf-8"))
+    spec["engine"] = engine
+    target = Path(s.runner.agents_dir) / "core/recruiter.yaml"
+    target.write_text(yaml.safe_dump(spec), encoding="utf-8")
+    assert s.runner.force_engine is None
+    agent = next(a for a in doctor._roster(s) if a.id == "recruiter")
+    assert agent.engine.value == engine
+    installed = p2a.setup_paper2agent(s)
+    assert installed == [p2a.skill_path(engine, s)]
+    assert installed[0].is_relative_to(home)
+    assert row(s)["status"] == "ok"
+    if engine == "claude_code":
+        ctx = RunContext(task=Task(agent_id=agent.id, prompt="x"), agent=agent, settings=s,
+                         workdir=tmp_path, mcp_servers=[], env={}, emit=lambda *a: None, prompt="x")
+        adapter = get_adapter(agent.engine, s)
+        assert adapter.preflight_error(ctx, adapter.staff_env(ctx)) is None
+        cmd = adapter.build_command(ctx)
+        assert "--plugin-dir" in cmd
+        assert "--disable-slash-commands" not in cmd
