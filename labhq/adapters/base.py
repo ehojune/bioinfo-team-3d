@@ -487,6 +487,12 @@ class RunContext:
     # engine reported a shell command that exited 0. The Codex sandbox record reads both (#328).
     started_command: list[str] | None = None
     commands_ran: bool = False
+    # Set by the runner when the PI halts the task (#59 ①). A hooked Claude run stops itself at its next tool call;
+    # after halt_grace_s (0 for engines without hooks) run() ends the CLI, keeping the session id.
+    halt: asyncio.Event | None = None
+    halt_grace_s: float = 0.0
+    # Runner hook: the CLI process started, so the steers in its prompt reached the engine.
+    on_started: Callable[[], None] | None = None
 
     @property
     def meta_dir(self) -> Path:
@@ -877,6 +883,9 @@ class AgentAdapter(ABC):
         refused = ctx.before_spawn() if ctx.before_spawn else None
         if refused:
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error=refused)
+        if ctx.halt is not None and ctx.halt.is_set():  # halted while labhq prepared the run: nothing starts
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error_kind="halted",
+                              error="halted before the CLI started", session_id=ctx.task.resume_session_id)
         try:
             group_args = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
                           if os.name == "nt" else {"start_new_session": True})
@@ -895,6 +904,15 @@ class AgentAdapter(ABC):
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False,
                               error=f"could not start executable {cmd[0]!r}: {detail}")
         ctx.started_command = launcher
+        if ctx.on_started:
+            try:
+                ctx.on_started()
+            except BaseException as exc:  # never leave a started CLI running unsupervised (PR #532 review)
+                await self._kill(proc)
+                if not isinstance(exc, Exception):
+                    raise
+                return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False,
+                                  error=f"runner could not record the CLI start: {type(exc).__name__}: {exc}")
         st = RunState()
         tool_activity = _ToolActivity(self.engine)
         stderr_tail: deque[str] = deque(maxlen=60)
@@ -1056,9 +1074,30 @@ class AgentAdapter(ABC):
                 delay = max(0.01, min(30.0, min(due) - quiet))
                 await asyncio.sleep(delay)
 
+        async def halt_watch() -> None:
+            """The PI halted the task: wait for a hooked Claude to stop itself, then end the tree (#59 ①)."""
+            if ctx.halt is None:
+                return
+            await ctx.halt.wait()
+            if ctx.halt_grace_s > 0:
+                try:
+                    await asyncio.wait_for(proc.wait(), ctx.halt_grace_s)
+                    return
+                except asyncio.TimeoutError:
+                    pass
+            if proc.returncode is not None or result_arrived.is_set():
+                return
+            st.error_kind = "halted"
+            st.error = "halted by the PI"
+            await ctx.emit("agent.log", {"level": "warn", "text": (
+                "PI가 멈춤을 요청해 labhq가 프로세스 트리를 끝냈습니다. 세션 id는 남겨 두었고, 재개하면 같은 세션으로 "
+                "이어 갑니다" + (f" (도구 hook이 {ctx.halt_grace_s:g}s 안에 멈추지 못함)" if ctx.halt_grace_s > 0 else ""))})
+            await self._kill(proc)
+
         drain = asyncio.gather(feed_stdin(), read_out(), read_err(), proc.wait())
         guard = asyncio.create_task(exit_guard())
         watch = asyncio.create_task(stall_watch())
+        halting = asyncio.create_task(halt_watch())
         try:
             await asyncio.wait_for(asyncio.shield(drain), timeout=self.settings.runner.task_timeout_s)
         except asyncio.TimeoutError:
@@ -1074,7 +1113,9 @@ class AgentAdapter(ABC):
             watch.cancel()
             if not ended_after_result:
                 guard.cancel()
-        await asyncio.gather(guard, watch, return_exceptions=True)  # a guard that is ending the tree finishes first
+            if getattr(st, "error_kind", None) != "halted":
+                halting.cancel()
+        await asyncio.gather(guard, watch, halting, return_exceptions=True)  # an ending tree finishes first
         returncode = 0 if ended_after_result else proc.returncode  # ended by labhq after the result: not a failure
         try:
             ctx.write_meta("stderr_tail.txt", "\n".join(stderr_tail))

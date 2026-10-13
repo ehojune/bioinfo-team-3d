@@ -219,6 +219,25 @@ def _api_error_detail(response) -> str:
     return json.dumps(detail, ensure_ascii=False, separators=(",", ":")) if detail is not None else ""
 
 
+TASK_CONTROL_DONE = {"steer": "방향 수정을 보냈습니다", "pause": "일시 정지를 보냈습니다", "resume": "재개를 보냈습니다",
+                     "halt": "멈춤을 보냈습니다"}
+
+
+def task_control(s: Settings, action: str, task_id: str, text: str | None = None) -> str:
+    """`labhq task steer|pause|resume|halt`: the same REST call as the staff sheet's buttons (#59 ①)."""
+    from urllib.parse import quote
+
+    if action == "steer" and not (text or "").strip():
+        raise SystemExit("labhq task steer <task_id> \"<방향 수정>\" — 보낼 내용을 적어 주세요")
+    out = _api(s, "POST", f"/api/tasks/{quote(task_id, safe='')}/{action}",
+               json={"text": text} if action == "steer" else {})
+    if out.get("resumed_halted"):
+        return f"{task_id}: 멈췄던 작업을 재개합니다 · 같은 세션으로 다음 turn을 보냅니다"
+    where = ("" if out.get("sent", True) else " · 러너가 꺼져 있어 다시 연결되면 전달합니다" if action == "halt"
+             else " · 같은 단계의 다음 turn에 적용합니다")
+    return f"{task_id}: {TASK_CONTROL_DONE[action]}{where}"
+
+
 def _api(s: Settings, method: str, path: str, *, raw_errors: bool = False, **kw):
     import httpx
 
@@ -1377,6 +1396,10 @@ def main(argv: list[str] | None = None) -> None:
     note.add_argument("text")
     cancel = sub.add_parser("cancel", help="cancel a request: stop its tasks, waits and cards, keep partial results")
     cancel.add_argument("request_id")
+    task_p = sub.add_parser("task", help="steer, pause, resume or halt one running task (#59)")
+    task_p.add_argument("action", choices=("steer", "pause", "resume", "halt"))
+    task_p.add_argument("task_id")
+    task_p.add_argument("text", nargs="?", help="steer: the direction change for the staff member (2,000 characters)")
     resume = sub.add_parser("resume", help="retry a step waiting for quota or engine login")
     resume.add_argument("request_id")
     resume.add_argument("step_id")
@@ -1666,6 +1689,8 @@ def main(argv: list[str] | None = None) -> None:
         print(f"{out['request_id']}: 이미 취소된 요청입니다" if out.get("already") else
               f"{out['request_id']}: 취소했습니다 · 멈춘 작업 {len(out.get('cancelled_tasks') or [])}개 · "
               "부분 결과는 보고서에 있습니다")
+    elif args.cmd == "task":
+        print(task_control(s, args.action, args.task_id, args.text))
     elif args.cmd == "resume":
         print(_api(s, "POST", f"/api/requests/{args.request_id}/steps/{args.step_id}/resume-quota", json={}))
     elif args.cmd == "watch":

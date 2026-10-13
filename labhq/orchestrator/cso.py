@@ -781,6 +781,8 @@ WAKE_PROMPT = """Your HPC jobs finished:
 Job scripts and logs are under jobs/ in your workspace ({workdir}). Check exit status and outputs, then
 continue your step and report as instructed."""
 
+HALT_RESUME_PROMPT = ("The PI halted this task and has now resumed it. Continue the same task from where you "
+                      "stopped. If the PI changed direction meanwhile, that note comes first in this message.")
 WRAP_PROMPT = "Your turn limit was reached. Save any partial results under outputs/ and write outputs/PARTIAL_STATUS.md with what is done and what remains unfinished."
 # Saving files, writing the status note and answering take more than two turns: a 2-turn wrap-up stopped at its
 # third turn with nothing saved (7th mock trial, 2026-10-03).
@@ -2106,7 +2108,8 @@ def failure_kind(outcome: TaskResult | BaseException, engine: str = "") -> str |
       below and to an engine limit
     Offline, timeout, empty result/CLI stream,  transient
       explicit rate-limit/overload/5xx/network signal
-    Policy/approval/budget/cancel/invalid input, terminal
+    Policy/approval/budget/cancel/PI halt/       terminal
+      invalid input,
       ordinary nonzero exit, other error
     Environment signature only in the last       environment
       failed command's output (no later command
@@ -2123,7 +2126,7 @@ def failure_kind(outcome: TaskResult | BaseException, engine: str = "") -> str |
         return "transient"
     if isinstance(outcome, BaseException):
         return "terminal"
-    if outcome.error_kind == "ask_rejected":
+    if outcome.error_kind in ("ask_rejected", "halted"):  # the PI stopped a halted turn: never replay it
         return "terminal"
     if outcome.ok and (outcome.text.strip() or outcome.structured is not None or waiting(outcome)):
         return None
@@ -3026,6 +3029,25 @@ class Orchestrator:
             res = await dispatch_with_retry(current, max_attempts, start)
             tool_errors = list(res.tool_errors)
             while True:
+                if res.error_kind == "halted":  # #59 ①: parked until the PI resumes, then the same session goes on
+                    wait_halted = getattr(self.hub, "wait_halted", None)
+                    if wait_halted is None or not await wait_halted(rid, turn_key(current), res):
+                        return res
+                    can_resume = bool(res.session_id and self.hub.supports_resume(current.agent_id))
+                    current = current.model_copy(update={
+                        "id": new_id("task"),
+                        "prompt": continuation_prompt(turn, HALT_RESUME_PROMPT, resumable=can_resume,
+                                                      previous_result=res,
+                                                      context_chars=self.cfg.context_chars_per_step),
+                        "meta": {**current.meta, "kind": current.meta.get("kind", "step"),
+                                 "parent_task": res.task_id,
+                                 **({"workdir": res.workdir} if res.workdir else {})},
+                        "resume_session_id": res.session_id if can_resume else None,
+                    })
+                    res = await dispatch_with_retry(current, max_attempts)
+                    tool_errors.extend(res.tool_errors)
+                    res = res.model_copy(update={"tool_errors": list(tool_errors)})
+                    continue
                 login = not res.ok and is_login_error(engine, res.error)
                 if login:
                     deadline = login_deadline(current)

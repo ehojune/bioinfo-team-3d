@@ -181,6 +181,10 @@ def test_package_data_includes_office_assets():
     ('web_checklist_skip.cjs', 'checklist skip web tests passed'),
     ('web_cards_status.cjs', 'fail 0'),
     ('web_request_lifecycle.cjs', 'request lifecycle web tests passed'),
+    ('web_staff_control.cjs', 'staff control web tests passed'),
+    ('web_staff_control_tasks.cjs', 'staff control task rows web tests passed'),
+    ('web_staff_control_steps.cjs', 'staff control step web tests passed'),
+    ('web_staff_control_scope.cjs', 'staff control scope web tests passed'),
     ('web_contract_provenance.cjs', 'fail 0'),
     ('web_trial_ready.cjs', 'trial readiness web tests passed'),
 ])
