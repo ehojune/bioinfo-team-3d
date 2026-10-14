@@ -6,11 +6,6 @@
 <title>labhq 사무실</title>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="labhq">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jua&family=Noto+Serif+KR:wght@500;600;700&display=swap">
 <!--LABHQ_BOOT-->
 <style>
 :root{
@@ -328,6 +323,7 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
 <link rel="stylesheet" href="./ui/shutdown.css">
 <link rel="stylesheet" href="ui/tokens.css">
 <link rel="stylesheet" href="ui/components.css">
+<link rel="stylesheet" href="ui/office.css">
 </head>
 <body>
 <header class="top">
@@ -437,6 +433,7 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
 <div class="toast ui-toast" id="toast" role="status" aria-live="polite"></div>
 <script src="./state.js"></script>
 <script type="module">
+import {officeSVG, officeHead, officeCharacter, officeStatus} from './ui/office-art.js';
 import {bindShutdown} from './ui/shutdown.js';
 import {answerRequired, decisionChoice, decisionNote, storageChoice, revisedToast, revisionNoteMissing, syncReviewCards, syncDecisionCards, syncDecisionHistory, createHistoryVisibility, expandableText, syncExpandableText} from './ui/decide.js';
 import {syncStaffCards} from './ui/strip.js';
@@ -489,97 +486,10 @@ let decisionHistory = [];
 const historyVisibility = createHistoryVisibility(`${MODE}:${INSTANCE}`);
 
 /* ---------------- staff art: original chibi animals ---------------- */
-const FUR = {
-  owl: ['#8C735E', '#EFE3D3'], penguin: ['#2F3A48', '#F4F6F8'], bear: ['#A8764F', '#E2C29F'],
-  squirrel: ['#C9793A', '#F1D9B8'], fox: ['#E27B36', '#FBEBDD'], raccoon: ['#8F969C', '#E6E8EA'],
-  octopus: ['#B46AB8', '#D3A0D6'], hedgehog: ['#7C5D47', '#E9D5B7'], turtle: ['#9CC27F', '#C9DFB6'],
-  beaver: ['#8C5A3B', '#C99A77'], otter: ['#7E5C4B', '#D8BFA9'], chick: ['#F2C84B', '#F7DC86'],
-};
 const isContract = a => !!a && (a.employment === 'contract' || String(a.id).startsWith('c_'));
-function kindOf(a) { return LabHQState.staffCharacter(a); }
-const SPIKES = (() => {
-  const pts = [];
-  for (let i = 0, deg = 150; deg <= 390; deg += 12, i++) {
-    const r = i % 2 ? 17 : 23.5, t = deg * Math.PI / 180;
-    pts.push(`${(50 + r * Math.cos(t)).toFixed(1)},${(40 - r * Math.sin(t)).toFixed(1)}`);
-  }
-  return `<polygon points="${pts.join(' ')}" fill="#6E5240"/><ellipse cx="50" cy="63" rx="19" ry="15" fill="#6E5240"/>`;
-})();
-const NOSE = '#3B2A20', EYE = '#2A2F35';
-const PARTS = {
-  owl: { ears: '<path d="M36 27 33 12 44 21Z M64 27 67 12 56 21Z" fill="FUR"/>', feat: '<path d="M47.6 43h4.8L50 47.8Z" fill="#E3A23B"/>' },
-  penguin: { patch: '<ellipse cx="50" cy="41" rx="12.5" ry="11.5" fill="PALE"/>', feat: '<path d="M47.4 43.2h5.2L50 47Z" fill="#F0A53A"/>' },
-  bear: { ears: '<circle cx="36.5" cy="24.5" r="6" fill="FUR"/><circle cx="63.5" cy="24.5" r="6" fill="FUR"/><circle cx="36.5" cy="24.5" r="3" fill="PALE"/><circle cx="63.5" cy="24.5" r="3" fill="PALE"/>',
-    feat: `<ellipse cx="50" cy="44.5" rx="7.5" ry="5.5" fill="PALE"/><ellipse cx="50" cy="42.6" rx="2.6" ry="1.8" fill="${NOSE}"/><path d="M48 46.2q2 1.4 4 0" fill="none" stroke="${NOSE}" stroke-width="1" stroke-linecap="round"/>` },
-  squirrel: { back: '<path d="M36 74C16 72 12 48 23 37c6-6 13-1 10 6-3 8 1 14 6 17Z" fill="#B8692E"/>',
-    ears: '<path d="M38 26 36 15 45 22Z M62 26 64 15 55 22Z" fill="FUR"/>', patch: '<ellipse cx="50" cy="44" rx="10" ry="7.5" fill="PALE"/>',
-    feat: `<circle cx="50" cy="42.5" r="1.6" fill="${NOSE}"/>` },
-  fox: { back: '<path d="M63 74c22 1 31-15 23-28-4 11-12 16-21 16Z" fill="FUR"/><path d="M86 46c3 5 3 10 1 14-4-3-4-9-1-14Z" fill="PALE"/>',
-    ears: `<path d="M35 29 33 11 46 22Z M65 29 67 11 54 22Z" fill="FUR"/><path d="M33 11l2.4 6 3-2.5Z M67 11l-2.4 6-3-2.5Z" fill="${NOSE}"/>`,
-    patch: '<path d="M37 42q13 12 26 0q-2 9-13 10q-11-1-13-10Z" fill="PALE"/>', feat: `<circle cx="50" cy="42.6" r="1.8" fill="${NOSE}"/>` },
-  raccoon: { back: '<path d="M63 72c16 3 26-5 26-15-5 5-12 8-24 6Z" fill="FUR"/><path d="M79 66l3-7M85 62l2-6" stroke="#3E4449" stroke-width="3"/>',
-    ears: '<circle cx="37" cy="25" r="5.2" fill="FUR"/><circle cx="63" cy="25" r="5.2" fill="FUR"/><circle cx="37" cy="25" r="2.4" fill="#3E4449"/><circle cx="63" cy="25" r="2.4" fill="#3E4449"/>',
-    patch: '<path d="M34 37q16-8 32 0q1 7-7 7q-9-4-18 0q-8 0-7-7Z" fill="#3E4449"/><ellipse cx="50" cy="46" rx="6" ry="4" fill="PALE"/>',
-    feat: '<ellipse cx="50" cy="44" rx="2.2" ry="1.6" fill="#2A2F35"/>' },
-  octopus: { noBelly: true, back: '<path d="M34 60c-8 4-10 12-5 16M66 60c8 4 10 12 5 16" fill="none" stroke="FUR" stroke-width="5" stroke-linecap="round"/>',
-    extra: '<circle cx="43" cy="27" r="2.2" fill="PALE"/><circle cx="57" cy="25" r="1.6" fill="PALE"/><circle cx="61" cy="31" r="1.3" fill="PALE"/>',
-    feat: '<path d="M47.5 45q2.5 2 5 0" fill="none" stroke="#5B2E5E" stroke-width="1.2" stroke-linecap="round"/>' },
-  hedgehog: { back: SPIKES, headPale: true, noBelly: true, feat: `<ellipse cx="50" cy="44" rx="3" ry="2.2" fill="${NOSE}"/>` },
-  turtle: { noBelly: true, shell: true,
-    extra: '<g fill="none" stroke="#2A2F35" stroke-width="1.2"><circle cx="44" cy="38" r="4.3"/><circle cx="56" cy="38" r="4.3"/><path d="M48.3 38h3.4"/></g>',
-    feat: '<path d="M47.5 45q2.5 1.8 5 0" fill="none" stroke="#3E5A2E" stroke-width="1.1" stroke-linecap="round"/>' },
-  beaver: { ears: '<circle cx="38" cy="25" r="4.2" fill="FUR"/><circle cx="62" cy="25" r="4.2" fill="FUR"/><circle cx="38" cy="25" r="2" fill="PALE"/><circle cx="62" cy="25" r="2" fill="PALE"/>',
-    patch: '<ellipse cx="50" cy="44.5" rx="8" ry="6" fill="PALE"/>',
-    feat: `<ellipse cx="50" cy="42" rx="2.6" ry="1.8" fill="${NOSE}"/><rect x="47.8" y="46" width="4.4" height="4.2" rx=".8" fill="#fff" stroke="#D9CFC4" stroke-width=".5"/><path d="M50 46v4.2" stroke="#D9CFC4" stroke-width=".5"/>` },
-  otter: { ears: '<circle cx="38" cy="26" r="3.6" fill="FUR"/><circle cx="62" cy="26" r="3.6" fill="FUR"/>',
-    patch: '<ellipse cx="50" cy="44.5" rx="10.5" ry="7" fill="PALE"/>',
-    feat: `<ellipse cx="50" cy="41.8" rx="2.4" ry="1.7" fill="${NOSE}"/><path d="M44 44.5 35 43.5M44 46.5 35 47.5M56 44.5l9-1M56 46.5l9 1" stroke="#5A4235" stroke-width=".8" stroke-linecap="round"/>`,
-    desk: '<ellipse cx="50" cy="66" rx="4" ry="2.4" fill="#A7B0B8"/>' },
-  chick: { noBelly: true, feat: '<path d="M47 41.5h6L50 46Z" fill="#EE8E2E"/>',
-    extra: '<path d="M36 27 50 6 64 27Z" fill="#FFFFFF" stroke="#C9D3DC" stroke-width=".8"/><path d="M50 6 45 27" stroke="#C9D3DC" stroke-width=".8"/><path d="M52 16h5M53 20h6" stroke="#9AA7B3" stroke-width=".9" stroke-linecap="round"/>' },
-};
-function eyes(kind) {
-  const open = kind === 'raccoon'
-    ? `<circle cx="44" cy="38" r="2.6" fill="#fff"/><circle cx="56" cy="38" r="2.6" fill="#fff"/><circle cx="44.4" cy="38.4" r="1.4" fill="${EYE}"/><circle cx="56.4" cy="38.4" r="1.4" fill="${EYE}"/>`
-    : kind === 'owl'
-      ? `<circle cx="43.5" cy="38" r="6" fill="#F7F1E6"/><circle cx="56.5" cy="38" r="6" fill="#F7F1E6"/><circle cx="43.5" cy="38.4" r="2.7" fill="${EYE}"/><circle cx="56.5" cy="38.4" r="2.7" fill="${EYE}"/>`
-      : `<circle cx="44" cy="38" r="2.2" fill="${EYE}"/><circle cx="56" cy="38" r="2.2" fill="${EYE}"/><circle cx="44.7" cy="37.3" r=".7" fill="#fff"/><circle cx="56.7" cy="37.3" r=".7" fill="#fff"/>`;
-  const lid = kind === 'raccoon' ? '#fff' : EYE;
-  return `<g class="eyes-open">${open}</g><g class="eyes-closed"><path d="M41 38.5q3 2.4 6 0M53 38.5q3 2.4 6 0" fill="none" stroke="${lid}" stroke-width="1.5" stroke-linecap="round"/></g>`;
-}
-function charArt(kind) {
-  if (kind === 'neutral') return '<circle cx="50" cy="34" r="20" fill="#89939d"/><text x="50" y="41" text-anchor="middle" fill="white" font-size="22">?</text>';
-  const [fur, pale] = FUR[kind] || FUR.otter, p = PARTS[kind] || {};
-  const fill = s => (s || '').replace(/FUR/g, fur).replace(/PALE/g, pale);
-  const body = p.shell
-    ? '<ellipse cx="50" cy="63" rx="21" ry="16.5" fill="#5E8C4A"/><path d="M50 51l7 5v8l-7 5-7-5v-8Z M43 56l-9-2 M57 56l9-2 M43 64l-8 5 M57 64l8 5" fill="none" stroke="#46703A" stroke-width="1.3"/>'
-    : `<ellipse cx="50" cy="63" rx="16" ry="14" fill="${fur}"/>` + (p.noBelly ? '' : `<ellipse cx="50" cy="66" rx="10" ry="8" fill="${pale}"/>`);
-  return fill(p.back) + fill(p.ears) + body +
-    `<circle cx="50" cy="38" r="${kind === 'octopus' ? 18.5 : 17}" fill="${p.headPale ? pale : fur}"/>` +
-    fill(p.patch) + eyes(kind) + fill(p.feat) +
-    '<ellipse cx="39.5" cy="44" rx="3" ry="1.9" fill="#F29BA0" opacity=".5"/><ellipse cx="60.5" cy="44" rx="3" ry="1.9" fill="#F29BA0" opacity=".5"/>' +
-    fill(p.extra);
-}
-function seatSVG(a) {
-  const k = kindOf(a), fur = (FUR[k] || FUR.otter)[0], p = PARTS[k] || {};
-  return `<svg viewBox="0 0 100 104" aria-hidden="true" focusable="false">
-<ellipse class="spot" cx="50" cy="95" rx="42" ry="6.5"/><rect class="chair" x="33" y="45" width="34" height="24" rx="8"/>
-<g class="char">${charArt(k)}</g>
-<path class="desk-top" d="M10 72h80l-8-10H18Z"/><rect class="desk-front" x="10" y="72" width="80" height="15" rx="1.5"/>
-<rect class="desk-front" x="78.5" y="55" width="3" height="8"/><path class="screen" d="M68 57 92 53V36L68 40Z"/><path class="glow" d="M70 55.3 90 52V38L70 41.5Z"/>
-<g class="code"><rect x="72" y="43.5" width="10" height="1.6" rx=".8"/><rect x="72" y="47" width="14" height="1.6" rx=".8"/><rect x="72" y="50.5" width="7" height="1.6" rx=".8"/></g>
-${p.desk || ''}
-<ellipse class="paw paw-l" cx="41" cy="66.5" rx="5" ry="3.4" fill="${fur}"/><ellipse class="paw paw-r" cx="59" cy="66.5" rx="5" ry="3.4" fill="${fur}"/>
-<ellipse class="paw-up" cx="30" cy="36" rx="4.4" ry="6" fill="${fur}"/>
-<g class="m-dots"><text x="50" y="14" text-anchor="middle">···</text></g>
-<g class="m-bang"><circle cx="68" cy="13" r="7.5"/><text x="68" y="17" text-anchor="middle">!</text></g>
-<g class="m-check"><circle cx="68" cy="13" r="7.5"/><path d="M64.6 13.2l2.4 2.4 4.4-4.8" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></g>
-<g class="m-z"><text x="64" y="17">z</text><text x="71" y="10">z</text><text x="79" y="3">Z</text></g>
-<path class="m-sweat" d="M72 24c2.5 3.2 3 5 1.6 6.6a2.3 2.3 0 0 1-3.3 0C69 29 69.5 27.2 72 24Z" fill="#7FB6F0"/>
-</svg>`;
-}
-const EMPTY_SEAT = `<svg viewBox="0 0 100 104" aria-hidden="true" focusable="false"><ellipse class="spot" cx="50" cy="95" rx="42" ry="6.5"/><rect class="chair-empty" x="33" y="45" width="34" height="24" rx="8"/><path class="desk-top" d="M10 72h80l-8-10H18Z"/><rect class="desk-front" x="10" y="72" width="80" height="15" rx="1.5"/><rect class="desk-front" x="78.5" y="55" width="3" height="8"/><path class="screen" d="M68 57 92 53V36L68 40Z"/></svg>`;
-const headSVG = kind => `<svg viewBox="24 8 52 50" aria-hidden="true" focusable="false">${charArt(kind)}</svg>`;
+function kindOf(a) { return officeCharacter(a, LabHQState.staffCharacter(a)); }
+const seatSVG = a => officeSVG(a, kindOf(a));
+const headSVG = officeHead;
 
 /* ---------------- state ---------------- */
 const officeState = LabHQState.createOfficeState({mode: MODE, now,
@@ -648,29 +558,24 @@ const ZONES = [
   ['lead', '지휘부', ['chief_of_staff', 'cso', 'sci_reviewer']],
   ['research', '연구', ['biologist', 'lit_scout', 'bioinfo-agent']],
   ['data', '데이터와 분석', ['data_steward', 'analyst', 'engineer', 'qc_reviewer']],
-  ['hr', '인사팀과 파견직 자리', ['recruiter']],
+  ['hr', '운영과 파견직', ['recruiter', 'facilities']],
 ];
-const HOT_DESKS = 2;
 let officeKey = '', seatEls = new Map();
 function seatHTML(a) {
   const [first, ...rest] = String(a.name || a.id).split(' ');
   const sub = isContract(a) ? contractLeft(a) : (rest.join(' ') || a.role || '');
-  return `<button type="button" class="seat st-idle" data-agent="${esc(a.id)}"><span class="bubble"></span>${seatSVG(a)}<span class="nm">${esc(first)}</span><span class="sub">${esc(sub)}</span></button>`;
+  return `<button type="button" class="seat st-idle" data-agent="${esc(a.id)}">${seatSVG(a)}<span class="seat-info"><span class="nm">${esc(first)}</span><span class="sub">${esc(sub)}</span><span class="office-status"><span class="status-dot" aria-hidden="true"></span><span class="office-status-text"></span></span></span></button>`;
 }
 function renderOffice() {
   const list = [...S.agents.values()];
-  const key = list.map(a => `${a.id}:${a.name}:${a.expires_at || ''}`).join('|');
+  const key = list.map(a => JSON.stringify([a.id,a.name,a.role,a.character,a.employment,a.expires_at])).join('|');
   if (key !== officeKey) {
     officeKey = key;
     const zones = { lead: [], research: [], data: [], hr: [] }, placed = new Set();
     for (const [z, , ids] of ZONES) for (const id of ids) { const a = ag(id); if (a) { zones[z].push(a); placed.add(id); } }
     for (const a of list) if (!placed.has(a.id)) (isContract(a) ? zones.hr : zones.research).push(a);
-    const hired = zones.hr.filter(isContract).length;
-    $('#zones').innerHTML = ZONES.map(([z, label]) => {
-      const empties = z === 'hr' ? Array(Math.max(0, HOT_DESKS - hired)).fill(
-        `<div class="seat empty" aria-hidden="true"><span class="bubble"></span>${EMPTY_SEAT}<span class="nm">빈 자리</span><span class="sub">파견직이 앉을 곳</span></div>`).join('') : '';
-      return zones[z].length || empties ? `<section class="zone" aria-label="${label}"><h3>${label}</h3><div class="seats">${zones[z].map(seatHTML).join('')}${empties}</div></section>` : '';
-    }).join('');
+    $('#zones').innerHTML = ZONES.map(([z, label]) => zones[z].length
+      ? `<section class="zone" data-zone="${z}" aria-label="${label}"><h3>${label}<span class="zone-count">${zones[z].length}명</span></h3><div class="seats">${zones[z].map(seatHTML).join('')}</div></section>` : '').join('');
     seatEls = new Map([...document.querySelectorAll('.seat[data-agent]')].map(el => [el.dataset.agent, el]));
   }
   for (const [id, el] of seatEls) {
@@ -678,8 +583,11 @@ function renderOffice() {
     const vs = visual(a);
     const cls = `seat st-${vs}${a.arriving && now() - a.arriving < 2 ? ' arriving' : ''}`;
     if (el.className !== cls) el.className = cls;
-    const b = bubble(a, vs), bub = el.firstElementChild;
-    if (bub.textContent !== b) bub.textContent = b;
+    const status = officeStatus(a, vs, stateText(a, vs));
+    el.dataset.status = status.kind;
+    const label = el.querySelector('.office-status-text');
+    if (label.textContent !== status.text) label.textContent = status.text;
+    el.title = stateText(a, vs);
     el.setAttribute('aria-label', `${a.name}, ${stateText(a, vs)}${a.task && vs !== 'idle' ? `, ${a.task}` : ''}`);
   }
 }
