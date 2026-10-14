@@ -557,7 +557,10 @@ def _local_process_diagnostics(s: Settings) -> list[dict]:
         if state == "unknown":
             detail += f"프로세스 신원 확인 불가 — {problem}"
         elif record:
-            latest = latest_records(logs, role, record["pid"])
+            # `up` records the launcher (a venv's python.exe), whose real-interpreter child writes the diagnostics.
+            children = (proc_tree.child_pids(record["pid"], created=proc_tree.parse_created(record["created"]))
+                        if state == "alive" else [])
+            latest = latest_records(logs, role, record["pid"], also=children)
             exited = latest.get("exit")
             detail += f"PID {record['pid']} " + ("실행 중" if state == "alive" else
                 "프로세스 없음(비정상 종료 의심)" if not exited else "프로세스 없음(종료 기록 있음)")

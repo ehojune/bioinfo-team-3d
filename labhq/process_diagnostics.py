@@ -12,6 +12,7 @@ import sys
 import threading
 import traceback
 from datetime import datetime, timezone
+from typing import Iterable
 
 
 def _resources() -> dict:
@@ -171,9 +172,13 @@ class ProcessDiagnostics:
         self._output.close()
 
 
-def latest_records(logs: Path, role: str, pid: int) -> dict:
-    """Read a bounded tail and ignore earlier processes, including previous starts of a reused PID."""
+def latest_records(logs: Path, role: str, pid: int, *, also: Iterable[int] = ()) -> dict:
+    """Read a bounded tail and ignore earlier processes, including previous starts of a reused PID.
+
+    `also` names more PIDs whose rows count as this process's: a venv's python.exe launcher is the PID `up` records,
+    and its child, the real interpreter, writes the rows."""
     latest = {}
+    pids = {pid, *also}
     try:
         with (logs / f"{role}-diagnostics.jsonl").open(mode="rb") as source:
             size = source.seek(0, 2)
@@ -184,7 +189,7 @@ def latest_records(logs: Path, role: str, pid: int) -> dict:
                 row = json.loads(line)
             except (ValueError, UnicodeError):
                 continue
-            if not isinstance(row, dict) or row.get("pid") != pid:
+            if not isinstance(row, dict) or row.get("pid") not in pids:
                 continue
             event = row.get("event")
             if event == "start":
