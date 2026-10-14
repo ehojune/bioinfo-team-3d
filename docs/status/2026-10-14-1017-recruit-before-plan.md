@@ -13,11 +13,12 @@
 
 - main `d56253a`: 새 회귀 23 failed → branch 23 passed.
 - 관련 368 passed, 채용·기존 계약·모의 e2e 106 passed. 수정 후 계약·웹·채용 148 passed, 1 skipped. 표준 Node 46개 파일 통과.
-- 공개 검사·diff 검사 통과. Windows 전체 재검증: 6,213 passed, 66 skipped, semantics on/off 기록 비교 1 failed. 해당 두 경우를 단독 재실행해 2 passed를 확인했습니다. Windows 전체 최종 판정은 CI에서도 확인합니다.
+- 채용 카드 추가로 드러난 승인 기록 순서 문제를 고쳤습니다. 순서 회귀 2개는 main에서 실패하며 수정 후 채용·semantics 53개가 통과했습니다.
+- 공개·diff 검사 통과. 전체 pytest와 최종 CI 결과는 PR #581에 기록합니다.
 
 ## 남은 지적
 
-- semantics on/off 기록 비교가 로컬 전체 실행에서 한 번 달랐고 단독 재실행에서는 재현되지 않았습니다.
+- 봇 리뷰 대기·대응과 병합은 총괄에게 넘깁니다.
 - 실제 Paper2Agent 변환·채용과 PI/trial 실행·설정 변경은 수행하지 않았습니다.
 
 🤖 Generated with Codex (gpt-6) for the labhq dev lead
