@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 05:24 | [`b8dcfd7`](https://github.com/ehojune/bioinfo-team-3d/pull/604/commits/b8dcfd7) | 편집자 정리본에 보고서 PDF(report.pdf)를 넣고 그림 링크가 정리본 안의 파일만 가리키게 한다. PDF를 못 만들거나 크기 한도(github.edition_pdf_max_mb)를 넘으면 이유 한 줄만 남기고 PDF 없이 게시한다(#584). |
 | 04:39 | [`27325ed`](https://github.com/ehojune/bioinfo-team-3d/pull/603/commits/27325ed) | 리뷰 context가 topic별로 답한 공유 점검 id를 topic.id 줄(그 topic의 점검 내용과 계획 답)로 싣고 리뷰 규칙이 그 id마다 한 줄씩 답하게 해, 한 topic의 not_done이 다른 topic 단계에 P2로 달리지 않게 함 (#586) |
 | 03:56 | [`80442f0`](https://github.com/ehojune/bioinfo-team-3d/pull/602/commits/80442f0) | 단독 처리 결과의 점검 판정은 계획 단계 A가 아니라 단독 처리에 달고, topic별로 다르게 답한 공유 점검 id의 판정은 topic별 답과 함께 두어 같은 topic의 step 답에만 잇고 점검표를 topic마다 한 줄로 적음 (#586) |
 | 03:06 | [`7e9c535`](https://github.com/ehojune/bioinfo-team-3d/pull/601/commits/7e9c535) | 움짤이 --max-mb를 넘으면 기존 output을 바꾸지 않고 임시 파일을 거쳐 교체 (#546, PR #599 지적) |
