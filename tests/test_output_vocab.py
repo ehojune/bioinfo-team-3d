@@ -41,9 +41,9 @@ def test_packaged_vocabulary_loads_with_counts_under_the_cap():
     counts = v.counts()
     assert vocab.BRANCH_LIMITS == {"data": 36, "format": 32, "operation": 24, "topic": None}
     assert vocab.MAX_EDAM_TERMS == 92
-    assert counts["keys"] == 123
+    assert counts["keys"] == 124
     assert counts["edam_terms"] <= vocab.MAX_EDAM_TERMS + counts["topic"]
-    assert (counts["data"], counts["format"], counts["operation"], counts["topic"]) == (30, 28, 22, 43)
+    assert (counts["data"], counts["format"], counts["operation"], counts["topic"]) == (30, 28, 22, 44)
     reviewed = {"genomic_features", "normalized_expression", "transformed_expression", "variant_annotations"}
     assert reviewed <= set(v.keys("data"))
     assert "features" not in v.terms

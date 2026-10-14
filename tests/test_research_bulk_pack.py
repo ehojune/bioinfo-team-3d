@@ -510,7 +510,8 @@ def test_key_normalization_keeps_exact_keys_and_ambiguous_ids():
     assert normalize_pack_keys(one, {"bulk_tumor_normal": 1, BULK_PACK: 2}) == {"bulk_tumor_normal": 1, BULK_PACK: 2}
 
     catalog = {"microarray_expression": [ChecklistItem("batch", "c", "w", "microarray_expression")],
-               "bulk_rna_seq": [ChecklistItem("batch", "c2", "w2", "bulk_rna_seq")]}
+               "bulk_rna_seq": [ChecklistItem("batch", "c2", "w2", "bulk_rna_seq")],
+               "single_cell_rna_seq": [ChecklistItem("batch", "c3", "w3", "single_cell_rna_seq")]}
     topics = ["microarray_expression"]
     assert normalize_answers({"microarray_expression.batch": "step:s1"}, topics, catalog) == {"batch": "step:s1"}
     # An exact answer leaves the alias as an extra key; validation reads only the exact one.
@@ -518,14 +519,18 @@ def test_key_normalization_keeps_exact_keys_and_ambiguous_ids():
     assert normalize_answers(both, topics, catalog) == both
     # Only a declared topic's alias is re-keyed; anything else is left for validation to report.
     assert normalize_answers({"bulk_rna_seq.batch": "step:s1"}, topics, catalog) == {"bulk_rna_seq.batch": "step:s1"}
-    # Two declared topics share the id: the same answer merges, different answers are not silently dropped.
-    two = ["microarray_expression", "bulk_rna_seq"]
-    same = {"microarray_expression.batch": "step:s1", "bulk_rna_seq.batch": "step:s1"}
+    # Two declared topics share the id: one answer can cover both, or each topic can name its own valid step.
+    two = ["bulk_rna_seq", "single_cell_rna_seq"]
+    same = {"bulk_rna_seq.batch": "step:s1", "single_cell_rna_seq.batch": "step:s1"}
     assert normalize_answers(same, two, catalog) == {"batch": "step:s1"}
-    split = {"microarray_expression.batch": "step:s1", "bulk_rna_seq.batch": "step:s2"}
+    split = {"bulk_rna_seq.batch": "step:S5", "single_cell_rna_seq.batch": "step:S4"}
     assert normalize_answers(split, two, catalog) == split
     from labhq.vocab.topic_checklists import answer_errors, requirements
-    assert answer_errors(normalize_answers(split, two, catalog), requirements(two, catalog), ["s1", "s2"])
+    assert answer_errors(normalize_answers(split, two, catalog), requirements(two, catalog), ["S4", "S5"]) == []
+    invalid = {**split, "single_cell_rna_seq.batch": "step:missing"}
+    assert answer_errors(normalize_answers(invalid, two, catalog), requirements(two, catalog), ["S4", "S5"]) == [
+        "checklist.single_cell_rna_seq.batch refers to unknown step missing"
+    ]
 
 
 async def test_empty_topics_warning_is_frozen_and_visible_on_the_cp1_card():

@@ -5,8 +5,8 @@ labhq가 계획과 산출에 붙이는 이름표를 한곳에 모은 표입니�
 
 | 무엇 | 수 | 쓰임 |
 |---|---:|---|
-| topic(분야) | 43 | CSO가 계획마다 적는 분야 이름표. 점검표와 분야 규칙 pack을 고르는 열쇠 |
-| 점검표 항목 | 124 | topic마다 계획이 답해야 하는 점검. 할 수 있으면 하고, 못 하면 이유를 밝힌다 |
+| topic(분야) | 44 | CSO가 계획마다 적는 분야 이름표. 점검표와 분야 규칙 pack을 고르는 열쇠 |
+| 점검표 항목 | 129 | topic마다 계획이 답해야 하는 점검. 할 수 있으면 하고, 못 하면 이유를 밝힌다 |
 | 데이터 종류(data) | 30 | 단계 산출에 붙이는 이름표 |
 | 파일 형식(format) | 28 | 단계 산출에 붙이는 이름표 |
 | 작업(operation) | 22 | 단계 산출에 붙이는 이름표 |
@@ -18,6 +18,7 @@ labhq가 계획과 산출에 붙이는 이름표를 한곳에 모은 표입니�
 |---|---|---:|---|
 | `bulk_rna_seq` | bulk RNA sequencing for gene or transcript expression analysis | 4 | RNA-Seq (topic_3170) |
 | `single_cell_rna_seq` | single-cell or single-nucleus RNA sequencing with cell-resolved expression measurements | 3 | Single-cell sequencing (topic_4028) |
+| `bulk_deconvolution` | estimating cell-type proportions or cell-type-specific signals from bulk transcriptomic mixtures | 5 | - |
 | `spatial_transcriptomics` | transcript measurements retained with positions in intact tissue | 3 | - |
 | `atac_seq` | ATAC-seq analysis of chromatin accessibility | 3 | ATAC-seq (topic_4053) |
 | `chip_seq` | ChIP-seq analysis of protein-DNA binding or histone marks | 3 | ChIP-seq (topic_3169) |
@@ -80,6 +81,16 @@ labhq가 계획과 산출에 붙이는 이름표를 한곳에 모은 표입니�
 | `pseudobulk` | 공여자 간 비교는 세포가 아니라 공여자 단위(pseudobulk 등)로 한다 | 세포를 독립 생물학적 반복으로 세는 오류를 막기 위해서다 |
 | `qc` | 시료별 QC 기준과 doublet·ambient RNA 처리를 밝힌다 | 시료별 품질과 오염이 집단 차이처럼 보일 수 있기 때문이다 |
 | `batch` | 통합(integration) 전후 batch 효과를 확인한다 | 통합이 생물학적 신호를 지우거나 기술 차이를 남길 수 있기 때문이다 |
+
+### bulk_deconvolution
+
+| id | 점검 | 이유 |
+|---|---|---|
+| `reference_profile` | 참조 세포 프로필의 자료 출처, 조직·세포형 범위, 생성 방법과 판본을 기록한다 | 참조가 대상 조직과 맞지 않거나 세포형이 빠지면 추정 비율이 왜곡되기 때문이다 |
+| `mixture_validation` | 합성 혼합물이나 알려진 세포 비율 자료에서 추정값의 오차와 상관을 검증한다 | 정답 비율이 있는 자료 없이 실제 시료의 분해 정확도를 판단하기 어렵기 때문이다 |
+| `rare_cell_limit` | 희귀 세포형의 최소 검출 비율과 오검출을 따로 평가하고 해석 한계를 밝힌다 | 낮은 비율에서는 검출력 저하와 다른 세포형 신호의 혼동이 커지기 때문이다 |
+| `cohort_cross_validation` | 참조 구축과 성능 평가를 환자·코호트 단위로 분리해 제외 교차검증한다 | 같은 환자나 코호트가 양쪽에 들어가면 일반화 성능이 부풀려지기 때문이다 |
+| `normalization_match` | bulk 혼합물과 참조 프로필의 scale·정규화·유전자 식별자 처리를 맞추고 기록한다 | 입력 변환과 정규화 차이가 방법 선택만큼 추정 오차를 바꿀 수 있기 때문이다 |
 
 ### spatial_transcriptomics
 

@@ -6,6 +6,7 @@ PMID는 2026-10-05에 PubMed에서 첫 저자·학술지·연도와 제목 단�
 
 | topic | 근거 |
 |---|---|
+| bulk_deconvolution | Newman et al. 2015 Nat Methods, CIBERSORT·합성 혼합·검출 한계 (PMID 25822800) · Avila Cobos et al. 2020 Nat Commun, 전처리·정규화·참조 비교 benchmark (PMID 33159064) |
 | spatial_transcriptomics | Svensson et al. 2018 Nat Methods, SpatialDE (PMID 29553579) · Cable et al. 2022 Nat Biotechnol, RCTD (PMID 33603203) |
 | atac_seq | ENCODE ATAC-seq data standards (https://www.encodeproject.org/atac-seq/) · Amemiya et al. 2019 Sci Rep, ENCODE Blacklist (PMID 31249361) |
 | chip_seq | Landt et al. 2012 Genome Res, ENCODE ChIP-seq guidelines (PMID 22955991) · Li et al. 2011 Ann Appl Stat, IDR (doi:10.1214/11-AOAS466, PubMed 미등재) |

@@ -171,6 +171,47 @@ def test_one_id_under_two_declared_topics_keeps_both_checks(tmp_path):
         ["report NRF and PBC", "call peaks"]
 
 
+def test_shared_id_with_the_same_check_keeps_every_topic_and_validates_each_answer():
+    shared = {
+        topic: [topic_checklists.ChecklistItem("pairing", "keep pairs", "avoid pseudoreplication", topic)]
+        for topic in ("bulk_rna_seq", "microarray_expression", "single_cell_rna_seq")
+    }
+    required = topic_checklists.requirements(list(shared), shared)
+    assert required[0].topic == "bulk_rna_seq,microarray_expression,single_cell_rna_seq"
+    answers = {
+        "bulk_rna_seq.pairing": "step:A",
+        "microarray_expression.pairing": "not_applicable: unpaired cohort",
+        "single_cell_rna_seq.pairing": "assumption: donor pairing is unavailable",
+    }
+    assert topic_checklists.answer_errors(answers, required, ["A"]) == []
+    answers["single_cell_rna_seq.pairing"] = "step:missing"
+    assert topic_checklists.answer_errors(answers, required, ["A"]) == [
+        "checklist.single_cell_rna_seq.pairing refers to unknown step missing"]
+
+
+def test_qualified_shared_id_assumptions_are_counted_as_skip_warnings():
+    catalog = topic_checklists.load()
+    topics = ["bulk_rna_seq", "single_cell_rna_seq"]
+    plan = general_plan(topics=topics, checklist={
+        "bulk_rna_seq.batch": "assumption: bulk batch metadata is missing",
+        "single_cell_rna_seq.batch": "assumption: single-cell batch metadata is missing",
+        "pairing": "step:A",
+        "gene_set_test": "step:A",
+        "independent_validation": "not_applicable: no independent cohort",
+        "pseudobulk": "step:A",
+        "qc": "step:A",
+    })
+    warned = cso.with_checklist_skip_warnings(plan, catalog, None)
+    assert warned["warnings"] == [
+        "점검 못 함 bulk_rna_seq/batch: bulk batch metadata is missing",
+        "점검 못 함 single_cell_rna_seq/batch: single-cell batch metadata is missing",
+    ]
+    assert "못 한 점검 2건" in cso.checklist_skip_line(warned)
+    plan["checklist"]["single_cell_rna_seq.batch"] = "not_applicable: no integration was used"
+    warned = cso.with_checklist_skip_warnings(plan, catalog, None)
+    assert warned["warnings"] == ["점검 못 함 bulk_rna_seq/batch: bulk batch metadata is missing"]
+
+
 def test_checklist_requirements_and_answer_contract_are_topic_scoped():
     loaded = topic_checklists.load()
     assert topic_checklists.requirements([], loaded) == []

@@ -74,7 +74,8 @@ def requirements(topics: Any, checklists: Mapping[str, list[ChecklistItem]]) -> 
     """Return declared-topic requirements once per id, preserving file/topic order.
 
     Two declared topics can list one id with different checks (``library_qc`` for ATAC and ChIP). The plan answers
-    an id once, so the checks are joined instead of the later topic's check being dropped."""
+    an id once, so the checks are joined instead of the later topic's check being dropped. Every sharing topic is
+    retained even when its check text is identical, because topic-qualified answers are validated one by one."""
     selected = set(topics) if isinstance(topics, list) else set()
     found: dict[str, ChecklistItem] = {}
     for topic, items in checklists.items():
@@ -83,9 +84,15 @@ def requirements(topics: Any, checklists: Mapping[str, list[ChecklistItem]]) -> 
                 prior = found.get(item.id)
                 if prior is None:
                     found[item.id] = item
-                elif item.check not in prior.check.split(" / "):
-                    found[item.id] = ChecklistItem(item.id, f"{prior.check} / {item.check}",
-                                                   f"{prior.why} / {item.why}", f"{prior.topic},{item.topic}")
+                else:
+                    checks = prior.check.split(" / ")
+                    whys = prior.why.split(" / ")
+                    found[item.id] = ChecklistItem(
+                        item.id,
+                        " / ".join([*checks, *([] if item.check in checks else [item.check])]),
+                        " / ".join([*whys, *([] if item.why in whys else [item.why])]),
+                        f"{prior.topic},{item.topic}",
+                    )
     return list(found.values())
 
 
@@ -95,8 +102,8 @@ def normalize_answers(answers: Any, topics: Any, checklists: Mapping[str, list[C
     The plan answers each id once, but a planner reading the topic and id columns often joins them; the v0.5 trial
     plan was rejected twice for that spelling alone (2026-10-07). Only an unambiguous alias is re-keyed: when an exact
     id answer exists, or two topics sharing an id (``library_qc`` for ATAC and ChIP) were answered differently, every
-    key stays as written, so validation asks for the one joined answer instead of one topic's check being dropped
-    (PR #470 review)."""
+    key stays as written. Validation accepts those topic-qualified answers only when every topic supplied a valid
+    answer, so no topic's check is dropped (PR #470 review, #586)."""
     if not isinstance(answers, dict):
         return answers
     selected = set(topics) if isinstance(topics, list) else set()
@@ -150,6 +157,7 @@ def prompt_rule(checklists: Mapping[str, list[ChecklistItem]]) -> str:
         "After choosing `topics`, read only the rows of the topics you declare.",
         "For every item under each topic you declare, answer top-level `checklist` with exactly one of:",
         "`step:<step id>`, `assumption: <why it could not be done>`, or `not_applicable: <why it does not apply>`.",
+        "For an id shared by topics, use one bare id answer for all, or answer every topic as `topic.id`.",
         "Do every applicable check the data allow. When a check applies but cannot be done (e.g. no independent",
         "cohort exists), answer `assumption: <why it could not be done>`: a justified skip is acceptable, becomes a",
         "stated limitation and is shown to the PI as a warning. Never skip silently or with an empty reason.",
@@ -175,6 +183,21 @@ def _placeholder(reason: str) -> bool:
     return "".join(ch for ch in reason.lower() if ch.isalnum()) in PLACEHOLDER_REASONS
 
 
+def _answer_values(body: dict[str, Any], item: ChecklistItem) -> list[tuple[str, Any]]:
+    """Bare answer, or one qualified answer slot per topic sharing the id."""
+    if item.id in body:
+        return [(item.id, body[item.id])]
+    topics = item.topic.split(",")
+    if len(topics) == 1:
+        return [(item.id, None)]
+    values = []
+    for topic in topics:
+        keys = [key for key in (f"{topic}.{item.id}", f"{topic}/{item.id}") if key in body]
+        key = keys[0] if len(keys) == 1 else f"{topic}.{item.id}"
+        values.append((key, body.get(key) if len(keys) == 1 else None))
+    return values
+
+
 def answer_errors(answers: Any, required: list[ChecklistItem], step_ids: list[str]) -> list[str]:
     """Validate required answers and step references without rejecting unrelated extra keys."""
     if not required:
@@ -183,20 +206,22 @@ def answer_errors(answers: Any, required: list[ChecklistItem], step_ids: list[st
     errors: list[str] = []
     known = set(step_ids)
     for item in required:
-        value = body.get(item.id)
-        if skip_reason(value) == "":
-            errors.append(f"checklist.{item.id} must answer with a reason: assumption: <why it could not be done> "
-                          "or not_applicable: <why it does not apply>")
-            continue
-        if not isinstance(value, str) or not ANSWER.fullmatch(value.strip()):
-            # The check itself rides along: the plan prompt names only the file (#420), so a correction round
-            # still says what to answer if the planner never read it.
-            errors.append(f"checklist.{item.id} must answer step:<step id>, assumption: <why it could not be "
-                          f"done>, or not_applicable: <why it does not apply> (check: {item.check})")
-            continue
-        match = ANSWER.fullmatch(value.strip())
-        if match and match.group(2) and match.group(2) not in known:
-            errors.append(f"checklist.{item.id} refers to unknown step {match.group(2)}")
+        for answer_id, value in _answer_values(body, item):
+            if skip_reason(value) == "":
+                errors.append(f"checklist.{answer_id} must answer with a reason: "
+                              "assumption: <why it could not be done> or "
+                              "not_applicable: <why it does not apply>")
+                continue
+            if not isinstance(value, str) or not ANSWER.fullmatch(value.strip()):
+                # The check itself rides along: the plan prompt names only the file (#420), so a correction round
+                # still says what to answer if the planner never read it.
+                errors.append(f"checklist.{answer_id} must answer step:<step id>, "
+                              "assumption: <why it could not be done>, or "
+                              f"not_applicable: <why it does not apply> (check: {item.check})")
+                continue
+            match = ANSWER.fullmatch(value.strip())
+            if match and match.group(2) and match.group(2) not in known:
+                errors.append(f"checklist.{answer_id} refers to unknown step {match.group(2)}")
     return errors
 
 
@@ -212,10 +237,16 @@ def skipped(answers: Any, required: list[ChecklistItem]) -> list[tuple[str, str]
     body = answers if isinstance(answers, dict) else {}
     found = []
     for item in required:
-        value = body.get(item.id)
-        reason = skip_reason(value)
-        if reason and value.strip().startswith("assumption:"):
-            found.append((label(item), reason))
+        for answer_id, value in _answer_values(body, item):
+            reason = skip_reason(value)
+            if reason and value.strip().startswith("assumption:"):
+                if answer_id == item.id:
+                    name = label(item)
+                elif answer_id.endswith(f".{item.id}"):
+                    name = f"{answer_id[:-len(item.id) - 1]}/{item.id}"
+                else:
+                    name = answer_id
+                found.append((name, reason))
     return found
 
 
