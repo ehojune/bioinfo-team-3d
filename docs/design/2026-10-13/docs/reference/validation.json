@@ -1,0 +1,33 @@
+{
+  "status": "STATIC_PASS_VISUAL_UNVERIFIED",
+  "directions": [
+    "A",
+    "B",
+    "C",
+    "D"
+  ],
+  "characters": [
+    "0",
+    "1",
+    "2",
+    "3",
+    "4"
+  ],
+  "improvements": 10,
+  "relative_links_checked": 22,
+  "copy_hashes_checked": 13,
+  "iframe_previews": 4,
+  "external_scripts": 0,
+  "inline_script_syntax": "PASS",
+  "html_utf8_and_korean_lang": "PASS",
+  "screenshot_count": 0,
+  "character_proof_png_count": 2,
+  "browser_qa": "DENIED: browser security policy; user declined permission for http://127.0.0.1:55940",
+  "unverified": [
+    "PC/phone rendered layout",
+    "font loading",
+    "overflow",
+    "selection and clipboard browser interactions",
+    "keyboard and accessibility"
+  ]
+}

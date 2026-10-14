@@ -140,7 +140,7 @@ def test_package_data_includes_office_assets():
     config = (package.parent / 'pyproject.toml').read_text(encoding='utf-8')
     patterns = ast.literal_eval(re.search(r'labhq = (\[[\s\S]*?\])', config)[1])
     included = {p for pattern in patterns for p in package.glob(pattern) if p.is_file()}
-    needed = {WEB / 'state.js', WEB / 'lab3d/index.html', *(WEB / 'ui').glob('*.js')}
+    needed = {WEB / 'state.js', WEB / 'lab3d/index.html', *(WEB / 'ui').glob('*.js'), *(WEB / 'ui').glob('*.css')}
     for folder in (WEB / 'lab3d/src', WEB / 'lab3d/assets', WEB / 'vendor/three'):
         needed.update(p for p in folder.rglob('*') if p.suffix in {'.js', '.gltf', '.glb', '.bin'})
     assert needed <= included
@@ -194,6 +194,7 @@ def test_package_data_includes_office_assets():
     ('web_trial_ready.cjs', 'trial readiness web tests passed'),
     ('web_shutdown.cjs', 'fail 0'),
     ('web_result_storage.cjs', 'fail 0'),
+    ('web_design_tokens.cjs', 'fail 0'),
 ])
 def test_office_in_node(filename, marker):
     node = shutil.which('node')
