@@ -2,7 +2,9 @@
 // comparison, the baseline updater's exit status, the virtual page clock, and what the driver reports. No Chrome is
 // needed except where a test says so.
 const {test} = require('node:test'), assert = require('node:assert/strict');
+const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
 const {DEFAULT_TOLERANCE, diffView, sameColor, colorChannels} = require('./support/layout_snapshot.cjs');
+const {updateBaseline} = require('../scripts/update_visual_baseline.cjs');
 
 // ---- layout_snapshot: colors are #rrggbb hex bytes ----
 test('sameColor reads #rrggbb as one hex byte per channel', () => {
@@ -42,3 +44,63 @@ test('diffView reports a color that moved by more than the tolerance and not one
   assert.equal(diffs.length, 1);
   assert.match(diffs[0], /tab\[decisions\] paint\.color #1d6b40 -> #1e7b40/);
 });
+
+// ---- scripts/update_visual_baseline.cjs: its exit status says whether a baseline was written ----
+// `initial` is the baseline's content before the run (null: no file). `child` plays the visual test.
+function updater({skip = '', initial = '{"v":1}', child}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'labhq-baseline-test-'));
+  const baseline = path.join(dir, 'baseline.json');
+  if (initial !== null) fs.writeFileSync(baseline, initial);
+  const out = {spawned: 0, log: [], error: []};
+  try {
+    out.status = updateBaseline({baseline, skip: () => skip, log: m => out.log.push(m), error: m => out.error.push(m),
+      run: () => { out.spawned += 1; return child(baseline); }});
+  } finally { fs.rmSync(dir, {recursive: true, force: true}); }
+  return out;
+}
+const rewrite = (content, status = 0) => file => { fs.writeFileSync(file, content); return {status}; };
+
+test('a skipped visual test (no Chrome) fails the update, and the test is not even started', () => {
+  const r = updater({skip: 'no Chrome found (set LABHQ_TEST_CHROME)', child: rewrite('{"v":2}')});
+  assert.equal(r.status, 1);
+  assert.equal(r.spawned, 0);
+  assert.match(r.error.join('\n'), /NOT updated.*skipped.*no Chrome found/);
+  assert.deepEqual(r.log, []);
+});
+
+test('a child that exits 0 and leaves the baseline as it was fails the update', () => {
+  for (const child of [() => ({status: 0}), rewrite('{"v":1}')]) {  // never wrote it / wrote the same bytes
+    const r = updater({child});
+    assert.equal(r.status, 1);
+    assert.match(r.error.join('\n'), /NOT updated.*unchanged.*nothing to commit/);
+    assert.deepEqual(r.log, [], 'no commit hint for an unchanged baseline');
+  }
+  const missing = updater({initial: null, child: () => ({status: 0})});  // skipped, and there never was a file
+  assert.equal(missing.status, 1);
+});
+
+test('only a change of line endings (a CRLF checkout) is not a changed baseline', () => {
+  const r = updater({initial: '{"v":1}\r\n{"w":2}\r\n', child: rewrite('{"v":1}\n{"w":2}\n')});
+  assert.equal(r.status, 1);
+  assert.match(r.error.join('\n'), /unchanged/);
+});
+
+test('a rewritten baseline exits 0 and points at the review step', () => {
+  for (const initial of ['{"v":1}', null]) {  // changed, or created
+    const r = updater({initial, child: rewrite('{"v":2}')});
+    assert.equal(r.status, 0);
+    assert.match(r.log.join('\n'), /Review the differences above, then commit/);
+    assert.deepEqual(r.error, []);
+  }
+});
+
+test('a failing or killed visual test fails the update with its own status', () => {
+  const failed = updater({child: rewrite('{"v":2}', 3)});
+  assert.equal(failed.status, 3);
+  assert.match(failed.error.join('\n'), /NOT updated.*failed \(exit 3\)/);
+  assert.deepEqual(failed.log, []);
+  const killed = updater({child: () => ({status: null, signal: 'SIGKILL'})});
+  assert.equal(killed.status, 1);
+  assert.match(killed.error.join('\n'), /NOT updated.*did not finish.*SIGKILL/);
+});
+

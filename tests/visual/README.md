@@ -23,6 +23,8 @@ node scripts/update_visual_baseline.cjs
 
 이전 기준선과 달라진 항목이 출력됩니다. 의도한 변화인지 확인하고 `demo-layout.baseline.json`을 커밋하세요. 실패한 검사를 통과시키려는 용도로는 쓰지 않습니다.
 
+기준선 파일이 실제로 다른 내용으로 다시 쓰여야 종료 코드 0입니다. Chrome이 없어 시험이 건너뛰어졌거나 레이아웃이 이미 기준선과 같아 파일이 그대로면 `Baseline NOT updated`와 이유를 출력하고 1로 끝납니다. 줄바꿈(CRLF/LF)만 다른 것은 바뀐 것으로 치지 않습니다.
+
 ## README 데모 움짤
 
 ```
