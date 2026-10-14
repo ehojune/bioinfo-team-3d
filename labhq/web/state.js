@@ -426,6 +426,13 @@ function apply(ev, replay = false) {
   const t = ev.type, d = ev.data || {}, id = ev.agent_id, rid = ev.request_id, ts = ev.ts || now();
   trackActivity(ev);
   switch (t) {
+    case 'messenger.translated': {
+      const card = S.approvals.get(d.approval_id);
+      if (card) card.pi_display = d.pi_display;
+      const followup = S.requests.get(rid)?.followups.find(f => f.id === d.followup_id);
+      if (followup) followup.pi_display = d.pi_display;
+      break;
+    }
     case 'snapshot': {
       const pendingBefore = [...S.approvals.keys()];
       // Reconnection keeps a view selected even by older UI consumers that assign S.current directly.
@@ -866,6 +873,7 @@ function apply(ev, replay = false) {
     case 'request.followup_done': {
       const q = req(rid), prev = q.followups.find(f => f.id === d.id);
       const entry = { ...(prev || { id: d.id, text: '' }), status: d.ok ? 'done' : 'failed', answer: d.answer || '', error: d.error || '' };
+      if (d.pi_display) entry.pi_display = d.pi_display;
       delete entry.answer_truncated; delete entry.answer_chars;
       if (d.answer_truncated) Object.assign(entry, { answer_truncated: true, answer_chars: d.answer_chars });  // a snapshot replay (#126)
       q.followups = prev ? q.followups.map(f => (f.id === d.id ? entry : f)) : [...q.followups, entry];

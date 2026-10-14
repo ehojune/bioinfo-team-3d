@@ -6118,9 +6118,13 @@ class Orchestrator:
             metadata.append(f"Budget: ${outcome['spent_usd']:.2f}{pending} {relation} "
                             f"${outcome['limit_usd']:.2f}; {decision}.")
         report_appendix = _appendix_sections(report_appendix, metadata)
+        from ..report_style import check_report
+        report, style_note = check_report(report)
+        if style_note:
+            report_appendix = _appendix_sections(report_appendix, [style_note])
         req.update(status="done" if ok else "failed", report=report, report_appendix=report_appendix,
                    results=results, review=review,
-                   cost_usd=self.cost.get(rid, 0.0), finished_at=time.time())
+                   cost_usd=max(self.cost.get(rid, 0.0), float(req.get("cost_usd") or 0)), finished_at=time.time())
         if cp4.enabled(req) and ok:
             req.setdefault("id", rid)
             contract = req.get("research_contract") or {}

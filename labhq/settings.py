@@ -366,6 +366,14 @@ class RecruitSettings(BaseModel):
 MODEL_NAME_PATTERN = r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}"
 
 
+class PiLanguageSettings(BaseModel):
+    enabled: bool = True
+    model: str | None = Field(default="haiku", pattern="^" + MODEL_NAME_PATTERN + "$")
+    per_request_usd: float = Field(default=0.50, ge=0, allow_inf_nan=False)
+    per_message_usd: float = Field(default=0.05, ge=0.01, multiple_of=0.01, allow_inf_nan=False)
+    timeout_s: float = Field(default=30, gt=0, le=120)
+
+
 class OrchestratorSettings(BaseModel):
     wait_for_clarification: bool = True
     cso_agent: str = "cso"
@@ -516,6 +524,7 @@ class Settings(BaseModel):
     policy: PolicySettings = PolicySettings()
     recruit: RecruitSettings = RecruitSettings()
     orchestrator: OrchestratorSettings = OrchestratorSettings()
+    pi_language: PiLanguageSettings = Field(default_factory=PiLanguageSettings)
     plan: PlanSettings = PlanSettings()
     lab: LabSettings = LabSettings()
     research: ResearchSettings = ResearchSettings()

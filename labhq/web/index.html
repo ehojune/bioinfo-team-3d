@@ -695,7 +695,8 @@ const fullAnswerHTML = (q, f) => !f.answer_truncated ? '' : `<p class="fu-more">
 function followupHTML(q) {
   const list = (q.followups || []).map(f => `<li class="fu"><p class="fu-q">${esc(f.text)}</p>${
     f.status === 'running' ? '<p class="fu-wait">답을 기다리는 중…</p>'
-      : f.status === 'done' ? `<pre class="fu-a">${esc(f.answer)}${f.answer_truncated ? '…' : ''}</pre>${fullAnswerHTML(q, f)}`
+      : f.pi_display?.status === 'translated' ? `<p class="fu-a">펭귄 비서실장 설명: ${esc(f.pi_display.text)}</p><details><summary>자세히</summary><pre>${esc(f.answer || f.error)}</pre>${fullAnswerHTML(q, f)}</details>`
+      : f.status === 'done' ? `${f.pi_display ? '<small>번역 못 함</small>' : ''}<pre class="fu-a">${esc(f.answer)}${f.answer_truncated ? '…' : ''}</pre>${fullAnswerHTML(q, f)}`
       : `<p class="fu-err">${esc(f.error || '답을 받지 못했어요')}</p>`}</li>`).join('');
   const busy = (q.followups || []).some(f => f.status === 'running');
   const form = FOLLOWUP_STATUSES.includes(q.status) && api?.followup ? `<div class="fu-in"><label class="sr" for="fu-text">이어 묻기</label>
