@@ -235,6 +235,14 @@ class RecruitProposal(StrictModel):
     repo: str
     focus: str
     reason: str
+    step_ids: list[str] = Field(default_factory=list)
+
+    @model_serializer(mode="wrap")
+    def omit_empty_steps(self, handler):
+        data = handler(self)
+        if not data.get("step_ids"):
+            data.pop("step_ids", None)
+        return data
 
 
 class PackPlanValue(StrictModel):
@@ -285,6 +293,7 @@ class ResearchPlan(StrictModel):
     recruit: list[RecruitProposal]
     paper_skills: list[PaperSkillSelection] = Field(default_factory=list, max_length=2)
     paper_skill_results: list[dict[str, Any]] = Field(default_factory=list, max_length=2)
+    recruit_results: list[dict[str, Any]] = Field(default_factory=list)
     notes: str
 
     @field_validator("budget_usd", mode="before")
@@ -318,7 +327,7 @@ class ResearchPlan(StrictModel):
         # Plans frozen before topic routing must keep their canonical JSON and plan hash.
         data = handler(self)
         for field in ("topics", "pack_applicability", "warnings", "checklist", "suggested_next",
-                      "paper_skills", "paper_skill_results"):
+                      "paper_skills", "paper_skill_results", "recruit_results"):
             if not data.get(field):
                 data.pop(field, None)
         if data.get("budget_usd") is None:  # plans frozen before R17 keep their plan_sha256
@@ -422,12 +431,15 @@ def _without(schema: dict[str, Any], definition: str, fields: tuple[str, ...], d
 # The engine-facing schemas stay those of main before #221: declarations are offered only when switched on.
 RESEARCH_PLAN_SCHEMA: dict[str, Any] = _without(ResearchPlan.model_json_schema(), "ResearchStep", ("output_types",),
                                                 ("OutputTypeEntry", "PackApplicabilityRecord"))
-for _system_field in ("pack_applicability", "warnings", "paper_skill_results"):
+for _system_field in ("pack_applicability", "warnings", "paper_skill_results", "recruit_results"):
     RESEARCH_PLAN_SCHEMA["properties"].pop(_system_field, None)
     if _system_field in RESEARCH_PLAN_SCHEMA.get("required", []):
         RESEARCH_PLAN_SCHEMA["required"].remove(_system_field)
 if "topics" not in RESEARCH_PLAN_SCHEMA["required"]:
     RESEARCH_PLAN_SCHEMA["required"].append("topics")
+# Fresh proposals must assign work; the stored model still accepts legacy frozen plans.
+RESEARCH_PLAN_SCHEMA["$defs"]["RecruitProposal"]["required"].append("step_ids")
+RESEARCH_PLAN_SCHEMA["$defs"]["RecruitProposal"]["properties"]["step_ids"]["minItems"] = 1
 RESEARCH_RESULT_SCHEMA: dict[str, Any] = _without(ResearchResult.model_json_schema(), "ArtifactRef",
                                                   ("data_type", "format"))
 # What a research step's engine is held to: the result, or the same shape with empty ledger lists and the question

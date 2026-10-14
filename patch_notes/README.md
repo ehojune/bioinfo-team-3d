@@ -14,19 +14,32 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 12:50 | [`80da10b`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/80da10b) | 최신 main의 웹 테스트 자동 수집을 병합하고 채용 회귀 marker 보존 |
+| 12:46 | [`a8fae43`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/a8fae43) | mock 채용 제안에 담당 단계를 넣고 roster 없는 재개에서도 계약을 확인 |
+| 12:34 | [`913ee3f`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/913ee3f) | 변환 비용 중복 없는 집계·payload 재변환·제안 검증과 종료 계약 재개를 수정 |
+| 12:25 | [`172cb87`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/172cb87) | 최신 main을 병합하고 채용·P2 후속 웹 테스트 목록을 모두 보존 |
 | 12:12 | [`5cc6b2b`](https://github.com/ehojune/bioinfo-team-3d/pull/583/commits/5cc6b2b) | main #585 작업판 변경을 병합하고 Node 자동 수집 51개·늦은 저장 버튼 회귀 확인 |
 | 12:09 | [`b229f3f`](https://github.com/ehojune/bioinfo-team-3d/pull/583/commits/b229f3f) | main #580 병합: 늦은 저장·검토 대기·Node 자동 수집을 보존하고 completed 상태의 저장 선택 차단 |
 | 11:56 | [`024c721`](https://github.com/ehojune/bioinfo-team-3d/pull/583/commits/024c721) | 검토 완료 뒤에도 2.5D·3D 저장 선택을 유지하고 재시작 때 이미 선택한 저장 카드를 해결 처리 |
+| 11:55 | [`36604bc`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/36604bc) | 최신 main의 결정 화면 변경을 병합 |
+| 11:55 | [`5f2850f`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/5f2850f) | 범위 승인 뒤 채용하고 만료·해제된 계약은 재개 대기 대신 정규직으로 재배정 |
 | 11:37 | [`faf5d6e`](https://github.com/ehojune/bioinfo-team-3d/pull/585/commits/faf5d6e) | 첨부·참고 버튼 문구를 화면 갱신 뒤에도 유지하고 회귀 검사·캡처 갱신 |
 | 11:26 | [`192cd27`](https://github.com/ehojune/bioinfo-team-3d/pull/585/commits/192cd27) | 작업판 빈 목록·완료 접기, 전체 제목 요청 전환, 메신저·직원 카드·48px 입력을 시안 E로 정리 |
 | 11:25 | [`1a3de63`](https://github.com/ehojune/bioinfo-team-3d/pull/583/commits/1a3de63) | Node 웹 test 자동 수집·기존 성공 표시 보존, 취소된 부분 결과 저장·게시와 무기한 저장 선택·재시작 복원 수정 |
 | 11:20 | [`9c0ac31`](https://github.com/ehojune/bioinfo-team-3d/pull/583/commits/9c0ac31) | 최신 main의 결정 카드 디자인과 늦은 저장 버튼을 함께 보존하고 디자인 test를 실제 state에 연결 |
 | 11:08 | [`7c4752d`](https://github.com/ehojune/bioinfo-team-3d/pull/580/commits/7c4752d) | 최신 main 병합: P2·design-token·shutdown 테스트 보존, CSS 로드 순서 충돌 해소 |
+| 11:03 | [`9bacb02`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/9bacb02) | 종료 창 CSS와 공통 디자인 CSS의 로드 순서를 병합 후에도 유지 |
+| 11:03 | [`da43188`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/da43188) | 논문별 채용 복구를 분리하고 담당 단계 필수화 및 active 파견직 재접속 대기 수정 |
+| 10:58 | [`7329af9`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/7329af9) | 최신 main을 병합하고 채용·디자인 토큰 웹 테스트 목록을 모두 보존 |
 | 10:57 | [`a057d3a`](https://github.com/ehojune/bioinfo-team-3d/pull/583/commits/a057d3a) | 끝난 요청의 저장 위치 카드를 API·CLI·웹에서 열고 검토 뒤 편집자 정리·게시 승인으로 연결. 수정 회차·환경·출처와 README 링크 보강 |
 | 10:35 | [`b1983fd`](https://github.com/ehojune/bioinfo-team-3d/pull/582/commits/b1983fd) | 시안 E의 결정 카드 위계·대기 배지·폰 우선 배치와 검토·이력 공통 부품, 전후 화면 및 회귀 검사를 추가했다. |
+| 10:29 | [`f8ea0ae`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/f8ea0ae) | 채용 카드 추가 후 PI 승인 기록을 생성 시각순으로 정렬하고 직접·일괄 기록 회귀 추가 |
 | 10:13 | [`fd4ac7b`](https://github.com/ehojune/bioinfo-team-3d/pull/580/commits/fd4ac7b) | P2 웹 회귀 파일을 pytest의 CI 실행 목록에 연결 |
 | 09:52 | [`6fdb37d`](https://github.com/ehojune/bioinfo-team-3d/pull/580/commits/6fdb37d) | 병합된 P2 22건 수정: 대기 표시·결과 정리·follow-up·시설팀·메신저·검색·init |
+| 09:48 | [`006c3dc`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/006c3dc) | 계획 전 채용 schema·prompt 고정 hash와 새 웹 회귀의 CI 실행 목록 갱신 |
 | 09:47 | [`a411da2`](https://github.com/ehojune/bioinfo-team-3d/pull/579/commits/a411da2) | 긴 URL·DOI 참고 칩의 줄바꿈을 보존하고 상태 칩만 한 줄로 표시한다. |
+| 09:30 | [`28e6a8e`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/28e6a8e) | 채용 승인 대기 재시작 때 중복 카드를 막고 저장된 결정을 복구 |
+| 09:29 | [`d640098`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/d640098) | 논문 재현 파견직을 CP1 전에 채용하고 이번 계획에 배정·실패 재배정·인재풀 재고용 |
 | 09:28 | [`50d4e52`](https://github.com/ehojune/bioinfo-team-3d/pull/579/commits/50d4e52) | 시안 E의 63개 토큰과 2D 공통 부품을 적용하고 시안·캐릭터·비평·전후 화면을 보관했다. |
 | 09:07 | [`3036ac1`](https://github.com/ehojune/bioinfo-team-3d/pull/576/commits/3036ac1) | 웹 종료가 gateway 자신의 종료를 기다리다 강제 종료되던 교착을 분리하고 Windows venv launcher PID를 인정 |
 | 09:01 | [`eae315c`](https://github.com/ehojune/bioinfo-team-3d/pull/573/commits/eae315c) | 최신 main 병합 — 편집자 게시·GitHub 전송·검색 색인은 CP4 수용 뒤에만 시작하고 종료 때 타이머 취소와 저장소 close를 함께 처리 |

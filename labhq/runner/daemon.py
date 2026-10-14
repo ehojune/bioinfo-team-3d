@@ -1030,6 +1030,12 @@ class Runner:
     async def run_task(self, task: Task, workdir_override: Path | None = None) -> TaskResult:
         from ..recruit.paper_skills import PaperSkillBuild
 
+        if task.meta.get("kind") in {"recruit_check", "plan_recruit"}:
+            from ..recruit.planning import run_task
+            result = await run_task(self, task)
+            await self.emit(Event(type="task.result", task_id=task.id, agent_id=task.agent_id,
+                                  request_id=task.request_id, data=result.model_dump(mode="json")))
+            return result
         build = None
         if task.meta.get("kind") == "paper_skill":
             try:

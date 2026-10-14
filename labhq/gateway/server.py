@@ -62,7 +62,7 @@ TASK_CANCEL_KEEP_S = 2 * 86400
 # Cards that decide the request itself (PI 점검 R5). They wait policy.approvals.pi_decision_timeout_s instead of the gate
 # timeout, the request waits as waiting_pi meanwhile, and an unanswered card ends as *_timed_out, never as a deny.
 PI_DECISION_KINDS = frozenset({"clarify", "question", "scope", "budget", "research_plan", "research_evidence",
-                               "research_continue", "resume", "result_storage", "result_publish"})
+                               "research_continue", "resume", "result_storage", "result_publish", "recruit_plan"})
 # Runner cards that only inform: no hook waits on them, so their task's result does not close them (#521).
 RUNNER_NOTICE_KINDS = frozenset({"codex_sandbox_setup"})
 # Steer, pause, resume and halt of a running task (#59 ①); a steer message is at most this long. The gateway keeps each
@@ -1252,7 +1252,8 @@ class Hub:
                     # A research continuation re-runs step ids of an earlier round under a new CP1 (#90).
                     prior_meta.get("research_round") == task.meta.get("research_round") and
                     # A consult belongs to one ask; another ask's consult is not its prior attempt.
-                    prior_meta.get("ask_id") == task.meta.get("ask_id"))
+                    prior_meta.get("ask_id") == task.meta.get("ask_id") and
+                    prior_meta.get("recruit_identity") == task.meta.get("recruit_identity"))
 
     @staticmethod
     def _same_runner_generation(entry: dict, runner_id: str | None, incarnation: str | None) -> bool:
@@ -1350,6 +1351,12 @@ class Hub:
                 self._schedule_resume_expiry(aid)
 
     def resume_agents(self, rid: str) -> set[str]:
+        from ..recruit.planning import pending_receipt_agents
+
+        pending = pending_receipt_agents(self.requests[rid], self)
+        return self._resume_agents(rid) | pending
+
+    def _resume_agents(self, rid: str) -> set[str]:
         req = self.requests[rid]
         if req.get("mode") == "direct":
             return set() if self.completed_direct_result(rid) else {req["agent_id"]}
@@ -1406,7 +1413,7 @@ class Hub:
 
     async def resume_when_ready(self, rid: str) -> None:
         req = self.requests[rid]
-        if req.get("status") == "cancelled":
+        if req.get("status") == "cancelled" or req.get("outcome") == "recruit_contract_ended":
             return
         await self._set_status(rid, "waiting_for_runner")
         deadline = asyncio.get_running_loop().time() + self.s.gateway.resume_wait_s
@@ -1416,6 +1423,16 @@ class Hub:
                 return
             missing = {aid for aid in self.resume_agents(rid)
                        if self.agent_runner.get(aid) not in self.runners}
+            if req.get("recruit_contract_failure"):
+                error = "계획에 배정된 파견직 계약이 종료되었습니다: " + ", ".join(req["recruit_contract_failure"])
+                req.update(status="failed", outcome="recruit_contract_ended", error=error, finished_at=time.time())
+                self.save_request(rid)
+                for aid, entry in list(self.approvals.items()):
+                    card = entry["approval"]
+                    if card.get("request_id") == rid and card.get("kind") == "resume":
+                        await self.close_approval(aid, error)
+                self.schedule_terminal(rid, "request.failed", {"error": error})
+                return
             if not missing:
                 await self._set_status(rid, "running")
                 await self.publish({"type": "request.resumed", "ts": time.time(), "request_id": rid,
@@ -2417,7 +2434,9 @@ class Hub:
             task = self.store.get("task", msg["task_id"])
             if task and not task.get("jobs_submitted"):
                 self.store.put("task", msg["task_id"], {**task, "jobs_submitted": True})
-        entry = self.recruits_running.get(runner_id) if typ in ("recruit.done", "recruit.failed") else None
+        entry = (self.recruits_running.get(runner_id)
+                 if typ in ("recruit.done", "recruit.failed") and not (msg.get("data") or {}).get("plan_task_id")
+                 else None)
         if entry and entry.get("count"):
             entry["count"] -= 1
         await self.publish(msg, runner_id=runner_id, runner_seq=runner_seq)
