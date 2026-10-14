@@ -14,6 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 03:06 | [`7e9c535`](https://github.com/ehojune/bioinfo-team-3d/pull/601/commits/7e9c535) | 움짤이 --max-mb를 넘으면 기존 output을 바꾸지 않고 임시 파일을 거쳐 교체 (#546, PR #599 지적) |
+| 03:04 | [`103d3cf`](https://github.com/ehojune/bioinfo-team-3d/pull/601/commits/103d3cf) | 가상 timer callback의 예외를 reportError로 올려 d.errors에 기록 (#546, PR #599 지적) |
+| 03:03 | [`68846ee`](https://github.com/ehojune/bioinfo-team-3d/pull/601/commits/68846ee) | 기준선 갱신이 Chrome 없어 건너뛰어지거나 기준선이 그대로면 이유를 내고 1로 끝남 (#546, PR #599 지적) |
+| 03:01 | [`8007211`](https://github.com/ehojune/bioinfo-team-3d/pull/601/commits/8007211) | 화면 비교의 색 허용 오차가 #rrggbb를 채널별 hex 바이트로 읽음 (#546, PR #599 지적) |
 | 02:54 | [`d01aab2`](https://github.com/ehojune/bioinfo-team-3d/pull/600/commits/d01aab2) | 리뷰어가 점검 항목마다 했다·일부·안 했다와 근거를 답하고, 계획이 단계로 답한 항목을 못 했다고 판정하면 P2 지적을 더하며, 실행 기록에 점검표를 붙임 (#586) |
 | 02:05 | [`1d81ca7`](https://github.com/ehojune/bioinfo-team-3d/pull/599/commits/1d81ca7) | 화면 비교 test의 시험 글꼴을 1/16em 단위 폭으로 맞춰 Linux CI의 1/64px 반올림에도 줄바꿈이 같게 하고, 글꼴 확인 허용치를 0.1px로 넓혀 기준선을 다시 만들었다(#546). |
 | 01:28 | [`025732c`](https://github.com/ehojune/bioinfo-team-3d/pull/599/commits/025732c) | main(#598)을 합쳐 test_web_3d.py의 브라우저 test 제한 시간 충돌을 풀었다. 기존 web_office_browser 170초와 새 화면 비교 260초를 함께 둔다(#546). |
