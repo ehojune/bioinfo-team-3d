@@ -9,11 +9,11 @@ source:
 generator:
   script: scripts/edam_subset.py
   script_sha256: 9af0008acff8cbee78387364e3e500cc6ecb3b0ae9b77953f997bb3e2c5efb51
-  map_sha256: d9c23e90ee7581325e421f9817a26ab29135b8530d6929238beb2b6e7c82062b
+  map_sha256: 450d6b1f9de234f09cb2b69b1a67c7df64a3945ce17f5f2e26e95bb4a23baad8
 counts:
-  keys: 123
+  keys: 124
   edam_terms: 75
-  unknown: 44
+  unknown: 45
 terms:
   raw_counts:
     branch: data
@@ -658,6 +658,11 @@ terms:
     - topic_0003
     - topic_3077
     - topic_3168
+  bulk_deconvolution:
+    branch: topic
+    id: unknown
+    reason: no_candidate
+    candidate: null
   spatial_transcriptomics:
     branch: topic
     id: unknown

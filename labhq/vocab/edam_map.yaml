@@ -86,6 +86,7 @@ candidates:
   cell_segmentation: null
   bulk_rna_seq: RNA-Seq
   single_cell_rna_seq: Single-cell sequencing
+  bulk_deconvolution: null
   spatial_transcriptomics: null
   atac_seq: ATAC-seq
   chip_seq: ChIP-seq

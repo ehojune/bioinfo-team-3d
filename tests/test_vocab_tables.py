@@ -22,6 +22,18 @@ def test_doc_lists_every_topic_and_each_checklist_item():
     assert "Ensembl VEP" in text
 
 
+def test_bulk_deconvolution_topic_has_its_required_checks():
+    from labhq import vocab
+    from labhq.vocab import topic_checklists
+
+    terms = vocab.load()
+    assert terms.is_key("topic", "bulk_deconvolution")
+    assert {item.id for item in topic_checklists.load(vocab=terms)["bulk_deconvolution"]} == {
+        "reference_profile", "mixture_validation", "rare_cell_limit", "cohort_cross_validation",
+        "normalization_match",
+    }
+
+
 def test_check_mode_reports_up_to_date():
     done = subprocess.run([sys.executable, "scripts/vocab_tables.py", "--check"], cwd=ROOT, capture_output=True,
                           text=True, encoding="utf-8")

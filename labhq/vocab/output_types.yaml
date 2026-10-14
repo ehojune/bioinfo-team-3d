@@ -513,6 +513,12 @@ terms:
     ok: ["10x single-cell RNA-seq", "single-nucleus RNA-seq with intron counting"]
     not: ["bulk RNA-seq", "spatial transcriptomics", "single-cell ATAC-seq"]
     review: "PI 2026-10-04"
+  bulk_deconvolution:
+    branch: topic
+    definition: "estimating cell-type proportions or cell-type-specific signals from bulk transcriptomic mixtures"
+    ok: ["estimating immune-cell fractions from bulk RNA-seq", "reference-based deconvolution of a bulk expression matrix"]
+    not: ["single-cell clustering", "spatial transcriptomics deconvolution", "bulk differential expression without mixture decomposition"]
+    review: "PI 2026-10-14 #586"
   # tier=extended; pipelines=spatialaxe; edam=Transcriptomics (closest Topic label)
   spatial_transcriptomics:
     branch: topic
