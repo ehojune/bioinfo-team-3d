@@ -11,3 +11,7 @@ rows:
 - sha: f7e8537
   at: 2026-10-14 23:05
   text: CI flake 정리 상태 기록을 docs/status에 추가했다.
+- sha: c0da1ed
+  at: 2026-10-14 23:20
+  text: POSIX에서 SIGKILL 직후 /proc/<pid>/stat이 ESRCH를 돌려주면 신원 불명(2)이 아니라 이미 끝난 프로세스(0)로
+    본다(gateway 종료 watcher).
