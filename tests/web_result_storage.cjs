@@ -37,6 +37,15 @@ test('both offices pass structured storage choices',()=>{
   assert.match(fs.readFileSync(path.join(web,'lab3d/src/live.js'),'utf8'),/if \(storage\) decision\.storage = storage/);
 });
 
+test('PI-opened late storage stays answerable without a countdown',async()=>{
+  const ui=await mod, host=new Element();
+  const card={id:'late',kind:'result_storage',created_at:1,
+    detail:{late_storage:true,storage:{github_available:true,suggested_name:'study'}}};
+  const [row]=ui.syncDecisionCards(host,[card],[],{now:()=>1e9});
+  assert.doesNotMatch(row.textContent,/시간 초과|남음/);
+  assert.equal(row._decisionParts.approve.disabled,false);
+});
+
 test('publishing waits for PI review and preserves the editor preview',async()=>{
   const ui=await mod, host=new Element();
   const request={pi_review_pending:true,pi_reviewed_at:null};

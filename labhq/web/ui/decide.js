@@ -749,10 +749,11 @@ export function syncDecisionCards(container, approvals, suggestions = [], option
 // CP4 uses this same report card; its target travels with the PI's decision.
 export function syncReviewCards(container, requests, options = {}) {
   const existing = new Map([...container.children].map(row => [row.dataset.reviewRequest, row]));
-  const rows = [...requests].filter(q => globalThis.LabHQState.needsPiReview(q)).map(q => {
+  const rows = [...requests].filter(q => globalThis.LabHQState.needsPiReview(q) || globalThis.LabHQState.needsStorage(q)).map(q => {
+    const reviewPending = globalThis.LabHQState.needsPiReview(q);
     const final = q.status === 'review_pending' ? q.final_checkpoint : null;
     const reportReady = q.status === 'done' || !!final;
-    const key = JSON.stringify([q.text, q.status, final, options.disabled?.(q) || false]);
+    const key = JSON.stringify([q.text, q.status, final, q.resultStorage, reviewPending, options.disabled?.(q) || false]);
     const prior = existing.get(q.id);
     if (prior?.dataset.reviewKey === key) return prior;
     const row = doc().createElement('article'); row.className = 'ap';
@@ -761,29 +762,37 @@ export function syncReviewCards(container, requests, options = {}) {
     const journal = options.presentation === 'journal';
     if (journal) {
       row.className += ' ui-card decision-card';
-      add(body, 'h3', reportReady ? '보고서를 검토할까요?' : '종료된 요청의 결과를 확인할까요?', 'decision-question');
+      add(body, 'h3', !reviewPending ? '결과를 어디에 저장할까요?' : reportReady ? '보고서를 검토할까요?' : '종료된 요청의 결과를 확인할까요?', 'decision-question');
       const facts = add(body, 'dl', '', 'decision-facts');
       for (const [label, value] of [['상태', globalThis.LabHQState.reviewLabel(q)], ['자동 승인', '없음']]) {
         const cell = add(facts, 'div'); add(cell, 'dt', label); add(cell, 'dd', value);
       }
       const status = add(body, 'span', '', 'ui-chip decision-status');
       add(status, 'i', '', 'status-dot').setAttribute?.('aria-hidden', 'true');
-      add(status, 'span', '검토 대기');
+      add(status, 'span', reviewPending ? '검토 대기' : '저장 위치 미정');
     }
-    add(body, 'strong', globalThis.LabHQState.reviewLabel(q), 'kind');
+    add(body, 'strong', reviewPending ? globalThis.LabHQState.reviewLabel(q) : '결과 저장', 'kind');
     add(body, 'p', q.text || q.id, 'sum');
-    add(body, 'p', final ? 'CP4 · 최종 초안을 검토해 주세요. 수용은 게시·전송·실행 승인이 아닙니다.' : reportReady ? '작업 완료 · 보고서를 검토해 주세요.' : '요청 종료 · 결과와 이유를 확인해 주세요.', 'decision-meta');
+    add(body, 'p', !reviewPending ? '저장 위치를 고르면 결과 정리와 게시 승인으로 이어집니다.' : final ? 'CP4 · 최종 초안을 검토해 주세요. 수용은 게시·전송·실행 승인이 아닙니다.' : reportReady ? '작업 완료 · 보고서를 검토해 주세요.' : '요청 종료 · 결과와 이유를 확인해 주세요.', 'decision-meta');
     if (final) add(body, 'p', `초안 ${final.revision} · ${final.target_sha256} · 기한 ${new Date(final.deadline_at * 1000).toLocaleString()}`, 'decision-meta');
     const actions = add(body, 'div', '', 'acts');
     const open = add(actions, 'button', reportReady ? '보고서 열기' : '결과·이유 보기', 'btn go');
     if (journal) open.className += ' ui-button ui-button--primary decision-primary';
     open.type = 'button'; open.onclick = () => options.onOpen?.(q.id);
-    const done = add(actions, 'button', reportReady ? '검토 완료' : '확인 완료', 'btn');
-    done.type = 'button'; done.disabled = options.disabled?.(q) || false;
-    done.onclick = () => options.onDone?.(q.id, final ? {decision:'accepted', revision:final.revision, target_sha256:final.target_sha256} : {});
-    if (final) {
-      const deny = add(actions, 'button', '수용 거부', 'btn'); deny.type = 'button'; deny.disabled = done.disabled;
-      deny.onclick = () => options.onDone?.(q.id, {decision:'rejected', revision:final.revision, target_sha256:final.target_sha256});
+    const disabled = options.disabled?.(q) || false;
+    if (reviewPending) {
+      const done = add(actions, 'button', reportReady ? '검토 완료' : '확인 완료', 'btn');
+      done.type = 'button'; done.disabled = disabled;
+      done.onclick = () => options.onDone?.(q.id, final ? {decision:'accepted', revision:final.revision, target_sha256:final.target_sha256} : {});
+      if (final) {
+        const deny = add(actions, 'button', '수용 거부', 'btn'); deny.type = 'button'; deny.disabled = disabled;
+        deny.onclick = () => options.onDone?.(q.id, {decision:'rejected', revision:final.revision, target_sha256:final.target_sha256});
+      }
+    }
+    if (globalThis.LabHQState.needsStorage(q)) {
+      const storage = add(actions, 'button', '저장 위치 정하기', 'btn');
+      storage.type = 'button'; storage.disabled = disabled;
+      storage.onclick = () => options.onStorage?.(q.id);
     }
     return row;
   });
@@ -833,7 +842,7 @@ export function syncDecisionHistory(container, history, options = {}) {
       const approval = item.approval || {};
       const row = add(list, 'li', '', 'decision-history-item');
       if (options.presentation === 'journal') row.className += ' ui-card ui-list-row';
-      const outcome = item.state === 'timed_out' ? '시간 초과' : item.state === 'expired' ? '만료' : item.approved ? '승인' :
+      const outcome = item.state === 'reconciled' ? '저장 선택 복구' : item.state === 'timed_out' ? '시간 초과' : item.state === 'expired' ? '만료' : item.approved ? '승인' :
         item.choice === 'revise' ? '수정 요청' : '거절';
       add(row, 'strong', `${outcome} · ${(options.kindLabels || {})[approval.kind] || approval.kind || '결정'}`);
       if (options.presentation === 'journal') {
