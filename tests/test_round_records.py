@@ -178,6 +178,47 @@ async def test_oversized_human_report_is_cut_only_between_lines(tmp_path, monkey
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("large_part", ["outputs", "paths", "report", "all"])
+async def test_every_variable_round_section_fits_the_body_limit(tmp_path, monkeypatch, large_part):
+    from labhq.integrations import rounds
+
+    cfg = settings(tmp_path)
+    cfg.dev_log.repo = "records/private"
+    remote = FakeGitHub()
+    hub = Hub(cfg, httpx.MockTransport(remote))
+    rid = f"req-large-{large_part}"
+    round_request(hub, rid, "done")
+    request = hub.requests[rid]
+    if large_part in {"outputs", "all"}:
+        request["results"]["a"]["outputs"] = [f"outputs/result-{i:03d}.txt" for i in range(200)]
+    if large_part in {"paths", "all"}:
+        request["results"]["a"]["outputs"] = [f"outputs/{'x' * 320}-{i:03d}.txt" for i in range(200)]
+    if large_part in {"report", "all"}:
+        request["report"] = "\n".join(f"보고서 {i:03d} {'r' * 100}" for i in range(400))
+    if large_part == "all":
+        request["clarifications"] = [
+            {"questions": [f"질문 {i} {'q' * 100}"], "answer": f"답변 {'a' * 100}"}
+            for i in range(100)
+        ]
+        request["step_decisions"] = [
+            {"step_id": f"step-{i:03d}", "approved": i % 2 == 0, "note": "d" * 100}
+            for i in range(100)
+        ]
+        request["plan"]["steps"] = [
+            {"id": f"step-{i:03d}", "agent_id": f"agent-{'p' * 100}", "depends_on": [], "outputs": []}
+            for i in range(200)
+        ]
+    hub.save_request(rid)
+    hub.rounds.write(rid)
+    monkeypatch.setattr(rounds, "MAX_BODY", 3_000)
+
+    assert await hub.rounds.publish(rid)
+    assert len(remote.issue["body"]) <= rounds.MAX_BODY
+    assert f"<!-- labhq round {rid} -->" in remote.issue["body"]
+    assert f"rounds/{rid}.json" in remote.issue["body"]
+
+
+@pytest.mark.asyncio
 async def test_oversized_round_edits_the_issue_with_the_same_marker(tmp_path, monkeypatch):
     from labhq.integrations import rounds
 
@@ -228,6 +269,39 @@ async def test_recovery_retries_a_delivery_failed_by_the_old_size_limit(tmp_path
         hub.rounds.recover()
         await hub.rounds.drain()
         assert len(remote.calls) == before
+    finally:
+        if hub.rounds.worker:
+            hub.rounds.worker.cancel()
+            await asyncio.gather(hub.rounds.worker, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_recovery_retries_failed_large_update_when_issue_digest_is_stale(tmp_path, monkeypatch):
+    from labhq.integrations import rounds
+
+    cfg = settings(tmp_path)
+    cfg.dev_log.repo = "records/private"
+    rid = "req-recover-stale"
+    marker = f"<!-- labhq round {rid} -->"
+    remote = FakeGitHub()
+    remote.issue = {"number": 7, "body": f"{marker}\n\n중간 상태"}
+    hub = Hub(cfg, httpx.MockTransport(remote))
+    round_request(hub, rid, "done")
+    hub.requests[rid]["report"] = "최종 결과\n" * 100
+    hub.save_request(rid)
+    hub.rounds.write(rid)
+    monkeypatch.setattr(rounds, "MAX_BODY", 3_000)
+    hub.store.put("round_issue", rid, {"number": 7, "sha256": "stale-interrupted-digest"})
+    hub.store.put("round_delivery", rid, {
+        "request_id": rid, "generation": 1, "attempts": 1, "state": "failed",
+    })
+
+    hub.rounds.recover()
+    try:
+        await asyncio.wait_for(hub.rounds.drain(), 2)
+        assert "최종 결과" in remote.issue["body"]
+        assert any(method == "PATCH" for method, _, _ in remote.calls)
+        assert hub.store.get("round_delivery", rid) is None
     finally:
         if hub.rounds.worker:
             hub.rounds.worker.cancel()
