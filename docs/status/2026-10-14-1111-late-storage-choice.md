@@ -13,9 +13,11 @@
 
 - 기준 main `4a7c03b`: 새 Python 회귀 10 failed, 웹 회귀 2 failed. 관련 Python 35 passed, CP4 포함 43 passed.
 - Node 48개 파일 모두 통과. GitHub 생성·업로드는 mock transport로만 검증했습니다.
-- Windows 전체 pytest는 다른 레인의 실행이 이어져 15분 대기 후 미실행했습니다. CI 각 job은 push 뒤 확인합니다.
+- Windows 전체 pytest는 다른 레인의 실행이 이어져 15분 대기 후 미실행했습니다. main 충돌로 CI run이 생성되지 않았습니다. changes, pytest (3.10·3.12), pytest-windows, clean-install, ro-crate-validator, pytest-slow, readme, patch-notes 모두 미실행입니다.
 
 ## 남은 지적
+
+- main 충돌 해소와 로컬 전체 pytest·CI 최종 검증은 총괄에게 넘깁니다.
 
 - 실제 저장소 생성·게시, PI/trial 접속·재시작, 설정 변경, 리뷰 요청·인라인 답글·병합은 하지 않았습니다.
 
