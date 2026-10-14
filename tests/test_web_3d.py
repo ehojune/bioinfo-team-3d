@@ -157,6 +157,7 @@ def test_package_data_includes_office_assets():
     ('web_expand_history.cjs', 'fail 0'),
     ('web_messenger_history.cjs', 'fail 0'),
     ('web_pi_text.cjs', 'fail 0'),
+    ('web_pi_language.cjs', 'fail 0'),
     ('web_staff_busy.cjs', 'fail 0'),
     ('web_issue126.cjs', 'full answer on demand in 2.5D and 3D: OK'),
     ('web_issue184.cjs', 'fail 0'),

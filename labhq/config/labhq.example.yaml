@@ -187,3 +187,9 @@ research:
 # gateway.state_dir/semantics/에 ID·hash·개수만 남기고, CSO·승인·보고에는 아무것도 주지 않습니다.
 # ab는 연구 요청 절반에만 재사용 후보를 CSO 계획 참고로 줍니다.
 semantics: off
+pi_language:
+  enabled: true
+  model: haiku
+  per_request_usd: 0.50
+  per_message_usd: 0.05
+  timeout_s: 30
