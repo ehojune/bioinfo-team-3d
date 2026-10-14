@@ -907,7 +907,7 @@
     {"key":"composer","shown":true,"loose":true,"box":{"x":0,"y":831,"w":1440,"h":69},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
   ]
 }},
-"desktop/report/tasks": {"viewport": {"w":1440,"h":900}, "doc": {"w":1440,"h":913}, "items": {
+"desktop/report/tasks": {"viewport": {"w":1440,"h":900}, "doc": {"w":1440,"h":938}, "items": {
   "top": [
     {"key":"top","shown":true,"box":{"x":0,"y":0,"w":1440,"h":87},"paint":{"color":"#1c2430","background":"#faf8f4"}}
   ],
@@ -925,12 +925,12 @@
   ],
   "panel": [
     {"key":"decisions","shown":false},
-    {"key":"tasks","shown":true,"box":{"x":13,"y":87,"w":476,"h":725},"paint":{"color":"#1c2430"}},
+    {"key":"tasks","shown":true,"box":{"x":13,"y":87,"w":476,"h":750},"paint":{"color":"#1c2430"}},
     {"key":"feed","shown":false},
     {"key":"jobs","shown":false}
   ],
   "task-board": [
-    {"key":"task-board","shown":true,"box":{"x":13,"y":116,"w":476,"h":697},"paint":{"color":"#1c2430"}}
+    {"key":"task-board","shown":true,"box":{"x":13,"y":116,"w":476,"h":721},"paint":{"color":"#1c2430"}}
   ],
   "task-choice": [
     {"key":"0","shown":true,"box":{"x":13,"y":145,"w":476,"h":103},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#7f8790"}}

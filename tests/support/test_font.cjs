@@ -1,10 +1,12 @@
 // A metrics-only TrueType font for layout tests, built in memory (no file, no dependency).
-// Every glyph is blank; Latin-range glyphs are 0.55 em wide and everything else (Hangul, CJK punctuation,
+// Every glyph is blank; Latin-range glyphs are 9/16 em wide and everything else (Hangul, CJK punctuation,
 // symbols) is 1 em wide, with a 1 em line box. Forcing it on the demo page makes text widths and wrapping
 // identical on Windows, macOS and Linux, so a layout snapshot does not depend on which system fonts exist.
 'use strict';
 
-const UNITS = 1000, NARROW = 550, WIDE = 1000, ASCENT = 880, DESCENT = 120;
+// 1024 units per em and advances in whole sixteenths of an em (576 = 9/16, 1024 = 16/16) make every advance an exact
+// multiple of 1/16 px at integer font sizes, so FreeType's 1/64 px rounding (Linux) cannot move a line break.
+const UNITS = 1024, NARROW = 576, WIDE = 1024, ASCENT = 901, DESCENT = 123;
 const NARROW_RANGES = [[0x20, 0x24F], [0x2000, 0x206F]];
 const WIDE_RANGES = [[0x2070, 0x22FF], [0x2460, 0x27BF], [0x2B00, 0x2BFF], [0x3000, 0x30FF], [0x3130, 0x318F],
   [0x3200, 0x32FF], [0xAC00, 0xD7A3], [0xFF00, 0xFFEF]];

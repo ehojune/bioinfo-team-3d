@@ -210,7 +210,8 @@ async function openDemo(opts = {}) {
         const ok = await evaluate('window.__layoutFontLoaded');
         if (!ok) throw new Error('layout test font was rejected by Chrome: ' + await evaluate('window.__layoutFontError'));
         const probe = await evaluate("(()=>{const s=document.createElement('span');s.style.cssText='position:absolute;font:16px LabhqLayoutFont';s.textContent='가';document.body.appendChild(s);const w=s.getBoundingClientRect().width;s.remove();return w})()");
-        if (probe !== 16) throw new Error('layout test font is not applied (Hangul probe is ' + probe + 'px, expected 16px)');
+        // FreeType (Linux) rounds advances to 1/64 px, so allow a hair of difference from the exact 16 px.
+        if (Math.abs(probe - 16) > 0.1) throw new Error('layout test font is not applied (Hangul probe is ' + probe + 'px, expected 16px)');
       }
       await frames();
     }
