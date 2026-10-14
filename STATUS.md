@@ -4,6 +4,33 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 결론
+
+PR #573에 최신 main(`d56253a`)을 병합했습니다. 충돌은 `labhq/gateway/server.py` 한 곳이었고 두 쪽 의도를 모두 남겼습니다.
+
+## 바뀐 것
+
+- 종료 처리: CP4 기한 타이머 취소와 편집자 저장소 close를 함께 실행합니다.
+- 검토 대기 초안은 편집자 게시·GitHub 전송·검색 색인을 시작하지 않습니다. 최종 결정이 색인 알림과 편집자 게시를 예약합니다. bundle을 다시 만드는 요청은 갱신된 bundle 기록이 게시를 예약합니다.
+- 검색 색인은 `review_pending` 초안을 건너뜁니다. 시작 시 과거 요청 재처리에서도 같습니다.
+- 매뉴얼 CP4 절에 수용 뒤 시작하는 항목을 적었습니다.
+- 앞선 봇 지적(P1 GitHub 전송 보류, P2 workdir 없는 요청의 bundle 재생성)의 수정 `bbcf48d`가 로컬에만 있어 PR head에 없었습니다. 그대로 보존해 이 병합과 함께 push합니다.
+
+## 확인
+
+- 회귀: 수용 뒤 색인 알림·편집자 게시를 확인하는 통합 test를 추가했습니다(`test_cp4_accept_wakes_recall_and_publishes_editor_after_review`).
+- Windows 전체 pytest 6222개 통과. 처음 한 번은 `PYTHONUTF8=1` 때문에 `tasklist` 한국어 출력 해석이 실패해 1개가 떨어졌고, 그 변수를 빼고 다시 통과했습니다.
+- Node test 45개 파일을 하나씩 통과했습니다.
+
+## 남은 지적
+
+- 코드 리뷰(Codex)는 한도 소진으로 돌리지 못했습니다.
+- PI/trial 실행·재시작, 리뷰 요청, 병합은 하지 않았습니다.
+
+Refs #90
+
+🤖 Generated with Claude Code for the labhq dev lead
+
 새 설정의 `labhq init`에서 pipeline 코드를 공개 upstream에 PR로 기여할지 묻습니다. `y`(대소문자 무관)만 동의이며 Enter·`--yes`·불분명한 답은 끔으로 저장합니다.
 
 - 기존 동의값과 upstream 대상은 `--force`에서도 보존합니다.
@@ -20,6 +47,33 @@ Refs #300
 남은 지적: 보정한 테스트 환경에서 Windows 전체 재실행이 필요합니다. fork 지원은 A의 main 반영 뒤 B 레인에서 진행합니다.
 
 🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
+## 결론
+
+PR #573의 CP4 GitHub 전송 시점(P1)과 기존 bundle 갱신 예약(P2)을 `bbcf48d`에서 수정했습니다.
+
+## 바뀐 것
+
+- 검토 대기 초안은 GitHub terminal delivery를 만들지 않습니다. 옛 대기 이벤트도 게시하지 않습니다.
+- 최종 결정과 전송 기록을 함께 저장합니다. 수용 뒤 보고서 commit·issue 종료, 거부·만료 뒤 실패 알림·issue 유지로 처리합니다. 재시작 시 남은 전송을 복구합니다.
+- `workdir_id`가 없어도 기존 bundle이나 미완료 생성 기록이 있으면 receipt 갱신을 예약합니다.
+- main `363cdd4`를 병합했습니다. 패치노트는 기존 들여쓰기와 따옴표로 감싼 7자리 SHA를 유지합니다.
+
+## 확인
+
+- `3392480`에서 새 회귀 5개 실패 → 수정 후 관련 68개 통과. GitHub는 mock transport만 사용했습니다.
+- Windows 전체 pytest: 미실행. 다른 레인의 전체 실행이 연속돼 약 40분 대기 후 중단했습니다. 동시 전체 실행 금지를 지켰습니다.
+- 공개 검사 통과. 패치노트·목차·diff 검사는 기록 커밋 뒤 실행합니다.
+
+## 남은 지적
+
+- P2는 가져온 report-only bundle의 재생성 예약·receipt 검증을 mock으로 확인했습니다. 현재 원본 탐색기는 모든 `workdir_id`가 없으면 bundle을 직접 복원하지 못합니다. 원본 복구 기능은 이번 수정에 추가하지 않았습니다.
+- Windows 전체 통과 조건이 남아 push·인라인 답글·현재 수정 head의 CI 확인을 보류했습니다. 총괄이 전체 pytest 실행 순서를 확보한 뒤 이어갑니다.
+- PI/trial 실행·재시작, 실제 보고서 게시, 리뷰 요청, 병합은 하지 않았습니다.
+
+Refs #90
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
 
 ## 결론
 
@@ -70,6 +124,34 @@ Refs #300
 - PI/trial 실행·설정·배포, 리뷰 요청·인라인 답글·병합은 하지 않았다.
 
 Refs #60
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
+opt-in 연구 요청의 기존 **검토 완료**를 CP4 수용으로 연결합니다. 별도 승인 카드는 만들지 않습니다.
+
+## 바뀐 것
+
+- 생성 시 설정·계약 version 고정. 리뷰 accept·보고서 검사 뒤 초안 revision과 본문·감사·claim hash를 저장합니다.
+- 유효한 PI receipt 전에는 `review_pending`. 거부·만료·취소·hash 변경은 완료하지 않습니다. 재시작은 저장 초안을 재사용합니다.
+- 웹·CLI 결정에 revision/hash를 묶고 bundle·verify에 초안과 receipt를 연결합니다. 수용은 게시·전송·HPC 권한이 아닙니다.
+- 기준 `1b41209`. #565·#556·#567·#571 포함. 총괄의 순서 해제 지시에 따라 착수했습니다.
+
+## 확인
+
+- 새 회귀: 기준 main에서 1 failed → branch 통과. 관련 Python 330 passed·4 skipped, 최종 집중 56 passed. Node 43개 파일 통과.
+- Windows 전체 pytest: **UNVERIFIED**. 다른 레인의 전체 실행이 연속으로 이어져 동시 전체 실행 금지를 지켰습니다. CI 결과와 구분합니다.
+- 공개·diff 검사 통과. 패치노트·상태 문서를 기록하고 patch-notes·notes-index를 검사했습니다.
+- 매뉴얼 122,610 → 123,414자.
+
+## 남은 지적
+
+- 레인 임시 폴더 삭제가 자동 승인 검토의 `blocked by policy`로 차단돼 정리를 인계합니다.
+- 로컬 Windows 전체 통과 조건은 미충족입니다. PI/trial live 검증·배포·CP3·CP4 수정 재실행은 범위 밖입니다.
+- 봇 리뷰 요청·대응·병합은 총괄에게 넘깁니다.
+
+Refs #90
 
 🤖 Generated with Codex (gpt-6) for the labhq dev lead
 
