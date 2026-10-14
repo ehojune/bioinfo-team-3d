@@ -27,6 +27,8 @@ if TYPE_CHECKING:
 log = logging.getLogger("labhq.rounds")
 REPO_NAME = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _ORIGINAL_REPORT = object()
+DISPLAY_TASK_KINDS = frozenset({"pi_interpretation"})
+DISPLAY_EVENT_TYPES = frozenset({"messenger.translated"})
 
 
 class RoundPublicationDeferred(RuntimeError):
@@ -75,6 +77,16 @@ def environment_snapshot(hub: "Hub") -> dict:
             "state_dir_name": Path(hub.s.gateway.state_dir).name}
 
 
+def is_research_task(task: dict) -> bool:
+    """Display-only work is billed and audited, but is not a research step or provenance source."""
+    return task.get("kind") not in DISPLAY_TASK_KINDS
+
+
+def is_research_event(event: dict, display_task_ids: set[str]) -> bool:
+    """Keep UI delivery events in the raw ledger without folding them into the request's research record."""
+    return event.get("type") not in DISPLAY_EVENT_TYPES and event.get("task_id") not in display_task_ids
+
+
 def record_sources(hub: "Hub") -> dict[str, dict[str, list[dict]]]:
     """Tasks, events and approval decisions grouped by request, read from the state DB once.
 
@@ -82,9 +94,15 @@ def record_sources(hub: "Hub") -> dict[str, dict[str, list[dict]]]:
     on the 10-08 trial state (40 requests, 18 MB of task rows) that held the start for 7 s.
     """
     grouped: dict[str, dict[str, list[dict]]] = {"tasks": {}, "events": {}, "decisions": {}}
-    for task in hub.store.all("task").values():
+    all_tasks = hub.store.all("task")
+    display_task_ids = {tid for tid, task in all_tasks.items() if not is_research_task(task)}
+    for task in all_tasks.values():
+        if not is_research_task(task):
+            continue
         grouped["tasks"].setdefault(str(task.get("request_id")), []).append(task)
     for event in hub.store.events_since(0):
+        if not is_research_event(event, display_task_ids):
+            continue
         grouped["events"].setdefault(str(event.get("request_id")), []).append(event)
     for decision in hub.store.all("approval_decision").values():
         grouped["decisions"].setdefault(str((decision.get("approval") or {}).get("request_id")), []).append(decision)
@@ -115,14 +133,10 @@ def metadata_failure_kind(result: dict) -> str | None:
 def build_record(hub: "Hub", rid: str, sources: dict[str, dict[str, list[dict]]] | None = None) -> dict:
     req = hub.requests[rid]
     if sources is None:
-        tasks = [v for v in hub.store.all("task").values() if v.get("request_id") == rid]
-        events = [v for v in hub.store.events_since(0) if v.get("request_id") == rid]
-        decisions = [v for v in hub.store.all("approval_decision").values()
-                     if (v.get("approval") or {}).get("request_id") == rid]
-    else:
-        tasks = list(sources["tasks"].get(rid, []))
-        events = list(sources["events"].get(rid, []))
-        decisions = list(sources["decisions"].get(rid, []))
+        sources = record_sources(hub)
+    tasks = list(sources["tasks"].get(rid, []))
+    events = list(sources["events"].get(rid, []))
+    decisions = list(sources["decisions"].get(rid, []))
     decisions += [{"approval": v["approval"], "approved": None, "note": None,
                    "state": "pending"} for v in hub.approvals.values()
                   if v["approval"].get("request_id") == rid]
