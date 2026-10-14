@@ -83,6 +83,7 @@ test('composer primary is 48px and secondary options are disclosed',()=>{
   assert.match(html,/class="[^"]*composer-primary[^"]*" id="send"/);
   assert.match(css,/\.composer-primary[^}]*min-height:\s*var\(--ds-h-touch\)/);
   assert.match(html,/<details[^>]*class="composer-options"/);
+  assert.match(html,/refs.items.length \? `첨부·참고 \$\{refs.items.length\}` : '첨부·참고'/);
   assert.match(css,/\.request-choice[^}]*min-height:\s*var\(--ds-h-touch\)/);
 });
 test('board, message, staff and input text token pairs meet AA in both themes',()=>{

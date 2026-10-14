@@ -959,7 +959,7 @@ function renderRefs() {
     onRemove: index => { refs.items.splice(index, 1); renderRefs(); },
     onToggleDefaults: () => { refs.useDefaults = !refs.useDefaults; renderRefs(); },
   });
-  $('#ref-toggle').textContent = refs.items.length ? `참고 ${refs.items.length}` : '참고';
+  $('#ref-toggle').textContent = refs.items.length ? `첨부·참고 ${refs.items.length}` : '첨부·참고';
 }
 function addRef() {
   const input = $('#ref-input'), ref = inferReference(input.value);
