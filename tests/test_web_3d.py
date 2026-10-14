@@ -148,6 +148,7 @@ def test_package_data_includes_office_assets():
 
 # Legacy scripts print their own success message; node:test uses fail 0.
 NODE_WEB_MARKERS = {
+    'web_recruit_before_plan.cjs': 'pre-plan recruitment card passed',
     'web_state.cjs': 'isolation and bounds: OK',
     'web_live.cjs': 'reconnect and replay gap: OK',
     'web_command_center.cjs': 'keyed decisions, staff strip and tabs: OK',

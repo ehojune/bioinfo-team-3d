@@ -125,6 +125,9 @@ def build_record(hub: "Hub", rid: str, sources: dict[str, dict[str, list[dict]]]
     decisions += [{"approval": v["approval"], "approved": None, "note": None,
                    "state": "pending"} for v in hub.approvals.values()
                   if v["approval"].get("request_id") == rid]
+    # The state DB iterates random approval IDs, not the order PI saw the cards.
+    decisions.sort(key=lambda d: ((d.get("approval") or {}).get("created_at") or 0,
+                                  (d.get("approval") or {}).get("kind") or ""))
     plan = req.get("plan") or {}
     results = req.get("results") or {}
     steps = []

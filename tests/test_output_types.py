@@ -30,8 +30,10 @@ CANARY = "CANARY-7f3a-secret"
 # changes for that planned behavior while output-type declarations still add nothing when off.
 # #557 adds the shared Korean PI prose rule to card questions; the schema and output-type switch stay unchanged.
 # #549 adds optional paper_skills and its selection rule; output-type off/on behavior is unchanged.
-PLAN_SCHEMA_SHA = "781b4143c58cac2affd3b7d85a5470f6aed1d240608834093a75a7e5a6caac51"
-PLAN_PROMPT_SHA = "67df0eda5cd75d5df3990effd0aebd4c152f052a9066f26bfa4e3bf51999184d"
+# #549 B adds recruit.step_ids and reproduction/Nextflow planning rules; the exact off contract changes with it.
+# PR #581 P1: fresh recruits require at least one step_id; legacy stored plans remain compatible.
+PLAN_SCHEMA_SHA = "044be4598c06b6dc0423b25734ebf1bc610359fc1a6236e5c807eb51983f74ac"
+PLAN_PROMPT_SHA = "868d16071ac1a871bdf5355dd27a25bedef2a899a30058cb21405d3ffb323f72"
 PROMPT_ARGS = dict(request="REQ", roster="ROSTER", capabilities="CAPS", briefing="BRIEF", max_steps=3,
                    question_rule=QUESTION_RULE, lab_scope="LAB", topics_rule=topics.prompt_rule(V))
 

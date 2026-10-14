@@ -34,7 +34,7 @@ const ACTIVE_REQUEST_STATES = new Set(['running', 'waiting_for_runner', 'waiting
 const TERMINAL_REQUEST_STATES = new Set(['done', 'failed', 'cancelled', 'rejected', 'review_pending']);
 // Cards that park an active request as waiting_pi (server.py PI_DECISION_KINDS). A resume card is one too, but its
 // request is interrupted, not parked.
-const PI_DECISION_KINDS = new Set(['clarify', 'question', 'scope', 'budget', 'research_plan', 'research_evidence', 'research_continue', 'result_storage', 'result_publish']);
+const PI_DECISION_KINDS = new Set(['clarify', 'question', 'scope', 'budget', 'research_plan', 'research_evidence', 'research_continue', 'result_storage', 'result_publish', 'recruit_plan']);
 const isActiveRequest = status => ACTIVE_REQUEST_STATES.has(status);
 const isTerminalRequest = status => TERMINAL_REQUEST_STATES.has(status);
 const websocketCloseAction = code => code === 1008
@@ -164,7 +164,7 @@ function resetSnapshotState() {
 }
 const STATE_KO = { idle: '쉬는 중', queued: '순서 기다림', working: '작업 중', waiting: '승인 기다림',
   hibernating: 'HPC 기다리는 중', done: '완료', error: '문제 발생' };
-const KIND_KO = { result_storage: '결과 저장 위치', result_publish: '편집자 정리본 확인', hpc_submit: 'HPC 제출', tool_permission: '도구 권한', budget: '예산 초과', recruit: '채용', download: '대용량 다운로드', clarify: 'PI 질문', scope: '범위 확인', research_plan: 'CP1 계획 승인', research_evidence: 'CP2 증거 검토', research_continue: '리뷰 뒤 이어 가기', codex_sandbox_setup: 'Codex sandbox 준비', facilities_fix: '환경 자동 수정', resume: '중단된 요청 재개', question: '직원 질문 · PI 확인' };
+const KIND_KO = { result_storage: '결과 저장 위치', result_publish: '편집자 정리본 확인', hpc_submit: 'HPC 제출', tool_permission: '도구 권한', budget: '예산 초과', recruit: '채용', recruit_plan: '계획 전 채용', download: '대용량 다운로드', clarify: 'PI 질문', scope: '범위 확인', research_plan: 'CP1 계획 승인', research_evidence: 'CP2 증거 검토', research_continue: '리뷰 뒤 이어 가기', codex_sandbox_setup: 'Codex sandbox 준비', facilities_fix: '환경 자동 수정', resume: '중단된 요청 재개', question: '직원 질문 · PI 확인' };
 const JOB_KO = { queued: '대기', running: '실행 중', completed: '완료', failed: '실패', held: '보류', suspended: '일시정지',
   cancelled: '취소', unknown_finished: '종료 (확인 필요)', error: '오류', missing: '확인 중' };
 const GH_KO = { issue: 'GitHub에 이 요청의 이슈를 열었어요', plan: '이슈에 계획을 올렸어요', review: '이슈에 리뷰 결과를 올렸어요',
@@ -777,6 +777,7 @@ function apply(ev, replay = false) {
       break;
     }
     case 'recruit.suggested': {
+      if (d.handled) break; // This request already used its one pre-plan hiring card.
       const key = d.repo || d.paper;
       const hired = [...S.agents.values()].some(a => isContract(a) && key && String(key).toLowerCase().includes(String(a.id).slice(2)));
       if (!hired && !S.suggestions.some(s => (s.repo || s.paper) === key)) S.suggestions.push({ ...d, request_id: rid, id: `sug_${++S.seq}` });

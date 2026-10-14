@@ -387,11 +387,13 @@ class Recruitment:
         self.paper, self.repo, self.focus = msg.get("paper"), msg.get("repo"), msg.get("focus")
         self.ttl_days = float(msg.get("ttl_days") or self.s.recruit.default_ttl_days)
         self.request_id = msg.get("request_id")
+        self.plan_task_id = msg.get("plan_task_id")
         self.slug = slugify(msg.get("name") or self.repo or self.paper or "contract")
 
     async def _emit(self, typ: str, data: dict) -> None:
         await self.r.emit(Event(type=typ, request_id=self.request_id, agent_id=self.s.recruit.agent_id,
-                                data={"slug": self.slug, **data}))
+                                data={"slug": self.slug, **data,
+                                      **({"plan_task_id": self.plan_task_id} if self.plan_task_id else {})}))
 
     async def run(self) -> AgentSpec | None:
         talent = self.r.registry.talent_dir / self.slug

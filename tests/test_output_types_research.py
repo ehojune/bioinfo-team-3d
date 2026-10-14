@@ -29,9 +29,11 @@ CANARY = "CANARY-research-91c2"
 # PI 점검 R17 adds the optional numeric `budget_usd` to the plan schema and its rule to the prompt; a plan without
 # it keeps its canonical JSON and hash (VALID_PLAN_SHA).
 # #549 adds paper skill selection before CP1; empty additions still preserve VALID_PLAN_SHA.
-RESEARCH_PLAN_SCHEMA_SHA = "7d49331dda0b1881e8f55917c99d99dc76ead1956e479e92cf888113238ae8e4"
+# #549 B adds recruit.step_ids and hiring rules; an empty recruitment still preserves VALID_PLAN_SHA.
+# PR #581 P1: fresh recruits require at least one step_id; legacy stored plans remain compatible.
+RESEARCH_PLAN_SCHEMA_SHA = "6ce90ea335d696327af314f2b0f4b57bb5ad5a7a98a89b1f7214ed26092a1abf"
 RESEARCH_RESULT_SCHEMA_SHA = "9a767787fade091505fea149a8841845738ce30ce77cf6657cbca0aaa72af64d"
-RESEARCH_PROMPT_SHA = "a7f5df2a847c27d5c2a03716e1df9b854f7ee3398df9a82253331ea1e11a1b54"
+RESEARCH_PROMPT_SHA = "752962b74141a2ca02aecc586f7ecba10e35b43117c93119e6939922f4f4c6ba"
 VALID_PLAN_SHA = "f611461cc2dbb17e39159ec1df6a75d8f7b661eb39bbe42c8ed0438c5c45e213"
 
 
