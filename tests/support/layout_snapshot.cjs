@@ -111,13 +111,20 @@ function snapshotSource(view) {
   })(${JSON.stringify(SPEC)}, ${JSON.stringify(ANCHORS)}, ${JSON.stringify(view)})`;
 }
 
-const channels = css => (String(css).match(/[\d.]+/g) || []).map(Number);
+// [r, g, b, alpha 0..1] of a stored color. The snapshot writes #rrggbb (or #rrggbbaa, alpha as a byte); each pair of
+// hex digits is one channel. Decimal rgb()/rgba() text still reads as before. null when it is neither.
+function colorChannels(css) {
+  const text = String(css).trim();
+  const hex = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})?$/i.exec(text);
+  if (hex) return [1, 2, 3].map(i => parseInt(hex[i], 16)).concat(hex[4] ? parseInt(hex[4], 16) / 255 : 1);
+  const n = (text.match(/[\d.]+/g) || []).map(Number);
+  return n.length >= 3 ? [n[0], n[1], n[2], n.length > 3 ? n[3] : 1] : null;
+}
 function sameColor(a, b, tolerance) {
   if (a === b) return true;
-  const x = channels(a), y = channels(b);
-  if (x.length < 3 || y.length < 3) return false;
-  const alphaX = x.length > 3 ? x[3] : 1, alphaY = y.length > 3 ? y[3] : 1;
-  return x.slice(0, 3).every((v, i) => Math.abs(v - y[i]) <= tolerance.colorChannel) && Math.abs(alphaX - alphaY) <= 0.02;
+  const x = colorChannels(a), y = colorChannels(b);
+  if (!x || !y) return false;
+  return x.slice(0, 3).every((v, i) => Math.abs(v - y[i]) <= tolerance.colorChannel) && Math.abs(x[3] - y[3]) <= 0.02;
 }
 
 // Differences between a baseline view and a new one, as readable lines. Empty means the layout matches.
@@ -184,4 +191,4 @@ function formatBaseline(data) {
   return lines.join('\n') + '\n';
 }
 
-module.exports = {DEFAULT_TOLERANCE, SPEC, snapshotSource, diffView, formatBaseline, sameColor};
+module.exports = {DEFAULT_TOLERANCE, SPEC, snapshotSource, diffView, formatBaseline, sameColor, colorChannels};

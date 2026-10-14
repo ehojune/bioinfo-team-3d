@@ -189,7 +189,7 @@ def test_office_in_node(filename, marker):
         pytest.skip('Node is optional')
     script = Path(__file__).with_name(filename)
     # The optional installed-browser checks wait for Chrome's start and the demo viewports (node:test budgets of 150 s and 240 s).
-    timeout = {'web_office_browser.cjs': 170, 'web_visual_demo.cjs': 260}.get(filename, 30)
+    timeout = {'web_office_browser.cjs': 170, 'web_visual_demo.cjs': 260, 'web_visual_tooling.cjs': 170}.get(filename, 30)
     result = subprocess.run([node, str(script)], capture_output=True, text=True, encoding='utf-8', timeout=timeout)
     assert result.returncode == 0, result.stdout + result.stderr
     assert marker in result.stdout, result.stdout + result.stderr

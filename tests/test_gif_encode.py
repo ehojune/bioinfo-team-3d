@@ -196,3 +196,68 @@ def test_cli_builds_a_gif_from_frames_json_and_enforces_the_size_cap(tmp_path, c
     assert gif_encode.main([str(tmp_path / 'frames.json'), str(out)]) == 0
     assert '2 frames, 1.0 s' in capsys.readouterr().out
     assert gif_encode.main([str(tmp_path / 'frames.json'), str(out), '--max-mb', '0.0001']) == 1
+
+
+def frames_json(tmp_path, count=2):
+    for number in range(count):
+        width, height, rgb = synthetic_frame(60, 40, number, 12)
+        (tmp_path / f'{number}.png').write_bytes(make_png(width, height, rgb, 4))
+    items = ','.join(f'{{"png":"{number}.png","ms":400}}' for number in range(count))
+    (tmp_path / 'frames.json').write_text(f'{{"frames":[{items}]}}', encoding='utf-8')
+    return str(tmp_path / 'frames.json')
+
+
+def test_a_gif_over_the_cap_leaves_the_existing_output_untouched(tmp_path, capsys):
+    # PR #599 review: write_gif replaced the output first and only then failed on the size cap.
+    spec = frames_json(tmp_path)
+    out = tmp_path / 'out.gif'
+    assert gif_encode.main([spec, str(out)]) == 0
+    good = out.read_bytes()
+    capsys.readouterr()
+    assert gif_encode.main([spec, str(out), '--max-mb', '0.0001']) == 1
+    captured = capsys.readouterr()
+    assert out.read_bytes() == good
+    assert 'larger than 0.0001 MB' in captured.err and 'was not replaced' in captured.err
+    assert 'MB' in captured.out  # the size still prints, so the cap is easy to tune
+    assert sorted(path.name for path in tmp_path.iterdir()) == ['0.png', '1.png', 'frames.json', 'out.gif']
+
+
+def test_a_gif_over_the_cap_creates_no_output(tmp_path):
+    spec = frames_json(tmp_path)
+    out = tmp_path / 'new.gif'
+    assert gif_encode.main([spec, str(out), '--max-mb', '0.0001']) == 1
+    assert not out.exists() and not list(tmp_path.glob('*.tmp'))
+
+
+def test_a_gif_within_the_cap_replaces_the_output_and_leaves_no_temp_file(tmp_path):
+    spec = frames_json(tmp_path)
+    out = tmp_path / 'out.gif'
+    out.write_bytes(b'an older gif')
+    assert gif_encode.main([spec, str(out), '--max-mb', '5']) == 0
+    assert out.read_bytes()[:6] == b'GIF89a'
+    assert not list(tmp_path.glob('*.tmp'))
+
+
+def test_write_gif_checks_the_cap_before_writing_anything(tmp_path):
+    frames = [synthetic_frame(60, 40, number, 12) for number in range(2)]
+    out = tmp_path / 'out.gif'
+    out.write_bytes(b'previous')
+    with pytest.raises(gif_encode.GifTooLarge) as error:
+        gif_encode.write_gif(frames, [400, 400], out, max_bytes=100)
+    assert error.value.size > 100 and out.read_bytes() == b'previous'
+    size = gif_encode.write_gif(frames, [400, 400], out, max_bytes=error.value.size)  # exactly at the cap is fine
+    assert size == error.value.size == out.stat().st_size
+
+
+def test_a_write_that_fails_keeps_the_old_output_and_removes_the_temp_file(tmp_path, monkeypatch):
+    frames = [synthetic_frame(60, 40, 0, 12)]
+    out = tmp_path / 'out.gif'
+    out.write_bytes(b'previous')
+
+    def refuse(src, dst):
+        raise OSError('disk says no')
+
+    monkeypatch.setattr(gif_encode.os, 'replace', refuse)
+    with pytest.raises(OSError, match='disk says no'):
+        gif_encode.write_gif(frames, [400], out)
+    assert out.read_bytes() == b'previous' and not list(tmp_path.glob('*.tmp'))
