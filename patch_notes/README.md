@@ -14,9 +14,14 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 16:45 | [`42def3b`](https://github.com/ehojune/bioinfo-team-3d/pull/592/commits/42def3b) | 최신 main 병합(#595 기록 비교 수정 포함) |
 | 16:15 | [`68b4532`](https://github.com/ehojune/bioinfo-team-3d/pull/595/commits/68b4532) | 통역 표시 전용 task·event를 연구 round 기록과 재접속 작업 목록에서 분리해 semantics 비교를 안정화 |
+| 14:20 | [`c10a801`](https://github.com/ehojune/bioinfo-team-3d/pull/592/commits/c10a801) | 공유 ID 답 규칙을 반영해 일반·연구 계획 프롬프트의 고정 해시를 갱신했다. |
 | 14:13 | [`f3efe4d`](https://github.com/ehojune/bioinfo-team-3d/pull/594/commits/f3efe4d) | 통제 요청의 통역 차단과 비용·미집계 예산 반영, 실패 표시·진행·종료 대기 수정 |
+| 13:50 | [`2e5aebe`](https://github.com/ehojune/bioinfo-team-3d/pull/592/commits/2e5aebe) | 공유 점검 ID의 분야별 답 검증과 생략 경고 집계를 보완하고 매뉴얼 수치를 갱신했다. |
 | 13:45 | [`f24e76c`](https://github.com/ehojune/bioinfo-team-3d/pull/593/commits/f24e76c) | 완료된 채용 단계의 파견직 receipt를 재개 대기에서 제외하고 미완료 단계만 기다리게 함 |
+| 13:42 | [`b8e00f9`](https://github.com/ehojune/bioinfo-team-3d/pull/592/commits/b8e00f9) | 공유 checklist ID에 분야별 유효 답이 모두 있으면 계획 검증을 통과하게 했다. |
+| 13:42 | [`30c49dd`](https://github.com/ehojune/bioinfo-team-3d/pull/592/commits/30c49dd) | bulk deconvolution topic과 재현성·검증 점검표 5개를 어휘에 추가했다. |
 | 13:19 | [`f2a1156`](https://github.com/ehojune/bioinfo-team-3d/pull/588/commits/f2a1156) | 최신 main의 Node 웹 테스트 자동 수집을 유지해 충돌 해소 |
 | 13:16 | [`3741906`](https://github.com/ehojune/bioinfo-team-3d/pull/587/commits/3741906) | 최신 본문 digest가 다른 실패를 재시도하고 모든 가변 절을 공통 예산으로 축약 |
 | 13:11 | [`1f0f40e`](https://github.com/ehojune/bioinfo-team-3d/pull/590/commits/1f0f40e) | main의 Node 웹 테스트 자동 수집과 사무실 token 검사를 함께 보존 |
