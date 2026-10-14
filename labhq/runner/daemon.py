@@ -1058,7 +1058,7 @@ class Runner:
                     or self.s.hpc.scheduler == "none" or "hpc" not in agent.builtin_mcp
                     or not task.request_id or not re.fullmatch(r"[A-Za-z0-9_-]+", task.request_id)):
                 raise ValueError("whole-request HPC needs a scheduler, built-in HPC worker and request id")
-            workdir_override = self.ws_root / "requests" / task.request_id
+            workdir_override = self.ws_root / "hpc" / task.request_id
         read_only = is_read_only_task(task.meta, agent)
         refusal = read_only_refusal(agent.id, agent.engine) if read_only else None
         # A contract hire works only once active, and staff that send data to external services never take restricted

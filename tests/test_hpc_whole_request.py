@@ -8,7 +8,9 @@ import pytest
 
 from labhq.models import AgentSpec, Engine, Task, TaskResult
 from labhq.orchestrator.cso import Orchestrator, validate_steps
+from labhq.request_bundle import build_request_bundle
 from labhq.runner.daemon import Runner
+from labhq.evidence.audit import verify_request
 from tests.test_cso import FakeHub, result
 from tests.test_workspace_boundary import _settings
 
@@ -67,6 +69,15 @@ async def test_choice_after_briefing_before_plan_and_recorded(mode):
 @pytest.mark.parametrize("scheduler,online,tools", [("none", True, True), ("mock", False, True), ("mock", True, False)])
 async def test_unavailable_hpc_defaults_local_without_card(scheduler, online, tools):
     hub = hub_for(lambda task: None, scheduler, online, tools)
+    assert await Orchestrator(hub)._choose_execution("r")
+    assert hub.requests["r"]["execution_location"]["mode"] == "local"
+    assert not hub.approvals
+
+
+async def test_direct_request_uses_only_target_agents_hpc_capability():
+    hub = hub_for(lambda task: None)
+    hub.requests["r"].update(mode="direct", agent_id="cso")
+
     assert await Orchestrator(hub)._choose_execution("r")
     assert hub.requests["r"]["execution_location"]["mode"] == "local"
     assert not hub.approvals
@@ -219,8 +230,30 @@ async def test_shared_workspace_mock_jobs_read_previous_output(tmp_path, monkeyp
     assert len(submissions) == 2 and len(set(workdirs)) == 1
     assert all(r.ok and r.pending_jobs for r in results)
     assert results[0].workdir == results[1].workdir
+    workdir = Path(results[0].workdir)
+    assert workdir == Path(settings.runner.workspace_root) / "hpc" / "r"
     assert not (workdirs[0] / "inputs").exists()
     assert "outputs/s2.txt" in results[1].outputs
+
+    request = {
+        "id": "r", "text": "test", "mode": "team", "status": "done",
+        "plan": {"steps": [
+            {"id": "s1", "agent_id": "worker", "depends_on": [], "outputs": ["outputs/s1.txt"]},
+            {"id": "s2", "agent_id": "worker", "depends_on": ["s1"], "outputs": ["outputs/s2.txt"]},
+        ]},
+        "results": {sid: result.model_dump(mode="json") for sid, result in zip(("s1", "s2"), results)},
+    }
+    manifest = (workdir / "manifest.json").read_bytes()
+    job_records = sorted(path.relative_to(workdir) for path in (workdir / "jobs").rglob("*"))
+
+    bundle = Path(build_request_bundle(request, settings)["path"])
+
+    assert bundle == Path(settings.runner.workspace_root) / "requests" / "r"
+    assert (workdir / "manifest.json").read_bytes() == manifest
+    assert sorted(path.relative_to(workdir) for path in (workdir / "jobs").rglob("*")) == job_records
+    assert (workdir / "outputs/s1.txt").read_text(encoding="utf-8") == "upstream"
+    assert (workdir / "outputs/s2.txt").read_text(encoding="utf-8") == "upstream processed"
+    assert verify_request(request, settings)["exit_code"] == 0
 
 
 async def test_hpc_step_without_job_is_not_success(tmp_path, monkeypatch):

@@ -9,9 +9,10 @@ OPTIONS = [
 ]
 
 
-def available_runner(hub):
+def available_runner(hub, agent_id=None):
     """Only an online, built-in scheduler with a processing worker can own the request."""
-    for aid, agent in hub.agents.items():
+    agents = hub.agents.items() if agent_id is None else ((agent_id, hub.agents.get(agent_id, {})),)
+    for aid, agent in agents:
         host = getattr(hub, "agent_runner", {}).get(aid) or agent.get("runner_id")
         caps = getattr(hub, "runner_capabilities", {}).get(host, {})
         if (host in getattr(hub, "runners", {}) and caps.get("scheduler") in {"sge", "pbs", "slurm", "mock"}

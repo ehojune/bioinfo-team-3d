@@ -2365,7 +2365,8 @@ class Orchestrator:
         req = self.hub.requests[rid]
         if req.get("execution_location"):
             return True
-        host = execution_policy.available_runner(self.hub)
+        host = execution_policy.available_runner(
+            self.hub, req.get("agent_id") if req.get("mode") == "direct" else None)
         if host is None:
             req["execution_location"] = {"mode": "local", "source": "사용 가능한 HPC 없음"}
         else:
