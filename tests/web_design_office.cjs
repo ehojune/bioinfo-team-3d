@@ -14,7 +14,7 @@ test('every roster animal has a full body and its own role prop, including facil
   const expected={chief_of_staff:['penguin','clipboard'],cso:['owl','clipboard'],biologist:['bear','leaf'],
     data_steward:['squirrel','folder'],lit_scout:['fox','book'],analyst:['raccoon','laptop'],
     engineer:['octopus','wrench'],qc_reviewer:['hedgehog','magnifier'],sci_reviewer:['turtle','checklist'],
-    recruiter:['beaver','clipboard'],'bioinfo-agent':['otter','laptop'],facilities:['hamster','tools'],c_demo:['chick','badge']};
+    recruiter:['beaver','clipboard'],editor:['beaver','pen'],'bioinfo-agent':['otter','laptop'],facilities:['hamster','tools'],c_demo:['chick','badge']};
   for(const [id,[kind,prop]] of Object.entries(expected)){
     const a={id},svg=ui.officeSVG(a,state.staffCharacter(a));
     assert.match(svg,new RegExp(`data-character="${kind}"`),id);
@@ -23,6 +23,29 @@ test('every roster animal has a full body and its own role prop, including facil
   }
   assert.equal(ui.officeProp({id:'analyst',employment:'contract'}),'badge');
   assert.match(ui.officeSVG({id:'CSO'},state.staffCharacter({id:'CSO'})),/data-character="owl"/);
+});
+test('every core roster staff member has its own office prop and sits in an office zone (editor carried over from #590)',async()=>{
+  const ui=await load();
+  const dir=path.resolve(__dirname,'../agents/core');
+  const core=fs.readdirSync(dir).filter(f=>f.endsWith('.yaml')).map(f=>{
+    const text=fs.readFileSync(path.join(dir,f),'utf8');
+    return {id:text.match(/^id:\s*(\S+)/m)[1],character:text.match(/^character:\s*(\S+)/m)[1]};
+  });
+  assert.ok(core.length>=13,'core roster is read from agents/core');
+  const zones=Function('return '+html.match(/const ZONES = (\[[\s\S]*?\n\]);/)[1])();
+  const seated=zones.flatMap(([,,ids])=>ids);
+  assert.equal(new Set(seated).size,seated.length,'no staff member sits in two zones');
+  for(const {id,character} of core){
+    assert.ok(seated.includes(id),id+' has a seat in ZONES');
+    assert.notEqual(ui.officeProp({id}),'badge',id+' has a role prop, not the contractor badge');
+    assert.match(ui.officeSVG({id},state.staffCharacter({id,character})),new RegExp('data-character="'+(id==='facilities'?'hamster':character)+'"'),id);
+  }
+  assert.equal(zones.find(([,,ids])=>ids.includes('editor'))[0],'hr','editor sits with operations, not research');
+  assert.equal(zones.find(([,,ids])=>ids.includes('recruiter'))[0],'hr');
+  assert.equal(ui.officeProp({id:'editor'}),'pen');
+  assert.equal(ui.officeProp({id:'editor',employment:'contract'}),'badge','a contract badge still wins');
+  const svg=ui.officeSVG({id:'editor'},'beaver');
+  assert.match(svg,/data-prop="pen"/);assert.doesNotMatch(svg,/<image|<use|href=|url\(|https?:/i);
 });
 test('unknown and unsupported characters retain a neutral question-mark before and after roster',async()=>{
   const ui=await load();
