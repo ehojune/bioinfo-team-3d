@@ -154,7 +154,7 @@ class ResultStorage:
             req = self.hub.requests[rid]
             if req.get("result_storage"):
                 raise ValueError("이미 저장 위치를 골랐거나 게시한 요청입니다.")
-            if req.get("status") not in {"done", "completed", "failed", "cancelled", "review_pending"} or req.get("cancelling"):
+            if req.get("status") not in {"done", "failed", "cancelled", "review_pending"} or req.get("cancelling"):
                 raise ValueError("끝난 요청이나 보고서 검토 대기 요청에서 저장 위치를 정해 주세요.")
             if req.get("status") == "cancelled" and not str(req.get("report") or "").strip():
                 raise ValueError("저장할 부분 결과 보고서가 없습니다.")
@@ -301,17 +301,22 @@ class ResultStorage:
                 else:
                     docs["REPRODUCE.md"] += "\n\n## 실행 명령\n\n요청 묶음에 기록된 실행 명령이 없습니다."
                 if "editor" in self.hub.agents:
-                    result = await self.hub.orchestrator.run_step(Task(
-                        agent_id="editor", request_id=rid,
-                        prompt="다음 기록만 써서 README를 정리하세요.\n" + json.dumps(docs, ensure_ascii=False),
-                        output_schema={"type": "object", "properties": {"readme": {"type": "string"}},
-                                       "required": ["readme"], "additionalProperties": False},
-                        meta={"kind": "result_editor", "title": "결과를 저장소용으로 정리",
-                              "agent_overrides": {"sandbox": "read-only"}}))
+                    try:
+                        result = await self.hub.orchestrator.run_step(Task(
+                            agent_id="editor", request_id=rid,
+                            prompt="다음 기록만 써서 README를 정리하세요.\n" + json.dumps(docs, ensure_ascii=False),
+                            output_schema={"type": "object", "properties": {"readme": {"type": "string"}},
+                                           "required": ["readme"], "additionalProperties": False},
+                            meta={"kind": "result_editor", "title": "결과를 저장소용으로 정리",
+                                  "agent_overrides": {"sandbox": "read-only"}}))
+                    except Exception:
+                        result = None  # Budget/dispatch failures still leave the deterministic edition.
                     saved = req["result_storage"]  # PI review may replace the persisted request fields while we wait.
-                    readme = (result.structured or {}).get("readme") if result.ok else None
+                    readme = (result.structured or {}).get("readme") if result and result.ok else None
                     if isinstance(readme, str) and readme.strip():
                         docs["README.md"] = clean_document(readme, self.s, req)
+                        docs["README.md"] += ("\n\n[전체 결과·그림·표](report.md) · [진행 기록](PROGRESS.md) · "
+                                              "[재현 방법](REPRODUCE.md) · [출처](SOURCES.md)\n")
                         if links:
                             docs["README.md"] += "\n## 그림·표·실행 파일\n\n" + links + "\n"
                 if any(f"]({name})" not in docs["README.md"] for name in
@@ -345,7 +350,7 @@ class ResultStorage:
                             "visibility": saved.get("visibility"), "local_draft": str(target)})
                 saved = req["result_storage"]
                 if not decision.get("approved"):
-                    saved["status"] = "declined"
+                    saved["status"] = "draft" if decision.get("state") == "timed_out" else "declined"
                     return
             await self.upload(rid, docs, images)
             saved["status"] = "published"

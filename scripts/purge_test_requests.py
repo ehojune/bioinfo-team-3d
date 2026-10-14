@@ -68,10 +68,13 @@ def purge(path, backup, texts, agent_id, mode):
                 if dest.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                     raise RuntimeError("backup integrity check failed")
             deleted_events = 0
+            has_messenger = db.execute("SELECT 1 FROM sqlite_master WHERE name='messenger_events'").fetchone()
             for rid in ids:
                 deleted_events += db.execute(
                     "DELETE FROM events WHERE json_extract(body, '$.request_id')=?", (rid,)).rowcount
                 db.execute("DELETE FROM state WHERE kind='request' AND key=?", (rid,))
+                if has_messenger:
+                    db.execute("DELETE FROM messenger_events WHERE request_id=?", (rid,))
                 # These are queued copies of those events, not unrelated request state.
                 db.execute("DELETE FROM state WHERE kind IN ('terminal_delivery', 'reporter_delivery') "
                            "AND json_extract(body, '$.request_id')=?", (rid,))

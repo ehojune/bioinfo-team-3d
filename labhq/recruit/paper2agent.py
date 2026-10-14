@@ -109,6 +109,7 @@ def skill_path(engine: str, settings=None) -> Path:
     if engine == "claude_code":
         home /= "labhq-paper2agent"
     path = home / "skills" / "paper2agent"
+    guard_test_path(path)
     personal = [Path.home() / name for name in (".claude", ".codex", ".agents")]
     if any(path.resolve() == p.resolve() or p.resolve() in path.resolve().parents for p in personal):
         raise ValueError(f"Set engines.{engine}.env.{key} to a separate staff directory")

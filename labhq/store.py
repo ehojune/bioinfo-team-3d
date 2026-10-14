@@ -22,6 +22,8 @@ MESSENGER_TYPES = (
 
 def messenger_event(body: dict) -> bool:
     return body.get("type") in MESSENGER_TYPES or (
+        body.get("type") == "task.dispatched" and body.get("data", {}).get("kind")
+        in {None, "step", "direct", "briefing", "review"}) or (
         body.get("type") == "agent.log" and bool(body.get("data", {}).get("text"))
         and body.get("data", {}).get("level") not in {"debug", "thinking"})
 

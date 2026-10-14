@@ -192,7 +192,7 @@ function syncLive(S, visual, stateText, currentTask) {
   if(nextBoard!==boardKey){boardKey=nextBoard;updateBoard(q);}
   const running=[...S.jobs.values()].filter(j=>j.state==='running').length;
   leds.forEach((led,i)=>{led.visible=i<running;});
-  liveApprovalCount=S.approvals.size+S.engineHolds.size;updatePanel();$('approval-chip').hidden=!liveApprovalCount;$('approval-chip').textContent=`승인·로그인 대기 ${liveApprovalCount}`;requestRender();
+  liveApprovalCount=S.approvals.size+S.engineHolds.size+[...S.requests.values()].filter(globalThis.LabHQState.needsPiReview).length;updatePanel();$('approval-chip').hidden=!liveApprovalCount;$('approval-chip').textContent=`승인·검토·로그인 대기 ${liveApprovalCount}`;requestRender();
 }
 // hibernating covers HPC jobs and unanswered questions (state.js stateText, #511 review).
 function stateLabel(c){return String(c.statusText||(c.state==='hibernating'&&c.waitFor==='answer'?'답 대기':STATE_LABELS[c.state])).replace(/[&<>"']/g, ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));}

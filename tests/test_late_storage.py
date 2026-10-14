@@ -63,12 +63,15 @@ async def test_selected_request_cannot_reopen(setup, saved):
     assert not hub.approvals and not calls
 
 
-async def test_running_request_cannot_open(setup):
-    app, hub, _ = setup
-    hub.requests["r"]["status"] = "running"
+@pytest.mark.parametrize("status", ["running", "completed"])
+async def test_unreviewable_request_cannot_open(setup, status):
+    app, hub, calls = setup
+    hub.requests["r"]["status"] = status
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test",
                                  headers={"Authorization": "Bearer test-token"}) as client:
         assert (await client.post("/api/requests/r/storage")).status_code == 409
+    assert not hub.approvals and not calls
+    assert not hub.requests["r"].get("result_storage")
 
 
 @pytest.mark.parametrize("status", ["done", "cancelled"])

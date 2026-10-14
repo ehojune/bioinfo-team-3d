@@ -50,7 +50,7 @@ def build_request_report(settings: Any, rid: str) -> dict:
         "steps_failed": sum(_dict(result).get("ok") is False for result in results),
         "tasks": len(tasks), "outputs_reported": sum(len(_items(_dict(r).get("outputs"))) for r in output_results),
         "approvals": {state: sum((d.get("state") or ("approved" if d.get("approved") else "denied")) == state
-                                  for d in decisions) for state in ("approved", "denied", "expired")},
+                                  for d in decisions) for state in ("approved", "denied", "expired", "timed_out")},
         "inputs": len(_items(req.get("references"))),
     }
     paths = shadow.ShadowPaths(root / "semantics")
@@ -86,7 +86,9 @@ def build_request_report(settings: Any, rid: str) -> dict:
 
 
 _STATUS = {"done": "완료", "failed": "실패", "cancelled": "취소", "rejected": "거절",
-           "running": "진행 중", "interrupted": "중단", "queued": "대기"}
+           "running": "진행 중", "interrupted": "중단", "queued": "대기",
+           "waiting_pi": "PI 응답 대기", "waiting_quota": "사용량 한도 대기", "waiting_login": "로그인 대기",
+           "waiting_facilities_fix": "환경 수정 대기", "waiting_for_runner": "runner 연결 대기"}
 _ACTIONS = {"approval.decide": "승인 결정", "ask.answer": "질문 답변", "request.followup": "이어 묻기",
             "task.cancel": "작업 취소", "recruit.start": "직원 추가", "contract.update": "계약 변경",
             "hpc.submit": "클러스터 작업 제출"}
@@ -155,7 +157,7 @@ def render_request_report(rep: Mapping[str, Any]) -> str:
     out += ["실제 진행", f"상태: {_STATUS.get(actual['status'], '진행 상태 확인 필요')}",
             f"단계 {actual['steps']}개 · 완료 {actual['steps_done']} · 실패 {actual['steps_failed']} · 직원 실행 {actual['tasks']}건",
             f"요청에 등록한 입력 {actual['inputs']}개 · 보고된 산출 {actual['outputs_reported']}개",
-            f"결정: 승인 {approvals['approved']} · 거절 {approvals['denied']} · 만료 {approvals['expired']}",
+            f"결정: 승인 {approvals['approved']} · 거절 {approvals['denied']} · 만료 {approvals['expired']} · 시간 초과 {approvals.get('timed_out', 0)}",
             "종류는 선언·이름표이고 산출은 직원 보고 기준입니다. 파일 내용이나 재현성을 검증한 결과는 아닙니다.",
             "현재 설정과 실행 기록은 과거 관측 시점의 설정을 증명하지 않습니다."]
     return "\n".join(out)

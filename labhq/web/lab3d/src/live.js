@@ -218,6 +218,7 @@ export function startLiveOffice(onState) {
           if (effect.type === 'renderAfter') setTimeout(render, effect.ms);
         }
         if (ev.type === 'approval.stale') { pending.delete(ev.data?.id); notice('이미 끝난 승인 요청입니다.'); }
+        if (ev.type === 'error') { pending.clear(); notice(ev.data?.message || ev.message || '입력을 확인해 다시 시도하세요.'); }
         if (ev.type === 'snapshot') { lastSeq = ev.seq || 0; pending.clear(); }
         else if (ev.seq && ev.seq > lastSeq) lastSeq = ev.seq;
         for (const id of pending) if (!S.approvals.has(id)) pending.delete(id);

@@ -3,6 +3,19 @@ export function messageFromEvent(ev) {
   const d = ev.data || {}, m = {seq:ev.seq, ts:ev.ts, rid:ev.request_id,
     who:ev.agent_id || 'cso', text:'', cls:''};
   switch (ev.type) {
+    case 'task.dispatched': {
+      m.to = ev.agent_id;
+      if (d.kind === 'briefing') Object.assign(m, {who:'cso', text:'착수 브리핑 부탁해요'});
+      else if (d.kind === 'review') Object.assign(m, {who:'cso', text:'결과 검토 부탁해요'});
+      else if (d.kind === 'direct') Object.assign(m, {who:'pi', text:d.title || d.prompt || ''});
+      else if (/HPC 결과/.test(d.title || '')) Object.assign(m, {who:'hpc', text:'작업이 끝났어요. 이어서 해 주세요'});
+      else if (d.kind === 'step' || !d.kind) {
+        const step = /Your step \(([^)]+)\):\s*([\s\S]*?)(?:\n\n|$)/.exec(d.prompt || '');
+        Object.assign(m, {who:'cso', text:d.title || (step ? `${step[1]}: ${step[2]}` : d.prompt || '')});
+      }
+      else return null;
+      break;
+    }
     case 'agent.log':
       if (!d.text || ['debug','thinking'].includes(d.level)) return null;
       Object.assign(m, {text:d.text, cls:d.level === 'alert' ? 'alert' : '',
@@ -65,7 +78,11 @@ export function createMessenger({fetchPage}) {
         const page = await fetchPage(this.before);
         if (current !== generation) return;
         for (const ev of page.events) {
-          const m = messageFromEvent(ev);
+          if (ev.type === 'request.followup') followupAgents.set(ev.data.id, ev.data.agent_id);
+        }
+        for (const ev of page.events) {
+          const m = messageFromEvent(ev.type === 'request.followup_done' ? {...ev, data:{...ev.data,
+            agent_id:ev.data.agent_id || followupAgents.get(ev.data.id)}} : ev);
           if (m) rows.set(m.seq, m); // full REST text replaces an overlapping live preview
         }
         this.items = [...rows.values()].sort((a,b) => a.seq-b.seq);

@@ -15,6 +15,13 @@ class Element {
 }
 global.document={createElement:tag=>new Element(tag)};
 const nodes=el=>[el,...el.children.flatMap(nodes)];
+test('unreviewable completed status does not offer late storage', async()=>{
+  const ui=await mod, host=new Element();
+  const q={id:'r',status:'completed',report:'Result',pi_review_pending:true};
+  assert.equal(LabHQState.needsStorage(q),false);
+  ui.syncReviewCards(host,[q],{onStorage:()=>assert.fail('unreviewable request')});
+  assert.doesNotMatch(host.textContent,/저장 위치 정하기/);
+});
 test('review card opens late storage and removes action after selection and reconnect', async()=>{
   const ui=await mod, host=new Element(), office=LabHQState.createOfficeState();
   office.apply({type:'snapshot',data:{requests:[{id:'r',status:'review_pending',pi_review_pending:true}]}});
