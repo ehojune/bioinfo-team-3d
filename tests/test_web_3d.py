@@ -193,6 +193,7 @@ def test_package_data_includes_office_assets():
     ('web_contract_provenance.cjs', 'fail 0'),
     ('web_trial_ready.cjs', 'trial readiness web tests passed'),
     ('web_result_storage.cjs', 'fail 0'),
+    ('web_p2_followups_1013.cjs', 'fail 0'),
 ])
 def test_office_in_node(filename, marker):
     node = shutil.which('node')
