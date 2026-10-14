@@ -113,7 +113,7 @@ def _refresh_receipt(receipt, hub):
         if terms is not None:
             break
     if terms is None:
-        agent = hub.agents.get(aid)
+        agent = getattr(hub, "agents", {}).get(aid)
         if agent is None:
             agent = next((a for entry in getattr(hub, "last_runner_rosters", {}).values()
                           for a in entry.get("agents", []) if a.get("id") == aid), {})
