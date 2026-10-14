@@ -319,6 +319,41 @@ export function decisionNote(row, approved = true) {
   return lines.join('\n');
 }
 
+export function storageChoice(row) {
+  const box = row?._decisionParts?.storage;
+  if (!box || box.hidden) return null;
+  return {mode: box._mode.value, repo: box._repo.value.trim(), visibility: box._visibility.value};
+}
+
+function renderStorage(box, value) {
+  const config = value?.detail?.storage;
+  box.hidden = !config;
+  if (!config || box._config === JSON.stringify(config)) return;
+  box._config = JSON.stringify(config);
+  box.replaceChildren();
+  add(box, 'strong', '이 결과를 어디에 남길까요?');
+  if (config.warning) add(box, 'p', config.warning);
+  const modeLabel = add(box, 'label', '저장 위치 '), mode = add(modeLabel, 'select');
+  for (const [key, label] of [['local','로컬만 (기본)'], ['new','새 GitHub 저장소 만들기'], ['existing','기존 GitHub 저장소']]) {
+    const option = add(mode, 'option', label); option.value = key;
+    option.disabled = key !== 'local' && !config.github_available;
+  }
+  mode.value = 'local';
+  const repoLabel = add(box, 'label', '저장소 이름 '), repo = add(repoLabel, 'input');
+  repo.value = config.suggested_name || '';
+  const visibilityLabel = add(box, 'label', '공개 범위 '), visibility = add(visibilityLabel, 'select');
+  for (const [key, label] of [['private','비공개'], ['public','공개 (누구나 볼 수 있음)']]) {
+    const option = add(visibility, 'option', label); option.value = key;
+  }
+  visibility.value = 'private';
+  const update = () => {
+    repoLabel.hidden = visibilityLabel.hidden = mode.value === 'local';
+    repo.placeholder = mode.value === 'existing' ? '소유자/저장소' : config.suggested_name;
+  };
+  mode.onchange = () => {repo.value = mode.value === 'new' ? config.suggested_name : ''; update();};
+  box._mode = mode; box._repo = repo; box._visibility = visibility; update();
+}
+
 // CP2 evidence review (#90): the decision is a structured choice; the note is only a memo.
 const EVIDENCE_LABELS = { refused_rows: '계약에 맞지 않아 뺀 근거',
   refused_evidence: '거부된 evidence (승인 대상 아님)', unsupported_claims: '근거를 잃은 claim',
@@ -382,6 +417,7 @@ export function renderDetail(container, kind, detail, approval = null) {
     kind === 'resume' ? ['request_text', 'has_plan'] :  // the summary already quotes it; has_plan only picks the steps wording
     kind === 'research_plan' && typeof detail?.plan_canonical === 'string' ? ['gate', 'pack_applicability', 'warnings', 'protocol_revision', 'packs', 'revise_allowed'] :
     kind === 'question' && clarifyQuestions(approval).length ? ['options'] : [];
+  shown.push('storage');
   const entries = detail !== null && typeof detail === 'object' && !Array.isArray(detail) ?
     [...preferred.filter(key => Object.hasOwn(detail, key)), ...Object.keys(detail).filter(key => !preferred.includes(key) && !shown.includes(key))]
       .map(key => [key, detailValue(detail[key])]) : detail == null ? [] : [['detail', detailValue(detail)]];
@@ -395,7 +431,17 @@ export function renderDetail(container, kind, detail, approval = null) {
   const list = add(container, 'dl', '', 'approval-detail');
   const labels = DETAIL_LABELS[kind] || {};
   for (const [key, value] of entries) {
-    if (kind === 'research_plan' && key === 'plan_canonical') renderResearchPlan(list, detail.plan_canonical);
+    if (kind === 'result_publish' && key === 'documents') {
+      for (const [name, body] of Object.entries(detail.documents || {}))
+        detailEntry(list, name, body, {raw:true, fold:true, open:name === 'README.md', summary:name});
+    } else if (kind === 'result_publish' && key === 'images') {
+      for (const [name, uri] of Object.entries(detail.images || {})) {
+        if (!/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(uri)) continue;
+        const figure = add(list, 'div'); add(figure, 'p', name);
+        const img = add(figure, 'img'); img.src = uri; img.alt = name;
+        img.setAttribute?.('style', 'max-width:100%;max-height:420px');
+      }
+    } else if (kind === 'research_plan' && key === 'plan_canonical') renderResearchPlan(list, detail.plan_canonical);
     else if (kind === 'research_continue' && key === 'p1_issues') renderReviewIssues(list, detail.p1_issues);
     else if (kind === 'resume' && key === 'created_at') detailEntry(list, labels[key], receivedAt(detail.created_at), {raw: true});
     else if (kind === 'resume' && key === 'steps' && Array.isArray(detail.steps))
@@ -433,6 +479,8 @@ function createCard(item, options) {
   const detail = add(body, 'div', '', 'why');
   const questions = add(body, 'div', '', 'clarify');
   questions.hidden = true;
+  const storage = add(body, 'div', '', 'result-storage');
+  storage.hidden = true;
   const assumptions = add(body, 'div', '', 'plan-assumptions');
   assumptions.hidden = true;
   const timing = add(body, 'p', '', 'decision-meta');
@@ -447,7 +495,7 @@ function createCard(item, options) {
   revise.type = 'button'; revise.hidden = true;
   const deny = add(actions, 'button', '', 'btn');
   deny.type = 'button';
-  row._decisionParts = { title, who, request, summary, detail, questions, assumptions, timing, note, consequence, approve, revise, deny };
+  row._decisionParts = { title, who, request, summary, detail, questions, storage, assumptions, timing, note, consequence, approve, revise, deny };
   return row;
 }
 
@@ -545,6 +593,7 @@ function updateCard(row, item, options) {
     item.type === 'suggestion' ? {reason: value.reason, repo: value.repo, paper: value.paper} : value.detail,
     approval ? value : {pi_reason: plainPiText(value.reason), pi_outcome: HIRE_RESULT});
   renderQuestions(p.questions, approval ? value : null);
+  renderStorage(p.storage, approval ? value : null);
   renderAssumptions(p.assumptions, approval ? value : null);
   p.timing.textContent = approval ? timingText(value, options) : '';
   p.note.placeholder = value.kind === 'question' ? (p.questions._questions?.length
@@ -562,15 +611,22 @@ function updateCard(row, item, options) {
   const answers = approval && clarifyQuestions(value).length > 0;
   p.approve.textContent = item.type === 'suggestion' ? '채용하기' : evidence ? '증거 승인' : value.kind === 'clarify' || (value.kind === 'question' && answers) ? '답하고 진행' : scope ? '진행' : '승인';
   p.deny.textContent = item.type === 'suggestion' ? '나중에' : evidence ? '거부' : scope ? '중단' : '거절';
+  if (value.kind === 'result_storage') {p.approve.textContent = '선택하고 진행'; p.deny.textContent = '로컬만';}
+  if (value.kind === 'result_publish') {p.approve.textContent = '확인했어요 · 올리기'; p.deny.textContent = '로컬에만 남기기';}
   // CP2 수정 요청 re-plans through a new CP1 until the continuation cap, then ends the request like 거부 (R10).
   p.revise.textContent = reviseContinues(value) ? '수정 요청' : '수정 요청(요청 끝남)'; p.revise.hidden = !(evidence || planRevise);
   p.approve.dataset.act = item.type === 'suggestion' ? 'hire' : 'approve';
   p.revise.dataset.act = 'revise';
   p.deny.dataset.act = item.type === 'suggestion' ? 'later' : 'deny';
   const disabled = options.disabled ? options.disabled(value, item.type) : false;
-  p.approve.disabled = disabled; p.revise.disabled = disabled; p.deny.disabled = disabled;
+  const reviewPending = value.kind === 'result_publish' && request?.pi_review_pending === true && !request.pi_reviewed_at;
+  p.approve.disabled = disabled || reviewPending; p.revise.disabled = disabled; p.deny.disabled = disabled;
+  if (reviewPending) {
+    p.consequence.textContent = '보고서 검토·확인을 완료하면 정리본을 올릴 수 있어요.';
+    p.consequence.hidden = false;
+  }
   if (options.onDecision) {
-    p.approve.onclick = () => options.onDecision(value, true, decisionNote(row, true), item.type, decisionChoice(value, 'approve'));
+    p.approve.onclick = () => options.onDecision(value, true, decisionNote(row, true), item.type, decisionChoice(value, 'approve'), storageChoice(row));
     p.revise.onclick = () => options.onDecision(value, false, decisionNote(row, false), item.type, decisionChoice(value, 'revise'));
     p.deny.onclick = () => options.onDecision(value, false, decisionNote(row, false), item.type, decisionChoice(value, 'deny'));
   }

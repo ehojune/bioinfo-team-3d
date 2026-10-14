@@ -381,3 +381,39 @@ async def test_cp4_accept_rebuilds_existing_report_only_bundle(tmp_path, monkeyp
     finally:
         for timer in hub.final_review_timers.values():
             timer.cancel()
+
+
+@pytest.mark.asyncio
+async def test_cp4_accept_wakes_recall_and_publishes_editor_after_review(tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    fake = await draft_hub()
+    hub = persisted(tmp_path, fake.requests['r'])
+    hub.s.runner.workspace_root = str(tmp_path / 'runs')
+    hub.s.github.auto_publish_results = True
+    req = hub.requests['r']
+    req['text'] = 'checkpoint recall integration'
+    req['result_storage'] = {'mode': 'existing', 'repo': 'owner/study', 'status': 'selected'}
+    upload = AsyncMock()
+    monkeypatch.setattr(hub.result_storage, 'upload', upload)
+    # CP4 draft is neither a completed search hit nor a publishable edition.
+    hub._commit_terminal_record('r', 'request.completed', {'ok': True})
+    assert 'r' not in hub.result_storage.tasks
+    await hub.knowledge.drain()
+    assert not hub.knowledge.search('checkpoint')
+    upload.assert_not_awaited()
+    hub.knowledge.wake.clear()
+    try:
+        hub.review_done('r', **target(req))
+        assert hub.knowledge.wake.is_set()
+        assert hub.store.get('knowledge_pending', 'r')
+        await hub.result_storage.tasks['r']
+        upload.assert_awaited_once()
+        assert req['result_storage']['status'] == 'published'
+        assert req['pi_reviewed_at'] == req['research_contract']['final_receipt']['decided_at']
+        await hub.knowledge.drain()
+        assert hub.knowledge.search('checkpoint')[0]['request_id'] == 'r'
+    finally:
+        await hub.result_storage.close()
+        for timer in hub.final_review_timers.values():
+            timer.cancel()

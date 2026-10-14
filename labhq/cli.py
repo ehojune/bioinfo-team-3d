@@ -1396,6 +1396,8 @@ def main(argv: list[str] | None = None) -> None:
     review.add_argument("--sha256", help="CP4 target hash shown in the report card")
     review.add_argument("--reject", action="store_true", help="reject this CP4 draft")
     sub.add_parser("status", help="show runners, running requests and pending approvals")
+    recall = sub.add_parser("recall", help="search past requests in this gateway (2+ characters, at most 5 hits)")
+    recall.add_argument("query")
     doctor = sub.add_parser("doctor", help="check runner capabilities without starting agents")
     doctor.add_argument("--json", action="store_true", help="write state_dir/capabilities.json")
     doctor.add_argument("--network", action="store_true", help="check public data source reachability")
@@ -1693,6 +1695,11 @@ def main(argv: list[str] | None = None) -> None:
         print(f"승인 대기: {len(approvals)}")
         for approval in approvals:
             print(f"  {approval['id']} [{approval['kind']}] {approval['summary']}")
+    elif args.cmd == "recall":
+        if not 2 <= len(args.query.strip()) <= 200:
+            p.error("recall query must contain 2 to 200 characters")
+        for hit in _api(s, "GET", "/api/knowledge/search", params={"q": args.query}):
+            print(f"{hit['request_id']} ({hit['source']})\n{hit['body']}\n")
     elif args.cmd == "review-done":
         target = ({"revision": args.revision, "target_sha256": args.sha256,
                    "decision": "rejected" if args.reject else "accepted"}

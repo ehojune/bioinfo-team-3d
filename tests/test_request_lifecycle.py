@@ -72,27 +72,32 @@ DENIED = {"approved": False, "note": ""}
 # ----- R5: an unanswered PI decision parks the request; it never ends as a deny -----
 
 @pytest.mark.asyncio
-async def test_pi_decision_cards_outlive_the_gate_timeout_and_park_the_request(tmp_path):
+async def test_pi_decision_cards_outlive_the_gate_timeout_and_park_active_requests(tmp_path):
     s = _settings(tmp_path)
     s.policy.approvals.timeout_s = 1  # the gate timeout; it used to end every card below after one second
     hub = Hub(s)
     kinds = sorted(PI_DECISION_KINDS - {"resume"})  # a resume card has no waiter; tested below
     for kind in kinds:
         _request(hub, f"r_{kind}")
+        if kind == "result_publish":
+            hub.requests[f"r_{kind}"]["status"] = "done"
+            hub.review_done(f"r_{kind}")
     waits = {kind: asyncio.create_task(hub.request_approval(kind, f"{kind}?", f"r_{kind}")) for kind in kinds}
     await asyncio.sleep(1.4)
     assert not [kind for kind, wait in waits.items() if wait.done()]
-    assert {kind: hub.requests[f"r_{kind}"]["status"] for kind in kinds} == {kind: "waiting_pi" for kind in kinds}
+    assert {kind: hub.requests[f"r_{kind}"]["status"] for kind in kinds} == {
+        kind: "done" if kind == "result_publish" else "waiting_pi" for kind in kinds}
     cards = {entry["approval"]["request_id"]: aid for aid, entry in hub.approvals.items()}
     for kind in kinds:
         assert hub.approvals[cards[f"r_{kind}"]]["approval"]["timeout_s"] == s.policy.approvals.pi_decision_timeout_s
         await hub.resolve_approval(cards[f"r_{kind}"], True, "진행")
     decisions = {kind: await asyncio.wait_for(wait, 1) for kind, wait in waits.items()}
     assert all(decision["approved"] and "state" not in decision for decision in decisions.values())
-    assert {hub.requests[f"r_{kind}"]["status"] for kind in kinds} == {"running"}
+    assert {kind: hub.requests[f"r_{kind}"]["status"] for kind in kinds} == {
+        kind: "done" if kind == "result_publish" else "running" for kind in kinds}
     assert not any(hub.requests[f"r_{kind}"].get("pi_waits") for kind in kinds)
     statuses = [e["data"]["status"] for e in hub.events if e["type"] == "request.status"]
-    assert statuses.count("waiting_pi") == len(kinds) and statuses.count("running") == len(kinds)
+    assert statuses.count("waiting_pi") == len(kinds) - 1 and statuses.count("running") == len(kinds) - 1
 
 
 @pytest.mark.asyncio

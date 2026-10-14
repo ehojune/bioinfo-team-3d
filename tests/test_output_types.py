@@ -29,8 +29,9 @@ CANARY = "CANARY-7f3a-secret"
 # related to output types. #458 makes the environment owner's venv interpreter explicit; the exact digest below
 # changes for that planned behavior while output-type declarations still add nothing when off.
 # #557 adds the shared Korean PI prose rule to card questions; the schema and output-type switch stay unchanged.
-PLAN_SCHEMA_SHA = "a70326fd571c005ce9e956fcf7fe3a6217cf489f4aba3c780a03a40ca68bb284"
-PLAN_PROMPT_SHA = "7278457f52a1aaa4e3e6e330c5ade51622a9446c86aedac0934ee68220b466de"
+# #549 adds optional paper_skills and its selection rule; output-type off/on behavior is unchanged.
+PLAN_SCHEMA_SHA = "781b4143c58cac2affd3b7d85a5470f6aed1d240608834093a75a7e5a6caac51"
+PLAN_PROMPT_SHA = "67df0eda5cd75d5df3990effd0aebd4c152f052a9066f26bfa4e3bf51999184d"
 PROMPT_ARGS = dict(request="REQ", roster="ROSTER", capabilities="CAPS", briefing="BRIEF", max_steps=3,
                    question_rule=QUESTION_RULE, lab_scope="LAB", topics_rule=topics.prompt_rule(V))
 
