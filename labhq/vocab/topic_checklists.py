@@ -183,19 +183,25 @@ def _placeholder(reason: str) -> bool:
     return "".join(ch for ch in reason.lower() if ch.isalnum()) in PLACEHOLDER_REASONS
 
 
-def _answer_values(body: dict[str, Any], item: ChecklistItem) -> list[tuple[str, Any]]:
-    """Bare answer, or one qualified answer slot per topic sharing the id."""
+def _answer_slots(body: dict[str, Any], item: ChecklistItem) -> list[tuple[str, str, Any]]:
+    """(answer key, topic, answer) for each place the plan answers a check: one bare slot (topic ""), or one
+    qualified slot per topic sharing the id when the plan answered them separately."""
     if item.id in body:
-        return [(item.id, body[item.id])]
+        return [(item.id, "", body[item.id])]
     topics = item.topic.split(",")
     if len(topics) == 1:
-        return [(item.id, None)]
-    values = []
+        return [(item.id, "", None)]
+    slots = []
     for topic in topics:
         keys = [key for key in (f"{topic}.{item.id}", f"{topic}/{item.id}") if key in body]
         key = keys[0] if len(keys) == 1 else f"{topic}.{item.id}"
-        values.append((key, body.get(key) if len(keys) == 1 else None))
-    return values
+        slots.append((key, topic, body.get(key) if len(keys) == 1 else None))
+    return slots
+
+
+def _answer_values(body: dict[str, Any], item: ChecklistItem) -> list[tuple[str, Any]]:
+    """Bare answer, or one qualified answer slot per topic sharing the id."""
+    return [(key, value) for key, _, value in _answer_slots(body, item)]
 
 
 def answer_errors(answers: Any, required: list[ChecklistItem], step_ids: list[str]) -> list[str]:
@@ -287,55 +293,123 @@ REVIEW_STATUS_LABELS = {"done": "했다", "partly": "일부", "not_done": "안 �
 REVIEW_MISSES = ("partly", "not_done")
 
 
-def _id_aliases(item: ChecklistItem) -> set[str]:
-    """Spellings a reviewer may use for a check: the bare id, or ``topic.id`` / ``topic/id`` per declared topic."""
-    return {item.id, *(f"{topic}{sep}{item.id}" for topic in item.topic.split(",") for sep in (".", "/"))}
+def _id_aliases(item: ChecklistItem) -> dict[str, str]:
+    """``{spelling: topic}`` a reviewer may use for a check: the bare id (topic ""), or ``topic.id`` / ``topic/id``.
+
+    The topic is kept only when several topics share the id: a lone topic's qualified spelling is the bare check."""
+    topics = item.topic.split(",")
+    return {item.id: "", **{f"{topic}{sep}{item.id}": topic if len(topics) > 1 else ""
+                            for topic in topics for sep in (".", "/")}}
 
 
-def review_verdicts(rows: Any, required: list[ChecklistItem]) -> dict[str, tuple[str, str]]:
-    """``{item id: (status, evidence)}`` from the reviewer's ``checklist`` rows, for the required checks only.
+def review_verdicts(rows: Any, required: list[ChecklistItem]) -> dict[tuple[str, str], tuple[str, str]]:
+    """``{(item id, topic): (status, evidence)}`` from the reviewer's ``checklist`` rows, for the required checks only.
 
-    A row naming no required check is dropped. When rows repeat a check, the worse status wins, so a miss is
-    never hidden by a second ``done``."""
+    ``topic`` is "" for a bare-id row (and for a check that only one topic has). A ``topic.id`` or ``topic/id`` row
+    of a shared id keeps its topic, so a plan that answered each topic differently can match each verdict to its own
+    answer instead of one merged verdict (PR #600 review). A row naming no required check is dropped. When rows
+    repeat a check, the worse status wins, so a miss is never hidden by a second ``done``."""
     if not isinstance(rows, list):
         return {}
-    by_alias = {alias: item.id for item in required for alias in _id_aliases(item)}
-    found: dict[str, tuple[str, str]] = {}
+    by_alias = {alias: (item.id, topic) for item in required for alias, topic in _id_aliases(item).items()}
+    found: dict[tuple[str, str], tuple[str, str]] = {}
     for row in rows:
         if not isinstance(row, dict) or not isinstance(row.get("id"), str):
             continue
-        item_id = by_alias.get(row["id"].strip())
+        key = by_alias.get(row["id"].strip())
         status, evidence = row.get("status"), row.get("evidence")
-        if item_id is None or status not in REVIEW_STATUSES:
+        if key is None or status not in REVIEW_STATUSES:
             continue
-        prior = found.get(item_id)
+        prior = found.get(key)
         if prior is None or REVIEW_STATUSES.index(status) > REVIEW_STATUSES.index(prior[0]):
-            found[item_id] = (status, evidence.strip() if isinstance(evidence, str) else "")
+            found[key] = (status, evidence.strip() if isinstance(evidence, str) else "")
     return found
+
+
+@dataclass(frozen=True)
+class CheckSlot:
+    """One answer of the plan to a check, with the reviewer's verdict on it.
+
+    A bare answer (or a check of one topic) is one slot. A shared id the plan answered per topic is one slot per
+    topic, each with its own answer, steps and verdict."""
+    name: str                # topic/id as shown to the PI
+    topic: str               # "" for a bare answer
+    answer: str              # the plan's answer text, "" when it gave none
+    steps: tuple[str, ...]   # the step ids the answer names (``step:<id>``)
+    status: str              # "" when the reviewer gave no verdict for it
+    evidence: str
+    shared: bool = False     # the verdict is the reviewer's bare-id row, which names no topic
+
+
+def _worst(verdicts: list[tuple[str, str]]) -> tuple[str, str]:
+    return max(verdicts, key=lambda verdict: REVIEW_STATUSES.index(verdict[0]), default=("", ""))
+
+
+def check_slots(answers: Any, item: ChecklistItem,
+                verdicts: Mapping[tuple[str, str], tuple[str, str]]) -> list[CheckSlot]:
+    """The slots of one check. A bare answer takes the worst verdict among the reviewer's rows for the id, since the
+    plan gave one answer for all of them. A topic's own answer takes that topic's row; without one it takes the
+    reviewer's bare-id row (``shared``) and never another topic's verdict."""
+    body = answers if isinstance(answers, dict) else {}
+    bare = verdicts.get((item.id, ""))
+    slots = []
+    for _, topic, value in _answer_slots(body, item):
+        text = value.strip() if isinstance(value, str) else ""
+        match = ANSWER.fullmatch(text)
+        steps = (match.group(2),) if match and match.group(2) else ()
+        if topic:
+            own = verdicts.get((item.id, topic))
+            status, evidence = own or bare or ("", "")
+            slots.append(CheckSlot(f"{topic}/{item.id}", topic, text, steps, status, evidence,
+                                   shared=own is None and bare is not None))
+        else:
+            status, evidence = _worst([verdict for (verdict_id, _), verdict in verdicts.items()
+                                       if verdict_id == item.id])
+            slots.append(CheckSlot(label(item), "", text, steps, status, evidence))
+    return slots
 
 
 def answered_steps(answers: Any, item: ChecklistItem) -> list[str]:
     """The step ids the plan answered a check with (``step:<id>``), once each, in answer order."""
-    body = answers if isinstance(answers, dict) else {}
     steps: list[str] = []
-    for _, value in _answer_values(body, item):
-        match = ANSWER.fullmatch(value.strip()) if isinstance(value, str) else None
-        if match and match.group(2) and match.group(2) not in steps:
-            steps.append(match.group(2))
+    for slot in check_slots(answers, item, {}):
+        steps += [step for step in slot.steps if step not in steps]
     return steps
 
 
-def review_misses(answers: Any, required: list[ChecklistItem], rows: Any) \
-        -> list[tuple[ChecklistItem, list[str], str, str]]:
-    """(check, owning steps, status, evidence) for each check the plan answered with a step that the reviewer found
-    only partly or not done. assumption and not_applicable answers are not here: the plan already said why."""
+@dataclass(frozen=True)
+class ReviewMiss:
+    """A check the plan answered with a step that the reviewer found only partly or not done."""
+    item: ChecklistItem
+    name: str                # topic/id of each answer the verdict covers, joined by ", "
+    topics: tuple[str, ...]  # those answers' topics; empty for a bare answer
+    steps: tuple[str, ...]   # the steps those answers name
+    status: str
+    evidence: str
+
+
+def review_misses(answers: Any, required: list[ChecklistItem], rows: Any) -> list[ReviewMiss]:
+    """Each check the plan answered with a step that the reviewer found only partly or not done.
+
+    A miss belongs to the step answer of the topic whose verdict it is, so a shared id the plan answered per topic
+    can give one miss per topic. A bare-id reviewer row is one verdict: it covers the topics without a row of their
+    own in a single miss that names all their steps. assumption and not_applicable answers are not here: the plan
+    already said why."""
     verdicts = review_verdicts(rows, required)
     found = []
     for item in required:
-        status, evidence = verdicts.get(item.id, ("", ""))
-        steps = answered_steps(answers, item)
-        if status in REVIEW_MISSES and steps:
-            found.append((item, steps, status, evidence))
+        misses = [slot for slot in check_slots(answers, item, verdicts)
+                  if slot.status in REVIEW_MISSES and slot.steps]
+        shared = [slot for slot in misses if slot.shared]
+        for slot in misses:
+            if slot.shared and slot is not shared[0]:
+                continue  # inside the shared miss
+            group = shared if slot.shared else [slot]
+            found.append(ReviewMiss(
+                item, ", ".join(member.name for member in group),
+                tuple(member.topic for member in group if member.topic),
+                tuple(dict.fromkeys(step for member in group for step in member.steps)),
+                slot.status, slot.evidence))
     return found
 
 
@@ -344,30 +418,30 @@ def _table_cell(text: Any, limit: int = 120) -> str:
     return cell if len(cell) <= limit else cell[:limit - 1].rstrip() + "…"
 
 
-def report_table(answers: Any, required: list[ChecklistItem], rows: Any) -> str:
-    """The appendix table, one line per required check: item, owning step, reviewer verdict, evidence (#586).
+def report_table(answers: Any, required: list[ChecklistItem], rows: Any, *, owner: str | None = None) -> str:
+    """The appendix table: item, owning step, reviewer verdict, evidence (#586). One line per check, and one per
+    topic answer when the plan answered a shared id per topic (PR #600 review).
 
     A check answered assumption shows 가정 and a not_applicable one 해당 없음 (no verdict: nothing was left undone);
-    both fall back to the plan's reason when the reviewer gave no evidence. Without a reviewer row the verdict is -."""
+    both fall back to the plan's reason when the reviewer gave no evidence. Without a reviewer row the verdict is -.
+    ``owner`` replaces the step ids of a step-answered check: the solo route reviews one direct result, and the
+    plan's steps never ran."""
     if not required:
         return ""
-    body = answers if isinstance(answers, dict) else {}
     verdicts = review_verdicts(rows, required)
     lines = ["| 항목 | 담당 단계 | 리뷰 판정 | 근거 |", "| --- | --- | --- | --- |"]
     for item in required:
-        steps = answered_steps(body, item)
-        values = [value.strip() for _, value in _answer_values(body, item) if isinstance(value, str)]
-        reason = next((r for value in values if (r := skip_reason(value))), "")
-        if steps:
-            owner = ", ".join(steps)
-        elif any(value.startswith("assumption:") for value in values):
-            owner = "가정"
-        elif any(value.startswith("not_applicable:") for value in values):
-            owner = "해당 없음"
-        else:
-            owner = "-"
-        status, evidence = verdicts.get(item.id, ("", ""))
-        verdict = "-" if owner == "해당 없음" or not status else REVIEW_STATUS_LABELS[status]
-        lines.append("| " + " | ".join(_table_cell(value) for value in (
-            label(item), owner, verdict, evidence or (reason if not steps else "") or "-")) + " |")
+        for slot in check_slots(answers, item, verdicts):
+            reason = skip_reason(slot.answer) or ""
+            if slot.steps:
+                cell = owner or ", ".join(slot.steps)
+            elif slot.answer.startswith("assumption:"):
+                cell = "가정"
+            elif slot.answer.startswith("not_applicable:"):
+                cell = "해당 없음"
+            else:
+                cell = "-"
+            verdict = "-" if cell == "해당 없음" or not slot.status else REVIEW_STATUS_LABELS[slot.status]
+            lines.append("| " + " | ".join(_table_cell(value) for value in (
+                slot.name, cell, verdict, slot.evidence or (reason if not slot.steps else "") or "-")) + " |")
     return "\n".join(lines)
