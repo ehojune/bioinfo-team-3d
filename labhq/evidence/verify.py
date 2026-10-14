@@ -12,6 +12,38 @@ slow authority leaves sources unverified instead of holding the report for minut
 
 from __future__ import annotations
 
+
+def final_checkpoint_problems(request: dict) -> list[str]:
+    """Legacy requests have no CP4 obligation; versioned opt-in requests need a matching receipt."""
+    from ..research import final_checkpoint as cp4
+
+    contract = request.get("research_contract") or {}
+    if not cp4.enabled(request):
+        return []
+    problems = cp4.receipt_errors(request)
+    if contract.get("schema_version") != 2 or contract.get("final_checkpoint") is not True:
+        problems.append("CP4 contract version or opt-in flag is missing")
+    if request.get("status") != "done":
+        problems.append("CP4 request is not accepted")
+    return problems
+
+
+def final_bundle_problems(record: dict) -> list[str]:
+    """Validate the immutable, pre-path-rewrite draft kept in a portable bundle."""
+    try:
+        draft = record["draft"]
+        content = draft["content"]
+        request = {"id": record["request_id"], "status": "done", **content,
+                   "plan": {"steps": [{"id": sid} for sid in content["claims"]]},
+                   "results": {sid: {"structured": ledger} for sid, ledger in content["claims"].items()},
+                   "research_contract": {"schema_version": record["contract_version"], "final_checkpoint": True,
+                       **{k: content[k] for k in ("plan_sha256", "review", "report_check")},
+                       "checkpoints": {"cp2": content["cp2"]}, "final_draft": draft,
+                       "final_receipt": record.get("receipt")}}
+        return final_checkpoint_problems(request)
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return ["CP4 bundle record is malformed"]
+
 import asyncio
 import re
 import time

@@ -113,7 +113,7 @@ claim은 지지·반박으로 연결한 출처가 모두 `found`일 때만 `veri
 | CP1 계획 | 연구 실행 전 | 질문·가설, plan hash, 성공/중단 기준, 비용·데이터 경계, 승인 뒤 집행 상한(`budget_usd`), 승인·수정 요청(메모 필수, 이전 계획과 메모로 새 요청이 다시 계획; 단계가 돌기 전 첫 CP1에만)·거절 |
 | CP2 증거 | 연구 단계 실행 뒤, 리뷰·보고서 전 | claim별 상태·근거 종류 표, 거부된 근거·근거 잃은 claim, 승인·수정 요청(메모 필수, 새 CP1로 이어 감)·거부 선택 |
 | CP3 선택 | 후보·방법 선택 시 | 공통 기준, 대안·민감도, 최소 판별 실험·비용 |
-| CP4 수용 | 감사와 최종 초안 뒤 | 현재 권고, claim/audit/report hash, 남은 공백과 이견 |
+| CP4 수용 | 감사와 최종 초안 뒤(`final_checkpoint` opt-in) | 기존 검토 완료 카드에서 초안 revision·claim/audit/report hash를 수용·거부. receipt 전에는 `review_pending` |
 
 receipt에는 gate, 요청, 대상 revision/hash, 결정자, 시각, 결정과 위임 범위를 적는다. 질문 답변·직원 상담·resume 승인·예산/HPC/전송 승인은 연구 승인을 대신하지 않는다.
 

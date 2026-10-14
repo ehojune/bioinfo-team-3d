@@ -660,6 +660,19 @@ def verify_bundle_copy(root: Path, expected_request_id: str | None = None) -> di
     if "MANIFEST.tsv" not in files:
         problems.append("RO-Crate에 MANIFEST.tsv File entity가 없습니다")
     expected_inputs, recorded = _expected_input_values(root)
+    from .evidence.verify import final_bundle_problems
+    try:
+        claims = json.loads(_plain_file(root, "claims.json").read_text(encoding="utf-8")) if "claims.json" in manifest else {}
+        if claims.get("final_checkpoint") is True or "final_checkpoint.json" in manifest:
+            final = json.loads(_plain_file(root, "final_checkpoint.json").read_text(encoding="utf-8"))
+            problems.extend(f"CP4: {problem}" for problem in final_bundle_problems(final))
+            if final.get("request_id") != expected_request_id:
+                problems.append("CP4 bundle request ID mismatch")
+            if (claims.get("final_receipt") != final.get("receipt") or
+                    (claims.get("final_draft") or {}).get("target_sha256") != (final.get("draft") or {}).get("target_sha256")):
+                problems.append("CP4 claims and draft receipt mismatch")
+    except (OSError, UnicodeError, ValueError, AttributeError):
+        problems.append("CP4 claims or draft record is missing or unreadable")
     report["external_input_hashes"] = recorded
     for identifier, (name, sha256) in expected_inputs.items():
         entity = by_id.get(identifier)

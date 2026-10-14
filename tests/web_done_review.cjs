@@ -99,3 +99,24 @@ test('snapshot review state wins over old terminal replay and failure uses ackno
   assert.equal(state.needsPiReview(office.req('r')),false);
   assert.equal(effects.filter(e=>e.type==='toast').length,0);
 });
+
+test('CP4 uses one report card, binds both choices and replays acceptance', async () => {
+  const office=state.createOfficeState(), final={revision:1,target_sha256:'a'.repeat(64),deadline_at:200};
+  office.apply({type:'request.completed',request_id:'r',data:{ok:true,status:'review_pending',
+    report:'Final draft',pi_review_pending:true,final_checkpoint:final}});
+  assert.equal(office.req('r').status,'review_pending');
+  assert.equal(state.requestStatusText(office.req('r')),'보고서 검토 대기');
+  const ui=await decide, container=new Element(), calls=[];
+  const rows=ui.syncReviewCards(container,[office.req('r')],{onDone:(id,target)=>calls.push([id,target])});
+  assert.equal(rows.length,1);
+  const nodes=el=>[el,...el.children.flatMap(nodes)], buttons=nodes(rows[0]).filter(c=>c.tagName==='button');
+  assert.deepEqual(buttons.map(b=>b.textContent),['보고서 열기','검토 완료','수용 거부']);
+  buttons[1].onclick();buttons[2].onclick();
+  assert.deepEqual(calls.map(c=>c[1]),[
+    {decision:'accepted',revision:1,target_sha256:final.target_sha256},
+    {decision:'rejected',revision:1,target_sha256:final.target_sha256}]);
+  office.apply({type:'request.reviewed',request_id:'r',data:{status:'done',pi_reviewed_at:100,
+    final_checkpoint:{...final,receipt:{decision:'accepted'}}}});
+  assert.equal(state.needsPiReview(office.req('r')),false);
+  assert.equal(office.req('r').status,'done');
+});

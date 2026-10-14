@@ -1,0 +1,8 @@
+.shutdown-dialog{width:min(560px,calc(100% - 32px));max-height:85vh;overflow:auto;border:1px solid var(--line);border-radius:16px;padding:24px;background:var(--paper);color:var(--ink);font:inherit}
+.shutdown-dialog::backdrop{background:#0006}
+.shutdown-dialog h2{font-size:20px;margin-top:0}
+.shutdown-dialog p{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}
+.shutdown-actions{display:flex;gap:8px;flex-wrap:wrap}
+.shutdown-actions button{font:inherit;border:1px solid var(--line);border-radius:8px;min-height:44px;padding:8px 12px;background:var(--panel,#faf8f1);color:var(--ink);cursor:pointer}
+.shutdown-actions button:disabled{opacity:.45;cursor:not-allowed}
+.shutdown-actions button:focus-visible{outline:3px solid #c88651;outline-offset:2px}
