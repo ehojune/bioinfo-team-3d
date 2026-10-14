@@ -21,6 +21,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
+from . import proc_tree
 from .costs import cost_detail, cost_text
 from .facilities.signatures import problem_text
 from .request_status import is_terminal_request, request_status_label, request_display_label
@@ -697,18 +698,20 @@ def _wait_for_process_end(pid: int, created: str, timeout: float) -> bool:
 
 def _terminate_tree(pid: int, *, created: str | None = None) -> None:
     if sys.platform == "win32":
-        # taskkill writes in the OEM code page (cp949 on Korean Windows) while labhq.cmd sets PYTHONUTF8=1: a bare
-        # text=True decodes as UTF-8, kills both reader threads with a traceback and returns None (trial-ready 2026-10-12).
-        result = subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], capture_output=True,
-                                encoding="oem", errors="replace", timeout=15)
-        if result.returncode:
+        # Not `taskkill /T`: it follows parent PIDs Windows may have reused. After `up` exits the launchers keep a stale
+        # parent PID, and a tree collected by it ended the PI's gateway and runner together (#589). The helper keeps
+        # only descendants created no earlier than their parent and re-checks each one's creation time as it kills.
+        identity = proc_tree.parse_created(created)
+        if created is not None and identity is None:
+            raise OSError(f"PID {pid}의 생성 시각 형식({created})을 읽을 수 없어 종료하지 않음")
+        result = proc_tree.kill_tree(pid, created=identity)
+        if pid in result.failed:
             try:
                 missing = _process_created(pid) is None
             except ProcessIdentityError:
                 missing = False
             if not missing:
-                detail = " ".join(((result.stderr or "") + " " + (result.stdout or "")).split())
-                raise OSError(detail or f"taskkill exit {result.returncode}")
+                raise OSError(result.failed[pid])
         return
     try:
         os.killpg(pid, signal.SIGTERM)
