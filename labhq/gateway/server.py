@@ -1226,7 +1226,8 @@ class Hub:
                     # A research continuation re-runs step ids of an earlier round under a new CP1 (#90).
                     prior_meta.get("research_round") == task.meta.get("research_round") and
                     # A consult belongs to one ask; another ask's consult is not its prior attempt.
-                    prior_meta.get("ask_id") == task.meta.get("ask_id"))
+                    prior_meta.get("ask_id") == task.meta.get("ask_id") and
+                    prior_meta.get("recruit_identity") == task.meta.get("recruit_identity"))
 
     @staticmethod
     def _same_runner_generation(entry: dict, runner_id: str | None, incarnation: str | None) -> bool:
@@ -1324,6 +1325,11 @@ class Hub:
                 self._schedule_resume_expiry(aid)
 
     def resume_agents(self, rid: str) -> set[str]:
+        from ..recruit.planning import pending_receipt_agents
+
+        return self._resume_agents(rid) | pending_receipt_agents(self.requests[rid])
+
+    def _resume_agents(self, rid: str) -> set[str]:
         req = self.requests[rid]
         if req.get("mode") == "direct":
             return set() if self.completed_direct_result(rid) else {req["agent_id"]}

@@ -27,8 +27,7 @@ def paper_key(value):
     return paper_skills.paper_id(value) or str(value or "").strip().rstrip("/").casefold()
 
 
-async def prepare_plan(plan, rid, hub, run):
-    plan = copy.deepcopy(plan)
+def _proposals(plan):
     steps = {s["id"]: s for s in plan.get("steps", [])}
     proposals = []
     for row in plan.get("recruit") or []:
@@ -41,18 +40,40 @@ async def prepare_plan(plan, rid, hub, run):
             existing["step_ids"] = list(dict.fromkeys(existing["step_ids"] + ids))
         else:
             proposals.append({**row, "step_ids": ids})
+    return proposals
+
+
+def _batch_key(proposals):
+    return hashlib.sha256(json.dumps(proposals, sort_keys=True).encode()).hexdigest()
+
+
+def pending_receipt_agents(req):
+    """Only the current, unfrozen draft's receipts gate restart readiness."""
+    if req.get("research_contract") or req.get("results"):
+        return set()
+    batch = (req.get("plan_recruitment") or {}).get(_batch_key(_proposals(req.get("plan") or {})), {})
+    return {row["agent_id"] for row in batch.get("results", {}).values()
+            if row.get("status") == "active" and row.get("agent_id")}
+
+
+async def prepare_plan(plan, rid, hub, run):
+    plan = copy.deepcopy(plan)
+    steps = {s["id"]: s for s in plan.get("steps", [])}
+    proposals = _proposals(plan)
     if not proposals:
         return plan
     req = hub.requests[rid]
     # The approval and each receipt survive a restart between hiring and CP1.
-    key = hashlib.sha256(json.dumps(proposals, sort_keys=True).encode()).hexdigest()
+    key = _batch_key(proposals)
     state = req.setdefault("plan_recruitment", {})
     batch = state.setdefault(key, {"results": {}})
 
     async def dispatch(kind, payload=None):
+        identity = key + ":" + paper_key((payload or {}).get("paper") or (payload or {}).get("repo"))
         task = Task(agent_id=hub.s.recruit.agent_id, request_id=rid, prompt="Prepare approved plan recruitment",
                     budget_usd=hub.s.recruit.max_budget_usd,
                     meta={"kind": kind, "recruit": payload or {}, "max_attempts": 1,
+                          "recruit_identity": identity,
                           "title": "계획 전 파견직 채용", "activate_on_pass": True})
         try:
             res = await run(task)

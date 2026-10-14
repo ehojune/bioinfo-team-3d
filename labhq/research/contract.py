@@ -434,6 +434,9 @@ for _system_field in ("pack_applicability", "warnings", "paper_skill_results", "
         RESEARCH_PLAN_SCHEMA["required"].remove(_system_field)
 if "topics" not in RESEARCH_PLAN_SCHEMA["required"]:
     RESEARCH_PLAN_SCHEMA["required"].append("topics")
+# Fresh proposals must assign work; the stored model still accepts legacy frozen plans.
+RESEARCH_PLAN_SCHEMA["$defs"]["RecruitProposal"]["required"].append("step_ids")
+RESEARCH_PLAN_SCHEMA["$defs"]["RecruitProposal"]["properties"]["step_ids"]["minItems"] = 1
 RESEARCH_RESULT_SCHEMA: dict[str, Any] = _without(ResearchResult.model_json_schema(), "ArtifactRef",
                                                   ("data_type", "format"))
 # What a research step's engine is held to: the result, or the same shape with empty ledger lists and the question

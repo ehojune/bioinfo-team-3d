@@ -242,3 +242,133 @@ async def test_interrupted_approval_does_not_open_a_second_hiring_card():
     assert len(cards) == 1
     assert final["steps"][0]["agent_id"] == "worker"
     assert final["recruit_results"][0]["status"] == "timed_out"
+
+
+@pytest.mark.asyncio
+async def test_recovery_does_not_reuse_another_paper_or_batch_receipt():
+    from labhq.gateway.server import Hub
+    from labhq.recruit.planning import prepare_plan
+    from tests.test_cso import FakeHub, result
+
+    entries = []
+    interrupted = False
+
+    async def reply(task):
+        nonlocal interrupted
+        if task.meta["kind"] == "recruit_check":
+            return result(task, structured={"status": "ready"})
+        if entries and not interrupted:
+            interrupted = True
+            raise asyncio.CancelledError()
+        for entry in entries:
+            if Hub._matches_recovery(task, entry):
+                return result(task, structured=entry["receipt"])
+        aid = "c_" + str(len(entries))
+        hub.agents[aid] = {"id": aid, "employment": "contract", "contract_status": "active"}
+        receipt = {"status": "active", "agent_id": aid}
+        entries.append({"request_id": "r", "kind": task.meta["kind"], "step_id": task.meta.get("step_id"),
+                        "payload": task.model_dump(mode="json"), "receipt": receipt})
+        return result(task, structured=receipt)
+
+    hub = FakeHub(reply)
+    hub.approve_budget = True
+    draft = {"recruit": [proposal(), proposal("PMID:87654321", ["s2"])], "steps": [
+        {"id": sid, "agent_id": "worker"} for sid in ("s1", "s2")]}
+    with pytest.raises(asyncio.CancelledError):
+        await prepare_plan(draft, "r", hub, reply)
+    final = await prepare_plan(draft, "r", hub, reply)
+    assert [step["agent_id"] for step in final["steps"]] == ["c_0", "c_1"]
+    draft["recruit"][0]["focus"] = "a revised method specification"
+    revised = await prepare_plan(draft, "r", hub, reply)
+    assert [step["agent_id"] for step in revised["steps"]] == ["c_2", "c_3"]
+
+
+@pytest.mark.parametrize("research", [False, True])
+@pytest.mark.parametrize("step_ids", [None, []])
+def test_new_recruit_schema_requires_target_steps(research, step_ids):
+    from jsonschema import Draft202012Validator
+    from labhq.orchestrator.cso import PLAN_SCHEMA
+    from labhq.research.contract import RESEARCH_PLAN_SCHEMA, ResearchPlan
+
+    schema = RESEARCH_PLAN_SCHEMA if research else PLAN_SCHEMA
+    plan = valid_plan()
+    row = proposal()
+    if step_ids is None:
+        row.pop("step_ids")
+    else:
+        row["step_ids"] = step_ids
+    plan["recruit"] = [row]
+    recruit_schema = {**schema["properties"]["recruit"], "$defs": schema.get("$defs", {})}
+    assert list(Draft202012Validator(recruit_schema).iter_errors(plan["recruit"]))
+    # Frozen legacy research plans still load without rewriting their canonical content.
+    if research and step_ids is None:
+        assert "step_ids" not in ResearchPlan.model_validate(plan).model_dump(mode="json")["recruit"][0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["team", "plan_only"])
+@pytest.mark.parametrize("reconnect", [True, False])
+async def test_resume_waits_for_active_recruit_receipt(tmp_path, mode, reconnect):
+    from labhq.gateway.server import Hub
+    from labhq.recruit.planning import prepare_plan
+
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    settings.gateway.resume_wait_s = 0.2
+    hub = Hub(settings)
+    hub.requests["r"] = {"id": "r", "status": "running", "mode": mode, "text": "reproduce",
+                         "plan": {"recruit": [proposal()], "steps": [{"id": "s1", "agent_id": "worker"}]}}
+
+    async def forbidden(task):
+        pytest.fail("saved hiring must not dispatch again")
+
+    import hashlib
+    import json
+    key = hashlib.sha256(json.dumps([proposal()], sort_keys=True).encode()).hexdigest()
+    hub.requests["r"]["plan_recruitment"] = {key: {"check": {"status": "ready"},
+        "approval": {"approved": True}, "results": {}}}
+    from labhq.recruit.planning import paper_key
+    batch = hub.requests["r"]["plan_recruitment"][key]
+    batch["results"] = {paper_key(proposal()["paper"]): {"status": "active", "agent_id": "c_paper"}}
+    hub.requests["r"]["plan_recruitment"]["old-batch"] = {
+        "results": {"old-paper": {"status": "active", "agent_id": "c_old"}}}
+    hub.save_request("r")
+    hub.store.close()
+    restored = Hub(settings)
+    resumed = None
+    called = []
+
+    async def run_request(rid, resume=False):
+        called.append(rid)
+        req = restored.requests[rid]
+        req["plan"] = await prepare_plan(req["plan"], rid, restored, forbidden)
+
+    restored.orchestrator.run_request = run_request
+    restored.runners["core"] = object()
+    for aid in ("worker", "cso", "sci_reviewer", "chief_of_staff", "precedent"):
+        restored.agent_runner[aid] = "core"
+    try:
+        resumed = asyncio.create_task(restored.resume_when_ready("r"))
+        await asyncio.sleep(0)
+        assert not called
+        assert restored.requests["r"]["status"] == "waiting_for_runner"
+        if reconnect:
+            restored.runners["hire"] = object()
+            restored.agent_runner["c_paper"] = "hire"
+            restored.agents["c_paper"] = {"id": "c_paper", "employment": "contract", "contract_status": "active"}
+        await asyncio.wait_for(resumed, 2)
+        req = restored.requests["r"]
+        if reconnect:
+            assert called == ["r"]
+            assert req["plan"]["steps"][0]["agent_id"] == "c_paper"
+            assert not req["plan"].get("warnings")
+        else:
+            assert not called and req["status"] == "interrupted"
+            assert req["plan_recruitment"][key]["results"][paper_key(proposal()["paper"])]["status"] == "active"
+    finally:
+        if resumed:
+            resumed.cancel()
+            await asyncio.gather(resumed, return_exceptions=True)
+        for timer in restored.resume_timers.values():
+            timer.cancel()
+        restored.store.close()
