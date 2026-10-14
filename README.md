@@ -30,9 +30,9 @@ labhq는 Claude Code와 Codex를 **연구소 직원**처럼 부리는 바이오�
 
 | 2.5D 사무실 (`/`) | 3D 사무실 (`/3d`) |
 |---|---|
-| ![2.5D 사무실: 요청 진행 그래프, 사내 메신저, 직원 책상](docs/media/office-25d.webp) | ![3D 종이숲 사무실: 직원 책상과 진행 중인 요청 패널](docs/media/office-3d.webp) |
+| ![2.5D 사무실 데모: 요청이 들어오면 직원이 일하고, 결정 카드를 승인하면 보고서가 나오는 약 13초 흐름](docs/media/office-25d.gif) | ![3D 종이숲 사무실: 직원 책상과 진행 중인 요청 패널](docs/media/office-3d.webp) |
 
-mock 데모(`labhq demo --web`)를 15초 동안 녹화한 화면입니다. 요청 하나가 CSO 계획, 승인, 단계 진행을 거쳐 끝납니다.
+mock 데모(`labhq demo --web`)입니다. 2.5D는 새 디자인으로 다시 녹화했습니다(약 13초). 요청 하나가 CSO 계획, 직원 작업, 결정 카드 승인, 보고서 확인으로 이어집니다.
 정지 화면: [2.5D](docs/media/office-25d.png) · [3D](docs/media/office-3d.png)
 
 ## 어떻게 일하나

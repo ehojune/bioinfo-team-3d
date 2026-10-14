@@ -23,10 +23,11 @@ const PROPS = {
   folder:'<path d="M48 115v-7h24l7 7h34v26H48ZM55 123h49M55 131h30"/>',
   leaf:'<path d="M80 142v-33M80 126q-27 0-25-23 25 0 25 23ZM80 132q27 0 25-23-25 0-25 23Z"/>',
   checklist:'<rect x="59" y="105" width="43" height="38" rx="3"/><path d="m65 116 4 4 7-9M82 116h13m-30 13 4 4 7-9M82 129h13"/>',
+  pen:'<rect x="52" y="106" width="42" height="36" rx="3"/><path d="M59 117h26M59 125h26M59 133h14M99 103l8-3 9 27-8 13-5-14ZM103 129l8 5"/>',
 };
 const ROLES = {chief_of_staff:'clipboard',cso:'clipboard',sci_reviewer:'checklist',biologist:'leaf',
   lit_scout:'book','bioinfo-agent':'laptop',data_steward:'folder',analyst:'laptop',engineer:'wrench',
-  qc_reviewer:'magnifier',recruiter:'clipboard',facilities:'tools'};
+  qc_reviewer:'magnifier',recruiter:'clipboard',editor:'pen',facilities:'tools'};
 export function officeCharacter(a, resolved) {
   // The facilities roster supplies hamster. Also cover its first pre-roster avatar.
   const kind = String(a?.id || '').toLowerCase() === 'facilities' ? 'hamster' : resolved;

@@ -24,7 +24,7 @@ function demoBannerText(status) {
   return `${base} · ${progress}`;
 }
 const STAFF_NAMES = {cso:'CSO(부엉이)', chief_of_staff:'비서실장', biologist:'생물학자', data_steward:'데이터 관리자', lit_scout:'문헌 조사원', analyst:'분석가', engineer:'엔지니어', qc_reviewer:'품질 리뷰어', sci_reviewer:'과학 리뷰어', recruiter:'채용 담당', facilities:'시설팀', colleague:'동료 직원', 'bioinfo-agent':'생물정보 직원', pi:'나', hpc:'HPC', github:'GitHub', system:'시스템'};
-const STAFF_CHARACTERS = {cso:'owl', chief_of_staff:'penguin', biologist:'bear', data_steward:'squirrel', lit_scout:'fox', analyst:'raccoon', engineer:'octopus', qc_reviewer:'hedgehog', sci_reviewer:'turtle', recruiter:'beaver', 'bioinfo-agent':'otter'};
+const STAFF_CHARACTERS = {cso:'owl', chief_of_staff:'penguin', biologist:'bear', data_steward:'squirrel', lit_scout:'fox', analyst:'raccoon', engineer:'octopus', qc_reviewer:'hedgehog', sci_reviewer:'turtle', recruiter:'beaver', editor:'beaver', 'bioinfo-agent':'otter'};
 function staffCharacter(a) {
   const id = String(a?.id || '').toLowerCase();
   return STAFF_CHARACTERS[id] || (id.startsWith('c_') ? 'chick' : a?.character && a.character !== 'paper-hat-chick' && a.character !== 'chick' ? a.character : 'neutral');
