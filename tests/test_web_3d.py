@@ -188,7 +188,9 @@ def test_office_in_node(filename, marker):
     if not node:
         pytest.skip('Node is optional')
     script = Path(__file__).with_name(filename)
-    result = subprocess.run([node, str(script)], capture_output=True, text=True, encoding='utf-8', timeout=30)
+    # The optional installed-browser check waits for two demo viewports (90s node:test budget).
+    timeout = 100 if filename == 'web_office_browser.cjs' else 30
+    result = subprocess.run([node, str(script)], capture_output=True, text=True, encoding='utf-8', timeout=timeout)
     assert result.returncode == 0, result.stdout + result.stderr
     assert marker in result.stdout, result.stdout + result.stderr
 

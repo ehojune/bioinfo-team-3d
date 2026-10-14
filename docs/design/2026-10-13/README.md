@@ -11,6 +11,7 @@ PI 선택은 **E + 캐릭터 1(작은 전신 + 직무 소품)**이다. [결정�
 | 비평·참고 분석 · 필요할 때만 조회 | [자료 안내](docs/reference/README.md) |
 | Claude가 관찰한 기존 화면 16장 | [shots](shots/) |
 | 이 PR의 전후 화면 | [comparison](comparison/) |
+| 사무실·캐릭터 전후 | [office-comparison](office-comparison/) |
 
 다른 시안과 비평은 보관용이다. 당시의 `UNVERIFIED`·캡처 실패 기록을 유지했고 개인 PC 경로만 가렸다. 외부 폰트·스크립트 URL은 원본 그대로다. 과거 보고서의 미생성 파일 링크는 당시 예정 기록이며 이 보관본에 포함되지 않는다.
 
