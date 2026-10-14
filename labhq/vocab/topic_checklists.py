@@ -378,6 +378,35 @@ def answered_steps(answers: Any, item: ChecklistItem) -> list[str]:
 
 
 @dataclass(frozen=True)
+class ReviewEntry:
+    """One line the reviewer is asked to answer: the id exactly as it must be written, with that line's own check."""
+    id: str      # the bare id, or ``topic.id`` for a shared id the plan answered per topic
+    check: str
+    why: str
+    topic: str   # "" for a bare id
+    answer: str  # the plan's answer to this line, "" when it gave none
+
+
+def review_entries(answers: Any, required: list[ChecklistItem],
+                   checklists: Mapping[str, list[ChecklistItem]]) -> list[ReviewEntry]:
+    """The lines the reviewer answers, in requirement order (PR #602 review).
+
+    A check the plan answered once (a bare id, or one declared topic) is one line under its bare id. A shared id the
+    plan answered per topic is one line per topic under ``topic.id``, with that topic's own check, because a reviewer
+    who is only shown the bare id answers it once and cannot say which topic's step missed it. check_slots reads
+    those qualified rows back, so the listing and the reading use the same slots."""
+    body = answers if isinstance(answers, dict) else {}
+    entries = []
+    for item in required:
+        slots = _answer_slots(body, item)
+        for _, topic, value in slots:
+            own = next((row for row in checklists.get(topic, []) if row.id == item.id), item) if topic else item
+            entries.append(ReviewEntry(f"{topic}.{item.id}" if topic else item.id, own.check, own.why, topic,
+                                       value.strip() if isinstance(value, str) else ""))
+    return entries
+
+
+@dataclass(frozen=True)
 class ReviewMiss:
     """A check the plan answered with a step that the reviewer found only partly or not done."""
     item: ChecklistItem

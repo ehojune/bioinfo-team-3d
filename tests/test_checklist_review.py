@@ -6,6 +6,7 @@ check, and the report never named one: only assumption and not_applicable answer
 from __future__ import annotations
 
 import copy
+import re
 
 import pytest
 
@@ -403,3 +404,114 @@ async def test_solo_report_attributes_the_checklist_to_the_solo_result_not_to_pl
     assert "| bulk_rna_seq/batch | 단독 처리 | 안 했다 | no batch term in the result |" in appendix
     assert "| bulk_rna_seq/pairing | 단독 처리 | 했다 | answer.md |" in appendix
     assert req["review"]["verdict"] == "accept"
+
+
+# ---------- the reviewer is shown the ids it must answer (PR #602 review) ----------
+
+LISTED_ID = re.compile(r"(?m)^- ([a-z][a-z0-9_.-]*): ")
+
+
+def listed_ids(prompt):
+    """The ids in the checklist block of a review prompt: a reviewer can only answer exactly what is listed there."""
+    block = prompt.split("Declared topic checklist and plan answers:", 1)[1].split("\nAnswers: ", 1)[0]
+    return LISTED_ID.findall(block)
+
+
+def listed_rows(prompt, not_done=()):
+    """A reviewer that follows CHECKLIST_REVIEW_RULE literally: one row per listed id, none for anything else."""
+    return [row(item_id, "not_done" if item_id in not_done else "done", f"{item_id} evidence")
+            for item_id in listed_ids(prompt)]
+
+
+def check_of(topic, item_id):
+    return next(item for item in CATALOG[topic] if item.id == item_id)
+
+
+def test_the_review_context_lists_a_shared_id_once_per_topic_with_its_own_check_and_answer():
+    context = cso.plan_review_context(per_topic_plan("step:S5", "step:S4"), CATALOG, None)
+    ids = listed_ids(context)
+    assert "bulk_rna_seq.batch" in ids and "single_cell_rna_seq.batch" in ids and "batch" not in ids
+    bulk, single_cell = check_of("bulk_rna_seq", "batch"), check_of("single_cell_rna_seq", "batch")
+    assert bulk.check != single_cell.check  # each topic keeps its own check, not the joined text
+    assert f"- bulk_rna_seq.batch: {bulk.check} Why: {bulk.why} — 계획 답: step:S5\n" in context
+    assert f"- single_cell_rna_seq.batch: {single_cell.check} Why: {single_cell.why} — 계획 답: step:S4\n" in context
+    assert " / " not in context.split("\nAnswers: ", 1)[0]
+    mixed = cso.plan_review_context(per_topic_plan("step:S5", "assumption: 처리 날짜가 없다"), CATALOG, None)
+    assert "- single_cell_rna_seq.batch: " in mixed and "계획 답: assumption: 처리 날짜가 없다" in mixed
+
+
+def test_the_review_context_keeps_the_bare_id_for_unshared_checks_and_for_a_bare_plan_answer():
+    context = cso.plan_review_context(general_plan(checklist=bulk_answers()), CATALOG, None)
+    assert listed_ids(context) == [item.id for item in CATALOG["bulk_rna_seq"]] and "계획 답" not in context
+    both = general_plan(topics=["bulk_rna_seq", "single_cell_rna_seq"], checklist={"batch": "step:S1"})
+    ids = listed_ids(cso.plan_review_context(both, CATALOG, None))
+    assert ids.count("batch") == 1 and "bulk_rna_seq.batch" not in ids
+    plan = general_plan(checklist={**bulk_answers(), "precedent.1": "step:A"})
+    ids = listed_ids(cso.plan_review_context(plan, CATALOG, PRECEDENT_RECORD))
+    assert "precedent.1" in ids and "batch" in ids
+
+
+@pytest.mark.parametrize("prompt", [cso.REVIEW_PROMPT, cso.RESEARCH_REVIEW_PROMPT], ids=["review", "research"])
+def test_both_review_prompts_ask_for_one_entry_per_listed_topic_id(prompt):
+    assert "using its id exactly as listed" in prompt
+    assert "listed once per topic as `topic.id` gets one entry per listed id" in prompt.replace("\n", " ")
+
+
+def test_a_reviewer_that_answers_exactly_the_listed_ids_gets_per_topic_verdicts_and_no_false_p2():
+    plan = per_topic_plan("step:S5", "step:S4")
+    prompt = cso.REVIEW_PROMPT.format(request="q", results="S4, S5 done") + cso.plan_review_context(plan, CATALOG, None)
+    rows = listed_rows(prompt, not_done={"single_cell_rna_seq.batch"})
+    assert {"bulk_rna_seq.batch", "single_cell_rna_seq.batch"} <= {entry["id"] for entry in rows}
+    parsed = cso.lenient_review({**OLD_GENERIC, "checklist": rows}, REVIEW_SCHEMA)
+    review = review_with_checklist(parsed, plan, CATALOG, None)
+    assert [(i["step_id"], i["priority"]) for i in review["issues"]] == [("S4", "P2")]
+    assert "single_cell_rna_seq/batch" in review["issues"][0]["problem"]
+    assert "batch" not in listed_ids(prompt)  # no bare line to answer once for both topics
+
+
+TRIAL_ANSWERS = {"bulk_rna_seq.batch": "step:S5", "pairing": "step:S5", "gene_set_test": "step:S5",
+                 "independent_validation": "not_applicable: no independent public cohort",
+                 "single_cell_rna_seq.batch": "step:S4", "pseudobulk": "step:S4", "qc": "step:S4"}
+
+
+def trial_plan():
+    """The 10-13 trial: two declared topics, `batch` answered by S5 (bulk) and by S4 (single cell)."""
+    plan = general_plan(topics=["bulk_rna_seq", "single_cell_rna_seq"], checklist=dict(TRIAL_ANSWERS))
+    plan["steps"] = [{"id": step, "agent_id": "worker", "instruction": "analyze", "outputs": [], "depends_on": []}
+                     for step in ("S4", "S5")]
+    return plan
+
+
+@pytest.mark.asyncio
+async def test_the_real_review_path_files_a_shared_id_miss_on_its_own_topics_step_only():
+    prompts = []
+
+    async def dispatch(task):
+        kind = task.meta["kind"]
+        if kind == "plan":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=trial_plan())
+        if kind == "step":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text=f"{task.meta['step_id']} done")
+        if kind == "review":
+            prompts.append(task.prompt)
+            rows = listed_rows(task.prompt, not_done={"single_cell_rna_seq.batch"})
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=generic(rows))
+        assert kind == "synthesis", kind
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text="## 결론과 권고\nbody")
+
+    hub = FakeHub(dispatch)
+    hub.s.orchestrator.precedent_agent = None
+    await Orchestrator(hub).run_request("r")
+    req = hub.requests["r"]
+
+    assert req["status"] == "done", req.get("error")
+    assert len(prompts) == 1 and CHECKLIST_REVIEW_RULE in prompts[0]
+    ids = listed_ids(prompts[0])
+    assert "bulk_rna_seq.batch" in ids and "single_cell_rna_seq.batch" in ids and "batch" not in ids
+    assert {entry["id"] for entry in req["review"]["checklist"]} == set(ids)
+    assert [(i["step_id"], i["priority"]) for i in req["review"]["issues"]] == [("S4", "P2")]
+    assert "S5" not in req["review"]["issues"][0]["problem"] + req["review"]["issues"][0]["request"]
+    appendix = req["report_appendix"]
+    assert "| bulk_rna_seq/batch | S5 | 했다 | bulk_rna_seq.batch evidence |" in appendix
+    assert "| single_cell_rna_seq/batch | S4 | 안 했다 | single_cell_rna_seq.batch evidence |" in appendix
+    assert "P2 · S4: 점검 single_cell_rna_seq/batch" in req["report"] and "P2 · S5" not in req["report"]

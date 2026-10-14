@@ -1,0 +1,6 @@
+pr: 603
+rows:
+- sha: 27325ed
+  at: 2026-10-15 04:39
+  text: 리뷰 context가 topic별로 답한 공유 점검 id를 topic.id 줄(그 topic의 점검 내용과 계획 답)로 싣고 리뷰 규칙이
+    그 id마다 한 줄씩 답하게 해, 한 topic의 not_done이 다른 topic 단계에 P2로 달리지 않게 함 (#586)

@@ -619,7 +619,8 @@ RESEARCH_RESULT_FIELD_RULES = "\n".join(f"- {rule}" for rule in RESULT_CONTRACT_
 # the ids (plan_review_context); labhq reads the answers in review_with_checklist and checklist_appendix.
 CHECKLIST_REVIEW_RULE = (
     "When the declared topic checklist or Analysis precedents below list items, also fill `checklist` with one\n"
-    "entry for every listed checklist item and required precedent item, using its id exactly as listed. Each entry\n"
+    "entry for every listed checklist item and required precedent item, using its id exactly as listed (a check\n"
+    "listed once per topic as `topic.id` gets one entry per listed id). Each entry\n"
     "has `status` (done, partly or not_done) and `evidence`: the step id or output path in the results that shows\n"
     "it, or a short reason when not_done. One line each. Judge from the results, not from the plan's answer.\n"
     "For an item the plan answered step:<id> that you mark partly or not_done, labhq adds a P2 issue unless you\n"
@@ -2053,8 +2054,12 @@ def plan_review_context(plan: Any, catalog: dict[str, list[topic_checklists.Chec
     if not required and not rendered:
         return ""
     lines = ["\n\nDeclared topic checklist and plan answers:"]
-    lines.extend(f"- {item.id}: {item.check} Why: {item.why}" for item in required)
     answers = body.get("checklist") if isinstance(body.get("checklist"), dict) else {}
+    # A shared id the plan answered per topic is listed once per topic as topic.id, with the plan's answer, so the
+    # reviewer's rows say which topic's step missed the check (PR #602 review).
+    lines.extend(f"- {entry.id}: {entry.check} Why: {entry.why}" + (f" — 계획 답: {entry.answer or '없음'}"
+                                                                  if entry.topic else "")
+                 for entry in topic_checklists.review_entries(answers, required, catalog))
     lines.append("Answers: " + json.dumps(answers, ensure_ascii=False, sort_keys=True))
     if rendered:
         lines += ["", rendered]
