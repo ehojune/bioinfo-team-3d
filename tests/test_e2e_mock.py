@@ -16,10 +16,31 @@ from labhq.util import free_port
 REPO = Path(__file__).resolve().parents[1]
 
 
-async def _until(pred, timeout=30.0, waiting_for="condition", state=None):
-    deadline = time.monotonic() + timeout
+# A hang detector, not a speed limit. The flow does about 285 durable writes (write_owned with fsync) on the event
+# loop, so a slow Windows disk stretches every step. That ran past the old 60 s and 90 s bounds (#592, #604) while the
+# request was still running and its next task had just been dispatched.
+HANG_S = 120.0       # no progress for this long means stuck
+CEILING_S = 1200.0   # even a flow that keeps moving ends here
+_clock = time.monotonic
+
+
+async def _until(pred, timeout=HANG_S, waiting_for="condition", state=None, progress=None):
+    """Wait until pred() holds.
+
+    Without `progress`, `timeout` is a plain deadline. With it (a cheap snapshot of what the flow has done so far),
+    `timeout` counts from the last change, so a slow runner that keeps moving is never cut off, while a flow that
+    stopped still fails after `timeout`. Nothing waits longer than CEILING_S.
+    """
+    start = _clock()
+    deadline = start + timeout
+    last = progress() if progress else None
     while not pred():
-        if time.monotonic() >= deadline:
+        now = _clock()
+        if progress:
+            current = progress()
+            if current != last:
+                last, deadline = current, now + timeout
+        if now >= deadline or now - start >= CEILING_S:
             observed = state() if state else None
             raise AssertionError(f"timed out waiting for {waiting_for}; observed={observed!r}")
         await asyncio.sleep(0.05)
@@ -38,12 +59,20 @@ def _request_state(hub, rid, seen):
     }
 
 
-async def _wait_for_request_terminal(hub, rid, seen, timeout):
+def _request_progress(hub, rid, seen):
+    request = hub.requests.get(rid) or {}
+    return (request.get("status"), len(request.get("results") or {}),
+            sum(1 for event in seen if event.get("request_id") == rid))
+
+
+async def _wait_for_request_terminal(hub, rid, seen, timeout=HANG_S):
+    """`timeout` is the longest the request may go without any progress (tests/test_research_cp1.py passes its own)."""
     await _until(
         lambda: (hub.requests.get(rid) or {}).get("status") in {"done", "failed", "cancelled", "interrupted"},
         timeout,
         f"request {rid} to reach a terminal state",
         lambda: _request_state(hub, rid, seen),
+        progress=lambda: _request_progress(hub, rid, seen),
     )
 
 
@@ -55,6 +84,47 @@ async def test_until_timeout_reports_observed_event_order():
             "request events",
             lambda: {"events": ["request.started", "job.submitted"]},
         )
+
+
+class _Clock:
+    """Each reading moves a fake clock forward, so the wait helper's limits run in a few polls and no real time."""
+
+    def __init__(self, step):
+        self.now, self.step = 0.0, step
+
+    def __call__(self):
+        self.now += self.step
+        return self.now
+
+
+async def test_until_keeps_waiting_while_the_flow_moves(monkeypatch):
+    monkeypatch.setitem(globals(), "_clock", _Clock(100.0))
+    polls = {"n": 0}
+
+    def done():
+        polls["n"] += 1
+        return polls["n"] > 8  # 800 fake seconds, past the 250 s hang limit, under the ceiling
+
+    await _until(done, 250.0, "a slow but moving flow", progress=lambda: polls["n"])
+
+
+async def test_until_fails_when_progress_stops_and_names_what_it_saw(monkeypatch):
+    monkeypatch.setitem(globals(), "_clock", _Clock(100.0))
+    with pytest.raises(AssertionError, match=r"stuck flow.*'last': 'dispatched'"):
+        await _until(lambda: False, 250.0, "stuck flow", lambda: {"last": "dispatched"}, progress=lambda: "same")
+
+
+async def test_until_ends_at_the_ceiling_even_if_progress_never_stops(monkeypatch):
+    monkeypatch.setitem(globals(), "_clock", _Clock(100.0))
+    polls = {"n": 0}
+
+    def moving():
+        polls["n"] += 1
+        return polls["n"]
+
+    with pytest.raises(AssertionError, match="endless flow"):
+        await _until(lambda: False, 250.0, "endless flow", progress=moving)
+    assert polls["n"] * 100.0 <= CEILING_S + 400.0  # stopped near the ceiling, not run on
 
 
 async def test_full_lab_flow_with_mock_agents(tmp_path):
@@ -83,7 +153,7 @@ async def test_full_lab_flow_with_mock_agents(tmp_path):
             async def approve():
                 # Answer later, like the web or a phone: request_approval must already be waiting on
                 # its future, so the pending-approval path stays under test (no fixed sleep).
-                await _until(lambda: aid in hub.approvals, 10, f"approval {aid} to be pending",
+                await _until(lambda: aid in hub.approvals, HANG_S, f"approval {aid} to be pending",
                              lambda: {"pending": sorted(hub.approvals)})
                 await hub.resolve_approval(aid, True, "ok")
 
@@ -92,13 +162,13 @@ async def test_full_lab_flow_with_mock_agents(tmp_path):
     hub.publish = tap
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=gport, log_level="warning"))
     tasks = [asyncio.create_task(server.serve())]
-    await _until(lambda: server.started, 10, "gateway server startup", lambda: {"started": server.started})
+    await _until(lambda: server.started, HANG_S, "gateway server startup", lambda: {"started": server.started})
     runner = Runner(s)
     tasks.append(asyncio.create_task(runner.run_forever()))
     try:
         await _until(
             lambda: "cso" in hub.agents and "recruiter" in hub.agents,
-            30,
+            HANG_S,
             "runner agent registration",
             lambda: {"agents": list(hub.agents)},
         )
@@ -107,7 +177,7 @@ async def test_full_lab_flow_with_mock_agents(tmp_path):
         assert hub.agents["analyst"]["engine"] == "mock"
 
         rid = hub.create_request(RequestIn(text="CD276 세포유형 분석 [hpc] [needs-approval] [revise] [revision-fail] [artifact] [recruit] [question] [block]"))
-        await _wait_for_request_terminal(hub, rid, seen, 90)
+        await _wait_for_request_terminal(hub, rid, seen)
         req = hub.requests[rid]
         assert req["status"] == "done", _request_state(hub, rid, seen)
         steps = req["plan"]["steps"]
@@ -122,9 +192,10 @@ async def test_full_lab_flow_with_mock_agents(tmp_path):
             } and "깨어나서" in (
                 ((hub.requests[rid].get("results") or {}).get(analyst_step) or {}).get("text") or ""
             ),
-            30,
+            HANG_S,
             "recruit, HPC completion, and analyst wake result",
             lambda: _request_state(hub, rid, seen),
+            progress=lambda: _request_progress(hub, rid, seen),
         )
         req = hub.requests[rid]
 
@@ -161,7 +232,7 @@ async def test_full_lab_flow_with_mock_agents(tmp_path):
         supports_resume = hub.supports_resume
         hub.supports_resume = lambda agent_id: False if agent_id == "biologist" else supports_resume(agent_id)
         rid_no_resume = hub.create_request(RequestIn(text="Resume 없는 blocking 확인 [block]"))
-        await _wait_for_request_terminal(hub, rid_no_resume, seen, 60)
+        await _wait_for_request_terminal(hub, rid_no_resume, seen)
         no_resume = hub.requests[rid_no_resume]
         assert no_resume["status"] == "done", _request_state(hub, rid_no_resume, seen)
         blocked_step = next(st["id"] for st in no_resume["plan"]["steps"]
@@ -182,7 +253,7 @@ async def test_full_lab_flow_with_mock_agents(tmp_path):
         hub.supports_resume = supports_resume
 
         rid_partial = hub.create_request(RequestIn(text="Partial study [max-turns]"))
-        await _wait_for_request_terminal(hub, rid_partial, seen, 60)
+        await _wait_for_request_terminal(hub, rid_partial, seen)
         partial = hub.requests[rid_partial]
         assert partial["status"] == "failed"
         biologist = next(st["id"] for st in partial["plan"]["steps"] if st["agent_id"] == "biologist")
@@ -195,9 +266,10 @@ async def test_full_lab_flow_with_mock_agents(tmp_path):
                                             "focus": "Preprocessing and clustering", "ttl_days": 7})
         await _until(
             lambda: "c_scanpy" in hub.agents,
-            30,
+            HANG_S,
             "contract agent registration",
             lambda: {"agents": list(hub.agents)},
+            progress=lambda: len(seen),
         )
         assert hub.agents["c_scanpy"]["employment"] == "contract"
         # #424: the contract keeps the commit and license it was built from and labhq's hash of the skill copy
@@ -208,7 +280,7 @@ async def test_full_lab_flow_with_mock_agents(tmp_path):
         assert saved["contract"]["skill_sha256"] == provenance["skill_sha256"]
         assert saved["contract"]["source_commit"] == provenance["source_commit"]
         rid2 = hub.create_request(RequestIn(text="클러스터링 자문", mode="direct", agent_id="c_scanpy"))
-        await _wait_for_request_terminal(hub, rid2, seen, 30)
+        await _wait_for_request_terminal(hub, rid2, seen)
         assert hub.requests[rid2]["status"] == "done"
         wd = Path(hub.requests[rid2]["results"]["direct"]["workdir"])
         assert (wd / ".claude" / "skills" / "scanpy-paper" / "SKILL.md").exists()
