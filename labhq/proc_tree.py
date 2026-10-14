@@ -6,11 +6,18 @@ launcher is gone, such as the detached gateway and runner that `labhq up` leaves
 short-lived process now holds the old PID, and ends it together with that process.
 
 Here a process is a child only when its parent PID matches and it was created no earlier than that parent. A process
-older than its claimed parent is a PID-reuse orphan: it and its subtree are left alone. The validated set is ended
-leaves first, one PID at a time, and each kill re-reads the creation time on the very handle it terminates, so a PID
-that was reused after the snapshot is skipped.
+older than its claimed parent is a PID-reuse orphan: it and its subtree are left alone.
 
-POSIX callers keep process groups; nothing here runs off Windows (`_snapshot` returns None there).
+A PID can also change hands between the process table being read and the process being opened. So every candidate is
+opened first and the handles are held until the kill decision is made: an open handle pins its process object, so
+its PID cannot be reused. A second table read, taken once all handles are open, must still show the parent PID the
+first read showed; a candidate whose PID now belongs to another process fails that test. The creation time used for
+the validation and the kill itself both come from the held handle, and a PID is never reopened to be killed.
+
+The validated set is ended leaves first. When one process cannot be ended, `spare_ancestors_on_failure` leaves its whole
+chain of ancestors running, so the survivor stays reachable through live parents for a retry.
+
+POSIX callers keep process groups; nothing here runs off Windows (`_table` returns None there).
 """
 from __future__ import annotations
 
@@ -21,8 +28,7 @@ from dataclasses import dataclass, field
 from typing import Iterable
 
 KILLED = "killed"
-GONE = "gone"  # no such process, or it had already exited
-REUSED = "reused"  # the PID now belongs to a process created at another time
+GONE = "gone"  # the process had already exited
 
 
 @dataclass(frozen=True)
@@ -35,8 +41,9 @@ class Proc:
 @dataclass
 class KillResult:
     killed: list[int] = field(default_factory=list)  # in kill order: leaves first, the root last
-    skipped: list[int] = field(default_factory=list)  # already gone, or the PID was reused: not touched
-    failed: dict[int, str] = field(default_factory=dict)  # pid -> why TerminateProcess did not work
+    skipped: list[int] = field(default_factory=list)  # already gone, or the root's PID now belongs to another process
+    failed: dict[int, str] = field(default_factory=dict)  # pid -> why it could not be opened or ended
+    spared: list[int] = field(default_factory=list)  # left running on purpose: ancestors of a process that failed
 
 
 def parse_created(value: str | None) -> int | None:
@@ -78,7 +85,7 @@ def validated_descendants(root_pid: int, procs: Iterable[Proc]) -> list[Proc]:
 
 def child_pids(pid: int, *, created: int | None = None) -> list[int]:
     """Direct children of `pid` that are really its children. Empty off Windows, when the table cannot be read, or
-    when `created` is given and `pid` is now another process."""
+    when `created` is given and `pid` is now another process. Read-only: it never decides a kill."""
     procs = _snapshot()
     if procs is None:
         return []
@@ -88,44 +95,100 @@ def child_pids(pid: int, *, created: int | None = None) -> list[int]:
     return [p.pid for p in validated_descendants(pid, procs) if p.ppid == pid]
 
 
-def kill_tree(pid: int, *, created: int | None = None, spare_root_on_failure: bool = False) -> KillResult:
+def _reachable(root_pid: int, rows: list[tuple[int, int]]) -> list[int]:
+    """Every PID the parent PIDs reach from `root_pid`, valid or not: the candidates to open and then validate."""
+    children: dict[int, list[int]] = {}
+    for pid, ppid in rows:
+        if ppid != pid:
+            children.setdefault(ppid, []).append(pid)
+    found: list[int] = []
+    seen = {root_pid}
+    pending = deque([root_pid])
+    while pending:
+        for child in children.get(pending.popleft(), ()):
+            if child not in seen:
+                seen.add(child)
+                found.append(child)
+                pending.append(child)
+    return found
+
+
+def kill_tree(pid: int, *, created: int | None = None, spare_ancestors_on_failure: bool = False) -> KillResult:
     """End `pid` and its validated descendants, leaves first, without `taskkill /T`.
 
     `created` is the identity the caller recorded for `pid` (FILETIME ticks): when the PID now belongs to a process
     created at another time, nothing is touched. Without it the caller owns a handle to `pid` (a Popen child), so the
-    PID cannot have been reused. A process table that cannot be read ends only `pid` itself.
+    PID cannot have been reused. A process table that cannot be read twice ends only `pid` itself. A descendant that
+    cannot be opened (another user's, protected) cannot be checked and is left alone.
 
-    With `spare_root_on_failure`, `pid` is left running when a descendant could not be ended: a caller that keeps a
-    record of `pid` (`down`) then still finds it alive and can retry, instead of losing the way to the survivor."""
+    With `spare_ancestors_on_failure`, a process that could not be ended keeps its whole ancestor chain up to `pid`
+    running, so a caller that keeps a record of `pid` (`down`) still finds the survivor through live parents on a
+    retry. Processes that are not ancestors of a failure are still ended."""
     result = KillResult()
-    procs = _snapshot()
-    victims: list[tuple[int, int | None]]
-    if procs is None:
-        victims = [(pid, created)]
-    else:
-        root = next((p for p in procs if p.pid == pid), None)
-        if root is None or (created is not None and root.created != created):
-            result.skipped.append(pid)
-            return result
-        victims = [(p.pid, p.created) for p in reversed(validated_descendants(pid, procs))]
-        victims.append((pid, root.created if root.created is not None else created))
-    for victim, identity in victims:
-        if spare_root_on_failure and victim == pid and result.failed:
-            break  # the root is the last victim
-        try:
-            outcome = _terminate(victim, identity)
-        except OSError as exc:
-            result.failed[victim] = str(exc) or f"PID {victim}을 종료하지 못함"
-            continue
-        (result.killed if outcome == KILLED else result.skipped).append(victim)
+    held: dict[int, _Handle] = {}
+    try:
+        _end_tree(pid, created, spare_ancestors_on_failure, result, held)
+    finally:
+        for handle in held.values():
+            handle.close()
     return result
 
 
-# --- Windows primitives; the tests replace these two with a fake process table -------------------------------------
+def _end_tree(pid: int, created: int | None, spare: bool, result: KillResult, held: dict[int, _Handle]) -> None:
+    first = _table()
+    candidates = _reachable(pid, first) if first is not None else []
+    try:
+        root = _open(pid)
+    except OSError as exc:
+        result.failed[pid] = str(exc) or f"PID {pid}을 열 수 없음"
+        return
+    if root is None:
+        result.skipped.append(pid)
+        return
+    held[pid] = root
+    if created is not None and root.created != created:
+        result.skipped.append(pid)  # the PID now belongs to a process created at another time
+        return
+    for candidate in candidates:  # pin every candidate before anything is decided
+        try:
+            handle = _open(candidate)
+        except OSError:
+            continue
+        if handle is not None:
+            held[candidate] = handle
+    second = _table() if candidates else None
+    procs = [Proc(pid, 0, root.created)]
+    if second is not None:
+        before, after = dict(first), dict(second)
+        for candidate, handle in held.items():
+            # still the process the first read described: its PID shows the same parent PID now
+            if candidate != pid and candidate in after and after[candidate] == before.get(candidate):
+                procs.append(Proc(candidate, after[candidate], handle.created))
+    validated = validated_descendants(pid, procs)
+    parent_of = {p.pid: p.ppid for p in validated}
+    spared: set[int] = set()
+    for victim in [p.pid for p in reversed(validated)] + [pid]:
+        if victim in spared:
+            result.spared.append(victim)
+            continue
+        try:
+            outcome = held[victim].terminate()
+        except OSError as exc:
+            result.failed[victim] = str(exc) or f"PID {victim}을 종료하지 못함"
+            if spare:
+                ancestor = parent_of.get(victim)
+                while ancestor is not None:
+                    spared.add(ancestor)
+                    ancestor = parent_of.get(ancestor)  # the root has no entry: the chain ends there
+            continue
+        (result.killed if outcome == KILLED else result.skipped).append(victim)
+
+
+# --- Windows primitives; the tests replace `_table`, `_snapshot` and `_open` with a fake process table -------------
 
 _PROCESS_TERMINATE = 0x0001
 _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-_STILL_ACTIVE = 259
+_SYNCHRONIZE = 0x00100000
 _ERROR_INVALID_PARAMETER = 87
 
 
@@ -150,7 +213,8 @@ def _kernel():
     kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     kernel.OpenProcess.restype = wintypes.HANDLE
     kernel.CloseHandle.argtypes = [wintypes.HANDLE]
-    kernel.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
     kernel.GetProcessTimes.argtypes = [wintypes.HANDLE] + [ctypes.POINTER(FileTime)] * 4
     kernel.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
     kernel.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
@@ -170,13 +234,13 @@ def _creation_ticks(kernel, file_time, handle) -> int | None:
     return (created.high << 32) | created.low
 
 
-def _snapshot() -> list[Proc] | None:
-    """Every process with its creation time (None for ones this user cannot open); None off Windows or on failure."""
+def _table() -> list[tuple[int, int]] | None:
+    """(PID, parent PID) of every process; None off Windows or when the snapshot cannot be taken."""
     if os.name != "nt":
         return None
     import ctypes
 
-    kernel, file_time, entry_type = _kernel()
+    kernel, _file_time, entry_type = _kernel()
     snapshot = kernel.CreateToolhelp32Snapshot(0x00000002, 0)  # TH32CS_SNAPPROCESS
     if not snapshot or snapshot == ctypes.c_void_p(-1).value:
         return None
@@ -190,6 +254,16 @@ def _snapshot() -> list[Proc] | None:
             more = kernel.Process32NextW(snapshot, ctypes.byref(entry))
     finally:
         kernel.CloseHandle(snapshot)
+    return rows
+
+
+def _snapshot() -> list[Proc] | None:
+    """Every process with its creation time (None for ones this user cannot open); None off Windows or on failure.
+    Read-only: nothing is pinned, so this never decides a kill."""
+    rows = _table()
+    if rows is None:
+        return None
+    kernel, file_time, _entry = _kernel()
     procs = []
     for pid, ppid in rows:
         created = None
@@ -203,42 +277,53 @@ def _snapshot() -> list[Proc] | None:
     return procs
 
 
-def _terminate(pid: int, created: int | None) -> str:
-    """TerminateProcess on `pid`, after reading its creation time from the handle that will terminate it.
+class _Handle:
+    """An open handle to one process. It pins the process object, so the PID cannot be reused while it is open, and
+    both the creation time and the kill come from it."""
 
-    Returns KILLED, GONE or REUSED; raises OSError when the process is there and cannot be ended (or cannot be
-    identified while an identity was asked for)."""
-    if os.name != "nt":
-        raise OSError("Windows 전용")
-    import ctypes
-    from ctypes import wintypes
+    def __init__(self, pid: int, created: int, raw) -> None:
+        self.pid, self.created, self._raw = pid, created, raw
 
-    kernel, file_time, _entry = _kernel()
-    handle = kernel.OpenProcess(_PROCESS_TERMINATE | _PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-    if not handle:
-        error = ctypes.get_last_error()
-        if error == _ERROR_INVALID_PARAMETER:  # no such PID
+    def terminate(self) -> str:
+        """KILLED, or GONE when it had already exited; OSError when it is there and cannot be ended."""
+        import ctypes
+
+        kernel, _file_time, _entry = _kernel()
+
+        def running() -> bool:
+            return kernel.WaitForSingleObject(self._raw, 0) != 0  # signaled (0) means it has exited
+
+        if not running():
             return GONE
-        raise ctypes.WinError(error)
-    try:
-        code = wintypes.DWORD()
-
-        def active() -> bool:
-            return not kernel.GetExitCodeProcess(handle, ctypes.byref(code)) or code.value == _STILL_ACTIVE
-
-        if not active():
-            return GONE
-        if created is not None:
-            current = _creation_ticks(kernel, file_time, handle)
-            if current is None:
-                raise OSError(f"PID {pid}의 생성 시각을 읽을 수 없어 종료하지 않음")
-            if current != created:
-                return REUSED
-        if not kernel.TerminateProcess(handle, 1):
+        if not kernel.TerminateProcess(self._raw, 1):
             error = ctypes.get_last_error()
-            if not active():  # it ended on its own between the check and the kill
+            if not running():  # it ended on its own between the check and the kill
                 return GONE
             raise ctypes.WinError(error)
         return KILLED
-    finally:
-        kernel.CloseHandle(handle)
+
+    def close(self) -> None:
+        if self._raw:
+            _kernel()[0].CloseHandle(self._raw)
+            self._raw = None
+
+
+def _open(pid: int) -> _Handle | None:
+    """Pin `pid`: a handle that can query and end it. None when there is no such process; OSError when it cannot be
+    opened or its creation time cannot be read (then it cannot be checked, so it is not touched)."""
+    if os.name != "nt":
+        raise OSError("Windows 전용")
+    import ctypes
+
+    kernel, file_time, _entry = _kernel()
+    raw = kernel.OpenProcess(_PROCESS_TERMINATE | _PROCESS_QUERY_LIMITED_INFORMATION | _SYNCHRONIZE, False, pid)
+    if not raw:
+        error = ctypes.get_last_error()
+        if error == _ERROR_INVALID_PARAMETER:  # no such PID
+            return None
+        raise ctypes.WinError(error)
+    created = _creation_ticks(kernel, file_time, raw)
+    if created is None:
+        kernel.CloseHandle(raw)
+        raise OSError(f"PID {pid}의 생성 시각을 읽을 수 없어 확인하지 못함")
+    return _Handle(pid, created, raw)

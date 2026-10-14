@@ -18,6 +18,7 @@ from labhq import cli, doctor
 from labhq.adapters.base import AgentAdapter, RunContext, RunState
 from labhq.models import AgentSpec, Engine, Task
 from labhq.settings import Settings
+from tests.proc_table_fake import FakeProcessTable
 
 
 def _config(tmp_path: Path, *, token: str = "private-client") -> Path:
@@ -626,17 +627,11 @@ def test_down_refuses_when_readiness_fails_or_names_a_request_the_list_missed(tm
 def test_a_failed_windows_kill_still_raises_oserror_with_the_reason_and_never_starts_taskkill(monkeypatch):
     """#589 replaced `taskkill /T`, whose output decoding this used to cover (trial-ready 2026-10-12): a failure to
     end the recorded process must still reach `down` as an OSError carrying the reason."""
-    from labhq import proc_tree
-
-    def refuse(pid, created):
-        raise OSError("액세스가 거부되었습니다.")
-
     started = []
     monkeypatch.setattr(cli.sys, "platform", "win32")
     monkeypatch.setattr(cli.subprocess, "run", lambda *args, **kwargs: started.append(args))
-    monkeypatch.setattr(proc_tree, "_snapshot", lambda: [proc_tree.Proc(4242, 1, 1000)])
-    monkeypatch.setattr(proc_tree, "_terminate", refuse)
-    monkeypatch.setattr(cli, "_process_created", lambda pid: "alive")
+    table = FakeProcessTable({4242: (1, 1000)}).install(monkeypatch)
+    table.refuse[4242] = "액세스가 거부되었습니다."
     with pytest.raises(OSError, match="액세스가 거부되었습니다"):
         cli._terminate_tree(4242)
     assert started == []
@@ -645,26 +640,12 @@ def test_a_failed_windows_kill_still_raises_oserror_with_the_reason_and_never_st
 def test_down_on_windows_ends_the_recorded_tree_through_the_helper_and_checks_each_identity(tmp_path, monkeypatch):
     """#589: `down` ended the PI's gateway and runner by `taskkill /T`; the tree it collects now skips a process older
     than its claimed parent, and a recorded PID that changed hands before the kill is not touched."""
-    from labhq import proc_tree
-
     gateway, runner, child, orphan = 910_000_245, 910_000_244, 910_000_246, 910_000_300
-    table = {
-        gateway: proc_tree.Proc(gateway, 1, 1000),
-        child: proc_tree.Proc(child, gateway, 1100),
-        orphan: proc_tree.Proc(orphan, gateway, 400),  # older than the gateway: a stale parent PID, not its child
-        runner: proc_tree.Proc(runner, 1, 3000),  # created after the record was written: the PID changed hands
-    }
-    killed = []
-
-    def terminate(pid, created):
-        if pid not in table:
-            return proc_tree.GONE
-        if created is not None and table[pid].created != created:
-            return proc_tree.REUSED
-        killed.append(pid)
-        del table[pid]
-        return proc_tree.KILLED
-
+    table = FakeProcessTable({
+        gateway: (1, 1000), child: (gateway, 1100),
+        orphan: (gateway, 400),  # older than the gateway: a stale parent PID, not its child
+        runner: (1, 3000),  # created after the record was written: the PID changed hands
+    }).install(monkeypatch)
     settings = Settings.load(str(_config(tmp_path)))
     _write_process_record(settings, "runner", runner, "windows:2000")
     _write_process_record(settings, "gateway", gateway, "windows:1000")
@@ -675,13 +656,11 @@ def test_down_on_windows_ends_the_recorded_tree_through_the_helper_and_checks_ea
                         lambda _settings: {"requests": [], "followups": [], "recruits": 0, "ready": True})
     monkeypatch.setattr(cli, "_health", lambda _settings: None)
     monkeypatch.setattr(cli.subprocess, "run", lambda *args, **kwargs: pytest.fail(f"taskkill started: {args}"))
-    monkeypatch.setattr(proc_tree, "_snapshot", lambda: list(table.values()))
-    monkeypatch.setattr(proc_tree, "_terminate", terminate)
 
     cli._down(settings, force=False)
 
-    assert killed == [child, gateway]  # the reused runner PID and the stale-parent orphan were not touched
-    assert set(table) == {runner, orphan}
+    assert table.killed == [child, gateway]  # the reused runner PID and the stale-parent orphan were not touched
+    assert set(table.live) == {runner, orphan}
     assert not cli._pid_file(settings, "gateway").exists() and not cli._pid_file(settings, "runner").exists()
 
 
@@ -690,37 +669,23 @@ def test_down_on_windows_keeps_the_records_when_a_child_of_the_launcher_cannot_b
         tmp_path, monkeypatch, capsys, child_fails):
     """The bot's P1 on #597: the venv interpreter under a launcher refused TerminateProcess while the launcher itself
     was ended, and `down` removed the PID records and printed success with the runner still alive."""
-    from labhq import proc_tree
-
     runner, runner_child, gateway = 910_000_244, 910_000_245, 910_000_246
-    table = {
-        runner: proc_tree.Proc(runner, 1, 2000), runner_child: proc_tree.Proc(runner_child, runner, 2100),
-        gateway: proc_tree.Proc(gateway, 1, 1000),
-    }
-    killed = []
-
-    def terminate(pid, created):
-        if child_fails and pid == runner_child:
-            raise OSError("액세스가 거부되었습니다.")
-        if pid not in table:
-            return proc_tree.GONE
-        killed.append(pid)
-        del table[pid]
-        return proc_tree.KILLED
-
+    table = FakeProcessTable({
+        runner: (1, 2000), runner_child: (runner, 2100), gateway: (1, 1000),
+    }).install(monkeypatch)
+    if child_fails:
+        table.refuse[runner_child] = "액세스가 거부되었습니다."
     settings = Settings.load(str(_config(tmp_path)))
     _write_process_record(settings, "runner", runner, "windows:2000")
     _write_process_record(settings, "gateway", gateway, "windows:1000")
     monkeypatch.setattr(cli.sys, "platform", "win32")
     monkeypatch.setattr(cli, "_process_created",
-                        lambda pid: f"windows:{table[pid].created}" if pid in table else None)
+                        lambda pid: f"windows:{table.live[pid].created}" if pid in table.live else None)
     monkeypatch.setattr(cli, "_active_requests", lambda _settings: [])
     monkeypatch.setattr(cli, "_shutdown_readiness",
                         lambda _settings: {"requests": [], "followups": [], "recruits": 0, "ready": True})
     monkeypatch.setattr(cli, "_health", lambda _settings: None)
     monkeypatch.setattr(cli.subprocess, "run", lambda *args, **kwargs: pytest.fail(f"taskkill started: {args}"))
-    monkeypatch.setattr(proc_tree, "_snapshot", lambda: list(table.values()))
-    monkeypatch.setattr(proc_tree, "_terminate", terminate)
 
     if child_fails:
         with pytest.raises(SystemExit) as stopped:
@@ -730,10 +695,10 @@ def test_down_on_windows_keeps_the_records_when_a_child_of_the_launcher_cannot_b
         assert f"runner PID {runner}을 종료하지 못했습니다" in error
         assert f"PID {runner_child}: 액세스가 거부되었습니다." in error
         assert cli._pid_file(settings, "runner").exists() and cli._pid_file(settings, "gateway").exists()
-        assert runner in table and runner_child in table and gateway in table  # nothing half-stopped: retry is possible
+        assert set(table.live) == {runner, runner_child, gateway}  # nothing half-stopped: the retry can reach it
     else:
         cli._down(settings, force=False)
-        assert killed == [runner_child, runner, gateway] and not table
+        assert table.killed == [runner_child, runner, gateway] and not table.live
         assert not cli._pid_file(settings, "runner").exists() and not cli._pid_file(settings, "gateway").exists()
 
 

@@ -707,11 +707,11 @@ def _terminate_tree(pid: int, *, created: str | None = None) -> None:
         identity = proc_tree.parse_created(created)
         if created is not None and identity is None:
             raise OSError(f"PID {pid}의 생성 시각 형식({created})을 읽을 수 없어 종료하지 않음")
-        result = proc_tree.kill_tree(pid, created=identity, spare_root_on_failure=True)
+        result = proc_tree.kill_tree(pid, created=identity, spare_ancestors_on_failure=True)
         if result.failed:  # the root or any descendant: a survivor must not pass as stopped, and its record must stay
             detail = "; ".join(f"PID {failed}: {reason}" for failed, reason in result.failed.items())
-            if pid not in result.failed:
-                detail += f"; 다시 시도할 수 있게 PID {pid}는 종료하지 않음"
+            if result.spared:
+                detail += "; 다시 시도할 수 있게 PID " + ", ".join(map(str, result.spared)) + "은 종료하지 않음"
             raise OSError(detail)
         return
     try:
