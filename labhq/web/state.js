@@ -424,6 +424,11 @@ function apply(ev, replay = false) {
   const t = ev.type, d = ev.data || {}, id = ev.agent_id, rid = ev.request_id, ts = ev.ts || now();
   trackActivity(ev);
   switch (t) {
+    case 'messenger.translated': {
+      const card = S.approvals.get(d.approval_id);
+      if (card) card.pi_display = d.pi_display;
+      break;
+    }
     case 'snapshot': {
       const pendingBefore = [...S.approvals.keys()];
       // Reconnection keeps a view selected even by older UI consumers that assign S.current directly.

@@ -11,16 +11,17 @@ export function plainPiText(value) {
 
 // Display only. Keep source and decision values intact, including numbers and option indices.
 export function piText(parent, value, options = {}) {
+  if (options.attribution) add(parent, 'small', options.attribution);
   const raw = String(options.original ?? value ?? ''), plain = plainPiText(value);
   const codeLine = /^\s*(?:\$[\w]+\s*=|import\s+\w+|from\s+\w+\s+import|(?:const|let|var|def|function|class)\s|print\s*\(|(?:Remove-Item|New-Item|Get-Content|python|powershell|rm|mkdir)\s|[\[{]\s*["'])/mi;
-  const code = /```|~~~/.test(raw) || codeLine.test(raw);
+  const code = /```|~~~/.test(String(value ?? '')) || codeLine.test(String(value ?? ''));
   const english = /[A-Za-z]{3}/.test(plain) && !/[가-힣]/.test(plain);
   const prose = code ? plain.split('\n').filter(line => /[가-힣]/.test(line) && !codeLine.test(line) && !/[;{}=]/.test(line)).join('\n') : plain;
   const shown = english ? '직원이 영어로 보낸 내용입니다. 자세히에서 원문을 확인해 주세요.' :
     prose || (code ? '명령이나 코드가 포함된 내용입니다. 자세히에서 확인해 주세요.' : '');
   const preview = options.limit && shown.length > options.limit ? shown.slice(0, options.limit - 1) + '…' : shown;
   add(parent, options.tag || 'span', preview, 'pi-prose');
-  if (code || english || preview !== shown || options.truncated) {
+  if (code || english || preview !== shown || options.truncated || options.forceOriginal || raw !== String(value ?? '')) {
     return expandableText(parent, raw, {...options, pi: false, fold: true, summary: '자세히'});
   }
   return parent;
@@ -625,6 +626,7 @@ const DENY_RESULT = {
 const EVIDENCE_REVISE_ENDS = '이어 가기 상한에 닿아 수정 요청과 거부는 둘 다 이 요청을 끝냅니다. 근거를 보강하려면 새 요청을 보내세요.';
 // The gateway writes resume step ids as a Python list ("['s2', 's3']"); the card joins them (R19).
 export function displaySummary(approval) {
+  if (approval?.pi_display?.status === 'translated') return approval.pi_display.text;
   if (approval?.pi_summary) return plainPiText(approval.pi_summary);
   const text = String(approval?.summary ?? '');
   const d = approval?.detail;
@@ -676,7 +678,8 @@ function updateCard(row, item, options) {
   p.request.hidden = !p.request.textContent;
   syncExpandableText(p.summary, item.type === 'suggestion' ? '필요한 일을 맡길 직원을 추가하려 합니다.' :
     value.kind === 'tool_permission' && !value.pi_summary ? '직원이 도구를 실행하려 합니다. 작업 내용은 자세히에서 확인해 주세요.' : displaySummary(value) || value.id,
-    {pi: true, ...(value.pi_summary || value.kind === 'tool_permission' ? {} : {original: value.summary})});
+      {pi: true, attribution: value.pi_display?.status === 'failed' ? '번역 못 함' : value.pi_explainer || value.pi_display ? '펭귄 비서실장 설명' : '',
+        ...(value.pi_summary || value.kind === 'tool_permission' ? {} : {original: value.summary})});
   renderDetail(p.detail, item.type === 'suggestion' ? 'recruit' : value.kind,
     item.type === 'suggestion' ? {reason: value.reason, repo: value.repo, paper: value.paper} : value.detail,
     approval ? value : {pi_reason: plainPiText(value.reason), pi_outcome: HIRE_RESULT});

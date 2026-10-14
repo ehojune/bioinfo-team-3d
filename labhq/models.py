@@ -357,12 +357,17 @@ class ApprovalRequest(BaseModel):
     pi_summary: str = ''
     pi_reason: str = ''
     pi_outcome: str = ''
+    pi_explainer: str = ''
 
     @model_validator(mode='after')
     def explain_for_pi(self) -> 'ApprovalRequest':
         from .pi_text import approval_copy
+        missing = not self.pi_summary
         for key, value in approval_copy(self.kind, self.summary, self.detail).items():
-            setattr(self, key, value)
+            if not getattr(self, key):
+                setattr(self, key, value)
+        if missing:
+            self.pi_explainer = 'chief_of_staff'
         return self
 
 

@@ -1,0 +1,225 @@
+import asyncio
+from pathlib import Path
+
+import pytest
+
+from labhq.gateway.server import Hub
+from labhq.models import ApprovalRequest, TaskResult
+from labhq.pi_text import with_approval_copy
+from labhq.settings import Settings, PolicySettings
+from labhq.policy import evaluate_tool
+
+
+@pytest.fixture
+def hub(tmp_path):
+    cfg = Settings()
+    cfg.gateway.state_dir = str(tmp_path / 'state')
+    value = Hub(cfg)
+    value.requests['r'] = {'id': 'r', 'status': 'running', 'budget_usd': 5, 'cost_usd': 1.0}
+    value.agents['chief_of_staff'] = {'id': 'chief_of_staff', 'engine': 'claude_code', 'model': 'sonnet'}
+    value.agent_runner['chief_of_staff'] = 'runner'
+    value.runners['runner'] = object()
+    yield value
+    value.store.close()
+
+
+def event(typ='agent.log', **data):
+    return {'type': typ, 'request_id': 'r', 'agent_id': 'engineer',
+            'data': data or {'text': 'Please compare the input tables before continuing.'}}
+
+
+async def drain(hub):
+    while hub.pi_interpreter.tasks:
+        await asyncio.gather(*list(hub.pi_interpreter.tasks))
+
+
+def mock_model(monkeypatch, hub, text='입력 표를 비교해 차이가 있는지 확인하려 합니다. 비교가 끝나면 다음 작업을 진행합니다.'):
+    calls = []
+    async def dispatch(task):
+        calls.append(task)
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text=text, cost_usd=0.02)
+    monkeypatch.setattr(hub, 'dispatch', dispatch)
+    return calls
+
+
+def test_card_explained_by_chief_and_existing_copy_preserved():
+    raw = {'kind': 'tool_permission', 'summary': 'PowerShell: approval required',
+           'detail': {'tool_name': 'PowerShell', 'tool_input': {'command': 'New-Item -ItemType Directory -Force .tmp'}}}
+    card = with_approval_copy(raw)
+    assert card['pi_explainer'] == 'chief_of_staff'
+    assert '폴더를 만들' in card['pi_summary']
+    assert card['summary'] == raw['summary'] and card['detail'] == raw['detail']
+    provided = {**raw, 'pi_summary': '직원이 쓴 쉬운 설명', 'pi_reason': '표 비교', 'pi_outcome': '비교 결과'}
+    assert with_approval_copy(provided) == provided
+    assert ApprovalRequest(**provided).pi_summary == provided['pi_summary']
+
+
+@pytest.mark.parametrize('text,expected', [('ABC', False), ('BRCA1과 TP53을 확인했어요', False),
+    ('Please check the input tables.', True), ('결과: Analysis finished without errors.', True)])
+def test_english_ratio(text, expected):
+    from labhq.pi_language import is_english
+    assert is_english(text) is expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('typ,data', [('agent.log', {'text': 'Please compare the input tables.'}),
+    ('agent.ask', {'to': 'colleague:analyst', 'question': 'Can you compare the input tables?'}),
+    ('agent.answer', {'from': 'analyst', 'to': 'engineer', 'answer': 'The input tables have different sizes.'}),
+    ('agent.log', {'text': '표 확인 중입니다.\n```python\nprint(1)\n```'})])
+async def test_translation_is_one_shot_durable_and_counted(hub, monkeypatch, typ, data):
+    calls = mock_model(monkeypatch, hub)
+    await hub.publish(event(typ, **data))
+    original = hub.events[0]
+    assert len(calls) == 0  # delivery is never held up by the model
+    await drain(hub)
+    assert len(calls) == 1
+    assert calls[0].meta['agent_overrides']['model'] == 'haiku'
+    assert calls[0].meta['agent_overrides']['max_turns'] == 1
+    assert calls[0].budget_usd == 0.05
+    assert hub.requests['r']['cost_usd'] == pytest.approx(1.02)
+    saved = hub.store.messenger_history()['events'][0]
+    assert saved['data']['pi_display']['status'] == 'translated'
+    for key, value in data.items():
+        assert saved['data'][key] == value
+    hub.pi_interpreter.schedule(original)
+    await drain(hub)
+    assert len(calls) == 1 and hub.requests['r']['cost_usd'] == pytest.approx(1.02)
+    reopened = Hub(hub.s)
+    try:
+        reopened.pi_interpreter.schedule(saved)
+        assert not reopened.pi_interpreter.tasks
+        assert reopened.store.messenger_history()['events'][0]['data']['pi_display'] == saved['data']['pi_display']
+        assert reopened.requests['r']['cost_usd'] == pytest.approx(1.02)
+    finally:
+        reopened.store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('failure', ['disabled', 'model', 'runner', 'cap', 'request_cap'])
+async def test_unavailable_or_over_cap_keeps_original_and_delivery(hub, monkeypatch, failure):
+    calls = mock_model(monkeypatch, hub)
+    if failure == 'disabled': hub.s.pi_language.enabled = False
+    if failure == 'model': hub.s.pi_language.model = None
+    if failure == 'runner': hub.runners.clear()
+    if failure == 'cap': hub.s.pi_language.per_request_usd = 0
+    if failure == 'request_cap': hub.requests['r']['budget_usd'] = 1
+    await hub.publish(event())
+    await drain(hub)
+    message = hub.store.messenger_history()['events'][0]
+    assert message['data']['text'] == event()['data']['text']
+    assert message['data']['pi_display']['label'] == '번역 못 함'
+    assert calls == []
+    await hub.publish(event(text='한국어 후속 메시지'))
+    assert len(hub.store.messenger_history()['events']) == 2
+
+
+@pytest.mark.asyncio
+async def test_failed_model_is_cached_and_charged(hub, monkeypatch):
+    calls = mock_model(monkeypatch, hub, text='Still in English, no translation.')
+    await hub.publish(event())
+    await drain(hub)
+    assert hub.events[0]['data']['pi_display']['status'] == 'failed'
+    hub.pi_interpreter.schedule(hub.events[0])
+    assert len(calls) == 1 and hub.requests['r']['cost_usd'] == pytest.approx(1.02)
+
+
+@pytest.mark.asyncio
+async def test_reservations_survive_restart_and_concurrent_messages(hub, monkeypatch):
+    hub.s.pi_language.per_request_usd = 0.05
+    calls = mock_model(monkeypatch, hub)
+    await hub.publish(event())
+    await hub.publish(event())
+    await drain(hub)
+    assert len(calls) == 1
+    reopened = Hub(hub.s)
+    try:
+        reopened.agents = hub.agents
+        reopened.agent_runner = hub.agent_runner
+        reopened.runners = hub.runners
+        calls2 = mock_model(monkeypatch, reopened)
+        await reopened.publish(event())
+        await drain(reopened)
+        assert calls2 == []
+    finally:
+        reopened.store.close()
+
+
+def test_interrupted_translation_is_failed_without_retry(hub):
+    saved = hub.store.append_event(event(), 100)
+    hub.store.put('pi_translation', str(saved['seq']), {'status': 'pending'})
+    reopened = Hub(hub.s)
+    try:
+        message = reopened.store.messenger_history()['events'][0]
+        assert message['data']['pi_display']['label'] == '번역 못 함'
+        reopened.pi_interpreter.schedule(message)
+        assert not reopened.pi_interpreter.tasks
+    finally:
+        reopened.store.close()
+
+
+def test_report_humanizer_present_and_absent(tmp_path, monkeypatch):
+    from labhq import report_style
+    monkeypatch.setattr(report_style, 'humanizer_skill', lambda: None)
+    report = '결과가 정리되어진다.\n> 가지고 있다\n`에 있어서`'
+    assert report_style.check_report(report) == (report, '')
+    skill = tmp_path / 'SKILL.md'
+    skill.write_text('humanizer', encoding='utf8')
+    monkeypatch.setattr(report_style, 'humanizer_skill', lambda: skill)
+    fixed, note = report_style.check_report(report)
+    assert fixed == '결과가 정리된다.\n> 가지고 있다\n`에 있어서`'
+    assert '고친 1곳' in note
+    assert '통과' in report_style.check_report(fixed)[1]
+
+
+def test_new_item_force_is_not_recursive_delete(tmp_path):
+    result = evaluate_tool('PowerShell', {'command': 'New-Item -Force .tmp'}, PolicySettings(),
+                           workdir=str(tmp_path), allowed_roots=[str(tmp_path)])
+    assert result.action == 'allow' and '재귀 삭제' not in result.reason
+
+
+@pytest.mark.asyncio
+async def test_raw_runner_card_gets_interpretation_but_existing_copy_does_not(hub, monkeypatch):
+    calls = mock_model(monkeypatch, hub)
+    raw = {'id': 'a', 'kind': 'tool_permission', 'summary': 'New-Item -Force .tmp',
+           'detail': {'tool_input': {'command': 'New-Item -Force .tmp'}}}
+    await hub.on_runner_message('runner', {'type': 'approval.requested', 'request_id': 'r', 'data': raw})
+    await drain(hub)
+    assert len(calls) == 1
+    stored = hub.store.get('approval', 'a')['approval']
+    assert stored['pi_display']['text'] and stored['summary'] == raw['summary']
+    provided = {**raw, 'id': 'b', 'pi_summary': '임시 폴더를 만듭니다.',
+                'pi_reason': '비교 결과를 담습니다.', 'pi_outcome': '폴더가 생깁니다.'}
+    await hub.on_runner_message('runner', {'type': 'approval.requested', 'request_id': 'r', 'data': provided})
+    await drain(hub)
+    assert len(calls) == 1
+    assert hub.store.get('approval', 'b')['approval']['pi_summary'] == provided['pi_summary']
+
+
+@pytest.mark.asyncio
+async def test_timeout_cancels_only_interpreter_and_does_not_retry(hub, monkeypatch):
+    cancelled = []
+    async def dispatch(task):
+        await asyncio.Event().wait()
+    async def cancel(tid):
+        cancelled.append(tid)
+    monkeypatch.setattr(hub, 'dispatch', dispatch)
+    monkeypatch.setattr(hub, 'cancel_task', cancel)
+    hub.s.pi_language.timeout_s = 0.01
+    await hub.publish(event())
+    await drain(hub)
+    assert cancelled == ['pi_text_1']
+    assert hub.events[0]['data']['pi_display']['status'] == 'failed'
+    assert hub.requests['r']['cost_known'] is False
+
+
+def test_final_report_keeps_interpretation_cost_and_optional_style_appendix(hub, monkeypatch, tmp_path):
+    from labhq.orchestrator.cso import Orchestrator
+    from labhq import report_style
+    monkeypatch.setattr(report_style, 'humanizer_skill', lambda: tmp_path / 'SKILL.md')
+    # Capture the normal terminal boundary without starting background publication.
+    monkeypatch.setattr(hub, 'commit_terminal', lambda *args, **kwargs: None)
+    orchestrator = Orchestrator(hub)
+    orchestrator.cost['r'] = 0.5
+    orchestrator._finish('r', '결과를 가지고 있다.', {}, True)
+    assert hub.requests['r']['cost_usd'] == 1.0
+    assert '고친 1곳' in hub.requests['r']['report_appendix']
