@@ -2098,52 +2098,77 @@ def lenient_review(value: Any, schema: dict[str, Any]) -> dict | None:
     return None
 
 
-def _names_check(issue: dict, item: topic_checklists.ChecklistItem) -> bool:
-    """Whether a review issue names the check's id. ASCII boundaries: a Korean particle may follow the id."""
+def _names_check(issue: dict, miss: topic_checklists.ReviewMiss) -> bool:
+    """Whether a review issue names the check the miss is about. ASCII boundaries: a Korean particle may follow the id.
+
+    When the check is shared by several topics, an issue about another topic's ``topic/id`` or ``topic.id`` does not
+    stand in for this topic's miss (PR #600 review)."""
     text = " ".join(str(issue.get(key) or "") for key in ("problem", "request", "evidence_quote"))
-    return re.search(rf"(?<![A-Za-z0-9_.-]){re.escape(item.id)}(?![A-Za-z0-9_-])", text) is not None
+
+    def named(spelling: str) -> bool:
+        return re.search(rf"(?<![A-Za-z0-9_.-]){re.escape(spelling)}(?![A-Za-z0-9_-])", text) is not None
+
+    qualified = {topic: named(f"{topic}/{miss.item.id}") or named(f"{topic}.{miss.item.id}")
+                 for topic in miss.item.topic.split(",")}
+    if any(qualified[topic] for topic in miss.topics or qualified):
+        return True
+    return not any(qualified.values()) and named(miss.item.id)
+
+
+# The solo route reviews one direct result, not the plan's steps: those are only the fallback (route_decision).
+SOLO_OWNER = "단독 처리"
 
 
 def review_with_checklist(review: dict, plan: Any, catalog: dict[str, list[topic_checklists.ChecklistItem]],
-                          precedents: Any, *, research: bool = False) -> dict:
+                          precedents: Any, *, research: bool = False, owner: str | None = None) -> dict:
     """The review plus a P2 issue for each check the plan answered with a step that the reviewer found partly or not
     done (#586). In the 10-13 trial the reviewers got the checklist and cited it in no finding.
 
     A P1 or P2 issue that already names the check's id stands in for it; a P3 one does not. assumption and
-    not_applicable answers add nothing: the plan stated why, and the review already files a wrong reason. The
-    research lane's issues carry its extra fields (claim_id, category, evidence_quote)."""
+    not_applicable answers add nothing: the plan stated why, and the review already files a wrong reason. A check
+    several topics share, answered per topic, gets one issue per topic on that topic's own step. The research lane's
+    issues carry its extra fields (claim_id, category, evidence_quote).
+
+    ``owner`` is the result a solo review judged (SOLO_OWNER). The plan's steps never ran then, so the issue goes
+    to that result: it is neither filed on a plan step nor tells the PI to fix one (PR #600 review)."""
     body = plan if isinstance(plan, dict) else {}
     required = required_checklist_items(body, catalog, precedents)
     issues = [issue for issue in review.get("issues") or [] if isinstance(issue, dict)]
     added: list[dict] = []
-    for item, steps, status, evidence in topic_checklists.review_misses(
-            body.get("checklist"), required, review.get("checklist")):
-        if any(issue.get("priority") in ("P1", "P2") and _names_check(issue, item) for issue in [*issues, *added]):
+    for miss in topic_checklists.review_misses(body.get("checklist"), required, review.get("checklist")):
+        if any(issue.get("priority") in ("P1", "P2") and _names_check(issue, miss) for issue in [*issues, *added]):
             continue
-        owner = ", ".join(steps)
-        issue = {"step_id": steps[0], "priority": "P2",
-                 "problem": f"점검 {topic_checklists.label(item)}: 계획은 {owner} 단계로 답했지만 리뷰어는 "
-                            f"{'일부만 했다' if status == 'partly' else '하지 않았다'}고 판정했습니다. "
-                            f"근거: {evidence or '없음'}",
-                 "request": f"{owner} 단계에서 점검 {item.id}을(를) 끝내거나, 못 하는 이유를 계획에 "
-                            "assumption으로 남기세요."}
+        verdict = "일부만 했다" if miss.status == "partly" else "하지 않았다"
+        if owner:
+            issue = {"step_id": owner, "priority": "P2",
+                     "problem": f"점검 {miss.name}: {owner} 결과에서 리뷰어는 {verdict}고 판정했습니다. "
+                                f"근거: {miss.evidence or '없음'}",
+                     "request": f"{owner} 결과에서 점검 {miss.name}을(를) 끝내거나, 못 하는 이유를 한계에 남기세요."}
+        else:
+            steps = ", ".join(miss.steps)
+            issue = {"step_id": miss.steps[0], "priority": "P2",
+                     "problem": f"점검 {miss.name}: 계획은 {steps} 단계로 답했지만 리뷰어는 {verdict}고 "
+                                f"판정했습니다. 근거: {miss.evidence or '없음'}",
+                     "request": f"{steps} 단계에서 점검 {miss.name}을(를) 끝내거나, 못 하는 이유를 계획에 "
+                                "assumption으로 남기세요."}
         if research:
-            issue.update(claim_id="", category="other", evidence_quote=evidence)
+            issue.update(claim_id="", category="other", evidence_quote=miss.evidence)
         added.append(issue)
     return {**review, "issues": [*issues, *added]} if added else review
 
 
 def checklist_appendix(plan: Any, review: Any, catalog: dict[str, list[topic_checklists.ChecklistItem]],
-                       precedents: Any) -> str:
+                       precedents: Any, *, owner: str | None = None) -> str:
     """The execution-record table of every required check: item, owning step, reviewer verdict, evidence (#586).
-    The report body never named the checks; only assumption answers reached it as limitations."""
+    The report body never named the checks; only assumption answers reached it as limitations. ``owner`` names the
+    result that did the checks when it is not a plan step (the solo route: SOLO_OWNER)."""
     body = plan if isinstance(plan, dict) else {}
     required = required_checklist_items(body, catalog, precedents)
     if not required:
         return ""
     rows = review.get("checklist") if isinstance(review, dict) else None
     return ("점검표 (분야 점검 항목, 담당 단계, 리뷰 판정):\n\n" +
-            topic_checklists.report_table(body.get("checklist"), required, rows))
+            topic_checklists.report_table(body.get("checklist"), required, rows, owner=owner))
 
 
 SoloPhase = Literal["solo", "review", "fallback", "done"]
@@ -4786,7 +4811,8 @@ class Orchestrator:
             parsed = lenient_review(reviewed.structured, REVIEW_SCHEMA) or lenient_review(
                 extract_json(reviewed.text), REVIEW_SCHEMA)
             review = with_p1_verdict(review_with_checklist(
-                parsed, req.get("plan"), topic_checklists.load(), req.get("analysis_precedents"))
+                parsed, req.get("plan"), topic_checklists.load(), req.get("analysis_precedents"),
+                owner=SOLO_OWNER)
             ) if reviewed.ok and parsed else {
                 "status": "review_unparsed", "reason": reviewed.error or "missing or invalid verdict"}
             req["solo_review"] = review
@@ -6148,7 +6174,9 @@ class Orchestrator:
             catalog = topic_checklists.load()
         except (OSError, ValueError):
             return ""
-        return checklist_appendix(plan, review, catalog, precedents)
+        route = req.get("route_decision") or {}
+        solo = route.get("mode") == "solo" and not route.get("fallback")  # the plan's steps never ran
+        return checklist_appendix(plan, review, catalog, precedents, owner=SOLO_OWNER if solo else None)
 
     def _finish(self, rid: str, report: str, results: dict, ok: bool, review: dict | None = None,
                 error: str | None = None) -> None:

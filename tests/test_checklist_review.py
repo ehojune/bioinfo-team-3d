@@ -17,6 +17,7 @@ from labhq.vocab import topic_checklists
 from tests.test_cso import FakeHub
 from tests.test_research_cp2 import _interrupt
 from tests.test_research_report import ACCEPT, REPORT, _hub, _kinds
+from tests.test_solo_route import SoloHub, plan as solo_plan
 from tests.test_topic_checklists_precedents import PRECEDENTS, bulk_answers, general_plan
 
 SCORES = {"addresses_question": 4, "evidence": 4, "thoroughness": 4}
@@ -183,6 +184,101 @@ def test_the_table_lists_checks_even_when_no_reviewer_answered():
     assert cso.checklist_appendix(general_plan(topics=[]), None, CATALOG, None) == ""
 
 
+# ---------- one check answered per topic (PR #600 review) ----------
+
+def per_topic_plan(bulk, single_cell):
+    """The 10-13 trial shape: `batch` is a check of two declared topics and the plan answers it once per topic."""
+    others = {key: value for key, value in bulk_answers().items() if key != "batch"}
+    return general_plan(topics=["bulk_rna_seq", "single_cell_rna_seq"], checklist={
+        **others, "bulk_rna_seq.batch": bulk, "single_cell_rna_seq.batch": single_cell})
+
+
+def test_each_topics_verdict_of_a_shared_id_stays_with_its_own_answer():
+    plan = per_topic_plan("step:S5", "step:S4")
+    done_bulk = [row("bulk_rna_seq.batch", "done", "S5 outputs/batch.png"),
+                 row("single_cell_rna_seq.batch", "not_done", "no batch term in S4")]
+    found = added(generic(done_bulk), plan)
+    assert [(i["step_id"], i["priority"]) for i in found] == [("S4", "P2")]
+    assert "single_cell_rna_seq/batch" in found[0]["problem"] and "no batch term in S4" in found[0]["problem"]
+    assert "S5" not in found[0]["problem"] + found[0]["request"]
+    # the other way round, and a miss in both topics: one issue per topic, each on its own step
+    swapped = [row("bulk_rna_seq/batch", "partly", "S5 pairs one arm"), row("single_cell_rna_seq/batch", "done", "S4")]
+    found = added(generic(swapped), plan)
+    assert [i["step_id"] for i in found] == ["S5"] and "bulk_rna_seq/batch" in found[0]["problem"]
+    both = [row("bulk_rna_seq.batch", "not_done", "none"), row("single_cell_rna_seq.batch", "partly", "one")]
+    assert [i["step_id"] for i in added(generic(both), plan)] == ["S5", "S4"]
+
+
+def test_a_miss_is_linked_to_the_step_answer_of_its_own_topic_only():
+    # one topic answered step, the other assumption: the assumption topic's verdict never reaches the step answer
+    plan = per_topic_plan("step:S5", "assumption: 처리 날짜가 기록되지 않았다")
+    rows = [row("bulk_rna_seq.batch", "done", "S5"), row("single_cell_rna_seq.batch", "not_done", "no date")]
+    assert added(generic(rows), plan) == []
+    rows = [row("bulk_rna_seq.batch", "not_done", "no batch term"), row("single_cell_rna_seq.batch", "done", "-")]
+    found = added(generic(rows), plan)
+    assert [i["step_id"] for i in found] == ["S5"] and "bulk_rna_seq/batch" in found[0]["problem"]
+
+
+def test_a_bare_id_row_covers_only_the_topics_without_a_row_of_their_own():
+    plan = per_topic_plan("step:S5", "step:S4")
+    rows = [row("batch", "not_done", "shared"), row("bulk_rna_seq.batch", "done", "S5")]
+    found = added(generic(rows), plan)
+    assert [i["step_id"] for i in found] == ["S4"] and "bulk_rna_seq" not in found[0]["problem"]
+
+
+def test_a_bare_answer_for_a_shared_id_still_takes_the_worse_of_the_topic_rows():
+    plan = general_plan(topics=["bulk_rna_seq", "single_cell_rna_seq"], checklist={"batch": "step:S1"})
+    rows = [row("bulk_rna_seq.batch", "done", "S1"), row("single_cell_rna_seq.batch", "partly", "one arm")]
+    found = added(generic(rows), plan)
+    assert [i["step_id"] for i in found] == ["S1"] and "one arm" in found[0]["problem"]
+
+
+def test_an_issue_about_one_topics_alias_does_not_stand_in_for_the_other_topics_miss():
+    plan = per_topic_plan("step:S5", "step:S4")
+    rows = [row("bulk_rna_seq.batch", "not_done", "none"), row("single_cell_rna_seq.batch", "not_done", "none")]
+    existing = issue("P2", "single_cell_rna_seq/batch is not modelled", step_id="S4")
+    found = added(generic(rows, [existing]), plan)
+    assert [i["step_id"] for i in found] == ["S5"]
+    # a qualified spelling with a dot counts too, and an issue naming both stands in for both
+    assert [i["step_id"] for i in added(generic(rows, [issue("P1", "bulk_rna_seq.batch is missing")]), plan)] == ["S4"]
+    both = issue("P2", "bulk_rna_seq/batch and single_cell_rna_seq/batch are missing")
+    assert added(generic(rows, [both]), plan) == []
+
+
+def test_the_table_has_one_row_per_topic_answer_of_a_shared_id():
+    rows = [row("bulk_rna_seq.batch", "done", "S5 outputs/batch.png"),
+            row("single_cell_rna_seq/batch", "not_done", "no batch term in S4")]
+    plan = per_topic_plan("step:S5", "step:S4")
+    required = cso.required_checklist_items(plan, CATALOG, None)
+    lines = topic_checklists.report_table(plan["checklist"], required, rows).splitlines()
+    assert "| bulk_rna_seq/batch | S5 | 했다 | S5 outputs/batch.png |" in lines
+    assert "| single_cell_rna_seq/batch | S4 | 안 했다 | no batch term in S4 |" in lines
+    assert not any("bulk_rna_seq,single_cell_rna_seq" in line for line in lines)
+    mixed = per_topic_plan("step:S5", "assumption: 처리 날짜가 기록되지 않았다")
+    lines = topic_checklists.report_table(mixed["checklist"], required, rows).splitlines()
+    assert "| bulk_rna_seq/batch | S5 | 했다 | S5 outputs/batch.png |" in lines
+    assert "| single_cell_rna_seq/batch | 가정 | 안 했다 | no batch term in S4 |" in lines
+    section = cso.checklist_appendix(plan, generic(rows), CATALOG, None)
+    assert "| single_cell_rna_seq/batch | S4 | 안 했다 | no batch term in S4 |" in section
+
+
+# ---------- a solo review belongs to the solo result, not to plan step A (PR #600 review) ----------
+
+def test_a_solo_review_miss_is_filed_on_the_solo_result_and_never_on_a_plan_step():
+    rows = [row("batch", "not_done", "no batch term"), row("pairing", "partly", "3 of 5"), row("gene_set_test", "done")]
+    out = review_with_checklist(generic(rows), PLAN, CATALOG, None, owner=cso.SOLO_OWNER)
+    assert [(i["step_id"], i["priority"]) for i in out["issues"]] == [(cso.SOLO_OWNER, "P2")] * 2
+    for found in out["issues"]:
+        assert "A 단계" not in found["problem"] + found["request"] and cso.SOLO_OWNER in found["problem"]
+    assert "bulk_rna_seq/batch" in out["issues"][0]["problem"] and "no batch term" in out["issues"][0]["problem"]
+    assert valid_review(out, REVIEW_SCHEMA)
+    required = cso.required_checklist_items(PLAN, CATALOG, None)
+    lines = topic_checklists.report_table(PLAN["checklist"], required, rows, owner=cso.SOLO_OWNER).splitlines()
+    assert f"| bulk_rna_seq/batch | {cso.SOLO_OWNER} | 안 했다 | no batch term |" in lines
+    assert "| bulk_rna_seq/independent_validation | 해당 없음 | - | no independent public cohort |" in lines
+    assert not any("| A |" in line for line in lines)
+
+
 # ---------- end to end ----------
 
 CHECK_PLAN = general_plan(checklist=bulk_answers())
@@ -262,3 +358,48 @@ async def test_research_review_without_checklist_rows_still_lists_the_checks_in_
     assert req["outcome"] == "research_reported" and req["report"].startswith(REPORT)
     assert "| single_cell_rna_seq/qc | s1 | - | - |" in req["report_appendix"]
     assert not [i for i in req["research_contract"]["review"]["issues"] if "점검 " in i["problem"]]
+
+
+SOLO_ROWS = [row("batch", "not_done", "no batch term in the result"), row("pairing", "done", "answer.md"),
+             row("gene_set_test", "partly", "one gene set only"), row("independent_validation", "not_done", "no cohort")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("solo_review", [True, False])
+async def test_solo_report_attributes_the_checklist_to_the_solo_result_not_to_plan_step_a(solo_review):
+    hub = SoloHub(planned={**solo_plan(), "topics": ["bulk_rna_seq"], "checklist": bulk_answers()})
+    hub.s.orchestrator.precedent_agent = None
+    hub.s.orchestrator.solo_review = solo_review
+    if solo_review:
+        hub.s.orchestrator.reviewer_agent = "reviewer"
+        hub.agents["reviewer"] = {"id": "reviewer", "name": "reviewer", "role": "test", "engine": "mock"}
+    original = hub.dispatch
+
+    async def dispatch(task):
+        if task.meta.get("kind") == "review":
+            hub.calls.append(task)
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=generic(SOLO_ROWS))
+        return await original(task)
+
+    hub.dispatch = dispatch
+    await Orchestrator(hub).run_request("r")
+    req = hub.requests["r"]
+
+    assert [task.meta.get("kind") for task in hub.calls] == (
+        ["plan", "direct", "review"] if solo_review else ["plan", "direct"])
+    assert req["status"] == "done" and req["route_decision"]["mode"] == "solo"
+    appendix = req["report_appendix"]
+    assert "| bulk_rna_seq/batch | A |" not in appendix  # step A never ran: the solo turn did
+    assert f"| bulk_rna_seq/batch | {cso.SOLO_OWNER} |" in appendix
+    assert "| bulk_rna_seq/independent_validation | 해당 없음 |" in appendix
+    if not solo_review:
+        assert "| bulk_rna_seq/batch | 단독 처리 | - | - |" in appendix
+        assert "점검 " not in req["report"]
+        return
+    issues = req["solo_review"]["issues"]
+    assert not [found for found in issues if found["step_id"] == "A"]
+    assert [(found["step_id"], found["priority"]) for found in issues] == [(cso.SOLO_OWNER, "P2")] * 2
+    assert f"P2 · {cso.SOLO_OWNER}: 점검 bulk_rna_seq/batch" in req["report"]
+    assert "| bulk_rna_seq/batch | 단독 처리 | 안 했다 | no batch term in the result |" in appendix
+    assert "| bulk_rna_seq/pairing | 단독 처리 | 했다 | answer.md |" in appendix
+    assert req["review"]["verdict"] == "accept"
