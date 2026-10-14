@@ -19,7 +19,7 @@ function contrast(a, b) {
 }
 test('2D loads the token and component files after legacy rules; every ds reference resolves', () => {
   const styles = [...html.matchAll(/<link[^>]+href="([^"]+\.css)"/g)].map(m => m[1]);
-  assert.deepEqual(styles.slice(-3), ['ui/tokens.css', 'ui/components.css', 'ui/office.css']);
+  assert.deepEqual(styles.slice(-4), ['./ui/shutdown.css', 'ui/tokens.css', 'ui/components.css', 'ui/office.css']);
   assert.ok(html.indexOf('href="ui/tokens.css"') > html.indexOf('</style>'));
   const declared = new Set([...tokens.matchAll(/(--ds-[\w-]+):/g)].map(m => m[1]));
   for (const [, name] of (components + html + tokens + fs.readFileSync(path.join(web, 'ui/office.css'), 'utf8')).matchAll(/var\((--ds-[\w-]+)/g)) {

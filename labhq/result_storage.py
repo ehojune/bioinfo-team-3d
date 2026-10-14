@@ -11,7 +11,7 @@ import re
 from urllib.parse import quote
 
 from .integrations.github import GitHubClient, GitHubHTTPError, publish_clean, sanitize, root_zone_restricted
-from .models import Task
+from .models import ApprovalRequest, Task
 from .policy import touches, restricted_paths
 from .intake import reference_dirs
 from .recruit.provenance import touches_restricted
@@ -23,6 +23,7 @@ _PRIVATE_PATH = re.compile(r"(?<![\w:])(?:[A-Za-z]:[/\\]|\\\\|/(?:home|Users|mnt
 _ASSIGNMENT = re.compile(r"(?im)\b((?:api[_-]?key|token|password|secret)\s*[:=]\s*)[^\s,;]+")
 _TEXT_OUTPUTS = {".md", ".txt", ".svg", ".csv", ".tsv", ".py", ".r", ".sh", ".json"}
 _IMAGE_OUTPUTS = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+_DOCUMENT_LINKS = "[전체 결과·그림·표](report.md) · [진행 기록](PROGRESS.md) · [재현 방법](REPRODUCE.md) · [참고 자료](SOURCES.md)"
 
 
 def plain_path(path):
@@ -82,9 +83,16 @@ def draft_documents(req: dict, settings) -> dict[str, str]:
     progress = ["# 진행 기록", "", *[f"- {s.get('id')}: {s.get('instruction', '')}" for s in steps],
                 "", "## 결정·카드", json.dumps(req.get("clarifications") or [], ensure_ascii=False, indent=2),
                 "CP1: " + str((req.get("research_contract") or {}).get("approval", {}).get("state", "기록 없음")),
+                "", "## 수정 회차", json.dumps({"replans": [
+                    {k: v for k, v in entry.items() if k != "prior_results"}
+                    for entry in req.get("replan_history") or []],
+                    "review_progress": req.get("review_progress") or {}}, ensure_ascii=False, indent=2),
                 "", "## 검토", json.dumps(req.get("review") or {}, ensure_ascii=False, indent=2)]
-    sources = [str(r.get("value", "")) for r in req.get("references") or [] if r.get("kind") == "url"]
+    sources = [f"{r.get('kind')}: {r.get('value', '')}" for r in req.get("references") or []
+               if r.get("kind") in {"url", "github", "doi", "pmid"}]
     sources += re.findall(r"https?://[^\s<>\"'\])]+", report)
+    bibliography = re.search(r"(?im)^#{1,6}\s+(?:references|bibliography|참고\s*문헌|참고\s*자료|출처)[^\n]*\n", report)
+    citations = re.split(r"(?m)^#{1,6}\s+", report[bibliography.end():], maxsplit=1)[0] if bibliography else ""
     docs = {
         "README.md": "# 연구 결과\n\n## 무엇을 왜 했나요\n\n" + str(req.get("text") or "") +
             "\n\n## 결과\n\n" + report[:1800] + "\n\n[전체 결과·그림·표](report.md) · "
@@ -94,9 +102,11 @@ def draft_documents(req: dict, settings) -> dict[str, str]:
         "REPRODUCE.md": "# 재현 방법\n\n원본 입력·실행 파일은 로컬 요청 묶음에 있습니다. "
             "묶음의 README.md와 MANIFEST.tsv에서 환경·실행 명령·누락 파일을 확인하세요.\n\n"
             "이 정리본은 결과 설명용입니다. 원본 데이터나 실행 환경을 포함하지 않아 이것만으로 재실행되지는 않습니다.\n\n"
-            + "\n".join(f"- {s.get('id')}: {s.get('instruction', '')}" for s in steps),
+            + "\n".join(f"- {s.get('id')}: {s.get('instruction', '')}" for s in steps)
+            + "\n\n## 입력 출처\n\n" + ("\n".join(sources) or "공개 입력 출처가 기록되지 않았습니다."),
         "SOURCES.md": "# 출처·인용\n\n" + ("\n".join(f"- {url}" for url in dict.fromkeys(sources)) or
-                                                  "기록된 URL이 없습니다. 보고서의 인용을 확인하세요."),
+                                                  "기록된 URL이 없습니다. 보고서의 인용을 확인하세요.")
+            + ("\n\n## 보고서 문헌\n\n" + citations if citations else ""),
     }
     return {name: clean_document(body, settings, req) for name, body in docs.items()}
 
@@ -106,6 +116,7 @@ class ResultStorage:
         self.hub, self.s, self.transport = hub, hub.s, transport
         self.tasks: dict[str, asyncio.Task] = {}
         self._client = None
+        self._card_lock = asyncio.Lock()
 
     def client(self):
         token = os.environ.get(self.s.github.token_env, "")
@@ -137,12 +148,35 @@ class ResultStorage:
             return True
         return False
 
-    async def card(self, rid):
+    async def open_card(self, rid):
+        """Open one durable late-choice card without parking or restarting the request."""
+        async with self._card_lock:
+            req = self.hub.requests[rid]
+            if req.get("result_storage"):
+                raise ValueError("이미 저장 위치를 골랐거나 게시한 요청입니다.")
+            if req.get("status") not in {"done", "failed", "cancelled", "review_pending"} or req.get("cancelling"):
+                raise ValueError("끝난 요청이나 보고서 검토 대기 요청에서 저장 위치를 정해 주세요.")
+            if req.get("status") == "cancelled" and not str(req.get("report") or "").strip():
+                raise ValueError("저장할 부분 결과 보고서가 없습니다.")
+            for entry in self.hub.approvals.values():
+                approval = entry["approval"]
+                if approval.get("request_id") == rid and (approval.get("detail") or {}).get("storage"):
+                    return approval
+            storage = await self.card(rid, late=True)
+            approval = ApprovalRequest(kind="result_storage", request_id=rid,
+                summary="이 결과를 어디에 남길까요?", detail={"storage": storage, "late_storage": True}
+                ).model_dump(mode="json", exclude={"timeout_s"})
+            self.hub.approvals[approval["id"]] = {"approval": approval, "origin": None}
+            self.hub.save_approval(approval["id"])
+            await self.hub.publish({"type": "approval.requested", "request_id": rid, "data": approval})
+            return approval
+
+    async def card(self, rid, *, late=False):
         req = self.hub.requests[rid]
-        if self.inherited(rid):
+        if req.get("result_storage") or (not late and self.inherited(rid)):
             return None
         research = (req.get("intake") or {}).get("work_kind") == "research" or req.get("research_contract")
-        if not research and not self.s.github.ask_storage:
+        if not late and not research and not self.s.github.ask_storage:
             return None
         warning = ""
         available = False
@@ -158,8 +192,14 @@ class ResultStorage:
         return {"default": "local", "suggested_name": "labhq-" + rid.removeprefix("req_"),
                 "github_available": available, "warning": warning}
 
-    async def select(self, rid, choice):
+    async def select(self, rid, choice, *, late=False):
+        async with self._card_lock:
+            return await self._select(rid, choice, late=late)
+
+    async def _select(self, rid, choice, *, late=False):
         req = self.hub.requests[rid]
+        if late and req.get("result_storage"):
+            raise ValueError("이미 저장 위치를 골랐거나 게시한 요청입니다.")
         mode = choice.get("mode", "local")
         if mode not in {"local", "new", "existing"} or choice.get("visibility", "private") not in {"private", "public"}:
             raise ValueError("저장 위치와 공개 범위를 다시 골라 주세요.")
@@ -188,13 +228,19 @@ class ResultStorage:
                          "allow_public": visibility == "public", "status": "selected"}
             except Exception:
                 saved["warning"] = "GitHub에 쓸 권한이 없어 로컬에 남깁니다. 토큰의 저장소 읽기·쓰기 권한을 확인하세요."
+        if late:
+            saved["after_review"] = True
         req["result_storage"] = saved
         self.hub.save_request(rid)
+        if late:
+            self.schedule(rid)
         return saved
 
     def schedule(self, rid):
         req = self.hub.requests[rid]
         saved = req.get("result_storage") or {}
+        if saved.get("after_review") and (not req.get("pi_reviewed_at") or req.get("bundle_pending")):
+            return
         if not saved or saved.get("status") in {"published", "local", "failed", "declined"}:
             return
         if rid not in self.tasks or self.tasks[rid].done():
@@ -203,6 +249,8 @@ class ResultStorage:
     async def finish(self, rid):
         req = self.hub.requests[rid]
         saved = req.get("result_storage") or {}
+        if saved.get("after_review") and (not req.get("pi_reviewed_at") or req.get("bundle_pending")):
+            return
         if not saved or req.get("status") not in {"done", "completed", "failed", "cancelled"}:
             return
         try:
@@ -239,8 +287,19 @@ class ResultStorage:
                     docs["README.md"] += "\n## 그림·표·실행 파일\n\n" + links + "\n"
                     docs["REPRODUCE.md"] += "\n\n## 포함한 파일\n\n" + links + "\n"
                 bundle_readme = self.s.path(self.s.runner.workspace_root) / "requests" / rid / "README.md"
+                manifest = bundle_readme.with_name("MANIFEST.tsv")
+                environments = "환경 기록이 없습니다. 실행 환경은 로컬 묶음에서 확인하세요."
+                if plain_path(manifest) and manifest.is_file():
+                    with manifest.open(encoding="utf-8", newline="") as handle:
+                        for row in csv.DictReader(handle, delimiter="\t"):
+                            if row.get("status") == "summary" and row.get("environment_records"):
+                                environments = clean_document(row["environment_records"], self.s, req)
+                                break
+                docs["REPRODUCE.md"] += "\n\n## 환경\n\n" + environments
                 if plain_path(bundle_readme) and bundle_readme.is_file():
-                    docs["REPRODUCE.md"] += "\n\n" + clean_document(bundle_readme.read_text(encoding="utf-8"), self.s, req)
+                    docs["REPRODUCE.md"] += "\n\n## 실행 명령·묶음 안내\n\n" + clean_document(bundle_readme.read_text(encoding="utf-8"), self.s, req)
+                else:
+                    docs["REPRODUCE.md"] += "\n\n## 실행 명령\n\n요청 묶음에 기록된 실행 명령이 없습니다."
                 if "editor" in self.hub.agents:
                     try:
                         result = await self.hub.orchestrator.run_step(Task(
@@ -260,6 +319,9 @@ class ResultStorage:
                                               "[재현 방법](REPRODUCE.md) · [출처](SOURCES.md)\n")
                         if links:
                             docs["README.md"] += "\n## 그림·표·실행 파일\n\n" + links + "\n"
+                if any(f"]({name})" not in docs["README.md"] for name in
+                       ("report.md", "PROGRESS.md", "REPRODUCE.md", "SOURCES.md")):
+                    docs["README.md"] += "\n\n" + _DOCUMENT_LINKS + "\n"
                 docs.update(assets)
                 # The audit bundle's MANIFEST and RO-Crate are already sealed.
                 target = self.s.path(self.s.runner.workspace_root) / "requests" / f"{rid}-editor"

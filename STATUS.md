@@ -6,6 +6,49 @@
 
 ## 결론
 
+PR #583의 늦은 저장 선택과 main #580·#585의 수정 사항을 함께 보존했습니다. Refs #558.
+
+## 바뀐 것
+
+- 검토 뒤 실행, 카드 재사용·재시작 복원, 취소된 부분 결과, 기한 없는 선택을 유지했습니다.
+- 편집자 실패 시 기본 정리본, 저장 선택 approval 처리 순서, 게시 파일 단일 commit을 유지했습니다.
+- 검토할 수 없는 `completed` 상태는 API·웹의 늦은 저장 허용 목록에서 뺐습니다(리뷰 4266335778).
+- Node 자동 수집 51개에 main 명시 목록 50개가 모두 포함됩니다.
+
+## 확인
+
+- Windows 관련 pytest: 141 passed, 1 skipped. GitHub 호출은 mock만 사용했습니다.
+- `for f in tests/*.cjs; do node --test "$f"; done`: 51개 파일 통과.
+- 로컬 전체 pytest: ROUNDSIZE 전체 suite 실행 중이라 지시된 예외에 따라 미실행했습니다.
+- push 뒤 CI 결과는 PR 본문에 기록합니다.
+
+## 남은 지적
+
+- 로컬 전체 pytest 미실행. PI/trial 실행·재시작, 리뷰 요청·답글, PR 병합은 하지 않았습니다.
+
+## 결론
+
+PR #583의 2차 지적 2건을 수정했다. 검토 뒤 저장 선택은 남고, 선택 기록 뒤 종료되어 남은 카드는 재시작 때 해결한다.
+
+## 바뀐 것
+
+- 4266158617(P1): 2.5D·3D 결정 목록에 저장 위치 미정 카드를 유지한다. 검토 완료 버튼은 다시 표시하지 않는다.
+- 4266158629(P2): 저장 선택과 카드 해결 이벤트를 재생한 뒤 남은 카드를 삭제한다. 이력에는 저장 선택 복구로 표시한다.
+
+## 확인
+
+- 수정 전 `306282c`: UI 3건·재시작 2건 실패. 수정 뒤 관련 Python 69건·전체 Node 49개 파일 통과.
+- 공개 검사·diff 검사 통과. 다른 레인의 전체 pytest 실행으로 Windows 전체는 생략했다.
+
+## 남은 지적
+
+- push 지시와 GitHub 쓰기 금지의 적용 범위 확인 대기. 수정 head의 CI는 미실행이다.
+- 임시 폴더 삭제는 자동 승인 검토가 거절했다(`blocked by policy`).
+
+Refs #583
+
+## 결론
+
 PR #585: 시안 E를 작업판·메신저·직원 시트·요청 입력에 적용했다. Refs #546.
 
 ## 바뀐 것
@@ -26,6 +69,53 @@ PR #585: 시안 E를 작업판·메신저·직원 시트·요청 입력에 적�
 - 관련 검사 임시 폴더 삭제는 자동 승인 검토가 `blocked by policy`로 거부해 미정리다. 리뷰 요청·지적 대응·병합은 하지 않았다.
 
 [전후 화면 18장](../design/2026-10-13/board-comparison/README.md) · [검증 근거](../design/2026-10-13/docs/reference/board-verification.md)
+
+﻿## 결론
+
+PR #583의 봇 지적 3건을 고치고 main b55138e를 병합했다.
+
+## 바뀐 것
+
+- Node web_*.cjs 자동 수집. 기존 48개 성공 표시 보존, 현재 49개 수집.
+- 취소된 요청의 부분 보고서 저장·검토 후 게시 허용. 보고서가 없으면 이유 반환.
+- 늦은 저장 선택의 기한 제거. 기존 카드도 재시작·replay에서 기한 없이 복원.
+- 결정 카드 디자인과 저장 버튼 보존. 디자인 test의 state·CSS 순서 정합성 수정.
+
+## 확인
+
+- 수정 전: P1 수집 1 failed, 취소·기한 Python 10 failed, 취소 Node 1 failed.
+- 수정 후: Windows 관련 pytest 159 passed, 1 skipped. Node 49개 파일 전부 통과.
+- 기존 표시 48개 비교·새 파일 자동 수집 probe 통과. 공개 검사 통과.
+
+## 남은 지적
+
+- 다른 레인의 전체 pytest가 실행 중이라 로컬 전체 suite는 생략했다. 전체 검증은 CI 결과를 확인한다.
+- 실제 저장소 게시·PI/trial 실행·리뷰 댓글·PR 병합은 하지 않았다.
+
+## 결론
+
+저장 위치 질문 없이 끝난 요청도 API·CLI·웹에서 기존 카드를 열어 GitHub 정리본을 남깁니다. Refs #558.
+
+## 바뀐 것
+
+- `POST /api/requests/{rid}/storage`, `labhq storage <id>`, 검토 대기 카드의 **저장 위치 정하기**. 이미 선택·게시한 요청은 거부하고 열린 카드는 재사용합니다.
+- 검토 전 선택은 검토 완료와 묶음 갱신을 기다립니다. 검토 후 선택은 바로 편집자 → 게시 승인 → 업로드로 이어집니다.
+- README 문서 링크, 진행 기록의 수정 회차, 재현 방법의 환경·명령·입력 출처, 참고 자료의 DOI·PMID·문헌을 보강했습니다.
+- 3D 검토 완료에 CP4 revision·hash를 전달합니다. 기존 CSS 검사도 현재 로드 순서 세 파일을 모두 확인합니다.
+
+## 확인
+
+- 기준 main `4a7c03b`: 새 Python 회귀 10 failed, 웹 회귀 2 failed. 관련 Python 35 passed, CP4 포함 43 passed.
+- Node 48개 파일 모두 통과. GitHub 생성·업로드는 mock transport로만 검증했습니다.
+- Windows 전체 pytest는 다른 레인의 실행이 이어져 15분 대기 후 미실행했습니다. main 충돌로 CI run이 생성되지 않았습니다. changes, pytest (3.10·3.12), pytest-windows, clean-install, ro-crate-validator, pytest-slow, readme, patch-notes 모두 미실행입니다.
+
+## 남은 지적
+
+- main 충돌 해소와 로컬 전체 pytest·CI 최종 검증은 총괄에게 넘깁니다.
+
+- 실제 저장소 생성·게시, PI/trial 접속·재시작, 설정 변경, 리뷰 요청·인라인 답글·병합은 하지 않았습니다.
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
 
 ## 결론
 
