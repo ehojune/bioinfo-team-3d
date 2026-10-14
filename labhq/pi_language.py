@@ -18,7 +18,11 @@ def is_english(text: str) -> bool:
 
 
 def technical(text: str) -> bool:
-    return is_english(text) or bool(re.search(
+    return is_english(text) or code_or_path(text)
+
+
+def code_or_path(text: str) -> bool:
+    return bool(re.search(
         r"```|~~~|`[^`]+`|[A-Za-z]:[\\/]|(?:[\w.-]+/)+[\w.-]+|"
         r"(?:^|\n)\s*(?:\$\w+\s*=|import |from .+ import |def |print\(|New-Item |Remove-Item )", text))
 
@@ -48,7 +52,7 @@ def message_source(event: dict) -> str:
 class PiInterpreter:
     def __init__(self, hub):
         self.hub = hub
-        self.tasks: set[asyncio.Task] = set()
+        self.tasks: dict[asyncio.Task, str | None] = {}
         for key, entry in hub.store.all("pi_translation").items():
             if entry.get("status") == "pending":
                 failed = {"status": "failed", "label": "번역 못 함", "by": "chief_of_staff"}
@@ -78,8 +82,8 @@ class PiInterpreter:
                             "approval_id":
                             (event.get("data") or {}).get("id") if event.get("type") == "approval.requested" else None})
         task = asyncio.create_task(self._interpret(event, source))
-        self.tasks.add(task)
-        task.add_done_callback(self.tasks.discard)
+        self.tasks[task] = event.get("request_id")
+        task.add_done_callback(lambda done: self.tasks.pop(done, None))
 
     async def _interpret(self, event: dict, source: str) -> None:
         hub, cfg = self.hub, self.hub.s.pi_language
@@ -91,15 +95,22 @@ class PiInterpreter:
             agent = hub.agents.get(aid) or {}
             runner = hub.agent_runner.get(aid)
             req = hub.requests.get(rid)
+            # Events such as followup_done have no source task or restricted marker.
+            # Only a definite unrestricted verdict permits a separate model call;
+            # classification errors reach the failure handler without dispatching.
+            if not req or hub.orchestrator._request_restricted(rid) is not False:
+                return
             source_task = hub.store.get("task", event.get("task_id")) if event.get("task_id") else {}
             restricted = ((source_task or {}).get("payload", {}).get("meta", {}).get("restricted_inputs")
                           or (event.get("data") or {}).get("source_restricted"))
             budget = hub.store.get("pi_translation_budget", str(rid)) or {"reserved": 0.0}
+            limit = float(req.get("budget_usd") or hub.s.policy.budget.per_request_usd)
+            _, _, bound = hub.orchestrator._budget_bound(rid, limit)
             remaining = min(cfg.per_request_usd - budget["reserved"],
-                            float((req or {}).get("budget_usd") or hub.s.policy.budget.per_request_usd)
-                            - float((req or {}).get("cost_usd") or 0))
+                            limit - max(bound, float(req.get("cost_usd") or 0)))
             if (restricted or not cfg.enabled or not cfg.model or not req or not runner or runner not in hub.runners
                     or agent.get("engine") != "claude_code" or len(source) > 12000
+                    or not hub.orchestrator._diagnosis_budget_available(rid)
                     or remaining < cfg.per_message_usd):
                 return
             # Reserve the entire call ceiling, including failed/unknown calls, across restarts.
@@ -120,8 +131,9 @@ class PiInterpreter:
                                   "project_dirs": []}})
             result = await asyncio.wait_for(hub.dispatch(task), cfg.timeout_s)
             hub._record_task_cost(rid, task.id, result)
+            hub.orchestrator._count_cost(rid, task.id, result)
             text = plain_text(result.text)
-            if (result.ok and re.search(r"[가-힣]", text) and not technical(text)
+            if (result.ok and re.search(r"[가-힣]", text) and not code_or_path(text)
                     and len(text) <= 500 and len(re.split(r"(?<=[.!?。])\s+|\n+", text)) <= 2):
                 display = {"status": "translated", "text": text, "by": "chief_of_staff"}
         except (Exception, asyncio.CancelledError):
@@ -129,6 +141,7 @@ class PiInterpreter:
                 await hub.cancel_task(task.id)
                 hub._record_task_cost(rid, task.id, TaskResult(task_id=task.id, agent_id=task.agent_id,
                                                             ok=False), outcome_unknown=True)
+                hub.orchestrator._count_cost(rid, task.id)
         finally:
             hub.store.put("pi_translation", key, display)
             hub.store.set_message_display(event["seq"], display)
