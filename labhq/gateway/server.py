@@ -856,6 +856,9 @@ class Hub:
         finishing += [{"id": rid, "status": (self.requests.get(rid) or {}).get("status"),
                        "text": (self.requests.get(rid) or {}).get("text"), "stage": "bundle"}
                       for rid, task in self.terminal_tasks.items() if not task.done()]
+        finishing += [{"id": rid, "status": (self.requests.get(rid) or {}).get("status"),
+                       "text": (self.requests.get(rid) or {}).get("text"), "stage": "result_storage"}
+                      for rid, task in self.result_storage.tasks.items() if not task.done()]
         return {"requests": requests, "followups": followups, "recruits": recruits, "finishing": finishing,
                 "ready": not (requests or followups or recruits or finishing)}
 
@@ -2807,6 +2810,7 @@ class Hub:
     def ask_results_for_task(self, task_id: str) -> list[dict]:
         return [entry["answer"] for entry in self.store.all("ask").values()
                 if (entry.get("ask") or {}).get("task_id") == task_id
+                and not entry.get("facilities_diagnosis")
                 and entry.get("state") == "resolved" and entry.get("answer")]
 
     # ----- approvals -----

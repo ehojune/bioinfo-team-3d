@@ -232,25 +232,26 @@ class KnowledgeRecall:
                 if len(query) >= 3 and meta.get("trigram") == "1":
                     literal = '"' + query.replace('"', '""') + '"'
                     rows = db.execute("SELECT d.request_id FROM recall_fts f JOIN documents d ON d.id=f.rowid "
-                                      "WHERE recall_fts MATCH ? ORDER BY d.id DESC LIMIT 100", (literal,)).fetchall()
+                                      "WHERE recall_fts MATCH ? ORDER BY d.id DESC", (literal,))
                 else:
                     literal = "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
                     rows = db.execute("SELECT request_id FROM (SELECT * FROM documents ORDER BY id DESC LIMIT ?) "
-                                      "WHERE body LIKE ? ESCAPE '\\' ORDER BY id DESC LIMIT 100",
-                                      (SCAN_LIMIT, literal)).fetchall()
-            found = []
-            for (rid,) in rows:
-                # Reapply current policy and references before matching, including changed settings.
-                record = project(self.hub.s, rid, self.hub.store.get("request", rid) or {})
-                if record is None or query.casefold() not in record["body"].casefold():
-                    continue
-                body = record["body"]
-                start = max(0, body.casefold().find(query.casefold()) - 80)
-                record["body"] = body[start:start + 400]
-                found.append(record)
-                if len(found) == 5:
-                    break
-            return found
+                                      "WHERE body LIKE ? ESCAPE '\\' ORDER BY id DESC",
+                                      (SCAN_LIMIT, literal))
+                found = []
+                for batch in iter(lambda: rows.fetchmany(100), []):
+                    for (rid,) in batch:
+                        # Reapply current policy before counting a candidate toward the five results.
+                        record = project(self.hub.s, rid, self.hub.store.get("request", rid) or {})
+                        if record is None or query.casefold() not in record["body"].casefold():
+                            continue
+                        body = record["body"]
+                        start = max(0, body.casefold().find(query.casefold()) - 80)
+                        record["body"] = body[start:start + 400]
+                        found.append(record)
+                        if len(found) == 5:
+                            return found
+                return found
         except Exception:
             log.warning("local recall search unavailable")
             return []

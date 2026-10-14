@@ -194,6 +194,7 @@ def test_package_data_includes_office_assets():
     ('web_trial_ready.cjs', 'trial readiness web tests passed'),
     ('web_shutdown.cjs', 'fail 0'),
     ('web_result_storage.cjs', 'fail 0'),
+    ('web_p2_followups_1013.cjs', 'fail 0'),
     ('web_design_tokens.cjs', 'fail 0'),
     ('web_design_decisions.cjs', 'fail 0'),
 ])

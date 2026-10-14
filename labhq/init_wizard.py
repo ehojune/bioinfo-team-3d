@@ -212,7 +212,12 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
             raise InitError("인스턴스 설정은 덮어쓰지 않습니다. --force 없이 기존 설정을 사용하세요.")
     staff_home: Path | None = None
     claude_home: Path | None = None
-    existing = Settings.load(str(target)) if target.exists() else None
+    try:
+        existing = Settings.load(str(target)) if target.exists() else None
+    except (OSError, ValueError, yaml.YAMLError):
+        if not force:
+            raise
+        existing = None
     if existing is not None and not force:
         print("기존 설정과 token을 보존합니다. 교체하려면 --force를 사용하세요.")
         settings = existing
@@ -293,7 +298,9 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
             print("BIOINFO_AGENT_DIR: 생략 (필요할 때 설정)")
         if existing is not None:
             # Consent belongs to its target too; --force must not redirect an existing opt-in.
-            data.setdefault("policy", {})["bioinfo_agent"] = existing.policy.bioinfo_agent.model_dump()
+            bioinfo = data.setdefault("policy", {}).setdefault("bioinfo_agent", {})
+            for key in ("pipeline_pr", "pipeline_repo", "pipeline_base_branch"):
+                bioinfo[key] = getattr(existing.policy.bioinfo_agent, key)
         else:
             bioinfo = data.setdefault("policy", {}).setdefault("bioinfo_agent", {})
             print(f"새 pipeline 코드를 공개 upstream {bioinfo['pipeline_repo']}에 PR로 올릴지 선택합니다.")
