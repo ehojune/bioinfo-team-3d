@@ -4,3 +4,6 @@ rows:
   at: 2026-10-15 07:00
   text: 느린 Windows CI에서 e2e mock test가 60초·90초 고정 상한에 걸리던 것을, 진행이 멈춘 뒤 120초를 기다리는
     방식으로 바꿨다(#598).
+- sha: 6ac9051
+  at: 2026-10-15 07:13
+  text: e2e helper가 timeout 인자를 다시 받아, 그 helper를 쓰는 research cp1 test가 깨지지 않게 했다(#598).
