@@ -1,0 +1,10 @@
+pr: 597
+rows:
+- sha: '7184136'
+  at: 2026-10-14 18:01
+  text: Windows 종료(adapter 취소·버전 조사 시간 초과·down)가 taskkill /T 대신 생성 시각을 검증하는 helper를
+    써서, 재사용된 부모 PID 때문에 PI의 gateway·runner가 함께 죽던 문제를 막는다(#589).
+- sha: d13de19
+  at: 2026-10-14 18:02
+  text: status·doctor가 venv launcher의 자식이 쓴 heartbeat를 읽어 살아 있는 gateway를 '기록 없음'으로
+    보이지 않게 한다(#589).
