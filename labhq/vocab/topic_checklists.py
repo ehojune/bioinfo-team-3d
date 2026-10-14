@@ -277,3 +277,97 @@ def not_applicable(answers: Any) -> list[str]:
     return sorted(item_id for item_id, value in answers.items()
                   if isinstance(item_id, str) and isinstance(value, str) and value.startswith("not_applicable:")
                   and skip_reason(value))
+
+
+# --- Reviewer verdicts per check (#586) -------------------------------------------------------------------------
+# The review gets the declared checks and the plan's answers, answers each one (done, partly, not_done, with
+# evidence) and labhq turns a miss on a step-answered check into a P2 issue and the appendix table.
+REVIEW_STATUSES = ("done", "partly", "not_done")
+REVIEW_STATUS_LABELS = {"done": "했다", "partly": "일부", "not_done": "안 했다"}
+REVIEW_MISSES = ("partly", "not_done")
+
+
+def _id_aliases(item: ChecklistItem) -> set[str]:
+    """Spellings a reviewer may use for a check: the bare id, or ``topic.id`` / ``topic/id`` per declared topic."""
+    return {item.id, *(f"{topic}{sep}{item.id}" for topic in item.topic.split(",") for sep in (".", "/"))}
+
+
+def review_verdicts(rows: Any, required: list[ChecklistItem]) -> dict[str, tuple[str, str]]:
+    """``{item id: (status, evidence)}`` from the reviewer's ``checklist`` rows, for the required checks only.
+
+    A row naming no required check is dropped. When rows repeat a check, the worse status wins, so a miss is
+    never hidden by a second ``done``."""
+    if not isinstance(rows, list):
+        return {}
+    by_alias = {alias: item.id for item in required for alias in _id_aliases(item)}
+    found: dict[str, tuple[str, str]] = {}
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get("id"), str):
+            continue
+        item_id = by_alias.get(row["id"].strip())
+        status, evidence = row.get("status"), row.get("evidence")
+        if item_id is None or status not in REVIEW_STATUSES:
+            continue
+        prior = found.get(item_id)
+        if prior is None or REVIEW_STATUSES.index(status) > REVIEW_STATUSES.index(prior[0]):
+            found[item_id] = (status, evidence.strip() if isinstance(evidence, str) else "")
+    return found
+
+
+def answered_steps(answers: Any, item: ChecklistItem) -> list[str]:
+    """The step ids the plan answered a check with (``step:<id>``), once each, in answer order."""
+    body = answers if isinstance(answers, dict) else {}
+    steps: list[str] = []
+    for _, value in _answer_values(body, item):
+        match = ANSWER.fullmatch(value.strip()) if isinstance(value, str) else None
+        if match and match.group(2) and match.group(2) not in steps:
+            steps.append(match.group(2))
+    return steps
+
+
+def review_misses(answers: Any, required: list[ChecklistItem], rows: Any) \
+        -> list[tuple[ChecklistItem, list[str], str, str]]:
+    """(check, owning steps, status, evidence) for each check the plan answered with a step that the reviewer found
+    only partly or not done. assumption and not_applicable answers are not here: the plan already said why."""
+    verdicts = review_verdicts(rows, required)
+    found = []
+    for item in required:
+        status, evidence = verdicts.get(item.id, ("", ""))
+        steps = answered_steps(answers, item)
+        if status in REVIEW_MISSES and steps:
+            found.append((item, steps, status, evidence))
+    return found
+
+
+def _table_cell(text: Any, limit: int = 120) -> str:
+    cell = _cell(text).replace("|", "\\|")
+    return cell if len(cell) <= limit else cell[:limit - 1].rstrip() + "…"
+
+
+def report_table(answers: Any, required: list[ChecklistItem], rows: Any) -> str:
+    """The appendix table, one line per required check: item, owning step, reviewer verdict, evidence (#586).
+
+    A check answered assumption shows 가정 and a not_applicable one 해당 없음 (no verdict: nothing was left undone);
+    both fall back to the plan's reason when the reviewer gave no evidence. Without a reviewer row the verdict is -."""
+    if not required:
+        return ""
+    body = answers if isinstance(answers, dict) else {}
+    verdicts = review_verdicts(rows, required)
+    lines = ["| 항목 | 담당 단계 | 리뷰 판정 | 근거 |", "| --- | --- | --- | --- |"]
+    for item in required:
+        steps = answered_steps(body, item)
+        values = [value.strip() for _, value in _answer_values(body, item) if isinstance(value, str)]
+        reason = next((r for value in values if (r := skip_reason(value))), "")
+        if steps:
+            owner = ", ".join(steps)
+        elif any(value.startswith("assumption:") for value in values):
+            owner = "가정"
+        elif any(value.startswith("not_applicable:") for value in values):
+            owner = "해당 없음"
+        else:
+            owner = "-"
+        status, evidence = verdicts.get(item.id, ("", ""))
+        verdict = "-" if owner == "해당 없음" or not status else REVIEW_STATUS_LABELS[status]
+        lines.append("| " + " | ".join(_table_cell(value) for value in (
+            label(item), owner, verdict, evidence or (reason if not steps else "") or "-")) + " |")
+    return "\n".join(lines)

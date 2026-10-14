@@ -205,6 +205,16 @@ def scope_verdict(plan: Any) -> dict[str, str] | None:
         return None
     return {"verdict": scope["verdict"], "reason": short(str(scope.get("reason") or "").strip(), 500)}
 
+# The reviewer's answer to each declared checklist item and required precedent item (#586). Optional in both review
+# schemas: a review saved before it existed, or one from a request with no checklist, stays valid.
+CHECKLIST_REVIEW_SCHEMA: dict[str, Any] = {
+    "type": "array", "items": {
+        "type": "object", "additionalProperties": False,
+        "properties": {"id": {"type": "string"},
+                       "status": {"type": "string", "enum": list(topic_checklists.REVIEW_STATUSES)},
+                       "evidence": {"type": "string"}},
+        "required": ["id", "status", "evidence"]}}
+
 REVIEW_SCHEMA: dict[str, Any] = {
     "type": "object", "additionalProperties": False,
     "properties": {
@@ -220,6 +230,7 @@ REVIEW_SCHEMA: dict[str, Any] = {
                            "priority": {"type": "string", "enum": ["P1", "P2", "P3"]},
                            "problem": {"type": "string"}, "request": {"type": "string"}},
             "required": ["step_id", "priority", "problem", "request"]}},
+        "checklist": CHECKLIST_REVIEW_SCHEMA,
     },
     "required": ["verdict", "scores", "issues"],
 }
@@ -240,6 +251,7 @@ RESEARCH_LANE_REVIEW_SCHEMA: dict[str, Any] = {
                            "evidence_quote": {"type": "string"}, "problem": {"type": "string"},
                            "request": {"type": "string"}},
             "required": ["step_id", "claim_id", "priority", "category", "evidence_quote", "problem", "request"]}},
+        "checklist": CHECKLIST_REVIEW_SCHEMA,
     },
     "required": ["verdict", "issues"],
 }
@@ -603,6 +615,16 @@ STEP_OUTPUTS_RULE = ("\n\nDeclared outputs: save each at exactly this path in yo
 
 RESEARCH_RESULT_FIELD_RULES = "\n".join(f"- {rule}" for rule in RESULT_CONTRACT_FIELD_RULES)
 
+# What both reviews are asked about the declared checklist (#586). The context block that follows the prompt lists
+# the ids (plan_review_context); labhq reads the answers in review_with_checklist and checklist_appendix.
+CHECKLIST_REVIEW_RULE = (
+    "When the declared topic checklist or Analysis precedents below list items, also fill `checklist` with one\n"
+    "entry for every listed checklist item and required precedent item, using its id exactly as listed. Each entry\n"
+    "has `status` (done, partly or not_done) and `evidence`: the step id or output path in the results that shows\n"
+    "it, or a short reason when not_done. One line each. Judge from the results, not from the plan's answer.\n"
+    "For an item the plan answered step:<id> that you mark partly or not_done, labhq adds a P2 issue unless you\n"
+    "already filed a P1 or P2 issue that names the item id; name the id when you file one.")
+
 REVIEW_PROMPT = """Write only in your own outputs/ and .tmp/; never edit reviewed files or inputs.
 Save the final JSON to outputs/review.json and return the same JSON as your final answer.
 You are the scientific reviewer. Evaluate the team's work on the request below with three
@@ -615,6 +637,7 @@ handled incorrectly; it is P1 when fixing it would change a conclusion.
 A checklist item answered assumption with a stated, correct reason is acceptable (PI 2026-10-07): file an
 issue for it only when the reason is wrong or the missing check would change a conclusion (then P1), not
 merely because it was skipped.
+""" + CHECKLIST_REVIEW_RULE + """
 
 Request: {request}
 
@@ -727,6 +750,7 @@ anything omitted or handled incorrectly; it is P1 when fixing it would change a 
 A checklist item answered assumption with a stated, correct reason is acceptable (PI 2026-10-07): file an
 issue for it only when the reason is wrong or the missing check would change a conclusion (then P1), not
 merely because it was skipped.
+""" + CHECKLIST_REVIEW_RULE + """
 
 Request: {request}
 
@@ -2059,6 +2083,67 @@ def plan_report_context(plan: Any, catalog: dict[str, list[topic_checklists.Chec
     if rendered:
         lines += ["", rendered]
     return "\n".join(lines)
+
+
+def lenient_review(value: Any, schema: dict[str, Any]) -> dict | None:
+    """``value`` when it is a valid review, or valid once an unreadable optional ``checklist`` is dropped (#586).
+
+    A malformed verdict row must not cost the whole review: it gets two parse attempts, then ends review_unparsed."""
+    if valid_review(value, schema):
+        return value
+    if isinstance(value, dict) and "checklist" in value:
+        rest = {key: item for key, item in value.items() if key != "checklist"}
+        if valid_review(rest, schema):
+            return rest
+    return None
+
+
+def _names_check(issue: dict, item: topic_checklists.ChecklistItem) -> bool:
+    """Whether a review issue names the check's id. ASCII boundaries: a Korean particle may follow the id."""
+    text = " ".join(str(issue.get(key) or "") for key in ("problem", "request", "evidence_quote"))
+    return re.search(rf"(?<![A-Za-z0-9_.-]){re.escape(item.id)}(?![A-Za-z0-9_-])", text) is not None
+
+
+def review_with_checklist(review: dict, plan: Any, catalog: dict[str, list[topic_checklists.ChecklistItem]],
+                          precedents: Any, *, research: bool = False) -> dict:
+    """The review plus a P2 issue for each check the plan answered with a step that the reviewer found partly or not
+    done (#586). In the 10-13 trial the reviewers got the checklist and cited it in no finding.
+
+    A P1 or P2 issue that already names the check's id stands in for it; a P3 one does not. assumption and
+    not_applicable answers add nothing: the plan stated why, and the review already files a wrong reason. The
+    research lane's issues carry its extra fields (claim_id, category, evidence_quote)."""
+    body = plan if isinstance(plan, dict) else {}
+    required = required_checklist_items(body, catalog, precedents)
+    issues = [issue for issue in review.get("issues") or [] if isinstance(issue, dict)]
+    added: list[dict] = []
+    for item, steps, status, evidence in topic_checklists.review_misses(
+            body.get("checklist"), required, review.get("checklist")):
+        if any(issue.get("priority") in ("P1", "P2") and _names_check(issue, item) for issue in [*issues, *added]):
+            continue
+        owner = ", ".join(steps)
+        issue = {"step_id": steps[0], "priority": "P2",
+                 "problem": f"점검 {topic_checklists.label(item)}: 계획은 {owner} 단계로 답했지만 리뷰어는 "
+                            f"{'일부만 했다' if status == 'partly' else '하지 않았다'}고 판정했습니다. "
+                            f"근거: {evidence or '없음'}",
+                 "request": f"{owner} 단계에서 점검 {item.id}을(를) 끝내거나, 못 하는 이유를 계획에 "
+                            "assumption으로 남기세요."}
+        if research:
+            issue.update(claim_id="", category="other", evidence_quote=evidence)
+        added.append(issue)
+    return {**review, "issues": [*issues, *added]} if added else review
+
+
+def checklist_appendix(plan: Any, review: Any, catalog: dict[str, list[topic_checklists.ChecklistItem]],
+                       precedents: Any) -> str:
+    """The execution-record table of every required check: item, owning step, reviewer verdict, evidence (#586).
+    The report body never named the checks; only assumption answers reached it as limitations."""
+    body = plan if isinstance(plan, dict) else {}
+    required = required_checklist_items(body, catalog, precedents)
+    if not required:
+        return ""
+    rows = review.get("checklist") if isinstance(review, dict) else None
+    return ("점검표 (분야 점검 항목, 담당 단계, 리뷰 판정):\n\n" +
+            topic_checklists.report_table(body.get("checklist"), required, rows))
 
 
 SoloPhase = Literal["solo", "review", "fallback", "done"]
@@ -4230,8 +4315,9 @@ class Orchestrator:
         stored = contract.get("review") or {}
         review: dict = {}
         if stored.get("plan_sha256") == plan_hash:
-            saved = {"verdict": stored.get("verdict"), "issues": stored.get("issues")}
-            review = saved if valid_review(saved, RESEARCH_LANE_REVIEW_SCHEMA) else {}
+            saved = {"verdict": stored.get("verdict"), "issues": stored.get("issues"),
+                     **({"checklist": stored["checklist"]} if "checklist" in stored else {})}
+            review = lenient_review(saved, RESEARCH_LANE_REVIEW_SCHEMA) or {}
         if not review:
             catalog = topic_checklists.load()
             prompt = RESEARCH_REVIEW_PROMPT.format(
@@ -4254,10 +4340,11 @@ class Orchestrator:
                 if rid in self.budget_denials:
                     budget_denied("review", None)
                     return
-                parsed = (reply.structured if valid_review(reply.structured, RESEARCH_LANE_REVIEW_SCHEMA)
-                          else extract_json(reply.text))
-                if reply.ok and valid_review(parsed, RESEARCH_LANE_REVIEW_SCHEMA):
-                    review = with_p1_verdict(parsed)
+                parsed = (lenient_review(reply.structured, RESEARCH_LANE_REVIEW_SCHEMA)
+                          or lenient_review(extract_json(reply.text), RESEARCH_LANE_REVIEW_SCHEMA))
+                if reply.ok and parsed:
+                    review = with_p1_verdict(review_with_checklist(
+                        parsed, req.get("plan"), catalog, req.get("analysis_precedents"), research=True))
                     break
             if not review:
                 reason = (reply.error if reply else None) or "missing or invalid research review"
@@ -4696,8 +4783,11 @@ class Orchestrator:
                                            req.get("analysis_precedents")),
                 meta={**refs, "kind": "review", "outputs": ["outputs/review.json"], "revision": 0, "request": text,
                       "title": "단독 결과 과학 리뷰"}))
-            parsed = reviewed.structured if valid_review(reviewed.structured) else extract_json(reviewed.text)
-            review = with_p1_verdict(parsed) if reviewed.ok and valid_review(parsed) else {
+            parsed = lenient_review(reviewed.structured, REVIEW_SCHEMA) or lenient_review(
+                extract_json(reviewed.text), REVIEW_SCHEMA)
+            review = with_p1_verdict(review_with_checklist(
+                parsed, req.get("plan"), topic_checklists.load(), req.get("analysis_precedents"))
+            ) if reviewed.ok and parsed else {
                 "status": "review_unparsed", "reason": reviewed.error or "missing or invalid verdict"}
             req["solo_review"] = review
             self.hub.save_request(rid)
@@ -5821,11 +5911,11 @@ class Orchestrator:
                         self._finish(rid, self.report_results(steps, results, n), serialized_results(), ok=False,
                                      review={"status": "budget_denied"})
                         return
-                    parsed = r.structured if valid_review(r.structured) else None
-                    if parsed is None:
-                        parsed = extract_json(r.text)
-                    if r.ok and valid_review(parsed):
-                        review = with_p1_verdict(parsed)
+                    parsed = lenient_review(r.structured, REVIEW_SCHEMA) or lenient_review(
+                        extract_json(r.text), REVIEW_SCHEMA)
+                    if r.ok and parsed:
+                        review = with_p1_verdict(review_with_checklist(
+                            parsed, req.get("plan"), checklist_catalog, req.get("analysis_precedents")))
                         break
                 if not review:
                     review = {"status": "review_unparsed", "reason": r.error or "missing or invalid verdict"}
@@ -6046,6 +6136,20 @@ class Orchestrator:
                             report])
         return report, {**(previous.get("results") or {}), **results}, review or (stored or None)
 
+    @staticmethod
+    def _checklist_section(req: dict, review: dict | None) -> str:
+        """The checklist table for the execution record (#586); "" without declared checks, or if the vocabulary
+        cannot load, which must not stop a request from finishing."""
+        plan = req.get("plan") if isinstance(req.get("plan"), dict) else {}
+        precedents = req.get("analysis_precedents")
+        if not plan.get("topics") and not (isinstance(precedents, dict) and precedents.get("status") == "ok"):
+            return ""
+        try:
+            catalog = topic_checklists.load()
+        except (OSError, ValueError):
+            return ""
+        return checklist_appendix(plan, review, catalog, precedents)
+
     def _finish(self, rid: str, report: str, results: dict, ok: bool, review: dict | None = None,
                 error: str | None = None) -> None:
         req = self.hub.requests[rid]
@@ -6101,6 +6205,9 @@ class Orchestrator:
                     line += f"; cause: {entry.get('error_kind') or 'terminal'}: {short(entry['error'], 200)}"
                 audit.append(line)
             metadata.append("Step status and output paths:\n" + "\n".join(audit))
+            checks = self._checklist_section(req, review)
+            if checks:
+                metadata.append(checks)
         if req.get("pending_questions"):
             metadata.append("Pending PI decisions/questions:\n" + "\n".join(
                 f"- {question}" for question in req["pending_questions"]))
