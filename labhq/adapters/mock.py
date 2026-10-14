@@ -38,6 +38,8 @@ class MockAdapter(AgentAdapter):
         t, a = ctx.task, ctx.agent
         kind = t.meta.get("kind", "step")
         request = t.meta.get("request", "") + " " + t.prompt
+        location = t.meta.get("execution_location") or {}
+        whole_hpc = location.get("mode") == "hpc"
         await ctx.emit("agent.status", {"state": "working", "model": "mock"})
         await asyncio.sleep(self.settings.runner.mock_delay_s)
         structured = None
@@ -45,6 +47,9 @@ class MockAdapter(AgentAdapter):
 
         if kind == "plan":
             roster = {r["id"] for r in t.meta.get("roster", [])}
+            if whole_hpc:
+                roster = {r["id"] for r in t.meta.get("roster", [])
+                          if r.get("hpc_tools") and r.get("runner_id") == location.get("runner_id")}
             # biologist ∥ data_steward → bioinfo-agent (routine preprocessing) → analyst (HPC) → qc_reviewer
             layout = [("biologist", []), ("data_steward", []), ("bioinfo-agent", ["data_steward"]),
                       ("analyst", ["biologist", "bioinfo-agent", "data_steward"]), ("qc_reviewer", ["analyst"])]
@@ -70,6 +75,7 @@ class MockAdapter(AgentAdapter):
                 if aid == "data_steward" and "[artifact]" in request:
                     tokens += " [artifact]"
                 steps.append({"id": sid[aid], "agent_id": aid, "depends_on": d,
+                              **({"execution": location["mode"]} if location else {}),
                               "instruction": f"{aid} 파트 수행{tokens}",
                               "outputs": ["artifact.txt"] if "[artifact]" in tokens else []})
             recruit = []
@@ -150,7 +156,13 @@ class MockAdapter(AgentAdapter):
                                                         "timeout_s": self.settings.policy.approvals.timeout_s})
             text += f" · 승인 결과={'허가' if dec.get('approved') else '거절'}"
 
-        if "[hpc]" in own and not t.resume_session_id:
+        hpc_needed = "[hpc]" in own and not t.resume_session_id and location.get("mode") != "local"
+        if whole_hpc and kind in {"step", "direct"} and not (structured or {}).get("blocking_decision"):
+            manifest = json.loads((ctx.workdir / "manifest.json").read_text(encoding="utf-8"))
+            hpc_needed = not any(run.get("hpc_step_id") == (t.meta.get("step_id") or "direct")
+                                 and run.get("hpc_revision", 0) == t.meta.get("revision", 0)
+                                 and run.get("hpc_submitted") for run in manifest.get("runs", {}).values())
+        if hpc_needed:
             if self.settings.hpc.scheduler == "mock":  # a stand-in agent never submits to a real cluster
                 # Like hpc_submit: the runner submits the script and records the id (no caller-reported job ids).
                 script = ctx.workdir / "jobs" / f"mock_align_{t.id[-4:]}.sh"

@@ -206,6 +206,7 @@ class ResearchStep(StrictModel):
     checks: list[str] = Field(min_length=1)
     evidence_slots: list[EvidenceSlot]
     depends_on: list[str]
+    execution: Literal["local", "hpc"] | None = None
     # Pack rules and contract checks never read this; pack fields never fill it (no_type_inheritance).
     output_types: list[OutputTypeEntry] = Field(default_factory=list, max_length=MAX_ENTRIES)
 
@@ -213,6 +214,8 @@ class ResearchStep(StrictModel):
     def _drop_empty_output_types(self, handler: Any) -> dict[str, Any]:
         # An empty list is left out, so plans approved before #221 keep their canonical JSON and plan_sha256.
         data = handler(self)
+        if data.get("execution") is None:
+            data.pop("execution", None)
         if not data.get("output_types"):
             data.pop("output_types", None)
         return data

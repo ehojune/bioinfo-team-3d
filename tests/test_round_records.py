@@ -721,3 +721,15 @@ async def test_round_records_mask_reference_paths_like_project_reports(tmp_path)
     assert body.count("<reference-path>") >= 4
     text = "see /srv/private-notes/cohort/x.md"
     assert hub.rounds.client.clean(text) == hub.reporter._clean(text) == "see <reference-path>/x.md"
+
+
+def test_execution_choice_and_scope_answers_keep_pi_order(tmp_path):
+    from labhq.integrations.rounds import build_record
+
+    hub = Hub(settings(tmp_path))
+    round_request(hub, "r", "done")
+    for key, at, note in [("appr_a", 2, "scope"), ("appr_z", 1, "HPC")]:
+        hub.store.put("approval_decision", key, {
+            "approval": {"id": key, "request_id": "r", "kind": "clarify"},
+            "approved": True, "note": note, "decided_at": at})
+    assert [d["note"] for d in build_record(hub, "r")["pi_decisions"]] == ["HPC", "scope"]

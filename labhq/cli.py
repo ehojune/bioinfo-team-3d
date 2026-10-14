@@ -1229,7 +1229,12 @@ async def _demo_auto_approve(hub, aid: str, delay: float, phone: bool) -> None:
     if aid not in hub.approvals:
         return
     try:
-        await hub.resolve_approval(aid, True, "demo timeout auto-approve" if phone else "demo auto-approve")
+        note = "demo timeout auto-approve" if phone else "demo auto-approve"
+        card = hub.approvals[aid].get("approval", {})
+        if card.get("detail", {}).get("gate") == "execution_location":
+            from .orchestrator.execution import OPTIONS
+            note = OPTIONS[0]  # The isolated demo uses only the mock scheduler.
+        await hub.resolve_approval(aid, True, note)
     except KeyError:
         return  # A phone tap won the race.
     print("   (demo) 승인 대기 시간 만료 → 자동 승인" if phone else "   (demo) 📱 폰에서 '승인' 탭했다고 가정")

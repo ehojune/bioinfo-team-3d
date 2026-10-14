@@ -59,6 +59,11 @@ async def test_until_timeout_reports_observed_event_order():
 
 async def test_full_lab_flow_with_mock_agents(tmp_path):
     shutil.copytree(REPO / "agents", tmp_path / "agents")
+    # Keep the blocking biologist step in this fixture's all-HPC plan; production staff are unchanged.
+    biologist_path = tmp_path / "agents" / "core" / "biologist.yaml"
+    biologist = yaml.safe_load(biologist_path.read_text(encoding="utf-8"))
+    biologist.setdefault("builtin_mcp", []).append("hpc")
+    biologist_path.write_text(yaml.safe_dump(biologist, allow_unicode=True), encoding="utf-8")
     s = Settings()
     s.gateway.state_dir = s.runner.state_dir = str(tmp_path / "state")
     gport = free_port()
@@ -85,7 +90,11 @@ async def test_full_lab_flow_with_mock_agents(tmp_path):
                 # its future, so the pending-approval path stays under test (no fixed sleep).
                 await _until(lambda: aid in hub.approvals, 10, f"approval {aid} to be pending",
                              lambda: {"pending": sorted(hub.approvals)})
-                await hub.resolve_approval(aid, True, "ok")
+                from labhq.orchestrator.execution import OPTIONS
+                note = "ok"
+                if ev["data"].get("detail", {}).get("gate") == "execution_location":
+                    note = OPTIONS[0 if "[hpc]" in hub.requests[ev["request_id"]]["text"] else 1]
+                await hub.resolve_approval(aid, True, note)
 
             asyncio.get_running_loop().create_task(approve())
 
@@ -131,16 +140,21 @@ async def test_full_lab_flow_with_mock_agents(tmp_path):
         types = [e["type"] for e in seen if e.get("request_id") == rid]
         assert types.count("request.review") == 2, types  # revise → accept
         assert "recruit.suggested" in types and "job.submitted" in types and "jobs.finished" in types, types
-        assert sum(e["data"]["kind"] == "clarify" for e in seen if e["type"] == "approval.requested") == 1
-        clarify = next(e["data"] for e in seen if e["type"] == "approval.requested" and e["data"]["kind"] == "clarify")
+        assert sum(e["data"]["kind"] == "clarify" for e in seen if e["type"] == "approval.requested") == 2
+        assert req["execution_location"]["mode"] == "hpc"
+        assert all(step["execution"] == "hpc" for step in steps)
+        assert len({r["workdir"] for r in req["results"].values()}) == 1
+        clarify = next(e["data"] for e in seen if e["type"] == "approval.requested" and e["data"]["kind"] == "clarify"
+                       and e["data"].get("detail", {}).get("gate") != "execution_location")
         assert clarify["detail"]["questions"][0]["options"] == ["cases", "controls", "both"]  # #36 buttons
         assert req["clarifications"][0]["question_details"][0]["depth"] == 60
         assert "agent.ask" in types and "agent.answer" in types
         assert any(e["type"] == "approval.resolved" for e in seen)
         biologist_step = next(st["id"] for st in steps if st["agent_id"] == "biologist")
-        biologist_tasks = [v for v in hub.store.all("task").values()
+        biologist_tasks = sorted([v for v in hub.store.all("task").values()
                            if v.get("request_id") == rid
-                           and (v.get("payload") or {}).get("meta", {}).get("step_id") == biologist_step]
+                           and (v.get("payload") or {}).get("meta", {}).get("step_id") == biologist_step],
+                           key=lambda v: v["dispatched_at"])
         first_biologist = next(v for v in biologist_tasks
                                if not (v.get("payload") or {}).get("resume_session_id"))
         resumed_biologist = next(v for v in biologist_tasks

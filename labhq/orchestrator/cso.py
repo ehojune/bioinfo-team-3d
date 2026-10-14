@@ -50,6 +50,7 @@ from ..research.packs import (assess_pack_applicability, configured_packs, norma
                               pack_snapshot, packs_for_snapshot, render_pack_catalog, render_pack_review,
                               select_applied_packs, select_legacy_applied_packs)
 from ..util import clip, extract_json, input_relpath, output_relpath, short
+from . import execution as execution_policy
 from .. import vocab as output_vocab
 from ..recruit import paper_skills, planning as recruit_planning
 from ..vocab import declare as output_types
@@ -84,6 +85,7 @@ PLAN_SCHEMA: dict[str, Any] = {
         "steps": {"type": "array", "items": {
             "type": "object", "additionalProperties": False,
             "properties": {"id": {"type": "string"}, "agent_id": {"type": "string"},
+                           "execution": {"type": "string", "enum": ["local", "hpc"]},
                            "instruction": {"type": "string"},
                            "outputs": {"type": "array", "items": {"type": "string"}},
                            "depends_on": {"type": "array", "items": {"type": "string"}}},
@@ -1718,6 +1720,7 @@ def validate_steps(raw: list[dict], known: set[str], max_steps: int,
             sid = f"{sid}_{i}"
         seen.add(sid)
         steps.append({"id": sid, "agent_id": s.get("agent_id", ""), "instruction": s.get("instruction", ""),
+                      **({"execution": s["execution"]} if "execution" in s else {}),
                       "depends_on": [str(d) for d in s.get("depends_on") or []],
                       "outputs": [str(o) for o in s.get("outputs") or []]})
         raw_types[sid] = s.get("output_types")
@@ -2360,6 +2363,29 @@ class Orchestrator:
         self.hub.save_request(rid)
         return "answered", entry
 
+    async def _choose_execution(self, rid: str) -> bool:
+        req = self.hub.requests[rid]
+        if req.get("execution_location"):
+            return True
+        host = execution_policy.available_runner(
+            self.hub, req.get("agent_id") if req.get("mode") == "direct" else None)
+        if host is None:
+            req["execution_location"] = {"mode": "local", "source": "사용 가능한 HPC 없음"}
+        else:
+            decision = await self.hub.request_approval(
+                kind="clarify", request_id=rid, summary=execution_policy.QUESTION,
+                detail={"questions": [{"question": execution_policy.QUESTION, "options": execution_policy.OPTIONS,
+                                       "allow_free_text": False}], "gate": "execution_location"})
+            mode = execution_policy.selection(str(decision.get("note") or "")) if decision.get("approved") else None
+            if mode is None:
+                self._finish(rid, "실행 위치 답변을 받지 못해 처리 단계를 시작하지 않았습니다.", {}, ok=False)
+                return False
+            req["execution_location"] = {"mode": mode, "source": "PI 선택",
+                                         "approval_id": decision.get("approval_id") or decision.get("id"),
+                                         **({"runner_id": host, "workspace": rid} if mode == "hpc" else {})}
+        self.hub.save_request(rid)
+        return True
+
     def _output_vocab(self) -> output_vocab.Vocab | None:
         """The vocabulary when plan.declare_output_types is on and it loads; None means today's plan, unchanged."""
         plan = getattr(self.hub.s, "plan", None)
@@ -2924,6 +2950,17 @@ class Orchestrator:
     async def run_step(self, task: Task, first_attempt: int = 1) -> TaskResult:
         task = self._with_research_round(self._with_request_identity(task))
         rid = task.request_id or ""
+        location = self.hub.requests.get(rid, {}).get("execution_location")
+        if location:
+            task = task.model_copy(update={"meta": {**task.meta, "execution_location": location}})
+            if task.meta.get("kind") in {"step", "direct"}:
+                problems = execution_policy.plan_errors(
+                    [{"id": task.meta.get("step_id", "direct"), "agent_id": task.agent_id,
+                      "execution": location["mode"]}], location, self.hub.agents)
+                if problems:
+                    raise ValueError("; ".join(problems))
+                if location["mode"] == "hpc":
+                    task = task.model_copy(update={"prompt": task.prompt + execution_policy.plan_rule(location)})
         initial_attempt = first_attempt
         engine = str((self.hub.agents.get(task.agent_id) or {}).get("engine") or "")
         final_step = bool(task.meta.get("final_budget_turn"))  # nothing runs after this step but its own turns
@@ -3550,6 +3587,11 @@ class Orchestrator:
     # ---------- DAG ----------
     async def run_dag(self, rid: str, request: str, steps: list[dict], results: dict[str, TaskResult],
                       only: set[str] | None = None, feedback: dict[str, str] | None = None) -> None:
+        choice = self.hub.requests.get(rid, {}).get("execution_location")
+        problems = execution_policy.plan_errors(steps, choice, self.hub.agents)
+        if problems:
+            raise ValueError("; ".join(problems))
+        whole_hpc = bool(choice and choice["mode"] == "hpc")
         by_id = {s["id"]: s for s in steps}
         todo = {s["id"] for s in steps if only is None or s["id"] in only}
         running: dict[str, asyncio.Task] = {}
@@ -3561,7 +3603,7 @@ class Orchestrator:
             ENV_LOCK_OUTPUT in step.get("outputs", []) for step in steps)
         # Answers to blocking questions survive a gateway restart (the re-run step still needs them).
         decisions: dict[str, Any] = dict((req_state or {}).get("step_decisions") or {})
-        sem = asyncio.Semaphore(self.cfg.max_parallel_steps)
+        sem = asyncio.Semaphore(1 if whole_hpc else self.cfg.max_parallel_steps)
         # Ancestors' instructions count as inputs; the runner sees only this step's text, so it gets the verdict (#424).
         restricted: set[str] = set()
         if self._external_guard(rid):
@@ -3598,7 +3640,7 @@ class Orchestrator:
                                  for path in r.outputs]
                     # Relative to the step folder, where the runner links inputs/<step id> (#423): a script that
                     # names these paths still runs from a request bundle on another machine.
-                    paths = "\n".join(input_relpath(d, path) or str(Path(r.workdir) / path)
+                    paths = "\n".join((path if whole_hpc else input_relpath(d, path)) or str(Path(r.workdir) / path)
                                       for path in r.outputs) if r.workdir else ""
                     parts.append(f"{head}\nDeclared output artifacts: {json.dumps(artifacts)}\n"
                                  f"Readable files (relative to your folder):\n{paths}\n"
@@ -3607,7 +3649,8 @@ class Orchestrator:
                 r = results.get(d)
                 if r and r.ok and r.workdir and r.outputs:
                     artifacts = [{"workdir_id": r.workdir_id, "path": path} for path in r.outputs]
-                    paths = "\n".join(input_relpath(d, path) or str(Path(r.workdir) / path) for path in r.outputs)
+                    paths = "\n".join((path if whole_hpc else input_relpath(d, path)) or str(Path(r.workdir) / path)
+                                      for path in r.outputs)
                     parts.append(f"## {d} · {by_id[d]['agent_id']} (earlier step, files only)\n"
                                  f"Declared output artifacts: {json.dumps(artifacts)}\n"
                                  f"Readable files (relative to your folder):\n{paths}")
@@ -3644,6 +3687,13 @@ class Orchestrator:
             declared = [rel for rel in map(output_relpath, step.get("outputs") or []) if rel]
             if declared:
                 prompt += STEP_OUTPUTS_RULE.format(paths=", ".join(f"./{rel}" for rel in declared))
+            if whole_hpc:
+                prompt += ("\n\nThis whole request runs on HPC. Use hpc_submit for ALL data processing, including "
+                           "downloads, setup, QC and report files. Your local turn only prepares job scripts and "
+                           "reads permitted summaries. Job cwd is the shared outputs/ folder: strip the leading "
+                           "outputs/ from declared output paths inside scripts. Previous outputs are already there. "
+                           "Do not copy inputs between step folders or process data in the local shell. "
+                           "Submit, end the turn, then resume when the scheduler finishes.")
             decision = decisions.get(step["id"])
             ctx = upstream(step)
             updates = []
@@ -3692,7 +3742,9 @@ class Orchestrator:
                               .get(step["id"], {}).get("revision", 0),
                               "title": f"{step['id']}: {step['instruction'][:100]}" + (" (리뷰 반영 수정)" if feedback else ""),
                               "project_dirs": self.hub.requests.get(rid, {}).get("project_dirs", []),
-                              "upstream_dirs": upstream_dirs, "upstream_steps": upstream_steps,
+                              "upstream_dirs": [] if whole_hpc else upstream_dirs,
+                              "upstream_steps": {} if whole_hpc else upstream_steps,
+                              **({"execution_location": choice} if choice else {}),
                               "outputs": step.get("outputs", []),
                               "environment_step": ENV_LOCK_OUTPUT in step.get("outputs", []),
                               "shared_environment_protected": shared_environment_protected,
@@ -4625,6 +4677,11 @@ class Orchestrator:
     def _ensure_route_decision(self, req: dict, roster: list[dict], *, research: bool) -> tuple[dict, bool]:
         """Keep a decision made before a restart; research and malformed stored values stay on the team path."""
         stored = req.get("route_decision")
+        if (req.get("execution_location") or {}).get("mode") == "hpc":
+            decision = route_decision(req.get("plan"), self.cfg.solo_agent, roster,
+                                      requested="team", research=research)
+            req["route_decision"] = decision
+            return decision, decision != stored
         if (not research and isinstance(stored, dict) and stored.get("mode") in {"team", "solo"}
                 and (stored.get("mode") != "solo" or stored.get("agent_id"))):
             return stored, False
@@ -4771,6 +4828,16 @@ class Orchestrator:
                     self._finish(rid, "연구로 지정한 요청은 직원 한 명에게 직접 보낼 수 없습니다. 팀(CSO)에게 보내면 "
                                  "계획을 세워 CP1 승인을 받습니다.", {}, ok=False)
                     return
+                if not await self._choose_execution(rid):
+                    return
+                location = req["execution_location"]
+                if location["mode"] == "hpc":
+                    errors = execution_policy.plan_errors(
+                        [{"id": "direct", "agent_id": req["agent_id"], "execution": "hpc"}],
+                        location, self.hub.agents)
+                    if errors:
+                        raise ValueError("; ".join(errors))
+                    text += execution_policy.plan_rule(location)
                 await self._plan_clarification(rid, {})
                 vocab = self._output_vocab()
                 res = await self.run_step(Task(
@@ -4875,6 +4942,8 @@ class Orchestrator:
                         summary = "\n".join(hiring_warnings) + "\n" + summary
                     if paper_line:
                         summary = paper_line + "\n" + summary
+                    if req.get("execution_location"):
+                        summary += " " + execution_policy.record_line(req["execution_location"])
                     if reuse_pending:
                         source = ("CP2 수정 요청 반영" if carried.get("trigger") == "cp2_revise"
                                   else "리뷰 P1 반영")
@@ -4898,6 +4967,8 @@ class Orchestrator:
                                     "packs": plan["protocol"]["packs"],
                                     "scope_status": plan["intake"]["scope_status"],
                                     "budget": budget, "revise_allowed": can_revise,
+                                    **({"execution_location": req["execution_location"]}
+                                       if req.get("execution_location") else {}),
                                     **({"continuation": {
                                         **{key: carried.get(key) for key in
                                            ("round", "from_plan_sha256", "reuse", "rerun", "p1_issues")},
@@ -5147,6 +5218,9 @@ class Orchestrator:
                         self._finish(rid, "브리핑 뒤 예산 승인 거부", {"briefing": b.model_dump(mode="json")}, ok=False)
                         return
                     briefing = b.text
+                if not await self._choose_execution(rid):
+                    await stop_precedent_job()
+                    return
                 if precedent_job:
                     try:
                         precedent_result = await precedent_job
@@ -5203,6 +5277,8 @@ class Orchestrator:
                                                     if topic_vocab else "")
                         prompt += planning_guidance(checklist_catalog, req.get("analysis_precedents"))
                         schema = plan_schema(vocab is not None)
+                    if req.get("execution_location"):
+                        prompt += execution_policy.plan_rule(req["execution_location"])
                     planned = await self.run_step(Task(
                         agent_id=self.cfg.cso_agent, request_id=rid, output_schema=schema,
                         resume_session_id=session_id, prompt=prompt,
@@ -5320,6 +5396,7 @@ class Orchestrator:
                             problems = [str(error)]
                         problems.extend(recruit_planning.proposal_errors(candidate))
                         drafted = candidate.get("steps") if isinstance(candidate, dict) else None
+                        problems += execution_policy.plan_errors(drafted, req.get("execution_location"), self.hub.agents)
                         bad_agents = unavailable_plan_agents(drafted, known, orchestration)
                         if bad_agents:
                             problems.append(f"research plan uses unavailable or orchestration agents: {bad_agents}; "
@@ -5422,6 +5499,10 @@ class Orchestrator:
                             if topic_vocab is not None:
                                 plan = normalize_plan_topics(plan, topic_vocab, strict=False)
                             plan = normalize_plan_keys(plan, {}, checklist_catalog)
+                            location_errors = execution_policy.plan_errors(
+                                plan.get("steps"), req.get("execution_location"), self.hub.agents)
+                            if location_errors:
+                                raise PlanAgentError("; ".join(location_errors))
                             recruit_errors = recruit_planning.proposal_errors(plan)
                             if recruit_errors:
                                 raise PlanAgentError("; ".join(recruit_errors))
@@ -5622,7 +5703,8 @@ class Orchestrator:
                             empty_rule=empty_rule, question_rule=QUESTION_RULE, request=text,
                             plan=json.dumps(req.get("plan") or {"steps": steps}, ensure_ascii=False),
                             results=self.format_results(steps, results, n)) +
-                        planning_guidance(checklist_catalog, req.get("analysis_precedents")),
+                        planning_guidance(checklist_catalog, req.get("analysis_precedents")) +
+                        (execution_policy.plan_rule(req["execution_location"]) if req.get("execution_location") else ""),
                         # revision and parse_attempt keep each CSO call distinct for ledger recovery after a restart.
                         meta={**refs, "kind": "replan", "trigger": trigger, "revision": attempt,
                               "parse_attempt": parse_attempt, "request": text, "roster": roster,
@@ -5689,6 +5771,10 @@ class Orchestrator:
                         raise ValueError(f"re-plan has {len(kept) + len(raw)} steps with the kept ones; "
                                          f"maximum is {self.cfg.max_steps}")
                     type_stats: dict = {}
+                    location_errors = execution_policy.plan_errors(
+                        kept + raw, req.get("execution_location"), self.hub.agents)
+                    if location_errors:
+                        raise ValueError("; ".join(location_errors))
                     merged, warnings = validate_steps(kept + raw, known, self.cfg.max_steps, orchestration,
                                                       vocab=vocab, stats=type_stats, guard=self._external_guard(rid))
                     # A kept step already ran. A dependency inferred from its old instruction on a new step is not
@@ -6066,6 +6152,8 @@ class Orchestrator:
         paper_record = paper_skills.appendix(req.get("plan") or {}, results)
         if paper_record:
             metadata.append(paper_record)
+        if req.get("execution_location"):
+            metadata.append(execution_policy.record_line(req["execution_location"]))
         route = req.get("route_decision") or {}
         if route.get("fallback"):
             metadata.append("처리 방식: 단독 실패 → 팀" +
