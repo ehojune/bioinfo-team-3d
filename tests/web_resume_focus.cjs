@@ -59,7 +59,9 @@ test('task selector redraws in activity order and labels terminal states', () =>
   const ctx = vm.createContext({S:office.S, LabHQState:state, $:() => ({}), reqKey:'', snapshotLoaded:true,
     esc:String, short:String, nick:String});
   vm.runInContext(render + '\nglobalThis.pick = pick; }\nrenderRequest();', ctx);
-  assert.match(ctx.pick, /Save output \(완료\)/);
+  assert.match(ctx.pick, /request-title">Save output<\/span>.*완료<\/span>/);
+  assert.match(ctx.pick, /data-request-id="old"/);
+  assert.doesNotMatch(ctx.pick, /<select/);
   assert.ok(ctx.pick.indexOf('value="old"') < ctx.pick.indexOf('value="waiting"'));
   office.apply({type:'agent.log', request_id:'waiting', ts:150, data:{text:'Question'}});
   vm.runInContext('renderRequest();', ctx);

@@ -84,7 +84,7 @@ test('whiteboard exposes completed report action and staff keep completion until
   const vm=require('node:vm'), ctx=vm.createContext({S:office.S,LabHQState:state,$:()=>board,
     esc:String,short:String,processingLabel:()=>'',phaseList:()=>'',nick:office.nick});
   vm.runInContext(html.slice(html.indexOf('function renderBoard()'),html.indexOf('function renderRack()'))+'\nrenderBoard();',ctx);
-  assert.match(board.innerHTML,/Study/);assert.match(board.innerHTML,/✓ 보고서 검토 대기/);
+  assert.doesNotMatch(board.innerHTML,/Study/,'request title belongs only in the request list');assert.match(board.innerHTML,/✓ 보고서 검토 대기/);
   assert.match(board.innerHTML,/data-open-review="r"[^>]*>보고서 열기/);
   assert.equal(office.visual(office.ag('cso')),'done');
   office.apply({type:'request.reviewed',request_id:'r',data:{pi_reviewed_at:100}});
@@ -110,7 +110,7 @@ test('CP4 uses one report card, binds both choices and replays acceptance', asyn
   const rows=ui.syncReviewCards(container,[office.req('r')],{onDone:(id,target)=>calls.push([id,target])});
   assert.equal(rows.length,1);
   const nodes=el=>[el,...el.children.flatMap(nodes)], buttons=nodes(rows[0]).filter(c=>c.tagName==='button');
-  assert.deepEqual(buttons.map(b=>b.textContent),['보고서 열기','검토 완료','수용 거부']);
+  assert.deepEqual(buttons.map(b=>b.textContent),['보고서 열기','검토 완료','수용 거부','저장 위치 정하기']);
   buttons[1].onclick();buttons[2].onclick();
   assert.deepEqual(calls.map(c=>c[1]),[
     {decision:'accepted',revision:1,target_sha256:final.target_sha256},

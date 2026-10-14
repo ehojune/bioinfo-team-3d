@@ -417,6 +417,7 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
     <input id="ask" type="text" enterkeyhint="send" placeholder="무엇을 알아볼까요?">
     <label class="sr" for="send-mode">보내는 방식</label>
     <select id="send-mode" hidden><option value="note">이 요청에 메모</option><option value="request">새 요청</option></select>
+    <details class="composer-options"><summary>옵션</summary><div class="composer-options-in">
     <label class="sr" for="target">받는 사람</label>
     <select id="target"></select>
     <label class="team-toggle" id="team-only-label"><input id="team-only" type="checkbox">팀으로</label>
@@ -426,12 +427,13 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
     </select>
     <label class="sr" for="project">프로젝트</label>
     <select id="project" hidden></select>
-    <button class="btn" id="ref-toggle" type="button" aria-controls="ref-panel" aria-expanded="false">참고</button>
-    <button class="btn primary" id="send" type="button">보내기</button>
+    </div></details>
+    <button class="btn composer-secondary" id="ref-toggle" type="button" aria-controls="ref-panel" aria-expanded="false">첨부·참고</button>
+    <button class="btn primary ui-button composer-primary" id="send" type="button">보내기</button>
   </div>
 </div>
 
-<dialog class="sheet ui-sheet" id="sheet"><div class="sheet-in" id="sheet-in"></div></dialog>
+<dialog class="sheet ui-sheet" id="sheet" aria-label="직원 정보"><div class="sheet-in" id="sheet-in"></div></dialog>
 <div class="toast ui-toast" id="toast" role="status" aria-live="polite"></div>
 <script src="./state.js"></script>
 <script type="module">
@@ -441,7 +443,7 @@ import {syncStaffCards} from './ui/strip.js';
 import {syncTaskBoard} from './ui/tasks.js';
 import {controlHtml, controlKey, staffControls} from './ui/control.js';
 import {initTabShell, updateDecisionBadge} from './ui/shell.js';
-import {createMessenger, bindHistoryViewport} from './ui/messenger.js';
+import {createMessenger, bindHistoryViewport, syncMessageRows} from './ui/messenger.js';
 import {KIND_LABELS as REF_KIND, inferReference, syncReferenceChips} from './ui/refs.js';
 (() => {
 'use strict';
@@ -694,8 +696,7 @@ function renderBoard() {
   if (el.dataset.key === key) return;
   el.dataset.key = key;
   if (!q) { el.innerHTML = `<p class="board-empty">${snapshotLoaded ? '오늘의 할 일을 기다리는 중' : loadingText('사무실 상태')}</p>`; return; }
-  const chips = q.plan.map(s => `<span class="chip st-${q.steps[s.id] || 'pending'}" title="${esc(s.instruction)}">${esc(s.id)} ${esc(nick(s.agent_id))}</span>`).join('');
-  el.innerHTML = `<p class="board-title">${[esc(short(q.text, 70)), esc(processingLabel(q))].filter(Boolean).join(' · ')}</p>${resume ? `<p class="req-meta">${esc(resume)}</p>` : ''}${phaseList(q)}<div class="chips">${chips}</div>${LabHQState.needsPiReview(q) ? `<p>✓ ${esc(LabHQState.requestStatusText(q))}</p><button class="btn go" style="font-size:1.1em;padding:10px 18px" data-open-review="${esc(q.id)}">${['done', 'review_pending'].includes(q.status) ? '보고서 열기' : '결과·이유 보기'}</button>` : ''}`;
+  el.innerHTML = `<p class="board-title">${esc(processingLabel(q) || '요청 진행')}</p>${resume ? `<p class="req-meta">${esc(resume)}</p>` : ''}${phaseList(q)}${LabHQState.needsPiReview(q) ? `<p>✓ ${esc(LabHQState.requestStatusText(q))}</p><button class="btn go" style="font-size:1.1em;padding:10px 18px" data-open-review="${esc(q.id)}">${['done', 'review_pending'].includes(q.status) ? '보고서 열기' : '결과·이유 보기'}</button>` : ''}`;
 }
 function renderRack() {
   const jobs = [...S.jobs.values()].sort((a, b) => (b.ts || 0) - (a.ts || 0)).slice(0, 8);
@@ -715,11 +716,11 @@ function renderDoor() { $('#door').classList.toggle('open', now() < S.doorUntil)
 
 function renderApprovals() {
   const items = [...S.approvals.values()], sugs = S.suggestions, holds = [...S.engineHolds.values()];
-  const reviews = [...S.requests.values()].filter(LabHQState.needsPiReview);
+  const reviews = [...S.requests.values()].filter(q => LabHQState.needsPiReview(q) || LabHQState.needsStorage(q));
   const total = items.length + sugs.length + holds.length + reviews.length;
   const decisions = items.length + sugs.length + reviews.length;
   updateDecisionBadge($('#decision-count'), decisions);
-  syncReviewCards($('#review-cards'), reviews, {presentation:'journal', onOpen:openReview, onDone:finishReview, disabled:() => !api?.reviewDone});
+  syncReviewCards($('#review-cards'), reviews, {presentation:'journal', onOpen:openReview, onDone:finishReview, onStorage:chooseStorage, disabled:() => !api?.reviewDone});
   $('#ap-count').textContent = decisions ? `${decisions}건` : '';
   const board = $('#board');  // #57 ⑧: waiting decisions make the board blink and lead to 결정
   board.classList.toggle('alert', total > 0);
@@ -830,14 +831,14 @@ function renderRequest() {
   reqKey = key;
   // Before the first snapshot no request is known yet, which is not the same as none (#521).
   if (!q) { el.innerHTML = `<p class="empty-note">${snapshotLoaded ? '아직 요청이 없어요. 아래 입력창에 적으면 CSO가 팀에 나눠 맡겨요.' : loadingText('요청')}</p>`; return; }
-  const pick = all.length > 1 ? `<p class="req-pick"><label class="sr" for="req-sel">요청 고르기</label><select id="req-sel">${all.map(r =>
-    `<option value="${esc(r.id)}"${r.id === q.id ? ' selected' : ''}>${esc(short(r.text || r.id, 40))} (${esc(LabHQState.requestStatusText(r, S.approvals))})</option>`).join('')}</select></p>` : '';
+  const pick = `<nav class="request-list" aria-label="최근 요청"><h3>최근 요청</h3>${all.map(r =>
+    `<button type="button" class="request-choice" data-request-id="${esc(r.id)}" value="${esc(r.id)}" aria-current="${r.id === q.id}"><span class="request-title">${esc(r.text || r.id)}</span><span class="status-label ${LabHQState.needsPiReview(r) ? 'status-decision' : 'status-neutral'}"><span class="status-dot" aria-hidden="true"></span>${esc(LabHQState.requestStatusText(r, S.approvals))}</span></button>`).join('')}</nav>`;
   const proj = S.projects.find(p => p.id === q.project_id);
   const gh = q.github.filter(g => safeUrl(g.url)).map(g => `<li><a href="${esc(g.url)}" target="_blank" rel="noopener">${esc({ issue: `이슈 #${g.number}`, report: '보고서 커밋', final: '최종 코멘트', plan: '계획 코멘트', review: '리뷰 코멘트', recruit: '채용 기록', pr: 'PR', pipeline_pr: 'bioinfo-agent pipeline PR', codex_review: 'Codex 리뷰 요청' }[g.kind] || g.kind)}</a></li>`).join('');
   const pipeline = q.pipelinePr && q.pipelinePr.status !== 'open' ? `<p class="empty-note">pipeline PR ${q.pipelinePr.status === 'pending' ? '대기' : '거부'}: ${esc(q.pipelinePr.reason || '')}</p>` : '';
   const refList = (q.references || []).map(r => `<li class="chip">${esc(REF_KIND[r.kind] || r.kind)} ${esc(r.value)}${r.source === 'pi_profile' ? ' (기본)' : ''}</li>`).join('');
-  el.innerHTML = `${pick}<p class="req-text">${esc(q.text)}</p><p class="req-meta">${processingLabel(q) ? `<span>${esc(processingLabel(q))}</span>` : ''}</p>${refList ? `<ul class="req-refs" aria-label="참고 자료">${refList}</ul>` : ''}${assumptionsHTML(q)}${phaseList(q)}<div id="task-board"></div>
-<p class="req-meta">${proj ? `<span>프로젝트 ${esc(proj.name)}</span>` : ''}<span>비용 ${esc(LabHQState.costLabel(q))}</span>${q.costSummary && Object.keys(q.costSummary.by_engine || {}).length ? `<span>${esc(LabHQState.engineCostLabel(q.costSummary))}</span>` : ''}${q.costSummary && q.costSummary.by_agent ? `<span>${esc(LabHQState.agentCostLabel(q.costSummary, nick))}</span>` : ''}<span class="req-status st-${esc(q.status)}">${esc(statusText)}</span></p>
+  el.innerHTML = `${pick}<p class="req-meta">${processingLabel(q) ? `<span>${esc(processingLabel(q))}</span>` : ''}</p>${refList ? `<ul class="req-refs" aria-label="참고 자료">${refList}</ul>` : ''}${assumptionsHTML(q)}<div id="task-board"></div>
+<p class="req-meta">${proj ? `<span>프로젝트 ${esc(proj.name)}</span>` : ''}<span>비용 ${esc(LabHQState.costLabel(q))}</span>${q.costSummary && Object.keys(q.costSummary.by_engine || {}).length ? `<span>${esc(LabHQState.engineCostLabel(q.costSummary))}</span>` : ''}${q.costSummary && q.costSummary.by_agent ? `<span>${esc(LabHQState.agentCostLabel(q.costSummary, nick))}</span>` : ''}<span class="req-status status-label st-${esc(q.status)}"><span class="status-dot" aria-hidden="true"></span>${esc(statusText)}</span></p>
   ${api?.cancelRequest && (LabHQState.isActiveRequest(q.status) || q.status === 'interrupted') ? `<p class="req-actions"><button class="btn" id="req-cancel" type="button" data-rid="${esc(q.id)}">요청 취소</button></p>` : ''}
   ${pipeline}${gh ? `<ul class="gh">${gh}</ul>` : ''}${notesHTML(q)}${reportHTML(q)}${LabHQState.needsPiReview(q) ? `<p><button class="btn go" data-review-done="${esc(q.id)}">${['done', 'review_pending'].includes(q.status) ? '검토 완료' : '확인 완료'}</button></p>` : ''}${bundleHTML(q)}${auditHTML(q)}${q.error ? `<p class="empty-note">${esc(q.error)}</p>` : ''}${followupHTML(q)}`;
   if ($('#fu-text')) $('#fu-text').value = fuDrafts.get(q.id) || '';  // a live update keeps this request's draft
@@ -846,7 +847,7 @@ function renderRequest() {
     onQuotaResume: api?.resumeQuota ? sid => api.resumeQuota(q.id, sid).then(() => toast('한도 대기를 풀었어요')).catch(err => toast(`재개하지 못했어요: ${err.message}`)) : null });
 }
 function renderStaff() {
-  syncStaffCards($('#staff-strip'), S.agents.values(), { visual, stateText, currentTool, toolLabel, now });
+  syncStaffCards($('#staff-strip'), S.agents.values(), { visual, stateText, currentTool, toolLabel, now, currentTask, avatarHTML: a => headSVG(kindOf(a)) });
 }
 let feedKey = '';
 function avatar(who) {
@@ -859,26 +860,7 @@ function renderFeedRows() {
   const key = items.length + ':' + (items[0] ? items[0].ts + items[0].text : '') + ':' + Math.floor(now() / 30) + ':' + [...S.agents.values()].map(a => a.id + a.name + a.character).join();
   if (key === feedKey) return;
   feedKey = key;
-  const list = $('#feed'), old = list._rows || new Map(), next = new Map();
-  const rows = items.map(m => {
-    let row = old.get(m);
-    if (!row) {
-      row = document.createElement('li'); row.className = `msg ${m.cls || ''}`;
-      row.innerHTML = `<span class="av">${avatar(m.who)}</span><div><b>${esc(nick(m.who))}${m.to ? ` <i>→ ${esc(nick(m.to))}</i>` : ''}</b><div class="message-text"></div></div><time></time>`;
-      expandableText(row.querySelector('.message-text'), m.fullText ?? m.text, {pi: true, limit: 150, summary: m.text,
-        fold: m.fullText != null && m.fullText !== m.text, truncated: m.truncated, cutChars: m.cutChars});
-      if (safeUrl(m.url)) {
-        const link = document.createElement('a'); link.href = m.url; link.target = '_blank'; link.rel = 'noopener'; link.textContent = '열기';
-        row.querySelector('.message-text').append(link);
-      }
-    }
-    row.querySelector('.av').innerHTML = avatar(m.who);
-    row.querySelector('b').textContent = nick(m.who) + (m.to ? ` → ${nick(m.to)}` : '');
-    row.querySelector('time').textContent = ago(m.ts); next.set(m, row); return row;
-  });
-  if (!items.length) list.innerHTML = '<li class="empty-note">팀이 주고받는 말이 여기에 쌓여요.</li>';
-  else if (rows.some((row, i) => list.children[i] !== row) || rows.length !== list.children.length) list.replaceChildren(...rows);
-  list._rows = next;
+  syncMessageRows($('#feed'), items, {nick, avatarHTML:avatar, ago, expandableText});
 }
 const syncMessenger = bindHistoryViewport(messenger, $('#feed-history'), $('#feed-history-status'), renderFeedRows);
 messenger.onChange = reason => { feedKey = ''; syncMessenger(reason); };
@@ -917,6 +899,7 @@ function renderComposerMode() {
   if (active && composerRid !== q.id) { composerRid = q.id; mode.value = 'note'; }
   if (!active) composerRid = null;
   const noteMode = active && mode.value === 'note';
+  $('.composer-options').hidden = noteMode;
   $('#target').hidden = noteMode;
   $('#team-only-label').hidden = noteMode;
   $('#work-kind').hidden = noteMode;
@@ -937,6 +920,14 @@ async function openReview(rid) {
       reqKey = ''; schedule();
     } catch (err) { toast(`보고서를 불러오지 못했어요: ${err.message}`); }
   }
+}
+async function chooseStorage(rid) {
+  if (!api?.storage) return;
+  try {
+    const card = await api.storage(rid);
+    officeState.apply({type:'approval.requested', request_id:rid, data:card});
+    schedule(); toast('저장 위치를 골라 주세요.');
+  } catch (err) { toast(`저장 위치 카드를 열지 못했어요: ${err.message}`); }
 }
 async function finishReview(rid, target) {
   if (!api?.reviewDone) return;
@@ -976,7 +967,7 @@ function renderRefs() {
     onRemove: index => { refs.items.splice(index, 1); renderRefs(); },
     onToggleDefaults: () => { refs.useDefaults = !refs.useDefaults; renderRefs(); },
   });
-  $('#ref-toggle').textContent = refs.items.length ? `참고 ${refs.items.length}` : '참고';
+  $('#ref-toggle').textContent = refs.items.length ? `첨부·참고 ${refs.items.length}` : '첨부·참고';
 }
 function addRef() {
   const input = $('#ref-input'), ref = inferReference(input.value);
@@ -1052,7 +1043,7 @@ $('#approvals').addEventListener('click', async e => {
     }
   } catch (err) { btn.disabled = false; toast(`처리하지 못했어요: ${err.message}`); }
 });
-$('#request').addEventListener('change', e => { if (e.target.id === 'req-sel') { officeState.selectRequest(e.target.value); schedule(); } });
+$('#request').addEventListener('click', e => { const choice = e.target.closest('[data-request-id]'); if (choice) { officeState.selectRequest(choice.dataset.requestId); schedule(); } });
 $('#request').addEventListener('input', e => { if (e.target.id === 'fu-text') fuDrafts.set(e.target.dataset.rid, e.target.value); });
 $('#request').addEventListener('click', async e => {
   if (e.target.classList?.contains('audit-bundle')) {
@@ -1105,6 +1096,7 @@ function sheetSpent(id) {
 function renderSheetLogs() {
   const dlg = $('#sheet'), a = dlg.open || dlg.hasAttribute('open') ? ag(dlg.dataset.agent) : null;
   const list = a && $('#sheet-in ul.activity'); if (!list) return;
+  syncStaffCards($('#sheet-staff'), [a], {tag:'article', visual, stateText, currentTool, toolLabel, now, currentTask, avatarHTML: a => headSVG(kindOf(a))});
   const trace = list.dataset.view === 'trace';
   const items = trace ? (a.trace || []).slice().reverse() : a.log.slice().reverse().slice(0, 14);
   const old = list._rows || new Map(), next = new Map();
@@ -1166,7 +1158,7 @@ function openSheet(id) {
   const acts = ['<button type="button" class="btn primary" data-act="assign">이 직원에게 맡기기</button>'];
   if (isContract(a)) acts.push('<button type="button" class="btn" data-act="extend">계약 14일 연장</button>', '<button type="button" class="btn" data-act="release">계약 종료</button>');
   acts.push('<button type="button" class="btn" data-act="close">닫기</button>');
-  $('#sheet-in').innerHTML = `<div class="sheet-head"><svg viewBox="18 2 64 72" aria-hidden="true">${charArt(kindOf(a))}</svg><div><h2>${esc(a.name)}</h2><p class="role">${esc(a.role || '')}</p></div></div>
+  $('#sheet-in').innerHTML = `<div id="sheet-staff"></div>
 <dl class="facts">${facts.map(([k, v]) => `<dt>${esc(k)}</dt><dd${k === '쓴 비용' ? ' class="sheet-spent"' : k === '상태' ? ' class="sheet-state"' : k === '지금 하는 일' ? ' class="sheet-task"' : ''}>${esc(v)}</dd>`).join('')}</dl>
 <div class="sheet-command" aria-label="실행 중인 도구 입력"></div>
 <div class="staff-control-slot" data-key="${esc(controlKey(control))}">${controlHtml(control, esc)}</div>
@@ -1276,6 +1268,7 @@ function startLive() {
     contract: (id, action, days) => post(`/api/contracts/${encodeURIComponent(id)}`, { action, days }),
     cancel: id => post(`/api/tasks/${encodeURIComponent(id)}/cancel`, {}),
     control: (id, action, text) => post(`/api/tasks/${encodeURIComponent(id)}/${action}`, action === 'steer' ? { text } : {}),
+    storage: rid => post(`/api/requests/${encodeURIComponent(rid)}/storage`, {}),
     reviewDone: (rid, target = {}) => post(`/api/requests/${encodeURIComponent(rid)}/review-done`, target),
     cancelRequest: rid => post(`/api/requests/${encodeURIComponent(rid)}/cancel`, {}),
     resumeQuota: (rid, sid) => post(`/api/requests/${encodeURIComponent(rid)}/steps/${encodeURIComponent(sid)}/resume-quota`, {}),

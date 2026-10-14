@@ -89,9 +89,9 @@ test('phone shows decisions before office and brings selected tab into view', ()
 });
 test('review/history retain actions, report, time and hide in shared cards; 3D default stays unchanged', async () => {
   const {syncReviewCards,syncDecisionHistory} = await mod;
-  global.LabHQState = {needsPiReview:() => true,reviewLabel:() => '검토 대기'};
+  require('../labhq/web/state.js');
   const reviews = new Element(), history = new Element(), calls = [];
-  const [review] = syncReviewCards(reviews,[{id:'r',status:'done',text:'분석 결과'}],{presentation:'journal',onDone:id=>calls.push(id)});
+  const [review] = syncReviewCards(reviews,[{id:'r',status:'done',text:'분석 결과',pi_review_pending:true}],{presentation:'journal',onDone:id=>calls.push(id)});
   assert.ok(classes(review,'ui-card'));
   nodes(review).find(n => n.tagName === 'button' && n.textContent === '검토 완료').onclick();
   assert.deepEqual(calls,['r']);
