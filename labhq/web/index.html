@@ -716,11 +716,11 @@ function renderDoor() { $('#door').classList.toggle('open', now() < S.doorUntil)
 
 function renderApprovals() {
   const items = [...S.approvals.values()], sugs = S.suggestions, holds = [...S.engineHolds.values()];
-  const reviews = [...S.requests.values()].filter(LabHQState.needsPiReview);
+  const reviews = [...S.requests.values()].filter(q => LabHQState.needsPiReview(q) || LabHQState.needsStorage(q));
   const total = items.length + sugs.length + holds.length + reviews.length;
   const decisions = items.length + sugs.length + reviews.length;
   updateDecisionBadge($('#decision-count'), decisions);
-  syncReviewCards($('#review-cards'), reviews, {presentation:'journal', onOpen:openReview, onDone:finishReview, disabled:() => !api?.reviewDone});
+  syncReviewCards($('#review-cards'), reviews, {presentation:'journal', onOpen:openReview, onDone:finishReview, onStorage:chooseStorage, disabled:() => !api?.reviewDone});
   $('#ap-count').textContent = decisions ? `${decisions}건` : '';
   const board = $('#board');  // #57 ⑧: waiting decisions make the board blink and lead to 결정
   board.classList.toggle('alert', total > 0);
@@ -921,6 +921,14 @@ async function openReview(rid) {
       reqKey = ''; schedule();
     } catch (err) { toast(`보고서를 불러오지 못했어요: ${err.message}`); }
   }
+}
+async function chooseStorage(rid) {
+  if (!api?.storage) return;
+  try {
+    const card = await api.storage(rid);
+    officeState.apply({type:'approval.requested', request_id:rid, data:card});
+    schedule(); toast('저장 위치를 골라 주세요.');
+  } catch (err) { toast(`저장 위치 카드를 열지 못했어요: ${err.message}`); }
 }
 async function finishReview(rid, target) {
   if (!api?.reviewDone) return;
@@ -1261,6 +1269,7 @@ function startLive() {
     contract: (id, action, days) => post(`/api/contracts/${encodeURIComponent(id)}`, { action, days }),
     cancel: id => post(`/api/tasks/${encodeURIComponent(id)}/cancel`, {}),
     control: (id, action, text) => post(`/api/tasks/${encodeURIComponent(id)}/${action}`, action === 'steer' ? { text } : {}),
+    storage: rid => post(`/api/requests/${encodeURIComponent(rid)}/storage`, {}),
     reviewDone: (rid, target = {}) => post(`/api/requests/${encodeURIComponent(rid)}/review-done`, target),
     cancelRequest: rid => post(`/api/requests/${encodeURIComponent(rid)}/cancel`, {}),
     resumeQuota: (rid, sid) => post(`/api/requests/${encodeURIComponent(rid)}/steps/${encodeURIComponent(sid)}/resume-quota`, {}),

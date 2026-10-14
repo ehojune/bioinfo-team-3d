@@ -65,10 +65,22 @@ export function startLiveOffice(onState) {
   function text(parent, tag, value) {
     const el = document.createElement(tag); el.textContent = value; parent.append(el); return el;
   }
-  async function reviewDone(rid) {
+  async function chooseStorage(rid) {
     try {
-      const response = await fetch(`/api/requests/${encodeURIComponent(rid)}/review-done`,
+      const response = await fetch(`/api/requests/${encodeURIComponent(rid)}/storage`,
         {method:'POST', headers:{Authorization:`Bearer ${token}`}});
+      if (!response.ok) throw new Error((await response.json()).detail || String(response.status));
+      apply({type:'approval.requested', request_id:rid, data:await response.json()});
+      render(); notice('저장 위치를 골라 주세요.');
+    } catch (error) { notice(`저장 위치 카드를 열지 못했어요: ${error.message}`); }
+  }
+  async function reviewDone(rid, target) {
+    try {
+      const request = S.requests.get(rid);
+      const final = request?.status === 'review_pending' ? request.final_checkpoint : null;
+      const response = await fetch(`/api/requests/${encodeURIComponent(rid)}/review-done`,
+        {method:'POST', headers:{Authorization:`Bearer ${token}`, 'Content-Type':'application/json'},
+          body:JSON.stringify(target || (final ? {decision:'accepted', revision:final.revision, target_sha256:final.target_sha256} : {}))});
       if (!response.ok) throw new Error(String(response.status));
       apply({type:'request.reviewed', request_id:rid, data:await response.json()});
       render(); notice('검토·확인을 마쳤어요');
@@ -84,8 +96,8 @@ export function startLiveOffice(onState) {
     $('demo-banner').hidden = !demo;
     if (demo) $('demo-banner').textContent = globalThis.LabHQState.demoBannerText(S.demoStatus);
     $('token-form').hidden = S.conn !== 'auth' && S.conn !== 'offline';
-    $('approval-count').textContent = S.approvals.size + S.engineHolds.size + [...S.requests.values()].filter(globalThis.LabHQState.needsPiReview).length;
-    syncReviewCards($('review-cards'), S.requests.values(), {onOpen:openReview, onDone:reviewDone, disabled:() => S.conn !== 'live'});
+    $('approval-count').textContent = S.approvals.size + S.engineHolds.size + [...S.requests.values()].filter(q => globalThis.LabHQState.needsPiReview(q) || globalThis.LabHQState.needsStorage(q)).length;
+    syncReviewCards($('review-cards'), S.requests.values(), {onOpen:openReview, onDone:reviewDone, onStorage:chooseStorage, disabled:() => S.conn !== 'live'});
     const holdRows = [...S.engineHolds.values()].map(hold => {
       const row = document.createElement('article');
       text(row, 'strong', `로그인 대기 · ${hold.engine}`);

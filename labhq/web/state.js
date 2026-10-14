@@ -46,6 +46,8 @@ const REQUEST_STATUS_KO = { running: '진행 중', waiting_for_runner: '러너 �
   interrupted: '중단됨', done: '완료', failed: '실패', cancelled: '취소됨', rejected: '거부됨', review_pending: '보고서 검토 대기' };
 const requestStatusLabel = status => REQUEST_STATUS_KO[status] || String(status || '상태 모름');
 const needsPiReview = q => !!q && isTerminalRequest(q.status) && q.pi_review_pending === true && !q.pi_reviewed_at;
+const needsStorage = q => !!q && ['done', 'failed', 'cancelled', 'review_pending'].includes(q.status)
+  && (q.status !== 'cancelled' || !!String(q.report || '').trim()) && !Object.keys(q.resultStorage || {}).length;
 const reviewLabel = q => ['done', 'review_pending'].includes(q.status) ? '보고서 검토' : '결과 확인';
 const requestActivity = q => Math.max(Number(q.updated_at) || 0, Number(q.created_at) || 0);
 function sortRequests(requests) {
@@ -291,7 +293,7 @@ function upsertAgent(a) {
 function req(rid) {
   if (!S.requests.has(rid)) {
     const q = { id: rid, text: '', steps: {}, plan: [], github: [], cost: 0, costKnown: true, phase: 'briefing', status: 'running', created_at: now() };
-    for (const key of ['pi_review_pending', 'pi_reviewed_at', 'agent_id', 'final_checkpoint']) Object.defineProperty(q, key, {value:null, writable:true, enumerable:false});
+    for (const key of ['pi_review_pending', 'pi_reviewed_at', 'agent_id', 'final_checkpoint', 'resultStorage']) Object.defineProperty(q, key, {value:null, writable:true, enumerable:false});
     Object.defineProperty(q, 'updated_at', { value: 0, writable: true, enumerable: false });
     Object.defineProperty(q, 'resumed', { value: false, writable: true, enumerable: false });
     Object.defineProperty(q, 'references', { value: [], writable: true, enumerable: false });
@@ -448,6 +450,7 @@ function apply(ev, replay = false) {
         Object.assign(q, { text: r.text, status: r.status, mode: r.mode, project_id: r.project_id, created_at: r.created_at, cost: r.cost_usd || 0, costKnown: r.cost_known !== false });
         q.pi_review_pending = r.pi_review_pending === true; q.pi_reviewed_at = r.pi_reviewed_at || null; q.agent_id = r.agent_id || '';
         q.final_checkpoint = r.final_checkpoint || null;
+        q.resultStorage = r.result_storage || {};
         q.updated_at = Math.max(q.updated_at, Number(r.updated_at) || 0);
         // With a trimmed event history, running in the initial snapshot still means work is continuing.
         q.resumed = q.resumed || r.status === 'running';
@@ -663,7 +666,7 @@ function apply(ev, replay = false) {
       const resumed = pending?.kind === 'resume' && d.approved && (pending.request_id || rid);
       if (resumed && S.requests.has(resumed)) { const q = req(resumed); q.resumeMissing = []; reopen(q, 'waiting_for_runner'); }
       // A card nobody answered is not the PI's refusal (R5, #521): it timed out or was closed.
-      const unanswered = d.state === 'timed_out' ? '시간 초과로 닫혔어요' : ['expired', 'cancelled'].includes(d.state) ? '답 없이 닫혔어요' : '';
+      const unanswered = d.state === 'reconciled' ? '저장 선택을 복구했어요' : d.state === 'timed_out' ? '시간 초과로 닫혔어요' : ['expired', 'cancelled'].includes(d.state) ? '답 없이 닫혔어요' : '';
       const note = d.note ? ` (${short(d.note, 60)})` : '';
       const fullNote = d.note ? ` (${d.note})` : '';
       feed(unanswered ? { who: 'system', text: `${unanswered}${note}`, fullText: `${unanswered}${fullNote}` }
@@ -851,7 +854,7 @@ function apply(ev, replay = false) {
     }
     case 'request.storage': {
       req(rid).resultStorage = d.result_storage || {};
-      feed({who:'editor', text:d.result_storage?.warning || (d.result_storage?.status === 'published' ? '정리본을 GitHub에 올렸습니다.' : '정리본을 로컬에 남겼습니다.')}, ts, rid);
+      feed({who:'editor', text:d.result_storage?.warning || (d.result_storage?.status === 'selected' ? '저장 위치를 정했습니다.' : d.result_storage?.status === 'published' ? '정리본을 GitHub에 올렸습니다.' : '정리본을 로컬에 남겼습니다.')}, ts, rid);
       break;
     }
     case 'request.followup': {
@@ -943,5 +946,5 @@ return { S, apply, selectRequest, ag, visual, stateText, currentTask, currentToo
 }
 root.LabHQState = { createOfficeState, costLabel, engineCostLabel, agentCostLabel, agentSpentLabel, totalCostLabel,
   isActiveRequest, isTerminalRequest, REQUEST_STATUS_KO, requestStatusLabel, requestStatusText, processingLabel,
-  needsPiReview, reviewLabel, staffCharacter, STAFF_NAMES, websocketCloseAction, officeStorageKey, createRequestFocusStorage, sortRequests, requestActivity, requestResumeLabel, connectionLabel, demoBannerText };
+  needsPiReview, needsStorage, reviewLabel, staffCharacter, STAFF_NAMES, websocketCloseAction, officeStorageKey, createRequestFocusStorage, sortRequests, requestActivity, requestResumeLabel, connectionLabel, demoBannerText };
 })(globalThis);
