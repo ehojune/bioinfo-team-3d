@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 22:09 | [`bbb5dd9`](https://github.com/ehojune/bioinfo-team-3d/pull/577/commits/bbb5dd9) | init에서 새 pipeline 공개 기여 동의를 묻고 기존 동의값·대상을 보존 |
 | 22:03 | [`efe0642`](https://github.com/ehojune/bioinfo-team-3d/pull/575/commits/efe0642) | 논문 스킬 계획 계약의 고정 hash를 갱신하고 실행 중 재계획에서는 새 논문 선택을 제외 |
 | 21:43 | [`0dd57dc`](https://github.com/ehojune/bioinfo-team-3d/pull/575/commits/0dd57dc) | 두 논문의 변환 복구 키를 분리하고 논문 ID가 다른 결과는 장착하지 않음 |
 | 21:39 | [`623bf3b`](https://github.com/ehojune/bioinfo-team-3d/pull/575/commits/623bf3b) | 선행 연구 논문을 CP1 전 자문형 스킬로 준비하고 요청별 담당 단계에 장착·기록 |
