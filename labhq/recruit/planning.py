@@ -7,6 +7,8 @@ import hashlib
 import json
 import time
 
+import yaml
+
 from ..models import Task, TaskResult
 from . import paper2agent, paper_skills, provenance
 
@@ -47,11 +49,66 @@ def _batch_key(proposals):
     return hashlib.sha256(json.dumps(proposals, sort_keys=True).encode()).hexdigest()
 
 
-def pending_receipt_agents(req):
+def _refresh_receipt(receipt, hub):
+    """Invalidate only confirmed ended contracts; an offline runner may still return.
+
+    Read YAML without Registry.load(), which would archive expired contracts here.
+    The active contract file takes precedence over an older talent-pool copy.
+    """
+    aid = receipt.get("agent_id")
+    if receipt.get("status") != "active" or not aid:
+        return False
+    terms = None
+    base = hub.s.path(hub.s.runner.agents_dir)
+    contracts = hub.s.path(hub.s.runner.contract_dir) if hub.s.runner.contract_dir else base / "contract"
+    for pattern, folder in (("*.yaml", contracts), ("*/contract.yaml", hub.s.path(hub.s.runner.talent_dir))):
+        for path in folder.glob(pattern):
+            try:
+                data = yaml.safe_load(path.read_text(encoding="utf-8"))
+            except (OSError, yaml.YAMLError):
+                continue
+            if isinstance(data, dict) and data.get("id") == aid and isinstance(data.get("contract"), dict):
+                terms = data["contract"]
+                break
+        if terms is not None:
+            break
+    if terms is None:
+        agent = hub.agents.get(aid)
+        if agent is None:
+            agent = next((a for entry in getattr(hub, "last_runner_rosters", {}).values()
+                          for a in entry.get("agents", []) if a.get("id") == aid), {})
+        terms = {"status": agent.get("contract_status"), "expires_at": agent.get("expires_at")}
+    status = terms.get("status")
+    expires = terms.get("expires_at")
+    ended = status in {"expired", "archived", "released"}
+    ended = ended or (isinstance(expires, (int, float)) and expires <= time.time())
+    if not ended:
+        return False
+    receipt.update(status="failed", error="contract_ended")
+    return True
+
+
+def _restore_fallbacks(plan, batch):
+    changed = False
+    failed = {row.get("agent_id") for row in batch.get("results", {}).values()
+              if row.get("status") == "failed" and row.get("error") == "contract_ended"}
+    for step in plan.get("steps", []):
+        fallback = batch.get("fallback_agents", {}).get(step["id"])
+        if step["agent_id"] in failed and fallback and step["agent_id"] != fallback:
+            step["agent_id"] = fallback
+            changed = True
+    return changed
+
+
+def pending_receipt_agents(req, hub):
     """Only the current, unfrozen draft's receipts gate restart readiness."""
     if req.get("research_contract") or req.get("results"):
         return set()
     batch = (req.get("plan_recruitment") or {}).get(_batch_key(_proposals(req.get("plan") or {})), {})
+    changed = [_refresh_receipt(row, hub) for row in batch.get("results", {}).values()]
+    restored = _restore_fallbacks(req.get("plan") or {}, batch)
+    if any(changed) or restored:
+        hub.save_request(req["id"])
     return {row["agent_id"] for row in batch.get("results", {}).values()
             if row.get("status") == "active" and row.get("agent_id")}
 
@@ -67,6 +124,7 @@ async def prepare_plan(plan, rid, hub, run):
     key = _batch_key(proposals)
     state = req.setdefault("plan_recruitment", {})
     batch = state.setdefault(key, {"results": {}})
+    batch.setdefault("fallback_agents", {sid: step["agent_id"] for sid, step in steps.items()})
 
     async def dispatch(kind, payload=None):
         identity = key + ":" + paper_key((payload or {}).get("paper") or (payload or {}).get("repo"))
@@ -113,11 +171,16 @@ async def prepare_plan(plan, rid, hub, run):
                                       batch["check"].get("status", "failed")})
             hub.save_request(rid)
         receipt = batch["results"][pid]
+        if _refresh_receipt(receipt, hub):
+            hub.save_request(rid)
+        _restore_fallbacks(plan, batch)
         agent = hub.agents.get(receipt.get("agent_id")) or {}
         active = (receipt.get("status") == "active" and agent.get("employment") == "contract"
                   and agent.get("contract_status") == "active")
         reason = {"unavailable": "Paper2Agent 미설치 또는 doctor 실패", "denied": "채용 거절",
                   "timed_out": "채용 시간 초과"}.get(receipt.get("status"), "채용·수습 실패 또는 직원 미접속")
+        if receipt.get("error") == "contract_ended":
+            reason = "채용 계약 만료 또는 해제"
         for sid in row["step_ids"]:
             if active:
                 steps[sid]["agent_id"] = agent["id"]

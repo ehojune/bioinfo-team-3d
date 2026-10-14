@@ -1327,7 +1327,8 @@ class Hub:
     def resume_agents(self, rid: str) -> set[str]:
         from ..recruit.planning import pending_receipt_agents
 
-        return self._resume_agents(rid) | pending_receipt_agents(self.requests[rid])
+        pending = pending_receipt_agents(self.requests[rid], self)
+        return self._resume_agents(rid) | pending
 
     def _resume_agents(self, rid: str) -> set[str]:
         req = self.requests[rid]

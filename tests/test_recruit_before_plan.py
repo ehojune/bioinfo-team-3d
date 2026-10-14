@@ -308,13 +308,31 @@ def test_new_recruit_schema_requires_target_steps(research, step_ids):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["team", "plan_only"])
 @pytest.mark.parametrize("reconnect", [True, False])
-async def test_resume_waits_for_active_recruit_receipt(tmp_path, mode, reconnect):
+@pytest.mark.parametrize("contract_state", ["active", "expired", "released", "assigned_expired"])
+async def test_resume_waits_for_active_recruit_receipt(tmp_path, mode, reconnect, contract_state):
     from labhq.gateway.server import Hub
     from labhq.recruit.planning import prepare_plan
 
     settings = Settings()
     settings.gateway.state_dir = str(tmp_path / "state")
     settings.gateway.resume_wait_s = 0.2
+    settings.runner.agents_dir = str(tmp_path / "agents")
+    settings.runner.contract_dir = str(tmp_path / "contracts")
+    settings.runner.talent_dir = str(tmp_path / "talent")
+    from pathlib import Path
+    from labhq.registry import Registry
+    registry = Registry(Path(settings.runner.agents_dir), Path(settings.runner.talent_dir),
+                        Path(settings.runner.contract_dir))
+    spec = AgentSpec(id="c_paper", name="Paper", role="method", engine=Engine.mock,
+                     employment=Employment.contract,
+                     contract=ContractInfo(paper=proposal()["paper"], kind="technician", hired_at=1,
+                                           expires_at=time.time() + 1000, status="active"))
+    registry.save_contract(spec)
+    if contract_state in {"expired", "assigned_expired"}:
+        spec.contract.expires_at = time.time() - 1
+        registry.save_contract(spec)
+    elif contract_state == "released":
+        registry.release(spec.id)
     hub = Hub(settings)
     hub.requests["r"] = {"id": "r", "status": "running", "mode": mode, "text": "reproduce",
                          "plan": {"recruit": [proposal()], "steps": [{"id": "s1", "agent_id": "worker"}]}}
@@ -330,11 +348,15 @@ async def test_resume_waits_for_active_recruit_receipt(tmp_path, mode, reconnect
     from labhq.recruit.planning import paper_key
     batch = hub.requests["r"]["plan_recruitment"][key]
     batch["results"] = {paper_key(proposal()["paper"]): {"status": "active", "agent_id": "c_paper"}}
+    if contract_state == "assigned_expired":
+        batch["fallback_agents"] = {"s1": "worker"}
+        hub.requests["r"]["plan"]["steps"][0]["agent_id"] = "c_paper"
     hub.requests["r"]["plan_recruitment"]["old-batch"] = {
         "results": {"old-paper": {"status": "active", "agent_id": "c_old"}}}
     hub.save_request("r")
     hub.store.close()
     restored = Hub(settings)
+    initial_approvals = set(restored.approvals)
     resumed = None
     called = []
 
@@ -350,15 +372,24 @@ async def test_resume_waits_for_active_recruit_receipt(tmp_path, mode, reconnect
     try:
         resumed = asyncio.create_task(restored.resume_when_ready("r"))
         await asyncio.sleep(0)
-        assert not called
-        assert restored.requests["r"]["status"] == "waiting_for_runner"
-        if reconnect:
+        if contract_state == "active":
+            assert not called
+            assert restored.requests["r"]["status"] == "waiting_for_runner"
+        if reconnect and contract_state == "active":
             restored.runners["hire"] = object()
             restored.agent_runner["c_paper"] = "hire"
             restored.agents["c_paper"] = {"id": "c_paper", "employment": "contract", "contract_status": "active"}
         await asyncio.wait_for(resumed, 2)
         req = restored.requests["r"]
-        if reconnect:
+        if contract_state != "active":
+            assert called == ["r"]
+            assert req["plan"]["steps"][0]["agent_id"] == "worker"
+            assert "재배정" in req["plan"]["warnings"][0]
+            assert req["plan"]["recruit_results"][0]["status"] == "failed"
+            assert restored.resume_agents("r").isdisjoint({"c_paper", "c_old"})
+            assert set(restored.approvals) == initial_approvals  # no second resume card
+            assert await prepare_plan(req["plan"], "r", restored, forbidden) == req["plan"]
+        elif reconnect:
             assert called == ["r"]
             assert req["plan"]["steps"][0]["agent_id"] == "c_paper"
             assert not req["plan"].get("warnings")
@@ -372,3 +403,60 @@ async def test_resume_waits_for_active_recruit_receipt(tmp_path, mode, reconnect
         for timer in restored.resume_timers.values():
             timer.cancel()
         restored.store.close()
+
+
+@pytest.mark.parametrize("status,expires,expected", [
+    ("active", 1, "failed"), ("archived", 10**12, "failed"), ("active", 10**12, "active")])
+def test_remote_receipt_uses_stored_roster_contract(tmp_path, status, expires, expected):
+    from types import SimpleNamespace
+    from labhq.recruit.planning import _refresh_receipt
+
+    settings = Settings()
+    settings.runner.agents_dir = str(tmp_path / "absent-agents")
+    settings.runner.talent_dir = str(tmp_path / "absent-talent")
+    hub = SimpleNamespace(s=settings, agents={}, last_runner_rosters={"remote": {"agents": [
+        {"id": "c_paper", "contract_status": status, "expires_at": expires}]}})
+    receipt = {"status": "active", "agent_id": "c_paper"}
+    _refresh_receipt(receipt, hub)
+    assert receipt["status"] == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("resume", [False, True])
+@pytest.mark.parametrize("approved", [False, True])
+@pytest.mark.parametrize("mode", ["team", "plan_only"])
+async def test_scope_decision_precedes_recruitment(resume, approved, mode):
+    settings = Settings()
+    settings.research.enabled = False
+    settings.orchestrator.chief_of_staff_agent = None
+    settings.orchestrator.reviewer_agent = None
+    settings.orchestrator.precedent_agent = None
+    plan = {"steps": [{"id": "s1", "agent_id": "worker", "instruction": "reproduce", "depends_on": []}],
+            "recruit": [proposal()], "scope": {"verdict": "out", "reason": "outside the lab scope"}}
+    order = []
+
+    async def reply(task):
+        kind = task.meta["kind"]
+        order.append(kind)
+        data = plan if kind == "plan" else {"status": "ready" if kind == "recruit_check" else "failed"}
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=data, text="done", cost_usd=0)
+
+    hub = MiniHub(settings, reply, mode=mode, work_kind="simple")
+    hub.agents["recruiter"] = {"id": "recruiter", "name": "Recruiter", "role": "hire", "engine": "mock"}
+    if resume:
+        hub.requests["r"].update(plan=copy.deepcopy(plan), scope_check=copy.deepcopy(plan["scope"]))
+
+    async def approve(**card):
+        order.append(card["kind"])
+        return {"approved": approved if card["kind"] == "scope" else True}
+
+    hub.request_approval = approve
+    await Orchestrator(hub).run_request("r", resume=resume)
+    assert "scope" in order
+    if approved:
+        assert order.index("scope") < order.index("recruit_check") < order.index("plan_recruit")
+        assert order.count("scope") == 1
+    else:
+        assert not {"recruit_check", "recruit_plan", "plan_recruit", "step"}.intersection(order)
+        assert "plan_recruitment" not in hub.requests["r"]
+        assert hub.requests["r"]["outcome"] == "out_of_scope_declined"

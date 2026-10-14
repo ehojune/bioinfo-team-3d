@@ -4970,6 +4970,8 @@ class Orchestrator:
                 self.hub.save_request(rid)
 
             if resume and req.get("plan", {}).get("steps"):
+                if not research_lane and not await self._scope_gate(rid, req):
+                    return
                 if not req.get("research_contract") and not req.get("results"):
                     await prepare_recruits()
                 if research_lane:
@@ -5033,8 +5035,6 @@ class Orchestrator:
                 self.hub.save_request(rid)
                 if created:
                     await self._emit(rid, "request.route", decision)
-                if not research_lane and not await self._scope_gate(rid, req):  # a card the restart closed (#36)
-                    return
                 if not research_lane and await self._run_solo(rid, text, refs):
                     return
                 results: dict[str, TaskResult] = self.hub.result_map(rid)
@@ -5461,6 +5461,9 @@ class Orchestrator:
                     scope = scope_verdict(plan) or req.get("scope_first")
                     if scope:
                         req["scope_check"] = scope
+                if not research_lane and (req["mode"] != "plan_only" or req["plan"].get("recruit")):
+                    if not await self._scope_gate(rid, req):
+                        return
                 await prepare_recruits()
                 steps = req["plan"]["steps"]
                 req["plan"] = await paper_skills.prepare_plan(
@@ -5485,8 +5488,6 @@ class Orchestrator:
                 elif req["mode"] == "plan_only":
                     req["outcome"] = "plan_only"
                     self._finish(rid, plan_res.text or "Plan completed.", {}, ok=True)
-                    return
-                elif not await self._scope_gate(rid, req):
                     return
                 elif await self._run_solo(rid, text, refs):
                     return
