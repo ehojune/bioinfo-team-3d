@@ -21,6 +21,7 @@ from typing import Any, Iterator
 from .adapters.held_dir import HeldDir, NotPlainFolder
 from .evidence.audit import claims_record, locate_workdir
 from .evidence.claims import normalize_artifact_path
+from .report_figures import bundle_figure_check, figure_owners, link_workdir_figures, linked_figure_paths
 from .ro_crate import FORMAT_MARKER, METADATA_FILE, write_ro_crate
 
 
@@ -499,6 +500,10 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
     runner_capabilities = runner_capabilities or {}
     results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
     rerun_receipt = _rerun_receipt(req)
+    # The report links a figure as <workdir_id>/outputs/<file>; the bundle names it steps/<step_id>/outputs/<file>, and
+    # a linked figure is kept even when the bundle's total limits are full (#584). The per-file limit still applies.
+    report_text = link_workdir_figures(str(req.get("report") or ""), figure_owners(results))
+    linked_figures = set(linked_figure_paths(report_text))
     plan_steps = [step for step in ((req.get("plan") or {}).get("steps") or []) if isinstance(step, Mapping)]
     ordered_ids, ordered_steps = _topological_steps(plan_steps, results)
     max_file_bytes = int(float(settings.runner.bundle_max_file_mb) * 1024 * 1024)
@@ -526,7 +531,8 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
                 row["size"] = info.st_size
                 if info.st_size > max_file_bytes:
                     row["status"] = f"not copied{tag}: size"
-                elif copied_files >= max_total_files or copied_bytes + info.st_size > max_total_bytes:
+                elif ((copied_files >= max_total_files or copied_bytes + info.st_size > max_total_bytes)
+                      and rel.as_posix() not in linked_figures):
                     row["status"] = f"not copied{tag}: total limit"
                     total_limit_hit = total_limit_hit or not tag  # its appendix note counts recorded outputs
                 else:
@@ -706,7 +712,7 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
             input_summary += " (" + ", ".join(
                 f"{reason} {count}" for reason, count in sorted(skipped_by_reason.items())) + ")"
 
-        report = str(req.get("report") or "")
+        report = report_text
         appendix = str(req.get("report_appendix") or "")
         replaced = _superseded(req, tasks)
         if replaced:
@@ -724,6 +730,9 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
         if not_copied:
             appendix += f"\n\n- 요청 묶음 상태: incomplete (기록 산출 {not_copied}개 미복사; MANIFEST.tsv 확인)"
         (temp / "report.md").write_text(report, encoding="utf-8", newline="\n")
+        figure_problems = bundle_figure_check(temp)["problems"]  # the same check `labhq verify` runs later
+        if figure_problems:
+            appendix += "\n\n## 보고서 그림 링크\n\n" + "\n".join(f"- {problem}" for problem in figure_problems)
         (temp / "report_appendix.md").write_text(appendix, encoding="utf-8", newline="\n")
         from .recruit.paper_skills import records as paper_skill_records
         paper_records = paper_skill_records(req.get("plan") or {}, results)
