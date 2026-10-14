@@ -1,0 +1,17 @@
+pr: 596
+rows:
+- sha: 3bc48a3
+  at: 2026-10-14 16:34
+  text: 보고서 결과에 핵심 그림을 마크다운 링크로 넣게 하고, 요청 묶음이 링크된 그림을 상한과 무관하게 지키며 labhq verify가 링크된
+    그림의 존재를 확인한다(#584).
+- sha: 6205f30
+  at: 2026-10-14 16:34
+  text: 보고서를 그림·한글 글꼴·인쇄 CSS가 든 HTML 한 장으로 만들고 Edge·Chrome headless로 PDF를 인쇄한다. 브라우저가
+    없으면 HTML과 이유를 준다(#584).
+- sha: 8d512df
+  at: 2026-10-14 16:34
+  text: 보고서 PDF를 받는 gateway 주소, labhq report --pdf, 2.5D·3D의 PDF로 받기 버튼을 더했다. 통제 데이터
+    요청은 만들지 않는다(#584).
+- sha: 9e29940
+  at: 2026-10-14 16:34
+  text: 보고서 그림·PDF의 test(브라우저 mock 포함)와 manual의 보고서 PDF 절을 더했다(#584).
