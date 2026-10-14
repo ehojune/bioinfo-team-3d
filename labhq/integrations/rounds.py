@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("labhq.rounds")
 REPO_NAME = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+_ORIGINAL_REPORT = object()
 
 
 class RoundPublicationDeferred(RuntimeError):
@@ -240,7 +241,9 @@ def build_record(hub: "Hub", rid: str, sources: dict[str, dict[str, list[dict]]]
     }
 
 
-def render_record(record: dict) -> str:
+def render_record(record: dict, *, include_json: bool = True,
+                  report_override: object = _ORIGINAL_REPORT,
+                  report_notice: str | None = None) -> str:
     data = json.dumps(record, ensure_ascii=False, indent=2, default=str)
     req, result = record["request"], record["result"]
     commit = record["environment"].get("git_commit")
@@ -267,12 +270,66 @@ def render_record(record: dict) -> str:
               f"- 점수: {json.dumps(record['review']['scores'], ensure_ascii=False)}",
               f"- 수정 회차: {record['review']['revision_rounds']}", "", "## PI 결정"]
     lines += [f"- {d['kind']}: {d['approved']} {d['note'] or ''}" for d in record["pi_decisions"]]
+    if report_override is _ORIGINAL_REPORT:
+        report = result.get("report") or result.get("root_cause_summary") or ""
+    else:
+        report = str(report_override)
     lines += ["", "## 결과", f"- 상태: {result['status']}",
               f"- 미결정: {json.dumps(result['pending_decisions'], ensure_ascii=False)}",
               f"- 이상 징후: {', '.join(result['anomalies']) or '없음'}",
-              str(result.get("report") or result.get("root_cause_summary") or ""),
-              "", "<details><summary>JSON schema v1</summary>", "", "```json", data, "```", "", "</details>", ""]
+               report]
+    if report_notice:
+        lines += ["", report_notice]
+    if include_json:
+        lines += ["", "<details><summary>JSON schema v1</summary>", "", "```json", data, "```", "", "</details>", ""]
+    else:
+        lines += ["", f"> JSON 원본은 로컬 rounds/{record['request_id']}.json에 있음", ""]
     return "\n".join(lines)
+
+
+def _line_prefix(text: str, limit: int) -> str:
+    """Fit whole Markdown lines, closing a fenced block when the cut lands inside one."""
+    if limit <= 0:
+        return ""
+    kept: list[str] = []
+    used = 0
+    fence: tuple[str, int] | None = None
+    for line in text.splitlines(keepends=True):
+        match = re.match(r"^\s*(`{3,}|~{3,})", line)
+        next_fence = fence
+        if match:
+            token = match.group(1)
+            if fence is None:
+                next_fence = (token[0], len(token))
+            elif token[0] == fence[0] and len(token) >= fence[1]:
+                next_fence = None
+        closing = f"\n{next_fence[0] * next_fence[1]}" if next_fence else ""
+        if used + len(line) + len(closing) > limit:
+            break
+        kept.append(line)
+        used += len(line)
+        fence = next_fence
+    prefix = "".join(kept).rstrip("\r\n")
+    if fence:
+        prefix += f"\n{fence[0] * fence[1]}"
+    return prefix
+
+
+def _marked_body(record: dict, *, limit: int, compact: bool = True) -> str:
+    marker = f"<!-- labhq round {record['request_id']} -->"
+    full = marker + "\n\n" + render_record(record)
+    if len(full) <= limit or not compact:
+        return full
+    without_json = marker + "\n\n" + render_record(record, include_json=False)
+    if len(without_json) <= limit:
+        return without_json
+    notice = f"> 결과 보고서 전문은 로컬 기록 rounds/{record['request_id']}.md에 있음"
+    base = marker + "\n\n" + render_record(
+        record, include_json=False, report_override="", report_notice=notice)
+    report = str(record["result"].get("report") or record["result"].get("root_cause_summary") or "")
+    shortened = _line_prefix(report, limit - len(base))
+    return marker + "\n\n" + render_record(
+        record, include_json=False, report_override=shortened, report_notice=notice)
 
 
 class RoundRecorder:
@@ -342,8 +399,22 @@ class RoundRecorder:
                 pending.add(rid)
         for rid in pending:
             delivery = self.hub.store.get("round_delivery", rid) or {}
-            if delivery.get("state") != "failed":
+            failed_oversize = (delivery.get("state") == "failed" and
+                               not self.hub.store.get("round_issue", rid) and
+                               self._legacy_body_exceeded_limit(rid))
+            if delivery.get("state") != "failed" or failed_oversize:
                 self.submit(rid, attempts=delivery.get("attempts", 0))
+
+    def _legacy_body_exceeded_limit(self, rid: str) -> bool:
+        """Recognize deliveries the pre-compaction publisher left permanently failed."""
+        try:
+            record = json.loads((self.directory / f"{rid}.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        def clean(value: str) -> str:
+            return publish_clean(value, self.s, self.hub.requests.values())
+
+        return len(_marked_body(_clean_tree(record, clean), limit=MAX_BODY, compact=False)) > MAX_BODY
 
     async def drain(self) -> None:
         await self.queue.join()
@@ -436,11 +507,11 @@ class RoundRecorder:
         gh = self.client
         record = json.loads((self.directory / f"{rid}.json").read_text(encoding="utf-8"))
         clean = gh.clean
-        body = render_record(_clean_tree(record, clean))
+        record = _clean_tree(record, clean)
         marker = f"<!-- labhq round {rid} -->"
-        body = marker + "\n\n" + body
+        body = _marked_body(record, limit=MAX_BODY)
         if len(body) > MAX_BODY:
-            log.warning("round record exceeds GitHub issue size; local record retained")
+            log.warning("round record exceeds GitHub issue size after report compaction; local record retained")
             return False
         digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
         if (self.hub.store.get("round_issue", rid) or {}).get("sha256") == digest:

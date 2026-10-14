@@ -130,6 +130,111 @@ class FakeGitHub:
 
 
 @pytest.mark.asyncio
+async def test_oversized_round_posts_human_body_without_json(tmp_path, monkeypatch):
+    from labhq.integrations import rounds
+
+    cfg = settings(tmp_path)
+    cfg.dev_log.repo = "records/private"
+    remote = FakeGitHub()
+    hub = Hub(cfg, httpx.MockTransport(remote))
+    round_request(hub, "req-large-json", "done")
+    report = "사람용 결과 한 줄\n" * 80
+    hub.requests["req-large-json"]["report"] = report
+    hub.save_request("req-large-json")
+    hub.rounds.write("req-large-json")
+    monkeypatch.setattr(rounds, "MAX_BODY", 3_000)
+
+    assert await hub.rounds.publish("req-large-json")
+    body = remote.issue["body"]
+    assert len(body) <= rounds.MAX_BODY
+    assert report.rstrip() in body
+    assert "<details><summary>JSON schema v1</summary>" not in body
+    assert "JSON 원본은 로컬 rounds/req-large-json.json에 있음" in body
+
+
+@pytest.mark.asyncio
+async def test_oversized_human_report_is_cut_only_between_lines(tmp_path, monkeypatch):
+    from labhq.integrations import rounds
+
+    cfg = settings(tmp_path)
+    cfg.dev_log.repo = "records/private"
+    remote = FakeGitHub()
+    hub = Hub(cfg, httpx.MockTransport(remote))
+    round_request(hub, "req-large-report", "done")
+    report_lines = [f"| row-{i:03d} | {'x' * 60} |" for i in range(100)]
+    hub.requests["req-large-report"]["report"] = "\n".join(report_lines)
+    hub.save_request("req-large-report")
+    hub.rounds.write("req-large-report")
+    monkeypatch.setattr(rounds, "MAX_BODY", 2_000)
+
+    assert await hub.rounds.publish("req-large-report")
+    body = remote.issue["body"]
+    kept = [line for line in body.splitlines() if line.startswith("| row-")]
+    assert len(body) <= rounds.MAX_BODY
+    assert kept and kept == report_lines[:len(kept)]
+    assert report_lines[-1] not in body
+    assert "결과 보고서 전문은 로컬 기록 rounds/req-large-report.md에 있음" in body
+    assert "JSON 원본은 로컬 rounds/req-large-report.json에 있음" in body
+
+
+@pytest.mark.asyncio
+async def test_oversized_round_edits_the_issue_with_the_same_marker(tmp_path, monkeypatch):
+    from labhq.integrations import rounds
+
+    cfg = settings(tmp_path)
+    cfg.dev_log.repo = "records/private"
+    marker = "<!-- labhq round req-existing-large -->"
+    remote = FakeGitHub()
+    remote.issue = {"number": 7, "body": f"{marker}\n\n수동 게시 본문"}
+    hub = Hub(cfg, httpx.MockTransport(remote))
+    round_request(hub, "req-existing-large", "done")
+    hub.requests["req-existing-large"]["report"] = "긴 결과\n" * 100
+    hub.save_request("req-existing-large")
+    hub.rounds.write("req-existing-large")
+    monkeypatch.setattr(rounds, "MAX_BODY", 3_000)
+
+    assert await hub.rounds.publish("req-existing-large")
+    assert remote.issue["body"].count(marker) == 1
+    assert sum(method == "POST" for method, _, _ in remote.calls) == 0
+    assert sum(method == "PATCH" for method, _, _ in remote.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_recovery_retries_a_delivery_failed_by_the_old_size_limit(tmp_path, monkeypatch):
+    from labhq.integrations import rounds
+
+    cfg = settings(tmp_path)
+    cfg.dev_log.repo = "records/private"
+    remote = FakeGitHub()
+    hub = Hub(cfg, httpx.MockTransport(remote))
+    round_request(hub, "req-recover-large", "done")
+    hub.requests["req-recover-large"]["report"] = "복구할 결과\n" * 100
+    hub.save_request("req-recover-large")
+    hub.rounds.write("req-recover-large")
+    monkeypatch.setattr(rounds, "MAX_BODY", 3_000)
+    hub.store.put("round_delivery", "req-recover-large", {
+        "request_id": "req-recover-large", "generation": 1, "attempts": 1, "state": "failed",
+    })
+
+    hub.rounds.recover()
+    try:
+        await asyncio.wait_for(hub.rounds.drain(), 2)
+        assert remote.issue is not None
+        assert hub.store.get("round_delivery", "req-recover-large") is None
+        before = len(remote.calls)
+        hub.store.put("round_delivery", "req-recover-large", {
+            "request_id": "req-recover-large", "generation": 2, "attempts": 1, "state": "failed",
+        })
+        hub.rounds.recover()
+        await hub.rounds.drain()
+        assert len(remote.calls) == before
+    finally:
+        if hub.rounds.worker:
+            hub.rounds.worker.cancel()
+            await asyncio.gather(hub.rounds.worker, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("method", ["GET", "POST", "PATCH"])
 async def test_transient_publication_retries_without_restart(tmp_path, method, monkeypatch):
     class FailsOnce(FakeGitHub):
