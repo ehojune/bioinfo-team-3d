@@ -15,6 +15,7 @@ Refs #598. `test_full_lab_flow_with_mock_agents`가 Windows CI에서 흔들린 �
 
 - `tests/test_e2e_mock.py`의 `_until`이 `progress`를 받습니다. 진행(요청 상태·결과 수·그 요청의 사건 수)이 바뀔 때마다 기한이 새로 시작하고, 멈추면 `HANG_S`(120초) 뒤 실패합니다. 어떤 대기도 `CEILING_S`(1200초)를 넘지 않습니다. 실패 메시지의 `observed`는 그대로입니다.
 - 요청 종료 대기 4곳, recruit·HPC·깨어남 대기, 계약직 등록 대기는 진행 기준으로, 시작·등록·승인 대기는 120초 고정으로 바꿨습니다. `_until`의 기존 10~90초 상한은 모두 바뀌었습니다(종료 때 task를 정리하는 10초는 그대로).
+- `_wait_for_request_terminal`은 `timeout`(진행 없이 기다릴 최대 시간) 인자를 그대로 받습니다. `tests/test_research_cp1.py`가 이 helper를 60초로 부르고 있어서, 그 test도 같은 진행 기준을 따릅니다(상한이 느슨해지기만 합니다).
 - 가짜 시계로 도는 helper test 3건(진행 중이면 계속 기다림, 멈추면 실패하고 본 상태를 알림, 끝없이 움직여도 상한에서 끝남)을 더했습니다.
 - 제품 코드는 바꾸지 않았고 지운 assertion이나 skip은 없습니다.
 

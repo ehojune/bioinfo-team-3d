@@ -65,10 +65,11 @@ def _request_progress(hub, rid, seen):
             sum(1 for event in seen if event.get("request_id") == rid))
 
 
-async def _wait_for_request_terminal(hub, rid, seen):
+async def _wait_for_request_terminal(hub, rid, seen, timeout=HANG_S):
+    """`timeout` is the longest the request may go without any progress (tests/test_research_cp1.py passes its own)."""
     await _until(
         lambda: (hub.requests.get(rid) or {}).get("status") in {"done", "failed", "cancelled", "interrupted"},
-        HANG_S,
+        timeout,
         f"request {rid} to reach a terminal state",
         lambda: _request_state(hub, rid, seen),
         progress=lambda: _request_progress(hub, rid, seen),
