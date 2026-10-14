@@ -145,6 +145,15 @@ def test_one_process_that_refuses_to_die_is_reported_and_the_others_still_end(wo
     assert result.failed == {KID: "Access is denied"} and result.killed == [GRANDKID, ROOT]
 
 
+def test_a_root_can_be_spared_while_a_descendant_refuses_to_die(world):
+    world.refuse[KID] = "Access is denied"
+    result = proc_tree.kill_tree(ROOT, spare_root_on_failure=True)
+    assert result.failed == {KID: "Access is denied"} and result.killed == [GRANDKID]
+    assert ROOT in world.live and ROOT not in {pid for pid, _ in world.terminate_calls}
+    world.refuse.clear()
+    assert proc_tree.kill_tree(ROOT, spare_root_on_failure=True).killed == [KID, ROOT]  # a retry finishes the tree
+
+
 def test_child_pids_lists_only_validated_direct_children(world):
     world.live[N + 303] = Proc(N + 303, ROOT, 1300)
     assert proc_tree.child_pids(ROOT) == [KID, N + 303]
@@ -280,12 +289,26 @@ def test_cli_terminate_tree_raises_when_the_recorded_process_cannot_be_ended(wor
         cli._terminate_tree(ROOT, created="windows:1000")
 
 
-def test_cli_terminate_tree_accepts_a_failure_when_the_process_is_gone_anyway(world, monkeypatch):
+def test_cli_terminate_tree_raises_when_a_descendant_cannot_be_ended_and_keeps_the_root_for_a_retry(world, monkeypatch):
+    """The bot's P1 on #597: only a failure on the root counted, so a venv interpreter that refused to die under a
+    launcher that did die let `down` drop the PID record and report success."""
     _no_process_starts(monkeypatch)
     monkeypatch.setattr(cli.sys, "platform", "win32")
-    monkeypatch.setattr(cli, "_process_created", lambda pid: None)
-    world.refuse[ROOT] = "Access is denied"
-    cli._terminate_tree(ROOT)
+    world.refuse[KID] = "Access is denied"
+    with pytest.raises(OSError) as raised:
+        cli._terminate_tree(ROOT, created="windows:1000")
+    assert f"PID {KID}: Access is denied" in str(raised.value) and f"PID {ROOT}" in str(raised.value)
+    assert world.killed == [GRANDKID] and ROOT in world.live  # the record still names a live process: `down` can retry
+
+
+def test_cli_terminate_tree_names_every_process_it_could_not_end(world, monkeypatch):
+    _no_process_starts(monkeypatch)
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    world.refuse[GRANDKID] = "Access is denied"
+    world.refuse[ROOT] = "should not be tried"
+    with pytest.raises(OSError, match=rf"PID {GRANDKID}: Access is denied"):
+        cli._terminate_tree(ROOT)
+    assert ROOT not in {pid for pid, _ in world.terminate_calls}
 
 
 # --- a real Windows parent and child --------------------------------------------------------------------------

@@ -88,12 +88,15 @@ def child_pids(pid: int, *, created: int | None = None) -> list[int]:
     return [p.pid for p in validated_descendants(pid, procs) if p.ppid == pid]
 
 
-def kill_tree(pid: int, *, created: int | None = None) -> KillResult:
+def kill_tree(pid: int, *, created: int | None = None, spare_root_on_failure: bool = False) -> KillResult:
     """End `pid` and its validated descendants, leaves first, without `taskkill /T`.
 
     `created` is the identity the caller recorded for `pid` (FILETIME ticks): when the PID now belongs to a process
     created at another time, nothing is touched. Without it the caller owns a handle to `pid` (a Popen child), so the
-    PID cannot have been reused. A process table that cannot be read ends only `pid` itself."""
+    PID cannot have been reused. A process table that cannot be read ends only `pid` itself.
+
+    With `spare_root_on_failure`, `pid` is left running when a descendant could not be ended: a caller that keeps a
+    record of `pid` (`down`) then still finds it alive and can retry, instead of losing the way to the survivor."""
     result = KillResult()
     procs = _snapshot()
     victims: list[tuple[int, int | None]]
@@ -107,6 +110,8 @@ def kill_tree(pid: int, *, created: int | None = None) -> KillResult:
         victims = [(p.pid, p.created) for p in reversed(validated_descendants(pid, procs))]
         victims.append((pid, root.created if root.created is not None else created))
     for victim, identity in victims:
+        if spare_root_on_failure and victim == pid and result.failed:
+            break  # the root is the last victim
         try:
             outcome = _terminate(victim, identity)
         except OSError as exc:

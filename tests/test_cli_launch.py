@@ -685,6 +685,58 @@ def test_down_on_windows_ends_the_recorded_tree_through_the_helper_and_checks_ea
     assert not cli._pid_file(settings, "gateway").exists() and not cli._pid_file(settings, "runner").exists()
 
 
+@pytest.mark.parametrize("child_fails", [True, False])
+def test_down_on_windows_keeps_the_records_when_a_child_of_the_launcher_cannot_be_ended(
+        tmp_path, monkeypatch, capsys, child_fails):
+    """The bot's P1 on #597: the venv interpreter under a launcher refused TerminateProcess while the launcher itself
+    was ended, and `down` removed the PID records and printed success with the runner still alive."""
+    from labhq import proc_tree
+
+    runner, runner_child, gateway = 910_000_244, 910_000_245, 910_000_246
+    table = {
+        runner: proc_tree.Proc(runner, 1, 2000), runner_child: proc_tree.Proc(runner_child, runner, 2100),
+        gateway: proc_tree.Proc(gateway, 1, 1000),
+    }
+    killed = []
+
+    def terminate(pid, created):
+        if child_fails and pid == runner_child:
+            raise OSError("액세스가 거부되었습니다.")
+        if pid not in table:
+            return proc_tree.GONE
+        killed.append(pid)
+        del table[pid]
+        return proc_tree.KILLED
+
+    settings = Settings.load(str(_config(tmp_path)))
+    _write_process_record(settings, "runner", runner, "windows:2000")
+    _write_process_record(settings, "gateway", gateway, "windows:1000")
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    monkeypatch.setattr(cli, "_process_created",
+                        lambda pid: f"windows:{table[pid].created}" if pid in table else None)
+    monkeypatch.setattr(cli, "_active_requests", lambda _settings: [])
+    monkeypatch.setattr(cli, "_shutdown_readiness",
+                        lambda _settings: {"requests": [], "followups": [], "recruits": 0, "ready": True})
+    monkeypatch.setattr(cli, "_health", lambda _settings: None)
+    monkeypatch.setattr(cli.subprocess, "run", lambda *args, **kwargs: pytest.fail(f"taskkill started: {args}"))
+    monkeypatch.setattr(proc_tree, "_snapshot", lambda: list(table.values()))
+    monkeypatch.setattr(proc_tree, "_terminate", terminate)
+
+    if child_fails:
+        with pytest.raises(SystemExit) as stopped:
+            cli._down(settings, force=False)
+        error = capsys.readouterr().err
+        assert stopped.value.code == 2
+        assert f"runner PID {runner}을 종료하지 못했습니다" in error
+        assert f"PID {runner_child}: 액세스가 거부되었습니다." in error
+        assert cli._pid_file(settings, "runner").exists() and cli._pid_file(settings, "gateway").exists()
+        assert runner in table and runner_child in table and gateway in table  # nothing half-stopped: retry is possible
+    else:
+        cli._down(settings, force=False)
+        assert killed == [runner_child, runner, gateway] and not table
+        assert not cli._pid_file(settings, "runner").exists() and not cli._pid_file(settings, "gateway").exists()
+
+
 @pytest.mark.skipif(os.name != "nt", reason="the OEM code page is a Windows thing")
 def test_oem_decoding_never_raises_on_bytes_that_are_not_utf8():
     result = subprocess.run([sys.executable, "-c", "import sys; sys.stdout.buffer.write(bytes([0xbc, 0xba, 0xb0]))"],
