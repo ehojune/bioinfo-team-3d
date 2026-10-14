@@ -16,6 +16,9 @@ from labhq.settings import Settings
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "quota"
+# Only bounds a hang. Every wait below ends on an event, never on this clock: a loaded Windows CI runner is
+# sometimes slow for seconds, and 0.2-2 s bounds (and a 1 s quota window) failed main and PRs, 2026-10-11..13.
+WAIT = 60
 KST = timezone(timedelta(hours=9))
 
 
@@ -130,12 +133,12 @@ async def test_gateway_waits_until_the_runner_instant_not_its_own_reading(tmp_pa
     hub.publish = publish
     hub.dispatch = dispatch
     result = await asyncio.wait_for(Orchestrator(hub).run_step(
-        Task(agent_id="worker", request_id="r", prompt="work", meta={"kind": "step", "step_id": "A"})), 2)
+        Task(agent_id="worker", request_id="r", prompt="work", meta={"kind": "step", "step_id": "A"})), WAIT)
     assert result.ok and len(calls) == 2 and waits == [instant]
     assert time.time() >= instant
 
 
-def _hub(tmp_path, *, max_wait=1.0):
+def _hub(tmp_path, *, max_wait=1000):
     settings = Settings()
     settings.gateway.state_dir = str(tmp_path / "state")
     settings.orchestrator.step_retry_backoff_s = 0
@@ -163,7 +166,7 @@ async def test_waiting_quota_request_routes_parallel_ask(tmp_path):
     hub.store.put("ask", ask.id, {"state": "pending", "ask": ask.model_dump(mode="json")})
     hub._start_ask(ask, "runner")
 
-    await asyncio.wait_for(routed.wait(), 0.2)
+    await asyncio.wait_for(routed.wait(), WAIT)
     assert hub.store.get("ask", ask.id)["state"] == "working"
 
 
@@ -183,7 +186,7 @@ async def test_quota_parks_then_automatically_resumes_same_session(tmp_path):
 
     hub.dispatch = dispatch
     result = await asyncio.wait_for(Orchestrator(hub).run_step(
-        Task(agent_id="worker", request_id="r", prompt="work", meta={"kind": "step", "step_id": "A"})), 1)
+        Task(agent_id="worker", request_id="r", prompt="work", meta={"kind": "step", "step_id": "A"})), WAIT)
     assert result.ok and len(calls) == 2
     assert calls[1].resume_session_id == "session-1"
     assert "quota_waits" not in hub.requests["r"]
@@ -208,10 +211,10 @@ async def test_manual_resume_releases_every_step_on_the_engine(tmp_path):
     hub.publish = publish
     waiter = asyncio.create_task(hub.wait_quota("r", "A", "codex", resume_at=9999999999,
                                                 deadline_at=9999999999, reason="limit"))
-    await asyncio.wait_for(parked.wait(), 1)
+    await asyncio.wait_for(parked.wait(), WAIT)
     assert hub.request_summary(hub.requests["r"])["step_progress"]["steps"]["A"] == "waiting_quota"
     released = await hub.force_quota_resume("r", "A")
-    assert await asyncio.wait_for(waiter, 1)
+    assert await asyncio.wait_for(waiter, WAIT)
     assert set(released) == {("r", "A"), ("other", "B")}
     assert all("quota_waits" not in hub.requests[rid] for rid in ("r", "other"))
 
@@ -239,10 +242,10 @@ async def test_another_step_on_the_same_engine_waits_before_dispatch(tmp_path):
     hub.dispatch = dispatch
     running = asyncio.create_task(Orchestrator(hub).run_step(
         Task(agent_id="worker", request_id="r", prompt="work", meta={"kind": "step", "step_id": "B"})))
-    await asyncio.wait_for(parked.wait(), 1)
+    await asyncio.wait_for(parked.wait(), WAIT)
     assert calls == [] and hub.requests["r"]["status"] == "waiting_quota"
     await hub.force_quota_resume("limited", "A")
-    assert (await asyncio.wait_for(running, 1)).ok and len(calls) == 1
+    assert (await asyncio.wait_for(running, WAIT)).ok and len(calls) == 1
 
 
 @pytest.mark.asyncio
@@ -269,7 +272,7 @@ async def test_a_wake_turn_that_hits_the_quota_parks_and_resumes(tmp_path):
     hub.dispatch = dispatch
     hub.wait_jobs = wait_jobs
     result = await asyncio.wait_for(Orchestrator(hub).run_step(
-        Task(agent_id="worker", request_id="r", prompt="work", meta={"kind": "step", "step_id": "A"})), 1)
+        Task(agent_id="worker", request_id="r", prompt="work", meta={"kind": "step", "step_id": "A"})), WAIT)
     assert result.ok and result.text == "done" and len(calls) == 3
     assert calls[2].meta["parent_task"] == calls[1].id and calls[2].resume_session_id == "s1"
     assert [e["type"] for e in hub.events if "quota" in e["type"]] == [
@@ -300,11 +303,11 @@ async def test_budget_is_checked_again_when_a_quota_hold_releases(tmp_path):
     orchestrator = Orchestrator(hub)
     running = asyncio.create_task(orchestrator.run_step(
         Task(agent_id="worker", request_id="r", prompt="work", meta={"kind": "step", "step_id": "B"})))
-    await asyncio.wait_for(parked.wait(), 1)
+    await asyncio.wait_for(parked.wait(), WAIT)
     orchestrator.budget_denials["r"] = "budget exceeded; approval denied"
     await hub.force_quota_resume("limited", "A")
     with pytest.raises(BudgetExceeded):
-        await asyncio.wait_for(running, 1)
+        await asyncio.wait_for(running, WAIT)
     assert calls == []
 
 
@@ -345,7 +348,7 @@ async def test_gateway_restart_keeps_wait_and_auto_recovery_path(tmp_path):
         resumed.set()
 
     restored.resume_when_ready = resume_when_ready
-    await asyncio.wait_for(restored.resume_quota_request("r"), 1)
+    await asyncio.wait_for(restored.resume_quota_request("r"), WAIT)
     assert resumed.is_set()
 
 
@@ -431,10 +434,10 @@ async def test_a_followup_quota_wait_keeps_the_finished_request_status(tmp_path)
     hub.publish = publish
     waiter = asyncio.create_task(hub.wait_quota("r", "followup-1", "codex", resume_at=9999999999,
                                                 deadline_at=9999999999, reason="limit"))
-    await asyncio.wait_for(parked.wait(), 1)
+    await asyncio.wait_for(parked.wait(), WAIT)
     assert hub.requests["r"]["status"] == "done"
     await hub.force_quota_resume("r", "followup-1")
-    assert await asyncio.wait_for(waiter, 1)
+    assert await asyncio.wait_for(waiter, WAIT)
     assert hub.requests["r"]["status"] == "done" and "quota_waits" not in hub.requests["r"]
 
 

@@ -6,8 +6,9 @@ const chromePath=process.env.LABHQ_TEST_CHROME || ['C:/Program Files/Google/Chro
   '/usr/bin/google-chrome','/usr/bin/chromium'].find(p=>fs.existsSync(p));
 const web=process.env.LABHQ_WEB_TEST_ROOT || path.resolve(__dirname,'../labhq/web');
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const START_MS=60000;  // Chrome start budget; the node:test budget below covers it plus the two viewport passes
 test('real phone layout shows CSO, analyst, engineer and QC above the composer; reduced motion and local assets',
-  {skip:!chromePath || typeof WebSocket==='undefined',timeout:90000},async()=>{
+  {skip:!chromePath || typeof WebSocket==='undefined',timeout:150000},async()=>{
   const profile=fs.mkdtempSync(path.join(os.tmpdir(),'labhq-office-browser-'));
   const server=http.createServer((req,res)=>{
     const filename=path.resolve(web,decodeURIComponent(new URL(req.url,'http://localhost').pathname.slice(1)));
@@ -35,12 +36,25 @@ test('real phone layout shows CSO, analyst, engineer and QC above the composer; 
         HOMEDRIVE:path.parse(browserHome).root.slice(0,2),HOMEPATH:browserHome.slice(2),
         LOCALAPPDATA:local,APPDATA:roaming,XDG_CONFIG_HOME:config},stdio:['ignore','ignore','pipe']});
     chrome.stderr.on('data',chunk=>{chromeError=(chromeError+chunk).slice(-2000);});
-    let debug;
-    for(let i=0;i<100;i++){try{debug=fs.readFileSync(path.join(profile,'DevToolsActivePort'),'utf8').split('\n')[0];break;}catch{await sleep(100);}}
-    assert.ok(debug,`Chrome started: ${chromeError}`);
-    const targets=await(await fetch(`http://127.0.0.1:${debug}/json`)).json();
-    ws=new WebSocket(targets.find(t=>t.type==='page').webSocketDebuggerUrl);
-    await new Promise(r=>ws.onopen=r);
+    // Chrome's cold start on a loaded CI runner took more than the old 10 s (ubuntu 3.10: a PR run and a main run, 2026-10-14).
+    // Wait for the DevToolsActivePort file and the page target on a deadline, and stop early if Chrome exits.
+    let debug,exited=null;
+    chrome.on('exit',(code,signal)=>{exited={code,signal};});
+    const startDeadline=Date.now()+START_MS;
+    for(;;){
+      try{debug=fs.readFileSync(path.join(profile,'DevToolsActivePort'),'utf8').split('\n')[0];}catch{}
+      if(debug||exited||Date.now()>=startDeadline)break;
+      await sleep(100);
+    }
+    assert.ok(debug,`Chrome did not publish its debugging port within ${START_MS/1000}s (exit: ${JSON.stringify(exited)}): ${chromeError}`);
+    let page;
+    while(!page&&!exited&&Date.now()<startDeadline){
+      try{page=(await(await fetch(`http://127.0.0.1:${debug}/json`)).json()).find(t=>t.type==='page');}catch{}
+      if(!page)await sleep(100);
+    }
+    assert.ok(page,`Chrome has no page target within ${START_MS/1000}s (exit: ${JSON.stringify(exited)}): ${chromeError}`);
+    ws=new WebSocket(page.webSocketDebuggerUrl);
+    await new Promise((resolve,reject)=>{ws.onopen=resolve;ws.onerror=()=>reject(new Error('DevTools websocket failed to open'));});
     let serial=0;const pending=new Map(),external=[],errors=[];
     ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.method==='Network.requestWillBeSent'&&/^https?:/.test(m.params.request.url)&&!m.params.request.url.startsWith(origin+'/'))external.push(m.params.request.url);
       if(m.method==='Runtime.exceptionThrown')errors.push(m.params.exceptionDetails.text);

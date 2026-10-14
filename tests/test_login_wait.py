@@ -16,8 +16,19 @@ from labhq.settings import Settings
 
 CLAUDE_EXPIRED = "Failed to authenticate: OAuth session expired and could not be refreshed"
 
+# Only bounds a hang. Every wait below ends on an event or a condition, never on this clock: a loaded Windows CI
+# runner is sometimes slow for seconds, and 1-5 s bounds (and a 1 s login window) failed main and PRs, 2026-10-12..14.
+WAIT = 60
 
-def _hub(tmp_path, *, retry=0.02, maximum=1.0):
+
+async def _until(predicate, timeout=WAIT):
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        assert time.monotonic() < deadline, "condition not reached"
+        await asyncio.sleep(0.01)
+
+
+def _hub(tmp_path, *, retry=0.02, maximum=600):
     settings = Settings()
     settings.gateway.state_dir = str(tmp_path / "state")
     settings.orchestrator.step_retry_backoff_s = 0
@@ -141,7 +152,7 @@ async def test_briefing_login_failure_parks_not_finishes_and_notifies_once(tmp_p
     hub.dispatch = dispatch
     running = asyncio.create_task(Orchestrator(hub).run_step(
         Task(agent_id="worker", request_id="r", prompt="brief", meta={"kind": "briefing"})))
-    await asyncio.wait_for(parked.wait(), 1)
+    await asyncio.wait_for(parked.wait(), WAIT)
 
     assert hub.requests["r"]["status"] == "waiting_login"
     assert "finished_at" not in hub.requests["r"]
@@ -178,7 +189,7 @@ async def test_login_wait_automatically_retries_the_same_turn(tmp_path):
 
     hub.dispatch = dispatch
     result = await asyncio.wait_for(Orchestrator(hub).run_step(
-        Task(agent_id="worker", request_id="r", prompt="plan", meta={"kind": "plan"})), 1)
+        Task(agent_id="worker", request_id="r", prompt="plan", meta={"kind": "plan"})), WAIT)
 
     assert result.ok and result.text == "done" and len(calls) == 3
     assert [task.meta["kind"] for task in calls] == ["plan", "plan", "plan"]
@@ -205,7 +216,7 @@ async def test_login_retry_preserves_direct_task_budget_schema_and_fields(tmp_pa
     original = Task(agent_id="worker", request_id="r", prompt="direct", context="kept context",
                     output_schema=schema, budget_usd=1.25,
                     meta={"kind": "direct", "custom": "kept"})
-    result = await asyncio.wait_for(Orchestrator(hub).run_step(original), 1)
+    result = await asyncio.wait_for(Orchestrator(hub).run_step(original), WAIT)
 
     assert result.ok and len(calls) == 2
     assert calls[1].id != calls[0].id
@@ -234,7 +245,7 @@ async def test_solo_login_retry_preserves_request_budget_and_schema(tmp_path):
                           outputs=["answer.md"], workdir_id="task_solo", cost_usd=0.0)
 
     hub.dispatch = dispatch
-    assert await asyncio.wait_for(Orchestrator(hub)._run_solo("r", "work", {}), 5)
+    assert await asyncio.wait_for(Orchestrator(hub)._run_solo("r", "work", {}), WAIT)
 
     assert len(calls) == 2
     assert calls[1].budget_usd == calls[0].budget_usd == 0.75
@@ -298,12 +309,12 @@ async def test_manual_resume_retries_immediately_and_releases_same_engine(tmp_pa
     hub.dispatch = dispatch
     running = asyncio.create_task(Orchestrator(hub).run_step(
         Task(agent_id="worker", request_id="r", prompt="review", meta={"kind": "review"})))
-    await asyncio.wait_for(parked.wait(), 1)
+    await asyncio.wait_for(parked.wait(), WAIT)
     hub.requests["other"] = {"id": "other", "status": "waiting_login", "login_waits": {
         "review": {"engine": "claude_code", "resume_at": 9999999999, "deadline_at": 9999999999,
                    "reason": "expired", "waiting_since": time.time()}}}
     released = await hub.force_quota_resume("r", "review")
-    assert (await asyncio.wait_for(running, 1)).ok
+    assert (await asyncio.wait_for(running, WAIT)).ok
     assert set(released) == {("r", "review"), ("other", "review")}
     assert "login_waits" not in hub.requests["r"] and "login_waits" not in hub.requests["other"]
 
@@ -327,15 +338,19 @@ async def test_login_wait_deadline_becomes_terminal_failure_with_reason(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_login_retry_expiry_ends_notice_and_next_failure_notifies_again(tmp_path):
-    # A 0.2 s cap left one retry slot; a loaded Windows CI runner sometimes spent it all on the first wait
-    # bookkeeping and saw calls == 1 (PR #457 CI, 2026-10-07). 1 s keeps the test about a second long.
-    hub = _hub(tmp_path, retry=0.05, maximum=1.0)
+async def test_login_retry_expiry_ends_notice_and_next_failure_notifies_again(tmp_path, monkeypatch):
+    # The window is wall-clock. Racing a 0.2 s cap, then a 1 s cap, against a loaded Windows CI runner left no
+    # retry slot (calls == 1, PR #457, 2026-10-07). So the cap is generous and each failed turn "takes" 20 s on a
+    # skewed clock: the 50 s window ends after a few retries however slow the host is.
+    real_time, skew = time.time, [0.0]
+    monkeypatch.setattr(time, "time", lambda: real_time() + skew[0])
+    hub = _hub(tmp_path, retry=0.05, maximum=50)
     calls = 0
 
     async def dispatch(task):
         nonlocal calls
         calls += 1
+        skew[0] += 20
         return TaskResult(task_id=task.id, agent_id="worker", ok=False, error=CLAUDE_EXPIRED)
 
     hub.dispatch = dispatch
@@ -361,7 +376,7 @@ async def test_login_retry_expiry_ends_notice_and_next_failure_notifies_again(tm
     hub.publish = publish
     again = asyncio.create_task(Orchestrator(hub).run_step(
         Task(agent_id="worker", request_id="r", prompt="again", meta={"kind": "direct"})))
-    await asyncio.wait_for(parked.wait(), 1)
+    await asyncio.wait_for(parked.wait(), WAIT)
     assert len([event for event in hub.events if event["type"] == "engine.login_wait"]) == first_notice_count + 1
     again.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -433,7 +448,7 @@ async def test_restart_keeps_waiting_login_and_recovers_without_approval(tmp_pat
         resumed.set()
 
     restored.resume_when_ready = resume_when_ready
-    await asyncio.wait_for(restored.resume_held_request("r"), 1)
+    await asyncio.wait_for(restored.resume_held_request("r"), WAIT)
     assert resumed.is_set()
 
 
@@ -458,7 +473,7 @@ async def test_restart_preserves_the_original_login_deadline(tmp_path):
 
     restored.dispatch = dispatch
     result = await asyncio.wait_for(Orchestrator(restored).run_step(
-        Task(agent_id="worker", request_id="r", prompt="plan", meta={"kind": "plan"})), 1)
+        Task(agent_id="worker", request_id="r", prompt="plan", meta={"kind": "plan"})), WAIT)
     assert not result.ok and result.error_kind == "login_wait_limit" and calls == 0
     assert time.time() >= original_deadline
 
@@ -523,16 +538,13 @@ async def test_a_parallel_turn_ending_keeps_the_waiting_turns_login_window(tmp_p
     orchestrator = Orchestrator(hub)
     b = asyncio.create_task(orchestrator.run_step(
         Task(agent_id="worker", request_id="r", prompt="b", meta={"kind": "step", "step_id": "b"})))
-    await asyncio.wait_for(b_running.wait(), 2)
+    await asyncio.wait_for(b_running.wait(), WAIT)
     a = asyncio.create_task(orchestrator.run_step(
         Task(agent_id="worker", request_id="r", prompt="a", meta={"kind": "step", "step_id": "a"})))
-    for _ in range(200):
-        if (hub.requests["r"].get("login_waits") or {}).get("a"):
-            break
-        await asyncio.sleep(0.01)
+    await _until(lambda: (hub.requests["r"].get("login_waits") or {}).get("a"))
     window = dict(hub.requests["r"]["login_windows"]["claude_code"])
     release_b.set()
-    assert (await asyncio.wait_for(b, 2)).ok
+    assert (await asyncio.wait_for(b, WAIT)).ok
     for _ in range(20):  # a may wake and park again on the same window
         await asyncio.sleep(0.01)
     kept = hub.requests["r"]["login_windows"]["claude_code"]
@@ -574,18 +586,12 @@ async def test_parallel_retries_woken_together_keep_the_window_until_the_last_en
     orchestrator = Orchestrator(hub)
     tasks = [asyncio.create_task(orchestrator.run_step(
         Task(agent_id="worker", request_id="r", prompt=s, meta={"kind": "step", "step_id": s}))) for s in "ab"]
-    for _ in range(200):
-        if len(hub.requests["r"].get("login_waits") or {}) == 2:
-            break
-        await asyncio.sleep(0.01)
+    await _until(lambda: len(hub.requests["r"].get("login_waits") or {}) == 2)
     window = dict(hub.requests["r"]["login_windows"]["claude_code"])
     assert sorted(window["turns"]) == ["a", "b"]
     await hub.release_login("claude_code", manual=True)
-    assert (await asyncio.wait_for(tasks[0], 2)).ok
-    for _ in range(200):  # b re-parks after its retry fails again
-        if (hub.requests["r"].get("login_waits") or {}).get("b"):
-            break
-        await asyncio.sleep(0.01)
+    assert (await asyncio.wait_for(tasks[0], WAIT)).ok
+    await _until(lambda: (hub.requests["r"].get("login_waits") or {}).get("b"))  # b re-parks after its retry fails
     kept = hub.requests["r"]["login_windows"]["claude_code"]
     assert kept["turns"] == ["b"]
     assert (kept["started_at"], kept["deadline_at"]) == (window["started_at"], window["deadline_at"])
@@ -612,19 +618,13 @@ async def test_parallel_consults_to_two_agents_are_separate_login_turns(tmp_path
     tasks = [asyncio.create_task(orchestrator.run_step(
         Task(agent_id=agent, request_id="r", prompt=ask, meta={"kind": "consult", "ask_id": ask})))
         for agent, ask in (("worker", "ask_a"), ("other", "ask_b"))]
-    for _ in range(200):
-        if len(hub.requests["r"].get("login_waits") or {}) == 2:
-            break
-        await asyncio.sleep(0.01)
+    await _until(lambda: len(hub.requests["r"].get("login_waits") or {}) == 2)
     assert sorted(hub.requests["r"]["login_waits"]) == ["consult:ask_a", "consult:ask_b"]
     window = dict(hub.requests["r"]["login_windows"]["claude_code"])
     assert sorted(window["turns"]) == ["consult:ask_a", "consult:ask_b"]
     await hub.release_login("claude_code", manual=True)
-    assert (await asyncio.wait_for(tasks[0], 2)).ok
-    for _ in range(200):  # ask b re-parks after its retry fails again
-        if (hub.requests["r"].get("login_waits") or {}).get("consult:ask_b"):
-            break
-        await asyncio.sleep(0.01)
+    assert (await asyncio.wait_for(tasks[0], WAIT)).ok
+    await _until(lambda: (hub.requests["r"].get("login_waits") or {}).get("consult:ask_b"))  # ask b re-parks
     kept = hub.requests["r"]["login_windows"]["claude_code"]
     assert kept["turns"] == ["consult:ask_b"]
     assert (kept["started_at"], kept["deadline_at"]) == (window["started_at"], window["deadline_at"])
@@ -646,5 +646,5 @@ async def test_a_consult_window_saved_with_the_old_bare_kind_is_dropped_when_the
 
     hub.dispatch = dispatch
     result = await asyncio.wait_for(Orchestrator(hub).run_step(
-        Task(agent_id="worker", request_id="r", prompt="ask", meta={"kind": "consult", "ask_id": "ask_a"})), 2)
+        Task(agent_id="worker", request_id="r", prompt="ask", meta={"kind": "consult", "ask_id": "ask_a"})), WAIT)
     assert result.ok and "login_windows" not in hub.requests["r"]
