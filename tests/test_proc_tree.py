@@ -164,11 +164,50 @@ def test_a_second_table_read_that_fails_ends_only_the_root(world, monkeypatch):
     assert result.killed == [ROOT] and world.leaked_handles == 0
 
 
-def test_a_descendant_that_cannot_be_opened_is_never_touched_and_nor_is_its_subtree(world):
+def test_a_descendant_that_cannot_be_opened_is_never_touched_but_is_reported_as_failed(world):
     world.unreadable.add(KID)
     result = proc_tree.kill_tree(ROOT)
-    assert result.killed == [ROOT] and not result.failed
-    assert KID in world.live and GRANDKID in world.live
+    assert result.failed == {KID: "Access is denied"} and result.killed == [ROOT]  # by default the rest still ends
+    assert KID in world.live and GRANDKID in world.live  # unchecked, so not touched, and nor is its subtree
+
+
+def test_a_descendant_that_cannot_be_opened_spares_its_ancestor_chain_like_a_failed_kill(monkeypatch):
+    """The bot's P1 on #597: an elevated child gave Access denied on open, the open failure was swallowed, the root
+    was ended and `failed` stayed empty, so `down` dropped the record and the child outlived it."""
+    world = FakeProcessTable(_two_branches()).install(monkeypatch)
+    world.unreadable.add(GRANDKID)
+
+    first = proc_tree.kill_tree(ROOT, spare_ancestors_on_failure=True)
+
+    assert first.failed == {GRANDKID: "Access is denied"}
+    assert first.killed == [SIBKID, SIB] and first.spared == [KID, ROOT]  # the sibling branch has no failure
+    assert {ROOT, KID, GRANDKID} <= set(world.live) and world.leaked_handles == 0
+
+    world.unreadable.clear()
+    retry = proc_tree.kill_tree(ROOT, spare_ancestors_on_failure=True)
+
+    assert retry.killed == [GRANDKID, KID, ROOT] and not retry.failed and not world.live
+
+
+def test_a_descendant_that_vanishes_before_it_can_be_opened_is_not_a_failure(monkeypatch):
+    world = FakeProcessTable(_two_branches()).install(monkeypatch)
+    world.hooks[1] = lambda w: w.live.pop(GRANDKID)
+    result = proc_tree.kill_tree(ROOT, spare_ancestors_on_failure=True)
+    assert not result.failed and not result.spared and result.killed == [SIBKID, SIB, KID, ROOT]
+
+
+def test_a_denied_descendant_that_is_gone_by_the_second_read_is_not_a_failure(monkeypatch):
+    world = FakeProcessTable(_two_branches()).install(monkeypatch)
+    world.unreadable.add(GRANDKID)
+    world.hooks[1] = lambda w: w.live.pop(GRANDKID)  # it ended after the first read, so it is not in the second
+    result = proc_tree.kill_tree(ROOT, spare_ancestors_on_failure=True)
+    assert not result.failed and not result.spared and result.killed == [SIBKID, SIB, KID, ROOT]
+
+
+def test_a_denied_process_under_something_that_is_not_ours_is_not_a_failure(world):
+    world.unreadable.add(ORPHAN_CHILD)  # its parent ORPHAN is older than ROOT, so it is not in ROOT's tree
+    result = proc_tree.kill_tree(ROOT, spare_ancestors_on_failure=True)
+    assert not result.failed and result.killed == [GRANDKID, KID, ROOT]
 
 
 def test_a_root_that_cannot_be_opened_is_reported_as_failed(world):
@@ -334,6 +373,17 @@ def test_cli_terminate_tree_raises_when_the_recorded_process_cannot_be_ended(wor
     world.refuse[ROOT] = "Access is denied"
     with pytest.raises(OSError, match="Access is denied"):
         cli._terminate_tree(ROOT, created="windows:1000")
+
+
+def test_cli_terminate_tree_raises_when_a_descendant_cannot_even_be_opened(monkeypatch):
+    world = FakeProcessTable(_two_branches()).install(monkeypatch)
+    _no_process_starts(monkeypatch)
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    world.unreadable.add(GRANDKID)
+    with pytest.raises(OSError) as raised:
+        cli._terminate_tree(ROOT, created="windows:1000")
+    assert f"PID {GRANDKID}: Access is denied" in str(raised.value) and f"{KID}, {ROOT}" in str(raised.value)
+    assert world.killed == [SIBKID, SIB] and {ROOT, KID, GRANDKID} <= set(world.live)
 
 
 def test_cli_terminate_tree_raises_when_a_descendant_cannot_be_ended_and_keeps_its_ancestors_for_a_retry(

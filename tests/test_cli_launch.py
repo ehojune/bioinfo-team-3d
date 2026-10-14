@@ -664,17 +664,21 @@ def test_down_on_windows_ends_the_recorded_tree_through_the_helper_and_checks_ea
     assert not cli._pid_file(settings, "gateway").exists() and not cli._pid_file(settings, "runner").exists()
 
 
-@pytest.mark.parametrize("child_fails", [True, False])
+@pytest.mark.parametrize("failure", ["terminate", "open", None])
 def test_down_on_windows_keeps_the_records_when_a_child_of_the_launcher_cannot_be_ended(
-        tmp_path, monkeypatch, capsys, child_fails):
-    """The bot's P1 on #597: the venv interpreter under a launcher refused TerminateProcess while the launcher itself
-    was ended, and `down` removed the PID records and printed success with the runner still alive."""
+        tmp_path, monkeypatch, capsys, failure):
+    """The bot's P1s on #597: the venv interpreter under a launcher refused TerminateProcess, or could not even be
+    opened (Access denied), while the launcher itself was ended, and `down` removed the PID records and printed
+    success with the runner still alive."""
     runner, runner_child, gateway = 910_000_244, 910_000_245, 910_000_246
     table = FakeProcessTable({
         runner: (1, 2000), runner_child: (runner, 2100), gateway: (1, 1000),
     }).install(monkeypatch)
-    if child_fails:
-        table.refuse[runner_child] = "액세스가 거부되었습니다."
+    reason = {"terminate": "액세스가 거부되었습니다.", "open": "Access is denied"}.get(failure)
+    if failure == "terminate":
+        table.refuse[runner_child] = reason
+    elif failure == "open":
+        table.unreadable.add(runner_child)
     settings = Settings.load(str(_config(tmp_path)))
     _write_process_record(settings, "runner", runner, "windows:2000")
     _write_process_record(settings, "gateway", gateway, "windows:1000")
@@ -687,13 +691,13 @@ def test_down_on_windows_keeps_the_records_when_a_child_of_the_launcher_cannot_b
     monkeypatch.setattr(cli, "_health", lambda _settings: None)
     monkeypatch.setattr(cli.subprocess, "run", lambda *args, **kwargs: pytest.fail(f"taskkill started: {args}"))
 
-    if child_fails:
+    if failure:
         with pytest.raises(SystemExit) as stopped:
             cli._down(settings, force=False)
         error = capsys.readouterr().err
         assert stopped.value.code == 2
         assert f"runner PID {runner}을 종료하지 못했습니다" in error
-        assert f"PID {runner_child}: 액세스가 거부되었습니다." in error
+        assert f"PID {runner_child}: {reason}" in error
         assert cli._pid_file(settings, "runner").exists() and cli._pid_file(settings, "gateway").exists()
         assert set(table.live) == {runner, runner_child, gateway}  # nothing half-stopped: the retry can reach it
     else:

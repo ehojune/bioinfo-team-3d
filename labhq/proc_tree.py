@@ -118,8 +118,10 @@ def kill_tree(pid: int, *, created: int | None = None, spare_ancestors_on_failur
 
     `created` is the identity the caller recorded for `pid` (FILETIME ticks): when the PID now belongs to a process
     created at another time, nothing is touched. Without it the caller owns a handle to `pid` (a Popen child), so the
-    PID cannot have been reused. A process table that cannot be read twice ends only `pid` itself. A descendant that
-    cannot be opened (another user's, protected) cannot be checked and is left alone.
+    PID cannot have been reused. A process table that cannot be read twice ends only `pid` itself. A candidate that
+    cannot be opened (another user's, protected) cannot be checked, so it is never touched; if its parent PID still
+    names `pid` or a validated descendant it may be a survivor, and it is recorded as failed like one that refuses to
+    die. A candidate that is gone by then is not.
 
     With `spare_ancestors_on_failure`, a process that could not be ended keeps its whole ancestor chain up to `pid`
     running, so a caller that keeps a record of `pid` (`down`) still finds the survivor through live parents on a
@@ -149,17 +151,19 @@ def _end_tree(pid: int, created: int | None, spare: bool, result: KillResult, he
     if created is not None and root.created != created:
         result.skipped.append(pid)  # the PID now belongs to a process created at another time
         return
+    unopened: dict[int, str] = {}
     for candidate in candidates:  # pin every candidate before anything is decided
         try:
             handle = _open(candidate)
-        except OSError:
+        except OSError as exc:
+            unopened[candidate] = str(exc) or f"PID {candidate}을 열 수 없음"
             continue
         if handle is not None:
             held[candidate] = handle
     second = _table() if candidates else None
     procs = [Proc(pid, 0, root.created)]
+    before, after = (dict(first), dict(second)) if second is not None else ({}, {})
     if second is not None:
-        before, after = dict(first), dict(second)
         for candidate, handle in held.items():
             # still the process the first read described: its PID shows the same parent PID now
             if candidate != pid and candidate in after and after[candidate] == before.get(candidate):
@@ -167,6 +171,22 @@ def _end_tree(pid: int, created: int | None, spare: bool, result: KillResult, he
     validated = validated_descendants(pid, procs)
     parent_of = {p.pid: p.ppid for p in validated}
     spared: set[int] = set()
+
+    def failed(victim: int, reason: str) -> None:
+        result.failed[victim] = reason
+        if spare:
+            ancestor = parent_of.get(victim)
+            while ancestor is not None:
+                spared.add(ancestor)
+                ancestor = parent_of.get(ancestor)  # the root has no entry: the chain ends there
+
+    ours = {pid, *parent_of}
+    for candidate, reason in unopened.items():
+        # Unchecked, so never touched. Still a child of the root or of a validated descendant, with the parent PID it
+        # had in both reads: it may be a survivor. Gone, or hanging off something that is not ours: not a failure.
+        if candidate in after and after[candidate] == before.get(candidate) and after[candidate] in ours:
+            parent_of[candidate] = after[candidate]
+            failed(candidate, reason)
     for victim in [p.pid for p in reversed(validated)] + [pid]:
         if victim in spared:
             result.spared.append(victim)
@@ -174,12 +194,7 @@ def _end_tree(pid: int, created: int | None, spare: bool, result: KillResult, he
         try:
             outcome = held[victim].terminate()
         except OSError as exc:
-            result.failed[victim] = str(exc) or f"PID {victim}을 종료하지 못함"
-            if spare:
-                ancestor = parent_of.get(victim)
-                while ancestor is not None:
-                    spared.add(ancestor)
-                    ancestor = parent_of.get(ancestor)  # the root has no entry: the chain ends there
+            failed(victim, str(exc) or f"PID {victim}을 종료하지 못함")
             continue
         (result.killed if outcome == KILLED else result.skipped).append(victim)
 
