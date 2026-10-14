@@ -325,6 +325,7 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
 .log-view{display:flex;gap:6px;margin:0 0 6px}.log-view .btn{min-height:32px;font-size:13px}.log-view .btn[aria-pressed="true"]{border-color:var(--ink);font-weight:600}
 
 </style>
+<link rel="stylesheet" href="./ui/shutdown.css">
 <link rel="stylesheet" href="ui/tokens.css">
 <link rel="stylesheet" href="ui/components.css">
 </head>
@@ -364,16 +365,16 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
 
   <aside class="panels ui-card" id="command-center" aria-label="Command Center">
     <nav class="cc-tabs" id="cc-tabs" aria-label="Command Center 탭">
-      <button class="ui-tab" type="button" data-tab-target="decisions">결정</button>
+      <button class="ui-tab" type="button" data-tab-target="decisions">결정 <span class="ui-tab__count" id="decision-count" hidden></span></button>
       <button class="ui-tab" type="button" data-tab-target="tasks">작업판</button>
       <button class="ui-tab" type="button" data-tab-target="feed">메신저</button>
       <button class="ui-tab" type="button" data-tab-target="jobs">HPC</button>
     </nav>
     <section class="panel" data-tab="decisions" aria-labelledby="h-ap">
       <h2 id="h-ap">결정할 일 <span class="n" id="ap-count"></span></h2>
-      <div id="engine-holds"></div>
       <div id="review-cards"></div>
       <div id="approvals"></div>
+      <div id="engine-holds" aria-label="운영 문제"></div>
       <div id="approval-history" aria-label="결정 이력"></div>
     </section>
     <section class="panel" data-tab="tasks" aria-labelledby="h-req" hidden>
@@ -433,14 +434,13 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
 <dialog class="sheet ui-sheet" id="sheet"><div class="sheet-in" id="sheet-in"></div></dialog>
 <div class="toast ui-toast" id="toast" role="status" aria-live="polite"></div>
 <script src="./state.js"></script>
-<link rel="stylesheet" href="./ui/shutdown.css">
 <script type="module">
 import {bindShutdown} from './ui/shutdown.js';
 import {answerRequired, decisionChoice, decisionNote, storageChoice, revisedToast, revisionNoteMissing, syncReviewCards, syncDecisionCards, syncDecisionHistory, createHistoryVisibility, expandableText, syncExpandableText} from './ui/decide.js';
 import {syncStaffCards} from './ui/strip.js';
 import {syncTaskBoard} from './ui/tasks.js';
 import {controlHtml, controlKey, staffControls} from './ui/control.js';
-import {initTabShell} from './ui/shell.js';
+import {initTabShell, updateDecisionBadge} from './ui/shell.js';
 import {createMessenger, bindHistoryViewport} from './ui/messenger.js';
 import {KIND_LABELS as REF_KIND, inferReference, syncReferenceChips} from './ui/refs.js';
 (() => {
@@ -467,6 +467,10 @@ const store = {
 const raf = window.requestAnimationFrame ? window.requestAnimationFrame.bind(window) : (f => setTimeout(f, 16));
 const safeUrl = u => (typeof u === 'string' && /^https?:\/\//.test(u)) ? u : null;
 const showTab = initTabShell($('#cc-tabs'), $('#command-center'), 'decisions');
+$('#cc-tabs').addEventListener('click', event => {
+  if (event.target.closest('button[data-tab-target]') && matchMedia('(max-width: 620px)').matches)
+    $('#command-center').scrollIntoView({block: 'start'});
+});
 // #57 ⑧: the office props are tab entrances — the board opens the task board (or 결정 while decisions wait),
 // the HPC rack opens HPC, the door opens the messenger.
 function openPropTab(e) {
@@ -713,31 +717,33 @@ function renderApprovals() {
   const items = [...S.approvals.values()], sugs = S.suggestions, holds = [...S.engineHolds.values()];
   const reviews = [...S.requests.values()].filter(LabHQState.needsPiReview);
   const total = items.length + sugs.length + holds.length + reviews.length;
-  syncReviewCards($('#review-cards'), reviews, {onOpen:openReview, onDone:finishReview, onStorage:chooseStorage, disabled:() => !api?.reviewDone});
-  $('#ap-count').textContent = total ? `${total}건` : '';
+  const decisions = items.length + sugs.length + reviews.length;
+  updateDecisionBadge($('#decision-count'), decisions);
+  syncReviewCards($('#review-cards'), reviews, {presentation:'journal', onOpen:openReview, onDone:finishReview, onStorage:chooseStorage, disabled:() => !api?.reviewDone});
+  $('#ap-count').textContent = decisions ? `${decisions}건` : '';
   const board = $('#board');  // #57 ⑧: waiting decisions make the board blink and lead to 결정
   board.classList.toggle('alert', total > 0);
   board.dataset.tabLink = total ? 'decisions' : 'tasks';
   board.title = total ? `결정 ${total}건 기다림, 결정 열기` : '작업판 열기';
   const holdRows = holds.map(hold => {
-    const row = document.createElement('article'); row.className = 'ap'; row.dataset.engine = hold.engine;
+    const row = document.createElement('article'); row.className = 'ap ui-card operation-card'; row.dataset.engine = hold.engine;
     const body = document.createElement('div'); row.append(body);
     const kind = document.createElement('div'); kind.className = 'kind'; body.append(kind);
-    const title = document.createElement('strong'); title.textContent = '로그인 대기'; kind.append(title);
+    const title = document.createElement('strong'); title.textContent = '○ 로그인 대기 · 운영 문제'; kind.append(title);
     const engine = document.createElement('span'); engine.textContent = hold.engine; kind.append(engine);
     const summary = document.createElement('p'); summary.className = 'sum'; summary.textContent = `${hold.engine} 계정에 다시 로그인해 주세요.`; body.append(summary);
-    const command = document.createElement('pre'); command.textContent = hold.command || ''; body.append(command);
-    const resume = document.createElement('button'); resume.className = 'btn go'; resume.type = 'button';
+    expandableText(body, hold.command || '', {fold:true, summary:'자세히'});
+    const resume = document.createElement('button'); resume.className = 'btn ui-button'; resume.type = 'button';
     resume.textContent = '로그인했어요 · 다시 시도';
     resume.onclick = () => api?.resumeQuota(hold.request_id, hold.step_id).then(() => toast('로그인 대기를 풀었어요')).catch(err => toast(`재개하지 못했어요: ${err.message}`));
     body.append(resume); return row;
   });
   const holdList = document.createElement('div'); holdList.className = 'list'; holdList.replaceChildren(...holdRows);
   $('#engine-holds').replaceChildren(...(holdRows.length ? [holdList] : []));
-  syncDecisionCards($('#approvals'), items, sugs, { now, nick, kindLabels: KIND_KO, requests: S.requests,
+  syncDecisionCards($('#approvals'), items, sugs, { presentation:'journal', now, nick, kindLabels: KIND_KO, requests: S.requests,
     taskStep: S.taskStep, avatarHTML: (value, type) => headSVG(type === 'suggestion' ? 'owl' : kindOf(ag(value.agent_id) || {id:value.agent_id})),
     emptyText: snapshotLoaded ? (reviews.length ? '추가 승인 대기는 없어요.' : '지금은 결정할 일이 없어요. 승인이 필요하면 여기에 바로 떠요.') : loadingText('결정할 일') });
-  syncDecisionHistory($('#approval-history'), decisionHistory, { kindLabels: KIND_KO, requests: S.requests,
+  syncDecisionHistory($('#approval-history'), decisionHistory, { presentation:'journal', kindLabels: KIND_KO, requests: S.requests,
     visibility: historyVisibility, onOpenRequest: id => { officeState.selectRequest(id); reqKey = ''; renderRequest(); schedule(); showTab('tasks'); $('#request').scrollIntoView({block: 'start'}); } });
 }
 
@@ -1340,9 +1346,9 @@ const Demo = (() => {
     if (meta.step_id) E('request.step_done', { request_id: rid, data: { step_id: meta.step_id, ok: true, agent_id: agent } });
   }
   const step = (rid, sid, agent, instruction, fn, extra = '') => work(agent, rid, { kind: 'step', step_id: sid, title: `${sid}: ${instruction}${extra}` }, fn);
-  function ask(agent, kind, summary, rid, reason) {
+  function ask(agent, kind, summary, rid, reason, presentation = {}) {
     const id = `appr_demo${++n}`;
-    E('approval.requested', { agent_id: agent, request_id: rid, data: { id, kind, summary, agent_id: agent, detail: { reason } } });
+    E('approval.requested', { agent_id: agent, request_id: rid, data: { id, kind, summary, agent_id: agent, ...presentation, detail: { reason, ...presentation.detail } } });
     E('agent.status', { agent_id: agent, request_id: rid, data: { state: 'waiting' } });
     return new Promise(res => {
       const done = (ok, note) => {
@@ -1396,7 +1402,8 @@ const Demo = (() => {
       }),
       step(rid, 's2', 'data_steward', steps[1].instruction, async () => {
         tool('data_steward', 'cellxgene_census', 'LUAD atlas', rid); await sleep(900);
-        const ok = await ask('data_steward', 'hpc_submit', 'HPC 제출: fetch_atlas, 4 cores, 32G, 06:00:00 (약 24 core-h)', rid, '337k cells h5ad를 클러스터로 받아 체크섬을 기록해요');
+        const ok = await ask('data_steward', 'hpc_submit', 'HPC 제출: fetch_atlas, 4 cores, 32G, 06:00:00 (약 24 core-h)', rid, '337k cells h5ad를 클러스터로 받아 체크섬을 기록해요',
+          {pi_summary:'공개 세포 자료를 받아 확인하려 합니다.', detail:{cores:4, mem:'32G', walltime:'06:00:00'}});
         if (ok) { await hpc('data_steward', rid, 'fetch_atlas', 4200); say('data_steward', '337,002 cells 받았고 체크섬을 매니페스트에 적었어요', rid); await sleep(700); }
       }),
     ]);
@@ -1450,7 +1457,8 @@ const Demo = (() => {
       say('engineer', '경로 공백 처리 버그를 고치고 PR을 열었어요', rid); gh(rid, 'pr', 31); await sleep(600); gh(rid, 'codex_review', 31);
     });
     await step(rid, 's2', 'bioinfo-agent', steps[1].instruction, async () => {
-      const ok = await ask('bioinfo-agent', 'hpc_submit', 'HPC 제출: wgs_qc_batch, 16 cores, 64G, 12:00:00 (약 192 core-h)', rid, 'fastp, mosdepth, VerifyBamID2, somalier를 30샘플에 표준 설정으로 돌려요');
+      const ok = await ask('bioinfo-agent', 'hpc_submit', 'HPC 제출: wgs_qc_batch, 16 cores, 64G, 12:00:00 (약 192 core-h)', rid, 'fastp, mosdepth, VerifyBamID2, somalier를 30샘플에 표준 설정으로 돌려요',
+        {pi_summary:'30개 표본의 품질을 확인하려 합니다.', detail:{cores:16, mem:'64G', walltime:'12:00:00'}});
       if (ok) { await hpc('bioinfo-agent', rid, 'wgs_qc_batch', 6000); say('bioinfo-agent', '30샘플 완료. 로그와 요약표를 outputs/에 저장했어요', rid); await sleep(600); }
     });
     await step(rid, 's3', 'qc_reviewer', steps[2].instruction, async () => {
