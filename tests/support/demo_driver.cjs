@@ -50,6 +50,10 @@ const CLOCK_SOURCE = `(() => {
     timers.set(id, {id, at: t + delay, fn: typeof fn === 'function' ? fn : () => {}, args, every: every ? Math.max(1, delay) : 0});
     return id;
   };
+  // A real browser reports an exception thrown by a timer callback as uncaught (window.onerror and the DevTools
+  // Runtime.exceptionThrown event, which the driver collects in its errors list) and carries on with the other timers.
+  // reportError does the same; logging it with console.error would hide it from assert.deepEqual(d.errors, []).
+  const reportUncaught = e => { try { window.reportError(e); } catch (_) { console.error(e); } };
   window.setTimeout = (fn, ms, ...args) => add(fn, ms, args, false);
   window.setInterval = (fn, ms, ...args) => add(fn, ms, args, true);
   window.clearTimeout = window.clearInterval = id => { timers.delete(id); };
@@ -70,7 +74,7 @@ const CLOCK_SOURCE = `(() => {
       if (!next) break;
       t = Math.max(t, next.at);
       if (next.every) next.at += next.every; else timers.delete(next.id);
-      try { next.fn(...next.args); } catch (e) { console.error(e); }
+      try { next.fn(...next.args); } catch (e) { reportUncaught(e); }
       await macrotask();
     }
     t = target;
@@ -227,4 +231,4 @@ async function openDemo(opts = {}) {
   } catch (e) { await close(); throw e; }
 }
 
-module.exports = {openDemo, skipReason, findChrome, sleep, WEB_ROOT};
+module.exports = {openDemo, skipReason, findChrome, sleep, WEB_ROOT, CLOCK_SOURCE};

@@ -5,6 +5,8 @@ const {test} = require('node:test'), assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
 const {DEFAULT_TOLERANCE, diffView, sameColor, colorChannels} = require('./support/layout_snapshot.cjs');
 const {updateBaseline} = require('../scripts/update_visual_baseline.cjs');
+const vm = require('node:vm');
+const {openDemo, skipReason, CLOCK_SOURCE} = require('./support/demo_driver.cjs');
 
 // ---- layout_snapshot: colors are #rrggbb hex bytes ----
 test('sameColor reads #rrggbb as one hex byte per channel', () => {
@@ -104,3 +106,83 @@ test('a failing or killed visual test fails the update with its own status', () 
   assert.match(killed.error.join('\n'), /NOT updated.*did not finish.*SIGKILL/);
 });
 
+
+// ---- demo_driver: an exception in a virtual timer callback is a page error ----
+// The page-side clock runs here in a vm context. Its MessageChannel is a stub so no port keeps Node alive.
+function pageClock() {
+  const reported = [], logged = [];
+  const later = fn => setImmediate(fn);
+  class StubChannel {
+    constructor() { this.port1 = {}; this.port2 = {postMessage: () => later(() => this.port1.onmessage && this.port1.onmessage())}; }
+  }
+  const win = {setTimeout, clearTimeout, requestAnimationFrame: cb => later(cb),
+    reportError: error => reported.push(String(error && error.message || error))};
+  const sandbox = {window: win, MessageChannel: StubChannel, localStorage: {clear() {}}, requestAnimationFrame: win.requestAnimationFrame,
+    console: {error: error => logged.push(String(error && error.message || error))}};
+  vm.createContext(sandbox);
+  vm.runInContext(CLOCK_SOURCE, sandbox);
+  return {win, clock: win.__vclock, reported, logged};
+}
+
+test('an exception thrown by a virtual setTimeout callback is reported as uncaught, and other timers still run', async () => {
+  const {win, clock, reported, logged} = pageClock();
+  const ran = [];
+  win.setTimeout(() => ran.push('first'), 10);
+  win.setTimeout(() => { throw new Error('boom in timeout'); }, 20);
+  win.setTimeout(() => ran.push('after the throw'), 30);
+  await clock.advance(100);
+  assert.deepEqual(reported, ['boom in timeout']);
+  assert.deepEqual(ran, ['first', 'after the throw']);
+  assert.deepEqual(logged, [], 'not merely logged');
+  assert.equal(clock.now(), 100);
+  assert.equal(clock.pending(), 0);
+});
+
+test('every throw of a virtual setInterval callback is reported and the interval keeps running', async () => {
+  const {win, clock, reported} = pageClock();
+  let calls = 0;
+  win.setInterval(() => { calls += 1; if (calls % 2 === 0) throw new Error(`boom ${calls}`); }, 10);
+  await clock.advance(45);
+  assert.equal(calls, 4);
+  assert.deepEqual(reported, ['boom 2', 'boom 4']);
+  assert.equal(clock.pending(), 1);
+});
+
+test('timers that do not throw report nothing', async () => {
+  const {win, clock, reported, logged} = pageClock();
+  win.setTimeout(() => {}, 5);
+  win.setInterval(() => {}, 7);
+  await clock.advance(50);
+  assert.deepEqual([reported, logged], [[], []]);
+});
+
+test('without reportError the exception is still logged, never swallowed', async () => {
+  const {win, clock, reported, logged} = pageClock();
+  delete win.reportError;
+  win.setTimeout(() => { throw new Error('old browser'); }, 5);
+  await clock.advance(10);
+  assert.deepEqual([reported, logged], [[], ['old browser']]);
+});
+
+test('the driver lists a timer callback exception in errors, so the visual test sees it',
+  {skip: skipReason() || false, timeout: 150000}, async () => {
+    const d = await openDemo({reducedMotion: true});
+    try {
+      await d.load();
+      assert.deepEqual(d.errors, [], 'the demo itself loads without page errors');
+      await d.evaluate(`window.__ran = [];
+        setTimeout(() => { throw new Error('boom in timeout'); }, 10);
+        setTimeout(() => window.__ran.push('after the throw'), 20);
+        let n = 0;
+        setInterval(() => { if (++n === 2) throw new Error('boom in interval'); }, 30);`);
+      await d.advance(100);
+      await d.frames();
+      assert.equal(d.errors.length, 2, JSON.stringify(d.errors));
+      assert.match(d.errors[0], /boom in timeout/);
+      assert.match(d.errors[1], /boom in interval/);
+      assert.deepEqual(await d.evaluate('window.__ran'), ['after the throw']);
+      assert.throws(() => assert.deepEqual(d.errors, []), 'the assertion the visual test makes now fails');
+    } finally {
+      await d.close();
+    }
+  });
