@@ -14,7 +14,12 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 17:21 | [`2d503e4`](https://github.com/ehojune/bioinfo-team-3d/pull/596/commits/2d503e4) | 보고서 PDF·그림 링크의 리뷰 지적을 고쳤다. 목록 항목 아래의 코드·표·문단과 순서 번호 이음, 한글 조사 앞 기울임, PDF 캐시 key(표지 값·묶음 문서 digest), 괄호·꺾쇠·#·? 그림 경로, 절대경로 rewrite 뒤 그림 링크 검사(#584). |
 | 16:45 | [`42def3b`](https://github.com/ehojune/bioinfo-team-3d/pull/592/commits/42def3b) | 최신 main 병합(#595 기록 비교 수정 포함) |
+| 16:34 | [`3bc48a3`](https://github.com/ehojune/bioinfo-team-3d/pull/596/commits/3bc48a3) | 보고서 결과에 핵심 그림을 마크다운 링크로 넣게 하고, 요청 묶음이 링크된 그림을 상한과 무관하게 지키며 labhq verify가 링크된 그림의 존재를 확인한다(#584). |
+| 16:34 | [`6205f30`](https://github.com/ehojune/bioinfo-team-3d/pull/596/commits/6205f30) | 보고서를 그림·한글 글꼴·인쇄 CSS가 든 HTML 한 장으로 만들고 Edge·Chrome headless로 PDF를 인쇄한다. 브라우저가 없으면 HTML과 이유를 준다(#584). |
+| 16:34 | [`8d512df`](https://github.com/ehojune/bioinfo-team-3d/pull/596/commits/8d512df) | 보고서 PDF를 받는 gateway 주소, labhq report --pdf, 2.5D·3D의 PDF로 받기 버튼을 더했다. 통제 데이터 요청은 만들지 않는다(#584). |
+| 16:34 | [`9e29940`](https://github.com/ehojune/bioinfo-team-3d/pull/596/commits/9e29940) | 보고서 그림·PDF의 test(브라우저 mock 포함)와 manual의 보고서 PDF 절을 더했다(#584). |
 | 16:15 | [`68b4532`](https://github.com/ehojune/bioinfo-team-3d/pull/595/commits/68b4532) | 통역 표시 전용 task·event를 연구 round 기록과 재접속 작업 목록에서 분리해 semantics 비교를 안정화 |
 | 14:20 | [`c10a801`](https://github.com/ehojune/bioinfo-team-3d/pull/592/commits/c10a801) | 공유 ID 답 규칙을 반영해 일반·연구 계획 프롬프트의 고정 해시를 갱신했다. |
 | 14:13 | [`f3efe4d`](https://github.com/ehojune/bioinfo-team-3d/pull/594/commits/f3efe4d) | 통제 요청의 통역 차단과 비용·미집계 예산 반영, 실패 표시·진행·종료 대기 수정 |
