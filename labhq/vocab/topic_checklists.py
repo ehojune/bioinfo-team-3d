@@ -95,8 +95,8 @@ def normalize_answers(answers: Any, topics: Any, checklists: Mapping[str, list[C
     The plan answers each id once, but a planner reading the topic and id columns often joins them; the v0.5 trial
     plan was rejected twice for that spelling alone (2026-10-07). Only an unambiguous alias is re-keyed: when an exact
     id answer exists, or two topics sharing an id (``library_qc`` for ATAC and ChIP) were answered differently, every
-    key stays as written, so validation asks for the one joined answer instead of one topic's check being dropped
-    (PR #470 review)."""
+    key stays as written. Validation accepts those topic-qualified answers only when every topic supplied a valid
+    answer, so no topic's check is dropped (PR #470 review, #586)."""
     if not isinstance(answers, dict):
         return answers
     selected = set(topics) if isinstance(topics, list) else set()
@@ -150,6 +150,7 @@ def prompt_rule(checklists: Mapping[str, list[ChecklistItem]]) -> str:
         "After choosing `topics`, read only the rows of the topics you declare.",
         "For every item under each topic you declare, answer top-level `checklist` with exactly one of:",
         "`step:<step id>`, `assumption: <why it could not be done>`, or `not_applicable: <why it does not apply>`.",
+        "For an id shared by topics, use one bare id answer for all, or answer every topic as `topic.id`.",
         "Do every applicable check the data allow. When a check applies but cannot be done (e.g. no independent",
         "cohort exists), answer `assumption: <why it could not be done>`: a justified skip is acceptable, becomes a",
         "stated limitation and is shown to the PI as a warning. Never skip silently or with an empty reason.",
@@ -183,20 +184,34 @@ def answer_errors(answers: Any, required: list[ChecklistItem], step_ids: list[st
     errors: list[str] = []
     known = set(step_ids)
     for item in required:
-        value = body.get(item.id)
-        if skip_reason(value) == "":
-            errors.append(f"checklist.{item.id} must answer with a reason: assumption: <why it could not be done> "
-                          "or not_applicable: <why it does not apply>")
-            continue
-        if not isinstance(value, str) or not ANSWER.fullmatch(value.strip()):
-            # The check itself rides along: the plan prompt names only the file (#420), so a correction round
-            # still says what to answer if the planner never read it.
-            errors.append(f"checklist.{item.id} must answer step:<step id>, assumption: <why it could not be "
-                          f"done>, or not_applicable: <why it does not apply> (check: {item.check})")
-            continue
-        match = ANSWER.fullmatch(value.strip())
-        if match and match.group(2) and match.group(2) not in known:
-            errors.append(f"checklist.{item.id} refers to unknown step {match.group(2)}")
+        values = [(item.id, body.get(item.id))]
+        topics = item.topic.split(",")
+        if item.id not in body and len(topics) > 1:
+            qualified = []
+            for topic in topics:
+                keys = [key for key in (f"{topic}.{item.id}", f"{topic}/{item.id}") if key in body]
+                if len(keys) != 1:
+                    qualified = []
+                    break
+                qualified.append((keys[0], body[keys[0]]))
+            if qualified:
+                values = qualified
+        for answer_id, value in values:
+            if skip_reason(value) == "":
+                errors.append(f"checklist.{answer_id} must answer with a reason: "
+                              "assumption: <why it could not be done> or "
+                              "not_applicable: <why it does not apply>")
+                continue
+            if not isinstance(value, str) or not ANSWER.fullmatch(value.strip()):
+                # The check itself rides along: the plan prompt names only the file (#420), so a correction round
+                # still says what to answer if the planner never read it.
+                errors.append(f"checklist.{answer_id} must answer step:<step id>, "
+                              "assumption: <why it could not be done>, or "
+                              f"not_applicable: <why it does not apply> (check: {item.check})")
+                continue
+            match = ANSWER.fullmatch(value.strip())
+            if match and match.group(2) and match.group(2) not in known:
+                errors.append(f"checklist.{answer_id} refers to unknown step {match.group(2)}")
     return errors
 
 
