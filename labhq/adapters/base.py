@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from .. import proc_tree
 from ..facilities import signatures as env_signatures
 from ..models import AgentSpec, McpServerSpec, Task, TaskResult
 from ..settings import Settings
@@ -197,45 +198,6 @@ def _idle_process_tree(root_pid: int, servers: list[McpServerSpec]) -> bool | No
             return None
         return False
     return True
-
-
-def _windows_descendants(root_pid: int) -> list[int]:
-    """Snapshot descendants before taskkill; some sandboxed Windows hosts deny taskkill /T."""
-    if os.name != "nt":
-        return []
-    import ctypes
-    from ctypes import wintypes
-
-    class ProcessEntry(ctypes.Structure):
-        _fields_ = [
-            ("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
-            ("th32ProcessID", wintypes.DWORD), ("th32DefaultHeapID", ctypes.c_size_t),
-            ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
-            ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", wintypes.LONG),
-            ("dwFlags", wintypes.DWORD), ("szExeFile", wintypes.WCHAR * 260),
-        ]
-
-    kernel = ctypes.windll.kernel32
-    kernel.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
-    snapshot = kernel.CreateToolhelp32Snapshot(0x00000002, 0)
-    if snapshot == ctypes.c_void_p(-1).value:
-        return []
-    children: dict[int, list[int]] = {}
-    entry = ProcessEntry()
-    entry.dwSize = ctypes.sizeof(entry)
-    try:
-        more = kernel.Process32FirstW(snapshot, ctypes.byref(entry))
-        while more:
-            children.setdefault(int(entry.th32ParentProcessID), []).append(int(entry.th32ProcessID))
-            more = kernel.Process32NextW(snapshot, ctypes.byref(entry))
-    finally:
-        kernel.CloseHandle(snapshot)
-    found, pending = [], list(children.get(root_pid, []))
-    while pending:
-        pid = pending.pop()
-        found.append(pid)
-        pending.extend(children.get(pid, []))
-    return found
 
 
 def _npm_script(shim: Path) -> tuple[Path, bool] | None:
@@ -1159,26 +1121,11 @@ class AgentAdapter(ABC):
         if os.name == "nt":
             if proc.returncode is not None:
                 return
-            descendants = _windows_descendants(proc.pid)
-            returncode = None
+            # Not `taskkill /T`: it follows parent PIDs Windows may have reused, and ended an unrelated tree (#589).
             try:
-                killer = await asyncio.create_subprocess_exec(
-                    "taskkill", "/T", "/F", "/PID", str(proc.pid),
-                    stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
-                )
-                await asyncio.wait_for(killer.wait(), 5)
-                returncode = killer.returncode
-            # Windows can report ERROR_NOT_ENOUGH_MEMORY as MemoryError while
-            # starting taskkill.  The direct PID fallback must still reap the
-            # already-snapshotted tree instead of abandoning cancellation.
-            except (OSError, MemoryError, asyncio.TimeoutError):
+                proc_tree.kill_tree(proc.pid)
+            except (OSError, MemoryError):  # the direct kill below still reaps the child
                 pass
-            if returncode != 0:
-                for pid in reversed(descendants):
-                    try:
-                        os.kill(pid, signal.SIGTERM)
-                    except (OSError, ProcessLookupError):
-                        pass
             if proc.returncode is None:
                 try:
                     proc.kill()

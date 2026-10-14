@@ -24,7 +24,7 @@ def test_a_probe_that_hangs_with_a_grandchild_returns_at_the_timeout():
     assert time.monotonic() - started < 1 + versions._JOIN_SLACK + 1
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX process groups; Windows ends the tree with taskkill /T")
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process groups; Windows ends the tree through labhq.proc_tree (tests/test_proc_tree.py)")
 def test_a_timed_out_probe_ends_the_grandchild_it_started(tmp_path):
     marker = tmp_path / "grandchild.pid"
     script = ("import subprocess, sys, time\n"

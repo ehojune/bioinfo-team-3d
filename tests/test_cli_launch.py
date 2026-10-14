@@ -18,6 +18,7 @@ from labhq import cli, doctor
 from labhq.adapters.base import AgentAdapter, RunContext, RunState
 from labhq.models import AgentSpec, Engine, Task
 from labhq.settings import Settings
+from tests.proc_table_fake import FakeProcessTable
 
 
 def _config(tmp_path: Path, *, token: str = "private-client") -> Path:
@@ -623,30 +624,86 @@ def test_down_refuses_when_readiness_fails_or_names_a_request_the_list_missed(tm
     assert stopped.value.code == 2 and killed == [] and "req_new" in capsys.readouterr().err
 
 
-def test_taskkill_output_is_decoded_as_oem_and_a_failure_without_text_still_raises_oserror(monkeypatch):
-    """Trial-ready 2026-10-12: labhq.cmd sets PYTHONUTF8=1, taskkill answers in cp949, and a bare text=True killed both
-    reader threads with UnicodeDecodeError tracebacks and returned None, so the failure message code hit None.split()."""
-    seen = {}
-
-    def fake_run(command, **kwargs):
-        seen.update(kwargs)
-        return subprocess.CompletedProcess(command, 1, stdout=None, stderr=None)  # what a failed decode leaves
-
+def test_a_failed_windows_kill_still_raises_oserror_with_the_reason_and_never_starts_taskkill(monkeypatch):
+    """#589 replaced `taskkill /T`, whose output decoding this used to cover (trial-ready 2026-10-12): a failure to
+    end the recorded process must still reach `down` as an OSError carrying the reason."""
+    started = []
     monkeypatch.setattr(cli.sys, "platform", "win32")
-    monkeypatch.setattr(cli.subprocess, "run", fake_run)
-    monkeypatch.setattr(cli, "_process_created", lambda pid: "alive")
-    with pytest.raises(OSError, match="taskkill exit 1"):
+    monkeypatch.setattr(cli.subprocess, "run", lambda *args, **kwargs: started.append(args))
+    table = FakeProcessTable({4242: (1, 1000)}).install(monkeypatch)
+    table.refuse[4242] = "액세스가 거부되었습니다."
+    with pytest.raises(OSError, match="액세스가 거부되었습니다"):
         cli._terminate_tree(4242)
-    assert seen["encoding"] == "oem" and seen["errors"] == "replace" and not seen.get("text")
+    assert started == []
 
 
-def test_taskkill_failure_text_survives_when_one_stream_is_empty(monkeypatch):
+def test_down_on_windows_ends_the_recorded_tree_through_the_helper_and_checks_each_identity(tmp_path, monkeypatch):
+    """#589: `down` ended the PI's gateway and runner by `taskkill /T`; the tree it collects now skips a process older
+    than its claimed parent, and a recorded PID that changed hands before the kill is not touched."""
+    gateway, runner, child, orphan = 910_000_245, 910_000_244, 910_000_246, 910_000_300
+    table = FakeProcessTable({
+        gateway: (1, 1000), child: (gateway, 1100),
+        orphan: (gateway, 400),  # older than the gateway: a stale parent PID, not its child
+        runner: (1, 3000),  # created after the record was written: the PID changed hands
+    }).install(monkeypatch)
+    settings = Settings.load(str(_config(tmp_path)))
+    _write_process_record(settings, "runner", runner, "windows:2000")
+    _write_process_record(settings, "gateway", gateway, "windows:1000")
     monkeypatch.setattr(cli.sys, "platform", "win32")
-    monkeypatch.setattr(cli.subprocess, "run", lambda command, **kwargs: subprocess.CompletedProcess(
-        command, 128, stdout="", stderr="오류: 프로세스를 찾을 수 없습니다."))
-    monkeypatch.setattr(cli, "_process_created", lambda pid: "alive")
-    with pytest.raises(OSError, match="프로세스를 찾을 수 없습니다"):
-        cli._terminate_tree(4242)
+    monkeypatch.setattr(cli, "_process_created", lambda pid: {runner: "windows:2000", gateway: "windows:1000"}[pid])
+    monkeypatch.setattr(cli, "_active_requests", lambda _settings: [])
+    monkeypatch.setattr(cli, "_shutdown_readiness",
+                        lambda _settings: {"requests": [], "followups": [], "recruits": 0, "ready": True})
+    monkeypatch.setattr(cli, "_health", lambda _settings: None)
+    monkeypatch.setattr(cli.subprocess, "run", lambda *args, **kwargs: pytest.fail(f"taskkill started: {args}"))
+
+    cli._down(settings, force=False)
+
+    assert table.killed == [child, gateway]  # the reused runner PID and the stale-parent orphan were not touched
+    assert set(table.live) == {runner, orphan}
+    assert not cli._pid_file(settings, "gateway").exists() and not cli._pid_file(settings, "runner").exists()
+
+
+@pytest.mark.parametrize("failure", ["terminate", "open", None])
+def test_down_on_windows_keeps_the_records_when_a_child_of_the_launcher_cannot_be_ended(
+        tmp_path, monkeypatch, capsys, failure):
+    """The bot's P1s on #597: the venv interpreter under a launcher refused TerminateProcess, or could not even be
+    opened (Access denied), while the launcher itself was ended, and `down` removed the PID records and printed
+    success with the runner still alive."""
+    runner, runner_child, gateway = 910_000_244, 910_000_245, 910_000_246
+    table = FakeProcessTable({
+        runner: (1, 2000), runner_child: (runner, 2100), gateway: (1, 1000),
+    }).install(monkeypatch)
+    reason = {"terminate": "액세스가 거부되었습니다.", "open": "Access is denied"}.get(failure)
+    if failure == "terminate":
+        table.refuse[runner_child] = reason
+    elif failure == "open":
+        table.unreadable.add(runner_child)
+    settings = Settings.load(str(_config(tmp_path)))
+    _write_process_record(settings, "runner", runner, "windows:2000")
+    _write_process_record(settings, "gateway", gateway, "windows:1000")
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    monkeypatch.setattr(cli, "_process_created",
+                        lambda pid: f"windows:{table.live[pid].created}" if pid in table.live else None)
+    monkeypatch.setattr(cli, "_active_requests", lambda _settings: [])
+    monkeypatch.setattr(cli, "_shutdown_readiness",
+                        lambda _settings: {"requests": [], "followups": [], "recruits": 0, "ready": True})
+    monkeypatch.setattr(cli, "_health", lambda _settings: None)
+    monkeypatch.setattr(cli.subprocess, "run", lambda *args, **kwargs: pytest.fail(f"taskkill started: {args}"))
+
+    if failure:
+        with pytest.raises(SystemExit) as stopped:
+            cli._down(settings, force=False)
+        error = capsys.readouterr().err
+        assert stopped.value.code == 2
+        assert f"runner PID {runner}을 종료하지 못했습니다" in error
+        assert f"PID {runner_child}: {reason}" in error
+        assert cli._pid_file(settings, "runner").exists() and cli._pid_file(settings, "gateway").exists()
+        assert set(table.live) == {runner, runner_child, gateway}  # nothing half-stopped: the retry can reach it
+    else:
+        cli._down(settings, force=False)
+        assert table.killed == [runner_child, runner, gateway] and not table.live
+        assert not cli._pid_file(settings, "runner").exists() and not cli._pid_file(settings, "gateway").exists()
 
 
 @pytest.mark.skipif(os.name != "nt", reason="the OEM code page is a Windows thing")

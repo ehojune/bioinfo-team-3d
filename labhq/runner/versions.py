@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import threading
 
+from .. import proc_tree
 from ..adapters.base import _resolve_command, expand_env
 from ..settings import Settings
 
@@ -55,11 +56,11 @@ def _run_probe(argv: list[str], env: dict[str, str], timeout: float) -> tuple[in
 def _kill_tree(proc: subprocess.Popen) -> None:
     """End a timed-out probe and whatever it started; every wait here is bounded."""
     if os.name == "nt":
+        # Not `taskkill /T`: it follows parent PIDs Windows may have reused. This runs on every timed-out probe, and it
+        # ended the PI's gateway and runner together when a stale parent PID of theirs matched the probe's (#589).
         try:
-            killer = subprocess.Popen(["taskkill", "/T", "/F", "/PID", str(proc.pid)], stdin=subprocess.DEVNULL,
-                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            killer.wait(timeout=_KILL_GRACE)
-        except (OSError, subprocess.SubprocessError):
+            proc_tree.kill_tree(proc.pid)
+        except (OSError, MemoryError):
             pass
     else:
         try:
