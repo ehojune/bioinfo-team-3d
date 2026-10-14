@@ -33,7 +33,8 @@ function python() {
 (async () => {
   const reason = skipReason();
   if (reason) { console.error('cannot record: ' + reason); process.exit(2); }
-  const framesDir = path.resolve(option('--frames-dir', fs.mkdtempSync(path.join(os.tmpdir(), 'labhq-demo-frames-'))));
+  const keepFrames = option('--frames-dir', '');
+  const framesDir = path.resolve(keepFrames || fs.mkdtempSync(path.join(os.tmpdir(), 'labhq-demo-frames-')));
   fs.mkdirSync(framesDir, {recursive: true});
   const d = await openDemo({width: SIZE.width, height: SIZE.height, reducedMotion: true});
   const frames = [];
@@ -82,5 +83,5 @@ function python() {
   fs.mkdirSync(path.dirname(STILL), {recursive: true});
   fs.copyFileSync(path.join(framesDir, decision.png), STILL);
   console.log(`still: ${path.relative(ROOT, STILL)}  (frames: ${framesDir})`);
-  if (!option('--frames-dir', '')) fs.rmSync(framesDir, {recursive: true, force: true});
+  if (!keepFrames) fs.rmSync(framesDir, {recursive: true, force: true});
 })().catch(error => { console.error(error); process.exit(1); });
