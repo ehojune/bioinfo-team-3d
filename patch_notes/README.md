@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 09:47 | [`a411da2`](https://github.com/ehojune/bioinfo-team-3d/pull/579/commits/a411da2) | 긴 URL·DOI 참고 칩의 줄바꿈을 보존하고 상태 칩만 한 줄로 표시한다. |
+| 09:28 | [`50d4e52`](https://github.com/ehojune/bioinfo-team-3d/pull/579/commits/50d4e52) | 시안 E의 63개 토큰과 2D 공통 부품을 적용하고 시안·캐릭터·비평·전후 화면을 보관했다. |
 | 09:07 | [`3036ac1`](https://github.com/ehojune/bioinfo-team-3d/pull/576/commits/3036ac1) | 웹 종료가 gateway 자신의 종료를 기다리다 강제 종료되던 교착을 분리하고 Windows venv launcher PID를 인정 |
 | 09:01 | [`eae315c`](https://github.com/ehojune/bioinfo-team-3d/pull/573/commits/eae315c) | 최신 main 병합 — 편집자 게시·GitHub 전송·검색 색인은 CP4 수용 뒤에만 시작하고 종료 때 타이머 취소와 저장소 close를 함께 처리 |
 | 08:55 | [`9d600ea`](https://github.com/ehojune/bioinfo-team-3d/pull/576/commits/9d600ea) | main 병합 충돌 해소 — 종료 UI와 결과 저장 편집기 등록을 함께 보존 |
