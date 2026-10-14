@@ -13,6 +13,7 @@ const {MiniWebSocket} = require('./mini_ws.cjs');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const WEB_ROOT = process.env.LABHQ_WEB_TEST_ROOT || path.resolve(__dirname, '../../labhq/web');
 const FORBIDDEN_PORTS = [8787, 55921];
+const START_MS = 60000;  // Chrome start budget; the node:test budget of each test covers it
 
 function findChrome() {
   const candidates = [process.env.LABHQ_TEST_CHROME,
@@ -133,13 +134,24 @@ async function openDemo(opts = {}) {
     {windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'], env: {...process.env, HOME: home, USERPROFILE: home,
       HOMEDRIVE: path.parse(home).root.slice(0, 2), HOMEPATH: home.slice(2), LOCALAPPDATA: local, APPDATA: roaming, XDG_CONFIG_HOME: config}});
     chrome.stderr.on('data', chunk => { chromeError = (chromeError + chunk).slice(-2000); });
-    let debug;
-    for (let i = 0; i < 200; i++) { try { debug = fs.readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0]; break; } catch { await sleep(100); } }
-    if (!debug) throw new Error('Chrome did not start: ' + chromeError);
-    const targets = await (await fetch(`http://127.0.0.1:${debug}/json`)).json();
+    // A cold Chrome start on a loaded CI runner can take far longer than 10 s (see tests/web_office_browser.cjs):
+    // wait for the DevToolsActivePort file and the page target on a deadline, and stop early if Chrome exits.
+    let debug, page, exited = null;
+    chrome.on('exit', (code, signal) => { exited = {code, signal}; });
+    const startDeadline = Date.now() + START_MS;
+    while (!debug && !exited && Date.now() < startDeadline) {
+      try { debug = fs.readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0]; } catch { /* not written yet */ }
+      if (!debug) await sleep(100);
+    }
+    if (!debug) throw new Error(`Chrome did not publish its debugging port within ${START_MS / 1000}s (exit: ${JSON.stringify(exited)}): ${chromeError}`);
+    while (!page && !exited && Date.now() < startDeadline) {
+      try { page = (await (await fetch(`http://127.0.0.1:${debug}/json`)).json()).find(t => t.type === 'page'); } catch { /* not listening yet */ }
+      if (!page) await sleep(100);
+    }
+    if (!page) throw new Error(`Chrome has no page target within ${START_MS / 1000}s (exit: ${JSON.stringify(exited)}): ${chromeError}`);
     // Node 22+ has a global WebSocket; older Nodes use the small client in mini_ws.cjs (LABHQ_FORCE_MINI_WS=1 forces it).
     const Socket = typeof WebSocket !== 'undefined' && !process.env.LABHQ_FORCE_MINI_WS ? WebSocket : MiniWebSocket;
-    ws = new Socket(targets.find(t => t.type === 'page').webSocketDebuggerUrl);
+    ws = new Socket(page.webSocketDebuggerUrl);
     await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = e => reject(new Error('CDP socket failed: ' + (e?.message || e))); });
     let serial = 0;
     const pending = new Map(), external = [], errors = [];
