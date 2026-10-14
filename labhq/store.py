@@ -112,7 +112,8 @@ class StateStore:
                     if k in {"text", "level", "text_truncated", "text_chars", "question", "answer",
                              "reason", "status", "from", "to", "agent_id", "id", "ask_id", "ok",
                              "error", "answer_truncated", "answer_chars", "url", "kind",
-                             "questions", "pi_summary", "summary", "approved", "note", "state", "choice"}}
+                             "questions", "pi_summary", "summary", "approved", "note", "state", "choice",
+                             "pi_display", "pi_explainer", "title", "prompt", "source_restricted"}}
             if body.get("type") == "request.followup_done" and not data.get("agent_id"):
                 request = self.get("request", body.get("request_id")) or {}
                 previous = next((f for f in request.get("followups", []) if f.get("id") == data.get("id")), {})
@@ -137,6 +138,16 @@ class StateStore:
         events = list(reversed(rows[:limit]))
         return {"events": events, "has_more": more,
                 "next_before": events[0]["seq"] if more else None}
+
+    def set_message_display(self, seq: int, display: dict) -> None:
+        with self.db:
+            for table in ("events", "messenger_events"):
+                row = self.db.execute(f"SELECT body FROM {table} WHERE seq=?", (seq,)).fetchone()
+                if row:
+                    event = json.loads(row[0])
+                    event.setdefault("data", {})["pi_display"] = display
+                    self.db.execute(f"UPDATE {table} SET body=? WHERE seq=?",
+                                    (json.dumps(event, ensure_ascii=False), seq))
 
     def commit_terminal(self, rid: str, request: dict, event: dict, limit: int) -> dict:
         """Checkpoint terminal state, event and reporter delivery in one transaction."""

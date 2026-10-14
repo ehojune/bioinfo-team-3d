@@ -293,6 +293,8 @@ class Hub:
         self.cancel_result_wait_s = CANCEL_RESULT_WAIT_S
         self.approvals: dict[str, dict] = self.store.all("approval")
         self.requests: dict[str, dict] = self.store.all("request")
+        from ..pi_language import PiInterpreter
+        self.pi_interpreter = PiInterpreter(self)
         self.final_review_timers: dict[str, asyncio.Task] = {}
         self.login_notices: set[str] = set()  # computed after stale login waits are dropped below
         self.last_runner_rosters: dict[str, dict] = self.store.all("runner_roster")
@@ -1221,6 +1223,7 @@ class Hub:
                     dead.append(client)
             for client in dead:
                 self.clients.discard(client)
+            self.pi_interpreter.schedule(event)
 
     def result_map(self, rid: str) -> SavedResults:
         return SavedResults(self, rid)
@@ -2169,6 +2172,9 @@ class Hub:
 
     # ----- events -----
     async def publish(self, ev: dict, runner_id: str | None = None, runner_seq: int | None = None) -> None:
+        internal = self.store.get("task", ev.get("task_id")) if ev.get("task_id") else None
+        if (internal or {}).get("kind") == "pi_interpretation" and ev.get("type") == "agent.log":
+            ev = {**ev, "data": {**ev.get("data", {}), "level": "debug"}}
         if ev.get('type') == 'approval.requested':
             ev = {**ev, 'data': with_approval_copy(ev.get('data') or {})}
         async with self.event_lock:
@@ -2191,6 +2197,7 @@ class Hub:
                 self.save_request(rid)
         if self.reporter.enabled():
             self.reporter.submit(ev)
+        self.pi_interpreter.schedule(ev)
         if ev.get("type") in ("request.step_done", "request.step_skipped") and ev.get("request_id"):
             await self._close_step_controls(ev["request_id"], (ev.get("data") or {}).get("step_id"))
 
@@ -3594,6 +3601,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
 
     @app.on_event("shutdown")
     async def warn_running_on_shutdown() -> None:
+        await hub.pi_interpreter.close()
         for timer in hub.final_review_timers.values():
             timer.cancel()
         await hub.result_storage.close()
@@ -3907,7 +3915,10 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     async def messenger(before: int | None = Query(default=None, ge=1, le=9223372036854775807),
                         limit: int = Query(default=40, ge=1, le=200),
                         request_id: str | None = None) -> dict:
-        return hub.store.messenger_history(before, limit, request_id)
+        page = hub.store.messenger_history(before, limit, request_id)
+        for event in page["events"]:
+            hub.pi_interpreter.schedule(event)
+        return page
 
     @app.get("/api/events", dependencies=[Depends(auth)])
     async def events(limit: int = 200, since: int | None = None) -> list[dict]:

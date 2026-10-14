@@ -14,15 +14,27 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 13:45 | [`f24e76c`](https://github.com/ehojune/bioinfo-team-3d/pull/593/commits/f24e76c) | 완료된 채용 단계의 파견직 receipt를 재개 대기에서 제외하고 미완료 단계만 기다리게 함 |
+| 13:19 | [`f2a1156`](https://github.com/ehojune/bioinfo-team-3d/pull/588/commits/f2a1156) | 최신 main의 Node 웹 테스트 자동 수집을 유지해 충돌 해소 |
+| 13:16 | [`3741906`](https://github.com/ehojune/bioinfo-team-3d/pull/587/commits/3741906) | 최신 본문 digest가 다른 실패를 재시도하고 모든 가변 절을 공통 예산으로 축약 |
+| 13:11 | [`1f0f40e`](https://github.com/ehojune/bioinfo-team-3d/pull/590/commits/1f0f40e) | main의 Node 웹 테스트 자동 수집과 사무실 token 검사를 함께 보존 |
+| 12:55 | [`619fa2e`](https://github.com/ehojune/bioinfo-team-3d/pull/587/commits/619fa2e) | 최신 main 변경을 라운드 크기 제한 수정과 함께 보존 |
 | 12:50 | [`80da10b`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/80da10b) | 최신 main의 웹 테스트 자동 수집을 병합하고 채용 회귀 marker 보존 |
 | 12:46 | [`a8fae43`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/a8fae43) | mock 채용 제안에 담당 단계를 넣고 roster 없는 재개에서도 계약을 확인 |
+| 12:44 | [`e505794`](https://github.com/ehojune/bioinfo-team-3d/pull/590/commits/e505794) | 격리된 테스트 홈에서도 사무실 브라우저 검사를 실행 |
+| 12:42 | [`7771337`](https://github.com/ehojune/bioinfo-team-3d/pull/588/commits/7771337) | 배포용 예시 설정을 동기화하고 새 웹 테스트를 CI 실행 목록에 등록 |
+| 12:36 | [`3472b35`](https://github.com/ehojune/bioinfo-team-3d/pull/590/commits/3472b35) | 사무실 브라우저 검사를 CI 실행 목록에 등록 |
 | 12:34 | [`913ee3f`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/913ee3f) | 변환 비용 중복 없는 집계·payload 재변환·제안 검증과 종료 계약 재개를 수정 |
+| 12:31 | [`a8b8bca`](https://github.com/ehojune/bioinfo-team-3d/pull/588/commits/a8b8bca) | 2D·3D 이어 묻기 상세에 같은 통역 캐시를 표시하고 재시작 실패 상태를 보존 |
+| 12:28 | [`2633c04`](https://github.com/ehojune/bioinfo-team-3d/pull/590/commits/2633c04) | 사무실을 캐릭터 1과 내용에 맞는 구역 배치로 변경 |
+| 12:25 | [`f5b518b`](https://github.com/ehojune/bioinfo-team-3d/pull/588/commits/f5b518b) | 비서실장 통역·영어 한국어 표시, 영구 캐시·비용 상한·보고서 문체 점검 |
 | 12:25 | [`172cb87`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/172cb87) | 최신 main을 병합하고 채용·P2 후속 웹 테스트 목록을 모두 보존 |
 | 12:12 | [`5cc6b2b`](https://github.com/ehojune/bioinfo-team-3d/pull/583/commits/5cc6b2b) | main #585 작업판 변경을 병합하고 Node 자동 수집 51개·늦은 저장 버튼 회귀 확인 |
 | 12:09 | [`b229f3f`](https://github.com/ehojune/bioinfo-team-3d/pull/583/commits/b229f3f) | main #580 병합: 늦은 저장·검토 대기·Node 자동 수집을 보존하고 completed 상태의 저장 선택 차단 |
 | 11:56 | [`024c721`](https://github.com/ehojune/bioinfo-team-3d/pull/583/commits/024c721) | 검토 완료 뒤에도 2.5D·3D 저장 선택을 유지하고 재시작 때 이미 선택한 저장 카드를 해결 처리 |
 | 11:55 | [`36604bc`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/36604bc) | 최신 main의 결정 화면 변경을 병합 |
 | 11:55 | [`5f2850f`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/5f2850f) | 범위 승인 뒤 채용하고 만료·해제된 계약은 재개 대기 대신 정규직으로 재배정 |
+| 11:46 | [`bbee78f`](https://github.com/ehojune/bioinfo-team-3d/pull/587/commits/bbee78f) | 최신 main의 디자인 결정 UI 변경을 라운드 기록 수정과 함께 보존 |
 | 11:37 | [`faf5d6e`](https://github.com/ehojune/bioinfo-team-3d/pull/585/commits/faf5d6e) | 첨부·참고 버튼 문구를 화면 갱신 뒤에도 유지하고 회귀 검사·캡처 갱신 |
 | 11:26 | [`192cd27`](https://github.com/ehojune/bioinfo-team-3d/pull/585/commits/192cd27) | 작업판 빈 목록·완료 접기, 전체 제목 요청 전환, 메신저·직원 카드·48px 입력을 시안 E로 정리 |
 | 11:25 | [`1a3de63`](https://github.com/ehojune/bioinfo-team-3d/pull/583/commits/1a3de63) | Node 웹 test 자동 수집·기존 성공 표시 보존, 취소된 부분 결과 저장·게시와 무기한 저장 선택·재시작 복원 수정 |
@@ -32,6 +44,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 11:03 | [`da43188`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/da43188) | 논문별 채용 복구를 분리하고 담당 단계 필수화 및 active 파견직 재접속 대기 수정 |
 | 10:58 | [`7329af9`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/7329af9) | 최신 main을 병합하고 채용·디자인 토큰 웹 테스트 목록을 모두 보존 |
 | 10:57 | [`a057d3a`](https://github.com/ehojune/bioinfo-team-3d/pull/583/commits/a057d3a) | 끝난 요청의 저장 위치 카드를 API·CLI·웹에서 열고 검토 뒤 편집자 정리·게시 승인으로 연결. 수정 회차·환경·출처와 README 링크 보강 |
+| 10:55 | [`6bf1e95`](https://github.com/ehojune/bioinfo-team-3d/pull/587/commits/6bf1e95) | 큰 라운드 기록에서 JSON을 빼고 결과를 줄 단위로 줄여 게시하며 과거 크기 초과 delivery를 복구 |
 | 10:35 | [`b1983fd`](https://github.com/ehojune/bioinfo-team-3d/pull/582/commits/b1983fd) | 시안 E의 결정 카드 위계·대기 배지·폰 우선 배치와 검토·이력 공통 부품, 전후 화면 및 회귀 검사를 추가했다. |
 | 10:29 | [`f8ea0ae`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/f8ea0ae) | 채용 카드 추가 후 PI 승인 기록을 생성 시각순으로 정렬하고 직접·일괄 기록 회귀 추가 |
 | 10:13 | [`fd4ac7b`](https://github.com/ehojune/bioinfo-team-3d/pull/580/commits/fd4ac7b) | P2 웹 회귀 파일을 pytest의 CI 실행 목록에 연결 |

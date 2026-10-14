@@ -47,25 +47,37 @@ export function messageFromEvent(ev) {
       m.cls = ev.type === 'request.failed' || d.ok === false ? 'alert' : ''; break;
     default: return null;
   }
+  if (ev.type === 'approval.requested') m.original = d.summary;
+  if (d.pi_display) Object.assign(m, {original:m.original ?? m.text, piDisplay:d.pi_display});
   return m;
 }
 
 export function createMessenger({fetchPage}) {
-  let rows = new Map(), generation = 0, followupAgents = new Map();
+  let rows = new Map(), generation = 0, followupAgents = new Map(), translations = new Map();
+  const overlay = m => m && translations.has(m.seq) ? {...m, original:m.original ?? m.text, piDisplay:translations.get(m.seq)} : m;
   const history = {
     items:[], before:null, loaded:false, loading:false, hasMore:true, error:false, onChange:() => {},
     get label() { return this.loading ? '불러오는 중…' : this.error ? '불러오지 못했어요. 눌러서 다시 시도하세요'
       : this.loaded && !this.hasMore ? '처음입니다' : '위로 스크롤하면 이전 기록을 불러옵니다'; },
     reset() {
-      generation++; rows = new Map(); followupAgents = new Map();
+      generation++; rows = new Map(); followupAgents = new Map(); translations = new Map();
       Object.assign(this, {items:[], before:null, loaded:false, loading:false, hasMore:true, error:false});
       this.onChange('reset');
     },
     ingest(ev) {
+      if (ev.type === 'messenger.translated') {
+        translations.set(ev.data.message_seq, ev.data.pi_display);
+        const old = rows.get(ev.data.message_seq);
+        if (old) {
+          rows.set(old.seq, {...old, original:old.original ?? old.text, piDisplay:ev.data.pi_display});
+          this.items = [...rows.values()].sort((a,b) => a.seq-b.seq); this.onChange('live');
+        }
+        return;
+      }
       if (ev.type === 'request.followup') followupAgents.set(ev.data.id, ev.data.agent_id);
       if (ev.type === 'request.followup_done') ev = {...ev, data:{...ev.data,
         agent_id:ev.data.agent_id || followupAgents.get(ev.data.id)}};
-      const m = messageFromEvent(ev);
+      const m = overlay(messageFromEvent(ev));
       if (!m || !Number.isSafeInteger(m.seq) || rows.has(m.seq)) return;
       rows.set(m.seq, m); this.items = [...rows.values()].sort((a,b) => a.seq-b.seq);
       this.onChange('live');
@@ -83,7 +95,7 @@ export function createMessenger({fetchPage}) {
         for (const ev of page.events) {
           const m = messageFromEvent(ev.type === 'request.followup_done' ? {...ev, data:{...ev.data,
             agent_id:ev.data.agent_id || followupAgents.get(ev.data.id)}} : ev);
-          if (m) rows.set(m.seq, m); // full REST text replaces an overlapping live preview
+          if (m) rows.set(m.seq, overlay(m)); // full REST text replaces an overlapping live preview
         }
         this.items = [...rows.values()].sort((a,b) => a.seq-b.seq);
         this.before = page.next_before; this.hasMore = page.has_more; this.loaded = true;
@@ -132,7 +144,15 @@ export function syncMessageRows(container, items, options) {
       const header = add(body, 'div', 'message-header');
       const name = add(header, 'b', 'message-sender'), time = add(header, 'time', 'message-time');
       const text = add(body, 'div', 'message-text');
-      options.expandableText(text, m.fullText ?? m.text, {pi:true, limit:150, summary:m.text,
+      if (m.piDisplay) {
+        if (m.piDisplay.status === 'translated') {
+          add(text, 'small', 'message-interpreter').textContent = '펭귄 비서실장 설명';
+          options.expandableText(text, m.piDisplay.text, {pi:true, limit:500, original:m.original ?? m.text, forceOriginal:true});
+        } else {
+          add(text, 'small', 'message-interpreter').textContent = '번역 못 함';
+          options.expandableText(text, m.original ?? m.text, {limit:150});
+        }
+      } else options.expandableText(text, m.fullText ?? m.text, {pi:true, limit:150, summary:m.text,
         fold:m.fullText != null && m.fullText !== m.text, truncated:m.truncated, cutChars:m.cutChars});
       if (typeof m.url === 'string' && /^https?:\/\//.test(m.url)) {
         const link = add(text, 'a', 'message-link'); link.href=m.url; link.target='_blank'; link.rel='noopener'; link.textContent='열기';
