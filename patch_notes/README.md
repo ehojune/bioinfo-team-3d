@@ -10,15 +10,30 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-10-14
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 09:47 | [`a411da2`](https://github.com/ehojune/bioinfo-team-3d/pull/579/commits/a411da2) | 긴 URL·DOI 참고 칩의 줄바꿈을 보존하고 상태 칩만 한 줄로 표시한다. |
+| 09:28 | [`50d4e52`](https://github.com/ehojune/bioinfo-team-3d/pull/579/commits/50d4e52) | 시안 E의 63개 토큰과 2D 공통 부품을 적용하고 시안·캐릭터·비평·전후 화면을 보관했다. |
+| 09:07 | [`3036ac1`](https://github.com/ehojune/bioinfo-team-3d/pull/576/commits/3036ac1) | 웹 종료가 gateway 자신의 종료를 기다리다 강제 종료되던 교착을 분리하고 Windows venv launcher PID를 인정 |
+| 09:01 | [`eae315c`](https://github.com/ehojune/bioinfo-team-3d/pull/573/commits/eae315c) | 최신 main 병합 — 편집자 게시·GitHub 전송·검색 색인은 CP4 수용 뒤에만 시작하고 종료 때 타이머 취소와 저장소 close를 함께 처리 |
+| 08:55 | [`9d600ea`](https://github.com/ehojune/bioinfo-team-3d/pull/576/commits/9d600ea) | main 병합 충돌 해소 — 종료 UI와 결과 저장 편집기 등록을 함께 보존 |
+
 ## 2026-10-13
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 22:14 | [`8ddabf0`](https://github.com/ehojune/bioinfo-team-3d/pull/576/commits/8ddabf0) | 종료 UI 회귀 파일을 CI의 Node 검사 목록에 등록 |
+| 22:09 | [`bbb5dd9`](https://github.com/ehojune/bioinfo-team-3d/pull/577/commits/bbb5dd9) | init에서 새 pipeline 공개 기여 동의를 묻고 기존 동의값·대상을 보존 |
 | 22:03 | [`efe0642`](https://github.com/ehojune/bioinfo-team-3d/pull/575/commits/efe0642) | 논문 스킬 계획 계약의 고정 hash를 갱신하고 실행 중 재계획에서는 새 논문 선택을 제외 |
 | 21:43 | [`0dd57dc`](https://github.com/ehojune/bioinfo-team-3d/pull/575/commits/0dd57dc) | 두 논문의 변환 복구 키를 분리하고 논문 ID가 다른 결과는 장착하지 않음 |
+| 21:40 | [`ff1b133`](https://github.com/ehojune/bioinfo-team-3d/pull/576/commits/ff1b133) | 웹 종료 확인 창과 PI 전용 종료 API: 진행 중 거부·강제 확인·탭만 닫기, down 재사용 |
 | 21:39 | [`623bf3b`](https://github.com/ehojune/bioinfo-team-3d/pull/575/commits/623bf3b) | 선행 연구 논문을 CP1 전 자문형 스킬로 준비하고 요청별 담당 단계에 장착·기록 |
+| 21:37 | [`bbcf48d`](https://github.com/ehojune/bioinfo-team-3d/pull/573/commits/bbcf48d) | CP4 수용 전 GitHub 최종 게시를 보류하고 결정의 내구성·재시작 전송과 기존 묶음 재생성 예약을 수정 |
 | 21:33 | [`6e90068`](https://github.com/ehojune/bioinfo-team-3d/pull/566/commits/6e90068) | 초안 복구 때 CRLF 줄바꿈까지 그대로 보존하고 회귀로 확인 |
 | 21:24 | [`9c00f99`](https://github.com/ehojune/bioinfo-team-3d/pull/566/commits/9c00f99) | 게시 카드 수명 테스트에 요청 종료·PI 검토 완료 조건 반영 |
+| 21:16 | [`9c2a679`](https://github.com/ehojune/bioinfo-team-3d/pull/573/commits/9c2a679) | 연구 최종 초안을 기존 검토 완료에서 CP4로 수용하고 hash·receipt·재시작·묶음 검증을 연결 |
 | 21:04 | [`63e2bbe`](https://github.com/ehojune/bioinfo-team-3d/pull/574/commits/63e2bbe) | 완료 요청을 가린 로컬 색인으로 검색하는 recall API·CLI와 checkpoint 재처리·doctor를 추가 |
 | 21:04 | [`e1402f9`](https://github.com/ehojune/bioinfo-team-3d/pull/566/commits/e1402f9) | 정리본을 감사 묶음 밖에 저장하고 PI 검토·초안 복구·공개 금지 상속·산출 경로 인코딩 보완 |
 | 20:56 | [`32b5823`](https://github.com/ehojune/bioinfo-team-3d/pull/572/commits/32b5823) | 메신저 Node 회귀 테스트를 pytest의 CI 실행 목록에 등록 |

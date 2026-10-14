@@ -6,6 +6,150 @@
 
 ## 결론
 
+PR #579: PI가 고른 E + 캐릭터 1의 첫 구현. 63개 토큰(기존 셸 별칭 8개 별도)과 2D 공통 부품을 적용했다.
+
+## 바뀐 것
+
+- `ui/tokens.css`: 색 역할·글자 6단·간격·반경·그림자·상태색·터치 높이·다크 테마.
+- `ui/components.css`: 카드·버튼·칩·탭·시트·토스트·목록 줄. 기존 버튼·칩·탭에 연결하고 긴 참고 칩의 줄바꿈을 보존했다.
+- [선택 기록·시안·캐릭터·비평 보관](../design/2026-10-13/README.md). Claude 캡처 16장과 [데스크톱·폰 전후](../design/2026-10-13/comparison/README.md) 포함.
+
+## 확인
+
+- Node 46개 파일 통과. 밝은/어두운 테마 각각 19개 글자 대비 조합: 최저 5.10:1 / 6.39:1.
+- 관련 pytest 82 passed, 1 skipped. CSS 서빙·패키지 포함·Node CI 등록 확인.
+- Windows 전체 pytest: **6,191 passed, 66 skipped** (775.62초). 전체 검사의 임시 폴더 삭제 확인.
+- 1440×900·390×844에서 가로 넘침 없음. 폰의 긴 URL·48px 버튼, 직원 시트·다크 테마·3D 데모 표시 확인.
+- 공개·패치노트·목차·diff 검사 통과.
+- [코드 head `b55eb41` CI](https://github.com/ehojune/bioinfo-team-3d/actions/runs/38492308495): changes·patch-notes·pytest 3.10·3.12·Windows·slow·clean-install·ro-crate-validator 성공, readme 조건부 건너뜀.
+
+## 남은 지적
+
+- 결정 카드 위계·탭 개수 연결·폰 순서·입력창 배치·캐릭터 1은 후속 PR 범위다. 대비 확인은 이번 공통 부품의 주요 글자/배경 조합에 한정한다.
+- PI/trial 실행·설정·배포, 3D 코드 변경, 리뷰 요청·인라인 답글·병합은 하지 않았다.
+
+Refs #546
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
+PR #573에 최신 main(`d56253a`)을 병합했습니다. 충돌은 `labhq/gateway/server.py` 한 곳이었고 두 쪽 의도를 모두 남겼습니다.
+
+## 바뀐 것
+
+- 종료 처리: CP4 기한 타이머 취소와 편집자 저장소 close를 함께 실행합니다.
+- 검토 대기 초안은 편집자 게시·GitHub 전송·검색 색인을 시작하지 않습니다. 최종 결정이 색인 알림과 편집자 게시를 예약합니다. bundle을 다시 만드는 요청은 갱신된 bundle 기록이 게시를 예약합니다.
+- 검색 색인은 `review_pending` 초안을 건너뜁니다. 시작 시 과거 요청 재처리에서도 같습니다.
+- 매뉴얼 CP4 절에 수용 뒤 시작하는 항목을 적었습니다.
+- 앞선 봇 지적(P1 GitHub 전송 보류, P2 workdir 없는 요청의 bundle 재생성)의 수정 `bbcf48d`가 로컬에만 있어 PR head에 없었습니다. 그대로 보존해 이 병합과 함께 push합니다.
+
+## 확인
+
+- 회귀: 수용 뒤 색인 알림·편집자 게시를 확인하는 통합 test를 추가했습니다(`test_cp4_accept_wakes_recall_and_publishes_editor_after_review`).
+- Windows 전체 pytest 6222개 통과. 처음 한 번은 `PYTHONUTF8=1` 때문에 `tasklist` 한국어 출력 해석이 실패해 1개가 떨어졌고, 그 변수를 빼고 다시 통과했습니다.
+- Node test 45개 파일을 하나씩 통과했습니다.
+
+## 남은 지적
+
+- 코드 리뷰(Codex)는 한도 소진으로 돌리지 못했습니다.
+- PI/trial 실행·재시작, 리뷰 요청, 병합은 하지 않았습니다.
+
+Refs #90
+
+🤖 Generated with Claude Code for the labhq dev lead
+
+## 결론
+웹 종료가 gateway 자신의 종료를 기다리다 10초 뒤 강제 종료되던 교착(봇 P1)을 고쳤습니다. 이제 gateway는 종료 hook을 실행하며 정상 종료합니다.
+
+## 바뀐 것
+- runner만 `down`으로 끈 뒤, 분리된 감시 프로세스를 띄우고 gateway가 SIGTERM과 같은 정상 종료 경로를 스스로 시작합니다. 요청 task는 바로 끝납니다. 감시 프로세스는 30초 안에 끝나지 않을 때만 강제로 끕니다(`state/logs/gateway-exit-watch.log`). Windows·POSIX 공통.
+- "그래도 끄기"도 같은 경로입니다. runner를 끈 뒤 gateway hook이 중단된 요청을 기록하고, 요청 기록은 이미 저장돼 있습니다.
+- 같은 테스트에서 드러난 별도 결함: Windows venv의 `python.exe`는 실제 인터프리터를 자식으로 띄워 `up`이 기록한 PID가 gateway의 `os.getpid()`와 달라, 웹 종료가 항상 "PID 기록을 확인할 수 없어" 거부됐습니다. 기록 PID가 부모 launcher이면 인정합니다.
+- main(`d56253a`)을 병합해 충돌을 풀었습니다(index.html import, Node 검사 목록).
+
+## 확인
+- 재현: 옛 `run()`(`down` 직접 호출)에 같은 테스트를 걸면 gateway가 강제 종료돼 `Application shutdown complete`가 없어 실패. 고친 코드에서 통과.
+- 새 실제 프로세스 테스트 `tests/test_web_shutdown_process.py`(빈 포트의 실제 gateway·가짜 runner·웹 소켓 연결): 정상 종료, 강제 종료(진행 중 요청), 감시 프로세스의 강제 경로·신원 불명 거부·분리 실행 옵션.
+- Windows 전체 `pytest -q`: **6224 passed·66 skipped·0 failed**(실제 node.exe를 PATH 앞에 둠, basetemp 삭제함). POSIX 실제 프로세스 테스트는 이 PC에서 돌리지 못했고 CI의 Ubuntu가 돌립니다.
+- 실제 PI·trial 인스턴스와 8787 포트는 건드리지 않았습니다.
+
+## 남은 지적
+- P2(2.5D 데모에서 종료 버튼 숨김)는 이 변경 범위 밖이라 남겨 둡니다.
+- 완료 표시는 종료 접수 뒤 서버 연결 끊김을 기준으로 하므로 네트워크 단절과 구별하지 못합니다(manual에 명시).
+
+Refs #560
+
+새 설정의 `labhq init`에서 pipeline 코드를 공개 upstream에 PR로 기여할지 묻습니다. `y`(대소문자 무관)만 동의이며 Enter·`--yes`·불분명한 답은 끔으로 저장합니다.
+
+- 기존 동의값과 upstream 대상은 `--force`에서도 보존합니다.
+- dry-run은 설정·token·직원 홈을 만들지 않으며 새 instance마다 동의를 따로 받습니다.
+- 거절 시 내용 수집·GitHub 호출을 막는 기존 경로를 검증했습니다. fork 자동 생성은 후속 작업입니다.
+- 설치와 bioinfo-agent 연결 매뉴얼을 갱신했습니다.
+
+검증: 기준 main `2ffb06d`에서 새 회귀 10 failed·3 passed → 수정 후 관련 129 passed. Windows 전체는 6,147 passed·66 skipped·45 failed: 격리된 홈에서 Node shim이 실행 파일을 찾지 못한 웹 테스트 45건입니다. 테스트 PATH에 Node 실행 파일을 직접 지정하자 해당 45건이 모두 통과했습니다. 보정 후 전체 재실행은 다른 레인의 전체 suite 때문에 미실행이며 로컬 전체 통과 조건은 아직 충족하지 않았습니다.
+
+공개·diff·패치노트·목차 검사 통과. 코드 head `bbb5dd9`의 CI는 pytest 3.10·3.12·Windows·slow, clean-install, ro-crate-validator, changes 성공·readme skipped였습니다. 누락 기록을 넣은 `428dc3c`는 changes·patch-notes 성공이며 나머지는 기록 전용 변경으로 skipped입니다. 생략된 job을 실행 통과로 세지 않습니다.
+
+Refs #300
+
+남은 지적: 보정한 테스트 환경에서 Windows 전체 재실행이 필요합니다. fork 지원은 A의 main 반영 뒤 B 레인에서 진행합니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
+## 결론
+
+PR #573의 CP4 GitHub 전송 시점(P1)과 기존 bundle 갱신 예약(P2)을 `bbcf48d`에서 수정했습니다.
+
+## 바뀐 것
+
+- 검토 대기 초안은 GitHub terminal delivery를 만들지 않습니다. 옛 대기 이벤트도 게시하지 않습니다.
+- 최종 결정과 전송 기록을 함께 저장합니다. 수용 뒤 보고서 commit·issue 종료, 거부·만료 뒤 실패 알림·issue 유지로 처리합니다. 재시작 시 남은 전송을 복구합니다.
+- `workdir_id`가 없어도 기존 bundle이나 미완료 생성 기록이 있으면 receipt 갱신을 예약합니다.
+- main `363cdd4`를 병합했습니다. 패치노트는 기존 들여쓰기와 따옴표로 감싼 7자리 SHA를 유지합니다.
+
+## 확인
+
+- `3392480`에서 새 회귀 5개 실패 → 수정 후 관련 68개 통과. GitHub는 mock transport만 사용했습니다.
+- Windows 전체 pytest: 미실행. 다른 레인의 전체 실행이 연속돼 약 40분 대기 후 중단했습니다. 동시 전체 실행 금지를 지켰습니다.
+- 공개 검사 통과. 패치노트·목차·diff 검사는 기록 커밋 뒤 실행합니다.
+
+## 남은 지적
+
+- P2는 가져온 report-only bundle의 재생성 예약·receipt 검증을 mock으로 확인했습니다. 현재 원본 탐색기는 모든 `workdir_id`가 없으면 bundle을 직접 복원하지 못합니다. 원본 복구 기능은 이번 수정에 추가하지 않았습니다.
+- Windows 전체 통과 조건이 남아 push·인라인 답글·현재 수정 head의 CI 확인을 보류했습니다. 총괄이 전체 pytest 실행 순서를 확보한 뒤 이어갑니다.
+- PI/trial 실행·재시작, 실제 보고서 게시, 리뷰 요청, 병합은 하지 않았습니다.
+
+Refs #90
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+웹의 **종료하기**에서 현재 일을 확인한 뒤 labhq를 끄거나 탭만 닫습니다. 2.5D·3D는 같은 확인 창을 씁니다.
+
+## 바뀐 것
+- 요청 제목·건수, PI 결정 대기, 이어 묻기·채용·마무리 표시.
+- 진행 중 일반 종료 거부. 강제 종료는 중단·재개 안내 뒤 추가 확인. Enter 차단.
+- PI 토큰 전용 API. 현재 gateway·runner의 PID 기록 확인 후 기존 `down`의 재확인·잠금·종료 순서 재사용.
+- 원격 접속 시 서버 PC의 인스턴스를 끈다고 표시. 종료 중 새 쓰기 요청 차단.
+
+## 확인
+- base `363cdd4`: 새 Python 21 failed, Node 파일 실패. branch 관련 Python 66 passed·1 skipped, 새 Node 8 passed.
+- Windows 전체: **6120 passed·66 skipped·45 failed**. Node shim의 격리 홈 경로 44건과 새 Node 파일 CI 등록 누락 1건. 등록 보완 후 실제 node.exe를 PATH에 둔 관련 파일은 **70 passed·1 skipped**. 로컬 전체 통과로 판정하지 않음.
+- Node 전체 45개 파일 통과. 합성 미리보기에서 2.5D·3D, Enter 차단, 탭만 닫기 확인.
+- 공개 검사·diff 검사 통과. PID·종료는 가짜 프로세스로 검증. 실제 PI/trial 인스턴스 변경 없음.
+
+## 남은 지적
+- PR 충돌로 CI가 생성되지 않았습니다. 충돌 해소·CI 실행은 총괄에게 넘깁니다.
+- basetemp 삭제는 자동 승인 검토가 `blocked by policy`로 거부해 미완료입니다.
+- 완료 표시는 종료 접수 뒤 서버 연결 끊김을 기준으로 하므로 네트워크 단절과 구별하지 못합니다(manual에 명시).
+
+Refs #560
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
 선행 연구에서 고른 논문을 CP1 전에 자문형 스킬로 준비하고 지정한 정규직의 해당 단계에만 장착합니다. Refs #549 (C).
 
 ## 바뀐 것
@@ -53,6 +197,34 @@
 - PI/trial 실행·설정·배포, 리뷰 요청·인라인 답글·병합은 하지 않았다.
 
 Refs #60
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
+opt-in 연구 요청의 기존 **검토 완료**를 CP4 수용으로 연결합니다. 별도 승인 카드는 만들지 않습니다.
+
+## 바뀐 것
+
+- 생성 시 설정·계약 version 고정. 리뷰 accept·보고서 검사 뒤 초안 revision과 본문·감사·claim hash를 저장합니다.
+- 유효한 PI receipt 전에는 `review_pending`. 거부·만료·취소·hash 변경은 완료하지 않습니다. 재시작은 저장 초안을 재사용합니다.
+- 웹·CLI 결정에 revision/hash를 묶고 bundle·verify에 초안과 receipt를 연결합니다. 수용은 게시·전송·HPC 권한이 아닙니다.
+- 기준 `1b41209`. #565·#556·#567·#571 포함. 총괄의 순서 해제 지시에 따라 착수했습니다.
+
+## 확인
+
+- 새 회귀: 기준 main에서 1 failed → branch 통과. 관련 Python 330 passed·4 skipped, 최종 집중 56 passed. Node 43개 파일 통과.
+- Windows 전체 pytest: **UNVERIFIED**. 다른 레인의 전체 실행이 연속으로 이어져 동시 전체 실행 금지를 지켰습니다. CI 결과와 구분합니다.
+- 공개·diff 검사 통과. 패치노트·상태 문서를 기록하고 patch-notes·notes-index를 검사했습니다.
+- 매뉴얼 122,610 → 123,414자.
+
+## 남은 지적
+
+- 레인 임시 폴더 삭제가 자동 승인 검토의 `blocked by policy`로 차단돼 정리를 인계합니다.
+- 로컬 Windows 전체 통과 조건은 미충족입니다. PI/trial live 검증·배포·CP3·CP4 수정 재실행은 범위 밖입니다.
+- 봇 리뷰 요청·대응·병합은 총괄에게 넘깁니다.
+
+Refs #90
 
 🤖 Generated with Codex (gpt-6) for the labhq dev lead
 

@@ -1,0 +1,5 @@
+pr: 577
+rows:
+- sha: "bbb5dd9"
+  at: 2026-10-13 22:09
+  text: init에서 새 pipeline 공개 기여 동의를 묻고 기존 동의값·대상을 보존

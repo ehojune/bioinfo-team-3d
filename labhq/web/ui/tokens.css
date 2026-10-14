@@ -1,0 +1,78 @@
+/* #546: PI selection E. Values stay paired for light/dark themes. */
+:root{
+  color-scheme: light;
+
+  /* 색 · 표면 */
+  --ds-paper:      light-dark(#FAF8F4, #14181E);
+  --ds-surface:    light-dark(#FFFFFF, #1C222A);
+  --ds-sunk:       light-dark(#F2EFE9, #10141A);
+  /* 색 · 글자 */
+  --ds-ink:        light-dark(#1C2430, #EEF0F2);
+  --ds-ink-2:      light-dark(#47525F, #C3CAD2);
+  --ds-ink-3:      light-dark(#5B6672, #9AA5B0);
+  /* 색 · 선 */
+  --ds-line:       light-dark(#E2DDD3, #2B323B);
+  --ds-line-ui:    light-dark(#7F8790, #6F7A86);
+  /* 색 · 강조 = 내가 할 일 */
+  --ds-accent:     light-dark(#2848A6, #9DB4FF);
+  --ds-on-accent:  light-dark(#FFFFFF, #0F1A3D);
+  --ds-accent-soft:light-dark(#E9EDF9, #232C47);
+  /* 색 · 상태 */
+  --ds-work:       light-dark(#1D6B40, #7FD0A1);
+  --ds-work-bg:    light-dark(#E6F1EA, #1B2E24);
+  --ds-hpc:        light-dark(#7A3E9D, #D2B2EC);
+  --ds-hpc-bg:     light-dark(#F1E9F6, #2E2238);
+  --ds-wait:       light-dark(#505B67, #AAB4BE);
+  --ds-wait-bg:    light-dark(#EDEFF1, #262D35);
+  --ds-warn:       light-dark(#7A4A00, #F2C466);
+  --ds-warn-bg:    light-dark(#FFF0D0, #3A2E12);
+  --ds-err:        light-dark(#A32020, #FF9E96);
+  --ds-err-bg:     light-dark(#FBE8E6, #3C1E1C);
+  /* 색 · 가구와 일러스트 */
+  --ds-furn:       light-dark(#D9D2C4, #3B3F46);
+  --ds-furn-line:  light-dark(#BDB5A4, #4E535B);
+  --ds-il-cream:   #F1E6D4;  --ds-il-dark: #2A2018;  --ds-il-beak: #E0A03A;
+  --ds-av-penguin: #2B3645;  --ds-av-owl: #8B6B4A;   --ds-av-bear: #8A5A3C;  --ds-av-squirrel: #C9803F;
+  --ds-av-otter:   #8E6E52;  --ds-av-raccoon: #8D97A4; --ds-av-hedgehog: #5E4B3C; --ds-av-octopus: #B8605F;
+  --ds-av-bg:      light-dark(#EDE6DA, #2F2B26);
+
+  /* 서체 */
+  --ds-font-sans:  "Pretendard Variable", Pretendard, -apple-system, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif;
+  --ds-font-serif: "Noto Serif KR", "Nanum Myeongjo", "Batang", "Apple Myungjo", serif;
+  --ds-font-mono:  ui-monospace, "SFMono-Regular", Consolas, "Malgun Gothic", monospace;
+  /* 글자 크기 6단 (rem) */
+  --ds-fs-1: .75rem;     /* 12  배지 전용 */
+  --ds-fs-2: .8125rem;   /* 13  보조 최소 */
+  --ds-fs-3: .9375rem;   /* 15  본문 */
+  --ds-fs-4: 1.0625rem;  /* 17  소제목 */
+  --ds-fs-5: 1.375rem;   /* 22  화면 제목 */
+  --ds-fs-6: 1.75rem;    /* 28  큰 숫자·첫 제목 */
+  /* 간격 7단 */
+  --ds-sp-1: 4px;  --ds-sp-2: 8px;  --ds-sp-3: 12px; --ds-sp-4: 16px; --ds-sp-5: 24px; --ds-sp-6: 32px; --ds-sp-7: 48px;
+  /* 반경 */
+  --ds-r-1: 8px;  --ds-r-2: 12px;  --ds-r-pill: 999px;
+  /* 높이 */
+  --ds-h-touch: 48px;  --ds-h-ctl: 44px;  --ds-h-dense: 32px;
+  /* 그림자 2단 */
+  --ds-e-1: 0 1px 2px rgb(28 36 48 / .08);
+  --ds-e-2: 0 12px 32px rgb(28 36 48 / .18);
+  /* 레이어 4단 */
+  --ds-z-sticky: 10;  --ds-z-tabbar: 20;  --ds-z-sheet: 30;  --ds-z-toast: 40;
+}
+:root[data-theme="light"]{ color-scheme: light; }
+:root[data-theme="dark"]{ color-scheme: dark; }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { color-scheme: dark; }
+}
+/* Legacy shell aliases; office illustration/status tokens migrate in later PRs. */
+:root {
+  --paper: var(--ds-paper);
+  --panel: var(--ds-surface);
+  --ink: var(--ds-ink);
+  --muted: var(--ds-ink-3);
+  --line: var(--ds-line);
+  --focus: var(--ds-accent);
+  --ui: var(--ds-font-sans);
+  --brand-font: "Jua", var(--ds-font-sans);
+}

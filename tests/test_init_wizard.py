@@ -50,6 +50,95 @@ def _digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
 
 
+@pytest.mark.parametrize("answer,enabled", [("y", True), ("Y", True), ("n", False),
+                                          ("", False), ("yes", False), ("maybe", False)])
+def test_pipeline_consent_requires_explicit_y(monkeypatch, capsys, answer, enabled):
+    prompts = []
+
+    def respond(prompt):
+        prompts.append(prompt)
+        return answer if "기여" in prompt else ""
+
+    monkeypatch.setattr("builtins.input", respond)
+    wizard.run()
+    assert _data()["policy"]["bioinfo_agent"]["pipeline_pr"] is enabled
+    assert sum("기여" in prompt and "y/N" in prompt for prompt in prompts) == 1
+    output = capsys.readouterr().out
+    assert "공개" in output and "ehojune/bioinfo-agent" in output and "fork" in output
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("force", [False, True])
+def test_pipeline_consent_is_preserved_on_reinit(monkeypatch, enabled, force):
+    wizard.run(yes=True)
+    target = Path("config/labhq.yaml")
+    data = _data()
+    data["policy"]["bioinfo_agent"].update(pipeline_pr=enabled, pipeline_repo="example/pipelines")
+    target.write_text(yaml.safe_dump(data), encoding="utf-8")
+    original = target.read_bytes()
+
+    def respond(prompt):
+        assert "기여" not in prompt
+        return ""
+
+    monkeypatch.setattr("builtins.input", respond)
+    wizard.run(force=force)
+    assert _data()["policy"]["bioinfo_agent"]["pipeline_pr"] is enabled
+    assert _data()["policy"]["bioinfo_agent"]["pipeline_repo"] == "example/pipelines"
+    if not force:
+        assert target.read_bytes() == original
+
+
+def test_pipeline_consent_yes_stays_off(monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda *_: pytest.fail("unexpected prompt"))
+    wizard.run(yes=True)
+    assert _data()["policy"]["bioinfo_agent"]["pipeline_pr"] is False
+
+
+@pytest.mark.parametrize("answer", ["n", "", "unclear"])
+async def test_pipeline_consent_decline_makes_no_github_calls(tmp_path, monkeypatch, answer):
+    from tests.test_bioinfo_pipeline_pr import fake_pipeline_api, pipeline, run_submission
+
+    monkeypatch.setattr("builtins.input", lambda prompt: answer if "기여" in prompt else "")
+    wizard.run()
+    enabled = Settings.load("config/labhq.yaml").policy.bioinfo_agent.pipeline_pr
+    calls = []
+    hub, delivered = await run_submission(tmp_path, pipeline(), fake_pipeline_api(calls), pipeline_pr=enabled)
+    try:
+        assert delivered is True and calls == []
+        assert hub.reporter.enabled() is False
+    finally:
+        hub.store.close()
+
+
+def test_pipeline_consent_dry_run_never_writes(isolated_home, tmp_path, monkeypatch):
+    (isolated_home / ".codex").mkdir()
+    (isolated_home / ".codex" / "AGENTS.md").write_text("personal", encoding="utf-8")
+    monkeypatch.setattr(wizard.secrets, "token_urlsafe", lambda *_: pytest.fail("token generated"))
+    monkeypatch.setattr("builtins.input", lambda prompt: "y" if "기여" in prompt else "")
+    seen = []
+    original_collect = doctor.collect
+
+    def collect(settings, **kwargs):
+        seen.append(settings.policy.bioinfo_agent.pipeline_pr)
+        return original_collect(settings, **kwargs)
+
+    monkeypatch.setattr(doctor, "collect", collect)
+    before = sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*"))
+    wizard.run(dry_run=True)
+    assert seen == [True]
+    assert sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*")) == before
+
+
+def test_pipeline_consent_is_per_instance(isolated_home, monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda prompt: "y" if "기여" in prompt else "")
+    cli.main(["init", "--instance", "contributing"])
+    cli.main(["init", "--instance", "local", "--yes"])
+    for name, enabled in (("contributing", True), ("local", False)):
+        path = isolated_home / ".labhq" / name / "labhq.yaml"
+        assert _data(path)["policy"]["bioinfo_agent"]["pipeline_pr"] is enabled
+
+
 def test_yes_accepts_defaults_and_summarizes_doctor(monkeypatch, capsys):
     monkeypatch.setattr(wizard, "_is_windows", lambda: True)
     monkeypatch.setattr("builtins.input", lambda *_: (_ for _ in ()).throw(AssertionError("prompt")))
@@ -161,7 +250,7 @@ def test_no_personal_claude_folder_no_claude_staff_home(isolated_home, capsys):
 def test_interactive_plugin_and_scheduler_are_recorded(tmp_path, monkeypatch, capsys):
     plugin = tmp_path / "private-checkout"
     plugin.mkdir()
-    answers = iter(["pbs", str(plugin)])
+    answers = iter(["pbs", str(plugin), "n"])
     monkeypatch.setattr("builtins.input", lambda *_: next(answers))
     wizard.run()
     data = _data()
