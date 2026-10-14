@@ -191,7 +191,15 @@ export function startLiveOffice(onState) {
         text(row, 'p', `실행 중 메모 · ${sent} · ${note.text}`);
       }
       for (const f of q.followups || []) {  // asked from the 2.5D request view; the shared reducer tracks them
-        if (f.pi_display?.status === 'translated') {
+        if (f.status === 'running') {
+          text(row, 'p', `이어 묻기: ${f.text} → 답 기다리는 중`);
+        } else if (f.status !== 'done') {
+          text(row, 'p', `이어 묻기: ${f.text} → 답하지 못함`).className = 'fu-err';
+          if (f.pi_display?.status === 'translated') {
+            expandableText(row, f.pi_display.text, {pi:true, original:f.error, forceOriginal:true,
+              attribution:'펭귄 비서실장 설명'});
+          } else text(row, 'p', f.error || '답하지 못함').className = 'fu-err';
+        } else if (f.pi_display?.status === 'translated') {
           text(row, 'p', `이어 묻기: ${f.text}`);
           expandableText(row, f.pi_display.text, {pi:true, original:f.answer || f.error, forceOriginal:true,
             attribution:'펭귄 비서실장 설명', truncated:f.answer_truncated, cutChars:f.answer_chars});

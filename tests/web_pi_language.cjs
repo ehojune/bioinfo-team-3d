@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const {test} = require('node:test');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 const root = process.env.LABHQ_WEB_TEST_ROOT || path.resolve(__dirname, '../labhq/web');
 const load = file => import('data:text/javascript;base64,' + Buffer.from(fs.readFileSync(path.join(root,file),'utf8')).toString('base64'));
 class Element {
@@ -71,4 +72,40 @@ test('follow-up translation reaches the shared 2D and 3D request state',()=>{
   const f=S.requests.get('r').followups[0];
   assert.equal(f.pi_display.text,translated.text);
   assert.equal(f.answer,'Original English answer');
+});
+
+for (const surface of ['2.5D', '3D']) test(`${surface}: translated follow-up errors remain failures`,()=>{
+  require(path.join(root,'state.js'));
+  const {S,apply}=globalThis.LabHQState.createOfficeState();
+  apply({type:'request.followup_done',request_id:'r',data:{id:'f',ok:false,error:'Input comparison failed'}});
+  apply({type:'messenger.translated',request_id:'r',data:{followup_id:'f',pi_display:translated}});
+  const q=S.requests.get('r');
+  assert.equal(q.followups[0].status,'failed');
+  if(surface==='2.5D') {
+    const source=fs.readFileSync(path.join(root,'index.html'),'utf8');
+    const start=source.indexOf('const FOLLOWUP_STATUSES =');
+    const end=source.indexOf('const reportHTML =',start);
+    const context=vm.createContext({esc:String,api:null,q});
+    const rendered=vm.runInContext(source.slice(start,end)+'\nfollowupHTML(q)',context);
+    assert.match(rendered,/class="fu-err"/);
+    assert.match(rendered,/답을 받지 못했어요/);
+    assert.match(rendered,/표를 비교해 차이를 확인하려 합니다/);
+    assert.match(rendered,/Input comparison failed/);
+    assert.doesNotMatch(rendered,/class="fu-a"/);
+  } else {
+    const source=fs.readFileSync(path.join(root,'lab3d/src/live.js'),'utf8').replace(/\r\n/g,'\n');
+    const start=source.indexOf('for (const f of q.followups || [])');
+    const end=source.indexOf('\n    }\n    requests.replaceChildren',start);
+    assert.ok(start>0 && end>start);
+    const row=new Element();
+    const text=(parent,tag,value)=>{const node=new Element(tag);node.textContent=value;parent.append(node);return node;};
+    const context=vm.createContext({q,row,text,expandableText:(parent,value,opts)=>{
+      text(parent,'p',value);text(parent,'pre',opts.original);
+    }});
+    vm.runInContext(source.slice(start,end),context);
+    assert.match(row.textContent,/답하지 못함/);
+    assert.match(row.textContent,/표를 비교해 차이를 확인하려 합니다/);
+    assert.match(row.textContent,/Input comparison failed/);
+    assert.ok(nodes(row).some(n=>n.className==='fu-err'));
+  }
 });

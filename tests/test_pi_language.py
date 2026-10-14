@@ -235,3 +235,133 @@ async def test_followup_detail_uses_same_cached_display(hub, monkeypatch):
     saved = hub.store.get('request', 'r')['followups'][0]
     assert saved['answer'] == raw and saved['pi_display']['status'] == 'translated'
     assert len(calls) == 1
+
+
+# #588 review regressions: only synthetic text and mocked model dispatch.
+SOURCES = [
+    ('task.dispatched', {'title': 'Please compare the input tables.'}),
+    ('agent.log', {'text': 'Please compare the input tables.'}),
+    ('agent.ask', {'question': 'Please compare the input tables.'}),
+    ('agent.answer', {'answer': 'Please compare the input tables.'}),
+    ('request.followup_done', {'id': 'f', 'ok': True, 'answer': 'Please compare the input tables.'}),
+    ('request.questions', {'questions': ['Please compare the input tables.']}),
+    ('request.failed', {'error': 'Please compare the input tables.'}),
+    ('request.completed', {'error': 'Please compare the input tables.'}),
+    ('github.failed', {'error': 'Please compare the input tables.'}),
+    ('request.created', {'text': 'Please compare the input tables.'}),
+    ('request.followup', {'text': 'Please compare the input tables.'}),
+    ('request.note', {'text': 'Please compare the input tables.'}),
+    ('approval.resolved', {'note': 'Please compare the input tables.'}),
+    ('approval.requested', {'id': 'a', 'pi_needs_interpretation': True,
+                            'summary': 'Please compare the input tables.'}),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('typ,data', SOURCES)
+@pytest.mark.parametrize('origin', ['text', 'project_dirs', 'references', 'error', 'unknown'])
+async def test_review_request_restriction_blocks_every_source(hub, monkeypatch, tmp_path, typ, data, origin):
+    from labhq.settings import DataZone
+    calls = mock_model(monkeypatch, hub)
+    zone = str(tmp_path / 'restricted')
+    hub.s.policy.data_zones = [DataZone(path=zone, level='restricted')]
+    req = hub.requests['r']
+    if origin == 'text': req['text'] = f'Compare {zone}/example.txt'
+    if origin == 'project_dirs': req['project_dirs'] = [zone]
+    if origin == 'references': req['references'] = [{'kind': 'path', 'value': zone}]
+    if origin == 'error':
+        def broken(_rid): raise ValueError('classification unavailable')
+        monkeypatch.setattr(hub.orchestrator, '_request_restricted', broken)
+    if origin == 'unknown': monkeypatch.setattr(hub.orchestrator, '_request_restricted', lambda rid: None)
+    # No task ID or event-level restricted marker: consult the request itself.
+    await hub.publish(event(typ, **data))
+    await drain(hub)
+    assert calls == []
+    assert hub.events[0]['data']['pi_display']['status'] == 'failed'
+    assert hub.store.all('pi_translation_budget') == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('timeout', [False, True])
+async def test_review_translation_updates_active_budget_once(hub, monkeypatch, timeout):
+    orch = hub.orchestrator
+    orch.cost['r'] = 1.0
+    calls = mock_model(monkeypatch, hub)
+    if timeout:
+        async def dispatch(task):
+            calls.append(task)
+            await asyncio.Event().wait()
+        async def cancel(tid): pass
+        monkeypatch.setattr(hub, 'dispatch', dispatch)
+        monkeypatch.setattr(hub, 'cancel_task', cancel)
+        hub.s.pi_language.timeout_s = 0.01
+    await hub.publish(event())
+    await drain(hub)
+    spent, unknown, bound = orch._budget_bound('r', 5)
+    assert spent == pytest.approx(1.0 if timeout else 1.02)
+    assert unknown == int(timeout)
+    assert bound > spent if timeout else bound == spent
+    before = orch._budget_bound('r', 5)
+    orch._count_recorded_costs('r')
+    hub.pi_interpreter.schedule(hub.events[0])
+    await drain(hub)
+    assert orch._budget_bound('r', 5) == before
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('exhausted', ['active', 'unknown'])
+async def test_review_spent_request_does_not_translate(hub, monkeypatch, exhausted):
+    calls = mock_model(monkeypatch, hub)
+    hub.orchestrator.cost['r'] = 5 if exhausted == 'active' else 1
+    if exhausted == 'unknown':
+        hub.s.policy.budget.per_task_usd = 5
+        hub.orchestrator.cost_unknown['r'] = {'unreported'}
+    await hub.publish(event())
+    await drain(hub)
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_review_english_terms_in_korean_translation(hub, monkeypatch):
+    text = 'single-cell RNA-seq 분석을 실행합니다.'
+    mock_model(monkeypatch, hub, text=text)
+    await hub.publish(event())
+    await drain(hub)
+    assert hub.events[0]['data']['pi_display']['text'] == text
+
+
+def test_review_interpreter_is_not_a_request_step(hub):
+    hub.requests['r']['plan'] = {'steps': [{'id': 'analysis', 'agent_id': 'engineer'}]}
+    for tid, kind, step in [('internal', 'pi_interpretation', None), ('work', 'step', 'analysis')]:
+        hub.store.put('task', tid, {'request_id': 'r', 'accepted': True, 'kind': kind, 'step_id': step,
+                                  'payload': {'agent_id': 'chief_of_staff'}})
+    assert [t['id'] for t in hub.running_tasks()] == ['work']
+    assert set(hub.request_summary(hub.requests['r'])['step_progress']['steps']) == {'analysis'}
+    snap = hub.snapshot()['data']
+    assert [t['id'] for t in snap['running_tasks']] == ['work']
+    assert set(snap['requests'][0]['step_status']) == {'analysis'}
+    assert set(snap['requests'][0]['step_details']) == {'analysis'}
+
+
+@pytest.mark.asyncio
+async def test_review_shutdown_waits_for_terminal_translation(hub, monkeypatch):
+    entered, finish = asyncio.Event(), asyncio.Event()
+    hub.requests['r']['status'] = 'done'
+    async def dispatch(task):
+        entered.set()
+        await finish.wait()
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                          text='입력 표를 확인했습니다.', cost_usd=0.02)
+    monkeypatch.setattr(hub, 'dispatch', dispatch)
+    await hub.publish(event('request.followup_done', id='f', ok=True, answer='Please compare the tables.'))
+    await entered.wait()
+    try:
+        readiness = hub.shutdown_readiness()
+        assert readiness['ready'] is False
+        assert any(f['id'] == 'r' and f['stage'] == 'pi_interpretation' for f in readiness['finishing'])
+    finally:
+        finish.set()
+        await drain(hub)
+    assert hub.shutdown_readiness()['ready'] is True
+    assert hub.events[0]['data']['pi_display']['status'] == 'translated'

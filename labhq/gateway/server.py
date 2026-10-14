@@ -884,6 +884,9 @@ class Hub:
         finishing += [{"id": rid, "status": (self.requests.get(rid) or {}).get("status"),
                        "text": (self.requests.get(rid) or {}).get("text"), "stage": "result_storage"}
                       for rid, task in self.result_storage.tasks.items() if not task.done()]
+        finishing += [{"id": rid, "status": (self.requests.get(rid) or {}).get("status"),
+                       "text": (self.requests.get(rid) or {}).get("text"), "stage": "pi_interpretation"}
+                      for task, rid in self.pi_interpreter.tasks.items() if not task.done()]
         return {"requests": requests, "followups": followups, "recruits": recruits, "finishing": finishing,
                 "ready": not (requests or followups or recruits or finishing)}
 
@@ -898,6 +901,8 @@ class Hub:
             return []
         selected: dict[tuple[str, str], tuple[tuple[int, float], dict]] = {}
         for tid, entry in (self.store.all("task") if tasks is None else tasks).items():
+            if entry.get("kind") == "pi_interpretation":
+                continue  # Display work never adds a step to the request's plan/progress.
             req = self.requests.get(entry.get("request_id"), {})
             if not entry.get("accepted") or not is_active_request(req.get("status")):
                 continue
