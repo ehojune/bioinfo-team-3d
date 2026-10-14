@@ -74,7 +74,8 @@ def requirements(topics: Any, checklists: Mapping[str, list[ChecklistItem]]) -> 
     """Return declared-topic requirements once per id, preserving file/topic order.
 
     Two declared topics can list one id with different checks (``library_qc`` for ATAC and ChIP). The plan answers
-    an id once, so the checks are joined instead of the later topic's check being dropped."""
+    an id once, so the checks are joined instead of the later topic's check being dropped. Every sharing topic is
+    retained even when its check text is identical, because topic-qualified answers are validated one by one."""
     selected = set(topics) if isinstance(topics, list) else set()
     found: dict[str, ChecklistItem] = {}
     for topic, items in checklists.items():
@@ -83,9 +84,15 @@ def requirements(topics: Any, checklists: Mapping[str, list[ChecklistItem]]) -> 
                 prior = found.get(item.id)
                 if prior is None:
                     found[item.id] = item
-                elif item.check not in prior.check.split(" / "):
-                    found[item.id] = ChecklistItem(item.id, f"{prior.check} / {item.check}",
-                                                   f"{prior.why} / {item.why}", f"{prior.topic},{item.topic}")
+                else:
+                    checks = prior.check.split(" / ")
+                    whys = prior.why.split(" / ")
+                    found[item.id] = ChecklistItem(
+                        item.id,
+                        " / ".join([*checks, *([] if item.check in checks else [item.check])]),
+                        " / ".join([*whys, *([] if item.why in whys else [item.why])]),
+                        f"{prior.topic},{item.topic}",
+                    )
     return list(found.values())
 
 
@@ -176,6 +183,21 @@ def _placeholder(reason: str) -> bool:
     return "".join(ch for ch in reason.lower() if ch.isalnum()) in PLACEHOLDER_REASONS
 
 
+def _answer_values(body: dict[str, Any], item: ChecklistItem) -> list[tuple[str, Any]]:
+    """Bare answer, or one qualified answer slot per topic sharing the id."""
+    if item.id in body:
+        return [(item.id, body[item.id])]
+    topics = item.topic.split(",")
+    if len(topics) == 1:
+        return [(item.id, None)]
+    values = []
+    for topic in topics:
+        keys = [key for key in (f"{topic}.{item.id}", f"{topic}/{item.id}") if key in body]
+        key = keys[0] if len(keys) == 1 else f"{topic}.{item.id}"
+        values.append((key, body.get(key) if len(keys) == 1 else None))
+    return values
+
+
 def answer_errors(answers: Any, required: list[ChecklistItem], step_ids: list[str]) -> list[str]:
     """Validate required answers and step references without rejecting unrelated extra keys."""
     if not required:
@@ -184,19 +206,7 @@ def answer_errors(answers: Any, required: list[ChecklistItem], step_ids: list[st
     errors: list[str] = []
     known = set(step_ids)
     for item in required:
-        values = [(item.id, body.get(item.id))]
-        topics = item.topic.split(",")
-        if item.id not in body and len(topics) > 1:
-            qualified = []
-            for topic in topics:
-                keys = [key for key in (f"{topic}.{item.id}", f"{topic}/{item.id}") if key in body]
-                if len(keys) != 1:
-                    qualified = []
-                    break
-                qualified.append((keys[0], body[keys[0]]))
-            if qualified:
-                values = qualified
-        for answer_id, value in values:
+        for answer_id, value in _answer_values(body, item):
             if skip_reason(value) == "":
                 errors.append(f"checklist.{answer_id} must answer with a reason: "
                               "assumption: <why it could not be done> or "
@@ -227,10 +237,16 @@ def skipped(answers: Any, required: list[ChecklistItem]) -> list[tuple[str, str]
     body = answers if isinstance(answers, dict) else {}
     found = []
     for item in required:
-        value = body.get(item.id)
-        reason = skip_reason(value)
-        if reason and value.strip().startswith("assumption:"):
-            found.append((label(item), reason))
+        for answer_id, value in _answer_values(body, item):
+            reason = skip_reason(value)
+            if reason and value.strip().startswith("assumption:"):
+                if answer_id == item.id:
+                    name = label(item)
+                elif answer_id.endswith(f".{item.id}"):
+                    name = f"{answer_id[:-len(item.id) - 1]}/{item.id}"
+                else:
+                    name = answer_id
+                found.append((name, reason))
     return found
 
 
