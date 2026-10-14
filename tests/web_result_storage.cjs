@@ -64,3 +64,15 @@ test('publishing waits for PI review and preserves the editor preview',async()=>
   ui.syncDecisionCards(host,[card],[],{requests,disabled:()=>true});
   assert.equal(reviewed._decisionParts.approve.disabled,true);
 });
+
+test('publish card names the PDF line, included or skipped',async()=>{
+  const ui=await mod, host=new Element();
+  const skipped={id:'p1',kind:'result_publish',request_id:'r',detail:{documents:{'README.md':'draft'},
+    pdf:'PDF는 포함하지 않았어요: 이 PC에서 Edge나 Chrome을 찾지 못했어요.'}};
+  const [row]=ui.syncDecisionCards(host,[skipped],[],{requests:new Map([['r',{pi_reviewed_at:1}]])});
+  assert.match(row.textContent,/보고서 PDF/);
+  assert.match(row.textContent,/PDF는 포함하지 않았어요: 이 PC에서 Edge나 Chrome을 찾지 못했어요\./);
+  const included={id:'p2',kind:'result_publish',request_id:'r',detail:{documents:{'README.md':'draft'},pdf:'포함: report.pdf (1.2 MB)'}};
+  const [row2]=ui.syncDecisionCards(new Element(),[included],[],{requests:new Map([['r',{pi_reviewed_at:1}]])});
+  assert.match(row2.textContent,/포함: report\.pdf \(1\.2 MB\)/);
+});

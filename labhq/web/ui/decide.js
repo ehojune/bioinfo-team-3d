@@ -375,6 +375,7 @@ const DETAIL_LABELS = {
   research_continue: { round: '이어 가기 차수', limit: '이어 가기 상한', plan_sha256: '지난 계획 plan hash' },
   question: { why_blocked: '막힌 이유', from: '묻는 직원' },
   resume: { created_at: '접수 시각', steps: '남은 단계' },
+  result_publish: { pdf: '보고서 PDF' },
 };
 // A resume card's epoch seconds read as a local date, the way the gateway writes it in the summary.
 const two = n => String(n).padStart(2, '0');

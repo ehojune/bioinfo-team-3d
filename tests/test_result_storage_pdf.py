@@ -1,0 +1,228 @@
+"""The repository edition's report.pdf and figure links (#584 item 4). GitHub is a mock transport; the PDF builder is
+mocked or, where noted, runs for real with no browser found."""
+import base64
+from pathlib import Path
+
+import pytest
+
+from labhq.report_figures import classify, image_links
+from labhq.report_pdf import NO_BROWSER, ReportFile
+from labhq.result_storage import ResultStorage
+from labhq.settings import DataZone, GitHubSettings
+from tests.test_result_storage import Hub, fake_github
+
+PDF = b"%PDF-1.7\n" + b"synthetic report body " * 80
+REPORT = ("# 결과\n\n핵심 그림입니다.\n\n![핵심 그림](wd1/outputs/plot.png)\n\n![미보고 그림](wd1/outputs/extra.png)\n\n"
+          "![묶음 밖](../../secret.png)\n\n![로컬 경로](C:/Users/alice/plot.png)\n\n![원격](https://example.org/a.png)\n\n"
+          "코드 안의 `![예](wd1/outputs/none.png)`는 그대로 둡니다.\n")
+
+
+def prepare(tmp_path, monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token-for-tests")
+    hub = Hub(tmp_path)
+    bundle = Path(hub.s.runner.workspace_root) / "requests/req_test"
+    outputs = bundle / "steps/s1/outputs"
+    outputs.mkdir(parents=True)
+    (outputs / "plot.png").write_bytes(b"\x89PNG synthetic plot")
+    (outputs / "extra.png").write_bytes(b"\x89PNG synthetic extra")
+    (bundle / "MANIFEST.tsv").write_text("relative_path\tstatus\nsteps/s1/outputs/plot.png\tcopied\n"
+                                         "steps/s1/outputs/extra.png\tcopied (unreported)\n", encoding="utf-8")
+    hub.requests["req_test"].update(
+        status="done", pi_reviewed_at=1, report=REPORT,
+        results={"s1": {"workdir_id": "wd1", "outputs": ["outputs/plot.png", "outputs/extra.png"]}})
+    return hub, Path(hub.s.runner.workspace_root) / "requests/req_test-editor"
+
+
+def builder(seen, data=PDF):
+    def build(req, settings, tasks=None, *, source=None, **kwargs):
+        seen.append({"source": source, "req": req,
+                     "files": sorted(path.relative_to(source).as_posix() for path in source.rglob("*") if path.is_file()),
+                     "report": (source / "report.md").read_text(encoding="utf-8")})
+        return ReportFile("pdf", data, "", "req_test-report.pdf", "application/pdf")
+    return build
+
+
+def approve_all(hub, cards):
+    async def approve(**kw):
+        cards.append(kw)
+        return {"approved": True}
+    hub.request_approval = approve
+
+
+def puts(calls):
+    return {path.split("/contents/")[1]: body for method, path, body in calls if method == "PUT"}
+
+
+async def publish(hub, calls):
+    service = ResultStorage(hub, fake_github(calls, exists=True))
+    await service.select("req_test", {"mode": "existing", "repo": "owner/study"})
+    await service.finish("req_test")
+    await service.close()
+
+
+async def test_pdf_is_in_the_edition_and_uploaded_as_binary(tmp_path, monkeypatch):
+    hub, edition = prepare(tmp_path, monkeypatch)
+    seen, calls, cards = [], [], []
+    monkeypatch.setattr("labhq.result_storage.build_report_file", builder(seen))
+    approve_all(hub, cards)
+    await publish(hub, calls)
+    assert len(seen) == 1 and seen[0]["source"] == edition  # printed from the reviewed edition, not the raw bundle
+    assert "steps/s1/outputs/plot.png" in seen[0]["files"] and "steps/s1/outputs/extra.png" not in seen[0]["files"]
+    assert "(steps/s1/outputs/plot.png)" in seen[0]["report"] and "(wd1/outputs/plot.png)" not in seen[0]["report"]
+    assert seen[0]["req"]["report_appendix"] == "" and "alice" not in seen[0]["req"]["report"]
+    assert (edition / "report.pdf").read_bytes() == PDF
+    sent = puts(calls)
+    pdf = sent["labhq/results/req_test/report.pdf"]
+    assert base64.b64decode(pdf["content"]) == PDF and pdf["message"] == "연구 결과 PDF"
+    assert "(report.pdf)" in base64.b64decode(sent["labhq/results/req_test/README.md"]["content"]).decode()
+    assert "(report.pdf)" in (edition / "README.md").read_text(encoding="utf-8")
+    assert cards[0]["detail"]["pdf"].startswith("포함: report.pdf")
+    assert hub.requests["req_test"]["result_storage"]["status"] == "published"
+    assert hub.requests["req_test"]["result_storage"]["pdf"]["included"] is True
+
+
+@pytest.mark.parametrize("case, reason", [
+    ("no_browser", "Edge나 Chrome을 찾지 못했어요"),
+    ("print_failed", "브라우저가 PDF를 만들지 못했어요"),
+    ("raises", "오류가 나서"),
+    ("real_builder_no_browser", "Edge나 Chrome을 찾지 못했어요"),
+])
+async def test_pdf_skipped_with_a_reason_and_publishing_still_goes_through(tmp_path, monkeypatch, case, reason):
+    hub, edition = prepare(tmp_path, monkeypatch)
+    calls, cards = [], []
+    if case == "no_browser":
+        monkeypatch.setattr("labhq.result_storage.build_report_file", lambda *a, **k: ReportFile(
+            "html", b"<html></html>", NO_BROWSER, "x.html", "text/html"))
+    elif case == "print_failed":
+        monkeypatch.setattr("labhq.result_storage.build_report_file", lambda *a, **k: ReportFile(
+            "html", b"<html></html>", "브라우저가 PDF를 만들지 못해 HTML로 드립니다(종료 코드 1).", "x.html", "text/html"))
+    elif case == "raises":
+        def boom(*a, **k):
+            raise RuntimeError("printer exploded at C:/Users/alice/secret")
+        monkeypatch.setattr("labhq.result_storage.build_report_file", boom)
+    else:  # the real builder; a browser may exist on this PC, so none is found
+        monkeypatch.setattr("labhq.report_pdf.find_browser", lambda configured=None: None)
+    approve_all(hub, cards)
+    await publish(hub, calls)
+    line = cards[0]["detail"]["pdf"]
+    assert line.startswith("PDF는 포함하지 않았어요: ") and reason in line and "alice" not in line
+    assert not (edition / "report.pdf").exists()
+    sent = puts(calls)
+    assert "labhq/results/req_test/report.pdf" not in sent
+    readme = base64.b64decode(sent["labhq/results/req_test/README.md"]["content"]).decode()
+    assert line in readme and "(report.pdf)" not in readme
+    assert line in (edition / "README.md").read_text(encoding="utf-8")
+    assert "labhq/results/req_test/report.md" in sent  # the rest of the edition is published
+    assert hub.requests["req_test"]["result_storage"]["status"] == "published"
+
+
+async def test_size_cap_from_settings(tmp_path, monkeypatch):
+    hub, edition = prepare(tmp_path, monkeypatch)
+    assert hub.s.github.edition_pdf_max_mb == 20
+    hub.s.github.edition_pdf_max_mb = 1
+    seen, calls, cards = [], [], []
+    monkeypatch.setattr("labhq.result_storage.build_report_file",
+                        builder(seen, b"%PDF-1.7\n" + b"0" * (1024 * 1024)))  # one byte over 1 MB
+    approve_all(hub, cards)
+    await publish(hub, calls)
+    assert cards[0]["detail"]["pdf"] == "PDF는 포함하지 않았어요: PDF가 1.0 MB라 한도 1 MB를 넘어요."
+    assert "labhq/results/req_test/report.pdf" not in puts(calls) and not (edition / "report.pdf").exists()
+    assert hub.requests["req_test"]["result_storage"]["status"] == "published"
+
+
+async def test_pdf_exactly_at_the_cap_is_kept(tmp_path, monkeypatch):
+    hub, edition = prepare(tmp_path, monkeypatch)
+    hub.s.github.edition_pdf_max_mb = 1
+    data = b"%PDF-1.7\n" + b"0" * (1024 * 1024 - 9)
+    monkeypatch.setattr("labhq.result_storage.build_report_file", builder([], data))
+    calls = []
+    approve_all(hub, [])
+    await publish(hub, calls)
+    assert base64.b64decode(puts(calls)["labhq/results/req_test/report.pdf"]["content"]) == data
+
+
+def test_cap_setting_is_positive():
+    assert GitHubSettings().edition_pdf_max_mb == 20
+    with pytest.raises(ValueError):
+        GitHubSettings(edition_pdf_max_mb=0)
+
+
+async def test_figure_links_resolve_inside_the_edition(tmp_path, monkeypatch):
+    hub, edition = prepare(tmp_path, monkeypatch)
+    monkeypatch.setattr("labhq.report_pdf.find_browser", lambda configured=None: None)
+    service = ResultStorage(hub, fake_github([], exists=True))
+    await service.select("req_test", {"mode": "local"})
+    await service.finish("req_test")
+    await service.close()
+    kept = 0
+    for name in ("report.md", "README.md"):
+        text = (edition / name).read_text(encoding="utf-8")
+        for link in image_links(text):
+            kind, value = classify(link.target)
+            if kind == "remote":
+                assert link.target.startswith("https://example.org/")  # not a path into the bundle
+                continue
+            assert kind == "local" and (edition / value).is_file(), (name, link.target)
+            kept += 1
+    assert kept == 2  # plot.png in report.md and in the README excerpt
+    report = (edition / "report.md").read_text(encoding="utf-8")
+    assert "![핵심 그림](steps/s1/outputs/plot.png)" in report
+    assert "*(그림 생략: 미보고 그림)*" in report and "*(그림 생략: 묶음 밖)*" in report
+    assert "*(그림 생략: 로컬 경로)*" in report and "alice" not in report
+    assert "`![예](wd1/outputs/none.png)`" in report  # code stays as written
+    assert (edition / "steps/s1/outputs/plot.png").is_file() and not (edition / "steps/s1/outputs/extra.png").exists()
+
+
+async def test_controlled_request_is_not_published_or_printed(tmp_path, monkeypatch):
+    hub, edition = prepare(tmp_path, monkeypatch)
+    seen, calls = [], []
+    monkeypatch.setattr("labhq.result_storage.build_report_file", builder(seen))
+    service = ResultStorage(hub, fake_github(calls, exists=True))
+    await service.select("req_test", {"mode": "existing", "repo": "owner/study"})
+    hub.s.policy.data_zones = [DataZone(path="/controlled", level="restricted")]
+    hub.requests["req_test"]["text"] = "Analyze /controlled/cohort.tsv"
+    async def never(**kw):
+        raise AssertionError("no publish card for a controlled-data request")
+    hub.request_approval = never
+    await service.finish("req_test")
+    await service.close()
+    assert hub.requests["req_test"]["result_storage"]["status"] == "local"
+    assert seen == [] and not edition.exists()
+    assert not any(c[0] in {"POST", "PUT"} for c in calls)
+
+
+async def test_resumed_draft_uploads_the_pdf_it_already_printed(tmp_path, monkeypatch):
+    hub, edition = prepare(tmp_path, monkeypatch)
+    seen, calls, answers = [], [], iter([{"approved": False, "state": "timed_out"}, {"approved": True}])
+    monkeypatch.setattr("labhq.result_storage.build_report_file", builder(seen))
+    cards = []
+    async def answer(**kw):
+        cards.append(kw)
+        return next(answers)
+    hub.request_approval = answer
+    service = ResultStorage(hub, fake_github(calls, exists=True))
+    await service.select("req_test", {"mode": "existing", "repo": "owner/study"})
+    await service.finish("req_test")
+    assert hub.requests["req_test"]["result_storage"]["status"] == "draft" and not puts(calls)
+    await service.finish("req_test")  # reads the folder back, binary PDF included
+    await service.close()
+    assert len(seen) == 1 and hub.requests["req_test"]["result_storage"]["status"] == "published"
+    assert base64.b64decode(puts(calls)["labhq/results/req_test/report.pdf"]["content"]) == PDF
+    assert cards[1]["detail"]["pdf"].startswith("포함: report.pdf")
+
+
+async def test_resumed_draft_refuses_a_file_that_is_not_a_pdf(tmp_path, monkeypatch):
+    hub, edition = prepare(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr("labhq.result_storage.build_report_file", builder([]))
+    answers = iter([{"approved": False, "state": "timed_out"}, {"approved": True}])
+    async def answer(**kw):
+        return next(answers)
+    hub.request_approval = answer
+    service = ResultStorage(hub, fake_github(calls, exists=True))
+    await service.select("req_test", {"mode": "existing", "repo": "owner/study"})
+    await service.finish("req_test")
+    (edition / "report.pdf").write_bytes(b"<html>not a pdf</html>")
+    await service.finish("req_test")
+    await service.close()
+    assert hub.requests["req_test"]["result_storage"]["status"] == "failed" and not puts(calls)

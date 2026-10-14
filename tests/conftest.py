@@ -48,3 +48,10 @@ def _no_host_private_paths(tmp_path_factory, monkeypatch):
     exist on the machine; tests/test_private_paths.py sets the real functions back where it needs them."""
     monkeypatch.setattr(private_paths, "host_home", lambda: str(tmp_path_factory.getbasetemp() / "empty-home"))
     monkeypatch.setattr(private_paths, "_labhq_entries", lambda settings, home: [])
+
+
+@pytest.fixture(autouse=True)
+def _no_real_browser(monkeypatch):
+    """The report PDF needs an installed Edge or Chrome, and the repository edition prints one (#584). No test starts a
+    real browser: a test that prints patches `find_browser` or `subprocess.run` itself, as tests/test_report_pdf.py does."""
+    monkeypatch.setattr("labhq.report_pdf.find_browser", lambda configured=None: None)

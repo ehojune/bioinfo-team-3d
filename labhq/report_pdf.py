@@ -609,21 +609,25 @@ def _save(folder: Path, name: str, data: bytes) -> None:
 
 
 def build_report_file(req: Mapping[str, Any], settings: Any, tasks: Mapping[str, Any] | None = None, *,
-                      timeout: float = PRINT_TIMEOUT_S, now: datetime | None = None) -> ReportFile:
+                      timeout: float = PRINT_TIMEOUT_S, now: datetime | None = None,
+                      source: Path | None = None) -> ReportFile:
     """The PDF of a finished request's report, or its HTML and the reason there is no PDF.
 
     The output is cached next to the request bundle (``requests/<id>-report/``) and reused while the report, the bundle
-    manifest and RENDER_VERSION are unchanged. Raises ReportRefused for an unfinished or controlled-data request."""
+    manifest and RENDER_VERSION are unchanged. Raises ReportRefused for an unfinished or controlled-data request.
+
+    ``source``: read ``report.md`` and the figures from this folder (the reviewed repository edition, #584) instead of
+    the request bundle, and neither read nor write the cache."""
     check_buildable(req, settings, tasks)
     rid = str(req.get("id") or "")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", rid):
         raise ReportRefused("요청 번호가 올바르지 않아요.")
     requests_root = settings.path(settings.runner.workspace_root).resolve() / "requests"
-    bundle = requests_root / rid
+    bundle = source if source is not None else requests_root / rid
     bundle = bundle if _plain_dir(bundle) else None
     cache = requests_root / f"{rid}-report"
     key = _cache_key(req, bundle)
-    usable = _cache_usable(requests_root, cache)
+    usable = source is None and _cache_usable(requests_root, cache)
     with _LOCK:
         try:
             if not usable:

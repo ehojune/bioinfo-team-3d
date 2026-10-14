@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import copy
 import csv
 import json
 import os
+from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
 import re
 from urllib.parse import quote
@@ -15,6 +17,8 @@ from .models import ApprovalRequest, Task
 from .policy import touches, restricted_paths
 from .intake import reference_dirs
 from .recruit.provenance import touches_restricted
+from .report_figures import classify, figure_owners, image_links, link_workdir_figures, output_exists
+from .report_pdf import NO_BROWSER, ReportRefused, build_report_file
 from .request_bundle import _POSIX_ABS, _WINDOWS_ABS
 
 _REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
@@ -24,6 +28,8 @@ _ASSIGNMENT = re.compile(r"(?im)\b((?:api[_-]?key|token|password|secret)\s*[:=]\
 _TEXT_OUTPUTS = {".md", ".txt", ".svg", ".csv", ".tsv", ".py", ".r", ".sh", ".json"}
 _IMAGE_OUTPUTS = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
 _DOCUMENT_LINKS = "[전체 결과·그림·표](report.md) · [진행 기록](PROGRESS.md) · [재현 방법](REPRODUCE.md) · [참고 자료](SOURCES.md)"
+_PDF_NAME = "report.pdf"
+_GENERATED = ("README.md", "report.md", "PROGRESS.md", "REPRODUCE.md", "SOURCES.md")  # edition documents that may link a figure
 
 
 def plain_path(path):
@@ -78,6 +84,35 @@ def edition_assets(req, settings):
     return assets, images
 
 
+def edition_figure_links(text: str, req: dict, settings, included) -> str:
+    """Make every local figure link of an edition document resolve to a file the edition holds (#584).
+
+    The report links ``<workdir_id>/outputs/<file>``; `edition_assets` copies a reported output to its bundle path
+    ``steps/<step_id>/outputs/<file>``, so the link is rewritten to that. A link to a file the edition does not hold
+    (unreported, too large, a type left out) or to a path outside it becomes a plain-text note. ``included`` holds the
+    edition's file names; http(s) and data: links are not paths into the bundle and stay."""
+    results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
+    bundle = settings.path(settings.runner.workspace_root) / "requests" / req["id"]
+    text = link_workdir_figures(text, figure_owners(results),
+                                output_exists(results, bundle if plain_path(bundle) and bundle.is_dir() else None))
+    pieces, last = [], 0
+    for link in image_links(text):
+        kind, value = classify(link.target, lambda name: name in included)
+        if kind == "remote" or (kind == "local" and value in included):
+            continue
+        pieces += [text[last:link.start], f"*(그림 생략: {link.alt.strip() or '그림'})*"]
+        last = link.end
+    return "".join(pieces) + text[last:] if pieces else text
+
+
+def pdf_skip_line(reason: str) -> str:
+    return f"PDF는 포함하지 않았어요: {reason}"
+
+
+def pdf_cap_mb(settings) -> float:
+    return float(settings.github.edition_pdf_max_mb)
+
+
 def clean_document(text: str, settings, req: dict) -> str:
     text = sanitize(text, settings.policy, [os.environ.get(settings.github.token_env, "")], limit=None)
     text = publish_clean(text, settings, [req], limit=None)
@@ -86,9 +121,13 @@ def clean_document(text: str, settings, req: dict) -> str:
     return _ASSIGNMENT.sub(r"\1<redacted-secret>", _PRIVATE_PATH.sub("<local-path>", text))
 
 
-def draft_documents(req: dict, settings) -> dict[str, str]:
-    """Only derived prose enters this edition. Raw bundle data and binary files stay local."""
+def draft_documents(req: dict, settings, included=None) -> dict[str, str]:
+    """Only derived prose enters this edition. Raw bundle data and binary files stay local.
+
+    ``included``: the edition's file names; the report's figure links are made to resolve to them (#584)."""
     report = str(req.get("report") or "결과 보고서가 없습니다.")
+    if included is not None:
+        report = edition_figure_links(report, req, settings, included)  # before cleaning, which would cut a path's ")"
     steps = (req.get("plan") or {}).get("steps") or []
     progress = ["# 진행 기록", "", *[f"- {s.get('id')}: {s.get('instruction', '')}" for s in steps],
                 "", "## 결정·카드", json.dumps(req.get("clarifications") or [], ensure_ascii=False, indent=2),
@@ -268,6 +307,7 @@ class ResultStorage:
             if controlled_request(req, self.s):
                 saved.update(status="local", warning="통제 데이터가 포함된 요청은 로컬 묶음에만 남깁니다.")
                 return
+            pdf = None
             if saved.get("status") == "draft":
                 # Resume the exact on-disk edition the PI was reviewing, without another paid task.
                 target = Path(saved["draft_path"])
@@ -279,15 +319,20 @@ class ResultStorage:
                         raise ValueError("linked editor file")
                     if path.is_file():
                         name = path.relative_to(target).as_posix()
-                        if path.suffix.lower() in _IMAGE_OUTPUTS:
+                        if name == _PDF_NAME:
+                            pdf = path.read_bytes()
+                        elif path.suffix.lower() in _IMAGE_OUTPUTS:
                             images[name] = path.read_bytes()
                         else:
                             docs[name] = path.read_bytes().decode("utf-8")
                 if "README.md" not in docs:
                     raise ValueError("missing editor README")
+                if pdf is not None and (not pdf.startswith(b"%PDF-") or len(pdf) > pdf_cap_mb(self.s) * 1024 * 1024):
+                    raise ValueError("invalid editor PDF")
             else:
-                docs = draft_documents(req, self.s)
                 assets, images = edition_assets(req, self.s)
+                included = {*assets, *images}
+                docs = draft_documents(req, self.s, included)
                 links = "\n".join(f"- [{name}]({quote(name, safe='/')})" for name in [*assets, *images])
                 if links:
                     docs["README.md"] += "\n## 그림·표·실행 파일\n\n" + links + "\n"
@@ -328,18 +373,35 @@ class ResultStorage:
                 if any(f"]({name})" not in docs["README.md"] for name in
                        ("report.md", "PROGRESS.md", "REPRODUCE.md", "SOURCES.md")):
                     docs["README.md"] += "\n\n" + _DOCUMENT_LINKS + "\n"
+                for name in _GENERATED:  # the editor's README and the bundle's own text are linked here as well
+                    docs[name] = edition_figure_links(docs[name], req, self.s, included)
                 docs.update(assets)
                 # The audit bundle's MANIFEST and RO-Crate are already sealed.
                 target = self.s.path(self.s.runner.workspace_root) / "requests" / f"{rid}-editor"
                 if not plain_path(target):
                     raise ValueError("linked editor directory")
                 target.mkdir(parents=True, exist_ok=True)
-                for name, body in {**docs, **images}.items():
+
+                def write(name, body):
                     path = target / name
                     if not plain_path(path):
                         raise ValueError("linked editor file")
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_bytes(body if isinstance(body, bytes) else body.encode("utf-8"))
+
+                for name, body in {**docs, **images}.items():
+                    write(name, body)
+                pdf, reason = await self.edition_pdf(rid, req, docs["report.md"], target)
+                saved = req["result_storage"]  # PI review may replace the persisted request fields while we print.
+                if pdf:
+                    docs["README.md"] += f"\n[보고서 PDF]({_PDF_NAME})\n"
+                    write(_PDF_NAME, pdf)
+                else:
+                    docs["README.md"] += f"\n{pdf_skip_line(reason)}\n"
+                    if plain_path(target / _PDF_NAME):
+                        (target / _PDF_NAME).unlink(missing_ok=True)  # a PDF left by an earlier attempt is not this edition's
+                write("README.md", docs["README.md"])
+                saved["pdf"] = {"included": bool(pdf), "bytes": len(pdf or b""), "note": "" if pdf else pdf_skip_line(reason)}
                 saved.update(draft_path=str(target), status="draft")
                 self.hub.save_request(rid)
             if saved.get("mode") == "local":
@@ -348,17 +410,21 @@ class ResultStorage:
             if self.s.github.auto_publish_results and not req.get("pi_reviewed_at"):
                 return  # review_done schedules this saved draft again.
             if not self.s.github.auto_publish_results:
+                detail = {"documents": docs, "repo": saved.get("repo"),
+                          "images": {name: "data:" + _IMAGE_OUTPUTS[Path(name).suffix.lower()] + ";base64," +
+                                     base64.b64encode(body).decode("ascii") for name, body in images.items()},
+                          "visibility": saved.get("visibility"), "local_draft": str(target)}
+                pdf_line = (f"포함: {_PDF_NAME} ({len(pdf) / 1024 / 1024:.1f} MB)" if pdf
+                            else str((saved.get("pdf") or {}).get("note") or ""))
+                if pdf_line:
+                    detail["pdf"] = pdf_line
                 decision = await self.hub.request_approval(kind="result_publish", request_id=rid,
-                    summary=f"편집한 결과를 {saved.get('repo')}에 올릴까요?",
-                    detail={"documents": docs, "repo": saved.get("repo"),
-                            "images": {name: "data:" + _IMAGE_OUTPUTS[Path(name).suffix.lower()] + ";base64," +
-                                       base64.b64encode(body).decode("ascii") for name, body in images.items()},
-                            "visibility": saved.get("visibility"), "local_draft": str(target)})
+                    summary=f"편집한 결과를 {saved.get('repo')}에 올릴까요?", detail=detail)
                 saved = req["result_storage"]
                 if not decision.get("approved"):
                     saved["status"] = "draft" if decision.get("state") == "timed_out" else "declined"
                     return
-            await self.upload(rid, docs, images)
+            await self.upload(rid, docs, images, pdf)
             saved["status"] = "published"
         except asyncio.CancelledError:
             raise
@@ -370,7 +436,28 @@ class ResultStorage:
             await self.hub.publish({"type": "request.storage", "request_id": rid,
                                     "data": {"result_storage": saved}})
 
-    async def upload(self, rid, docs, images=None):
+    async def edition_pdf(self, rid, req, report, target) -> tuple[bytes | None, str]:
+        """``(report.pdf bytes, "")``, or ``(None, plain Korean reason)``: the report printed from the reviewed edition
+        folder (its cleaned report.md and the figures it holds), never from the raw bundle, and within the size cap."""
+        shown = copy.deepcopy(req)
+        shown.update(text=clean_document(str(req.get("text") or ""), self.s, req), report=report, report_appendix="")
+        store = getattr(self.hub, "store", None)
+        tasks = {key: copy.deepcopy(task) for key, task in store.all("task").items()
+                 if isinstance(task, dict) and task.get("request_id") == rid} if store else {}
+        try:
+            built = await asyncio.to_thread(build_report_file, shown, self.s, tasks, source=target)
+        except ReportRefused:
+            return None, "이 요청은 PDF 보고서를 만들 수 없는 상태예요."
+        except Exception:
+            return None, "PDF를 만드는 중 오류가 나서 넣지 못했어요."
+        if built.kind != "pdf" or not built.data.startswith(b"%PDF-"):
+            return None, ("이 PC에서 Edge나 Chrome을 찾지 못했어요." if built.reason == NO_BROWSER
+                          else "브라우저가 PDF를 만들지 못했어요.")
+        if len(built.data) > pdf_cap_mb(self.s) * 1024 * 1024:
+            return None, f"PDF가 {len(built.data) / 1024 / 1024:.1f} MB라 한도 {pdf_cap_mb(self.s):g} MB를 넘어요."
+        return built.data, ""
+
+    async def upload(self, rid, docs, images=None, pdf=None):
         if not self.hub.requests[rid].get("pi_reviewed_at"):
             raise ValueError("보고서 검토 완료 뒤 게시해 주세요.")
         saved = self.hub.requests[rid]["result_storage"]
@@ -397,6 +484,8 @@ class ResultStorage:
             await gh.put_file(repo, f"labhq/results/{rid}/{name}", body, "연구 결과 정리", branch)
         for name, body in (images or {}).items():
             await gh.put_image(repo, f"labhq/results/{rid}/{name}", body, branch)
+        if pdf:
+            await gh.put_binary(repo, f"labhq/results/{rid}/{_PDF_NAME}", pdf, branch, "연구 결과 PDF")
 
     async def close(self):
         for task in self.tasks.values():
