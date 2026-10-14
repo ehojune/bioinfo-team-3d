@@ -138,6 +138,7 @@ async def test_runner_waits_for_probation_and_handles_failure(runner, monkeypatc
 @pytest.mark.parametrize("changed", [False, True])
 async def test_talent_rehire_without_conversion(runner, monkeypatch, tmp_path, changed):
     from labhq.recruit.provenance import folder_sha256
+    from labhq.recruit.planning import conversion_payload
     r, seen = runner
     skill = tmp_path / "skill"
     skill.mkdir()
@@ -146,7 +147,8 @@ async def test_talent_rehire_without_conversion(runner, monkeypatch, tmp_path, c
                      employment=Employment.contract,
                      contract=ContractInfo(paper="pmid:12345678", kind="full", hired_at=1, expires_at=2,
                                            status="active", skill_dir=str(skill), skill_sha256=folder_sha256(skill),
-                                           verification={"probe_tools": ["reproduce"], "offer_status": "verified"}))
+                                           verification={"probe_tools": ["reproduce"], "offer_status": "verified",
+                                                         "conversion_payload": conversion_payload(proposal())}))
     r.registry.save_contract(spec)
     r.registry.release(spec.id)
     if changed:

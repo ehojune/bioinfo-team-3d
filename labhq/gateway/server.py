@@ -1390,7 +1390,7 @@ class Hub:
 
     async def resume_when_ready(self, rid: str) -> None:
         req = self.requests[rid]
-        if req.get("status") == "cancelled":
+        if req.get("status") == "cancelled" or req.get("outcome") == "recruit_contract_ended":
             return
         await self._set_status(rid, "waiting_for_runner")
         deadline = asyncio.get_running_loop().time() + self.s.gateway.resume_wait_s
@@ -1400,6 +1400,16 @@ class Hub:
                 return
             missing = {aid for aid in self.resume_agents(rid)
                        if self.agent_runner.get(aid) not in self.runners}
+            if req.get("recruit_contract_failure"):
+                error = "계획에 배정된 파견직 계약이 종료되었습니다: " + ", ".join(req["recruit_contract_failure"])
+                req.update(status="failed", outcome="recruit_contract_ended", error=error, finished_at=time.time())
+                self.save_request(rid)
+                for aid, entry in list(self.approvals.items()):
+                    card = entry["approval"]
+                    if card.get("request_id") == rid and card.get("kind") == "resume":
+                        await self.close_approval(aid, error)
+                self.schedule_terminal(rid, "request.failed", {"error": error})
+                return
             if not missing:
                 await self._set_status(rid, "running")
                 await self.publish({"type": "request.resumed", "ts": time.time(), "request_id": rid,

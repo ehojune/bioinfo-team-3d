@@ -2905,6 +2905,12 @@ class Orchestrator:
         if req.get("cost_known") is False and not unknown:
             unknown.add("recorded-before-classification")
 
+    def _count_recorded_costs(self, rid: str) -> None:
+        """Include nested conversion turns and parallel completions, deduplicated by task ID."""
+        req = self.hub.requests.get(rid) or {}
+        for tid in set(req.get("cost_items") or {}) | set(req.get("cost_by_task") or {}):
+            self._count_cost(rid, tid)
+
     # ---------- one agent step, including HPC hibernate/wake cycles ----------
     def _with_research_round(self, task: Task) -> Task:
         """A continuation round's tasks carry ``research_round`` (2 and up), so restart recovery never hands a step,
@@ -3069,6 +3075,7 @@ class Orchestrator:
                     kind = failure_kind(res, engine)
                     if kind != "login":  # a rejected login never starts a billed model turn
                         self._count_cost(rid, res.task_id, res)
+                    self._count_recorded_costs(rid)
                     previous_workdir = res.workdir or previous_workdir
                     if res.session_id and self.hub.supports_resume(current.agent_id):
                         previous_session = res.session_id
@@ -3410,6 +3417,7 @@ class Orchestrator:
     async def _check_budget(self, rid: str, *, block: bool = True, final_turn: bool = False) -> None:
         # A completed attempt keeps its result; a denied budget only blocks the next attempt.
         async with self.budget_locks.setdefault(rid, asyncio.Lock()):
+            self._count_recorded_costs(rid)
             if rid in self.budget_denials:
                 if block:
                     raise BudgetExceeded(self.budget_denials[rid])
@@ -5310,6 +5318,7 @@ class Orchestrator:
                                                             expected_intake=intake, pack_definitions=candidate_packs)
                         except (ValueError, TypeError) as error:
                             problems = [str(error)]
+                        problems.extend(recruit_planning.proposal_errors(candidate))
                         drafted = candidate.get("steps") if isinstance(candidate, dict) else None
                         bad_agents = unavailable_plan_agents(drafted, known, orchestration)
                         if bad_agents:
@@ -5413,6 +5422,9 @@ class Orchestrator:
                             if topic_vocab is not None:
                                 plan = normalize_plan_topics(plan, topic_vocab, strict=False)
                             plan = normalize_plan_keys(plan, {}, checklist_catalog)
+                            recruit_errors = recruit_planning.proposal_errors(plan)
+                            if recruit_errors:
+                                raise PlanAgentError("; ".join(recruit_errors))
                             steps, step_warnings = validate_steps(plan.get("steps") or [], known, self.cfg.max_steps,
                                                                   orchestration, vocab=vocab, stats=type_stats,
                                                                   guard=self._external_guard(rid))

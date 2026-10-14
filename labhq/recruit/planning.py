@@ -30,19 +30,59 @@ def paper_key(value):
 
 
 def _proposals(plan):
-    steps = {s["id"]: s for s in plan.get("steps", [])}
-    proposals = []
-    for row in plan.get("recruit") or []:
-        ids = list(dict.fromkeys(s for s in row.get("step_ids", []) if s in steps))
-        if not (row.get("paper") or row.get("repo")):
+    errors = proposal_errors(plan)
+    if errors:
+        raise ValueError("; ".join(errors))
+    return copy.deepcopy(plan.get("recruit") or [])
+
+
+def proposal_errors(plan):
+    """Validate fresh hiring proposals before approval; never discard an invalid assignment."""
+    if not isinstance(plan, dict):
+        return ["recruit: plan must be an object"]
+    raw_steps = plan.get("steps")
+    steps = {s["id"] for s in raw_steps if isinstance(s, dict) and isinstance(s.get("id"), str)} \
+        if isinstance(raw_steps, list) else set()
+    rows = plan.get("recruit", [])
+    if not isinstance(rows, list):
+        return ["recruit must be an array"]
+    errors, papers, assigned = [], set(), set()
+    fields = {"paper", "repo", "focus", "reason", "step_ids"}
+    for index, row in enumerate(rows):
+        prefix = f"recruit[{index}]"
+        if not isinstance(row, dict):
+            errors.append(f"{prefix} must be an object")
             continue
-        existing = next((p for p in proposals if paper_key(p.get("paper") or p.get("repo")) ==
-                         paper_key(row.get("paper") or row.get("repo"))), None)
-        if existing:
-            existing["step_ids"] = list(dict.fromkeys(existing["step_ids"] + ids))
+        if set(row) != fields:
+            errors.append(f"{prefix} requires exactly {sorted(fields)}; reproduction uses technician/full hiring")
+        for field in ("paper", "repo", "focus", "reason"):
+            if not isinstance(row.get(field), str):
+                errors.append(f"{prefix}.{field} must be a string")
+            elif field in {"focus", "reason"} and not row[field].strip():
+                errors.append(f"{prefix}.{field} must not be blank")
+        if not any(isinstance(row.get(f), str) and row[f].strip() for f in ("paper", "repo")):
+            errors.append(f"{prefix} needs paper or repo")
+        pid = paper_key(next((row[f] for f in ("paper", "repo")
+                              if isinstance(row.get(f), str) and row[f].strip()), ""))
+        if pid in papers:
+            errors.append(f"{prefix} repeats a paper; combine its steps in one proposal")
+        papers.add(pid)
+        ids = row.get("step_ids")
+        if not isinstance(ids, list) or not ids or any(not isinstance(s, str) or not s.strip() for s in ids):
+            errors.append(f"{prefix}.step_ids must be a nonempty array of step IDs")
         else:
-            proposals.append({**row, "step_ids": ids})
-    return proposals
+            if len(ids) != len(set(ids)) or assigned.intersection(ids):
+                errors.append(f"{prefix}.step_ids assigns a step more than once")
+            if set(ids) - steps:
+                errors.append(f"{prefix}.step_ids contains unknown steps: {sorted(set(ids) - steps)}")
+            assigned.update(ids)
+    return errors
+
+
+def conversion_payload(row):
+    # Assignment and explanation do not affect conversion. Keep the effective tool requirement versioned.
+    return {"paper": paper_key(row.get("paper") or row.get("repo")), "repo": row.get("repo") or "",
+            "focus": row.get("focus") or "", "kind": "technician/full", "version": 1}
 
 
 def _batch_key(proposals):
@@ -101,14 +141,35 @@ def _restore_fallbacks(plan, batch):
 
 
 def pending_receipt_agents(req, hub):
-    """Only the current, unfrozen draft's receipts gate restart readiness."""
-    if req.get("research_contract") or req.get("results"):
-        return set()
-    batch = (req.get("plan_recruitment") or {}).get(_batch_key(_proposals(req.get("plan") or {})), {})
+    """Reconcile all remaining assignments before waiting for a runner, including frozen plans."""
+    plan = req.get("plan") or {}
+    frozen = bool(req.get("research_contract") or req.get("results"))
+    # Read legacy frozen proposals as saved; validation is for new plans, not canonical snapshots.
+    batch = (req.get("plan_recruitment") or {}).get(_batch_key(plan.get("recruit") or []), {})
     changed = [_refresh_receipt(row, hub) for row in batch.get("results", {}).values()]
-    restored = _restore_fallbacks(req.get("plan") or {}, batch)
-    if any(changed) or restored:
+    remaining = {s["agent_id"] for s in plan.get("steps", []) if s["id"] not in (req.get("results") or {})}
+    ended = set()
+    for aid in remaining:
+        probe = {"status": "active", "agent_id": aid}
+        if _refresh_receipt(probe, hub):
+            ended.add(aid)
+    restored = False if frozen else _restore_fallbacks(plan, batch)
+    if not frozen:
+        for step in plan.get("steps", []):
+            if step["id"] in (req.get("results") or {}) or step["agent_id"] not in ended:
+                continue
+            fallback = batch.get("fallback_agents", {}).get(step["id"])
+            if fallback and fallback not in ended:
+                step["agent_id"] = fallback
+                restored = True
+    unresolved = ended.intersection(s["agent_id"] for s in plan.get("steps", [])
+                                   if s["id"] not in (req.get("results") or {}))
+    if unresolved:
+        req["recruit_contract_failure"] = sorted(unresolved)
+    if any(changed) or restored or unresolved:
         hub.save_request(req["id"])
+    if frozen:
+        return set()
     return {row["agent_id"] for row in batch.get("results", {}).values()
             if row.get("status") == "active" and row.get("agent_id")}
 
@@ -188,10 +249,6 @@ async def prepare_plan(plan, rid, hub, run):
                 warning = f"{sid}: {reason}; 정규직 {steps[sid]['agent_id']}에 재배정"
                 if warning not in plan.setdefault("warnings", []):
                     plan["warnings"].append(warning)
-        if not active and not row["step_ids"]:
-            warning = f"{pid}: {reason}; 기존 담당을 유지합니다"
-            if warning not in plan.setdefault("warnings", []):
-                plan["warnings"].append(warning)
         rows.append({"paper": row.get("paper", ""), "step_ids": row["step_ids"], **receipt})
     plan["recruit_results"] = rows
     return plan
@@ -212,9 +269,12 @@ async def run_task(runner, task):
             raise ValueError("plan hiring needs approval to activate on passing probation")
         row = task.meta["recruit"]
         pid = paper_key(row.get("paper") or row.get("repo"))
+        payload = conversion_payload(row)
         for spec in runner.registry.talent_pool():
             c = spec.contract
             if not c or paper_key(c.paper or c.repo) != pid or c.kind not in {"technician", "full"}:
+                continue
+            if c.verification.get("conversion_payload") != payload:
                 continue
             # A failed probation or changed payload must never be silently promoted by rehire.
             passed, _ = paper2agent.probation(c.kind, c.verification.get("probe_tools") or [],
@@ -229,7 +289,7 @@ async def run_task(runner, task):
                 return {"status": "failed", "error": "인재풀 직원이 active가 아님"}
             runner._send_roster()
             return {"status": "active", "agent_id": spec.id, "reused": True}
-        name = "plan-" + hashlib.sha256(pid.encode()).hexdigest()[:24]
+        name = "plan-" + _batch_key(payload)[:24]
         spec = await paper2agent.Recruitment(runner, {
             **row, "name": name, "request_id": task.request_id, "plan_task_id": task.id,
             "focus": row.get("focus", "") + "\nDeliver a technician/full hire with executable paper tools.",
@@ -237,6 +297,8 @@ async def run_task(runner, task):
         runner._send_roster()
         if not spec or not spec.contract or spec.contract.status != "active" or spec.contract.kind not in {"technician", "full"}:
             return {"status": "failed", "error": "기술자형 수습 미통과"}
+        spec.contract.verification["conversion_payload"] = payload
+        runner.registry.save_contract(spec)
         return {"status": "active", "agent_id": spec.id, "reused": False}
 
     try:
