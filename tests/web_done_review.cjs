@@ -84,7 +84,7 @@ test('whiteboard exposes completed report action and staff keep completion until
   const vm=require('node:vm'), ctx=vm.createContext({S:office.S,LabHQState:state,$:()=>board,
     esc:String,short:String,processingLabel:()=>'',phaseList:()=>'',nick:office.nick});
   vm.runInContext(html.slice(html.indexOf('function renderBoard()'),html.indexOf('function renderRack()'))+'\nrenderBoard();',ctx);
-  assert.match(board.innerHTML,/Study/);assert.match(board.innerHTML,/✓ 보고서 검토 대기/);
+  assert.doesNotMatch(board.innerHTML,/Study/,'request title belongs only in the request list');assert.match(board.innerHTML,/✓ 보고서 검토 대기/);
   assert.match(board.innerHTML,/data-open-review="r"[^>]*>보고서 열기/);
   assert.equal(office.visual(office.ag('cso')),'done');
   office.apply({type:'request.reviewed',request_id:'r',data:{pi_reviewed_at:100}});

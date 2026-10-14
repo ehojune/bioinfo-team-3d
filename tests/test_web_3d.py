@@ -197,6 +197,7 @@ def test_package_data_includes_office_assets():
     ('web_p2_followups_1013.cjs', 'fail 0'),
     ('web_design_tokens.cjs', 'fail 0'),
     ('web_design_decisions.cjs', 'fail 0'),
+    ('web_design_board.cjs', 'fail 0'),
 ])
 def test_office_in_node(filename, marker):
     node = shutil.which('node')
