@@ -10,6 +10,18 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-10-15
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 02:05 | [`1d81ca7`](https://github.com/ehojune/bioinfo-team-3d/pull/599/commits/1d81ca7) | 화면 비교 test의 시험 글꼴을 1/16em 단위 폭으로 맞춰 Linux CI의 1/64px 반올림에도 줄바꿈이 같게 하고, 글꼴 확인 허용치를 0.1px로 넓혀 기준선을 다시 만들었다(#546). |
+| 01:28 | [`025732c`](https://github.com/ehojune/bioinfo-team-3d/pull/599/commits/025732c) | main(#598)을 합쳐 test_web_3d.py의 브라우저 test 제한 시간 충돌을 풀었다. 기존 web_office_browser 170초와 새 화면 비교 260초를 함께 둔다(#546). |
+| 01:28 | [`a15ef6e`](https://github.com/ehojune/bioinfo-team-3d/pull/599/commits/a15ef6e) | 화면 비교 test가 느린 CI 러너에서 Chrome 시작을 60초 기한으로 기다리고 Chrome이 먼저 끝나면 이유와 함께 바로 실패하게 했다(#546). |
+| 01:24 | [`4943b43`](https://github.com/ehojune/bioinfo-team-3d/pull/599/commits/4943b43) | 녹화 스크립트가 쓰지 않는 임시 폴더를 만들지 않게 했다(#546). |
+| 01:20 | [`6b6e897`](https://github.com/ehojune/bioinfo-team-3d/pull/599/commits/6b6e897) | 편집자(비버)가 파견직 배지·연구 구역 대신 운영과 파견직 구역의 펜과 종이 소품으로 보이게 하고, 핵심 직원이 소품·구역 표에 모두 있는지 확인하는 test를 더했다(#546). |
+| 01:20 | [`a943e3d`](https://github.com/ehojune/bioinfo-team-3d/pull/599/commits/a943e3d) | 데모 화면을 데스크톱·폰 headless Chrome으로 열어 네 장면의 레이아웃을 JSON 기준선과 비교하는 test를 넣었다. 기준선은 scripts/update_visual_baseline.cjs로 일부러 바꾼다(#546). |
+| 01:20 | [`be638a0`](https://github.com/ehojune/bioinfo-team-3d/pull/599/commits/be638a0) | README 데모 움짤을 새 디자인으로 다시 녹화했다(960px, 약 13초). 표준 라이브러리만 쓰는 GIF 인코더와 녹화 스크립트를 함께 넣었다(#546). |
+
 ## 2026-10-14
 
 | 시간 | 커밋 | 주요 변경사항 |
