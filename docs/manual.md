@@ -285,6 +285,7 @@ labhq approvals              # 대기 중 승인 → labhq approve <id> [--deny 
 labhq approve <clarify-id> --note "1: a, 2: b"  # 질문 카드는 답이 없으면 보내지 않고 요청을 유지
 labhq approve <question-id> --note "a"          # 선택지가 있는 직원 질문도 같음. 선택지는 approvals와 거절 메시지에 a) b) …로 나옴
 labhq verify <request_id>    # runner PC에서 산출 sha256과 보고서 claim 앵커를 다시 검사(--json, --bundle audit.zip)
+labhq report <request_id> --pdf   # 그림이 들어간 보고서를 PDF로 저장(--out 파일). 브라우저가 없으면 HTML과 이유
 labhq recruit --repo https://github.com/scverse/scanpy --focus "Preprocessing and clustering" --ttl 14   # 채용 담당 러너가 꺼져 있으면 보내지 않고 409
 labhq talent                 # 인재풀
 labhq contract extend c_scanpy --days 14    # extend | release | activate | rehire
@@ -433,7 +434,7 @@ Windows 러너는 직원 Python이 OS 신뢰 저장소도 믿게 합니다. 기�
 | `request.resume_waiting` · `request.resumed` · `request.resume_timeout` | 재개 승인 뒤 runner 기다림·재개·기다림 초과 | `러너 기다림`(빠진 직원) → `진행 중`, 초과면 `중단됨`과 새 재개 카드 |
 | `request.continued` | 연구 리뷰 revise 뒤 PI가 이어 가기를 승인했거나 CP2에서 수정 요청을 골라 새 계획으로 넘어감(`round`, CP2면 `trigger: cp2_revise`) | CP1·CP2·이어 가기 카드의 `이어 가기 차수` 칸 |
 
-REST (Bearer `client_token`): `GET /api/agents`, `GET|POST /api/requests` (`status`, `limit`; 본문 `references`·`default_references`. direct 요청의 직원은 연결된 runner·저장된 runner roster·`runner.agents_dir` 중 한 곳에 있으면 받아서 runner를 기다리고, 어디에도 없으면 404), `GET /api/requests/{id}`, `POST /api/requests/{id}/notes` (`{"text"}`, 미종료 요청만, 2,000자·20개), `POST /api/requests/{id}/followup` (`{"text"}`, 끝난 요청만, 한 번에 하나),
+REST (Bearer `client_token`): `GET /api/agents`, `GET|POST /api/requests` (`status`, `limit`; 본문 `references`·`default_references`. direct 요청의 직원은 연결된 runner·저장된 runner roster·`runner.agents_dir` 중 한 곳에 있으면 받아서 runner를 기다리고, 어디에도 없으면 404), `GET /api/requests/{id}`, `GET /api/requests/{id}/report-pdf`(그림이 든 PDF, 브라우저가 없으면 HTML과 `X-Labhq-Reason`), `POST /api/requests/{id}/notes` (`{"text"}`, 미종료 요청만, 2,000자·20개), `POST /api/requests/{id}/followup` (`{"text"}`, 끝난 요청만, 한 번에 하나),
 `GET|POST /api/approvals[/{id}]`, `POST /api/tasks/{id}/cancel`, `POST /api/tasks/{id}/steer|pause|resume|halt` ([직원 제어](#직원-제어)), `POST /api/requests/{id}/steps/{step}/resume-quota`, `POST /api/recruit`, `POST /api/contracts/{agent_id}`,
 `GET /api/projects`, `GET /api/approvals/history`, `POST /api/projects/{id}/prs/{n}/codex-review`, `GET /api/events`, `GET /api/health`. 폰은 `/ws/client`로 스냅샷+이벤트를 받고 `{"type":"approval.resolve",...}`로 바로 승인할 수 있습니다.
 
@@ -442,6 +443,17 @@ task 취소(`POST /api/tasks/{id}/cancel`)는 task 기록의 runner로 보냅니
 모든 게이트웨이 이벤트에는 `schema_version: 1`과 재시작 후에도 이어지는 `seq`가 붙습니다. `/ws/client?since=<seq>`와 `/api/events?since=<seq>`는 이후 이벤트를 재전송합니다. 보관 상한을 지난 `since`에는 `replay_gap` 스냅샷으로 화면 상태를 교체합니다.
 
 메신저 조회는 `GET /api/messenger`에 PI Bearer `client_token`이 필요합니다. `request_id`를 생략하면 전체 요청, 지정하면 해당 요청만 조회합니다. `limit`은 기본 40·최대 200(범위 밖은 422), `before`는 이전 응답의 `next_before`를 넣습니다. 응답 `{events, has_more, next_before}`의 이벤트는 페이지 안에서 과거→최근 순서이며, 커서는 해당 `seq`를 제외한 더 오래된 기록을 가리킵니다. 이벤트 재전송 버퍼와 별도 SQLite `messenger_events`에 보관하므로 gateway를 다시 열어도 유지됩니다. 보고 알림에는 보고서 본문을 중복 저장하지 않습니다.
+
+### 보고서 PDF
+
+보고서 본문(`report.md`)은 "결과"에 핵심 그림을 최대 6개 마크다운 이미지로 넣습니다. 직원은 단계 결과 목록에 있는 `<workdir_id>/outputs/<파일>`(png·jpg·gif·svg)만 링크하고, 요청 묶음은 그 링크를 `steps/<step_id>/outputs/<파일>`로 고쳐 씁니다. 링크한 그림은 묶음의 누적 상한이 차 있어도 복사합니다(파일 하나의 상한 `runner.bundle_max_file_mb`는 그대로). `labhq verify`는 묶음 문서의 로컬 그림 링크가 묶음 안의 비어 있지 않은 일반 파일인지 확인하고, 없거나 묶음 밖을 가리키면 `보고서 그림: …` 문제로 적습니다(exit 1). 묶음을 만들 때도 같은 문제를 부록 "보고서 그림 링크"에 남깁니다.
+
+PDF는 필요할 때만 만듭니다. 끝난 요청에서 웹 요청 상세(2.5D·3D)의 **PDF로 받기** 버튼이나 `labhq report <request_id> --pdf [--out 파일]`을 쓰면 gateway가 `GET /api/requests/{id}/report-pdf`로 만듭니다.
+
+- 순서: 묶음의 `report.md`·`report_appendix.md`로 그림(data: URI)·한글 글꼴·인쇄 CSS를 갖춘 HTML 한 장을 만들고, 이 PC의 Edge·Chrome을 headless로 돌려 PDF로 인쇄합니다. 구성은 표지(요청·시각·상태), 본문(결론·결과·방법·한계), 부록(실행 기록)입니다. 외부 주소의 그림은 넣지 않고 그 자리에 "그림 없음"을 적습니다.
+- 브라우저는 `gateway.report_browser`, PATH, 표준 설치 위치 순으로 찾습니다. 못 찾거나 인쇄가 60초 안에 안 끝나면 HTML을 주고 이유를 알립니다(브라우저로 열어 "PDF로 저장"). LaTeX·GTK 같은 의존성은 없습니다.
+- 결과는 `runner.workspace_root/requests/<request_id>-report/`에 두고, 보고서·묶음 MANIFEST가 그대로면 PDF를 다시 쓰지 않습니다. 묶음 폴더 안에는 쓰지 않아 `labhq verify`가 영향을 받지 않습니다.
+- 끝나지 않은 요청, 보고서가 없는 요청, 통제 데이터 구역을 건드린 요청에는 만들지 않고(409) 이유를 알립니다. 결과 저장(#558)의 정리본과 같은 판정을 씁니다.
 
 ### 로그인 대기
 
@@ -924,6 +936,7 @@ report는 중첩 집계의 구조와 개수(0 이상의 정수)를 확인합니�
 테스트 요청 정리는 `python scripts/purge_test_requests.py --database <gateway.sqlite3>`로 후보만 확인합니다. 기본 표지는 정확한 문구 `save outputs/counts.tsv`·agent `worker`·mode `direct` 세 가지입니다. 삭제는 gateway를 끈 유지보수 시간에만 `--apply --gateway-stopped --config <설정> --backup <새 파일>`을 붙입니다. 먼저 SQLite 백업을 만들고 일치한 요청과 이벤트만 지웁니다. 데모 문구는 자동 선택하지 않습니다.
 
 - **Live 출처 검사** (`research.live_source_check`, 기본 `false`): 켜면 CP2 카드 전과 `labhq verify`에서 Crossref·doi.org·NCBI를 확인합니다. 이어 가기를 결정해 보관한 차수는 새 계획 전 재시작에서 다시 묻지 않습니다. `labhq verify`는 각 단계가 인용한 자기 산출물과 계획상 모든 조상 단계 산출물의 hash도 다시 확인합니다. `research.live_source_contact`는 API User-Agent·mailto에 넣을 관리자 email이며 기본값은 빈 문자열입니다.
+- **PDF 보고서 브라우저** (`gateway.report_browser`, 기본 `null`): PDF를 인쇄할 Edge·Chrome 실행 파일 경로입니다. 비우면 PATH와 표준 설치 위치에서 찾습니다([보고서 PDF](#보고서-pdf)).
 - **상태** (`gateway.state_dir`, `runner.state_dir`): 기본 `~/.labhq/state`. SQLite WAL에 요청·비용·승인·잡을 저장합니다. 재개 승인 뒤 필요한 runner를 기다리되(`gateway.resume_wait_s`, 기본 300초), 수락된 task 완료에는 연결 대기 제한을 적용하지 않습니다. 완료된 direct 요청·DAG·제어 단계와 리뷰 수정 횟수를 이어서 처리합니다. 이어받는 task는 재개 전에 보낸 것뿐이고, 재개 뒤 새로 보낸 호출(clarify 답 뒤 재계획 등)은 같은 단계라도 새로 돕니다. 불확실 task는 같은 runner 세대에만 재전송하고, 추적 중인 HPC job은 재제출 없이 wake로 잇습니다. 재개 뒤 다시 route된 질의는 runner 재접속을 기다려 그 질의의 상담을 이어받고, 이어받을 수 없으면 새 session·workdir에서 다시 묻습니다(#93). CSO 계획·최종 보고서와 이어 묻기는 같은 session·workdir를 쥔 이전 task(재시작으로 답을 잃은 상담, interrupted가 된 이어 묻기)가 지금 runner 세대에서 도는 동안 기다렸다가 그 turn에서 잇고, 끝났는지 모르면 새 session·workdir로 엽니다(#112, #144).
 - **랩 범위** (`lab.scope`, #36): 일반 요청의 범위 판정에 쓰는 한 줄 설명입니다. 비우면 "one-PI bioinformatics lab"과 주요 분야 목록을 씁니다. CSO가 계획과 함께 범위를 in·borderline·out으로 판정하고, out이면 단계를 실행하기 전에 **범위 확인** 카드로 진행·중단을 묻습니다. 중단하면 실행 비용 없이 끝나고(브리핑·계획 비용만), borderline은 실행하되 보고서에 한 줄을 남깁니다.
 - **재계획** (`orchestrator.max_failure_replans`, 기본 1; `max_replans`, 기본 0): 앞 값은 단계 실패, 뒤 값은 리뷰 revise의 남은 DAG 재계획 상한입니다. 예전 설정처럼 `max_replans`만 적으면 두 경로에 같은 값을 씁니다.
