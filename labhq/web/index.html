@@ -709,6 +709,9 @@ const reportHTML = q => !q.report ? '' : `<section class="pi-report"><h3>PI용 �
     api?.requestDetail ? ` <button class="btn report-full" type="button" data-rid="${esc(q.id)}"${fuLoading.has(q.id) ? ' disabled' : ''}>전문 보기</button>` : ''}</p>` : ''}${q.report_appendix ?
     `<details class="report-appendix"><summary>실행 기록</summary><pre>${esc(q.report_appendix)}${q.report_appendix_truncated ? '…' : ''}</pre>${q.report_appendix_truncated && api?.requestDetail ?
       `<p class="fu-more">앞 ${[...q.report_appendix].length.toLocaleString()}자만 보여요 <button class="btn report-full" type="button" data-rid="${esc(q.id)}"${fuLoading.has(q.id) ? ' disabled' : ''}>전문 보기</button></p>` : ''}</details>` : ''}</section>`;
+// A finished request's report with its figures as a PDF (an HTML page when this PC has no browser to print it) (#584).
+const reportPdfHTML = q => !q.report || !api?.reportPdf || !LabHQState.isTerminalRequest(q.status) ? ''
+  : `<p><button class="btn report-pdf" type="button" data-rid="${esc(q.id)}">PDF로 받기</button> <small>그림이 들어간 전체 보고서</small></p>`;
 const auditHTML = q => api?.auditBundle
   ? `<p><a class="btn audit-bundle" href="/api/requests/${encodeURIComponent(q.id)}/audit-bundle" data-rid="${esc(q.id)}" download>감사 번들</a></p>` : '';
 const notesHTML = q => !(q.piNotes || []).length ? '' : `<section class="pi-notes" aria-label="실행 중 메모"><h3>실행 중 메모</h3><ol>${q.piNotes.map(note =>
@@ -749,7 +752,7 @@ function renderRequest() {
   el.innerHTML = `${pick}<p class="req-meta">${processingLabel(q) ? `<span>${esc(processingLabel(q))}</span>` : ''}</p>${refList ? `<ul class="req-refs" aria-label="참고 자료">${refList}</ul>` : ''}${assumptionsHTML(q)}<div id="task-board"></div>
 <p class="req-meta">${proj ? `<span>프로젝트 ${esc(proj.name)}</span>` : ''}<span>비용 ${esc(LabHQState.costLabel(q))}</span>${q.costSummary && Object.keys(q.costSummary.by_engine || {}).length ? `<span>${esc(LabHQState.engineCostLabel(q.costSummary))}</span>` : ''}${q.costSummary && q.costSummary.by_agent ? `<span>${esc(LabHQState.agentCostLabel(q.costSummary, nick))}</span>` : ''}<span class="req-status status-label st-${esc(q.status)}"><span class="status-dot" aria-hidden="true"></span>${esc(statusText)}</span></p>
   ${api?.cancelRequest && (LabHQState.isActiveRequest(q.status) || q.status === 'interrupted') ? `<p class="req-actions"><button class="btn" id="req-cancel" type="button" data-rid="${esc(q.id)}">요청 취소</button></p>` : ''}
-  ${pipeline}${gh ? `<ul class="gh">${gh}</ul>` : ''}${notesHTML(q)}${reportHTML(q)}${LabHQState.needsPiReview(q) ? `<p><button class="btn go" data-review-done="${esc(q.id)}">${['done', 'review_pending'].includes(q.status) ? '검토 완료' : '확인 완료'}</button></p>` : ''}${bundleHTML(q)}${auditHTML(q)}${q.error ? `<p class="empty-note">${esc(q.error)}</p>` : ''}${followupHTML(q)}`;
+  ${pipeline}${gh ? `<ul class="gh">${gh}</ul>` : ''}${notesHTML(q)}${reportHTML(q)}${reportPdfHTML(q)}${LabHQState.needsPiReview(q) ? `<p><button class="btn go" data-review-done="${esc(q.id)}">${['done', 'review_pending'].includes(q.status) ? '검토 완료' : '확인 완료'}</button></p>` : ''}${bundleHTML(q)}${auditHTML(q)}${q.error ? `<p class="empty-note">${esc(q.error)}</p>` : ''}${followupHTML(q)}`;
   if ($('#fu-text')) $('#fu-text').value = fuDrafts.get(q.id) || '';  // a live update keeps this request's draft
   syncTaskBoard($('#task-board'), q, S.stepDetails, { nick,
     onCancel: api?.cancel ? id => api.cancel(id).then(() => toast('취소 요청을 보냈어요')).catch(err => toast(`취소하지 못했어요: ${err.message}`)) : null,
@@ -964,6 +967,20 @@ $('#request').addEventListener('click', async e => {
     } catch (err) { toast(`감사 번들을 받지 못했어요: ${err.message}`); }
     return;
   }
+  if (e.target.classList?.contains('report-pdf')) {
+    e.preventDefault();
+    const button = e.target, rid = button.dataset.rid;
+    if (button.disabled) return;
+    button.disabled = true; toast('PDF를 만드는 중이에요. 몇 초 걸려요');
+    try {
+      const {blob, kind, reason} = await api.reportPdf(rid);
+      const url = URL.createObjectURL(blob), link = document.createElement('a');
+      link.href = url; link.download = `labhq-report-${rid}.${kind}`; link.click(); URL.revokeObjectURL(url);
+      toast(reason || 'PDF를 받았어요');
+    } catch (err) { toast(`PDF를 만들지 못했어요: ${err.message}`); }
+    finally { button.disabled = false; }
+    return;
+  }
   if (e.target.classList?.contains('fu-full') || e.target.classList?.contains('report-full')) {
     const rid = e.target.dataset.rid;
     if (fuLoading.has(rid)) return;
@@ -1167,6 +1184,15 @@ function startLive() {
     followup: (rid, text) => post(`/api/requests/${encodeURIComponent(rid)}/followup`, { text }),
     requestDetail: rid => get(`/api/requests/${encodeURIComponent(rid)}`),
     auditBundle: rid => getBlob(`/api/requests/${encodeURIComponent(rid)}/audit-bundle`),
+    reportPdf: async rid => {
+      const r = await fetch(`/api/requests/${encodeURIComponent(rid)}/report-pdf`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) {
+        let detail = ''; try { detail = (await r.json()).detail; } catch {}
+        throw new Error(typeof detail === 'string' && detail ? detail : String(r.status));
+      }
+      return { blob: await r.blob(), kind: r.headers.get('X-Labhq-Report-Kind') === 'pdf' ? 'pdf' : 'html',
+               reason: decodeURIComponent(r.headers.get('X-Labhq-Reason') || '') };
+    },
     approve: async (id, ok, note = '', choice = null, storage = null) => {
       const decision = choice ? { approved: ok, note, choice } : { approved: ok, note };
       if (storage) decision.storage = storage;

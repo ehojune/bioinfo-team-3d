@@ -54,6 +54,23 @@ export function startLiveOffice(onState) {
       link.href = url; link.download = `labhq-audit-${rid}.zip`; link.click(); URL.revokeObjectURL(url);
     } catch (error) { notice(`감사 번들을 받지 못했어요: ${error.message}`); }
   }
+  async function downloadReportPdf(rid, button) {
+    if (button.disabled) return;
+    button.disabled = true; notice('PDF를 만드는 중이에요. 몇 초 걸려요.');
+    try {
+      const response = await fetch(`/api/requests/${encodeURIComponent(rid)}/report-pdf`,
+        {headers:{Authorization:`Bearer ${token}`}});
+      if (!response.ok) {
+        let detail = ''; try { detail = (await response.json()).detail; } catch {}
+        throw new Error(typeof detail === 'string' && detail ? detail : String(response.status));
+      }
+      const kind = response.headers.get('X-Labhq-Report-Kind') === 'pdf' ? 'pdf' : 'html';
+      const url = URL.createObjectURL(await response.blob()), link = document.createElement('a');
+      link.href = url; link.download = `labhq-report-${rid}.${kind}`; link.click(); URL.revokeObjectURL(url);
+      notice(decodeURIComponent(response.headers.get('X-Labhq-Reason') || '') || 'PDF를 받았어요.');
+    } catch (error) { notice(`PDF를 만들지 못했어요: ${error.message}`); }
+    finally { button.disabled = false; }
+  }
   async function resumeLogin(hold) {
     try {
       const response = await fetch(`/api/requests/${encodeURIComponent(hold.request_id)}/steps/${encodeURIComponent(hold.step_id)}/resume-quota`,
@@ -165,6 +182,10 @@ export function startLiveOffice(onState) {
         if (q.report_truncated) {
           const more = text(row, 'button', '전문 보기'); more.type = 'button';
           more.disabled = loadingAnswers.has(q.id); more.onclick = () => loadFullAnswers(q.id);
+        }
+        if (globalThis.LabHQState.isTerminalRequest(q.status)) {
+          const pdf = text(row, 'button', 'PDF로 받기'); pdf.type = 'button';
+          pdf.onclick = () => downloadReportPdf(q.id, pdf);
         }
       }
       if (q.report_appendix) {

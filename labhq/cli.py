@@ -927,6 +927,49 @@ def _verify(s: Settings, request_id: str, *, as_json: bool, bundle: str | None) 
     return report["exit_code"]
 
 
+def _report(s: Settings, request_id: str, *, pdf: bool, out: str | None) -> int:
+    """`labhq report <request>`: print the PI report. With `--pdf`, save it as a PDF with its figures, or as an HTML
+    page and the reason when this PC has no Edge or Chrome to print it (#584)."""
+    import httpx
+    from urllib.parse import quote, unquote
+
+    path = f"/api/requests/{quote(request_id, safe='')}"
+    if not pdf:
+        req = _api(s, "GET", path)
+        print(_terminal_report(req) if isinstance(req, dict) else "")
+        return 0
+    try:
+        response = httpx.get(_http_base(s) + path + "/report-pdf", timeout=180,
+                             headers={"Authorization": f"Bearer {s.gateway.client_token}"})
+    except httpx.HTTPError:
+        print(f"gateway에 연결할 수 없습니다: {_http_base(s)} — `{_config_command(s, 'up')}`을 실행하세요.",
+              file=sys.stderr)
+        return 2
+    if response.status_code != 200:
+        detail = _api_error_detail(response)
+        print("gateway에 그 요청이 없습니다" if response.status_code == 404 else
+              f"보고서를 만들지 못했습니다(HTTP {response.status_code})" + (f": {detail}" if detail else ""),
+              file=sys.stderr)
+        return 2
+    kind = "pdf" if response.headers.get("X-Labhq-Report-Kind") == "pdf" else "html"
+    target = Path(out) if out else Path.cwd() / f"{request_id}-report.{kind}"
+    if target.suffix.casefold() != f".{kind}":
+        target = target.with_suffix(f".{kind}")  # an HTML fallback never lands in a .pdf name
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        partial = target.with_name(f".{target.name}.partial")
+        partial.write_bytes(response.content)
+        os.replace(partial, target)
+    except OSError as exc:
+        print(f"보고서를 저장하지 못했습니다: {exc}", file=sys.stderr)
+        return 2
+    print(f"보고서 {kind.upper()}: {target}")
+    reason = unquote(response.headers.get("X-Labhq-Reason", ""))
+    if reason:
+        print(reason, file=sys.stderr)
+    return 0
+
+
 _BUNDLE_FIELDS = ("bundle_path", "bundle_status", "bundle_grade", "bundle_grade_reasons", "bundle_warning")
 
 
@@ -1456,6 +1499,11 @@ def main(argv: list[str] | None = None) -> None:
     vp.add_argument("--json", action="store_true", help="print the result as JSON")
     vp.add_argument("--bundle", metavar="OUT.zip", help="also write README.md, claims.json and artifacts.json "
                     "into a zip (the output files themselves are not included)")
+    rep = sub.add_parser("report", help="print a request's PI report, or save it as a PDF with its figures (--pdf)")
+    rep.add_argument("request_id")
+    rep.add_argument("--pdf", action="store_true", help="save a PDF with the figures (an HTML page and the reason "
+                     "when this PC has no Edge or Chrome to print it); never made for controlled-data requests")
+    rep.add_argument("--out", metavar="FILE", help="where to save it (default: ./<request>-report.pdf)")
     rp = sub.add_parser("recruit", help="hire a contract agent from a paper/repo via Paper2Agent")
     rp.add_argument("--paper")
     rp.add_argument("--repo")
@@ -1807,6 +1855,8 @@ def main(argv: list[str] | None = None) -> None:
         print(_api(s, "POST", f"/api/approvals/{args.id}", json=body))
     elif args.cmd == "verify":
         raise SystemExit(_verify(s, args.request_id, as_json=args.json, bundle=args.bundle))
+    elif args.cmd == "report":
+        raise SystemExit(_report(s, args.request_id, pdf=args.pdf, out=args.out))
     elif args.cmd == "recruit":
         print(_api(s, "POST", "/api/recruit", json={"paper": args.paper, "repo": args.repo, "focus": args.focus,
                                                     "ttl_days": args.ttl, "name": args.name}))
