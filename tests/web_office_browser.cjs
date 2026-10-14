@@ -20,11 +20,24 @@ test('real phone layout shows CSO, analyst, engineer and QC above the composer; 
     await new Promise(r=>server.listen(0,'127.0.0.1',r));
     const port=server.address().port;assert.ok(![8787,55921].includes(port));
     const origin=`http://127.0.0.1:${port}`;
+    const browserHome=path.join(profile,'home');
+    const local=path.join(browserHome,'AppData','Local'),roaming=path.join(browserHome,'AppData','Roaming');
+    // Chrome resolves the default directory before comparing --user-data-dir.
+    // Both the empty default and actual profile stay under this test's temporary root.
+    fs.mkdirSync(path.join(local,'Google','Chrome','User Data'),{recursive:true});
+    fs.mkdirSync(roaming,{recursive:true});
+    const config=path.join(browserHome,'.config');
+    fs.mkdirSync(path.join(config,'google-chrome'),{recursive:true});
+    let chromeError='';
     chrome=spawn(chromePath,['--headless=new','--remote-debugging-port=0',`--user-data-dir=${profile}`,
-      '--no-first-run','--no-default-browser-check',...(process.env.CI?['--no-sandbox']:[]),'about:blank'],{windowsHide:true,stdio:'ignore'});
+      '--no-first-run','--no-default-browser-check',...(process.env.CI?['--no-sandbox']:[]),'about:blank'],
+      {windowsHide:true,env:{...process.env,HOME:browserHome,USERPROFILE:browserHome,
+        HOMEDRIVE:path.parse(browserHome).root.slice(0,2),HOMEPATH:browserHome.slice(2),
+        LOCALAPPDATA:local,APPDATA:roaming,XDG_CONFIG_HOME:config},stdio:['ignore','ignore','pipe']});
+    chrome.stderr.on('data',chunk=>{chromeError=(chromeError+chunk).slice(-2000);});
     let debug;
     for(let i=0;i<100;i++){try{debug=fs.readFileSync(path.join(profile,'DevToolsActivePort'),'utf8').split('\n')[0];break;}catch{await sleep(100);}}
-    assert.ok(debug,'Chrome started');
+    assert.ok(debug,`Chrome started: ${chromeError}`);
     const targets=await(await fetch(`http://127.0.0.1:${debug}/json`)).json();
     ws=new WebSocket(targets.find(t=>t.type==='page').webSocketDebuggerUrl);
     await new Promise(r=>ws.onopen=r);
