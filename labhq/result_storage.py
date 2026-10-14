@@ -31,6 +31,16 @@ def plain_path(path):
     return not any((p.exists() or p.is_symlink()) and is_link(p) for p in [path, *path.parents])
 
 
+def controlled_request(req, settings):
+    """Whether the request touches controlled data: a restricted zone named by its text, folders, references or
+    results, or `/` or a drive root as a restricted zone. The repository edition and the PDF report both stop here."""
+    return bool(root_zone_restricted(settings.policy) or touches_restricted(
+        [str(req.get("text") or "")],
+        [*(req.get("project_dirs") or []), *reference_dirs(req.get("references"))], settings) or touches(
+        [req.get("text"), req.get("project_dirs"), req.get("references"), req.get("results")],
+        restricted_paths(settings.policy)))
+
+
 def edition_assets(req, settings):
     """Copy only reported outputs from the already checked bundle, never raw inputs or unreported files."""
     bundle = settings.path(settings.runner.workspace_root) / "requests" / req["id"]
@@ -255,11 +265,7 @@ class ResultStorage:
             return
         try:
             # Controlled inputs never enter the editor prompt or the repository edition.
-            if root_zone_restricted(self.s.policy) or touches_restricted(
-                    [str(req.get("text") or "")],
-                    [*(req.get("project_dirs") or []), *reference_dirs(req.get("references"))], self.s) or touches(
-                    [req.get("text"), req.get("project_dirs"), req.get("references"), req.get("results")],
-                    restricted_paths(self.s.policy)):
+            if controlled_request(req, self.s):
                 saved.update(status="local", warning="통제 데이터가 포함된 요청은 로컬 묶음에만 남깁니다.")
                 return
             if saved.get("status") == "draft":

@@ -26,6 +26,8 @@ class GatewaySettings(BaseModel):
     # A request whose task has no connected runner waits this long as waiting_for_runner, then fails (PI 점검 R15).
     runner_wait_s: float = Field(default=86400, gt=0)
     state_dir: str = Field(default_factory=lambda: os.environ.get("LABHQ_STATE_DIR", "~/.labhq/state"))
+    # Edge or Chrome that prints the PDF report (#584). None: look on PATH and in the standard install folders.
+    report_browser: str | None = None
 
 
 class RunnerSettings(BaseModel):
