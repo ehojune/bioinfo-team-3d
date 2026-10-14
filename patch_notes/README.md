@@ -14,15 +14,19 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 13:19 | [`f2a1156`](https://github.com/ehojune/bioinfo-team-3d/pull/588/commits/f2a1156) | 최신 main의 Node 웹 테스트 자동 수집을 유지해 충돌 해소 |
 | 13:16 | [`3741906`](https://github.com/ehojune/bioinfo-team-3d/pull/587/commits/3741906) | 최신 본문 digest가 다른 실패를 재시도하고 모든 가변 절을 공통 예산으로 축약 |
 | 13:11 | [`1f0f40e`](https://github.com/ehojune/bioinfo-team-3d/pull/590/commits/1f0f40e) | main의 Node 웹 테스트 자동 수집과 사무실 token 검사를 함께 보존 |
 | 12:55 | [`619fa2e`](https://github.com/ehojune/bioinfo-team-3d/pull/587/commits/619fa2e) | 최신 main 변경을 라운드 크기 제한 수정과 함께 보존 |
 | 12:50 | [`80da10b`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/80da10b) | 최신 main의 웹 테스트 자동 수집을 병합하고 채용 회귀 marker 보존 |
 | 12:46 | [`a8fae43`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/a8fae43) | mock 채용 제안에 담당 단계를 넣고 roster 없는 재개에서도 계약을 확인 |
 | 12:44 | [`e505794`](https://github.com/ehojune/bioinfo-team-3d/pull/590/commits/e505794) | 격리된 테스트 홈에서도 사무실 브라우저 검사를 실행 |
+| 12:42 | [`7771337`](https://github.com/ehojune/bioinfo-team-3d/pull/588/commits/7771337) | 배포용 예시 설정을 동기화하고 새 웹 테스트를 CI 실행 목록에 등록 |
 | 12:36 | [`3472b35`](https://github.com/ehojune/bioinfo-team-3d/pull/590/commits/3472b35) | 사무실 브라우저 검사를 CI 실행 목록에 등록 |
 | 12:34 | [`913ee3f`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/913ee3f) | 변환 비용 중복 없는 집계·payload 재변환·제안 검증과 종료 계약 재개를 수정 |
+| 12:31 | [`a8b8bca`](https://github.com/ehojune/bioinfo-team-3d/pull/588/commits/a8b8bca) | 2D·3D 이어 묻기 상세에 같은 통역 캐시를 표시하고 재시작 실패 상태를 보존 |
 | 12:28 | [`2633c04`](https://github.com/ehojune/bioinfo-team-3d/pull/590/commits/2633c04) | 사무실을 캐릭터 1과 내용에 맞는 구역 배치로 변경 |
+| 12:25 | [`f5b518b`](https://github.com/ehojune/bioinfo-team-3d/pull/588/commits/f5b518b) | 비서실장 통역·영어 한국어 표시, 영구 캐시·비용 상한·보고서 문체 점검 |
 | 12:25 | [`172cb87`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/172cb87) | 최신 main을 병합하고 채용·P2 후속 웹 테스트 목록을 모두 보존 |
 | 12:12 | [`5cc6b2b`](https://github.com/ehojune/bioinfo-team-3d/pull/583/commits/5cc6b2b) | main #585 작업판 변경을 병합하고 Node 자동 수집 51개·늦은 저장 버튼 회귀 확인 |
 | 12:09 | [`b229f3f`](https://github.com/ehojune/bioinfo-team-3d/pull/583/commits/b229f3f) | main #580 병합: 늦은 저장·검토 대기·Node 자동 수집을 보존하고 completed 상태의 저장 선택 차단 |

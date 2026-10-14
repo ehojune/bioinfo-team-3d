@@ -42,6 +42,31 @@ PR #581 · `recruit-before-plan` · Refs #549
 - 다른 레인 전체 pytest와 겹쳐 로컬 전체 검사는 생략. 최종 CI 결과는 PR 본문에 기록.
 - 공개·패치노트·목차 검사 후 push. PI/trial 실행·리뷰 요청·인라인 답글·병합 없음.
 
+PR #588 · `plain-language-2`
+
+## 바뀐 것
+
+- 펭귄 비서실장 설명과 영어 메시지 한국어 표시. 원문은 자세히에 보존하며 기존 쉬운 설명은 유지합니다.
+- 메시지 번호별 영구 캐시, 호출 1회, 모델·활성화·요청별 비용 상한. 실패해도 전달하며 번역 비용은 요청에 합산합니다.
+- 최종 보고서의 설치된 humanizer 표현 3종 점검과 부록 한 줄. 전체 40개 패턴 진단은 아닙니다.
+- 생성 명령 승인 오탐 회귀 확인, 매뉴얼·예시 설정 갱신.
+
+## 확인
+
+- origin/main 기준 새 Python 22건·웹 6건 실패. 생성 명령 테스트는 main에서 이미 통과했습니다.
+- Windows 관련 Python 281 passed. Node 전체 51개 파일 최종 수정까지 통과.
+- 배포 예시 동기화·CI 등록 검증: Python 372 passed/7 skipped, 격리 HOME의 Node PATH 보정 후 웹 51 passed.
+- 다른 레인의 전체 pytest 실행을 확인해 로컬 전체 pytest는 생략했습니다. 전체 결과는 PR CI에 남깁니다.
+- 모델은 mock만 사용했습니다. PI/trial 접속·실행, 실제 모델 호출, 리뷰 요청, 병합은 하지 않았습니다.
+
+Refs #557
+
+## 남은 지적
+
+- 로컬 전체 pytest는 레인 중복 실행 금지에 따른 미실행입니다. 테스트 임시 폴더 삭제는 자동 승인 검토가 blocked by policy로 거부했습니다.
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
 ## 결론
 
 PR #587: 큰 연구 라운드도 사람용 본문을 GitHub issue로 게시하고 원본은 로컬 기록에 보존한다.
