@@ -348,6 +348,7 @@ dialog.sheet::backdrop{background:rgba(17,26,34,.45)}
     <span class="conn" id="conn"><i></i><span>연결 중</span></span>
     <a id="view-3d" href="/3d/">3D</a>
     <span class="cost" id="cost">사용 비용 불러오는 중</span>
+    <button type="button" class="btn" id="shutdown" hidden>종료하기</button>
   </div>
   <p class="note" id="note" role="status" hidden></p>
   <p class="runner-off" id="runner-off" role="status" hidden>러너 꺼짐 — 터미널에서 <code>labhq up</code>(또는 <code>labhq runner</code>)을 실행하세요. 그동안 보낸 요청은 러너를 기다려요.</p>
@@ -445,7 +446,9 @@ dialog.sheet::backdrop{background:rgba(17,26,34,.45)}
 <dialog class="sheet" id="sheet"><div class="sheet-in" id="sheet-in"></div></dialog>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script src="./state.js"></script>
+<link rel="stylesheet" href="./ui/shutdown.css">
 <script type="module">
+import {bindShutdown} from './ui/shutdown.js';
 import {answerRequired, decisionChoice, decisionNote, storageChoice, revisedToast, revisionNoteMissing, syncReviewCards, syncDecisionCards, syncDecisionHistory, createHistoryVisibility, expandableText, syncExpandableText} from './ui/decide.js';
 import {syncStaffCards} from './ui/strip.js';
 import {syncTaskBoard} from './ui/tasks.js';
@@ -1241,6 +1244,7 @@ setInterval(schedule, 15000);  // keeps "n분 전" labels and contract countdown
 /* ---------------- live: gateway WebSocket + REST ---------------- */
 function startLive() {
   let token = QS.get('token') || store.get('labhq_token') || '';
+  bindShutdown($('#shutdown'), {token: () => token});
   let lastSeq = 0;
   if (QS.get('token')) { store.set('labhq_token', token); history.replaceState(null, '', location.pathname); }
   const link = (rel, href) => { const l = document.createElement('link'); l.rel = rel; l.href = href; document.head.appendChild(l); };

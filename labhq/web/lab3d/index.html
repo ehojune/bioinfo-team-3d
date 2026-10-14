@@ -9,6 +9,7 @@
   <title>labhq · 종이숲 연구소</title>
   <!--LABHQ_BOOT-->
   <script src="../state.js"></script>
+  <link rel="stylesheet" href="../ui/shutdown.css">
   <script type="importmap">{"imports":{"three":"../vendor/three/build/three.module.js","three/addons/":"../vendor/three/examples/jsm/"}}</script>
   <style>
     .expandable-text{min-width:0;max-width:100%}.expandable-text summary{cursor:pointer;overflow-wrap:anywhere}.expandable-text summary:focus-visible{outline:3px solid #c88651;outline-offset:2px}.expandable-text pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:4px 0;font:inherit}
@@ -49,7 +50,7 @@
 <body>
   <p id="demo-banner" role="status" hidden></p>
   <section id="live-panel" aria-label="실시간 요청과 승인" hidden>
-    <div class="live-top"><a id="view-2d" href="/">2.5D 사무실</a><span id="connection" role="status">연결 중</span></div>
+    <div class="live-top"><a id="view-2d" href="/">2.5D 사무실</a><span id="connection" role="status">연결 중</span><button type="button" id="shutdown" hidden>종료하기</button></div>
     <form id="token-form" hidden><label for="token">게이트웨이 토큰</label><input id="token" type="password" autocomplete="off"><button>연결</button><small>설정 파일의 gateway.client_token 값이에요. 이 PC라면 터미널에서 <code>labhq open --3d</code>를 실행하면 토큰을 넣은 채 열려요.</small></form>
     <p id="live-notice" role="status"></p>
     <details open><summary>결정할 일 <span id="approval-count">0</span></summary><div id="login-holds"></div><div id="review-cards"></div><div id="approvals"></div><div id="approval-history" aria-label="결정 이력"></div></details>
