@@ -370,11 +370,15 @@ class GitHubClient:
 
     async def put_image(self, repo: str, path: str, content: bytes, branch: str) -> dict:
         """An image from a reviewed result edition; text files use put_file's cleaner."""
+        return await self.put_binary(repo, path, content, branch, "연구 결과 그림")
+
+    async def put_binary(self, repo: str, path: str, content: bytes, branch: str, message: str) -> dict:
+        """Bytes of a reviewed result edition (an image, the report PDF): sent as they are, replacing an existing file."""
         endpoint = f"/repos/{repo}/contents/{quote(path, safe='/')}"
         existing = await self.http.get(endpoint, params={"ref": branch})
         if existing.status_code not in {200, 404}:
             raise GitHubHTTPError("GET", endpoint, existing)
-        payload = {"message": "연구 결과 그림", "branch": branch,
+        payload = {"message": message, "branch": branch,
                    "content": base64.b64encode(content).decode("ascii")}
         if existing.status_code == 200:
             payload["sha"] = existing.json()["sha"]

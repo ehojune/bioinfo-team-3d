@@ -764,6 +764,9 @@ resume 비용·Codex 토큰은 호출별 증분으로 합산합니다(#82). 원 
 정리본은 README·결과 보고서·진행 기록·재현 방법·출처로 구성됩니다. 보고된 그림·표·실행 파일은 링크로 연결합니다.
 텍스트는 기존 게시 검사로 비밀값·개인 경로를 가립니다. 통제 데이터가 걸린 요청은 편집자에게 보내거나 게시하지 않습니다.
 원본 입력과 미보고 파일은 제외합니다. 파일당 1 MB·합계 5 MB 안에서 옮기며, 정리본만으로 재실행된다고 보장하지 않습니다.
+보고서의 그림 링크는 정리본이 가진 `steps/<step_id>/outputs/<파일>`로 고쳐 씁니다. 정리본에 없는 그림(미보고·1 MB 초과 등)이나 정리본 밖을 가리키는 링크는 "그림 생략" 글로 바꿉니다.
+정리본에는 `report.pdf`도 넣습니다. 정리본 폴더의 가려 쓴 `report.md`와 그 안의 그림만으로, 보고서 PDF와 같은 방식(이 PC의 Edge·Chrome)으로 인쇄하므로 부록·원본 묶음은 들어가지 않습니다. README가 `report.pdf`를 링크하고, 게시 카드에는 PDF 한 줄이 보입니다.
+브라우저가 없거나 인쇄에 실패하거나 크기가 `github.edition_pdf_max_mb`(기본 20)를 넘으면 PDF만 빼고 게시하며, 카드와 README에 "PDF는 포함하지 않았어요: 이유" 한 줄을 남깁니다.
 
 보고서의 **검토 완료**(실패는 **확인 완료**) 뒤, **편집자 정리본 확인** 카드에서 문서·그림을 확인하고 **확인했어요 · 올리기**를 누르면
 `labhq/results/<요청 id>/`에 게시합니다. **로컬에만 남기기**를 누르면 GitHub에 쓰지 않습니다.
@@ -939,6 +942,7 @@ report는 중첩 집계의 구조와 개수(0 이상의 정수)를 확인합니�
 
 - **Live 출처 검사** (`research.live_source_check`, 기본 `false`): 켜면 CP2 카드 전과 `labhq verify`에서 Crossref·doi.org·NCBI를 확인합니다. 이어 가기를 결정해 보관한 차수는 새 계획 전 재시작에서 다시 묻지 않습니다. `labhq verify`는 각 단계가 인용한 자기 산출물과 계획상 모든 조상 단계 산출물의 hash도 다시 확인합니다. `research.live_source_contact`는 API User-Agent·mailto에 넣을 관리자 email이며 기본값은 빈 문자열입니다.
 - **PDF 보고서 브라우저** (`gateway.report_browser`, 기본 `null`): PDF를 인쇄할 Edge·Chrome 실행 파일 경로입니다. 비우면 PATH와 표준 설치 위치에서 찾습니다([보고서 PDF](#보고서-pdf)).
+- **정리본 PDF 상한** (`github.edition_pdf_max_mb`, 기본 `20`): 편집자 정리본에 넣는 `report.pdf`의 크기 상한(MB)입니다. 넘으면 PDF만 빼고 게시합니다([편집자와 정리본 확인](#편집자와-정리본-확인)).
 - **상태** (`gateway.state_dir`, `runner.state_dir`): 기본 `~/.labhq/state`. SQLite WAL에 요청·비용·승인·잡을 저장합니다. 재개 승인 뒤 필요한 runner를 기다리되(`gateway.resume_wait_s`, 기본 300초), 수락된 task 완료에는 연결 대기 제한을 적용하지 않습니다. 완료된 direct 요청·DAG·제어 단계와 리뷰 수정 횟수를 이어서 처리합니다. 이어받는 task는 재개 전에 보낸 것뿐이고, 재개 뒤 새로 보낸 호출(clarify 답 뒤 재계획 등)은 같은 단계라도 새로 돕니다. 불확실 task는 같은 runner 세대에만 재전송하고, 추적 중인 HPC job은 재제출 없이 wake로 잇습니다. 재개 뒤 다시 route된 질의는 runner 재접속을 기다려 그 질의의 상담을 이어받고, 이어받을 수 없으면 새 session·workdir에서 다시 묻습니다(#93). CSO 계획·최종 보고서와 이어 묻기는 같은 session·workdir를 쥔 이전 task(재시작으로 답을 잃은 상담, interrupted가 된 이어 묻기)가 지금 runner 세대에서 도는 동안 기다렸다가 그 turn에서 잇고, 끝났는지 모르면 새 session·workdir로 엽니다(#112, #144).
 - **랩 범위** (`lab.scope`, #36): 일반 요청의 범위 판정에 쓰는 한 줄 설명입니다. 비우면 "one-PI bioinformatics lab"과 주요 분야 목록을 씁니다. CSO가 계획과 함께 범위를 in·borderline·out으로 판정하고, out이면 단계를 실행하기 전에 **범위 확인** 카드로 진행·중단을 묻습니다. 중단하면 실행 비용 없이 끝나고(브리핑·계획 비용만), borderline은 실행하되 보고서에 한 줄을 남깁니다.
 - **재계획** (`orchestrator.max_failure_replans`, 기본 1; `max_replans`, 기본 0): 앞 값은 단계 실패, 뒤 값은 리뷰 revise의 남은 DAG 재계획 상한입니다. 예전 설정처럼 `max_replans`만 적으면 두 경로에 같은 값을 씁니다.
