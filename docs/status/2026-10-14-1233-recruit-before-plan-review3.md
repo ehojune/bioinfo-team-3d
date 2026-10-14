@@ -7,5 +7,6 @@ PR #581 · `recruit-before-plan` · Refs #549
 - PR 원래 head `87cc431`: 새 회귀 35 failed / 7 passed. 수정 뒤 42건 통과.
 - 관련 pytest 424 passed + Windows 파일 교체 WinError 5 한 건; 해당 test 재실행 1 passed. Node 51개 파일 통과.
 - CI에서 발견한 mock 제안의 누락 step_ids와 roster 없는 재개 경로를 보완. 기존 회귀 5 failed → 관련 163 passed, shadow 제거 검사 6 passed.
+- 이후 main의 웹 테스트 자동 수집을 병합. 채용·웹 174 passed / 1 skipped, Node 52개 파일 통과.
 - 다른 레인 전체 pytest와 겹쳐 로컬 전체 검사는 생략. 최종 CI 결과는 PR 본문에 기록.
 - 공개·패치노트·목차 검사 후 push. PI/trial 실행·리뷰 요청·인라인 답글·병합 없음.

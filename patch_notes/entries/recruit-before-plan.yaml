@@ -36,3 +36,6 @@ rows:
 - sha: 'a8fae43'
   at: 2026-10-14 12:46
   text: mock 채용 제안에 담당 단계를 넣고 roster 없는 재개에서도 계약을 확인
+- sha: '80da10b'
+  at: 2026-10-14 12:50
+  text: 최신 main의 웹 테스트 자동 수집을 병합하고 채용 회귀 marker 보존
