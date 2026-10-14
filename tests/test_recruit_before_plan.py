@@ -407,6 +407,65 @@ async def test_resume_waits_for_active_recruit_receipt(tmp_path, mode, reconnect
         restored.store.close()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hire_done", [True, False])
+async def test_resume_waits_only_for_unfinished_recruit_steps(tmp_path, hire_done):
+    from labhq.gateway.server import Hub
+    from labhq.recruit import planning
+
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    settings.gateway.resume_wait_s = 0.01
+    settings.runner.agents_dir = str(tmp_path / "agents")
+    settings.runner.contract_dir = str(tmp_path / "contracts")
+    settings.runner.talent_dir = str(tmp_path / "talent")
+    hub = Hub(settings)
+    recruit = proposal(steps=["hire"])
+    plan = {"recruit": [recruit], "steps": [
+        {"id": "hire", "agent_id": "c_paper"},
+        {"id": "regular", "agent_id": "worker"},
+    ]}
+    done = "hire" if hire_done else "regular"
+    hub.requests["r"] = {
+        "id": "r", "status": "running", "mode": "team", "text": "reproduce",
+        "plan": plan, "results": {done: {"ok": True}},
+        "plan_recruitment": {planning._batch_key([recruit]): {
+            "results": {planning.paper_key(recruit["paper"]): {
+                "status": "active", "agent_id": "c_paper"}},
+        }},
+    }
+    hub.agents["c_paper"] = {"id": "c_paper", "employment": "contract",
+                              "contract_status": "active"}
+    hub.agent_runner["c_paper"] = "hire"
+    hub.runners["core"] = object()
+    for aid in ("worker", "cso", "sci_reviewer"):
+        hub.agent_runner[aid] = "core"
+    called = []
+
+    async def run_request(rid, resume=False):
+        called.append((rid, resume))
+
+    hub.orchestrator.run_request = run_request
+    try:
+        assert planning.pending_receipt_agents(hub.requests["r"], hub) == (
+            set() if hire_done else {"c_paper"})
+        await hub.resume_when_ready("r")
+        resume_cards = [entry for entry in hub.approvals.values()
+                        if entry["approval"].get("kind") == "resume"]
+        if hire_done:
+            assert called == [("r", True)]
+            assert hub.requests["r"]["status"] == "running"
+            assert not resume_cards
+        else:
+            assert not called
+            assert hub.requests["r"]["status"] == "interrupted"
+            assert len(resume_cards) == 1
+    finally:
+        for timer in hub.resume_timers.values():
+            timer.cancel()
+        hub.store.close()
+
+
 @pytest.mark.parametrize("status,expires,expected", [
     ("active", 1, "failed"), ("archived", 10**12, "failed"), ("active", 10**12, "active")])
 def test_remote_receipt_uses_stored_roster_contract(tmp_path, status, expires, expected):
