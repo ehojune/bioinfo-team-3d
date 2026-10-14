@@ -83,8 +83,8 @@ def project(settings, rid, request):
     if not isinstance(rid, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", rid):
         return None
     try:
-        if not is_terminal_request(request.get("status")):
-            return None
+        if not is_terminal_request(request.get("status")) or request.get("status") == "review_pending":
+            return None  # an unaccepted CP4 draft is not a completed request; the PI decision indexes it
         if clean(rid, settings, request) != rid:
             return None
         summary = clean(request.get("text"), settings, request)

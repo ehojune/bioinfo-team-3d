@@ -302,6 +302,8 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
     if report_check and report_check["rerun"]:
         problems += [f"보고서 앵커: {problem}" for problem in report_check["rerun"]["problems"]]
     problems += [f"계획 결속: {problem}" for problem in ledger_binding_problems(req)]
+    from .verify import final_checkpoint_problems
+    problems += [f"CP4: {problem}" for problem in final_checkpoint_problems(req)]
     for checked in source_reports:
         problems += [f"live source: {checked.step_id}/{evidence_id} 결함"
                      for evidence_id in checked.defective_evidence]
@@ -457,7 +459,11 @@ def claims_record(req: Mapping[str, Any], *, report_check: Any = None,
                                                   "source_verification", "source_verification_reports")
                     if key in receipt},
             "report_check": report_check,
-            "source_verification": source_verification or []}
+            "source_verification": source_verification or [],
+            **({"contract_version": contract.get("schema_version"),
+                "final_checkpoint": contract.get("final_checkpoint"),
+                "final_draft": contract.get("final_draft"), "final_receipt": contract.get("final_receipt")}
+               if contract.get("schema_version") == 2 else {})}
 
 
 def bundle_bytes(report: Mapping[str, Any], req: Mapping[str, Any]) -> bytes:

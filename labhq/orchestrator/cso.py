@@ -4162,11 +4162,16 @@ class Orchestrator:
 
         The plan stays frozen, so a review that asks for revision ends the request unless the PI continues through
         a new plan and CP1 (``_research_continue``). The review is saved in the contract and reused after a
-        restart; the report is written again.
+        restart; a frozen CP4 draft is reused without another synthesis.
         Failed lookups are attached to every report here, whether or not the CSO listed them (#58 ④).
         """
         req = self.hub.requests[rid]
         contract = req["research_contract"]
+        from ..research import final_checkpoint as cp4
+        if cp4.enabled(req) and contract.get("final_draft"):
+            cp4.reconcile(req)
+            self.hub.save_request(rid)
+            return
         plan_hash = contract["plan_sha256"]
         refs = reference_meta(req)
         reviewer = self.cfg.reviewer_agent
@@ -4705,6 +4710,11 @@ class Orchestrator:
         goes on in this process through a new plan and CP1 (``_research_continue``); its running cost is kept, and no
         briefing runs again."""
         req = self.hub.requests[rid]
+        from ..research import final_checkpoint as cp4
+        if cp4.enabled(req) and (req.get("research_contract") or {}).get("final_draft"):
+            cp4.reconcile(req)
+            self.hub.save_request(rid)
+            return  # a saved final draft never goes through synthesis again, even with changed settings
         refs = reference_meta(req)
         # Pointers ride with the request text, so briefing, plan, steps, review and report all see them (#36).
         text = (req["text"] + render_references(req.get("references")) +
@@ -4797,9 +4807,10 @@ class Orchestrator:
                                      else research_execution)
                 req["research_contract"] = {
                     **stored,
-                    "schema_version": 1,
+                    "schema_version": stored.get("schema_version", (req.get("research_options") or {}).get("contract_version", 1)),
                     "work_kind": "research",
                     "execution_enabled": execution_enabled,
+                    "final_checkpoint": bool(stored.get("final_checkpoint", (req.get("research_options") or {}).get("final_checkpoint", False)) and execution_enabled),
                     "plan_sha256": approval.get("current_sha256") or approval.get("target_sha256"),
                     "pack_snapshot": active_pack_hashes,
                     **({} if legacy_pack_contract else {"pack_applicability": plan.get("pack_applicability") or {}}),
@@ -5984,6 +5995,11 @@ class Orchestrator:
         req = self.hub.requests[rid]
         if req.get("status") == "cancelled":
             return  # request cancel already wrote its report and terminal record (R13)
+        from ..research import final_checkpoint as cp4
+        if cp4.enabled(req) and (req.get("research_contract") or {}).get("final_draft"):
+            cp4.reconcile(req)
+            self.hub.save_request(rid)
+            return  # preserve the exact body and audit the PI saw
         report, results, review = self._unstarted_continuation_end(req, report, results, review)
         report, report_appendix = _split_report_appendix(report)
         if report.lstrip().startswith("### ") and "Full instructions, outputs and errors per step:" in report:
@@ -6058,10 +6074,25 @@ class Orchestrator:
         req.update(status="done" if ok else "failed", report=report, report_appendix=report_appendix,
                    results=results, review=review,
                    cost_usd=self.cost.get(rid, 0.0), finished_at=time.time())
+        if cp4.enabled(req) and ok:
+            req.setdefault("id", rid)
+            contract = req.get("research_contract") or {}
+            check, accepted = contract.get("report_check") or {}, contract.get("review") or {}
+            if (accepted.get("verdict") == "accept" and "problems" in check and not check["problems"]
+                    and not any(i.get("priority") == "P1" for i in accepted.get("issues") or [])):
+                cp4.freeze(req, self.hub.s.policy.approvals.pi_decision_timeout_s)
+                req.update(status="review_pending", outcome="research_final_pending",
+                           pi_review_pending=True, pi_reviewed_at=None)
+            else:
+                req.update(status="failed", outcome="research_final_unverified")
+                ok = False
         data = {"ok": ok, **_terminal_reports(rid, report, report_appendix), "cost_usd": req["cost_usd"],
                 "cost_known": req.get("cost_known", True), "cost_summary": req.get("cost_summary"),
                 "usage": req.get("usage", {}),
                 "usage_known": req.get("usage_known", True)}
+        if cp4.enabled(req):
+            data.update(status=req["status"], final_checkpoint=cp4.summary(req),
+                        pi_review_pending=True, pi_reviewed_at=None)
         if error:  # one readable office-feed line; `labhq send` prints report first, or error when report is absent
             req["error"] = data["error"] = error
         if hasattr(self.hub, "schedule_terminal"):

@@ -38,6 +38,8 @@ from ..adapters import enforces_read_only, get_adapter, read_only_refusal
 from ..hooks.control import STEER_LIMIT
 from ..orchestrator.cso import Orchestrator, _terminal_reports, environment_problem, holds_session, solo_phase
 from ..research import continuation as research_continuation
+from ..research import final_checkpoint as cp4
+from ..research.contract import classify_intake
 from ..research.packs import check_configured_packs
 from ..request_status import is_active_request, is_terminal_request
 from ..settings import Settings
@@ -290,6 +292,7 @@ class Hub:
         self.cancel_result_wait_s = CANCEL_RESULT_WAIT_S
         self.approvals: dict[str, dict] = self.store.all("approval")
         self.requests: dict[str, dict] = self.store.all("request")
+        self.final_review_timers: dict[str, asyncio.Task] = {}
         self.login_notices: set[str] = set()  # computed after stale login waits are dropped below
         self.last_runner_rosters: dict[str, dict] = self.store.all("runner_roster")
         self.events: deque = deque(maxlen=settings.gateway.event_buffer)
@@ -320,6 +323,9 @@ class Hub:
                 card["timeout_s"] = bound  # a card saved before it had this bound; the web counts it down
                 self.save_approval(aid)
         for rid, req in self.requests.items():
+            cp4.reconcile(req)
+            if cp4.enabled(req):
+                self.save_request(rid)
             if (req.pop("pi_waits", None) is not None) | (req.pop("runner_waits", None) is not None):
                 self.save_request(rid)  # their cards and waiters died with the old process
             if is_active_request(req.get("status")) and req.get("status") not in {
@@ -370,12 +376,20 @@ class Hub:
                 self.rounds.write(rid)
 
     def save_request(self, rid: str) -> None:
+        cp4.reconcile(self.requests[rid])
         self.requests[rid]["updated_at"] = time.time()
         self.store.put("request", rid, self.requests[rid])
 
-    def review_done(self, rid: str) -> dict:
+    def review_done(self, rid: str, *, decision: str = "accepted", revision: int | None = None,
+                    target_sha256: str | None = None) -> dict:
         """PI acknowledgment is independent of execution and never blocks another request."""
         req = self.requests[rid]
+        contract = req.get("research_contract") or {}
+        timeout_ack = (req.get("status") == "failed" and
+                       (contract.get("final_receipt") or {}).get("decision") == "timed_out"
+                       and revision is None and target_sha256 is None)
+        if cp4.enabled(req) and contract.get("final_draft") and not timeout_ack:
+            return self._final_review(rid, decision, revision=revision, target_sha256=target_sha256)
         if not is_terminal_request(req.get("status")) or req.get("cancelling"):
             raise ValueError("보고서가 끝난 요청만 검토 완료로 표시합니다")
         if not req.get("pi_reviewed_at"):
@@ -393,6 +407,65 @@ class Hub:
             self.pending_committed.append((event, tuple(self.clients)))
             asyncio.get_running_loop().create_task(self._send_committed_event())
         return {"request_id": rid, "pi_review_pending": False, "pi_reviewed_at": req["pi_reviewed_at"]}
+
+    def _final_review(self, rid: str, decision: str, **target) -> dict:
+        req = self.requests[rid]
+        updated = copy.deepcopy(req)
+        receipt = cp4.decide(updated, decision, **target)
+        if req.get("pi_reviewed_at") and req == updated:
+            return {"request_id": rid, "status": req["status"], "pi_review_pending": False,
+                    "pi_reviewed_at": req["pi_reviewed_at"], "final_checkpoint": cp4.summary(req)}
+        at = receipt["decided_at"]
+        reviewed_at = None if decision == "timed_out" else at
+        updated.update(pi_review_pending=reviewed_at is None, pi_reviewed_at=reviewed_at, updated_at=at)
+        audit = {"actor": receipt["decider"], "at": at, "outcome": updated["status"], "receipt": receipt}
+        updated.setdefault("pi_review_audit", []).append(audit)
+        updated["bundle_pending"] = bool(req.get("bundle_path") or req.get("bundle_pending")
+                                         or self._has_bundle_workdir(rid))
+        data = {"request_id": rid, "status": updated["status"], "pi_review_pending": reviewed_at is None,
+                "pi_reviewed_at": reviewed_at, "final_checkpoint": cp4.summary(updated)}
+        event = self.store.commit_terminal(rid, updated,
+            {"type": "request.reviewed", "ts": at, "request_id": rid, "data": {**audit, **data}},
+            self.s.gateway.event_buffer)
+        req.update(updated)
+        self.knowledge.notify()
+        if not updated["bundle_pending"]:
+            self.result_storage.schedule(rid)  # otherwise the refreshed bundle commit schedules it
+        self.events.append(event)
+        self.pending_committed.append((event, tuple(self.clients)))
+        asyncio.get_running_loop().create_task(self._send_committed_event())
+        self._queue_terminal_delivery(event)
+        timer = self.final_review_timers.pop(rid, None)
+        if timer and timer is not asyncio.current_task():
+            timer.cancel()
+        if updated["bundle_pending"]:
+            asyncio.get_running_loop().create_task(self._refresh_final_bundle(rid))
+        return data
+
+    async def _refresh_final_bundle(self, rid: str) -> None:
+        prior = self.terminal_tasks.get(rid)
+        if prior:
+            await asyncio.shield(prior)
+            self.terminal_tasks.pop(rid, None)
+            if not self.requests[rid].get("bundle_pending"):
+                return
+        self.requests[rid]["bundle_pending"] = True
+        self.save_request(rid)
+        await self._schedule_bundle(rid, {})
+
+    def recover_final_reviews(self) -> None:
+        for rid, req in self.requests.items():
+            if req.get("status") == "review_pending" and rid not in self.final_review_timers:
+                self.final_review_timers[rid] = asyncio.create_task(self._expire_final_review(rid))
+
+    async def _expire_final_review(self, rid: str) -> None:
+        try:
+            draft = self.requests[rid]["research_contract"]["final_draft"]
+            await asyncio.sleep(max(0, draft["deadline_at"] - time.time()))
+            if self.requests[rid].get("status") == "review_pending":
+                self._final_review(rid, "timed_out")
+        finally:
+            self.final_review_timers.pop(rid, None)
 
     def quota_hold(self, engine: str) -> dict | None:
         """The account-wide hold for an engine, derived from durable per-request waits."""
@@ -870,7 +943,7 @@ class Hub:
                    "bundle_warning": req.get("bundle_warning")}
         if environment:
             summary["step_environment"] = environment
-        summary.update(pi_review_pending=is_terminal_request(req.get("status")) and not req.get("pi_reviewed_at")
+        summary.update(final_checkpoint=cp4.summary(req), pi_review_pending=is_terminal_request(req.get("status")) and not req.get("pi_reviewed_at")
                        and not req.get("cancelling", False), pi_reviewed_at=req.get("pi_reviewed_at"))
         return summary
 
@@ -1025,17 +1098,27 @@ class Hub:
                                      runner_capabilities: dict) -> None:
         outcome = await asyncio.to_thread(
             self._bundle_outcome, rid, request, tasks, runner_capabilities)
+        if cp4.summary(request) != cp4.summary(self.requests[rid]):
+            # PI decided while this draft bundle was being copied. Keep the durable pending marker
+            # until the bundle containing that receipt is committed.
+            await self._commit_terminal_async(rid, data, copy.deepcopy(self.requests[rid]), tasks,
+                                              runner_capabilities)
+            return
         self._apply_bundle_outcome(rid, data, outcome)
         self._commit_bundle_record(rid, data)
 
     def _commit_terminal_record(self, rid: str, typ: str, data: dict) -> None:
-        if not self.requests[rid].get("bundle_pending"):
-            self.result_storage.schedule(rid)
         # Failure never changes the request outcome, and terminal requests loaded after a restart do not pass this
         # checkpoint again.
+        cp4.reconcile(self.requests[rid])
         self.requests[rid].update(pi_review_pending=True, pi_reviewed_at=None)
         data = {**data, "pi_review_pending": True, "pi_reviewed_at": None}
-        event = self.store.commit_terminal(rid, self.requests[rid],
+        if cp4.enabled(self.requests[rid]):
+            data.update(status=self.requests[rid]["status"], final_checkpoint=cp4.summary(self.requests[rid]))
+        self.recover_final_reviews()
+        review_pending = cp4.enabled(self.requests[rid]) and self.requests[rid].get("status") == "review_pending"
+        commit = self.store.commit_request_event if review_pending else self.store.commit_terminal
+        event = commit(rid, self.requests[rid],
                                            {"type": typ, "ts": time.time(), "request_id": rid,
                                             "data": copy.deepcopy(data)},
                                            self.s.gateway.event_buffer)
@@ -1053,7 +1136,10 @@ class Hub:
         # A client joining after this checkpoint replays it from SQLite.
         self.pending_committed.append((event, tuple(self.clients)))
         asyncio.get_running_loop().create_task(self._send_committed_event())
-        self._queue_terminal_delivery(event)
+        if not review_pending:
+            if not self.requests[rid].get("bundle_pending"):
+                self.result_storage.schedule(rid)
+            self._queue_terminal_delivery(event)
         if getattr(self, "semantics_shadow", None) is not None:  # semantics-hook: after the request ended
             self.semantics_shadow.after_request(rid)  # semantics-hook: copies rows, queues, never raises
 
@@ -2997,6 +3083,8 @@ class Hub:
         if status == "cancelled":
             return {"request_id": rid, "status": "cancelled", "already": True,
                     "cancelled_tasks": list(req.get("cancelled_tasks") or [])}
+        if status == "review_pending":
+            return {**self._final_review(rid, "cancelled"), "cancelled_tasks": []}
         if is_terminal_request(status):
             raise ValueError(f"이미 끝난 요청입니다({status})")
         self._restore_unstarted_continuation(rid, req)
@@ -3175,6 +3263,11 @@ class Hub:
         # snapshot, prompts or reports.
         originals = [{"value": r.value, "original": r.original} for r in body.references if r.original]
         req["environment"] = environment_snapshot(self)
+        research = self.s.research
+        intake = classify_intake(body.text, body.work_kind, mode=body.mode)
+        req["research_options"] = {"contract_version": 2, "final_checkpoint": bool(
+            research.enabled and research.evidence_checkpoint and research.final_checkpoint
+            and body.mode == "orchestrate" and intake.work_kind == "research")}
         self.requests[rid] = req
         if proj:
             self.result_storage.inherited(rid)
@@ -3350,7 +3443,7 @@ class Hub:
                           "followups": [snapshot_followup(f) for f in (r.get("followups") or [])[-20:]],
                           "step_status": self.request_summary(r, running)["step_progress"]["steps"],
                           "pi_review_pending": is_terminal_request(r.get("status")) and not r.get("pi_reviewed_at") and not r.get("cancelling", False),
-                          "pi_reviewed_at": r.get("pi_reviewed_at"),
+                          "pi_reviewed_at": r.get("pi_reviewed_at"), "final_checkpoint": cp4.summary(r),
                           "error": short(r.get("error") or "", 2000),
                           "step_details": self.request_step_details(r.get("id", ""), r, tasks),
                           **({} if r.get("id") in recent_terminals else snapshot_reports(r)),
@@ -3436,6 +3529,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         await hub.finish_interrupted_cancels()
         hub.recover_pending_bundles()
         await hub.expire_stale_resume_cards()
+        hub.recover_final_reviews()
         for rid, request in hub.requests.items():
             if is_terminal_request(request.get("status")):
                 hub._restart_request_asks(rid)
@@ -3446,6 +3540,8 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
 
     @app.on_event("shutdown")
     async def warn_running_on_shutdown() -> None:
+        for timer in hub.final_review_timers.values():
+            timer.cancel()
         await hub.result_storage.close()
         loop = asyncio.get_running_loop()
         local_tasks = [task for task in hub.terminal_tasks.values() if task.get_loop() is loop]
@@ -3581,11 +3677,16 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         return {"ok": True, "url": c.get("html_url")}
 
     @app.post("/api/requests/{rid}/review-done", dependencies=[Depends(auth)])
-    async def review_done(rid: str) -> dict:
+    async def review_done(rid: str, body: dict | None = None) -> dict:
         if rid not in hub.requests:
             raise HTTPException(404)
         try:
-            return hub.review_done(rid)
+            body = body or {}
+            decision = body.get("decision", "accepted")
+            if decision not in {"accepted", "rejected"}:
+                raise ValueError("검토 결정은 accepted 또는 rejected입니다")
+            return hub.review_done(rid, decision=decision, revision=body.get("revision"),
+                                   target_sha256=body.get("target_sha256"))
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
 
