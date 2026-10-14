@@ -21,7 +21,7 @@ test('real phone layout shows CSO, analyst, engineer and QC above the composer; 
     const port=server.address().port;assert.ok(![8787,55921].includes(port));
     const origin=`http://127.0.0.1:${port}`;
     chrome=spawn(chromePath,['--headless=new','--remote-debugging-port=0',`--user-data-dir=${profile}`,
-      '--no-first-run','--no-default-browser-check','about:blank'],{windowsHide:true,stdio:'ignore'});
+      '--no-first-run','--no-default-browser-check',...(process.env.CI?['--no-sandbox']:[]),'about:blank'],{windowsHide:true,stdio:'ignore'});
     let debug;
     for(let i=0;i<100;i++){try{debug=fs.readFileSync(path.join(profile,'DevToolsActivePort'),'utf8').split('\n')[0];break;}catch{await sleep(100);}}
     assert.ok(debug,'Chrome started');
