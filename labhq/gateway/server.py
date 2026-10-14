@@ -3817,6 +3817,26 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         return Response(payload, media_type="application/zip",
                         headers={"Content-Disposition": 'attachment; filename="labhq-audit.zip"'})
 
+    @app.get("/api/requests/{rid}/report-pdf", dependencies=[Depends(auth)])
+    async def report_pdf(rid: str) -> Response:
+        """The finished request's report with its figures as a PDF; the HTML and a reason when no browser can print (#584)."""
+        if rid not in hub.requests:
+            raise HTTPException(404)
+        from urllib.parse import quote
+
+        from ..report_pdf import ReportRefused, build_report_file
+
+        tasks = {key: copy.deepcopy(task) for key, task in hub.store.all("task").items()
+                 if isinstance(task, dict) and task.get("request_id") == rid}
+        try:
+            built = await asyncio.to_thread(build_report_file, copy.deepcopy(hub.requests[rid]), settings, tasks)
+        except ReportRefused as exc:
+            raise HTTPException(409, str(exc)) from exc
+        headers = {"Content-Disposition": f'attachment; filename="{built.filename}"', "X-Labhq-Report-Kind": built.kind}
+        if built.reason:  # header values are latin-1: the page decodes this with decodeURIComponent
+            headers["X-Labhq-Reason"] = quote(built.reason, safe="")
+        return Response(built.data, media_type=built.media_type, headers=headers)
+
     @app.get("/api/approvals", dependencies=[Depends(auth)])
     async def approvals() -> list[dict]:
         return [e["approval"] for e in hub.approvals.values()]

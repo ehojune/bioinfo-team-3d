@@ -330,6 +330,11 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
         if req.get("bundle_path") and not request_bundle["present"]:
             request_bundle["problems"].append("요청에 기록된 묶음 폴더가 없습니다")
         problems += [f"요청 묶음 사본: {problem}" for problem in request_bundle["problems"]]
+        if request_bundle["present"]:  # a figure the report links must be a file of the bundle (#584)
+            from ..report_figures import bundle_figure_check
+
+            request_bundle["figures"] = bundle_figure_check(root / "requests" / request_id)
+            problems += [f"보고서 그림: {problem}" for problem in request_bundle["figures"]["problems"]]
     return {"request_id": req.get("id"), "text": req.get("text"), "status": req.get("status"),
             "outcome": req.get("outcome"), "checked_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "labhq_version": __version__, "files": files, "report_check": report_check,
@@ -401,6 +406,10 @@ def render_verify(report: Mapping[str, Any]) -> str:
                 f"RO-Crate 없음(문제 {len(request_bundle['problems'])}건)"
                 if request_bundle["problems"] else "RO-Crate 없는 이전 형식"
             ))
+    figures = (request_bundle or {}).get("figures") or {}
+    if figures.get("linked") or figures.get("problems"):
+        lines.append(f"보고서 그림: 링크 {figures.get('linked', 0)}개, "
+                     + ("모두 묶음 안에 있음" if not figures.get("problems") else f"문제 {len(figures['problems'])}건"))
     if report.get("bundle"):
         lines.append(f"감사 번들: {report['bundle']}")
     lines += [f"확인 못함: {reason}" for reason in report["reasons"]]

@@ -6,6 +6,7 @@ gateway:
   url: ws://127.0.0.1:8787   # runner가 접속할 주소 (원격이면 wss://…)
   runner_token: change-me-runner
   client_token: change-me-client
+  # report_browser: C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe  # PDF 보고서를 인쇄할 Edge·Chrome(비우면 자동으로 찾음)
 
 runner:
   id: lab-workstation

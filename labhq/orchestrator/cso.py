@@ -657,6 +657,13 @@ Current plan:
 Team results so far:
 {results}"""
 
+# Figures in the PI report (#584): the request bundle rewrites <workdir_id>/outputs/<file> to steps/<step_id>/outputs/<file>.
+REPORT_FIGURE_RULE = (
+    "Figures: under \"결과\", embed at most 6 key figures as markdown images, each on its own line as "
+    "![one-line caption](<workdir_id>/outputs/<file>). Link only .png, .jpg, .gif or .svg files copied exactly from "
+    "the \"Outputs:\" lists of the team results below, never a path that is not listed, and use image links nowhere "
+    "else. When no step produced a figure, embed none. The caption says what the figure shows, not how it was made.")
+
 SYNTH_PROMPT = """Write the final report for the PI.
 Use these sections in this order: 1) "결론과 권고", 2) "결과" with evidence and file paths, 3) "방법 요약"
 including seeds and tool and data versions, 4) "한계" including reviewer concerns and what would change the
@@ -665,6 +672,7 @@ The PI reads the body once (#373): aim for about 4,000 characters, longer only w
 result statistic once, in "결과", and refer to it elsewhere instead of repeating it (seeds, versions and cutoffs
 still belong in "방법 요약"); keep "방법 요약" to about eight lines, and under "한계" keep only what could change the
 conclusion.
+""" + REPORT_FIGURE_RULE + """
 Do not turn a failed lookup into evidence or proof of absence. LabHQ stores warnings, review records and execution
 details in the separate execution record; do not copy their details into the body. When the warning preview is not
 "(none)", summarize its importance in one line under "한계" and end that line with "실행 기록 참고".
@@ -775,6 +783,7 @@ The PI reads the body once (#373): aim for about 4,000 characters, longer only w
 result statistic once, in "결과", and refer to it elsewhere instead of repeating it (seeds, versions and cutoffs
 still belong in "방법 요약"); keep "방법 요약" to about eight lines, and under "한계" keep only what could change the
 conclusion.
+""" + REPORT_FIGURE_RULE + """
 When Analysis precedents are supplied below, add a short "선행 연구 기준" section: one cited line for each required
 analysis done or not done (with the reason), and put omitted recommended analyses under "다음에 할 수 있는 분석".
 Under "한계", include one line for every checklist answer that used assumption. Do not list checks that do not apply

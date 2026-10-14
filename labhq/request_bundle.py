@@ -21,6 +21,8 @@ from typing import Any, Iterator
 from .adapters.held_dir import HeldDir, NotPlainFolder
 from .evidence.audit import claims_record, locate_workdir
 from .evidence.claims import normalize_artifact_path
+from .report_figures import (bundle_figure_check, figure_owners, link_workdir_figures, linked_figure_paths,
+                             output_exists)
 from .ro_crate import FORMAT_MARKER, METADATA_FILE, write_ro_crate
 
 
@@ -499,6 +501,10 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
     runner_capabilities = runner_capabilities or {}
     results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
     rerun_receipt = _rerun_receipt(req)
+    # The report links a figure as <workdir_id>/outputs/<file>; the bundle names it steps/<step_id>/outputs/<file>, and
+    # a linked figure is kept even when the bundle's total limits are full (#584). The per-file limit still applies.
+    report_text = link_workdir_figures(str(req.get("report") or ""), figure_owners(results), output_exists(results))
+    linked_figures = set(linked_figure_paths(report_text))
     plan_steps = [step for step in ((req.get("plan") or {}).get("steps") or []) if isinstance(step, Mapping)]
     ordered_ids, ordered_steps = _topological_steps(plan_steps, results)
     max_file_bytes = int(float(settings.runner.bundle_max_file_mb) * 1024 * 1024)
@@ -526,7 +532,8 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
                 row["size"] = info.st_size
                 if info.st_size > max_file_bytes:
                     row["status"] = f"not copied{tag}: size"
-                elif copied_files >= max_total_files or copied_bytes + info.st_size > max_total_bytes:
+                elif ((copied_files >= max_total_files or copied_bytes + info.st_size > max_total_bytes)
+                      and rel.as_posix() not in linked_figures):
                     row["status"] = f"not copied{tag}: total limit"
                     total_limit_hit = total_limit_hit or not tag  # its appendix note counts recorded outputs
                 else:
@@ -706,7 +713,7 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
             input_summary += " (" + ", ".join(
                 f"{reason} {count}" for reason, count in sorted(skipped_by_reason.items())) + ")"
 
-        report = str(req.get("report") or "")
+        report = report_text
         appendix = str(req.get("report_appendix") or "")
         replaced = _superseded(req, tasks)
         if replaced:
@@ -779,6 +786,13 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
             relative = path.relative_to(temp).as_posix()
             rewrite_by_file[relative] = (count, paths)
             remaining.update(paths)
+
+        # The figure check reads the rewritten report: an image linked by its absolute workdir path now points inside the
+        # bundle. It is the same check `labhq verify` runs later.
+        figure_problems = bundle_figure_check(temp)["problems"]
+        if figure_problems:
+            with (temp / "report_appendix.md").open("a", encoding="utf-8", newline="\n") as handle:
+                handle.write("\n\n## 보고서 그림 링크\n\n" + "\n".join(f"- {problem}" for problem in figure_problems))
 
         grade, grade_reasons = _grade(rows, ordered_steps, rewrite_by_file, not_copied, rerun_receipt)
         with (temp / "README.md").open("a", encoding="utf-8", newline="\n") as handle:
