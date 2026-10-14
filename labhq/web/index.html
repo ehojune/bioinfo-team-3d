@@ -325,6 +325,7 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
 .log-view{display:flex;gap:6px;margin:0 0 6px}.log-view .btn{min-height:32px;font-size:13px}.log-view .btn[aria-pressed="true"]{border-color:var(--ink);font-weight:600}
 
 </style>
+<link rel="stylesheet" href="./ui/shutdown.css">
 <link rel="stylesheet" href="ui/tokens.css">
 <link rel="stylesheet" href="ui/components.css">
 </head>
@@ -433,7 +434,6 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
 <dialog class="sheet ui-sheet" id="sheet"><div class="sheet-in" id="sheet-in"></div></dialog>
 <div class="toast ui-toast" id="toast" role="status" aria-live="polite"></div>
 <script src="./state.js"></script>
-<link rel="stylesheet" href="./ui/shutdown.css">
 <script type="module">
 import {bindShutdown} from './ui/shutdown.js';
 import {answerRequired, decisionChoice, decisionNote, storageChoice, revisedToast, revisionNoteMissing, syncReviewCards, syncDecisionCards, syncDecisionHistory, createHistoryVisibility, expandableText, syncExpandableText} from './ui/decide.js';
