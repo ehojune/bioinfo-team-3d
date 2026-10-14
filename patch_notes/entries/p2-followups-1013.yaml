@@ -3,3 +3,6 @@ rows:
 - sha: '6fdb37d'
   at: 2026-10-14 09:52
   text: '병합된 P2 22건 수정: 대기 표시·결과 정리·follow-up·시설팀·메신저·검색·init'
+- sha: 'fd4ac7b'
+  at: 2026-10-14 10:13
+  text: P2 웹 회귀 파일을 pytest의 CI 실행 목록에 연결
