@@ -4647,6 +4647,11 @@ class Orchestrator:
     def _ensure_route_decision(self, req: dict, roster: list[dict], *, research: bool) -> tuple[dict, bool]:
         """Keep a decision made before a restart; research and malformed stored values stay on the team path."""
         stored = req.get("route_decision")
+        if (req.get("execution_location") or {}).get("mode") == "hpc":
+            decision = route_decision(req.get("plan"), self.cfg.solo_agent, roster,
+                                      requested="team", research=research)
+            req["route_decision"] = decision
+            return decision, decision != stored
         if (not research and isinstance(stored, dict) and stored.get("mode") in {"team", "solo"}
                 and (stored.get("mode") != "solo" or stored.get("agent_id"))):
             return stored, False

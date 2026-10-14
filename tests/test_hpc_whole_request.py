@@ -104,6 +104,15 @@ async def test_saved_choice_is_reused_without_another_card():
     assert hub.requests["r"]["execution_location"] == saved and not hub.approvals
 
 
+def test_hpc_request_keeps_dag_instead_of_solo_shortcut():
+    hub = hub_for(lambda task: None)
+    req = hub.requests["r"]
+    req.update(execution_location={"mode": "hpc"}, route="solo",
+               route_decision={"mode": "solo", "agent_id": "worker"})
+    decision, changed = Orchestrator(hub)._ensure_route_decision(req, list(hub.agents.values()), research=False)
+    assert decision["mode"] == "team" and changed
+
+
 @pytest.mark.parametrize("mode", ["hpc", "local"])
 async def test_research_cp1_records_execution_choice(mode):
     from labhq.orchestrator.execution import OPTIONS
