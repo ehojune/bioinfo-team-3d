@@ -21,7 +21,12 @@ function cardFor(step, status, detail, options) {
   const card = add(doc().createElement('div'), 'details', '', `task-card task-${status}`);
   card.dataset.step = step.id;
   const summary = add(card, 'summary');
-  add(summary, 'strong', step.id); add(summary, 'span', STATUS[status] || status);
+  const title = add(summary, 'span', '', 'task-heading');
+  add(title, 'strong', step.instruction || step.id);
+  add(title, 'small', `${options.nick ? options.nick(step.agent_id) : step.agent_id || '미배정'} · ${step.id}`, 'task-owner');
+  const badge = add(summary, 'span', '', `task-status status-label status-${status}`);
+  add(badge, 'span', '', 'status-dot').setAttribute('aria-hidden', 'true');
+  add(badge, 'span', STATUS[status] || status);
   add(card, 'p', step.instruction || '', 'task-instruction');
   add(card, 'p', `${options.nick ? options.nick(step.agent_id) : step.agent_id || '미배정'} · 시도 ${detail.attempts || 0}회`, 'task-meta');
   list(card, '산출물', detail.outputs);
@@ -67,13 +72,24 @@ export function syncTaskBoard(container, request, stepDetails, options = {}) {
   if (!request) { container.replaceChildren(add(doc().createElement('div'), 'p', '아직 요청이 없어요.', 'empty-note')); return; }
   const board = doc().createElement('div'); board.className = 'kanban';
   const columns = {};
-  for (const [id, title] of [['waiting','대기'],['working','진행'],['review','확인'],['done','완료']]) {
-    const column = add(board, 'section', '', 'kanban-column'); column.dataset.column = id; add(column, 'h3', title); columns[id] = column;
+  for (const [id, title] of [['working','진행'],['review','확인'],['waiting','대기'],['done','완료']]) {
+    const column = add(board, id === 'done' ? 'details' : 'section', '', 'kanban-column');
+    column.dataset.column = id;
+    add(column, id === 'done' ? 'summary' : 'h3', title); columns[id] = column;
   }
   for (const step of request.plan || []) {
     const status = request.steps[step.id] || 'pending';
     const detail = stepDetails.get(`${request.id}:${step.id}`) || { attempts:0, outputs:[], missing_outputs:[], review_issues:[] };
     columns[COLUMN[status] || 'waiting'].append(cardFor(step, status, detail, options));
+  }
+  for (const [id, column] of Object.entries(columns)) {
+    const count = column.children.length - 1;
+    column.hidden = count === 0;
+    if (id === 'done') {
+      column.children[0].textContent = `완료 · ${count}개 단계`;
+      column.open = Boolean(container._completedOpen);
+      column.addEventListener('toggle', () => { container._completedOpen = column.open; });
+    }
   }
   container.replaceChildren(board);
 }

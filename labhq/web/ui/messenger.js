@@ -116,3 +116,39 @@ export function bindHistoryViewport(history, viewport, status, render) {
     }
   };
 }
+
+// Reuse rows: unfolding a message and loading older history never resets its disclosure.
+export function syncMessageRows(container, items, options) {
+  const old = container._rows || new Map(), next = new Map();
+  const add = (parent, tag, cls) => {
+    const el = document.createElement(tag); el.className = cls; parent.append(el); return el;
+  };
+  const rows = items.map(m => {
+    let row = old.get(m);
+    if (!row) {
+      row = document.createElement('li'); row.className = `msg message-row ${m.who === 'pi' ? 'message-self' : ''} ${m.cls || ''}`;
+      const avatar = add(row, 'span', 'av'); avatar.setAttribute('aria-hidden', 'true');
+      const body = add(row, 'div', 'message-bubble');
+      const header = add(body, 'div', 'message-header');
+      const name = add(header, 'b', 'message-sender'), time = add(header, 'time', 'message-time');
+      const text = add(body, 'div', 'message-text');
+      options.expandableText(text, m.fullText ?? m.text, {pi:true, limit:150, summary:m.text,
+        fold:m.fullText != null && m.fullText !== m.text, truncated:m.truncated, cutChars:m.cutChars});
+      if (typeof m.url === 'string' && /^https?:\/\//.test(m.url)) {
+        const link = add(text, 'a', 'message-link'); link.href=m.url; link.target='_blank'; link.rel='noopener'; link.textContent='열기';
+      }
+      row._messageParts = {avatar, name, time};
+    }
+    const p = row._messageParts;
+    p.avatar.innerHTML = options.avatarHTML(m.who);
+    p.name.textContent = options.nick(m.who) + (m.to ? ` → ${options.nick(m.to)}` : '');
+    p.time.textContent = options.ago(m.ts);
+    if (Number.isFinite(Number(m.ts))) p.time.setAttribute('datetime', new Date(Number(m.ts)*1000).toISOString());
+    next.set(m,row); return row;
+  });
+  if (!items.length) {
+    const empty = document.createElement('li'); empty.className='empty-note'; empty.textContent='팀이 주고받는 말이 여기에 쌓여요.';
+    container.replaceChildren(empty);
+  } else if (rows.some((row,i)=>container.children[i]!==row) || rows.length!==container.children.length) container.replaceChildren(...rows);
+  container._rows=next; return rows;
+}
