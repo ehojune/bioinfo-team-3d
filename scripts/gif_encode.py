@@ -8,11 +8,13 @@ it can also be run alone:
     python scripts/gif_encode.py frames.json out.gif [--max-mb 5]
 
 frames.json: {"frames": [{"png": "01-start.png", "ms": 1100}, ...]} with paths relative to the JSON file.
+The output is replaced only by a GIF within --max-mb; a larger one exits 1 and leaves the old file alone.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import struct
 import sys
 import zlib
@@ -194,8 +196,16 @@ def _sub_blocks(payload):
     return bytes(blocks)
 
 
-def write_gif(frames, delays_ms, path):
-    """frames: list of (width, height, rgb bytes), all the same size. Returns the file size in bytes."""
+class GifTooLarge(ValueError):
+    """The encoded GIF is over the size cap. Nothing was written; `size` is what it would have been."""
+
+    def __init__(self, size):
+        super().__init__(f'GIF is {size} bytes')
+        self.size = size
+
+
+def encode_gif(frames, delays_ms):
+    """frames: list of (width, height, rgb bytes), all the same size. Returns the GIF file as bytes."""
     width, height = frames[0][0], frames[0][1]
     if any((w, h) != (width, height) for w, h, _ in frames):
         raise ValueError('all frames must have the same size')
@@ -216,8 +226,27 @@ def write_gif(frames, delays_ms, path):
         out += b'\x2C' + struct.pack('<HHHHB', 0, 0, width, height, 0)
         out += b'\x08' + _sub_blocks(lzw_encode(indices))
     out += b'\x3B'
-    Path(path).write_bytes(out)
-    return len(out)
+    return bytes(out)
+
+
+def write_gif(frames, delays_ms, path, max_bytes=None):
+    """Encode the frames and write them to `path`; returns the file size in bytes.
+
+    The GIF is checked against `max_bytes` (None: no cap) before anything is written, then written to a temporary
+    file beside `path` and moved over it. A too-large or failed run raises and leaves the earlier `path` as it was:
+    the file the README points at is never replaced by a GIF the cap refused."""
+    data = encode_gif(frames, delays_ms)
+    if max_bytes is not None and len(data) > max_bytes:
+        raise GifTooLarge(len(data))
+    target = Path(path)
+    temp = target.with_name(target.name + '.tmp')
+    try:
+        temp.write_bytes(data)
+        os.replace(temp, target)
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise
+    return len(data)
 
 
 def main(argv=None):
@@ -229,12 +258,15 @@ def main(argv=None):
     spec_path = Path(args.frames_json)
     spec = json.loads(spec_path.read_text(encoding='utf-8'))
     frames = [read_png(spec_path.parent / item['png']) for item in spec['frames']]
-    size = write_gif(frames, [item['ms'] for item in spec['frames']], args.output)
     seconds = sum(item['ms'] for item in spec['frames']) / 1000
-    print(f'{args.output}: {frames[0][0]}x{frames[0][1]}, {len(frames)} frames, {seconds:.1f} s, {size / 1e6:.2f} MB')
-    if size > args.max_mb * 1e6:
-        print(f'error: larger than {args.max_mb} MB', file=sys.stderr)
+    summary = f'{args.output}: {frames[0][0]}x{frames[0][1]}, {len(frames)} frames, {seconds:.1f} s, '
+    try:
+        size = write_gif(frames, [item['ms'] for item in spec['frames']], args.output, max_bytes=args.max_mb * 1e6)
+    except GifTooLarge as error:
+        print(summary + f'{error.size / 1e6:.2f} MB')
+        print(f'error: larger than {args.max_mb} MB; {args.output} was not replaced', file=sys.stderr)
         return 1
+    print(summary + f'{size / 1e6:.2f} MB')
     return 0
 
 
