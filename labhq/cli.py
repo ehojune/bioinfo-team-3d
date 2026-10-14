@@ -477,8 +477,8 @@ def _process_created(pid: int) -> str | None:
         stat_path = proc / str(pid) / "stat"
         try:
             raw = stat_path.read_text(encoding="ascii")
-        except FileNotFoundError:
-            return None
+        except (FileNotFoundError, ProcessLookupError):
+            return None  # a process in the middle of exiting answers ESRCH, not ENOENT: it is gone either way
         except OSError as exc:
             raise ProcessIdentityError(f"/proc에서 PID {pid} 생성 시각을 읽을 수 없음: {exc}") from None
         end = raw.rfind(")")

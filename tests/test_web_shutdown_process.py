@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 import time
+import types
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -186,6 +187,40 @@ def test_the_watcher_reports_a_gateway_that_ended_by_itself(instance, capsys):
     done.kill()
     assert watch_gateway_exit(settings, done.pid, created, grace=5) == 0
     assert not cli._pid_file(settings, "gateway").exists() and "정상 종료" in capsys.readouterr().out
+
+
+class _ProcTree:
+    """/proc where the process is exiting: its stat file answers with `error`."""
+
+    def __init__(self, error):
+        self.error = error
+
+    def is_dir(self):
+        return True
+
+    def __truediv__(self, _name):
+        return self
+
+    def read_text(self, **_kwargs):
+        raise self.error
+
+
+def _linux_proc(monkeypatch, error):
+    monkeypatch.setattr(cli, "sys", types.SimpleNamespace(platform="linux"))
+    monkeypatch.setattr(cli, "Path", lambda *_args: _ProcTree(error))
+
+
+def test_a_process_that_is_exiting_reads_as_gone_not_unreadable(monkeypatch):
+    # CI 2026-10-14 (ubuntu 3.12): the watcher read /proc/<pid>/stat right after SIGKILL, got ESRCH ("No such process"),
+    # called the identity unreadable and returned 2 instead of 0 for a gateway that had ended.
+    _linux_proc(monkeypatch, ProcessLookupError(3, "No such process"))
+    assert cli._process_created(4242) is None
+
+
+def test_a_proc_error_that_is_not_a_missing_process_stays_unreadable(monkeypatch):
+    _linux_proc(monkeypatch, PermissionError(13, "Permission denied"))
+    with pytest.raises(cli.ProcessIdentityError):
+        cli._process_created(4242)
 
 
 def test_the_watcher_leaves_a_process_it_cannot_identify_alone(instance, monkeypatch, capsys):

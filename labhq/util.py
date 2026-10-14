@@ -7,6 +7,7 @@ import os
 import re
 import socket
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -80,6 +81,24 @@ def without_windows_app_aliases(env: dict[str, str]) -> dict[str, str]:
     return cleaned
 
 
+REPLACE_RETRY = os.name == "nt"
+
+
+def replace_file(source: str | Path, target: str | Path, *, attempts: int = 20, delay_s: float = 0.05) -> None:
+    """os.replace that waits out a Windows scanner or indexer briefly holding either path open.
+
+    Windows reports that as PermissionError (WinError 5 or 32) though nothing is wrong with the permissions, and the
+    same call succeeds a few milliseconds later. POSIX, other errors, and a hold that outlasts `attempts` raise."""
+    for attempt in range(1, attempts + 1):
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            if not REPLACE_RETRY or attempt == attempts:
+                raise
+            time.sleep(delay_s)
+
+
 def atomic_write_text(path: str | Path, text: str) -> None:
     """Replace a text file from a same-directory temporary file."""
     target = Path(path)
@@ -93,7 +112,7 @@ def atomic_write_text(path: str | Path, text: str) -> None:
             out.write(text)
             out.flush()
             os.fsync(out.fileno())
-        os.replace(temporary, target)
+        replace_file(temporary, target)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
