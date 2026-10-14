@@ -715,7 +715,7 @@ function renderDoor() { $('#door').classList.toggle('open', now() < S.doorUntil)
 
 function renderApprovals() {
   const items = [...S.approvals.values()], sugs = S.suggestions, holds = [...S.engineHolds.values()];
-  const reviews = [...S.requests.values()].filter(LabHQState.needsPiReview);
+  const reviews = [...S.requests.values()].filter(q => LabHQState.needsPiReview(q) || LabHQState.needsStorage(q));
   const total = items.length + sugs.length + holds.length + reviews.length;
   const decisions = items.length + sugs.length + reviews.length;
   updateDecisionBadge($('#decision-count'), decisions);

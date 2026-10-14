@@ -96,7 +96,7 @@ export function startLiveOffice(onState) {
     $('demo-banner').hidden = !demo;
     if (demo) $('demo-banner').textContent = globalThis.LabHQState.demoBannerText(S.demoStatus);
     $('token-form').hidden = S.conn !== 'auth' && S.conn !== 'offline';
-    $('approval-count').textContent = S.approvals.size + S.engineHolds.size + [...S.requests.values()].filter(globalThis.LabHQState.needsPiReview).length;
+    $('approval-count').textContent = S.approvals.size + S.engineHolds.size + [...S.requests.values()].filter(q => globalThis.LabHQState.needsPiReview(q) || globalThis.LabHQState.needsStorage(q)).length;
     syncReviewCards($('review-cards'), S.requests.values(), {onOpen:openReview, onDone:reviewDone, onStorage:chooseStorage, disabled:() => S.conn !== 'live'});
     const holdRows = [...S.engineHolds.values()].map(hold => {
       const row = document.createElement('article');

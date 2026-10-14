@@ -308,6 +308,23 @@ class Hub:
                 self.events.append(self.store.append_event({"type": "runner.offline", "ts": time.time(),
                     "data": {"runner_id": runner_id, "reason": "gateway_restarted"}}, settings.gateway.event_buffer))
         for aid, entry in list(self.approvals.items()):
+            card = entry["approval"]
+            rid = card.get("request_id")
+            saved = (self.requests.get(rid) or {}).get("result_storage")
+            if card.get("kind") == "result_storage" and (card.get("detail") or {}).get("late_storage") and saved:
+                # select() may have committed before the old process removed its card. Replay both updates
+                # before deleting it, so another interruption can safely retry this reconciliation.
+                note = "저장된 선택으로 저장 위치 카드를 복구했습니다."
+                answer = {"id": aid, "state": "reconciled", "note": note, "storage": saved}
+                self.store.put("approval_decision", aid, {"approval": card, "origin": entry.get("origin"),
+                    **answer, "decided_at": time.time()})
+                for event in ({"type": "request.storage", "data": {"result_storage": saved}},
+                              {"type": "approval.resolved", "data": answer}):
+                    self.events.append(self.store.append_event({**event, "ts": time.time(), "request_id": rid},
+                                                               settings.gateway.event_buffer))
+                self.store.delete("approval", aid)
+                self.approvals.pop(aid)
+                continue
             if (entry.get("origin") is None and entry["approval"].get("kind") not in {"resume", "facilities_fix"}
                     and not (entry["approval"].get("detail") or {}).get("late_storage")):
                 self.approvals.pop(aid)

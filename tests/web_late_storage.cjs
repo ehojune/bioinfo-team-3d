@@ -36,6 +36,50 @@ test('both offices wire storage API and shared review action',()=>{
     assert.match(src,/\/api\/requests\/\$\{encodeURIComponent\(rid\)\}\/storage/);
   }
 });
+for (const presentation of ['journal', undefined]) {
+  test(`storage stays reachable after review and reconnect (${presentation || '3D'})`, async()=>{
+    const ui=await mod, host=new Element(), office=LabHQState.createOfficeState();
+    const request={id:'r',status:'done',text:'Study',report:'Result',pi_review_pending:true};
+    office.apply({type:'snapshot',data:{requests:[request]}});
+    let picked;
+    const options={presentation,onStorage:id=>picked=id};
+    ui.syncReviewCards(host,[office.req('r')],options);
+    office.apply({type:'request.reviewed',request_id:'r',data:{pi_reviewed_at:1,pi_review_pending:false}});
+    const verify=()=>{
+      const [row]=ui.syncReviewCards(host,[office.req('r')],options);
+      assert.ok(row, 'reviewed request still offers storage');
+      assert.doesNotMatch(row.textContent,/검토 완료|확인 완료|검토 대기|검토해 주세요/);
+      const button=nodes(row).find(n=>n.tagName==='button' && n.textContent==='저장 위치 정하기');
+      assert.ok(button); button.onclick(); assert.equal(picked,'r');
+    };
+    verify();
+    office.apply({type:'snapshot',data:{requests:[{...request,pi_reviewed_at:1,pi_review_pending:false}]}});
+    verify();
+    office.apply({type:'request.storage',request_id:'r',data:{result_storage:{mode:'local'}}});
+    assert.equal(ui.syncReviewCards(host,[office.req('r')],options).length,0);
+  });
+}
+test('2.5D decision render includes reviewed storage requests in cards and badge',()=>{
+  const src=fs.readFileSync(path.join(web,'index.html'),'utf8');
+  const render=src.slice(src.indexOf('function renderApprovals() {'),src.indexOf("  $('#ap-count').textContent"));
+  const q={id:'r',status:'done',pi_reviewed_at:1};
+  let cards, badge;
+  // Run the extracted renderer with the same dependencies as the page.
+  const run=new Function('S','LabHQState','$','updateDecisionBadge','syncReviewCards','openReview','finishReview','chooseStorage','api',render+'}; return renderApprovals;');
+  run({approvals:new Map(),suggestions:[],engineHolds:new Map(),requests:new Map([['r',q]])},LabHQState,()=>({}),
+    (_,n)=>badge=n,(_,qs)=>cards=qs,()=>{},()=>{},()=>{},{reviewDone:true})();
+  assert.deepEqual(cards,[q]); assert.equal(badge,1);
+});
+test('reconciled storage replay closes the card without claiming a PI refusal',()=>{
+  const office=LabHQState.createOfficeState();
+  office.apply({type:'approval.requested',request_id:'r',data:{id:'a',kind:'result_storage',request_id:'r'}});
+  office.apply({type:'request.storage',request_id:'r',data:{result_storage:{mode:'local'}}});
+  office.apply({type:'approval.resolved',request_id:'r',data:{id:'a',state:'reconciled'}});
+  assert.equal(office.S.approvals.size,0);
+  assert.equal(office.req('r').resultStorage.mode,'local');
+  assert.equal(office.S.feed[0].text,'저장 선택을 복구했어요');
+  assert.equal(office.S.feed[0].who,'system');
+});
 test('cancelled partial reports retain the late storage action', async()=>{
   const ui=await mod, host=new Element();
   const q={id:'r',status:'cancelled',report:'Partial result',pi_review_pending:true};

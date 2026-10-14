@@ -653,7 +653,7 @@ function apply(ev, replay = false) {
       const resumed = pending?.kind === 'resume' && d.approved && (pending.request_id || rid);
       if (resumed && S.requests.has(resumed)) { const q = req(resumed); q.resumeMissing = []; reopen(q, 'waiting_for_runner'); }
       // A card nobody answered is not the PI's refusal (R5, #521): it timed out or was closed.
-      const unanswered = d.state === 'timed_out' ? '시간 초과로 닫혔어요' : ['expired', 'cancelled'].includes(d.state) ? '답 없이 닫혔어요' : '';
+      const unanswered = d.state === 'reconciled' ? '저장 선택을 복구했어요' : d.state === 'timed_out' ? '시간 초과로 닫혔어요' : ['expired', 'cancelled'].includes(d.state) ? '답 없이 닫혔어요' : '';
       const note = d.note ? ` (${short(d.note, 60)})` : '';
       const fullNote = d.note ? ` (${d.note})` : '';
       feed(unanswered ? { who: 'system', text: `${unanswered}${note}`, fullText: `${unanswered}${fullNote}` }

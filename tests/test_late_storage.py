@@ -201,6 +201,38 @@ async def test_late_card_has_no_deadline(setup):
     assert "timeout_s" not in hub.store.all("approval")[card["id"]]["approval"]
 
 
+@pytest.mark.parametrize("mode", ["local", "new"])
+async def test_restart_resolves_late_card_after_selection_commit_crash(setup, monkeypatch, mode):
+    _, hub, calls = setup
+    hub.save_request("r")
+    card = await hub.result_storage.open_card("r")
+    cursor = hub.store.event_bounds()[1]
+    monkeypatch.setattr(hub, "publish", AsyncMock(side_effect=RuntimeError("crash after selection")))
+    with pytest.raises(RuntimeError, match="crash after selection"):
+        await hub.resolve_approval(card["id"], True, storage={"mode": mode, "repo": "study"})
+    saved = hub.store.get("request", "r")["result_storage"]
+    assert saved["mode"] == mode
+    assert card["id"] in hub.store.all("approval")
+
+    restarted = Hub(hub.s, github_transport=fake_github(calls))
+    assert card["id"] not in restarted.approvals
+    assert card["id"] not in restarted.store.all("approval")
+    assert restarted.store.get("approval_decision", card["id"])["storage"] == saved
+    assert restarted.store.get("approval_decision", card["id"])["state"] == "reconciled"
+    replay = restarted.store.events_since(cursor)
+    assert any(e["type"] == "request.storage" and e["data"]["result_storage"] == saved for e in replay)
+    assert any(e["type"] == "approval.resolved" and e["data"]["id"] == card["id"] for e in replay)
+    assert restarted.requests["r"]["result_storage"] == saved
+    cursor = restarted.store.event_bounds()[1]
+    again = Hub(hub.s, github_transport=fake_github(calls))
+    assert card["id"] not in again.approvals
+    assert not [e for e in again.store.events_since(cursor) if e["type"] == "approval.resolved"]
+    assert not any(method in {"POST", "PUT"} for method, _, _ in calls)
+    for instance in (hub, restarted, again):
+        await instance.result_storage.close()
+        instance.store.close()
+
+
 @pytest.mark.parametrize("legacy_timeout", [False, True])
 async def test_late_card_stays_answerable_after_old_deadline_and_restart(setup, legacy_timeout):
     _, hub, calls = setup
