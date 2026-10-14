@@ -8,6 +8,8 @@ office.apply({ type: 'approval.requested', request_id: 'r', data: {
   id: 'hire', kind: 'recruit_plan', request_id: 'r', summary: '수습 통과하면 바로 투입',
   detail: { recruits: [{ paper: 'PMID:1' }, { paper: 'PMID:2' }] }
 } });
+office.apply({ type: 'request.step_quota_wait', request_id: 'r', data: { step_id: 'hire', engine: 'mock', resume_at: 2000 } });
+assert.equal(office.S.requests.get('r').status, 'waiting_quota');
 office.apply({ type: 'request.step_quota_resumed', request_id: 'r', data: { step_id: 'hire', engine: 'mock' } });
 assert.equal(office.S.requests.get('r').status, 'waiting_pi');
 office.apply({ type: 'recruit.suggested', request_id: 'r', data: { handled: true,
