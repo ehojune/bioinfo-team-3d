@@ -21,7 +21,7 @@ export function piText(parent, value, options = {}) {
     prose || (code ? '명령이나 코드가 포함된 내용입니다. 자세히에서 확인해 주세요.' : '');
   const preview = options.limit && shown.length > options.limit ? shown.slice(0, options.limit - 1) + '…' : shown;
   add(parent, options.tag || 'span', preview, 'pi-prose');
-  if (code || english || preview !== shown || options.truncated || options.forceOriginal || raw !== String(value ?? '')) {
+  if (code || english || preview !== shown || options.truncated || options.forceOriginal) {
     return expandableText(parent, raw, {...options, pi: false, fold: true, summary: '자세히'});
   }
   return parent;

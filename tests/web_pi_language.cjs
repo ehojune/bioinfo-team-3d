@@ -63,3 +63,12 @@ test('translation arriving during a history fetch survives the older response',a
   finish({events:[ev],has_more:false}); await pending;
   assert.equal(h.items[0].piDisplay.text,translated.text);
 });
+test('follow-up translation reaches the shared 2D and 3D request state',()=>{
+  require(path.join(root,'state.js'));
+  const {S,apply}=globalThis.LabHQState.createOfficeState();
+  apply({type:'request.followup_done',request_id:'r',data:{id:'f',ok:true,answer:'Original English answer'}});
+  apply({type:'messenger.translated',request_id:'r',data:{followup_id:'f',pi_display:translated}});
+  const f=S.requests.get('r').followups[0];
+  assert.equal(f.pi_display.text,translated.text);
+  assert.equal(f.answer,'Original English answer');
+});

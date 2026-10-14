@@ -58,6 +58,12 @@ class PiInterpreter:
                 if aid in hub.approvals:
                     hub.approvals[aid]["approval"]["pi_display"] = failed
                     hub.save_approval(aid)
+                rid = entry.get("request_id")
+                if rid in hub.requests and entry.get("followup_id"):
+                    for followup in hub.requests[rid].get("followups") or []:
+                        if followup.get("id") == entry["followup_id"]:
+                            followup["pi_display"] = failed
+                    hub.save_request(rid)
 
     def schedule(self, event: dict) -> None:
         source = message_source(event)
@@ -67,7 +73,9 @@ class PiInterpreter:
         if self.hub.store.get("pi_translation", key):
             return
         # Reserve before starting: a crash never causes a second paid call for this message.
-        self.hub.store.put("pi_translation", key, {"status": "pending", "approval_id":
+        self.hub.store.put("pi_translation", key, {"status": "pending", "request_id": event.get("request_id"),
+                            "followup_id": (event.get("data") or {}).get("id") if event.get("type") == "request.followup_done" else None,
+                            "approval_id":
                             (event.get("data") or {}).get("id") if event.get("type") == "approval.requested" else None})
         task = asyncio.create_task(self._interpret(event, source))
         self.tasks.add(task)
@@ -128,11 +136,18 @@ class PiInterpreter:
             if approval_id in hub.approvals:
                 hub.approvals[approval_id]["approval"]["pi_display"] = display
                 hub.save_approval(approval_id)
+            followup_id = (event.get("data") or {}).get("id") if event.get("type") == "request.followup_done" else None
+            if followup_id and rid in hub.requests:
+                for followup in hub.requests[rid].get("followups") or []:
+                    if followup.get("id") == followup_id:
+                        followup["pi_display"] = display
+                hub.save_request(rid)
             for saved in hub.events:
                 if saved["seq"] == event["seq"]:
                     saved.setdefault("data", {})["pi_display"] = display
             await hub.publish({"type": "messenger.translated", "ts": time.time(), "request_id": rid,
-                               "data": {"message_seq": event["seq"], "approval_id": approval_id, "pi_display": display}})
+                               "data": {"message_seq": event["seq"], "approval_id": approval_id,
+                                        "followup_id": followup_id, "pi_display": display}})
 
     async def close(self) -> None:
         tasks = list(self.tasks)

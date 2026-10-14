@@ -223,3 +223,15 @@ def test_final_report_keeps_interpretation_cost_and_optional_style_appendix(hub,
     orchestrator._finish('r', '결과를 가지고 있다.', {}, True)
     assert hub.requests['r']['cost_usd'] == 1.0
     assert '고친 1곳' in hub.requests['r']['report_appendix']
+
+
+@pytest.mark.asyncio
+async def test_followup_detail_uses_same_cached_display(hub, monkeypatch):
+    calls = mock_model(monkeypatch, hub)
+    raw = 'Please compare the input tables.'
+    hub.requests['r']['followups'] = [{'id': 'f', 'answer': raw}]
+    await hub.publish(event('request.followup_done', id='f', answer=raw, ok=True))
+    await drain(hub)
+    saved = hub.store.get('request', 'r')['followups'][0]
+    assert saved['answer'] == raw and saved['pi_display']['status'] == 'translated'
+    assert len(calls) == 1
