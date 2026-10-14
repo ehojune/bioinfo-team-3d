@@ -1120,7 +1120,7 @@ def _reaches(steps: list[dict], start: str, target: str) -> bool:
     return False
 
 
-ORCHESTRATION_ROLES = frozenset({"cso", "chief_of_staff", "sci_reviewer", "editor"})
+ORCHESTRATION_ROLES = frozenset({"cso", "chief_of_staff", "sci_reviewer", "editor", "facilities"})
 MAX_CLARIFY_CARDS = 2
 ANSWERED_QUESTIONS_HEADING = "PI가 이미 답한 질문 — 다시 묻지 말 것"
 
@@ -2318,6 +2318,8 @@ class Orchestrator:
         self.hub.save_request(rid)
         await self._emit(rid, "request.questions", {"questions": req["pending_questions"], "details": details})
         if not self.cfg.wait_for_clarification:
+            if storage and not req.get("result_storage"):
+                await storage_service.select(rid, {"mode": "local"})
             return "open", None
         # Answers a CP1 수정 요청 carried over from the old request filter questions but used none of this one's cards.
         contract = req.get("research_contract") or {}
@@ -2812,18 +2814,27 @@ class Orchestrator:
         # Whatever is still resumed (session or absolute workdir) is pinned to its runner at dispatch time.
         pin = {"session_runner": origin} if origin and (session_id or workdir) else {}
         resumable = bool(session_id and self.hub.supports_resume(agent))
-        earlier = [f for f in req.get("followups") or [] if f.get("id") != fid and f.get("status") == "done"][-3:]
+        completed = [f for f in req.get("followups") or [] if f.get("id") != fid and f.get("status") == "done"]
+        for followup in completed:
+            if not (followup.get("result") or {}).get("workdir") and getattr(self.hub, "store", None):
+                prior = self.hub.store.get("task", followup.get("task_id")) or {}
+                if (prior.get("result") or {}).get("workdir"):
+                    followup["result"] = {"workdir": prior["result"]["workdir"]}
+        earlier = completed[-3:]
         history = "".join(f"\nEarlier follow-up: {f.get('text')}\nYour answer: {clip(f.get('answer') or '', 1500)}\n"
+                          + (f"Answer workspace (read-only): {f['result']['workdir']}\n"
+                             if (f.get("result") or {}).get("workdir") else "")
                           for f in earlier)
         outputs = [r["workdir"] for r in (req.get("results") or {}).values()
                    if isinstance(r, dict) and r.get("workdir") and r.get("outputs")]
+        outputs += [f["result"]["workdir"] for f in completed if (f.get("result") or {}).get("workdir")]
         task = Task(agent_id=agent, request_id=rid, resume_session_id=session_id if resumable else None,
                     prompt=FOLLOWUP_PROMPT.format(
                         request=clip((req.get("text") or "") + render_references(req.get("references")), 4000),
                         report=clip(req.get("report") or "(no report)", 6000), history=history,
                         question=entry["text"]) + (
                             f"\nPrevious workspace (read-only): {workdir}\n"
-                            "Paths in earlier answers are relative to that workspace. Save new files only in this "
+                            "Resolve earlier output paths against each answer's recorded workspace. Save new files only in this "
                             "task's own outputs/ and .tmp/." if workdir else ""),
                     meta={**reference_meta(req), "kind": "followup", "followup_id": fid,
                           "title": f"이어 묻기: {entry['text'][:80]}", "request": req.get("text") or "",
@@ -2841,6 +2852,7 @@ class Orchestrator:
         answered = result.ok and bool(result.text.strip())
         entry.update(status="done" if answered else "failed", answer=clip(result.text.strip(), 20000) if answered else "",
                      error=None if answered else (result.error or "empty answer"), task_id=result.task_id,
+                     result={"workdir": result.workdir},
                      resumed_session=task.resume_session_id, answered_at=time.time())
         if not direct and result.session_id and self.hub.supports_resume(agent):
             req["cso_session_id"], req["cso_workdir"] = result.session_id, result.workdir or workdir

@@ -95,6 +95,28 @@ def test_pipeline_consent_yes_stays_off(monkeypatch):
     assert _data()["policy"]["bioinfo_agent"]["pipeline_pr"] is False
 
 
+@pytest.mark.parametrize("broken", ["gateway: [", "gateway: {port: invalid}"])
+def test_force_replaces_unreadable_config(broken):
+    target = Path("config/labhq.yaml")
+    target.parent.mkdir()
+    target.write_text(broken, encoding="utf-8")
+    wizard.run(yes=True, force=True)
+    assert Settings.load(str(target)).policy.bioinfo_agent.pipeline_pr is False
+
+
+def test_force_preserves_consent_but_restores_hard_stops():
+    wizard.run(yes=True)
+    data = _data()
+    data["policy"]["bioinfo_agent"].update(pipeline_pr=True, pipeline_repo="example/pipelines",
+                                            pipeline_base_branch="stable", hard_stops=[])
+    Path("config/labhq.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
+    wizard.run(yes=True, force=True)
+    policy = _data()["policy"]["bioinfo_agent"]
+    assert policy["hard_stops"] == yaml.safe_load(wizard._template_text())["policy"]["bioinfo_agent"]["hard_stops"]
+    assert policy["pipeline_pr"] and policy["pipeline_repo"] == "example/pipelines"
+    assert policy["pipeline_base_branch"] == "stable"
+
+
 @pytest.mark.parametrize("answer", ["n", "", "unclear"])
 async def test_pipeline_consent_decline_makes_no_github_calls(tmp_path, monkeypatch, answer):
     from tests.test_bioinfo_pipeline_pr import fake_pipeline_api, pipeline, run_submission
