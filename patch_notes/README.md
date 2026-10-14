@@ -14,6 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 23:20 | [`c0da1ed`](https://github.com/ehojune/bioinfo-team-3d/pull/598/commits/c0da1ed) | POSIX에서 SIGKILL 직후 /proc/<pid>/stat이 ESRCH를 돌려주면 신원 불명(2)이 아니라 이미 끝난 프로세스(0)로 본다(gateway 종료 watcher). |
+| 23:05 | [`f7e8537`](https://github.com/ehojune/bioinfo-team-3d/pull/598/commits/f7e8537) | CI flake 정리 상태 기록을 docs/status에 추가했다. |
+| 22:14 | [`8f49942`](https://github.com/ehojune/bioinfo-team-3d/pull/598/commits/8f49942) | CI에서 같은 test가 2번 이상 흔들린 원인인 1~2초 실제 시계 경계를 사건 대기로 바꿨다(login·quota wait, stall watch, topic checklist, round records, followup e2e, Chrome 시작). |
+| 22:14 | [`41b379e`](https://github.com/ehojune/bioinfo-team-3d/pull/598/commits/41b379e) | Windows에서 백신·색인기가 방금 쓴 파일을 붙들어 os.replace가 PermissionError로 거부되면 최대 약 1초 기다린다(라운드 기록·atomic_write_text). |
 | 20:24 | [`b247ef0`](https://github.com/ehojune/bioinfo-team-3d/pull/597/commits/b247ef0) | 열 수 없는(Access denied) 후손도 종료 실패와 똑같이 실패로 기록하고 조상을 보존해 down이 살아남은 자식을 두고 성공하지 않게 한다(#589 봇 P1). |
 | 19:19 | [`1593224`](https://github.com/ehojune/bioinfo-team-3d/pull/597/commits/1593224) | tree-kill이 후보 handle을 열어 PID를 고정하고 두 번째 표로 부모 PID를 다시 확인한 뒤 그 handle로 종료하며, 실패한 프로세스의 조상 전체를 남겨 재시도가 닿게 한다(#589 봇 P1 2건). |
 | 18:39 | [`fc10f13`](https://github.com/ehojune/bioinfo-team-3d/pull/597/commits/fc10f13) | down이 launcher 밑 자식 프로세스의 종료 실패도 실패로 알리고 PID 기록을 남겨, runner가 살아남은 채 성공으로 끝나지 않게 한다(#589 봇 P1). |

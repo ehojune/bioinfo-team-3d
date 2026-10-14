@@ -18,7 +18,7 @@ import httpx
 from .. import __version__
 from ..models import TaskResult
 from ..orchestrator.cso import environment_problem, failure_kind
-from ..util import short
+from ..util import replace_file, short
 from .github import GitHubClient, GitHubHTTPError, MAX_BODY, publish_clean, root_zone_restricted
 
 if TYPE_CHECKING:
@@ -467,7 +467,7 @@ class RoundRecorder:
             target = self.directory / f"{rid}.{suffix}"
             temporary = target.with_suffix(f".{suffix}.tmp")
             temporary.write_text(body, encoding="utf-8")
-            os.replace(temporary, target)
+            replace_file(temporary, target)
         return record
 
     def _stored_environment(self, rid: str) -> dict | None:

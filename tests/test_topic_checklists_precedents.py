@@ -15,6 +15,11 @@ from tests.test_cso import FakeHub
 from tests.test_research_protocol import MiniHub, valid_plan
 
 
+# Only bounds a hang. Each wait below ends on an event, never on this clock: a loaded Windows CI runner is
+# sometimes slow for seconds, and a 1 s bound failed two PR runs (2026-10-13..14).
+WAIT = 60
+
+
 PRECEDENTS = {
     "papers": [
         {"title": "Paired expression best practices", "citations": ["PMID:12345678"]},
@@ -270,7 +275,7 @@ class ParallelHub(FakeHub):
 async def test_briefing_and_precedent_dispatch_in_parallel_and_store_structured_result():
     hub = ParallelHub()
     running = asyncio.create_task(Orchestrator(hub).run_request("r"))
-    await asyncio.wait_for(hub.release.wait(), timeout=1)
+    await asyncio.wait_for(hub.release.wait(), timeout=WAIT)
     assert hub.started == {"briefing", "precedent"}
     await running
     record = hub.requests["r"]["analysis_precedents"]
@@ -443,7 +448,7 @@ class EarlyEndHub(FakeHub):
 @pytest.mark.asyncio
 async def test_a_failed_briefing_cancels_the_scout_on_its_runner_and_waits_for_it():
     hub = EarlyEndHub(runner_answers_cancel=True)
-    await asyncio.wait_for(Orchestrator(hub).run_request("r"), timeout=5)
+    await asyncio.wait_for(Orchestrator(hub).run_request("r"), timeout=WAIT)
     assert hub.requests["r"]["status"] == "failed"
     assert len(hub.cancel_sent) == 1 and not hub.scout_reaped  # the runner's cancelled result came back
 
@@ -452,7 +457,7 @@ async def test_a_failed_briefing_cancels_the_scout_on_its_runner_and_waits_for_i
 async def test_a_failed_briefing_reaps_a_scout_whose_runner_never_answers(monkeypatch):
     monkeypatch.setattr(cso, "PRECEDENT_CANCEL_GRACE_S", 0.05)
     hub = EarlyEndHub(runner_answers_cancel=False)
-    await asyncio.wait_for(Orchestrator(hub).run_request("r"), timeout=5)
+    await asyncio.wait_for(Orchestrator(hub).run_request("r"), timeout=WAIT)
     assert hub.requests["r"]["status"] == "failed"
     assert hub.cancel_sent == [] and hub.scout_reaped
 

@@ -9,6 +9,10 @@ import pytest
 from labhq.gateway.server import Hub
 from labhq.settings import DataZone, Settings
 
+# Only bounds a hang. Each drain ends when the delivery queue empties, never on this clock: a loaded Windows CI
+# runner is sometimes slow for seconds, and a 2 s bound failed a PR run (2026-10-12).
+WAIT = 60
+
 
 def settings(tmp_path):
     cfg = Settings()
@@ -259,7 +263,7 @@ async def test_recovery_retries_a_delivery_failed_by_the_old_size_limit(tmp_path
 
     hub.rounds.recover()
     try:
-        await asyncio.wait_for(hub.rounds.drain(), 2)
+        await asyncio.wait_for(hub.rounds.drain(), WAIT)
         assert remote.issue is not None
         assert hub.store.get("round_delivery", "req-recover-large") is None
         before = len(remote.calls)
@@ -298,7 +302,7 @@ async def test_recovery_retries_failed_large_update_when_issue_digest_is_stale(t
 
     hub.rounds.recover()
     try:
-        await asyncio.wait_for(hub.rounds.drain(), 2)
+        await asyncio.wait_for(hub.rounds.drain(), WAIT)
         assert "최종 결과" in remote.issue["body"]
         assert any(method == "PATCH" for method, _, _ in remote.calls)
         assert hub.store.get("round_delivery", rid) is None
@@ -331,7 +335,7 @@ async def test_transient_publication_retries_without_restart(tmp_path, method, m
     hub.rounds.write("req-retry")
     hub.rounds.submit("req-retry")
     try:
-        await asyncio.wait_for(hub.rounds.drain(), 2)
+        await asyncio.wait_for(hub.rounds.drain(), WAIT)
         assert remote.failed
         assert remote.issue is not None and "Finished" in remote.issue["body"]
         assert hub.store.get("round_delivery", "req-retry") is None
@@ -359,7 +363,7 @@ async def test_403_reset_requires_exhausted_remaining_and_waits_until_reset(tmp_
     hub.rounds.write("req-forbidden")
     hub.rounds.submit("req-forbidden")
     try:
-        await asyncio.wait_for(hub.rounds.drain(), 2)
+        await asyncio.wait_for(hub.rounds.drain(), WAIT)
         delivery = hub.store.get("round_delivery", "req-forbidden")
         assert delivery["state"] == "failed" and delivery["attempts"] == 1
         assert len(forbidden.calls) == 1
@@ -390,7 +394,7 @@ async def test_403_reset_requires_exhausted_remaining_and_waits_until_reset(tmp_
     hub.rounds.write("req-limited")
     hub.rounds.submit("req-limited")
     try:
-        await asyncio.wait_for(hub.rounds.drain(), 2)
+        await asyncio.wait_for(hub.rounds.drain(), WAIT)
         assert waited and waited[0] > 1_000_000_000
         assert remote.issue is not None
         assert hub.store.get("round_delivery", "req-limited") is None
@@ -425,7 +429,7 @@ async def test_rate_limit_retry_after_is_a_lower_bound_and_does_not_exhaust_atte
     hub.rounds.write("req-rate")
     hub.rounds.submit("req-rate")
     try:
-        await asyncio.wait_for(hub.rounds.drain(), 2)
+        await asyncio.wait_for(hub.rounds.drain(), WAIT)
         assert slept == [60]
         assert remote.issue is not None
         assert hub.store.get("round_delivery", "req-rate") is None
@@ -444,7 +448,7 @@ async def test_missing_token_stays_pending_and_recovers_after_restart(tmp_path, 
     first.rounds.write("req-token")
     first.rounds.submit("req-token")
     try:
-        await asyncio.wait_for(first.rounds.drain(), 2)
+        await asyncio.wait_for(first.rounds.drain(), WAIT)
         assert first.store.get("round_delivery", "req-token")["state"] == "pending"
     finally:
         first.rounds.worker.cancel()
@@ -455,7 +459,7 @@ async def test_missing_token_stays_pending_and_recovers_after_restart(tmp_path, 
     restarted = Hub(cfg, httpx.MockTransport(remote))
     restarted.rounds.recover()
     try:
-        await asyncio.wait_for(restarted.rounds.drain(), 2)
+        await asyncio.wait_for(restarted.rounds.drain(), WAIT)
         assert remote.issue is not None
         assert restarted.store.get("round_delivery", "req-token") is None
     finally:
@@ -483,7 +487,7 @@ async def test_publication_stops_on_permanent_failure_or_retry_limit(tmp_path, f
     hub.rounds.write("req-stop")
     hub.rounds.submit("req-stop")
     try:
-        await asyncio.wait_for(hub.rounds.drain(), 2)
+        await asyncio.wait_for(hub.rounds.drain(), WAIT)
         assert len(calls) == (2 if failure == "public" else 3 if failure == 500 else 1)
         assert not any(method in {"POST", "PATCH"} for method in calls)
         assert hub.store.get("round_delivery", "req-stop")["state"] == "failed"

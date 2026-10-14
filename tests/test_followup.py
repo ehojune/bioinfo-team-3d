@@ -453,10 +453,12 @@ async def test_runner_removes_staff_mcp_and_keeps_only_the_scoped_write_gate(tmp
     assert "notes_writer" in [s.name for s in seen[2].mcp_servers], "an ordinary step keeps the agent's servers"
 
 
-async def _until(predicate, timeout=30.0):
-    started = time.time()
+# The mock request takes ~4 s here and needs ~300 store writes, so a loaded Windows CI runner went past the old
+# 30 s on main (2026-10-14). The bound only has to detect a hang; each wait ends on the condition.
+async def _until(predicate, timeout=180.0):
+    started = time.monotonic()
     while not predicate():
-        assert time.time() - started < timeout, "timed out"
+        assert time.monotonic() - started < timeout, "timed out"
         await asyncio.sleep(0.05)
 
 
@@ -474,18 +476,18 @@ async def test_followup_end_to_end_with_mock_runner(tmp_path):
     hub = app.state.hub
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
     tasks = [asyncio.create_task(server.serve())]
-    await _until(lambda: server.started, 10)
+    await _until(lambda: server.started)
     runner = Runner(s)
     tasks.append(asyncio.create_task(runner.run_forever()))
     try:
-        await _until(lambda: "cso" in hub.agents, 15)
+        await _until(lambda: "cso" in hub.agents)
         rid = hub.create_request(RequestIn(text="공개 데이터 요약"))
-        await _until(lambda: hub.requests[rid]["status"] != "running", 30)
+        await _until(lambda: hub.requests[rid]["status"] != "running")
         req = hub.requests[rid]
         assert req["status"] == "done", req.get("error")
         session, workdir = req["cso_session_id"], req["cso_workdir"]
         entry = hub.start_followup(rid, "왜 그 데이터를 골랐나요?")
-        await _until(lambda: entry["status"] != "running", 20)
+        await _until(lambda: entry["status"] != "running")
         assert entry["status"] == "done", entry
         task = next(v for v in hub.store.all("task").values()
                     if (v.get("payload") or {}).get("meta", {}).get("followup_id") == entry["id"])

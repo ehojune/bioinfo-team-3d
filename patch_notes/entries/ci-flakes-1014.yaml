@@ -1,0 +1,17 @@
+pr: 598
+rows:
+- sha: 8f49942
+  at: 2026-10-14 22:14
+  text: CI에서 같은 test가 2번 이상 흔들린 원인인 1~2초 실제 시계 경계를 사건 대기로 바꿨다(login·quota wait, stall
+    watch, topic checklist, round records, followup e2e, Chrome 시작).
+- sha: 41b379e
+  at: 2026-10-14 22:14
+  text: Windows에서 백신·색인기가 방금 쓴 파일을 붙들어 os.replace가 PermissionError로 거부되면 최대 약 1초 기다린다(라운드
+    기록·atomic_write_text).
+- sha: f7e8537
+  at: 2026-10-14 23:05
+  text: CI flake 정리 상태 기록을 docs/status에 추가했다.
+- sha: c0da1ed
+  at: 2026-10-14 23:20
+  text: POSIX에서 SIGKILL 직후 /proc/<pid>/stat이 ESRCH를 돌려주면 신원 불명(2)이 아니라 이미 끝난 프로세스(0)로
+    본다(gateway 종료 watcher).
