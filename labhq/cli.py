@@ -1217,7 +1217,7 @@ async def _demo_auto_approve(hub, aid: str, delay: float, phone: bool) -> None:
         return
     try:
         note = "demo timeout auto-approve" if phone else "demo auto-approve"
-        card = hub.approvals[aid]["approval"]
+        card = hub.approvals[aid].get("approval", {})
         if card.get("detail", {}).get("gate") == "execution_location":
             from .orchestrator.execution import OPTIONS
             note = OPTIONS[0]  # The isolated demo uses only the mock scheduler.

@@ -76,12 +76,20 @@ async def test_request_updates_land_in_project_repo(tmp_path):
     hub = app.state.hub
     publish = hub.publish
 
+    async def answer(card):
+        from labhq.orchestrator.execution import OPTIONS
+        note = "ok"
+        if card.get("detail", {}).get("gate") == "execution_location":
+            # Keep waiting_pi observable beyond the old completion sleep.
+            await asyncio.sleep(0.4)
+            assert hub.requests[card["request_id"]]["status"] == "waiting_pi"
+            note = OPTIONS[1]
+        await hub.resolve_approval(card["id"], True, note)
+
     async def tap(ev, **kwargs):
         await publish(ev, **kwargs)
         if ev.get("type") == "approval.requested":
-            from labhq.orchestrator.execution import OPTIONS
-            note = OPTIONS[1] if ev["data"].get("detail", {}).get("gate") == "execution_location" else "ok"
-            asyncio.get_running_loop().create_task(hub.resolve_approval(ev["data"]["id"], True, note))
+            tasks.append(asyncio.create_task(answer(ev["data"])))
 
     hub.publish = tap
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=gport, log_level="warning"))
@@ -93,8 +101,8 @@ async def test_request_updates_land_in_project_repo(tmp_path):
         await _until(lambda: "cso" in hub.agents, 15)
         rid = hub.create_request(RequestIn(text="CD276 분석 [revise]", project_id="demo"))
         assert str(tmp_path / "clone") in hub.requests[rid]["project_dirs"]
-        await _until(lambda: hub.requests[rid]["status"] != "running", 60)
-        await asyncio.sleep(0.2)
+        await _until(lambda: hub.requests[rid]["status"] in {"done", "failed", "cancelled"}, 60)
+        assert hub.requests[rid]["status"] == "done", hub.requests[rid].get("error")
         await hub.reporter.drain()
         kinds = [(m, p.rsplit("/", 1)[-1] if "/contents/" not in p else "contents") for m, p, _ in calls]
         assert kinds[:2] == [("GET", "issues"), ("POST", "issues")]
@@ -107,7 +115,8 @@ async def test_request_updates_land_in_project_repo(tmp_path):
 
         before = len(calls)
         rid2 = hub.create_request(RequestIn(text="공개 저장소 테스트", project_id="open"))
-        await _until(lambda: hub.requests[rid2]["status"] != "running", 60)
+        await _until(lambda: hub.requests[rid2]["status"] in {"done", "failed", "cancelled"}, 60)
+        assert hub.requests[rid2]["status"] == "done", hub.requests[rid2].get("error")
         await hub.reporter.drain()
         assert len(calls) == before  # public repo stays silent without allow_public_reports
     finally:
