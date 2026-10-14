@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 03:56 | [`80442f0`](https://github.com/ehojune/bioinfo-team-3d/pull/602/commits/80442f0) | 단독 처리 결과의 점검 판정은 계획 단계 A가 아니라 단독 처리에 달고, topic별로 다르게 답한 공유 점검 id의 판정은 topic별 답과 함께 두어 같은 topic의 step 답에만 잇고 점검표를 topic마다 한 줄로 적음 (#586) |
 | 03:06 | [`7e9c535`](https://github.com/ehojune/bioinfo-team-3d/pull/601/commits/7e9c535) | 움짤이 --max-mb를 넘으면 기존 output을 바꾸지 않고 임시 파일을 거쳐 교체 (#546, PR #599 지적) |
 | 03:04 | [`103d3cf`](https://github.com/ehojune/bioinfo-team-3d/pull/601/commits/103d3cf) | 가상 timer callback의 예외를 reportError로 올려 d.errors에 기록 (#546, PR #599 지적) |
 | 03:03 | [`68846ee`](https://github.com/ehojune/bioinfo-team-3d/pull/601/commits/68846ee) | 기준선 갱신이 Chrome 없어 건너뛰어지거나 기준선이 그대로면 이유를 내고 1로 끝남 (#546, PR #599 지적) |
