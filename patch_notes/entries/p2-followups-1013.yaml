@@ -6,3 +6,6 @@ rows:
 - sha: 'fd4ac7b'
   at: 2026-10-14 10:13
   text: P2 웹 회귀 파일을 pytest의 CI 실행 목록에 연결
+- sha: '7c4752d'
+  at: 2026-10-14 11:08
+  text: '최신 main 병합: P2·design-token·shutdown 테스트 보존, CSS 로드 순서 충돌 해소'
