@@ -6,6 +6,33 @@
 
 ## 결론
 
+최근 3일(10-11~14) `test` workflow에서 같은 test가 2번 이상 흔들린 원인은 대부분 1~2초짜리 실제 시계 경계였습니다. 그 test들이 사건을 기다리게 바꾸고, 반복 실행 중 만난 제품 결함 하나(Windows 파일 교체)를 고쳤습니다.
+
+## 바뀐 것
+
+- login/quota wait test: 기본 대기 창을 1초에서 600초·1000초로 늘리고, 만료를 보는 test는 20초씩 흐르는 가짜 시계로 바꿨습니다.
+- stall watch, topic checklist, round records, followup e2e test: 1~30초 상한을 hang 감지용 60~180초로 늘리고, sleep 폴링 5곳은 조건 대기로 바꿨습니다.
+- `web_office_browser.cjs`: Chrome 시작을 10초 고정 반복 대신 60초 deadline으로 기다리고, Chrome이 먼저 끝나면 바로 실패합니다.
+- 제품: `cli._process_created`가 종료 중인 프로세스의 `/proc/<pid>/stat` 읽기 오류(ESRCH)를 "신원을 읽을 수 없음"이 아니라 "이미 없음"으로 봅니다. 이 PR의 CI에서 같은 코드가 한 번은 통과하고 한 번은 `test_the_watcher_reports_a_gateway_that_ended_by_itself`(exit 2)로 실패했습니다.
+- 제품: `util.replace_file`이 Windows에서 스캐너가 잠깐 붙든 파일의 `os.replace` 거부(PermissionError)를 최대 약 1초 기다립니다. `RoundRecorder.write`와 `atomic_write_text`가 씁니다.
+- 지우거나 skip한 test는 없고 검사 내용은 같습니다.
+
+## 확인
+
+- 지연 주입(저장소 쓰기마다 event loop을 150~300ms 막음): login 12건과 quota·stall watch 7건이 수정 전 실패, 수정 후 통과.
+- 반복 실행: login·quota·stall·topic·round records·followup·`web_office_browser` wrapper 각 20/20, `.cjs` 직접 10/10.
+- 수정하지 않은 test(이미 고쳐졌거나 PR 한정 실패): semantics 2파일, kill 경로 2건, github reporter, bench 20/20.
+- 이 PC에서만 본 것: semantics 반복 중 2번 `Windows fatal exception: access violation`(`runner/versions.py` probe 스레드의 CreateProcess), 전체 실행에서 `test_staff_control_steps`가 한국어 `tasklist` 출력을 UTF-8로 읽다 실패(`PYTHONUTF8=1` 없이는 통과). 둘 다 CI 로그에는 없어 고치지 않았습니다.
+- 전체 pytest 6618 passed, 1 failed(위 `tasklist` 인코딩), 66 skipped.
+
+## 남은 지적
+
+- 같은 `os.replace` 거부에 취약한 곳이 더 있습니다(`request_bundle.py`, `doctor.py`, `runner/codex_sandbox.py`, `hooks/control.py` 등). 이번에는 이 PR이 본 두 곳만 고쳤습니다.
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+## 결론
+
 PI의 gateway·runner가 하루에 여러 번 종료 기록 없이 함께 죽던 원인인 PID 재사용 tree-kill을 막았습니다. 종료 대상은 이제 "부모 PID가 같고 부모보다 늦게 만들어진" 프로세스뿐이고, 죽이기 직전에 생성 시각을 다시 확인합니다. Refs #589.
 
 ## 원인
