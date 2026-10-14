@@ -661,7 +661,7 @@ export function syncReviewCards(container, requests, options = {}) {
   const rows = [...requests].filter(q => globalThis.LabHQState.needsPiReview(q)).map(q => {
     const final = q.status === 'review_pending' ? q.final_checkpoint : null;
     const reportReady = q.status === 'done' || !!final;
-    const key = JSON.stringify([q.text, q.status, final, options.disabled?.(q) || false]);
+    const key = JSON.stringify([q.text, q.status, final, q.resultStorage, options.disabled?.(q) || false]);
     const prior = existing.get(q.id);
     if (prior?.dataset.reviewKey === key) return prior;
     const row = doc().createElement('article'); row.className = 'ap';
@@ -680,6 +680,11 @@ export function syncReviewCards(container, requests, options = {}) {
     if (final) {
       const deny = add(actions, 'button', '수용 거부', 'btn'); deny.type = 'button'; deny.disabled = done.disabled;
       deny.onclick = () => options.onDone?.(q.id, {decision:'rejected', revision:final.revision, target_sha256:final.target_sha256});
+    }
+    if (globalThis.LabHQState.needsStorage(q)) {
+      const storage = add(actions, 'button', '저장 위치 정하기', 'btn');
+      storage.type = 'button'; storage.disabled = done.disabled;
+      storage.onclick = () => options.onStorage?.(q.id);
     }
     return row;
   });

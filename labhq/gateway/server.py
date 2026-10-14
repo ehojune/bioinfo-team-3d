@@ -308,7 +308,8 @@ class Hub:
                 self.events.append(self.store.append_event({"type": "runner.offline", "ts": time.time(),
                     "data": {"runner_id": runner_id, "reason": "gateway_restarted"}}, settings.gateway.event_buffer))
         for aid, entry in list(self.approvals.items()):
-            if entry.get("origin") is None and entry["approval"].get("kind") not in {"resume", "facilities_fix"}:
+            if (entry.get("origin") is None and entry["approval"].get("kind") not in {"resume", "facilities_fix"}
+                    and not (entry["approval"].get("detail") or {}).get("late_storage")):
                 self.approvals.pop(aid)
                 self.store.delete("approval", aid)
                 self.store.put("approval_decision", aid, {"approval": entry["approval"],
@@ -2996,7 +2997,9 @@ class Hub:
                 raise ValueError("보고서 검토 완료 뒤 게시해 주세요.")
         if pending and (pending["approval"].get("detail") or {}).get("storage"):
             rid = pending["approval"]["request_id"]
-            storage = await self.result_storage.select(rid, storage if approved and storage else {"mode": "local"})
+            storage = await self.result_storage.select(rid, storage if approved and storage else {"mode": "local"},
+                late=bool(pending["approval"]["detail"].get("late_storage")))
+            await self.publish({"type": "request.storage", "request_id": rid, "data": {"result_storage": storage}})
         self._cancel_facilities_timeout(approval_id)
         self._cancel_resume_timer(approval_id)
         entry = self.approvals.pop(approval_id, None)
@@ -3686,6 +3689,15 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             raise HTTPException(409, "project has no repo or GitHub token is not set")
         c = await gh.request_codex_review(proj.repo, number, body.note, settings.github.codex_mention)
         return {"ok": True, "url": c.get("html_url")}
+
+    @app.post("/api/requests/{rid}/storage", dependencies=[Depends(auth)])
+    async def storage_card(rid: str) -> dict:
+        if rid not in hub.requests:
+            raise HTTPException(404)
+        try:
+            return await hub.result_storage.open_card(rid)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
 
     @app.post("/api/requests/{rid}/review-done", dependencies=[Depends(auth)])
     async def review_done(rid: str, body: dict | None = None) -> dict:
