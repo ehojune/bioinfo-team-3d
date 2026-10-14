@@ -2938,7 +2938,8 @@ class Orchestrator:
                       "execution": location["mode"]}], location, self.hub.agents)
                 if problems:
                     raise ValueError("; ".join(problems))
-                task = task.model_copy(update={"prompt": task.prompt + execution_policy.plan_rule(location)})
+                if location["mode"] == "hpc":
+                    task = task.model_copy(update={"prompt": task.prompt + execution_policy.plan_rule(location)})
         initial_attempt = first_attempt
         engine = str((self.hub.agents.get(task.agent_id) or {}).get("engine") or "")
         final_step = bool(task.meta.get("final_budget_turn"))  # nothing runs after this step but its own turns
@@ -4904,7 +4905,7 @@ class Orchestrator:
                     if paper_line:
                         summary = paper_line + "\n" + summary
                     if req.get("execution_location"):
-                        summary = execution_policy.record_line(req["execution_location"]) + ". " + summary
+                        summary += " " + execution_policy.record_line(req["execution_location"])
                     if reuse_pending:
                         source = ("CP2 수정 요청 반영" if carried.get("trigger") == "cp2_revise"
                                   else "리뷰 P1 반영")

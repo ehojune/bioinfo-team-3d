@@ -65,7 +65,9 @@ async def run_lab(tmp: Path, semantics: Any, texts: list[str], *, project_id: st
 
             async def approve():
                 await _until(lambda: aid in hub.approvals, 10)
-                await hub.resolve_approval(aid, True, "ok")
+                from labhq.orchestrator.execution import OPTIONS
+                note = OPTIONS[1] if ev["data"].get("detail", {}).get("gate") == "execution_location" else "ok"
+                await hub.resolve_approval(aid, True, note)
             asyncio.get_running_loop().create_task(approve())
 
     hub.publish = tap

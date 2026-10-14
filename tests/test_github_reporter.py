@@ -79,7 +79,9 @@ async def test_request_updates_land_in_project_repo(tmp_path):
     async def tap(ev, **kwargs):
         await publish(ev, **kwargs)
         if ev.get("type") == "approval.requested":
-            asyncio.get_running_loop().create_task(hub.resolve_approval(ev["data"]["id"], True, "ok"))
+            from labhq.orchestrator.execution import OPTIONS
+            note = OPTIONS[1] if ev["data"].get("detail", {}).get("gate") == "execution_location" else "ok"
+            asyncio.get_running_loop().create_task(hub.resolve_approval(ev["data"]["id"], True, note))
 
     hub.publish = tap
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=gport, log_level="warning"))

@@ -125,6 +125,8 @@ def build_record(hub: "Hub", rid: str, sources: dict[str, dict[str, list[dict]]]
     decisions += [{"approval": v["approval"], "approved": None, "note": None,
                    "state": "pending"} for v in hub.approvals.values()
                   if v["approval"].get("request_id") == rid]
+    # Execution choice and scope clarification are distinct cards. Store key order is random, not PI order.
+    decisions.sort(key=lambda d: d.get("decided_at") or (d.get("approval") or {}).get("created_at") or 0)
     plan = req.get("plan") or {}
     results = req.get("results") or {}
     steps = []
