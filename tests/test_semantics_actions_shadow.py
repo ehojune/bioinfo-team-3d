@@ -18,7 +18,7 @@ from tests.semantics_shadow_lab import lab_record, run_lab, task_row
 
 ROOT = Path(__file__).resolve().parents[1]
 ON = {"mode": "shadow", "actions": "shadow"}
-TEXT = "CD276 세포유형 분석 [artifact] [recruit] [question]"  # one approval: two would race in the round order
+TEXT = "CD276 세포유형 분석 [artifact] [recruit] [question]"
 
 
 def _settings(tmp_path, semantics=ON):
@@ -45,6 +45,23 @@ def _finish(hub, rid="req_unit1", **extra):
                          "created_at": 1790000000.0, "finished_at": 1790000100.0, "results": {},
                          "plan": {"steps": []}, **extra}
     hub.commit_terminal(rid, "request.completed", {"ok": True})
+
+
+@pytest.mark.parametrize("bulk", [False, True])
+def test_round_orders_clarification_hiring_and_cp1_by_card_creation(tmp_path, bulk):
+    from labhq.integrations.rounds import build_record, record_sources
+
+    hub = _hub(tmp_path, {"mode": "off"})
+    hub.requests["req_unit1"] = {"text": "reproduce", "environment": {"model_ids": []}}
+    for aid, kind, created in [("appr_a", "recruit_plan", 20), ("appr_z", "clarify", 10)]:
+        hub.store.put("approval_decision", aid, {"approval": {
+            "id": aid, "request_id": "req_unit1", "kind": kind, "created_at": created},
+            "approved": True})
+    hub.approvals["appr_pending"] = {"approval": {
+        "id": "appr_pending", "request_id": "req_unit1", "kind": "research_plan", "created_at": 30}}
+    record = build_record(hub, "req_unit1", record_sources(hub) if bulk else None)
+    assert [(d["kind"], d["state"]) for d in record["pi_decisions"]] == [
+        ("clarify", "resolved"), ("recruit_plan", "resolved"), ("research_plan", "pending")]
 
 
 # ---------------------------------------------------------------- off is as before
