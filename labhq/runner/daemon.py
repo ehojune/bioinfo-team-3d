@@ -590,7 +590,8 @@ class Runner:
             servers.append(McpServerSpec(name="labhq_approval", command=sys.executable,
                                          args=["-m", "labhq.tools.approval_mcp"], env=env,
                                          timeout_s=timeout_s))
-        if "hpc" in agent.builtin_mcp and self.s.hpc.scheduler != "none":
+        if ("hpc" in agent.builtin_mcp and self.s.hpc.scheduler != "none"
+                and env.get("LABHQ_EXECUTION_MODE") != "local"):
             servers.append(McpServerSpec(name="labhq_hpc", command=sys.executable,
                                          args=["-m", "labhq.tools.hpc_mcp"], env=env,
                                          timeout_s=timeout_s))
@@ -603,7 +604,8 @@ class Runner:
             servers.append(McpServerSpec(name="labhq_ask", command=sys.executable,
                                          args=["-m", "labhq.tools.ask_mcp"], env=env,
                                          timeout_s=timeout_s))
-        return servers + list(agent.mcp)
+        return servers + [server for server in agent.mcp
+                          if not (env.get("LABHQ_EXECUTION_MODE") == "local" and server.name == "labhq_hpc")]
 
     def _resume_baseline(self, task: Task, agent: AgentSpec, ws: TaskWorkspace) -> dict | None:
         """Look across this runner's workspaces, including a reused workspace after restart."""
@@ -1047,6 +1049,14 @@ class Runner:
 
     async def _run_task(self, task: Task, workdir_override: Path | None = None, *, paper_skill_build=None) -> TaskResult:
         agent = self._resolve_agent(task)
+        location = task.meta.get("execution_location") or {}
+        whole_hpc = (location.get("mode") == "hpc" and task.meta.get("kind") in {"step", "direct"})
+        if whole_hpc:
+            if (location.get("runner_id") != self.s.runner.id
+                    or self.s.hpc.scheduler == "none" or "hpc" not in agent.builtin_mcp
+                    or not task.request_id or not re.fullmatch(r"[A-Za-z0-9_-]+", task.request_id)):
+                raise ValueError("whole-request HPC needs a scheduler, built-in HPC worker and request id")
+            workdir_override = self.ws_root / "requests" / task.request_id
         read_only = is_read_only_task(task.meta, agent)
         refusal = read_only_refusal(agent.id, agent.engine) if read_only else None
         # A contract hire works only once active, and staff that send data to external services never take restricted
@@ -1332,6 +1342,7 @@ class Runner:
             env = {
                 "LABHQ_BROKER_URL": self.broker.url, "LABHQ_BROKER_TOKEN": broker_token,
                 "LABHQ_TASK_ID": task.id, "LABHQ_AGENT_ID": agent.id, "LABHQ_WORKDIR": str(ws.dir),
+                "LABHQ_EXECUTION_MODE": "hpc" if whole_hpc else "local" if location else "",
                 "LABHQ_READ_ONLY": "1" if read_only else "0",
                 "LABHQ_ENVIRONMENT_STEP": "1" if task.meta.get("environment_step") is True else "0",
                 "LABHQ_SHARED_ENVIRONMENT_PROTECTED": (
@@ -1534,6 +1545,16 @@ class Runner:
             self.jobs[jid].update(session_id=result.session_id, workdir=str(ws.dir))
             self.store.put("job", jid, self.jobs[jid])
         result.pending_jobs, result.workdir = pending, str(ws.dir)
+        blocking = result.blocking_decision or (result.structured.get("blocking_decision")
+                                               if isinstance(result.structured, dict) else None)
+        if whole_hpc and result.ok and not pending and not result.pending_asks and not blocking:
+            runs = ws._manifest().get("runs") or {}
+            step_id = task.meta.get("step_id") or "direct"
+            if not any(run.get("hpc_step_id") == step_id and run.get("hpc_submitted")
+                       and run.get("hpc_revision", 0) == task.meta.get("revision", 0)
+                       for run in runs.values()):
+                result = result.model_copy(update={"ok": False,
+                    "error": "HPC 처리 단계에 러너가 제출한 잡 기록이 없습니다. 로컬 결과는 받지 않습니다."})
         result.workdir_id = ws.dir.name
         # The record keeps what the step read: hashes taken before the run. A writable input the step changed gets
         # changed_during_step, and its hash stays the one from before (PR #442 review).
@@ -1700,6 +1721,9 @@ class Runner:
             return {"error": "this task is not running on the runner; the job was not submitted"}
         if running[0]:  # read-only tasks get a broker token too, but no HPC (read_only_profile)
             return {"error": "a read-only task cannot submit HPC jobs; the job was not submitted"}
+        location = getattr(getattr(ws, "task", None), "meta", {}).get("execution_location") or {}
+        if location and (location.get("mode") != "hpc" or ws.task.meta.get("kind") not in {"step", "direct"}):
+            return {"error": "this request selected local execution for this task; no HPC job was submitted"}
 
         async def approve(payload: dict) -> dict:
             return await self.broker.request_approval(ApprovalRequest.model_validate(
@@ -1720,6 +1744,9 @@ class Runner:
                 done.set_result(None)
 
         async def record(result: dict) -> None:
+            if location.get("mode") == "hpc":
+                ws.update_run(tid, hpc_step_id=ws.task.meta.get("step_id") or "direct", hpc_submitted=True,
+                              hpc_revision=ws.task.meta.get("revision", 0))
             await self._track_job({"task_id": tid, "agent_id": aid, "job_id": result["job_id"],
                                    "name": result["name"], "script": result["script"],
                                    "script_sha256": result["script_sha256"],

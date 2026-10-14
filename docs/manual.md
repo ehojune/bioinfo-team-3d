@@ -102,7 +102,18 @@ AlphaGenome API 키가 아직 없으면 마지막에 한 번 묻습니다. Enter
 스케줄러는 `qsub`/`qstat`(SGE·PBS)과 `sbatch`/`sinfo`(Slurm)로 찾고, 종류를 하나로 정할 수 없으면 묻습니다(`--yes`면 멈춤).
 스케줄러 도구가 있으면 HPC 상담을 합니다(#119). 읽기 전용 조회(SGE `qconf -sql`·`-spl`·`-sp`·`-sc`, PBS `qstat -Q`·`qstat -B -f`·`pbsnodes -a`, Slurm `sinfo`)로 큐·PE·메모리 리소스·PBS 종류를 모아 `hpc:` 초안을 설정에 넣고 보여 줍니다.
 설정을 저장한 뒤 `sleep 1` 시험 잡(1코어, 5분)의 제출 명령을 보여 주고, PI가 `y`라고 답할 때만 한 번 제출해 끝날 때까지 추적합니다. `--yes`·`--dry-run`에서는 묻지 않고, 통제 구역 안에서는 제출하지 않습니다.
-클러스터가 없으면 `scheduler: none`이고, 무거운 단계는 로컬 CLI로만 돌리며 그럴 수 없는 단계는 CSO가 계획에서 밝힙니다. `ssh_host`·데이터 계정 전환(`submit_prefix`)은 상담이 정하지 않습니다([설정 포인트](#설정-포인트)).
+온라인 runner에 scheduler와 내장 HPC 도구를 쓰는 직원이 있으면 브리핑 뒤, CP1 전에 요청 전체의 실행 위치를 묻습니다(#430). 설정이 없거나 해당 runner가 오프라인이면 질문 없이 로컬로 정합니다.
+
+| 선택 | 실행·데이터 위치 | 시간·비용 |
+|---|---|---|
+| HPC | 다운로드·환경 준비·QC·분석·그림/보고서 파일을 모두 HPC 잡으로 실행. 요청 하나의 `outputs/`에서 순서대로 이어 감 | 큐 대기와 서버 사용료 가능 |
+| 이 PC | 모든 처리 단계가 로컬. HPC 도구·잡 제출은 차단 | 큐 대기는 없지만 큰 작업은 오래 걸리며 PC 자원 사용 |
+
+선택은 요청 기록·CP1 카드·보고서 부록에 남고 재시작에도 유지됩니다. 실행 위치가 섞이거나 다른 runner를 쓰는 HPC 계획은 거부합니다. HPC 단계는 제출 기록이 있어야 완료로 받습니다. 직원은 잡 스크립트를 준비하고 허용된 요약만 읽으며, 결과 회수는 마지막 CSO 보고·요청 묶음에서 합니다. 이 규칙은 계획·제출 검사이며 직원 CLI 전체를 격리하는 sandbox는 아닙니다.
+
+공유 계정(`hpc.submit_prefix`)도 같은 요청의 `outputs/`를 잡 작업 폴더로 씁니다. 중간 결과를 private 단계 폴더에서 옮기지 않습니다. 잡은 반환된 `output_dir`에 쓰고 원본 restricted 데이터는 그 밖의 지정 구역에 둡니다. 그룹 접근이 필요한 기존 입력과 상위 폴더 권한은 운영자가 준비해야 합니다. 외부 HPC MCP만 연결한 구성은 이 방식의 대상이 아닙니다. 실제 클러스터 검증은 서버 복구 뒤에 진행합니다.
+
+`scheduler: none`이면 로컬에서 처리할 수 없는 작업을 CSO가 계획에 밝힙니다. `ssh_host`·계정 전환(`submit_prefix`)은 설치 상담이 정하지 않습니다([설정 포인트](#설정-포인트)).
 `--yes`는 기본값을 수락하고 `--dry-run`은 파일 생성 없이 변경과 doctor 점검을 보여 줍니다. 기존 설정은 보존하며 `--force`일 때만 교체합니다.
 Windows에서는 restricted 구역을 빼고, 개인 Codex 지침이 있으면 직원 전용 `CODEX_HOME`을, `~/.claude`가 있으면 Claude 직원 전용 `CLAUDE_CONFIG_DIR`(`~/.labhq/claude-staff`)을 넣고 사람이 실행할 로그인 명령을 안내합니다.
 Codex `bin`이 비어 있거나 `auto`이면 Windows 앱에서 판본이 가장 높은 폴더를 고르고, 판본을 비교할 수 없을 때만 mtime을 씁니다. doctor는 고른 경로를 표시합니다. 앱이 없으면 PATH를 사용합니다.
@@ -340,7 +351,7 @@ CSO는 설치·예산·통제 데이터·HPC 같은 권한/비용/접근, PI만 
 | `INPUTS.tsv` | 단계에 연 외부 입력 파일의 경로·크기·mtime·sha256 또는 생략 이유 |
 | `ro-crate-metadata.json` | RO-Crate 1.1·Process Run Crate 0.5 JSON-LD metadata |
 
-단계 폴더는 원래 workdir의 `outputs/` 구조를 유지합니다. 묶음은 폴더를 순회하지 않고 runner가 실행 때 기록하고 hash한 산출만 링크를 따르지 않는 handle로 엽니다. 현재 hash가 기록과 다르거나 파일 확인·상한 검사가 실패하면 복사하지 않고 `MANIFEST.tsv`에 이유를 남기며 묶음을 `incomplete`로 표시합니다. 단계가 보고하지 않고 `outputs/`에 쓴 파일(그림, gene-set 사본 등)도 스크립트가 읽을 수 있어 복사합니다. 기록된 산출을 모두 복사한 뒤 남은 상한 안에서 복사하고, 실행 때 hash가 없어 상태를 `copied (unreported)`로 적습니다. 이런 파일이 빠져도 묶음은 `incomplete`가 되지 않고 부록에 개수만 남습니다. 단계는 앞 단계 산출을 작업 폴더 안 `inputs/<앞 단계 id>/`로 읽습니다. 앞 단계는 직접 의존 단계만이 아니라 다른 단계를 거쳐 이어지는 모든 조상 단계입니다. 직접 의존 단계는 결과 본문까지, 나머지는 파일 목록만 프롬프트에 들어갑니다. runner가 실행 전에 이 링크(POSIX symlink, Windows junction)를 앞 단계 `outputs/`에 걸고, 프롬프트에는 그 상대경로만 줍니다. 링크를 못 걸면 이유와 원래 경로를 프롬프트에 적습니다. 공유 계정 HPC 모드(`hpc.submit_prefix`)에서는 잡이 다른 계정으로 `hpc_out/`에서 돌고 제출 검사가 작업 폴더의 링크를 모두 거부하므로 링크를 만들지 않고 원래 경로를 줍니다. 묶음에서는 `python link_inputs.py`가 같은 링크를 다시 겁니다(안 되면 복사). README는 각 `steps/<step_id>/`에서 스크립트를 실행하고, 위 단계 절대경로는 그 폴더 기준 상대경로로 바꿉니다. Markdown 링크는 문서 기준입니다. Python은 runner가 보고한 명령을 쓰고, 모르면 `python`과 경고를 함께 적습니다. 다른 절대경로는 manifest와 부록에 남깁니다. 수정 전 판은 부록의 `대체됨` 목록에만 적습니다.
+단계 폴더는 원래 workdir의 `outputs/` 구조를 유지합니다. 묶음은 폴더를 순회하지 않고 runner가 실행 때 기록하고 hash한 산출만 링크를 따르지 않는 handle로 엽니다. 현재 hash가 기록과 다르거나 파일 확인·상한 검사가 실패하면 복사하지 않고 `MANIFEST.tsv`에 이유를 남기며 묶음을 `incomplete`로 표시합니다. 단계가 보고하지 않고 `outputs/`에 쓴 파일(그림, gene-set 사본 등)도 스크립트가 읽을 수 있어 복사합니다. 기록된 산출을 모두 복사한 뒤 남은 상한 안에서 복사하고, 실행 때 hash가 없어 상태를 `copied (unreported)`로 적습니다. 이런 파일이 빠져도 묶음은 `incomplete`가 되지 않고 부록에 개수만 남습니다. 단계는 앞 단계 산출을 작업 폴더 안 `inputs/<앞 단계 id>/`로 읽습니다. 앞 단계는 직접 의존 단계만이 아니라 다른 단계를 거쳐 이어지는 모든 조상 단계입니다. 직접 의존 단계는 결과 본문까지, 나머지는 파일 목록만 프롬프트에 들어갑니다. runner가 실행 전에 이 링크(POSIX symlink, Windows junction)를 앞 단계 `outputs/`에 걸고, 프롬프트에는 그 상대경로만 줍니다. 링크를 못 걸면 이유와 원래 경로를 프롬프트에 적습니다. 요청 전체 HPC 선택 시에는 같은 `outputs/`에서 이어 가므로 단계 간 입력 링크를 만들지 않습니다. 이전 요청의 공유 계정 모드(`hpc.submit_prefix`)는 `hpc_out/`와 원래 경로를 유지합니다. 묶음에서는 `python link_inputs.py`가 같은 링크를 다시 겁니다(안 되면 복사). README는 각 `steps/<step_id>/`에서 스크립트를 실행하고, 위 단계 절대경로는 그 폴더 기준 상대경로로 바꿉니다. Markdown 링크는 문서 기준입니다. Python은 runner가 보고한 명령을 쓰고, 모르면 `python`과 경고를 함께 적습니다. 다른 절대경로는 manifest와 부록에 남깁니다. 수정 전 판은 부록의 `대체됨` 목록에만 적습니다.
 
 묶음 README·부록·MANIFEST·RO-Crate와 웹·CLI 요청 화면에는 재현 등급과 이유를 적습니다(`docs/research_protocol.md`의 구분). `replayable`은 기록 산출이 모두 복사됐고, 데이터를 낸 단계마다 스크립트가, 스크립트를 쓴 단계마다 자기나 앞 단계의 환경 기록(`outputs/env/`)이 있고, 복사한 스크립트에 절대경로가 남지 않았을 때입니다. 하나라도 빠지면 `documented`입니다. 입력 hash·생략 수는 등급 기준에 넣지 않습니다. `rerun_verified`는 request ID·시각·원본/재실행 MANIFEST sha256이 든 유효한 `rerun_receipt.json`이 있을 때만 줍니다.
 
@@ -645,7 +656,7 @@ Claude 직원의 맨 `Write`·`Edit`는 작업·project·upstream 폴더의 `Edi
 
 ### 데이터 구역
 
-`policy.data_zones`. 경로마다 public·internal·restricted 등급을 붙입니다. 통제 원본은 절대경로로 지정. 권장: Linux 러너 전용 계정, 데이터 계정 소유·권한 `0700`인 구역, `hpc.submit_prefix: ["sudo", "-n", "-u", "data-account"]`, 필수 설정 `hpc.user: data-account`·`hpc.job_group: lab-jobs`. 러너·data-account를 같은 그룹에 넣습니다. `sudoers`는 잡 제출·취소용 `qsub`와 `qdel`(Slurm은 `sbatch`와 `scancel`)만 허용합니다. 전환된 잡의 상대 출력은 반환값의 `output_dir`(`hpc_out/`)에 쓰며, 공유 폴더에는 집계 결과만 둡니다. restricted 구역이 설정되면 Windows 러너는 시작을 거부하며, POSIX 러너 계정이 원본을 읽거나 통과할 수 있어도 거부합니다. `policy.allow_runner_read_restricted: true`는 경고를 남기는 명시적 예외입니다.
+`policy.data_zones`. 경로마다 public·internal·restricted 등급을 붙입니다. 통제 원본은 절대경로로 지정. 권장: Linux 러너 전용 계정, 데이터 계정 소유·권한 `0700`인 구역, `hpc.submit_prefix: ["sudo", "-n", "-u", "data-account"]`, 필수 설정 `hpc.user: data-account`·`hpc.job_group: lab-jobs`. 러너·data-account를 같은 그룹에 넣습니다. `sudoers`는 잡 제출·취소용 `qsub`와 `qdel`(Slurm은 `sbatch`와 `scancel`)만 허용합니다. 전환된 잡의 상대 출력은 반환값의 `output_dir`(요청 전체 HPC는 `outputs/`, 이전 요청은 `hpc_out/`)에 쓰며, 공유 폴더에는 집계 결과만 둡니다. restricted 구역이 설정되면 Windows 러너는 시작을 거부하며, POSIX 러너 계정이 원본을 읽거나 통과할 수 있어도 거부합니다. `policy.allow_runner_read_restricted: true`는 경고를 남기는 명시적 예외입니다.
 
 ### PI 개인 경로
 
