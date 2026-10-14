@@ -321,6 +321,11 @@ class Hub:
         bound = settings.policy.approvals.pi_decision_timeout_s
         for aid, entry in self.approvals.items():
             card = entry["approval"]
+            if (card.get("detail") or {}).get("late_storage") and "timeout_s" in card:
+                card.pop("timeout_s")  # PI-opened choices remain answerable, including older saved cards.
+                self.save_approval(aid)
+                self.events.append(self.store.append_event({"type": "approval.requested", "ts": time.time(),
+                    "request_id": card.get("request_id"), "data": card}, settings.gateway.event_buffer))
             if card.get("kind") == "resume" and card.get("timeout_s") != bound:
                 card["timeout_s"] = bound  # a card saved before it had this bound; the web counts it down
                 self.save_approval(aid)
@@ -2857,9 +2862,12 @@ class Hub:
         A PI-decision card (PI_DECISION_KINDS) waits ``pi_decision_timeout_s`` (default 7 days) and parks its request
         as ``waiting_pi`` until it is answered (R5); the card stays answerable the whole time. Only when even that
         bound passes does it return ``state: timed_out``, which callers record as ``*_timed_out``, never as a deny."""
-        if (self.requests.get(request_id or "") or {}).get("status") == "cancelled":
+        request = self.requests.get(request_id or "") or {}
+        reviewed_result = (kind == "result_publish" and request.get("pi_reviewed_at")
+                           and str(request.get("report") or "").strip())
+        if request.get("status") == "cancelled" and not reviewed_result:
             return {"approved": False, "note": "request cancelled", "state": "cancelled", "approval_id": None,
-                    "decided_at": time.time()}  # a cancelled request opens no card (R13)
+                    "decided_at": time.time()}  # only reviewed partial results may open a post-cancel card
         rules = self.s.policy.approvals
         pi_decision = kind in PI_DECISION_KINDS
         req = ApprovalRequest(kind=kind, summary=summary, request_id=request_id, detail=detail or {},

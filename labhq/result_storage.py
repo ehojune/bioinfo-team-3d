@@ -154,16 +154,18 @@ class ResultStorage:
             req = self.hub.requests[rid]
             if req.get("result_storage"):
                 raise ValueError("이미 저장 위치를 골랐거나 게시한 요청입니다.")
-            if req.get("status") not in {"done", "completed", "failed", "review_pending"} or req.get("cancelling"):
+            if req.get("status") not in {"done", "completed", "failed", "cancelled", "review_pending"} or req.get("cancelling"):
                 raise ValueError("끝난 요청이나 보고서 검토 대기 요청에서 저장 위치를 정해 주세요.")
+            if req.get("status") == "cancelled" and not str(req.get("report") or "").strip():
+                raise ValueError("저장할 부분 결과 보고서가 없습니다.")
             for entry in self.hub.approvals.values():
                 approval = entry["approval"]
                 if approval.get("request_id") == rid and (approval.get("detail") or {}).get("storage"):
                     return approval
             storage = await self.card(rid, late=True)
             approval = ApprovalRequest(kind="result_storage", request_id=rid,
-                summary="이 결과를 어디에 남길까요?", detail={"storage": storage, "late_storage": True},
-                timeout_s=self.s.policy.approvals.pi_decision_timeout_s).model_dump(mode="json")
+                summary="이 결과를 어디에 남길까요?", detail={"storage": storage, "late_storage": True}
+                ).model_dump(mode="json", exclude={"timeout_s"})
             self.hub.approvals[approval["id"]] = {"approval": approval, "origin": None}
             self.hub.save_approval(approval["id"])
             await self.hub.publish({"type": "approval.requested", "request_id": rid, "data": approval})
@@ -249,7 +251,7 @@ class ResultStorage:
         saved = req.get("result_storage") or {}
         if saved.get("after_review") and (not req.get("pi_reviewed_at") or req.get("bundle_pending")):
             return
-        if not saved or req.get("status") not in {"done", "completed", "failed"}:
+        if not saved or req.get("status") not in {"done", "completed", "failed", "cancelled"}:
             return
         try:
             # Controlled inputs never enter the editor prompt or the repository edition.

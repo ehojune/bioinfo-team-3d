@@ -46,7 +46,8 @@ const REQUEST_STATUS_KO = { running: '진행 중', waiting_for_runner: '러너 �
   interrupted: '중단됨', done: '완료', failed: '실패', cancelled: '취소됨', rejected: '거부됨', review_pending: '보고서 검토 대기' };
 const requestStatusLabel = status => REQUEST_STATUS_KO[status] || String(status || '상태 모름');
 const needsPiReview = q => !!q && isTerminalRequest(q.status) && q.pi_review_pending === true && !q.pi_reviewed_at;
-const needsStorage = q => !!q && ['done', 'completed', 'failed', 'review_pending'].includes(q.status) && !Object.keys(q.resultStorage || {}).length;
+const needsStorage = q => !!q && ['done', 'completed', 'failed', 'cancelled', 'review_pending'].includes(q.status)
+  && (q.status !== 'cancelled' || !!String(q.report || '').trim()) && !Object.keys(q.resultStorage || {}).length;
 const reviewLabel = q => ['done', 'review_pending'].includes(q.status) ? '보고서 검토' : '결과 확인';
 const requestActivity = q => Math.max(Number(q.updated_at) || 0, Number(q.created_at) || 0);
 function sortRequests(requests) {

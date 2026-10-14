@@ -36,6 +36,17 @@ test('both offices wire storage API and shared review action',()=>{
     assert.match(src,/\/api\/requests\/\$\{encodeURIComponent\(rid\)\}\/storage/);
   }
 });
+test('cancelled partial reports retain the late storage action', async()=>{
+  const ui=await mod, host=new Element();
+  const q={id:'r',status:'cancelled',report:'Partial result',pi_review_pending:true};
+  assert.equal(LabHQState.needsStorage(q),true);
+  let picked;
+  const [row]=ui.syncReviewCards(host,[q],{onStorage:id=>picked=id});
+  const button=nodes(row).find(n=>n.tagName==='button' && n.textContent==='저장 위치 정하기');
+  assert.ok(button); button.onclick(); assert.equal(picked,'r');
+  assert.equal(LabHQState.needsStorage({...q,resultStorage:{mode:'local'}}),false);
+  for (const report of [null,'','   ']) assert.equal(LabHQState.needsStorage({...q,report}),false);
+});
 test('3D review passes the CP4 target before late storage publishing', async()=>{
   const src=fs.readFileSync(path.join(web,'lab3d/src/live.js'),'utf8');
   const handler=src.slice(src.indexOf('  async function reviewDone('),src.indexOf('  function openReview('));

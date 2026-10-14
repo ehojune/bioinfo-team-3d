@@ -28,7 +28,7 @@ def setup(tmp_path, monkeypatch):
     return app, hub, calls
 
 
-@pytest.mark.parametrize("status", ["done", "review_pending", "failed"])
+@pytest.mark.parametrize("status", ["done", "review_pending", "failed", "cancelled"])
 async def test_late_card_is_authenticated_durable_and_reused(setup, status):
     app, hub, calls = setup
     hub.requests["r"]["status"] = status
@@ -71,9 +71,11 @@ async def test_running_request_cannot_open(setup):
         assert (await client.post("/api/requests/r/storage")).status_code == 409
 
 
+@pytest.mark.parametrize("status", ["done", "cancelled"])
 @pytest.mark.parametrize("reviewed", [False, True])
-async def test_late_selection_runs_editor_after_review_then_approval_and_mock_upload(setup, monkeypatch, reviewed):
+async def test_late_selection_runs_editor_after_review_then_approval_and_mock_upload(setup, monkeypatch, reviewed, status):
     app, hub, calls = setup
+    hub.requests["r"]["status"] = status
     if reviewed:
         hub.requests["r"]["pi_reviewed_at"] = 1
     hub.agents["editor"] = {}
@@ -167,3 +169,59 @@ def test_cli_opens_storage_card(monkeypatch, capsys):
     cli.main(["storage", "r"])
     assert calls == [("POST", "/api/requests/r/storage", {"json": {}})]
     assert "appr_test" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("report", [None, "", "   "])
+async def test_cancelled_without_report_explains_why_storage_is_unavailable(setup, report):
+    app, hub, calls = setup
+    hub.requests["r"].update(status="cancelled", report=report)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test",
+                                 headers={"Authorization": "Bearer test-token"}) as client:
+        response = await client.post("/api/requests/r/storage")
+    assert response.status_code == 409
+    assert "보고서가 없" in response.json()["detail"]
+    assert not hub.approvals and not calls
+
+
+async def test_cancelled_finish_edits_partial_report(setup):
+    _, hub, calls = setup
+    hub.requests["r"].update(status="cancelled", pi_reviewed_at=1,
+                            result_storage={"mode": "local", "status": "selected", "after_review": True})
+    await hub.result_storage.finish("r")
+    saved = hub.requests["r"]["result_storage"]
+    assert saved["status"] == "local"
+    assert (Path(saved["draft_path"]) / "report.md").read_text(encoding="utf-8") == "Result"
+    assert not calls
+
+
+async def test_late_card_has_no_deadline(setup):
+    _, hub, _ = setup
+    card = await hub.result_storage.open_card("r")
+    assert "timeout_s" not in card
+    assert "timeout_s" not in hub.store.all("approval")[card["id"]]["approval"]
+
+
+@pytest.mark.parametrize("legacy_timeout", [False, True])
+async def test_late_card_stays_answerable_after_old_deadline_and_restart(setup, legacy_timeout):
+    _, hub, calls = setup
+    hub.requests["r"]["pi_reviewed_at"] = 1
+    hub.save_request("r")
+    card = await hub.result_storage.open_card("r")
+    card["created_at"] = 1
+    if legacy_timeout:
+        card["timeout_s"] = 60
+    hub.save_approval(card["id"])
+    restarted = Hub(hub.s, github_transport=fake_github(calls))
+    restored = restarted.approvals[card["id"]]["approval"]
+    assert "timeout_s" not in restored
+    assert "timeout_s" not in restarted.store.all("approval")[card["id"]]["approval"]
+    replayed = [e["data"] for e in restarted.store.events_since(0)
+                if e["type"] == "approval.requested" and e["data"]["id"] == card["id"]]
+    assert "timeout_s" not in replayed[-1]
+    assert (await restarted.result_storage.open_card("r"))["id"] == card["id"]
+    await restarted.resolve_approval(card["id"], True, storage={"mode": "local"})
+    await restarted.result_storage.tasks["r"]
+    assert card["id"] not in restarted.approvals
+    assert restarted.requests["r"]["result_storage"]["status"] == "local"
+    assert not any(method in {"POST", "PUT"} for method, _, _ in calls)
+    await restarted.result_storage.close()
