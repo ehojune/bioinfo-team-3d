@@ -148,3 +148,55 @@
   :is(.ui-toast, .toast) { bottom: calc(195px + env(safe-area-inset-bottom, 0px)); }
 }
 @media (prefers-reduced-motion: reduce) { :is(.ui-toast, .toast) { transition: none; } }
+
+/* E: question → facts → explanation → decision. Scoped to the 2D presentation. */
+.ap.decision-card, .ap.operation-card {
+  display: block;
+  padding: var(--ds-sp-4);
+  background: var(--ds-surface);
+  border-color: var(--ds-line);
+  color: var(--ds-ink);
+  margin-bottom: var(--ds-sp-3);
+}
+.ap.decision-card { border-top: 3px solid var(--ds-accent); }
+.board.alert { border-color: var(--ds-accent); box-shadow: 0 0 0 2px var(--ds-accent-soft); }
+@keyframes boardBlink { 50% { box-shadow: 0 0 0 4px var(--ds-accent-soft); } }
+.decision-card > .who { float: right; margin-left: var(--ds-sp-2); }
+.decision-question { margin: 0 0 var(--ds-sp-3); font: 600 var(--ds-fs-5)/1.4 var(--ds-font-sans); overflow-wrap: anywhere; }
+.decision-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(80px, 1fr)); margin: 0 0 var(--ds-sp-3); border-block: 1px solid var(--ds-line); clear: both; }
+.decision-facts > div { min-width: 0; padding: var(--ds-sp-2); }
+.decision-facts > div + div { border-left: 1px solid var(--ds-line); }
+.decision-facts dt { color: var(--ds-ink-3); font-size: var(--ds-fs-2); }
+.decision-facts dd { margin: var(--ds-sp-1) 0 0; font-size: var(--ds-fs-4); font-weight: 600; overflow-wrap: anywhere; }
+.ap.decision-card .sum, .decision-explanation, .ap.decision-card .why { font-size: var(--ds-fs-3); line-height: 1.6; color: var(--ds-ink); }
+.decision-explanation p { margin: var(--ds-sp-2) 0; }
+.ap.decision-card .kind, .ap.operation-card .kind { color: var(--ds-ink-2); font-size: var(--ds-fs-2); }
+.ap.decision-card .decision-meta, .ap.decision-card .req-of { font-size: var(--ds-fs-2); color: var(--ds-ink-3); overflow-wrap: anywhere; }
+.decision-status.ui-chip { color: var(--ds-accent); background: var(--ds-accent-soft); margin-block: var(--ds-sp-2); }
+.decision-status.ui-chip::before { content: none; }
+.status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex: none; }
+.ap.decision-card .acts { display: flex; flex-wrap: wrap; gap: var(--ds-sp-3); margin-top: var(--ds-sp-3); }
+.decision-primary.ui-button { width: 100%; min-height: var(--ds-h-touch); }
+.decision-secondary.ui-button { background: transparent; border-color: transparent; color: var(--ds-ink-2); text-decoration: underline; min-height: var(--ds-h-touch); }
+.decision-memo { display: block; margin-top: var(--ds-sp-3); color: var(--ds-ink-2); font-size: var(--ds-fs-2); }
+.ap.decision-card .ans { border-color: var(--ds-line-ui); }
+.decision-source { margin-top: var(--ds-sp-3); color: var(--ds-ink-2); font-size: var(--ds-fs-2); }
+.decision-source > summary { cursor: pointer; padding-block: var(--ds-sp-2); }
+.decision-source summary:focus-visible { outline: 3px solid var(--ds-accent); }
+.ap.operation-card { border: 1px dashed var(--ds-line-ui); border-left: 4px solid var(--ds-wait); }
+.operation-card .sum { margin-block: var(--ds-sp-2); }
+.decision-history-item.ui-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--ds-sp-2); padding: var(--ds-sp-3); margin-bottom: var(--ds-sp-2); font-size: var(--ds-fs-3); }
+.decision-history-group:has(.ui-card) ol { list-style: none; padding: 0; }
+.decision-history-group:has(.ui-card) h3 { font-size: var(--ds-fs-3); margin-block: var(--ds-sp-3); }
+.decision-history-item.ui-card > :is(span, details, small) { grid-column: 1 / -1; overflow-wrap: anywhere; }
+.decision-history-item.ui-card time { font-size: var(--ds-fs-2); color: var(--ds-ink-3); }
+.decision-history-status .status-dot { margin-left: var(--ds-sp-2); }
+.decision-history-item.ui-card .decision-report { color: var(--ds-accent); margin: 0; }
+.decision-history-item.ui-card .decision-hide { min-width: var(--ds-h-touch); min-height: var(--ds-h-touch); background: var(--ds-surface); color: var(--ds-ink-2); border: 1px solid var(--ds-line-ui); border-radius: var(--ds-r-1); cursor: pointer; }
+@media (max-width: 620px) {
+  .layout { display: flex; flex-direction: column; }
+  #command-center { order: -1; width: 100%; box-sizing: border-box; scroll-margin-top: var(--ds-sp-2); }
+  .office { width: 100%; box-sizing: border-box; }
+  .decision-question { font-size: var(--ds-fs-4); }
+  .ap.decision-card { padding: var(--ds-sp-3); }
+}
