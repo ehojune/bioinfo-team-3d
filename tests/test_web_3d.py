@@ -146,59 +146,42 @@ def test_package_data_includes_office_assets():
     assert needed <= included
 
 
-@pytest.mark.parametrize('filename,marker', [
-    ('web_state.cjs', 'isolation and bounds: OK'),
-    ('web_live.cjs', 'reconnect and replay gap: OK'),
-    ('web_demo_separation.cjs', 'fail 0'),
-    ('web_resume_focus.cjs', 'fail 0'),
-    ('web_done_review.cjs', 'fail 0'),
-    ('web_command_center.cjs', 'keyed decisions, staff strip and tabs: OK'),
-    ('web_decision_detail.cjs', 'fail 0'),
-    ('web_expand_history.cjs', 'fail 0'),
-    ('web_messenger_history.cjs', 'fail 0'),
-    ('web_pi_text.cjs', 'fail 0'),
-    ('web_staff_busy.cjs', 'fail 0'),
-    ('web_issue126.cjs', 'full answer on demand in 2.5D and 3D: OK'),
-    ('web_issue184.cjs', 'fail 0'),
-    ('web_decision_focus.cjs', 'fail 0'),
-    ('web_decision_summary.cjs', 'fail 0'),
-    ('web_scope_card.cjs', 'fail 0'),
-    ('web_clarify_options.cjs', 'fail 0'),
-    ('web_cp2_evidence.cjs', 'fail 0'),
-    ('web_issue75.cjs', 'mobile staff collapse and bounded grouped decision history: OK'),
-    ('web_followup.cjs', 'fail 0'),
-    ('web_refs.cjs', 'fail 0'),
-    ('web_ask.cjs', 'web_ask: ask/answer feed, refusal, targets and replay passed'),
-    ('web_issue106.cjs', 'snapshot task priority, cancellation and hibernating label: OK'),
-    ('web_issue87.cjs', 'snapshot restores an active step after a 200-event replay gap: OK'),
-    # Node files written after this list existed ran only by hand; CI runs node through this test alone.
-    ('web_issue58.cjs', 'web issue58 tests passed'),
-    ('web_assumptions.cjs', 'assumptions web tests passed'),
-    ('web_agent_trace.cjs', 'agent trace web tests passed'),
-    ('web_agent_capabilities.cjs', 'agent capability web tests passed'),
-    ('web_office_props.cjs', 'office prop tab entrances: OK'),
-    ('web_cost_by_agent.cjs', 'cost by agent web tests passed'),
-    ('web_solo_route.cjs', 'solo route web tests passed'),
-    ('web_work_kind.cjs', 'work kind web tests passed'),
-    ('web_request_bundle.cjs', 'request bundle web tests passed'),
-    ('web_display_followups.cjs', 'display follow-up web tests passed'),
-    ('web_environment.cjs', 'environment failure web tests passed'),
-    ('web_checklist_skip.cjs', 'checklist skip web tests passed'),
-    ('web_cards_status.cjs', 'fail 0'),
-    ('web_request_lifecycle.cjs', 'request lifecycle web tests passed'),
-    ('web_staff_control.cjs', 'staff control web tests passed'),
-    ('web_staff_control_tasks.cjs', 'staff control task rows web tests passed'),
-    ('web_staff_control_steps.cjs', 'staff control step web tests passed'),
-    ('web_staff_control_scope.cjs', 'staff control scope web tests passed'),
-    ('web_contract_provenance.cjs', 'fail 0'),
-    ('web_trial_ready.cjs', 'trial readiness web tests passed'),
-    ('web_shutdown.cjs', 'fail 0'),
-    ('web_result_storage.cjs', 'fail 0'),
-    ('web_p2_followups_1013.cjs', 'fail 0'),
-    ('web_design_tokens.cjs', 'fail 0'),
-    ('web_design_decisions.cjs', 'fail 0'),
-    ('web_design_board.cjs', 'fail 0'),
-])
+# Legacy scripts print their own success message; node:test uses fail 0.
+NODE_WEB_MARKERS = {
+    'web_state.cjs': 'isolation and bounds: OK',
+    'web_live.cjs': 'reconnect and replay gap: OK',
+    'web_command_center.cjs': 'keyed decisions, staff strip and tabs: OK',
+    'web_issue126.cjs': 'full answer on demand in 2.5D and 3D: OK',
+    'web_issue75.cjs': 'mobile staff collapse and bounded grouped decision history: OK',
+    'web_ask.cjs': 'web_ask: ask/answer feed, refusal, targets and replay passed',
+    'web_issue106.cjs': 'snapshot task priority, cancellation and hibernating label: OK',
+    'web_issue87.cjs': 'snapshot restores an active step after a 200-event replay gap: OK',
+    'web_issue58.cjs': 'web issue58 tests passed',
+    'web_assumptions.cjs': 'assumptions web tests passed',
+    'web_agent_trace.cjs': 'agent trace web tests passed',
+    'web_agent_capabilities.cjs': 'agent capability web tests passed',
+    'web_office_props.cjs': 'office prop tab entrances: OK',
+    'web_cost_by_agent.cjs': 'cost by agent web tests passed',
+    'web_solo_route.cjs': 'solo route web tests passed',
+    'web_work_kind.cjs': 'work kind web tests passed',
+    'web_request_bundle.cjs': 'request bundle web tests passed',
+    'web_display_followups.cjs': 'display follow-up web tests passed',
+    'web_environment.cjs': 'environment failure web tests passed',
+    'web_checklist_skip.cjs': 'checklist skip web tests passed',
+    'web_request_lifecycle.cjs': 'request lifecycle web tests passed',
+    'web_staff_control.cjs': 'staff control web tests passed',
+    'web_staff_control_tasks.cjs': 'staff control task rows web tests passed',
+    'web_staff_control_steps.cjs': 'staff control step web tests passed',
+    'web_staff_control_scope.cjs': 'staff control scope web tests passed',
+    'web_trial_ready.cjs': 'trial readiness web tests passed',
+}
+NODE_WEB_TESTS = [
+    (path.name, NODE_WEB_MARKERS.get(path.name, 'fail 0'))
+    for path in sorted(Path(__file__).parent.glob('web_*.cjs'))
+]
+
+
+@pytest.mark.parametrize('filename,marker', NODE_WEB_TESTS)
 def test_office_in_node(filename, marker):
     node = shutil.which('node')
     if not node:
@@ -210,7 +193,9 @@ def test_office_in_node(filename, marker):
 
 
 def test_every_node_web_test_runs_in_ci():
-    # A .cjs file outside the list above never runs in CI (five did not, found 2026-10-04).
-    listed = {name for name, _marker in test_office_in_node.pytestmark[0].args[1]}
+    collected = dict(test_office_in_node.pytestmark[0].args[1])
     on_disk = {path.name for path in Path(__file__).parent.glob('web_*.cjs')}
-    assert on_disk <= listed, sorted(on_disk - listed)
+    assert set(collected) == on_disk
+    assert NODE_WEB_MARKERS.keys() <= on_disk
+    assert all(collected[name] == NODE_WEB_MARKERS.get(name, 'fail 0') for name in on_disk)
+    assert all(isinstance(marker, str) and marker for marker in collected.values())

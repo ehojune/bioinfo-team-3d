@@ -1395,6 +1395,8 @@ def main(argv: list[str] | None = None) -> None:
     op.add_argument("--3d", dest="three_d", action="store_true", help="open the 3D office instead of 2.5D")
     sub.add_parser("runner")
     sub.add_parser("agents")
+    storage = sub.add_parser("storage", help="open the storage choice card for a finished request")
+    storage.add_argument("id")
     review = sub.add_parser("review-done", help="mark a finished report reviewed (or failure acknowledged)")
     review.add_argument("id")
     review.add_argument("--revision", type=int, help="CP4 draft revision shown in the report card")
@@ -1705,6 +1707,9 @@ def main(argv: list[str] | None = None) -> None:
             p.error("recall query must contain 2 to 200 characters")
         for hit in _api(s, "GET", "/api/knowledge/search", params={"q": args.query}):
             print(f"{hit['request_id']} ({hit['source']})\n{hit['body']}\n")
+    elif args.cmd == "storage":
+        result = _api(s, "POST", f"/api/requests/{args.id}/storage", json={})
+        print(f"{args.id}: 저장 위치 카드 {result['id']} — 웹에서 저장 위치를 골라 주세요.")
     elif args.cmd == "review-done":
         target = ({"revision": args.revision, "target_sha256": args.sha256,
                    "decision": "rejected" if args.reject else "accepted"}
