@@ -59,7 +59,7 @@ TASK_CANCEL_KEEP_S = 2 * 86400
 # Cards that decide the request itself (PI 점검 R5). They wait policy.approvals.pi_decision_timeout_s instead of the gate
 # timeout, the request waits as waiting_pi meanwhile, and an unanswered card ends as *_timed_out, never as a deny.
 PI_DECISION_KINDS = frozenset({"clarify", "question", "scope", "budget", "research_plan", "research_evidence",
-                               "research_continue", "resume", "result_storage", "result_publish"})
+                               "research_continue", "resume", "result_storage", "result_publish", "recruit_plan"})
 # Runner cards that only inform: no hook waits on them, so their task's result does not close them (#521).
 RUNNER_NOTICE_KINDS = frozenset({"codex_sandbox_setup"})
 # Steer, pause, resume and halt of a running task (#59 ①); a steer message is at most this long. The gateway keeps each
@@ -2304,7 +2304,9 @@ class Hub:
             task = self.store.get("task", msg["task_id"])
             if task and not task.get("jobs_submitted"):
                 self.store.put("task", msg["task_id"], {**task, "jobs_submitted": True})
-        entry = self.recruits_running.get(runner_id) if typ in ("recruit.done", "recruit.failed") else None
+        entry = (self.recruits_running.get(runner_id)
+                 if typ in ("recruit.done", "recruit.failed") and not (msg.get("data") or {}).get("plan_task_id")
+                 else None)
         if entry and entry.get("count"):
             entry["count"] -= 1
         await self.publish(msg, runner_id=runner_id, runner_seq=runner_seq)

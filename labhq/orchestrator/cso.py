@@ -51,7 +51,7 @@ from ..research.packs import (assess_pack_applicability, configured_packs, norma
                               select_applied_packs, select_legacy_applied_packs)
 from ..util import clip, extract_json, input_relpath, output_relpath, short
 from .. import vocab as output_vocab
-from ..recruit import paper_skills
+from ..recruit import paper_skills, planning as recruit_planning
 from ..vocab import declare as output_types
 from ..vocab import public_resources, topic_checklists
 from ..vocab import topics as topic_types
@@ -91,7 +91,8 @@ PLAN_SCHEMA: dict[str, Any] = {
         "recruit": {"type": "array", "items": {
             "type": "object", "additionalProperties": False,
             "properties": {"paper": {"type": "string"}, "repo": {"type": "string"},
-                           "focus": {"type": "string"}, "reason": {"type": "string"}},
+                           "focus": {"type": "string"}, "reason": {"type": "string"},
+                           "step_ids": {"type": "array", "items": {"type": "string"}}},
             "required": ["paper", "repo", "focus", "reason"]}},
         "paper_skills": paper_skills.SELECTION_SCHEMA,
         "notes": {"type": "string"},
@@ -151,7 +152,7 @@ def route_decision(plan: Any, solo_agent: str | None, roster: list[dict], *, req
     planned = plan.get("route") if isinstance(plan, dict) else None
     roster_ids = {agent.get("id") for agent in roster if isinstance(agent, dict)}
     solo = bool(not research and requested != "team" and planned == "solo" and solo_agent in roster_ids
-                and not (plan or {}).get("paper_skill_results"))
+                and not (plan or {}).get("paper_skill_results") and not (plan or {}).get("recruit_results"))
     return {"mode": "solo" if solo else "team", "planned": planned if planned in {"team", "solo"} else "team",
             "requested": requested if requested in {"auto", "team"} else "auto",
             **({"agent_id": solo_agent} if solo else {})}
@@ -415,6 +416,7 @@ Rules:
 - """ + ENV_STEP_RULE + """
 - If no roster member covers a required method, add a contract hire to `recruit` (paper + code repo +
   focus) and plan the step for whoever is closest; the PI decides whether to hire.
+- """ + recruit_planning.PLAN_RULE + """
 - """ + paper_skills.PLAN_RULE + """
 - {question_rule} """ + PI_CARD_QUESTION_RULE + """
 - """ + ASSUMPTIONS_RULE + """
@@ -429,7 +431,7 @@ Rules:
 
 PI's request: {request}"""
 
-RESEARCH_PLAN_PROMPT = paper_skills.PLAN_RULE + "\n\n" + """Create a frozen research contract for the PI's request. Do not execute or analyze.
+RESEARCH_PLAN_PROMPT = recruit_planning.PLAN_RULE + "\n\n" + paper_skills.PLAN_RULE + "\n\n" + """Create a frozen research contract for the PI's request. Do not execute or analyze.
 
 Team roster (use these agent ids exactly, never an orchestration role):
 {roster}
@@ -2907,7 +2909,8 @@ class Orchestrator:
         initial_attempt = first_attempt
         engine = str((self.hub.agents.get(task.agent_id) or {}).get("engine") or "")
         final_step = bool(task.meta.get("final_budget_turn"))  # nothing runs after this step but its own turns
-        optional_support = bool(task.meta.get("facilities_diagnosis") or task.meta.get("kind") == "paper_skill")
+        optional_support = bool(task.meta.get("facilities_diagnosis") or task.meta.get("kind") in
+                                {"paper_skill", "recruit_check", "plan_recruit"})
 
         def quota_deadline() -> float:
             req = self.hub.requests[rid]
@@ -3209,7 +3212,7 @@ class Orchestrator:
                 res = res.model_copy(update={"tool_errors": list(dict.fromkeys(tool_errors))})
 
         res = await dispatch_turn(task, max_attempts=task.meta.get("max_attempts"), start=initial_attempt)
-        if task.meta.get("kind") == "paper_skill":
+        if task.meta.get("kind") in {"paper_skill", "recruit_check", "plan_recruit"}:
             return res  # optional advice never adds wake/wrap-up turns or delays CP1 on a failed conversion
         if task.meta.get("facilities_diagnosis"):
             return res  # one consult turn, even if a malformed reply claims pending jobs/questions
@@ -4836,6 +4839,9 @@ class Orchestrator:
                                "확인하고 승인하세요." + (" 고칠 점이 있으면 메모와 함께 수정 요청을 고르세요."
                                                       if can_revise else ""))
                     paper_line = paper_skills.card_text(plan)
+                    hiring_warnings = [w for w in plan.get("warnings", []) if "재배정" in w]
+                    if hiring_warnings:
+                        summary = "\n".join(hiring_warnings) + "\n" + summary
                     if paper_line:
                         summary = paper_line + "\n" + summary
                     if reuse_pending:
@@ -4940,7 +4946,21 @@ class Orchestrator:
                 self.hub.save_request(rid)
                 return True
 
+            async def prepare_recruits():
+                nonlocal roster, known
+                req["plan"] = await recruit_planning.prepare_plan(
+                    req["plan"], rid, self.hub, lambda task: self._step_task(rid, self.run_step(task)))
+                all_available = [a for a in self.hub.agents.values() if not not_yet_active(a)]
+                known = {a["id"] for a in all_available}
+                roster = [a for a in all_available if a["id"] not in orchestration]
+                # Apply the existing agent, DAG and external-data checks to the final assignments too.
+                validate_steps(req["plan"]["steps"], known, self.cfg.max_steps, orchestration,
+                               guard=self._external_guard(rid))
+                self.hub.save_request(rid)
+
             if resume and req.get("plan", {}).get("steps"):
+                if not req.get("research_contract") and not req.get("results"):
+                    await prepare_recruits()
                 if research_lane:
                     # A frozen contract resumes by its CP1 snapshot, never by a fresh applicability decision: the
                     # snapshot holds the applied packs, and a pack answered not_applicable (pre-topic, or a sentence-
@@ -5430,6 +5450,8 @@ class Orchestrator:
                     scope = scope_verdict(plan) or req.get("scope_first")
                     if scope:
                         req["scope_check"] = scope
+                await prepare_recruits()
+                steps = req["plan"]["steps"]
                 req["plan"] = await paper_skills.prepare_plan(
                     req["plan"], req.get("analysis_precedents") or {}, roster, rid, self.hub.s,
                     lambda task: self._step_task(rid, self.run_step(task)))
@@ -5440,9 +5462,9 @@ class Orchestrator:
                 if created:
                     await self._emit(rid, "request.route", decision)
                 await self._emit(rid, "request.plan", {**req["plan"], "processing": decision})
-                for rec in plan.get("recruit") or []:
-                    if rec.get("repo") or rec.get("paper"):
-                        await self._emit(rid, "recruit.suggested", rec)  # UI shows a 채용 제안 card → POST /api/recruit
+                if req["plan"].get("recruit_results"):
+                    await self._emit(rid, "recruit.suggested", {
+                        "handled": True, "recruits": req["plan"]["recruit_results"]})
                 if not steps:
                     self._finish(rid, plan_res.text or "CSO returned no steps.", {}, ok=False)
                     return

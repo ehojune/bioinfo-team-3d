@@ -589,8 +589,9 @@ flowchart LR
 
 별도 직원을 채용하는 흐름은 다음과 같습니다.
 
-1. **채용 요청** — CSO 계획의 `recruit` 필드(“팀에 이 방법 가진 사람이 없다”)가 `recruit.suggested` 이벤트로
-   폰에 뜨고, PI가 승인하면 `POST /api/recruit`. 여우 헤드헌터는 논문·저장소·튜토리얼 유무·필요 API 키를 조사해 후보를 올립니다.
+1. **계획 전 채용** — 논문 분석 재현은 기술자형/full 파견직이 맡습니다. CSO는 `recruit.step_ids`에 담당 단계를,
+   초안에는 실패 시 맡을 정규직을 적습니다. 연구·일반 요청 모두 채용 승인은 요청당 한 장으로 묶고 CP1 전에 받습니다.
+   승인에는 **수습 통과하면 바로 투입**이 포함됩니다. 같은 논문의 인재풀은 수습 기록·hash 확인 후 재고용하며 재변환하지 않습니다.
 2. **변환** — 인사팀이 `talent/<slug>/build`에서 paper2agent 스킬을 실행. `--json-schema`로 오퍼레터 형식을 강제하고
    `--max-budget-usd`로 비용 상한.
 3. **수습** — labhq가 납품된 MCP 서버를 직접 띄워 툴 목록을 확인 (자문형은 스킬 존재 확인). Paper2Agent가 돌려준
@@ -599,7 +600,11 @@ flowchart LR
    `probation` 파견직은 명단·직원 카드에 `수습(PI 승인 대기)`로 보이지만 CSO 배정·직접 요청·상담에서 빠지고 러너도 실행을
    거부합니다. PI가 `labhq contract activate c_<slug>`로 승인하면 일을 맡습니다.
 4. **계약서** — `agents/contract/c_<slug>.yaml`. 비밀값은 `${ENV}` 자리표시자만 저장. 명단에 `[파견직]` 태그와 툴 목록이
-   올라가서 CSO가 다음 계획부터 바로 배정합니다. 채용물 고정(#424) 항목도 함께 남습니다.
+   올라가면 **이번 요청**의 해당 단계를 맡고 계획을 확정합니다. 채용 거절·실패·시간 초과는 정규직 재배정으로,
+   Paper2Agent doctor 실패는 채용 생략으로 처리하며 이유를 계획·CP1에 적습니다. 채용 대기 상한은 `runner.task_timeout_s`입니다.
+
+   기존 방법 재현(파견직)과 신규 구현(bioinfo-agent)은 병렬로 돌린 뒤 비교합니다. Nextflow는 파견직의 방법·툴 명세 →
+   bioinfo-agent의 workflow 구현 → 파견직 검증 순서입니다. 수동 채용 API(`POST /api/recruit`)도 유지합니다.
 
    | 항목 | 출처 |
    |---|---|
@@ -734,6 +739,8 @@ bioinfo-agent의 일반 질문과 새 pipeline 생성 여부는 CSO가 답합니
 `labhq codex-review <project> <PR번호>`로 그 프로젝트 PR에 Codex 리뷰 요청 댓글을 한 번 남깁니다. 직원도 같은 규칙을 따릅니다(직원 공통 규칙). 리뷰 지적에는 멘션 없이 답하고, 수정을 모두 push한 뒤 PR 상단에 리뷰 요청을 한 번만 남기며, 리뷰가 도는 동안에는 다시 부르지 않습니다. 멘션이 든 댓글마다 리뷰 세션이 따로 뜨기 때문입니다.
 
 ## 연구 lane과 검증
+
+논문 재현 단계가 있으면 CP1 전에 채용 승인 → 변환·수습 → active 배정을 마칩니다. CP1은 확정된 담당자와 재배정 사유를 보여줍니다.
 
 ![연구 lane: CSO 계획 → CP1 계획 승인 → 단계 실행 → CP2 근거 승인 → 리뷰 → claim 앵커 보고서 → labhq verify](media/research-lane.svg)
 

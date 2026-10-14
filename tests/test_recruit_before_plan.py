@@ -1,0 +1,217 @@
+"""Request-scoped hiring: fake recruiter only, never a real Paper2Agent conversion."""
+import copy
+import asyncio
+import time
+
+import pytest
+
+from labhq.models import AgentSpec, ContractInfo, Employment, Engine, Task, TaskResult
+from labhq.orchestrator.cso import Orchestrator, PLAN_PROMPT, RESEARCH_PLAN_PROMPT
+from labhq.settings import Settings
+from tests.test_research_protocol import MiniHub, valid_plan
+from tests.test_paper_skill_attach import runner
+
+
+def proposal(paper="PMID:12345678", steps=None):
+    return {"paper": paper, "repo": "", "focus": "reproduce the paper", "reason": "PI asks for reproduction",
+            "step_ids": steps or ["s1"]}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["active", "denied", "failed", "timed_out", "unavailable", "probation"])
+@pytest.mark.parametrize("research", [True, False])
+async def test_hire_before_cp1_and_assign_this_plan(outcome, research):
+    s = Settings()
+    s.research.enabled = research
+    s.orchestrator.chief_of_staff_agent = None
+    s.orchestrator.reviewer_agent = None
+    plan = valid_plan(steps=3)
+    plan["steps"][1]["agent_id"] = "bioinfo-agent"
+    plan["steps"][2]["depends_on"] = ["s1", "s2"]
+    plan["recruit"] = [proposal(), proposal("PMID:87654321", ["s3"])]
+    if not research:
+        plan = {k: plan[k] for k in ("steps", "recruit", "notes", "clarifying_questions")}
+    order = []
+
+    async def reply(task):
+        kind = task.meta["kind"]
+        order.append(kind)
+        if kind == "plan":
+            data = copy.deepcopy(plan)
+        elif kind == "recruit_check":
+            data = {"status": "unavailable" if outcome == "unavailable" else "ready"}
+        elif kind == "plan_recruit":
+            data = {"status": outcome, "agent_id": "c_paper"}
+            if outcome == "active":
+                hub.agents["c_paper"] = {"id": "c_paper", "name": "Paper", "role": "method", "engine": "mock",
+                                         "employment": "contract", "contract_status": "active"}
+        else:
+            data = {}
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=data, cost_usd=0)
+
+    hub = MiniHub(s, reply, mode="plan_only", work_kind="research" if research else "simple",
+                  text="Reproduce the paper and compare a new implementation")
+    hub.agents.update({a: {"id": a, "name": a, "role": "test", "engine": "mock"}
+                       for a in ("bioinfo-agent", "recruiter")})
+
+    async def approve(**card):
+        order.append(card["kind"])
+        hub.approvals.append(card)
+        return {"approved": outcome != "denied" or card["kind"] != "recruit_plan",
+                "approval_id": "test", "decided_at": 1.0}
+
+    hub.request_approval = approve
+    await Orchestrator(hub).run_request("r")
+    req = hub.requests["r"]
+    assert req["status"] == "done", req.get("report")
+    cards = [a for a in hub.approvals if a["kind"] == "recruit_plan"]
+    assert len(cards) == (0 if outcome == "unavailable" else 1)
+    if cards:
+        assert len(cards[0]["detail"]["recruits"]) == 2
+        assert "수습 통과하면 바로 투입" in cards[0]["summary"]
+    final = req["plan"]
+    assert final["steps"][0]["agent_id"] == ("c_paper" if outcome == "active" else "worker")
+    assert final["steps"][0]["depends_on"] == final["steps"][1]["depends_on"] == []
+    assert final["steps"][1]["agent_id"] == "bioinfo-agent"
+    assert final["steps"][2]["depends_on"] == ["s1", "s2"]
+    if outcome != "active":
+        assert final["warnings"] and "재배정" in final["warnings"][-1]
+    if outcome in {"denied", "unavailable"}:
+        assert "plan_recruit" not in order
+    if research:
+        assert order.index("research_plan") > order.index("recruit_check")
+        if outcome == "active":
+            assert order.index("research_plan") > order.index("plan_recruit")
+        cp1 = hub.approvals[-1]
+        assert final["steps"][0]["agent_id"] in cp1["detail"]["plan_canonical"]
+        if outcome != "active":
+            assert "재배정" in cp1["summary"]
+
+
+def test_both_planners_require_reproduction_parallel_comparison_and_joint_nextflow():
+    for prompt in (PLAN_PROMPT, RESEARCH_PLAN_PROMPT):
+        for phrase in ("technician/full", "step_ids", "parallel", "comparison", "Nextflow", "bioinfo-agent"):
+            assert phrase in prompt
+
+
+def hire_task():
+    return Task(agent_id="recruiter", request_id="r", prompt="hire",
+                meta={"kind": "plan_recruit", "recruit": proposal(), "activate_on_pass": True})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["active", "probation", "failed", "timed_out", "unavailable"])
+async def test_runner_waits_for_probation_and_handles_failure(runner, monkeypatch, state):
+    r, _ = runner
+    r.s.runner.task_timeout_s = 1
+    events = []
+    monkeypatch.setattr(r, "_send_roster", lambda: events.append("roster"))
+
+    async def fake_run(recruitment):
+        events.append("convert")
+        if state == "timed_out":
+            await asyncio.sleep(10)
+        if state == "failed":
+            raise RuntimeError("fake conversion failed")
+        events.append("probation")
+        spec = AgentSpec(id="c_paper", name="Paper", role="method", engine=Engine.mock,
+                         employment=Employment.contract,
+                         contract=ContractInfo(paper="PMID:12345678", kind="technician", hired_at=1,
+                                               expires_at=time.time() + 1000, status=state))
+        r.registry.save_contract(spec)
+        return spec
+
+    monkeypatch.setattr("labhq.recruit.paper2agent.Recruitment.run", fake_run)
+    if state == "unavailable":
+        monkeypatch.setattr("labhq.doctor._paper2agent_row", lambda *a: {"status": "fail"})
+    result = await r.run_task(hire_task())
+    expected = "failed" if state == "probation" else state
+    assert result.structured["status"] == expected
+    if state == "active":
+        assert events == ["convert", "probation", "roster"]
+        assert r.registry.get("c_paper").contract.status == "active"
+    if state == "unavailable":
+        assert events == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changed", [False, True])
+async def test_talent_rehire_without_conversion(runner, monkeypatch, tmp_path, changed):
+    from labhq.recruit.provenance import folder_sha256
+    r, seen = runner
+    skill = tmp_path / "skill"
+    skill.mkdir()
+    (skill / "SKILL.md").write_text("paper method", encoding="utf-8")
+    spec = AgentSpec(id="c_paper", name="Paper", role="method", engine=Engine.mock,
+                     employment=Employment.contract,
+                     contract=ContractInfo(paper="pmid:12345678", kind="full", hired_at=1, expires_at=2,
+                                           status="active", skill_dir=str(skill), skill_sha256=folder_sha256(skill),
+                                           verification={"probe_tools": ["reproduce"], "offer_status": "verified"}))
+    r.registry.save_contract(spec)
+    r.registry.release(spec.id)
+    if changed:
+        (skill / "SKILL.md").write_text("modified", encoding="utf-8")
+
+    async def forbidden(*args):
+        pytest.fail("talent must not be converted again")
+
+    monkeypatch.setattr("labhq.recruit.paper2agent.Recruitment.run", forbidden)
+    result = await r.run_task(hire_task())
+    assert result.structured["status"] == ("failed" if changed else "active")
+    if not changed:
+        assert result.structured["reused"] is True
+        assert r.registry.get(spec.id).contract.expires_at > time.time()
+    assert not seen
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parallel", [False, True])
+async def test_nextflow_hire_spec_implementation_hire_validation_and_resume(parallel):
+    from labhq.recruit.planning import prepare_plan
+    from tests.test_cso import FakeHub, result
+    calls = []
+    started = set()
+    both = asyncio.Event()
+
+    async def reply(task):
+        calls.append((task.meta["kind"], task.agent_id))
+        if task.meta["kind"] == "recruit_check":
+            return result(task, structured={"status": "ready"}, cost_usd=0)
+        if task.meta["kind"] == "plan_recruit":
+            return result(task, structured={"status": "active", "agent_id": "c_paper"}, cost_usd=0)
+        if parallel and task.meta["kind"] == "step":
+            sid = task.meta["step_id"]
+            if sid != "validate":
+                started.add(sid)
+                if len(started) == 2:
+                    both.set()
+                await asyncio.wait_for(both.wait(), 2)
+            else:
+                assert both.is_set()
+        return result(task, text="done", cost_usd=0)
+
+    hub = FakeHub(reply)
+    hub.approve_budget = True
+    hub.agents.update({"c_paper": {"id": "c_paper", "name": "Paper", "engine": "mock", "role": "method",
+                                     "employment": "contract", "contract_status": "active"},
+                       "bioinfo-agent": {"id": "bioinfo-agent", "engine": "mock", "name": "B", "role": "code"}})
+    draft = {"recruit": [proposal(steps=["spec", "validate"])], "steps": [
+        {"id": "spec", "agent_id": "worker", "instruction": "method and tools", "depends_on": []},
+        {"id": "workflow", "agent_id": "bioinfo-agent", "instruction": "Nextflow", "depends_on": ["spec"]},
+        {"id": "validate", "agent_id": "worker", "instruction": "validate workflow", "depends_on": ["workflow"]}]}
+    if parallel:
+        draft["recruit"][0]["step_ids"] = ["spec"]
+        draft["steps"][1]["depends_on"] = []
+        draft["steps"][2]["depends_on"] = ["spec", "workflow"]
+        draft["steps"][2]["instruction"] = "compare both methods"
+    plan = await prepare_plan(draft, "r", hub, reply)
+    resumed = await prepare_plan(draft, "r", hub, reply)
+    assert resumed == plan and len(hub.approvals) == 1
+    assert calls.count(("plan_recruit", "recruiter")) == 1
+    hub.requests["r"]["plan"] = plan
+    await Orchestrator(hub).run_dag("r", "Nextflow reproduction", plan["steps"], {})
+    agents = [agent for kind, agent in calls if kind == "step"]
+    if parallel:
+        assert set(agents[:2]) == {"c_paper", "bioinfo-agent"} and agents[2] == "worker"
+    else:
+        assert agents == ["c_paper", "bioinfo-agent", "c_paper"]

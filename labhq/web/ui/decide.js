@@ -370,6 +370,7 @@ const DETAIL_LABELS = {
   research_evidence: { ...EVIDENCE_LABELS, plan_sha256: 'plan hash', unreported_outputs: '보고하지 않은 산출',
     artifact_sha256: '산출 파일 hash', continuation: '이어 가기 차수' },
   research_plan: { target_sha256: 'plan hash', scope_status: '범위 판정', continuation: '이어 가기 차수' },
+  recruit_plan: { recruits: '논문·채용 이유·담당 단계', activate_on_pass: '수습 통과하면 바로 투입', target_sha256: '채용 묶음 hash' },
   research_continue: { round: '이어 가기 차수', limit: '이어 가기 상한', plan_sha256: '지난 계획 plan hash' },
   question: { why_blocked: '막힌 이유', from: '묻는 직원' },
   resume: { created_at: '접수 시각', steps: '남은 단계' },
@@ -529,6 +530,7 @@ const HIRE_RESULT = '채용하면 원본 commit·license·외부 전송 대상�
 const DENY_RESULT = {
   resume: '거절하면 이 요청은 실패로 끝납니다.',
   research_plan: '거절하면 이 요청은 단계를 돌리지 않고 끝납니다. 계획을 고치려면 고칠 점을 넣어 새 요청을 보내세요.',
+  recruit_plan: '승인하면 수습 통과 뒤 이번 계획에 투입합니다. 거절·실패·시간 초과 때는 정규직이 맡고 계획에 이유를 남깁니다.',
   research_plan_revise: '수정 요청은 메모를 넣은 새 요청으로 계획을 다시 세워 새 CP1을 받습니다. 거절하면 이 요청은 단계를 돌리지 않고 끝납니다.',
   research_evidence: '수정 요청은 메모로 새 계획을 세워 새 CP1을 받고 바뀐 단계만 다시 돌립니다. 거부하면 요청이 끝납니다.',
   question: '거절하면 직원에게 "진행 불가"로 전합니다.',
