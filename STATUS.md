@@ -4,6 +4,19 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+PR #581 · `recruit-before-plan` · Refs #549
+
+- 4266319195: 내부 변환 task를 요청 예산에 ID별 한 번만 집계. 다음 dispatch 전 예산 카드 확인.
+- 4266319201: 변환 입력을 계약에 저장·비교. repo·focus 변경 시 별도 인재로 재변환.
+- 4266319202: 제안 필드·단계 존재·중복·기술자형 조건을 한 함수에서 검사하고 일반·연구 계획 교정으로 반환.
+- 4266319205: 남은 단계 계약을 재개 전에 확인. 확정 전 fallback, 확정 후 terminal failure와 기존 resume 카드 종료.
+- PR 원래 head `87cc431`: 새 회귀 35 failed / 7 passed. 수정 뒤 42건 통과.
+- 관련 pytest 424 passed + Windows 파일 교체 WinError 5 한 건; 해당 test 재실행 1 passed. Node 51개 파일 통과.
+- CI에서 발견한 mock 제안의 누락 step_ids와 roster 없는 재개 경로를 보완. 기존 회귀 5 failed → 관련 163 passed, shadow 제거 검사 6 passed.
+- 이후 main의 웹 테스트 자동 수집을 병합. 채용·웹 174 passed / 1 skipped, Node 52개 파일 통과.
+- 다른 레인 전체 pytest와 겹쳐 로컬 전체 검사는 생략. 최종 CI 결과는 PR 본문에 기록.
+- 공개·패치노트·목차 검사 후 push. PI/trial 실행·리뷰 요청·인라인 답글·병합 없음.
+
 ## 결론
 
 PR #583의 늦은 저장 선택과 main #580·#585의 수정 사항을 함께 보존했습니다. Refs #558.
@@ -49,6 +62,26 @@ Refs #583
 
 ## 결론
 
+PR #581의 봇 2차 지적 P1·P2를 수정했다. Refs #549.
+
+## 바뀐 것
+
+- 일반 요청은 새 계획·재개 모두 범위 승인 뒤 채용한다. 거절하면 채용하지 않는다.
+- receipt의 계약 만료·해제를 확인해 정규직으로 재배정한다. 유효한 계약의 러너 대기는 유지한다.
+- 최신 main을 병합하고 merge commit도 패치노트에 기록했다.
+
+## 확인
+
+- PR head `bb7261a`: 새 회귀 20 failed, 기존 대기 4 passed. 수정 후 관련 pytest 390 passed.
+- 모든 `tests/*.cjs`를 `node --test`로 실행해 통과했다.
+- 다른 레인의 전체 pytest가 실행 중이어서 로컬 전체 suite는 생략했다. 전체 검증은 현재 head의 CI 결과로 확인한다.
+
+## 남은 지적
+
+- PI/trial 실행·재시작, 리뷰 요청·인라인 답글·병합은 하지 않았다.
+
+## 결론
+
 PR #585: 시안 E를 작업판·메신저·직원 시트·요청 입력에 적용했다. Refs #546.
 
 ## 바뀐 것
@@ -91,6 +124,32 @@ PR #583의 봇 지적 3건을 고치고 main b55138e를 병합했다.
 
 - 다른 레인의 전체 pytest가 실행 중이라 로컬 전체 suite는 생략했다. 전체 검증은 CI 결과를 확인한다.
 - 실제 저장소 게시·PI/trial 실행·리뷰 댓글·PR 병합은 하지 않았다.
+
+## 결론
+
+논문 재현 파견직을 CP1 전에 채용·배정합니다. 최신 main을 병합하고 봇 P1 세 건을 수정했습니다. Refs #549.
+
+## 바뀐 것
+
+- 충돌 난 웹 테스트 목록은 양쪽을 보존하고 종료 창·공통 디자인 CSS의 로드 순서를 맞췄습니다.
+- 채용 task 복구는 batch·논문별로 구분합니다. 다른 논문의 완료 receipt를 재사용하지 않습니다.
+- 새 일반·연구 계획은 `step_ids`가 필수이며 최소 한 단계가 필요합니다. 저장된 연구 계획의 호환성은 유지합니다.
+- 재시작하면 현재 batch의 active 파견직 러너를 기다립니다. 기한이 지나면 receipt를 보존하고 요청을 중단합니다.
+- 승인·수습·인재풀 재고용·실패 시 정규직 재배정은 기존 요청별 기록을 따릅니다.
+
+## 확인
+
+- 병합 후 수정 전 `7329af9`: P1 회귀 **9 failed** → 수정 후 채용 **32 passed**.
+- 관련 **273 passed/1 skipped**, 기존 복구 **100 passed**. Node **48개 파일 통과**.
+- Windows 전체 pytest **6,308 passed/66 skipped**(738.52초).
+- 공개 검사·패치노트·기록 목차 검사 통과. merge commit을 포함해 패치노트 행을 남겼습니다.
+
+## 남은 지적
+
+- 전체 pytest에 subprocess 출력의 `UnicodeDecodeError` thread warning이 남습니다. 실패한 테스트는 없습니다.
+- 실제 Paper2Agent 채용·PI/trial 실행 검증과 PR 병합은 수행하지 않았습니다.
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
 
 ## 결론
 
@@ -151,6 +210,31 @@ PR #582 · `design-decisions` · Refs #546
 - CI: head 1d9a24d의 [run 38497285439](https://github.com/ehojune/bioinfo-team-3d/actions/runs/38497285439)에서 changes·patch-notes·pytest 3.10·3.12·Windows·slow·clean-install·ro-crate-validator 성공, readme 조건부 건너뜀. 로컬 Windows 전체 PASS는 미충족이다. 봇 리뷰·병합은 총괄에게 넘긴다.
 
 [화면·회귀 근거](../design/2026-10-13/docs/reference/decisions-verification.md)
+
+## 결론
+
+논문 분석 재현에 필요한 파견직을 CP1 전에 채용하고 이번 요청의 해당 단계에 배정합니다. Refs #549 (B·PI 선호).
+
+## 바뀐 것
+
+- 연구·일반 계획에 재현=기술자형/full, 기존·신규 병렬 비교, 공동 Nextflow 순서를 명시합니다.
+- 채용을 요청당 한 장으로 승인하고 수습 통과 뒤 바로 투입합니다. 같은 논문 인재풀은 hash·수습 기록 확인 후 재고용합니다.
+- 거절·실패·시간 초과는 초안의 정규직에게 재배정합니다. Paper2Agent doctor 실패는 생략 사유를 계획·CP1에 남깁니다.
+- 중복 승인·재변환을 막는 요청별 기록, 기존 채용 API와 분리한 실행 집계, 매뉴얼·모의 회귀 테스트를 추가했습니다.
+
+## 확인
+
+- main `d56253a`: 새 회귀 23 failed → branch 23 passed.
+- 관련 368 passed, 채용·기존 계약·모의 e2e 106 passed. 수정 후 계약·웹·채용 148 passed, 1 skipped. 표준 Node 46개 파일 통과.
+- 채용 카드 추가로 드러난 승인 기록 순서 문제를 고쳤습니다. 순서 회귀 2개는 main에서 실패하며 수정 후 채용·semantics 53개가 통과했습니다.
+- 공개·diff 검사 통과. 전체 pytest와 최종 CI 결과는 PR #581에 기록합니다.
+
+## 남은 지적
+
+- 봇 리뷰 대기·대응과 병합은 총괄에게 넘깁니다.
+- 실제 Paper2Agent 변환·채용과 PI/trial 실행·설정 변경은 수행하지 않았습니다.
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
 
 ## 결론
 
