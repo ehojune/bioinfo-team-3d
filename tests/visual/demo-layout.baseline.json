@@ -1,0 +1,2113 @@
+{
+"version": 1,
+"note": "Layout snapshot of labhq/web/index.html?demo=1 with the metrics-only test font. Regenerate with node scripts/update_visual_baseline.cjs.",
+"tolerance": {"px":4,"frac":0.01,"loosePx":12,"looseFrac":0.03,"colorChannel":2,"docHeightFrac":0.02},
+"views": {
+"desktop/start/default": {"viewport": {"w":1440,"h":900}, "doc": {"w":1440,"h":900}, "items": {
+  "top": [
+    {"key":"top","shown":true,"box":{"x":0,"y":0,"w":1440,"h":87},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "office": [
+    {"key":"office","shown":true,"box":{"x":96,"y":101,"w":728,"h":499},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ],
+  "wall-board": [
+    {"key":"wall-board","shown":true,"box":{"x":5,"y":12,"w":638,"h":42},"paint":{"color":"#1c2430","background":"#ffffff","border":"#7f8790"}}
+  ],
+  "rack": [
+    {"key":"rack","shown":true,"box":{"x":655,"y":5,"w":28,"h":56},"paint":{"color":"#1c2430"}}
+  ],
+  "door": [
+    {"key":"door","shown":true,"box":{"x":695,"y":5,"w":28,"h":56},"paint":{"color":"#1c2430"}}
+  ],
+  "zone": [
+    {"key":"lead","shown":true,"box":{"x":9,"y":74,"w":351,"h":198},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#e2ddd3"}},
+    {"key":"research","shown":true,"box":{"x":368,"y":74,"w":351,"h":210},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#e2ddd3"}},
+    {"key":"data","shown":true,"box":{"x":9,"y":292,"w":351,"h":198},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#e2ddd3"}},
+    {"key":"hr","shown":true,"box":{"x":368,"y":292,"w":351,"h":118},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#e2ddd3"}}
+  ],
+  "seat": [
+    {"key":"chief_of_staff","shown":true,"status":"idle","box":{"x":18,"y":107,"w":164,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"cso","shown":true,"status":"idle","box":{"x":186,"y":107,"w":164,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"sci_reviewer","shown":true,"status":"idle","box":{"x":18,"y":187,"w":164,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"biologist","shown":true,"status":"idle","box":{"x":377,"y":107,"w":164,"h":82},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"lit_scout","shown":true,"status":"idle","box":{"x":545,"y":107,"w":165,"h":82},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"bioinfo-agent","shown":true,"status":"idle","box":{"x":377,"y":193,"w":164,"h":82},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"data_steward","shown":true,"status":"idle","box":{"x":18,"y":325,"w":164,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"analyst","shown":true,"status":"idle","box":{"x":186,"y":325,"w":164,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"engineer","shown":true,"status":"idle","box":{"x":18,"y":405,"w":164,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"qc_reviewer","shown":true,"status":"idle","box":{"x":186,"y":405,"w":164,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"recruiter","shown":true,"status":"idle","box":{"x":377,"y":325,"w":333,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}}
+  ],
+  "character": [
+    {"key":"chief_of_staff","shown":true,"box":{"x":20,"y":109,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"cso","shown":true,"box":{"x":188,"y":109,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"sci_reviewer","shown":true,"box":{"x":20,"y":189,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"biologist","shown":true,"box":{"x":379,"y":112,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"lit_scout","shown":true,"box":{"x":547,"y":112,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"bioinfo-agent","shown":true,"box":{"x":379,"y":198,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"data_steward","shown":true,"box":{"x":20,"y":327,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"analyst","shown":true,"box":{"x":188,"y":327,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"engineer","shown":true,"box":{"x":20,"y":407,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"qc_reviewer","shown":true,"box":{"x":188,"y":407,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"recruiter","shown":true,"box":{"x":379,"y":327,"w":72,"h":72},"paint":{"color":"#1c2430"}}
+  ],
+  "seat-status": [
+    {"key":"chief_of_staff","shown":true,"box":{"x":92,"y":157,"w":88,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"cso","shown":true,"box":{"x":260,"y":157,"w":88,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"sci_reviewer","shown":true,"box":{"x":92,"y":237,"w":88,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"biologist","shown":true,"box":{"x":451,"y":169,"w":88,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"lit_scout","shown":true,"box":{"x":619,"y":160,"w":89,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"bioinfo-agent","shown":true,"box":{"x":451,"y":255,"w":88,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"data_steward","shown":true,"box":{"x":92,"y":375,"w":88,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"analyst","shown":true,"box":{"x":260,"y":375,"w":88,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"engineer","shown":true,"box":{"x":92,"y":455,"w":88,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"qc_reviewer","shown":true,"box":{"x":260,"y":455,"w":88,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"recruiter","shown":true,"box":{"x":451,"y":375,"w":257,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"}
+  ],
+  "seat-dot": [
+    {"key":"chief_of_staff","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"cso","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"sci_reviewer","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"biologist","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"lit_scout","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"bioinfo-agent","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"data_steward","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"analyst","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"engineer","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"qc_reviewer","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"recruiter","shown":true,"paint":{"color":"#47525f","background":"#47525f"}}
+  ],
+  "cc": [
+    {"key":"cc","shown":true,"box":{"x":842,"y":101,"w":502,"h":199},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "tab": [
+    {"key":"decisions","shown":true,"status":"true","box":{"x":13,"y":25,"w":116,"h":44},"paint":{"color":"#2848a6","background":"#ffffff"},"text":"결정"},
+    {"key":"tasks","shown":true,"status":"false","box":{"x":133,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"작업판"},
+    {"key":"feed","shown":true,"status":"false","box":{"x":253,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"메신저"},
+    {"key":"jobs","shown":true,"status":"false","box":{"x":373,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"HPC"}
+  ],
+  "tab-count": [
+    {"key":"tab-count","shown":false,"text":""}
+  ],
+  "panel": [
+    {"key":"decisions","shown":true,"box":{"x":13,"y":87,"w":476,"h":99},"paint":{"color":"#1c2430"}},
+    {"key":"tasks","shown":false},
+    {"key":"feed","shown":false},
+    {"key":"jobs","shown":false}
+  ],
+  "decision": [
+  ],
+  "decision-status": [
+  ],
+  "decision-primary": [
+  ],
+  "review": [
+  ],
+  "review-primary": [
+  ],
+  "staff-wrap": [
+    {"key":"staff-wrap","shown":true,"box":{"x":80,"y":636,"w":1280,"h":187},"paint":{"color":"#1c2430"}}
+  ],
+  "staff-toggle": [
+    {"key":"staff-toggle","shown":false,"status":"false","text":"직원 보기"}
+  ],
+  "staff-strip": [
+    {"key":"staff-strip","shown":true,"box":{"x":16,"y":0,"w":1248,"h":187},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ],
+  "composer": [
+    {"key":"composer","shown":true,"loose":true,"box":{"x":0,"y":831,"w":1440,"h":69},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ]
+}},
+"desktop/start/tasks": {"viewport": {"w":1440,"h":900}, "doc": {"w":1440,"h":900}, "items": {
+  "top": [
+    {"key":"top","shown":true,"box":{"x":0,"y":0,"w":1440,"h":87},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "cc": [
+    {"key":"cc","shown":true,"box":{"x":842,"y":101,"w":502,"h":151},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "tab": [
+    {"key":"decisions","shown":true,"status":"false","box":{"x":13,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"결정"},
+    {"key":"tasks","shown":true,"status":"true","box":{"x":133,"y":25,"w":116,"h":44},"paint":{"color":"#2848a6","background":"#ffffff"},"text":"작업판"},
+    {"key":"feed","shown":true,"status":"false","box":{"x":253,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"메신저"},
+    {"key":"jobs","shown":true,"status":"false","box":{"x":373,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"HPC"}
+  ],
+  "tab-count": [
+    {"key":"tab-count","shown":false,"text":""}
+  ],
+  "panel": [
+    {"key":"decisions","shown":false},
+    {"key":"tasks","shown":true,"box":{"x":13,"y":87,"w":476,"h":51},"paint":{"color":"#1c2430"}},
+    {"key":"feed","shown":false},
+    {"key":"jobs","shown":false}
+  ],
+  "task-board": [
+    {"key":"task-board","shown":true,"box":{"x":13,"y":116,"w":476,"h":22},"paint":{"color":"#1c2430"}}
+  ],
+  "task-choice": [
+  ],
+  "task-column": [
+  ],
+  "task-card": [
+  ]
+}},
+"desktop/start/feed": {"viewport": {"w":1440,"h":900}, "doc": {"w":1440,"h":900}, "items": {
+  "top": [
+    {"key":"top","shown":true,"box":{"x":0,"y":0,"w":1440,"h":87},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "cc": [
+    {"key":"cc","shown":true,"box":{"x":842,"y":101,"w":502,"h":226},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "tab": [
+    {"key":"decisions","shown":true,"status":"false","box":{"x":13,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"결정"},
+    {"key":"tasks","shown":true,"status":"false","box":{"x":133,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"작업판"},
+    {"key":"feed","shown":true,"status":"true","box":{"x":253,"y":25,"w":116,"h":44},"paint":{"color":"#2848a6","background":"#ffffff"},"text":"메신저"},
+    {"key":"jobs","shown":true,"status":"false","box":{"x":373,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"HPC"}
+  ],
+  "tab-count": [
+    {"key":"tab-count","shown":false,"text":""}
+  ],
+  "panel": [
+    {"key":"decisions","shown":false},
+    {"key":"tasks","shown":false},
+    {"key":"feed","shown":true,"box":{"x":13,"y":87,"w":476,"h":126},"paint":{"color":"#1c2430"}},
+    {"key":"jobs","shown":false}
+  ],
+  "messenger": [
+    {"key":"messenger","shown":true,"box":{"x":13,"y":116,"w":476,"h":98},"paint":{"color":"#1c2430"}}
+  ],
+  "message": [
+    {"key":"0","shown":true,"box":{"x":13,"y":116,"w":476,"h":98},"paint":{"color":"#1c2430"}}
+  ]
+}},
+"desktop/start/staff": {"viewport": {"w":1440,"h":900}, "doc": {"w":1440,"h":900}, "items": {
+  "top": [
+    {"key":"top","shown":true,"box":{"x":0,"y":0,"w":1440,"h":87},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "cc": [
+    {"key":"cc","shown":true,"box":{"x":842,"y":101,"w":502,"h":199},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "tab": [
+    {"key":"decisions","shown":true,"status":"true","box":{"x":13,"y":25,"w":116,"h":44},"paint":{"color":"#2848a6","background":"#ffffff"},"text":"결정"},
+    {"key":"tasks","shown":true,"status":"false","box":{"x":133,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"작업판"},
+    {"key":"feed","shown":true,"status":"false","box":{"x":253,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"메신저"},
+    {"key":"jobs","shown":true,"status":"false","box":{"x":373,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"HPC"}
+  ],
+  "tab-count": [
+    {"key":"tab-count","shown":false,"text":""}
+  ],
+  "panel": [
+    {"key":"decisions","shown":true,"box":{"x":13,"y":87,"w":476,"h":99},"paint":{"color":"#1c2430"}},
+    {"key":"tasks","shown":false},
+    {"key":"feed","shown":false},
+    {"key":"jobs","shown":false}
+  ],
+  "staff-wrap": [
+    {"key":"staff-wrap","shown":true,"box":{"x":80,"y":636,"w":1280,"h":187},"paint":{"color":"#1c2430"}}
+  ],
+  "staff-toggle": [
+    {"key":"staff-toggle","shown":false,"status":"false","text":"직원 보기"}
+  ],
+  "staff-strip": [
+    {"key":"staff-strip","shown":true,"box":{"x":16,"y":0,"w":1248,"h":187},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ],
+  "staff-card": [
+    {"key":"chief_of_staff","shown":true,"status":"staff-idle","box":{"x":25,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"cso","shown":true,"status":"staff-idle","box":{"x":273,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"sci_reviewer","shown":true,"status":"staff-idle","box":{"x":521,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"biologist","shown":true,"status":"staff-idle","box":{"x":769,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"lit_scout","shown":true,"status":"staff-idle","box":{"x":1017,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"bioinfo-agent","shown":true,"status":"staff-idle","box":{"x":1265,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"data_steward","shown":true,"status":"staff-idle","box":{"x":1513,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"analyst","shown":true,"status":"staff-idle","box":{"x":1761,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"engineer","shown":true,"status":"staff-idle","box":{"x":2009,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"qc_reviewer","shown":true,"status":"staff-idle","box":{"x":2257,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"recruiter","shown":true,"status":"staff-idle","box":{"x":2505,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "staff-chip": [
+    {"key":"chief_of_staff","shown":true,"box":{"x":78,"y":61,"w":174,"h":32},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"cso","shown":true,"box":{"x":326,"y":61,"w":174,"h":32},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"sci_reviewer","shown":true,"box":{"x":574,"y":79,"w":174,"h":26},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"biologist","shown":true,"box":{"x":822,"y":79,"w":174,"h":26},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"lit_scout","shown":true,"box":{"x":1070,"y":74,"w":174,"h":21},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"bioinfo-agent","shown":true,"box":{"x":1318,"y":79,"w":174,"h":26},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"data_steward","shown":true,"box":{"x":1566,"y":79,"w":174,"h":26},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"analyst","shown":true,"box":{"x":1814,"y":61,"w":174,"h":32},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"engineer","shown":true,"box":{"x":2062,"y":79,"w":174,"h":26},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"qc_reviewer","shown":true,"box":{"x":2310,"y":61,"w":174,"h":32},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"recruiter","shown":true,"box":{"x":2558,"y":61,"w":174,"h":32},"paint":{"color":"#505b67"},"text":"쉬는 중"}
+  ],
+  "staff-dot": [
+    {"key":"chief_of_staff","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"cso","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"sci_reviewer","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"biologist","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"lit_scout","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"bioinfo-agent","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"data_steward","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"analyst","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"engineer","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"qc_reviewer","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"recruiter","shown":true,"paint":{"color":"#505b67","background":"#505b67"}}
+  ]
+}},
+"desktop/running/default": {"viewport": {"w":1440,"h":900}, "doc": {"w":1440,"h":900}, "items": {
+  "top": [
+    {"key":"top","shown":true,"box":{"x":0,"y":0,"w":1440,"h":87},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "office": [
+    {"key":"office","shown":true,"box":{"x":96,"y":101,"w":728,"h":513},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ],
+  "wall-board": [
+    {"key":"wall-board","shown":true,"box":{"x":5,"y":5,"w":638,"h":70},"paint":{"color":"#1c2430","background":"#ffffff","border":"#2848a6"}}
+  ],
+  "rack": [
+    {"key":"rack","shown":true,"box":{"x":655,"y":12,"w":28,"h":56},"paint":{"color":"#1c2430"}}
+  ],
+  "door": [
+    {"key":"door","shown":true,"box":{"x":695,"y":12,"w":28,"h":56},"paint":{"color":"#1c2430"}}
+  ],
+  "zone": [
+    {"key":"lead","shown":true,"box":{"x":9,"y":88,"w":351,"h":198},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#e2ddd3"}},
+    {"key":"research","shown":true,"box":{"x":368,"y":88,"w":351,"h":210},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#e2ddd3"}},
+    {"key":"data","shown":true,"box":{"x":9,"y":306,"w":351,"h":198},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#e2ddd3"}},
+    {"key":"hr","shown":true,"box":{"x":368,"y":306,"w":351,"h":118},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#e2ddd3"}}
+  ],
+  "seat": [
+    {"key":"chief_of_staff","shown":true,"status":"working","box":{"x":18,"y":120,"w":164,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"cso","shown":true,"status":"working","box":{"x":186,"y":120,"w":164,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"sci_reviewer","shown":true,"status":"idle","box":{"x":18,"y":200,"w":164,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"biologist","shown":true,"status":"working","box":{"x":377,"y":120,"w":164,"h":82},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"lit_scout","shown":true,"status":"idle","box":{"x":545,"y":120,"w":165,"h":82},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"bioinfo-agent","shown":true,"status":"idle","box":{"x":377,"y":207,"w":164,"h":82},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"data_steward","shown":true,"status":"working","box":{"x":18,"y":339,"w":164,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"analyst","shown":true,"status":"idle","box":{"x":186,"y":339,"w":164,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"engineer","shown":true,"status":"idle","box":{"x":18,"y":419,"w":164,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"qc_reviewer","shown":true,"status":"idle","box":{"x":186,"y":419,"w":164,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"recruiter","shown":true,"status":"idle","box":{"x":377,"y":339,"w":333,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}}
+  ],
+  "character": [
+    {"key":"chief_of_staff","shown":true,"box":{"x":20,"y":122,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"cso","shown":true,"box":{"x":188,"y":122,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"sci_reviewer","shown":true,"box":{"x":20,"y":202,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"biologist","shown":true,"box":{"x":379,"y":126,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"lit_scout","shown":true,"box":{"x":547,"y":126,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"bioinfo-agent","shown":true,"box":{"x":379,"y":212,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"data_steward","shown":true,"box":{"x":20,"y":341,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"analyst","shown":true,"box":{"x":188,"y":341,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"engineer","shown":true,"box":{"x":20,"y":421,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"qc_reviewer","shown":true,"box":{"x":188,"y":421,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"recruiter","shown":true,"box":{"x":379,"y":341,"w":72,"h":72},"paint":{"color":"#1c2430"}}
+  ],
+  "seat-status": [
+    {"key":"chief_of_staff","shown":true,"box":{"x":92,"y":171,"w":88,"h":18},"paint":{"color":"#1d6b40"},"text":"일하는 중"},
+    {"key":"cso","shown":true,"box":{"x":260,"y":171,"w":88,"h":18},"paint":{"color":"#1d6b40"},"text":"일하는 중"},
+    {"key":"sci_reviewer","shown":true,"box":{"x":92,"y":251,"w":88,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"biologist","shown":true,"box":{"x":451,"y":183,"w":88,"h":18},"paint":{"color":"#1d6b40"},"text":"일하는 중"},
+    {"key":"lit_scout","shown":true,"box":{"x":619,"y":174,"w":89,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"bioinfo-agent","shown":true,"box":{"x":451,"y":269,"w":88,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"data_steward","shown":true,"box":{"x":92,"y":389,"w":88,"h":18},"paint":{"color":"#1d6b40"},"text":"일하는 중"},
+    {"key":"analyst","shown":true,"box":{"x":260,"y":389,"w":88,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"engineer","shown":true,"box":{"x":92,"y":469,"w":88,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"qc_reviewer","shown":true,"box":{"x":260,"y":469,"w":88,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"recruiter","shown":true,"box":{"x":451,"y":389,"w":257,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"}
+  ],
+  "seat-dot": [
+    {"key":"chief_of_staff","shown":true,"paint":{"color":"#1d6b40","background":"#1d6b40"}},
+    {"key":"cso","shown":true,"paint":{"color":"#1d6b40","background":"#1d6b40"}},
+    {"key":"sci_reviewer","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"biologist","shown":true,"paint":{"color":"#1d6b40","background":"#1d6b40"}},
+    {"key":"lit_scout","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"bioinfo-agent","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"data_steward","shown":true,"paint":{"color":"#1d6b40","background":"#1d6b40"}},
+    {"key":"analyst","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"engineer","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"qc_reviewer","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"recruiter","shown":true,"paint":{"color":"#47525f","background":"#47525f"}}
+  ],
+  "cc": [
+    {"key":"cc","shown":true,"box":{"x":842,"y":101,"w":502,"h":521},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "tab": [
+    {"key":"decisions","shown":true,"status":"true","box":{"x":13,"y":25,"w":116,"h":44},"paint":{"color":"#2848a6","background":"#ffffff"},"text":"결정 1"},
+    {"key":"tasks","shown":true,"status":"false","box":{"x":133,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"작업판"},
+    {"key":"feed","shown":true,"status":"false","box":{"x":253,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"메신저"},
+    {"key":"jobs","shown":true,"status":"false","box":{"x":373,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"HPC"}
+  ],
+  "tab-count": [
+    {"key":"tab-count","shown":true,"box":{"x":79,"y":38,"w":18,"h":17},"paint":{"color":"#2848a6","background":"#e9edf9"},"text":"1"}
+  ],
+  "panel": [
+    {"key":"decisions","shown":true,"box":{"x":13,"y":87,"w":476,"h":729},"paint":{"color":"#1c2430"}},
+    {"key":"tasks","shown":false},
+    {"key":"feed","shown":false},
+    {"key":"jobs","shown":false}
+  ],
+  "decision": [
+    {"key":"suggestion:sug_1","shown":true,"box":{"x":13,"y":116,"w":476,"h":653},"paint":{"color":"#1c2430","background":"#ffffff","border":"#2848a6"}}
+  ],
+  "decision-status": [
+    {"key":"0","shown":true,"box":{"x":30,"y":356,"w":85,"h":23},"paint":{"color":"#2848a6","background":"#e9edf9"},"text":"결정 대기"}
+  ],
+  "decision-primary": [
+    {"key":"0","shown":true,"box":{"x":30,"y":484,"w":442,"h":48},"paint":{"color":"#ffffff","background":"#2848a6","border":"#2848a6"},"text":"채용하기"}
+  ],
+  "review": [
+  ],
+  "review-primary": [
+  ],
+  "staff-wrap": [
+    {"key":"staff-wrap","shown":true,"box":{"x":80,"y":636,"w":1280,"h":187},"paint":{"color":"#1c2430"}}
+  ],
+  "staff-toggle": [
+    {"key":"staff-toggle","shown":false,"status":"false","text":"직원 보기"}
+  ],
+  "staff-strip": [
+    {"key":"staff-strip","shown":true,"box":{"x":16,"y":0,"w":1248,"h":187},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ],
+  "composer": [
+    {"key":"composer","shown":true,"loose":true,"box":{"x":0,"y":831,"w":1440,"h":69},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ]
+}},
+"desktop/running/tasks": {"viewport": {"w":1440,"h":900}, "doc": {"w":1440,"h":900}, "items": {
+  "top": [
+    {"key":"top","shown":true,"box":{"x":0,"y":0,"w":1440,"h":87},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "cc": [
+    {"key":"cc","shown":true,"box":{"x":842,"y":101,"w":502,"h":521},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "tab": [
+    {"key":"decisions","shown":true,"status":"false","box":{"x":13,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"결정 1"},
+    {"key":"tasks","shown":true,"status":"true","box":{"x":133,"y":25,"w":116,"h":44},"paint":{"color":"#2848a6","background":"#ffffff"},"text":"작업판"},
+    {"key":"feed","shown":true,"status":"false","box":{"x":253,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"메신저"},
+    {"key":"jobs","shown":true,"status":"false","box":{"x":373,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"HPC"}
+  ],
+  "tab-count": [
+    {"key":"tab-count","shown":true,"box":{"x":79,"y":38,"w":18,"h":17},"paint":{"color":"#2848a6","background":"#e9edf9"},"text":"1"}
+  ],
+  "panel": [
+    {"key":"decisions","shown":false},
+    {"key":"tasks","shown":true,"box":{"x":13,"y":87,"w":476,"h":750},"paint":{"color":"#1c2430"}},
+    {"key":"feed","shown":false},
+    {"key":"jobs","shown":false}
+  ],
+  "task-board": [
+    {"key":"task-board","shown":true,"box":{"x":13,"y":116,"w":476,"h":721},"paint":{"color":"#1c2430"}}
+  ],
+  "task-choice": [
+    {"key":"0","shown":true,"box":{"x":13,"y":145,"w":476,"h":103},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#7f8790"}}
+  ],
+  "task-column": [
+    {"key":"0","shown":true,"box":{"x":13,"y":284,"w":476,"h":200},"paint":{"color":"#1c2430"}},
+    {"key":"1","shown":false},
+    {"key":"2","shown":true,"box":{"x":13,"y":496,"w":476,"h":281},"paint":{"color":"#1c2430"}},
+    {"key":"3","shown":false}
+  ],
+  "task-card": [
+    {"key":"0","shown":true,"box":{"x":13,"y":329,"w":476,"h":75},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"1","shown":true,"box":{"x":13,"y":409,"w":476,"h":75},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"2","shown":true,"box":{"x":13,"y":541,"w":476,"h":75},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"3","shown":true,"box":{"x":13,"y":622,"w":476,"h":75},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"4","shown":true,"box":{"x":13,"y":702,"w":476,"h":75},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ]
+}},
+"desktop/running/feed": {"viewport": {"w":1440,"h":900}, "doc": {"w":1440,"h":900}, "items": {
+  "top": [
+    {"key":"top","shown":true,"box":{"x":0,"y":0,"w":1440,"h":87},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "cc": [
+    {"key":"cc","shown":true,"box":{"x":842,"y":101,"w":502,"h":521},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "tab": [
+    {"key":"decisions","shown":true,"status":"false","box":{"x":13,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"결정 1"},
+    {"key":"tasks","shown":true,"status":"false","box":{"x":133,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"작업판"},
+    {"key":"feed","shown":true,"status":"true","box":{"x":253,"y":25,"w":116,"h":44},"paint":{"color":"#2848a6","background":"#ffffff"},"text":"메신저"},
+    {"key":"jobs","shown":true,"status":"false","box":{"x":373,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"HPC"}
+  ],
+  "tab-count": [
+    {"key":"tab-count","shown":true,"box":{"x":79,"y":38,"w":18,"h":17},"paint":{"color":"#2848a6","background":"#e9edf9"},"text":"1"}
+  ],
+  "panel": [
+    {"key":"decisions","shown":false},
+    {"key":"tasks","shown":false},
+    {"key":"feed","shown":true,"box":{"x":13,"y":87,"w":476,"h":524},"paint":{"color":"#1c2430"}},
+    {"key":"jobs","shown":false}
+  ],
+  "messenger": [
+    {"key":"messenger","shown":true,"box":{"x":13,"y":116,"w":476,"h":1050},"paint":{"color":"#1c2430"}}
+  ],
+  "message": [
+    {"key":"0","shown":true,"box":{"x":13,"y":116,"w":476,"h":98},"paint":{"color":"#1c2430"}},
+    {"key":"1","shown":true,"box":{"x":13,"y":213,"w":476,"h":98},"paint":{"color":"#1c2430"}},
+    {"key":"2","shown":true,"box":{"x":13,"y":311,"w":476,"h":122},"paint":{"color":"#1c2430"}},
+    {"key":"3","shown":true,"box":{"x":13,"y":433,"w":476,"h":98},"paint":{"color":"#1c2430"}},
+    {"key":"4","shown":true,"box":{"x":13,"y":531,"w":476,"h":98},"paint":{"color":"#1c2430"}},
+    {"key":"5","shown":true,"box":{"x":13,"y":628,"w":476,"h":122},"paint":{"color":"#1c2430"}},
+    {"key":"6","shown":true,"box":{"x":13,"y":751,"w":476,"h":98},"paint":{"color":"#1c2430"}},
+    {"key":"7","shown":true,"box":{"x":13,"y":848,"w":476,"h":98},"paint":{"color":"#1c2430"}}
+  ]
+}},
+"desktop/running/staff": {"viewport": {"w":1440,"h":900}, "doc": {"w":1440,"h":900}, "items": {
+  "top": [
+    {"key":"top","shown":true,"box":{"x":0,"y":0,"w":1440,"h":87},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "cc": [
+    {"key":"cc","shown":true,"box":{"x":842,"y":101,"w":502,"h":521},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "tab": [
+    {"key":"decisions","shown":true,"status":"true","box":{"x":13,"y":25,"w":116,"h":44},"paint":{"color":"#2848a6","background":"#ffffff"},"text":"결정 1"},
+    {"key":"tasks","shown":true,"status":"false","box":{"x":133,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"작업판"},
+    {"key":"feed","shown":true,"status":"false","box":{"x":253,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"메신저"},
+    {"key":"jobs","shown":true,"status":"false","box":{"x":373,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"HPC"}
+  ],
+  "tab-count": [
+    {"key":"tab-count","shown":true,"box":{"x":79,"y":38,"w":18,"h":17},"paint":{"color":"#2848a6","background":"#e9edf9"},"text":"1"}
+  ],
+  "panel": [
+    {"key":"decisions","shown":true,"box":{"x":13,"y":87,"w":476,"h":729},"paint":{"color":"#1c2430"}},
+    {"key":"tasks","shown":false},
+    {"key":"feed","shown":false},
+    {"key":"jobs","shown":false}
+  ],
+  "staff-wrap": [
+    {"key":"staff-wrap","shown":true,"box":{"x":80,"y":636,"w":1280,"h":187},"paint":{"color":"#1c2430"}}
+  ],
+  "staff-toggle": [
+    {"key":"staff-toggle","shown":false,"status":"false","text":"직원 보기"}
+  ],
+  "staff-strip": [
+    {"key":"staff-strip","shown":true,"box":{"x":16,"y":0,"w":1248,"h":187},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ],
+  "staff-card": [
+    {"key":"chief_of_staff","shown":true,"status":"staff-working","box":{"x":25,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"cso","shown":true,"status":"staff-working","box":{"x":273,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"sci_reviewer","shown":true,"status":"staff-idle","box":{"x":521,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"biologist","shown":true,"status":"staff-working","box":{"x":769,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"lit_scout","shown":true,"status":"staff-idle","box":{"x":1017,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"bioinfo-agent","shown":true,"status":"staff-idle","box":{"x":1265,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"data_steward","shown":true,"status":"staff-working","box":{"x":1513,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"analyst","shown":true,"status":"staff-idle","box":{"x":1761,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"engineer","shown":true,"status":"staff-idle","box":{"x":2009,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"qc_reviewer","shown":true,"status":"staff-idle","box":{"x":2257,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"recruiter","shown":true,"status":"staff-idle","box":{"x":2505,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "staff-chip": [
+    {"key":"chief_of_staff","shown":true,"box":{"x":78,"y":56,"w":174,"h":27},"paint":{"color":"#1d6b40"},"text":"생각하는 중"},
+    {"key":"cso","shown":true,"box":{"x":326,"y":56,"w":174,"h":27},"paint":{"color":"#1d6b40"},"text":"생각하는 중"},
+    {"key":"sci_reviewer","shown":true,"box":{"x":574,"y":79,"w":174,"h":26},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"biologist","shown":true,"box":{"x":822,"y":74,"w":174,"h":21},"paint":{"color":"#1d6b40"},"text":"생각하는 중"},
+    {"key":"lit_scout","shown":true,"box":{"x":1070,"y":74,"w":174,"h":21},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"bioinfo-agent","shown":true,"box":{"x":1318,"y":79,"w":174,"h":26},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"data_steward","shown":true,"box":{"x":1566,"y":74,"w":174,"h":21},"paint":{"color":"#1d6b40"},"text":"생각하는 중"},
+    {"key":"analyst","shown":true,"box":{"x":1814,"y":61,"w":174,"h":32},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"engineer","shown":true,"box":{"x":2062,"y":79,"w":174,"h":26},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"qc_reviewer","shown":true,"box":{"x":2310,"y":61,"w":174,"h":32},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"recruiter","shown":true,"box":{"x":2558,"y":61,"w":174,"h":32},"paint":{"color":"#505b67"},"text":"쉬는 중"}
+  ],
+  "staff-dot": [
+    {"key":"chief_of_staff","shown":true,"paint":{"color":"#1d6b40","background":"#1d6b40"}},
+    {"key":"cso","shown":true,"paint":{"color":"#1d6b40","background":"#1d6b40"}},
+    {"key":"sci_reviewer","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"biologist","shown":true,"paint":{"color":"#1d6b40","background":"#1d6b40"}},
+    {"key":"lit_scout","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"bioinfo-agent","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"data_steward","shown":true,"paint":{"color":"#1d6b40","background":"#1d6b40"}},
+    {"key":"analyst","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"engineer","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"qc_reviewer","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"recruiter","shown":true,"paint":{"color":"#505b67","background":"#505b67"}}
+  ]
+}},
+"desktop/decision/default": {"viewport": {"w":1440,"h":900}, "doc": {"w":1440,"h":900}, "items": {
+  "top": [
+    {"key":"top","shown":true,"box":{"x":0,"y":0,"w":1440,"h":87},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "office": [
+    {"key":"office","shown":true,"box":{"x":96,"y":101,"w":728,"h":519},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ],
+  "wall-board": [
+    {"key":"wall-board","shown":true,"box":{"x":5,"y":5,"w":638,"h":70},"paint":{"color":"#1c2430","background":"#ffffff","border":"#2848a6"}}
+  ],
+  "rack": [
+    {"key":"rack","shown":true,"box":{"x":655,"y":12,"w":28,"h":56},"paint":{"color":"#1c2430"}}
+  ],
+  "door": [
+    {"key":"door","shown":true,"box":{"x":695,"y":12,"w":28,"h":56},"paint":{"color":"#1c2430"}}
+  ],
+  "zone": [
+    {"key":"lead","shown":true,"box":{"x":9,"y":88,"w":351,"h":198},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#e2ddd3"}},
+    {"key":"research","shown":true,"box":{"x":368,"y":88,"w":351,"h":210},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#e2ddd3"}},
+    {"key":"data","shown":true,"box":{"x":9,"y":306,"w":351,"h":204},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#e2ddd3"}},
+    {"key":"hr","shown":true,"box":{"x":368,"y":306,"w":351,"h":118},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#e2ddd3"}}
+  ],
+  "seat": [
+    {"key":"chief_of_staff","shown":true,"status":"working","box":{"x":18,"y":120,"w":164,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"cso","shown":true,"status":"working","box":{"x":186,"y":120,"w":164,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"sci_reviewer","shown":true,"status":"idle","box":{"x":18,"y":200,"w":164,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"biologist","shown":true,"status":"working","box":{"x":377,"y":120,"w":164,"h":82},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"lit_scout","shown":true,"status":"idle","box":{"x":545,"y":120,"w":165,"h":82},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"bioinfo-agent","shown":true,"status":"idle","box":{"x":377,"y":207,"w":164,"h":82},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"data_steward","shown":true,"status":"decision","box":{"x":18,"y":339,"w":164,"h":83},"paint":{"color":"#1c2430","background":"#e9edf9"}},
+    {"key":"analyst","shown":true,"status":"idle","box":{"x":186,"y":339,"w":164,"h":83},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"engineer","shown":true,"status":"idle","box":{"x":18,"y":425,"w":164,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"qc_reviewer","shown":true,"status":"idle","box":{"x":186,"y":425,"w":164,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"recruiter","shown":true,"status":"idle","box":{"x":377,"y":339,"w":333,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}}
+  ],
+  "character": [
+    {"key":"chief_of_staff","shown":true,"box":{"x":20,"y":122,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"cso","shown":true,"box":{"x":188,"y":122,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"sci_reviewer","shown":true,"box":{"x":20,"y":202,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"biologist","shown":true,"box":{"x":379,"y":126,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"lit_scout","shown":true,"box":{"x":547,"y":126,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"bioinfo-agent","shown":true,"box":{"x":379,"y":212,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"data_steward","shown":true,"box":{"x":20,"y":344,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"analyst","shown":true,"box":{"x":188,"y":344,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"engineer","shown":true,"box":{"x":20,"y":427,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"qc_reviewer","shown":true,"box":{"x":188,"y":427,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"recruiter","shown":true,"box":{"x":379,"y":341,"w":72,"h":72},"paint":{"color":"#1c2430"}}
+  ],
+  "seat-status": [
+    {"key":"chief_of_staff","shown":true,"box":{"x":92,"y":171,"w":88,"h":18},"paint":{"color":"#1d6b40"},"text":"일하는 중"},
+    {"key":"cso","shown":true,"box":{"x":260,"y":171,"w":88,"h":18},"paint":{"color":"#1d6b40"},"text":"일하는 중"},
+    {"key":"sci_reviewer","shown":true,"box":{"x":92,"y":251,"w":88,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"biologist","shown":true,"box":{"x":451,"y":183,"w":88,"h":18},"paint":{"color":"#1d6b40"},"text":"일하는 중"},
+    {"key":"lit_scout","shown":true,"box":{"x":619,"y":174,"w":89,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"bioinfo-agent","shown":true,"box":{"x":451,"y":269,"w":88,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"data_steward","shown":true,"box":{"x":92,"y":383,"w":88,"h":36},"paint":{"color":"#2848a6"},"text":"승인 기다려요"},
+    {"key":"analyst","shown":true,"box":{"x":260,"y":392,"w":88,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"engineer","shown":true,"box":{"x":92,"y":476,"w":88,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"qc_reviewer","shown":true,"box":{"x":260,"y":476,"w":88,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"recruiter","shown":true,"box":{"x":451,"y":389,"w":257,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"}
+  ],
+  "seat-dot": [
+    {"key":"chief_of_staff","shown":true,"paint":{"color":"#1d6b40","background":"#1d6b40"}},
+    {"key":"cso","shown":true,"paint":{"color":"#1d6b40","background":"#1d6b40"}},
+    {"key":"sci_reviewer","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"biologist","shown":true,"paint":{"color":"#1d6b40","background":"#1d6b40"}},
+    {"key":"lit_scout","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"bioinfo-agent","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"data_steward","shown":true,"paint":{"color":"#2848a6","background":"#2848a6"}},
+    {"key":"analyst","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"engineer","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"qc_reviewer","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"recruiter","shown":true,"paint":{"color":"#47525f","background":"#47525f"}}
+  ],
+  "cc": [
+    {"key":"cc","shown":true,"box":{"x":842,"y":101,"w":502,"h":521},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "tab": [
+    {"key":"decisions","shown":true,"status":"true","box":{"x":13,"y":25,"w":116,"h":44},"paint":{"color":"#2848a6","background":"#ffffff"},"text":"결정 2"},
+    {"key":"tasks","shown":true,"status":"false","box":{"x":133,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"작업판"},
+    {"key":"feed","shown":true,"status":"false","box":{"x":253,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"메신저"},
+    {"key":"jobs","shown":true,"status":"false","box":{"x":373,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"HPC"}
+  ],
+  "tab-count": [
+    {"key":"tab-count","shown":true,"box":{"x":79,"y":38,"w":18,"h":17},"paint":{"color":"#2848a6","background":"#e9edf9"},"text":"2"}
+  ],
+  "panel": [
+    {"key":"decisions","shown":true,"box":{"x":13,"y":87,"w":476,"h":1370},"paint":{"color":"#1c2430"}},
+    {"key":"tasks","shown":false},
+    {"key":"feed","shown":false},
+    {"key":"jobs","shown":false}
+  ],
+  "decision": [
+    {"key":"approval:appr_demo6","shown":true,"box":{"x":13,"y":116,"w":476,"h":629},"paint":{"color":"#1c2430","background":"#ffffff","border":"#2848a6"}},
+    {"key":"suggestion:sug_1","shown":true,"box":{"x":13,"y":757,"w":476,"h":653},"paint":{"color":"#1c2430","background":"#ffffff","border":"#2848a6"}}
+  ],
+  "decision-status": [
+    {"key":"0","shown":true,"box":{"x":30,"y":332,"w":85,"h":23},"paint":{"color":"#2848a6","background":"#e9edf9"},"text":"결정 대기"},
+    {"key":"1","shown":true,"box":{"x":30,"y":997,"w":85,"h":23},"paint":{"color":"#2848a6","background":"#e9edf9"},"text":"결정 대기"}
+  ],
+  "decision-primary": [
+    {"key":"0","shown":true,"box":{"x":30,"y":460,"w":442,"h":48},"paint":{"color":"#ffffff","background":"#2848a6","border":"#2848a6"},"text":"승인"},
+    {"key":"1","shown":true,"box":{"x":30,"y":1125,"w":442,"h":48},"paint":{"color":"#ffffff","background":"#2848a6","border":"#2848a6"},"text":"채용하기"}
+  ],
+  "review": [
+  ],
+  "review-primary": [
+  ],
+  "staff-wrap": [
+    {"key":"staff-wrap","shown":true,"box":{"x":80,"y":636,"w":1280,"h":187},"paint":{"color":"#1c2430"}}
+  ],
+  "staff-toggle": [
+    {"key":"staff-toggle","shown":false,"status":"false","text":"직원 보기"}
+  ],
+  "staff-strip": [
+    {"key":"staff-strip","shown":true,"box":{"x":16,"y":0,"w":1248,"h":187},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ],
+  "composer": [
+    {"key":"composer","shown":true,"loose":true,"box":{"x":0,"y":831,"w":1440,"h":69},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ]
+}},
+"desktop/decision/tasks": {"viewport": {"w":1440,"h":900}, "doc": {"w":1440,"h":900}, "items": {
+  "top": [
+    {"key":"top","shown":true,"box":{"x":0,"y":0,"w":1440,"h":87},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "cc": [
+    {"key":"cc","shown":true,"box":{"x":842,"y":101,"w":502,"h":521},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "tab": [
+    {"key":"decisions","shown":true,"status":"false","box":{"x":13,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"결정 2"},
+    {"key":"tasks","shown":true,"status":"true","box":{"x":133,"y":25,"w":116,"h":44},"paint":{"color":"#2848a6","background":"#ffffff"},"text":"작업판"},
+    {"key":"feed","shown":true,"status":"false","box":{"x":253,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"메신저"},
+    {"key":"jobs","shown":true,"status":"false","box":{"x":373,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"HPC"}
+  ],
+  "tab-count": [
+    {"key":"tab-count","shown":true,"box":{"x":79,"y":38,"w":18,"h":17},"paint":{"color":"#2848a6","background":"#e9edf9"},"text":"2"}
+  ],
+  "panel": [
+    {"key":"decisions","shown":false},
+    {"key":"tasks","shown":true,"box":{"x":13,"y":87,"w":476,"h":750},"paint":{"color":"#1c2430"}},
+    {"key":"feed","shown":false},
+    {"key":"jobs","shown":false}
+  ],
+  "task-board": [
+    {"key":"task-board","shown":true,"box":{"x":13,"y":116,"w":476,"h":721},"paint":{"color":"#1c2430"}}
+  ],
+  "task-choice": [
+    {"key":"0","shown":true,"box":{"x":13,"y":145,"w":476,"h":103},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#7f8790"}}
+  ],
+  "task-column": [
+    {"key":"0","shown":true,"box":{"x":13,"y":284,"w":476,"h":200},"paint":{"color":"#1c2430"}},
+    {"key":"1","shown":false},
+    {"key":"2","shown":true,"box":{"x":13,"y":496,"w":476,"h":281},"paint":{"color":"#1c2430"}},
+    {"key":"3","shown":false}
+  ],
+  "task-card": [
+    {"key":"0","shown":true,"box":{"x":13,"y":329,"w":476,"h":75},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"1","shown":true,"box":{"x":13,"y":409,"w":476,"h":75},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"2","shown":true,"box":{"x":13,"y":541,"w":476,"h":75},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"3","shown":true,"box":{"x":13,"y":622,"w":476,"h":75},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"4","shown":true,"box":{"x":13,"y":702,"w":476,"h":75},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ]
+}},
+"desktop/decision/feed": {"viewport": {"w":1440,"h":900}, "doc": {"w":1440,"h":900}, "items": {
+  "top": [
+    {"key":"top","shown":true,"box":{"x":0,"y":0,"w":1440,"h":87},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "cc": [
+    {"key":"cc","shown":true,"box":{"x":842,"y":101,"w":502,"h":521},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "tab": [
+    {"key":"decisions","shown":true,"status":"false","box":{"x":13,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"결정 2"},
+    {"key":"tasks","shown":true,"status":"false","box":{"x":133,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"작업판"},
+    {"key":"feed","shown":true,"status":"true","box":{"x":253,"y":25,"w":116,"h":44},"paint":{"color":"#2848a6","background":"#ffffff"},"text":"메신저"},
+    {"key":"jobs","shown":true,"status":"false","box":{"x":373,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"HPC"}
+  ],
+  "tab-count": [
+    {"key":"tab-count","shown":true,"box":{"x":79,"y":38,"w":18,"h":17},"paint":{"color":"#2848a6","background":"#e9edf9"},"text":"2"}
+  ],
+  "panel": [
+    {"key":"decisions","shown":false},
+    {"key":"tasks","shown":false},
+    {"key":"feed","shown":true,"box":{"x":13,"y":87,"w":476,"h":524},"paint":{"color":"#1c2430"}},
+    {"key":"jobs","shown":false}
+  ],
+  "messenger": [
+    {"key":"messenger","shown":true,"box":{"x":13,"y":116,"w":476,"h":1147},"paint":{"color":"#1c2430"}}
+  ],
+  "message": [
+    {"key":"0","shown":true,"box":{"x":13,"y":116,"w":476,"h":98},"paint":{"color":"#1c2430"}},
+    {"key":"1","shown":true,"box":{"x":13,"y":213,"w":476,"h":98},"paint":{"color":"#1c2430"}},
+    {"key":"2","shown":true,"box":{"x":13,"y":311,"w":476,"h":98},"paint":{"color":"#1c2430"}},
+    {"key":"3","shown":true,"box":{"x":13,"y":408,"w":476,"h":122},"paint":{"color":"#1c2430"}},
+    {"key":"4","shown":true,"box":{"x":13,"y":531,"w":476,"h":98},"paint":{"color":"#1c2430"}},
+    {"key":"5","shown":true,"box":{"x":13,"y":628,"w":476,"h":98},"paint":{"color":"#1c2430"}},
+    {"key":"6","shown":true,"box":{"x":13,"y":726,"w":476,"h":122},"paint":{"color":"#1c2430"}},
+    {"key":"7","shown":true,"box":{"x":13,"y":848,"w":476,"h":98},"paint":{"color":"#1c2430"}}
+  ]
+}},
+"desktop/decision/staff": {"viewport": {"w":1440,"h":900}, "doc": {"w":1440,"h":900}, "items": {
+  "top": [
+    {"key":"top","shown":true,"box":{"x":0,"y":0,"w":1440,"h":87},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "cc": [
+    {"key":"cc","shown":true,"box":{"x":842,"y":101,"w":502,"h":521},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "tab": [
+    {"key":"decisions","shown":true,"status":"true","box":{"x":13,"y":25,"w":116,"h":44},"paint":{"color":"#2848a6","background":"#ffffff"},"text":"결정 2"},
+    {"key":"tasks","shown":true,"status":"false","box":{"x":133,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"작업판"},
+    {"key":"feed","shown":true,"status":"false","box":{"x":253,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"메신저"},
+    {"key":"jobs","shown":true,"status":"false","box":{"x":373,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"HPC"}
+  ],
+  "tab-count": [
+    {"key":"tab-count","shown":true,"box":{"x":79,"y":38,"w":18,"h":17},"paint":{"color":"#2848a6","background":"#e9edf9"},"text":"2"}
+  ],
+  "panel": [
+    {"key":"decisions","shown":true,"box":{"x":13,"y":87,"w":476,"h":1370},"paint":{"color":"#1c2430"}},
+    {"key":"tasks","shown":false},
+    {"key":"feed","shown":false},
+    {"key":"jobs","shown":false}
+  ],
+  "staff-wrap": [
+    {"key":"staff-wrap","shown":true,"box":{"x":80,"y":636,"w":1280,"h":187},"paint":{"color":"#1c2430"}}
+  ],
+  "staff-toggle": [
+    {"key":"staff-toggle","shown":false,"status":"false","text":"직원 보기"}
+  ],
+  "staff-strip": [
+    {"key":"staff-strip","shown":true,"box":{"x":16,"y":0,"w":1248,"h":187},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ],
+  "staff-card": [
+    {"key":"chief_of_staff","shown":true,"status":"staff-working","box":{"x":25,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"cso","shown":true,"status":"staff-working","box":{"x":273,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"sci_reviewer","shown":true,"status":"staff-idle","box":{"x":521,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"biologist","shown":true,"status":"staff-working","box":{"x":769,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"lit_scout","shown":true,"status":"staff-idle","box":{"x":1017,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"bioinfo-agent","shown":true,"status":"staff-idle","box":{"x":1265,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"data_steward","shown":true,"status":"staff-waiting","box":{"x":1513,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"analyst","shown":true,"status":"staff-idle","box":{"x":1761,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"engineer","shown":true,"status":"staff-idle","box":{"x":2009,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"qc_reviewer","shown":true,"status":"staff-idle","box":{"x":2257,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"recruiter","shown":true,"status":"staff-idle","box":{"x":2505,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "staff-chip": [
+    {"key":"chief_of_staff","shown":true,"box":{"x":78,"y":56,"w":174,"h":27},"paint":{"color":"#1d6b40"},"text":"생각하는 중"},
+    {"key":"cso","shown":true,"box":{"x":326,"y":56,"w":174,"h":27},"paint":{"color":"#1d6b40"},"text":"생각하는 중"},
+    {"key":"sci_reviewer","shown":true,"box":{"x":574,"y":79,"w":174,"h":26},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"biologist","shown":true,"box":{"x":822,"y":74,"w":174,"h":21},"paint":{"color":"#1d6b40"},"text":"생각하는 중"},
+    {"key":"lit_scout","shown":true,"box":{"x":1070,"y":74,"w":174,"h":21},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"bioinfo-agent","shown":true,"box":{"x":1318,"y":79,"w":174,"h":26},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"data_steward","shown":true,"box":{"x":1566,"y":74,"w":174,"h":21},"paint":{"color":"#2848a6"},"text":"PI 결정 기다리는 중"},
+    {"key":"analyst","shown":true,"box":{"x":1814,"y":61,"w":174,"h":32},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"engineer","shown":true,"box":{"x":2062,"y":79,"w":174,"h":26},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"qc_reviewer","shown":true,"box":{"x":2310,"y":61,"w":174,"h":32},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"recruiter","shown":true,"box":{"x":2558,"y":61,"w":174,"h":32},"paint":{"color":"#505b67"},"text":"쉬는 중"}
+  ],
+  "staff-dot": [
+    {"key":"chief_of_staff","shown":true,"paint":{"color":"#1d6b40","background":"#1d6b40"}},
+    {"key":"cso","shown":true,"paint":{"color":"#1d6b40","background":"#1d6b40"}},
+    {"key":"sci_reviewer","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"biologist","shown":true,"paint":{"color":"#1d6b40","background":"#1d6b40"}},
+    {"key":"lit_scout","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"bioinfo-agent","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"data_steward","shown":true,"paint":{"color":"#2848a6","background":"#2848a6"}},
+    {"key":"analyst","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"engineer","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"qc_reviewer","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"recruiter","shown":true,"paint":{"color":"#505b67","background":"#505b67"}}
+  ]
+}},
+"desktop/report/default": {"viewport": {"w":1440,"h":900}, "doc": {"w":1440,"h":900}, "items": {
+  "top": [
+    {"key":"top","shown":true,"box":{"x":0,"y":0,"w":1440,"h":87},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "office": [
+    {"key":"office","shown":true,"box":{"x":96,"y":101,"w":728,"h":513},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ],
+  "wall-board": [
+    {"key":"wall-board","shown":true,"box":{"x":5,"y":5,"w":638,"h":70},"paint":{"color":"#1c2430","background":"#ffffff","border":"#2848a6"}}
+  ],
+  "rack": [
+    {"key":"rack","shown":true,"box":{"x":655,"y":12,"w":28,"h":56},"paint":{"color":"#1c2430"}}
+  ],
+  "door": [
+    {"key":"door","shown":true,"box":{"x":695,"y":12,"w":28,"h":56},"paint":{"color":"#1c2430"}}
+  ],
+  "zone": [
+    {"key":"lead","shown":true,"box":{"x":9,"y":88,"w":351,"h":198},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#e2ddd3"}},
+    {"key":"research","shown":true,"box":{"x":368,"y":88,"w":351,"h":210},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#e2ddd3"}},
+    {"key":"data","shown":true,"box":{"x":9,"y":306,"w":351,"h":198},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#e2ddd3"}},
+    {"key":"hr","shown":true,"box":{"x":368,"y":306,"w":351,"h":118},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#e2ddd3"}}
+  ],
+  "seat": [
+    {"key":"chief_of_staff","shown":true,"status":"idle","box":{"x":18,"y":120,"w":164,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"cso","shown":true,"status":"done","box":{"x":186,"y":120,"w":164,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"sci_reviewer","shown":true,"status":"done","box":{"x":18,"y":200,"w":164,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"biologist","shown":true,"status":"idle","box":{"x":377,"y":120,"w":164,"h":82},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"lit_scout","shown":true,"status":"idle","box":{"x":545,"y":120,"w":165,"h":82},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"bioinfo-agent","shown":true,"status":"idle","box":{"x":377,"y":207,"w":164,"h":82},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"data_steward","shown":true,"status":"idle","box":{"x":18,"y":339,"w":164,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"analyst","shown":true,"status":"idle","box":{"x":186,"y":339,"w":164,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"engineer","shown":true,"status":"idle","box":{"x":18,"y":419,"w":164,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"qc_reviewer","shown":true,"status":"idle","box":{"x":186,"y":419,"w":164,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"recruiter","shown":true,"status":"idle","box":{"x":377,"y":339,"w":333,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}}
+  ],
+  "character": [
+    {"key":"chief_of_staff","shown":true,"box":{"x":20,"y":122,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"cso","shown":true,"box":{"x":188,"y":122,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"sci_reviewer","shown":true,"box":{"x":20,"y":202,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"biologist","shown":true,"box":{"x":379,"y":126,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"lit_scout","shown":true,"box":{"x":547,"y":126,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"bioinfo-agent","shown":true,"box":{"x":379,"y":212,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"data_steward","shown":true,"box":{"x":20,"y":341,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"analyst","shown":true,"box":{"x":188,"y":341,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"engineer","shown":true,"box":{"x":20,"y":421,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"qc_reviewer","shown":true,"box":{"x":188,"y":421,"w":72,"h":72},"paint":{"color":"#1c2430"}},
+    {"key":"recruiter","shown":true,"box":{"x":379,"y":341,"w":72,"h":72},"paint":{"color":"#1c2430"}}
+  ],
+  "seat-status": [
+    {"key":"chief_of_staff","shown":true,"box":{"x":92,"y":171,"w":88,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"cso","shown":true,"box":{"x":260,"y":171,"w":88,"h":18},"paint":{"color":"#47525f"},"text":"끝남"},
+    {"key":"sci_reviewer","shown":true,"box":{"x":92,"y":251,"w":88,"h":18},"paint":{"color":"#47525f"},"text":"끝남"},
+    {"key":"biologist","shown":true,"box":{"x":451,"y":183,"w":88,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"lit_scout","shown":true,"box":{"x":619,"y":174,"w":89,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"bioinfo-agent","shown":true,"box":{"x":451,"y":269,"w":88,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"data_steward","shown":true,"box":{"x":92,"y":389,"w":88,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"analyst","shown":true,"box":{"x":260,"y":389,"w":88,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"engineer","shown":true,"box":{"x":92,"y":469,"w":88,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"qc_reviewer","shown":true,"box":{"x":260,"y":469,"w":88,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"recruiter","shown":true,"box":{"x":451,"y":389,"w":257,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"}
+  ],
+  "seat-dot": [
+    {"key":"chief_of_staff","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"cso","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"sci_reviewer","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"biologist","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"lit_scout","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"bioinfo-agent","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"data_steward","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"analyst","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"engineer","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"qc_reviewer","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"recruiter","shown":true,"paint":{"color":"#47525f","background":"#47525f"}}
+  ],
+  "cc": [
+    {"key":"cc","shown":true,"box":{"x":842,"y":101,"w":502,"h":521},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "tab": [
+    {"key":"decisions","shown":true,"status":"true","box":{"x":13,"y":25,"w":116,"h":44},"paint":{"color":"#2848a6","background":"#ffffff"},"text":"결정 2"},
+    {"key":"tasks","shown":true,"status":"false","box":{"x":133,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"작업판"},
+    {"key":"feed","shown":true,"status":"false","box":{"x":253,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"메신저"},
+    {"key":"jobs","shown":true,"status":"false","box":{"x":373,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"HPC"}
+  ],
+  "tab-count": [
+    {"key":"tab-count","shown":true,"box":{"x":79,"y":38,"w":18,"h":17},"paint":{"color":"#2848a6","background":"#e9edf9"},"text":"2"}
+  ],
+  "panel": [
+    {"key":"decisions","shown":true,"box":{"x":13,"y":87,"w":476,"h":1130},"paint":{"color":"#1c2430"}},
+    {"key":"tasks","shown":false},
+    {"key":"feed","shown":false},
+    {"key":"jobs","shown":false}
+  ],
+  "decision": [
+    {"key":"suggestion:sug_1","shown":true,"box":{"x":13,"y":516,"w":476,"h":653},"paint":{"color":"#1c2430","background":"#ffffff","border":"#2848a6"}}
+  ],
+  "decision-status": [
+    {"key":"0","shown":true,"box":{"x":30,"y":756,"w":85,"h":23},"paint":{"color":"#2848a6","background":"#e9edf9"},"text":"결정 대기"}
+  ],
+  "decision-primary": [
+    {"key":"0","shown":true,"box":{"x":30,"y":885,"w":442,"h":48},"paint":{"color":"#ffffff","background":"#2848a6","border":"#2848a6"},"text":"채용하기"}
+  ],
+  "review": [
+    {"key":"req_demo1","shown":true,"box":{"x":13,"y":116,"w":476,"h":388},"paint":{"color":"#1c2430","background":"#ffffff","border":"#2848a6"}}
+  ],
+  "review-primary": [
+    {"key":"0","shown":true,"box":{"x":30,"y":383,"w":442,"h":48},"paint":{"color":"#ffffff","background":"#2848a6","border":"#2848a6"},"text":"보고서 열기"}
+  ],
+  "staff-wrap": [
+    {"key":"staff-wrap","shown":true,"box":{"x":80,"y":636,"w":1280,"h":187},"paint":{"color":"#1c2430"}}
+  ],
+  "staff-toggle": [
+    {"key":"staff-toggle","shown":false,"status":"false","text":"직원 보기"}
+  ],
+  "staff-strip": [
+    {"key":"staff-strip","shown":true,"box":{"x":16,"y":0,"w":1248,"h":187},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ],
+  "composer": [
+    {"key":"composer","shown":true,"loose":true,"box":{"x":0,"y":831,"w":1440,"h":69},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ]
+}},
+"desktop/report/tasks": {"viewport": {"w":1440,"h":900}, "doc": {"w":1440,"h":913}, "items": {
+  "top": [
+    {"key":"top","shown":true,"box":{"x":0,"y":0,"w":1440,"h":87},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "cc": [
+    {"key":"cc","shown":true,"box":{"x":842,"y":101,"w":502,"h":521},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "tab": [
+    {"key":"decisions","shown":true,"status":"false","box":{"x":13,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"결정 2"},
+    {"key":"tasks","shown":true,"status":"true","box":{"x":133,"y":25,"w":116,"h":44},"paint":{"color":"#2848a6","background":"#ffffff"},"text":"작업판"},
+    {"key":"feed","shown":true,"status":"false","box":{"x":253,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"메신저"},
+    {"key":"jobs","shown":true,"status":"false","box":{"x":373,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"HPC"}
+  ],
+  "tab-count": [
+    {"key":"tab-count","shown":true,"box":{"x":79,"y":38,"w":18,"h":17},"paint":{"color":"#2848a6","background":"#e9edf9"},"text":"2"}
+  ],
+  "panel": [
+    {"key":"decisions","shown":false},
+    {"key":"tasks","shown":true,"box":{"x":13,"y":87,"w":476,"h":725},"paint":{"color":"#1c2430"}},
+    {"key":"feed","shown":false},
+    {"key":"jobs","shown":false}
+  ],
+  "task-board": [
+    {"key":"task-board","shown":true,"box":{"x":13,"y":116,"w":476,"h":697},"paint":{"color":"#1c2430"}}
+  ],
+  "task-choice": [
+    {"key":"0","shown":true,"box":{"x":13,"y":145,"w":476,"h":103},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#7f8790"}}
+  ],
+  "task-column": [
+    {"key":"0","shown":false},
+    {"key":"1","shown":false},
+    {"key":"2","shown":false},
+    {"key":"3","shown":true,"box":{"x":13,"y":263,"w":476,"h":44},"paint":{"color":"#1c2430"}}
+  ],
+  "task-card": [
+    {"key":"0","shown":true,"box":{"x":13,"y":313,"w":476,"h":75},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"1","shown":true,"box":{"x":13,"y":394,"w":476,"h":75},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"2","shown":true,"box":{"x":13,"y":475,"w":476,"h":75},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"3","shown":true,"box":{"x":13,"y":556,"w":476,"h":75},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"4","shown":true,"box":{"x":13,"y":637,"w":476,"h":75},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ]
+}},
+"desktop/report/feed": {"viewport": {"w":1440,"h":900}, "doc": {"w":1440,"h":900}, "items": {
+  "top": [
+    {"key":"top","shown":true,"box":{"x":0,"y":0,"w":1440,"h":87},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "cc": [
+    {"key":"cc","shown":true,"box":{"x":842,"y":101,"w":502,"h":521},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "tab": [
+    {"key":"decisions","shown":true,"status":"false","box":{"x":13,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"결정 2"},
+    {"key":"tasks","shown":true,"status":"false","box":{"x":133,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"작업판"},
+    {"key":"feed","shown":true,"status":"true","box":{"x":253,"y":25,"w":116,"h":44},"paint":{"color":"#2848a6","background":"#ffffff"},"text":"메신저"},
+    {"key":"jobs","shown":true,"status":"false","box":{"x":373,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"HPC"}
+  ],
+  "tab-count": [
+    {"key":"tab-count","shown":true,"box":{"x":79,"y":38,"w":18,"h":17},"paint":{"color":"#2848a6","background":"#e9edf9"},"text":"2"}
+  ],
+  "panel": [
+    {"key":"decisions","shown":false},
+    {"key":"tasks","shown":false},
+    {"key":"feed","shown":true,"box":{"x":13,"y":87,"w":476,"h":524},"paint":{"color":"#1c2430"}},
+    {"key":"jobs","shown":false}
+  ],
+  "messenger": [
+    {"key":"messenger","shown":true,"box":{"x":13,"y":116,"w":476,"h":3782},"paint":{"color":"#1c2430"}}
+  ],
+  "message": [
+    {"key":"0","shown":true,"box":{"x":13,"y":116,"w":476,"h":98},"paint":{"color":"#1c2430"}},
+    {"key":"1","shown":true,"box":{"x":13,"y":213,"w":476,"h":98},"paint":{"color":"#1c2430"}},
+    {"key":"2","shown":true,"box":{"x":13,"y":311,"w":476,"h":98},"paint":{"color":"#1c2430"}},
+    {"key":"3","shown":true,"box":{"x":13,"y":408,"w":476,"h":98},"paint":{"color":"#1c2430"}},
+    {"key":"4","shown":true,"box":{"x":13,"y":506,"w":476,"h":98},"paint":{"color":"#1c2430"}},
+    {"key":"5","shown":true,"box":{"x":13,"y":604,"w":476,"h":98},"paint":{"color":"#1c2430"}},
+    {"key":"6","shown":true,"box":{"x":13,"y":701,"w":476,"h":122},"paint":{"color":"#1c2430"}},
+    {"key":"7","shown":true,"box":{"x":13,"y":823,"w":476,"h":98},"paint":{"color":"#1c2430"}}
+  ]
+}},
+"desktop/report/staff": {"viewport": {"w":1440,"h":900}, "doc": {"w":1440,"h":900}, "items": {
+  "top": [
+    {"key":"top","shown":true,"box":{"x":0,"y":0,"w":1440,"h":87},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "cc": [
+    {"key":"cc","shown":true,"box":{"x":842,"y":101,"w":502,"h":521},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "tab": [
+    {"key":"decisions","shown":true,"status":"true","box":{"x":13,"y":25,"w":116,"h":44},"paint":{"color":"#2848a6","background":"#ffffff"},"text":"결정 2"},
+    {"key":"tasks","shown":true,"status":"false","box":{"x":133,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"작업판"},
+    {"key":"feed","shown":true,"status":"false","box":{"x":253,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"메신저"},
+    {"key":"jobs","shown":true,"status":"false","box":{"x":373,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"HPC"}
+  ],
+  "tab-count": [
+    {"key":"tab-count","shown":true,"box":{"x":79,"y":38,"w":18,"h":17},"paint":{"color":"#2848a6","background":"#e9edf9"},"text":"2"}
+  ],
+  "panel": [
+    {"key":"decisions","shown":true,"box":{"x":13,"y":87,"w":476,"h":1130},"paint":{"color":"#1c2430"}},
+    {"key":"tasks","shown":false},
+    {"key":"feed","shown":false},
+    {"key":"jobs","shown":false}
+  ],
+  "staff-wrap": [
+    {"key":"staff-wrap","shown":true,"box":{"x":80,"y":636,"w":1280,"h":187},"paint":{"color":"#1c2430"}}
+  ],
+  "staff-toggle": [
+    {"key":"staff-toggle","shown":false,"status":"false","text":"직원 보기"}
+  ],
+  "staff-strip": [
+    {"key":"staff-strip","shown":true,"box":{"x":16,"y":0,"w":1248,"h":187},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ],
+  "staff-card": [
+    {"key":"chief_of_staff","shown":true,"status":"staff-idle","box":{"x":25,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"cso","shown":true,"status":"staff-done","box":{"x":273,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"sci_reviewer","shown":true,"status":"staff-done","box":{"x":521,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"biologist","shown":true,"status":"staff-idle","box":{"x":769,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"lit_scout","shown":true,"status":"staff-idle","box":{"x":1017,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"bioinfo-agent","shown":true,"status":"staff-idle","box":{"x":1265,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"data_steward","shown":true,"status":"staff-idle","box":{"x":1513,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"analyst","shown":true,"status":"staff-idle","box":{"x":1761,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"engineer","shown":true,"status":"staff-idle","box":{"x":2009,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"qc_reviewer","shown":true,"status":"staff-idle","box":{"x":2257,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"recruiter","shown":true,"status":"staff-idle","box":{"x":2505,"y":9,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "staff-chip": [
+    {"key":"chief_of_staff","shown":true,"box":{"x":78,"y":61,"w":174,"h":32},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"cso","shown":true,"box":{"x":326,"y":56,"w":174,"h":27},"paint":{"color":"#505b67"},"text":"완료"},
+    {"key":"sci_reviewer","shown":true,"box":{"x":574,"y":74,"w":174,"h":21},"paint":{"color":"#505b67"},"text":"완료"},
+    {"key":"biologist","shown":true,"box":{"x":822,"y":79,"w":174,"h":26},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"lit_scout","shown":true,"box":{"x":1070,"y":74,"w":174,"h":21},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"bioinfo-agent","shown":true,"box":{"x":1318,"y":79,"w":174,"h":26},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"data_steward","shown":true,"box":{"x":1566,"y":79,"w":174,"h":26},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"analyst","shown":true,"box":{"x":1814,"y":61,"w":174,"h":32},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"engineer","shown":true,"box":{"x":2062,"y":79,"w":174,"h":26},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"qc_reviewer","shown":true,"box":{"x":2310,"y":61,"w":174,"h":32},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"recruiter","shown":true,"box":{"x":2558,"y":61,"w":174,"h":32},"paint":{"color":"#505b67"},"text":"쉬는 중"}
+  ],
+  "staff-dot": [
+    {"key":"chief_of_staff","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"cso","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"sci_reviewer","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"biologist","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"lit_scout","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"bioinfo-agent","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"data_steward","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"analyst","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"engineer","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"qc_reviewer","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"recruiter","shown":true,"paint":{"color":"#505b67","background":"#505b67"}}
+  ]
+}},
+"phone/start/default": {"viewport": {"w":390,"h":844}, "doc": {"w":390,"h":1379}, "items": {
+  "top": [
+    {"key":"top","shown":true,"box":{"x":0,"y":0,"w":390,"h":142},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "office": [
+    {"key":"office","shown":true,"box":{"x":16,"y":321,"w":358,"h":838},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ],
+  "wall-board": [
+    {"key":"wall-board","shown":true,"box":{"x":9,"y":16,"w":260,"h":42},"paint":{"color":"#1c2430","background":"#ffffff","border":"#7f8790"}}
+  ],
+  "rack": [
+    {"key":"rack","shown":true,"box":{"x":281,"y":9,"w":28,"h":56},"paint":{"color":"#1c2430"}}
+  ],
+  "door": [
+    {"key":"door","shown":true,"box":{"x":321,"y":9,"w":28,"h":56},"paint":{"color":"#1c2430"}}
+  ],
+  "zone": [
+    {"key":"lead","shown":true,"box":{"x":9,"y":288,"w":340,"h":198},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#e2ddd3"}},
+    {"key":"research","shown":true,"box":{"x":9,"y":493,"w":340,"h":210},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#e2ddd3"}},
+    {"key":"data","shown":true,"box":{"x":9,"y":82,"w":340,"h":198},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#e2ddd3"}},
+    {"key":"hr","shown":true,"box":{"x":9,"y":711,"w":340,"h":118},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#e2ddd3"}}
+  ],
+  "seat": [
+    {"key":"chief_of_staff","shown":true,"status":"idle","box":{"x":18,"y":320,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"cso","shown":true,"status":"idle","box":{"x":181,"y":320,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"sci_reviewer","shown":true,"status":"idle","box":{"x":18,"y":400,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"biologist","shown":true,"status":"idle","box":{"x":18,"y":526,"w":159,"h":82},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"lit_scout","shown":true,"status":"idle","box":{"x":181,"y":526,"w":159,"h":82},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"bioinfo-agent","shown":true,"status":"idle","box":{"x":18,"y":612,"w":159,"h":82},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"data_steward","shown":true,"status":"idle","box":{"x":18,"y":115,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"analyst","shown":true,"status":"idle","box":{"x":181,"y":115,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"engineer","shown":true,"status":"idle","box":{"x":18,"y":195,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"qc_reviewer","shown":true,"status":"idle","box":{"x":181,"y":195,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"recruiter","shown":true,"status":"idle","box":{"x":18,"y":744,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}}
+  ],
+  "character": [
+    {"key":"chief_of_staff","shown":true,"box":{"x":20,"y":326,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"cso","shown":true,"box":{"x":183,"y":326,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"sci_reviewer","shown":true,"box":{"x":20,"y":406,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"biologist","shown":true,"box":{"x":20,"y":535,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"lit_scout","shown":true,"box":{"x":183,"y":535,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"bioinfo-agent","shown":true,"box":{"x":20,"y":621,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"data_steward","shown":true,"box":{"x":20,"y":121,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"analyst","shown":true,"box":{"x":183,"y":121,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"engineer","shown":true,"box":{"x":20,"y":201,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"qc_reviewer","shown":true,"box":{"x":183,"y":201,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"recruiter","shown":true,"box":{"x":20,"y":750,"w":64,"h":64},"paint":{"color":"#1c2430"}}
+  ],
+  "seat-status": [
+    {"key":"chief_of_staff","shown":true,"box":{"x":84,"y":370,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"cso","shown":true,"box":{"x":247,"y":370,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"sci_reviewer","shown":true,"box":{"x":84,"y":450,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"biologist","shown":true,"box":{"x":84,"y":588,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"lit_scout","shown":true,"box":{"x":247,"y":579,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"bioinfo-agent","shown":true,"box":{"x":84,"y":674,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"data_steward","shown":true,"box":{"x":84,"y":165,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"analyst","shown":true,"box":{"x":247,"y":165,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"engineer","shown":true,"box":{"x":84,"y":245,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"qc_reviewer","shown":true,"box":{"x":247,"y":245,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"recruiter","shown":true,"box":{"x":84,"y":794,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"}
+  ],
+  "seat-dot": [
+    {"key":"chief_of_staff","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"cso","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"sci_reviewer","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"biologist","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"lit_scout","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"bioinfo-agent","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"data_steward","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"analyst","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"engineer","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"qc_reviewer","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"recruiter","shown":true,"paint":{"color":"#47525f","background":"#47525f"}}
+  ],
+  "cc": [
+    {"key":"cc","shown":true,"box":{"x":16,"y":156,"w":358,"h":147},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "tab": [
+    {"key":"decisions","shown":true,"status":"true","box":{"x":-8,"y":635,"w":91,"h":48},"paint":{"color":"#2848a6","background":"#ffffff"},"text":"결정"},
+    {"key":"tasks","shown":true,"status":"false","box":{"x":87,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"작업판"},
+    {"key":"feed","shown":true,"status":"false","box":{"x":181,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"메신저"},
+    {"key":"jobs","shown":true,"status":"false","box":{"x":276,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"HPC"}
+  ],
+  "tab-count": [
+    {"key":"tab-count","shown":false,"text":""}
+  ],
+  "panel": [
+    {"key":"decisions","shown":true,"box":{"x":13,"y":13,"w":332,"h":121},"paint":{"color":"#1c2430"}},
+    {"key":"tasks","shown":false},
+    {"key":"feed","shown":false},
+    {"key":"jobs","shown":false}
+  ],
+  "decision": [
+  ],
+  "decision-status": [
+  ],
+  "decision-primary": [
+  ],
+  "review": [
+  ],
+  "review-primary": [
+  ],
+  "staff-wrap": [
+    {"key":"staff-wrap","shown":true,"box":{"x":0,"y":628,"w":390,"h":38},"paint":{"color":"#1c2430"}}
+  ],
+  "staff-toggle": [
+    {"key":"staff-toggle","shown":true,"status":"false","box":{"x":8,"y":0,"w":374,"h":38},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"},"text":"직원 보기"}
+  ],
+  "staff-strip": [
+    {"key":"staff-strip","shown":false}
+  ],
+  "composer": [
+    {"key":"composer","shown":true,"loose":true,"box":{"x":0,"y":664,"w":390,"h":121},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ]
+}},
+"phone/start/tasks": {"viewport": {"w":390,"h":844}, "doc": {"w":390,"h":1332}, "items": {
+  "top": [
+    {"key":"top","shown":true,"box":{"x":0,"y":0,"w":390,"h":142},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "cc": [
+    {"key":"cc","shown":true,"box":{"x":16,"y":156,"w":358,"h":100},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "tab": [
+    {"key":"decisions","shown":true,"status":"false","box":{"x":-8,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"결정"},
+    {"key":"tasks","shown":true,"status":"true","box":{"x":87,"y":635,"w":91,"h":48},"paint":{"color":"#2848a6","background":"#ffffff"},"text":"작업판"},
+    {"key":"feed","shown":true,"status":"false","box":{"x":181,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"메신저"},
+    {"key":"jobs","shown":true,"status":"false","box":{"x":276,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"HPC"}
+  ],
+  "tab-count": [
+    {"key":"tab-count","shown":false,"text":""}
+  ],
+  "panel": [
+    {"key":"decisions","shown":false},
+    {"key":"tasks","shown":true,"box":{"x":13,"y":13,"w":332,"h":74},"paint":{"color":"#1c2430"}},
+    {"key":"feed","shown":false},
+    {"key":"jobs","shown":false}
+  ],
+  "task-board": [
+    {"key":"task-board","shown":true,"box":{"x":13,"y":42,"w":332,"h":45},"paint":{"color":"#1c2430"}}
+  ],
+  "task-choice": [
+  ],
+  "task-column": [
+  ],
+  "task-card": [
+  ]
+}},
+"phone/start/feed": {"viewport": {"w":390,"h":844}, "doc": {"w":390,"h":1384}, "items": {
+  "top": [
+    {"key":"top","shown":true,"box":{"x":0,"y":0,"w":390,"h":142},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "cc": [
+    {"key":"cc","shown":true,"box":{"x":16,"y":156,"w":358,"h":152},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "tab": [
+    {"key":"decisions","shown":true,"status":"false","box":{"x":-8,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"결정"},
+    {"key":"tasks","shown":true,"status":"false","box":{"x":87,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"작업판"},
+    {"key":"feed","shown":true,"status":"true","box":{"x":181,"y":635,"w":91,"h":48},"paint":{"color":"#2848a6","background":"#ffffff"},"text":"메신저"},
+    {"key":"jobs","shown":true,"status":"false","box":{"x":276,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"HPC"}
+  ],
+  "tab-count": [
+    {"key":"tab-count","shown":false,"text":""}
+  ],
+  "panel": [
+    {"key":"decisions","shown":false},
+    {"key":"tasks","shown":false},
+    {"key":"feed","shown":true,"box":{"x":13,"y":13,"w":332,"h":126},"paint":{"color":"#1c2430"}},
+    {"key":"jobs","shown":false}
+  ],
+  "messenger": [
+    {"key":"messenger","shown":true,"box":{"x":13,"y":42,"w":332,"h":98},"paint":{"color":"#1c2430"}}
+  ],
+  "message": [
+    {"key":"0","shown":true,"box":{"x":13,"y":42,"w":332,"h":98},"paint":{"color":"#1c2430"}}
+  ]
+}},
+"phone/start/staff": {"viewport": {"w":390,"h":844}, "doc": {"w":390,"h":1566}, "items": {
+  "top": [
+    {"key":"top","shown":true,"box":{"x":0,"y":0,"w":390,"h":142},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "cc": [
+    {"key":"cc","shown":true,"box":{"x":16,"y":156,"w":358,"h":147},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "tab": [
+    {"key":"decisions","shown":true,"status":"true","box":{"x":-8,"y":635,"w":91,"h":48},"paint":{"color":"#2848a6","background":"#ffffff"},"text":"결정"},
+    {"key":"tasks","shown":true,"status":"false","box":{"x":87,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"작업판"},
+    {"key":"feed","shown":true,"status":"false","box":{"x":181,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"메신저"},
+    {"key":"jobs","shown":true,"status":"false","box":{"x":276,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"HPC"}
+  ],
+  "tab-count": [
+    {"key":"tab-count","shown":false,"text":""}
+  ],
+  "panel": [
+    {"key":"decisions","shown":true,"box":{"x":13,"y":13,"w":332,"h":121},"paint":{"color":"#1c2430"}},
+    {"key":"tasks","shown":false},
+    {"key":"feed","shown":false},
+    {"key":"jobs","shown":false}
+  ],
+  "staff-wrap": [
+    {"key":"staff-wrap","shown":true,"box":{"x":0,"y":441,"w":390,"h":225},"paint":{"color":"#1c2430"}}
+  ],
+  "staff-toggle": [
+    {"key":"staff-toggle","shown":true,"status":"true","box":{"x":8,"y":0,"w":374,"h":38},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"},"text":"직원 닫기"}
+  ],
+  "staff-strip": [
+    {"key":"staff-strip","shown":true,"box":{"x":8,"y":38,"w":374,"h":187},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ],
+  "staff-card": [
+    {"key":"chief_of_staff","shown":true,"status":"staff-idle","box":{"x":17,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"cso","shown":true,"status":"staff-idle","box":{"x":265,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"sci_reviewer","shown":true,"status":"staff-idle","box":{"x":513,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"biologist","shown":true,"status":"staff-idle","box":{"x":761,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"lit_scout","shown":true,"status":"staff-idle","box":{"x":1009,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"bioinfo-agent","shown":true,"status":"staff-idle","box":{"x":1257,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"data_steward","shown":true,"status":"staff-idle","box":{"x":1505,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"analyst","shown":true,"status":"staff-idle","box":{"x":1753,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"engineer","shown":true,"status":"staff-idle","box":{"x":2001,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"qc_reviewer","shown":true,"status":"staff-idle","box":{"x":2249,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"recruiter","shown":true,"status":"staff-idle","box":{"x":2497,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "staff-chip": [
+    {"key":"chief_of_staff","shown":true,"box":{"x":70,"y":99,"w":174,"h":32},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"cso","shown":true,"box":{"x":318,"y":99,"w":174,"h":32},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"sci_reviewer","shown":true,"box":{"x":566,"y":117,"w":174,"h":26},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"biologist","shown":true,"box":{"x":814,"y":117,"w":174,"h":26},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"lit_scout","shown":true,"box":{"x":1062,"y":112,"w":174,"h":21},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"bioinfo-agent","shown":true,"box":{"x":1310,"y":117,"w":174,"h":26},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"data_steward","shown":true,"box":{"x":1558,"y":117,"w":174,"h":26},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"analyst","shown":true,"box":{"x":1806,"y":99,"w":174,"h":32},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"engineer","shown":true,"box":{"x":2054,"y":117,"w":174,"h":26},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"qc_reviewer","shown":true,"box":{"x":2302,"y":99,"w":174,"h":32},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"recruiter","shown":true,"box":{"x":2550,"y":99,"w":174,"h":32},"paint":{"color":"#505b67"},"text":"쉬는 중"}
+  ],
+  "staff-dot": [
+    {"key":"chief_of_staff","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"cso","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"sci_reviewer","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"biologist","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"lit_scout","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"bioinfo-agent","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"data_steward","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"analyst","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"engineer","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"qc_reviewer","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"recruiter","shown":true,"paint":{"color":"#505b67","background":"#505b67"}}
+  ]
+}},
+"phone/running/default": {"viewport": {"w":390,"h":844}, "doc": {"w":390,"h":2028}, "items": {
+  "top": [
+    {"key":"top","shown":true,"box":{"x":0,"y":0,"w":390,"h":142},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "office": [
+    {"key":"office","shown":true,"box":{"x":16,"y":936,"w":358,"h":873},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ],
+  "wall-board": [
+    {"key":"wall-board","shown":true,"box":{"x":9,"y":9,"w":260,"h":91},"paint":{"color":"#1c2430","background":"#ffffff","border":"#2848a6"}}
+  ],
+  "rack": [
+    {"key":"rack","shown":true,"box":{"x":281,"y":27,"w":28,"h":56},"paint":{"color":"#1c2430"}}
+  ],
+  "door": [
+    {"key":"door","shown":true,"box":{"x":321,"y":27,"w":28,"h":56},"paint":{"color":"#1c2430"}}
+  ],
+  "zone": [
+    {"key":"lead","shown":true,"box":{"x":9,"y":323,"w":340,"h":198},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#e2ddd3"}},
+    {"key":"research","shown":true,"box":{"x":9,"y":528,"w":340,"h":210},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#e2ddd3"}},
+    {"key":"data","shown":true,"box":{"x":9,"y":117,"w":340,"h":198},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#e2ddd3"}},
+    {"key":"hr","shown":true,"box":{"x":9,"y":746,"w":340,"h":118},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#e2ddd3"}}
+  ],
+  "seat": [
+    {"key":"chief_of_staff","shown":true,"status":"working","box":{"x":18,"y":355,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"cso","shown":true,"status":"working","box":{"x":181,"y":355,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"sci_reviewer","shown":true,"status":"idle","box":{"x":18,"y":435,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"biologist","shown":true,"status":"working","box":{"x":18,"y":561,"w":159,"h":82},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"lit_scout","shown":true,"status":"idle","box":{"x":181,"y":561,"w":159,"h":82},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"bioinfo-agent","shown":true,"status":"idle","box":{"x":18,"y":647,"w":159,"h":82},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"data_steward","shown":true,"status":"working","box":{"x":18,"y":150,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"analyst","shown":true,"status":"idle","box":{"x":181,"y":150,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"engineer","shown":true,"status":"idle","box":{"x":18,"y":230,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"qc_reviewer","shown":true,"status":"idle","box":{"x":181,"y":230,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"recruiter","shown":true,"status":"idle","box":{"x":18,"y":779,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}}
+  ],
+  "character": [
+    {"key":"chief_of_staff","shown":true,"box":{"x":20,"y":361,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"cso","shown":true,"box":{"x":183,"y":361,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"sci_reviewer","shown":true,"box":{"x":20,"y":441,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"biologist","shown":true,"box":{"x":20,"y":570,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"lit_scout","shown":true,"box":{"x":183,"y":570,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"bioinfo-agent","shown":true,"box":{"x":20,"y":656,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"data_steward","shown":true,"box":{"x":20,"y":156,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"analyst","shown":true,"box":{"x":183,"y":156,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"engineer","shown":true,"box":{"x":20,"y":236,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"qc_reviewer","shown":true,"box":{"x":183,"y":236,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"recruiter","shown":true,"box":{"x":20,"y":785,"w":64,"h":64},"paint":{"color":"#1c2430"}}
+  ],
+  "seat-status": [
+    {"key":"chief_of_staff","shown":true,"box":{"x":84,"y":405,"w":91,"h":18},"paint":{"color":"#1d6b40"},"text":"일하는 중"},
+    {"key":"cso","shown":true,"box":{"x":247,"y":405,"w":91,"h":18},"paint":{"color":"#1d6b40"},"text":"일하는 중"},
+    {"key":"sci_reviewer","shown":true,"box":{"x":84,"y":485,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"biologist","shown":true,"box":{"x":84,"y":623,"w":91,"h":18},"paint":{"color":"#1d6b40"},"text":"일하는 중"},
+    {"key":"lit_scout","shown":true,"box":{"x":247,"y":614,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"bioinfo-agent","shown":true,"box":{"x":84,"y":709,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"data_steward","shown":true,"box":{"x":84,"y":200,"w":91,"h":18},"paint":{"color":"#1d6b40"},"text":"일하는 중"},
+    {"key":"analyst","shown":true,"box":{"x":247,"y":200,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"engineer","shown":true,"box":{"x":84,"y":280,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"qc_reviewer","shown":true,"box":{"x":247,"y":280,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"recruiter","shown":true,"box":{"x":84,"y":829,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"}
+  ],
+  "seat-dot": [
+    {"key":"chief_of_staff","shown":true,"paint":{"color":"#1d6b40","background":"#1d6b40"}},
+    {"key":"cso","shown":true,"paint":{"color":"#1d6b40","background":"#1d6b40"}},
+    {"key":"sci_reviewer","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"biologist","shown":true,"paint":{"color":"#1d6b40","background":"#1d6b40"}},
+    {"key":"lit_scout","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"bioinfo-agent","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"data_steward","shown":true,"paint":{"color":"#1d6b40","background":"#1d6b40"}},
+    {"key":"analyst","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"engineer","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"qc_reviewer","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"recruiter","shown":true,"paint":{"color":"#47525f","background":"#47525f"}}
+  ],
+  "cc": [
+    {"key":"cc","shown":true,"box":{"x":16,"y":156,"w":358,"h":761},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "tab": [
+    {"key":"decisions","shown":true,"status":"true","box":{"x":-8,"y":635,"w":91,"h":48},"paint":{"color":"#2848a6","background":"#ffffff"},"text":"결정 1"},
+    {"key":"tasks","shown":true,"status":"false","box":{"x":87,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"작업판"},
+    {"key":"feed","shown":true,"status":"false","box":{"x":181,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"메신저"},
+    {"key":"jobs","shown":true,"status":"false","box":{"x":276,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"HPC"}
+  ],
+  "tab-count": [
+    {"key":"tab-count","shown":true,"box":{"x":45,"y":649,"w":18,"h":17},"paint":{"color":"#2848a6","background":"#e9edf9"},"text":"1"}
+  ],
+  "panel": [
+    {"key":"decisions","shown":true,"box":{"x":13,"y":13,"w":332,"h":735},"paint":{"color":"#1c2430"}},
+    {"key":"tasks","shown":false},
+    {"key":"feed","shown":false},
+    {"key":"jobs","shown":false}
+  ],
+  "decision": [
+    {"key":"suggestion:sug_1","shown":true,"box":{"x":13,"y":42,"w":332,"h":659},"paint":{"color":"#1c2430","background":"#ffffff","border":"#2848a6"}}
+  ],
+  "decision-status": [
+    {"key":"0","shown":true,"box":{"x":26,"y":271,"w":85,"h":23},"paint":{"color":"#2848a6","background":"#e9edf9"},"text":"결정 대기"}
+  ],
+  "decision-primary": [
+    {"key":"0","shown":true,"box":{"x":26,"y":420,"w":306,"h":48},"paint":{"color":"#ffffff","background":"#2848a6","border":"#2848a6"},"text":"채용하기"}
+  ],
+  "review": [
+  ],
+  "review-primary": [
+  ],
+  "staff-wrap": [
+    {"key":"staff-wrap","shown":true,"box":{"x":0,"y":628,"w":390,"h":38},"paint":{"color":"#1c2430"}}
+  ],
+  "staff-toggle": [
+    {"key":"staff-toggle","shown":true,"status":"false","box":{"x":8,"y":0,"w":374,"h":38},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"},"text":"직원 보기"}
+  ],
+  "staff-strip": [
+    {"key":"staff-strip","shown":false}
+  ],
+  "composer": [
+    {"key":"composer","shown":true,"loose":true,"box":{"x":0,"y":674,"w":390,"h":111},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ]
+}},
+"phone/running/tasks": {"viewport": {"w":390,"h":844}, "doc": {"w":390,"h":2043}, "items": {
+  "top": [
+    {"key":"top","shown":true,"box":{"x":0,"y":0,"w":390,"h":142},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "cc": [
+    {"key":"cc","shown":true,"box":{"x":16,"y":156,"w":358,"h":776},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "tab": [
+    {"key":"decisions","shown":true,"status":"false","box":{"x":-8,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"결정 1"},
+    {"key":"tasks","shown":true,"status":"true","box":{"x":87,"y":635,"w":91,"h":48},"paint":{"color":"#2848a6","background":"#ffffff"},"text":"작업판"},
+    {"key":"feed","shown":true,"status":"false","box":{"x":181,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"메신저"},
+    {"key":"jobs","shown":true,"status":"false","box":{"x":276,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"HPC"}
+  ],
+  "tab-count": [
+    {"key":"tab-count","shown":true,"box":{"x":45,"y":649,"w":18,"h":17},"paint":{"color":"#2848a6","background":"#e9edf9"},"text":"1"}
+  ],
+  "panel": [
+    {"key":"decisions","shown":false},
+    {"key":"tasks","shown":true,"box":{"x":13,"y":13,"w":332,"h":750},"paint":{"color":"#1c2430"}},
+    {"key":"feed","shown":false},
+    {"key":"jobs","shown":false}
+  ],
+  "task-board": [
+    {"key":"task-board","shown":true,"box":{"x":13,"y":42,"w":332,"h":721},"paint":{"color":"#1c2430"}}
+  ],
+  "task-choice": [
+    {"key":"0","shown":true,"box":{"x":13,"y":71,"w":332,"h":103},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#7f8790"}}
+  ],
+  "task-column": [
+    {"key":"0","shown":true,"box":{"x":13,"y":210,"w":332,"h":200},"paint":{"color":"#1c2430"}},
+    {"key":"1","shown":false},
+    {"key":"2","shown":true,"box":{"x":13,"y":422,"w":332,"h":281},"paint":{"color":"#1c2430"}},
+    {"key":"3","shown":false}
+  ],
+  "task-card": [
+    {"key":"0","shown":true,"box":{"x":13,"y":255,"w":332,"h":75},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"1","shown":true,"box":{"x":13,"y":335,"w":332,"h":75},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"2","shown":true,"box":{"x":13,"y":467,"w":332,"h":75},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"3","shown":true,"box":{"x":13,"y":548,"w":332,"h":75},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"4","shown":true,"box":{"x":13,"y":628,"w":332,"h":75},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ]
+}},
+"phone/running/feed": {"viewport": {"w":390,"h":844}, "doc": {"w":390,"h":2495}, "items": {
+  "top": [
+    {"key":"top","shown":true,"box":{"x":0,"y":0,"w":390,"h":142},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "cc": [
+    {"key":"cc","shown":true,"box":{"x":16,"y":156,"w":358,"h":1228},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "tab": [
+    {"key":"decisions","shown":true,"status":"false","box":{"x":-8,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"결정 1"},
+    {"key":"tasks","shown":true,"status":"false","box":{"x":87,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"작업판"},
+    {"key":"feed","shown":true,"status":"true","box":{"x":181,"y":635,"w":91,"h":48},"paint":{"color":"#2848a6","background":"#ffffff"},"text":"메신저"},
+    {"key":"jobs","shown":true,"status":"false","box":{"x":276,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"HPC"}
+  ],
+  "tab-count": [
+    {"key":"tab-count","shown":true,"box":{"x":45,"y":649,"w":18,"h":17},"paint":{"color":"#2848a6","background":"#e9edf9"},"text":"1"}
+  ],
+  "panel": [
+    {"key":"decisions","shown":false},
+    {"key":"tasks","shown":false},
+    {"key":"feed","shown":true,"box":{"x":13,"y":13,"w":332,"h":1202},"paint":{"color":"#1c2430"}},
+    {"key":"jobs","shown":false}
+  ],
+  "messenger": [
+    {"key":"messenger","shown":true,"box":{"x":13,"y":42,"w":332,"h":1173},"paint":{"color":"#1c2430"}}
+  ],
+  "message": [
+    {"key":"0","shown":true,"box":{"x":13,"y":42,"w":332,"h":98},"paint":{"color":"#1c2430"}},
+    {"key":"1","shown":true,"box":{"x":13,"y":139,"w":332,"h":98},"paint":{"color":"#1c2430"}},
+    {"key":"2","shown":true,"box":{"x":13,"y":237,"w":332,"h":147},"paint":{"color":"#1c2430"}},
+    {"key":"3","shown":true,"box":{"x":13,"y":384,"w":332,"h":98},"paint":{"color":"#1c2430"}},
+    {"key":"4","shown":true,"box":{"x":13,"y":481,"w":332,"h":122},"paint":{"color":"#1c2430"}},
+    {"key":"5","shown":true,"box":{"x":13,"y":604,"w":332,"h":147},"paint":{"color":"#1c2430"}},
+    {"key":"6","shown":true,"box":{"x":13,"y":751,"w":332,"h":98},"paint":{"color":"#1c2430"}},
+    {"key":"7","shown":true,"box":{"x":13,"y":848,"w":332,"h":122},"paint":{"color":"#1c2430"}}
+  ]
+}},
+"phone/running/staff": {"viewport": {"w":390,"h":844}, "doc": {"w":390,"h":2216}, "items": {
+  "top": [
+    {"key":"top","shown":true,"box":{"x":0,"y":0,"w":390,"h":142},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "cc": [
+    {"key":"cc","shown":true,"box":{"x":16,"y":156,"w":358,"h":761},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "tab": [
+    {"key":"decisions","shown":true,"status":"true","box":{"x":-8,"y":635,"w":91,"h":48},"paint":{"color":"#2848a6","background":"#ffffff"},"text":"결정 1"},
+    {"key":"tasks","shown":true,"status":"false","box":{"x":87,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"작업판"},
+    {"key":"feed","shown":true,"status":"false","box":{"x":181,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"메신저"},
+    {"key":"jobs","shown":true,"status":"false","box":{"x":276,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"HPC"}
+  ],
+  "tab-count": [
+    {"key":"tab-count","shown":true,"box":{"x":45,"y":649,"w":18,"h":17},"paint":{"color":"#2848a6","background":"#e9edf9"},"text":"1"}
+  ],
+  "panel": [
+    {"key":"decisions","shown":true,"box":{"x":13,"y":13,"w":332,"h":735},"paint":{"color":"#1c2430"}},
+    {"key":"tasks","shown":false},
+    {"key":"feed","shown":false},
+    {"key":"jobs","shown":false}
+  ],
+  "staff-wrap": [
+    {"key":"staff-wrap","shown":true,"box":{"x":0,"y":441,"w":390,"h":225},"paint":{"color":"#1c2430"}}
+  ],
+  "staff-toggle": [
+    {"key":"staff-toggle","shown":true,"status":"true","box":{"x":8,"y":0,"w":374,"h":38},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"},"text":"직원 닫기"}
+  ],
+  "staff-strip": [
+    {"key":"staff-strip","shown":true,"box":{"x":8,"y":38,"w":374,"h":187},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ],
+  "staff-card": [
+    {"key":"chief_of_staff","shown":true,"status":"staff-working","box":{"x":17,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"cso","shown":true,"status":"staff-working","box":{"x":265,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"sci_reviewer","shown":true,"status":"staff-idle","box":{"x":513,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"biologist","shown":true,"status":"staff-working","box":{"x":761,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"lit_scout","shown":true,"status":"staff-idle","box":{"x":1009,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"bioinfo-agent","shown":true,"status":"staff-idle","box":{"x":1257,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"data_steward","shown":true,"status":"staff-working","box":{"x":1505,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"analyst","shown":true,"status":"staff-idle","box":{"x":1753,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"engineer","shown":true,"status":"staff-idle","box":{"x":2001,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"qc_reviewer","shown":true,"status":"staff-idle","box":{"x":2249,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"recruiter","shown":true,"status":"staff-idle","box":{"x":2497,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "staff-chip": [
+    {"key":"chief_of_staff","shown":true,"box":{"x":70,"y":94,"w":174,"h":27},"paint":{"color":"#1d6b40"},"text":"생각하는 중"},
+    {"key":"cso","shown":true,"box":{"x":318,"y":94,"w":174,"h":27},"paint":{"color":"#1d6b40"},"text":"생각하는 중"},
+    {"key":"sci_reviewer","shown":true,"box":{"x":566,"y":117,"w":174,"h":26},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"biologist","shown":true,"box":{"x":814,"y":112,"w":174,"h":21},"paint":{"color":"#1d6b40"},"text":"생각하는 중"},
+    {"key":"lit_scout","shown":true,"box":{"x":1062,"y":112,"w":174,"h":21},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"bioinfo-agent","shown":true,"box":{"x":1310,"y":117,"w":174,"h":26},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"data_steward","shown":true,"box":{"x":1558,"y":112,"w":174,"h":21},"paint":{"color":"#1d6b40"},"text":"생각하는 중"},
+    {"key":"analyst","shown":true,"box":{"x":1806,"y":99,"w":174,"h":32},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"engineer","shown":true,"box":{"x":2054,"y":117,"w":174,"h":26},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"qc_reviewer","shown":true,"box":{"x":2302,"y":99,"w":174,"h":32},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"recruiter","shown":true,"box":{"x":2550,"y":99,"w":174,"h":32},"paint":{"color":"#505b67"},"text":"쉬는 중"}
+  ],
+  "staff-dot": [
+    {"key":"chief_of_staff","shown":true,"paint":{"color":"#1d6b40","background":"#1d6b40"}},
+    {"key":"cso","shown":true,"paint":{"color":"#1d6b40","background":"#1d6b40"}},
+    {"key":"sci_reviewer","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"biologist","shown":true,"paint":{"color":"#1d6b40","background":"#1d6b40"}},
+    {"key":"lit_scout","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"bioinfo-agent","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"data_steward","shown":true,"paint":{"color":"#1d6b40","background":"#1d6b40"}},
+    {"key":"analyst","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"engineer","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"qc_reviewer","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"recruiter","shown":true,"paint":{"color":"#505b67","background":"#505b67"}}
+  ]
+}},
+"phone/decision/default": {"viewport": {"w":390,"h":844}, "doc": {"w":390,"h":2713}, "items": {
+  "top": [
+    {"key":"top","shown":true,"box":{"x":0,"y":0,"w":390,"h":142},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "office": [
+    {"key":"office","shown":true,"box":{"x":16,"y":1613,"w":358,"h":880},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ],
+  "wall-board": [
+    {"key":"wall-board","shown":true,"box":{"x":9,"y":9,"w":260,"h":91},"paint":{"color":"#1c2430","background":"#ffffff","border":"#2848a6"}}
+  ],
+  "rack": [
+    {"key":"rack","shown":true,"box":{"x":281,"y":27,"w":28,"h":56},"paint":{"color":"#1c2430"}}
+  ],
+  "door": [
+    {"key":"door","shown":true,"box":{"x":321,"y":27,"w":28,"h":56},"paint":{"color":"#1c2430"}}
+  ],
+  "zone": [
+    {"key":"lead","shown":true,"box":{"x":9,"y":330,"w":340,"h":198},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#e2ddd3"}},
+    {"key":"research","shown":true,"box":{"x":9,"y":535,"w":340,"h":210},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#e2ddd3"}},
+    {"key":"data","shown":true,"box":{"x":9,"y":117,"w":340,"h":204},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#e2ddd3"}},
+    {"key":"hr","shown":true,"box":{"x":9,"y":753,"w":340,"h":118},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#e2ddd3"}}
+  ],
+  "seat": [
+    {"key":"chief_of_staff","shown":true,"status":"working","box":{"x":18,"y":362,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"cso","shown":true,"status":"working","box":{"x":181,"y":362,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"sci_reviewer","shown":true,"status":"idle","box":{"x":18,"y":442,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"biologist","shown":true,"status":"working","box":{"x":18,"y":568,"w":159,"h":82},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"lit_scout","shown":true,"status":"idle","box":{"x":181,"y":568,"w":159,"h":82},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"bioinfo-agent","shown":true,"status":"idle","box":{"x":18,"y":654,"w":159,"h":82},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"data_steward","shown":true,"status":"decision","box":{"x":18,"y":150,"w":159,"h":83},"paint":{"color":"#1c2430","background":"#e9edf9"}},
+    {"key":"analyst","shown":true,"status":"idle","box":{"x":181,"y":150,"w":159,"h":83},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"engineer","shown":true,"status":"idle","box":{"x":18,"y":237,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"qc_reviewer","shown":true,"status":"idle","box":{"x":181,"y":237,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"recruiter","shown":true,"status":"idle","box":{"x":18,"y":786,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}}
+  ],
+  "character": [
+    {"key":"chief_of_staff","shown":true,"box":{"x":20,"y":368,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"cso","shown":true,"box":{"x":183,"y":368,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"sci_reviewer","shown":true,"box":{"x":20,"y":448,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"biologist","shown":true,"box":{"x":20,"y":577,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"lit_scout","shown":true,"box":{"x":183,"y":577,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"bioinfo-agent","shown":true,"box":{"x":20,"y":663,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"data_steward","shown":true,"box":{"x":20,"y":159,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"analyst","shown":true,"box":{"x":183,"y":159,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"engineer","shown":true,"box":{"x":20,"y":243,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"qc_reviewer","shown":true,"box":{"x":183,"y":243,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"recruiter","shown":true,"box":{"x":20,"y":792,"w":64,"h":64},"paint":{"color":"#1c2430"}}
+  ],
+  "seat-status": [
+    {"key":"chief_of_staff","shown":true,"box":{"x":84,"y":412,"w":91,"h":18},"paint":{"color":"#1d6b40"},"text":"일하는 중"},
+    {"key":"cso","shown":true,"box":{"x":247,"y":412,"w":91,"h":18},"paint":{"color":"#1d6b40"},"text":"일하는 중"},
+    {"key":"sci_reviewer","shown":true,"box":{"x":84,"y":492,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"biologist","shown":true,"box":{"x":84,"y":630,"w":91,"h":18},"paint":{"color":"#1d6b40"},"text":"일하는 중"},
+    {"key":"lit_scout","shown":true,"box":{"x":247,"y":621,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"bioinfo-agent","shown":true,"box":{"x":84,"y":716,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"data_steward","shown":true,"box":{"x":84,"y":194,"w":91,"h":36},"paint":{"color":"#2848a6"},"text":"승인 기다려요"},
+    {"key":"analyst","shown":true,"box":{"x":247,"y":203,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"engineer","shown":true,"box":{"x":84,"y":287,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"qc_reviewer","shown":true,"box":{"x":247,"y":287,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"recruiter","shown":true,"box":{"x":84,"y":836,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"}
+  ],
+  "seat-dot": [
+    {"key":"chief_of_staff","shown":true,"paint":{"color":"#1d6b40","background":"#1d6b40"}},
+    {"key":"cso","shown":true,"paint":{"color":"#1d6b40","background":"#1d6b40"}},
+    {"key":"sci_reviewer","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"biologist","shown":true,"paint":{"color":"#1d6b40","background":"#1d6b40"}},
+    {"key":"lit_scout","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"bioinfo-agent","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"data_steward","shown":true,"paint":{"color":"#2848a6","background":"#2848a6"}},
+    {"key":"analyst","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"engineer","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"qc_reviewer","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"recruiter","shown":true,"paint":{"color":"#47525f","background":"#47525f"}}
+  ],
+  "cc": [
+    {"key":"cc","shown":true,"box":{"x":16,"y":156,"w":358,"h":1439},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "tab": [
+    {"key":"decisions","shown":true,"status":"true","box":{"x":-8,"y":635,"w":91,"h":48},"paint":{"color":"#2848a6","background":"#ffffff"},"text":"결정 2"},
+    {"key":"tasks","shown":true,"status":"false","box":{"x":87,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"작업판"},
+    {"key":"feed","shown":true,"status":"false","box":{"x":181,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"메신저"},
+    {"key":"jobs","shown":true,"status":"false","box":{"x":276,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"HPC"}
+  ],
+  "tab-count": [
+    {"key":"tab-count","shown":true,"box":{"x":45,"y":649,"w":18,"h":17},"paint":{"color":"#2848a6","background":"#e9edf9"},"text":"2"}
+  ],
+  "panel": [
+    {"key":"decisions","shown":true,"box":{"x":13,"y":13,"w":332,"h":1413},"paint":{"color":"#1c2430"}},
+    {"key":"tasks","shown":false},
+    {"key":"feed","shown":false},
+    {"key":"jobs","shown":false}
+  ],
+  "decision": [
+    {"key":"approval:appr_demo6","shown":true,"box":{"x":13,"y":42,"w":332,"h":665},"paint":{"color":"#1c2430","background":"#ffffff","border":"#2848a6"}},
+    {"key":"suggestion:sug_1","shown":true,"box":{"x":13,"y":719,"w":332,"h":659},"paint":{"color":"#1c2430","background":"#ffffff","border":"#2848a6"}}
+  ],
+  "decision-status": [
+    {"key":"0","shown":true,"box":{"x":26,"y":298,"w":85,"h":23},"paint":{"color":"#2848a6","background":"#e9edf9"},"text":"결정 대기"},
+    {"key":"1","shown":true,"box":{"x":26,"y":948,"w":85,"h":23},"paint":{"color":"#2848a6","background":"#e9edf9"},"text":"결정 대기"}
+  ],
+  "decision-primary": [
+    {"key":"0","shown":true,"box":{"x":26,"y":427,"w":306,"h":48},"paint":{"color":"#ffffff","background":"#2848a6","border":"#2848a6"},"text":"승인"},
+    {"key":"1","shown":true,"box":{"x":26,"y":1098,"w":306,"h":48},"paint":{"color":"#ffffff","background":"#2848a6","border":"#2848a6"},"text":"채용하기"}
+  ],
+  "review": [
+  ],
+  "review-primary": [
+  ],
+  "staff-wrap": [
+    {"key":"staff-wrap","shown":true,"box":{"x":0,"y":628,"w":390,"h":38},"paint":{"color":"#1c2430"}}
+  ],
+  "staff-toggle": [
+    {"key":"staff-toggle","shown":true,"status":"false","box":{"x":8,"y":0,"w":374,"h":38},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"},"text":"직원 보기"}
+  ],
+  "staff-strip": [
+    {"key":"staff-strip","shown":false}
+  ],
+  "composer": [
+    {"key":"composer","shown":true,"loose":true,"box":{"x":0,"y":674,"w":390,"h":111},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ]
+}},
+"phone/decision/tasks": {"viewport": {"w":390,"h":844}, "doc": {"w":390,"h":2050}, "items": {
+  "top": [
+    {"key":"top","shown":true,"box":{"x":0,"y":0,"w":390,"h":142},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "cc": [
+    {"key":"cc","shown":true,"box":{"x":16,"y":156,"w":358,"h":776},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "tab": [
+    {"key":"decisions","shown":true,"status":"false","box":{"x":-8,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"결정 2"},
+    {"key":"tasks","shown":true,"status":"true","box":{"x":87,"y":635,"w":91,"h":48},"paint":{"color":"#2848a6","background":"#ffffff"},"text":"작업판"},
+    {"key":"feed","shown":true,"status":"false","box":{"x":181,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"메신저"},
+    {"key":"jobs","shown":true,"status":"false","box":{"x":276,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"HPC"}
+  ],
+  "tab-count": [
+    {"key":"tab-count","shown":true,"box":{"x":45,"y":649,"w":18,"h":17},"paint":{"color":"#2848a6","background":"#e9edf9"},"text":"2"}
+  ],
+  "panel": [
+    {"key":"decisions","shown":false},
+    {"key":"tasks","shown":true,"box":{"x":13,"y":13,"w":332,"h":750},"paint":{"color":"#1c2430"}},
+    {"key":"feed","shown":false},
+    {"key":"jobs","shown":false}
+  ],
+  "task-board": [
+    {"key":"task-board","shown":true,"box":{"x":13,"y":42,"w":332,"h":721},"paint":{"color":"#1c2430"}}
+  ],
+  "task-choice": [
+    {"key":"0","shown":true,"box":{"x":13,"y":71,"w":332,"h":103},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#7f8790"}}
+  ],
+  "task-column": [
+    {"key":"0","shown":true,"box":{"x":13,"y":210,"w":332,"h":200},"paint":{"color":"#1c2430"}},
+    {"key":"1","shown":false},
+    {"key":"2","shown":true,"box":{"x":13,"y":422,"w":332,"h":281},"paint":{"color":"#1c2430"}},
+    {"key":"3","shown":false}
+  ],
+  "task-card": [
+    {"key":"0","shown":true,"box":{"x":13,"y":255,"w":332,"h":75},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"1","shown":true,"box":{"x":13,"y":335,"w":332,"h":75},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"2","shown":true,"box":{"x":13,"y":467,"w":332,"h":75},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"3","shown":true,"box":{"x":13,"y":548,"w":332,"h":75},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"4","shown":true,"box":{"x":13,"y":628,"w":332,"h":75},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ]
+}},
+"phone/decision/feed": {"viewport": {"w":390,"h":844}, "doc": {"w":390,"h":2625}, "items": {
+  "top": [
+    {"key":"top","shown":true,"box":{"x":0,"y":0,"w":390,"h":142},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "cc": [
+    {"key":"cc","shown":true,"box":{"x":16,"y":156,"w":358,"h":1351},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "tab": [
+    {"key":"decisions","shown":true,"status":"false","box":{"x":-8,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"결정 2"},
+    {"key":"tasks","shown":true,"status":"false","box":{"x":87,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"작업판"},
+    {"key":"feed","shown":true,"status":"true","box":{"x":181,"y":635,"w":91,"h":48},"paint":{"color":"#2848a6","background":"#ffffff"},"text":"메신저"},
+    {"key":"jobs","shown":true,"status":"false","box":{"x":276,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"HPC"}
+  ],
+  "tab-count": [
+    {"key":"tab-count","shown":true,"box":{"x":45,"y":649,"w":18,"h":17},"paint":{"color":"#2848a6","background":"#e9edf9"},"text":"2"}
+  ],
+  "panel": [
+    {"key":"decisions","shown":false},
+    {"key":"tasks","shown":false},
+    {"key":"feed","shown":true,"box":{"x":13,"y":13,"w":332,"h":1325},"paint":{"color":"#1c2430"}},
+    {"key":"jobs","shown":false}
+  ],
+  "messenger": [
+    {"key":"messenger","shown":true,"box":{"x":13,"y":42,"w":332,"h":1296},"paint":{"color":"#1c2430"}}
+  ],
+  "message": [
+    {"key":"0","shown":true,"box":{"x":13,"y":42,"w":332,"h":122},"paint":{"color":"#1c2430"}},
+    {"key":"1","shown":true,"box":{"x":13,"y":164,"w":332,"h":98},"paint":{"color":"#1c2430"}},
+    {"key":"2","shown":true,"box":{"x":13,"y":262,"w":332,"h":98},"paint":{"color":"#1c2430"}},
+    {"key":"3","shown":true,"box":{"x":13,"y":359,"w":332,"h":147},"paint":{"color":"#1c2430"}},
+    {"key":"4","shown":true,"box":{"x":13,"y":506,"w":332,"h":98},"paint":{"color":"#1c2430"}},
+    {"key":"5","shown":true,"box":{"x":13,"y":604,"w":332,"h":122},"paint":{"color":"#1c2430"}},
+    {"key":"6","shown":true,"box":{"x":13,"y":726,"w":332,"h":147},"paint":{"color":"#1c2430"}},
+    {"key":"7","shown":true,"box":{"x":13,"y":873,"w":332,"h":98},"paint":{"color":"#1c2430"}}
+  ]
+}},
+"phone/decision/staff": {"viewport": {"w":390,"h":844}, "doc": {"w":390,"h":2900}, "items": {
+  "top": [
+    {"key":"top","shown":true,"box":{"x":0,"y":0,"w":390,"h":142},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "cc": [
+    {"key":"cc","shown":true,"box":{"x":16,"y":156,"w":358,"h":1439},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "tab": [
+    {"key":"decisions","shown":true,"status":"true","box":{"x":-8,"y":635,"w":91,"h":48},"paint":{"color":"#2848a6","background":"#ffffff"},"text":"결정 2"},
+    {"key":"tasks","shown":true,"status":"false","box":{"x":87,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"작업판"},
+    {"key":"feed","shown":true,"status":"false","box":{"x":181,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"메신저"},
+    {"key":"jobs","shown":true,"status":"false","box":{"x":276,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"HPC"}
+  ],
+  "tab-count": [
+    {"key":"tab-count","shown":true,"box":{"x":45,"y":649,"w":18,"h":17},"paint":{"color":"#2848a6","background":"#e9edf9"},"text":"2"}
+  ],
+  "panel": [
+    {"key":"decisions","shown":true,"box":{"x":13,"y":13,"w":332,"h":1413},"paint":{"color":"#1c2430"}},
+    {"key":"tasks","shown":false},
+    {"key":"feed","shown":false},
+    {"key":"jobs","shown":false}
+  ],
+  "staff-wrap": [
+    {"key":"staff-wrap","shown":true,"box":{"x":0,"y":441,"w":390,"h":225},"paint":{"color":"#1c2430"}}
+  ],
+  "staff-toggle": [
+    {"key":"staff-toggle","shown":true,"status":"true","box":{"x":8,"y":0,"w":374,"h":38},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"},"text":"직원 닫기"}
+  ],
+  "staff-strip": [
+    {"key":"staff-strip","shown":true,"box":{"x":8,"y":38,"w":374,"h":187},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ],
+  "staff-card": [
+    {"key":"chief_of_staff","shown":true,"status":"staff-working","box":{"x":17,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"cso","shown":true,"status":"staff-working","box":{"x":265,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"sci_reviewer","shown":true,"status":"staff-idle","box":{"x":513,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"biologist","shown":true,"status":"staff-working","box":{"x":761,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"lit_scout","shown":true,"status":"staff-idle","box":{"x":1009,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"bioinfo-agent","shown":true,"status":"staff-idle","box":{"x":1257,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"data_steward","shown":true,"status":"staff-waiting","box":{"x":1505,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"analyst","shown":true,"status":"staff-idle","box":{"x":1753,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"engineer","shown":true,"status":"staff-idle","box":{"x":2001,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"qc_reviewer","shown":true,"status":"staff-idle","box":{"x":2249,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"recruiter","shown":true,"status":"staff-idle","box":{"x":2497,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "staff-chip": [
+    {"key":"chief_of_staff","shown":true,"box":{"x":70,"y":94,"w":174,"h":27},"paint":{"color":"#1d6b40"},"text":"생각하는 중"},
+    {"key":"cso","shown":true,"box":{"x":318,"y":94,"w":174,"h":27},"paint":{"color":"#1d6b40"},"text":"생각하는 중"},
+    {"key":"sci_reviewer","shown":true,"box":{"x":566,"y":117,"w":174,"h":26},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"biologist","shown":true,"box":{"x":814,"y":112,"w":174,"h":21},"paint":{"color":"#1d6b40"},"text":"생각하는 중"},
+    {"key":"lit_scout","shown":true,"box":{"x":1062,"y":112,"w":174,"h":21},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"bioinfo-agent","shown":true,"box":{"x":1310,"y":117,"w":174,"h":26},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"data_steward","shown":true,"box":{"x":1558,"y":112,"w":174,"h":21},"paint":{"color":"#2848a6"},"text":"PI 결정 기다리는 중"},
+    {"key":"analyst","shown":true,"box":{"x":1806,"y":99,"w":174,"h":32},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"engineer","shown":true,"box":{"x":2054,"y":117,"w":174,"h":26},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"qc_reviewer","shown":true,"box":{"x":2302,"y":99,"w":174,"h":32},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"recruiter","shown":true,"box":{"x":2550,"y":99,"w":174,"h":32},"paint":{"color":"#505b67"},"text":"쉬는 중"}
+  ],
+  "staff-dot": [
+    {"key":"chief_of_staff","shown":true,"paint":{"color":"#1d6b40","background":"#1d6b40"}},
+    {"key":"cso","shown":true,"paint":{"color":"#1d6b40","background":"#1d6b40"}},
+    {"key":"sci_reviewer","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"biologist","shown":true,"paint":{"color":"#1d6b40","background":"#1d6b40"}},
+    {"key":"lit_scout","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"bioinfo-agent","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"data_steward","shown":true,"paint":{"color":"#2848a6","background":"#2848a6"}},
+    {"key":"analyst","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"engineer","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"qc_reviewer","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"recruiter","shown":true,"paint":{"color":"#505b67","background":"#505b67"}}
+  ]
+}},
+"phone/report/default": {"viewport": {"w":390,"h":844}, "doc": {"w":390,"h":2439}, "items": {
+  "top": [
+    {"key":"top","shown":true,"box":{"x":0,"y":0,"w":390,"h":142},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "office": [
+    {"key":"office","shown":true,"box":{"x":16,"y":1346,"w":358,"h":873},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ],
+  "wall-board": [
+    {"key":"wall-board","shown":true,"box":{"x":9,"y":9,"w":260,"h":91},"paint":{"color":"#1c2430","background":"#ffffff","border":"#2848a6"}}
+  ],
+  "rack": [
+    {"key":"rack","shown":true,"box":{"x":281,"y":27,"w":28,"h":56},"paint":{"color":"#1c2430"}}
+  ],
+  "door": [
+    {"key":"door","shown":true,"box":{"x":321,"y":27,"w":28,"h":56},"paint":{"color":"#1c2430"}}
+  ],
+  "zone": [
+    {"key":"lead","shown":true,"box":{"x":9,"y":323,"w":340,"h":198},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#e2ddd3"}},
+    {"key":"research","shown":true,"box":{"x":9,"y":528,"w":340,"h":210},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#e2ddd3"}},
+    {"key":"data","shown":true,"box":{"x":9,"y":117,"w":340,"h":198},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#e2ddd3"}},
+    {"key":"hr","shown":true,"box":{"x":9,"y":746,"w":340,"h":118},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#e2ddd3"}}
+  ],
+  "seat": [
+    {"key":"chief_of_staff","shown":true,"status":"idle","box":{"x":18,"y":355,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"cso","shown":true,"status":"done","box":{"x":181,"y":355,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"sci_reviewer","shown":true,"status":"done","box":{"x":18,"y":435,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"biologist","shown":true,"status":"idle","box":{"x":18,"y":561,"w":159,"h":82},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"lit_scout","shown":true,"status":"idle","box":{"x":181,"y":561,"w":159,"h":82},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"bioinfo-agent","shown":true,"status":"idle","box":{"x":18,"y":647,"w":159,"h":82},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"data_steward","shown":true,"status":"idle","box":{"x":18,"y":150,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"analyst","shown":true,"status":"idle","box":{"x":181,"y":150,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"engineer","shown":true,"status":"idle","box":{"x":18,"y":230,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"qc_reviewer","shown":true,"status":"idle","box":{"x":181,"y":230,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"recruiter","shown":true,"status":"idle","box":{"x":18,"y":779,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}}
+  ],
+  "character": [
+    {"key":"chief_of_staff","shown":true,"box":{"x":20,"y":361,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"cso","shown":true,"box":{"x":183,"y":361,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"sci_reviewer","shown":true,"box":{"x":20,"y":441,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"biologist","shown":true,"box":{"x":20,"y":570,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"lit_scout","shown":true,"box":{"x":183,"y":570,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"bioinfo-agent","shown":true,"box":{"x":20,"y":656,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"data_steward","shown":true,"box":{"x":20,"y":156,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"analyst","shown":true,"box":{"x":183,"y":156,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"engineer","shown":true,"box":{"x":20,"y":236,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"qc_reviewer","shown":true,"box":{"x":183,"y":236,"w":64,"h":64},"paint":{"color":"#1c2430"}},
+    {"key":"recruiter","shown":true,"box":{"x":20,"y":785,"w":64,"h":64},"paint":{"color":"#1c2430"}}
+  ],
+  "seat-status": [
+    {"key":"chief_of_staff","shown":true,"box":{"x":84,"y":405,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"cso","shown":true,"box":{"x":247,"y":405,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"끝남"},
+    {"key":"sci_reviewer","shown":true,"box":{"x":84,"y":485,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"끝남"},
+    {"key":"biologist","shown":true,"box":{"x":84,"y":623,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"lit_scout","shown":true,"box":{"x":247,"y":614,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"bioinfo-agent","shown":true,"box":{"x":84,"y":709,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"data_steward","shown":true,"box":{"x":84,"y":200,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"analyst","shown":true,"box":{"x":247,"y":200,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"engineer","shown":true,"box":{"x":84,"y":280,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"qc_reviewer","shown":true,"box":{"x":247,"y":280,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"recruiter","shown":true,"box":{"x":84,"y":829,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"}
+  ],
+  "seat-dot": [
+    {"key":"chief_of_staff","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"cso","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"sci_reviewer","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"biologist","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"lit_scout","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"bioinfo-agent","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"data_steward","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"analyst","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"engineer","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"qc_reviewer","shown":true,"paint":{"color":"#47525f","background":"#47525f"}},
+    {"key":"recruiter","shown":true,"paint":{"color":"#47525f","background":"#47525f"}}
+  ],
+  "cc": [
+    {"key":"cc","shown":true,"box":{"x":16,"y":156,"w":358,"h":1171},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "tab": [
+    {"key":"decisions","shown":true,"status":"true","box":{"x":-8,"y":635,"w":91,"h":48},"paint":{"color":"#2848a6","background":"#ffffff"},"text":"결정 2"},
+    {"key":"tasks","shown":true,"status":"false","box":{"x":87,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"작업판"},
+    {"key":"feed","shown":true,"status":"false","box":{"x":181,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"메신저"},
+    {"key":"jobs","shown":true,"status":"false","box":{"x":276,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"HPC"}
+  ],
+  "tab-count": [
+    {"key":"tab-count","shown":true,"box":{"x":45,"y":649,"w":18,"h":17},"paint":{"color":"#2848a6","background":"#e9edf9"},"text":"2"}
+  ],
+  "panel": [
+    {"key":"decisions","shown":true,"box":{"x":13,"y":13,"w":332,"h":1145},"paint":{"color":"#1c2430"}},
+    {"key":"tasks","shown":false},
+    {"key":"feed","shown":false},
+    {"key":"jobs","shown":false}
+  ],
+  "decision": [
+    {"key":"suggestion:sug_1","shown":true,"box":{"x":13,"y":452,"w":332,"h":659},"paint":{"color":"#1c2430","background":"#ffffff","border":"#2848a6"}}
+  ],
+  "decision-status": [
+    {"key":"0","shown":true,"box":{"x":26,"y":681,"w":85,"h":23},"paint":{"color":"#2848a6","background":"#e9edf9"},"text":"결정 대기"}
+  ],
+  "decision-primary": [
+    {"key":"0","shown":true,"box":{"x":26,"y":830,"w":306,"h":48},"paint":{"color":"#ffffff","background":"#2848a6","border":"#2848a6"},"text":"채용하기"}
+  ],
+  "review": [
+    {"key":"req_demo1","shown":true,"box":{"x":13,"y":42,"w":332,"h":398},"paint":{"color":"#1c2430","background":"#ffffff","border":"#2848a6"}}
+  ],
+  "review-primary": [
+    {"key":"0","shown":true,"box":{"x":26,"y":319,"w":306,"h":48},"paint":{"color":"#ffffff","background":"#2848a6","border":"#2848a6"},"text":"보고서 열기"}
+  ],
+  "staff-wrap": [
+    {"key":"staff-wrap","shown":true,"box":{"x":0,"y":628,"w":390,"h":38},"paint":{"color":"#1c2430"}}
+  ],
+  "staff-toggle": [
+    {"key":"staff-toggle","shown":true,"status":"false","box":{"x":8,"y":0,"w":374,"h":38},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"},"text":"직원 보기"}
+  ],
+  "staff-strip": [
+    {"key":"staff-strip","shown":false}
+  ],
+  "composer": [
+    {"key":"composer","shown":true,"loose":true,"box":{"x":0,"y":664,"w":390,"h":121},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ]
+}},
+"phone/report/tasks": {"viewport": {"w":390,"h":844}, "doc": {"w":390,"h":2066}, "items": {
+  "top": [
+    {"key":"top","shown":true,"box":{"x":0,"y":0,"w":390,"h":142},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "cc": [
+    {"key":"cc","shown":true,"box":{"x":16,"y":156,"w":358,"h":799},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "tab": [
+    {"key":"decisions","shown":true,"status":"false","box":{"x":-8,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"결정 2"},
+    {"key":"tasks","shown":true,"status":"true","box":{"x":87,"y":635,"w":91,"h":48},"paint":{"color":"#2848a6","background":"#ffffff"},"text":"작업판"},
+    {"key":"feed","shown":true,"status":"false","box":{"x":181,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"메신저"},
+    {"key":"jobs","shown":true,"status":"false","box":{"x":276,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"HPC"}
+  ],
+  "tab-count": [
+    {"key":"tab-count","shown":true,"box":{"x":45,"y":649,"w":18,"h":17},"paint":{"color":"#2848a6","background":"#e9edf9"},"text":"2"}
+  ],
+  "panel": [
+    {"key":"decisions","shown":false},
+    {"key":"tasks","shown":true,"box":{"x":13,"y":13,"w":332,"h":773},"paint":{"color":"#1c2430"}},
+    {"key":"feed","shown":false},
+    {"key":"jobs","shown":false}
+  ],
+  "task-board": [
+    {"key":"task-board","shown":true,"box":{"x":13,"y":42,"w":332,"h":744},"paint":{"color":"#1c2430"}}
+  ],
+  "task-choice": [
+    {"key":"0","shown":true,"box":{"x":13,"y":71,"w":332,"h":103},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#7f8790"}}
+  ],
+  "task-column": [
+    {"key":"0","shown":false},
+    {"key":"1","shown":false},
+    {"key":"2","shown":false},
+    {"key":"3","shown":true,"box":{"x":13,"y":189,"w":332,"h":44},"paint":{"color":"#1c2430"}}
+  ],
+  "task-card": [
+    {"key":"0","shown":true,"box":{"x":13,"y":239,"w":332,"h":75},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"1","shown":true,"box":{"x":13,"y":320,"w":332,"h":75},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"2","shown":true,"box":{"x":13,"y":401,"w":332,"h":75},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"3","shown":true,"box":{"x":13,"y":482,"w":332,"h":75},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"4","shown":true,"box":{"x":13,"y":563,"w":332,"h":75},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ]
+}},
+"phone/report/feed": {"viewport": {"w":390,"h":844}, "doc": {"w":390,"h":5476}, "items": {
+  "top": [
+    {"key":"top","shown":true,"box":{"x":0,"y":0,"w":390,"h":142},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "cc": [
+    {"key":"cc","shown":true,"box":{"x":16,"y":156,"w":358,"h":4209},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "tab": [
+    {"key":"decisions","shown":true,"status":"false","box":{"x":-8,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"결정 2"},
+    {"key":"tasks","shown":true,"status":"false","box":{"x":87,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"작업판"},
+    {"key":"feed","shown":true,"status":"true","box":{"x":181,"y":635,"w":91,"h":48},"paint":{"color":"#2848a6","background":"#ffffff"},"text":"메신저"},
+    {"key":"jobs","shown":true,"status":"false","box":{"x":276,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"HPC"}
+  ],
+  "tab-count": [
+    {"key":"tab-count","shown":true,"box":{"x":45,"y":649,"w":18,"h":17},"paint":{"color":"#2848a6","background":"#e9edf9"},"text":"2"}
+  ],
+  "panel": [
+    {"key":"decisions","shown":false},
+    {"key":"tasks","shown":false},
+    {"key":"feed","shown":true,"box":{"x":13,"y":13,"w":332,"h":4183},"paint":{"color":"#1c2430"}},
+    {"key":"jobs","shown":false}
+  ],
+  "messenger": [
+    {"key":"messenger","shown":true,"box":{"x":13,"y":42,"w":332,"h":4154},"paint":{"color":"#1c2430"}}
+  ],
+  "message": [
+    {"key":"0","shown":true,"box":{"x":13,"y":42,"w":332,"h":122},"paint":{"color":"#1c2430"}},
+    {"key":"1","shown":true,"box":{"x":13,"y":164,"w":332,"h":98},"paint":{"color":"#1c2430"}},
+    {"key":"2","shown":true,"box":{"x":13,"y":262,"w":332,"h":98},"paint":{"color":"#1c2430"}},
+    {"key":"3","shown":true,"box":{"x":13,"y":359,"w":332,"h":98},"paint":{"color":"#1c2430"}},
+    {"key":"4","shown":true,"box":{"x":13,"y":457,"w":332,"h":122},"paint":{"color":"#1c2430"}},
+    {"key":"5","shown":true,"box":{"x":13,"y":579,"w":332,"h":98},"paint":{"color":"#1c2430"}},
+    {"key":"6","shown":true,"box":{"x":13,"y":677,"w":332,"h":122},"paint":{"color":"#1c2430"}},
+    {"key":"7","shown":true,"box":{"x":13,"y":799,"w":332,"h":122},"paint":{"color":"#1c2430"}}
+  ]
+}},
+"phone/report/staff": {"viewport": {"w":390,"h":844}, "doc": {"w":390,"h":2626}, "items": {
+  "top": [
+    {"key":"top","shown":true,"box":{"x":0,"y":0,"w":390,"h":142},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "cc": [
+    {"key":"cc","shown":true,"box":{"x":16,"y":156,"w":358,"h":1171},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "tab": [
+    {"key":"decisions","shown":true,"status":"true","box":{"x":-8,"y":635,"w":91,"h":48},"paint":{"color":"#2848a6","background":"#ffffff"},"text":"결정 2"},
+    {"key":"tasks","shown":true,"status":"false","box":{"x":87,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"작업판"},
+    {"key":"feed","shown":true,"status":"false","box":{"x":181,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"메신저"},
+    {"key":"jobs","shown":true,"status":"false","box":{"x":276,"y":635,"w":91,"h":48},"paint":{"color":"#47525f","background":"#ffffff"},"text":"HPC"}
+  ],
+  "tab-count": [
+    {"key":"tab-count","shown":true,"box":{"x":45,"y":649,"w":18,"h":17},"paint":{"color":"#2848a6","background":"#e9edf9"},"text":"2"}
+  ],
+  "panel": [
+    {"key":"decisions","shown":true,"box":{"x":13,"y":13,"w":332,"h":1145},"paint":{"color":"#1c2430"}},
+    {"key":"tasks","shown":false},
+    {"key":"feed","shown":false},
+    {"key":"jobs","shown":false}
+  ],
+  "staff-wrap": [
+    {"key":"staff-wrap","shown":true,"box":{"x":0,"y":441,"w":390,"h":225},"paint":{"color":"#1c2430"}}
+  ],
+  "staff-toggle": [
+    {"key":"staff-toggle","shown":true,"status":"true","box":{"x":8,"y":0,"w":374,"h":38},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"},"text":"직원 닫기"}
+  ],
+  "staff-strip": [
+    {"key":"staff-strip","shown":true,"box":{"x":8,"y":38,"w":374,"h":187},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ],
+  "staff-card": [
+    {"key":"chief_of_staff","shown":true,"status":"staff-idle","box":{"x":17,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"cso","shown":true,"status":"staff-done","box":{"x":265,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"sci_reviewer","shown":true,"status":"staff-done","box":{"x":513,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"biologist","shown":true,"status":"staff-idle","box":{"x":761,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"lit_scout","shown":true,"status":"staff-idle","box":{"x":1009,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"bioinfo-agent","shown":true,"status":"staff-idle","box":{"x":1257,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"data_steward","shown":true,"status":"staff-idle","box":{"x":1505,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"analyst","shown":true,"status":"staff-idle","box":{"x":1753,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"engineer","shown":true,"status":"staff-idle","box":{"x":2001,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"qc_reviewer","shown":true,"status":"staff-idle","box":{"x":2249,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"recruiter","shown":true,"status":"staff-idle","box":{"x":2497,"y":47,"w":240,"h":169},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+  ],
+  "staff-chip": [
+    {"key":"chief_of_staff","shown":true,"box":{"x":70,"y":99,"w":174,"h":32},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"cso","shown":true,"box":{"x":318,"y":94,"w":174,"h":27},"paint":{"color":"#505b67"},"text":"완료"},
+    {"key":"sci_reviewer","shown":true,"box":{"x":566,"y":112,"w":174,"h":21},"paint":{"color":"#505b67"},"text":"완료"},
+    {"key":"biologist","shown":true,"box":{"x":814,"y":117,"w":174,"h":26},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"lit_scout","shown":true,"box":{"x":1062,"y":112,"w":174,"h":21},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"bioinfo-agent","shown":true,"box":{"x":1310,"y":117,"w":174,"h":26},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"data_steward","shown":true,"box":{"x":1558,"y":117,"w":174,"h":26},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"analyst","shown":true,"box":{"x":1806,"y":99,"w":174,"h":32},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"engineer","shown":true,"box":{"x":2054,"y":117,"w":174,"h":26},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"qc_reviewer","shown":true,"box":{"x":2302,"y":99,"w":174,"h":32},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"recruiter","shown":true,"box":{"x":2550,"y":99,"w":174,"h":32},"paint":{"color":"#505b67"},"text":"쉬는 중"}
+  ],
+  "staff-dot": [
+    {"key":"chief_of_staff","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"cso","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"sci_reviewer","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"biologist","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"lit_scout","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"bioinfo-agent","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"data_steward","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"analyst","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"engineer","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"qc_reviewer","shown":true,"paint":{"color":"#505b67","background":"#505b67"}},
+    {"key":"recruiter","shown":true,"paint":{"color":"#505b67","background":"#505b67"}}
+  ]
+}}
+}
+}
