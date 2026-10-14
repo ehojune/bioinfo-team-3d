@@ -64,7 +64,16 @@ async def prepare_plan(plan, rid, hub, run):
         batch["check"] = await dispatch("recruit_check")
         hub.save_request(rid)
     available = batch["check"].get("status") == "ready"
+    if available and "approval" not in batch and batch.get("approval_started"):
+        # Gateway restart expires pending cards. Recover a decision already made; never open a second hire card.
+        store = getattr(hub, "store", None)
+        decisions = store.all("approval_decision").values() if store is not None else []
+        saved = next((d for d in decisions if (a := d.get("approval", {})).get("request_id") == rid
+                      and a.get("kind") == "recruit_plan" and a.get("detail", {}).get("target_sha256") == key), None)
+        batch["approval"] = saved or {"approved": False, "state": "expired", "note": "채용 승인 대기 중단"}
     if available and "approval" not in batch:
+        batch["approval_started"] = True
+        hub.save_request(rid)
         batch["approval"] = await hub.request_approval(
             kind="recruit_plan", request_id=rid,
             summary=f"논문 재현 파견직 {len(proposals)}건 채용: 수습 통과하면 바로 투입합니다. "
@@ -78,7 +87,7 @@ async def prepare_plan(plan, rid, hub, run):
         pid = paper_key(row.get("paper") or row.get("repo"))
         if pid not in batch["results"]:
             batch["results"][pid] = (await dispatch("plan_recruit", row) if approved else
-                                     {"status": ("timed_out" if batch.get("approval", {}).get("state") == "timed_out"
+                                     {"status": ("timed_out" if batch.get("approval", {}).get("state") in {"timed_out", "expired"}
                                                  else "denied") if available else
                                       batch["check"].get("status", "failed")})
             hub.save_request(rid)

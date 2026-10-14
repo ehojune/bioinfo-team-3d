@@ -215,3 +215,30 @@ async def test_nextflow_hire_spec_implementation_hire_validation_and_resume(para
         assert set(agents[:2]) == {"c_paper", "bioinfo-agent"} and agents[2] == "worker"
     else:
         assert agents == ["c_paper", "bioinfo-agent", "c_paper"]
+
+
+@pytest.mark.asyncio
+async def test_interrupted_approval_does_not_open_a_second_hiring_card():
+    from labhq.recruit.planning import prepare_plan
+    from tests.test_cso import FakeHub, result
+
+    async def reply(task):
+        assert task.meta["kind"] == "recruit_check"
+        return result(task, structured={"status": "ready"}, cost_usd=0)
+
+    hub = FakeHub(reply)
+    cards = []
+
+    async def interrupted(**card):
+        cards.append(card)
+        raise asyncio.CancelledError()
+
+    hub.request_approval = interrupted
+    draft = {"recruit": [proposal()], "steps": [
+        {"id": "s1", "agent_id": "worker", "instruction": "reproduce", "depends_on": []}]}
+    with pytest.raises(asyncio.CancelledError):
+        await prepare_plan(draft, "r", hub, reply)
+    final = await prepare_plan(draft, "r", hub, reply)
+    assert len(cards) == 1
+    assert final["steps"][0]["agent_id"] == "worker"
+    assert final["recruit_results"][0]["status"] == "timed_out"
