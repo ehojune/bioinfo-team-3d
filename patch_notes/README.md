@@ -14,6 +14,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 20:24 | [`b247ef0`](https://github.com/ehojune/bioinfo-team-3d/pull/597/commits/b247ef0) | 열 수 없는(Access denied) 후손도 종료 실패와 똑같이 실패로 기록하고 조상을 보존해 down이 살아남은 자식을 두고 성공하지 않게 한다(#589 봇 P1). |
+| 19:19 | [`1593224`](https://github.com/ehojune/bioinfo-team-3d/pull/597/commits/1593224) | tree-kill이 후보 handle을 열어 PID를 고정하고 두 번째 표로 부모 PID를 다시 확인한 뒤 그 handle로 종료하며, 실패한 프로세스의 조상 전체를 남겨 재시도가 닿게 한다(#589 봇 P1 2건). |
+| 18:39 | [`fc10f13`](https://github.com/ehojune/bioinfo-team-3d/pull/597/commits/fc10f13) | down이 launcher 밑 자식 프로세스의 종료 실패도 실패로 알리고 PID 기록을 남겨, runner가 살아남은 채 성공으로 끝나지 않게 한다(#589 봇 P1). |
+| 18:02 | [`d13de19`](https://github.com/ehojune/bioinfo-team-3d/pull/597/commits/d13de19) | status·doctor가 venv launcher의 자식이 쓴 heartbeat를 읽어 살아 있는 gateway를 '기록 없음'으로 보이지 않게 한다(#589). |
+| 18:01 | [`7184136`](https://github.com/ehojune/bioinfo-team-3d/pull/597/commits/7184136) | Windows 종료(adapter 취소·버전 조사 시간 초과·down)가 taskkill /T 대신 생성 시각을 검증하는 helper를 써서, 재사용된 부모 PID 때문에 PI의 gateway·runner가 함께 죽던 문제를 막는다(#589). |
 | 17:21 | [`2d503e4`](https://github.com/ehojune/bioinfo-team-3d/pull/596/commits/2d503e4) | 보고서 PDF·그림 링크의 리뷰 지적을 고쳤다. 목록 항목 아래의 코드·표·문단과 순서 번호 이음, 한글 조사 앞 기울임, PDF 캐시 key(표지 값·묶음 문서 digest), 괄호·꺾쇠·#·? 그림 경로, 절대경로 rewrite 뒤 그림 링크 검사(#584). |
 | 16:45 | [`42def3b`](https://github.com/ehojune/bioinfo-team-3d/pull/592/commits/42def3b) | 최신 main 병합(#595 기록 비교 수정 포함) |
 | 16:34 | [`3bc48a3`](https://github.com/ehojune/bioinfo-team-3d/pull/596/commits/3bc48a3) | 보고서 결과에 핵심 그림을 마크다운 링크로 넣게 하고, 요청 묶음이 링크된 그림을 상한과 무관하게 지키며 labhq verify가 링크된 그림의 존재를 확인한다(#584). |
