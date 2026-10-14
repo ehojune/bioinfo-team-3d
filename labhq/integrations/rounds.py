@@ -26,6 +26,9 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("labhq.rounds")
 REPO_NAME = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+_ORIGINAL_REPORT = object()
+DISPLAY_TASK_KINDS = frozenset({"pi_interpretation"})
+DISPLAY_EVENT_TYPES = frozenset({"messenger.translated"})
 
 
 class RoundPublicationDeferred(RuntimeError):
@@ -74,6 +77,16 @@ def environment_snapshot(hub: "Hub") -> dict:
             "state_dir_name": Path(hub.s.gateway.state_dir).name}
 
 
+def is_research_task(task: dict) -> bool:
+    """Display-only work is billed and audited, but is not a research step or provenance source."""
+    return task.get("kind") not in DISPLAY_TASK_KINDS
+
+
+def is_research_event(event: dict, display_task_ids: set[str]) -> bool:
+    """Keep UI delivery events in the raw ledger without folding them into the request's research record."""
+    return event.get("type") not in DISPLAY_EVENT_TYPES and event.get("task_id") not in display_task_ids
+
+
 def record_sources(hub: "Hub") -> dict[str, dict[str, list[dict]]]:
     """Tasks, events and approval decisions grouped by request, read from the state DB once.
 
@@ -81,9 +94,15 @@ def record_sources(hub: "Hub") -> dict[str, dict[str, list[dict]]]:
     on the 10-08 trial state (40 requests, 18 MB of task rows) that held the start for 7 s.
     """
     grouped: dict[str, dict[str, list[dict]]] = {"tasks": {}, "events": {}, "decisions": {}}
-    for task in hub.store.all("task").values():
+    all_tasks = hub.store.all("task")
+    display_task_ids = {tid for tid, task in all_tasks.items() if not is_research_task(task)}
+    for task in all_tasks.values():
+        if not is_research_task(task):
+            continue
         grouped["tasks"].setdefault(str(task.get("request_id")), []).append(task)
     for event in hub.store.events_since(0):
+        if not is_research_event(event, display_task_ids):
+            continue
         grouped["events"].setdefault(str(event.get("request_id")), []).append(event)
     for decision in hub.store.all("approval_decision").values():
         grouped["decisions"].setdefault(str((decision.get("approval") or {}).get("request_id")), []).append(decision)
@@ -114,14 +133,10 @@ def metadata_failure_kind(result: dict) -> str | None:
 def build_record(hub: "Hub", rid: str, sources: dict[str, dict[str, list[dict]]] | None = None) -> dict:
     req = hub.requests[rid]
     if sources is None:
-        tasks = [v for v in hub.store.all("task").values() if v.get("request_id") == rid]
-        events = [v for v in hub.store.events_since(0) if v.get("request_id") == rid]
-        decisions = [v for v in hub.store.all("approval_decision").values()
-                     if (v.get("approval") or {}).get("request_id") == rid]
-    else:
-        tasks = list(sources["tasks"].get(rid, []))
-        events = list(sources["events"].get(rid, []))
-        decisions = list(sources["decisions"].get(rid, []))
+        sources = record_sources(hub)
+    tasks = list(sources["tasks"].get(rid, []))
+    events = list(sources["events"].get(rid, []))
+    decisions = list(sources["decisions"].get(rid, []))
     decisions += [{"approval": v["approval"], "approved": None, "note": None,
                    "state": "pending"} for v in hub.approvals.values()
                   if v["approval"].get("request_id") == rid]
@@ -243,7 +258,9 @@ def build_record(hub: "Hub", rid: str, sources: dict[str, dict[str, list[dict]]]
     }
 
 
-def render_record(record: dict) -> str:
+def render_record(record: dict, *, include_json: bool = True,
+                  report_override: object = _ORIGINAL_REPORT,
+                  report_notice: str | None = None) -> str:
     data = json.dumps(record, ensure_ascii=False, indent=2, default=str)
     req, result = record["request"], record["result"]
     commit = record["environment"].get("git_commit")
@@ -270,12 +287,154 @@ def render_record(record: dict) -> str:
               f"- 점수: {json.dumps(record['review']['scores'], ensure_ascii=False)}",
               f"- 수정 회차: {record['review']['revision_rounds']}", "", "## PI 결정"]
     lines += [f"- {d['kind']}: {d['approved']} {d['note'] or ''}" for d in record["pi_decisions"]]
+    if report_override is _ORIGINAL_REPORT:
+        report = result.get("report") or result.get("root_cause_summary") or ""
+    else:
+        report = str(report_override)
     lines += ["", "## 결과", f"- 상태: {result['status']}",
               f"- 미결정: {json.dumps(result['pending_decisions'], ensure_ascii=False)}",
               f"- 이상 징후: {', '.join(result['anomalies']) or '없음'}",
-              str(result.get("report") or result.get("root_cause_summary") or ""),
-              "", "<details><summary>JSON schema v1</summary>", "", "```json", data, "```", "", "</details>", ""]
+               report]
+    if report_notice:
+        lines += ["", report_notice]
+    if include_json:
+        lines += ["", "<details><summary>JSON schema v1</summary>", "", "```json", data, "```", "", "</details>", ""]
+    else:
+        lines += ["", f"> JSON 원본은 로컬 rounds/{record['request_id']}.json에 있음", ""]
     return "\n".join(lines)
+
+
+def _line_prefix(text: str, limit: int) -> str:
+    """Fit whole Markdown lines, closing a fenced block when the cut lands inside one."""
+    if limit <= 0:
+        return ""
+    kept: list[str] = []
+    used = 0
+    fence: tuple[str, int] | None = None
+    for line in text.splitlines(keepends=True):
+        match = re.match(r"^\s*(`{3,}|~{3,})", line)
+        next_fence = fence
+        if match:
+            token = match.group(1)
+            if fence is None:
+                next_fence = (token[0], len(token))
+            elif token[0] == fence[0] and len(token) >= fence[1]:
+                next_fence = None
+        closing = f"\n{next_fence[0] * next_fence[1]}" if next_fence else ""
+        if used + len(line) + len(closing) > limit:
+            break
+        kept.append(line)
+        used += len(line)
+        fence = next_fence
+    prefix = "".join(kept).rstrip("\r\n")
+    if fence:
+        prefix += f"\n{fence[0] * fence[1]}"
+    return prefix
+
+
+def _fit_variable_sections(prefix: str, sections: list[tuple[str, str]], suffix: str, limit: int) -> str:
+    """Share the remaining body budget across every variable section, keeping whole lines."""
+    def assemble(contents: list[str]) -> str:
+        parts = [prefix]
+        for (heading, _), content in zip(sections, contents):
+            parts += ["", heading]
+            if content:
+                parts.append(content)
+        parts += ["", suffix]
+        return "\n".join(parts)
+
+    empty = assemble([""] * len(sections))
+    available = max(0, limit - len(empty))
+    texts = [text for _, text in sections]
+    allocations = [0] * len(texts)
+    active = set(range(len(texts)))
+    while active and available:
+        share = available // len(active)
+        if share == 0:
+            break
+        completed = {i for i in active if len(texts[i]) - allocations[i] <= share}
+        if completed:
+            for i in completed:
+                added = len(texts[i]) - allocations[i]
+                allocations[i] += added
+                available -= added
+            active -= completed
+            continue
+        for i in sorted(active):
+            added = min(share, available)
+            allocations[i] += added
+            available -= added
+        break
+
+    body = assemble([_line_prefix(text, allocations[i]) for i, text in enumerate(texts)])
+    return body if len(body) <= limit else _line_prefix(body, limit)
+
+
+def _compact_record_body(record: dict, marker: str, limit: int) -> str:
+    """Render every variable record section within one shared Markdown budget."""
+    req, result = record["request"], record["result"]
+    commit = record["environment"].get("git_commit")
+    source_repo = record["environment"].get("source_repo")
+    shown_commit = commit or "미확인"
+    if commit and isinstance(source_repo, str) and REPO_NAME.fullmatch(source_repo):
+        shown_commit = f"[{commit}](https://github.com/{source_repo}/commit/{commit})"
+
+    plan_lines = [
+        f"- {step.get('id')}: {step.get('agent_id')} (선행: {', '.join(step.get('depends_on') or []) or '없음'})"
+        for step in record["plan"]["steps"]
+    ] + [f"- 경고: {warning}" for warning in record["plan"]["warnings"]]
+    step_lines: list[str] = []
+    for step in record["steps"]:
+        step_lines.append(f"- {step['id']}: {step['status']}, 시도 {step['attempts']}")
+        outputs = step["output_paths"]
+        step_lines += [f"  - 산출물: {path}" for path in outputs] if outputs else ["  - 산출물: 없음"]
+    report = str(result.get("report") or result.get("root_cause_summary") or "")
+    sections = [
+        ("## 요청", "\n".join([
+            str(req.get("text") or ""), f"- 모드: {req.get('mode') or '—'}",
+            f"- 프로젝트: {req.get('project_id') or '—'}",
+            f"- meta: {json.dumps(req.get('meta') or {}, ensure_ascii=False)}",
+            f"- 확인 질문·답변: {json.dumps(req.get('clarifications') or [], ensure_ascii=False)}",
+            f"- 단계 결정: {json.dumps(req.get('step_decisions') or {}, ensure_ascii=False)}",
+        ])),
+        ("## 환경", "\n".join([
+            f"- labhq: {record['environment']['labhq_version']}", f"- Git: {shown_commit}",
+            f"- 모델: {', '.join(record['environment']['model_ids']) or '보고 없음'}",
+            f"- 인스턴스: {record['environment']['instance']}",
+        ])),
+        ("## 계획", "\n".join(plan_lines)),
+        ("## 단계", "\n".join(step_lines)),
+        ("## 리뷰", "\n".join([
+            f"- 판정: {record['review']['verdict'] or '없음'}",
+            f"- 점수: {json.dumps(record['review']['scores'], ensure_ascii=False)}",
+            f"- 수정 회차: {record['review']['revision_rounds']}",
+        ])),
+        ("## PI 결정", "\n".join(
+            f"- {decision['kind']}: {decision['approved']} {decision['note'] or ''}"
+            for decision in record["pi_decisions"]
+        )),
+        ("## 결과", "\n".join([
+            f"- 상태: {result['status']}",
+            f"- 미결정: {json.dumps(result['pending_decisions'], ensure_ascii=False)}",
+            f"- 이상 징후: {', '.join(result['anomalies']) or '없음'}", report,
+        ])),
+    ]
+    suffix = "\n".join([
+        f"> 결과 보고서 전문은 로컬 기록 rounds/{record['request_id']}.md에 있음",
+        f"> JSON 원본은 로컬 rounds/{record['request_id']}.json에 있음",
+    ])
+    return _fit_variable_sections(marker, sections, suffix, limit)
+
+
+def _marked_body(record: dict, *, limit: int, compact: bool = True) -> str:
+    marker = f"<!-- labhq round {record['request_id']} -->"
+    full = marker + "\n\n" + render_record(record)
+    if len(full) <= limit or not compact:
+        return full
+    without_json = marker + "\n\n" + render_record(record, include_json=False)
+    if len(without_json) <= limit:
+        return without_json
+    return _compact_record_body(record, marker, limit)
 
 
 class RoundRecorder:
@@ -345,8 +504,34 @@ class RoundRecorder:
                 pending.add(rid)
         for rid in pending:
             delivery = self.hub.store.get("round_delivery", rid) or {}
-            if delivery.get("state") != "failed":
+            stored_digest = (self.hub.store.get("round_issue", rid) or {}).get("sha256")
+            failed_oversize = (delivery.get("state") == "failed" and
+                               stored_digest != self._current_body_digest(rid) and
+                               self._legacy_body_exceeded_limit(rid))
+            if delivery.get("state") != "failed" or failed_oversize:
                 self.submit(rid, attempts=delivery.get("attempts", 0))
+
+    def _current_body_digest(self, rid: str) -> str | None:
+        try:
+            record = json.loads((self.directory / f"{rid}.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        def clean(value: str) -> str:
+            return publish_clean(value, self.s, self.hub.requests.values())
+
+        body = _marked_body(_clean_tree(record, clean), limit=MAX_BODY)
+        return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+    def _legacy_body_exceeded_limit(self, rid: str) -> bool:
+        """Recognize deliveries the pre-compaction publisher left permanently failed."""
+        try:
+            record = json.loads((self.directory / f"{rid}.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        def clean(value: str) -> str:
+            return publish_clean(value, self.s, self.hub.requests.values())
+
+        return len(_marked_body(_clean_tree(record, clean), limit=MAX_BODY, compact=False)) > MAX_BODY
 
     async def drain(self) -> None:
         await self.queue.join()
@@ -439,11 +624,11 @@ class RoundRecorder:
         gh = self.client
         record = json.loads((self.directory / f"{rid}.json").read_text(encoding="utf-8"))
         clean = gh.clean
-        body = render_record(_clean_tree(record, clean))
+        record = _clean_tree(record, clean)
         marker = f"<!-- labhq round {rid} -->"
-        body = marker + "\n\n" + body
+        body = _marked_body(record, limit=MAX_BODY)
         if len(body) > MAX_BODY:
-            log.warning("round record exceeds GitHub issue size; local record retained")
+            log.warning("round record exceeds GitHub issue size after report compaction; local record retained")
             return False
         digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
         if (self.hub.store.get("round_issue", rid) or {}).get("sha256") == digest:

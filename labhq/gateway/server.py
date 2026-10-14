@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from ..integrations.github import ProjectReporter
 from ..intake import MAX_REFERENCES, Reference, effective_references
-from ..integrations.rounds import RoundRecorder, environment_snapshot
+from ..integrations.rounds import RoundRecorder, environment_snapshot, is_research_event, is_research_task
 from ..integrations.visibility import dev_log_visibility
 from ..login import login_command
 from ..ask_results import ask_result, read_ask_results, rejected_step
@@ -293,6 +293,8 @@ class Hub:
         self.cancel_result_wait_s = CANCEL_RESULT_WAIT_S
         self.approvals: dict[str, dict] = self.store.all("approval")
         self.requests: dict[str, dict] = self.store.all("request")
+        from ..pi_language import PiInterpreter
+        self.pi_interpreter = PiInterpreter(self)
         self.final_review_timers: dict[str, asyncio.Task] = {}
         self.login_notices: set[str] = set()  # computed after stale login waits are dropped below
         self.last_runner_rosters: dict[str, dict] = self.store.all("runner_roster")
@@ -882,6 +884,9 @@ class Hub:
         finishing += [{"id": rid, "status": (self.requests.get(rid) or {}).get("status"),
                        "text": (self.requests.get(rid) or {}).get("text"), "stage": "result_storage"}
                       for rid, task in self.result_storage.tasks.items() if not task.done()]
+        finishing += [{"id": rid, "status": (self.requests.get(rid) or {}).get("status"),
+                       "text": (self.requests.get(rid) or {}).get("text"), "stage": "pi_interpretation"}
+                      for task, rid in self.pi_interpreter.tasks.items() if not task.done()]
         return {"requests": requests, "followups": followups, "recruits": recruits, "finishing": finishing,
                 "ready": not (requests or followups or recruits or finishing)}
 
@@ -896,6 +901,8 @@ class Hub:
             return []
         selected: dict[tuple[str, str], tuple[tuple[int, float], dict]] = {}
         for tid, entry in (self.store.all("task") if tasks is None else tasks).items():
+            if entry.get("kind") == "pi_interpretation":
+                continue  # Display work never adds a step to the request's plan/progress.
             req = self.requests.get(entry.get("request_id"), {})
             if not entry.get("accepted") or not is_active_request(req.get("status")):
                 continue
@@ -1221,6 +1228,7 @@ class Hub:
                     dead.append(client)
             for client in dead:
                 self.clients.discard(client)
+            self.pi_interpreter.schedule(event)
 
     def result_map(self, rid: str) -> SavedResults:
         return SavedResults(self, rid)
@@ -2169,6 +2177,9 @@ class Hub:
 
     # ----- events -----
     async def publish(self, ev: dict, runner_id: str | None = None, runner_seq: int | None = None) -> None:
+        internal = self.store.get("task", ev.get("task_id")) if ev.get("task_id") else None
+        if (internal or {}).get("kind") == "pi_interpretation" and ev.get("type") == "agent.log":
+            ev = {**ev, "data": {**ev.get("data", {}), "level": "debug"}}
         if ev.get('type') == 'approval.requested':
             ev = {**ev, 'data': with_approval_copy(ev.get('data') or {})}
         async with self.event_lock:
@@ -2191,6 +2202,7 @@ class Hub:
                 self.save_request(rid)
         if self.reporter.enabled():
             self.reporter.submit(ev)
+        self.pi_interpreter.schedule(ev)
         if ev.get("type") in ("request.step_done", "request.step_skipped") and ev.get("request_id"):
             await self._close_step_controls(ev["request_id"], (ev.get("data") or {}).get("step_id"))
 
@@ -3465,7 +3477,7 @@ class Hub:
         # Keep this separate from the request board's accepted-step selection.
         staff_tasks = {task["id"]: task for task in running}
         for tid, entry in tasks.items():
-            if entry.get("completed"):
+            if entry.get("completed") or not is_research_task(entry):
                 continue
             payload = entry.get("payload") or {}
             staff_tasks[tid] = {"id": tid, "request_id": entry.get("request_id"),
@@ -3474,7 +3486,9 @@ class Hub:
                 "state": "running" if entry.get("accepted") else "queued",
                 "dispatched_at": entry.get("dispatched_at", 0), "activity": entry.get("activity") or {}}
         pipeline_prs = self.pipeline_prs()
-        recent_events = list(self.events)[-200:]
+        display_task_ids = {tid for tid, entry in tasks.items() if not is_research_task(entry)}
+        recent_events = [event for event in self.events
+                         if is_research_event(event, display_task_ids)][-200:]
         recent_terminals = {
             event.get("request_id") for event in recent_events
             if event.get("type") in {"request.completed", "request.failed"}
@@ -3594,6 +3608,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
 
     @app.on_event("shutdown")
     async def warn_running_on_shutdown() -> None:
+        await hub.pi_interpreter.close()
         for timer in hub.final_review_timers.values():
             timer.cancel()
         await hub.result_storage.close()
@@ -3907,7 +3922,10 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     async def messenger(before: int | None = Query(default=None, ge=1, le=9223372036854775807),
                         limit: int = Query(default=40, ge=1, le=200),
                         request_id: str | None = None) -> dict:
-        return hub.store.messenger_history(before, limit, request_id)
+        page = hub.store.messenger_history(before, limit, request_id)
+        for event in page["events"]:
+            hub.pi_interpreter.schedule(event)
+        return page
 
     @app.get("/api/events", dependencies=[Depends(auth)])
     async def events(limit: int = 200, since: int | None = None) -> list[dict]:

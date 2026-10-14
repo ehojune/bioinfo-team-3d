@@ -13,7 +13,7 @@ from typing import Any
 import uvicorn
 
 from labhq.gateway.server import RequestIn, create_app
-from labhq.integrations.rounds import build_record
+from labhq.integrations.rounds import build_record, record_sources
 from labhq.request_status import is_terminal_request
 from labhq.runner.daemon import Runner
 from labhq.settings import DataZone, ProjectSettings, Settings
@@ -121,13 +121,14 @@ def _normalize(value: Any, roots: list[str]) -> Any:
 
 
 def lab_record(result: dict, tmp: Path) -> dict:
-    """What the lab recorded for its requests: prompts, schemas, plans, approvals, results, rounds, web."""
+    """The research record: prompts, schemas, plans, approvals, results, rounds and the request web view."""
     hub = result["hub"]
     roots = sorted({str(tmp), str(tmp.resolve())}, key=len, reverse=True)
+    sources = record_sources(hub)
     out = []
     for rid in result["rids"]:
         req = hub.requests[rid]
-        tasks = sorted((t for t in hub.store.all("task").values() if t.get("request_id") == rid),
+        tasks = sorted(sources["tasks"].get(rid, []),
                        key=lambda t: (str(t.get("kind")), str(t.get("step_id")), t.get("attempt") or 0,
                                       t.get("revision") or 0, t.get("dispatched_at") or 0))
         prompts = [{"agent": (t.get("payload") or {}).get("agent_id"), "kind": t.get("kind"),
@@ -138,11 +139,10 @@ def lab_record(result: dict, tmp: Path) -> dict:
         approvals = sorted(json.dumps(_normalize({**{k: (d.get("approval") or {}).get(k) for k in
                                                      ("kind", "summary", "detail")}, "approved": d.get("approved")},
                                                  roots), sort_keys=True, default=str)
-                           for d in hub.store.all("approval_decision").values()
-                           if (d.get("approval") or {}).get("request_id") == rid)
+                           for d in sources["decisions"].get(rid, []))
         events = sorted(json.dumps(_normalize({"type": e.get("type"), "data": e.get("data")}, roots),
                                    sort_keys=True, default=str)
-                        for e in hub.store.events_since(0) if e.get("request_id") == rid)
+                        for e in sources["events"].get(rid, []))
         snapshot = next(r for r in hub.snapshot()["data"]["requests"] if r["id"] == rid)
         out.append({
             "status": req.get("status"), "plan": req.get("plan"), "results": req.get("results"),

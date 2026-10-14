@@ -1,0 +1,5 @@
+pr: 595
+rows:
+- sha: 68b4532
+  at: 2026-10-14 16:15
+  text: 통역 표시 전용 task·event를 연구 round 기록과 재접속 작업 목록에서 분리해 semantics 비교를 안정화

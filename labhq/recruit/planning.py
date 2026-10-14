@@ -168,10 +168,16 @@ def pending_receipt_agents(req, hub):
         req["recruit_contract_failure"] = sorted(unresolved)
     if any(changed) or restored or unresolved:
         hub.save_request(req["id"])
-    if frozen:
-        return set()
-    return {row["agent_id"] for row in batch.get("results", {}).values()
-            if row.get("status") == "active" and row.get("agent_id")}
+    remaining_steps = {s["id"] for s in plan.get("steps", [])
+                       if s["id"] not in (req.get("results") or {})}
+    pending_papers = set()
+    for proposal in plan.get("recruit") or []:
+        step_ids = proposal.get("step_ids")
+        # Legacy proposals without target metadata keep the conservative wait.
+        if not isinstance(step_ids, list) or not step_ids or remaining_steps.intersection(step_ids):
+            pending_papers.add(paper_key(proposal.get("paper") or proposal.get("repo")))
+    return {row["agent_id"] for pid, row in batch.get("results", {}).items()
+            if pid in pending_papers and row.get("status") == "active" and row.get("agent_id")}
 
 
 async def prepare_plan(plan, rid, hub, run):

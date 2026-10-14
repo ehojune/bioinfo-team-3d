@@ -111,4 +111,7 @@ def approval_copy(kind: str, summary: str, detail: dict) -> dict[str, str]:
 
 
 def with_approval_copy(card: dict) -> dict:
-    return {**card, **approval_copy(str(card.get('kind', '')), str(card.get('summary', '')), card.get('detail') or {})}
+    copy = approval_copy(str(card.get('kind', '')), str(card.get('summary', '')), card.get('detail') or {})
+    return {**card, **{key: card.get(key) or value for key, value in copy.items()},
+            **({'pi_explainer': 'chief_of_staff', 'pi_needs_interpretation': True}
+               if not card.get('pi_summary') else {})}

@@ -4,6 +4,104 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 결론
+
+통역 표시 작업이 semantics 비교용 연구 기록에 비결정적으로 섞이던 main CI flake를 고쳤습니다. Refs #557.
+
+## 바뀐 것
+
+- `pi_interpretation` task와 lifecycle event, `messenger.translated`를 round 연구 기록에서 제외했습니다.
+- raw ledger·메신저 전달·요청 비용 집계·종료 대기는 유지했습니다.
+- reconnect snapshot의 작업 목록에서도 표시 전용 task/event를 제외했습니다.
+
+## 확인
+
+- 수정 전 `confirm` 2회째 재현: `messenger.translated.data.message_seq` 84/87 불일치.
+- 실패 parameter 3개를 10회 반복: 30 passed, 0 failed.
+- 관련 pytest: 152 passed + round/environment 139 passed.
+- `web_office_browser.cjs`와 pytest wrapper 통과. CI의 기존 실패는 Chrome 시작 10초 timeout이었고 제품 assertion은 재현되지 않았습니다.
+- `scripts/check_public.sh` 통과. 실제 모델·GitHub API test 호출, PI/trial/HPC 실행은 없습니다.
+
+## 남은 지적
+
+- CI 3.10·3.12·Windows 확인 대기.
+
+🤖 Generated with Codex (gpt-5) for the labhq dev lead
+
+## 결론
+
+#588의 남은 지적 6건을 수정했습니다. Refs #557.
+
+## 바뀐 것
+
+| 항목 | 수정 |
+|---|---|
+| 1 · P1 통제 데이터 | 요청 문장·경로·참고 자료를 policy로 판정하고 오류·불명확 시 모델 호출 차단 |
+| 2 · P1 비용 | 통역 비용·timeout 미집계 비용을 실행 중 예산에 한 번만 반영하고 소진 시 호출 차단 |
+| 3 · P2 한국어 | 영문 기술 용어를 허용하고 코드·경로는 거부 |
+| 4 · P2 이어 묻기 | 2.5D·3D에서 번역된 오류도 실패 문구·스타일 유지 |
+| 5 · P2 진행 | 내부 통역 task를 요청 단계·진행·snapshot의 running_tasks에서 제외 |
+| 6 · P2 종료 | 진행 중 통역을 shutdown_readiness의 finishing에 포함 |
+
+## 확인
+
+- main `4476228`: 새 Python 회귀 77개 실패, Node 렌더링 회귀 2개 실패.
+- 수정 후 관련 pytest 235 passed, Node 5개 파일 통과. 실제 모델·GitHub 호출은 mock만 사용했습니다.
+- 공개 저장소·패치노트·기록 목차 검사 통과.
+- 별도 clone venv 사용. 전체 pytest는 CI에 맡깁니다.
+
+## 남은 지적
+
+- CI·자동 봇 리뷰 확인은 총괄 인계. 브라우저 육안 확인은 UNVERIFIED.
+
+🤖 Generated with Codex (gpt-6-astra) for the labhq dev lead
+
+## 결론
+
+PR #593에서 완료된 채용 단계의 파견직 runner를 재개 대기에서 제외했습니다.
+
+## 바뀐 것
+
+- `recruit.step_ids` 가운데 미완료 단계가 있는 active receipt만 기다립니다.
+- 파견직 단계가 끝났으면 정규직·리뷰 단계를 재개하며, 미완료라면 기존처럼 기다립니다.
+
+## 확인
+
+- main 코드 회귀: 1 failed, 1 passed. 수정 뒤 같은 회귀 2 passed.
+- 관련 pytest 99 passed. `scripts/check_public.sh` 통과. 전체 pytest는 CI에 맡겼습니다.
+
+## 남은 지적
+
+- P2 4266513167과 4266592247은 이번 범위에서 고치지 않았습니다.
+- 봇 리뷰 대기·지적 대응·병합은 총괄이 이어받습니다.
+
+Refs #591
+
+## 결론
+
+PR #590 · Refs #546. 시안 E와 캐릭터 1을 2D 사무실에 적용했습니다.
+
+## 바뀐 것
+
+- roster 동물 전신과 직무 소품, 시설팀 햄스터·파견직 배지·중립 fallback.
+- 내용에 맞는 2열 구역. 폰 사무실은 분석 구역·지휘부부터 표시합니다. 결정 우선 화면 순서는 유지합니다.
+- 상태 점+글자, 결정 대기 강조색, OS 움직임 줄이기. 기존 외부 폰트 링크 제거.
+- shared state·3D·API 변경 없음.
+
+## 확인
+
+- 기준 main `7c1686d`: 새 Node 회귀 6 실패·대비 1 통과, Chrome 회귀 1 실패 → branch 모두 통과.
+- Node 전체 52개 파일, 174건 통과. Windows 전체 pytest: **1 failed, 6300 passed, 66 skipped, 1382 warnings in 772.02s (0:12:52)**. 실패한 Node 등록 누락 수정 후 관련 Windows **88 passed, 1 skipped**. 전체 재실행은 다른 pytest 프로세스 감지로 차단돼 관련 검사만 실행했습니다.
+- PC 1440×900·폰 390×844: 그림 72/64px, 핵심 직원 가림·가로 넘침 없음.
+- 실제 글자 대비 light/dark 최저 6.50:1, 그림 윤곽 3:1 이상. reduced-motion animation 0, 외부 이미지·폰트 요청 0.
+- 공개·패치노트·기록 목차 검사 통과. main `5a97108`과 충돌(`CONFLICTING`). CI: changes·patch-notes·pytest 3.10/3.12/Windows/slow·clean-install·ro-crate-validator·readme 모두 미생성.
+
+[전후 화면 4장](../design/2026-10-13/office-comparison/README.md) · [검사 근거](../design/2026-10-13/docs/reference/office-verification.md)
+
+## 남은 지적
+
+main 충돌 해소·CI 확인은 총괄에게 넘긴다. 전체 Windows 재실행은 동시 pytest 감지로 생략했다. 관련 검사 TEMP 삭제는 자동 승인 검토가 `blocked by policy`로 거부해 보존했다. 봇 판단·병합은 총괄에게 넘긴다.
+
 PR #581 · `recruit-before-plan` · Refs #549
 
 - 4266319195: 내부 변환 task를 요청 예산에 ID별 한 번만 집계. 다음 dispatch 전 예산 카드 확인.
@@ -16,6 +114,58 @@ PR #581 · `recruit-before-plan` · Refs #549
 - 이후 main의 웹 테스트 자동 수집을 병합. 채용·웹 174 passed / 1 skipped, Node 52개 파일 통과.
 - 다른 레인 전체 pytest와 겹쳐 로컬 전체 검사는 생략. 최종 CI 결과는 PR 본문에 기록.
 - 공개·패치노트·목차 검사 후 push. PI/trial 실행·리뷰 요청·인라인 답글·병합 없음.
+
+PR #588 · `plain-language-2`
+
+## 바뀐 것
+
+- 펭귄 비서실장 설명과 영어 메시지 한국어 표시. 원문은 자세히에 보존하며 기존 쉬운 설명은 유지합니다.
+- 메시지 번호별 영구 캐시, 호출 1회, 모델·활성화·요청별 비용 상한. 실패해도 전달하며 번역 비용은 요청에 합산합니다.
+- 최종 보고서의 설치된 humanizer 표현 3종 점검과 부록 한 줄. 전체 40개 패턴 진단은 아닙니다.
+- 생성 명령 승인 오탐 회귀 확인, 매뉴얼·예시 설정 갱신.
+
+## 확인
+
+- origin/main 기준 새 Python 22건·웹 6건 실패. 생성 명령 테스트는 main에서 이미 통과했습니다.
+- Windows 관련 Python 281 passed. Node 전체 51개 파일 최종 수정까지 통과.
+- 배포 예시 동기화·CI 등록 검증: Python 372 passed/7 skipped, 격리 HOME의 Node PATH 보정 후 웹 51 passed.
+- 다른 레인의 전체 pytest 실행을 확인해 로컬 전체 pytest는 생략했습니다. 전체 결과는 PR CI에 남깁니다.
+- 모델은 mock만 사용했습니다. PI/trial 접속·실행, 실제 모델 호출, 리뷰 요청, 병합은 하지 않았습니다.
+
+Refs #557
+
+## 남은 지적
+
+- 로컬 전체 pytest는 레인 중복 실행 금지에 따른 미실행입니다. 테스트 임시 폴더 삭제는 자동 승인 검토가 blocked by policy로 거부했습니다.
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
+PR #587: 큰 연구 라운드도 사람용 본문을 GitHub issue로 게시하고 원본은 로컬 기록에 보존한다.
+
+## 바뀐 것
+
+- 한도를 넘으면 JSON을 빼고 로컬 `rounds/<rid>.json`을 안내한다.
+- 그래도 길면 결과 보고서를 Markdown 줄 단위로 줄이고 로컬 전문 경로를 남긴다.
+- 같은 marker 이슈는 수정하며 sha256 중복 방지를 유지한다.
+- 과거 크기 초과 `failed` delivery는 재시작 때 다시 시도한다. 게시 기록이 있으면 건드리지 않는다.
+
+## 확인
+
+- 새 회귀 4건은 main에서 실패하고 branch에서 통과했다. 관련 pytest 42 passed.
+- 최신 main 병합 뒤 focused 33 passed.
+- Windows 전체 pytest: **6,278 passed, 66 skipped** (733.86초). Node CJS 48개 파일 통과.
+- 공개·diff 검사 통과. `%TEMP%`의 작업용 pytest 폴더 삭제 완료.
+- CI는 기록 커밋 push 뒤 확인한다.
+
+## 남은 지적
+
+- PI/trial 실행·설정·접속, 실제 라운드 저장소 쓰기, 리뷰 요청·인라인 답글·병합은 하지 않았다.
+
+Refs #69
+
+🤖 Generated with Codex (gpt-5.6-sol) for the labhq dev lead
 
 ## 결론
 

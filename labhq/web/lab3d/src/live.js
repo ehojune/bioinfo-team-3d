@@ -1,4 +1,4 @@
-import {answerRequired, revisionNoteMissing, syncReviewCards, syncDecisionCards, syncDecisionHistory, createHistoryVisibility} from '../../ui/decide.js';
+import {answerRequired, revisionNoteMissing, syncReviewCards, syncDecisionCards, syncDecisionHistory, createHistoryVisibility, expandableText} from '../../ui/decide.js';
 import {bindShutdown} from '../../ui/shutdown.js';
 
 // DOM controls and transport stay outside the shared event reducer.
@@ -191,7 +191,22 @@ export function startLiveOffice(onState) {
         text(row, 'p', `실행 중 메모 · ${sent} · ${note.text}`);
       }
       for (const f of q.followups || []) {  // asked from the 2.5D request view; the shared reducer tracks them
-        text(row, 'p', `이어 묻기: ${f.text} → ${f.status === 'done' ? f.answer + (f.answer_truncated ? '…' : '') : f.status === 'running' ? '답 기다리는 중' : f.error || '답하지 못함'}`);
+        if (f.status === 'running') {
+          text(row, 'p', `이어 묻기: ${f.text} → 답 기다리는 중`);
+        } else if (f.status !== 'done') {
+          text(row, 'p', `이어 묻기: ${f.text} → 답하지 못함`).className = 'fu-err';
+          if (f.pi_display?.status === 'translated') {
+            expandableText(row, f.pi_display.text, {pi:true, original:f.error, forceOriginal:true,
+              attribution:'펭귄 비서실장 설명'});
+          } else text(row, 'p', f.error || '답하지 못함').className = 'fu-err';
+        } else if (f.pi_display?.status === 'translated') {
+          text(row, 'p', `이어 묻기: ${f.text}`);
+          expandableText(row, f.pi_display.text, {pi:true, original:f.answer || f.error, forceOriginal:true,
+            attribution:'펭귄 비서실장 설명', truncated:f.answer_truncated, cutChars:f.answer_chars});
+        } else {
+          if (f.pi_display) text(row, 'small', '번역 못 함');
+          text(row, 'p', `이어 묻기: ${f.text} → ${f.status === 'done' ? f.answer + (f.answer_truncated ? '…' : '') : f.status === 'running' ? '답 기다리는 중' : f.error || '답하지 못함'}`);
+        }
         if (f.status === 'done' && f.answer_truncated) {
           const more = text(row, 'button', '전문 보기'); more.type = 'button';
           more.disabled = loadingAnswers.has(q.id); more.onclick = () => loadFullAnswers(q.id);
