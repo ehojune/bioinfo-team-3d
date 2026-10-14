@@ -497,7 +497,95 @@ function createCard(item, options) {
   const deny = add(actions, 'button', '', 'btn');
   deny.type = 'button';
   row._decisionParts = { title, who, request, summary, detail, questions, storage, assumptions, timing, note, consequence, approve, revise, deny };
+  if (options.presentation === 'journal') {
+    row.className += ' ui-card decision-card';
+    const heading = doc().createElement('h3'); heading.className = 'decision-question';
+    const facts = doc().createElement('dl'); facts.className = 'decision-facts';
+    const status = doc().createElement('span'); status.className = 'ui-chip decision-status';
+    const dot = add(status, 'i', '', 'status-dot'); dot.setAttribute?.('aria-hidden', 'true');
+    add(status, 'span', '결정 대기');
+    const source = doc().createElement('details'); source.className = 'decision-source';
+    add(source, 'summary', '자세히'); source.append(detail);
+    const explanation = doc().createElement('div'); explanation.className = 'decision-explanation';
+    const reason = add(explanation, 'p'), outcome = add(explanation, 'p');
+    const memo = doc().createElement('label'); memo.className = 'decision-memo';
+    add(memo, 'span', '메모'); memo.append(note);
+    approve.className += ' ui-button ui-button--primary decision-primary';
+    deny.className += ' ui-button decision-secondary';
+    revise.className += ' ui-button decision-secondary';
+    body.replaceChildren(heading, facts, summary, explanation, status, kind, request, questions, storage, assumptions, timing, consequence, actions, memo, source);
+    Object.assign(row._decisionParts, {heading, facts, reason, outcome});
+  }
   return row;
+}
+
+const DECISION_QUESTIONS = {
+  hpc_submit: '클러스터 작업을 시작할까요?', tool_permission: '이 도구 실행을 승인할까요?',
+  budget: '예산 상한을 올릴까요?', recruit: '이 직원을 채용할까요?',
+  research_plan: '이 계획으로 연구를 시작할까요?', research_evidence: '이 근거를 승인할까요?',
+  research_continue: '연구를 한 차례 더 이어 갈까요?', resume: '중단된 작업을 이어 갈까요?',
+  clarify: '어떤 방향으로 진행할까요?', question: '직원에게 어떤 답을 줄까요?',
+  scope: '이 범위로 진행할까요?', facilities_fix: '운영 문제 수정을 승인할까요?',
+  result_storage: '결과를 어디에 남길까요?', result_publish: '이 정리본을 올릴까요?',
+};
+// Facts come only from received fields; absent resource estimates must never be invented.
+export function decisionFacts(value, who = '') {
+  const d = value.detail || {}, missing = '미제공';
+  const text = v => v == null || v === '' ? missing : String(v);
+  const money = v => v != null && v !== '' && Number.isFinite(Number(v)) ? `$${Number(v).toFixed(2)}` : missing;
+  switch (value.kind) {
+    case 'hpc_submit': return [['자원', [d.cores != null ? `${d.cores}코어` : '', d.mem].filter(Boolean).join(' · ') || missing], ['최대 시간', text(d.walltime)], ['대기열', text(d.queue)]];
+    case 'budget': return [['사용 비용', money(d.spent_usd)], ['현재 상한', money(d.limit_usd)], ['새 상한', money(d.requested_budget_usd)]];
+    case 'research_plan': {
+      let plan = {}; try { plan = JSON.parse(d.plan_canonical || '{}'); } catch {}
+      const steps = Array.isArray(plan.steps) ? plan.steps : [];
+      const people = new Set(steps.map(s => s.agent_id).filter(Boolean)).size;
+      return [['단계', Array.isArray(plan.steps) ? `${steps.length}개` : missing], ['담당', people ? `${people}명` : missing]];
+    }
+    case 'research_evidence': return [['검토 단계', d.results ? `${Object.keys(d.results).length}개` : missing], ['근거를 잃은 주장', Array.isArray(d.unsupported_claims) ? `${d.unsupported_claims.length}개` : missing]];
+    case 'research_continue': return [['이번 차수', text(d.round)], ['차수 상한', text(d.limit)]];
+    case 'resume': return [['남은 단계', Array.isArray(d.steps) ? d.steps.join(', ') || (d.has_plan === false ? '요청 전체' : '없음') : missing], ['접수', receivedAt(d.created_at) || missing]];
+    case 'tool_permission': return [['도구', text(d.tool_name)], ['요청 직원', who || missing]];
+    case 'recruit': return [['제안 직원', who || missing], ['출처', d.repo || value.repo ? '저장소 · 자세히' : '자세히에서 확인']];
+    default: return [['요청 직원', who || missing], ['종류', (DECISION_QUESTIONS[value.kind] || '결정 요청').replace(/\?$/, '')]];
+  }
+}
+
+function updateJournalCard(p, value, suggestion) {
+  const kind = suggestion ? 'recruit' : value.kind;
+  if (!/[가-힣]/.test(p.title.textContent)) p.title.textContent = '결정 요청';
+  p.heading.textContent = DECISION_QUESTIONS[kind] || '이 요청을 승인할까요?';
+  const facts = decisionFacts({...value, kind}, p.who.textContent);
+  const signature = JSON.stringify(facts);
+  if (p.facts._signature !== signature) {
+    p.facts._signature = signature; p.facts.replaceChildren();
+    for (const [label, value] of facts) {
+      const cell = add(p.facts, 'div'); add(cell, 'dt', label); add(cell, 'dd', value);
+    }
+  }
+  syncExpandableText(p.reason, value.pi_reason || value.detail?.reason || value.reason || '', {pi: true});
+  syncExpandableText(p.outcome, value.pi_outcome || '', {pi: true});
+  p.reason.hidden = !p.reason.textContent; p.outcome.hidden = !p.outcome.textContent;
+  // These legacy renderers already fold their raw fields. Reuse that content inside the
+  // journal's single 자세히 rather than making the PI open two identically named folds.
+  if (['tool_permission', 'hpc_submit', 'budget', 'recruit'].includes(kind)) {
+    const fold = [...p.detail.children].find(node => node.tagName?.toLowerCase() === 'details');
+    if (fold) {
+      const caption = fold.children[0]?.textContent || '';
+      p.detail.replaceChildren(...[...fold.children].slice(1));
+      if (caption.includes('서버에서')) add(p.detail, 'small', caption);
+    }
+  }
+  // Raw values remain exact inside 자세히; field captions are readable Korean, including unknown keys.
+  const captions = {reason:'이유', detail:'상세 내용', input:'명령 입력', tool_name:'도구', command:'명령',
+    queue:'대기열', cores:'코어 수', mem:'메모리', walltime:'최대 시간', resources:'자원', repo:'저장소', paper:'논문',
+    script_path:'스크립트 위치', script_preview:'스크립트 미리보기', action:'조치', signature_id:'문제 식별자',
+    'data boundary':'데이터 경계', topics:'연구 주제', protocol:'연구 절차'};
+  const visit = node => {
+    if (node.tagName?.toLowerCase() === 'dt' && !/[가-힣]/.test(node.textContent)) node.textContent = captions[node.textContent] || '추가 정보';
+    for (const child of node.children || []) visit(child);
+  };
+  visit(p.detail);
 }
 
 function descendants(plan, root) {
@@ -594,6 +682,7 @@ function updateCard(row, item, options) {
   renderDetail(p.detail, item.type === 'suggestion' ? 'recruit' : value.kind,
     item.type === 'suggestion' ? {reason: value.reason, repo: value.repo, paper: value.paper} : value.detail,
     approval ? value : {pi_reason: plainPiText(value.reason), pi_outcome: HIRE_RESULT});
+  if (p.heading) updateJournalCard(p, value, !approval);
   renderQuestions(p.questions, approval ? value : null);
   renderStorage(p.storage, approval ? value : null);
   renderAssumptions(p.assumptions, approval ? value : null);
@@ -669,12 +758,25 @@ export function syncReviewCards(container, requests, options = {}) {
     const row = doc().createElement('article'); row.className = 'ap';
     row.dataset.reviewRequest = q.id; row.dataset.reviewKey = key;
     const body = add(row, 'div');
+    const journal = options.presentation === 'journal';
+    if (journal) {
+      row.className += ' ui-card decision-card';
+      add(body, 'h3', reportReady ? '보고서를 검토할까요?' : '종료된 요청의 결과를 확인할까요?', 'decision-question');
+      const facts = add(body, 'dl', '', 'decision-facts');
+      for (const [label, value] of [['상태', globalThis.LabHQState.reviewLabel(q)], ['자동 승인', '없음']]) {
+        const cell = add(facts, 'div'); add(cell, 'dt', label); add(cell, 'dd', value);
+      }
+      const status = add(body, 'span', '', 'ui-chip decision-status');
+      add(status, 'i', '', 'status-dot').setAttribute?.('aria-hidden', 'true');
+      add(status, 'span', '검토 대기');
+    }
     add(body, 'strong', globalThis.LabHQState.reviewLabel(q), 'kind');
     add(body, 'p', q.text || q.id, 'sum');
     add(body, 'p', final ? 'CP4 · 최종 초안을 검토해 주세요. 수용은 게시·전송·실행 승인이 아닙니다.' : reportReady ? '작업 완료 · 보고서를 검토해 주세요.' : '요청 종료 · 결과와 이유를 확인해 주세요.', 'decision-meta');
     if (final) add(body, 'p', `초안 ${final.revision} · ${final.target_sha256} · 기한 ${new Date(final.deadline_at * 1000).toLocaleString()}`, 'decision-meta');
     const actions = add(body, 'div', '', 'acts');
     const open = add(actions, 'button', reportReady ? '보고서 열기' : '결과·이유 보기', 'btn go');
+    if (journal) open.className += ' ui-button ui-button--primary decision-primary';
     open.type = 'button'; open.onclick = () => options.onOpen?.(q.id);
     const done = add(actions, 'button', reportReady ? '검토 완료' : '확인 완료', 'btn');
     done.type = 'button'; done.disabled = options.disabled?.(q) || false;
@@ -730,9 +832,14 @@ export function syncDecisionHistory(container, history, options = {}) {
     for (const item of values) {
       const approval = item.approval || {};
       const row = add(list, 'li', '', 'decision-history-item');
+      if (options.presentation === 'journal') row.className += ' ui-card ui-list-row';
       const outcome = item.state === 'timed_out' ? '시간 초과' : item.state === 'expired' ? '만료' : item.approved ? '승인' :
         item.choice === 'revise' ? '수정 요청' : '거절';
       add(row, 'strong', `${outcome} · ${(options.kindLabels || {})[approval.kind] || approval.kind || '결정'}`);
+      if (options.presentation === 'journal') {
+        row.children[0].className = 'decision-history-status';
+        add(row.children[0], 'i', '', 'status-dot').setAttribute?.('aria-hidden', 'true');
+      }
       const at = new Date(Number(item.decided_at) * 1000);
       if (item.decided_at != null && Number.isFinite(at.getTime())) {
         const pad = n => String(n).padStart(2, '0');
