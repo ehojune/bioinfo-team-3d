@@ -21,7 +21,8 @@ from typing import Any, Iterator
 from .adapters.held_dir import HeldDir, NotPlainFolder
 from .evidence.audit import claims_record, locate_workdir
 from .evidence.claims import normalize_artifact_path
-from .report_figures import bundle_figure_check, figure_owners, link_workdir_figures, linked_figure_paths
+from .report_figures import (bundle_figure_check, figure_owners, link_workdir_figures, linked_figure_paths,
+                             output_exists)
 from .ro_crate import FORMAT_MARKER, METADATA_FILE, write_ro_crate
 
 
@@ -502,7 +503,7 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
     rerun_receipt = _rerun_receipt(req)
     # The report links a figure as <workdir_id>/outputs/<file>; the bundle names it steps/<step_id>/outputs/<file>, and
     # a linked figure is kept even when the bundle's total limits are full (#584). The per-file limit still applies.
-    report_text = link_workdir_figures(str(req.get("report") or ""), figure_owners(results))
+    report_text = link_workdir_figures(str(req.get("report") or ""), figure_owners(results), output_exists(results))
     linked_figures = set(linked_figure_paths(report_text))
     plan_steps = [step for step in ((req.get("plan") or {}).get("steps") or []) if isinstance(step, Mapping)]
     ordered_ids, ordered_steps = _topological_steps(plan_steps, results)
@@ -730,9 +731,6 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
         if not_copied:
             appendix += f"\n\n- 요청 묶음 상태: incomplete (기록 산출 {not_copied}개 미복사; MANIFEST.tsv 확인)"
         (temp / "report.md").write_text(report, encoding="utf-8", newline="\n")
-        figure_problems = bundle_figure_check(temp)["problems"]  # the same check `labhq verify` runs later
-        if figure_problems:
-            appendix += "\n\n## 보고서 그림 링크\n\n" + "\n".join(f"- {problem}" for problem in figure_problems)
         (temp / "report_appendix.md").write_text(appendix, encoding="utf-8", newline="\n")
         from .recruit.paper_skills import records as paper_skill_records
         paper_records = paper_skill_records(req.get("plan") or {}, results)
@@ -788,6 +786,13 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
             relative = path.relative_to(temp).as_posix()
             rewrite_by_file[relative] = (count, paths)
             remaining.update(paths)
+
+        # The figure check reads the rewritten report: an image linked by its absolute workdir path now points inside the
+        # bundle. It is the same check `labhq verify` runs later.
+        figure_problems = bundle_figure_check(temp)["problems"]
+        if figure_problems:
+            with (temp / "report_appendix.md").open("a", encoding="utf-8", newline="\n") as handle:
+                handle.write("\n\n## 보고서 그림 링크\n\n" + "\n".join(f"- {problem}" for problem in figure_problems))
 
         grade, grade_reasons = _grade(rows, ordered_steps, rewrite_by_file, not_copied, rerun_receipt)
         with (temp / "README.md").open("a", encoding="utf-8", newline="\n") as handle:

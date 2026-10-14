@@ -446,13 +446,13 @@ task 취소(`POST /api/tasks/{id}/cancel`)는 task 기록의 runner로 보냅니
 
 ### 보고서 PDF
 
-보고서 본문(`report.md`)은 "결과"에 핵심 그림을 최대 6개 마크다운 이미지로 넣습니다. 직원은 단계 결과 목록에 있는 `<workdir_id>/outputs/<파일>`(png·jpg·gif·svg)만 링크하고, 요청 묶음은 그 링크를 `steps/<step_id>/outputs/<파일>`로 고쳐 씁니다. 링크한 그림은 묶음의 누적 상한이 차 있어도 복사합니다(파일 하나의 상한 `runner.bundle_max_file_mb`는 그대로). `labhq verify`는 묶음 문서의 로컬 그림 링크가 묶음 안의 비어 있지 않은 일반 파일인지 확인하고, 없거나 묶음 밖을 가리키면 `보고서 그림: …` 문제로 적습니다(exit 1). 묶음을 만들 때도 같은 문제를 부록 "보고서 그림 링크"에 남깁니다.
+보고서 본문(`report.md`)은 "결과"에 핵심 그림을 최대 6개 마크다운 이미지로 넣습니다. 직원은 단계 결과 목록에 있는 `<workdir_id>/outputs/<파일>`(png·jpg·gif·svg)만 링크하고, 요청 묶음은 그 링크를 `steps/<step_id>/outputs/<파일>`로 고쳐 씁니다. 경로의 괄호(`plot(1).png`)와 꺾쇠(`<my plot.png>`)는 온전히 읽고, 파일 이름에 든 `#`·`?`는 그 파일이 있으면 이름의 일부로 둡니다. 링크한 그림은 묶음의 누적 상한이 차 있어도 복사합니다(파일 하나의 상한 `runner.bundle_max_file_mb`는 그대로). `labhq verify`는 묶음 문서의 로컬 그림 링크가 묶음 안의 비어 있지 않은 일반 파일인지 확인하고, 없거나 묶음 밖을 가리키면 `보고서 그림: …` 문제로 적습니다(exit 1). 묶음을 만들 때도 같은 문제를 부록 "보고서 그림 링크"에 남깁니다.
 
 PDF는 필요할 때만 만듭니다. 끝난 요청에서 웹 요청 상세(2.5D·3D)의 **PDF로 받기** 버튼이나 `labhq report <request_id> --pdf [--out 파일]`을 쓰면 gateway가 `GET /api/requests/{id}/report-pdf`로 만듭니다.
 
 - 순서: 묶음의 `report.md`·`report_appendix.md`로 그림(data: URI)·한글 글꼴·인쇄 CSS를 갖춘 HTML 한 장을 만들고, 이 PC의 Edge·Chrome을 headless로 돌려 PDF로 인쇄합니다. 구성은 표지(요청·시각·상태), 본문(결론·결과·방법·한계), 부록(실행 기록)입니다. 외부 주소의 그림은 넣지 않고 그 자리에 "그림 없음"을 적습니다.
 - 브라우저는 `gateway.report_browser`, PATH, 표준 설치 위치 순으로 찾습니다. 못 찾거나 인쇄가 60초 안에 안 끝나면 HTML을 주고 이유를 알립니다(브라우저로 열어 "PDF로 저장"). LaTeX·GTK 같은 의존성은 없습니다.
-- 결과는 `runner.workspace_root/requests/<request_id>-report/`에 두고, 보고서·묶음 MANIFEST가 그대로면 PDF를 다시 쓰지 않습니다. 묶음 폴더 안에는 쓰지 않아 `labhq verify`가 영향을 받지 않습니다.
+- 결과는 `runner.workspace_root/requests/<request_id>-report/`에 두고, 표지에 찍히는 값(상태·검토 단계)·묶음의 `report.md`·`report_appendix.md`·MANIFEST가 그대로면 PDF를 다시 쓰지 않습니다. 묶음 폴더 안에는 쓰지 않아 `labhq verify`가 영향을 받지 않습니다.
 - 끝나지 않은 요청, 보고서가 없는 요청, 통제 데이터 구역을 건드린 요청에는 만들지 않고(409) 이유를 알립니다. 결과 저장(#558)의 정리본과 같은 판정을 씁니다.
 
 ### 로그인 대기

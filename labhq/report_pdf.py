@@ -25,7 +25,8 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from .report_figures import FIGURE_SUFFIXES, IMAGE_PATTERN, classify, figure_owners, link_workdir_figures
+from .report_figures import (FIGURE_SUFFIXES, IMAGE_PATTERN, classify, figure_owners, link_workdir_figures,
+                             output_exists)
 
 RENDER_VERSION = "1"  # bump when the page's markup or CSS changes: a cached PDF of an older one is not reused
 PRINT_TIMEOUT_S = 60.0
@@ -60,7 +61,8 @@ _INLINE_CODE = re.compile(r"`([^`\n]+)`")
 _ANCHOR = re.compile(r"\[\[\s*claim\s*:\s*([^\[\]\n]*?)\s*\]\]", re.IGNORECASE)
 _LINK = re.compile(r"\[([^\]\n]+)\]\(([^)\s]+)(?:\s+&quot;.*?&quot;)?\)")
 _BOLD = re.compile(r"\*\*(?=\S)(.+?)(?<=\S)\*\*")
-_ITALIC = re.compile(r"(?<![\w*])\*(?=[^\s*])([^*\n]+?)(?<=[^\s*])\*(?![\w*])")
+# ASCII-only word guards: `2*3*4` stays text and `*TP53*의` is italic (a Hangul particle is not a word here)
+_ITALIC = re.compile(r"(?<![A-Za-z0-9_*])\*(?=[^\s*])([^*\n]+?)(?<=[^\s*])\*(?![A-Za-z0-9_*])")
 _STRIKE = re.compile(r"~~(?=\S)(.+?)(?<=\S)~~")
 _STASH = re.compile(r"\x00(\d+)\x00")
 _FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})(.*)$")
@@ -114,9 +116,17 @@ class FigureEmbedder:
         self.total += len(payload)
         return f"data:{FIGURE_SUFFIXES[suffix]};base64,{base64.b64encode(payload).decode('ascii')}", ""
 
+    def _holds(self, path: str) -> bool:
+        from .ro_crate import _plain_file
+
+        try:
+            return self.root is not None and _plain_file(self.root, path).is_file()
+        except OSError:
+            return False
+
     def markup(self, alt: str, target: str, *, block: bool) -> str:
         """``alt`` and ``target`` are the raw markdown text; the markup returned is escaped."""
-        kind, value = classify(target)
+        kind, value = classify(target, self._holds)
         uri, reason = self._uri(kind, value)
         shown = alt.strip() or PurePosixPath(value.replace("\\", "/")).name or "그림"
         if uri is None:
@@ -194,9 +204,13 @@ def _indent(line: str) -> int:
 
 
 def _starts_block(lines: list[str], index: int) -> bool:
+    """Whether the line at ``index`` begins a block, so a paragraph or a list item's own text stops before it."""
     line = lines[index]
+    item = _ITEM.match(line)
+    if item and item.group(2)[0].isdigit() and int(item.group(2)[:-1]) != 1:
+        item = None  # only an ordered list starting at 1 may interrupt a paragraph: "2026. 10. 14." stays text
     return bool(_FENCE.match(line) or _HEADING.match(line) or _RULE.match(line) or _QUOTE.match(line)
-                or _ITEM.match(line) or _is_table(lines, index))
+                or item or _is_table(lines, index))
 
 
 def _is_table(lines: list[str], index: int) -> bool:
@@ -204,12 +218,39 @@ def _is_table(lines: list[str], index: int) -> bool:
             and bool(_TABLE_SEPARATOR.match(lines[index + 1])) and len(_cells(lines[index])) >= 1)
 
 
-def _list(lines: list[str], index: int, figures: FigureEmbedder) -> tuple[str, int]:
+def _fence_state(fence: str, text: str) -> str:
+    """The marker of the code fence still open after one more line of an item's content ("" when none is open)."""
+    stripped = text.strip()
+    if fence:
+        return "" if stripped.startswith(fence) and not stripped.strip(fence[0]) else fence
+    opened = _FENCE.match(text)
+    return opened.group(1) if opened else ""
+
+
+def _item_html(content: list[str], figures: FigureEmbedder, shift: int) -> str:
+    """One list item's content as blocks; its first paragraph goes without ``<p>`` (a tight list)."""
+    out = _blocks(content, figures, shift)
+    if out.startswith("<p>"):
+        end = out.index("</p>")  # the text is escaped, so the first "</p>" closes the first paragraph
+        out = out[3:end] + out[end + 4:].lstrip("\n")
+    return out
+
+
+def _list(lines: list[str], index: int, figures: FigureEmbedder, shift: int) -> tuple[str, int]:
     first = _ITEM.match(lines[index])
     assert first is not None
     base, ordered = _indent(lines[index]), first.group(2)[0].isdigit()
-    items: list[list[Any]] = []  # [text lines, nested list html]
+    start = int(first.group(2)[:-1]) if ordered else 1
+    items: list[list[str]] = []  # each item's content lines; continuation lines lose the marker's indent
+    offset, fence, plain = 0, "", False  # plain: the last line is paragraph text, which a lazy line may continue
     count = len(lines)
+
+    def add(text: str) -> None:
+        nonlocal fence, plain
+        items[-1].append(text)
+        fence = _fence_state(fence, text)
+        plain = bool(text.strip()) and not fence and not _FENCE.match(text)
+
     while index < count:
         line = lines[index]
         if not line.strip():  # a blank line ends the list unless the next line belongs to it
@@ -219,26 +260,29 @@ def _list(lines: list[str], index: int, figures: FigureEmbedder) -> tuple[str, i
             if ahead >= count:
                 break
             following = _ITEM.match(lines[ahead])
-            if _indent(lines[ahead]) > base or (following and _indent(lines[ahead]) == base
-                                                 and following.group(2)[0].isdigit() == ordered):
-                index = ahead
-                continue
-            break
+            if _indent(lines[ahead]) > base:  # more of this item (a second paragraph, a fence, a table)
+                for _ in range(ahead - index):
+                    add("")
+            elif not (following and _indent(lines[ahead]) == base
+                      and following.group(2)[0].isdigit() == ordered):
+                break
+            index = ahead
+            continue
         item, depth = _ITEM.match(line), _indent(line)
-        if item and depth > base:
-            nested, index = _list(lines, index, figures)
-            items[-1][1] += nested
-        elif item and depth == base and item.group(2)[0].isdigit() == ordered:
-            items.append([[item.group(3)], ""])
-            index += 1
-        elif item or (depth <= base and _starts_block(lines, index)):
+        if item and depth == base and item.group(2)[0].isdigit() == ordered:
+            items.append([])
+            offset, fence = base + len(item.group(2)) + 1, ""
+            add(item.group(3))
+        elif depth > base:  # this item's content: nested lists, fences, tables, more paragraphs
+            add(" " * (depth - min(depth, offset)) + line.lstrip())
+        elif plain and not _starts_block(lines, index):  # a lazy continuation of the item's paragraph
+            add(line.strip())
+        else:
             break
-        else:  # the item's own next line, indented or lazy
-            items[-1][0].append(line.strip())
-            index += 1
-    tag = "ol" if ordered else "ul"
-    body = "".join(f"<li>{_inline(' '.join(text), figures)}{nested}</li>" for text, nested in items)
-    return f"<{tag}>{body}</{tag}>", index
+        index += 1
+    tag, number = ("ol", f' start="{start}"' if start != 1 else "") if ordered else ("ul", "")
+    body = "".join(f"<li>{_item_html(content, figures, shift)}</li>" for content in items)
+    return f"<{tag}{number}>{body}</{tag}>", index
 
 
 def _blocks(lines: list[str], figures: FigureEmbedder, shift: int) -> str:
@@ -293,7 +337,7 @@ def _blocks(lines: list[str], figures: FigureEmbedder, shift: int) -> str:
             out.append(f"<blockquote>{_blocks(quoted, figures, shift)}</blockquote>")
             continue
         if _ITEM.match(line):
-            markup, index = _list(lines, index, figures)
+            markup, index = _list(lines, index, figures, shift)
             out.append(markup)
             continue
         paragraph = [line.strip()]
@@ -315,7 +359,7 @@ def markdown_to_html(markdown: str, figures: FigureEmbedder, *, top_level: int =
     lines = (markdown or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
     levels, fenced = [], False
     for line in lines:
-        if _FENCE.match(line):
+        if _FENCE.match(line.lstrip()):  # a fence inside a list item may be indented past three spaces
             fenced = not fenced
         elif not fenced and (found := _HEADING.match(line)):
             levels.append(len(found.group(1)))
@@ -403,7 +447,7 @@ def build_report_html(req: Mapping[str, Any], bundle: Path | None, *, now: datet
     # A bundle made before the link rewrite, or the stored report itself, still names figures <workdir_id>/outputs/<file>.
     owners = figure_owners(results)
     body = markdown_to_html(link_workdir_figures(_read_document(bundle, "report.md", str(req.get("report") or "")),
-                                                 owners), figures)
+                                                 owners, output_exists(results, bundle)), figures)
     appendix_text = _read_document(bundle, "report_appendix.md", str(req.get("report_appendix") or ""))
     appendix = markdown_to_html(appendix_text, figures, top_level=3) if appendix_text.strip() else ""
     made = (now or datetime.now()).astimezone().strftime("%Y-%m-%d %H:%M")
@@ -527,15 +571,23 @@ def check_buildable(req: Mapping[str, Any], settings: Any, tasks: Mapping[str, A
 
 
 def _cache_key(req: Mapping[str, Any], bundle: Path | None) -> str:
+    """Everything the page is built from: the cover's fields and the two documents as `build_report_html` reads them."""
+    from .request_status import request_display_label
+
     manifest = b""
     if bundle is not None:
         try:
             manifest = (bundle / "MANIFEST.tsv").read_bytes()
         except OSError:
             manifest = b""
+    documents = [hashlib.sha256(_read_document(bundle, name, str(req.get(field) or "")).encode("utf-8")).hexdigest()
+                 for name, field in (("report.md", "report"), ("report_appendix.md", "report_appendix"))]
+    results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
     return hashlib.sha256(json.dumps(
-        [RENDER_VERSION, req.get("id"), req.get("text"), req.get("status"), req.get("report"),
-         req.get("report_appendix"), req.get("bundle_grade"), hashlib.sha256(manifest).hexdigest()],
+        [RENDER_VERSION, req.get("id"), req.get("text"), req.get("created_at"), req.get("status"),
+         request_display_label(dict(req)), req.get("pi_review_pending"), req.get("pi_reviewed_at"),
+         req.get("report"), req.get("report_appendix"), req.get("bundle_grade"), figure_owners(results), documents,
+         hashlib.sha256(manifest).hexdigest()],
         ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest()
 
 

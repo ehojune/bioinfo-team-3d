@@ -12,7 +12,8 @@ import pytest
 from labhq.cli import _verify, main
 from labhq.evidence.audit import render_verify, verify_request
 from labhq.orchestrator import cso
-from labhq.report_figures import bundle_figure_check, link_workdir_figures, linked_figure_paths
+from labhq.report_figures import (bundle_figure_check, classify, image_links, link_workdir_figures, linked_figure_paths,
+                                  output_exists)
 from labhq.report_pdf import (NO_BROWSER, FigureEmbedder, ReportRefused, build_report_file, build_report_html,
                               find_browser, markdown_to_html, print_pdf)
 from labhq.request_bundle import build_request_bundle
@@ -430,3 +431,122 @@ def test_cli_verify_prints_the_figure_problem(tmp_path, monkeypatch, capsys):
     code = _verify(settings, request["id"], as_json=False, bundle=None)
     out = capsys.readouterr().out
     assert code == 1 and "보고서 그림: 링크 1개, 문제 1건" in out
+
+
+# --- review of PR #596 -------------------------------------------------------------------------------------------------
+
+def test_list_items_keep_the_fences_tables_and_paragraphs_nested_under_them():
+    out = markdown_to_html("1. 실행\n\n   ```bash\n   # 주석\n   python run.py\n\n   echo done\n   ```\n\n"
+                           "2. 결과\n   | a | b |\n   |---|---|\n   | 1 | 2 |\n\n   이어지는 문단\n3. 끝\n",
+                           FigureEmbedder(None))
+    assert out.count("<ol") == 1 and out.count("<li>") == 3
+    assert "<pre><code># 주석\npython run.py\n\necho done</code></pre>" in out and "```" not in out
+    assert ("<table><thead><tr><th>a</th><th>b</th></tr></thead>"
+            "<tbody><tr><td>1</td><td>2</td></tr></tbody></table>") in out
+    assert "<p>이어지는 문단</p>" in out and "<h" not in out  # a '# 주석' line in the fence is not a heading
+    assert out.index("<pre>") < out.index("<table>") < out.index("이어지는 문단") < out.index("끝")
+    nested = markdown_to_html("- 가\n  1. 나\n\n     ```\n     <b>x</b>\n     ```\n- 다\n", FigureEmbedder(None))
+    assert nested == "<ul><li>가<ol><li>나<pre><code>&lt;b&gt;x&lt;/b&gt;</code></pre></li></ol></li><li>다</li></ul>"
+    # text at the margin after a closed fence ends the list instead of joining the item
+    after = markdown_to_html("- 가\n  ```\n  x\n  ```\n문단\n", FigureEmbedder(None))
+    assert after.endswith("<p>문단</p>") and after.count("<li>") == 1
+
+
+def test_an_ordered_list_split_by_a_figure_continues_its_numbers():
+    figures = FigureEmbedder(None)
+    out = markdown_to_html("1. 가\n2. 나\n\n![그림](steps/s1/outputs/a.png)\n\n3. 다\n4. 라\n", figures)
+    assert out.count("<ol>") == 1 and '<ol start="3"><li>다</li><li>라</li></ol>' in out
+    # a number other than 1 does not interrupt a paragraph or a list item's text (CommonMark)
+    dated = markdown_to_html("문단\n2026. 10. 14. 날짜\n\n- 항목\n2026. 10. 14. 날짜\n\n문단\n1. 목록\n", figures)
+    assert "<p>문단 2026. 10. 14. 날짜</p>" in dated and "<li>항목 2026. 10. 14. 날짜</li>" in dated
+    assert dated.count("<ol") == 1 and "<p>문단</p>\n<ol><li>목록</li></ol>" in dated
+
+
+def test_italic_and_bold_work_next_to_korean_particles():
+    out = markdown_to_html("*TP53*의 **BRCA1**은 *변이*가 있고 2*3*4와 a*b*c는 그대로", FigureEmbedder(None))
+    assert "<em>TP53</em>의" in out and "<strong>BRCA1</strong>은" in out and "<em>변이</em>가" in out
+    assert "2*3*4와" in out and "a*b*c는" in out
+
+
+def test_cached_pdf_is_not_reused_after_the_cover_or_the_bundle_documents_change(tmp_path, monkeypatch):
+    settings, request, tasks, bundle = build(tmp_path, REPORT)
+    calls: list = []
+    fake_browser(monkeypatch, calls=calls)
+    build_report_file(request, settings, tasks)
+    assert len(calls) == 1 and build_report_file(request, settings, tasks).cached and len(calls) == 1
+    reviewing = {**request, "pi_review_pending": True}  # the cover's status line changes
+    assert not build_report_file(reviewing, settings, tasks).cached and len(calls) == 2
+    assert build_report_file(reviewing, settings, tasks).cached
+    assert not build_report_file({**reviewing, "pi_reviewed_at": 1760500000.0}, settings, tasks).cached
+    assert not build_report_file({**reviewing, "created_at": 1760500000.0}, settings, tasks).cached
+    count = len(calls)
+    (bundle / "report.md").write_text((bundle / "report.md").read_text("utf-8") + "\n\n고친 문장\n", encoding="utf-8")
+    assert not build_report_file(reviewing, settings, tasks).cached and len(calls) == count + 1
+    with (bundle / "report_appendix.md").open("a", encoding="utf-8") as handle:
+        handle.write("\n- 고친 기록\n")
+    assert not build_report_file(reviewing, settings, tasks).cached and len(calls) == count + 2
+    assert build_report_file(reviewing, settings, tasks).cached and len(calls) == count + 2
+
+
+def test_a_figure_name_with_hash_or_question_mark_is_kept_when_the_file_exists(tmp_path):
+    files = {"outputs/a#1.png": PNG, "outputs/fig1.png": PNG}
+    report = "# 결과\n\n![해시](WD/outputs/a#1.png)\n\n![조각](WD/outputs/fig1.png#frag)\n"
+    settings, request, _tasks, bundle = build(tmp_path, report, files=files)
+    text = (bundle / "report.md").read_text(encoding="utf-8")
+    assert "![해시](steps/s1/outputs/a%231.png)" in text and "![조각](steps/s1/outputs/fig1.png)" in text
+    assert bundle_figure_check(bundle) == {"linked": 2, "problems": []}
+    assert linked_figure_paths(text) == ["steps/s1/outputs/a#1.png", "steps/s1/outputs/fig1.png"]
+    assert verify_request(request, settings)["exit_code"] == 0
+    page, missing = build_report_html(request, bundle)
+    assert missing == [] and page.count("<img ") == 2
+    (bundle / "report.md").write_text(request["report"], encoding="utf-8")  # an older bundle: the link as written
+    page, missing = build_report_html(request, bundle)
+    assert missing == [] and page.count("<img ") == 2
+    # no file to look at (a name NTFS does not allow): the step's listed outputs decide; otherwise drop the query
+    owners, listed = {"task_a": "s1"}, {"s1": {"outputs": ["outputs/what?.png"]}}
+    out = link_workdir_figures("![x](task_a/outputs/what?.png) ![y](task_a/outputs/b.png?raw=1)", owners,
+                               output_exists(listed))
+    assert "![x](steps/s1/outputs/what%3F.png)" in out and "![y](steps/s1/outputs/b.png)" in out
+    assert classify("https://example.com/a.png?x=1#y") == ("remote", "https://example.com/a.png?x=1#y")
+    assert classify("steps/s1/outputs/a%231.png") == ("local", "steps/s1/outputs/a#1.png")
+
+
+def test_figure_targets_with_parentheses_and_angle_brackets_resolve_to_the_copied_file(tmp_path):
+    found = image_links('![a](x/plot(1).png) ![b](<x/a (2).png>) ![c](x(1(2)).png "t")')
+    assert [link.target for link in found] == ["x/plot(1).png", "x/a (2).png", "x(1(2)).png"]
+    files = {"outputs/plot(1).png": PNG, "outputs/my plot.png": PNG, "outputs/a (2).png": PNG}
+    report = ("# 결과\n\n![괄호](WD/outputs/plot(1).png)\n\n![꺾쇠](<WD/outputs/my plot.png>)\n\n"
+              '![둘 다](<WD/outputs/a (2).png> "제목")\n\n그림은 ![인라인](WD/outputs/plot(1).png) 처럼도 넣는다.\n')
+    settings, request, _tasks, bundle = build(tmp_path, report, files=files)
+    text = (bundle / "report.md").read_text(encoding="utf-8")
+    assert "![괄호](steps/s1/outputs/plot%281%29.png)" in text and "![꺾쇠](steps/s1/outputs/my%20plot.png)" in text
+    assert '![둘 다](steps/s1/outputs/a%20%282%29.png "제목")' in text
+    assert bundle_figure_check(bundle) == {"linked": 4, "problems": []}
+    assert set(linked_figure_paths(text)) == {f"steps/s1/{name}" for name in files}
+    assert verify_request(request, settings)["exit_code"] == 0
+    page, missing = build_report_html(request, bundle)
+    assert missing == [] and page.count("<img ") == 4
+    raw = "![그림](steps/s1/outputs/plot(1).png)\n\n![x](<steps/s1/outputs/a (2).png>)"  # unrewritten, as a PI may write
+    embedder = FigureEmbedder(bundle)
+    out = markdown_to_html(raw, embedder)
+    assert out.count("<figure>") == 2 and not embedder.missing and ".png)" not in out
+
+
+def test_the_bundle_figure_check_reads_the_report_after_the_absolute_path_rewrite(tmp_path):
+    workdir = (tmp_path / "runs" / "2026-10-14" / "task_s1_analyst").as_posix()
+    report = f"# 결과\n\n![절대]({workdir}/outputs/fig1.png)\n"
+    settings, request, _tasks, bundle = build(tmp_path, report)
+    assert "![절대](steps/s1/outputs/fig1.png)" in (bundle / "report.md").read_text(encoding="utf-8")
+    appendix = (bundle / "report_appendix.md").read_text(encoding="utf-8")
+    assert "보고서 그림 링크" not in appendix and "묶음 밖" not in appendix
+    assert bundle_figure_check(bundle) == {"linked": 1, "problems": []}
+    assert verify_request(request, settings)["exit_code"] == 0
+    # a rewritten link to a file the bundle does not hold is still reported in the appendix
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+    other_workdir = (other_dir / "runs" / "2026-10-14" / "task_s1_analyst").as_posix()
+    missing_report = f"# 결과\n\n![없음]({other_workdir}/outputs/nope.png)\n"
+    _settings, _request, _tasks, other = build(other_dir, missing_report)
+    appendix = (other / "report_appendix.md").read_text(encoding="utf-8")
+    assert "## 보고서 그림 링크" in appendix and "묶음에 없습니다: steps/s1/outputs/nope.png" in appendix
+    assert appendix.count("묶음에 없습니다") == 1

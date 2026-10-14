@@ -8,7 +8,7 @@ the linked file, and `labhq verify` checks that every local image link points at
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote, unquote
@@ -18,7 +18,18 @@ FIGURE_SUFFIXES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jp
 MAX_LINKED_FIGURES = 24  # the bundle keeps this many linked figures past its total limits
 DOCUMENTS = ("report.md", "report_appendix.md")
 
-IMAGE_PATTERN = re.compile(r"!\[(?P<alt>[^\]\n]*)\]\(\s*(?P<target><[^>\n]*>|[^)\s]+)(?P<title>\s+(?:\"[^\"\n]*\"|'[^'\n]*'))?\s*\)")
+
+def _balanced(depth: int = 4) -> str:
+    """A link destination without spaces whose parentheses are balanced up to ``depth`` levels (``plot(1).png``)."""
+    inner = r"[^()\s]*"
+    for _ in range(depth - 1):
+        inner = rf"(?:[^()\s]|\({inner}\))*"
+    return rf"(?:[^()\s]|\({inner}\))+"
+
+
+IMAGE_PATTERN = re.compile(
+    r"!\[(?P<alt>[^\]\n]*)\]\(\s*(?P<target><[^>\n]*>|" + _balanced() +
+    r")(?P<title>\s+(?:\"[^\"\n]*\"|'[^'\n]*'))?\s*\)")
 CODE_PATTERN = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]*`", re.DOTALL)
 _SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]+:")
 _DRIVE = re.compile(r"[A-Za-z]:[\\/]")
@@ -45,19 +56,31 @@ def image_links(markdown: str) -> list[ImageLink]:
     return found
 
 
-def classify(target: str) -> tuple[str, str]:
+def _relative(value: str) -> str:
+    value = value.replace("\\", "/")
+    while value.startswith("./"):
+        value = value[2:]
+    return value
+
+
+def classify(target: str, exists: Callable[[str], bool] | None = None) -> tuple[str, str]:
     """(kind, value): ``remote`` for an http(s) or data URL, ``outside`` for an absolute path, else ``local`` with the
-    decoded relative POSIX path (query and fragment dropped)."""
+    decoded relative POSIX path.
+
+    A local path loses its ``#fragment`` and ``?query`` unless ``exists`` says the whole name (``a#1.png``) is a file:
+    ``exists`` takes the decoded relative path. Without ``exists`` they are dropped, as a browser would."""
     value = target.strip()
     lowered = value.lower()
     if lowered.startswith(("http://", "https://", "data:")):
         return "remote", value
     if value.startswith(("/", "\\")) or _DRIVE.match(value) or _SCHEME.match(value):
         return "outside", value
-    value = unquote(value.split("#", 1)[0].split("?", 1)[0]).replace("\\", "/")
-    while value.startswith("./"):
-        value = value[2:]
-    return "local", value
+    stripped = _relative(unquote(value.split("#", 1)[0].split("?", 1)[0]))
+    if exists is not None and ("#" in value or "?" in value):
+        whole = _relative(unquote(value))
+        if whole != stripped and exists(whole):
+            return "local", whole
+    return "local", stripped
 
 
 def figure_owners(results: Mapping[str, object]) -> dict[str, str]:
@@ -66,14 +89,41 @@ def figure_owners(results: Mapping[str, object]) -> dict[str, str]:
             if isinstance(result, Mapping) and result.get("workdir_id")}
 
 
-def link_workdir_figures(report: str, owners: Mapping[str, str]) -> str:
+def output_exists(results: Mapping[str, object], root: Path | None = None) -> Callable[[str, str], bool]:
+    """``(step_id, "outputs/<file>") -> bool``: the step's result lists that output, or the bundle at ``root`` holds it."""
+    listed = {(str(step_id), str(name).replace("\\", "/")) for step_id, result in results.items()
+              if isinstance(result, Mapping) and isinstance(result.get("outputs"), (list, tuple))
+              for name in result["outputs"]}
+
+    def exists(step_id: str, relative: str) -> bool:
+        if (step_id, relative) in listed:
+            return True
+        if root is None:
+            return False
+        from .ro_crate import _plain_file
+
+        try:
+            return _plain_file(root, f"steps/{step_id}/{relative}").is_file()
+        except OSError:
+            return False
+
+    return exists
+
+
+def link_workdir_figures(report: str, owners: Mapping[str, str],
+                         exists: Callable[[str, str], bool] | None = None) -> str:
     """Rewrite ``<workdir_id>/outputs/<file>`` image links to the bundle's ``steps/<step_id>/outputs/<file>``.
 
-    ``owners`` maps a step's workdir id to its step id. Other links, and every link inside code, stay as written."""
+    ``owners`` maps a step's workdir id to its step id. ``exists`` (see `output_exists`) tells a file named ``a#1.png``
+    from ``a.png`` plus a fragment. Other links, and every link inside code, stay as written."""
+    def whole_name(path: str) -> bool:
+        head, _, rest = path.partition("/")
+        return exists is not None and head in owners and exists(owners[head], rest)
+
     pieces: list[str] = []
     last = 0
     for link in image_links(report):
-        kind, value = classify(link.target)
+        kind, value = classify(link.target, whole_name)
         head, _, rest = value.partition("/")
         if kind != "local" or head not in owners or not rest.startswith("outputs/") or ".." in rest.split("/"):
             continue
@@ -102,6 +152,12 @@ def bundle_figure_check(root: Path) -> dict[str, object]:
     not hold as a plain, non-empty file (a link or junction on the way counts as missing)."""
     from .ro_crate import _plain_file
 
+    def holds(path: str) -> bool:
+        try:
+            return _plain_file(root, path).is_file()
+        except OSError:
+            return False
+
     linked = 0
     problems: list[str] = []
     for name in DOCUMENTS:
@@ -110,7 +166,7 @@ def bundle_figure_check(root: Path) -> dict[str, object]:
         except (OSError, UnicodeError):
             continue
         for link in image_links(text):
-            kind, value = classify(link.target)
+            kind, value = classify(link.target, holds)
             if kind == "remote":
                 continue
             linked += 1
