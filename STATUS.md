@@ -31,6 +31,27 @@ Refs #90
 
 🤖 Generated with Claude Code for the labhq dev lead
 
+## 결론
+웹 종료가 gateway 자신의 종료를 기다리다 10초 뒤 강제 종료되던 교착(봇 P1)을 고쳤습니다. 이제 gateway는 종료 hook을 실행하며 정상 종료합니다.
+
+## 바뀐 것
+- runner만 `down`으로 끈 뒤, 분리된 감시 프로세스를 띄우고 gateway가 SIGTERM과 같은 정상 종료 경로를 스스로 시작합니다. 요청 task는 바로 끝납니다. 감시 프로세스는 30초 안에 끝나지 않을 때만 강제로 끕니다(`state/logs/gateway-exit-watch.log`). Windows·POSIX 공통.
+- "그래도 끄기"도 같은 경로입니다. runner를 끈 뒤 gateway hook이 중단된 요청을 기록하고, 요청 기록은 이미 저장돼 있습니다.
+- 같은 테스트에서 드러난 별도 결함: Windows venv의 `python.exe`는 실제 인터프리터를 자식으로 띄워 `up`이 기록한 PID가 gateway의 `os.getpid()`와 달라, 웹 종료가 항상 "PID 기록을 확인할 수 없어" 거부됐습니다. 기록 PID가 부모 launcher이면 인정합니다.
+- main(`d56253a`)을 병합해 충돌을 풀었습니다(index.html import, Node 검사 목록).
+
+## 확인
+- 재현: 옛 `run()`(`down` 직접 호출)에 같은 테스트를 걸면 gateway가 강제 종료돼 `Application shutdown complete`가 없어 실패. 고친 코드에서 통과.
+- 새 실제 프로세스 테스트 `tests/test_web_shutdown_process.py`(빈 포트의 실제 gateway·가짜 runner·웹 소켓 연결): 정상 종료, 강제 종료(진행 중 요청), 감시 프로세스의 강제 경로·신원 불명 거부·분리 실행 옵션.
+- Windows 전체 `pytest -q`: **6224 passed·66 skipped·0 failed**(실제 node.exe를 PATH 앞에 둠, basetemp 삭제함). POSIX 실제 프로세스 테스트는 이 PC에서 돌리지 못했고 CI의 Ubuntu가 돌립니다.
+- 실제 PI·trial 인스턴스와 8787 포트는 건드리지 않았습니다.
+
+## 남은 지적
+- P2(2.5D 데모에서 종료 버튼 숨김)는 이 변경 범위 밖이라 남겨 둡니다.
+- 완료 표시는 종료 접수 뒤 서버 연결 끊김을 기준으로 하므로 네트워크 단절과 구별하지 못합니다(manual에 명시).
+
+Refs #560
+
 새 설정의 `labhq init`에서 pipeline 코드를 공개 upstream에 PR로 기여할지 묻습니다. `y`(대소문자 무관)만 동의이며 Enter·`--yes`·불분명한 답은 끔으로 저장합니다.
 
 - 기존 동의값과 upstream 대상은 `--force`에서도 보존합니다.
@@ -72,6 +93,30 @@ PR #573의 CP4 GitHub 전송 시점(P1)과 기존 bundle 갱신 예약(P2)을 `b
 - PI/trial 실행·재시작, 실제 보고서 게시, 리뷰 요청, 병합은 하지 않았습니다.
 
 Refs #90
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+웹의 **종료하기**에서 현재 일을 확인한 뒤 labhq를 끄거나 탭만 닫습니다. 2.5D·3D는 같은 확인 창을 씁니다.
+
+## 바뀐 것
+- 요청 제목·건수, PI 결정 대기, 이어 묻기·채용·마무리 표시.
+- 진행 중 일반 종료 거부. 강제 종료는 중단·재개 안내 뒤 추가 확인. Enter 차단.
+- PI 토큰 전용 API. 현재 gateway·runner의 PID 기록 확인 후 기존 `down`의 재확인·잠금·종료 순서 재사용.
+- 원격 접속 시 서버 PC의 인스턴스를 끈다고 표시. 종료 중 새 쓰기 요청 차단.
+
+## 확인
+- base `363cdd4`: 새 Python 21 failed, Node 파일 실패. branch 관련 Python 66 passed·1 skipped, 새 Node 8 passed.
+- Windows 전체: **6120 passed·66 skipped·45 failed**. Node shim의 격리 홈 경로 44건과 새 Node 파일 CI 등록 누락 1건. 등록 보완 후 실제 node.exe를 PATH에 둔 관련 파일은 **70 passed·1 skipped**. 로컬 전체 통과로 판정하지 않음.
+- Node 전체 45개 파일 통과. 합성 미리보기에서 2.5D·3D, Enter 차단, 탭만 닫기 확인.
+- 공개 검사·diff 검사 통과. PID·종료는 가짜 프로세스로 검증. 실제 PI/trial 인스턴스 변경 없음.
+
+## 남은 지적
+- PR 충돌로 CI가 생성되지 않았습니다. 충돌 해소·CI 실행은 총괄에게 넘깁니다.
+- basetemp 삭제는 자동 승인 검토가 `blocked by policy`로 거부해 미완료입니다.
+- 완료 표시는 종료 접수 뒤 서버 연결 끊김을 기준으로 하므로 네트워크 단절과 구별하지 못합니다(manual에 명시).
+
+Refs #560
 
 🤖 Generated with Codex (gpt-6) for the labhq dev lead
 
