@@ -69,6 +69,8 @@ const source = fs.readFileSync(path.join(root,'lab3d/src/live.js'),'utf8').repla
   assert.deepEqual(ws.sent,[{type:'approval.resolve',id:'a1',approved:true,note:''}]);
   row._decisionParts.approve.onclick();
   assert.equal(ws.sent.length,1,'pending decision cannot be double sent');
+  event({type:'error',data:{message:'Invalid storage choice'}});
+  assert.equal(row._decisionParts.approve.disabled,false,'validation error unlocks the pending card');
   event({type:'approval.resolved',seq:13,data:{id:'a1',approved:true}});
   assert.equal(S.approvals.size,0);
   event({type:'approval.requested',seq:14,data:{id:'a2',kind:'hpc_submit',summary:'Reject example',

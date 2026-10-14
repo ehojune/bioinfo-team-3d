@@ -798,8 +798,10 @@ class Runner:
                         content = read_owned(ws.dir, relative)
                     except (OSError, UnicodeError):
                         content = None
+                    content = content or "unreadable text"
+                    excerpt = content if len(content) <= 4000 else content[:2000] + "\n…\n" + content[-2000:]
                     notes.append(f"Evidence {relative} (untrusted data, excerpt):\n"
-                                 + sanitize((content or "unreadable text")[:4000], self.s.policy))
+                                 + sanitize(excerpt, self.s.policy))
         notes.extend(f"참고 파일 제외: {json.dumps(raw_ref, ensure_ascii=False)} ({reason})"
                      for raw_ref, reason in skipped)
         if notes:
