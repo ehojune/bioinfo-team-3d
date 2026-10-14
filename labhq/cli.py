@@ -818,7 +818,9 @@ def _unrecorded_process_still_running(s: Settings, *, timeout: float) -> str | N
             f"`{_config_command(s, 'up')}`으로 다시 시작하세요.")
 
 
-def _down_unlocked(s: Settings, *, force: bool = False) -> None:
+def _down_unlocked(s: Settings, *, force: bool = False, keep_gateway: bool = False) -> None:
+    """Stop the recorded runner and gateway. With keep_gateway the gateway keeps running: the web shutdown runs inside
+    that gateway, which cannot wait here for its own end, so it ends itself afterwards (gateway/shutdown.py)."""
     active = _active_requests(s)
     readiness = _shutdown_readiness(s) if active is not None else "unknown"
     lines = [f"진행 중 요청: {_active_request_line(request)}" for request in active or []]
@@ -853,13 +855,16 @@ def _down_unlocked(s: Settings, *, force: bool = False) -> None:
         print(f"진행 중 작업을 확인할 수 없어 종료하지 않았습니다. 계속하려면 "
               f"`{_config_command(s, 'down --force')}`를 쓰세요.", file=sys.stderr)
         raise SystemExit(2)
-    for role in ("runner", "gateway"):
+    roles = ("runner",) if keep_gateway else ("runner", "gateway")
+    for role in roles:
         state, _record, reason = _process_record(s, role)
         if state == "unknown":
             _record_problem(role, reason)
-    stopped = [(role, pid) for role in ("runner", "gateway") if (pid := _stop_background(s, role)) is not None]
+    stopped = [(role, pid) for role in roles if (pid := _stop_background(s, role)) is not None]
     if stopped:
         print("종료: " + ", ".join(f"{role} PID {pid}" for role, pid in stopped))
+    if keep_gateway:
+        return
     # A gateway or runner started outside `up` (a script, another shell) has no process record, so nothing above
     # stopped it. Say so instead of "기록된 프로세스 없음" with exit 0, or `up` reuses it as if it were fresh.
     running = _unrecorded_process_still_running(s, timeout=_DOWN_RECHECK_SECONDS if stopped else 0)
@@ -870,9 +875,9 @@ def _down_unlocked(s: Settings, *, force: bool = False) -> None:
         print("종료: 기록된 프로세스 없음")
 
 
-def _down(s: Settings, *, force: bool = False) -> None:
+def _down(s: Settings, *, force: bool = False, keep_gateway: bool = False) -> None:
     with _operation_lock(s):
-        _down_unlocked(s, force=force)
+        _down_unlocked(s, force=force, keep_gateway=keep_gateway)
 
 
 def _terminal_report(data: dict) -> str:

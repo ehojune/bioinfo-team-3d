@@ -1,0 +1,1053 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>labhq 2D 시안 E — Claude 안</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@500;600;700&display=swap">
+<style>
+/* ==========================================================================
+   토큰 — 값은 여기 한 곳에서만 정한다. 색은 light-dark(라이트, 다크) 한 벌.
+   ========================================================================== */
+:root{
+  color-scheme: light dark;
+
+  /* 색 · 표면 */
+  --paper:      light-dark(#FAF8F4, #14181E);
+  --surface:    light-dark(#FFFFFF, #1C222A);
+  --sunk:       light-dark(#F2EFE9, #10141A);
+  /* 색 · 글자 */
+  --ink:        light-dark(#1C2430, #EEF0F2);
+  --ink-2:      light-dark(#47525F, #C3CAD2);
+  --ink-3:      light-dark(#5B6672, #9AA5B0);
+  /* 색 · 선 */
+  --line:       light-dark(#E2DDD3, #2B323B);
+  --line-ui:    light-dark(#7F8790, #6F7A86);
+  /* 색 · 강조 = 내가 할 일 */
+  --accent:     light-dark(#2848A6, #9DB4FF);
+  --on-accent:  light-dark(#FFFFFF, #0F1A3D);
+  --accent-soft:light-dark(#E9EDF9, #232C47);
+  /* 색 · 상태 */
+  --work:       light-dark(#1D6B40, #7FD0A1);
+  --work-bg:    light-dark(#E6F1EA, #1B2E24);
+  --hpc:        light-dark(#7A3E9D, #D2B2EC);
+  --hpc-bg:     light-dark(#F1E9F6, #2E2238);
+  --wait:       light-dark(#505B67, #AAB4BE);
+  --wait-bg:    light-dark(#EDEFF1, #262D35);
+  --warn:       light-dark(#7A4A00, #F2C466);
+  --warn-bg:    light-dark(#FFF0D0, #3A2E12);
+  --err:        light-dark(#A32020, #FF9E96);
+  --err-bg:     light-dark(#FBE8E6, #3C1E1C);
+  /* 색 · 가구와 일러스트 */
+  --furn:       light-dark(#D9D2C4, #3B3F46);
+  --furn-line:  light-dark(#BDB5A4, #4E535B);
+  --il-cream:   #F1E6D4;  --il-dark: #2A2018;  --il-beak: #E0A03A;
+  --av-penguin: #2B3645;  --av-owl: #8B6B4A;   --av-bear: #8A5A3C;  --av-squirrel: #C9803F;
+  --av-otter:   #8E6E52;  --av-raccoon: #8D97A4; --av-hedgehog: #5E4B3C; --av-octopus: #B8605F;
+  --av-bg:      light-dark(#EDE6DA, #2F2B26);
+
+  /* 서체 */
+  --font-sans:  "Pretendard Variable", Pretendard, -apple-system, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif;
+  --font-serif: "Noto Serif KR", "Nanum Myeongjo", "Batang", "Apple Myungjo", serif;
+  --font-mono:  ui-monospace, "SFMono-Regular", Consolas, "Malgun Gothic", monospace;
+  /* 글자 크기 6단 (rem) */
+  --fs-1: .75rem;     /* 12  배지 전용 */
+  --fs-2: .8125rem;   /* 13  보조 최소 */
+  --fs-3: .9375rem;   /* 15  본문 */
+  --fs-4: 1.0625rem;  /* 17  소제목 */
+  --fs-5: 1.375rem;   /* 22  화면 제목 */
+  --fs-6: 1.75rem;    /* 28  큰 숫자·첫 제목 */
+  /* 간격 7단 */
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px; --sp-7: 48px;
+  /* 반경 */
+  --r-1: 8px;  --r-2: 12px;  --r-pill: 999px;
+  /* 높이 */
+  --h-touch: 48px;  --h-ctl: 44px;  --h-dense: 32px;
+  /* 그림자 2단 */
+  --e-1: 0 1px 2px rgb(28 36 48 / .08);
+  --e-2: 0 12px 32px rgb(28 36 48 / .18);
+  /* 레이어 4단 */
+  --z-sticky: 10;  --z-tabbar: 20;  --z-sheet: 30;  --z-toast: 40;
+}
+:root[data-theme="light"]{ color-scheme: light; }
+:root[data-theme="dark"]{ color-scheme: dark; }
+
+/* ---------- 기본 ---------- */
+*{ box-sizing: border-box; }
+html{ -webkit-text-size-adjust: 100%; }
+body{
+  margin: 0; background: var(--paper); color: var(--ink);
+  font: 400 var(--fs-3)/1.6 var(--font-sans);
+  letter-spacing: -.005em; word-break: keep-all; overflow-wrap: break-word;
+}
+h1,h2,h3,h4,h5,h6,p,ol,ul,dl,dd,figure{ margin: 0; }
+ol,ul{ padding: 0; list-style: none; }
+a{ color: var(--accent); text-underline-offset: 3px; }
+svg{ display: block; }
+:focus-visible{ outline: 3px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.sr-only{ position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.serif{ font-family: var(--font-serif); }
+.num{ font-variant-numeric: tabular-nums; }
+.mono{ font-family: var(--font-mono); font-size: inherit; }
+.overline{ font-size: var(--fs-2); font-weight: 600; letter-spacing: .06em; color: var(--ink-3); }
+.muted{ color: var(--ink-2); }
+.small{ font-size: var(--fs-2); }
+
+/* ---------- 이 페이지(설명 영역) ---------- */
+.page{ max-width: 1240px; margin: 0 auto; padding: var(--sp-6) var(--sp-4) var(--sp-7); }
+.spec{ display: grid; gap: var(--sp-5); padding-bottom: var(--sp-6); border-bottom: 1px solid var(--ink); }
+.spec h1{ font: 700 var(--fs-6)/1.3 var(--font-serif); letter-spacing: -.02em; }
+.spec .concept{ font: 500 var(--fs-4)/1.65 var(--font-serif); max-width: 46em; }
+.spec .feel{ color: var(--ink-2); max-width: 46em; }
+.jump{ display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-4); font-size: var(--fs-2); }
+.jump a{ display: inline-flex; align-items: center; min-height: var(--h-ctl); font-weight: 600; }
+
+.block{ padding-top: var(--sp-6); }
+.block > h2{ font: 600 var(--fs-5)/1.35 var(--font-serif); margin: var(--sp-1) 0 var(--sp-2); }
+.block > .lead{ color: var(--ink-2); max-width: 46em; margin-bottom: var(--sp-5); }
+
+.scroll{ overflow-x: auto; max-width: 100%; }
+.tokens{ border-collapse: collapse; width: 100%; min-width: 760px; font-size: var(--fs-2); }
+.tokens caption{ text-align: left; font-weight: 600; color: var(--ink-3); letter-spacing: .06em; padding: var(--sp-4) 0 var(--sp-2); }
+.tokens th{ text-align: left; font-weight: 600; color: var(--ink-3); padding: var(--sp-2) var(--sp-3) var(--sp-2) 0; border-bottom: 1px solid var(--ink); }
+.tokens td{ padding: var(--sp-2) var(--sp-3) var(--sp-2) 0; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.tokens td:first-child{ white-space: nowrap; }
+.tokens code{ font-family: var(--font-mono); font-size: var(--fs-2); color: var(--ink); }
+.sw{ display: inline-block; width: 18px; height: 18px; border-radius: 4px; vertical-align: -4px; margin-right: var(--sp-2); box-shadow: inset 0 0 0 1px rgb(0 0 0 / .18); }
+.sw--dk{ box-shadow: inset 0 0 0 1px rgb(128 128 128 / .45); }
+
+.changes{ margin-top: var(--sp-5); display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: var(--sp-5) var(--sp-6); counter-reset: ch; }
+.changes li{ counter-increment: ch; display: grid; grid-template-columns: 36px 1fr; gap: 0 var(--sp-3); align-content: start; }
+.changes li::before{ content: counter(ch); font: 600 var(--fs-6)/1 var(--font-serif); color: var(--ink-3); grid-row: span 2; }
+.changes h3{ font: 700 var(--fs-4)/1.4 var(--font-sans); }
+.changes p{ color: var(--ink-2); margin-top: var(--sp-1); }
+
+.stage{ overflow-x: auto; padding-bottom: var(--sp-3); }
+.hint{ display: none; font-size: var(--fs-2); color: var(--ink-3); margin-bottom: var(--sp-2); }
+@media (max-width: 1260px){ .hint{ display: block; } }
+
+.notes{ display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: var(--sp-3) var(--sp-5); margin-top: var(--sp-5); counter-reset: n; font-size: var(--fs-2); color: var(--ink-2); }
+.notes li{ counter-increment: n; padding-top: var(--sp-2); border-top: 1px solid var(--ink); }
+.notes li::before{ content: counter(n) ". "; font-weight: 700; color: var(--ink); }
+
+/* ==========================================================================
+   구성 요소 — 칩, 버튼, 아바타, 좌석
+   ========================================================================== */
+.is-work     { --st: var(--work);   --st-bg: var(--work-bg);   --ring: var(--work);   --scr: var(--work); }
+.is-hpc      { --st: var(--hpc);    --st-bg: var(--hpc-bg);    --ring: var(--hpc);    --scr: var(--hpc); }
+.is-wait     { --st: var(--wait);   --st-bg: var(--wait-bg); }
+.is-done     { --st: var(--wait);   --st-bg: var(--wait-bg); }
+.is-err      { --st: var(--err);    --st-bg: var(--err-bg);    --ring: var(--err); }
+.is-warn     { --st: var(--warn);   --st-bg: var(--warn-bg); }
+.is-decision { --st: var(--accent); --st-bg: var(--accent-soft); --ring: var(--accent); --scr: var(--accent); }
+
+.chip{
+  display: inline-flex; align-items: center; gap: 6px; min-height: 24px; padding: 2px 10px;
+  border-radius: var(--r-pill); background: var(--st-bg, var(--wait-bg)); color: var(--st, var(--wait));
+  font-size: var(--fs-1); font-weight: 700; line-height: 1.3; white-space: nowrap;
+}
+.chip--solid{ background: var(--accent); color: var(--on-accent); }
+.shape{ flex: none; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.is-wait > .shape, .is-wait .shape{ background: none; box-shadow: inset 0 0 0 1.5px currentColor; }
+.is-hpc .shape{ border-radius: 2px; }
+.is-decision .shape{ border-radius: 1px; transform: rotate(45deg) scale(.9); }
+.is-warn .shape, .is-err .shape{ border-radius: 0; background: currentColor; box-shadow: none; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.is-done .shape{ width: auto; height: auto; background: none; box-shadow: none; border-radius: 0; font-size: var(--fs-1); line-height: 1; font-weight: 800; }
+.is-done .shape::before{ content: "✓"; }
+
+.btn{
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-2);
+  min-height: var(--h-ctl); padding: 0 var(--sp-4); border-radius: var(--r-1);
+  font: 600 var(--fs-3)/1.2 var(--font-sans); letter-spacing: -.005em; cursor: pointer;
+  border: 1px solid var(--line-ui); background: var(--surface); color: var(--ink);
+}
+.btn--lg{ min-height: var(--h-touch); font-size: var(--fs-4); }
+.btn--primary{ background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.btn--danger{ border-color: var(--err); color: var(--err); }
+.btn--quiet{ border-color: transparent; background: none; color: var(--accent); padding: 0 var(--sp-2); }
+.btn--block{ width: 100%; }
+
+.av{ display: block; width: 56px; height: 56px; border-radius: 50%; overflow: hidden; flex: none; }
+.av--sm{ width: 24px; height: 24px; }
+.av--md{ width: 40px; height: 40px; }
+.il-cream{ fill: var(--il-cream); } .il-dark{ fill: var(--il-dark); } .il-beak{ fill: var(--il-beak); } .il-white{ fill: #fff; }
+.il-bg{ fill: var(--av-bg); }
+.d-top{ fill: var(--furn); } .d-edge{ fill: var(--furn-line); } .d-stand{ fill: var(--furn-line); }
+.d-screen{ fill: var(--scr, var(--furn-line)); }
+.rack-body{ fill: var(--furn); } .rack-slot{ fill: var(--furn-line); } .rack-led{ fill: var(--scr, var(--line-ui)); }
+
+/* 좌석: 아바타 + 책상 + 이름·상태. 상태는 링(색) + 칩(점 모양+글자)로 두 번 말한다 */
+.seat{ display: grid; align-content: start; justify-items: center; text-align: center; gap: 2px; min-width: 0; }
+.seat__fig{ position: relative; width: 104px; height: 76px; margin-bottom: var(--sp-2); }
+.seat__fig .av{ position: absolute; left: 6px; top: 10px; box-shadow: 0 0 0 2px var(--gap, var(--sunk)), 0 0 0 4px var(--ring, transparent); }
+.seat__fig .desk{ position: absolute; left: 0; bottom: 0; width: 104px; height: 38px; }
+.seat__name{ font: 700 var(--fs-3)/1.3 var(--font-sans); }
+.seat__role{ font-size: var(--fs-2); color: var(--ink-2); line-height: 1.35; }
+.seat .chip{ margin-top: var(--sp-2); }
+.seat__task{ font-size: var(--fs-2); color: var(--ink-2); line-height: 1.45; margin-top: var(--sp-1); max-width: 150px; }
+.seat.is-decision .av{ animation: halo 2.6s ease-in-out infinite; }
+@keyframes halo{ 0%,100%{ box-shadow: 0 0 0 2px var(--gap, var(--sunk)), 0 0 0 4px var(--ring), 0 0 0 4px transparent; } 50%{ box-shadow: 0 0 0 2px var(--gap, var(--sunk)), 0 0 0 4px var(--ring), 0 0 0 10px var(--accent-soft); } }
+@media (prefers-reduced-motion: reduce){ .seat.is-decision .av{ animation: none; } }
+
+/* ==========================================================================
+   앱 창(데스크톱)
+   ========================================================================== */
+.app{ width: 1200px; background: var(--paper); border: 1px solid var(--line-ui); border-radius: var(--r-2); overflow: hidden; box-shadow: var(--e-1); }
+.topbar{ display: flex; align-items: center; gap: var(--sp-4); min-height: 56px; padding: 0 var(--sp-5); border-bottom: 1px solid var(--line); }
+.logo{ font: 700 var(--fs-5)/1 var(--font-serif); letter-spacing: -.02em; display: inline-flex; align-items: baseline; gap: var(--sp-2); }
+.logo small{ font: 500 var(--fs-3)/1 var(--font-sans); color: var(--ink-3); letter-spacing: 0; }
+.topbar .sp{ flex: 1; }
+.seg{ display: inline-flex; padding: 2px; border: 1px solid var(--line-ui); border-radius: var(--r-pill); }
+.seg a, .seg span{ display: inline-flex; align-items: center; height: var(--h-dense); padding: 0 var(--sp-4); border-radius: var(--r-pill); font-size: var(--fs-2); font-weight: 700; text-decoration: none; color: var(--ink-2); }
+.seg [aria-current]{ background: var(--ink); color: var(--paper); }
+
+.hero{ display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--sp-4) var(--sp-6); padding: var(--sp-5) var(--sp-5) var(--sp-4); border-bottom: 1px solid var(--line); }
+.hero h1{ font: 600 var(--fs-6)/1.3 var(--font-serif); letter-spacing: -.02em; margin-top: var(--sp-1); }
+.hero h1 em{ font-style: normal; color: var(--accent); }
+.stats{ display: flex; gap: var(--sp-6); margin: 0; }
+.stat b{ display: block; font: 600 var(--fs-6)/1.1 var(--font-serif); font-variant-numeric: tabular-nums; }
+.stat span{ font-size: var(--fs-2); color: var(--ink-3); }
+
+.cols{ display: grid; grid-template-columns: minmax(0, 1fr) 520px; }
+.col-office{ padding: var(--sp-5); display: grid; gap: var(--sp-5); align-content: start; }
+.col-panel{ border-left: 1px solid var(--line); padding: 0 var(--sp-5) var(--sp-5); display: flex; flex-direction: column; }
+.composer{ margin-top: auto; padding-top: var(--sp-5); display: grid; gap: var(--sp-2); }
+.composer__row{ display: flex; gap: var(--sp-2); }
+.input{ flex: 1; min-width: 0; min-height: var(--h-touch); padding: 0 var(--sp-3); border: 1px solid var(--line-ui); border-radius: var(--r-1); background: var(--surface); color: var(--ink); font: 400 var(--fs-3)/1.4 var(--font-sans); }
+.input::placeholder{ color: var(--ink-3); }
+.composer .btn{ min-height: var(--h-touch); }
+
+/* 요청 머리 */
+.req{ display: grid; gap: var(--sp-3); padding-bottom: var(--sp-5); border-bottom: 1px solid var(--line); }
+.req__top{ display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }
+.req__title{ font: 600 var(--fs-5)/1.45 var(--font-serif); letter-spacing: -.015em; }
+.req__meta{ font-size: var(--fs-2); color: var(--ink-3); }
+.more{ display: inline-flex; align-items: center; min-height: var(--h-ctl); font-size: var(--fs-2); font-weight: 600; width: max-content; }
+
+.phases{ display: flex; margin: var(--sp-2) 0 0; }
+.phases li{ position: relative; flex: 1; display: grid; gap: var(--sp-2); font-size: var(--fs-2); color: var(--ink-2); padding-right: var(--sp-2); }
+.phases li::before{ content: ""; position: absolute; top: 9px; left: 26px; right: 6px; height: 2px; background: var(--line); }
+.phases li:last-child::before{ display: none; }
+.phases .is-ok::before{ background: var(--ink); }
+.pdot{ width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: var(--fs-1); font-weight: 800; border: 2px solid var(--line-ui); background: var(--paper); color: var(--paper); }
+.is-ok .pdot{ background: var(--ink); border-color: var(--ink); }
+.is-now .pdot{ border-color: var(--work); box-shadow: inset 0 0 0 4px var(--paper), inset 0 0 0 10px var(--work); }
+.is-now{ color: var(--ink); font-weight: 700; }
+
+/* 사무실 */
+.sec-head{ display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-3); }
+.sec-head a{ display: inline-flex; align-items: center; min-height: var(--h-dense); }
+.sec-head h3{ font: 700 var(--fs-4)/1.3 var(--font-sans); }
+.plan{ display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); margin-top: var(--sp-3); }
+.zone{ background: var(--sunk); border-radius: var(--r-2); padding: var(--sp-4); display: grid; gap: var(--sp-4); align-content: start; }
+.zone__head{ display: flex; align-items: baseline; justify-content: space-between; }
+.zone__seats{ display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); }
+.zone--hpc{ align-content: stretch; grid-template-rows: auto 1fr; }
+.zone--hpc .rackrow{ align-self: center; display: grid; grid-template-columns: 56px 1fr; gap: var(--sp-4); align-items: center; }
+.zone--hpc .rack{ width: 56px; height: 72px; }
+.zone--hpc h4{ font: 700 var(--fs-3)/1.3 var(--font-sans); }
+.away{ display: flex; align-items: center; gap: var(--sp-3); margin-top: var(--sp-4); color: var(--ink-2); font-size: var(--fs-2); }
+.stack{ display: flex; }
+.stack .av{ border: 2px solid var(--paper); margin-left: -8px; width: 32px; height: 32px; }
+.stack .av:first-child{ margin-left: 0; }
+.stack .plus{ display: grid; place-items: center; width: 32px; height: 32px; margin-left: -8px; border-radius: 50%; background: var(--wait-bg); color: var(--wait); font-size: var(--fs-1); font-weight: 700; border: 2px solid var(--paper); }
+
+/* 오른쪽 패널 */
+.tabs{ display: flex; gap: var(--sp-5); border-bottom: 1px solid var(--line); margin: 0 calc(-1 * var(--sp-5)); padding: 0 var(--sp-5); }
+.tab{ position: relative; display: inline-flex; align-items: center; gap: var(--sp-2); min-height: var(--h-touch); padding: 0 2px; border: 0; background: none; cursor: pointer; font: 600 var(--fs-3)/1 var(--font-sans); color: var(--ink-2); }
+.tab[aria-selected="true"]{ color: var(--ink); }
+.tab[aria-selected="true"]::after{ content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--ink); }
+.badge{ display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: var(--r-pill); background: var(--accent); color: var(--on-accent); font-size: var(--fs-1); font-weight: 700; font-variant-numeric: tabular-nums; }
+.panel-head{ display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-3); padding: var(--sp-5) 0 var(--sp-3); }
+.panel-head h2{ font: 600 var(--fs-5)/1.3 var(--font-serif); }
+.pager{ display: inline-flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-2); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.stackcards{ display: grid; gap: var(--sp-4); }
+
+/* ==========================================================================
+   결정 카드
+   ========================================================================== */
+.dcard{
+  position: relative; display: grid; gap: var(--sp-4); background: var(--surface);
+  border: 1px solid var(--line); border-radius: var(--r-2); padding: var(--sp-5);
+}
+.dcard.is-focus{ border-color: var(--line-ui); }
+.dcard.is-focus::before{ content: ""; position: absolute; left: -1px; right: -1px; top: -1px; height: 3px; background: var(--accent); border-radius: var(--r-2) var(--r-2) 0 0; }
+.dcard__top{ display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap; }
+.dcard__kind{ display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+.dcard__when{ font-size: var(--fs-2); color: var(--ink-3); }
+.who{ display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-2); color: var(--ink-2); }
+.dcard h3{ font: 700 var(--fs-4)/1.45 var(--font-sans); letter-spacing: -.01em; }
+.dcard h3.big{ font: 600 var(--fs-5)/1.45 var(--font-serif); letter-spacing: -.015em; }
+.dcard .sum{ color: var(--ink-2); }
+.factline{ display: flex; flex-wrap: wrap; gap: 0 var(--sp-3); font-size: var(--fs-2); color: var(--ink-2); }
+.factline span + span::before{ content: "·"; margin-right: var(--sp-3); color: var(--ink-3); }
+.facts{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-block: 1px solid var(--line); }
+.fact{ padding: var(--sp-3) var(--sp-3) var(--sp-3) 0; min-width: 0; }
+.fact + .fact{ padding-left: var(--sp-4); border-left: 1px solid var(--line); }
+.fact dt{ font-size: var(--fs-2); color: var(--ink-3); }
+.fact dd{ font: 600 var(--fs-5)/1.25 var(--font-serif); font-variant-numeric: tabular-nums; margin-top: 2px; }
+.fact dd small{ display: block; font: 400 var(--fs-2)/1.4 var(--font-sans); color: var(--ink-2); margin-top: 2px; }
+.field{ display: grid; gap: var(--sp-1); }
+.field > b{ font-size: var(--fs-2); font-weight: 600; color: var(--ink-3); letter-spacing: .06em; }
+.quote{ border-left: 2px solid var(--line-ui); padding-left: var(--sp-3); font-size: var(--fs-2); color: var(--ink-2); line-height: 1.55; }
+.quote b{ display: block; font-weight: 600; color: var(--ink-3); letter-spacing: .06em; }
+.steps3{ border-top: 1px solid var(--ink); }
+.steps3 li{ display: grid; grid-template-columns: 24px 24px 1fr; gap: var(--sp-3); align-items: center; padding: var(--sp-3) 0; border-bottom: 1px solid var(--line); font-size: var(--fs-3); }
+.steps3 .n{ font: 600 var(--fs-4)/1 var(--font-serif); color: var(--ink-3); }
+.fold{ border-top: 1px solid var(--line); }
+.fold summary{ display: flex; align-items: center; min-height: var(--h-ctl); cursor: pointer; font-size: var(--fs-2); font-weight: 600; color: var(--ink-2); }
+.fold dl{ display: grid; grid-template-columns: auto 1fr; gap: var(--sp-1) var(--sp-4); padding: 0 0 var(--sp-3); font-size: var(--fs-2); color: var(--ink-2); }
+.fold dt{ color: var(--ink-3); }
+.actions{ display: grid; gap: var(--sp-3); }
+.actions--row{ grid-template-columns: 1.5fr 1fr; }
+.actions--row3{ grid-template-columns: 1.4fr 1fr 1fr; }
+.after{ font-size: var(--fs-2); color: var(--ink-3); }
+.tools{ display: grid; }
+.memo{ display: inline-flex; align-items: center; min-height: var(--h-ctl); width: max-content; font-size: var(--fs-2); font-weight: 600; color: var(--accent); }
+
+/* 확대 보기 두 장 */
+.pair{ display: grid; grid-template-columns: repeat(2, 540px); gap: var(--sp-6); align-items: start; }
+
+/* ==========================================================================
+   작업판
+   ========================================================================== */
+.board{ width: 1000px; background: var(--paper); border: 1px solid var(--line-ui); border-radius: var(--r-2); padding: var(--sp-5); display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: var(--sp-6); }
+.reqlist{ display: flex; gap: var(--sp-5); border-bottom: 1px solid var(--line); margin-bottom: var(--sp-5); }
+.reqlist a{ position: relative; display: inline-flex; flex-direction: column; justify-content: center; min-height: var(--h-touch); padding: var(--sp-2) 2px; text-decoration: none; color: var(--ink-2); font-size: var(--fs-2); max-width: 300px; }
+.reqlist a b{ font-size: var(--fs-3); font-weight: 600; color: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.reqlist a[aria-current]{ color: var(--ink); }
+.reqlist a[aria-current]::after{ content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--ink); }
+.result{ border: 1px dashed var(--line-ui); border-radius: var(--r-2); padding: var(--sp-5); display: grid; gap: var(--sp-2); margin: var(--sp-5) 0; }
+.result h3{ font: 600 var(--fs-5)/1.4 var(--font-serif); }
+.result p{ color: var(--ink-2); }
+.meter{ display: flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-2); color: var(--ink-2); margin-top: var(--sp-2); }
+.meter i{ flex: 1; height: 6px; border-radius: var(--r-pill); background: var(--line); overflow: hidden; }
+.meter i::before{ content: ""; display: block; width: 3%; height: 100%; background: var(--work); }
+.steplist{ border-top: 1px solid var(--ink); }
+.steplist li{ display: grid; grid-template-columns: 28px 40px minmax(0, 1fr) auto; gap: var(--sp-3); align-items: center; min-height: 68px; padding: var(--sp-3) 0; border-bottom: 1px solid var(--line); }
+.steplist .n{ font: 600 var(--fs-5)/1 var(--font-serif); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.steplist .t{ font-weight: 600; line-height: 1.4; }
+.steplist .s{ font-size: var(--fs-2); color: var(--ink-2); line-height: 1.45; }
+.rail{ display: grid; gap: var(--sp-5); align-content: start; padding-top: var(--sp-2); }
+.rail section{ border-top: 1px solid var(--ink); padding-top: var(--sp-3); display: grid; gap: var(--sp-2); font-size: var(--fs-2); color: var(--ink-2); }
+.rail h4{ font: 700 var(--fs-3)/1.3 var(--font-sans); color: var(--ink); }
+.rail .big{ font: 600 var(--fs-6)/1.1 var(--font-serif); color: var(--ink); font-variant-numeric: tabular-nums; }
+.rail a{ display: inline-flex; align-items: center; min-height: var(--h-ctl); font-weight: 600; }
+
+/* ==========================================================================
+   폰 (390px)
+   ========================================================================== */
+.phones{ display: flex; flex-wrap: wrap; gap: var(--sp-4); align-items: flex-start; }
+.phone{ width: 390px; max-width: 100%; height: 820px; display: flex; flex-direction: column; background: var(--paper); border: 1px solid var(--line-ui); border-radius: 32px; overflow: hidden; box-shadow: var(--e-1); }
+.phone figcaption{ display: none; }
+.p-bar{ flex: none; display: flex; align-items: center; justify-content: space-between; min-height: 56px; padding: var(--sp-1) var(--sp-4) 0 var(--sp-4); }
+.p-body{ flex: 1; min-height: 0; overflow: hidden; padding: var(--sp-2) var(--sp-4) var(--sp-4); display: grid; gap: var(--sp-4); align-content: start; }
+.p-fade{ -webkit-mask-image: linear-gradient(#000 80%, transparent); mask-image: linear-gradient(#000 80%, transparent); }
+.p-title{ font: 600 var(--fs-5)/1.35 var(--font-serif); letter-spacing: -.015em; }
+.p-title em{ font-style: normal; color: var(--accent); }
+.p-stats{ display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-4); font-size: var(--fs-2); color: var(--ink-3); margin-top: var(--sp-1); }
+.p-stats b{ color: var(--ink); font-variant-numeric: tabular-nums; }
+.p-pager{ display: flex; align-items: center; justify-content: space-between; margin-bottom: calc(-1 * var(--sp-2)); }
+.p-tabbar{ flex: none; display: grid; grid-template-columns: repeat(5, 1fr); min-height: 64px; border-top: 1px solid var(--line); background: var(--surface); padding-bottom: env(safe-area-inset-bottom, 0px); }
+.ptab{ position: relative; display: grid; justify-items: center; align-content: center; gap: 2px; min-height: var(--h-touch); color: var(--ink-2); font-size: var(--fs-2); font-weight: 600; text-decoration: none; }
+.ptab svg{ width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.ptab[aria-current]{ color: var(--ink); }
+.ptab[aria-current]::before{ content: ""; position: absolute; top: -1px; left: 22%; right: 22%; height: 2px; background: var(--ink); }
+.ptab .badge{ position: absolute; top: 2px; left: calc(50% + 6px); min-width: 18px; height: 18px; font-size: var(--fs-1); }
+.phone .dcard{ padding: var(--sp-4); gap: var(--sp-3); }
+.phone .fact dd{ font-size: var(--fs-4); font-family: var(--font-sans); font-weight: 700; }
+.phone .fact{ padding-right: var(--sp-2); }
+.phone .fact + .fact{ padding-left: var(--sp-3); }
+.phone .actions .btn{ width: 100%; }
+.peek{ color: var(--ink); text-decoration: none; display: flex; align-items: center; gap: var(--sp-3); min-height: 56px; padding: var(--sp-2) var(--sp-4); border: 1px solid var(--line); border-radius: var(--r-2); background: var(--surface); }
+.peek .t{ flex: 1; min-width: 0; font-weight: 600; line-height: 1.35; font-size: var(--fs-3); }
+.peek .t small{ display: block; font-weight: 400; font-size: var(--fs-2); color: var(--ink-3); }
+.phone .plan{ grid-template-columns: 1fr; margin-top: 0; gap: var(--sp-3); }
+.phone .zone{ padding: var(--sp-4) var(--sp-3); }
+.phone .zone__seats{ gap: var(--sp-2); }
+.phone .seat__task{ max-width: 140px; }
+.phone .steplist li{ grid-template-columns: 24px 40px minmax(0, 1fr); min-height: 72px; }
+.phone .steplist .chipcell{ grid-column: 3; justify-self: start; margin-top: -4px; }
+.phone .result{ margin: 0; padding: var(--sp-4); }
+.phone .req{ padding-bottom: var(--sp-4); gap: var(--sp-2); }
+.phone .req__title{ font-size: var(--fs-4); font-weight: 700; font-family: var(--font-sans); line-height: 1.5; }
+
+@media (max-width: 560px){
+  .jump a{ min-height: var(--h-ctl); }
+  .spec h1{ font-size: var(--fs-5); }
+}
+/* 좁은 화면에서는 폰 틀이 쪽 여백을 뚫고 나와 실제 폭(390px)으로 보인다 */
+@media (max-width: 430px){
+  .phones{ gap: var(--sp-5); }
+  .phone{ width: calc(100% + 2 * var(--sp-4)); max-width: none; margin-inline: calc(-1 * var(--sp-4)); border-radius: 0; border-inline: 0; }
+}
+</style>
+</head>
+<body>
+
+<!-- ============ 일러스트 스프라이트(직원 8종, 책상, 서버랙) ============ -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="av-penguin" viewBox="0 0 64 64">
+      <rect width="64" height="64" class="il-bg"/>
+      <circle cx="32" cy="34" r="22" style="fill:var(--av-penguin)"/>
+      <circle cx="25.5" cy="31" r="6.4" class="il-cream"/><circle cx="38.5" cy="31" r="6.4" class="il-cream"/>
+      <ellipse cx="32" cy="43" rx="9.5" ry="8" class="il-cream"/>
+      <circle cx="26" cy="31.5" r="2.3" class="il-dark"/><circle cx="38" cy="31.5" r="2.3" class="il-dark"/>
+      <path d="M28 37.5h8l-4 5z" class="il-beak"/>
+    </symbol>
+    <symbol id="av-owl" viewBox="0 0 64 64">
+      <rect width="64" height="64" class="il-bg"/>
+      <path d="M13 24 18 8l11 8zM51 24 46 8 35 16z" style="fill:var(--av-owl)"/>
+      <circle cx="32" cy="35" r="22" style="fill:var(--av-owl)"/>
+      <circle cx="24" cy="31" r="8.6" class="il-cream"/><circle cx="40" cy="31" r="8.6" class="il-cream"/>
+      <circle cx="24" cy="31" r="4.2" class="il-dark"/><circle cx="40" cy="31" r="4.2" class="il-dark"/>
+      <circle cx="25.3" cy="29.7" r="1.3" class="il-white"/><circle cx="41.3" cy="29.7" r="1.3" class="il-white"/>
+      <path d="M29 38.5h6l-3 6z" class="il-beak"/>
+    </symbol>
+    <symbol id="av-bear" viewBox="0 0 64 64">
+      <rect width="64" height="64" class="il-bg"/>
+      <circle cx="17" cy="17" r="7.6" style="fill:var(--av-bear)"/><circle cx="47" cy="17" r="7.6" style="fill:var(--av-bear)"/>
+      <circle cx="17" cy="17" r="3.8" class="il-cream"/><circle cx="47" cy="17" r="3.8" class="il-cream"/>
+      <circle cx="32" cy="35" r="22" style="fill:var(--av-bear)"/>
+      <ellipse cx="32" cy="42.5" rx="10.5" ry="8" class="il-cream"/>
+      <ellipse cx="32" cy="38.8" rx="3.7" ry="2.7" class="il-dark"/>
+      <circle cx="23.5" cy="30" r="2.5" class="il-dark"/><circle cx="40.5" cy="30" r="2.5" class="il-dark"/>
+      <path d="M32 41.4v2.4M28 45.4q4 2.8 8 0" fill="none" stroke="var(--il-dark)" stroke-width="1.7" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="av-squirrel" viewBox="0 0 64 64">
+      <rect width="64" height="64" class="il-bg"/>
+      <path d="M44 55C62 50 64 24 50 12c4 12-1 21-10 26z" style="fill:var(--av-squirrel);opacity:.78"/>
+      <path d="M13 24 16 8l11 9zM43 24 40 8 29 17z" style="fill:var(--av-squirrel)"/>
+      <circle cx="29" cy="37" r="20" style="fill:var(--av-squirrel)"/>
+      <ellipse cx="29" cy="44.5" rx="10.5" ry="7.5" class="il-cream"/>
+      <circle cx="21.5" cy="33" r="2.4" class="il-dark"/><circle cx="36.5" cy="33" r="2.4" class="il-dark"/>
+      <ellipse cx="29" cy="40.4" rx="3" ry="2.1" class="il-dark"/>
+      <rect x="27.2" y="44" width="3.6" height="4.6" rx="1.2" class="il-white"/>
+    </symbol>
+    <symbol id="av-otter" viewBox="0 0 64 64">
+      <rect width="64" height="64" class="il-bg"/>
+      <circle cx="19" cy="19" r="5.2" style="fill:var(--av-otter)"/><circle cx="45" cy="19" r="5.2" style="fill:var(--av-otter)"/>
+      <circle cx="32" cy="35" r="22" style="fill:var(--av-otter)"/>
+      <ellipse cx="32" cy="43" rx="13.5" ry="9.2" class="il-cream"/>
+      <ellipse cx="32" cy="38.6" rx="4.2" ry="2.9" class="il-dark"/>
+      <circle cx="23.5" cy="30" r="2.5" class="il-dark"/><circle cx="40.5" cy="30" r="2.5" class="il-dark"/>
+      <path d="M32 41.4v2.2M28 45q4 2.8 8 0" fill="none" stroke="var(--il-dark)" stroke-width="1.6" stroke-linecap="round"/>
+      <g class="il-dark" opacity=".55"><circle cx="24" cy="42" r=".9"/><circle cx="26.5" cy="43.8" r=".9"/><circle cx="40" cy="42" r=".9"/><circle cx="37.5" cy="43.8" r=".9"/></g>
+    </symbol>
+    <symbol id="av-raccoon" viewBox="0 0 64 64">
+      <rect width="64" height="64" class="il-bg"/>
+      <circle cx="16" cy="20" r="7.4" style="fill:var(--av-raccoon)"/><circle cx="48" cy="20" r="7.4" style="fill:var(--av-raccoon)"/>
+      <circle cx="16" cy="20" r="3.6" class="il-dark"/><circle cx="48" cy="20" r="3.6" class="il-dark"/>
+      <circle cx="32" cy="35" r="22" style="fill:var(--av-raccoon)"/>
+      <ellipse cx="32" cy="41" rx="15" ry="11" style="fill:#EEF0F2"/>
+      <path d="M12.5 30q9-7 19.5-1.4Q42.500 23 51.500 30q-3 9-12 6.500-3-1.500-7.500-.500-4.500-1-7.500.5-9 2.500-12-6.500z" class="il-dark"/>
+      <circle cx="24" cy="31.800" r="2.300" class="il-white"/><circle cx="40" cy="31.800" r="2.300" class="il-white"/>
+      <circle cx="24.400" cy="32" r="1.100" class="il-dark"/><circle cx="40.400" cy="32" r="1.100" class="il-dark"/>
+      <ellipse cx="32" cy="42" rx="3.500" ry="2.500" class="il-dark"/>
+    </symbol>
+    <symbol id="av-hedgehog" viewBox="0 0 64 64">
+      <rect width="64" height="64" class="il-bg"/>
+      <circle cx="32" cy="32" r="22" style="fill:var(--av-hedgehog)"/>
+      <circle cx="32" cy="32" r="26" fill="none" stroke="var(--av-hedgehog)" stroke-width="6" stroke-dasharray="4.200 3.200"/>
+      <ellipse cx="32" cy="41" rx="15" ry="12" class="il-cream"/>
+      <circle cx="25" cy="38" r="2.300" class="il-dark"/><circle cx="39" cy="38" r="2.300" class="il-dark"/>
+      <circle cx="32" cy="45" r="3" class="il-dark"/>
+    </symbol>
+    <symbol id="av-octopus" viewBox="0 0 64 64">
+      <rect width="64" height="64" class="il-bg"/>
+      <path d="M12 30a20 20 0 0 1 40 0v17q0 7-5 7t-5-7q0 7-5 7t-5-7q0 7-5 7t-5-7q0 7-5 7t-5-7z" style="fill:var(--av-octopus)"/>
+      <circle cx="24" cy="31" r="5" class="il-white"/><circle cx="40" cy="31" r="5" class="il-white"/>
+      <circle cx="24.600" cy="31.600" r="2.400" class="il-dark"/><circle cx="40.600" cy="31.600" r="2.400" class="il-dark"/>
+      <path d="M28.500 41q3.500 2.800 7 0" fill="none" stroke="var(--il-dark)" stroke-width="1.700" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="desk" viewBox="0 0 104 38">
+      <rect class="d-stand" x="83" y="19" width="4" height="8"/>
+      <rect class="d-screen" x="72" y="4" width="26" height="17" rx="3"/>
+      <rect class="d-edge" x="2" y="26" width="100" height="10" rx="3"/>
+      <rect class="d-top" x="2" y="20" width="100" height="9" rx="4"/>
+    </symbol>
+    <symbol id="rack" viewBox="0 0 56 72">
+      <rect class="rack-body" x="3" y="2" width="50" height="68" rx="7"/>
+      <rect class="rack-slot" x="9" y="9" width="38" height="15" rx="3"/>
+      <rect class="rack-slot" x="9" y="29" width="38" height="15" rx="3"/>
+      <rect class="rack-slot" x="9" y="49" width="38" height="15" rx="3"/>
+      <circle class="rack-led" cx="16" cy="16.500" r="2.200"/><circle class="rack-led" cx="16" cy="36.500" r="2.200"/><circle class="rack-led" cx="16" cy="56.500" r="2.200"/>
+    </symbol>
+  </defs>
+</svg>
+
+<main class="page">
+
+<!-- ====================================================================== -->
+<!-- 머리말: 방향 이름, 한 줄 개념, 토큰, 핵심 변화 5가지                     -->
+<!-- ====================================================================== -->
+<header class="spec">
+  <div>
+    <p class="overline">labhq 2D 리디자인 · 시안 E</p>
+    <h1>E — Claude 안</h1>
+  </div>
+  <p class="concept">조용한 연구 저널의 지면 위에 동물 직원들이 앉아 있는 사무실. 여백과 글자 위계로 읽히고, 색은 “내가 할 일” 한 곳에만 쓴다.</p>
+  <p class="feel">참고 사이트에서 가져온 것은 결이다. nf-co.re의 가는 선과 알약 배지, Meta Research의 큰 제목과 넉넉한 여백, Neurology의 작은 라벨과 정돈된 목록. 색과 배치는 따라 하지 않았다. 라이트·다크는 OS 설정을 따른다.</p>
+  <nav class="jump" aria-label="이 페이지의 구역">
+    <a href="#tokens">토큰</a><a href="#changes">핵심 변화 5가지</a><a href="#s1">① 데스크톱 메인</a><a href="#s2">② 결정 카드</a><a href="#s3">③ 작업판</a><a href="#s4">④ 폰 390px</a>
+  </nav>
+</header>
+
+<section class="block" id="tokens" aria-labelledby="tokens-h">
+  <p class="overline">디자인 토큰</p>
+  <h2 id="tokens-h">변수 한 벌이 모든 화면을 정한다</h2>
+  <p class="lead">값은 <code class="mono">:root</code> 한 곳에서만 정한다. 색은 <code class="mono">light-dark(라이트, 다크)</code>로 한 번만 적어 다크 팔레트 중복이 없다. 글자는 rem이라 브라우저 글자 크기 설정이 따라온다. 대비는 모두 WCAG AA 이상이다(계산값은 표 오른쪽).</p>
+  <div class="scroll">
+  <table class="tokens">
+    <caption>색 — 역할로만 이름 짓는다</caption>
+    <thead><tr><th>변수</th><th>라이트</th><th>다크</th><th>쓰임 · 대비</th></tr></thead>
+    <tbody>
+      <tr><td><span class="sw" style="background:var(--paper)"></span><code>--paper</code></td><td class="mono">#FAF8F4</td><td class="mono">#14181E</td><td>페이지 바탕</td></tr>
+      <tr><td><span class="sw" style="background:var(--surface)"></span><code>--surface</code></td><td class="mono">#FFFFFF</td><td class="mono">#1C222A</td><td>카드·입력 바탕</td></tr>
+      <tr><td><span class="sw" style="background:var(--sunk)"></span><code>--sunk</code></td><td class="mono">#F2EFE9</td><td class="mono">#10141A</td><td>구역 바닥, 눌린 면</td></tr>
+      <tr><td><span class="sw" style="background:var(--ink)"></span><code>--ink</code></td><td class="mono">#1C2430</td><td class="mono">#EEF0F2</td><td>제목·본문 · 14.7:1</td></tr>
+      <tr><td><span class="sw" style="background:var(--ink-2)"></span><code>--ink-2</code></td><td class="mono">#47525F</td><td class="mono">#C3CAD2</td><td>보조 글자 · 7.5:1</td></tr>
+      <tr><td><span class="sw" style="background:var(--ink-3)"></span><code>--ink-3</code></td><td class="mono">#5B6672</td><td class="mono">#9AA5B0</td><td>라벨·메타 · 5.5:1 (13px 이상에서만)</td></tr>
+      <tr><td><span class="sw" style="background:var(--line)"></span><code>--line</code></td><td class="mono">#E2DDD3</td><td class="mono">#2B323B</td><td>장식 구분선(정보 없음)</td></tr>
+      <tr><td><span class="sw" style="background:var(--line-ui)"></span><code>--line-ui</code></td><td class="mono">#7F8790</td><td class="mono">#6F7A86</td><td>버튼·입력 테두리 · 3.4:1</td></tr>
+      <tr><td><span class="sw" style="background:var(--accent)"></span><code>--accent</code></td><td class="mono">#2848A6</td><td class="mono">#9DB4FF</td><td><b>내가 할 일</b> 전용: 승인 버튼·결정 칩·포커스 · 8.2:1</td></tr>
+      <tr><td><span class="sw" style="background:var(--on-accent)"></span><code>--on-accent</code></td><td class="mono">#FFFFFF</td><td class="mono">#0F1A3D</td><td>강조색 위 글자 · 8.2:1</td></tr>
+      <tr><td><span class="sw" style="background:var(--accent-soft)"></span><code>--accent-soft</code></td><td class="mono">#E9EDF9</td><td class="mono">#232C47</td><td>결정 칩 바탕, 좌석 후광</td></tr>
+      <tr><td><span class="sw" style="background:var(--work)"></span><code>--work</code> / <code>--work-bg</code></td><td class="mono">#1D6B40 / #E6F1EA</td><td class="mono">#7FD0A1 / #1B2E24</td><td>상태 ● 작업 중 · 5.6:1</td></tr>
+      <tr><td><span class="sw" style="background:var(--hpc)"></span><code>--hpc</code> / <code>--hpc-bg</code></td><td class="mono">#7A3E9D / #F1E9F6</td><td class="mono">#D2B2EC / #2E2238</td><td>상태 ■ HPC 실행 중 · 5.9:1</td></tr>
+      <tr><td><span class="sw" style="background:var(--wait)"></span><code>--wait</code> / <code>--wait-bg</code></td><td class="mono">#505B67 / #EDEFF1</td><td class="mono">#AAB4BE / #262D35</td><td>상태 ○ 대기 · ✓ 완료 · 6.0:1</td></tr>
+      <tr><td><span class="sw" style="background:var(--warn)"></span><code>--warn</code> / <code>--warn-bg</code></td><td class="mono">#7A4A00 / #FFF0D0</td><td class="mono">#F2C466 / #3A2E12</td><td>▲ 주의(위험 경고) 전용 · 6.6:1</td></tr>
+      <tr><td><span class="sw" style="background:var(--err)"></span><code>--err</code> / <code>--err-bg</code></td><td class="mono">#A32020 / #FBE8E6</td><td class="mono">#FF9E96 / #3C1E1C</td><td>▲ 오류 · 거절 버튼 글자 · 6.4:1</td></tr>
+      <tr><td><span class="sw" style="background:var(--furn)"></span><code>--furn</code> / <code>--furn-line</code></td><td class="mono">#D9D2C4 / #BDB5A4</td><td class="mono">#3B3F46 / #4E535B</td><td>책상·서버랙 (가구)</td></tr>
+      <tr><td><span class="sw" style="background:var(--av-owl)"></span><code>--av-*</code>, <code>--il-*</code> 12개</td><td class="mono">직원 8종 털색 + 크림·먹색·부리 + --av-bg #EDE6DA</td><td class="mono">털색은 그대로, --av-bg #2F2B26</td><td>일러스트 팔레트. UI 색과 섞이지 않는다</td></tr>
+    </tbody>
+  </table>
+  <table class="tokens">
+    <caption>글자 · 간격 · 모양 · 높이 · 레이어</caption>
+    <thead><tr><th>변수</th><th>값</th><th colspan="2">쓰임</th></tr></thead>
+    <tbody>
+      <tr><td><code>--font-sans</code></td><td class="mono">Pretendard Variable</td><td colspan="2">본문·UI·버튼·직원 이름. Jua는 쓰지 않는다</td></tr>
+      <tr><td><code>--font-serif</code></td><td class="mono">Noto Serif KR</td><td colspan="2">요청 제목·큰 숫자·로고·결정 제목(확대)만</td></tr>
+      <tr><td><code>--font-mono</code></td><td class="mono">ui-monospace</td><td colspan="2">작업 이름·ID 같은 코드 값</td></tr>
+      <tr><td><code>--fs-1</code></td><td class="mono">.75rem · 12px</td><td colspan="2">칩·배지 안의 글자 전용</td></tr>
+      <tr><td><code>--fs-2</code></td><td class="mono">.8125rem · 13px</td><td colspan="2">보조·라벨·메타(이보다 작은 글자는 없다)</td></tr>
+      <tr><td><code>--fs-3</code></td><td class="mono">.9375rem · 15px</td><td colspan="2">본문·버튼</td></tr>
+      <tr><td><code>--fs-4</code></td><td class="mono">1.0625rem · 17px</td><td colspan="2">소제목·카드 제목·큰 버튼</td></tr>
+      <tr><td><code>--fs-5</code></td><td class="mono">1.375rem · 22px</td><td colspan="2">화면 제목</td></tr>
+      <tr><td><code>--fs-6</code></td><td class="mono">1.75rem · 28px</td><td colspan="2">첫 문장·큰 숫자</td></tr>
+      <tr><td><code>--sp-1 … --sp-7</code></td><td class="mono">4 · 8 · 12 · 16 · 24 · 32 · 48px</td><td colspan="2">padding·margin·gap은 이 7개만</td></tr>
+      <tr><td><code>--r-1</code> · <code>--r-2</code> · <code>--r-pill</code></td><td class="mono">8px · 12px · 999px</td><td colspan="2">버튼·입력 / 카드·구역 / 칩·아바타</td></tr>
+      <tr><td><code>--h-touch</code> · <code>--h-ctl</code> · <code>--h-dense</code></td><td class="mono">48 · 44 · 32px</td><td colspan="2">주 행동 / 기본 터치 / 데스크톱 전용 조밀</td></tr>
+      <tr><td><code>--e-1</code> · <code>--e-2</code></td><td class="mono">0 1px 2px / 0 12px 32px</td><td colspan="2">그림자는 창 테두리와 시트·팝업 둘뿐</td></tr>
+      <tr><td><code>--z-sticky … --z-toast</code></td><td class="mono">10 · 20 · 30 · 40</td><td colspan="2">고정 헤더 / 탭바 / 시트 / 알림</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section class="block" id="changes" aria-labelledby="changes-h">
+  <p class="overline">핵심 변화</p>
+  <h2 id="changes-h">비평에서 가장 크게 걸린 다섯 가지를 먼저 고쳤다</h2>
+  <ol class="changes">
+    <li><h3>색에 역할을 하나씩</h3><p>강조색(남청) 하나는 “내가 할 일”에만 쓴다. 결정 칩, 승인 버튼, 결정 카드 윗줄이 전부다. 상태는 점 모양과 글자로 같이 말한다(● 작업 중 · ■ HPC · ○ 대기 · ✓ 완료 · ▲ 오류). 노랑은 위험 경고 전용이다.</p></li>
+    <li><h3>첫 줄이 “오늘”을 말한다</h3><p>“결정 2건이 기다리고 있어요”가 화면 첫 문장이다. 진행·완료·비용이 그 옆에 붙는다. 폰은 결정 탭이 첫 탭이고 개수 배지가 달린다. 사무실은 한 탭 안에서만 스크롤한다.</p></li>
+    <li><h3>결정 카드의 위계를 뒤집었다</h3><p>제목(무엇을) → 사실 3칸(얼마나) → 이유(왜) → 승인. <code class="mono">reason</code>·<code class="mono">detail</code> 같은 영어 이름을 없앴다. 승인은 전폭 48px, 거절은 떨어진 글자형 버튼이다. 메모는 접었다.</p></li>
+    <li><h3>사무실은 평면도, 작업판은 결과 먼저</h3><p>구역 2×2에 좌석을 모아 직원 띠와 이중 스크롤을 없앴다. 작업판은 칸반 대신 결과 카드와 번호 붙은 단계 목록이다. 단계마다 담당 아바타·한 줄 지시·상태 칩이 보인다.</p></li>
+    <li><h3>토큰 한 벌로 줄였다</h3><p>글자 12종을 6단으로, 반경 10종을 2개와 알약으로, 터치 높이 7종을 3개로 정했다. 다크는 <code class="mono">light-dark()</code> 한 벌이다. 세리프는 제목과 큰 숫자에만 써서 저널의 결을 낸다.</p></li>
+  </ol>
+</section>
+
+<!-- ====================================================================== -->
+<!-- ① 데스크톱 메인                                                         -->
+<!-- ====================================================================== -->
+<section class="block" id="s1" aria-labelledby="s1-h">
+  <p class="overline">① 데스크톱 · 1200px</p>
+  <h2 id="s1-h">메인 화면: 왼쪽 사무실, 오른쪽 결정</h2>
+  <p class="lead">결정이 있으면 첫 문장과 오른쪽 열이 그것부터 말한다. 결정이 없으면 같은 자리에 새 요청 입력과 최근 요청이 온다.</p>
+  <p class="hint">좁은 화면에서는 이 시안 틀을 가로로 밀어서 볼 수 있어요.</p>
+  <div class="stage"><div class="app">
+
+    <header class="topbar">
+      <span class="logo">labhq <small>사무실</small></span>
+      <span class="sp"></span>
+      <span class="chip is-wait"><i class="shape"></i>데모</span>
+      <span class="seg" role="group" aria-label="보기 방식"><span aria-current="true">2D</span><a href="#">3D</a></span>
+    </header>
+
+    <section class="hero" aria-label="오늘">
+      <div>
+        <p class="overline">2026년 10월 13일 화요일</p>
+        <h1>결정 <em class="num">2건</em>이 기다리고 있어요</h1>
+      </div>
+      <ul class="stats">
+        <li class="stat"><b>1</b><span>진행 중 요청</span></li>
+        <li class="stat"><b>0</b><span>완료</span></li>
+        <li class="stat"><b>$0.39</b><span>지금까지 비용</span></li>
+      </ul>
+    </section>
+
+    <div class="cols">
+      <div class="col-office">
+
+        <section class="req" aria-labelledby="req1">
+          <div class="req__top"><span class="overline">진행 중인 요청</span><span class="chip is-work"><i class="shape"></i>작업 중</span></div>
+          <h2 class="req__title" id="req1">공개 폐선암 scRNA-seq에서 CD276(B7-H3) 고발현 세포유형 찾고 QC까지</h2>
+          <p class="req__meta">14:02 시작 · GitHub 이슈 #12</p>
+          <ol class="phases" aria-label="진행 단계">
+            <li class="is-ok"><span class="pdot">✓</span>브리핑</li>
+            <li class="is-ok"><span class="pdot">✓</span>계획</li>
+            <li class="is-now"><span class="pdot"></span>실행</li>
+            <li><span class="pdot"></span>리뷰</li>
+            <li><span class="pdot"></span>보고</li>
+          </ol>
+          <a class="more" href="#">다른 요청 1건 · 계획 확인을 기다려요 ›</a>
+        </section>
+
+        <section aria-labelledby="off1">
+          <div class="sec-head"><h3 id="off1">사무실</h3><a class="small" href="#">직원 11명 중 6명 표시 · 모두 보기</a></div>
+          <div class="plan">
+
+            <section class="zone" aria-label="지휘부">
+              <div class="zone__head"><h4 class="overline">지휘부</h4></div>
+              <div class="zone__seats">
+                <article class="seat is-done">
+                  <div class="seat__fig"><svg class="av" role="img" aria-label="펭귄"><use href="#av-penguin"/></svg><svg class="desk" aria-hidden="true"><use href="#desk"/></svg></div>
+                  <h5 class="seat__name">펭귄</h5><p class="seat__role">비서실장</p>
+                  <span class="chip"><i class="shape"></i>완료</span>
+                  <p class="seat__task">브리핑을 마쳤어요</p>
+                </article>
+                <article class="seat is-decision">
+                  <div class="seat__fig"><svg class="av" role="img" aria-label="부엉이"><use href="#av-owl"/></svg><svg class="desk" aria-hidden="true"><use href="#desk"/></svg></div>
+                  <h5 class="seat__name">부엉이</h5><p class="seat__role">CSO</p>
+                  <span class="chip chip--solid"><i class="shape"></i>내 결정 필요</span>
+                  <p class="seat__task">WGS QC 계획 확인</p>
+                </article>
+              </div>
+            </section>
+
+            <section class="zone" aria-label="연구">
+              <div class="zone__head"><h4 class="overline">연구</h4></div>
+              <div class="zone__seats">
+                <article class="seat is-work">
+                  <div class="seat__fig"><svg class="av" role="img" aria-label="곰"><use href="#av-bear"/></svg><svg class="desk" aria-hidden="true"><use href="#desk"/></svg></div>
+                  <h5 class="seat__name">곰</h5><p class="seat__role">Biology 만물박사</p>
+                  <span class="chip"><i class="shape"></i>작업 중</span>
+                  <p class="seat__task">B7-H3 생물학과 가설 정리</p>
+                </article>
+                <article class="seat is-wait">
+                  <div class="seat__fig"><svg class="av" role="img" aria-label="너구리"><use href="#av-raccoon"/></svg><svg class="desk" aria-hidden="true"><use href="#desk"/></svg></div>
+                  <h5 class="seat__name">너구리</h5><p class="seat__role">분석가</p>
+                  <span class="chip"><i class="shape"></i>대기</span>
+                  <p class="seat__task">1·3번이 끝나면 시작</p>
+                </article>
+              </div>
+            </section>
+
+            <section class="zone" aria-label="데이터와 분석">
+              <div class="zone__head"><h4 class="overline">데이터와 분석</h4></div>
+              <div class="zone__seats">
+                <article class="seat is-decision">
+                  <div class="seat__fig"><svg class="av" role="img" aria-label="다람쥐"><use href="#av-squirrel"/></svg><svg class="desk" aria-hidden="true"><use href="#desk"/></svg></div>
+                  <h5 class="seat__name">다람쥐</h5><p class="seat__role">데이터 담당</p>
+                  <span class="chip chip--solid"><i class="shape"></i>내 결정 필요</span>
+                  <p class="seat__task">HPC 제출 승인</p>
+                </article>
+                <article class="seat is-wait">
+                  <div class="seat__fig"><svg class="av" role="img" aria-label="수달"><use href="#av-otter"/></svg><svg class="desk" aria-hidden="true"><use href="#desk"/></svg></div>
+                  <h5 class="seat__name">수달</h5><p class="seat__role">bioinfo-agent</p>
+                  <span class="chip"><i class="shape"></i>대기</span>
+                  <p class="seat__task">2번이 끝나면 시작</p>
+                </article>
+              </div>
+            </section>
+
+            <section class="zone zone--hpc" aria-label="HPC">
+              <div class="zone__head"><h4 class="overline">HPC</h4></div>
+              <div class="rackrow is-wait">
+                <svg class="rack" role="img" aria-label="서버랙"><use href="#rack"/></svg>
+                <div>
+                  <h4>계산 서버</h4>
+                  <p class="small muted">실행 중인 작업이 없어요.</p>
+                  <p class="small muted">fetch_atlas는 제출 승인을 기다려요.</p>
+                </div>
+              </div>
+            </section>
+
+          </div>
+          <div class="away">
+            <span class="stack" aria-hidden="true">
+              <svg class="av"><use href="#av-hedgehog"/></svg><svg class="av"><use href="#av-octopus"/></svg><span class="plus">+3</span>
+            </span>
+            <span>자리에 없는 직원 5명 · 모두 대기 중이에요</span>
+          </div>
+        </section>
+      </div>
+
+      <aside class="col-panel" aria-label="명령 패널">
+        <div class="tabs" role="tablist" aria-label="패널">
+          <button class="tab" role="tab" aria-selected="true">결정 <span class="badge" aria-label="2건">2</span></button>
+          <button class="tab" role="tab" aria-selected="false">작업판</button>
+          <button class="tab" role="tab" aria-selected="false">메신저</button>
+          <button class="tab" role="tab" aria-selected="false">HPC</button>
+        </div>
+        <div class="panel-head">
+          <h2>결정할 일</h2>
+          <span class="pager">1 / 2 <a href="#" class="btn btn--quiet">다음 ›</a></span>
+        </div>
+
+        <div class="stackcards">
+          <!-- 카드 1: HPC 제출 -->
+          <article class="dcard is-focus" aria-labelledby="d1t">
+            <div class="dcard__top">
+              <div class="dcard__kind"><span class="overline">HPC 제출</span><span class="chip is-warn"><i class="shape"></i>주의 · 자원을 써요</span></div>
+              <span class="dcard__when">3분 전</span>
+            </div>
+            <div class="who"><svg class="av av--sm" role="img" aria-label="다람쥐"><use href="#av-squirrel"/></svg><span>다람쥐 데이터 담당이 요청했어요</span></div>
+            <h3 id="d1t">아틀라스 내려받기를 HPC에 맡길까요?</h3>
+            <p class="factline"><span>4코어 · 메모리 32GB</span><span>최대 6시간</span><span>약 24코어·시간</span></p>
+            <p class="small muted"><b style="color:var(--ink-3);font-weight:600">이유</b>&nbsp; 세포 33만 7천 개 분량의 h5ad 파일을 계산 서버로 받아 체크섬을 기록해요.</p>
+            <div class="actions actions--row">
+              <button class="btn btn--primary btn--lg">승인</button>
+              <button class="btn btn--danger btn--lg">거절</button>
+            </div>
+          </article>
+
+          <!-- 카드 2: 계획 확인 -->
+          <article class="dcard" aria-labelledby="d2t">
+            <div class="dcard__top">
+              <div class="dcard__kind"><span class="overline">계획 확인</span><span class="chip is-wait"><i class="shape"></i>확인</span></div>
+              <span class="dcard__when">1분 전</span>
+            </div>
+            <div class="who"><svg class="av av--sm" role="img" aria-label="부엉이"><use href="#av-owl"/></svg><span>부엉이 CSO가 보냈어요 · WGS 30샘플 QC 요청</span></div>
+            <h3 id="d2t">WGS 표준 QC, 이 계획으로 시작할까요?</h3>
+            <p class="factline"><span>3단계</span><span>담당 3명</span><span>예상 약 $0.4</span></p>
+            <p class="small muted"><b style="color:var(--ink-3);font-weight:600">이유</b>&nbsp; 샘플시트 검증 스크립트를 먼저 고친 뒤 QC를 돌리고 판정해요.</p>
+            <div class="actions actions--row3">
+              <button class="btn btn--primary btn--lg">승인</button>
+              <button class="btn btn--lg">수정 요청</button>
+              <button class="btn btn--danger btn--lg">거절</button>
+            </div>
+          </article>
+        </div>
+
+        <form class="composer" aria-label="새 요청" onsubmit="return false">
+          <label class="overline" for="c1">새 요청 또는 메모</label>
+          <div class="composer__row">
+            <input id="c1" class="input" type="text" placeholder="무엇을 맡길까요?">
+            <button type="button" class="btn btn--quiet">옵션</button>
+            <button type="button" class="btn">보내기</button>
+          </div>
+        </form>
+      </aside>
+    </div>
+  </div></div>
+</section>
+
+<!-- ====================================================================== -->
+<!-- ② 결정 카드 확대                                                        -->
+<!-- ====================================================================== -->
+<section class="block" id="s2" aria-labelledby="s2-h">
+  <p class="overline">② 결정 카드 · 확대</p>
+  <h2 id="s2-h">읽는 순서가 곧 위에서 아래의 순서다</h2>
+  <p class="lead">무엇을, 얼마나, 왜를 큰 층에 올렸다. 요청 인용과 메모는 판단에 필요한 만큼만 남기고 아래로 내렸다. 같은 카드 틀 하나에 종류만 바뀐다.</p>
+  <p class="hint">좁은 화면에서는 이 시안 틀을 가로로 밀어서 볼 수 있어요.</p>
+  <div class="stage"><div class="pair">
+
+    <!-- HPC 제출 -->
+    <article class="dcard is-focus" aria-labelledby="e1t">
+      <div class="dcard__top">
+        <div class="dcard__kind"><span class="overline">HPC 제출</span><span class="chip is-warn"><i class="shape"></i>주의 · 자원을 써요</span></div>
+        <span class="dcard__when">3분 전 도착</span>
+      </div>
+      <div class="who"><svg class="av av--sm" role="img" aria-label="다람쥐"><use href="#av-squirrel"/></svg><span>다람쥐 데이터 담당이 요청했어요</span></div>
+      <h3 class="big" id="e1t">아틀라스 내려받기를 HPC에 맡길까요?</h3>
+      <p class="sum"><span class="mono">fetch_atlas</span> 작업을 HPC에 제출해요. 승인하면 바로 대기열에 들어가요.</p>
+      <dl class="facts">
+        <div class="fact"><dt>자원</dt><dd>4코어<small>메모리 32GB</small></dd></div>
+        <div class="fact"><dt>최대 시간</dt><dd>6시간<small>넘으면 자동 중단</small></dd></div>
+        <div class="fact"><dt>사용량</dt><dd>약 24<small>코어·시간</small></dd></div>
+      </dl>
+      <div class="field"><b>이유</b><p>세포 33만 7천 개 분량의 h5ad 파일을 계산 서버로 받아 체크섬을 기록해요.</p></div>
+      <div class="quote"><b>요청</b>공개 폐선암 scRNA-seq에서 CD276(B7-H3) 고발현 세포유형 찾고 QC까지</div>
+      <a class="memo" href="#">+ 메모 추가</a>
+      <div class="actions">
+        <button class="btn btn--primary btn--lg btn--block">승인</button>
+        <button class="btn btn--danger btn--block">거절</button>
+      </div>
+      <p class="after">승인하면 바로 제출돼요. 제출한 뒤에는 HPC 탭에서 취소할 수 있어요.</p>
+    </article>
+
+    <!-- 계획 확인 -->
+    <article class="dcard is-focus" aria-labelledby="e2t">
+      <div class="dcard__top">
+        <div class="dcard__kind"><span class="overline">계획 확인</span><span class="chip is-wait"><i class="shape"></i>확인</span></div>
+        <span class="dcard__when">1분 전 도착</span>
+      </div>
+      <div class="who"><svg class="av av--sm" role="img" aria-label="부엉이"><use href="#av-owl"/></svg><span>부엉이 CSO가 보냈어요</span></div>
+      <h3 class="big" id="e2t">WGS 표준 QC, 이 계획으로 시작할까요?</h3>
+      <p class="sum">새로 받은 WGS 30샘플에 표준 QC를 돌리고 이상 샘플을 알려 드려요.</p>
+      <dl class="facts">
+        <div class="fact"><dt>단계</dt><dd>3개<small>순서대로 진행</small></dd></div>
+        <div class="fact"><dt>담당</dt><dd>3명<small>엔지니어·수달·QC</small></dd></div>
+        <div class="fact"><dt>예상 비용</dt><dd>약 $0.4<small>참고용 추정</small></dd></div>
+      </dl>
+      <ol class="steps3" aria-label="계획 단계">
+        <li><span class="n">1</span><svg class="av av--sm" role="img" aria-label="문어"><use href="#av-octopus"/></svg><span>샘플시트 검증 스크립트 버그 수정</span></li>
+        <li><span class="n">2</span><svg class="av av--sm" role="img" aria-label="수달"><use href="#av-otter"/></svg><span>WGS 표준 QC 배치 실행</span></li>
+        <li><span class="n">3</span><svg class="av av--sm" role="img" aria-label="고슴도치"><use href="#av-hedgehog"/></svg><span>통과·경고·실패 판정</span></li>
+      </ol>
+      <div class="field"><b>다루는 데이터</b><p>이 저장소 안의 WGS 30샘플만 써요. 밖으로 내보내지 않아요.</p></div>
+      <div class="tools">
+        <details class="fold"><summary>기술 정보 보기</summary><dl><dt>계획 지문</dt><dd class="mono">3f9a…c1d7</dd><dt>프로토콜</dt><dd class="mono">v2</dd></dl></details>
+        <a class="memo" href="#">+ 메모 추가</a>
+      </div>
+      <div class="actions">
+        <button class="btn btn--primary btn--lg btn--block">승인</button>
+        <div class="actions actions--row" style="grid-template-columns:1fr 1fr">
+          <button class="btn">수정 요청</button>
+          <button class="btn btn--danger">거절</button>
+        </div>
+      </div>
+      <p class="after">수정 요청은 메모를 넣어 계획을 다시 받아요. 거절하면 이 요청은 시작하지 않고 끝나요.</p>
+    </article>
+
+  </div></div>
+  <ol class="notes">
+    <li>무엇을: 제목은 질문 한 문장. 코드 이름은 본문 속 mono로만.</li>
+    <li>얼마나: 사실 3칸. 숫자는 세리프 22px, 단위는 13px.</li>
+    <li>왜: “이유” 한 줄. 영어 필드명 <span class="mono">reason</span> 없음.</li>
+    <li>누가 시켰나: 요청 인용은 선 하나와 13px로 낮췄다.</li>
+    <li>행동: 승인 전폭 48px, 거절은 떨어진 글자형. 결과를 아래 한 줄로 알려 준다.</li>
+  </ol>
+</section>
+
+<!-- ====================================================================== -->
+<!-- ③ 작업판                                                                -->
+<!-- ====================================================================== -->
+<section class="block" id="s3" aria-labelledby="s3-h">
+  <p class="overline">③ 작업판</p>
+  <h2 id="s3-h">결과를 먼저, 그 아래에 단계를 번호 순으로</h2>
+  <p class="lead">오른쪽 패널의 작업판 탭을 넓게 펼쳐 본 모습이다. 칸반 4열을 없앴다. 요청이 끝나면 맨 위 결과 카드에 답 한 줄과 보고서가 들어오고, 단계 목록은 그대로 근거로 남는다. 단계 ID(s1…)는 번호로 바꿨다.</p>
+  <p class="hint">좁은 화면에서는 이 시안 틀을 가로로 밀어서 볼 수 있어요.</p>
+  <div class="stage"><div class="board">
+    <div>
+      <div class="reqlist" role="tablist" aria-label="요청">
+        <a href="#" role="tab" aria-current="true"><span>진행 중</span><b>CD276(B7-H3) 고발현 세포유형 찾기</b></a>
+        <a href="#" role="tab"><span>계획 확인 대기</span><b>WGS 30샘플 표준 QC</b></a>
+      </div>
+
+      <section class="req" style="border:0;padding-bottom:0" aria-labelledby="req3">
+        <div class="req__top"><span class="overline">요청</span><span class="chip is-work"><i class="shape"></i>작업 중</span></div>
+        <h2 class="req__title" id="req3">공개 폐선암 scRNA-seq에서 CD276(B7-H3) 고발현 세포유형 찾고 QC까지</h2>
+        <ol class="phases" aria-label="진행 단계">
+          <li class="is-ok"><span class="pdot">✓</span>브리핑</li>
+          <li class="is-ok"><span class="pdot">✓</span>계획</li>
+          <li class="is-now"><span class="pdot"></span>실행</li>
+          <li><span class="pdot"></span>리뷰</li>
+          <li><span class="pdot"></span>보고</li>
+        </ol>
+      </section>
+
+      <section class="result" aria-labelledby="res1">
+        <span class="overline">결과</span>
+        <h3 id="res1">아직 결과가 없어요</h3>
+        <p>끝나면 이곳에 답 한 줄과 보고서가 올라와요. 지금은 5단계 중 첫 단계를 하는 중이고, 2번은 내 승인을 기다려요.</p>
+        <div class="meter"><span>0 / 5단계 완료</span><i></i></div>
+      </section>
+
+      <div class="sec-head" style="margin-bottom:var(--sp-3)"><h3>단계</h3><span class="small muted">번호 순서대로 보여요</span></div>
+      <ol class="steplist">
+        <li class="is-work"><span class="n">1</span><svg class="av av--md" role="img" aria-label="곰"><use href="#av-bear"/></svg>
+          <div><p class="t">B7-H3 생물학과 가설 정리</p><p class="s">곰 · 문헌 2건에서 가설을 모으는 중</p></div><span class="chip"><i class="shape"></i>작업 중</span></li>
+        <li class="is-decision"><span class="n">2</span><svg class="av av--md" role="img" aria-label="다람쥐"><use href="#av-squirrel"/></svg>
+          <div><p class="t">LUAD 아틀라스 확보·체크섬</p><p class="s">다람쥐 · HPC 제출 승인을 기다려요</p></div><span class="chip chip--solid"><i class="shape"></i>내 결정 필요</span></li>
+        <li class="is-wait"><span class="n">3</span><svg class="av av--md" role="img" aria-label="수달"><use href="#av-otter"/></svg>
+          <div><p class="t">표준 scRNA QC 파이프라인 실행</p><p class="s">수달 · 2번이 끝나면 시작</p></div><span class="chip"><i class="shape"></i>대기</span></li>
+        <li class="is-wait"><span class="n">4</span><svg class="av av--md" role="img" aria-label="너구리"><use href="#av-raccoon"/></svg>
+          <div><p class="t">세포유형별 pseudobulk DE</p><p class="s">너구리 · 1번과 3번이 끝나면 시작</p></div><span class="chip"><i class="shape"></i>대기</span></li>
+        <li class="is-wait"><span class="n">5</span><svg class="av av--md" role="img" aria-label="고슴도치"><use href="#av-hedgehog"/></svg>
+          <div><p class="t">분석 결과 QC</p><p class="s">고슴도치 · 4번이 끝나면 시작</p></div><span class="chip"><i class="shape"></i>대기</span></li>
+      </ol>
+    </div>
+
+    <aside class="rail" aria-label="요약">
+      <section><h4>지금까지 비용</h4><p class="big">$0.39</p><p>Claude 직원 3명, 한도 안이에요.</p></section>
+      <section><h4>기록</h4><a href="#">GitHub 이슈 #12 ›</a><a href="#">계획 문서 ›</a></section>
+      <section><h4>HPC</h4><p>실행 중 0건 · 승인 대기 1건</p><a href="#">HPC 탭으로 가기 ›</a></section>
+    </aside>
+  </div></div>
+</section>
+
+<!-- ====================================================================== -->
+<!-- ④ 폰 390px                                                              -->
+<!-- ====================================================================== -->
+<section class="block" id="s4" aria-labelledby="s4-h">
+  <p class="overline">④ 폰 · 390px</p>
+  <h2 id="s4-h">결정 탭이 첫 화면이고, 승인 버튼이 접힘선 위에 있다</h2>
+  <p class="lead">탭 셸로 간다. 고정 영역은 위 56px + 아래 64px뿐이고 입력창은 “새 요청” 시트로 옮겼다. 승인은 전폭 48px, 거절은 한 줄 아래에 떼어 놓았다.</p>
+  <div class="phones">
+
+    <!-- 폰 1: 결정 -->
+    <figure class="phone" aria-label="폰 · 결정 탭">
+      <div class="p-bar"><span class="logo">labhq</span><a class="btn" href="#">+ 새 요청</a></div>
+      <div class="p-body">
+        <div>
+          <h1 class="p-title">결정 <em class="num">2건</em>이 기다려요</h1>
+          <p class="p-stats"><span>진행 <b>1</b></span><span>완료 <b>0</b></span><span>비용 <b>$0.39</b></span></p>
+        </div>
+        <article class="dcard is-focus" aria-labelledby="p1t">
+          <div class="dcard__top">
+            <div class="dcard__kind"><span class="overline">HPC 제출</span><span class="chip is-warn"><i class="shape"></i>주의 · 자원을 써요</span></div>
+          </div>
+          <div class="who"><svg class="av av--sm" role="img" aria-label="다람쥐"><use href="#av-squirrel"/></svg><span>다람쥐 데이터 담당 · 3분 전</span></div>
+          <h3 class="big" id="p1t">아틀라스 내려받기를 HPC에 맡길까요?</h3>
+          <dl class="facts">
+            <div class="fact"><dt>자원</dt><dd>4코어<small>메모리 32GB</small></dd></div>
+            <div class="fact"><dt>최대 시간</dt><dd>6시간<small>넘으면 중단</small></dd></div>
+            <div class="fact"><dt>사용량</dt><dd>약 24<small>코어·시간</small></dd></div>
+          </dl>
+          <div class="field"><b>이유</b><p class="small">세포 33만 7천 개 분량의 h5ad 파일을 받아 체크섬을 기록해요.</p></div>
+          <div class="actions">
+            <button class="btn btn--primary btn--lg">승인</button>
+            <button class="btn btn--danger">거절</button>
+          </div>
+        </article>
+        <a class="peek" href="#" aria-label="다음 결정 보기">
+          <svg class="av av--md" role="img" aria-label="부엉이"><use href="#av-owl"/></svg>
+          <span class="t"><small>다음 · 계획 확인</small>WGS 표준 QC를 시작할까요?</span>
+          <span aria-hidden="true">›</span>
+        </a>
+        <a class="peek is-work" href="#" aria-label="진행 중인 요청 보기">
+          <svg class="av av--md" role="img" aria-label="곰"><use href="#av-bear"/></svg>
+          <span class="t"><small>진행 중 1건</small>곰이 가설을 정리하는 중</span>
+          <span aria-hidden="true">›</span>
+        </a>
+      </div>
+      <nav class="p-tabbar" aria-label="화면 이동">
+        <a class="ptab" href="#" aria-current="page"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12.500 3 3 5-6"/></svg>결정<span class="badge" aria-label="2건">2</span></a>
+        <a class="ptab" href="#"><svg viewBox="0 0 24 24"><path d="M3 10.500 12 4l9 6.500V20H3z"/><path d="M9.500 20v-6h5v6"/></svg>사무실</a>
+        <a class="ptab" href="#"><svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6h.01M4 12h.01M4 18h.01"/></svg>작업판</a>
+        <a class="ptab" href="#"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H9.500L4 20z"/></svg>메신저</a>
+        <a class="ptab" href="#"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.500h.01M7 16.500h.01"/></svg>HPC</a>
+      </nav>
+    </figure>
+
+    <!-- 폰 2: 사무실 -->
+    <figure class="phone" aria-label="폰 · 사무실 탭">
+      <div class="p-bar"><span class="logo">labhq</span><a class="btn" href="#">+ 새 요청</a></div>
+      <div class="p-body p-fade">
+        <section class="req" aria-labelledby="req4">
+          <div class="req__top"><span class="overline">진행 중인 요청</span><span class="chip is-work"><i class="shape"></i>작업 중</span></div>
+          <h2 class="req__title" id="req4">공개 폐선암 scRNA-seq에서 CD276(B7-H3) 고발현 세포유형 찾고 QC까지</h2>
+          <ol class="phases" aria-label="진행 단계">
+            <li class="is-ok"><span class="pdot">✓</span>브리핑</li>
+            <li class="is-ok"><span class="pdot">✓</span>계획</li>
+            <li class="is-now"><span class="pdot"></span>실행</li>
+            <li><span class="pdot"></span>리뷰</li>
+            <li><span class="pdot"></span>보고</li>
+          </ol>
+        </section>
+        <div class="plan">
+          <section class="zone" aria-label="지휘부">
+            <div class="zone__head"><h4 class="overline">지휘부</h4></div>
+            <div class="zone__seats">
+              <article class="seat is-done">
+                <div class="seat__fig"><svg class="av" role="img" aria-label="펭귄"><use href="#av-penguin"/></svg><svg class="desk" aria-hidden="true"><use href="#desk"/></svg></div>
+                <h5 class="seat__name">펭귄</h5><p class="seat__role">비서실장</p>
+                <span class="chip"><i class="shape"></i>완료</span>
+              </article>
+              <article class="seat is-decision">
+                <div class="seat__fig"><svg class="av" role="img" aria-label="부엉이"><use href="#av-owl"/></svg><svg class="desk" aria-hidden="true"><use href="#desk"/></svg></div>
+                <h5 class="seat__name">부엉이</h5><p class="seat__role">CSO</p>
+                <span class="chip chip--solid"><i class="shape"></i>내 결정 필요</span>
+              </article>
+            </div>
+          </section>
+          <section class="zone" aria-label="연구">
+            <div class="zone__head"><h4 class="overline">연구</h4></div>
+            <div class="zone__seats">
+              <article class="seat is-work">
+                <div class="seat__fig"><svg class="av" role="img" aria-label="곰"><use href="#av-bear"/></svg><svg class="desk" aria-hidden="true"><use href="#desk"/></svg></div>
+                <h5 class="seat__name">곰</h5><p class="seat__role">Biology 만물박사</p>
+                <span class="chip"><i class="shape"></i>작업 중</span>
+              </article>
+              <article class="seat is-wait">
+                <div class="seat__fig"><svg class="av" role="img" aria-label="너구리"><use href="#av-raccoon"/></svg><svg class="desk" aria-hidden="true"><use href="#desk"/></svg></div>
+                <h5 class="seat__name">너구리</h5><p class="seat__role">분석가</p>
+                <span class="chip"><i class="shape"></i>대기</span>
+              </article>
+            </div>
+          </section>
+          <section class="zone" aria-label="데이터와 분석">
+            <div class="zone__head"><h4 class="overline">데이터와 분석</h4></div>
+            <div class="zone__seats">
+              <article class="seat is-decision">
+                <div class="seat__fig"><svg class="av" role="img" aria-label="다람쥐"><use href="#av-squirrel"/></svg><svg class="desk" aria-hidden="true"><use href="#desk"/></svg></div>
+                <h5 class="seat__name">다람쥐</h5><p class="seat__role">데이터 담당</p>
+                <span class="chip chip--solid"><i class="shape"></i>내 결정 필요</span>
+              </article>
+              <article class="seat is-wait">
+                <div class="seat__fig"><svg class="av" role="img" aria-label="수달"><use href="#av-otter"/></svg><svg class="desk" aria-hidden="true"><use href="#desk"/></svg></div>
+                <h5 class="seat__name">수달</h5><p class="seat__role">bioinfo-agent</p>
+                <span class="chip"><i class="shape"></i>대기</span>
+              </article>
+            </div>
+          </section>
+        </div>
+      </div>
+      <nav class="p-tabbar" aria-label="화면 이동">
+        <a class="ptab" href="#"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12.500 3 3 5-6"/></svg>결정<span class="badge" aria-label="2건">2</span></a>
+        <a class="ptab" href="#" aria-current="page"><svg viewBox="0 0 24 24"><path d="M3 10.500 12 4l9 6.500V20H3z"/><path d="M9.500 20v-6h5v6"/></svg>사무실</a>
+        <a class="ptab" href="#"><svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6h.01M4 12h.01M4 18h.01"/></svg>작업판</a>
+        <a class="ptab" href="#"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H9.500L4 20z"/></svg>메신저</a>
+        <a class="ptab" href="#"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.500h.01M7 16.500h.01"/></svg>HPC</a>
+      </nav>
+    </figure>
+
+    <!-- 폰 3: 작업판 -->
+    <figure class="phone" aria-label="폰 · 작업판 탭">
+      <div class="p-bar"><span class="logo">labhq</span><a class="btn" href="#">+ 새 요청</a></div>
+      <div class="p-body p-fade">
+        <section class="req" aria-labelledby="req5">
+          <div class="req__top"><span class="overline">작업판</span><span class="chip is-work"><i class="shape"></i>작업 중</span></div>
+          <h2 class="req__title" id="req5">공개 폐선암 scRNA-seq에서 CD276(B7-H3) 고발현 세포유형 찾고 QC까지</h2>
+        </section>
+        <section class="result" aria-labelledby="res2">
+          <span class="overline">결과</span>
+          <h3 id="res2" style="font-size:var(--fs-4)">아직 결과가 없어요</h3>
+          <p class="small">끝나면 답 한 줄과 보고서가 여기에 올라와요.</p>
+          <div class="meter"><span>0 / 5단계</span><i></i></div>
+        </section>
+        <ol class="steplist" aria-label="단계">
+          <li class="is-work"><span class="n">1</span><svg class="av av--md" role="img" aria-label="곰"><use href="#av-bear"/></svg>
+            <div><p class="t">B7-H3 생물학과 가설 정리</p><p class="s">곰 · 가설을 모으는 중</p></div><span class="chip chipcell"><i class="shape"></i>작업 중</span></li>
+          <li class="is-decision"><span class="n">2</span><svg class="av av--md" role="img" aria-label="다람쥐"><use href="#av-squirrel"/></svg>
+            <div><p class="t">LUAD 아틀라스 확보·체크섬</p><p class="s">다람쥐 · HPC 제출 승인 기다림</p></div><span class="chip chip--solid chipcell"><i class="shape"></i>내 결정 필요</span></li>
+          <li class="is-wait"><span class="n">3</span><svg class="av av--md" role="img" aria-label="수달"><use href="#av-otter"/></svg>
+            <div><p class="t">표준 scRNA QC 파이프라인 실행</p><p class="s">수달 · 2번이 끝나면 시작</p></div><span class="chip chipcell"><i class="shape"></i>대기</span></li>
+          <li class="is-wait"><span class="n">4</span><svg class="av av--md" role="img" aria-label="너구리"><use href="#av-raccoon"/></svg>
+            <div><p class="t">세포유형별 pseudobulk DE</p><p class="s">너구리 · 1번과 3번이 끝나면 시작</p></div><span class="chip chipcell"><i class="shape"></i>대기</span></li>
+          <li class="is-wait"><span class="n">5</span><svg class="av av--md" role="img" aria-label="고슴도치"><use href="#av-hedgehog"/></svg>
+            <div><p class="t">분석 결과 QC</p><p class="s">고슴도치 · 4번이 끝나면 시작</p></div><span class="chip chipcell"><i class="shape"></i>대기</span></li>
+        </ol>
+      </div>
+      <nav class="p-tabbar" aria-label="화면 이동">
+        <a class="ptab" href="#"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12.500 3 3 5-6"/></svg>결정<span class="badge" aria-label="2건">2</span></a>
+        <a class="ptab" href="#"><svg viewBox="0 0 24 24"><path d="M3 10.500 12 4l9 6.500V20H3z"/><path d="M9.500 20v-6h5v6"/></svg>사무실</a>
+        <a class="ptab" href="#" aria-current="page"><svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6h.01M4 12h.01M4 18h.01"/></svg>작업판</a>
+        <a class="ptab" href="#"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H9.500L4 20z"/></svg>메신저</a>
+        <a class="ptab" href="#"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.500h.01M7 16.500h.01"/></svg>HPC</a>
+      </nav>
+    </figure>
+
+  </div>
+</section>
+
+</main>
+</body>
+</html>

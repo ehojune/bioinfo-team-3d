@@ -1,0 +1,14 @@
+pr: 576
+rows:
+- sha: "ff1b133"
+  at: 2026-10-13 21:40
+  text: '웹 종료 확인 창과 PI 전용 종료 API: 진행 중 거부·강제 확인·탭만 닫기, down 재사용'
+- sha: "8ddabf0"
+  at: 2026-10-13 22:14
+  text: 종료 UI 회귀 파일을 CI의 Node 검사 목록에 등록
+- sha: "9d600ea"
+  at: 2026-10-14 08:55
+  text: main 병합 충돌 해소 — 종료 UI와 결과 저장 편집기 등록을 함께 보존
+- sha: "3036ac1"
+  at: 2026-10-14 09:07
+  text: 웹 종료가 gateway 자신의 종료를 기다리다 강제 종료되던 교착을 분리하고 Windows venv launcher PID를 인정
