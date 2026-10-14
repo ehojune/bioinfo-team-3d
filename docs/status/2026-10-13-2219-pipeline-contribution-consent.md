@@ -5,10 +5,12 @@
 - 거절 시 내용 수집·GitHub 호출을 막는 기존 경로를 검증했습니다. fork 자동 생성은 후속 작업입니다.
 - 설치와 bioinfo-agent 연결 매뉴얼을 갱신했습니다.
 
-검증: 기준 main `2ffb06d`에서 새 회귀 10 failed·3 passed → 수정 후 관련 129 passed. 공개 검사·diff 검사 통과. 로컬 Windows 전체 pytest는 다른 레인의 전체 suite가 이어서 실행돼 미실행이며, 완료 조건은 아직 충족하지 않았습니다. CI 결과는 현재 head의 checks에서 확인합니다.
+검증: 기준 main `2ffb06d`에서 새 회귀 10 failed·3 passed → 수정 후 관련 129 passed. Windows 전체는 6,147 passed·66 skipped·45 failed: 격리된 홈에서 Node shim이 실행 파일을 찾지 못한 웹 테스트 45건입니다. 테스트 PATH에 Node 실행 파일을 직접 지정하자 해당 45건이 모두 통과했습니다. 보정 후 전체 재실행은 다른 레인의 전체 suite 때문에 미실행이며 로컬 전체 통과 조건은 아직 충족하지 않았습니다.
+
+공개·diff·패치노트·목차 검사 통과. 코드 head `bbb5dd9`의 CI는 pytest 3.10·3.12·Windows·slow, clean-install, ro-crate-validator, changes 성공·readme skipped였습니다. 누락 기록을 넣은 `428dc3c`는 changes·patch-notes 성공이며 나머지는 기록 전용 변경으로 skipped입니다. 생략된 job을 실행 통과로 세지 않습니다.
 
 Refs #300
 
-남은 지적: fork 지원은 B 레인 후속입니다.
+남은 지적: 보정한 테스트 환경에서 Windows 전체 재실행이 필요합니다. fork 지원은 A의 main 반영 뒤 B 레인에서 진행합니다.
 
 🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
