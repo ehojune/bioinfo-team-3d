@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from ..integrations.github import ProjectReporter
 from ..intake import MAX_REFERENCES, Reference, effective_references
-from ..integrations.rounds import RoundRecorder, environment_snapshot
+from ..integrations.rounds import RoundRecorder, environment_snapshot, is_research_event, is_research_task
 from ..integrations.visibility import dev_log_visibility
 from ..login import login_command
 from ..ask_results import ask_result, read_ask_results, rejected_step
@@ -3477,7 +3477,7 @@ class Hub:
         # Keep this separate from the request board's accepted-step selection.
         staff_tasks = {task["id"]: task for task in running}
         for tid, entry in tasks.items():
-            if entry.get("completed"):
+            if entry.get("completed") or not is_research_task(entry):
                 continue
             payload = entry.get("payload") or {}
             staff_tasks[tid] = {"id": tid, "request_id": entry.get("request_id"),
@@ -3486,7 +3486,9 @@ class Hub:
                 "state": "running" if entry.get("accepted") else "queued",
                 "dispatched_at": entry.get("dispatched_at", 0), "activity": entry.get("activity") or {}}
         pipeline_prs = self.pipeline_prs()
-        recent_events = list(self.events)[-200:]
+        display_task_ids = {tid for tid, entry in tasks.items() if not is_research_task(entry)}
+        recent_events = [event for event in self.events
+                         if is_research_event(event, display_task_ids)][-200:]
         recent_terminals = {
             event.get("request_id") for event in recent_events
             if event.get("type") in {"request.completed", "request.failed"}

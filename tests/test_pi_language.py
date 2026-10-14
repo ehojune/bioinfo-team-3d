@@ -332,6 +332,7 @@ async def test_review_english_terms_in_korean_translation(hub, monkeypatch):
 
 
 def test_review_interpreter_is_not_a_request_step(hub):
+    from labhq.integrations.rounds import build_record, record_sources
     hub.requests['r']['plan'] = {'steps': [{'id': 'analysis', 'agent_id': 'engineer'}]}
     for tid, kind, step in [('internal', 'pi_interpretation', None), ('work', 'step', 'analysis')]:
         hub.store.put('task', tid, {'request_id': 'r', 'accepted': True, 'kind': kind, 'step_id': step,
@@ -340,8 +341,17 @@ def test_review_interpreter_is_not_a_request_step(hub):
     assert set(hub.request_summary(hub.requests['r'])['step_progress']['steps']) == {'analysis'}
     snap = hub.snapshot()['data']
     assert [t['id'] for t in snap['running_tasks']] == ['work']
+    assert [t['id'] for t in snap['staff_tasks']] == ['work']
     assert set(snap['requests'][0]['step_status']) == {'analysis'}
     assert set(snap['requests'][0]['step_details']) == {'analysis'}
+    hub.store.append_event({'type': 'task.dispatched', 'request_id': 'r', 'task_id': 'internal', 'data': {}}, 100)
+    hub.store.append_event({'type': 'messenger.translated', 'request_id': 'r',
+                            'data': {'message_seq': 1, 'pi_display': {'status': 'failed'}}}, 100)
+    hub.store.append_event({'type': 'request.note', 'request_id': 'r', 'data': {'text': 'kept'}}, 100)
+    sources = record_sources(hub)
+    assert [task.get('kind') for task in sources['tasks']['r']] == ['step']
+    assert [event['type'] for event in sources['events']['r']] == ['request.note']
+    assert 'chief_of_staff' not in build_record(hub, 'r')['environment']['model_ids']
 
 
 @pytest.mark.asyncio
