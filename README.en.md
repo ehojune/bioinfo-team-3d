@@ -32,9 +32,9 @@ Risky or costly actions are approved by the PI on the web or a phone.
 
 | 2.5D office (`/`) | 3D office (`/3d`) |
 |---|---|
-| ![2.5D office: request progress graph, internal messenger, staff desks](docs/media/office-25d.webp) | ![3D paper-forest office: staff desks and an in-progress request panel](docs/media/office-3d.webp) |
+| ![2.5D office demo: a request comes in, staff work on it, and approving the decision card produces a report (about 13 seconds)](docs/media/office-25d.gif) | ![3D paper-forest office: staff desks and an in-progress request panel](docs/media/office-3d.webp) |
 
-A 15-second recording of the mock demo (`labhq demo --web`). One request goes through the CSO plan, approval, and step progress to the end.
+The mock demo (`labhq demo --web`). The 2.5D recording is new with the redesigned UI (about 13 seconds): one request goes through the CSO plan, staff work, approval of a decision card, and the finished report.
 Still frames: [2.5D](docs/media/office-25d.png) · [3D](docs/media/office-3d.png)
 
 ## How it works
