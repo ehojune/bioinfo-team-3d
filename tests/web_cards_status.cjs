@@ -16,6 +16,7 @@ class Element {
   insertBefore(child,ref) { this.removeChild(child);this.children.splice(this.children.indexOf(ref),0,child);return child; }
   removeChild(child) { this.children=this.children.filter(x=>x!==child);return child; }
   addEventListener(type,callback) { this['on'+type]=callback; }
+  setAttribute(name,value) { this[name]=String(value); }
 }
 global.document={createElement:tag=>new Element(tag)};
 const web=path.join(__dirname,'../labhq/web');

@@ -564,7 +564,13 @@ function apply(ev, replay = false) {
     }
     case 'agent.tool_error': { const a = ag(id); if (a) logTo(a, `도구 오류: ${d.text}`, ts, d); break; }
     case 'agent.log': {
-      const a = ag(id); if (!a || !d.text) break;
+      const a = ag(id);
+      if (!a && d.code === 'dev_log_visibility' && d.text) {
+        feed({who:'system', text:d.text, cls:'alert'}, ts, rid);
+        if (!replay) effects.push({type:'toast', text:d.text});
+        break;
+      }
+      if (!a || !d.text) break;
       if (d.level === 'debug' || d.level === 'thinking') { traceTo(a, d.level, d.text, ts, d); break; }
       a.say = d.text; a.sayAt = ts; logTo(a, d.text, ts, d);
       // An alert (a read-only run changed files) always reaches the feed, never throttled with ordinary talk.

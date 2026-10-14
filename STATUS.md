@@ -4,6 +4,53 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 결론
+
+PR #585: 시안 E를 작업판·메신저·직원 시트·요청 입력에 적용했다. Refs #546.
+
+## 바뀐 것
+
+- 빈 단계 목록 숨김·완료 접기, 요청 문장·진행 단계 중복 제거.
+- 전체 제목·상태·검토 대기가 있는 요청 목록과 48px 선택 영역.
+- 한국어 이름·시각·말풍선, 전체 기록·자세히 유지.
+- 같은 직원 카드로 그림·역할·정규직/파견직·상태·현재 업무 표시.
+- 48px 보내기와 첨부·참고·옵션 분리. API·reducer·3D·그림 생성 코드는 보존.
+
+## 확인
+
+- 새 Node: main에서 6 실패·대비 1 통과 → branch 7 통과. 전체 Node 49개 파일 통과.
+- 관련 Windows pytest: 85 passed, 1 skipped. 전체: **6,275 passed, 66 skipped**(759.59초). 전체 검사 임시 폴더 삭제 확인.
+- 1440×900·390×844 가로 넘침 없음. 빈 목록 0px·완료 접기 44px, 전환·검토 표시 확인.
+- 밝은/어두운 테마 56개 글자 대비 조합: 최저 5.10:1. 공개 검사 통과.
+- 코드 head `cbee072`의 [CI](https://github.com/ehojune/bioinfo-team-3d/actions/runs/38502191583): changes·patch-notes·pytest 3.10·3.12·Windows·slow·clean-install·ro-crate-validator 성공, readme 조건부 생략.
+- 관련 검사 임시 폴더 삭제는 자동 승인 검토가 `blocked by policy`로 거부해 미정리다. 리뷰 요청·지적 대응·병합은 하지 않았다.
+
+[전후 화면 18장](../design/2026-10-13/board-comparison/README.md) · [검증 근거](../design/2026-10-13/docs/reference/board-verification.md)
+
+## 결론
+
+PR #580에 main `4a7c03b`를 병합했다(merge `7c4752d`). P2·design-token·shutdown 테스트를 모두 보존했다.
+
+## 바뀐 것
+
+- `test_web_3d.py`의 Node 목록은 양쪽의 정확한 합집합 48개다.
+- shutdown CSS를 `<head>`의 token CSS 앞에 배치해 main에서 들어온 로드 순서 충돌을 해결했다. 테스트 조건은 유지했다.
+
+## 확인
+
+- 관련 pytest: 138 passed, 1 skipped. Node: 48개 파일 통과.
+- Windows 전체 pytest: 6,298 passed, 66 skipped(808.62초).
+- 공개 검사·diff 검사 통과. push 뒤 CI 결과는 PR 본문에 기록한다.
+
+## 남은 지적
+
+- 임시 폴더 삭제는 자동 승인 검사에서 거부돼 총괄에게 경로를 넘긴다.
+- PR 병합과 리뷰 요청은 하지 않았다.
+
+Refs #580
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
 PR #582 · `design-decisions` · Refs #546
 
 - 결정 배지(0건 숨김), 질문·사실·설명·48px 승인·거절·메모 순서, 원문 펼침을 2D에 적용했다.
@@ -14,6 +61,80 @@ PR #582 · `design-decisions` · Refs #546
 - CI: head 1d9a24d의 [run 38497285439](https://github.com/ehojune/bioinfo-team-3d/actions/runs/38497285439)에서 changes·patch-notes·pytest 3.10·3.12·Windows·slow·clean-install·ro-crate-validator 성공, readme 조건부 건너뜀. 로컬 Windows 전체 PASS는 미충족이다. 봇 리뷰·병합은 총괄에게 넘긴다.
 
 [화면·회귀 근거](../design/2026-10-13/docs/reference/decisions-verification.md)
+
+## 결론
+
+기준 main `d538058`의 P2 34건: **22건 수정, 6건 이미 해결, 6건 보류**. #575에는 P2 인라인이 없습니다.
+
+## 확인
+
+- 수정 항목: main에서 새 Python 24건·Node 5건 실패 → branch 통과. 별도 보류 probe 6건도 main에서 재현.
+- 이미 해결: main의 기존 pytest 9건과 한국어 표시명·status assertion 통과.
+- 관련 pytest 232 passed, 후속 확인 121 passed. Node 46개 파일 및 pytest의 Node 실행 검사 47건 통과.
+- Windows 전체 pytest: 6263 passed, 66 skipped, 1232 warnings in 751.58s (0:12:31). mock e2e 포함, basetemp 삭제 완료. 실서비스 실행 없음.
+- 공개 검사·diff·patch-notes·notes-index 검사 통과.
+- manual: 128,086 → 128,160자(+74). 기존 절만 수정.
+
+## 항목별 결과
+
+| PR | 인라인 id | 요지 | 결과 |
+|---|---|---|---|
+| #563 | 4257405284 | timed_out 결정 합계 | 고침 `6fdb37d` |
+| #563 | 4257405297 | waiting 상태 표시 | 고침 `6fdb37d` |
+| #562 | 4256725269 | 이전 follow-up 작업 폴더 누적 | 고침 `6fdb37d` |
+| #566 | 4257278189 | 편집자 실패 시 기본 정리본 | 고침 `6fdb37d` |
+| #566 | 4257278194 | terminal 뒤 편집자 비용 정산 | 보류 — terminal event·round·후처리 비용 모델을 함께 정해야 함 |
+| #566 | 4257278201 | 한국어 표시명·status 손상 | 이미 해결(b123195) |
+| #566 | 4257405941 | 질문 대기 off에서도 로컬 선택 | 고침 `6fdb37d` |
+| #566 | 4257405952 | 편집 뒤 기본 문서 링크 | 고침 `6fdb37d` |
+| #566 | 4257405959 | 입력 오류 뒤 3D 카드 재활성화 | 고침 `6fdb37d` |
+| #566 | 4257405974 | 특수문자 산출 경로 인코딩 | 이미 해결(b123195) |
+| #566 | 4257499944 | 취소 요청 부분 정리본 | 고침 `6fdb37d` |
+| #566 | 4257697760 | 저장 선택 approval 원자성 | 보류 — 승인 선점·실패 복구·timeout 경합의 보안 경계 변경 |
+| #566 | 4257697768 | 서버의 게시 전 검토 확인 | 이미 해결(b123195) |
+| #566 | 4257806565 | 게시 파일 단일 commit | 보류 — Contents API를 Git tree/ref 트랜잭션으로 교체해야 함 |
+| #566 | 4257806570 | approval snapshot 이미지 분리 | 보류 — 인증된 지연 preview endpoint와 두 UI 변경 필요 |
+| #566 | 4258023541 | 재시작 시 편집 초안 재사용 | 이미 해결(b123195) |
+| #566 | 4258098593 | 공개 게시 금지 프로젝트 상속 | 이미 해결(b123195) |
+| #566 | 4258637591 | MANIFEST hash와 게시 bytes 검증 | 보류 — 열린 파일·재시작 초안의 신뢰 경계를 함께 설계해야 함 |
+| #566 | 4258715865 | 정리 작업 중 정상 종료 차단 | 고침 `6fdb37d` |
+| #566 | 4258715874 | 게시 timeout 초안 보존 | 고침 `6fdb37d` |
+| #556 | 4256437484 | roster 없는 시작 경고 | 고침 `6fdb37d` |
+| #553 | 4256843193 | 실제 Codex recruiter roster | 이미 해결(3ce6f7a) |
+| #553 | 4257446960 | staff 경로 guard 선행 | 고침 `6fdb37d` |
+| #565 | 4257144371 | 3D chip의 검토 대기 합계 | 고침 `6fdb37d` |
+| #567 | 4257413691 | 시설팀을 일반 plan에서 제외 | 고침 `6fdb37d` |
+| #567 | 4257548500 | 시설팀 오류 로그 tail | 고침 `6fdb37d` |
+| #571 | 4258059679 | 자동 진단을 blocking ask에서 제외 | 고침 `6fdb37d` |
+| #571 | 4258059689 | runner 재접속 전 진단 회수 | 보류 — consult 채택·runner 대기·재시작 ask 순서 변경 필요 |
+| #572 | 4258159093 | 메신저 단계 위임 투영·보관 | 고침 `6fdb37d` |
+| #572 | 4258232335 | 테스트 요청 purge의 보관 사본 | 고침 `6fdb37d` |
+| #572 | 4258605478 | REST follow-up 담당자 복원 | 고침 `6fdb37d` |
+| #574 | 4258701773 | 정책 제외 후보 뒤 검색 | 고침 `6fdb37d` |
+| #577 | 4259145664 | force로 손상 설정 복구 | 고침 `6fdb37d` |
+| #577 | 4265468202 | force의 hard-stop 기본값 복구 | 고침 `6fdb37d` |
+
+## 남은 지적
+
+- 보류 6건은 위 표의 설계·보안 경계를 총괄이 결정한 뒤 별도 변경으로 진행합니다.
+- PI·trial 실행, 설정·본 checkout 수정, 리뷰 요청·인라인 답글·병합은 하지 않았습니다.
+- 회귀 근거: `tests/test_p2_followups_1013.py`, `tests/test_init_wizard.py`, `tests/web_p2_followups_1013.cjs`, `tests/web_live.cjs`.
+
+## CI
+
+코드 head `e4bb941` · [run 38494585446](https://github.com/ehojune/bioinfo-team-3d/actions/runs/38494585446). 이후 기록 전용 커밋은 이 코드 검사 결과를 재사용합니다.
+
+| Job | 결과 |
+|---|---|
+| patch-notes | success |
+| changes | success |
+| clean-install | success |
+| pytest-slow | success |
+| pytest-windows | success |
+| pytest (3.12) | success |
+| pytest (3.10) | success |
+| ro-crate-validator | success |
+| readme | skipped |
 
 ## 결론
 

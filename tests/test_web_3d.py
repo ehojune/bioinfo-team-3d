@@ -195,8 +195,10 @@ def test_package_data_includes_office_assets():
     ('web_shutdown.cjs', 'fail 0'),
     ('web_result_storage.cjs', 'fail 0'),
     ('web_recruit_before_plan.cjs', 'pre-plan recruitment card passed'),
+    ('web_p2_followups_1013.cjs', 'fail 0'),
     ('web_design_tokens.cjs', 'fail 0'),
     ('web_design_decisions.cjs', 'fail 0'),
+    ('web_design_board.cjs', 'fail 0'),
 ])
 def test_office_in_node(filename, marker):
     node = shutil.which('node')

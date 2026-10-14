@@ -23,16 +23,22 @@ export function provenanceText(agent = {}) {
   return [...hold, ...parts].join(' · ');
 }
 
-function makeCard(agent) {
-  const card = doc().createElement('button'); card.type = 'button'; card.className = 'staff-card'; card.dataset.agent = agent.id;
+function makeCard(agent, options) {
+  const card = doc().createElement(options.tag || 'button'); card.type = 'button'; card.className = 'staff-card'; card.dataset.agent = agent.id;
+  const avatar = add(card, 'span', '', 'staff-avatar'); avatar.setAttribute('aria-hidden', 'true');
   const top = add(card, 'span', '', 'staff-card-top');
-  const name = add(top, 'strong'); const status = add(top, 'em');
+  const name = add(top, 'strong');
+  const badge = add(card, 'span', '', 'staff-status status-label');
+  add(badge, 'span', '', 'status-dot').setAttribute('aria-hidden', 'true');
+  const status = add(badge, 'span');
   const role = add(card, 'span', '', 'staff-role');
+  const employment = add(card, 'span', '', 'staff-employment');
+  const current = add(card, 'span', '', 'staff-current');
   const tool = add(card, 'span', '', 'staff-tool');
   const provenance = add(card, 'span', '', 'staff-provenance');
   const gaugeLabel = add(card, 'span', '', 'staff-gauge-label');
   const gauge = add(card, 'progress', '', 'staff-gauge');
-  card._staffParts = { name, status, role, tool, provenance, gaugeLabel, gauge };
+  card._staffParts = { name, status, badge, avatar, role, employment, current, tool, provenance, gaugeLabel, gauge };
   return card;
 }
 
@@ -40,6 +46,10 @@ function update(card, agent, options) {
   const p = card._staffParts, state = options.visual ? options.visual(agent) : agent.state || 'idle';
   const status = options.stateText ? options.stateText(agent, state) : statusOf(state, agent);
   p.name.textContent = agent.name || agent.id; p.status.textContent = status;
+  p.badge.className = `staff-status status-label status-${state}`;
+  if (options.avatarHTML) p.avatar.innerHTML = options.avatarHTML(agent);
+  p.employment.textContent = agent.employment === 'contract' || String(agent.id).startsWith('c_') ? '파견직' : '정규직';
+  p.current.textContent = `지금 하는 일 · ${state === 'idle' ? '없음' : options.currentTask?.(agent) || status}`;
   p.role.textContent = agent.role || '역할 미지정';
   const tool = options.currentTool ? options.currentTool(agent)?.name : agent.tool;
   p.tool.textContent = `도구 · ${tool ? (options.toolLabel ? options.toolLabel(tool) : tool) : '없음'}`;
@@ -57,7 +67,7 @@ function update(card, agent, options) {
 
 export function syncStaffCards(container, agents, options = {}) {
   const existing = new Map(Array.from(container.children || []).map(card => [card.dataset.agent, card]));
-  const cards = Array.from(agents || []).map(agent => { const card = existing.get(agent.id) || makeCard(agent); update(card, agent, options); return card; });
+  const cards = Array.from(agents || []).map(agent => { const card = existing.get(agent.id) || makeCard(agent, options); update(card, agent, options); return card; });
   container.replaceChildren(...cards);
   return cards;
 }

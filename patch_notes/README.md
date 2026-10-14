@@ -14,7 +14,12 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 11:37 | [`faf5d6e`](https://github.com/ehojune/bioinfo-team-3d/pull/585/commits/faf5d6e) | 첨부·참고 버튼 문구를 화면 갱신 뒤에도 유지하고 회귀 검사·캡처 갱신 |
+| 11:26 | [`192cd27`](https://github.com/ehojune/bioinfo-team-3d/pull/585/commits/192cd27) | 작업판 빈 목록·완료 접기, 전체 제목 요청 전환, 메신저·직원 카드·48px 입력을 시안 E로 정리 |
+| 11:08 | [`7c4752d`](https://github.com/ehojune/bioinfo-team-3d/pull/580/commits/7c4752d) | 최신 main 병합: P2·design-token·shutdown 테스트 보존, CSS 로드 순서 충돌 해소 |
 | 10:35 | [`b1983fd`](https://github.com/ehojune/bioinfo-team-3d/pull/582/commits/b1983fd) | 시안 E의 결정 카드 위계·대기 배지·폰 우선 배치와 검토·이력 공통 부품, 전후 화면 및 회귀 검사를 추가했다. |
+| 10:13 | [`fd4ac7b`](https://github.com/ehojune/bioinfo-team-3d/pull/580/commits/fd4ac7b) | P2 웹 회귀 파일을 pytest의 CI 실행 목록에 연결 |
+| 09:52 | [`6fdb37d`](https://github.com/ehojune/bioinfo-team-3d/pull/580/commits/6fdb37d) | 병합된 P2 22건 수정: 대기 표시·결과 정리·follow-up·시설팀·메신저·검색·init |
 | 09:47 | [`a411da2`](https://github.com/ehojune/bioinfo-team-3d/pull/579/commits/a411da2) | 긴 URL·DOI 참고 칩의 줄바꿈을 보존하고 상태 칩만 한 줄로 표시한다. |
 | 09:28 | [`50d4e52`](https://github.com/ehojune/bioinfo-team-3d/pull/579/commits/50d4e52) | 시안 E의 63개 토큰과 2D 공통 부품을 적용하고 시안·캐릭터·비평·전후 화면을 보관했다. |
 | 09:07 | [`3036ac1`](https://github.com/ehojune/bioinfo-team-3d/pull/576/commits/3036ac1) | 웹 종료가 gateway 자신의 종료를 기다리다 강제 종료되던 교착을 분리하고 Windows venv launcher PID를 인정 |

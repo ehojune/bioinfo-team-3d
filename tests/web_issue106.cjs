@@ -10,6 +10,7 @@ class Element {
     this.textContent = ''; this.className = ''; this.listeners = {};
   }
   append(...children) { this.children.push(...children); }
+  setAttribute(name,value) { this[name]=String(value); }
   replaceChildren(...children) { this.children = children; }
   addEventListener(type, callback) { (this.listeners[type] ??= []).push(callback); }
   querySelectorAll(tag) {
