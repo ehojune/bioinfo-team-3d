@@ -1,0 +1,9 @@
+pr: 643
+rows:
+- sha: 3f007d7
+  at: 2026-10-15 18:48
+  text: Windows down이 supervisor·role·자식 프로세스의 실제 종료를 확인하고 clean-install이 남은 venv
+    프로세스를 검출하게 했다.
+- sha: 9442c95
+  at: 2026-10-15 18:50
+  text: clean-install 임의 포트에서 PI 인스턴스 포트 8787·55921을 제외했다.
