@@ -9,7 +9,7 @@ import pytest
 
 from labhq import cli, edition_sources
 from labhq.gateway.server import Hub as RealHub, create_app
-from labhq.result_storage import (EDITOR_REPORT_CHARS, document_links, draft_documents, editor_prompt,
+from labhq.result_storage import (EDITOR_OTHER_CHARS, EDITOR_REPORT_CHARS, document_links, draft_documents, editor_prompt,
                                   fit_record, readme_excerpt)
 from labhq.settings import Settings
 from tests.test_result_storage import Hub
@@ -194,6 +194,13 @@ def test_a_report_over_the_bound_is_an_outline_plus_whole_sections_and_names_wha
     assert len(prompt) < EDITOR_REPORT_CHARS + 20_000
     whole, omitted = fit_record("짧은 글", 100)
     assert (whole, omitted) == ("짧은 글", [])
+
+
+def test_fit_record_keeps_five_thousand_sections_inside_the_bound():
+    record = "".join(f"## 절 {number}\n내용 {number}\n" for number in range(5000))
+    body, omitted = fit_record(record, EDITOR_OTHER_CHARS)
+    assert len(body) + len("; ".join(omitted)) <= EDITOR_OTHER_CHARS
+    assert omitted[-1] == "절 4999" and any("개 절" in title for title in omitted)
 
 
 async def test_the_readme_never_claims_a_cut_because_of_our_own_truncation(tmp_path, monkeypatch):
