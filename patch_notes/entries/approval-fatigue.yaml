@@ -9,3 +9,6 @@ rows:
 - sha: 31e1e8a
   at: 2026-10-16 00:47
   text: 자동 승인 닫힌 문법·쓰기 link 검사·관리 스킬 전체 트리 grant, 네 P1 회귀와 46건 재생
+- sha: 2dfdb5d
+  at: 2026-10-16 00:59
+  text: uv grant를 --no-project·--no-config 직접 실행으로 제한하고 cwd backend·환경 변수 접두 회귀 검증
