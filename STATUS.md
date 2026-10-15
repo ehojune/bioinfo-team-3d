@@ -6,6 +6,26 @@
 
 ## 결론
 
+Fixes #619. PR #649. 편집자 정리본의 내부 주소 우회와 긴 절 목록의 입력 한도 초과를 막았습니다.
+
+## 바뀐 것
+
+- HTTP(S) 역슬래시와 ASCII 공백·제어문자를 정규화한 뒤 host를 판정합니다.
+- percent encoding·userinfo·legacy IPv4·IPv6·끝 점으로 쓴 내부 host도 같은 표에서 차단합니다.
+- 개요·본문·생략 절 목록이 문서별 한도를 함께 쓰며, 긴 목록은 앞뒤 제목과 중간 개수로 줄입니다.
+
+## 확인
+
+- 공개 링크 회귀는 수정 전 7 failed, 수정 후 63 passed
+- 5,000절 회귀는 수정 전 30,000자 한도에 199,089자, 수정 후 한도 이내
+- 관련 pytest 85 passed, `scripts/check_public.sh` 통과
+
+## 남은 것
+
+CI 결과는 push 뒤 확인합니다. 리뷰 요청과 병합은 하지 않습니다.
+
+## 결론
+
 PR #648에서 Windows CI의 staff-control flake를 사건 순서 검증으로 고쳤습니다. 원인은 제품 결함이 아니라 `sleep(0.1)` 뒤 `t1`이 시작됐다고 가정한 test 시간 의존입니다. Refs #59.
 
 ## 바뀐 것
@@ -47,6 +67,58 @@ WSL을 설정하지 않은 Windows 설치의 `doctor`는 선택 기능이 꺼졌
 ## 남은 것
 
 리뷰 요청과 병합은 총괄이 이어받습니다.
+
+## 결론
+
+Refs #644, PR #646. 세션 고정·재전송·solo 재시작·파이프라인 파일 요청의 CI 회귀를 복구했습니다. main에도 있는 Windows wizard 실패는 그대로 둡니다.
+
+## 바뀐 것
+
+- 전송은 roster 변경 시 계산한 `agent_runner`를 사용합니다. 전송 직전 재계산으로 담당을 지우지 않으며 세션 pin과 재전송 대상 검사는 유지합니다.
+- runner 상태 없는 재개 계획 조회는 빈 유효 roster를 돌려줍니다. `last_runner_rosters` 이름은 유지합니다.
+- 기존 테스트·CI 설정은 바꾸지 않았습니다.
+
+## 확인
+
+| 검증 | 결과 |
+|---|---|
+| main `5c0cfc2` Windows 비교 | wizard 1 failed, halt·semantics 제거 포함 7 passed |
+| 수정 branch 관련 테스트 | 178 passed, main과 같은 wizard 1 failed |
+| 지정 전체 pytest `-q -x -p no:cacheprovider tests` | 2706 passed, 12 skipped 뒤 같은 wizard 실패로 중단 |
+| wizard 1건 제외 전체 실행 | 7243 passed, 67 skipped; 로컬 Node shim 때문에 web 연동 64 failed |
+| 실제 Node 실행 파일로 실패 64건 재검증 | 64 passed |
+| CJS 전체 | 64개 파일 통과 |
+| 공개 저장소 검사 | 통과 |
+
+## 남은 지적
+
+- **전체 pytest 단일 실행 PASS는 아닙니다.** wizard는 main 로컬 및 Actions 38722581183에서도 같은 실패입니다.
+- halt는 main·수정 branch 로컬에서 통과했습니다. 테스트와 runner 실행 코드는 main과 같습니다. 기존 Windows CI 실패 원인은 이번 실행으로 확정하지 못했습니다.
+- push 후 CI 판정은 PR checks와 로컬 인계 로그에 남깁니다. 리뷰 요청·병합은 하지 않습니다.
+
+## 결론
+
+Fixes #644. 실행 중 task가 있으면 직원의 담당 runner를 유지하고 모두 끝난 뒤 새 task부터 준비된 WSL에 배정합니다. WSL 시작만 실패한 `up`은 경고 한 줄과 exit 0으로 끝납니다.
+
+## 바뀐 것
+
+- `Hub.effective_roster()`를 routing·등록 hosted_agents·generation 판정·불확실 전송·dispatch 재연결·카드 복구·채용 조회의 단일 출처로 사용합니다.
+- 미완료 task의 저장된 runner ID로 담당을 고정합니다. 전송 불확실 timeout도 담당을 풀지 않으며 새 task를 다른 runner로 보내지 않습니다.
+- grep(`git grep -n -e runner_agents -e last_runner_rosters -- labhq`) 결과는 server.py 8곳뿐입니다: 초기화 262·306, 재시작 offline 알림용 ID 목록 314, 계산 함수 2080·2082·2107, 입력 저장 2136·2138. 계산 함수 밖에 원본 roster를 읽어 담당을 정하는 경로는 없습니다.
+
+## 확인
+
+- origin/main `5c0cfc2`: 새 회귀 4 failed. 수정본: 같은 4 passed(native 실행 중 대체 runner 연결·재연결, 새 task도 native 유지, 모든 task 완료 후 WSL, 원본 접근 AST 검사, WSL 오류 경고/exit 0).
+- 관련 pytest 278 passed/1 skipped. 채용 경로 변경 후 추가 pytest 103 passed(새 회귀 4건 포함).
+- 기존 불확실 전송 test는 reconnect timeout만 0.01초로 줄이고 담당 유지·미완료 단언을 추가했습니다. 채용 test의 mock은 유효 roster API로 바꿨습니다.
+- `scripts/check_public.sh` 통과.
+- clone 전용 venv·격리 state·mock socket/WSL 사용. 전체 pytest는 CI에 맡깁니다.
+
+## 남은 지적
+
+- 없음. CI 결과는 push 후 확인합니다.
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
 
 ## 결론
 

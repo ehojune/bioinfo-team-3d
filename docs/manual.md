@@ -154,7 +154,7 @@ WSL을 설정하지 않은 설치에서 `doctor`는 선택 기능이 꺼졌다�
 
 작업은 Windows `runner.workspace_root`와 같은 `/mnt/<drive>/…` 폴더를 씁니다. gateway 위치와 무관하게 대상 runner의 `runtime_env`로 작업·결과·이벤트 경로를 변환해 project·reference·`inputs/<step>`·manifest·bundle을 잇습니다. `/home` 작업 폴더·UNC 경로는 거부합니다. setup은 Windows 승인·예산 정책과 reference root(프로젝트 포함)를 복사하고 개인·통제 구역 경로도 변환합니다. 변환 실패는 설정 거부이며, 정책이나 reference root를 바꿨다면 `wsl-runner stop` 후 setup을 다시 실행하세요.
 
-bioinfo-agent는 WSL이 연결됐을 때만 WSL에 우선 배정하고 끊기면 연결된 Windows 직원으로 돌아갑니다. CSO는 연결된 runner의 Nextflow·Docker 확인을 계획에 반영합니다. WSL Claude CLI·직원 로그인(`root/claude-staff`)은 별도 준비하며 setup은 로그인하지 않습니다. 실행 위치 선택 카드는 #612 2단계입니다.
+직원마다 담당 runner는 하나입니다. 실행 중이거나 전송 결과가 불확실한 task가 있으면 담당을 유지하고 새 task도 그 runner에 보냅니다. 모두 끝나면 bioinfo-agent는 준비된 WSL을 우선하며, WSL이 끊겼으면 연결된 Windows 직원으로 돌아갑니다. `up`에서 WSL 시작만 실패하면 경고 한 줄을 출력하고 native 시작은 성공으로 마칩니다. CSO는 연결된 runner의 Nextflow·Docker 확인을 계획에 반영합니다. WSL Claude CLI·직원 로그인(`root/claude-staff`)은 별도 준비하며 setup은 로그인하지 않습니다. 실행 위치 선택 카드는 #612 2단계입니다.
 
 ## 띄우기와 접속
 
@@ -843,7 +843,8 @@ resume 비용·Codex 토큰은 호출별 증분으로 합산합니다(#82). 원 
 
 비버 편집자(`editor`, 가벼운 Codex 모델)가 끝난 요청의 README를 쉬운 말로 다듬습니다.
 정리본은 README·결과 보고서·진행 기록·재현 방법·출처로 구성됩니다. 보고된 그림·표·실행 파일은 링크로 연결합니다.
-텍스트는 기존 게시 검사로 비밀값·개인 경로를 가립니다. 통제 데이터가 걸린 요청은 편집자에게 보내거나 게시하지 않습니다.
+긴 문서는 문서별 입력 상한 안에서 개요와 앞부분을 보내며, 절이 많으면 생략 목록의 가운데를 개수로 줄입니다.
+텍스트는 기존 게시 검사로 비밀값·개인 경로를 가립니다. 공개 링크는 브라우저와 같은 구분자로 해석한 뒤 내부 host를 제외합니다. 통제 데이터가 걸린 요청은 편집자에게 보내거나 게시하지 않습니다.
 원본 입력과 미보고 파일은 제외합니다. 복사하는 파일은 파일당 1 MB·합계 5 MB 안에서 옮기며, 정리본만으로 재실행된다고 보장하지 않습니다.
 보고서의 그림 링크는 정리본이 가진 `steps/<step_id>/outputs/<파일>`로 고쳐 씁니다. 정리본에 없는 그림(미보고·1 MB 초과 등)이나 정리본 밖을 가리키는 링크는 "그림 생략" 글로 바꿉니다.
 보고서에 graphical abstract가 없으면(또는 있어도 정리본에 못 담으면) labhq가 `graphical_abstract.svg`를 그려 정리본 폴더에 두고 README·`report.md`의 첫 그림으로 링크합니다. 라벨은 정리본 문서와 같은 가림 검사를 거칩니다(#608).

@@ -217,30 +217,53 @@ def document_links(readme: str) -> str:
                       if not re.search(rf"\]\((?:\./)?{re.escape(name)}(?:#[^)]*)?\)", readme))
 
 
+def _bounded_titles(titles: list[str], budget: int) -> list[str]:
+    """Keep a title list inside ``budget``, retaining both ends and counting the omitted middle."""
+    if not titles or budget <= 0:
+        return []
+    if len("; ".join(titles)) <= budget:
+        return titles
+    for side in range(min(8, len(titles) // 2), -1, -1):
+        middle = len(titles) - side * 2
+        summary = titles[:side] + [f"… 중간 {middle}개 절"] + (titles[-side:] if side else [])
+        if len("; ".join(summary)) <= budget:
+            return summary
+    return ["…"[:budget]]
+
+
 def fit_record(text: str, budget: int) -> tuple[str, list[str]]:
     """``text`` whole when it fits ``budget`` characters. Otherwise an outline of its headings, then its sections in
-    order, whole until the budget is used (the section that crosses it keeps its opening) and only a title and first
-    line after that. Also the titles of the sections that were not sent whole."""
+    order, whole until the budget is used. The outline and a bounded summary of omitted section titles share that same
+    budget; the section that crosses it keeps as much of its opening as fits."""
     if len(text) <= budget:
         return text, []
     pieces = [piece for piece in re.split(r"(?m)^(?=#{1,6}\s)", text) if piece]
     titles = [piece.splitlines()[0].lstrip("#").strip()[:120] if piece.startswith("#") else "(제목 없는 앞부분)"
               for piece in pieces]
-    shown, left, omitted = [], budget, []
-    for piece, title in zip(pieces, titles):
+    title_budget = min(2048, max(1, budget // 5)) if budget > 0 else 0
+    body_budget = max(0, budget - title_budget)
+    outline_budget = min(8000, max(0, body_budget // 5))
+    outline = _bounded_titles(titles, outline_budget)
+    header = "[개요]\n" + "\n".join(f"- {title}" for title in outline) + "\n\n[본문]\n"
+    if len(header) >= body_budget:
+        return header[:body_budget], _bounded_titles(titles, title_budget)
+
+    shown, left, omitted_at = [], body_budget - len(header), len(pieces)
+    for at, piece in enumerate(pieces):
         if len(piece) <= left:
             shown.append(piece)
             left -= len(piece)
             continue
-        omitted.append(title)
+        omitted_at = at
         if left > 0:
-            part = piece[:left]
-            shown.append((part[:part.rfind("\n")] if "\n" in part else part) + "\n…(이 절은 여기까지만 실었습니다)\n")
-            left = 0
-        else:
-            first = next((line.strip() for line in piece.splitlines()[1:] if line.strip()), "")
-            shown.append(f"{title}\n{first[:200]}\n…(본문은 싣지 않았습니다)\n")
-    return "[개요]\n" + "\n".join(f"- {title}" for title in titles) + "\n\n[본문]\n" + "".join(shown), omitted
+            rest = len(pieces) - at - 1
+            marker = f"\n…(이 절과 나머지 {rest}개 절의 본문은 싣지 않았습니다)\n"
+            opening = piece[:max(0, left - len(marker))].rstrip()
+            shown.append((opening + marker)[:left])
+        break
+    body = header + "".join(shown)
+    omitted = _bounded_titles(titles[omitted_at:], title_budget)
+    return body, omitted
 
 
 def editor_prompt(docs: dict[str, str], request_text: str) -> str:
@@ -258,7 +281,7 @@ def editor_prompt(docs: dict[str, str], request_text: str) -> str:
         omitted += [f"{name}의 {title}" for title in cut]
         parts.append(f"===== {label}{' (개요와 일부 절)' if cut else ' (전문)'} =====\n{body.strip()}\n")
     if omitted:
-        note = ("입력 크기 때문에 다음 절은 본문 대신 제목과 첫 줄만(또는 앞부분만) 담았습니다: " + "; ".join(omitted) +
+        note = ("입력 크기 때문에 다음 절은 본문 대신 앞부분만 담았습니다(목록이 길면 가운데 절은 개수로 요약): " + "; ".join(omitted) +
                 ". 이 절들의 전문은 게시되는 문서에 그대로 있습니다. README에 기록이 불완전하다고 쓰지 말고 "
                 "자세한 내용은 해당 문서를 보라고 안내하세요.")
     else:
