@@ -9,3 +9,6 @@ rows:
 - sha: 5d654bb
   at: 2026-10-16 01:54
   text: StructuredOutput parse 오류와 일반 tool error의 수집 경계를 복원
+- sha: 8a069ba
+  at: 2026-10-16 02:49
+  text: 계획 prompt의 사용자 입력 정규화를 제거하고 명령과 정규식을 원문대로 보존
