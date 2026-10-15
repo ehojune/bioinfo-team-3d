@@ -47,7 +47,8 @@ Refs #613 (PI 결정 C). 새 `labhq init` 설정이 PI가 시험한 동작으로
 ## 확인
 
 - 새 test 54건: `tests/test_init_defaults.py` 34건, `tests/test_instance_guard.py` 20건. 임시 폴더와 가짜 process 기록만 쓰고 실제 프로세스·포트는 쓰지 않습니다. 옛 예시 설정으로 되돌리면 새 test 6건과 고친 semantics test 1건이 실패합니다.
-- 기존 test 수정 3곳(약화 없음): `test_init_wizard.py`의 Windows `--yes` 구역 기대값(빈 목록 → 작업 폴더 internal 구역 하나)과 대화형 답 순서(dev log 질문 한 줄 추가), `test_semantics_shadow_settings.py`의 "예시 설정이 off" 확인(코드 기본 off 확인은 유지하고, 예시는 ab·confirm으로 확인). `tests/conftest.py`는 흔한 위치 탐지를 테스트마다 비웁니다(이 PC의 `D:/bioinfo-agent`에 test가 기대지 않게).
+- 기존 test 수정 3곳(약화 없음): `test_init_wizard.py`의 Windows `--yes` 구역 기대값(빈 목록 → 작업 폴더 internal 구역 하나)과 대화형 답 순서(dev log 질문 한 줄 추가), `test_semantics_shadow_settings.py`의 "예시 설정이 off" 확인(코드 기본 off 확인은 유지하고, 예시는 ab·confirm으로 확인). 이 test는 action layer만 지우는 검사(`test_semantics_shadow_remove`)에서도 돌아서 `actions` 키를 뺀 설정으로 mode를 확인하고, actions 쪽 확인은 그 layer가 소유한 `test_semantics_actions.py`에 뒀습니다. `tests/conftest.py`는 흔한 위치 탐지를 테스트마다 비웁니다(이 PC의 `D:/bioinfo-agent`에 test가 기대지 않게).
+- 첫 CI에서 위 semantics test가 3개 환경 모두 실패했고(`ShadowConfig(actions=True)`가 action layer 제거본에 없음), 고친 뒤 `test_semantics_shadow_remove.py` 6건을 로컬에서 통과시켰습니다.
 - 로컬 Windows pytest 전체: 82%까지 전부 통과, 나머지에서 59건 실패. 59건은 main에서도 똑같이 실패합니다(`tests/test_web_3d.py` 58건은 격리 HOME 아래에서 `node.exe`를 못 찾음, `test_staff_control_steps.py` 1건은 `tasklist` 출력이 None). node test 58개 파일은 `node --test`로 모두 통과.
 - `scripts/check_public.sh`, `scripts/patch_notes.py check` 통과.
 
