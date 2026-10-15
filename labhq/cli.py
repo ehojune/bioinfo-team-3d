@@ -24,6 +24,7 @@ from pathlib import Path
 from . import proc_tree
 from .costs import cost_detail, cost_text
 from .facilities.signatures import problem_text
+from .process_diagnostics import SUPERVISOR_SUFFIX
 from .request_status import is_terminal_request, request_status_label, request_display_label
 from .settings import Settings
 from .test_guard import guard_test_path
@@ -40,6 +41,8 @@ _TERMINATE_POLL_SECONDS = 0.1
 _DOWN_RECHECK_SECONDS = 3.0
 _BUNDLE_WAIT_SECONDS = 60.0
 _BUNDLE_POLL_SECONDS = 3.0
+# How long `up` waits for a new supervisor to pin its ancestors and record the role it started (#589).
+_CHILD_RECORD_WAIT_SECONDS = 20.0
 
 
 def _instance_config(name: str) -> str:
@@ -362,6 +365,29 @@ def _pid_file(s: Settings, role: str) -> Path:
     return _launch_state(s) / f"labhq-{role}.pid"
 
 
+def _supervisor_role(role: str) -> str:
+    """The record name of a role's supervisor: `labhq-<role>-supervisor.pid` (#589)."""
+    return role + SUPERVISOR_SUFFIX
+
+
+def _stopping_file(s: Settings, role: str) -> Path:
+    return _launch_state(s) / f"labhq-{role}.stopping"
+
+
+def _mark_stopping(s: Settings, role: str) -> None:
+    """The role is being stopped on purpose: its supervisor must not restart it. `up` lifts this when it starts the
+    role again. Written before the supervisor or the role is touched."""
+    _stopping_file(s, role).parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(_stopping_file(s, role), datetime.now().astimezone().isoformat(timespec="seconds") + "\n")
+
+
+def _clear_stopping(s: Settings, role: str) -> None:
+    try:
+        _stopping_file(s, role).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def _operation_lock_file(s: Settings) -> Path:
     return _launch_state(s) / "labhq-up-down.lock"
 
@@ -544,6 +570,42 @@ def _process_record(s: Settings, role: str, *, cleanup: bool = True) -> tuple[st
     return "alive", record, None
 
 
+def _exit_text(row: dict) -> str:
+    """One `child_exit` row from a supervisor, as `status` prints it: when, the exit code, and whether `down` asked."""
+    code = f"code={row.get('code')}"
+    if row.get("code_hex"):
+        code += f" ({row['code_hex']})"
+    if row.get("signal"):
+        code += f" {row['signal']}"
+    extra = [f"PID {row.get('child_pid')}"]
+    if row.get("uptime_s") is not None:
+        extra.append(f"가동 {row['uptime_s']}초")
+    if row.get("stop_requested"):
+        extra.append("종료 요청(down·웹 종료)")
+    return f"{row.get('time')} {code} ({', '.join(extra)})"
+
+
+def _supervisor_detail(s: Settings, role: str, logs: Path, child_state: str) -> tuple[str, bool]:
+    """What `status` and `doctor` say about a role's supervisor and the last end it recorded (#589), and whether the
+    role is running unprotected: its supervisor's record exists but the process is gone."""
+    from .process_diagnostics import latest_child_exit
+
+    state, record, problem = _process_record(s, _supervisor_role(role), cleanup=False)
+    unprotected = False
+    if state == "alive" and record:
+        text = f"감독 PID {record['pid']} 실행 중"
+    elif state == "unknown":
+        text = f"감독 신원 확인 불가 — {problem}"
+    elif state == "stale":
+        text = f"감독 PID {record['pid']} 프로세스 없음" if record else "감독 기록이 잘못됨"
+        unprotected = child_state == "alive"
+    else:
+        text = "감독 없음" + ("(감독 도입 전 방식으로 시작됨: down 뒤 up으로 다시 시작하면 적용)"
+                              if child_state == "alive" else "")
+    last = latest_child_exit(logs, role)
+    return text + ("; 마지막 종료 " + _exit_text(last) if last else "; 마지막 종료 기록 없음"), unprotected
+
+
 def _local_process_diagnostics(s: Settings) -> list[dict]:
     from .process_diagnostics import latest_records
 
@@ -551,7 +613,7 @@ def _local_process_diagnostics(s: Settings) -> list[dict]:
     logs = _launch_state(s) / "logs"
     for role in ("gateway", "runner"):
         state, record, problem = _process_record(s, role, cleanup=False)
-        if state == "missing":
+        if state == "missing" and _process_record(s, _supervisor_role(role), cleanup=False)[0] != "alive":
             continue  # Remote/foreground daemons need no local PID record.
         detail = f"{role}: "
         if state == "unknown":
@@ -572,9 +634,14 @@ def _local_process_diagnostics(s: Settings) -> list[dict]:
                 detail += "; heartbeat 기록 없음"
             detail += (f"; exit {exited.get('time')} reason={exited.get('reason')} code={exited.get('code')}"
                        if exited else "; exit 기록 없음")
+        elif state == "missing":
+            detail += "프로세스 기록 없음(감독이 다시 시작하는 중일 수 있음)"
         else:
             detail += "잘못된 PID 기록"
-        rows.append({"group": "process", "name": role, "status": "ok" if state == "alive" else "warn",
+        supervision, unprotected = _supervisor_detail(s, role, logs, state)
+        detail += "; " + supervision
+        rows.append({"group": "process", "name": role,
+                     "status": "ok" if state == "alive" and not unprotected else "warn",
                      "detail": detail, "hint": "state/logs의 diagnostics.jsonl·fault.log·일반 로그를 확인하세요."})
     return rows
 
@@ -585,20 +652,13 @@ def _record_problem(role: str, reason: str | None) -> None:
     raise SystemExit(2)
 
 
-def _start_background(s: Settings, role: str, *, popen=None) -> int:
-    state = _launch_state(s)
-    logs = state / "logs"
-    logs.mkdir(parents=True, exist_ok=True)
+def _launch_options(s: Settings) -> dict:
+    """What every detached labhq process of `up` shares: no console, no stdin, stderr into stdout, a fresh process
+    group or session so a signal sent to the starter's group never reaches it."""
     env = dict(os.environ)
     env["PYTHONUTF8"] = "1"
     env["PYTHONUNBUFFERED"] = "1"
     env["PYTHONFAULTHANDLER"] = "1"  # Also cover interpreter/import failures before role hooks install.
-    if role == "runner":
-        env = without_windows_app_aliases(env)
-    command = [sys.executable, "-m", "labhq.cli"]
-    if s.config_path:
-        command += ["-c", s.config_path]
-    command.append(role)
     options = {
         "cwd": str(REPO), "stdin": subprocess.DEVNULL, "stderr": subprocess.STDOUT,
         "env": env, "close_fds": True,
@@ -608,7 +668,77 @@ def _start_background(s: Settings, role: str, *, popen=None) -> int:
                                     getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200))
     else:
         options["start_new_session"] = True
-    with (logs / f"{role}.log").open("a", encoding="utf-8") as output:
+    return options
+
+
+def _child_launch(s: Settings, role: str) -> tuple[list[str], dict]:
+    """The command and Popen options for the gateway or runner itself. The role's supervisor starts it, not `up`
+    (#589), so its recorded parent is a process that lives as long as it does."""
+    options = _launch_options(s)
+    if role == "runner":
+        options["env"] = without_windows_app_aliases(options["env"])
+    command = [sys.executable, "-m", "labhq.cli"]
+    if s.config_path:
+        command += ["-c", s.config_path]
+    command.append(role)
+    return command, options
+
+
+def _supervisor_launch(s: Settings, role: str) -> tuple[list[str], dict]:
+    options = _launch_options(s)
+    if role == "runner":
+        options["env"] = without_windows_app_aliases(options["env"])
+    return [sys.executable, "-m", "labhq.supervisor", s.config_path or "", role], options
+
+
+def _await_child_record(s: Settings, role: str, *, supervisor_pid: int, supervisor_created: str,
+                        timeout: float | None = None) -> None:
+    """Wait until the role's supervisor has recorded the process it started, or fail the start.
+
+    The supervisor pins its own ancestors and then starts and records the role, so a record means both are done.
+    `up` is one of those ancestors and must still be alive while it happens: a PID that is already free cannot be
+    held (#589). A supervisor that ended first, or never recorded anything, is stopped and removed."""
+    supervisor = _supervisor_role(role)
+    deadline = time.monotonic() + (_CHILD_RECORD_WAIT_SECONDS if timeout is None else timeout)
+    while True:
+        state, _record, _reason = _process_record(s, role, cleanup=False)
+        if state == "alive":
+            return
+        try:
+            still = _process_created(supervisor_pid) == supervisor_created
+        except ProcessIdentityError:
+            still = True  # unreadable is not gone: keep waiting for the record, then give up at the deadline
+        if not still:
+            reason = "감독 프로세스가 먼저 끝났습니다"
+            break
+        if time.monotonic() >= deadline:
+            reason = f"감독 프로세스가 {role} 기록을 남기지 않았습니다"
+            break
+        time.sleep(0.1)
+    try:
+        _terminate_tree(supervisor_pid, created=supervisor_created)
+    except OSError:
+        pass
+    _pid_file(s, supervisor).unlink(missing_ok=True)
+    print(f"{role}을 시작하지 못했습니다: {reason}. 로그: {_launch_state(s) / 'logs' / (supervisor + '.log')}",
+          file=sys.stderr)
+    raise SystemExit(2)
+
+
+def _start_background(s: Settings, role: str, *, popen=None) -> int:
+    """Start the gateway or runner under its own detached supervisor and return the supervisor's PID (#589).
+
+    `up` exits once everything answers, so a process `up` started directly would keep naming the dead `up` as its
+    parent, and Windows can give that PID to a stranger that something later kills by parent PID alone. The
+    supervisor outlives `up`, starts the role as its own child and records how it ended; `up` records the
+    supervisor, which records the role."""
+    state = _launch_state(s)
+    logs = state / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    supervisor = _supervisor_role(role)
+    _clear_stopping(s, role)
+    command, options = _supervisor_launch(s, role)
+    with (logs / f"{supervisor}.log").open("a", encoding="utf-8") as output:
         process = (popen or subprocess.Popen)(command, stdout=output, **options)
     try:
         created = _process_created(process.pid)
@@ -618,17 +748,23 @@ def _start_background(s: Settings, role: str, *, popen=None) -> int:
         except OSError:
             if hasattr(process, "terminate"):
                 process.terminate()
-        _record_problem(role, str(exc))
+        _record_problem(supervisor, str(exc))
     if created is None:
         try:
             _terminate_tree(process.pid)
         except OSError:
             if hasattr(process, "terminate"):
                 process.terminate()
-        _record_problem(role, f"띄운 PID {process.pid}이 이미 종료됨")
-    record = {"pid": int(process.pid), "role": role, "created": created, "config": s.config_path}
-    atomic_write_text(_pid_file(s, role), json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
+        _record_problem(supervisor, f"띄운 PID {process.pid}이 이미 종료됨")
+    record = {"pid": int(process.pid), "role": supervisor, "created": created, "config": s.config_path}
+    atomic_write_text(_pid_file(s, supervisor), json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
+    _await_child_record(s, role, supervisor_pid=int(process.pid), supervisor_created=created)
     return int(process.pid)
+
+
+def _supervised(s: Settings, role: str) -> bool:
+    """The role's supervisor is running (it may be between a restart's end and its next start)."""
+    return _process_record(s, _supervisor_role(role))[0] == "alive"
 
 
 def _up_unlocked(s: Settings, *, popen=None) -> None:
@@ -638,9 +774,10 @@ def _up_unlocked(s: Settings, *, popen=None) -> None:
     # A healthy server can share the port and state directory while using another config (#559).
     # Do not silently claim the requested settings are active, or delete the other process's record.
     for role in ("gateway", "runner"):
-        state, _record, reason = _process_record(s, role)
-        if state == "unknown":
-            _record_problem(role, reason)
+        for name in (role, _supervisor_role(role)):
+            state, _record, reason = _process_record(s, name)
+            if state == "unknown":
+                _record_problem(name, reason)
     health = _health(s)
     if health is None:
         state, _record, reason = _process_record(s, "gateway")
@@ -650,6 +787,13 @@ def _up_unlocked(s: Settings, *, popen=None) -> None:
             health = _wait_for_health(s, runner=False, timeout=30)
             if health is None:
                 print(f"gateway 프로세스는 살아 있으나 인증된 상태를 확인할 수 없음 — 로그: "
+                      f"{_launch_state(s) / 'logs' / 'gateway.log'}", file=sys.stderr)
+                raise SystemExit(2)
+        elif _supervised(s, "gateway"):
+            # Its supervisor is restarting it (settings: supervisor.restart); a second supervisor would race it.
+            health = _wait_for_health(s, runner=False, timeout=30)
+            if health is None:
+                print(f"gateway 감독 프로세스는 살아 있으나 gateway가 응답하지 않음 — 로그: "
                       f"{_launch_state(s) / 'logs' / 'gateway.log'}", file=sys.stderr)
                 raise SystemExit(2)
         else:
@@ -667,6 +811,12 @@ def _up_unlocked(s: Settings, *, popen=None) -> None:
             health = _wait_for_health(s, runner=True, timeout=30)
             if health is None:
                 print(f"runner 프로세스는 살아 있으나 gateway에 연결되지 않음 — 로그: "
+                      f"{_launch_state(s) / 'logs' / 'runner.log'}", file=sys.stderr)
+                raise SystemExit(2)
+        elif _supervised(s, "runner"):
+            health = _wait_for_health(s, runner=True, timeout=30)
+            if health is None:
+                print(f"runner 감독 프로세스는 살아 있으나 runner가 gateway에 연결되지 않음 — 로그: "
                       f"{_launch_state(s) / 'logs' / 'runner.log'}", file=sys.stderr)
                 raise SystemExit(2)
         else:
@@ -701,9 +851,10 @@ def _wait_for_process_end(pid: int, created: str, timeout: float) -> bool:
 
 def _terminate_tree(pid: int, *, created: str | None = None) -> None:
     if sys.platform == "win32":
-        # Not `taskkill /T`: it follows parent PIDs Windows may have reused. After `up` exits the launchers keep a stale
-        # parent PID, and a tree collected by it ended the PI's gateway and runner together (#589). The helper keeps
-        # only descendants created no earlier than their parent and re-checks each one's creation time as it kills.
+        # Not a kill that collects the tree by parent PID alone: Windows may have reused those PIDs. Launchers started
+        # before the supervisor (#589) keep a stale parent PID after `up` exits, and a tree collected by it ended the
+        # PI's gateway and runner together. The helper keeps only descendants created no earlier than their parent and
+        # re-checks each one's creation time as it kills.
         identity = proc_tree.parse_created(created)
         if created is not None and identity is None:
             raise OSError(f"PID {pid}의 생성 시각 형식({created})을 읽을 수 없어 종료하지 않음")
@@ -736,11 +887,35 @@ def _terminate_tree(pid: int, *, created: str | None = None) -> None:
 
 
 def _stop_background(s: Settings, role: str) -> int | None:
+    """Stop one role: its supervisor first, so nothing restarts it, then whatever of the role itself is left (#589).
+
+    On Windows ending the supervisor's tree ends the role too, so the second step usually finds it gone; on POSIX the
+    supervisor passes the stop on and waits, and the role has its own process group. The role's record is read again
+    after the supervisor is gone: a role that ended meanwhile may have had its PID reused, and is not touched."""
+    supervisor = _supervisor_role(role)
+    supervisor_state, supervisor_record, supervisor_reason = _process_record(s, supervisor)
+    if supervisor_state == "unknown":
+        _record_problem(supervisor, supervisor_reason)
     state, record, reason = _process_record(s, role)
-    if state in {"missing", "stale"}:
-        return None
     if state == "unknown":
         _record_problem(role, reason)
+    role_pid = int(record["pid"]) if state == "alive" else None
+    supervisor_pid: int | None = None
+    if supervisor_state == "alive":
+        _mark_stopping(s, role)
+        supervisor_pid = int(supervisor_record["pid"])
+        try:
+            _terminate_tree(supervisor_pid, created=str(supervisor_record["created"]))
+        except OSError as exc:
+            print(f"{supervisor} PID {supervisor_pid}을 종료하지 못했습니다: {exc}", file=sys.stderr)
+            raise SystemExit(2) from None
+        _pid_file(s, supervisor).unlink(missing_ok=True)
+        if state == "alive":
+            state, record, reason = _process_record(s, role)
+            if state == "unknown":
+                _record_problem(role, reason)
+    if state != "alive":
+        return role_pid or supervisor_pid
     pid = int(record["pid"])
     try:
         _terminate_tree(pid, created=str(record["created"]))
@@ -861,9 +1036,10 @@ def _down_unlocked(s: Settings, *, force: bool = False, keep_gateway: bool = Fal
         raise SystemExit(2)
     roles = ("runner",) if keep_gateway else ("runner", "gateway")
     for role in roles:
-        state, _record, reason = _process_record(s, role)
-        if state == "unknown":
-            _record_problem(role, reason)
+        for name in (role, _supervisor_role(role)):
+            state, _record, reason = _process_record(s, name)
+            if state == "unknown":
+                _record_problem(name, reason)
     stopped = [(role, pid) for role in roles if (pid := _stop_background(s, role)) is not None]
     if stopped:
         print("종료: " + ", ".join(f"{role} PID {pid}" for role, pid in stopped))

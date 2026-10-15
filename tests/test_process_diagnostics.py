@@ -77,16 +77,19 @@ def test_stale_pid_is_reported_with_last_records_without_deleting_it(tmp_path, m
 
 
 def test_up_redirects_both_streams_and_unbuffers_child(tmp_path, monkeypatch):
+    """`up` now starts the role's supervisor (#589), which starts the role: the supervisor's streams are checked here,
+    the role's own in tests/test_supervisor.py."""
     settings = _settings(tmp_path)
     monkeypatch.setattr(cli, "_process_created", lambda pid: "created")
+    monkeypatch.setattr(cli, "_await_child_record", lambda *args, **kwargs: None)  # no supervisor runs in this test
     def spawn(command, **options):
         assert options["stderr"] == subprocess.STDOUT
-        assert options["stdout"].name.endswith("gateway.log")
+        assert options["stdout"].name.endswith("gateway-supervisor.log")
         assert options["env"]["PYTHONUNBUFFERED"] == "1"
         options["stdout"].write("child-output\n")
         return type("Child", (), {"pid": 99999999})()
     cli._start_background(settings, "gateway", popen=spawn)
-    assert "child-output" in (tmp_path / "state" / "logs" / "gateway.log").read_text()
+    assert "child-output" in (tmp_path / "state" / "logs" / "gateway-supervisor.log").read_text()
 
 
 @pytest.mark.parametrize("ending,reason,code", [

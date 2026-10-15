@@ -8,6 +8,14 @@ gateway:
   client_token: change-me-client
   # report_browser: C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe  # PDF 보고서를 인쇄할 Edge·Chrome(비우면 자동으로 찾음)
 
+# `up`이 역할마다 띄우는 감독 프로세스. 항상 gateway·runner의 종료 시각과 종료 코드를 기록한다(docs/manual.md).
+# supervisor:
+#   restart: false        # true: 스스로 끝난(종료 코드 0이 아닌) 역할을 다시 시작. 기본은 꺼짐
+#   max_restarts: 5       # restart_window_s 안에 다시 시작하는 최대 횟수. 넘으면 그대로 둠
+#   restart_window_s: 600
+#   backoff_s: 5          # 첫 재시작 전 대기. 다시 시작할 때마다 두 배
+#   backoff_cap_s: 120
+
 runner:
   id: lab-workstation
   max_parallel: 4
