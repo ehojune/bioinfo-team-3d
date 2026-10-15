@@ -3200,6 +3200,9 @@ class Orchestrator:
                 self.attempts.setdefault(rid, {})[key] = self.attempts.get(rid, {}).get(key, 0) + 1
                 attempt_task = current.model_copy(update={"id": current.id if attempt == 1 else new_id("task"),
                                                   "resume_session_id": previous_session,
+                                                  "request_budget_remaining_usd": (
+                                                      None if optional_support else
+                                                      self._request_budget_remaining(rid)),
                                                   "meta": {**current.meta, "attempt": attempt,
                                                            **({"workdir": previous_workdir} if previous_workdir else {})}})
                 if attempt > 1:
@@ -3630,6 +3633,15 @@ class Orchestrator:
                     state["outcome"] = "budget_timed_out"
                 if block:
                     raise BudgetExceeded(reason)
+
+    def _request_budget_remaining(self, rid: str) -> float | None:
+        """Request allowance still available to a runner call after recorded and reserved costs."""
+        req = self.hub.requests.get(rid, {})
+        limit = req.get("budget_usd") or self.hub.s.policy.budget.per_request_usd
+        if not limit:
+            return None
+        _spent, _unknown, bound = self._budget_bound(rid, float(limit))
+        return max(0.0, float(limit) - bound)
 
     def _research_budget(self, rid: str, req: dict, plan: dict) -> tuple[dict[str, Any], str]:
         """The spending cap a CP1 approval of ``plan`` enforces (PI 점검 R17), and where its configured cap came from.

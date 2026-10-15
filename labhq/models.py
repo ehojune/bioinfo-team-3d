@@ -287,6 +287,7 @@ class Task(BaseModel):
     output_schema: dict[str, Any] | None = None
     resume_session_id: str | None = None
     budget_usd: float | None = None
+    request_budget_remaining_usd: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     created_at: float = Field(default_factory=time.time)
     meta: Annotated[dict[str, Any], RunnerPathFields] = {}
 

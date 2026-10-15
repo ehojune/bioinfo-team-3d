@@ -13,6 +13,15 @@ RETRY_PROMPT = (
 )
 
 
+def _retry_budget(ctx: RunContext) -> float | None:
+    """Total allowance for this runner turn, bounded by the request's remaining allowance."""
+    task_budget = ctx.task.budget_usd or ctx.agent.max_budget_usd or ctx.settings.policy.budget.per_task_usd
+    limits = [float(task_budget)] if task_budget and task_budget > 0 else []
+    if ctx.task.request_budget_remaining_usd is not None:
+        limits.append(float(ctx.task.request_budget_remaining_usd))
+    return min(limits) if limits else None
+
+
 async def run_with_json_retries(adapter, ctx: RunContext) -> TaskResult:
     """Each retry resumes the same workspace/session and has its own accounting baseline."""
     emit, record = ctx.emit, ctx.record_run
@@ -22,6 +31,7 @@ async def run_with_json_retries(adapter, ctx: RunContext) -> TaskResult:
     usage: dict[str, int] = {}
     usage_known = True
     errors: list[str] = []
+    retry_budget = _retry_budget(ctx)
 
     async def observe(kind: str, data: dict) -> None:
         nonlocal parse_error
@@ -48,10 +58,17 @@ async def run_with_json_retries(adapter, ctx: RunContext) -> TaskResult:
             for key, value in result.usage.items():
                 usage[key] = usage.get(key, 0) + value
             errors.extend(result.tool_errors)
-            if not parse_error or result.error_kind == "halted" or (ctx.halt and ctx.halt.is_set()):
+            if parse_error:
+                errors.append(parse_error)
+            if (result.structured is not None or not parse_error or result.error_kind == "halted"
+                    or (ctx.halt and ctx.halt.is_set())):
                 break
-            errors.append(parse_error)
-            if attempt == ctx.settings.runner.structured_output_retries or not result.session_id:
+            remaining = None
+            if retry_budget is not None:
+                remaining = (retry_budget - sum(value for value in costs if value is not None)
+                             if all(value is not None for value in costs) else 0.0)
+            if (attempt == ctx.settings.runner.structured_output_retries or not result.session_id
+                    or (remaining is not None and remaining <= 0)):
                 result = result.model_copy(update={
                     "ok": False, "structured": None, "text": "", "blocking_decision": None,
                     "error_kind": FORMAT_ERROR,
@@ -61,7 +78,8 @@ async def run_with_json_retries(adapter, ctx: RunContext) -> TaskResult:
             await emit("agent.log", {"level": "info", "text": (
                 f"StructuredOutput 형식 오류 자동 재시도 {attempt + 1}/{ctx.settings.runner.structured_output_retries}")})
             ctx.task = ctx.task.model_copy(update={"resume_session_id": result.session_id,
-                                                   "prompt": RETRY_PROMPT, "context": ""})
+                                                   "prompt": RETRY_PROMPT, "context": "",
+                                                   **({"budget_usd": remaining} if remaining is not None else {})})
             ctx.prompt, ctx.prompt_pointer = RETRY_PROMPT, None
             ctx.resume_baseline = dict(baseline)
         known = all(value is not None for value in costs)

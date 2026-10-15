@@ -15,7 +15,8 @@ from tests.test_cso import FakeHub, penguins_hub, replan_hub, result as task_res
 ERROR = "InputValidationError: StructuredOutput was called with input that could not be parsed as JSON"
 
 
-def make_runner(tmp_path, monkeypatch, failures, *, limit=2, error=ERROR, session="same-session"):
+def make_runner(tmp_path, monkeypatch, failures, *, limit=2, error=ERROR, session="same-session",
+                valid_on_parse_error=False):
     cfg = Settings()
     cfg.gateway.state_dir = cfg.runner.state_dir = str(tmp_path / "state")
     cfg.runner.workspace_root = str(tmp_path / "runs")
@@ -36,14 +37,47 @@ def make_runner(tmp_path, monkeypatch, failures, *, limit=2, error=ERROR, sessio
                     "type": "user", "message": {"content": [
                         {"type": "tool_result", "is_error": True, "content": error}]}}), RunState(), ctx)
             ctx.record_run(session_id=session, session_cost_total=len(calls) * 0.1)
+            failed = len(calls) <= failures
             return TaskResult(task_id=ctx.task.id, agent_id="worker", ok=True, session_id=session,
                               cost_usd=0.1, usage={"input_tokens": 10},
-                              text="안전 검사 때문에 멈췄습니다" if len(calls) <= failures else "완료",
-                              structured={"clarifying_questions": ["진행할까요?"]} if len(calls) <= failures
-                              else {"answer": "완료"})
+                              text="안전 검사 때문에 멈췄습니다" if failed else "완료",
+                              structured=None if failed and not valid_on_parse_error else {"answer": "완료"})
 
     monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_: Adapter())
     return runner, calls
+
+
+@pytest.mark.asyncio
+async def test_valid_final_structured_output_suppresses_resume_retry(tmp_path, monkeypatch):
+    runner, calls = make_runner(tmp_path, monkeypatch, 1, valid_on_parse_error=True)
+
+    result = await runner.run_task(Task(agent_id="worker", prompt="original", output_schema={"type": "object"}))
+
+    assert len(calls) == 1
+    assert result.ok and result.structured == {"answer": "완료"}
+    assert result.cost_usd == pytest.approx(0.1) and result.usage["input_tokens"] == 10
+    assert ERROR in result.tool_errors
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("task_budget,request_limit,spent", [(0.1, 0.6, 0.1), (0.5, 0.2, 0.1)])
+async def test_retry_stops_when_smaller_budget_is_spent(tmp_path, monkeypatch, task_budget, request_limit, spent):
+    runner, calls = make_runner(tmp_path, monkeypatch, 10)
+    hub = FakeHub(runner.run_task)
+    hub.requests["r"]["budget_usd"] = request_limit
+    orch = Orchestrator(hub)
+    orch.cost["r"] = spent
+
+    result = await orch.run_step(Task(
+        agent_id="worker", request_id="r", prompt="original", output_schema={"type": "object"},
+        budget_usd=task_budget,
+    ))
+
+    assert len(calls) == 1
+    assert hub.calls[0].request_budget_remaining_usd == pytest.approx(request_limit - spent)
+    assert not result.ok and result.error_kind == "structured_output_format"
+    assert result.cost_usd == pytest.approx(0.1) and result.usage["input_tokens"] == 10
+    assert ERROR in result.tool_errors
 
 
 @pytest.mark.asyncio
