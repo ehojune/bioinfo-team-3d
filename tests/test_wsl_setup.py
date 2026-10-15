@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -63,7 +64,7 @@ def test_doctor_collapses_unconfigured_disabled_wsl(settings, monkeypatch):
     from labhq import wsl_setup
 
     calls = []
-    monkeypatch.setattr(doctor.sys, "platform", "win32")
+    monkeypatch.setattr(doctor, "sys", SimpleNamespace(platform="win32"))
     monkeypatch.setattr(wsl_setup, "distributions", lambda: [settings.runner.wsl.distro])
     monkeypatch.setattr(wsl_setup, "_remote", lambda *a, **kw: calls.append((a, kw)) or {"ok": True, **READY})
     monkeypatch.setattr(cli, "_health", lambda s: health(s))
@@ -84,7 +85,7 @@ def test_doctor_checks_enabled_wsl_individually_with_actual_login_path(settings,
     data["runner"]["wsl"] = {"enabled": True, "root": "/home/runner/labhq-wsl"}
     Path(settings.config_path).write_text(yaml.safe_dump(data), encoding="utf-8")
     settings = Settings.load(settings.config_path)
-    monkeypatch.setattr(doctor.sys, "platform", "win32")
+    monkeypatch.setattr(doctor, "sys", SimpleNamespace(platform="win32"))
     monkeypatch.setattr(wsl_setup, "distributions", lambda: [settings.runner.wsl.distro])
     monkeypatch.setattr(wsl_setup, "_remote", lambda *a, **kw: {"ok": True, **READY, "claude_login": False})
     monkeypatch.setattr(cli, "_health", lambda s: health(s))
