@@ -6,3 +6,6 @@ rows:
 - sha: 091c53f
   at: 2026-10-16 01:37
   text: StructuredOutput 최종 결과를 우선하고 잔여 예산 안에서만 재시도
+- sha: 5d654bb
+  at: 2026-10-16 01:54
+  text: StructuredOutput parse 오류와 일반 tool error의 수집 경계를 복원
