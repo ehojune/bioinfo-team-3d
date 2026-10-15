@@ -19,3 +19,9 @@ rows:
   at: 2026-10-15 17:55
   text: runner 경계의 Task·결과·이벤트 경로를 모델 선언과 runtime_env로 변환하고 reference root·manifest
     수집을 연결한다.
+- sha: ceee47a
+  at: 2026-10-15 18:39
+  text: 불확실 task를 최초 runner에 고정하고 WSL 준비 판정을 점검·활성화·gateway에 통합한다.
+- sha: 93f3e41
+  at: 2026-10-15 18:37
+  text: 'main의 #641 테스트 안정화를 WSL runner 수정 브랜치에 반영한다.'
