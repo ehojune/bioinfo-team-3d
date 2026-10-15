@@ -1429,7 +1429,7 @@ class Runner:
                 result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=error)
                 await emit_final({"state": "error", "error": error}, result.model_dump(mode="json"))
                 return result
-            # PI personal paths (policy.private_paths): one that holds a folder this task works in is left open.
+            # Explicit references retain their policy exception; managed roots stay private.
             keep = [ws.dir, self.ws_root, *extra_dirs, *read_dirs,
                     *(self.s.path(r) for r in self.s.runner.reference_roots),
                     *(self.s.path(p.local_dir) for p in self.s.projects if p.local_dir)]

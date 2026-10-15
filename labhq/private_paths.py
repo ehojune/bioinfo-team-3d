@@ -324,12 +324,14 @@ def resolve_private_paths(settings: Settings, keep: Iterable[str | os.PathLike |
     if settings.policy.private_paths == []:
         return PrivatePaths(enabled=False)
     home = home or host_home()
-    managed = managed_read_dirs(settings, cwd, home)
+    managed = [str(settings.path(settings.runner.talent_dir)), str(settings.path(settings.runner.workspace_root))]
     open_reads = list(open_reads)
     kept: set[str] = set()
     for folder in keep:
         # A managed workspace grants reads, never exposes its private parent/siblings.
-        if folder and not inside_any(os.path.abspath(str(folder)), managed):
+        if folder and not any(inside_any(f, managed) or any(inside_any(m, [f]) for m in managed)
+                              or (cwd is not None and inside_any(str(cwd), [f]))
+                              for f in _forms(str(folder))):
             kept |= _forms(str(folder))
     paths: list[str] = []
     labels: list[str] = []
@@ -352,13 +354,9 @@ def resolve_private_paths(settings: Settings, keep: Iterable[str | os.PathLike |
             paths.extend(short_spellings(spelled))
     paths = [p for i, p in enumerate(paths)
              if _fold(p, _case_insensitive(p)) not in {_fold(q, _case_insensitive(p)) for q in paths[:i]}]
-    reads = []
-    for folder in [*open_reads, *(p for p in managed if inside_any(p, paths))]:
-        if folder:
-            written = os.path.abspath(str(folder))
-            # Do not turn a configured alias into a new read grant at its destination.
-            if _fold(written, _case_insensitive(written)) == _fold(os.path.realpath(written), _case_insensitive(written)):
-                reads.append(written)
+    if cwd is not None and inside_any(os.path.abspath(str(cwd)), paths):
+        open_reads.append(str(cwd))
+    reads = scoped_open_reads(settings, open_reads, cwd, home)
     return PrivatePaths(tuple(dict.fromkeys(paths)), tuple(dict.fromkeys(labels)), tuple(dict.fromkeys(skipped)),
                         open_reads=tuple(dict.fromkeys(reads)))
 
@@ -395,10 +393,46 @@ def credential_path(path: str) -> bool:
                              r'\.claude\.json|history\.jsonl', parts[-1], re.I))
 
 
-def managed_read_dirs(settings: Settings, cwd=None, home: str | None = None) -> list[str]:
-    """Configured work roots; staff skills require a task-specific runner grant."""
-    roots = [str(settings.path(settings.runner.talent_dir)), str(settings.path(settings.runner.workspace_root))]
-    return roots
+def scoped_open_reads(settings: Settings, candidates: Iterable[str], cwd=None,
+                      home: str | None = None) -> list[str]:
+    """Finalize every read grant in one place; shared task/staff containers are never read roots.
+
+    Within runs/talent only the current workdir (including a recruiter's build override) is eligible.
+    Plugins, skills and Claude saved output must be explicit candidates, below their shared containers.
+    Compare both spellings so an alias cannot turn a narrow grant into a shared-root grant.
+    """
+    work = os.path.abspath(str(cwd)) if cwd is not None else None
+    managed = [str(settings.path(settings.runner.workspace_root)), str(settings.path(settings.runner.talent_dir))]
+    staff = [os.path.join(home or host_home(), name) for name in ('.claude', '.codex')]
+    config = staff_claude_config_dir(settings, home)
+    codex = configured_staff_codex_home(settings, Path(work or managed[0]))
+    staff += [str(p) for p in (config, codex) if p]
+    containers = [*managed, *staff, *(os.path.join(s, name) for s in staff
+                                     for name in ('projects', 'sessions', 'plugins', 'skills'))]
+    container_forms = [f for p in containers for f in _forms(p)]
+    managed_forms = [f for p in managed for f in _forms(p)]
+    projects = [f for s in staff for f in _forms(os.path.join(s, 'projects'))]
+    own_projects = staff_claude_project_dirs(settings, work) if work else []
+    reads = []
+    for candidate in candidates:
+        if not candidate:
+            continue
+        written = os.path.abspath(str(candidate))
+        forms = _forms(written)
+        if any(_fold(f, _case_insensitive(written)) != _fold(written, _case_insensitive(written)) for f in forms):
+            continue
+        # Final invariant: no grant may enclose a shared container, another task's subtree,
+        # or another Claude project. This also covers candidates supplied by plugins/doctor.
+        if any(inside_any(p, forms) for p in container_forms):
+            continue
+        if any(inside_any(f, managed_forms) and (not work or not inside_any(f, [work])) for f in forms):
+            continue
+        if any(inside_any(f, projects) and not inside_any(f, own_projects) for f in forms):
+            continue
+        if work and inside_any(work, forms) and not inside_any(written, [work]):
+            continue
+        reads.append(written)
+    return list(dict.fromkeys(reads))
 
 
 def managed_shell_read(command: str, private_paths: Iterable[str], open_reads: Iterable[str],

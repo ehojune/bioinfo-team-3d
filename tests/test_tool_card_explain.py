@@ -38,12 +38,13 @@ def gate(layout, tool, data):
 
 @pytest.mark.parametrize('which', ['build', 'skills', 'runs'])
 @pytest.mark.parametrize('tool', ['Read', 'Bash'])
-def test_managed_reads_need_no_approval(layout, which, tool):
+def test_only_task_and_skill_reads_need_no_approval(layout, which, tool):
     _, root, build, skills = layout
     path = {'build': build, 'skills': skills, 'runs': root / 'runs'}[which] / 'guide.md'
     path.write_text('public guide', encoding='utf-8')
     data = {'file_path': str(path)} if tool == 'Read' else {'command': f'cat "{path}"'}
-    assert gate(layout, tool, data).action == 'allow'
+    expected = ('deny' if tool == 'Read' else 'ask') if which == 'runs' else 'allow'
+    assert gate(layout, tool, data).action == expected
 
 
 def test_reported_compound_read_needs_no_approval(layout):

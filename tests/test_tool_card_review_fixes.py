@@ -91,8 +91,10 @@ def test_codex_profiles_keep_same_scoped_read_grants(layout, monkeypatch, read_o
                           workdir=build, private_paths=private.paths, private_open_reads=private.open_reads)
     flags = codex.CodexAdapter(cfg).sandbox_flags(ctx)
     profile = next(v for v in flags if v.startswith('permissions.labhq_staff='))
-    for path in (root / 'runs', root / 'talent', skills):
+    for path in (build, skills):
         assert f'{codex._toml(str(path))} = "read"' in profile
+    for path in (root / 'runs', root / 'talent', build.parent):
+        assert f'{codex._toml(str(path))} = "read"' not in profile
     for path in (root, private_child):
         assert f'{codex._toml(str(path))} = "deny"' in profile
     assert f'{codex._toml(str(skills.parent))} = "read"' not in profile
