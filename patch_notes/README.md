@@ -14,9 +14,20 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 13:10 | [`34e8b20`](https://github.com/ehojune/bioinfo-team-3d/pull/610/commits/34e8b20) | 출처 호스트 거름을 하나(public_link)로 닫고(끝 점·IPv6·IPv4 변형·userinfo), 괄호 있는 DOI와 짧은 PMID를 받으며, 게시 카드 답과 --redraft를 같은 lock으로 직렬화해 게시 시작 뒤 재작성을 거부한다(#607). |
+| 12:43 | [`583a8c6`](https://github.com/ehojune/bioinfo-team-3d/pull/614/commits/583a8c6) | 실행 중인 gateway·runner가 정체(설정 파일과 state·runner state·runner id·포트 지문)를 적고, up과 doctor가 그 정체로 같은 state·runner state·포트를 쥔 다른 설정을 막으며 gateway는 /api/health의 identity로 정체를 알려 준다(#613). |
+| 12:43 | [`0a584d9`](https://github.com/ehojune/bioinfo-team-3d/pull/614/commits/0a584d9) | init이 bioinfo-agent 폴더를 상대 경로로 받아도 절대 경로로 저장하고, doctor는 상대 경로로 적힌 설정을 warn한다(#613). |
+| 12:11 | [`4bf0768`](https://github.com/ehojune/bioinfo-team-3d/pull/610/commits/4bf0768) | main의 PDF 그림 정책(#611·#616)을 합치고, 편집자 입력·출처 추출·--redraft와 함께 draft_documents·finish가 초록과 출처 assets를 모두 받게 한다(#607). |
+| 12:05 | [`5ef1ee2`](https://github.com/ehojune/bioinfo-team-3d/pull/614/commits/5ef1ee2) | 예시 설정이 semantics ab·actions confirm을 켜도 action layer만 지우는 검사(test_semantics_shadow_remove)가 통과하도록 의미 모델 설정 test를 고친다(#613). |
 | 11:32 | [`836b448`](https://github.com/ehojune/bioinfo-team-3d/pull/616/commits/836b448) | 게시 PDF는 정리본이 담을 수 있는 그림(보고된 산출물, 정리본이 담는 형식)만 넣고 크기 제한만 푼다. 보고서의 graphical abstract는 첫 제목 아래 첫 그림으로 옮기고, verify는 자체 abstract가 없으면 그려 넣을 한 자리를 빼 결과 그림 10장까지만 센다(#608, #611 리뷰 P2). |
+| 11:31 | [`778edff`](https://github.com/ehojune/bioinfo-team-3d/pull/614/commits/778edff) | 격리 설치 검사(scripts/clean_install_check.py)의 init 입력을 질문 수에 매이지 않게 해, init이 묻는 질문이 늘어도 EOF로 멈추지 않는다(#613). |
+| 11:27 | [`fad7274`](https://github.com/ehojune/bioinfo-team-3d/pull/614/commits/fad7274) | labhq init이 PI가 시험한 설정(연구 모드·분야 팩·의미 모델 ab·산출물 종류 선언)으로 새 설정을 만들고, bioinfo-agent 위치를 찾거나 묻고 못 찾으면 연결 안 됨을 알리며, dev_log.repo를 묻는다(#613). |
+| 11:26 | [`e3fc6b0`](https://github.com/ehojune/bioinfo-team-3d/pull/614/commits/e3fc6b0) | 설정이 다른 labhq가 같은 state 폴더·포트를 쓰거나 이 PC의 주 설정과 다르면 doctor와 up이 쉬운 한국어로 알리고 고치는 명령(labhq -c <그 설정> open 등)을 보여 준다(#613). |
+| 11:11 | [`6919ffc`](https://github.com/ehojune/bioinfo-team-3d/pull/610/commits/6919ffc) | resource_versions의 출처 열·칸 안 주소에도 비공개 호스트와 자격 증명 쿼리 거름을 적용하고, 링크 안의 DOI는 쿼리 없이 하나로만 적는다(#607). |
 | 10:53 | [`6f6ffae`](https://github.com/ehojune/bioinfo-team-3d/pull/611/commits/6f6ffae) | 실제 브라우저 test는 이 PC에서 인쇄가 안 되면 건너뛰어, CI 러너의 Chrome sandbox 문제를 그림 줄이기 실패로 세지 않는다(#608). |
 | 10:50 | [`29cdd86`](https://github.com/ehojune/bioinfo-team-3d/pull/611/commits/29cdd86) | 보고서 PDF의 그림은 크기 제한 없이 요청 묶음의 원본을 쓰고(정리본 PDF도 같음), PDF는 50 MB(github.edition_pdf_max_mb, 최대 75) 안으로 그림을 빼지 않고 해상도를 단계적으로 줄여 맞춘다. 그림은 11장까지이고 한 장은 graphical abstract이며, 보고서에 없으면 labhq가 계획·입력 출처·결론으로 흐름도를 그려 PDF와 정리본의 첫 그림으로 넣는다(#608). |
+| 10:38 | [`bb88f35`](https://github.com/ehojune/bioinfo-team-3d/pull/610/commits/bb88f35) | 편집자 정리본의 SOURCES.md가 DOI·PMID·GEO·SRA 번호와 자료 버전까지 모으고, 편집자에게 보고서 전문을 보내며, README 링크 줄을 한 번만 쓰고, labhq storage --redraft로 게시 전 정리본을 다시 만든다(#607). |
+| 10:38 | [`24c721a`](https://github.com/ehojune/bioinfo-team-3d/pull/610/commits/24c721a) | 요청이 끝나거나 검토 완료를 표시하거나 게이트웨이를 시작할 때 끝난 요청의 낡은 재개 카드를 지우고 이벤트로 남긴다(#607). |
 | 07:13 | [`6ac9051`](https://github.com/ehojune/bioinfo-team-3d/pull/605/commits/6ac9051) | e2e helper가 timeout 인자를 다시 받아, 그 helper를 쓰는 research cp1 test가 깨지지 않게 했다(#598). |
 | 07:00 | [`4b3277b`](https://github.com/ehojune/bioinfo-team-3d/pull/605/commits/4b3277b) | 느린 Windows CI에서 e2e mock test가 60초·90초 고정 상한에 걸리던 것을, 진행이 멈춘 뒤 120초를 기다리는 방식으로 바꿨다(#598). |
 | 05:24 | [`b8dcfd7`](https://github.com/ehojune/bioinfo-team-3d/pull/604/commits/b8dcfd7) | 편집자 정리본에 보고서 PDF(report.pdf)를 넣고 그림 링크가 정리본 안의 파일만 가리키게 한다. PDF를 못 만들거나 크기 한도(github.edition_pdf_max_mb)를 넘으면 이유 한 줄만 남기고 PDF 없이 게시한다(#584). |

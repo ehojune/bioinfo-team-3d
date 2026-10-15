@@ -167,7 +167,9 @@ def test_yes_accepts_defaults_and_summarizes_doctor(monkeypatch, capsys):
     cli.main(["init", "--yes"])
     data = _data()
     assert data["hpc"]["scheduler"] == "none"
-    assert data["policy"]["data_zones"] == []
+    # Windows keeps no restricted zone; the run folder is the one internal zone the semantics model needs (#613).
+    assert data["policy"]["data_zones"] == [
+        {"path": "~/.labhq/runs", "level": "internal", "note": "labhq 작업 폴더 — 의미 모델 hash용"}]
     assert data["engines"]["codex"]["bin"] == "auto"
     output = capsys.readouterr().out
     assert "doctor: ok" in output and "fail 0" in output
@@ -272,7 +274,7 @@ def test_no_personal_claude_folder_no_claude_staff_home(isolated_home, capsys):
 def test_interactive_plugin_and_scheduler_are_recorded(tmp_path, monkeypatch, capsys):
     plugin = tmp_path / "private-checkout"
     plugin.mkdir()
-    answers = iter(["pbs", str(plugin), "n"])
+    answers = iter(["pbs", str(plugin), "", "n"])  # scheduler, bioinfo-agent folder, dev log repo (empty), consent
     monkeypatch.setattr("builtins.input", lambda *_: next(answers))
     wizard.run()
     data = _data()

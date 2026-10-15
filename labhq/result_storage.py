@@ -15,6 +15,7 @@ from urllib.parse import quote
 from .integrations.github import GitHubClient, GitHubHTTPError, publish_clean, sanitize, root_zone_restricted
 from .models import ApprovalRequest, Task
 from .policy import touches, restricted_paths
+from . import edition_sources
 from .intake import reference_dirs
 from .recruit.provenance import touches_restricted
 from .report_abstract import abstract_first, build_graphical_abstract, with_abstract_link
@@ -29,7 +30,11 @@ _PRIVATE_PATH = re.compile(r"(?<![\w:])(?:[A-Za-z]:[/\\]|\\\\|/(?:home|Users|mnt
 _ASSIGNMENT = re.compile(r"(?im)\b((?:api[_-]?key|token|password|secret)\s*[:=]\s*)[^\s,;]+")
 _TEXT_OUTPUTS = {".md", ".txt", ".svg", ".csv", ".tsv", ".py", ".r", ".sh", ".json"}
 _IMAGE_OUTPUTS = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
-_DOCUMENT_LINKS = "[전체 결과·그림·표](report.md) · [진행 기록](PROGRESS.md) · [재현 방법](REPRODUCE.md) · [참고 자료](SOURCES.md)"
+_DOCUMENT_LINKS = (("report.md", "전체 결과·그림·표"), ("PROGRESS.md", "진행 기록"), ("REPRODUCE.md", "재현 방법"),
+                   ("SOURCES.md", "출처"))
+README_EXCERPT_CHARS = 1800  # the deterministic README quotes this much of the report; report.md holds all of it
+EDITOR_REPORT_CHARS = 100_000  # what the editor reads of the report whole; a longer one is sent as outline + sections
+EDITOR_OTHER_CHARS = 30_000  # the same bound for each of PROGRESS.md, REPRODUCE.md and SOURCES.md
 _PDF_NAME = "report.pdf"
 _GENERATED = ("README.md", "report.md", "PROGRESS.md", "REPRODUCE.md", "SOURCES.md")  # edition documents that may link a figure
 PDF_UPLOAD_MAX_MB = 75  # base64 of this is 100 MB, the contents API's file limit (#608); settings caps the PDF size there
@@ -156,12 +161,79 @@ def clean_document(text: str, settings, req: dict) -> str:
     return _ASSIGNMENT.sub(r"\1<redacted-secret>", _PRIVATE_PATH.sub("<local-path>", text))
 
 
-def draft_documents(req: dict, settings, included=None, *, abstract: bool = False) -> dict[str, str]:
+def readme_excerpt(report: str, limit: int = README_EXCERPT_CHARS) -> str:
+    """The opening of the report for the README, cut at a paragraph, else a line, else a sentence; report.md has the rest."""
+    if len(report) <= limit:
+        return report
+    head = report[:limit]
+    sentence = max((m.start() for m in re.finditer(r"(?<=[.!?。])\s", head)), default=-1)
+    cut = next((at for at in (head.rfind("\n\n"), head.rfind("\n"), sentence) if at > limit // 3), limit)
+    return head[:cut].rstrip() + "\n\n…(이어지는 내용은 report.md에 있습니다.)"
+
+
+def document_links(readme: str) -> str:
+    """A link line for the edition documents the README does not link yet; empty when it already links all of them."""
+    return " · ".join(f"[{label}]({name})" for name, label in _DOCUMENT_LINKS
+                      if not re.search(rf"\]\((?:\./)?{re.escape(name)}(?:#[^)]*)?\)", readme))
+
+
+def fit_record(text: str, budget: int) -> tuple[str, list[str]]:
+    """``text`` whole when it fits ``budget`` characters. Otherwise an outline of its headings, then its sections in
+    order, whole until the budget is used (the section that crosses it keeps its opening) and only a title and first
+    line after that. Also the titles of the sections that were not sent whole."""
+    if len(text) <= budget:
+        return text, []
+    pieces = [piece for piece in re.split(r"(?m)^(?=#{1,6}\s)", text) if piece]
+    titles = [piece.splitlines()[0].lstrip("#").strip()[:120] if piece.startswith("#") else "(제목 없는 앞부분)"
+              for piece in pieces]
+    shown, left, omitted = [], budget, []
+    for piece, title in zip(pieces, titles):
+        if len(piece) <= left:
+            shown.append(piece)
+            left -= len(piece)
+            continue
+        omitted.append(title)
+        if left > 0:
+            part = piece[:left]
+            shown.append((part[:part.rfind("\n")] if "\n" in part else part) + "\n…(이 절은 여기까지만 실었습니다)\n")
+            left = 0
+        else:
+            first = next((line.strip() for line in piece.splitlines()[1:] if line.strip()), "")
+            shown.append(f"{title}\n{first[:200]}\n…(본문은 싣지 않았습니다)\n")
+    return "[개요]\n" + "\n".join(f"- {title}" for title in titles) + "\n\n[본문]\n" + "".join(shown), omitted
+
+
+def editor_prompt(docs: dict[str, str], request_text: str) -> str:
+    """What the editor reads: the request and the whole report, PROGRESS, REPRODUCE and SOURCES (#607).
+
+    A document over its size bound is sent as an outline plus whole sections, and the prompt names exactly which
+    sections are not whole, says the published document has them, and tells the editor not to call the record
+    incomplete. The README draft is left out: it quotes only the report's opening."""
+    parts, omitted = [], []
+    for name, label, budget in (("report.md", "보고서 report.md", EDITOR_REPORT_CHARS),
+                                ("PROGRESS.md", "진행 기록 PROGRESS.md", EDITOR_OTHER_CHARS),
+                                ("REPRODUCE.md", "재현 방법 REPRODUCE.md", EDITOR_OTHER_CHARS),
+                                ("SOURCES.md", "출처 SOURCES.md", EDITOR_OTHER_CHARS)):
+        body, cut = fit_record(docs.get(name, ""), budget)
+        omitted += [f"{name}의 {title}" for title in cut]
+        parts.append(f"===== {label}{' (개요와 일부 절)' if cut else ' (전문)'} =====\n{body.strip()}\n")
+    if omitted:
+        note = ("입력 크기 때문에 다음 절은 본문 대신 제목과 첫 줄만(또는 앞부분만) 담았습니다: " + "; ".join(omitted) +
+                ". 이 절들의 전문은 게시되는 문서에 그대로 있습니다. README에 기록이 불완전하다고 쓰지 말고 "
+                "자세한 내용은 해당 문서를 보라고 안내하세요.")
+    else:
+        note = "아래 기록은 전체를 그대로 담았습니다. README에 기록의 길이나 완결성을 문제 삼는 말을 쓰지 마세요."
+    return ("다음 기록만 써서 README를 정리하세요.\n" + note + "\n\n===== 요청 =====\n" + request_text.strip()
+            + "\n\n" + "\n".join(parts))
+
+
+def draft_documents(req: dict, settings, included=None, assets=None, *, abstract: bool = False) -> dict[str, str]:
     """Only derived prose enters this edition. Raw bundle data and binary files stay local.
 
     ``included``: the edition's file names; the report's figure links are made to resolve to them (#584).
+    ``assets``: the edition's text outputs by name; its ``resource_versions`` files feed SOURCES.md (#607).
     ``abstract``: the edition holds the drawn graphical abstract (`edition_abstract`); it is the report's first figure (#608)."""
-    report = str(req.get("report") or "결과 보고서가 없습니다.")
+    report =str(req.get("report") or "결과 보고서가 없습니다.")
     if included is not None:
         report = edition_figure_links(report, req, settings, included)  # before cleaning, which would cut a path's ")"
         report = with_abstract_link(report) if abstract else abstract_first(report, lambda name: name in included)
@@ -179,10 +251,12 @@ def draft_documents(req: dict, settings, included=None, *, abstract: bool = Fals
     sources += re.findall(r"https?://[^\s<>\"'\])]+", report)
     bibliography = re.search(r"(?im)^#{1,6}\s+(?:references|bibliography|참고\s*문헌|참고\s*자료|출처)[^\n]*\n", report)
     citations = re.split(r"(?m)^#{1,6}\s+", report[bibliography.end():], maxsplit=1)[0] if bibliography else ""
+    found = edition_sources.collect(
+        [report, str(req.get("report_appendix") or "")], req.get("references") or [],
+        [text for name, text in (assets or {}).items() if edition_sources.is_versions_file(name)])
     docs = {
         "README.md": "# 연구 결과\n\n## 무엇을 왜 했나요\n\n" + str(req.get("text") or "") +
-            "\n\n## 결과\n\n" + report[:1800] + "\n\n[전체 결과·그림·표](report.md) · "
-            "[진행 기록](PROGRESS.md) · [재현 방법](REPRODUCE.md) · [출처](SOURCES.md)\n",
+            "\n\n## 결과\n\n" + readme_excerpt(report) + "\n\n" + document_links("") + "\n",
         "report.md": report,
         "PROGRESS.md": "\n".join(progress),
         "REPRODUCE.md": "# 재현 방법\n\n원본 입력·실행 파일은 로컬 요청 묶음에 있습니다. "
@@ -190,9 +264,7 @@ def draft_documents(req: dict, settings, included=None, *, abstract: bool = Fals
             "이 정리본은 결과 설명용입니다. 원본 데이터나 실행 환경을 포함하지 않아 이것만으로 재실행되지는 않습니다.\n\n"
             + "\n".join(f"- {s.get('id')}: {s.get('instruction', '')}" for s in steps)
             + "\n\n## 입력 출처\n\n" + ("\n".join(sources) or "공개 입력 출처가 기록되지 않았습니다."),
-        "SOURCES.md": "# 출처·인용\n\n" + ("\n".join(f"- {url}" for url in dict.fromkeys(sources)) or
-                                                  "기록된 URL이 없습니다. 보고서의 인용을 확인하세요.")
-            + ("\n\n## 보고서 문헌\n\n" + citations if citations else ""),
+        "SOURCES.md": edition_sources.render(found, citations),
     }
     return {name: clean_document(body, settings, req) for name, body in docs.items()}
 
@@ -203,6 +275,12 @@ class ResultStorage:
         self.tasks: dict[str, asyncio.Task] = {}
         self._client = None
         self._card_lock = asyncio.Lock()
+        self.uploading: set[str] = set()  # requests whose files are going to the repository right now
+
+    @property
+    def card_lock(self) -> asyncio.Lock:
+        """Held by a redraft and by the answer to a publish card, so the two never interleave (#607)."""
+        return self._card_lock
 
     def client(self):
         token = os.environ.get(self.s.github.token_env, "")
@@ -332,6 +410,45 @@ class ResultStorage:
         if rid not in self.tasks or self.tasks[rid].done():
             self.tasks[rid] = asyncio.create_task(self.finish(rid))
 
+    async def redraft(self, rid) -> dict:
+        """Run the editor again for an edition that is drafted but not published, and replace its publish card (#607).
+
+        Allowed while the publish card is pending (or its answer window passed) and after the PI declined it. A published
+        edition is refused: its files are already in the repository. The old card is closed and the new draft opens a
+        new one; the folder is rebuilt, so nothing of the old draft stays."""
+        async with self.card_lock:
+            req = self.hub.requests[rid]
+            saved = req.get("result_storage") or {}
+            status = saved.get("status")
+            if status == "published":
+                raise ValueError("이미 게시한 정리본은 다시 만들 수 없습니다. 저장소에 올라간 파일을 이 명령이 바꾸지 않습니다.")
+            if status not in {"draft", "declined"}:
+                raise ValueError("다시 만들 정리본이 없습니다. 정리본을 만든 뒤 게시 승인을 기다리거나 거절한 요청만 다시 만들 수 있습니다"
+                                 f"(저장 상태: {status or '선택 없음'}).")
+            if req.get("status") not in {"done", "completed", "failed", "cancelled"} or req.get("cancelling"):
+                raise ValueError("끝난 요청만 정리본을 다시 만들 수 있습니다.")
+            if saved.get("after_review") and (not req.get("pi_reviewed_at") or req.get("bundle_pending")):
+                raise ValueError("보고서 검토 완료와 묶음 갱신 뒤에 다시 만들 수 있습니다.")
+            if controlled_request(req, self.s):
+                raise ValueError("통제 데이터가 포함된 요청은 편집자에게 보내지 않습니다.")
+            cards = [aid for aid, entry in self.hub.approvals.items()
+                     if entry["approval"].get("request_id") == rid and entry["approval"].get("kind") == "result_publish"]
+            running = self.tasks.get(rid)
+            if rid in self.uploading or (running is not None and not running.done() and not cards):
+                # approved (its card is gone) or already uploading: cancelling now could leave a half-published edition
+                raise ValueError("게시가 시작됐습니다. 올라가는 도중에는 다시 만들 수 없으니 끝난 뒤 결과를 확인해 주세요.")
+            if running is not None and not running.done():
+                running.cancel()  # it only waits for the old card's answer
+                await asyncio.gather(running, return_exceptions=True)
+            for aid in cards:
+                await self.hub.close_approval(aid, "정리본을 다시 만들어 이 게시 카드를 닫았습니다")
+            for key in ("draft_path", "pdf", "warning", "error_type"):
+                saved.pop(key, None)
+            saved["status"] = "selected"  # a restart before the new draft is saved builds it from scratch
+            self.hub.save_request(rid)
+            self.tasks[rid] = asyncio.create_task(self.finish(rid))
+            return {"request_id": rid, "status": "redrafting", "closed_cards": cards}
+
     async def finish(self, rid):
         req = self.hub.requests[rid]
         saved = req.get("result_storage") or {}
@@ -373,7 +490,7 @@ class ResultStorage:
                 if drawn:
                     assets[ABSTRACT_FILE] = drawn
                     included.add(ABSTRACT_FILE)
-                docs = draft_documents(req, self.s, included, abstract=bool(drawn))
+                docs = draft_documents(req, self.s, included, assets, abstract=bool(drawn))
                 links = "\n".join(f"- [{name}]({quote(name, safe='/')})" for name in [*assets, *images])
                 if links:
                     docs["README.md"] += "\n## 그림·표·실행 파일\n\n" + links + "\n"
@@ -396,7 +513,7 @@ class ResultStorage:
                     try:
                         result = await self.hub.orchestrator.run_step(Task(
                             agent_id="editor", request_id=rid,
-                            prompt="다음 기록만 써서 README를 정리하세요.\n" + json.dumps(docs, ensure_ascii=False),
+                            prompt=editor_prompt(docs, clean_document(str(req.get("text") or ""), self.s, req)),
                             output_schema={"type": "object", "properties": {"readme": {"type": "string"}},
                                            "required": ["readme"], "additionalProperties": False},
                             meta={"kind": "result_editor", "title": "결과를 저장소용으로 정리",
@@ -407,13 +524,10 @@ class ResultStorage:
                     readme = (result.structured or {}).get("readme") if result and result.ok else None
                     if isinstance(readme, str) and readme.strip():
                         docs["README.md"] = clean_document(readme, self.s, req)
-                        docs["README.md"] += ("\n\n[전체 결과·그림·표](report.md) · [진행 기록](PROGRESS.md) · "
-                                              "[재현 방법](REPRODUCE.md) · [출처](SOURCES.md)\n")
+                        if missing := document_links(docs["README.md"]):  # one link line: the editor's own, or ours
+                            docs["README.md"] += "\n\n" + missing + "\n"
                         if links:
                             docs["README.md"] += "\n## 그림·표·실행 파일\n\n" + links + "\n"
-                if any(f"]({name})" not in docs["README.md"] for name in
-                       ("report.md", "PROGRESS.md", "REPRODUCE.md", "SOURCES.md")):
-                    docs["README.md"] += "\n\n" + _DOCUMENT_LINKS + "\n"
                 for name in _GENERATED:  # the editor's README and the bundle's own text are linked here as well
                     docs[name] = edition_figure_links(docs[name], req, self.s, included)
                 docs.update(assets)
@@ -422,6 +536,13 @@ class ResultStorage:
                 if not plain_path(target):
                     raise ValueError("linked editor directory")
                 target.mkdir(parents=True, exist_ok=True)
+                for stale in sorted(target.rglob("*"), reverse=True):  # only this edition's files stay (a redraft, a retry)
+                    if not plain_path(stale):
+                        raise ValueError("linked editor file")
+                    if stale.is_file():
+                        stale.unlink()
+                    else:
+                        stale.rmdir()
 
                 def write(name, body):
                     path = target / name
@@ -467,7 +588,11 @@ class ResultStorage:
                 if not decision.get("approved"):
                     saved["status"] = "draft" if decision.get("state") == "timed_out" else "declined"
                     return
-            await self.upload(rid, docs, images, pdf)
+            self.uploading.add(rid)  # from here a redraft is refused: some files may already be in the repository
+            try:
+                await self.upload(rid, docs, images, pdf)
+            finally:
+                self.uploading.discard(rid)
             saved["status"] = "published"
         except asyncio.CancelledError:
             raise
