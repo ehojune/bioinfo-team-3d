@@ -472,3 +472,23 @@ metatranscriptomics:
   - id: dna_normalization
     check: 전사 차이는 짝 metagenome의 DNA 풍부도로 보정해 발현 변화와 분류군 풍부도 변화를 구분한다
     why: 분류군이 늘어난 것을 발현이 늘어난 것으로 오인하지 않기 위해서다
+
+variant_effect:
+  - id: population_frequency
+    check: gnomAD 같은 집단 자료의 dataset 판본과 전체·주요 ancestry 집단별 allele frequency를 보고하고, 관찰되지 않았으면 조회에 성공했는데 없었다고 밝힌다
+    why: 흔한 변이는 희귀 질환의 원인일 가능성이 낮고 빈도는 집단마다 다르기 때문이다
+  - id: clinical_assertions
+    check: ClinVar 분류를 review status와 평가 날짜와 함께 보고하고, 입력 allele과 같은 항목인지 확인한다
+    why: 같은 변이도 제출자마다 해석이 다르고 등록된 항목이 다른 allele일 수 있기 때문이다
+  - id: consequence_annotation
+    check: VEP로 변이 결과 유형을 보고하되 MANE Select(없으면 canonical) transcript를 기준으로 하고 Ensembl release와 참조 유전체 판본을 밝힌다
+    why: transcript에 따라 같은 변이의 결과가 달라지고 판본이 바뀌면 주석도 바뀌기 때문이다
+  - id: missense_prediction
+    check: 암호화 missense 변이는 AlphaMissense 점수와 분류를 같은 transcript 기준으로 보고하고, 다른 변이는 해당 없음으로 적는다
+    why: ClinVar에 없는 missense 변이는 구조와 진화 정보를 합친 예측이 보조 단서가 되기 때문이다
+  - id: regulatory_splicing
+    check: 비암호화·조절·스플라이싱 변이는 AlphaGenome(키가 있을 때)의 ref/alt 예측을 보고하고, 도구가 없으면 SpliceAI 같은 스플라이스 예측이나 공개 조절 주석으로 대신하며 무엇을 썼는지 밝힌다
+    why: 단백질을 바꾸지 않는 변이는 AlphaMissense가 다루지 못하기 때문이다
+  - id: concordance_limits
+    check: 빈도·ClinVar·VEP·예측이 서로 맞는지 비교해 어긋나는 변이를 따로 표시하고, 예측은 임상 근거가 아니라고 한계에 적는다. ACMG/AMP 기준 분류는 요청이 있을 때만 한다
+    why: 예측을 진단처럼 읽거나 어긋난 증거 중 한쪽만 고르지 않게 하기 위해서다

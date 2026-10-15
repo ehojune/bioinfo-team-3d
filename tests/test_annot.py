@@ -105,7 +105,9 @@ async def test_vep_sends_batches_of_200_per_endpoint_and_keeps_input_order(tmp_p
     assert [c.url.path for c in posts] == ["/vep/human/region"] * 3 + ["/vep/human/hgvs", "/vep/human/id"]
     assert [len(json.loads(c.content)["variants"]) for c in posts[:3]] == [200, 200, 50]
     assert json.loads(posts[0].content)["variants"][0] == "1 1000 labhq0 A G . . ."
-    assert all(parse_qs(c.url.query.decode()) == {"canonical": ["1"], "hgvs": ["1"], "mane": ["1"]} for c in posts)
+    # human GRCh38 also asks for the AlphaMissense plugin (#621); the other assemblies and species do not
+    assert all(parse_qs(c.url.query.decode()) == {"canonical": ["1"], "hgvs": ["1"], "mane": ["1"],
+                                                  "AlphaMissense": ["1"]} for c in posts)
     assert result["n_inputs"] == result["n_ok"] == 452 and result["n_errors"] == 0
     assert [r["input"] for r in result["results"]] == variants
     first = result["results"][0]
