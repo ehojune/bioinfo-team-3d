@@ -14,8 +14,13 @@ bench case YAML의 정답 식별자가 비벤치 코드로 새면 CI가 파일�
 
 ## 확인
 
-- 관련 pytest 3 passed
+- 관련 pytest 8 passed
 - `scripts/check_public.sh` 통과
+
+## P1 후속
+
+- 식별자 경계를 ASCII 영숫자로 판정해 `GKN1을`, `(COL1A1과)`, `6OIM은구조`도 누출로 잡습니다.
+- 영문 단어 안의 부분 일치는 계속 제외합니다.
 
 ## 남은 것
 
