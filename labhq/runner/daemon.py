@@ -1255,7 +1255,7 @@ class Runner:
         async def emit(typ: str, data: dict) -> None:
             if typ == "task.result":  # the last event: which steers were delivered, for the gateway's step (#59 ①)
                 data = {**data, "control": self.controls.finish(task.id)}
-            if typ == "agent.tool_error":
+            if typ == "agent.tool_error" and task.meta.get("general_result_contract"):
                 first = str(data.get("text") or "tool failed").splitlines()[0].strip() or "tool failed"
                 tool_errors.append(short(first, 200))
             await self.emit(Event(type=typ, task_id=task.id, agent_id=agent.id, request_id=task.request_id, data=data))
