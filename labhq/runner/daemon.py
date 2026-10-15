@@ -1677,7 +1677,8 @@ class Runner:
                 else:
                     adapter = get_adapter(agent.engine, self.s)
                     try:
-                        result = await adapter.run(ctx)
+                        from .structured_output import run_with_json_retries
+                        result = await run_with_json_retries(adapter, ctx)
                     except BaseException:  # cancelled or crashed after the CLI was stopped: still compare
                         # Keep what the failed step read; the after-run comparison is skipped (PR #442 review).
                         await ws.aupdate_run(task.id, input_files=input_files,

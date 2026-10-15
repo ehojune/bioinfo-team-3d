@@ -287,6 +287,7 @@ class Task(BaseModel):
     output_schema: dict[str, Any] | None = None
     resume_session_id: str | None = None
     budget_usd: float | None = None
+    request_budget_remaining_usd: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     created_at: float = Field(default_factory=time.time)
     meta: Annotated[dict[str, Any], RunnerPathFields] = {}
 
@@ -318,7 +319,7 @@ class TaskResult(BaseModel):
     # Parsed only for ordinary orchestration steps. Research steps keep their result v2 ledger in ``structured``.
     general_sections: dict[str, str] = {}
     evidence_path_warnings: list[str] = []
-    # One bounded first line per failed tool call, collected by the runner for ordinary steps only.
+    # One bounded first line per failed tool call, collected for every employee task.
     tool_errors: list[str] = []
     provenance: dict[str, Any] = {}  # manifest summary; the gateway may not share the runner's disk
     pipeline_submission: dict[str, Any] | None = None  # gateway-only handoff; stripped before web publication

@@ -42,6 +42,17 @@ def mock_model(monkeypatch, hub, text='입력 표를 비교해 차이가 있는�
     return calls
 
 
+@pytest.mark.asyncio
+async def test_interpreter_receives_tool_error_evidence(hub, monkeypatch):
+    calls = mock_model(monkeypatch, hub)
+    error = 'InputValidationError: StructuredOutput could not be parsed as JSON'
+    await hub.publish(event(text='The response was stopped by a safety check.', tool_errors=[error]))
+    await drain(hub)
+    assert len(calls) == 1
+    assert error in calls[0].prompt
+    assert '도구 오류 원문이 있으면 그것을 근거로' in calls[0].prompt
+
+
 def test_card_explained_by_chief_and_existing_copy_preserved():
     raw = {'kind': 'tool_permission', 'summary': 'PowerShell: approval required',
            'detail': {'tool_name': 'PowerShell', 'tool_input': {'command': 'New-Item -ItemType Directory -Force .tmp'}}}
@@ -76,6 +87,8 @@ async def test_translation_is_one_shot_durable_and_counted(hub, monkeypatch, typ
     assert calls[0].meta['agent_overrides']['model'] == 'haiku'
     assert calls[0].meta['agent_overrides']['max_turns'] == 1
     assert calls[0].budget_usd == 0.05
+    assert '도구 오류 원문이 있으면 그것을 근거로' in calls[0].prompt
+    assert '확인하지 않은 원인을 지어내지 않는다' in calls[0].prompt
     assert hub.requests['r']['cost_usd'] == pytest.approx(1.02)
     saved = hub.store.messenger_history()['events'][0]
     assert saved['data']['pi_display']['status'] == 'translated'

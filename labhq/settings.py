@@ -58,6 +58,7 @@ class RunnerSettings(BaseModel):
     contract_dir: str | None = None  # active contract roster; default agents_dir/contract, per instance (#303)
     broker_port: int = 8788
     task_timeout_s: int = 6 * 3600
+    structured_output_retries: int = Field(default=2, ge=0)  # JSON transport repair, separate from result_corrections
     # After the CLI's final turn event, how long its process may take to exit before labhq ends its tree and
     # finishes the step with the result already received (#330).
     exit_grace_s: float = Field(default=45, ge=0)

@@ -2292,7 +2292,8 @@ def failure_kind(outcome: TaskResult | BaseException, engine: str = "") -> str |
         return "transient"
     if isinstance(outcome, BaseException):
         return "terminal"
-    if outcome.error_kind in PI_STOP_ERROR_KINDS:  # the PI stopped this turn: never replay it
+    if outcome.error_kind in PI_STOP_ERROR_KINDS or outcome.error_kind == "structured_output_format":
+        # PI stops and exhausted JSON repair must not enter another retry/facilities loop.
         return "terminal"
     if outcome.ok and (outcome.text.strip() or outcome.structured is not None or waiting(outcome)):
         return None
@@ -3202,6 +3203,9 @@ class Orchestrator:
                 self.attempts.setdefault(rid, {})[key] = self.attempts.get(rid, {}).get(key, 0) + 1
                 attempt_task = current.model_copy(update={"id": current.id if attempt == 1 else new_id("task"),
                                                   "resume_session_id": previous_session,
+                                                  "request_budget_remaining_usd": (
+                                                      None if optional_support else
+                                                      self._request_budget_remaining(rid)),
                                                   "meta": {**current.meta, "attempt": attempt,
                                                            **({"workdir": previous_workdir} if previous_workdir else {})}})
                 if attempt > 1:
@@ -3573,6 +3577,12 @@ class Orchestrator:
             })
         if final_step:  # every turn of the last step has run: an overrun now is recorded, not asked about
             await self._check_budget(rid, block=False, final_turn=True)
+        if res.error_kind == "structured_output_format":
+            await self.hub.request_approval(
+                kind="clarify", request_id=rid, summary="직원 응답의 형식 오류로 자동 재시도를 마쳤습니다.",
+                detail={"questions": [{"question": "형식 오류로 결과를 받지 못했습니다. 요청을 멈춥니다.",
+                                       "options": ["확인"], "allow_free_text": False}],
+                        "tool_errors": res.tool_errors, "error": res.error})
         return res
 
     async def _check_budget(self, rid: str, *, block: bool = True, final_turn: bool = False) -> None:
@@ -3634,6 +3644,15 @@ class Orchestrator:
                     state["outcome"] = "budget_timed_out"
                 if block:
                     raise BudgetExceeded(reason)
+
+    def _request_budget_remaining(self, rid: str) -> float | None:
+        """Request allowance still available to a runner call after recorded and reserved costs."""
+        req = self.hub.requests.get(rid, {})
+        limit = req.get("budget_usd") or self.hub.s.policy.budget.per_request_usd
+        if not limit:
+            return None
+        _spent, _unknown, bound = self._budget_bound(rid, float(limit))
+        return max(0.0, float(limit) - bound)
 
     def _research_budget(self, rid: str, req: dict, plan: dict) -> tuple[dict[str, Any], str]:
         """The spending cap a CP1 approval of ``plan`` enforces (PI 점검 R17), and where its configured cap came from.
@@ -5823,6 +5842,8 @@ class Orchestrator:
                             return None
                         if outcome.error_kind == "ask_rejected":
                             return "a PI decision rejected this step; re-planning would route around it"
+                        if outcome.error_kind == "structured_output_format":
+                            return "JSON format retries exhausted; re-planning would reset the retry limit"
                         if outcome.pending_jobs:
                             return (f"failed with live HPC jobs {outcome.pending_jobs}; a new step could submit "
                                     "them again")
