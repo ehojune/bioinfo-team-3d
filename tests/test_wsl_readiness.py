@@ -160,6 +160,7 @@ def test_runner_publishes_readiness_for_its_actual_staff_config(settings, monkey
     from labhq.runner.daemon import Runner
 
     settings.runner.environment = "wsl"
+    settings.runner.workspace_root = "/mnt/c/Shared/Runs"
     settings.engines.claude_code.env = {"CLAUDE_CONFIG_DIR": "staff-test-home"}
     runner = Runner(settings)
     runner.registry.agents["bioinfo-agent"] = AgentSpec(id="bioinfo-agent", name="Bio", role="analysis",
