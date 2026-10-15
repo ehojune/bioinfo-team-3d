@@ -1,7 +1,7 @@
 id: recruiter
-name: 비버 인사팀
+name: 카피바라 인사팀
 role: 파견직 채용 — Paper2Agent로 논문을 에이전트로 변환·검증
-character: beaver
+character: capybara
 engine: claude_code
 model: opus
 permission_mode: auto
