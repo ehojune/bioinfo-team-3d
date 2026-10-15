@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 13:54 | [`925e877`](https://github.com/ehojune/bioinfo-team-3d/pull/624/commits/925e877) | OKF Loremaster를 검토해 참고 자료에 올리고, 가져갈 것의 매핑과 라이선스 조건을 docs/reference에 남겼다(코드 변경 없음). |
 | 13:10 | [`34e8b20`](https://github.com/ehojune/bioinfo-team-3d/pull/610/commits/34e8b20) | 출처 호스트 거름을 하나(public_link)로 닫고(끝 점·IPv6·IPv4 변형·userinfo), 괄호 있는 DOI와 짧은 PMID를 받으며, 게시 카드 답과 --redraft를 같은 lock으로 직렬화해 게시 시작 뒤 재작성을 거부한다(#607). |
 | 12:43 | [`583a8c6`](https://github.com/ehojune/bioinfo-team-3d/pull/614/commits/583a8c6) | 실행 중인 gateway·runner가 정체(설정 파일과 state·runner state·runner id·포트 지문)를 적고, up과 doctor가 그 정체로 같은 state·runner state·포트를 쥔 다른 설정을 막으며 gateway는 /api/health의 identity로 정체를 알려 준다(#613). |
 | 12:43 | [`0a584d9`](https://github.com/ehojune/bioinfo-team-3d/pull/614/commits/0a584d9) | init이 bioinfo-agent 폴더를 상대 경로로 받아도 절대 경로로 저장하고, doctor는 상대 경로로 적힌 설정을 warn한다(#613). |
