@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -24,6 +25,9 @@ class CheckFailure(RuntimeError):
         super().__init__(detail)
         self.stage = stage
         self.detail = detail
+
+
+_RESERVED_PORTS = {8787, 55921}  # PI instance and its runner; clean-install must never borrow them
 
 
 def _one_line(value: object, limit: int = 500) -> str:
@@ -71,9 +75,12 @@ def _expect(stage: str, condition: bool, detail: str) -> None:
 
 
 def _free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
+    while True:
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = int(sock.getsockname()[1])
+        if port not in _RESERVED_PORTS:
+            return port
 
 
 def _labhq_command(checkout: Path, *args: str) -> list[str]:
@@ -84,6 +91,68 @@ def _labhq_command(checkout: Path, *args: str) -> list[str]:
 
 def _venv_python(checkout: Path) -> Path:
     return checkout / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
+
+def _process_images() -> list[tuple[int, Path]]:
+    """Best-effort active PID/image pairs without adding a clean-install dependency."""
+    if os.name != "nt":
+        found: list[tuple[int, Path]] = []
+        proc = Path("/proc")
+        if not proc.is_dir():
+            return found
+        for row in proc.iterdir():
+            if not row.name.isdigit():
+                continue
+            try:
+                argv0 = (row / "cmdline").read_bytes().split(b"\0", 1)[0].decode(errors="replace")
+                image = Path(argv0) if argv0 else (row / "exe").resolve(strict=True)
+            except (OSError, UnicodeError):
+                continue
+            found.append((int(row.name), image))
+        return found
+
+    powershell = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+    query = (
+        "$ErrorActionPreference='Stop'; "
+        "$rows=@(Get-CimInstance Win32_Process -Filter \"Name='python.exe' OR Name='pythonw.exe'\" | "
+        "Select-Object ProcessId,ExecutablePath); ConvertTo-Json -Compress -InputObject $rows"
+    )
+    done = subprocess.run([str(powershell), "-NoProfile", "-NonInteractive", "-Command", query],
+                          capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20, check=False)
+    if done.returncode:
+        raise OSError("Windows process 목록을 읽지 못함: " + _one_line(done.stderr or done.stdout))
+    try:
+        rows = json.loads(done.stdout or "[]")
+    except ValueError:
+        raise OSError("Windows process 목록 JSON을 읽지 못함") from None
+    if isinstance(rows, dict):
+        rows = [rows]
+    return [(int(row["ProcessId"]), Path(row["ExecutablePath"])) for row in rows
+            if isinstance(row, dict) and row.get("ExecutablePath")]
+
+
+def _launch_process_names(state_dir: Path) -> dict[int, str]:
+    names: dict[int, str] = {}
+    for path in state_dir.glob("labhq-*.pid"):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+            pid = int(record["pid"])
+        except (OSError, ValueError, TypeError, KeyError):
+            continue
+        names[pid] = path.stem.removeprefix("labhq-")
+    return names
+
+
+def _venv_python_processes(checkout: Path, names: dict[int, str]) -> list[str]:
+    venv = os.path.normcase(str((checkout / ".venv").resolve()))
+    remaining = []
+    for pid, image in _process_images():
+        normalized = os.path.normcase(str(image.resolve()))
+        if normalized != venv and not normalized.startswith(venv + os.sep):
+            continue
+        label = names.get(pid, image.name)
+        remaining.append(f"{label} ({image.name} PID {pid})")
+    return remaining
 
 
 def _isolated_env(root: Path, checkout: Path) -> dict[str, str]:
@@ -179,8 +248,8 @@ def rehearse(source: Path, guard_paths: list[Path]) -> str:
     started = False
     request_id = ""
 
-    with tempfile.TemporaryDirectory(prefix="labhq-clean-install-") as temporary:
-        root = Path(temporary)
+    root = Path(tempfile.mkdtemp(prefix="labhq-clean-install-"))
+    try:
         checkout = root / "bioinfo-team-3d"
         clone_env = os.environ.copy()
         _run(
@@ -266,6 +335,7 @@ def rehearse(source: Path, guard_paths: list[Path]) -> str:
             required = ["report.md", "report_appendix.md", "MANIFEST.tsv", "ro-crate-metadata.json"]
             _expect("보고서와 요청 묶음", all((bundle / name).is_file() for name in required), "묶음 파일 누락")
 
+            launch_names = _launch_process_names(root / "state/gateway")
             _run(
                 "labhq down",
                 _labhq_command(checkout, "-c", "config/labhq.yaml", "down"),
@@ -273,6 +343,8 @@ def rehearse(source: Path, guard_paths: list[Path]) -> str:
                 env=env,
                 timeout=120,
             )
+            remaining = _venv_python_processes(checkout, launch_names)
+            _expect("down 뒤 venv 프로세스 종료", not remaining, "남은 프로세스: " + ", ".join(remaining))
             started = False
         finally:
             if started:
@@ -285,6 +357,15 @@ def rehearse(source: Path, guard_paths: list[Path]) -> str:
                     timeout=30,
                     check=False,
                 )
+    finally:
+        # Preserve an actionable stage failure (especially the remaining process names) if that same process also
+        # keeps Windows from deleting its loaded modules. With no prior failure, cleanup errors still fail the check.
+        active_error = sys.exc_info()[0] is not None
+        try:
+            shutil.rmtree(root)
+        except OSError:
+            if not active_error:
+                raise
 
     after = _snapshot(list(before))
     changed = [str(path) for path, value in before.items() if after[path] != value]

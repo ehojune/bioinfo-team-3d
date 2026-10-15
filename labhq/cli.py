@@ -936,6 +936,8 @@ def _terminate_tree(pid: int, *, created: str | None = None) -> None:
             if result.spared:
                 detail += "; 다시 시도할 수 있게 PID " + ", ".join(map(str, result.spared)) + "은 종료하지 않음"
             raise OSError(detail)
+        if created is not None and not _wait_for_process_end(pid, created, _TERMINATE_GRACE_SECONDS):
+            raise OSError(f"{_TERMINATE_GRACE_SECONDS:g}초 안에 프로세스가 끝나지 않음")
         return
     try:
         os.killpg(pid, signal.SIGTERM)
