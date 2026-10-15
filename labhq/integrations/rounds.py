@@ -249,6 +249,7 @@ def build_record(hub: "Hub", rid: str, sources: dict[str, dict[str, list[dict]]]
         "pi_decisions": [{"kind": (d.get("approval") or {}).get("kind"), "approved": d.get("approved"),
                           "note": d.get("note"), "state": d.get("state") or "resolved"} for d in decisions],
         "result": {"status": req.get("status"), "root_cause_summary": req.get("error"),
+                   **({"dev_reports": req["dev_reports"]} if req.get("dev_reports") else {}),
                    "report_links": _report_links(req),
                    "execution_record": req.get("execution_record") or "",
                    "bundle_conversion": req.get("bundle_conversion") or "", "pending_decisions": pending,

@@ -2538,7 +2538,8 @@ async def test_failed_report_starts_with_step_cause_and_pi_action_and_masks_path
     first = req["report"].splitlines()[:3]
     assert "s10_results_qc · qc_reviewer" in first[0] and "Windows 명령줄 길이 제한" in first[0]
     assert first[1].startswith("원인: Windows 명령줄 길이 제한")
-    assert first[2] == "PI가 할 일: 개발자에게 알리기"
+    assert first[2] == "개발팀에 자동 보고됨"
+    assert req["dev_reports"][0]["request_id"] == "r" and req["dev_reports"][0]["signature"]
     assert "C:\\Users" not in req["report"] and "secret" not in req["report"]
     assert req["error"], "request.completed must carry a non-empty server-side failure reason"
 

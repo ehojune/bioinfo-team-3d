@@ -42,6 +42,7 @@ from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARC
                                  plan_sha256 as research_plan_sha256,
                                  refresh_plan_approval, research_plan_errors, research_plan_schema,
                                  research_result_errors, salvage_research_result, validate_research_plan,
+                                 missing_result_slots, repair_result_slots,
                                  validate_research_result, with_pack_refs)
 from ..research import continuation as research_continuation
 from ..security import redact_tokens
@@ -1239,11 +1240,11 @@ def failed_request_summary(req: dict, results: dict, fallback: Any = "") -> tupl
     else:
         sid, agent, cause_raw, error_kind = "request", "cso", fallback, ""
     cause = safe_failure_cause(cause_raw)
-    action = "개발자에게 알리기" if _developer_action(cause, error_kind) else "다시 보내기"
+    action = "개발팀에 자동 보고됨" if req.get("dev_reports") else "다시 보내기"
     summary = "\n".join([
         f"실패한 단계: {sid} · {agent} — {cause}",
         f"원인: {cause}",
-        f"PI가 할 일: {action}",
+        action if req.get("dev_reports") else f"PI가 할 일: {action}",
     ])
     return summary, cause if sid == "request" else f"{sid} 실패: {cause}"
 
@@ -2306,6 +2307,8 @@ def failure_kind(outcome: TaskResult | BaseException, engine: str = "") -> str |
     if strong and (strong.get("source") == "error"
                    or not (_terminal_signal(error) or _transient_signal(error) or _engine_limit(outcome))):
         return "environment"
+    if outcome.error_kind == "contract" or "invalid research result contract" in error:
+        return "contract"
     if _terminal_signal(error):
         return "terminal"
     if (("invalid model selection" in error and "is not recognized" in error)
@@ -3067,7 +3070,7 @@ class Orchestrator:
         engine = str((self.hub.agents.get(task.agent_id) or {}).get("engine") or "")
         final_step = bool(task.meta.get("final_budget_turn"))  # nothing runs after this step but its own turns
         optional_support = bool(task.meta.get("facilities_diagnosis") or task.meta.get("kind") in
-                                {"paper_skill", "recruit_check", "plan_recruit"})
+                                {"paper_skill", "recruit_check", "plan_recruit", "slot_repair"})
 
         def quota_deadline() -> float:
             req = self.hub.requests[rid]
@@ -3894,6 +3897,51 @@ class Orchestrator:
                         "workdir": via.workdir or original.workdir,
                     })
 
+                async def repair_slots(structured: dict, slots: list[str]) -> TaskResult:
+                    # Persist before dispatch: a restarted DAG must not ask a second time.
+                    records = req_state["research_contract"].setdefault("slot_repairs", {})
+                    record = records.get(step["id"])
+                    if record and record.get("plan_sha256") != research_plan_sha256(research_plan):
+                        record = None
+                    if record is None:
+                        record = records[step["id"]] = {"slots": slots, "asked": True, "answers": {},
+                                                      "plan_sha256": research_plan_sha256(research_plan)}
+                        self.hub.save_request(rid)
+                        if current.session_id and self.hub.supports_resume(step["agent_id"]):
+                            schema = {"type": "object", "additionalProperties": False,
+                                      "required": slots, "properties": {slot: {
+                                          "type": "object", "additionalProperties": False,
+                                          "required": ["status", "reason"], "properties": {
+                                              "status": {"type": "string", "enum": [
+                                                  "attempted_found", "attempted_none", "not_attempted"]},
+                                              "reason": {"type": "string", "minLength": 1, "maxLength": 280}}}
+                                          for slot in slots}}
+                            question = Task(
+                                agent_id=step["agent_id"], request_id=rid, output_schema=schema,
+                                resume_session_id=current.session_id,
+                                prompt=("누락된 증거 칸의 시도 여부만 답하세요. 파일·분석·전체 결과 JSON은 고치지 마세요. "
+                                        "각 칸 id → {status: attempted_found/attempted_none/not_attempted, "
+                                        "reason: 한 줄 이유}. 칸: " + ", ".join(slots)),
+                                meta={**task.meta, "kind": "slot_repair", "max_attempts": 1, "outputs": [],
+                                      "parent_task": current.task_id, "title": f"{step['id']}: 누락 칸 확인",
+                                      **({"workdir": current.workdir} if current.workdir else {})})
+                            try:
+                                answer = await self.run_step(question)
+                            except BudgetExceeded:
+                                raise
+                            except Exception:
+                                answer = None
+                            if answer is not None and answer.unreported_outputs:
+                                return original.model_copy(update={"ok": False, "error_kind": "contract",
+                                    "error": "invalid research result contract: slot repair changed output files"})
+                            if answer is not None and answer.ok:
+                                record["answers"] = (answer.structured if isinstance(answer.structured, dict)
+                                                     else extract_json(answer.text))
+                            self.hub.save_request(rid)
+                    ledger = repair_result_slots(structured, slots, record.get("answers"))
+                    validate_research_result(ledger.model_dump(mode="json"), plan=research_plan)
+                    return accept(ledger, current)
+
                 for correction in range(limit + 1):
                     asked = blocking_question(current)
                     structured = (current.structured if isinstance(current.structured, dict)
@@ -3902,6 +3950,10 @@ class Orchestrator:
                         structured = {k: v for k, v in structured.items() if k != "blocking_decision"}
                     problems = (["a result correction cannot ask a new blocking_decision; return corrected JSON"]
                                 if asked else research_result_errors(structured, plan=research_plan))
+                    slots = ([] if asked else missing_result_slots(
+                        structured, plan=research_plan, expected_step_id=step["id"]))
+                    if slots:
+                        return await repair_slots(structured, slots)
                     validated_result = None
                     if not problems:
                         validated_result = validate_research_result(structured, plan=research_plan)
@@ -3923,7 +3975,15 @@ class Orchestrator:
                         # employee said it cannot go on without that decision (PR #353 review).
                         salvaged, refused_rows, unsupported_claims, salvage_problems = (
                             (None, [], [], []) if asked else
-                            salvage_research_result(structured, plan=research_plan, expected_step_id=step["id"]))
+                            salvage_research_result(structured, plan=research_plan, expected_step_id=step["id"],
+                                                    allow_slot_gaps=True))
+                        if salvaged is not None:
+                            candidate = salvaged.model_dump(mode="json")
+                            slots = missing_result_slots(candidate, plan=research_plan, expected_step_id=step["id"])
+                            if slots:
+                                repaired = await repair_slots(candidate, slots)
+                                save_salvage(refused_rows, unsupported_claims)
+                                return repaired
                         if salvaged is not None and refused_rows:
                             save_salvage(refused_rows, unsupported_claims)
                             return original.model_copy(update={
@@ -3932,7 +3992,7 @@ class Orchestrator:
                                 "workdir": current.workdir or original.workdir,
                             })
                         return original.model_copy(update={
-                            "ok": False, "error": "invalid research result contract: " +
+                            "ok": False, "error_kind": "contract", "error": "invalid research result contract: " +
                             "; ".join(dict.fromkeys([*problems, *salvage_problems])),
                             "session_id": current.session_id or original.session_id,
                             "workdir": current.workdir or original.workdir,
@@ -4023,6 +4083,9 @@ class Orchestrator:
                         outcome = previous.model_copy(update={"revision_failed":
                             f"{outcome.error_kind or failure_kind(outcome) or 'terminal'}: {outcome.error or 'unknown error'}"})
                     results[sid] = outcome
+                    if not outcome.ok and failure_kind(outcome) not in {"environment", "login", "quota"}:
+                        self._record_dev_failure(rid, sid, outcome.error or "unknown error",
+                                                 outcome.error_kind or failure_kind(outcome) or "terminal")
                     environment = None if outcome.ok else environment_problem(outcome)
                     await self._emit(rid, "request.step_done", {"step_id": sid, "ok": results[sid].ok,
                                                                 "agent_id": by_id[sid]["agent_id"],
@@ -4086,7 +4149,7 @@ class Orchestrator:
 
     async def _research_after_steps(self, rid: str, text: str, steps: list[dict], results: dict[str, TaskResult],
                                     n: int, serialized: Callable[[], dict[str, dict]], packs: dict) -> None:
-        """The research lane after its steps ran: a failure ends the request, success stops at CP2 (#90).
+        """Review successful independent steps at CP2, retaining failed steps as explicit limitations (#657).
 
         The generic re-plan, review and synthesis would change or judge the frozen PLAN without a new CP1 approval,
         so the research lane never reaches them. Evidence whose artifact labhq did not collect is refused and shown
@@ -4098,7 +4161,10 @@ class Orchestrator:
         req = self.hub.requests[rid]
         contract = req["research_contract"]
         failed = [s["id"] for s in steps if s["id"] not in results or not results[s["id"]].ok]
-        if rid in self.budget_denials or failed:
+        successful = [s for s in steps if s["id"] not in failed]
+        warnings = [f"{sid}: 단계 실패 또는 의존 단계 건너뜀 — " +
+                    safe_failure_cause(results[sid].error if sid in results else "not run") for sid in failed]
+        if rid in self.budget_denials or not successful:
             contract["failure"] = {"steps": failed, "plan_sha256": contract["plan_sha256"],
                                    **({"budget": self.budget_denials[rid]} if rid in self.budget_denials else {})}
             req["outcome"] = "research_failed"
@@ -4107,6 +4173,14 @@ class Orchestrator:
                          "\n\nResearch stopped before CP2. labhq does not re-plan a frozen research PLAN; a changed "
                          "plan needs a new CP1 approval of its hash.", serialized(), ok=False)
             return
+        steps = successful
+        for step in steps:
+            ledger = results[step["id"]].structured or {}
+            for row in ledger.get("evidence", []):
+                if row.get("origin"):
+                    warnings.append(f"{step['id']}/{','.join(row['slots'])}: origin: {row['origin']}; "
+                                    f"{row.get('attempt_status') or 'unknown'} — {row.get('status_detail')}")
+        contract["result_warnings"] = warnings
         # CP2 approves these ledgers as results of the plan frozen at CP1, so each must validate under it. A reused
         # continuation result is a copy rebound to the new plan (``carry_over``); this catches any other drift
         # (PR #448 review).
@@ -4190,7 +4264,10 @@ class Orchestrator:
                    ("수정 요청은 메모에 적은 고칠 점으로 CSO가 새 계획을 세워 새 CP1을 받습니다(바뀐 단계만 다시 실행)."
                     if revise_continues else
                     f"이어 가기 상한(research.revise_continuations={limit})에 닿아 수정 요청도 요청을 끝냅니다."))
+        if warnings:
+            summary += f" 경고 {len(warnings)}건: 누락 칸·실패 단계는 한계로 남습니다."
         detail = {"gate": "research_evidence", "plan_sha256": contract["plan_sha256"],
+                  **({"warnings": warnings} if warnings else {}),
                    "choices": list(EVIDENCE_CHOICES), "revise_continues": revise_continues,
                    **({"refused_rows": refused_rows} if refused_rows else {}),
                    **({"refused_evidence": refused} if refused else {}),
@@ -4251,6 +4328,7 @@ class Orchestrator:
                 "gate": "research_evidence", "decision": decided, "choice": decision.get("choice"), "note": note,
                 "approval_id": decision.get("approval_id"), "decided_at": decision.get("decided_at"),
                 "plan_sha256": contract["plan_sha256"], "asks": asks,
+                **({"warnings": warnings} if warnings else {}),
                 **({"refused_rows": refused_rows} if refused_rows else {}),
                 "refused_evidence": refused, "unsupported_claims": unsupported,
                 "artifact_sha256": artifact_sha256, "unreported_outputs": unreported_outputs,
@@ -4260,6 +4338,8 @@ class Orchestrator:
         req["outcome"] = f"evidence_{decided}"
         self.hub.save_request(rid)
         audit = f"CP2 evidence review: {decided}."
+        if warnings:
+            audit += "\n결과 한계:\n" + "\n".join(f"- {line}" for line in warnings)
         if refused_rows:
             audit += "\n계약에 맞지 않아 뺀 근거:\n" + "\n".join(
                 f"- {row['step_id']}/{row['row_type']} {row['row_id']}: {row['reason']}" for row in refused_rows)
@@ -4375,6 +4455,8 @@ class Orchestrator:
                 prompt += research_continuation.review_prompt(carried.get("p1_issues") or [],
                                                               approval_note(carried.get("pi_request")))
             prompt += approval_note_block("CP2", cp2_notes, CP2_REVIEW_NOTE_RULE) + self._spending_cap_line(rid)
+            if contract.get("result_warnings"):
+                prompt += "\nCP2 result limitations:\n" + "\n".join(contract["result_warnings"])
             reply: TaskResult | None = None
             for parse_attempt in (1, 2):
                 reply = await self.run_step(Task(
@@ -4422,7 +4504,8 @@ class Orchestrator:
                 citable="\n".join(map(_citable_claim_line, citable)) or "(none)",
                 uncitable="\n".join(f"- {row['step_id']}/{row['claim'].get('id')} ({row['reason']}): "
                                     f"{row['claim'].get('statement')}" for row in other) or "(none)",
-                gaps="\n".join(_research_gap_lines(ledgers, lookups)) or "(none)", verdict=review["verdict"],
+                gaps="\n".join([*_research_gap_lines(ledgers, lookups),
+                                *(contract.get("result_warnings") or [])]) or "(none)", verdict=review["verdict"],
                 issues="\n".join(issues) or "(none)", results=self.format_results(steps, results, n)) +
                 plan_report_context(req.get("plan"), topic_checklists.load(),
                                     req.get("analysis_precedents")) +
@@ -6085,6 +6168,7 @@ class Orchestrator:
                 execution.append("Pending PI decisions/questions:\n" + "\n".join(
                     f"- {question}" for question in req["pending_questions"]))
             serialized_saved = {key: value.model_dump(mode="json") for key, value in saved.items()}
+            self._record_dev_failure(rid, "request", req["error"], "internal")
             summary, _feed_error = failed_request_summary(req, serialized_saved, req["error"])
             req["report"] = (summary + "\n\n## 결론과 권고\n요청을 완료하지 못했습니다. 실행 기록의 원인과 "
                              "다음 조치를 확인하세요.\n\n## 결과\n확정할 최종 결과가 없습니다.\n\n## 방법 요약\n"
@@ -6186,6 +6270,30 @@ class Orchestrator:
         solo = route.get("mode") == "solo" and not route.get("fallback")  # the plan's steps never ran
         return checklist_appendix(plan, review, catalog, precedents, owner=SOLO_OWNER if solo else None)
 
+    def _record_dev_failure(self, rid: str, step_id: str, cause: str, kind: str) -> None:
+        """Record an error fingerprint in the configured round log, or a local JSONL outbox."""
+        import hashlib
+
+        req = self.hub.requests[rid]
+        signature = hashlib.sha256(f"{kind}:{safe_failure_cause(cause)}".encode()).hexdigest()[:20]
+        records = req.setdefault("dev_reports", [])
+        if any(row["step_id"] == step_id and row["signature"] == signature for row in records):
+            return
+        record = {"request_id": rid, "step_id": step_id, "signature": signature, "kind": kind}
+        cfg = self.hub.s.dev_log
+        if not (cfg.enabled and cfg.repo):
+            path = self.hub.s.path(self.hub.s.gateway.state_dir) / "dev-reports.jsonl"
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with path.open("a", encoding="utf-8") as stream:
+                    stream.write(json.dumps(record, ensure_ascii=False) + "\n")
+            except OSError:
+                req["dev_report_error"] = "개발 기록 저장 실패"
+                self.hub.save_request(rid)
+                return
+        records.append(record)
+        self.hub.save_request(rid)
+
     def _finish(self, rid: str, report: str, results: dict, ok: bool, review: dict | None = None,
                 error: str | None = None) -> None:
         req = self.hub.requests[rid]
@@ -6197,6 +6305,8 @@ class Orchestrator:
             self.hub.save_request(rid)
             return  # preserve the exact body and audit the PI saw
         report, results, review = self._unstarted_continuation_end(req, report, results, review)
+        if not ok and _developer_action(error or report) and not req.get("dev_reports"):
+            self._record_dev_failure(rid, "request", error or report, "internal")
         report, report_appendix = _split_report_appendix(report)
         report_appendix, legacy_execution = split_appendix(report_appendix)
         execution = [req.get("execution_record") or "", legacy_execution]
@@ -6213,6 +6323,14 @@ class Orchestrator:
                 report = f"{req['clarification_failure']}\n\n남은 질문:\n{pending}\n\n{report}"
             error = error or str(req["clarification_failure"])
         report = _with_review_reference(report, review)
+        warnings = (req.get("research_contract") or {}).get("result_warnings") or []
+        if warnings:
+            section = "\n".join(f"- {line}" for line in warnings)
+            heading = re.search(r"(?m)^## 한계\s*$", report)
+            if heading:
+                report = report[:heading.end()] + "\n" + section + "\n" + report[heading.end():]
+            else:
+                report = _before_bench_block(report, "## 한계\n" + section)
         metadata = []
         paper_record = paper_skills.appendix(req.get("plan") or {}, results)
         if paper_record:

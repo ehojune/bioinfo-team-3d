@@ -836,13 +836,15 @@ def _validation_salvage_targets(error: ValidationError, value: dict[str, Any]) \
     return targets or None
 
 
-def salvage_research_result(value: Any, *, plan: ResearchPlan | dict[str, Any], expected_step_id: str) \
+def salvage_research_result(value: Any, *, plan: ResearchPlan | dict[str, Any], expected_step_id: str,
+                            allow_slot_gaps: bool = False) \
         -> tuple[ResearchResult | None, list[dict[str, str]], list[dict[str, str]], list[str]]:
     """Refuse row-local contract defects after correction turns, without weakening structural validation.
 
     Evidence refusals cascade through ``derived_from`` and links. A claim that loses its only relation required by
     its status is removed from the valid ledger and recorded as unsupported for CP2. The frozen plan identity,
-    result envelope, step binding and required evidence slots are never salvaged.
+    result envelope and step binding are never salvaged. Missing required slots use the separate, explicit
+    slot-repair question and source-free gap rows; this row-refusal function alone never invents a slot answer.
     """
     problems = research_result_errors(value, plan=plan)
     if not problems:
@@ -895,7 +897,10 @@ def salvage_research_result(value: Any, *, plan: ResearchPlan | dict[str, Any], 
             if not targets:
                 return None, [], [], research_result_errors(candidate, plan=parsed_plan)
         except (TypeError, ValueError):
-            # These are frozen-plan/step binding failures, including a required slot lost during refusal.
+            # Only the orchestrator may request the still-incomplete ledger for its one slot question.
+            if allow_slot_gaps and missing_result_slots(candidate, plan=parsed_plan,
+                                                       expected_step_id=expected_step_id):
+                return ResearchResult.model_validate(candidate), refused, unsupported, []
             return None, [], [], research_result_errors(candidate, plan=parsed_plan)
         else:
             if result.step_id != expected_step_id:
@@ -987,6 +992,51 @@ def salvage_research_result(value: Any, *, plan: ResearchPlan | dict[str, Any], 
         if before == after:
             return None, [], [], research_result_errors(candidate, plan=parsed_plan)
     return None, [], [], research_result_errors(candidate, plan=parsed_plan)
+
+
+def missing_result_slots(value: Any, *, plan: ResearchPlan | dict[str, Any],
+                         expected_step_id: str) -> list[str]:
+    """Return gaps only when the entire envelope, ledger and all other bindings are valid."""
+    try:
+        parsed = ResearchResult.model_validate(value)
+        frozen = plan if isinstance(plan, ResearchPlan) else ResearchPlan.model_validate(plan)
+    except (TypeError, ValueError):
+        return []
+    if parsed.step_id != expected_step_id or parsed.plan_sha256 != plan_sha256(frozen):
+        return []
+    step = next((step for step in frozen.steps if step.id == expected_step_id), None)
+    if step is None:
+        return []
+    errors = step_binding_errors(parsed, step)
+    if not errors or any(not error.startswith("required evidence slot ") for error in errors):
+        return []
+    filled = {slot for row in parsed.evidence for slot in row.slots}
+    return [slot.id for slot in step.evidence_slots if slot.required and slot.id not in filled]
+
+
+def repair_result_slots(value: dict, slots: list[str], answers: Any) -> ResearchResult:
+    """Record reported attempts without promoting a short answer to scientific evidence."""
+    candidate = copy.deepcopy(value)
+    ids = {row["id"] for row in candidate["evidence"]}
+    for slot in slots:
+        answer = answers.get(slot) if isinstance(answers, dict) else None
+        valid = (isinstance(answer, dict) and set(answer) == {"status", "reason"}
+                 and answer.get("status") in {"attempted_found", "attempted_none", "not_attempted"}
+                 and isinstance(answer.get("reason"), str) and bool(answer["reason"].strip())
+                 and len(answer["reason"]) <= 280)
+        origin = "slot_repair" if valid else "omitted_by_output"
+        reason = " ".join(answer["reason"].split()) if valid else "출력에서 빠짐: 칸 질문에 유효한 답이 없음"
+        row_id = f"slot_gap_{len(ids) + 1}"
+        while row_id in ids:
+            row_id += "x"
+        ids.add(row_id)
+        candidate["evidence"].append({
+            "id": row_id, "kind": "observation", "status": "unavailable", "slots": [slot],
+            "origin": origin, "attempt_status": answer["status"] if valid else None,
+            "observation": "필수 증거 칸의 출력 누락 기록", "source": None,
+            "status_detail": reason,
+        })
+    return ResearchResult.model_validate(candidate)
 
 
 def step_binding_errors(result: ResearchResult, step: ResearchStep) -> list[str]:
