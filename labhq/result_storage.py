@@ -17,7 +17,7 @@ from .models import ApprovalRequest, Task
 from .policy import touches, restricted_paths
 from .intake import reference_dirs
 from .recruit.provenance import touches_restricted
-from .report_abstract import build_graphical_abstract, with_abstract_link
+from .report_abstract import abstract_first, build_graphical_abstract, with_abstract_link
 from .report_figures import (ABSTRACT_FILE, classify, figure_owners, has_abstract_link, image_links, is_abstract_target,
                              link_workdir_figures, output_exists)
 from .report_pdf import NO_BROWSER, ReportRefused, build_report_file, pdf_cap_bytes, size_notes
@@ -50,14 +50,16 @@ def controlled_request(req, settings):
         restricted_paths(settings.policy)))
 
 
-def edition_assets(req, settings):
-    """Copy only reported outputs from the already checked bundle, never raw inputs or unreported files."""
+def edition_candidates(req, settings) -> dict[str, Path]:
+    """The bundle files the edition may carry, by bundle name: reported outputs of a step (the manifest says ``copied``,
+    not an unreported file), of a type the edition keeps, whose name needs no masking. Their size is not looked at here:
+    `edition_assets` limits what it copies, the PDF printed from the bundle does not (#608). One rule decides both, so the
+    published PDF never shows a figure the reviewed edition leaves out (#611 review)."""
     bundle = settings.path(settings.runner.workspace_root) / "requests" / req["id"]
     manifest = bundle / "MANIFEST.tsv"
     if not plain_path(manifest) or not manifest.is_file():
-        return {}, {}
-    assets, images = {}, {}
-    total = 0
+        return {}
+    found: dict[str, Path] = {}
     with manifest.open(encoding="utf-8", newline="") as handle:
         for row in csv.DictReader(handle, delimiter="\t"):
             name = row.get("relative_path", "")
@@ -72,18 +74,28 @@ def edition_assets(req, settings):
             path = bundle / name
             if not plain_path(path) or not path.is_file():
                 continue
-            size = path.stat().st_size
-            if size > 1_000_000 or total + size > 5_000_000:
+            found[name] = path
+    return found
+
+
+def edition_assets(req, settings):
+    """Copy only reported outputs from the already checked bundle, never raw inputs or unreported files."""
+    assets, images = {}, {}
+    total = 0
+    for name, path in edition_candidates(req, settings).items():
+        suffix = PurePosixPath(name).suffix.lower()
+        size = path.stat().st_size
+        if size > 1_000_000 or total + size > 5_000_000:
+            continue
+        total += size
+        payload = path.read_bytes()
+        if suffix in _IMAGE_OUTPUTS:
+            images[name] = payload
+        else:
+            try:
+                assets[name] = clean_document(payload.decode("utf-8"), settings, req)
+            except UnicodeDecodeError:
                 continue
-            total += size
-            payload = path.read_bytes()
-            if suffix in _IMAGE_OUTPUTS:
-                images[name] = payload
-            else:
-                try:
-                    assets[name] = clean_document(payload.decode("utf-8"), settings, req)
-                except UnicodeDecodeError:
-                    continue
     return assets, images
 
 
@@ -121,26 +133,14 @@ def edition_abstract(req: dict, settings, included) -> str | None:
     return build_graphical_abstract(req, report, scrub=lambda text: clean_document(text, settings, req))
 
 
-class _BundleFigures:
-    """``name in figures``: the request bundle holds ``name`` as a plain file."""
-
-    def __init__(self, bundle) -> None:
-        self.bundle = bundle
-
-    def __contains__(self, name: str) -> bool:
-        from .ro_crate import _plain_file
-        try:
-            return self.bundle is not None and _plain_file(self.bundle, name).is_file()
-        except OSError:
-            return False
-
-
 def pdf_report_text(req: dict, settings) -> str:
     """The report text the edition's PDF is printed from: cleaned like the edition's report.md, but its figure links point
-    at the originals in the request bundle (no per-figure size limit, #608), not at the size-limited edition copies."""
-    bundle = settings.path(settings.runner.workspace_root) / "requests" / req["id"]
-    held = _BundleFigures(bundle if plain_path(bundle) and bundle.is_dir() else None)
-    text = edition_figure_links(str(req.get("report") or "결과 보고서가 없습니다."), req, settings, held)
+    at the originals in the request bundle (no per-figure size limit, #608), not at the size-limited edition copies.
+
+    Only the figures the edition may carry (`edition_candidates`) stay linked; an unreported bundle file, a type the
+    edition leaves out or a name it would mask becomes a "그림 생략" note, as in the edition (#611 review)."""
+    text = edition_figure_links(str(req.get("report") or "결과 보고서가 없습니다."), req, settings,
+                                edition_candidates(req, settings).keys())
     return clean_document(text, settings, req)
 
 
@@ -164,8 +164,7 @@ def draft_documents(req: dict, settings, included=None, *, abstract: bool = Fals
     report = str(req.get("report") or "결과 보고서가 없습니다.")
     if included is not None:
         report = edition_figure_links(report, req, settings, included)  # before cleaning, which would cut a path's ")"
-        if abstract:
-            report = with_abstract_link(report)
+        report = with_abstract_link(report) if abstract else abstract_first(report, lambda name: name in included)
     steps = (req.get("plan") or {}).get("steps") or []
     progress = ["# 진행 기록", "", *[f"- {s.get('id')}: {s.get('instruction', '')}" for s in steps],
                 "", "## 결정·카드", json.dumps(req.get("clarifications") or [], ensure_ascii=False, indent=2),

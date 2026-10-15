@@ -29,7 +29,7 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from .report_abstract import build_graphical_abstract, with_abstract_link
+from .report_abstract import abstract_first, build_graphical_abstract, with_abstract_link
 from .report_figures import (ABSTRACT_FILE, FIGURE_SUFFIXES, IMAGE_PATTERN, MAX_REPORT_FIGURES, classify,
                              drop_dead_abstract_links, figure_owners, has_abstract_link, link_workdir_figures,
                              output_exists)
@@ -480,7 +480,9 @@ def build_report_html(req: Mapping[str, Any], bundle: Path | None, *, now: datet
     owners = figure_owners(results)
     source = report_text if report_text is not None else _read_document(bundle, "report.md", str(req.get("report") or ""))
     linked = link_workdir_figures(source, owners, output_exists(results, bundle))
-    if not has_abstract_link(linked, figures._holds):
+    if has_abstract_link(linked, figures._holds):
+        linked = abstract_first(linked, figures._holds)  # the report's own abstract, wherever the writer put it
+    else:
         linked = drop_dead_abstract_links(linked, figures._holds)  # a link to a file nobody could make
         figures.extra[ABSTRACT_FILE] = build_graphical_abstract(req, linked, scrub=scrub).encode("utf-8")
         linked = with_abstract_link(linked)

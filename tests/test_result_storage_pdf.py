@@ -72,8 +72,10 @@ async def test_pdf_is_in_the_edition_and_uploaded_as_binary(tmp_path, monkeypatc
     bundle = edition.with_name("req_test")
     assert len(seen) == 1 and seen[0]["source"] == bundle  # #608: the bundle's original figures, not the edition's copies
     assert "steps/s1/outputs/plot.png" in seen[0]["files"] and "steps/s1/outputs/extra.png" in seen[0]["files"]
-    assert not (edition / "steps/s1/outputs/extra.png").exists()  # the edition leaves it out, the PDF does not
-    assert "(steps/s1/outputs/plot.png)" in seen[0]["report"] and "(steps/s1/outputs/extra.png)" in seen[0]["report"]
+    assert not (edition / "steps/s1/outputs/extra.png").exists()  # an unreported output: the edition leaves it out
+    # #611 review: and so does the PDF, whose figures are the edition's reported outputs, only without the size limit
+    assert "(steps/s1/outputs/plot.png)" in seen[0]["report"] and "extra.png" not in seen[0]["report"]
+    assert "*(그림 생략: 미보고 그림)*" in seen[0]["report"]
     assert "(wd1/outputs/plot.png)" not in seen[0]["report"]
     assert seen[0]["req"]["report_appendix"] == "" and "alice" not in seen[0]["report"]  # cleaned like the edition
     assert (edition / "report.pdf").read_bytes() == PDF

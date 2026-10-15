@@ -92,7 +92,9 @@ async def test_large_figures_stay_in_the_pdf_and_come_from_the_bundle_not_the_ed
     await publish(hub, calls)
     assert len(pages) == 1
     assert base64.b64encode(big).decode("ascii") in pages[0]  # the original, whatever its size
-    assert base64.b64encode(b"\x89PNG synthetic extra").decode("ascii") in pages[0]  # also the one the edition leaves out
+    # #611 review: the size limit is lifted, the eligibility is not; an unreported output stays out of the PDF as in the edition
+    assert base64.b64encode(b"\x89PNG synthetic extra").decode("ascii") not in pages[0]
+    assert "(그림 생략: 미보고 그림)" in pages[0]
     assert not (edition / "steps/s1/outputs/big.png").exists()  # the edition keeps its own limit for copied files
     assert "*(그림 생략: 큰 그림)*" in (edition / "report.md").read_text(encoding="utf-8")
     assert "[그림 없음: 큰 그림" not in pages[0] and "[그림 없음: 미보고 그림" not in pages[0]  # only the remote link is missing
@@ -240,7 +242,8 @@ def test_never_more_than_eleven_figures(tmp_path):
     assert "그림 4개를 넣지 못했어요" in page and [alt for _src, alt in image_sources(page)][1:] == [
         f"그림 {index}" for index in range(10)]  # the first ten, in order, after the abstract
     problems = bundle_figure_check(bundle)["problems"]
-    assert len(problems) == 1 and "14장" in problems[0] and "11장까지" in problems[0]
+    # #611 review: no abstract of its own, so the drawn one takes the 11th place and 10 result figures are the most
+    assert len(problems) == 1 and "14장" in problems[0] and "결과 그림은 10장까지" in problems[0]
     assert len(linked_figure_paths((bundle / "report.md").read_text(encoding="utf-8"))) == 11
     assert FigureEmbedder(bundle, limit=1).markup("a", "steps/s1/outputs/f0.png", block=False).startswith("<img")
 

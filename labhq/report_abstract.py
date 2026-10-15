@@ -16,7 +16,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 from urllib.parse import urlsplit
 
-from .report_figures import ABSTRACT_FILE
+from .report_figures import ABSTRACT_FILE, classify, image_links, is_abstract_target
 
 CAPTION = "Graphical abstract — 질문 → 데이터 → 방법 → 핵심 결과"
 
@@ -291,14 +291,49 @@ def build_graphical_abstract(req: Mapping[str, Any], report: str, *,
     return "\n".join(out)
 
 
-def with_abstract_link(report: str, name: str = ABSTRACT_FILE) -> str:
-    """``report`` with the abstract as its first figure: under the first heading outside a code fence, else on top."""
-    link = f"![{CAPTION}]({name})"
+def insert_after_first_heading(report: str, markup: str) -> str:
+    """``report`` with ``markup`` as its own paragraph under the first heading outside a code fence, else on top."""
     lines = (report or "").split("\n")
     fenced = False
     for index, line in enumerate(lines):
         if _FENCE.match(line):
             fenced = not fenced
         elif not fenced and _HEADING.match(line):
-            return "\n".join([*lines[:index + 1], "", link, "", *lines[index + 1:]])
-    return link + "\n\n" + (report or "")
+            tail = lines[index + 1:]
+            while tail and not tail[0].strip():
+                tail.pop(0)
+            return "\n".join([*lines[:index + 1], "", markup, "", *tail])
+    return markup + "\n\n" + (report or "")
+
+
+def with_abstract_link(report: str, name: str = ABSTRACT_FILE) -> str:
+    """``report`` with the abstract as its first figure: under the first heading outside a code fence, else on top."""
+    return insert_after_first_heading(report, f"![{CAPTION}]({name})")
+
+
+def abstract_first(report: str, resolves: Callable[[str], bool]) -> str:
+    """Move the report's own graphical abstract to be its first figure, under the first heading (#611 review).
+
+    ``resolves`` (the decoded relative path -> bool) says which abstract link points at a file that exists. Nothing moves
+    when there is none, or when it already comes before every other figure; the link keeps its caption and target."""
+    links = image_links(report)
+    found = None
+    for link in links:
+        kind, value = classify(link.target, resolves)
+        if kind == "local" and is_abstract_target(value) and resolves(value):
+            found = link
+            break
+    if found is None or found is links[0]:
+        return report
+    before, after = report[:found.start], report[found.end:]
+    start = before.rfind("\n") + 1
+    end = after.find("\n")
+    end = len(after) if end < 0 else end
+    if not before[start:].strip() and not after[:end].strip():  # alone on its line: the line goes, and one blank beside it
+        before, after = before[:start], after[end + 1:]
+        if before.endswith("\n\n"):
+            if after.startswith("\n"):
+                after = after[1:]
+            elif not after:
+                before = before[:-1]
+    return insert_after_first_heading(before + after, report[found.start:found.end])
