@@ -655,7 +655,7 @@ async def test_invalid_result_is_corrected_once_and_the_request_continues():
     (1, ["plan", "step", "result_correction"]),
     (0, ["plan", "step"]),
 ])
-async def test_invalid_correction_or_zero_limit_keeps_the_existing_failure(corrections, expected_kinds):
+async def test_invalid_correction_or_zero_limit_refuses_bad_evidence_and_exposes_gap(corrections, expected_kinds):
     settings = _settings()
     settings.research.result_corrections = corrections
     holder = {}
@@ -680,9 +680,14 @@ async def test_invalid_correction_or_zero_limit_keeps_the_existing_failure(corre
 
     assert [task.meta["kind"] for task in hub.calls] == expected_kinds
     result = hub.requests["r"]["results"]["s1"]
-    assert result["error"].startswith("invalid research result contract: ")
-    assert "assessment_reason" in result["error"]
-    assert hub.requests["r"]["outcome"] == "research_failed"
+    assert result["ok"] and result["error"] is None
+    assert result["structured"]["claims"] == []
+    assert result["structured"]["evidence"][0]["origin"] == "omitted_by_output"
+    cp2 = hub.requests["r"]["research_contract"]["checkpoints"]["cp2"]
+    assert any("assessment_reason" in row["reason"] for row in cp2["refused_rows"])
+    assert cp2["unsupported_claims"] and cp2["warnings"]
+    # CP1's answer is not a structured CP2 choice: a repaired step never implies evidence approval.
+    assert hub.requests["r"]["outcome"] == "evidence_unreadable"
 
 
 @pytest.mark.asyncio
@@ -860,7 +865,8 @@ async def test_research_step_failure_takes_its_own_path_even_with_replans_on():
     assert req["outcome"] == "research_failed" and req["status"] == "failed"
     assert req["research_contract"]["failure"]["steps"] == ["s1"]
     first = req["report"].splitlines()[:3]
-    assert "s1" in first[0] and "원인" in first[1] and first[2].startswith("PI가 할 일:")
+    assert "s1" in first[0] and "원인" in first[1] and first[2] == "개발팀에 자동 보고됨"
+    assert req["dev_reports"][0]["step_id"] == "s1"
     assert "a changed plan needs a new CP1 approval" not in req["report"]
     assert "a changed plan needs a new CP1 approval" in req["execution_record"]
     assert "replan_progress" not in req and "replan_history" not in req
