@@ -11,3 +11,7 @@ rows:
 - sha: 877c2e6
   at: 2026-10-15 14:31
   text: manual과 status에 AlphaMissense 사용법, Ensembl REST 확인 결과, 라이선스 확인 내용을 적는다(#621).
+- sha: 8dbe72d
+  at: 2026-10-15 15:28
+  text: 선택된 VEP transcript에 AlphaMissense 점수가 없으면 주 요약은 점수 없음으로 두고, 다른 transcript의
+    점수·등급은 별도 필드로 분리한다.
