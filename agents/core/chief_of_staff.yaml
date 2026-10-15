@@ -4,6 +4,7 @@ role: 브리핑 — 분야 동향·데이터 가용성·접근 제약·실현 �
 character: penguin
 engine: claude_code
 model: sonnet
+model_tier: balanced
 permission_mode: default
 tools: [WebSearch, WebFetch, Read]
 builtin_mcp: [approval]

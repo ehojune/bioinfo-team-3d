@@ -1580,7 +1580,7 @@ class Hub:
         item = outcome_unknown_item(result, agent) if outcome_unknown else task_cost_item(result, agent)
         item["recorded_at"] = time.time()
         amount = float(item["usd"]) if item["status"] != "unknown" else 0.0
-        costs[tid] = amount
+        costs[tid] = amount if item["status"] != "unknown" else None
         req.setdefault("cost_items", {})[tid] = item
         req["cost_usd"] = float(req.get("cost_usd") or 0) + amount
         req["cost_known"] = req.get("cost_known", True) and item["status"] != "unknown"
