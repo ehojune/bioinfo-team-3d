@@ -17,8 +17,10 @@ from .models import ApprovalRequest, Task
 from .policy import touches, restricted_paths
 from .intake import reference_dirs
 from .recruit.provenance import touches_restricted
-from .report_figures import classify, figure_owners, image_links, link_workdir_figures, output_exists
-from .report_pdf import NO_BROWSER, ReportRefused, build_report_file
+from .report_abstract import build_graphical_abstract, with_abstract_link
+from .report_figures import (ABSTRACT_FILE, classify, figure_owners, has_abstract_link, image_links, is_abstract_target,
+                             link_workdir_figures, output_exists)
+from .report_pdf import NO_BROWSER, ReportRefused, build_report_file, pdf_cap_bytes, size_notes
 from .request_bundle import _POSIX_ABS, _WINDOWS_ABS
 
 _REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
@@ -30,6 +32,7 @@ _IMAGE_OUTPUTS = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpe
 _DOCUMENT_LINKS = "[전체 결과·그림·표](report.md) · [진행 기록](PROGRESS.md) · [재현 방법](REPRODUCE.md) · [참고 자료](SOURCES.md)"
 _PDF_NAME = "report.pdf"
 _GENERATED = ("README.md", "report.md", "PROGRESS.md", "REPRODUCE.md", "SOURCES.md")  # edition documents that may link a figure
+PDF_UPLOAD_MAX_MB = 75  # base64 of this is 100 MB, the contents API's file limit (#608); settings caps the PDF size there
 
 
 def plain_path(path):
@@ -100,17 +103,49 @@ def edition_figure_links(text: str, req: dict, settings, included) -> str:
         kind, value = classify(link.target, lambda name: name in included)
         if kind == "remote" or (kind == "local" and value in included):
             continue
-        pieces += [text[last:link.start], f"*(그림 생략: {link.alt.strip() or '그림'})*"]
+        # a graphical abstract nobody made is not an omitted figure: its link goes without a note (#608)
+        note = "" if kind == "local" and is_abstract_target(value) else f"*(그림 생략: {link.alt.strip() or '그림'})*"
+        pieces += [text[last:link.start], note]
         last = link.end
     return "".join(pieces) + text[last:] if pieces else text
 
 
+def edition_abstract(req: dict, settings, included) -> str | None:
+    """SVG text of the graphical abstract labhq draws when the edition's report has no abstract figure the edition holds
+    (#608); None when it has one or there is no report. The labels are masked like the edition's documents."""
+    if not str(req.get("report") or "").strip():
+        return None
+    report = edition_figure_links(str(req["report"]), req, settings, included)
+    if has_abstract_link(report, lambda name: name in included):
+        return None
+    return build_graphical_abstract(req, report, scrub=lambda text: clean_document(text, settings, req))
+
+
+class _BundleFigures:
+    """``name in figures``: the request bundle holds ``name`` as a plain file."""
+
+    def __init__(self, bundle) -> None:
+        self.bundle = bundle
+
+    def __contains__(self, name: str) -> bool:
+        from .ro_crate import _plain_file
+        try:
+            return self.bundle is not None and _plain_file(self.bundle, name).is_file()
+        except OSError:
+            return False
+
+
+def pdf_report_text(req: dict, settings) -> str:
+    """The report text the edition's PDF is printed from: cleaned like the edition's report.md, but its figure links point
+    at the originals in the request bundle (no per-figure size limit, #608), not at the size-limited edition copies."""
+    bundle = settings.path(settings.runner.workspace_root) / "requests" / req["id"]
+    held = _BundleFigures(bundle if plain_path(bundle) and bundle.is_dir() else None)
+    text = edition_figure_links(str(req.get("report") or "결과 보고서가 없습니다."), req, settings, held)
+    return clean_document(text, settings, req)
+
+
 def pdf_skip_line(reason: str) -> str:
     return f"PDF는 포함하지 않았어요: {reason}"
-
-
-def pdf_cap_mb(settings) -> float:
-    return float(settings.github.edition_pdf_max_mb)
 
 
 def clean_document(text: str, settings, req: dict) -> str:
@@ -121,13 +156,16 @@ def clean_document(text: str, settings, req: dict) -> str:
     return _ASSIGNMENT.sub(r"\1<redacted-secret>", _PRIVATE_PATH.sub("<local-path>", text))
 
 
-def draft_documents(req: dict, settings, included=None) -> dict[str, str]:
+def draft_documents(req: dict, settings, included=None, *, abstract: bool = False) -> dict[str, str]:
     """Only derived prose enters this edition. Raw bundle data and binary files stay local.
 
-    ``included``: the edition's file names; the report's figure links are made to resolve to them (#584)."""
+    ``included``: the edition's file names; the report's figure links are made to resolve to them (#584).
+    ``abstract``: the edition holds the drawn graphical abstract (`edition_abstract`); it is the report's first figure (#608)."""
     report = str(req.get("report") or "결과 보고서가 없습니다.")
     if included is not None:
         report = edition_figure_links(report, req, settings, included)  # before cleaning, which would cut a path's ")"
+        if abstract:
+            report = with_abstract_link(report)
     steps = (req.get("plan") or {}).get("steps") or []
     progress = ["# 진행 기록", "", *[f"- {s.get('id')}: {s.get('instruction', '')}" for s in steps],
                 "", "## 결정·카드", json.dumps(req.get("clarifications") or [], ensure_ascii=False, indent=2),
@@ -327,12 +365,16 @@ class ResultStorage:
                             docs[name] = path.read_bytes().decode("utf-8")
                 if "README.md" not in docs:
                     raise ValueError("missing editor README")
-                if pdf is not None and (not pdf.startswith(b"%PDF-") or len(pdf) > pdf_cap_mb(self.s) * 1024 * 1024):
+                if pdf is not None and (not pdf.startswith(b"%PDF-") or len(pdf) > PDF_UPLOAD_MAX_MB * 1024 * 1024):
                     raise ValueError("invalid editor PDF")
             else:
                 assets, images = edition_assets(req, self.s)
                 included = {*assets, *images}
-                docs = draft_documents(req, self.s, included)
+                drawn = edition_abstract(req, self.s, included)  # #608: the edition opens with a graphical abstract
+                if drawn:
+                    assets[ABSTRACT_FILE] = drawn
+                    included.add(ABSTRACT_FILE)
+                docs = draft_documents(req, self.s, included, abstract=bool(drawn))
                 links = "\n".join(f"- [{name}]({quote(name, safe='/')})" for name in [*assets, *images])
                 if links:
                     docs["README.md"] += "\n## 그림·표·실행 파일\n\n" + links + "\n"
@@ -391,17 +433,18 @@ class ResultStorage:
 
                 for name, body in {**docs, **images}.items():
                     write(name, body)
-                pdf, reason = await self.edition_pdf(rid, req, docs["report.md"], target)
+                pdf, reason = await self.edition_pdf(rid, req)  # reason: why there is no PDF, else a size note
                 saved = req["result_storage"]  # PI review may replace the persisted request fields while we print.
                 if pdf:
-                    docs["README.md"] += f"\n[보고서 PDF]({_PDF_NAME})\n"
+                    docs["README.md"] += f"\n[보고서 PDF]({_PDF_NAME})\n" + (f"\n{reason}\n" if reason else "")
                     write(_PDF_NAME, pdf)
                 else:
                     docs["README.md"] += f"\n{pdf_skip_line(reason)}\n"
                     if plain_path(target / _PDF_NAME):
                         (target / _PDF_NAME).unlink(missing_ok=True)  # a PDF left by an earlier attempt is not this edition's
                 write("README.md", docs["README.md"])
-                saved["pdf"] = {"included": bool(pdf), "bytes": len(pdf or b""), "note": "" if pdf else pdf_skip_line(reason)}
+                saved["pdf"] = {"included": bool(pdf), "bytes": len(pdf or b""), "note": "" if pdf else pdf_skip_line(reason),
+                                "size_note": reason if pdf else ""}
                 saved.update(draft_path=str(target), status="draft")
                 self.hub.save_request(rid)
             if saved.get("mode") == "local":
@@ -414,8 +457,9 @@ class ResultStorage:
                           "images": {name: "data:" + _IMAGE_OUTPUTS[Path(name).suffix.lower()] + ";base64," +
                                      base64.b64encode(body).decode("ascii") for name, body in images.items()},
                           "visibility": saved.get("visibility"), "local_draft": str(target)}
-                pdf_line = (f"포함: {_PDF_NAME} ({len(pdf) / 1024 / 1024:.1f} MB)" if pdf
-                            else str((saved.get("pdf") or {}).get("note") or ""))
+                pdf_line = (f"포함: {_PDF_NAME} ({len(pdf) / 1024 / 1024:.1f} MB)"
+                            + (f" · {(saved.get('pdf') or {}).get('size_note')}" if (saved.get("pdf") or {}).get("size_note") else "")
+                            if pdf else str((saved.get("pdf") or {}).get("note") or ""))
                 if pdf_line:
                     detail["pdf"] = pdf_line
                 decision = await self.hub.request_approval(kind="result_publish", request_id=rid,
@@ -436,16 +480,24 @@ class ResultStorage:
             await self.hub.publish({"type": "request.storage", "request_id": rid,
                                     "data": {"result_storage": saved}})
 
-    async def edition_pdf(self, rid, req, report, target) -> tuple[bytes | None, str]:
-        """``(report.pdf bytes, "")``, or ``(None, plain Korean reason)``: the report printed from the reviewed edition
-        folder (its cleaned report.md and the figures it holds), never from the raw bundle, and within the size cap."""
+    async def edition_pdf(self, rid, req) -> tuple[bytes | None, str]:
+        """``(report.pdf bytes, size note)``, or ``(None, plain Korean reason)``.
+
+        The report is printed from the request bundle's original figures, whatever their size, under the edition's cleaned
+        text (#608); the edition's own copies keep their 1 MB and 5 MB limits. The PDF is at most ``github.edition_pdf_max_mb``
+        (50 MB by default): figures are shrunk to fit, never left out, and a PDF still over the cap is kept with a note. Only a
+        PDF past what the GitHub contents API takes is left out, with its size as the reason."""
+        bundle = self.s.path(self.s.runner.workspace_root) / "requests" / rid
+        text = pdf_report_text(req, self.s)
         shown = copy.deepcopy(req)
-        shown.update(text=clean_document(str(req.get("text") or ""), self.s, req), report=report, report_appendix="")
+        shown.update(text=clean_document(str(req.get("text") or ""), self.s, req), report=text, report_appendix="")
         store = getattr(self.hub, "store", None)
         tasks = {key: copy.deepcopy(task) for key, task in store.all("task").items()
                  if isinstance(task, dict) and task.get("request_id") == rid} if store else {}
         try:
-            built = await asyncio.to_thread(build_report_file, shown, self.s, tasks, source=target)
+            built = await asyncio.to_thread(
+                build_report_file, shown, self.s, tasks, source=bundle, report_text=text,
+                scrub=lambda label: clean_document(label, self.s, req))
         except ReportRefused:
             return None, "이 요청은 PDF 보고서를 만들 수 없는 상태예요."
         except Exception:
@@ -453,9 +505,10 @@ class ResultStorage:
         if built.kind != "pdf" or not built.data.startswith(b"%PDF-"):
             return None, ("이 PC에서 Edge나 Chrome을 찾지 못했어요." if built.reason == NO_BROWSER
                           else "브라우저가 PDF를 만들지 못했어요.")
-        if len(built.data) > pdf_cap_mb(self.s) * 1024 * 1024:
-            return None, f"PDF가 {len(built.data) / 1024 / 1024:.1f} MB라 한도 {pdf_cap_mb(self.s):g} MB를 넘어요."
-        return built.data, ""
+        if len(built.data) > PDF_UPLOAD_MAX_MB * 1024 * 1024:
+            return None, (f"PDF가 {len(built.data) / 1024 / 1024:.1f} MB라 GitHub에 올릴 수 있는 한도 "
+                          f"{PDF_UPLOAD_MAX_MB} MB를 넘어요.")
+        return built.data, " ".join(size_notes(built.data, built.shrunk, built.over_cap, pdf_cap_bytes(self.s)))
 
     async def upload(self, rid, docs, images=None, pdf=None):
         if not self.hub.requests[rid].get("pi_reviewed_at"):

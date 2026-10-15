@@ -681,12 +681,19 @@ Current plan:
 Team results so far:
 {results}"""
 
-# Figures in the PI report (#584): the request bundle rewrites <workdir_id>/outputs/<file> to steps/<step_id>/outputs/<file>.
+# Figures in the PI report (#584, #608): the request bundle rewrites <workdir_id>/outputs/<file> to
+# steps/<step_id>/outputs/<file>. At most 11 figures: up to 10 result figures plus one graphical abstract.
 REPORT_FIGURE_RULE = (
-    "Figures: under \"결과\", embed at most 6 key figures as markdown images, each on its own line as "
-    "![one-line caption](<workdir_id>/outputs/<file>). Link only .png, .jpg, .gif or .svg files copied exactly from "
-    "the \"Outputs:\" lists of the team results below, never a path that is not listed, and use image links nowhere "
-    "else. When no step produced a figure, embed none. The caption says what the figure shows, not how it was made.")
+    "Figures: embed at most 11 figures in the whole report: up to 10 key result figures under \"결과\" plus one "
+    "graphical abstract. Embed each as a markdown image on its own line, ![one-line caption](<workdir_id>/outputs/<file>). "
+    "Link only .png, .jpg, .gif or .svg files copied exactly from the \"Outputs:\" lists of the team results below, "
+    "never a path that is not listed, and use image links nowhere else. When no step produced a figure, embed no result "
+    "figure. The caption says what the figure shows, not how it was made.\n"
+    "Graphical abstract: one figure that summarizes the whole project as question -> data -> methods and steps -> key "
+    "findings, with short Korean labels. If you can run code in your workspace, create it with code (for example "
+    "matplotlib) as outputs/graphical_abstract.png (or .svg) in your own outputs/ and link it as the first figure under "
+    "\"결론과 권고\", as ![Graphical abstract](outputs/graphical_abstract.png). If you cannot create files, write no "
+    "link for it: labhq then draws the abstract from the plan, the data sources and your conclusion and puts it first.")
 
 SYNTH_PROMPT = """Write the final report for the PI.
 Use these sections in this order: 1) "결론과 권고", 2) "결과" with evidence and file paths, 3) "방법 요약"

@@ -114,7 +114,7 @@ github:
   token_env: GITHUB_TOKEN        # 게이트웨이 환경변수. fine-grained PAT: Issues·Contents·Pull requests RW
   dashboard_url: null            # 예: https://labhq.<tailnet>.ts.net — 이슈 본문에 사무실 링크
   codex_mention: "@codex"        # codex 멘션은 PR 상단 리뷰 요청에만 한 번
-  edition_pdf_max_mb: 20         # 편집자 정리본에 넣는 report.pdf 크기 상한(MB). 넘으면 PDF만 빼고 게시
+  edition_pdf_max_mb: 50         # report.pdf 크기 상한(MB, 최대 75). 넘으면 그림을 빼지 않고 해상도를 줄여 맞춥니다
 
 # 공개 자원 조회(labhq_annot). AlphaGenome API 키는 이 위치의 파일에만 둡니다: labhq init이 묻고 runner 계정만
 # 읽게 저장합니다. 설정에는 위치만 적고 키 값은 적지 않습니다.
