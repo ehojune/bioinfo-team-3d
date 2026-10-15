@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 16:16 | [`bf10257`](https://github.com/ehojune/bioinfo-team-3d/pull/631/commits/bf10257) | AlphaGenome 권장 변이 점수·한국어 요약·tidy 표와 크기 상한·판본 캐시를 추가하고 variant_effect 안내를 연결 |
 | 15:28 | [`123d977`](https://github.com/ehojune/bioinfo-team-3d/pull/628/commits/123d977) | 403 복구 안내에서 실패한 환경 토큰을 해제하고 README로 저장소를 만들게 하며, 빈 저장소는 branch 없는 첫 파일로 초기화한 뒤 기존 파일의 sha를 보존해 갱신한다(#607). |
 | 15:28 | [`8dbe72d`](https://github.com/ehojune/bioinfo-team-3d/pull/626/commits/8dbe72d) | 선택된 VEP transcript에 AlphaMissense 점수가 없으면 주 요약은 점수 없음으로 두고, 다른 transcript의 점수·등급은 별도 필드로 분리한다. |
 | 14:54 | [`d897e32`](https://github.com/ehojune/bioinfo-team-3d/pull/628/commits/d897e32) | 게시에 실패한 정리본을 labhq storage --republish로 로컬 초안 그대로 다시 올리고(--redraft도 failed를 받음), 토큰이 새 저장소를 만들거나 쓰지 못할 때 이유와 할 일을 쉬운 말로 알리며, doctor가 fine-grained 토큰을 미리 경고한다(#607). |
