@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
-from labhq import cli
+from labhq import cli, edition_sources
 from labhq.gateway.server import Hub as RealHub, create_app
 from labhq.result_storage import (EDITOR_REPORT_CHARS, document_links, draft_documents, editor_prompt,
                                   fit_record, readme_excerpt)
@@ -108,6 +108,43 @@ def test_resource_versions_of_the_bundle_reach_sources_from_the_edition_assets()
     text = sources_of("보고서", versions=VERSIONS)
     assert "- MSigDB: 2026.1.Hs" in text and "[PMID 35151227]" in text
     assert "- Resource: Version" not in text  # the table header is not a row
+
+
+PRIVATE_VERSIONS = """| Resource | Version | Source |
+|---|---|---|
+| Local service | 1.0 | http://127.0.0.1:8787/api/version |
+| Gateway | 2.0 | http://gateway.local/v |
+| Internal | 3.0 | https://host.internal/v |
+| Lab LAN | 4.0 | http://192.168.1.5/v |
+| Dev box | 5.0 | http://localhost:8000/v |
+| Ten net | 6.0 | http://10.0.0.5/v |
+| Signed | 7.0 | https://data.example.org/v?token=abc123&page=2 |
+| Public | 8.0 | https://example.org/release |
+| Note | see http://127.0.0.1:9/x | |
+"""
+
+
+def test_version_sources_get_the_same_privacy_filter_as_every_other_link():
+    text = sources_of("보고서", versions=PRIVATE_VERSIONS)
+    for private in ("127.0.0.1", "gateway.local", "host.internal", "192.168", "localhost", "10.0.0.5", "abc123"):
+        assert private not in text, private  # a public edition never names an internal service or a credential
+    for row in ("- Local service: 1.0\n", "- Gateway: 2.0\n", "- Internal: 3.0\n", "- Lab LAN: 4.0\n",
+                "- Dev box: 5.0\n", "- Ten net: 6.0\n"):
+        assert row in text, row  # the version stays; only the private address goes
+    assert "- Signed: 7.0 (https://data.example.org/v)\n" in text  # the credential query is dropped, the page kept
+    assert "- Public: 8.0 (https://example.org/release)\n" in text
+    assert "- Note: see (비공개 주소 생략)\n" in text  # a private link inside a cell is masked too
+
+
+def test_a_doi_in_a_link_is_one_doi_without_the_links_query():
+    report = ("See https://doi.org/10.1234/example?utm_source=x and doi.org/10.5678/other?token=abc123 and "
+              "https://publisher.example.org/article/10.4321/xyz?session=9 and a bare 10.9999/plain.")
+    assert edition_sources.collect([report]).listing("doi") == [
+        "10.1234/example", "10.4321/xyz", "10.5678/other", "10.9999/plain"]
+    text = sources_of(report)
+    assert text.count("[10.1234/example](https://doi.org/10.1234/example)") == 1
+    for query in ("utm_source", "abc123", "session=9", "token="):
+        assert query not in text, query
 
 
 def long_report(parts=40, size=2500):

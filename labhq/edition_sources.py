@@ -64,12 +64,34 @@ def _private_host(host: str) -> bool:
     return not address.is_global
 
 
+def _clean_doi(value: str) -> str:
+    """A DOI without the query or fragment a link put after it (``10.1234/x?utm_source=y`` is DOI ``10.1234/x``)."""
+    return re.split(r"[?#]", value, maxsplit=1)[0].rstrip(_TRAILING)
+
+
+def _public_link(url: str) -> str | None:
+    """The web address to publish: None for a private host or one with credentials, else without a credential query."""
+    url = url.rstrip(_TRAILING)
+    parts = urlsplit(url)
+    if not parts.hostname or _private_host(parts.hostname) or parts.username or parts.password:
+        return None
+    return _public(url)
+
+
+def _mask_urls(text: str) -> str:
+    """``text`` with each link made publishable; a private one becomes a note."""
+    def mask(match: re.Match) -> str:
+        core = match.group().rstrip(_TRAILING)
+        return (_public_link(core) or "(비공개 주소 생략)") + match.group()[len(core):]
+    return _URL.sub(mask, text)
+
+
 def _identity(url: str) -> tuple[str, str] | None:
     """The ``(kind, id)`` a link to a public record stands for, or None for an ordinary web address."""
     parts = urlsplit(url)
     host, path = (parts.hostname or "").lower(), parts.path
     if host in _DOI_HOSTS:
-        doi = unquote(path.strip("/")).rstrip(_TRAILING)
+        doi = _clean_doi(unquote(path.strip("/")))
         return ("doi", doi) if _DOI_ONLY.fullmatch(doi) else None
     if host == "pubmed.ncbi.nlm.nih.gov":
         match = re.fullmatch(r"/(\d+)/?", path)
@@ -110,22 +132,23 @@ class Sources:
             self.found[kind].setdefault(key, value)
 
     def add_url(self, url: str) -> None:
-        url = url.rstrip(_TRAILING)
-        parts = urlsplit(url)
-        if not parts.hostname or _private_host(parts.hostname) or parts.username or parts.password:
+        link = _public_link(url)
+        if link is None:
             return
-        identity = _identity(url)
+        identity = _identity(link)
         if identity:
             self.add(*identity)
-        else:
-            self.add("web", _public(url))
+            return
+        self.add("web", link)
+        for match in _DOI.finditer(unquote(urlsplit(link).path)):  # a DOI inside a link comes from its path alone
+            self.add("doi", _clean_doi(match.group()))
 
     def scan(self, text: str) -> None:
         """Every identifier in free text."""
         for match in _URL.finditer(text):
             self.add_url(match.group())
-        for match in _DOI.finditer(text):
-            self.add("doi", match.group().rstrip(_TRAILING))
+        for match in _DOI.finditer(_URL.sub(" ", text)):  # links were read above; a link's query is no part of a DOI
+            self.add("doi", _clean_doi(match.group()))
         for match in _PMID.finditer(text):
             for number in _NUMBER.findall(match.group(1)):
                 self.add("pmid", number)
@@ -140,14 +163,15 @@ class Sources:
         elif kind == "doi":
             match = _DOI_ONLY.search(value)
             if match:
-                self.add("doi", match.group().rstrip(_TRAILING))
+                self.add("doi", _clean_doi(match.group()))
         elif kind in {"url", "github"}:
             self.scan(value)
 
     def scan_versions(self, text: str) -> None:
         """``resource -> version`` rows of a ``resource_versions`` file, and the links beside them."""
         for name, version, source in parse_versions(text):
-            self.versions[(name, version)] = self.versions.get((name, version)) or source
+            link = (_public_link(source) if source else None) or ""  # a private or credentialed source is dropped
+            self.versions[(name, version)] = self.versions.get((name, version)) or link
 
     def listing(self, kind: str) -> list[str]:
         values = list(self.found[kind].values())
@@ -169,7 +193,7 @@ def _cells(line: str) -> list[str]:
 
 
 def _plain(cell: str) -> str:
-    return " ".join(re.sub(r"`|\*\*", "", cell).split())
+    return _mask_urls(" ".join(re.sub(r"`|\*\*", "", cell).split()))
 
 
 def _column(header: list[str], pattern: str) -> int | None:
