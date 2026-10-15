@@ -11,3 +11,7 @@ rows:
   at: 2026-10-15 11:11
   text: resource_versions의 출처 열·칸 안 주소에도 비공개 호스트와 자격 증명 쿼리 거름을 적용하고, 링크 안의 DOI는 쿼리
     없이 하나로만 적는다(#607).
+- sha: 4bf0768
+  at: 2026-10-15 12:11
+  text: main의 PDF 그림 정책(#611·#616)을 합치고, 편집자 입력·출처 추출·--redraft와 함께 draft_documents·finish가
+    초록과 출처 assets를 모두 받게 한다(#607).
