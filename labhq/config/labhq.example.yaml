@@ -39,6 +39,15 @@ runner:
   input_hash_max_total_bytes: 21474836480  # 단계마다 cache miss 입력을 읽는 누적 상한(20 GiB)
   system_ca_bundle: true          # Windows: 직원 Python이 OS 신뢰 저장소도 믿게(기관 TLS 검사 장비). 직접 SSL_CERT_FILE을 정하면 그대로 둠
 
+# dry-run의 호출당 예상 비용 범위. 출처·확인일은 사용하는 엔진의 공식 가격표를 직접 확인한 뒤 적습니다.
+# token 수와 구독 과금이 정해지지 않은 기본값은 지어내지 않고 null로 두며, 이때 "비용 모름"으로 표시합니다.
+model_tier_prices:
+  source: null
+  checked_on: null
+  fast: {min_usd: null, max_usd: null}
+  balanced: {min_usd: null, max_usd: null}
+  reasoning: {min_usd: null, max_usd: null}
+
 engines:
 # bioinfo-agent plugin 경로는 러너 환경변수 BIOINFO_AGENT_DIR로 지정 (agents/core/bioinfo-agent.yaml).
 # labhq init이 BIOINFO_AGENT_DIR, D:/bioinfo-agent·~/bioinfo-agent, WSL의 /mnt/d/bioinfo-agent 순으로 찾아 아래 env에
@@ -125,6 +134,7 @@ recruit:
   default_ttl_days: 30
   contract_engine: claude_code
   contract_model: sonnet
+  contract_model_tier: balanced
 
 github:
   token_env: GITHUB_TOKEN        # 게이트웨이 환경변수. fine-grained PAT: Issues·Contents·Pull requests RW

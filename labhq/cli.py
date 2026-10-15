@@ -345,9 +345,9 @@ def _request_cost_totals_overview(totals: dict) -> str:
     if estimated:
         text += f" (추정 ${estimated:.2f} 포함)"
     if unknown:
-        text += f" + 미집계된 비용 {unknown}건" + (" 이상" if legacy_unknown else "")
+        text += f" + 비용 모름 {unknown}건" + (" 이상" if legacy_unknown else "")
     elif legacy_unknown:
-        text += " + 미집계된 비용"
+        text += " + 비용 모름"
     return text
 
 
@@ -1749,6 +1749,8 @@ def main(argv: list[str] | None = None) -> None:
     sp.add_argument("--work-kind", choices=("auto", "simple", "research"), default="auto",
                     help="with research.enabled: simple skips the research lane (CP1/CP2), research forces it")
     sp.add_argument("--cso-model", help="request-local CSO model from orchestrator.cso_models")
+    sp.add_argument("--dry-run", action="store_true",
+                    help="show pre-plan calls and cost ranges without calling models, tools or the network")
     sp.add_argument("--no-wait", action="store_true")
     note = sub.add_parser("note", help="send a note to later stages of a running request")
     note.add_argument("request_id")
@@ -2098,7 +2100,14 @@ def main(argv: list[str] | None = None) -> None:
                 "project_dirs": args.project_dir, "budget_usd": args.budget, "project_id": args.project,
                 "references": references, "default_references": not args.no_default_refs,
                 "work_kind": args.work_kind}
-        if args.no_wait:
+        if args.dry_run:
+            from .dry_run import build_preview, render_preview
+
+            try:
+                print(render_preview(build_preview(s, body)))
+            except ValueError as exc:
+                p.error(str(exc))
+        elif args.no_wait:
             print(_api(s, "POST", "/api/requests", json=body))
         else:
             _run_websocket(s, _send_and_wait(s, body))

@@ -4,6 +4,7 @@ role: 생물학적 해석·가설·메커니즘·실험 설계 비평
 character: bear
 engine: claude_code
 model: opus
+model_tier: reasoning
 permission_mode: default
 tools: [WebSearch, WebFetch, Read]
 builtin_mcp: [approval, annot]

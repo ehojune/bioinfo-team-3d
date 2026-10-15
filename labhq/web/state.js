@@ -95,14 +95,14 @@ function costParts(actual, estimated, unknown) {
   const parts = [];
   if (actual > 0 || !(estimated > 0 || unknown)) parts.push(`확인 ${usd(actual)}`);
   if (estimated > 0) parts.push(`추정 ${usd(estimated)}`);
-  if (unknown) parts.push(`미집계된 비용 ${unknown}건`);
+  if (unknown) parts.push(`비용 모름 ${unknown}건`);
   return parts.join(' + ');
 }
 const summaryParts = s => costParts(Number(s.actual_usd) || 0, Number(s.estimated_usd) || 0, Number(s.unknown_count) || 0);
 function costLabel(q) {
   if (q && q.costSummary) return summaryParts(q.costSummary);
   const cost = Number(q && q.cost) || 0;
-  return q && q.costKnown === false ? `${cost ? usd(cost) + ' + ' : ''}미집계된 비용` : usd(cost);
+  return q && q.costKnown === false ? `${cost ? usd(cost) + ' + ' : ''}비용 모름` : usd(cost);
 }
 function engineCostLabel(summary) {
   if (!summary || !summary.by_engine) return '';
@@ -136,7 +136,7 @@ function totalCostLabel(requests, total) {
     else if (q.costKnown === false || q.cost_known === false) legacyUnknown = true;
   }
   return `사용 비용 ${usd(total)}${estimated > 0 ? ` (추정 ${usd(estimated)} 포함)` : ''}` +
-    (unknown ? ` + 미집계된 비용 ${unknown}건${legacyUnknown ? ' 이상' : ''}` : legacyUnknown ? ' + 미집계된 비용' : '');
+    (unknown ? ` + 비용 모름 ${unknown}건${legacyUnknown ? ' 이상' : ''}` : legacyUnknown ? ' + 비용 모름' : '');
 }
 function applyCostSummary(q, summary) {
   if (!summary || typeof summary !== 'object') return;

@@ -152,6 +152,7 @@ def test_every_agent_field_is_classified_for_the_read_only_profile(monkeypatch):
 
     assert set(AgentSpec.model_fields) == set(ro.READ_ONLY_KEEPS) | set(ro.READ_ONLY_FIELDS)
     assert not set(ro.READ_ONLY_KEEPS) & set(ro.READ_ONLY_FIELDS)
+    assert ro.read_only_profile(AgentSpec(id="a", name="A", role="r", model_tier="reasoning")).model_tier == "reasoning"
     # A field nobody classified yet is a capability nobody decided on: the build refuses.
     monkeypatch.setattr(ro, "READ_ONLY_KEEPS", tuple(k for k in ro.READ_ONLY_KEEPS if k != "tags"))
     with pytest.raises(RuntimeError, match="tags"):

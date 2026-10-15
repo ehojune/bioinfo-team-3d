@@ -3,6 +3,7 @@ name: 수달 bioinfo-agent
 role: 반복·정형 분석 전담 — 검증된 파이프라인을 표준 방식으로 대량·반복 실행
 character: otter
 engine: claude_code
+model_tier: balanced
 plugin_dirs: ["${BIOINFO_AGENT_DIR}"]
 allow_skills: true
 required_skills: ["bioinfo:bioinfo-analyze"]
