@@ -1,0 +1,6 @@
+pr: 628
+rows:
+- sha: d897e32
+  at: 2026-10-15 14:54
+  text: 게시에 실패한 정리본을 labhq storage --republish로 로컬 초안 그대로 다시 올리고(--redraft도 failed를
+    받음), 토큰이 새 저장소를 만들거나 쓰지 못할 때 이유와 할 일을 쉬운 말로 알리며, doctor가 fine-grained 토큰을 미리 경고한다(#607).
