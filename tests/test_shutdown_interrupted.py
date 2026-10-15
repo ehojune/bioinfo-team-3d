@@ -138,6 +138,64 @@ def test_correction_requires_recorded_shutdown_evidence(tmp_path, stopping, code
             assert event["data"]["previous"]["error"] == f"exit {code}"
 
 
+@pytest.mark.parametrize("storage_status", ["draft", "local"])
+async def test_correction_resets_generated_storage_but_keeps_location(tmp_path, storage_status):
+    hub = make_hub(tmp_path)
+    old_draft = tmp_path / "old-draft"
+    old_draft.mkdir()
+    (old_draft / "README.md").write_text("old failure report", encoding="utf-8")
+    hub.requests["r"].update(status="failed", error="exit 129: terminated",
+        shutdown_evidence={"exit_code": 129, "stopping": True},
+        result_storage={"mode": "existing", "repo": "owner/study", "visibility": "public",
+            "allow_public": True, "branch": "reports", "status": storage_status,
+            "draft_path": str(old_draft), "report_url": "https://example.test/old",
+            "pdf": {"included": False}, "warning": "old warning"})
+    hub.save_request("r")
+
+    await hub.mark_interrupted("r")
+
+    assert hub.requests["r"]["result_storage"] == {
+        "mode": "existing", "repo": "owner/study", "visibility": "public",
+        "allow_public": True, "branch": "reports", "status": "selected",
+    }
+
+
+async def test_corrected_request_builds_new_draft_from_resumed_report(tmp_path):
+    hub = make_hub(tmp_path)
+    old_draft = tmp_path / "runs" / "requests" / "r-editor"
+    old_draft.mkdir(parents=True)
+    (old_draft / "README.md").write_text("old failure report", encoding="utf-8")
+    hub.requests["r"].update(status="failed", report="old failure report", error="exit 129: terminated",
+        shutdown_evidence={"exit_code": 129, "stopping": True},
+        result_storage={"mode": "existing", "repo": "owner/study", "visibility": "private",
+            "allow_public": False, "branch": "main", "status": "draft", "draft_path": str(old_draft)})
+    hub.save_request("r")
+
+    await hub.mark_interrupted("r")
+    hub.requests["r"].update(status="done", report="new resumed result")
+    await hub.result_storage.finish("r")
+
+    saved = hub.requests["r"]["result_storage"]
+    assert saved["status"] == "draft"
+    readme = (old_draft / "README.md").read_text(encoding="utf-8")
+    assert "new resumed result" in readme
+    assert "old failure report" not in readme
+
+
+async def test_correction_refuses_published_storage(tmp_path):
+    hub = make_hub(tmp_path)
+    hub.requests["r"].update(status="failed", error="exit 129: terminated",
+        shutdown_evidence={"exit_code": 129, "stopping": True},
+        result_storage={"mode": "existing", "repo": "owner/study", "visibility": "private",
+            "allow_public": False, "status": "published", "report_url": "https://example.test/report"})
+    hub.save_request("r")
+
+    with pytest.raises(ValueError, match="이미 게시"):
+        await hub.mark_interrupted("r")
+    assert hub.requests["r"]["status"] == "failed"
+    assert hub.requests["r"]["result_storage"]["status"] == "published"
+
+
 @pytest.mark.parametrize("age", [1, 60, -1])
 async def test_legacy_correction_uses_contemporaneous_gateway_signal(tmp_path, age):
     hub = make_hub(tmp_path)

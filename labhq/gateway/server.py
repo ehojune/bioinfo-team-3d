@@ -572,6 +572,11 @@ class Hub:
         if correction:
             updated.update(pi_review_pending=False, pi_reviewed_at=None)
             updated.pop("finished_at", None)
+            storage = updated.get("result_storage") or {}
+            if storage:
+                updated["result_storage"] = {key: value for key, value in storage.items()
+                    if key in {"mode", "repo", "visibility", "allow_public", "branch"}}
+                updated["result_storage"]["status"] = "selected"
         cp4.reconcile(updated)
         data = {"status": "interrupted", "previous": before}
         if evidence is not None:
@@ -3272,6 +3277,8 @@ class Hub:
     async def mark_interrupted(self, rid: str) -> dict:
         from ..interruption import recorded_shutdown_evidence, shutdown_interruption
         req = self.requests[rid]
+        if (req.get("result_storage") or {}).get("status") == "published":
+            raise ValueError("이미 게시한 결과가 있어 interrupted로 정정할 수 없습니다. 게시된 결과를 이 명령이 바꾸지 않습니다")
         evidence = recorded_shutdown_evidence(self.s, req)
         if req.get("status") != "failed" or req.get("revised_to") or not shutdown_interruption(
                 exit_code=evidence.get("exit_code"), error=evidence.get("error"), stopping=evidence.get("stopping"),
