@@ -1,4 +1,6 @@
 """PR #638 review regressions; fake runner and isolated filesystem only."""
+import os
+
 import pytest
 
 from labhq.models import Task
@@ -7,9 +9,11 @@ from labhq.private_paths import credential_path
 from labhq.pi_text import with_approval_copy
 from tests.test_claude_staff_home import _staff
 from tests.test_private_paths import _capture_runner, _runner_settings
+from tests.test_tool_card_explain import system_commands
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures('system_commands')
 @pytest.mark.parametrize('kind', ['', 'paper_skill', 'recruit'])
 async def test_only_skill_build_tasks_read_paper2agent(tmp_path, monkeypatch, kind):
     home, staff, _, _, _, _ = _staff(tmp_path, monkeypatch)
@@ -27,7 +31,8 @@ async def test_only_skill_build_tasks_read_paper2agent(tmp_path, monkeypatch, ki
         data = {'command': f'cat "{path}"'} if tool == 'Bash' else {'file_path': str(path)}
         return evaluate_tool(tool, data, settings.policy, allowed_roots=[str(ctx.workdir)],
                              workdir=str(ctx.workdir), private_paths=ctx.private_paths,
-                             private_open_reads=ctx.private_open_reads, home=str(home), environ={}).action
+                             private_open_reads=ctx.private_open_reads, home=str(home),
+                             environ={'PATH': os.environ['PATH']}).action
     assert gate('Bash', skill / 'SKILL.md') == ('allow' if kind else 'ask')
     assert gate('Read', skill / 'SKILL.md') == ('allow' if kind else 'deny')
     assert gate('Read', build / 'result.txt') == 'allow'

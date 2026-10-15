@@ -12,8 +12,22 @@ from labhq.settings import Settings
 from tests.test_private_paths import _link_dir
 
 
+def _system_commands(monkeypatch):
+    # Acceptance fixtures model a staff token that cannot write system binaries, including on admin CI.
+    import labhq.workspace_commands as commands
+    system = 'C:/Program Files/Git/usr/bin' if os.name == 'nt' else '/usr/bin'
+    monkeypatch.setenv('PATH', system + os.pathsep + os.environ.get('PATH', ''))
+    monkeypatch.setattr(commands, '_executable_writable', lambda path: False)
+
+
 @pytest.fixture
-def layout(tmp_path):
+def system_commands(monkeypatch):
+    _system_commands(monkeypatch)
+
+
+@pytest.fixture
+def layout(tmp_path, monkeypatch):
+    _system_commands(monkeypatch)
     root = tmp_path / 'staff'
     build = root / 'talent' / 'paper' / 'build' / 'task'
     skills = root / 'claude' / 'labhq-paper2agent' / 'skills' / 'paper2agent'

@@ -2313,12 +2313,13 @@ def evaluate_tool(
         reads = [p for p in private_open_reads if not (Path(p).parent.name == 'projects' and
                  Path(p).name == claude_project_slug(os.path.abspath(workdir or '.')))]
         grammar = workspace_command_reason(str(checked.get('command', '')), workdir, private_paths,
-                    powershell=tool_name == 'PowerShell', read_roots=reads, forbidden=closed_zones)
+                    powershell=tool_name == 'PowerShell', read_roots=reads, forbidden=closed_zones,
+                    environ=environ)
     scoped = bool(grammar and grammar.startswith('문법 안:'))
     decision = _evaluate_tool(tool_name, checked, policy, allowed_roots, workdir, environ=environ,
                               windows=windows, workspace_operation=bool(scoped))
     private = (_private_decision(tool_name, checked, private_paths, workdir, home, environ,
-                                list(private_open_reads), closed_zones)
+                                list(private_open_reads), closed_zones, workspace_operation=scoped)
                if private_enabled or private_paths else None)
     # Only ever stricter: a deny stays a deny, and an ask is not turned into an allow.
     if private and decision.action != "deny" and (private.action == "deny" or decision.action == "allow"):
@@ -2397,7 +2398,8 @@ _PRIVATE_PATH_KEYS = ("file_path", "notebook_path", "path")
 
 def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths: list[str], workdir: str | None,
                       home: str | None, environ: Mapping[str, str] | None,
-                      open_reads: list[str] | None = None, closed_zones: Iterable[str] = ()) -> Decision | None:
+                      open_reads: list[str] | None = None, closed_zones: Iterable[str] = (), *,
+                      workspace_operation: bool = False) -> Decision | None:
     """PI personal paths (policy.private_paths): file tools are denied, a shell command naming one asks the PI.
 
     While private paths are active Claude pre-approves no shell command and no read outside the task's folders
@@ -2457,16 +2459,8 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
         return None
     if tool_name in SHELL_TOOLS:
         cmd = str(tool_input.get("command", ""))
-        from .workspace_commands import workspace_command
-        if not registry_access(cmd) and workspace_command(cmd, workdir, private_paths,
-                                                         powershell=tool_name == 'PowerShell', forbidden=closed_zones):
+        if workspace_operation and not registry_access(cmd):
             return None
-        if tool_name == 'Bash' and open_reads and not registry_access(cmd):
-            from .private_paths import claude_project_slug
-            reads = [p for p in open_reads if not (Path(p).parent.name == 'projects' and
-                     Path(p).name == claude_project_slug(os.path.abspath(workdir or '.')))]
-            if workspace_command(cmd, workdir, private_paths, read_roots=reads, forbidden=closed_zones):
-                return None
         if tool_name == 'Bash' and open_reads:
             managed = managed_shell_read(cmd, private_paths, open_reads, workdir)
             if managed is True:
