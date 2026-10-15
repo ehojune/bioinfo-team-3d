@@ -28,7 +28,7 @@ from labhq.report_abstract import UNITS, _width, build_graphical_abstract, with_
 from labhq.report_figures import (MAX_LINKED_FIGURES, MAX_REPORT_FIGURES, bundle_figure_check, image_links,
                                   linked_figure_paths)
 from labhq.report_pdf import (NO_BROWSER, SHRINK_LEVELS, FigureEmbedder, build_report_file, build_report_html,
-                              find_browser, print_within_cap, shrink_page)
+                              find_browser, print_pdf, print_within_cap, shrink_page)
 from tests.test_report_pdf import PNG, SVG, build
 from tests.test_result_storage_pdf import approve_all, builder, prepare, publish, puts
 
@@ -212,6 +212,11 @@ def test_a_real_browser_shrinks_large_figures_under_the_cap(tmp_path, monkeypatc
         return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
                 + chunk(b"IDAT", zlib.compress(raw, 1)) + chunk(b"IEND", b""))
 
+    probe = tmp_path / "probe.html"
+    probe.write_text("<!doctype html><title>probe</title><p>probe</p>", encoding="utf-8")
+    failed = print_pdf(REAL_FIND_BROWSER(), probe, tmp_path / "probe.pdf", timeout=90)
+    if failed:  # a browser that cannot print at all here (a CI sandbox) says nothing about the shrink loop
+        pytest.skip(f"the browser cannot print on this machine: {failed}")
     monkeypatch.setattr("labhq.report_pdf.find_browser", REAL_FIND_BROWSER)
     files = {f"outputs/f{index}.png": noise_png(1500, 1000, index + 2) for index in range(3)}
     settings, request, tasks, _bundle = build(tmp_path, figure_report(3), files=files)
