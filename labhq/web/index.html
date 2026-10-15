@@ -558,7 +558,12 @@ function renderHeader() {
   const txt = LabHQState.connectionLabel(S.conn, IS_DEMO);
   c.className = `conn ${S.conn}`;
   if (c.lastChild.textContent !== txt) c.lastChild.textContent = txt;
-  $('#cost').textContent = snapshotLoaded ? LabHQState.totalCostLabel([...S.requests.values()], S.cost) : `사용 비용 · ${loadingText('비용')}`;
+  const allRequests = [...S.requests.values()];
+  const costRequests = LabHQState.sessionCostRequests(allRequests, S.sessionStartedAt);
+  const currentCost = LabHQState.requestsCostTotal(costRequests);
+  const cumulativeCost = LabHQState.totalCostLabel(allRequests, LabHQState.requestsCostTotal(allRequests));
+  $('#cost').textContent = snapshotLoaded ? LabHQState.totalCostLabel(costRequests, currentCost) : `사용 비용 · ${loadingText('비용')}`;
+  $('#cost').title = snapshotLoaded ? `전체 ${cumulativeCost}` : '';
   $('#note').hidden = !IS_DEMO;
   if (IS_DEMO) $('#note').textContent = LabHQState.demoBannerText(S.demoStatus);
   $('#runner-off').hidden = !(MODE !== 'demo' && S.conn === 'live' && S.runnersKnown && !S.runners.size);  // R15
@@ -617,7 +622,7 @@ function renderBoard() {
   const key = q ? JSON.stringify([q.id, q.phase, q.steps, q.text, q.processing, resume, q.pi_review_pending, q.pi_reviewed_at]) : snapshotLoaded ? 'none' : `loading:${S.conn}`;
   if (el.dataset.key === key) return;
   el.dataset.key = key;
-  if (!q) { el.innerHTML = `<p class="board-empty">${snapshotLoaded ? '오늘의 할 일을 기다리는 중' : loadingText('사무실 상태')}</p>`; return; }
+  if (!q) { el.innerHTML = `<p class="board-empty">${snapshotLoaded ? '새 요청을 기다리는 중' : loadingText('사무실 상태')}</p>`; return; }
   el.innerHTML = `<p class="board-title">${esc(processingLabel(q) || '요청 진행')}</p>${resume ? `<p class="req-meta">${esc(resume)}</p>` : ''}${phaseList(q)}${LabHQState.needsPiReview(q) ? `<p>✓ ${esc(LabHQState.requestStatusText(q))}</p><button class="btn go" style="font-size:1.1em;padding:10px 18px" data-open-review="${esc(q.id)}">${['done', 'review_pending'].includes(q.status) ? '보고서 열기' : '결과·이유 보기'}</button>` : ''}`;
 }
 function renderRack() {
@@ -754,13 +759,16 @@ function renderRequest() {
   // The status line also names a waiting resume card or the runners a resume still needs (R14).
   const statusText = q ? LabHQState.requestStatusText(q, S.approvals) : '';
   const all = LabHQState.sortRequests(S.requests.values());
-  const key = q ? JSON.stringify([S.requests.size, staffNames, statusText, all.map(r => [r.id, r.status, r.text, r.pi_review_pending, r.pi_reviewed_at]), q.id, q.phase, q.status, q.steps, details, q.github.length, q.pipelinePr, q.report, q.report_appendix, q.execution_record, q.bundlePath, q.bundleStatus, q.bundleGrade, q.bundleGradeReasons, q.bundleWarning, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes, q.processing]) : snapshotLoaded ? 'none' : `loading:${S.conn}`;
+  const requestDigest = all.map(r => [r.id, r.status, r.text, r.pi_review_pending, r.pi_reviewed_at, Math.round(r.cost * 100), r.costKnown]);
+  const key = q ? JSON.stringify([S.requests.size, staffNames, statusText, requestDigest, q.id, q.phase, q.status, q.steps, details, q.github.length, q.pipelinePr, q.report, q.report_appendix, q.execution_record, q.bundlePath, q.bundleStatus, q.bundleGrade, q.bundleGradeReasons, q.bundleWarning, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes, q.processing]) : snapshotLoaded ? `none:${JSON.stringify(requestDigest)}` : `loading:${S.conn}`;
   if (key === reqKey) return;
   reqKey = key;
+  const current = all.filter(r => !LabHQState.isPastRequest(r)), past = all.filter(LabHQState.isPastRequest);
+  const choice = r => `<button type="button" class="request-choice" data-request-id="${esc(r.id)}" value="${esc(r.id)}" aria-current="${r.id === q?.id}"><span class="request-title">${esc(r.text || r.id)}</span><span class="status-label ${LabHQState.needsPiReview(r) ? 'status-decision' : 'status-neutral'}"><span class="status-dot" aria-hidden="true"></span>${esc(LabHQState.requestStatusText(r, S.approvals))}</span></button>`;
+  const cumulative = LabHQState.totalCostLabel(all, LabHQState.requestsCostTotal(all)).replace(/^사용 비용 /, '');
+  const pick = all.length ? `<nav class="request-list" aria-label="요청 목록"><h3>요청</h3>${current.map(choice).join('')}${past.length ? `<details class="past-requests"><summary>지난 요청 ${past.length}건 · 누적 비용 ${esc(cumulative)}</summary>${past.map(choice).join('')}</details>` : ''}</nav>` : '';
   // Before the first snapshot no request is known yet, which is not the same as none (#521).
-  if (!q) { el.innerHTML = `<p class="empty-note">${snapshotLoaded ? '아직 요청이 없어요. 아래 입력창에 적으면 CSO가 팀에 나눠 맡겨요.' : loadingText('요청')}</p>`; return; }
-  const pick = `<nav class="request-list" aria-label="최근 요청"><h3>최근 요청</h3>${all.map(r =>
-    `<button type="button" class="request-choice" data-request-id="${esc(r.id)}" value="${esc(r.id)}" aria-current="${r.id === q.id}"><span class="request-title">${esc(r.text || r.id)}</span><span class="status-label ${LabHQState.needsPiReview(r) ? 'status-decision' : 'status-neutral'}"><span class="status-dot" aria-hidden="true"></span>${esc(LabHQState.requestStatusText(r, S.approvals))}</span></button>`).join('')}</nav>`;
+  if (!q) { el.innerHTML = `${pick}<p class="empty-note">${snapshotLoaded ? '새 요청을 기다리는 중입니다. 아래 입력창에 적으면 CSO가 팀에 나눠 맡겨요.' : loadingText('요청')}</p>`; return; }
   const proj = S.projects.find(p => p.id === q.project_id);
   const gh = q.github.filter(g => safeUrl(g.url)).map(g => `<li><a href="${esc(g.url)}" target="_blank" rel="noopener">${esc({ issue: `이슈 #${g.number}`, report: '보고서 커밋', final: '최종 코멘트', plan: '계획 코멘트', review: '리뷰 코멘트', recruit: '채용 기록', pr: 'PR', pipeline_pr: 'bioinfo-agent pipeline PR', codex_review: 'Codex 리뷰 요청' }[g.kind] || g.kind)}</a></li>`).join('');
   const pipeline = q.pipelinePr && q.pipelinePr.status !== 'open' ? `<p class="empty-note">pipeline PR ${q.pipelinePr.status === 'pending' ? '대기' : '거부'}: ${esc(q.pipelinePr.reason || '')}</p>` : '';

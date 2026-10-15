@@ -95,7 +95,7 @@ for (const surface of ['2.5D', '3D']) test(`${surface}: translated follow-up err
   } else {
     const source=fs.readFileSync(path.join(root,'lab3d/src/live.js'),'utf8').replace(/\r\n/g,'\n');
     const start=source.indexOf('for (const f of q.followups || [])');
-    const end=source.indexOf('\n    }\n    requests.replaceChildren',start);
+    const end=source.indexOf('\n    }\n    if (pastRows.length)',start);
     assert.ok(start>0 && end>start);
     const row=new Element();
     const text=(parent,tag,value)=>{const node=new Element(tag);node.textContent=value;parent.append(node);return node;};

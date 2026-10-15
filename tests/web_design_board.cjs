@@ -42,7 +42,7 @@ test('request title occurs once in the full-title recent list, with review statu
   const title='긴 요청 제목을 중간에서 자르지 않고 끝까지 읽으며 지난 연구 결과를 확인합니다';
   const all=[{id:'r',text:title,status:'done',pi_review_pending:true},{id:'s',text:'다른 요청',status:'running'}];
   const ctx=vm.createContext({all,q:all[0],LabHQState:state,S:{approvals:new Map()},esc:String,short:s=>s.slice(0,40)});
-  const start=html.indexOf('  const pick ='),end=html.indexOf('  const proj =',start);
+  const start=html.indexOf('  const current ='),end=html.indexOf('  // Before the first snapshot',start);
   vm.runInContext(html.slice(start,end)+';globalThis.pick=pick;',ctx);
   assert.doesNotMatch(ctx.pick,/<select/); assert.match(ctx.pick,/<button/);
   assert.ok(ctx.pick.includes(title)); assert.match(ctx.pick,/보고서 검토 대기/);

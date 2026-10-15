@@ -25,7 +25,7 @@ from . import instance_guard, proc_tree
 from .costs import cost_detail, cost_text
 from .facilities.signatures import problem_text
 from .process_diagnostics import SUPERVISOR_SUFFIX
-from .request_status import is_terminal_request, request_status_label, request_display_label
+from .request_status import is_terminal_request, request_display_label, request_status_label
 from .settings import Settings
 from .test_guard import guard_test_path
 from .util import atomic_write_text, free_port, short, without_windows_app_aliases
@@ -335,6 +335,20 @@ def _authenticated_requests(s: Settings, *, limit: int) -> list[dict] | None:
 
 def _active_requests(s: Settings) -> list[dict] | None:
     return _authenticated_requests(s, limit=200)
+
+
+def _request_cost_totals_overview(totals: dict) -> str:
+    text = f"${float(totals.get('cost_usd') or 0):.2f}"
+    estimated = float(totals.get("estimated_usd") or 0)
+    unknown = int(totals.get("unknown_count") or 0)
+    legacy_unknown = totals.get("legacy_unknown") is True
+    if estimated:
+        text += f" (추정 ${estimated:.2f} 포함)"
+    if unknown:
+        text += f" + 미집계된 비용 {unknown}건" + (" 이상" if legacy_unknown else "")
+    elif legacy_unknown:
+        text += " + 미집계된 비용"
+    return text
 
 
 def _health(s: Settings) -> dict | None:
@@ -1957,7 +1971,12 @@ def main(argv: list[str] | None = None) -> None:
             if summary or req.get("cost_known") is False or req.get("cost_usd"):
                 print(f"    비용: {cost_text(req.get('cost_usd'), req.get('cost_known'), summary)}"
                       + (f" {cost_detail(summary)}" if summary else ""))
-        recent = _api(s, "GET", "/api/requests?status=all&limit=20")
+        recent = _api(s, "GET", "/api/requests?status=all&limit=200")
+        totals = _api(s, "GET", "/api/requests/summary")
+        print(f"이번 세션·진행 중 비용: {_request_cost_totals_overview(totals.get('session') or {})}")
+        if totals.get("past_count"):
+            print(f"지난 요청: {int(totals['past_count'])}건 · 누적 비용 "
+                  f"{_request_cost_totals_overview(totals.get('total') or {})}")
         reviews = [req for req in recent if req.get("pi_review_pending")]
         if reviews:
             print(f"PI 검토·확인 대기: {len(reviews)}")

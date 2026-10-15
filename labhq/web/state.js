@@ -32,11 +32,21 @@ function staffCharacter(a) {
 const isContract = a => !!a && (a.employment === 'contract' || String(a.id).startsWith('c_'));
 const ACTIVE_REQUEST_STATES = new Set(['running', 'waiting_for_runner', 'waiting_quota', 'waiting_login', 'waiting_facilities_fix', 'waiting_pi']);
 const TERMINAL_REQUEST_STATES = new Set(['done', 'failed', 'cancelled', 'rejected', 'review_pending']);
+const TERMINAL_FOLLOWUP_STATES = new Set(['done', 'failed', 'interrupted']);
 // Cards that park an active request as waiting_pi (server.py PI_DECISION_KINDS). A resume card is one too, but its
 // request is interrupted, not parked.
 const PI_DECISION_KINDS = new Set(['clarify', 'question', 'scope', 'budget', 'research_plan', 'research_evidence', 'research_continue', 'result_storage', 'result_publish', 'recruit_plan']);
 const isActiveRequest = status => ACTIVE_REQUEST_STATES.has(status);
 const isTerminalRequest = status => TERMINAL_REQUEST_STATES.has(status);
+const hasActiveFollowup = q => (q?.followups || []).some(f => !TERMINAL_FOLLOWUP_STATES.has(f.status));
+const isPastRequest = q => !!q && isTerminalRequest(q.status) && !!q.pi_reviewed_at && !hasActiveFollowup(q);
+const officeRequests = requests => [...requests].filter(q => !isPastRequest(q));
+const sessionCostRequests = (requests, startedAt) => [...requests].flatMap(q => {
+  if (Number.isFinite(q.sessionCost)) return [{...q, cost:q.sessionCost,
+    costKnown:q.sessionCostKnown, costSummary:q.sessionCostSummary}];
+  return !isPastRequest(q) || (Number(q.created_at) || 0) >= (Number(startedAt) || Infinity) ? [q] : [];
+});
+const requestsCostTotal = requests => [...requests].reduce((total, q) => total + (Number(q?.cost) || Number(q?.cost_usd) || 0), 0);
 const websocketCloseAction = code => code === 1008
   ? {connection: 'auth', retry: false}
   : {connection: 'offline', retry: true};
@@ -121,8 +131,9 @@ function agentSpentLabel(requests, id) {
 function totalCostLabel(requests, total) {
   let estimated = 0, unknown = 0, legacyUnknown = false;
   for (const q of requests) {
-    if (q.costSummary) { estimated += Number(q.costSummary.estimated_usd) || 0; unknown += Number(q.costSummary.unknown_count) || 0; }
-    else if (q.costKnown === false) legacyUnknown = true;
+    const summary = q.costSummary || q.cost_summary;
+    if (summary) { estimated += Number(summary.estimated_usd) || 0; unknown += Number(summary.unknown_count) || 0; }
+    else if (q.costKnown === false || q.cost_known === false) legacyUnknown = true;
   }
   return `사용 비용 ${usd(total)}${estimated > 0 ? ` (추정 ${usd(estimated)} 포함)` : ''}` +
     (unknown ? ` + 미집계된 비용 ${unknown}건${legacyUnknown ? ' 이상' : ''}` : legacyUnknown ? ' + 미집계된 비용' : '');
@@ -130,6 +141,17 @@ function totalCostLabel(requests, total) {
 function applyCostSummary(q, summary) {
   if (!summary || typeof summary !== 'object') return;
   q.costSummary = summary; q.costKnown = !(Number(summary.unknown_count) > 0);
+}
+function applySessionCost(q, data, startedAt) {
+  if (typeof data.session_cost_usd === 'number' && Number.isFinite(data.session_cost_usd)) {
+    q.sessionCost = data.session_cost_usd;
+    q.sessionCostKnown = data.session_cost_known !== false;
+    q.sessionCostSummary = data.session_cost_summary || null;
+  } else if ((Number(q.created_at) || 0) >= (Number(startedAt) || Infinity)) {
+    q.sessionCost = q.cost;
+    q.sessionCostKnown = q.costKnown;
+    q.sessionCostSummary = q.costSummary;
+  }
 }
 function createOfficeState({mode = 'live', now = () => Date.now() / 1000, focusStorage = null} = {}) {
 let preferred = focusStorage?.get() || null;
@@ -154,6 +176,7 @@ Object.defineProperty(S, 'taskControl', { value: new Map(), enumerable: false })
 Object.defineProperty(S, 'taskKind', { value: new Map(), enumerable: false });
 Object.defineProperty(S, 'demoStatus', { value: null, writable: true, enumerable: false });
 Object.defineProperty(S, 'activeTasks', { value: new Map(), enumerable: false });
+Object.defineProperty(S, 'sessionStartedAt', { value: 0, writable: true, enumerable: false });
 function resetSnapshotState() {
   S.agents.clear(); S.approvals.clear(); S.suggestions = []; S.requests.clear(); S.current = null;
   S.jobs.clear(); S.feed = []; S.cost = 0; S.projects = [];
@@ -382,8 +405,9 @@ function selectRequest(id, manual = true) {
   focusStorage?.set(preferred);
 }
 function pickCurrent() {
-  const saved = preferred && S.requests.has(preferred.id) ? preferred : null;
-  const id = saved?.id || sortRequests(S.requests.values())[0]?.id;
+  const savedRequest = preferred && S.requests.get(preferred.id);
+  const saved = savedRequest && !isPastRequest(savedRequest) ? preferred : null;
+  const id = saved?.id || sortRequests(officeRequests(S.requests.values()))[0]?.id;
   if (id) selectRequest(id, saved?.manual || false);
   else { S.current = null; preferred = null; focusStorage?.set(null); }
 }
@@ -438,6 +462,7 @@ function apply(ev, replay = false) {
       // Reconnection keeps a view selected even by older UI consumers that assign S.current directly.
       if (S.current && S.current !== preferred?.id) preferred = {id:S.current, manual:true};
       resetSnapshotState();
+      S.sessionStartedAt = Number(d.session_started_at) || 0;
       (d.agents || []).forEach(upsertAgent);
       S.projects = d.projects || [];
       S.defaultRefs = d.default_references || [];
@@ -466,6 +491,7 @@ function apply(ev, replay = false) {
         if (r.execution_record_truncated) Object.assign(q, { execution_record_truncated: true,
           execution_record_chars: r.execution_record_chars });
         q.costSummary = null; applyCostSummary(q, r.cost_summary);
+        applySessionCost(q, r, S.sessionStartedAt);
         if (r.plan) setPlan(q, r.plan);
         q.references = r.references || [];
         q.followups = (r.followups || []).map(f => ({ ...f }));
@@ -818,7 +844,7 @@ function apply(ev, replay = false) {
     // A status the gateway sets itself: waiting_pi, waiting_for_runner, interrupted, running (R5, R15, #494).
     case 'request.status': { const q = req(rid); if (d.status && !isTerminalRequest(q.status)) q.status = d.status; break; }
     case 'request.runner_wait': feed({ who: 'system', text: d.message || '러너를 기다려요', cls: 'alert' }, ts, rid); break;
-    case 'request.reviewed': { const q = req(rid); q.pi_review_pending = d.pi_review_pending === true; q.pi_reviewed_at = d.pi_reviewed_at; if (d.status) q.status = d.status; if (d.final_checkpoint) q.final_checkpoint = d.final_checkpoint; break; }
+    case 'request.reviewed': { const q = req(rid); q.pi_review_pending = d.pi_review_pending === true; q.pi_reviewed_at = d.pi_reviewed_at; if (d.status) q.status = d.status; if (d.final_checkpoint) q.final_checkpoint = d.final_checkpoint; if (S.current === rid && isPastRequest(q)) pickCurrent(); break; }
     case 'request.completed': case 'request.failed': {
       for (const [tid, task] of S.activeTasks) if (task.request_id === rid) S.activeTasks.delete(tid);
       const q = req(rid), wasPending = needsPiReview(q);
@@ -833,6 +859,7 @@ function apply(ev, replay = false) {
       }
       if (d.cost_known === false) q.costKnown = false;
       applyCostSummary(q, d.cost_summary);
+      applySessionCost(q, d, S.sessionStartedAt);
       if (d.report) q.report = d.report;
       if (d.report_appendix) q.report_appendix = d.report_appendix;
       if (d.execution_record) q.execution_record = d.execution_record;
@@ -887,6 +914,7 @@ function apply(ev, replay = false) {
       if (typeof d.cost_usd === 'number' && Number.isFinite(d.cost_usd) && d.cost_usd >= 0) { S.cost += d.cost_usd - q.cost; q.cost = d.cost_usd; }
       if (d.cost_known === false) q.costKnown = false;
       applyCostSummary(q, d.cost_summary);
+      applySessionCost(q, d, S.sessionStartedAt);
       feed({ who: entry.agent_id || 'cso', to: 'pi', text: d.ok ? `답변: ${short(d.answer, 130)}` : `이어 묻기에 답하지 못했어요: ${short(d.error, 100)}`,
         fullText: d.ok ? `답변: ${d.answer || ''}` : `이어 묻기에 답하지 못했어요: ${d.error || ''}`, truncated: d.answer_truncated, cutText: d.answer,
         cls: d.ok ? '' : 'alert' }, ts, rid);
@@ -959,6 +987,7 @@ function toolLabel(name) {
 return { S, apply, selectRequest, ag, visual, stateText, currentTask, currentTool, toolInputLine, nick, req, setPlan, feed, fillFollowups, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES, phaseLabel };
 }
 root.LabHQState = { createOfficeState, costLabel, engineCostLabel, agentCostLabel, agentSpentLabel, totalCostLabel,
-  isActiveRequest, isTerminalRequest, REQUEST_STATUS_KO, requestStatusLabel, requestStatusText, processingLabel,
+  isActiveRequest, isTerminalRequest, isPastRequest, officeRequests, sessionCostRequests, requestsCostTotal,
+  REQUEST_STATUS_KO, requestStatusLabel, requestStatusText, processingLabel,
   needsPiReview, needsStorage, reviewLabel, staffCharacter, STAFF_NAMES, websocketCloseAction, officeStorageKey, createRequestFocusStorage, sortRequests, requestActivity, requestResumeLabel, connectionLabel, demoBannerText };
 })(globalThis);
