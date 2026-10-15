@@ -1,0 +1,5 @@
+pr: 648
+rows:
+- sha: fae9771
+  at: 2026-10-15 21:50
+  text: Windows halt 대기 test를 고정 sleep 대신 CLI 시작과 semaphore 대기 사건으로 검증한다.
