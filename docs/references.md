@@ -17,6 +17,7 @@
 | [open-science](https://github.com/aipoch/open-science) | 로컬 AI 연구 workbench | 권한 게이트·채용 출처·인용 확인·재현 기록 개선을 검토하고 후속 작업에 반영했습니다([조사·후속](https://github.com/ehojune/bioinfo-team-3d/issues/316)). |
 | [BioMCP](https://github.com/genomoncology/biomcp) | 생의학 조회 CLI·MCP | 필요한 정보만 단계별로 조회하는 설계를 검토했습니다([#41](https://github.com/ehojune/bioinfo-team-3d/issues/41)). |
 | [ToolUniverse](https://github.com/mims-harvard/ToolUniverse) | 과학 도구 검색·실행 프레임워크 | 도구 검색과 역할별 도구 묶음을 검토했으며 기본 연결에는 넣지 않았습니다([#64](https://github.com/ehojune/bioinfo-team-3d/issues/64)). |
+| [OKF Loremaster](https://github.com/PFreda-Lab/okf-loremaster) | PubMed·PMC 문헌에서 근거를 뽑아 마크다운 코퍼스로 내보내는 멀티 에이전트 | 인용문·수치가 원문에 실제로 있는지 코드로 확인하는 검증과 읽은 본문 범위(초록·전문) 기록을 검토했고, 채택할 부분을 후속 작업으로 정리했습니다. 코드는 아직 가져오지 않았습니다([조사·후속](https://github.com/ehojune/bioinfo-team-3d/issues/620)). |
 | [PubMed](https://pubmed.ncbi.nlm.nih.gov/) | 생의학 문헌 DB | 문헌 검색과 과학 리뷰의 인용 대조에 연결했습니다([도구](manual.md#연결된-도구)). |
 | [bioRxiv](https://www.biorxiv.org/) · [medRxiv](https://www.medrxiv.org/) | 생명·의학 preprint 서버 | 출판 전 연구를 찾는 MCP를 연결했습니다([도구](manual.md#연결된-도구)). |
 | [ChEMBL](https://www.ebi.ac.uk/chembl/) | 화합물·생물활성 DB | 화합물 검색 MCP를 연결했습니다([도구](manual.md#연결된-도구)). |
