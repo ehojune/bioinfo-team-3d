@@ -14,12 +14,19 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 03:51 | [`75a248b`](https://github.com/ehojune/bioinfo-team-3d/pull/668/commits/75a248b) | StructuredOutput 재시도에서 Windows 경로·명령·정규식 원문을 보존하고 JSON escape만 지시 |
+| 03:49 | [`878972b`](https://github.com/ehojune/bioinfo-team-3d/pull/668/commits/878972b) | 최신 main의 작업 폴더 승인 보정을 StructuredOutput 재시도와 함께 보존 |
+| 03:32 | [`63d6635`](https://github.com/ehojune/bioinfo-team-3d/pull/668/commits/63d6635) | 최신 main의 결과 계약 보정과 StructuredOutput 재시도 순서를 함께 보존 |
+| 02:49 | [`8a069ba`](https://github.com/ehojune/bioinfo-team-3d/pull/668/commits/8a069ba) | 계획 prompt의 사용자 입력 정규화를 제거하고 명령과 정규식을 원문대로 보존 |
 | 02:47 | [`e03e945`](https://github.com/ehojune/bioinfo-team-3d/pull/659/commits/e03e945) | Windows PATH 실행 파일을 실제 Program Files·Git·System32 경로와 쓰기 권한으로 판정하고 작업 폴더 후보는 차단 |
 | 02:33 | [`3edab51`](https://github.com/ehojune/bioinfo-team-3d/pull/655/commits/3edab51) | 대화형·외부 종료 신호와 게시 draft 복구 계약을 다시 분리했다. |
 | 02:32 | [`3c9f814`](https://github.com/ehojune/bioinfo-team-3d/pull/661/commits/3c9f814) | 누락 칸 질문을 일반 요청 예산으로 계산하고 한 task 예약액이 남지 않으면 원본 ledger를 빈칸으로 보존 |
 | 02:08 | [`ce8a59f`](https://github.com/ehojune/bioinfo-team-3d/pull/659/commits/ce8a59f) | 승인 수정 브랜치에 최신 main 병합 |
 | 02:08 | [`3660963`](https://github.com/ehojune/bioinfo-team-3d/pull/659/commits/3660963) | PowerShell provider·콜론 operand를 카드로 보내고 staff PATH의 시스템 실행 파일·쓰기 권한을 한 번 판정해 기록 |
 | 02:07 | [`7cf2a82`](https://github.com/ehojune/bioinfo-team-3d/pull/661/commits/7cf2a82) | PI 거절·중지 신호가 있으면 독립 단계 성공 여부와 관계없이 CP2 전에 요청을 중단 |
+| 01:54 | [`5d654bb`](https://github.com/ehojune/bioinfo-team-3d/pull/668/commits/5d654bb) | StructuredOutput parse 오류와 일반 tool error의 수집 경계를 복원 |
+| 01:37 | [`091c53f`](https://github.com/ehojune/bioinfo-team-3d/pull/668/commits/091c53f) | StructuredOutput 최종 결과를 우선하고 잔여 예산 안에서만 재시도 |
+| 01:24 | [`deebc4b`](https://github.com/ehojune/bioinfo-team-3d/pull/668/commits/deebc4b) | StructuredOutput 파싱 오류를 같은 세션에서 재시도하고 한도 초과는 형식 오류로 보고 |
 | 01:15 | [`c1947c9`](https://github.com/ehojune/bioinfo-team-3d/pull/659/commits/c1947c9) | task 한정 grant와 카드 선택지를 제거하고 구버전 저장 choice를 무시 |
 | 01:13 | [`fd2ebdd`](https://github.com/ehojune/bioinfo-team-3d/pull/661/commits/fd2ebdd) | 후속 칸 질문의 내부 기록 필드를 최초 step schema에서 분리해 output types off 계약 유지 |
 | 00:59 | [`2dfdb5d`](https://github.com/ehojune/bioinfo-team-3d/pull/659/commits/2dfdb5d) | uv grant를 --no-project·--no-config 직접 실행으로 제한하고 cwd backend·환경 변수 접두 회귀 검증 |
