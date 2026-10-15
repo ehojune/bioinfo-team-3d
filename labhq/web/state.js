@@ -917,7 +917,7 @@ function apply(ev, replay = false) {
     }
     case 'request.followup_done': {
       const q = req(rid), prev = q.followups.find(f => f.id === d.id);
-      const entry = { ...(prev || { id: d.id, text: '' }), status: d.ok ? 'done' : 'failed', answer: d.answer || '', error: d.error || '' };
+      const entry = { ...(prev || { id: d.id, text: '' }), status: d.status === 'interrupted' ? 'interrupted' : d.ok ? 'done' : 'failed', answer: d.answer || '', error: d.error || '' };
       if (d.pi_display) entry.pi_display = d.pi_display;
       delete entry.answer_truncated; delete entry.answer_chars;
       if (d.answer_truncated) Object.assign(entry, { answer_truncated: true, answer_chars: d.answer_chars });  // a snapshot replay (#126)

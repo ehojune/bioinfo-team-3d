@@ -11,6 +11,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..models import Task, TaskResult
+from ..interruption import ShutdownInterrupted
 from ..util import atomic_write_text, extract_json
 from . import paper2agent, provenance
 
@@ -81,6 +82,8 @@ async def prepare_plan(plan: dict, precedents: dict, roster: list[dict], rid: st
                 receipt = {"status": "failed", "error": result.error or "Paper2Skill 변환 실패"}
             if receipt.get("status") in {"ready", "reused"} and receipt.get("paper_id") != selected["paper_id"]:
                 receipt = {"status": "failed", "error": "Paper2Skill 논문 ID 불일치"}
+        except ShutdownInterrupted:
+            raise
         except Exception as exc:
             receipt = {"status": "failed", "error": f"Paper2Skill 변환 실패 ({type(exc).__name__})"}
         rows.append({**receipt, **selected})

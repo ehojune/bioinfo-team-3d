@@ -2987,12 +2987,18 @@ class Orchestrator:
         self._seed_cost(rid, req)
         try:
             result = await self.run_step(task)
+        except ShutdownInterrupted as error:
+            entry["shutdown_evidence"] = error.evidence
+            result = TaskResult(task_id=task.id, agent_id=agent, ok=False,
+                                error="runner 종료로 이어 묻기가 중단됐습니다. 연결된 뒤 다시 물어 주세요.",
+                                shutdown_evidence=error.evidence)
         except BudgetExceeded as error:
             result = TaskResult(task_id=task.id, agent_id=agent, ok=False, error=str(error))
         except Exception as error:  # the follow-up must end in a recorded state, never stay "running"
             result = TaskResult(task_id=task.id, agent_id=agent, ok=False, error=f"{type(error).__name__}: {error}")
         answered = result.ok and bool(result.text.strip())
-        entry.update(status="done" if answered else "failed", answer=clip(result.text.strip(), 20000) if answered else "",
+        status = "interrupted" if result.shutdown_evidence else "done" if answered else "failed"
+        entry.update(status=status, answer=clip(result.text.strip(), 20000) if answered else "",
                      error=None if answered else (result.error or "empty answer"), task_id=result.task_id,
                      result={"workdir": result.workdir},
                      resumed_session=task.resume_session_id, answered_at=time.time())
@@ -3000,9 +3006,10 @@ class Orchestrator:
             req["cso_session_id"], req["cso_workdir"] = result.session_id, result.workdir or workdir
         self.hub.save_request(rid)
         if getattr(self.hub, "semantics_shadow", None) is not None:  # semantics-hook: actions
-            self.hub.semantics_shadow.after_followup(rid, fid, "ended", "done" if answered else "failed")  # semantics-hook: actions
+            self.hub.semantics_shadow.after_followup(rid, fid, "ended", status)  # semantics-hook: actions
         await self._emit(rid, "request.followup_done", {
             "id": fid, "ok": answered, "answer": clip(entry["answer"], 20000), "error": entry["error"],
+            **({"status": status} if status == "interrupted" else {}),
             "cost_usd": float(req.get("cost_usd") or 0), "cost_known": req.get("cost_known", True),
             **_cost_summary_field(req), **_session_cost_fields(self.hub, req)})
 
@@ -5304,6 +5311,8 @@ class Orchestrator:
                 if precedent_job:
                     try:
                         precedent_result = await precedent_job
+                    except ShutdownInterrupted:
+                        raise
                     except Exception:
                         precedent_result = None
                     parsed = None

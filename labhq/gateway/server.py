@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field, field_validator
 from ..integrations.github import ProjectReporter
 from ..intake import MAX_REFERENCES, Reference, effective_references
 from ..instance_guard import public_identity
+from ..interruption import ShutdownInterrupted
 from ..integrations.rounds import RoundRecorder, environment_snapshot, is_research_event, is_research_task
 from ..integrations.visibility import dev_log_visibility
 from ..login import login_command
@@ -1593,6 +1594,7 @@ class Hub:
                     not self._same_runner_generation(entry, runner_id, incarnation)):
                 self._abandon_previous_generation(tid, entry)
         self._session_state_changed()
+        self.result_storage.resume_interrupted()
 
     def _record_task_cost(self, rid: str | None, tid: str, result: TaskResult, *,
                           outcome_unknown: bool = False) -> None:
@@ -2960,6 +2962,10 @@ class Hub:
                     await asyncio.wait_for(self.orchestrator.answer_ask(ask, runner_id), remaining)
                 else:
                     await self.orchestrator.answer_ask(ask, runner_id)
+            except ShutdownInterrupted as exc:
+                await self.resolve_ask(ask, runner_id, ask_result(
+                    reason="runner 종료로 상담이 중단됐습니다. 연결된 뒤 다시 요청해 주세요.",
+                    interrupted=True, retryable=True, shutdown_evidence=exc.evidence, **{"from": "labhq"}))
             except asyncio.TimeoutError as exc:
                 if entry.get("facilities_diagnosis"):
                     for tid, prior in self.consult_attempts(ask.id, "facilities"):

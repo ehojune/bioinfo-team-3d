@@ -15,6 +15,7 @@ from urllib.parse import quote
 import httpx
 
 from .integrations.github import GitHubClient, GitHubHTTPError, publish_clean, sanitize, root_zone_restricted
+from .interruption import ShutdownInterrupted
 from .models import ApprovalRequest, Task
 from .policy import touches, restricted_paths
 from . import edition_sources
@@ -470,8 +471,27 @@ class ResultStorage:
             return
         if not saved or saved.get("status") in {"published", "local", "failed", "declined"}:
             return
+        if saved.get("status") == "interrupted" and self._editor_connection() is None:
+            return  # A gateway restart must also wait for the editor, not publish a fallback draft.
         if rid not in self.tasks or self.tasks[rid].done():
             self.tasks[rid] = asyncio.create_task(self.finish(rid))
+
+    def _editor_connection(self):
+        runner = getattr(self.hub, "agent_runner", {}).get("editor")
+        return getattr(self.hub, "runners", {}).get(runner)
+
+    def resume_interrupted(self):
+        if self._editor_connection() is None:
+            return
+        for rid, req in self.hub.requests.items():
+            if (req.get("result_storage") or {}).get("status") != "interrupted":
+                continue
+            task = self.tasks.get(rid)
+            if task is not None and not task.done():
+                # The new runner can connect during finish's final state publication.
+                task.add_done_callback(lambda _: self.resume_interrupted())
+            else:
+                self.schedule(rid)
 
     async def redraft(self, rid) -> dict:
         """Run the editor again for an edition that is drafted but not published, and replace its publish card (#607).
@@ -561,6 +581,13 @@ class ResultStorage:
             return
         if not saved or req.get("status") not in {"done", "completed", "failed", "cancelled"}:
             return
+        if saved.get("status") == "interrupted":
+            if self._editor_connection() is None:
+                return
+            saved["status"] = "selected"
+            for key in ("warning", "shutdown_evidence"):
+                saved.pop(key, None)
+        editor_connection = self._editor_connection()
         try:
             # Controlled inputs never enter the editor prompt or the repository edition.
             if controlled_request(req, self.s):
@@ -623,6 +650,8 @@ class ResultStorage:
                                            "required": ["readme"], "additionalProperties": False},
                             meta={"kind": "result_editor", "title": "결과를 저장소용으로 정리",
                                   "agent_overrides": {"sandbox": "read-only"}}))
+                    except ShutdownInterrupted:
+                        raise
                     except Exception:
                         result = None  # Budget/dispatch failures still leave the deterministic edition.
                     saved = req["result_storage"]  # PI review may replace the persisted request fields while we wait.
@@ -708,6 +737,13 @@ class ResultStorage:
                 except Exception as exc:
                     saved["round_warning"] = (
                         f"게시를 마쳤지만 운전 기록을 갱신하지 못했습니다({type(exc).__name__}).")
+        except ShutdownInterrupted as exc:
+            saved = req["result_storage"]
+            saved.update(status="interrupted", shutdown_evidence=exc.evidence,
+                         warning="runner 종료로 편집이 중단됐습니다. 편집자 runner가 연결되면 다시 준비합니다.")
+            # A replacement may already be connected when its predecessor's result arrives.
+            if self._editor_connection() is not editor_connection:
+                self.resume_interrupted()
         except asyncio.CancelledError:
             raise
         except Exception as exc:

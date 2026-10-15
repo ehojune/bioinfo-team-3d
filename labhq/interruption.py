@@ -1,12 +1,12 @@
 """Shutdown classification shared by runner, orchestration and PI corrections."""
-import asyncio
 import json
 import re
 import signal
 from datetime import datetime
 
 
-class ShutdownInterrupted(asyncio.CancelledError):
+class ShutdownInterrupted(Exception):
+    """A runner stopped; the gateway caller still owns its state and retry policy."""
     def __init__(self, evidence):
         self.evidence = evidence
         super().__init__("task interrupted by shutdown")

@@ -22,6 +22,8 @@ test('the shared reducer tracks follow-ups on a finished request', () => {
   assert.equal(q.cost, 1.25); assert.equal(S.cost, 1.25, 'final total replaces the live follow-up subtotal');
   apply({type: 'request.followup_done', request_id: 'r1', data: {id: 'fu_2', ok: false, error: 'runner offline'}});
   assert.equal(q.followups[2].status, 'failed');
+  apply({type: 'request.followup_done', request_id: 'r1', data: {id: 'fu_3', ok: false, status: 'interrupted', error: 'runner stopped'}});
+  assert.equal(q.followups[3].status, 'interrupted');
   assert.equal(Object.keys(q).includes('followups'), false, 'kept out of the legacy state digest');
 });
 
