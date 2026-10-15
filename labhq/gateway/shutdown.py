@@ -128,6 +128,7 @@ class WebShutdown:
         # process to end. `down` takes the up/down lock and checks readiness again before stopping the runner.
         try:
             cli._down(self.settings, force=force, keep_gateway=True)
+            self._mark_gateway_stopping()
             watcher = self._start_watcher()
             try:
                 self.request_exit()
@@ -138,6 +139,15 @@ class WebShutdown:
         except (SystemExit, Exception):
             self.status = "failed"
         # On success the status stays "stopping" until this process has exited.
+
+    def _mark_gateway_stopping(self) -> None:
+        """This gateway is about to end by itself on purpose: its supervisor must not start it again (#589). A marker
+        that cannot be written only matters with `supervisor.restart` on, and must not keep the shutdown from running."""
+        try:
+            cli._mark_stopping(self.settings, "gateway")
+        except OSError as exc:
+            print(f"종료 표시를 남기지 못했습니다(supervisor.restart가 켜져 있으면 gateway가 다시 시작될 수 있음): {exc}",
+                  file=sys.stderr, flush=True)
 
     def _start_watcher(self):
         """The runner is already stopped, so a gateway that fails to start its watcher still shuts down: a stalled

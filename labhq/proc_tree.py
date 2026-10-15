@@ -1,9 +1,9 @@
 """Windows process-tree termination that never follows a stale parent PID (#589).
 
 Windows keeps a process's parent PID after the parent exits and later hands that PID to an unrelated process. A tree
-collected by parent PID alone (`taskkill /T`, or a scan of `th32ParentProcessID`) then counts a long-lived process whose
-launcher is gone, such as the detached gateway and runner that `labhq up` leaves behind, as a child of whatever
-short-lived process now holds the old PID, and ends it together with that process.
+collected by parent PID alone (the Windows tree-kill command, or a scan of `th32ParentProcessID`) then counts a
+long-lived process whose launcher is gone, such as the detached gateway and runner that `labhq up` leaves behind, as a
+child of whatever short-lived process now holds the old PID, and ends it together with that process.
 
 Here a process is a child only when its parent PID matches and it was created no earlier than that parent. A process
 older than its claimed parent is a PID-reuse orphan: it and its subtree are left alone.
@@ -16,6 +16,11 @@ the validation and the kill itself both come from the held handle, and a PID is 
 
 The validated set is ended leaves first. When one process cannot be ended, `spare_ancestors_on_failure` leaves its whole
 chain of ancestors running, so the survivor stays reachable through live parents for a retry.
+
+`pin_ancestors` is the other half. Code outside labhq (a test, a tool) may still collect a tree by parent PID alone, and
+nothing here can change that. What can be changed is whether the stale PID is ever handed out: a process holds a
+handle on each of its nearest ancestors, so even after they exit their PIDs stay reserved and no unrelated process
+can be given one.
 
 POSIX callers keep process groups; nothing here runs off Windows (`_table` returns None there).
 """
@@ -114,7 +119,7 @@ def _reachable(root_pid: int, rows: list[tuple[int, int]]) -> list[int]:
 
 
 def kill_tree(pid: int, *, created: int | None = None, spare_ancestors_on_failure: bool = False) -> KillResult:
-    """End `pid` and its validated descendants, leaves first, without `taskkill /T`.
+    """End `pid` and its validated descendants, leaves first, never by parent PID alone.
 
     `created` is the identity the caller recorded for `pid` (FILETIME ticks): when the PID now belongs to a process
     created at another time, nothing is touched. Without it the caller owns a handle to `pid` (a Popen child), so the
@@ -197,6 +202,65 @@ def _end_tree(pid: int, created: int | None, spare: bool, result: KillResult, he
             failed(victim, str(exc) or f"PID {victim}을 종료하지 못함")
             continue
         (result.killed if outcome == KILLED else result.skipped).append(victim)
+
+
+@dataclass
+class PinResult:
+    """Ancestors this process holds open. Closing them (or exiting) lets their PIDs be reused again."""
+
+    pinned: list[int] = field(default_factory=list)  # nearest ancestor first
+    unpinned: dict[int, str] = field(default_factory=dict)  # PID -> why it could not be held; the walk stops there
+    handles: list = field(default_factory=list, repr=False)
+
+    def close(self) -> None:
+        while self.handles:
+            self.handles.pop().close()
+
+
+def pin_ancestors(*, depth: int = 4, pid: int | None = None) -> PinResult:
+    """Hold a handle on each of `pid`'s (default: this process's) nearest `depth` ancestors while the result stays open.
+
+    A parent that has exited still names its PID in its children's parent field. While a handle on it is open Windows
+    keeps the process object, so that PID cannot be given to another process, and a tree collected by parent PID from
+    that number can never start at a stranger. The walk stops at the first ancestor that cannot be held: already gone
+    (nothing left to hold), unreadable, or younger than its child, which means its PID was reused before this ran. The
+    result lists what was held and why the walk stopped. An ancestor that cannot be held is reported there rather than
+    raised, since losing this protection must not stop the caller. Empty off Windows."""
+    result = PinResult()
+    rows = _table()
+    if rows is None:
+        return result
+    parent_of = dict(rows)
+    pid = os.getpid() if pid is None else pid
+    try:
+        own = _open(pid, terminate=False)
+    except OSError as exc:
+        result.unpinned[pid] = str(exc) or f"PID {pid}을 열 수 없음"
+        return result
+    if own is None:
+        return result
+    child_pid, child_created = pid, own.created
+    own.close()
+    for _ in range(depth):
+        ppid = parent_of.get(child_pid)
+        if not ppid or ppid == child_pid:
+            break
+        try:
+            handle = _open(ppid, terminate=False)
+        except OSError as exc:
+            result.unpinned[ppid] = str(exc) or f"PID {ppid}을 열 수 없음"
+            break
+        if handle is None:
+            result.unpinned[ppid] = "이미 종료되어 붙들 수 없음"
+            break
+        if handle.created > child_created:
+            handle.close()
+            result.unpinned[ppid] = "자식보다 늦게 만들어짐: PID가 이미 다른 프로세스에 재사용됨"
+            break
+        result.handles.append(handle)
+        result.pinned.append(ppid)
+        child_pid, child_created = ppid, handle.created
+    return result
 
 
 # --- Windows primitives; the tests replace `_table`, `_snapshot` and `_open` with a fake process table -------------
@@ -323,15 +387,19 @@ class _Handle:
             self._raw = None
 
 
-def _open(pid: int) -> _Handle | None:
-    """Pin `pid`: a handle that can query and end it. None when there is no such process; OSError when it cannot be
-    opened or its creation time cannot be read (then it cannot be checked, so it is not touched)."""
+def _open(pid: int, *, terminate: bool = True) -> _Handle | None:
+    """Pin `pid`: a handle that can query and end it (query only with `terminate=False`, which is all that holding a
+    PID needs and works on more processes). None when there is no such process; OSError when it cannot be opened or
+    its creation time cannot be read (then it cannot be checked, so it is not touched)."""
     if os.name != "nt":
         raise OSError("Windows 전용")
     import ctypes
 
     kernel, file_time, _entry = _kernel()
-    raw = kernel.OpenProcess(_PROCESS_TERMINATE | _PROCESS_QUERY_LIMITED_INFORMATION | _SYNCHRONIZE, False, pid)
+    rights = _PROCESS_QUERY_LIMITED_INFORMATION
+    if terminate:
+        rights |= _PROCESS_TERMINATE | _SYNCHRONIZE
+    raw = kernel.OpenProcess(rights, False, pid)
     if not raw:
         error = ctypes.get_last_error()
         if error == _ERROR_INVALID_PARAMETER:  # no such PID

@@ -47,6 +47,7 @@ class FakeProcessTable:
         self.refuse: dict[int, str] = {}  # pid -> why terminate raises
         self.unreadable: set[int] = set()  # PIDs OpenProcess is denied for
         self.opened: list[int] = []
+        self.opened_for_query_only: list[int] = []  # PIDs opened without the right to end them (`terminate=False`)
         self.opened_handles: list[FakeHandle] = []
         self.closed = 0
         self.reads = 0
@@ -63,8 +64,10 @@ class FakeProcessTable:
     def snapshot(self):
         return list(self.live.values())
 
-    def open(self, pid: int):
+    def open(self, pid: int, *, terminate: bool = True):
         self.opened.append(pid)
+        if not terminate:
+            self.opened_for_query_only.append(pid)
         if pid in self.unreadable:
             raise OSError("Access is denied")
         proc = self.live.get(pid)

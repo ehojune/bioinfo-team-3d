@@ -1121,7 +1121,8 @@ class AgentAdapter(ABC):
         if os.name == "nt":
             if proc.returncode is not None:
                 return
-            # Not `taskkill /T`: it follows parent PIDs Windows may have reused, and ended an unrelated tree (#589).
+            # Not a kill that collects the tree by parent PID alone: Windows may have reused those PIDs, and one ended an
+            # unrelated tree (#589).
             try:
                 proc_tree.kill_tree(proc.pid)
             except (OSError, MemoryError):  # the direct kill below still reaps the child

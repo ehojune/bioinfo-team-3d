@@ -185,16 +185,19 @@ def test_up_and_down_manage_only_their_process_records_and_clean_runner_path(tmp
         return Process(4100 + len(calls))
 
     monkeypatch.setattr(cli, "_process_created", lambda pid: f"created:{pid}")
+    # `up` starts each role's supervisor (#589) and the supervisor records the role: none runs in this test.
+    monkeypatch.setattr(cli, "_await_child_record", lambda *args, **kwargs: None)
     cli._up(settings, popen=popen)
     assert [call[0][-1] for call in calls] == ["gateway", "runner"]
+    assert all(call[0][1:3] == ["-m", "labhq.supervisor"] for call in calls)
     assert all(call[1]["creationflags"] & 0x00000208 == 0x00000208 for call in calls)
     runner_path = calls[1][1]["env"]["PATH"].casefold()
     assert "windowsapps" not in runner_path and "appdata\\local\\python\\bin" not in runner_path
-    gateway = json.loads(cli._pid_file(settings, "gateway").read_text())
-    runner = json.loads(cli._pid_file(settings, "runner").read_text())
-    assert gateway == {"pid": 4101, "role": "gateway", "created": "created:4101",
+    gateway = json.loads(cli._pid_file(settings, "gateway-supervisor").read_text())
+    runner = json.loads(cli._pid_file(settings, "runner-supervisor").read_text())
+    assert gateway == {"pid": 4101, "role": "gateway-supervisor", "created": "created:4101",
                        "config": settings.config_path}
-    assert runner == {"pid": 4102, "role": "runner", "created": "created:4102",
+    assert runner == {"pid": 4102, "role": "runner-supervisor", "created": "created:4102",
                       "config": settings.config_path}
     killed = []
     monkeypatch.setattr(cli, "_active_requests", lambda _settings: [])
@@ -203,8 +206,10 @@ def test_up_and_down_manage_only_their_process_records_and_clean_runner_path(tmp
                         lambda _settings: {"requests": [], "followups": [], "recruits": 0, "ready": True})
     monkeypatch.setattr(cli, "_terminate_tree", lambda pid, **kwargs: killed.append(pid))
     cli._down(settings, force=False)
-    assert killed == [4102, 4101]
+    assert killed == [4102, 4101]  # the supervisors: ending one ends the role under it
     assert not cli._pid_file(settings, "gateway").exists() and not cli._pid_file(settings, "runner").exists()
+    assert not cli._pid_file(settings, "gateway-supervisor").exists()
+    assert not cli._pid_file(settings, "runner-supervisor").exists()
     assert "웹 사무실:" in capsys.readouterr().out
 
 
@@ -625,8 +630,8 @@ def test_down_refuses_when_readiness_fails_or_names_a_request_the_list_missed(tm
 
 
 def test_a_failed_windows_kill_still_raises_oserror_with_the_reason_and_never_starts_taskkill(monkeypatch):
-    """#589 replaced `taskkill /T`, whose output decoding this used to cover (trial-ready 2026-10-12): a failure to
-    end the recorded process must still reach `down` as an OSError carrying the reason."""
+    """#589 replaced the Windows tree-kill command, whose output decoding this used to cover (trial-ready 2026-10-12):
+    a failure to end the recorded process must still reach `down` as an OSError carrying the reason."""
     started = []
     monkeypatch.setattr(cli.sys, "platform", "win32")
     monkeypatch.setattr(cli.subprocess, "run", lambda *args, **kwargs: started.append(args))
@@ -638,8 +643,9 @@ def test_a_failed_windows_kill_still_raises_oserror_with_the_reason_and_never_st
 
 
 def test_down_on_windows_ends_the_recorded_tree_through_the_helper_and_checks_each_identity(tmp_path, monkeypatch):
-    """#589: `down` ended the PI's gateway and runner by `taskkill /T`; the tree it collects now skips a process older
-    than its claimed parent, and a recorded PID that changed hands before the kill is not touched."""
+    """#589: `down` ended the PI's gateway and runner with a tree collected by parent PID alone; the tree it collects
+    now skips a process older than its claimed parent, and a recorded PID that changed hands before the kill is not
+    touched."""
     gateway, runner, child, orphan = 910_000_245, 910_000_244, 910_000_246, 910_000_300
     table = FakeProcessTable({
         gateway: (1, 1000), child: (gateway, 1100),
