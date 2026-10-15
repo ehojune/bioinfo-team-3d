@@ -95,7 +95,7 @@ POSIX에서는 `./labhq.sh init`, `./labhq.sh -c config/labhq.yaml doctor`를 �
 
 `labhq init`은 예시 설정을 복사해 gateway token을 무작위로 만들고 HPC·bioinfo-agent 경로를 묻습니다.
 새 설정은 PI가 시험한 동작으로 시작합니다(#613): `research.enabled`·`research.evidence_checkpoint`, 분야 팩 `bulk_tumor_normal@3`·`single_cell_de@3`, `semantics: {mode: ab, actions: confirm}`, `plan.declare_output_types: true`, 그리고 의미 모델이 산출물 hash를 재도록 `runner.workspace_root`를 `internal` 구역으로 둡니다. 끄려면 설정에서 각 값을 바꾸세요. 이 목록은 `labhq/init_defaults.py`의 `REFERENCE_BEHAVIOUR`이고, `tests/test_init_defaults.py`가 예시 설정·`init` 결과와 어긋나면 실패합니다. 토큰·경로·사람 이름 같은 개인 값은 목록에 없습니다. `pipeline_pr` 동의, `dev_log.repo`, `BIOINFO_AGENT_DIR`은 사람이나 PC마다 달라 기본값으로 켜지 않고 묻거나 찾습니다. 이미 있는 설정은 옮기지 않습니다.
-bioinfo-agent 폴더는 `--bioinfo-agent <폴더>`, 이미 있는 `BIOINFO_AGENT_DIR`, `D:/bioinfo-agent`·`~/bioinfo-agent` 같은 흔한 위치, WSL의 `/mnt/d/bioinfo-agent` 순으로 찾습니다. 못 찾으면 묻고(`--yes`면 묻지 않음) 끝내 모르면 "bioinfo-agent 연결 안 됨 — …"을 알리고 연결 없이 설정을 씁니다. `doctor`의 `bioinfo-agent` 행이 연결 여부를 warn으로 알립니다.
+bioinfo-agent 폴더는 `--bioinfo-agent <폴더>`, 이미 있는 `BIOINFO_AGENT_DIR`, `D:/bioinfo-agent`·`~/bioinfo-agent` 같은 흔한 위치, WSL의 `/mnt/d/bioinfo-agent` 순으로 찾습니다. 못 찾으면 묻고(`--yes`면 묻지 않음) 끝내 모르면 "bioinfo-agent 연결 안 됨 — …"을 알리고 연결 없이 설정을 씁니다. 찾거나 받은 경로는 상대 경로여도 절대 경로로 바꿔 저장합니다(직원 task는 자기 작업 폴더 기준으로 상대 경로를 읽어 연결이 깨지기 때문입니다). `doctor`의 `bioinfo-agent` 행이 연결 여부를 warn으로 알리고, 상대 경로로 적힌 설정도 warn합니다.
 `dev_log.repo`(개발 기록을 올릴 비공개 저장소)는 `init`이 owner/name으로 한 번 묻고 Enter면 비워 둡니다. 비어 있으면 기록은 이 PC에만 남고 `doctor`의 `dev log` 행이 설정하는 법을 알려 줍니다.
 새 설정에서는 pipeline 코드의 공개 PR 기여 동의도 묻습니다. `y`(대소문자 무관)만 동의이며 Enter·`--yes`·그 밖의 답은 끔입니다.
 AlphaGenome API 키가 아직 없으면 마지막에 한 번 묻습니다. Enter로 건너뛸 수 있고, 키 보관은 [공개 자원 조회 도구](#공개-자원-조회-도구)에 있습니다.
@@ -111,11 +111,12 @@ AlphaGenome API 키가 아직 없으면 마지막에 한 번 묻습니다. Enter
 Windows에서는 restricted 구역을 빼고, 개인 Codex 지침이 있으면 직원 전용 `CODEX_HOME`을, `~/.claude`가 있으면 Claude 직원 전용 `CLAUDE_CONFIG_DIR`(`~/.labhq/claude-staff`)을 넣고 사람이 실행할 로그인 명령을 안내합니다.
 Codex `bin`이 비어 있거나 `auto`이면 Windows 앱에서 판본이 가장 높은 폴더를 고르고, 판본을 비교할 수 없을 때만 mtime을 씁니다. doctor는 고른 경로를 표시합니다. 앱이 없으면 PATH를 사용합니다.
 
-**다른 설정이 겹칠 때(#613).** 한 PC에서 설정 파일이 다른 labhq가 함께 돌면 서로의 기록·승인을 섞거나 엉뚱한 사무실을 열게 됩니다. `doctor`(`instance` 행)와 `up`이 아래 경우를 쉬운 한국어와 고치는 명령으로 알립니다. 읽기만 하고 네트워크를 쓰지 않습니다.
-- 같은 state 폴더: 다른 설정으로 시작한 프로세스가 살아 있으면 `up`은 시작하지 않고 `labhq -c <그 설정> open`·`down`을 안내합니다. 살아 있지는 않지만 마지막으로 그 폴더를 쓴 설정이 다르면 경고만 합니다.
-- 같은 포트: 다른 설정의 gateway가 이 포트에서 돌거나 다른 token의 gateway가 답하면 `up`이 멈추고 어느 설정인지와 `labhq -c <그 설정> open`을 알립니다.
+**다른 설정이 겹칠 때(#613).** 한 PC에서 설정 파일이 다른 labhq가 함께 돌면 서로의 기록·승인을 섞거나 엉뚱한 사무실을 열게 됩니다. 실행 중인 gateway와 runner는 시작할 때 자기 *정체*를 적어 둡니다: 시작한 설정 파일, 그리고 `gateway.state_dir`·`runner.state_dir`·`runner.id`·포트의 지문(둘 다 해시이고 비밀값은 없음). 파일은 gateway state 폴더의 `labhq-gateway-owner.json`과 runner state 폴더의 `labhq-runner-owner.json`이고, gateway는 `/api/health`의 `identity`로도 같은 해시를 돌려줍니다(경로·token 없음). `doctor`(`instance` 행)와 `up`은 state 폴더·runner state 폴더·포트를 쥔 쪽의 정체를 지금 설정과 비교해 쉬운 한국어와 고치는 명령으로 알립니다. 읽기만 하고 `doctor`는 네트워크를 쓰지 않습니다.
+- 같은 state 폴더: 다른 정체의 프로세스가 살아 있으면 `up`은 시작하지 않고 `labhq -c <그 설정> open`·`down`을 안내합니다. 이 설정 파일이 시작한 뒤 바뀐 설정으로 아직 돌고 있으면 `down` 뒤 `up`을 안내합니다. 살아 있지는 않지만 마지막으로 그 폴더를 쓴 설정이 다르면 경고만 합니다.
+- 같은 runner state 폴더: `runner-<id>.sqlite3`, control 폴더, 입력 hash cache를 두 runner가 함께 쓰면 안 되므로 `runner.id`가 달라도 막습니다. `labhq runner`·`labhq gateway`를 직접 띄워도 시작할 때 같은 검사를 하고 막힌 채로 시작하지 않습니다.
+- 같은 포트: 다른 설정의 gateway가 이 포트에서 돌면(그 설정의 프로세스 기록이 그 설정을 가리킬 때만) `up`이 멈추고 어느 설정인지와 `labhq -c <그 설정> open`을 알립니다. 같은 token으로 답하는 gateway도 `identity`가 이 설정과 다르면 쓰지 않고, 정체를 알려 주지 않는 이전 판 gateway는 이 설정의 프로세스 기록이 보증할 때만 받아들입니다. 받아들이지 않은 gateway는 `labhq-last-config.json`·주 설정에 적지 않습니다.
 - 주 설정: 처음 `up`이 성공한 설정 경로를 기본 state 폴더(`~/.labhq/state`)의 `labhq-primary-config.json`에 한 번 적습니다. 다른 설정으로 `doctor`·`up`하면 경고하고, 바꾸려면 `labhq -c <새 설정> up --make-primary`를 씁니다. `--instance`로 만든 인스턴스는 일부러 따로 쓰므로 주 설정이 되지 않고 비교하지도 않습니다.
-`up`이 성공하면 그 state 폴더에 `labhq-last-config.json`도 남깁니다. 설정 파일이 지워지면 그 기록은 무시합니다.
+`up`이 자기 gateway임을 확인한 뒤에만 그 state 폴더에 `labhq-last-config.json`을 남깁니다. 설정 파일이 지워지면 그 기록은 무시합니다.
 
 실행 전 `labhq doctor`로 설정·엔진·직원·계산 도구를 점검하세요. `labhq doctor --json`은 러너 상태 디렉터리에 `capabilities.json`을 쓰고, `--network`를 붙일 때만 공개 데이터 사이트에 접속합니다. 이 manifest의 `runner_capabilities`는 러너가 보고하는 기능과 같은 설정·roster에서 산출한 사실입니다. `research lane` 행은 연구 lane이 끝까지 도는지 알려 줍니다. `research.enabled`만 켜면 CP1 뒤 멈춘다는 warn이 뜨고, `evidence_checkpoint`까지 켜야 CP2·리뷰·보고서로 갑니다. `research` 아래 오타 키는 시작할 때 오류입니다.
 doctor는 roster가 쓰는 엔진만 검사하고, 생략한 네트워크·dry-run 로그인 검사는 한 줄로 묶습니다. fail이 하나라도 있거나, 활성 직원이 없거나, roster 엔진 실행 파일이 하나라도 없으면 끝에 `실행 준비: 아니오`와 이유를 표시합니다. 다른 warn은 준비 여부를 바꾸지 않습니다.

@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from ..integrations.github import ProjectReporter
 from ..intake import MAX_REFERENCES, Reference, effective_references
+from ..instance_guard import public_identity
 from ..integrations.rounds import RoundRecorder, environment_snapshot, is_research_event, is_research_task
 from ..integrations.visibility import dev_log_visibility
 from ..login import login_command
@@ -3974,11 +3975,17 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
 
     @app.get("/api/health")
     async def health() -> dict:
-        return {"service": "labhq gateway", "runners": list(hub.runners), "runner_online": bool(hub.runners),
-                "agents": len(hub.agents),
-                "active_requests": sum(is_active_request(r.get("status")) for r in hub.requests.values()),
-                "waiting_for_runner": sum(r.get("status") == "waiting_for_runner" for r in hub.requests.values()),
-                "running_tasks": len(hub.running_tasks())}
+        payload = {"service": "labhq gateway", "runners": list(hub.runners), "runner_online": bool(hub.runners),
+                   "agents": len(hub.agents),
+                   "active_requests": sum(is_active_request(r.get("status")) for r in hub.requests.values()),
+                   "waiting_for_runner": sum(r.get("status") == "waiting_for_runner" for r in hub.requests.values()),
+                   "running_tasks": len(hub.running_tasks())}
+        # Which config this gateway runs from, as hashes: `labhq up` never adopts another config's gateway (#613).
+        # No path and no token: this endpoint needs no login.
+        identity = public_identity(settings)
+        if identity:
+            payload["identity"] = identity
+        return payload
 
     @app.get("/", response_class=HTMLResponse)
     async def office() -> HTMLResponse:

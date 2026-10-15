@@ -25,11 +25,12 @@ def fake_processes(monkeypatch):
 
 
 def make_config(path: Path, state: Path, *, port: int = PORT, token: str = "unit-client", instance: str | None = None,
-                url_host: str = "127.0.0.1") -> Settings:
+                url_host: str = "127.0.0.1", runner_state: Path | None = None,
+                runner_id: str | None = None) -> Settings:
     path.parent.mkdir(parents=True, exist_ok=True)
     data = {"gateway": {"client_token": token, "runner_token": "unit-runner", "port": port,
                         "url": f"ws://{url_host}:{port}", "state_dir": str(state)},
-            "runner": {"state_dir": str(state), "id": f"runner-{path.stem}"}}
+            "runner": {"state_dir": str(runner_state or state), "id": runner_id or f"runner-{path.stem}"}}
     if instance:
         data["instance"] = instance
     path.write_text(yaml.safe_dump(data), encoding="utf-8")
@@ -294,3 +295,178 @@ def test_doctor_masks_the_home_folder_in_what_it_shows_but_not_in_the_command(tm
     row, = instance_rows(mine)
     assert str(home) not in row["detail"] and "~/old/labhq.yaml" in row["detail"]
     assert other.config_path in row["hint"]
+
+
+# --- identity: whatever owns the state, the runner state or the port is compared with this config ------------------
+
+
+def answer(settings: Settings, claims: Settings | None = None) -> dict:
+    """A gateway's /api/health answer with this config's runner connected, claiming the identity of `claims`."""
+    health = {"service": "labhq gateway", "runners": [settings.runner.id]}
+    if claims is not None:
+        health["identity"] = instance_guard.public_identity(claims)
+    return health
+
+
+def test_the_fingerprint_follows_the_state_folders_runner_id_and_port_and_never_a_secret(tmp_path):
+    base = make_config(tmp_path / "a.yaml", tmp_path / "s", runner_id="lab")
+    same = make_config(tmp_path / "a.yaml", tmp_path / "s", runner_id="lab", token="another-token")
+    assert instance_guard.identity_of(base) == instance_guard.identity_of(same)
+    for change in ({"port": PORT + 1}, {"runner_id": "other"}):
+        changed = make_config(tmp_path / "a.yaml", tmp_path / "s", **{"runner_id": "lab", **change})
+        assert instance_guard.identity_of(changed).fingerprint != instance_guard.identity_of(base).fingerprint
+        assert instance_guard.identity_of(changed).config_id == instance_guard.identity_of(base).config_id
+    moved = make_config(tmp_path / "a.yaml", tmp_path / "t", runner_id="lab")
+    assert instance_guard.identity_of(moved).fingerprint != instance_guard.identity_of(base).fingerprint
+    elsewhere = make_config(tmp_path / "b.yaml", tmp_path / "s", runner_id="lab")
+    assert instance_guard.identity_of(elsewhere).config_id != instance_guard.identity_of(base).config_id
+
+
+def test_the_gateway_health_answer_carries_the_identity_and_no_path_or_token(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from labhq.gateway.server import create_app
+
+    settings = make_config(tmp_path / "labhq.yaml", tmp_path / "state", token="very-private-client-token")
+    body = TestClient(create_app(settings)).get("/api/health")
+    assert body.json()["identity"] == instance_guard.public_identity(settings)
+    assert settings.config_path not in body.text and "very-private-client-token" not in body.text
+    assert str(tmp_path) not in body.text
+    bare = Settings.model_validate({"gateway": {"state_dir": str(tmp_path / "state2")}})
+    assert "identity" not in TestClient(create_app(bare)).get("/api/health").json()
+
+
+# P1: two runners must never share runner-<id>.sqlite3, the control folder or the input hash cache.
+@pytest.mark.parametrize("same_id", [True, False], ids=["same runner id", "other runner id"])
+def test_another_configs_live_runner_in_the_same_runner_state_folder_blocks_up_and_doctor(
+        tmp_path, capsys, same_id):
+    shared = tmp_path / "runner-shared"
+    mine = make_config(tmp_path / "mine.yaml", tmp_path / "state-mine", runner_state=shared, runner_id="lab")
+    other = make_config(tmp_path / "old-clone" / "labhq.yaml", tmp_path / "state-old", port=PORT + 1,
+                        runner_state=shared, runner_id="lab" if same_id else "old")
+    instance_guard.write_owner(other, "runner")  # this process stands in for the other config's running runner
+    notices = instance_guard.check(mine)
+    assert [n.key for n in notices] == ["runner_state"] and notices[0].blocking
+    assert "같은 runner state 폴더" in notices[0].text and "control 폴더" in notices[0].text
+    assert f'labhq -c "{other.config_path}" down' in notices[0].fix
+    with pytest.raises(SystemExit) as stopped:
+        cli._up_unlocked(mine)
+    assert stopped.value.code == 2 and "같은 runner state 폴더" in capsys.readouterr().err
+    row, = instance_rows(mine)
+    assert row["name"] == "other config: runner" and row["status"] == "warn"
+
+
+def test_a_dead_runner_owner_or_the_same_config_is_no_runner_conflict(tmp_path, monkeypatch):
+    shared = tmp_path / "runner-shared"
+    mine = make_config(tmp_path / "mine.yaml", tmp_path / "state-mine", runner_state=shared)
+    other = make_config(tmp_path / "old.yaml", tmp_path / "state-old", port=PORT + 1, runner_state=shared)
+    instance_guard.write_owner(mine, "runner")
+    assert instance_guard.check(mine) == []  # my own runner
+    instance_guard.write_owner(other, "runner")
+    assert [n.key for n in instance_guard.check(mine)] == ["runner_state"]
+    monkeypatch.setattr(cli, "_process_created", lambda pid: "a-later-process")  # the owner has exited
+    assert instance_guard.check(mine) == []
+
+
+def test_a_starting_runner_or_gateway_is_refused_while_another_config_holds_its_state(tmp_path, capsys):
+    shared = tmp_path / "runner-shared"
+    first = make_config(tmp_path / "first.yaml", tmp_path / "state-1", runner_state=shared)
+    second = make_config(tmp_path / "second.yaml", tmp_path / "state-2", port=PORT + 1, runner_state=shared)
+    assert instance_guard.claim(first, "runner") is None  # records itself as the owner
+    assert instance_guard.claim(first, "runner") is None  # the same config again is not a conflict
+    refused = instance_guard.claim(second, "runner")
+    assert refused is not None and refused.blocking and refused.key == "runner_state"
+    with pytest.raises(SystemExit) as stopped:
+        cli._claim_or_exit(second, "runner")
+    assert stopped.value.code == 2 and "같은 runner state 폴더" in capsys.readouterr().err
+    # a gateway claims its own state folder the same way
+    gateway_one = make_config(tmp_path / "g1.yaml", tmp_path / "gstate")
+    gateway_two = make_config(tmp_path / "g2.yaml", tmp_path / "gstate", port=PORT + 2)
+    assert instance_guard.claim(gateway_one, "gateway") is None
+    assert instance_guard.claim(gateway_two, "gateway").key == "state_alive"
+
+
+# P1: a gateway on the port that answers with the same token is not adopted unless it is this config's.
+def test_a_gateway_with_the_same_token_from_an_unknown_config_is_not_adopted_or_recorded(
+        tmp_path, monkeypatch, capsys):
+    mine = make_config(tmp_path / "mine.yaml", tmp_path / "state-mine", runner_id="lab")
+    unknown = make_config(tmp_path / "checkout-elsewhere" / "config" / "labhq.yaml", tmp_path / "state-x",
+                          runner_id="lab")  # same token, same port, same runner id, listed nowhere
+    monkeypatch.setattr(cli, "_health", lambda s: answer(mine, unknown))
+    with pytest.raises(SystemExit) as stopped:
+        cli._up_unlocked(mine)
+    assert stopped.value.code == 2
+    err = capsys.readouterr().err
+    assert "다른 설정 파일로 시작한 gateway" in err and "찾지 못했습니다" in err
+    assert instance_guard.last_config(mine) is None and instance_guard.primary_config() is None
+
+
+def test_a_gateway_of_a_known_config_is_named_with_the_command_that_opens_it(tmp_path, monkeypatch, capsys):
+    mine = make_config(tmp_path / "mine.yaml", tmp_path / "state-mine")
+    trial = named_instance(Path.home(), "trial", tmp_path / "state-trial")  # known from ~/.labhq, no record of running
+    monkeypatch.setattr(cli, "_health", lambda s: answer(mine, trial))
+    with pytest.raises(SystemExit) as stopped:
+        cli._up_unlocked(mine)
+    assert stopped.value.code == 2
+    err = capsys.readouterr().err
+    assert f"포트 {PORT}에는 이미 다른 설정 파일" in err
+    assert f'labhq -c "{trial.config_path}" open' in fix_commands(err)
+    assert instance_guard.primary_config() is None
+
+
+def test_a_gateway_started_from_this_config_before_an_edit_is_not_adopted_either(tmp_path, monkeypatch, capsys):
+    before = make_config(tmp_path / "labhq.yaml", tmp_path / "state-old")
+    after = make_config(tmp_path / "labhq.yaml", tmp_path / "state-new")  # the same file, edited since the start
+    monkeypatch.setattr(cli, "_health", lambda s: answer(after, before))
+    with pytest.raises(SystemExit) as stopped:
+        cli._up_unlocked(after)
+    assert stopped.value.code == 2
+    assert "시작한 뒤 바뀐 설정" in capsys.readouterr().err and instance_guard.last_config(after) is None
+
+
+def test_a_gateway_that_answers_with_this_configs_identity_is_adopted_and_recorded(tmp_path, monkeypatch):
+    mine = make_config(tmp_path / "mine.yaml", tmp_path / "state")
+    monkeypatch.setattr(cli, "_health", lambda s: answer(mine, mine))
+    cli._up_unlocked(mine)  # nothing to start
+    assert instance_guard.last_config(mine) == mine.config_path
+    assert instance_guard.primary_config() == mine.config_path
+
+
+def test_a_gateway_that_could_not_take_the_port_does_not_pass_for_the_one_just_started(
+        tmp_path, monkeypatch, capsys):
+    mine = make_config(tmp_path / "mine.yaml", tmp_path / "state-mine", runner_id="lab")
+    other = make_config(tmp_path / "elsewhere" / "labhq.yaml", tmp_path / "state-x", runner_id="lab")
+    monkeypatch.setattr(cli, "_health", lambda s: None)
+    monkeypatch.setattr(cli, "_start_background", lambda *a, **k: 1)  # the new gateway lost the race for the port
+    monkeypatch.setattr(cli, "_wait_for_health", lambda s, *, runner, timeout=20: answer(mine, other))
+    with pytest.raises(SystemExit) as stopped:
+        cli._up_unlocked(mine)
+    assert stopped.value.code == 2
+    assert "다른 설정 파일로 시작한 gateway" in capsys.readouterr().err
+    assert instance_guard.last_config(mine) is None
+
+
+def test_a_gateway_without_an_identity_is_trusted_only_with_this_configs_own_live_record(
+        tmp_path, monkeypatch, capsys):
+    mine = make_config(tmp_path / "mine.yaml", tmp_path / "state")
+    monkeypatch.setattr(cli, "_health", lambda s: answer(mine))  # an older gateway: no identity in its answer
+    cli._up_unlocked(mine)
+    err = capsys.readouterr().err
+    assert "알 수 없습니다" in err and "기록은 남기지 않습니다" in err
+    assert instance_guard.last_config(mine) is None and instance_guard.primary_config() is None
+    record(mine, "gateway", 4101)  # now this config's own live process record vouches for it
+    cli._up_unlocked(mine)
+    assert capsys.readouterr().err == "" and instance_guard.last_config(mine) == mine.config_path
+
+
+# P2: a process record counts for a candidate only when it names that candidate.
+def test_a_candidate_whose_state_folder_another_config_holds_is_not_the_one_running_on_the_port(tmp_path):
+    home = Path.home()
+    shared = tmp_path / "state-shared"
+    candidate = named_instance(home, "a", shared, port=PORT)  # A would use this port
+    running = named_instance(home, "b", shared, port=PORT + 1)  # B is what runs, in A's state folder
+    record(candidate, "gateway", 4401, config=running.config_path)
+    new = make_config(tmp_path / "c.yaml", tmp_path / "state-c", port=PORT)  # C takes A's port, which is free
+    assert instance_guard.check(new) == []
+    record(candidate, "gateway", 4402)  # now A's own process runs there
+    assert [n.key for n in instance_guard.check(new)] == ["port"]

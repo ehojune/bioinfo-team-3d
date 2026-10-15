@@ -648,6 +648,19 @@ def _up_unlocked(s: Settings, *, popen=None, make_primary: bool = False) -> None
         state, _record, reason = _process_record(s, role)
         if state == "unknown":
             _record_problem(role, reason)
+    confirmed = True
+
+    def verify(answer: dict, *, started_here: bool) -> None:
+        """Every gateway answer is checked for whose it is before `up` relies on it (#613): another identity stops
+        `up`, and only a confirmed gateway is recorded."""
+        nonlocal confirmed
+        found, ours = instance_guard.check_health(s, answer, started_here=started_here)
+        for notice in found:
+            print(notice.render(), file=sys.stderr)
+        if any(notice.blocking for notice in found):
+            raise SystemExit(2)
+        confirmed = confirmed and ours
+
     try:
         health = _health(s)
     except SystemExit:  # 401: _authenticated_requests already said the token differs; say whose gateway it is
@@ -655,6 +668,8 @@ def _up_unlocked(s: Settings, *, popen=None, make_primary: bool = False) -> None
             if notice.key == "port":
                 print(notice.render(), file=sys.stderr)
         raise
+    if health is not None:
+        verify(health, started_here=False)  # something answered before this `up` started anything
     if health is None:
         state, _record, reason = _process_record(s, "gateway")
         if state == "unknown":
@@ -672,6 +687,9 @@ def _up_unlocked(s: Settings, *, popen=None, make_primary: bool = False) -> None
             print(f"gateway가 시작되지 않았습니다. 로그: {_launch_state(s) / 'logs' / 'gateway.log'}",
                   file=sys.stderr)
             raise SystemExit(2)
+        # Our own process, or the one we just started: if another config's gateway answers instead (ours could not
+        # take the port), it is not ours.
+        verify(health, started_here=True)
     if s.runner.id not in (health.get("runners") or []):
         state, _record, reason = _process_record(s, "runner")
         if state == "unknown":
@@ -689,8 +707,18 @@ def _up_unlocked(s: Settings, *, popen=None, make_primary: bool = False) -> None
             print(f"runner가 연결되지 않았습니다. 로그: {_launch_state(s) / 'logs' / 'runner.log'}",
                   file=sys.stderr)
             raise SystemExit(2)
-    instance_guard.record_success(s, make_primary=make_primary)
+    if confirmed:  # never record a gateway that is someone else's
+        instance_guard.record_success(s, make_primary=make_primary)
     print(f"웹 사무실: {_http_base(s)}/  (`{_config_command(s, 'open')}`)")
+
+
+def _claim_or_exit(s: Settings, role: str) -> None:
+    """A gateway or runner records itself as the owner of its state folder; another config's live process there
+    stops it, however it was started (#613)."""
+    notice = instance_guard.claim(s, role)
+    if notice is not None:
+        print(notice.render(), file=sys.stderr)
+        raise SystemExit(2)
 
 
 def _up(s: Settings, *, popen=None, make_primary: bool = False) -> None:
@@ -1687,6 +1715,7 @@ def main(argv: list[str] | None = None) -> None:
             async def install_loop_diagnostics():
                 diagnostics.attach_loop()
 
+            _claim_or_exit(s, "gateway")
             try:
                 uvicorn.run(app, host=s.gateway.host, port=s.gateway.port, log_level="info",
                             log_config=gateway_log_config())
@@ -1714,6 +1743,7 @@ def main(argv: list[str] | None = None) -> None:
             path_key = next((key for key in clean if key.casefold() == "path"), None)
             if path_key:
                 os.environ[path_key] = clean[path_key]
+            _claim_or_exit(s, "runner")  # before Runner opens runner-<id>.sqlite3
             asyncio.run(_run_runner_with_interrupts(Runner(s), diagnostics))
     elif args.cmd == "status":
         for row in _local_process_diagnostics(s):
