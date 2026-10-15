@@ -2054,7 +2054,7 @@ class Hub:
         if capabilities is not None:
             self.runner_capabilities[runner_id] = capabilities
         wsl_runner = self.s.runner.wsl.id if self.s.runner.wsl.enabled else next(
-            (rid for rid, report in self.runner_capabilities.items() if report.get("environment") == "wsl"), None)
+            (rid for rid, report in self.runner_capabilities.items() if report.get("runtime_env") == "wsl"), None)
         if wsl_runner and self.agent_runner.get("bioinfo-agent") not in (None, wsl_runner):
             self.agent_runner.pop("bioinfo-agent", None)
             self.agents.pop("bioinfo-agent", None)

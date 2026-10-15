@@ -509,7 +509,8 @@ class Runner:
     def capabilities(self) -> dict:
         external_hpc = any("labhq_hpc" in a.get("mcp", []) for a in self.registry.roster())
         capabilities = {"scheduler": self.s.hpc.scheduler,
-                        "environment": self.s.runner.environment,
+                        "runtime_env": ("wsl" if self.s.runner.environment == "wsl" else
+                                        "windows" if sys.platform == "win32" else "linux"),
                         "compute_backends": ["local CLI"] +
                                             ([self.s.hpc.scheduler] if self.s.hpc.scheduler != "none" else []) +
                                             (["external labhq_hpc MCP"] if external_hpc else []),
