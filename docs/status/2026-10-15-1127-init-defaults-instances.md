@@ -42,6 +42,8 @@ Refs #613 (PI 결정 C). 새 `labhq init` 설정이 PI가 시험한 동작으로
 
 **문서** — README 설치 절, `docs/manual.md`(init, doctor, 겹침 경고, bioinfo-agent 연결).
 
+**격리 설치 검사** — `scripts/clean_install_check.py`가 `init`에 Enter 세 번만 줘서, 질문이 하나 늘자 마지막 동의 질문에서 EOFError가 났습니다(임시 HOME에서 재현). 입력을 Enter 여덟 번으로 늘렸습니다.
+
 ## 확인
 
 - 새 test 54건: `tests/test_init_defaults.py` 34건, `tests/test_instance_guard.py` 20건. 임시 폴더와 가짜 process 기록만 쓰고 실제 프로세스·포트는 쓰지 않습니다. 옛 예시 설정으로 되돌리면 새 test 6건과 고친 semantics test 1건이 실패합니다.

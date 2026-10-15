@@ -8,3 +8,7 @@ rows:
   at: "2026-10-15 11:27"
   text: labhq init이 PI가 시험한 설정(연구 모드·분야 팩·의미 모델 ab·산출물 종류 선언)으로 새 설정을 만들고, bioinfo-agent
     위치를 찾거나 묻고 못 찾으면 연결 안 됨을 알리며, dev_log.repo를 묻는다(#613).
+- sha: "778edff"
+  at: "2026-10-15 11:31"
+  text: 격리 설치 검사(scripts/clean_install_check.py)의 init 입력을 질문 수에 매이지 않게 해, init이 묻는
+    질문이 늘어도 EOF로 멈추지 않는다(#613).
