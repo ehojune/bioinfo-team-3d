@@ -27,6 +27,9 @@ class CheckFailure(RuntimeError):
         self.detail = detail
 
 
+_RESERVED_PORTS = {8787, 55921}  # PI instance and its runner; clean-install must never borrow them
+
+
 def _one_line(value: object, limit: int = 500) -> str:
     lines = [line.strip() for line in str(value or "").splitlines() if line.strip()]
     text = " | ".join(lines[-3:]) if lines else "출력 없음"
@@ -72,9 +75,12 @@ def _expect(stage: str, condition: bool, detail: str) -> None:
 
 
 def _free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
+    while True:
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = int(sock.getsockname()[1])
+        if port not in _RESERVED_PORTS:
+            return port
 
 
 def _labhq_command(checkout: Path, *args: str) -> list[str]:
