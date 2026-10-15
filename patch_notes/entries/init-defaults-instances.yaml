@@ -1,0 +1,10 @@
+pr: 614
+rows:
+- sha: "e3fc6b0"
+  at: "2026-10-15 11:26"
+  text: 설정이 다른 labhq가 같은 state 폴더·포트를 쓰거나 이 PC의 주 설정과 다르면 doctor와 up이 쉬운 한국어로 알리고
+    고치는 명령(labhq -c <그 설정> open 등)을 보여 준다(#613).
+- sha: "fad7274"
+  at: "2026-10-15 11:27"
+  text: labhq init이 PI가 시험한 설정(연구 모드·분야 팩·의미 모델 ab·산출물 종류 선언)으로 새 설정을 만들고, bioinfo-agent
+    위치를 찾거나 묻고 못 찾으면 연결 안 됨을 알리며, dev_log.repo를 묻는다(#613).
