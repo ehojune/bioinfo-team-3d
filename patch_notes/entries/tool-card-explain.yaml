@@ -12,3 +12,6 @@ rows:
 - sha: 3f70eab
   at: 2026-10-15 17:44
   text: 활동 요약을 표시 전용 필드로 분리해 기존 상태 재생 유지
+- sha: 018e895
+  at: 2026-10-15 17:59
+  text: Bash 공백 경로 우회·통제 데이터 위험 표시·read-only 읽기 grant·경로 label 수정
