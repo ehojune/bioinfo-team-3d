@@ -1,6 +1,6 @@
 ## 결론
 
-Fixes #667. StructuredOutput JSON 파싱 오류를 모든 직원 task의 runner 공통 경로에서 같은 세션으로 재시도합니다.
+Fixes #667. PR #668. StructuredOutput JSON 파싱 오류를 모든 직원 task의 runner 공통 경로에서 같은 세션으로 재시도합니다.
 
 ## 바뀐 것
 
