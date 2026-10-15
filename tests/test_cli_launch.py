@@ -668,7 +668,9 @@ def test_down_on_windows_ends_the_recorded_tree_through_the_helper_and_checks_ea
     _write_process_record(settings, "runner", runner, "windows:2000")
     _write_process_record(settings, "gateway", gateway, "windows:1000")
     monkeypatch.setattr(cli.sys, "platform", "win32")
-    monkeypatch.setattr(cli, "_process_created", lambda pid: {runner: "windows:2000", gateway: "windows:1000"}[pid])
+    monkeypatch.setattr(cli, "_process_created", lambda pid: (
+        f"windows:{table.live[pid].created}" if pid in table.live else None
+    ))
     monkeypatch.setattr(cli, "_active_requests", lambda _settings: [])
     monkeypatch.setattr(cli, "_shutdown_readiness",
                         lambda _settings: {"requests": [], "followups": [], "recruits": 0, "ready": True})
