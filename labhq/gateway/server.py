@@ -3822,6 +3822,15 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
 
+    @app.post("/api/requests/{rid}/storage/republish", dependencies=[Depends(auth)])
+    async def storage_republish(rid: str) -> dict:
+        if rid not in hub.requests:
+            raise HTTPException(404)
+        try:
+            return await hub.result_storage.republish(rid)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
     @app.post("/api/requests/{rid}/review-done", dependencies=[Depends(auth)])
     async def review_done(rid: str, body: dict | None = None) -> dict:
         if rid not in hub.requests:
