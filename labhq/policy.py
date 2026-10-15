@@ -2304,11 +2304,17 @@ def evaluate_tool(
     checked = git_bash_command(tool_name, judged, allowed_roots, windows)
     # On with no active path (PR #327) still runs the registry check; a non-empty list alone also means on.
     private_paths = list(private_paths)
+    private_open_reads = list(private_open_reads)
     closed_zones = [z.path for z in policy.data_zones if z.level == 'restricted']
-    from .workspace_commands import workspace_command
-    scoped = (tool_name in SHELL_TOOLS and workdir and
-              workspace_command(str(checked.get('command', '')), workdir, private_paths,
-                                powershell=tool_name == 'PowerShell', forbidden=closed_zones))
+    from .workspace_commands import workspace_command_reason
+    grammar = None
+    if tool_name in SHELL_TOOLS:
+        from .private_paths import claude_project_slug
+        reads = [p for p in private_open_reads if not (Path(p).parent.name == 'projects' and
+                 Path(p).name == claude_project_slug(os.path.abspath(workdir or '.')))]
+        grammar = workspace_command_reason(str(checked.get('command', '')), workdir, private_paths,
+                    powershell=tool_name == 'PowerShell', read_roots=reads, forbidden=closed_zones)
+    scoped = bool(grammar and grammar.startswith('문법 안:'))
     decision = _evaluate_tool(tool_name, checked, policy, allowed_roots, workdir, environ=environ,
                               windows=windows, workspace_operation=bool(scoped))
     private = (_private_decision(tool_name, checked, private_paths, workdir, home, environ,
@@ -2317,8 +2323,15 @@ def evaluate_tool(
     # Only ever stricter: a deny stays a deny, and an ask is not turned into an allow.
     if private and decision.action != "deny" and (private.action == "deny" or decision.action == "allow"):
         decision = private
-    if scoped and decision.action == 'allow':
-        decision.reason = 'task workspace operation'
+    if grammar and (scoped or private_open_reads):
+        # The closed grammar governs the managed task-read exception introduced here.
+        # Legacy policy without a managed read grant retains its existing decisions.
+        if not scoped and private_open_reads and (private_enabled or private_paths) and decision.action == 'allow':
+            decision = Decision('ask', grammar)
+        elif decision.action == 'allow':
+            decision.reason = grammar
+        else:
+            decision.reason = grammar + ' · ' + decision.reason
     if read_only:
         if tool_name in WRITE_LIKE:
             path = judged.get("file_path") or judged.get("notebook_path")

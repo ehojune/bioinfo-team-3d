@@ -74,13 +74,13 @@ async def approval_prompt(tool_name: str, input: dict[str, Any] | None = None,
     # A respelled write path (#219) is what was judged and what the PI sees, so Claude must write that one.
     tool_input = d.updated_input or input or {}
     if d.action == "allow":
-        if d.reason == 'task workspace operation' and TOKEN:
+        if d.reason.startswith('문법 안:') and TOKEN:
             # A task-scoped log, never an approval card. The broker authenticates the task identity.
             try:
                 async with httpx.AsyncClient(timeout=5) as c:
                     r = await c.post(f'{BROKER}/event', headers={'X-Labhq-Token': TOKEN}, json={
                         'task_id': TASK, 'agent_id': AGENT, 'type': 'agent.log',
-                        'data': {'level': 'info', 'text': '작업 폴더 안 도구 실행 자동 허용',
+                        'data': {'level': 'info', 'text': d.reason,
                                  'tool_name': tool_name, 'policy_action': 'allow',
                                  'policy_rule': 'task_workspace'}})
                     r.raise_for_status()

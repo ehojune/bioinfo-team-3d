@@ -41,9 +41,7 @@ def test_replay_coverage_is_explicit():
     'mkdir -p tmp; touch tmp/item; cat tmp/item',
     'rm -rf tmp/', 'rm -rf .tmp/paper-review',
     'cd .tmp && rm -rf paper-review',
-    'S="{work}"; cat "$S/guide.md"',
     'cat "{work}/guide.md" > "{work}/copy.md"',
-    "python - <<'EOF'\nimport json\np='.tmp/bundle.json'\nb=json.load(open(p))\njson.dump(b,open('outputs/bundle.json','w'))\nEOF",
 ])
 def test_workspace_shell_needs_no_card(layout, command):
     work = layout[2]
@@ -68,6 +66,8 @@ def test_absolute_delete_and_download(layout, tool, command):
     'cat "${UNKNOWN}"', 'cat "unterminated',
     "python -c \"open('../other/secret')\"",
     "python -c \"import os; os.system('cat ../private')\"",
+    'S="{work}"; cat "$S/guide.md"',
+    "python - <<'EOF'\nimport json\np='.tmp/bundle.json'\nb=json.load(open(p))\njson.dump(b,open('outputs/bundle.json','w'))\nEOF",
 ])
 def test_real_risks_still_ask(layout, command):
     cmd = command.replace('{work}', layout[2].as_posix()).replace('{root}', layout[1].as_posix())
@@ -130,6 +130,7 @@ async def test_auto_workspace_permission_logs_without_card(layout, monkeypatch):
     assert result['behavior'] == 'allow'
     assert len(sent) == 1 and sent[0][0].endswith('/event')
     assert sent[0][1]['data']['policy_rule'] == 'task_workspace'
+    assert sent[0][1]['data']['text'].startswith('문법 안:')
 
 
 def test_script_group_rechecks_every_operand_and_script_bytes(layout):
@@ -139,7 +140,8 @@ def test_script_group_rechecks_every_operand_and_script_bytes(layout):
     script.write_text('print("fixture")', encoding='utf-8')
     def scope(args):
         return script_approval_scope('Bash', {'command': f'uv run "{script.as_posix()}" {args}'},
-                                     str(work), [str(root)], [str(work), str(skills)])
+                                     str(work), [str(root)], [str(work), str(skills)],
+                                     managed_roots=[str(skills)])
     first = scope('build --work .tmp/a')
     assert first and first == scope('prepare --work .tmp/b')
     for args in ('--work ../other', '--work .env', '--work "' + (root / 'private').as_posix() + '"',

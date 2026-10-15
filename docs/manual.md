@@ -777,16 +777,16 @@ flowchart LR
 ### 승인 게이트와 쓰기 범위
 
 HPC 제출(코어·시간 기준), 위험한 셸 명령, 예산 초과, 파견직 채용은 PI가 결정함에서 정합니다. Claude 직원의 파일·셸 호출은 승인 게이트를 거치고, 다른 엔진 직원은 sandbox와 지침에 기댑니다(아래 절과 [알려진 한계](#알려진-한계)). 셸·파일·MCP 규칙이 없는 도구는 `policy.approvals.auto_allow_tools`(기본: Read·Glob·Grep·LS·WebSearch·WebFetch·TodoWrite·Skill·StructuredOutput·ToolSearch, 그리고 이미 승인 게이트를 거친 Bash의 백그라운드 출력을 읽거나 멈추는 BashOutput·KillShell·TaskOutput·TaskStop)에 있을 때만 허용하고, 나머지는 PI에게 묻습니다. 셸 명령을 돌리는 `Monitor`가 그 예입니다. `Task`·`Agent`·`Workflow`·`TeamCreate`·`TeamDelete`는 이 목록에 넣어도 거부합니다(#421).
-현재 작업·논문 스킬 빌드 폴더의 경로가 확실한 읽기·쓰기는 개인 경로의 하위여도 허용합니다. `S=...`, `cd`, 파일 명령, JSON 편집용 Python heredoc, PowerShell 다운로드를 판정합니다. `auto` 직원도 같은 규칙을 쓰며 자동 허용은 작업 로그에 남깁니다.
+작업 폴더 자동 허용은 닫힌 문법만 받습니다. 변수·대입·치환·간접 실행·Python 본문은 카드로 보냅니다. `cd`는 맨 앞 한 번과 `&&` 연결만 허용하며 판정 근거를 기록합니다.
 
 | 작업 | 승인 |
 |---|---|
 | 실제 작업 폴더 안 `rm -rf tmp/`, `.tmp/paper-review`, 절대 경로 삭제 | 불필요 |
-| 폴더 자체 삭제, `..`, link·junction 탈출, 자격 증명, 다른 직원·작업 경로 | 계속 확인 |
-| 해석하지 못한 명령·실행 중에 만드는 경로 | 기존 게이트 유지 |
-| 같은 작업의 동일한 Python 스크립트 실행 | 적격 카드에서 **이 작업 동안 같은 부류 허용** 선택 가능 |
+| 폴더 자체 삭제, `..`, link·junction·hard link 쓰기, 자격 증명, 다른 작업 경로 | 확인 |
+| 문법 밖 명령·실행 중에 만드는 경로 | 확인 |
+| 직원 쓰기 범위 밖의 관리 스킬 실행 | **이 작업 동안 같은 부류 허용** 선택 가능 |
 
-묶음 허용은 스크립트 내용과 경로가 같고 인자가 작업 폴더 안일 때만 재사용합니다. 작업 종료·runner 재시작 때 만료되며 자격 증명·다른 작업 경로에는 적용하지 않습니다. `find`·PowerShell pipeline 삭제는 기존 `.tmp` 규칙을 유지합니다. [명령별 판정·재생 범위](reference/tool-approval-grammar.md)를 참고하세요.
+묶음 허용은 관리 스킬 전체 트리 hash·진입 경로·도구를 매번 확인하며 작업 종료·runner 재시작 때 만료됩니다. 작업 폴더 스크립트에는 주지 않습니다. [문법·재생 근거](reference/tool-approval-grammar.md).
 
 Claude 직원의 맨 `Write`·`Edit`는 작업·project·upstream 폴더의 `Edit(//…/**)` 규칙으로 좁혀 사전 허용합니다. 링크·junction으로 적힌 폴더는 적힌 표기와 실제 경로에 규칙을 하나씩 둡니다(Claude는 둘 다 맞아야 허용). 그 밖 쓰기는 승인 게이트를 거칩니다(#219). 셸 쓰기 대상이 `~`로 시작하면 그 셸의 home으로 펼쳐 쓰기 허용 폴더와 대조합니다. Bash는 `HOME`(없으면 `USERPROFILE`과 `HOMEDRIVE`+`HOMEPATH`), PowerShell은 Windows에서 `USERPROFILE`과 `HOMEDRIVE`+`HOMEPATH`를 모두 봅니다. `~user`·`~+`·`~-`처럼 펼 수 없으면 묻고, 읽기 경로는 그대로 둡니다(#521).
 

@@ -47,10 +47,12 @@ def test_only_task_and_skill_reads_need_no_approval(layout, which, tool):
     assert gate(layout, tool, data).action == expected
 
 
-def test_reported_compound_read_needs_no_approval(layout):
+def test_reported_compound_read_requires_card_for_mixed_cd_separators(layout):
     _, _, build, skills = layout
     cmd = f'cd "{build}" && ls -la && find . -maxdepth 3 | head -50; which uv python; ls "{skills}"'
-    assert gate(layout, 'Bash', {'command': cmd}).action == 'allow'
+    assert gate(layout, 'Bash', {'command': cmd}).action == 'ask'
+    literal = f'cd "{build}" && ls -la && find . -maxdepth 3 && which uv python && ls "{skills}"'
+    assert gate(layout, 'Bash', {'command': literal}).action == 'allow'
 
 
 @pytest.mark.parametrize('relative', ['claude/.credentials.json', 'claude/auth.json', 'claude/token.json',

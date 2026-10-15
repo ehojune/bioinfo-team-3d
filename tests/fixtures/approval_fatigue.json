@@ -65,7 +65,7 @@
     "tool": "Bash",
     "command": "S=\"{skill}/paper2skill/scripts\"; sed -n 395,440p $S/reading_package.py",
     "before": "ask",
-    "after": "allow"
+    "after": "ask"
   },
   {
     "case": 11,
@@ -121,7 +121,7 @@
     "tool": "Bash",
     "command": "S=\"{skill}/paper2skill/scripts\"; sed -n 380,450p \"$S/reading_package.py\"; grep -n \"def \\|inventory\\|expected\" \"$S/reading_package.py\" | sed -n 1,80p",
     "before": "ask",
-    "after": "allow"
+    "after": "ask"
   },
   {
     "case": 19,
@@ -161,7 +161,7 @@
     "tool": "Bash",
     "command": "cat \"{skill}/paper2skill/references/review-plan.md\"; cd \"{work}/.tmp/paper-review/documents/s001-teschendorff2018-aam\"; ls; cat pages/page-0012.json",
     "before": "allow",
-    "after": "allow"
+    "after": "ask"
   },
   {
     "case": 24,
@@ -241,7 +241,7 @@
     "tool": "Bash",
     "command": "cat \"{skill}/paper2skill/references/review-plan.md\"; cd \"{work}/.tmp/paper-review/documents/s001-teschendorff2018-aam\"; ls; head -c 3000 pages/page-0034.json",
     "before": "ask",
-    "after": "allow"
+    "after": "ask"
   },
   {
     "case": 36,
@@ -261,7 +261,7 @@
     "tool": "Bash",
     "command": "cd \"{work}\" && ls -la && find . -maxdepth 3 | head -50; which uv python; ls \"{skill}/paper2skill/references\" \"{skill}/paper2skill/scripts\"",
     "before": "allow",
-    "after": "allow"
+    "after": "ask"
   },
   {
     "case": 39,
@@ -277,7 +277,7 @@
     "tool": "Bash",
     "command": "S=\"{skill}/paper2skill/scripts\"; ls \"$S\"; grep -n \"relative_to\" \"$S\"/*.py",
     "before": "ask",
-    "after": "allow"
+    "after": "ask"
   },
   {
     "case": 41,

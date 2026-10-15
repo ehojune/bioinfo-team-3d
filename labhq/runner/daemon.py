@@ -1863,7 +1863,13 @@ class Runner:
                           private_open_reads=ctx.private_open_reads, private_enabled=ctx.private_enabled)
         if d.action != 'ask' or 'policy.private_paths' not in d.reason:
             return None
-        return script_approval_scope(name, data, str(ctx.workdir), ctx.private_paths, ctx.private_open_reads)
+        from ..recruit.paper2agent import skill_path
+        try:
+            managed = [str(skill_path(ctx.agent.engine.value, self.s))]
+        except ValueError:
+            return None
+        return script_approval_scope(name, data, str(ctx.workdir), ctx.private_paths, ctx.private_open_reads,
+                                     managed_roots=managed, writable_roots=[str(p) for p in active[1]])
 
     async def _on_approval(self, req: ApprovalRequest) -> None:
         req.request_id = req.request_id or self.task_req.get(req.task_id or "")
