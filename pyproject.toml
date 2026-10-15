@@ -19,6 +19,7 @@ Repository = "https://github.com/ehojune/bioinfo-team-3d"
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+alphagenome = ["alphagenome"]
 
 [project.scripts]
 labhq = "labhq.cli:main"

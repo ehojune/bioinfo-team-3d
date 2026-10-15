@@ -10,6 +10,9 @@
   "office": [
     {"key":"office","shown":true,"box":{"x":96,"y":101,"w":728,"h":499},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
   ],
+  "main-splitter": [
+    {"key":"main-splitter","shown":true,"box":{"x":824,"y":101,"w":18,"h":521},"paint":{"color":"#7f8790"}}
+  ],
   "wall-board": [
     {"key":"wall-board","shown":true,"box":{"x":5,"y":12,"w":638,"h":42},"paint":{"color":"#1c2430","background":"#ffffff","border":"#7f8790"}}
   ],
@@ -108,6 +111,9 @@
   "staff-wrap": [
     {"key":"staff-wrap","shown":true,"box":{"x":80,"y":636,"w":1280,"h":187},"paint":{"color":"#1c2430"}}
   ],
+  "staff-splitter": [
+    {"key":"staff-splitter","shown":true,"box":{"x":96,"y":627,"w":1248,"h":18},"paint":{"color":"#7f8790"}}
+  ],
   "staff-toggle": [
     {"key":"staff-toggle","shown":false,"status":"false","text":"직원 보기"}
   ],
@@ -121,6 +127,9 @@
 "desktop/start/tasks": {"viewport": {"w":1440,"h":900}, "doc": {"w":1440,"h":900}, "items": {
   "top": [
     {"key":"top","shown":true,"box":{"x":0,"y":0,"w":1440,"h":87},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "main-splitter": [
+    {"key":"main-splitter","shown":true,"box":{"x":824,"y":101,"w":18,"h":521},"paint":{"color":"#7f8790"}}
   ],
   "cc": [
     {"key":"cc","shown":true,"box":{"x":842,"y":101,"w":502,"h":151},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
@@ -154,6 +163,9 @@
   "top": [
     {"key":"top","shown":true,"box":{"x":0,"y":0,"w":1440,"h":87},"paint":{"color":"#1c2430","background":"#faf8f4"}}
   ],
+  "main-splitter": [
+    {"key":"main-splitter","shown":true,"box":{"x":824,"y":101,"w":18,"h":521},"paint":{"color":"#7f8790"}}
+  ],
   "cc": [
     {"key":"cc","shown":true,"box":{"x":842,"y":101,"w":502,"h":226},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
   ],
@@ -183,6 +195,9 @@
   "top": [
     {"key":"top","shown":true,"box":{"x":0,"y":0,"w":1440,"h":87},"paint":{"color":"#1c2430","background":"#faf8f4"}}
   ],
+  "main-splitter": [
+    {"key":"main-splitter","shown":true,"box":{"x":824,"y":101,"w":18,"h":521},"paint":{"color":"#7f8790"}}
+  ],
   "cc": [
     {"key":"cc","shown":true,"box":{"x":842,"y":101,"w":502,"h":199},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
   ],
@@ -203,6 +218,9 @@
   ],
   "staff-wrap": [
     {"key":"staff-wrap","shown":true,"box":{"x":80,"y":636,"w":1280,"h":187},"paint":{"color":"#1c2430"}}
+  ],
+  "staff-splitter": [
+    {"key":"staff-splitter","shown":true,"box":{"x":96,"y":627,"w":1248,"h":18},"paint":{"color":"#7f8790"}}
   ],
   "staff-toggle": [
     {"key":"staff-toggle","shown":false,"status":"false","text":"직원 보기"}
@@ -256,6 +274,9 @@
   ],
   "office": [
     {"key":"office","shown":true,"box":{"x":96,"y":101,"w":728,"h":513},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ],
+  "main-splitter": [
+    {"key":"main-splitter","shown":true,"box":{"x":824,"y":101,"w":18,"h":521},"paint":{"color":"#7f8790"}}
   ],
   "wall-board": [
     {"key":"wall-board","shown":true,"box":{"x":5,"y":5,"w":638,"h":70},"paint":{"color":"#1c2430","background":"#ffffff","border":"#2848a6"}}
@@ -358,6 +379,9 @@
   "staff-wrap": [
     {"key":"staff-wrap","shown":true,"box":{"x":80,"y":636,"w":1280,"h":187},"paint":{"color":"#1c2430"}}
   ],
+  "staff-splitter": [
+    {"key":"staff-splitter","shown":true,"box":{"x":96,"y":627,"w":1248,"h":18},"paint":{"color":"#7f8790"}}
+  ],
   "staff-toggle": [
     {"key":"staff-toggle","shown":false,"status":"false","text":"직원 보기"}
   ],
@@ -371,6 +395,9 @@
 "desktop/running/tasks": {"viewport": {"w":1440,"h":900}, "doc": {"w":1440,"h":900}, "items": {
   "top": [
     {"key":"top","shown":true,"box":{"x":0,"y":0,"w":1440,"h":87},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "main-splitter": [
+    {"key":"main-splitter","shown":true,"box":{"x":824,"y":101,"w":18,"h":521},"paint":{"color":"#7f8790"}}
   ],
   "cc": [
     {"key":"cc","shown":true,"box":{"x":842,"y":101,"w":502,"h":521},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
@@ -414,6 +441,9 @@
   "top": [
     {"key":"top","shown":true,"box":{"x":0,"y":0,"w":1440,"h":87},"paint":{"color":"#1c2430","background":"#faf8f4"}}
   ],
+  "main-splitter": [
+    {"key":"main-splitter","shown":true,"box":{"x":824,"y":101,"w":18,"h":521},"paint":{"color":"#7f8790"}}
+  ],
   "cc": [
     {"key":"cc","shown":true,"box":{"x":842,"y":101,"w":502,"h":521},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
   ],
@@ -450,6 +480,9 @@
   "top": [
     {"key":"top","shown":true,"box":{"x":0,"y":0,"w":1440,"h":87},"paint":{"color":"#1c2430","background":"#faf8f4"}}
   ],
+  "main-splitter": [
+    {"key":"main-splitter","shown":true,"box":{"x":824,"y":101,"w":18,"h":521},"paint":{"color":"#7f8790"}}
+  ],
   "cc": [
     {"key":"cc","shown":true,"box":{"x":842,"y":101,"w":502,"h":521},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
   ],
@@ -470,6 +503,9 @@
   ],
   "staff-wrap": [
     {"key":"staff-wrap","shown":true,"box":{"x":80,"y":636,"w":1280,"h":187},"paint":{"color":"#1c2430"}}
+  ],
+  "staff-splitter": [
+    {"key":"staff-splitter","shown":true,"box":{"x":96,"y":627,"w":1248,"h":18},"paint":{"color":"#7f8790"}}
   ],
   "staff-toggle": [
     {"key":"staff-toggle","shown":false,"status":"false","text":"직원 보기"}
@@ -523,6 +559,9 @@
   ],
   "office": [
     {"key":"office","shown":true,"box":{"x":96,"y":101,"w":728,"h":519},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ],
+  "main-splitter": [
+    {"key":"main-splitter","shown":true,"box":{"x":824,"y":101,"w":18,"h":521},"paint":{"color":"#7f8790"}}
   ],
   "wall-board": [
     {"key":"wall-board","shown":true,"box":{"x":5,"y":5,"w":638,"h":70},"paint":{"color":"#1c2430","background":"#ffffff","border":"#2848a6"}}
@@ -628,6 +667,9 @@
   "staff-wrap": [
     {"key":"staff-wrap","shown":true,"box":{"x":80,"y":636,"w":1280,"h":187},"paint":{"color":"#1c2430"}}
   ],
+  "staff-splitter": [
+    {"key":"staff-splitter","shown":true,"box":{"x":96,"y":627,"w":1248,"h":18},"paint":{"color":"#7f8790"}}
+  ],
   "staff-toggle": [
     {"key":"staff-toggle","shown":false,"status":"false","text":"직원 보기"}
   ],
@@ -641,6 +683,9 @@
 "desktop/decision/tasks": {"viewport": {"w":1440,"h":900}, "doc": {"w":1440,"h":900}, "items": {
   "top": [
     {"key":"top","shown":true,"box":{"x":0,"y":0,"w":1440,"h":87},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "main-splitter": [
+    {"key":"main-splitter","shown":true,"box":{"x":824,"y":101,"w":18,"h":521},"paint":{"color":"#7f8790"}}
   ],
   "cc": [
     {"key":"cc","shown":true,"box":{"x":842,"y":101,"w":502,"h":521},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
@@ -684,6 +729,9 @@
   "top": [
     {"key":"top","shown":true,"box":{"x":0,"y":0,"w":1440,"h":87},"paint":{"color":"#1c2430","background":"#faf8f4"}}
   ],
+  "main-splitter": [
+    {"key":"main-splitter","shown":true,"box":{"x":824,"y":101,"w":18,"h":521},"paint":{"color":"#7f8790"}}
+  ],
   "cc": [
     {"key":"cc","shown":true,"box":{"x":842,"y":101,"w":502,"h":521},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
   ],
@@ -720,6 +768,9 @@
   "top": [
     {"key":"top","shown":true,"box":{"x":0,"y":0,"w":1440,"h":87},"paint":{"color":"#1c2430","background":"#faf8f4"}}
   ],
+  "main-splitter": [
+    {"key":"main-splitter","shown":true,"box":{"x":824,"y":101,"w":18,"h":521},"paint":{"color":"#7f8790"}}
+  ],
   "cc": [
     {"key":"cc","shown":true,"box":{"x":842,"y":101,"w":502,"h":521},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
   ],
@@ -740,6 +791,9 @@
   ],
   "staff-wrap": [
     {"key":"staff-wrap","shown":true,"box":{"x":80,"y":636,"w":1280,"h":187},"paint":{"color":"#1c2430"}}
+  ],
+  "staff-splitter": [
+    {"key":"staff-splitter","shown":true,"box":{"x":96,"y":627,"w":1248,"h":18},"paint":{"color":"#7f8790"}}
   ],
   "staff-toggle": [
     {"key":"staff-toggle","shown":false,"status":"false","text":"직원 보기"}
@@ -793,6 +847,9 @@
   ],
   "office": [
     {"key":"office","shown":true,"box":{"x":96,"y":101,"w":728,"h":513},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ],
+  "main-splitter": [
+    {"key":"main-splitter","shown":true,"box":{"x":824,"y":101,"w":18,"h":521},"paint":{"color":"#7f8790"}}
   ],
   "wall-board": [
     {"key":"wall-board","shown":true,"box":{"x":5,"y":5,"w":638,"h":70},"paint":{"color":"#1c2430","background":"#ffffff","border":"#2848a6"}}
@@ -897,6 +954,9 @@
   "staff-wrap": [
     {"key":"staff-wrap","shown":true,"box":{"x":80,"y":636,"w":1280,"h":187},"paint":{"color":"#1c2430"}}
   ],
+  "staff-splitter": [
+    {"key":"staff-splitter","shown":true,"box":{"x":96,"y":627,"w":1248,"h":18},"paint":{"color":"#7f8790"}}
+  ],
   "staff-toggle": [
     {"key":"staff-toggle","shown":false,"status":"false","text":"직원 보기"}
   ],
@@ -910,6 +970,9 @@
 "desktop/report/tasks": {"viewport": {"w":1440,"h":900}, "doc": {"w":1440,"h":938}, "items": {
   "top": [
     {"key":"top","shown":true,"box":{"x":0,"y":0,"w":1440,"h":87},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "main-splitter": [
+    {"key":"main-splitter","shown":true,"box":{"x":824,"y":101,"w":18,"h":521},"paint":{"color":"#7f8790"}}
   ],
   "cc": [
     {"key":"cc","shown":true,"box":{"x":842,"y":101,"w":502,"h":521},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
@@ -953,6 +1016,9 @@
   "top": [
     {"key":"top","shown":true,"box":{"x":0,"y":0,"w":1440,"h":87},"paint":{"color":"#1c2430","background":"#faf8f4"}}
   ],
+  "main-splitter": [
+    {"key":"main-splitter","shown":true,"box":{"x":824,"y":101,"w":18,"h":521},"paint":{"color":"#7f8790"}}
+  ],
   "cc": [
     {"key":"cc","shown":true,"box":{"x":842,"y":101,"w":502,"h":521},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
   ],
@@ -989,6 +1055,9 @@
   "top": [
     {"key":"top","shown":true,"box":{"x":0,"y":0,"w":1440,"h":87},"paint":{"color":"#1c2430","background":"#faf8f4"}}
   ],
+  "main-splitter": [
+    {"key":"main-splitter","shown":true,"box":{"x":824,"y":101,"w":18,"h":521},"paint":{"color":"#7f8790"}}
+  ],
   "cc": [
     {"key":"cc","shown":true,"box":{"x":842,"y":101,"w":502,"h":521},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
   ],
@@ -1009,6 +1078,9 @@
   ],
   "staff-wrap": [
     {"key":"staff-wrap","shown":true,"box":{"x":80,"y":636,"w":1280,"h":187},"paint":{"color":"#1c2430"}}
+  ],
+  "staff-splitter": [
+    {"key":"staff-splitter","shown":true,"box":{"x":96,"y":627,"w":1248,"h":18},"paint":{"color":"#7f8790"}}
   ],
   "staff-toggle": [
     {"key":"staff-toggle","shown":false,"status":"false","text":"직원 보기"}
@@ -1062,6 +1134,9 @@
   ],
   "office": [
     {"key":"office","shown":true,"box":{"x":16,"y":321,"w":358,"h":838},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ],
+  "main-splitter": [
+    {"key":"main-splitter","shown":false}
   ],
   "wall-board": [
     {"key":"wall-board","shown":true,"box":{"x":9,"y":16,"w":260,"h":42},"paint":{"color":"#1c2430","background":"#ffffff","border":"#7f8790"}}
@@ -1161,6 +1236,9 @@
   "staff-wrap": [
     {"key":"staff-wrap","shown":true,"box":{"x":0,"y":628,"w":390,"h":38},"paint":{"color":"#1c2430"}}
   ],
+  "staff-splitter": [
+    {"key":"staff-splitter","shown":false}
+  ],
   "staff-toggle": [
     {"key":"staff-toggle","shown":true,"status":"false","box":{"x":8,"y":0,"w":374,"h":38},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"},"text":"직원 보기"}
   ],
@@ -1174,6 +1252,9 @@
 "phone/start/tasks": {"viewport": {"w":390,"h":844}, "doc": {"w":390,"h":1332}, "items": {
   "top": [
     {"key":"top","shown":true,"box":{"x":0,"y":0,"w":390,"h":142},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "main-splitter": [
+    {"key":"main-splitter","shown":false}
   ],
   "cc": [
     {"key":"cc","shown":true,"box":{"x":16,"y":156,"w":358,"h":100},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
@@ -1207,6 +1288,9 @@
   "top": [
     {"key":"top","shown":true,"box":{"x":0,"y":0,"w":390,"h":142},"paint":{"color":"#1c2430","background":"#faf8f4"}}
   ],
+  "main-splitter": [
+    {"key":"main-splitter","shown":false}
+  ],
   "cc": [
     {"key":"cc","shown":true,"box":{"x":16,"y":156,"w":358,"h":152},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
   ],
@@ -1236,6 +1320,9 @@
   "top": [
     {"key":"top","shown":true,"box":{"x":0,"y":0,"w":390,"h":142},"paint":{"color":"#1c2430","background":"#faf8f4"}}
   ],
+  "main-splitter": [
+    {"key":"main-splitter","shown":false}
+  ],
   "cc": [
     {"key":"cc","shown":true,"box":{"x":16,"y":156,"w":358,"h":147},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
   ],
@@ -1256,6 +1343,9 @@
   ],
   "staff-wrap": [
     {"key":"staff-wrap","shown":true,"box":{"x":0,"y":441,"w":390,"h":225},"paint":{"color":"#1c2430"}}
+  ],
+  "staff-splitter": [
+    {"key":"staff-splitter","shown":false}
   ],
   "staff-toggle": [
     {"key":"staff-toggle","shown":true,"status":"true","box":{"x":8,"y":0,"w":374,"h":38},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"},"text":"직원 닫기"}
@@ -1309,6 +1399,9 @@
   ],
   "office": [
     {"key":"office","shown":true,"box":{"x":16,"y":936,"w":358,"h":873},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ],
+  "main-splitter": [
+    {"key":"main-splitter","shown":false}
   ],
   "wall-board": [
     {"key":"wall-board","shown":true,"box":{"x":9,"y":9,"w":260,"h":91},"paint":{"color":"#1c2430","background":"#ffffff","border":"#2848a6"}}
@@ -1411,6 +1504,9 @@
   "staff-wrap": [
     {"key":"staff-wrap","shown":true,"box":{"x":0,"y":628,"w":390,"h":38},"paint":{"color":"#1c2430"}}
   ],
+  "staff-splitter": [
+    {"key":"staff-splitter","shown":false}
+  ],
   "staff-toggle": [
     {"key":"staff-toggle","shown":true,"status":"false","box":{"x":8,"y":0,"w":374,"h":38},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"},"text":"직원 보기"}
   ],
@@ -1424,6 +1520,9 @@
 "phone/running/tasks": {"viewport": {"w":390,"h":844}, "doc": {"w":390,"h":2043}, "items": {
   "top": [
     {"key":"top","shown":true,"box":{"x":0,"y":0,"w":390,"h":142},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "main-splitter": [
+    {"key":"main-splitter","shown":false}
   ],
   "cc": [
     {"key":"cc","shown":true,"box":{"x":16,"y":156,"w":358,"h":776},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
@@ -1467,6 +1566,9 @@
   "top": [
     {"key":"top","shown":true,"box":{"x":0,"y":0,"w":390,"h":142},"paint":{"color":"#1c2430","background":"#faf8f4"}}
   ],
+  "main-splitter": [
+    {"key":"main-splitter","shown":false}
+  ],
   "cc": [
     {"key":"cc","shown":true,"box":{"x":16,"y":156,"w":358,"h":1228},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
   ],
@@ -1503,6 +1605,9 @@
   "top": [
     {"key":"top","shown":true,"box":{"x":0,"y":0,"w":390,"h":142},"paint":{"color":"#1c2430","background":"#faf8f4"}}
   ],
+  "main-splitter": [
+    {"key":"main-splitter","shown":false}
+  ],
   "cc": [
     {"key":"cc","shown":true,"box":{"x":16,"y":156,"w":358,"h":761},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
   ],
@@ -1523,6 +1628,9 @@
   ],
   "staff-wrap": [
     {"key":"staff-wrap","shown":true,"box":{"x":0,"y":441,"w":390,"h":225},"paint":{"color":"#1c2430"}}
+  ],
+  "staff-splitter": [
+    {"key":"staff-splitter","shown":false}
   ],
   "staff-toggle": [
     {"key":"staff-toggle","shown":true,"status":"true","box":{"x":8,"y":0,"w":374,"h":38},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"},"text":"직원 닫기"}
@@ -1576,6 +1684,9 @@
   ],
   "office": [
     {"key":"office","shown":true,"box":{"x":16,"y":1613,"w":358,"h":880},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ],
+  "main-splitter": [
+    {"key":"main-splitter","shown":false}
   ],
   "wall-board": [
     {"key":"wall-board","shown":true,"box":{"x":9,"y":9,"w":260,"h":91},"paint":{"color":"#1c2430","background":"#ffffff","border":"#2848a6"}}
@@ -1681,6 +1792,9 @@
   "staff-wrap": [
     {"key":"staff-wrap","shown":true,"box":{"x":0,"y":628,"w":390,"h":38},"paint":{"color":"#1c2430"}}
   ],
+  "staff-splitter": [
+    {"key":"staff-splitter","shown":false}
+  ],
   "staff-toggle": [
     {"key":"staff-toggle","shown":true,"status":"false","box":{"x":8,"y":0,"w":374,"h":38},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"},"text":"직원 보기"}
   ],
@@ -1694,6 +1808,9 @@
 "phone/decision/tasks": {"viewport": {"w":390,"h":844}, "doc": {"w":390,"h":2050}, "items": {
   "top": [
     {"key":"top","shown":true,"box":{"x":0,"y":0,"w":390,"h":142},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "main-splitter": [
+    {"key":"main-splitter","shown":false}
   ],
   "cc": [
     {"key":"cc","shown":true,"box":{"x":16,"y":156,"w":358,"h":776},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
@@ -1737,6 +1854,9 @@
   "top": [
     {"key":"top","shown":true,"box":{"x":0,"y":0,"w":390,"h":142},"paint":{"color":"#1c2430","background":"#faf8f4"}}
   ],
+  "main-splitter": [
+    {"key":"main-splitter","shown":false}
+  ],
   "cc": [
     {"key":"cc","shown":true,"box":{"x":16,"y":156,"w":358,"h":1351},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
   ],
@@ -1773,6 +1893,9 @@
   "top": [
     {"key":"top","shown":true,"box":{"x":0,"y":0,"w":390,"h":142},"paint":{"color":"#1c2430","background":"#faf8f4"}}
   ],
+  "main-splitter": [
+    {"key":"main-splitter","shown":false}
+  ],
   "cc": [
     {"key":"cc","shown":true,"box":{"x":16,"y":156,"w":358,"h":1439},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
   ],
@@ -1793,6 +1916,9 @@
   ],
   "staff-wrap": [
     {"key":"staff-wrap","shown":true,"box":{"x":0,"y":441,"w":390,"h":225},"paint":{"color":"#1c2430"}}
+  ],
+  "staff-splitter": [
+    {"key":"staff-splitter","shown":false}
   ],
   "staff-toggle": [
     {"key":"staff-toggle","shown":true,"status":"true","box":{"x":8,"y":0,"w":374,"h":38},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"},"text":"직원 닫기"}
@@ -1846,6 +1972,9 @@
   ],
   "office": [
     {"key":"office","shown":true,"box":{"x":16,"y":1346,"w":358,"h":873},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
+  ],
+  "main-splitter": [
+    {"key":"main-splitter","shown":false}
   ],
   "wall-board": [
     {"key":"wall-board","shown":true,"box":{"x":9,"y":9,"w":260,"h":91},"paint":{"color":"#1c2430","background":"#ffffff","border":"#2848a6"}}
@@ -1950,6 +2079,9 @@
   "staff-wrap": [
     {"key":"staff-wrap","shown":true,"box":{"x":0,"y":628,"w":390,"h":38},"paint":{"color":"#1c2430"}}
   ],
+  "staff-splitter": [
+    {"key":"staff-splitter","shown":false}
+  ],
   "staff-toggle": [
     {"key":"staff-toggle","shown":true,"status":"false","box":{"x":8,"y":0,"w":374,"h":38},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"},"text":"직원 보기"}
   ],
@@ -1963,6 +2095,9 @@
 "phone/report/tasks": {"viewport": {"w":390,"h":844}, "doc": {"w":390,"h":2066}, "items": {
   "top": [
     {"key":"top","shown":true,"box":{"x":0,"y":0,"w":390,"h":142},"paint":{"color":"#1c2430","background":"#faf8f4"}}
+  ],
+  "main-splitter": [
+    {"key":"main-splitter","shown":false}
   ],
   "cc": [
     {"key":"cc","shown":true,"box":{"x":16,"y":156,"w":358,"h":799},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
@@ -2006,6 +2141,9 @@
   "top": [
     {"key":"top","shown":true,"box":{"x":0,"y":0,"w":390,"h":142},"paint":{"color":"#1c2430","background":"#faf8f4"}}
   ],
+  "main-splitter": [
+    {"key":"main-splitter","shown":false}
+  ],
   "cc": [
     {"key":"cc","shown":true,"box":{"x":16,"y":156,"w":358,"h":4209},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
   ],
@@ -2042,6 +2180,9 @@
   "top": [
     {"key":"top","shown":true,"box":{"x":0,"y":0,"w":390,"h":142},"paint":{"color":"#1c2430","background":"#faf8f4"}}
   ],
+  "main-splitter": [
+    {"key":"main-splitter","shown":false}
+  ],
   "cc": [
     {"key":"cc","shown":true,"box":{"x":16,"y":156,"w":358,"h":1171},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
   ],
@@ -2062,6 +2203,9 @@
   ],
   "staff-wrap": [
     {"key":"staff-wrap","shown":true,"box":{"x":0,"y":441,"w":390,"h":225},"paint":{"color":"#1c2430"}}
+  ],
+  "staff-splitter": [
+    {"key":"staff-splitter","shown":false}
   ],
   "staff-toggle": [
     {"key":"staff-toggle","shown":true,"status":"true","box":{"x":8,"y":0,"w":374,"h":38},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"},"text":"직원 닫기"}

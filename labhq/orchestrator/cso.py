@@ -34,6 +34,7 @@ from ..intake import (CLARIFYING_QUESTION_SCHEMA, QUESTION_RULE, has_structure,
 from ..models import AskRequest, RunnerUnavailable, Task, TaskResult, hard_stop_kind, new_id, waiting
 from ..quota import is_quota_error, received_quota_wait
 from ..login import is_login_error
+from ..report_format import (PAPER_RULE, ABSTRACT_PLAN_RULE, split_appendix, scientific_appendix, add_references)
 from ..request_status import is_terminal_request
 from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARCH_STEP_SCHEMA, ResearchPlan,
                                  bind_result_artifacts,
@@ -377,7 +378,7 @@ DECLARED_OUTPUTS_FALLBACK_RULE = (
 ANALYSIS_REPRODUCIBILITY_PLAN_RULE = (
     f"Every analysis step declares the scripts it runs under {OUTPUT_SCRIPTS_DIR} (for example "
     f"{OUTPUT_SCRIPTS_DIR}analyze.py), as well as result-determining intermediate artifacts under "
-    f"{OUTPUT_REFERENCE_DIR}.")
+    f"{OUTPUT_REFERENCE_DIR}. " + ABSTRACT_PLAN_RULE)
 
 ROUTE_PLAN_RULE = ("Set route to solo only when one employee can finish the whole request in one turn of about "
                    "30 minutes or less: a lookup, a table, a single QC check or figure, a literature list. Use team "
@@ -385,7 +386,7 @@ ROUTE_PLAN_RULE = ("Set route to solo only when one employee can finish the whol
                    "dependent stages, HPC, or controlled data. When in doubt, use team. Plan the steps either way: "
                    "they are the fallback.")
 
-SOLO_PROMPT = """Complete this request by yourself in one turn.
+SOLO_PROMPT = PAPER_RULE + """Complete this request by yourself in one turn.
 
 Original request:
 {request}
@@ -394,7 +395,7 @@ Planning assumptions:
 {assumptions}
 
 Rules:
-- Lead with the conclusion and write a short report, about 2,000 Korean characters or less.
+- Write a short paper report, about 2,000 Korean characters or less. Create and declare outputs/graphical_abstract.png (or .svg) with code and link it as the first figure.
 - Save every deliverable under outputs/ using relative paths.
 - Save analysis code under """ + OUTPUT_SCRIPTS_DIR + """ and use only relative paths inside it.
 - In the limitations, give one line for each thing you could not do and each assumption you had to make.
@@ -690,32 +691,24 @@ REPORT_FIGURE_RULE = (
     "never a path that is not listed, and use image links nowhere else. When no step produced a figure, embed no result "
     "figure. The caption says what the figure shows, not how it was made.\n"
     "Graphical abstract: one figure that summarizes the whole project as question -> data -> methods and steps -> key "
-    "findings, with short Korean labels. If you can run code in your workspace, create it with code (for example "
-    "matplotlib) as outputs/graphical_abstract.png (or .svg) in your own outputs/ and link it as the first figure under "
-    "\"결론과 권고\", as ![Graphical abstract](outputs/graphical_abstract.png). If you cannot create files, write no "
-    "link for it: labhq then draws the abstract from the plan, the data sources and your conclusion and puts it first.")
+    "findings, with short Korean labels. Link the final report step's listed graphical_abstract.png (or .svg) "
+    "as the first figure just below the title, using its exact Outputs path. Do not create files during "
+    "read-only synthesis. If no step produced it, write no link: labhq draws the existing fallback flowchart.")
 
-SYNTH_PROMPT = """Write the final report for the PI.
-Use these sections in this order: 1) "결론과 권고", 2) "결과" with evidence and file paths, 3) "방법 요약"
-including seeds and tool and data versions, 4) "한계" including reviewer concerns and what would change the
-conclusion. Put concrete next steps in the recommendation. Start with the report's first heading: no preamble.
-The PI reads the body once (#373): aim for about 4,000 characters, longer only when the results need it. State each
-result statistic once, in "결과", and refer to it elsewhere instead of repeating it (seeds, versions and cutoffs
-still belong in "방법 요약"); keep "방법 요약" to about eight lines, and under "한계" keep only what could change the
-conclusion.
+SYNTH_PROMPT = PAPER_RULE + """Write the final report for the PI.
 """ + REPORT_FIGURE_RULE + """
-Do not turn a failed lookup into evidence or proof of absence. LabHQ stores warnings, review records and execution
+Do not turn a failed lookup into evidence or proof of absence. LabHQ stores warnings and execution
 details in the separate execution record; do not copy their details into the body. When the warning preview is not
-"(none)", summarize its importance in one line under "한계" and end that line with "실행 기록 참고".
+"(none)", summarize its importance in one line under "논의" and end that line with "실행 기록 참고".
 Warning preview ("(none)" means there is no warning section):
 {warnings}
 
 Scientific design assumptions: {assumptions}
-Under "방법 요약", add a subsection titled "가정" and list these choices with their reasons. If none were recorded,
+Under "방법", add a subsection titled "가정" and list these choices with their reasons. If none were recorded,
 do not invent any.
-When Analysis precedents are supplied below, add a short "선행 연구 기준" section: one cited line for each required
-analysis done or not done (with the reason), and put omitted recommended analyses under "다음에 할 수 있는 분석".
-Under "한계", include one line for every checklist answer that used assumption. Do not list checks that do not apply
+When Analysis precedents are supplied below, add a short "선행 연구 기준" subsection under "방법": one cited line for each required
+analysis done or not done (with the reason), and put omitted recommended analyses under a "다음에 할 수 있는 분석" subsection in "논의".
+Under "논의", include one line for every checklist answer that used assumption. Do not list checks that do not apply
 to this request in the report body.
 
 Request: {request}
@@ -729,8 +722,8 @@ Reviewer: {review}"""
 # trial F5); the request still fails, but the PI gets the CSO's conclusion instead of a step dump.
 UNRESOLVED_REVIEW_NOTE = (
     "\n\nThe reviewer still asked for revisions after the last revision labhq could run. Summarize the effect "
-    "on the conclusion under \"한계\", but do not copy the reviewer's original text into the PI report. LabHQ "
-    "stores every open issue verbatim in the separate execution record.")
+    "on the conclusion under \"논의\", but do not copy the reviewer's original text into the PI report. LabHQ "
+    "stores every open issue verbatim in the scientific appendix.")
 
 REVIEW_REFERENCE_NOTE = (
     "\n\nThe remaining P2 and P3 issues do not change the conclusion. LabHQ appends a \"리뷰 참고\" section with "
@@ -796,7 +789,7 @@ def review_at_priority(review: dict, priority: str) -> dict:
     return {**review, "verdict": "revise" if priority == "P1" and issues else "accept", "issues": issues}
 
 
-RESEARCH_SYNTH_PROMPT = """Write the final research report for the PI from the frozen plan, the evidence the PI
+RESEARCH_SYNTH_PROMPT = PAPER_RULE + """Write the final research report for the PI from the frozen plan, the evidence the PI
 approved at CP2 and the research review below.
 
 Claim anchors (labhq checks them by machine):
@@ -805,20 +798,13 @@ Claim anchors (labhq checks them by machine):
 - Anchor only the citable claims listed below, each with the anchor shown there. A claim that is not listed as
   citable is not established: do not state it as a conclusion.
 - A failed or empty lookup is neither evidence nor proof of absence. LabHQ appends its details, CP2 records and the
-  claim check in the separate execution record. Summarize an important warning in one line under "한계" and
+  claim check in the separate execution record. Summarize an important warning in one line under "논의" and
   end that line with "실행 기록 참고", without copying the raw warning into the body.
 - Report the reviewer's P1 and P2 issues as limitations.
-Use these sections in this order: 1) "결론과 권고", 2) "결과" with claim anchors and file paths, 3) "방법 요약"
-including seeds and tool and data versions, 4) "한계" including not-established claims and what would change the
-conclusion. Put concrete next steps in the recommendation. Start with the report's first heading: no preamble.
-The PI reads the body once (#373): aim for about 4,000 characters, longer only when the results need it. State each
-result statistic once, in "결과", and refer to it elsewhere instead of repeating it (seeds, versions and cutoffs
-still belong in "방법 요약"); keep "방법 요약" to about eight lines, and under "한계" keep only what could change the
-conclusion.
 """ + REPORT_FIGURE_RULE + """
-When Analysis precedents are supplied below, add a short "선행 연구 기준" section: one cited line for each required
-analysis done or not done (with the reason), and put omitted recommended analyses under "다음에 할 수 있는 분석".
-Under "한계", include one line for every checklist answer that used assumption. Do not list checks that do not apply
+When Analysis precedents are supplied below, add a short "선행 연구 기준" subsection under "방법": one cited line for each required
+analysis done or not done (with the reason), and put omitted recommended analyses under a "다음에 할 수 있는 분석" subsection in "논의".
+Under "논의", include one line for every checklist answer that used assumption. Do not list checks that do not apply
 to this request in the report body.
 
 Request: {request}
@@ -1031,8 +1017,8 @@ def earlier_round_lines(contract: dict) -> list[str]:
     return lines
 
 
-EARLIER_ROUNDS_RULE = ("This request continued from the earlier rounds above. Right after \"결론과 권고\", add a short "
-                       "section \"이전 차수에서 고친 것\": one line per issue saying how this round addressed it, ending "
+EARLIER_ROUNDS_RULE = ("This request continued from the earlier rounds above. Under \"논의\", add a short "
+                       "subsection \"이전 차수에서 고친 것\": one line per issue saying how this round addressed it, ending "
                        "with the claim anchor that shows the fix, or saying plainly that it was not addressed.")
 
 
@@ -1311,9 +1297,11 @@ def _append_report_metadata(report: str, sections: list[str]) -> str:
 def _split_report_appendix(report: str) -> tuple[str, str]:
     """Separate the PI report from the execution record, including old/model-written combined reports."""
     report = str(report or "").strip()
-    if EXECUTION_APPENDIX_TITLE not in report:
+    match = re.search(r"(?m)^## 부록(?:: 실행 기록)?[ \t]*$", report)
+    if not match:
         return report, ""
-    body, raw = report.split(EXECUTION_APPENDIX_TITLE, 1)
+    title = match.group()
+    body, raw = report[:match.start()], report[match.end():]
     appendix = raw.strip()
     # #229 benchmark parsers require their machine block to remain the last part of the PI report.
     marker = re.compile(r"<!-- LABHQ_BENCH_RESULT -->.*?<!-- /LABHQ_BENCH_RESULT -->", re.DOTALL)
@@ -1322,13 +1310,13 @@ def _split_report_appendix(report: str) -> tuple[str, str]:
         benchmark = blocks[0].group(0)
         appendix = appendix[:blocks[0].start()].rstrip()
         body = body.rstrip() + "\n\n" + benchmark
-    return body.strip(), (EXECUTION_APPENDIX_TITLE + ("\n\n" + appendix if appendix else ""))
+    return body.strip(), (title + ("\n\n" + appendix if appendix else ""))
 
 
-def _terminal_reports(rid: str, report: str, report_appendix: str) -> dict[str, Any]:
+def _terminal_reports(rid: str, report: str, report_appendix: str, execution_record: str = "") -> dict[str, Any]:
     """Bound terminal copies while pointing every truncated field at the durable request."""
     data = {}
-    for field, value in (("report", report), ("report_appendix", report_appendix)):
+    for field, value in (("report", report), ("report_appendix", report_appendix), ("execution_record", execution_record)):
         data[field] = clip(value, 20000)
         if len(value) > 20000:
             data[f"{field}_truncated"] = True
@@ -1348,7 +1336,7 @@ def _execution_warning_summary(report: str) -> str:
         benchmark = blocks[0].group(0)
         report = report[:blocks[0].start()].rstrip()
     line = "실행 경고가 있습니다. 실행 기록 참고."
-    limitations = re.search(r"(?m)^## 한계\s*$", report)
+    limitations = re.search(r"(?m)^## (?:한계|논의)\s*$", report)
     if not limitations:
         report = report.rstrip() + "\n\n" + line
     else:
@@ -1400,6 +1388,12 @@ def _earlier_rounds_fallback(contract: dict) -> str:
 def _before_bench_block(report: str, section: str) -> str:
     """Add ``section`` at the end of the PI report, before a trailing benchmark result block, which bench scoring
     requires to stay last (labhq/bench.py; #517 review)."""
+    discussion = re.search(r"(?m)^## 논의[ \t]*$", report)
+    if discussion:
+        following = re.search(r"(?m)^## ", report[discussion.end():])
+        end = discussion.end() + (following.start() if following else len(report[discussion.end():]))
+        section = re.sub(r"(?m)^## ", "### ", section)
+        return report[:end].rstrip() + "\n\n" + section + "\n\n" + report[end:]
     marker = re.compile(r"<!-- LABHQ_BENCH_RESULT -->.*?<!-- /LABHQ_BENCH_RESULT -->", re.DOTALL)
     blocks = list(marker.finditer(report))
     if len(blocks) == 1 and not report[blocks[0].end():].strip():
@@ -1419,7 +1413,13 @@ def _with_review_reference(report: str, review: dict | None) -> str:
         benchmark = blocks[0].group(0)
         report = report[:blocks[0].start()].rstrip()
     report = re.sub(r"(?ms)^#{1,6}[ \t]*리뷰 참고[ \t]*$.*?(?=^#{1,6} |\Z)", "", report).rstrip()
-    report = report + "\n\n" + reference
+    discussion = re.search(r"(?m)^## 논의[ \t]*$", report)
+    if discussion:
+        following = re.search(r"(?m)^## ", report[discussion.end():])
+        end = discussion.end() + (following.start() if following else len(report[discussion.end():]))
+        report = report[:end].rstrip() + "\n\n" + reference.replace("## 리뷰 참고", "### 리뷰 참고", 1) + "\n\n" + report[end:]
+    else:
+        report = report + "\n\n" + reference
     return report + (("\n\n" + benchmark) if benchmark else "")
 
 
@@ -4448,14 +4448,8 @@ class Orchestrator:
         body_reference = _review_reference(review)
         if body_reference and not REVIEW_REFERENCE_HEADING.search(body):
             body = _before_bench_block(body, body_reference)
-        # The body keeps only P2 lines and a P3 count, so the record holds every remaining issue verbatim (PR #438).
-        open_reference = [issue for issue in (review or {}).get("issues") or []
-                          if isinstance(issue, dict) and issue.get("priority") in {"P2", "P3"}]
-        review_record = (["남은 P2·P3 지적 원문:\n" + "\n".join(
-            f"- {issue.get('priority')} · {issue.get('step_id') or '-'}: {issue.get('problem')} → {issue.get('request')}"
-            for issue in open_reference)] if open_reference else [])
-        report = body.rstrip() + "\n\n" + _appendix_sections(model_appendix,
-                                                             [*claim_check, *review_record, cp2_audit])
+        req["execution_record"] = _appendix_sections("", [*claim_check, cp2_audit])
+        report = body.rstrip() + ("\n\n" + model_appendix if model_appendix else "")
         end("report_incomplete" if check["problems"] else "research_reported", report,
             not check["problems"] and rid not in self.budget_denials, review)
 
@@ -6048,16 +6042,9 @@ class Orchestrator:
                     final = await self.run_step(synthesis)
                 except BudgetExceeded as error:
                     final = TaskResult(task_id=synthesis.id, agent_id=synthesis.agent_id, ok=False, error=str(error))
-                # The CSO sees the review clipped to 3,000 characters, so labhq appends every open issue itself:
-                # the execution record always carries the full list, whatever synthesis left out (PR #338 review).
-                open_issues = "\n".join(
-                    f"- {issue.get('step_id')}: {issue.get('problem')} → {issue.get('request')}"
-                    for issue in review.get("issues") or [])
                 body = (final.text if final.ok else self.report_results(steps, results, n) +
                         f"\n\nSynthesis failed: {final.error}")
-                report = _append_report_metadata(
-                    body, ["Review: revisions unresolved. The reviewer's open issues, verbatim:\n" +
-                           (open_issues or "- (no issue text)")])
+                report = _append_report_metadata(body, ["Review: revisions unresolved."])
                 self._finish(rid, report,
                              serialized_results(), ok=False, review=review,
                              error="리뷰 지적이 수정 상한 뒤에도 남아 있습니다")
@@ -6094,10 +6081,11 @@ class Orchestrator:
             req["report"] = (summary + "\n\n## 결론과 권고\n요청을 완료하지 못했습니다. 실행 기록의 원인과 "
                              "다음 조치를 확인하세요.\n\n## 결과\n확정할 최종 결과가 없습니다.\n\n## 방법 요약\n"
                              "완료된 단계까지 실행했습니다.\n\n## 한계\n요청 처리 오류가 있습니다. 실행 기록 참고.")
-            req["report_appendix"] = _appendix_sections("", [req["error"], *execution])
+            req["execution_record"] = "\n\n".join([req["error"], *execution])
+            req["report_appendix"] = scientific_appendix("", req, req.get("review"), "")
             # The preserved partial report goes with the event so a connected (or reconnecting) office shows it.
             failed = {"error": safe_failure_cause(req["error"]),
-                      **_terminal_reports(rid, req.get("report") or "", req.get("report_appendix") or ""),
+                      **_terminal_reports(rid, req.get("report") or "", req.get("report_appendix") or "", req.get("execution_record") or ""),
                       "cost_usd": float(req.get("cost_usd") or 0),
                       "cost_known": req.get("cost_known", True), "cost_summary": req.get("cost_summary")}
             if hasattr(self.hub, "schedule_terminal"):
@@ -6202,8 +6190,10 @@ class Orchestrator:
             return  # preserve the exact body and audit the PI saw
         report, results, review = self._unstarted_continuation_end(req, report, results, review)
         report, report_appendix = _split_report_appendix(report)
+        report_appendix, legacy_execution = split_appendix(report_appendix)
+        execution = [req.get("execution_record") or "", legacy_execution]
         if report.lstrip().startswith("### ") and "Full instructions, outputs and errors per step:" in report:
-            report_appendix = _appendix_sections(report_appendix, [report])
+            execution.append(report)
             summary, feed_error = failed_request_summary(req, results, error or report)
             report = (summary + "\n\n## 결론과 권고\n요청을 완료하지 못했습니다. 실행 기록의 원인과 다음 조치를 "
                       "확인하세요.\n\n## 결과\n확정할 최종 결과가 없습니다.\n\n## 방법 요약\n"
@@ -6245,9 +6235,6 @@ class Orchestrator:
                     line += f"; cause: {entry.get('error_kind') or 'terminal'}: {short(entry['error'], 200)}"
                 audit.append(line)
             metadata.append("Step status and output paths:\n" + "\n".join(audit))
-            checks = self._checklist_section(req, review)
-            if checks:
-                metadata.append(checks)
         if req.get("pending_questions"):
             metadata.append("Pending PI decisions/questions:\n" + "\n".join(
                 f"- {question}" for question in req["pending_questions"]))
@@ -6273,11 +6260,13 @@ class Orchestrator:
             relation = ">" if outcome["spent_usd"] > outcome["limit_usd"] else "/"
             metadata.append(f"Budget: ${outcome['spent_usd']:.2f}{pending} {relation} "
                             f"${outcome['limit_usd']:.2f}; {decision}.")
-        report_appendix = _appendix_sections(report_appendix, metadata)
+        req["execution_record"] = "\n\n".join(p for p in [*execution, *metadata] if p).replace(EXECUTION_APPENDIX_TITLE, "## 실행 기록")
+        report_appendix = scientific_appendix(report_appendix, req, review, self._checklist_section(req, review))
+        report = add_references(report, report_appendix, req.get("references") or [])
         from ..report_style import check_report
         report, style_note = check_report(report)
         if style_note:
-            report_appendix = _appendix_sections(report_appendix, [style_note])
+            req["execution_record"] += "\n\n" + style_note
         req.update(status="done" if ok else "failed", report=report, report_appendix=report_appendix,
                    results=results, review=review,
                    cost_usd=max(self.cost.get(rid, 0.0), float(req.get("cost_usd") or 0)), finished_at=time.time())
@@ -6293,7 +6282,7 @@ class Orchestrator:
             else:
                 req.update(status="failed", outcome="research_final_unverified")
                 ok = False
-        data = {"ok": ok, **_terminal_reports(rid, report, report_appendix), "cost_usd": req["cost_usd"],
+        data = {"ok": ok, **_terminal_reports(rid, report, report_appendix, req.get("execution_record") or ""), "cost_usd": req["cost_usd"],
                 "cost_known": req.get("cost_known", True), "cost_summary": req.get("cost_summary"),
                 "usage": req.get("usage", {}),
                 "usage_known": req.get("usage_known", True)}

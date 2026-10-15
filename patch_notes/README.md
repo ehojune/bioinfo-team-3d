@@ -14,6 +14,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 16:36 | [`9f4d35e`](https://github.com/ehojune/bioinfo-team-3d/pull/635/commits/9f4d35e) | 2.5D 사무실과 Command Center, 직원 시트 경계를 마우스·키보드로 조정하고 브라우저별 크기를 기억하게 했다(#633). |
+| 16:31 | [`3e0ac50`](https://github.com/ehojune/bioinfo-team-3d/pull/629/commits/3e0ac50) | 게시 상태와 운전 기록 경계를 바로잡고 legacy 실행 부록과 실패 원인을 보존했다. |
+| 16:27 | [`58dd063`](https://github.com/ehojune/bioinfo-team-3d/pull/629/commits/58dd063) | main의 빈 저장소 게시와 새 topic prompt 변경을 보고서 형식 branch에 함께 반영했다. |
+| 16:16 | [`bf10257`](https://github.com/ehojune/bioinfo-team-3d/pull/631/commits/bf10257) | AlphaGenome 권장 변이 점수·한국어 요약·tidy 표와 크기 상한·판본 캐시를 추가하고 variant_effect 안내를 연결 |
+| 15:50 | [`e599277`](https://github.com/ehojune/bioinfo-team-3d/pull/629/commits/e599277) | 운전 기록·과학 부록을 분리하고 논문 형식 보고서·분석 단계 graphical abstract·출처 추출을 연결 |
 | 15:28 | [`123d977`](https://github.com/ehojune/bioinfo-team-3d/pull/628/commits/123d977) | 403 복구 안내에서 실패한 환경 토큰을 해제하고 README로 저장소를 만들게 하며, 빈 저장소는 branch 없는 첫 파일로 초기화한 뒤 기존 파일의 sha를 보존해 갱신한다(#607). |
 | 15:28 | [`8dbe72d`](https://github.com/ehojune/bioinfo-team-3d/pull/626/commits/8dbe72d) | 선택된 VEP transcript에 AlphaMissense 점수가 없으면 주 요약은 점수 없음으로 두고, 다른 transcript의 점수·등급은 별도 필드로 분리한다. |
 | 14:54 | [`d897e32`](https://github.com/ehojune/bioinfo-team-3d/pull/628/commits/d897e32) | 게시에 실패한 정리본을 labhq storage --republish로 로컬 초안 그대로 다시 올리고(--redraft도 failed를 받음), 토큰이 새 저장소를 만들거나 쓰지 못할 때 이유와 할 일을 쉬운 말로 알리며, doctor가 fine-grained 토큰을 미리 경고한다(#607). |

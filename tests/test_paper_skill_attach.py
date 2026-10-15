@@ -99,7 +99,7 @@ async def test_selection_conversion_cp1_scope_appendix_and_bundle(runner, tmp_pa
     cp1 = next(c for c in hub.approvals if c["kind"] == "research_plan")
     assert "참고 논문 스킬: Paired method → worker" in cp1["summary"]
     assert rows[0]["skill_sha256"] in cp1["detail"]["plan_canonical"]
-    assert rows[0]["skill_sha256"] in req["report_appendix"]
+    assert rows[0]["skill_sha256"] in req["execution_record"]
 
     # Exercise the actual DAG dispatch and runner; another step and request get no copies.
     dag = FakeHub(reply)
@@ -119,7 +119,7 @@ async def test_selection_conversion_cp1_scope_appendix_and_bundle(runner, tmp_pa
 
     bs, request, task = pending_bundle_fixture(tmp_path / "bundle", "r")
     request["plan"] = req["plan"]
-    request["report_appendix"] = req["report_appendix"]
+    request["execution_record"] = req["execution_record"]
     from labhq.request_bundle import build_request_bundle
     bundle = Path(build_request_bundle(request, bs, {"task-r": task})["path"])
     record = json.loads((bundle / "paper_skills.json").read_text(encoding="utf-8"))[0]

@@ -32,11 +32,12 @@ CANARY = "CANARY-7f3a-secret"
 # #549 adds optional paper_skills and its selection rule; output-type off/on behavior is unchanged.
 # #549 B adds recruit.step_ids and reproduction/Nextflow planning rules; the exact off contract changes with it.
 # PR #581 P1: fresh recruits require at least one step_id; legacy stored plans remain compatible.
+# #609: graphical abstract creation moves to the final write-capable report step.
 # #586 공유 id 규칙 한 줄: 공유 항목의 bare/qualified 답 형식을 명시한다.
 # #621 adds the approved topic variant_effect, so the topic rule this test renders grows by one entry; the prompt
 # template, the schema and the output-type switch are unchanged (this hash moved on purpose).
 PLAN_SCHEMA_SHA = "044be4598c06b6dc0423b25734ebf1bc610359fc1a6236e5c807eb51983f74ac"
-PLAN_PROMPT_SHA = "12a32faccb5d2800af5c64fd6f4d2ea63ce537b355769e3b903274e629ff19ed"
+PLAN_PROMPT_SHA = "9c2d578d6d257a5a4ad39a2ab7a53163f542bc82c7f126b201672eb20b238e8f"
 PROMPT_ARGS = dict(request="REQ", roster="ROSTER", capabilities="CAPS", briefing="BRIEF", max_steps=3,
                    question_rule=QUESTION_RULE, lab_scope="LAB", topics_rule=topics.prompt_rule(V))
 
