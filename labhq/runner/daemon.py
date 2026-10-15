@@ -260,6 +260,7 @@ class Runner:
         self.scheduler = Scheduler(settings.hpc)
         self.connected = asyncio.Event()
         self._stopping = False
+        self.started_at = time.time()
         self.engine_versions: dict[str, str] | None = None  # probed once, off the event loop, before connecting
         self.local_software: dict | None = None  # bounded doctor probes, once before the first hello
         self.codex_sandbox = SandboxWatch()  # elevated setup still fits this Codex (#328)
@@ -290,8 +291,20 @@ class Runner:
                               pending_jobs=[job["job_id"] for job in jobs],
                               workdir=next((job.get("workdir") for job in jobs if job.get("workdir")), None),
                               session_id=next((job.get("session_id") for job in jobs if job.get("session_id")), None))
-        return TaskResult(task_id=tid, agent_id=agent_id, ok=False,
-                          error="runner restarted: accepted task interrupted")
+        return self._shutdown_result(TaskResult(task_id=tid, agent_id=agent_id, ok=False,
+                          error="runner restarted: accepted task interrupted"), cancelled=True, recovered=True)
+
+    def _shutdown_result(self, result: TaskResult, *, cancelled: bool = False,
+                         recovered: bool = False) -> TaskResult:
+        """Attach the same evidence before live delivery, durable enqueue or restart recovery."""
+        from ..interruption import shutdown_interruption, stopping_marker
+        stopping = recovered or self._stopping or stopping_marker(self.s, self.started_at)
+        if not result.ok and shutdown_interruption(exit_code=result.exit_code, error=result.error,
+                                                   stopping=stopping, cancelled=cancelled):
+            result.shutdown_evidence = {"exit_code": result.exit_code, "error": result.error,
+                "stopping": True, "cancelled": cancelled,
+                "source": "runner-recovery" if recovered else "runner", "at": time.time()}
+        return result
 
     # ---------------- lifecycle ----------------
     def _check_job_group(self) -> None:
@@ -704,7 +717,8 @@ class Runner:
                     raise
                 return
             err = "cancelled" if cancelled else f"{type(e).__name__}: {e}"
-            res = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error=err)
+            res = self._shutdown_result(
+                TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error=err), cancelled=cancelled)
             base = dict(task_id=task.id, agent_id=task.agent_id, request_id=task.request_id)
             # One unit: a second cancel arriving while this commits cannot leave the status without the result.
             await self.emit_all([
@@ -1836,6 +1850,7 @@ class Runner:
             result.tool_errors = [*result.tool_errors, *tool_errors]
         if not result.ok and result.quota_reset_at is None:  # only this machine knows the CLI's zone
             result.quota_reset_at = quota_reset_instant(agent.engine.value, result.error)
+        self._shutdown_result(result)
         state = "hibernating" if waiting(result) else ("done" if result.ok else "error")
         extra = ({"jobs": pending, "asks": result.pending_asks} if waiting(result) else
                  ({"error": short(result.error, 200)} if result.error else {}))

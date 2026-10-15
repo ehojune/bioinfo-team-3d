@@ -1112,6 +1112,7 @@ class AgentAdapter(ABC):
         st.error = st.error or self.stderr_error(stderr)
         st.ended_by_guard = ended_after_result
         res = self.finalize(st, ctx, returncode)
+        res.exit_code = returncode
         ctx.commands_ran = st.commands_ran
         if res.error and stderr and ("empty CLI stream" in res.error or "IneligibleTierError" in stderr):
             res.error = f"{res.error}: {short(stderr, 500)}"

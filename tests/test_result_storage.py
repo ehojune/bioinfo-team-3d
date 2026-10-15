@@ -181,8 +181,6 @@ async def test_mock_request_reaches_editor_and_fake_github(tmp_path, monkeypatch
         if ev.get("type") == "approval.requested":
             card = ev["data"]
             cards.append(card)
-            if card["kind"] == "result_publish":
-                hub.review_done(card["request_id"])
             storage = {"mode": "new", "repo": "study", "visibility": "private"} if card.get("detail", {}).get("storage") else None
             asyncio.create_task(hub.resolve_approval(card["id"], True, "ok", storage=storage))
     hub.publish = tap
@@ -194,6 +192,9 @@ async def test_mock_request_reaches_editor_and_fake_github(tmp_path, monkeypatch
         jobs.append(asyncio.create_task(runner.run_forever()))
         await _until(lambda: "editor" in hub.agents, 15)
         rid = hub.create_request(RequestIn(text="Compare public studies"))
+        await _until(lambda: hub.requests[rid].get("status") == "done", 60)
+        assert not any(c["kind"] == "result_publish" for c in cards)
+        hub.review_done(rid)
         await _until(lambda: (hub.requests[rid].get("result_storage") or {}).get("status") in {"published", "failed"}, 60)
         saved = hub.requests[rid]["result_storage"]
         assert saved["status"] == "published", saved
@@ -219,7 +220,7 @@ async def test_decline_and_restricted_request_never_upload(tmp_path, monkeypatch
     hub = Hub(tmp_path)
     service = ResultStorage(hub, fake_github(calls, exists=True))
     await service.select("req_test", {"mode": "existing", "repo": "owner/study"})
-    hub.requests["req_test"].update(status="done", report="result")
+    hub.requests["req_test"].update(status="done", report="result", pi_reviewed_at=1)
     async def decline(**kw):
         return {"approved": False}
     hub.request_approval = decline

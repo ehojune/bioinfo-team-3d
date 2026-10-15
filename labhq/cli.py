@@ -1359,15 +1359,21 @@ async def _run_runner_with_interrupts(runner, diagnostics=None) -> None:
         if not (active or jobs) or (last_warning and now - last_warning <= 10):
             if diagnostics:
                 diagnostics.note_signal(_signum)
+            runner._stopping = True
             raise KeyboardInterrupt
         last_warning = now
         print(f"진행 중인 task {len(active)}개, 감시 중인 HPC job {len(jobs)}개: {', '.join(active + jobs)}. "
               "10초 안에 Ctrl+C를 다시 누르면 종료합니다.", file=sys.stderr, flush=True)
 
+    from .interruption import watch_shutdown_signals
+    restore_signals = watch_shutdown_signals(lambda: setattr(runner, "_stopping", True), interrupt=False)
+    # Keep the interactive handler last. SIGTERM/SIGHUP mark an external shutdown;
+    # SIGINT still warns once while work is active and exits on the second press.
     signal.signal(signal.SIGINT, on_interrupt)
     try:
         await runner.run_forever()
     finally:
+        restore_signals()
         signal.signal(signal.SIGINT, previous)
         runner.stop()
 
@@ -1757,6 +1763,9 @@ def main(argv: list[str] | None = None) -> None:
     note = sub.add_parser("note", help="send a note to later stages of a running request")
     note.add_argument("request_id")
     note.add_argument("text")
+    request_p = sub.add_parser("request", help="correct a request with recorded shutdown evidence")
+    request_p.add_argument("action", choices=("mark-interrupted",))
+    request_p.add_argument("request_id")
     cancel = sub.add_parser("cancel", help="cancel a request: stop its tasks, waits and cards, keep partial results")
     cancel.add_argument("request_id")
     task_p = sub.add_parser("task", help="steer, pause, resume or halt one running task (#59)")
@@ -1964,6 +1973,9 @@ def main(argv: list[str] | None = None) -> None:
             @app.on_event("startup")
             async def install_loop_diagnostics():
                 diagnostics.attach_loop()
+                # Uvicorn has installed its handlers by startup; preserve its exit path.
+                from .interruption import watch_shutdown_signals
+                watch_shutdown_signals(lambda: setattr(app.state.hub, "stopping", True))
 
             _claim_or_exit(s, "gateway")
             try:
@@ -2074,6 +2086,9 @@ def main(argv: list[str] | None = None) -> None:
     elif args.cmd == "storage":
         result = _api(s, "POST", f"/api/requests/{args.id}/storage", json={})
         print(f"{args.id}: 저장 위치 카드 {result['id']} — 웹에서 저장 위치를 골라 주세요.")
+    elif args.cmd == "request":
+        result = _api(s, "POST", f"/api/requests/{args.request_id}/mark-interrupted")
+        print(f"{args.request_id}: {result['status']}")
     elif args.cmd == "review-done":
         target = ({"revision": args.revision, "target_sha256": args.sha256,
                    "decision": "rejected" if args.reject else "accepted"}

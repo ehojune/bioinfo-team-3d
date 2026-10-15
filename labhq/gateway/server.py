@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field, field_validator
 from ..integrations.github import ProjectReporter
 from ..intake import MAX_REFERENCES, Reference, effective_references
 from ..instance_guard import public_identity
+from ..interruption import ShutdownInterrupted
 from ..integrations.rounds import RoundRecorder, environment_snapshot, is_research_event, is_research_task
 from ..integrations.visibility import dev_log_visibility
 from ..login import login_command
@@ -247,9 +248,12 @@ class SavedResults(dict):
 
 
 class Hub:
+    result_review_required = True
+
     def __init__(self, settings: Settings, github_transport: httpx.AsyncBaseTransport | None = None):
         self.s = settings
         self.session_started_at = time.time()
+        self.stopping = False
         self.store = StateStore(settings.path(settings.gateway.state_dir) / "gateway.sqlite3")
         from ..knowledge.recall import KnowledgeRecall
         self.knowledge = KnowledgeRecall(self)
@@ -366,12 +370,7 @@ class Hub:
                 self.save_request(rid)  # their cards and waiters died with the old process
             if is_active_request(req.get("status")) and req.get("status") not in {
                     "waiting_quota", "waiting_login", "waiting_facilities_fix"}:
-                before, req["status"] = req.get("status"), "interrupted"
-                self.save_request(rid)
-                # An open page learns it without a reload: it reconnects with `since` and replays this (#494).
-                self.events.append(self.store.append_event({"type": "request.status", "ts": time.time(),
-                    "request_id": rid, "data": {"status": "interrupted", "previous": before}},
-                    settings.gateway.event_buffer))
+                self.interrupt_request(rid)
             stale = [f for f in req.get("followups") or [] if is_active_followup(f)]
             for followup in stale:  # its task future died with the old process; the PI can ask again
                 followup.update(status="interrupted", error="gateway restarted before the answer arrived")
@@ -390,14 +389,8 @@ class Hub:
         self.login_notices = {str(entry.get("engine") or "") for req in self.requests.values()
                               for entry in (req.get("login_waits") or {}).values()}
         for rid, req in self.requests.items():
-            if req.get("status") == "interrupted" and not any(
-                a["approval"].get("kind") == "resume" and a["approval"].get("request_id") == rid
-                for a in self.approvals.values()
-            ):
-                approval = self.new_resume_approval(rid)
-                self.events.append(self.store.append_event({"type": "approval.requested", "ts": time.time(),
-                                                             "request_id": rid, "data": approval.model_dump(mode="json")},
-                                                            settings.gateway.event_buffer))
+            if req.get("status") == "interrupted":
+                self.interrupt_request(rid)
         self.orchestrator = Orchestrator(self)
         self.reporter = ProjectReporter(self, settings, github_transport)
         from ..result_storage import ResultStorage
@@ -569,11 +562,58 @@ class Hub:
         elif req.get("status") in HOLD_STATES:
             req["status"] = "running"
 
-    async def _set_status(self, rid: str, status: str) -> None:
+    def interrupt_request(self, rid: str, *, evidence: dict | None = None,
+                          correction: bool = False) -> None:
+        """Commit interruption and one resume card, usable both at startup and on the live loop."""
+        req = self.requests[rid]
+        before = req.get("status")
+        previous = copy.deepcopy(req) if correction else None
+        updated = {**req, "status": "interrupted", "updated_at": time.time()}
+        if evidence is not None:
+            updated["shutdown_evidence"] = evidence
+        if correction:
+            updated.update(pi_review_pending=False, pi_reviewed_at=None)
+            updated.pop("finished_at", None)
+            storage = updated.get("result_storage") or {}
+            if storage:
+                updated["result_storage"] = {key: value for key, value in storage.items()
+                    if key in {"mode", "repo", "visibility", "allow_public", "branch"}}
+                updated["result_storage"]["status"] = "selected"
+        cp4.reconcile(updated)
+        data = {"status": "interrupted", "previous": before}
+        if evidence is not None:
+            data.update(reason="shutdown", evidence=evidence)
+        if correction:
+            data.update(actor="pi", previous=previous)
+        if before != "interrupted" or correction:
+            event = self.store.commit_request_event(rid, updated,
+                {"type": "request.corrected" if correction else "request.status", "ts": time.time(),
+                 "request_id": rid, "data": data}, self.s.gateway.event_buffer)
+            req.clear()
+            req.update(updated)
+            self.events.append(event)
+            self.pending_committed.append((event, tuple(self.clients)))
+        if not any(a["approval"].get("kind") == "resume" and a["approval"].get("request_id") == rid
+                   for a in self.approvals.values()):
+            approval = self.new_resume_approval(rid)
+            event = self.store.append_event({"type": "approval.requested", "ts": time.time(),
+                "request_id": rid, "data": with_approval_copy(approval.model_dump(mode="json"))},
+                self.s.gateway.event_buffer)
+            self.events.append(event)
+            self.pending_committed.append((event, tuple(self.clients)))
+
+    async def _set_status(self, rid: str, status: str, *, evidence: dict | None = None) -> None:
         """A status the gateway sets itself (resume, restart), told to open pages as request.status."""
+        if status == "interrupted":
+            self.interrupt_request(rid, evidence=evidence)
+            await self._send_committed_event()
+            await self.close_publish_cards(rid)
+            return
         req = self.requests[rid]
         before = req.get("status")
         req["status"] = status
+        if status == "failed":
+            await self.close_publish_cards(rid)
         self.save_request(rid)
         if before != status:
             await self.publish({"type": "request.status", "ts": time.time(), "request_id": rid,
@@ -1175,6 +1215,8 @@ class Hub:
         cp4.reconcile(self.requests[rid])
         if is_terminal_request(self.requests[rid].get("status")):  # a finished request is never resumed (#607)
             self.retire_resume_cards(rid, "요청이 끝나 재개 카드를 닫았습니다")
+        if self.requests[rid].get("status") in {"failed", "interrupted"}:
+            asyncio.get_running_loop().create_task(self.close_publish_cards(rid))
         self.requests[rid].update(pi_review_pending=True, pi_reviewed_at=None)
         data = {**data, "pi_review_pending": True, "pi_reviewed_at": None}
         if cp4.enabled(self.requests[rid]):
@@ -1519,9 +1561,6 @@ class Hub:
                 await self._set_status(rid, "interrupted")
                 await self.publish({"type": "request.resume_timeout", "ts": time.time(), "request_id": rid,
                                     "data": {"missing_agents": sorted(missing)}})
-                approval = self.new_resume_approval(rid)
-                await self.publish({"type": "approval.requested", "ts": time.time(), "request_id": rid,
-                                    "data": approval.model_dump(mode="json")})
                 return
             await asyncio.sleep(min(0.1, max(0, deadline - asyncio.get_running_loop().time())))
 
@@ -1562,6 +1601,7 @@ class Hub:
                     not self._same_runner_generation(entry, runner_id, incarnation)):
                 self._abandon_previous_generation(tid, entry)
         self._session_state_changed()
+        self.result_storage.resume_interrupted()
 
     def _record_task_cost(self, rid: str | None, tid: str, result: TaskResult, *,
                           outcome_unknown: bool = False) -> None:
@@ -2931,6 +2971,10 @@ class Hub:
                     await asyncio.wait_for(self.orchestrator.answer_ask(ask, runner_id), remaining)
                 else:
                     await self.orchestrator.answer_ask(ask, runner_id)
+            except ShutdownInterrupted as exc:
+                await self.resolve_ask(ask, runner_id, ask_result(
+                    reason="runner 종료로 상담이 중단됐습니다. 연결된 뒤 다시 요청해 주세요.",
+                    interrupted=True, retryable=True, shutdown_evidence=exc.evidence, **{"from": "labhq"}))
             except asyncio.TimeoutError as exc:
                 if entry.get("facilities_diagnosis"):
                     for tid, prior in self.consult_attempts(ask.id, "facilities"):
@@ -3230,6 +3274,25 @@ class Hub:
             self.requests[rid].update(status="failed", error="resume declined", finished_at=time.time())
             self.schedule_terminal(rid, "request.failed", {"error": "resume declined"})
 
+    async def close_publish_cards(self, rid: str) -> None:
+        for aid in self.result_storage.publish_cards(rid):
+            await self.close_approval(aid, "요청이 중단되거나 대체되어 게시 카드를 닫았습니다")
+
+    async def mark_interrupted(self, rid: str) -> dict:
+        from ..interruption import recorded_shutdown_evidence, shutdown_interruption
+        req = self.requests[rid]
+        if (req.get("result_storage") or {}).get("status") == "published":
+            raise ValueError("이미 게시한 결과가 있어 interrupted로 정정할 수 없습니다. 게시된 결과를 이 명령이 바꾸지 않습니다")
+        evidence = recorded_shutdown_evidence(self.s, req)
+        if req.get("status") != "failed" or req.get("revised_to") or not shutdown_interruption(
+                exit_code=evidence.get("exit_code"), error=evidence.get("error"), stopping=evidence.get("stopping"),
+                cancelled=evidence.get("cancelled")):
+            raise ValueError("종료 당시의 종료 코드와 종료 중 표시가 확인된 failed 요청만 정정합니다")
+        self.interrupt_request(rid, evidence=evidence, correction=True)
+        await self._send_committed_event()
+        await self.close_publish_cards(rid)
+        return {"request_id": rid, "status": "interrupted"}
+
     async def close_approval(self, aid: str, note: str, *, notify_runner: bool = True) -> bool:
         """Close a pending card without a PI answer: whoever waits on it hears "no" with state ``expired``.
 
@@ -3484,6 +3547,8 @@ class Hub:
             if old.get("revised_to") != existing:
                 old["revised_to"] = existing
                 self.save_request(rid)
+            if self.result_storage.publish_cards(rid):
+                asyncio.get_running_loop().create_task(self.close_publish_cards(rid))
             return existing
         text = (str(old.get("text") or "").rstrip() +
                 f"\n\n[CP1 수정 요청 · {rid}] PI가 이전 계획에 남긴 고칠 점:\n{note.strip()}")
@@ -3515,6 +3580,8 @@ class Hub:
         new_rid = self.create_request(body, extra=extra)
         old["revised_to"] = new_rid
         self.save_request(rid)
+        if self.result_storage.publish_cards(rid):
+            asyncio.get_running_loop().create_task(self.close_publish_cards(rid))
         return new_rid
 
     def start_followup(self, rid: str, text: str) -> dict:
@@ -3726,6 +3793,10 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         hub.knowledge.start()
         hub.recover_terminal_deliveries()
         await hub.finish_interrupted_cancels()
+        for rid, req in hub.requests.items():
+            if (req.get("status") == "interrupted" or req.get("revised_to")
+                    or (req.get("status") == "failed" and not req.get("pi_reviewed_at"))):
+                await hub.close_publish_cards(rid)
         hub.recover_pending_bundles()
         await hub.expire_stale_resume_cards()
         hub.recover_final_reviews()
@@ -3739,6 +3810,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
 
     @app.on_event("shutdown")
     async def warn_running_on_shutdown() -> None:
+        hub.stopping = True
         await hub.pi_interpreter.close()
         for timer in hub.final_review_timers.values():
             timer.cancel()
@@ -3919,6 +3991,15 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             raise HTTPException(404)
         try:
             return await hub.result_storage.republish(rid)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.post("/api/requests/{rid}/mark-interrupted", dependencies=[Depends(auth)])
+    async def mark_interrupted(rid: str) -> dict:
+        if rid not in hub.requests:
+            raise HTTPException(404)
+        try:
+            return await hub.mark_interrupted(rid)
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
 

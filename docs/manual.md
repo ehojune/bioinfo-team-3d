@@ -356,6 +356,12 @@ client token으로 인증한 `GET /api/knowledge/search?q=유전자`와 같은 �
 
 ### 요청 수명과 PI 검토
 
+runner만 종료·재시작돼도 gateway는 요청을 `중단됨`으로 저장하고 재개 카드를 한 장 엽니다. 종료 중 task 취소와 재시작 복구 결과에도 종료 근거가 남습니다.
+
+이어 묻기도 `interrupted`로 남아 다시 질문을 받습니다. 상담 질의는 중단 이유와 재시도 안내로 대기를 끝내며, 결과 편집은 편집자 runner가 다시 연결되면 자동으로 재개합니다. 작업 취소·gateway 종료의 asyncio 취소는 그대로 전파합니다.
+
+`labhq request mark-interrupted <id>`는 저장된 종료 근거(종료 코드·취소와 종료 중 표시, 또는 실패 직전 10초 안의 gateway 신호 기록)가 일치하는 failed 요청만 정정하고 재개 카드를 엽니다. 이전 상태는 이벤트에 남기며 근거가 없으면 거부합니다.
+
 실행과 보고서 작성 → **보고서 검토 대기** → PI **검토 완료** 순서입니다. 실패·취소·거부도 결과와 이유를 확인한 뒤 마무리합니다. CLI에서는 `labhq review-done <request_id>`를 씁니다. `status`에 검토 대기가 보이며 `send`·`watch`는 보고서 출력 후 종료합니다. gateway는 실행 결과를 보존하고 PI 확인 시각(`pi_reviewed_at`)·감사 기록·`request.reviewed` 이벤트를 함께 저장합니다. 다시 눌러도 중복 기록하지 않습니다.
 
 ### 단독 처리

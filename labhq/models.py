@@ -324,6 +324,8 @@ class TaskResult(BaseModel):
     pipeline_submission: dict[str, Any] | None = None  # gateway-only handoff; stripped before web publication
     partial_results: bool = False
     revision_failed: str | None = None
+    exit_code: int | None = None
+    shutdown_evidence: dict[str, Any] = {}
     error_kind: str | None = None
     error: str | None = None
     # Epoch seconds of a subscription-quota reset. The runner reads the CLI's clock time in its own zone (#37).

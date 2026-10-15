@@ -10,6 +10,7 @@ import time
 import yaml
 
 from ..models import Task, TaskResult
+from ..interruption import ShutdownInterrupted
 from . import paper2agent, paper_skills, provenance
 
 PLAN_RULE = (
@@ -202,6 +203,8 @@ async def prepare_plan(plan, rid, hub, run):
         try:
             res = await run(task)
             return res.structured if res.ok and isinstance(res.structured, dict) else {"status": "failed"}
+        except ShutdownInterrupted:
+            raise
         except Exception as exc:
             return {"status": "failed", "error": type(exc).__name__}
 
