@@ -44,6 +44,7 @@ from ..research.packs import check_configured_packs
 from ..request_status import is_active_request, is_terminal_request
 from ..settings import Settings
 from ..security import token_matches
+from .. import durable
 from ..store import StateStore
 from ..util import short
 from .shutdown import ShutdownIn, WebShutdown
@@ -3617,6 +3618,9 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         if local_tasks:
             await asyncio.gather(*local_tasks, return_exceptions=True)
         await hub.knowledge.stop()
+        # Every queued durable write finishes before the process goes (#606).
+        if not await durable.adrain(durable.EXIT_DRAIN_S):
+            log.warning("gateway shutdown: durable writes still pending after %.0f s", durable.EXIT_DRAIN_S)
         running = [r["id"] for r in hub.requests.values() if is_active_request(r.get("status"))]
         if running:
             log.warning("gateway shutdown with running requests: %s", ", ".join(running))

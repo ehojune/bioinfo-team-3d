@@ -15,6 +15,7 @@ import re
 import stat
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -23,12 +24,13 @@ from typing import Any
 import websockets
 import yaml
 
+from .. import durable
 from ..adapters import (adapter_preflight_error, get_adapter, is_read_only_task, read_only_profile,
                         read_only_refusal)
 from ..adapters.base import RunContext
 from ..adapters.held_dir import HeldDir
 from ..adapters.owned import (OwnedPathError, is_link, owned_link_error, plain_directory, read_owned,
-                              remove_entry, write_owned)
+                              awrite_owned, remove_entry, write_owned)
 from ..ask_results import read_ask_results, rejected_step
 from ..artifact_policy import unreported_warning_paths
 from ..facilities import fixes as facility_fixes
@@ -203,6 +205,10 @@ def environment_record(rows: list[dict[str, Any]]) -> dict[str, Any]:
 class Runner:
     def __init__(self, settings: Settings):
         self.s = settings
+        # The loop and its thread, noted by `_send_durably`: a message committed on the durable writer thread asks
+        # this loop to reload the outbox queue (#606).
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._loop_thread: threading.Thread | None = None
         self.store = StateStore(settings.path(settings.runner.state_dir) / f"runner-{settings.runner.id}.sqlite3")
         saved_incarnation = self.store.all("runner_meta").get("incarnation")
         self.incarnation = saved_incarnation["id"] if saved_incarnation else uuid.uuid4().hex
@@ -292,7 +298,11 @@ class Runner:
             os.umask(0o077)  # task inputs created by this runner and its agents stay private
         self.registry.load()
         log.info("runner %s: %d agents", self.s.runner.id, len(self.registry.agents))
-        await asyncio.gather(self.broker.serve(), self._connection_loop(), self._job_watch_loop())
+        try:
+            await asyncio.gather(self.broker.serve(), self._connection_loop(), self._job_watch_loop())
+        finally:
+            # Writes queued by the tasks that were just cancelled still finish (#606).
+            await durable.adrain(durable.EXIT_DRAIN_S)
 
     def stop(self) -> None:
         self._stopping = True
@@ -303,9 +313,39 @@ class Runner:
     def send(self, obj: dict) -> None:
         if obj.get("type") not in {"runner.roster"}:
             self.store.enqueue(obj, self.s.runner.outbox_limit)
-            self.reload_outbox()
+            self._reload_outbox_after_commit()
         else:
             self.outbox.put_nowait(json.dumps(obj, ensure_ascii=False, default=str))
+
+    def _reload_outbox_after_commit(self) -> None:
+        # On the loop's own thread this is the old straight call. On the durable writer thread (`_send_durably`) the
+        # reload is queued for the loop, and runs before the awaiting caller resumes.
+        loop = self._loop
+        if loop is not None and threading.current_thread() is not self._loop_thread:
+            loop.call_soon_threadsafe(self.reload_outbox)
+        else:
+            self.reload_outbox()
+
+    async def _send_durably(self, obj: dict, *, before: tuple | None = None, after: tuple | None = None) -> None:
+        """`send` for a coroutine (#606): `before`, the message and `after` are one job on the durable writer thread,
+        in that order, so the loop is not held for their fsyncs and a cancelled caller cannot leave one of them
+        undone. `before` and `after` are `(kind, key, body)` rows for the state table. The message still goes through
+        `self.send`, the one place every outgoing message passes."""
+        self._loop, self._loop_thread = asyncio.get_running_loop(), threading.current_thread()
+        if obj.get("type") in {"runner.roster"} and before is None and after is None:
+            self.send(obj)  # not stored: nothing to wait for
+            return
+        await durable.run(self.store.lane, self._send_now, obj, before, after)
+
+    def _send_now(self, obj: dict, before: tuple | None, after: tuple | None) -> None:
+        if before:
+            self.store.put(*before)
+        self.send(obj)
+        if after:
+            self.store.put(*after)
+
+    async def asend(self, obj: dict) -> None:
+        await self._send_durably(obj)
 
     def reload_outbox(self, preserve_roster: bool = True) -> None:
         roster = []
@@ -325,9 +365,9 @@ class Runner:
             ws.append_event(d)
         elif ev.task_id in self.event_buffers:
             self.event_buffers[ev.task_id].append(d)
-        self.send(d)
-        if ev.type == "task.result" and ev.task_id:
-            self.store.put("accepted_task", ev.task_id, {"state": "finished"})
+        finished = (("accepted_task", ev.task_id, {"state": "finished"})
+                    if ev.type == "task.result" and ev.task_id else None)
+        await self._send_durably(d, after=finished)
 
     async def _connection_loop(self) -> None:
         url = f"{self.s.gateway.url.rstrip('/')}/ws/runner?token={self.s.gateway.runner_token}"
@@ -424,20 +464,21 @@ class Runner:
         if typ == "task.dispatch":
             task = Task.model_validate(msg["task"])
             prior = self.store.get("accepted_task", task.id)
-            if prior is None:
-                self.store.put("accepted_task", task.id,
-                               {"state": "running", "task": task.model_dump(mode="json")})
-            self.send({"type": "task.accepted", "task_id": task.id, "request_id": task.request_id})
+            await self._send_durably(
+                {"type": "task.accepted", "task_id": task.id, "request_id": task.request_id},
+                before=(("accepted_task", task.id, {"state": "running", "task": task.model_dump(mode="json")})
+                        if prior is None else None))
             if prior is None:
                 self.tasks[task.id] = asyncio.create_task(self._run_guarded(task))
             elif prior.get("state") == "running" and task.id not in self.tasks:
                 has_result = any(e.get("type") == "task.result" and e.get("task_id") == task.id
                                  for e in self.store.pending())
                 if not has_result:
-                    self.send({"type": "task.result", "task_id": task.id, "agent_id": task.agent_id,
-                                "request_id": task.request_id,
-                                "data": self._interrupted_result(task.id, task.agent_id).model_dump(mode="json")})
-                    self.store.put("accepted_task", task.id, {"state": "finished"})
+                    await self._send_durably(
+                        {"type": "task.result", "task_id": task.id, "agent_id": task.agent_id,
+                         "request_id": task.request_id,
+                         "data": self._interrupted_result(task.id, task.agent_id).model_dump(mode="json")},
+                        after=("accepted_task", task.id, {"state": "finished"}))
         elif typ == "task.cancel":
             t = self.tasks.get(msg.get("task_id", ""))
             if t:
@@ -451,12 +492,12 @@ class Runner:
                 if task_id and not (run and run.done()):  # an answer after the task ended must not revive it
                     await self.emit(Event(type="agent.status", task_id=task_id, agent_id=agent_id,
                                           request_id=self.task_req.get(task_id), data={"state": "working"}))
-            self.send({"type": "approval.ack", "id": msg["id"]})
+            await self.asend({"type": "approval.ack", "id": msg["id"]})
         elif typ == "ask.resolved":
             self.broker.resolve_ask(msg["id"], msg.get("answer") or {})
-            self.send({"type": "ask.ack", "id": msg["id"]})
+            await self.asend({"type": "ask.ack", "id": msg["id"]})
         elif typ == "runner.ack":
-            self.store.ack(int(msg["runner_seq"]))
+            await self.store.aack(int(msg["runner_seq"]))
         elif typ == "registry.reload":
             self.registry.load()
             self._send_roster()
@@ -490,9 +531,10 @@ class Runner:
             reason = "unknown task" if error is None else f"not applied: {type(error).__name__}"
             if error is not None:
                 log.warning("task %s control %s not applied: %s", tid, msg.get("action"), error)
-            self.send({"type": "control.nack", "task_id": tid, "action": msg.get("action"),
-                       "steer_id": (msg.get("steer") or {}).get("id") if isinstance(msg.get("steer"), dict) else None,
-                       "reason": reason})
+            await self.asend({"type": "control.nack", "task_id": tid, "action": msg.get("action"),
+                              "steer_id": ((msg.get("steer") or {}).get("id")
+                                           if isinstance(msg.get("steer"), dict) else None),
+                              "reason": reason})
             return
         base["agent_id"] = self.controls.agent_of(tid) or base["agent_id"]
         await self.emit(Event(type="agent.control", data=summary, **base))
@@ -947,8 +989,8 @@ class Runner:
         if not changed:
             return result
         # Labels stand in for local paths in the error and the alert; this local manifest maps them back.
-        ws.update_run(task_id, read_only_changes=changed,
-                      read_only_roots={label: str(path) for label, path in watch.roots})
+        await ws.aupdate_run(task_id, read_only_changes=changed,
+                             read_only_roots={label: str(path) for label, path in watch.roots})
         shown = ", ".join(changed[:8]) + (f" 외 {len(changed) - 8}개" if len(changed) > 8 else "")
         await emit("agent.log", {"level": "alert", "text": (
             f"읽기 전용 실행이 파일을 바꿨습니다: {shown}. 되돌리지 않았으니 확인하세요. "
@@ -1173,15 +1215,15 @@ class Runner:
             if task.meta.get("kind") == "facilities_fix":
                 started = preclean_started or time.time()
                 proposal = task.meta.get("facilities_fix")
-                ws.update_run(task.id, started_at=started, kind="facilities_fix",
-                              fix_id=proposal.get("fix_id") if isinstance(proposal, dict) else None)
+                await ws.aupdate_run(task.id, started_at=started, kind="facilities_fix",
+                                     fix_id=proposal.get("fix_id") if isinstance(proposal, dict) else None)
                 record = preclean_record or await facility_fixes.execute(proposal, ws.dir)
                 result = TaskResult(task_id=task.id, agent_id=agent.id, ok=bool(record.get("ok")),
                                     text=record.get("action") or "", cost_usd=0.0, cost_known=True,
                                     error=record.get("error"), facilities_fix=record,
                                     workdir=str(ws.dir), workdir_id=ws.dir.name)
-                ws.update_run(task.id, ended_at=time.time(), ok=result.ok, error=result.error,
-                              cost_usd=0.0, cost_known=True, facilities_fix=record)
+                await ws.aupdate_run(task.id, ended_at=time.time(), ok=result.ok, error=result.error,
+                                     cost_usd=0.0, cost_known=True, facilities_fix=record)
                 result.provenance = ws.provenance()
                 status = "완료" if result.ok else "실패"
                 await emit("agent.log", {"level": "info" if result.ok else "alert",
@@ -1268,7 +1310,7 @@ class Runner:
                 task = ws.task = task.model_copy(update={"prompt": rewrite(task.prompt),
                                                          "context": rewrite(task.context)})
             # Reference tables the prompt names by file (topic checklists, #420), written before TASK.md.
-            for name in ws.write_reference_files(task.meta.get("workspace_files")):
+            for name in await ws.awrite_reference_files(task.meta.get("workspace_files")):
                 await emit("agent.log", {"level": "warn", "text": f"참고 파일 거부: {name}"})
             if task.meta.get("paper_skills"):
                 plugin, skill_warnings = ws.install_paper_skills(task.meta["paper_skills"], self.s.runner.id)
@@ -1280,7 +1322,7 @@ class Runner:
                 task = ws.task = task.model_copy(update={"context": task.context + "\n\n" + (
                     "Use the request's paper advice in .agents/skills/paper-*/SKILL.md; cite the paper when used."
                     if plugin else "논문 스킬 장착 불가; 제공된 선행 연구 요약으로 계속하세요.")})
-            prompt = ws.write_task_md()
+            prompt = await ws.awrite_task_md()
             if agent.contract and agent.contract.skill_dir:
                 skill_error = ws.install_skill(Path(agent.contract.skill_dir))
                 if skill_error:
@@ -1377,7 +1419,7 @@ class Runner:
                     records, _note = await asyncio.to_thread(
                         ws.scan_output_records, zones, self.s.runner.reference_scan_max_entries,
                         self.s.runner.reference_scan_max_depth, self.s.runner.output_hash_max_bytes)
-                    ws.update_run(task.id, environment_record=environment_record(records))
+                    await ws.aupdate_run(task.id, environment_record=environment_record(records))
                     return
                 output_records, note = await asyncio.to_thread(
                     ws.scan_output_records, zones, self.s.runner.reference_scan_max_entries,
@@ -1394,9 +1436,9 @@ class Runner:
                     if output_before.get(row["path"]) != output_identity(row)
                 ]
                 incomplete = "; ".join(dict.fromkeys(output_scan_notes)) or None
-                ws.update_run(task.id, observed_outputs=observed_outputs,
-                              environment_record=environment_record(output_records),
-                              **({"observed_outputs_incomplete": incomplete} if incomplete else {}))
+                await ws.aupdate_run(task.id, observed_outputs=observed_outputs,
+                                     environment_record=environment_record(output_records),
+                                     **({"observed_outputs_incomplete": incomplete} if incomplete else {}))
 
             engine_settings = claude_deny_private(claude_deny_links(claude_read_only(
                 claude_settings(self.s.policy), [d for d in [*read_dirs, *(extra_dirs if read_only else [])]
@@ -1482,11 +1524,11 @@ class Runner:
                 return False
 
             ctx.wait_ready = wait_ready
-            ws.update_run(task.id, started_at=time.time(), runner_id=self.s.runner.id,
-                          engine=agent.engine.value, model=agent.model,
-                          engine_cli_version=(self.engine_versions or {}).get(agent.engine.value),
-                          resume_of=task.resume_session_id, kind=task.meta.get("kind"),
-                          **({"reference_dirs": read_dirs} if read_dirs else {}))
+            await ws.aupdate_run(task.id, started_at=time.time(), runner_id=self.s.runner.id,
+                                 engine=agent.engine.value, model=agent.model,
+                                 engine_cli_version=(self.engine_versions or {}).get(agent.engine.value),
+                                 resume_of=task.resume_session_id, kind=task.meta.get("kind"),
+                                 **({"reference_dirs": read_dirs} if read_dirs else {}))
             self.active_roots[task.id] = (read_only, [ws.dir.resolve(), *(Path(d).resolve() for d in extra_dirs)])
             try:
                 refused = watch.take_baseline() if watch else None
@@ -1498,8 +1540,9 @@ class Runner:
                         result = await adapter.run(ctx)
                     except BaseException:  # cancelled or crashed after the CLI was stopped: still compare
                         # Keep what the failed step read; the after-run comparison is skipped (PR #442 review).
-                        ws.update_run(task.id, input_files=input_files,
-                                      **({"input_files_incomplete": "; ".join(input_notes)} if input_notes else {}))
+                        await ws.aupdate_run(task.id, input_files=input_files,
+                                             **({"input_files_incomplete": "; ".join(input_notes)}
+                                                if input_notes else {}))
                         await collect_observed_outputs()
                         if watch and watch.baseline is not None:
                             await self._read_only_verdict(TaskResult(task_id=task.id, agent_id=agent.id, ok=False),
@@ -1554,8 +1597,8 @@ class Runner:
         if changed:
             input_notes.append(f"입력 파일 {changed}개가 단계 실행 중에 바뀌었습니다(기록된 hash는 실행 전 내용)")
         input_notes = list(dict.fromkeys([*input_notes, *after_notes]))
-        ws.update_run(task.id, input_files=input_files,
-                      **({"input_files_incomplete": "; ".join(input_notes)} if input_notes else {}))
+        await ws.aupdate_run(task.id, input_files=input_files,
+                             **({"input_files_incomplete": "; ".join(input_notes)} if input_notes else {}))
         for note in input_notes:
             await emit("agent.log", {"level": "warn", "text": note})
         declared = task.meta.get("outputs", [])
@@ -1647,15 +1690,17 @@ class Runner:
             result = await asyncio.to_thread(paper_skill_build.finish, result)
         try:
             for name in (f"RESULT_{task.id}.md", "RESULT.md"):  # never through a link the agent made (#165)
-                write_owned(ws.dir, f"outputs/{name}", result.text or "")
+                await awrite_owned(ws.dir, f"outputs/{name}", result.text or "")
         except OwnedPathError:
             error = "작업 폴더의 outputs가 실행 중에 링크로 바뀌어 결과 파일을 쓰지 않았습니다"
             await emit("agent.log", {"level": "alert", "text": error})
             result = result.model_copy(update={"ok": False, "error": error})
-        ws.update_run(task.id, ended_at=time.time(), ok=result.ok, error=result.error, cost_usd=result.cost_usd,
-                      cost_known=result.cost_known if result.cost_known is not None else result.cost_usd is not None,
-                      usage=result.usage, usage_known=result.usage_known,
-                      session_id=result.session_id, pending_jobs=pending)
+        await ws.aupdate_run(task.id, ended_at=time.time(), ok=result.ok, error=result.error,
+                             cost_usd=result.cost_usd,
+                             cost_known=result.cost_known if result.cost_known is not None
+                             else result.cost_usd is not None,
+                             usage=result.usage, usage_known=result.usage_known,
+                             session_id=result.session_id, pending_jobs=pending)
         result.provenance = ws.provenance()
         if task.meta.get("paper_skills"):
             ws.clear_paper_skills()  # before task.result can release a dependent step

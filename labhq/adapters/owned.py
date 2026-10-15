@@ -17,6 +17,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path, PurePath
 
+from .. import durable
 from .held_dir import HeldDir, NotPlainFolder
 
 # Folders labhq creates in a workspace and the files it writes there (TaskWorkspace, the adapters' prepare(), the
@@ -111,7 +112,21 @@ def _held_parent(root: Path, relative: PurePath):
 
 
 def write_owned(root: Path, relative: str, text: str) -> Path:
-    """Replace one labhq file in a workspace. A link at the file itself is replaced, not followed."""
+    """Replace one labhq file in a workspace. A link at the file itself is replaced, not followed.
+
+    While the files' durable writer (labhq.durable) has work queued this queues behind it, so it cannot overtake
+    a write; otherwise it writes directly. A coroutine uses `awrite_owned` instead, which does not stop
+    the event loop for the fsync (#606)."""
+    return durable.call(durable.FILES, _write_owned_now, root, relative, text)
+
+
+async def awrite_owned(root: Path, relative: str, text: str) -> Path:
+    """`write_owned` for a coroutine: the fsync runs on the durable writer thread, the caller resumes once the file
+    is replaced and its folder flushed, and the event loop serves other work meanwhile."""
+    return await durable.run(durable.FILES, _write_owned_now, root, relative, text)
+
+
+def _write_owned_now(root: Path, relative: str, text: str) -> Path:
     rel = PurePath(relative)
     target = Path(root) / rel
     temporary = f".{rel.name}.labhq-{uuid.uuid4().hex}.tmp"

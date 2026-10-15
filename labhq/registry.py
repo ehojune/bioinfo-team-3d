@@ -13,7 +13,7 @@ from pathlib import Path
 import yaml
 
 from .models import AgentSpec, Employment
-from .util import atomic_write_text
+from .util import aatomic_write_text, atomic_write_text
 
 log = logging.getLogger(__name__)
 
@@ -87,6 +87,21 @@ class Registry:
         return out
 
     # ----- contract lifecycle -----
+    async def asave_contract(self, spec: AgentSpec) -> Path:
+        """`save_contract` for a coroutine: the two fsyncs run on the durable writer thread (#606). The roster
+        dicts change here, on the loop, only after both files are written."""
+        assert spec.employment == Employment.contract and spec.contract
+        p = self.contract_dir / f"{spec.id}.yaml"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        text = _dump(spec)
+        await aatomic_write_text(p, text)
+        tdir = self.talent_dir / self._slug(spec)
+        tdir.mkdir(parents=True, exist_ok=True)
+        await aatomic_write_text(tdir / "contract.yaml", text)
+        self.agents[spec.id] = spec
+        self.paths[spec.id] = p
+        return p
+
     def save_contract(self, spec: AgentSpec) -> Path:
         assert spec.employment == Employment.contract and spec.contract
         p = self.contract_dir / f"{spec.id}.yaml"
