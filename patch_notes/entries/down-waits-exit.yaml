@@ -10,3 +10,6 @@ rows:
 - sha: 5c2ff24
   at: 2026-10-15 19:06
   text: Windows 종료 대기 test의 process 확인을 mock으로 격리해 Linux CI에서도 같은 계약을 검증하게 했다.
+- sha: f5cf6bc
+  at: 2026-10-16 00:55
+  text: Windows venv launcher가 자식 종료 뒤 끝나는 동안의 Access denied를 종료 완료로 판정하게 했다.
