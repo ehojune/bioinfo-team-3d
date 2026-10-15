@@ -1,0 +1,6 @@
+pr: 645
+rows:
+- sha: a9e286e
+  at: 2026-10-15 19:06
+  text: OKF Loremaster의 인용문·수치 원문 대조기를 Unicode·Python 3.10에 맞춰 이식하고 Apache-2.0 출처를
+    동봉
