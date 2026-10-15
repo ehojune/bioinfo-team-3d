@@ -92,7 +92,7 @@ async def test_managed_tree_helper_change_invalidates_broker_grant(layout):
     helper.write_text('def main(): pass\n', encoding='utf-8')
     cards = []
     def scope(req):
-        return script_approval_scope('Bash', {'command': f'python "{script.as_posix()}"'},
+        return script_approval_scope('Bash', {'command': f'uv run --no-project --no-config "{script.as_posix()}"'},
                     str(work), [str(root)], [str(work), str(skills)], managed_roots=[str(skills)])
     async def card(req):
         cards.append(req)
@@ -123,7 +123,7 @@ def test_scope_tracks_entire_tree_and_provenance(layout, change):
     managed = [str(skills)]
     writable = []
     def scope():
-        return script_approval_scope('Bash', {'command': f'python "{script.as_posix()}"'},
+        return script_approval_scope('Bash', {'command': f'uv run --no-project --no-config "{script.as_posix()}"'},
                     str(work), [str(root)], [str(work), str(skills)],
                     managed_roots=managed, writable_roots=writable)
     first = scope()
@@ -145,3 +145,65 @@ def test_scope_tracks_entire_tree_and_provenance(layout, change):
     assert scope() != first
     if change in {'hardlink', 'junction', 'writable', 'unmanaged'}:
         assert scope() is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('tool', ['Bash', 'PowerShell'])
+@pytest.mark.parametrize('launcher,reusable', [
+    ('uv run', False),
+    ('uv run --no-project', False),
+    ('uv run --no-config', False),
+    ('python', False),
+    ('python3', False),
+    ('uvx', False),
+    ('uv run --no-project --no-config', True),
+    ('uv run --no-config --no-project', True),
+])
+async def test_project_discovery_cannot_reuse_task_grant(layout, tool, launcher, reusable):
+    from labhq.models import ApprovalRequest
+    from labhq.runner.approvals import Broker
+    from labhq.workspace_commands import script_approval_scope
+    _, root, work, skills = layout
+    script = skills / 'main.py'
+    script.write_text('pass\n', encoding='utf-8')
+    data = {'command': f'{launcher} "{script.as_posix()}"'}
+    cards = []
+    def scope(req):
+        return script_approval_scope(tool, data, str(work), [str(root)],
+                                     [str(work), str(skills)], managed_roots=[str(skills)])
+    async def card(req):
+        cards.append(req)
+        broker.resolve(req.id, True, choice='allow_task_class')
+    async def noop(body): pass
+    broker = Broker(0, card, noop, noop, tool_scope=scope)
+    def request():
+        return ApprovalRequest(task_id='task', agent_id='worker', kind='tool_permission', summary='fixture')
+    assert gate(layout, tool, data).action == 'ask'
+    assert (await broker.request_approval(request()))['approved']
+    # Only classify: never run uv, install dependencies, or execute this writable backend.
+    (work / 'pyproject.toml').write_text(
+        '[project]\nname = "fixture"\nversion = "0.0.0"\n'
+        '[build-system]\nrequires = []\nbuild-backend = "backend"\nbackend-path = ["."]\n',
+        encoding='utf-8')
+    (work / 'backend.py').write_text('raise RuntimeError("writable backend")\n', encoding='utf-8')
+    (work / 'uv.toml').write_text('offline = true\n', encoding='utf-8')
+    assert (await broker.request_approval(request()))['approved']
+    assert len(cards) == (1 if reusable else 2)
+    assert bool(broker.scope_grants) is reusable
+    assert bool(scope(None)) is reusable
+
+
+@pytest.mark.parametrize('tool', ['Bash', 'PowerShell'])
+@pytest.mark.parametrize('prefix', [
+    'UV_PROJECT=project ', 'UV_CONFIG_FILE=uv.toml ', 'PYTHONPATH=helpers ',
+    'env UV_PROJECT=project ', '$env:UV_PROJECT="project"; ',
+])
+def test_environment_prefix_never_creates_task_grant(layout, tool, prefix):
+    from labhq.workspace_commands import script_approval_scope
+    _, root, work, skills = layout
+    script = skills / 'main.py'
+    script.write_text('pass\n', encoding='utf-8')
+    data = {'command': f'{prefix}uv run --no-project --no-config "{script.as_posix()}"'}
+    assert gate(layout, tool, data).action == 'ask'
+    assert script_approval_scope(tool, data, str(work), [str(root)],
+                                [str(work), str(skills)], managed_roots=[str(skills)]) is None

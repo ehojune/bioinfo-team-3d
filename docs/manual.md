@@ -787,9 +787,9 @@ HPC 제출(코어·시간 기준), 위험한 셸 명령, 예산 초과, 파견�
 | 실제 작업 폴더 안 `rm -rf tmp/`, `.tmp/paper-review`, 절대 경로 삭제 | 불필요 |
 | 폴더 자체 삭제, `..`, link·junction·hard link 쓰기, 자격 증명, 다른 작업 경로 | 확인 |
 | 문법 밖 명령·실행 중에 만드는 경로 | 확인 |
-| 직원 쓰기 범위 밖의 관리 스킬 실행 | **이 작업 동안 같은 부류 허용** 선택 가능 |
+| 쓰기 범위 밖 관리 스킬을 `uv run --no-project --no-config <script.py>`로 직접 실행 | **이 작업 동안 같은 부류 허용** 선택 가능 |
 
-묶음 허용은 관리 스킬 전체 트리 hash·진입 경로·도구를 매번 확인하며 작업 종료·runner 재시작 때 만료됩니다. 작업 폴더 스크립트에는 주지 않습니다. [문법·재생 근거](reference/tool-approval-grammar.md).
+묶음 허용은 스킬 전체 트리 hash·진입 경로·도구를 매번 확인하며 작업 종료·runner 재시작 때 만료됩니다. 다른 `uv run`·`python`·`uvx`, 환경 변수 접두, 작업 폴더 스크립트는 매번 카드입니다. [문법·재생 근거](reference/tool-approval-grammar.md).
 
 Claude 직원의 맨 `Write`·`Edit`는 작업·project·upstream 폴더의 `Edit(//…/**)` 규칙으로 좁혀 사전 허용합니다. 링크·junction으로 적힌 폴더는 적힌 표기와 실제 경로에 규칙을 하나씩 둡니다(Claude는 둘 다 맞아야 허용). 그 밖 쓰기는 승인 게이트를 거칩니다(#219). 셸 쓰기 대상이 `~`로 시작하면 그 셸의 home으로 펼쳐 쓰기 허용 폴더와 대조합니다. Bash는 `HOME`(없으면 `USERPROFILE`과 `HOMEDRIVE`+`HOMEPATH`), PowerShell은 Windows에서 `USERPROFILE`과 `HOMEDRIVE`+`HOMEPATH`를 모두 봅니다. `~user`·`~+`·`~-`처럼 펼 수 없으면 묻고, 읽기 경로는 그대로 둡니다(#521).
 

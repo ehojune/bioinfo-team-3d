@@ -269,12 +269,12 @@ def script_approval_scope(tool: str, data: dict, workdir: str, private_paths, op
     if tool not in {'Bash', 'PowerShell'} or not parts or len(parts) != 1:
         return None
     words = parts[0]
-    if words[:2] == ['uv', 'run']:
-        prefix, args = 'uv run', words[2:]
-    elif words and words[0] in {'python', 'python3'}:
-        prefix, args = words[0], words[1:]
-    else:
+    # The tree digest cannot cover uv's writable cwd project/backend or config discovery.
+    # Keep a closed launcher grammar: both discovery opt-outs, then the managed script.
+    if words[:2] != ['uv', 'run'] or len(words) < 5 or set(words[2:4]) != {
+            '--no-project', '--no-config'}:
         return None
+    prefix, args = 'uv run --no-project --no-config', words[4:]
     if not args or not args[0].endswith('.py'):
         return None
     script = args[0] if os.path.isabs(args[0]) else os.path.join(workdir, args[0])

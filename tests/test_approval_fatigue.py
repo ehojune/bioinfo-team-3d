@@ -139,7 +139,7 @@ def test_script_group_rechecks_every_operand_and_script_bytes(layout):
     script = skills / 'bundle.py'
     script.write_text('print("fixture")', encoding='utf-8')
     def scope(args):
-        return script_approval_scope('Bash', {'command': f'uv run "{script.as_posix()}" {args}'},
+        return script_approval_scope('Bash', {'command': f'uv run --no-project --no-config "{script.as_posix()}" {args}'},
                                      str(work), [str(root)], [str(work), str(skills)],
                                      managed_roots=[str(skills)])
     first = scope('build --work .tmp/a')
@@ -231,7 +231,7 @@ def test_runner_uses_live_context_and_rechecks_private_boundaries(layout):
                           private_enabled=True)
     runner = SimpleNamespace(s=cfg, tool_contexts={'task': ctx}, active_roots={'task': (False, [work])})
     req = ApprovalRequest(task_id='task', agent_id='worker', kind='tool_permission', summary='fixture',
-                          detail={'tool_name': 'Bash', 'tool_input': {'command': f'uv run "{script.as_posix()}" build --work .tmp/a'}})
+                          detail={'tool_name': 'Bash', 'tool_input': {'command': f'uv run --no-project --no-config "{script.as_posix()}" build --work .tmp/a'}})
     assert Runner._tool_approval_scope(runner, req)
     req.detail['tool_input']['command'] += ' ../other'
     assert Runner._tool_approval_scope(runner, req) is None
