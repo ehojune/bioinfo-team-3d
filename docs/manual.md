@@ -364,6 +364,23 @@ CSO는 설치·예산·통제 데이터·HPC 같은 권한/비용/접근, PI만 
 최종 보고서는 `report`(결론과 권고 → 결과 → 방법 요약 → 한계)와 `report_appendix`(실행 기록)로 나뉩니다. 본문은 한 번 읽는 분량(약 4,000자, 결과가 요구할 때만 더 길게)을 목표로 하고, 수치는 `결과`에 한 번만 적습니다(#373, 벤치 C t6 본문 12,600자). 본문에는 중요한 경고만 한 줄과 "실행 기록 참고"를 남기고, 단계 상태·산출 경로·도구 실패·미해결 리뷰 원문·비용·claim check는 부록에 둡니다. API·이벤트·CLI는 두 필드를 보내고, 웹은 본문 아래 접힌 실행 기록을 보여 줍니다. GitHub 프로젝트 보고와 감사 번들은 `report.md`·`report_appendix.md`를 함께 남기며, claim anchor 검사는 `report`만 읽습니다. 분석 단계는 실행 스크립트를 `outputs/scripts/`, 결과를 좌우한 대응표·gene set 사본을 `outputs/reference/`에 선언·저장하고, `.tmp`에는 버려도 되는 파일만 둡니다. 스크립트를 돌린 단계는 그 스크립트를 실행한 인터프리터로 판과 패키지 목록(`<인터프리터> --version`·`<인터프리터> -m pip freeze`)을 `outputs/env/<단계 id>.txt`에 남깁니다. 앞 환경 단계의 lock이 쓴 것을 그대로 덮으면 생략하고, 직접 설치한 패키지(`./.pylib` 등)는 언제나 자기 기록에 넣습니다. 요청 묶음의 재현 등급은 이 기록이 있어야 `replayable`이 됩니다. 방법 요약에는 seed와 도구·데이터 버전을 적습니다.
 `outputs/env/`·`outputs/scripts/`·`outputs/reference/` 파일은 선언에서 빠져도 `unreported_outputs`에 남아 요청 묶음·MANIFEST·RO-Crate에 들어갑니다. 같은 작업 폴더에서 retry·질문 답 뒤 재실행·리뷰 수정을 해도 앞 실행 목록을 이어받되, 새 실행에서 정식 산출로 보고한 파일은 뺍니다. runner 로그·CP2 카드·`labhq verify`처럼 사람이 보는 미보고 산출 경고에서만 숨깁니다.
 
+### 디스크 쓰기와 느린 디스크
+
+labhq는 상태를 쓸 때마다 디스크에 확실히 내려갈 때까지(fsync) 기다린 뒤 다음 단계로 갑니다. 요청 하나가 흐르는 동안 이런 쓰기가 수백 번 일어납니다. 디스크가 느리면(백신이 검사하는 폴더, 네트워크 드라이브, 느린 CI 디스크) 이 대기가 event loop을 막아서, 그동안 API 응답·WebSocket·heartbeat와 다른 요청이 같이 멈췄습니다(#606).
+
+이제 쓰기는 쓰기 전용 thread(`labhq/durable.py`)가 합니다. 작업 폴더 파일용 thread가 하나, SQLite 파일마다 하나씩 있고, 각자 대기열(FIFO)을 순서대로 처리합니다. 부르는 쪽은 `await`으로 끝나기를 기다리므로 "쓰고 나서 다음 단계"는 그대로이고, 기다리는 동안 loop은 다른 일을 합니다.
+
+- 같은 파일이나 같은 DB에 대한 쓰기는 부른 순서대로 끝나고, 쓴 뒤의 읽기는 쓴 내용을 봅니다.
+- 쓰기가 실패하면 그 예외가 `await`한 곳으로 옵니다.
+- 부른 쪽이 취소돼도 이미 넣은 쓰기는 끝까지 갑니다. 함께 가야 하는 쓰기(보낸 메시지와 "보냈다"는 표시, 작업을 닫는 상태와 결과)는 한 묶음으로 갑니다. 결과가 이미 나간 task에는 취소 결과를 따로 보내지 않습니다.
+- 종료할 때(gateway 종료 hook, runner 종료, 프로세스 종료)는 대기 중인 쓰기를 모두 끝낸 뒤 나갑니다.
+- 갑자기 죽어도 파일은 옛것이나 새것 한쪽입니다(임시 파일, fsync, 교체 순서 그대로). SQLite는 커밋된 데까지입니다. 아직 시작하지 않은 쓰기만 사라지는데, 그 쓰기를 기다리던 단계는 어차피 다음으로 가지 못했습니다.
+- fsync를 모아서 한꺼번에 하거나 미루지 않습니다. 쓰기마다 디스크에 내려간 뒤에 돌아옵니다.
+
+SQLite는 읽기 연결과 쓰기 연결을 나눠(WAL) 읽기가 커밋을 기다리지 않습니다.
+
+옮긴 곳은 runner의 작업 폴더 쓰기(`manifest.json`, `TASK*.md`, `RESULT*.md`, 직원 CLI 설정 파일, 파견직 계약 파일)와 runner의 outbox·ack입니다. gateway의 SQLite 쓰기(이벤트 순번, 요청 행, task 원장)는 아직 loop에서 동기로 돕니다. 기존 코드와 테스트가 "기다림 없이 한 번에 끝난다"는 가정으로 짜여 있어서 따로 다루기로 했습니다. 쓰기 지점별 목록은 [쓰기 지점 지도](status/2026-10-15-1125-store-writes-off-loop.md)에 있습니다.
+
 ### topic 점검표와 선행 연구 기준
 
 점검표는 `labhq/vocab/topic_checklists.yaml`의 `topic → [{id, check, why}]`이고, 승인된 topic 44개 모두에 항목이 있습니다(129항목). 항목의 근거 문헌은 [topic 점검표 근거](reference/topic_checklists_sources.md)에 있습니다. topic마다 PMID를 검증한 근거 논문 목록(30편 이상, #446)은 [topic별 근거 논문](reference/topic_papers.md)에 있습니다. 여러 topic이 같은 id를 쓰면 bare `id` 답 하나를 모두에 적용하거나, 선언한 모든 topic에 `topic.id` 답을 하나씩 냅니다. 점검 내용이 다르면(ATAC와 ChIP의 `library_qc` 등) 교정 메시지에서 두 내용을 ` / `로 잇습니다. 새 항목은 먼저 `output_types.yaml`의 승인된 topic key 아래에 넣고 test를 보탭니다. 계획·재계획 프롬프트에는 점검 내용을 싣지 않습니다. 러너가 CSO 작업 폴더에 `topic_checklists.tsv`(topic, id, check, why)를 쓰고, 프롬프트는 "선언한 topic의 줄만 읽어라"라고만 적습니다(PI 결정 2026-10-05, #420). 그래서 topic이 늘어도 프롬프트는 약 650자로 같습니다. 답이 빠지면 고침 요청에 그 점검 내용을 붙입니다. PLAN의 답은 `checklist: {id: "step:<step id>" | "assumption: <한 줄>" | "not_applicable: <이유>"}`입니다. 일반 lane은 누락 시 한 번 고친 뒤 경고로 진행하고, 연구 lane은 PLAN 검증 오류로 멈춥니다. `assumption` 답은 보고서 한계에 한 줄씩 남습니다. `not_applicable`은 요청에 해당하지 않는 점검이라 한계로 쓰지 않고 보고서 본문에서 뺍니다. 해당하는데 못 한 점검(예: 독립 코호트가 없음)은 `assumption: <이유>`로 답합니다(벤치 C, #373).
