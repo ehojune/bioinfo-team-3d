@@ -1112,17 +1112,6 @@ def reference_meta(request: dict | None) -> dict[str, list[str]]:
     return {"reference_dirs": dirs} if dirs else {}
 
 
-def plan_prompt_paths(prompt: str) -> str:
-    """Normalize Windows path values only; leave prose, regexes and JSON escapes intact."""
-    # Quoted paths may contain spaces. Bare paths end at whitespace or a prose delimiter.
-    paths = r'''(["'`])([A-Za-z]:\\[^"'`\r\n]+)\1|(?<![\w\\])[A-Za-z]:\\[^\s"'`<>\[\]{}(),;]+'''
-    def slash(match: re.Match) -> str:
-        if match.group(1):
-            return match.group(1) + match.group(2).replace("\\", "/") + match.group(1)
-        return match.group(0).replace("\\", "/")
-    return re.sub(paths, slash, prompt)
-
-
 def format_roster(agents: list[dict]) -> str:
     lines = []
     for a in agents:
@@ -5374,7 +5363,7 @@ class Orchestrator:
                         schema = plan_schema(vocab is not None)
                     planned = await self.run_step(Task(
                         agent_id=self.cfg.cso_agent, request_id=rid, output_schema=schema,
-                        resume_session_id=session_id, prompt=plan_prompt_paths(prompt),
+                        resume_session_id=session_id, prompt=prompt,
                         meta={**refs, "kind": "plan", "roster": roster, "request": plan_request,
                               "title": "업무 분해·배정 계획 수립", **({"workdir": workdir} if workdir else {}),
                               **checklist_meta(checklist_catalog)}))

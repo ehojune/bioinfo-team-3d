@@ -10,7 +10,7 @@ Fixes #667. PR #668. StructuredOutput JSON 파싱 오류를 같은 세션에서 
 - parse 오류는 retry wrapper가 직접 보존하고, 일반 tool error를 결과에 담는 기존 `general_result_contract` 경계는 유지합니다.
 - 한도 초과는 ‘형식 오류’ 카드 한 번으로 알리고, 자동 재계획으로 한도를 초기화하지 않습니다.
 - 공통 직원·비서실장 prompt에 원문 근거와 원인 추측 금지 규칙을 넣었습니다. 통역에도 도구 오류 근거를 전달합니다.
-- 계획 prompt의 Windows 경로 값만 `/`로 바꿉니다. 원본 요청과 정규식은 보존합니다.
+- 사용자 텍스트·명령·정규식은 계획 prompt에서 고쳐 쓰지 않습니다. 재시도 지시문에서 모델이 자기 JSON의 경로와 escape를 고치게 합니다.
 - `research.result_corrections`와 별도입니다. output types off 계약과 prompt hash 고정값은 그대로입니다.
 
 ## 확인

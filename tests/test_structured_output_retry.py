@@ -157,12 +157,11 @@ def test_staff_and_chief_prompts_forbid_invented_causes():
 
 
 @pytest.mark.asyncio
-async def test_plan_prompt_normalizes_only_windows_path_values():
+async def test_plan_prompt_preserves_user_command_and_regex_verbatim():
     hub = penguins_hub(["fixture"])
-    hub.requests["r"]["text"] += r' Read C:\work\reads.tsv and "D:\data folder\table.tsv"; regex \d+\t stays.'
+    command = r'"C:\tool\run.exe --pattern \d+\t"'
+    hub.requests["r"]["text"] += f" Run this command exactly: {command}"
     await Orchestrator(hub).run_request("r")
     plan = next(task for task in hub.calls if task.meta["kind"] == "plan")
-    assert "C:/work/reads.tsv" in plan.prompt
-    assert '"D:/data folder/table.tsv"' in plan.prompt
-    assert r"regex \d+\t stays" in plan.prompt
-    assert r"C:\work\reads.tsv" in hub.requests["r"]["text"]
+    assert command in plan.prompt
+    assert command in hub.requests["r"]["text"]
