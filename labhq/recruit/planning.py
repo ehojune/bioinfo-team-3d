@@ -115,8 +115,7 @@ def _refresh_receipt(receipt, hub):
     if terms is None:
         agent = getattr(hub, "agents", {}).get(aid)
         if agent is None:
-            agent = next((a for entry in getattr(hub, "last_runner_rosters", {}).values()
-                          for a in entry.get("agents", []) if a.get("id") == aid), {})
+            agent = hub.effective_roster(include_history=True).get(aid, {})
         terms = {"status": agent.get("contract_status"), "expires_at": agent.get("expires_at")}
     status = terms.get("status")
     expires = terms.get("expires_at")

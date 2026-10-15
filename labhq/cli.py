@@ -882,9 +882,13 @@ def _up_unlocked(s: Settings, *, popen=None, make_primary: bool = False) -> None
     if confirmed:  # never record a gateway that is someone else's
         instance_guard.record_success(s, make_primary=make_primary)
     if s.runner.wsl.enabled:
-        from .wsl_setup import control
+        from .wsl_setup import WslError, control
 
-        control(s, "start")
+        try:
+            control(s, "start")
+        except WslError as exc:
+            print(f"경고: WSL runner 시작 실패 — {' '.join(str(exc).split())}; native 시작은 완료했습니다.",
+                  file=sys.stderr)
     print(f"웹 사무실: {_http_base(s)}/  (`{_config_command(s, 'open')}`)")
 
 
