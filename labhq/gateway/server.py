@@ -248,6 +248,8 @@ class SavedResults(dict):
 
 
 class Hub:
+    result_review_required = True
+
     def __init__(self, settings: Settings, github_transport: httpx.AsyncBaseTransport | None = None):
         self.s = settings
         self.session_started_at = time.time()

@@ -704,7 +704,9 @@ class ResultStorage:
             if saved.get("mode") == "local":
                 saved["status"] = "local"
                 return
-            if not req.get("pi_reviewed_at") or req.get("revised_to"):
+            review_required = self.s.github.auto_publish_results or getattr(
+                self.hub, "result_review_required", False)
+            if req.get("revised_to") or (review_required and not req.get("pi_reviewed_at")):
                 return  # review_done schedules this saved draft again.
             if not self.s.github.auto_publish_results:
                 detail = {"documents": docs, "repo": saved.get("repo"),

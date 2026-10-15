@@ -75,7 +75,7 @@ def recorded_shutdown_evidence(settings, request):
         return {}
     path = settings.path(settings.gateway.state_dir) / "logs" / "gateway-diagnostics.jsonl"
     try:
-        with path.open("rb") as source:
+        with path.open("rb", encoding=None) as source:
             size = source.seek(0, 2)
             source.seek(max(0, size - 65536))
             lines = source.read().splitlines()

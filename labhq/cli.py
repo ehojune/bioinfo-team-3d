@@ -989,7 +989,6 @@ def _stop_background(s: Settings, role: str) -> int | None:
     if state != "alive":
         return role_pid or supervisor_pid
     pid = int(record["pid"])
-    _mark_stopping(s, role)
     try:
         _terminate_tree(pid, created=str(record["created"]))
     except OSError as exc:
@@ -1364,9 +1363,11 @@ async def _run_runner_with_interrupts(runner, diagnostics=None) -> None:
         print(f"진행 중인 task {len(active)}개, 감시 중인 HPC job {len(jobs)}개: {', '.join(active + jobs)}. "
               "10초 안에 Ctrl+C를 다시 누르면 종료합니다.", file=sys.stderr, flush=True)
 
-    signal.signal(signal.SIGINT, on_interrupt)
     from .interruption import watch_shutdown_signals
     restore_signals = watch_shutdown_signals(lambda: setattr(runner, "_stopping", True), interrupt=False)
+    # Keep the interactive handler last. SIGTERM/SIGHUP mark an external shutdown;
+    # SIGINT still warns once while work is active and exits on the second press.
+    signal.signal(signal.SIGINT, on_interrupt)
     try:
         await runner.run_forever()
     finally:
