@@ -249,13 +249,14 @@ class Runner:
         self.ended_roots: list[tuple[float, str, bool, list[Path]]] = []
         self.task_req: dict[str, str | None] = {}
         self.approval_tasks: dict[str, tuple[str | None, str | None]] = {}
+        self.tool_contexts: dict[str, Any] = {}
         self.submitting: dict[str, set[asyncio.Future]] = {}  # submit commands running, by task (#214 review)
         self.jobs: dict[str, dict] = self.store.all("job")
         self.notified: set[str] = set(self.store.all("notified"))
         self.task_req.update({j["task_id"]: j.get("request_id") for j in self.jobs.values() if j.get("task_id")})
         self.broker = Broker(settings.runner.broker_port, self._on_approval, self._on_tool_event,
                              self._on_submit, self._on_ask, self._owns_job,
-                             on_approval_timeout=self._on_approval_timeout)
+                             on_approval_timeout=self._on_approval_timeout, tool_scope=self._tool_approval_scope)
         self.scheduler = Scheduler(settings.hpc)
         self.connected = asyncio.Event()
         self._stopping = False
@@ -581,7 +582,8 @@ class Runner:
         elif typ == "task.control":
             await self._on_control(msg)
         elif typ == "approval.resolved":
-            if self.broker.resolve(msg["id"], bool(msg.get("approved")), msg.get("note", "")):
+            if self.broker.resolve(msg["id"], bool(msg.get("approved")), msg.get("note", ""),
+                                   **({'choice': msg['choice']} if msg.get('choice') else {})):
                 task_id, agent_id = self.approval_tasks.pop(msg["id"], (None, None))
                 run = self.tasks.get(task_id or "")
                 if task_id and not (run and run.done()):  # an answer after the task ended must not revive it
@@ -1653,6 +1655,7 @@ class Runner:
                                  resume_of=task.resume_session_id, kind=task.meta.get("kind"),
                                  **({"reference_dirs": read_dirs} if read_dirs else {}))
             self.active_roots[task.id] = (read_only, [ws.dir.resolve(), *(Path(d).resolve() for d in extra_dirs)])
+            self.tool_contexts[task.id] = ctx
             try:
                 refused = watch.take_baseline() if watch else None
                 if refused:  # fail closed: a run whose writes cannot be checked does not start
@@ -1686,6 +1689,8 @@ class Runner:
                 if outcome["status"] == "rejected":
                     result = rejected_step(result, outcome["reason"])
             finally:
+                self.tool_contexts.pop(task.id, None)
+                self.broker.clear_tool_scopes(task.id)
                 ended = self.active_roots.pop(task.id, None)
                 # A submit command already running for this run lands in pending_jobs below; later ones are refused.
                 if in_flight := list(self.submitting.pop(task.id, ())):
@@ -1841,6 +1846,25 @@ class Runner:
         return result
 
     # ---------------- broker callbacks (from MCP tools) ----------------
+    def _tool_approval_scope(self, req: ApprovalRequest):
+        from ..policy import evaluate_tool
+        from ..workspace_commands import script_approval_scope
+        ctx = self.tool_contexts.get(req.task_id or '')
+        if req.kind != 'tool_permission' or not ctx or ctx.agent.id != req.agent_id:
+            return None
+        active = self.active_roots.get(req.task_id)
+        if not active or active[0]:
+            return None
+        name, data = req.detail.get('tool_name'), req.detail.get('tool_input')
+        if not isinstance(name, str) or not isinstance(data, dict):
+            return None
+        d = evaluate_tool(name, data, self.s.policy, allowed_roots=[str(p) for p in active[1]],
+                          workdir=str(ctx.workdir), private_paths=ctx.private_paths,
+                          private_open_reads=ctx.private_open_reads, private_enabled=ctx.private_enabled)
+        if d.action != 'ask' or 'policy.private_paths' not in d.reason:
+            return None
+        return script_approval_scope(name, data, str(ctx.workdir), ctx.private_paths, ctx.private_open_reads)
+
     async def _on_approval(self, req: ApprovalRequest) -> None:
         req.request_id = req.request_id or self.task_req.get(req.task_id or "")
         ws = self.workspaces.get(req.task_id or '')

@@ -24,6 +24,20 @@ async function card(kind,detail) {
   return {decide,container,approval,row,detail:row._decisionParts.detail};
 }
 
+test('task-class permission is an explicit choice only on eligible tool cards', async () => {
+  const decide = await modulePromise, container = new Element(), sent = [];
+  const approval = {id:'task-class', kind:'tool_permission', detail:{task_scope_label:'bundle.py execution'}};
+  const [row] = decide.syncDecisionCards(container, [approval], [], {onDecision:(...args)=>sent.push(args)});
+  assert.equal(row._decisionParts.taskClass.hidden, false);
+  row._decisionParts.taskClass.onclick();
+  assert.equal(sent[0][1], true);
+  assert.equal(sent[0][4], 'allow_task_class');
+  assert.equal(decide.decisionChoice(approval, 'allow_task_class'), 'allow_task_class');
+  const regular = await card('tool_permission', {tool_name:'Bash'});
+  assert.equal(regular.row._decisionParts.taskClass.hidden, true);
+  assert.equal(decide.decisionChoice(regular.approval, 'allow_task_class'), null);
+});
+
 test('tool_permission command, arguments and all extra fields appear as literal DOM text',async()=>{
   for (const input of [{command:'printf "<img src=x onerror=alert(1)>"',args:['--example','a&b']},
     JSON.stringify({command:'printf "<img src=x onerror=alert(1)>"',args:['--example','a&b']})]) {

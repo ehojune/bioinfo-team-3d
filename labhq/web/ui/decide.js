@@ -360,6 +360,7 @@ const EVIDENCE_LABELS = { refused_rows: '계약에 맞지 않아 뺀 근거',
   refused_evidence: '거부된 evidence (승인 대상 아님)', unsupported_claims: '근거를 잃은 claim',
   results: '단계별 claim·evidence 원장' };
 export function decisionChoice(approval, act) {
+  if (approval?.kind === 'tool_permission' && approval.detail?.task_scope_label && act === 'allow_task_class') return act;
   // CP1 sends a choice only where 수정 요청 exists, so an older gateway reads approve/deny exactly as before.
   if (approval?.kind !== 'research_evidence' && !(approval?.kind === 'research_plan' && reviseContinues(approval))) return null;
   return { approve: 'approve', revise: 'revise', deny: 'deny' }[act] || null;
@@ -494,11 +495,13 @@ function createCard(item, options) {
   const actions = add(body, 'div', '', 'acts');
   const approve = add(actions, 'button', '', 'btn go');
   approve.type = 'button';
+  const taskClass = add(actions, 'button', '이 작업 동안 같은 부류 허용', 'btn');
+  taskClass.type = 'button'; taskClass.hidden = true;
   const revise = add(actions, 'button', '', 'btn');  // CP2 evidence review only
   revise.type = 'button'; revise.hidden = true;
   const deny = add(actions, 'button', '', 'btn');
   deny.type = 'button';
-  row._decisionParts = { title, who, request, summary, detail, questions, storage, assumptions, timing, note, consequence, approve, revise, deny };
+  row._decisionParts = { title, who, request, summary, detail, questions, storage, assumptions, timing, note, consequence, approve, taskClass, revise, deny };
   if (options.presentation === 'journal') {
     row.className += ' ui-card decision-card';
     const heading = doc().createElement('h3'); heading.className = 'decision-question';
@@ -712,16 +715,21 @@ function updateCard(row, item, options) {
   // CP2 수정 요청 re-plans through a new CP1 until the continuation cap, then ends the request like 거부 (R10).
   p.revise.textContent = reviseContinues(value) ? '수정 요청' : '수정 요청(요청 끝남)'; p.revise.hidden = !(evidence || planRevise);
   p.approve.dataset.act = item.type === 'suggestion' ? 'hire' : 'approve';
+  p.taskClass.hidden = !(approval && value.kind === 'tool_permission' && value.detail?.task_scope_label);
+  p.taskClass.title = value.detail?.task_scope_label || '';
+  p.taskClass.dataset.act = 'allow_task_class';
   p.revise.dataset.act = 'revise';
   p.deny.dataset.act = item.type === 'suggestion' ? 'later' : 'deny';
   const disabled = options.disabled ? options.disabled(value, item.type) : false;
   const reviewPending = value.kind === 'result_publish' && request?.pi_review_pending === true && !request.pi_reviewed_at;
   p.approve.disabled = disabled || reviewPending; p.revise.disabled = disabled; p.deny.disabled = disabled;
+  p.taskClass.disabled = disabled;
   if (reviewPending) {
     p.consequence.textContent = '보고서 검토·확인을 완료하면 정리본을 올릴 수 있어요.';
     p.consequence.hidden = false;
   }
   if (options.onDecision) {
+    p.taskClass.onclick = () => options.onDecision(value, true, decisionNote(row, true), item.type, 'allow_task_class');
     p.approve.onclick = () => options.onDecision(value, true, decisionNote(row, true), item.type, decisionChoice(value, 'approve'), storageChoice(row));
     p.revise.onclick = () => options.onDecision(value, false, decisionNote(row, false), item.type, decisionChoice(value, 'revise'));
     p.deny.onclick = () => options.onDecision(value, false, decisionNote(row, false), item.type, decisionChoice(value, 'deny'));

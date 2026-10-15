@@ -2302,14 +2302,21 @@ def evaluate_tool(
     # Every check reads a Git Bash command with its drive paths spelled the Windows way, zones and private paths
     # included: converting only the write targets let `cp /c/<zone>/raw /c/<root>/out` through (PR #364 review).
     checked = git_bash_command(tool_name, judged, allowed_roots, windows)
-    decision = _evaluate_tool(tool_name, checked, policy, allowed_roots, workdir, environ=environ, windows=windows)
     # On with no active path (PR #327) still runs the registry check; a non-empty list alone also means on.
     private_paths = list(private_paths)
+    from .workspace_commands import workspace_command
+    scoped = (tool_name in SHELL_TOOLS and workdir and
+              workspace_command(str(checked.get('command', '')), workdir, private_paths,
+                                powershell=tool_name == 'PowerShell'))
+    decision = _evaluate_tool(tool_name, checked, policy, allowed_roots, workdir, environ=environ,
+                              windows=windows, workspace_operation=bool(scoped))
     private = (_private_decision(tool_name, checked, private_paths, workdir, home, environ, list(private_open_reads))
                if private_enabled or private_paths else None)
     # Only ever stricter: a deny stays a deny, and an ask is not turned into an allow.
     if private and decision.action != "deny" and (private.action == "deny" or decision.action == "allow"):
         decision = private
+    if scoped and decision.action == 'allow':
+        decision.reason = 'task workspace operation'
     if read_only:
         if tool_name in WRITE_LIKE:
             path = judged.get("file_path") or judged.get("notebook_path")
@@ -2435,6 +2442,16 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
         return None
     if tool_name in SHELL_TOOLS:
         cmd = str(tool_input.get("command", ""))
+        from .workspace_commands import workspace_command
+        if not registry_access(cmd) and workspace_command(cmd, workdir, private_paths,
+                                                         powershell=tool_name == 'PowerShell'):
+            return None
+        if tool_name == 'Bash' and open_reads and not registry_access(cmd):
+            from .private_paths import claude_project_slug
+            reads = [p for p in open_reads if not (Path(p).parent.name == 'projects' and
+                     Path(p).name == claude_project_slug(os.path.abspath(workdir or '.')))]
+            if workspace_command(cmd, workdir, private_paths, read_roots=reads):
+                return None
         if tool_name == 'Bash' and open_reads:
             managed = managed_shell_read(cmd, private_paths, open_reads, workdir)
             if managed is True:
@@ -2564,6 +2581,7 @@ def _evaluate_tool(
     *,
     environ: Mapping[str, str] | None = None,
     windows: bool | None = None,
+    workspace_operation: bool = False,
 ) -> Decision:
     environ = os.environ if environ is None else environ
     windows = os.name == "nt" if windows is None else windows
@@ -2614,7 +2632,7 @@ def _evaluate_tool(
                 # The pattern sees only rm's first option cluster; every option word of a real rm counts (#17), and
                 # `docker rm` or `git rm` in its own tree is not one (#535 follow-up).
                 recursive = _recursive_rm(cmd) if not powershell else re.search(pat, delete_text, re.IGNORECASE)
-                if recursive and not _recursive_delete_inside_workdir(cmd, powershell, workdir):
+                if recursive and not workspace_operation and not _recursive_delete_inside_workdir(cmd, powershell, workdir):
                     return Decision("ask", f"재귀 삭제 확인 필요: `{cmd[:200]}`")
                 # A deleting find meets the same `.tmp` rule (find -delete, -exec rm, | xargs rm).
                 if not powershell and not all(_find_delete_inside_step_tmp(cmd, find, workdir)

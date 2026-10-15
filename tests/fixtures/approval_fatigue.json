@@ -1,0 +1,322 @@
+[
+  {
+    "case": 1,
+    "status": "complete_input_assumed_context",
+    "tool": "Bash",
+    "command": "python -c \"\nimport json\nd=json.load(open(r'{saved}/fixture-session/tool-results/mcp-pubmed-get_article_metadata-1792050657982.txt',encoding='utf-8'))\nfor a in d['articles']:\n print(a['identifiers'].get('pmid'),a['identifiers'].get('doi'),a['publication_date'].get('year'),a['journal']['iso_abbreviation'],'|',a['title']);print(' ',(a.get('abstract') or '')[:900].replace('\\n',' '));print()\n\"",
+    "before": "ask",
+    "after": "ask"
+  },
+  {
+    "case": 2,
+    "status": "truncated_input_unavailable"
+  },
+  {
+    "case": 3,
+    "status": "complete_input_assumed_context",
+    "tool": "Bash",
+    "command": "S=\"{skill}/paper2skill/scripts\"; diff --strip-trailing-cr \"$S/reading_package.py\" .tmp/p2s-scripts/reading_package.py > .tmp/p2s-scripts/windows-path.patch; cat .tmp/p2s-scripts/windows-path.patch; ls .tmp/staging 2>&1; cat .tmp/review/verification.json 2>/dev/null | head -c 1500",
+    "before": "ask",
+    "after": "ask"
+  },
+  {
+    "case": 4,
+    "status": "complete_input_assumed_context",
+    "tool": "Bash",
+    "command": "cd ../.. && S={skill}/paper2skill/scripts; uv run $S/paper_bundle.py prepare .tmp/src/teschendorff2018_aam.pdf --work .tmp/paper-review --name teschendorff2018-methylation-paper --title \"Statistical and integrative system-level analysis of DNA methylation data\" --main .tmp/src/teschendorff2018_aam.pdf 2>&1 | tail -20; cat .tmp/paper-review/bundle.json",
+    "before": "ask",
+    "after": "ask"
+  },
+  {
+    "case": 5,
+    "status": "complete_input_assumed_context",
+    "tool": "Bash",
+    "command": "S={skill}/paper2skill; cat $S/references/bundle-review.md $S/references/review-plan.md; uv run $S/scripts/paper_bundle.py --help; uv run $S/scripts/paper_bundle.py prepare --help",
+    "before": "ask",
+    "after": "ask"
+  },
+  {
+    "case": 6,
+    "status": "complete_input_assumed_context",
+    "tool": "Bash",
+    "command": "S=\"{skill}/paper2skill/scripts\"; grep -n \"Unexpected directory\\|Unexpected file\" $S/*.py; ls -la .tmp/staging 2>&1",
+    "before": "ask",
+    "after": "ask"
+  },
+  {
+    "case": 7,
+    "status": "truncated_input_unavailable"
+  },
+  {
+    "case": 8,
+    "status": "truncated_input_unavailable"
+  },
+  {
+    "case": 9,
+    "status": "mock_reconstructed_from_summary",
+    "tool": "Bash",
+    "command": "rm -rf tmp/",
+    "before": "ask",
+    "after": "allow"
+  },
+  {
+    "case": 10,
+    "status": "complete_input_assumed_context",
+    "tool": "Bash",
+    "command": "S=\"{skill}/paper2skill/scripts\"; sed -n 395,440p $S/reading_package.py",
+    "before": "ask",
+    "after": "allow"
+  },
+  {
+    "case": 11,
+    "status": "truncated_input_unavailable"
+  },
+  {
+    "case": 12,
+    "status": "mock_reconstructed_from_summary",
+    "tool": "Bash",
+    "command": "rm -rf tmp/",
+    "before": "ask",
+    "after": "allow"
+  },
+  {
+    "case": 13,
+    "status": "complete_input_assumed_context",
+    "tool": "PowerShell",
+    "command": "uv run \"{skill}/paper2skill/scripts/paper_bundle.py\" build --work .tmp\\paper-review --output .tmp\\staging\\teschendorff2018-methylation-paper --require-reviewed",
+    "before": "ask",
+    "after": "ask"
+  },
+  {
+    "case": 14,
+    "status": "truncated_input_unavailable"
+  },
+  {
+    "case": 15,
+    "status": "complete_input_assumed_context",
+    "tool": "Bash",
+    "command": "cd \"{work}\"; f=\"{saved}/fixture-session/tool-results/bndsdjjf4.txt\"; grep -n \"=== 1[6-9]\" $f; tail -n +1 $f | sed -n '/=== 15/,/=== 16/p' | tail -8 | cut -c1-300",
+    "before": "ask",
+    "after": "ask"
+  },
+  {
+    "case": 16,
+    "status": "mock_reconstructed_from_summary",
+    "tool": "Bash",
+    "command": "rm -rf tmp/",
+    "before": "ask",
+    "after": "allow"
+  },
+  {
+    "case": 17,
+    "status": "mock_reconstructed_from_summary",
+    "tool": "Bash",
+    "command": "rm -rf tmp/",
+    "before": "ask",
+    "after": "allow"
+  },
+  {
+    "case": 18,
+    "status": "complete_input_assumed_context",
+    "tool": "Bash",
+    "command": "S=\"{skill}/paper2skill/scripts\"; sed -n 380,450p \"$S/reading_package.py\"; grep -n \"def \\|inventory\\|expected\" \"$S/reading_package.py\" | sed -n 1,80p",
+    "before": "ask",
+    "after": "allow"
+  },
+  {
+    "case": 19,
+    "status": "complete_input_assumed_context",
+    "tool": "Bash",
+    "command": "uv run \"{skill}/paper2skill/scripts/paper_bundle.py\" prepare .tmp/src/pubmed-23441458-record.md --work .tmp/paper-review --name pmid-23441458-paper --title \"Paternal exposure to occupational electromagnetic radiation and sex ratio of the offspring: a meta-analysis\" 2>&1 | tail -20; cat .tmp/paper-review/bundle.json",
+    "before": "ask",
+    "after": "ask"
+  },
+  {
+    "case": 20,
+    "status": "complete_input_assumed_context",
+    "tool": "Bash",
+    "command": "find .tmp/staging; ls .tmp/review; S=\"{skill}/paper2skill/scripts/paper_bundle.py\"; grep -n \"Unexpected directory\" \"$S\" \"$(dirname \"$S\")\"/*.py | head",
+    "before": "ask",
+    "after": "ask"
+  },
+  {
+    "case": 21,
+    "status": "complete_input_assumed_context",
+    "tool": "Bash",
+    "command": "python -c \"\nimport json\nd=json.load(open(r'{saved}/fixture-session/tool-results/mcp-pubmed-get_article_metadata-1792050657982.txt',encoding='utf-8'))\nfor a in d['articles']:\n if a['identifiers']['pmid'] in ('29320903','27031570','22842703','30659322','34108217','31630954','34049115'):\n print(a['identifiers']['pmid'],'|',a['abstract'][800:1900].replace('\\n',' '));print()\n\"",
+    "before": "ask",
+    "after": "ask"
+  },
+  {
+    "case": 22,
+    "status": "complete_input_assumed_context",
+    "tool": "Bash",
+    "command": "cd \"{work}\"; S=\"{skill}/paper2skill/scripts\"; { diff --strip-trailing-cr $S/reading_package.py .tmp/p2s-scripts/reading_package.py; diff --strip-trailing-cr $S/pdf_to_skill.py .tmp/p2s-scripts/pdf_to_skill.py; } | tee .tmp/p2s-patch.diff",
+    "before": "ask",
+    "after": "ask"
+  },
+  {
+    "case": 23,
+    "status": "complete_input_assumed_context",
+    "tool": "Bash",
+    "command": "cat \"{skill}/paper2skill/references/review-plan.md\"; cd \"{work}/.tmp/paper-review/documents/s001-teschendorff2018-aam\"; ls; cat pages/page-0012.json",
+    "before": "allow",
+    "after": "allow"
+  },
+  {
+    "case": 24,
+    "status": "mock_reconstructed_from_summary",
+    "tool": "Bash",
+    "command": "rm -rf tmp/",
+    "before": "ask",
+    "after": "allow"
+  },
+  {
+    "case": 25,
+    "status": "complete_input_assumed_context",
+    "tool": "Bash",
+    "command": "S=\"{skill}/paper2skill\"; cat $S/references/bundle-review.md; echo ======; cat $S/references/review-plan.md; grep -nE \"suffix|\\.pdf|\\.txt|\\.md|\\.xlsx|\\.csv|\\.png\" $S/scripts/paper_bundle.py | head -60",
+    "before": "ask",
+    "after": "ask"
+  },
+  {
+    "case": 26,
+    "status": "truncated_input_unavailable"
+  },
+  {
+    "case": 27,
+    "status": "truncated_input_unavailable"
+  },
+  {
+    "case": 28,
+    "status": "mock_reconstructed_from_summary",
+    "tool": "Bash",
+    "command": "rm -rf tmp/",
+    "before": "ask",
+    "after": "allow"
+  },
+  {
+    "case": 29,
+    "status": "complete_input_assumed_context",
+    "tool": "Bash",
+    "command": "cat \"{skill}/paper2skill/SKILL.md\"; ls \"{skill}/paper2skill\" \"{skill}/paper2skill\"/*; ls -la",
+    "before": "ask",
+    "after": "allow"
+  },
+  {
+    "case": 30,
+    "status": "truncated_input_unavailable"
+  },
+  {
+    "case": 31,
+    "status": "complete_input_assumed_context",
+    "tool": "PowerShell",
+    "command": "$py=\"{other}/.venv/Scripts/python.exe\"; Remove-Item outputs/qc/checks/s6_theta_vs_umi_truth.txt; & $py -W ignore outputs/scripts/analysis_qc.py s6metrics | Select-String -Pattern \"mismatch|MISMATCH|bootstrap|rows lacking|fixture-sample method|sum-to-1\" ; & $py -W ignore outputs/scripts/analysis_qc_extra.py | Select-String -Pattern \"theta|iCMS|Hallmark|rank\"; & $py outputs/scripts/env_record.py",
+    "before": "ask",
+    "after": "ask"
+  },
+  {
+    "case": 32,
+    "status": "complete_input_assumed_context",
+    "tool": "Bash",
+    "command": "cat \"{skill}/paper2skill/SKILL.md\"; ls \"{skill}/paper2skill\" \"{skill}/paper2skill/\"*; ls -la",
+    "before": "ask",
+    "after": "allow"
+  },
+  {
+    "case": 33,
+    "status": "truncated_input_unavailable"
+  },
+  {
+    "case": 34,
+    "status": "mock_reconstructed_from_summary",
+    "tool": "Bash",
+    "command": "rm -rf tmp/",
+    "before": "ask",
+    "after": "allow"
+  },
+  {
+    "case": 35,
+    "status": "complete_input_assumed_context",
+    "tool": "Bash",
+    "command": "cat \"{skill}/paper2skill/references/review-plan.md\"; cd \"{work}/.tmp/paper-review/documents/s001-teschendorff2018-aam\"; ls; head -c 3000 pages/page-0034.json",
+    "before": "ask",
+    "after": "allow"
+  },
+  {
+    "case": 36,
+    "status": "mock_reconstructed_from_summary",
+    "tool": "Bash",
+    "command": "rm -rf tmp/",
+    "before": "ask",
+    "after": "allow"
+  },
+  {
+    "case": 37,
+    "status": "truncated_input_unavailable"
+  },
+  {
+    "case": 38,
+    "status": "complete_input_assumed_context",
+    "tool": "Bash",
+    "command": "cd \"{work}\" && ls -la && find . -maxdepth 3 | head -50; which uv python; ls \"{skill}/paper2skill/references\" \"{skill}/paper2skill/scripts\"",
+    "before": "allow",
+    "after": "allow"
+  },
+  {
+    "case": 39,
+    "status": "complete_input_assumed_context",
+    "tool": "Bash",
+    "command": "uv run {skill}/paper2skill/scripts/paper_bundle.py build --work paper-review --output staging/teschendorff2018-methylation-paper --require-reviewed 2>&1 | tail -15",
+    "before": "ask",
+    "after": "ask"
+  },
+  {
+    "case": 40,
+    "status": "complete_input_assumed_context",
+    "tool": "Bash",
+    "command": "S=\"{skill}/paper2skill/scripts\"; ls \"$S\"; grep -n \"relative_to\" \"$S\"/*.py",
+    "before": "ask",
+    "after": "allow"
+  },
+  {
+    "case": 41,
+    "status": "truncated_input_unavailable"
+  },
+  {
+    "case": 42,
+    "status": "truncated_input_unavailable"
+  },
+  {
+    "case": 43,
+    "status": "complete_input_assumed_context",
+    "tool": "Bash",
+    "command": "S=\"{skill}/paper2skill/scripts\"; mkdir -p .tmp/p2s-scripts; cp $S/*.py .tmp/p2s-scripts/; grep -n \"str(.*relative_to(\" .tmp/p2s-scripts/*.py",
+    "before": "ask",
+    "after": "ask"
+  },
+  {
+    "case": 44,
+    "status": "complete_input_assumed_context",
+    "tool": "Bash",
+    "command": "S=\"{skill}/paper2skill/scripts/paper_bundle.py\"; uv run \"$S\" prepare src/main.pdf src/supplement.pdf --work .tmp/review --name conesa-rnaseq-best-practices-paper --title \"A survey of best practices for RNA-seq data analysis\" --main src/main.pdf 2>&1 | tail -20; cat .tmp/review/bundle.json",
+    "before": "ask",
+    "after": "ask"
+  },
+  {
+    "case": 45,
+    "status": "complete_input_assumed_context",
+    "tool": "Bash",
+    "command": "P=\"{skill}/paper2skill/scripts/paper_bundle.py\"\nuv run \"$P\" build --work .tmp/paper-review --output .tmp/staging/pmid-23441458-paper --require-reviewed 2>&1 | tail -15; uv run \"$P\" review-aid --work .tmp/paper-review 2>&1 | tail -6; find .tmp/staging -type f; cat .tmp/staging/pmid-23441458-paper/SKILL.md .tmp/staging/pmid-23441458-paper/references/*.md",
+    "before": "ask",
+    "after": "ask"
+  },
+  {
+    "case": 46,
+    "status": "complete_input_assumed_context",
+    "tool": "PowerShell",
+    "command": "Invoke-WebRequest -Uri \"https://media.springernature.com/original/springer-static/esm/art%3A10.1186%2Fs13059-016-0881-8/MediaObjects/13059_2016_881_MOESM1_ESM.pdf\" -OutFile src/supplement.pdf -UseBasicParsing; (Get-Item src/supplement.pdf).Length; $s=\"{skill}/paper2skill\"; Get-ChildItem $s\\references,$s\\scripts | Select-Object Name",
+    "before": "ask",
+    "after": "ask"
+  }
+]

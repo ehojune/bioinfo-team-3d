@@ -39,7 +39,7 @@ def _validated(model: type[BaseModel], data: dict) -> Any:
 class Broker:
     def __init__(self, port: int, on_approval: Handler, on_event: Handler, on_submit: Submit,
                  on_ask: Handler | None = None, owns_job: Predicate | None = None,
-                 on_approval_timeout: Handler | None = None):
+                 on_approval_timeout: Handler | None = None, tool_scope: Callable | None = None):
         self.port = port
         self.pending: dict[str, asyncio.Future] = {}
         self.pending_asks: dict[str, asyncio.Future] = {}
@@ -50,6 +50,9 @@ class Broker:
         self._on_ask = on_ask
         self._owns_job = owns_job  # without it no job counts as owned, so hpc_cancel refuses all
         self._on_approval_timeout = on_approval_timeout
+        self._tool_scope = tool_scope
+        self.scope_pending: dict[tuple, asyncio.Future] = {}
+        self.scope_grants: set[tuple] = set()
         self.server: uvicorn.Server | None = None
         self.app = self._build_app()
 
@@ -111,17 +114,53 @@ class Broker:
         return app
 
     async def request_approval(self, req: ApprovalRequest) -> dict:
+        # Never trust scope labels supplied by a task process.
+        req.detail.pop('task_scope_label', None)
+        while True:
+            scope = self._tool_scope(req) if self._tool_scope else None
+            key = (req.task_id, req.agent_id, scope[0]) if scope else None
+            pending = self.scope_pending.get(key)
+            if pending is None:
+                break
+            try:
+                answer = await asyncio.wait_for(asyncio.shield(pending), req.timeout_s)
+            except asyncio.TimeoutError:
+                return {'approved': False, 'note': 'approval timed out', 'state': 'timed_out'}
+            if not answer.get('approved'):
+                return answer
+            # Waiting may have changed the script, links or live task context. Recompute the scope.
+        if key:
+            req.detail['task_scope_label'] = scope[1]
+            if key in self.scope_grants:
+                await self._on_event({'task_id': req.task_id, 'agent_id': req.agent_id, 'type': 'agent.log',
+                    'data': {'level': 'info', 'text': '이 작업 동안 허용한 도구 부류 실행',
+                             'policy_rule': 'task_class', 'scope': scope[1]}})
+                return {'approved': True, 'note': 'PI task-class grant'}
         fut = asyncio.get_running_loop().create_future()
         self.pending[req.id] = fut
+        group_done = asyncio.get_running_loop().create_future() if key else None
+        if key:
+            self.scope_pending[key] = group_done
         try:
             await self._on_approval(req)
-            return await asyncio.wait_for(fut, req.timeout_s)
+            answer = await asyncio.wait_for(asyncio.shield(fut), req.timeout_s)
+            if key and answer.get('approved') and answer.get('choice') == 'allow_task_class':
+                # A finished/revoked task cannot gain a grant from a late answer.
+                if self.scope_pending.get(key) is group_done:
+                    self.scope_grants.add(key)
+            return answer
         except asyncio.TimeoutError:
             if self._on_approval_timeout is not None:
                 await self._on_approval_timeout(req)
             return {"approved": False, "note": "approval timed out", "state": "timed_out"}
         finally:
+            if not fut.done():
+                fut.set_result({'approved': False, 'note': 'approval ended'})
             self.pending.pop(req.id, None)
+            if key and self.scope_pending.get(key) is group_done:
+                self.scope_pending.pop(key, None)
+            if group_done and not group_done.done():
+                group_done.set_result(fut.result() if not fut.cancelled() else {'approved': False})
 
     async def request_ask(self, req: AskRequest) -> dict:
         def terminal(answer: dict) -> dict:
@@ -156,10 +195,10 @@ class Broker:
         finally:
             self.pending_asks.pop(req.id, None)
 
-    def resolve(self, approval_id: str, approved: bool, note: str = "") -> bool:
+    def resolve(self, approval_id: str, approved: bool, note: str = "", choice: str | None = None) -> bool:
         fut = self.pending.get(approval_id)
         if fut and not fut.done():
-            fut.set_result({"approved": approved, "note": note})
+            fut.set_result({"approved": approved, "note": note, **({'choice': choice} if choice else {})})
             return True
         return False
 
@@ -174,9 +213,17 @@ class Broker:
         return [ask_id for ask_id, owner in self.hibernate_asks.items() if owner == task_id]
 
     def finish_task(self, task_id: str) -> None:
+        self.clear_tool_scopes(task_id)
         self.task_ask_results.pop(task_id, None)
         for ask_id in self.pending_for_task(task_id):
             self.hibernate_asks.pop(ask_id, None)
+
+    def clear_tool_scopes(self, task_id: str) -> None:
+        self.scope_grants = {key for key in self.scope_grants if key[0] != task_id}
+        for key in [key for key in self.scope_pending if key[0] == task_id]:
+            future = self.scope_pending.pop(key)
+            if not future.done():
+                future.set_result({'approved': False, 'note': 'task finished'})
 
     async def serve(self) -> None:
         config = uvicorn.Config(self.app, host="127.0.0.1", port=self.port, log_level="warning", lifespan="off")
