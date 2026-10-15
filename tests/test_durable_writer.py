@@ -48,6 +48,28 @@ class SlowFsync:
         return self.real(fd)
 
 
+class BlockedFsync:
+    """Hold the first fsync until the test explicitly releases it."""
+
+    def __init__(self, monkeypatch):
+        self.real = os.fsync
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.lock = threading.Lock()
+        self.calls = 0
+        monkeypatch.setattr(os, "fsync", self)
+
+    def __call__(self, fd):
+        with self.lock:
+            block = self.calls == 0
+            self.calls += 1
+        if block:
+            self.entered.set()
+            if not self.release.wait(30):
+                raise TimeoutError("test did not release the blocked fsync")
+        return self.real(fd)
+
+
 # ----- the queue itself -----
 
 def test_jobs_run_in_submission_order_on_one_thread(fresh_writer):
@@ -442,16 +464,25 @@ async def test_cancelled_emit_still_queues_the_result_and_marks_the_task_finishe
 async def test_a_stalled_file_write_does_not_hold_up_a_database_commit(tmp_path, monkeypatch, fresh_writer):
     store = StateStore(tmp_path / "s.sqlite3")
     await store.aput("task", "warm", {"up": True})  # the database's lane is running
-    SlowFsync(monkeypatch, 0.5)
+    disk = BlockedFsync(monkeypatch)
     stalled = asyncio.ensure_future(awrite_owned(tmp_path, "x.txt", "slow"))
-    await asyncio.sleep(0.05)
-    started = time.perf_counter()
-    store.put("task", "k", {"a": 1})  # a synchronous commit on the loop thread: it waits for nothing else
-    await store.aput("task", "k2", {"a": 2})
-    quick = time.perf_counter() - started
-    assert not stalled.done() and quick < 0.2, f"the commits waited {quick:.2f} s behind a stalled file write"
-    assert store.get("task", "k2") == {"a": 2}
-    await stalled
+    assert await asyncio.to_thread(disk.entered.wait, 10), "the file write never reached fsync"
+    committed = asyncio.Event()
+
+    async def commit_rows():
+        store.put("task", "k", {"a": 1})  # a synchronous commit on the loop thread: it waits for nothing else
+        await store.aput("task", "k2", {"a": 2})
+        committed.set()
+
+    commit_task = asyncio.create_task(commit_rows())
+    try:
+        await asyncio.wait_for(committed.wait(), 10)
+        assert not disk.release.is_set(), "the database commits only finished after the file write was released"
+        assert not stalled.done()
+        assert store.get("task", "k2") == {"a": 2}
+    finally:
+        disk.release.set()
+        await asyncio.gather(stalled, commit_task)
 
 
 # ----- a task's closing events survive cancels (review of #615) -----
