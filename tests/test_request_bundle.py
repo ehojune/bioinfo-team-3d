@@ -181,7 +181,7 @@ def test_recorded_output_failure_is_manifested_and_marks_bundle_incomplete(tmp_p
     assert row["status"] == expected
     assert not (bundle / "steps/s1/outputs/result.txt").exists()
     assert built["status"] == "incomplete"
-    assert "요청 묶음 상태: incomplete" in (bundle / "report_appendix.md").read_text(encoding="utf-8")
+    assert "요청 묶음 상태: incomplete" in (bundle / "execution_record.md").read_text(encoding="utf-8")
 
 
 def test_only_runner_recorded_and_hashed_outputs_are_copied(tmp_path):
@@ -259,8 +259,8 @@ def test_bundle_is_portable_filtered_and_idempotent(tmp_path):
     bundled_script = (bundle / "steps/s2/outputs/scripts/analyze.py").read_text(encoding="utf-8")
     assert str(upstream) not in bundled_script and upstream.as_posix() not in bundled_script
     assert str(outside) in bundled_script  # a path outside this request's step workdirs is untouched
-    assert "대체됨" in (bundle / "report_appendix.md").read_text(encoding="utf-8")
-    assert old.name in (bundle / "report_appendix.md").read_text(encoding="utf-8")
+    assert "대체됨" in (bundle / "execution_record.md").read_text(encoding="utf-8")
+    assert old.name in (bundle / "execution_record.md").read_text(encoding="utf-8")
 
     with (bundle / "MANIFEST.tsv").open(encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle, delimiter="\t"))
@@ -501,7 +501,7 @@ def test_unreported_outputs_are_copied_after_recorded_ones_without_marking_incom
     assert (bundle / "steps/s1/outputs/reference/figure.svg").read_text(encoding="utf-8") == "figure.svg"
     assert not any("escape" in path for path in rows)
     assert built["status"] == "complete"
-    appendix = (bundle / "report_appendix.md").read_text(encoding="utf-8")
+    appendix = (bundle / "execution_record.md").read_text(encoding="utf-8")
     assert "보고하지 않은 산출 3개 미복사" in appendix
     assert "누적 상한으로 기록 산출 일부를 복사하지 않음" not in appendix
 
@@ -580,7 +580,7 @@ def test_request_total_limits_record_every_omission(tmp_path, total_bytes, max_f
     assert by_path["steps/s1/outputs/b.txt"]["status"] == "not copied: total limit"
     assert by_path["steps/s1/outputs/c.txt"]["status"] == "not copied: total limit"
     assert "누적 상한으로 기록 산출 일부를 복사하지 않음" in (
-        bundle / "report_appendix.md").read_text(encoding="utf-8")
+        bundle / "execution_record.md").read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio
@@ -601,7 +601,7 @@ async def test_remote_runner_records_warning_without_gateway_path(tmp_path):
 
     note = "runner가 다른 PC라 묶음을 만들지 않음"
     assert data["bundle_warning"] == note and "bundle_path" not in data
-    assert note in hub.requests["remote"]["report_appendix"]
+    assert note in hub.requests["remote"]["execution_record"]
     assert hub.events[-1]["data"]["bundle_warning"] == note
     await asyncio.sleep(0)
     hub.store.close()
@@ -908,7 +908,7 @@ async def test_incomplete_bundle_status_is_stored_in_bundle_event(tmp_path):
     assert data["bundle_status"] == "incomplete"
     assert hub.events[-1]["type"] == "request.bundle"
     assert hub.events[-1]["data"]["bundle_status"] == "incomplete"
-    assert "요청 묶음 상태: incomplete" in Path(data["bundle_path"], "report_appendix.md").read_text(
+    assert "요청 묶음 상태: incomplete" in Path(data["bundle_path"], "execution_record.md").read_text(
         encoding="utf-8")
     await asyncio_sleep()
     hub.store.close()
@@ -1101,7 +1101,7 @@ def test_missing_scripts_environment_or_a_kept_absolute_path_lowers_the_grade_wi
         "절대경로가 남은 스크립트: steps/de/outputs/scripts/de.py",
     ]
     assert "- `documented`\n- 스크립트 없이 데이터 산출만 있는 단계: qc\n" in readme
-    appendix = (Path(built["path"]) / "report_appendix.md").read_text(encoding="utf-8")
+    appendix = (Path(built["path"]) / "execution_record.md").read_text(encoding="utf-8")
     assert "- 재현 등급: documented (스크립트 없이 데이터 산출만 있는 단계: qc; " in appendix
 
 
@@ -1219,7 +1219,7 @@ def test_ro_crate_privacy_refusal_is_warning_only(tmp_path):
     assert "crate_warning" in built
     assert not (bundle / METADATA_FILE).exists()
     assert FORMAT_MARKER in (bundle / "README.md").read_text(encoding="utf-8")
-    assert "RO-Crate metadata를 만들지 못했습니다" in (bundle / "report_appendix.md").read_text(encoding="utf-8")
+    assert "RO-Crate metadata를 만들지 못했습니다" in (bundle / "execution_record.md").read_text(encoding="utf-8")
 
 
 def test_ro_crate_allows_consecutive_dots_inside_names():

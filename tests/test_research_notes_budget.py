@@ -104,7 +104,7 @@ async def test_cp2_note_reaches_the_review_and_the_report_prompts_and_stays_in_t
         assert "PI 승인 메모 (CP2)" in prompt and CP2_NOTE in prompt
     assert "does not change the CP2 decision" in review
     assert "한계" in synthesis.split("PI 승인 메모 (CP2)", 1)[1]
-    assert f"PI note: {CP2_NOTE}" in req["report_appendix"]  # the audit record is unchanged
+    assert f"PI note: {CP2_NOTE}" in req["execution_record"]  # the audit record is unchanged
     assert all(CP2_NOTE not in task.prompt for task in _kinds(hub, "step"))
 
 
@@ -129,7 +129,7 @@ async def test_a_long_note_is_clipped_with_a_marker_in_prompts_but_kept_whole_in
     synthesis = _kinds(hub, "synthesis")[0].prompt
     assert note not in synthesis and note[:cso.APPROVAL_NOTE_CHARS] in synthesis and "메모가 길어" in synthesis
     assert hub.requests["r"]["research_contract"]["checkpoints"]["cp2"]["note"] == note
-    assert note in hub.requests["r"]["report_appendix"]
+    assert note in hub.requests["r"]["execution_record"]
 
 
 # ---------- R11: 이어 가기 note (and the CP2 note before it) → the continuation plan ----------
@@ -173,7 +173,7 @@ async def test_a_plan_budget_overrun_on_the_finished_report_is_recorded_without_
     assert orch.budget_denials == {}
     assert orch.budget_outcomes["r"] == [{"spent_usd": 2.0, "limit_usd": 1.0,
                                            "approved": None, "final_turn": True}]
-    assert "final turn; no further work" in req["report_appendix"]
+    assert "final turn; no further work" in req["execution_record"]
 
 
 @pytest.mark.asyncio
@@ -208,7 +208,7 @@ async def test_a_report_turn_that_waits_for_an_answer_is_not_the_final_turn_unti
     assert [item["kind"] for item in hub.approvals] == ["research_plan", "research_evidence", "budget"]
     assert orch.budget_outcomes["r"] == [{"spent_usd": 2.0, "limit_usd": 1.0, "approved": True},
                                          {"spent_usd": 3.0, "limit_usd": 2.0, "approved": None, "final_turn": True}]
-    appendix = req["report_appendix"]
+    appendix = req["execution_record"]
     assert appendix.count("final turn; no further work") == 1
     assert appendix.index("$2.00 > $1.00; approved") < appendix.index("$3.00 > $2.00; final turn")
 
@@ -452,7 +452,7 @@ async def test_earlier_round_cp2_notes_stay_in_the_audit_appendix_with_their_rou
     hub = cont._hub(tmp_path, decisions)
     await Orchestrator(hub).run_request("r")
 
-    appendix = hub.requests["r"]["report_appendix"]
+    appendix = hub.requests["r"]["execution_record"]
     assert f"PI note (round 1 CP2): {long_note}" in appendix  # whole, though prompts clip it
     assert "PI note: 2차 확인" in appendix
 

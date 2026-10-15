@@ -74,7 +74,7 @@ async def test_accept_receipt_restart_and_finish_preserve_approved_body(tmp_path
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('part', ['report', 'report_appendix', 'claims', 'review', 'receipt', 'missing', 'component'])
+@pytest.mark.parametrize('part', ['report', 'report_appendix', 'execution_record', 'claims', 'review', 'receipt', 'missing', 'component'])
 async def test_changed_content_or_stale_receipt_cannot_be_done(tmp_path, part):
     from labhq.evidence.verify import final_checkpoint_problems
     fake = await draft_hub()
@@ -82,7 +82,7 @@ async def test_changed_content_or_stale_receipt_cannot_be_done(tmp_path, part):
     req = hub.requests['r']
     hub.review_done('r', **target(req))
     contract = req['research_contract']
-    if part in {'report', 'report_appendix'}:
+    if part in {'report', 'report_appendix', 'execution_record'}:
         req[part] += 'changed'
     elif part == 'claims':
         req['results']['s1']['structured']['claims'][0]['statement'] += 'changed'
@@ -98,7 +98,7 @@ async def test_changed_content_or_stale_receipt_cannot_be_done(tmp_path, part):
     hub.save_request('r')
     assert req['status'] != 'done' and not req['pi_reviewed_at']
     assert Hub(hub.s).requests['r']['status'] != 'done'
-    if part in {'report', 'report_appendix', 'claims', 'review'}:
+    if part in {'report', 'report_appendix', 'execution_record', 'claims', 'review'}:
         with pytest.raises(ValueError):
             hub.review_done('r', **target(req))
 

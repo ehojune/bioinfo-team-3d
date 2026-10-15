@@ -33,6 +33,7 @@ def test_the_checklist_has_four_to_six_checks_each_with_a_why():
     for resource in ("gnomAD", "ClinVar", "VEP", "MANE", "AlphaMissense", "AlphaGenome", "SpliceAI", "ACMG"):
         assert resource in text, resource
     by_id = {item.id: item.check for item in items}
+    assert "alphagenome_variant" in by_id["regulatory_splicing"]
     assert "임상 근거가 아니" in by_id["concordance_limits"] and "요청이 있을 때만" in by_id["concordance_limits"]
 
 

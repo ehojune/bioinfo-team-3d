@@ -466,10 +466,13 @@ function apply(ev, replay = false) {
         if (typeof r.report === 'string') q.report = r.report;
         if (typeof r.error === 'string' && r.error) q.error = r.error;
         if (typeof r.report_appendix === 'string') q.report_appendix = r.report_appendix;
+        if (typeof r.execution_record === 'string') q.execution_record = r.execution_record;
         q.bundlePath = r.bundle_path || ''; q.bundleStatus = r.bundle_status || ''; q.bundleGrade = r.bundle_grade || ''; q.bundleGradeReasons = r.bundle_grade_reasons || []; q.bundleWarning = r.bundle_warning || '';
         if (r.report_truncated) Object.assign(q, { report_truncated: true, report_chars: r.report_chars });
         if (r.report_appendix_truncated) Object.assign(q, { report_appendix_truncated: true,
           report_appendix_chars: r.report_appendix_chars });
+        if (r.execution_record_truncated) Object.assign(q, { execution_record_truncated: true,
+          execution_record_chars: r.execution_record_chars });
         q.costSummary = null; applyCostSummary(q, r.cost_summary);
         if (r.plan) setPlan(q, r.plan);
         q.references = r.references || [];
@@ -840,11 +843,15 @@ function apply(ev, replay = false) {
       applyCostSummary(q, d.cost_summary);
       if (d.report) q.report = d.report;
       if (d.report_appendix) q.report_appendix = d.report_appendix;
+      if (d.execution_record) q.execution_record = d.execution_record;
       delete q.report_truncated; delete q.report_chars;
       delete q.report_appendix_truncated; delete q.report_appendix_chars;
+      delete q.execution_record_truncated; delete q.execution_record_chars;
       if (d.report_truncated) Object.assign(q, { report_truncated: true, report_chars: d.report_chars });
       if (d.report_appendix_truncated) Object.assign(q, { report_appendix_truncated: true,
         report_appendix_chars: d.report_appendix_chars });
+      if (d.execution_record_truncated) Object.assign(q, { execution_record_truncated: true,
+        execution_record_chars: d.execution_record_chars });
       if (d.error) q.error = d.error;
       q.bundlePath = d.bundle_path || ''; q.bundleStatus = d.bundle_status || ''; q.bundleGrade = d.bundle_grade || ''; q.bundleGradeReasons = d.bundle_grade_reasons || []; q.bundleWarning = d.bundle_warning || '';
       // The gateway sends a reason; when it did not, say what is known instead of ending the line on a colon.
@@ -940,6 +947,12 @@ function fillRequestDetail(rid, request) {
       (q.report_appendix_truncated || q.report_appendix !== request.report_appendix)) {
     q.report_appendix = request.report_appendix;
     delete q.report_appendix_truncated; delete q.report_appendix_chars;
+    filled++;
+  }
+  if (q && typeof request?.execution_record === 'string' &&
+      (q.execution_record_truncated || q.execution_record !== request.execution_record)) {
+    q.execution_record = request.execution_record;
+    delete q.execution_record_truncated; delete q.execution_record_chars;
     filled++;
   }
   return filled;

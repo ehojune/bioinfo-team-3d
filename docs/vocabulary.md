@@ -423,7 +423,7 @@ labhq가 계획과 산출에 붙이는 이름표를 한곳에 모은 표입니�
 | `clinical_assertions` | ClinVar 분류를 review status와 평가 날짜와 함께 보고하고, 입력 allele과 같은 항목인지 확인한다 | 같은 변이도 제출자마다 해석이 다르고 등록된 항목이 다른 allele일 수 있기 때문이다 |
 | `consequence_annotation` | VEP로 변이 결과 유형을 보고하되 MANE Select(없으면 canonical) transcript를 기준으로 하고 Ensembl release와 참조 유전체 판본을 밝힌다 | transcript에 따라 같은 변이의 결과가 달라지고 판본이 바뀌면 주석도 바뀌기 때문이다 |
 | `missense_prediction` | 암호화 missense 변이는 AlphaMissense 점수와 분류를 같은 transcript 기준으로 보고하고, 다른 변이는 해당 없음으로 적는다 | ClinVar에 없는 missense 변이는 구조와 진화 정보를 합친 예측이 보조 단서가 되기 때문이다 |
-| `regulatory_splicing` | 비암호화·조절·스플라이싱 변이는 AlphaGenome(키가 있을 때)의 ref/alt 예측을 보고하고, 도구가 없으면 SpliceAI 같은 스플라이스 예측이나 공개 조절 주석으로 대신하며 무엇을 썼는지 밝힌다 | 단백질을 바꾸지 않는 변이는 AlphaMissense가 다루지 못하기 때문이다 |
+| `regulatory_splicing` | 비암호화·조절·스플라이싱 변이는 labhq_annot의 alphagenome_variant(AlphaGenome 키·SDK가 있을 때)로 권장 scorer의 ref/alt 점수·quantile·조직·방향을 보고하고, 도구가 없으면 SpliceAI 같은 예측이나 공개 조절 주석으로 대신하며 무엇을 썼는지 밝힌다 | 단백질을 바꾸지 않는 변이는 AlphaMissense가 다루지 못하기 때문이다 |
 | `concordance_limits` | 빈도·ClinVar·VEP·예측이 서로 맞는지 비교해 어긋나는 변이를 따로 표시하고, 예측은 임상 근거가 아니라고 한계에 적는다. ACMG/AMP 기준 분류는 요청이 있을 때만 한다 | 예측을 진단처럼 읽거나 어긋난 증거 중 한쪽만 고르지 않게 하기 위해서다 |
 
 ## 데이터 종류(data)
@@ -529,7 +529,7 @@ labhq가 계획과 산출에 붙이는 이름표를 한곳에 모은 표입니�
 | variants | gnomAD | population allele frequency (labhq_annot gnomad tool) |
 | variants | ClinVar | clinical significance (labhq_annot clinvar tool) |
 | variants | dbSNP | rsID and known variant identity |
-| variants | AlphaGenome | predicted regulatory effect of non-coding variants (labhq_annot alphagenome tool when its key is set) |
+| variants | AlphaGenome | predicted regulatory/splicing variant effects (labhq_annot alphagenome_variant recommended scores when key and SDK are available) |
 | variants | COSMIC | somatic mutation recurrence in cancer |
 | genes | Open Targets | target-disease association evidence |
 | genes | DisGeNET | gene-disease associations |

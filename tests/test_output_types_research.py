@@ -31,12 +31,13 @@ CANARY = "CANARY-research-91c2"
 # #549 adds paper skill selection before CP1; empty additions still preserve VALID_PLAN_SHA.
 # #549 B adds recruit.step_ids and hiring rules; an empty recruitment still preserves VALID_PLAN_SHA.
 # PR #581 P1: fresh recruits require at least one step_id; legacy stored plans remain compatible.
+# #609: graphical abstract creation moves to the final write-capable report step.
 # #586 공유 id 규칙 한 줄: 공유 항목의 bare/qualified 답 형식을 명시한다.
 # #621 adds the approved topic variant_effect, so the topic rule inside this fixed prompt grows by one entry; the
 # prompt template and both schemas are unchanged (RESEARCH_PROMPT_SHA moved on purpose, VALID_PLAN_SHA did not).
 RESEARCH_PLAN_SCHEMA_SHA = "6ce90ea335d696327af314f2b0f4b57bb5ad5a7a98a89b1f7214ed26092a1abf"
 RESEARCH_RESULT_SCHEMA_SHA = "9a767787fade091505fea149a8841845738ce30ce77cf6657cbca0aaa72af64d"
-RESEARCH_PROMPT_SHA = "1ee4c8aa2b06d74782cf414c974faf188066fd5e00da9a4f2daee67ca5d679f3"
+RESEARCH_PROMPT_SHA = "fb84f5da36989cacc4547e848f633f72bbf64b9aba3b5b25c12b05235084d0c7"
 VALID_PLAN_SHA = "f611461cc2dbb17e39159ec1df6a75d8f7b661eb39bbe42c8ed0438c5c45e213"
 
 

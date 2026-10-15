@@ -1,0 +1,5 @@
+pr: 631
+rows:
+- sha: bf10257
+  at: 2026-10-15 16:16
+  text: AlphaGenome 권장 변이 점수·한국어 요약·tidy 표와 크기 상한·판본 캐시를 추가하고 variant_effect 안내를 연결

@@ -62,7 +62,7 @@ a{color:var(--sleep-ink)}
 
 /* layout */
 .layout{max-width:1280px;margin:0 auto;padding:14px 16px;display:grid;gap:18px}
-@media (min-width:1000px){.layout{grid-template-columns:minmax(0,1.45fr) minmax(330px,1fr);align-items:start}}
+@media (min-width:1000px){.layout{grid-template-columns:minmax(320px,var(--office-panel-size,1.45fr)) var(--ds-resize-hit) minmax(330px,1fr);gap:0;align-items:start}}
 
 /* office */
 .office{background:var(--floor) var(--tile);border:1px solid var(--line);border-radius:18px;overflow:hidden}
@@ -281,6 +281,8 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
   .office{max-height:100%;overflow:auto}
   .panels{max-height:100%}
   .staff-wrap{position:static;flex:none;width:100%}
+  .staff-wrap{height:var(--staff-panel-size,auto);min-height:92px;max-height:300px;box-sizing:border-box}
+  .staff-strip{height:100%;overflow-y:auto;box-sizing:border-box}
   .composer{position:relative;flex:none}
 }
 @media (max-width:620px){
@@ -359,6 +361,10 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
     <div class="zones" id="zones"></div>
   </section>
 
+  <div class="panel-splitter panel-splitter--vertical" id="main-splitter" role="separator" tabindex="0"
+       aria-label="사무실과 결정·작업판·메신저 너비 조정" aria-orientation="vertical"
+       aria-controls="office command-center"></div>
+
   <aside class="panels ui-card" id="command-center" aria-label="Command Center">
     <nav class="cc-tabs" id="cc-tabs" aria-label="Command Center 탭">
       <button class="ui-tab" type="button" data-tab-target="decisions">결정 <span class="ui-tab__count" id="decision-count" hidden></span></button>
@@ -390,6 +396,10 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
     </section>
   </aside>
 </main>
+
+<div class="panel-splitter panel-splitter--horizontal" id="staff-splitter" role="separator" tabindex="0"
+     aria-label="작업 영역과 직원 시트 높이 조정" aria-orientation="horizontal"
+     aria-controls="office command-center staff-strip"></div>
 
 <section class="staff-wrap" aria-labelledby="staff-heading">
   <h2 id="staff-heading">직원</h2>
@@ -440,6 +450,7 @@ import {syncStaffCards} from './ui/strip.js';
 import {syncTaskBoard} from './ui/tasks.js';
 import {controlHtml, controlKey, staffControls} from './ui/control.js';
 import {initTabShell, updateDecisionBadge} from './ui/shell.js';
+import {initResizablePanels} from './ui/resizable.js';
 import {createMessenger, bindHistoryViewport, syncMessageRows} from './ui/messenger.js';
 import {KIND_LABELS as REF_KIND, inferReference, syncReferenceChips} from './ui/refs.js';
 (() => {
@@ -464,6 +475,9 @@ const store = {
   set(k, v) { try { localStorage.setItem(LabHQState.officeStorageKey({demo: IS_DEMO}, k), v); } catch (e) { /* storage unavailable */ } },
 };
 const raf = window.requestAnimationFrame ? window.requestAnimationFrame.bind(window) : (f => setTimeout(f, 16));
+initResizablePanels({layout: $('.layout'), office: $('#office'), staff: $('.staff-wrap'),
+  mainSplitter: $('#main-splitter'), staffSplitter: $('#staff-splitter'),
+  storage: store, storageKey: `panel_sizes:${INSTANCE}`});
 const safeUrl = u => (typeof u === 'string' && /^https?:\/\//.test(u)) ? u : null;
 const showTab = initTabShell($('#cc-tabs'), $('#command-center'), 'decisions');
 $('#cc-tabs').addEventListener('click', event => {
@@ -712,8 +726,10 @@ function followupHTML(q) {
 const reportHTML = q => !q.report ? '' : `<section class="pi-report"><h3>PI용 보고서</h3><pre>${esc(q.report)}${q.report_truncated ? '…' : ''}</pre>${
   q.report_truncated ? `<p class="fu-more">앞 ${[...q.report].length.toLocaleString()}자만 보여요${q.report_chars ? ` (전체 ${Number(q.report_chars).toLocaleString()}자)` : ''}${
     api?.requestDetail ? ` <button class="btn report-full" type="button" data-rid="${esc(q.id)}"${fuLoading.has(q.id) ? ' disabled' : ''}>전문 보기</button>` : ''}</p>` : ''}${q.report_appendix ?
-    `<details class="report-appendix"><summary>실행 기록</summary><pre>${esc(q.report_appendix)}${q.report_appendix_truncated ? '…' : ''}</pre>${q.report_appendix_truncated && api?.requestDetail ?
-      `<p class="fu-more">앞 ${[...q.report_appendix].length.toLocaleString()}자만 보여요 <button class="btn report-full" type="button" data-rid="${esc(q.id)}"${fuLoading.has(q.id) ? ' disabled' : ''}>전문 보기</button></p>` : ''}</details>` : ''}</section>`;
+    `<details class="report-appendix"><summary>${q.report_appendix.startsWith('## 부록\n') ? '과학 부록' : '실행 기록'}</summary><pre>${esc(q.report_appendix)}${q.report_appendix_truncated ? '…' : ''}</pre>${q.report_appendix_truncated && api?.requestDetail ?
+      `<p class="fu-more">앞 ${[...q.report_appendix].length.toLocaleString()}자만 보여요 <button class="btn report-full" type="button" data-rid="${esc(q.id)}"${fuLoading.has(q.id) ? ' disabled' : ''}>전문 보기</button></p>` : ''}</details>` : ''}${q.execution_record ?
+    `<details class="report-appendix"><summary>실행 기록</summary><pre>${esc(q.execution_record)}${q.execution_record_truncated ? '…' : ''}</pre>${q.execution_record_truncated && api?.requestDetail ?
+      `<p class="fu-more">앞 ${[...q.execution_record].length.toLocaleString()}자만 보여요 <button class="btn report-full" type="button" data-rid="${esc(q.id)}"${fuLoading.has(q.id) ? ' disabled' : ''}>전문 보기</button></p>` : ''}</details>` : ''}</section>`;
 // A finished request's report with its figures as a PDF (an HTML page when this PC has no browser to print it) (#584).
 const reportPdfHTML = q => !q.report || !api?.reportPdf || !LabHQState.isTerminalRequest(q.status) ? ''
   : `<p><button class="btn report-pdf" type="button" data-rid="${esc(q.id)}">PDF로 받기</button> <small>그림이 들어간 전체 보고서</small></p>`;
@@ -744,7 +760,7 @@ function renderRequest() {
   const statusText = q ? LabHQState.requestStatusText(q, S.approvals) : '';
   const all = LabHQState.sortRequests(S.requests.values());
   const requestDigest = all.map(r => [r.id, r.status, r.text, r.pi_review_pending, r.pi_reviewed_at, Math.round(r.cost * 100), r.costKnown]);
-  const key = q ? JSON.stringify([S.requests.size, staffNames, statusText, requestDigest, q.id, q.phase, q.status, q.steps, details, q.github.length, q.pipelinePr, q.report, q.report_appendix, q.bundlePath, q.bundleStatus, q.bundleGrade, q.bundleGradeReasons, q.bundleWarning, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes, q.processing]) : snapshotLoaded ? `none:${JSON.stringify(requestDigest)}` : `loading:${S.conn}`;
+  const key = q ? JSON.stringify([S.requests.size, staffNames, statusText, requestDigest, q.id, q.phase, q.status, q.steps, details, q.github.length, q.pipelinePr, q.report, q.report_appendix, q.execution_record, q.bundlePath, q.bundleStatus, q.bundleGrade, q.bundleGradeReasons, q.bundleWarning, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes, q.processing]) : snapshotLoaded ? `none:${JSON.stringify(requestDigest)}` : `loading:${S.conn}`;
   if (key === reqKey) return;
   reqKey = key;
   const current = all.filter(r => !LabHQState.isPastRequest(r)), past = all.filter(LabHQState.isPastRequest);

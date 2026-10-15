@@ -1125,14 +1125,19 @@ def _down(s: Settings, *, force: bool = False, keep_gateway: bool = False) -> No
 def _terminal_report(data: dict) -> str:
     """PI report first, then the separately labelled execution record for watch/send."""
     body = str(data.get("report") or data.get("error") or "")
-    appendix = str(data.get("report_appendix") or "")
     if data.get("report_truncated"):
         body += (f"\n\n[… 본문 잘림 · 전체 {data.get('report_chars', '?')}자 · "
                  f"전문: GET {data.get('report_api', '-')}]")
-    if appendix and data.get("report_appendix_truncated"):
-        appendix += (f"\n\n[… 실행 기록 잘림 · 전체 {data.get('report_appendix_chars', '?')}자 · "
-                     f"전문: GET {data.get('report_appendix_api', '-')}]")
-    return body + (("\n\n--- 실행 기록 ---\n" + appendix) if appendix else "")
+    for field, label in (("report_appendix", "과학 부록"), ("execution_record", "실행 기록")):
+        appendix = str(data.get(field) or "")
+        if field == "report_appendix" and not appendix.startswith("## 부록\n"):
+            label = "실행 기록"  # old requests
+        if appendix and data.get(f"{field}_truncated"):
+            appendix += (f"\n\n[… {label} 잘림 · 전체 {data.get(f'{field}_chars', '?')}자 · "
+                         f"전문: GET {data.get(f'{field}_api', '-')}]")
+        if appendix:
+            body += f"\n\n--- {label} ---\n" + appendix
+    return body
 
 
 def _verify(s: Settings, request_id: str, *, as_json: bool, bundle: str | None) -> int:
