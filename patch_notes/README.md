@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 17:50 | [`7501cb2`](https://github.com/ehojune/bioinfo-team-3d/pull/641/commits/7501cb2) | Windows CI의 디스크 쓰기 liveness test를 벽시계 임계값 대신 Event 사건 순서로 검증한다. |
 | 17:17 | [`58975d2`](https://github.com/ehojune/bioinfo-team-3d/pull/639/commits/58975d2) | CLI의 recruiter 표기를 카피바라로 바꾸고 편집자 비버와 구분한다 |
 | 16:49 | [`50411cb`](https://github.com/ehojune/bioinfo-team-3d/pull/639/commits/50411cb) | 인사팀을 카피바라로 바꾸고 2D·3D 캐릭터, 표시 이름, 중복 검사를 함께 갱신했습니다 |
 | 16:36 | [`9f4d35e`](https://github.com/ehojune/bioinfo-team-3d/pull/635/commits/9f4d35e) | 2.5D 사무실과 Command Center, 직원 시트 경계를 마우스·키보드로 조정하고 브라우저별 크기를 기억하게 했다(#633). |
