@@ -20,6 +20,7 @@ import yaml
 
 from .adapters.base import _resolve_command, codex_app_choice, expand_env
 from .adapters import adapter_preflight_error, get_adapter
+from . import instance_guard
 from .models import AgentSpec, Engine
 from . import private_paths as private_path_module
 from .private_paths import (PrivatePaths, configured_claude_config_dir, in_pi_claude, inside_any,
@@ -87,6 +88,12 @@ def _research_row(settings: Settings) -> dict:
 
 def _row(group: str, name: str, status: str, detail: str, hint: str) -> dict:
     return {"group": group, "name": name, "status": status, "detail": detail, "hint": hint}
+
+
+def _instance_rows(settings: Settings) -> list[dict]:
+    """Other configs that share this one's state folder or port, or a primary config that differs (#613)."""
+    return [_row("instance", instance_guard.DOCTOR_NAME[notice.key], "warn", notice.text, notice.fix)
+            for notice in instance_guard.check(settings, show=_safe_path)]
 
 
 def _writable(path: Path) -> bool:
@@ -519,6 +526,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
                          "gateway.client_token is set in the runner's config",
                          "Give the runner a config without gateway.client_token; see docs/runner-account.md."))
     rows.append(_research_row(settings))
+    rows.extend(_instance_rows(settings))
     markers = parent_claude_markers(dict(os.environ))
     rows.append(_row("staff", "claude_parent_session_env", "warn" if markers else "ok",
                      f"부모 Claude 세션 마커 {len(markers)}개를 직원 subprocess에서 제거"

@@ -21,7 +21,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-from . import proc_tree
+from . import instance_guard, proc_tree
 from .costs import cost_detail, cost_text
 from .facilities.signatures import problem_text
 from .request_status import is_terminal_request, request_status_label, request_display_label
@@ -631,9 +631,16 @@ def _start_background(s: Settings, role: str, *, popen=None) -> int:
     return int(process.pid)
 
 
-def _up_unlocked(s: Settings, *, popen=None) -> None:
+def _up_unlocked(s: Settings, *, popen=None, make_primary: bool = False) -> None:
     if _default_client_token(s.gateway.client_token):
         print("gateway 시작 거부: gateway.client_token의 change-me 기본값을 바꾸세요.", file=sys.stderr)
+        raise SystemExit(2)
+    # Another config on the same state folder or port is named, with the command that fixes it (#613). A live one
+    # stops `up`: it would otherwise report that other config's gateway as this one.
+    notices = instance_guard.check(s)
+    for notice in notices:
+        print(notice.render(), file=sys.stderr)
+    if any(notice.blocking for notice in notices):
         raise SystemExit(2)
     # A healthy server can share the port and state directory while using another config (#559).
     # Do not silently claim the requested settings are active, or delete the other process's record.
@@ -641,7 +648,13 @@ def _up_unlocked(s: Settings, *, popen=None) -> None:
         state, _record, reason = _process_record(s, role)
         if state == "unknown":
             _record_problem(role, reason)
-    health = _health(s)
+    try:
+        health = _health(s)
+    except SystemExit:  # 401: _authenticated_requests already said the token differs; say whose gateway it is
+        for notice in instance_guard.check(s, token_mismatch=True):
+            if notice.key == "port":
+                print(notice.render(), file=sys.stderr)
+        raise
     if health is None:
         state, _record, reason = _process_record(s, "gateway")
         if state == "unknown":
@@ -676,12 +689,13 @@ def _up_unlocked(s: Settings, *, popen=None) -> None:
             print(f"runner가 연결되지 않았습니다. 로그: {_launch_state(s) / 'logs' / 'runner.log'}",
                   file=sys.stderr)
             raise SystemExit(2)
+    instance_guard.record_success(s, make_primary=make_primary)
     print(f"웹 사무실: {_http_base(s)}/  (`{_config_command(s, 'open')}`)")
 
 
-def _up(s: Settings, *, popen=None) -> None:
+def _up(s: Settings, *, popen=None, make_primary: bool = False) -> None:
     with _operation_lock(s):
-        _up_unlocked(s, popen=popen)
+        _up_unlocked(s, popen=popen, make_primary=make_primary)
 
 
 def _wait_for_process_end(pid: int, created: str, timeout: float) -> bool:
@@ -1435,7 +1449,9 @@ def main(argv: list[str] | None = None) -> None:
     init.add_argument("--dry-run", action="store_true", help="preview without writing files")
     init.add_argument("--force", action="store_true", help="replace an existing config and rotate tokens")
     sub.add_parser("gateway")
-    sub.add_parser("up", help="start the gateway and runner in the background")
+    up = sub.add_parser("up", help="start the gateway and runner in the background")
+    up.add_argument("--make-primary", action="store_true",
+                    help="record this config as this PC's primary config (the first `up` records it by itself)")
     down = sub.add_parser("down", help="stop only the gateway and runner recorded by this instance")
     down.add_argument("--force", action="store_true", help="stop even when work is active or cannot be checked")
     op = sub.add_parser("open", help="open the web office in the browser, signed in (the token is never printed)")
@@ -1676,7 +1692,7 @@ def main(argv: list[str] | None = None) -> None:
                 diagnostics.write("uvicorn_end", reason=diagnostics.reason if error is None else type(error).__name__,
                                   code=getattr(error, "code", 1) if error is not None else diagnostics.code)
     elif args.cmd == "up":
-        _up(s)
+        _up(s, make_primary=args.make_primary)
     elif args.cmd == "down":
         _down(s, force=args.force)
     elif args.cmd == "open":
