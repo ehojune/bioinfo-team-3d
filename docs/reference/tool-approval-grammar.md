@@ -19,9 +19,7 @@
 
 - 쓰기는 resolve한 경로도 작업 폴더 안이어야 한다. 기존 파일은 regular file·nlink=1, 대상과 기존 상위 폴더는 symlink·junction·reparse point가 아니어야 한다. 새 파일도 기존 부모부터 검사한다. POSIX 디렉터리의 nlink는 하위 폴더 수이므로 파일의 nlink 조건과 구분한다.
 - 자동 허용 근거는 `agent.log`의 `문법 안: …`, 카드 근거는 `문법 밖: 이유`. broker 통신 장애 때 로그 전달은 보장하지 않는다.
-- task grant는 `uv run --no-project --no-config <script.py>` 직접 실행만 받는다(두 옵션의 순서는 자유). runner가 고른 설치 Paper2Agent 스킬이며 직원 쓰기 root 밖이어야 한다. 다른 launcher·옵션·환경 변수 접두에는 grant가 없다.
-- 두 옵션은 hash 밖 cwd의 project/workspace와 설정 탐색을 막는다. `UV_PROJECT`·`UV_CONFIG_FILE`·`PYTHONPATH` 등 명령 앞 대입은 닫힌 문법에서 거부한다. 작업 스크립트와 단순 read grant도 대상이 아니다.
-- 스킬 전체의 파일명·디렉터리·내용을 SHA-256으로 고정한다. helper 변경·추가·삭제·이름 변경마다 key가 바뀐다. link·비정규 파일·10,000항목/32MB 한도 초과는 grant를 주지 않는다.
+- 스크립트와 실행 코드는 명령 해석만으로 전체 범위를 고정할 수 없어 매번 카드로 보낸다. 반복 승인을 줄이는 방안은 OS sandbox 격리로 별도 이슈에서 다룬다.
 
 ## 46건 재생
 

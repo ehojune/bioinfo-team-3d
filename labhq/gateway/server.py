@@ -203,7 +203,7 @@ class DecisionIn(BaseModel):
     note: str = ""
     storage: dict | None = None
     # CP2 evidence review reads only this; the note never decides (#90). Other approvals ignore it.
-    choice: Literal["approve", "revise", "deny", "allow_task_class"] | None = None
+    choice: Literal["approve", "revise", "deny"] | None = None
 
 
 class RecruitIn(BaseModel):
@@ -1667,7 +1667,8 @@ class Hub:
             if entry["origin"] == runner_id:
                 await self.send_runner(runner_id, {"type": "approval.resolved", "id": aid,
                                                    "approved": entry["approved"], "note": entry["note"],
-                                                   **({'choice': entry['choice']} if entry.get('choice') else {})})
+                                                   **({'choice': entry['choice']}
+                                                      if entry.get('choice') in DECISION_CHOICES else {})})
 
     async def cancel_task(self, tid: str) -> bool:
         """Ask the task's runner to stop it and keep the ask until the task ends (PR #396 review).
@@ -3189,9 +3190,6 @@ class Hub:
         if entry is None:
             raise KeyError(approval_id)
         chosen = {"choice": choice} if choice in DECISION_CHOICES else {}
-        if (choice == 'allow_task_class' and approved and entry['approval'].get('kind') == 'tool_permission'
-                and (entry['approval'].get('detail') or {}).get('task_scope_label')):
-            chosen = {'choice': choice}
         if storage is not None:
             chosen["storage"] = storage
         self.store.delete("approval", approval_id)

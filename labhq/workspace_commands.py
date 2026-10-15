@@ -1,7 +1,6 @@
 """Literal task-local shell operations. Unknown syntax keeps the normal approval gate."""
 from __future__ import annotations
 
-import hashlib
 import os
 import re
 import shlex
@@ -228,91 +227,3 @@ def _workspace_command(parts, workdir: str | None, private_paths=(), *, powershe
         else:
             return False
     return not (external_read and writes)
-
-
-def _tree_digest(root: Path) -> str:
-    """Hash every name and byte, including helpers and hidden files; never follow aliases."""
-    from .adapters.owned import is_link
-    digest = hashlib.sha256()
-    pending = [root]
-    count = total = 0
-    while pending:
-        path = pending.pop()
-        info = path.lstat()
-        count += 1
-        if count > 10000 or is_link(path):
-            raise ValueError('linked or oversized skill tree')
-        name = path.relative_to(root).as_posix().encode()
-        digest.update(len(name).to_bytes(8, 'big') + name)
-        if stat.S_ISDIR(info.st_mode):
-            digest.update(b'D')
-            pending.extend(sorted(path.iterdir(), reverse=True))
-        elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
-            total += info.st_size
-            if total > 32_000_000:
-                raise ValueError('oversized skill tree')
-            content = path.read_bytes()
-            digest.update(b'F' + len(content).to_bytes(8, 'big') + content)
-        else:
-            raise ValueError('non-regular skill file')
-    return digest.hexdigest()
-
-
-def script_approval_scope(tool: str, data: dict, workdir: str, private_paths, open_reads, *,
-                          managed_roots=(), writable_roots=()) -> tuple[str, str] | None:
-    """An explicit temporary grant for a runner-selected, staff-read-only managed skill tree.
-
-    This is never automatic permission. The runner recomputes it for every call; a private/credential
-    operand, changed script, other task, shell expression or different executable cannot reuse it.
-    """
-    parts, _ = literal_commands(str(data.get('command', '')), powershell=tool == 'PowerShell')
-    if tool not in {'Bash', 'PowerShell'} or not parts or len(parts) != 1:
-        return None
-    words = parts[0]
-    # The tree digest cannot cover uv's writable cwd project/backend or config discovery.
-    # Keep a closed launcher grammar: both discovery opt-outs, then the managed script.
-    if words[:2] != ['uv', 'run'] or len(words) < 5 or set(words[2:4]) != {
-            '--no-project', '--no-config'}:
-        return None
-    prefix, args = 'uv run --no-project --no-config', words[4:]
-    if not args or not args[0].endswith('.py'):
-        return None
-    script = args[0] if os.path.isabs(args[0]) else os.path.join(workdir, args[0])
-    if not _managed_operand(script, workdir, list(private_paths), list(open_reads)):
-        return None
-    try:
-        # Read grants alone are not provenance. Only the runner supplies installation roots.
-        roots = [Path(p).absolute() for p in managed_roots]
-        writable = [workdir, *writable_roots]
-        real_script = resolved_read_path(script)
-        candidates = [p for p in roots if inside_any(script, [str(p)]) and
-                      inside_any(real_script, [str(p)])]
-        if len(candidates) != 1:
-            return None
-        tree = candidates[0]
-        if any(inside_any(str(tree), [p]) or inside_any(p, [str(tree)]) for p in writable):
-            return None
-        if not inside_any(str(tree), private_paths) or not inside_any(str(tree), open_reads):
-            return None
-        # Reject aliases in the install path, not just aliases beneath it.
-        from .adapters.owned import is_link
-        if any(is_link(p) for p in (tree, *tree.parents)):
-            return None
-        if not Path(script).is_file():
-            return None
-    except (OSError, ValueError, RuntimeError):
-        return None
-    for value in args[1:]:
-        if value.startswith('-'):
-            if not re.fullmatch(r'--?[A-Za-z][A-Za-z0-9_-]*', value):
-                return None
-            continue
-        if not workspace_command('cat ' + shlex.quote(value), workdir, private_paths):
-            return None
-    try:
-        path = Path(script)
-        digest = _tree_digest(tree)
-        key = '\0'.join((tool, prefix, real_script, str(tree), digest))
-    except (OSError, ValueError, RuntimeError):
-        return None
-    return hashlib.sha256(key.encode()).hexdigest(), f'{path.name} 실행 · 관리 스킬 전체 고정 · 인자는 이 작업 폴더 안'
