@@ -50,12 +50,13 @@ def gateway_url(data):
             host = route[route.index("via") + 1]
             candidates.append(urlunsplit(parsed._replace(netloc=f"{host}:{parsed.port or 80}")))
     opener = build_opener(ProxyHandler({}))
+    fetch = opener.open
     for candidate in candidates:
         url = urlsplit(candidate)
         health_url = urlunsplit(url._replace(scheme="https" if url.scheme == "wss" else "http",
                                              path="/api/health", query="", fragment=""))
         try:
-            with opener.open(health_url, timeout=3) as response:
+            with fetch(health_url, timeout=3) as response:
                 health = json.load(response)
             if (health.get("service") == "labhq gateway" and data.get("identity")
                     and health.get("identity") == data["identity"]):
@@ -118,9 +119,9 @@ def main(data):
         if not python.exists() and run(["python3", "-m", "venv", str(root / "venv")], 60).returncode:
             return {"ok": False, "reason": "venv"}
         source = Path(data["source"])
-        stamp = hashlib.sha256((str(source) + (source / "pyproject.toml").read_text()).encode()).hexdigest()
+        stamp = hashlib.sha256((str(source) + (source / "pyproject.toml").read_text(encoding="utf-8")).encode()).hexdigest()
         marker = root / "installed-source"
-        if not marker.exists() or marker.read_text() != stamp:
+        if not marker.exists() or marker.read_text(encoding="utf-8") != stamp:
             if run([str(python), "-m", "pip", "install", "-e", str(source)], 480).returncode:
                 return {"ok": False, "reason": "install"}
             private_write(marker, stamp)
@@ -145,7 +146,7 @@ def main(data):
         from labhq import cli
         from labhq.settings import Settings
 
-        old = yaml.safe_load(config.read_text()) if config.exists() else None
+        old = yaml.safe_load(config.read_text(encoding="utf-8")) if config.exists() else None
         port = (old or {}).get("runner", {}).get("broker_port")
         if not port:
             with socket.socket() as sock:
@@ -163,7 +164,7 @@ def main(data):
             "codex": {"bin": "codex", "env": {"CODEX_HOME": str(root / "codex-staff")}}}
         settings["annot"] = {"alphagenome_key_file": str(root / "secrets/alphagenome_api_key")}
         Settings.model_validate(settings)
-        agent = yaml.safe_load((Path(data["source"]) / "agents/core/bioinfo-agent.yaml").read_text())
+        agent = yaml.safe_load((Path(data["source"]) / "agents/core/bioinfo-agent.yaml").read_text(encoding="utf-8"))
         agent["plugin_dirs"] = [data["bioinfo_agent"]]
         target = root / "agents/core/bioinfo-agent.yaml"
         agent_text = yaml.safe_dump(agent, allow_unicode=True, sort_keys=False)
@@ -171,7 +172,7 @@ def main(data):
             s = Settings.load(str(config))
             with cli._operation_lock(s):
                 live = cli._supervised(s, "runner") or cli._process_record(s, "runner")[0] != "missing"
-                changed = old != settings or not target.exists() or target.read_text() != agent_text
+                changed = old != settings or not target.exists() or target.read_text(encoding="utf-8") != agent_text
                 if live and changed:
                     return {"ok": False, "reason": "busy"}
                 if not changed:

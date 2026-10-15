@@ -634,7 +634,8 @@ def test_runner_reports_effective_compute_capabilities():
     runner.local_software = {"r": {"available": False, "version": None}}
     hello = runner.hello()
     assert hello["capabilities"] == {
-        "scheduler": "none", "compute_backends": ["local CLI"], "hpc_tools": False,
+        "scheduler": "none", "runtime_env": "windows" if sys.platform == "win32" else "linux",
+        "compute_backends": ["local CLI"], "hpc_tools": False,
         "engine_cli_versions": {"mock": "unreported"},
         "local_software": {"r": {"available": False, "version": None}},
         "platform": sys.platform,
