@@ -15,6 +15,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
 | 02:47 | [`e03e945`](https://github.com/ehojune/bioinfo-team-3d/pull/659/commits/e03e945) | Windows PATH 실행 파일을 실제 Program Files·Git·System32 경로와 쓰기 권한으로 판정하고 작업 폴더 후보는 차단 |
+| 02:33 | [`3edab51`](https://github.com/ehojune/bioinfo-team-3d/pull/655/commits/3edab51) | 대화형·외부 종료 신호와 게시 draft 복구 계약을 다시 분리했다. |
 | 02:32 | [`3c9f814`](https://github.com/ehojune/bioinfo-team-3d/pull/661/commits/3c9f814) | 누락 칸 질문을 일반 요청 예산으로 계산하고 한 task 예약액이 남지 않으면 원본 ledger를 빈칸으로 보존 |
 | 02:08 | [`ce8a59f`](https://github.com/ehojune/bioinfo-team-3d/pull/659/commits/ce8a59f) | 승인 수정 브랜치에 최신 main 병합 |
 | 02:08 | [`3660963`](https://github.com/ehojune/bioinfo-team-3d/pull/659/commits/3660963) | PowerShell provider·콜론 operand를 카드로 보내고 staff PATH의 시스템 실행 파일·쓰기 권한을 한 번 판정해 기록 |
@@ -23,13 +24,17 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 01:13 | [`fd2ebdd`](https://github.com/ehojune/bioinfo-team-3d/pull/661/commits/fd2ebdd) | 후속 칸 질문의 내부 기록 필드를 최초 step schema에서 분리해 output types off 계약 유지 |
 | 00:59 | [`2dfdb5d`](https://github.com/ehojune/bioinfo-team-3d/pull/659/commits/2dfdb5d) | uv grant를 --no-project·--no-config 직접 실행으로 제한하고 cwd backend·환경 변수 접두 회귀 검증 |
 | 00:55 | [`f5cf6bc`](https://github.com/ehojune/bioinfo-team-3d/pull/643/commits/f5cf6bc) | Windows venv launcher가 자식 종료 뒤 끝나는 동안의 Access denied를 종료 완료로 판정하게 했다. |
+| 00:53 | [`e7bd382`](https://github.com/ehojune/bioinfo-team-3d/pull/655/commits/e7bd382) | 중단 정정 때 이전 결과 저장 상태를 비우고 게시된 결과의 정정을 거부 |
 | 00:47 | [`31e1e8a`](https://github.com/ehojune/bioinfo-team-3d/pull/659/commits/31e1e8a) | 자동 승인 닫힌 문법·쓰기 link 검사·관리 스킬 전체 트리 grant, 네 P1 회귀와 46건 재생 |
+| 00:40 | [`cf58a94`](https://github.com/ehojune/bioinfo-team-3d/pull/655/commits/cf58a94) | 종료 중단을 일반 예외로 분리하고 이어 묻기·상담·편집 재개 및 계획 콜백의 상태를 보존 |
 | 00:38 | [`a9ad4f6`](https://github.com/ehojune/bioinfo-team-3d/pull/650/commits/a9ad4f6) | 벤치 정답 식별자 경계를 ASCII 영숫자로 판정해 한국어 조사와 붙은 표기도 누출로 탐지한다. |
 | 00:27 | [`773cf4d`](https://github.com/ehojune/bioinfo-team-3d/pull/659/commits/773cf4d) | glob 읽기 예외에서도 restricted 하위 파일 차단, 작업·스킬 폴더 회귀 검증 |
 | 00:27 | [`eeac72d`](https://github.com/ehojune/bioinfo-team-3d/pull/661/commits/eeac72d) | 필수 증거 칸을 한 번 확인해 출처 있는 빈칸으로 남기고 독립 단계·CP2를 계속하며 개발 오류를 자동 기록 |
+| 00:23 | [`b1049b6`](https://github.com/ehojune/bioinfo-team-3d/pull/655/commits/b1049b6) | runner 종료 취소·outbox·복구의 종료 근거와 gateway 중단 전환·재개 카드 생성을 공통화 |
 | 00:18 | [`f34897b`](https://github.com/ehojune/bioinfo-team-3d/pull/659/commits/f34897b) | 작업 폴더 승인 오판 축소와 task 한정 스크립트 허용, 합성 재생 34건 카드 32→18건 |
 | 00:18 | [`f6f2aa9`](https://github.com/ehojune/bioinfo-team-3d/pull/650/commits/f6f2aa9) | 벤치 정답 식별자를 NFKC와 대소문자 접기로 정규화하고 긴 식별자의 하이픈·밑줄·공백·점 변형도 누출로 잡는다. |
 | 00:03 | [`97cf0a3`](https://github.com/ehojune/bioinfo-team-3d/pull/656/commits/97cf0a3) | 결정·작업판 중심 배치, 계획 흐름과 직원 카드 닫기·복원, 실패 결과 바로 보기 |
+| 00:01 | [`c55954a`](https://github.com/ehojune/bioinfo-team-3d/pull/655/commits/c55954a) | 종료 신호와 종료 표시를 함께 판정해 interrupted로 보존하고 PI 검토 뒤 게시 카드·실패 정정 CLI를 연결 |
 
 ## 2026-10-15
 

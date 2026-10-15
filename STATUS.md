@@ -114,6 +114,43 @@ PR #659의 P1 네 건을 닫힌 문법·쓰기 link 검사·관리 스킬 전체
 
 ## 결론
 
+Fixes #652. PR #655의 P1 4284969814를 수정합니다. `ShutdownInterrupted`를 일반 `Exception`으로 분리하고 runner만 종료돼도 각 호출자가 중단 상태를 저장하도록 했습니다. 진짜 `asyncio.CancelledError`는 기존 취소 경로를 따릅니다.
+
+기존 변경은 유지합니다: 종료 근거가 있는 요청은 `interrupted`와 재개 카드로 보존하며, 게시 카드는 PI 검토 뒤에만 엽니다. `mark-interrupted` 정정에는 저장된 종료 근거나 실패 직전 gateway 신호 기록이 필요합니다.
+
+## 호출부와 처리
+
+`git grep`의 직접 호출과 콜백 전달을 모두 확인했습니다. 요청 단계는 `run_request()`의 공통 처리에서 실행 중 단계를 정리하고 `_set_status(..., "interrupted")`로 재개 카드를 저장합니다.
+
+| `run_step()` 호출부 | 종료 중단 처리 |
+|---|---|
+| `run_request`: direct, briefing, 최초·revise·clarify 계획, review, synthesis | 요청 공통 처리로 전파 |
+| `run_request`: precedent | 일반 오류 fallback 전에 중단을 다시 던져 요청 공통 처리로 전달 |
+| `run_dag.run_one`: 단계 실행·결과 JSON 정정 | 다른 실행 단계를 취소·회수한 뒤 요청 공통 처리로 전달 |
+| `_run_solo`: 단독 실행·과학 리뷰 | 요청 공통 처리로 전파 |
+| `_research_report`: 연구 리뷰·최종 보고 | 요청 공통 처리로 전파 |
+| `prepare_recruits` → `recruit.planning.prepare_plan`: recruit_check·plan_recruit | 실패 receipt로 바꾸지 않고 요청 공통 처리로 전달 |
+| `paper_skills.prepare_plan`: paper_skill | 변환 실패로 바꾸지 않고 요청 공통 처리로 전달 |
+| `run_followup` | `interrupted`·종료 근거 저장, 다시 질문 허용, live 화면도 중단 상태 유지 |
+| `answer_ask` → `_start_ask().route()` | `resolved` 저장, 중단·재시도 안내가 담긴 rejected 응답으로 원 작업의 waiter 해제 |
+| `ResultStorage.finish`: result_editor | 저장 상태 `interrupted`; 편집자 runner 재연결 때 schedule. 재연결이 결과 도착 전·마지막 저장 중이어도 재개 |
+
+## 확인
+
+- 기본 회귀: 수정 전 5 failed / 5 passed → 수정 후 10 passed.
+- 예외 계층 변경 뒤 발견한 콜백 회귀 3건도 수정 전 실패를 확인했습니다.
+- 최종 새 회귀 18건 포함 관련 pytest **732 passed**. 기존 #655 테스트 포함.
+- follow-up reducer: 수정 전 중단 상태 assertion 실패 → 수정 후 3 passed.
+- 관련 Node **4 passed**. 공개 검사·patch-notes·notes-index 통과.
+
+## 남은 지적
+
+push 뒤 CI를 확인합니다. 리뷰 요청과 병합은 하지 않습니다.
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
 Fixes #657. PR #661. 필수 증거 칸 누락은 한 번 확인한 뒤 출처가 있는 빈칸으로 드러내고, 성공한 독립 단계의 결과는 CP2로 보냅니다.
 
 ## 바뀐 것
@@ -140,6 +177,26 @@ Fixes #657. PR #661. 필수 증거 칸 누락은 한 번 확인한 뒤 출처가
 - 실제 직원 CLI·PI 요청은 실행하지 않았습니다. 리뷰 요청과 병합은 총괄에게 넘깁니다.
 
 🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
+PR #655 P1 4284691846·4284691856을 같은 branch에서 수정했습니다.
+
+## 바뀐 것
+
+- runner 후처리·취소·재시작 복구는 `_shutdown_result`로 종료 근거를 붙이고 outbox에 보존합니다.
+- gateway 시작·대기 복구·재개 시간 초과·CSO 종료·PI 정정은 `interrupt_request`로 상태·이벤트·재개 카드 한 장을 기록합니다.
+- 요청의 interrupted 직접 대입은 공통 함수 안 한 곳입니다. 별도 followup 상태는 제외합니다.
+
+## 확인
+
+- 새 회귀: 수정 전 4 failed / 2 passed → 수정 후 6 passed.
+- 관련 pytest 361 passed / 2 skipped; 일반 취소·HPC job 복구·기존 Hub 시작 경로 유지.
+- 공개 검사 통과. patch-notes·notes-index 검사는 기록 커밋 전 실행합니다.
+
+## 남은 것
+
+push 뒤 CI 확인과 P1 인라인 답글을 남깁니다. 리뷰 요청·병합은 하지 않습니다.
 
 ## 결론
 
@@ -200,6 +257,27 @@ PR #656. 결정·작업판을 주 영역으로 넓히고 실패 결과를 바로
 ## 남은 것
 
 최종 push의 CI 상태는 PR 본문에 기록합니다. PI instance와 3D 파일은 변경하지 않았습니다. 리뷰 요청·병합은 총괄이 이어받습니다.
+
+PR #655 · branch `shutdown-is-interrupted` · 코드 `c55954a`
+
+종료 중 계획 생성이 `exit 129`로 끝나도 요청을 `interrupted`로 보존해 재시작 때 재개 카드를 엽니다. 게시 카드는 PI 검토 뒤에만 열고 실패·중단·revise 대체 시 열린 카드를 닫습니다.
+
+Fixes #652
+
+| 판정 근거 | 결과 |
+|---|---|
+| POSIX HUP·INT·QUIT·KILL·TERM의 `128+N` 또는 `-N` + gateway/runner 종료 표시 | interrupted |
+| Windows `1`, `0xC000013A`, `0xC000010A`(signed 포함) + 종료 표시 | interrupted |
+| 같은 코드지만 종료 표시 없음 / 종료 중이어도 다른 오류 코드 | failed 유지 |
+| 재개 뒤 새 시도 | 이전 종료 근거 제거 후 다시 판정 |
+
+- 공통 `run_step()`에서 단계·CSO 계획·답변 반영/revise 계획·최종 보고의 종료를 판정합니다. runner 결과, CLI 신호 처리, web shutdown, supervisor 없는 down도 종료 근거를 전달합니다.
+- `pi_reviewed_at` 조건은 auto-publish 설정과 무관합니다. `review_done`이 저장본을 다시 schedule하며, 카드 종료는 `close_approval`을 씁니다.
+- `labhq request mark-interrupted <id>`는 PI 인증 API에서 이전 상태를 이벤트에 저장하고 정정합니다. 기존 실패는 저장된 종료 근거 또는 실패 직전 10초 안의 gateway 신호 로그가 필요합니다. 현재 종료 표시만으로 과거 실패를 바꾸지 않습니다.
+
+검증: origin/main `063a89d`에서 새 테스트 **23 failed / 7 passed**, branch **30 passed**. 관련 pytest **367 passed / 2 skipped** 후 마지막 상태 보존·카드 조건 변경은 새 테스트 30개로 재확인했습니다. 공개 검사·diff 검사 통과. 전체 pytest는 CI에서 확인합니다.
+
+남은 지적: PI 데이터는 확인·정정하지 않았습니다. 과거 종료 로그가 최근 64 KiB에 없거나 시간 조건이 맞지 않으면 정정 명령은 거부합니다.
 
 # PR #651 — 비용 모름 표시와 호출 없는 dry-run
 
