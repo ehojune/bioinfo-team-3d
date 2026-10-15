@@ -1,0 +1,5 @@
+pr: 630
+rows:
+- sha: db5fb41
+  at: 2026-10-15 15:54
+  text: setup-wsl로 로컬 WSL runner를 준비하고 bioinfo-agent 배정·도구 안내·실측을 추가했다 (#612 1단계).
