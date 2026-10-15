@@ -86,6 +86,15 @@ class RunnerSettings(BaseModel):
     # folders) before and after the run; past this many it is refused rather than run unchecked (#36).
     read_only_check_max_entries: int = Field(default=50000, ge=1)
 
+    @model_validator(mode="after")
+    def validate_wsl(self) -> "RunnerSettings":
+        if self.wsl.enabled and self.id == self.wsl.id:
+            raise ValueError("Windows and WSL runner.id must differ")
+        if self.environment == "wsl":
+            from .wsl_paths import shared_path
+            self.workspace_root = shared_path(self.workspace_root, "wsl")
+        return self
+
 
 class EngineBin(BaseModel):
     model_config = ConfigDict(extra="forbid")  # a misspelled or unsupported option must not pass silently

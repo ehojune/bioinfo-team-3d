@@ -136,21 +136,23 @@ Codex 직원 로그인 격리는 [알려진 한계](#알려진-한계)의 전용
 Windows 설정을 선택해 `labhq -c <설정> setup-wsl --check`로 배포판·Java·Nextflow·Docker·bioinfo-agent·WSL labhq·runner 등록/연결을 확인합니다. `없음`은 실행 또는 연결을 확인하지 못했다는 뜻입니다.
 
 1. `labhq -c <설정> up`으로 gateway를 켭니다.
-2. `labhq -c <설정> setup-wsl`을 실행합니다. 관리자 명령은 안내만 합니다. 없는 Nextflow(24.10.5), 현재 checkout의 editable labhq venv, 별도 runner 설정을 준비하고 runner를 시작합니다.
+2. `labhq -c <설정> setup-wsl`로 없는 Nextflow(24.10.5)·editable labhq venv·runner 설정을 준비합니다. 연결 확인 뒤에만 활성화를 저장하며 실패하면 Windows 설정은 유지합니다. 관리자 명령은 안내만 합니다.
 3. 이후 `up`·`down`이 WSL runner도 시작·종료합니다. 따로 제어하려면 같은 설정으로 `wsl-runner start` 또는 `wsl-runner stop`을 씁니다. 기존 supervisor와 프로세스 신원 검사를 재사용합니다.
 
 | `runner.wsl` 설정 | 기본값 / 용도 |
 |---|---|
 | `distro`, `user` | `Ubuntu-22.04`, 배포판 기본 사용자 |
-| `id` | `lab-wsl` — Windows runner와 달라야 함 |
+| `id` | `lab-wsl` — 활성화 때 Windows runner와 같으면 설정·시작 거부 |
 | `bioinfo_agent` | `/mnt/d/bioinfo-agent` |
-| `root` | Linux 홈의 `.local/share/labhq/wsl-<설정 해시>`; venv·state·작업·로그·직원 설정을 분리 |
-| `gateway_url` | 먼저 기존 주소, localhost가 안 되면 WSL 기본 경로의 Windows 주소를 확인 |
-| `enabled` | setup 성공 시 true |
+| `root` | Linux 홈의 `.local/share/labhq/wsl-<설정 해시>`; venv·state·로그·직원 설정을 분리 |
+| `gateway_url` | 기존 주소 → localhost 실패 시 Windows NAT 주소. 기본 포트 ws 80·wss 443 |
+| `enabled` | setup의 연결 확인 성공 시 true |
 
 토큰은 stdin으로 전달하고 Linux의 700 폴더 안 600 설정 파일에 둡니다. Windows mount에는 저장하지 않습니다. NAT에서 연결이 안 되면 gateway를 WSL에서 닿는 주소에 bind하고 방화벽을 확인하세요. setup이 bind나 방화벽을 바꾸지는 않습니다.
 
-bioinfo-agent는 WSL runner에 배정하며 연결이 끊겨도 Windows로 넘기지 않습니다. CSO는 연결된 runner의 Nextflow·Docker 실행 확인을 계획에 반영합니다. WSL의 Claude CLI와 직원 전용 로그인(`root/claude-staff`)은 별도 준비가 필요합니다. setup은 로그인하지 않습니다. 실행 위치 선택 카드는 #612 2단계입니다.
+작업은 Windows `runner.workspace_root`와 같은 `/mnt/<drive>/…` 폴더를 씁니다. 경로를 양방향 변환해 `inputs/<step>`과 최종 bundle을 잇습니다. `/home` 작업 폴더·UNC 경로는 거부합니다. setup은 Windows 승인·예산 정책을 복사하고 개인·통제 구역 경로를 변환합니다. 변환 실패는 설정 거부이며, 정책을 바꿨다면 `wsl-runner stop` 후 setup을 다시 실행하세요.
+
+bioinfo-agent는 WSL이 연결됐을 때만 WSL에 우선 배정하고 끊기면 연결된 Windows 직원으로 돌아갑니다. CSO는 연결된 runner의 Nextflow·Docker 확인을 계획에 반영합니다. WSL Claude CLI·직원 로그인(`root/claude-staff`)은 별도 준비하며 setup은 로그인하지 않습니다. 실행 위치 선택 카드는 #612 2단계입니다.
 
 ## 띄우기와 접속
 

@@ -1,11 +1,12 @@
 """Small stdlib bootstrap, run by WSL's python3 before the labhq venv exists.
 
 Input is JSON on stdin; output is bounded facts, never installer output or credentials.
-State, virtualenv, work and PID records stay on Linux, separate from the Windows instance.
+State, virtualenv and PID records stay on Linux. Work uses the Windows shared drive.
 """
 from __future__ import annotations
 
 import hashlib
+import copy
 import json
 import os
 from pathlib import Path
@@ -48,7 +49,8 @@ def gateway_url(data):
         route = run(["ip", "route", "show", "default"]).stdout.decode().split()
         if "via" in route:
             host = route[route.index("via") + 1]
-            candidates.append(urlunsplit(parsed._replace(netloc=f"{host}:{parsed.port or 80}")))
+            port = parsed.port or (443 if parsed.scheme == "wss" else 80)
+            candidates.append(urlunsplit(parsed._replace(netloc=f"{host}:{port}")))
     opener = build_opener(ProxyHandler({}))
     fetch = opener.open
     for candidate in candidates:
@@ -155,14 +157,22 @@ def main(data):
         settings = {"instance": "wsl-runner", "gateway": {"url": data["url"],
                     "runner_token": data["token"], "client_token": "", "state_dir": str(root / "supervisor")},
                     "runner": {"id": data["id"], "environment": "wsl", "state_dir": str(root / "state"),
-                               "workspace_root": str(root / "runs"), "agents_dir": str(root / "agents"),
+                               "workspace_root": data["workspace_root"], "agents_dir": str(root / "agents"),
                                "talent_dir": str(root / "talent"), "contract_dir": str(root / "contracts"),
                                "broker_port": port, "force_engine": data.get("force_engine")},
-                    "hpc": {"scheduler": "none"}, "supervisor": data["supervisor"]}
+                    "hpc": {"scheduler": "none"}, "supervisor": data["supervisor"],
+                    "policy": copy.deepcopy(data["policy"])}
         settings["engines"] = {"claude_code": {"bin": "claude", "env": {
             "CLAUDE_CONFIG_DIR": str(root / "claude-staff")}},
             "codex": {"bin": "codex", "env": {"CODEX_HOME": str(root / "codex-staff")}}}
         settings["annot"] = {"alphagenome_key_file": str(root / "secrets/alphagenome_api_key")}
+        if data.get("private_defaults"):
+            from labhq.private_paths import DEFAULT_HOME_ENTRIES
+            # Keep Linux credentials protected as well as the inherited Windows paths.
+            settings["policy"]["private_paths"] = [*settings["policy"]["private_paths"],
+                *(str(Path.home() / name) for name in DEFAULT_HOME_ENTRIES),
+                str(config), str(root / "supervisor"), str(root / "claude-staff"),
+                str(root / "codex-staff"), str(root / "secrets")]
         Settings.model_validate(settings)
         agent = yaml.safe_load((Path(data["source"]) / "agents/core/bioinfo-agent.yaml").read_text(encoding="utf-8"))
         agent["plugin_dirs"] = [data["bioinfo_agent"]]

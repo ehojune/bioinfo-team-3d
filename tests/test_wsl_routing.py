@@ -25,21 +25,24 @@ def settings(tmp_path):
 def test_bioinfo_routes_to_wsl_after_windows_reconnect(settings, configured):
     settings.runner = type(settings.runner).model_validate({**settings.runner.model_dump(), "wsl": {"enabled": configured}})
     hub = Hub(settings)
+    hub.runners["windows"] = object()
     staff = [AgentSpec(id="bioinfo-agent", name="Bioinfo", role="analysis", engine="mock").summary()]
     hub.set_roster("windows", staff, {"runtime_env": "windows", "environment": {}})
     if configured:
-        assert "bioinfo-agent" not in hub.agent_runner
+        assert hub.agent_runner["bioinfo-agent"] == "windows"
+    hub.runners["lab-wsl"] = object()
     hub.set_roster("lab-wsl", staff, {"runtime_env": "wsl", "environment": {}})
     hub.set_roster("windows", staff, {"runtime_env": "windows", "environment": {}})
     assert hub.agent_runner["bioinfo-agent"] == "lab-wsl"
-    # An offline WSL runner must not silently hand Linux work to Windows.
+    # A WSL runner without this staff member no longer takes precedence.
     hub.set_roster("lab-wsl", [], {"runtime_env": "wsl", "environment": {}})
     hub.set_roster("windows", staff, {"runtime_env": "windows", "environment": {}})
-    assert "bioinfo-agent" not in hub.agent_runner
+    assert hub.agent_runner["bioinfo-agent"] == "windows"
 
 
 def test_runner_reports_runtime_without_replacing_login_environment(settings, monkeypatch):
     settings.runner.environment = "wsl"
+    settings.runner.workspace_root = "/mnt/c/Shared/Runs"
     monkeypatch.setenv("XDG_CONFIG_HOME", "/test/login-config")
 
     capabilities = Runner(settings).capabilities()

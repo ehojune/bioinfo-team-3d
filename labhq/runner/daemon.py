@@ -210,6 +210,7 @@ _EMIT_UNIT: contextvars.ContextVar[list | None] = contextvars.ContextVar("labhq_
 
 class Runner:
     def __init__(self, settings: Settings):
+        settings.runner.validate_wsl()
         self.s = settings
         # The loop and its thread, noted by `_send_durably`: a message committed on the durable writer thread asks
         # this loop to reload the outbox queue (#606).
@@ -511,6 +512,7 @@ class Runner:
         capabilities = {"scheduler": self.s.hpc.scheduler,
                         "runtime_env": ("wsl" if self.s.runner.environment == "wsl" else
                                         "windows" if sys.platform == "win32" else "linux"),
+                        "workspace_root": str(self.s.path(self.s.runner.workspace_root)),
                         "compute_backends": ["local CLI"] +
                                             ([self.s.hpc.scheduler] if self.s.hpc.scheduler != "none" else []) +
                                             (["external labhq_hpc MCP"] if external_hpc else []),
@@ -1150,6 +1152,16 @@ class Runner:
 
     async def run_task(self, task: Task, workdir_override: Path | None = None) -> TaskResult:
         from ..recruit.paper_skills import PaperSkillBuild
+
+        if self.s.runner.environment == "wsl":
+            from ..wsl_paths import message_paths, shared_path
+            task = task.model_copy(update={"meta": message_paths(task.meta, "wsl")})
+            shared_path(str(self.ws_root.resolve()), "wsl")
+            if workdir_override is not None:
+                workdir_override = Path(shared_path(str(workdir_override), "wsl"))
+            override = workdir_override or task.meta.get("workdir")
+            if override:
+                shared_path(str(Path(override).resolve()), "wsl")
 
         self._result_queued.discard(task.id)  # a new run of this id
 

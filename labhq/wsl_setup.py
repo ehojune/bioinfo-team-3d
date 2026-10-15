@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import time
@@ -16,6 +17,7 @@ import yaml
 from . import instance_guard
 from .settings import Settings
 from .util import atomic_write_text
+from .wsl_paths import shared_path
 
 
 class WslError(RuntimeError):
@@ -127,6 +129,31 @@ def _save_enabled(s: Settings) -> None:
     s.runner.wsl.enabled = True
 
 
+def _shared_settings(s: Settings) -> dict:
+    """Snapshot the Windows policy on each setup; refuse anything we cannot map."""
+    from .private_paths import configured_private_paths
+
+    def convert(raw):
+        expanded = os.path.expandvars(os.path.expanduser(str(raw)))
+        # Settings-relative paths and home defaults are resolved on Windows, never in WSL.
+        if not expanded.startswith(("/", "\\")) and not (len(expanded) > 1 and expanded[1] == ":"):
+            expanded = str(s.path(expanded).resolve())
+        return shared_path(expanded, "wsl")
+
+    try:
+        policy = s.policy.model_dump()
+        for zone in policy["data_zones"]:
+            zone["path"] = convert(zone["path"])
+        private = policy["private_paths"]
+        if private is None:
+            private = [path for path, _label in configured_private_paths(s, str(Path.home()))]
+        policy["private_paths"] = [convert(path) for path in private]
+        return {"workspace_root": convert(s.runner.workspace_root), "policy": policy,
+                "private_defaults": s.policy.private_paths is None}
+    except ValueError as exc:
+        raise WslError("WSL shared 경로로 바꾸지 못해 설정을 거부했습니다.") from exc
+
+
 def setup(s: Settings) -> list[dict]:
     if not s.config_path:
         raise WslError("먼저 labhq init으로 설정을 만들고 -c로 선택하세요.")
@@ -134,6 +161,7 @@ def setup(s: Settings) -> list[dict]:
         raise WslError("Windows와 WSL의 runner.id는 달라야 합니다.")
     if s.runner.wsl.distro not in distributions():
         return check(s)  # administrator commands are advice only
+    shared = _shared_settings(s)
     facts = _remote(s, "probe")
     _remote(s, "install", install_nextflow=not facts.get("nextflow"))
     # Verify the reachable gateway by its identity before sending the runner token anywhere over the network.
@@ -142,13 +170,15 @@ def setup(s: Settings) -> list[dict]:
         raise WslError("WSL에서 이 gateway에 닿지 못했습니다. 먼저 up을 실행하세요. "
                        "NAT 방식이면 gateway.host와 방화벽을 확인하고 runner.wsl.gateway_url에 Windows 주소를 넣으세요.")
     _remote(s, "configure", url=network["url"], token=s.gateway.runner_token,
-            supervisor=s.supervisor.model_dump(), force_engine=s.runner.force_engine)
-    _save_enabled(s)
+            supervisor=s.supervisor.model_dump(), force_engine=s.runner.force_engine, **shared)
     control(s, "start")
+    _save_enabled(s)
     return check(s)
 
 
 def control(s: Settings, action: str) -> None:
+    if action == "start" and s.runner.id == s.runner.wsl.id:
+        raise WslError("Windows와 WSL의 runner.id는 달라야 합니다.")
     _remote(s, action)
     if action == "start":
         from .cli import _health

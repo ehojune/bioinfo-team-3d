@@ -66,6 +66,8 @@ def test_missing_wsl_only_prints_admin_advice(settings, monkeypatch):
 
 def test_setup_repeat_uses_same_private_config_and_no_nextflow_install(settings, monkeypatch):
     from labhq import wsl_bootstrap, wsl_setup
+    monkeypatch.setattr(wsl_setup, "_shared_settings", lambda s: {"workspace_root": "/mnt/c/Shared/Runs",
+                                                               "policy": s.policy.model_dump()})
     monkeypatch.setattr(wsl_setup, "distributions", lambda: ["Ubuntu-22.04"])
     monkeypatch.setattr(cli, "_health", lambda s: health(s))
     calls = []
@@ -109,7 +111,8 @@ def test_linux_private_config_is_idempotent_and_separate(settings, tmp_path, mon
     monkeypatch.setattr(wsl_bootstrap.sys, "prefix", str(root / "venv"))
     data = {"action": "configure", "root": str(root), "source": str(source), "id": "lab-wsl",
             "url": "ws://192.0.2.1:43123", "token": settings.gateway.runner_token,
-            "bioinfo_agent": "/opt/bioinfo-agent", "supervisor": {"restart": True}}
+            "bioinfo_agent": "/opt/bioinfo-agent", "supervisor": {"restart": True},
+            "workspace_root": "/mnt/c/Shared/Runs", "policy": settings.policy.model_dump()}
     assert wsl_bootstrap.main(data)["ok"]
     config = root / "labhq.yaml"
     before = config.stat().st_mtime_ns
@@ -118,6 +121,7 @@ def test_linux_private_config_is_idempotent_and_separate(settings, tmp_path, mon
     assert actual.runner.id != settings.runner.id
     assert actual.runner.state_dir != settings.runner.state_dir
     assert actual.runner.environment == "wsl"
+    assert actual.runner.workspace_root == "/mnt/c/Shared/Runs"
     assert actual.gateway.client_token == "" and actual.gateway.runner_token == settings.gateway.runner_token
     if wsl_bootstrap.os.name != "nt":
         assert config.stat().st_mode & 0o777 == 0o600

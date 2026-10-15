@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 import mimetypes
+import os
 import time
 from collections import deque
 from collections.abc import Callable, Mapping
@@ -2053,8 +2054,10 @@ class Hub:
         self.store.put("runner_roster", runner_id, roster)
         if capabilities is not None:
             self.runner_capabilities[runner_id] = capabilities
-        wsl_runner = self.s.runner.wsl.id if self.s.runner.wsl.enabled else next(
-            (rid for rid, report in self.runner_capabilities.items() if report.get("runtime_env") == "wsl"), None)
+        wsl_runner = next((rid for rid in self.runners
+                           if self.runner_capabilities.get(rid, {}).get("runtime_env") == "wsl"
+                           and any(a["id"] == "bioinfo-agent" for a in
+                                   (agents if rid == runner_id else self.runner_agents.get(rid, [])))), None)
         if wsl_runner and self.agent_runner.get("bioinfo-agent") not in (None, wsl_runner):
             self.agent_runner.pop("bioinfo-agent", None)
             self.agents.pop("bioinfo-agent", None)
@@ -2067,8 +2070,7 @@ class Hub:
         for a in agents:
             caps = self.runner_capabilities.get(runner_id, {})
             if a["id"] == "bioinfo-agent":
-                # Configured routing is sticky even while WSL is offline. For a gateway already running
-                # during setup, a WSL registration wins over later Windows reconnects as well.
+                # Only a connected WSL worker takes precedence over the native roster.
                 if wsl_runner and runner_id != wsl_runner:
                     continue
             hpc_tools = bool(a.get("hpc_tools", caps.get("hpc_tools") and
@@ -2101,6 +2103,10 @@ class Hub:
             for aid, host in self.agent_runner.items():
                 if host == runner_id:
                     self.agent_online.setdefault(aid, asyncio.Event()).clear()
+            if self.runner_capabilities.get(runner_id, {}).get("runtime_env") == "wsl":
+                for native_id in self.runners:
+                    if self.runner_capabilities.get(native_id, {}).get("runtime_env") != "wsl":
+                        self.set_roster(native_id, self.runner_agents.get(native_id, []))
             self._session_state_changed()
             return True
         return False
@@ -2180,6 +2186,9 @@ class Hub:
         ws = self.runners.get(runner_id)
         if ws is None:
             raise RunnerNotSent(f"runner {runner_id} is offline")
+        if self.runner_capabilities.get(runner_id, {}).get("runtime_env") == "wsl":
+            from ..wsl_paths import message_paths
+            msg = message_paths(msg, "wsl")
         payload = json.dumps(msg, ensure_ascii=False, default=str)
         async with self.runner_locks[runner_id]:
             if self.runners.get(runner_id) is not ws:
@@ -2261,6 +2270,9 @@ class Hub:
         if ws is not None and (self.runners.get(runner_id) is not ws or
                                self.runner_incarnations.get(runner_id) != incarnation):
             return
+        if self.runner_capabilities.get(runner_id, {}).get("runtime_env") == "wsl":
+            from ..wsl_paths import message_paths
+            msg = message_paths(msg, "windows" if os.name == "nt" else "wsl")
         runner_seq = msg.get("runner_seq")
         if runner_seq is not None and runner_seq <= self.store.runner_seen(runner_id):
             await self.send_runner(runner_id, {"type": "runner.ack", "runner_seq": runner_seq})

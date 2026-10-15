@@ -734,6 +734,7 @@ def _start_background(s: Settings, role: str, *, popen=None) -> int:
     parent, and Windows can give that PID to a stranger that something later kills by parent PID alone. The
     supervisor outlives `up`, starts the role as its own child and records how it ended; `up` records the
     supervisor, which records the role."""
+    s.runner.validate_wsl()
     state = _launch_state(s)
     logs = state / "logs"
     logs.mkdir(parents=True, exist_ok=True)
@@ -770,6 +771,7 @@ def _supervised(s: Settings, role: str) -> bool:
 
 
 def _up_unlocked(s: Settings, *, popen=None, make_primary: bool = False) -> None:
+    s.runner.validate_wsl()
     if _default_client_token(s.gateway.client_token):
         print("gateway 시작 거부: gateway.client_token의 change-me 기본값을 바꾸세요.", file=sys.stderr)
         raise SystemExit(2)
