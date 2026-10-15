@@ -12,3 +12,6 @@ rows:
 - sha: 8a069ba
   at: 2026-10-16 02:49
   text: 계획 prompt의 사용자 입력 정규화를 제거하고 명령과 정규식을 원문대로 보존
+- sha: 63d6635
+  at: 2026-10-16 03:32
+  text: 최신 main의 결과 계약 보정과 StructuredOutput 재시도 순서를 함께 보존
