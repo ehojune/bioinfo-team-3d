@@ -74,13 +74,14 @@ def test_plan_prompts_declare_analysis_scripts_as_outputs():
         assert "outputs/reference/" in prompt
 
 
-def test_report_prompts_put_the_readable_body_before_the_execution_appendix():
+def test_report_prompts_put_the_scientific_body_before_its_appendix_and_keep_operations_separate():
     for prompt in (cso.SYNTH_PROMPT, cso.RESEARCH_SYNTH_PROMPT):
-        structure = prompt.split("Use these sections in this order:", 1)[1]
-        headings = [structure.index(f'"{heading}"') for heading in ("결론과 권고", "결과", "방법 요약", "한계")]
+        headings = [prompt.index(f'"{heading}"') for heading in
+                    ("제목", "요약(Abstract)", "서론", "방법", "결과", "논의", "결론", "참고", "부록")]
         assert headings == sorted(headings)
         assert "separate execution record" in prompt
         assert "실행 기록 참고" in prompt
+        assert "## 부록: 실행 기록" not in prompt
 
 
 def test_step_prompt_asks_for_escaped_line_breaks_inside_the_json_string():

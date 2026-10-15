@@ -101,7 +101,7 @@ def snapshot_event(event: dict) -> dict:
         return {**event, "data": snapshot_followup(data)}
     if event.get("type") in {"request.completed", "request.failed"}:
         shortened, changed = dict(data), False
-        for field in ("report", "report_appendix"):
+        for field in ("report", "report_appendix", "execution_record"):
             value = data.get(field)
             if isinstance(value, str) and len(value) > SNAPSHOT_REPORT_CHARS:
                 shortened[field] = value[:SNAPSHOT_REPORT_CHARS]
@@ -121,7 +121,7 @@ def snapshot_event(event: dict) -> dict:
 
 def snapshot_reports(request: dict) -> dict:
     """Stored terminal reports for snapshots, bounded exactly like replayed terminal events."""
-    data = {key: request[key] for key in ("report", "report_appendix")
+    data = {key: request[key] for key in ("report", "report_appendix", "execution_record")
             if isinstance(request.get(key), str)}
     if not data:
         return {}
@@ -1018,6 +1018,7 @@ class Hub:
     def _apply_bundle_outcome(self, rid: str, data: dict, outcome: dict) -> None:
         bundled = outcome.get("bundle")
         if bundled:
+            self.requests[rid]["bundle_conversion"] = bundled.get("conversion_record") or ""
             self.requests[rid]["bundle_path"] = data["bundle_path"] = bundled["path"]
             self.requests[rid]["bundle_status"] = data["bundle_status"] = bundled["status"]
             self.requests[rid]["bundle_grade"] = data["bundle_grade"] = bundled.get("grade")
@@ -1032,12 +1033,12 @@ class Hub:
             return
         warning = str(outcome["warning"])
         if outcome.get("appendix"):
-            appendix = str(self.requests[rid].get("report_appendix") or "")
+            appendix = str(self.requests[rid].get("execution_record") or "")
             if warning not in appendix:
                 appendix = appendix.rstrip() + ("\n\n" if appendix.strip() else "") + warning
-                self.requests[rid]["report_appendix"] = appendix
-                if isinstance(data.get("report_appendix"), str) and not data.get("report_appendix_truncated"):
-                    data["report_appendix"] = appendix
+                self.requests[rid]["execution_record"] = appendix
+                if isinstance(data.get("execution_record"), str) and not data.get("execution_record_truncated"):
+                    data["execution_record"] = appendix
         self.requests[rid].pop("bundle_path", None)
         self.requests[rid].pop("bundle_status", None)
         self.requests[rid].pop("bundle_grade", None)
@@ -1067,6 +1068,7 @@ class Hub:
         asyncio.get_running_loop().create_task(self._send_committed_event())
         try:
             self.rounds.write(rid)
+            self.rounds.submit(rid)
         except OSError as exc:
             log.warning("round record bundle update failed for %s: %s", rid, exc)
 
@@ -3250,8 +3252,10 @@ class Hub:
         pending = req.pop("cancelling", None) or {}
         report, appendix = self._cancel_report(req, list(req.get("cancelled_tasks") or []),
                                                dict.fromkeys(pending.get("quota_steps") or []))
-        req.update(report=report, report_appendix=appendix)
-        data = {"ok": False, "status": "cancelled", "error": req["error"], **_terminal_reports(rid, report, appendix),
+        from ..report_format import split_appendix
+        appendix, execution = split_appendix(appendix)
+        req.update(report=report, report_appendix=appendix, execution_record=execution)
+        data = {"ok": False, "status": "cancelled", "error": req["error"], **_terminal_reports(rid, report, appendix, execution),
                 "cost_usd": req.get("cost_usd", 0), "cost_known": req.get("cost_known", True),
                 "cost_summary": req.get("cost_summary"), "usage": req.get("usage", {}),
                 "usage_known": req.get("usage_known", True)}

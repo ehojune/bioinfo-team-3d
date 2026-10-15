@@ -245,12 +245,13 @@ def build_record(hub: "Hub", rid: str, sources: dict[str, dict[str, list[dict]]]
         "review": {"verdict": (req.get("review") or {}).get("verdict"),
                    "scores": (req.get("review") or {}).get("scores") or {},
                    "revision_rounds": (req.get("review_progress") or {}).get("last_completed_revision", 0),
-                   "revision_failures": [s["revision_failed"] for s in steps if s["revision_failed"]],
-                   "detail": req.get("review") or {}},
+                   "revision_failures": [s["revision_failed"] for s in steps if s["revision_failed"]]},
         "pi_decisions": [{"kind": (d.get("approval") or {}).get("kind"), "approved": d.get("approved"),
                           "note": d.get("note"), "state": d.get("state") or "resolved"} for d in decisions],
-        "result": {"status": req.get("status"), "root_cause_summary": req.get("report") or req.get("error"),
-                   "report": req.get("report"), "pending_decisions": pending,
+        "result": {"status": req.get("status"), "root_cause_summary": req.get("error"),
+                   "report_links": _report_links(req),
+                   "execution_record": req.get("execution_record") or "",
+                   "bundle_conversion": req.get("bundle_conversion") or "", "pending_decisions": pending,
                    "anomalies": anomalies, "usage": req.get("usage") or {},
                    "cost_usd": req.get("cost_usd"), "cost_known": req.get("cost_known"),
                    "cost_summary": req.get("cost_summary"),
@@ -258,9 +259,65 @@ def build_record(hub: "Hub", rid: str, sources: dict[str, dict[str, list[dict]]]
     }
 
 
+def _report_links(req: dict) -> list[dict]:
+    links = []
+    if req.get("bundle_path"):
+        root = str(req["bundle_path"]).replace("\\", "/").rstrip("/")
+        links += [{"label": "과학 보고서 · 요청 묶음", "path": root + "/report.md"},
+                  {"label": "운전 기록 · 요청 묶음", "path": root + "/execution_record.md"}]
+    saved = req.get("result_storage") or {}
+    if saved.get("status") == "published" and saved.get("repo"):
+        url = (f"https://github.com/{saved['repo']}/blob/{saved.get('branch') or 'main'}/"
+               f"labhq/results/{req['id']}/report.md")
+        links.append({"label": "과학 보고서 · GitHub 정리본", "path": url})
+    return links
+
+
+def _operation_lines(record: dict) -> list[str]:
+    from urllib.parse import quote
+    result = record["result"]
+    links = result.get("report_links") or []
+    lines = []
+    for link in links:
+        label, path = str(link["label"]), str(link["path"])
+        if re.match(r"^https?://", path, re.IGNORECASE):
+            lines.append(f"- [{label}]({quote(path, safe='/:')})")
+        else:
+            lines.append(f"- {label}: `{path.replace('`', '')}`")
+    if not links:
+        path = f"/api/requests/{quote(str(record['request_id']), safe='')}"
+        lines.append(f"- 과학 보고서 · 요청 상세: `{path}` (묶음·게시 링크 없음)")
+    seen = set()
+    for step in record["steps"]:
+        for raw in step.get("output_paths") or []:
+            path = str(raw).replace("\\", "/")
+            parts = path.rstrip("/").split("/")
+            if parts[-1] in {"report.html", "timeline.html", "trace.txt"} or "pipeline_info" in parts:
+                if path not in seen:
+                    lines.append(f"- Nextflow · {parts[-1]}: `{path.replace('`', '')}`")
+                    seen.add(path)
+    execution = str(result.get("execution_record") or "")
+    root_cause = str(result.get("root_cause_summary") or "")
+    if root_cause and root_cause not in execution:
+        lines.append(f"- 실패 원인: {root_cause}")
+    lines += [f"- 비용: {result.get('cost_usd')} (집계: {result.get('cost_known')})",
+              execution, str(result.get("bundle_conversion") or "")]
+    return lines
+
+
+def _operation_record(record: dict) -> dict:
+    # Old JSON records remain readable, but their scientific text must not leak into rendered JSON/Markdown.
+    legacy_scientific_body = "report" in record["result"]
+    dropped = {"report", "root_cause_summary"} if legacy_scientific_body else {"report"}
+    result = {key: value for key, value in record["result"].items() if key not in dropped}
+    review = {key: value for key, value in record["review"].items() if key != "detail"}
+    return {**record, "result": result, "review": review}
+
+
 def render_record(record: dict, *, include_json: bool = True,
                   report_override: object = _ORIGINAL_REPORT,
                   report_notice: str | None = None) -> str:
+    record = _operation_record(record)
     data = json.dumps(record, ensure_ascii=False, indent=2, default=str)
     req, result = record["request"], record["result"]
     commit = record["environment"].get("git_commit")
@@ -287,14 +344,10 @@ def render_record(record: dict, *, include_json: bool = True,
               f"- 점수: {json.dumps(record['review']['scores'], ensure_ascii=False)}",
               f"- 수정 회차: {record['review']['revision_rounds']}", "", "## PI 결정"]
     lines += [f"- {d['kind']}: {d['approved']} {d['note'] or ''}" for d in record["pi_decisions"]]
-    if report_override is _ORIGINAL_REPORT:
-        report = result.get("report") or result.get("root_cause_summary") or ""
-    else:
-        report = str(report_override)
     lines += ["", "## 결과", f"- 상태: {result['status']}",
               f"- 미결정: {json.dumps(result['pending_decisions'], ensure_ascii=False)}",
               f"- 이상 징후: {', '.join(result['anomalies']) or '없음'}",
-               report]
+               *_operation_lines(record)]
     if report_notice:
         lines += ["", report_notice]
     if include_json:
@@ -344,7 +397,7 @@ def _fit_variable_sections(prefix: str, sections: list[tuple[str, str]], suffix:
         return "\n".join(parts)
 
     empty = assemble([""] * len(sections))
-    available = max(0, limit - len(empty))
+    available = max(0, limit - len(empty) - len(sections))  # nonempty content adds one separator per section
     texts = [text for _, text in sections]
     allocations = [0] * len(texts)
     active = set(range(len(texts)))
@@ -388,7 +441,7 @@ def _compact_record_body(record: dict, marker: str, limit: int) -> str:
         step_lines.append(f"- {step['id']}: {step['status']}, 시도 {step['attempts']}")
         outputs = step["output_paths"]
         step_lines += [f"  - 산출물: {path}" for path in outputs] if outputs else ["  - 산출물: 없음"]
-    report = str(result.get("report") or result.get("root_cause_summary") or "")
+    report = "\n".join(_operation_lines(record))
     sections = [
         ("## 요청", "\n".join([
             str(req.get("text") or ""), f"- 모드: {req.get('mode') or '—'}",
@@ -420,7 +473,7 @@ def _compact_record_body(record: dict, marker: str, limit: int) -> str:
         ])),
     ]
     suffix = "\n".join([
-        f"> 결과 보고서 전문은 로컬 기록 rounds/{record['request_id']}.md에 있음",
+        f"> 운전 기록 전문은 로컬 기록 rounds/{record['request_id']}.md에 있음",
         f"> JSON 원본은 로컬 rounds/{record['request_id']}.json에 있음",
     ])
     return _fit_variable_sections(marker, sections, suffix, limit)
