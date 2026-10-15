@@ -4,6 +4,7 @@ role: 데이터·분석 결과 QC (PASS/WARN/FAIL 판정)
 character: hedgehog
 engine: claude_code
 model: sonnet
+model_tier: balanced
 permission_mode: default
 tools: [Read, Glob, Grep, Write, "Bash(ls *)", "Bash(wc *)"]
 builtin_mcp: [approval, hpc]

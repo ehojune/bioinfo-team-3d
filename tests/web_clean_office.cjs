@@ -33,7 +33,7 @@ test('header cost keeps current-session and office requests, with unknown costs 
   assert.deepEqual(shown.map(q => q.id), ['recent', 'unknown', 'run']);
   assert.equal(state.requestsCostTotal(shown), 6);
   assert.equal(state.totalCostLabel(shown, state.requestsCostTotal(shown)),
-    '사용 비용 $6.00 + 미집계된 비용');
+    '사용 비용 $6.00 + 비용 모름');
 });
 
 test('a non-terminal follow-up restores reviewed work and contributes only its session cost', () => {

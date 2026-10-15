@@ -4,6 +4,7 @@ import os
 import ntpath
 import re
 import stat
+from datetime import date
 from pathlib import Path
 from typing import Any  # semantics-hook
 from typing import Literal
@@ -374,6 +375,7 @@ class RecruitSettings(BaseModel):
     default_ttl_days: int = 30
     contract_engine: str = "claude_code"
     contract_model: str | None = "sonnet"
+    contract_model_tier: Literal["fast", "balanced", "reasoning"] = "balanced"
     skill_source: str = "https://github.com/jmiao24/Paper2Agent"
     # setup-paper2agent installs exactly this commit (40 hex); None installs the latest HEAD and records it (#424).
     skill_commit: str | None = None
@@ -455,6 +457,42 @@ class PlanSettings(BaseModel):
     stay as they were (nothing is deleted or rewritten)."""
 
     declare_output_types: bool = False
+
+
+class ModelTierRate(BaseModel):
+    """Operator-supplied USD range for one model call; blank means unknown."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    min_usd: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    max_usd: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def complete_range(self) -> "ModelTierRate":
+        if (self.min_usd is None) != (self.max_usd is None):
+            raise ValueError("model tier price needs both min_usd and max_usd, or neither")
+        if self.min_usd is not None and self.max_usd is not None and self.max_usd < self.min_usd:
+            raise ValueError("model tier max_usd must be at least min_usd")
+        return self
+
+
+class ModelTierPrices(BaseModel):
+    """One configurable table for dry-run call ranges. No source means every range stays unknown."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str | None = None
+    checked_on: date | None = None
+    fast: ModelTierRate = Field(default_factory=ModelTierRate)
+    balanced: ModelTierRate = Field(default_factory=ModelTierRate)
+    reasoning: ModelTierRate = Field(default_factory=ModelTierRate)
+
+    @model_validator(mode="after")
+    def sourced_prices(self) -> "ModelTierPrices":
+        priced = any(rate.min_usd is not None for rate in (self.fast, self.balanced, self.reasoning))
+        if priced and (not self.source or self.checked_on is None):
+            raise ValueError("priced model tiers require source and checked_on")
+        return self
 
 
 class PiProfileSettings(BaseModel):
@@ -566,6 +604,7 @@ class Settings(BaseModel):
     orchestrator: OrchestratorSettings = OrchestratorSettings()
     pi_language: PiLanguageSettings = Field(default_factory=PiLanguageSettings)
     plan: PlanSettings = PlanSettings()
+    model_tier_prices: ModelTierPrices = Field(default_factory=ModelTierPrices)
     lab: LabSettings = LabSettings()
     research: ResearchSettings = ResearchSettings()
     pi_profile: PiProfileSettings = PiProfileSettings()
