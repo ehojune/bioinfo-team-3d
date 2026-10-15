@@ -15,3 +15,7 @@ rows:
   at: 2026-10-15 12:11
   text: main의 PDF 그림 정책(#611·#616)을 합치고, 편집자 입력·출처 추출·--redraft와 함께 draft_documents·finish가
     초록과 출처 assets를 모두 받게 한다(#607).
+- sha: 34e8b20
+  at: 2026-10-15 13:10
+  text: 출처 호스트 거름을 하나(public_link)로 닫고(끝 점·IPv6·IPv4 변형·userinfo), 괄호 있는 DOI와 짧은 PMID를
+    받으며, 게시 카드 답과 --redraft를 같은 lock으로 직렬화해 게시 시작 뒤 재작성을 거부한다(#607).
