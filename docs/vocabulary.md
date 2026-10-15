@@ -5,8 +5,8 @@ labhq가 계획과 산출에 붙이는 이름표를 한곳에 모은 표입니�
 
 | 무엇 | 수 | 쓰임 |
 |---|---:|---|
-| topic(분야) | 44 | CSO가 계획마다 적는 분야 이름표. 점검표와 분야 규칙 pack을 고르는 열쇠 |
-| 점검표 항목 | 129 | topic마다 계획이 답해야 하는 점검. 할 수 있으면 하고, 못 하면 이유를 밝힌다 |
+| topic(분야) | 45 | CSO가 계획마다 적는 분야 이름표. 점검표와 분야 규칙 pack을 고르는 열쇠 |
+| 점검표 항목 | 135 | topic마다 계획이 답해야 하는 점검. 할 수 있으면 하고, 못 하면 이유를 밝힌다 |
 | 데이터 종류(data) | 30 | 단계 산출에 붙이는 이름표 |
 | 파일 형식(format) | 28 | 단계 산출에 붙이는 이름표 |
 | 작업(operation) | 22 | 단계 산출에 붙이는 이름표 |
@@ -60,6 +60,7 @@ labhq가 계획과 산출에 붙이는 이름표를 한곳에 모은 표입니�
 | `metagenomic_functional_profiling` | gene, pathway and functional profiling from metagenomic data | 3 | Metagenomics (topic_3174) |
 | `metagenome_binning` | grouping metagenomic contigs into metagenome-assembled genomes | 3 | - |
 | `metatranscriptomics` | RNA sequencing of microbial communities for activity and function | 2 | Metatranscriptomics (topic_3941) |
+| `variant_effect` | interpreting the likely effect of specific variants (missense, regulatory, splicing) with public frequency, clinical and prediction resources | 6 | - |
 
 ## 점검표
 
@@ -413,6 +414,17 @@ labhq가 계획과 산출에 붙이는 이름표를 한곳에 모은 표입니�
 |---|---|---|
 | `rrna_host_removal` | rRNA 제거(실험·in silico)와 숙주 read 제거 뒤 남은 read 비율을 보고한다 | rRNA와 숙주 read가 남으면 미생물 전사 신호가 묻힌다 |
 | `dna_normalization` | 전사 차이는 짝 metagenome의 DNA 풍부도로 보정해 발현 변화와 분류군 풍부도 변화를 구분한다 | 분류군이 늘어난 것을 발현이 늘어난 것으로 오인하지 않기 위해서다 |
+
+### variant_effect
+
+| id | 점검 | 이유 |
+|---|---|---|
+| `population_frequency` | gnomAD 같은 집단 자료의 dataset 판본과 전체·주요 ancestry 집단별 allele frequency를 보고하고, 관찰되지 않았으면 조회에 성공했는데 없었다고 밝힌다 | 흔한 변이는 희귀 질환의 원인일 가능성이 낮고 빈도는 집단마다 다르기 때문이다 |
+| `clinical_assertions` | ClinVar 분류를 review status와 평가 날짜와 함께 보고하고, 입력 allele과 같은 항목인지 확인한다 | 같은 변이도 제출자마다 해석이 다르고 등록된 항목이 다른 allele일 수 있기 때문이다 |
+| `consequence_annotation` | VEP로 변이 결과 유형을 보고하되 MANE Select(없으면 canonical) transcript를 기준으로 하고 Ensembl release와 참조 유전체 판본을 밝힌다 | transcript에 따라 같은 변이의 결과가 달라지고 판본이 바뀌면 주석도 바뀌기 때문이다 |
+| `missense_prediction` | 암호화 missense 변이는 AlphaMissense 점수와 분류를 같은 transcript 기준으로 보고하고, 다른 변이는 해당 없음으로 적는다 | ClinVar에 없는 missense 변이는 구조와 진화 정보를 합친 예측이 보조 단서가 되기 때문이다 |
+| `regulatory_splicing` | 비암호화·조절·스플라이싱 변이는 AlphaGenome(키가 있을 때)의 ref/alt 예측을 보고하고, 도구가 없으면 SpliceAI 같은 스플라이스 예측이나 공개 조절 주석으로 대신하며 무엇을 썼는지 밝힌다 | 단백질을 바꾸지 않는 변이는 AlphaMissense가 다루지 못하기 때문이다 |
+| `concordance_limits` | 빈도·ClinVar·VEP·예측이 서로 맞는지 비교해 어긋나는 변이를 따로 표시하고, 예측은 임상 근거가 아니라고 한계에 적는다. ACMG/AMP 기준 분류는 요청이 있을 때만 한다 | 예측을 진단처럼 읽거나 어긋난 증거 중 한쪽만 고르지 않게 하기 위해서다 |
 
 ## 데이터 종류(data)
 

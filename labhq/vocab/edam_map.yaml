@@ -128,3 +128,4 @@ candidates:
   metagenomic_functional_profiling: Metagenomics
   metagenome_binning: null
   metatranscriptomics: Metatranscriptomics
+  variant_effect: null
