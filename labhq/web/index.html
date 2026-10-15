@@ -62,7 +62,7 @@ a{color:var(--sleep-ink)}
 
 /* layout */
 .layout{max-width:1280px;margin:0 auto;padding:14px 16px;display:grid;gap:18px}
-@media (min-width:1000px){.layout{grid-template-columns:minmax(0,1.45fr) minmax(330px,1fr);align-items:start}}
+@media (min-width:1000px){.layout{grid-template-columns:minmax(320px,var(--office-panel-size,1.45fr)) var(--ds-resize-hit) minmax(330px,1fr);gap:0;align-items:start}}
 
 /* office */
 .office{background:var(--floor) var(--tile);border:1px solid var(--line);border-radius:18px;overflow:hidden}
@@ -281,6 +281,8 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
   .office{max-height:100%;overflow:auto}
   .panels{max-height:100%}
   .staff-wrap{position:static;flex:none;width:100%}
+  .staff-wrap{height:var(--staff-panel-size,auto);min-height:92px;max-height:300px;box-sizing:border-box}
+  .staff-strip{height:100%;overflow-y:auto;box-sizing:border-box}
   .composer{position:relative;flex:none}
 }
 @media (max-width:620px){
@@ -359,6 +361,10 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
     <div class="zones" id="zones"></div>
   </section>
 
+  <div class="panel-splitter panel-splitter--vertical" id="main-splitter" role="separator" tabindex="0"
+       aria-label="사무실과 결정·작업판·메신저 너비 조정" aria-orientation="vertical"
+       aria-controls="office command-center"></div>
+
   <aside class="panels ui-card" id="command-center" aria-label="Command Center">
     <nav class="cc-tabs" id="cc-tabs" aria-label="Command Center 탭">
       <button class="ui-tab" type="button" data-tab-target="decisions">결정 <span class="ui-tab__count" id="decision-count" hidden></span></button>
@@ -390,6 +396,10 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
     </section>
   </aside>
 </main>
+
+<div class="panel-splitter panel-splitter--horizontal" id="staff-splitter" role="separator" tabindex="0"
+     aria-label="작업 영역과 직원 시트 높이 조정" aria-orientation="horizontal"
+     aria-controls="office command-center staff-strip"></div>
 
 <section class="staff-wrap" aria-labelledby="staff-heading">
   <h2 id="staff-heading">직원</h2>
@@ -440,6 +450,7 @@ import {syncStaffCards} from './ui/strip.js';
 import {syncTaskBoard} from './ui/tasks.js';
 import {controlHtml, controlKey, staffControls} from './ui/control.js';
 import {initTabShell, updateDecisionBadge} from './ui/shell.js';
+import {initResizablePanels} from './ui/resizable.js';
 import {createMessenger, bindHistoryViewport, syncMessageRows} from './ui/messenger.js';
 import {KIND_LABELS as REF_KIND, inferReference, syncReferenceChips} from './ui/refs.js';
 (() => {
@@ -464,6 +475,9 @@ const store = {
   set(k, v) { try { localStorage.setItem(LabHQState.officeStorageKey({demo: IS_DEMO}, k), v); } catch (e) { /* storage unavailable */ } },
 };
 const raf = window.requestAnimationFrame ? window.requestAnimationFrame.bind(window) : (f => setTimeout(f, 16));
+initResizablePanels({layout: $('.layout'), office: $('#office'), staff: $('.staff-wrap'),
+  mainSplitter: $('#main-splitter'), staffSplitter: $('#staff-splitter'),
+  storage: store, storageKey: `panel_sizes:${INSTANCE}`});
 const safeUrl = u => (typeof u === 'string' && /^https?:\/\//.test(u)) ? u : null;
 const showTab = initTabShell($('#cc-tabs'), $('#command-center'), 'decisions');
 $('#cc-tabs').addEventListener('click', event => {

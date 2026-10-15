@@ -101,6 +101,33 @@
 }
 .ui-tab__count[hidden] { display: none; }
 
+.panel-splitter {
+  display: none;
+  position: relative;
+  touch-action: none;
+  user-select: none;
+  border: 0;
+  background: transparent;
+  color: var(--ds-line-ui);
+}
+.panel-splitter::after {
+  content: "";
+  position: absolute;
+  border-radius: var(--ds-r-pill);
+  background: currentColor;
+}
+.panel-splitter:hover, .panel-splitter.is-resizing { color: var(--ds-accent); }
+.panel-splitter:focus-visible { outline: 3px solid var(--ds-accent); outline-offset: -3px; }
+.panel-splitter--vertical { align-self: stretch; min-height: var(--ds-h-touch); cursor: col-resize; }
+.panel-splitter--vertical::after { inset: var(--ds-sp-5) calc(50% - 1px); width: 2px; }
+.panel-splitter--horizontal { cursor: row-resize; }
+.panel-splitter--horizontal::after { inset: calc(50% - 1px) var(--ds-sp-5); height: 2px; }
+@media (min-width: 1000px) {
+  .panel-splitter { display: block; }
+  .panel-splitter--horizontal { flex: 0 0 var(--ds-resize-hit); width: min(100%, 1248px); margin: calc(var(--ds-resize-hit) / -2) auto; z-index: var(--ds-z-tabbar); }
+}
+@media (max-width: 620px) { .panel-splitter { display: none; } }
+
 :is(.ui-sheet, dialog.sheet) {
   border: 1px solid var(--ds-line-ui);
   border-radius: var(--ds-r-2);
