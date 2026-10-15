@@ -359,6 +359,9 @@ async def test_redraft_api_and_cli(tmp_path, monkeypatch, capsys):
 # ----- round 3: one host gate, balanced DOI parentheses, short labelled PMIDs, publish vs redraft -----
 
 PRIVATE_LINKS = [
+    "http://127.0.0.1\\example.org/secret", "http://gateway.local\\example.org/x",
+    "http://127.0.0.1\\\texample.org/x", "http://gateway.local \\\nexample.org/x",
+    "http://localhost.\\\rexample.org/x", "http://10.0.0.1\\\x00example.org/x",
     "http://127.0.0.1/x", "http://127.0.0.1./x", "http://127.0.0.1.../x", "http://gateway.local./secret",
     "http://gateway.local/x", "https://host.internal./v", "http://LOCALHOST/x", "http://localhost./x",
     "http://x.localhost/x", "http://nas.lan/x", "http://router.home.arpa./x", "http://home.arpa/x",
@@ -370,9 +373,11 @@ PRIVATE_LINKS = [
     "http://0x7f000001/x", "http://%31%32%37.0.0.1/x",  # decimal, hex, octal and short IPv4 forms, percent-encoded
     "http://10.0.0.5/", "http://172.16.0.1/", "http://192.168.1.5/", "http://169.254.169.254/", "http://0.0.0.0/",
     "http://240.0.0.1/", "http://100.64.0.1/", "http://224.0.0.1/",  # private, link-local, unspecified, reserved, shared, multicast
-    "http://user:pw@127.0.0.1/x", "ftp://example.org/x", "http:///x"]
+    "http://a@127.0.0.1/x", "http://user:pw@127.0.0.1/x", "ftp://example.org/x", "http:///x"]
 PUBLIC_LINKS = {
     "https://example.org/a": "https://example.org/a",
+    "https://example.org\\public/path": "https://example.org/public/path",
+    "https://exa\tmple.org/x": "https://example.org/x",
     "http://8.8.8.8/x": "http://8.8.8.8/x",
     "http://134744072/x": "http://8.8.8.8/x",  # the same address in decimal
     "https://[2606:4700:4700::1111]/x": "https://[2606:4700:4700::1111]/x",
