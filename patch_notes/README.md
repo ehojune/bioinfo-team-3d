@@ -14,14 +14,21 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 18:17 | [`07fd2ae`](https://github.com/ehojune/bioinfo-team-3d/pull/638/commits/07fd2ae) | 최신 main 병합과 채용 담당·편집자 표시 충돌 해결 |
+| 18:17 | [`5b886e2`](https://github.com/ehojune/bioinfo-team-3d/pull/638/commits/5b886e2) | 읽기 예외를 현재 작업·명시한 스킬 폴더로 제한하고 공용 상위 경로를 최종 검사 |
 | 18:06 | [`450cdb7`](https://github.com/ehojune/bioinfo-team-3d/pull/642/commits/450cdb7) | 단독 처리 직원을 2D·3D 사자로 표시하고 체크리스트, 기본 매핑, 중복 회귀 검사를 추가했습니다 |
 | 18:05 | [`0ffd924`](https://github.com/ehojune/bioinfo-team-3d/pull/637/commits/0ffd924) | 실행·대기 중인 이어 묻기를 현재 요청으로 유지하고 발생 시각 기준 세션 비용을 집계함 |
+| 17:59 | [`018e895`](https://github.com/ehojune/bioinfo-team-3d/pull/638/commits/018e895) | Bash 공백 경로 우회·통제 데이터 위험 표시·read-only 읽기 grant·경로 label 수정 |
 | 17:56 | [`325bfe0`](https://github.com/ehojune/bioinfo-team-3d/pull/637/commits/325bfe0) | 최신 main의 인사팀 화면 변경을 병합해 깨끗한 사무실 표시와 함께 보존함 |
 | 17:50 | [`7501cb2`](https://github.com/ehojune/bioinfo-team-3d/pull/641/commits/7501cb2) | Windows CI의 디스크 쓰기 liveness test를 벽시계 임계값 대신 Event 사건 순서로 검증한다. |
+| 17:44 | [`3f70eab`](https://github.com/ehojune/bioinfo-team-3d/pull/638/commits/3f70eab) | 활동 요약을 표시 전용 필드로 분리해 기존 상태 재생 유지 |
+| 17:29 | [`830f0f9`](https://github.com/ehojune/bioinfo-team-3d/pull/638/commits/830f0f9) | 최신 main 변경 병합 |
+| 17:29 | [`f009585`](https://github.com/ehojune/bioinfo-team-3d/pull/638/commits/f009585) | 논문 스킬 읽기 범위·자격 증명 판정과 활동·auto 승인 설명 수정 |
 | 17:17 | [`58975d2`](https://github.com/ehojune/bioinfo-team-3d/pull/639/commits/58975d2) | CLI의 recruiter 표기를 카피바라로 바꾸고 편집자 비버와 구분한다 |
 | 17:15 | [`9c1a329`](https://github.com/ehojune/bioinfo-team-3d/pull/637/commits/9c1a329) | 전체 요청 집계를 서버에서 제공해 CLI 누적 건수와 비용의 200건 상한을 없앰 |
 | 17:09 | [`90aaca6`](https://github.com/ehojune/bioinfo-team-3d/pull/637/commits/90aaca6) | 최신 main의 패널 크기 조절을 병합해 깨끗한 첫 화면과 지난 요청·비용 표시를 함께 보존함 |
 | 16:49 | [`50411cb`](https://github.com/ehojune/bioinfo-team-3d/pull/639/commits/50411cb) | 인사팀을 카피바라로 바꾸고 2D·3D 캐릭터, 표시 이름, 중복 검사를 함께 갱신했습니다 |
+| 16:46 | [`446496e`](https://github.com/ehojune/bioinfo-team-3d/pull/638/commits/446496e) | 관리 폴더 읽기 오판을 고치고 도구 승인 카드·CLI에 작업 맥락·위험·실제 담당 이름을 표시 |
 | 16:38 | [`8f7129c`](https://github.com/ehojune/bioinfo-team-3d/pull/637/commits/8f7129c) | 검토를 마친 종료 요청을 지난 요청으로 접고 새 세션 비용만 앞에 표시함 |
 | 16:36 | [`9f4d35e`](https://github.com/ehojune/bioinfo-team-3d/pull/635/commits/9f4d35e) | 2.5D 사무실과 Command Center, 직원 시트 경계를 마우스·키보드로 조정하고 브라우저별 크기를 기억하게 했다(#633). |
 | 16:31 | [`3e0ac50`](https://github.com/ehojune/bioinfo-team-3d/pull/629/commits/3e0ac50) | 게시 상태와 운전 기록 경계를 바로잡고 legacy 실행 부록과 실패 원인을 보존했다. |
