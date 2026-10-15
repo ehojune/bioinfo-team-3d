@@ -188,7 +188,7 @@ def _open_recorded_output(outputs: HeldDir, path: PurePosixPath) -> Iterator[tup
 
 
 def _held_workdir(stack: ExitStack, root: Path,
-                  result: Mapping[str, Any]) -> tuple[HeldDir, Path, dict[str, Any]] | tuple[None, str, dict]:
+                  result: Mapping[str, Any], *, shared_wsl: bool = False) -> tuple[HeldDir, Path, dict[str, Any]] | tuple[None, str, dict]:
     """Hold one same-host workdir inside the configured root, or return its local lookup failure."""
     workdir, reason = locate_workdir(root, result)
     if workdir is None:
@@ -202,7 +202,7 @@ def _held_workdir(stack: ExitStack, root: Path,
         fd = held.open_read_file("manifest.json")
         with os.fdopen(fd, "rb") as source:
             manifest = json.loads(source.read(MANIFEST_MAX_BYTES + 1).decode("utf-8"))
-        if not isinstance(manifest, dict) or manifest.get("host") != platform.node():
+        if not isinstance(manifest, dict) or (manifest.get("host") != platform.node() and not shared_wsl):
             raise RemoteRunnerBundle(REMOTE_RUNNER_NOTE)
         return held, real_workdir, manifest
     except RemoteRunnerBundle:
@@ -614,8 +614,22 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
                 result = results.get(step_id)
                 if not isinstance(result, Mapping):
                     continue
+                # A local WSL worker shares this exact drive root; unrelated remote hosts still refuse.
+                from .wsl_paths import message_paths, shared_path
+                task = (tasks or {}).get(str(result.get("task_id") or ""), {})
+                caps = (runner_capabilities or {}).get(str(task.get("runner_id") or ""), {})
+                shared_wsl = False
+                if caps.get("runtime_env") == "wsl":
+                    path_target = "windows" if os.name == "nt" else "wsl"
+                    try:
+                        shared_root = shared_path(str(caps.get("workspace_root") or ""), path_target)
+                        shared_wsl = Path(shared_root).resolve() == root
+                        if shared_wsl:
+                            result = message_paths(result, path_target)
+                    except ValueError:
+                        raise RemoteRunnerBundle(REMOTE_RUNNER_NOTE)
                 recorded = _recorded_outputs(result)
-                held, workdir_or_reason, manifest = _held_workdir(stack, root, result)
+                held, workdir_or_reason, manifest = _held_workdir(stack, root, result, shared_wsl=shared_wsl)
                 if held is None:
                     for index, (raw, safe, _expected) in enumerate(recorded, 1):
                         relative = (PurePosixPath("steps", step_id, *safe.parts).as_posix() if safe is not None
@@ -625,6 +639,8 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
                                      "status": "not copied: missing", "rewritten": 0,
                                      "remaining_absolute_paths": "", "rewritten_files": ""})
                     continue
+                if shared_wsl:
+                    manifest = message_paths(manifest, path_target)
                 workdir = Path(workdir_or_reason)
                 found_workdirs += 1
                 workdirs.append((step_id, workdir))

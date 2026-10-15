@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 import mimetypes
+import os
 import time
 from collections import deque
 from collections.abc import Callable, Mapping
@@ -2069,11 +2070,22 @@ class Hub:
                 self._start_ask(AskRequest.model_validate(entry["ask"]), entry.get("origin"))
 
     def set_roster(self, runner_id: str, agents: list[dict], capabilities: dict | None = None) -> None:
+        from ..wsl_readiness import wsl_readiness
+
         roster = {"agents": agents, "updated_at": time.time()}
         self.last_runner_rosters[runner_id] = roster
         self.store.put("runner_roster", runner_id, roster)
         if capabilities is not None:
             self.runner_capabilities[runner_id] = capabilities
+        wsl_runner = next((rid for rid in self.runners
+                           if self.runner_capabilities.get(rid, {}).get("runtime_env") == "wsl"
+                           and wsl_readiness(self.runner_capabilities.get(rid, {}).get("wsl_readiness", {}))
+                           and any(a["id"] == "bioinfo-agent" for a in
+                                   (agents if rid == runner_id else self.runner_agents.get(rid, [])))), None)
+        if wsl_runner and self.agent_runner.get("bioinfo-agent") not in (None, wsl_runner):
+            self.agent_runner.pop("bioinfo-agent", None)
+            self.agents.pop("bioinfo-agent", None)
+            self.agent_online.setdefault("bioinfo-agent", asyncio.Event()).clear()
         for aid in [a for a, r in self.agent_runner.items() if r == runner_id]:
             self.agent_runner.pop(aid, None)
             self.agents.pop(aid, None)
@@ -2081,6 +2093,12 @@ class Hub:
         self.runner_agents[runner_id] = agents
         for a in agents:
             caps = self.runner_capabilities.get(runner_id, {})
+            if a["id"] == "bioinfo-agent":
+                if caps.get("runtime_env") == "wsl" and runner_id != wsl_runner:
+                    continue
+                # Only a connected, ready WSL worker takes precedence over the native roster.
+                if wsl_runner and runner_id != wsl_runner:
+                    continue
             hpc_tools = bool(a.get("hpc_tools", caps.get("hpc_tools") and
                                                  "hpc" in a.get("builtin_mcp", [])))
             self.agents[a["id"]] = {**a, "runner_id": runner_id,
@@ -2094,6 +2112,10 @@ class Hub:
             self.agent_runner[a["id"]] = runner_id
             if runner_id in self.runners:
                 self.agent_online.setdefault(a["id"], asyncio.Event()).set()
+        if not wsl_runner and self.runner_capabilities.get(runner_id, {}).get("runtime_env") == "wsl":
+            for native_id in self.runners:
+                if self.runner_capabilities.get(native_id, {}).get("runtime_env") != "wsl":
+                    self.set_roster(native_id, self.runner_agents.get(native_id, []))
         # Every step waiting for a runner looks again (wait_for_runner) and ends now if nothing is left to wait for,
         # instead of after gateway.runner_wait_s with a false "runner never connected" (#521): an agent this runner
         # dropped (a contract that expired while it was off), or a first agent that waited only because no runner
@@ -2111,6 +2133,10 @@ class Hub:
             for aid, host in self.agent_runner.items():
                 if host == runner_id:
                     self.agent_online.setdefault(aid, asyncio.Event()).clear()
+            if self.runner_capabilities.get(runner_id, {}).get("runtime_env") == "wsl":
+                for native_id in self.runners:
+                    if self.runner_capabilities.get(native_id, {}).get("runtime_env") != "wsl":
+                        self.set_roster(native_id, self.runner_agents.get(native_id, []))
             self._session_state_changed()
             return True
         return False
@@ -2190,6 +2216,8 @@ class Hub:
         ws = self.runners.get(runner_id)
         if ws is None:
             raise RunnerNotSent(f"runner {runner_id} is offline")
+        from ..wsl_paths import message_paths
+        msg = message_paths(msg, self.runner_capabilities.get(runner_id, {}).get("runtime_env"))
         payload = json.dumps(msg, ensure_ascii=False, default=str)
         async with self.runner_locks[runner_id]:
             if self.runners.get(runner_id) is not ws:
@@ -2271,6 +2299,9 @@ class Hub:
         if ws is not None and (self.runners.get(runner_id) is not ws or
                                self.runner_incarnations.get(runner_id) != incarnation):
             return
+        if self.runner_capabilities.get(runner_id, {}).get("runtime_env") in {"wsl", "windows"}:
+            from ..wsl_paths import message_paths
+            msg = message_paths(msg, "windows")
         runner_seq = msg.get("runner_seq")
         if runner_seq is not None and runner_seq <= self.store.runner_seen(runner_id):
             await self.send_runner(runner_id, {"type": "runner.ack", "runner_seq": runner_seq})
@@ -2586,6 +2617,7 @@ class Hub:
         fut = asyncio.get_running_loop().create_future()
         self.futures[task.id] = fut
         self.task_runner[task.id] = rid
+        original_incarnation = self.runner_incarnations.get(rid)
         self.store.put("task", task.id, {"request_id": task.request_id,
                                           "runner_id": rid,
                                           "runner_incarnation": self.runner_incarnations.get(rid),
@@ -2628,15 +2660,16 @@ class Hub:
                     break
                 target = self.agent_runner[task.agent_id]
                 refused = self._session_pin_refusal(task, target)
-                if refused:  # the agent id moved to another runner while the pinned one was away: never re-send there
+                if (refused or target != rid or
+                        self.runner_incarnations.get(target) != original_incarnation):
                     # The first frame may have reached the pinned runner, so this is the uncertain-delivery outcome,
                     # not a certain $0 (same bookkeeping as the timeout above).
                     self.futures.pop(task.id, None)
                     self.task_runner.pop(task.id, None)
                     self._release_steers(task)
                     result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False,
-                                        error=f"{refused.error}; delivery to runner "
-                                              f"{task.meta.get('session_runner')} uncertain")
+                                        error=f"{refused.error + '; ' if refused else ''}"
+                                              f"delivery to runner {rid} uncertain; manual recovery required")
                     self._record_task_cost(task.request_id, task.id, result, outcome_unknown=True)
                     return result
                 try:

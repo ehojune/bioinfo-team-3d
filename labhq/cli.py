@@ -750,6 +750,7 @@ def _start_background(s: Settings, role: str, *, popen=None) -> int:
     parent, and Windows can give that PID to a stranger that something later kills by parent PID alone. The
     supervisor outlives `up`, starts the role as its own child and records how it ended; `up` records the
     supervisor, which records the role."""
+    s.runner.validate_wsl()
     state = _launch_state(s)
     logs = state / "logs"
     logs.mkdir(parents=True, exist_ok=True)
@@ -786,6 +787,7 @@ def _supervised(s: Settings, role: str) -> bool:
 
 
 def _up_unlocked(s: Settings, *, popen=None, make_primary: bool = False) -> None:
+    s.runner.validate_wsl()
     if _default_client_token(s.gateway.client_token):
         print("gateway 시작 거부: gateway.client_token의 change-me 기본값을 바꾸세요.", file=sys.stderr)
         raise SystemExit(2)
@@ -879,6 +881,10 @@ def _up_unlocked(s: Settings, *, popen=None, make_primary: bool = False) -> None
             raise SystemExit(2)
     if confirmed:  # never record a gateway that is someone else's
         instance_guard.record_success(s, make_primary=make_primary)
+    if s.runner.wsl.enabled:
+        from .wsl_setup import control
+
+        control(s, "start")
     print(f"웹 사무실: {_http_base(s)}/  (`{_config_command(s, 'open')}`)")
 
 
@@ -1102,9 +1108,19 @@ def _down_unlocked(s: Settings, *, force: bool = False, keep_gateway: bool = Fal
             state, _record, reason = _process_record(s, name)
             if state == "unknown":
                 _record_problem(name, reason)
+    wsl_stop_error = None
+    if s.runner.wsl.enabled:
+        from .wsl_setup import WslError, control
+
+        try:
+            control(s, "stop")
+        except WslError as exc:
+            wsl_stop_error = exc
     stopped = [(role, pid) for role in roles if (pid := _stop_background(s, role)) is not None]
     if stopped:
         print("종료: " + ", ".join(f"{role} PID {pid}" for role, pid in stopped))
+    if wsl_stop_error is not None:
+        print(f"WSL runner를 종료하지 못했습니다(native 역할 종료는 계속): {wsl_stop_error}", file=sys.stderr)
     if keep_gateway:
         return
     # A gateway or runner started outside `up` (a script, another shell) has no process record, so nothing above
@@ -1115,6 +1131,8 @@ def _down_unlocked(s: Settings, *, force: bool = False, keep_gateway: bool = Fal
         raise SystemExit(2)
     if not stopped:
         print("종료: 기록된 프로세스 없음")
+    if wsl_stop_error is not None:
+        raise SystemExit(2)
 
 
 def _down(s: Settings, *, force: bool = False, keep_gateway: bool = False) -> None:
@@ -1688,6 +1706,10 @@ def main(argv: list[str] | None = None) -> None:
     op = sub.add_parser("open", help="open the web office in the browser, signed in (the token is never printed)")
     op.add_argument("--3d", dest="three_d", action="store_true", help="open the 3D office instead of 2.5D")
     sub.add_parser("runner")
+    sw = sub.add_parser("setup-wsl", help="이 PC의 WSL 분석 runner 준비")
+    sw.add_argument("--check", action="store_true", help="설치하지 않고 준비 상태만 확인")
+    wr = sub.add_parser("wsl-runner", help="이 설정의 WSL runner 시작·종료")
+    wr.add_argument("action", choices=("start", "stop"))
     sub.add_parser("agents")
     storage = sub.add_parser("storage", help="open the storage choice card for a finished request, or redraft or republish its edition")
     storage.add_argument("id")
@@ -1882,7 +1904,21 @@ def main(argv: list[str] | None = None) -> None:
     except FileNotFoundError as exc:
         p.exit(2, f"labhq: {exc}\n")
 
-    if args.cmd == "doctor":
+    if args.cmd in ("setup-wsl", "wsl-runner"):
+        from .wsl_setup import WslError, check, control, render as render_wsl, setup
+
+        try:
+            if args.cmd == "wsl-runner":
+                control(s, args.action)
+                print("WSL runner: " + ("시작" if args.action == "start" else "종료"))
+            else:
+                rows = check(s) if args.check else setup(s)
+                print(render_wsl(rows))
+                if any(row["status"] != "ok" for row in rows):
+                    raise SystemExit(1)
+        except WslError as exc:
+            p.exit(2, f"WSL: {exc}\n")
+    elif args.cmd == "doctor":
         from .doctor import collect, render, save
 
         requested = args.config or os.environ.get("LABHQ_CONFIG")

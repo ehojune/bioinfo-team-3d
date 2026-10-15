@@ -30,8 +30,21 @@ class GatewaySettings(BaseModel):
     report_browser: str | None = None
 
 
+class WslSettings(BaseModel):
+    enabled: bool = False
+    distro: str = "Ubuntu-22.04"
+    user: str | None = None
+    id: str = "lab-wsl"
+    # Empty: an instance-specific directory on the Linux filesystem, never the Windows mount.
+    root: str | None = None
+    bioinfo_agent: str = "/mnt/d/bioinfo-agent"
+    gateway_url: str | None = None
+
+
 class RunnerSettings(BaseModel):
     id: str = "local"
+    wsl: WslSettings = Field(default_factory=WslSettings)
+    environment: Literal["native", "wsl"] = "native"
     os_account: str | None = None  # the dedicated OS account the runner must run as (docs/runner-account.md)
     max_parallel: int = 4
     consult_parallel: int = Field(default=2, ge=1)
@@ -72,6 +85,15 @@ class RunnerSettings(BaseModel):
     # A consult or follow-up lists every entry it could write to (workspace, writable project/upstream/reference
     # folders) before and after the run; past this many it is refused rather than run unchecked (#36).
     read_only_check_max_entries: int = Field(default=50000, ge=1)
+
+    @model_validator(mode="after")
+    def validate_wsl(self) -> "RunnerSettings":
+        if self.wsl.enabled and self.id == self.wsl.id:
+            raise ValueError("Windows and WSL runner.id must differ")
+        if self.environment == "wsl":
+            from .wsl_paths import shared_path
+            self.workspace_root = shared_path(self.workspace_root, "wsl")
+        return self
 
 
 class EngineBin(BaseModel):

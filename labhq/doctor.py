@@ -49,6 +49,13 @@ LOCAL_PYTHON_PACKAGES = {
 LOCAL_TOOLS = ("docker", "nextflow", "java", "wsl")
 
 
+def wsl_tool_status() -> dict[str, bool]:
+    """Called inside the WSL runner: installed Docker alone does not prove its daemon answers."""
+    commands = {"docker": ["docker", "info"], "nextflow": ["nextflow", "-version"],
+                "java": ["java", "-version"]}
+    return {name: _probe(argv, dict(os.environ), timeout=15)[0] == 0 for name, argv in commands.items()}
+
+
 def _safe_path(path: str | Path) -> str:
     """Show home paths as ~ and avoid disclosing other machine-specific parents."""
     raw = str(path)
@@ -761,6 +768,11 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
         found = bool(shutil.which(tool))
         rows.append(_row("compute", tool, "ok" if found else "warn", "on PATH" if found else "missing",
                          f"Install or configure {tool} if bioinfo-agent needs it."))
+    if sys.platform == "win32" or settings.runner.wsl.enabled:
+        from .wsl_setup import check as check_wsl
+
+        rows.extend(check_wsl(settings) if not dry_run else [
+            _row("WSL", "준비 상태", "skip", "dry-run", "labhq setup-wsl --check")])
     if network and not dry_run:
         for name, url in SOURCES.items():
             reachable = _network_check(url)

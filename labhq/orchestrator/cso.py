@@ -367,6 +367,9 @@ def format_capabilities(roster: list[dict], runner_capabilities: dict | None = N
     for runner_id in sorted({a.get("runner_id") for a in roster if a.get("runner_id")}):
         runner = capabilities.get(runner_id) if isinstance(capabilities.get(runner_id), dict) else {}
         lines.append(f"- runner {runner_id} local software: {_format_local_software(runner.get('local_software'))}")
+        if runner.get("runtime_env") == "wsl":
+            lines.append(f"- runner {runner_id}: 로컬 WSL. bioinfo-agent 분석은 이 runner에서 실행한다. "
+                         "위 tools의 nextflow/docker가 yes이면 로컬 Linux 파이프라인을 계획에 넣는다.")
     return "\n".join(lines)
 
 DECLARED_OUTPUTS_FALLBACK_RULE = (
