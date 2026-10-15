@@ -9,6 +9,9 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CASE_DIR = REPO_ROOT / "labhq" / "bench_data" / "cases"
 IDENTIFIER_TYPES = {"string", "string_list"}
+ALLOWED_OCCURRENCES = {
+    # (relative path, identifier): "왜 런타임 prompt의 벤치 정답 누출이 아닌지"
+}
 
 
 def _answer_identifiers(case_dir=CASE_DIR):
@@ -42,9 +45,16 @@ def _tracked_scan_paths(repo_root=REPO_ROOT):
             continue
         relative = Path(raw_path.decode("utf-8"))
         parts = relative.parts
-        if parts[0] == "labhq":
-            if relative.suffix != ".py" or "bench_data" in parts or relative.name.startswith("bench"):
-                continue
+        if "tests" in parts:
+            continue
+        if parts[0] == "labhq" and "bench_data" in parts:
+            continue
+        if parts[0] == "labhq" and relative.name.startswith("bench") and relative.suffix == ".py":
+            continue
+        if parts[:3] == ("labhq", "web", "vendor"):
+            continue
+        if b"\0" in (repo_root / relative).read_bytes():
+            continue
         paths.append(relative)
     return paths
 
@@ -61,12 +71,14 @@ def _find_leaks(repo_root, relative_paths, answers):
         for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             for identifier, pattern in patterns.items():
                 if pattern.search(line):
+                    if (relative.as_posix(), identifier) in ALLOWED_OCCURRENCES:
+                        continue
                     cases = ", ".join(sorted(answers[identifier]))
                     leaks.append(f"{relative.as_posix()}:{line_number}: {identifier} ({cases})")
     return leaks
 
 
-def test_bench_answer_identifiers_do_not_leak_into_non_bench_code():
+def test_bench_answer_identifiers_do_not_leak_into_non_bench_runtime_files():
     answers = _answer_identifiers()
     leaks = _find_leaks(REPO_ROOT, _tracked_scan_paths(), answers)
     assert not leaks, "벤치 정답 식별자가 비벤치 코드에 있습니다:\n" + "\n".join(leaks)
@@ -84,6 +96,20 @@ def test_leak_check_reports_file_line_and_source_case_from_a_temporary_copy(tmp_
     leaks = _find_leaks(copied_root, [relative], answers)
 
     assert leaks == ["labhq/answer_leak_probe.py:2: GSE79973 (geo-gastric-summary.dataset_id)"]
+
+
+def test_leak_check_covers_a_research_pack_yaml_in_a_temporary_copy(tmp_path):
+    answers = _answer_identifiers()
+    identifier = "GKN1"
+    relative = Path("labhq") / "research" / "packs" / "answer_leak_probe.yaml"
+    copied_root = tmp_path / "repo-copy"
+    copied_path = copied_root / relative
+    copied_path.parent.mkdir(parents=True)
+    copied_path.write_text(f"reviewer_questions:\n  - Check {identifier}\n", encoding="utf-8")
+
+    leaks = _find_leaks(copied_root, [relative], answers)
+
+    assert leaks == [f"{relative.as_posix()}:2: GKN1 (geo-gastric-summary.down_gene)"]
 
 
 def test_general_example_wording_is_not_treated_as_an_answer_identifier(tmp_path):
