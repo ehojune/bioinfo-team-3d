@@ -16,3 +16,11 @@ rows:
   at: "2026-10-15 12:05"
   text: 예시 설정이 semantics ab·actions confirm을 켜도 action layer만 지우는 검사(test_semantics_shadow_remove)가
     통과하도록 의미 모델 설정 test를 고친다(#613).
+- sha: "583a8c6"
+  at: "2026-10-15 12:43"
+  text: 실행 중인 gateway·runner가 정체(설정 파일과 state·runner state·runner id·포트 지문)를 적고, up과
+    doctor가 그 정체로 같은 state·runner state·포트를 쥔 다른 설정을 막으며 gateway는 /api/health의 identity로
+    정체를 알려 준다(#613).
+- sha: "0a584d9"
+  at: "2026-10-15 12:43"
+  text: init이 bioinfo-agent 폴더를 상대 경로로 받아도 절대 경로로 저장하고, doctor는 상대 경로로 적힌 설정을 warn한다(#613).
