@@ -6,3 +6,6 @@ rows:
 - sha: fd2ebdd
   at: 2026-10-16 01:13
   text: 후속 칸 질문의 내부 기록 필드를 최초 step schema에서 분리해 output types off 계약 유지
+- sha: 7cf2a82
+  at: 2026-10-16 02:07
+  text: PI 거절·중지 신호가 있으면 독립 단계 성공 여부와 관계없이 CP2 전에 요청을 중단
