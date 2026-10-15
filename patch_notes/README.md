@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 00:55 | [`f5cf6bc`](https://github.com/ehojune/bioinfo-team-3d/pull/643/commits/f5cf6bc) | Windows venv launcher가 자식 종료 뒤 끝나는 동안의 Access denied를 종료 완료로 판정하게 했다. |
 | 00:38 | [`a9ad4f6`](https://github.com/ehojune/bioinfo-team-3d/pull/650/commits/a9ad4f6) | 벤치 정답 식별자 경계를 ASCII 영숫자로 판정해 한국어 조사와 붙은 표기도 누출로 탐지한다. |
 | 00:18 | [`f6f2aa9`](https://github.com/ehojune/bioinfo-team-3d/pull/650/commits/f6f2aa9) | 벤치 정답 식별자를 NFKC와 대소문자 접기로 정규화하고 긴 식별자의 하이픈·밑줄·공백·점 변형도 누출로 잡는다. |
 | 00:03 | [`97cf0a3`](https://github.com/ehojune/bioinfo-team-3d/pull/656/commits/97cf0a3) | 결정·작업판 중심 배치, 계획 흐름과 직원 카드 닫기·복원, 실패 결과 바로 보기 |
@@ -33,8 +34,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 21:48 | [`9d98ae2`](https://github.com/ehojune/bioinfo-team-3d/pull/647/commits/9d98ae2) | WSL 미설정 doctor를 선택 기능 한 줄로 줄이고 활성화 때 실제 직원 로그인 경로를 안내한다. |
 | 20:43 | [`80acdcd`](https://github.com/ehojune/bioinfo-team-3d/pull/646/commits/80acdcd) | 전송 시 계산된 runner 담당과 세션 고정을 보존하고 roster 없는 solo 재개 조회 호환 복구 |
 | 19:54 | [`95bfde7`](https://github.com/ehojune/bioinfo-team-3d/pull/646/commits/95bfde7) | 직원별 유효 roster로 실행 중 담당을 고정하고 WSL 시작 실패를 native up 경고로 분리 |
+| 19:06 | [`5c2ff24`](https://github.com/ehojune/bioinfo-team-3d/pull/643/commits/5c2ff24) | Windows 종료 대기 test의 process 확인을 mock으로 격리해 Linux CI에서도 같은 계약을 검증하게 했다. |
 | 19:06 | [`a9e286e`](https://github.com/ehojune/bioinfo-team-3d/pull/645/commits/a9e286e) | OKF Loremaster의 인용문·수치 원문 대조기를 Unicode·Python 3.10에 맞춰 이식하고 Apache-2.0 출처를 동봉 |
 | 18:53 | [`2d742cc`](https://github.com/ehojune/bioinfo-team-3d/pull/630/commits/2d742cc) | WSL 준비 상태 test의 작업 폴더를 공유 경로로 명시해 Linux CI fixture를 바로잡는다. |
+| 18:50 | [`9442c95`](https://github.com/ehojune/bioinfo-team-3d/pull/643/commits/9442c95) | clean-install 임의 포트에서 PI 인스턴스 포트 8787·55921을 제외했다. |
+| 18:48 | [`3f007d7`](https://github.com/ehojune/bioinfo-team-3d/pull/643/commits/3f007d7) | Windows down이 supervisor·role·자식 프로세스의 실제 종료를 확인하고 clean-install이 남은 venv 프로세스를 검출하게 했다. |
 | 18:39 | [`ceee47a`](https://github.com/ehojune/bioinfo-team-3d/pull/630/commits/ceee47a) | 불확실 task를 최초 runner에 고정하고 WSL 준비 판정을 점검·활성화·gateway에 통합한다. |
 | 18:37 | [`93f3e41`](https://github.com/ehojune/bioinfo-team-3d/pull/630/commits/93f3e41) | main의 #641 테스트 안정화를 WSL runner 수정 브랜치에 반영한다. |
 | 18:17 | [`07fd2ae`](https://github.com/ehojune/bioinfo-team-3d/pull/638/commits/07fd2ae) | 최신 main 병합과 채용 담당·편집자 표시 충돌 해결 |
