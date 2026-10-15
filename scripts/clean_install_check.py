@@ -210,7 +210,7 @@ def rehearse(source: Path, guard_paths: list[Path]) -> str:
                 _labhq_command(checkout, "init"),
                 cwd=checkout,
                 env=env,
-                input_text="\n\n\n",
+                input_text="\n" * 8,  # Enter through every question (scheduler, bioinfo-agent, dev log, consent, ...)
                 timeout=120,
             )
             _expect("init 설정 생성", (checkout / "config/labhq.yaml").is_file(), "config/labhq.yaml 없음")
