@@ -1,0 +1,8 @@
+pr: 647
+rows:
+- sha: 9d98ae2
+  at: 2026-10-15 21:48
+  text: WSL 미설정 doctor를 선택 기능 한 줄로 줄이고 활성화 때 실제 직원 로그인 경로를 안내한다.
+- sha: 97a2acd
+  at: 2026-10-15 22:36
+  text: WSL doctor 회귀 테스트가 Linux 전역 platform 값을 바꾸지 않도록 격리한다.
