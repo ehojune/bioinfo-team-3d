@@ -7,3 +7,6 @@ rows:
 - sha: 9442c95
   at: 2026-10-15 18:50
   text: clean-install 임의 포트에서 PI 인스턴스 포트 8787·55921을 제외했다.
+- sha: 5c2ff24
+  at: 2026-10-15 19:06
+  text: Windows 종료 대기 test의 process 확인을 mock으로 격리해 Linux CI에서도 같은 계약을 검증하게 했다.
