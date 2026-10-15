@@ -27,6 +27,7 @@ _ARRAYEXPRESS = re.compile(r"(?<![A-Za-z0-9])E-[A-Z]{3,5}-\d+(?![A-Za-z0-9])")
 _BIOPROJECT = re.compile(r"(?<![A-Za-z0-9])PRJ(?:NA|EB|DB)\d+(?![A-Za-z0-9])")
 _NUMBER = re.compile(r"\d+")
 _SECRET_KEY = re.compile(r"(?i)token|key|sig|secret|pass|auth|credential|session|expires")
+_URL_CONTROLS = re.compile(r"[\x00-\x20\x7f]")
 _TRAILING = ".,;:!?*_"
 _PRIVATE_SUFFIXES = (".local", ".localhost", ".internal", ".lan", ".home.arpa", ".test")
 _DOI_HOSTS = {"doi.org", "dx.doi.org", "www.doi.org"}
@@ -165,9 +166,11 @@ def _public_host(raw: str) -> str | None:
 def public_link(url: str) -> str | None:
     """The one gate for every web address this module writes: None for a private or unreadable host, else the address
     with its host canonical, without userinfo (``user:pass@``), without the fragment, and without a query that names a
-    credential (a signed link carries it there)."""
+    credential (a signed link carries it there). HTTP backslashes and ASCII controls are normalized before parsing,
+    matching the separators browsers use when deciding which host a link reaches."""
     try:
-        parts = urlsplit(_trim(url))
+        normalized = _URL_CONTROLS.sub("", url.replace("\\", "/"))
+        parts = urlsplit(_trim(normalized))
         port, raw_host = parts.port, parts.hostname
     except ValueError:
         return None

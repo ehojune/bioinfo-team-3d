@@ -91,20 +91,28 @@ async def test_a_control_the_runner_could_not_apply_is_nacked_and_its_steer_stay
 
 @pytest.mark.asyncio
 async def test_a_halt_for_a_task_waiting_for_a_run_slot_takes_effect_at_once(tmp_path, monkeypatch):
-    release, started = asyncio.Event(), []
+    release, first_started, slot_waiting = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    started = []
+
+    class ObservedSemaphore(asyncio.Semaphore):
+        async def acquire(self):
+            if self.locked():
+                slot_waiting.set()
+            return await super().acquire()
 
     async def run(ctx):
         started.append(ctx.task.id)
         if ctx.task.id == "t1":
+            first_started.set()
             await release.wait()
         return TaskResult(task_id=ctx.task.id, agent_id="worker", ok=True, text="done", session_id="S1")
 
     runner = _runner(tmp_path, monkeypatch, run)
-    runner.sem = asyncio.Semaphore(1)  # runner.max_parallel: 1, taken by t1
+    runner.sem = ObservedSemaphore(1)  # runner.max_parallel: 1, taken by t1
     first = asyncio.create_task(runner.run_task(_task("t1")))
-    await asyncio.sleep(0.1)
+    await asyncio.wait_for(first_started.wait(), 2)
     queued = asyncio.create_task(runner.run_task(_task("t2", session="S2")))
-    await asyncio.sleep(0.1)
+    await asyncio.wait_for(slot_waiting.wait(), 2)
     assert started == ["t1"] and not queued.done()
 
     await runner._on_message(_msg("t2", "halt"))

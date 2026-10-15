@@ -1,0 +1,8 @@
+pr: 646
+rows:
+- sha: 95bfde7
+  at: 2026-10-15 19:54
+  text: 직원별 유효 roster로 실행 중 담당을 고정하고 WSL 시작 실패를 native up 경고로 분리
+- sha: 80acdcd
+  at: 2026-10-15 20:43
+  text: 전송 시 계산된 runner 담당과 세션 고정을 보존하고 roster 없는 solo 재개 조회 호환 복구

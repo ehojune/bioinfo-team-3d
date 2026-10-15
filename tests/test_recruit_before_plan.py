@@ -475,8 +475,8 @@ def test_remote_receipt_uses_stored_roster_contract(tmp_path, status, expires, e
     settings = Settings()
     settings.runner.agents_dir = str(tmp_path / "absent-agents")
     settings.runner.talent_dir = str(tmp_path / "absent-talent")
-    hub = SimpleNamespace(s=settings, agents={}, last_runner_rosters={"remote": {"agents": [
-        {"id": "c_paper", "contract_status": status, "expires_at": expires}]}})
+    hub = SimpleNamespace(s=settings, agents={}, effective_roster=lambda **kw: {
+        "c_paper": {"id": "c_paper", "contract_status": status, "expires_at": expires}})
     receipt = {"status": "active", "agent_id": "c_paper"}
     _refresh_receipt(receipt, hub)
     assert receipt["status"] == expected
