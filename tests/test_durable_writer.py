@@ -452,3 +452,105 @@ async def test_a_stalled_file_write_does_not_hold_up_a_database_commit(tmp_path,
     assert not stalled.done() and quick < 0.2, f"the commits waited {quick:.2f} s behind a stalled file write"
     assert store.get("task", "k2") == {"a": 2}
     await stalled
+
+
+# ----- a task's closing events survive cancels (review of #615) -----
+
+def _slow_runner(tmp_path, stall):
+    from labhq.runner.daemon import Runner  # noqa: F811 - the module-level import is the same class
+
+    s = Settings()
+    s.runner.state_dir = str(tmp_path / "state")
+    s.runner.workspace_root, s.runner.talent_dir, s.runner.agents_dir = (
+        str(tmp_path / "runs"), str(tmp_path / "talent"), str(tmp_path / "agents"))
+    runner = Runner(s)
+    path = Path(s.path(s.runner.state_dir)) / f"runner-{s.runner.id}.sqlite3"
+    SlowCommit.stall = stall
+    runner.store._wdb = sqlite3.connect(path, factory=SlowCommit, check_same_thread=False, timeout=5)
+    return runner
+
+
+async def test_a_second_cancel_while_the_closing_events_commit_still_delivers_the_result_once(
+        tmp_path, monkeypatch, fresh_writer):
+    from labhq.models import Task
+
+    runner = _slow_runner(tmp_path, 0.3)
+    finishes, real_finish = [], runner.controls.finish
+    monkeypatch.setattr(runner.controls, "finish", lambda tid: finishes.append(tid) or real_finish(tid))
+
+    async def runs_forever(task):
+        await asyncio.sleep(30)
+
+    monkeypatch.setattr(runner, "run_task", runs_forever)
+    task = Task(agent_id="analyst", prompt="x", request_id="r1")
+    guarded = asyncio.create_task(runner._run_guarded(task))
+    await asyncio.sleep(0.05)
+    guarded.cancel()  # the first cancel: the handler starts sending the closing events
+    await asyncio.sleep(0.1)
+    guarded.cancel()  # the second lands while they commit (each commit takes 0.3 s)
+    with pytest.raises(asyncio.CancelledError):
+        await guarded
+    assert await durable.adrain(10)
+    SlowCommit.stall = 0.0
+    sent = runner.store.pending()
+    assert [e["type"] for e in sent] == ["agent.status", "task.result"]  # the gateway is not left waiting
+    assert sent[1]["data"]["error"] == "cancelled" and finishes == [task.id]
+    assert runner.store.get("accepted_task", task.id) == {"state": "finished"}
+
+
+async def test_a_cancel_during_the_final_result_does_not_queue_a_second_result(tmp_path, monkeypatch, fresh_writer):
+    from labhq.models import Task
+
+    runner = _slow_runner(tmp_path, 0.3)
+
+    async def finishing(task):  # the real result goes out through emit, as in _run_task
+        await runner.emit(Event(type="task.result", task_id=task.id, agent_id=task.agent_id,
+                                request_id=task.request_id, data={"task_id": task.id, "ok": True, "text": "real"}))
+
+    monkeypatch.setattr(runner, "run_task", finishing)
+    task = Task(agent_id="analyst", prompt="x", request_id="r1")
+    guarded = asyncio.create_task(runner._run_guarded(task))
+    await asyncio.sleep(0.1)
+    guarded.cancel()  # while the real result is committing: the commit goes on
+    with pytest.raises(asyncio.CancelledError):
+        await guarded
+    assert await durable.adrain(10)
+    SlowCommit.stall = 0.0
+    results = [e for e in runner.store.pending() if e["type"] == "task.result"]
+    assert len(results) == 1 and results[0]["data"]["ok"] is True and results[0]["data"]["text"] == "real"
+
+
+# ----- Windows: the write thread's replace meets a reader (review of #615) -----
+
+windows_only = pytest.mark.skipif(os.name != "nt", reason="Windows refuses to replace a file another handle has open")
+
+
+@windows_only
+def test_replace_waits_out_a_reader_that_still_has_the_file_open(tmp_path, fresh_writer):
+    target = tmp_path / "manifest.json"
+    target.write_text("old", encoding="utf-8")
+    reader = open(target, "rb")  # no FILE_SHARE_DELETE, like read_owned's own open
+    timer = threading.Timer(0.3, reader.close)
+    timer.start()
+    try:
+        write_owned(tmp_path, "manifest.json", "new")  # refused at first; the reader lets go after 0.3 s
+    finally:
+        timer.join()
+        reader.close()
+    assert target.read_text(encoding="utf-8") == "new"
+
+
+@windows_only
+def test_read_owned_retries_a_sharing_violation_instead_of_reporting_the_file_missing(tmp_path, monkeypatch):
+    (tmp_path / "manifest.json").write_text('{"a": 1}', encoding="utf-8")
+    real_open, refused = os.open, []
+
+    def flaky(path, flags, *args, **kwargs):
+        if str(path).endswith("manifest.json") and len(refused) < 2:  # a replace is in flight on the write thread
+            refused.append(path)
+            raise PermissionError(13, "sharing violation")
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", flaky)
+    assert read_owned(tmp_path, "manifest.json") == '{"a": 1}'
+    assert len(refused) == 2

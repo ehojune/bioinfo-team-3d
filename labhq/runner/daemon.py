@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
+import copy
 import json
 import logging
 import os
@@ -202,6 +204,10 @@ def environment_record(rows: list[dict[str, Any]]) -> dict[str, Any]:
             **({"size": row.get("size")} if row.get("size") is not None else {})}
 
 
+# While `Runner.emit_all` runs, `emit` collects each event here instead of sending it, and emit_all sends them as one job.
+_EMIT_UNIT: contextvars.ContextVar[list | None] = contextvars.ContextVar("labhq_emit_unit", default=None)
+
+
 class Runner:
     def __init__(self, settings: Settings):
         self.s = settings
@@ -209,6 +215,9 @@ class Runner:
         # this loop to reload the outbox queue (#606).
         self._loop: asyncio.AbstractEventLoop | None = None
         self._loop_thread: threading.Thread | None = None
+        # Tasks whose task.result is already queued in this run. A cancel that arrives while the result commits does
+        # not stop the commit, so the cancel handler must not queue a second, "cancelled" one over it (#606).
+        self._result_queued: set[str] = set()
         self.store = StateStore(settings.path(settings.runner.state_dir) / f"runner-{settings.runner.id}.sqlite3")
         saved_incarnation = self.store.all("runner_meta").get("incarnation")
         self.incarnation = saved_incarnation["id"] if saved_incarnation else uuid.uuid4().hex
@@ -335,14 +344,21 @@ class Runner:
         if obj.get("type") in {"runner.roster"} and before is None and after is None:
             self.send(obj)  # not stored: nothing to wait for
             return
-        await durable.run(self.store.lane, self._send_now, obj, before, after)
+        await self._send_batch([(obj, [before] if before else [], [after] if after else [])])
 
-    def _send_now(self, obj: dict, before: tuple | None, after: tuple | None) -> None:
-        if before:
-            self.store.put(*before)
-        self.send(obj)
-        if after:
-            self.store.put(*after)
+    async def _send_batch(self, items: list[tuple[dict, list[tuple], list[tuple]]]) -> None:
+        """Several messages, each with its rows before and after, as ONE job: all of it is committed, in this order,
+        whatever happens to the caller while it waits."""
+        self._loop, self._loop_thread = asyncio.get_running_loop(), threading.current_thread()
+        await durable.run(self.store.lane, self._send_batch_now, items)
+
+    def _send_batch_now(self, items: list[tuple[dict, list[tuple], list[tuple]]]) -> None:
+        for obj, befores, afters in items:
+            for row in befores:
+                self.store.put(*row)
+            self.send(obj)
+            for row in afters:
+                self.store.put(*row)
 
     async def asend(self, obj: dict) -> None:
         await self._send_durably(obj)
@@ -359,15 +375,63 @@ class Runner:
             self.outbox.put_nowait(json.dumps(item, ensure_ascii=False, default=str))
 
     async def emit(self, ev: Event) -> None:
+        prepared = self._prepare_event(ev)
+        if prepared is None:
+            return
+        unit = _EMIT_UNIT.get()
+        if unit is not None:  # inside emit_all: sent with the others as one job
+            unit.append(prepared)
+            return
+        await self._send_events([prepared])
+
+    def _prepare_event(self, ev: Event) -> tuple[dict, list[tuple], list[tuple]] | None:
+        """What `emit` does before the send: the task's own log, its buffer, and for a task.result the mark that the
+        task finished and the note that its result is queued. None for a roster, which is not stored."""
         d = ev.model_dump(mode="json")
         ws = self.workspaces.get(ev.task_id or "")
         if ws:
             ws.append_event(d)
         elif ev.task_id in self.event_buffers:
             self.event_buffers[ev.task_id].append(d)
-        finished = (("accepted_task", ev.task_id, {"state": "finished"})
-                    if ev.type == "task.result" and ev.task_id else None)
-        await self._send_durably(d, after=finished)
+        if d.get("type") == "runner.roster":
+            self.send(d)
+            return None
+        marks: list[tuple] = []
+        if ev.type == "task.result" and ev.task_id:
+            marks.append(("accepted_task", ev.task_id, {"state": "finished"}))
+            self._result_queued.add(ev.task_id)
+        return d, [], marks
+
+    async def _send_events(self, items: list[tuple[dict, list[tuple], list[tuple]]]) -> None:
+        try:
+            await self._send_batch(items)
+        except Exception:
+            # Nothing was queued after all. (A cancel is not this: the job runs on and its result stays queued.)
+            self._result_queued.difference_update(
+                d.get("task_id") for d, _before, _after in items if d.get("type") == "task.result")
+            raise
+
+    async def emit_all(self, events: list[Event], *, before: list[tuple] | None = None,
+                       after: list[tuple] | None = None) -> None:
+        """Events that belong together (a closing status and the task's result; an approval and the status it
+        causes) as one uncancellable unit: one durable job that commits all of them, in order, with the rows in
+        `before` ahead of the first and the rows in `after` behind the last. These used to run without a pause, so a
+        cancel could not land between them; it still cannot (#606). Each event still passes through `self.emit`."""
+        unit: list[tuple[dict, list[tuple], list[tuple]]] = []
+        token = _EMIT_UNIT.set(unit)
+        try:
+            for ev in events:
+                await self.emit(ev)
+        finally:
+            _EMIT_UNIT.reset(token)
+        if not unit:
+            return
+        # Copied now: the writer thread serializes them later, and the caller goes on changing its own objects.
+        if before:
+            unit[0] = (unit[0][0], [copy.deepcopy(row) for row in before], unit[0][2])
+        if after:
+            unit[-1] = (unit[-1][0], unit[-1][1], [*unit[-1][2], *[copy.deepcopy(row) for row in after]])
+        await self._send_events(unit)
 
     async def _connection_loop(self) -> None:
         url = f"{self.s.gateway.url.rstrip('/')}/ws/runner?token={self.s.gateway.runner_token}"
@@ -596,16 +660,27 @@ class Runner:
             await self.run_task(task)
         except BaseException as e:  # cancelled or crashed: the gateway must still get a result
             self.event_buffers.pop(task.id, None)
-            err = "cancelled" if isinstance(e, asyncio.CancelledError) else f"{type(e).__name__}: {e}"
-            if not isinstance(e, asyncio.CancelledError):
+            cancelled = isinstance(e, asyncio.CancelledError)
+            if not cancelled:
                 log.exception("task %s crashed", task.id)
+            if task.id in self._result_queued:
+                # The real result is already on its way and commits even though this task was cancelled while it
+                # waited. A second, "cancelled" one would overwrite it at the gateway (#606).
+                if cancelled:
+                    raise
+                return
+            err = "cancelled" if cancelled else f"{type(e).__name__}: {e}"
             res = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error=err)
             base = dict(task_id=task.id, agent_id=task.agent_id, request_id=task.request_id)
-            await self.emit(Event(type="agent.status", data={"state": "error", "error": short(err, 200)}, **base))
-            await self.emit(Event(type="task.result", data={**res.model_dump(mode="json"),
-                                                            "control": self.controls.finish(task.id)}, **base))
-            if isinstance(e, asyncio.CancelledError):
+            # One unit: a second cancel arriving while this commits cannot leave the status without the result.
+            await self.emit_all([
+                Event(type="agent.status", data={"state": "error", "error": short(err, 200)}, **base),
+                Event(type="task.result", data={**res.model_dump(mode="json"),
+                                                "control": self.controls.finish(task.id)}, **base)])
+            if cancelled:
                 raise
+        finally:
+            self._result_queued.discard(task.id)  # the run is over: nothing left to guard
 
     def _resolve_agent(self, task: Task) -> AgentSpec:
         agent = self.registry.get(task.agent_id)
@@ -1070,6 +1145,8 @@ class Runner:
     async def run_task(self, task: Task, workdir_override: Path | None = None) -> TaskResult:
         from ..recruit.paper_skills import PaperSkillBuild
 
+        self._result_queued.discard(task.id)  # a new run of this id
+
         if task.meta.get("kind") in {"recruit_check", "plan_recruit"}:
             from ..recruit.planning import run_task
             result = await run_task(self, task)
@@ -1106,8 +1183,9 @@ class Runner:
         if refusal:  # the gateway refuses first; this holds for any other sender and after force_engine
             result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=refusal)
             base = dict(task_id=task.id, agent_id=agent.id, request_id=task.request_id)
-            await self.emit(Event(type="agent.status", data={"state": "error", "error": short(refusal, 200)}, **base))
-            await self.emit(Event(type="task.result", data=result.model_dump(mode="json"), **base))
+            await self.emit_all([
+                Event(type="agent.status", data={"state": "error", "error": short(refusal, 200)}, **base),
+                Event(type="task.result", data=result.model_dump(mode="json"), **base)])
             return result
         if read_only:  # an allowlist built from the staff member's identity, never the sender's overrides
             agent = read_only_profile(agent)
@@ -1145,6 +1223,13 @@ class Runner:
                     await self.emit(Event(type=kind, task_id=task.id, agent_id=agent.id, request_id=task.request_id,
                                           data=body))
 
+        async def emit_final(state: dict, result_data: dict) -> None:
+            """The closing agent.status and the task.result as one uncancellable unit (see `emit_all`)."""
+            base = dict(task_id=task.id, agent_id=agent.id, request_id=task.request_id)
+            await self.emit_all([
+                Event(type="agent.status", data=state, **base),
+                Event(type="task.result", data={**result_data, "control": self.controls.finish(task.id)}, **base)])
+
         await emit("agent.status", {"state": "queued"})
         consult = task.meta.get("kind") == "consult"
         semaphore = self.consult_sem if consult else self.sem
@@ -1167,8 +1252,7 @@ class Runner:
                 task_id=task.id, agent_id=agent.id, ok=False, error_kind="halted",
                 error="halted before the turn started", session_id=task.resume_session_id))
             await emit("agent.log", {"level": "info", "text": "시작하기 전에 멈췄어요. 받은 방향 수정은 같은 단계의 다음 turn에 남깁니다"})
-            await emit("agent.status", {"state": "idle", "halted": True})
-            await emit("task.result", result.model_dump(mode="json"))
+            await emit_final({"state": "idle", "halted": True}, result.model_dump(mode="json"))
             return result
         async with _holding(semaphore):
             steers, dropped = self.controls.take_prompt_steers(task.id)
@@ -1197,8 +1281,7 @@ class Runner:
                     error = f"재사용 작업 폴더를 안전하게 열 수 없어 실행을 거부합니다: {reason}"
                     result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=error)
                     await emit("agent.log", {"level": "alert", "text": error})
-                    await emit("agent.status", {"state": "error", "error": short(error, 200)})
-                    await emit("task.result", result.model_dump(mode="json"))
+                    await emit_final({"state": "error", "error": short(error, 200)}, result.model_dump(mode="json"))
                     return result
                 proposal = task.meta.get("facilities_fix")
                 if task.meta.get("kind") == "facilities_fix" and facility_fixes.is_workspace_cache(proposal):
@@ -1228,9 +1311,9 @@ class Runner:
                 status = "완료" if result.ok else "실패"
                 await emit("agent.log", {"level": "info" if result.ok else "alert",
                                          "text": f"환경 수정 {status}: {record.get('action') or record.get('error') or ''}"})
-                await emit("agent.status", {"state": "done" if result.ok else "error",
-                                            **({"error": short(result.error, 200)} if result.error else {})})
-                await emit("task.result", result.model_dump(mode="json"))
+                await emit_final({"state": "done" if result.ok else "error",
+                                  **({"error": short(result.error, 200)} if result.error else {})},
+                                 result.model_dump(mode="json"))
                 return result
             extra_dirs = [str(self.s.path(d)) for d in [*agent.project_dirs, *task.meta.get("project_dirs", [])]]
             task, consult_error = self._stage_consult_refs(task, ws)
@@ -1240,8 +1323,8 @@ class Runner:
             if consult_error:
                 result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=consult_error)
                 await emit("agent.log", {"level": "alert", "text": consult_error})
-                await emit("agent.status", {"state": "error", "error": short(consult_error, 200)})
-                await emit("task.result", result.model_dump(mode="json"))
+                await emit_final({"state": "error", "error": short(consult_error, 200)},
+                                 result.model_dump(mode="json"))
                 return result
             # Every folder opened to the task is judged by the same zone rule (intake.overlaps_zone) (#132).
             denied_links, _incomplete = await self._project_links(extra_dirs, zones, emit)
@@ -1256,8 +1339,7 @@ class Runner:
                          "(네트워크(UNC) 경로) 실행을 거부합니다. 드라이브 경로로 설정하거나 링크를 옮기세요")
                 result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=error)
                 await emit("agent.log", {"level": "alert", "text": error})
-                await emit("agent.status", {"state": "error", "error": short(error, 200)})
-                await emit("task.result", result.model_dump(mode="json"))
+                await emit_final({"state": "error", "error": short(error, 200)}, result.model_dump(mode="json"))
                 return result
             root = self.ws_root.resolve()
             for directory in task.meta.get("upstream_dirs", []):
@@ -1327,8 +1409,7 @@ class Runner:
                 skill_error = ws.install_skill(Path(agent.contract.skill_dir))
                 if skill_error:
                     result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=skill_error)
-                    await emit("agent.status", {"state": "error", "error": skill_error})
-                    await emit("task.result", result.model_dump(mode="json"))
+                    await emit_final({"state": "error", "error": skill_error}, result.model_dump(mode="json"))
                     return result
             for directory in read_dirs:
                 # Pre-approved shell commands (e.g. Bash(python *)) are not sandboxed; only OS permissions
@@ -1346,8 +1427,7 @@ class Runner:
             except (OSError, ValueError, yaml.YAMLError) as exc:
                 error = f"직원용 설정 사본을 만들 수 없어 실행을 거부합니다 ({type(exc).__name__})"
                 result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=error)
-                await emit("agent.status", {"state": "error", "error": error})
-                await emit("task.result", result.model_dump(mode="json"))
+                await emit_final({"state": "error", "error": error}, result.model_dump(mode="json"))
                 return result
             # PI personal paths (policy.private_paths): one that holds a folder this task works in is left open.
             keep = [ws.dir, self.ws_root, *extra_dirs, *read_dirs,
@@ -1713,8 +1793,7 @@ class Runner:
                  ({"error": short(result.error, 200)} if result.error else {}))
         if result.error_kind == "halted":  # stopped by the PI and resumable, not a problem to show
             state, extra = "idle", {"halted": True}
-        await emit("agent.status", {"state": state, **extra})
-        await emit("task.result", result.model_dump(mode="json"))
+        await emit_final({"state": state, **extra}, result.model_dump(mode="json"))
         return result
 
     # ---------------- broker callbacks (from MCP tools) ----------------
@@ -1722,23 +1801,24 @@ class Runner:
         req.request_id = req.request_id or self.task_req.get(req.task_id or "")
         self.approval_tasks[req.id] = (req.task_id, req.agent_id)
         base = dict(task_id=req.task_id, agent_id=req.agent_id, request_id=req.request_id)
-        await self.emit(Event(type="approval.requested", data=req.model_dump(mode="json"), **base))
-        if req.task_id:
-            await self.emit(Event(type="agent.status", data={"state": "waiting", "approval": req.id}, **base))
+        await self.emit_all([
+            Event(type="approval.requested", data=req.model_dump(mode="json"), **base),
+            *([Event(type="agent.status", data={"state": "waiting", "approval": req.id}, **base)]
+              if req.task_id else [])])
 
     async def _on_approval_timeout(self, req: ApprovalRequest) -> None:
         self.approval_tasks.pop(req.id, None)
         base = dict(task_id=req.task_id, agent_id=req.agent_id, request_id=req.request_id)
-        await self.emit(Event(type="approval.timed_out", data={"id": req.id}, **base))
-        if req.task_id:
-            await self.emit(Event(type="agent.status", data={"state": "working"}, **base))
+        await self.emit_all([
+            Event(type="approval.timed_out", data={"id": req.id}, **base),
+            *([Event(type="agent.status", data={"state": "working"}, **base)] if req.task_id else [])])
 
     async def _on_ask(self, req: AskRequest) -> None:
         req.request_id = req.request_id or self.task_req.get(req.task_id or "")
         base = dict(task_id=req.task_id, agent_id=req.agent_id, request_id=req.request_id)
-        await self.emit(Event(type="ask.requested", data=req.model_dump(mode="json"), **base))
-        if req.task_id:
-            await self.emit(Event(type="agent.status", data={"state": "waiting", "ask": req.id}, **base))
+        await self.emit_all([
+            Event(type="ask.requested", data=req.model_dump(mode="json"), **base),
+            *([Event(type="agent.status", data={"state": "waiting", "ask": req.id}, **base)] if req.task_id else [])])
 
     async def _on_tool_event(self, body: dict) -> None:
         tid = body.get("task_id")
@@ -1790,12 +1870,14 @@ class Runner:
                            "scheduler": self.s.hpc.scheduler, "request_id": self.task_req.get(tid or ""),
                            "workdir": str(ws.dir) if ws else None,
                            "script_sha256": body.get("script_sha256"), "submitted_by_runner": True}
-        self.store.put("job", jid, self.jobs[jid])
         if ws:
             ws.append_job({**body, "submitted_at": time.time()})
-        await self.emit(Event(type="job.submitted", task_id=tid, agent_id=body.get("agent_id"),
-                              request_id=self.task_req.get(tid or ""),
-                              data={"job_id": jid, "name": body.get("name"), "core_hours": body.get("core_hours")}))
+        # The job row and the event that announces it are one unit: a cancel cannot keep the row and lose the event.
+        await self.emit_all([Event(type="job.submitted", task_id=tid, agent_id=body.get("agent_id"),
+                                   request_id=self.task_req.get(tid or ""),
+                                   data={"job_id": jid, "name": body.get("name"),
+                                         "core_hours": body.get("core_hours")})],
+                            before=[("job", jid, self.jobs[jid])])
 
     async def _owns_job(self, identity: dict) -> bool:
         """hpc_cancel scope (#172): a job the runner submitted for this agent in this task or request.
@@ -1835,14 +1917,18 @@ class Runner:
                 state = "unknown_finished"
             else:
                 j["missing"] = 0
-            if state != j["state"]:
+            changed = state != j["state"]
+            if changed:
                 j.update(state=state, exit_status=info.exit_status)
-                await self.emit(Event(type="job.state", task_id=j["task_id"], agent_id=j["agent_id"],
-                                      request_id=self.task_req.get(j["task_id"] or ""),
-                                      data={"job_id": jid, "name": j["name"], "state": state,
-                                            "exit_status": info.exit_status}))
             j["terminal"] = state in TERMINAL
-            self.store.put("job", jid, j)
+            if changed:  # the event and the saved job state are one unit
+                await self.emit_all([Event(type="job.state", task_id=j["task_id"], agent_id=j["agent_id"],
+                                           request_id=self.task_req.get(j["task_id"] or ""),
+                                           data={"job_id": jid, "name": j["name"], "state": state,
+                                                 "exit_status": info.exit_status})],
+                                    after=[("job", jid, j)])
+            else:
+                self.store.put("job", jid, j)
 
         by_task: dict[str, list[dict]] = {}
         for j in self.jobs.values():
@@ -1853,10 +1939,14 @@ class Runner:
             t = self.tasks.get(tid)
             if t is not None and not t.done():  # the agent is still talking; wake it after it ends
                 continue
-            await self.emit(Event(
-                type="jobs.finished", task_id=tid, agent_id=js[0]["agent_id"], request_id=self.task_req.get(tid),
-                data={"jobs": [{k: x.get(k) for k in ("job_id", "name", "state", "exit_status")} for x in js],
-                      "session_id": js[0].get("session_id"), "workdir": js[0].get("workdir")},
-            ))
+            # The event and the "notified" mark are one unit: a cancel cannot send the wake-up and forget that it did.
             self.notified.add(tid)
-            self.store.put("notified", tid, {"done": True})
+            try:
+                await self.emit_all([Event(
+                    type="jobs.finished", task_id=tid, agent_id=js[0]["agent_id"], request_id=self.task_req.get(tid),
+                    data={"jobs": [{k: x.get(k) for k in ("job_id", "name", "state", "exit_status")} for x in js],
+                          "session_id": js[0].get("session_id"), "workdir": js[0].get("workdir")},
+                )], after=[("notified", tid, {"done": True})])
+            except Exception:
+                self.notified.discard(tid)
+                raise
