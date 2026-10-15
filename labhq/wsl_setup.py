@@ -148,7 +148,9 @@ def _shared_settings(s: Settings) -> dict:
         if private is None:
             private = [path for path, _label in configured_private_paths(s, str(Path.home()))]
         policy["private_paths"] = [convert(path) for path in private]
+        roots = [*s.runner.reference_roots, *(p.local_dir for p in s.projects if p.local_dir)]
         return {"workspace_root": convert(s.runner.workspace_root), "policy": policy,
+                "reference_roots": list(dict.fromkeys(convert(root) for root in roots)),
                 "private_defaults": s.policy.private_paths is None}
     except ValueError as exc:
         raise WslError("WSL shared 경로로 바꾸지 못해 설정을 거부했습니다.") from exc

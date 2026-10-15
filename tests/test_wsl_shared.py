@@ -157,9 +157,7 @@ async def test_gateway_translates_task_and_results(settings):
     hub.futures["shared-result"] = future
     await hub.on_runner_message("lab-wsl", {"type": "task.result", "task_id": "shared-result", "data": {
         "task_id": "shared-result", "agent_id": "bioinfo-agent", "ok": True, "workdir": "/mnt/c/Runs/new"}})
-    import os
-    expected = "C:/Runs/new" if os.name == "nt" else "/mnt/c/Runs/new"
-    assert future.result().workdir == expected
+    assert future.result().workdir == "C:/Runs/new"
 
 
 def test_wsl_linux_only_workspace_refused():
@@ -194,7 +192,9 @@ def test_shared_wsl_bundle_collects_different_hostname(tmp_path, monkeypatch):
     s, req, task = pending_bundle_fixture(tmp_path, "shared-wsl")
     result = req["results"]["direct"]
     workdir = Path(result["workdir"])
-    (workdir / "manifest.json").write_text(json.dumps({"host": "other-wsl-hostname"}), encoding="utf-8")
+    manifest = {"host": "other-wsl-hostname", "runs": {result["task_id"]: {
+        "input_files": [{"path": "/mnt/c/Shared/input.tsv", "sha256": "input-hash"}]}}}
+    (workdir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     wire_root = "/mnt/c/Shared/Runs"
     wire_workdir = wire_root + "/" + workdir.relative_to(s.runner.workspace_root).as_posix()
     result["workdir"] = wire_workdir
@@ -205,6 +205,8 @@ def test_shared_wsl_bundle_collects_different_hostname(tmp_path, monkeypatch):
             return s.runner.workspace_root
         if raw == wire_workdir:
             return str(workdir)
+        if raw == "/mnt/c/Shared/input.tsv":
+            return str(tmp_path / "input.tsv")
         return original(raw, target)
     monkeypatch.setattr(wsl_paths, "shared_path", mounted)
     bundle = build_request_bundle(req, s, {result["task_id"]: task}, {
@@ -212,6 +214,9 @@ def test_shared_wsl_bundle_collects_different_hostname(tmp_path, monkeypatch):
     destination = Path(s.runner.workspace_root) / "requests/shared-wsl/steps/direct/outputs/answer.txt"
     assert destination.read_text(encoding="utf-8") == "answer\n"
     assert bundle["status"] != "incomplete"
+    inputs = destination.parents[3] / "INPUTS.tsv"
+    assert str(tmp_path / "input.tsv") in inputs.read_text(encoding="utf-8")
+    assert json.loads((workdir / "manifest.json").read_text(encoding="utf-8")) == manifest
 
 
 def test_nonshared_wsl_bundle_keeps_remote_host_refusal(tmp_path):
@@ -237,11 +242,13 @@ def test_bootstrap_persists_policy_without_defaults(settings, tmp_path, monkeypa
     policy["private_paths"] = ["/mnt/c/Private"]
     data = {"action": "configure", "root": str(root), "source": str(source), "id": "lab-wsl",
             "url": "ws://192.0.2.1:43123", "token": "test-only-token", "bioinfo_agent": "/opt/bioinfo-agent",
-            "supervisor": {"restart": False}, "workspace_root": "/mnt/c/Shared/Runs", "policy": policy}
+            "supervisor": {"restart": False}, "workspace_root": "/mnt/c/Shared/Runs", "policy": policy,
+            "reference_roots": ["/mnt/d/Refs", "/mnt/c/Shared/project"]}
     assert wsl_bootstrap.main(data)["ok"]
     actual = Settings.load(str(root / "labhq.yaml"))
     assert actual.policy.model_dump() == policy
     assert actual.runner.workspace_root == "/mnt/c/Shared/Runs"
+    assert actual.runner.reference_roots == data["reference_roots"]
     data["private_defaults"] = True
     monkeypatch.setattr(cli, "_supervised", lambda *a: False)
     monkeypatch.setattr(cli, "_process_record", lambda *a: ("missing", None, None))

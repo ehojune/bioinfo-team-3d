@@ -2188,9 +2188,8 @@ class Hub:
         ws = self.runners.get(runner_id)
         if ws is None:
             raise RunnerNotSent(f"runner {runner_id} is offline")
-        if self.runner_capabilities.get(runner_id, {}).get("runtime_env") == "wsl":
-            from ..wsl_paths import message_paths
-            msg = message_paths(msg, "wsl")
+        from ..wsl_paths import message_paths
+        msg = message_paths(msg, self.runner_capabilities.get(runner_id, {}).get("runtime_env"))
         payload = json.dumps(msg, ensure_ascii=False, default=str)
         async with self.runner_locks[runner_id]:
             if self.runners.get(runner_id) is not ws:
@@ -2272,9 +2271,9 @@ class Hub:
         if ws is not None and (self.runners.get(runner_id) is not ws or
                                self.runner_incarnations.get(runner_id) != incarnation):
             return
-        if self.runner_capabilities.get(runner_id, {}).get("runtime_env") == "wsl":
+        if self.runner_capabilities.get(runner_id, {}).get("runtime_env") in {"wsl", "windows"}:
             from ..wsl_paths import message_paths
-            msg = message_paths(msg, "windows" if os.name == "nt" else "wsl")
+            msg = message_paths(msg, "windows")
         runner_seq = msg.get("runner_seq")
         if runner_seq is not None and runner_seq <= self.store.runner_seen(runner_id):
             await self.send_runner(runner_id, {"type": "runner.ack", "runner_seq": runner_seq})

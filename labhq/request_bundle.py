@@ -639,6 +639,8 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
                                      "status": "not copied: missing", "rewritten": 0,
                                      "remaining_absolute_paths": "", "rewritten_files": ""})
                     continue
+                if shared_wsl:
+                    manifest = message_paths(manifest, path_target)
                 workdir = Path(workdir_or_reason)
                 found_workdirs += 1
                 workdirs.append((step_id, workdir))

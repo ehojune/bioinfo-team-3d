@@ -1155,7 +1155,7 @@ class Runner:
 
         if self.s.runner.environment == "wsl":
             from ..wsl_paths import message_paths, shared_path
-            task = task.model_copy(update={"meta": message_paths(task.meta, "wsl")})
+            task = Task.model_validate(message_paths(task.model_dump(), "wsl"))
             shared_path(str(self.ws_root.resolve()), "wsl")
             if workdir_override is not None:
                 workdir_override = Path(shared_path(str(workdir_override), "wsl"))

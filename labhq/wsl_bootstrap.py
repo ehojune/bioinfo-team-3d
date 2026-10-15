@@ -158,6 +158,7 @@ def main(data):
                     "runner_token": data["token"], "client_token": "", "state_dir": str(root / "supervisor")},
                     "runner": {"id": data["id"], "environment": "wsl", "state_dir": str(root / "state"),
                                "workspace_root": data["workspace_root"], "agents_dir": str(root / "agents"),
+                               "reference_roots": data.get("reference_roots", []),
                                "talent_dir": str(root / "talent"), "contract_dir": str(root / "contracts"),
                                "broker_port": port, "force_engine": data.get("force_engine")},
                     "hpc": {"scheduler": "none"}, "supervisor": data["supervisor"],

@@ -6,6 +6,14 @@ drive letter and separators. UNC and Linux-only absolute paths cannot be shared.
 from __future__ import annotations
 
 import re
+from typing import get_args, get_type_hints
+
+from .models import PathShape, RunnerPathFields
+
+
+# Derived from the model, never maintain a second list at a call site.
+PATH_FIELDS = {name: shape for name, hint in get_type_hints(RunnerPathFields, include_extras=True).items()
+               for shape in get_args(hint) if isinstance(shape, PathShape)}
 
 
 def shared_path(value: str, target: str) -> str:
@@ -26,25 +34,35 @@ def shared_path(value: str, target: str) -> str:
     return prefix + "/".join(parts)
 
 
-def message_paths(value, target: str, key: str = ""):
-    """Translate structured path fields, never prompts, shell commands or result text."""
-    singles = {"workdir", "source_workdir", "cwd", "workspace_root"}
-    lists = {"upstream_dirs", "outputs", "missing_outputs", "unreported_outputs"}
-    mappings = {"upstream_steps", "output_sha256", "output_types", "output_tool_use_ids"}
+def message_paths(value, target: str, key: str = "", *, _parent=None):
+    """Copy a wire message into the consumer's path view using the model contract.
+
+    The gateway's canonical shared-drive view is Windows, on every gateway OS.
+    Dispatch selects the actual consumer runtime; Linux-only paths and opaque
+    content are preserved. Filesystem access must still enforce its own roots.
+    """
+    if target not in {"wsl", "windows"}:
+        return value
+    rule = PATH_FIELDS.get(key)
+    if rule and rule.when and (_parent or {}).get(rule.when[0]) != rule.when[1]:
+        return value
+    shape = rule.kind if rule else None
+    if shape == "opaque":
+        return value
 
     def path(raw):
         if not isinstance(raw, str):
             return raw
-        if raw.startswith("/") or re.match(r"^[A-Za-z]:|^\\", raw):
+        if re.match(r"^(?:[A-Za-z]:[/\\]|/mnt/[A-Za-z](?:/|$))", raw):
             return shared_path(raw, target)
-        return raw  # outputs are normally relative to the workdir
+        return raw  # relative outputs and paths private to a native Linux runner
 
     if isinstance(value, dict):
-        if key == "upstream_steps":
+        if shape == "values":
             return {k: path(v) for k, v in value.items()}
-        if key in mappings:
+        if shape == "keys":
             return {path(k): v for k, v in value.items()}
-        return {k: message_paths(v, target, k) for k, v in value.items()}
+        return {k: message_paths(v, target, k, _parent=value) for k, v in value.items()}
     if isinstance(value, list):
-        return [path(v) if key in lists else message_paths(v, target) for v in value]
-    return path(value) if key in singles else value
+        return [path(v) if shape == "items" else message_paths(v, target) for v in value]
+    return path(value) if shape == "scalar" else value
