@@ -10,6 +10,9 @@ import yaml
 from labhq import cli, doctor, instance_guard
 from labhq.settings import Settings
 
+READY = dict(bioinfo_agent=True, bioinfo_skill=True, java=True, nextflow=True,
+             claude_cli=True, claude_login=True)
+
 
 @pytest.fixture(autouse=True)
 def restore_bootstrap_environment(monkeypatch):
@@ -47,7 +50,7 @@ def test_check_reports_each_fact_without_install(settings, monkeypatch):
     monkeypatch.setattr(wsl_setup, "_remote", remote)
     monkeypatch.setattr(cli, "_health", lambda s: health(s))
     rows = wsl_setup.check(settings)
-    assert len(rows) == 8 and calls == ["probe"]
+    assert len(rows) == 12 and calls == ["probe"]
     assert next(r for r in rows if r["name"] == "Docker 실행")["detail"] == "없음"
     assert rows[-1]["detail"] == "ok"
     assert "test-only" not in wsl_setup.render(rows)
@@ -73,7 +76,7 @@ def test_setup_repeat_uses_same_private_config_and_no_nextflow_install(settings,
     calls = []
     def remote(s, action, **kwargs):
         calls.append((action, kwargs))
-        return {"ok": True, "nextflow": True, "url": "ws://192.0.2.1:43123"}
+        return {"ok": True, **READY, "url": "ws://192.0.2.1:43123"}
     monkeypatch.setattr(wsl_setup, "_remote", remote)
     wsl_setup.setup(settings)
     first = Path(settings.config_path).read_bytes()

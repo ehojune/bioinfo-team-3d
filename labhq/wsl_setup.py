@@ -15,6 +15,7 @@ import time
 import yaml
 
 from . import instance_guard
+from . import wsl_readiness
 from .settings import Settings
 from .util import atomic_write_text
 from .wsl_paths import shared_path
@@ -81,9 +82,13 @@ def _remote(s: Settings, action: str, **extra) -> dict:
 
 
 LABELS = {"distro": "WSL 배포판", "java": "Java 실행", "nextflow": "Nextflow 실행",
-          "docker": "Docker 실행", "bioinfo_agent": "bioinfo-agent 폴더", "labhq": "WSL labhq 설치",
+          "docker": "Docker 실행", "bioinfo_agent": "bioinfo-agent manifest", "bioinfo_skill": "bioinfo-analyze skill",
+          "claude_cli": "WSL Claude CLI", "claude_login": "WSL Claude 로그인", "ready": "WSL 분석 준비",
+          "labhq": "WSL labhq 설치",
           "registered": "WSL runner 등록", "connected": "WSL runner 연결"}
 ADMIN_HINTS = {"distro": "Windows 관리자 터미널: wsl --install -d Ubuntu-22.04",
+               "claude_cli": "WSL 안에 Linux용 Claude Code CLI를 설치하고 setup-wsl --check를 다시 실행하세요.",
+               "claude_login": "WSL runner의 claude-staff 폴더를 CLAUDE_CONFIG_DIR로 지정한 뒤 claude auth login을 실행하세요.",
                "java": "WSL에서 직접 실행: sudo apt install openjdk-17-jre-headless",
                "docker": "WSL에서 직접 실행: sudo apt install docker.io && sudo service docker start\n"
                          "  Docker 사용 권한: sudo usermod -aG docker $USER (다시 로그인)"}
@@ -105,7 +110,7 @@ def check(s: Settings) -> list[dict]:
                          and s.runner.wsl.id in health.get("runners", []))
     except (SystemExit, OSError):
         connected = False
-    values = {**facts, "distro": present, "connected": connected}
+    values = {**facts, "ready": wsl_readiness.wsl_readiness(facts), "distro": present, "connected": connected}
     return [{"group": "WSL", "name": name, "status": "ok" if values.get(key) is True else "warn",
              "detail": "ok" if values.get(key) is True else "없음",
              "hint": ADMIN_HINTS.get(key, "labhq setup-wsl을 실행하세요.")}
@@ -166,6 +171,9 @@ def setup(s: Settings) -> list[dict]:
     shared = _shared_settings(s)
     facts = _remote(s, "probe")
     _remote(s, "install", install_nextflow=not facts.get("nextflow"))
+    # Re-probe after installation; a successful connection alone never means analysis is ready.
+    if not wsl_readiness.wsl_readiness(_remote(s, "probe")):
+        return check(s)
     # Verify the reachable gateway by its identity before sending the runner token anywhere over the network.
     network = _remote(s, "gateway")
     if not network.get("url"):
@@ -174,6 +182,8 @@ def setup(s: Settings) -> list[dict]:
     _remote(s, "configure", url=network["url"], token=s.gateway.runner_token,
             supervisor=s.supervisor.model_dump(), force_engine=s.runner.force_engine, **shared)
     control(s, "start")
+    if not wsl_readiness.wsl_readiness(_remote(s, "probe")):
+        return check(s)
     _save_enabled(s)
     return check(s)
 

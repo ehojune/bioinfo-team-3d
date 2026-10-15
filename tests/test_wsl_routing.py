@@ -7,6 +7,7 @@ from labhq.models import AgentSpec
 from labhq.orchestrator.cso import format_capabilities
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
+from test_wsl_setup import READY
 
 
 @pytest.fixture
@@ -31,7 +32,7 @@ def test_bioinfo_routes_to_wsl_after_windows_reconnect(settings, configured):
     if configured:
         assert hub.agent_runner["bioinfo-agent"] == "windows"
     hub.runners["lab-wsl"] = object()
-    hub.set_roster("lab-wsl", staff, {"runtime_env": "wsl", "environment": {}})
+    hub.set_roster("lab-wsl", staff, {"runtime_env": "wsl", "environment": {}, "wsl_readiness": READY})
     hub.set_roster("windows", staff, {"runtime_env": "windows", "environment": {}})
     assert hub.agent_runner["bioinfo-agent"] == "lab-wsl"
     # A WSL runner without this staff member no longer takes precedence.

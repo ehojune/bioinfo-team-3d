@@ -453,6 +453,7 @@ class Runner:
                 self.local_software = {}
         while not self._stopping:
             try:
+                await asyncio.to_thread(self._refresh_wsl_readiness)
                 async with websockets.connect(url, max_size=64 * 2**20, ping_interval=20, ping_timeout=60) as ws:
                     backoff = 1.0
                     await ws.send(json.dumps(self.hello()))
@@ -507,6 +508,26 @@ class Runner:
                                                      "labhq_hpc" in summary.get("mcp", [])})
         return agents
 
+    def _refresh_wsl_readiness(self) -> None:
+        if self.s.runner.environment != "wsl":
+            return
+        from .. import wsl_readiness
+
+        self.wsl_readiness = {}
+        agent = self.registry.agents.get("bioinfo-agent")
+        if agent is None:
+            return
+        adapter = get_adapter(Engine.claude_code, self.s)
+        ctx = RunContext(task=Task(agent_id=agent.id, prompt=""), agent=agent, workdir=self.ws_root,
+                         settings=self.s, mcp_servers=[], env={}, emit=lambda *_: None, prompt="")
+        env = adapter.staff_env(ctx)
+        try:
+            directories = [str(self.ws_root / p) if not Path(p).is_absolute() else p
+                           for p in adapter._plugin_dirs(ctx, env)]
+            self.wsl_readiness = wsl_readiness.probe(directories, env, self.s.engines.claude_code.bin)
+        except (OSError, ValueError):
+            pass  # no positive facts: gateway keeps the native worker
+
     def capabilities(self) -> dict:
         external_hpc = any("labhq_hpc" in a.get("mcp", []) for a in self.registry.roster())
         capabilities = {"scheduler": self.s.hpc.scheduler,
@@ -523,6 +544,8 @@ class Runner:
         local_software = getattr(self, "local_software", None)
         if local_software is not None:
             capabilities["local_software"] = local_software
+        if self.s.runner.environment == "wsl":
+            capabilities["wsl_readiness"] = dict(getattr(self, "wsl_readiness", {}))
         return capabilities
 
     def hello(self) -> dict:
@@ -572,6 +595,7 @@ class Runner:
             await self.store.aack(int(msg["runner_seq"]))
         elif typ == "registry.reload":
             self.registry.load()
+            await asyncio.to_thread(self._refresh_wsl_readiness)
             self._send_roster()
         elif typ == "recruit.start":
             asyncio.create_task(self._recruit(msg))

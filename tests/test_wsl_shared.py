@@ -13,7 +13,7 @@ from labhq.gateway.server import Hub
 from labhq.models import AgentSpec
 from labhq.policy import evaluate_tool
 from labhq.settings import DataZone, RunnerSettings, Settings
-from test_wsl_setup import settings, restore_bootstrap_environment
+from test_wsl_setup import settings, restore_bootstrap_environment, READY
 
 
 @pytest.mark.parametrize("connected", [False, True])
@@ -24,7 +24,7 @@ def test_only_connected_wsl_claims_bioinfo(settings, connected):
     hub.runners["windows"] = object()
     if connected:
         hub.runners["lab-wsl"] = object()
-    hub.set_roster("lab-wsl", staff, {"runtime_env": "wsl"})
+    hub.set_roster("lab-wsl", staff, {"runtime_env": "wsl", "wsl_readiness": READY})
     hub.set_roster("windows", staff, {"runtime_env": "windows"})
     assert hub.agent_runner["bioinfo-agent"] == ("lab-wsl" if connected else "windows")
     if connected:
@@ -36,7 +36,7 @@ def test_failed_connect_does_not_enable_or_rewrite(settings, monkeypatch):
     monkeypatch.setattr(wsl_setup, "_shared_settings", lambda s: {"workspace_root": "/mnt/c/Shared/Runs",
                                                                "policy": s.policy.model_dump()}, raising=False)
     monkeypatch.setattr(wsl_setup, "distributions", lambda: [settings.runner.wsl.distro])
-    monkeypatch.setattr(wsl_setup, "_remote", lambda *a, **kw: {"ok": True, "nextflow": True, "url": "ws://host"})
+    monkeypatch.setattr(wsl_setup, "_remote", lambda *a, **kw: {"ok": True, **READY, "url": "ws://host"})
     monkeypatch.setattr(wsl_setup, "control", lambda *a: (_ for _ in ()).throw(wsl_setup.WslError("offline")))
     before = Path(settings.config_path).read_bytes()
     with pytest.raises(wsl_setup.WslError):
@@ -96,7 +96,7 @@ def test_shared_workspace_and_policy_refresh(settings, monkeypatch):
     def remote(s, action, **kw):
         if action == "configure":
             payloads.append(kw)
-        return {"ok": True, "nextflow": True, "url": "ws://host"}
+        return {"ok": True, **READY, "url": "ws://host"}
     monkeypatch.setattr(wsl_setup, "_remote", remote)
     wsl_setup.setup(settings)
     config = payloads[-1]

@@ -104,10 +104,15 @@ def main(data):
     config = root / "labhq.yaml"
     action = data["action"]
     if action == "probe":
-        return {"ok": True, "java": run(["java", "-version"]).returncode == 0,
-                "nextflow": run(["nextflow", "-version"]).returncode == 0,
+        # Direct script invocation must also work before the venv/package is installed.
+        if not __package__:
+            sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from labhq.wsl_readiness import probe
+
+        facts = probe([data["bioinfo_agent"]],
+                      {**os.environ, "CLAUDE_CONFIG_DIR": str(root / "claude-staff")})
+        return {"ok": True, **facts,
                 "docker": run(["docker", "info"], timeout=10).returncode == 0,
-                "bioinfo_agent": (Path(data["bioinfo_agent"]) / ".claude-plugin/plugin.json").is_file(),
                 "labhq": run([str(python), "-c", "import labhq.cli"]).returncode == 0,
                 "registered": config.is_file() and run([str(python), "-c",
                     "from labhq.settings import Settings; import sys; "
