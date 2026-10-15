@@ -22,7 +22,28 @@ export function keyDelta(axis, key) {
 export function initResizablePanels(options) {
   const {layout, office, staff, mainSplitter, staffSplitter, storage, storageKey, win = window} = options;
   const desktop = win.matchMedia('(min-width: 1000px)');
-  const values = readPanelSizes(storage.get(storageKey));
+  // Version the persisted layout without changing the instance-specific storage namespace.
+  const versionKey = `${storageKey}:version`, version = '2';
+  const raw = storage.get(versionKey) === version ? storage.get(storageKey) : null;
+  const values = readPanelSizes(raw);
+  try { if (JSON.parse(raw)?.staffClosed === true) values.staffClosed = true; } catch {}
+  storage.set(versionKey, version);
+  storage.set(storageKey, JSON.stringify(values));
+  const setStaffClosed = (closed, focus = false) => {
+    staff.hidden = closed; staffSplitter.hidden = closed;
+    if (options.reopenButton) options.reopenButton.hidden = !closed;
+    if (closed) values.staffClosed = true; else delete values.staffClosed;
+    storage.set(storageKey, JSON.stringify(values));
+    if (focus) (closed ? options.reopenButton : options.closeButton)?.focus();
+  };
+  options.closeButton?.addEventListener('click', () => setStaffClosed(true, true));
+  options.reopenButton?.addEventListener('click', () => {
+    staff.classList.add('open');
+    const toggle = staff.querySelector('#staff-toggle');
+    if (toggle) { toggle.setAttribute('aria-expanded', 'true'); toggle.textContent = '직원 닫기'; }
+    setStaffClosed(false, true);
+  });
+  setStaffClosed(Boolean(values.staffClosed));
 
   const bounds = kind => {
     if (kind === 'main') {
