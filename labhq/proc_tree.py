@@ -377,7 +377,10 @@ class _Handle:
             return GONE
         if not kernel.TerminateProcess(self._raw, 1):
             error = ctypes.get_last_error()
-            if not running():  # it ended on its own between the check and the kill
+            # A Windows venv launcher ends by itself after its interpreter child. During that transition
+            # TerminateProcess can say access denied before the process handle becomes signaled. Waiting on the
+            # already-pinned handle distinguishes that normal exit from a process that really refused to end.
+            if kernel.WaitForSingleObject(self._raw, _PROCESS_EXIT_WAIT_MS) == 0:
                 return GONE
             raise ctypes.WinError(error)
         waited = kernel.WaitForSingleObject(self._raw, _PROCESS_EXIT_WAIT_MS)

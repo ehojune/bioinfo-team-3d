@@ -406,6 +406,24 @@ def test_cli_terminate_tree_raises_when_a_descendant_cannot_be_ended_and_keeps_i
     assert world.killed == [SIBKID, SIB] and {ROOT, KID, GRANDKID} <= set(world.live)  # `down` can retry
 
 
+def test_a_process_ending_by_itself_after_terminate_refuses_is_already_gone(monkeypatch):
+    """A Windows venv launcher can be terminating but not signaled yet after its interpreter child exits."""
+    waits = iter((0x00000102, 0))  # running at first; signaled while the bounded wait is in progress
+
+    class Kernel:
+        def WaitForSingleObject(self, _handle, _timeout):
+            return next(waits)
+
+        def TerminateProcess(self, _handle, _code):
+            return False
+
+    monkeypatch.setattr(proc_tree, "_kernel", lambda: (Kernel(), None, None))
+    import ctypes
+    monkeypatch.setattr(ctypes, "get_last_error", lambda: 5, raising=False)
+
+    assert proc_tree._Handle(ROOT, 1000, object()).terminate() == proc_tree.GONE
+
+
 # --- a real Windows parent and child --------------------------------------------------------------------------
 
 _PAIR = (
