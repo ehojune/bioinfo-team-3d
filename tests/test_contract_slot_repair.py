@@ -28,6 +28,40 @@ def slot_hub(answer):
     return hub
 
 
+def budget_slot_hub(*, cap, step_cost):
+    hub = slot_hub({'e1': {'status': 'attempted_none', 'reason': 'search attempt recorded'}})
+    original = hub.reply
+    hub.requests['r']['budget_usd'] = cap
+    hub.s.policy.budget.per_task_usd = 0.10
+
+    async def reply(task):
+        result = await original(task)
+        cost = step_cost if task.meta['kind'] == 'step' else 0.0
+        return result.model_copy(update={'cost_usd': cost, 'cost_known': True})
+
+    hub.reply = reply
+    return hub
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(('step_cost', 'expected_questions'), [(1.0, 0), (0.95, 0), (0.80, 1)])
+async def test_slot_question_only_runs_when_its_budget_reservation_fits(step_cost, expected_questions):
+    hub = budget_slot_hub(cap=1.0, step_cost=step_cost)
+    await Orchestrator(hub).run_request('r')
+
+    req = hub.requests['r']
+    calls = [task for task in hub.calls if task.meta['kind'] == 'slot_repair']
+    assert len(calls) == expected_questions
+    if calls:
+        assert calls[0].budget_usd == pytest.approx(0.10)
+    assert req['status'] == 'done'
+    assert req['results']['s1']['ok']
+    assert req['results']['s1']['structured']['evidence'][-1]['origin'] == (
+        'slot_repair' if expected_questions else 'omitted_by_output')
+    assert not any(approval['kind'] == 'budget' for approval in hub.approvals)
+    assert float(req.get('cost_usd') or 0) <= req['budget_usd']
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize('status', ['attempted_found', 'attempted_none', 'not_attempted'])
 async def test_missing_slots_get_one_small_question_without_whole_result_correction(status):

@@ -3073,7 +3073,7 @@ class Orchestrator:
         engine = str((self.hub.agents.get(task.agent_id) or {}).get("engine") or "")
         final_step = bool(task.meta.get("final_budget_turn"))  # nothing runs after this step but its own turns
         optional_support = bool(task.meta.get("facilities_diagnosis") or task.meta.get("kind") in
-                                {"paper_skill", "recruit_check", "plan_recruit", "slot_repair"})
+                                {"paper_skill", "recruit_check", "plan_recruit"})
 
         def quota_deadline() -> float:
             req = self.hub.requests[rid]
@@ -3686,6 +3686,18 @@ class Orchestrator:
         spent = max(self.cost.get(rid, 0), float(req.get("cost_usd") or 0))
         return spent + count * self._unknown_reserve(limit) < limit
 
+    def _optional_turn_budget_available(self, rid: str) -> bool:
+        """A nonessential normal turn runs only when one conservative task reservation fits under the request cap."""
+        self._count_recorded_costs(rid)
+        if rid in self.budget_denials:
+            return False
+        req = self.hub.requests.get(rid, {})
+        limit = req.get("budget_usd") or self.hub.s.policy.budget.per_request_usd
+        if not limit:
+            return True
+        _spent, _unknown, bound = self._budget_bound(rid, limit)
+        return bound + self._unknown_reserve(limit) <= limit
+
     def _budget_bound(self, rid: str, limit: float) -> tuple[float, int, float]:
         """Counted dollars, unaccounted tasks, and the total the cap is judged on: never $0 for an unknown task."""
         spent = self.cost.get(rid, 0.0)
@@ -3907,10 +3919,13 @@ class Orchestrator:
                     if record and record.get("plan_sha256") != research_plan_sha256(research_plan):
                         record = None
                     if record is None:
-                        record = records[step["id"]] = {"slots": slots, "asked": True, "answers": {},
+                        record = records[step["id"]] = {"slots": slots, "asked": False, "answers": {},
                                                       "plan_sha256": research_plan_sha256(research_plan)}
                         self.hub.save_request(rid)
-                        if current.session_id and self.hub.supports_resume(step["agent_id"]):
+                        if (current.session_id and self.hub.supports_resume(step["agent_id"]) and
+                                self._optional_turn_budget_available(rid)):
+                            request_limit = (req_state.get("budget_usd") or
+                                             self.hub.s.policy.budget.per_request_usd)
                             schema = {"type": "object", "additionalProperties": False,
                                       "required": slots, "properties": {slot: {
                                           "type": "object", "additionalProperties": False,
@@ -3922,16 +3937,19 @@ class Orchestrator:
                             question = Task(
                                 agent_id=step["agent_id"], request_id=rid, output_schema=schema,
                                 resume_session_id=current.session_id,
+                                budget_usd=(self._unknown_reserve(request_limit) if request_limit else None),
                                 prompt=("누락된 증거 칸의 시도 여부만 답하세요. 파일·분석·전체 결과 JSON은 고치지 마세요. "
                                         "각 칸 id → {status: attempted_found/attempted_none/not_attempted, "
                                         "reason: 한 줄 이유}. 칸: " + ", ".join(slots)),
                                 meta={**task.meta, "kind": "slot_repair", "max_attempts": 1, "outputs": [],
                                       "parent_task": current.task_id, "title": f"{step['id']}: 누락 칸 확인",
                                       **({"workdir": current.workdir} if current.workdir else {})})
+                            record["asked"] = True
+                            self.hub.save_request(rid)
                             try:
                                 answer = await self.run_step(question)
                             except BudgetExceeded:
-                                raise
+                                answer = None
                             except Exception:
                                 answer = None
                             if answer is not None and answer.unreported_outputs:
