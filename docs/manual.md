@@ -558,7 +558,7 @@ runner PC에 무언가 없어서 실패한 단계는 `environment` 실패입니�
 | 🐙 문어 엔지니어 | `engineer` | 파이프라인·도구·테스트 | Codex / gpt-5.6-sol | workspace-write | 웹 disabled·HPC* |
 | 🦔 고슴도치 Data QC | `qc_reviewer` | PASS/WARN/FAIL QC | Claude Code / sonnet | — | HPC* |
 | 🐢 거북이 과학 리뷰어 | `sci_reviewer` | 3기준 교차 리뷰 | Codex / gpt-6-astra | 자기 outputs/·.tmp/만 쓰기 | live 웹 |
-| 🦫 비버 인사팀 | `recruiter` | Paper2Agent 변환·검증 | Claude Code / opus | — | Skill·Agent |
+| 카피바라 인사팀 | `recruiter` | Paper2Agent 변환·검증 | Claude Code / opus | — | Skill·Agent |
 | 🐹 시설팀 | `facilities` | 환경 오류 진단·PI 조치 안내 | Codex / gpt-6-sol | read-only | 전달된 진단 근거만 |
 | 🐥 파견직 | `c_<slug>` | 논문의 방법 적용 | Claude Code / sonnet | — | 논문 MCP·skill |
 
@@ -658,7 +658,7 @@ plugin을 읽고 `--disable-slash-commands`를 빼서 `bioinfo:bioinfo-analyze` 
 ```mermaid
 flowchart LR
   N[필요 발생<br/>CSO 계획의 recruit · 여우 헤드헌팅 · PI 직접] --> A{PI 승인<br/>폰}
-  A -->|승인| C[🦫 인사팀<br/>paper2agent 스킬 실행]
+  A -->|승인| C[카피바라 인사팀<br/>paper2agent 스킬 실행]
   C --> O[오퍼레터 JSON<br/>툴 · 엔트리포인트 · 한계]
   O --> P[수습<br/>MCP 기동 · 툴 목록 확인]
   P -->|통과| W[계약 중<br/>agents/contract · 만료일]

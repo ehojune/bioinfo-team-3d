@@ -13,7 +13,7 @@ assert.deepEqual({...context.LabHQState.websocketCloseAction(1006)}, {connection
 const office = create({now: () => 1000});
 const names = create();
 names.apply({type:'snapshot', data:{agents:[{id:'recruiter',name:'비버 인사팀'}, {id:'editor',name:'비버 편집자'}]}});
-assert.equal(names.nick('recruiter'), '비버 인사팀');
+assert.equal(names.nick('recruiter'), '카피바라(인사팀)');
 assert.equal(names.nick('editor'), '비버 편집자');
 const agent = {id:'analyst', name:'Analyst', employment:'core'};
 const plan = {steps:[{id:'s1', agent_id:'analyst', instruction:'Inspect'}, {id:'s2', depends_on:['s1']}]};

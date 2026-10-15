@@ -23,8 +23,8 @@ function demoBannerText(status) {
     : status?.phase === 'running' ? 'mock 요청 진행 중' : 'mock 데모 준비 중';
   return `${base} · ${progress}`;
 }
-const STAFF_NAMES = {cso:'CSO(부엉이)', chief_of_staff:'비서실장', biologist:'생물학자', data_steward:'데이터 관리자', lit_scout:'문헌 조사원', analyst:'분석가', engineer:'엔지니어', qc_reviewer:'품질 리뷰어', sci_reviewer:'과학 리뷰어', recruiter:'채용 담당', facilities:'시설팀', colleague:'동료 직원', 'bioinfo-agent':'생물정보 직원', pi:'나', hpc:'HPC', github:'GitHub', system:'시스템'};
-const STAFF_CHARACTERS = {cso:'owl', chief_of_staff:'penguin', biologist:'bear', data_steward:'squirrel', lit_scout:'fox', analyst:'raccoon', engineer:'octopus', qc_reviewer:'hedgehog', sci_reviewer:'turtle', recruiter:'beaver', editor:'beaver', 'bioinfo-agent':'otter'};
+const STAFF_NAMES = {cso:'CSO(부엉이)', chief_of_staff:'비서실장', biologist:'생물학자', data_steward:'데이터 관리자', lit_scout:'문헌 조사원', analyst:'분석가', engineer:'엔지니어', qc_reviewer:'품질 리뷰어', sci_reviewer:'과학 리뷰어', recruiter:'카피바라(인사팀)', facilities:'시설팀', colleague:'동료 직원', 'bioinfo-agent':'생물정보 직원', pi:'나', hpc:'HPC', github:'GitHub', system:'시스템'};
+const STAFF_CHARACTERS = {cso:'owl', chief_of_staff:'penguin', biologist:'bear', data_steward:'squirrel', lit_scout:'fox', analyst:'raccoon', engineer:'octopus', qc_reviewer:'hedgehog', sci_reviewer:'turtle', recruiter:'capybara', editor:'beaver', 'bioinfo-agent':'otter'};
 function staffCharacter(a) {
   const id = String(a?.id || '').toLowerCase();
   return STAFF_CHARACTERS[id] || (id.startsWith('c_') ? 'chick' : a?.character && a.character !== 'paper-hat-chick' && a.character !== 'chick' ? a.character : 'neutral');
@@ -272,7 +272,7 @@ function trackActivity(ev) {
     } else S.activeTasks.delete(tid);
   }
 }
-const nick = id => { const key = String(id || '').toLowerCase(), a = ag(key); return ({cso:STAFF_NAMES.cso, facilities:STAFF_NAMES.facilities}[key]) || (a?.name && a.name !== a.id ? (['recruiter','editor'].includes(key) ? String(a.name) : String(a.name).split(' ')[0]) : STAFF_NAMES[key] || (key.startsWith('c_') ? '파견 직원' : id ? '직원' : '')); };
+const nick = id => { const key = String(id || '').toLowerCase(), a = ag(key); return ({cso:STAFF_NAMES.cso, recruiter:STAFF_NAMES.recruiter, facilities:STAFF_NAMES.facilities}[key]) || (a?.name && a.name !== a.id ? (['recruiter','editor'].includes(key) ? String(a.name) : String(a.name).split(' ')[0]) : STAFF_NAMES[key] || (key.startsWith('c_') ? '파견 직원' : id ? '직원' : '')); };
 // A staff member's task rows: kept while the task runs, waits for HPC or an answer, is halted, or holds its paused
 // step; removed on its terminal event, as a reload would (PR #532 review).
 function trackTask(a, tid, state, title, keep = false, rid = '', sid = '') {
