@@ -1265,7 +1265,7 @@ const Demo = (() => {
     ['lit_scout', '여우 문헌·헤드헌터', '문헌 검색, 파견직 후보 발굴', 'codex', 'gpt-6-luna'], ['bioinfo-agent', '수달 bioinfo-agent', '반복·정형 분석 전담', 'cli', null],
     ['data_steward', '다람쥐 데이터 담당', '데이터 확보·매니페스트', 'claude_code', 'sonnet'], ['analyst', '너구리 분석가', '분석 설계·실행', 'claude_code', 'opus'],
     ['engineer', '문어 코딩 엔지니어', '파이프라인·도구 개발', 'codex', null], ['qc_reviewer', '고슴도치 Data QC', 'PASS/WARN/FAIL QC', 'claude_code', 'sonnet'],
-    ['recruiter', '비버 인사팀', 'Paper2Agent 채용', 'claude_code', 'opus'],
+    ['recruiter', '카피바라 인사팀', 'Paper2Agent 채용', 'claude_code', 'opus'],
   ].map(([id, name, role, engine, model]) => ({ id, name, role, engine, model, employment: 'core',
     capabilities: { resume: engine !== 'cli', read_only: engine !== 'cli', effort: null, max_turns: null,
       permission: engine === 'codex' ? 'workspace-write' : engine === 'cli' ? null : 'default',

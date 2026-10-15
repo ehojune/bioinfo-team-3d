@@ -14,10 +14,11 @@ export const ROSTER=[
   {id:'engineer',name:'문어 엔지니어',species:'문어',role:'파이프라인 · 도구 · 테스트',prop:'렌치',fur:'#AE8292',seat:[1.9,3.1],state:'working'},
   {id:'qc_reviewer',name:'고슴도치 Data QC',species:'고슴도치',role:'PASS / WARN / FAIL 판정',prop:'QC 판정 도장',fur:'#A28763',seat:[5.65,-3.9],state:'error'},
   {id:'sci_reviewer',name:'거북 과학 리뷰어',species:'거북',role:'질문 · 근거 · 철저성 검토',prop:'세 탭 리뷰 문서',fur:'#8FAD7C',seat:[-5.6,3.1],state:'queued'},
-  {id:'recruiter',name:'비버 인사팀',species:'비버',role:'Paper2Agent 변환 · 검증',prop:'오퍼레터',fur:'#A38061',seat:[5.65,-.4],state:'done'},
+  {id:'recruiter',name:'카피바라 인사팀',species:'카피바라',role:'Paper2Agent 변환 · 검증',prop:'명함철',fur:'#B38B6D',seat:[5.65,-.4],state:'done'},
   {id:'facilities',name:'시설팀',species:'햄스터',role:'환경 오류 진단',prop:'점검표',fur:'#C5A678',seat:[-7.75,3.1],state:'queued'},
   {id:'contract',name:'병아리 파견직',species:'병아리',role:'논문의 방법 적용',prop:'논문을 접은 종이모자',fur:'#DFC46E',seat:[5.65,3.1],state:'queued'},
 ];
+export const EDITOR={id:'editor',name:'비버 편집자',species:'비버',role:'보고서 편집',prop:'교정 원고',fur:'#A38061',seat:[7.75,2.8],state:'queued',archetype:'editor'};
 
 export function makeCharacter(s,parent,def,index){
   const root=s.group(parent,[def.seat[0],0,def.seat[1]]);root.name=def.id;
@@ -35,7 +36,8 @@ export function makeCharacter(s,parent,def,index){
   if(id==='engineer'){headW=.54;headH=.64;bodyW=.40;bodyH=.22;head.position.y=1.93;}
   if(id==='qc_reviewer'){headW=.42;headH=.32;bodyW=.47;head.position.y=1.81;}
   if(id==='sci_reviewer'){headW=.31;headH=.30;bodyW=.42;bodyH=.42;head.position.set(0,1.95,.26);}
-  if(id==='recruiter'){headW=.50;headH=.41;bodyW=.47;}
+  if(id==='recruiter'){headW=.54;headH=.38;headD=.44;bodyW=.53;bodyH=.58;}
+  if(id==='editor'){headW=.50;headH=.41;bodyW=.47;}
   if(id==='contract'){headW=.38;headH=.36;bodyW=.33;bodyH=.37;head.position.y=1.72;}
   s.ball(body,fur,[0,1.24,0],[bodyW,bodyH,.35]);
   if(id!=='engineer'){
@@ -110,6 +112,11 @@ export function makeCharacter(s,parent,def,index){
     roundEars(.38,.30,.14);muzzle(.29,.18,.34);
     for(const side of [-1,1])s.ball(head,cream,[side*.31,-.12,.30],[.18,.15,.13]);
   }else if(id==='recruiter'){
+    // 카피바라: 둥근 큰 몸, 작은 귀, 넓고 뭉툭한 코.
+    roundEars(.36,.24,.09);muzzle(.34,.19,.40);
+    s.ball(head,dark,[0,-.07,.55],[.10,.06,.045]);
+    s.ball(body,cream,[0,1.32,.31],[.30,.37,.075]);
+  }else if(id==='editor'){
     roundEars(.41,.28,.135);muzzle(.32,.20,.35);
     for(const side of [-1,1])s.box(head,C.white,[side*.066,-.30,.47],[.108,.17,.065]);
     const tail=s.group(body,[.59,.78,-.14],[0,.15,-.65]);
@@ -165,7 +172,8 @@ export function makeCharacter(s,parent,def,index){
   else if(id==='engineer'){s.bar(prop,C.ink,[-.15,.02,0],[.14,.54,0],.068);s.ring(prop,C.ink,[.18,.63,0],[.15,.15,.15]);s.box(prop,C.wood,[.18,.76,.01],[.13,.14,.17]);}
   else if(id==='qc_reviewer'){s.box(prop,C.red,[0,.065,0],[.48,.13,.35]);s.cyl(prop,C.dark,[0,.24,0],[.075,.28,.075]);s.ball(prop,C.dark,[0,.39,0],[.15,.075,.13]);s.box(prop,C.cream,[.24,.012,.27],[.48,.022,.29]);s.box(prop,C.moss,[.24,.03,.27],[.27,.01,.12]);}
   else if(id==='sci_reviewer'){book(C.edge,.50,.59);for(let j=0;j<3;j++)s.box(prop,[C.sage,C.gold,C.blue][j],[-.16+j*.16,.625,.02],[.13,.13,.06]);lines();}
-  else if(id==='recruiter'){book(C.cream,.48,.47);s.bar(prop,C.edge,[-.23,.16,.14],[0,.28,.14],.015);s.bar(prop,C.edge,[0,.28,.14],[.23,.16,.14],.015);s.ball(prop,C.red,[0,.25,.16],[.063,.063,.02]);}
+  else if(id==='recruiter'){s.box(prop,C.sage,[0,.14,0],[.50,.28,.30]);s.box(prop,C.cream,[0,.31,.04],[.44,.08,.25]);s.ball(prop,C.rust,[-.13,.16,.17],[.055,.055,.02]);s.box(prop,C.edge,[.10,.18,.17],[.16,.018,.015]);}
+  else if(id==='editor'){book(C.cream,.48,.47);s.bar(prop,C.edge,[-.23,.16,.14],[0,.28,.14],.015);s.bar(prop,C.edge,[0,.28,.14],[.23,.16,.14],.015);s.ball(prop,C.red,[0,.25,.16],[.063,.063,.02]);}
   else {s.box(prop,C.sage,[0,.10,0],[.42,.20,.3]);s.box(prop,C.cream,[0,.205,0],[.38,.03,.27]);}
   return {...def,index,root,body,head,headY:head.position.y,open,closed,arms,propGroup:prop,phase:index*.81};
 }
