@@ -12,3 +12,6 @@ rows:
 - sha: 3d886d2
   at: 2026-10-15 16:23
   text: runtime_env 기대값과 WSL bootstrap의 UTF-8 text I/O를 명시해 전체 CI 검사를 맞춘다.
+- sha: 8883fbf
+  at: 2026-10-15 17:15
+  text: WSL 공유 작업 폴더·정책 상속·연결 후 활성화와 ID 및 TLS 포트 검증을 고쳤다.
