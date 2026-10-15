@@ -586,8 +586,9 @@ def _exit_text(row: dict) -> str:
 
 
 def _supervisor_detail(s: Settings, role: str, logs: Path, child_state: str) -> tuple[str, bool]:
-    """What `status` and `doctor` say about a role's supervisor and the last end it recorded (#589), and whether the
-    role is running unprotected: its supervisor's record exists but the process is gone."""
+    """What `status` and `doctor` say about a role's supervisor and the last end it recorded (#589), and whether that
+    is a warning even though the role runs: its supervisor's record exists but the process is gone, or its identity
+    cannot be read (another config's, or not openable), so nobody knows the role is protected."""
     from .process_diagnostics import latest_child_exit
 
     state, record, problem = _process_record(s, _supervisor_role(role), cleanup=False)
@@ -596,6 +597,7 @@ def _supervisor_detail(s: Settings, role: str, logs: Path, child_state: str) -> 
         text = f"감독 PID {record['pid']} 실행 중"
     elif state == "unknown":
         text = f"감독 신원 확인 불가 — {problem}"
+        unprotected = True
     elif state == "stale":
         text = f"감독 PID {record['pid']} 프로세스 없음" if record else "감독 기록이 잘못됨"
         unprotected = child_state == "alive"

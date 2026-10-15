@@ -351,6 +351,40 @@ def test_a_dead_supervisor_over_a_running_role_is_a_warning_and_the_record_is_no
     assert supervisor.exists()  # reading never removes a record
 
 
+def test_a_supervisor_whose_identity_cannot_be_read_is_a_warning_over_a_running_role(tmp_path, monkeypatch):
+    """Nobody can say the role is protected then (the bot's P2 on #617): warn, not ok."""
+    settings = _settings(tmp_path)
+    supervisor = _record(settings, "gateway-supervisor", SUP)
+    _record(settings, ROLE, CHILD)
+
+    def identity(pid):
+        if pid == SUP:
+            raise cli.ProcessIdentityError("access denied")
+        return f"created:{pid}"
+
+    monkeypatch.setattr(cli, "_process_created", identity)
+
+    row = _row(settings)
+
+    assert row["status"] == "warn"
+    assert "감독 신원 확인 불가 — access denied" in row["detail"]
+    assert f"PID {CHILD} 실행 중" in row["detail"]
+    assert supervisor.exists()
+
+
+def test_a_supervisor_record_of_another_config_is_a_warning_over_a_running_role(tmp_path):
+    settings = _settings(tmp_path)
+    path = _record(settings, "gateway-supervisor", SUP)
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["config"] = str(tmp_path / "another.yaml")
+    path.write_text(json.dumps(record), encoding="utf-8")
+    _record(settings, ROLE, CHILD)
+
+    row = _row(settings)
+
+    assert row["status"] == "warn" and "감독 신원 확인 불가" in row["detail"] and "다른 설정 파일로 실행 중" in row["detail"]
+
+
 def test_a_role_between_restarts_still_shows_up_with_its_supervisor(tmp_path):
     settings = _settings(tmp_path)
     _record(settings, "gateway-supervisor", SUP)
