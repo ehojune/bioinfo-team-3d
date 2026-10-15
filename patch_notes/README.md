@@ -14,7 +14,13 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 12:43 | [`583a8c6`](https://github.com/ehojune/bioinfo-team-3d/pull/614/commits/583a8c6) | 실행 중인 gateway·runner가 정체(설정 파일과 state·runner state·runner id·포트 지문)를 적고, up과 doctor가 그 정체로 같은 state·runner state·포트를 쥔 다른 설정을 막으며 gateway는 /api/health의 identity로 정체를 알려 준다(#613). |
+| 12:43 | [`0a584d9`](https://github.com/ehojune/bioinfo-team-3d/pull/614/commits/0a584d9) | init이 bioinfo-agent 폴더를 상대 경로로 받아도 절대 경로로 저장하고, doctor는 상대 경로로 적힌 설정을 warn한다(#613). |
+| 12:05 | [`5ef1ee2`](https://github.com/ehojune/bioinfo-team-3d/pull/614/commits/5ef1ee2) | 예시 설정이 semantics ab·actions confirm을 켜도 action layer만 지우는 검사(test_semantics_shadow_remove)가 통과하도록 의미 모델 설정 test를 고친다(#613). |
 | 11:32 | [`836b448`](https://github.com/ehojune/bioinfo-team-3d/pull/616/commits/836b448) | 게시 PDF는 정리본이 담을 수 있는 그림(보고된 산출물, 정리본이 담는 형식)만 넣고 크기 제한만 푼다. 보고서의 graphical abstract는 첫 제목 아래 첫 그림으로 옮기고, verify는 자체 abstract가 없으면 그려 넣을 한 자리를 빼 결과 그림 10장까지만 센다(#608, #611 리뷰 P2). |
+| 11:31 | [`778edff`](https://github.com/ehojune/bioinfo-team-3d/pull/614/commits/778edff) | 격리 설치 검사(scripts/clean_install_check.py)의 init 입력을 질문 수에 매이지 않게 해, init이 묻는 질문이 늘어도 EOF로 멈추지 않는다(#613). |
+| 11:27 | [`fad7274`](https://github.com/ehojune/bioinfo-team-3d/pull/614/commits/fad7274) | labhq init이 PI가 시험한 설정(연구 모드·분야 팩·의미 모델 ab·산출물 종류 선언)으로 새 설정을 만들고, bioinfo-agent 위치를 찾거나 묻고 못 찾으면 연결 안 됨을 알리며, dev_log.repo를 묻는다(#613). |
+| 11:26 | [`e3fc6b0`](https://github.com/ehojune/bioinfo-team-3d/pull/614/commits/e3fc6b0) | 설정이 다른 labhq가 같은 state 폴더·포트를 쓰거나 이 PC의 주 설정과 다르면 doctor와 up이 쉬운 한국어로 알리고 고치는 명령(labhq -c <그 설정> open 등)을 보여 준다(#613). |
 | 10:53 | [`6f6ffae`](https://github.com/ehojune/bioinfo-team-3d/pull/611/commits/6f6ffae) | 실제 브라우저 test는 이 PC에서 인쇄가 안 되면 건너뛰어, CI 러너의 Chrome sandbox 문제를 그림 줄이기 실패로 세지 않는다(#608). |
 | 10:50 | [`29cdd86`](https://github.com/ehojune/bioinfo-team-3d/pull/611/commits/29cdd86) | 보고서 PDF의 그림은 크기 제한 없이 요청 묶음의 원본을 쓰고(정리본 PDF도 같음), PDF는 50 MB(github.edition_pdf_max_mb, 최대 75) 안으로 그림을 빼지 않고 해상도를 단계적으로 줄여 맞춘다. 그림은 11장까지이고 한 장은 graphical abstract이며, 보고서에 없으면 labhq가 계획·입력 출처·결론으로 흐름도를 그려 PDF와 정리본의 첫 그림으로 넣는다(#608). |
 | 07:13 | [`6ac9051`](https://github.com/ehojune/bioinfo-team-3d/pull/605/commits/6ac9051) | e2e helper가 timeout 인자를 다시 받아, 그 helper를 쓰는 research cp1 test가 깨지지 않게 했다(#598). |
