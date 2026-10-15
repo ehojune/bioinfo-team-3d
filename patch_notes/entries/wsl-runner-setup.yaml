@@ -3,3 +3,9 @@ rows:
 - sha: db5fb41
   at: 2026-10-15 15:54
   text: setup-wsl로 로컬 WSL runner를 준비하고 bioinfo-agent 배정·도구 안내·실측을 추가했다 (#612 1단계).
+- sha: 215097d
+  at: 2026-10-15 16:02
+  text: WSL 실행 위치를 runtime_env capability로 분리해 로그인 환경변수와 함께 보존한다.
+- sha: 38c28d1
+  at: 2026-10-15 16:06
+  text: WSL 정지 실패를 보고하면서도 native runner와 gateway 종료를 끝까지 진행한다.
