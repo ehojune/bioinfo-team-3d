@@ -12,7 +12,7 @@ class ShutdownInterrupted(asyncio.CancelledError):
         super().__init__("task interrupted by shutdown")
 
 
-def shutdown_interruption(*, exit_code=None, error=None, stopping=False) -> bool:
+def shutdown_interruption(*, exit_code=None, error=None, stopping=False, cancelled=False) -> bool:
     """A signal-shaped exit alone is not evidence that labhq was shutting down."""
     if exit_code is None:
         match = re.search(r"\bexit(?: code)?\s+(-?\d+)\b", error or "")
@@ -22,7 +22,9 @@ def shutdown_interruption(*, exit_code=None, error=None, stopping=False) -> bool
     codes = {1, 0xC000013A, -1073741510, 0xC000010A, -1073741558}
     codes.update(-n for n in (1, 2, 3, 9, 15))
     codes.update(128 + n for n in (1, 2, 3, 9, 15))
-    return stopping is True and exit_code in codes
+    # Python task cancellation has no process exit code. Only a runner's shutdown/recovery
+    # path may supply this evidence; a plain user cancellation is not a shutdown.
+    return stopping is True and (cancelled is True or exit_code in codes)
 
 
 def stopping_marker(settings, since: float) -> bool:

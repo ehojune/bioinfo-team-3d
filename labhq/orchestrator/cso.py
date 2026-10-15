@@ -3226,7 +3226,8 @@ class Orchestrator:
                     "stopping": bool(getattr(self.hub, "stopping", False)) or stopping_marker(
                         self.hub.s, getattr(self.hub, "session_started_at", time.time())), "source": "gateway"}
                 if not res.ok and shutdown_interruption(exit_code=evidence.get("exit_code"),
-                        error=evidence.get("error"), stopping=evidence.get("stopping")):
+                        error=evidence.get("error"), stopping=evidence.get("stopping"),
+                        cancelled=evidence.get("cancelled")):
                     evidence = {**evidence, "task_id": res.task_id, "kind": current.meta.get("kind"), "at": time.time()}
                     raise ShutdownInterrupted(evidence)
                 if res.tool_errors:
@@ -6085,12 +6086,7 @@ class Orchestrator:
                          ok=final.ok and rid not in self.budget_denials, review=review)
         except ShutdownInterrupted as exc:
             await asyncio.gather(*self.cancel_steps(rid), return_exceptions=True)
-            req.update(status="interrupted", shutdown_evidence=exc.evidence)
-            self.hub.save_request(rid)
-            if hasattr(self.hub, "close_publish_cards"):
-                await self.hub.close_publish_cards(rid)
-            await self._emit(rid, "request.status", {"status": "interrupted", "reason": "shutdown",
-                                                    "evidence": exc.evidence})
+            await self.hub._set_status(rid, "interrupted", evidence=exc.evidence)
         except Exception as e:
             if self._continuation_unstarted(req):
                 # Ends as the revise it continued, with that round's plan and results put back (``_finish``).

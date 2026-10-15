@@ -54,6 +54,13 @@ class FakeHub:
     def save_request(self, rid):
         pass
 
+    async def _set_status(self, rid, status, *, evidence=None):
+        self.requests[rid]["status"] = status
+        if evidence is not None:
+            self.requests[rid]["shutdown_evidence"] = evidence
+        await self.publish({"type": "request.status", "request_id": rid,
+                            "data": {"status": status, "evidence": evidence}})
+
     async def wait_agent_online(self, agent_id, timeout_s):
         self.waiting_for_runner.set()
         await self.runner_online.wait()

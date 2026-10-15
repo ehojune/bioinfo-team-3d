@@ -367,12 +367,7 @@ class Hub:
                 self.save_request(rid)  # their cards and waiters died with the old process
             if is_active_request(req.get("status")) and req.get("status") not in {
                     "waiting_quota", "waiting_login", "waiting_facilities_fix"}:
-                before, req["status"] = req.get("status"), "interrupted"
-                self.save_request(rid)
-                # An open page learns it without a reload: it reconnects with `since` and replays this (#494).
-                self.events.append(self.store.append_event({"type": "request.status", "ts": time.time(),
-                    "request_id": rid, "data": {"status": "interrupted", "previous": before}},
-                    settings.gateway.event_buffer))
+                self.interrupt_request(rid)
             stale = [f for f in req.get("followups") or [] if is_active_followup(f)]
             for followup in stale:  # its task future died with the old process; the PI can ask again
                 followup.update(status="interrupted", error="gateway restarted before the answer arrived")
@@ -391,14 +386,8 @@ class Hub:
         self.login_notices = {str(entry.get("engine") or "") for req in self.requests.values()
                               for entry in (req.get("login_waits") or {}).values()}
         for rid, req in self.requests.items():
-            if req.get("status") == "interrupted" and not any(
-                a["approval"].get("kind") == "resume" and a["approval"].get("request_id") == rid
-                for a in self.approvals.values()
-            ):
-                approval = self.new_resume_approval(rid)
-                self.events.append(self.store.append_event({"type": "approval.requested", "ts": time.time(),
-                                                             "request_id": rid, "data": approval.model_dump(mode="json")},
-                                                            settings.gateway.event_buffer))
+            if req.get("status") == "interrupted":
+                self.interrupt_request(rid)
         self.orchestrator = Orchestrator(self)
         self.reporter = ProjectReporter(self, settings, github_transport)
         from ..result_storage import ResultStorage
@@ -570,12 +559,52 @@ class Hub:
         elif req.get("status") in HOLD_STATES:
             req["status"] = "running"
 
-    async def _set_status(self, rid: str, status: str) -> None:
+    def interrupt_request(self, rid: str, *, evidence: dict | None = None,
+                          correction: bool = False) -> None:
+        """Commit interruption and one resume card, usable both at startup and on the live loop."""
+        req = self.requests[rid]
+        before = req.get("status")
+        previous = copy.deepcopy(req) if correction else None
+        updated = {**req, "status": "interrupted", "updated_at": time.time()}
+        if evidence is not None:
+            updated["shutdown_evidence"] = evidence
+        if correction:
+            updated.update(pi_review_pending=False, pi_reviewed_at=None)
+            updated.pop("finished_at", None)
+        cp4.reconcile(updated)
+        data = {"status": "interrupted", "previous": before}
+        if evidence is not None:
+            data.update(reason="shutdown", evidence=evidence)
+        if correction:
+            data.update(actor="pi", previous=previous)
+        if before != "interrupted" or correction:
+            event = self.store.commit_request_event(rid, updated,
+                {"type": "request.corrected" if correction else "request.status", "ts": time.time(),
+                 "request_id": rid, "data": data}, self.s.gateway.event_buffer)
+            req.clear()
+            req.update(updated)
+            self.events.append(event)
+            self.pending_committed.append((event, tuple(self.clients)))
+        if not any(a["approval"].get("kind") == "resume" and a["approval"].get("request_id") == rid
+                   for a in self.approvals.values()):
+            approval = self.new_resume_approval(rid)
+            event = self.store.append_event({"type": "approval.requested", "ts": time.time(),
+                "request_id": rid, "data": with_approval_copy(approval.model_dump(mode="json"))},
+                self.s.gateway.event_buffer)
+            self.events.append(event)
+            self.pending_committed.append((event, tuple(self.clients)))
+
+    async def _set_status(self, rid: str, status: str, *, evidence: dict | None = None) -> None:
         """A status the gateway sets itself (resume, restart), told to open pages as request.status."""
+        if status == "interrupted":
+            self.interrupt_request(rid, evidence=evidence)
+            await self._send_committed_event()
+            await self.close_publish_cards(rid)
+            return
         req = self.requests[rid]
         before = req.get("status")
         req["status"] = status
-        if status in {"failed", "interrupted"}:
+        if status == "failed":
             await self.close_publish_cards(rid)
         self.save_request(rid)
         if before != status:
@@ -1524,9 +1553,6 @@ class Hub:
                 await self._set_status(rid, "interrupted")
                 await self.publish({"type": "request.resume_timeout", "ts": time.time(), "request_id": rid,
                                     "data": {"missing_agents": sorted(missing)}})
-                approval = self.new_resume_approval(rid)
-                await self.publish({"type": "approval.requested", "ts": time.time(), "request_id": rid,
-                                    "data": approval.model_dump(mode="json")})
                 return
             await asyncio.sleep(min(0.1, max(0, deadline - asyncio.get_running_loop().time())))
 
@@ -3242,25 +3268,12 @@ class Hub:
         req = self.requests[rid]
         evidence = recorded_shutdown_evidence(self.s, req)
         if req.get("status") != "failed" or req.get("revised_to") or not shutdown_interruption(
-                exit_code=evidence.get("exit_code"), error=evidence.get("error"), stopping=evidence.get("stopping")):
+                exit_code=evidence.get("exit_code"), error=evidence.get("error"), stopping=evidence.get("stopping"),
+                cancelled=evidence.get("cancelled")):
             raise ValueError("종료 당시의 종료 코드와 종료 중 표시가 확인된 failed 요청만 정정합니다")
-        previous = copy.deepcopy(req)
-        updated = {**req, "status": "interrupted", "shutdown_evidence": evidence,
-                   "pi_review_pending": False, "pi_reviewed_at": None}
-        updated.pop("finished_at", None)
-        event = self.store.commit_request_event(rid, updated,
-            {"type": "request.corrected", "ts": time.time(), "request_id": rid,
-             "data": {"actor": "pi", "previous": previous, "status": "interrupted", "evidence": evidence}},
-            self.s.gateway.event_buffer)
-        req.update(updated)
-        req.pop("finished_at", None)
-        self.events.append(event)
-        self.pending_committed.append((event, tuple(self.clients)))
+        self.interrupt_request(rid, evidence=evidence, correction=True)
         await self._send_committed_event()
         await self.close_publish_cards(rid)
-        approval = self.new_resume_approval(rid)
-        await self.publish({"type": "approval.requested", "ts": time.time(), "request_id": rid,
-                            "data": approval.model_dump(mode="json")})
         return {"request_id": rid, "status": "interrupted"}
 
     async def close_approval(self, aid: str, note: str, *, notify_runner: bool = True) -> bool:
