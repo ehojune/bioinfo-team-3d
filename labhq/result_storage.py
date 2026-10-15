@@ -679,8 +679,12 @@ class ResultStorage:
             saved["report_url"] = (f"https://github.com/{saved['repo']}/blob/{saved.get('branch') or 'main'}/"
                                    f"labhq/results/{rid}/report.md")
             if hasattr(self.hub, "rounds"):
-                self.hub.rounds.write(rid)
-                self.hub.rounds.submit(rid)
+                try:
+                    self.hub.rounds.write(rid)
+                    self.hub.rounds.submit(rid)
+                except Exception as exc:
+                    saved["round_warning"] = (
+                        f"게시를 마쳤지만 운전 기록을 갱신하지 못했습니다({type(exc).__name__}).")
         except asyncio.CancelledError:
             raise
         except Exception as exc:

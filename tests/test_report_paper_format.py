@@ -1,5 +1,6 @@
 """PI report/operation boundary and paper layout (#609). No live staff or GitHub calls."""
 import json
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -39,10 +40,29 @@ def test_round_links_reports_without_scientific_body_even_in_json(tmp_path):
     for text in (render_record(record), _marked_body(record, limit=12000)):
         assert "SCIENTIFIC_BODY_SENTINEL" not in text
         assert "report.md)" in text and "https://github.com/example/results/blob/main/labhq/results/paper/report.md" in text
+        assert "[과학 보고서 · 요청 묶음]" not in text
+        assert "[과학 보고서 · GitHub 정리본](" in text
         assert "worker completed" in text
         for name in ("report.html", "timeline.html", "trace.txt", "pipeline_info/"):
             assert name in text
-        assert "[Nextflow" in text
+        assert "[Nextflow" not in text
+
+
+def test_audit_bundle_splits_a_legacy_execution_appendix(tmp_path):
+    from labhq.evidence.audit import write_bundle
+
+    out = tmp_path / "audit.zip"
+    report = {"request_id": "legacy", "files": [], "problems": [], "unreported_outputs": {}}
+    request = {"id": "legacy", "report_appendix":
+               "## 부록\n\n### 가정\npaired\n\n## 부록: 실행 기록\nlegacy warning",
+               "execution_record": "current operation"}
+    write_bundle(report, request, out)
+    with zipfile.ZipFile(out) as bundle:
+        appendix = bundle.read("report_appendix.md").decode()
+        operations = bundle.read("execution_record.md").decode()
+
+    assert "paired" in appendix and "legacy warning" not in appendix
+    assert "legacy warning" in operations and "current operation" in operations
 
 
 def test_legacy_round_render_drops_old_report_fields(tmp_path):

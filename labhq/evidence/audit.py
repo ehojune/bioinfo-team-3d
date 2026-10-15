@@ -23,6 +23,7 @@ from typing import Any
 
 from .. import __version__
 from ..artifact_policy import unreported_warning_paths
+from ..report_format import split_appendix
 from .report_check import check_report
 
 OK, MISMATCH, MISSING, UNREADABLE, UNCHECKED, UNRECORDED = (
@@ -488,10 +489,13 @@ def bundle_bytes(report: Mapping[str, Any], req: Mapping[str, Any]) -> bytes:
                  for row in report["files"]]
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as bundle:
+        appendix, legacy_execution = split_appendix(str(req.get("report_appendix") or ""))
+        execution = "\n\n".join(
+            part for part in (str(req.get("execution_record") or ""), legacy_execution) if part)
         bundle.writestr("README.md", _bundle_readme(report))
         bundle.writestr("report.md", str(req.get("report") or ""))
-        bundle.writestr("report_appendix.md", str(req.get("report_appendix") or ""))
-        bundle.writestr("execution_record.md", str(req.get("execution_record") or ""))
+        bundle.writestr("report_appendix.md", appendix)
+        bundle.writestr("execution_record.md", execution)
         bundle.writestr("claims.json", json.dumps(claims, ensure_ascii=False, indent=2, default=str))
         bundle.writestr("artifacts.json", json.dumps(artifacts, ensure_ascii=False, indent=2))
     return stream.getvalue()

@@ -277,9 +277,16 @@ def _operation_lines(record: dict) -> list[str]:
     from urllib.parse import quote
     result = record["result"]
     links = result.get("report_links") or []
-    lines = [f"- [{link['label']}]({quote(str(link['path']), safe='/:')})" for link in links]
+    lines = []
+    for link in links:
+        label, path = str(link["label"]), str(link["path"])
+        if re.match(r"^https?://", path, re.IGNORECASE):
+            lines.append(f"- [{label}]({quote(path, safe='/:')})")
+        else:
+            lines.append(f"- {label}: `{path.replace('`', '')}`")
     if not links:
-        lines.append(f"- [과학 보고서 · 요청 상세](/api/requests/{quote(str(record['request_id']), safe='')}) (묶음·게시 링크 없음)")
+        path = f"/api/requests/{quote(str(record['request_id']), safe='')}"
+        lines.append(f"- 과학 보고서 · 요청 상세: `{path}` (묶음·게시 링크 없음)")
     seen = set()
     for step in record["steps"]:
         for raw in step.get("output_paths") or []:
@@ -287,16 +294,22 @@ def _operation_lines(record: dict) -> list[str]:
             parts = path.rstrip("/").split("/")
             if parts[-1] in {"report.html", "timeline.html", "trace.txt"} or "pipeline_info" in parts:
                 if path not in seen:
-                    lines.append(f"- [Nextflow · {parts[-1]}]({quote(path, safe='/:')})")
+                    lines.append(f"- Nextflow · {parts[-1]}: `{path.replace('`', '')}`")
                     seen.add(path)
+    execution = str(result.get("execution_record") or "")
+    root_cause = str(result.get("root_cause_summary") or "")
+    if root_cause and root_cause not in execution:
+        lines.append(f"- 실패 원인: {root_cause}")
     lines += [f"- 비용: {result.get('cost_usd')} (집계: {result.get('cost_known')})",
-              str(result.get("execution_record") or ""), str(result.get("bundle_conversion") or "")]
+              execution, str(result.get("bundle_conversion") or "")]
     return lines
 
 
 def _operation_record(record: dict) -> dict:
     # Old JSON records remain readable, but their scientific text must not leak into rendered JSON/Markdown.
-    result = {key: value for key, value in record["result"].items() if key not in {"report", "root_cause_summary"}}
+    legacy_scientific_body = "report" in record["result"]
+    dropped = {"report", "root_cause_summary"} if legacy_scientific_body else {"report"}
+    result = {key: value for key, value in record["result"].items() if key not in dropped}
     review = {key: value for key, value in record["review"].items() if key != "detail"}
     return {**record, "result": result, "review": review}
 

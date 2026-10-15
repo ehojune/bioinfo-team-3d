@@ -70,6 +70,30 @@ def test_local_round_schema_and_status(tmp_path, status):
     assert "/data/restricted/sample" in md
 
 
+def test_terminal_error_without_execution_record_stays_in_the_operation_record(tmp_path):
+    hub = Hub(settings(tmp_path))
+    round_request(hub, "req-resume", "failed")
+    reason = "resume timed out before a runner accepted the request"
+    hub.requests["req-resume"].update(error=reason, execution_record="")
+    hub.save_request("req-resume")
+
+    record = hub.rounds.write("req-resume")
+    markdown = (hub.rounds.directory / "req-resume.md").read_text(encoding="utf-8")
+
+    assert record["result"]["root_cause_summary"] == reason
+    assert reason in markdown
+
+
+def test_round_without_a_remote_report_uses_a_path_label_not_a_broken_link(tmp_path):
+    hub = Hub(settings(tmp_path))
+    round_request(hub, "req-local", "failed")
+    hub.rounds.write("req-local")
+    markdown = (hub.rounds.directory / "req-local.md").read_text(encoding="utf-8")
+
+    assert "](/api/requests/req-local)" not in markdown
+    assert "`/api/requests/req-local`" in markdown
+
+
 def test_round_environment_links_the_configured_labhq_commit(tmp_path):
     cfg = settings(tmp_path)
     cfg.dev_log.source_repo = "example/labhq"
@@ -715,6 +739,7 @@ async def test_round_records_mask_reference_paths_like_project_reports(tmp_path)
     round_request(hub, "req-ref", "done")
     request = hub.requests["req-ref"]
     request["references"] = [{"kind": "path", "value": "/srv/private-notes/cohort", "source": "request"}]
+    request["bundle_path"] = "/srv/private-notes/cohort/request-bundle"
     request["plan"]["steps"][0]["instruction"] = "Read /srv/private-notes/cohort/summary.md first"
     request["review"]["issues"] = [{"step_id": "a", "problem": "missed c:/users/pi/yuan/lessons.md"}]
     request["execution_record"] = r"Used /srv/private-notes/cohort/a.tsv and C:\Users\pi\Yuan\b.md."
@@ -724,5 +749,7 @@ async def test_round_records_mask_reference_paths_like_project_reports(tmp_path)
     body = remote.issue["body"]
     assert "private-notes" not in body and "yuan" not in body.casefold()
     assert body.count("<reference-path>") >= 4
+    assert "[과학 보고서 · 요청 묶음]" not in body
+    assert "`<reference-path>/request-bundle/report.md`" in body
     text = "see /srv/private-notes/cohort/x.md"
     assert hub.rounds.client.clean(text) == hub.reporter._clean(text) == "see <reference-path>/x.md"
