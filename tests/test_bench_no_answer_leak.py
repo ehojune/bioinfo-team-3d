@@ -73,10 +73,10 @@ def _tracked_scan_paths(repo_root=REPO_ROOT):
 
 def _identifier_patterns(identifier):
     normalized, compact = _identifier_forms(identifier)
-    patterns = [re.compile(rf"(?<!\w){re.escape(normalized)}(?!\w)")]
+    patterns = [re.compile(rf"(?<![A-Za-z0-9]){re.escape(normalized)}(?![A-Za-z0-9])")]
     if compact is not None:
         flexible = f"{SEPARATOR_CHARS}*".join(re.escape(character) for character in compact)
-        patterns.append(re.compile(rf"(?<!\w){flexible}(?!\w)"))
+        patterns.append(re.compile(rf"(?<![A-Za-z0-9]){flexible}(?![A-Za-z0-9])"))
     return patterns
 
 
@@ -172,6 +172,25 @@ def test_leak_check_does_not_match_identifiers_inside_general_words(tmp_path):
     )
 
     assert _find_leaks(copied_root, [relative], _answer_identifiers()) == []
+
+
+def test_leak_check_finds_identifiers_next_to_korean_and_parentheses(tmp_path):
+    relative = Path("labhq") / "korean_answer_variants.py"
+    copied_root = tmp_path / "repo-copy"
+    copied_path = copied_root / relative
+    copied_path.parent.mkdir(parents=True)
+    copied_path.write_text(
+        "prompt = 'GKN1을 확인하고 (COL1A1과) 6OIM은구조를 비교한다'\n",
+        encoding="utf-8",
+    )
+
+    leaks = _find_leaks(copied_root, [relative], _answer_identifiers())
+
+    assert leaks == [
+        "labhq/korean_answer_variants.py:1: GKN1 (geo-gastric-summary.down_gene)",
+        "labhq/korean_answer_variants.py:1: COL1A1 (geo-gastric-summary.up_gene)",
+        "labhq/korean_answer_variants.py:1: 6OIM (inco-kras-g12c.pdb_id)",
+    ]
 
 
 def test_short_identifiers_do_not_use_separator_removed_matching(tmp_path):
