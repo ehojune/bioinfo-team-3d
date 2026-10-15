@@ -110,6 +110,8 @@ def reason(detail: dict, policy_reason: str, risk: str) -> str:
         rule = '걸린 규칙: 통제 데이터 경계. 보호된 자료 경로에 접근합니다.'
     elif 'outside' in policy_reason.lower() or 'write' in policy_reason.lower():
         rule = '걸린 규칙: 허용된 작업 폴더 밖 쓰기 확인.'
+    if detail.get('permission_mode') == 'auto':
+        rule += ' auto여도 이 규칙 때문에 묻습니다.'
     return f'{purpose}\n{rule}\n위험 등급: {risk}.'
 
 

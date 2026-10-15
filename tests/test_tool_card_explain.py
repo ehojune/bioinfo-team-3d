@@ -16,7 +16,7 @@ from tests.test_private_paths import _link_dir
 def layout(tmp_path):
     root = tmp_path / 'staff'
     build = root / 'talent' / 'paper' / 'build' / 'task'
-    skills = root / 'claude' / 'skills'
+    skills = root / 'claude' / 'labhq-paper2agent' / 'skills' / 'paper2agent'
     for p in (build, skills, root / 'private', root / 'runs'):
         p.mkdir(parents=True)
     cfg = Settings()
@@ -29,7 +29,8 @@ def layout(tmp_path):
 
 def gate(layout, tool, data):
     cfg, root, build, skills = layout
-    private = resolve_private_paths(cfg, cwd=build)
+    # This fixture models the runner's explicit paper-skill build grant.
+    private = resolve_private_paths(cfg, cwd=build, open_reads=[str(skills)])
     return evaluate_tool(tool, data, cfg.policy, allowed_roots=[str(build)], workdir=str(build),
                          private_paths=private.paths, private_open_reads=private.open_reads,
                          private_enabled=private.enabled)
@@ -52,7 +53,8 @@ def test_reported_compound_read_needs_no_approval(layout):
 
 
 @pytest.mark.parametrize('relative', ['claude/.credentials.json', 'claude/auth.json', 'claude/token.json',
-                                    'claude/skills/auth.json', 'claude/skills/access_token.json',
+                                    'claude/labhq-paper2agent/skills/paper2agent/auth.json',
+                                    'claude/labhq-paper2agent/skills/paper2agent/access_token.json',
                                     'talent/paper/build/task/.env', 'private/diary.md'])
 @pytest.mark.parametrize('tool', ['Read', 'Bash'])
 def test_secrets_and_personal_paths_stay_closed(layout, relative, tool):
@@ -123,7 +125,7 @@ async def test_runner_adds_trusted_paper_context_and_requester(layout):
     cfg, _, build, _ = layout
     task = Task(id='build', agent_id='recruiter', prompt='prepare paper skill', meta={'kind': 'paper_skill',
                 'paper_skill': {'title': 'Example paper'}, 'step_id': 'paper_skill_x'})
-    agent = AgentSpec(id='recruiter', name='비버 인사팀', role='recruiter')
+    agent = AgentSpec(id='recruiter', name='비버 인사팀', role='recruiter', permission_mode='auto')
     events = []
     async def emit_all(items):
         events.extend(items)
@@ -136,6 +138,8 @@ async def test_runner_adds_trusted_paper_context_and_requester(layout):
     assert card['agent_id'] == 'recruiter'
     assert card['detail']['requester_name'] == '비버 인사팀'
     assert 'Example paper' in card['pi_reason']
+    assert card['detail']['permission_mode'] == 'auto'
+    assert 'auto여도 이 규칙 때문에 묻습니다' in card['pi_reason']
 
 
 def test_cli_approvals_uses_same_copy(monkeypatch, capsys):

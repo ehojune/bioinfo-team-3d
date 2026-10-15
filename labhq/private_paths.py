@@ -387,22 +387,17 @@ def resolved_read_path(path: str) -> str:
 
 def credential_path(path: str) -> bool:
     """Credential-like entries never inherit a managed-folder read grant."""
-    return any(re.search(r'(?:^|[._-])(?:credentials?|auth|oauth|tokens?)(?:[._-]|$)', part, re.I) or
-               re.fullmatch(r'\.env(?:\..*)?|'
-                           r'\.ssh|\.aws|\.netrc|\.git-credentials|id_(?:rsa|ed25519)|'
-                           r'\.claude\.json|history\.jsonl', part, re.I)
-               for part in path.replace('\\', '/').split('/'))
+    parts = path.replace('\\', '/').rstrip('/').split('/')
+    if any(part.casefold() in {'.ssh', '.aws', '.azure', '.gnupg', '.docker', '.kube'} for part in parts):
+        return True
+    return bool(re.search(r'(?:^|[._-])(?:credentials?|auth|oauth|tokens?)(?:[._-]|$)', parts[-1], re.I) or
+                re.fullmatch(r'\.env(?:\..*)?|\.netrc|\.git-credentials|id_(?:rsa|ed25519)|'
+                             r'\.claude\.json|history\.jsonl', parts[-1], re.I))
 
 
 def managed_read_dirs(settings: Settings, cwd=None, home: str | None = None) -> list[str]:
-    """Configured labhq work roots and staff-owned skill installs (not the login home)."""
+    """Configured work roots; staff skills require a task-specific runner grant."""
     roots = [str(settings.path(settings.runner.talent_dir)), str(settings.path(settings.runner.workspace_root))]
-    staff = staff_claude_config_dir(settings, home)
-    if staff:
-        roots += [os.path.join(staff, 'skills'), os.path.join(staff, 'labhq-paper2agent', 'skills')]
-    codex = configured_staff_codex_home(settings, Path(cwd or settings.base_dir()))
-    if codex and not inside_any(str(codex), [os.path.join(home or host_home(), '.codex')]):
-        roots.append(str(codex / 'skills' / 'paper2agent'))
     return roots
 
 
@@ -414,7 +409,10 @@ def managed_shell_read(command: str, private_paths: Iterable[str], open_reads: I
     parts = read_commands(command)
     if parts is None or not workdir:
         return None
-    reads, private = list(open_reads), list(private_paths)
+    # Claude's saved output exception is for file tools only (#553), never shell approval.
+    reads = [p for p in open_reads if not (
+        Path(p).parent.name == 'projects' and Path(p).name == claude_project_slug(os.path.abspath(workdir)))]
+    private = list(private_paths)
     bases = [workdir]
     for name, operands in parts:
         for value in operands:

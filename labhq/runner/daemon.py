@@ -1435,7 +1435,8 @@ class Runner:
                     *(self.s.path(p.local_dir) for p in self.s.projects if p.local_dir)]
             # Loading code never exempts its containing config/login folder from protection.
             open_reads = plugin_keep_dirs(self.s, agent.plugin_dirs, ws.dir)
-            if agent.id == self.s.recruit.agent_id or task.meta.get("kind") == "recruit":
+            if task.meta.get("kind") == "recruit" or (
+                    task.meta.get("kind") == "paper_skill" and agent.id == self.s.recruit.agent_id):
                 from ..recruit.paper2agent import skill_path
                 if agent.engine in (Engine.claude_code, Engine.codex):
                     skill = skill_path(agent.engine.value, self.s)
@@ -1815,6 +1816,7 @@ class Runner:
                     pass  # Invalid install configuration must not prevent an approval from being delivered.
             req.agent_id = ws.task.agent_id
             req.detail = {**req.detail, 'requester_name': ws.agent.name,
+                          'permission_mode': ws.agent.permission_mode,
                           'task_context': {'kind': meta.get('kind'), 'title': meta.get('title'),
                                            'step_id': meta.get('step_id'),
                                            'paper_title': (meta.get('paper_skill') or {}).get('title')},

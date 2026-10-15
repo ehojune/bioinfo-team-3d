@@ -508,7 +508,7 @@ const headSVG = officeHead;
 /* ---------------- state ---------------- */
 const officeState = LabHQState.createOfficeState({mode: MODE, now,
   focusStorage: LabHQState.createRequestFocusStorage({demo: IS_DEMO, instance: INSTANCE})});
-const { S, ag, visual, stateText, currentTask, currentTool, toolInputLine, nick, req, setPlan, feed, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES } = officeState;
+const { S, ag, visual, stateText, currentTask, currentTool, toolInputLine, toolActivitySummary, nick, req, setPlan, feed, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES } = officeState;
 const messenger = createMessenger({fetchPage: before => api.messenger(before)});
 function apply(ev, replay = false) {
   if (MODE === 'live') {
@@ -1048,8 +1048,8 @@ function renderSheetLogs() {
       row = document.createElement('li'); if (trace) row.className = 'trace';
       row.append(document.createElement('time'));
       if (trace) { const label = document.createElement('b'); label.textContent = l.level === 'thinking' ? '생각' : '디버그'; row.append(label); }
-      expandableText(row, l.fullText ?? l.text, {limit: trace ? 400 : 240, summary: l.text,
-        fold: l.fullText != null && l.fullText !== l.text, truncated: l.truncated, cutChars: l.cutChars});
+      expandableText(row, l.text, {pi:true, original:l.fullText ?? l.text, limit: trace ? 400 : 240,
+        forceOriginal: l.fullText != null && l.fullText !== l.text, truncated: l.truncated, cutChars: l.cutChars});
     }
     row.querySelector('time').textContent = ago(l.ts); next.set(l, row); return row;
   });
@@ -1061,8 +1061,9 @@ function renderSheetLogs() {
   const command = $('#sheet-in .sheet-command'), tool = currentTool(a);
   if (command) {
     command.hidden = !tool;
-    syncExpandableText(command, tool ? (typeof tool.input === 'string' ? tool.input : JSON.stringify(tool.input ?? '')) : '',
-      {limit: 120, summary: tool?.summary || toolInputLine(tool?.input), fold: Boolean(tool), truncated: tool?.input_truncated, cutChars: tool?.input_limit});
+    syncExpandableText(command, tool ? toolActivitySummary(tool) : '',
+      {limit: 120, pi:true, original: tool ? (typeof tool.input === 'string' ? tool.input : JSON.stringify(tool.input ?? '')) : '', forceOriginal:Boolean(tool),
+        summary:'자세히', fold:Boolean(tool), truncated:tool?.input_truncated});
   }
   const spent = $('#sheet-in .sheet-spent'), figure = sheetSpent(a.id); if (spent && spent.textContent !== figure) spent.textContent = figure;
   // #59 ①: the control block follows the task (paused, halted, ended) without wiping a direction being typed.

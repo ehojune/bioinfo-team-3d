@@ -40,7 +40,7 @@ export function expandableText(parent, value, options = {}) {
   if (options.pi) return piText(parent, value, options);
   const text = String(value ?? ''), limit = options.limit ?? 240;
   const preview = text.replace(/\s+/g, ' ').trim();
-  const cut = options.truncated ? ` (서버에서 ${options.cutChars ?? [...text].length}자로 잘림)` : '';
+  const cut = options.truncated ? ' (받은 내용 일부)' : '';
   if (!options.fold && preview.length <= limit && text.split('\n').length <= 8) {
     return add(parent, options.tag || 'span', text + cut);
   }
@@ -575,7 +575,7 @@ function updateJournalCard(p, value, suggestion) {
     if (fold) {
       const caption = fold.children[0]?.textContent || '';
       p.detail.replaceChildren(...[...fold.children].slice(1));
-      if (caption.includes('서버에서')) add(p.detail, 'small', caption);
+      if (caption.includes('받은 내용 일부')) add(p.detail, 'small', caption);
     }
   }
   // Raw values remain exact inside 자세히; field captions are readable Korean, including unknown keys.
