@@ -1067,6 +1067,10 @@ class RegulatoryAnnotator(Annotator):
                 "eqtl": {"rows": rows, "total": total, "truncated": truncated}}
 
     # ----- AlphaGenome -----
+    async def alphagenome_variant(self, variants: object, **kwargs: Any) -> dict:
+        from .annot_alphagenome import score_variants
+        return await score_variants(self, variants, **kwargs)
+
     async def alphagenome(self, variants_or_intervals: object, outputs: list[str] | None = None,
                           ontology_terms: list[str] | None = None, sequence_length: str = AG_DEFAULT_LENGTH,
                           organism: str = "human") -> dict:
