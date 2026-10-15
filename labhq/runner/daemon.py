@@ -1255,7 +1255,7 @@ class Runner:
         async def emit(typ: str, data: dict) -> None:
             if typ == "task.result":  # the last event: which steers were delivered, for the gateway's step (#59 ①)
                 data = {**data, "control": self.controls.finish(task.id)}
-            if typ == "agent.tool_error" and task.meta.get("general_result_contract"):
+            if typ == "agent.tool_error":
                 first = str(data.get("text") or "tool failed").splitlines()[0].strip() or "tool failed"
                 tool_errors.append(short(first, 200))
             await self.emit(Event(type=typ, task_id=task.id, agent_id=agent.id, request_id=task.request_id, data=data))
@@ -1660,7 +1660,8 @@ class Runner:
                 else:
                     adapter = get_adapter(agent.engine, self.s)
                     try:
-                        result = await adapter.run(ctx)
+                        from .structured_output import run_with_json_retries
+                        result = await run_with_json_retries(adapter, ctx)
                     except BaseException:  # cancelled or crashed after the CLI was stopped: still compare
                         # Keep what the failed step read; the after-run comparison is skipped (PR #442 review).
                         await ws.aupdate_run(task.id, input_files=input_files,

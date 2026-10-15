@@ -393,7 +393,13 @@ class ClaudeCodeAdapter(AgentAdapter):
                 await ctx.emit("agent.tool_result", {"id": block.get("tool_use_id")})
                 if block.get("is_error"):
                     note_failed_output(st, block.get("content"))
-                    await ctx.emit("agent.tool_error", {**event_preview("text", block.get("content"), 400)})
+                    raw = str(block.get("content") or "")
+                    # Classify before the display preview truncates the tool's original error.
+                    parse_error = "StructuredOutput" in raw and "could not be parsed as JSON" in raw
+                    await ctx.emit("agent.tool_error", {
+                        **event_preview("text", block.get("content"), 400),
+                        **({"structured_output_parse_error": True} if parse_error else {}),
+                    })
                 elif block.get("tool_use_id") in st.shell_calls:
                     note_command_ok(st)
         elif typ == "result":

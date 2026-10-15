@@ -345,6 +345,8 @@ ROLE_FOOTER = PI_TEXT_RULE + """
 - bioinfo-agent sends every gate question to the CSO first. Build a missing reusable pipeline when the CSO says to;
   put it under outputs/pipeline/<name>/ with manifest.json so labhq can open the upstream PR.
 - Separate observed results from hypotheses. Record tool versions and parameters.
+- 도구 오류 원문을 그대로 근거로 쓰고 확인하지 않은 원인을 지어내지 않는다. 안전 검사 등으로 추측하지 않는다.
+- StructuredOutput JSON 파싱 오류는 labhq가 재시도한다. 같은 내용의 JSON만 고치고 PI에게 진행 방식을 묻지 않는다.
 - A lookup that failed (error, timeout, refused access) is a failure, never a negative result; report it as one.
   A search that found nothing goes in the report with what was searched: source, query, scope and filters.
 - If you fall back to a weaker method (a substitute tool, a subsample, a simpler model), state it and why in
