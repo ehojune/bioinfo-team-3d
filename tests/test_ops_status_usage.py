@@ -94,6 +94,10 @@ def test_cli_status_shows_running_work_and_approvals(monkeypatch, capsys):
     def api(_settings, _method, path):
         if path == "/api/health":
             return {"runners": ["runner-1"]}
+        if path == "/api/requests/summary":
+            costs = {"cost_usd": 0.5, "estimated_usd": 0.2, "unknown_count": 1,
+                     "legacy_unknown": False}
+            return {"request_count": 1, "past_count": 0, "session": costs, "total": costs}
         if path.startswith("/api/requests?"):
             return [{"id": "r1", "text": "분석", "step_progress":
                      {"done": 1, "total": 2, "steps": {"s1": "done", "s2": "running"}},

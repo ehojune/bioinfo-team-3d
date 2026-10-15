@@ -31,7 +31,7 @@ from ..integrations.rounds import RoundRecorder, environment_snapshot, is_resear
 from ..integrations.visibility import dev_log_visibility
 from ..login import login_command
 from ..ask_results import ask_result, read_ask_results, rejected_step
-from ..costs import outcome_unknown_item, request_cost_summary, task_cost_item
+from ..costs import outcome_unknown_item, request_cost_summary, request_cost_totals, task_cost_item
 from ..models import ApprovalRequest, AskRequest, RunnerNotSent, RunnerUnavailable, Task, TaskResult, new_id, waiting
 from ..pi_text import with_approval_copy
 from ..recruit.provenance import not_yet_active, probation_refusal
@@ -3802,6 +3802,16 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
                   or r.get("status") == status][:limit]
         running = hub.running_tasks() if chosen else []  # one ledger read for the whole list
         return [hub.request_summary(r, running) for r in chosen]
+
+    @app.get("/api/requests/summary", dependencies=[Depends(auth)])
+    async def request_totals() -> dict:
+        requests = list(hub.requests.values())
+        session = [request for request in requests if is_office_request(request)
+                   or float(request.get("created_at") or 0) >= hub.session_started_at]
+        return {"request_count": len(requests),
+                "past_count": sum(not is_office_request(request) for request in requests),
+                "session": request_cost_totals(session),
+                "total": request_cost_totals(requests)}
 
     @app.get("/api/projects", dependencies=[Depends(auth)])
     async def projects() -> list[dict]:

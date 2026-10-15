@@ -28,6 +28,34 @@ def test_gateway_marks_one_shared_office_and_session_boundary(tmp_path, monkeypa
         'past': False, 'review': True, 'new-past': False}
 
 
+def test_gateway_request_totals_include_history_beyond_list_limit(tmp_path, monkeypatch):
+    monkeypatch.setattr('labhq.gateway.server.time.time', lambda: 100.0)
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path)
+    settings.gateway.client_token = 'test-token'
+    app = create_app(settings)
+    app.state.hub.requests.update({
+        **{f'past-{index}': {'id': f'past-{index}', 'status': 'done', 'created_at': index / 10,
+                             'pi_reviewed_at': 90, 'cost_usd': 1}
+           for index in range(201)},
+        'current': {'id': 'current', 'status': 'running', 'created_at': 110, 'cost_usd': 2},
+    })
+
+    with TestClient(app) as client:
+        headers = {'Authorization': f'Bearer {settings.gateway.client_token}'}
+        assert len(client.get('/api/requests?status=all&limit=200', headers=headers).json()) == 200
+        totals = client.get('/api/requests/summary', headers=headers).json()
+
+    assert totals == {
+        'request_count': 202,
+        'past_count': 201,
+        'session': {'cost_usd': 2.0, 'estimated_usd': 0.0, 'unknown_count': 0,
+                    'legacy_unknown': False},
+        'total': {'cost_usd': 203.0, 'estimated_usd': 0.0, 'unknown_count': 0,
+                  'legacy_unknown': False},
+    }
+
+
 def test_health_and_cli_status_use_the_same_clean_office_boundary(tmp_path, monkeypatch, capsys):
     settings = Settings()
     settings.gateway.state_dir = str(tmp_path)
@@ -58,6 +86,14 @@ def test_health_and_cli_status_use_the_same_clean_office_boundary(tmp_path, monk
             return rows[:1]
         if url.startswith('/api/requests?status=all'):
             return rows
+        if url == '/api/requests/summary':
+            return {
+                'request_count': 4, 'past_count': 2,
+                'session': {'cost_usd': 9, 'estimated_usd': 0, 'unknown_count': 0,
+                            'legacy_unknown': False},
+                'total': {'cost_usd': 39, 'estimated_usd': 0, 'unknown_count': 0,
+                          'legacy_unknown': False},
+            }
         if url == '/api/approvals':
             return []
         raise AssertionError(url)

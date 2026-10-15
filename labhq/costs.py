@@ -8,6 +8,7 @@ staff usually run on a ChatGPT plan.
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from datetime import date, datetime, timezone
 from typing import Any
 
@@ -185,6 +186,21 @@ def request_cost_summary(req: dict) -> dict | None:
     if set(req.get("cost_by_task") or {}) - set(items):
         return None
     return aggregate_costs(items)
+
+
+def request_cost_totals(requests: Iterable[dict]) -> dict:
+    """Display totals across requests, including legacy records without task classifications."""
+    cost = estimated = 0.0
+    unknown = 0
+    legacy_unknown = False
+    for request in requests:
+        cost += float(request.get("cost_usd") or 0)
+        summary = request.get("cost_summary") or {}
+        estimated += float(summary.get("estimated_usd") or 0)
+        unknown += int(summary.get("unknown_count") or 0)
+        legacy_unknown = legacy_unknown or (request.get("cost_known") is False and not summary)
+    return {"cost_usd": round(cost, 6), "estimated_usd": round(estimated, 6),
+            "unknown_count": unknown, "legacy_unknown": legacy_unknown}
 
 
 def _usd(value: Any, digits: int = 2) -> str:
