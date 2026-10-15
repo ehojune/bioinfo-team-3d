@@ -2385,19 +2385,26 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
     pattern's folder part is. Called while private paths are on, even with no active path: then only the
     registry check has anything to match.
 
-    `open_reads` (#298 ⑤): a read tool may open a path inside one of these folders although a private path holds
-    it, when every spelling of it (as written, `..` resolved, and its real path) is inside one. Shell and write
-    tools are judged as before.
+    `open_reads`: file reads and proven literal Bash reads may use managed folders below a private parent.
+    Written and resolved destinations must stay open. The task's own file-write grant remains scoped to its
+    workdir; other shell/write rules are unchanged.
     """
     from .private_paths import holds_open_read, mentioned_private_path, open_read_allowed, path_field_text, \
-        registry_access
+        registry_access, credential_path, managed_shell_read, resolved_read_path
 
     if tool_name in READ_LIKE | WRITE_LIKE:
-        open_reads = (open_reads or []) if tool_name in READ_LIKE else []
+        # Keep the existing file-write grant for this task, never for all managed folders.
+        managed = open_reads or []
+        open_reads = managed if tool_name in READ_LIKE else (
+            [workdir] if workdir and open_read_allowed(workdir, managed) else [])
         holders = [p for p in private_paths if holds_open_read(p, open_reads)]
         closed = [p for p in private_paths if p not in holders]
 
         def private(spelled: str) -> bool:
+            if credential_path(spelled) and any((
+                    mentioned_private_path(spelled, private_paths, home, environ),
+                    open_read_allowed(os.path.dirname(spelled), open_reads))):
+                return True
             if mentioned_private_path(spelled, closed, home, environ):
                 return True
             return bool(holders and mentioned_private_path(spelled, holders, home, environ)
@@ -2418,6 +2425,8 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
             if os.path.isabs(spelled):  # a link in the workspace can lead to a personal folder
                 try:
                     spellings.add(os.path.realpath(spelled))
+                    raw = value if os.path.isabs(value) else os.path.join(base or '', value)
+                    spellings.add(resolved_read_path(raw))
                 except (OSError, ValueError):
                     pass
             if any(private(s) for s in spellings):
@@ -2426,6 +2435,12 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
         return None
     if tool_name in SHELL_TOOLS:
         cmd = str(tool_input.get("command", ""))
+        if tool_name == 'Bash' and open_reads:
+            managed = managed_shell_read(cmd, private_paths, open_reads, workdir)
+            if managed is True:
+                return None
+            if managed is False:
+                return Decision('ask', 'Bash reaches a closed or credential path (policy.private_paths)')
         if private_paths and mentioned_private_path(cmd, private_paths, home, environ):
             return Decision("ask", f"{tool_name} names a PI personal path (policy.private_paths): `{cmd[:200]}`")
         # A link in the workspace (`alias -> ~/.ssh`) names no private path; its real path does.

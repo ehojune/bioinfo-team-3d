@@ -67,3 +67,18 @@ test('a summary kept open survives unchanged card refresh',async()=>{
   assert.equal(nodes(row._decisionParts.summary).find(n=>n.tagName==='details'),fold);
   assert.equal(fold.open,true);
 });
+test('tool cards keep the trusted requester role in both office layouts',async()=>{
+  const {syncDecisionCards,decisionFacts}=await mod;
+  const card={id:'tool',kind:'tool_permission',agent_id:'recruiter',pi_summary:'파일 목록 보기.',
+    pi_reason:'논문으로 자문 스킬을 만드는 중입니다. 위험 등급: 낮음 · 읽기.',
+    pi_outcome:'승인하면 한 번 실행합니다. 거절하면 실행하지 않습니다.',
+    detail:{requester_name:'비버 인사팀',tool_name:'Bash',tool_input:{command:'ls -la'}}};
+  for (const tagName of ['div','article']) {
+    const parent=new Element();
+    const [row]=syncDecisionCards(parent,[card],[],{tagName,nick:()=> '비버'});
+    assert.equal(row._decisionParts.who.textContent,'비버 인사팀');
+    assert.ok(row.textContent.includes(card.pi_reason));
+    assert.ok(row.textContent.includes(card.pi_outcome));
+    assert.deepEqual(decisionFacts(card,'비버')[1],['요청 직원','비버 인사팀']);
+  }
+});

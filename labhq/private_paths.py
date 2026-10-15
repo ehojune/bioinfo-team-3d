@@ -316,16 +316,20 @@ def short_spellings(path: str) -> list[str]:
 def resolve_private_paths(settings: Settings, keep: Iterable[str | os.PathLike | None] = (),
                           home: str | None = None, open_reads: Iterable[str] = (),
                           cwd: str | os.PathLike | None = None) -> PrivatePaths:
-    """The entries that exist and contain no folder in `keep` (task workdir, workspace root, reference and
-    project folders). An entry that contains one is skipped, not split. Plugin/skill paths belong in
-    `open_reads`, alongside a Claude task's own project folder in the staff config folder: an entry
-    holding one stays active, and only that folder opens, for reading."""
+    """Keep private parents of managed roots closed and grant only scoped reads below them.
+
+    Explicit reference/project `keep` folders retain their legacy skip behavior. Installed plugins/skills
+    and the task's Claude output folder use `open_reads`; they never exempt the containing login home.
+    """
     if settings.policy.private_paths == []:
         return PrivatePaths(enabled=False)
     home = home or host_home()
+    managed = managed_read_dirs(settings, cwd, home)
+    open_reads = list(open_reads)
     kept: set[str] = set()
     for folder in keep:
-        if folder:
+        # A managed workspace grants reads, never exposes its private parent/siblings.
+        if folder and not inside_any(os.path.abspath(str(folder)), managed):
             kept |= _forms(str(folder))
     paths: list[str] = []
     labels: list[str] = []
@@ -349,17 +353,104 @@ def resolve_private_paths(settings: Settings, keep: Iterable[str | os.PathLike |
     paths = [p for i, p in enumerate(paths)
              if _fold(p, _case_insensitive(p)) not in {_fold(q, _case_insensitive(p)) for q in paths[:i]}]
     reads = []
-    for folder in open_reads:
+    for folder in [*open_reads, *(p for p in managed if inside_any(p, paths))]:
         if folder:
-            reads.append(os.path.abspath(str(folder)))
-            reads.append(os.path.realpath(str(folder)))
+            written = os.path.abspath(str(folder))
+            # Do not turn a configured alias into a new read grant at its destination.
+            if _fold(written, _case_insensitive(written)) == _fold(os.path.realpath(written), _case_insensitive(written)):
+                reads.append(written)
     return PrivatePaths(tuple(dict.fromkeys(paths)), tuple(dict.fromkeys(labels)), tuple(dict.fromkeys(skipped)),
                         open_reads=tuple(dict.fromkeys(reads)))
 
 
 def open_read_allowed(path: str, open_reads: Iterable[str]) -> bool:
-    """Whether a file tool's absolute, `..`-free `path` is inside a folder this task may read."""
-    return inside_any(path, [p for p in open_reads if p])
+    """Both normalized spelling and real destination must stay inside the same read root."""
+    if credential_path(path):
+        return False
+    try:
+        real = resolved_read_path(path)
+        return any(inside_any(path, [p]) and inside_any(real, [p])
+                   for p in open_reads if p) and not credential_path(real)
+    except (OSError, ValueError, RuntimeError):
+        return False
+
+
+def resolved_read_path(path: str) -> str:
+    """Resolve each segment before consuming '..', including Windows junctions."""
+    if not os.path.isabs(path):
+        return path
+    current = Path(Path(path).anchor)
+    for part in Path(path).parts[1:]:
+        current = current.parent if part == '..' else Path(os.path.realpath(current / part))
+    return str(current)
+
+
+def credential_path(path: str) -> bool:
+    """Credential-like entries never inherit a managed-folder read grant."""
+    return any(re.search(r'(?:^|[._-])(?:credentials?|auth|oauth|tokens?)(?:[._-]|$)', part, re.I) or
+               re.fullmatch(r'\.env(?:\..*)?|'
+                           r'\.ssh|\.aws|\.netrc|\.git-credentials|id_(?:rsa|ed25519)|'
+                           r'\.claude\.json|history\.jsonl', part, re.I)
+               for part in path.replace('\\', '/').split('/'))
+
+
+def managed_read_dirs(settings: Settings, cwd=None, home: str | None = None) -> list[str]:
+    """Configured labhq work roots and staff-owned skill installs (not the login home)."""
+    roots = [str(settings.path(settings.runner.talent_dir)), str(settings.path(settings.runner.workspace_root))]
+    staff = staff_claude_config_dir(settings, home)
+    if staff:
+        roots += [os.path.join(staff, 'skills'), os.path.join(staff, 'labhq-paper2agent', 'skills')]
+    codex = configured_staff_codex_home(settings, Path(cwd or settings.base_dir()))
+    if codex and not inside_any(str(codex), [os.path.join(home or host_home(), '.codex')]):
+        roots.append(str(codex / 'skills' / 'paper2agent'))
+    return roots
+
+
+def managed_shell_read(command: str, private_paths: Iterable[str], open_reads: Iterable[str],
+                       workdir: str | None) -> bool | None:
+    """Prove a literal read sequence stays outside closed paths; never relax other policy decisions."""
+    from .tool_command import read_commands
+
+    parts = read_commands(command)
+    if parts is None or not workdir:
+        return None
+    reads, private = list(open_reads), list(private_paths)
+    bases = [workdir]
+    for name, operands in parts:
+        for value in operands:
+            for base in list(bases):
+                if not _managed_operand(value, base, private, reads):
+                    return False
+            if name == 'cd':
+                # cd may fail, or run in a pipeline subshell: keep both possible directories.
+                bases += [resolved_read_path(value if os.path.isabs(value) else os.path.join(b, value))
+                          for b in list(bases)]
+                bases = list(dict.fromkeys(bases))
+                if len(bases) > MAX_CD_BASES:
+                    return None
+    return True
+
+
+def _managed_operand(value: str, base: str, private: list[str], reads: list[str]) -> bool:
+    # Keep symlink/.. ordering for realpath; normpath first would hide an escape.
+    raw = value if os.path.isabs(value) else os.path.join(base, value)
+    spelled = path_field_text(value, base)
+    try:
+        real = resolved_read_path(raw)
+    except (OSError, ValueError, RuntimeError):
+        return False
+    if credential_path(spelled) or credential_path(real):
+        return False
+    if inside_any(spelled, reads) and not open_read_allowed(raw, reads):
+        return False
+    for target in (spelled, real):
+        for root in private:
+            if inside_any(target, [root]):
+                eligible = [r for r in reads if inside_any(r, [root]) and not inside_any(root, [r])]
+                # An explicitly private child of a managed root remains closed.
+                if not open_read_allowed(target, eligible):
+                    return False
+    return True
 
 
 def holds_open_read(private: str, open_reads: Iterable[str]) -> bool:

@@ -263,7 +263,7 @@ function trackActivity(ev) {
     } else S.activeTasks.delete(tid);
   }
 }
-const nick = id => { const key = String(id || '').toLowerCase(), a = ag(key); return ({cso:STAFF_NAMES.cso, facilities:STAFF_NAMES.facilities}[key]) || (a?.name && a.name !== a.id ? String(a.name).split(' ')[0] : STAFF_NAMES[key] || (key.startsWith('c_') ? '파견 직원' : id ? '직원' : '')); };
+const nick = id => { const key = String(id || '').toLowerCase(), a = ag(key); return ({cso:STAFF_NAMES.cso, facilities:STAFF_NAMES.facilities}[key]) || (a?.name && a.name !== a.id ? (['recruiter','editor'].includes(key) ? String(a.name) : String(a.name).split(' ')[0]) : STAFF_NAMES[key] || (key.startsWith('c_') ? '파견 직원' : id ? '직원' : '')); };
 // A staff member's task rows: kept while the task runs, waits for HPC or an answer, is halted, or holds its paused
 // step; removed on its terminal event, as a reload would (PR #532 review).
 function trackTask(a, tid, state, title, keep = false, rid = '', sid = '') {
