@@ -275,6 +275,12 @@ class ResultStorage:
         self.tasks: dict[str, asyncio.Task] = {}
         self._client = None
         self._card_lock = asyncio.Lock()
+        self.uploading: set[str] = set()  # requests whose files are going to the repository right now
+
+    @property
+    def card_lock(self) -> asyncio.Lock:
+        """Held by a redraft and by the answer to a publish card, so the two never interleave (#607)."""
+        return self._card_lock
 
     def client(self):
         token = os.environ.get(self.s.github.token_env, "")
@@ -410,7 +416,7 @@ class ResultStorage:
         Allowed while the publish card is pending (or its answer window passed) and after the PI declined it. A published
         edition is refused: its files are already in the repository. The old card is closed and the new draft opens a
         new one; the folder is rebuilt, so nothing of the old draft stays."""
-        async with self._card_lock:
+        async with self.card_lock:
             req = self.hub.requests[rid]
             saved = req.get("result_storage") or {}
             status = saved.get("status")
@@ -428,9 +434,10 @@ class ResultStorage:
             cards = [aid for aid, entry in self.hub.approvals.items()
                      if entry["approval"].get("request_id") == rid and entry["approval"].get("kind") == "result_publish"]
             running = self.tasks.get(rid)
+            if rid in self.uploading or (running is not None and not running.done() and not cards):
+                # approved (its card is gone) or already uploading: cancelling now could leave a half-published edition
+                raise ValueError("게시가 시작됐습니다. 올라가는 도중에는 다시 만들 수 없으니 끝난 뒤 결과를 확인해 주세요.")
             if running is not None and not running.done():
-                if not cards:
-                    raise ValueError("정리본을 만들거나 게시하는 중입니다. 끝난 뒤 다시 시도해 주세요.")
                 running.cancel()  # it only waits for the old card's answer
                 await asyncio.gather(running, return_exceptions=True)
             for aid in cards:
@@ -581,7 +588,11 @@ class ResultStorage:
                 if not decision.get("approved"):
                     saved["status"] = "draft" if decision.get("state") == "timed_out" else "declined"
                     return
-            await self.upload(rid, docs, images, pdf)
+            self.uploading.add(rid)  # from here a redraft is refused: some files may already be in the repository
+            try:
+                await self.upload(rid, docs, images, pdf)
+            finally:
+                self.uploading.discard(rid)
             saved["status"] = "published"
         except asyncio.CancelledError:
             raise

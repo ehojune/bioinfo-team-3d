@@ -6,16 +6,20 @@ it to its public record, removes duplicates and groups by kind. Only identifiers
 from __future__ import annotations
 
 import re
+import socket
 from collections.abc import Iterable, Mapping
-from ipaddress import ip_address
+from ipaddress import IPv4Address, IPv4Network, IPv6Address, IPv6Network, ip_address
 from urllib.parse import parse_qsl, unquote, urlsplit, urlunsplit
 
-# ASCII only: a Korean particle glued to a link ("https://x.org/a를") is not part of it. ")" and "]" end a markdown link.
-_STOP = "\\s<>\"'`\\])\u0080-\U0010ffff"
+# ASCII only: a Korean particle glued to a link ("https://x.org/a를") is not part of it. "]" ends a markdown link; ")"
+# does not, because a balanced pair belongs to a DOI or a path: `_trim` cuts at the first unbalanced one.
+_STOP = "\\s<>\"'`\\]\u0080-\U0010ffff"
 _URL = re.compile(rf"https?://[^{_STOP}]+")
 _DOI = re.compile(rf"(?<![A-Za-z0-9.])10\.\d{{4,9}}/[^{_STOP}]+")
 _DOI_ONLY = re.compile(r"10\.\d{4,9}/\S+")
-_PMID = re.compile(r"(?<![A-Za-z])PMIDs?\s*[:#]?\s*(\d{5,9}(?:\s*(?:,|/|·|&|and|및|와|과)\s*\d{5,9})*)", re.IGNORECASE)
+# After the label any 1 to 9 digit number is a PMID; a number that follows only a separator keeps the stricter 5 to 9.
+_PMID = re.compile(r"(?<![A-Za-z])PMIDs?\s*[:#]?\s*(\d{1,9}(?!\d)(?:\s*(?:,|/|·|&|and|및|와|과)\s*\d{5,9}(?!\d))*)",
+                   re.IGNORECASE)
 _PMC = re.compile(r"(?<![A-Za-z0-9])PMC\d{5,9}(?![A-Za-z0-9])")
 _GEO = re.compile(r"(?<![A-Za-z0-9])(?:GSE|GSM|GPL)\d{3,9}(?![A-Za-z0-9])")
 _SRA = re.compile(r"(?<![A-Za-z0-9])(?:SR[RPXS]|ER[RPX]|DR[RPX])\d{5,}(?![A-Za-z0-9])")
@@ -24,8 +28,9 @@ _BIOPROJECT = re.compile(r"(?<![A-Za-z0-9])PRJ(?:NA|EB|DB)\d+(?![A-Za-z0-9])")
 _NUMBER = re.compile(r"\d+")
 _SECRET_KEY = re.compile(r"(?i)token|key|sig|secret|pass|auth|credential|session|expires")
 _TRAILING = ".,;:!?*_"
-_PRIVATE_SUFFIXES = (".local", ".localhost", ".internal", ".lan", ".test", ".home.arpa")
+_PRIVATE_SUFFIXES = (".local", ".localhost", ".internal", ".lan", ".home.arpa", ".test")
 _DOI_HOSTS = {"doi.org", "dx.doi.org", "www.doi.org"}
+_NAT64 = IPv6Network("64:ff9b::/96")
 
 # Order = how SOURCES.md lists them: papers, public data, then web addresses.
 KINDS = (("doi", "논문 DOI"), ("pmid", "PubMed"), ("pmc", "PubMed Central"), ("geo", "GEO 데이터"),
@@ -55,34 +60,130 @@ def record_url(kind: str, value: str) -> str:
     raise ValueError(kind)
 
 
-def _private_host(host: str) -> bool:
-    host = host.lower().strip("[]")
-    try:
-        address = ip_address(host)
-    except ValueError:
-        return "." not in host or host.endswith(_PRIVATE_SUFFIXES)
-    return not address.is_global
+def _trim(value: str) -> str:
+    """``value`` up to the first closing parenthesis that has no opening one (the sentence or markdown link that held it
+    ends there), without the punctuation a sentence puts after it. A balanced pair stays: ``10.1016/S0016-5085(98)70201-6``."""
+    depth = 0
+    for at, char in enumerate(value):
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            if depth == 0:
+                value = value[:at]
+                break
+            depth -= 1
+    return value.rstrip(_TRAILING + "(")
 
 
 def _clean_doi(value: str) -> str:
     """A DOI without the query or fragment a link put after it (``10.1234/x?utm_source=y`` is DOI ``10.1234/x``)."""
-    return re.split(r"[?#]", value, maxsplit=1)[0].rstrip(_TRAILING)
+    return _trim(re.split(r"[?#]", value, maxsplit=1)[0])
 
 
-def _public_link(url: str) -> str | None:
-    """The web address to publish: None for a private host or one with credentials, else without a credential query."""
-    url = url.rstrip(_TRAILING)
-    parts = urlsplit(url)
-    if not parts.hostname or _private_host(parts.hostname) or parts.username or parts.password:
+def _legacy_ipv4(host: str) -> IPv4Address | None:
+    """The address of a host written the old way, which `inet_aton` and browsers read: one to four numbers separated by
+    dots, each decimal, ``0``-octal or ``0x``-hex, the last one filling the remaining bytes (``2130706433``, ``0x7f.1``,
+    ``0177.0.0.1``, ``127.1``). Spelled out here so the answer is the same on every platform."""
+    parts = host.split(".")
+    if not 1 <= len(parts) <= 4:
         return None
-    return _public(url)
+    numbers = []
+    for part in parts:
+        if re.fullmatch(r"0[xX][0-9a-fA-F]*", part):
+            numbers.append(int(part[2:] or "0", 16))
+        elif re.fullmatch(r"0[0-7]*", part):
+            numbers.append(int(part, 8))
+        elif re.fullmatch(r"[1-9][0-9]*", part):
+            numbers.append(int(part))
+        else:
+            return None
+    *head, last = numbers
+    if any(number > 255 for number in head) or last >= 256 ** (4 - len(head)):
+        return None
+    return IPv4Address(sum(number << (8 * (3 - at)) for at, number in enumerate(head)) + last)
+
+
+def _address(host: str):
+    """The IP address a canonical host is, in any form; None for a DNS name or text that is no address."""
+    try:
+        return ip_address(host)
+    except ValueError:
+        pass
+    if ":" in host:
+        return None
+    legacy = _legacy_ipv4(host)
+    if legacy is not None:
+        return legacy
+    try:
+        return IPv4Address(socket.inet_aton(host))  # whatever else this platform's inet_aton accepts
+    except (OSError, ValueError, UnicodeError):
+        return None
+
+
+def _public_address(address) -> bool:
+    """Whether an address is reachable on the public internet: not private, loopback, link-local, reserved, unspecified,
+    multicast or shared; an IPv4 address inside IPv6 (mapped, NAT64, 6to4) is judged as that IPv4 address."""
+    if isinstance(address, IPv6Address):
+        embedded = address.ipv4_mapped or address.sixtofour or (
+            IPv4Address(int(address) & 0xFFFFFFFF) if address in _NAT64 else None)
+        if embedded is not None:
+            return _public_address(embedded)
+        if address.is_site_local:
+            return False
+    return not (address.is_private or address.is_loopback or address.is_link_local or address.is_reserved
+                or address.is_unspecified or address.is_multicast or not address.is_global
+                or (isinstance(address, IPv4Address) and address in IPv4Network("100.64.0.0/10")))
+
+
+def _public_host(raw: str) -> str | None:
+    """THE host reader: every link, version source and URL of this module passes here.
+
+    The canonical host (lowercase, no brackets, no trailing dots, IDNA/punycode, an address in its plain form) when it is
+    a public name or address; None when it is private or unreadable: a loopback, private, link-local, reserved,
+    unspecified or multicast address in any spelling (IPv6, IPv4-mapped IPv6, decimal/octal/hex IPv4), ``localhost``, a
+    single-label name, or a name ending in ``.local``, ``.internal``, ``.lan``, ``.home.arpa``, ``.localhost``."""
+    host = unquote(raw).strip().strip("[]").lower()
+    if ":" in host:
+        host = host.split("%")[0]  # an IPv6 zone id
+    host = host.rstrip(".")  # the DNS root dot, however many
+    if not host:
+        return None
+    if ":" not in host:
+        try:
+            host = host.encode("idna").decode("ascii")
+        except UnicodeError:
+            return None
+    address = _address(host)
+    if address is not None:
+        return str(address) if _public_address(address) else None
+    if ":" in host or "." not in host or host == "localhost" or any(
+            host == suffix[1:] or host.endswith(suffix) for suffix in _PRIVATE_SUFFIXES):
+        return None
+    return host
+
+
+def public_link(url: str) -> str | None:
+    """The one gate for every web address this module writes: None for a private or unreadable host, else the address
+    with its host canonical, without userinfo (``user:pass@``), without the fragment, and without a query that names a
+    credential (a signed link carries it there)."""
+    try:
+        parts = urlsplit(_trim(url))
+        port, raw_host = parts.port, parts.hostname
+    except ValueError:
+        return None
+    host = _public_host(raw_host) if raw_host and parts.scheme in {"http", "https"} else None
+    if host is None:
+        return None
+    netloc = (f"[{host}]" if ":" in host else host) + (f":{port}" if port is not None else "")
+    secret = any(_SECRET_KEY.search(key) for key, _ in parse_qsl(parts.query, keep_blank_values=True))
+    return urlunsplit((parts.scheme, netloc, parts.path, "" if secret else parts.query, ""))
 
 
 def _mask_urls(text: str) -> str:
     """``text`` with each link made publishable; a private one becomes a note."""
     def mask(match: re.Match) -> str:
-        core = match.group().rstrip(_TRAILING)
-        return (_public_link(core) or "(비공개 주소 생략)") + match.group()[len(core):]
+        core = _trim(match.group())
+        return (public_link(core) or "(비공개 주소 생략)") + match.group()[len(core):]
     return _URL.sub(mask, text)
 
 
@@ -110,14 +211,6 @@ def _identity(url: str) -> tuple[str, str] | None:
     return None
 
 
-def _public(url: str) -> str:
-    """A web address without a query that names a credential (a signed link carries it there)."""
-    parts = urlsplit(url)
-    if any(_SECRET_KEY.search(key) for key, _ in parse_qsl(parts.query, keep_blank_values=True)):
-        return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
-    return url
-
-
 class Sources:
     """Identifiers found so far, one list per kind, each without repeats."""
 
@@ -132,7 +225,7 @@ class Sources:
             self.found[kind].setdefault(key, value)
 
     def add_url(self, url: str) -> None:
-        link = _public_link(url)
+        link = public_link(url)
         if link is None:
             return
         identity = _identity(link)
@@ -170,7 +263,7 @@ class Sources:
     def scan_versions(self, text: str) -> None:
         """``resource -> version`` rows of a ``resource_versions`` file, and the links beside them."""
         for name, version, source in parse_versions(text):
-            link = (_public_link(source) if source else None) or ""  # a private or credentialed source is dropped
+            link = (public_link(source) if source else None) or ""  # a private or credentialed source is dropped
             self.versions[(name, version)] = self.versions.get((name, version)) or link
 
     def listing(self, kind: str) -> list[str]:
@@ -219,7 +312,7 @@ def parse_versions(text: str) -> list[tuple[str, str, str]]:
             elif header and not all(re.fullmatch(r":?-{2,}:?", cell) for cell in cells if cell):
                 if version < len(cells) and cells[0] and cells[version]:
                     link = _URL.search(cells[source]) if source is not None and source < len(cells) else None
-                    rows.append((_plain(cells[0]), _plain(cells[version]), link.group().rstrip(_TRAILING) if link else ""))
+                    rows.append((_plain(cells[0]), _plain(cells[version]), link.group() if link else ""))  # public_link reads it
             continue
         header = None
         bullet = re.fullmatch(r"\s*[-*]\s+([A-Za-z][\w .+/-]{0,40}?)\s*(?::|=|==)\s*(v?\d[\w.+-]*)\s*", raw)

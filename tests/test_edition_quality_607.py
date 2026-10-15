@@ -354,3 +354,114 @@ async def test_redraft_api_and_cli(tmp_path, monkeypatch, capsys):
     cli.main(["storage", "req_x", "--redraft"])
     assert calls == [("POST", "/api/requests/req_x/storage/redraft")]
     assert "편집자를 다시 돌립니다 (이전 게시 카드 1장 닫음)" in capsys.readouterr().out
+
+
+# ----- round 3: one host gate, balanced DOI parentheses, short labelled PMIDs, publish vs redraft -----
+
+PRIVATE_LINKS = [
+    "http://127.0.0.1/x", "http://127.0.0.1./x", "http://127.0.0.1.../x", "http://gateway.local./secret",
+    "http://gateway.local/x", "https://host.internal./v", "http://LOCALHOST/x", "http://localhost./x",
+    "http://x.localhost/x", "http://nas.lan/x", "http://router.home.arpa./x", "http://home.arpa/x",
+    "http://intranet/x", "http://intranet./x",  # a single-label name
+    "http://[::1]/x", "http://[::ffff:127.0.0.1]/x", "http://[::ffff:7f00:1]/x", "http://[fe80::1]/x",
+    "http://[fc00::1]/x", "http://[::]/x", "http://[64:ff9b::7f00:1]/x", "http://[2002:7f00:1::]/x",
+    "http://[fe80::1%25eth0]/x", "http://[::ffff:10.0.0.1]/x",  # IPv6, IPv4-mapped, NAT64, 6to4, zone id
+    "http://2130706433/x", "http://0x7f.1/x", "http://0177.0.0.1/x", "http://127.1/x", "http://017700000001/x",
+    "http://0x7f000001/x", "http://%31%32%37.0.0.1/x",  # decimal, hex, octal and short IPv4 forms, percent-encoded
+    "http://10.0.0.5/", "http://172.16.0.1/", "http://192.168.1.5/", "http://169.254.169.254/", "http://0.0.0.0/",
+    "http://240.0.0.1/", "http://100.64.0.1/", "http://224.0.0.1/",  # private, link-local, unspecified, reserved, shared, multicast
+    "http://user:pw@127.0.0.1/x", "ftp://example.org/x", "http:///x"]
+PUBLIC_LINKS = {
+    "https://example.org/a": "https://example.org/a",
+    "http://8.8.8.8/x": "http://8.8.8.8/x",
+    "http://134744072/x": "http://8.8.8.8/x",  # the same address in decimal
+    "https://[2606:4700:4700::1111]/x": "https://[2606:4700:4700::1111]/x",
+    "https://example.org./x": "https://example.org/x",  # the root dot goes
+    "https://10.example.org/x": "https://10.example.org/x",  # digits first is still a name
+    "https://user:pass@example.org/x": "https://example.org/x",  # userinfo goes
+    "https://example.org/v?token=abc&p=1": "https://example.org/v",  # a credential query goes
+    "https://example.org:8443/x": "https://example.org:8443/x",
+    "https://EXAMPLE.org/Path#frag": "https://example.org/Path",
+    "https://bücher.example/x": "https://xn--bcher-kva.example/x",  # IDNA
+    "https://en.wikipedia.org/wiki/Foo_(bar)": "https://en.wikipedia.org/wiki/Foo_(bar)"}
+
+
+@pytest.mark.parametrize("url", PRIVATE_LINKS)
+def test_the_host_gate_drops_every_private_spelling(url):
+    assert edition_sources.public_link(url) is None
+
+
+@pytest.mark.parametrize("url, expected", PUBLIC_LINKS.items())
+def test_the_host_gate_keeps_public_hosts_in_canonical_form(url, expected):
+    assert edition_sources.public_link(url) == expected
+
+
+def test_no_private_spelling_reaches_sources_by_any_route():
+    report = " ".join(PRIVATE_LINKS + ["https://example.org/kept"])
+    versions = "| Resource | Version | Source |\n|---|---|---|\n" + "".join(
+        f"| Tool{number} | {number}.0 | {url} |\n" for number, url in enumerate(PRIVATE_LINKS))
+    text = sources_of(report, versions=versions)
+    for marker in ("127.0.0.1", "gateway.local", "host.internal", "localhost", "nas.lan", "home.arpa", "intranet",
+                   "::1", "169.254", "192.168", "10.0.0.5", "172.16", "2130706433", "0x7f", "0177", "user:pw", "ftp://"):
+        assert marker not in text, marker
+    assert "- https://example.org/kept" in text and "- Tool3: 3.0\n" in text  # the public link and the version stay
+
+
+def test_balanced_parentheses_stay_in_a_doi_and_a_closing_one_ends_it():
+    doi = "10.1016/S0016-5085(98)70201-6"
+    report = (f"bare {doi} here, and in prose ({doi}). Also (doi:10.1038/ng.3224), and "
+              f"[link](https://doi.org/{doi}) and https://doi.org/{doi.replace('(', '%28').replace(')', '%29')} "
+              "and https://en.wikipedia.org/wiki/Foo_(bar).")
+    found = edition_sources.collect([report])
+    assert found.listing("doi") == [doi, "10.1038/ng.3224"]  # one entry for each, never "10.1016/S0016-5085(98"
+    assert found.listing("web") == ["https://en.wikipedia.org/wiki/Foo_(bar)"]
+    assert "(https://doi.org/10.1016/S0016-5085%2898%2970201-6)" in sources_of(report)
+
+
+def test_a_labelled_pmid_may_be_short_but_an_unlabelled_number_stays_strict():
+    found = edition_sources.collect(["Legacy record PMID: 87; also PMID 12 / 34 and PMIDs 25706628, 25706627. "
+                                     "See 99 and 1234567890 (PMID 1234567890)."])
+    assert found.listing("pmid") == ["12", "87", "25706627", "25706628"]  # 34 follows only a separator; 99 has no label
+    assert "[PMID 87](https://pubmed.ncbi.nlm.nih.gov/87/)" in sources_of("PMID: 87")
+    assert "출처를 찾지 못했습니다" not in sources_of("PMID: 87")
+
+
+async def test_redraft_is_refused_once_the_upload_started(tmp_path, monkeypatch):
+    hub, editor, _ = redraft_hub(tmp_path, monkeypatch, ["# 첫 정리본"])
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def mid_upload(rid, docs, images=None, pdf=None):
+        started.set()
+        await release.wait()
+
+    monkeypatch.setattr(hub.result_storage, "upload", mid_upload)
+    hub.result_storage.schedule("req_test")
+    card = await publish_card(hub)
+    await hub.resolve_approval(card["id"], True)
+    with pytest.raises(ValueError, match="게시가 시작됐습니다"):  # approved, the task has not reached the upload yet
+        await hub.result_storage.redraft("req_test")
+    await asyncio.wait_for(started.wait(), 5)
+    task = hub.result_storage.tasks["req_test"]
+    with pytest.raises(ValueError, match="게시가 시작됐습니다"):  # files are going to the repository
+        await hub.result_storage.redraft("req_test")
+    assert not task.done() and editor.await_count == 1  # nothing was cancelled or rebuilt
+    assert hub.requests["req_test"]["result_storage"]["status"] == "draft"
+    release.set()
+    await task
+    assert hub.requests["req_test"]["result_storage"]["status"] == "published"
+    await hub.result_storage.close()
+
+
+async def test_a_publish_answer_waits_for_a_redraft_that_holds_the_lock(tmp_path, monkeypatch):
+    hub, editor, upload = redraft_hub(tmp_path, monkeypatch, ["# 첫 정리본"])
+    hub.result_storage.schedule("req_test")
+    card = await publish_card(hub)
+    async with hub.result_storage.card_lock:  # a redraft is in progress
+        answer = asyncio.create_task(hub.resolve_approval(card["id"], True))
+        await asyncio.sleep(0.05)
+        assert not answer.done() and card["id"] in hub.approvals  # the answer did not slip in before the redraft
+        await hub.close_approval(card["id"], "정리본을 다시 만들어 이 게시 카드를 닫았습니다")  # what the redraft does
+    with pytest.raises(KeyError):  # the replaced card can no longer be answered
+        await answer
+    upload.assert_not_awaited()
+    await hub.result_storage.close()

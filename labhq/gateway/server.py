@@ -3087,6 +3087,16 @@ class Hub:
     async def resolve_approval(self, approval_id: str, approved: bool, note: str = "",
                                choice: str | None = None, storage: dict | None = None) -> None:
         pending = self.approvals.get(approval_id)
+        if pending and pending["approval"].get("kind") == "result_publish":
+            # The answer to a publish card and a redraft of that edition never interleave (#607): a redraft that came
+            # first has closed this card (KeyError below), one that comes after sees the upload started and is refused.
+            async with self.result_storage.card_lock:
+                return await self._resolve_approval(approval_id, approved, note, choice, storage)
+        return await self._resolve_approval(approval_id, approved, note, choice, storage)
+
+    async def _resolve_approval(self, approval_id: str, approved: bool, note: str = "",
+                                choice: str | None = None, storage: dict | None = None) -> None:
+        pending = self.approvals.get(approval_id)
         if pending and approved and pending["approval"].get("kind") == "result_publish":
             req = self.requests.get(pending["approval"].get("request_id")) or {}
             if not req.get("pi_reviewed_at"):
