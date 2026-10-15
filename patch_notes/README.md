@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 16:36 | [`9f4d35e`](https://github.com/ehojune/bioinfo-team-3d/pull/635/commits/9f4d35e) | 2.5D 사무실과 Command Center, 직원 시트 경계를 마우스·키보드로 조정하고 브라우저별 크기를 기억하게 했다(#633). |
 | 16:16 | [`bf10257`](https://github.com/ehojune/bioinfo-team-3d/pull/631/commits/bf10257) | AlphaGenome 권장 변이 점수·한국어 요약·tidy 표와 크기 상한·판본 캐시를 추가하고 variant_effect 안내를 연결 |
 | 15:28 | [`123d977`](https://github.com/ehojune/bioinfo-team-3d/pull/628/commits/123d977) | 403 복구 안내에서 실패한 환경 토큰을 해제하고 README로 저장소를 만들게 하며, 빈 저장소는 branch 없는 첫 파일로 초기화한 뒤 기존 파일의 sha를 보존해 갱신한다(#607). |
 | 15:28 | [`8dbe72d`](https://github.com/ehojune/bioinfo-team-3d/pull/626/commits/8dbe72d) | 선택된 VEP transcript에 AlphaMissense 점수가 없으면 주 요약은 점수 없음으로 두고, 다른 transcript의 점수·등급은 별도 필드로 분리한다. |
