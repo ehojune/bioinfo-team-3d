@@ -39,11 +39,13 @@ ALPHAGENOME = _alphagenome()
 server = make_server(
     "labhq-annot",
     instructions=(
-        "Look up public databases: vep (Ensembl VEP consequences), gnomad (population allele frequency), clinvar "
+        "Look up public databases: vep (Ensembl VEP consequences, with AlphaMissense missense pathogenicity for human "
+        "GRCh38), gnomad (population allele frequency), clinvar "
         "(clinical classification) for variants; chipatlas (ChIP-Atlas enrichment of public ChIP/ATAC peaks for a gene "
         "list or regions), chipatlas_targets (target genes of a transcription factor), encode (ENCODE candidate "
         "cis-regulatory elements overlapping regions), gtex (GTEx tissue expression and eQTLs for genes or variants)"
-        + ("; alphagenome (AlphaGenome predicted effects of variants or signal over intervals)" if ALPHAGENOME else "")
+        + ("; alphagenome_variant (recommended variant effect scores, GRCh38), "
+           "alphagenome (legacy track summaries over variants or intervals)" if ALPHAGENOME else "")
         + ". Give variants as chr:pos:ref:alt (VCF-style alleles), HGVS or rsID, and regions as chr:start-end "
         "(1-based, inclusive). A malformed item comes back as that item's error and the rest are still looked up. "
         "Each result names the database release under `source` and is logged to outputs/annotation_queries.jsonl, "
@@ -74,7 +76,10 @@ async def _run(method: str, *args: object, **kwargs: object) -> str:
 @server.tool()
 async def vep(variants: list[str], assembly: Literal["GRCh38", "GRCh37"] = "GRCh38", species: str = "human") -> str:
     """Ensembl VEP consequences (most severe consequence, genes, MANE/canonical transcript HGVS) for variants given
-    as chr:pos:ref:alt, HGVS or rsID. Sent in batches of 200 within Ensembl's rate limits."""
+    as chr:pos:ref:alt, HGVS or rsID. Sent in batches of 200 within Ensembl's rate limits. For human GRCh38 each
+    result also has `alphamissense`: the AlphaMissense score (0-1) and class of a missense variant from the same
+    transcript, or "해당 없음" for other variants. It is a model prediction, not clinical evidence (CC BY 4.0, cite
+    Cheng et al. 2023 Science); the terms are under `source.additional_sources`."""
     return await _run("vep", variants, assembly, species)
 
 
@@ -135,6 +140,19 @@ async def gtex(genes_or_variants: list[str], tissues: list[str] | None = None, d
 
 
 if ALPHAGENOME is not None:
+    @server.tool()
+    async def alphagenome_variant(variants: list[str], sequence_length: Literal["16KB", "100KB", "500KB", "1MB"] = "1MB",
+                                  ontology_terms: list[str] | None = None, tissues: list[str] | None = None,
+                                  top: int = 20, assembly: Literal["GRCh38"] = "GRCh38") -> str:
+        """Recommended AlphaGenome score_variant scores for GRCh38 chr:pos:ref>alt (or chr:pos:ref:alt).
+        Returns Korean effect summary and top tidy rows ranked by absolute quantile. Direction is reported only
+        for signed scorers. At most 10 variants, 1MB per variant, 1000 bp per allele, top 1..100 (default 20).
+        ontology_terms (CURIEs) and tissues (exact biosample_name or gtex_tissue, case-insensitive) filter rows
+        AFTER scoring; each allows 20 values. SDK/model/scorers and terms accompany the cached results.
+        Non-commercial research predictions, not clinical evidence."""
+        return await _run("alphagenome_variant", variants, sequence_length=sequence_length,
+                          ontology_terms=ontology_terms, tissues=tissues, top=top, assembly=assembly)
+
     @server.tool()
     async def alphagenome(variants_or_intervals: list[str], outputs: list[str] | None = None,
                           ontology_terms: list[str] | None = None,

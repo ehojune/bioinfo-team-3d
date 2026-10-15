@@ -785,3 +785,9 @@ terms:
     ok: ["gut microbiome metatranscriptome", "community gene expression profiling"]
     not: ["metagenomic DNA profiling", "host bulk RNA-seq"]
     review: "PI 2026-10-06 (#420)"
+  variant_effect:
+    branch: topic
+    definition: "interpreting the likely effect of specific variants (missense, regulatory, splicing) with public frequency, clinical and prediction resources"
+    ok: ["annotating a variant list with frequency, ClinVar and consequence", "assessing a missense variant with AlphaMissense", "scoring a noncoding or splice variant"]
+    not: ["variant calling from sequencing reads", "case-control association testing", "pedigree-based candidate ranking alone"]
+    review: "PI 2026-10-15 (#621)"

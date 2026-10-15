@@ -117,6 +117,23 @@ def _bioinfo_row(settings: Settings) -> dict:
     return _row("config", "bioinfo-agent", "ok", f"연결됨: {_safe_path(folder)}", "")
 
 
+FINE_GRAINED_PREFIX = "github_pat_"
+
+
+def _github_token_row(settings: Settings) -> dict | None:
+    """One warning when the GitHub token is a fine-grained PAT (#607). Such a token may be limited to selected repositories,
+    and then it cannot create one: publishing to a new repository needs the repository made first and added to the token.
+    Only the prefix is compared. No request is made, and nothing of the token is shown."""
+    if not os.environ.get(settings.github.token_env, "").startswith(FINE_GRAINED_PREFIX):
+        return None
+    return _row("config", "github token", "warn",
+                "fine-grained 토큰: 새 저장소로 게시하려면 저장소를 먼저 만들고 이 토큰의 저장소 접근에 추가해야 합니다",
+                "PowerShell에서는 `$env:GITHUB_TOKEN=$null; gh repo create <소유자>/<이름> --private --add-readme`, "
+                "bash에서는 `env -u GITHUB_TOKEN -u GH_TOKEN gh repo create <소유자>/<이름> --private --add-readme`를 쓰거나 "
+                "GitHub 웹에서 README를 넣어 만드세요. 토큰 설정에서 그 저장소에 Contents: Read and write를 주세요. "
+                "게시가 실패했다면 그다음 `labhq storage <요청 id> --republish`.")
+
+
 def _instance_rows(settings: Settings) -> list[dict]:
     """Other configs that share this one's state folder or port, or a primary config that differs (#613)."""
     return [_row("instance", instance_guard.DOCTOR_NAME[notice.key], "warn", notice.text, notice.fix)
@@ -292,7 +309,7 @@ def _alphagenome_row(settings: Settings) -> dict:
                     "키가 생기면 labhq init을 다시 실행해 붙여 넣으세요.")
     if not alphagenome_client_available():
         return _row("annot", "AlphaGenome", "warn", "키 있음, alphagenome 패키지 없음 (도구 미등록)",
-                    "runner의 Python에 pip install alphagenome")
+                    "runner의 Python에 pip install 'labhq[alphagenome]' 또는 pip install alphagenome")
     return _row("annot", "AlphaGenome", "ok", "키 있음", "")
 
 
@@ -554,6 +571,8 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
                          "Give the runner a config without gateway.client_token; see docs/runner-account.md."))
     rows.append(_research_row(settings))
     rows.append(_bioinfo_row(settings))
+    if github_row := _github_token_row(settings):
+        rows.append(github_row)
     rows.extend(_instance_rows(settings))
     markers = parent_claude_markers(dict(os.environ))
     rows.append(_row("staff", "claude_parent_session_env", "warn" if markers else "ok",

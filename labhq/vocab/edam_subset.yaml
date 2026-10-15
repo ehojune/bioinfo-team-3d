@@ -9,11 +9,11 @@ source:
 generator:
   script: scripts/edam_subset.py
   script_sha256: 9af0008acff8cbee78387364e3e500cc6ecb3b0ae9b77953f997bb3e2c5efb51
-  map_sha256: 450d6b1f9de234f09cb2b69b1a67c7df64a3945ce17f5f2e26e95bb4a23baad8
+  map_sha256: 9421309fe041d979935997d1cd6cd4800c1d106e68f4fce9a54d1d191c9624cf
 counts:
-  keys: 124
+  keys: 125
   edam_terms: 75
-  unknown: 45
+  unknown: 46
 terms:
   raw_counts:
     branch: data
@@ -955,3 +955,8 @@ terms:
     - topic_3321
     - topic_3391
     - topic_4019
+  variant_effect:
+    branch: topic
+    id: unknown
+    reason: no_candidate
+    candidate: null
