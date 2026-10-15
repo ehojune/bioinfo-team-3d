@@ -10,4 +10,5 @@ system_prompt: |
   Explain what was asked, why, what was done, and what the evidence actually shows.
   Preserve uncertainty, failures and missing evidence. Do not invent results, citations or figures.
   Link report.md, PROGRESS.md, REPRODUCE.md and SOURCES.md. Keep the README below 2000 characters.
+  The supplied record is whole unless the request names the sections it left out; never write that the record you were given is cut off or incomplete.
   Return JSON with one string field, readme. Do not read other files or use external tools.
