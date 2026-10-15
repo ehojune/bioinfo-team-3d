@@ -98,6 +98,11 @@ def _bioinfo_row(settings: Settings) -> dict:
         return _row("config", "bioinfo-agent", "warn",
                     bioinfo_link.NOT_CONNECTED + "BIOINFO_AGENT_DIR이 비어 있어 bioinfo-agent 직원(Nextflow 분석)을 쓸 수 없습니다",
                     bioinfo_link.FIX)
+    if not os.path.isabs(os.path.expandvars(os.path.expanduser(folder))):
+        return _row("config", "bioinfo-agent", "warn",
+                    bioinfo_link.NOT_CONNECTED + "BIOINFO_AGENT_DIR이 상대 경로라 task마다 다른 폴더로 읽혀 연결에 실패합니다",
+                    "BIOINFO_AGENT_DIR을 절대 경로로 바꾸세요(예: D:/bioinfo-agent). 새 설정이면 `labhq init --bioinfo-agent <폴더>`가 "
+                    "절대 경로로 저장합니다.")
     if not bioinfo_link.is_plugin_dir(folder):
         return _row("config", "bioinfo-agent", "warn",
                     bioinfo_link.NOT_CONNECTED + "BIOINFO_AGENT_DIR 폴더에서 plugin(.claude-plugin/plugin.json, "

@@ -322,3 +322,40 @@ def test_an_existing_config_is_left_alone_and_nothing_is_asked(monkeypatch):
     no_input(monkeypatch)
     wizard.run()
     assert Path("config/labhq.yaml").read_bytes() == before  # no migration of an existing config
+
+
+# --- the saved folder is absolute: a task reads a relative plugin folder from its own work folder -------------------
+
+
+def test_a_relative_flag_folder_is_saved_as_the_absolute_path_it_was_checked_at(tmp_path, monkeypatch):
+    plugin_folder(tmp_path / "work" / "bioinfo-agent")
+    (tmp_path / "work" / "checkout").mkdir()
+    monkeypatch.chdir(tmp_path / "work" / "checkout")
+    no_input(monkeypatch)
+    wizard.run(config=str(tmp_path / "out" / "labhq.yaml"), yes=True, bioinfo_agent="../bioinfo-agent")
+    saved = written(tmp_path / "out" / "labhq.yaml")["engines"]["claude_code"]["env"]["BIOINFO_AGENT_DIR"]
+    assert Path(saved).is_absolute() and ".." not in Path(saved).parts
+    assert Path(saved) == tmp_path / "work" / "bioinfo-agent"
+
+
+def test_a_relative_folder_from_the_environment_or_the_prompt_is_saved_absolute_too(tmp_path, monkeypatch):
+    plugin_folder(tmp_path / "rel-env")
+    monkeypatch.setenv("BIOINFO_AGENT_DIR", "rel-env")
+    no_input(monkeypatch)
+    wizard.run(yes=True)
+    assert written()["engines"]["claude_code"]["env"]["BIOINFO_AGENT_DIR"] == str(tmp_path / "rel-env")
+    monkeypatch.delenv("BIOINFO_AGENT_DIR")
+    plugin_folder(tmp_path / "rel-typed")
+    monkeypatch.setattr("builtins.input", lambda prompt: "rel-typed" if "찾지 못했습니다" in prompt else (
+        "none" if "scheduler" in prompt else ""))
+    wizard.run(config=str(tmp_path / "typed" / "labhq.yaml"))
+    assert written(tmp_path / "typed" / "labhq.yaml")["engines"]["claude_code"]["env"][
+        "BIOINFO_AGENT_DIR"] == str(tmp_path / "rel-typed")
+
+
+def test_doctor_warns_when_the_configured_folder_is_relative_even_if_it_exists_here(tmp_path):
+    plugin_folder(tmp_path / "rel-config")  # init runs in tmp_path, so the relative name would resolve here
+    settings = Settings.model_validate({"engines": {"claude_code": {"bin": "claude",
+                                                                    "env": {"BIOINFO_AGENT_DIR": "rel-config"}}}})
+    row, = rows(settings, "bioinfo-agent")
+    assert row["status"] == "warn" and "상대 경로" in row["detail"] and "절대 경로" in row["hint"]

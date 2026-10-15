@@ -117,6 +117,12 @@ def _alphagenome_key(settings: Settings) -> None:
     print("AlphaGenome: 키 저장 (이 계정만 읽을 수 있는 파일, 값과 경로 출력 생략)")
 
 
+def _absolute(path: str) -> str:
+    """The folder as an absolute path. The claude_code adapter reads a relative plugin folder from each task's own
+    work folder, so a path saved as typed (`../bioinfo-agent`) would stop connecting as soon as init's cwd is gone."""
+    return os.path.abspath(os.path.expandvars(os.path.expanduser(path)))
+
+
 def _bioinfo_agent(explicit: str | None, yes: bool) -> str | None:
     """The folder for engines.claude_code.env.BIOINFO_AGENT_DIR, or None: bioinfo-agent stays off (#613).
 
@@ -127,7 +133,7 @@ def _bioinfo_agent(explicit: str | None, yes: bool) -> str | None:
             raise InitError("--bioinfo-agent 폴더에서 bioinfo-agent plugin(.claude-plugin/plugin.json과 "
                             "skills/bioinfo-analyze)을 찾지 못했습니다.")
         print("bioinfo-agent: --bioinfo-agent 경로로 연결 (경로 출력 생략)")
-        return explicit
+        return _absolute(explicit)
     found = bioinfo_link.detect()
     if found:
         path, source = found
@@ -139,7 +145,7 @@ def _bioinfo_agent(explicit: str | None, yes: bool) -> str | None:
         path = _ask("bioinfo-agent 폴더를 찾지 못했습니다. 경로를 적거나 비워 두세요(연결 안 함)", "", yes).strip().strip('"')
     if path and not bioinfo_link.is_plugin_dir(path):
         print("주의: 그 폴더에서 plugin(.claude-plugin/plugin.json)을 찾지 못했습니다. 경로를 확인하세요 (doctor가 다시 알려 줌).")
-    return path or None
+    return _absolute(path) if path else None
 
 
 def _dev_log_repo(existing: Settings | None, yes: bool) -> str | None:
