@@ -1,0 +1,11 @@
+pr: 611
+rows:
+- sha: 29cdd86
+  at: 2026-10-15 10:50
+  text: 보고서 PDF의 그림은 크기 제한 없이 요청 묶음의 원본을 쓰고(정리본 PDF도 같음), PDF는 50 MB(github.edition_pdf_max_mb,
+    최대 75) 안으로 그림을 빼지 않고 해상도를 단계적으로 줄여 맞춘다. 그림은 11장까지이고 한 장은 graphical abstract이며,
+    보고서에 없으면 labhq가 계획·입력 출처·결론으로 흐름도를 그려 PDF와 정리본의 첫 그림으로 넣는다(#608).
+- sha: 6f6ffae
+  at: 2026-10-15 10:53
+  text: 실제 브라우저 test는 이 PC에서 인쇄가 안 되면 건너뛰어, CI 러너의 Chrome sandbox 문제를 그림 줄이기 실패로 세지
+    않는다(#608).

@@ -259,6 +259,10 @@ class GitHubHTTPError(RuntimeError):
         return max([0.0, *delays])
 
 
+CONTENTS_API_MAX_BYTES = 100 * 1024 * 1024  # GitHub's limit for one file through the contents API, as sent (base64)
+BINARY_WRITE_TIMEOUT_S = 900.0  # an upload of tens of MB over a slow link; the connect and read timeouts stay 30 s
+
+
 class GitHubClient:
     def __init__(self, token: str, api_url: str, transport: httpx.AsyncBaseTransport | None = None,
                  clean: Callable[[str], str] | None = None):
@@ -373,16 +377,23 @@ class GitHubClient:
         return await self.put_binary(repo, path, content, branch, "연구 결과 그림")
 
     async def put_binary(self, repo: str, path: str, content: bytes, branch: str, message: str) -> dict:
-        """Bytes of a reviewed result edition (an image, the report PDF): sent as they are, replacing an existing file."""
+        """Bytes of a reviewed result edition (an image, the report PDF): sent as they are, replacing an existing file.
+
+        The contents API takes the file as base64, a third bigger than the bytes, and refuses a file over
+        CONTENTS_API_MAX_BYTES (100 MB): a 50 MB PDF is 67 MB on the wire. That is checked before anything is sent, and the
+        upload gets the write time such a body needs instead of the 30 seconds of an ordinary call (#608)."""
+        encoded = base64.b64encode(content).decode("ascii")
+        if len(encoded) > CONTENTS_API_MAX_BYTES:
+            raise ValueError(f"{len(content) / 1024 / 1024:.1f} MB is more than the GitHub contents API takes "
+                             f"({CONTENTS_API_MAX_BYTES // 1024 // 1024} MB as base64)")
         endpoint = f"/repos/{repo}/contents/{quote(path, safe='/')}"
         existing = await self.http.get(endpoint, params={"ref": branch})
         if existing.status_code not in {200, 404}:
             raise GitHubHTTPError("GET", endpoint, existing)
-        payload = {"message": message, "branch": branch,
-                   "content": base64.b64encode(content).decode("ascii")}
+        payload = {"message": message, "branch": branch, "content": encoded}
         if existing.status_code == 200:
             payload["sha"] = existing.json()["sha"]
-        response = await self.http.put(endpoint, json=payload)
+        response = await self.http.put(endpoint, json=payload, timeout=httpx.Timeout(30.0, write=BINARY_WRITE_TIMEOUT_S))
         if response.status_code >= 400:
             raise GitHubHTTPError("PUT", endpoint, response)
         return response.json()

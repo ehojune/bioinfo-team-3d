@@ -1,5 +1,9 @@
 """The repository edition's report.pdf and figure links (#584 item 4). GitHub is a mock transport; the PDF builder is
-mocked or, where noted, runs for real with no browser found."""
+mocked or, where noted, runs for real with no browser found.
+
+#608 changed the contract these tests pin: the PDF is printed from the request bundle's original figures under the
+edition's cleaned text (not from the size-limited edition copies), is never dropped for its size, and the edition opens
+with a graphical abstract."""
 import base64
 from pathlib import Path
 
@@ -33,12 +37,11 @@ def prepare(tmp_path, monkeypatch):
     return hub, Path(hub.s.runner.workspace_root) / "requests/req_test-editor"
 
 
-def builder(seen, data=PDF):
-    def build(req, settings, tasks=None, *, source=None, **kwargs):
-        seen.append({"source": source, "req": req,
-                     "files": sorted(path.relative_to(source).as_posix() for path in source.rglob("*") if path.is_file()),
-                     "report": (source / "report.md").read_text(encoding="utf-8")})
-        return ReportFile("pdf", data, "", "req_test-report.pdf", "application/pdf")
+def builder(seen, data=PDF, **flags):
+    def build(req, settings, tasks=None, *, source=None, report_text=None, scrub=None, **kwargs):
+        seen.append({"source": source, "req": req, "report": report_text, "scrub": scrub,
+                     "files": sorted(path.relative_to(source).as_posix() for path in source.rglob("*") if path.is_file())})
+        return ReportFile("pdf", data, "", "req_test-report.pdf", "application/pdf", **flags)
     return build
 
 
@@ -66,10 +69,13 @@ async def test_pdf_is_in_the_edition_and_uploaded_as_binary(tmp_path, monkeypatc
     monkeypatch.setattr("labhq.result_storage.build_report_file", builder(seen))
     approve_all(hub, cards)
     await publish(hub, calls)
-    assert len(seen) == 1 and seen[0]["source"] == edition  # printed from the reviewed edition, not the raw bundle
-    assert "steps/s1/outputs/plot.png" in seen[0]["files"] and "steps/s1/outputs/extra.png" not in seen[0]["files"]
-    assert "(steps/s1/outputs/plot.png)" in seen[0]["report"] and "(wd1/outputs/plot.png)" not in seen[0]["report"]
-    assert seen[0]["req"]["report_appendix"] == "" and "alice" not in seen[0]["req"]["report"]
+    bundle = edition.with_name("req_test")
+    assert len(seen) == 1 and seen[0]["source"] == bundle  # #608: the bundle's original figures, not the edition's copies
+    assert "steps/s1/outputs/plot.png" in seen[0]["files"] and "steps/s1/outputs/extra.png" in seen[0]["files"]
+    assert not (edition / "steps/s1/outputs/extra.png").exists()  # the edition leaves it out, the PDF does not
+    assert "(steps/s1/outputs/plot.png)" in seen[0]["report"] and "(steps/s1/outputs/extra.png)" in seen[0]["report"]
+    assert "(wd1/outputs/plot.png)" not in seen[0]["report"]
+    assert seen[0]["req"]["report_appendix"] == "" and "alice" not in seen[0]["report"]  # cleaned like the edition
     assert (edition / "report.pdf").read_bytes() == PDF
     sent = puts(calls)
     pdf = sent["labhq/results/req_test/report.pdf"]
@@ -116,16 +122,33 @@ async def test_pdf_skipped_with_a_reason_and_publishing_still_goes_through(tmp_p
     assert hub.requests["req_test"]["result_storage"]["status"] == "published"
 
 
-async def test_size_cap_from_settings(tmp_path, monkeypatch):
+async def test_pdf_over_the_cap_is_kept_with_a_size_note(tmp_path, monkeypatch):
+    """#608: a PDF the figure shrinking could not bring under the cap used to be left out; it is kept and says so."""
     hub, edition = prepare(tmp_path, monkeypatch)
-    assert hub.s.github.edition_pdf_max_mb == 20
+    assert hub.s.github.edition_pdf_max_mb == 50
     hub.s.github.edition_pdf_max_mb = 1
+    data = b"%PDF-1.7\n" + b"0" * (1024 * 1024)  # one byte over 1 MB
     seen, calls, cards = [], [], []
-    monkeypatch.setattr("labhq.result_storage.build_report_file",
-                        builder(seen, b"%PDF-1.7\n" + b"0" * (1024 * 1024)))  # one byte over 1 MB
+    monkeypatch.setattr("labhq.result_storage.build_report_file", builder(seen, data, shrunk=6, over_cap=True))
     approve_all(hub, cards)
     await publish(hub, calls)
-    assert cards[0]["detail"]["pdf"] == "PDF는 포함하지 않았어요: PDF가 1.0 MB라 한도 1 MB를 넘어요."
+    note = "그림을 6단계까지 줄여도 PDF가 1.0 MB라 한도 1 MB를 넘어요. 그림은 하나도 빼지 않았어요."
+    assert cards[0]["detail"]["pdf"] == f"포함: report.pdf (1.0 MB) · {note}"
+    assert base64.b64decode(puts(calls)["labhq/results/req_test/report.pdf"]["content"]) == data
+    assert note in (edition / "README.md").read_text(encoding="utf-8") and (edition / "report.pdf").read_bytes() == data
+    saved = hub.requests["req_test"]["result_storage"]
+    assert saved["status"] == "published" and saved["pdf"]["included"] and saved["pdf"]["size_note"] == note
+
+
+async def test_pdf_past_what_github_takes_is_left_out_with_its_size(tmp_path, monkeypatch):
+    hub, edition = prepare(tmp_path, monkeypatch)
+    monkeypatch.setattr("labhq.result_storage.PDF_UPLOAD_MAX_MB", 1)
+    seen, calls, cards = [], [], []
+    monkeypatch.setattr("labhq.result_storage.build_report_file",
+                        builder(seen, b"%PDF-1.7\n" + b"0" * (1024 * 1024)))
+    approve_all(hub, cards)
+    await publish(hub, calls)
+    assert cards[0]["detail"]["pdf"] == "PDF는 포함하지 않았어요: PDF가 1.0 MB라 GitHub에 올릴 수 있는 한도 1 MB를 넘어요."
     assert "labhq/results/req_test/report.pdf" not in puts(calls) and not (edition / "report.pdf").exists()
     assert hub.requests["req_test"]["result_storage"]["status"] == "published"
 
@@ -142,9 +165,11 @@ async def test_pdf_exactly_at_the_cap_is_kept(tmp_path, monkeypatch):
 
 
 def test_cap_setting_is_positive():
-    assert GitHubSettings().edition_pdf_max_mb == 20
-    with pytest.raises(ValueError):
-        GitHubSettings(edition_pdf_max_mb=0)
+    assert GitHubSettings().edition_pdf_max_mb == 50  # #608: it was 20
+    assert GitHubSettings(edition_pdf_max_mb=75).edition_pdf_max_mb == 75  # 75 MB is 100 MB as base64
+    for bad in (0, 76):
+        with pytest.raises(ValueError):
+            GitHubSettings(edition_pdf_max_mb=bad)
 
 
 async def test_figure_links_resolve_inside_the_edition(tmp_path, monkeypatch):
@@ -164,9 +189,10 @@ async def test_figure_links_resolve_inside_the_edition(tmp_path, monkeypatch):
                 continue
             assert kind == "local" and (edition / value).is_file(), (name, link.target)
             kept += 1
-    assert kept == 2  # plot.png in report.md and in the README excerpt
+    assert kept == 4  # plot.png and the graphical abstract (#608), in report.md and in the README excerpt
     report = (edition / "report.md").read_text(encoding="utf-8")
     assert "![핵심 그림](steps/s1/outputs/plot.png)" in report
+    assert [link.target for link in image_links(report)][:2] == ["graphical_abstract.svg", "steps/s1/outputs/plot.png"]
     assert "*(그림 생략: 미보고 그림)*" in report and "*(그림 생략: 묶음 밖)*" in report
     assert "*(그림 생략: 로컬 경로)*" in report and "alice" not in report
     assert "`![예](wd1/outputs/none.png)`" in report  # code stays as written
