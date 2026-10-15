@@ -14,10 +14,13 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 14:38 | [`bc42f1b`](https://github.com/ehojune/bioinfo-team-3d/pull/615/commits/bc42f1b) | 계약 저장(두 복사본과 roster 갱신)과 작업 결과 파일 둘을 각각 한 작업으로 묶어 취소가 반쪽 상태를 남기지 않게 하고, 놀고 있는 쓰기 lane에서도 서로 다른 thread의 동기 호출이 호출 순서를 지키게 한다(#606). |
 | 14:09 | [`7a36ced`](https://github.com/ehojune/bioinfo-team-3d/pull/617/commits/7a36ced) | status·doctor가 신원을 읽을 수 없는 감독 기록(접근 거부, 다른 설정 파일)도 죽은 감독 기록처럼 warn으로 보여 준다(#589 봇 P2). |
 | 14:09 | [`0d5eb80`](https://github.com/ehojune/bioinfo-team-3d/pull/617/commits/0d5eb80) | supervisor.restart가 켜져 있어도 종료 코드 2(labhq 자신의 시작 거부)는 다시 시작하지 않고, up의 감독 검사를 #614 identity 검증과 함께 가짜 프로세스로 test한다(#589). |
 | 14:06 | [`4c1a7e4`](https://github.com/ehojune/bioinfo-team-3d/pull/617/commits/4c1a7e4) | origin/main(#614)을 병합해 up이 감독 프로세스 검사와 인스턴스 identity 검증(check·verify·기록)을 함께 돌린다. gateway·runner의 소유 기록은 프로세스가 같은 -c로 스스로 계산하므로 감독이 넘길 것은 없다(#589). |
+| 13:59 | [`18c1528`](https://github.com/ehojune/bioinfo-team-3d/pull/615/commits/18c1528) | 느린 디스크에서 /api/health가 멈추지 않는지 보는 test가 CI 기계의 일시 지연 한 번에는 실패하지 않게 한다. 조사 100여 번 중 하나가 0.41초 걸려 3.10 job이 실패했다(#606). |
 | 13:54 | [`925e877`](https://github.com/ehojune/bioinfo-team-3d/pull/624/commits/925e877) | OKF Loremaster를 검토해 참고 자료에 올리고, 가져갈 것의 매핑과 라이선스 조건을 docs/reference에 남겼다(코드 변경 없음). |
+| 13:28 | [`f7466c8`](https://github.com/ehojune/bioinfo-team-3d/pull/615/commits/f7466c8) | 독립 리뷰 지적을 고친다. 작업을 닫는 사건(상태·결과·finished 표시)을 한 작업으로 묶어 둘째 취소에도 결과가 나가게 하고, 결과가 이미 나간 task에는 취소 결과를 더 보내지 않으며, Windows 쓰기 thread의 교체·읽기 충돌을 짧게 재시도한다(#606). |
 | 13:10 | [`34e8b20`](https://github.com/ehojune/bioinfo-team-3d/pull/610/commits/34e8b20) | 출처 호스트 거름을 하나(public_link)로 닫고(끝 점·IPv6·IPv4 변형·userinfo), 괄호 있는 DOI와 짧은 PMID를 받으며, 게시 카드 답과 --redraft를 같은 lock으로 직렬화해 게시 시작 뒤 재작성을 거부한다(#607). |
 | 12:50 | [`c7f0a12`](https://github.com/ehojune/bioinfo-team-3d/pull/617/commits/c7f0a12) | tests·labhq 어디에도 taskkill의 /T 스위치가 없도록 가드 test를 더하고, 걸리던 설명 주석 여덟 곳의 말을 바꾼다(#589). |
 | 12:49 | [`89b4dfe`](https://github.com/ehojune/bioinfo-team-3d/pull/617/commits/89b4dfe) | 프로세스가 가까운 조상 4개의 handle을 열어 두는 pin_ancestors를 더해, 끝난 부모의 PID가 다른 프로세스에 재사용되지 않게 한다(#589). |
@@ -27,6 +30,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 12:11 | [`4bf0768`](https://github.com/ehojune/bioinfo-team-3d/pull/610/commits/4bf0768) | main의 PDF 그림 정책(#611·#616)을 합치고, 편집자 입력·출처 추출·--redraft와 함께 draft_documents·finish가 초록과 출처 assets를 모두 받게 한다(#607). |
 | 12:05 | [`5ef1ee2`](https://github.com/ehojune/bioinfo-team-3d/pull/614/commits/5ef1ee2) | 예시 설정이 semantics ab·actions confirm을 켜도 action layer만 지우는 검사(test_semantics_shadow_remove)가 통과하도록 의미 모델 설정 test를 고친다(#613). |
 | 11:32 | [`836b448`](https://github.com/ehojune/bioinfo-team-3d/pull/616/commits/836b448) | 게시 PDF는 정리본이 담을 수 있는 그림(보고된 산출물, 정리본이 담는 형식)만 넣고 크기 제한만 푼다. 보고서의 graphical abstract는 첫 제목 아래 첫 그림으로 옮기고, verify는 자체 abstract가 없으면 그려 넣을 한 자리를 빼 결과 그림 10장까지만 센다(#608, #611 리뷰 P2). |
+| 11:32 | [`195fe11`](https://github.com/ehojune/bioinfo-team-3d/pull/615/commits/195fe11) | runner의 저장 쓰기(작업 폴더 파일 289번, SQLite outbox)를 대상별 쓰기 thread로 옮겨 느린 디스크에서도 API가 멈추지 않게 한다. 쓰기 순서·예외 전달·종료 때 비우기·충돌 복구는 그대로다(#606). |
 | 11:31 | [`778edff`](https://github.com/ehojune/bioinfo-team-3d/pull/614/commits/778edff) | 격리 설치 검사(scripts/clean_install_check.py)의 init 입력을 질문 수에 매이지 않게 해, init이 묻는 질문이 늘어도 EOF로 멈추지 않는다(#613). |
 | 11:27 | [`fad7274`](https://github.com/ehojune/bioinfo-team-3d/pull/614/commits/fad7274) | labhq init이 PI가 시험한 설정(연구 모드·분야 팩·의미 모델 ab·산출물 종류 선언)으로 새 설정을 만들고, bioinfo-agent 위치를 찾거나 묻고 못 찾으면 연결 안 됨을 알리며, dev_log.repo를 묻는다(#613). |
 | 11:26 | [`e3fc6b0`](https://github.com/ehojune/bioinfo-team-3d/pull/614/commits/e3fc6b0) | 설정이 다른 labhq가 같은 state 폴더·포트를 쓰거나 이 PC의 주 설정과 다르면 doctor와 up이 쉬운 한국어로 알리고 고치는 명령(labhq -c <그 설정> open 등)을 보여 준다(#613). |
