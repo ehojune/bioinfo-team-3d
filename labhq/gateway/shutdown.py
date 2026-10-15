@@ -120,6 +120,7 @@ class WebShutdown:
                 raise HTTPException(409, "이 인스턴스의 PID 기록을 확인할 수 없어 끌 수 없습니다. "
                                     "labhq up으로 시작한 인스턴스에서 사용하세요.")
         self.status = "stopping"
+        self.hub.stopping = True
         return {"status": self.status}
 
     def run(self, force: bool) -> None:
@@ -138,6 +139,7 @@ class WebShutdown:
                 raise
         except (SystemExit, Exception):
             self.status = "failed"
+            self.hub.stopping = False
         # On success the status stays "stopping" until this process has exited.
 
     def _mark_gateway_stopping(self) -> None:

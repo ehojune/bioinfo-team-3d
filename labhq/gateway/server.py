@@ -250,6 +250,7 @@ class Hub:
     def __init__(self, settings: Settings, github_transport: httpx.AsyncBaseTransport | None = None):
         self.s = settings
         self.session_started_at = time.time()
+        self.stopping = False
         self.store = StateStore(settings.path(settings.gateway.state_dir) / "gateway.sqlite3")
         from ..knowledge.recall import KnowledgeRecall
         self.knowledge = KnowledgeRecall(self)
@@ -574,6 +575,8 @@ class Hub:
         req = self.requests[rid]
         before = req.get("status")
         req["status"] = status
+        if status in {"failed", "interrupted"}:
+            await self.close_publish_cards(rid)
         self.save_request(rid)
         if before != status:
             await self.publish({"type": "request.status", "ts": time.time(), "request_id": rid,
@@ -1176,6 +1179,8 @@ class Hub:
         cp4.reconcile(self.requests[rid])
         if is_terminal_request(self.requests[rid].get("status")):  # a finished request is never resumed (#607)
             self.retire_resume_cards(rid, "요청이 끝나 재개 카드를 닫았습니다")
+        if self.requests[rid].get("status") in {"failed", "interrupted"}:
+            asyncio.get_running_loop().create_task(self.close_publish_cards(rid))
         self.requests[rid].update(pi_review_pending=True, pi_reviewed_at=None)
         data = {**data, "pi_review_pending": True, "pi_reviewed_at": None}
         if cp4.enabled(self.requests[rid]):
@@ -3208,6 +3213,36 @@ class Hub:
             self.requests[rid].update(status="failed", error="resume declined", finished_at=time.time())
             self.schedule_terminal(rid, "request.failed", {"error": "resume declined"})
 
+    async def close_publish_cards(self, rid: str) -> None:
+        for aid in self.result_storage.publish_cards(rid):
+            await self.close_approval(aid, "요청이 중단되거나 대체되어 게시 카드를 닫았습니다")
+
+    async def mark_interrupted(self, rid: str) -> dict:
+        from ..interruption import recorded_shutdown_evidence, shutdown_interruption
+        req = self.requests[rid]
+        evidence = recorded_shutdown_evidence(self.s, req)
+        if req.get("status") != "failed" or req.get("revised_to") or not shutdown_interruption(
+                exit_code=evidence.get("exit_code"), error=evidence.get("error"), stopping=evidence.get("stopping")):
+            raise ValueError("종료 당시의 종료 코드와 종료 중 표시가 확인된 failed 요청만 정정합니다")
+        previous = copy.deepcopy(req)
+        updated = {**req, "status": "interrupted", "shutdown_evidence": evidence,
+                   "pi_review_pending": False, "pi_reviewed_at": None}
+        updated.pop("finished_at", None)
+        event = self.store.commit_request_event(rid, updated,
+            {"type": "request.corrected", "ts": time.time(), "request_id": rid,
+             "data": {"actor": "pi", "previous": previous, "status": "interrupted", "evidence": evidence}},
+            self.s.gateway.event_buffer)
+        req.update(updated)
+        req.pop("finished_at", None)
+        self.events.append(event)
+        self.pending_committed.append((event, tuple(self.clients)))
+        await self._send_committed_event()
+        await self.close_publish_cards(rid)
+        approval = self.new_resume_approval(rid)
+        await self.publish({"type": "approval.requested", "ts": time.time(), "request_id": rid,
+                            "data": approval.model_dump(mode="json")})
+        return {"request_id": rid, "status": "interrupted"}
+
     async def close_approval(self, aid: str, note: str, *, notify_runner: bool = True) -> bool:
         """Close a pending card without a PI answer: whoever waits on it hears "no" with state ``expired``.
 
@@ -3462,6 +3497,8 @@ class Hub:
             if old.get("revised_to") != existing:
                 old["revised_to"] = existing
                 self.save_request(rid)
+            if self.result_storage.publish_cards(rid):
+                asyncio.get_running_loop().create_task(self.close_publish_cards(rid))
             return existing
         text = (str(old.get("text") or "").rstrip() +
                 f"\n\n[CP1 수정 요청 · {rid}] PI가 이전 계획에 남긴 고칠 점:\n{note.strip()}")
@@ -3493,6 +3530,8 @@ class Hub:
         new_rid = self.create_request(body, extra=extra)
         old["revised_to"] = new_rid
         self.save_request(rid)
+        if self.result_storage.publish_cards(rid):
+            asyncio.get_running_loop().create_task(self.close_publish_cards(rid))
         return new_rid
 
     def start_followup(self, rid: str, text: str) -> dict:
@@ -3704,6 +3743,10 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         hub.knowledge.start()
         hub.recover_terminal_deliveries()
         await hub.finish_interrupted_cancels()
+        for rid, req in hub.requests.items():
+            if (req.get("status") == "interrupted" or req.get("revised_to")
+                    or (req.get("status") == "failed" and not req.get("pi_reviewed_at"))):
+                await hub.close_publish_cards(rid)
         hub.recover_pending_bundles()
         await hub.expire_stale_resume_cards()
         hub.recover_final_reviews()
@@ -3717,6 +3760,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
 
     @app.on_event("shutdown")
     async def warn_running_on_shutdown() -> None:
+        hub.stopping = True
         await hub.pi_interpreter.close()
         for timer in hub.final_review_timers.values():
             timer.cancel()
@@ -3897,6 +3941,15 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             raise HTTPException(404)
         try:
             return await hub.result_storage.republish(rid)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.post("/api/requests/{rid}/mark-interrupted", dependencies=[Depends(auth)])
+    async def mark_interrupted(rid: str) -> dict:
+        if rid not in hub.requests:
+            raise HTTPException(404)
+        try:
+            return await hub.mark_interrupted(rid)
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
 

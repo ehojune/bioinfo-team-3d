@@ -652,7 +652,7 @@ class ResultStorage:
             if saved.get("mode") == "local":
                 saved["status"] = "local"
                 return
-            if self.s.github.auto_publish_results and not req.get("pi_reviewed_at"):
+            if not req.get("pi_reviewed_at") or req.get("revised_to"):
                 return  # review_done schedules this saved draft again.
             if not self.s.github.auto_publish_results:
                 detail = {"documents": docs, "repo": saved.get("repo"),
@@ -668,7 +668,7 @@ class ResultStorage:
                     summary=f"편집한 결과를 {saved.get('repo')}에 올릴까요?", detail=detail)
                 saved = req["result_storage"]
                 if not decision.get("approved"):
-                    saved["status"] = "draft" if decision.get("state") == "timed_out" else "declined"
+                    saved["status"] = "draft" if decision.get("state") in {"timed_out", "expired"} else "declined"
                     return
             self.uploading.add(rid)  # from here a redraft is refused: some files may already be in the repository
             try:

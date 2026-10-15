@@ -259,6 +259,7 @@ class Runner:
         self.scheduler = Scheduler(settings.hpc)
         self.connected = asyncio.Event()
         self._stopping = False
+        self.started_at = time.time()
         self.engine_versions: dict[str, str] | None = None  # probed once, off the event loop, before connecting
         self.local_software: dict | None = None  # bounded doctor probes, once before the first hello
         self.codex_sandbox = SandboxWatch()  # elevated setup still fits this Codex (#328)
@@ -1832,6 +1833,11 @@ class Runner:
             result.tool_errors = [*result.tool_errors, *tool_errors]
         if not result.ok and result.quota_reset_at is None:  # only this machine knows the CLI's zone
             result.quota_reset_at = quota_reset_instant(agent.engine.value, result.error)
+        from ..interruption import shutdown_interruption, stopping_marker
+        stopping = self._stopping or stopping_marker(self.s, self.started_at)
+        if not result.ok and shutdown_interruption(exit_code=result.exit_code, error=result.error, stopping=stopping):
+            result.shutdown_evidence = {"exit_code": result.exit_code, "error": result.error,
+                                        "stopping": True, "source": "runner", "at": time.time()}
         state = "hibernating" if waiting(result) else ("done" if result.ok else "error")
         extra = ({"jobs": pending, "asks": result.pending_asks} if waiting(result) else
                  ({"error": short(result.error, 200)} if result.error else {}))

@@ -21,6 +21,7 @@ from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..artifact_policy import (OUTPUT_ENV_DIR, OUTPUT_REFERENCE_DIR, OUTPUT_SCRIPTS_DIR,
                                unreported_warning_paths)
 from ..costs import cost_detail, format_cost, task_cost_item
+from ..interruption import ShutdownInterrupted, shutdown_interruption, stopping_marker
 from ..pi_text import PI_TEXT_RULE
 from ..evidence.claims import RESULT_CONTRACT_FIELD_RULES
 from ..evidence.report_check import (FAILED_LOOKUP_TITLE, anchor, check_report, claim_rows, failed_lookup_lines,
@@ -3221,6 +3222,13 @@ class Orchestrator:
                     res = merged_workspace_rerun(previous_result, res)
                     if kind == "environment":  # the record the step result, its event and the report show (#35)
                         res = res.model_copy(update={"environment": environment_problem(res, engine)})
+                evidence = res.shutdown_evidence or {"exit_code": res.exit_code, "error": res.error,
+                    "stopping": bool(getattr(self.hub, "stopping", False)) or stopping_marker(
+                        self.hub.s, getattr(self.hub, "session_started_at", time.time())), "source": "gateway"}
+                if not res.ok and shutdown_interruption(exit_code=evidence.get("exit_code"),
+                        error=evidence.get("error"), stopping=evidence.get("stopping")):
+                    evidence = {**evidence, "task_id": res.task_id, "kind": current.meta.get("kind"), "at": time.time()}
+                    raise ShutdownInterrupted(evidence)
                 if res.tool_errors:
                     tool_errors = list(dict.fromkeys([*tool_errors, *res.tool_errors]))
                 if tool_errors:  # a retry that succeeds keeps the earlier attempts' failed lookups (PR #363 review)
@@ -4004,6 +4012,11 @@ class Orchestrator:
                     except BudgetExceeded as e:
                         await skip(sid, str(e))
                         continue
+                    except ShutdownInterrupted:
+                        for pending in running.values():
+                            pending.cancel()
+                        await asyncio.gather(*running.values(), return_exceptions=True)
+                        raise
                     except asyncio.CancelledError:
                         outcome = TaskResult(task_id="", agent_id=by_id[sid]["agent_id"], ok=False, error="cancelled")
                     except Exception as e:
@@ -4877,6 +4890,7 @@ class Orchestrator:
             cp4.reconcile(req)
             self.hub.save_request(rid)
             return  # a saved final draft never goes through synthesis again, even with changed settings
+        req.pop("shutdown_evidence", None)  # a new attempt must not inherit the previous shutdown verdict
         refs = reference_meta(req)
         # Pointers ride with the request text, so briefing, plan, steps, review and report all see them (#36).
         text = (req["text"] + render_references(req.get("references")) +
@@ -6069,6 +6083,14 @@ class Orchestrator:
             report = _append_report_metadata(body, [review_appendix]) if review_appendix else body
             self._finish(rid, report, serialized_results(),
                          ok=final.ok and rid not in self.budget_denials, review=review)
+        except ShutdownInterrupted as exc:
+            await asyncio.gather(*self.cancel_steps(rid), return_exceptions=True)
+            req.update(status="interrupted", shutdown_evidence=exc.evidence)
+            self.hub.save_request(rid)
+            if hasattr(self.hub, "close_publish_cards"):
+                await self.hub.close_publish_cards(rid)
+            await self._emit(rid, "request.status", {"status": "interrupted", "reason": "shutdown",
+                                                    "evidence": exc.evidence})
         except Exception as e:
             if self._continuation_unstarted(req):
                 # Ends as the revise it continued, with that round's plan and results put back (``_finish``).
