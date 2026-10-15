@@ -12,3 +12,6 @@ rows:
 - sha: 2dfdb5d
   at: 2026-10-16 00:59
   text: uv grant를 --no-project·--no-config 직접 실행으로 제한하고 cwd backend·환경 변수 접두 회귀 검증
+- sha: c1947c9
+  at: 2026-10-16 01:15
+  text: task 한정 grant와 카드 선택지를 제거하고 구버전 저장 choice를 무시
