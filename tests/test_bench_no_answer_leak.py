@@ -1,5 +1,6 @@
 import re
 import subprocess
+import unicodedata
 from collections import defaultdict
 from pathlib import Path
 
@@ -12,10 +13,19 @@ IDENTIFIER_TYPES = {"string", "string_list"}
 ALLOWED_OCCURRENCES = {
     # (relative path, identifier): "왜 런타임 prompt의 벤치 정답 누출이 아닌지"
 }
+SEPARATOR_CHARS = r"[-_.\s]"
+SEPARATOR_RE = re.compile(rf"{SEPARATOR_CHARS}+")
+
+
+def _identifier_forms(value):
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    compact = SEPARATOR_RE.sub("", normalized)
+    return normalized, compact if len(compact) >= 4 else None
 
 
 def _answer_identifiers(case_dir=CASE_DIR):
     answers = defaultdict(set)
+    canonical_identifiers = {}
     for case_path in sorted(case_dir.glob("*.yaml")):
         case = yaml.safe_load(case_path.read_text(encoding="utf-8"))
         case_name = case.get("id", case_path.stem)
@@ -27,7 +37,9 @@ def _answer_identifiers(case_dir=CASE_DIR):
                 values = [values]
             for value in values:
                 if isinstance(value, str) and value:
-                    answers[value].add(f"{case_name}.{field_name}")
+                    normalized, _ = _identifier_forms(value)
+                    canonical = canonical_identifiers.setdefault(normalized, value)
+                    answers[canonical].add(f"{case_name}.{field_name}")
     assert answers, "bench result_fields.equals에서 정답 식별자를 하나도 수집하지 못했습니다"
     return answers
 
@@ -59,18 +71,24 @@ def _tracked_scan_paths(repo_root=REPO_ROOT):
     return paths
 
 
-def _identifier_pattern(identifier):
-    return re.compile(rf"(?<![A-Za-z0-9_]){re.escape(identifier)}(?![A-Za-z0-9_])")
+def _identifier_patterns(identifier):
+    normalized, compact = _identifier_forms(identifier)
+    patterns = [re.compile(rf"(?<!\w){re.escape(normalized)}(?!\w)")]
+    if compact is not None:
+        flexible = f"{SEPARATOR_CHARS}*".join(re.escape(character) for character in compact)
+        patterns.append(re.compile(rf"(?<!\w){flexible}(?!\w)"))
+    return patterns
 
 
 def _find_leaks(repo_root, relative_paths, answers):
-    patterns = {identifier: _identifier_pattern(identifier) for identifier in answers}
+    patterns = {identifier: _identifier_patterns(identifier) for identifier in answers}
     leaks = []
     for relative in relative_paths:
         path = repo_root / relative
         for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            for identifier, pattern in patterns.items():
-                if pattern.search(line):
+            normalized_line, _ = _identifier_forms(line)
+            for identifier, identifier_patterns in patterns.items():
+                if any(pattern.search(normalized_line) for pattern in identifier_patterns):
                     if (relative.as_posix(), identifier) in ALLOWED_OCCURRENCES:
                         continue
                     cases = ", ".join(sorted(answers[identifier]))
@@ -122,3 +140,45 @@ def test_general_example_wording_is_not_treated_as_an_answer_identifier(tmp_path
     copied_path.write_text(f'example = "{example}"\n', encoding="utf-8")
 
     assert _find_leaks(copied_root, [relative], _answer_identifiers()) == []
+
+
+def test_leak_check_normalizes_case_separators_and_fullwidth_characters(tmp_path):
+    relative = Path("labhq") / "answer_variants.py"
+    copied_root = tmp_path / "repo-copy"
+    copied_path = copied_root / relative
+    copied_path.parent.mkdir(parents=True)
+    copied_path.write_text(
+        "genes = ['gkn1', 'COL1-A1']\nstructure = '６ｏｉｍ'\n",
+        encoding="utf-8",
+    )
+
+    leaks = _find_leaks(copied_root, [relative], _answer_identifiers())
+
+    assert leaks == [
+        "labhq/answer_variants.py:1: GKN1 (geo-gastric-summary.down_gene)",
+        "labhq/answer_variants.py:1: COL1A1 (geo-gastric-summary.up_gene)",
+        "labhq/answer_variants.py:2: 6OIM (inco-kras-g12c.pdb_id)",
+    ]
+
+
+def test_leak_check_does_not_match_identifiers_inside_general_words(tmp_path):
+    relative = Path("labhq") / "general_words.py"
+    copied_root = tmp_path / "repo-copy"
+    copied_path = copied_root / relative
+    copied_path.parent.mkdir(parents=True)
+    copied_path.write_text(
+        "labels = ['megkn1like', 'precol1a1post', 'x6oimy']\n",
+        encoding="utf-8",
+    )
+
+    assert _find_leaks(copied_root, [relative], _answer_identifiers()) == []
+
+
+def test_short_identifiers_do_not_use_separator_removed_matching(tmp_path):
+    relative = Path("labhq") / "short_identifier.py"
+    copied_root = tmp_path / "repo-copy"
+    copied_path = copied_root / relative
+    copied_path.parent.mkdir(parents=True)
+    copied_path.write_text("label = 'A-B-C'\n", encoding="utf-8")
+
+    assert _find_leaks(copied_root, [relative], {"ABC": {"case.field"}}) == []
