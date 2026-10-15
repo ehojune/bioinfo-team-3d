@@ -106,9 +106,14 @@ async def test_health_answers_while_the_runner_writes_through_a_slow_disk(tmp_pa
         # Probes sent while a slow write was in flight, from the stall's start to its end.
         during = [latency for start, latency in probes if first <= start <= last]
         assert len(during) >= 5, f"too few probes while writes stalled: {len(during)}"
-        assert max(during) < PROBE_LIMIT_S, (
-            f"/api/health took {max(during):.2f} s while a write was stalled; "
-            f"{sorted(round(x, 2) for x in during)[-5:]}")
+        # A frozen loop answers nothing for the whole stall: a few probes, the first of them taking about STALL_S.
+        # A live one answers every probe at once. One probe in twenty may meet a hiccup of the CI machine itself
+        # (a real fsync on a shared disk, a starved core) - one 0.41 s outlier among 100 fast probes failed a run -
+        # but no probe may take most of a stall.
+        slow = [latency for latency in during if latency >= PROBE_LIMIT_S]
+        assert max(during) < STALL_S * 0.9 and len(slow) <= max(1, len(during) // 20), (
+            f"/api/health was slow while a write was stalled: {len(slow)} of {len(during)} probes took "
+            f"{PROBE_LIMIT_S} s or more, the slowest {sorted(round(x, 2) for x in during)[-5:]}")
     finally:
         stop.set()
         runner.stop()
