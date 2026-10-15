@@ -216,7 +216,15 @@ def bundle_figure_check(root: Path) -> dict[str, object]:
                     continue
                 if empty:
                     problems.append(f"{name}: 링크한 그림 파일이 비어 있습니다: {value}")
-    if len(local) > MAX_REPORT_FIGURES:
-        problems.append(f"보고서 그림이 {len(local)}장이에요. 한 보고서에는 {MAX_REPORT_FIGURES}장까지(결과 그림 "
-                        f"{MAX_REPORT_FIGURES - 1}장과 graphical abstract 1장)만 넣고, PDF에는 앞의 {MAX_REPORT_FIGURES}장만 들어갑니다.")
+    # Without an abstract of its own the PDF and the edition draw one, which takes the 11th place: 10 result figures at
+    # most (#611 review). With one, the 11 are its own and 10 results.
+    own_abstract = any(is_abstract_target(value) and holds(value) for value in local)
+    limit = MAX_REPORT_FIGURES if own_abstract else MAX_REPORT_FIGURES - 1
+    if len(local) > limit:
+        problems.append(
+            f"보고서 그림이 {len(local)}장이에요. 한 보고서에는 {MAX_REPORT_FIGURES}장까지(결과 그림 {MAX_REPORT_FIGURES - 1}장과 "
+            f"graphical abstract 1장)만 넣고, PDF에는 앞의 {MAX_REPORT_FIGURES}장만 들어갑니다."
+            if own_abstract else
+            f"보고서 그림이 {len(local)}장이에요. graphical abstract가 없으면 labhq가 한 장을 그려 넣으므로 결과 그림은 "
+            f"{limit}장까지만 넣고, PDF에는 앞의 {limit}장만 들어갑니다.")
     return {"linked": linked, "problems": list(dict.fromkeys(problems))}
