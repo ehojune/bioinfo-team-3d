@@ -39,6 +39,6 @@ assert.match(characters, /id:'recruiter',name:'카피바라 인사팀',species:'
 assert.match(characters, /id==='recruiter'.*카피바라/s, '3D recruiter branch documents the capybara form');
 assert.match(characters, /EDITOR=\{id:'editor',name:'비버 편집자',species:'비버'.*archetype:'editor'/);
 const main3d = read('labhq/web/lab3d/src/main.js');
-assert.match(main3d, /a\.id==='editor' \? EDITOR : null/, '3D editor must keep its own beaver archetype');
+assert.match(main3d, /a\.id==='editor' \? EDITOR :/, '3D editor must keep its own beaver archetype');
 
 console.log('recruiter capybara identity, unique roster and artwork: OK');

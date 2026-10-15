@@ -9,7 +9,7 @@ const SELECTED = {
 
 const PALETTE = {
   penguin:['#657780','#F3E7D6'], bear:['#AB8568','#F3E7D6'], squirrel:['#CE925F','#FAE8D2'],
-  turtle:['#96AD7D','#E6EACD'], capybara:['#B38B6D','#F3E7D6'], beaver:['#AA8265','#F3E7D6'], otter:['#AD907B','#F3E7D6'],
+  turtle:['#96AD7D','#E6EACD'], capybara:['#B38B6D','#F3E7D6'], beaver:['#AA8265','#F3E7D6'], lion:['#C99A52','#F3E7D6'], otter:['#AD907B','#F3E7D6'],
   hamster:['#C7A185','#FAE8D2'], chick:['#E5BF69','#FFF3CC'], neutral:['#A4ADB1','#F0F1ED'],
 };
 const PROPS = {
@@ -28,7 +28,7 @@ const PROPS = {
 };
 const ROLES = {chief_of_staff:'clipboard',cso:'clipboard',sci_reviewer:'checklist',biologist:'leaf',
   lit_scout:'book','bioinfo-agent':'laptop',data_steward:'folder',analyst:'laptop',engineer:'wrench',
-  qc_reviewer:'magnifier',recruiter:'businesscard',editor:'pen',facilities:'tools'};
+  qc_reviewer:'magnifier',recruiter:'businesscard',editor:'pen',solo:'checklist',facilities:'tools'};
 export function officeCharacter(a, resolved) {
   // The facilities roster supplies hamster. Also cover its first pre-roster avatar.
   const kind = String(a?.id || '').toLowerCase() === 'facilities' ? 'hamster' : resolved;
@@ -40,24 +40,27 @@ export function officeProp(a) {
 }
 function companion(kind) {
   const [fur,pale]=PALETTE[kind] || PALETTE.neutral;
-  const roundEars=['bear','beaver','otter','hamster','neutral'].includes(kind);
+  const roundEars=['bear','beaver','lion','otter','hamster','neutral'].includes(kind);
   const ears=kind==='capybara' ? '<circle cx="50" cy="39" r="9"/><circle cx="110" cy="39" r="9"/>'
     : roundEars ? '<circle cx="47" cy="38" r="13"/><circle cx="113" cy="38" r="13"/>'
     : kind==='squirrel' ? '<path d="m43 48 2-27 23 18m24 0 23-18 2 27"/>' : '';
   const tail=kind==='squirrel' ? '<path d="M49 136C7 132 13 74 34 85s-1 31 23 34Z"/>'
+    : kind==='lion' ? '<path d="M107 126q31 8 24-20" fill="none" stroke-width="6"/><circle cx="131" cy="104" r="7"/>'
     : kind==='beaver' ? '<path d="M107 130q35-26 30 4-15 18-36 7Z"/>' : '';
   const feet=kind==='turtle' ? '<ellipse cx="51" cy="138" rx="13" ry="6"/><ellipse cx="109" cy="138" rx="13" ry="6"/>'
     : '<ellipse cx="61" cy="139" rx="13" ry="6"/><ellipse cx="99" cy="139" rx="13" ry="6"/>';
   const body=kind==='turtle' ? '<ellipse cx="80" cy="113" rx="38" ry="28"/>'
     : kind==='capybara' ? '<ellipse cx="80" cy="113" rx="43" ry="31"/>'
     : '<path d="M56 89Q80 83 104 89Q119 113 110 138H50Q41 113 56 89Z"/>';
+  const mane=kind==='lion' ? '<path d="M36 70Q24 55 38 44Q33 27 51 27Q61 13 76 23Q91 11 101 27Q120 27 119 45Q134 56 123 71Q126 91 107 94Q95 106 80 97Q63 106 52 94Q33 91 36 70Z" fill="#9A6745"/>' : '';
   const face=kind==='penguin' ? `<path d="M44 62q8-29 36-9 28-20 36 9v14q-36 39-72 0Z" fill="${pale}" stroke="none"/>`
+    : kind==='lion' ? `<path d="M43 60C43 34 117 34 117 60L115 72Q108 96 80 96Q52 96 45 72Z" fill="${fur}"/><ellipse cx="80" cy="78" rx="19" ry="13" fill="${pale}" stroke="none"/>`
     : kind==='hamster' ? `<ellipse cx="55" cy="77" rx="17" ry="12" fill="${pale}" stroke="none"/><ellipse cx="105" cy="77" rx="17" ry="12" fill="${pale}" stroke="none"/>` : '';
   const mouth=['penguin','chick'].includes(kind) ? '<path d="M73 76h14l-7 9Z" fill="#C49244"/>'
     : kind==='capybara' ? `<ellipse cx="80" cy="79" rx="22" ry="14" fill="${pale}"/><ellipse cx="80" cy="75" rx="8" ry="5" fill="#303638" stroke="none"/><path d="M80 80v5m-8 0q8 7 16 0" fill="none"/>`
     : kind==='beaver' ? `<ellipse cx="80" cy="80" rx="18" ry="12" fill="${pale}"/><path d="M73 84h14v12H73ZM80 85v10"/>`
     : '<path d="M75 79q5 6 10 0" fill="none"/>';
-  return `<g fill="${fur}" stroke="#303638" stroke-width="2.5" stroke-linejoin="round">${tail}${body}${feet}<path d="M61 96Q80 88 99 96L101 131Q80 140 59 131Z" fill="${pale}" stroke="none"/>${ears}<path d="M39 58C39 21 121 21 121 58L119 71Q111 100 80 99Q48 100 41 72Z"/>${face}${mouth}<g fill="#303638" stroke="none"><ellipse cx="61" cy="64" rx="4" ry="5"/><ellipse cx="99" cy="64" rx="4" ry="5"/></g>${kind==='neutral'?'<circle cx="80" cy="65" r="28" fill="#F0F1ED"/><text x="80" y="79" text-anchor="middle" font-size="38" fill="#303638" stroke="none">?</text>':''}</g>`;
+  return `<g fill="${fur}" stroke="#303638" stroke-width="2.5" stroke-linejoin="round">${tail}${body}${feet}<path d="M61 96Q80 88 99 96L101 131Q80 140 59 131Z" fill="${pale}" stroke="none"/>${mane}${ears}<path d="M39 58C39 21 121 21 121 58L119 71Q111 100 80 99Q48 100 41 72Z"/>${face}${mouth}<g fill="#303638" stroke="none"><ellipse cx="61" cy="64" rx="4" ry="5"/><ellipse cx="99" cy="64" rx="4" ry="5"/></g>${kind==='neutral'?'<circle cx="80" cy="65" r="28" fill="#F0F1ED"/><text x="80" y="79" text-anchor="middle" font-size="38" fill="#303638" stroke="none">?</text>':''}</g>`;
 }
 export function officeSVG(a, kind) {
   kind=officeCharacter(a,kind);

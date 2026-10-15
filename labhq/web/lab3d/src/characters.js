@@ -19,6 +19,7 @@ export const ROSTER=[
   {id:'contract',name:'병아리 파견직',species:'병아리',role:'논문의 방법 적용',prop:'논문을 접은 종이모자',fur:'#DFC46E',seat:[5.65,3.1],state:'queued'},
 ];
 export const EDITOR={id:'editor',name:'비버 편집자',species:'비버',role:'보고서 편집',prop:'교정 원고',fur:'#A38061',seat:[7.75,2.8],state:'queued',archetype:'editor'};
+export const SOLO={id:'solo',name:'사자 단독 처리',species:'사자',role:'요청 단독 처리',prop:'완료 체크리스트',fur:'#C99A52',seat:[7.75,-.4],state:'queued',archetype:'solo'};
 
 export function makeCharacter(s,parent,def,index){
   const root=s.group(parent,[def.seat[0],0,def.seat[1]]);root.name=def.id;
@@ -38,6 +39,7 @@ export function makeCharacter(s,parent,def,index){
   if(id==='sci_reviewer'){headW=.31;headH=.30;bodyW=.42;bodyH=.42;head.position.set(0,1.95,.26);}
   if(id==='recruiter'){headW=.54;headH=.38;headD=.44;bodyW=.53;bodyH=.58;}
   if(id==='editor'){headW=.50;headH=.41;bodyW=.47;}
+  if(id==='solo'){headW=.48;headH=.43;bodyW=.44;bodyH=.52;}
   if(id==='contract'){headW=.38;headH=.36;bodyW=.33;bodyH=.37;head.position.y=1.72;}
   s.ball(body,fur,[0,1.24,0],[bodyW,bodyH,.35]);
   if(id!=='engineer'){
@@ -123,6 +125,12 @@ export function makeCharacter(s,parent,def,index){
     s.ball(tail,C.dark,[0,.27,0],[.28,.57,.095]);
     for(let j=0;j<5;j++)s.bar(tail,C.edge,[-.20,j*.17-.07,.081],[.20,j*.17-.07,.081],.018);
     for(const x of [-.12,0,.12])s.bar(tail,C.edge,[x,-.03,.084],[x,.64,.084],.012);
+  }else if(id==='solo'){
+    // 사자: 얼굴 뒤의 납작한 갈기와 둥근 귀를 겹치지 않게 둔다.
+    s.ball(head,C.rust,[0,.01,-.13],[.65,.59,.22]);
+    roundEars(.39,.31,.13);muzzle(.27,.17,.39);
+    const tail=s.group(body,[.39,.92,-.18],[0,0,-.65]);
+    s.ball(tail,fur,[.22,.30,0],[.10,.42,.10]);s.ball(tail,C.rust,[.25,.70,0],[.16,.18,.15]);
   }else if(id==='contract'){
     s.cone(head,C.rust,[0,-.09,.42],[.095,.23,.095],[Math.PI/2,0,0]);
     const hat=s.group(head,[0,.28,0]);
@@ -174,6 +182,7 @@ export function makeCharacter(s,parent,def,index){
   else if(id==='sci_reviewer'){book(C.edge,.50,.59);for(let j=0;j<3;j++)s.box(prop,[C.sage,C.gold,C.blue][j],[-.16+j*.16,.625,.02],[.13,.13,.06]);lines();}
   else if(id==='recruiter'){s.box(prop,C.sage,[0,.14,0],[.50,.28,.30]);s.box(prop,C.cream,[0,.31,.04],[.44,.08,.25]);s.ball(prop,C.rust,[-.13,.16,.17],[.055,.055,.02]);s.box(prop,C.edge,[.10,.18,.17],[.16,.018,.015]);}
   else if(id==='editor'){book(C.cream,.48,.47);s.bar(prop,C.edge,[-.23,.16,.14],[0,.28,.14],.015);s.bar(prop,C.edge,[0,.28,.14],[.23,.16,.14],.015);s.ball(prop,C.red,[0,.25,.16],[.063,.063,.02]);}
+  else if(id==='solo'){book(C.cream,.48,.58);for(const y of [.22,.35,.48]){s.box(prop,C.moss,[-.15,y,.122],[.07,.07,.016]);s.bar(prop,C.edge,[-.17,y,.14],[-.14,y-.035,.14],.014);s.bar(prop,C.edge,[-.14,y-.035,.14],[-.08,y+.045,.14],.014);s.box(prop,C.sage,[.08,y,.122],[.25,.018,.016]);}}
   else {s.box(prop,C.sage,[0,.10,0],[.42,.20,.3]);s.box(prop,C.cream,[0,.205,0],[.38,.03,.27]);}
   return {...def,index,root,body,head,headY:head.position.y,open,closed,arms,propGroup:prop,phase:index*.81};
 }
