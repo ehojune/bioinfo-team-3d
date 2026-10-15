@@ -309,6 +309,10 @@ class Hub:
             if last_seen.get(runner_id) != "runner.offline":
                 self.events.append(self.store.append_event({"type": "runner.offline", "ts": time.time(),
                     "data": {"runner_id": runner_id, "reason": "gateway_restarted"}}, settings.gateway.event_buffer))
+        # A finished request is never resumed: its resume card (made before it finished) goes, with a record (#607).
+        for rid in {e["approval"].get("request_id") for e in self.approvals.values() if e["approval"].get("kind") == "resume"}:
+            if is_terminal_request((self.requests.get(rid) or {}).get("status")):
+                self.retire_resume_cards(rid, "재시작 때 이미 끝난 요청이라 재개 카드를 닫았습니다")
         for aid, entry in list(self.approvals.items()):
             card = entry["approval"]
             rid = card.get("request_id")
@@ -418,6 +422,7 @@ class Hub:
             return self._final_review(rid, decision, revision=revision, target_sha256=target_sha256)
         if not is_terminal_request(req.get("status")) or req.get("cancelling"):
             raise ValueError("보고서가 끝난 요청만 검토 완료로 표시합니다")
+        self.retire_resume_cards(rid, "보고서를 검토 완료로 표시해 재개 카드를 닫았습니다")
         if not req.get("pi_reviewed_at"):
             at = time.time()
             updated = copy.deepcopy(req)
@@ -436,6 +441,7 @@ class Hub:
 
     def _final_review(self, rid: str, decision: str, **target) -> dict:
         req = self.requests[rid]
+        self.retire_resume_cards(rid, "보고서를 검토해 재개 카드를 닫았습니다")
         updated = copy.deepcopy(req)
         receipt = cp4.decide(updated, decision, **target)
         if req.get("pi_reviewed_at") and req == updated:
@@ -1145,6 +1151,8 @@ class Hub:
         # Failure never changes the request outcome, and terminal requests loaded after a restart do not pass this
         # checkpoint again.
         cp4.reconcile(self.requests[rid])
+        if is_terminal_request(self.requests[rid].get("status")):  # a finished request is never resumed (#607)
+            self.retire_resume_cards(rid, "요청이 끝나 재개 카드를 닫았습니다")
         self.requests[rid].update(pi_review_pending=True, pi_reviewed_at=None)
         data = {**data, "pi_review_pending": True, "pi_reviewed_at": None}
         if cp4.enabled(self.requests[rid]):
@@ -1295,6 +1303,34 @@ class Hub:
         self.save_approval(approval.id)
         self._schedule_resume_expiry(approval.id)
         return approval
+
+    def retire_resume_cards(self, rid: str, note: str) -> list[str]:
+        """Resolve and remove every pending resume card of a request that no longer needs resuming (#607).
+
+        Each leaves an ``approval.expired`` event and an ``approval_decision`` record. The request is not touched."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None  # at startup no page is connected; one that connects replays the stored event
+        closed = []
+        for aid, entry in list(self.approvals.items()):
+            card = entry["approval"]
+            if card.get("kind") != "resume" or card.get("request_id") != rid:
+                continue
+            self._cancel_resume_timer(aid)
+            self.approvals.pop(aid, None)
+            self.store.delete("approval", aid)
+            self.store.put("approval_decision", aid, {"approval": card, "origin": None, "approved": False, "note": note,
+                                                      "state": "expired", "decided_at": time.time()})
+            event = self.store.append_event({"type": "approval.expired", "ts": time.time(), "request_id": rid,
+                                             "data": {"id": aid, "note": note}}, self.s.gateway.event_buffer)
+            self.events.append(event)
+            if loop is not None:
+                self.pending_committed.append((event, tuple(self.clients)))
+            closed.append(aid)
+        if closed and loop is not None:
+            loop.create_task(self._send_committed_event())
+        return closed
 
     def _resume_deadline(self, approval: dict) -> float:
         # Every resume card gets the PI-decision bound, also one saved before it had a timer (its timeout_s was 3600).
@@ -3081,7 +3117,7 @@ class Hub:
             entry["future"].set_result({"approved": approved, "note": note, **chosen})
         elif entry["approval"].get("kind") == "resume":
             rid = entry["approval"]["request_id"]
-            if approved:
+            if approved and not is_terminal_request(self.requests[rid].get("status")):
                 await self._set_status(rid, "waiting_for_runner")
                 self._restart_request_asks(rid)
                 self.track_request(rid, self.resume_when_ready(rid))
@@ -3100,7 +3136,7 @@ class Hub:
         await self.publish({"type": "approval.resolved", "ts": time.time(), "task_id": a.get("task_id"),
                             "agent_id": a.get("agent_id"), "request_id": a.get("request_id"),
                             "data": {"id": approval_id, "approved": approved, "note": note, **chosen}})
-        if a.get("kind") == "resume" and not approved:
+        if a.get("kind") == "resume" and not approved and not is_terminal_request(self.requests[a["request_id"]].get("status")):
             rid = a["request_id"]
             self._restore_unstarted_continuation(rid, self.requests[rid])
             self.requests[rid].update(status="failed", error="resume declined", finished_at=time.time())
@@ -3759,6 +3795,15 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             raise HTTPException(404)
         try:
             return await hub.result_storage.open_card(rid)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.post("/api/requests/{rid}/storage/redraft", dependencies=[Depends(auth)])
+    async def storage_redraft(rid: str) -> dict:
+        if rid not in hub.requests:
+            raise HTTPException(404)
+        try:
+            return await hub.result_storage.redraft(rid)
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
 
