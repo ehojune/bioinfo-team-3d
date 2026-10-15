@@ -42,7 +42,7 @@ from ..research import continuation as research_continuation
 from ..research import final_checkpoint as cp4
 from ..research.contract import classify_intake
 from ..research.packs import check_configured_packs
-from ..request_status import is_active_request, is_terminal_request
+from ..request_status import is_active_request, is_office_request, is_terminal_request
 from ..settings import Settings
 from ..security import token_matches
 from .. import durable
@@ -246,6 +246,7 @@ class SavedResults(dict):
 class Hub:
     def __init__(self, settings: Settings, github_transport: httpx.AsyncBaseTransport | None = None):
         self.s = settings
+        self.session_started_at = time.time()
         self.store = StateStore(settings.path(settings.gateway.state_dir) / "gateway.sqlite3")
         from ..knowledge.recall import KnowledgeRecall
         self.knowledge = KnowledgeRecall(self)
@@ -983,6 +984,9 @@ class Hub:
                    "bundle_status": req.get("bundle_status"), "bundle_grade": req.get("bundle_grade"),
                    "bundle_grade_reasons": req.get("bundle_grade_reasons") or [],
                    "bundle_warning": req.get("bundle_warning")}
+        summary["office_current"] = is_office_request(req)
+        summary["session_current"] = (summary["office_current"]
+                                      or float(req.get("created_at") or 0) >= self.session_started_at)
         if environment:
             summary["step_environment"] = environment
         summary.update(final_checkpoint=cp4.summary(req), pi_review_pending=is_terminal_request(req.get("status")) and not req.get("pi_reviewed_at")
@@ -3543,6 +3547,7 @@ class Hub:
         }
         return {"type": "snapshot", "schema_version": 1, "seq": self.store.event_bounds()[1],
                 "ts": time.time(), "data": {
+            "session_started_at": self.session_started_at,
             **({"demo_status": self.demo_status} if getattr(self, "demo_status", None) is not None else {}),
             "agents": list(self.agents.values()),
             "runners": list(self.runners),
@@ -3556,6 +3561,9 @@ class Hub:
                           # the full list and full answers stay on the request (GET /api/requests/{id})
                           "followups": [snapshot_followup(f) for f in (r.get("followups") or [])[-20:]],
                           "step_status": self.request_summary(r, running)["step_progress"]["steps"],
+                          "office_current": is_office_request(r),
+                          "session_current": (is_office_request(r)
+                                              or float(r.get("created_at") or 0) >= self.session_started_at),
                           "pi_review_pending": is_terminal_request(r.get("status")) and not r.get("pi_reviewed_at") and not r.get("cancelling", False),
                           "pi_reviewed_at": r.get("pi_reviewed_at"), "final_checkpoint": cp4.summary(r),
                           "error": short(r.get("error") or "", 2000),
@@ -4046,6 +4054,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     @app.get("/api/health")
     async def health() -> dict:
         payload = {"service": "labhq gateway", "runners": list(hub.runners), "runner_online": bool(hub.runners),
+                   "session_started_at": hub.session_started_at,
                    "agents": len(hub.agents),
                    "active_requests": sum(is_active_request(r.get("status")) for r in hub.requests.values()),
                    "waiting_for_runner": sum(r.get("status") == "waiting_for_runner" for r in hub.requests.values()),

@@ -26,3 +26,12 @@ def is_active_request(status: object) -> bool:
 
 def is_terminal_request(status: object) -> bool:
     return status in TERMINAL_REQUEST_STATES
+
+
+def is_past_request(request: dict) -> bool:
+    """A terminal request leaves the office only after the PI acknowledged it."""
+    return is_terminal_request(request.get("status")) and bool(request.get("pi_reviewed_at"))
+
+
+def is_office_request(request: dict) -> bool:
+    return not is_past_request(request)

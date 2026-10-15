@@ -123,7 +123,7 @@
     {"key":"top","shown":true,"box":{"x":0,"y":0,"w":1440,"h":87},"paint":{"color":"#1c2430","background":"#faf8f4"}}
   ],
   "cc": [
-    {"key":"cc","shown":true,"box":{"x":842,"y":101,"w":502,"h":151},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+    {"key":"cc","shown":true,"box":{"x":842,"y":101,"w":502,"h":174},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
   ],
   "tab": [
     {"key":"decisions","shown":true,"status":"false","box":{"x":13,"y":25,"w":116,"h":44},"paint":{"color":"#47525f","background":"#ffffff"},"text":"결정"},
@@ -136,12 +136,12 @@
   ],
   "panel": [
     {"key":"decisions","shown":false},
-    {"key":"tasks","shown":true,"box":{"x":13,"y":87,"w":476,"h":51},"paint":{"color":"#1c2430"}},
+    {"key":"tasks","shown":true,"box":{"x":13,"y":87,"w":476,"h":74},"paint":{"color":"#1c2430"}},
     {"key":"feed","shown":false},
     {"key":"jobs","shown":false}
   ],
   "task-board": [
-    {"key":"task-board","shown":true,"box":{"x":13,"y":116,"w":476,"h":22},"paint":{"color":"#1c2430"}}
+    {"key":"task-board","shown":true,"box":{"x":13,"y":116,"w":476,"h":45},"paint":{"color":"#1c2430"}}
   ],
   "task-choice": [
   ],

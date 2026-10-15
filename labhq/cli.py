@@ -25,7 +25,8 @@ from . import instance_guard, proc_tree
 from .costs import cost_detail, cost_text
 from .facilities.signatures import problem_text
 from .process_diagnostics import SUPERVISOR_SUFFIX
-from .request_status import is_terminal_request, request_status_label, request_display_label
+from .request_status import (is_office_request, is_past_request, is_terminal_request,
+                             request_display_label, request_status_label)
 from .settings import Settings
 from .test_guard import guard_test_path
 from .util import atomic_write_text, free_port, short, without_windows_app_aliases
@@ -333,6 +334,21 @@ def _authenticated_requests(s: Settings, *, limit: int) -> list[dict] | None:
 
 def _active_requests(s: Settings) -> list[dict] | None:
     return _authenticated_requests(s, limit=200)
+
+
+def _request_cost_overview(requests: list[dict]) -> str:
+    total = sum(float(row.get("cost_usd") or 0) for row in requests)
+    estimated = sum(float((row.get("cost_summary") or {}).get("estimated_usd") or 0) for row in requests)
+    unknown = sum(int((row.get("cost_summary") or {}).get("unknown_count") or 0) for row in requests)
+    legacy_unknown = any(row.get("cost_known") is False and not row.get("cost_summary") for row in requests)
+    text = f"${total:.2f}"
+    if estimated:
+        text += f" (추정 ${estimated:.2f} 포함)"
+    if unknown:
+        text += f" + 미집계된 비용 {unknown}건" + (" 이상" if legacy_unknown else "")
+    elif legacy_unknown:
+        text += " + 미집계된 비용"
+    return text
 
 
 def _health(s: Settings) -> dict | None:
@@ -1950,7 +1966,16 @@ def main(argv: list[str] | None = None) -> None:
             if summary or req.get("cost_known") is False or req.get("cost_usd"):
                 print(f"    비용: {cost_text(req.get('cost_usd'), req.get('cost_known'), summary)}"
                       + (f" {cost_detail(summary)}" if summary else ""))
-        recent = _api(s, "GET", "/api/requests?status=all&limit=20")
+        recent = _api(s, "GET", "/api/requests?status=all&limit=200")
+        session_started_at = float(health.get("session_started_at") or 0)
+        session_rows = [req for req in recent if req.get("session_current") is True or
+                        (req.get("session_current") is None and
+                         (is_office_request(req) or float(req.get("created_at") or 0) >= session_started_at))]
+        print(f"이번 세션·진행 중 비용: {_request_cost_overview(session_rows)}")
+        past = [req for req in recent if req.get("office_current") is False or
+                (req.get("office_current") is None and is_past_request(req))]
+        if past:
+            print(f"지난 요청: {len(past)}건 · 누적 비용 {_request_cost_overview(recent)}")
         reviews = [req for req in recent if req.get("pi_review_pending")]
         if reviews:
             print(f"PI 검토·확인 대기: {len(reviews)}")
