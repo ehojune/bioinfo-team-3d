@@ -2390,6 +2390,11 @@ def _cost_summary_field(req: dict) -> dict:
     return {"cost_summary": req["cost_summary"]} if req.get("cost_summary") else {}
 
 
+def _session_cost_fields(hub: Any, req: dict) -> dict:
+    fields = getattr(hub, "request_session_cost_fields", None)
+    return fields(req) if fields else {}
+
+
 class Orchestrator:
     def __init__(self, hub: "Hub"):
         self.hub = hub
@@ -2920,7 +2925,7 @@ class Orchestrator:
             await self._emit(rid, "request.followup_done", {
                 "id": fid, "ok": False, "answer": "", "error": reason,
                 "cost_usd": float(req.get("cost_usd") or 0), "cost_known": req.get("cost_known", True),
-                **_cost_summary_field(req)})
+                **_cost_summary_field(req), **_session_cost_fields(self.hub, req)})
 
         try:
             refusal = read_only_refusal(agent, self._engine(rid, agent))
@@ -2995,7 +3000,7 @@ class Orchestrator:
         await self._emit(rid, "request.followup_done", {
             "id": fid, "ok": answered, "answer": clip(entry["answer"], 20000), "error": entry["error"],
             "cost_usd": float(req.get("cost_usd") or 0), "cost_known": req.get("cost_known", True),
-            **_cost_summary_field(req)})
+            **_cost_summary_field(req), **_session_cost_fields(self.hub, req)})
 
     def _count_adopted_cost(self, rid: str | None, task_id: str) -> None:
         """Add an adopted task's recorded cost once (#93).

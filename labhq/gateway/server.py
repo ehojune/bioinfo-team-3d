@@ -31,7 +31,8 @@ from ..integrations.rounds import RoundRecorder, environment_snapshot, is_resear
 from ..integrations.visibility import dev_log_visibility
 from ..login import login_command
 from ..ask_results import ask_result, read_ask_results, rejected_step
-from ..costs import outcome_unknown_item, request_cost_summary, request_cost_totals, task_cost_item
+from ..costs import (outcome_unknown_item, request_cost_summary, request_cost_totals,
+                     request_session_cost_totals, task_cost_item)
 from ..models import ApprovalRequest, AskRequest, RunnerNotSent, RunnerUnavailable, Task, TaskResult, new_id, waiting
 from ..pi_text import with_approval_copy
 from ..recruit.provenance import not_yet_active, probation_refusal
@@ -42,7 +43,8 @@ from ..research import continuation as research_continuation
 from ..research import final_checkpoint as cp4
 from ..research.contract import classify_intake
 from ..research.packs import check_configured_packs
-from ..request_status import is_active_request, is_office_request, is_terminal_request
+from ..request_status import (has_active_followup, is_active_followup, is_active_request,
+                              is_office_request, is_terminal_request)
 from ..settings import Settings
 from ..security import token_matches
 from .. import durable
@@ -369,7 +371,7 @@ class Hub:
                 self.events.append(self.store.append_event({"type": "request.status", "ts": time.time(),
                     "request_id": rid, "data": {"status": "interrupted", "previous": before}},
                     settings.gateway.event_buffer))
-            stale = [f for f in req.get("followups") or [] if f.get("status") == "running"]
+            stale = [f for f in req.get("followups") or [] if is_active_followup(f)]
             for followup in stale:  # its task future died with the old process; the PI can ask again
                 followup.update(status="interrupted", error="gateway restarted before the answer arrived")
             if stale:
@@ -987,11 +989,23 @@ class Hub:
         summary["office_current"] = is_office_request(req)
         summary["session_current"] = (summary["office_current"]
                                       or float(req.get("created_at") or 0) >= self.session_started_at)
+        summary.update(self.request_session_cost_fields(req))
         if environment:
             summary["step_environment"] = environment
         summary.update(final_checkpoint=cp4.summary(req), pi_review_pending=is_terminal_request(req.get("status")) and not req.get("pi_reviewed_at")
                        and not req.get("cancelling", False), pi_reviewed_at=req.get("pi_reviewed_at"))
         return summary
+
+    def request_session_cost_fields(self, req: dict) -> dict:
+        totals = request_session_cost_totals([req], self.session_started_at)
+        return {
+            "session_cost_usd": totals["cost_usd"],
+            "session_cost_known": not (totals["unknown_count"] or totals["legacy_unknown"]),
+            "session_cost_summary": {
+                "estimated_usd": totals["estimated_usd"],
+                "unknown_count": totals["unknown_count"],
+            },
+        }
 
     def clear_step_jobs(self, rid: str, step_id: str) -> None:
         # A jobs.finished checkpoint remains useful until the resulting step is adopted.
@@ -1564,6 +1578,7 @@ class Hub:
             return
         agent = self.agents.get(result.agent_id)
         item = outcome_unknown_item(result, agent) if outcome_unknown else task_cost_item(result, agent)
+        item["recorded_at"] = time.time()
         amount = float(item["usd"]) if item["status"] != "unknown" else 0.0
         costs[tid] = amount
         req.setdefault("cost_items", {})[tid] = item
@@ -3454,7 +3469,7 @@ class Hub:
             raise ValueError(f"request is {req.get('status')}; ask a follow-up after it finishes")
         if req.get("status") == "cancelled":  # every turn of a cancelled request is refused, so it could only fail
             raise ValueError("취소한 요청에는 이어 묻기를 보낼 수 없습니다. 새 요청을 보내세요")
-        if any(f.get("status") == "running" for f in req.get("followups") or []):
+        if has_active_followup(req):
             raise ValueError("a follow-up for this request is still running")
         if req.get("followup_agent_id"):
             agent = req["followup_agent_id"]
@@ -3565,6 +3580,7 @@ class Hub:
                           # the full list and full answers stay on the request (GET /api/requests/{id})
                           "followups": [snapshot_followup(f) for f in (r.get("followups") or [])[-20:]],
                           "step_status": self.request_summary(r, running)["step_progress"]["steps"],
+                          **self.request_session_cost_fields(r),
                           "office_current": is_office_request(r),
                           "session_current": (is_office_request(r)
                                               or float(r.get("created_at") or 0) >= self.session_started_at),
@@ -3806,11 +3822,9 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     @app.get("/api/requests/summary", dependencies=[Depends(auth)])
     async def request_totals() -> dict:
         requests = list(hub.requests.values())
-        session = [request for request in requests if is_office_request(request)
-                   or float(request.get("created_at") or 0) >= hub.session_started_at]
         return {"request_count": len(requests),
                 "past_count": sum(not is_office_request(request) for request in requests),
-                "session": request_cost_totals(session),
+                "session": request_session_cost_totals(requests, hub.session_started_at),
                 "total": request_cost_totals(requests)}
 
     @app.get("/api/projects", dependencies=[Depends(auth)])

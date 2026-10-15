@@ -36,6 +36,23 @@ test('header cost keeps current-session and office requests, with unknown costs 
     '사용 비용 $6.00 + 미집계된 비용');
 });
 
+test('a non-terminal follow-up restores reviewed work and contributes only its session cost', () => {
+  const old = {...reviewed, followups:[{id:'fu', status:'waiting_quota'}], cost_usd:32,
+    session_cost_usd:2, session_cost_known:true,
+    session_cost_summary:{estimated_usd:0, unknown_count:0}};
+  assert.equal(state.isPastRequest(old), false);
+
+  const office = state.createOfficeState();
+  office.apply({type:'snapshot', data:{session_started_at:100, requests:[old]}});
+  assert.equal(office.S.current, 'past', 'running follow-up remains on the opening board');
+  const shown = state.sessionCostRequests(office.S.requests.values(), 100);
+  assert.equal(state.requestsCostTotal(shown), 2);
+
+  office.apply({type:'snapshot', data:{session_started_at:100,
+    requests:[{...old, followups:[{id:'fu', status:'done'}]}]}});
+  assert.equal(office.S.current, null, 'finished follow-up returns reviewed work to the past list');
+});
+
 test('2.5D and 3D keep past requests collapsed and show a clean empty board', () => {
   const root = path.resolve(__dirname, '../labhq/web');
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');

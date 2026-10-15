@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from labhq import cli
 from labhq.gateway.server import Hub, create_app
+from labhq.models import TaskResult
 from labhq.request_status import is_office_request, is_past_request
 from labhq.settings import Settings
 
@@ -54,6 +55,48 @@ def test_gateway_request_totals_include_history_beyond_list_limit(tmp_path, monk
         'total': {'cost_usd': 203.0, 'estimated_usd': 0.0, 'unknown_count': 0,
                   'legacy_unknown': False},
     }
+
+
+def test_old_reviewed_request_returns_to_office_for_followup_and_counts_only_new_cost(tmp_path, monkeypatch):
+    now = [100.0]
+    monkeypatch.setattr('labhq.gateway.server.time.time', lambda: now[0])
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path)
+    settings.gateway.client_token = 'test-token'
+    app = create_app(settings)
+    request = {
+        'id': 'old', 'status': 'done', 'created_at': 10, 'pi_reviewed_at': 90,
+        'followups': [{'id': 'fu', 'status': 'waiting_quota'}],
+        'cost_usd': 30,
+        'cost_by_task': {'old-task': 30},
+        'cost_items': {
+            'old-task': {'task_id': 'old-task', 'engine': 'mock', 'status': 'actual',
+                         'usd': 30, 'recorded_at': 50},
+        },
+    }
+    app.state.hub.requests['old'] = request
+    now[0] = 110.0
+    app.state.hub._record_task_cost(
+        'old', 'followup-task',
+        TaskResult(task_id='followup-task', agent_id='cso', ok=True, cost_usd=2, cost_known=True),
+    )
+
+    assert is_office_request(request)
+    row = app.state.hub.request_summary(request)
+    assert row['office_current'] is True
+    assert app.state.hub.snapshot()['data']['requests'][0]['office_current'] is True
+
+    with TestClient(app) as client:
+        headers = {'Authorization': f'Bearer {settings.gateway.client_token}'}
+        totals = client.get('/api/requests/summary', headers=headers).json()
+
+    assert totals['session'] == {
+        'cost_usd': 2.0, 'estimated_usd': 0.0, 'unknown_count': 0,
+        'legacy_unknown': False,
+    }
+    request['followups'][0]['status'] = 'done'
+    assert is_past_request(request)
+    assert app.state.hub.snapshot()['data']['requests'][0]['office_current'] is False
 
 
 def test_health_and_cli_status_use_the_same_clean_office_boundary(tmp_path, monkeypatch, capsys):

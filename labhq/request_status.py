@@ -3,6 +3,7 @@
 ACTIVE_REQUEST_STATES = frozenset({"running", "waiting_for_runner", "waiting_quota", "waiting_login",
                                    "waiting_facilities_fix", "waiting_pi"})
 TERMINAL_REQUEST_STATES = frozenset({"done", "failed", "cancelled", "rejected", "review_pending"})
+TERMINAL_FOLLOWUP_STATES = frozenset({"done", "failed", "interrupted"})
 # What `labhq status` and `labhq watch` print for each request status.
 REQUEST_STATUS_KO = {"running": "진행 중", "waiting_for_runner": "러너 기다림", "waiting_quota": "한도 대기",
                      "waiting_login": "로그인 대기", "waiting_facilities_fix": "환경 수정 승인 대기",
@@ -28,9 +29,19 @@ def is_terminal_request(status: object) -> bool:
     return status in TERMINAL_REQUEST_STATES
 
 
+def is_active_followup(followup: dict) -> bool:
+    """Unknown and future non-terminal states still mean that the follow-up occupies the request."""
+    return followup.get("status") not in TERMINAL_FOLLOWUP_STATES
+
+
+def has_active_followup(request: dict) -> bool:
+    return any(is_active_followup(followup) for followup in request.get("followups") or [])
+
+
 def is_past_request(request: dict) -> bool:
     """A terminal request leaves the office only after the PI acknowledged it."""
-    return is_terminal_request(request.get("status")) and bool(request.get("pi_reviewed_at"))
+    return (is_terminal_request(request.get("status")) and bool(request.get("pi_reviewed_at"))
+            and not has_active_followup(request))
 
 
 def is_office_request(request: dict) -> bool:

@@ -190,10 +190,26 @@ def request_cost_summary(req: dict) -> dict | None:
 
 def request_cost_totals(requests: Iterable[dict]) -> dict:
     """Display totals across requests, including legacy records without task classifications."""
+    return _request_cost_totals(requests)
+
+
+def _request_cost_totals(requests: Iterable[dict], since: float | None = None) -> dict:
     cost = estimated = 0.0
     unknown = 0
     legacy_unknown = False
     for request in requests:
+        if since is not None and float(request.get("created_at") or 0) < since:
+            items = {
+                tid: item for tid, item in (request.get("cost_items") or {}).items()
+                if isinstance(item.get("recorded_at"), (int, float))
+                and not isinstance(item.get("recorded_at"), bool)
+                and float(item["recorded_at"]) >= since
+            }
+            summary = aggregate_costs(items)
+            cost += float(summary.get("subtotal_usd") or 0)
+            estimated += float(summary.get("estimated_usd") or 0)
+            unknown += int(summary.get("unknown_count") or 0)
+            continue
         cost += float(request.get("cost_usd") or 0)
         summary = request.get("cost_summary") or {}
         estimated += float(summary.get("estimated_usd") or 0)
@@ -201,6 +217,11 @@ def request_cost_totals(requests: Iterable[dict]) -> dict:
         legacy_unknown = legacy_unknown or (request.get("cost_known") is False and not summary)
     return {"cost_usd": round(cost, 6), "estimated_usd": round(estimated, 6),
             "unknown_count": unknown, "legacy_unknown": legacy_unknown}
+
+
+def request_session_cost_totals(requests: Iterable[dict], since: float) -> dict:
+    """Costs recorded in this gateway session; old legacy rows without timestamps stay outside it."""
+    return _request_cost_totals(requests, since=since)
 
 
 def _usd(value: Any, digits: int = 2) -> str:

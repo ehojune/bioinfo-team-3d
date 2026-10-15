@@ -32,14 +32,20 @@ function staffCharacter(a) {
 const isContract = a => !!a && (a.employment === 'contract' || String(a.id).startsWith('c_'));
 const ACTIVE_REQUEST_STATES = new Set(['running', 'waiting_for_runner', 'waiting_quota', 'waiting_login', 'waiting_facilities_fix', 'waiting_pi']);
 const TERMINAL_REQUEST_STATES = new Set(['done', 'failed', 'cancelled', 'rejected', 'review_pending']);
+const TERMINAL_FOLLOWUP_STATES = new Set(['done', 'failed', 'interrupted']);
 // Cards that park an active request as waiting_pi (server.py PI_DECISION_KINDS). A resume card is one too, but its
 // request is interrupted, not parked.
 const PI_DECISION_KINDS = new Set(['clarify', 'question', 'scope', 'budget', 'research_plan', 'research_evidence', 'research_continue', 'result_storage', 'result_publish', 'recruit_plan']);
 const isActiveRequest = status => ACTIVE_REQUEST_STATES.has(status);
 const isTerminalRequest = status => TERMINAL_REQUEST_STATES.has(status);
-const isPastRequest = q => !!q && isTerminalRequest(q.status) && !!q.pi_reviewed_at;
+const hasActiveFollowup = q => (q?.followups || []).some(f => !TERMINAL_FOLLOWUP_STATES.has(f.status));
+const isPastRequest = q => !!q && isTerminalRequest(q.status) && !!q.pi_reviewed_at && !hasActiveFollowup(q);
 const officeRequests = requests => [...requests].filter(q => !isPastRequest(q));
-const sessionCostRequests = (requests, startedAt) => [...requests].filter(q => !isPastRequest(q) || (Number(q.created_at) || 0) >= (Number(startedAt) || Infinity));
+const sessionCostRequests = (requests, startedAt) => [...requests].flatMap(q => {
+  if (Number.isFinite(q.sessionCost)) return [{...q, cost:q.sessionCost,
+    costKnown:q.sessionCostKnown, costSummary:q.sessionCostSummary}];
+  return !isPastRequest(q) || (Number(q.created_at) || 0) >= (Number(startedAt) || Infinity) ? [q] : [];
+});
 const requestsCostTotal = requests => [...requests].reduce((total, q) => total + (Number(q?.cost) || Number(q?.cost_usd) || 0), 0);
 const websocketCloseAction = code => code === 1008
   ? {connection: 'auth', retry: false}
@@ -135,6 +141,17 @@ function totalCostLabel(requests, total) {
 function applyCostSummary(q, summary) {
   if (!summary || typeof summary !== 'object') return;
   q.costSummary = summary; q.costKnown = !(Number(summary.unknown_count) > 0);
+}
+function applySessionCost(q, data, startedAt) {
+  if (typeof data.session_cost_usd === 'number' && Number.isFinite(data.session_cost_usd)) {
+    q.sessionCost = data.session_cost_usd;
+    q.sessionCostKnown = data.session_cost_known !== false;
+    q.sessionCostSummary = data.session_cost_summary || null;
+  } else if ((Number(q.created_at) || 0) >= (Number(startedAt) || Infinity)) {
+    q.sessionCost = q.cost;
+    q.sessionCostKnown = q.costKnown;
+    q.sessionCostSummary = q.costSummary;
+  }
 }
 function createOfficeState({mode = 'live', now = () => Date.now() / 1000, focusStorage = null} = {}) {
 let preferred = focusStorage?.get() || null;
@@ -474,6 +491,7 @@ function apply(ev, replay = false) {
         if (r.execution_record_truncated) Object.assign(q, { execution_record_truncated: true,
           execution_record_chars: r.execution_record_chars });
         q.costSummary = null; applyCostSummary(q, r.cost_summary);
+        applySessionCost(q, r, S.sessionStartedAt);
         if (r.plan) setPlan(q, r.plan);
         q.references = r.references || [];
         q.followups = (r.followups || []).map(f => ({ ...f }));
@@ -841,6 +859,7 @@ function apply(ev, replay = false) {
       }
       if (d.cost_known === false) q.costKnown = false;
       applyCostSummary(q, d.cost_summary);
+      applySessionCost(q, d, S.sessionStartedAt);
       if (d.report) q.report = d.report;
       if (d.report_appendix) q.report_appendix = d.report_appendix;
       if (d.execution_record) q.execution_record = d.execution_record;
@@ -895,6 +914,7 @@ function apply(ev, replay = false) {
       if (typeof d.cost_usd === 'number' && Number.isFinite(d.cost_usd) && d.cost_usd >= 0) { S.cost += d.cost_usd - q.cost; q.cost = d.cost_usd; }
       if (d.cost_known === false) q.costKnown = false;
       applyCostSummary(q, d.cost_summary);
+      applySessionCost(q, d, S.sessionStartedAt);
       feed({ who: entry.agent_id || 'cso', to: 'pi', text: d.ok ? `답변: ${short(d.answer, 130)}` : `이어 묻기에 답하지 못했어요: ${short(d.error, 100)}`,
         fullText: d.ok ? `답변: ${d.answer || ''}` : `이어 묻기에 답하지 못했어요: ${d.error || ''}`, truncated: d.answer_truncated, cutText: d.answer,
         cls: d.ok ? '' : 'alert' }, ts, rid);
