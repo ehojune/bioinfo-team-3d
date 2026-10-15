@@ -15,7 +15,8 @@ So `up` starts a supervisor per role, and the supervisor starts the role itself 
   record of one.
 
 With `supervisor.restart` on, a role that ended on its own with a non-zero code is started again after a backoff, at
-most `supervisor.max_restarts` times within `supervisor.restart_window_s`. It is off by default. A role stopped on
+most `supervisor.max_restarts` times within `supervisor.restart_window_s`; exit code 2, labhq's own refusal to start,
+is not retried. It is off by default. A role stopped on
 purpose is never restarted: `down` and the web shutdown write a marker file before touching anything, and a signal to
 the supervisor counts too.
 
@@ -38,6 +39,9 @@ from .settings import Settings, SupervisorSettings
 from .util import atomic_write_text
 
 ROLES = ("gateway", "runner")
+# What labhq itself exits with when it refuses to start: a rejected config (#559), another config's live process on its
+# state folder (#613), a command-line error. Starting it again is refused the same way.
+REFUSED_TO_START = 2
 TICK_SECONDS = 0.5  # how often a wait looks at the stop marker and the stop flag
 
 
@@ -122,6 +126,9 @@ class Supervisor:
                             **exit_fields(code))
             if stopping or code == 0:
                 return 0
+            if code == REFUSED_TO_START and self.policy.enabled:
+                self.diag.write("restart_skipped", child=self.role, reason="refused_to_start")
+                return 1
             delay = self.policy.delay(restarts, self._monotonic())
             if delay is None:
                 if self.policy.enabled:

@@ -238,6 +238,26 @@ def test_a_restart_that_succeeds_ends_the_supervisor_cleanly_when_the_role_later
     assert [row["attempt"] for row in diag.rows if row["event"] == "child_exit"] == [1, 2]
 
 
+def test_a_role_that_refused_to_start_is_not_started_again(tmp_path):
+    """Exit code 2 is labhq's own refusal (a rejected config, another config's live process on its state folder, #613):
+    the same start would be refused the same way, so restarting only fills the log."""
+    run, _settings_, clock, popen, diag, _pins = _make(tmp_path, [FakeChild(2), FakeChild(0)], restart=True)
+
+    assert run.run() == 1
+
+    assert len(popen.calls) == 1 and clock.waits == []
+    assert diag.events()[-2:] == ["child_exit", "restart_skipped"]
+    assert diag.row("restart_skipped")["reason"] == "refused_to_start"
+
+
+def test_exit_code_2_is_only_special_when_restarting_is_on(tmp_path):
+    run, _settings_, _clock, _popen, diag, _pins = _make(tmp_path, [FakeChild(2)])
+
+    assert run.run() == 1
+
+    assert "restart_skipped" not in diag.events()  # off: nothing was going to restart it anyway
+
+
 def test_a_role_stopped_on_purpose_is_not_restarted(tmp_path):
     child = FakeChild(1)
     run, settings, _clock, popen, diag, _pins = _make(tmp_path, [child, FakeChild(0)], restart=True)
