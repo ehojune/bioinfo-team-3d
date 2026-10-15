@@ -25,7 +25,7 @@ from . import instance_guard, proc_tree
 from .costs import cost_detail, cost_text
 from .facilities.signatures import problem_text
 from .process_diagnostics import SUPERVISOR_SUFFIX
-from .request_status import is_terminal_request, request_status_label, request_display_label
+from .request_status import is_terminal_request, request_display_label, request_status_label
 from .settings import Settings
 from .test_guard import guard_test_path
 from .util import atomic_write_text, free_port, short, without_windows_app_aliases
@@ -335,6 +335,20 @@ def _authenticated_requests(s: Settings, *, limit: int) -> list[dict] | None:
 
 def _active_requests(s: Settings) -> list[dict] | None:
     return _authenticated_requests(s, limit=200)
+
+
+def _request_cost_totals_overview(totals: dict) -> str:
+    text = f"${float(totals.get('cost_usd') or 0):.2f}"
+    estimated = float(totals.get("estimated_usd") or 0)
+    unknown = int(totals.get("unknown_count") or 0)
+    legacy_unknown = totals.get("legacy_unknown") is True
+    if estimated:
+        text += f" (추정 ${estimated:.2f} 포함)"
+    if unknown:
+        text += f" + 미집계된 비용 {unknown}건" + (" 이상" if legacy_unknown else "")
+    elif legacy_unknown:
+        text += " + 미집계된 비용"
+    return text
 
 
 def _health(s: Settings) -> dict | None:
@@ -736,6 +750,7 @@ def _start_background(s: Settings, role: str, *, popen=None) -> int:
     parent, and Windows can give that PID to a stranger that something later kills by parent PID alone. The
     supervisor outlives `up`, starts the role as its own child and records how it ended; `up` records the
     supervisor, which records the role."""
+    s.runner.validate_wsl()
     state = _launch_state(s)
     logs = state / "logs"
     logs.mkdir(parents=True, exist_ok=True)
@@ -772,6 +787,7 @@ def _supervised(s: Settings, role: str) -> bool:
 
 
 def _up_unlocked(s: Settings, *, popen=None, make_primary: bool = False) -> None:
+    s.runner.validate_wsl()
     if _default_client_token(s.gateway.client_token):
         print("gateway 시작 거부: gateway.client_token의 change-me 기본값을 바꾸세요.", file=sys.stderr)
         raise SystemExit(2)
@@ -865,6 +881,10 @@ def _up_unlocked(s: Settings, *, popen=None, make_primary: bool = False) -> None
             raise SystemExit(2)
     if confirmed:  # never record a gateway that is someone else's
         instance_guard.record_success(s, make_primary=make_primary)
+    if s.runner.wsl.enabled:
+        from .wsl_setup import control
+
+        control(s, "start")
     print(f"웹 사무실: {_http_base(s)}/  (`{_config_command(s, 'open')}`)")
 
 
@@ -1090,9 +1110,19 @@ def _down_unlocked(s: Settings, *, force: bool = False, keep_gateway: bool = Fal
             state, _record, reason = _process_record(s, name)
             if state == "unknown":
                 _record_problem(name, reason)
+    wsl_stop_error = None
+    if s.runner.wsl.enabled:
+        from .wsl_setup import WslError, control
+
+        try:
+            control(s, "stop")
+        except WslError as exc:
+            wsl_stop_error = exc
     stopped = [(role, pid) for role in roles if (pid := _stop_background(s, role)) is not None]
     if stopped:
         print("종료: " + ", ".join(f"{role} PID {pid}" for role, pid in stopped))
+    if wsl_stop_error is not None:
+        print(f"WSL runner를 종료하지 못했습니다(native 역할 종료는 계속): {wsl_stop_error}", file=sys.stderr)
     if keep_gateway:
         return
     # A gateway or runner started outside `up` (a script, another shell) has no process record, so nothing above
@@ -1103,6 +1133,8 @@ def _down_unlocked(s: Settings, *, force: bool = False, keep_gateway: bool = Fal
         raise SystemExit(2)
     if not stopped:
         print("종료: 기록된 프로세스 없음")
+    if wsl_stop_error is not None:
+        raise SystemExit(2)
 
 
 def _down(s: Settings, *, force: bool = False, keep_gateway: bool = False) -> None:
@@ -1676,6 +1708,10 @@ def main(argv: list[str] | None = None) -> None:
     op = sub.add_parser("open", help="open the web office in the browser, signed in (the token is never printed)")
     op.add_argument("--3d", dest="three_d", action="store_true", help="open the 3D office instead of 2.5D")
     sub.add_parser("runner")
+    sw = sub.add_parser("setup-wsl", help="이 PC의 WSL 분석 runner 준비")
+    sw.add_argument("--check", action="store_true", help="설치하지 않고 준비 상태만 확인")
+    wr = sub.add_parser("wsl-runner", help="이 설정의 WSL runner 시작·종료")
+    wr.add_argument("action", choices=("start", "stop"))
     sub.add_parser("agents")
     storage = sub.add_parser("storage", help="open the storage choice card for a finished request, or redraft or republish its edition")
     storage.add_argument("id")
@@ -1730,7 +1766,7 @@ def main(argv: list[str] | None = None) -> None:
     cr.add_argument("project")
     cr.add_argument("pr", type=int)
     cr.add_argument("--note", default="")
-    sub.add_parser("approvals")
+    sub.add_parser("approvals").add_argument('--details', action='store_true', help='show original tool input and rule')
     ap = sub.add_parser("approve", help="decide a pending approval (CP2 evidence review needs --choice)")
     ap.add_argument("id")
     ap.add_argument("--deny", action="store_true")
@@ -1870,7 +1906,21 @@ def main(argv: list[str] | None = None) -> None:
     except FileNotFoundError as exc:
         p.exit(2, f"labhq: {exc}\n")
 
-    if args.cmd == "doctor":
+    if args.cmd in ("setup-wsl", "wsl-runner"):
+        from .wsl_setup import WslError, check, control, render as render_wsl, setup
+
+        try:
+            if args.cmd == "wsl-runner":
+                control(s, args.action)
+                print("WSL runner: " + ("시작" if args.action == "start" else "종료"))
+            else:
+                rows = check(s) if args.check else setup(s)
+                print(render_wsl(rows))
+                if any(row["status"] != "ok" for row in rows):
+                    raise SystemExit(1)
+        except WslError as exc:
+            p.exit(2, f"WSL: {exc}\n")
+    elif args.cmd == "doctor":
         from .doctor import collect, render, save
 
         requested = args.config or os.environ.get("LABHQ_CONFIG")
@@ -1959,7 +2009,12 @@ def main(argv: list[str] | None = None) -> None:
             if summary or req.get("cost_known") is False or req.get("cost_usd"):
                 print(f"    비용: {cost_text(req.get('cost_usd'), req.get('cost_known'), summary)}"
                       + (f" {cost_detail(summary)}" if summary else ""))
-        recent = _api(s, "GET", "/api/requests?status=all&limit=20")
+        recent = _api(s, "GET", "/api/requests?status=all&limit=200")
+        totals = _api(s, "GET", "/api/requests/summary")
+        print(f"이번 세션·진행 중 비용: {_request_cost_totals_overview(totals.get('session') or {})}")
+        if totals.get("past_count"):
+            print(f"지난 요청: {int(totals['past_count'])}건 · 누적 비용 "
+                  f"{_request_cost_totals_overview(totals.get('total') or {})}")
         reviews = [req for req in recent if req.get("pi_review_pending")]
         if reviews:
             print(f"PI 검토·확인 대기: {len(reviews)}")
@@ -2067,8 +2122,16 @@ def main(argv: list[str] | None = None) -> None:
     elif args.cmd == "codex-review":
         print(_api(s, "POST", f"/api/projects/{args.project}/prs/{args.pr}/codex-review", json={"note": args.note}))
     elif args.cmd == "approvals":
+        from .pi_text import with_approval_copy
         for a in _api(s, "GET", "/api/approvals"):
-            print(f"{a['id']}  [{a['kind']}] {a['summary']}")
+            a = with_approval_copy(a)
+            print(f"{a['id']}  [{a['kind']}] {a['pi_summary']}")
+            if a['kind'] == 'tool_permission':
+                print(f"요청 직원: {(a.get('detail') or {}).get('requester_name') or a.get('agent_id') or '미제공'}")
+            print(a['pi_reason'])
+            print(a['pi_outcome'])
+            if args.details:
+                print('자세히: ' + json.dumps({'summary': a['summary'], 'detail': a.get('detail') or {}}, ensure_ascii=False))
             for option in _question_options(a):
                 print(f"    {option}")
     elif args.cmd == "approve":

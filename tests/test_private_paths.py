@@ -279,20 +279,22 @@ def _capture_runner(settings, monkeypatch, engine=Engine.claude_code):
 async def test_runner_gives_claude_rules_the_gate_list_and_the_labels(tmp_path, monkeypatch):
     home = _home(tmp_path)
     monkeypatch.setattr(private_paths, "host_home", lambda: str(home))
-    settings = _runner_settings(tmp_path, ["~/.ssh", str(tmp_path)])  # tmp_path holds the workspace: skipped
+    settings = _runner_settings(tmp_path, ["~/.ssh", str(tmp_path)])  # managed reads leave private siblings closed
     runner, seen = _capture_runner(settings, monkeypatch)
     for task_id in ("t1", "t2"):
         result = await runner.run_task(Task(id=task_id, agent_id="worker", request_id="r", prompt="q"))
         assert result.ok, result.error
     ctx = seen["ctx"]
-    assert ctx.private_labels == ["~/.ssh"]
+    assert ctx.private_labels == ["~/.ssh", f"{OUTSIDE_HOME_LABEL} …/{tmp_path.name}"]
     deny = ctx.claude_settings["permissions"]["deny"]
     rule = f"Read(/{private_paths_rule(home / '.ssh')}/**)"
     assert rule in deny
-    assert ctx.env[ENV_VAR].split(os.pathsep) == [str(home / ".ssh")]
+    assert ctx.env[ENV_VAR].split(os.pathsep) == [str(home / ".ssh"), str(tmp_path)]
+    assert evaluate_tool('Read', {'file_path': str(tmp_path / 'private.txt')}, settings.policy,
+                         private_paths=ctx.private_paths, private_open_reads=ctx.private_open_reads).action == 'deny'
     warned = [e["data"]["text"] for e in runner.store.pending()
               if e["type"] == "agent.log" and "개인 경로 차단에서 제외" in e["data"].get("text", "")]
-    assert len(warned) == 1 and OUTSIDE_HOME_LABEL in warned[0], "said once, not on every task"
+    assert not warned, 'managed reads must not exempt the containing private folder'
 
 
 def private_paths_rule(path: Path) -> str:
@@ -374,8 +376,8 @@ def _doctor_row(settings, monkeypatch):
 
 @pytest.mark.parametrize("private,status,detail", [
     (["~/.ssh", "~/.netrc"], "ok", "2 active"),
-    (["~/.ssh", "TMP"], "ok", "1 active; skipped, holds a work folder: OUTSIDE"),
-    (["TMP"], "warn", "0 active; skipped, holds a work folder: OUTSIDE"),
+    (["~/.ssh", "TMP"], "ok", "2 active"),
+    (["TMP"], "ok", "1 active"),
     ([], "warn", "off (policy.private_paths: [])"),
     (["~/.kube"], "warn", "0 active"),
 ])
@@ -1031,7 +1033,7 @@ def test_enabled_with_no_active_path_pre_approves_no_shell_and_explicit_off_keep
 async def test_runner_keeps_private_paths_on_when_no_entry_is_active(tmp_path, monkeypatch):
     home = _home(tmp_path)
     monkeypatch.setattr(private_paths, "host_home", lambda: str(home))
-    for private, enabled in ((["~/missing", str(tmp_path)], True), ([], False)):  # absent + holds the workspace
+    for private, enabled in ((["~/missing"], True), ([], False)):  # absent list still enables registry protection
         runner, seen = _capture_runner(_runner_settings(tmp_path / str(enabled), private), monkeypatch)
         assert (await runner.run_task(Task(id="t1", agent_id="worker", request_id="r", prompt="q"))).ok
         ctx = seen["ctx"]

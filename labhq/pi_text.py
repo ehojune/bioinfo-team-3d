@@ -74,11 +74,11 @@ def tool_description(detail: dict) -> str:
 def approval_copy(kind: str, summary: str, detail: dict) -> dict[str, str]:
     """Stable Korean explanation for old and new producers; source fields are left intact."""
     if kind == 'tool_permission':
-        one = tool_description(detail)
-        reason = '자동으로 허용하는 범위를 벗어나 실행 전에 확인이 필요합니다.'
+        from .tool_explanation import explain, reason as tool_reason
+        described, risk, _ = explain(detail)
+        one = described or tool_description(detail)
         policy_reason = str(detail.get('policy_reason') or summary)
-        if '재귀 삭제' in policy_reason:
-            reason = '폴더 안의 파일까지 지우는 명령이 감지됐습니다. 실제 삭제 대상은 원문에서 확인해 주세요.'
+        reason = tool_reason(detail, policy_reason, risk)
         outcome = '승인하면 이 도구 호출을 한 번 허용합니다. 거절하면 실행하지 않습니다.'
     elif kind == 'hpc_submit':
         one = '계산 서버에 작업을 보내려 합니다.'
@@ -111,7 +111,9 @@ def approval_copy(kind: str, summary: str, detail: dict) -> dict[str, str]:
 
 
 def with_approval_copy(card: dict) -> dict:
+    from .tool_explanation import needs_interpretation
     copy = approval_copy(str(card.get('kind', '')), str(card.get('summary', '')), card.get('detail') or {})
     return {**card, **{key: card.get(key) or value for key, value in copy.items()},
-            **({'pi_explainer': 'chief_of_staff', 'pi_needs_interpretation': True}
+            **({'pi_explainer': 'chief_of_staff', 'pi_needs_interpretation':
+                card.get('kind') != 'tool_permission' or needs_interpretation(card.get('detail') or {})}
                if not card.get('pi_summary') else {})}

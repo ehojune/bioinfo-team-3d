@@ -17,6 +17,7 @@ import subprocess
 from pathlib import Path, PurePath
 
 from ..policy import claude_allowed_tools
+from ..plugin_checks import read_plugin_manifest, skill_file
 from ..util import event_preview, short, tool_input_fingerprint, tool_input_summary
 from .base import (AgentAdapter, role_footer, RunContext, RunState, SHELL_TOOLS, child_config_dirs, expand_env,
                    note_command_ok, note_failed_output, record_model_id, wrap_cwd)
@@ -81,14 +82,6 @@ def user_config_isolation(env: dict[str, str], cwd: Path) -> dict:
 # relative path the manifest itself declares (custom commands/agents/hooks/mcpServers/lspServers files).
 PLUGIN_PARTS = (".claude-plugin", "skills", "agents", "hooks", "commands", "output-styles", "bin", "scripts")
 PLUGIN_ROOT_FILES = (".mcp.json", ".lsp.json", "settings.json")
-
-
-def read_plugin_manifest(path: Path) -> dict | None:
-    try:
-        data = json.loads((path / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    return data if isinstance(data, dict) else None
 
 
 def _manifest_paths(value) -> list[str]:
@@ -264,7 +257,7 @@ class ClaudeCodeAdapter(AgentAdapter):
             plugin, name = skill.split(":")
             if plugin not in found:
                 return f"required plugin '{plugin}' is not among plugin_dirs"
-            if not (found[plugin] / "skills" / name / "SKILL.md").is_file():
+            if not skill_file(found[plugin], name).is_file():
                 return f"required skill '{skill}' is missing from the plugin"
         if found:
             try:

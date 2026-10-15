@@ -210,6 +210,7 @@ _EMIT_UNIT: contextvars.ContextVar[list | None] = contextvars.ContextVar("labhq_
 
 class Runner:
     def __init__(self, settings: Settings):
+        settings.runner.validate_wsl()
         self.s = settings
         # The loop and its thread, noted by `_send_durably`: a message committed on the durable writer thread asks
         # this loop to reload the outbox queue (#606).
@@ -443,11 +444,16 @@ class Runner:
             from ..doctor import staff_python_summary
             try:
                 self.local_software = await asyncio.to_thread(staff_python_summary)
+                if self.s.runner.environment == "wsl":
+                    from ..doctor import wsl_tool_status
+
+                    self.local_software["tools"].update(await asyncio.to_thread(wsl_tool_status))
             except Exception:  # noqa: BLE001 - a host probe must not keep the runner offline
                 log.warning("runner %s could not summarize local software", self.s.runner.id, exc_info=True)
                 self.local_software = {}
         while not self._stopping:
             try:
+                await asyncio.to_thread(self._refresh_wsl_readiness)
                 async with websockets.connect(url, max_size=64 * 2**20, ping_interval=20, ping_timeout=60) as ws:
                     backoff = 1.0
                     await ws.send(json.dumps(self.hello()))
@@ -502,9 +508,32 @@ class Runner:
                                                      "labhq_hpc" in summary.get("mcp", [])})
         return agents
 
+    def _refresh_wsl_readiness(self) -> None:
+        if self.s.runner.environment != "wsl":
+            return
+        from .. import wsl_readiness
+
+        self.wsl_readiness = {}
+        agent = self.registry.agents.get("bioinfo-agent")
+        if agent is None:
+            return
+        adapter = get_adapter(Engine.claude_code, self.s)
+        ctx = RunContext(task=Task(agent_id=agent.id, prompt=""), agent=agent, workdir=self.ws_root,
+                         settings=self.s, mcp_servers=[], env={}, emit=lambda *_: None, prompt="")
+        env = adapter.staff_env(ctx)
+        try:
+            directories = [str(self.ws_root / p) if not Path(p).is_absolute() else p
+                           for p in adapter._plugin_dirs(ctx, env)]
+            self.wsl_readiness = wsl_readiness.probe(directories, env, self.s.engines.claude_code.bin)
+        except (OSError, ValueError):
+            pass  # no positive facts: gateway keeps the native worker
+
     def capabilities(self) -> dict:
         external_hpc = any("labhq_hpc" in a.get("mcp", []) for a in self.registry.roster())
         capabilities = {"scheduler": self.s.hpc.scheduler,
+                        "runtime_env": ("wsl" if self.s.runner.environment == "wsl" else
+                                        "windows" if sys.platform == "win32" else "linux"),
+                        "workspace_root": str(self.s.path(self.s.runner.workspace_root)),
                         "compute_backends": ["local CLI"] +
                                             ([self.s.hpc.scheduler] if self.s.hpc.scheduler != "none" else []) +
                                             (["external labhq_hpc MCP"] if external_hpc else []),
@@ -515,6 +544,8 @@ class Runner:
         local_software = getattr(self, "local_software", None)
         if local_software is not None:
             capabilities["local_software"] = local_software
+        if self.s.runner.environment == "wsl":
+            capabilities["wsl_readiness"] = dict(getattr(self, "wsl_readiness", {}))
         return capabilities
 
     def hello(self) -> dict:
@@ -564,6 +595,7 @@ class Runner:
             await self.store.aack(int(msg["runner_seq"]))
         elif typ == "registry.reload":
             self.registry.load()
+            await asyncio.to_thread(self._refresh_wsl_readiness)
             self._send_roster()
         elif typ == "recruit.start":
             asyncio.create_task(self._recruit(msg))
@@ -1145,6 +1177,16 @@ class Runner:
     async def run_task(self, task: Task, workdir_override: Path | None = None) -> TaskResult:
         from ..recruit.paper_skills import PaperSkillBuild
 
+        if self.s.runner.environment == "wsl":
+            from ..wsl_paths import message_paths, shared_path
+            task = Task.model_validate(message_paths(task.model_dump(), "wsl"))
+            shared_path(str(self.ws_root.resolve()), "wsl")
+            if workdir_override is not None:
+                workdir_override = Path(shared_path(str(workdir_override), "wsl"))
+            override = workdir_override or task.meta.get("workdir")
+            if override:
+                shared_path(str(Path(override).resolve()), "wsl")
+
         self._result_queued.discard(task.id)  # a new run of this id
 
         if task.meta.get("kind") in {"recruit_check", "plan_recruit"}:
@@ -1429,13 +1471,14 @@ class Runner:
                 result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=error)
                 await emit_final({"state": "error", "error": error}, result.model_dump(mode="json"))
                 return result
-            # PI personal paths (policy.private_paths): one that holds a folder this task works in is left open.
+            # Explicit references retain their policy exception; managed roots stay private.
             keep = [ws.dir, self.ws_root, *extra_dirs, *read_dirs,
                     *(self.s.path(r) for r in self.s.runner.reference_roots),
                     *(self.s.path(p.local_dir) for p in self.s.projects if p.local_dir)]
             # Loading code never exempts its containing config/login folder from protection.
             open_reads = plugin_keep_dirs(self.s, agent.plugin_dirs, ws.dir)
-            if agent.id == self.s.recruit.agent_id or task.meta.get("kind") == "recruit":
+            if task.meta.get("kind") == "recruit" or (
+                    task.meta.get("kind") == "paper_skill" and agent.id == self.s.recruit.agent_id):
                 from ..recruit.paper2agent import skill_path
                 if agent.engine in (Engine.claude_code, Engine.codex):
                     skill = skill_path(agent.engine.value, self.s)
@@ -1800,6 +1843,31 @@ class Runner:
     # ---------------- broker callbacks (from MCP tools) ----------------
     async def _on_approval(self, req: ApprovalRequest) -> None:
         req.request_id = req.request_id or self.task_req.get(req.task_id or "")
+        ws = self.workspaces.get(req.task_id or '')
+        if req.kind == 'tool_permission' and ws:
+            from ..pi_text import approval_copy
+            from ..recruit.paper2agent import skill_path
+            meta = ws.task.meta
+            labels = {str(ws.dir): '이 작업의 빌드 폴더' if meta.get('kind') == 'paper_skill' else '이 작업의 폴더',
+                      str(self.s.path(self.s.runner.talent_dir)): 'labhq 논문 스킬 보관 폴더',
+                      str(self.s.path(self.s.runner.workspace_root)): 'labhq 작업 폴더'}
+            if meta.get('kind') in ('paper_skill', 'recruit') and ws.agent.engine in (Engine.claude_code, Engine.codex):
+                try:
+                    labels[str(skill_path(ws.agent.engine.value, self.s))] = 'Paper2Agent 스킬 참고 자료'
+                except ValueError:
+                    pass  # Invalid install configuration must not prevent an approval from being delivered.
+            req.agent_id = ws.task.agent_id
+            req.detail = {**req.detail, 'requester_name': ws.agent.name,
+                          'workdir': str(ws.dir),
+                          'permission_mode': ws.agent.permission_mode,
+                          'task_context': {'kind': meta.get('kind'), 'title': meta.get('title'),
+                                           'step_id': meta.get('step_id'),
+                                           'paper_title': (meta.get('paper_skill') or {}).get('title')},
+                          'path_labels': labels}
+            for key, value in approval_copy(req.kind, req.summary, req.detail).items():
+                setattr(req, key, value)
+            from ..tool_explanation import needs_interpretation
+            req.pi_needs_interpretation = needs_interpretation(req.detail)
         self.approval_tasks[req.id] = (req.task_id, req.agent_id)
         base = dict(task_id=req.task_id, agent_id=req.agent_id, request_id=req.request_id)
         await self.emit_all([

@@ -14,14 +14,38 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 22:36 | [`97a2acd`](https://github.com/ehojune/bioinfo-team-3d/pull/647/commits/97a2acd) | WSL doctor 회귀 테스트가 Linux 전역 platform 값을 바꾸지 않도록 격리한다. |
+| 21:48 | [`9d98ae2`](https://github.com/ehojune/bioinfo-team-3d/pull/647/commits/9d98ae2) | WSL 미설정 doctor를 선택 기능 한 줄로 줄이고 활성화 때 실제 직원 로그인 경로를 안내한다. |
+| 19:06 | [`a9e286e`](https://github.com/ehojune/bioinfo-team-3d/pull/645/commits/a9e286e) | OKF Loremaster의 인용문·수치 원문 대조기를 Unicode·Python 3.10에 맞춰 이식하고 Apache-2.0 출처를 동봉 |
+| 18:53 | [`2d742cc`](https://github.com/ehojune/bioinfo-team-3d/pull/630/commits/2d742cc) | WSL 준비 상태 test의 작업 폴더를 공유 경로로 명시해 Linux CI fixture를 바로잡는다. |
+| 18:39 | [`ceee47a`](https://github.com/ehojune/bioinfo-team-3d/pull/630/commits/ceee47a) | 불확실 task를 최초 runner에 고정하고 WSL 준비 판정을 점검·활성화·gateway에 통합한다. |
+| 18:37 | [`93f3e41`](https://github.com/ehojune/bioinfo-team-3d/pull/630/commits/93f3e41) | main의 #641 테스트 안정화를 WSL runner 수정 브랜치에 반영한다. |
+| 18:17 | [`07fd2ae`](https://github.com/ehojune/bioinfo-team-3d/pull/638/commits/07fd2ae) | 최신 main 병합과 채용 담당·편집자 표시 충돌 해결 |
+| 18:17 | [`5b886e2`](https://github.com/ehojune/bioinfo-team-3d/pull/638/commits/5b886e2) | 읽기 예외를 현재 작업·명시한 스킬 폴더로 제한하고 공용 상위 경로를 최종 검사 |
 | 18:06 | [`450cdb7`](https://github.com/ehojune/bioinfo-team-3d/pull/642/commits/450cdb7) | 단독 처리 직원을 2D·3D 사자로 표시하고 체크리스트, 기본 매핑, 중복 회귀 검사를 추가했습니다 |
+| 18:05 | [`0ffd924`](https://github.com/ehojune/bioinfo-team-3d/pull/637/commits/0ffd924) | 실행·대기 중인 이어 묻기를 현재 요청으로 유지하고 발생 시각 기준 세션 비용을 집계함 |
+| 17:59 | [`018e895`](https://github.com/ehojune/bioinfo-team-3d/pull/638/commits/018e895) | Bash 공백 경로 우회·통제 데이터 위험 표시·read-only 읽기 grant·경로 label 수정 |
+| 17:56 | [`325bfe0`](https://github.com/ehojune/bioinfo-team-3d/pull/637/commits/325bfe0) | 최신 main의 인사팀 화면 변경을 병합해 깨끗한 사무실 표시와 함께 보존함 |
+| 17:55 | [`498e125`](https://github.com/ehojune/bioinfo-team-3d/pull/630/commits/498e125) | runner 경계의 Task·결과·이벤트 경로를 모델 선언과 runtime_env로 변환하고 reference root·manifest 수집을 연결한다. |
 | 17:50 | [`7501cb2`](https://github.com/ehojune/bioinfo-team-3d/pull/641/commits/7501cb2) | Windows CI의 디스크 쓰기 liveness test를 벽시계 임계값 대신 Event 사건 순서로 검증한다. |
+| 17:44 | [`3f70eab`](https://github.com/ehojune/bioinfo-team-3d/pull/638/commits/3f70eab) | 활동 요약을 표시 전용 필드로 분리해 기존 상태 재생 유지 |
+| 17:29 | [`830f0f9`](https://github.com/ehojune/bioinfo-team-3d/pull/638/commits/830f0f9) | 최신 main 변경 병합 |
+| 17:29 | [`f009585`](https://github.com/ehojune/bioinfo-team-3d/pull/638/commits/f009585) | 논문 스킬 읽기 범위·자격 증명 판정과 활동·auto 승인 설명 수정 |
 | 17:17 | [`58975d2`](https://github.com/ehojune/bioinfo-team-3d/pull/639/commits/58975d2) | CLI의 recruiter 표기를 카피바라로 바꾸고 편집자 비버와 구분한다 |
+| 17:15 | [`9c1a329`](https://github.com/ehojune/bioinfo-team-3d/pull/637/commits/9c1a329) | 전체 요청 집계를 서버에서 제공해 CLI 누적 건수와 비용의 200건 상한을 없앰 |
+| 17:15 | [`8883fbf`](https://github.com/ehojune/bioinfo-team-3d/pull/630/commits/8883fbf) | WSL 공유 작업 폴더·정책 상속·연결 후 활성화와 ID 및 TLS 포트 검증을 고쳤다. |
+| 17:09 | [`90aaca6`](https://github.com/ehojune/bioinfo-team-3d/pull/637/commits/90aaca6) | 최신 main의 패널 크기 조절을 병합해 깨끗한 첫 화면과 지난 요청·비용 표시를 함께 보존함 |
 | 16:49 | [`50411cb`](https://github.com/ehojune/bioinfo-team-3d/pull/639/commits/50411cb) | 인사팀을 카피바라로 바꾸고 2D·3D 캐릭터, 표시 이름, 중복 검사를 함께 갱신했습니다 |
+| 16:46 | [`446496e`](https://github.com/ehojune/bioinfo-team-3d/pull/638/commits/446496e) | 관리 폴더 읽기 오판을 고치고 도구 승인 카드·CLI에 작업 맥락·위험·실제 담당 이름을 표시 |
+| 16:38 | [`8f7129c`](https://github.com/ehojune/bioinfo-team-3d/pull/637/commits/8f7129c) | 검토를 마친 종료 요청을 지난 요청으로 접고 새 세션 비용만 앞에 표시함 |
 | 16:36 | [`9f4d35e`](https://github.com/ehojune/bioinfo-team-3d/pull/635/commits/9f4d35e) | 2.5D 사무실과 Command Center, 직원 시트 경계를 마우스·키보드로 조정하고 브라우저별 크기를 기억하게 했다(#633). |
 | 16:31 | [`3e0ac50`](https://github.com/ehojune/bioinfo-team-3d/pull/629/commits/3e0ac50) | 게시 상태와 운전 기록 경계를 바로잡고 legacy 실행 부록과 실패 원인을 보존했다. |
 | 16:27 | [`58dd063`](https://github.com/ehojune/bioinfo-team-3d/pull/629/commits/58dd063) | main의 빈 저장소 게시와 새 topic prompt 변경을 보고서 형식 branch에 함께 반영했다. |
+| 16:23 | [`3d886d2`](https://github.com/ehojune/bioinfo-team-3d/pull/630/commits/3d886d2) | runtime_env 기대값과 WSL bootstrap의 UTF-8 text I/O를 명시해 전체 CI 검사를 맞춘다. |
 | 16:16 | [`bf10257`](https://github.com/ehojune/bioinfo-team-3d/pull/631/commits/bf10257) | AlphaGenome 권장 변이 점수·한국어 요약·tidy 표와 크기 상한·판본 캐시를 추가하고 variant_effect 안내를 연결 |
+| 16:06 | [`38c28d1`](https://github.com/ehojune/bioinfo-team-3d/pull/630/commits/38c28d1) | WSL 정지 실패를 보고하면서도 native runner와 gateway 종료를 끝까지 진행한다. |
+| 16:02 | [`215097d`](https://github.com/ehojune/bioinfo-team-3d/pull/630/commits/215097d) | WSL 실행 위치를 runtime_env capability로 분리해 로그인 환경변수와 함께 보존한다. |
+| 15:54 | [`db5fb41`](https://github.com/ehojune/bioinfo-team-3d/pull/630/commits/db5fb41) | setup-wsl로 로컬 WSL runner를 준비하고 bioinfo-agent 배정·도구 안내·실측을 추가했다 (#612 1단계). |
 | 15:50 | [`e599277`](https://github.com/ehojune/bioinfo-team-3d/pull/629/commits/e599277) | 운전 기록·과학 부록을 분리하고 논문 형식 보고서·분석 단계 graphical abstract·출처 추출을 연결 |
 | 15:28 | [`123d977`](https://github.com/ehojune/bioinfo-team-3d/pull/628/commits/123d977) | 403 복구 안내에서 실패한 환경 토큰을 해제하고 README로 저장소를 만들게 하며, 빈 저장소는 branch 없는 첫 파일로 초기화한 뒤 기존 파일의 sha를 보존해 갱신한다(#607). |
 | 15:28 | [`8dbe72d`](https://github.com/ehojune/bioinfo-team-3d/pull/626/commits/8dbe72d) | 선택된 VEP transcript에 AlphaMissense 점수가 없으면 주 요약은 점수 없음으로 두고, 다른 transcript의 점수·등급은 별도 필드로 분리한다. |

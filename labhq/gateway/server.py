@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 import mimetypes
+import os
 import time
 from collections import deque
 from collections.abc import Callable, Mapping
@@ -31,7 +32,8 @@ from ..integrations.rounds import RoundRecorder, environment_snapshot, is_resear
 from ..integrations.visibility import dev_log_visibility
 from ..login import login_command
 from ..ask_results import ask_result, read_ask_results, rejected_step
-from ..costs import outcome_unknown_item, request_cost_summary, task_cost_item
+from ..costs import (outcome_unknown_item, request_cost_summary, request_cost_totals,
+                     request_session_cost_totals, task_cost_item)
 from ..models import ApprovalRequest, AskRequest, RunnerNotSent, RunnerUnavailable, Task, TaskResult, new_id, waiting
 from ..pi_text import with_approval_copy
 from ..recruit.provenance import not_yet_active, probation_refusal
@@ -42,7 +44,8 @@ from ..research import continuation as research_continuation
 from ..research import final_checkpoint as cp4
 from ..research.contract import classify_intake
 from ..research.packs import check_configured_packs
-from ..request_status import is_active_request, is_terminal_request
+from ..request_status import (has_active_followup, is_active_followup, is_active_request,
+                              is_office_request, is_terminal_request)
 from ..settings import Settings
 from ..security import token_matches
 from .. import durable
@@ -246,6 +249,7 @@ class SavedResults(dict):
 class Hub:
     def __init__(self, settings: Settings, github_transport: httpx.AsyncBaseTransport | None = None):
         self.s = settings
+        self.session_started_at = time.time()
         self.store = StateStore(settings.path(settings.gateway.state_dir) / "gateway.sqlite3")
         from ..knowledge.recall import KnowledgeRecall
         self.knowledge = KnowledgeRecall(self)
@@ -368,7 +372,7 @@ class Hub:
                 self.events.append(self.store.append_event({"type": "request.status", "ts": time.time(),
                     "request_id": rid, "data": {"status": "interrupted", "previous": before}},
                     settings.gateway.event_buffer))
-            stale = [f for f in req.get("followups") or [] if f.get("status") == "running"]
+            stale = [f for f in req.get("followups") or [] if is_active_followup(f)]
             for followup in stale:  # its task future died with the old process; the PI can ask again
                 followup.update(status="interrupted", error="gateway restarted before the answer arrived")
             if stale:
@@ -983,11 +987,26 @@ class Hub:
                    "bundle_status": req.get("bundle_status"), "bundle_grade": req.get("bundle_grade"),
                    "bundle_grade_reasons": req.get("bundle_grade_reasons") or [],
                    "bundle_warning": req.get("bundle_warning")}
+        summary["office_current"] = is_office_request(req)
+        summary["session_current"] = (summary["office_current"]
+                                      or float(req.get("created_at") or 0) >= self.session_started_at)
+        summary.update(self.request_session_cost_fields(req))
         if environment:
             summary["step_environment"] = environment
         summary.update(final_checkpoint=cp4.summary(req), pi_review_pending=is_terminal_request(req.get("status")) and not req.get("pi_reviewed_at")
                        and not req.get("cancelling", False), pi_reviewed_at=req.get("pi_reviewed_at"))
         return summary
+
+    def request_session_cost_fields(self, req: dict) -> dict:
+        totals = request_session_cost_totals([req], self.session_started_at)
+        return {
+            "session_cost_usd": totals["cost_usd"],
+            "session_cost_known": not (totals["unknown_count"] or totals["legacy_unknown"]),
+            "session_cost_summary": {
+                "estimated_usd": totals["estimated_usd"],
+                "unknown_count": totals["unknown_count"],
+            },
+        }
 
     def clear_step_jobs(self, rid: str, step_id: str) -> None:
         # A jobs.finished checkpoint remains useful until the resulting step is adopted.
@@ -1560,6 +1579,7 @@ class Hub:
             return
         agent = self.agents.get(result.agent_id)
         item = outcome_unknown_item(result, agent) if outcome_unknown else task_cost_item(result, agent)
+        item["recorded_at"] = time.time()
         amount = float(item["usd"]) if item["status"] != "unknown" else 0.0
         costs[tid] = amount
         req.setdefault("cost_items", {})[tid] = item
@@ -2050,11 +2070,22 @@ class Hub:
                 self._start_ask(AskRequest.model_validate(entry["ask"]), entry.get("origin"))
 
     def set_roster(self, runner_id: str, agents: list[dict], capabilities: dict | None = None) -> None:
+        from ..wsl_readiness import wsl_readiness
+
         roster = {"agents": agents, "updated_at": time.time()}
         self.last_runner_rosters[runner_id] = roster
         self.store.put("runner_roster", runner_id, roster)
         if capabilities is not None:
             self.runner_capabilities[runner_id] = capabilities
+        wsl_runner = next((rid for rid in self.runners
+                           if self.runner_capabilities.get(rid, {}).get("runtime_env") == "wsl"
+                           and wsl_readiness(self.runner_capabilities.get(rid, {}).get("wsl_readiness", {}))
+                           and any(a["id"] == "bioinfo-agent" for a in
+                                   (agents if rid == runner_id else self.runner_agents.get(rid, [])))), None)
+        if wsl_runner and self.agent_runner.get("bioinfo-agent") not in (None, wsl_runner):
+            self.agent_runner.pop("bioinfo-agent", None)
+            self.agents.pop("bioinfo-agent", None)
+            self.agent_online.setdefault("bioinfo-agent", asyncio.Event()).clear()
         for aid in [a for a, r in self.agent_runner.items() if r == runner_id]:
             self.agent_runner.pop(aid, None)
             self.agents.pop(aid, None)
@@ -2062,6 +2093,12 @@ class Hub:
         self.runner_agents[runner_id] = agents
         for a in agents:
             caps = self.runner_capabilities.get(runner_id, {})
+            if a["id"] == "bioinfo-agent":
+                if caps.get("runtime_env") == "wsl" and runner_id != wsl_runner:
+                    continue
+                # Only a connected, ready WSL worker takes precedence over the native roster.
+                if wsl_runner and runner_id != wsl_runner:
+                    continue
             hpc_tools = bool(a.get("hpc_tools", caps.get("hpc_tools") and
                                                  "hpc" in a.get("builtin_mcp", [])))
             self.agents[a["id"]] = {**a, "runner_id": runner_id,
@@ -2075,6 +2112,10 @@ class Hub:
             self.agent_runner[a["id"]] = runner_id
             if runner_id in self.runners:
                 self.agent_online.setdefault(a["id"], asyncio.Event()).set()
+        if not wsl_runner and self.runner_capabilities.get(runner_id, {}).get("runtime_env") == "wsl":
+            for native_id in self.runners:
+                if self.runner_capabilities.get(native_id, {}).get("runtime_env") != "wsl":
+                    self.set_roster(native_id, self.runner_agents.get(native_id, []))
         # Every step waiting for a runner looks again (wait_for_runner) and ends now if nothing is left to wait for,
         # instead of after gateway.runner_wait_s with a false "runner never connected" (#521): an agent this runner
         # dropped (a contract that expired while it was off), or a first agent that waited only because no runner
@@ -2092,6 +2133,10 @@ class Hub:
             for aid, host in self.agent_runner.items():
                 if host == runner_id:
                     self.agent_online.setdefault(aid, asyncio.Event()).clear()
+            if self.runner_capabilities.get(runner_id, {}).get("runtime_env") == "wsl":
+                for native_id in self.runners:
+                    if self.runner_capabilities.get(native_id, {}).get("runtime_env") != "wsl":
+                        self.set_roster(native_id, self.runner_agents.get(native_id, []))
             self._session_state_changed()
             return True
         return False
@@ -2171,6 +2216,8 @@ class Hub:
         ws = self.runners.get(runner_id)
         if ws is None:
             raise RunnerNotSent(f"runner {runner_id} is offline")
+        from ..wsl_paths import message_paths
+        msg = message_paths(msg, self.runner_capabilities.get(runner_id, {}).get("runtime_env"))
         payload = json.dumps(msg, ensure_ascii=False, default=str)
         async with self.runner_locks[runner_id]:
             if self.runners.get(runner_id) is not ws:
@@ -2252,6 +2299,9 @@ class Hub:
         if ws is not None and (self.runners.get(runner_id) is not ws or
                                self.runner_incarnations.get(runner_id) != incarnation):
             return
+        if self.runner_capabilities.get(runner_id, {}).get("runtime_env") in {"wsl", "windows"}:
+            from ..wsl_paths import message_paths
+            msg = message_paths(msg, "windows")
         runner_seq = msg.get("runner_seq")
         if runner_seq is not None and runner_seq <= self.store.runner_seen(runner_id):
             await self.send_runner(runner_id, {"type": "runner.ack", "runner_seq": runner_seq})
@@ -2567,6 +2617,7 @@ class Hub:
         fut = asyncio.get_running_loop().create_future()
         self.futures[task.id] = fut
         self.task_runner[task.id] = rid
+        original_incarnation = self.runner_incarnations.get(rid)
         self.store.put("task", task.id, {"request_id": task.request_id,
                                           "runner_id": rid,
                                           "runner_incarnation": self.runner_incarnations.get(rid),
@@ -2609,15 +2660,16 @@ class Hub:
                     break
                 target = self.agent_runner[task.agent_id]
                 refused = self._session_pin_refusal(task, target)
-                if refused:  # the agent id moved to another runner while the pinned one was away: never re-send there
+                if (refused or target != rid or
+                        self.runner_incarnations.get(target) != original_incarnation):
                     # The first frame may have reached the pinned runner, so this is the uncertain-delivery outcome,
                     # not a certain $0 (same bookkeeping as the timeout above).
                     self.futures.pop(task.id, None)
                     self.task_runner.pop(task.id, None)
                     self._release_steers(task)
                     result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False,
-                                        error=f"{refused.error}; delivery to runner "
-                                              f"{task.meta.get('session_runner')} uncertain")
+                                        error=f"{refused.error + '; ' if refused else ''}"
+                                              f"delivery to runner {rid} uncertain; manual recovery required")
                     self._record_task_cost(task.request_id, task.id, result, outcome_unknown=True)
                     return result
                 try:
@@ -3450,7 +3502,7 @@ class Hub:
             raise ValueError(f"request is {req.get('status')}; ask a follow-up after it finishes")
         if req.get("status") == "cancelled":  # every turn of a cancelled request is refused, so it could only fail
             raise ValueError("취소한 요청에는 이어 묻기를 보낼 수 없습니다. 새 요청을 보내세요")
-        if any(f.get("status") == "running" for f in req.get("followups") or []):
+        if has_active_followup(req):
             raise ValueError("a follow-up for this request is still running")
         if req.get("followup_agent_id"):
             agent = req["followup_agent_id"]
@@ -3547,6 +3599,7 @@ class Hub:
         }
         return {"type": "snapshot", "schema_version": 1, "seq": self.store.event_bounds()[1],
                 "ts": time.time(), "data": {
+            "session_started_at": self.session_started_at,
             **({"demo_status": self.demo_status} if getattr(self, "demo_status", None) is not None else {}),
             "agents": list(self.agents.values()),
             "runners": list(self.runners),
@@ -3560,6 +3613,10 @@ class Hub:
                           # the full list and full answers stay on the request (GET /api/requests/{id})
                           "followups": [snapshot_followup(f) for f in (r.get("followups") or [])[-20:]],
                           "step_status": self.request_summary(r, running)["step_progress"]["steps"],
+                          **self.request_session_cost_fields(r),
+                          "office_current": is_office_request(r),
+                          "session_current": (is_office_request(r)
+                                              or float(r.get("created_at") or 0) >= self.session_started_at),
                           "pi_review_pending": is_terminal_request(r.get("status")) and not r.get("pi_reviewed_at") and not r.get("cancelling", False),
                           "pi_reviewed_at": r.get("pi_reviewed_at"), "final_checkpoint": cp4.summary(r),
                           "error": short(r.get("error") or "", 2000),
@@ -3794,6 +3851,14 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
                   or r.get("status") == status][:limit]
         running = hub.running_tasks() if chosen else []  # one ledger read for the whole list
         return [hub.request_summary(r, running) for r in chosen]
+
+    @app.get("/api/requests/summary", dependencies=[Depends(auth)])
+    async def request_totals() -> dict:
+        requests = list(hub.requests.values())
+        return {"request_count": len(requests),
+                "past_count": sum(not is_office_request(request) for request in requests),
+                "session": request_session_cost_totals(requests, hub.session_started_at),
+                "total": request_cost_totals(requests)}
 
     @app.get("/api/projects", dependencies=[Depends(auth)])
     async def projects() -> list[dict]:
@@ -4050,6 +4115,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     @app.get("/api/health")
     async def health() -> dict:
         payload = {"service": "labhq gateway", "runners": list(hub.runners), "runner_online": bool(hub.runners),
+                   "session_started_at": hub.session_started_at,
                    "agents": len(hub.agents),
                    "active_requests": sum(is_active_request(r.get("status")) for r in hub.requests.values()),
                    "waiting_for_runner": sum(r.get("status") == "waiting_for_runner" for r in hub.requests.values()),

@@ -34,6 +34,13 @@ export function startLiveOffice(onState) {
   }
   let noticeApproval = null;  // #184: the approval whose request the notice shows, cleared when it ends
   const notice = (value, approvalId = null) => { $('live-notice').textContent = value; noticeApproval = approvalId; };
+  const requestRows = () => {
+    const root = $('requests');
+    if (typeof root.querySelectorAll === 'function')
+      return [...root.querySelectorAll('[data-request-id]')];
+    return [...(root.children || [])].filter(row => row.dataset?.requestId);
+  };
+  const requestRow = rid => requestRows().find(row => row.dataset.requestId === rid);
   // #126: a snapshot holds the head of a long follow-up answer; the full request comes from the gateway on demand.
   async function loadFullAnswers(rid, quiet = false) {
     if (loadingAnswers.has(rid)) return;
@@ -105,11 +112,17 @@ export function startLiveOffice(onState) {
   }
   function openReview(rid) {
     selectRequest(rid); render();
-    [...$('requests').children].find(row => row.dataset.requestId === rid)?.scrollIntoView({block:'start'});
+    requestRow(rid)?.scrollIntoView({block:'start'});
     loadFullAnswers(rid, true);
   }
   function render() {
     $('connection').textContent = globalThis.LabHQState.connectionLabel(S.conn, demo);
+    const allRequests = [...S.requests.values()];
+    const costRequests = globalThis.LabHQState.sessionCostRequests(allRequests, S.sessionStartedAt);
+    $('session-cost').textContent = S.conn === 'connecting' ? '사용 비용 불러오는 중' : globalThis.LabHQState.totalCostLabel(
+      costRequests, globalThis.LabHQState.requestsCostTotal(costRequests));
+    $('session-cost').title = `전체 ${globalThis.LabHQState.totalCostLabel(
+      allRequests, globalThis.LabHQState.requestsCostTotal(allRequests))}`;
     $('demo-banner').hidden = !demo;
     if (demo) $('demo-banner').textContent = globalThis.LabHQState.demoBannerText(S.demoStatus);
     $('token-form').hidden = S.conn !== 'auth' && S.conn !== 'offline';
@@ -142,20 +155,22 @@ export function startLiveOffice(onState) {
       }});
     if ($('approval-history')) syncDecisionHistory($('approval-history'), decisionHistory, {
       kindLabels: KIND_KO, requests: S.requests, visibility: historyVisibility,
-      onOpenRequest: id => { selectRequest(id); render(); const row = [...$('requests').children].find(row => row.dataset.requestId === id); row?.scrollIntoView({block:'start'}); },
+      onOpenRequest: id => { selectRequest(id); render(); requestRow(id)?.scrollIntoView({block:'start'}); },
     });
-    const requests = $('requests'), oldRows = new Map([...requests.children]
+    const requests = $('requests'), oldRows = new Map(requestRows()
       .filter(row => row.dataset?.requestId).map(row => [row.dataset.requestId, row]));
-    const rows = [];
-    if (!S.requests.size) text({append: row => rows.push(row)}, 'p', '요청 없음');
+    const rows = [], pastRows = [];
+    if (!globalThis.LabHQState.officeRequests(S.requests.values()).length)
+      text({append: row => rows.push(row)}, 'p', '새 요청을 기다리는 중');
     for (const q of globalThis.LabHQState.sortRequests(S.requests.values())) {
       const status = globalThis.LabHQState.requestStatusText(q, S.approvals);  // R14: never a raw status
       const key = JSON.stringify([q.text, q.status, status, q.phase, q.plan, q.steps, q.processing, q.review, q.error, q.report,
         q.report_appendix, q.execution_record, q.execution_record_truncated, q.report_truncated, q.report_appendix_truncated, q.followups, q.piNotes,
         q.assumptions, q.bundlePath, q.bundleStatus, q.bundleGrade, q.bundleGradeReasons, q.bundleWarning, loadingAnswers.has(q.id)]);
       const prior = oldRows.get(q.id);
-      if (prior?.dataset.renderKey === key) { rows.push(prior); continue; }
-      const row = document.createElement('article'); row.dataset.requestId = q.id; row.dataset.renderKey = key; rows.push(row);
+      const target = globalThis.LabHQState.isPastRequest(q) ? pastRows : rows;
+      if (prior?.dataset.renderKey === key) { target.push(prior); continue; }
+      const row = document.createElement('article'); row.dataset.requestId = q.id; row.dataset.renderKey = key; target.push(row);
       text(row, 'strong', q.text || q.id);
       // Same labels as the 2.5D board. A finished request says 완료/실패 in its status already, so no phase then.
       text(row, 'p', [status, q.phase === 'done' ? '' : phaseLabel(q), globalThis.LabHQState.processingLabel(q)]
@@ -242,6 +257,13 @@ export function startLiveOffice(onState) {
           more.disabled = loadingAnswers.has(q.id); more.onclick = () => loadFullAnswers(q.id);
         }
       }
+    }
+    if (pastRows.length) {
+      const past = document.createElement('details'), summary = document.createElement('summary');
+      const cumulative = globalThis.LabHQState.totalCostLabel(
+        allRequests, globalThis.LabHQState.requestsCostTotal(allRequests)).replace(/^사용 비용 /, '');
+      summary.textContent = `지난 요청 ${pastRows.length}건 · 누적 비용 ${cumulative}`;
+      past.append(summary, ...pastRows); rows.push(past);
     }
     requests.replaceChildren(...rows);
     onState(S, visual, stateText, currentTask);

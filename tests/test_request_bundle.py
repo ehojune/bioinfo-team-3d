@@ -968,6 +968,10 @@ def test_cli_status_shows_recent_bundle(monkeypatch, capsys):
             return {"runners": []}
         if path == "/api/approvals":
             return []
+        if path == "/api/requests/summary":
+            costs = {"cost_usd": 0, "estimated_usd": 0, "unknown_count": 0,
+                     "legacy_unknown": False}
+            return {"request_count": 1, "past_count": 0, "session": costs, "total": costs}
         if "status=running" in path:
             return []
         return [{"id": "r1", "status": "done", "bundle_path": "C:/runs/requests/r1",

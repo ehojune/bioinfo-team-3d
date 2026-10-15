@@ -4,6 +4,87 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# PR #647 — WSL 미설정 doctor 출력 정리
+
+Refs #612.
+
+## 결론
+
+WSL을 설정하지 않은 Windows 설치의 `doctor`는 선택 기능이 꺼졌다는 한 줄만 표시합니다.
+
+## 바뀐 것
+
+- WSL 활성화 상태와 직접 실행한 `setup-wsl --check`는 개별 점검을 유지
+- Claude 로그인 안내에 해당 WSL runner의 실제 `claude-staff` 경로 표시
+- 새 회귀 2건으로 미설정·활성화 출력을 고정
+
+## 확인
+
+- 새 회귀: main 코드 2 failed → branch 2 passed
+- `test_init_wizard.py`, `test_doctor.py`, WSL 관련 test: 187 passed
+- `scripts/check_public.sh` 통과
+
+## 남은 것
+
+리뷰 요청과 병합은 총괄이 이어받습니다.
+
+## 결론
+
+Refs #622. PR #645. OKF Loremaster의 인용문·수치 원문 대조기를 독립 모듈로 옮겼습니다.
+
+## 바뀐 것
+
+- 주장 표기 정밀도로 수치를 대조하고 locator가 찾은 문장은 80단어로 제한
+- Unicode 글자·숫자 보존, Python 3.10 호환, OKF schema 의존 제거
+- Apache-2.0 전문·NOTICE·원본 커밋과 변경 표시, manual 라이선스 예외
+
+## 확인
+
+- 관련 pytest 222 passed, 2 skipped
+- Python 3.10 grammar·한글 인용문·구간·가운뎃점·단어 창 회귀 통과
+- wheel 라이선스 파일 포함, `scripts/check_public.sh` 통과
+
+## 남은 것
+
+2단계인 `lit_scout`·`verify.py` 연결은 하지 않았습니다. 리뷰 요청과 병합은 총괄이 이어받습니다.
+
+# PR #630 — WSL 준비 판정·불확실 전송
+
+| 항목 | 결과 |
+|---|---|
+| P1 4281071639 | 최초 runner·incarnation에 불확실 task 고정, 대상 변경 시 재전송 없이 uncertain |
+| P1 4281071647 | 점검·활성화·gateway가 같은 준비 판정 사용, 미준비 상태는 native 선택 |
+| 필수 준비 | bioinfo manifest·skill, Java·Nextflow, WSL Claude CLI·직원 로그인 |
+| 검증 | 수정 전 회귀 실패 → 수정 후 통과, 관련 pytest 334 passed / 9 skipped, 전체 CJS 통과 |
+| CI 보정 | Linux 임시 경로를 WSL 공유 경로로 잘못 사용한 새 test fixture를 수정 |
+| 후속 인계 | push 뒤 새 P1 4281444658·P2 4281444670, 추가 수정 없음 |
+| 범위 | 실제 WSL·PI 인스턴스 변경 없음, 리뷰 요청·병합 없음 |
+
+근거: `tests/test_wsl_readiness.py`, `labhq/wsl_readiness.py`, `labhq/gateway/server.py`.
+
+## 결론
+
+Refs #634. PR #638의 P1 `4281094837`을 수정했습니다. 수정 커밋 `5b886e2`, main 병합 `07fd2ae`.
+
+## 바뀐 것
+
+- `scoped_open_reads()`에서 모든 읽기 예외를 최종 검사합니다. 현재 작업·논문 스킬 빌드 폴더와 명시한 plugin·skill·자기 Claude project만 남깁니다.
+- workspace·talent 공용 root, 다른 작업 subtree, staff 공용 상위 경로와 링크 별칭을 제외합니다. 같은 목록을 Claude·Codex·managed shell이 받습니다.
+- main의 카피바라 표시와 이 branch의 편집자 이름 보존을 함께 반영했습니다.
+
+## 확인
+
+- 새 회귀 23건: 수정 전 23 failed → 수정 후 23 passed. 다른 작업의 `outputs/RESULT.md` 차단·자기 파일 허용을 세 경로에서 확인했습니다.
+- 관련 pytest 567 passed·3 skipped. #553 비공개 불변식 포함.
+- 전체 Node CJS 62개 파일과 공개 저장소 검사 통과.
+- 기존 공용 root 허용 단언을 차단 단언으로 바꾸고 Claude 저장 출력 fixture에 현재 작업 경로를 명시했습니다.
+- PI 인스턴스·PI venv·HPC 사용 없음. 테스트는 clone venv와 격리 홈에서 실행했습니다.
+
+## 남은 것
+
+- 동적으로 조합한 셸 경로는 기존 정적 판정의 한계입니다.
+- CI 결과는 PR checks에서 확인합니다. 리뷰 요청·병합은 하지 않습니다.
+
 ## 결론
 
 Refs #640. PR #642. 단독 처리 직원 `solo`는 로컬 설정에 `character`가 없어도 사자로 보입니다.
@@ -26,6 +107,53 @@ CI 결과는 push 뒤 확인합니다. 리뷰 요청과 병합은 하지 않습�
 
 ## 결론
 
+PR #638의 P1 3건·P2 1건을 수정했습니다. Refs #634.
+
+| 지적 | 수정 |
+|---|---|
+| 4280803723 | Bash escaped space·인접 따옴표는 POSIX 토큰으로 합칩니다. 해석 실패·drive-relative 경로는 묻습니다. |
+| 4280939685 | 통제·개인 경로는 읽기라도 높음·노출 확인 필요로 표시하고 동작별 설명을 유지합니다. |
+| 4280939701 | Codex read-only profile에도 관리 폴더·해당 스킬의 읽기 grant를 적용합니다. 개인 하위 경로 deny는 유지합니다. |
+| 4280939708 | 위치 label은 절대경로·구분자·대소문자와 링크 목적지를 확인합니다. `..`·링크로 벗어나면 label을 붙이지 않습니다. |
+
+## 확인
+
+- 수정 전 head `5c35f20`: 새 테스트 40건 중 33 failed·7 passed로 네 지적 재현.
+- 최종 관련 pytest: 722 passed·8 skipped. 새 회귀 테스트 45건 포함.
+- `test_claude_staff_home.py` 등 기존 보안 테스트 수정 없이 통과. 카드 테스트의 개인 경로 위험 기대값만 중간→높음으로 변경.
+- 관련 Node: 16 passed. PI 인스턴스·사용자 홈·PI venv·실제 엔진 사용 없음.
+- CI 결과는 push 후 PR 본문에 기록합니다. 병합·리뷰 재요청은 하지 않습니다.
+
+## 남은 지적
+
+- 동적으로 만든 셸 경로는 기존 정적 판정의 한계입니다. 해석하지 못한 관리 읽기는 확인을 요구합니다.
+
+## 결론
+
+Refs #630. 두 P1의 경로 변환을 모델 선언과 runner 경계 함수로 통합했다. gateway가 Linux여도 WSL 결과를 Windows runner에 전달한다.
+
+## 바뀐 것
+
+| 지적 | 수정 |
+|---|---|
+| P1 4280657526 | 공유 경로는 gateway OS와 무관하게 Windows 형식으로 저장하고 대상 runner의 `runtime_env`로 배포한다. 결과·이벤트·manifest·bundle이 같은 변환 함수를 쓴다. |
+| P1 4280657538 | project·reference·upstream 경로를 함께 변환하고 setup에서 reference root와 프로젝트 root를 WSL 설정에 넘긴다. |
+
+`RunnerPathFields`에 경로 필드와 값·목록·mapping 변환 방식을 선언했다. 모델 필드의 이름·타입 주석으로 누락을 검사한다. 프롬프트·자유 형식 결과·상대 산출 경로는 보존한다.
+
+## 확인
+
+- PR head `fe83ff8`: 두 P1 및 reference root 회귀 3건 실패 → 수정 후 통과.
+- 관련 pytest 297 passed / 27 skipped. 산출물 타입·논문 스킬·라운드 기록 107 passed.
+- 새 경로 필드 누락 감지, 원격 gateway의 이벤트, 실제 임시 project·reference 파일 읽기, manifest 원본 보존과 bundle 입력 목록 확인.
+- 전체 테스트는 CI에서 실행한다. push 후 결과는 PR checks와 로컬 인계 기록에 남긴다.
+
+## 남은 것
+
+기존 WSL 설정은 정지 후 setup을 다시 실행해야 reference root를 받는다. PI 인스턴스·실제 WSL은 실행하지 않았다. 리뷰 요청·병합은 총괄에게 넘긴다.
+
+## 결론
+
 PR #641에서 #615의 Windows CI 시간 측정 test 두 개를 사건 순서 검증으로 바꿨습니다. 파일 쓰기를 Event로 막은 채 DB commit과 health 응답이 release 전에 끝나는지 확인합니다. Refs #606.
 
 ## 바뀐 것
@@ -43,6 +171,55 @@ PR #641에서 #615의 Windows CI 시간 측정 test 두 개를 사건 순서 검
 ## 남은 것
 
 - push 뒤 CI와 전체 재실행 1회를 확인합니다. 리뷰 요청과 병합은 하지 않습니다.
+
+## 결론
+
+Refs #634. PR #638의 staff 폴더 읽기 범위·자격 증명 이름 오판·활동 표시·auto 승인 설명을 수정했습니다.
+
+## 바뀐 것
+
+- Paper2Agent 읽기는 논문 스킬 빌드 작업의 해당 스킬 하위로 한정합니다. 일반 작업과 다른 스킬은 열지 않습니다.
+- 자기 빌드 폴더와 저장 출력의 파일 읽기는 유지합니다. 저장 출력의 Bash 접근은 계속 묻습니다.
+- `auth`·`oauth`·`token` 같은 상위 폴더명은 허용하고 자격 증명 파일명과 비밀 디렉터리는 보호합니다.
+- 직원 활동은 한국어 요약, 원문은 자세히에 표시합니다. auto에서도 묻는 규칙을 설명합니다.
+
+## 검증
+
+- 수정 전: 기존 보안 테스트 3건과 새 pytest 8건 실패. 새 Node 2건 실패.
+- 수정 후: 관련 pytest 643 passed/7 skipped. 실제 node.exe를 쓰는 웹 pytest wrapper 86 passed/1 skipped(Node 61개 포함). `test_claude_staff_home.py` 변경 없음.
+- CI의 웹 상태 비교 실패 2건도 표시용 요약을 별도 필드로 분리해 수정했습니다. 기존 상태 비교 테스트는 그대로 통과합니다.
+- 공개 검사·diff 검사 통과. 패치노트·목차 검사와 push 후 CI 결과는 PR에 기록합니다.
+- 브라우저 실화면: UNVERIFIED. PI 인스턴스·HPC 사용 없음.
+
+## 남은 지적
+
+- 동적으로 조합한 셸 경로는 기존 정적 판정의 한계입니다.
+
+## 결론
+
+Refs #630. 봇 2차 지적 5건을 수정했다. Windows와 WSL은 같은 작업 폴더를 쓰며 승인·예산 정책도 함께 적용한다.
+
+## 바뀐 것
+
+| 지적 | 수정 |
+|---|---|
+| P1 4280129662 | 공유 drive의 경로 변환을 한 함수로 모았다. 선행 입력·작업 폴더·산출·bundle을 연결하고 Linux 전용 작업 폴더는 거부한다. 공유 root가 확인된 WSL만 bundle hostname 예외를 받는다. |
+| P1 4280129675 | setup마다 Windows 정책을 복사하고 개인·통제 구역 경로를 변환한다. 변환 실패는 거부하며 기본 개인 경로 보호는 두 OS 모두 유지한다. |
+| P1 4280232224 | 연결 확인 뒤에만 enabled를 저장한다. WSL이 끊기면 연결된 Windows 직원에게 배정한다. |
+| P2 4280129685 | 설정 검증·up·background·직접 runner·WSL start에서 ID 중복을 거부한다. |
+| P2 4280232232 | NAT fallback의 기본 포트를 ws 80·wss 443으로 나눈다. |
+
+## 확인
+
+- 원래 PR head `6fc5c69`: 새 회귀 22 failed / 2 passed. 수정 후 24 passed.
+- 관련 pytest: 463 passed / 32 skipped. 시작 경로·CSO 추가 확인: 257 passed.
+- 격리 실측: Windows 단계 → WSL 단계 파일 전달과 최종 bundle 수집 성공. 누락 0건, WSL 시험 runner exit 0. 실제 모델 호출 없이 CLI 파일 작업으로 확인했다.
+- WSL manual 1,226자 → 1,506자. public·patch-notes·notes-index 검사는 기록 커밋과 함께 확인한다. CI는 push 뒤 PR checks에서 확인한다.
+
+## 남은 것
+
+- Windows 정책 변경 뒤 WSL을 멈추고 setup을 다시 실행해야 한다.
+- 리뷰 요청·병합은 하지 않았다. 실측 원본과 테스트 로그는 clone의 `.pr-drafts/`에 보관한다.
 
 ## 결론
 
@@ -69,6 +246,28 @@ Refs #636. 인사팀(recruiter)을 비버에서 카피바라로 바꿨습니다.
 
 ## 결론
 
+Refs #634. labhq 관리 폴더의 단순 읽기에 생기던 승인을 줄이고 도구 카드에 작업·위치·목적·규칙·위험·승인/거절 결과를 표시합니다.
+
+## 바뀐 것
+
+- 경로: 관리 폴더 읽기만 예외로 처리합니다. 개인 상위 폴더는 보호하며 자격 증명·개인 하위 경로·링크/상위 경로 우회는 계속 차단합니다. 작업 자신의 파일 쓰기 권한은 유지합니다.
+- 설명: 복합 읽기 명령을 나눠 설명하고 빌드 단계·논문 제목을 붙입니다. 템플릿이 해석하지 못한 명령만 통역 대상으로 넘깁니다.
+- 이름: 실제 Task 담당은 recruiter였습니다. 이름을 첫 단어로 줄여 편집자와 모두 ‘비버’로 보이던 표시를 역할까지 보이게 고쳤습니다.
+- 화면: 2.5D·3D 공통 카드와 CLI가 같은 설명을 씁니다. 원문은 자세히/`approvals --details`에 남깁니다.
+
+## 확인
+
+- 원본 main `5d35959`에서 새 회귀 22 failed/28 passed → branch 50 passed. Node 카드·직원 이름 회귀도 main에서 실패했습니다.
+- 관련 pytest 683 passed/7 skipped, Node 7개 파일 통과. 이후 추가한 장착 스킬·플러그인 읽기 4건도 통과했습니다. 전체 suite는 CI에 맡깁니다.
+- `scripts/check_public.sh`·diff 검사 통과. patch-notes·notes-index와 CI 결과는 PR에 기록합니다.
+- 브라우저 실화면 확인: UNVERIFIED. PI 인스턴스에서 시운전하지 않았습니다.
+
+## 남은 지적
+
+- 셸에서 실행 중 만들어지는 경로는 기존처럼 정적 경로 판정의 한계입니다. 읽기 예외는 정해진 단순 문법만 처리합니다.
+
+## 결론
+
 PR #635에서 데스크톱 2.5D 패널 경계를 마우스와 키보드로 조정하게 했습니다. 더블클릭하면 기본 크기로 돌아가고, 데모·라이브·instance별로 저장합니다. 폰과 3D는 그대로입니다. Refs #633.
 
 ## 바뀐 것
@@ -86,6 +285,27 @@ PR #635에서 데스크톱 2.5D 패널 경계를 마우스와 키보드로 조�
 ## 남은 것
 
 - CI 결과는 push 뒤 확인합니다. 리뷰 요청과 병합은 하지 않습니다.
+
+## 결론
+
+Refs #632. 새 세션에서는 검토를 마친 완료·실패·취소 요청을 작업판과 제목 선택에서 빼고 `지난 요청`으로 접습니다. 검토 대기 요청은 그대로 보입니다.
+
+## 바뀐 것
+
+- 2.5D·3D·CLI가 현재 사무실과 지난 요청을 같은 기준으로 나눕니다.
+- 머리글은 이번 세션 비용만 표시하고 전체 누적 비용은 도움말과 지난 요청 요약에 남깁니다.
+- 요청 기록·검색·보고서·저장 결과는 지우지 않습니다.
+- `docs/manual.md` 웹 사무실 설명은 146,796자에서 146,847자로 51자 늘었습니다.
+
+## 확인
+
+- 새 Node·pytest test는 main에서 실패하고 이 branch에서 통과했습니다.
+- 관련 pytest 72 passed, 1 skipped. `tests/*.cjs` 전체 통과.
+- 데스크톱 1440px·폰 390px 전후 화면을 `docs/status/assets/clean-office-open/`에 남겼습니다.
+
+## 남은 것
+
+- GitHub CI 결과는 PR을 연 뒤 확인합니다.
 
 ## 결론
 Refs #621. PR #631. `alphagenome_variant`가 GRCh38 변이를 권장 scorer로 평가하고 한국어 요약과 원 수치 표를 돌려줍니다.
@@ -106,6 +326,38 @@ Refs #621. PR #631. `alphagenome_variant`가 GRCh38 변이를 권장 scorer로 �
 - 실제 API 실측은 지시 범위 밖. 서버 build ID는 SDK가 공개하지 않아 미확인으로 기록합니다.
 - SDK가 일부 RPC 오류를 재시도하므로 10개 변이는 최대 50회 RPC 시도가 될 수 있습니다.
 - 출처·SDK 계약: [참고 기록](https://github.com/ehojune/bioinfo-team-3d/blob/alphagenome-variant-score/docs/reference/alphagenome-variant.md).
+
+## 결론
+
+Refs #612. 1단계: `setup-wsl`로 로컬 WSL runner를 준비하고 Windows gateway에 연결합니다. 실행 위치 카드는 2단계로 남깁니다.
+
+## 바뀐 것
+
+- `setup-wsl --check`: 배포판·Java·Nextflow·Docker·bioinfo-agent·labhq·등록·연결을 항목별 표시.
+- setup: 사용자 venv·editable 설치, 없는 Nextflow만 설치, Linux 전용 state·설정·작업 폴더. 관리자 명령은 안내만.
+- 토큰은 stdin과 600 설정 파일로 전달. Windows `up/down`과 `wsl-runner start/stop`은 기존 supervisor를 재사용.
+- bioinfo-agent를 WSL에 배정하고 Windows 재연결로 덮지 않음. doctor WSL 절과 CSO 도구 안내, manual 추가.
+
+## 확인
+
+| 항목 | 결과 |
+|---|---|
+| 새 mock test 12개 | main `33e9603`: 12 실패(동작 assertion 4, 새 API 부재 8); branch: 12 통과 |
+| 관련 pytest | 409 passed, 3 skipped; 전체 suite는 CI |
+| Node | `tests/web_agent_capabilities.cjs` 통과 |
+| 실제 setup·check | Ubuntu 22.04, 별도 설정·state·임시 포트의 Windows gateway에 `lab-wsl` 연결; 8항목 모두 ok |
+| 반복·재시작 | setup 재실행 성공, `down → up` 뒤 WSL 재연결 |
+| 도구 | Java 17.0.20.1, Nextflow 24.10.5, Docker 29.7.1 |
+| Nextflow + Docker | Ubuntu 22.04 컨테이너의 HELLO 1 task, COMPLETED / exit 0, `hello.txt=hello`, report·trace 생성 |
+| 토큰 | Linux 폴더 700·설정 600, Linux 로그 11개와 Windows 로그에서 토큰 0건 |
+
+실측은 mock 직원으로 runner 연결을 확인하고 Nextflow를 WSL에서 직접 실행했습니다. WSL Claude CLI·직원 로그인은 없어서 bioinfo-agent의 LLM 실행은 검증하지 않았습니다. 초기 Alpine 컨테이너에는 Bash가 없어 실패했고 Ubuntu 이미지로 완료했습니다. PI 인스턴스·PI venv·보호 포트·HPC·관리자 명령은 사용하지 않았습니다.
+
+## 남은 것
+
+- WSL Claude CLI와 직원 전용 로그인 준비. setup은 자격 증명을 입력하지 않습니다.
+- CI 결과는 PR checks에서 확인. 리뷰 요청·병합은 하지 않습니다.
+- 로컬 실측 근거: `.pr-drafts/live-evidence.json`, `hello.log`, `live-setup-wsl-check.log`, `test-main.log`, `test-final.log`(모두 커밋 제외).
 
 ## 결론
 

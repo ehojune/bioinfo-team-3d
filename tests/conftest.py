@@ -65,3 +65,11 @@ def _no_host_bioinfo_agent(monkeypatch):
     """`labhq init` looks for a bioinfo-agent checkout in common places (D:/bioinfo-agent, ~/bioinfo-agent, /mnt/d/...),
     which exist on some PCs. No test depends on this machine; tests/test_init_defaults.py names its own places."""
     monkeypatch.setattr(bioinfo_link, "common_paths", lambda: [])
+
+
+@pytest.fixture(autouse=True)
+def _no_host_wsl(monkeypatch):
+    """Doctor must never start an operator's WSL distribution in a test (#612)."""
+    from labhq import wsl_setup
+
+    monkeypatch.setattr(wsl_setup, "distributions", lambda: [])

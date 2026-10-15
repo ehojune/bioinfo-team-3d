@@ -52,7 +52,7 @@ test('one native control folds literal text, exposes aria-expanded, marks server
   syncExpandableText(parent,raw,{limit:80,truncated:true});
   const fold=find(parent,'details'),summary=find(fold,'summary');
   assert.equal(fold.open,false); assert.equal(summary.getAttribute('aria-expanded'),'false');
-  assert.ok(summary.textContent.includes('…')); assert.match(summary.textContent,/서버에서 \d+자로 잘림/);
+  assert.ok(summary.textContent.includes('…')); assert.match(summary.textContent,/받은 내용 일부/);
   assert.equal(find(fold,'pre').textContent,raw); assert.equal(find(parent,'img'),undefined);
   fold.open=true;fold.ontoggle();assert.equal(summary.getAttribute('aria-expanded'),'true');
   syncExpandableText(parent,raw,{limit:80,truncated:true});assert.equal(find(parent,'details'),fold);
@@ -101,7 +101,7 @@ test('decision detail uses the shared fold and preserves an open history line ac
   const raw='line\n'.repeat(200)+'TAIL'; const cards=new Element();
   syncDecisionCards(cards,[{id:'open',kind:'tool_permission',detail:{input:raw,input_truncated:true}}]);
   const detailFold=nodes(cards).find(n=>n.className==='expandable-text');assert.ok(detailFold);
-  assert.equal(find(detailFold,'pre').textContent,raw);assert.match(find(detailFold,'summary').textContent,/서버에서/);
+  assert.equal(find(detailFold,'pre').textContent,raw);assert.match(find(detailFold,'summary').textContent,/받은 내용 일부/);
   const container=new Element(),items=[{...decision('past'),note:raw}],options={visibility:createHistoryVisibility('live',storage())};
   syncDecisionHistory(container,items,options);const fold=find(container,'details');fold.open=true;
   syncDecisionHistory(container,items,options);assert.equal(find(container,'details'),fold);assert.equal(fold.open,true);
@@ -111,7 +111,7 @@ test('both offices wire report navigation and share history visibility; 2.5D she
   const html=fs.readFileSync(path.join(root,'index.html'),'utf8'),live=fs.readFileSync(path.join(root,'lab3d/src/live.js'),'utf8');
   assert.match(html,/createHistoryVisibility\(`\$\{MODE\}:\$\{INSTANCE\}`\)/);
   assert.match(html,/onOpenRequest:[\s\S]*?officeState.selectRequest\(id\)[\s\S]*?showTab\('tasks'\)/);
-  assert.match(html,/expandableText\(row, l.fullText/);
+  assert.match(html,/expandableText\(row, l.piText \?\? l.text, \{pi:true, original:l.fullText \?\? l.text/);
   assert.match(html,/syncMessageRows\(\$\('#feed'\), items, \{nick, avatarHTML:avatar, ago, expandableText\}\)/);
   assert.match(fs.readFileSync(path.join(root,'ui/messenger.js'),'utf8'),/options.expandableText\(text, m.fullText \?\? m.text/);
   assert.match(live,/createHistoryVisibility\(`live:/);assert.match(live,/syncDecisionHistory/);

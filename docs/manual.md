@@ -131,6 +131,31 @@ npm의 `.cmd`/`.bat` shim은 여러 줄 prompt를 손상시킬 수 있어 labhq�
 
 Codex 직원 로그인 격리는 [알려진 한계](#알려진-한계)의 전용 `CODEX_HOME` 안내를 따릅니다. `labhq doctor`가 구성을 점검합니다.
 
+### 이 PC의 WSL에서 분석하기
+
+Windows 설정을 선택해 `labhq -c <설정> setup-wsl --check`로 도구·plugin·runner 연결을 확인합니다. 분석 준비에는 bioinfo manifest·bioinfo-analyze skill·Java·Nextflow·WSL Claude CLI와 직원 계정 로그인이 모두 필요합니다. 연결·roster 갱신 때 준비가 확인된 WSL만 우선 배정하며, 미준비 상태면 native를 씁니다.
+
+WSL을 설정하지 않은 설치에서 `doctor`는 선택 기능이 꺼졌다는 한 줄만 냅니다. `setup-wsl --check`를 직접 실행하거나 WSL을 활성화한 뒤에는 개별 준비 상태와 실제 WSL 직원 로그인 경로를 안내합니다.
+
+1. `labhq -c <설정> up`으로 gateway를 켭니다.
+2. `labhq -c <설정> setup-wsl`로 없는 Nextflow(24.10.5)·editable labhq venv·runner 설정을 준비합니다. 분석 준비와 연결을 모두 확인한 뒤 활성화를 저장합니다. Claude CLI 설치·로그인과 관리자 명령은 안내만 합니다.
+3. 이후 `up`·`down`이 WSL runner도 시작·종료합니다. 따로 제어하려면 같은 설정으로 `wsl-runner start` 또는 `wsl-runner stop`을 씁니다. 기존 supervisor와 프로세스 신원 검사를 재사용합니다.
+
+| `runner.wsl` 설정 | 기본값 / 용도 |
+|---|---|
+| `distro`, `user` | `Ubuntu-22.04`, 배포판 기본 사용자 |
+| `id` | `lab-wsl` — 활성화 때 Windows runner와 같으면 설정·시작 거부 |
+| `bioinfo_agent` | `/mnt/d/bioinfo-agent` |
+| `root` | Linux 홈의 `.local/share/labhq/wsl-<설정 해시>`; venv·state·로그·직원 설정을 분리 |
+| `gateway_url` | 기존 주소 → localhost 실패 시 Windows NAT 주소. 기본 포트 ws 80·wss 443 |
+| `enabled` | setup의 연결 확인 성공 시 true |
+
+토큰은 stdin으로 전달하고 Linux의 700 폴더 안 600 설정 파일에 둡니다. Windows mount에는 저장하지 않습니다. NAT에서 연결이 안 되면 gateway를 WSL에서 닿는 주소에 bind하고 방화벽을 확인하세요. setup이 bind나 방화벽을 바꾸지는 않습니다.
+
+작업은 Windows `runner.workspace_root`와 같은 `/mnt/<drive>/…` 폴더를 씁니다. gateway 위치와 무관하게 대상 runner의 `runtime_env`로 작업·결과·이벤트 경로를 변환해 project·reference·`inputs/<step>`·manifest·bundle을 잇습니다. `/home` 작업 폴더·UNC 경로는 거부합니다. setup은 Windows 승인·예산 정책과 reference root(프로젝트 포함)를 복사하고 개인·통제 구역 경로도 변환합니다. 변환 실패는 설정 거부이며, 정책이나 reference root를 바꿨다면 `wsl-runner stop` 후 setup을 다시 실행하세요.
+
+bioinfo-agent는 WSL이 연결됐을 때만 WSL에 우선 배정하고 끊기면 연결된 Windows 직원으로 돌아갑니다. CSO는 연결된 runner의 Nextflow·Docker 확인을 계획에 반영합니다. WSL Claude CLI·직원 로그인(`root/claude-staff`)은 별도 준비하며 setup은 로그인하지 않습니다. 실행 위치 선택 카드는 #612 2단계입니다.
+
 ## 띄우기와 접속
 
 ```bash
@@ -199,6 +224,10 @@ PI 토큰으로 `POST /api/shutdown`을 호출하며 `down`의 상태 재확인�
 
 - 펭귄 비서실장이 기술 메시지와 직원 간 영어 대화를 두 문장 이내의 한국어로 설명합니다. 원문은 **자세히**에 보존하며 전달은 번역을 기다리지 않습니다.
 - 쉬운 설명이 없는 승인 카드에도 설명을 붙입니다. 이미 있는 설명과 승인 대상·명령은 바꾸지 않습니다.
+- 도구 카드는 목록 조회·파일 읽기·프로그램 위치 확인·설치·네트워크·쓰기·삭제를 구분하고, 작업 위치·단계와 목적·걸린 규칙·위험 등급·승인/거절 결과를 보여 줍니다. 논문 스킬 빌드는 논문 제목과 실제 담당 이름(예: 비버 인사팀)을 표시합니다. 2.5D·3D·`labhq approvals`가 같은 설명을 쓰며 CLI 원문은 `labhq approvals --details`로 봅니다. 템플릿으로 해석한 명령에는 통역 모델을 쓰지 않습니다.
+- 현재 작업 폴더(논문 스킬 빌드 작업은 해당 빌드 폴더)와 장착한 플러그인의 단순 읽기는 허용합니다. workspace·talent 공용 root와 다른 직원 폴더를 품는 상위 경로는 읽기 예외에서 제외합니다. staff의 Paper2Agent 참고 자료는 논문 스킬 빌드 작업에만 해당 스킬 하위로 엽니다. 자격 증명·개인 경로·다른 작업의 저장 출력은 계속 보호합니다. 자기 저장 출력은 파일 도구로만 읽습니다.
+- 통제·개인 경로 접근은 읽기라도 위험 등급을 **높음·확인 필요**로 표시합니다. 위치 이름은 절대경로·구분자·대소문자와 실제 링크 목적지를 확인해 붙입니다. 관리 폴더 읽기 grant는 Codex의 read-only profile에도 적용하며, Bash 경로는 POSIX 규칙으로 해석하고 모호하면 묻습니다.
+- 직원 활동에는 쉬운 요약을 쓰고 명령 원문은 **자세히**에 둡니다. auto에서도 승인 카드가 뜨면 어떤 규칙 때문에 묻는지 설명합니다. 쓰기·삭제·불명확한 스크립트에는 기존 정책을 적용합니다.
 - `pi_language` 설정: `enabled: true`, `model: haiku`, `per_request_usd: 0.50`, `per_message_usd: 0.05`, `timeout_s: 30`. 비용·미집계 비용은 실행 중 요청 예산에도 한 번만 반영합니다. 호출 상한을 먼저 예약해 실패·재시작 뒤에도 번역 상한을 유지하며 요청 예산이 소진되면 호출하지 않습니다.
 - 요청 문장·경로·참고 자료가 policy의 통제 구역에 닿거나 판정이 불명확하면 설명 모델에 보내지 않습니다.
 - 영문자 8개 이상이며 영문자·한글 중 영문자가 60% 이상이면 영어로 판정합니다. 코드·경로도 설명 대상입니다. 한국어 설명 속 영문 기술 용어는 허용하고 코드·경로는 거부합니다. 메시지별 결과와 실패를 저장해 재번역하지 않습니다.
@@ -214,7 +243,7 @@ PI 토큰으로 `POST /api/shutdown`을 호출하며 `down`의 상태 재확인�
 
 같은 Wi-Fi의 폰에서 체험하려면 `labhq demo --web --phone`을 실행하고 출력된 `/3d` URL을 엽니다. 승인은 폰에서 누르거나 기본 120초 뒤 자동 처리됩니다.
 `/`는 2.5D, `/3d`는 3D 사무실입니다. 두 화면은 빌드 없이 `state.js` reducer와 `/ws/client`를 공유하며 같은 client token으로 연결합니다.
-다시 열면 이 브라우저에서 마지막으로 보던 요청을 복원합니다(데모·라이브·instance별 저장). 없으면 끝나지 않은 요청 중 최근 활동한 것을 고르고, 모두 끝났으면 가장 최근 활동한 요청을 엽니다. 작업판 목록도 진행·대기 요청을 위에, 완료·실패 요청을 아래에 두고 상태를 표시합니다. 새 실행 요청은 자동으로 열지만 끝난 요청이 들어와도 직접 고른 화면은 유지합니다. 화이트보드의 **이어서 진행 중**은 재개 이벤트가 있거나 접속 당시 이미 실행 중이던 요청에 표시됩니다.
+다시 열면 검토·확인이 남은 요청과 진행·중단된 요청 중 최근 활동한 것을 엽니다. 모두 정리됐으면 **새 요청을 기다리는 중**으로 시작하고, `pi_reviewed_at`이 기록된 종료 요청은 2.5D·3D의 접힌 **지난 요청**에서 보고서와 저장 위치를 다시 찾습니다. 이어 묻기가 실행·대기 중이면 검토를 마친 요청도 작업판에 남고, 끝나면 다시 **지난 요청**으로 접힙니다. 위쪽 비용은 이번 `up` 뒤 기록된 비용만 합치며, 전체 누적액은 지난 요청 묶음과 비용 툴팁에 표시합니다. 브라우저의 마지막 선택은 지난 요청이 아닐 때만 복원합니다. 화이트보드의 **이어서 진행 중**은 재개 이벤트가 있거나 접속 당시 이미 실행 중이던 요청에 표시됩니다.
 2.5D는 gateway의 첫 스냅샷이 오기 전에는 비용·사무실 판·결정 탭·요청 카드를 "불러오는 중"으로 보이고, 토큰이 없으면 "토큰을 넣으면 … 불러와요"로 보입니다. 빈 사무실이나 $0.00으로 보이지 않게 하려는 것입니다.
 
 2D 사무실은 작은 전신 동물과 직무 소품으로 직원을 구분합니다. 상태는 그림 옆 점과 글자로 보이며 결정 대기는 남청색으로 강조합니다. 폰에서는 사무실의 분석 구역·지휘부를 먼저 배치하고 그림은 64px 이상으로 유지합니다. OS의 움직임 줄이기 설정을 따릅니다. 편집자(비버)는 운영과 파견직 구역에 펜과 종이 소품으로 앉습니다.
@@ -1263,6 +1292,7 @@ tests/                   스케줄러 파서 · 정책 · 레지스트리 · MCP
 | 코드 — `.py`·`.js`·`.html`·`.css`·`.sh`·`.cjs` 등 실행되는 파일과 test | [GPL-3.0-or-later](../LICENSE) |
 | 그 밖 — README·`docs/`·`patch_notes/` 같은 문서, 그림·영상, 데이터 표(`labhq/vocab/`, EDAM에서 뽑은 표 포함), `agents/`의 역할 정의 | [CC BY-SA 4.0](../LICENSE-CC-BY-SA-4.0.txt) |
 | 예외 — `labhq/web/vendor/three/`(three.js) | 그 폴더의 [MIT](../labhq/web/vendor/three/LICENSE) |
+| 예외 — `labhq/evidence/literal_check.py`·`tests/test_literal_check.py`(OKF Loremaster에서 수정) | evidence 폴더의 [Apache-2.0](../labhq/evidence/LICENSE-APACHE-2.0.txt)·[NOTICE](../labhq/evidence/NOTICE.md) |
 | 예외 — `labhq/web/lab3d/assets/placeholder.gltf` | 파일에 적힌 CC0-1.0 |
 
 코드를 고쳐 배포하면 소스를 같은 GPL로 공개하고, 문서·데이터를 쓰면 출처를 밝히고 같은 CC BY-SA로 공유합니다. EDAM 표의 출처·판본은 그 파일 옆 NOTICE에 적습니다.

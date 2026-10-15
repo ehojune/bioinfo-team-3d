@@ -367,6 +367,9 @@ def format_capabilities(roster: list[dict], runner_capabilities: dict | None = N
     for runner_id in sorted({a.get("runner_id") for a in roster if a.get("runner_id")}):
         runner = capabilities.get(runner_id) if isinstance(capabilities.get(runner_id), dict) else {}
         lines.append(f"- runner {runner_id} local software: {_format_local_software(runner.get('local_software'))}")
+        if runner.get("runtime_env") == "wsl":
+            lines.append(f"- runner {runner_id}: 로컬 WSL. bioinfo-agent 분석은 이 runner에서 실행한다. "
+                         "위 tools의 nextflow/docker가 yes이면 로컬 Linux 파이프라인을 계획에 넣는다.")
     return "\n".join(lines)
 
 DECLARED_OUTPUTS_FALLBACK_RULE = (
@@ -2390,6 +2393,11 @@ def _cost_summary_field(req: dict) -> dict:
     return {"cost_summary": req["cost_summary"]} if req.get("cost_summary") else {}
 
 
+def _session_cost_fields(hub: Any, req: dict) -> dict:
+    fields = getattr(hub, "request_session_cost_fields", None)
+    return fields(req) if fields else {}
+
+
 class Orchestrator:
     def __init__(self, hub: "Hub"):
         self.hub = hub
@@ -2920,7 +2928,7 @@ class Orchestrator:
             await self._emit(rid, "request.followup_done", {
                 "id": fid, "ok": False, "answer": "", "error": reason,
                 "cost_usd": float(req.get("cost_usd") or 0), "cost_known": req.get("cost_known", True),
-                **_cost_summary_field(req)})
+                **_cost_summary_field(req), **_session_cost_fields(self.hub, req)})
 
         try:
             refusal = read_only_refusal(agent, self._engine(rid, agent))
@@ -2995,7 +3003,7 @@ class Orchestrator:
         await self._emit(rid, "request.followup_done", {
             "id": fid, "ok": answered, "answer": clip(entry["answer"], 20000), "error": entry["error"],
             "cost_usd": float(req.get("cost_usd") or 0), "cost_known": req.get("cost_known", True),
-            **_cost_summary_field(req)})
+            **_cost_summary_field(req), **_session_cost_fields(self.hub, req)})
 
     def _count_adopted_cost(self, rid: str | None, task_id: str) -> None:
         """Add an adopted task's recorded cost once (#93).

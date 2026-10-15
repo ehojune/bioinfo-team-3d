@@ -3,8 +3,9 @@ from __future__ import annotations
 import re
 import time
 import uuid
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Iterable, Literal
+from typing import Annotated, Any, Iterable, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_serializer, model_validator
 
@@ -209,6 +210,72 @@ class AgentSpec(BaseModel):
         }
 
 
+@dataclass(frozen=True)
+class PathShape:
+    """Which part of a wire field contains paths (not arbitrary user text)."""
+
+    kind: Literal["scalar", "items", "keys", "values", "opaque"]
+    when: tuple[str, str] | None = None
+
+
+WirePath = Annotated[str, PathShape("scalar")]
+WirePaths = Annotated[list[str], PathShape("items")]
+WirePathKeys = Annotated[dict[str, Any], PathShape("keys")]
+WirePathValues = Annotated[dict[str, str], PathShape("values")]
+WireReference = Annotated[str, PathShape("scalar", ("kind", "path"))]
+WireOpaque = Annotated[Any, PathShape("opaque")]
+
+
+@dataclass
+class RunnerPathFields:
+    """Path contract for Task.meta, TaskResult, Event.data and their manifests.
+
+    The boundary derives its field table from these annotations. Keep structured
+    user content opaque; new path fields must be declared here (checked in tests).
+    Relative paths stay relative. Mapping keys such as step IDs stay unchanged.
+    """
+
+    workdir: WirePath
+    source_workdir: WirePath
+    cwd: WirePath
+    workspace_root: WirePath
+    project_dirs: WirePaths
+    plugin_dirs: WirePaths
+    reference_dirs: WirePaths
+    reference_roots: WirePaths
+    upstream_dirs: WirePaths
+    upstream_steps: WirePathValues
+    outputs: WirePaths
+    missing_outputs: WirePaths
+    unreported_outputs: WirePaths
+    output_sha256: WirePathKeys
+    output_types: WirePathKeys
+    output_tool_use_ids: WirePathKeys
+    consult_refs: WirePaths
+    path: WirePath
+    file_path: WirePath
+    local_dir: WirePath
+    skill_dir: WirePath
+    talent_dir: WirePath
+    mcp_path: WirePath
+    mcp_entry_path: WirePath
+    value: WireReference
+    manifest: WirePath
+    manifest_path: WirePath
+    bundle: WirePath
+    bundle_path: WirePath
+    read_only_roots: WirePathValues
+    # These are content, not transport fields, even when they contain a "path" key.
+    prompt: WireOpaque
+    context: WireOpaque
+    text: WireOpaque
+    structured: WireOpaque
+    output_schema: WireOpaque
+    workspace_files: WireOpaque
+    workdir_id: WireOpaque
+    evidence_path_warnings: WireOpaque
+
+
 class Task(BaseModel):
     id: str = Field(default_factory=lambda: new_id("task"))
     request_id: str | None = None
@@ -219,7 +286,7 @@ class Task(BaseModel):
     resume_session_id: str | None = None
     budget_usd: float | None = None
     created_at: float = Field(default_factory=time.time)
-    meta: dict[str, Any] = {}
+    meta: Annotated[dict[str, Any], RunnerPathFields] = {}
 
 
 class TaskResult(BaseModel):
@@ -236,16 +303,16 @@ class TaskResult(BaseModel):
     usage_known: bool = True
     pending_jobs: list[str] = []
     pending_asks: list[str] = []
-    workdir: str | None = None
+    workdir: WirePath | None = None
     workdir_id: str | None = None
-    outputs: list[str] = []  # paths relative to workdir
-    missing_outputs: list[str] = []
+    outputs: WirePaths = []  # paths relative to workdir
+    missing_outputs: WirePaths = []
     # output relpath -> type record (labhq.vocab.declare.runner_records); only for collected outputs (#221)
-    output_types: dict[str, Any] = {}
+    output_types: WirePathKeys = {}
     output_types_stats: dict[str, Any] = {}
-    output_sha256: dict[str, str] = {}
-    output_tool_use_ids: dict[str, str] = {}
-    unreported_outputs: list[str] = []
+    output_sha256: Annotated[dict[str, str], PathShape("keys")] = {}
+    output_tool_use_ids: Annotated[dict[str, str], PathShape("keys")] = {}
+    unreported_outputs: WirePaths = []
     # Parsed only for ordinary orchestration steps. Research steps keep their result v2 ledger in ``structured``.
     general_sections: dict[str, str] = {}
     evidence_path_warnings: list[str] = []
@@ -341,7 +408,7 @@ class Event(BaseModel):
     task_id: str | None = None
     agent_id: str | None = None
     request_id: str | None = None
-    data: dict[str, Any] = {}
+    data: Annotated[dict[str, Any], RunnerPathFields] = {}
 
 
 class ApprovalRequest(BaseModel):
@@ -358,6 +425,7 @@ class ApprovalRequest(BaseModel):
     pi_reason: str = ''
     pi_outcome: str = ''
     pi_explainer: str = ''
+    pi_needs_interpretation: bool = False
 
     @model_validator(mode='after')
     def explain_for_pi(self) -> 'ApprovalRequest':
@@ -368,6 +436,9 @@ class ApprovalRequest(BaseModel):
                 setattr(self, key, value)
         if missing:
             self.pi_explainer = 'chief_of_staff'
+            if self.kind == 'tool_permission':
+                from .tool_explanation import needs_interpretation
+                self.pi_needs_interpretation = needs_interpretation(self.detail)
         return self
 
 

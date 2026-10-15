@@ -57,7 +57,7 @@ def _staff(tmp_path, monkeypatch, *, private=None, config=None):
 
 
 def _found(settings, ws):
-    return resolve_private_paths(settings, [ws], open_reads=staff_claude_project_dirs(settings, ws))
+    return resolve_private_paths(settings, [ws], open_reads=staff_claude_project_dirs(settings, ws), cwd=ws)
 
 
 def _gate(found, home, ws, tool, tool_input):
