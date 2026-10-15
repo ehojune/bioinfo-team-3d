@@ -347,14 +347,19 @@ def test_no_taskkill_tree_flag_is_left_in_the_package():
 def test_cli_terminate_tree_uses_the_helper_with_the_recorded_identity(world, monkeypatch):
     _no_process_starts(monkeypatch)
     monkeypatch.setattr(cli.sys, "platform", "win32")
+    waited = []
+    monkeypatch.setattr(cli, "_wait_for_process_end",
+                        lambda pid, created, timeout: waited.append((pid, created, timeout)) or True)
     cli._terminate_tree(ROOT, created="windows:1000")
     assert world.killed == [GRANDKID, KID, ROOT]
     assert ORPHANS <= set(world.live)
+    assert waited == [(ROOT, "windows:1000", cli._TERMINATE_GRACE_SECONDS)]
 
 
 def test_cli_terminate_tree_leaves_a_reused_pid_alone_without_an_error(world, monkeypatch):
     _no_process_starts(monkeypatch)
     monkeypatch.setattr(cli.sys, "platform", "win32")
+    monkeypatch.setattr(cli, "_wait_for_process_end", lambda pid, created, timeout: True)
     cli._terminate_tree(ROOT, created="windows:7")
     assert world.killed == []
 
