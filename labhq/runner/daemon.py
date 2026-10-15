@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
+import copy
 import json
 import logging
 import os
@@ -15,6 +17,7 @@ import re
 import stat
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -23,12 +26,13 @@ from typing import Any
 import websockets
 import yaml
 
+from .. import durable
 from ..adapters import (adapter_preflight_error, get_adapter, is_read_only_task, read_only_profile,
                         read_only_refusal)
 from ..adapters.base import RunContext
 from ..adapters.held_dir import HeldDir
 from ..adapters.owned import (OwnedPathError, is_link, owned_link_error, plain_directory, read_owned,
-                              remove_entry, write_owned)
+                              awrite_owned_many, remove_entry, write_owned)
 from ..ask_results import read_ask_results, rejected_step
 from ..artifact_policy import unreported_warning_paths
 from ..facilities import fixes as facility_fixes
@@ -200,9 +204,20 @@ def environment_record(rows: list[dict[str, Any]]) -> dict[str, Any]:
             **({"size": row.get("size")} if row.get("size") is not None else {})}
 
 
+# While `Runner.emit_all` runs, `emit` collects each event here instead of sending it, and emit_all sends them as one job.
+_EMIT_UNIT: contextvars.ContextVar[list | None] = contextvars.ContextVar("labhq_emit_unit", default=None)
+
+
 class Runner:
     def __init__(self, settings: Settings):
         self.s = settings
+        # The loop and its thread, noted by `_send_durably`: a message committed on the durable writer thread asks
+        # this loop to reload the outbox queue (#606).
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._loop_thread: threading.Thread | None = None
+        # Tasks whose task.result is already queued in this run. A cancel that arrives while the result commits does
+        # not stop the commit, so the cancel handler must not queue a second, "cancelled" one over it (#606).
+        self._result_queued: set[str] = set()
         self.store = StateStore(settings.path(settings.runner.state_dir) / f"runner-{settings.runner.id}.sqlite3")
         saved_incarnation = self.store.all("runner_meta").get("incarnation")
         self.incarnation = saved_incarnation["id"] if saved_incarnation else uuid.uuid4().hex
@@ -292,7 +307,11 @@ class Runner:
             os.umask(0o077)  # task inputs created by this runner and its agents stay private
         self.registry.load()
         log.info("runner %s: %d agents", self.s.runner.id, len(self.registry.agents))
-        await asyncio.gather(self.broker.serve(), self._connection_loop(), self._job_watch_loop())
+        try:
+            await asyncio.gather(self.broker.serve(), self._connection_loop(), self._job_watch_loop())
+        finally:
+            # Writes queued by the tasks that were just cancelled still finish (#606).
+            await durable.adrain(durable.EXIT_DRAIN_S)
 
     def stop(self) -> None:
         self._stopping = True
@@ -303,9 +322,46 @@ class Runner:
     def send(self, obj: dict) -> None:
         if obj.get("type") not in {"runner.roster"}:
             self.store.enqueue(obj, self.s.runner.outbox_limit)
-            self.reload_outbox()
+            self._reload_outbox_after_commit()
         else:
             self.outbox.put_nowait(json.dumps(obj, ensure_ascii=False, default=str))
+
+    def _reload_outbox_after_commit(self) -> None:
+        # On the loop's own thread this is the old straight call. On the durable writer thread (`_send_durably`) the
+        # reload is queued for the loop, and runs before the awaiting caller resumes.
+        loop = self._loop
+        if loop is not None and threading.current_thread() is not self._loop_thread:
+            loop.call_soon_threadsafe(self.reload_outbox)
+        else:
+            self.reload_outbox()
+
+    async def _send_durably(self, obj: dict, *, before: tuple | None = None, after: tuple | None = None) -> None:
+        """`send` for a coroutine (#606): `before`, the message and `after` are one job on the durable writer thread,
+        in that order, so the loop is not held for their fsyncs and a cancelled caller cannot leave one of them
+        undone. `before` and `after` are `(kind, key, body)` rows for the state table. The message still goes through
+        `self.send`, the one place every outgoing message passes."""
+        self._loop, self._loop_thread = asyncio.get_running_loop(), threading.current_thread()
+        if obj.get("type") in {"runner.roster"} and before is None and after is None:
+            self.send(obj)  # not stored: nothing to wait for
+            return
+        await self._send_batch([(obj, [before] if before else [], [after] if after else [])])
+
+    async def _send_batch(self, items: list[tuple[dict, list[tuple], list[tuple]]]) -> None:
+        """Several messages, each with its rows before and after, as ONE job: all of it is committed, in this order,
+        whatever happens to the caller while it waits."""
+        self._loop, self._loop_thread = asyncio.get_running_loop(), threading.current_thread()
+        await durable.run(self.store.lane, self._send_batch_now, items)
+
+    def _send_batch_now(self, items: list[tuple[dict, list[tuple], list[tuple]]]) -> None:
+        for obj, befores, afters in items:
+            for row in befores:
+                self.store.put(*row)
+            self.send(obj)
+            for row in afters:
+                self.store.put(*row)
+
+    async def asend(self, obj: dict) -> None:
+        await self._send_durably(obj)
 
     def reload_outbox(self, preserve_roster: bool = True) -> None:
         roster = []
@@ -319,15 +375,63 @@ class Runner:
             self.outbox.put_nowait(json.dumps(item, ensure_ascii=False, default=str))
 
     async def emit(self, ev: Event) -> None:
+        prepared = self._prepare_event(ev)
+        if prepared is None:
+            return
+        unit = _EMIT_UNIT.get()
+        if unit is not None:  # inside emit_all: sent with the others as one job
+            unit.append(prepared)
+            return
+        await self._send_events([prepared])
+
+    def _prepare_event(self, ev: Event) -> tuple[dict, list[tuple], list[tuple]] | None:
+        """What `emit` does before the send: the task's own log, its buffer, and for a task.result the mark that the
+        task finished and the note that its result is queued. None for a roster, which is not stored."""
         d = ev.model_dump(mode="json")
         ws = self.workspaces.get(ev.task_id or "")
         if ws:
             ws.append_event(d)
         elif ev.task_id in self.event_buffers:
             self.event_buffers[ev.task_id].append(d)
-        self.send(d)
+        if d.get("type") == "runner.roster":
+            self.send(d)
+            return None
+        marks: list[tuple] = []
         if ev.type == "task.result" and ev.task_id:
-            self.store.put("accepted_task", ev.task_id, {"state": "finished"})
+            marks.append(("accepted_task", ev.task_id, {"state": "finished"}))
+            self._result_queued.add(ev.task_id)
+        return d, [], marks
+
+    async def _send_events(self, items: list[tuple[dict, list[tuple], list[tuple]]]) -> None:
+        try:
+            await self._send_batch(items)
+        except Exception:
+            # Nothing was queued after all. (A cancel is not this: the job runs on and its result stays queued.)
+            self._result_queued.difference_update(
+                d.get("task_id") for d, _before, _after in items if d.get("type") == "task.result")
+            raise
+
+    async def emit_all(self, events: list[Event], *, before: list[tuple] | None = None,
+                       after: list[tuple] | None = None) -> None:
+        """Events that belong together (a closing status and the task's result; an approval and the status it
+        causes) as one uncancellable unit: one durable job that commits all of them, in order, with the rows in
+        `before` ahead of the first and the rows in `after` behind the last. These used to run without a pause, so a
+        cancel could not land between them; it still cannot (#606). Each event still passes through `self.emit`."""
+        unit: list[tuple[dict, list[tuple], list[tuple]]] = []
+        token = _EMIT_UNIT.set(unit)
+        try:
+            for ev in events:
+                await self.emit(ev)
+        finally:
+            _EMIT_UNIT.reset(token)
+        if not unit:
+            return
+        # Copied now: the writer thread serializes them later, and the caller goes on changing its own objects.
+        if before:
+            unit[0] = (unit[0][0], [copy.deepcopy(row) for row in before], unit[0][2])
+        if after:
+            unit[-1] = (unit[-1][0], unit[-1][1], [*unit[-1][2], *[copy.deepcopy(row) for row in after]])
+        await self._send_events(unit)
 
     async def _connection_loop(self) -> None:
         url = f"{self.s.gateway.url.rstrip('/')}/ws/runner?token={self.s.gateway.runner_token}"
@@ -424,20 +528,21 @@ class Runner:
         if typ == "task.dispatch":
             task = Task.model_validate(msg["task"])
             prior = self.store.get("accepted_task", task.id)
-            if prior is None:
-                self.store.put("accepted_task", task.id,
-                               {"state": "running", "task": task.model_dump(mode="json")})
-            self.send({"type": "task.accepted", "task_id": task.id, "request_id": task.request_id})
+            await self._send_durably(
+                {"type": "task.accepted", "task_id": task.id, "request_id": task.request_id},
+                before=(("accepted_task", task.id, {"state": "running", "task": task.model_dump(mode="json")})
+                        if prior is None else None))
             if prior is None:
                 self.tasks[task.id] = asyncio.create_task(self._run_guarded(task))
             elif prior.get("state") == "running" and task.id not in self.tasks:
                 has_result = any(e.get("type") == "task.result" and e.get("task_id") == task.id
                                  for e in self.store.pending())
                 if not has_result:
-                    self.send({"type": "task.result", "task_id": task.id, "agent_id": task.agent_id,
-                                "request_id": task.request_id,
-                                "data": self._interrupted_result(task.id, task.agent_id).model_dump(mode="json")})
-                    self.store.put("accepted_task", task.id, {"state": "finished"})
+                    await self._send_durably(
+                        {"type": "task.result", "task_id": task.id, "agent_id": task.agent_id,
+                         "request_id": task.request_id,
+                         "data": self._interrupted_result(task.id, task.agent_id).model_dump(mode="json")},
+                        after=("accepted_task", task.id, {"state": "finished"}))
         elif typ == "task.cancel":
             t = self.tasks.get(msg.get("task_id", ""))
             if t:
@@ -451,12 +556,12 @@ class Runner:
                 if task_id and not (run and run.done()):  # an answer after the task ended must not revive it
                     await self.emit(Event(type="agent.status", task_id=task_id, agent_id=agent_id,
                                           request_id=self.task_req.get(task_id), data={"state": "working"}))
-            self.send({"type": "approval.ack", "id": msg["id"]})
+            await self.asend({"type": "approval.ack", "id": msg["id"]})
         elif typ == "ask.resolved":
             self.broker.resolve_ask(msg["id"], msg.get("answer") or {})
-            self.send({"type": "ask.ack", "id": msg["id"]})
+            await self.asend({"type": "ask.ack", "id": msg["id"]})
         elif typ == "runner.ack":
-            self.store.ack(int(msg["runner_seq"]))
+            await self.store.aack(int(msg["runner_seq"]))
         elif typ == "registry.reload":
             self.registry.load()
             self._send_roster()
@@ -490,9 +595,10 @@ class Runner:
             reason = "unknown task" if error is None else f"not applied: {type(error).__name__}"
             if error is not None:
                 log.warning("task %s control %s not applied: %s", tid, msg.get("action"), error)
-            self.send({"type": "control.nack", "task_id": tid, "action": msg.get("action"),
-                       "steer_id": (msg.get("steer") or {}).get("id") if isinstance(msg.get("steer"), dict) else None,
-                       "reason": reason})
+            await self.asend({"type": "control.nack", "task_id": tid, "action": msg.get("action"),
+                              "steer_id": ((msg.get("steer") or {}).get("id")
+                                           if isinstance(msg.get("steer"), dict) else None),
+                              "reason": reason})
             return
         base["agent_id"] = self.controls.agent_of(tid) or base["agent_id"]
         await self.emit(Event(type="agent.control", data=summary, **base))
@@ -554,16 +660,27 @@ class Runner:
             await self.run_task(task)
         except BaseException as e:  # cancelled or crashed: the gateway must still get a result
             self.event_buffers.pop(task.id, None)
-            err = "cancelled" if isinstance(e, asyncio.CancelledError) else f"{type(e).__name__}: {e}"
-            if not isinstance(e, asyncio.CancelledError):
+            cancelled = isinstance(e, asyncio.CancelledError)
+            if not cancelled:
                 log.exception("task %s crashed", task.id)
+            if task.id in self._result_queued:
+                # The real result is already on its way and commits even though this task was cancelled while it
+                # waited. A second, "cancelled" one would overwrite it at the gateway (#606).
+                if cancelled:
+                    raise
+                return
+            err = "cancelled" if cancelled else f"{type(e).__name__}: {e}"
             res = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error=err)
             base = dict(task_id=task.id, agent_id=task.agent_id, request_id=task.request_id)
-            await self.emit(Event(type="agent.status", data={"state": "error", "error": short(err, 200)}, **base))
-            await self.emit(Event(type="task.result", data={**res.model_dump(mode="json"),
-                                                            "control": self.controls.finish(task.id)}, **base))
-            if isinstance(e, asyncio.CancelledError):
+            # One unit: a second cancel arriving while this commits cannot leave the status without the result.
+            await self.emit_all([
+                Event(type="agent.status", data={"state": "error", "error": short(err, 200)}, **base),
+                Event(type="task.result", data={**res.model_dump(mode="json"),
+                                                "control": self.controls.finish(task.id)}, **base)])
+            if cancelled:
                 raise
+        finally:
+            self._result_queued.discard(task.id)  # the run is over: nothing left to guard
 
     def _resolve_agent(self, task: Task) -> AgentSpec:
         agent = self.registry.get(task.agent_id)
@@ -947,8 +1064,8 @@ class Runner:
         if not changed:
             return result
         # Labels stand in for local paths in the error and the alert; this local manifest maps them back.
-        ws.update_run(task_id, read_only_changes=changed,
-                      read_only_roots={label: str(path) for label, path in watch.roots})
+        await ws.aupdate_run(task_id, read_only_changes=changed,
+                             read_only_roots={label: str(path) for label, path in watch.roots})
         shown = ", ".join(changed[:8]) + (f" 외 {len(changed) - 8}개" if len(changed) > 8 else "")
         await emit("agent.log", {"level": "alert", "text": (
             f"읽기 전용 실행이 파일을 바꿨습니다: {shown}. 되돌리지 않았으니 확인하세요. "
@@ -1028,6 +1145,8 @@ class Runner:
     async def run_task(self, task: Task, workdir_override: Path | None = None) -> TaskResult:
         from ..recruit.paper_skills import PaperSkillBuild
 
+        self._result_queued.discard(task.id)  # a new run of this id
+
         if task.meta.get("kind") in {"recruit_check", "plan_recruit"}:
             from ..recruit.planning import run_task
             result = await run_task(self, task)
@@ -1064,8 +1183,9 @@ class Runner:
         if refusal:  # the gateway refuses first; this holds for any other sender and after force_engine
             result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=refusal)
             base = dict(task_id=task.id, agent_id=agent.id, request_id=task.request_id)
-            await self.emit(Event(type="agent.status", data={"state": "error", "error": short(refusal, 200)}, **base))
-            await self.emit(Event(type="task.result", data=result.model_dump(mode="json"), **base))
+            await self.emit_all([
+                Event(type="agent.status", data={"state": "error", "error": short(refusal, 200)}, **base),
+                Event(type="task.result", data=result.model_dump(mode="json"), **base)])
             return result
         if read_only:  # an allowlist built from the staff member's identity, never the sender's overrides
             agent = read_only_profile(agent)
@@ -1103,6 +1223,13 @@ class Runner:
                     await self.emit(Event(type=kind, task_id=task.id, agent_id=agent.id, request_id=task.request_id,
                                           data=body))
 
+        async def emit_final(state: dict, result_data: dict) -> None:
+            """The closing agent.status and the task.result as one uncancellable unit (see `emit_all`)."""
+            base = dict(task_id=task.id, agent_id=agent.id, request_id=task.request_id)
+            await self.emit_all([
+                Event(type="agent.status", data=state, **base),
+                Event(type="task.result", data={**result_data, "control": self.controls.finish(task.id)}, **base)])
+
         await emit("agent.status", {"state": "queued"})
         consult = task.meta.get("kind") == "consult"
         semaphore = self.consult_sem if consult else self.sem
@@ -1125,8 +1252,7 @@ class Runner:
                 task_id=task.id, agent_id=agent.id, ok=False, error_kind="halted",
                 error="halted before the turn started", session_id=task.resume_session_id))
             await emit("agent.log", {"level": "info", "text": "시작하기 전에 멈췄어요. 받은 방향 수정은 같은 단계의 다음 turn에 남깁니다"})
-            await emit("agent.status", {"state": "idle", "halted": True})
-            await emit("task.result", result.model_dump(mode="json"))
+            await emit_final({"state": "idle", "halted": True}, result.model_dump(mode="json"))
             return result
         async with _holding(semaphore):
             steers, dropped = self.controls.take_prompt_steers(task.id)
@@ -1155,8 +1281,7 @@ class Runner:
                     error = f"재사용 작업 폴더를 안전하게 열 수 없어 실행을 거부합니다: {reason}"
                     result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=error)
                     await emit("agent.log", {"level": "alert", "text": error})
-                    await emit("agent.status", {"state": "error", "error": short(error, 200)})
-                    await emit("task.result", result.model_dump(mode="json"))
+                    await emit_final({"state": "error", "error": short(error, 200)}, result.model_dump(mode="json"))
                     return result
                 proposal = task.meta.get("facilities_fix")
                 if task.meta.get("kind") == "facilities_fix" and facility_fixes.is_workspace_cache(proposal):
@@ -1173,22 +1298,22 @@ class Runner:
             if task.meta.get("kind") == "facilities_fix":
                 started = preclean_started or time.time()
                 proposal = task.meta.get("facilities_fix")
-                ws.update_run(task.id, started_at=started, kind="facilities_fix",
-                              fix_id=proposal.get("fix_id") if isinstance(proposal, dict) else None)
+                await ws.aupdate_run(task.id, started_at=started, kind="facilities_fix",
+                                     fix_id=proposal.get("fix_id") if isinstance(proposal, dict) else None)
                 record = preclean_record or await facility_fixes.execute(proposal, ws.dir)
                 result = TaskResult(task_id=task.id, agent_id=agent.id, ok=bool(record.get("ok")),
                                     text=record.get("action") or "", cost_usd=0.0, cost_known=True,
                                     error=record.get("error"), facilities_fix=record,
                                     workdir=str(ws.dir), workdir_id=ws.dir.name)
-                ws.update_run(task.id, ended_at=time.time(), ok=result.ok, error=result.error,
-                              cost_usd=0.0, cost_known=True, facilities_fix=record)
+                await ws.aupdate_run(task.id, ended_at=time.time(), ok=result.ok, error=result.error,
+                                     cost_usd=0.0, cost_known=True, facilities_fix=record)
                 result.provenance = ws.provenance()
                 status = "완료" if result.ok else "실패"
                 await emit("agent.log", {"level": "info" if result.ok else "alert",
                                          "text": f"환경 수정 {status}: {record.get('action') or record.get('error') or ''}"})
-                await emit("agent.status", {"state": "done" if result.ok else "error",
-                                            **({"error": short(result.error, 200)} if result.error else {})})
-                await emit("task.result", result.model_dump(mode="json"))
+                await emit_final({"state": "done" if result.ok else "error",
+                                  **({"error": short(result.error, 200)} if result.error else {})},
+                                 result.model_dump(mode="json"))
                 return result
             extra_dirs = [str(self.s.path(d)) for d in [*agent.project_dirs, *task.meta.get("project_dirs", [])]]
             task, consult_error = self._stage_consult_refs(task, ws)
@@ -1198,8 +1323,8 @@ class Runner:
             if consult_error:
                 result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=consult_error)
                 await emit("agent.log", {"level": "alert", "text": consult_error})
-                await emit("agent.status", {"state": "error", "error": short(consult_error, 200)})
-                await emit("task.result", result.model_dump(mode="json"))
+                await emit_final({"state": "error", "error": short(consult_error, 200)},
+                                 result.model_dump(mode="json"))
                 return result
             # Every folder opened to the task is judged by the same zone rule (intake.overlaps_zone) (#132).
             denied_links, _incomplete = await self._project_links(extra_dirs, zones, emit)
@@ -1214,8 +1339,7 @@ class Runner:
                          "(네트워크(UNC) 경로) 실행을 거부합니다. 드라이브 경로로 설정하거나 링크를 옮기세요")
                 result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=error)
                 await emit("agent.log", {"level": "alert", "text": error})
-                await emit("agent.status", {"state": "error", "error": short(error, 200)})
-                await emit("task.result", result.model_dump(mode="json"))
+                await emit_final({"state": "error", "error": short(error, 200)}, result.model_dump(mode="json"))
                 return result
             root = self.ws_root.resolve()
             for directory in task.meta.get("upstream_dirs", []):
@@ -1268,7 +1392,7 @@ class Runner:
                 task = ws.task = task.model_copy(update={"prompt": rewrite(task.prompt),
                                                          "context": rewrite(task.context)})
             # Reference tables the prompt names by file (topic checklists, #420), written before TASK.md.
-            for name in ws.write_reference_files(task.meta.get("workspace_files")):
+            for name in await ws.awrite_reference_files(task.meta.get("workspace_files")):
                 await emit("agent.log", {"level": "warn", "text": f"참고 파일 거부: {name}"})
             if task.meta.get("paper_skills"):
                 plugin, skill_warnings = ws.install_paper_skills(task.meta["paper_skills"], self.s.runner.id)
@@ -1280,13 +1404,12 @@ class Runner:
                 task = ws.task = task.model_copy(update={"context": task.context + "\n\n" + (
                     "Use the request's paper advice in .agents/skills/paper-*/SKILL.md; cite the paper when used."
                     if plugin else "논문 스킬 장착 불가; 제공된 선행 연구 요약으로 계속하세요.")})
-            prompt = ws.write_task_md()
+            prompt = await ws.awrite_task_md()
             if agent.contract and agent.contract.skill_dir:
                 skill_error = ws.install_skill(Path(agent.contract.skill_dir))
                 if skill_error:
                     result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=skill_error)
-                    await emit("agent.status", {"state": "error", "error": skill_error})
-                    await emit("task.result", result.model_dump(mode="json"))
+                    await emit_final({"state": "error", "error": skill_error}, result.model_dump(mode="json"))
                     return result
             for directory in read_dirs:
                 # Pre-approved shell commands (e.g. Bash(python *)) are not sandboxed; only OS permissions
@@ -1304,8 +1427,7 @@ class Runner:
             except (OSError, ValueError, yaml.YAMLError) as exc:
                 error = f"직원용 설정 사본을 만들 수 없어 실행을 거부합니다 ({type(exc).__name__})"
                 result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=error)
-                await emit("agent.status", {"state": "error", "error": error})
-                await emit("task.result", result.model_dump(mode="json"))
+                await emit_final({"state": "error", "error": error}, result.model_dump(mode="json"))
                 return result
             # PI personal paths (policy.private_paths): one that holds a folder this task works in is left open.
             keep = [ws.dir, self.ws_root, *extra_dirs, *read_dirs,
@@ -1377,7 +1499,7 @@ class Runner:
                     records, _note = await asyncio.to_thread(
                         ws.scan_output_records, zones, self.s.runner.reference_scan_max_entries,
                         self.s.runner.reference_scan_max_depth, self.s.runner.output_hash_max_bytes)
-                    ws.update_run(task.id, environment_record=environment_record(records))
+                    await ws.aupdate_run(task.id, environment_record=environment_record(records))
                     return
                 output_records, note = await asyncio.to_thread(
                     ws.scan_output_records, zones, self.s.runner.reference_scan_max_entries,
@@ -1394,9 +1516,9 @@ class Runner:
                     if output_before.get(row["path"]) != output_identity(row)
                 ]
                 incomplete = "; ".join(dict.fromkeys(output_scan_notes)) or None
-                ws.update_run(task.id, observed_outputs=observed_outputs,
-                              environment_record=environment_record(output_records),
-                              **({"observed_outputs_incomplete": incomplete} if incomplete else {}))
+                await ws.aupdate_run(task.id, observed_outputs=observed_outputs,
+                                     environment_record=environment_record(output_records),
+                                     **({"observed_outputs_incomplete": incomplete} if incomplete else {}))
 
             engine_settings = claude_deny_private(claude_deny_links(claude_read_only(
                 claude_settings(self.s.policy), [d for d in [*read_dirs, *(extra_dirs if read_only else [])]
@@ -1482,11 +1604,11 @@ class Runner:
                 return False
 
             ctx.wait_ready = wait_ready
-            ws.update_run(task.id, started_at=time.time(), runner_id=self.s.runner.id,
-                          engine=agent.engine.value, model=agent.model,
-                          engine_cli_version=(self.engine_versions or {}).get(agent.engine.value),
-                          resume_of=task.resume_session_id, kind=task.meta.get("kind"),
-                          **({"reference_dirs": read_dirs} if read_dirs else {}))
+            await ws.aupdate_run(task.id, started_at=time.time(), runner_id=self.s.runner.id,
+                                 engine=agent.engine.value, model=agent.model,
+                                 engine_cli_version=(self.engine_versions or {}).get(agent.engine.value),
+                                 resume_of=task.resume_session_id, kind=task.meta.get("kind"),
+                                 **({"reference_dirs": read_dirs} if read_dirs else {}))
             self.active_roots[task.id] = (read_only, [ws.dir.resolve(), *(Path(d).resolve() for d in extra_dirs)])
             try:
                 refused = watch.take_baseline() if watch else None
@@ -1498,8 +1620,9 @@ class Runner:
                         result = await adapter.run(ctx)
                     except BaseException:  # cancelled or crashed after the CLI was stopped: still compare
                         # Keep what the failed step read; the after-run comparison is skipped (PR #442 review).
-                        ws.update_run(task.id, input_files=input_files,
-                                      **({"input_files_incomplete": "; ".join(input_notes)} if input_notes else {}))
+                        await ws.aupdate_run(task.id, input_files=input_files,
+                                             **({"input_files_incomplete": "; ".join(input_notes)}
+                                                if input_notes else {}))
                         await collect_observed_outputs()
                         if watch and watch.baseline is not None:
                             await self._read_only_verdict(TaskResult(task_id=task.id, agent_id=agent.id, ok=False),
@@ -1554,8 +1677,8 @@ class Runner:
         if changed:
             input_notes.append(f"입력 파일 {changed}개가 단계 실행 중에 바뀌었습니다(기록된 hash는 실행 전 내용)")
         input_notes = list(dict.fromkeys([*input_notes, *after_notes]))
-        ws.update_run(task.id, input_files=input_files,
-                      **({"input_files_incomplete": "; ".join(input_notes)} if input_notes else {}))
+        await ws.aupdate_run(task.id, input_files=input_files,
+                             **({"input_files_incomplete": "; ".join(input_notes)} if input_notes else {}))
         for note in input_notes:
             await emit("agent.log", {"level": "warn", "text": note})
         declared = task.meta.get("outputs", [])
@@ -1646,16 +1769,19 @@ class Runner:
         if paper_skill_build is not None:
             result = await asyncio.to_thread(paper_skill_build.finish, result)
         try:
-            for name in (f"RESULT_{task.id}.md", "RESULT.md"):  # never through a link the agent made (#165)
-                write_owned(ws.dir, f"outputs/{name}", result.text or "")
+            # Never through a link the agent made (#165). Both files are one job: a cancel cannot write only one.
+            await awrite_owned_many(ws.dir, [(f"outputs/{name}", result.text or "")
+                                             for name in (f"RESULT_{task.id}.md", "RESULT.md")])
         except OwnedPathError:
             error = "작업 폴더의 outputs가 실행 중에 링크로 바뀌어 결과 파일을 쓰지 않았습니다"
             await emit("agent.log", {"level": "alert", "text": error})
             result = result.model_copy(update={"ok": False, "error": error})
-        ws.update_run(task.id, ended_at=time.time(), ok=result.ok, error=result.error, cost_usd=result.cost_usd,
-                      cost_known=result.cost_known if result.cost_known is not None else result.cost_usd is not None,
-                      usage=result.usage, usage_known=result.usage_known,
-                      session_id=result.session_id, pending_jobs=pending)
+        await ws.aupdate_run(task.id, ended_at=time.time(), ok=result.ok, error=result.error,
+                             cost_usd=result.cost_usd,
+                             cost_known=result.cost_known if result.cost_known is not None
+                             else result.cost_usd is not None,
+                             usage=result.usage, usage_known=result.usage_known,
+                             session_id=result.session_id, pending_jobs=pending)
         result.provenance = ws.provenance()
         if task.meta.get("paper_skills"):
             ws.clear_paper_skills()  # before task.result can release a dependent step
@@ -1668,8 +1794,7 @@ class Runner:
                  ({"error": short(result.error, 200)} if result.error else {}))
         if result.error_kind == "halted":  # stopped by the PI and resumable, not a problem to show
             state, extra = "idle", {"halted": True}
-        await emit("agent.status", {"state": state, **extra})
-        await emit("task.result", result.model_dump(mode="json"))
+        await emit_final({"state": state, **extra}, result.model_dump(mode="json"))
         return result
 
     # ---------------- broker callbacks (from MCP tools) ----------------
@@ -1677,23 +1802,24 @@ class Runner:
         req.request_id = req.request_id or self.task_req.get(req.task_id or "")
         self.approval_tasks[req.id] = (req.task_id, req.agent_id)
         base = dict(task_id=req.task_id, agent_id=req.agent_id, request_id=req.request_id)
-        await self.emit(Event(type="approval.requested", data=req.model_dump(mode="json"), **base))
-        if req.task_id:
-            await self.emit(Event(type="agent.status", data={"state": "waiting", "approval": req.id}, **base))
+        await self.emit_all([
+            Event(type="approval.requested", data=req.model_dump(mode="json"), **base),
+            *([Event(type="agent.status", data={"state": "waiting", "approval": req.id}, **base)]
+              if req.task_id else [])])
 
     async def _on_approval_timeout(self, req: ApprovalRequest) -> None:
         self.approval_tasks.pop(req.id, None)
         base = dict(task_id=req.task_id, agent_id=req.agent_id, request_id=req.request_id)
-        await self.emit(Event(type="approval.timed_out", data={"id": req.id}, **base))
-        if req.task_id:
-            await self.emit(Event(type="agent.status", data={"state": "working"}, **base))
+        await self.emit_all([
+            Event(type="approval.timed_out", data={"id": req.id}, **base),
+            *([Event(type="agent.status", data={"state": "working"}, **base)] if req.task_id else [])])
 
     async def _on_ask(self, req: AskRequest) -> None:
         req.request_id = req.request_id or self.task_req.get(req.task_id or "")
         base = dict(task_id=req.task_id, agent_id=req.agent_id, request_id=req.request_id)
-        await self.emit(Event(type="ask.requested", data=req.model_dump(mode="json"), **base))
-        if req.task_id:
-            await self.emit(Event(type="agent.status", data={"state": "waiting", "ask": req.id}, **base))
+        await self.emit_all([
+            Event(type="ask.requested", data=req.model_dump(mode="json"), **base),
+            *([Event(type="agent.status", data={"state": "waiting", "ask": req.id}, **base)] if req.task_id else [])])
 
     async def _on_tool_event(self, body: dict) -> None:
         tid = body.get("task_id")
@@ -1745,12 +1871,14 @@ class Runner:
                            "scheduler": self.s.hpc.scheduler, "request_id": self.task_req.get(tid or ""),
                            "workdir": str(ws.dir) if ws else None,
                            "script_sha256": body.get("script_sha256"), "submitted_by_runner": True}
-        self.store.put("job", jid, self.jobs[jid])
         if ws:
             ws.append_job({**body, "submitted_at": time.time()})
-        await self.emit(Event(type="job.submitted", task_id=tid, agent_id=body.get("agent_id"),
-                              request_id=self.task_req.get(tid or ""),
-                              data={"job_id": jid, "name": body.get("name"), "core_hours": body.get("core_hours")}))
+        # The job row and the event that announces it are one unit: a cancel cannot keep the row and lose the event.
+        await self.emit_all([Event(type="job.submitted", task_id=tid, agent_id=body.get("agent_id"),
+                                   request_id=self.task_req.get(tid or ""),
+                                   data={"job_id": jid, "name": body.get("name"),
+                                         "core_hours": body.get("core_hours")})],
+                            before=[("job", jid, self.jobs[jid])])
 
     async def _owns_job(self, identity: dict) -> bool:
         """hpc_cancel scope (#172): a job the runner submitted for this agent in this task or request.
@@ -1790,14 +1918,18 @@ class Runner:
                 state = "unknown_finished"
             else:
                 j["missing"] = 0
-            if state != j["state"]:
+            changed = state != j["state"]
+            if changed:
                 j.update(state=state, exit_status=info.exit_status)
-                await self.emit(Event(type="job.state", task_id=j["task_id"], agent_id=j["agent_id"],
-                                      request_id=self.task_req.get(j["task_id"] or ""),
-                                      data={"job_id": jid, "name": j["name"], "state": state,
-                                            "exit_status": info.exit_status}))
             j["terminal"] = state in TERMINAL
-            self.store.put("job", jid, j)
+            if changed:  # the event and the saved job state are one unit
+                await self.emit_all([Event(type="job.state", task_id=j["task_id"], agent_id=j["agent_id"],
+                                           request_id=self.task_req.get(j["task_id"] or ""),
+                                           data={"job_id": jid, "name": j["name"], "state": state,
+                                                 "exit_status": info.exit_status})],
+                                    after=[("job", jid, j)])
+            else:
+                self.store.put("job", jid, j)
 
         by_task: dict[str, list[dict]] = {}
         for j in self.jobs.values():
@@ -1808,10 +1940,14 @@ class Runner:
             t = self.tasks.get(tid)
             if t is not None and not t.done():  # the agent is still talking; wake it after it ends
                 continue
-            await self.emit(Event(
-                type="jobs.finished", task_id=tid, agent_id=js[0]["agent_id"], request_id=self.task_req.get(tid),
-                data={"jobs": [{k: x.get(k) for k in ("job_id", "name", "state", "exit_status")} for x in js],
-                      "session_id": js[0].get("session_id"), "workdir": js[0].get("workdir")},
-            ))
+            # The event and the "notified" mark are one unit: a cancel cannot send the wake-up and forget that it did.
             self.notified.add(tid)
-            self.store.put("notified", tid, {"done": True})
+            try:
+                await self.emit_all([Event(
+                    type="jobs.finished", task_id=tid, agent_id=js[0]["agent_id"], request_id=self.task_req.get(tid),
+                    data={"jobs": [{k: x.get(k) for k in ("job_id", "name", "state", "exit_status")} for x in js],
+                          "session_id": js[0].get("session_id"), "workdir": js[0].get("workdir")},
+                )], after=[("notified", tid, {"done": True})])
+            except Exception:
+                self.notified.discard(tid)
+                raise

@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import logging
@@ -27,10 +28,10 @@ from contextlib import suppress
 from pathlib import Path, PurePath
 from typing import Any
 
-from .. import __version__
+from .. import __version__, durable
 from ..adapters.held_dir import HeldDir, NotPlainFolder
 from ..adapters.owned import (OwnedPathError, append_owned, case_sensitive_directory, plain_directory, read_owned,
-                              write_owned)
+                              awrite_owned, write_owned)
 from ..adapters.owned import is_link as _is_link
 from ..adapters.owned import remove_entry as _remove_entry
 from ..adapters.read_only import SKILL_DIRS
@@ -210,18 +211,31 @@ class TaskWorkspace:
         ws.prompt_pointer, ws._append_refused = None, True
         return ws
 
-    def write_task_md(self) -> str:
+    def _task_md(self) -> tuple[str, str]:
         t, a = self.task, self.agent
         body = f"# Task {t.id}\n\nAssigned to: {a.name} ({a.id}) — {a.role}\n\n## Instruction\n{t.prompt}\n"
         if t.context:
             body += f"\n## Context from teammates\n{t.context}\n"
         name = (f"TASK_wake_{t.id}.md" if t.resume_session_id else
                 f"TASK_{t.id}.md" if (self.dir / "TASK.md").exists() else "TASK.md")
-        write_owned(self.dir, name, body)
+        return body, name
+
+    def _task_md_written(self, body: str, name: str) -> str:
         # The adapter falls back to this when the inline prompt would overflow the command line (#222).
         self.prompt_pointer = (f"Read {name} in the current directory (it is long) and carry out the instruction "
-                               f"there.\n\nInstruction summary: {t.prompt[:2000]}")
+                               f"there.\n\nInstruction summary: {self.task.prompt[:2000]}")
         return body if len(body) <= INLINE_LIMIT else self.prompt_pointer
+
+    def write_task_md(self) -> str:
+        body, name = self._task_md()
+        write_owned(self.dir, name, body)
+        return self._task_md_written(body, name)
+
+    async def awrite_task_md(self) -> str:
+        """`write_task_md` for a coroutine: the fsync runs on the durable writer thread (#606)."""
+        body, name = self._task_md()
+        await awrite_owned(self.dir, name, body)
+        return self._task_md_written(body, name)
 
     def write_reference_files(self, files: Any) -> list[str]:
         """Write the reference tables named in ``task.meta["workspace_files"]`` next to TASK.md (#420).
@@ -238,6 +252,10 @@ class TaskWorkspace:
                 continue
             write_owned(self.dir, name, text)
         return refused
+
+    async def awrite_reference_files(self, files: Any) -> list[str]:
+        """`write_reference_files` for a coroutine: the whole loop runs as one job on the durable writer thread."""
+        return await durable.run(durable.FILES, self.write_reference_files, files)
 
     def link_inputs(self, upstream: dict[str, Path]) -> dict[str, str]:
         """Point ``inputs/<step id>`` at each upstream step's ``outputs/`` folder (#423).
@@ -374,6 +392,11 @@ class TaskWorkspace:
         }
 
     def write_manifest(self, **fields: Any) -> None:
+        durable.call(durable.FILES, self._write_manifest_now, fields)
+
+    def _write_manifest_now(self, fields: dict[str, Any]) -> None:
+        # Read, change and write as one job: another write queued meanwhile cannot slip between the read and the
+        # replace and be lost.
         data = self._manifest()
         data.update(fields)
         write_owned(self.dir, "manifest.json", json.dumps(data, indent=2, ensure_ascii=False, default=str))
@@ -744,6 +767,15 @@ class TaskWorkspace:
 
     def update_run(self, task_id: str, **fields: Any) -> None:
         """A workspace can host several runs (original + wake-ups after HPC jobs)."""
+        durable.call(durable.FILES, self._update_run_now, task_id, fields)
+
+    async def aupdate_run(self, task_id: str, **fields: Any) -> None:
+        """`update_run` for a coroutine: the fsync runs on the durable writer thread (#606). The fields are copied
+        first, so the caller may change them while the write is queued."""
+        await durable.run(durable.FILES, self._update_run_now, task_id, copy.deepcopy(fields))
+
+    def _update_run_now(self, task_id: str, fields: dict[str, Any]) -> None:
+        # Read, change and write as one job (see _write_manifest_now).
         data = self._manifest()
         data.setdefault("runs", {}).setdefault(task_id, {}).update(fields)
         write_owned(self.dir, "manifest.json", json.dumps(data, indent=2, ensure_ascii=False, default=str))
