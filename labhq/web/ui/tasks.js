@@ -1,9 +1,33 @@
 const doc = () => globalThis.document;
 function add(parent, tag, text = '', className = '') { const el = doc().createElement(tag); el.textContent = text; if (className) el.className = className; parent.append(el); return el; }
-const STATUS = { pending:'대기', queued:'대기', working:'진행 중', waiting_quota:'한도 대기', waiting_login:'로그인 대기', waiting_facilities_fix:'환경 수정 승인 대기', hibernating:'HPC 대기', halted:'멈춤 · 재개 가능', paused:'일시 정지', revise:'리뷰 반영', error:'실패', failed:'실패', skipped:'건너뜀', done:'완료' };
+export const STATUS = { pending:'대기', queued:'대기', working:'진행 중', waiting_quota:'한도 대기', waiting_login:'로그인 대기', waiting_facilities_fix:'환경 수정 승인 대기', hibernating:'HPC 대기', halted:'멈춤 · 재개 가능', paused:'일시 정지', revise:'리뷰 반영', error:'실패', failed:'실패', skipped:'건너뜀', done:'완료' };
 const COLUMN = { pending:'waiting', queued:'waiting', working:'working', waiting_quota:'working', waiting_login:'working', waiting_facilities_fix:'working', hibernating:'working', halted:'working', paused:'working', revise:'review', error:'review', failed:'review', skipped:'done', done:'done' };
 
 const pad = n => String(n).padStart(2, '0');
+// A compact plan trail shared by all tabs, separate from the whiteboard's request phases.
+export function syncStepFlow(container, request, options = {}) {
+  const plan = request?.plan || [], steps = request?.steps || {};
+  container.hidden = !plan.length;
+  const key = JSON.stringify(plan.map(s => [s.id, steps[s.id], options.nick?.(s.agent_id) || s.agent_id]));
+  if (container._flowKey === key) return;
+  container._flowKey = key;
+  const done = s => ['done', 'skipped'].includes(steps[s.id]);
+  const current = plan.find(s => !done(s) && !['pending', 'queued', undefined].includes(steps[s.id])) || plan.find(s => !done(s));
+  const rows = [];
+  for (let i = 0; i < plan.length;) {
+    let end = i;
+    while (end < plan.length && done(plan[end])) end++;
+    if (end - i > 2) {
+      const row = doc().createElement('li'); row.textContent = `✓ ${end - i}`;
+      row.setAttribute('aria-label', `완료·건너뜀 ${end - i}단계`); rows.push(row); i = end; continue;
+    }
+    const s = plan[i++], status = steps[s.id] || 'pending', row = doc().createElement('li');
+    row.textContent = `${s.id} ${options.nick?.(s.agent_id) || s.agent_id || '미배정'} ${done(s) ? '✓' : s === current ? '●' : '○'} ${STATUS[status] || status}`;
+    if (s === current) row.setAttribute('aria-current', 'step');
+    rows.push(row);
+  }
+  container.replaceChildren(...rows);
+}
 // Local "MM-DD HH:MM", the same on every browser locale.
 export function stamp(seconds) {
   const d = new Date(Number(seconds) * 1000);
