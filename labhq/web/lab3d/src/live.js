@@ -151,7 +151,7 @@ export function startLiveOffice(onState) {
     for (const q of globalThis.LabHQState.sortRequests(S.requests.values())) {
       const status = globalThis.LabHQState.requestStatusText(q, S.approvals);  // R14: never a raw status
       const key = JSON.stringify([q.text, q.status, status, q.phase, q.plan, q.steps, q.processing, q.review, q.error, q.report,
-        q.report_appendix, q.report_truncated, q.report_appendix_truncated, q.followups, q.piNotes,
+        q.report_appendix, q.execution_record, q.execution_record_truncated, q.report_truncated, q.report_appendix_truncated, q.followups, q.piNotes,
         q.assumptions, q.bundlePath, q.bundleStatus, q.bundleGrade, q.bundleGradeReasons, q.bundleWarning, loadingAnswers.has(q.id)]);
       const prior = oldRows.get(q.id);
       if (prior?.dataset.renderKey === key) { rows.push(prior); continue; }
@@ -190,9 +190,18 @@ export function startLiveOffice(onState) {
       }
       if (q.report_appendix) {
         const details = text(row, 'details', ''), summary = text(details, 'summary', '실행 기록');
-        summary.textContent = '실행 기록';
+        summary.textContent = q.report_appendix.startsWith('## 부록\n') ? '과학 부록' : '실행 기록';
         text(details, 'pre', q.report_appendix + (q.report_appendix_truncated ? '…' : ''));
         if (q.report_appendix_truncated) {
+          const more = text(details, 'button', '전문 보기'); more.type = 'button';
+          more.disabled = loadingAnswers.has(q.id); more.onclick = () => loadFullAnswers(q.id);
+        }
+      }
+      if (q.execution_record) {
+        const details = text(row, 'details', ''), summary = text(details, 'summary', '실행 기록');
+        summary.textContent = '실행 기록';
+        text(details, 'pre', q.execution_record + (q.execution_record_truncated ? '…' : ''));
+        if (q.execution_record_truncated) {
           const more = text(details, 'button', '전문 보기'); more.type = 'button';
           more.disabled = loadingAnswers.has(q.id); more.onclick = () => loadFullAnswers(q.id);
         }

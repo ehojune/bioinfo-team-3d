@@ -707,8 +707,10 @@ function followupHTML(q) {
 const reportHTML = q => !q.report ? '' : `<section class="pi-report"><h3>PI용 보고서</h3><pre>${esc(q.report)}${q.report_truncated ? '…' : ''}</pre>${
   q.report_truncated ? `<p class="fu-more">앞 ${[...q.report].length.toLocaleString()}자만 보여요${q.report_chars ? ` (전체 ${Number(q.report_chars).toLocaleString()}자)` : ''}${
     api?.requestDetail ? ` <button class="btn report-full" type="button" data-rid="${esc(q.id)}"${fuLoading.has(q.id) ? ' disabled' : ''}>전문 보기</button>` : ''}</p>` : ''}${q.report_appendix ?
-    `<details class="report-appendix"><summary>실행 기록</summary><pre>${esc(q.report_appendix)}${q.report_appendix_truncated ? '…' : ''}</pre>${q.report_appendix_truncated && api?.requestDetail ?
-      `<p class="fu-more">앞 ${[...q.report_appendix].length.toLocaleString()}자만 보여요 <button class="btn report-full" type="button" data-rid="${esc(q.id)}"${fuLoading.has(q.id) ? ' disabled' : ''}>전문 보기</button></p>` : ''}</details>` : ''}</section>`;
+    `<details class="report-appendix"><summary>${q.report_appendix.startsWith('## 부록\n') ? '과학 부록' : '실행 기록'}</summary><pre>${esc(q.report_appendix)}${q.report_appendix_truncated ? '…' : ''}</pre>${q.report_appendix_truncated && api?.requestDetail ?
+      `<p class="fu-more">앞 ${[...q.report_appendix].length.toLocaleString()}자만 보여요 <button class="btn report-full" type="button" data-rid="${esc(q.id)}"${fuLoading.has(q.id) ? ' disabled' : ''}>전문 보기</button></p>` : ''}</details>` : ''}${q.execution_record ?
+    `<details class="report-appendix"><summary>실행 기록</summary><pre>${esc(q.execution_record)}${q.execution_record_truncated ? '…' : ''}</pre>${q.execution_record_truncated && api?.requestDetail ?
+      `<p class="fu-more">앞 ${[...q.execution_record].length.toLocaleString()}자만 보여요 <button class="btn report-full" type="button" data-rid="${esc(q.id)}"${fuLoading.has(q.id) ? ' disabled' : ''}>전문 보기</button></p>` : ''}</details>` : ''}</section>`;
 // A finished request's report with its figures as a PDF (an HTML page when this PC has no browser to print it) (#584).
 const reportPdfHTML = q => !q.report || !api?.reportPdf || !LabHQState.isTerminalRequest(q.status) ? ''
   : `<p><button class="btn report-pdf" type="button" data-rid="${esc(q.id)}">PDF로 받기</button> <small>그림이 들어간 전체 보고서</small></p>`;
@@ -738,7 +740,7 @@ function renderRequest() {
   // The status line also names a waiting resume card or the runners a resume still needs (R14).
   const statusText = q ? LabHQState.requestStatusText(q, S.approvals) : '';
   const all = LabHQState.sortRequests(S.requests.values());
-  const key = q ? JSON.stringify([S.requests.size, staffNames, statusText, all.map(r => [r.id, r.status, r.text, r.pi_review_pending, r.pi_reviewed_at]), q.id, q.phase, q.status, q.steps, details, q.github.length, q.pipelinePr, q.report, q.report_appendix, q.bundlePath, q.bundleStatus, q.bundleGrade, q.bundleGradeReasons, q.bundleWarning, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes, q.processing]) : snapshotLoaded ? 'none' : `loading:${S.conn}`;
+  const key = q ? JSON.stringify([S.requests.size, staffNames, statusText, all.map(r => [r.id, r.status, r.text, r.pi_review_pending, r.pi_reviewed_at]), q.id, q.phase, q.status, q.steps, details, q.github.length, q.pipelinePr, q.report, q.report_appendix, q.execution_record, q.bundlePath, q.bundleStatus, q.bundleGrade, q.bundleGradeReasons, q.bundleWarning, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes, q.processing]) : snapshotLoaded ? 'none' : `loading:${S.conn}`;
   if (key === reqKey) return;
   reqKey = key;
   // Before the first snapshot no request is known yet, which is not the same as none (#521).

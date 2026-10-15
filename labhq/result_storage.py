@@ -249,7 +249,7 @@ def draft_documents(req: dict, settings, included=None, assets=None, *, abstract
     sources = [f"{r.get('kind')}: {r.get('value', '')}" for r in req.get("references") or []
                if r.get("kind") in {"url", "github", "doi", "pmid"}]
     sources += re.findall(r"https?://[^\s<>\"'\])]+", report)
-    bibliography = re.search(r"(?im)^#{1,6}\s+(?:references|bibliography|참고\s*문헌|참고\s*자료|출처)[^\n]*\n", report)
+    bibliography = re.search(r"(?im)^#{1,6}\s+(?:references|bibliography|참고(?:\s*문헌|\s*자료)?|출처)[^\n]*\n", report)
     citations = re.split(r"(?m)^#{1,6}\s+", report[bibliography.end():], maxsplit=1)[0] if bibliography else ""
     found = edition_sources.collect(
         [report, str(req.get("report_appendix") or "")], req.get("references") or [],
@@ -594,6 +594,11 @@ class ResultStorage:
             finally:
                 self.uploading.discard(rid)
             saved["status"] = "published"
+            saved["report_url"] = (f"https://github.com/{saved['repo']}/blob/{saved.get('branch') or 'main'}/"
+                                   f"labhq/results/{rid}/report.md")
+            if hasattr(self.hub, "rounds"):
+                self.hub.rounds.write(rid)
+                self.hub.rounds.submit(rid)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -657,6 +662,7 @@ class ResultStorage:
         if not info.get("private", False) and not saved.get("allow_public"):
             raise ValueError("public publishing not approved")
         branch = saved.get("branch") or info.get("default_branch") or "main"
+        saved["branch"] = branch
         for name, body in docs.items():
             await gh.put_file(repo, f"labhq/results/{rid}/{name}", body, "연구 결과 정리", branch)
         for name, body in (images or {}).items():

@@ -31,7 +31,7 @@ STATUS_ORDER = (OK, MISMATCH, MISSING, UNREADABLE, UNCHECKED, UNRECORDED)
 STATUS_KO = {OK: "일치", MISMATCH: "불일치", MISSING: "없음", UNREADABLE: "읽지 못함", UNCHECKED: "확인 못함",
              UNRECORDED: "기록된 해시 없음"}
 PROBLEM_STATUSES = frozenset({MISMATCH, MISSING, UNREADABLE, UNCHECKED})
-BUNDLE_FILES = ("README.md", "report.md", "report_appendix.md", "claims.json", "artifacts.json")
+BUNDLE_FILES = ("README.md", "report.md", "report_appendix.md", "execution_record.md", "claims.json", "artifacts.json")
 NO_FILES_LINE = "산출 파일 자체는 넣지 않았습니다(크기와 데이터 경계). 원본은 `artifacts.json`의 sha256으로 대조합니다."
 _SAFE_REQUEST_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 
@@ -448,7 +448,8 @@ def _bundle_readme(report: Mapping[str, Any]) -> str:
         lines += ["## 문제", "", *[f"- {problem}" for problem in report["problems"]], ""]
     lines += ["## 파일", "",
               "- `report.md`: PI용 본문(이 본문을 claim anchor 검사)",
-              "- `report_appendix.md`: 단계·경고·리뷰·비용 실행 기록",
+              "- `report_appendix.md`: 과학 부록(점검표·리뷰·가정)",
+              "- `execution_record.md`: 단계·경고·비용 운전 기록",
               "- `claims.json`: 단계 ledger, CP2 receipt(`artifact_sha256` 포함), 보고서 앵커 검사(기록과 다시 돌린 결과)",
               "- `artifacts.json`: 산출 파일마다 경로·크기·기록 sha256·지금 sha256·상태·만든 직원·task", ""]
     return "\n".join(lines)
@@ -490,6 +491,7 @@ def bundle_bytes(report: Mapping[str, Any], req: Mapping[str, Any]) -> bytes:
         bundle.writestr("README.md", _bundle_readme(report))
         bundle.writestr("report.md", str(req.get("report") or ""))
         bundle.writestr("report_appendix.md", str(req.get("report_appendix") or ""))
+        bundle.writestr("execution_record.md", str(req.get("execution_record") or ""))
         bundle.writestr("claims.json", json.dumps(claims, ensure_ascii=False, indent=2, default=str))
         bundle.writestr("artifacts.json", json.dumps(artifacts, ensure_ascii=False, indent=2))
     return stream.getvalue()

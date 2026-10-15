@@ -404,7 +404,7 @@ async def test_a_runner_wait_past_its_bound_fails_with_a_korean_next_step(tmp_pa
     hub = Hub(s)
     rid = hub.create_request(RequestIn(text="공개 데이터 QC 요약"))
     await _until(lambda: hub.requests[rid]["status"] == "failed")
-    report = hub.requests[rid]["report"] + hub.requests[rid].get("report_appendix", "")
+    report = hub.requests[rid]["report"] + hub.requests[rid].get("execution_record", "")
     assert "러너가 1분 안에 연결되지 않아 cso 작업을 보내지 못했습니다" in report and "labhq runner" in report
 
 
