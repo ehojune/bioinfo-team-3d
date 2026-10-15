@@ -92,6 +92,7 @@ fsync 없이 rename만 하는 곳도 그대로입니다: round 기록(`RoundReco
 - 충돌 모의: 부분 파일은 없고(대상 파일은 옛것이나 새것), 적용된 쓰기는 대기열 앞쪽 K개였습니다. 파일 3지점, SQLite 2지점, runner 재시작 1건(outbox 앞쪽 4개와 중단된 task 결과 하나, 순번 연속)을 확인했습니다.
 - 전체 pytest(리뷰 반영 전 head): 6,651 passed, 59 failed, 66 skipped. 실패 59건은 이 PC에서 main도 똑같이 실패하는 것입니다(`test_web_3d.py::test_office_in_node` 58건은 node 경로, `test_staff_control_steps::test_a_cli_start_the_runner_cannot_record_ends_the_cli`은 `tasklist` 출력 해석).
 - `scripts/check_public.sh`, `scripts/patch_notes.py check` 통과.
+- 리뷰 반영 head의 CI: pytest 3.12·Windows 통과, 3.10은 `/api/health` 조사 100여 번 중 하나가 0.41초 걸려 실패했습니다(나머지는 수 ms). CI 기계의 일시 지연으로 보고, 조사 하나라도 stall의 9할(0.45초)을 넘으면 실패하고 20번에 한 번까지만 0.2초를 넘길 수 있게 test를 고쳤습니다. main에서는 여전히 실패합니다.
 - 리뷰 반영 뒤에는 PI 시운전 중이라 프로세스를 띄우는 test를 로컬에서 돌리지 않았습니다. 프로세스를 띄우지 않는 Runner·Hub test 1,000여 건과 새 test를 돌렸고(통과), 나머지는 CI에 맡겼습니다.
 
 ## 남은 것
