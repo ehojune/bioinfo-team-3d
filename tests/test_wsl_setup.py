@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -56,6 +57,47 @@ def test_check_reports_each_fact_without_install(settings, monkeypatch):
     assert "test-only" not in wsl_setup.render(rows)
     monkeypatch.setattr(cli, "_health", lambda s: {**health(s), "identity": {"config_id": "other", "fingerprint": "other"}})
     assert wsl_setup.check(settings)[-1]["detail"] == "없음"
+
+
+def test_doctor_collapses_unconfigured_disabled_wsl(settings, monkeypatch):
+    """An available distro is not an opted-in feature and must not flood a fresh install with warnings."""
+    from labhq import wsl_setup
+
+    calls = []
+    monkeypatch.setattr(doctor, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(wsl_setup, "distributions", lambda: [settings.runner.wsl.distro])
+    monkeypatch.setattr(wsl_setup, "_remote", lambda *a, **kw: calls.append((a, kw)) or {"ok": True, **READY})
+    monkeypatch.setattr(cli, "_health", lambda s: health(s))
+
+    result = doctor.collect(settings, require_paper2agent=False)
+    rows = [row for row in result["checks"] if row["group"] == "WSL"]
+
+    assert rows == [{"group": "WSL", "name": "선택 기능", "status": "skip",
+                     "detail": "꺼짐", "hint": "labhq setup-wsl"}]
+    assert calls == []
+    assert "CLAUDE_CONFIG_DIR" not in doctor.render(result)
+
+
+def test_doctor_checks_enabled_wsl_individually_with_actual_login_path(settings, monkeypatch):
+    from labhq import wsl_setup
+
+    data = yaml.safe_load(Path(settings.config_path).read_text(encoding="utf-8"))
+    data["runner"]["wsl"] = {"enabled": True, "root": "/home/runner/labhq-wsl"}
+    Path(settings.config_path).write_text(yaml.safe_dump(data), encoding="utf-8")
+    settings = Settings.load(settings.config_path)
+    monkeypatch.setattr(doctor, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(wsl_setup, "distributions", lambda: [settings.runner.wsl.distro])
+    monkeypatch.setattr(wsl_setup, "_remote", lambda *a, **kw: {"ok": True, **READY, "claude_login": False})
+    monkeypatch.setattr(cli, "_health", lambda s: health(s))
+
+    result = doctor.collect(settings, require_paper2agent=False)
+    rows = [row for row in result["checks"] if row["group"] == "WSL"]
+    rendered = doctor.render(result)
+
+    assert len(rows) == len(wsl_setup.LABELS)
+    assert any(row["name"] == "WSL Claude 로그인" for row in rows)
+    assert "/home/runner/labhq-wsl/claude-staff" in rendered
+    assert "CLAUDE_CONFIG_DIR" in rendered
 
 
 def test_missing_wsl_only_prints_admin_advice(settings, monkeypatch):

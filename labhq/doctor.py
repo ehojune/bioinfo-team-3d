@@ -769,10 +769,13 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
         rows.append(_row("compute", tool, "ok" if found else "warn", "on PATH" if found else "missing",
                          f"Install or configure {tool} if bioinfo-agent needs it."))
     if sys.platform == "win32" or settings.runner.wsl.enabled:
-        from .wsl_setup import check as check_wsl
+        from .wsl_setup import check as check_wsl, configured as wsl_configured
 
-        rows.extend(check_wsl(settings) if not dry_run else [
-            _row("WSL", "준비 상태", "skip", "dry-run", "labhq setup-wsl --check")])
+        if not settings.runner.wsl.enabled and not wsl_configured(settings):
+            rows.append(_row("WSL", "선택 기능", "skip", "꺼짐", "labhq setup-wsl"))
+        else:
+            rows.extend(check_wsl(settings) if not dry_run else [
+                _row("WSL", "준비 상태", "skip", "dry-run", "labhq setup-wsl --check")])
     if network and not dry_run:
         for name, url in SOURCES.items():
             reachable = _network_check(url)
