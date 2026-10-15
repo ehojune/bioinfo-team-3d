@@ -44,7 +44,7 @@ fsync 없이 rename만 하는 곳도 그대로입니다: round 기록(`RoundReco
 - `StateStore`: 읽기 연결과 쓰기 연결을 나눴습니다. 쓰기는 전부 쓰기 연결 하나로 한 번에 한 transaction씩 갑니다. 읽기는 쓰기 도중에도 기다리지 않습니다(WAL). transaction 안의 읽기는 쓰기 연결로 합니다(`request.followup_done`이 방금 저장한 요청 행을 읽기 때문). `close()` 뒤의 쓰기는 이전처럼 `ProgrammingError`입니다.
 - runner: `emit`과 `_on_message`의 outbox 쓰기·ack가 코루틴용 경로를 탑니다. 메시지는 계속 `Runner.send`를 거칩니다(테스트가 `send`를 바꿔 가로챕니다). 결과 메시지와 "finished" 표시, `task.accepted`와 "running" 표시는 한 작업이라 취소돼도 갈라지지 않습니다.
 - 종료: gateway 종료 hook과 `Runner.run_forever`의 `finally`가 대기 중인 쓰기를 모두 끝낸 뒤 나갑니다. 프로세스 종료 때도 `atexit`이 같은 일을 합니다(30초 상한).
-- 새 test 27건: `tests/test_durable_writer.py`(25), `tests/test_loop_liveness_606.py`(2, 새 API 없이 쓰여서 main에서도 돌아갑니다). 기존 test는 하나도 바꾸지 않았습니다.
+- 새 test 30건: `tests/test_durable_writer.py`(28), `tests/test_loop_liveness_606.py`(2, 새 API 없이 쓰여서 main에서도 돌아갑니다). 기존 test는 하나도 바꾸지 않았습니다.
 
 ## 독립 리뷰 반영(PR 리뷰 3건)
 
@@ -57,6 +57,26 @@ fsync 없이 rename만 하는 곳도 그대로입니다: round 기록(`RoundReco
 | P2: Windows에서 쓰기 thread의 `os.replace`가 loop thread의 `read_owned`와 겹치면 `PermissionError` | `read_owned`의 열기는 `FILE_SHARE_DELETE`가 없어 교체를 막고, 교체 중에는 열기도 거부됨 | `HeldDir.replace`가 Windows에서 `util.replace_file`처럼 짧게(최대 약 1초) 기다려 다시 시도합니다. `read_owned`의 열기도 `PermissionError`를 짧게(최대 약 0.1초) 다시 시도하고, 그래도 안 되면 이전처럼 없음으로 읽습니다. | `test_replace_waits_out_a_reader_that_still_has_the_file_open`, `test_read_owned_retries_a_sharing_violation_instead_of_reporting_the_file_missing`(Windows 전용) |
 
 옮기지 않은 "멈추지 않음" 가정 한 곳: `_on_control`의 `agent.control` + 안내 로그 두 사건은 정보 표시라 갈라져도 상태가 어긋나지 않아 묶지 않았습니다. 승인 응답의 `agent.status` + ack는 둘째가 빠져도 gateway가 결정을 다시 보내 ack가 나가므로 그대로 뒀습니다. gateway가 같은 task의 둘째 `task.result`를 무시하게 하는 것은 하지 않았습니다(runner 쪽에서 막았고, gateway는 이번에 안 건드립니다).
+
+## 리뷰 3차 반영
+
+| 지적 | 고침 | test |
+|---|---|---|
+| P1: `Registry.asave_contract`가 두 복사본을 `await` 둘로 쓰고 roster 갱신은 그 뒤라, 둘 사이의 취소가 반쪽 고용을 남김 | 두 복사본과 roster 갱신을 한 `durable.run` 작업으로 묶었습니다. 파일은 쓰기 thread에서 쓰고, roster dict는 작업이 끝나기 전에 스스로 예약한 callback으로 loop에서 바꿉니다(다른 thread가 dict를 바꾸면 loop의 `roster()` 순회가 깨질 수 있어서). | `test_a_cancel_between_the_two_contract_copies_cannot_leave_a_partial_hire` |
+| P2: 놀고 있는 lane에서 다른 thread의 동기 `call` 둘이 둘 다 직접 실행되어 순서를 우회함 | 직접 실행도 lane의 실행 lock 아래서 한 번에 하나씩 합니다. 대기열의 작업도 같은 lock을 잡고 돕니다. 이미 lane 안(작업이나 직접 호출 속)에서 부르는 호출은 자기를 기다리지 않고 그 자리에서 실행합니다. | `test_two_threads_writing_one_path_on_an_idle_lane_land_in_call_order` |
+| P2: `contract.update`(`extend`·`release`·`activate`·`rehire`)가 아직 loop에서 동기로 씀 | 하지 않았습니다. 후속으로 넘깁니다: 성능 문제(동기 fsync), 정합성 영향 없음. | - |
+
+내가 추가한 비동기 helper 가운데 `await durable.run(...)`이 연속으로 둘 이상인 곳을 모두 찾아(AST로 찾고 눈으로 확인) 정리했습니다.
+
+| 곳 | 연속 `await` | 판단 |
+|---|---|---|
+| `Registry.asave_contract` | 파일 2 + roster | 위 P1로 한 작업 |
+| `_run_task`의 `RESULT_<id>.md`·`RESULT.md` | 2(반복문) | 새 `awrite_owned_many`로 한 작업. 취소가 하나만 쓰게 두지 않습니다. |
+| `awrite_task_md`, `aupdate_run`, `awrite_meta`, `aput`, `aenqueue`, `aack`, `asave_contract` 안의 파일들, `_send_batch`·`emit_all` | 1 (`awrite_reference_files`와 `AgentAdapter.prepare` 호출은 여러 파일을 한 작업으로 이미 묶음) | 그대로 |
+| `AgentAdapter.run`: prepare, `command.txt`, `stderr_tail.txt` | 3, 단계가 서로 다름 | 파일마다 독립이고 취소되면 그 실행이 끝나므로 그대로 |
+| `_run_task`의 `aupdate_run`들(시작·입력·종료), 참고 파일 뒤 `TASK.md` | 여러 번, 단계마다 완결 | 사이에 이미 다른 `await`가 있었으므로 이전과 같은 취소 지점입니다. 그대로 |
+| `Runner._on_message`의 승인 응답(`agent.status` 뒤 ack) | 2 | 취소돼 ack가 빠지면 gateway가 결정을 다시 보내 ack가 나가므로 그대로 |
+| `_poll_jobs`, `collect_observed_outputs` | 2, 서로 다른 분기·반복 | 각각 한 묶음(앞 절의 `emit_all`)이거나 배타적 분기라 그대로 |
 
 ## 설계 판단
 
@@ -88,7 +108,7 @@ fsync 없이 rename만 하는 곳도 그대로입니다: round 기록(`RoundReco
 
 벽시계 시간은 같습니다. e2e는 쓰기를 하나씩 기다리며 이어지는 흐름이라 쓰기 시간이 그대로 더해집니다. 달라진 것은 그 사이 loop이 살아 있다는 점입니다(위 두 번째 줄 이상).
 
-- 새 test 27건은 모두 통과했습니다. `tests/test_loop_liveness_606.py`의 2건은 main에서 실패합니다(`/api/health` 1.01초, loop 정지 2.01초). 나머지는 새 API를 쓰니 main에서는 import부터 실패합니다.
+- 새 test 30건은 모두 통과했습니다. `tests/test_loop_liveness_606.py`의 2건은 main에서 실패합니다(`/api/health` 1.01초, loop 정지 2.01초). 나머지는 새 API를 쓰니 main에서는 import부터 실패합니다.
 - 충돌 모의: 부분 파일은 없고(대상 파일은 옛것이나 새것), 적용된 쓰기는 대기열 앞쪽 K개였습니다. 파일 3지점, SQLite 2지점, runner 재시작 1건(outbox 앞쪽 4개와 중단된 task 결과 하나, 순번 연속)을 확인했습니다.
 - 전체 pytest(리뷰 반영 전 head): 6,651 passed, 59 failed, 66 skipped. 실패 59건은 이 PC에서 main도 똑같이 실패하는 것입니다(`test_web_3d.py::test_office_in_node` 58건은 node 경로, `test_staff_control_steps::test_a_cli_start_the_runner_cannot_record_ends_the_cli`은 `tasklist` 출력 해석).
 - `scripts/check_public.sh`, `scripts/patch_notes.py check` 통과.
@@ -96,6 +116,8 @@ fsync 없이 rename만 하는 곳도 그대로입니다: round 기록(`RoundReco
 - 리뷰 반영 뒤에는 PI 시운전 중이라 프로세스를 띄우는 test를 로컬에서 돌리지 않았습니다. 프로세스를 띄우지 않는 Runner·Hub test 1,000여 건과 새 test를 돌렸고(통과), 나머지는 CI에 맡겼습니다.
 
 ## 남은 것
+
+- `Registry.extend`·`release`·`activate`·`rehire`(runner의 `contract.update` 메시지)는 동기 `save_contract`를 loop에서 부릅니다. lane이 놀고 있으면 fsync 두 번이 loop thread에서 직접 돕니다. 느린 디스크에서 그동안 runner의 heartbeat와 다른 task 처리가 멈춥니다(성능 문제, 정합성 영향 없음). 후속입니다.
 
 - gateway SQLite 쓰기 약 894번(위 표)은 loop에서 동기입니다. 느린 디스크에서 gateway API는 아직 커밋 시간만큼 멈춥니다. 위 세 가지를 풀 설계가 먼저 필요합니다.
 - 동기 호출 쪽은 같은 대상의 대기열 뒤에서 기다립니다. 그래서 runner에서 아직 동기로 남은 `record_run`은 쌓인 쓰기가 끝나기를 기다린 만큼 loop을 붙잡습니다(이전에는 자기 쓰기 시간만큼). 실제 엔진은 task당 2~3번입니다.
