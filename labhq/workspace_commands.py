@@ -57,7 +57,7 @@ def _python_paths(source: str) -> list[str] | None:
 
 
 def workspace_command(command: str, workdir: str | None, private_paths=(), *, powershell=False,
-                      read_roots=()) -> bool:
+                      read_roots=(), forbidden=()) -> bool:
     """Prove every path stays in the current, existing task folder (never a read-only grant).
 
     The shell is not a sandbox. This exception deliberately accepts only a small literal grammar;
@@ -96,6 +96,8 @@ def workspace_command(command: str, workdir: str | None, private_paths=(), *, po
         raw = value if os.path.isabs(value) else os.path.join(base, value)
         try:
             real = resolved_read_path(raw)
+            if inside_any(os.path.abspath(raw), forbidden) or inside_any(real, forbidden):
+                return False
             if not inside_any(os.path.abspath(raw), roots) or not inside_any(real, roots):
                 return False
             if not _managed_operand(value, base, list(private_paths), roots):

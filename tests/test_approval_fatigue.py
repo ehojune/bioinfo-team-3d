@@ -241,3 +241,14 @@ def test_dangerous_command_pattern_still_wins(layout):
     cfg, _, _, _ = layout
     cfg.policy.approvals.bash_ask_patterns.append(r'\brm\b')
     assert gate(layout, 'Bash', {'command': 'rm -rf tmp'}).action == 'ask'
+
+
+@pytest.mark.parametrize('place', ['work', 'skill'])
+def test_glob_read_never_reopens_restricted_child(layout, place):
+    from labhq.settings import DataZone
+    cfg, _, work, skills = layout
+    folder = work if place == 'work' else skills
+    private = folder / 'protected.py'
+    private.write_text('fixture only', encoding='utf-8')
+    cfg.policy.data_zones = [DataZone(path=str(private), level='restricted')]
+    assert gate(layout, 'Bash', {'command': f'cat "{folder.as_posix()}"/*.py'}).action == 'ask'
