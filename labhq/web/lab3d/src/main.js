@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { Shapes,C } from './primitives.js';
-import { EDITOR,ROSTER,STATES,STATE_LABELS,STATE_COLORS } from './characters.js';
+import { EDITOR,ROSTER,SOLO,STATES,STATE_LABELS,STATE_COLORS } from './characters.js';
 import { buildOffice } from './office.js';
 import { rosterFor,selectionsFor,buildSkin,buildProcedural,labelPoint } from './skins.js';
 import { buildStatusLayer } from './status-layer.js';
@@ -163,7 +163,7 @@ function syncLive(S, visual, stateText, currentTask) {
     s.remove(room);
     let extras=0;
     roster=agents.map(a=>{
-      const known=ROSTER.find(def=>def.id===a.id&&def.id!=='contract') || (a.id==='editor' ? EDITOR : null);
+      const known=ROSTER.find(def=>def.id===a.id&&def.id!=='contract') || (a.id==='editor' ? EDITOR : a.id==='solo' ? SOLO : null);
       const base=known||ROSTER.find(def=>def.id==='contract');
       const extra=known?null:extras++;
       return {...base,id:a.id,name:a.name||a.id,role:a.role||'',task:a.task||'',archetype:base.archetype||base.id,

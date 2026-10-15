@@ -150,6 +150,7 @@ def test_package_data_includes_office_assets():
 NODE_WEB_MARKERS = {
     'web_recruit_before_plan.cjs': 'pre-plan recruitment card passed',
     'web_recruiter_capybara.cjs': 'recruiter capybara identity, unique roster and artwork: OK',
+    'web_solo_lion.cjs': 'solo lion default, unique roster and artwork: OK',
     'web_state.cjs': 'isolation and bounds: OK',
     'web_live.cjs': 'reconnect and replay gap: OK',
     'web_command_center.cjs': 'keyed decisions, staff strip and tabs: OK',

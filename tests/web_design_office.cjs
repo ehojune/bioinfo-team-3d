@@ -14,7 +14,7 @@ test('every roster animal has a full body and its own role prop, including facil
   const expected={chief_of_staff:['penguin','clipboard'],cso:['owl','clipboard'],biologist:['bear','leaf'],
     data_steward:['squirrel','folder'],lit_scout:['fox','book'],analyst:['raccoon','laptop'],
     engineer:['octopus','wrench'],qc_reviewer:['hedgehog','magnifier'],sci_reviewer:['turtle','checklist'],
-    recruiter:['capybara','businesscard'],editor:['beaver','pen'],'bioinfo-agent':['otter','laptop'],facilities:['hamster','tools'],c_demo:['chick','badge']};
+    recruiter:['capybara','businesscard'],editor:['beaver','pen'],solo:['lion','checklist'],'bioinfo-agent':['otter','laptop'],facilities:['hamster','tools'],c_demo:['chick','badge']};
   for(const [id,[kind,prop]] of Object.entries(expected)){
     const a={id},svg=ui.officeSVG(a,state.staffCharacter(a));
     assert.match(svg,new RegExp(`data-character="${kind}"`),id);
