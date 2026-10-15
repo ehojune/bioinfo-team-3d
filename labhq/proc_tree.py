@@ -34,6 +34,7 @@ from typing import Iterable
 
 KILLED = "killed"
 GONE = "gone"  # the process had already exited
+_PROCESS_EXIT_WAIT_MS = 10_000
 
 
 @dataclass(frozen=True)
@@ -379,7 +380,12 @@ class _Handle:
             if not running():  # it ended on its own between the check and the kill
                 return GONE
             raise ctypes.WinError(error)
-        return KILLED
+        waited = kernel.WaitForSingleObject(self._raw, _PROCESS_EXIT_WAIT_MS)
+        if waited == 0:  # WAIT_OBJECT_0: the process and its loaded modules are actually gone
+            return KILLED
+        if waited == 0x00000102:  # WAIT_TIMEOUT
+            raise OSError(f"PID {self.pid}이 {_PROCESS_EXIT_WAIT_MS // 1000}초 안에 끝나지 않음")
+        raise OSError(f"PID {self.pid} 종료 확인 실패(WaitForSingleObject={waited})")
 
     def close(self) -> None:
         if self._raw:
