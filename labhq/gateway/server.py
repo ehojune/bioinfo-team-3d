@@ -3869,7 +3869,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             raise HTTPException(404)
         from urllib.parse import quote
 
-        from ..report_pdf import ReportRefused, build_report_file
+        from ..report_pdf import ReportRefused, build_report_file, pdf_cap_bytes, size_notes
 
         tasks = {key: copy.deepcopy(task) for key, task in hub.store.all("task").items()
                  if isinstance(task, dict) and task.get("request_id") == rid}
@@ -3878,8 +3878,10 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         except ReportRefused as exc:
             raise HTTPException(409, str(exc)) from exc
         headers = {"Content-Disposition": f'attachment; filename="{built.filename}"', "X-Labhq-Report-Kind": built.kind}
-        if built.reason:  # header values are latin-1: the page decodes this with decodeURIComponent
-            headers["X-Labhq-Reason"] = quote(built.reason, safe="")
+        # A PDF that needed shrunk figures says so in the same header (#608); the page and `labhq report` show it.
+        shown = built.reason or " ".join(size_notes(built.data, built.shrunk, built.over_cap, pdf_cap_bytes(settings)))
+        if shown:  # header values are latin-1: the page decodes this with decodeURIComponent
+            headers["X-Labhq-Reason"] = quote(shown, safe="")
         return Response(built.data, media_type=built.media_type, headers=headers)
 
     @app.get("/api/approvals", dependencies=[Depends(auth)])

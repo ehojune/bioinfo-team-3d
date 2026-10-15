@@ -193,7 +193,11 @@ async def test_cancelled_finish_edits_partial_report(setup):
     await hub.result_storage.finish("r")
     saved = hub.requests["r"]["result_storage"]
     assert saved["status"] == "local"
-    assert (Path(saved["draft_path"]) / "report.md").read_text(encoding="utf-8") == "Result"
+    edition = Path(saved["draft_path"])
+    # #608: the edition opens with the graphical abstract labhq draws when the report has none; the report text is as it was
+    assert (edition / "report.md").read_text(encoding="utf-8") == (
+        "![Graphical abstract — 질문 → 데이터 → 방법 → 핵심 결과](graphical_abstract.svg)\n\nResult")
+    assert (edition / "graphical_abstract.svg").read_text(encoding="utf-8").startswith("<svg ")
     assert not calls
 
 

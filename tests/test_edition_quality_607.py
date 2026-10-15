@@ -176,7 +176,9 @@ async def test_editor_gets_the_whole_report_and_no_cut_off_wording(tmp_path, mon
     await hub.result_storage.finish("req_test")
     prompt = editor.call_args.args[0].prompt
     assert "END-OF-REPORT-MARKER" in prompt and "절 7의 내용입니다." in prompt
-    assert report.strip() in prompt  # the report goes in whole, not as the README draft's first 1800 characters
+    # the report goes in whole, not as the README draft's first 1800 characters (the edition adds its abstract figure
+    # under the title, so the text after the title is compared)
+    assert report.strip().split("\n\n", 1)[1] in prompt
     assert "끊" not in prompt and "잘리" not in prompt and "전체를 그대로 담았습니다" in prompt
     assert "(전문)" in prompt and "[개요]" not in prompt
 
@@ -352,4 +354,3 @@ async def test_redraft_api_and_cli(tmp_path, monkeypatch, capsys):
     cli.main(["storage", "req_x", "--redraft"])
     assert calls == [("POST", "/api/requests/req_x/storage/redraft")]
     assert "편집자를 다시 돌립니다 (이전 게시 카드 1장 닫음)" in capsys.readouterr().out
-

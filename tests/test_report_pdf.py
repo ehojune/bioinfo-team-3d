@@ -193,7 +193,7 @@ def test_html_marks_a_figure_it_cannot_embed_and_never_reads_outside_the_bundle(
               "![없음](steps/s1/outputs/gone.png)\n\n![ok](WD/outputs/fig1.png)\n")
     _settings, request, _tasks, bundle = build(tmp_path, report)
     page, missing = build_report_html(request, bundle)
-    assert page.count("<img ") == 1
+    assert page.count("<img ") == 2  # the figure and the graphical abstract labhq draws when the report has none (#608)
     assert len(missing) == 4 and any("묶음 밖" in item for item in missing) and any("외부 주소" in item for item in missing)
     assert "그림 4개를 넣지 못했어요" in page and "figure-missing" in page
     assert "https://example.com/a.png" not in page
@@ -210,9 +210,9 @@ def test_figure_embedder_limits_and_missing_bundle(tmp_path, monkeypatch):
     (tmp_path / "steps/s1/outputs").mkdir(parents=True)
     (tmp_path / "steps/s1/outputs/big.png").write_bytes(PNG * 10)
     (tmp_path / "steps/s1/outputs/a.png").write_bytes(PNG)
-    monkeypatch.setattr("labhq.report_pdf.MAX_FIGURE_BYTES", 100)
     embedder = FigureEmbedder(tmp_path)
-    assert "크기 한도" in embedder.markup("big", "steps/s1/outputs/big.png", block=False)
+    # #608: a figure has no size limit of its own (it was 8 MB); the PDF is shrunk to its cap instead
+    assert "<img " in embedder.markup("big", "steps/s1/outputs/big.png", block=False)
     assert "<img " in embedder.markup("a", "steps/s1/outputs/a.png", block=False)
     assert "요청 묶음이 없어" in FigureEmbedder(None).markup("a", "steps/s1/outputs/a.png", block=False)
     assert "그림 형식이 아님" in embedder.markup("t", "steps/s1/outputs/t.tsv", block=False)
@@ -498,10 +498,10 @@ def test_a_figure_name_with_hash_or_question_mark_is_kept_when_the_file_exists(t
     assert linked_figure_paths(text) == ["steps/s1/outputs/a#1.png", "steps/s1/outputs/fig1.png"]
     assert verify_request(request, settings)["exit_code"] == 0
     page, missing = build_report_html(request, bundle)
-    assert missing == [] and page.count("<img ") == 2
+    assert missing == [] and page.count("<img ") == 3  # two figures and the drawn graphical abstract (#608)
     (bundle / "report.md").write_text(request["report"], encoding="utf-8")  # an older bundle: the link as written
     page, missing = build_report_html(request, bundle)
-    assert missing == [] and page.count("<img ") == 2
+    assert missing == [] and page.count("<img ") == 3
     # no file to look at (a name NTFS does not allow): the step's listed outputs decide; otherwise drop the query
     owners, listed = {"task_a": "s1"}, {"s1": {"outputs": ["outputs/what?.png"]}}
     out = link_workdir_figures("![x](task_a/outputs/what?.png) ![y](task_a/outputs/b.png?raw=1)", owners,
@@ -525,7 +525,7 @@ def test_figure_targets_with_parentheses_and_angle_brackets_resolve_to_the_copie
     assert set(linked_figure_paths(text)) == {f"steps/s1/{name}" for name in files}
     assert verify_request(request, settings)["exit_code"] == 0
     page, missing = build_report_html(request, bundle)
-    assert missing == [] and page.count("<img ") == 4
+    assert missing == [] and page.count("<img ") == 5  # four figures and the drawn graphical abstract (#608)
     raw = "![그림](steps/s1/outputs/plot(1).png)\n\n![x](<steps/s1/outputs/a (2).png>)"  # unrewritten, as a PI may write
     embedder = FigureEmbedder(bundle)
     out = markdown_to_html(raw, embedder)

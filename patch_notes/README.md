@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 11:32 | [`836b448`](https://github.com/ehojune/bioinfo-team-3d/pull/616/commits/836b448) | 게시 PDF는 정리본이 담을 수 있는 그림(보고된 산출물, 정리본이 담는 형식)만 넣고 크기 제한만 푼다. 보고서의 graphical abstract는 첫 제목 아래 첫 그림으로 옮기고, verify는 자체 abstract가 없으면 그려 넣을 한 자리를 빼 결과 그림 10장까지만 센다(#608, #611 리뷰 P2). |
+| 10:53 | [`6f6ffae`](https://github.com/ehojune/bioinfo-team-3d/pull/611/commits/6f6ffae) | 실제 브라우저 test는 이 PC에서 인쇄가 안 되면 건너뛰어, CI 러너의 Chrome sandbox 문제를 그림 줄이기 실패로 세지 않는다(#608). |
+| 10:50 | [`29cdd86`](https://github.com/ehojune/bioinfo-team-3d/pull/611/commits/29cdd86) | 보고서 PDF의 그림은 크기 제한 없이 요청 묶음의 원본을 쓰고(정리본 PDF도 같음), PDF는 50 MB(github.edition_pdf_max_mb, 최대 75) 안으로 그림을 빼지 않고 해상도를 단계적으로 줄여 맞춘다. 그림은 11장까지이고 한 장은 graphical abstract이며, 보고서에 없으면 labhq가 계획·입력 출처·결론으로 흐름도를 그려 PDF와 정리본의 첫 그림으로 넣는다(#608). |
 | 07:13 | [`6ac9051`](https://github.com/ehojune/bioinfo-team-3d/pull/605/commits/6ac9051) | e2e helper가 timeout 인자를 다시 받아, 그 helper를 쓰는 research cp1 test가 깨지지 않게 했다(#598). |
 | 07:00 | [`4b3277b`](https://github.com/ehojune/bioinfo-team-3d/pull/605/commits/4b3277b) | 느린 Windows CI에서 e2e mock test가 60초·90초 고정 상한에 걸리던 것을, 진행이 멈춘 뒤 120초를 기다리는 방식으로 바꿨다(#598). |
 | 05:24 | [`b8dcfd7`](https://github.com/ehojune/bioinfo-team-3d/pull/604/commits/b8dcfd7) | 편집자 정리본에 보고서 PDF(report.pdf)를 넣고 그림 링크가 정리본 안의 파일만 가리키게 한다. PDF를 못 만들거나 크기 한도(github.edition_pdf_max_mb)를 넘으면 이유 한 줄만 남기고 PDF 없이 게시한다(#584). |

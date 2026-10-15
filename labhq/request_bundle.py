@@ -21,8 +21,8 @@ from typing import Any, Iterator
 from .adapters.held_dir import HeldDir, NotPlainFolder
 from .evidence.audit import claims_record, locate_workdir
 from .evidence.claims import normalize_artifact_path
-from .report_figures import (bundle_figure_check, figure_owners, link_workdir_figures, linked_figure_paths,
-                             output_exists)
+from .report_figures import (bundle_figure_check, drop_dead_abstract_links, figure_owners, link_workdir_figures,
+                             linked_figure_paths, output_exists)
 from .ro_crate import FORMAT_MARKER, METADATA_FILE, write_ro_crate
 
 
@@ -504,6 +504,9 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
     # The report links a figure as <workdir_id>/outputs/<file>; the bundle names it steps/<step_id>/outputs/<file>, and
     # a linked figure is kept even when the bundle's total limits are full (#584). The per-file limit still applies.
     report_text = link_workdir_figures(str(req.get("report") or ""), figure_owners(results), output_exists(results))
+    # A graphical abstract the writer linked but no step produced is no bundle file: the link goes, and the PDF and the
+    # edition draw their own abstract (#608). Any other figure link stays as written.
+    report_text = drop_dead_abstract_links(report_text, lambda path: path.startswith("steps/"))
     linked_figures = set(linked_figure_paths(report_text))
     plan_steps = [step for step in ((req.get("plan") or {}).get("steps") or []) if isinstance(step, Mapping)]
     ordered_ids, ordered_steps = _topological_steps(plan_steps, results)

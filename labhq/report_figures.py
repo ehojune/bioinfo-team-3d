@@ -15,7 +15,10 @@ from urllib.parse import quote, unquote
 
 FIGURE_SUFFIXES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
                    ".webp": "image/webp", ".svg": "image/svg+xml"}
-MAX_LINKED_FIGURES = 24  # the bundle keeps this many linked figures past its total limits
+MAX_REPORT_FIGURES = 11  # PI 10-15 (#608): up to 10 result figures plus the graphical abstract, in a report and its PDF
+MAX_LINKED_FIGURES = MAX_REPORT_FIGURES  # the bundle keeps this many linked figures past its total limits
+ABSTRACT_STEM = "graphical_abstract"  # a figure with this file stem is the report's graphical abstract (#608)
+ABSTRACT_FILE = ABSTRACT_STEM + ".svg"  # what labhq draws when the report has none
 DOCUMENTS = ("report.md", "report_appendix.md")
 
 
@@ -81,6 +84,35 @@ def classify(target: str, exists: Callable[[str], bool] | None = None) -> tuple[
         if whole != stripped and exists(whole):
             return "local", whole
     return "local", stripped
+
+
+def is_abstract_target(value: str) -> bool:
+    """Whether a local link's path names a graphical abstract: the stem ``graphical_abstract`` and a figure suffix."""
+    path = PurePosixPath(value.replace("\\", "/"))
+    return path.stem.casefold() == ABSTRACT_STEM and path.suffix.casefold() in FIGURE_SUFFIXES
+
+
+def has_abstract_link(report: str, resolves: Callable[[str], bool]) -> bool:
+    """Whether the report links a graphical abstract that ``resolves`` (takes the decoded relative path) can open."""
+    for link in image_links(report):
+        kind, value = classify(link.target, resolves)
+        if kind == "local" and is_abstract_target(value) and resolves(value):
+            return True
+    return False
+
+
+def drop_dead_abstract_links(report: str, resolves: Callable[[str], bool]) -> str:
+    """Remove the links to a graphical abstract that ``resolves`` cannot open (a writer that could not make the file).
+
+    Another figure is never touched, and a link inside code stays as written."""
+    pieces: list[str] = []
+    last = 0
+    for link in image_links(report):
+        kind, value = classify(link.target, resolves)
+        if kind == "local" and is_abstract_target(value) and not resolves(value):
+            pieces += [report[last:link.start]]
+            last = link.end
+    return "".join(pieces) + report[last:] if pieces else report
 
 
 def figure_owners(results: Mapping[str, object]) -> dict[str, str]:
@@ -160,6 +192,7 @@ def bundle_figure_check(root: Path) -> dict[str, object]:
 
     linked = 0
     problems: list[str] = []
+    local: dict[str, None] = {}  # distinct local figures across both documents: the PDF shows MAX_REPORT_FIGURES
     for name in DOCUMENTS:
         try:
             text = _plain_file(root, name).read_text(encoding="utf-8")
@@ -170,6 +203,7 @@ def bundle_figure_check(root: Path) -> dict[str, object]:
             if kind == "remote":
                 continue
             linked += 1
+            local[value] = None
             if kind == "outside":
                 problems.append(f"{name}: 그림 링크가 묶음 밖 경로입니다: {PurePosixPath(value.replace(chr(92), '/')).name}")
             elif PurePosixPath(value).suffix.casefold() not in FIGURE_SUFFIXES:
@@ -182,4 +216,15 @@ def bundle_figure_check(root: Path) -> dict[str, object]:
                     continue
                 if empty:
                     problems.append(f"{name}: 링크한 그림 파일이 비어 있습니다: {value}")
+    # Without an abstract of its own the PDF and the edition draw one, which takes the 11th place: 10 result figures at
+    # most (#611 review). With one, the 11 are its own and 10 results.
+    own_abstract = any(is_abstract_target(value) and holds(value) for value in local)
+    limit = MAX_REPORT_FIGURES if own_abstract else MAX_REPORT_FIGURES - 1
+    if len(local) > limit:
+        problems.append(
+            f"보고서 그림이 {len(local)}장이에요. 한 보고서에는 {MAX_REPORT_FIGURES}장까지(결과 그림 {MAX_REPORT_FIGURES - 1}장과 "
+            f"graphical abstract 1장)만 넣고, PDF에는 앞의 {MAX_REPORT_FIGURES}장만 들어갑니다."
+            if own_abstract else
+            f"보고서 그림이 {len(local)}장이에요. graphical abstract가 없으면 labhq가 한 장을 그려 넣으므로 결과 그림은 "
+            f"{limit}장까지만 넣고, PDF에는 앞의 {limit}장만 들어갑니다.")
     return {"linked": linked, "problems": list(dict.fromkeys(problems))}

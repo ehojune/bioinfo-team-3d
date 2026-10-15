@@ -5,6 +5,10 @@ Korean-capable font stack and print CSS, and carries a content security policy t
 the installed browser in headless mode; with no browser, or when printing fails, the caller gets the HTML and a plain
 Korean reason. No markdown library, LaTeX or GTK is involved: the converter below covers what reports use (headings,
 paragraphs, lists, tables, links, images, code, quotes).
+
+Figure policy (#608): a figure has no size limit and is always the bundle's original, at most 11 go in (the graphical
+abstract included, drawn by `report_abstract` when the report has none), and the PDF is at most 50 MB by shrinking the
+figures in the browser step by step, never by leaving one out.
 """
 
 from __future__ import annotations
@@ -19,19 +23,24 @@ import shutil
 import subprocess
 import tempfile
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from .report_figures import (FIGURE_SUFFIXES, IMAGE_PATTERN, classify, figure_owners, link_workdir_figures,
+from .report_abstract import abstract_first, build_graphical_abstract, with_abstract_link
+from .report_figures import (ABSTRACT_FILE, FIGURE_SUFFIXES, IMAGE_PATTERN, MAX_REPORT_FIGURES, classify,
+                             drop_dead_abstract_links, figure_owners, has_abstract_link, link_workdir_figures,
                              output_exists)
 
-RENDER_VERSION = "1"  # bump when the page's markup or CSS changes: a cached PDF of an older one is not reused
+RENDER_VERSION = "2"  # bump when the page's markup or CSS changes: a cached PDF of an older one is not reused
 PRINT_TIMEOUT_S = 60.0
-MAX_FIGURE_BYTES = 8 * 1024 * 1024
-MAX_FIGURES_TOTAL_BYTES = 48 * 1024 * 1024
+_CSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'"  # no network; the shrink variants add one script
+PRINT_SLOW_BYTES_PER_S = 2 * 1024 * 1024  # a page of embedded figures gets one more second of printing per 2 MB (#608)
+PDF_MAX_MB = 50.0  # PI 10-15 (#608): the PDF is at most this big; figures are shrunk to fit, never left out
+# Figure shrink steps tried in order when a print is over the cap: (longest edge in pixels, JPEG quality).
+SHRINK_LEVELS = ((2600, 0.85), (2000, 0.75), (1500, 0.65), (1100, 0.55), (800, 0.45), (600, 0.35))
 MAX_REQUEST_CHARS = 2000
 _LOCK = threading.Lock()  # one print at a time: a headless browser is heavy and the PI has one PC
 
@@ -51,7 +60,9 @@ class ReportFile:
     filename: str
     media_type: str
     cached: bool = False
-    notes: tuple[str, ...] = ()  # figures the page could not embed
+    notes: tuple[str, ...] = ()  # figures the page could not embed, and how far the figures were shrunk to fit the cap
+    shrunk: int = 0  # 0: the figures are as they came; n: shrink step n of SHRINK_LEVELS was needed (#608)
+    over_cap: bool = False  # the smallest PDF the steps gave is still over the cap: no figure was left out for it
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -78,11 +89,17 @@ def _esc(text: str) -> str:
 
 
 class FigureEmbedder:
-    """Reads linked figures from the bundle and returns <img> or <figure> markup. ``root`` None: no bundle."""
+    """Reads linked figures from the bundle and returns <img> or <figure> markup. ``root`` None: no bundle.
 
-    def __init__(self, root: Path | None) -> None:
+    A figure has no size limit (#608): the PDF is brought under its cap by shrinking, not by leaving a figure out. At most
+    ``limit`` figures go in (MAX_REPORT_FIGURES, the graphical abstract included); the rest are named as not embedded.
+    ``extra`` holds figures that are not in the bundle (the drawn abstract), by the name the report links them with."""
+
+    def __init__(self, root: Path | None, *, extra: Mapping[str, bytes] | None = None,
+                 limit: int = MAX_REPORT_FIGURES) -> None:
         self.root = root
-        self.total = 0
+        self.extra = dict(extra or {})
+        self.limit = limit
         self.embedded = 0
         self.missing: list[str] = []
 
@@ -90,33 +107,42 @@ class FigureEmbedder:
         if kind == "outside":
             return None, "묶음 밖 경로라 넣지 않음"
         if kind == "remote":
-            if value.lower().startswith("data:image/") and len(value) <= MAX_FIGURE_BYTES:
-                return value, ""
-            return None, "외부 주소의 그림은 넣지 않음"
+            if not value.lower().startswith("data:image/"):
+                return None, "외부 주소의 그림은 넣지 않음"
+            if self.embedded >= self.limit:
+                return None, f"그림은 {self.limit}장까지만 넣음"
+            return value, ""
         suffix = PurePosixPath(value).suffix.casefold()
         if suffix not in FIGURE_SUFFIXES:
             return None, "그림 형식이 아님"
-        if self.root is None:
-            return None, "요청 묶음이 없어 넣지 못함"
-        from .ro_crate import _plain_file
+        payload: bytes | None = self.extra.get(value)
+        path = None
+        if payload is None:
+            if self.root is None:
+                return None, "요청 묶음이 없어 넣지 못함"
+            from .ro_crate import _plain_file
 
-        try:
-            path = _plain_file(self.root, value)
-            size = path.stat().st_size
-        except OSError:
-            return None, "묶음에 없음"
-        if size == 0:
+            try:
+                path = _plain_file(self.root, value)
+                size = path.stat().st_size
+            except OSError:
+                return None, "묶음에 없음"
+            if size == 0:
+                return None, "빈 파일"
+        elif not payload:
             return None, "빈 파일"
-        if size > MAX_FIGURE_BYTES or self.total + size > MAX_FIGURES_TOTAL_BYTES:
-            return None, "크기 한도를 넘음"
-        try:
-            payload = path.read_bytes()
-        except OSError:
-            return None, "읽지 못함"
-        self.total += len(payload)
+        if self.embedded >= self.limit:
+            return None, f"그림은 {self.limit}장까지만 넣음"  # decided before the file is read: it may be large
+        if payload is None:
+            try:
+                payload = path.read_bytes()
+            except OSError:
+                return None, "읽지 못함"
         return f"data:{FIGURE_SUFFIXES[suffix]};base64,{base64.b64encode(payload).decode('ascii')}", ""
 
     def _holds(self, path: str) -> bool:
+        if path in self.extra:
+            return True
         from .ro_crate import _plain_file
 
         try:
@@ -435,9 +461,15 @@ def _read_document(bundle: Path | None, name: str, fallback: str) -> str:
     return fallback
 
 
-def build_report_html(req: Mapping[str, Any], bundle: Path | None, *, now: datetime | None = None
+def build_report_html(req: Mapping[str, Any], bundle: Path | None, *, now: datetime | None = None,
+                      report_text: str | None = None, scrub: Callable[[str], str] | None = None
                       ) -> tuple[str, list[str]]:
-    """The single-file report page and the figures it could not embed. ``bundle`` is the request bundle folder."""
+    """The single-file report page and the figures it could not embed. ``bundle`` is the request bundle folder.
+
+    The report always opens with a graphical abstract (#608): the one the report links, or else the diagram labhq draws
+    from the request. ``report_text``: the report as given, with no appendix, instead of the bundle's documents (the
+    edition's PDF prints its own cleaned text over the bundle's original figures); ``scrub`` masks the drawn
+    abstract's labels the same way."""
     from .request_status import request_display_label
 
     rid = str(req.get("id") or "")
@@ -446,9 +478,17 @@ def build_report_html(req: Mapping[str, Any], bundle: Path | None, *, now: datet
     results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
     # A bundle made before the link rewrite, or the stored report itself, still names figures <workdir_id>/outputs/<file>.
     owners = figure_owners(results)
-    body = markdown_to_html(link_workdir_figures(_read_document(bundle, "report.md", str(req.get("report") or "")),
-                                                 owners, output_exists(results, bundle)), figures)
-    appendix_text = _read_document(bundle, "report_appendix.md", str(req.get("report_appendix") or ""))
+    source = report_text if report_text is not None else _read_document(bundle, "report.md", str(req.get("report") or ""))
+    linked = link_workdir_figures(source, owners, output_exists(results, bundle))
+    if has_abstract_link(linked, figures._holds):
+        linked = abstract_first(linked, figures._holds)  # the report's own abstract, wherever the writer put it
+    else:
+        linked = drop_dead_abstract_links(linked, figures._holds)  # a link to a file nobody could make
+        figures.extra[ABSTRACT_FILE] = build_graphical_abstract(req, linked, scrub=scrub).encode("utf-8")
+        linked = with_abstract_link(linked)
+    body = markdown_to_html(linked, figures)
+    appendix_text = ("" if report_text is not None
+                     else _read_document(bundle, "report_appendix.md", str(req.get("report_appendix") or "")))
     appendix = markdown_to_html(appendix_text, figures, top_level=3) if appendix_text.strip() else ""
     made = (now or datetime.now()).astimezone().strftime("%Y-%m-%d %H:%M")
     shown_request = request_text if len(request_text) <= MAX_REQUEST_CHARS else request_text[:MAX_REQUEST_CHARS] + "…"
@@ -464,7 +504,7 @@ def build_report_html(req: Mapping[str, Any], bundle: Path | None, *, now: datet
         notes = f'<p class="notes">그림 {len(figures.missing)}개를 넣지 못했어요: {shown}{more}</p>'
     page = f"""<!doctype html>
 <html lang="ko"><head><meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">
+<meta http-equiv="Content-Security-Policy" content="{_CSP}">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{_esc("labhq 결과 보고서 · " + (rid or _title(request_text, rid)))}</title>
 <style>{CSS}</style></head><body>
@@ -534,6 +574,76 @@ def print_pdf(browser: str, html_path: Path, pdf_path: Path, *, timeout: float =
     return None
 
 
+# The browser re-encodes the page's raster figures before printing (#608): each is drawn onto a canvas no larger than
+# MAX pixels on its longest side and kept as a JPEG of quality Q when that is smaller than the original. A figure that is
+# already small, an SVG and anything that is not an embedded raster are left as they are. The script is added only to the
+# shrink variants of the page; it has no network (the policy still allows none), and the page's own text is never touched.
+_SHRINK_SCRIPT = r"""<script>(function(){var MAX=__MAX__,Q=__Q__;
+document.querySelectorAll('img').forEach(function(el){
+var src=el.getAttribute('src')||'';
+if(!/^data:image\/(png|jpeg|webp|gif);base64,/i.test(src))return;
+var probe=new Image();
+probe.onload=function(){try{
+var w=probe.naturalWidth,h=probe.naturalHeight;if(!w||!h)return;
+var s=Math.min(1,MAX/Math.max(w,h)),cw=Math.max(1,Math.round(w*s)),ch=Math.max(1,Math.round(h*s));
+var c=document.createElement('canvas');c.width=cw;c.height=ch;
+var x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,cw,ch);x.drawImage(probe,0,0,cw,ch);
+var out=c.toDataURL('image/jpeg',Q);
+if(out.length<src.length)el.src=out;
+}catch(e){}};
+probe.src=src;});})();</script>"""
+_RASTER = re.compile(r'src="data:image/(?:png|jpeg|webp|gif);base64,')
+
+
+def shrink_page(page: str, level: int) -> str:
+    """``page`` with shrink step ``level`` (1..len(SHRINK_LEVELS)) of SHRINK_LEVELS applied by the browser as it loads."""
+    level = min(max(level, 1), len(SHRINK_LEVELS))
+    edge, quality = SHRINK_LEVELS[level - 1]
+    script = _SHRINK_SCRIPT.replace("__MAX__", str(edge)).replace("__Q__", str(quality))
+    head, found, tail = page.rpartition("</body>")
+    page = f"{head}{script}{found}{tail}" if found else page + script
+    page = page.replace(_CSP, _CSP + "; script-src 'unsafe-inline'", 1)
+    return page.replace("</head>", f'<meta name="labhq-shrink" content="{level}"></head>', 1)
+
+
+def _timed_out(reason: str) -> bool:
+    return "끝내지 못해" in reason  # print_pdf's timeout wording: a heavy page may print once its figures are smaller
+
+
+def print_within_cap(browser: str, page: str, cap_bytes: int, *, timeout: float = PRINT_TIMEOUT_S
+                     ) -> tuple[bytes, str, int, bool]:
+    """``(pdf, reason, shrink step, over cap)``: the page printed, and while the PDF is over ``cap_bytes`` printed again
+    with the figures shrunk a step further (#608). No figure is dropped and the PDF is never dropped for its size.
+
+    ``reason`` is print_pdf's plain Korean reason when no print worked (then ``pdf`` is empty). When even the last step is
+    over the cap, the smallest PDF is returned with ``over cap`` set. A page with no raster figure is printed once."""
+    work = Path(tempfile.mkdtemp(prefix="labhq-report-"))
+    raster = _RASTER.search(page) is not None
+    best: tuple[int, int, Path] | None = None
+    reason = ""
+    try:
+        for level in range(len(SHRINK_LEVELS) + 1):
+            data = (page if level == 0 else shrink_page(page, level)).encode("utf-8")
+            source, target = work / "report.html", work / f"report-{level}.pdf"
+            source.write_bytes(data)
+            failed = print_pdf(browser, source, target, timeout=timeout + len(data) / PRINT_SLOW_BYTES_PER_S)
+            if failed:
+                reason = failed
+                if raster and _timed_out(failed):
+                    continue
+                break
+            size = target.stat().st_size
+            if best is None or size < best[0]:
+                best = (size, level, target)
+            if size <= cap_bytes or not raster:
+                break
+        if best is None:
+            return b"", reason, 0, False
+        return best[2].read_bytes(), "", best[1], best[0] > cap_bytes
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 # ---------------------------------------------------------------------------------------------------------------------
 # one request
 
@@ -570,7 +680,16 @@ def check_buildable(req: Mapping[str, Any], settings: Any, tasks: Mapping[str, A
         raise ReportRefused("통제 데이터가 포함된 요청은 PDF 보고서를 만들지 않아요. 로컬 요청 묶음의 report.md를 보세요.")
 
 
-def _cache_key(req: Mapping[str, Any], bundle: Path | None) -> str:
+def pdf_cap_bytes(settings: Any) -> int:
+    """The PDF size cap from ``github.edition_pdf_max_mb`` (default PDF_MAX_MB), in bytes."""
+    try:
+        megabytes = float(getattr(getattr(settings, "github", None), "edition_pdf_max_mb", PDF_MAX_MB))
+    except (TypeError, ValueError):
+        megabytes = PDF_MAX_MB
+    return int((megabytes if megabytes > 0 else PDF_MAX_MB) * 1024 * 1024)
+
+
+def _cache_key(req: Mapping[str, Any], bundle: Path | None, cap_bytes: int = 0) -> str:
     """Everything the page is built from: the cover's fields and the two documents as `build_report_html` reads them."""
     from .request_status import request_display_label
 
@@ -587,7 +706,7 @@ def _cache_key(req: Mapping[str, Any], bundle: Path | None) -> str:
         [RENDER_VERSION, req.get("id"), req.get("text"), req.get("created_at"), req.get("status"),
          request_display_label(dict(req)), req.get("pi_review_pending"), req.get("pi_reviewed_at"),
          req.get("report"), req.get("report_appendix"), req.get("bundle_grade"), figure_owners(results), documents,
-         hashlib.sha256(manifest).hexdigest()],
+         hashlib.sha256(manifest).hexdigest(), cap_bytes],
         ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest()
 
 
@@ -608,16 +727,33 @@ def _save(folder: Path, name: str, data: bytes) -> None:
     os.replace(partial, folder / name)
 
 
+def size_notes(pdf: bytes, level: int, over_cap: bool, cap_bytes: int) -> tuple[str, ...]:
+    megabytes, cap = len(pdf) / 1024 / 1024, cap_bytes / 1024 / 1024
+    if over_cap:
+        return (f"그림을 {level}단계까지 줄여도 PDF가 {megabytes:.1f} MB라 한도 {cap:g} MB를 넘어요. 그림은 하나도 빼지 않았어요.",)
+    if level:
+        return (f"그림을 {level}단계 줄여 PDF를 {megabytes:.1f} MB로 맞췄어요(한도 {cap:g} MB).",)
+    return ()
+
+
 def build_report_file(req: Mapping[str, Any], settings: Any, tasks: Mapping[str, Any] | None = None, *,
                       timeout: float = PRINT_TIMEOUT_S, now: datetime | None = None,
-                      source: Path | None = None) -> ReportFile:
+                      source: Path | None = None, report_text: str | None = None,
+                      scrub: Callable[[str], str] | None = None) -> ReportFile:
     """The PDF of a finished request's report, or its HTML and the reason there is no PDF.
 
     The output is cached next to the request bundle (``requests/<id>-report/``) and reused while the report, the bundle
-    manifest and RENDER_VERSION are unchanged. Raises ReportRefused for an unfinished or controlled-data request.
+    manifest, the size cap and RENDER_VERSION are unchanged. Raises ReportRefused for an unfinished or controlled-data
+    request.
 
-    ``source``: read ``report.md`` and the figures from this folder (the reviewed repository edition, #584) instead of
-    the request bundle, and neither read nor write the cache."""
+    The figures are the originals in the bundle, whatever their size (#608). The PDF is at most ``github.edition_pdf_max_mb``
+    (50 MB by default): when the first print is bigger the browser re-encodes the figures at a lower resolution and the page
+    is printed again, step by step (`print_within_cap`); no figure and no PDF is dropped for size, and the smallest PDF is
+    kept, flagged in ``over_cap``, when no step fits.
+
+    ``source``: read the documents and the figures from this folder instead of the request bundle, and neither read nor
+    write the cache. ``report_text``: use this report, with no appendix, instead of the documents (the repository
+    edition's cleaned text over the bundle's figures, #608); ``scrub`` masks the drawn graphical abstract's labels."""
     check_buildable(req, settings, tasks)
     rid = str(req.get("id") or "")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", rid):
@@ -626,8 +762,9 @@ def build_report_file(req: Mapping[str, Any], settings: Any, tasks: Mapping[str,
     bundle = source if source is not None else requests_root / rid
     bundle = bundle if _plain_dir(bundle) else None
     cache = requests_root / f"{rid}-report"
-    key = _cache_key(req, bundle)
-    usable = source is None and _cache_usable(requests_root, cache)
+    cap = pdf_cap_bytes(settings)
+    key = _cache_key(req, bundle, cap)
+    usable = source is None and report_text is None and _cache_usable(requests_root, cache)
     with _LOCK:
         try:
             if not usable:
@@ -635,24 +772,20 @@ def build_report_file(req: Mapping[str, Any], settings: Any, tasks: Mapping[str,
             meta = json.loads((cache / "cache.json").read_text(encoding="utf-8"))
             if meta.get("key") == key and meta.get("kind") == "pdf":
                 return ReportFile("pdf", (cache / "report.pdf").read_bytes(), "", f"{rid}-report.pdf",
-                                  "application/pdf", cached=True, notes=tuple(meta.get("notes") or ()))
-        except (OSError, ValueError, AttributeError):
+                                  "application/pdf", cached=True, notes=tuple(meta.get("notes") or ()),
+                                  shrunk=int(meta.get("shrunk") or 0), over_cap=bool(meta.get("over_cap")))
+        except (OSError, ValueError, AttributeError, TypeError):
             pass
-        page, missing = build_report_html(req, bundle, now=now)
+        page, missing = build_report_html(req, bundle, now=now, report_text=report_text, scrub=scrub)
         data = page.encode("utf-8")
         notes = tuple(missing)
         browser = find_browser(getattr(getattr(settings, "gateway", None), "report_browser", None))
-        reason, pdf = NO_BROWSER, b""
+        reason, pdf, level, over_cap = NO_BROWSER, b"", 0, False
         if browser:
-            work = Path(tempfile.mkdtemp(prefix="labhq-report-"))
-            try:
-                source, target = work / "report.html", work / "report.pdf"
-                source.write_bytes(data)
-                reason = print_pdf(browser, source, target, timeout=timeout) or ""
-                pdf = target.read_bytes() if not reason else b""
-            finally:
-                shutil.rmtree(work, ignore_errors=True)
+            pdf, reason, level, over_cap = print_within_cap(browser, page, cap, timeout=timeout)
         kind = "pdf" if pdf else "html"
+        if pdf:
+            notes += size_notes(pdf, level, over_cap, cap)
         try:
             if not usable:
                 raise OSError("cache folder is not a plain folder")
@@ -661,10 +794,12 @@ def build_report_file(req: Mapping[str, Any], settings: Any, tasks: Mapping[str,
                 _save(cache, "report.pdf", pdf)
             else:
                 (cache / "report.pdf").unlink(missing_ok=True)
-            _save(cache, "cache.json", json.dumps({"key": key, "kind": kind, "reason": reason,
-                                                   "notes": list(notes)}, ensure_ascii=False).encode("utf-8"))
+            _save(cache, "cache.json", json.dumps({"key": key, "kind": kind, "reason": reason, "notes": list(notes),
+                                                   "shrunk": level, "over_cap": over_cap},
+                                                  ensure_ascii=False).encode("utf-8"))
         except OSError:
             pass  # the cache is a convenience; the PI still gets the file
         if pdf:
-            return ReportFile("pdf", pdf, "", f"{rid}-report.pdf", "application/pdf", notes=notes)
+            return ReportFile("pdf", pdf, "", f"{rid}-report.pdf", "application/pdf", notes=notes, shrunk=level,
+                              over_cap=over_cap)
         return ReportFile("html", data, reason, f"{rid}-report.html", "text/html; charset=utf-8", notes=notes)
