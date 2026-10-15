@@ -1,5 +1,7 @@
 """#634: managed reads, truthful explanations and recruiter identity; no live services."""
 import os
+import shutil
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -15,8 +17,13 @@ from tests.test_private_paths import _link_dir
 def _system_commands(monkeypatch):
     # Acceptance fixtures model a staff token that cannot write system binaries, including on admin CI.
     import labhq.workspace_commands as commands
-    system = 'C:/Program Files/Git/usr/bin' if os.name == 'nt' else '/usr/bin'
-    monkeypatch.setenv('PATH', system + os.pathsep + os.environ.get('PATH', ''))
+    if os.name == 'nt':
+        git = shutil.which('git.exe')
+        assert git
+        system = commands._git_install_root(git) / 'usr/bin'
+    else:
+        system = Path('/usr/bin')
+    monkeypatch.setenv('PATH', str(system) + os.pathsep + os.environ.get('PATH', ''))
     monkeypatch.setattr(commands, '_executable_writable', lambda path: False)
 
 
@@ -221,7 +228,8 @@ def test_existing_own_file_write_grant_does_not_open_all_managed_folders(layout)
 @pytest.mark.asyncio
 @pytest.mark.parametrize('engine_name', ['claude_code', 'codex'])
 @pytest.mark.parametrize('plugin', [False, True])
-async def test_runner_loaded_skills_and_plugins_allow_literal_shell_reads(tmp_path, monkeypatch, engine_name, plugin):
+async def test_runner_loaded_skills_and_plugins_allow_literal_shell_reads(
+        tmp_path, monkeypatch, system_commands, engine_name, plugin):
     from labhq.models import Engine
     from tests.test_plugin_private_reads import _run
     ctx, home, skill, secrets = await _run(tmp_path, monkeypatch, Engine(engine_name), plugin)

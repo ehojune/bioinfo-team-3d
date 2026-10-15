@@ -21,7 +21,7 @@
 
 - 쓰기는 resolve한 경로도 작업 폴더 안이어야 한다. 기존 파일은 regular file·nlink=1, 대상과 기존 상위 폴더는 symlink·junction·reparse point가 아니어야 한다. 새 파일도 기존 부모부터 검사한다. POSIX 디렉터리의 nlink는 하위 폴더 수이므로 파일의 nlink 조건과 구분한다.
 - 자동 허용 근거는 `agent.log`의 `문법 안: …`, 카드 근거는 `문법 밖: 이유`. broker 통신 장애 때 로그 전달은 보장하지 않는다.
-- 명령·cwd별 PATH 해석은 판정마다 한 번만 하며 실행 파일 경로를 근거에 남긴다. 시스템 위치는 Windows System32·Git `usr/bin`, POSIX `/usr/bin`·`/bin`이다. Windows는 readonly 속성 대신 현재 token의 파일·디렉터리 변경 권한을 확인한다.
+- 명령·cwd별 PATH 해석은 판정마다 한 번만 하며 실행 파일 경로를 근거에 남긴다. 실행 파일은 작업 폴더 밖의 쓰기 불가 위치여야 한다. Windows는 실제 System32·Program Files·Git 설치 경로를 풀고 readonly 속성 대신 현재 token의 파일·디렉터리 변경 권한을 확인한다. POSIX 시스템 위치는 `/usr/bin`·`/bin`이다.
 - profile·함수 덮어쓰기, 판정과 실행 사이 교체 등 남은 명령 해석 우회는 #666의 OS sandbox에서 다룬다. 이 검사는 sandbox가 아니다.
 - 스크립트와 실행 코드는 명령 해석만으로 전체 범위를 고정할 수 없어 매번 카드로 보낸다. 반복 승인을 줄이는 방안은 OS sandbox 격리로 별도 이슈에서 다룬다.
 

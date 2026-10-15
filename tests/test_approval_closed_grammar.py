@@ -41,7 +41,13 @@ def test_workspace_path_executable_requires_card(layout, prefix):
 
 def test_system_touch_allowed_and_resolution_logged_once(layout, monkeypatch):
     import labhq.workspace_commands as commands
-    system = Path('C:/Program Files/Git/usr/bin' if os.name == 'nt' else '/usr/bin')
+    if os.name == 'nt':
+        import shutil
+        git = shutil.which('git.exe')
+        assert git
+        system = commands._git_install_root(git) / 'usr/bin'
+    else:
+        system = Path('/usr/bin')
     executable = system / ('touch.exe' if os.name == 'nt' else 'touch')
     assert executable.is_file()
     # Model an unprivileged staff token even when CI itself runs as administrator/root.
@@ -61,8 +67,14 @@ def test_system_touch_allowed_and_resolution_logged_once(layout, monkeypatch):
 def test_writable_system_executable_requires_card(layout, monkeypatch):
     import labhq.workspace_commands as commands
     monkeypatch.setattr(commands, '_executable_writable', lambda path: True)
-    system = 'C:/Program Files/Git/usr/bin' if os.name == 'nt' else '/usr/bin'
-    decision = path_gate(layout, 'touch outputs/x', system)
+    if os.name == 'nt':
+        import shutil
+        git = shutil.which('git.exe')
+        assert git
+        system = commands._git_install_root(git) / 'usr/bin'
+    else:
+        system = Path('/usr/bin')
+    decision = path_gate(layout, 'touch outputs/x', str(system))
     assert decision.action == 'ask'
     assert '(writable)' in decision.reason
 
@@ -73,6 +85,18 @@ def test_actual_write_access_is_detected(tmp_path):
     executable.write_text('fixture only', encoding='utf-8')
     assert _executable_writable(executable)
     assert _executable_writable(tmp_path)
+
+
+def test_readonly_workspace_executable_still_requires_card(layout, monkeypatch):
+    import labhq.workspace_commands as commands
+    work = layout[2]
+    executable = work / ('touch.exe' if os.name == 'nt' else 'touch')
+    executable.write_text('fixture only; never executed', encoding='utf-8')
+    executable.chmod(0o755)
+    monkeypatch.setattr(commands, '_executable_writable', lambda path: False)
+    decision = path_gate(layout, 'touch outputs/x', str(work))
+    assert decision.action == 'ask'
+    assert '(workspace)' in decision.reason
 
 
 @pytest.mark.parametrize('tool', ['Bash', 'PowerShell'])

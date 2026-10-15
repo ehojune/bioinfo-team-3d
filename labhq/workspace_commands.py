@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import re
 import shlex
+import shutil
 import stat
 from pathlib import Path
 
@@ -14,10 +15,30 @@ _LITERAL_COMMANDS = {'cd', 'set-location', 'rm', 'remove-item', 'cat', 'ls', 'he
                      'invoke-webrequest'}
 
 
-def _system_bins():
+def _environment_value(environ, name, default=''):
+    return next((value for key, value in environ.items() if key.casefold() == name.casefold()), default)
+
+
+def _git_install_root(executable):
+    path = Path(executable).resolve(strict=True)
+    for parent in path.parents:
+        if (parent / 'usr/bin').is_dir():
+            return parent
+    return path.parent
+
+
+def _system_bins(environ):
     if os.name == 'nt':
-        return [Path(os.environ.get('SystemRoot', 'C:/Windows')) / 'System32',
-                Path(os.environ.get('ProgramFiles', 'C:/Program Files')) / 'Git/usr/bin']
+        roots = [Path(_environment_value(environ, 'SystemRoot', 'C:/Windows')) / 'System32']
+        roots.extend(Path(value) for name in ('ProgramFiles', 'ProgramFiles(x86)')
+                     if (value := _environment_value(environ, name)))
+        git = shutil.which('git.exe', path=_environment_value(environ, 'PATH'))
+        if git:
+            try:
+                roots.append(_git_install_root(git))
+            except (OSError, ValueError, RuntimeError):
+                pass
+        return roots
     return [Path('/usr/bin'), Path('/bin')]
 
 
@@ -67,8 +88,13 @@ def _resolve_executable(name, base, environ, powershell):
                 continue
             try:
                 real = candidate.resolve(strict=True)
-                trusted = next((p.resolve() for p in _system_bins()
-                                if real.is_relative_to(p.resolve())), None)
+                lexical = Path(os.path.abspath(candidate))
+                workspace = Path(base).resolve(strict=True)
+                if lexical.is_relative_to(workspace) or real.is_relative_to(workspace):
+                    return False, name + '=' + str(real) + ' (workspace)'
+                trusted = next((root for root in (
+                    p.resolve(strict=True) for p in _system_bins(environ) if p.is_dir())
+                    if real.is_relative_to(root)), None)
                 if trusted is None or (os.name == 'nt' and real.suffix.lower() != '.exe'):
                     return False, name + '=' + str(real) + ' (non-system)'
                 for target in (real, *real.parents):
