@@ -366,12 +366,15 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
        aria-controls="office command-center"></div>
 
   <aside class="panels ui-card" id="command-center" aria-label="Command Center">
+    <div class="cc-heading">
+    <ol class="step-flow" id="step-flow" aria-label="현재 요청의 계획 단계" hidden></ol>
     <nav class="cc-tabs" id="cc-tabs" aria-label="Command Center 탭">
       <button class="ui-tab" type="button" data-tab-target="decisions">결정 <span class="ui-tab__count" id="decision-count" hidden></span></button>
       <button class="ui-tab" type="button" data-tab-target="tasks">작업판</button>
       <button class="ui-tab" type="button" data-tab-target="feed">메신저</button>
       <button class="ui-tab" type="button" data-tab-target="jobs">HPC</button>
     </nav>
+    </div>
     <section class="panel" data-tab="decisions" aria-labelledby="h-ap">
       <h2 id="h-ap">결정할 일 <span class="n" id="ap-count"></span></h2>
       <div id="review-cards"></div>
@@ -403,9 +406,12 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
 
 <section class="staff-wrap" aria-labelledby="staff-heading">
   <h2 id="staff-heading">직원</h2>
+  <button class="btn staff-close" id="staff-close" type="button" aria-label="직원 카드 영역 닫기" aria-controls="staff-strip">×</button>
   <button class="staff-toggle" id="staff-toggle" type="button" aria-controls="staff-strip" aria-expanded="false">직원 보기</button>
   <div class="staff-strip" id="staff-strip"></div>
 </section>
+
+<button class="btn staff-reopen" id="staff-reopen" type="button" aria-controls="staff-strip" hidden>직원 카드 보기</button>
 
 <div class="composer">
   <div class="ref-panel" id="ref-panel" hidden>
@@ -447,7 +453,7 @@ import {officeSVG, officeHead, officeCharacter, officeStatus} from './ui/office-
 import {bindShutdown} from './ui/shutdown.js';
 import {answerRequired, decisionChoice, decisionNote, storageChoice, revisedToast, revisionNoteMissing, syncReviewCards, syncDecisionCards, syncDecisionHistory, createHistoryVisibility, expandableText, syncExpandableText} from './ui/decide.js';
 import {syncStaffCards} from './ui/strip.js';
-import {syncTaskBoard} from './ui/tasks.js';
+import {syncTaskBoard, syncStepFlow} from './ui/tasks.js';
 import {controlHtml, controlKey, staffControls} from './ui/control.js';
 import {initTabShell, updateDecisionBadge} from './ui/shell.js';
 import {initResizablePanels} from './ui/resizable.js';
@@ -477,6 +483,7 @@ const store = {
 const raf = window.requestAnimationFrame ? window.requestAnimationFrame.bind(window) : (f => setTimeout(f, 16));
 initResizablePanels({layout: $('.layout'), office: $('#office'), staff: $('.staff-wrap'),
   mainSplitter: $('#main-splitter'), staffSplitter: $('#staff-splitter'),
+  closeButton: $('#staff-close'), reopenButton: $('#staff-reopen'),
   storage: store, storageKey: `panel_sizes:${INSTANCE}`});
 const safeUrl = u => (typeof u === 'string' && /^https?:\/\//.test(u)) ? u : null;
 const showTab = initTabShell($('#cc-tabs'), $('#command-center'), 'decisions');
@@ -528,6 +535,7 @@ let pending = false;
 function schedule() { if (!pending) { pending = true; raf(() => { pending = false; render(); }); } }
 function render() {
   renderHeader(); renderOffice(); renderBoard(); renderRack(); renderDoor();
+  syncStepFlow($('#step-flow'), S.requests.get(S.current), {nick});
   renderApprovals(); renderRequest(); renderFeed(); renderJobs(); renderTargets(); renderComposerMode(); renderStaff(); renderRefs(); renderSheetLogs();
 }
 function ago(ts) {
@@ -750,6 +758,15 @@ const bundleHTML = q => {
   const warning = q.bundleWarning ? `<p class="empty-note">요청 묶음 경고: ${esc(q.bundleWarning)}</p>` : '';
   return bundle + warning;
 };
+const hasOutcome = q => ['failed', 'rejected', 'cancelled', 'interrupted'].includes(q.status);
+const outcomeHTML = q => !hasOutcome(q) ? '' : `<section id="request-outcome" class="request-outcome" tabindex="-1" aria-label="결과와 이유">
+<h3>결과·이유</h3><p>${esc(LabHQState.requestStatusText(q, S.approvals))}</p>
+<h4>이유</h4><p>${esc(q.error || '요청 수준의 이유가 기록되지 않았어요. 아래 작업판에서 단계별 기록을 확인해 주세요.')}</p>
+<h4>남은 결과</h4>${q.report ? reportHTML(q) : '<p>남아 있는 보고서가 없어요. 단계별 산출물은 아래 작업판에서 확인해 주세요.</p>'}
+<h4>다음 행동</h4><p>${q.status === 'interrupted' ? '결정 탭의 재개 카드에서 이어 가기를 승인해 주세요.' : '원인을 해결한 뒤 새 요청으로 다시 시작하거나 남은 결과에 이어 물어보세요.'}</p>
+${q.status === 'interrupted' ? '<button type="button" class="btn" data-outcome-next="resume">재개 결정 보기</button>' : ''}
+<button type="button" class="btn" data-outcome-next="request">새 요청으로 다시 시작</button>
+${FOLLOWUP_STATUSES.includes(q.status) && api?.followup ? '<button type="button" class="btn" data-outcome-next="followup">남은 결과에 이어 묻기</button>' : ''}</section>`;
 let reqKey = '';
 function renderRequest() {
   const el = $('#request'), q = S.requests.get(S.current);
@@ -760,7 +777,7 @@ function renderRequest() {
   const statusText = q ? LabHQState.requestStatusText(q, S.approvals) : '';
   const all = LabHQState.sortRequests(S.requests.values());
   const requestDigest = all.map(r => [r.id, r.status, r.text, r.pi_review_pending, r.pi_reviewed_at, Math.round(r.cost * 100), r.costKnown]);
-  const key = q ? JSON.stringify([S.requests.size, staffNames, statusText, requestDigest, q.id, q.phase, q.status, q.steps, details, q.github.length, q.pipelinePr, q.report, q.report_appendix, q.execution_record, q.bundlePath, q.bundleStatus, q.bundleGrade, q.bundleGradeReasons, q.bundleWarning, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes, q.processing]) : snapshotLoaded ? `none:${JSON.stringify(requestDigest)}` : `loading:${S.conn}`;
+  const key = q ? JSON.stringify([S.requests.size, staffNames, statusText, requestDigest, q.id, q.phase, q.status, q.error, q.steps, details, q.github.length, q.pipelinePr, q.report, q.report_appendix, q.execution_record, q.bundlePath, q.bundleStatus, q.bundleGrade, q.bundleGradeReasons, q.bundleWarning, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes, q.processing]) : snapshotLoaded ? `none:${JSON.stringify(requestDigest)}` : `loading:${S.conn}`;
   if (key === reqKey) return;
   reqKey = key;
   const current = all.filter(r => !LabHQState.isPastRequest(r)), past = all.filter(LabHQState.isPastRequest);
@@ -773,10 +790,10 @@ function renderRequest() {
   const gh = q.github.filter(g => safeUrl(g.url)).map(g => `<li><a href="${esc(g.url)}" target="_blank" rel="noopener">${esc({ issue: `이슈 #${g.number}`, report: '보고서 커밋', final: '최종 코멘트', plan: '계획 코멘트', review: '리뷰 코멘트', recruit: '채용 기록', pr: 'PR', pipeline_pr: 'bioinfo-agent pipeline PR', codex_review: 'Codex 리뷰 요청' }[g.kind] || g.kind)}</a></li>`).join('');
   const pipeline = q.pipelinePr && q.pipelinePr.status !== 'open' ? `<p class="empty-note">pipeline PR ${q.pipelinePr.status === 'pending' ? '대기' : '거부'}: ${esc(q.pipelinePr.reason || '')}</p>` : '';
   const refList = (q.references || []).map(r => `<li class="chip">${esc(REF_KIND[r.kind] || r.kind)} ${esc(r.value)}${r.source === 'pi_profile' ? ' (기본)' : ''}</li>`).join('');
-  el.innerHTML = `${pick}<p class="req-meta">${processingLabel(q) ? `<span>${esc(processingLabel(q))}</span>` : ''}</p>${refList ? `<ul class="req-refs" aria-label="참고 자료">${refList}</ul>` : ''}${assumptionsHTML(q)}<div id="task-board"></div>
+  el.innerHTML = `${pick}${outcomeHTML(q)}<p class="req-meta">${processingLabel(q) ? `<span>${esc(processingLabel(q))}</span>` : ''}</p>${refList ? `<ul class="req-refs" aria-label="참고 자료">${refList}</ul>` : ''}${assumptionsHTML(q)}<div id="task-board"></div>
 <p class="req-meta">${proj ? `<span>프로젝트 ${esc(proj.name)}</span>` : ''}<span>비용 ${esc(LabHQState.costLabel(q))}</span>${q.costSummary && Object.keys(q.costSummary.by_engine || {}).length ? `<span>${esc(LabHQState.engineCostLabel(q.costSummary))}</span>` : ''}${q.costSummary && q.costSummary.by_agent ? `<span>${esc(LabHQState.agentCostLabel(q.costSummary, nick))}</span>` : ''}<span class="req-status status-label st-${esc(q.status)}"><span class="status-dot" aria-hidden="true"></span>${esc(statusText)}</span></p>
   ${api?.cancelRequest && (LabHQState.isActiveRequest(q.status) || q.status === 'interrupted') ? `<p class="req-actions"><button class="btn" id="req-cancel" type="button" data-rid="${esc(q.id)}">요청 취소</button></p>` : ''}
-  ${pipeline}${gh ? `<ul class="gh">${gh}</ul>` : ''}${notesHTML(q)}${reportHTML(q)}${reportPdfHTML(q)}${LabHQState.needsPiReview(q) ? `<p><button class="btn go" data-review-done="${esc(q.id)}">${['done', 'review_pending'].includes(q.status) ? '검토 완료' : '확인 완료'}</button></p>` : ''}${bundleHTML(q)}${auditHTML(q)}${q.error ? `<p class="empty-note">${esc(q.error)}</p>` : ''}${followupHTML(q)}`;
+  ${pipeline}${gh ? `<ul class="gh">${gh}</ul>` : ''}${notesHTML(q)}${hasOutcome(q) ? '' : reportHTML(q)}${reportPdfHTML(q)}${LabHQState.needsPiReview(q) ? `<p><button class="btn go" data-review-done="${esc(q.id)}">${['done', 'review_pending'].includes(q.status) ? '검토 완료' : '확인 완료'}</button></p>` : ''}${bundleHTML(q)}${auditHTML(q)}${followupHTML(q)}`;
   if ($('#fu-text')) $('#fu-text').value = fuDrafts.get(q.id) || '';  // a live update keeps this request's draft
   syncTaskBoard($('#task-board'), q, S.stepDetails, { nick,
     onCancel: api?.cancel ? id => api.cancel(id).then(() => toast('취소 요청을 보냈어요')).catch(err => toast(`취소하지 못했어요: ${err.message}`)) : null,
@@ -849,11 +866,19 @@ function renderComposerMode() {
 let api = null;
 async function openReview(rid) {
   officeState.selectRequest(rid); reqKey = ''; renderRequest(); showTab('tasks');
-  $('#request').scrollIntoView({block:'start'});
+  renderBoard(); renderComposerMode();
+  syncStepFlow($('#step-flow'), S.requests.get(S.current), {nick});
+  const reveal = () => {
+    if (S.current !== rid) return;
+    const target = $('#request-outcome') || $('#request');
+    target.setAttribute('tabindex', '-1');
+    target.scrollIntoView({block:'start'}); target.focus({preventScroll:true});
+  };
+  reveal();
   if (api?.requestDetail) {
     try {
       const detail = await api.requestDetail(rid); fillRequestDetail(rid, detail);
-      reqKey = ''; schedule();
+      if (S.current === rid) { reqKey = ''; renderRequest(); reveal(); }
     } catch (err) { toast(`보고서를 불러오지 못했어요: ${err.message}`); }
   }
 }
@@ -878,6 +903,15 @@ async function finishReview(rid, target) {
 document.addEventListener('click', e => {
   const open = e.target.closest('[data-open-review]');
   if (open) { e.stopPropagation(); openReview(open.dataset.openReview); }
+  const next = e.target.closest('[data-outcome-next]');
+  if (next) {
+    if (next.dataset.outcomeNext === 'followup') $('#fu-text')?.focus();
+    else if (next.dataset.outcomeNext === 'resume') { showTab('decisions'); $('#command-center').scrollIntoView({block:'start'}); }
+    else {
+      $('#send-mode').value = 'request'; renderComposerMode();
+      $('#ask').value = S.requests.get(S.current)?.text || ''; $('#ask').focus();
+    }
+  }
   const done = e.target.closest('[data-review-done]');
   if (done) finishReview(done.dataset.reviewDone);
 });
