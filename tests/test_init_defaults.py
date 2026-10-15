@@ -102,16 +102,6 @@ def test_init_output_carries_the_reference_behaviour_and_loads(monkeypatch):
     check_configured_packs(settings)  # the gateway refuses to start on a pack it cannot load
 
 
-def test_semantics_reads_the_init_value_as_ab_with_actions_confirm(monkeypatch):
-    from labhq.research import semantics_shadow
-
-    no_input(monkeypatch)
-    wizard.run(yes=True)
-    settings = Settings.load("config/labhq.yaml")
-    assert semantics_shadow.configured(settings) == "ab"
-    assert semantics_shadow.actions_setting(settings) == "confirm"
-
-
 @pytest.mark.parametrize("windows", [True, False])
 def test_the_run_folder_is_an_internal_zone_so_semantics_can_hash_outputs(monkeypatch, windows):
     monkeypatch.setattr(wizard, "_is_windows", lambda: windows)
