@@ -121,7 +121,9 @@ def _github_token_row(settings: Settings) -> dict | None:
         return None
     return _row("config", "github token", "warn",
                 "fine-grained 토큰: 새 저장소로 게시하려면 저장소를 먼저 만들고 이 토큰의 저장소 접근에 추가해야 합니다",
-                "`gh repo create <소유자>/<이름> --private`로 만들고 토큰 설정에서 그 저장소에 Contents: Read and write를 주세요. "
+                "PowerShell에서는 `$env:GITHUB_TOKEN=$null; gh repo create <소유자>/<이름> --private --add-readme`, "
+                "bash에서는 `env -u GITHUB_TOKEN -u GH_TOKEN gh repo create <소유자>/<이름> --private --add-readme`를 쓰거나 "
+                "GitHub 웹에서 README를 넣어 만드세요. 토큰 설정에서 그 저장소에 Contents: Read and write를 주세요. "
                 "게시가 실패했다면 그다음 `labhq storage <요청 id> --republish`.")
 
 

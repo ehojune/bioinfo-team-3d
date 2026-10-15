@@ -63,7 +63,9 @@ def _retry_command(rid: str) -> str:
 def create_denied_text(repo: str, rid: str, visibility: str | None) -> str:
     flag = "--public" if visibility == "public" else "--private"
     return (f"토큰으로 새 저장소를 만들 수 없습니다. 선택한 저장소만 허용하는 fine-grained 토큰일 가능성이 큽니다. "
-            f"빈 저장소를 먼저 만드세요(이미 만들었다면 건너뛰세요): `gh repo create {repo} {flag}`. 그다음 GitHub 토큰 설정의 저장소 접근에 그 저장소를 추가하고 "
+            f"저장된 다른 gh 자격 증명으로 저장소를 만드세요. PowerShell: `$env:GITHUB_TOKEN=$null; gh repo create {repo} {flag} --add-readme`. "
+            f"bash: `env -u GITHUB_TOKEN -u GH_TOKEN gh repo create {repo} {flag} --add-readme`. "
+            f"또는 GitHub 웹에서 {repo}를 만들며 README 추가를 체크하세요. 그다음 GitHub 토큰 설정의 저장소 접근에 그 저장소를 추가하고 "
             f"Contents: Read and write 권한을 주세요. 끝나면 {_retry_command(rid)}를 실행하세요.")
 
 
@@ -749,14 +751,21 @@ class ResultStorage:
                     raise
         if not info.get("private", False) and not saved.get("allow_public"):
             raise ValueError("public publishing not approved")
-        branch = saved.get("branch") or info.get("default_branch") or "main"
+        default_branch = info.get("default_branch") or "main"
+        branch = saved.get("branch") or default_branch
         try:
+            empty = await gh.repository_is_empty(repo, default_branch)
+            if empty:
+                branch = default_branch
+            write_branch = None if empty else branch
             for name, body in docs.items():
-                await gh.put_file(repo, f"labhq/results/{rid}/{name}", body, "연구 결과 정리", branch)
+                await gh.put_file(repo, f"labhq/results/{rid}/{name}", body, "연구 결과 정리", write_branch)
+                write_branch = branch
             for name, body in (images or {}).items():
-                await gh.put_image(repo, f"labhq/results/{rid}/{name}", body, branch)
+                await gh.put_image(repo, f"labhq/results/{rid}/{name}", body, write_branch)
+                write_branch = branch
             if pdf:
-                await gh.put_binary(repo, f"labhq/results/{rid}/{_PDF_NAME}", pdf, branch, "연구 결과 PDF")
+                await gh.put_binary(repo, f"labhq/results/{rid}/{_PDF_NAME}", pdf, write_branch, "연구 결과 PDF")
         except (GitHubHTTPError, httpx.HTTPStatusError) as exc:
             denied(exc, write_denied_text(repo, rid))
             raise

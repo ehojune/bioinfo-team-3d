@@ -1,6 +1,7 @@
 """Publish retry (#607): a failed upload is retried from the local draft, a refused token says what to change, and doctor
 warns about a fine-grained token. Mock editor, mock GitHub and no process: nothing here reaches the network."""
 import asyncio
+import base64
 import json
 import logging
 import subprocess
@@ -160,7 +161,7 @@ async def test_republish_api_and_cli(tmp_path, monkeypatch, capsys):
 
 # ----- plain-Korean permission errors from upload() -----
 
-def fake_github(calls, *, repo=200, create=201, get_file=404, put=201, put_headers=None):
+def fake_github(calls, *, repo=200, create=201, get_file=404, put=201, put_headers=None, empty=False):
     """GitHub as a fine-grained token sees it. `repo`, `create`, `get_file` and `put` are the status of
     GET /repos/owner/study, POST /user/repos, GET and PUT of a file."""
     def handle(req):
@@ -175,6 +176,8 @@ def fake_github(calls, *, repo=200, create=201, get_file=404, put=201, put_heade
             return httpx.Response(repo, json={"message": "Not Found"} if repo >= 400 else
                                   {"full_name": "owner/study", "private": True, "permissions": {"push": True},
                                    "default_branch": "main"})
+        if path == "/repos/owner/study/contents/" and req.method == "GET":
+            return httpx.Response(404, json={"message": "Git Repository is empty."}) if empty else httpx.Response(200, json=[])
         if "/contents/" in path and req.method == "GET":
             return httpx.Response(get_file, json={"message": "no such file" if get_file == 404 else "Forbidden"})
         if "/contents/" in path:
@@ -217,16 +220,72 @@ async def test_a_token_that_cannot_create_a_repository_says_how_to_make_one(tmp_
     assert saved["status"] == "failed" and saved["error_type"] == "PublishAccessError"
     warning = saved["warning"]
     assert "새 저장소를 만들 수 없습니다" in warning and "fine-grained" in warning
-    assert "gh repo create owner/study --private" in warning
+    assert "$env:GITHUB_TOKEN=$null; gh repo create owner/study --private --add-readme" in warning
+    assert "env -u GITHUB_TOKEN -u GH_TOKEN gh repo create owner/study --private --add-readme" in warning
+    assert "GitHub 웹" in warning and "README" in warning
     assert "Contents: Read and write" in warning and "labhq storage req_test --republish" in warning
     assert not any(method == "PUT" for method, _, _ in calls)
     assert_no_token(hub, caplog, calls)
 
 
 def test_the_create_command_follows_the_chosen_visibility():
-    assert "gh repo create owner/study --public" in create_denied_text("owner/study", "req_a", "public")
-    assert "gh repo create owner/study --private" in create_denied_text("owner/study", "req_a", "private")
+    assert "gh repo create owner/study --public --add-readme" in create_denied_text("owner/study", "req_a", "public")
+    assert "gh repo create owner/study --private --add-readme" in create_denied_text("owner/study", "req_a", "private")
     assert "labhq storage req_a --republish" in write_denied_text("owner/study", "req_a")
+
+
+async def test_an_empty_repository_is_bootstrapped_without_a_branch_then_uses_the_default_branch(tmp_path, monkeypatch):
+    requests = []
+
+    def handle(req):
+        body = json.loads(req.content) if req.content else None
+        requests.append((req.method, req.url.path, dict(req.url.params), body))
+        if req.url.path == "/repos/owner/study":
+            return httpx.Response(200, json={"private": True, "default_branch": "main"})
+        if req.url.path == "/repos/owner/study/contents/":
+            return httpx.Response(404, json={"message": "Git Repository is empty."})
+        if req.method == "GET" and "/contents/" in req.url.path:
+            return httpx.Response(404, json={"message": "Not Found"})
+        if req.method == "PUT" and "/contents/" in req.url.path:
+            return httpx.Response(201, json={"content": {"html_url": "https://example.test/file"}})
+        raise AssertionError(f"unexpected request {req.method} {req.url.path}")
+
+    monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
+    hub = Hub(tmp_path)
+    hub.requests["req_test"].update(pi_reviewed_at=1, result_storage={**EXISTING, "status": "draft"})
+    service = ResultStorage(hub, httpx.MockTransport(handle))
+    await service.upload("req_test", {"README.md": "first", "report.md": "second"})
+    puts = [entry for entry in requests if entry[0] == "PUT"]
+    assert "branch" not in puts[0][3]
+    assert puts[1][3]["branch"] == "main"
+    await service.close()
+
+
+async def test_an_initialized_repository_updates_an_existing_file_with_its_sha(tmp_path, monkeypatch):
+    puts = []
+
+    def handle(req):
+        if req.url.path == "/repos/owner/study":
+            return httpx.Response(200, json={"private": True, "default_branch": "main"})
+        if req.url.path == "/repos/owner/study/contents/":
+            return httpx.Response(200, json=[{"name": "README.md"}])
+        if req.method == "GET" and req.url.path.endswith("/contents/labhq/results/req_test/README.md"):
+            return httpx.Response(200, json={"sha": "old-sha", "encoding": "base64",
+                                             "content": base64.b64encode(b"old").decode(),
+                                             "html_url": "https://example.test/old"})
+        if req.method == "PUT" and "/contents/" in req.url.path:
+            puts.append(json.loads(req.content))
+            return httpx.Response(200, json={"content": {"html_url": "https://example.test/new"}})
+        raise AssertionError(f"unexpected request {req.method} {req.url.path}")
+
+    monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
+    hub = Hub(tmp_path)
+    hub.requests["req_test"].update(pi_reviewed_at=1, result_storage={**EXISTING, "status": "draft"})
+    service = ResultStorage(hub, httpx.MockTransport(handle))
+    await service.upload("req_test", {"README.md": "new"})
+    assert puts == [{"message": "연구 결과 정리", "branch": "main",
+                     "content": base64.b64encode(b"new").decode(), "sha": "old-sha"}]
+    await service.close()
 
 
 @pytest.mark.parametrize("where,kwargs", [
@@ -307,6 +366,7 @@ def test_doctor_warns_in_one_line_about_a_fine_grained_token_without_showing_it(
     assert len(rows) == 1 and rows[0]["status"] == "warn"
     assert "\n" not in rows[0]["detail"] and "fine-grained" in rows[0]["detail"] and "저장소를 먼저 만들고" in rows[0]["detail"]
     assert "gh repo create" in rows[0]["hint"] and "--republish" in rows[0]["hint"]
+    assert "$env:GITHUB_TOKEN=$null" in rows[0]["hint"] and "--add-readme" in rows[0]["hint"]
     shown = json.dumps(result, ensure_ascii=False) + doctor.render(result)
     assert token not in shown and "Z9Z9" not in shown and "github_pat_" not in shown  # not even the prefix
 

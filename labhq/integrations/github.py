@@ -352,11 +352,12 @@ class GitHubClient:
         issue = await self._req("GET", f"/repos/{repo}/issues/{number}")
         return issue.get("state") == "closed"
 
-    async def put_file(self, repo: str, path: str, content: str, message: str, branch: str) -> dict:
+    async def put_file(self, repo: str, path: str, content: str, message: str, branch: str | None) -> dict:
         path, content = self.clean(path), self.clean(content)  # branch is a ref, not published text
         path = quote(path, safe="/")
         sha = None
-        r = await self.http.get(f"/repos/{repo}/contents/{path}", params={"ref": branch})
+        params = {"ref": branch} if branch else None
+        r = await self.http.get(f"/repos/{repo}/contents/{path}", params=params)
         if r.status_code == 200:
             existing = r.json()
             sha = existing.get("sha")
@@ -364,7 +365,9 @@ class GitHubClient:
                 return {"content": {"html_url": existing.get("html_url")}, "unchanged": True}
         elif r.status_code != 404:
             r.raise_for_status()
-        body = {"message": message, "branch": branch, "content": base64.b64encode(content.encode()).decode()}
+        body = {"message": message, "content": base64.b64encode(content.encode()).decode()}
+        if branch:
+            body["branch"] = branch
         if sha:
             body["sha"] = sha
         return await self._req("PUT", f"/repos/{repo}/contents/{path}", json=body)
@@ -372,11 +375,21 @@ class GitHubClient:
     async def repo_info(self, repo: str) -> dict:
         return await self._req("GET", f"/repos/{repo}")
 
-    async def put_image(self, repo: str, path: str, content: bytes, branch: str) -> dict:
+    async def repository_is_empty(self, repo: str, default_branch: str) -> bool:
+        """An empty repository has no root contents, so its first contents PUT must omit ``branch``."""
+        endpoint = f"/repos/{repo}/contents/"
+        response = await self.http.get(endpoint, params={"ref": default_branch})
+        if response.status_code == 404:
+            return True
+        if response.status_code >= 400:
+            raise GitHubHTTPError("GET", endpoint, response)
+        return False
+
+    async def put_image(self, repo: str, path: str, content: bytes, branch: str | None) -> dict:
         """An image from a reviewed result edition; text files use put_file's cleaner."""
         return await self.put_binary(repo, path, content, branch, "연구 결과 그림")
 
-    async def put_binary(self, repo: str, path: str, content: bytes, branch: str, message: str) -> dict:
+    async def put_binary(self, repo: str, path: str, content: bytes, branch: str | None, message: str) -> dict:
         """Bytes of a reviewed result edition (an image, the report PDF): sent as they are, replacing an existing file.
 
         The contents API takes the file as base64, a third bigger than the bytes, and refuses a file over
@@ -387,10 +400,13 @@ class GitHubClient:
             raise ValueError(f"{len(content) / 1024 / 1024:.1f} MB is more than the GitHub contents API takes "
                              f"({CONTENTS_API_MAX_BYTES // 1024 // 1024} MB as base64)")
         endpoint = f"/repos/{repo}/contents/{quote(path, safe='/')}"
-        existing = await self.http.get(endpoint, params={"ref": branch})
+        params = {"ref": branch} if branch else None
+        existing = await self.http.get(endpoint, params=params)
         if existing.status_code not in {200, 404}:
             raise GitHubHTTPError("GET", endpoint, existing)
-        payload = {"message": message, "branch": branch, "content": encoded}
+        payload = {"message": message, "content": encoded}
+        if branch:
+            payload["branch"] = branch
         if existing.status_code == 200:
             payload["sha"] = existing.json()["sha"]
         response = await self.http.put(endpoint, json=payload, timeout=httpx.Timeout(30.0, write=BINARY_WRITE_TIMEOUT_S))
