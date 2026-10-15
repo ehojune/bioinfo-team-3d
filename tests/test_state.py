@@ -1454,6 +1454,19 @@ async def test_task_cost_survives_restart_once_per_task(tmp_path):
     assert restarted.requests["r1"]["cost_by_task"] == {"t1": 2.5}
 
 
+def test_new_unknown_cost_is_stored_as_none_not_zero(tmp_path):
+    hub = Hub(settings(tmp_path))
+    hub.requests["r"] = {"id": "r", "status": "running", "mode": "direct", "text": "work"}
+
+    hub._record_task_cost("r", "unknown", TaskResult(
+        task_id="unknown", agent_id="a", ok=True, cost_usd=None, cost_known=False,
+    ))
+
+    assert hub.requests["r"]["cost_by_task"] == {"unknown": None}
+    assert hub.requests["r"]["cost_usd"] == 0.0
+    assert hub.requests["r"]["cost_summary"]["unknown_count"] == 1
+
+
 @pytest.mark.asyncio
 async def test_resume_waits_for_runner_and_reoffers_after_timeout(tmp_path):
     s = settings(tmp_path)

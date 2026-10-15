@@ -110,8 +110,8 @@ def test_mixed_costs_keep_engine_subtotals_and_unknown_count_separate():
     assert summary["by_engine"]["codex"]["estimated_usd"] == pytest.approx(3.0)
     assert summary["by_engine"]["gemini"]["unknown_count"] == 1
     assert summary["prices"][0]["model"] == "gpt-6.1-sol" and summary["prices"][0]["catalog_version"]
-    assert format_cost(summary) == "확인 $1.25 + 추정 $3.00 + 미집계된 비용 1건"
-    assert format_engines(summary) == "claude_code 확인 $1.25 · codex 추정 $3.00 · gemini 미집계된 비용 1건"
+    assert format_cost(summary) == "확인 $1.25 + 추정 $3.00 + 비용 모름 1건"
+    assert format_engines(summary) == "claude_code 확인 $1.25 · codex 추정 $3.00 · gemini 비용 모름 1건"
 
 
 def test_unknown_only_is_never_shown_as_zero_dollars():
@@ -119,9 +119,9 @@ def test_unknown_only_is_never_shown_as_zero_dollars():
                             cost_usd=None, cost_known=False, task_id="u")
     summary = aggregate_costs({"u": unknown})
 
-    assert format_cost(summary) == "미집계된 비용 1건"
+    assert format_cost(summary) == "비용 모름 1건"
     assert "$0" not in cost_text(0, False, summary)
-    assert cost_text(0, False) == "미집계된 비용" and cost_text(1.5, False) == "$1.50 + 미집계된 비용"
+    assert cost_text(0, False) == "비용 모름" and cost_text(1.5, False) == "$1.50 + 비용 모름"
     assert cost_text(0, True) == "$0.00"
     assert format_cost(aggregate_costs({})) == "확인 $0.00"
 
@@ -136,12 +136,28 @@ def test_old_price_catalog_is_flagged():
     assert format_warnings(summary) == "가격표 오래됨: codex gpt-6.1-sol (2026-10-02 확인)"
 
 
-def test_request_summary_waits_for_every_counted_task_to_be_classified():
+def test_request_summary_reads_legacy_numeric_rows_without_classification():
     item = classify_cost(engine="claude_code", model="opus", usage={}, usage_known=True,
                          cost_usd=0.2, cost_known=True, task_id="t1")
 
-    assert request_cost_summary({"cost_by_task": {"t0": 0.1, "t1": 0.2}, "cost_items": {"t1": item}}) is None
+    assert request_cost_summary({"cost_by_task": {"t0": 0.1, "t1": 0.2},
+                                 "cost_items": {"t1": item}})["actual_usd"] == 0.3
     assert request_cost_summary({"cost_by_task": {"t1": 0.2}, "cost_items": {"t1": item}})["actual_usd"] == 0.2
+
+
+def test_legacy_zero_and_new_unknown_rows_are_read_together():
+    unknown = classify_cost(engine="claude_code", model="unpriced", usage={}, usage_known=False,
+                            cost_usd=None, cost_known=False, task_id="new")
+
+    summary = request_cost_summary({
+        "cost_by_task": {"legacy": 0.0, "new": None},
+        "cost_items": {"new": unknown},
+    })
+
+    assert summary["actual_usd"] == 0.0
+    assert summary["unknown_count"] == 1
+    assert summary["unknown_tasks"] == ["new"]
+    assert format_cost(summary) == "비용 모름 1건"
 
 
 def test_request_cost_is_split_by_staff_member_when_items_name_them():

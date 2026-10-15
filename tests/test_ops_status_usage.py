@@ -113,8 +113,8 @@ def test_cli_status_shows_running_work_and_approvals(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "runner-1" in output and "r1 1/2 분석" in output
     assert "s2: running" in output and "a1 [tool_permission] 검토" in output
-    assert "확인 $0.30 + 추정 $0.20 + 미집계된 비용 1건" in output
-    assert "claude_code 확인 $0.30" in output and "codex 추정 $0.20 + 미집계된 비용 1건" in output
+    assert "확인 $0.30 + 추정 $0.20 + 비용 모름 1건" in output
+    assert "claude_code 확인 $0.30" in output and "codex 추정 $0.20 + 비용 모름 1건" in output
 
 
 def test_cli_resume_uses_the_existing_hold_endpoint(monkeypatch, capsys):
@@ -330,7 +330,7 @@ async def test_failure_comment_keeps_stored_accounting(tmp_path):
                          "cost_usd": 1.5, "cost_known": False}
     hub.reporter.issues["r"] = 7
     await hub.reporter.handle({"type": "request.failed", "request_id": "r", "data": {"error": "boom"}})
-    assert posted and "$1.5" in posted[-1] and "미집계된 비용" in posted[-1]
+    assert posted and "$1.5" in posted[-1] and "비용 모름" in posted[-1]
 
 
 def test_completion_line_and_project_report_show_unaccounted_cost_apart(tmp_path, capsys):
@@ -344,15 +344,15 @@ def test_completion_line_and_project_report_show_unaccounted_cost_apart(tmp_path
     render({"type": "request.completed", "ts": 1, "data": {"ok": True, "cost_usd": 1.5, "cost_known": False,
                                                             "cost_summary": summary}})
     line = capsys.readouterr().out
-    assert "cost=확인 $1.00 + 추정 $0.50 + 미집계된 비용 1건" in line and "codex 추정 $0.50 + 미집계된 비용 1건" in line
+    assert "cost=확인 $1.00 + 추정 $0.50 + 비용 모름 1건" in line and "codex 추정 $0.50 + 비용 모름 1건" in line
     render({"type": "request.completed", "ts": 1, "data": {"ok": True, "cost_usd": 0, "cost_known": False}})
-    assert "cost=미집계된 비용" in capsys.readouterr().out  # never "$0" for an unreported cost
+    assert "cost=비용 모름" in capsys.readouterr().out  # never "$0" for an unreported cost
 
     settings = Settings()
     settings.gateway.state_dir = str(tmp_path / "state")
     report = Hub(settings).reporter._report_md("r", {"text": "t", "cost_usd": 1.5, "cost_known": False,
                                                      "cost_summary": summary}, "body")
-    assert "- 비용: 확인 $1.00 + 추정 $0.50 + 미집계된 비용 1건 (claude_code 확인 $1.00 · codex" in report
+    assert "- 비용: 확인 $1.00 + 추정 $0.50 + 비용 모름 1건 (claude_code 확인 $1.00 · codex" in report
     assert "청구액이 아닙니다" in report
 
 

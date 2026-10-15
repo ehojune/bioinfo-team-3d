@@ -139,6 +139,7 @@ class AgentSpec(BaseModel):
     character: str | None = None
     engine: Engine = Engine.claude_code
     model: str | None = None
+    model_tier: Literal["fast", "balanced", "reasoning"] | None = None
     effort: str | None = None
     system_prompt: str = ""
     tools: list[str] = []  # pre-approved tools (Claude Code --allowedTools rule syntax)
@@ -192,6 +193,7 @@ class AgentSpec(BaseModel):
             "character": self.character,
             "engine": self.engine.value,
             "model": self.model,
+            "model_tier": self.model_tier,
             "employment": self.employment.value,
             "expires_at": self.contract.expires_at if self.contract else None,
             "contract_status": self.contract.status if self.contract else None,

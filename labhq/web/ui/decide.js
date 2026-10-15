@@ -367,7 +367,7 @@ export function decisionChoice(approval, act) {
 
 const DETAIL_LABELS = {
   budget: { spent_usd: '지금까지 쓴 비용', limit_usd: '지금 상한', requested_budget_usd: '승인하면 새 상한',
-    unknown_count: '비용 미집계 작업', unknown_reserve_usd: '미집계 작업 1건당 가정 비용' },
+    unknown_count: '비용 모름 작업', unknown_reserve_usd: '비용 모름 작업 1건당 가정 비용' },
   research_evidence: { ...EVIDENCE_LABELS, plan_sha256: 'plan hash', unreported_outputs: '보고하지 않은 산출',
     artifact_sha256: '산출 파일 hash', continuation: '이어 가기 차수' },
   research_plan: { target_sha256: 'plan hash', scope_status: '범위 판정', continuation: '이어 가기 차수' },

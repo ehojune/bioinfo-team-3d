@@ -1093,10 +1093,10 @@ async def test_report_keeps_confirmed_estimated_and_unaccounted_costs_apart():
     orch._finish("r", "Narrative", {"A": {"status": "done"}}, ok=True)
     report = hub.requests["r"]["execution_record"]
 
-    assert ("비용: 확인 $1.00 + 추정 $0.50 + 미집계된 비용 1건 "
-            "(claude_code 확인 $1.00 · codex 추정 $0.50 + 미집계된 비용 1건); 추정은") in report
+    assert ("비용: 확인 $1.00 + 추정 $0.50 + 비용 모름 1건 "
+            "(claude_code 확인 $1.00 · codex 추정 $0.50 + 비용 모름 1건); 추정은") in report
     assert "청구액이 아닙니다" in report and "$0.00" not in report
-    assert "Budget: $1.50 + 미집계 1건 / $10.00; denied." in report
+    assert "Budget: $1.50 + 비용 모름 1건 / $10.00; denied." in report
 
 
 @pytest.mark.asyncio
@@ -2434,9 +2434,9 @@ async def test_finish_keeps_bench_result_block_last_after_labhq_metadata():
     report = hub.requests["r"]["report"]
     appendix = hub.requests["r"]["execution_record"]
     assert report.rstrip().endswith("<!-- /LABHQ_BENCH_RESULT -->")
-    assert "Step status and output paths" not in report and "비용 미집계" not in report
-    assert appendix.index("Step status and output paths") < appendix.index("비용 미집계")
-    assert appendix.index("비용 미집계") < appendix.index("Budget: $1.25 > $1.00; approved.")
+    assert "Step status and output paths" not in report and "비용 모름" not in report
+    assert appendix.index("Step status and output paths") < appendix.index("비용 모름")
+    assert appendix.index("비용 모름") < appendix.index("Budget: $1.25 > $1.00; approved.")
 
 
 @pytest.mark.asyncio

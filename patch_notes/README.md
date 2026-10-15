@@ -10,10 +10,18 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-10-16
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 00:03 | [`97cf0a3`](https://github.com/ehojune/bioinfo-team-3d/pull/656/commits/97cf0a3) | 결정·작업판 중심 배치, 계획 흐름과 직원 카드 닫기·복원, 실패 결과 바로 보기 |
+
 ## 2026-10-15
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 23:46 | [`88df464`](https://github.com/ehojune/bioinfo-team-3d/pull/651/commits/88df464) | read-only 프로필이 모델 등급 메타데이터를 보존하도록 수정 |
+| 23:30 | [`39e58f8`](https://github.com/ehojune/bioinfo-team-3d/pull/651/commits/39e58f8) | 비용 모름 표시와 호출 없는 dry-run을 추가 |
 | 22:36 | [`97a2acd`](https://github.com/ehojune/bioinfo-team-3d/pull/647/commits/97a2acd) | WSL doctor 회귀 테스트가 Linux 전역 platform 값을 바꾸지 않도록 격리한다. |
 | 22:36 | [`84aca5d`](https://github.com/ehojune/bioinfo-team-3d/pull/649/commits/84aca5d) | 편집자 기록의 개요·본문·생략 절 목록을 문서별 입력 한도 안에서 요약 |
 | 22:34 | [`78a6048`](https://github.com/ehojune/bioinfo-team-3d/pull/649/commits/78a6048) | 공개 링크의 역슬래시와 ASCII 제어문자를 브라우저식으로 정규화한 뒤 내부 host를 차단 |

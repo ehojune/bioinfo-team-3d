@@ -180,11 +180,18 @@ def aggregate_costs(items: dict[str, dict]) -> dict:
     return summary
 
 
-def request_cost_summary(req: dict) -> dict | None:
-    """The request's summary, or None while an older record has tasks counted without a classification."""
-    items = req.get("cost_items") or {}
-    if set(req.get("cost_by_task") or {}) - set(items):
-        return None
+def request_cost_summary(req: dict) -> dict:
+    """The request's summary, reading legacy numeric rows and new unknown ``None`` rows together."""
+    items = dict(req.get("cost_items") or {})
+    for tid, value in (req.get("cost_by_task") or {}).items():
+        if tid in items:
+            continue
+        amount = _amount(value)
+        items[tid] = ({"task_id": tid, "engine": "unknown", "model": None,
+                       "status": "actual", "usd": amount}
+                      if amount is not None else
+                      {"task_id": tid, "engine": "unknown", "model": None,
+                       "status": "unknown", "usd": None, "reason": "unreported"})
     return aggregate_costs(items)
 
 
@@ -235,18 +242,18 @@ def _parts(actual: float, estimated: float, unknown: int, digits: int = 2) -> st
     if estimated > 0:
         parts.append(f"추정 {_usd(estimated, digits)}")
     if unknown:
-        parts.append(f"미집계된 비용 {unknown}건")
+        parts.append(f"비용 모름 {unknown}건")
     return " + ".join(parts)
 
 
 def format_cost(summary: dict, digits: int = 2) -> str:
-    """`확인 $0.30 + 추정 $0.20 + 미집계 1건`; zero parts are left out."""
+    """`확인 $0.30 + 추정 $0.20 + 비용 모름 1건`; zero parts are left out."""
     return _parts(float(summary.get("actual_usd") or 0), float(summary.get("estimated_usd") or 0),
                   int(summary.get("unknown_count") or 0), digits)
 
 
 def format_engines(summary: dict, digits: int = 2) -> str:
-    """`claude_code 확인 $0.30 · codex 추정 $0.20 + 미집계 1건`."""
+    """`claude_code 확인 $0.30 · codex 추정 $0.20 + 비용 모름 1건`."""
     return " · ".join(f"{name} {format_cost(engine, digits)}"
                       for name, engine in (summary.get("by_engine") or {}).items())
 
@@ -275,5 +282,5 @@ def cost_text(cost_usd: Any, cost_known: Any, summary: dict | None = None) -> st
         return format_cost(summary)
     known = float(cost_usd or 0)
     if cost_known is False:
-        return f"{_usd(known) + ' + ' if known else ''}미집계된 비용"
+        return f"{_usd(known) + ' + ' if known else ''}비용 모름"
     return _usd(known)
