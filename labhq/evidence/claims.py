@@ -356,9 +356,21 @@ class Evidence(StrictModel):
     # How many records a search returned, when the row records one. Code cannot read "0 hits" in a sentence,
     # but it can read this: a search that counted 0 is not_found, never an observation (#118).
     result_count: int | None = Field(default=None, ge=0)
+    origin: Literal["slot_repair", "omitted_by_output"] | None = None
+    attempt_status: Literal["attempted_found", "attempted_none", "not_attempted"] | None = None
 
     @model_validator(mode="after")
     def kind_shape(self) -> "Evidence":
+        if self.origin is not None:
+            # A code-written gap is an account of missing output, never a fabricated source or observation.
+            if (self.kind != "observation" or self.status != "unavailable" or self.source is not None
+                    or not self.slots or not _present(self.status_detail) or self.derived_from
+                    or self.quantities or self.result_count is not None
+                    or (self.origin == "slot_repair") != (self.attempt_status is not None)):
+                raise ValueError(f"evidence {self.id}: repaired slots must remain unavailable, source-free gaps")
+            return self
+        if self.attempt_status is not None:
+            raise ValueError(f"evidence {self.id}: attempt_status requires a repair origin")
         if self.result_count is not None:
             if not self.countable:
                 raise ValueError(f"{self.kind} row {self.id} is not a retrieval and has no result_count")
