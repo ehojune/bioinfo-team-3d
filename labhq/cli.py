@@ -1448,6 +1448,8 @@ def main(argv: list[str] | None = None) -> None:
     init.add_argument("--yes", action="store_true", help="accept suggested defaults")
     init.add_argument("--dry-run", action="store_true", help="preview without writing files")
     init.add_argument("--force", action="store_true", help="replace an existing config and rotate tokens")
+    init.add_argument("--bioinfo-agent", metavar="PATH",
+                      help="folder of the bioinfo-agent plugin (otherwise init looks for it, then asks)")
     sub.add_parser("gateway")
     up = sub.add_parser("up", help="start the gateway and runner in the background")
     up.add_argument("--make-primary", action="store_true",
@@ -1618,7 +1620,8 @@ def main(argv: list[str] | None = None) -> None:
         from yaml import YAMLError
 
         try:
-            result = run(args.config, yes=args.yes, dry_run=args.dry_run, force=args.force, instance=args.instance)
+            result = run(args.config, yes=args.yes, dry_run=args.dry_run, force=args.force, instance=args.instance,
+                         bioinfo_agent=args.bioinfo_agent)
         except InitError as exc:
             p.exit(1, f"init: {exc}\n")
         except (OSError, ValueError, YAMLError):

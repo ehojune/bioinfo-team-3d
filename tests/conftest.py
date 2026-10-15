@@ -55,3 +55,13 @@ def _no_real_browser(monkeypatch):
     """The report PDF needs an installed Edge or Chrome, and the repository edition prints one (#584). No test starts a
     real browser: a test that prints patches `find_browser` or `subprocess.run` itself, as tests/test_report_pdf.py does."""
     monkeypatch.setattr("labhq.report_pdf.find_browser", lambda configured=None: None)
+
+
+import labhq.bioinfo_link as bioinfo_link
+
+
+@pytest.fixture(autouse=True)
+def _no_host_bioinfo_agent(monkeypatch):
+    """`labhq init` looks for a bioinfo-agent checkout in common places (D:/bioinfo-agent, ~/bioinfo-agent, /mnt/d/...),
+    which exist on some PCs. No test depends on this machine; tests/test_init_defaults.py names its own places."""
+    monkeypatch.setattr(bioinfo_link, "common_paths", lambda: [])

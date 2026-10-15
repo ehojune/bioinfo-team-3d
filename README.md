@@ -194,7 +194,8 @@ POSIX에서는 `python3 -m venv .venv`, `./.venv/bin/python -m pip install -e ".
 .\labhq -c config\labhq.yaml doctor
 ```
 
-`init`은 HPC·bioinfo-agent 경로와 AlphaGenome 키도 묻습니다(없으면 Enter). 실제 모델을 부르지 않는 격리 설치 검사는 `python scripts/clean_install_check.py`입니다.
+`init`은 연구 모드(CP1·CP2·분야 팩), 의미 모델 `ab`, 산출물 종류 선언을 PI가 시험한 설정대로 켠 채 새 설정을 만듭니다. bioinfo-agent 위치는 환경변수·`D:/bioinfo-agent`·`~/bioinfo-agent`·WSL 경로 순으로 찾고, 못 찾으면 묻습니다(미리 주려면 `--bioinfo-agent <폴더>`). 끝내 모르면 "bioinfo-agent 연결 안 됨"이라 알리고 꺼 둡니다. 개발 기록용 비공개 저장소 `dev_log.repo`는 사람마다 달라 기본값이 없어 묻기만 합니다(Enter면 비움). HPC와 AlphaGenome 키도 묻습니다(없으면 Enter). 이미 있는 설정은 바꾸지 않습니다.
+`doctor`와 `up`은 같은 state 폴더나 포트를 쓰는 다른 설정 파일, 이 PC의 주 설정(처음 `up`이 성공한 설정)과 다른 설정을 쉬운 한국어로 알리고 고치는 명령을 보여 줍니다. 실제 모델을 부르지 않는 격리 설치 검사는 `python scripts/clean_install_check.py`입니다.
 
 ### 3. 띄우기
 

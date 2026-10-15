@@ -20,7 +20,7 @@ import yaml
 
 from .adapters.base import _resolve_command, codex_app_choice, expand_env
 from .adapters import adapter_preflight_error, get_adapter
-from . import instance_guard
+from . import bioinfo_link, instance_guard
 from .models import AgentSpec, Engine
 from . import private_paths as private_path_module
 from .private_paths import (PrivatePaths, configured_claude_config_dir, in_pi_claude, inside_any,
@@ -88,6 +88,21 @@ def _research_row(settings: Settings) -> dict:
 
 def _row(group: str, name: str, status: str, detail: str, hint: str) -> dict:
     return {"group": group, "name": name, "status": status, "detail": detail, "hint": hint}
+
+
+def _bioinfo_row(settings: Settings) -> dict:
+    """Whether the bioinfo-agent plugin is connected (#613): the folder a runner would hand to claude_code."""
+    env = {**os.environ, **expand_env(settings.engines.claude_code.env, os.environ)}
+    folder = bioinfo_link.configured_dir(env)
+    if not folder:
+        return _row("config", "bioinfo-agent", "warn",
+                    bioinfo_link.NOT_CONNECTED + "BIOINFO_AGENT_DIR이 비어 있어 bioinfo-agent 직원(Nextflow 분석)을 쓸 수 없습니다",
+                    bioinfo_link.FIX)
+    if not bioinfo_link.is_plugin_dir(folder):
+        return _row("config", "bioinfo-agent", "warn",
+                    bioinfo_link.NOT_CONNECTED + "BIOINFO_AGENT_DIR 폴더에서 plugin(.claude-plugin/plugin.json, "
+                    "skills/bioinfo-analyze)을 찾지 못했습니다", bioinfo_link.FIX)
+    return _row("config", "bioinfo-agent", "ok", f"연결됨: {_safe_path(folder)}", "")
 
 
 def _instance_rows(settings: Settings) -> list[dict]:
@@ -526,6 +541,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
                          "gateway.client_token is set in the runner's config",
                          "Give the runner a config without gateway.client_token; see docs/runner-account.md."))
     rows.append(_research_row(settings))
+    rows.append(_bioinfo_row(settings))
     rows.extend(_instance_rows(settings))
     markers = parent_claude_markers(dict(os.environ))
     rows.append(_row("staff", "claude_parent_session_env", "warn" if markers else "ok",
@@ -569,7 +585,9 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
         status = "ok" if visibility == "private" else "warn"
         detail = f"{repo}; visibility: {visibility}; 종료: v1.0, #40 bench 뒤 20 rounds 새 교훈 없음, 또는 보고 채널 이전 (#69)"
         rows.append(_row("config", "dev log", status, detail,
-                         "dev_log.repo에 비공개 기록 저장소를 지정하세요."))
+                         "dev_log.repo에 비공개 기록 저장소를 지정하세요." if settings.dev_log.repo else
+                         "dev_log.repo는 사람마다 달라 기본값이 없습니다. 개발 기록을 GitHub에도 남기려면 설정 파일의 dev_log.repo에 "
+                         "비공개 저장소 owner/name을 적고 gateway를 다시 시작하세요. 비워 두면 이 PC에만 기록합니다."))
 
     try:
         agents = _roster(settings)

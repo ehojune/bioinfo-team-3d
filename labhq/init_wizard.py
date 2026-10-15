@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import getpass
 import os
+import re
 import secrets
 import shutil
 import sys
@@ -12,7 +13,7 @@ from pathlib import Path
 
 import yaml
 
-from . import doctor, hpc_consult
+from . import bioinfo_link, doctor, hpc_consult, init_defaults
 from .adapters.base import _resolve_command
 from .runner.codex_sandbox import codex_command, powershell_executable, setup_hint
 from .settings import HpcSettings, Settings
@@ -116,6 +117,48 @@ def _alphagenome_key(settings: Settings) -> None:
     print("AlphaGenome: 키 저장 (이 계정만 읽을 수 있는 파일, 값과 경로 출력 생략)")
 
 
+def _bioinfo_agent(explicit: str | None, yes: bool) -> str | None:
+    """The folder for engines.claude_code.env.BIOINFO_AGENT_DIR, or None: bioinfo-agent stays off (#613).
+
+    Order: --bioinfo-agent PATH, an existing BIOINFO_AGENT_DIR, the common places (D:/bioinfo-agent, ~/bioinfo-agent),
+    a WSL path (/mnt/d/bioinfo-agent). When nothing is found and a person is answering, ask. Paths are not echoed."""
+    if explicit:
+        if not bioinfo_link.is_plugin_dir(explicit):
+            raise InitError("--bioinfo-agent 폴더에서 bioinfo-agent plugin(.claude-plugin/plugin.json과 "
+                            "skills/bioinfo-analyze)을 찾지 못했습니다.")
+        print("bioinfo-agent: --bioinfo-agent 경로로 연결 (경로 출력 생략)")
+        return explicit
+    found = bioinfo_link.detect()
+    if found:
+        path, source = found
+        print(f"bioinfo-agent: {bioinfo_link.SOURCE_LABEL[source]}에서 찾음 (경로 출력 생략)")
+        if not yes:
+            answer = input("이 위치로 연결할까요? [Enter: 예, 다른 경로를 적거나 n: 연결 안 함] ").strip().strip('"')
+            path = None if answer.lower() in ("n", "no") else (answer or path)
+    else:
+        path = _ask("bioinfo-agent 폴더를 찾지 못했습니다. 경로를 적거나 비워 두세요(연결 안 함)", "", yes).strip().strip('"')
+    if path and not bioinfo_link.is_plugin_dir(path):
+        print("주의: 그 폴더에서 plugin(.claude-plugin/plugin.json)을 찾지 못했습니다. 경로를 확인하세요 (doctor가 다시 알려 줌).")
+    return path or None
+
+
+def _dev_log_repo(existing: Settings | None, yes: bool) -> str | None:
+    """dev_log.repo is a person's repository, so there is no default: ask once, or leave it empty (local rounds only)."""
+    if existing is not None and existing.dev_log.repo:
+        print("dev_log.repo: 기존 설정의 값을 유지 (이름 출력 생략)")
+        return existing.dev_log.repo
+    answer = _ask("개발 기록(dev log)을 올릴 비공개 GitHub 저장소 owner/name (없으면 비워 두세요)", "", yes).strip()
+    if answer and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9_.-]+", answer):
+        print("dev_log.repo: owner/name 형식이 아니라 비워 둡니다.")
+        answer = ""
+    if answer:
+        print("dev_log.repo: 설정 (비공개 저장소인지는 doctor가 확인)")
+        return answer
+    print("dev_log.repo: 비워 둠 — 개발 기록은 이 PC에만 남습니다. GitHub에도 남기려면 설정의 dev_log.repo에 "
+          "비공개 저장소 owner/name을 적으세요.")
+    return None
+
+
 def _hpc_query(argv: list[str]):
     """One read-only cluster query for the HPC consult (tests replace it with fixture output)."""
     return hpc_consult.run_query(argv)
@@ -203,7 +246,7 @@ def _unused_port(used: set[int]) -> int:
 
 
 def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
-        force: bool = False, instance: str | None = None) -> dict:
+        force: bool = False, instance: str | None = None, bioinfo_agent: str | None = None) -> dict:
     target = Path(config or os.environ.get("LABHQ_CONFIG") or "config/labhq.yaml").resolve()
     guard_test_path(target)
     if instance:
@@ -269,6 +312,7 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
             policy["data_zones"] = [z for z in policy.get("data_zones", [])
                                     if z.get("level", "restricted") != "restricted"]
             print("Windows: restricted data_zones 제외")
+        init_defaults.ensure_workspace_zone(data)  # semantics hashes outputs only inside a public or internal zone
         engines = data.setdefault("engines", {})
         codex = engines.setdefault("codex", {})
         codex["bin"] = "auto"
@@ -289,13 +333,15 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
             engines.setdefault("claude_code", {}).setdefault("env", {})["CLAUDE_CONFIG_DIR"] = \
                 "${" + home_var + "}/" + doctor.CLAUDE_STAFF_DIR
             print("개인 Claude 설정(~/.claude) 발견: 직원 전용 ~/.labhq/claude-staff 사용")
-        plugin = _ask("bioinfo-agent checkout 경로 (기본값: BIOINFO_AGENT_DIR, 없으면 생략)",
-                      os.environ.get("BIOINFO_AGENT_DIR", ""), yes)
+        plugin = _bioinfo_agent(bioinfo_agent, yes)
         if plugin:
             engines.setdefault("claude_code", {}).setdefault("env", {})["BIOINFO_AGENT_DIR"] = plugin
             print("engines.claude_code.env.BIOINFO_AGENT_DIR: 설정 (경로 출력 생략)")
         else:
-            print("BIOINFO_AGENT_DIR: 생략 (필요할 때 설정)")
+            print(bioinfo_link.NOT_CONNECTED + "bioinfo-agent 직원(Nextflow 분석)을 쓸 수 없습니다. " + bioinfo_link.FIX)
+        repo = _dev_log_repo(existing, yes)
+        if repo:
+            data.setdefault("dev_log", {})["repo"] = repo
         if existing is not None:
             # Consent belongs to its target too; --force must not redirect an existing opt-in.
             bioinfo = data.setdefault("policy", {}).setdefault("bioinfo_agent", {})
@@ -307,6 +353,9 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
             print("fork 자동 생성은 아직 지원하지 않습니다. 해당 저장소의 쓰기 권한이 필요합니다.")
             bioinfo["pipeline_pr"] = _ask("공개 pipeline 기여에 동의하나요? (y/N)", "n", yes).lower() == "y"
             print("policy.bioinfo_agent.pipeline_pr: " + str(bioinfo["pipeline_pr"]).lower())
+        print("켜 둔 기본 설정: 연구 모드(CP1·CP2, 분야 팩 " + ", ".join(data["research"]["active_packs"]) + "), "
+              "의미 모델 ab(actions confirm), 산출물 종류 선언. 끄려면 설정의 research.enabled·semantics.mode·"
+              "plan.declare_output_types를 바꾸세요.")
         # Validate the complete plan before creating anything. Relative paths follow the target config.
         settings = Settings.model_validate(data)
         settings.config_path = str(target)
