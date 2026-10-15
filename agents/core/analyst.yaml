@@ -4,6 +4,7 @@ role: 통계·바이오인포 분석 설계와 실행 (HPC 작업 제출)
 character: raccoon
 engine: claude_code
 model: opus
+model_tier: reasoning
 permission_mode: default
 tools: [Read, Glob, Grep, Write, Edit, "Bash(python *)", "Bash(Rscript *)", "Bash(ls *)", "Bash(wc *)"]
 builtin_mcp: [approval, hpc, annot]

@@ -507,6 +507,7 @@ class Recruitment:
             id=f"c_{self.slug}"[:48], name=offer.get("agent_name") or self.slug,
             role=f"[파견] {offer.get('role_summary', '')}"[:200], character="paper-hat-chick",
             engine=Engine(self.s.recruit.contract_engine), model=self.s.recruit.contract_model,
+            model_tier=self.s.recruit.contract_model_tier,
             system_prompt=CONTRACT_PROMPT.format(name=offer.get("agent_name"), paper=self.paper, repo=self.repo,
                                                  role=offer.get("role_summary"), server=server, tools=tools_txt,
                                                  limits=limits, external=external),

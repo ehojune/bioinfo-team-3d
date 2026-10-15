@@ -4,6 +4,7 @@ role: 실행 환경·설치·로그인 오류 진단과 PI 조치 안내
 character: hamster
 engine: codex
 model: gpt-6-sol
+model_tier: balanced
 sandbox: read-only
 builtin_mcp: []
 tools: []

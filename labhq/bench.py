@@ -663,8 +663,8 @@ def _cost_cell(row: dict[str, Any]) -> str:
     if summary:
         return format_cost(summary, digits=4).replace("$", "")
     if row["cost_usd"] is None:
-        return "미집계"
-    return f"{row['cost_usd']:.4f}" + (" + 미집계" if row.get("cost_known") is False else "")
+        return "비용 모름"
+    return f"{row['cost_usd']:.4f}" + (" + 비용 모름" if row.get("cost_known") is False else "")
 
 
 def _comparison_markdown(result: dict[str, Any]) -> str:
@@ -678,8 +678,8 @@ def _comparison_markdown(result: dict[str, Any]) -> str:
         if ratio is None and row["cost_usd"] is not None and result.get("budget_usd"):
             ratio = float(row["cost_usd"]) / float(result["budget_usd"])
         # A ratio over a partly unaccounted cost is only a lower bound.
-        ratio_text = "미집계" if ratio is None else f"{'≥' if '미집계' in cost else ''}{ratio:.3f}"
-        cap = "미집계" if row["within_budget"] is None else "PASS" if row["within_budget"] else "FAIL"
+        ratio_text = "비용 모름" if ratio is None else f"{'≥' if '비용 모름' in cost else ''}{ratio:.3f}"
+        cap = "비용 모름" if row["within_budget"] is None else "PASS" if row["within_budget"] else "FAIL"
         pi_questions = "감지 가능" if row.get("pi_questions_observable") else "감지 불가·답변 미제공"
         structured = any(key in row for key in ("format_passed", "content_passed", "narrative_passed"))
         legacy_rows = legacy_rows or not structured
