@@ -2077,9 +2077,10 @@ class Hub:
         """
         from ..wsl_readiness import wsl_readiness
 
-        rosters = ({rid: entry.get("agents", []) for rid, entry in self.last_runner_rosters.items()}
+        # Resume planning can query a Hub before any runner state has been loaded.
+        rosters = ({rid: entry.get("agents", []) for rid, entry in getattr(self, "last_runner_rosters", {}).items()}
                    if include_history else {})
-        rosters.update(self.runner_agents)
+        rosters.update(getattr(self, "runner_agents", {}))
         candidates: dict[str, dict[str, dict]] = {}
         for rid, staff in rosters.items():
             caps = self.runner_capabilities.get(rid, {})
@@ -2098,7 +2099,7 @@ class Hub:
         # Persisted dispatch identity survives both socket loss and gateway restart. An uncertain
         # outcome stays unfinished: a timeout cannot prove that the original work stopped.
         # No reassignment means no ledger scan (in particular, ordinary result/session wakes).
-        if owners != self.agent_runner:
+        if owners != getattr(self, "agent_runner", {}):
             for entry in self.store.all("task").values():
                 aid = (entry.get("payload") or {}).get("agent_id")
                 rid = entry.get("runner_id")
@@ -2577,7 +2578,8 @@ class Hub:
                           error=f"session belongs to runner {pinned}; {task.agent_id!r} is now on runner {target}")
 
     async def dispatch(self, task: Task) -> TaskResult:
-        self._refresh_roster()
+        # Roster/lifecycle changes refresh agent_runner; dispatch consumes that resolved
+        # owner without replacing it before checking the session's runner pin.
         if (self.requests.get(task.request_id or "") or {}).get("status") == "cancelled":
             # A step still unwinding after request cancel retries or moves on; nothing more is sent (R13).
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
@@ -2676,7 +2678,6 @@ class Hub:
                     return result
                 if fut.done():
                     break
-                self._refresh_roster()
                 target = self.agent_runner[task.agent_id]
                 refused = self._session_pin_refusal(task, target)
                 if (refused or target != rid or
