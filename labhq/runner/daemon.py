@@ -1816,6 +1816,7 @@ class Runner:
                     pass  # Invalid install configuration must not prevent an approval from being delivered.
             req.agent_id = ws.task.agent_id
             req.detail = {**req.detail, 'requester_name': ws.agent.name,
+                          'workdir': str(ws.dir),
                           'permission_mode': ws.agent.permission_mode,
                           'task_context': {'kind': meta.get('kind'), 'title': meta.get('title'),
                                            'step_id': meta.get('step_id'),

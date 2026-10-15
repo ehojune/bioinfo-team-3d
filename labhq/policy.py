@@ -2457,6 +2457,8 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
             return Decision("ask", f"{tool_name} touches the registry (any registry access asks while private paths "
                                    f"are on; HKCU\\Environment holds the PI's tokens such as GITHUB_TOKEN; 레지스트리 "
                                    f"접근은 PI 승인 필요) via `{spelled[:80]}`: `{cmd[:200]}`")
+        if tool_name == 'Bash' and open_reads:
+            return Decision('ask', 'Bash read scope is ambiguous (policy.private_paths); confirmation required')
     return None
 
 

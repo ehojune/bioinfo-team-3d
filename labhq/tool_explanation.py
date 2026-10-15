@@ -1,6 +1,8 @@
 """Deterministic tool-card explanations; these fields never authorize a tool."""
 from __future__ import annotations
 
+import os
+
 from .tool_command import commands, read_commands
 
 
@@ -23,11 +25,22 @@ def explain(detail: dict) -> tuple[str, str, bool]:
     tool = detail.get('tool_name')
     command = str(data.get('command') or '')
     labels = detail.get('path_labels') or {}
+    workdir = detail.get('workdir')
 
     def place(path):
-        from .private_paths import inside_any
+        from .private_paths import inside_any, path_field_text, resolved_read_path
+
+        raw = str(path)
+        if not os.path.isabs(raw) and workdir:
+            raw = os.path.join(str(workdir), raw)
+        try:
+            spelled = path_field_text(raw, None)
+            real = resolved_read_path(raw)
+        except (OSError, ValueError, RuntimeError):
+            return '지정한 경로(자세히에서 확인)'
         for root in sorted(labels, key=len, reverse=True):
-            if inside_any(str(path), [root]):
+            normalized = path_field_text(str(root), detail.get('workdir'))
+            if os.path.isabs(raw) and inside_any(spelled, [normalized]) and inside_any(real, [normalized]):
                 return plain_text(labels[root])
         return '현재 작업 폴더' if path == '.' else '지정한 경로(자세히에서 확인)'
 
@@ -36,7 +49,7 @@ def explain(detail: dict) -> tuple[str, str, bool]:
         reading = tool in {'Read', 'Glob', 'Grep'}
         verb = {'Read': '파일 읽기', 'Glob': '파일 목록 보기', 'Grep': '파일 내용 검색'}.get(tool, '파일 쓰기·수정')
         return f'{place(path)}: {verb}.', ('낮음 · 읽기' if reading else '중간 · 쓰기'), True
-    parts = commands(command) if tool in ('Bash', 'PowerShell') else None
+    parts = commands(command, bash=tool == 'Bash') if tool in ('Bash', 'PowerShell') else None
     reads = read_commands(command) if tool == 'Bash' else None
     if reads is not None:
         lines, current = [], '현재 작업 폴더'
@@ -46,6 +59,8 @@ def explain(detail: dict) -> tuple[str, str, bool]:
             if name == 'cd':
                 current = place(paths[0])
                 lines.append(f'{current}로 이동')
+                # cd can fail or run in a pipeline subshell; later relative paths are ambiguous.
+                workdir = None
             else:
                 where = ' · '.join(dict.fromkeys(current if p == '.' else place(p) for p in paths))
                 lines.append(f'{where + ": " if where else ""}{names[name]}')
@@ -76,7 +91,8 @@ def explain(detail: dict) -> tuple[str, str, bool]:
         else:
             complete = False
     if actions:
-        locations = list(dict.fromkeys(plain_text(label) for path, label in labels.items() if path in command))
+        locations = list(dict.fromkeys(place(arg) for words in parts or [] for arg in words[1:]))
+        locations = [p for p in locations if p not in ('현재 작업 폴더', '지정한 경로(자세히에서 확인)')]
         if locations:
             actions.insert(0, '작업 위치: ' + ' · '.join(locations))
         if not complete:
@@ -98,16 +114,16 @@ def reason(detail: dict, policy_reason: str, risk: str) -> str:
     if context.get('step_id'):
         purpose += f" 단계: {plain_text(context['step_id'])}."
     rule = '자동 허용 범위 밖이라 실행 전 확인이 필요합니다.'
-    if 'private_paths' in policy_reason:
+    if 'restricted' in policy_reason.lower() or 'data_zones' in policy_reason or '통제' in policy_reason:
+        rule = '걸린 규칙: 통제 데이터 경계. 보호된 자료 경로에 접근합니다.'
+        risk = '높음 · 통제 데이터 노출 확인 필요; ' + risk.split(' · ', 1)[-1]
+    elif 'private_paths' in policy_reason:
         rule = '걸린 규칙: PI 개인 경로 보호. 개인 파일이나 자격 증명이 있는 경로 접근을 감지했습니다.'
-        if risk.startswith('낮음'):
-            risk = '중간 · 읽기; 개인 정보 노출 여부 확인 필요'
+        risk = '높음 · 개인 정보 노출 확인 필요; ' + risk.split(' · ', 1)[-1]
     elif 'registry' in policy_reason.lower() or '레지스트리' in policy_reason:
         rule = '걸린 규칙: 레지스트리 접근 보호. 계정 정보가 저장된 시스템 설정에 접근합니다.'
     elif '재귀 삭제' in policy_reason or 'recursive' in policy_reason.lower():
         rule = '걸린 규칙: 폴더 안의 파일까지 지우는 재귀 삭제 승인.'
-    elif 'restricted' in policy_reason.lower():
-        rule = '걸린 규칙: 통제 데이터 경계. 보호된 자료 경로에 접근합니다.'
     elif 'outside' in policy_reason.lower() or 'write' in policy_reason.lower():
         rule = '걸린 규칙: 허용된 작업 폴더 밖 쓰기 확인.'
     if detail.get('permission_mode') == 'auto':

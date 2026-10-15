@@ -430,6 +430,10 @@ def managed_shell_read(command: str, private_paths: Iterable[str], open_reads: I
 
 
 def _managed_operand(value: str, base: str, private: list[str], reads: list[str]) -> bool:
+    # POSIX unquoted backslashes can turn a Windows absolute path into C:relative.
+    # The drive's current directory is unknown; never infer a managed-read grant.
+    if re.match(r'^[A-Za-z]:(?![/\\])', value):
+        return False
     # Keep symlink/.. ordering for realpath; normpath first would hide an escape.
     raw = value if os.path.isabs(value) else os.path.join(base, value)
     spelled = path_field_text(value, base)

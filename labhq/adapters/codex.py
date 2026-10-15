@@ -243,26 +243,31 @@ class CodexAdapter(AgentAdapter):
         """`-s <mode>`, or with private paths to refuse a permission profile that extends the same built-in mode.
         Codex profiles and `-s` do not compose: a run takes one or the other."""
         sandbox = ctx.agent.sandbox
+        from ..private_paths import inside_any
+
+        deny = self.deny_read_paths(ctx)
+        restricted = [str(self.settings.path(z.path)) for z in self.settings.policy.data_zones
+                      if z.level == 'restricted']
+        reads = {path: 'read' for path in ctx.private_open_reads
+                 if inside_any(path, deny) and not inside_any(path, restricted)}
         if ctx.read_only or sandbox == "read-only":
             # Start with read access only: unlike :workspace this grants neither cwd nor global temp writes.
             # Adding these two roots produces a scoped workspace-write sandbox, including for resumed sessions.
-            filesystem = {str(ctx.workdir.resolve() / name): "write" for name in ("outputs", ".tmp")}
+            filesystem = dict(reads)
+            filesystem.update({str(ctx.workdir.resolve() / name): "write" for name in ("outputs", ".tmp")})
             if ctx.agent.id == "facilities":
-                filesystem = {}
-            filesystem.update({path: "deny" for path in self.deny_read_paths(ctx)})
-            filesystem.update({str(self.settings.path(z.path)): "deny"
-                               for z in self.settings.policy.data_zones if z.level == "restricted"})
+                filesystem = dict(reads)
+            filesystem.update({path: "deny" for path in deny})
+            filesystem.update({path: "deny" for path in restricted})
             profile = {"extends": ":read-only", "filesystem": filesystem}
             return ["-c", f"default_permissions={_toml(STAFF_PROFILE)}",
                     "-c", f"permissions.{STAFF_PROFILE}={_toml(profile)}", "-c", 'approval_policy="never"']
         parent = PROFILE_PARENTS.get(sandbox)
-        deny = self.deny_read_paths(ctx) if parent else []
+        deny = deny if parent else []
         if not deny:
             return ["-s", sandbox]
-        from ..private_paths import inside_any
-
         # Specific read roots reopen only the skill/plugin subtree inside a denied config home.
-        filesystem = {path: "read" for path in ctx.private_open_reads if inside_any(path, deny)}
+        filesystem = reads
         filesystem.update({path: "deny" for path in deny})
         profile = {"extends": parent, "filesystem": filesystem}
         return ["-c", f"default_permissions={_toml(STAFF_PROFILE)}",

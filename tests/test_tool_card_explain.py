@@ -103,7 +103,7 @@ def test_compound_card_explains_what_where_why_rule_risk_and_outcome(layout):
         'path_labels': {str(build): '이 작업의 빌드 폴더', str(skills): 'Paper2Agent 스킬 참고 자료'}}})
     text = '\n'.join(str(card.get(k, '')) for k in ('pi_summary', 'pi_reason', 'pi_outcome'))
     for word in ('목록', '프로그램 위치', '빌드 폴더', '스킬 참고 자료', 'Example paper', '자문 스킬',
-                 '개인 경로', '중간', '읽기', '승인하면', '거절하면'):
+                 '개인 경로', '높음', '읽기', '승인하면', '거절하면'):
         assert word in text
     assert str(build) not in text
     assert not card.get('pi_needs_interpretation')

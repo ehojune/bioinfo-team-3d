@@ -5,14 +5,16 @@ import re
 import shlex
 
 
-def commands(command: str) -> list[list[str]] | None:
+def commands(command: str, *, bash: bool = True) -> list[list[str]] | None:
     if not command or len(command) > 16000 or re.search(r'[$`{}()<>\n\r*?\[\]#~]', command):
         return None
     try:
         lexer = shlex.shlex(command, posix=True, punctuation_chars=';&|')
         lexer.whitespace_split = True
         lexer.commenters = ''
-        lexer.escape = ''  # quoted Windows paths retain their separators
+        # POSIX escaping joins escaped spaces and adjacent quoted/unquoted fragments.
+        if not bash:
+            lexer.escape = ''  # PowerShell's literal Windows separators are not Bash escapes.
         tokens = list(lexer)
     except ValueError:
         return None
