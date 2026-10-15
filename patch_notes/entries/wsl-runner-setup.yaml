@@ -9,3 +9,6 @@ rows:
 - sha: 38c28d1
   at: 2026-10-15 16:06
   text: WSL 정지 실패를 보고하면서도 native runner와 gateway 종료를 끝까지 진행한다.
+- sha: 3d886d2
+  at: 2026-10-15 16:23
+  text: runtime_env 기대값과 WSL bootstrap의 UTF-8 text I/O를 명시해 전체 CI 검사를 맞춘다.
