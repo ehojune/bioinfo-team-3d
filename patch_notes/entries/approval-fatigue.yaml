@@ -6,3 +6,6 @@ rows:
 - sha: 773cf4d
   at: 2026-10-16 00:27
   text: glob 읽기 예외에서도 restricted 하위 파일 차단, 작업·스킬 폴더 회귀 검증
+- sha: 31e1e8a
+  at: 2026-10-16 00:47
+  text: 자동 승인 닫힌 문법·쓰기 link 검사·관리 스킬 전체 트리 grant, 네 P1 회귀와 46건 재생
