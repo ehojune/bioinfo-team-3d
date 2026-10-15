@@ -25,7 +25,7 @@ main `568c29e` 기준. 원본 입력이 완전한 26건은 먼저 main에 그대
 
 ## 확인
 
-- 관련 pytest: 802 passed, 35 skipped(잘린 입력 12건 포함). 마지막 입력 형식 가드 후 신규 테스트 73 passed, 12 skipped.
+- 관련 pytest: 802 passed, 35 skipped(잘린 입력 12건 포함). 최종 restricted glob 보정 후 관련 테스트 686 passed, 19 skipped.
 - Node 승인 UI: 22 passed. 브라우저 시각 확인: UNVERIFIED.
 - `scripts/check_public.sh` 통과. 패치노트·status 기록 및 patch-notes·notes-index 검사를 통과했습니다.
 - PI instance·PI venv·실제 서비스 실행·원본 JSON 커밋 없음. 전체 pytest는 CI에 맡깁니다.
