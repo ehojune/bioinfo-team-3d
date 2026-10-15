@@ -2053,6 +2053,12 @@ class Hub:
         self.store.put("runner_roster", runner_id, roster)
         if capabilities is not None:
             self.runner_capabilities[runner_id] = capabilities
+        wsl_runner = self.s.runner.wsl.id if self.s.runner.wsl.enabled else next(
+            (rid for rid, report in self.runner_capabilities.items() if report.get("environment") == "wsl"), None)
+        if wsl_runner and self.agent_runner.get("bioinfo-agent") not in (None, wsl_runner):
+            self.agent_runner.pop("bioinfo-agent", None)
+            self.agents.pop("bioinfo-agent", None)
+            self.agent_online.setdefault("bioinfo-agent", asyncio.Event()).clear()
         for aid in [a for a, r in self.agent_runner.items() if r == runner_id]:
             self.agent_runner.pop(aid, None)
             self.agents.pop(aid, None)
@@ -2060,6 +2066,11 @@ class Hub:
         self.runner_agents[runner_id] = agents
         for a in agents:
             caps = self.runner_capabilities.get(runner_id, {})
+            if a["id"] == "bioinfo-agent":
+                # Configured routing is sticky even while WSL is offline. For a gateway already running
+                # during setup, a WSL registration wins over later Windows reconnects as well.
+                if wsl_runner and runner_id != wsl_runner:
+                    continue
             hpc_tools = bool(a.get("hpc_tools", caps.get("hpc_tools") and
                                                  "hpc" in a.get("builtin_mcp", [])))
             self.agents[a["id"]] = {**a, "runner_id": runner_id,

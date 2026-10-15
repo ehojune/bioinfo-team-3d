@@ -443,6 +443,10 @@ class Runner:
             from ..doctor import staff_python_summary
             try:
                 self.local_software = await asyncio.to_thread(staff_python_summary)
+                if self.s.runner.environment == "wsl":
+                    from ..doctor import wsl_tool_status
+
+                    self.local_software["tools"].update(await asyncio.to_thread(wsl_tool_status))
             except Exception:  # noqa: BLE001 - a host probe must not keep the runner offline
                 log.warning("runner %s could not summarize local software", self.s.runner.id, exc_info=True)
                 self.local_software = {}
@@ -505,6 +509,7 @@ class Runner:
     def capabilities(self) -> dict:
         external_hpc = any("labhq_hpc" in a.get("mcp", []) for a in self.registry.roster())
         capabilities = {"scheduler": self.s.hpc.scheduler,
+                        "environment": self.s.runner.environment,
                         "compute_backends": ["local CLI"] +
                                             ([self.s.hpc.scheduler] if self.s.hpc.scheduler != "none" else []) +
                                             (["external labhq_hpc MCP"] if external_hpc else []),

@@ -30,8 +30,21 @@ class GatewaySettings(BaseModel):
     report_browser: str | None = None
 
 
+class WslSettings(BaseModel):
+    enabled: bool = False
+    distro: str = "Ubuntu-22.04"
+    user: str | None = None
+    id: str = "lab-wsl"
+    # Empty: an instance-specific directory on the Linux filesystem, never the Windows mount.
+    root: str | None = None
+    bioinfo_agent: str = "/mnt/d/bioinfo-agent"
+    gateway_url: str | None = None
+
+
 class RunnerSettings(BaseModel):
     id: str = "local"
+    wsl: WslSettings = Field(default_factory=WslSettings)
+    environment: Literal["native", "wsl"] = "native"
     os_account: str | None = None  # the dedicated OS account the runner must run as (docs/runner-account.md)
     max_parallel: int = 4
     consult_parallel: int = Field(default=2, ge=1)

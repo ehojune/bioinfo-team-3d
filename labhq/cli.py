@@ -863,6 +863,10 @@ def _up_unlocked(s: Settings, *, popen=None, make_primary: bool = False) -> None
             raise SystemExit(2)
     if confirmed:  # never record a gateway that is someone else's
         instance_guard.record_success(s, make_primary=make_primary)
+    if s.runner.wsl.enabled:
+        from .wsl_setup import control
+
+        control(s, "start")
     print(f"웹 사무실: {_http_base(s)}/  (`{_config_command(s, 'open')}`)")
 
 
@@ -1086,6 +1090,10 @@ def _down_unlocked(s: Settings, *, force: bool = False, keep_gateway: bool = Fal
             state, _record, reason = _process_record(s, name)
             if state == "unknown":
                 _record_problem(name, reason)
+    if s.runner.wsl.enabled:
+        from .wsl_setup import control
+
+        control(s, "stop")
     stopped = [(role, pid) for role in roles if (pid := _stop_background(s, role)) is not None]
     if stopped:
         print("종료: " + ", ".join(f"{role} PID {pid}" for role, pid in stopped))
@@ -1667,6 +1675,10 @@ def main(argv: list[str] | None = None) -> None:
     op = sub.add_parser("open", help="open the web office in the browser, signed in (the token is never printed)")
     op.add_argument("--3d", dest="three_d", action="store_true", help="open the 3D office instead of 2.5D")
     sub.add_parser("runner")
+    sw = sub.add_parser("setup-wsl", help="이 PC의 WSL 분석 runner 준비")
+    sw.add_argument("--check", action="store_true", help="설치하지 않고 준비 상태만 확인")
+    wr = sub.add_parser("wsl-runner", help="이 설정의 WSL runner 시작·종료")
+    wr.add_argument("action", choices=("start", "stop"))
     sub.add_parser("agents")
     storage = sub.add_parser("storage", help="open the storage choice card for a finished request, or redraft its edition")
     storage.add_argument("id")
@@ -1858,7 +1870,21 @@ def main(argv: list[str] | None = None) -> None:
     except FileNotFoundError as exc:
         p.exit(2, f"labhq: {exc}\n")
 
-    if args.cmd == "doctor":
+    if args.cmd in ("setup-wsl", "wsl-runner"):
+        from .wsl_setup import WslError, check, control, render as render_wsl, setup
+
+        try:
+            if args.cmd == "wsl-runner":
+                control(s, args.action)
+                print("WSL runner: " + ("시작" if args.action == "start" else "종료"))
+            else:
+                rows = check(s) if args.check else setup(s)
+                print(render_wsl(rows))
+                if any(row["status"] != "ok" for row in rows):
+                    raise SystemExit(1)
+        except WslError as exc:
+            p.exit(2, f"WSL: {exc}\n")
+    elif args.cmd == "doctor":
         from .doctor import collect, render, save
 
         requested = args.config or os.environ.get("LABHQ_CONFIG")
