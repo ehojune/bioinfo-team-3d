@@ -846,8 +846,7 @@ class Hub:
             return False
 
     def has_seen_agent(self, agent_id: str) -> bool:
-        return any(any(agent.get("id") == agent_id for agent in entry.get("agents", []))
-                   for entry in self.last_runner_rosters.values())
+        return agent_id in self.effective_roster(include_history=True)
 
     def configured_agent_ids(self) -> set[str]:
         """Staff ids in this config's runner.agents_dir (core and active contracts). Empty when the folder is on
@@ -1556,7 +1555,7 @@ class Hub:
         self.runner_processes[runner_id] = process
         self.runner_locks.setdefault(runner_id, asyncio.Lock())
         self.set_roster(runner_id, agents, capabilities)
-        hosted_agents = {a["id"] for a in agents}
+        hosted_agents = {aid for aid, a in self.effective_roster().items() if a["runner_id"] == runner_id}
         for tid, entry in self.store.all("task").items():
             if (not entry.get("completed") and
                     (entry.get("payload") or {}).get("agent_id") in hosted_agents and
@@ -1606,6 +1605,7 @@ class Hub:
                                   "manual recovery required")
         self.store.put("task", tid, {**entry, "completed": True, "abandoned": True,
                                      "result": result.model_dump(mode="json")})
+        self._refresh_roster()
         self._record_task_cost(entry.get("request_id"), tid, result, outcome_unknown=True)
         future = self.futures.get(tid)
         if future and not future.done():
@@ -1643,7 +1643,7 @@ class Hub:
                                       process: str | None = None) -> list[str]:
         """At runner registration, close cards whose asking process is gone: the runner restarted, the agent now
         lives on this runner, or the card's task was abandoned. The old process is not told; it is gone."""
-        hosted = {a.get("id") for a in self.runner_agents.get(runner_id, [])}
+        hosted = {aid for aid, a in self.effective_roster().items() if a["runner_id"] == runner_id}
         closed = []
         for aid, entry in list(self.approvals.items()):
             reason = self._orphan_reason(entry, runner_id, incarnation, hosted, process)
@@ -2069,53 +2069,76 @@ class Hub:
             if (entry.get("ask") or {}).get("request_id") == rid and entry.get("state") in {"pending", "working"}:
                 self._start_ask(AskRequest.model_validate(entry["ask"]), entry.get("origin"))
 
-    def set_roster(self, runner_id: str, agents: list[dict], capabilities: dict | None = None) -> None:
+    def effective_roster(self, *, include_history: bool = False) -> dict[str, dict]:
+        """Resolve one owner per agent. Unfinished deliveries pin ownership even while offline.
+
+        Advertised rosters are input only here; routing, recovery and registration use this view.
+        History is for discovery/waiting, never for dispatch to a disconnected runner.
+        """
         from ..wsl_readiness import wsl_readiness
 
+        rosters = ({rid: entry.get("agents", []) for rid, entry in self.last_runner_rosters.items()}
+                   if include_history else {})
+        rosters.update(self.runner_agents)
+        candidates: dict[str, dict[str, dict]] = {}
+        for rid, staff in rosters.items():
+            caps = self.runner_capabilities.get(rid, {})
+            for agent in staff:
+                aid = agent["id"]
+                if (aid == "bioinfo-agent" and caps.get("runtime_env") == "wsl" and
+                        not wsl_readiness(caps.get("wsl_readiness", {}))):
+                    continue
+                candidates.setdefault(aid, {})[rid] = agent
+        owners = {}
+        for aid, hosts in candidates.items():
+            online = [rid for rid in hosts if rid in self.runners]
+            ready_wsl = [rid for rid in online if aid == "bioinfo-agent" and
+                         self.runner_capabilities.get(rid, {}).get("runtime_env") == "wsl"]
+            owners[aid] = (ready_wsl or online or list(hosts))[-1]
+        # Persisted dispatch identity survives both socket loss and gateway restart. An uncertain
+        # outcome stays unfinished: a timeout cannot prove that the original work stopped.
+        # No reassignment means no ledger scan (in particular, ordinary result/session wakes).
+        if owners != self.agent_runner:
+            for entry in self.store.all("task").values():
+                aid = (entry.get("payload") or {}).get("agent_id")
+                rid = entry.get("runner_id")
+                if aid and rid and not entry.get("completed"):
+                    owners[aid] = rid
+                    prior = next((a for a in self.last_runner_rosters.get(rid, {}).get("agents", [])
+                                  if a.get("id") == aid), {"id": aid})
+                    candidates.setdefault(aid, {}).setdefault(rid, prior)
+        return {aid: {**candidates[aid][rid], "runner_id": rid} for aid, rid in owners.items()}
+
+    def _refresh_roster(self) -> None:
+        roster = self.effective_roster()
+        for aid in set(self.agent_runner) | set(roster):
+            signal = self.agent_online.setdefault(aid, asyncio.Event())
+            if aid in roster and roster[aid]["runner_id"] in self.runners:
+                signal.set()
+            else:
+                signal.clear()
+        self.agent_runner = {aid: a["runner_id"] for aid, a in roster.items()}
+        self.agents = {}
+        for aid, a in roster.items():
+            caps = self.runner_capabilities.get(a["runner_id"], {})
+            hpc_tools = bool(a.get("hpc_tools", caps.get("hpc_tools") and
+                                                 "hpc" in a.get("builtin_mcp", [])))
+            self.agents[aid] = {**a, "scheduler": caps.get("scheduler", "none"),
+                                "task_timeout_s": a.get("task_timeout_s", self.s.runner.task_timeout_s),
+                                "compute_backends": (["local CLI"] +
+                                                     [b for b in caps.get("compute_backends", [])
+                                                      if b != "local CLI" and hpc_tools]),
+                                "hpc_tools": hpc_tools}
+            self.agents[aid]["capabilities"] = self._agent_capabilities(self.agents[aid])
+
+    def set_roster(self, runner_id: str, agents: list[dict], capabilities: dict | None = None) -> None:
         roster = {"agents": agents, "updated_at": time.time()}
         self.last_runner_rosters[runner_id] = roster
         self.store.put("runner_roster", runner_id, roster)
+        self.runner_agents[runner_id] = agents
         if capabilities is not None:
             self.runner_capabilities[runner_id] = capabilities
-        wsl_runner = next((rid for rid in self.runners
-                           if self.runner_capabilities.get(rid, {}).get("runtime_env") == "wsl"
-                           and wsl_readiness(self.runner_capabilities.get(rid, {}).get("wsl_readiness", {}))
-                           and any(a["id"] == "bioinfo-agent" for a in
-                                   (agents if rid == runner_id else self.runner_agents.get(rid, [])))), None)
-        if wsl_runner and self.agent_runner.get("bioinfo-agent") not in (None, wsl_runner):
-            self.agent_runner.pop("bioinfo-agent", None)
-            self.agents.pop("bioinfo-agent", None)
-            self.agent_online.setdefault("bioinfo-agent", asyncio.Event()).clear()
-        for aid in [a for a, r in self.agent_runner.items() if r == runner_id]:
-            self.agent_runner.pop(aid, None)
-            self.agents.pop(aid, None)
-            self.agent_online.setdefault(aid, asyncio.Event()).clear()
-        self.runner_agents[runner_id] = agents
-        for a in agents:
-            caps = self.runner_capabilities.get(runner_id, {})
-            if a["id"] == "bioinfo-agent":
-                if caps.get("runtime_env") == "wsl" and runner_id != wsl_runner:
-                    continue
-                # Only a connected, ready WSL worker takes precedence over the native roster.
-                if wsl_runner and runner_id != wsl_runner:
-                    continue
-            hpc_tools = bool(a.get("hpc_tools", caps.get("hpc_tools") and
-                                                 "hpc" in a.get("builtin_mcp", [])))
-            self.agents[a["id"]] = {**a, "runner_id": runner_id,
-                                    "scheduler": caps.get("scheduler", "none"),
-                                    "task_timeout_s": a.get("task_timeout_s", self.s.runner.task_timeout_s),
-                                    "compute_backends": (["local CLI"] +
-                                                         [b for b in caps.get("compute_backends", [])
-                                                          if b != "local CLI" and hpc_tools]),
-                                    "hpc_tools": hpc_tools}
-            self.agents[a["id"]]["capabilities"] = self._agent_capabilities(self.agents[a["id"]])
-            self.agent_runner[a["id"]] = runner_id
-            if runner_id in self.runners:
-                self.agent_online.setdefault(a["id"], asyncio.Event()).set()
-        if not wsl_runner and self.runner_capabilities.get(runner_id, {}).get("runtime_env") == "wsl":
-            for native_id in self.runners:
-                if self.runner_capabilities.get(native_id, {}).get("runtime_env") != "wsl":
-                    self.set_roster(native_id, self.runner_agents.get(native_id, []))
+        self._refresh_roster()
         # Every step waiting for a runner looks again (wait_for_runner) and ends now if nothing is left to wait for,
         # instead of after gateway.runner_wait_s with a false "runner never connected" (#521): an agent this runner
         # dropped (a contract that expired while it was off), or a first agent that waited only because no runner
@@ -2130,13 +2153,7 @@ class Hub:
             self.runners.pop(runner_id, None)  # keep roster + pending futures: the runner will reconnect
             self.runner_incarnations.pop(runner_id, None)
             self.runner_processes.pop(runner_id, None)
-            for aid, host in self.agent_runner.items():
-                if host == runner_id:
-                    self.agent_online.setdefault(aid, asyncio.Event()).clear()
-            if self.runner_capabilities.get(runner_id, {}).get("runtime_env") == "wsl":
-                for native_id in self.runners:
-                    if self.runner_capabilities.get(native_id, {}).get("runtime_env") != "wsl":
-                        self.set_roster(native_id, self.runner_agents.get(native_id, []))
+            self._refresh_roster()
             self._session_state_changed()
             return True
         return False
@@ -2151,9 +2168,8 @@ class Hub:
         if (first and not self.runners) or task.agent_id in self.agent_runner:
             return True
         # Known from the roster of a runner that is away; a connected runner that dropped the agent does not count.
-        return any(runner not in self.runners and
-                   any(agent.get("id") == task.agent_id for agent in entry.get("agents", []))
-                   for runner, entry in self.last_runner_rosters.items())
+        owner = self.effective_roster(include_history=True).get(task.agent_id)
+        return bool(owner and owner["runner_id"] not in self.runners)
 
     def _runner_wait_failure(self, agent_id: str) -> str:
         bound = float(self.s.gateway.runner_wait_s)
@@ -2432,6 +2448,7 @@ class Hub:
                 # A reported result supersedes an abandonment: the task did finish (#112).
                 self.store.put("task", tid, {**{k: v for k, v in task.items() if k != "abandoned"},
                                               "completed": True, "result": result.model_dump(mode="json")})
+                self._refresh_roster()
                 payload = task.get("payload") or {}
                 meta = payload.get("meta") or {}
                 request = self.requests.get(task.get("request_id") or "")
@@ -2560,6 +2577,7 @@ class Hub:
                           error=f"session belongs to runner {pinned}; {task.agent_id!r} is now on runner {target}")
 
     async def dispatch(self, task: Task) -> TaskResult:
+        self._refresh_roster()
         if (self.requests.get(task.request_id or "") or {}).get("status") == "cancelled":
             # A step still unwinding after request cancel retries or moves on; nothing more is sent (R13).
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
@@ -2658,6 +2676,7 @@ class Hub:
                     return result
                 if fut.done():
                     break
+                self._refresh_roster()
                 target = self.agent_runner[task.agent_id]
                 refused = self._session_pin_refusal(task, target)
                 if (refused or target != rid or
