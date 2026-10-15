@@ -17,8 +17,9 @@
 ## 바뀐 것
 
 - 새 `labhq/supervisor.py`: 조상 handle 고정, 역할 시작과 `labhq-<role>.pid` 기록(이전과 같은 형식), 대기, `child_exit` 기록(역할 PID·종료 코드·Windows 상태 hex·POSIX signal·가동 시간·종료 요청 여부)을 `<role>-supervisor-diagnostics.jsonl`에 남김. 역할이 시작되지 못하면 `child_start_failed`.
-- `supervisor.restart`(설정, **기본 꺼짐**): 켜면 스스로 끝난(종료 코드 0이 아닌) 역할을 다시 시작합니다. 5초에서 시작해 두 배씩 최대 120초 기다리고, 600초 안에 5번을 넘기면 그만둡니다(`restart_giving_up`). `down`·웹 종료가 먼저 남기는 표시 파일(`labhq-<role>.stopping`)이 있으면 다시 시작하지 않습니다.
-- `labhq/cli.py`: `up`이 감독을 띄우고 `labhq-<role>-supervisor.pid`로 기록한 뒤 역할 기록을 기다립니다. 감독이 먼저 끝났거나 20초 안에 기록하지 않으면 감독을 정리하고 exit 2. 감독이 다시 시작하는 중인 역할에는 감독을 하나 더 띄우지 않고 응답을 기다립니다. `down`은 감독을 먼저 끝낸 뒤 역할에 남은 것을 끝내고(그 사이 끝나 PID가 재사용됐을 수 있어 기록을 다시 읽음), 감독 신원을 확인할 수 없으면 아무것도 끄기 전에 exit 2입니다. `status`·`doctor`는 감독 PID와 역할의 마지막 종료(시각·코드·PID·가동 시간·`down` 요청 여부)를 보여 줍니다. 감독 기록은 있는데 감독이 없고 역할만 살아 있으면 warn입니다. 이 변경 전에 시작한 역할은 "감독 없음(감독 도입 전 방식으로 시작됨)"으로 알립니다.
+- `supervisor.restart`(설정, **기본 꺼짐**): 켜면 스스로 끝난(종료 코드 0이 아닌) 역할을 다시 시작합니다. 5초에서 시작해 두 배씩 최대 120초 기다리고, 600초 안에 5번을 넘기면 그만둡니다(`restart_giving_up`). 종료 코드 2는 labhq 자신의 시작 거부(설정 거부, #613의 다른 설정 소유 기록)라 같은 거부가 되풀이되므로 다시 시작하지 않습니다(`restart_skipped`). `down`·웹 종료가 먼저 남기는 표시 파일(`labhq-<role>.stopping`)이 있으면 다시 시작하지 않습니다.
+- `labhq/cli.py`: `up`이 감독을 띄우고 `labhq-<role>-supervisor.pid`로 기록한 뒤 역할 기록을 기다립니다. 감독이 먼저 끝났거나 20초 안에 기록하지 않으면 감독을 정리하고 exit 2. 감독이 다시 시작하는 중인 역할에는 감독을 하나 더 띄우지 않고 응답을 기다립니다. `down`은 감독을 먼저 끝낸 뒤 역할에 남은 것을 끝내고(그 사이 끝나 PID가 재사용됐을 수 있어 기록을 다시 읽음), 감독 신원을 확인할 수 없으면 아무것도 끄기 전에 exit 2입니다. `status`·`doctor`는 감독 PID와 역할의 마지막 종료(시각·코드·PID·가동 시간·`down` 요청 여부)를 보여 줍니다. 감독 기록은 있는데 감독이 없거나 신원을 읽을 수 없고(접근 거부, 다른 설정 파일의 기록) 역할만 살아 있으면 warn입니다. 이 변경 전에 시작한 역할은 "감독 없음(감독 도입 전 방식으로 시작됨)"으로 알립니다.
+- #614(인스턴스 identity)와 함께: `_up_unlocked`는 #614의 검사(시작 전 `check`, 응답마다 `verify`, 확인된 gateway만 기록)를 그대로 두고 감독 쪽을 얹었습니다. gateway·runner의 소유 기록과 identity는 프로세스가 `-c`로 받은 설정에서 스스로 계산하고, 감독은 `up`과 같은 `-c`를 넘기며 역할 기록에 이 설정의 경로를 씁니다. 그래서 감독이 따로 넘기거나 기록할 것은 없고, `up`의 확인은 전과 같이 맞습니다. 감독이 다시 시작하는 중인 역할의 응답에도 `verify`를 겁니다.
 - `labhq/gateway/shutdown.py`: 웹 종료가 gateway를 끄기 전에 종료 표시를 남깁니다.
 - `labhq/settings.py`, `config/labhq.example.yaml`(패키지 사본 포함), `docs/manual.md`: `supervisor` 설정과 설명.
 - `labhq/proc_tree.py`: `pin_ancestors`.
@@ -26,10 +27,10 @@
 
 ## 확인
 
-- 새 unit test 71건(`test_supervisor.py` 23, `test_supervisor_cli.py` 24, `test_pin_ancestors.py` 7, `test_no_tree_kill.py` 17). 가짜 프로세스·가짜 시계와 실제 PID와 겹치지 않는 값만 쓰고, 실제 프로세스 primitive에 닿으면 실패하게 막아 두었습니다. main에서는 모두 실패합니다(가드는 8곳이 걸리고, 나머지는 `labhq.supervisor`·`pin_ancestors`·`latest_child_exit`가 없어 실패).
+- 새 unit test 79건(`test_supervisor.py` 25, `test_supervisor_cli.py` 26, `test_supervisor_up_identity.py` 4, `test_pin_ancestors.py` 7, `test_no_tree_kill.py` 17). 가짜 프로세스·가짜 시계와 실제 PID와 겹치지 않는 값만 쓰고, 실제 프로세스 primitive에 닿으면 실패하게 막아 두었습니다. main(병합 전)에서는 모두 실패합니다(가드는 8곳이 걸리고, 나머지는 `labhq.supervisor`·`pin_ancestors`·`latest_child_exit`가 없어 실패).
 - 기존 test 2건을 새 동작에 맞췄습니다: `test_cli_launch.py`의 up·down 기록 test(이제 감독 기록을 확인), `test_process_diagnostics.py`의 로그·버퍼링 test(감독의 스트림을 확인, 역할의 스트림은 `test_supervisor.py`).
 - 실제 프로세스 test 6건은 CI 전용입니다(`tests/test_supervisor_process.py`): 실패한 역할의 종료 코드 기록, 재시작과 상한, 밖에서 죽인 역할은 재시작하고 표시된 정지는 재시작하지 않음, POSIX signal 전달, **Windows: 감독이 끝난 부모의 PID를 쥐고 있어 그 PID가 열린 채 남음**, 진짜 gateway가 감독의 자식으로 돌고 `down`이 둘 다 끝냄. 기존 `test_web_shutdown_process.py`도 이제 감독 아래의 진짜 gateway를 씁니다. Windows `clean-install` job이 진짜 `up`→`down`을 돕니다.
-- 로컬에서는 프로세스를 띄우거나 끄는 test를 돌리지 않았습니다(PI 시운전 중). 그 밖의 121개 test 파일 3600건 통과, `scripts/check_public.sh`·`scripts/patch_notes.py check` 통과. 읽기만 하는 확인으로 `pin_ancestors()`를 이 PC에서 한 번 불러 조상 4개를 쥐었다 놓았습니다.
+- 로컬에서는 프로세스를 띄우거나 끄는 test를 돌리지 않았습니다(PI 시운전 중). 병합 전에 그 밖의 121개 test 파일 3600건, 병합 뒤에는 #614의 `test_instance_guard.py`·`test_init_defaults.py`와 예시 설정 일치 test를 포함해 449건 통과, `scripts/check_public.sh`·`scripts/patch_notes.py check` 통과. 읽기만 하는 확인으로 `pin_ancestors()`를 이 PC에서 한 번 불러 조상 4개를 쥐었다 놓았습니다.
 
 ## 위험과 남은 것
 
