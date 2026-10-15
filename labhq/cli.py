@@ -1742,7 +1742,7 @@ def main(argv: list[str] | None = None) -> None:
     cr.add_argument("project")
     cr.add_argument("pr", type=int)
     cr.add_argument("--note", default="")
-    sub.add_parser("approvals")
+    sub.add_parser("approvals").add_argument('--details', action='store_true', help='show original tool input and rule')
     ap = sub.add_parser("approve", help="decide a pending approval (CP2 evidence review needs --choice)")
     ap.add_argument("id")
     ap.add_argument("--deny", action="store_true")
@@ -2084,8 +2084,16 @@ def main(argv: list[str] | None = None) -> None:
     elif args.cmd == "codex-review":
         print(_api(s, "POST", f"/api/projects/{args.project}/prs/{args.pr}/codex-review", json={"note": args.note}))
     elif args.cmd == "approvals":
+        from .pi_text import with_approval_copy
         for a in _api(s, "GET", "/api/approvals"):
-            print(f"{a['id']}  [{a['kind']}] {a['summary']}")
+            a = with_approval_copy(a)
+            print(f"{a['id']}  [{a['kind']}] {a['pi_summary']}")
+            if a['kind'] == 'tool_permission':
+                print(f"요청 직원: {(a.get('detail') or {}).get('requester_name') or a.get('agent_id') or '미제공'}")
+            print(a['pi_reason'])
+            print(a['pi_outcome'])
+            if args.details:
+                print('자세히: ' + json.dumps({'summary': a['summary'], 'detail': a.get('detail') or {}}, ensure_ascii=False))
             for option in _question_options(a):
                 print(f"    {option}")
     elif args.cmd == "approve":

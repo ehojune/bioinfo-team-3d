@@ -40,7 +40,7 @@ export function expandableText(parent, value, options = {}) {
   if (options.pi) return piText(parent, value, options);
   const text = String(value ?? ''), limit = options.limit ?? 240;
   const preview = text.replace(/\s+/g, ' ').trim();
-  const cut = options.truncated ? ` (서버에서 ${options.cutChars ?? [...text].length}자로 잘림)` : '';
+  const cut = options.truncated ? ' (받은 내용 일부)' : '';
   if (!options.fold && preview.length <= limit && text.split('\n').length <= 8) {
     return add(parent, options.tag || 'span', text + cut);
   }
@@ -547,7 +547,7 @@ export function decisionFacts(value, who = '') {
     case 'research_evidence': return [['검토 단계', d.results ? `${Object.keys(d.results).length}개` : missing], ['근거를 잃은 주장', Array.isArray(d.unsupported_claims) ? `${d.unsupported_claims.length}개` : missing]];
     case 'research_continue': return [['이번 차수', text(d.round)], ['차수 상한', text(d.limit)]];
     case 'resume': return [['남은 단계', Array.isArray(d.steps) ? d.steps.join(', ') || (d.has_plan === false ? '요청 전체' : '없음') : missing], ['접수', receivedAt(d.created_at) || missing]];
-    case 'tool_permission': return [['도구', text(d.tool_name)], ['요청 직원', who || missing]];
+    case 'tool_permission': return [['도구', text(d.tool_name)], ['요청 직원', d.requester_name || who || missing]];
     case 'recruit': return [['제안 직원', who || missing], ['출처', d.repo || value.repo ? '저장소 · 자세히' : '자세히에서 확인']];
     default: return [['요청 직원', who || missing], ['종류', (DECISION_QUESTIONS[value.kind] || '결정 요청').replace(/\?$/, '')]];
   }
@@ -575,7 +575,7 @@ function updateJournalCard(p, value, suggestion) {
     if (fold) {
       const caption = fold.children[0]?.textContent || '';
       p.detail.replaceChildren(...[...fold.children].slice(1));
-      if (caption.includes('서버에서')) add(p.detail, 'small', caption);
+      if (caption.includes('받은 내용 일부')) add(p.detail, 'small', caption);
     }
   }
   // Raw values remain exact inside 자세히; field captions are readable Korean, including unknown keys.
@@ -674,7 +674,8 @@ function updateCard(row, item, options) {
   const labels = options.kindLabels || {};
   const approval = item.type === 'approval';
   p.title.textContent = item.type === 'suggestion' ? '파견직 채용 제안' : (labels[value.kind] || value.kind || '결정');
-  p.who.textContent = options.nick ? options.nick(value.agent_id) || 'CSO' : value.agent_id || 'CSO';
+  p.who.textContent = (value.kind === 'tool_permission' && value.detail?.requester_name) ||
+    (options.nick ? options.nick(value.agent_id) || 'CSO' : value.agent_id || 'CSO');
   // Parallel CP1/CP2 cards look alike; the request text tells them apart (data already in the web state).
   const request = approval && value.request_id && options.requests?.get ? options.requests.get(value.request_id) : null;
   syncExpandableText(p.request, request?.text ? `요청: ${request.text}` : '', {limit: 90});

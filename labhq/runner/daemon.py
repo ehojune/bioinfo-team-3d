@@ -1429,13 +1429,14 @@ class Runner:
                 result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=error)
                 await emit_final({"state": "error", "error": error}, result.model_dump(mode="json"))
                 return result
-            # PI personal paths (policy.private_paths): one that holds a folder this task works in is left open.
+            # Explicit references retain their policy exception; managed roots stay private.
             keep = [ws.dir, self.ws_root, *extra_dirs, *read_dirs,
                     *(self.s.path(r) for r in self.s.runner.reference_roots),
                     *(self.s.path(p.local_dir) for p in self.s.projects if p.local_dir)]
             # Loading code never exempts its containing config/login folder from protection.
             open_reads = plugin_keep_dirs(self.s, agent.plugin_dirs, ws.dir)
-            if agent.id == self.s.recruit.agent_id or task.meta.get("kind") == "recruit":
+            if task.meta.get("kind") == "recruit" or (
+                    task.meta.get("kind") == "paper_skill" and agent.id == self.s.recruit.agent_id):
                 from ..recruit.paper2agent import skill_path
                 if agent.engine in (Engine.claude_code, Engine.codex):
                     skill = skill_path(agent.engine.value, self.s)
@@ -1800,6 +1801,31 @@ class Runner:
     # ---------------- broker callbacks (from MCP tools) ----------------
     async def _on_approval(self, req: ApprovalRequest) -> None:
         req.request_id = req.request_id or self.task_req.get(req.task_id or "")
+        ws = self.workspaces.get(req.task_id or '')
+        if req.kind == 'tool_permission' and ws:
+            from ..pi_text import approval_copy
+            from ..recruit.paper2agent import skill_path
+            meta = ws.task.meta
+            labels = {str(ws.dir): '이 작업의 빌드 폴더' if meta.get('kind') == 'paper_skill' else '이 작업의 폴더',
+                      str(self.s.path(self.s.runner.talent_dir)): 'labhq 논문 스킬 보관 폴더',
+                      str(self.s.path(self.s.runner.workspace_root)): 'labhq 작업 폴더'}
+            if meta.get('kind') in ('paper_skill', 'recruit') and ws.agent.engine in (Engine.claude_code, Engine.codex):
+                try:
+                    labels[str(skill_path(ws.agent.engine.value, self.s))] = 'Paper2Agent 스킬 참고 자료'
+                except ValueError:
+                    pass  # Invalid install configuration must not prevent an approval from being delivered.
+            req.agent_id = ws.task.agent_id
+            req.detail = {**req.detail, 'requester_name': ws.agent.name,
+                          'workdir': str(ws.dir),
+                          'permission_mode': ws.agent.permission_mode,
+                          'task_context': {'kind': meta.get('kind'), 'title': meta.get('title'),
+                                           'step_id': meta.get('step_id'),
+                                           'paper_title': (meta.get('paper_skill') or {}).get('title')},
+                          'path_labels': labels}
+            for key, value in approval_copy(req.kind, req.summary, req.detail).items():
+                setattr(req, key, value)
+            from ..tool_explanation import needs_interpretation
+            req.pi_needs_interpretation = needs_interpretation(req.detail)
         self.approval_tasks[req.id] = (req.task_id, req.agent_id)
         base = dict(task_id=req.task_id, agent_id=req.agent_id, request_id=req.request_id)
         await self.emit_all([

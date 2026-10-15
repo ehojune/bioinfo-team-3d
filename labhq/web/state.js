@@ -244,6 +244,15 @@ function toolInputLine(input) {
   if (value && typeof value === 'object') value = value.command ?? value.file_path ?? value.path ?? value.query ?? value.pattern ?? value.description ?? Object.keys(value).join(', ');
   return String(value ?? '').replace(/\s+/g, ' ').trim();
 }
+// Display categories only: a script's contents and effects are not inferred from its name.
+function toolActivitySummary(tool = {}) {
+  const command = toolInputLine(tool.input), shell = /Bash|PowerShell|shell|command_execution/i.test(tool.name || '');
+  if (!shell) return ({Read:'파일 읽기', Glob:'파일 목록 보기', Grep:'파일 내용 검색', Write:'파일 쓰기', Edit:'파일 수정'}[tool.name]) || '도구 실행';
+  const engine = /\buv\s+run\b/.test(command) ? 'uv' : /\bpython(?:3|\.exe)?\b/.test(command) ? 'python' : '';
+  if (engine && /(?:^|[\s/\\])paper_bundle\.py\b/.test(command)) return `논문 묶음을 만드는 스크립트 실행(${engine})`;
+  if (engine) return `스크립트 실행(${engine})`;
+  return '작업 명령 실행';
+}
 function trackActivity(ev) {
   const d = ev.data || {}, tid = ev.task_id;
   if (!tid) return;
@@ -286,7 +295,7 @@ function trackActivity(ev) {
     } else S.activeTasks.delete(tid);
   }
 }
-const nick = id => { const key = String(id || '').toLowerCase(), a = ag(key); return ({cso:STAFF_NAMES.cso, recruiter:STAFF_NAMES.recruiter, facilities:STAFF_NAMES.facilities}[key]) || (a?.name && a.name !== a.id ? String(a.name).split(' ')[0] : STAFF_NAMES[key] || (key.startsWith('c_') ? '파견 직원' : id ? '직원' : '')); };
+const nick = id => { const key = String(id || '').toLowerCase(), a = ag(key); return ({cso:STAFF_NAMES.cso, recruiter:STAFF_NAMES.recruiter, facilities:STAFF_NAMES.facilities}[key]) || (a?.name && a.name !== a.id ? (['recruiter','editor'].includes(key) ? String(a.name) : String(a.name).split(' ')[0]) : STAFF_NAMES[key] || (key.startsWith('c_') ? '파견 직원' : id ? '직원' : '')); };
 // A staff member's task rows: kept while the task runs, waits for HPC or an answer, is halted, or holds its paused
 // step; removed on its terminal event, as a reload would (PR #532 review).
 function trackTask(a, tid, state, title, keep = false, rid = '', sid = '') {
@@ -351,6 +360,7 @@ function setPlan(q, plan) {
 function receivedText(row, text, metadata = {}) {
   Object.defineProperties(row, {
     fullText: {value: String(text ?? ''), enumerable: false},
+    piText: {value: metadata.piText, enumerable: false},
     truncated: {value: Boolean(metadata.text_truncated || metadata.input_truncated), enumerable: false},
     cutChars: {value: metadata.text_limit ?? metadata.input_limit ?? [...String(metadata.text ?? metadata.input ?? text ?? '')].length, enumerable: false},
   });
@@ -563,7 +573,8 @@ function apply(ev, replay = false) {
     }
     case 'agent.tool': { const a = ag(id); if (!a) break; a.tool = d.name; a.toolAt = ts; a.toolCalls = (a.toolCalls || 0) + 1;
       const input = typeof d.input === 'string' ? d.input : JSON.stringify(d.input ?? '');
-      logTo(a, `도구 ${toolLabel(d.name)} ${input}`, ts, {...d, previewText: `도구 ${toolLabel(d.name)} ${short(d.summary || toolInputLine(d.input), 80)}`}); break; }
+      logTo(a, `도구 ${toolLabel(d.name)} ${input}`, ts, {...d, piText: toolActivitySummary(d),
+        previewText: `도구 ${toolLabel(d.name)} ${short(d.summary || toolInputLine(d.input), 80)}`}); break; }
     case 'agent.control': {
       // Merged, never replaced: a steer or pause to a halted task keeps it halted until resumed or expired.
       if (ev.task_id) {
@@ -984,7 +995,7 @@ function toolLabel(name) {
     Skill: '스킬 실행', Agent: '서브에이전트', edit: '파일 수정', web_search: '웹 검색' }[n]) || n;
 }
 
-return { S, apply, selectRequest, ag, visual, stateText, currentTask, currentTool, toolInputLine, nick, req, setPlan, feed, fillFollowups, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES, phaseLabel };
+return { S, apply, selectRequest, ag, visual, stateText, currentTask, currentTool, toolInputLine, toolActivitySummary, nick, req, setPlan, feed, fillFollowups, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES, phaseLabel };
 }
 root.LabHQState = { createOfficeState, costLabel, engineCostLabel, agentCostLabel, agentSpentLabel, totalCostLabel,
   isActiveRequest, isTerminalRequest, isPastRequest, officeRequests, sessionCostRequests, requestsCostTotal,

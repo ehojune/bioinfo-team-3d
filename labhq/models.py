@@ -358,6 +358,7 @@ class ApprovalRequest(BaseModel):
     pi_reason: str = ''
     pi_outcome: str = ''
     pi_explainer: str = ''
+    pi_needs_interpretation: bool = False
 
     @model_validator(mode='after')
     def explain_for_pi(self) -> 'ApprovalRequest':
@@ -368,6 +369,9 @@ class ApprovalRequest(BaseModel):
                 setattr(self, key, value)
         if missing:
             self.pi_explainer = 'chief_of_staff'
+            if self.kind == 'tool_permission':
+                from .tool_explanation import needs_interpretation
+                self.pi_needs_interpretation = needs_interpretation(self.detail)
         return self
 
 
