@@ -56,8 +56,9 @@ def _run_probe(argv: list[str], env: dict[str, str], timeout: float) -> tuple[in
 def _kill_tree(proc: subprocess.Popen) -> None:
     """End a timed-out probe and whatever it started; every wait here is bounded."""
     if os.name == "nt":
-        # Not `taskkill /T`: it follows parent PIDs Windows may have reused. This runs on every timed-out probe, and it
-        # ended the PI's gateway and runner together when a stale parent PID of theirs matched the probe's (#589).
+        # Not a kill that collects the tree by parent PID alone: Windows may have reused those PIDs. This runs on every
+        # timed-out probe, and such a kill ended the PI's gateway and runner together when a stale parent PID of theirs
+        # matched the probe's (#589).
         try:
             proc_tree.kill_tree(proc.pid)
         except (OSError, MemoryError):

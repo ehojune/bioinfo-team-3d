@@ -1,0 +1,25 @@
+pr: 617
+rows:
+- sha: 89b4dfe
+  at: 2026-10-15 12:49
+  text: 프로세스가 가까운 조상 4개의 handle을 열어 두는 pin_ancestors를 더해, 끝난 부모의 PID가 다른 프로세스에 재사용되지
+    않게 한다(#589).
+- sha: 0b00bf4
+  at: 2026-10-15 12:49
+  text: up이 역할마다 감독 프로세스를 띄워 gateway·runner의 부모가 끝까지 살아 있게 하고, 감독이 역할의 종료 코드와 시각을
+    진단 기록에 남기며 status·doctor가 보여 준다. 재시작은 설정(기본 꺼짐)이다(#589).
+- sha: c7f0a12
+  at: 2026-10-15 12:50
+  text: tests·labhq 어디에도 taskkill의 /T 스위치가 없도록 가드 test를 더하고, 걸리던 설명 주석 여덟 곳의 말을 바꾼다(#589).
+- sha: 4c1a7e4
+  at: 2026-10-15 14:06
+  text: origin/main(#614)을 병합해 up이 감독 프로세스 검사와 인스턴스 identity 검증(check·verify·기록)을
+    함께 돌린다. gateway·runner의 소유 기록은 프로세스가 같은 -c로 스스로 계산하므로 감독이 넘길 것은 없다(#589).
+- sha: 7a36ced
+  at: 2026-10-15 14:09
+  text: status·doctor가 신원을 읽을 수 없는 감독 기록(접근 거부, 다른 설정 파일)도 죽은 감독 기록처럼 warn으로 보여 준다(#589
+    봇 P2).
+- sha: 0d5eb80
+  at: 2026-10-15 14:09
+  text: 'supervisor.restart가 켜져 있어도 종료 코드 2(labhq 자신의 시작 거부)는 다시 시작하지 않고, up의 감독 검사를
+    #614 identity 검증과 함께 가짜 프로세스로 test한다(#589).'

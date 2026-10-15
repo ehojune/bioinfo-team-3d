@@ -17,13 +17,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from .. import proc_tree
+from .. import durable, proc_tree
 from ..facilities import signatures as env_signatures
 from ..models import AgentSpec, McpServerSpec, Task, TaskResult
 from ..settings import Settings
 from ..test_guard import guard_test_path
 from ..util import event_preview, extract_json, merge_staff_env, short, without_windows_app_aliases
-from .owned import OwnedPathError, plain_directory, write_owned
+from .owned import OwnedPathError, awrite_owned, plain_directory, write_owned
 from .read_only import (labhq_workspace_paths, read_only_engine_env, read_only_launch_error, read_only_mismatch,
                         read_only_workspace_error)
 
@@ -473,6 +473,10 @@ class RunContext:
         """Write one file in the adapter's scratch folder `.labhq/`, never through a link (#165)."""
         return write_owned(self.workdir, f".labhq/{name}", text)
 
+    async def awrite_meta(self, name: str, text: str) -> Path:
+        """`write_meta` for a coroutine: the fsync runs on the durable writer thread (#606)."""
+        return await awrite_owned(self.workdir, f".labhq/{name}", text)
+
 
 
 async def pending_uac_prompts() -> bool | None:
@@ -814,7 +818,9 @@ class AgentAdapter(ABC):
             await ctx.emit("agent.log", {"level": "warn", "text": (
                 f"읽기 전용 실행이라 engines.{self.engine}.env에서 {', '.join(dropped)}를 뺐습니다. "
                 "로그인·설정 위치·API 접속 변수만 씁니다")})
-        self.prepare(ctx)  # may add to ctx.env (engine: cli puts CliSpec.env there)
+        # May add to ctx.env (engine: cli puts CliSpec.env there). It writes labhq's files with an fsync each, so it
+        # runs as one job on the durable writer thread and the event loop keeps serving (#606).
+        await durable.run(durable.FILES, self.prepare, ctx)
         cmd = self.build_command(ctx)
         env = self.staff_env(ctx)
 
@@ -848,7 +854,7 @@ class AgentAdapter(ABC):
         refused = self.prompt_pointer_error(ctx)
         if refused:
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error=refused)
-        ctx.write_meta("command.txt", shlex.join(short(a, 200) if len(a) > 200 else a for a in cmd))
+        await ctx.awrite_meta("command.txt", shlex.join(short(a, 200) if len(a) > 200 else a for a in cmd))
         await ctx.emit("agent.log", {"level": "debug", "text": f"$ {ctx.agent.engine.value} ({len(cmd)} args)"})
 
         payload = self.stdin_payload(ctx)
@@ -1098,7 +1104,7 @@ class AgentAdapter(ABC):
         await asyncio.gather(guard, watch, halting, return_exceptions=True)  # an ending tree finishes first
         returncode = 0 if ended_after_result else proc.returncode  # ended by labhq after the result: not a failure
         try:
-            ctx.write_meta("stderr_tail.txt", "\n".join(stderr_tail))
+            await ctx.awrite_meta("stderr_tail.txt", "\n".join(stderr_tail))
         except OwnedPathError:  # the agent replaced .labhq with a link while it ran: keep the result, drop the tail
             await ctx.emit("agent.log", {"level": "warn", "text": (
                 "작업 폴더의 .labhq가 실행 중에 링크로 바뀌어 stderr 기록을 남기지 않았습니다")})
@@ -1121,7 +1127,8 @@ class AgentAdapter(ABC):
         if os.name == "nt":
             if proc.returncode is not None:
                 return
-            # Not `taskkill /T`: it follows parent PIDs Windows may have reused, and ended an unrelated tree (#589).
+            # Not a kill that collects the tree by parent PID alone: Windows may have reused those PIDs, and one ended an
+            # unrelated tree (#589).
             try:
                 proc_tree.kill_tree(proc.pid)
             except (OSError, MemoryError):  # the direct kill below still reaps the child

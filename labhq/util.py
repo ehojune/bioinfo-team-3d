@@ -11,6 +11,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from . import durable
+
 
 def tool_input_summary(value: Any) -> str:
     """A readable tool input head, taken before JSON previews are truncated."""
@@ -100,7 +102,18 @@ def replace_file(source: str | Path, target: str | Path, *, attempts: int = 20, 
 
 
 def atomic_write_text(path: str | Path, text: str) -> None:
-    """Replace a text file from a same-directory temporary file."""
+    """Replace a text file from a same-directory temporary file.
+
+    Queues behind the files' durable writer while it has work queued (labhq.durable), so it cannot overtake a write."""
+    durable.call(durable.FILES, _atomic_write_text_now, path, text)
+
+
+async def aatomic_write_text(path: str | Path, text: str) -> None:
+    """`atomic_write_text` for a coroutine: the fsync runs on the durable writer thread, not on the event loop."""
+    await durable.run(durable.FILES, _atomic_write_text_now, path, text)
+
+
+def _atomic_write_text_now(path: str | Path, text: str) -> None:
     target = Path(path)
     temporary: Path | None = None
     try:

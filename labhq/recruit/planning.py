@@ -304,7 +304,7 @@ async def run_task(runner, task):
         if not spec or not spec.contract or spec.contract.status != "active" or spec.contract.kind not in {"technician", "full"}:
             return {"status": "failed", "error": "기술자형 수습 미통과"}
         spec.contract.verification["conversion_payload"] = payload
-        runner.registry.save_contract(spec)
+        await runner.registry.asave_contract(spec)
         return {"status": "active", "agent_id": spec.id, "reused": False}
 
     try:

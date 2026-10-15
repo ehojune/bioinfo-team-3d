@@ -452,7 +452,7 @@ class Recruitment:
         if reason:
             c.verification["probation_reason"] = reason
         c.status = "active" if passed else "probation"
-        path = self.r.registry.save_contract(spec)
+        path = await self.r.registry.asave_contract(spec)
         await self._emit("recruit.done", {"agent": spec.summary(), "path": str(path), "passed_probation": passed})
         return spec
 

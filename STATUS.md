@@ -6,6 +6,74 @@
 
 ## 결론
 
+Refs #620. OKF Loremaster를 읽기만 하고 검토해 참고 자료에 올렸습니다. 코드 변경은 없고, 채택할 일은 후속 issue 두 건(#622, #623)으로 넘겼습니다.
+
+## 바뀐 것
+
+- `docs/references.md`·`docs/references.en.md`: OKF Loremaster 행(검토만 했고 코드는 가져오지 않았다고 표시).
+- `docs/reference/okf-loremaster.md`(새 노트)와 `docs/reference/README.md` 색인 한 줄: 프로젝트 개요, 가져갈 것 네 건의 매핑, Apache-2.0 조건.
+- 후속 issue: #622(원문 대조 검증 이식, 이어서 선행 연구 조사 적용), #623(벤치 정답 값 누출 검사).
+
+## 확인
+
+- 대상 저장소는 파일만 읽었고 실행·설치하지 않았습니다(커밋 `ead3819`).
+- `scripts/check_public.sh` 통과, 바꾼 문서의 상대 링크 4개 파일 모두 깨진 곳 없음.
+- 코드 변경이 없어 test는 돌리지 않았습니다.
+
+## 남은 것
+
+- README 본문에는 References 절이 없어서 README '더 읽기'가 연결하는 `docs/references*.md`에 넣었습니다.
+- 코드를 실제로 옮기면 그 행을 "코드를 옮겼다"로 고칩니다(#622).
+
+## 결론
+
+`labhq up`이 역할(gateway, runner)마다 감독 프로세스를 하나씩 띄웁니다. 감독이 gateway·runner를 자기 자식으로 시작해 끝까지 기다리므로, 두 프로세스의 부모 PID는 사는 동안 재사용될 수 없습니다. 감독은 역할이 끝난 시각과 종료 코드도 남깁니다. #589에서 얻지 못하던 단서입니다. 시운전이 끝난 뒤 배포합니다. Refs #589.
+
+## 남은 경로
+
+#597은 labhq 자신의 종료 경로만 고쳤습니다. `up`이 끝나면 launcher는 죽은 `up`을 부모로 기록한 채 남습니다. labhq 밖의 코드(test의 트리 종료, 다른 도구)가 부모 PID만 보고 트리를 끄면, 그 번호를 물려받은 프로세스를 따라 gateway·runner가 함께 죽습니다. 10-15 10:38~10:48에 #597을 배포한 뒤에도 같은 모양으로 꺼졌습니다. 밖의 코드는 고칠 수 없으니, 그 PID가 다른 프로세스에 배정되지 않게 합니다.
+
+## 선택한 설계
+
+(a) 감독 프로세스를 택했습니다. 부모가 살아 있으면 PID는 재사용될 수 없고, 종료 코드도 같은 자리에서 남습니다. (b) `PROC_THREAD_ATTRIBUTE_PARENT_PROCESS`는 부모를 다른 오래 사는 프로세스로 지정하는데, 그 프로세스가 죽으면 같은 문제가 돌아옵니다. STARTUPINFOEX를 ctypes로 직접 만들어야 하고 권한이 없을 때의 경로도 갈라져, 단순하지 않아서 뺐습니다.
+
+(a)만으로는 한 곳이 비어 있어 하나를 더했습니다. 감독 자신의 부모는 죽은 `up`입니다. 그 PID가 재사용돼 트리 종료가 거기서 시작하면 감독이 자식으로 잡히고, gateway·runner가 따라 죽습니다. 그래서 감독은 시작할 때 조상 프로세스 4개의 handle을 열어 둡니다(`proc_tree.pin_ancestors`). 열린 handle이 있는 동안은 끝난 프로세스의 PID도 반환되지 않습니다. #597의 종료 helper가 이미 쓰는 성질입니다. `up`은 감독이 이 일을 하고 역할을 기록할 때까지(최대 20초) 끝나지 않습니다. 조상 중 하나인 `up`이 살아 있어야 그 PID를 붙들 수 있습니다.
+
+감독은 역할마다 하나입니다(gateway용, runner용). 한쪽만 다시 띄우는 `up`과, runner만 끄고 gateway는 두는 웹 종료(`down --keep-gateway`)가 있습니다. 감독 하나가 둘을 맡으면 시작·종료 명령을 감독에게 보내는 통로가 따로 필요합니다. 역할마다 하나면 `up`·`down`이 지금처럼 프로세스를 띄우고 끄는 것으로 끝납니다.
+
+## 바뀐 것
+
+- 새 `labhq/supervisor.py`: 조상 handle 고정, 역할 시작과 `labhq-<role>.pid` 기록(이전과 같은 형식), 대기, `child_exit` 기록(역할 PID·종료 코드·Windows 상태 hex·POSIX signal·가동 시간·종료 요청 여부)을 `<role>-supervisor-diagnostics.jsonl`에 남김. 역할이 시작되지 못하면 `child_start_failed`.
+- `supervisor.restart`(설정, **기본 꺼짐**): 켜면 스스로 끝난(종료 코드 0이 아닌) 역할을 다시 시작합니다. 5초에서 시작해 두 배씩 최대 120초 기다리고, 600초 안에 5번을 넘기면 그만둡니다(`restart_giving_up`). 종료 코드 2는 labhq 자신의 시작 거부(설정 거부, #613의 다른 설정 소유 기록)라 같은 거부가 되풀이되므로 다시 시작하지 않습니다(`restart_skipped`). `down`·웹 종료가 먼저 남기는 표시 파일(`labhq-<role>.stopping`)이 있으면 다시 시작하지 않습니다.
+- `labhq/cli.py`: `up`이 감독을 띄우고 `labhq-<role>-supervisor.pid`로 기록한 뒤 역할 기록을 기다립니다. 감독이 먼저 끝났거나 20초 안에 기록하지 않으면 감독을 정리하고 exit 2. 감독이 다시 시작하는 중인 역할에는 감독을 하나 더 띄우지 않고 응답을 기다립니다. `down`은 감독을 먼저 끝낸 뒤 역할에 남은 것을 끝내고(그 사이 끝나 PID가 재사용됐을 수 있어 기록을 다시 읽음), 감독 신원을 확인할 수 없으면 아무것도 끄기 전에 exit 2입니다. `status`·`doctor`는 감독 PID와 역할의 마지막 종료(시각·코드·PID·가동 시간·`down` 요청 여부)를 보여 줍니다. 감독 기록은 있는데 감독이 없거나 신원을 읽을 수 없고(접근 거부, 다른 설정 파일의 기록) 역할만 살아 있으면 warn입니다. 이 변경 전에 시작한 역할은 "감독 없음(감독 도입 전 방식으로 시작됨)"으로 알립니다.
+- #614(인스턴스 identity)와 함께: `_up_unlocked`는 #614의 검사(시작 전 `check`, 응답마다 `verify`, 확인된 gateway만 기록)를 그대로 두고 감독 쪽을 얹었습니다. gateway·runner의 소유 기록과 identity는 프로세스가 `-c`로 받은 설정에서 스스로 계산하고, 감독은 `up`과 같은 `-c`를 넘기며 역할 기록에 이 설정의 경로를 씁니다. 그래서 감독이 따로 넘기거나 기록할 것은 없고, `up`의 확인은 전과 같이 맞습니다. 감독이 다시 시작하는 중인 역할의 응답에도 `verify`를 겁니다.
+- `labhq/gateway/shutdown.py`: 웹 종료가 gateway를 끄기 전에 종료 표시를 남깁니다.
+- `labhq/settings.py`, `config/labhq.example.yaml`(패키지 사본 포함), `docs/manual.md`: `supervisor` 설정과 설명.
+- `labhq/proc_tree.py`: `pin_ancestors`.
+- `tests/test_no_tree_kill.py`(가드): tests/와 labhq/의 모든 텍스트 파일(주석·docstring 포함)에서 `taskkill` 뒤 같은 문장의 `/T`·`-T` 스위치를 찾습니다. 여러 줄 인자 목록과 `/F/T`도 잡습니다. 점검 결과 실제 `/T` 호출은 tests/에도 labhq/에도 없었고, 설명 주석·docstring 8곳만 걸려 말을 바꿨습니다. 부모 PID만 보고 트리를 끄는 코드도 없었습니다(`adapters/base.py`의 `_idle_process_tree`는 읽기 전용).
+
+## 확인
+
+- 새 unit test 79건(`test_supervisor.py` 25, `test_supervisor_cli.py` 26, `test_supervisor_up_identity.py` 4, `test_pin_ancestors.py` 7, `test_no_tree_kill.py` 17). 가짜 프로세스·가짜 시계와 실제 PID와 겹치지 않는 값만 쓰고, 실제 프로세스 primitive에 닿으면 실패하게 막아 두었습니다. main(병합 전)에서는 모두 실패합니다(가드는 8곳이 걸리고, 나머지는 `labhq.supervisor`·`pin_ancestors`·`latest_child_exit`가 없어 실패).
+- 기존 test 2건을 새 동작에 맞췄습니다: `test_cli_launch.py`의 up·down 기록 test(이제 감독 기록을 확인), `test_process_diagnostics.py`의 로그·버퍼링 test(감독의 스트림을 확인, 역할의 스트림은 `test_supervisor.py`).
+- 실제 프로세스 test 6건은 CI 전용입니다(`tests/test_supervisor_process.py`): 실패한 역할의 종료 코드 기록, 재시작과 상한, 밖에서 죽인 역할은 재시작하고 표시된 정지는 재시작하지 않음, POSIX signal 전달, **Windows: 감독이 끝난 부모의 PID를 쥐고 있어 그 PID가 열린 채 남음**, 진짜 gateway가 감독의 자식으로 돌고 `down`이 둘 다 끝냄. 기존 `test_web_shutdown_process.py`도 이제 감독 아래의 진짜 gateway를 씁니다. Windows `clean-install` job이 진짜 `up`→`down`을 돕니다.
+- 로컬에서는 프로세스를 띄우거나 끄는 test를 돌리지 않았습니다(PI 시운전 중). 병합 전에 그 밖의 121개 test 파일 3600건, 병합 뒤에는 #614의 `test_instance_guard.py`·`test_init_defaults.py`와 예시 설정 일치 test를 포함해 449건 통과, `scripts/check_public.sh`·`scripts/patch_notes.py check` 통과. 읽기만 하는 확인으로 `pin_ancestors()`를 이 PC에서 한 번 불러 조상 4개를 쥐었다 놓았습니다.
+
+## 위험과 남은 것
+
+- 배포 뒤 `down`→`up`을 한 번 해야 감독 아래로 들어갑니다. 그 전에 시작한 gateway·runner는 이전 방식 그대로입니다.
+- 감독 자체가 밖에서 강제 종료되면 역할은 다시 죽은 번호를 부모로 가진 채 남습니다. `status`·`doctor`가 warn으로 알리지만 막지는 못합니다. 감독이 죽을 때 역할을 함께 끝내는 job 묶음은 두지 않았습니다.
+- 조상 handle을 못 열면(권한, 이미 끝난 부모) 역할은 그래도 시작하고 이유를 `parents_pinned` 행에 남깁니다. 그때는 보호가 없습니다.
+- Windows `down`은 트리를 말단부터 끄므로 감독이 `child_exit`를 쓰기 전에 끝날 수 있습니다. POSIX는 기록합니다.
+- 프로세스가 역할마다 늘어납니다(감독 launcher와 interpreter). 명령줄로 gateway·runner를 찾는 도구에는 `labhq.supervisor`도 보입니다.
+- 10-15의 정지가 PID 재사용 때문이라는 증거는 아직 가설입니다. 다음에 꺼지면 감독의 `child_exit`가 종료 코드를 남깁니다.
+
+Refs #589
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+## 결론
+
 Refs #608. #611 리뷰의 P2 세 건을 고쳤습니다. 게시 PDF는 PI가 검토한 정리본이 담을 수 있는 그림만 보여 주고(크기 제한만 풉니다), 보고서의 graphical abstract는 첫 그림이 되며, `labhq verify`는 그려 넣을 abstract 자리를 셉니다.
 
 ## 바뀐 것
@@ -93,6 +161,131 @@ Refs #613 (PI 결정 C). 새 `labhq init` 설정이 PI가 시험한 동작으로
 - 같은 설정 파일을 고친 뒤 다시 시작하지 않은 프로세스가 돌고 있으면(정체의 지문이 바뀜) `up`이 `down` 뒤 `up`을 안내하며 막습니다. 포트만 바꾼 경우처럼 새 포트가 비어 있어도 같은 state 폴더를 옛 프로세스가 쥐고 있으면 막힙니다.
 - `orchestrator.solo_agent: solo`는 PI 설정에 있지만 저장소 roster에 `solo` 직원이 없어 init 기본값에 넣지 않았습니다.
 - `plan.declare_output_types`는 이슈가 켜라고 했지만 PI 시험 설정에는 없습니다(시험 근거 없음). 예시 설정의 `projects:` 자리표시자(`your-account/my-project`)도 PI 설정(`projects: []`)과 다르지만 범위 밖이라 두었습니다.
+
+## 결론
+
+Refs #606. runner의 디스크 쓰기(작업 폴더 파일 289번과 SQLite 대부분)를 쓰기 전용 thread로 넘겼습니다. 느린 디스크에서도 API가 멈추지 않습니다. fsync를 0.5초씩 늦춰도 `/api/health`는 한 번도 0.2초를 넘기지 않았습니다(main은 1.03초). "쓰고 나서 다음 단계"와 쓰기 순서는 그대로이고 fsync를 모으거나 미루지 않습니다.
+
+한계: gateway의 SQLite 쓰기(약 900번)는 아직 loop에서 동기로 돕니다. 이유는 아래 "gateway를 옮기지 않은 이유"에 있습니다.
+
+## 쓰기 지점 지도
+
+mock e2e 한 번(요청 4건, task 40개)에서 센 값입니다. `os.fsync`와 SQLite 쓰기 transaction을 호출 지점별로 셌습니다.
+
+### 파일 쓰기(fsync 있음)
+
+| 지점 | 횟수 | 이전 | 지금 |
+|---|---|---|---|
+| runner `_run_task`: `ws.update_run`(manifest.json 읽기·수정·쓰기) 4곳, 읽기 전용 판정·환경 수정의 3곳 | 160(뒤 3곳은 e2e에서 안 돎) | loop | thread |
+| runner `_run_task`: `outputs/RESULT_<id>.md`·`RESULT.md` | 80 | loop | thread |
+| runner `_run_task`: `TASK*.md`, 참고 파일 | 45 | loop | thread |
+| 파견직 계약 `registry.save_contract`(`atomic_write_text` 2개) | 4 | loop | thread |
+| 직원 CLI 설정 `prepare()`(mcp.json, system_prompt.md, AGENTS.md, GEMINI.md, .gemini/settings.json, prompt.md, role.md, output_schema.json), `command.txt`, `stderr_tail.txt` | e2e 0(mock은 안 씀), 실제 엔진은 task당 약 5~9 | loop | thread |
+| `ctx.record_run`(session id, model id, plugin 기록) | e2e 0, 실제 엔진은 task당 2~3 | loop | loop(동기 호출이라 그대로) |
+| 합계 | 289 | loop 289 | loop 0 |
+
+loop 밖이라 손대지 않은 곳: `labhq_hpc`·`labhq_annot`의 쓰기(직원 CLI가 띄우는 MCP 서버 프로세스), `record_tool_use`(Claude hook 프로세스), CLI(`cli._pid_file`, bench), `paper_skills.finish`(`asyncio.to_thread`), 의미 모델 그림자·액션 기록(daemon thread, 기본 off).
+fsync 없이 rename만 하는 곳도 그대로입니다: round 기록(`RoundRecorder.write`), 입력 hash cache, 시스템 CA, Claude `--settings` 파일.
+
+### SQLite 쓰기(WAL, `synchronous=FULL`이라 커밋마다 fsync)
+
+| 종류 | main(loop) | 지금 loop | 지금 thread |
+|---|---|---|---|
+| runner outbox: `enqueue`(emit·task.accepted 등) | 261 | 0 | 261 |
+| runner outbox: `ack` | 약 520 | 0 | 약 520 |
+| runner `accepted_task` put | 약 80 | 0 | 약 80 |
+| runner 그 밖(`job`·`notified` put) | 3 | 3 | 0 |
+| gateway 이벤트 순번: `append_event`, `commit_terminal`, `commit_request_event`, `set_message_display` | 448 | 448 | 0 |
+| gateway task 원장(dispatch, runner 메시지 처리) | 192 | 192 | 0 |
+| gateway 요청 행 `save_request` | 117 | 117 | 0 |
+| gateway step 제어, pi_language, 승인·ask, 종료 전달 등 | 약 137 | 약 137 | 0 |
+| 합계 | 약 2,330 | 897 | 약 1,430 |
+
+## 바뀐 것
+
+- `labhq/durable.py`(새 파일): 쓰기 전용 thread와 FIFO 대기열. 대상마다 하나입니다(작업 폴더 파일 하나, SQLite 파일마다 하나). `await run(lane, fn)`은 끝날 때까지 기다리고, `call(lane, fn)`은 동기 호출입니다. thread가 안 떠 있으면 그 자리에서 쓰고, 일이 쌓여 있으면 뒤에 서서 기다립니다. 2초 놀면 thread가 끝나고 다음 쓰기에 다시 뜹니다.
+- 파일 쓰기: `write_owned`, `atomic_write_text`는 같은 일을 하되 위 `call`로 갑니다. `awrite_owned`, `aatomic_write_text`, `TaskWorkspace.aupdate_run`·`awrite_task_md`·`awrite_reference_files`, `RunContext.awrite_meta`, `Registry.asave_contract`가 코루틴용입니다. manifest.json의 읽기·수정·쓰기는 한 작업이라, 사이에 다른 쓰기가 끼어 갱신을 잃지 않습니다.
+- `StateStore`: 읽기 연결과 쓰기 연결을 나눴습니다. 쓰기는 전부 쓰기 연결 하나로 한 번에 한 transaction씩 갑니다. 읽기는 쓰기 도중에도 기다리지 않습니다(WAL). transaction 안의 읽기는 쓰기 연결로 합니다(`request.followup_done`이 방금 저장한 요청 행을 읽기 때문). `close()` 뒤의 쓰기는 이전처럼 `ProgrammingError`입니다.
+- runner: `emit`과 `_on_message`의 outbox 쓰기·ack가 코루틴용 경로를 탑니다. 메시지는 계속 `Runner.send`를 거칩니다(테스트가 `send`를 바꿔 가로챕니다). 결과 메시지와 "finished" 표시, `task.accepted`와 "running" 표시는 한 작업이라 취소돼도 갈라지지 않습니다.
+- 종료: gateway 종료 hook과 `Runner.run_forever`의 `finally`가 대기 중인 쓰기를 모두 끝낸 뒤 나갑니다. 프로세스 종료 때도 `atexit`이 같은 일을 합니다(30초 상한).
+- 새 test 30건: `tests/test_durable_writer.py`(28), `tests/test_loop_liveness_606.py`(2, 새 API 없이 쓰여서 main에서도 돌아갑니다). 기존 test는 하나도 바꾸지 않았습니다.
+
+## 독립 리뷰 반영(PR 리뷰 3건)
+
+리뷰어 둘이 따로 찾았고 적대적 확인을 거친 결함 셋입니다. 각각 고치기 전 head에서 test가 실패하는 것을 확인했습니다.
+
+| 결함 | 원인 | 고침 | test |
+|---|---|---|---|
+| P1: `task.cancel`이 두 번 오면 `task.result`가 안 나가 gateway가 영영 기다림 | 취소·실패 처리(`_run_guarded`)가 `emit`을 두 번 이어 불렀는데, `emit`이 이제 멈추므로 둘째 취소가 둘 사이에 들어옴 | 닫는 사건(상태 + `task.result` + finished 표시)을 `Runner.emit_all`로 한 작업에 묶었습니다. `controls.finish()`도 보내기 전에 불립니다. `_run_task`의 닫는 쌍 9곳, 거부 경로, 승인·ask 쌍, job 제출·상태·완료와 그 표시도 같은 규칙입니다. 각 사건은 계속 `Runner.emit`을 거칩니다. | `test_a_second_cancel_while_the_closing_events_commit_still_delivers_the_result_once` |
+| P2: 마지막 결과를 보내다 취소되면 취소 결과가 하나 더 나가 gateway가 덮어씀 | 결과 commit은 끝까지 가는데 취소 처리가 둘째 `task.result`를 보냄 | runner가 task마다 "결과가 이미 나갔다"를 적고(`_result_queued`), 취소·실패 처리는 그러면 아무것도 더 보내지 않습니다. 새 실행이 시작되거나 guarded 실행이 끝나면 지웁니다. | `test_a_cancel_during_the_final_result_does_not_queue_a_second_result` |
+| P2: Windows에서 쓰기 thread의 `os.replace`가 loop thread의 `read_owned`와 겹치면 `PermissionError` | `read_owned`의 열기는 `FILE_SHARE_DELETE`가 없어 교체를 막고, 교체 중에는 열기도 거부됨 | `HeldDir.replace`가 Windows에서 `util.replace_file`처럼 짧게(최대 약 1초) 기다려 다시 시도합니다. `read_owned`의 열기도 `PermissionError`를 짧게(최대 약 0.1초) 다시 시도하고, 그래도 안 되면 이전처럼 없음으로 읽습니다. | `test_replace_waits_out_a_reader_that_still_has_the_file_open`, `test_read_owned_retries_a_sharing_violation_instead_of_reporting_the_file_missing`(Windows 전용) |
+
+옮기지 않은 "멈추지 않음" 가정 한 곳: `_on_control`의 `agent.control` + 안내 로그 두 사건은 정보 표시라 갈라져도 상태가 어긋나지 않아 묶지 않았습니다. 승인 응답의 `agent.status` + ack는 둘째가 빠져도 gateway가 결정을 다시 보내 ack가 나가므로 그대로 뒀습니다. gateway가 같은 task의 둘째 `task.result`를 무시하게 하는 것은 하지 않았습니다(runner 쪽에서 막았고, gateway는 이번에 안 건드립니다).
+
+## 리뷰 3차 반영
+
+| 지적 | 고침 | test |
+|---|---|---|
+| P1: `Registry.asave_contract`가 두 복사본을 `await` 둘로 쓰고 roster 갱신은 그 뒤라, 둘 사이의 취소가 반쪽 고용을 남김 | 두 복사본과 roster 갱신을 한 `durable.run` 작업으로 묶었습니다. 파일은 쓰기 thread에서 쓰고, roster dict는 작업이 끝나기 전에 스스로 예약한 callback으로 loop에서 바꿉니다(다른 thread가 dict를 바꾸면 loop의 `roster()` 순회가 깨질 수 있어서). | `test_a_cancel_between_the_two_contract_copies_cannot_leave_a_partial_hire` |
+| P2: 놀고 있는 lane에서 다른 thread의 동기 `call` 둘이 둘 다 직접 실행되어 순서를 우회함 | 직접 실행도 lane의 실행 lock 아래서 한 번에 하나씩 합니다. 대기열의 작업도 같은 lock을 잡고 돕니다. 이미 lane 안(작업이나 직접 호출 속)에서 부르는 호출은 자기를 기다리지 않고 그 자리에서 실행합니다. | `test_two_threads_writing_one_path_on_an_idle_lane_land_in_call_order` |
+| P2: `contract.update`(`extend`·`release`·`activate`·`rehire`)가 아직 loop에서 동기로 씀 | 하지 않았습니다. 후속으로 넘깁니다: 성능 문제(동기 fsync), 정합성 영향 없음. | - |
+
+내가 추가한 비동기 helper 가운데 `await durable.run(...)`이 연속으로 둘 이상인 곳을 모두 찾아(AST로 찾고 눈으로 확인) 정리했습니다.
+
+| 곳 | 연속 `await` | 판단 |
+|---|---|---|
+| `Registry.asave_contract` | 파일 2 + roster | 위 P1로 한 작업 |
+| `_run_task`의 `RESULT_<id>.md`·`RESULT.md` | 2(반복문) | 새 `awrite_owned_many`로 한 작업. 취소가 하나만 쓰게 두지 않습니다. |
+| `awrite_task_md`, `aupdate_run`, `awrite_meta`, `aput`, `aenqueue`, `aack`, `asave_contract` 안의 파일들, `_send_batch`·`emit_all` | 1 (`awrite_reference_files`와 `AgentAdapter.prepare` 호출은 여러 파일을 한 작업으로 이미 묶음) | 그대로 |
+| `AgentAdapter.run`: prepare, `command.txt`, `stderr_tail.txt` | 3, 단계가 서로 다름 | 파일마다 독립이고 취소되면 그 실행이 끝나므로 그대로 |
+| `_run_task`의 `aupdate_run`들(시작·입력·종료), 참고 파일 뒤 `TASK.md` | 여러 번, 단계마다 완결 | 사이에 이미 다른 `await`가 있었으므로 이전과 같은 취소 지점입니다. 그대로 |
+| `Runner._on_message`의 승인 응답(`agent.status` 뒤 ack) | 2 | 취소돼 ack가 빠지면 gateway가 결정을 다시 보내 ack가 나가므로 그대로 |
+| `_poll_jobs`, `collect_observed_outputs` | 2, 서로 다른 분기·반복 | 각각 한 묶음(앞 절의 `emit_all`)이거나 배타적 분기라 그대로 |
+
+## 설계 판단
+
+| 판단 | 이유 |
+|---|---|
+| 쓰기 thread를 프로세스에 하나가 아니라 대상마다 하나로 | 처음에는 하나였습니다. e2e처럼 gateway와 runner가 한 프로세스에 있으면 gateway의 동기 커밋이 runner의 막힌 파일 쓰기 뒤에 서서 `/api/health`가 0.30초 걸렸습니다. 순서가 필요한 것은 같은 파일·같은 DB뿐이라 대상별로 나눴고, 같은 대상 안에서는 그대로 FIFO입니다. |
+| SQLite: 쓰기 전용 연결 하나 + 읽기 연결 하나(소유 thread 하나로 합치지 않음) | 읽기까지 쓰기 thread로 보내면 loop이 읽기마다 막힌 커밋 뒤에 섭니다. 연결 하나를 lock으로 나눠 쓰면 읽기가 커밋이 끝나기를 기다립니다(커밋 중에는 sqlite가 그 연결을 잠급니다). WAL에서 읽기 연결은 쓰기를 기다리지 않습니다. |
+| 동기 호출도 같은 대기열 | 코루틴이 넣어 둔 쓰기를 동기 쓰기가 앞지르면 같은 키에 옛 값이 나중에 덮입니다. 일이 쌓여 있으면 뒤에 서고, 비어 있으면 그 자리에서 씁니다(CLI·스크립트·thread 없는 테스트는 이전과 같음). |
+| 쓰기는 취소되지 않음(`asyncio.shield`) | 동기였을 때는 쓰기 도중에 취소될 수 없었습니다. 호출한 코루틴이 취소돼도 쓰기는 끝납니다. |
+| 직렬화는 호출 시점에 | `aput`, `aenqueue`는 본문을 부르는 순간 JSON으로 굳힙니다. 이후 호출자가 바꿔도 행은 그대로입니다. |
+
+### gateway를 옮기지 않은 이유
+
+처음에는 gateway의 `publish`(요청 행 저장)와 runner 메시지 처리의 task 활동 저장도 옮겼습니다. 기존 test 9건이 깨졌습니다(`test_state` 3, `test_ask_review3` 2, `test_login_wait`, `test_request_lifecycle`, `test_staff_control`, `test_staff_control_review`). `publish`가 처음으로 실제로 멈추게 되면서 "`await asyncio.sleep(0)` 한 번 뒤에 dispatch가 runner 소켓에 나가 있다" 같은 가정이 깨졌습니다. 같은 가정은 제품 코드에도 있을 수 있습니다(클라이언트가 없으면 `publish`는 한 번도 멈추지 않아 왔습니다). 그래서 gateway는 이번에 안 건드렸고, 되돌린 뒤 9건이 다시 통과했습니다.
+
+옮기려면 따로 풀어야 하는 것:
+- 이벤트 순번: `append_event`와 `self.events`(메모리), snapshot의 `seq`(DB)가 짝입니다. 커밋과 목록 추가 사이에 loop이 끼어들면 새 클라이언트가 이벤트 하나를 영영 못 받는 틈이 생깁니다.
+- task 원장은 DB가 원본이라 읽고-고치고-쓰기(`get` 뒤 `put`)가 많습니다. 쓰기를 늦추면 옛 값을 읽고 덮을 수 있습니다.
+- 요청 행은 메모리가 원본이라 안전하지만 `save_request`가 동기 함수로 100곳 넘게 불립니다.
+
+## 확인
+
+| | main | 지금 |
+|---|---|---|
+| fsync 0.5초일 때 `/api/health`(task 하나 실행 중, 별도 thread에서 20ms마다 조회) | 창 안에서 5번 답함, 최대 1.03초, 중앙값 0.86초 | 117번 답함, 최대 0.011초, 중앙값 0.005초 |
+| SQLite 커밋 0.5초일 때 runner `emit` 3번 + ack 동안 loop 정지 | 2.01초 | 0.2초 미만(test가 확인) |
+| e2e mock 지연 없이(통과 횟수, call 시간) | 5/5, 9.9~10.9초 | 10/10, 9.2~11.4초 |
+| e2e mock에 fsync마다 0.2초 지연 | 69.4초(289번 모두 loop thread) | 68.6초(loop thread 0번) |
+
+벽시계 시간은 같습니다. e2e는 쓰기를 하나씩 기다리며 이어지는 흐름이라 쓰기 시간이 그대로 더해집니다. 달라진 것은 그 사이 loop이 살아 있다는 점입니다(위 두 번째 줄 이상).
+
+- 새 test 30건은 모두 통과했습니다. `tests/test_loop_liveness_606.py`의 2건은 main에서 실패합니다(`/api/health` 1.01초, loop 정지 2.01초). 나머지는 새 API를 쓰니 main에서는 import부터 실패합니다.
+- 충돌 모의: 부분 파일은 없고(대상 파일은 옛것이나 새것), 적용된 쓰기는 대기열 앞쪽 K개였습니다. 파일 3지점, SQLite 2지점, runner 재시작 1건(outbox 앞쪽 4개와 중단된 task 결과 하나, 순번 연속)을 확인했습니다.
+- 전체 pytest(리뷰 반영 전 head): 6,651 passed, 59 failed, 66 skipped. 실패 59건은 이 PC에서 main도 똑같이 실패하는 것입니다(`test_web_3d.py::test_office_in_node` 58건은 node 경로, `test_staff_control_steps::test_a_cli_start_the_runner_cannot_record_ends_the_cli`은 `tasklist` 출력 해석).
+- `scripts/check_public.sh`, `scripts/patch_notes.py check` 통과.
+- 리뷰 반영 head의 CI: pytest 3.12·Windows 통과, 3.10은 `/api/health` 조사 100여 번 중 하나가 0.41초 걸려 실패했습니다(나머지는 수 ms). CI 기계의 일시 지연으로 보고, 조사 하나라도 stall의 9할(0.45초)을 넘으면 실패하고 20번에 한 번까지만 0.2초를 넘길 수 있게 test를 고쳤습니다. main에서는 여전히 실패합니다.
+- 리뷰 반영 뒤에는 PI 시운전 중이라 프로세스를 띄우는 test를 로컬에서 돌리지 않았습니다. 프로세스를 띄우지 않는 Runner·Hub test 1,000여 건과 새 test를 돌렸고(통과), 나머지는 CI에 맡겼습니다.
+
+## 남은 것
+
+- `Registry.extend`·`release`·`activate`·`rehire`(runner의 `contract.update` 메시지)는 동기 `save_contract`를 loop에서 부릅니다. lane이 놀고 있으면 fsync 두 번이 loop thread에서 직접 돕니다. 느린 디스크에서 그동안 runner의 heartbeat와 다른 task 처리가 멈춥니다(성능 문제, 정합성 영향 없음). 후속입니다.
+
+- gateway SQLite 쓰기 약 894번(위 표)은 loop에서 동기입니다. 느린 디스크에서 gateway API는 아직 커밋 시간만큼 멈춥니다. 위 세 가지를 풀 설계가 먼저 필요합니다.
+- 동기 호출 쪽은 같은 대상의 대기열 뒤에서 기다립니다. 그래서 runner에서 아직 동기로 남은 `record_run`은 쌓인 쓰기가 끝나기를 기다린 만큼 loop을 붙잡습니다(이전에는 자기 쓰기 시간만큼). 실제 엔진은 task당 2~3번입니다.
+- Windows에서 `write_owned`의 교체(`HeldDir.replace`)는 백신이 막 쓴 파일을 잡고 있으면 `PermissionError`로 실패합니다. 다른 곳은 `util.replace_file`이 기다려 주지만 여기는 재시도가 없습니다. 새 test(같은 파일을 1,000번 바꿈)에서 보였고 이번 PR 밖입니다.
 
 ## 결론
 

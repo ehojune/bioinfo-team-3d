@@ -138,7 +138,11 @@ Codex 직원 로그인 격리는 [알려진 한계](#알려진-한계)의 전용
 .\labhq -c config\labhq.yaml open
 ```
 
-Windows wrapper는 `.venv\Scripts\python.exe`를 직접 실행하므로 venv 활성화나 PowerShell ExecutionPolicy 변경이 필요 없습니다. `up`은 gateway와 runner를 분리된 background process로 띄우고 state 폴더에 로그와 생성 시각을 포함한 프로세스 기록을 남깁니다. 같은 instance의 `up`·`down`은 state 폴더 lock으로 직렬화되며, 다른 명령이 진행 중이면 exit 2입니다. POSIX에서는 `./labhq.sh`를 씁니다.
+Windows wrapper는 `.venv\Scripts\python.exe`를 직접 실행하므로 venv 활성화나 PowerShell ExecutionPolicy 변경이 필요 없습니다. `up`은 gateway와 runner를 분리된 background process로 띄우고(역할마다 감독 프로세스를 거칩니다. 아래 **감독 프로세스**) state 폴더에 로그와 생성 시각을 포함한 프로세스 기록을 남깁니다. 같은 instance의 `up`·`down`은 state 폴더 lock으로 직렬화되며, 다른 명령이 진행 중이면 exit 2입니다. POSIX에서는 `./labhq.sh`를 씁니다.
+
+**감독 프로세스(#589):** `up`은 역할(gateway, runner)마다 작은 감독 프로세스를 하나씩 띄우고(`python -m labhq.supervisor`), gateway·runner는 그 감독의 자식으로 시작됩니다. `up`이 끝나면 `up`이 직접 띄운 프로세스는 죽은 `up`의 PID를 부모로 계속 기록합니다. Windows는 그 번호를 다른 프로세스에 다시 줄 수 있고, 부모 PID만 보고 트리를 끄는 도구(테스트 코드의 `/T` 종료 등)가 그 프로세스를 끄면 gateway·runner가 함께 죽습니다. labhq 자신의 종료 경로는 생성 시각을 확인하지만(#597) 밖의 코드는 고칠 수 없으므로, 부모 PID가 재사용되지 않게 합니다. 감독은 gateway·runner가 사는 동안 살아 있어 그 부모 PID는 재사용되지 않고, 감독 자신의 부모(`up`)는 시작할 때 조상 프로세스 4개의 handle을 열어 둬서 재사용되지 않습니다(열린 handle이 있으면 끝난 프로세스의 PID도 반환되지 않습니다). 감독은 gateway·runner가 끝난 시각과 종료 코드도 `<role>-supervisor-diagnostics.jsonl`에 `child_exit`로 남깁니다. 강제 종료는 프로세스 자신의 `exit` 기록을 남기지 못하므로 이것이 유일한 단서입니다. 조상 handle을 열지 못해도(권한·이미 끝난 부모) 역할은 시작하고, 이유는 같은 파일의 `parents_pinned` 행에 남깁니다. `up`은 감독이 조상을 고정하고 역할을 기록할 때까지(최대 20초) 끝나지 않습니다.
+
+`supervisor.restart: true`로 켜면 스스로 끝난(종료 코드 0이 아닌) 역할을 다시 시작합니다. 종료 코드 2는 labhq가 시작을 거부한 경우(설정 거부, 다른 설정이 같은 state 폴더를 쓰고 있다는 #613의 소유 기록)라 같은 거부가 되풀이되므로 다시 시작하지 않고 `restart_skipped`만 남깁니다. 처음엔 `backoff_s`(5초) 뒤에, 이어서 두 배씩 `backoff_cap_s`(120초)까지 기다리고, `restart_window_s`(600초) 안에 `max_restarts`(5)번을 넘기면 그대로 둡니다. **기본은 꺼짐**이라 비정상 종료가 가려지지 않습니다. `down`과 웹 종료로 멈춘 역할은 다시 시작하지 않습니다(`labhq-<role>.stopping` 표시 파일을 먼저 남기고, `up`이 지웁니다). 감독이 다시 시작하는 중에 `up`을 실행하면 감독을 하나 더 띄우지 않고 역할이 응답하길 기다립니다. 이 변경 전에 시작한 gateway·runner는 감독이 없고, `status`가 "감독 없음(감독 도입 전 방식)"이라고 알립니다. `down` 뒤 `up`을 하면 감독 아래로 들어갑니다. 감독 프로세스 기록이 있는데 프로세스가 없고 역할만 살아 있으면 `status`·`doctor`가 경고합니다(보호받지 못하는 상태).
 
 **예고 없이 꺼졌을 때:** `status`는 연결을 시도하기 전에, `doctor`는 네트워크 없이 로컬 PID 기록과 마지막 heartbeat·exit를 보여 줍니다. 조회는 PID 기록을 지우지 않습니다. 프로세스가 없고 exit도 없으면 `비정상 종료 의심`입니다. 아래 파일은 설정의 `gateway.state_dir/logs/`에 gateway·runner별로 쌓입니다(직접 실행한 경우도 동일).
 
@@ -147,10 +151,12 @@ Windows wrapper는 `.venv\Scripts\python.exe`를 직접 실행하므로 venv 활
 | `<role>-diagnostics.jsonl` | UTC 시각·PID·부모 PID, 시작, 10분 간격 heartbeat(RSS bytes·Windows handle 수), 예외 종류, signal, uvicorn 종료, exit reason/code |
 | `<role>-fault.log` | faulthandler의 native fault traceback, 잡히지 않은 Python 예외의 호출 스택 |
 | `<role>.log` | `up` 자식의 버퍼링을 끈 stdout/stderr, uvicorn·runner 일반 로그 |
+| `<role>-supervisor-diagnostics.jsonl` | 감독 자신의 시작·exit와 `parents_pinned`(고정한 조상 PID), `child_start`, `child_exit`(역할의 PID·종료 코드·가동 시간·`down` 요청 여부), `restart_scheduled`, `restart_giving_up` |
+| `<role>-supervisor.log` | 감독의 stdout/stderr(감독이 시작하지 못했을 때의 오류가 여기 남습니다) |
 
 지원하지 않는 자원 값은 `null`입니다. 예외 메시지·설정은 진단 JSON에 넣지 않습니다. heartbeat는 프로세스 생존 기록이며 gateway 응답 여부를 보장하지 않습니다. 강제 종료·`os._exit()`에서는 exit hook이 실행되지 않으므로 마지막 heartbeat와 같은 시각의 Windows Application/System 이벤트를 함께 봅니다([Python atexit](https://docs.python.org/3/library/atexit.html)). native fault 기록도 모든 외부 종료를 잡지는 못합니다([faulthandler](https://docs.python.org/3/library/faulthandler.html)). 현재 실행 중인 인스턴스에는 다음 시작부터 적용됩니다.
 
-`down`은 진행 중이거나 대기 중인 요청(PI 결정 대기 포함), 끝난 요청에서 돌고 있는 이어 묻기, 진행 중인 채용(`labhq recruit`), 아직 기록을 쓰는 끝난 요청(취소 보고서를 쓰기 전이거나 요청 묶음을 복사하는 중, `마무리 중인 요청`)이 있거나 인증된 상태를 확인할 수 없으면 exit 2로 거부합니다(gateway `/api/shutdown-readiness`, #500·#521). 채용 수는 러너 프로세스 기준이라, 러너를 다시 시작하면 이전 프로세스의 채용은 빠집니다(`runner.hello`의 `process`). 중단을 감수할 때만 `down --force`를 쓰며, 신원이 맞는 runner 프로세스 트리와 gateway만 종료합니다. POSIX는 SIGTERM 뒤 최대 10초 기다리고, 남아 있으면 SIGKILL한 뒤 종료를 확인하고 기록을 지웁니다. 기록된 프로세스를 멈춘 뒤에는 gateway가 아직 답하는지 한 번 더 확인합니다(종료 직후 최대 3초 기다림). 스크립트나 다른 창처럼 `up` 밖에서 시작해 PID 기록이 없는 gateway·runner가 계속 답하면(gateway가 다른 PC에 있으면 이 설정의 runner id가 아직 연결돼 있을 때만) `종료`로 끝내지 않고 "`up`이 아닌 방법으로 시작한 gateway/runner가 아직 실행 중"이라고 알리며 exit 2로 끝납니다. 그 프로세스는 `down`이 멈추지 못하니 직접 끈 뒤 `up`을 다시 실행하세요. 멈출 것이 아무것도 없고 gateway도 답하지 않을 때만 `종료: 기록된 프로세스 없음`을 출력하고 exit 0입니다. Windows에서는 `taskkill /T`를 쓰지 않습니다. 부모 PID가 같아도 부모보다 먼저 만들어진 프로세스는 자식으로 보지 않고, 후보의 handle을 먼저 열어 PID를 고정한 뒤 두 번째 조회로 부모 PID를 다시 확인해 그 handle로 종료하므로, `up`이 끝난 뒤 다른 프로세스가 물려받은 PID 때문에 gateway·runner가 함께 종료되는 일이 없습니다(#589; adapter 취소·시간 초과와 runner의 버전 조사 시간 초과도 같은 방식). `down`은 하나라도 종료하지 못하면 그 프로세스의 조상 전체를 남겨 두고 PID 기록을 유지하므로 다시 시도할 수 있습니다.
+`down`은 진행 중이거나 대기 중인 요청(PI 결정 대기 포함), 끝난 요청에서 돌고 있는 이어 묻기, 진행 중인 채용(`labhq recruit`), 아직 기록을 쓰는 끝난 요청(취소 보고서를 쓰기 전이거나 요청 묶음을 복사하는 중, `마무리 중인 요청`)이 있거나 인증된 상태를 확인할 수 없으면 exit 2로 거부합니다(gateway `/api/shutdown-readiness`, #500·#521). 채용 수는 러너 프로세스 기준이라, 러너를 다시 시작하면 이전 프로세스의 채용은 빠집니다(`runner.hello`의 `process`). 중단을 감수할 때만 `down --force`를 쓰며, 신원이 맞는 runner 프로세스 트리와 gateway만 종료합니다. 역할마다 감독을 먼저 끝내고(다시 시작하지 않도록 표시를 먼저 남깁니다) 그 뒤 역할에 남은 것을 끝냅니다. 감독의 신원을 확인할 수 없으면 아무것도 끝내기 전에 exit 2로 멈춥니다. POSIX는 SIGTERM 뒤 최대 10초 기다리고, 남아 있으면 SIGKILL한 뒤 종료를 확인하고 기록을 지웁니다. 기록된 프로세스를 멈춘 뒤에는 gateway가 아직 답하는지 한 번 더 확인합니다(종료 직후 최대 3초 기다림). 스크립트나 다른 창처럼 `up` 밖에서 시작해 PID 기록이 없는 gateway·runner가 계속 답하면(gateway가 다른 PC에 있으면 이 설정의 runner id가 아직 연결돼 있을 때만) `종료`로 끝내지 않고 "`up`이 아닌 방법으로 시작한 gateway/runner가 아직 실행 중"이라고 알리며 exit 2로 끝납니다. 그 프로세스는 `down`이 멈추지 못하니 직접 끈 뒤 `up`을 다시 실행하세요. 멈출 것이 아무것도 없고 gateway도 답하지 않을 때만 `종료: 기록된 프로세스 없음`을 출력하고 exit 0입니다. Windows에서는 `taskkill /T`를 쓰지 않습니다. 부모 PID가 같아도 부모보다 먼저 만들어진 프로세스는 자식으로 보지 않고, 후보의 handle을 먼저 열어 PID를 고정한 뒤 두 번째 조회로 부모 PID를 다시 확인해 그 handle로 종료하므로, `up`이 끝난 뒤 다른 프로세스가 물려받은 PID 때문에 gateway·runner가 함께 종료되는 일이 없습니다(#589; adapter 취소·시간 초과와 runner의 버전 조사 시간 초과도 같은 방식). `down`은 하나라도 종료하지 못하면 그 프로세스의 조상 전체를 남겨 두고 PID 기록을 유지하므로 다시 시도할 수 있습니다.
 
 **PC를 다시 켰을 때**
 
@@ -357,6 +363,23 @@ CSO는 설치·예산·통제 데이터·HPC 같은 권한/비용/접근, PI만 
 
 최종 보고서는 `report`(결론과 권고 → 결과 → 방법 요약 → 한계)와 `report_appendix`(실행 기록)로 나뉩니다. 본문은 한 번 읽는 분량(약 4,000자, 결과가 요구할 때만 더 길게)을 목표로 하고, 수치는 `결과`에 한 번만 적습니다(#373, 벤치 C t6 본문 12,600자). 본문에는 중요한 경고만 한 줄과 "실행 기록 참고"를 남기고, 단계 상태·산출 경로·도구 실패·미해결 리뷰 원문·비용·claim check는 부록에 둡니다. API·이벤트·CLI는 두 필드를 보내고, 웹은 본문 아래 접힌 실행 기록을 보여 줍니다. GitHub 프로젝트 보고와 감사 번들은 `report.md`·`report_appendix.md`를 함께 남기며, claim anchor 검사는 `report`만 읽습니다. 분석 단계는 실행 스크립트를 `outputs/scripts/`, 결과를 좌우한 대응표·gene set 사본을 `outputs/reference/`에 선언·저장하고, `.tmp`에는 버려도 되는 파일만 둡니다. 스크립트를 돌린 단계는 그 스크립트를 실행한 인터프리터로 판과 패키지 목록(`<인터프리터> --version`·`<인터프리터> -m pip freeze`)을 `outputs/env/<단계 id>.txt`에 남깁니다. 앞 환경 단계의 lock이 쓴 것을 그대로 덮으면 생략하고, 직접 설치한 패키지(`./.pylib` 등)는 언제나 자기 기록에 넣습니다. 요청 묶음의 재현 등급은 이 기록이 있어야 `replayable`이 됩니다. 방법 요약에는 seed와 도구·데이터 버전을 적습니다.
 `outputs/env/`·`outputs/scripts/`·`outputs/reference/` 파일은 선언에서 빠져도 `unreported_outputs`에 남아 요청 묶음·MANIFEST·RO-Crate에 들어갑니다. 같은 작업 폴더에서 retry·질문 답 뒤 재실행·리뷰 수정을 해도 앞 실행 목록을 이어받되, 새 실행에서 정식 산출로 보고한 파일은 뺍니다. runner 로그·CP2 카드·`labhq verify`처럼 사람이 보는 미보고 산출 경고에서만 숨깁니다.
+
+### 디스크 쓰기와 느린 디스크
+
+labhq는 상태를 쓸 때마다 디스크에 확실히 내려갈 때까지(fsync) 기다린 뒤 다음 단계로 갑니다. 요청 하나가 흐르는 동안 이런 쓰기가 수백 번 일어납니다. 디스크가 느리면(백신이 검사하는 폴더, 네트워크 드라이브, 느린 CI 디스크) 이 대기가 event loop을 막아서, 그동안 API 응답·WebSocket·heartbeat와 다른 요청이 같이 멈췄습니다(#606).
+
+이제 쓰기는 쓰기 전용 thread(`labhq/durable.py`)가 합니다. 작업 폴더 파일용 thread가 하나, SQLite 파일마다 하나씩 있고, 각자 대기열(FIFO)을 순서대로 처리합니다. 부르는 쪽은 `await`으로 끝나기를 기다리므로 "쓰고 나서 다음 단계"는 그대로이고, 기다리는 동안 loop은 다른 일을 합니다.
+
+- 같은 파일이나 같은 DB에 대한 쓰기는 부른 순서대로 끝나고, 쓴 뒤의 읽기는 쓴 내용을 봅니다.
+- 쓰기가 실패하면 그 예외가 `await`한 곳으로 옵니다.
+- 부른 쪽이 취소돼도 이미 넣은 쓰기는 끝까지 갑니다. 함께 가야 하는 쓰기(보낸 메시지와 "보냈다"는 표시, 작업을 닫는 상태와 결과)는 한 묶음으로 갑니다. 결과가 이미 나간 task에는 취소 결과를 따로 보내지 않습니다.
+- 종료할 때(gateway 종료 hook, runner 종료, 프로세스 종료)는 대기 중인 쓰기를 모두 끝낸 뒤 나갑니다.
+- 갑자기 죽어도 파일은 옛것이나 새것 한쪽입니다(임시 파일, fsync, 교체 순서 그대로). SQLite는 커밋된 데까지입니다. 아직 시작하지 않은 쓰기만 사라지는데, 그 쓰기를 기다리던 단계는 어차피 다음으로 가지 못했습니다.
+- fsync를 모아서 한꺼번에 하거나 미루지 않습니다. 쓰기마다 디스크에 내려간 뒤에 돌아옵니다.
+
+SQLite는 읽기 연결과 쓰기 연결을 나눠(WAL) 읽기가 커밋을 기다리지 않습니다.
+
+옮긴 곳은 runner의 작업 폴더 쓰기(`manifest.json`, `TASK*.md`, `RESULT*.md`, 직원 CLI 설정 파일, 파견직 계약 파일)와 runner의 outbox·ack입니다. gateway의 SQLite 쓰기(이벤트 순번, 요청 행, task 원장)는 아직 loop에서 동기로 돕니다. 기존 코드와 테스트가 "기다림 없이 한 번에 끝난다"는 가정으로 짜여 있어서 따로 다루기로 했습니다. 쓰기 지점별 목록은 [쓰기 지점 지도](status/2026-10-15-1125-store-writes-off-loop.md)에 있습니다.
 
 ### topic 점검표와 선행 연구 기준
 

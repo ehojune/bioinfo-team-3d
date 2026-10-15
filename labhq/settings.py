@@ -519,10 +519,23 @@ class ProjectSettings(BaseModel):
     labels: list[str] = ["labhq"]
 
 
+class SupervisorSettings(BaseModel):
+    """The per-role supervisor `labhq up` starts (#589). It always records how its gateway or runner ended."""
+
+    # On: a gateway or runner that ended on its own with a non-zero code is started again. Off by default, so a crash
+    # stays visible instead of being papered over. Stopping it with `down` or the web shutdown never restarts it.
+    restart: bool = False
+    max_restarts: int = Field(default=5, ge=1)  # within restart_window_s; the next end is final and the supervisor exits
+    restart_window_s: float = Field(default=600, gt=0)
+    backoff_s: float = Field(default=5, ge=0)  # wait before the first restart; doubles for each one still in the window
+    backoff_cap_s: float = Field(default=120, ge=0)
+
+
 class Settings(BaseModel):
     instance: str | None = None
     gateway: GatewaySettings = Field(default_factory=GatewaySettings)
     runner: RunnerSettings = Field(default_factory=RunnerSettings)
+    supervisor: SupervisorSettings = Field(default_factory=SupervisorSettings)
     engines: EnginesSettings = EnginesSettings()
     bench: BenchSettings = BenchSettings()
     hpc: HpcSettings = HpcSettings()
