@@ -720,24 +720,29 @@ def _alphamissense_score(block: object) -> float | None:
     return float(value)
 
 
+def _alphamissense_value(transcript: dict, *, other: bool = False) -> dict:
+    """Validated AlphaMissense value for one named transcript."""
+    score = _alphamissense_score(transcript.get("alphamissense"))
+    assert score is not None
+    block = transcript["alphamissense"]
+    am_class = block.get("am_class")
+    am_class = am_class.strip().lower() if isinstance(am_class, str) and am_class.strip() else None
+    label = ALPHAMISSENSE_CLASS_KO.get(am_class or "", f"분류 {am_class}" if am_class else "분류 없음")
+    transcript_id = transcript.get("transcript_id")
+    text = (f"다른 transcript({transcript_id})에는 {score:.2f} ({label})" if other
+            else f"AlphaMissense: {score:.2f} ({label})")
+    out: dict[str, Any] = {"status": "ok", "am_pathogenicity": score, "am_class": am_class, "class_ko": label,
+                           "text": text}
+    for key in ("transcript_id", "gene_symbol"):
+        if transcript.get(key):
+            out[key] = transcript[key]
+    return out
+
+
 def _alphamissense_summary(row: dict, transcripts: list[dict], chosen: dict | None, requested: bool) -> dict:
-    """AlphaMissense for one variant, from the transcript the summary already shows (MANE, then canonical, then
-    first). Only when that transcript has no score is another one's used, and then it is named."""
-    scored = [t for t in transcripts if _alphamissense_score(t.get("alphamissense")) is not None]
-    if scored:
-        pick = (next((t for t in scored if t is chosen), None)
-                or next((t for t in scored if t.get("mane_select")), None)
-                or next((t for t in scored if t.get("canonical")), None) or scored[0])
-        score = _alphamissense_score(pick["alphamissense"])
-        am_class = pick["alphamissense"].get("am_class")
-        am_class = am_class.strip().lower() if isinstance(am_class, str) and am_class.strip() else None
-        label = ALPHAMISSENSE_CLASS_KO.get(am_class or "", f"분류 {am_class}" if am_class else "분류 없음")
-        out: dict[str, Any] = {"status": "ok", "am_pathogenicity": score, "am_class": am_class, "class_ko": label,
-                               "text": f"AlphaMissense: {score:.2f} ({label})"}
-        for key in ("transcript_id", "gene_symbol"):
-            if pick.get(key):
-                out[key] = pick[key]
-        return out
+    """AlphaMissense from the same transcript the VEP summary shows."""
+    if chosen is not None and _alphamissense_score(chosen.get("alphamissense")) is not None:
+        return _alphamissense_value(chosen)
     if not any("missense_variant" in (t.get("consequence_terms") or []) for t in transcripts):
         return {"status": "not_applicable", "text": "AlphaMissense: 해당 없음 (missense 변이가 아닙니다)"}
     if row.get(ALPHAMISSENSE_FAILED):
@@ -745,8 +750,24 @@ def _alphamissense_summary(row: dict, transcripts: list[dict], chosen: dict | No
                                                   "점수 없이 받았습니다. 나머지 VEP 결과는 그대로입니다)"}
     if not requested:
         return {"status": "not_requested", "text": "AlphaMissense: 요청하지 않았습니다 (GRCh38 사람 변이만 조회합니다)"}
-    return {"status": "no_score", "text": "AlphaMissense: 점수 없음 (missense이지만 AlphaMissense 표에 없거나 "
-                                          "Ensembl이 점수를 붙이지 않았습니다)"}
+    out = {"status": "no_score", "text": "AlphaMissense: 점수 없음 (이 transcript). AlphaMissense 표에 없거나 "
+                                          "Ensembl이 점수를 붙이지 않았습니다"}
+    if chosen is not None:
+        for key in ("transcript_id", "gene_symbol"):
+            if chosen.get(key):
+                out[key] = chosen[key]
+    return out
+
+
+def _alphamissense_other(transcripts: list[dict], chosen: dict | None) -> dict | None:
+    """One scored transcript kept separate from the chosen transcript."""
+    scored = [t for t in transcripts if t is not chosen
+              and _alphamissense_score(t.get("alphamissense")) is not None]
+    if not scored:
+        return None
+    pick = (next((t for t in scored if t.get("mane_select")), None)
+            or next((t for t in scored if t.get("canonical")), None) or scored[0])
+    return _alphamissense_value(pick, other=True)
 
 
 def _vep_summary(item: Item, alphamissense: bool = False) -> dict:
@@ -768,6 +789,10 @@ def _vep_summary(item: Item, alphamissense: bool = False) -> dict:
                                                             "impact", "hgvsc", "hgvsp", "mane_select", "canonical")
                                  if chosen.get(k) is not None}
     summary["alphamissense"] = _alphamissense_summary(row, transcripts, chosen, alphamissense)
+    if summary["alphamissense"]["status"] == "no_score":
+        other = _alphamissense_other(transcripts, chosen)
+        if other is not None:
+            summary["alphamissense_other"] = other
     return summary
 
 

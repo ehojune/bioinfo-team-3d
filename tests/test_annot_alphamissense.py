@@ -112,10 +112,17 @@ async def test_the_mane_then_canonical_transcript_is_the_one_read(tmp_path):
     assert am["am_pathogenicity"] == 0.1  # no MANE or canonical: the first scored transcript
 
 
-async def test_another_transcript_is_used_only_when_the_shown_one_has_no_score_and_it_is_named(tmp_path):
+async def test_another_transcript_score_is_separate_from_the_shown_transcript(tmp_path):
     unscored = {key: value for key, value in MANE.items() if key != "alphamissense"}
-    am = (await summary_of(tmp_path, [unscored, OTHER]))["alphamissense"]
-    assert (am["status"], am["transcript_id"], am["am_pathogenicity"]) == ("ok", "ENST00000288602", 0.1)
+    row = await summary_of(tmp_path, [unscored, OTHER])
+    am = row["alphamissense"]
+    assert row["transcript"]["transcript_id"] == am["transcript_id"] == "ENST00000646891"
+    assert am["status"] == "no_score" and "점수 없음 (이 transcript)" in am["text"]
+    assert "am_pathogenicity" not in am
+    other = row["alphamissense_other"]
+    assert (other["transcript_id"], other["am_pathogenicity"], other["am_class"]) == (
+        "ENST00000288602", 0.1, "likely_benign")
+    assert other["text"] == "다른 transcript(ENST00000288602)에는 0.10 (양성 가능성 높음)"
 
 
 async def test_a_variant_that_is_not_missense_reads_not_applicable(tmp_path):

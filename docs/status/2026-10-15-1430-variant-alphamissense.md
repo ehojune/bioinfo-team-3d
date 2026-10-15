@@ -13,7 +13,7 @@ Refs #621 (A, C). 사람 GRCh38의 `vep`가 AlphaMissense를 함께 받아 변�
 
 ## 바뀐 것
 
-- `labhq/tools/annot.py`: 사람 GRCh38 VEP 요청에 `AlphaMissense=1`. 옵션이 캐시 키(`options`)에 들어가 이전 답이 완전한 답으로 다시 쓰이지 않습니다. 요약의 `alphamissense`는 MANE → canonical → 첫 transcript 순으로 같은 transcript의 점수를 읽고(`AlphaMissense: 0.99 (병원성 가능성 높음)`), missense가 아니면 `해당 없음`, 점수 없는 missense는 `점수 없음`입니다. Ensembl이 플러그인 요청을 거부하면(400·500) 플러그인 없이 한 번 더 보내 나머지 VEP 결과를 살리고 그 항목은 `unavailable`로 적고 캐시하지 않습니다.
+- `labhq/tools/annot.py`: 사람 GRCh38 VEP 요청에 `AlphaMissense=1`. 옵션이 캐시 키(`options`)에 들어가 이전 답이 완전한 답으로 다시 쓰이지 않습니다. 요약의 `alphamissense`는 MANE → canonical → 첫 transcript 순으로 고른 transcript의 점수만 읽습니다(`AlphaMissense: 0.99 (병원성 가능성 높음)`). 선택된 transcript에 점수가 없으면 `점수 없음 (이 transcript)`으로 두고, 다른 transcript의 점수는 `alphamissense_other`에 분리합니다. missense가 아니면 `해당 없음`입니다. Ensembl이 플러그인 요청을 거부하면(400·500) 플러그인 없이 한 번 더 보내 나머지 VEP 결과를 살리고 그 항목은 `unavailable`로 적고 캐시하지 않습니다.
 - 출처 기록: 결과 `source.additional_sources`(와 `annotation_queries.jsonl`·결과 파일)에 AlphaMissense의 라이선스·이용 조건·인용, 결과 `note`에 한 줄 경고.
 - `labhq/tools/annot_mcp.py`(도구 설명), `labhq/orchestrator/cso.py`(roster 한 줄).
 - `variant_effect` topic: `output_types.yaml`, `topic_checklists.yaml`(6항목), `edam_map.yaml`(null, 맞는 EDAM topic이 하나로 정해지지 않아 local), `edam_subset.yaml`, `docs/vocabulary.md`(생성), `docs/reference/topic_checklists_sources.md`(PMID 9건, 2026-10-15 PubMed 대조).
