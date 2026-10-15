@@ -101,6 +101,55 @@ async def test_s2_failure_only_blocks_descendants_and_independent_results_reach_
 
 
 @pytest.mark.asyncio
+async def test_pi_rejected_independent_step_stops_request_before_cp2():
+    hub = _hub()
+    original = hub.reply
+
+    async def reply(task):
+        if task.meta['kind'] == 'plan':
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                              structured=valid_plan(steps=2))
+        if task.meta['kind'] == 'step' and task.meta.get('step_id') == 's2':
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False,
+                              error_kind='ask_rejected', error='PI rejected the blocking decision')
+        return await original(task)
+
+    hub.reply = reply
+    await Orchestrator(hub).run_request('r')
+
+    req = hub.requests['r']
+    assert req['results']['s1']['ok'] and not req['results']['s2']['ok']
+    assert req['status'] == 'failed' and req['outcome'] == 'research_failed'
+    assert not any(a['kind'] == 'research_evidence' for a in hub.approvals)
+    assert not any(t.meta['kind'] == 'review' for t in hub.calls)
+
+
+@pytest.mark.asyncio
+async def test_contract_failed_independent_step_still_reaches_cp2():
+    hub = _hub()
+    original = hub.reply
+
+    async def reply(task):
+        if task.meta['kind'] == 'plan':
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                              structured=valid_plan(steps=2))
+        if task.meta['kind'] == 'step' and task.meta.get('step_id') == 's2':
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False,
+                              error_kind='contract', error='invalid research result contract')
+        return await original(task)
+
+    hub.reply = reply
+    await Orchestrator(hub).run_request('r')
+
+    req = hub.requests['r']
+    assert req['results']['s1']['ok'] and not req['results']['s2']['ok']
+    assert req['status'] == 'done'
+    card = next(a['detail'] for a in hub.approvals if a['kind'] == 'research_evidence')
+    assert set(card['results']) == {'s1'}
+    assert 's2' in json.dumps(card['warnings'])
+
+
+@pytest.mark.asyncio
 async def test_internal_failure_records_signature_and_no_developer_task_for_pi(tmp_path):
     hub = _hub()
     original = hub.reply

@@ -2257,6 +2257,9 @@ def blocking_question(result: TaskResult) -> str | None:
     return question.strip() if isinstance(question, str) and question.strip() else None
 
 
+PI_STOP_ERROR_KINDS = frozenset({"ask_rejected", "halted"})
+
+
 def failure_kind(outcome: TaskResult | BaseException, engine: str = "") -> str | None:
     """Classify dispatch outcomes with this retry table.
 
@@ -2288,7 +2291,7 @@ def failure_kind(outcome: TaskResult | BaseException, engine: str = "") -> str |
         return "transient"
     if isinstance(outcome, BaseException):
         return "terminal"
-    if outcome.error_kind in ("ask_rejected", "halted"):  # the PI stopped a halted turn: never replay it
+    if outcome.error_kind in PI_STOP_ERROR_KINDS:  # the PI stopped this turn: never replay it
         return "terminal"
     if outcome.ok and (outcome.text.strip() or outcome.structured is not None or waiting(outcome)):
         return None
@@ -4079,7 +4082,7 @@ class Orchestrator:
                                                                  "error": f"incomplete: missing outputs: {', '.join(missing)}"})
                     previous = results.get(sid)
                     if (feedback and sid in feedback and previous and previous.ok and not outcome.ok
-                            and outcome.error_kind not in {"ask_rejected", "wake_limit"}):
+                            and outcome.error_kind not in PI_STOP_ERROR_KINDS | {"wake_limit"}):
                         outcome = previous.model_copy(update={"revision_failed":
                             f"{outcome.error_kind or failure_kind(outcome) or 'terminal'}: {outcome.error or 'unknown error'}"})
                     results[sid] = outcome
@@ -4164,7 +4167,8 @@ class Orchestrator:
         successful = [s for s in steps if s["id"] not in failed]
         warnings = [f"{sid}: 단계 실패 또는 의존 단계 건너뜀 — " +
                     safe_failure_cause(results[sid].error if sid in results else "not run") for sid in failed]
-        if rid in self.budget_denials or not successful:
+        pi_stopped = any(sid in results and results[sid].error_kind in PI_STOP_ERROR_KINDS for sid in failed)
+        if rid in self.budget_denials or pi_stopped or not successful:
             contract["failure"] = {"steps": failed, "plan_sha256": contract["plan_sha256"],
                                    **({"budget": self.budget_denials[rid]} if rid in self.budget_denials else {})}
             req["outcome"] = "research_failed"
