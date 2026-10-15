@@ -1090,13 +1090,19 @@ def _down_unlocked(s: Settings, *, force: bool = False, keep_gateway: bool = Fal
             state, _record, reason = _process_record(s, name)
             if state == "unknown":
                 _record_problem(name, reason)
+    wsl_stop_error = None
     if s.runner.wsl.enabled:
-        from .wsl_setup import control
+        from .wsl_setup import WslError, control
 
-        control(s, "stop")
+        try:
+            control(s, "stop")
+        except WslError as exc:
+            wsl_stop_error = exc
     stopped = [(role, pid) for role in roles if (pid := _stop_background(s, role)) is not None]
     if stopped:
         print("종료: " + ", ".join(f"{role} PID {pid}" for role, pid in stopped))
+    if wsl_stop_error is not None:
+        print(f"WSL runner를 종료하지 못했습니다(native 역할 종료는 계속): {wsl_stop_error}", file=sys.stderr)
     if keep_gateway:
         return
     # A gateway or runner started outside `up` (a script, another shell) has no process record, so nothing above
@@ -1107,6 +1113,8 @@ def _down_unlocked(s: Settings, *, force: bool = False, keep_gateway: bool = Fal
         raise SystemExit(2)
     if not stopped:
         print("종료: 기록된 프로세스 없음")
+    if wsl_stop_error is not None:
+        raise SystemExit(2)
 
 
 def _down(s: Settings, *, force: bool = False, keep_gateway: bool = False) -> None:

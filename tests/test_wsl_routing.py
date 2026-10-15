@@ -1,6 +1,7 @@
 import pytest
 import yaml
-from labhq import cli, doctor
+from labhq import cli, doctor, wsl_setup
+from labhq.gateway.shutdown import WebShutdown
 from labhq.gateway.server import Hub
 from labhq.models import AgentSpec
 from labhq.orchestrator.cso import format_capabilities
@@ -60,3 +61,42 @@ def test_doctor_has_wsl_section(settings, monkeypatch):
     monkeypatch.setattr(doctor, "_paper2agent_row", lambda *a, **kw: doctor._row("staff", "paper2agent", "skip", "mock", ""))
     result = doctor.collect(settings, dry_run=True)
     assert any(row["group"] == "WSL" for row in result["checks"])
+
+
+def _mock_native_shutdown(monkeypatch, calls):
+    monkeypatch.setattr(cli, "_active_requests", lambda _settings: [])
+    monkeypatch.setattr(cli, "_shutdown_readiness",
+                        lambda _settings: {"requests": [], "followups": [], "recruits": 0, "ready": True})
+    monkeypatch.setattr(cli, "_process_record", lambda *args, **kwargs: ("missing", None, None))
+    monkeypatch.setattr(cli, "_stop_background",
+                        lambda _settings, role: calls.append(f"stop:{role}") or 900_000_001)
+    monkeypatch.setattr(cli, "_unrecorded_process_still_running", lambda *args, **kwargs: None)
+    monkeypatch.setattr(wsl_setup, "control",
+                        lambda *_args: (_ for _ in ()).throw(wsl_setup.WslError("WSL stop failed")))
+
+
+def test_force_down_stops_native_roles_before_reporting_wsl_failure(settings, monkeypatch, capsys):
+    settings.runner.wsl.enabled = True
+    calls = []
+    _mock_native_shutdown(monkeypatch, calls)
+
+    with pytest.raises(SystemExit) as stopped:
+        cli._down(settings, force=True)
+
+    assert stopped.value.code == 2
+    assert calls == ["stop:runner", "stop:gateway"]
+    assert "WSL stop failed" in capsys.readouterr().err
+
+
+def test_web_shutdown_stops_native_runner_and_gateway_when_wsl_stop_fails(settings, monkeypatch):
+    settings.runner.wsl.enabled = True
+    calls = []
+    _mock_native_shutdown(monkeypatch, calls)
+    shutdown = WebShutdown(settings, hub=None, request_exit=lambda: calls.append("exit:gateway"))
+    shutdown.status = "stopping"  # prepare() sets this before the background task runs
+    monkeypatch.setattr(shutdown, "_start_watcher", lambda: None)
+
+    shutdown.run(force=True)
+
+    assert calls == ["stop:runner", "exit:gateway"]
+    assert shutdown.status == "stopping"
