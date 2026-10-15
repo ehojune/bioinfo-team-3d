@@ -14,7 +14,13 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 15:28 | [`123d977`](https://github.com/ehojune/bioinfo-team-3d/pull/628/commits/123d977) | 403 복구 안내에서 실패한 환경 토큰을 해제하고 README로 저장소를 만들게 하며, 빈 저장소는 branch 없는 첫 파일로 초기화한 뒤 기존 파일의 sha를 보존해 갱신한다(#607). |
+| 15:28 | [`8dbe72d`](https://github.com/ehojune/bioinfo-team-3d/pull/626/commits/8dbe72d) | 선택된 VEP transcript에 AlphaMissense 점수가 없으면 주 요약은 점수 없음으로 두고, 다른 transcript의 점수·등급은 별도 필드로 분리한다. |
+| 14:54 | [`d897e32`](https://github.com/ehojune/bioinfo-team-3d/pull/628/commits/d897e32) | 게시에 실패한 정리본을 labhq storage --republish로 로컬 초안 그대로 다시 올리고(--redraft도 failed를 받음), 토큰이 새 저장소를 만들거나 쓰지 못할 때 이유와 할 일을 쉬운 말로 알리며, doctor가 fine-grained 토큰을 미리 경고한다(#607). |
 | 14:38 | [`bc42f1b`](https://github.com/ehojune/bioinfo-team-3d/pull/615/commits/bc42f1b) | 계약 저장(두 복사본과 roster 갱신)과 작업 결과 파일 둘을 각각 한 작업으로 묶어 취소가 반쪽 상태를 남기지 않게 하고, 놀고 있는 쓰기 lane에서도 서로 다른 thread의 동기 호출이 호출 순서를 지키게 한다(#606). |
+| 14:31 | [`6339168`](https://github.com/ehojune/bioinfo-team-3d/pull/626/commits/6339168) | 사람 GRCh38 VEP가 AlphaMissense 점수·분류를 함께 받아 변이마다 쉬운 한국어로 보여 주고, 라이선스·임상 근거 아님 고지를 기록한다(#621 A). |
+| 14:31 | [`cb94a32`](https://github.com/ehojune/bioinfo-team-3d/pull/626/commits/cb94a32) | 변이 해석 요청에 붙는 variant_effect 분야와 점검표 6항목(빈도·ClinVar·VEP·AlphaMissense·AlphaGenome·한계)을 더한다(#621 C). |
+| 14:31 | [`877c2e6`](https://github.com/ehojune/bioinfo-team-3d/pull/626/commits/877c2e6) | manual과 status에 AlphaMissense 사용법, Ensembl REST 확인 결과, 라이선스 확인 내용을 적는다(#621). |
 | 14:09 | [`7a36ced`](https://github.com/ehojune/bioinfo-team-3d/pull/617/commits/7a36ced) | status·doctor가 신원을 읽을 수 없는 감독 기록(접근 거부, 다른 설정 파일)도 죽은 감독 기록처럼 warn으로 보여 준다(#589 봇 P2). |
 | 14:09 | [`0d5eb80`](https://github.com/ehojune/bioinfo-team-3d/pull/617/commits/0d5eb80) | supervisor.restart가 켜져 있어도 종료 코드 2(labhq 자신의 시작 거부)는 다시 시작하지 않고, up의 감독 검사를 #614 identity 검증과 함께 가짜 프로세스로 test한다(#589). |
 | 14:06 | [`4c1a7e4`](https://github.com/ehojune/bioinfo-team-3d/pull/617/commits/4c1a7e4) | origin/main(#614)을 병합해 up이 감독 프로세스 검사와 인스턴스 identity 검증(check·verify·기록)을 함께 돌린다. gateway·runner의 소유 기록은 프로세스가 같은 -c로 스스로 계산하므로 감독이 넘길 것은 없다(#589). |

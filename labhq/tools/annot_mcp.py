@@ -39,7 +39,8 @@ ALPHAGENOME = _alphagenome()
 server = make_server(
     "labhq-annot",
     instructions=(
-        "Look up public databases: vep (Ensembl VEP consequences), gnomad (population allele frequency), clinvar "
+        "Look up public databases: vep (Ensembl VEP consequences, with AlphaMissense missense pathogenicity for human "
+        "GRCh38), gnomad (population allele frequency), clinvar "
         "(clinical classification) for variants; chipatlas (ChIP-Atlas enrichment of public ChIP/ATAC peaks for a gene "
         "list or regions), chipatlas_targets (target genes of a transcription factor), encode (ENCODE candidate "
         "cis-regulatory elements overlapping regions), gtex (GTEx tissue expression and eQTLs for genes or variants)"
@@ -74,7 +75,10 @@ async def _run(method: str, *args: object, **kwargs: object) -> str:
 @server.tool()
 async def vep(variants: list[str], assembly: Literal["GRCh38", "GRCh37"] = "GRCh38", species: str = "human") -> str:
     """Ensembl VEP consequences (most severe consequence, genes, MANE/canonical transcript HGVS) for variants given
-    as chr:pos:ref:alt, HGVS or rsID. Sent in batches of 200 within Ensembl's rate limits."""
+    as chr:pos:ref:alt, HGVS or rsID. Sent in batches of 200 within Ensembl's rate limits. For human GRCh38 each
+    result also has `alphamissense`: the AlphaMissense score (0-1) and class of a missense variant from the same
+    transcript, or "해당 없음" for other variants. It is a model prediction, not clinical evidence (CC BY 4.0, cite
+    Cheng et al. 2023 Science); the terms are under `source.additional_sources`."""
     return await _run("vep", variants, assembly, species)
 
 

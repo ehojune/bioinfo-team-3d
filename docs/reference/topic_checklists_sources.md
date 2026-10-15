@@ -2,6 +2,7 @@
 
 `labhq/vocab/topic_checklists.yaml`의 항목이 기대는 표준과 문헌이다. 찾아볼 때만 읽는다.
 PMID는 2026-10-05에 PubMed에서 첫 저자·학술지·연도와 제목 단어를 대조해 확인했다. #420으로 더한 23개 topic(`proteomics`부터)의 PMID는 2026-10-06에 NCBI esummary로 같은 대조를 스크립트로 했다.
+`variant_effect`(#621)의 PMID는 2026-10-15에 PubMed에서 첫 저자·학술지·연도·제목을 대조했다.
 처음 세 topic(`bulk_rna_seq`, `microarray_expression`, `single_cell_rna_seq`)은 PR #395의 모의 연구 기록에서 나왔고 이 표에 없다.
 
 | topic | 근거 |
@@ -47,3 +48,4 @@ PMID는 2026-10-05에 PubMed에서 첫 저자·학술지·연도와 제목 단�
 | metagenomic_functional_profiling | Beghini et al. 2021 eLife, bioBakery 3·HUMAnN 3 (PMID 33944776) · Gloor et al. 2017 Front Microbiol, 조성 자료 (PMID 29187837) |
 | metagenome_binning | Bowers et al. 2017 Nat Biotechnol, MIMAG (PMID 28787424) · Chklovski et al. 2023 Nat Methods, CheckM2 (PMID 37500759) · Sieber et al. 2018 Nat Microbiol, DAS Tool (PMID 29807988) · Meyer et al. 2022 Nat Methods, CAMI II (PMID 35396482) · Olm et al. 2017 ISME J, dRep (PMID 28742071) · Chaumeil et al. 2022 Bioinformatics, GTDB-Tk v2 (PMID 36218463) |
 | metatranscriptomics | Kopylova et al. 2012 Bioinformatics, SortMeRNA (PMID 23071270) · Shakya et al. 2019 Front Genet (PMID 31608125) · Zhang et al. 2021 Bioinformatics, 차등 발현 통계 (PMID 34252963) · Klingenberg & Meinicke 2017 PeerJ, 정규화 (PMID 29062598) |
+| variant_effect | Cheng et al. 2023 Science, AlphaMissense (PMID 37733863) · Avsec et al. 2026 Nature, AlphaGenome (PMID 41606153) · Karczewski et al. 2020 Nature, gnomAD (PMID 32461654) · Landrum et al. 2018 Nucleic Acids Res, ClinVar (PMID 29165669) · McLaren et al. 2016 Genome Biol, VEP (PMID 27268795) · Morales et al. 2022 Nature, MANE (PMID 35388217) · Jaganathan et al. 2019 Cell, SpliceAI (PMID 30661751) · Pejaver et al. 2022 Am J Hum Genet, 예측 도구 보정과 ClinGen PP3/BP4 권고 (PMID 36413997) · Richards et al. 2015 Genet Med, ACMG/AMP (PMID 25741868) |
