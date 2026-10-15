@@ -1668,10 +1668,13 @@ def main(argv: list[str] | None = None) -> None:
     op.add_argument("--3d", dest="three_d", action="store_true", help="open the 3D office instead of 2.5D")
     sub.add_parser("runner")
     sub.add_parser("agents")
-    storage = sub.add_parser("storage", help="open the storage choice card for a finished request, or redraft its edition")
+    storage = sub.add_parser("storage", help="open the storage choice card for a finished request, or redraft or republish its edition")
     storage.add_argument("id")
-    storage.add_argument("--redraft", action="store_true",
-                         help="run the editor again for an edition not published yet (publish card pending or declined)")
+    again = storage.add_mutually_exclusive_group()
+    again.add_argument("--redraft", action="store_true",
+                       help="run the editor again for an edition not published yet (publish card pending, declined or upload failed)")
+    again.add_argument("--republish", action="store_true",
+                       help="after a failed upload, open the publish card again with the local draft (the editor does not run)")
     review = sub.add_parser("review-done", help="mark a finished report reviewed (or failure acknowledged)")
     review.add_argument("id")
     review.add_argument("--revision", type=int, help="CP4 draft revision shown in the report card")
@@ -1994,6 +1997,10 @@ def main(argv: list[str] | None = None) -> None:
         result = _api(s, "POST", f"/api/requests/{args.id}/storage/redraft", json={})
         closed = f" (이전 게시 카드 {len(result['closed_cards'])}장 닫음)" if result.get("closed_cards") else ""
         print(f"{args.id}: 편집자를 다시 돌립니다{closed} — 새 정리본이 만들어지면 게시 카드가 다시 뜹니다.")
+    elif args.cmd == "storage" and args.republish:
+        result = _api(s, "POST", f"/api/requests/{args.id}/storage/republish", json={})
+        closed = f" (이전 게시 카드 {len(result['closed_cards'])}장 닫음)" if result.get("closed_cards") else ""
+        print(f"{args.id}: 로컬 정리본으로 다시 올립니다{closed} — 게시 카드가 뜨면 확인하고 올려 주세요.")
     elif args.cmd == "storage":
         result = _api(s, "POST", f"/api/requests/{args.id}/storage", json={})
         print(f"{args.id}: 저장 위치 카드 {result['id']} — 웹에서 저장 위치를 골라 주세요.")

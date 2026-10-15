@@ -319,7 +319,7 @@ async def test_redraft_refuses_published_and_not_yet_drafted_editions(tmp_path, 
     saved["status"] = "published"
     with pytest.raises(ValueError, match="이미 게시한 정리본은 다시 만들 수 없습니다"):
         await service.redraft("req_test")
-    for status in ("selected", "local", "failed"):
+    for status in ("selected", "local"):  # `failed` is allowed since the publish retry (#607); tests/test_publish_retry_607.py
         saved["status"] = status
         with pytest.raises(ValueError, match="다시 만들 정리본이 없습니다"):
             await service.redraft("req_test")

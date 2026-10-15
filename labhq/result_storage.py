@@ -12,6 +12,8 @@ from pathlib import Path, PurePosixPath
 import re
 from urllib.parse import quote
 
+import httpx
+
 from .integrations.github import GitHubClient, GitHubHTTPError, publish_clean, sanitize, root_zone_restricted
 from .models import ApprovalRequest, Task
 from .policy import touches, restricted_paths
@@ -38,6 +40,42 @@ EDITOR_OTHER_CHARS = 30_000  # the same bound for each of PROGRESS.md, REPRODUCE
 _PDF_NAME = "report.pdf"
 _GENERATED = ("README.md", "report.md", "PROGRESS.md", "REPRODUCE.md", "SOURCES.md")  # edition documents that may link a figure
 PDF_UPLOAD_MAX_MB = 75  # base64 of this is 100 MB, the contents API's file limit (#608); settings caps the PDF size there
+
+
+class PublishAccessError(RuntimeError):
+    """GitHub refused the token something the upload needs. The text is plain Korean, says what to change, and holds no token (#607)."""
+
+
+def _denial(exc: Exception) -> GitHubHTTPError | None:
+    """The 403 or 404 of a GitHub call that is not rate limiting: the token cannot reach the repository or create one.
+    ``put_file`` checks an existing file with httpx's own error, so that one is read as a GitHub error here."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        exc = GitHubHTTPError(exc.request.method, exc.request.url.path, exc.response)
+    if isinstance(exc, GitHubHTTPError) and exc.status_code in {403, 404} and not exc.rate_limited:
+        return exc
+    return None
+
+
+def _retry_command(rid: str) -> str:
+    return f"`labhq storage {rid} --republish`"
+
+
+def create_denied_text(repo: str, rid: str, visibility: str | None) -> str:
+    flag = "--public" if visibility == "public" else "--private"
+    return (f"토큰으로 새 저장소를 만들 수 없습니다. 선택한 저장소만 허용하는 fine-grained 토큰일 가능성이 큽니다. "
+            f"빈 저장소를 먼저 만드세요(이미 만들었다면 건너뛰세요): `gh repo create {repo} {flag}`. 그다음 GitHub 토큰 설정의 저장소 접근에 그 저장소를 추가하고 "
+            f"Contents: Read and write 권한을 주세요. 끝나면 {_retry_command(rid)}를 실행하세요.")
+
+
+def write_denied_text(repo: str, rid: str) -> str:
+    return (f"토큰으로 {repo}에 파일을 쓸 수 없습니다. 저장소 이름이 맞는지 보고, 선택한 저장소만 허용하는 fine-grained 토큰이면 "
+            f"GitHub 토큰 설정의 저장소 접근에 {repo}를 추가하고 Contents: Read and write 권한을 주세요. "
+            f"끝나면 {_retry_command(rid)}를 실행하세요.")
+
+
+def upload_failed_text(rid: str) -> str:
+    return ("GitHub에 올리지 못했습니다. 로컬 정리본은 남겨 두었습니다. 토큰과 저장소 권한을 확인하세요. "
+            f"고친 뒤 {_retry_command(rid)}로 다시 올릴 수 있습니다.")
 
 
 def plain_path(path):
@@ -413,26 +451,26 @@ class ResultStorage:
     async def redraft(self, rid) -> dict:
         """Run the editor again for an edition that is drafted but not published, and replace its publish card (#607).
 
-        Allowed while the publish card is pending (or its answer window passed) and after the PI declined it. A published
-        edition is refused: its files are already in the repository. The old card is closed and the new draft opens a
-        new one; the folder is rebuilt, so nothing of the old draft stays."""
+        Allowed while the publish card is pending (or its answer window passed), after the PI declined it, and after an
+        upload failed (`republish` reuses the local draft instead). A published edition is refused: its files are already
+        in the repository. The old card is closed and the new draft opens a new one; the folder is rebuilt, so nothing of
+        the old draft stays."""
         async with self.card_lock:
             req = self.hub.requests[rid]
             saved = req.get("result_storage") or {}
             status = saved.get("status")
             if status == "published":
                 raise ValueError("이미 게시한 정리본은 다시 만들 수 없습니다. 저장소에 올라간 파일을 이 명령이 바꾸지 않습니다.")
-            if status not in {"draft", "declined"}:
-                raise ValueError("다시 만들 정리본이 없습니다. 정리본을 만든 뒤 게시 승인을 기다리거나 거절한 요청만 다시 만들 수 있습니다"
-                                 f"(저장 상태: {status or '선택 없음'}).")
+            if status not in {"draft", "declined", "failed"}:
+                raise ValueError("다시 만들 정리본이 없습니다. 정리본을 만든 뒤 게시 승인을 기다리거나, 거절했거나, 게시에 실패한 요청만 "
+                                 f"다시 만들 수 있습니다(저장 상태: {status or '선택 없음'}).")
             if req.get("status") not in {"done", "completed", "failed", "cancelled"} or req.get("cancelling"):
                 raise ValueError("끝난 요청만 정리본을 다시 만들 수 있습니다.")
             if saved.get("after_review") and (not req.get("pi_reviewed_at") or req.get("bundle_pending")):
                 raise ValueError("보고서 검토 완료와 묶음 갱신 뒤에 다시 만들 수 있습니다.")
             if controlled_request(req, self.s):
                 raise ValueError("통제 데이터가 포함된 요청은 편집자에게 보내지 않습니다.")
-            cards = [aid for aid, entry in self.hub.approvals.items()
-                     if entry["approval"].get("request_id") == rid and entry["approval"].get("kind") == "result_publish"]
+            cards = self.publish_cards(rid)
             running = self.tasks.get(rid)
             if rid in self.uploading or (running is not None and not running.done() and not cards):
                 # approved (its card is gone) or already uploading: cancelling now could leave a half-published edition
@@ -448,6 +486,48 @@ class ResultStorage:
             self.hub.save_request(rid)
             self.tasks[rid] = asyncio.create_task(self.finish(rid))
             return {"request_id": rid, "status": "redrafting", "closed_cards": cards}
+
+    def publish_cards(self, rid) -> list[str]:
+        return [aid for aid, entry in self.hub.approvals.items()
+                if entry["approval"].get("request_id") == rid and entry["approval"].get("kind") == "result_publish"]
+
+    async def republish(self, rid) -> dict:
+        """Open the publish card again for an edition whose upload failed, from the local draft the PI reviewed (#607).
+
+        The editor does not run again (`redraft` does that): the folder is read as it is, so the card shows the same files.
+        Refused: a published edition (its files are in the repository), an edition that did not fail (its card is pending or
+        declined, so `redraft`), an unreviewed or controlled-data request, an upload still going, and a failed edition whose
+        local draft is gone. Held under the lock of `redraft` and of the answer to a publish card."""
+        async with self.card_lock:
+            req = self.hub.requests[rid]
+            saved = req.get("result_storage") or {}
+            status = saved.get("status")
+            if status == "published":
+                raise ValueError("이미 게시한 정리본은 다시 올릴 수 없습니다. 저장소에 올라간 파일을 이 명령이 바꾸지 않습니다.")
+            if status != "failed":
+                raise ValueError(f"게시에 실패한 정리본만 다시 올릴 수 있습니다(저장 상태: {status or '선택 없음'}). "
+                                 f"게시 카드가 떠 있거나 거절한 정리본은 `labhq storage {rid} --redraft`로 다시 만드세요.")
+            if req.get("status") not in {"done", "completed", "failed", "cancelled"} or req.get("cancelling"):
+                raise ValueError("끝난 요청만 정리본을 다시 올릴 수 있습니다.")
+            if not req.get("pi_reviewed_at") or req.get("bundle_pending"):
+                raise ValueError("보고서 검토 완료와 묶음 갱신 뒤에 다시 올릴 수 있습니다.")
+            if controlled_request(req, self.s):
+                raise ValueError("통제 데이터가 포함된 요청은 게시하지 않습니다.")
+            running = self.tasks.get(rid)
+            if rid in self.uploading or (running is not None and not running.done()):
+                raise ValueError("게시가 진행 중입니다. 끝난 뒤 결과를 확인해 주세요.")
+            draft = saved.get("draft_path")
+            if not draft or not plain_path(Path(draft)) or not Path(draft, "README.md").is_file():
+                raise ValueError(f"다시 올릴 로컬 정리본이 없습니다. `labhq storage {rid} --redraft`로 정리본을 다시 만드세요.")
+            cards = self.publish_cards(rid)
+            for aid in cards:
+                await self.hub.close_approval(aid, "게시에 실패한 정리본을 다시 올려 이 게시 카드를 닫았습니다")
+            for key in ("warning", "error_type"):
+                saved.pop(key, None)
+            saved["status"] = "draft"  # finish reads the folder back and opens the card, as after a restart
+            self.hub.save_request(rid)
+            self.tasks[rid] = asyncio.create_task(self.finish(rid))
+            return {"request_id": rid, "status": "republishing", "closed_cards": cards}
 
     async def finish(self, rid):
         req = self.hub.requests[rid]
@@ -597,8 +677,8 @@ class ResultStorage:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            saved["error_type"] = type(exc).__name__
-            saved.update(status="failed", warning="GitHub에 올리지 못했습니다. 로컬 정리본은 남겨 두었습니다. 토큰과 저장소 권한을 확인하세요.")
+            saved["error_type"] = type(exc).__name__  # the warning never quotes the exception, only the texts above
+            saved.update(status="failed", warning=str(exc) if isinstance(exc, PublishAccessError) else upload_failed_text(rid))
         finally:
             self.hub.save_request(rid)
             await self.hub.publish({"type": "request.storage", "request_id": rid,
@@ -642,27 +722,44 @@ class ResultStorage:
         if gh is None:
             raise ValueError("GitHub unavailable")
         repo = saved["repo"]
+
+        def denied(exc, text):
+            """A permission refusal of the token becomes the plain-Korean reason (#607); any other error is left to the caller."""
+            if _denial(exc):
+                raise PublishAccessError(text) from exc
+
         try:
             info = await gh.repo_info(repo)
         except GitHubHTTPError as exc:
             if exc.status_code != 404 or saved["mode"] != "new":
+                denied(exc, write_denied_text(repo, rid))
                 raise
             try:
                 info = await gh._req("POST", "/user/repos", json={"name": repo.split("/")[1],
                            "private": saved.get("visibility") != "public", "auto_init": True})
             except GitHubHTTPError as collision:
+                if collision.status_code == 403:
+                    denied(collision, create_denied_text(repo, rid, saved.get("visibility")))
                 if collision.status_code != 422:
                     raise
-                info = await gh.repo_info(repo)
+                try:
+                    info = await gh.repo_info(repo)
+                except GitHubHTTPError as again:
+                    denied(again, write_denied_text(repo, rid))
+                    raise
         if not info.get("private", False) and not saved.get("allow_public"):
             raise ValueError("public publishing not approved")
         branch = saved.get("branch") or info.get("default_branch") or "main"
-        for name, body in docs.items():
-            await gh.put_file(repo, f"labhq/results/{rid}/{name}", body, "연구 결과 정리", branch)
-        for name, body in (images or {}).items():
-            await gh.put_image(repo, f"labhq/results/{rid}/{name}", body, branch)
-        if pdf:
-            await gh.put_binary(repo, f"labhq/results/{rid}/{_PDF_NAME}", pdf, branch, "연구 결과 PDF")
+        try:
+            for name, body in docs.items():
+                await gh.put_file(repo, f"labhq/results/{rid}/{name}", body, "연구 결과 정리", branch)
+            for name, body in (images or {}).items():
+                await gh.put_image(repo, f"labhq/results/{rid}/{name}", body, branch)
+            if pdf:
+                await gh.put_binary(repo, f"labhq/results/{rid}/{_PDF_NAME}", pdf, branch, "연구 결과 PDF")
+        except (GitHubHTTPError, httpx.HTTPStatusError) as exc:
+            denied(exc, write_denied_text(repo, rid))
+            raise
 
     async def close(self):
         for task in self.tasks.values():
