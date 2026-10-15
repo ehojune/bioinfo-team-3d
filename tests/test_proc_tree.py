@@ -1,7 +1,7 @@
 """Tree-kill never follows a stale parent PID (#589).
 
 After `labhq up` exits, the gateway and runner launchers keep their old parent PID. Windows hands that PID to some
-short-lived process, and a tree collected by parent PID (`taskkill /T`) ends the PI's gateway and runner with it. The
+short-lived process, and a tree collected by parent PID alone ends the PI's gateway and runner with it. The
 fake process tables below use PIDs no real machine hands out, and every site test replaces the process starters, so
 a regression here cannot touch a real process.
 """
