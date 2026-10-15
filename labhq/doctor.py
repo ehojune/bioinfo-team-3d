@@ -302,7 +302,7 @@ def _alphagenome_row(settings: Settings) -> dict:
                     "키가 생기면 labhq init을 다시 실행해 붙여 넣으세요.")
     if not alphagenome_client_available():
         return _row("annot", "AlphaGenome", "warn", "키 있음, alphagenome 패키지 없음 (도구 미등록)",
-                    "runner의 Python에 pip install alphagenome")
+                    "runner의 Python에 pip install 'labhq[alphagenome]' 또는 pip install alphagenome")
     return _row("annot", "AlphaGenome", "ok", "키 있음", "")
 
 

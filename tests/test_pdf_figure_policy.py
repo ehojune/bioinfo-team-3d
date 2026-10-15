@@ -439,8 +439,8 @@ def test_writer_prompts_say_eleven_and_ask_for_the_graphical_abstract():
         assert rule in prompt
     assert "at most 11 figures" in rule and "up to 10 key result figures" in rule and "at most 6" not in rule
     assert "graphical abstract" in rule and "question -> data -> methods and steps -> key findings" in rule
-    assert "outputs/graphical_abstract.png (or .svg)" in rule and "matplotlib" in rule
-    assert "first figure under \"결론과 권고\"" in rule and "labhq then draws the abstract" in rule
+    assert "graphical_abstract.png (or .svg)" in rule and "read-only synthesis" in rule
+    assert "first figure just below the title" in rule and "fallback flowchart" in rule
     assert "<workdir_id>/outputs/<file>" in rule and "never a path that is not listed" in rule
     cso.SYNTH_PROMPT.format(request="r", results="x", review="v", warnings="w", assumptions="a")  # still formats
 

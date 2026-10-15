@@ -1,0 +1,11 @@
+pr: 629
+rows:
+- sha: e599277
+  at: 2026-10-15 15:50
+  text: 운전 기록·과학 부록을 분리하고 논문 형식 보고서·분석 단계 graphical abstract·출처 추출을 연결
+- sha: 58dd063
+  at: 2026-10-15 16:27
+  text: main의 빈 저장소 게시와 새 topic prompt 변경을 보고서 형식 branch에 함께 반영했다.
+- sha: 3e0ac50
+  at: 2026-10-15 16:31
+  text: 게시 상태와 운전 기록 경계를 바로잡고 legacy 실행 부록과 실패 원인을 보존했다.

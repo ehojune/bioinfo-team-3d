@@ -222,7 +222,7 @@ def test_final_report_keeps_interpretation_cost_and_optional_style_appendix(hub,
     orchestrator.cost['r'] = 0.5
     orchestrator._finish('r', '결과를 가지고 있다.', {}, True)
     assert hub.requests['r']['cost_usd'] == 1.0
-    assert '고친 1곳' in hub.requests['r']['report_appendix']
+    assert '고친 1곳' in hub.requests['r']['execution_record']
 
 
 @pytest.mark.asyncio

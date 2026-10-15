@@ -12,6 +12,7 @@ const DEFAULT_TOLERANCE = {px: 4, frac: 0.01, loosePx: 12, looseFrac: 0.03, colo
 const SPEC = [
   {group: 'top', sel: '.top', views: '*'},
   {group: 'office', sel: '#office', views: ['default']},
+  {group: 'main-splitter', sel: '#main-splitter', views: '*'},
   {group: 'wall-board', sel: '#board', anchor: 'office', views: ['default']},
   {group: 'rack', sel: '#rack', anchor: 'office', views: ['default']},
   {group: 'door', sel: '#door', anchor: 'office', views: ['default']},
@@ -36,6 +37,7 @@ const SPEC = [
   {group: 'messenger', sel: '#feed', anchor: 'cc', views: ['feed']},
   {group: 'message', sel: '#feed li', each: 'index', anchor: 'cc', views: ['feed'], limit: 8},
   {group: 'staff-wrap', sel: '.staff-wrap', views: ['default', 'staff']},
+  {group: 'staff-splitter', sel: '#staff-splitter', views: ['default', 'staff']},
   {group: 'staff-toggle', sel: '#staff-toggle', anchor: 'staff', views: ['default', 'staff'], text: true, status: 'aria-expanded'},
   {group: 'staff-strip', sel: '#staff-strip', anchor: 'staff', views: ['default', 'staff']},
   {group: 'staff-card', sel: '#staff-strip .staff-card', each: 'agent', anchor: 'staff', views: ['staff'], status: 'staff-status'},

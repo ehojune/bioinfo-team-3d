@@ -490,6 +490,7 @@ def build_report_html(req: Mapping[str, Any], bundle: Path | None, *, now: datet
     appendix_text = ("" if report_text is not None
                      else _read_document(bundle, "report_appendix.md", str(req.get("report_appendix") or "")))
     appendix = markdown_to_html(appendix_text, figures, top_level=3) if appendix_text.strip() else ""
+    appendix_label = "과학 부록" if appendix_text.startswith("## 부록\n") else "부록 · 실행 기록"
     made = (now or datetime.now()).astimezone().strftime("%Y-%m-%d %H:%M")
     shown_request = request_text if len(request_text) <= MAX_REQUEST_CHARS else request_text[:MAX_REQUEST_CHARS] + "…"
     rows = [("요청 번호", rid or "-"), ("요청 시각", _stamp(req.get("created_at"))),
@@ -518,7 +519,7 @@ def build_report_html(req: Mapping[str, Any], bundle: Path | None, *, now: datet
 <main class="report">
 {body}
 </main>
-{f'<section class="appendix"><h2>부록 · 실행 기록</h2>{appendix}</section>' if appendix else ''}
+{f'<section class="appendix"><h2>{appendix_label}</h2>{appendix}</section>' if appendix else ''}
 </body></html>
 """
     return page, figures.missing

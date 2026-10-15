@@ -103,14 +103,14 @@ async def test_live_source_check_marks_retracted_claim_in_card_and_appendix(monk
     await Orchestrator(hub).run_request("r")
 
     assert len(hub.approvals) == 2, {key: hub.requests["r"].get(key)
-                                     for key in ("outcome", "error", "report", "report_appendix")}
+                                     for key in ("outcome", "error", "report", "execution_record")}
     card = hub.approvals[1]["detail"]
     assert card["source_verification"] == [
         "s1/e1: doi:10.1021/am300292v found; defect=retracted_by doi:10.1021/acsami.9b11759",
         "s1/e1: artifact:a1 requires_verification"]
     assert any(row["claim_id"] == "c1" and "retracted_by" in row["reason"]
                for row in card["unsupported_claims"])
-    appendix = hub.requests["r"]["report_appendix"]
+    appendix = hub.requests["r"]["execution_record"]
     assert "Live source verification:" in appendix and "defect=retracted_by" in appendix
 
 
@@ -862,7 +862,7 @@ async def test_research_step_failure_takes_its_own_path_even_with_replans_on():
     first = req["report"].splitlines()[:3]
     assert "s1" in first[0] and "원인" in first[1] and first[2].startswith("PI가 할 일:")
     assert "a changed plan needs a new CP1 approval" not in req["report"]
-    assert "a changed plan needs a new CP1 approval" in req["report_appendix"]
+    assert "a changed plan needs a new CP1 approval" in req["execution_record"]
     assert "replan_progress" not in req and "replan_history" not in req
 
 

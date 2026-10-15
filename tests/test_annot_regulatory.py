@@ -702,7 +702,7 @@ async def test_with_a_key_the_server_offers_alphagenome_and_keeps_the_key_out_of
     env = _server_env(tmp_path, key_file, True)
     spec = McpServerSpec(name="annot", command=sys.executable, args=["-m", "labhq.tools.annot_mcp"], env=env)
     assert FAKE_KEY not in json.dumps(spec.model_dump(mode="json"))  # neither the command line nor its env
-    assert set(await list_tools(spec)) == BASE_TOOLS | {"alphagenome"}
+    assert set(await list_tools(spec)) == BASE_TOOLS | {"alphagenome", "alphagenome_variant"}
     params = StdioServerParameters(command=sys.executable, args=spec.args, env={**os.environ, **env})
     async with stdio_client(params) as streams:
         async with ClientSession(streams[0], streams[1]) as session:

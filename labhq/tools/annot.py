@@ -317,7 +317,7 @@ class Annotator:
 
     def _finish(self, tool: str, db: str, release: str, url: str, options: dict, items: list[Item],
                 summarize: Callable[[Item], dict], note: str | None = None, cache: bool = True,
-                additional_sources: list[dict] | None = None) -> dict:
+                additional_sources: list[dict] | None = None, source_details: dict | None = None) -> dict:
         queried_at = _now()
         if cache:  # False when the caller cached each answer under its own release (ChIP-Atlas target files)
             self._to_cache(tool, release, options, items, queried_at)
@@ -326,6 +326,8 @@ class Annotator:
                                              for item in items]})
         source = {"db": db, "release_or_version": release, "url": url, "queried_at": queried_at,
                   "request_sha256": request_sha256}
+        if source_details:
+            source.update(source_details)
         if additional_sources:  # a database reached through this one, with its own license (AlphaMissense via VEP)
             source["additional_sources"] = additional_sources
         results = []
