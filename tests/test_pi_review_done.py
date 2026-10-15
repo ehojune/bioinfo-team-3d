@@ -60,4 +60,4 @@ def test_cli_review_and_status_labels(monkeypatch, capsys):
     assert calls == [('POST', '/api/requests/r/review-done', {'json': {}})]
     assert '검토·확인 완료' in capsys.readouterr().out
     assert request_display_label({'status': 'done', 'pi_review_pending': True}) == '보고서 검토 대기'
-    assert cost_text(25.36, False) == '$25.36 + 미집계된 비용'
+    assert cost_text(25.36, False) == '$25.36 + 비용 모름'

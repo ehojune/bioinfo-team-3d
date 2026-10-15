@@ -4,6 +4,7 @@ role: 총괄 — 질문 설계·업무 배분·증거 통합 (직접 분석하�
 character: owl
 engine: claude_code
 model: opus
+model_tier: reasoning
 can_orchestrate: true
 permission_mode: default
 builtin_tools: "Read,Glob,Grep"

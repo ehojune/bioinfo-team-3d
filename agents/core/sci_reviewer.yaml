@@ -4,6 +4,7 @@ role: 과학적 검토 — 질문 적합성·근거 강도·철저성 (다른 �
 character: turtle
 engine: codex
 model: gpt-6-astra
+model_tier: reasoning
 sandbox: read-only  # runner grants writes only to this task's outputs/ and .tmp/
 tools: [WebSearch]  # Codex: live web search
 builtin_mcp: []

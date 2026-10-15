@@ -3578,7 +3578,7 @@ class Orchestrator:
                 self.budget_outcomes.setdefault(rid, []).append(outcome)
                 await self._emit(rid, "request.budget_exceeded", outcome)
                 return
-            pending = f" + 미집계 {unknown}건" if unknown else ""
+            pending = f" + 비용 모름 {unknown}건" if unknown else ""
             reserve = self._unknown_reserve(limit)
             raised = max(limit * 2, bound)
             # What each answer does, so the PI need not read detail.requested_budget_usd (trial 2026-10-08).
@@ -4941,7 +4941,7 @@ class Orchestrator:
             report += "\n\n단독 턴이 시작된 뒤 온 메모는 반영되지 않았다.\n" + "\n".join(
                 f"- {note.get('id') or 'note'}: {note.get('text') or ''}" for note in late_notes)
         cost = (f"${float(result.cost_usd):.2f}" if result.cost_known and result.cost_usd is not None
-                else "비용 미집계")
+                else "비용 모름")
         paths = ", ".join(f"{result.workdir_id or 'unknown-workdir'}/{path}" for path in result.outputs)
         report = _append_report_metadata(report, [f"처리 방식: 단독 ({agent})", f"단독 턴 비용: {cost}",
                                                    f"산출 경로: {paths or 'none'}"])
@@ -6376,13 +6376,13 @@ class Orchestrator:
             metadata.append(f"비용: {format_cost(cost_summary)} {cost_detail(cost_summary)}")
         elif req.get("cost_known") is False:
             known = float(req.get("cost_usd") or 0)
-            metadata.append(f"비용: {f'${known:.2f} + ' if known else ''}비용 미집계")
+            metadata.append(f"비용: {f'${known:.2f} + ' if known else ''}비용 모름")
         for outcome in self.budget_outcomes.get(rid, []):
             decision = ("final turn; no further work" if outcome.get("final_turn") else
                         "approved" if outcome["approved"] else
                         "timed out" if outcome.get("timed_out") else "denied")
             unknown = int(outcome.get("unknown_count") or 0)
-            pending = f" + 미집계 {unknown}건" if unknown else ""
+            pending = f" + 비용 모름 {unknown}건" if unknown else ""
             relation = ">" if outcome["spent_usd"] > outcome["limit_usd"] else "/"
             metadata.append(f"Budget: ${outcome['spent_usd']:.2f}{pending} {relation} "
                             f"${outcome['limit_usd']:.2f}; {decision}.")

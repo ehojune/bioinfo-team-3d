@@ -323,10 +323,10 @@ def test_partly_unaccounted_cost_is_neither_within_budget_nor_hidden():
            "pi_interventions": 0, "cost_usd": 0.3, "cost_budget_ratio": 0.3, "within_budget": None,
            "token_total": 0, "duration_s": 1.0, "cost_summary": partial["cost_summary"]}
     table = bench._comparison_markdown({"case_id": "c", "mode": "real", "budget_usd": 1.0, "rows": [row]})
-    assert "| 확인 0.3000 + 미집계된 비용 1건 | ≥0.300 | 미집계 |" in table
-    assert "## 비용 내역" in table and "claude_code 확인 $0.3000 · codex 미집계된 비용 1건" in table
+    assert "| 확인 0.3000 + 비용 모름 1건 | ≥0.300 | 비용 모름 |" in table
+    assert "## 비용 내역" in table and "claude_code 확인 $0.3000 · codex 비용 모름 1건" in table
     legacy = {**row, "cost_summary": None, "cost_known": False}
-    assert "| 0.3000 + 미집계 | ≥0.300 |" in bench._comparison_markdown(
+    assert "| 0.3000 + 비용 모름 | ≥0.300 |" in bench._comparison_markdown(
         {"case_id": "c", "mode": "real", "budget_usd": 1.0, "rows": [legacy]})
 
 

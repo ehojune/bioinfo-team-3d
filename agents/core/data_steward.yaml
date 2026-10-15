@@ -4,6 +4,7 @@ role: 공개/통제접근 데이터 확보·메타데이터·체크섬·데이�
 character: squirrel
 engine: claude_code
 model: sonnet
+model_tier: balanced
 permission_mode: default
 tools: [Read, Glob, Grep, Write, Edit, "Bash(ls *)", "Bash(md5sum *)", "Bash(sha256sum *)", "Bash(wc *)"]
 builtin_mcp: [approval, hpc]

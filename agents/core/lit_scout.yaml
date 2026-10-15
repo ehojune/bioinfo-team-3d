@@ -4,6 +4,7 @@ role: 문헌·웹 검색 + 파견직 후보(논문+코드) 발굴
 character: fox
 engine: codex
 model: gpt-6-luna
+model_tier: fast
 tools: [WebSearch]  # Codex: live web search
 builtin_mcp: [annot]
 mcp:
