@@ -22,3 +22,7 @@ rows:
   at: 2026-10-16 02:08
   text: PowerShell provider·콜론 operand를 카드로 보내고 staff PATH의 시스템 실행 파일·쓰기 권한을 한 번 판정해
     기록
+- sha: e03e945
+  at: 2026-10-16 02:47
+  text: Windows PATH 실행 파일을 실제 Program Files·Git·System32 경로와 쓰기 권한으로 판정하고 작업 폴더 후보는
+    차단
