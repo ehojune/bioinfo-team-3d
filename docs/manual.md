@@ -794,8 +794,16 @@ flowchart LR
 ### 승인 게이트와 쓰기 범위
 
 HPC 제출(코어·시간 기준), 위험한 셸 명령, 예산 초과, 파견직 채용은 PI가 결정함에서 정합니다. Claude 직원의 파일·셸 호출은 승인 게이트를 거치고, 다른 엔진 직원은 sandbox와 지침에 기댑니다(아래 절과 [알려진 한계](#알려진-한계)). 셸·파일·MCP 규칙이 없는 도구는 `policy.approvals.auto_allow_tools`(기본: Read·Glob·Grep·LS·WebSearch·WebFetch·TodoWrite·Skill·StructuredOutput·ToolSearch, 그리고 이미 승인 게이트를 거친 Bash의 백그라운드 출력을 읽거나 멈추는 BashOutput·KillShell·TaskOutput·TaskStop)에 있을 때만 허용하고, 나머지는 PI에게 묻습니다. 셸 명령을 돌리는 `Monitor`가 그 예입니다. `Task`·`Agent`·`Workflow`·`TeamCreate`·`TeamDelete`는 이 목록에 넣어도 거부합니다(#421).
-재귀 삭제는 연결·파이프·하위 셸이 없는 단일 `rm -r[f]` 또는 `Remove-Item -Recurse [-Force]` 명령이고, 모든 대상이 단계 작업 폴더의 `.tmp` 아래인 리터럴 상대 경로일 때만 허용합니다. `.tmp`나 대상의 상위 폴더가 link·junction이면 PI에게 묻습니다. `rm`은 `--` 앞의 모든 옵션 단어를 봅니다. `rm -f -r`, `rm -v -rf`, `rm --recursive`, 대상 뒤의 `-rf`도 재귀 삭제입니다. `--` 앞 단어가 변수·`$'..'`·명령 치환으로 시작하면(`rm "$OPT" x`, `rm -f $f`) `-r`일 수 있어 재귀 삭제로 봅니다. 큰따옴표로 감싼 변수 하나가 유일한 대상이면(`rm -f "$f"`) 옵션이어도 지울 대상이 없거나 파일 하나라 허용하고, `rm -f -- "$a" "$b"`처럼 `--` 뒤 대상도 허용합니다. 이 규칙은 실제 실행 파일이 rm일 때만 봅니다(명령 맨 앞, `sudo`·`xargs`·`find -exec`·`sh -c` 같은 실행기 뒤). `docker rm`은 rm이 아니고, `git rm`은 지금 작업 트리 안만 지우므로 허용합니다. `git rm`도 `-C`·`--git-dir`·`--work-tree`·`core.worktree`·`GIT_DIR`·`GIT_WORK_TREE`가 있거나 그 앞 단어가 변수면 묻습니다.
-`find`가 `-delete`, `-exec rm`(`-execdir`·`-ok`), `| xargs rm`으로 지우는 것도 같은 규칙입니다. 시작 경로와 `-exec rm`의 `{}` 밖 대상이 모두 `.tmp` 아래 리터럴 상대 경로일 때만 허용하고, 작업 폴더의 다른 곳(증거가 든 `outputs/` 등)은 `rm -rf outputs/x`처럼 PI에게 묻습니다. 시작 경로를 안 쓰면 작업 폴더 전체로 보고, `| xargs rm`은 파이프라서, `-L`은 link를 따라가서 언제나 묻습니다. `-exec` 뒤가 리터럴 `rm`·`unlink` 한 명령으로 읽히지 않으면(변수 명령, `$'..'` 단어, `sh -c 'rm ..'`·`env rm` 같은 감싼 삭제, `{}.bak`, `-execdir`의 `{}` 밖 대상) 묻습니다(#533). cmd의 `rd /s`·`del /s`는 언제나 묻습니다. PowerShell에서 첫 pipe 뒤에 Remove-Item 계열(`ri`·`rm`·`del`·`erase`·`rd`·`rmdir`)이나 .NET 삭제(`.Delete(`·`::Delete(`)가 있으면 재귀 삭제로 봅니다. pipe 앞 `Get-ChildItem`의 폴더가 모두 `.tmp` 아래 리터럴 상대 경로이고 뒤 단계가 그 항목만 지울 때만 허용합니다. 중간 단계는 항목을 그대로 넘기는 `Where-Object`·`Sort-Object`·`Select-Object -First` 등이고, 마지막은 경로 없는 `Remove-Item`이거나 `$_`·`$PSItem`만 지우는 `Remove-Item`·`ForEach-Object { $_.Delete() }`입니다. 다른 경로를 지우거나 새 객체를 만드는 단계(`% { 'C:/x' }`, 계산 속성), `iex`는 묻고, pipe 밖 .NET 삭제도 리터럴 경로가 없어 묻습니다(#533). `Write-Output`·`Set-Content`가 출력·기록하는 따옴표 안 글자는 쓰기 판정처럼 빼고 봅니다(#535).
+작업 폴더 자동 허용은 닫힌 문법만 받습니다. 변수·대입·치환·간접 실행·Python 본문은 카드로 보냅니다. `cd`는 맨 앞 한 번과 `&&` 연결만 허용합니다. 셸 내장 또는 staff PATH에서 찾은 쓰기 불가한 시스템 실행 파일만 받으며 해석 경로를 기록합니다. PowerShell의 콜론 operand는 실제 작업 경로가 증명되지 않으면 카드로 보냅니다([규칙](reference/tool-approval-grammar.md)).
+
+| 작업 | 승인 |
+|---|---|
+| 실제 작업 폴더 안 `rm -rf tmp/`, `.tmp/paper-review`, 절대 경로 삭제 | 불필요 |
+| 폴더 자체 삭제, `..`, link·junction·hard link 쓰기, 자격 증명, 다른 작업 경로 | 확인 |
+| 문법 밖 명령·실행 중에 만드는 경로 | 확인 |
+| 쓰기 범위 밖 스크립트·실행 코드 | 매번 확인 |
+
+반복 승인을 더 줄이는 방안은 OS sandbox 격리로 별도 이슈에서 다룹니다. [문법·재생 근거](reference/tool-approval-grammar.md).
 
 Claude 직원의 맨 `Write`·`Edit`는 작업·project·upstream 폴더의 `Edit(//…/**)` 규칙으로 좁혀 사전 허용합니다. 링크·junction으로 적힌 폴더는 적힌 표기와 실제 경로에 규칙을 하나씩 둡니다(Claude는 둘 다 맞아야 허용). 그 밖 쓰기는 승인 게이트를 거칩니다(#219). 셸 쓰기 대상이 `~`로 시작하면 그 셸의 home으로 펼쳐 쓰기 허용 폴더와 대조합니다. Bash는 `HOME`(없으면 `USERPROFILE`과 `HOMEDRIVE`+`HOMEPATH`), PowerShell은 Windows에서 `USERPROFILE`과 `HOMEDRIVE`+`HOMEPATH`를 모두 봅니다. `~user`·`~+`·`~-`처럼 펼 수 없으면 묻고, 읽기 경로는 그대로 둡니다(#521).
 

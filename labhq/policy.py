@@ -2302,14 +2302,37 @@ def evaluate_tool(
     # Every check reads a Git Bash command with its drive paths spelled the Windows way, zones and private paths
     # included: converting only the write targets let `cp /c/<zone>/raw /c/<root>/out` through (PR #364 review).
     checked = git_bash_command(tool_name, judged, allowed_roots, windows)
-    decision = _evaluate_tool(tool_name, checked, policy, allowed_roots, workdir, environ=environ, windows=windows)
     # On with no active path (PR #327) still runs the registry check; a non-empty list alone also means on.
     private_paths = list(private_paths)
-    private = (_private_decision(tool_name, checked, private_paths, workdir, home, environ, list(private_open_reads))
+    private_open_reads = list(private_open_reads)
+    closed_zones = [z.path for z in policy.data_zones if z.level == 'restricted']
+    from .workspace_commands import workspace_command_reason
+    grammar = None
+    if tool_name in SHELL_TOOLS:
+        from .private_paths import claude_project_slug
+        reads = [p for p in private_open_reads if not (Path(p).parent.name == 'projects' and
+                 Path(p).name == claude_project_slug(os.path.abspath(workdir or '.')))]
+        grammar = workspace_command_reason(str(checked.get('command', '')), workdir, private_paths,
+                    powershell=tool_name == 'PowerShell', read_roots=reads, forbidden=closed_zones,
+                    environ=environ)
+    scoped = bool(grammar and grammar.startswith('문법 안:'))
+    decision = _evaluate_tool(tool_name, checked, policy, allowed_roots, workdir, environ=environ,
+                              windows=windows, workspace_operation=bool(scoped))
+    private = (_private_decision(tool_name, checked, private_paths, workdir, home, environ,
+                                list(private_open_reads), closed_zones, workspace_operation=scoped)
                if private_enabled or private_paths else None)
     # Only ever stricter: a deny stays a deny, and an ask is not turned into an allow.
     if private and decision.action != "deny" and (private.action == "deny" or decision.action == "allow"):
         decision = private
+    if grammar and (scoped or private_open_reads):
+        # The closed grammar governs the managed task-read exception introduced here.
+        # Legacy policy without a managed read grant retains its existing decisions.
+        if not scoped and private_open_reads and (private_enabled or private_paths) and decision.action == 'allow':
+            decision = Decision('ask', grammar)
+        elif decision.action == 'allow':
+            decision.reason = grammar
+        else:
+            decision.reason = grammar + ' · ' + decision.reason
     if read_only:
         if tool_name in WRITE_LIKE:
             path = judged.get("file_path") or judged.get("notebook_path")
@@ -2375,7 +2398,8 @@ _PRIVATE_PATH_KEYS = ("file_path", "notebook_path", "path")
 
 def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths: list[str], workdir: str | None,
                       home: str | None, environ: Mapping[str, str] | None,
-                      open_reads: list[str] | None = None) -> Decision | None:
+                      open_reads: list[str] | None = None, closed_zones: Iterable[str] = (), *,
+                      workspace_operation: bool = False) -> Decision | None:
     """PI personal paths (policy.private_paths): file tools are denied, a shell command naming one asks the PI.
 
     While private paths are active Claude pre-approves no shell command and no read outside the task's folders
@@ -2435,6 +2459,8 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
         return None
     if tool_name in SHELL_TOOLS:
         cmd = str(tool_input.get("command", ""))
+        if workspace_operation and not registry_access(cmd):
+            return None
         if tool_name == 'Bash' and open_reads:
             managed = managed_shell_read(cmd, private_paths, open_reads, workdir)
             if managed is True:
@@ -2564,6 +2590,7 @@ def _evaluate_tool(
     *,
     environ: Mapping[str, str] | None = None,
     windows: bool | None = None,
+    workspace_operation: bool = False,
 ) -> Decision:
     environ = os.environ if environ is None else environ
     windows = os.name == "nt" if windows is None else windows
@@ -2614,7 +2641,7 @@ def _evaluate_tool(
                 # The pattern sees only rm's first option cluster; every option word of a real rm counts (#17), and
                 # `docker rm` or `git rm` in its own tree is not one (#535 follow-up).
                 recursive = _recursive_rm(cmd) if not powershell else re.search(pat, delete_text, re.IGNORECASE)
-                if recursive and not _recursive_delete_inside_workdir(cmd, powershell, workdir):
+                if recursive and not workspace_operation and not _recursive_delete_inside_workdir(cmd, powershell, workdir):
                     return Decision("ask", f"재귀 삭제 확인 필요: `{cmd[:200]}`")
                 # A deleting find meets the same `.tmp` rule (find -delete, -exec rm, | xargs rm).
                 if not powershell and not all(_find_delete_inside_step_tmp(cmd, find, workdir)

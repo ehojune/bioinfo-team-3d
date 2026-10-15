@@ -1,0 +1,28 @@
+pr: 659
+rows:
+- sha: f34897b
+  at: 2026-10-16 00:18
+  text: 작업 폴더 승인 오판 축소와 task 한정 스크립트 허용, 합성 재생 34건 카드 32→18건
+- sha: 773cf4d
+  at: 2026-10-16 00:27
+  text: glob 읽기 예외에서도 restricted 하위 파일 차단, 작업·스킬 폴더 회귀 검증
+- sha: 31e1e8a
+  at: 2026-10-16 00:47
+  text: 자동 승인 닫힌 문법·쓰기 link 검사·관리 스킬 전체 트리 grant, 네 P1 회귀와 46건 재생
+- sha: 2dfdb5d
+  at: 2026-10-16 00:59
+  text: uv grant를 --no-project·--no-config 직접 실행으로 제한하고 cwd backend·환경 변수 접두 회귀 검증
+- sha: c1947c9
+  at: 2026-10-16 01:15
+  text: task 한정 grant와 카드 선택지를 제거하고 구버전 저장 choice를 무시
+- sha: ce8a59f
+  at: 2026-10-16 02:08
+  text: 승인 수정 브랜치에 최신 main 병합
+- sha: '3660963'
+  at: 2026-10-16 02:08
+  text: PowerShell provider·콜론 operand를 카드로 보내고 staff PATH의 시스템 실행 파일·쓰기 권한을 한 번 판정해
+    기록
+- sha: e03e945
+  at: 2026-10-16 02:47
+  text: Windows PATH 실행 파일을 실제 Program Files·Git·System32 경로와 쓰기 권한으로 판정하고 작업 폴더 후보는
+    차단
