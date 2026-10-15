@@ -135,6 +135,8 @@ Codex 직원 로그인 격리는 [알려진 한계](#알려진-한계)의 전용
 
 Windows 설정을 선택해 `labhq -c <설정> setup-wsl --check`로 도구·plugin·runner 연결을 확인합니다. 분석 준비에는 bioinfo manifest·bioinfo-analyze skill·Java·Nextflow·WSL Claude CLI와 직원 계정 로그인이 모두 필요합니다. 연결·roster 갱신 때 준비가 확인된 WSL만 우선 배정하며, 미준비 상태면 native를 씁니다.
 
+WSL을 설정하지 않은 설치에서 `doctor`는 선택 기능이 꺼졌다는 한 줄만 냅니다. `setup-wsl --check`를 직접 실행하거나 WSL을 활성화한 뒤에는 개별 준비 상태와 실제 WSL 직원 로그인 경로를 안내합니다.
+
 1. `labhq -c <설정> up`으로 gateway를 켭니다.
 2. `labhq -c <설정> setup-wsl`로 없는 Nextflow(24.10.5)·editable labhq venv·runner 설정을 준비합니다. 분석 준비와 연결을 모두 확인한 뒤 활성화를 저장합니다. Claude CLI 설치·로그인과 관리자 명령은 안내만 합니다.
 3. 이후 `up`·`down`이 WSL runner도 시작·종료합니다. 따로 제어하려면 같은 설정으로 `wsl-runner start` 또는 `wsl-runner stop`을 씁니다. 기존 supervisor와 프로세스 신원 검사를 재사용합니다.
