@@ -14,8 +14,14 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 14:09 | [`7a36ced`](https://github.com/ehojune/bioinfo-team-3d/pull/617/commits/7a36ced) | status·doctor가 신원을 읽을 수 없는 감독 기록(접근 거부, 다른 설정 파일)도 죽은 감독 기록처럼 warn으로 보여 준다(#589 봇 P2). |
+| 14:09 | [`0d5eb80`](https://github.com/ehojune/bioinfo-team-3d/pull/617/commits/0d5eb80) | supervisor.restart가 켜져 있어도 종료 코드 2(labhq 자신의 시작 거부)는 다시 시작하지 않고, up의 감독 검사를 #614 identity 검증과 함께 가짜 프로세스로 test한다(#589). |
+| 14:06 | [`4c1a7e4`](https://github.com/ehojune/bioinfo-team-3d/pull/617/commits/4c1a7e4) | origin/main(#614)을 병합해 up이 감독 프로세스 검사와 인스턴스 identity 검증(check·verify·기록)을 함께 돌린다. gateway·runner의 소유 기록은 프로세스가 같은 -c로 스스로 계산하므로 감독이 넘길 것은 없다(#589). |
 | 13:54 | [`925e877`](https://github.com/ehojune/bioinfo-team-3d/pull/624/commits/925e877) | OKF Loremaster를 검토해 참고 자료에 올리고, 가져갈 것의 매핑과 라이선스 조건을 docs/reference에 남겼다(코드 변경 없음). |
 | 13:10 | [`34e8b20`](https://github.com/ehojune/bioinfo-team-3d/pull/610/commits/34e8b20) | 출처 호스트 거름을 하나(public_link)로 닫고(끝 점·IPv6·IPv4 변형·userinfo), 괄호 있는 DOI와 짧은 PMID를 받으며, 게시 카드 답과 --redraft를 같은 lock으로 직렬화해 게시 시작 뒤 재작성을 거부한다(#607). |
+| 12:50 | [`c7f0a12`](https://github.com/ehojune/bioinfo-team-3d/pull/617/commits/c7f0a12) | tests·labhq 어디에도 taskkill의 /T 스위치가 없도록 가드 test를 더하고, 걸리던 설명 주석 여덟 곳의 말을 바꾼다(#589). |
+| 12:49 | [`89b4dfe`](https://github.com/ehojune/bioinfo-team-3d/pull/617/commits/89b4dfe) | 프로세스가 가까운 조상 4개의 handle을 열어 두는 pin_ancestors를 더해, 끝난 부모의 PID가 다른 프로세스에 재사용되지 않게 한다(#589). |
+| 12:49 | [`0b00bf4`](https://github.com/ehojune/bioinfo-team-3d/pull/617/commits/0b00bf4) | up이 역할마다 감독 프로세스를 띄워 gateway·runner의 부모가 끝까지 살아 있게 하고, 감독이 역할의 종료 코드와 시각을 진단 기록에 남기며 status·doctor가 보여 준다. 재시작은 설정(기본 꺼짐)이다(#589). |
 | 12:43 | [`583a8c6`](https://github.com/ehojune/bioinfo-team-3d/pull/614/commits/583a8c6) | 실행 중인 gateway·runner가 정체(설정 파일과 state·runner state·runner id·포트 지문)를 적고, up과 doctor가 그 정체로 같은 state·runner state·포트를 쥔 다른 설정을 막으며 gateway는 /api/health의 identity로 정체를 알려 준다(#613). |
 | 12:43 | [`0a584d9`](https://github.com/ehojune/bioinfo-team-3d/pull/614/commits/0a584d9) | init이 bioinfo-agent 폴더를 상대 경로로 받아도 절대 경로로 저장하고, doctor는 상대 경로로 적힌 설정을 warn한다(#613). |
 | 12:11 | [`4bf0768`](https://github.com/ehojune/bioinfo-team-3d/pull/610/commits/4bf0768) | main의 PDF 그림 정책(#611·#616)을 합치고, 편집자 입력·출처 추출·--redraft와 함께 draft_documents·finish가 초록과 출처 assets를 모두 받게 한다(#607). |
