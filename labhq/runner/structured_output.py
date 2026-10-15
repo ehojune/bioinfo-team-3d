@@ -7,8 +7,9 @@ from ..models import TaskResult
 PARSE_ERROR = "could not be parsed as JSON"
 FORMAT_ERROR = "structured_output_format"
 RETRY_PROMPT = (
-    "StructuredOutput 형식 오류입니다. 경로는 /로 쓰고 문자열 안 역슬래시·따옴표를 JSON 규칙에 맞게 "
-    "이스케이프해 같은 내용을 다시 제출하세요. 작업을 다시 실행하거나 PI에게 묻지 마세요. "
+    "StructuredOutput 형식 오류입니다. 내용(경로·명령·정규식 포함)은 한 글자도 바꾸지 말고, "
+    "JSON 문자열 규칙에 맞게 역슬래시를 \\\\로, 따옴표를 \\\"로 escape해서 같은 내용을 다시 "
+    "제출하세요. 작업을 다시 실행하거나 PI에게 묻지 마세요. "
     "도구 오류 원문만 근거로 쓰고 확인하지 않은 원인을 지어내지 않는다."
 )
 

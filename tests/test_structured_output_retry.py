@@ -16,7 +16,7 @@ ERROR = "InputValidationError: StructuredOutput was called with input that could
 
 
 def make_runner(tmp_path, monkeypatch, failures, *, limit=2, error=ERROR, session="same-session",
-                valid_on_parse_error=False):
+                valid_on_parse_error=False, final_structured=None):
     cfg = Settings()
     cfg.gateway.state_dir = cfg.runner.state_dir = str(tmp_path / "state")
     cfg.runner.workspace_root = str(tmp_path / "runs")
@@ -38,10 +38,11 @@ def make_runner(tmp_path, monkeypatch, failures, *, limit=2, error=ERROR, sessio
                         {"type": "tool_result", "is_error": True, "content": error}]}}), RunState(), ctx)
             ctx.record_run(session_id=session, session_cost_total=len(calls) * 0.1)
             failed = len(calls) <= failures
+            structured = final_structured if final_structured is not None else {"answer": "완료"}
             return TaskResult(task_id=ctx.task.id, agent_id="worker", ok=True, session_id=session,
                               cost_usd=0.1, usage={"input_tokens": 10},
                               text="안전 검사 때문에 멈췄습니다" if failed else "완료",
-                              structured=None if failed and not valid_on_parse_error else {"answer": "완료"})
+                              structured=None if failed and not valid_on_parse_error else structured)
 
     monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_: Adapter())
     return runner, calls
@@ -91,11 +92,30 @@ async def test_parse_error_then_resume_succeeds_without_pi_card(tmp_path, monkey
     assert calls[1][0].resume_session_id == "same-session"
     assert calls[0][3] == calls[1][3]
     assert calls[1][2]["session_cost_total"] == pytest.approx(0.1)
-    assert "같은 내용" in calls[1][1] and "경로는 /" in calls[1][1]
+    retry_prompt = calls[1][1]
+    assert "경로는 /" not in retry_prompt
+    assert "한 글자도 바꾸지 말고" in retry_prompt
+    assert r"역슬래시를 \\로" in retry_prompt
+    assert r'따옴표를 \"로' in retry_prompt
     assert result.ok and result.structured == {"answer": "완료"}
     assert result.cost_usd == pytest.approx(0.2) and result.usage["input_tokens"] == 20
     assert ERROR in result.tool_errors
     assert hub.approvals == []
+
+
+@pytest.mark.asyncio
+async def test_retry_preserves_windows_path_value(tmp_path, monkeypatch):
+    command = r'C:\tool\run.exe --pattern "\d+\t"'
+    runner, calls = make_runner(tmp_path, monkeypatch, 1, final_structured={"command": command})
+
+    result = await runner.run_task(Task(
+        agent_id="worker", prompt=f"Run this command exactly: {command}",
+        output_schema={"type": "object"},
+    ))
+
+    assert len(calls) == 2
+    assert result.structured == {"command": command}
+    assert result.structured["command"] == command
 
 
 @pytest.mark.asyncio
