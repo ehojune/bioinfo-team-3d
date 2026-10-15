@@ -491,6 +491,18 @@ def test_watch_renders_staff_warnings(capsys):
     assert "UAC 대기" in capsys.readouterr().out
 
 
+def test_cli_distinguishes_the_capybara_recruiter_from_the_beaver_editor(capsys):
+    cli.render({"type": "agent.status", "agent_id": "recruiter", "ts": 1, "data": {"state": "done"}})
+    cli.render({"type": "agent.status", "agent_id": "editor", "ts": 1, "data": {"state": "done"}})
+    cli.render({"type": "recruit.status", "ts": 1, "data": {"slug": "paper", "stage": "준비"}})
+    cli.render({"type": "recruit.failed", "ts": 1, "data": {"error": "중단"}})
+    lines = capsys.readouterr().out.splitlines()
+    assert "카피바라 recruiter" in lines[0]
+    assert "🦫 editor" in lines[1]
+    assert "카피바라 인사팀" in lines[2]
+    assert "카피바라 채용 실패" in lines[3]
+
+
 def test_repo_wrappers_use_the_local_venv():
     root = Path(__file__).resolve().parents[1]
     windows = (root / "labhq.cmd").read_text(encoding="utf-8")

@@ -26,37 +26,45 @@ STALL_S = 0.5      # one slow fsync
 PROBE_LIMIT_S = 0.2
 
 
-class SlowDisk:
-    """os.fsync patched: the first `stalls` calls sleep before they flush, like a disk behind a scanner."""
+class BlockedDisk:
+    """Hold the first fsync until the test explicitly releases it."""
 
-    def __init__(self, monkeypatch, seconds, stalls):
-        self.real, self.seconds, self.stalls = os.fsync, seconds, stalls
+    def __init__(self, monkeypatch):
+        self.real = os.fsync
         self.lock = threading.Lock()
-        self.windows: list[tuple[float, float]] = []
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.calls = 0
         monkeypatch.setattr(os, "fsync", self)
 
     def __call__(self, fd):
         with self.lock:
-            stall = len(self.windows) < self.stalls
-            start = time.perf_counter()
-            if stall:
-                self.windows.append((start, start + self.seconds))
-        if stall:
-            time.sleep(self.seconds)
+            block = self.calls == 0
+            self.calls += 1
+        if block:
+            self.entered.set()
+            if not self.release.wait(30):
+                raise TimeoutError("test did not release the blocked fsync")
         return self.real(fd)
 
 
-def _probe(url, stop, out):
-    """What a browser or `labhq status` sees: a blocking client in its own thread."""
-    with httpx.Client(timeout=30) as client:
-        while not stop.is_set():
-            start = time.perf_counter()
-            try:
-                client.get(url).raise_for_status()
-                out.append((start, time.perf_counter() - start))
-            except Exception:  # noqa: BLE001 - a failed probe is an unanswered one
-                out.append((start, float("inf")))
-            time.sleep(0.02)
+def _probe_while_write_is_blocked(url, disk, finished, out):
+    """Send one health request after fsync entered and record whether it answered before release."""
+    if not disk.entered.wait(30):
+        out.append("the file write never reached fsync")
+        disk.release.set()
+        finished.set()
+        return
+    try:
+        with httpx.Client(timeout=10) as client:
+            response = client.get(url)
+            response.raise_for_status()
+            out.append(response.status_code)
+    except Exception as exc:  # noqa: BLE001 - the assertion reports an unanswered probe
+        out.append(f"{type(exc).__name__}: {exc}")
+        disk.release.set()  # let a blocking implementation unwind instead of hanging the test
+    finally:
+        finished.set()
 
 
 def _settings(tmp_path):
@@ -90,32 +98,30 @@ async def test_health_answers_while_the_runner_writes_through_a_slow_disk(tmp_pa
     await _until(lambda: server.started, 30, "gateway start")
     runner = Runner(s)
     tasks.append(asyncio.create_task(runner.run_forever()))
-    stop, probes = threading.Event(), []
-    prober = threading.Thread(target=_probe, args=(f"http://127.0.0.1:{port}/api/health", stop, probes), daemon=True)
+    disk = prober = None
     try:
         await _until(lambda: "biologist" in hub.agents, 30, "runner registration")
-        disk = SlowDisk(monkeypatch, STALL_S, stalls=6)  # the task's first six durable writes are slow
+        probe_finished, probe_result = threading.Event(), []
+        disk = BlockedDisk(monkeypatch)
+        prober = threading.Thread(
+            target=_probe_while_write_is_blocked,
+            args=(f"http://127.0.0.1:{port}/api/health", disk, probe_finished, probe_result),
+            daemon=True,
+        )
         prober.start()
         rid = hub.create_request(RequestIn(text="CD276 요약", mode="direct", agent_id="biologist"))
+        assert await asyncio.to_thread(probe_finished.wait, 15), "the health probe did not finish"
+        assert probe_result == [200], f"/api/health did not answer while the file write was blocked: {probe_result}"
+        assert disk.entered.is_set(), "the file write never reached fsync"
+        assert not disk.release.is_set(), "the health response arrived only after the file write was released"
+        disk.release.set()
         await _until(lambda: hub.requests[rid]["status"] in {"done", "failed"}, 120, "the request to end")
         assert hub.requests[rid]["status"] == "done"
-        stop.set()
-        prober.join(10)
-        assert len(disk.windows) >= 4, "the slow disk was never reached"
-        first, last = disk.windows[0][0], disk.windows[-1][1]
-        # Probes sent while a slow write was in flight, from the stall's start to its end.
-        during = [latency for start, latency in probes if first <= start <= last]
-        assert len(during) >= 5, f"too few probes while writes stalled: {len(during)}"
-        # A frozen loop answers nothing for the whole stall: a few probes, the first of them taking about STALL_S.
-        # A live one answers every probe at once. One probe in twenty may meet a hiccup of the CI machine itself
-        # (a real fsync on a shared disk, a starved core) - one 0.41 s outlier among 100 fast probes failed a run -
-        # but no probe may take most of a stall.
-        slow = [latency for latency in during if latency >= PROBE_LIMIT_S]
-        assert max(during) < STALL_S * 0.9 and len(slow) <= max(1, len(during) // 20), (
-            f"/api/health was slow while a write was stalled: {len(slow)} of {len(during)} probes took "
-            f"{PROBE_LIMIT_S} s or more, the slowest {sorted(round(x, 2) for x in during)[-5:]}")
     finally:
-        stop.set()
+        if disk is not None:
+            disk.release.set()
+        if prober is not None:
+            prober.join(10)
         runner.stop()
         server.should_exit = True
         _, pending = await asyncio.wait(tasks, timeout=15)

@@ -32,7 +32,9 @@ from .util import atomic_write_text, free_port, short, without_windows_app_alias
 
 REPO = Path(__file__).resolve().parents[1]
 ICON = {"cso": "🦉", "chief_of_staff": "🐧", "biologist": "🐻", "data_steward": "🐿️", "lit_scout": "🦊",
-        "analyst": "🦝", "engineer": "🐙", "qc_reviewer": "🦔", "sci_reviewer": "🐢", "recruiter": "🦫", "bioinfo-agent": "🦦"}
+        "analyst": "🦝", "engineer": "🐙", "qc_reviewer": "🦔", "sci_reviewer": "🐢",
+        "recruiter": "카피바라",
+        "editor": "🦫", "bioinfo-agent": "🦦"}
 STATE_KO = {"working": "작업 중", "waiting": "승인 대기", "hibernating": "HPC 대기(수면)", "done": "완료", "error": "오류"}
 _OPERATION_LOCKS: dict[str, threading.Lock] = {}
 _OPERATION_LOCKS_GUARD = threading.Lock()
@@ -150,12 +152,12 @@ def render(ev: dict, login_holds: set[str] | None = None) -> None:
         line = f"🐢 과학 리뷰 #{d.get('revision')}: {d.get('verdict')} {d.get('scores')}"
         line += "".join(f"\n   - {i.get('step_id')}: {i.get('problem')} → {i.get('request')}" for i in d.get("issues") or [])
     elif t == "recruit.status":
-        line = f"🦫 인사팀: {d.get('slug')} {d.get('stage')}"
+        line = f"카피바라 인사팀: {d.get('slug')} {d.get('stage')}"
     elif t == "recruit.done":
         ag = d.get("agent", {})
         line = f"🐥 파견직 입사: {ag.get('id')} ({ag.get('name')}) · 수습통과={d.get('passed_probation')}"
     elif t == "recruit.failed":
-        line = f"🦫 채용 실패: {d.get('error')}"
+        line = f"카피바라 채용 실패: {d.get('error')}"
     elif t == "contract.warning":
         line = f"⚠️ 재고용 {d.get('agent_id')}: {', '.join(d.get('changed') or [])} hash가 채용 때와 다름"
     elif t == "request.completed":
