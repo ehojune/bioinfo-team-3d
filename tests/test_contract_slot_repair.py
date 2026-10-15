@@ -44,6 +44,13 @@ async def test_missing_slots_get_one_small_question_without_whole_result_correct
     assert hub.requests['r']['status'] == 'done'
 
 
+def test_slot_repair_fields_are_not_part_of_the_initial_step_schema():
+    from labhq.research import contract as rc
+
+    properties = rc.RESEARCH_RESULT_SCHEMA['$defs']['Evidence']['properties']
+    assert 'origin' not in properties and 'attempt_status' not in properties
+
+
 @pytest.mark.asyncio
 async def test_unanswered_slot_is_warning_in_cp2_reviewer_and_report_limitations():
     hub = slot_hub({})

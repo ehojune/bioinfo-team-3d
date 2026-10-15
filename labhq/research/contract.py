@@ -437,8 +437,10 @@ if "topics" not in RESEARCH_PLAN_SCHEMA["required"]:
 # Fresh proposals must assign work; the stored model still accepts legacy frozen plans.
 RESEARCH_PLAN_SCHEMA["$defs"]["RecruitProposal"]["required"].append("step_ids")
 RESEARCH_PLAN_SCHEMA["$defs"]["RecruitProposal"]["properties"]["step_ids"]["minItems"] = 1
-RESEARCH_RESULT_SCHEMA: dict[str, Any] = _without(ResearchResult.model_json_schema(), "ArtifactRef",
-                                                  ("data_type", "format"))
+RESEARCH_RESULT_SCHEMA: dict[str, Any] = _without(
+    _without(ResearchResult.model_json_schema(), "ArtifactRef", ("data_type", "format")),
+    "Evidence", ("origin", "attempt_status"),
+)
 # What a research step's engine is held to: the result, or the same shape with empty ledger lists and the question
 # in ``blocking_decision`` when the step cannot go on without a PI decision (STEP_PROMPT). The question is handled
 # before the ledger is validated, and the step re-runs with the answer (#90 CP2).
