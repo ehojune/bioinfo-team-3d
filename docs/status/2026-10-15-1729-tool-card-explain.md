@@ -12,7 +12,8 @@ Refs #634. PR #638의 staff 폴더 읽기 범위·자격 증명 이름 오판·�
 ## 검증
 
 - 수정 전: 기존 보안 테스트 3건과 새 pytest 8건 실패. 새 Node 2건 실패.
-- 수정 후: 관련 pytest 643 passed/7 skipped, Node 61개 파일 통과. `test_claude_staff_home.py` 변경 없음.
+- 수정 후: 관련 pytest 643 passed/7 skipped. 실제 node.exe를 쓰는 웹 pytest wrapper 86 passed/1 skipped(Node 61개 포함). `test_claude_staff_home.py` 변경 없음.
+- CI의 웹 상태 비교 실패 2건도 표시용 요약을 별도 필드로 분리해 수정했습니다. 기존 상태 비교 테스트는 그대로 통과합니다.
 - 공개 검사·diff 검사 통과. 패치노트·목차 검사와 push 후 CI 결과는 PR에 기록합니다.
 - 브라우저 실화면: UNVERIFIED. PI 인스턴스·HPC 사용 없음.
 

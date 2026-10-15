@@ -111,7 +111,7 @@ test('both offices wire report navigation and share history visibility; 2.5D she
   const html=fs.readFileSync(path.join(root,'index.html'),'utf8'),live=fs.readFileSync(path.join(root,'lab3d/src/live.js'),'utf8');
   assert.match(html,/createHistoryVisibility\(`\$\{MODE\}:\$\{INSTANCE\}`\)/);
   assert.match(html,/onOpenRequest:[\s\S]*?officeState.selectRequest\(id\)[\s\S]*?showTab\('tasks'\)/);
-  assert.match(html,/expandableText\(row, l.text, \{pi:true, original:l.fullText \?\? l.text/);
+  assert.match(html,/expandableText\(row, l.piText \?\? l.text, \{pi:true, original:l.fullText \?\? l.text/);
   assert.match(html,/syncMessageRows\(\$\('#feed'\), items, \{nick, avatarHTML:avatar, ago, expandableText\}\)/);
   assert.match(fs.readFileSync(path.join(root,'ui/messenger.js'),'utf8'),/options.expandableText\(text, m.fullText \?\? m.text/);
   assert.match(live,/createHistoryVisibility\(`live:/);assert.match(live,/syncDecisionHistory/);

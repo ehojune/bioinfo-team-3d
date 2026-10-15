@@ -337,6 +337,7 @@ function setPlan(q, plan) {
 function receivedText(row, text, metadata = {}) {
   Object.defineProperties(row, {
     fullText: {value: String(text ?? ''), enumerable: false},
+    piText: {value: metadata.piText, enumerable: false},
     truncated: {value: Boolean(metadata.text_truncated || metadata.input_truncated), enumerable: false},
     cutChars: {value: metadata.text_limit ?? metadata.input_limit ?? [...String(metadata.text ?? metadata.input ?? text ?? '')].length, enumerable: false},
   });
@@ -546,7 +547,8 @@ function apply(ev, replay = false) {
     }
     case 'agent.tool': { const a = ag(id); if (!a) break; a.tool = d.name; a.toolAt = ts; a.toolCalls = (a.toolCalls || 0) + 1;
       const input = typeof d.input === 'string' ? d.input : JSON.stringify(d.input ?? '');
-      logTo(a, `도구 ${toolLabel(d.name)} ${input}`, ts, {...d, previewText: toolActivitySummary(d)}); break; }
+      logTo(a, `도구 ${toolLabel(d.name)} ${input}`, ts, {...d, piText: toolActivitySummary(d),
+        previewText: `도구 ${toolLabel(d.name)} ${short(d.summary || toolInputLine(d.input), 80)}`}); break; }
     case 'agent.control': {
       // Merged, never replaced: a steer or pause to a halted task keeps it halted until resumed or expired.
       if (ev.task_id) {

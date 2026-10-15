@@ -1048,7 +1048,7 @@ function renderSheetLogs() {
       row = document.createElement('li'); if (trace) row.className = 'trace';
       row.append(document.createElement('time'));
       if (trace) { const label = document.createElement('b'); label.textContent = l.level === 'thinking' ? '생각' : '디버그'; row.append(label); }
-      expandableText(row, l.text, {pi:true, original:l.fullText ?? l.text, limit: trace ? 400 : 240,
+      expandableText(row, l.piText ?? l.text, {pi:true, original:l.fullText ?? l.text, limit: trace ? 400 : 240,
         forceOriginal: l.fullText != null && l.fullText !== l.text, truncated: l.truncated, cutChars: l.cutChars});
     }
     row.querySelector('time').textContent = ago(l.ts); next.set(l, row); return row;

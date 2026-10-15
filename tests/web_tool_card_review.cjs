@@ -12,9 +12,10 @@ test('staff activity summarizes scripts and retains the received command', () =>
   const raw = 'P=.tmp/p2s-scripts/paper_bundle.py uv run "$P" build --work .tmp/paper-review';
   office.apply({type:'agent.tool', agent_id:'recruiter', data:{name:'Bash', input:raw, input_truncated:true, input_limit:400}});
   const row = office.ag('recruiter').log.at(-1);
-  assert.equal(row.text, '논문 묶음을 만드는 스크립트 실행(uv)');
+  assert.equal(row.piText, '논문 묶음을 만드는 스크립트 실행(uv)');
   assert.ok(row.fullText.includes(raw));
-  assert.equal(office.toolActivitySummary({name:'Bash', input:raw}), row.text);
+  assert.equal(office.toolActivitySummary({name:'Bash', input:raw}), row.piText);
+  assert.ok(!Object.keys(row).includes('piText'), 'display copy must not change replay state');
   assert.equal(office.toolActivitySummary({name:'Bash', input:'python opaque.py'}), '스크립트 실행(python)');
 });
 test('PI detail toggles hide internal truncation captions', async () => {
