@@ -249,6 +249,7 @@ class Runner:
         self.ended_roots: list[tuple[float, str, bool, list[Path]]] = []
         self.task_req: dict[str, str | None] = {}
         self.approval_tasks: dict[str, tuple[str | None, str | None]] = {}
+        self.tool_contexts: dict[str, Any] = {}
         self.submitting: dict[str, set[asyncio.Future]] = {}  # submit commands running, by task (#214 review)
         self.jobs: dict[str, dict] = self.store.all("job")
         self.notified: set[str] = set(self.store.all("notified"))
@@ -581,7 +582,8 @@ class Runner:
         elif typ == "task.control":
             await self._on_control(msg)
         elif typ == "approval.resolved":
-            if self.broker.resolve(msg["id"], bool(msg.get("approved")), msg.get("note", "")):
+            if self.broker.resolve(msg["id"], bool(msg.get("approved")), msg.get("note", ""),
+                                   **({'choice': msg['choice']} if msg.get('choice') else {})):
                 task_id, agent_id = self.approval_tasks.pop(msg["id"], (None, None))
                 run = self.tasks.get(task_id or "")
                 if task_id and not (run and run.done()):  # an answer after the task ended must not revive it
@@ -1653,6 +1655,7 @@ class Runner:
                                  resume_of=task.resume_session_id, kind=task.meta.get("kind"),
                                  **({"reference_dirs": read_dirs} if read_dirs else {}))
             self.active_roots[task.id] = (read_only, [ws.dir.resolve(), *(Path(d).resolve() for d in extra_dirs)])
+            self.tool_contexts[task.id] = ctx
             try:
                 refused = watch.take_baseline() if watch else None
                 if refused:  # fail closed: a run whose writes cannot be checked does not start
@@ -1687,6 +1690,7 @@ class Runner:
                 if outcome["status"] == "rejected":
                     result = rejected_step(result, outcome["reason"])
             finally:
+                self.tool_contexts.pop(task.id, None)
                 ended = self.active_roots.pop(task.id, None)
                 # A submit command already running for this run lands in pending_jobs below; later ones are refused.
                 if in_flight := list(self.submitting.pop(task.id, ())):

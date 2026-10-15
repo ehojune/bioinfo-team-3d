@@ -111,16 +111,20 @@ class Broker:
         return app
 
     async def request_approval(self, req: ApprovalRequest) -> dict:
+        # A task process cannot add UI-only fields. Old runners may still send this removed field.
+        req.detail.pop('task_scope_label', None)
         fut = asyncio.get_running_loop().create_future()
         self.pending[req.id] = fut
         try:
             await self._on_approval(req)
-            return await asyncio.wait_for(fut, req.timeout_s)
+            return await asyncio.wait_for(asyncio.shield(fut), req.timeout_s)
         except asyncio.TimeoutError:
             if self._on_approval_timeout is not None:
                 await self._on_approval_timeout(req)
             return {"approved": False, "note": "approval timed out", "state": "timed_out"}
         finally:
+            if not fut.done():
+                fut.set_result({'approved': False, 'note': 'approval ended'})
             self.pending.pop(req.id, None)
 
     async def request_ask(self, req: AskRequest) -> dict:
@@ -156,10 +160,12 @@ class Broker:
         finally:
             self.pending_asks.pop(req.id, None)
 
-    def resolve(self, approval_id: str, approved: bool, note: str = "") -> bool:
+    def resolve(self, approval_id: str, approved: bool, note: str = "", choice: str | None = None) -> bool:
         fut = self.pending.get(approval_id)
         if fut and not fut.done():
-            fut.set_result({"approved": approved, "note": note})
+            safe_choice = choice if choice in {"approve", "revise", "deny"} else None
+            fut.set_result({"approved": approved, "note": note,
+                            **({'choice': safe_choice} if safe_choice else {})})
             return True
         return False
 

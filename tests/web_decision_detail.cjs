@@ -24,6 +24,18 @@ async function card(kind,detail) {
   return {decide,container,approval,row,detail:row._decisionParts.detail};
 }
 
+test('legacy task-scope detail never adds a grant choice', async () => {
+  const decide = await modulePromise, container = new Element(), sent = [];
+  const approval = {id:'task-class', kind:'tool_permission', detail:{task_scope_label:'bundle.py execution'}};
+  const [row] = decide.syncDecisionCards(container, [approval], [], {onDecision:(...args)=>sent.push(args)});
+  assert.equal(row._decisionParts.taskClass, undefined);
+  assert.equal(nodes(row).some(node=>node.textContent.includes('같은 부류 허용')), false);
+  row._decisionParts.approve.onclick();
+  assert.equal(sent[0][1], true);
+  assert.equal(sent[0][4], null);
+  assert.equal(decide.decisionChoice(approval, 'allow_task_class'), null);
+});
+
 test('tool_permission command, arguments and all extra fields appear as literal DOM text',async()=>{
   for (const input of [{command:'printf "<img src=x onerror=alert(1)>"',args:['--example','a&b']},
     JSON.stringify({command:'printf "<img src=x onerror=alert(1)>"',args:['--example','a&b']})]) {
