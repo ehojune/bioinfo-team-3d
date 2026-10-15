@@ -289,7 +289,7 @@ def draft_documents(req: dict, settings, included=None, assets=None, *, abstract
     sources = [f"{r.get('kind')}: {r.get('value', '')}" for r in req.get("references") or []
                if r.get("kind") in {"url", "github", "doi", "pmid"}]
     sources += re.findall(r"https?://[^\s<>\"'\])]+", report)
-    bibliography = re.search(r"(?im)^#{1,6}\s+(?:references|bibliography|참고\s*문헌|참고\s*자료|출처)[^\n]*\n", report)
+    bibliography = re.search(r"(?im)^#{1,6}\s+(?:references|bibliography|참고(?:\s*문헌|\s*자료)?|출처)[^\n]*\n", report)
     citations = re.split(r"(?m)^#{1,6}\s+", report[bibliography.end():], maxsplit=1)[0] if bibliography else ""
     found = edition_sources.collect(
         [report, str(req.get("report_appendix") or "")], req.get("references") or [],
@@ -676,6 +676,15 @@ class ResultStorage:
             finally:
                 self.uploading.discard(rid)
             saved["status"] = "published"
+            saved["report_url"] = (f"https://github.com/{saved['repo']}/blob/{saved.get('branch') or 'main'}/"
+                                   f"labhq/results/{rid}/report.md")
+            if hasattr(self.hub, "rounds"):
+                try:
+                    self.hub.rounds.write(rid)
+                    self.hub.rounds.submit(rid)
+                except Exception as exc:
+                    saved["round_warning"] = (
+                        f"게시를 마쳤지만 운전 기록을 갱신하지 못했습니다({type(exc).__name__}).")
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -757,6 +766,7 @@ class ResultStorage:
             empty = await gh.repository_is_empty(repo, default_branch)
             if empty:
                 branch = default_branch
+            saved["branch"] = branch
             write_branch = None if empty else branch
             for name, body in docs.items():
                 await gh.put_file(repo, f"labhq/results/{rid}/{name}", body, "연구 결과 정리", write_branch)

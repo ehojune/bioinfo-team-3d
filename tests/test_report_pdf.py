@@ -48,7 +48,7 @@ def build(tmp_path: Path, report: str, *, settings: Settings | None = None, file
               "output_sha256": {name: hashlib.sha256(payload).hexdigest() for name, payload in files.items()}}
     request = {"id": "req_pdf", "text": "TP53 변이를 사례군과 대조군에서 비교해 주세요.", "mode": "orchestrate",
                "status": "done", "created_at": 1760400000.0, "report": report.replace("WD", workdir.name),
-               "report_appendix": "## 실행 기록\n\n- s1 완료\n", "results": {"s1": result},
+               "report_appendix": "## 부록\n\n- 과학 리뷰 완료\n", "execution_record": "- s1 완료", "results": {"s1": result},
                "plan": {"steps": [{"id": "s1", "depends_on": [], "outputs": list(files)}]}, **(extra or {})}
     tasks = {"t1": {"request_id": "req_pdf", "kind": "step", "completed": True, "result": result}}
     built = build_request_bundle(request, settings, tasks)
@@ -135,7 +135,7 @@ def test_verify_fails_when_a_linked_image_is_missing_or_points_outside_the_bundl
     assert not any("secret" in p or "example.com" in p for p in problems)  # no private path is echoed; remote is skipped
     assert len(problems) == 2
     assert "보고서 그림: 링크 3개, 문제 2건" in render_verify(verified)
-    appendix = (bundle / "report_appendix.md").read_text(encoding="utf-8")
+    appendix = (bundle / "execution_record.md").read_text(encoding="utf-8")
     assert "## 보고서 그림 링크" in appendix and "nope.png" in appendix
 
 
@@ -182,8 +182,8 @@ def test_html_embeds_figures_korean_text_and_allows_no_network(tmp_path):
     assert "<table>" in page and "<ul><li>첫째<ul><li>중첩</li></ul></li><li>둘째</li></ul>" in page
     assert "<script>" not in page and "&lt;script&gt;alert(1)&lt;/script&gt;" in page
     assert 'class="anchor">[s1/c1]' in page
-    assert "부록 · 실행 기록" in page and "s1 완료" in page
-    assert page.index("TP53 변이를 사례군") < page.index("결론과 권고") < page.index("부록 · 실행 기록")
+    assert "과학 부록" in page and "과학 리뷰 완료" in page
+    assert page.index("TP53 변이를 사례군") < page.index("결론과 권고") < page.index("과학 부록")
 
 
 def test_html_marks_a_figure_it_cannot_embed_and_never_reads_outside_the_bundle(tmp_path):
@@ -537,7 +537,7 @@ def test_the_bundle_figure_check_reads_the_report_after_the_absolute_path_rewrit
     report = f"# 결과\n\n![절대]({workdir}/outputs/fig1.png)\n"
     settings, request, _tasks, bundle = build(tmp_path, report)
     assert "![절대](steps/s1/outputs/fig1.png)" in (bundle / "report.md").read_text(encoding="utf-8")
-    appendix = (bundle / "report_appendix.md").read_text(encoding="utf-8")
+    appendix = (bundle / "execution_record.md").read_text(encoding="utf-8")
     assert "보고서 그림 링크" not in appendix and "묶음 밖" not in appendix
     assert bundle_figure_check(bundle) == {"linked": 1, "problems": []}
     assert verify_request(request, settings)["exit_code"] == 0
@@ -547,6 +547,6 @@ def test_the_bundle_figure_check_reads_the_report_after_the_absolute_path_rewrit
     other_workdir = (other_dir / "runs" / "2026-10-14" / "task_s1_analyst").as_posix()
     missing_report = f"# 결과\n\n![없음]({other_workdir}/outputs/nope.png)\n"
     _settings, _request, _tasks, other = build(other_dir, missing_report)
-    appendix = (other / "report_appendix.md").read_text(encoding="utf-8")
+    appendix = (other / "execution_record.md").read_text(encoding="utf-8")
     assert "## 보고서 그림 링크" in appendix and "묶음에 없습니다: steps/s1/outputs/nope.png" in appendix
     assert appendix.count("묶음에 없습니다") == 1

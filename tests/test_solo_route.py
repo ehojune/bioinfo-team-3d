@@ -95,8 +95,8 @@ async def test_solo_plan_dispatches_one_direct_turn_and_uses_its_report_and_outp
     assert "2,000" in direct.prompt and "outputs/scripts/" in direct.prompt
     req = hub.requests["r"]
     assert req["report"] == "짧은 결론"
-    assert "처리 방식: 단독 (solo)" in req["report_appendix"]
-    assert "task_solo/answer.md" in req["report_appendix"] and "$0.40" in req["report_appendix"]
+    assert "처리 방식: 단독 (solo)" in req["execution_record"]
+    assert "task_solo/answer.md" in req["execution_record"] and "$0.40" in req["execution_record"]
     assert req["route_decision"]["mode"] == "solo" and req["solo_result"]["ok"] is True
     assert req["followup_agent_id"] == "solo"
 
@@ -141,7 +141,7 @@ async def test_solo_failure_falls_back_to_saved_team_plan(solo):
     kinds = [task.meta.get("kind") for task in hub.calls]
     assert kinds == ["plan", "direct", "step", "synthesis"]
     assert hub.requests["r"]["report"] == "team report"
-    assert "단독 실패 → 팀" in hub.requests["r"]["report_appendix"]
+    assert "단독 실패 → 팀" in hub.requests["r"]["execution_record"]
     assert "followup_agent_id" not in hub.requests["r"]
     assert any(event["type"] == "request.route" and event["data"].get("fallback") for event in hub.events)
 

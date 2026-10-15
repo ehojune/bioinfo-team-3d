@@ -125,7 +125,7 @@ async def test_general_report_warns_without_copying_long_tool_output():
                                      "second failure should only affect the count"])
     Orchestrator(hub)._finish("r", "Narrative", {"A": {**result.model_dump(mode="json"), "status": "done"}}, ok=True)
     report = hub.requests["r"]["report"]
-    appendix = hub.requests["r"]["report_appendix"]
+    appendix = hub.requests["r"]["execution_record"]
 
     assert "실행 기록 참고" in report
     assert "## 보고서 경고" not in report

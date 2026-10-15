@@ -114,7 +114,7 @@ async def test_out_asks_before_any_step_and_proceed_runs_the_received_plan():
     assert len(kinds(hub, "plan")) == 1 and step_ids(hub) == ["A", "B"]  # no re-plan
     assert req["status"] == "done" and req["scope_check"]["decision"] == "proceed"
     assert "Scope verdict" not in req["report"]
-    assert f"Scope verdict: out; {REASON} PI decision: proceed." in req["report_appendix"]
+    assert f"Scope verdict: out; {REASON} PI decision: proceed." in req["execution_record"]
 
 
 @pytest.mark.asyncio
@@ -146,7 +146,7 @@ async def test_borderline_runs_and_leaves_one_report_line():
     req = hub.requests["r"]
     assert hub.approvals == [] and step_ids(hub) == ["A", "B"] and req["status"] == "done"
     assert "Scope verdict" not in req["report"]
-    lines = [line for line in req["report_appendix"].splitlines() if line.startswith("Scope verdict:")]
+    lines = [line for line in req["execution_record"].splitlines() if line.startswith("Scope verdict:")]
     assert lines == [f"Scope verdict: borderline; {REASON}"]
 
 
@@ -158,7 +158,7 @@ async def test_in_or_a_plan_without_a_verdict_runs_as_before(verdict):
     req = hub.requests["r"]
     assert hub.approvals == [] and step_ids(hub) == ["A", "B"] and req["status"] == "done"
     assert "Scope verdict" not in req["report"]
-    assert "Scope verdict" not in req["report_appendix"]
+    assert "Scope verdict" not in req["execution_record"]
     assert req.get("scope_check", {}).get("verdict") == verdict
 
 

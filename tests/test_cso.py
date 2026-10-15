@@ -210,7 +210,7 @@ async def test_run_request_exception_terminal_keeps_saved_cost():
     rid, typ, data = terminal[0]
     assert (rid, typ) == ("r", "request.failed")
     assert data["error"] == "RuntimeError: broken checkpoint"
-    assert "A · worker (FAILED)" in data["report_appendix"]
+    assert "A · worker (FAILED)" in data["execution_record"]
     assert data["cost_usd"] == 1.25 and data["cost_known"] is False
 
 
@@ -422,7 +422,7 @@ async def test_blocking_step_waits_then_reruns_before_dependent():
     assert decision["previous_result"]["tool_errors"] == ["fixture lookup failed", "shared lookup failed"]
     assert shared["A"].tool_errors == ["fixture lookup failed", "shared lookup failed", "second lookup failed"]
     assert shared["A"].unreported_outputs == ["outputs/figure.png", "outputs/scripts/prepare.py"]
-    appendix = hub.requests["r"]["report_appendix"]
+    appendix = hub.requests["r"]["execution_record"]
     assert "A: 실패한 조회 — 증거도 부재 증명도 아님 3건" in appendix
     assert "fixture lookup failed" in appendix
 
@@ -592,8 +592,8 @@ async def test_blocking_decision_denial_cancels_dispatch():
     hub = FakeHub(dispatch)
     await Orchestrator(hub).run_request("r")
     assert hub.requests["r"]["status"] == "failed"
-    assert "Choose a cohort" in hub.requests["r"]["report_appendix"]
-    assert "question was rejected or unanswered" in hub.requests["r"]["report_appendix"]
+    assert "Choose a cohort" in hub.requests["r"]["execution_record"]
+    assert "question was rejected or unanswered" in hub.requests["r"]["execution_record"]
     assert not hub.requests["r"].get("pending_questions")
     assert not hub.requests["r"]["results"]["A"]["ok"]
     assert hub.requests["r"]["results"]["A"]["error_kind"] == "ask_rejected"
@@ -781,8 +781,8 @@ async def test_failed_branch_skips_transitive_dependents_and_preserves_independe
     assert "A" in req["results"]["B"]["error"]
     assert "B" in req["results"]["C"]["error"]
     assert req["results"]["D"]["status"] == "done"
-    assert "SKIPPED" in req["report_appendix"] and "policy denied" in req["report_appendix"]
-    assert "A [terminal]: policy denied" in req["report_appendix"]
+    assert "SKIPPED" in req["execution_record"] and "policy denied" in req["execution_record"]
+    assert "A [terminal]: policy denied" in req["execution_record"]
     assert Counter(t.meta.get("step_id") for t in hub.calls)["A"] == 1
     assert not any(t.meta.get("step_id") in ("B", "C") for t in hub.calls)
     assert sum(e["type"] == "request.step_skipped" for e in hub.events) == 2
@@ -1084,7 +1084,7 @@ async def test_report_keeps_confirmed_estimated_and_unaccounted_costs_apart():
     orch.cost["r"] = 1.5
     orch.budget_outcomes["r"] = [{"spent_usd": 1.5, "limit_usd": 10, "approved": False, "unknown_count": 1}]
     orch._finish("r", "Narrative", {"A": {"status": "done"}}, ok=True)
-    report = hub.requests["r"]["report_appendix"]
+    report = hub.requests["r"]["execution_record"]
 
     assert ("비용: 확인 $1.00 + 추정 $0.50 + 미집계된 비용 1건 "
             "(claude_code 확인 $1.00 · codex 추정 $0.50 + 미집계된 비용 1건); 추정은") in report
@@ -1232,7 +1232,7 @@ async def test_parallel_budget_decision_preserves_completed_steps_and_controls_n
     assert sum(e["type"] == "request.budget_exceeded" for e in hub.events) == 1
     assert req["results"]["A"]["status"] == "done"
     assert req["results"]["D"]["status"] == "done"
-    assert "Budget: $0.60 > $0.50" in req["report_appendix"]
+    assert "Budget: $0.60 > $0.50" in req["execution_record"]
     if approved:
         assert req["status"] == "done"
         assert req["results"]["B"]["status"] == req["results"]["C"]["status"] == "done"
@@ -1315,7 +1315,7 @@ async def test_failed_revision_keeps_first_result_and_workspace():
     assert req["status"] == "done"
     assert req["results"]["A"]["text"] == "good evidence"
     assert "revision broke" in req["results"]["A"]["revision_failed"]
-    assert "revision failed" in req["report_appendix"]
+    assert "revision failed" in req["execution_record"]
     assert all(t.resume_session_id is None for t in seen if t.meta["kind"] == "review")
 
 
@@ -1428,7 +1428,7 @@ async def test_declared_missing_output_is_incomplete_and_skips_dependent():
     assert req["status"] == "failed"
     assert req["results"]["A"]["status"] == "incomplete"
     assert req["results"]["A"]["missing_outputs"] == ["outputs/table.tsv"]
-    assert "A [terminal]" in req["report_appendix"] and "table.tsv" in req["report_appendix"]
+    assert "A [terminal]" in req["execution_record"] and "table.tsv" in req["execution_record"]
     assert req["results"]["B"]["status"] == "skipped"
 
 
@@ -1747,7 +1747,7 @@ async def test_resume_rejects_stored_plan_when_max_steps_was_reduced():
     assert req["status"] == "failed"
     assert [step["id"] for step in req["plan"]["steps"]] == ["A", "B"]
     assert "2 steps" in req["error"] and "maximum is 1" in req["error"]
-    assert "### B · worker (FAILED" in req["report_appendix"]
+    assert "### B · worker (FAILED" in req["execution_record"]
     assert hub.calls == []
 
 
@@ -1949,7 +1949,7 @@ async def test_failed_upstream_replans_only_remaining_dag_and_keeps_success():
     assert req["replan_progress"] == {"attempts": 1, "max": 1, "in_flight": False}
     # The PI still reads why the original method was replaced, not only that it was.
     assert ("Re-plan history:\n- #1 step_failure: applied; retired: primary (primary analysis failed), report; "
-            "added: alternative") in req["report_appendix"]
+            "added: alternative") in req["execution_record"]
 
 
 @pytest.mark.asyncio
@@ -2020,7 +2020,7 @@ async def test_replan_does_not_route_around_a_cancelled_step():
     req = hub.requests["r"]
     assert req["status"] == "failed" and not kinds(hub, "replan")
     assert req["replan_history"][0]["status"] == "blocked"
-    assert "A: cancelled" in req["report_appendix"] and req["replan_progress"]["attempts"] == 0
+    assert "A: cancelled" in req["execution_record"] and req["replan_progress"]["attempts"] == 0
 
 
 @pytest.mark.asyncio
@@ -2138,8 +2138,8 @@ async def test_invalid_replan_keeps_success_failure_and_reports_replan_reason():
     assert req["results"]["kept"]["text"] == "kept evidence"
     assert req["results"]["broken"]["error"] == "tool unavailable"
     assert [step["id"] for step in req["plan"]["steps"]] == ["kept", "broken"]
-    assert "tool unavailable" in req["report_appendix"]
-    assert "#1 step_failure: failed; reason: step bad: invalid dependencies ['missing']" in req["report_appendix"]
+    assert "tool unavailable" in req["execution_record"]
+    assert "#1 step_failure: failed; reason: step bad: invalid dependencies ['missing']" in req["execution_record"]
 
 
 @pytest.mark.parametrize("candidate, reason", [
@@ -2192,7 +2192,7 @@ async def test_replan_cap_stops_repeated_failures():
     assert step_ids(hub) == ["A", "retry1", "retry2"]
     assert req["replan_history"][-1] == {"attempt": None, "trigger": "step_failure", "status": "limit",
                                          "reason": "re-plan limit reached (2/2)"}
-    assert "retry2 failed" in req["report_appendix"]
+    assert "retry2 failed" in req["execution_record"]
 
 
 @pytest.mark.asyncio
@@ -2205,7 +2205,7 @@ async def test_replan_does_not_route_around_a_rejected_pi_decision():
     req = hub.requests["r"]
     assert req["status"] == "failed" and not kinds(hub, "replan")
     assert req["replan_history"][0]["status"] == "blocked"
-    assert "A: a PI decision rejected this step" in req["report_appendix"]
+    assert "A: a PI decision rejected this step" in req["execution_record"]
     assert req["replan_progress"]["attempts"] == 0
 
 
@@ -2238,8 +2238,8 @@ async def test_replan_question_goes_through_clarify_gate_and_reports_pending_dec
     assert req["status"] == "failed"
     assert hub.approvals[-1]["kind"] == "clarify"
     assert req["pending_questions"] == [question]
-    assert "Pending PI decisions/questions:\n- May the fallback use the controlled cohort?" in req["report_appendix"]
-    assert "re-plan needs PI clarification that was denied or unanswered" in req["report_appendix"]
+    assert "Pending PI decisions/questions:\n- May the fallback use the controlled cohort?" in req["execution_record"]
+    assert "re-plan needs PI clarification that was denied or unanswered" in req["execution_record"]
 
 
 @pytest.mark.asyncio
@@ -2425,7 +2425,7 @@ async def test_finish_keeps_bench_result_block_last_after_labhq_metadata():
     orch._finish("r", "Narrative\n\n" + block,
                  {"A": {"status": "done", "workdir_id": "w", "outputs": ["outputs/answer.md"]}}, ok=True)
     report = hub.requests["r"]["report"]
-    appendix = hub.requests["r"]["report_appendix"]
+    appendix = hub.requests["r"]["execution_record"]
     assert report.rstrip().endswith("<!-- /LABHQ_BENCH_RESULT -->")
     assert "Step status and output paths" not in report and "비용 미집계" not in report
     assert appendix.index("Step status and output paths") < appendix.index("비용 미집계")
@@ -2446,7 +2446,7 @@ async def test_finish_groups_status_and_warnings_under_one_execution_appendix():
         }, ok=True)
 
     report = hub.requests["r"]["report"]
-    appendix = hub.requests["r"]["report_appendix"]
+    appendix = hub.requests["r"]["execution_record"]
     assert report.startswith("## 결론과 권고") and "실행 기록 참고" in report
     assert "## 부록: 실행 기록" not in report
     assert "## 보고서 경고" in appendix
@@ -2463,13 +2463,13 @@ def test_finish_preserves_a_long_appendix_and_marks_the_terminal_copy_as_truncat
     full = "기록" * 11_000
     Orchestrator(hub)._finish("r", "PI body\n\n## 부록: 실행 기록\n\n" + full, {}, ok=True)
 
-    stored = hub.requests["r"]["report_appendix"]
+    stored = hub.requests["r"]["execution_record"]
     data = terminal[0][2]
     assert full in stored and len(stored) > 20_000
-    assert len(data["report_appendix"]) <= 20_000 and data["report_appendix"] != stored
-    assert data["report_appendix_truncated"] is True
-    assert data["report_appendix_chars"] == len(stored)
-    assert data["report_appendix_api"] == "/api/requests/r"
+    assert len(data["execution_record"]) <= 20_000 and data["execution_record"] != stored
+    assert data["execution_record_truncated"] is True
+    assert data["execution_record_chars"] == len(stored)
+    assert data["execution_record_api"] == "/api/requests/r"
 
 
 def test_cso_plan_prompt_states_the_outputs_rule():
@@ -2505,7 +2505,7 @@ async def test_failed_twelve_step_report_names_each_failure_without_dumping_inst
 
     hub = FakeHub(dispatch)
     await Orchestrator(hub).run_request("r")
-    report = hub.requests["r"]["report_appendix"]
+    report = hub.requests["r"]["execution_record"]
     assert hub.requests["r"]["status"] == "failed"
     assert len(report) < 20000, len(report)
     assert "x" * 300 not in report, "the full instruction stays in the round record"
@@ -2564,7 +2564,6 @@ def test_review_revision_reruns_every_step_downstream_of_a_flagged_one():
     assert "Upstream step(s) s5 were revised" in extended["s6"] and "s5" in extended["s8"]
     assert "Upstream step(s) s9 were revised" in extended["s10"]
     assert with_downstream_revisions(steps, {"s10": "- fix wording\n"}) == {"s10": "- fix wording\n"}
-
 
 
 UNRESOLVED_REVIEW = {"verdict": "revise", "scores": {"addresses_question": 4, "evidence": 3, "thoroughness": 4},
@@ -2705,8 +2704,8 @@ async def test_unresolved_review_still_gets_a_cso_report():
     assert req["report"].startswith("CSO report body")
     # labhq appends every open issue verbatim: the CSO saw the review clipped to 3,000 characters (PR #338 review)
     assert "Review: revisions unresolved." not in req["report"]
-    assert "Review: revisions unresolved. The reviewer's open issues, verbatim:\n- A: no sensitivity check → add one" \
-        in req["report_appendix"]
+    assert "Review: revisions unresolved." in req["execution_record"]
+    assert "- P1 · A: no sensitivity check → add one" in req["report_appendix"]
     assert req["error"] == "리뷰 지적이 수정 상한 뒤에도 남아 있습니다"
     assert req["review"]["verdict"] == "revise"
 
@@ -2717,10 +2716,10 @@ async def test_unresolved_review_original_is_in_the_execution_appendix():
     await Orchestrator(hub).run_request("r")
 
     report = hub.requests["r"]["report"]
-    appendix = hub.requests["r"]["report_appendix"]
+    appendix = hub.requests["r"]["execution_record"]
     assert report.startswith("## 결론과 권고")
     assert "## 부록: 실행 기록" not in report and "Review: revisions unresolved." not in report
-    assert appendix.startswith("## 부록: 실행 기록")
+    assert appendix.startswith("## 실행 기록")
     assert "Review: revisions unresolved." in appendix
 
 
@@ -2750,7 +2749,7 @@ async def test_unresolved_synthesis_prompt_lists_open_issues_and_accept_prompt_i
     await Orchestrator(hub).run_request("r")
     prompt = kinds(hub, "synthesis")[0].prompt
     assert prompt.endswith(UNRESOLVED_REVIEW_NOTE)
-    assert "separate execution record" in UNRESOLVED_REVIEW_NOTE and "verbatim" in UNRESOLVED_REVIEW_NOTE
+    assert "scientific appendix" in UNRESOLVED_REVIEW_NOTE and "verbatim" in UNRESOLVED_REVIEW_NOTE
     assert "no sensitivity check" in prompt  # the reviewer's open issue is in the prompt it lists from
 
     accepted = unresolved_hub(lambda task: result(task, text="report"), accept=True)
@@ -2781,13 +2780,13 @@ async def test_unresolved_review_falls_back_to_step_results_when_synthesis_fails
 
     req = hub.requests["r"]
     assert req["status"] == "failed" and req["outcome"] == "review_unresolved"
-    assert "Review: revisions unresolved." in req["report_appendix"]
-    assert "### A · worker (ok)" in req["report_appendix"] and "A revision 1" in req["report_appendix"]
+    assert "Review: revisions unresolved." in req["execution_record"]
+    assert "### A · worker (ok)" in req["execution_record"] and "A revision 1" in req["execution_record"]
     if resume:
         assert not kinds(hub, "synthesis") and len(hub.approvals) == 1
-        assert "Synthesis failed: budget exceeded" in req["report_appendix"]
+        assert "Synthesis failed: budget exceeded" in req["execution_record"]
     else:
-        assert len(kinds(hub, "synthesis")) == 1 and "Synthesis failed: engine crashed" in req["report_appendix"]
+        assert len(kinds(hub, "synthesis")) == 1 and "Synthesis failed: engine crashed" in req["execution_record"]
 
 
 @pytest.mark.asyncio

@@ -445,7 +445,8 @@ def _readme(req: Mapping[str, Any], steps: list[Mapping[str, Any]], scripts: lis
         "# 요청 묶음", "", f"- 요청: `{req.get('id')}`", "- `report.md`: PI용 본문",
         *(["- `claims.json`: 연구 요청의 단계별 claim·근거 원장과 CP2 기록. 보고서의 `[[claim:<단계>/<claim>]]`은 "
            "`ledgers.<단계>.claims`의 `id`입니다"] if claims else []),
-        "- `report_appendix.md`: 실행 기록과 묶음 변환 기록", "- `steps/<step_id>/`: 단계 workdir 사본",
+        "- `report_appendix.md`: 과학 부록(점검표·리뷰·가정)",
+        "- `execution_record.md`: 운전 기록과 묶음 변환 기록", "- `steps/<step_id>/`: 단계 workdir 사본",
         "- `MANIFEST.tsv`: 사본의 크기·sha256과 원래 위치",
         "- `INPUTS.tsv`: 단계가 읽을 수 있던 외부 입력의 크기·mtime·sha256 또는 생략 이유", "",
         FORMAT_MARKER, "", "## RO-Crate", "",
@@ -731,24 +732,27 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
                 f"{reason} {count}" for reason, count in sorted(skipped_by_reason.items())) + ")"
 
         report = report_text
-        appendix = str(req.get("report_appendix") or "")
+        from .report_format import split_appendix
+        appendix, legacy = split_appendix(str(req.get("report_appendix") or ""))
+        execution = "\n\n".join(p for p in [str(req.get("execution_record") or ""), legacy] if p)
         replaced = _superseded(req, tasks)
         if replaced:
-            appendix += ("\n\n## 요청 묶음: 대체됨\n\n" +
+            execution += ("\n\n## 요청 묶음: 대체됨\n\n" +
                          "\n".join(f"- {item}" for item in replaced))
         if total_limit_hit:
-            appendix += ("\n\n- 누적 상한으로 기록 산출 일부를 복사하지 않음 "
+            execution += ("\n\n- 누적 상한으로 기록 산출 일부를 복사하지 않음 "
                          f"(복사 {copied_files}개, {copied_bytes} bytes; "
                          f"상한 {max_total_files}개, {max_total_bytes} bytes)")
         not_copied = sum(str(row["status"]).startswith("not copied:") for row in rows)
         bundle_status = "incomplete" if not_copied else "complete"
         unreported_missed = sum(str(row["status"]).startswith(f"not copied{UNREPORTED_TAG}:") for row in rows)
         if unreported_missed:
-            appendix += f"\n\n- 보고하지 않은 산출 {unreported_missed}개 미복사(크기·누적 상한 등; MANIFEST.tsv 확인)"
+            execution += f"\n\n- 보고하지 않은 산출 {unreported_missed}개 미복사(크기·누적 상한 등; MANIFEST.tsv 확인)"
         if not_copied:
-            appendix += f"\n\n- 요청 묶음 상태: incomplete (기록 산출 {not_copied}개 미복사; MANIFEST.tsv 확인)"
+            execution += f"\n\n- 요청 묶음 상태: incomplete (기록 산출 {not_copied}개 미복사; MANIFEST.tsv 확인)"
         (temp / "report.md").write_text(report, encoding="utf-8", newline="\n")
         (temp / "report_appendix.md").write_text(appendix, encoding="utf-8", newline="\n")
+        (temp / "execution_record.md").write_text(execution, encoding="utf-8", newline="\n")
         from .recruit.paper_skills import records as paper_skill_records
         paper_records = paper_skill_records(req.get("plan") or {}, results)
         if paper_records:
@@ -808,7 +812,7 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
         # bundle. It is the same check `labhq verify` runs later.
         figure_problems = bundle_figure_check(temp)["problems"]
         if figure_problems:
-            with (temp / "report_appendix.md").open("a", encoding="utf-8", newline="\n") as handle:
+            with (temp / "execution_record.md").open("a", encoding="utf-8", newline="\n") as handle:
                 handle.write("\n\n## 보고서 그림 링크\n\n" + "\n".join(f"- {problem}" for problem in figure_problems))
 
         grade, grade_reasons = _grade(rows, ordered_steps, rewrite_by_file, not_copied, rerun_receipt)
@@ -825,11 +829,11 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
         bundle_note.append("- 남은 절대경로: " + (", ".join(sorted(remaining)) if remaining else "없음"))
         if replaced:
             bundle_note.append(f"- 대체되어 제외한 판: {len(replaced)}개")
-        appendix_path = temp / "report_appendix.md"
+        appendix_path = temp / "execution_record.md"
         with appendix_path.open("a", encoding="utf-8", newline="\n") as handle:
             handle.write("\n".join(bundle_note) + "\n")
 
-        generated = [temp / "README.md", temp / "report.md", appendix_path, temp / "INPUTS.tsv",
+        generated = [temp / "README.md", temp / "report.md", temp / "report_appendix.md", appendix_path, temp / "INPUTS.tsv",
                       *([temp / "paper_skills.json"] if paper_records else []),
                       *([temp / "claims.json"] if claims else []),
                       *([temp / "final_checkpoint.json"] if final_checkpoint else []),
@@ -884,6 +888,7 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
                 "not_copied": not_copied,
                 "rewritten_files": rewritten_files,
                 "remaining_absolute_paths": sorted(remaining), "superseded": replaced,
+                "conversion_record": "\n".join(bundle_note) + ("\n\n## 보고서 그림 링크\n" + "\n".join(figure_problems) if figure_problems else ""),
                 **({"crate_warning": crate_warning} if crate_warning else {})}
     except Exception:
         if temp.exists():

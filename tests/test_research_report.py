@@ -128,7 +128,7 @@ async def test_contract_refusal_is_kept_in_the_final_report_metadata():
     req = hub.requests["r"]
     assert req["outcome"] == "research_reported"
     assert req["research_contract"]["report_check"] == {"anchors": 1, "problems": []}
-    assert "계약에 맞지 않아 뺀 근거" in req["report_appendix"] and "bad_date" in req["report_appendix"]
+    assert "계약에 맞지 않아 뺀 근거" in req["execution_record"] and "bad_date" in req["execution_record"]
 
 
 @pytest.mark.asyncio
@@ -146,7 +146,7 @@ async def test_budget_crossed_by_the_finished_report_records_the_overrun_without
     assert req["research_contract"]["report_check"] == {"anchors": 1, "problems": []}
     assert req["outcome"] == "research_reported" and req["status"] == "done"
     assert "failure" not in req["research_contract"]
-    assert "Budget: $2.00 > $1.00; final turn; no further work." in req["report_appendix"]
+    assert "Budget: $2.00 > $1.00; final turn; no further work." in req["execution_record"]
 
 
 # ---------- ②③④ the anchor check marks the report incomplete ----------
@@ -171,7 +171,7 @@ async def test_report_whose_anchors_do_not_check_out_is_incomplete(report, artif
     assert any(problem in line for line in check["problems"])
     assert req["report"].startswith(report)  # the body stays; the problems move to the execution record
     assert "Claim check:" not in req["report"] and "실행 기록 참고" in req["report"]
-    assert "Claim check:" in req["report_appendix"] and problem in req["report_appendix"].split("Claim check:", 1)[1]
+    assert "Claim check:" in req["execution_record"] and problem in req["execution_record"].split("Claim check:", 1)[1]
 
 
 @pytest.mark.asyncio
@@ -180,10 +180,10 @@ async def test_research_claim_check_and_execution_status_share_the_appendix():
     await Orchestrator(hub).run_request("r")
 
     report = hub.requests["r"]["report"]
-    appendix = hub.requests["r"]["report_appendix"]
+    appendix = hub.requests["r"]["execution_record"]
     assert report.startswith("The effect is present.") and "Claim check:" not in report
     assert "실행 기록 참고" in report
-    assert appendix.startswith("## 부록: 실행 기록")
+    assert appendix.startswith("## 실행 기록")
     assert "Claim check:" in appendix and "Step status and output paths" in appendix
 
 
@@ -199,7 +199,7 @@ async def test_research_claim_check_ignores_an_anchor_found_only_in_the_model_ap
     rerun = rerun_report_check(req)
     assert req["outcome"] == "report_incomplete" and req["status"] == "failed"
     assert recorded["anchors"] == 0 and any("anchors no claim" in line for line in recorded["problems"])
-    assert "[[claim:s1/c1]]" not in req["report"] and "[[claim:s1/c1]]" in req["report_appendix"]
+    assert "[[claim:s1/c1]]" not in req["report"] and "[[claim:s1/c1]]" in req["execution_record"]
     assert rerun and rerun["same"] is True and rerun["rerun"] == recorded
 
 
@@ -214,7 +214,7 @@ async def test_research_claim_check_ignores_a_bad_anchor_in_the_model_appendix()
     rerun = rerun_report_check(req)
     assert req["outcome"] == "research_reported" and req["status"] == "done"
     assert recorded == {"anchors": 1, "problems": []}
-    assert "[[claim:s1/c9]]" not in req["report"] and "[[claim:s1/c9]]" in req["report_appendix"]
+    assert "[[claim:s1/c9]]" not in req["report"] and "[[claim:s1/c9]]" in req["execution_record"]
     assert rerun and rerun["same"] is True and rerun["rerun"] == recorded
 
 
@@ -274,7 +274,7 @@ async def test_failed_lookup_warning_is_attached_to_the_report():
     req = hub.requests["r"]
     assert req["outcome"] == "research_reported"
     assert "e2" not in REPORT
-    section = req["report_appendix"].split("실패한 조회 — 증거도 부재 증명도 아님", 1)[1]
+    section = req["execution_record"].split("실패한 조회 — 증거도 부재 증명도 아님", 1)[1]
     assert "s1/e2 (failed)" in section and "the GEO query timed out" in section
     assert "s1/e2 (failed)" in hub.calls[3].prompt  # synthesis was told to list it as not established
 
