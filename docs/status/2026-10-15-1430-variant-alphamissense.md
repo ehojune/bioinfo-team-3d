@@ -27,7 +27,7 @@ Refs #621 (A, C). 사람 GRCh38의 `vep`가 AlphaMissense를 함께 받아 변�
 ## 확인
 
 - 새 test 30건(`test_annot_alphamissense.py` 23, `test_variant_effect_topic.py` 7)과 고친 기존 assertion 1건(`test_annot.py`의 VEP 질의 문자열)이 main 코드에서 모두 실패하고 이 branch에서 통과합니다(main 쪽은 labhq·docs 변경을 stash해 돌림).
-- 관련 pure test 1,400여 건(annot, vocab, checklist, prompt, semantics) 통과. PI 시험이 돌고 있어 프로세스를 띄우는 test(MCP stdio 서버, runner 연결, 하위 `python` 호출)는 로컬에서 돌리지 않았고 CI에 맡겼습니다.
+- 관련 pure test 1,200여 건(annot, vocab, checklist, prompt, semantics) 통과. PI 시험이 돌고 있어 프로세스를 띄우는 test(MCP stdio 서버, runner 연결, 하위 `python` 호출)는 로컬에서 돌리지 않았고 CI에 맡겼습니다.
 
 ## 남은 것
 
