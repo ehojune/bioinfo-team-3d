@@ -55,11 +55,27 @@ def _linux_path(s: Settings, path: Path) -> str:
     raise WslError("WSL에서 개발 폴더를 읽지 못했습니다.")
 
 
+def _root(s: Settings) -> str:
+    key = hashlib.sha256(str(s.config_path).encode()).hexdigest()[:12]
+    return s.runner.wsl.root or f"~/.local/share/labhq/wsl-{key}"
+
+
+def configured(s: Settings) -> bool:
+    """Whether this config opted into WSL settings, as distinct from model defaults."""
+    if not s.config_path:
+        return False
+    try:
+        data = yaml.safe_load(Path(s.config_path).read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return False
+    runner = data.get("runner") if isinstance(data, dict) else None
+    return isinstance(runner, dict) and isinstance(runner.get("wsl"), dict)
+
+
 def _remote(s: Settings, action: str, **extra) -> dict:
     checkout = Path(__file__).resolve().parents[1]
     source = _linux_path(s, checkout)
-    key = hashlib.sha256(str(s.config_path).encode()).hexdigest()[:12]
-    payload = {"action": action, "root": s.runner.wsl.root or f"~/.local/share/labhq/wsl-{key}",
+    payload = {"action": action, "root": _root(s),
                "source": source, "id": s.runner.wsl.id, "bioinfo_agent": s.runner.wsl.bioinfo_agent,
                "gateway_url": s.runner.wsl.gateway_url or s.gateway.url,
                "identity": instance_guard.public_identity(s), **extra}
@@ -111,9 +127,12 @@ def check(s: Settings) -> list[dict]:
     except (SystemExit, OSError):
         connected = False
     values = {**facts, "ready": wsl_readiness.wsl_readiness(facts), "distro": present, "connected": connected}
+    hints = {**ADMIN_HINTS, "claude_login":
+             f"WSL runner 경로 {_root(s).rstrip('/')}/claude-staff를 CLAUDE_CONFIG_DIR로 지정한 뒤 "
+             "claude auth login을 실행하세요."}
     return [{"group": "WSL", "name": name, "status": "ok" if values.get(key) is True else "warn",
              "detail": "ok" if values.get(key) is True else "없음",
-             "hint": ADMIN_HINTS.get(key, "labhq setup-wsl을 실행하세요.")}
+             "hint": hints.get(key, "labhq setup-wsl을 실행하세요.")}
             for key, name in LABELS.items()]
 
 
