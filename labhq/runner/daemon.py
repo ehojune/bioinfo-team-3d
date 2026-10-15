@@ -32,7 +32,7 @@ from ..adapters import (adapter_preflight_error, get_adapter, is_read_only_task,
 from ..adapters.base import RunContext
 from ..adapters.held_dir import HeldDir
 from ..adapters.owned import (OwnedPathError, is_link, owned_link_error, plain_directory, read_owned,
-                              awrite_owned, remove_entry, write_owned)
+                              awrite_owned_many, remove_entry, write_owned)
 from ..ask_results import read_ask_results, rejected_step
 from ..artifact_policy import unreported_warning_paths
 from ..facilities import fixes as facility_fixes
@@ -1769,8 +1769,9 @@ class Runner:
         if paper_skill_build is not None:
             result = await asyncio.to_thread(paper_skill_build.finish, result)
         try:
-            for name in (f"RESULT_{task.id}.md", "RESULT.md"):  # never through a link the agent made (#165)
-                await awrite_owned(ws.dir, f"outputs/{name}", result.text or "")
+            # Never through a link the agent made (#165). Both files are one job: a cancel cannot write only one.
+            await awrite_owned_many(ws.dir, [(f"outputs/{name}", result.text or "")
+                                             for name in (f"RESULT_{task.id}.md", "RESULT.md")])
         except OwnedPathError:
             error = "작업 폴더의 outputs가 실행 중에 링크로 바뀌어 결과 파일을 쓰지 않았습니다"
             await emit("agent.log", {"level": "alert", "text": error})

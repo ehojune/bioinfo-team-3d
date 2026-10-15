@@ -554,3 +554,63 @@ def test_read_owned_retries_a_sharing_violation_instead_of_reporting_the_file_mi
     monkeypatch.setattr(os, "open", flaky)
     assert read_owned(tmp_path, "manifest.json") == '{"a": 1}'
     assert len(refused) == 2
+
+
+# ----- the last review round -----
+
+async def test_a_cancel_between_the_two_contract_copies_cannot_leave_a_partial_hire(tmp_path, monkeypatch, fresh_writer):
+    from labhq.models import AgentSpec, ContractInfo, Employment
+    from labhq.registry import Registry
+
+    now = time.time()
+    spec = AgentSpec(id="c_x", name="X", role="[파견] test", employment=Employment.contract,
+                     contract=ContractInfo(repo="https://github.com/a/b", hired_at=now, expires_at=now + 3600,
+                                           status="active", talent_dir=str(tmp_path / "talent" / "x")))
+    registry = Registry(tmp_path / "agents", tmp_path / "talent", tmp_path / "contracts")
+    SlowFsync(monkeypatch, 0.25)
+    task = asyncio.create_task(registry.asave_contract(spec))
+    await asyncio.sleep(0.1)  # inside the first copy's fsync
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert await durable.adrain(10)
+    await asyncio.sleep(0)  # the roster update the job asked the loop for
+    assert (tmp_path / "contracts" / "c_x.yaml").exists()
+    assert (tmp_path / "talent" / "x" / "contract.yaml").exists(), "the talent-pool copy was never written"
+    assert registry.agents.get("c_x") is spec and registry.paths.get("c_x") == tmp_path / "contracts" / "c_x.yaml"
+
+
+def test_two_threads_writing_one_path_on_an_idle_lane_land_in_call_order(tmp_path, monkeypatch, fresh_writer):
+    real, flushes, lock = os.fsync, [], threading.Lock()
+
+    def first_flush_is_slow(fd):
+        with lock:
+            flushes.append(fd)
+            first = len(flushes) == 1
+        if first:
+            time.sleep(0.4)  # the first caller's flush takes long, the second caller's does not
+        return real(fd)
+
+    monkeypatch.setattr(os, "fsync", first_flush_is_slow)
+    first = threading.Thread(target=write_owned, args=(tmp_path, "manifest.json", "first"))
+    second = threading.Thread(target=write_owned, args=(tmp_path, "manifest.json", "second"))
+    first.start()
+    time.sleep(0.1)  # the second call starts while the first is still flushing
+    second.start()
+    first.join()
+    second.join()
+    assert read_owned(tmp_path, "manifest.json") == "second"  # the later call wins, as with a queue
+
+
+async def test_a_cancel_between_two_result_files_cannot_write_only_one(tmp_path, monkeypatch, fresh_writer):
+    from labhq.adapters.owned import awrite_owned_many
+
+    SlowFsync(monkeypatch, 0.25)
+    task = asyncio.create_task(awrite_owned_many(tmp_path, [("outputs/RESULT_t.md", "done"),
+                                                            ("outputs/RESULT.md", "done")]))
+    await asyncio.sleep(0.1)  # inside the first file's fsync
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert await durable.adrain(10)
+    assert read_owned(tmp_path, "outputs/RESULT_t.md") == "done" and read_owned(tmp_path, "outputs/RESULT.md") == "done"

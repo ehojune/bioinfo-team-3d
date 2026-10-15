@@ -6,6 +6,7 @@ to talent_dir/<slug>/contract.yaml (with its skill + MCP build), so rehiring is 
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from pathlib import Path
@@ -13,7 +14,8 @@ from pathlib import Path
 import yaml
 
 from .models import AgentSpec, Employment
-from .util import aatomic_write_text, atomic_write_text
+from . import durable
+from .util import atomic_write_text
 
 log = logging.getLogger(__name__)
 
@@ -88,30 +90,36 @@ class Registry:
 
     # ----- contract lifecycle -----
     async def asave_contract(self, spec: AgentSpec) -> Path:
-        """`save_contract` for a coroutine: the two fsyncs run on the durable writer thread (#606). The roster
-        dicts change here, on the loop, only after both files are written."""
+        """`save_contract` for a coroutine (#606): both copies, then the roster update, are ONE durable job, so a
+        cancel cannot leave one copy without the other or files without the roster. The files are written on the
+        writer thread; the roster dicts change on the loop, in a callback the job itself schedules before it ends."""
         assert spec.employment == Employment.contract and spec.contract
+        text, loop = _dump(spec), asyncio.get_running_loop()
+
+        def job() -> Path:
+            p = self._write_contract_copies(spec, text)
+            loop.call_soon_threadsafe(self._remember, spec, p)
+            return p
+
+        return await durable.run(durable.FILES, job)
+
+    def _write_contract_copies(self, spec: AgentSpec, text: str) -> Path:
         p = self.contract_dir / f"{spec.id}.yaml"
         p.parent.mkdir(parents=True, exist_ok=True)
-        text = _dump(spec)
-        await aatomic_write_text(p, text)
+        atomic_write_text(p, text)
         tdir = self.talent_dir / self._slug(spec)
         tdir.mkdir(parents=True, exist_ok=True)
-        await aatomic_write_text(tdir / "contract.yaml", text)
-        self.agents[spec.id] = spec
-        self.paths[spec.id] = p
+        atomic_write_text(tdir / "contract.yaml", text)
         return p
+
+    def _remember(self, spec: AgentSpec, path: Path) -> None:
+        self.agents[spec.id] = spec
+        self.paths[spec.id] = path
 
     def save_contract(self, spec: AgentSpec) -> Path:
         assert spec.employment == Employment.contract and spec.contract
-        p = self.contract_dir / f"{spec.id}.yaml"
-        p.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(p, _dump(spec))
-        tdir = self.talent_dir / self._slug(spec)
-        tdir.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(tdir / "contract.yaml", _dump(spec))
-        self.agents[spec.id] = spec
-        self.paths[spec.id] = p
+        p = self._write_contract_copies(spec, _dump(spec))
+        self._remember(spec, p)
         return p
 
     def extend(self, agent_id: str, days: float) -> AgentSpec:

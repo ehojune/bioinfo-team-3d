@@ -127,6 +127,15 @@ async def awrite_owned(root: Path, relative: str, text: str) -> Path:
     return await durable.run(durable.FILES, _write_owned_now, root, relative, text)
 
 
+async def awrite_owned_many(root: Path, writes: list[tuple[str, str]]) -> list[Path]:
+    """Several labhq files as ONE durable job, in order: a cancel cannot leave some of them written and the rest not."""
+    return await durable.run(durable.FILES, _write_owned_many_now, root, writes)
+
+
+def _write_owned_many_now(root: Path, writes: list[tuple[str, str]]) -> list[Path]:
+    return [_write_owned_now(root, relative, text) for relative, text in writes]
+
+
 def _write_owned_now(root: Path, relative: str, text: str) -> Path:
     rel = PurePath(relative)
     target = Path(root) / rel

@@ -56,6 +56,10 @@ class DurableWriter:
         self._lock = threading.Lock()
         self._queue: queue.SimpleQueue = queue.SimpleQueue()
         self._thread: threading.Thread | None = None
+        # Held while the lane runs anything: a queued job on its thread, or a direct call on the caller's thread. So
+        # two direct calls from different threads, or a direct call and a job, never overlap.
+        self._running = threading.RLock()
+        self._direct = threading.local()  # this thread is inside a direct call on this lane
 
     # ----- state -----
     def active(self) -> bool:
@@ -92,17 +96,28 @@ class DurableWriter:
             if not future.set_running_or_notify_cancel():
                 continue
             try:
-                result = fn(*args, **kwargs)
+                with self._running:
+                    result = fn(*args, **kwargs)
             except BaseException as exc:  # noqa: BLE001 - the awaiting caller gets it, the thread keeps draining
                 future.set_exception(exc)
             else:
                 future.set_result(result)
 
     def call(self, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
-        """Run `fn` in order with the queued jobs and wait for it. Direct when no thread is running for the lane or
-        when already on it (a job that itself writes)."""
-        if self.in_writer() or not self.active():
+        """Run `fn` in order with the queued jobs and wait for it. Direct when no thread is running for the lane, and
+        then one direct call at a time: a second thread's call waits for the first, so calls to an idle lane land in
+        the order they get in, as they would through the queue. Also direct when already inside the lane (a job or a
+        direct call that itself writes), which never waits for itself."""
+        if self.in_writer() or getattr(self._direct, "depth", 0):
             return fn(*args, **kwargs)
+        with self._running:
+            if not self.active():
+                self._direct.depth = 1
+                try:
+                    return fn(*args, **kwargs)
+                finally:
+                    self._direct.depth = 0
+        # Queued work exists: stand behind it. The lock is released first, since the lane's thread needs it.
         return self.submit(fn, *args, **kwargs).result()
 
     async def run(self, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
