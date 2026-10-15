@@ -20,6 +20,7 @@ from labhq.settings import Settings
 
 SUP, CHILD = 940_000_001, 940_000_002
 ROLE = "gateway"
+REAL_TERMINATE_TREE = cli._terminate_tree
 
 
 def _settings(tmp_path) -> Settings:
@@ -211,6 +212,55 @@ def test_down_does_not_touch_a_role_that_ended_with_its_supervisor_and_reports_t
     assert cli._stop_background(settings, ROLE) == CHILD
 
     assert ended == [SUP] and not child.exists()  # the role was not ended a second time through a stale record
+
+
+def test_down_waits_until_the_later_supervisor_has_really_ended(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    supervisor = _record(settings, "gateway-supervisor", SUP, created=f"windows:{SUP}")
+    child = _record(settings, ROLE, CHILD, created=f"windows:{CHILD}")
+    alive = {SUP: f"windows:{SUP}", CHILD: f"windows:{CHILD}"}
+    ended, waited = [], []
+    monkeypatch.setattr(cli, "_process_created", lambda pid: alive.get(pid))
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+
+    def terminate(pid, **kwargs):
+        ended.append(pid)
+        assert pid == SUP
+        alive.pop(CHILD)  # the role exits first; its supervisor is still winding down
+        return proc_tree.KillResult(killed=[pid])
+
+    def wait_for_end(pid, created, timeout):
+        waited.append((pid, created, timeout, dict(alive)))
+        alive.pop(pid)
+        return True
+
+    monkeypatch.setattr(proc_tree, "kill_tree", terminate)
+    monkeypatch.setattr(cli, "_wait_for_process_end", wait_for_end)
+    monkeypatch.setattr(cli, "_terminate_tree", REAL_TERMINATE_TREE)
+
+    assert cli._stop_background(settings, ROLE) == CHILD
+
+    assert ended == [SUP]
+    assert waited == [(SUP, f"windows:{SUP}", cli._TERMINATE_GRACE_SECONDS,
+                       {SUP: f"windows:{SUP}"})]
+    assert not alive and not supervisor.exists() and not child.exists()
+
+
+def test_down_timeout_names_the_role_and_remaining_pid_and_fails(tmp_path, monkeypatch, capsys):
+    settings = _settings(tmp_path)
+    child = _record(settings, ROLE, CHILD, created=f"windows:{CHILD}")
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    monkeypatch.setattr(cli, "_process_created", lambda pid: f"windows:{pid}")
+    monkeypatch.setattr(proc_tree, "kill_tree", lambda *args, **kwargs: proc_tree.KillResult(killed=[CHILD]))
+    monkeypatch.setattr(cli, "_wait_for_process_end", lambda *args, **kwargs: False)
+    monkeypatch.setattr(cli, "_terminate_tree", REAL_TERMINATE_TREE)
+
+    with pytest.raises(SystemExit) as stopped:
+        cli._stop_background(settings, ROLE)
+
+    assert stopped.value.code == 2 and child.exists()
+    error = capsys.readouterr().err
+    assert ROLE in error and f"PID {CHILD}" in error and "끝나지" in error
 
 
 def test_down_stops_nothing_more_when_the_supervisor_cannot_be_ended(tmp_path, monkeypatch, capsys):

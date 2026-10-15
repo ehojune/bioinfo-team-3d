@@ -347,14 +347,19 @@ def test_no_taskkill_tree_flag_is_left_in_the_package():
 def test_cli_terminate_tree_uses_the_helper_with_the_recorded_identity(world, monkeypatch):
     _no_process_starts(monkeypatch)
     monkeypatch.setattr(cli.sys, "platform", "win32")
+    waited = []
+    monkeypatch.setattr(cli, "_wait_for_process_end",
+                        lambda pid, created, timeout: waited.append((pid, created, timeout)) or True)
     cli._terminate_tree(ROOT, created="windows:1000")
     assert world.killed == [GRANDKID, KID, ROOT]
     assert ORPHANS <= set(world.live)
+    assert waited == [(ROOT, "windows:1000", cli._TERMINATE_GRACE_SECONDS)]
 
 
 def test_cli_terminate_tree_leaves_a_reused_pid_alone_without_an_error(world, monkeypatch):
     _no_process_starts(monkeypatch)
     monkeypatch.setattr(cli.sys, "platform", "win32")
+    monkeypatch.setattr(cli, "_wait_for_process_end", lambda pid, created, timeout: True)
     cli._terminate_tree(ROOT, created="windows:7")
     assert world.killed == []
 
@@ -399,6 +404,24 @@ def test_cli_terminate_tree_raises_when_a_descendant_cannot_be_ended_and_keeps_i
     message = str(raised.value)
     assert f"PID {GRANDKID}: Access is denied" in message and f"{KID}, {ROOT}" in message
     assert world.killed == [SIBKID, SIB] and {ROOT, KID, GRANDKID} <= set(world.live)  # `down` can retry
+
+
+def test_a_process_ending_by_itself_after_terminate_refuses_is_already_gone(monkeypatch):
+    """A Windows venv launcher can be terminating but not signaled yet after its interpreter child exits."""
+    waits = iter((0x00000102, 0))  # running at first; signaled while the bounded wait is in progress
+
+    class Kernel:
+        def WaitForSingleObject(self, _handle, _timeout):
+            return next(waits)
+
+        def TerminateProcess(self, _handle, _code):
+            return False
+
+    monkeypatch.setattr(proc_tree, "_kernel", lambda: (Kernel(), None, None))
+    import ctypes
+    monkeypatch.setattr(ctypes, "get_last_error", lambda: 5, raising=False)
+
+    assert proc_tree._Handle(ROOT, 1000, object()).terminate() == proc_tree.GONE
 
 
 # --- a real Windows parent and child --------------------------------------------------------------------------

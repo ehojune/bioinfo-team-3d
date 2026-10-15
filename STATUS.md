@@ -50,6 +50,34 @@ Refs #625.
 
 추출 캐시·재개와 요인 실험 bench는 다음 조각입니다. CI 확인·봇 리뷰·병합은 개발 총괄이 이어받습니다.
 
+# PR #650 — 벤치 정답 식별자 누출 검사
+
+Fixes #623.
+
+## 결론
+
+bench case YAML의 정답 식별자가 비벤치 코드로 새면 CI가 파일과 줄, 원본 사례를 밝혀 실패합니다.
+
+## 바뀐 것
+
+- `result_fields.equals`의 string 식별자를 자동 수집하며 0건이면 실패
+- 추적 중인 `labhq/**/*.py`, `agents/`, `config/`만 검사하고 bench 코드·데이터·test 제외
+- 임시 복사본 누출 탐지와 일반 예시 문구 비탐지를 회귀로 고정
+
+## 확인
+
+- 관련 pytest 8 passed
+- `scripts/check_public.sh` 통과
+
+## P1 후속
+
+- 식별자 경계를 ASCII 영숫자로 판정해 `GKN1을`, `(COL1A1과)`, `6OIM은구조`도 누출로 잡습니다.
+- 영문 단어 안의 부분 일치는 계속 제외합니다.
+
+## 남은 것
+
+리뷰 요청과 병합은 총괄이 이어받습니다.
+
 ## 결론
 
 Fixes #619. PR #649. 편집자 정리본의 내부 주소 우회와 긴 절 목록의 입력 한도 초과를 막았습니다.
@@ -185,6 +213,26 @@ Refs #622. PR #645. OKF Loremaster의 인용문·수치 원문 대조기를 독�
 ## 남은 것
 
 2단계인 `lit_scout`·`verify.py` 연결은 하지 않았습니다. 리뷰 요청과 병합은 총괄이 이어받습니다.
+
+## 결론
+
+Refs #589. PR #643에서 Windows의 `labhq down`이 supervisor·role과 자식 프로세스의 실제 종료를 기다리게 했습니다. 두 CI 실패의 `_rust.pyd` 잠금은 종료 요청 직후 임시 checkout을 지운 경합이었습니다.
+
+## 바뀐 것
+
+- Windows process tree의 각 process와 기록된 root PID 종료를 최대 10초 확인합니다. timeout이면 role·PID를 알리고 exit 2로 끝납니다.
+- clean-install은 `down` 뒤 임시 checkout `.venv`의 Python process 잔존을 role·PID 이름으로 검사합니다.
+- clean-install 임의 포트에서 PI 포트 8787·55921을 제외합니다.
+
+## 확인
+
+- 새 종료 test 2건: 수정 전 2 failed, 수정 뒤 2 passed.
+- 관련 pytest: 119 passed, 1 skipped.
+- 로컬 `python scripts/clean_install_check.py`, `scripts/check_public.sh` 통과.
+
+## 남은 것
+
+- PR #643 CI 확인 전입니다.
 
 # PR #630 — WSL 준비 판정·불확실 전송
 
