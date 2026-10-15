@@ -15,7 +15,12 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
 | 22:36 | [`97a2acd`](https://github.com/ehojune/bioinfo-team-3d/pull/647/commits/97a2acd) | WSL doctor 회귀 테스트가 Linux 전역 platform 값을 바꾸지 않도록 격리한다. |
+| 22:36 | [`84aca5d`](https://github.com/ehojune/bioinfo-team-3d/pull/649/commits/84aca5d) | 편집자 기록의 개요·본문·생략 절 목록을 문서별 입력 한도 안에서 요약 |
+| 22:34 | [`78a6048`](https://github.com/ehojune/bioinfo-team-3d/pull/649/commits/78a6048) | 공개 링크의 역슬래시와 ASCII 제어문자를 브라우저식으로 정규화한 뒤 내부 host를 차단 |
+| 21:50 | [`fae9771`](https://github.com/ehojune/bioinfo-team-3d/pull/648/commits/fae9771) | Windows halt 대기 test를 고정 sleep 대신 CLI 시작과 semaphore 대기 사건으로 검증한다. |
 | 21:48 | [`9d98ae2`](https://github.com/ehojune/bioinfo-team-3d/pull/647/commits/9d98ae2) | WSL 미설정 doctor를 선택 기능 한 줄로 줄이고 활성화 때 실제 직원 로그인 경로를 안내한다. |
+| 20:43 | [`80acdcd`](https://github.com/ehojune/bioinfo-team-3d/pull/646/commits/80acdcd) | 전송 시 계산된 runner 담당과 세션 고정을 보존하고 roster 없는 solo 재개 조회 호환 복구 |
+| 19:54 | [`95bfde7`](https://github.com/ehojune/bioinfo-team-3d/pull/646/commits/95bfde7) | 직원별 유효 roster로 실행 중 담당을 고정하고 WSL 시작 실패를 native up 경고로 분리 |
 | 19:06 | [`a9e286e`](https://github.com/ehojune/bioinfo-team-3d/pull/645/commits/a9e286e) | OKF Loremaster의 인용문·수치 원문 대조기를 Unicode·Python 3.10에 맞춰 이식하고 Apache-2.0 출처를 동봉 |
 | 18:53 | [`2d742cc`](https://github.com/ehojune/bioinfo-team-3d/pull/630/commits/2d742cc) | WSL 준비 상태 test의 작업 폴더를 공유 경로로 명시해 Linux CI fixture를 바로잡는다. |
 | 18:39 | [`ceee47a`](https://github.com/ehojune/bioinfo-team-3d/pull/630/commits/ceee47a) | 불확실 task를 최초 runner에 고정하고 WSL 준비 판정을 점검·활성화·gateway에 통합한다. |

@@ -9,7 +9,7 @@ import pytest
 
 from labhq import cli, edition_sources
 from labhq.gateway.server import Hub as RealHub, create_app
-from labhq.result_storage import (EDITOR_REPORT_CHARS, document_links, draft_documents, editor_prompt,
+from labhq.result_storage import (EDITOR_OTHER_CHARS, EDITOR_REPORT_CHARS, document_links, draft_documents, editor_prompt,
                                   fit_record, readme_excerpt)
 from labhq.settings import Settings
 from tests.test_result_storage import Hub
@@ -196,6 +196,13 @@ def test_a_report_over_the_bound_is_an_outline_plus_whole_sections_and_names_wha
     assert (whole, omitted) == ("짧은 글", [])
 
 
+def test_fit_record_keeps_five_thousand_sections_inside_the_bound():
+    record = "".join(f"## 절 {number}\n내용 {number}\n" for number in range(5000))
+    body, omitted = fit_record(record, EDITOR_OTHER_CHARS)
+    assert len(body) + len("; ".join(omitted)) <= EDITOR_OTHER_CHARS
+    assert omitted[-1] == "절 4999" and any("개 절" in title for title in omitted)
+
+
 async def test_the_readme_never_claims_a_cut_because_of_our_own_truncation(tmp_path, monkeypatch):
     report = long_report(parts=8)
     hub = editor_hub(tmp_path, report)  # no editor reply: the deterministic README
@@ -359,6 +366,9 @@ async def test_redraft_api_and_cli(tmp_path, monkeypatch, capsys):
 # ----- round 3: one host gate, balanced DOI parentheses, short labelled PMIDs, publish vs redraft -----
 
 PRIVATE_LINKS = [
+    "http://127.0.0.1\\example.org/secret", "http://gateway.local\\example.org/x",
+    "http://127.0.0.1\\\texample.org/x", "http://gateway.local \\\nexample.org/x",
+    "http://localhost.\\\rexample.org/x", "http://10.0.0.1\\\x00example.org/x",
     "http://127.0.0.1/x", "http://127.0.0.1./x", "http://127.0.0.1.../x", "http://gateway.local./secret",
     "http://gateway.local/x", "https://host.internal./v", "http://LOCALHOST/x", "http://localhost./x",
     "http://x.localhost/x", "http://nas.lan/x", "http://router.home.arpa./x", "http://home.arpa/x",
@@ -370,9 +380,11 @@ PRIVATE_LINKS = [
     "http://0x7f000001/x", "http://%31%32%37.0.0.1/x",  # decimal, hex, octal and short IPv4 forms, percent-encoded
     "http://10.0.0.5/", "http://172.16.0.1/", "http://192.168.1.5/", "http://169.254.169.254/", "http://0.0.0.0/",
     "http://240.0.0.1/", "http://100.64.0.1/", "http://224.0.0.1/",  # private, link-local, unspecified, reserved, shared, multicast
-    "http://user:pw@127.0.0.1/x", "ftp://example.org/x", "http:///x"]
+    "http://a@127.0.0.1/x", "http://user:pw@127.0.0.1/x", "ftp://example.org/x", "http:///x"]
 PUBLIC_LINKS = {
     "https://example.org/a": "https://example.org/a",
+    "https://example.org\\public/path": "https://example.org/public/path",
+    "https://exa\tmple.org/x": "https://example.org/x",
     "http://8.8.8.8/x": "http://8.8.8.8/x",
     "http://134744072/x": "http://8.8.8.8/x",  # the same address in decimal
     "https://[2606:4700:4700::1111]/x": "https://[2606:4700:4700::1111]/x",

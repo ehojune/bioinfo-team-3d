@@ -64,6 +64,8 @@ def test_check_and_activation_use_same_readiness(settings, monkeypatch, capsys):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("changed", ["target", "incarnation", "same"])
 async def test_uncertain_delivery_stays_on_original_runner(settings, changed):
+    # Ownership now stays with the disconnected runner; bound its reconnect wait in this test.
+    settings.orchestrator.runner_reconnect_timeout_s = 0.01
     hub = Hub(settings)
     staff = [{"id": "bioinfo-agent"}]
     sent = []
@@ -100,6 +102,9 @@ async def test_uncertain_delivery_stays_on_original_runner(settings, changed):
         if changed == "target":
             assert task.id not in hub.futures and task.id not in hub.task_runner
         assert hub.store.get("task", task.id)["runner_id"] == "wsl"
+        if changed == "target":
+            assert hub.agent_runner["bioinfo-agent"] == "wsl"
+            assert not hub.store.get("task", task.id).get("completed")
     hub.store.close()
 
 
