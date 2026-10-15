@@ -4,6 +4,20 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# PR #630 — WSL 준비 판정·불확실 전송
+
+| 항목 | 결과 |
+|---|---|
+| P1 4281071639 | 최초 runner·incarnation에 불확실 task 고정, 대상 변경 시 재전송 없이 uncertain |
+| P1 4281071647 | 점검·활성화·gateway가 같은 준비 판정 사용, 미준비 상태는 native 선택 |
+| 필수 준비 | bioinfo manifest·skill, Java·Nextflow, WSL Claude CLI·직원 로그인 |
+| 검증 | 수정 전 회귀 실패 → 수정 후 통과, 관련 pytest 334 passed / 9 skipped, 전체 CJS 통과 |
+| CI 보정 | Linux 임시 경로를 WSL 공유 경로로 잘못 사용한 새 test fixture를 수정 |
+| 후속 인계 | push 뒤 새 P1 4281444658·P2 4281444670, 추가 수정 없음 |
+| 범위 | 실제 WSL·PI 인스턴스 변경 없음, 리뷰 요청·병합 없음 |
+
+근거: `tests/test_wsl_readiness.py`, `labhq/wsl_readiness.py`, `labhq/gateway/server.py`.
+
 ## 결론
 
 Refs #634. PR #638의 P1 `4281094837`을 수정했습니다. 수정 커밋 `5b886e2`, main 병합 `07fd2ae`.
@@ -72,6 +86,30 @@ PR #638의 P1 3건·P2 1건을 수정했습니다. Refs #634.
 
 ## 결론
 
+Refs #630. 두 P1의 경로 변환을 모델 선언과 runner 경계 함수로 통합했다. gateway가 Linux여도 WSL 결과를 Windows runner에 전달한다.
+
+## 바뀐 것
+
+| 지적 | 수정 |
+|---|---|
+| P1 4280657526 | 공유 경로는 gateway OS와 무관하게 Windows 형식으로 저장하고 대상 runner의 `runtime_env`로 배포한다. 결과·이벤트·manifest·bundle이 같은 변환 함수를 쓴다. |
+| P1 4280657538 | project·reference·upstream 경로를 함께 변환하고 setup에서 reference root와 프로젝트 root를 WSL 설정에 넘긴다. |
+
+`RunnerPathFields`에 경로 필드와 값·목록·mapping 변환 방식을 선언했다. 모델 필드의 이름·타입 주석으로 누락을 검사한다. 프롬프트·자유 형식 결과·상대 산출 경로는 보존한다.
+
+## 확인
+
+- PR head `fe83ff8`: 두 P1 및 reference root 회귀 3건 실패 → 수정 후 통과.
+- 관련 pytest 297 passed / 27 skipped. 산출물 타입·논문 스킬·라운드 기록 107 passed.
+- 새 경로 필드 누락 감지, 원격 gateway의 이벤트, 실제 임시 project·reference 파일 읽기, manifest 원본 보존과 bundle 입력 목록 확인.
+- 전체 테스트는 CI에서 실행한다. push 후 결과는 PR checks와 로컬 인계 기록에 남긴다.
+
+## 남은 것
+
+기존 WSL 설정은 정지 후 setup을 다시 실행해야 reference root를 받는다. PI 인스턴스·실제 WSL은 실행하지 않았다. 리뷰 요청·병합은 총괄에게 넘긴다.
+
+## 결론
+
 PR #641에서 #615의 Windows CI 시간 측정 test 두 개를 사건 순서 검증으로 바꿨습니다. 파일 쓰기를 Event로 막은 채 DB commit과 health 응답이 release 전에 끝나는지 확인합니다. Refs #606.
 
 ## 바뀐 것
@@ -112,6 +150,32 @@ Refs #634. PR #638의 staff 폴더 읽기 범위·자격 증명 이름 오판·�
 ## 남은 지적
 
 - 동적으로 조합한 셸 경로는 기존 정적 판정의 한계입니다.
+
+## 결론
+
+Refs #630. 봇 2차 지적 5건을 수정했다. Windows와 WSL은 같은 작업 폴더를 쓰며 승인·예산 정책도 함께 적용한다.
+
+## 바뀐 것
+
+| 지적 | 수정 |
+|---|---|
+| P1 4280129662 | 공유 drive의 경로 변환을 한 함수로 모았다. 선행 입력·작업 폴더·산출·bundle을 연결하고 Linux 전용 작업 폴더는 거부한다. 공유 root가 확인된 WSL만 bundle hostname 예외를 받는다. |
+| P1 4280129675 | setup마다 Windows 정책을 복사하고 개인·통제 구역 경로를 변환한다. 변환 실패는 거부하며 기본 개인 경로 보호는 두 OS 모두 유지한다. |
+| P1 4280232224 | 연결 확인 뒤에만 enabled를 저장한다. WSL이 끊기면 연결된 Windows 직원에게 배정한다. |
+| P2 4280129685 | 설정 검증·up·background·직접 runner·WSL start에서 ID 중복을 거부한다. |
+| P2 4280232232 | NAT fallback의 기본 포트를 ws 80·wss 443으로 나눈다. |
+
+## 확인
+
+- 원래 PR head `6fc5c69`: 새 회귀 22 failed / 2 passed. 수정 후 24 passed.
+- 관련 pytest: 463 passed / 32 skipped. 시작 경로·CSO 추가 확인: 257 passed.
+- 격리 실측: Windows 단계 → WSL 단계 파일 전달과 최종 bundle 수집 성공. 누락 0건, WSL 시험 runner exit 0. 실제 모델 호출 없이 CLI 파일 작업으로 확인했다.
+- WSL manual 1,226자 → 1,506자. public·patch-notes·notes-index 검사는 기록 커밋과 함께 확인한다. CI는 push 뒤 PR checks에서 확인한다.
+
+## 남은 것
+
+- Windows 정책 변경 뒤 WSL을 멈추고 setup을 다시 실행해야 한다.
+- 리뷰 요청·병합은 하지 않았다. 실측 원본과 테스트 로그는 clone의 `.pr-drafts/`에 보관한다.
 
 ## 결론
 
@@ -218,6 +282,38 @@ Refs #621. PR #631. `alphagenome_variant`가 GRCh38 변이를 권장 scorer로 �
 - 실제 API 실측은 지시 범위 밖. 서버 build ID는 SDK가 공개하지 않아 미확인으로 기록합니다.
 - SDK가 일부 RPC 오류를 재시도하므로 10개 변이는 최대 50회 RPC 시도가 될 수 있습니다.
 - 출처·SDK 계약: [참고 기록](https://github.com/ehojune/bioinfo-team-3d/blob/alphagenome-variant-score/docs/reference/alphagenome-variant.md).
+
+## 결론
+
+Refs #612. 1단계: `setup-wsl`로 로컬 WSL runner를 준비하고 Windows gateway에 연결합니다. 실행 위치 카드는 2단계로 남깁니다.
+
+## 바뀐 것
+
+- `setup-wsl --check`: 배포판·Java·Nextflow·Docker·bioinfo-agent·labhq·등록·연결을 항목별 표시.
+- setup: 사용자 venv·editable 설치, 없는 Nextflow만 설치, Linux 전용 state·설정·작업 폴더. 관리자 명령은 안내만.
+- 토큰은 stdin과 600 설정 파일로 전달. Windows `up/down`과 `wsl-runner start/stop`은 기존 supervisor를 재사용.
+- bioinfo-agent를 WSL에 배정하고 Windows 재연결로 덮지 않음. doctor WSL 절과 CSO 도구 안내, manual 추가.
+
+## 확인
+
+| 항목 | 결과 |
+|---|---|
+| 새 mock test 12개 | main `33e9603`: 12 실패(동작 assertion 4, 새 API 부재 8); branch: 12 통과 |
+| 관련 pytest | 409 passed, 3 skipped; 전체 suite는 CI |
+| Node | `tests/web_agent_capabilities.cjs` 통과 |
+| 실제 setup·check | Ubuntu 22.04, 별도 설정·state·임시 포트의 Windows gateway에 `lab-wsl` 연결; 8항목 모두 ok |
+| 반복·재시작 | setup 재실행 성공, `down → up` 뒤 WSL 재연결 |
+| 도구 | Java 17.0.20.1, Nextflow 24.10.5, Docker 29.7.1 |
+| Nextflow + Docker | Ubuntu 22.04 컨테이너의 HELLO 1 task, COMPLETED / exit 0, `hello.txt=hello`, report·trace 생성 |
+| 토큰 | Linux 폴더 700·설정 600, Linux 로그 11개와 Windows 로그에서 토큰 0건 |
+
+실측은 mock 직원으로 runner 연결을 확인하고 Nextflow를 WSL에서 직접 실행했습니다. WSL Claude CLI·직원 로그인은 없어서 bioinfo-agent의 LLM 실행은 검증하지 않았습니다. 초기 Alpine 컨테이너에는 Bash가 없어 실패했고 Ubuntu 이미지로 완료했습니다. PI 인스턴스·PI venv·보호 포트·HPC·관리자 명령은 사용하지 않았습니다.
+
+## 남은 것
+
+- WSL Claude CLI와 직원 전용 로그인 준비. setup은 자격 증명을 입력하지 않습니다.
+- CI 결과는 PR checks에서 확인. 리뷰 요청·병합은 하지 않습니다.
+- 로컬 실측 근거: `.pr-drafts/live-evidence.json`, `hello.log`, `live-setup-wsl-check.log`, `test-main.log`, `test-final.log`(모두 커밋 제외).
 
 ## 결론
 
