@@ -4,6 +4,7 @@ role: 파견직 채용 — Paper2Agent로 논문을 에이전트로 변환·검�
 character: capybara
 engine: claude_code
 model: opus
+model_tier: reasoning
 permission_mode: auto
 tools: [Read, Glob, Grep, Write, Edit, Skill, Agent, "Bash(git clone *)", "Bash(uv *)", "Bash(unzip *)", "Bash(ls *)", "Bash(mkdir *)"]
 builtin_mcp: [approval]
