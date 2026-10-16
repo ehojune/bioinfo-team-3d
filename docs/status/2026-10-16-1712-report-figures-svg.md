@@ -17,8 +17,10 @@ PR #692에서 연구 보고서 그림을 SVG 원본 품질로 보존합니다. F
 - 새 회귀: main 8 failed → branch 8 passed.
 - 리뷰 회귀 pytest 69 passed, Node 8 passed. `scripts/check_public.sh` 통과.
 - 2차 리뷰 회귀 4건은 수정 전 4 failed → 수정 후 4 passed.
+- 3차 리뷰 회귀는 수정 전 3 failed → 관련 pytest 58 passed. 기존 절대경로 rewrite test도 통과했습니다.
 - `docs/manual.md`: 149,918자 → 151,752자(+1,834자).
 
 ## 남은 것
 
+- 그림별 누락 검사는 계획의 `key_figures`만 대상으로 삼고, 선언 없는 예전 묶음은 결과 그림 0개일 때만 경고합니다.
 - 리뷰 수정 head의 CI 결과는 push 뒤 확인합니다. 리뷰 재요청과 병합은 하지 않습니다.

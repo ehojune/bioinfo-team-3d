@@ -89,6 +89,8 @@ PLAN_SCHEMA: dict[str, Any] = {
             "properties": {"id": {"type": "string"}, "agent_id": {"type": "string"},
                            "instruction": {"type": "string"},
                            "outputs": {"type": "array", "items": {"type": "string"}},
+                           "key_figures": {"type": "array", "minItems": 1, "maxItems": 2,
+                                           "items": {"type": "string"}},
                            "depends_on": {"type": "array", "items": {"type": "string"}}},
             "required": ["id", "agent_id", "instruction", "depends_on"]}},
         "recruit": {"type": "array", "items": {
@@ -388,7 +390,8 @@ FIGURE_OUTPUT_RULE = (
 
 ANALYSIS_FIGURE_PLAN_RULE = (
     "Every analysis step (differential analysis, regression or trend, meta-analysis, dimensionality reduction, "
-    "pathway analysis, or QC summary) declares 1–2 key figures in outputs. Standard figures: differential "
+    "pathway analysis, or QC summary) declares 1–2 key figures in outputs and repeats their exact paths in "
+    "key_figures. Standard figures: differential "
     "analysis -> volcano and PCA; regression or trend -> trend with interval; meta-analysis -> forest and funnel; "
     "dimensionality reduction -> PCA; pathway analysis -> GSEA NES bar chart; QC summary -> QC summary chart. "
     + FIGURE_OUTPUT_RULE)
@@ -1786,7 +1789,9 @@ def validate_steps(raw: list[dict], known: set[str], max_steps: int,
         seen.add(sid)
         steps.append({"id": sid, "agent_id": s.get("agent_id", ""), "instruction": s.get("instruction", ""),
                       "depends_on": [str(d) for d in s.get("depends_on") or []],
-                      "outputs": [str(o) for o in s.get("outputs") or []]})
+                      "outputs": [str(o) for o in s.get("outputs") or []],
+                      **({"key_figures": [str(o) for o in s.get("key_figures") or []]}
+                         if "key_figures" in s else {})})
         raw_types[sid] = s.get("output_types")
     problems = []
     for s in steps:
@@ -1796,6 +1801,15 @@ def validate_steps(raw: list[dict], known: set[str], max_steps: int,
     if problems:
         raise PlanOutputsError("; ".join(problems) + ". Declare each output as outputs/<name> inside the "
                                "step's own workspace and save it at that path.")
+    for step in steps:
+        if "key_figures" not in step:
+            continue
+        figures = list(dict.fromkeys(filter(None, map(output_relpath, step["key_figures"]))))
+        invalid = [name for name in step["key_figures"] if output_relpath(name) not in step["outputs"]]
+        if invalid or not 1 <= len(figures) <= 2:
+            raise PlanOutputsError(
+                f"step {step['id']}: key_figures must contain 1–2 paths also declared in outputs")
+        step["key_figures"] = figures
     ids = {s["id"] for s in steps}
     producers: dict[str, list[str]] = {}
     for s in steps:

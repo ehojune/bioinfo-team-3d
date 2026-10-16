@@ -526,7 +526,7 @@ task 취소(`POST /api/tasks/{id}/cancel`)는 task 기록의 runner로 보냅니
 
 ### 보고서 PDF
 
-보고서 본문(`report.md`)에는 그림을 모두 11장까지 마크다운 이미지로 넣습니다. 분석 단계는 핵심 그림 1~2개를 SVG로 선언하고, 보고서는 이를 "결과"에 넣거나 빠진 이유를 한 줄로 적습니다. alt는 `그림 N. 이름`만 씁니다. graphical abstract 1장(`graphical_abstract.svg`)은 제목 아래 첫 그림입니다. matplotlib은 `svg.fonttype="none"`과 한국어 글꼴 묶음을 써서 한글을 `<text>`로 남깁니다. `labhq verify`는 결과 그림 누락, SVG 없는 PNG·JPEG, 한글 `<text>` 없는 SVG를 WARN으로 적습니다. WARN은 exit 0/1 판정과 `--bundle` 생성을 막지 않습니다.
+보고서 본문(`report.md`)에는 그림을 모두 11장까지 마크다운 이미지로 넣습니다. 분석 단계는 핵심 그림 1~2개를 SVG로 `outputs`와 `key_figures`에 선언하고, 보고서는 이를 "결과"에 넣거나 빠진 이유를 한 줄로 적습니다. 보조 그림은 누락 경고 대상이 아닙니다. 선언이 없는 예전 묶음은 그림 산출이 있는데 결과 그림이 하나도 없을 때만 경고합니다. alt는 `그림 N. 이름`만 씁니다. graphical abstract 1장(`graphical_abstract.svg`)은 제목 아래 첫 그림입니다. matplotlib은 `svg.fonttype="none"`과 한국어 글꼴 묶음을 써서 한글을 `<text>`로 남깁니다. `labhq verify`는 결과 그림 누락, SVG 없는 PNG·JPEG, 한글 `<text>` 없는 SVG를 WARN으로 적습니다. WARN은 exit 0/1 판정과 `--bundle` 생성을 막지 않습니다.
 
 PDF는 필요할 때만 만듭니다. 끝난 요청에서 웹 요청 상세(2.5D·3D)의 **PDF로 받기** 버튼이나 `labhq report <request_id> --pdf [--out 파일]`을 쓰면 gateway가 `GET /api/requests/{id}/report-pdf`로 만듭니다.
 

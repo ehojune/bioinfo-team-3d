@@ -8,6 +8,7 @@ the linked file, and `labhq verify` checks that every local image link points at
 from __future__ import annotations
 
 import csv
+import json
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -22,6 +23,8 @@ MAX_LINKED_FIGURES = MAX_REPORT_FIGURES  # the bundle keeps this many linked fig
 ABSTRACT_STEM = "graphical_abstract"  # a figure with this file stem is the report's graphical abstract (#608)
 ABSTRACT_FILE = ABSTRACT_STEM + ".svg"  # what labhq draws when the report has none
 DOCUMENTS = ("report.md", "report_appendix.md")
+FIGURE_PLAN_FILE = "FIGURES.json"
+NO_RESULT_FIGURES_WARNING = "분석 단계에 그림 산출이 있지만 보고서 결과 절에 그림이 없습니다."
 _HANGUL = re.compile(r"[가-힣]")
 _OMISSION = re.compile(r"(?:생략|제외|미포함|넣지\s*않|싣지\s*않|제시하지\s*않)\w*")
 
@@ -217,6 +220,18 @@ def _reported_figures(root: Path) -> list[str]:
     return found
 
 
+def _declared_key_figures(root: Path) -> list[str] | None:
+    """Bundle paths explicitly marked as key figures, or ``None`` for a legacy bundle."""
+    try:
+        value = json.loads((root / FIGURE_PLAN_FILE).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    figures = value.get("key_figures") if isinstance(value, Mapping) else None
+    if not isinstance(figures, list):
+        return None
+    return list(dict.fromkeys(str(figure).replace("\\", "/") for figure in figures if isinstance(figure, str)))
+
+
 def _has_omission_reason(result_text: str, figure: str) -> bool:
     """Whether one result-section line names ``figure`` and gives a non-empty omission reason."""
     path = PurePosixPath(figure)
@@ -313,8 +328,15 @@ def bundle_figure_check(root: Path) -> dict[str, object]:
             if own_abstract else
             f"보고서 그림이 {len(local)}장이에요. graphical abstract가 없으면 labhq가 한 장을 그려 넣으므로 결과 그림은 "
             f"{limit}장까지만 넣고, PDF에는 앞의 {limit}장만 들어갑니다.")
-    missing = [figure for figure in _reported_figures(root)
-               if figure not in result_local and not _has_omission_reason(result_text, figure)]
-    warnings[0:0] = [f"{figure}: 보고서 결과 절에 그림 링크나 한 줄 생략 사유가 없습니다." for figure in missing]
+    reported = _reported_figures(root)
+    declared = _declared_key_figures(root)
+    if declared is None:
+        if reported and not result_local:
+            warnings.insert(0, NO_RESULT_FIGURES_WARNING)
+    else:
+        declared_set = set(declared)
+        missing = [figure for figure in reported if figure in declared_set and figure not in result_local
+                   and not _has_omission_reason(result_text, figure)]
+        warnings[0:0] = [f"{figure}: 보고서 결과 절에 그림 링크나 한 줄 생략 사유가 없습니다." for figure in missing]
     return {"linked": linked, "problems": list(dict.fromkeys(problems)),
             "warnings": list(dict.fromkeys(warnings))}

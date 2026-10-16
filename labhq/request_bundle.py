@@ -21,8 +21,8 @@ from typing import Any, Iterator
 from .adapters.held_dir import HeldDir, NotPlainFolder
 from .evidence.audit import claims_record, locate_workdir
 from .evidence.claims import normalize_artifact_path
-from .report_figures import (bundle_figure_check, drop_dead_abstract_links, figure_owners, link_workdir_figures,
-                             linked_figure_paths, output_exists)
+from .report_figures import (FIGURE_PLAN_FILE, bundle_figure_check, drop_dead_abstract_links, figure_owners,
+                             link_workdir_figures, linked_figure_paths, output_exists)
 from .ro_crate import FORMAT_MARKER, METADATA_FILE, write_ro_crate
 
 
@@ -511,6 +511,16 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
     linked_figures = set(linked_figure_paths(report_text))
     plan_steps = [step for step in ((req.get("plan") or {}).get("steps") or []) if isinstance(step, Mapping)]
     ordered_ids, ordered_steps = _topological_steps(plan_steps, results)
+    key_figures_declared = any("key_figures" in step for step in ordered_steps)
+    key_figures: list[str] = []
+    for step in ordered_steps:
+        step_id = str(step.get("id") or "")
+        outputs = {path for raw in step.get("outputs") or [] if isinstance(raw, str)
+                   and (path := _safe_output_path(raw)) is not None}
+        for raw in step.get("key_figures") or []:
+            path = _safe_output_path(raw) if isinstance(raw, str) else None
+            if path is not None and path in outputs:
+                key_figures.append(PurePosixPath("steps", step_id, *path.parts).as_posix())
     max_file_bytes = int(float(settings.runner.bundle_max_file_mb) * 1024 * 1024)
     max_total_bytes = int(float(settings.runner.bundle_max_total_mb) * 1024 * 1024)
     max_total_files = int(settings.runner.bundle_max_files)
@@ -793,6 +803,10 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
             (temp / RERUN_RECEIPT_FILE).write_text(
                 json.dumps(rerun_receipt, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8", newline="\n")
+        if key_figures_declared:
+            (temp / FIGURE_PLAN_FILE).write_text(
+                json.dumps({"key_figures": list(dict.fromkeys(key_figures))}, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8", newline="\n")
         (temp / "README.md").write_text(_readme(req, ordered_steps, commands, unsafe, python_unknown, bool(links),
                                                  claims, copied_job_scripts),
                                           encoding="utf-8", newline="\n")
@@ -837,6 +851,7 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
             handle.write("\n".join(bundle_note) + "\n")
 
         generated = [temp / "README.md", temp / "report.md", temp / "report_appendix.md", appendix_path, temp / "INPUTS.tsv",
+                      *([temp / FIGURE_PLAN_FILE] if (temp / FIGURE_PLAN_FILE).is_file() else []),
                       *([temp / "paper_skills.json"] if paper_records else []),
                       *([temp / "claims.json"] if claims else []),
                       *([temp / "final_checkpoint.json"] if final_checkpoint else []),

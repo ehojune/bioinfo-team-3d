@@ -203,6 +203,7 @@ class ResearchStep(StrictModel):
     claim_ids: list[str]
     input_refs: list[str]
     outputs: list[str]
+    key_figures: list[str] = Field(default_factory=list, min_length=1, max_length=2)
     checks: list[str] = Field(min_length=1)
     evidence_slots: list[EvidenceSlot]
     depends_on: list[str]
@@ -210,11 +211,13 @@ class ResearchStep(StrictModel):
     output_types: list[OutputTypeEntry] = Field(default_factory=list, max_length=MAX_ENTRIES)
 
     @model_serializer(mode="wrap")
-    def _drop_empty_output_types(self, handler: Any) -> dict[str, Any]:
+    def _drop_empty_declarations(self, handler: Any) -> dict[str, Any]:
         # An empty list is left out, so plans approved before #221 keep their canonical JSON and plan_sha256.
         data = handler(self)
         if not data.get("output_types"):
             data.pop("output_types", None)
+        if not data.get("key_figures"):
+            data.pop("key_figures", None)
         return data
 
     @model_validator(mode="after")
@@ -224,6 +227,8 @@ class ResearchStep(StrictModel):
         duplicates = sorted({slot_id for slot_id in ids if ids.count(slot_id) > 1})
         if duplicates:
             raise ValueError(f"step {self.id} declares evidence slot {', '.join(duplicates)} more than once")
+        if any(path not in self.outputs for path in self.key_figures):
+            raise ValueError(f"step {self.id} key_figures must also be declared in outputs")
         return self
 
 
