@@ -1,0 +1,5 @@
+pr: 696
+rows:
+- sha: 1b3f19d
+  at: 2026-10-16 19:17
+  text: StructuredOutput 실패 원문 보존과 큰 계획 축소 재시도·크기 경고를 추가
