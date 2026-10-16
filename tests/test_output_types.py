@@ -36,9 +36,10 @@ CANARY = "CANARY-7f3a-secret"
 # #586 공유 id 규칙 한 줄: 공유 항목의 bare/qualified 답 형식을 명시한다.
 # #621 adds the approved topic variant_effect, so the topic rule this test renders grows by one entry; the prompt
 # template, the schema and the output-type switch are unchanged (this hash moved on purpose).
-PLAN_SCHEMA_SHA = "044be4598c06b6dc0423b25734ebf1bc610359fc1a6236e5c807eb51983f74ac"
+# PR #693 adds staff-skill fields to the canonical plan schema and writing-skill guidance to the prompt.
+PLAN_SCHEMA_SHA = "0c36ef948e2f22f77071fa222a4da33994341d39fa6ebfb3ea1f18173dde2101"
 # Issues #683/#690 intentionally add the SVG figure declaration rules.
-PLAN_PROMPT_SHA = "fe41f6ae1bb0f55375b99c34e2ed8c855e8e7f9d6e9a58f8ec0ccc8b724fea53"
+PLAN_PROMPT_SHA = "98a4802cd15ed5fa9b089b2165e96814e7fb0eb9c11494fe2714c3b917de841d"
 PROMPT_ARGS = dict(request="REQ", roster="ROSTER", capabilities="CAPS", briefing="BRIEF", max_steps=3,
                    question_rule=QUESTION_RULE, lab_scope="LAB", topics_rule=topics.prompt_rule(V))
 
