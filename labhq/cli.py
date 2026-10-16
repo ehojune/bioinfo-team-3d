@@ -1740,6 +1740,11 @@ def main(argv: list[str] | None = None) -> None:
     review.add_argument("--revision", type=int, help="CP4 draft revision shown in the report card")
     review.add_argument("--sha256", help="CP4 target hash shown in the report card")
     review.add_argument("--reject", action="store_true", help="reject this CP4 draft")
+    review.add_argument("--storage", choices=["keep", "local", "github", "existing"],
+                        help="answer the final storage question while marking the report reviewed")
+    review.add_argument("--name", help="with --storage github: new repository name; with existing: owner/repository")
+    review.add_argument("--visibility", choices=["private", "public"], default="private",
+                        help="with --storage github or existing: repository visibility")
     sub.add_parser("status", help="show runners, running requests and pending approvals")
     recall = sub.add_parser("recall", help="search past requests in this gateway (2+ characters, at most 5 hits)")
     recall.add_argument("query")
@@ -2110,8 +2115,14 @@ def main(argv: list[str] | None = None) -> None:
         target = ({"revision": args.revision, "target_sha256": args.sha256,
                    "decision": "rejected" if args.reject else "accepted"}
                   if args.revision is not None or args.sha256 or args.reject else {})
+        if args.storage:
+            target.update(storage=args.storage, name=args.name, visibility=args.visibility)
         result = _api(s, "POST", f"/api/requests/{args.id}/review-done", json=target)
         print(f"{args.id}: 검토·확인 완료 ({result['pi_reviewed_at']})")
+        if result.get("result_storage"):
+            print(f"저장 위치: {result['result_storage'].get('mode', 'local')}")
+        elif result.get("storage_card"):
+            print(f"저장 위치 카드 {result['storage_card']} — 처음 선택을 유지하거나 다시 골라 주세요.")
     elif args.cmd == "agents":
         for a in _api(s, "GET", "/api/agents"):
             kind = f"파견 ~{datetime.fromtimestamp(a['expires_at']):%m-%d}" if a.get("expires_at") else "정규"

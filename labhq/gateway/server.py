@@ -3225,8 +3225,9 @@ class Hub:
                 raise ValueError("보고서 검토 완료 뒤 게시해 주세요.")
         if pending and (pending["approval"].get("detail") or {}).get("storage"):
             rid = pending["approval"]["request_id"]
+            detail = pending["approval"]["detail"]
             storage = await self.result_storage.select(rid, storage if approved and storage else {"mode": "local"},
-                late=bool(pending["approval"]["detail"].get("late_storage")))
+                late=bool(detail.get("late_storage")), end=bool(detail.get("storage_end")))
             await self.publish({"type": "request.storage", "request_id": rid, "data": {"result_storage": storage}})
         self._cancel_facilities_timeout(approval_id)
         self._cancel_resume_timer(approval_id)
@@ -4022,8 +4023,22 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             decision = body.get("decision", "accepted")
             if decision not in {"accepted", "rejected"}:
                 raise ValueError("검토 결정은 accepted 또는 rejected입니다")
-            return hub.review_done(rid, decision=decision, revision=body.get("revision"),
-                                   target_sha256=body.get("target_sha256"))
+            result = hub.review_done(rid, decision=decision, revision=body.get("revision"),
+                                     target_sha256=body.get("target_sha256"))
+            card = await hub.result_storage.open_end_card(rid)
+            storage_choice = body.get("storage")
+            if storage_choice:
+                if card is None:
+                    raise ValueError("이 요청에는 끝 저장 위치 질문이 없습니다")
+                mode = {"github": "new", "existing": "existing"}.get(storage_choice, storage_choice)
+                default_name = "labhq-" + rid.removeprefix("req_") if mode == "new" else ""
+                choice = {"mode": mode, "repo": body.get("name") or default_name,
+                          "visibility": body.get("visibility", "private")}
+                await hub.resolve_approval(card["id"], True, storage=choice)
+                result["result_storage"] = hub.requests[rid].get("result_storage")
+            elif card is not None:
+                result["storage_card"] = card["id"]
+            return result
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
 

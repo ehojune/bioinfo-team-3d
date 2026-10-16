@@ -423,6 +423,7 @@ class ResultStorage:
     def __init__(self, hub, transport=None):
         self.hub, self.s, self.transport = hub, hub.s, transport
         self.tasks: dict[str, asyncio.Task] = {}
+        self.end_tasks: dict[str, asyncio.Task] = {}
         self._client = None
         self._card_lock = asyncio.Lock()
         self.uploading: set[str] = set()  # requests whose files are going to the repository right now
@@ -440,6 +441,32 @@ class ResultStorage:
             self._client = GitHubClient(token, self.s.github.api_url, self.transport)
         return self._client
 
+    async def _new_github_choice(self, rid: str, name: str, visibility: str) -> tuple[dict, str]:
+        """Validate #702's local-to-GitHub choice with the same non-creating permission probe."""
+        if not _NAME.fullmatch(name):
+            raise ValueError("새 저장소 이름은 영문·숫자·점·밑줄·하이픈으로 적어 주세요.")
+        if visibility not in {"private", "public"}:
+            raise ValueError("공개 범위는 private 또는 public입니다.")
+        gh = self.client()
+        if gh is None:
+            raise ValueError(f"GitHub 토큰이 없습니다. `labhq init`으로 넣거나 {self.s.github.token_env} 환경 변수를 설정하세요"
+                             f"({github_token.NEEDED_TEXT}).")
+        try:
+            login = (await gh._req("GET", "/user"))["login"]
+        except GitHubHTTPError as exc:
+            raise ValueError(f"GitHub가 토큰을 받지 않았습니다(HTTP {exc.status_code}). 새 토큰을 `labhq init`으로 넣으세요.") from None
+        try:
+            await gh._req("POST", "/user/repos", json={})
+        except GitHubHTTPError as exc:
+            if exc.status_code != 422:
+                raise ValueError(f"이 토큰은 저장소를 만들 수 없습니다. 빠진 권한: Repository creation(또는 Administration 쓰기)"
+                                 f"(HTTP {exc.status_code}). "
+                                 f"권한 있는 토큰을 `labhq init`으로 넣으세요: {github_token.TOKEN_SETTINGS_URL}") from None
+        note = ("fine-grained 토큰이면 Repository access가 All repositories여야 새 저장소에 올릴 수 있습니다."
+                if github_token.read_token(self.s).startswith(github_token.FINE_GRAINED_PREFIX) else "")
+        return {"mode": "new", "repo": f"{login}/{name}", "visibility": visibility,
+                "allow_public": visibility == "public", "status": "selected"}, note
+
     def inherited(self, rid):
         req = self.hub.requests[rid]
         if req.get("result_storage"):
@@ -450,6 +477,7 @@ class ResultStorage:
             req["result_storage"] = {key: value for key, value in previous.items()
                                      if key in {"mode", "repo", "visibility", "allow_public", "branch"}}
             req["result_storage"]["status"] = "selected"
+            self._mark_end_ask(req, req["result_storage"])
             self.hub.save_request(rid)
             return True
         project = self.s.project(req.get("project_id"))
@@ -458,9 +486,34 @@ class ResultStorage:
             req["result_storage"] = {"mode": "existing" if can_publish else "local", "repo": project.repo,
                 "visibility": project.visibility, "allow_public": project.allow_public_reports,
                 "branch": project.branch, "status": "selected"}
+            self._mark_end_ask(req, req["result_storage"])
             self.hub.save_request(rid)
             return True
         return False
+
+    @staticmethod
+    def _choice_snapshot(saved: dict) -> dict:
+        return {key: saved[key] for key in ("mode", "repo", "visibility", "allow_public", "branch") if key in saved}
+
+    def _mark_end_ask(self, req: dict, saved: dict) -> None:
+        """Only choices made by a request running on this version get the new end question.
+
+        Persisted requests from before #688 have no marker, so a gateway upgrade never reopens an already reviewed run.
+        """
+        if (req.get("status") and req.get("status") not in {"done", "completed", "failed", "cancelled"}
+                and not req.get("pi_reviewed_at")):
+            req["storage_end_ask"] = {"state": "pending", "initial": self._choice_snapshot(saved)}
+
+    @staticmethod
+    def _choice_label(saved: dict) -> str:
+        mode = saved.get("mode")
+        if mode == "local":
+            return "로컬"
+        if mode == "new":
+            return f"새 GitHub 저장소 {saved.get('repo') or ''}".strip()
+        if mode == "existing":
+            return f"기존 GitHub 저장소 {saved.get('repo') or ''}".strip()
+        return "선택 없음"
 
     async def open_card(self, rid):
         """Open one durable late-choice card without parking or restarting the request."""
@@ -485,12 +538,42 @@ class ResultStorage:
             await self.hub.publish({"type": "approval.requested", "request_id": rid, "data": approval})
             return approval
 
-    async def card(self, rid, *, late=False):
+    async def open_end_card(self, rid):
+        """Ask once more after a newly marked, successful request has been reviewed."""
+        async with self._card_lock:
+            req = self.hub.requests[rid]
+            marker = req.get("storage_end_ask") or {}
+            saved = req.get("result_storage") or {}
+            if marker.get("state") not in {"pending", "asked"}:
+                return None
+            if (req.get("status") not in {"done", "completed"} or not req.get("pi_reviewed_at")
+                    or req.get("bundle_pending") or saved.get("status") == "published"):
+                return None
+            for entry in self.hub.approvals.values():
+                approval = entry["approval"]
+                if (approval.get("request_id") == rid
+                        and (approval.get("detail") or {}).get("storage_end")):
+                    marker["state"] = "asked"
+                    return approval
+            storage = await self.card(rid, end=True)
+            initial = marker.get("initial") or self._choice_snapshot(saved)
+            storage.update(default="keep", allow_keep=True, initial_label=self._choice_label(initial))
+            approval = ApprovalRequest(kind="result_storage", request_id=rid,
+                summary=STORAGE_QUESTION, detail={"storage": storage, "storage_end": True}
+                ).model_dump(mode="json", exclude={"timeout_s"})
+            marker["state"] = "asked"
+            self.hub.approvals[approval["id"]] = {"approval": approval, "origin": None}
+            self.hub.save_request(rid)
+            self.hub.save_approval(approval["id"])
+            await self.hub.publish({"type": "approval.requested", "request_id": rid, "data": approval})
+            return approval
+
+    async def card(self, rid, *, late=False, end=False):
         req = self.hub.requests[rid]
-        if req.get("result_storage") or (not late and self.inherited(rid)):
+        if not end and (req.get("result_storage") or (not late and self.inherited(rid))):
             return None
         research = (req.get("intake") or {}).get("work_kind") == "research" or req.get("research_contract")
-        if not late and not research and not self.s.github.ask_storage:
+        if not late and not end and not research and not self.s.github.ask_storage:
             return None
         warning = ""
         available = False
@@ -509,53 +592,93 @@ class ResultStorage:
         return {"default": "local", "suggested_name": "labhq-" + rid.removeprefix("req_"),
                 "github_available": available, "warning": warning}
 
-    async def select(self, rid, choice, *, late=False):
+    async def select(self, rid, choice, *, late=False, end=False):
         async with self._card_lock:
-            return await self._select(rid, choice, late=late)
+            return await self._select(rid, choice, late=late, end=end)
 
-    async def _select(self, rid, choice, *, late=False):
+    async def _select(self, rid, choice, *, late=False, end=False):
         req = self.hub.requests[rid]
         if late and req.get("result_storage"):
             raise ValueError("이미 저장 위치를 골랐거나 게시한 요청입니다.")
         mode = choice.get("mode", "local")
-        if mode not in {"local", "new", "existing"} or choice.get("visibility", "private") not in {"private", "public"}:
+        if mode not in ({"keep", "local", "new", "existing"} if end else {"local", "new", "existing"}) or choice.get("visibility", "private") not in {"private", "public"}:
             raise ValueError("저장 위치와 공개 범위를 다시 골라 주세요.")
+        marker = req.get("storage_end_ask") or {}
+        if end and marker.get("state") not in {"pending", "asked"}:
+            raise ValueError("끝 저장 위치 질문이 없는 요청입니다.")
+        if end and mode == "keep":
+            choice = dict(marker.get("initial") or {})
+            mode = choice.get("mode", "local")
         saved = {"mode": "local", "status": "selected"}
         if mode in {"new", "existing"}:
             repo = str(choice.get("repo") or "").strip()
+            if end and mode == "new" and "/" in repo:
+                repo = repo.rsplit("/", 1)[-1]
             if mode == "new" and not _NAME.fullmatch(repo):
                 raise ValueError("새 저장소 이름은 영문·숫자·점·밑줄·하이픈으로 적어 주세요.")
             if mode == "existing" and (not _REPO.fullmatch(repo) or any(p in {".", ".."} for p in repo.split("/"))):
                 raise ValueError("기존 저장소는 소유자/저장소 이름으로 적어 주세요.")
             gh = self.client()
             try:
-                if gh is None:
+                if end and mode == "new":
+                    saved, _ = await self._new_github_choice(rid, repo, choice.get("visibility", "private"))
+                elif gh is None:
                     raise ValueError("no token")
-                if mode == "new":
+                elif mode == "new":
                     user = await gh._req("GET", "/user")
                     repo = f"{user['login']}/{repo}"
                 else:
                     info = await gh.repo_info(repo)
                     if not info.get("permissions", {}).get("push"):
                         raise ValueError("no write permission")
-                visibility = choice.get("visibility", "private")
-                if mode == "existing" and not info.get("private", False) and visibility != "public":
-                    raise ValueError("public repository requires public choice")
-                saved = {"mode": mode, "repo": repo, "visibility": visibility,
-                         "allow_public": visibility == "public", "status": "selected"}
-            except Exception:
-                saved["warning"] = "GitHub에 쓸 권한이 없어 로컬에 남깁니다. 토큰의 저장소 읽기·쓰기 권한을 확인하세요."
+                if not (end and mode == "new"):
+                    visibility = choice.get("visibility", "private")
+                    if mode == "existing" and not info.get("private", False) and visibility != "public":
+                        raise ValueError("public repository requires public choice")
+                    saved = {"mode": mode, "repo": repo, "visibility": visibility,
+                             "allow_public": visibility == "public", "status": "selected"}
+            except Exception as exc:
+                if end:
+                    if gh is None:
+                        saved["warning"] = (f"GitHub 토큰이 없어 로컬에 남깁니다. `labhq init`으로 넣으세요"
+                                            f"({github_token.NEEDED_TEXT}).")
+                    else:
+                        missing = ("Repository creation(또는 Administration 쓰기)" if mode == "new"
+                                   else "Contents 쓰기")
+                        saved["warning"] = (f"빠진 권한: {missing}. `labhq init`으로 권한 있는 토큰을 넣어 로컬 정리본을 "
+                                            "나중에 GitHub로 옮길 수 있습니다.")
+                else:
+                    saved["warning"] = "GitHub에 쓸 권한이 없어 로컬에 남깁니다. 토큰의 저장소 읽기·쓰기 권한을 확인하세요."
         if late:
             saved["after_review"] = True
+        if end:
+            saved["after_review"] = True
+            marker["state"] = "answered"
+            marker["final"] = self._choice_snapshot(saved)
         req["result_storage"] = saved
+        if not late and not end:
+            self._mark_end_ask(req, saved)
         self.hub.save_request(rid)
-        if late:
+        if late or end:
             self.schedule(rid)
         return saved
 
     def schedule(self, rid):
         req = self.hub.requests[rid]
         saved = req.get("result_storage") or {}
+        marker = req.get("storage_end_ask") or {}
+        if marker.get("state") in {"pending", "asked"}:
+            if req.get("status") in {"failed", "cancelled"} or saved.get("status") == "published":
+                marker["state"] = "skipped"
+                marker["final"] = self._choice_snapshot(saved)
+                self.hub.save_request(rid)
+            else:
+                if (req.get("status") in {"done", "completed"} and req.get("pi_reviewed_at")
+                        and not req.get("bundle_pending")):
+                    task = self.end_tasks.get(rid)
+                    if task is None or task.done():
+                        self.end_tasks[rid] = asyncio.create_task(self.open_end_card(rid))
+                return
         if saved.get("after_review") and (not req.get("pi_reviewed_at") or req.get("bundle_pending")):
             return
         if not saved or saved.get("status") in {"published", "local", "failed", "declined"}:
@@ -645,34 +768,14 @@ class ResultStorage:
             if rid in self.uploading or (running is not None and not running.done()):
                 raise ValueError("정리 작업이 진행 중입니다. 끝난 뒤 다시 실행하세요.")
             name = (name or "labhq-" + rid.removeprefix("req_")).strip()
-            if not _NAME.fullmatch(name):
-                raise ValueError("새 저장소 이름은 영문·숫자·점·밑줄·하이픈으로 적어 주세요.")
-            if visibility not in {"private", "public"}:
-                raise ValueError("공개 범위는 private 또는 public입니다.")
-            gh = self.client()
-            if gh is None:
-                raise ValueError(f"GitHub 토큰이 없습니다. `labhq init`으로 넣거나 {self.s.github.token_env} 환경 변수를 설정하세요"
-                                 f"({github_token.NEEDED_TEXT}).")
-            try:
-                login = (await gh._req("GET", "/user"))["login"]
-            except GitHubHTTPError as exc:
-                raise ValueError(f"GitHub가 토큰을 받지 않았습니다(HTTP {exc.status_code}). 새 토큰을 `labhq init`으로 넣으세요.") from None
-            try:
-                await gh._req("POST", "/user/repos", json={})  # no name: GitHub refuses it after the permission check
-            except GitHubHTTPError as exc:
-                if exc.status_code != 422:
-                    raise ValueError(f"이 토큰은 저장소를 만들 수 없습니다(HTTP {exc.status_code}). 토큰에 Repository creation"
-                                     f"(또는 Administration 쓰기)을 주세요: {github_token.TOKEN_SETTINGS_URL}") from None
+            choice, note = await self._new_github_choice(rid, name, visibility)
             # A branch inherited from a project names a branch of that repository, not of the new one (PR #702 review):
             # the new repository's default branch is used instead.
             for key in ("warning", "error_type", "draft_path", "branch"):
                 saved.pop(key, None)
-            saved.update(mode="new", repo=f"{login}/{name}", visibility=visibility, allow_public=visibility == "public",
-                         status="selected", after_review=True, converted_from="local")
+            saved.update(choice, after_review=True, converted_from="local")
             self.hub.save_request(rid)
             self.schedule(rid)
-            note = ("fine-grained 토큰이면 Repository access가 All repositories여야 새 저장소에 올릴 수 있습니다."
-                    if github_token.read_token(self.s).startswith(github_token.FINE_GRAINED_PREFIX) else "")
             return {"request_id": rid, "status": "converting", "repo": saved["repo"],
                     "waiting_review": bool(not req.get("pi_reviewed_at") or req.get("bundle_pending")), "note": note}
 
@@ -721,6 +824,8 @@ class ResultStorage:
     async def finish(self, rid):
         req = self.hub.requests[rid]
         saved = req.get("result_storage") or {}
+        if (req.get("storage_end_ask") or {}).get("state") in {"pending", "asked"}:
+            return
         if saved.get("after_review") and (not req.get("pi_reviewed_at") or req.get("bundle_pending")):
             return
         if not saved or req.get("status") not in {"done", "completed", "failed", "cancelled"}:
@@ -1120,9 +1225,10 @@ class ResultStorage:
             raise
 
     async def close(self):
-        for task in self.tasks.values():
+        for task in [*self.tasks.values(), *self.end_tasks.values()]:
             task.cancel()
-        if self.tasks:
-            await asyncio.gather(*self.tasks.values(), return_exceptions=True)
+        pending = [*self.tasks.values(), *self.end_tasks.values()]
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
         if self._client:
             await self._client.http.aclose()
