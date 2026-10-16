@@ -10,6 +10,16 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-10-17
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 01:41 | [`8e453f7`](https://github.com/ehojune/bioinfo-team-3d/pull/703/commits/8e453f7) | 모든 갈래 결과를 읽는 종합 단계가 하나는 있어야 갈래 계획을 받는다(종합 단계마다 다른 갈래만 읽는 계획 거절). |
+| 01:33 | [`56fd438`](https://github.com/ehojune/bioinfo-team-3d/pull/703/commits/56fd438) | 갈래 terminal 종합 완결성을 검증하고 실패 산출물 격리와 CP2 중단 기준을 보강했다 |
+| 00:42 | [`99db7fe`](https://github.com/ehojune/bioinfo-team-3d/pull/703/commits/99db7fe) | 갈래 연구 회귀 test 파일 끝의 불필요한 빈 줄을 정리했다 |
+| 00:32 | [`e0c5767`](https://github.com/ehojune/bioinfo-team-3d/pull/703/commits/e0c5767) | 갈래가 없는 CP2 카드의 기존 열 구성을 유지하면서 갈래 계획에만 갈래 열을 보였다 |
+| 00:16 | [`f29a6f3`](https://github.com/ehojune/bioinfo-team-3d/pull/703/commits/f29a6f3) | 독립된 근거 갈래를 함께 계획하고 실패한 갈래만 격리해 종합까지 이어가게 했다 |
+
 ## 2026-10-16
 
 | 시간 | 커밋 | 주요 변경사항 |
