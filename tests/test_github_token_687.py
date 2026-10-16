@@ -195,8 +195,31 @@ def test_init_stores_a_pasted_token_without_printing_it_or_its_place(tmp_path, m
     out = capsys.readouterr().out
     assert github_token.read_token(settings) == token and "토큰 저장" in out
     assert token not in out and "github_pat_" not in out and str(tmp_path) not in out
-    init_wizard._github_token(settings)  # a second init does not ask again
-    assert "저장된 토큰 파일" in capsys.readouterr().out
+    keep = Prompt("")
+    monkeypatch.setattr(init_wizard.getpass, "getpass", keep)
+    init_wizard._github_token(settings)  # a second init offers a replacement; Enter keeps the stored token
+    assert "그대로 두려면 Enter" in keep.asked[0] and "그대로 씁니다" in capsys.readouterr().out
+    assert github_token.read_token(settings) == token
+
+
+def test_init_replaces_an_expired_stored_token(tmp_path, monkeypatch, capsys):
+    """doctor tells a rejected token to go through `labhq init` again, so init must take a new one (PR #700 review)."""
+    settings = settings_in(tmp_path)
+    github_token.save_token(settings, fine_grained("Q7"))
+    monkeypatch.setattr(init_wizard, "_interactive", lambda: True)
+    monkeypatch.setattr(init_wizard.getpass, "getpass", Prompt(fine_grained("R8")))
+    init_wizard._github_token(settings)
+    out = capsys.readouterr().out
+    assert github_token.read_token(settings) == fine_grained("R8") and "토큰 저장" in out
+    assert fine_grained("R8") not in out and fine_grained("Q7") not in out
+
+
+def test_with_the_variable_set_init_does_not_ask(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("GITHUB_TOKEN", classic())
+    monkeypatch.setattr(init_wizard, "_interactive", lambda: True)
+    monkeypatch.setattr(init_wizard.getpass, "getpass", lambda *_: (_ for _ in ()).throw(AssertionError("asked")))
+    init_wizard._github_token(settings_in(tmp_path))
+    assert "환경 변수 GITHUB_TOKEN" in capsys.readouterr().out
 
 
 def test_init_refuses_something_that_is_not_a_token(tmp_path, monkeypatch, capsys):

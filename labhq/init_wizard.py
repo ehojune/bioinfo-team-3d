@@ -129,17 +129,24 @@ def _github_token(settings: Settings) -> None:
     if not _interactive():
         return
     source = github_token.token_source(settings)
-    if source:
-        where = f"환경 변수 {settings.github.token_env}" if source == "env" else "저장된 토큰 파일"
-        print(f"GitHub: {where}의 토큰을 씁니다(값 출력 생략). 권한은 아래 doctor가 확인합니다")
+    if source == "env":  # the variable wins over any stored file, so asking would change nothing
+        print(f"GitHub: 환경 변수 {settings.github.token_env}의 토큰을 씁니다(값 출력 생략). 권한은 아래 doctor가 확인합니다")
         return
-    print("GitHub 토큰(선택): 요청 결과를 GitHub 저장소로 정리하고 이슈로 알릴 때 씁니다. 없으면 결과는 로컬에만 저장합니다.")
+    if source == "file":  # an expired or revoked token is replaced here, as doctor's hint says (PR #700 review)
+        print("GitHub: 저장된 토큰이 있습니다(값 출력 생략). 만료·취소됐거나 권한을 바꾼 새 토큰이면 붙여 넣으세요.")
+    else:
+        print("GitHub 토큰(선택): 요청 결과를 GitHub 저장소로 정리하고 이슈로 알릴 때 씁니다. 없으면 결과는 로컬에만 저장합니다.")
     print("  필요한 권한 — " + github_token.NEEDED_TEXT)
     print("  만드는 곳 — " + github_token.TOKEN_SETTINGS_URL)
-    token = getpass.getpass("GitHub 토큰을 붙여 넣으세요, 없으면 Enter (입력은 화면에 보이지 않음): ").strip()
+    question = ("새 GitHub 토큰을 붙여 넣으세요, 그대로 두려면 Enter (입력은 화면에 보이지 않음): " if source == "file"
+                else "GitHub 토큰을 붙여 넣으세요, 없으면 Enter (입력은 화면에 보이지 않음): ")
+    token = getpass.getpass(question).strip()
     if not token:
-        print(f"GitHub: 건너뜀 (결과는 로컬에 저장. 나중에 labhq init을 다시 실행하거나 {settings.github.token_env} "
-              "환경 변수를 설정하세요)")
+        if source == "file":
+            print("GitHub: 저장된 토큰을 그대로 씁니다. 권한은 아래 doctor가 확인합니다")
+        else:
+            print(f"GitHub: 건너뜀 (결과는 로컬에 저장. 나중에 labhq init을 다시 실행하거나 {settings.github.token_env} "
+                  "환경 변수를 설정하세요)")
         return
     if not github_token.valid_token(token):
         print("GitHub: 토큰 형식이 아니라 저장하지 않았습니다 (github_pat_ 또는 ghp_로 시작하는 한 덩어리여야 합니다)")
