@@ -417,6 +417,8 @@ class OrchestratorSettings(BaseModel):
     max_replans: int = Field(default=0, ge=0)
     max_failure_replans: int = Field(default=1, ge=0)
     max_steps: int = 12
+    max_branches: int = Field(default=5, ge=1)
+    max_branch_steps: int = Field(default=8, ge=1)
     max_parallel_steps: int = 4
     max_wake_cycles: int = 5
     context_chars_per_step: int = 12000

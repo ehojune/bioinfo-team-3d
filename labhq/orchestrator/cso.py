@@ -38,7 +38,7 @@ from ..login import is_login_error
 from ..report_format import (PAPER_RULE, ABSTRACT_PLAN_RULE, split_appendix, scientific_appendix, add_references)
 from ..request_status import is_terminal_request
 from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARCH_STEP_SCHEMA, ResearchPlan,
-                                 bind_result_artifacts,
+                                 bind_result_artifacts, branch_plan_topology,
                                  canonical_plan_json, classify_intake, freeze_plan, read_evidence_decision,
                                  plan_sha256 as research_plan_sha256,
                                  refresh_plan_approval, research_plan_errors, research_plan_schema,
@@ -484,7 +484,16 @@ Configured domain packs (labhq writes `protocol.packs` from this snapshot; leave
 {packs}
 
 Contract rules:
-- Return schema_version 2 and at most {max_steps} steps. Never silently drop a step to fit the limit.
+- Return schema_version 2. A plan without branches has at most {max_steps} steps, exactly as before.
+  When the request explicitly lists independent evidence types, or naturally splits into independent questions that
+  use different evidence types, add `branches` with id, question, evidence_type, data_boundary and optional
+  estimated_budget_usd. Assign every step to one branch with `branch`, and assign the final integration steps to
+  `branch: "synthesis"`. Do not create branches for a request with one method or one evidence stream.
+  A branched plan has at most {max_branches} branches, {max_branch_steps} steps per branch, and 3 synthesis steps;
+  its total limit is actual branch count × {max_branch_steps} + 3 (configured maximum {branched_max_steps}).
+  Never silently drop a step to fit any limit: return a complete smaller
+  plan. The synthesis reads every branch result and still runs when at least one branch finishes. If a branch needs
+  a PI-provided extract or an internal-data folder, ask for it in clarifying_questions before planning that work.
 - The brief states question, purpose, subject, scope, deliverables, and observable completion conditions.
 - Explanatory/comparative work states a primary hypothesis, alternatives, and distinguishing observations.
   Exploratory/technical work uses its purpose and does not invent H0/H1.
@@ -506,6 +515,9 @@ Contract rules:
 - The original study's methods are reference, not a template: the request may ask a different question of the same
   data. Reuse a choice when it fits this request's question; do not copy the original design otherwise. Record in
   `protocol` only a different choice that could change the result and its evidence.
+- When a hypothesis identifies an exposed or focal group, make the primary contrast that group versus all others,
+  or versus the least-exposed group. Record one line in the protocol explaining the reference category. Use the
+  largest category only when category size, rather than the hypothesis, determines the comparison.
 - """ + ENV_STEP_RULE + """
 - LabHQ applies a pack when its structured `applies_when.topics_any` intersects top-level `topics`; fill
   `pack_values[key]` for applied packs only and add nothing for topic packs that do not match. A pack whose `applies_when` is
@@ -531,8 +543,10 @@ RESEARCH_CP2_RULE = (
     "step's collected artifact; evidence citing any other path is refused. The request then stops at CP2, where "
     "the PI approves, requests revision of, or denies the evidence. After approval one reviewer checks the claims "
     "against their ledgers and files, and the final report ties every conclusion to a ledger claim as "
-    "[[claim:<step_id>/<claim_id>]], which labhq checks. A failed step, a requested revision or a reviewer's revise "
-    "ends the request, and a changed plan needs a new CP1 approval.")
+    "[[claim:<step_id>/<claim_id>]], which labhq checks. In a branched plan, a failed branch blocks only later "
+    "steps in that branch; synthesis still runs from completed branches and names every failed branch, its reason "
+    "and last completed step. A requested revision or a reviewer's revise ends the request, and a changed plan "
+    "needs a new CP1 approval.")
 RESEARCH_CP2_PLAN_PROMPT = RESEARCH_PLAN_PROMPT.replace(RESEARCH_CP1_ONLY_RULE, RESEARCH_CP2_RULE)
 # CP2 cards an answer without a readable choice gets before the request ends as not approved.
 CP2_MAX_ASKS = 3
@@ -780,6 +794,11 @@ issue for it only when the reason is wrong or the missing check would change a c
 merely because it was skipped.
 Check that analysis steps declared key figures, the report embeds them under results or gives a one-line reason,
 and every figure follows the SVG, Korean <text>, raster-fallback, and no-capture rules.
+For a branched plan, WARN (as a P2 issue whose problem starts with "WARN:") when a branch has an analysis-result table
+in its step artifacts but that branch's actual analysis and result are absent from the summary or conclusion.
+WARN the same way when the reported reference category is on the same exposure side as the hypothesis's focal
+group. The primary contrast should be the focal group versus all others or the least-exposed group; a largest-group
+reference is valid only when the hypothesis is unrelated to exposure ordering.
 """ + CHECKLIST_REVIEW_RULE + """
 
 Request: {request}
@@ -830,6 +849,14 @@ Claim anchors (labhq checks them by machine):
   claim check in the separate execution record. Summarize an important warning in one line under "논의" and
   end that line with "실행 기록 참고", without copying the raw warning into the body.
 - Report the reviewer's P1 and P2 issues as limitations.
+- For every branch, put the analysis actually performed and its result in the 요약(Abstract), 결론, and graphical
+  abstract. A non-significant result is still a result: give the number of tests, threshold, and number passing.
+- When a direct test could not be done and a substitute analysis was used, separate three statements: what was
+  done and found; what it means and does not mean; and why the direct test was unavailable. In the branch comparison
+  table's 판정 cell, include a one-line substitute-analysis result instead of only "supports neither side".
+- State in one line whether each representative contrast matches the hypothesis and why its reference category was
+  chosen. If the reference category is on the same exposure side as the focal group, mark it WARN rather than
+  presenting it as the primary contrast.
 """ + REPORT_FIGURE_RULE + """
 When Analysis precedents are supplied below, add a short "선행 연구 기준" subsection under "방법": one cited line for each required
 analysis done or not done (with the reason), and put omitted recommended analyses under a "다음에 할 수 있는 분석" subsection in "논의".
@@ -1495,13 +1522,49 @@ def _research_plan_digest(plan: dict) -> str:
     """The frozen plan as the research reviewer and report writer read it: question, protocol, pack values, steps.
     Only the step list is clipped: a real plan runs past 20,000 characters, and clipping the whole JSON cut the
     middle of the protocol the reviewer judges against (PR #358 review)."""
-    steps = [{key: step.get(key) for key in ("id", "agent_id", "phase", "instruction", "claim_ids", "outputs",
-                                             "evidence_slots", "depends_on")} for step in plan.get("steps") or []]
+    steps = plan.get("steps") or []
+    step_table = [{key: step.get(key) for key in ("id", "branch", "depends_on", "phase")} for step in steps]
+    step_details = [{key: step.get(key) for key in ("id", "agent_id", "instruction", "claim_ids", "outputs",
+                                                    "evidence_slots")}
+                    for step in steps]
     frozen = {"brief": plan.get("brief"),
+              "branches": plan.get("branches") or [],
               "protocol": {k: v for k, v in (plan.get("protocol") or {}).items() if k != "packs"},
               "pack_values": plan.get("pack_values") or {}}
-    return (json.dumps(frozen, ensure_ascii=False) + "\nSteps: " +
-            clip(json.dumps(steps, ensure_ascii=False), 8000))
+    return (json.dumps(frozen, ensure_ascii=False) +
+            "\nStep table (complete): " + json.dumps(step_table, ensure_ascii=False) +
+            "\nStep details (instructions may be clipped): " +
+            clip(json.dumps(step_details, ensure_ascii=False), 8000))
+
+
+def _branch_terminal_states(topology: dict[str, Any], steps: list[dict],
+                            results: dict[str, TaskResult]) -> list[dict[str, Any]]:
+    """Summarize execution against the terminal sets from the shared branch topology."""
+    states = []
+    for branch_id in topology["branch_ids"]:
+        terminals = topology["terminals"].get(branch_id, [])
+        successful = [step_id for step_id in terminals if step_id in results and results[step_id].ok]
+        branch_steps = [step["id"] for step in steps if step.get("branch") == branch_id]
+        last_completed = next((step_id for step_id in reversed(branch_steps)
+                               if step_id in results and results[step_id].ok), "none")
+        failures = [f"{step_id}: {safe_failure_cause(results[step_id].error if step_id in results else 'not run')}"
+                    for step_id in terminals if step_id not in successful]
+        states.append({"branch": branch_id, "status": ("complete" if len(successful) == len(terminals) else
+                                                         "partial" if successful else "failed"),
+                       "terminals": terminals, "successful_terminals": successful,
+                       "reason": "; ".join(failures) or "completed",
+                       "last_completed_step": last_completed})
+    return states
+
+
+def _branch_terminal_status_table(states: list[dict[str, Any]]) -> str:
+    lines = ["## 갈래별 terminal 상태", "", "| 갈래 | 상태 | terminal | 이유 | 마지막으로 끝난 단계 |",
+             "|---|---|---|---|---|"]
+    for state in states:
+        reason = str(state["reason"]).replace("|", "\\|")
+        lines.append(f"| {state['branch']} | {state['status']} | {', '.join(state['terminals']) or 'none'} | "
+                     f"{reason} | {state['last_completed_step']} |")
+    return "\n".join(lines)
 
 
 def _research_protocol_digest(plan: dict) -> str:
@@ -3784,6 +3847,10 @@ class Orchestrator:
         req_state = self.hub.requests.get(rid)
         research_plan = ((req_state or {}).get("plan") if
                          ((req_state or {}).get("research_contract") or {}).get("execution_enabled") else None)
+        branch_topology = branch_plan_topology((research_plan or {}).get("branches") or [], steps)
+        branch_ids = branch_topology["branch_ids"]
+        branch_by_step = branch_topology["branch_by_step"]
+        branch_terminals = branch_topology["terminals"]
         shared_environment_protected = any(
             ENV_LOCK_OUTPUT in step.get("outputs", []) for step in steps)
         # Answers to blocking questions survive a gateway restart (the re-run step still needs them).
@@ -3819,8 +3886,8 @@ class Orchestrator:
             parts = []
             for d in step["depends_on"]:
                 r = results.get(d)
-                if r:
-                    head = f"## {d} · {by_id[d]['agent_id']}" + ("" if r.ok else f" (FAILED: {short(r.error, 200)})")
+                if r and r.ok:
+                    head = f"## {d} · {by_id[d]['agent_id']}"
                     artifacts = [{"workdir_id": r.workdir_id, "path": path}
                                  for path in r.outputs]
                     # Relative to the step folder, where the runner links inputs/<step id> (#423): a script that
@@ -3838,6 +3905,21 @@ class Orchestrator:
                     parts.append(f"## {d} · {by_id[d]['agent_id']} (earlier step, files only)\n"
                                  f"Declared output artifacts: {json.dumps(artifacts)}\n"
                                  f"Readable files (relative to your folder):\n{paths}")
+            if step.get("branch") == "synthesis" and branch_ids:
+                failed_lines = []
+                for branch_id in branch_ids:
+                    failed = [sid for sid in by_id if branch_by_step.get(sid) == branch_id and sid in results
+                              and not results[sid].ok]
+                    if not failed:
+                        continue
+                    last = next((sid for sid in reversed(list(by_id)) if branch_by_step.get(sid) == branch_id
+                                 and sid in results and results[sid].ok), "none")
+                    reasons = "; ".join(f"{sid}: {safe_failure_cause(results[sid].error or 'unknown error')}"
+                                        for sid in failed)
+                    failed_lines.append(f"- 실패한 갈래: {branch_id} — 이유: {reasons}; "
+                                        f"마지막으로 끝난 단계: {last}")
+                if failed_lines:
+                    parts.append("## Failed branch memo\n" + "\n".join(failed_lines))
             return "\n\n".join(parts)
 
         async def run_one(step: dict) -> TaskResult:
@@ -3904,9 +3986,9 @@ class Orchestrator:
                 updates.append(f"[Current upstream results — they replace what you read before]\n{ctx}")
             linked = input_steps(step)
             upstream_dirs = [results[d].workdir for d in linked
-                             if d in results and results[d].workdir and results[d].outputs]
+                             if d in results and results[d].ok and results[d].workdir and results[d].outputs]
             upstream_steps = {d: results[d].workdir for d in linked
-                              if d in results and results[d].workdir and results[d].outputs}
+                              if d in results and results[d].ok and results[d].workdir and results[d].outputs}
             task = Task(agent_id=step["agent_id"], request_id=rid, prompt=prompt, context=ctx,
                         output_schema=RESEARCH_STEP_SCHEMA if research_plan else None,
                         resume_session_id=session_id if can_resume else None,
@@ -4136,6 +4218,16 @@ class Orchestrator:
                     continue
                 blocked = [d for d in by_id[sid]["depends_on"] if d not in results or not results[d].ok]
                 if blocked:
+                    synthesis_after_branch_failure = (
+                        branch_by_step.get(sid) == "synthesis" and branch_ids and
+                        not any(branch_by_step.get(dep) == "synthesis" for dep in blocked) and
+                        any(any(terminal in results and results[terminal].ok
+                                for terminal in branch_terminals.get(branch_id, []))
+                            for branch_id in branch_ids)
+                    )
+                    if synthesis_after_branch_failure:
+                        running[sid] = self._step_task(rid, run_one(by_id[sid]))
+                        continue
                     reason = ", ".join(f"{d}: {results[d].error if d in results else 'not run'}" for d in blocked)
                     await skip(sid, f"upstream {reason}", blocked)
                     continue
@@ -4261,15 +4353,24 @@ class Orchestrator:
         warnings = [f"{sid}: 단계 실패 또는 의존 단계 건너뜀 — " +
                     safe_failure_cause(results[sid].error if sid in results else "not run") for sid in failed]
         pi_stopped = any(sid in results and results[sid].error_kind in PI_STOP_ERROR_KINDS for sid in failed)
-        if rid in self.budget_denials or pi_stopped or not successful:
+        branch_topology = branch_plan_topology(req["plan"].get("branches") or [], steps)
+        branch_states = _branch_terminal_states(branch_topology, steps, results)
+        no_successful_branch_terminal = bool(branch_states and
+                                             not any(state["successful_terminals"] for state in branch_states))
+        if rid in self.budget_denials or pi_stopped or not successful or no_successful_branch_terminal:
             contract["failure"] = {"steps": failed, "plan_sha256": contract["plan_sha256"],
+                                   **({"reason": "no branch terminal completed", "branch_status": branch_states}
+                                      if no_successful_branch_terminal else {}),
                                    **({"budget": self.budget_denials[rid]} if rid in self.budget_denials else {})}
             req["outcome"] = "research_failed"
             self.hub.save_request(rid)
-            self._finish(rid, self.report_results(steps, results, n) +
+            branch_report = (("\n\n" + _branch_terminal_status_table(branch_states))
+                             if no_successful_branch_terminal else "")
+            self._finish(rid, self.report_results(steps, results, n) + branch_report +
                          "\n\nResearch stopped before CP2. labhq does not re-plan a frozen research PLAN; a changed "
                          "plan needs a new CP1 approval of its hash.", serialized(), ok=False)
             return
+        all_steps = steps
         steps = successful
         for step in steps:
             ledger = results[step["id"]].structured or {}
@@ -4294,7 +4395,7 @@ class Orchestrator:
                          serialized(), ok=False)
             return
         ledgers = {s["id"]: results[s["id"]].structured for s in steps}
-        ancestors = step_ancestors(steps)
+        ancestors = step_ancestors(all_steps)
         refused: list[dict[str, str]] = []
         refused_rows: list[dict[str, str]] = []
         unsupported: list[dict[str, str]] = []
@@ -4320,7 +4421,7 @@ class Orchestrator:
                             for row in salvaged.get("unsupported_claims") or []]
             bound = bind_result_artifacts(result.structured if isinstance(result.structured, dict) else {},
                                            outputs=list(result.outputs),
-                                           upstream=ancestor_artifacts(steps, ancestors, results, step["id"]),
+                                           upstream=ancestor_artifacts(all_steps, ancestors, results, step["id"]),
                                            output_sha256=dict(result.output_sha256))
             refused += [{"step_id": step["id"], **row} for row in bound["refused_evidence"]]
             unsupported += [{"step_id": step["id"], **row} for row in bound["unsupported_claims"]]
@@ -4371,7 +4472,10 @@ class Orchestrator:
                   **({"unsupported_claims": unsupported} if unsupported else {}),
                   **({"source_verification": source_verification} if source_verification else {}),
                    "artifact_sha256": artifact_sha256, "unreported_outputs": warning_outputs,
-                  "results": ledgers}
+                  "results": ledgers,
+                  **({"branches": req["plan"].get("branches"),
+                      "step_branches": {step["id"]: step.get("branch") for step in steps}}
+                     if req["plan"].get("branches") else {})}
         carried = contract.get("continuation") or {}
         reuse_lines: list[str] = []
         if carried.get("plan_sha256") == contract["plan_sha256"]:  # a continuation round (#90)
@@ -5305,7 +5409,9 @@ class Orchestrator:
                 known = {a["id"] for a in all_available}
                 roster = [a for a in all_available if a["id"] not in orchestration]
                 # Apply the existing agent, DAG and external-data checks to the final assignments too.
-                validate_steps(req["plan"]["steps"], known, self.cfg.max_steps, orchestration,
+                research_limit = (len(req["plan"].get("branches") or []) * self.cfg.max_branch_steps + 3
+                                  if req["plan"].get("branches") else self.cfg.max_steps)
+                validate_steps(req["plan"]["steps"], known, research_limit, orchestration,
                                guard=self._external_guard(rid))
                 self.hub.save_request(rid)
 
@@ -5325,6 +5431,8 @@ class Orchestrator:
                     active_pack_hashes = pack_snapshot(packs)
                     req["plan"], _ = _normalize_plan_outputs(req["plan"])
                     validated = validate_research_plan(req["plan"], max_steps=self.cfg.max_steps,
+                                                       max_branches=self.cfg.max_branches,
+                                                       max_branch_steps=self.cfg.max_branch_steps,
                                                        active_packs=active_pack_hashes,
                                                        expected_intake=intake, pack_definitions=packs)
                     req["plan"] = validated.model_dump(mode="json")
@@ -5500,6 +5608,9 @@ class Orchestrator:
                             request=plan_request, roster=format_roster(roster),
                             capabilities=capabilities or "No workers available",
                             briefing=clip(briefing, 4000) or "(none)", max_steps=self.cfg.max_steps,
+                            max_branches=self.cfg.max_branches,
+                            max_branch_steps=self.cfg.max_branch_steps,
+                            branched_max_steps=self.cfg.max_branches * self.cfg.max_branch_steps + 3,
                             intake=json.dumps(intake.model_dump(mode="json"), ensure_ascii=False, sort_keys=True),
                             packs=render_pack_catalog(configured_pack_defs), question_rule=QUESTION_RULE,
                             output_types_rule=output_types.prompt_rule(vocab) if vocab else "",
@@ -5636,6 +5747,8 @@ class Orchestrator:
                     def plan_problems(candidate: Any, candidate_packs: dict[str, Any]) -> list[str]:
                         try:
                             problems = research_plan_errors(candidate, max_steps=self.cfg.max_steps,
+                                                            max_branches=self.cfg.max_branches,
+                                                            max_branch_steps=self.cfg.max_branch_steps,
                                                             active_packs=pack_snapshot(candidate_packs),
                                                             expected_intake=intake, pack_definitions=candidate_packs)
                         except (ValueError, TypeError) as error:
@@ -5704,6 +5817,8 @@ class Orchestrator:
                             plan = with_checklist_skip_warnings(plan, checklist_catalog,
                                                                 req.get("analysis_precedents"))
                             validated = validate_research_plan(plan, max_steps=self.cfg.max_steps,
+                                                               max_branches=self.cfg.max_branches,
+                                                               max_branch_steps=self.cfg.max_branch_steps,
                                                                active_packs=pack_snapshot(candidate_packs),
                                                                expected_intake=intake, pack_definitions=candidate_packs)
                             packs = candidate_packs
@@ -6418,6 +6533,9 @@ class Orchestrator:
         if report.lstrip().startswith("### ") and "Full instructions, outputs and errors per step:" in report:
             execution.append(report)
             summary, feed_error = failed_request_summary(req, results, error or report)
+            branch_status = ((req.get("research_contract") or {}).get("failure") or {}).get("branch_status") or []
+            if branch_status:
+                summary += "\n\n" + _branch_terminal_status_table(branch_status)
             report = (summary + "\n\n## 결론과 권고\n요청을 완료하지 못했습니다. 실행 기록의 원인과 다음 조치를 "
                       "확인하세요.\n\n## 결과\n확정할 최종 결과가 없습니다.\n\n## 방법 요약\n"
                       "완료된 단계까지 실행했습니다.\n\n## 한계\n요청 처리 경고가 있습니다. 실행 기록 참고.")

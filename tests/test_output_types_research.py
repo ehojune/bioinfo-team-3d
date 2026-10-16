@@ -36,9 +36,10 @@ CANARY = "CANARY-research-91c2"
 # #621 adds the approved topic variant_effect, so the topic rule inside this fixed prompt grows by one entry; the
 # prompt template and both schemas are unchanged (RESEARCH_PROMPT_SHA moved on purpose, VALID_PLAN_SHA did not).
 # #683 and #690 add declared analysis figures and SVG text/quality rules; #693 then adds staff-skill fields and guidance.
-RESEARCH_PLAN_SCHEMA_SHA = "aedf9155590ddc878afcfc7b56a89663d47cc943dc062e5cbc7ce4495e78693c"
+# #686 adds optional research branches and per-step branch ids; #694 adds the hypothesis-aligned reference rule.
+RESEARCH_PLAN_SCHEMA_SHA = "dc93790d21e41d290e4d75d254d0d5c80c3ca602d30538da2bcaef9a7a44bf26"
 RESEARCH_RESULT_SCHEMA_SHA = "9a767787fade091505fea149a8841845738ce30ce77cf6657cbca0aaa72af64d"
-RESEARCH_PROMPT_SHA = "dbccb7f25a499675693b38446c25f104c01df4d6c67abaa9725b86ececb01860"
+RESEARCH_PROMPT_SHA = "6ca7cebaae1e0a2dcd73509801b124c505d68820cd59893e82f0b5f8b9b12e1d"
 VALID_PLAN_SHA = "f611461cc2dbb17e39159ec1df6a75d8f7b661eb39bbe42c8ed0438c5c45e213"
 
 
@@ -57,6 +58,7 @@ def test_engine_schemas_and_prompt_off_are_those_of_main():
     assert raw_sha(rc.RESEARCH_RESULT_SCHEMA) == RESEARCH_RESULT_SCHEMA_SHA
     assert rc.research_plan_schema(False) is rc.RESEARCH_PLAN_SCHEMA
     args = dict(request="REQ", roster="ROSTER", capabilities="CAPS", briefing="BRIEF", max_steps=3,
+                max_branches=5, max_branch_steps=8, branched_max_steps=43,
                 question_rule=QUESTION_RULE, intake="INTAKE", packs="PACKS", topics_rule=topics.prompt_rule(V))
     assert raw_sha(cso.RESEARCH_PLAN_PROMPT.format(**args, output_types_rule="")) == RESEARCH_PROMPT_SHA
 

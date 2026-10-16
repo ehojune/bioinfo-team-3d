@@ -207,6 +207,8 @@ class ResearchStep(StrictModel):
     checks: list[str] = Field(min_length=1)
     evidence_slots: list[EvidenceSlot]
     depends_on: list[str]
+    # Present only in a branched plan. Older frozen plans omit it and keep their canonical hash.
+    branch: str | None = Field(default=None, min_length=1)
     # Pack rules and contract checks never read this; pack fields never fill it (no_type_inheritance).
     output_types: list[OutputTypeEntry] = Field(default_factory=list, max_length=MAX_ENTRIES)
 
@@ -218,6 +220,8 @@ class ResearchStep(StrictModel):
             data.pop("output_types", None)
         if not data.get("key_figures"):
             data.pop("key_figures", None)
+        if data.get("branch") is None:
+            data.pop("branch", None)
         return data
 
     @model_validator(mode="after")
@@ -245,6 +249,70 @@ class RecruitProposal(StrictModel):
         if not data.get("step_ids"):
             data.pop("step_ids", None)
         return data
+
+
+class ResearchBranch(StrictModel):
+    id: str = Field(min_length=1, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+    question: str = Field(min_length=1)
+    evidence_type: str = Field(min_length=1)
+    data_boundary: str = Field(min_length=1)
+    estimated_budget_usd: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+
+    @model_serializer(mode="wrap")
+    def _drop_missing_budget(self, handler: Any) -> dict[str, Any]:
+        data = handler(self)
+        if data.get("estimated_budget_usd") is None:
+            data.pop("estimated_budget_usd", None)
+        return data
+
+
+def branch_plan_topology(branches: list[Any], steps: list[Any]) -> dict[str, Any]:
+    """Return the one branch-completeness topology used by PLAN validation and execution."""
+    def field(item: Any, key: str, default: Any = None) -> Any:
+        return item.get(key, default) if isinstance(item, dict) else getattr(item, key, default)
+
+    branch_ids = [field(branch, "id") for branch in branches if field(branch, "id")]
+    branch_by_step = {field(step, "id"): field(step, "branch") for step in steps if field(step, "id")}
+    dependencies = {field(step, "id"): list(field(step, "depends_on", []) or [])
+                    for step in steps if field(step, "id")}
+    terminals = {
+        branch_id: [step_id for step_id, step_branch in branch_by_step.items()
+                    if step_branch == branch_id and
+                    not any(step_id in other_dependencies and branch_by_step.get(other_id) == branch_id
+                            for other_id, other_dependencies in dependencies.items())]
+        for branch_id in branch_ids
+    }
+    synthesis_ids = [step_id for step_id, branch_id in branch_by_step.items() if branch_id == "synthesis"]
+
+    def ancestors(step_id: str) -> set[str]:
+        found: set[str] = set()
+        pending = list(dependencies.get(step_id, []))
+        while pending:
+            dependency = pending.pop()
+            if dependency in found:
+                continue
+            found.add(dependency)
+            pending.extend(dependencies.get(dependency, []))
+        return found
+
+    def missing_from(step_id: str) -> list[str]:
+        seen = ancestors(step_id)
+        return [branch_id for branch_id in branch_ids
+                if not terminals[branch_id] or any(terminal not in seen for terminal in terminals[branch_id])]
+
+    # One synthesis step must read every branch: the union over several steps let S1 <- A and S2 <- B pass although no
+    # step integrates A with B (PR #703 review). Without such a step, report what the most complete one leaves out.
+    missing_by_synthesis = {step_id: missing_from(step_id) for step_id in synthesis_ids}
+    final_synthesis_ids = [step_id for step_id, missing in missing_by_synthesis.items() if not missing]
+    if final_synthesis_ids:
+        missing_synthesis_branches: list[str] = []
+    elif missing_by_synthesis:
+        missing_synthesis_branches = min(missing_by_synthesis.values(), key=len)
+    else:
+        missing_synthesis_branches = list(branch_ids)
+    return {"branch_ids": branch_ids, "branch_by_step": branch_by_step, "terminals": terminals,
+            "synthesis_ids": synthesis_ids, "final_synthesis_ids": final_synthesis_ids,
+            "missing_synthesis_branches": missing_synthesis_branches}
 
 
 class PackPlanValue(StrictModel):
@@ -291,6 +359,7 @@ class ResearchPlan(StrictModel):
     budget_usd: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     # Same structure as the general PLAN; plain strings from older plans keep their canonical hash.
     clarifying_questions: list[str | ClarifyingQuestion]
+    branches: list[ResearchBranch] = Field(default_factory=list)
     steps: list[ResearchStep] = Field(min_length=1)
     recruit: list[RecruitProposal]
     paper_skills: list[PaperSkillSelection] = Field(default_factory=list, max_length=2)
@@ -329,7 +398,7 @@ class ResearchPlan(StrictModel):
         # Plans frozen before topic routing must keep their canonical JSON and plan hash.
         data = handler(self)
         for field in ("topics", "pack_applicability", "warnings", "checklist", "suggested_next",
-                      "paper_skills", "paper_skill_results", "recruit_results"):
+                      "paper_skills", "paper_skill_results", "recruit_results", "branches"):
             if not data.get(field):
                 data.pop(field, None)
         if data.get("budget_usd") is None:  # plans frozen before R17 keep their plan_sha256
@@ -344,6 +413,24 @@ class ResearchPlan(StrictModel):
         if len(ids) != len(set(ids)):
             raise ValueError("research step ids must be unique")
         known = set(ids)
+        branch_ids = [branch.id for branch in self.branches]
+        if len(branch_ids) != len(set(branch_ids)):
+            raise ValueError("research branch ids must be unique")
+        if self.branches:
+            allowed = {*branch_ids, "synthesis"}
+            missing = [step.id for step in self.steps if step.branch not in allowed]
+            if missing:
+                raise ValueError(f"branched research steps must name a branch or synthesis: {missing}")
+            if not any(step.branch == "synthesis" for step in self.steps):
+                raise ValueError("branched research plan requires at least one synthesis step")
+            step_branches = {step.id: step.branch for step in self.steps}
+            for step in self.steps:
+                if step.branch in branch_ids:
+                    cross = [dep for dep in step.depends_on if step_branches.get(dep) != step.branch]
+                    if cross:
+                        raise ValueError(f"branch step {step.id} depends outside branch {step.branch}: {cross}")
+        elif any(step.branch is not None for step in self.steps):
+            raise ValueError("unbranched research plan must omit step.branch")
         dependencies = {step.id: step.depends_on for step in self.steps}
         for step in self.steps:
             invalid = [dep for dep in step.depends_on if dep not in known or dep == step.id]
@@ -365,6 +452,11 @@ class ResearchPlan(StrictModel):
 
         for step_id in ids:
             visit(step_id)
+        if self.branches:
+            topology = branch_plan_topology(self.branches, self.steps)
+            if topology["missing_synthesis_branches"]:
+                raise ValueError("no single synthesis step depends on every branch's terminal results; missing "
+                                 "branches: " + ", ".join(topology["missing_synthesis_branches"]))
         return self
 
 
@@ -631,14 +723,39 @@ def _pack_value_errors(supplied_all: Any, plan: ResearchPlan | None, active_pack
     return errors
 
 
-def _contract_errors(plan: ResearchPlan | None, value: Any, *, max_steps: int, active_packs: dict[str, str],
+def _contract_errors(plan: ResearchPlan | None, value: Any, *, max_steps: int, max_branches: int,
+                     max_branch_steps: int, active_packs: dict[str, str],
                      expected_intake: IntakeDecision | None,
                      pack_definitions: dict[str, Any] | None) -> list[str]:
     """Every check after the schema. A draft that fails the schema still gets its pack checks."""
     raw = value if isinstance(value, dict) else {}
     errors: list[str] = []
     steps = plan.steps if plan is not None else raw.get("steps")
-    if isinstance(steps, list) and len(steps) > max_steps:
+    raw_branches = plan.branches if plan is not None else raw.get("branches")
+    branches = raw_branches if isinstance(raw_branches, list) else []
+    if branches:
+        if len(branches) > max_branches:
+            errors.append(f"research plan has {len(branches)} branches; maximum is {max_branches}; "
+                          "re-plan without truncation")
+        branch_ids = [branch.id if isinstance(branch, ResearchBranch) else branch.get("id")
+                      for branch in branches if isinstance(branch, (ResearchBranch, dict))]
+        if isinstance(steps, list):
+            for branch_id in branch_ids:
+                count = sum((step.branch if isinstance(step, ResearchStep) else step.get("branch")) == branch_id
+                            for step in steps if isinstance(step, (ResearchStep, dict)))
+                if count > max_branch_steps:
+                    errors.append(f"research branch {branch_id} has {count} steps; maximum is {max_branch_steps}; "
+                                  "re-plan without truncation")
+            synthesis = sum((step.branch if isinstance(step, ResearchStep) else step.get("branch")) == "synthesis"
+                            for step in steps if isinstance(step, (ResearchStep, dict)))
+            if synthesis > 3:
+                errors.append(f"research plan has {synthesis} synthesis steps; maximum is 3; "
+                              "re-plan without truncation")
+            total_limit = len(branches) * max_branch_steps + 3
+            if len(steps) > total_limit:
+                errors.append(f"branched research plan has {len(steps)} steps; maximum is {total_limit}; "
+                              "re-plan without truncation")
+    elif isinstance(steps, list) and len(steps) > max_steps:
         errors.append(f"research plan has {len(steps)} steps; maximum is {max_steps}; re-plan without truncation")
     if plan is not None:
         selected = {ref.key: ref.sha256 for ref in plan.protocol.packs}
@@ -666,7 +783,8 @@ def schema_error_lines(error: ValidationError) -> list[str]:
     return lines
 
 
-def research_plan_errors(value: Any, *, max_steps: int, active_packs: dict[str, str],
+def research_plan_errors(value: Any, *, max_steps: int, max_branches: int = 5, max_branch_steps: int = 8,
+                         active_packs: dict[str, str],
                          expected_intake: IntakeDecision | None = None,
                          pack_definitions: dict[str, Any] | None = None) -> list[str]:
     """All problems of a PLAN at once, so one correction can fix them together (#222)."""
@@ -675,7 +793,8 @@ def research_plan_errors(value: Any, *, max_steps: int, active_packs: dict[str, 
         errors: list[str] = []
     except ValidationError as error:
         plan, errors = None, schema_error_lines(error)
-    return errors + _contract_errors(plan, value, max_steps=max_steps, active_packs=active_packs,
+    return errors + _contract_errors(plan, value, max_steps=max_steps, max_branches=max_branches,
+                                     max_branch_steps=max_branch_steps, active_packs=active_packs,
                                      expected_intake=expected_intake, pack_definitions=pack_definitions)
 
 
@@ -686,11 +805,13 @@ def with_pack_refs(value: Any, refs: list[dict[str, str]]) -> Any:
     return {**value, "protocol": {**value["protocol"], "packs": [dict(ref) for ref in refs]}}
 
 
-def validate_research_plan(value: Any, *, max_steps: int, active_packs: dict[str, str],
+def validate_research_plan(value: Any, *, max_steps: int, max_branches: int = 5, max_branch_steps: int = 8,
+                           active_packs: dict[str, str],
                            expected_intake: IntakeDecision | None = None,
                            pack_definitions: dict[str, Any] | None = None) -> ResearchPlan:
     plan = ResearchPlan.model_validate(value)
-    errors = _contract_errors(plan, value, max_steps=max_steps, active_packs=active_packs,
+    errors = _contract_errors(plan, value, max_steps=max_steps, max_branches=max_branches,
+                              max_branch_steps=max_branch_steps, active_packs=active_packs,
                               expected_intake=expected_intake, pack_definitions=pack_definitions)
     if errors:
         raise ValueError("; ".join(errors))

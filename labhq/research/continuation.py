@@ -60,6 +60,7 @@ def frozen_context(plan: Mapping[str, Any]) -> dict[str, Any]:
     stopped to ask the PI for the sentences)."""
     brief = plan.get("brief") or {}
     return {"question": brief.get("question"), "scope": brief.get("scope"),
+            "branches": plan.get("branches") or [],
             "hypotheses": {"primary": brief.get("primary_hypothesis"),
                            "null_or_alternatives": brief.get("null_or_alternatives") or [],
                            "distinguishing_observations": brief.get("distinguishing_observations") or []},
