@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 18:16 | [`d9d758c`](https://github.com/ehojune/bioinfo-team-3d/pull/693/commits/d9d758c) | Claude bundled plugin과 읽기 전용 prompt 요약으로 직원 스킬 로딩을 복구 |
+| 17:34 | [`a12f25e`](https://github.com/ehojune/bioinfo-team-3d/pull/693/commits/a12f25e) | mock 읽기 전용 실행에서 Claude·Codex 전용 스킬 요구를 분리 |
+| 17:15 | [`c0a4eec`](https://github.com/ehojune/bioinfo-team-3d/pull/693/commits/c0a4eec) | 직원에게 humanizer와 graphical-abstract를 장착하고 한국어 문서 QC를 추가 |
 | 03:51 | [`75a248b`](https://github.com/ehojune/bioinfo-team-3d/pull/668/commits/75a248b) | StructuredOutput 재시도에서 Windows 경로·명령·정규식 원문을 보존하고 JSON escape만 지시 |
 | 03:49 | [`878972b`](https://github.com/ehojune/bioinfo-team-3d/pull/668/commits/878972b) | 최신 main의 작업 폴더 승인 보정을 StructuredOutput 재시도와 함께 보존 |
 | 03:32 | [`63d6635`](https://github.com/ehojune/bioinfo-team-3d/pull/668/commits/63d6635) | 최신 main의 결과 계약 보정과 StructuredOutput 재시도 순서를 함께 보존 |
