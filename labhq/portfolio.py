@@ -16,6 +16,7 @@ from urllib.parse import quote, unquote
 from .integrations.github import SECRET_PATTERNS, publish_clean, redact_url_credentials, sanitize
 from .korean_qc import check_document, check_preservation
 from .policy import touches
+from .research.contract import branch_plan_topology
 from .report_abstract import build_graphical_abstract
 from .request_bundle import _POSIX_ABS, _WINDOWS_ABS
 
@@ -61,17 +62,16 @@ _MARKDOWN_REFERENCE_DEFINITION = re.compile(
 _MARKDOWN_CODE = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]*`", re.DOTALL)
 _REMOTE_LINK = re.compile(r"(?i)^(?:https?://|data:|mailto:)")
 _PORTFOLIO_TOP = {"README.md", "REFERENCES.md", "DATA_AND_LICENSES.md"}
-_PORTFOLIO_FOLDERS = ("report/", "run/", "code/", "figures/", "tables/")
+_PORTFOLIO_FOLDERS = ("report/", "run/", "code/", "figures/", "tables/", "studies/")
 
 
-def declared_aggregate_tables(req: Mapping[str, Any]) -> set[str]:
-    """Return tables explicitly declared with the aggregate ``table`` output type."""
+def _declared_outputs(req: Mapping[str, Any], expected_type: str) -> set[str]:
     declared: set[str] = set()
 
     def add(step_id: str, name: Any, data_type: Any) -> None:
         if isinstance(data_type, Mapping):
             data_type = data_type.get("value") if data_type.get("basis") == "declared" else None
-        if not isinstance(name, str) or data_type != "table":
+        if not isinstance(name, str) or data_type != expected_type:
             return
         raw = name.replace("\\", "/")
         normalized = posixpath.normpath(raw[2:] if raw.startswith("./") else raw)
@@ -98,6 +98,11 @@ def declared_aggregate_tables(req: Mapping[str, Any]) -> set[str]:
                 if isinstance(entry, Mapping):
                     add(step_id, name, entry.get("data_type"))
     return declared
+
+
+def declared_aggregate_tables(req: Mapping[str, Any]) -> set[str]:
+    """Return tables explicitly declared with the aggregate ``table`` output type."""
+    return _declared_outputs(req, "table")
 
 
 def publish_file_allowed(name: str, body: str | bytes, *, internal: bool,
@@ -245,23 +250,66 @@ def _paper_like(text: str) -> bool:
                                                    for section in _PAPER_SECTIONS)
 
 
+def _latest_final_synthesis_ids(plan: Mapping[str, Any]) -> tuple[list[str], set[str]]:
+    branches = [branch for branch in plan.get("branches") or [] if isinstance(branch, Mapping)]
+    steps = [step for step in plan.get("steps") or [] if isinstance(step, Mapping)]
+    if not branches:
+        return [], set()
+    topology = branch_plan_topology(branches, steps)
+    ordered_final_ids = [str(step_id) for step_id in topology["final_synthesis_ids"]]
+    final_ids = set(ordered_final_ids)
+    synthesis_ids = set(topology["synthesis_ids"])
+    dependencies = {str(step.get("id")): [str(value) for value in step.get("depends_on") or []]
+                    for step in steps if step.get("id")}
+
+    def ancestors(step_id: str) -> set[str]:
+        found: set[str] = set()
+        pending = list(dependencies.get(step_id, []))
+        while pending:
+            dependency = pending.pop()
+            if dependency in found:
+                continue
+            found.add(dependency)
+            pending.extend(dependencies.get(dependency, []))
+        return found
+
+    superseded = {step_id for other_id in final_ids
+                  for step_id in final_ids.intersection(ancestors(other_id))}
+    return [step_id for step_id in ordered_final_ids if step_id not in superseded], synthesis_ids
+
+
 def _paper_candidate(req: dict, assets: Mapping[str, str]) -> str:
     report = str(req.get("report") or "").strip()
-    candidates: list[tuple[int, str]] = []
+    plan = req.get("plan") if isinstance(req.get("plan"), Mapping) else {}
+    final_synthesis_ids, synthesis_ids = _latest_final_synthesis_ids(plan)
+    step_branches = {str(step.get("id")): step.get("branch") for step in plan.get("steps") or []
+                     if isinstance(step, Mapping) and step.get("id")}
+    candidates: list[tuple[int, str, str | None]] = []
     for name, body in assets.items():
         if not name.lower().endswith(".md") or not _paper_like(body):
             continue
         lowered = name.lower()
+        source_step = _source_step(name, req)
         score = 10
         if "final_report" in lowered or "science_report" in lowered or "report_ko" in lowered:
             score += 20
         if "/report/" in lowered:
             score += 10
-        candidates.append((score, body.strip()))
+        if step_branches.get(source_step or "") == "synthesis":
+            score += 100
+        candidates.append((score, body.strip(), source_step))
+    review = req.get("review") or (req.get("review_progress") or {}).get("review") or {}
     review_ended = (req.get("outcome") == "research_review_revise"
-                    or str((req.get("review") or {}).get("verdict") or "").casefold() == "revise")
-    if candidates and (review_ended or not _paper_like(report)):
-        return max(candidates, key=lambda row: row[0])[1]
+                    or str(review.get("verdict") or "").casefold() == "revise")
+    if review_ended or not _paper_like(report):
+        final_order = {step_id: index for index, step_id in enumerate(final_synthesis_ids)}
+        final_candidates = [row for row in candidates if row[2] in final_order]
+        if final_candidates:
+            return max(final_candidates, key=lambda row: (final_order[row[2]], row[0]))[1]
+        if synthesis_ids:
+            candidates = [row for row in candidates if row[2] not in synthesis_ids]
+        if candidates:
+            return max(candidates, key=lambda row: row[0])[1]
     if _paper_like(report):
         return report
     title = str(req.get("text") or "연구 결과").strip().splitlines()[0][:120] or "연구 결과"
@@ -333,6 +381,114 @@ def _step_rows(req: dict, assets: Mapping[str, str]) -> list[tuple[str, str, str
             text = str(req.get("report") or "")
         rows.append((sid, data, _result_sentence(text)))
     return rows or [("종합", "요청에 기록된 자료", _result_sentence(str(req.get("report") or "")))]
+
+
+def _branch_slug(branch: Mapping[str, Any]) -> str:
+    label = str(branch.get("evidence_type") or branch.get("question") or "study").strip().casefold()
+    return re.sub(r"[^0-9a-z가-힣]+", "-", label).strip("-")[:32] or "study"
+
+
+def _branch_layout(req: dict) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    plan = req.get("plan") if isinstance(req.get("plan"), Mapping) else {}
+    branches = [branch for branch in plan.get("branches") or [] if isinstance(branch, Mapping)]
+    steps = [step for step in plan.get("steps") or [] if isinstance(step, Mapping)]
+    if not branches:
+        return [], {}
+    topology = branch_plan_topology(branches, steps)
+    folders = {str(branch["id"]): f"{branch['id']}-{_branch_slug(branch)}" for branch in branches}
+    specs = [{**branch, "folder": folders[str(branch["id"])],
+              "terminals": topology["terminals"].get(branch["id"], [])}
+             for branch in branches]
+    step_folders = {str(step_id): folders[str(branch_id)]
+                    for step_id, branch_id in topology["branch_by_step"].items()
+                    if branch_id in folders}
+    return specs, step_folders
+
+
+def _source_step(name: str, req: dict) -> str | None:
+    normalized = posixpath.normpath(name.replace("\\", "/"))
+    parts = PurePosixPath(normalized).parts
+    if len(parts) > 2 and parts[0] == "steps":
+        return parts[1]
+    results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
+    for step_id, result in results.items():
+        if not isinstance(result, Mapping):
+            continue
+        workdir = result.get("workdir") or result.get("workdir_id")
+        if not isinstance(workdir, str):
+            continue
+        prefix = posixpath.normpath(workdir.replace("\\", "/")).rstrip("/")
+        if normalized == prefix or normalized.startswith(prefix + "/"):
+            return str(step_id)
+    return None
+
+
+def _branch_rows(req: dict, specs: list[dict[str, Any]],
+                 step_folders: Mapping[str, str]) -> list[dict[str, str]]:
+    results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
+    folder_steps: dict[str, list[str]] = collections.defaultdict(list)
+    for step_id, folder in step_folders.items():
+        folder_steps[folder].append(step_id)
+    rows = []
+    for branch in specs:
+        folder = str(branch["folder"])
+        step_ids = folder_steps[folder]
+        recorded = [(step_id, results.get(step_id)) for step_id in step_ids
+                    if isinstance(results.get(step_id), Mapping)]
+        terminal_records = [(step_id, results.get(step_id)) for step_id in branch["terminals"]]
+        completed = [(step_id, result) for step_id, result in terminal_records
+                     if isinstance(result, Mapping) and result.get("ok") is not False]
+        failures = [
+            (step_id, str(result.get("error") or result.get("text") or "실패 이유 없음"))
+            if isinstance(result, Mapping) else (step_id, "terminal 결과 없음")
+            for step_id, result in terminal_records
+            if not isinstance(result, Mapping) or result.get("ok") is False
+        ]
+        if not terminal_records:
+            completed = [(step_id, result) for step_id, result in recorded
+                         if result.get("ok") is not False]
+            if not completed:
+                failures = [("terminal", "terminal 결과 없음")]
+        summaries = [_result_sentence(str(result.get("text") or "")) for _step_id, result in completed]
+        if completed and failures:
+            status = "부분"
+            failed_text = "; ".join(f"{step_id}: {reason}" for step_id, reason in failures)
+            result_text = " / ".join(summaries + [failed_text])
+        elif completed:
+            status = "완료"
+            result_text = " / ".join(summaries)
+        else:
+            status = "실패"
+            result_text = (failures[0][1] if len(failures) == 1 else
+                           "; ".join(f"{step_id}: {reason}" for step_id, reason in failures))
+        rows.append({
+            "id": str(branch.get("id") or "갈래"),
+            "question": str(branch.get("question") or "질문 기록 없음"),
+            "data": f"{branch.get('data_boundary') or '미기록'} · {branch.get('evidence_type') or '자료 미기록'}",
+            "status": status,
+            "result": result_text,
+            "folder": folder,
+        })
+    return rows
+
+
+def _study_documents(rows: list[dict[str, str]]) -> dict[str, str]:
+    index = ["# 갈래별 정리본", "", "| 갈래 | 질문 | 자료 | 상태 | 주요 결과 | 폴더 |",
+             "|---|---|---|---|---|---|"]
+    files: dict[str, str] = {}
+    for row in rows:
+        folder = row["folder"]
+        target = f"{folder}/README.md"
+        index.append("| {id} | {question} | {data} | {status} | {result} | [열기]({target}) |".format(
+            **{key: _safe_cell(value) for key, value in row.items()}, target=target))
+        files[f"studies/{folder}/README.md"] = (
+            f"# {row['id']} · {row['question']}\n\n"
+            f"- 자료: {row['data']}\n"
+            f"- 상태: {row['status']}\n\n"
+            f"## 주요 결과\n\n{row['result']}\n"
+        )
+    files["studies/README.md"] = "\n".join(index) + "\n"
+    return files
 
 
 def _safe_cell(value: str) -> str:
@@ -471,15 +627,22 @@ def _data_licenses(req: dict) -> str:
 
 
 def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_names: list[str],
-            omitted_tables: list[str], run_documents: Mapping[str, str]) -> str:
+            omitted_tables: list[str], run_documents: Mapping[str, str],
+            branch_rows: list[dict[str, str]] | None = None) -> str:
     title = report.splitlines()[0].lstrip("#").strip() or "연구 결과"
     abstract = "figures/graphical_abstract.svg" if "figures/graphical_abstract.svg" in figure_names else None
     key = next((name for name in figure_names if name != abstract), None)
     lines = [f"# {title}", "", f"**답: {_first_answer(report)}**", ""]
     if abstract:
         lines += [f"![그래픽 초록]({abstract})", ""]
-    lines += ["| 단계 | 자료 | 결과 |", "|---|---|---|"]
-    lines += [f"| {_safe_cell(step)} | {_safe_cell(data)} | {_safe_cell(result)} |" for step, data, result in rows]
+    if branch_rows:
+        lines += ["| 갈래 | 자료 | 상태 | 결과 | 폴더 |", "|---|---|---|---|---|"]
+        lines += [f"| {_safe_cell(row['id'])} | {_safe_cell(row['data'])} | {_safe_cell(row['status'])} | "
+                  f"{_safe_cell(row['result'])} | "
+                  f"[열기](studies/{row['folder']}/README.md) |" for row in branch_rows]
+    else:
+        lines += ["| 단계 | 자료 | 결과 |", "|---|---|---|"]
+        lines += [f"| {_safe_cell(step)} | {_safe_cell(data)} | {_safe_cell(result)} |" for step, data, result in rows]
     if key:
         lines += ["", f"![핵심 그림]({key})"]
     omitted_figures = list(dict.fromkeys(re.findall(r"\*\(그림 생략: ([^)\n]+)\)\*", report)))
@@ -495,6 +658,7 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
               "5. [출처](REFERENCES.md) — PMID, DOI, GEO와 URL",
               "6. `code/`, `figures/`, `tables/` — 게시 가능한 코드·SVG·집계표", "",
               "## 저장소 지도", "", "```text", "README.md", "report/", "run/", "code/", "figures/", "tables/",
+              *(["studies/               갈래별 코드·그림·표·단계 보고서"] if branch_rows else []),
               "REFERENCES.md", "DATA_AND_LICENSES.md", "```", "",
               "## Summary (English)", "",
               f"This repository is the publication edition of labhq request {req.get('id')}. "
@@ -545,33 +709,43 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
     files: dict[str, str | bytes] = {"report/report.md": report}
     used = set(files)
     source_targets: dict[str, str] = {}
+    branch_specs, step_folders = _branch_layout(req)
+    branch_rows = _branch_rows(req, branch_specs, step_folders) if branch_specs else []
     internal = request_uses_internal_data(req, settings)
     aggregate_tables = declared_aggregate_tables(req)
+    declared_reports = _declared_outputs(req, "report")
     omitted_tables: list[str] = []
     figure_names: list[str] = []
 
     for name, body in assets.items():
         path = PurePosixPath(name)
         suffix = path.suffix.lower()
+        branch_folder = step_folders.get(_source_step(name, req) or "")
+        prefix = f"studies/{branch_folder}/" if branch_folder else ""
         if suffix in _CODE_SUFFIXES and "scripts" in {part.casefold() for part in path.parts}:
-            target = _unique_target("code", name, used)
+            target = _unique_target(prefix + "code", name, used)
+            files[target] = body
+            source_targets[name] = target
+        elif branch_folder and suffix == ".md" and path.as_posix() in declared_reports:
+            target = _unique_target(prefix + "report", name, used)
             files[target] = body
             source_targets[name] = target
         elif path.name in _NEXTFLOW_NAMES and "pipeline_info" in {part.casefold() for part in path.parts}:
             if publish_file_allowed(name, body, internal=internal, declared=aggregate_tables):
-                target = _unique_target("run/nextflow", name, used)
+                target = _unique_target(prefix + "run/nextflow", name, used)
                 files[target] = body
                 source_targets[name] = target
         elif suffix in _TABLE_SUFFIXES:
             if not publish_file_allowed(name, body, internal=internal, declared=aggregate_tables):
                 omitted_tables.append(name)
             else:
-                target = _unique_target("tables", name, used)
+                target = _unique_target(prefix + "tables", name, used)
                 files[target] = body
                 source_targets[name] = target
 
     abstract_source = next((name for name in images
                             if "graphical_abstract" in name.casefold()
+                            and not step_folders.get(_source_step(name, req) or "")
                             and PurePosixPath(name).suffix.lower() == ".svg"), None)
     prepared_images = dict(images)
     if abstract_source is None:
@@ -582,14 +756,17 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
     for name, body in prepared_images.items():
         if _LITERATURE_OUTPUT.search(name.replace("\\", "/")) or PurePosixPath(name).suffix.lower() != ".svg":
             continue
-        target = ("figures/graphical_abstract.svg" if "graphical_abstract" in name.casefold()
-                  else _unique_target("figures", name, used))
+        branch_folder = step_folders.get(_source_step(name, req) or "")
+        figure_folder = f"studies/{branch_folder}/figures" if branch_folder else "figures"
+        target = ("figures/graphical_abstract.svg" if not branch_folder and
+                  "graphical_abstract" in name.casefold() else _unique_target(figure_folder, name, used))
         if target in files:
             continue
         text = _clean(body.decode("utf-8", errors="strict"), settings, req)
         files[target] = text.encode("utf-8")
         source_targets[name] = target
-        figure_names.append(target)
+        if not branch_folder:
+            figure_names.append(target)
 
     request_text = _clean(str(req.get("text") or ""), settings, req)
     execution = ""
@@ -608,8 +785,10 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
     for name in ("run/progress.md", "run/reproduce.md"):
         if name in run_documents:
             files[name] = _clean(run_documents[name], settings, req)
+    if branch_rows:
+        files.update({name: _clean(body, settings, req) for name, body in _study_documents(branch_rows).items()})
     readme = _plain_korean(_readme(
-        req, report, _step_rows(req, assets), figure_names, omitted_tables, run_documents))
+        req, report, _step_rows(req, assets), figure_names, omitted_tables, run_documents, branch_rows))
     if check_document(readme)["status"] != "PASS":
         raise ValueError("README에 반드시 0이어야 하는 한국어 표현이 남았습니다.")
     files["README.md"] = _clean(readme, settings, req)
