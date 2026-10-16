@@ -246,24 +246,58 @@ def _paper_like(text: str) -> bool:
                                                    for section in _PAPER_SECTIONS)
 
 
+def _latest_final_synthesis_ids(plan: Mapping[str, Any]) -> tuple[set[str], set[str]]:
+    branches = [branch for branch in plan.get("branches") or [] if isinstance(branch, Mapping)]
+    steps = [step for step in plan.get("steps") or [] if isinstance(step, Mapping)]
+    if not branches:
+        return set(), set()
+    topology = branch_plan_topology(branches, steps)
+    final_ids = set(topology["final_synthesis_ids"])
+    synthesis_ids = set(topology["synthesis_ids"])
+    dependencies = {str(step.get("id")): [str(value) for value in step.get("depends_on") or []]
+                    for step in steps if step.get("id")}
+
+    def ancestors(step_id: str) -> set[str]:
+        found: set[str] = set()
+        pending = list(dependencies.get(step_id, []))
+        while pending:
+            dependency = pending.pop()
+            if dependency in found:
+                continue
+            found.add(dependency)
+            pending.extend(dependencies.get(dependency, []))
+        return found
+
+    superseded = {step_id for other_id in final_ids
+                  for step_id in final_ids.intersection(ancestors(other_id))}
+    return final_ids - superseded, synthesis_ids
+
+
 def _paper_candidate(req: dict, assets: Mapping[str, str]) -> str:
     report = str(req.get("report") or "").strip()
     plan = req.get("plan") if isinstance(req.get("plan"), Mapping) else {}
+    final_synthesis_ids, synthesis_ids = _latest_final_synthesis_ids(plan)
     step_branches = {str(step.get("id")): step.get("branch") for step in plan.get("steps") or []
                      if isinstance(step, Mapping) and step.get("id")}
-    candidates: list[tuple[int, str]] = []
+    candidates: list[tuple[int, str, str | None]] = []
     for name, body in assets.items():
         if not name.lower().endswith(".md") or not _paper_like(body):
             continue
         lowered = name.lower()
+        source_step = _source_step(name, req)
         score = 10
         if "final_report" in lowered or "science_report" in lowered or "report_ko" in lowered:
             score += 20
         if "/report/" in lowered:
             score += 10
-        if step_branches.get(_source_step(name, req) or "") == "synthesis":
+        if step_branches.get(source_step or "") == "synthesis":
             score += 100
-        candidates.append((score, body.strip()))
+        candidates.append((score, body.strip(), source_step))
+    final_candidates = [row for row in candidates if row[2] in final_synthesis_ids]
+    if final_candidates:
+        return max(final_candidates, key=lambda row: row[0])[1]
+    if synthesis_ids:
+        candidates = [row for row in candidates if row[2] not in synthesis_ids]
     review_ended = (req.get("outcome") == "research_review_revise"
                     or str((req.get("review") or {}).get("verdict") or "").casefold() == "revise")
     if candidates and (review_ended or not _paper_like(report)):

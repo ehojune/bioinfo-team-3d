@@ -106,6 +106,35 @@ def test_same_named_branch_figures_and_report_links_stay_separate(tmp_path):
     assert broken_markdown_links(files) == []
 
 
+def test_final_synthesis_manuscript_wins_over_intermediate_synthesis(tmp_path):
+    settings, request, assets, images = branched_fixture(tmp_path)
+    request = deepcopy(request)
+    request["report"] = "요약만 남은 요청 보고서"
+    request["plan"]["steps"][-1] = {
+        "id": "S1", "branch": "synthesis", "instruction": "중간 종합을 쓴다.",
+        "depends_on": ["lit", "omics", "mdis", "ipums"],
+    }
+    request["plan"]["steps"].append({
+        "id": "S2", "branch": "synthesis", "instruction": "최종 종합을 쓴다.",
+        "depends_on": ["S1"],
+    })
+    request["results"].pop("synth")
+    request["results"].update({
+        "S1": {"ok": True, "text": "중간 종합"},
+        "S2": {"ok": True, "text": "최종 종합"},
+    })
+    intermediate = PAPER.replace("# 공개 오믹스 대체 분석", "# 중간 종합 원고")
+    final = PAPER.replace("# 공개 오믹스 대체 분석", "# 최종 종합 원고")
+    assets = {
+        "steps/S1/outputs/report/final_report.md": intermediate,
+        "steps/S2/outputs/report/final_report.md": final,
+    }
+
+    files = build_portfolio_files(request, settings, assets, images)
+
+    assert files["report/report.md"].startswith("# 최종 종합 원고\n")
+
+
 def test_internal_branch_uses_existing_publication_allowlist(tmp_path):
     settings, request, assets, images = branched_fixture(tmp_path)
 
