@@ -15,3 +15,6 @@ rows:
 - sha: '4630e7d'
   at: 2026-10-16 20:05
   text: 문헌·생물 직원 지시에 CC 논문의 publisher_copy 링크를 한 번 열어도 된다는 예외를 도구 설명과 맞췄다.
+- sha: 'f05341d'
+  at: 2026-10-16 20:17
+  text: 연동 목록 원본(scripts/integrations.py)에 labhq_annot의 Europe PMC 논문 본문 조회를 적었다.
