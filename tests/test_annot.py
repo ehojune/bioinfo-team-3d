@@ -511,8 +511,8 @@ async def test_stdio_server_lists_tools_and_answers_malformed_items_offline(tmp_
     (tmp_path / "work").mkdir()
     tools = await list_tools(McpServerSpec(name="annot", command=sys.executable,
                                            args=["-m", "labhq.tools.annot_mcp"], env=env))
-    # #435 C ③ added the regional tools; without a key alphagenome is not registered.
-    assert set(tools) == {"vep", "gnomad", "clinvar", "chipatlas", "chipatlas_targets", "encode", "gtex"}
+    # #435 C ③ added the regional tools and #697 fulltext; without a key alphagenome is not registered.
+    assert set(tools) == {"vep", "gnomad", "clinvar", "chipatlas", "chipatlas_targets", "encode", "gtex", "fulltext"}
     params = StdioServerParameters(command=sys.executable, args=["-m", "labhq.tools.annot_mcp"],
                                    env={**os.environ, **env})
     async with stdio_client(params) as streams:

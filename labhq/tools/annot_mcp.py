@@ -1,7 +1,8 @@
 """labhq-annot MCP server (stdio): public-resource lookups with release records (#435 C ② ③).
 
 Variants: Ensembl VEP, gnomAD, ClinVar (`annot.py`). Regions, genes and expression: ChIP-Atlas, ENCODE cCREs, GTEx,
-and AlphaGenome predictions when its key file exists (`annot_regulatory.py`).
+and AlphaGenome predictions when its key file exists (`annot_regulatory.py`). Papers: Europe PMC open-access full text,
+else the abstract (`annot_literature.py`, #697).
 
 Env (set by the runner): LABHQ_WORKDIR (where outputs/annotation_queries.jsonl goes), LABHQ_CONFIG (state_dir for the
 cache, annot.alphagenome_key_file). The AlphaGenome key is read here from that owner-only file, never from the
@@ -18,7 +19,7 @@ from typing import Literal
 import httpx
 
 from ..settings import Settings
-from . import annot, annot_keys, annot_regulatory
+from . import annot, annot_keys, annot_literature, annot_regulatory
 from ._mcpcompat import make_server, tool_failure
 
 S = Settings.load(os.environ.get("LABHQ_CONFIG"))
@@ -43,7 +44,8 @@ server = make_server(
         "GRCh38), gnomad (population allele frequency), clinvar "
         "(clinical classification) for variants; chipatlas (ChIP-Atlas enrichment of public ChIP/ATAC peaks for a gene "
         "list or regions), chipatlas_targets (target genes of a transcription factor), encode (ENCODE candidate "
-        "cis-regulatory elements overlapping regions), gtex (GTEx tissue expression and eQTLs for genes or variants)"
+        "cis-regulatory elements overlapping regions), gtex (GTEx tissue expression and eQTLs for genes or variants), "
+        "fulltext (the body of a paper by PMID, PMCID or DOI: Europe PMC open-access full text, else the abstract)"
         + ("; alphagenome_variant (recommended variant effect scores, GRCh38), "
            "alphagenome (legacy track summaries over variants or intervals)" if ALPHAGENOME else "")
         + ". Give variants as chr:pos:ref:alt (VCF-style alleles), HGVS or rsID, and regions as chr:start-end "
@@ -70,6 +72,17 @@ async def _run(method: str, *args: object, **kwargs: object) -> str:
         except (annot.LookupFailed, ValueError) as exc:
             message = ALPHAGENOME.redact(str(exc)) if ALPHAGENOME else str(exc)
             raise tool_failure(message) from exc
+    return json.dumps(result, ensure_ascii=False)
+
+
+async def _run_literature(ids: list[str]) -> str:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=20.0), follow_redirects=True,
+                                 headers={"User-Agent": annot.USER_AGENT}) as client:
+        annotator = annot_literature.LiteratureAnnotator(client, WORKDIR, CACHE_DIR, pace=PACE)
+        try:
+            result = await annotator.fulltext(ids)
+        except (annot.LookupFailed, ValueError) as exc:
+            raise tool_failure(str(exc)) from exc
     return json.dumps(result, ensure_ascii=False)
 
 
@@ -137,6 +150,19 @@ async def gtex(genes_or_variants: list[str], tissues: list[str] | None = None, d
     variants (chr:pos:ref:alt on GRCh38, or rsID). tissues are GTEx tissueSiteDetailId values such as Liver or
     Whole_Blood (all tissues when empty). Up to 50 items per call; eQTL lists stop at 1,000 rows per item."""
     return await _run("gtex", genes_or_variants, tissues, dataset, eqtl)
+
+
+@server.tool()
+async def fulltext(ids: list[str]) -> str:
+    """The body of papers given as PMID, PMCID (PMC...) or DOI, up to 20 per call. Europe PMC finds each record; an
+    open-access copy there is written as Markdown (sections, tables, figure captions, references) to
+    outputs/literature/<id>.md, otherwise that file holds the abstract. Each result says `access_level` (full_text,
+    abstract or metadata), the license and `text_file`; read the file with your file tools. Use this instead of
+    opening PMC or publisher pages on the web, which often answer with a CAPTCHA. The files are third-party text
+    under the paper's license: cite them by path, quote briefly, and never list them as your step outputs.
+    `publisher_copy` appears when a CC-licensed paper has no Europe PMC copy: one try at that link is fine; paywalled
+    papers stay at the abstract."""
+    return await _run_literature(ids)
 
 
 if ALPHAGENOME is not None:

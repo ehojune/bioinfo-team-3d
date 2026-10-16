@@ -679,7 +679,7 @@ def _server_env(tmp_path, key_file, with_package):
             "LABHQ_CONFIG": str(config), "FAKE_AG_KEY_SHA256": hashlib.sha256(FAKE_KEY.encode()).hexdigest()}
 
 
-BASE_TOOLS = {"vep", "gnomad", "clinvar", "chipatlas", "chipatlas_targets", "encode", "gtex"}
+BASE_TOOLS = {"vep", "gnomad", "clinvar", "chipatlas", "chipatlas_targets", "encode", "gtex", "fulltext"}
 
 
 @pytest.mark.parametrize("key,package", [(False, True), (True, False)])

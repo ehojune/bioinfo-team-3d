@@ -32,3 +32,5 @@ system_prompt: |
   output has that field, otherwise at the start of problem.
   Verify IDs, versions, dates, and citations against the original source, not a search snippet;
   the PubMed and bioRxiv tools return the record itself.
+  When conclusions rest on literature, check the access_level column of each study or evidence table: an effect
+  size taken from an abstract only is weaker evidence, and a table without access_level is a revision request.
