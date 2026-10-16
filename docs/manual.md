@@ -887,9 +887,10 @@ resume 비용·Codex 토큰은 호출별 증분으로 합산합니다(#82). 원 
 | `report/` | 논문 형식 과학 보고서 md·PDF. 리뷰 수정 요구 뒤 끝나도 보고서 단계 원고를 올리고 미반영 지적은 `정정`에 둠 |
 | `run/` | 요청 원문, CP1·CP2·리뷰 결정과 메모 원문, 실행 기록, 비용·직원 표, Nextflow report·timeline·trace |
 | `code/`·`figures/`·`tables/` | 단계 스크립트, SVG, 집계표 |
+| `studies/<갈래 id>-<이름>/` | 갈래별 코드·그림·표·단계 보고서와 상태. 실패 갈래도 `studies/README.md`에 이유와 함께 남김 |
 | `REFERENCES.md`·`DATA_AND_LICENSES.md` | 중복을 뺀 PMID·DOI·GEO와 자료별 이용 조건·필수 인용문 자리 |
 
-유의하지 않은 결과도 검정 수·기준·통과 수와 함께 README·보고서에 남깁니다. `outputs/literature/`의 논문 본문, 원본 입력, 미보고 파일은 싣지 않습니다. 내부 자료 요청은 문서 Markdown, SVG 그림, Python·R·shell 코드만 기본으로 싣고, JSON·TXT·HTML·표는 단계가 `output_types`에서 `table`로 선언했으며 1–9 칸이 없을 때만 루트·호환 사본에 싣습니다. 공개 자료 요청은 이 제한을 받지 않습니다. 정리본 Markdown의 상대 링크가 실제 파일을 가리키지 않으면 게시를 멈춥니다. 비밀값·로컬 경로·서명 URL이 남거나 README·보고서의 한국어 금지 표현이 0이 아니어도 멈춥니다. 통제 데이터 요청은 편집자에게 보내거나 게시하지 않습니다.
+갈래 계획이면 종합 보고서·그림은 루트에, 갈래 단계 산출물은 `studies/`에 둡니다. 갈래가 없으면 기존 구성을 유지합니다. 유의하지 않은 결과도 검정 수·기준·통과 수와 함께 README·보고서에 남깁니다. `outputs/literature/`의 논문 본문, 원본 입력, 미보고 파일은 싣지 않습니다. 내부 자료 요청은 문서 Markdown, SVG 그림, Python·R·shell 코드만 기본으로 싣고, JSON·TXT·HTML·표는 단계가 `output_types`에서 `table`로 선언했으며 1–9 칸이 없을 때만 정리본에 싣습니다. 공개 자료 요청은 이 제한을 받지 않습니다. 정리본 Markdown의 상대 링크가 실제 파일을 가리키지 않으면 게시를 멈춥니다. 비밀값·로컬 경로·서명 URL이 남거나 README·보고서의 한국어 금지 표현이 0이 아니어도 멈춥니다. 통제 데이터 요청은 편집자에게 보내거나 게시하지 않습니다.
 
 그림과 PDF는 줄이거나 재인코딩하지 않습니다. 게시 카드의 그림 미리보기만 파일당 1 MB·합계 5 MB로 제한합니다. 브라우저가 없으면 PDF만 빼고 이유를 남깁니다. [그래픽 초록 SVG 예시](media/graphical-abstract-example.svg)를 참고하세요.
 

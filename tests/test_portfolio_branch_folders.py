@@ -1,0 +1,134 @@
+from copy import deepcopy
+from pathlib import Path
+
+from labhq.portfolio import broken_markdown_links, build_portfolio_files
+from labhq.settings import DataZone, Settings
+
+from test_portfolio_edition import PAPER, portfolio_fixture
+
+
+def branched_fixture(tmp_path: Path):
+    settings = Settings()
+    internal = tmp_path / "mdis"
+    internal.mkdir()
+    settings.policy.data_zones = [DataZone(path=str(internal), level="internal")]
+    plan = {
+        "branches": [
+            {"id": "A", "question": "문헌 근거가 있는가?", "evidence_type": "literature",
+             "data_boundary": "public"},
+            {"id": "B", "question": "공개 오믹스가 지지하는가?", "evidence_type": "omics",
+             "data_boundary": "public"},
+            {"id": "C", "question": "국내 자료가 지지하는가?", "evidence_type": "mdis",
+             "data_boundary": "internal"},
+            {"id": "D", "question": "해외 자료가 지지하는가?", "evidence_type": "ipums",
+             "data_boundary": "licensed"},
+        ],
+        "steps": [
+            {"id": "lit", "branch": "A", "instruction": "문헌을 검토한다."},
+            {"id": "omics", "branch": "B", "instruction": "오믹스를 분석한다.",
+             "output_types": [{"name": "outputs/tables/summary.tsv", "data_type": "table"}]},
+            {"id": "mdis", "branch": "C", "instruction": "내부 자료를 집계한다.",
+             "output_types": [{"name": "outputs/tables/summary.tsv", "data_type": "table"}]},
+            {"id": "ipums", "branch": "D", "instruction": "해외 자료를 분석한다."},
+            {"id": "synth", "branch": "synthesis", "instruction": "갈래를 종합한다."},
+        ],
+    }
+    report = PAPER.replace(
+        "## 결과\n\n",
+        "## 결과\n\n![오믹스 그림](work-omics/outputs/figures/result.svg)\n\n"
+        "![국내 그림](work-mdis/outputs/figures/result.svg)\n\n",
+    )
+    request = {
+        "id": "req_branches",
+        "text": f"공개 자료와 {internal / 'births.tsv'}를 네 갈래로 비교한다.",
+        "status": "done",
+        "report": report,
+        "project_dirs": [str(internal)],
+        "plan": plan,
+        "results": {
+            "lit": {"ok": True, "text": "직접 근거를 찾지 못했다."},
+            "omics": {"ok": True, "text": "유전자 16,242개 중 FDR 0.05 통과는 0개였다.",
+                       "workdir": "work-omics", "outputs": ["outputs/figures/result.svg"]},
+            "mdis": {"ok": True, "text": "주 검정은 통계적으로 유의하지 않았다.",
+                      "workdir": "work-mdis", "outputs": ["outputs/figures/result.svg"]},
+            "ipums": {"ok": False, "error": "자료 접근이 거절됨", "text": ""},
+            "synth": {"ok": True, "text": "완료한 세 갈래를 종합했다."},
+        },
+    }
+    assets = {
+        "steps/synth/outputs/report/final_report.md": report,
+        "steps/lit/outputs/report/stage_report.md": "# 문헌 단계 보고서\n\n직접 근거를 찾지 못했다.\n",
+        "steps/omics/outputs/scripts/analyze.py": "print('omics')\n",
+        "steps/mdis/outputs/scripts/analyze.py": "print('mdis')\n",
+        "steps/omics/outputs/tables/summary.tsv": "tested\tpassed\n16242\t0\n",
+        "steps/mdis/outputs/tables/summary.tsv": "group\tcount\n전체\t100\n",
+        "steps/mdis/outputs/tables/people.tsv": "person_id\tvalue\np1\t42\n",
+    }
+    images = {
+        "work-omics/outputs/figures/result.svg":
+            b'<svg xmlns="http://www.w3.org/2000/svg"><text>omics</text></svg>',
+        "work-mdis/outputs/figures/result.svg":
+            b'<svg xmlns="http://www.w3.org/2000/svg"><text>mdis</text></svg>',
+    }
+    return settings, request, assets, images
+
+
+def test_four_branches_get_study_folders_and_failed_row(tmp_path):
+    settings, request, assets, images = branched_fixture(tmp_path)
+
+    files = build_portfolio_files(request, settings, assets, images)
+
+    folders = ("A-literature", "B-omics", "C-mdis", "D-ipums")
+    for folder in folders:
+        assert f"studies/{folder}/README.md" in files
+    assert "studies/A-literature/report/stage_report.md" in files
+    assert "studies/B-omics/code/analyze.py" in files
+    assert "studies/C-mdis/code/analyze.py" in files
+    index = files["studies/README.md"]
+    assert "| 갈래 | 질문 | 자료 | 상태 | 주요 결과 | 폴더 |" in index
+    assert "| D | 해외 자료가 지지하는가? | licensed · ipums | 실패 | 자료 접근이 거절됨 |" in index
+    assert "D-ipums/README.md" in index
+    assert "[열기](studies/A-literature/README.md)" in files["README.md"]
+    assert "studies/               갈래별 코드·그림·표·단계 보고서" in files["README.md"]
+
+
+def test_same_named_branch_figures_and_report_links_stay_separate(tmp_path):
+    settings, request, assets, images = branched_fixture(tmp_path)
+
+    files = build_portfolio_files(request, settings, assets, images)
+
+    omics = "studies/B-omics/figures/result.svg"
+    mdis = "studies/C-mdis/figures/result.svg"
+    assert files[omics] != files[mdis]
+    report = files["report/report.md"]
+    assert f"![오믹스 그림](../{omics})" in report
+    assert f"![국내 그림](../{mdis})" in report
+    assert broken_markdown_links(files) == []
+
+
+def test_internal_branch_uses_existing_publication_allowlist(tmp_path):
+    settings, request, assets, images = branched_fixture(tmp_path)
+
+    files = build_portfolio_files(request, settings, assets, images)
+
+    assert files["studies/C-mdis/tables/summary.tsv"] == "group\tcount\n전체\t100\n"
+    assert not any(name.endswith("people.tsv") for name in files)
+    assert "내부 자료 영역이라 표 1개는 요청 묶음에만 둠" in files["README.md"]
+
+
+def test_unbranched_request_keeps_the_existing_file_list(tmp_path):
+    settings, request, bundle, assets, images, decisions, tasks = portfolio_fixture(tmp_path)
+    request = deepcopy(request)
+
+    files = build_portfolio_files(
+        request, settings, assets, images, decisions=decisions, tasks=tasks, bundle=bundle,
+        run_documents={"run/progress.md": "# 진행 기록\n\n완료\n",
+                       "run/reproduce.md": "# 재현 방법\n\npython analysis.py\n"},
+    )
+
+    assert set(files) == {
+        "README.md", "report/report.md", "run/requests.md", "run/decisions.md",
+        "run/execution_record.md", "run/costs.md", "run/progress.md", "run/reproduce.md",
+        "code/analyze.py", "figures/graphical_abstract.svg", "figures/volcano.svg",
+        "tables/result_summary.tsv", "REFERENCES.md", "DATA_AND_LICENSES.md",
+    }
