@@ -50,7 +50,19 @@ def test_report_rule_requires_declared_figures_short_alt_and_svg_default():
 def test_figure_qc_warns_when_outputs_exist_but_results_have_no_figure(tmp_path):
     checked = _bundle(tmp_path, "# 보고서\n\n## 결과\n\n글만 있습니다.\n",
                       {"steps/s1/outputs/volcano.svg": HANGUL_SVG})
-    assert checked["warnings"] == ["분석 단계에 그림 산출이 있지만 보고서 결과 절에 그림이 없습니다."]
+    assert checked["warnings"] == [
+        "steps/s1/outputs/volcano.svg: 보고서 결과 절에 그림 링크나 한 줄 생략 사유가 없습니다."]
+
+
+def test_figure_qc_warns_for_each_declared_figure_missing_from_results(tmp_path):
+    files = {"steps/s1/outputs/volcano.svg": HANGUL_SVG, "steps/s1/outputs/pca.svg": HANGUL_SVG}
+    report = "# 보고서\n\n## 결과\n\n![그림 1. 화산도](steps/s1/outputs/volcano.svg)\n"
+    checked = _bundle(tmp_path, report, files)
+    assert checked["warnings"] == [
+        "steps/s1/outputs/pca.svg: 보고서 결과 절에 그림 링크나 한 줄 생략 사유가 없습니다."]
+
+    report += "\n- pca.svg는 표본 수가 부족해 생략했습니다.\n"
+    assert _bundle(tmp_path, report, files)["warnings"] == []
 
 
 def test_figure_qc_warns_for_png_without_same_name_svg(tmp_path):

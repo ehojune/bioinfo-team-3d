@@ -3,6 +3,7 @@ import base64
 import json
 import shutil
 from pathlib import Path
+from xml.etree import ElementTree
 
 import httpx
 import pytest
@@ -234,15 +235,19 @@ async def test_decline_and_restricted_request_never_upload(tmp_path, monkeypatch
     await service.close()
 
 
-def test_assets_only_reported_outputs_and_clean_text(tmp_path):
+def test_assets_only_reported_outputs_and_clean_text(tmp_path, monkeypatch):
     from labhq.result_storage import edition_assets
+    monkeypatch.setenv("GITHUB_TOKEN", "synthetic-private-token")
     hub = Hub(tmp_path)
     bundle = Path(hub.s.runner.workspace_root) / "requests/req_test"
     output = bundle / "steps/s1/outputs"
     output.mkdir(parents=True)
     (output / "table.tsv").write_text("gene\tvalue\nA\t2\n", encoding="utf-8")
     (output / "plot.png").write_bytes(b"synthetic-image")
-    (output / "plot.svg").write_text('<svg xmlns="http://www.w3.org/2000/svg"><text>그림</text></svg>', encoding="utf-8")
+    raw_svg = ('<svg xmlns="http://www.w3.org/2000/svg"><metadata>token=synthetic-private-token</metadata>'
+               '<desc>C:/Users/alice/project/plot.svg</desc><!-- /home/bob/private -->'
+               '<text>그림</text></svg>')
+    (output / "plot.svg").write_text(raw_svg, encoding="utf-8")
     (output / "secret.txt").write_text("raw input", encoding="utf-8")
     (bundle / "MANIFEST.tsv").write_text("relative_path\tstatus\nsteps/s1/outputs/table.tsv\tcopied\n"
         "steps/s1/outputs/plot.png\tcopied\nsteps/s1/outputs/plot.svg\tcopied\n"
@@ -250,6 +255,27 @@ def test_assets_only_reported_outputs_and_clean_text(tmp_path):
     text, images = edition_assets(hub.requests["req_test"], hub.s)
     assert list(text) == ["steps/s1/outputs/table.tsv"]
     assert list(images) == ["steps/s1/outputs/plot.png", "steps/s1/outputs/plot.svg"]
+    published_svg = images["steps/s1/outputs/plot.svg"].decode("utf-8")
+    assert "synthetic-private-token" not in published_svg
+    assert "alice" not in published_svg and "bob" not in published_svg
+    assert "&lt;redacted-secret&gt;" in published_svg and "&lt;local-path&gt;" in published_svg
+    ElementTree.fromstring(published_svg)
+    assert (output / "plot.svg").read_text(encoding="utf-8") == raw_svg  # the request bundle keeps the original
+
+    from labhq.result_storage import publish_image_previews
+    previews, omitted = publish_image_previews(images, tmp_path / "req-editor")
+    preview = base64.b64decode(previews["steps/s1/outputs/plot.svg"].split(",", 1)[1]).decode("utf-8")
+    assert preview == published_svg and not omitted
+
+
+def test_svg_publish_copy_refuses_a_secret_left_after_cleaning(tmp_path, monkeypatch):
+    from labhq.result_storage import clean_svg_for_publish
+    hub = Hub(tmp_path)
+    monkeypatch.setattr("labhq.result_storage.clean_document", lambda text, *_args: text)
+    secret = ("ghp_" + "A" * 26).encode("ascii")
+    with pytest.raises(ValueError, match="SVG.*비밀값"):
+        clean_svg_for_publish(b"<svg><metadata>" + secret + b"</metadata></svg>", hub.s,
+                              hub.requests["req_test"])
 
 
 def test_publish_preview_limits_do_not_limit_original_images(tmp_path):

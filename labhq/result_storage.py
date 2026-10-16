@@ -15,7 +15,8 @@ from urllib.parse import quote
 
 import httpx
 
-from .integrations.github import GitHubClient, GitHubHTTPError, publish_clean, sanitize, root_zone_restricted
+from .integrations.github import (GitHubClient, GitHubHTTPError, SECRET_PATTERNS, publish_clean,
+                                  redact_url_credentials, sanitize, root_zone_restricted)
 from .interruption import ShutdownInterrupted
 from .models import ApprovalRequest, Task
 from .policy import touches, restricted_paths
@@ -31,7 +32,11 @@ from .request_bundle import _POSIX_ABS, _WINDOWS_ABS
 _REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\Z")
 _PRIVATE_PATH = re.compile(r"(?<![\w:])(?:[A-Za-z]:[/\\]|\\\\|/(?:home|Users|mnt|srv|data|tmp|var|opt)/|~/)[^\s<>\"'`\])]+")
-_ASSIGNMENT = re.compile(r"(?im)\b((?:api[_-]?key|token|password|secret)\s*[:=]\s*)[^\s,;]+")
+_ASSIGNMENT = re.compile(
+    r"(?im)\b((?:api[_-]?key|token|password|secret)\s*[:=]\s*)"
+    r"(?!<redacted-secret>|&lt;redacted-secret&gt;|\[REDACTED\])[^\s,;<]+")
+_ASSIGNMENT_VALUE = re.compile(
+    r"(?im)\b(?:api[_-]?key|token|password|secret)\s*[:=]\s*(?P<value>[^\s,;<]+)")
 _TEXT_OUTPUTS = {".md", ".txt", ".svg", ".csv", ".tsv", ".py", ".r", ".sh", ".json"}
 _IMAGE_OUTPUTS = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp",
                   ".svg": "image/svg+xml"}
@@ -140,7 +145,9 @@ def edition_assets(req, settings):
                 continue
             total += size
         payload = path.read_bytes()
-        if suffix in _IMAGE_OUTPUTS:
+        if suffix == ".svg":
+            images[name] = clean_svg_for_publish(payload, settings, req)
+        elif suffix in _IMAGE_OUTPUTS:
             images[name] = payload
         else:
             try:
@@ -221,6 +228,36 @@ def clean_document(text: str, settings, req: dict) -> str:
     text = _WINDOWS_ABS.sub("<local-path>", text)
     text = _POSIX_ABS.sub("<local-path>", text)
     return _ASSIGNMENT.sub(r"\1<redacted-secret>", _PRIVATE_PATH.sub("<local-path>", text))
+
+
+def _unsafe_publish_text(text: str, settings, req: dict) -> bool:
+    """Whether a cleaned text still matches a publish-time secret or local-path rule."""
+    if any(re.search(pattern, text) for pattern in SECRET_PATTERNS):
+        return True
+    for match in _ASSIGNMENT_VALUE.finditer(text):
+        if not match.group("value").startswith(("<redacted-secret>", "&lt;redacted-secret&gt;", "[REDACTED]")):
+            return True
+    secrets = (os.environ.get(settings.github.token_env, ""), settings.gateway.client_token,
+               settings.gateway.runner_token)
+    if any(secret and len(secret) >= 8 and secret in text for secret in secrets):
+        return True
+    if (_PRIVATE_PATH.search(text) or _WINDOWS_ABS.search(text) or _POSIX_ABS.search(text)
+            or redact_url_credentials(text) != text):
+        return True
+    return clean_document(text, settings, req) != text
+
+
+def clean_svg_for_publish(payload: bytes, settings, req: dict) -> bytes:
+    """Clean the repository/card SVG copy while leaving the request-bundle original untouched."""
+    try:
+        cleaned = clean_document(payload.decode("utf-8"), settings, req)
+    except UnicodeDecodeError as exc:
+        raise ValueError("SVG 게시 사본을 UTF-8 텍스트로 읽을 수 없습니다.") from exc
+    if _unsafe_publish_text(cleaned, settings, req):
+        raise ValueError("SVG 게시 사본에 가리지 못한 비밀값 또는 로컬 경로가 있습니다.")
+    for marker in ("redacted-secret", "restricted-zone", "reference-path", "private-reference", "local-path"):
+        cleaned = cleaned.replace(f"<{marker}>", f"&lt;{marker}&gt;")
+    return cleaned.encode("utf-8")
 
 
 def readme_excerpt(report: str, limit: int = README_EXCERPT_CHARS) -> str:
@@ -629,7 +666,9 @@ class ResultStorage:
                         if name == _PDF_NAME:
                             pdf = path.read_bytes()
                         elif path.suffix.lower() in _IMAGE_OUTPUTS:
-                            images[name] = path.read_bytes()
+                            payload = path.read_bytes()
+                            images[name] = (clean_svg_for_publish(payload, self.s, req)
+                                            if path.suffix.lower() == ".svg" else payload)
                         else:
                             docs[name] = path.read_bytes().decode("utf-8")
                 if "README.md" not in docs:
@@ -641,7 +680,7 @@ class ResultStorage:
                 included = {*assets, *images}
                 drawn = edition_abstract(req, self.s, included)  # #608: the edition opens with a graphical abstract
                 if drawn:
-                    images[ABSTRACT_FILE] = drawn.encode("utf-8")
+                    images[ABSTRACT_FILE] = clean_svg_for_publish(drawn.encode("utf-8"), self.s, req)
                     included.add(ABSTRACT_FILE)
                 docs = draft_documents(req, self.s, included, assets, abstract=bool(drawn))
                 links = "\n".join(f"- [{name}]({quote(name, safe='/')})" for name in [*assets, *images])
@@ -851,7 +890,9 @@ class ResultStorage:
                 await gh.put_file(repo, f"labhq/results/{rid}/{name}", body, "연구 결과 정리", write_branch)
                 write_branch = branch
             for name, body in (images or {}).items():
-                await gh.put_image(repo, f"labhq/results/{rid}/{name}", body, write_branch)
+                payload = (clean_svg_for_publish(body, self.s, self.hub.requests[rid])
+                           if Path(name).suffix.lower() == ".svg" else body)
+                await gh.put_image(repo, f"labhq/results/{rid}/{name}", payload, write_branch)
                 write_branch = branch
             if pdf:
                 await gh.put_binary(repo, f"labhq/results/{rid}/{_PDF_NAME}", pdf, write_branch, "연구 결과 PDF")
