@@ -1,0 +1,5 @@
+pr: 702
+rows:
+- sha: 'e1b2b5d'
+  at: 2026-10-16 23:48
+  text: 로컬로 끝난 요청을 labhq storage <id> --to github로 나중에 새 GitHub 저장소로 옮기고, 저장 위치 카드는 PI 문구로 묻는다 (#688).
