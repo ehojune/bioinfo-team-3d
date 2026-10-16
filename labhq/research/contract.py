@@ -266,6 +266,43 @@ class ResearchBranch(StrictModel):
         return data
 
 
+def branch_plan_topology(branches: list[Any], steps: list[Any]) -> dict[str, Any]:
+    """Return the one branch-completeness topology used by PLAN validation and execution."""
+    def field(item: Any, key: str, default: Any = None) -> Any:
+        return item.get(key, default) if isinstance(item, dict) else getattr(item, key, default)
+
+    branch_ids = [field(branch, "id") for branch in branches if field(branch, "id")]
+    branch_by_step = {field(step, "id"): field(step, "branch") for step in steps if field(step, "id")}
+    dependencies = {field(step, "id"): list(field(step, "depends_on", []) or [])
+                    for step in steps if field(step, "id")}
+    terminals = {
+        branch_id: [step_id for step_id, step_branch in branch_by_step.items()
+                    if step_branch == branch_id and
+                    not any(step_id in other_dependencies and branch_by_step.get(other_id) == branch_id
+                            for other_id, other_dependencies in dependencies.items())]
+        for branch_id in branch_ids
+    }
+    synthesis_ids = [step_id for step_id, branch_id in branch_by_step.items() if branch_id == "synthesis"]
+
+    def ancestors(step_id: str) -> set[str]:
+        found: set[str] = set()
+        pending = list(dependencies.get(step_id, []))
+        while pending:
+            dependency = pending.pop()
+            if dependency in found:
+                continue
+            found.add(dependency)
+            pending.extend(dependencies.get(dependency, []))
+        return found
+
+    synthesis_ancestors = set().union(*(ancestors(step_id) for step_id in synthesis_ids)) if synthesis_ids else set()
+    missing_synthesis_branches = [branch_id for branch_id in branch_ids
+                                  if not terminals[branch_id] or
+                                  any(step_id not in synthesis_ancestors for step_id in terminals[branch_id])]
+    return {"branch_ids": branch_ids, "branch_by_step": branch_by_step, "terminals": terminals,
+            "synthesis_ids": synthesis_ids, "missing_synthesis_branches": missing_synthesis_branches}
+
+
 class PackPlanValue(StrictModel):
     # Domain pack declarations support only these scalar value types; keeping that in the core schema also gives
     # Structured Outputs a concrete lossless value schema for arbitrary field names.
@@ -403,6 +440,11 @@ class ResearchPlan(StrictModel):
 
         for step_id in ids:
             visit(step_id)
+        if self.branches:
+            topology = branch_plan_topology(self.branches, self.steps)
+            if topology["missing_synthesis_branches"]:
+                raise ValueError("synthesis dependency paths omit terminal results from branches: " +
+                                 ", ".join(topology["missing_synthesis_branches"]))
         return self
 
 

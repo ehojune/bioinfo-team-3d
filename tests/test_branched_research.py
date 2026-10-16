@@ -18,7 +18,8 @@ def branched_plan(counts=(7, 7, 7, 7), synthesis=2):
         {"id": chr(65 + index), "question": f"question {index + 1}",
          "evidence_type": kind, "data_boundary": "public data",
          "estimated_budget_usd": 10 + index}
-        for index, kind in enumerate(("literature", "public omics", "domestic statistics", "overseas statistics"))
+        for index, kind in enumerate(("literature", "public omics", "domestic statistics", "overseas statistics",
+                                      "clinical registry"))
     ][:len(counts)]
     steps = []
     terminals = []
@@ -86,6 +87,15 @@ def test_four_branch_thirty_step_plan_uses_branch_limits_not_legacy_twelve():
                                active_packs={})
 
 
+def test_four_branch_plan_rejects_synthesis_that_only_depends_on_branch_a():
+    plan = branched_plan((1, 1, 1, 1), synthesis=1)
+    plan["steps"][-1]["depends_on"] = ["A1"]
+
+    with pytest.raises(ValueError, match=r"branches.*B.*C.*D"):
+        validate_research_plan(plan, max_steps=12, max_branches=5, max_branch_steps=8,
+                               active_packs={})
+
+
 @pytest.mark.asyncio
 async def test_mock_cso_four_branch_thirty_step_plan_is_frozen_whole():
     settings = Settings()
@@ -128,8 +138,8 @@ async def test_nine_step_branch_is_replanned_without_silent_truncation():
 
 
 @pytest.mark.asyncio
-async def test_failed_branch_blocks_only_it_and_synthesis_gets_failure_memo():
-    plan = branched_plan((1, 2), synthesis=1)
+async def test_failed_branch_blocks_only_it_and_synthesis_gets_failure_memo_without_artifacts():
+    plan = branched_plan((1, 2, 1, 1), synthesis=1)
     settings = Settings()
     settings.research.enabled = True
     settings.research.evidence_checkpoint = True
@@ -143,7 +153,9 @@ async def test_failed_branch_blocks_only_it_and_synthesis_gets_failure_memo():
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
                               structured=copy.deepcopy(plan))
         if task.meta["step_id"] == "B1":
-            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error="source refused")
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error="source refused",
+                              text="PARTIAL-BRANCH-BODY", workdir="failed-b1-workdir",
+                              workdir_id="wd-failed-b1", outputs=["outputs/B1.partial.tsv"])
         result = result_for(hub, task)
         path = next(step["outputs"][0] for step in hub.requests["r"]["plan"]["steps"]
                     if step["id"] == task.meta["step_id"])
@@ -167,11 +179,70 @@ async def test_failed_branch_blocks_only_it_and_synthesis_gets_failure_memo():
     synthesis = next(task for task in hub.calls if task.meta.get("step_id") == "S1")
     assert "실패한 갈래: B" in synthesis.context and "source refused" in synthesis.context
     assert "마지막으로 끝난 단계: none" in synthesis.context
+    assert "PARTIAL-BRANCH-BODY" not in synthesis.context
+    assert "B1.partial.tsv" not in synthesis.context
+    assert "failed-b1-workdir" not in synthesis.meta["upstream_dirs"]
+    assert "B1" not in synthesis.meta["upstream_steps"]
     assert len(hub.approvals) == 2, {key: hub.requests["r"].get(key) for key in
                                      ("outcome", "error", "report", "execution_record", "results")}
     card = hub.approvals[1]["detail"]
-    assert card["step_branches"] == {"A1": "A", "S1": "synthesis"}
+    assert card["step_branches"] == {"A1": "A", "C1": "C", "D1": "D", "S1": "synthesis"}
     assert any("B1" in warning for warning in card["warnings"])
+
+
+@pytest.mark.asyncio
+async def test_four_branch_plan_with_no_successful_terminal_stops_before_cp2():
+    plan = branched_plan((2, 1, 1, 1), synthesis=1)
+    settings = Settings()
+    settings.research.enabled = True
+    settings.research.evidence_checkpoint = True
+    settings.orchestrator.chief_of_staff_agent = None
+    settings.orchestrator.reviewer_agent = None
+    holder = {}
+
+    async def reply(task):
+        hub = holder["hub"]
+        if task.meta["kind"] == "plan":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                              structured=copy.deepcopy(plan))
+        if task.meta["step_id"] in {"A2", "B1", "C1", "D1"}:
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False,
+                              error=f"terminal failed: {task.meta['step_id']}")
+        result = result_for(hub, task)
+        path = next(step["outputs"][0] for step in hub.requests["r"]["plan"]["steps"]
+                    if step["id"] == task.meta["step_id"])
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=result,
+                          outputs=[path], output_sha256={path: "a" * 64})
+
+    hub = holder["hub"] = MiniHub(settings, reply, mode="orchestrate", work_kind="research",
+                                     text="compare four independent evidence branches")
+
+    async def approval(**kwargs):
+        hub.approvals.append(kwargs)
+        if kwargs["kind"] == "research_plan":
+            return {"approved": True, "note": "approved", "approval_id": "a1", "decided_at": 1.0}
+        return {"approved": False, "choice": "deny", "note": "stop", "approval_id": "a2", "decided_at": 2.0}
+
+    hub.request_approval = approval
+    await Orchestrator(hub).run_request("r")
+
+    assert [approval["kind"] for approval in hub.approvals] == ["research_plan"]
+    assert hub.requests["r"]["outcome"] == "research_failed"
+    assert "갈래별 terminal 상태" in hub.requests["r"]["report"]
+    for branch, terminal in (("A", "A2"), ("B", "B1"), ("C", "C1"), ("D", "D1")):
+        assert branch in hub.requests["r"]["report"] and terminal in hub.requests["r"]["report"]
+
+
+def test_forty_three_step_digest_keeps_every_step_branch_mapping():
+    plan = branched_plan((8, 8, 8, 8, 8), synthesis=3)
+    for step in plan["steps"]:
+        step["instruction"] = f"{step['id']} " + ("long instruction " * 80)
+
+    digest = cso._research_plan_digest(plan)
+
+    assert len(plan["steps"]) == 43
+    for step in plan["steps"]:
+        assert f'"id": "{step["id"]}", "branch": "{step["branch"]}"' in digest
 
 
 def test_prompts_cover_branch_reporting_and_hypothesis_aligned_reference():
