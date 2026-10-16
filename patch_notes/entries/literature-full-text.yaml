@@ -3,3 +3,6 @@ rows:
 - sha: 'a87ed2f'
   at: 2026-10-16 19:37
   text: 직원이 Europe PMC 오픈 액세스 본문을 labhq_annot fulltext로 읽고 문헌 표마다 읽은 수준(access_level)을 적게 했다 (#697).
+- sha: 'fd4c268'
+  at: 2026-10-16 19:45
+  text: 일시적인 본문 조회 실패를 초록으로 30일 저장하지 않고, 서로 다른 DOI가 같은 본문 파일을 쓰지 않게 했다.
