@@ -117,10 +117,11 @@ async def test_the_edition_opens_with_the_reports_own_abstract_too(tmp_path, mon
     fake_printer(monkeypatch, [4096])
     approve_all(hub, [])
     await publish(hub, [])
-    for name in ("report.md", "README.md"):
-        targets = [link.target for link in image_links((edition / name).read_text(encoding="utf-8"))]
-        assert targets[0] == "steps/s1/outputs/graphical_abstract.png", (name, targets)
-    assert not (edition / "graphical_abstract.svg").exists()  # nothing drawn: the report has its own
+    report_targets = [link.target for link in image_links((edition / "report.md").read_text(encoding="utf-8"))]
+    readme_targets = [link.target for link in image_links((edition / "README.md").read_text(encoding="utf-8"))]
+    assert report_targets[0] == "steps/s1/outputs/graphical_abstract.png"
+    assert readme_targets[0] == "figures/graphical_abstract.svg"
+    assert (edition / "figures/graphical_abstract.svg").exists()  # the portfolio publishes SVG only
 
 
 def test_abstract_first_moves_only_a_valid_abstract_and_keeps_everything_else():

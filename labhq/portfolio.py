@@ -372,7 +372,9 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
             else:
                 files[_unique_target("tables", name, used)] = body
 
-    abstract_source = next((name for name in images if "graphical_abstract" in name.casefold()), None)
+    abstract_source = next((name for name in images
+                            if "graphical_abstract" in name.casefold()
+                            and PurePosixPath(name).suffix.lower() == ".svg"), None)
     prepared_images = dict(images)
     if abstract_source is None:
         shown = dict(req)
