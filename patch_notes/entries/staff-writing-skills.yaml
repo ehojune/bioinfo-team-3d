@@ -1,0 +1,11 @@
+pr: 693
+rows:
+- sha: c0a4eec
+  at: 2026-10-16 17:15
+  text: 직원에게 humanizer와 graphical-abstract를 장착하고 한국어 문서 QC를 추가
+- sha: a12f25e
+  at: 2026-10-16 17:34
+  text: mock 읽기 전용 실행에서 Claude·Codex 전용 스킬 요구를 분리
+- sha: d9d758c
+  at: 2026-10-16 18:16
+  text: Claude bundled plugin과 읽기 전용 prompt 요약으로 직원 스킬 로딩을 복구

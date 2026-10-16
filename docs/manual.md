@@ -233,7 +233,8 @@ PI 토큰으로 `POST /api/shutdown`을 호출하며 `down`의 상태 재확인�
 - 영문자 8개 이상이며 영문자·한글 중 영문자가 60% 이상이면 영어로 판정합니다. 코드·경로도 설명 대상입니다. 한국어 설명 속 영문 기술 용어는 허용하고 코드·경로는 거부합니다. 메시지별 결과와 실패를 저장해 재번역하지 않습니다.
 - 실패한 이어 묻기는 번역 후에도 실패로 표시합니다. 통역은 요청 단계·연구 round 기록·재접속 작업 목록에서 빼고, 비용 집계와 종료 전 마무리 작업에는 포함합니다. 원 task·event는 감사용 raw ledger에 남습니다.
 - 모델 없음·연결 끊김·상한 초과·번역 실패는 원문과 **번역 못 함**으로 표시합니다. 요청에 속하지 않는 메시지와 12,000자를 넘는 원문도 같은 방식으로 전달합니다.
-- 최종 보고서만 설치된 humanizer의 표현 3종을 로컬 점검하고 운전 기록에 통과/고친 수를 한 줄 남깁니다. 전체 40개 패턴 진단은 아니며 코드·인용은 보존합니다. 스킬이 없으면 건너뜁니다.
+- 쓰기 가능한 직원의 vendored skill은 Claude에서 검증된 `labhq-bundled-skills` plugin으로, Codex에서 작업 폴더 `.agents/skills`로 읽습니다. 읽기 전용 실행은 skill 도구를 끄고 금지 표현·전문어·쉼표와 그래픽 초록 점검 규칙만 prompt에 넣습니다.
+- 보고서와 정리본 README의 따옴표 밖 금지 표현 8종은 `PASS`/`WARN`으로 기록하며 윤문 보존 검사는 후속 연결입니다.
 
 2.5D 메신저는 최근 40건을 열고, 위로 스크롤하면 이전 기록을 40건씩 이어 붙입니다. 불러오는 중에는 안내를, 마지막에는 **처음입니다**를 표시합니다. 새로고침해도 저장된 기록을 다시 조회합니다. 직원 활동·feed의 메모리 상한과 별개로 질문·답·직원 메시지·보고 알림을 보관하며 도구 출력·생각·디버그는 제외합니다. 업그레이드 전에 보관 상한으로 삭제된 이벤트는 복구되지 않습니다.
 
@@ -638,6 +639,8 @@ Codex 직원은 `tools`에 `WebSearch`나 `WebFetch`가 있으면 `web_search="l
 | Claude Code plugin | bioinfo-agent (`bioinfo`) | bioinfo plugin 로드 (plugin_dirs) | [bioinfo-agent](../agents/core/bioinfo-agent.yaml) | [직원 설정](../agents/core/) |
 | skill | Paper2Agent | 논문·코드를 파견직으로 변환 (setup-paper2agent 필요) | [recruiter](../agents/core/recruiter.yaml) | [Paper2Agent](https://github.com/jmiao24/Paper2Agent) · [직원 설정](../agents/core/) · [채용 코드](../labhq/recruit/paper2agent.py) |
 | skill | bioinfo:bioinfo-analyze | 실행 전 존재 확인 (required_skills) | [bioinfo-agent](../agents/core/bioinfo-agent.yaml) | [직원 설정](../agents/core/) |
+| skill | graphical-abstract | Claude plugin·Codex .agents/skills (required_skills) | [analyst](../agents/core/analyst.yaml), [cso](../agents/core/cso.yaml), [editor](../agents/core/editor.yaml) | [직원 설정](../agents/core/) |
+| skill | humanizer | Claude plugin·Codex .agents/skills (required_skills) | [analyst](../agents/core/analyst.yaml), [biologist](../agents/core/biologist.yaml), [cso](../agents/core/cso.yaml), [editor](../agents/core/editor.yaml), [qc_reviewer](../agents/core/qc_reviewer.yaml) | [직원 설정](../agents/core/) |
 | 엔진 기능 | Claude Code | 직원 실행 엔진 | [analyst](../agents/core/analyst.yaml), [bioinfo-agent](../agents/core/bioinfo-agent.yaml), [biologist](../agents/core/biologist.yaml), [chief_of_staff](../agents/core/chief_of_staff.yaml), [cso](../agents/core/cso.yaml), [data_steward](../agents/core/data_steward.yaml), [qc_reviewer](../agents/core/qc_reviewer.yaml), [recruiter](../agents/core/recruiter.yaml) | [직원 설정](../agents/core/) |
 | 엔진 기능 | Codex | 직원 실행 엔진 | [editor](../agents/core/editor.yaml), [engineer](../agents/core/engineer.yaml), [facilities](../agents/core/facilities.yaml), [lit_scout](../agents/core/lit_scout.yaml), [sci_reviewer](../agents/core/sci_reviewer.yaml) | [직원 설정](../agents/core/) |
 | 엔진 기능 | Codex 웹 검색 | WebSearch / WebFetch → web_search="live" | [lit_scout](../agents/core/lit_scout.yaml), [sci_reviewer](../agents/core/sci_reviewer.yaml) | [adapter](../labhq/adapters/codex.py) · [직원 설정](../agents/core/) |
@@ -877,6 +880,7 @@ resume 비용·Codex 토큰은 호출별 증분으로 합산합니다(#82). 원 
 원본 입력과 미보고 파일은 제외합니다. 복사하는 파일은 파일당 1 MB·합계 5 MB 안에서 옮기며, 정리본만으로 재실행된다고 보장하지 않습니다.
 보고서의 그림 링크는 정리본이 가진 `steps/<step_id>/outputs/<파일>`로 고쳐 씁니다. 정리본에 없는 그림(미보고·1 MB 초과 등)이나 정리본 밖을 가리키는 링크는 "그림 생략" 글로 바꿉니다.
 보고서에 graphical abstract가 없으면(또는 있어도 정리본에 못 담으면) labhq가 `graphical_abstract.svg`를 그려 정리본 폴더에 두고 README·`report.md`의 첫 그림으로 링크합니다. 라벨은 정리본 문서와 같은 가림 검사를 거칩니다(#608).
+[합성 그래픽 초록 SVG 예시](media/graphical-abstract-example.svg)는 직원용 `graphical-abstract`의 팔레트·글꼴·접근성 형식을 보여 줍니다.
 정리본에는 `report.pdf`도 넣습니다. 정리본의 가려 쓴 `report.md` 본문에, 그림은 정리본의 1 MB·5 MB 한도를 받은 복사본이 아니라 요청 묶음의 원본을 써서(그림 크기 제한 없음) 보고서 PDF와 같은 방식(이 PC의 Edge·Chrome)으로 인쇄하므로 부록은 들어가지 않습니다. 그래서 정리본에 "그림 생략"으로 남은 큰 그림도 PDF에는 들어갑니다. 풀리는 것은 크기 제한뿐이고 자격은 정리본과 같습니다(보고된 산출물, 정리본이 담는 형식). 미보고 파일이나 정리본이 담지 않는 형식(gif 등)은 PDF에서도 "그림 생략"이라, 검토한 정리본에 없던 그림이 게시 PDF에 나오지 않습니다. README가 `report.pdf`를 링크하고, 게시 카드에는 PDF 한 줄이 보입니다.
 PDF는 `github.edition_pdf_max_mb`(기본 50, 최대 75) 이하로 맞춥니다. 넘으면 그림을 빼지 않고 해상도를 단계적으로 줄이며([보고서 PDF](#보고서-pdf)), 끝내 못 맞추면 가장 작은 PDF를 그대로 두고 카드와 README에 크기 한 줄을 남깁니다. 50 MB PDF는 base64로 약 67 MB라, 올릴 때는 쓰기 제한 시간을 길게 잡고 GitHub contents API 한도(base64 100 MB)를 넘는 파일은 보내기 전에 거절합니다. 그 한도를 넘는 PDF만 빠지고 이유가 남습니다.
 브라우저가 없거나 인쇄에 실패하면 PDF만 빼고 게시하며, 카드와 README에 "PDF는 포함하지 않았어요: 이유" 한 줄을 남깁니다.
