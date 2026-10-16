@@ -3985,6 +3985,16 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
 
+    @app.post("/api/requests/{rid}/storage/to-github", dependencies=[Depends(auth)])
+    async def storage_to_github(rid: str, body: dict | None = None) -> dict:
+        if rid not in hub.requests:
+            raise HTTPException(404)
+        body = body or {}
+        try:
+            return await hub.result_storage.to_github(rid, body.get("name"), body.get("visibility") or "private")
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
     @app.post("/api/requests/{rid}/storage/republish", dependencies=[Depends(auth)])
     async def storage_republish(rid: str) -> dict:
         if rid not in hub.requests:

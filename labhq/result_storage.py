@@ -21,7 +21,7 @@ from .integrations.github import (GitHubClient, GitHubHTTPError, SECRET_PATTERNS
 from .interruption import ShutdownInterrupted
 from .models import ApprovalRequest, Task
 from .policy import touches, restricted_paths
-from . import edition_sources
+from . import edition_sources, github_token
 from .portfolio import (broken_markdown_links, build_portfolio_files, declared_aggregate_tables, portfolio_root_file,
                         portfolio_report, publish_file_allowed, request_uses_internal_data, scan_publish_files,
                         table_allowed)
@@ -35,6 +35,7 @@ from .request_bundle import _POSIX_ABS, _WINDOWS_ABS
 
 _REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\Z")
+STORAGE_QUESTION = "결과를 GitHub 저장소로 정리할까요?"  # PI wording 2026-10-16 (#688): the card offers local, new, existing
 _PRIVATE_PATH = re.compile(r"(?<![\w:])(?:[A-Za-z]:[/\\]|\\\\|/(?:home|Users|mnt|srv|data|tmp|var|opt)/|~/)[^\s<>\"'`\])]+")
 _ASSIGNMENT = re.compile(
     r"(?im)\b((?:api[_-]?key|token|password|secret)\s*[:=]\s*)"
@@ -477,7 +478,7 @@ class ResultStorage:
                     return approval
             storage = await self.card(rid, late=True)
             approval = ApprovalRequest(kind="result_storage", request_id=rid,
-                summary="이 결과를 어디에 남길까요?", detail={"storage": storage, "late_storage": True}
+                summary=STORAGE_QUESTION, detail={"storage": storage, "late_storage": True}
                 ).model_dump(mode="json", exclude={"timeout_s"})
             self.hub.approvals[approval["id"]] = {"approval": approval, "origin": None}
             self.hub.save_approval(approval["id"])
@@ -494,14 +495,17 @@ class ResultStorage:
         warning = ""
         available = False
         gh = self.client()
+        later = f"나중에 토큰을 넣고 `labhq storage {rid} --to github`로 올릴 수 있습니다."
         if gh is None:
-            warning = f"GitHub에 연결하지 못했습니다. {self.s.github.token_env} 환경 변수에 토큰을 설정하세요. 지금은 로컬에 남깁니다."
+            warning = (f"GitHub 토큰이 없어 로컬에 남깁니다. `labhq init`으로 넣거나 {self.s.github.token_env} 환경 변수를 "
+                       f"설정하세요({github_token.NEEDED_TEXT}). {later}")
         else:
             try:
                 await gh._req("GET", "/user")
                 available = True
             except Exception:
-                warning = "GitHub 권한을 확인하지 못했습니다. 토큰의 저장소 읽기·쓰기 권한을 확인하세요. 지금은 로컬에 남깁니다."
+                warning = ("GitHub 권한을 확인하지 못해 로컬에 남깁니다. 토큰이 만료됐거나 권한이 모자랄 수 있습니다"
+                           f"({github_token.NEEDED_TEXT}). {later}")
         return {"default": "local", "suggested_name": "labhq-" + rid.removeprefix("req_"),
                 "github_available": available, "warning": warning}
 
@@ -616,6 +620,59 @@ class ResultStorage:
             self.hub.save_request(rid)
             self.tasks[rid] = asyncio.create_task(self.finish(rid))
             return {"request_id": rid, "status": "redrafting", "closed_cards": cards}
+
+    async def to_github(self, rid, name: str | None = None, visibility: str = "private") -> dict:
+        """Publish a request that ended local to a new GitHub repository (#688). On 10-16 there was no way: the late card
+        refused a request that had a storage choice, so the lead copied the edition and pushed it by hand.
+
+        The token is checked first: GET /user names the owner, and an empty POST /user/repos answers 422 when the token may
+        create repositories (403 without; nothing is made, #687). Then the choice becomes a new repository and the editor
+        runs again, since a local edition is not laid out for a repository root. The publish card and the report-review
+        condition stay as they are: nothing is uploaded before the PI answers the card."""
+        async with self.card_lock:
+            req = self.hub.requests[rid]
+            saved = req.get("result_storage") or {}
+            if not saved:
+                raise ValueError(f"아직 저장 위치를 고르지 않은 요청입니다. `labhq storage {rid}`로 저장 위치 카드를 여세요.")
+            if saved.get("mode") != "local" or saved.get("status") != "local":
+                raise ValueError(f"로컬에 남긴 정리본만 GitHub로 옮깁니다(저장 위치 {saved.get('mode')}, 상태 {saved.get('status')}). "
+                                 f"게시에 실패했으면 `labhq storage {rid} --republish`, 정리본을 다시 만들려면 `--redraft`를 쓰세요.")
+            if req.get("status") not in {"done", "completed", "failed", "cancelled"} or req.get("cancelling"):
+                raise ValueError("끝난 요청만 GitHub로 옮길 수 있습니다.")
+            if controlled_request(req, self.s):
+                raise ValueError("통제 데이터가 포함된 요청은 게시하지 않습니다.")
+            running = self.tasks.get(rid)
+            if rid in self.uploading or (running is not None and not running.done()):
+                raise ValueError("정리 작업이 진행 중입니다. 끝난 뒤 다시 실행하세요.")
+            name = (name or "labhq-" + rid.removeprefix("req_")).strip()
+            if not _NAME.fullmatch(name):
+                raise ValueError("새 저장소 이름은 영문·숫자·점·밑줄·하이픈으로 적어 주세요.")
+            if visibility not in {"private", "public"}:
+                raise ValueError("공개 범위는 private 또는 public입니다.")
+            gh = self.client()
+            if gh is None:
+                raise ValueError(f"GitHub 토큰이 없습니다. `labhq init`으로 넣거나 {self.s.github.token_env} 환경 변수를 설정하세요"
+                                 f"({github_token.NEEDED_TEXT}).")
+            try:
+                login = (await gh._req("GET", "/user"))["login"]
+            except GitHubHTTPError as exc:
+                raise ValueError(f"GitHub가 토큰을 받지 않았습니다(HTTP {exc.status_code}). 새 토큰을 `labhq init`으로 넣으세요.") from None
+            try:
+                await gh._req("POST", "/user/repos", json={})  # no name: GitHub refuses it after the permission check
+            except GitHubHTTPError as exc:
+                if exc.status_code != 422:
+                    raise ValueError(f"이 토큰은 저장소를 만들 수 없습니다(HTTP {exc.status_code}). 토큰에 Repository creation"
+                                     f"(또는 Administration 쓰기)을 주세요: {github_token.TOKEN_SETTINGS_URL}") from None
+            for key in ("warning", "error_type", "draft_path"):
+                saved.pop(key, None)
+            saved.update(mode="new", repo=f"{login}/{name}", visibility=visibility, allow_public=visibility == "public",
+                         status="selected", after_review=True, converted_from="local")
+            self.hub.save_request(rid)
+            self.schedule(rid)
+            note = ("fine-grained 토큰이면 Repository access가 All repositories여야 새 저장소에 올릴 수 있습니다."
+                    if github_token.read_token(self.s).startswith(github_token.FINE_GRAINED_PREFIX) else "")
+            return {"request_id": rid, "status": "converting", "repo": saved["repo"],
+                    "waiting_review": bool(not req.get("pi_reviewed_at") or req.get("bundle_pending")), "note": note}
 
     def publish_cards(self, rid) -> list[str]:
         return [aid for aid, entry in self.hub.approvals.items()
