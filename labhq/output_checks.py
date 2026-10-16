@@ -48,7 +48,7 @@ def _inside(root: Path, rel: str) -> Path | None:
 
 
 def _head_text(path: Path) -> str:
-    with path.open("rb") as handle:
+    with open(path, "rb") as handle:
         data = handle.read(MAX_TABLE_BYTES + 1)
     text = data[:MAX_TABLE_BYTES].decode("utf-8-sig", errors="replace")
     if len(data) > MAX_TABLE_BYTES and "\n" in text:
