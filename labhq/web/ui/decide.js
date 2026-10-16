@@ -199,6 +199,7 @@ export function evidenceRows(detail) {
 function renderEvidenceTable(list, detail) {
   const rows = evidenceRows(detail);
   if (!rows.length) return;
+  const branched = detail?.step_branches && Object.keys(detail.step_branches).length > 0;
   add(list, 'dt', `claim별 근거 (${rows.length}개)`);
   const cell = add(list, 'dd');
   const count = status => rows.filter(row => row.status === status).length;
@@ -208,11 +209,11 @@ function renderEvidenceTable(list, detail) {
     `표시 있는 claim ${rows.filter(row => row.marks).length}`].join(' · '), 'decision-meta');
   const table = add(add(cell, 'div', '', 'evidence-wrap'), 'table', '', 'evidence-table');
   const head = add(add(table, 'thead'), 'tr');
-  for (const label of ['갈래', '단계', 'claim', '상태', '근거 종류', '표시']) add(head, 'th', label);
+  for (const label of [...(branched ? ['갈래'] : []), '단계', 'claim', '상태', '근거 종류', '표시']) add(head, 'th', label);
   const body = add(table, 'tbody');
   for (const row of rows) {
     const line = add(body, 'tr', '', row.marks ? 'flagged' : '');
-    add(line, 'td', row.branch);
+    if (branched) add(line, 'td', row.branch);
     add(line, 'td', row.step);
     const claim = add(line, 'td');
     add(claim, 'div', row.statement);
