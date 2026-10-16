@@ -1,6 +1,6 @@
 ## 결론
 
-PR #705에서 갈래 계획 정리본을 `studies/` 아래 갈래별로 나눴습니다. Fixes #686.
+PR #705에서 갈래 계획 정리본을 `studies/` 아래 갈래별로 나누고, 마지막 리뷰의 원고 선택·보고서 보존·상태 표시 회귀를 고쳤습니다. Fixes #686.
 
 ## 바뀐 것
 
@@ -10,15 +10,17 @@ PR #705에서 갈래 계획 정리본을 `studies/` 아래 갈래별로 나눴�
 - 내부 자료 허용 목록과 갈래 없는 정리본 파일 목록은 그대로입니다.
 - 여러 종합 단계가 원고를 만들면 모든 갈래를 읽는 최종 단계 중 의존 순서상 마지막 원고를 고릅니다.
 - 갈래의 terminal별 성공 여부로 완료·부분·실패를 나누고, 부분 성공이면 성공 결과와 실패 이유를 함께 남깁니다.
+- review가 accept이면 최종 CSO 요청 원고를 유지하고, revise이거나 요청 원고가 논문 형식이 아닐 때만 마지막 종합 단계 원고를 씁니다.
+- 갈래 Markdown 보고서는 파일명이 아니라 `output_types`의 `report` 선언으로 보존합니다.
+- 루트 README 갈래 표에도 완료·부분·실패 상태를 표시합니다.
 
 ## 확인
 
-- 신규 회귀 test는 수정 전 3 failed, 수정 후 4 passed입니다.
-- 최종 종합 원고 회귀 test는 수정 전 실패, 수정 후 통과했습니다.
-- 부분 성공 갈래 회귀 test는 수정 전 실패, 수정 후 통과했습니다.
-- 관련 pytest 6파일 67 passed, `scripts/check_public.sh`, `git diff --check` 통과.
-- `docs/manual.md` 정리본 절만 짧게 갱신했습니다.
+- 마지막 리뷰 회귀 3건은 직전 head에서 각각 실패했고 수정 후 핵심 test 4 passed입니다.
+- `portfolio|result_storage|edition|branch` pytest 7파일 155 passed입니다.
+- `scripts/check_public.sh`, `git diff --check` 통과.
+- `docs/manual.md`는 기존 정리본 문단만 고쳐 156,106자에서 156,201자로 95자 늘었습니다.
 
 ## 남은 것
 
-- GitHub CI와 자동 리뷰 확인, 병합은 총괄이 이어갑니다.
+- GitHub CI 확인과 병합은 총괄이 이어갑니다. 이 PR의 리뷰 수정은 여기서 끝냅니다.
