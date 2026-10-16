@@ -10,6 +10,7 @@ import os
 from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
 import re
+from typing import Any
 from urllib.parse import quote
 
 import httpx
@@ -32,7 +33,8 @@ _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\Z")
 _PRIVATE_PATH = re.compile(r"(?<![\w:])(?:[A-Za-z]:[/\\]|\\\\|/(?:home|Users|mnt|srv|data|tmp|var|opt)/|~/)[^\s<>\"'`\])]+")
 _ASSIGNMENT = re.compile(r"(?im)\b((?:api[_-]?key|token|password|secret)\s*[:=]\s*)[^\s,;]+")
 _TEXT_OUTPUTS = {".md", ".txt", ".svg", ".csv", ".tsv", ".py", ".r", ".sh", ".json"}
-_IMAGE_OUTPUTS = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+_IMAGE_OUTPUTS = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp",
+                  ".svg": "image/svg+xml"}
 _DOCUMENT_LINKS = (("report.md", "전체 결과·그림·표"), ("PROGRESS.md", "진행 기록"), ("REPRODUCE.md", "재현 방법"),
                    ("SOURCES.md", "출처"))
 README_EXCERPT_CHARS = 1800  # the deterministic README quotes this much of the report; report.md holds all of it
@@ -40,6 +42,8 @@ EDITOR_REPORT_CHARS = 100_000  # what the editor reads of the report whole; a lo
 EDITOR_OTHER_CHARS = 30_000  # the same bound for each of PROGRESS.md, REPRODUCE.md and SOURCES.md
 _PDF_NAME = "report.pdf"
 _GENERATED = ("README.md", "report.md", "PROGRESS.md", "REPRODUCE.md", "SOURCES.md")  # edition documents that may link a figure
+PUBLISH_PREVIEW_FILE_MAX_BYTES = 1_000_000
+PUBLISH_PREVIEW_TOTAL_MAX_BYTES = 5_000_000
 
 
 class PublishAccessError(RuntimeError):
@@ -130,7 +134,7 @@ def edition_assets(req, settings):
     for name, path in edition_candidates(req, settings).items():
         suffix = PurePosixPath(name).suffix.lower()
         size = path.stat().st_size
-        unlimited = suffix in _IMAGE_OUTPUTS or suffix == ".svg"
+        unlimited = suffix in _IMAGE_OUTPUTS
         if not unlimited:
             if size > 1_000_000 or total + size > 5_000_000:
                 continue
@@ -144,6 +148,22 @@ def edition_assets(req, settings):
             except UnicodeDecodeError:
                 continue
     return assets, images
+
+
+def publish_image_previews(images: Mapping[str, bytes], target: Path) -> tuple[dict[str, str], dict[str, dict[str, Any]]]:
+    """Bound approval-card payloads without changing the full-size files kept in the edition."""
+    previews: dict[str, str] = {}
+    omitted: dict[str, dict[str, Any]] = {}
+    total = 0
+    for name, body in images.items():
+        size = len(body)
+        if size > PUBLISH_PREVIEW_FILE_MAX_BYTES or total + size > PUBLISH_PREVIEW_TOTAL_MAX_BYTES:
+            omitted[name] = {"size_bytes": size, "path": str(target / name)}
+            continue
+        previews[name] = ("data:" + _IMAGE_OUTPUTS[Path(name).suffix.lower()] + ";base64," +
+                          base64.b64encode(body).decode("ascii"))
+        total += size
+    return previews, omitted
 
 
 def edition_figure_links(text: str, req: dict, settings, included) -> str:
@@ -621,7 +641,7 @@ class ResultStorage:
                 included = {*assets, *images}
                 drawn = edition_abstract(req, self.s, included)  # #608: the edition opens with a graphical abstract
                 if drawn:
-                    assets[ABSTRACT_FILE] = drawn
+                    images[ABSTRACT_FILE] = drawn.encode("utf-8")
                     included.add(ABSTRACT_FILE)
                 docs = draft_documents(req, self.s, included, assets, abstract=bool(drawn))
                 links = "\n".join(f"- [{name}]({quote(name, safe='/')})" for name in [*assets, *images])
@@ -710,10 +730,11 @@ class ResultStorage:
             if req.get("revised_to") or (review_required and not req.get("pi_reviewed_at")):
                 return  # review_done schedules this saved draft again.
             if not self.s.github.auto_publish_results:
-                detail = {"documents": docs, "repo": saved.get("repo"),
-                          "images": {name: "data:" + _IMAGE_OUTPUTS[Path(name).suffix.lower()] + ";base64," +
-                                     base64.b64encode(body).decode("ascii") for name, body in images.items()},
+                previews, omitted = publish_image_previews(images, target)
+                detail = {"documents": docs, "repo": saved.get("repo"), "images": previews,
                           "visibility": saved.get("visibility"), "local_draft": str(target)}
+                if omitted:
+                    detail["image_preview_omitted"] = omitted
                 pdf_line = (f"포함: {_PDF_NAME} ({len(pdf) / 1024 / 1024:.1f} MB)"
                             + (f" · {(saved.get('pdf') or {}).get('size_note')}" if (saved.get("pdf") or {}).get("size_note") else "")
                             if pdf else str((saved.get("pdf") or {}).get("note") or ""))

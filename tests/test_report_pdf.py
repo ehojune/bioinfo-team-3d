@@ -108,7 +108,8 @@ def test_bundle_rewrites_workdir_figure_links_and_verify_accepts_them(tmp_path):
     assert check["linked"] == 2 and check["problems"] == []
     assert any("같은 이름의 SVG가 없습니다" in warning for warning in check["warnings"])
     verified = verify_request(request, settings)
-    assert verified["exit_code"] == 2, verified
+    assert verified["exit_code"] == 0, verified
+    assert verified["warnings"] and verified["reasons"] == []
     assert "보고서 그림: 링크 2개, 모두 묶음 안에 있음" in render_verify(verified)
 
 
@@ -130,7 +131,7 @@ def test_verify_fails_when_a_linked_image_is_missing_or_points_outside_the_bundl
     settings, request, _tasks, bundle = build(tmp_path, report)
     verified = verify_request(request, settings)
     problems = [p for p in verified["problems"] if p.startswith("보고서 그림")]
-    assert verified["exit_code"] == 2
+    assert verified["exit_code"] == 1
     assert any("묶음에 없습니다: steps/s1/outputs/nope.png" in p for p in problems)
     assert any("묶음 밖 경로" in p and "plot.png" in p for p in problems)
     assert not any("secret" in p or "example.com" in p for p in problems)  # no private path is echoed; remote is skipped
@@ -256,7 +257,7 @@ def test_pdf_is_printed_by_the_browser_with_its_own_profile_and_cached(tmp_path,
     assert kwargs["timeout"] > 0 and kwargs["stdin"] == subprocess.DEVNULL
     cache = bundle.parent / "req_pdf-report"
     assert (cache / "report.pdf").read_bytes() == FAKE_PDF and "data:image/png" in (cache / "report.html").read_text("utf-8")
-    assert bundle_figure_check(bundle)["problems"] == [] and verify_request(request, settings)["exit_code"] == 2
+    assert bundle_figure_check(bundle)["problems"] == [] and verify_request(request, settings)["exit_code"] == 0
     again = build_report_file(request, settings, tasks)
     assert again.cached and again.data == FAKE_PDF and len(calls) == 1
     build_report_file({**request, "report": request["report"] + "\n\n추가 문장"}, settings, tasks)
@@ -498,7 +499,7 @@ def test_a_figure_name_with_hash_or_question_mark_is_kept_when_the_file_exists(t
     checked = bundle_figure_check(bundle)
     assert checked["linked"] == 2 and checked["problems"] == [] and len(checked["warnings"]) == 2
     assert linked_figure_paths(text) == ["steps/s1/outputs/a#1.png", "steps/s1/outputs/fig1.png"]
-    assert verify_request(request, settings)["exit_code"] == 2
+    assert verify_request(request, settings)["exit_code"] == 0
     page, missing = build_report_html(request, bundle)
     assert missing == [] and page.count("<img ") == 3  # two figures and the drawn graphical abstract (#608)
     (bundle / "report.md").write_text(request["report"], encoding="utf-8")  # an older bundle: the link as written
@@ -526,7 +527,7 @@ def test_figure_targets_with_parentheses_and_angle_brackets_resolve_to_the_copie
     checked = bundle_figure_check(bundle)
     assert checked["linked"] == 4 and checked["problems"] == [] and len(checked["warnings"]) == 3
     assert set(linked_figure_paths(text)) == {f"steps/s1/{name}" for name in files}
-    assert verify_request(request, settings)["exit_code"] == 2
+    assert verify_request(request, settings)["exit_code"] == 0
     page, missing = build_report_html(request, bundle)
     assert missing == [] and page.count("<img ") == 5  # four figures and the drawn graphical abstract (#608)
     raw = "![그림](steps/s1/outputs/plot(1).png)\n\n![x](<steps/s1/outputs/a (2).png>)"  # unrewritten, as a PI may write
@@ -544,7 +545,7 @@ def test_the_bundle_figure_check_reads_the_report_after_the_absolute_path_rewrit
     assert "WARN:" in appendix and "묶음 밖" not in appendix
     checked = bundle_figure_check(bundle)
     assert checked["linked"] == 1 and checked["problems"] == [] and len(checked["warnings"]) == 1
-    assert verify_request(request, settings)["exit_code"] == 2
+    assert verify_request(request, settings)["exit_code"] == 0
     # a rewritten link to a file the bundle does not hold is still reported in the appendix
     other_dir = tmp_path / "other"
     other_dir.mkdir()

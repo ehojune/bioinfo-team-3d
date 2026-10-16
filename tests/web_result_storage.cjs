@@ -76,3 +76,26 @@ test('publish card names the PDF line, included or skipped',async()=>{
   const [row2]=ui.syncDecisionCards(new Element(),[included],[],{requests:new Map([['r',{pi_reviewed_at:1}]])});
   assert.match(row2.textContent,/포함: report\.pdf \(1\.2 MB\)/);
 });
+
+test('publish card previews base64 SVG as an image and rejects inline SVG markup',async()=>{
+  const ui=await mod, host=new Element();
+  const safe='data:image/svg+xml;base64,'+Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>').toString('base64');
+  const card={id:'svg',kind:'result_publish',request_id:'r',detail:{documents:{},images:{'safe.svg':safe,
+    'unsafe.svg':'data:image/svg+xml,<svg onload="alert(1)"></svg>'}}};
+  const [row]=ui.syncDecisionCards(host,[card],[],{requests:new Map([['r',{pi_reviewed_at:1}]])});
+  const walk=node=>[node,...node.children.flatMap(walk)];
+  const images=walk(row).filter(node=>node.tagName==='IMG');
+  assert.equal(images.length,1);
+  assert.equal(images[0].src,safe);
+  assert.equal(images[0].alt,'safe.svg');
+});
+
+test('publish card shows the size and local path when an image preview is omitted',async()=>{
+  const ui=await mod, host=new Element();
+  const card={id:'large',kind:'result_publish',request_id:'r',detail:{documents:{},images:{},
+    image_preview_omitted:{'large.png':{size_bytes:1500000,path:'C:/draft/large.png'}}}};
+  const [row]=ui.syncDecisionCards(host,[card],[],{requests:new Map([['r',{pi_reviewed_at:1}]])});
+  assert.match(row.textContent,/large\.png/);
+  assert.match(row.textContent,/1\.4 MB/);
+  assert.match(row.textContent,/C:\/draft\/large\.png/);
+});

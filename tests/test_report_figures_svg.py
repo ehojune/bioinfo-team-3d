@@ -2,9 +2,11 @@
 
 from pathlib import Path
 
+from labhq.cli import _verify
+from labhq.evidence.audit import verify_request
 from labhq.orchestrator import cso
 from labhq.report_figures import bundle_figure_check
-from labhq.report_pdf import CSS, build_report_file
+from labhq.report_pdf import CSS, RENDER_VERSION, build_report_file
 from labhq.settings import GitHubSettings
 from tests.test_report_pdf import PNG, build
 
@@ -69,6 +71,18 @@ def test_figure_qc_accepts_svg_with_hangul_text(tmp_path):
     assert checked == {"linked": 1, "problems": [], "warnings": []}
 
 
+def test_figure_warn_does_not_change_exit_or_skip_audit_bundle(tmp_path, monkeypatch):
+    settings, request, _tasks, _bundle_path = build(
+        tmp_path, "# 결과\n\n![그림 1. 결과](WD/outputs/fig1.png)\n", files={"outputs/fig1.png": PNG})
+    checked = verify_request(request, settings)
+    assert checked["exit_code"] == 0 and checked["reasons"] == []
+    assert any("같은 이름의 SVG가 없습니다" in warning for warning in checked["warnings"])
+    monkeypatch.setattr("labhq.cli._api", lambda *_args, **_kwargs: request)
+    audit = tmp_path / "audit.zip"
+    assert _verify(settings, request["id"], as_json=False, bundle=str(audit)) == 0
+    assert audit.is_file()
+
+
 def test_pdf_over_configured_50_mb_is_printed_once_without_shrinking(tmp_path, monkeypatch):
     settings, request, tasks, _bundle_path = build(
         tmp_path, "# 결과\n\n![그림 1. 결과](WD/outputs/fig1.png)\n")
@@ -91,6 +105,7 @@ def test_pdf_over_configured_50_mb_is_printed_once_without_shrinking(tmp_path, m
     assert any("줄이지 않았습니다" in note for note in built.notes)
 
 
-def test_pdf_has_no_figure_max_height_and_cap_defaults_to_unlimited():
-    assert "max-height" not in CSS
+def test_pdf_fits_tall_figures_without_resampling_and_invalidates_old_cache():
+    assert "max-height: 220mm" in CSS
+    assert RENDER_VERSION == "3"
     assert GitHubSettings().edition_pdf_max_mb is None

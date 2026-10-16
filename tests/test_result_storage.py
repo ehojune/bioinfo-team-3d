@@ -242,9 +242,28 @@ def test_assets_only_reported_outputs_and_clean_text(tmp_path):
     output.mkdir(parents=True)
     (output / "table.tsv").write_text("gene\tvalue\nA\t2\n", encoding="utf-8")
     (output / "plot.png").write_bytes(b"synthetic-image")
+    (output / "plot.svg").write_text('<svg xmlns="http://www.w3.org/2000/svg"><text>그림</text></svg>', encoding="utf-8")
     (output / "secret.txt").write_text("raw input", encoding="utf-8")
     (bundle / "MANIFEST.tsv").write_text("relative_path\tstatus\nsteps/s1/outputs/table.tsv\tcopied\n"
-        "steps/s1/outputs/plot.png\tcopied\nsteps/s1/outputs/secret.txt\tcopied (unreported)\n", encoding="utf-8")
+        "steps/s1/outputs/plot.png\tcopied\nsteps/s1/outputs/plot.svg\tcopied\n"
+        "steps/s1/outputs/secret.txt\tcopied (unreported)\n", encoding="utf-8")
     text, images = edition_assets(hub.requests["req_test"], hub.s)
     assert list(text) == ["steps/s1/outputs/table.tsv"]
-    assert list(images) == ["steps/s1/outputs/plot.png"]
+    assert list(images) == ["steps/s1/outputs/plot.png", "steps/s1/outputs/plot.svg"]
+
+
+def test_publish_preview_limits_do_not_limit_original_images(tmp_path):
+    from labhq.result_storage import (PUBLISH_PREVIEW_FILE_MAX_BYTES, PUBLISH_PREVIEW_TOTAL_MAX_BYTES,
+                                      publish_image_previews)
+    assert PUBLISH_PREVIEW_FILE_MAX_BYTES == 1_000_000
+    assert PUBLISH_PREVIEW_TOTAL_MAX_BYTES == 5_000_000
+    target = tmp_path / "req-editor"
+    images = {"small.svg": b"<svg/>", "large.png": b"x" * (PUBLISH_PREVIEW_FILE_MAX_BYTES + 1)}
+    previews, omitted = publish_image_previews(images, target)
+    assert previews["small.svg"].startswith("data:image/svg+xml;base64,")
+    assert omitted == {"large.png": {"size_bytes": 1_000_001, "path": str(target / "large.png")}}
+    assert len(images["large.png"]) == 1_000_001  # the original payload remains available for draft and upload
+
+    five = {f"f{i}.png": b"x" * PUBLISH_PREVIEW_FILE_MAX_BYTES for i in range(6)}
+    previews, omitted = publish_image_previews(five, target)
+    assert len(previews) == 5 and list(omitted) == ["f5.png"]

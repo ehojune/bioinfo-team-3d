@@ -162,7 +162,7 @@ def test_verify_counts_the_drawn_abstract_against_the_eleven(tmp_path):
     settings, request, _t, bundle = build(tmp_path / "eleven", figure_report(11), files=eleven)
     problems = bundle_figure_check(bundle)["problems"]
     assert len(problems) == 1 and "11장이에요" in problems[0] and "결과 그림은 10장까지" in problems[0]
-    assert verify_request(request, settings)["exit_code"] == 2  # figure warnings accompany the 11-figure problem
+    assert verify_request(request, settings)["exit_code"] == 1  # WARN does not turn a completed problem check into exit 2
     page, missing = build_report_html(request, bundle)
     assert page.count("<img ") == 11 and len(missing) == 1 and "11장까지만" in missing[0]
 
@@ -174,7 +174,7 @@ def test_an_abstract_of_its_own_keeps_all_eleven_places(tmp_path):
     settings, request, _t, bundle = build(tmp_path / "own", report, files=own)
     checked = bundle_figure_check(bundle)
     assert checked["problems"] == [] and checked["warnings"]
-    assert verify_request(request, settings)["exit_code"] == 2
+    assert verify_request(request, settings)["exit_code"] == 0
     twelve = own | {"outputs/f10.png": PNG}
     report12 = report + "\n![그림 10](WD/outputs/f10.png)\n"
     _s, _r, _t, bundle12 = build(tmp_path / "own12", report12, files=twelve)

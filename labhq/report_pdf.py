@@ -34,7 +34,7 @@ from .report_figures import (ABSTRACT_FILE, FIGURE_SUFFIXES, IMAGE_PATTERN, MAX_
                              drop_dead_abstract_links, figure_owners, has_abstract_link, link_workdir_figures,
                              output_exists)
 
-RENDER_VERSION = "2"  # bump when the page's markup or CSS changes: a cached PDF of an older one is not reused
+RENDER_VERSION = "3"  # bump when the page's markup or CSS changes: a cached PDF of an older one is not reused
 PRINT_TIMEOUT_S = 60.0
 _CSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'"  # no network
 PRINT_SLOW_BYTES_PER_S = 2 * 1024 * 1024  # a page of embedded figures gets one more second of printing per 2 MB (#608)
@@ -416,7 +416,7 @@ th, td { border: 1px solid #c9d3e0; padding: .3em .55em; text-align: left; verti
 th { background: #eef2f8; }
 tr { break-inside: avoid; }
 figure { break-inside: avoid; text-align: center; }
-figure img, p img { max-width: 100%; }
+figure img, p img { max-width: 100%; max-height: 220mm; }
 figcaption { font-size: 9.5pt; color: #4a5568; margin-top: .3em; }
 a { color: #1d4ed8; text-decoration: none; }
 .anchor { font-size: 7.5pt; color: #8a94a6; }

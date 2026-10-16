@@ -255,6 +255,7 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
     results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
     files: list[dict[str, Any]] = []
     reasons: list[str] = []
+    warnings: list[str] = []
     unreported: dict[str, list[str]] = {}
     scans: dict[str, tuple[list[dict[str, Any]], str | None]] = {}
     observed_artifacts: dict[str, dict[str, str]] = {}
@@ -336,11 +337,11 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
 
             request_bundle["figures"] = bundle_figure_check(root / "requests" / request_id)
             problems += [f"보고서 그림: {problem}" for problem in request_bundle["figures"]["problems"]]
-            reasons += [f"보고서 그림 WARN: {warning}" for warning in request_bundle["figures"]["warnings"]]
+            warnings += [f"보고서 그림 WARN: {warning}" for warning in request_bundle["figures"]["warnings"]]
     return {"request_id": req.get("id"), "text": req.get("text"), "status": req.get("status"),
             "outcome": req.get("outcome"), "checked_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "labhq_version": __version__, "files": files, "report_check": report_check,
-            "unreported_outputs": unreported, "problems": problems, "reasons": reasons,
+            "unreported_outputs": unreported, "problems": problems, "reasons": reasons, "warnings": warnings,
             "source_verification": [checked.model_dump(mode="json") for checked in source_reports],
             "request_bundle": request_bundle,
             "exit_code": 2 if reasons else 1 if problems else 0}
@@ -414,6 +415,7 @@ def render_verify(report: Mapping[str, Any]) -> str:
                      + ("모두 묶음 안에 있음" if not figures.get("problems") else f"문제 {len(figures['problems'])}건"))
     if report.get("bundle"):
         lines.append(f"감사 번들: {report['bundle']}")
+    lines += [f"경고: {warning}" for warning in report.get("warnings") or []]
     lines += [f"확인 못함: {reason}" for reason in report["reasons"]]
     verdict = {0: "문제 없음", 1: f"문제 {len(report['problems'])}건", 2: "이 PC에서 끝까지 검사하지 못함"}
     lines.append(f"결과: {verdict[report['exit_code']]} (exit {report['exit_code']})")
@@ -448,6 +450,8 @@ def _bundle_readme(report: Mapping[str, Any]) -> str:
         lines += [f"파일 재해시는 러너 PC에서 `labhq verify {report.get('request_id')}`를 실행하세요.", ""]
     if report["problems"]:
         lines += ["## 문제", "", *[f"- {problem}" for problem in report["problems"]], ""]
+    if report.get("warnings"):
+        lines += ["## 경고", "", *[f"- {warning}" for warning in report["warnings"]], ""]
     lines += ["## 파일", "",
               "- `report.md`: PI용 본문(이 본문을 claim anchor 검사)",
               "- `report_appendix.md`: 과학 부록(점검표·리뷰·가정)",

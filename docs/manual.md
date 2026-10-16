@@ -526,12 +526,12 @@ task 취소(`POST /api/tasks/{id}/cancel`)는 task 기록의 runner로 보냅니
 
 ### 보고서 PDF
 
-보고서 본문(`report.md`)에는 그림을 모두 11장까지 마크다운 이미지로 넣습니다. 분석 단계는 핵심 그림 1~2개를 SVG로 선언하고, 보고서는 이를 "결과"에 넣거나 빠진 이유를 한 줄로 적습니다. alt는 `그림 N. 이름`만 씁니다. graphical abstract 1장(`graphical_abstract.svg`)은 제목 아래 첫 그림입니다. matplotlib은 `svg.fonttype="none"`과 한국어 글꼴 묶음을 써서 한글을 `<text>`로 남깁니다. `labhq verify`는 결과 그림 누락, SVG 없는 PNG·JPEG, 한글 `<text>` 없는 SVG를 WARN으로 적습니다.
+보고서 본문(`report.md`)에는 그림을 모두 11장까지 마크다운 이미지로 넣습니다. 분석 단계는 핵심 그림 1~2개를 SVG로 선언하고, 보고서는 이를 "결과"에 넣거나 빠진 이유를 한 줄로 적습니다. alt는 `그림 N. 이름`만 씁니다. graphical abstract 1장(`graphical_abstract.svg`)은 제목 아래 첫 그림입니다. matplotlib은 `svg.fonttype="none"`과 한국어 글꼴 묶음을 써서 한글을 `<text>`로 남깁니다. `labhq verify`는 결과 그림 누락, SVG 없는 PNG·JPEG, 한글 `<text>` 없는 SVG를 WARN으로 적습니다. WARN은 exit 0/1 판정과 `--bundle` 생성을 막지 않습니다.
 
 PDF는 필요할 때만 만듭니다. 끝난 요청에서 웹 요청 상세(2.5D·3D)의 **PDF로 받기** 버튼이나 `labhq report <request_id> --pdf [--out 파일]`을 쓰면 gateway가 `GET /api/requests/{id}/report-pdf`로 만듭니다.
 
 - 순서: 묶음의 `report.md`·`report_appendix.md`로 그림(data: URI)·한글 글꼴·인쇄 CSS를 갖춘 HTML 한 장을 만들고, 이 PC의 Edge·Chrome을 headless로 돌려 PDF로 인쇄합니다. 구성은 표지(요청·시각·상태), 논문 형식 본문, 과학 부록입니다. 외부 주소의 그림은 넣지 않고 그 자리에 "그림 없음"을 적습니다.
-- 그림 정책(#608, #690): 그림에는 크기 제한이 없고 요청 묶음의 원본을 씁니다. 한 보고서에 11장(graphical abstract 포함)까지 넣습니다. 정리본의 그림 사본에도 1 MB·5 MB 상한을 적용하지 않습니다. 세로로 긴 그림은 `max-height`로 줄이지 않고 다음 쪽으로 넘깁니다.
+- 그림 정책(#608, #690): 그림에는 크기 제한이 없고 요청 묶음의 원본을 씁니다. 한 보고서에 11장(graphical abstract 포함)까지 넣습니다. 정리본의 그림 사본에도 1 MB·5 MB 상한을 적용하지 않습니다. 세로로 긴 그림은 인쇄 가능 영역에 맞춰 CSS `max-height: 220mm`로 표시 크기만 줄입니다. 재인코딩·재샘플링하지 않으며 SVG는 벡터 그대로라 PI 방침인 원본 품질 보존과 맞습니다.
 - 크기 알림: `github.edition_pdf_max_mb`의 기본은 무제한(`null`)입니다. 값을 적어도 경고만 남기며 그림을 JPEG로 재인코딩하거나 PDF를 줄이지 않습니다. PDF는 원본 HTML을 한 번만 인쇄합니다.
 - graphical abstract: 최종 보고서 단계는 `outputs/graphical_abstract.svg`와 생성 코드를 선언합니다. CSO는 읽기 전용이며 이 파일을 제목 아래 첫 그림으로 링크합니다. 파일이 없으면 labhq가 기존 SVG 흐름도를 그립니다.
 - 브라우저는 `gateway.report_browser`, PATH, 표준 설치 위치 순으로 찾습니다. 못 찾거나 인쇄가 60초 안에 안 끝나면 HTML을 주고 이유를 알립니다(브라우저로 열어 "PDF로 저장"). LaTeX·GTK 같은 의존성은 없습니다.
@@ -874,7 +874,7 @@ resume 비용·Codex 토큰은 호출별 증분으로 합산합니다(#82). 원 
 정리본은 README·결과 보고서·진행 기록·재현 방법·출처로 구성됩니다. 보고된 그림·표·실행 파일은 링크로 연결합니다.
 긴 문서는 문서별 입력 상한 안에서 개요와 앞부분을 보내며, 절이 많으면 생략 목록의 가운데를 개수로 줄입니다.
 텍스트는 기존 게시 검사로 비밀값·개인 경로를 가립니다. 공개 링크는 브라우저와 같은 구분자로 해석한 뒤 내부 host를 제외합니다. 통제 데이터가 걸린 요청은 편집자에게 보내거나 게시하지 않습니다.
-원본 입력과 미보고 파일은 제외합니다. 일반 산출은 파일당 1 MB·합계 5 MB 안에서 복사하지만 그림·보고서·PDF에는 이 상한을 적용하지 않습니다. 정리본만으로 재실행된다고 보장하지 않습니다.
+원본 입력과 미보고 파일은 제외합니다. 일반 산출은 파일당 1 MB·합계 5 MB 안에서 복사하지만 그림·보고서·PDF에는 이 상한을 적용하지 않습니다. 게시 승인 카드의 그림 미리보기만 파일당 1 MB·합계 5 MB로 제한하며, 넘으면 파일 이름·크기·로컬 정리본 경로를 보여 줍니다. 정리본만으로 재실행된다고 보장하지 않습니다.
 보고서의 그림 링크는 정리본이 가진 `steps/<step_id>/outputs/<파일>`로 고쳐 씁니다. 미보고 그림이나 정리본 밖을 가리키는 링크만 "그림 생략" 글로 바꿉니다.
 보고서에 graphical abstract가 없으면 labhq가 `graphical_abstract.svg`를 그려 정리본 폴더에 두고 README·`report.md`의 첫 그림으로 링크합니다. 라벨은 정리본 문서와 같은 가림 검사를 거칩니다.
 정리본에는 `report.pdf`도 넣습니다. 가려 쓴 `report.md`와 요청 묶음의 원본 그림을 Edge·Chrome으로 한 번 인쇄합니다. README가 PDF를 링크하고 게시 카드에는 크기 경고가 있으면 한 줄로 보입니다.
@@ -1010,7 +1010,7 @@ accept면 CSO가 결론·수치 문장마다 `[[claim:<step_id>/<claim_id>]]`를
 
 카드 메모는 결정이 아니고 다음 일을 맡은 쪽에 전달됩니다(PI 점검 R11). CP1 승인 메모는 그 계획의 모든 단계 prompt에, CP2 승인 메모는 리뷰와 보고서 prompt에(이어 간 요청은 앞 차수 CP2 메모도), 이어 가기 메모와 직전 CP2 메모는 새 계획 prompt에 들어갑니다(CP2 수정 요청 메모는 새 계획의 수정 요청 자체로 한 번만 들어가고, 새 리뷰 prompt에도 들어갑니다). prompt에는 2,000자까지만 넣고 잘렸다고 표시하며, 전문은 receipt와 보고서 감사 부록에 남습니다. 재사용된 단계는 다시 돌지 않으므로 새 CP1 메모를 받지 않습니다. 계획에는 숫자 `budget_usd`(선택)를 둘 수 있습니다. CP1을 승인하면 승인 때까지 쓴 비용(브리핑·선례·확인 질문·계획 단계, 이어 간 요청은 앞 차수 작업까지)에 `budget_usd`를 더한 값과 설정 상한(요청 예산, 없으면 `policy.budget.per_request_usd`) 가운데 작은 값이 요청의 집행 상한이 되고, 넘으면 예산 카드가 뜹니다(R17). CP1 카드 요약 끝줄(`집행 상한 $5.96(계획 예산 $3.00 + 계획까지 쓴 $2.96)`)과 `detail.budget`(`plan_budget_usd`·`spent_before_plan_usd`·`cap_usd`)에 그 상한과 내역이 보입니다. 이어 가기 차수는 그 차수 CP1 때까지 쓴 비용으로 다시 셉니다. 승인 직후 지금까지 쓴 비용을 새 상한으로 한 번 판정하므로, 단계를 돌리지 않고 끝나는 요청(`plan_only`, `evidence_checkpoint` 꺼짐)도 설정 상한이 이미 쓴 비용보다 낮으면 예산 카드가 뜹니다. 단계와 리뷰 prompt에는 `protocol.resource_limits` 문구와 별도로 실제 집행 상한이 한 줄 들어갑니다. `budget_usd`에 true/false를 쓴 계획은 검증에 걸려 교정을 받습니다. 이어 간 요청의 감사 부록에는 앞 차수 CP2 메모도 차수와 함께 전문으로 남습니다. `budget_usd`가 없는 계획은 지금처럼 요청 예산이나 정책 상한을 씁니다.
 
-`labhq verify <request_id>`는 gateway의 요청 기록을 읽고, runner PC의 작업 폴더에서 산출을 같은 규칙(상한까지만 읽기, 링크·junction 안 따라감, 통제 구역 제외)으로 다시 해시해 기록과 비교합니다. 요청 묶음이 있으면 link·junction을 먼저 거부한 뒤 JSON 구조·reference·경로 containment, 요청 ID, MANIFEST 필수 필드 형식, 파일↔`MANIFEST.tsv`↔crate의 size·sha256을 검사합니다. crate가 `File`로 선언한 파일은 MANIFEST status와 상관없이 있는지와 hash를 보고, status가 crate 기록과 다르면 문제로 적습니다(#475). 너무 깊게 중첩된 metadata JSON은 오류로 끝나지 않고 문제로 적습니다. MANIFEST에 기록된 crate·README가 없거나 README를 읽지 못하면 이전 형식으로 간주하지 않습니다. 외부 입력은 `INPUTS.tsv`와 crate에 적힌 hash끼리만 대조하며 원본을 재해시했다고 표시하지 않습니다. crate가 없는 이전 묶음은 기존 판정을 유지합니다. 연구 요청은 보고서 앵커 검사도 다시 돌리고, 보고하지 않은 산출은 경고로 보입니다. 문제가 없으면 exit 0, 불일치·없는 파일·앵커 문제는 1, 요청이나 작업 폴더가 없으면 2입니다. `--bundle out.zip`과 웹 요청 상세의 **감사 번들**은 `README.md`·`report.md`·`report_appendix.md`·`execution_record.md`·`claims.json`·`artifacts.json`을 담고 산출 파일은 넣지 않습니다. 예전 `부록: 실행 기록`도 만들 때 운전 기록으로 분리합니다. gateway에 작업 폴더가 없으면 기록만 담고 runner PC의 `labhq verify` 재검사를 안내합니다. 내장 MCP(hpc·ask)의 실패는 isError로 돌아가며 끝에 "이 실패는 증거도 부재 증명도 아닙니다"가 붙습니다. 일반 단계는 Findings·Evidence·Not established·Method changes 블록을 남기며, 모으지 않은 Evidence 경로와 실패한 도구 호출은 거부 대신 최종 보고서 경고로 올라갑니다(#58).
+`labhq verify <request_id>`는 gateway의 요청 기록을 읽고, runner PC의 작업 폴더에서 산출을 같은 규칙(상한까지만 읽기, 링크·junction 안 따라감, 통제 구역 제외)으로 다시 해시해 기록과 비교합니다. 요청 묶음이 있으면 link·junction을 먼저 거부한 뒤 JSON 구조·reference·경로 containment, 요청 ID, MANIFEST 필수 필드 형식, 파일↔`MANIFEST.tsv`↔crate의 size·sha256을 검사합니다. crate가 `File`로 선언한 파일은 MANIFEST status와 상관없이 있는지와 hash를 보고, status가 crate 기록과 다르면 문제로 적습니다(#475). 너무 깊게 중첩된 metadata JSON은 오류로 끝나지 않고 문제로 적습니다. MANIFEST에 기록된 crate·README가 없거나 README를 읽지 못하면 이전 형식으로 간주하지 않습니다. 외부 입력은 `INPUTS.tsv`와 crate에 적힌 hash끼리만 대조하며 원본을 재해시했다고 표시하지 않습니다. crate가 없는 이전 묶음은 기존 판정을 유지합니다. 연구 요청은 보고서 앵커 검사도 다시 돌리고, 보고하지 않은 산출은 경고로 보입니다. 문제가 없으면 exit 0, 불일치·없는 파일·앵커 문제는 1, 요청이나 작업 폴더가 없어 끝까지 검사하지 못하면 2입니다. 그림 WARN은 판정을 바꾸지 않고 exit 0/1에서도 `--bundle`을 만듭니다. `--bundle out.zip`과 웹 요청 상세의 **감사 번들**은 `README.md`·`report.md`·`report_appendix.md`·`execution_record.md`·`claims.json`·`artifacts.json`을 담고 산출 파일은 넣지 않습니다. 예전 `부록: 실행 기록`도 만들 때 운전 기록으로 분리합니다. gateway에 작업 폴더가 없으면 기록만 담고 runner PC의 `labhq verify` 재검사를 안내합니다. 내장 MCP(hpc·ask)의 실패는 isError로 돌아가며 끝에 "이 실패는 증거도 부재 증명도 아닙니다"가 붙습니다. 일반 단계는 Findings·Evidence·Not established·Method changes 블록을 남기며, 모으지 않은 Evidence 경로와 실패한 도구 호출은 거부 대신 최종 보고서 경고로 올라갑니다(#58).
 
 ### 최종 초안 수용(CP4)
 
