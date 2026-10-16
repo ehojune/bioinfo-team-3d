@@ -6,3 +6,6 @@ rows:
 - sha: 94bc05b
   at: 2026-10-16 20:10
   text: PNG 그래픽 초록만 있는 요청에도 포트폴리오용 SVG 대체본을 만든다
+- sha: 914dbf9
+  at: 2026-10-16 20:59
+  text: wheel manifest, 게시 payload 선별, Markdown 링크 검사를 회귀 test와 함께 바로잡는다
