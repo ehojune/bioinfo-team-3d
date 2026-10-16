@@ -32,7 +32,14 @@ JATS = """<?xml version="1.0" encoding="UTF-8"?>
     <p>The odds ratio was 1.02.<table-wrap><label>Table 1</label><caption><p>Boys by group</p></caption>
      <table><tr><th>Group</th><th>Boys</th><th>aOR</th><th colspan="2">95% CI</th></tr>
       <tr><td>Office</td><td>510</td><td>1.02</td><td>0.99</td><td>1|05</td></tr></table>
-    </table-wrap></p>
+    </table-wrap>After the table, <italic>no</italic> trend.<fig><label>Figure 2</label><caption><p>Trend</p></caption></fig>Last.</p>
+    <table-wrap><label>Table 2</label><caption><p>Spans</p></caption><table>
+     <tr><th rowspan="2">Group</th><th colspan="2">Boys</th><th rowspan="2">p</th></tr>
+     <tr><th>n</th><th>%</th></tr>
+     <tr><td>Office</td><td>510</td><td>51.2</td><td>0.04</td></tr>
+     <tr><td rowspan="2">Manual</td><td>480</td><td>50.9</td><td>0.30</td></tr>
+     <tr><td>12</td><td>49.0</td><td>0.88</td></tr>
+    </table></table-wrap>
     <fig><label>Figure 1</label><caption><p>Forest plot</p></caption></fig>
    </sec>
   </sec>
@@ -101,12 +108,18 @@ async def test_an_open_access_paper_is_written_as_markdown_and_the_record_keeps_
     row = out["results"][0]
     assert row["ok"] and row["access_level"] == "full_text" and row["pmcid"] == "PMC999"
     assert row["sections"] == ["Introduction", "Results"]
-    assert (row["n_tables"], row["n_figures"], row["n_references"]) == (1, 1, 2)
+    assert (row["n_tables"], row["n_figures"], row["n_references"]) == (2, 2, 2)
     assert row["text_file"] == ".tmp/literature/pmid-123.md"
     text = (tmp_path / "work" / row["text_file"]).read_text(encoding="utf-8")
     assert "## Results" in text and "### Main model" in text and "The odds ratio was 1.02." in text
     assert "| Group | Boys | aOR | 95% CI |  |" in text  # the spanning header keeps the columns aligned
     assert "| Office | 510 | 1.02 | 0.99 | 1\\|05 |" in text
+    # Text after an inline table or figure stays, in order (PR #698 review).
+    order = ["The odds ratio was 1.02.", "**Table 1**", "After the table, no trend.", "Figure 2 Trend", "Last."]
+    assert [text.index(piece) for piece in order] == sorted(text.index(piece) for piece in order)
+    # rowspan keeps every value under its own header.
+    assert ("| Group | Boys |  | p |\n|---|---|---|---|\n|  | n | % |  |\n| Office | 510 | 51.2 | 0.04 |\n"
+            "| Manual | 480 | 50.9 | 0.30 |\n|  | 12 | 49.0 | 0.88 |") in text
     assert "Figure 1 Forest plot" in text and "## References" in text
     assert "- Irgens A. Sex ratio. 1997. 111\n" in text  # an ID already in the citation is not repeated
     assert "- Magnuson A. Office work. 2007. (DOI 10.1080/x)" in text

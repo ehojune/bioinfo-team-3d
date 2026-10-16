@@ -87,24 +87,48 @@ def _cell(node: ET.Element) -> str:
     return _text(node).replace("|", "\\|")
 
 
-def _span(cell: ET.Element) -> int:
+def _span(cell: ET.Element, attribute: str, limit: int) -> int:
     try:
-        return max(1, min(int(cell.get("colspan") or 1), 50))
+        return max(1, min(int(cell.get(attribute) or 1), limit))
     except ValueError:
         return 1
+
+
+def _grid(wrap: ET.Element) -> list[list[str]]:
+    """Table rows on a column grid: a cell spanning columns or rows leaves empty cells where it reaches, so every
+    value stays under its own header (an effect size must not slide under the next column; PR #698 review)."""
+    rows, below = [], {}  # below: column -> rows a cell from an earlier row still covers
+    for tr in wrap.iter("tr"):
+        cells = [c for c in tr if c.tag in ("td", "th")]
+        row, col = [], 0
+        while cells or any(c >= col for c in below):
+            if below.get(col):
+                row.append("")
+                below[col] -= 1
+                if not below[col]:
+                    del below[col]
+                col += 1
+                continue
+            if not cells:
+                row.append("")
+                col += 1
+                continue
+            cell = cells.pop(0)
+            width, height = _span(cell, "colspan", 50), _span(cell, "rowspan", 500)
+            row += [_cell(cell)] + [""] * (width - 1)
+            if height > 1:
+                for c in range(col, col + width):
+                    below[c] = height - 1
+            col += width
+        if row:
+            rows.append(row)
+    return rows
 
 
 def _table(wrap: ET.Element) -> list[str]:
     label, caption = _text(wrap.find("label")), _text(wrap.find("caption"))
     lines = [f"**{label}** {caption}".strip(), ""]
-    rows = []
-    for tr in wrap.iter("tr"):
-        row = []
-        for c in tr:
-            if c.tag in ("td", "th"):  # a spanning header cell keeps the columns under it aligned
-                row += [_cell(c)] + [""] * (_span(c) - 1)
-        if row:
-            rows.append(row)
+    rows = _grid(wrap)
     if rows:
         width = max(len(row) for row in rows)
         rows = [row + [""] * (width - len(row)) for row in rows]
@@ -124,19 +148,32 @@ def _section(sec: ET.Element, level: int, out: list[str], counts: dict[str, int]
             titles.append(title)
     for child in sec:
         if child.tag == "p":
-            # A table or figure inside a paragraph is written after it, not flattened into the sentence.
-            inner = [node for node in child if node.tag in ("table-wrap", "fig")]
-            for node in inner:
-                child.remove(node)
-            paragraph = _text(child)
-            if paragraph:
-                out += [paragraph, ""]
-            for node in inner:
-                _block(node, out, counts)
+            _paragraph(child, out, counts)
         elif child.tag == "sec":
             _section(child, level + 1, out, counts, titles)
         elif child.tag in ("table-wrap", "fig", "list", "boxed-text", "disp-quote"):
             _block(child, out, counts)
+
+
+def _paragraph(p: ET.Element, out: list[str], counts: dict[str, int]) -> None:
+    """A paragraph in document order: a table or figure inside it becomes its own block where it stands, and the
+    sentences before and after it (the element's tail) stay on either side (PR #698 review)."""
+    parts = [p.text or ""]
+
+    def flush() -> None:
+        text = " ".join("".join(parts).split())
+        if text:
+            out.extend([text, ""])
+        parts.clear()
+
+    for node in p:
+        if node.tag in ("table-wrap", "fig"):
+            flush()
+            _block(node, out, counts)
+        else:
+            parts.append("".join(node.itertext()))
+        parts.append(node.tail or "")
+    flush()
 
 
 def _block(node: ET.Element, out: list[str], counts: dict[str, int]) -> None:
@@ -171,11 +208,10 @@ def jats_markdown(xml: str, header: list[str]) -> tuple[str, dict[str, Any]]:
     for child in body:
         if child.tag == "sec":
             _section(child, 2, out, counts, titles)
-        elif child.tag in ("p", "table-wrap", "fig", "list"):
-            if child.tag == "p":
-                out += [_text(child), ""]
-            else:
-                _block(child, out, counts)
+        elif child.tag == "p":
+            _paragraph(child, out, counts)
+        elif child.tag in ("table-wrap", "fig", "list"):
+            _block(child, out, counts)
     # Tables and figures kept in floats-group (some publishers) instead of the body.
     floats = root.find("floats-group")
     for node in floats if floats is not None else []:
