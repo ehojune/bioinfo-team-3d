@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 19:38 | [`a7a2b65`](https://github.com/ehojune/bioinfo-team-3d/pull/696/commits/a7a2b65) | 계획 크기 상한의 저장소·배포 설정 예시를 일치시킴 |
+| 19:17 | [`1b3f19d`](https://github.com/ehojune/bioinfo-team-3d/pull/696/commits/1b3f19d) | StructuredOutput 실패 원문 보존과 큰 계획 축소 재시도·크기 경고를 추가 |
 | 19:12 | [`b0fc244`](https://github.com/ehojune/bioinfo-team-3d/pull/692/commits/b0fc244) | PR #693의 staff-skill schema와 writing-skill prompt 변경에 맞춰 고정 hash를 갱신 |
 | 19:08 | [`2710613`](https://github.com/ehojune/bioinfo-team-3d/pull/692/commits/2710613) | main의 직원 글쓰기 prompt와 한국어 품질 기록을 그림 게시 변경에 함께 병합 |
 | 18:37 | [`bf1c3c9`](https://github.com/ehojune/bioinfo-team-3d/pull/692/commits/bf1c3c9) | 계획에 선언된 핵심 그림만 결과 절 누락 경고 대상으로 삼고 예전 묶음의 기존 규칙을 유지 |
