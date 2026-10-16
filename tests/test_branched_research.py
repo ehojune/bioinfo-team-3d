@@ -96,6 +96,17 @@ def test_four_branch_plan_rejects_synthesis_that_only_depends_on_branch_a():
                                active_packs={})
 
 
+def test_split_synthesis_steps_that_each_read_one_branch_are_rejected():
+    """S1 <- A and S2 <- B covered every branch only as a union; no step integrated them (PR #703 review)."""
+    plan = branched_plan((1, 1), synthesis=2)
+    plan["steps"][-2]["depends_on"] = ["A1"]
+    plan["steps"][-1]["depends_on"] = ["B1"]
+    with pytest.raises(ValueError, match=r"no single synthesis step.*missing branches: B"):
+        validate_research_plan(plan, max_steps=12, max_branches=5, max_branch_steps=8, active_packs={})
+    plan["steps"][-1]["depends_on"] = ["B1", "S1"]  # S2 now reads B and, through S1, A
+    validate_research_plan(plan, max_steps=12, max_branches=5, max_branch_steps=8, active_packs={})
+
+
 @pytest.mark.asyncio
 async def test_mock_cso_four_branch_thirty_step_plan_is_frozen_whole():
     settings = Settings()

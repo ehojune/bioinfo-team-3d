@@ -295,12 +295,24 @@ def branch_plan_topology(branches: list[Any], steps: list[Any]) -> dict[str, Any
             pending.extend(dependencies.get(dependency, []))
         return found
 
-    synthesis_ancestors = set().union(*(ancestors(step_id) for step_id in synthesis_ids)) if synthesis_ids else set()
-    missing_synthesis_branches = [branch_id for branch_id in branch_ids
-                                  if not terminals[branch_id] or
-                                  any(step_id not in synthesis_ancestors for step_id in terminals[branch_id])]
+    def missing_from(step_id: str) -> list[str]:
+        seen = ancestors(step_id)
+        return [branch_id for branch_id in branch_ids
+                if not terminals[branch_id] or any(terminal not in seen for terminal in terminals[branch_id])]
+
+    # One synthesis step must read every branch: the union over several steps let S1 <- A and S2 <- B pass although no
+    # step integrates A with B (PR #703 review). Without such a step, report what the most complete one leaves out.
+    missing_by_synthesis = {step_id: missing_from(step_id) for step_id in synthesis_ids}
+    final_synthesis_ids = [step_id for step_id, missing in missing_by_synthesis.items() if not missing]
+    if final_synthesis_ids:
+        missing_synthesis_branches: list[str] = []
+    elif missing_by_synthesis:
+        missing_synthesis_branches = min(missing_by_synthesis.values(), key=len)
+    else:
+        missing_synthesis_branches = list(branch_ids)
     return {"branch_ids": branch_ids, "branch_by_step": branch_by_step, "terminals": terminals,
-            "synthesis_ids": synthesis_ids, "missing_synthesis_branches": missing_synthesis_branches}
+            "synthesis_ids": synthesis_ids, "final_synthesis_ids": final_synthesis_ids,
+            "missing_synthesis_branches": missing_synthesis_branches}
 
 
 class PackPlanValue(StrictModel):
@@ -443,8 +455,8 @@ class ResearchPlan(StrictModel):
         if self.branches:
             topology = branch_plan_topology(self.branches, self.steps)
             if topology["missing_synthesis_branches"]:
-                raise ValueError("synthesis dependency paths omit terminal results from branches: " +
-                                 ", ".join(topology["missing_synthesis_branches"]))
+                raise ValueError("no single synthesis step depends on every branch's terminal results; missing "
+                                 "branches: " + ", ".join(topology["missing_synthesis_branches"]))
         return self
 
 
