@@ -98,12 +98,9 @@ def read_only_profile(agent: AgentSpec) -> AgentSpec:
         raise RuntimeError(f"read-only profile does not classify AgentSpec fields: {sorted(unclassified)}")
     kept = {name: copy.deepcopy(getattr(agent, name)) for name in READ_ONLY_KEEPS}
     fields = copy.deepcopy(READ_ONLY_FIELDS)
-    # First-party Markdown skills have no hooks or MCP. Keep only those; plugin requirements stay off.
-    from ..staff_skills import is_bundled_skill
-    fields["required_skills"] = ([name for name in agent.required_skills if is_bundled_skill(name)]
-                                 if agent.engine in {"claude_code", "codex"} else [])
-    if fields["required_skills"] and agent.engine == "claude_code":
-        fields["allow_skills"] = True
+    # Skill tools and plugins stay off. Preserve the safe writing guidance as plain role instructions instead.
+    from ..staff_skills import bundled_read_only_rules, bundled_requirements
+    kept["system_prompt"] = kept["system_prompt"].rstrip() + bundled_read_only_rules(bundled_requirements(agent))
     if agent.engine == "claude_code":
         fields["builtin_mcp"] = ["approval"]
     elif agent.engine == "codex":

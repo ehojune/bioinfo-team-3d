@@ -4,10 +4,14 @@ from pathlib import Path
 
 import yaml
 
+from labhq.adapters import get_adapter
+from labhq.adapters.base import RunContext
 from labhq.korean_qc import check_document, check_preservation
 from labhq.adapters.read_only import read_only_profile
 from labhq.models import AgentSpec, Engine, Task
+from labhq.plugin_checks import read_plugin_manifest, skill_file
 from labhq.runner.workspace import TaskWorkspace
+from labhq.settings import Settings
 from labhq.staff_skills import install_required_skills
 
 
@@ -22,6 +26,10 @@ TOKEN_COLORS = {
 
 def agent(name: str) -> dict:
     return yaml.safe_load((ROOT / "agents" / "core" / f"{name}.yaml").read_text(encoding="utf-8"))
+
+
+async def _emit(_kind, _data):
+    pass
 
 
 def test_bundled_writing_skills_have_their_contract_and_license_files():
@@ -73,6 +81,56 @@ def test_bundled_required_skill_is_copied_for_claude_and_codex(tmp_path):
 
     forced_mock = staff.model_copy(update={"engine": Engine.mock})
     assert read_only_profile(forced_mock).required_skills == []
+
+
+def test_bundled_skill_reaches_each_engine_loader(tmp_path):
+    task = Task(id="t", request_id="r", agent_id="writer", prompt="write")
+    claude = AgentSpec(id="writer", name="writer", role="writer", engine=Engine.claude_code,
+                       allow_skills=True, required_skills=["humanizer"])
+    claude_workspace = TaskWorkspace(tmp_path / "claude", task, claude)
+    assert install_required_skills(claude_workspace, claude) is None
+    claude_ctx = RunContext(task=task, agent=claude, workdir=claude_workspace.dir, settings=Settings(),
+                            mcp_servers=[], env={}, emit=_emit, prompt="write")
+    claude_adapter = get_adapter(Engine.claude_code, claude_ctx.settings)
+    assert claude_adapter.preflight_error(claude_ctx, {}) is None
+    claude_adapter.prepare(claude_ctx)
+    command = claude_adapter.build_command(claude_ctx)
+    plugin_dirs = [Path(command[i + 1]) for i, arg in enumerate(command) if arg == "--plugin-dir"]
+    assert SKILLS.parent in plugin_dirs
+    assert read_plugin_manifest(SKILLS.parent)["name"] == "labhq-bundled-skills"
+    assert skill_file(SKILLS.parent, "humanizer").samefile(SKILLS / "humanizer" / "SKILL.md")
+
+    codex = AgentSpec(id="writer", name="writer", role="writer", engine=Engine.codex,
+                      required_skills=["humanizer"])
+    codex_workspace = TaskWorkspace(tmp_path / "codex", task, codex)
+    assert install_required_skills(codex_workspace, codex) is None
+    codex_ctx = RunContext(task=task, agent=codex, workdir=codex_workspace.dir, settings=Settings(),
+                           mcp_servers=[], env={}, emit=_emit, prompt="write")
+    codex_command = get_adapter(Engine.codex, codex_ctx.settings).build_command(codex_ctx)
+    assert codex_command[codex_command.index("-C") + 1] == str(codex_workspace.dir)
+    assert (codex_workspace.dir / ".agents" / "skills" / "humanizer" / "SKILL.md").is_file()
+
+
+def test_read_only_profile_replaces_bundled_skills_with_prompt_rules(tmp_path):
+    staff = AgentSpec(id="writer", name="writer", role="writer", engine=Engine.claude_code,
+                      system_prompt="원래 역할", allow_skills=True,
+                      required_skills=["humanizer", "graphical-abstract"])
+    profile = read_only_profile(staff)
+    assert profile.required_skills == [] and not profile.allow_skills
+    for text in ("되어진다", "가지고 있다", "에 있어서", "비유의", "통계적으로 유의하지 않음",
+                 "유의차", "통계적으로 유의한 차이", "미보정", "보정 전", "쉼표"):
+        assert text in profile.system_prompt
+    for text in ("질문", "자료", "방법", "핵심 결과", "결론", "<title>", "<desc>", "PNG", "캡처", "잘림", "겹침"):
+        assert text in profile.system_prompt
+
+    task = Task(id="t", request_id="r", agent_id="writer", prompt="review")
+    ctx = RunContext(task=task, agent=profile, workdir=tmp_path, settings=Settings(), mcp_servers=[],
+                     env={}, emit=_emit, prompt="review", read_only=True)
+    adapter = get_adapter(Engine.claude_code, ctx.settings)
+    adapter.prepare(ctx)
+    command = adapter.build_command(ctx)
+    assert "--plugin-dir" not in command and "--disable-slash-commands" in command
+    assert command[command.index("--tools") + 1] == "Read,Glob,Grep,Write,Edit"
 
 
 def test_korean_qc_warns_outside_quotes_and_passes_quoted_text():

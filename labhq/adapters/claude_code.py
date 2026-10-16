@@ -18,6 +18,7 @@ from pathlib import Path, PurePath
 
 from ..policy import claude_allowed_tools
 from ..plugin_checks import read_plugin_manifest, skill_file
+from ..staff_skills import (BUNDLED_PLUGIN_DIR, BUNDLED_PLUGIN_NAME, bundled_requirements)
 from ..util import event_preview, short, tool_input_fingerprint, tool_input_summary
 from .base import (AgentAdapter, role_footer, RunContext, RunState, SHELL_TOOLS, child_config_dirs, expand_env,
                    note_command_ok, note_failed_output, record_model_id, wrap_cwd)
@@ -200,6 +201,8 @@ class ClaudeCodeAdapter(AgentAdapter):
 
     def _plugin_dirs(self, ctx: RunContext, env: dict[str, str]) -> list[str]:
         directories = [expand_env({"dir": raw}, env)["dir"] for raw in ctx.agent.plugin_dirs]
+        if bundled_requirements(ctx.agent) and not ctx.read_only:
+            directories.append(str(BUNDLED_PLUGIN_DIR))
         if ctx.agent.id == self.settings.recruit.agent_id and not ctx.read_only:
             from ..recruit.paper2agent import skill_path
             directories.append(str(skill_path("claude_code", self.settings).parent.parent))
@@ -239,7 +242,11 @@ class ClaudeCodeAdapter(AgentAdapter):
             directories = self._plugin_dirs(ctx, env)
         except ValueError as exc:
             return str(exc)
-        labels = [*ctx.agent.plugin_dirs, "Paper2Agent (labhq setup-paper2agent)"]
+        labels = [*ctx.agent.plugin_dirs]
+        if bundled_requirements(ctx.agent) and not ctx.read_only:
+            labels.append("labhq bundled skills")
+        if ctx.agent.id == self.settings.recruit.agent_id and not ctx.read_only:
+            labels.append("Paper2Agent (labhq setup-paper2agent)")
         for raw, directory in zip(labels, directories):
             for var in PLUGIN_VAR.findall(raw):
                 if not env.get(var):
@@ -255,6 +262,11 @@ class ClaudeCodeAdapter(AgentAdapter):
             found[str(manifest.get("name") or "")] = path
         for skill in ctx.agent.required_skills:
             if ":" not in skill:
+                plugin = found.get(BUNDLED_PLUGIN_NAME)
+                if plugin is None:
+                    return f"required bundled skill '{skill}' has no validated Claude plugin"
+                if not skill_file(plugin, skill).is_file():
+                    return f"required bundled skill '{skill}' is missing from the Claude plugin"
                 continue
             plugin, name = skill.split(":")
             if plugin not in found:

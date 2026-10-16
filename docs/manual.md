@@ -233,7 +233,8 @@ PI 토큰으로 `POST /api/shutdown`을 호출하며 `down`의 상태 재확인�
 - 영문자 8개 이상이며 영문자·한글 중 영문자가 60% 이상이면 영어로 판정합니다. 코드·경로도 설명 대상입니다. 한국어 설명 속 영문 기술 용어는 허용하고 코드·경로는 거부합니다. 메시지별 결과와 실패를 저장해 재번역하지 않습니다.
 - 실패한 이어 묻기는 번역 후에도 실패로 표시합니다. 통역은 요청 단계·연구 round 기록·재접속 작업 목록에서 빼고, 비용 집계와 종료 전 마무리 작업에는 포함합니다. 원 task·event는 감사용 raw ledger에 남습니다.
 - 모델 없음·연결 끊김·상한 초과·번역 실패는 원문과 **번역 못 함**으로 표시합니다. 요청에 속하지 않는 메시지와 12,000자를 넘는 원문도 같은 방식으로 전달합니다.
-- 짧은 메시지는 prompt의 한국어 규칙으로 바로 쓰고, 보고서·해석·정리본은 vendored `humanizer`를 적용합니다. 보고서와 정리본 README의 따옴표 밖 금지 표현 8종은 `PASS`/`WARN`으로 기록하며 윤문 보존 검사는 후속 연결입니다.
+- 쓰기 가능한 직원의 vendored skill은 Claude에서 검증된 `labhq-bundled-skills` plugin으로, Codex에서 작업 폴더 `.agents/skills`로 읽습니다. 읽기 전용 실행은 skill 도구를 끄고 금지 표현·전문어·쉼표와 그래픽 초록 점검 규칙만 prompt에 넣습니다.
+- 보고서와 정리본 README의 따옴표 밖 금지 표현 8종은 `PASS`/`WARN`으로 기록하며 윤문 보존 검사는 후속 연결입니다.
 
 2.5D 메신저는 최근 40건을 열고, 위로 스크롤하면 이전 기록을 40건씩 이어 붙입니다. 불러오는 중에는 안내를, 마지막에는 **처음입니다**를 표시합니다. 새로고침해도 저장된 기록을 다시 조회합니다. 직원 활동·feed의 메모리 상한과 별개로 질문·답·직원 메시지·보고 알림을 보관하며 도구 출력·생각·디버그는 제외합니다. 업그레이드 전에 보관 상한으로 삭제된 이벤트는 복구되지 않습니다.
 
@@ -638,8 +639,8 @@ Codex 직원은 `tools`에 `WebSearch`나 `WebFetch`가 있으면 `web_search="l
 | Claude Code plugin | bioinfo-agent (`bioinfo`) | bioinfo plugin 로드 (plugin_dirs) | [bioinfo-agent](../agents/core/bioinfo-agent.yaml) | [직원 설정](../agents/core/) |
 | skill | Paper2Agent | 논문·코드를 파견직으로 변환 (setup-paper2agent 필요) | [recruiter](../agents/core/recruiter.yaml) | [Paper2Agent](https://github.com/jmiao24/Paper2Agent) · [직원 설정](../agents/core/) · [채용 코드](../labhq/recruit/paper2agent.py) |
 | skill | bioinfo:bioinfo-analyze | 실행 전 존재 확인 (required_skills) | [bioinfo-agent](../agents/core/bioinfo-agent.yaml) | [직원 설정](../agents/core/) |
-| skill | graphical-abstract | 저장소에서 작업공간에 장착 (required_skills) | [analyst](../agents/core/analyst.yaml), [cso](../agents/core/cso.yaml), [editor](../agents/core/editor.yaml) | [직원 설정](../agents/core/) |
-| skill | humanizer | 저장소에서 작업공간에 장착 (required_skills) | [analyst](../agents/core/analyst.yaml), [biologist](../agents/core/biologist.yaml), [cso](../agents/core/cso.yaml), [editor](../agents/core/editor.yaml), [qc_reviewer](../agents/core/qc_reviewer.yaml) | [직원 설정](../agents/core/) |
+| skill | graphical-abstract | Claude plugin·Codex .agents/skills (required_skills) | [analyst](../agents/core/analyst.yaml), [cso](../agents/core/cso.yaml), [editor](../agents/core/editor.yaml) | [직원 설정](../agents/core/) |
+| skill | humanizer | Claude plugin·Codex .agents/skills (required_skills) | [analyst](../agents/core/analyst.yaml), [biologist](../agents/core/biologist.yaml), [cso](../agents/core/cso.yaml), [editor](../agents/core/editor.yaml), [qc_reviewer](../agents/core/qc_reviewer.yaml) | [직원 설정](../agents/core/) |
 | 엔진 기능 | Claude Code | 직원 실행 엔진 | [analyst](../agents/core/analyst.yaml), [bioinfo-agent](../agents/core/bioinfo-agent.yaml), [biologist](../agents/core/biologist.yaml), [chief_of_staff](../agents/core/chief_of_staff.yaml), [cso](../agents/core/cso.yaml), [data_steward](../agents/core/data_steward.yaml), [qc_reviewer](../agents/core/qc_reviewer.yaml), [recruiter](../agents/core/recruiter.yaml) | [직원 설정](../agents/core/) |
 | 엔진 기능 | Codex | 직원 실행 엔진 | [editor](../agents/core/editor.yaml), [engineer](../agents/core/engineer.yaml), [facilities](../agents/core/facilities.yaml), [lit_scout](../agents/core/lit_scout.yaml), [sci_reviewer](../agents/core/sci_reviewer.yaml) | [직원 설정](../agents/core/) |
 | 엔진 기능 | Codex 웹 검색 | WebSearch / WebFetch → web_search="live" | [lit_scout](../agents/core/lit_scout.yaml), [sci_reviewer](../agents/core/sci_reviewer.yaml) | [adapter](../labhq/adapters/codex.py) · [직원 설정](../agents/core/) |

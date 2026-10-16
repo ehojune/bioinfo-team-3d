@@ -194,7 +194,7 @@ def collect(agents_dir: Path) -> list[Integration]:
                     add("skill", skill, "실행 전 존재 확인 (required_skills)", staff, source,
                         look=None)
         for skill in bundled_skills:
-            add("skill", skill, "저장소에서 작업공간에 장착 (required_skills)", staff, source,
+            add("skill", skill, "Claude plugin·Codex .agents/skills (required_skills)", staff, source,
                 look=Look("직원 skill", TOOLS_ANCHOR, "", SKILL_COLOR))
 
         # The recruiter declares the skill in its prompt/tools; paper2agent.py invokes it.
