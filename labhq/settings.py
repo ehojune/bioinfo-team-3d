@@ -545,9 +545,8 @@ class AnnotSettings(BaseModel):
 class GitHubSettings(BaseModel):
     ask_storage: bool = False  # general requests opt in; research requests always ask
     auto_publish_results: bool = False  # otherwise review the editor draft in the web office
-    # report.pdf is at most this big: its figures are shrunk to fit, not left out (#584, #608). The cap stays under what
-    # the GitHub contents API takes as base64 (100 MB), so at most 75.
-    edition_pdf_max_mb: float = Field(default=50, gt=0, le=75)
+    # Optional warning threshold only. Report figures and PDFs are never shrunk to meet it (#690).
+    edition_pdf_max_mb: float | None = Field(default=None, gt=0)
     token_env: str = "GITHUB_TOKEN"  # token is read from this env var on the gateway host, never from YAML
     api_url: str = "https://api.github.com"
     dashboard_url: str | None = None  # link back to the web office in issue comments

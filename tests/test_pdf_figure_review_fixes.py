@@ -53,8 +53,9 @@ async def test_the_published_pdf_drops_figures_the_reviewed_edition_leaves_out(t
     for note in ("비공개 그림", "움직이는 그림", "미보고 그림"):
         assert f"(그림 생략: {note})" in page  # dropped with a note, as in the edition
     edition_report = (edition / "report.md").read_text(encoding="utf-8")
-    for note in ("비공개 그림", "움직이는 그림", "미보고 그림", "큰 그림"):
-        assert f"*(그림 생략: {note})*" in edition_report  # the PI reviewed these omissions (big only for its size)
+    for note in ("비공개 그림", "움직이는 그림", "미보고 그림"):
+        assert f"*(그림 생략: {note})*" in edition_report
+    assert "![큰 그림](steps/s1/outputs/big.png)" in edition_report
 
 
 def test_edition_candidates_is_the_eligibility_edition_assets_copies_by(tmp_path, monkeypatch):
@@ -68,7 +69,8 @@ def test_edition_candidates_is_the_eligibility_edition_assets_copies_by(tmp_path
     names = set(edition_candidates(request, hub.s))
     assert names == {"steps/s1/outputs/plot.png", "steps/s1/outputs/big.png", "steps/s1/outputs/notes.md"}
     assets, images = edition_assets(request, hub.s)
-    assert set(images) == {"steps/s1/outputs/plot.png"} and set(assets) == {"steps/s1/outputs/notes.md"}  # big: size
+    assert set(images) == {"steps/s1/outputs/plot.png", "steps/s1/outputs/big.png"}
+    assert set(assets) == {"steps/s1/outputs/notes.md"}
     text = pdf_report_text({**request, "report": "![a](steps/s1/outputs/big.png) ![b](steps/s1/outputs/private.png)"}, hub.s)
     assert "![a](steps/s1/outputs/big.png)" in text and "private.png" not in text and "(그림 생략: b)" in text
 
@@ -160,7 +162,7 @@ def test_verify_counts_the_drawn_abstract_against_the_eleven(tmp_path):
     settings, request, _t, bundle = build(tmp_path / "eleven", figure_report(11), files=eleven)
     problems = bundle_figure_check(bundle)["problems"]
     assert len(problems) == 1 and "11장이에요" in problems[0] and "결과 그림은 10장까지" in problems[0]
-    assert verify_request(request, settings)["exit_code"] == 1  # the same report loses its 11th figure in the PDF
+    assert verify_request(request, settings)["exit_code"] == 2  # figure warnings accompany the 11-figure problem
     page, missing = build_report_html(request, bundle)
     assert page.count("<img ") == 11 and len(missing) == 1 and "11장까지만" in missing[0]
 
@@ -170,7 +172,9 @@ def test_an_abstract_of_its_own_keeps_all_eleven_places(tmp_path):
     report = ("# 결론과 권고\n\n![Graphical abstract](WD/outputs/graphical_abstract.png)\n\n"
               + "\n\n".join(f"![그림 {index}](WD/outputs/f{index}.png)" for index in range(10)) + "\n")
     settings, request, _t, bundle = build(tmp_path / "own", report, files=own)
-    assert bundle_figure_check(bundle)["problems"] == [] and verify_request(request, settings)["exit_code"] == 0
+    checked = bundle_figure_check(bundle)
+    assert checked["problems"] == [] and checked["warnings"]
+    assert verify_request(request, settings)["exit_code"] == 2
     twelve = own | {"outputs/f10.png": PNG}
     report12 = report + "\n![그림 10](WD/outputs/f10.png)\n"
     _s, _r, _t, bundle12 = build(tmp_path / "own12", report12, files=twelve)

@@ -4074,8 +4074,8 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         except ReportRefused as exc:
             raise HTTPException(409, str(exc)) from exc
         headers = {"Content-Disposition": f'attachment; filename="{built.filename}"', "X-Labhq-Report-Kind": built.kind}
-        # A PDF that needed shrunk figures says so in the same header (#608); the page and `labhq report` show it.
-        shown = built.reason or " ".join(size_notes(built.data, built.shrunk, built.over_cap, pdf_cap_bytes(settings)))
+        # A warning-only configured size is shown without changing the PDF (#690).
+        shown = built.reason or " ".join(size_notes(built.data, pdf_cap_bytes(settings)))
         if shown:  # header values are latin-1: the page decodes this with decodeURIComponent
             headers["X-Labhq-Reason"] = quote(shown, safe="")
         return Response(built.data, media_type=built.media_type, headers=headers)

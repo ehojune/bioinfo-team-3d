@@ -40,7 +40,6 @@ EDITOR_REPORT_CHARS = 100_000  # what the editor reads of the report whole; a lo
 EDITOR_OTHER_CHARS = 30_000  # the same bound for each of PROGRESS.md, REPRODUCE.md and SOURCES.md
 _PDF_NAME = "report.pdf"
 _GENERATED = ("README.md", "report.md", "PROGRESS.md", "REPRODUCE.md", "SOURCES.md")  # edition documents that may link a figure
-PDF_UPLOAD_MAX_MB = 75  # base64 of this is 100 MB, the contents API's file limit (#608); settings caps the PDF size there
 
 
 class PublishAccessError(RuntimeError):
@@ -131,9 +130,11 @@ def edition_assets(req, settings):
     for name, path in edition_candidates(req, settings).items():
         suffix = PurePosixPath(name).suffix.lower()
         size = path.stat().st_size
-        if size > 1_000_000 or total + size > 5_000_000:
-            continue
-        total += size
+        unlimited = suffix in _IMAGE_OUTPUTS or suffix == ".svg"
+        if not unlimited:
+            if size > 1_000_000 or total + size > 5_000_000:
+                continue
+            total += size
         payload = path.read_bytes()
         if suffix in _IMAGE_OUTPUTS:
             images[name] = payload
@@ -613,7 +614,7 @@ class ResultStorage:
                             docs[name] = path.read_bytes().decode("utf-8")
                 if "README.md" not in docs:
                     raise ValueError("missing editor README")
-                if pdf is not None and (not pdf.startswith(b"%PDF-") or len(pdf) > PDF_UPLOAD_MAX_MB * 1024 * 1024):
+                if pdf is not None and not pdf.startswith(b"%PDF-"):
                     raise ValueError("invalid editor PDF")
             else:
                 assets, images = edition_assets(req, self.s)
@@ -760,9 +761,8 @@ class ResultStorage:
         """``(report.pdf bytes, size note)``, or ``(None, plain Korean reason)``.
 
         The report is printed from the request bundle's original figures, whatever their size, under the edition's cleaned
-        text (#608); the edition's own copies keep their 1 MB and 5 MB limits. The PDF is at most ``github.edition_pdf_max_mb``
-        (50 MB by default): figures are shrunk to fit, never left out, and a PDF still over the cap is kept with a note. Only a
-        PDF past what the GitHub contents API takes is left out, with its size as the reason."""
+        text (#608, #690). Figure copies and the PDF are not size-limited or re-encoded. A configured
+        ``github.edition_pdf_max_mb`` value produces a warning only."""
         bundle = self.s.path(self.s.runner.workspace_root) / "requests" / rid
         text = pdf_report_text(req, self.s)
         shown = copy.deepcopy(req)
@@ -781,10 +781,7 @@ class ResultStorage:
         if built.kind != "pdf" or not built.data.startswith(b"%PDF-"):
             return None, ("이 PC에서 Edge나 Chrome을 찾지 못했어요." if built.reason == NO_BROWSER
                           else "브라우저가 PDF를 만들지 못했어요.")
-        if len(built.data) > PDF_UPLOAD_MAX_MB * 1024 * 1024:
-            return None, (f"PDF가 {len(built.data) / 1024 / 1024:.1f} MB라 GitHub에 올릴 수 있는 한도 "
-                          f"{PDF_UPLOAD_MAX_MB} MB를 넘어요.")
-        return built.data, " ".join(size_notes(built.data, built.shrunk, built.over_cap, pdf_cap_bytes(self.s)))
+        return built.data, " ".join(size_notes(built.data, pdf_cap_bytes(self.s)))
 
     async def upload(self, rid, docs, images=None, pdf=None):
         if not self.hub.requests[rid].get("pi_reviewed_at"):

@@ -380,10 +380,23 @@ DECLARED_OUTPUTS_FALLBACK_RULE = (
     "outputs/data/expression_matrix.tsv.gz) and record the chosen path, scale, and source in the same step's record "
     "(for example outputs/data/fetch_log.md or the file header). Do not declare different filenames per path.")
 
+FIGURE_OUTPUT_RULE = (
+    "Figures default to SVG and keep Korean labels as SVG <text>. With matplotlib set "
+    "rcParams[\"svg.fonttype\"] = \"none\" and font.family to ['Malgun Gothic', 'Apple SD Gothic Neo', "
+    "'Noto Sans KR', 'sans-serif']. Do not use rasterized=True even for dense scatter plots, do not request PNG "
+    "as a deliverable, and never make a figure from a screen or browser capture (preview-only capture is allowed).")
+
+ANALYSIS_FIGURE_PLAN_RULE = (
+    "Every analysis step (differential analysis, regression or trend, meta-analysis, dimensionality reduction, "
+    "pathway analysis, or QC summary) declares 1–2 key figures in outputs. Standard figures: differential "
+    "analysis -> volcano and PCA; regression or trend -> trend with interval; meta-analysis -> forest and funnel; "
+    "dimensionality reduction -> PCA; pathway analysis -> GSEA NES bar chart; QC summary -> QC summary chart. "
+    + FIGURE_OUTPUT_RULE)
+
 ANALYSIS_REPRODUCIBILITY_PLAN_RULE = (
     f"Every analysis step declares the scripts it runs under {OUTPUT_SCRIPTS_DIR} (for example "
     f"{OUTPUT_SCRIPTS_DIR}analyze.py), as well as result-determining intermediate artifacts under "
-    f"{OUTPUT_REFERENCE_DIR}. " + ABSTRACT_PLAN_RULE)
+    f"{OUTPUT_REFERENCE_DIR}. " + ANALYSIS_FIGURE_PLAN_RULE + " " + ABSTRACT_PLAN_RULE)
 
 ROUTE_PLAN_RULE = ("Set route to solo only when one employee can finish the whole request in one turn of about "
                    "30 minutes or less: a lookup, a table, a single QC check or figure, a literature list. Use team "
@@ -400,7 +413,8 @@ Planning assumptions:
 {assumptions}
 
 Rules:
-- Write a short paper report, about 2,000 Korean characters or less. Create and declare outputs/graphical_abstract.png (or .svg) with code and link it as the first figure.
+- Write a short paper report, about 2,000 Korean characters or less. Create and declare outputs/graphical_abstract.svg with code and link it as the first figure.
+- """ + FIGURE_OUTPUT_RULE + """
 - Save every deliverable under outputs/ using relative paths.
 - Save analysis code under """ + OUTPUT_SCRIPTS_DIR + """ and use only relative paths inside it.
 - In the limitations, give one line for each thing you could not do and each assumption you had to make.
@@ -555,7 +569,8 @@ earlier environment step's lock covers exactly what you used; packages you insta
 ./.pylib) always go in your own record.
 If an HPC job runs the analysis, put the same version and package-list commands inside its job script so the compute
 environment, not only the runner login environment, writes the record under outputs/env/.
-Use .tmp only for disposable temporary files. In the method details, record the seed and tool and data versions."""
+Use .tmp only for disposable temporary files. In the method details, record the seed and tool and data versions.
+""" + FIGURE_OUTPUT_RULE
 
 STEP_PROMPT = RESEARCH_STEP_PROMPT + """
 
@@ -644,6 +659,8 @@ handled incorrectly; it is P1 when fixing it would change a conclusion.
 A checklist item answered assumption with a stated, correct reason is acceptable (PI 2026-10-07): file an
 issue for it only when the reason is wrong or the missing check would change a conclusion (then P1), not
 merely because it was skipped.
+Check that analysis steps declared key figures, the report embeds them under results or gives a one-line reason,
+and every figure follows the SVG, Korean <text>, raster-fallback, and no-capture rules.
 """ + CHECKLIST_REVIEW_RULE + """
 
 Request: {request}
@@ -691,12 +708,14 @@ Team results so far:
 # steps/<step_id>/outputs/<file>. At most 11 figures: up to 10 result figures plus one graphical abstract.
 REPORT_FIGURE_RULE = (
     "Figures: embed at most 11 figures in the whole report: up to 10 key result figures under \"결과\" plus one "
-    "graphical abstract. Embed each as a markdown image on its own line, ![one-line caption](<workdir_id>/outputs/<file>). "
-    "Link only .png, .jpg, .gif or .svg files copied exactly from the \"Outputs:\" lists of the team results below, "
-    "never a path that is not listed, and use image links nowhere else. When no step produced a figure, embed no result "
-    "figure. The caption says what the figure shows, not how it was made.\n"
+    "graphical abstract. You must embed every key figure declared by a step under \"결과\"; if one is omitted, give "
+    "a one-line reason. Embed each as a markdown image on its own line with a short alt, exactly \"그림 N. 이름\", "
+    "where N is its report order. SVG is the default. Use ![그림 N. 이름](<workdir_id>/outputs/<file>) and link "
+    "only supported figure files copied exactly from the "
+    "\"Outputs:\" lists of the team results below, never a path that is not listed, and use image links nowhere else. "
+    "When no step produced a figure, embed no result figure. The short name says what the figure shows.\n"
     "Graphical abstract: one figure that summarizes the whole project as question -> data -> methods and steps -> key "
-    "findings, with short Korean labels. Link the final report step's listed graphical_abstract.png (or .svg) "
+    "findings, with short Korean labels kept as SVG <text>. Link the final report step's listed graphical_abstract.svg "
     "as the first figure just below the title, using its exact Outputs path. Do not create files during "
     "read-only synthesis. If no step produced it, write no link: labhq draws the existing fallback flowchart.")
 
@@ -756,6 +775,8 @@ anything omitted or handled incorrectly; it is P1 when fixing it would change a 
 A checklist item answered assumption with a stated, correct reason is acceptable (PI 2026-10-07): file an
 issue for it only when the reason is wrong or the missing check would change a conclusion (then P1), not
 merely because it was skipped.
+Check that analysis steps declared key figures, the report embeds them under results or gives a one-line reason,
+and every figure follows the SVG, Korean <text>, raster-fallback, and no-capture rules.
 """ + CHECKLIST_REVIEW_RULE + """
 
 Request: {request}

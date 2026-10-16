@@ -336,6 +336,7 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
 
             request_bundle["figures"] = bundle_figure_check(root / "requests" / request_id)
             problems += [f"보고서 그림: {problem}" for problem in request_bundle["figures"]["problems"]]
+            reasons += [f"보고서 그림 WARN: {warning}" for warning in request_bundle["figures"]["warnings"]]
     return {"request_id": req.get("id"), "text": req.get("text"), "status": req.get("status"),
             "outcome": req.get("outcome"), "checked_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "labhq_version": __version__, "files": files, "report_check": report_check,

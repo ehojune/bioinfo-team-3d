@@ -35,9 +35,10 @@ CANARY = "CANARY-research-91c2"
 # #586 공유 id 규칙 한 줄: 공유 항목의 bare/qualified 답 형식을 명시한다.
 # #621 adds the approved topic variant_effect, so the topic rule inside this fixed prompt grows by one entry; the
 # prompt template and both schemas are unchanged (RESEARCH_PROMPT_SHA moved on purpose, VALID_PLAN_SHA did not).
+# #683 and #690 add declared analysis figures and SVG text/quality rules; schemas and canonical plan hashes stay fixed.
 RESEARCH_PLAN_SCHEMA_SHA = "6ce90ea335d696327af314f2b0f4b57bb5ad5a7a98a89b1f7214ed26092a1abf"
 RESEARCH_RESULT_SCHEMA_SHA = "9a767787fade091505fea149a8841845738ce30ce77cf6657cbca0aaa72af64d"
-RESEARCH_PROMPT_SHA = "fb84f5da36989cacc4547e848f633f72bbf64b9aba3b5b25c12b05235084d0c7"
+RESEARCH_PROMPT_SHA = "d51bc3632653812347c5b9fa214807690ab498b2d12365b48dfff16dda5870f2"
 VALID_PLAN_SHA = "f611461cc2dbb17e39159ec1df6a75d8f7b661eb39bbe42c8ed0438c5c45e213"
 
 

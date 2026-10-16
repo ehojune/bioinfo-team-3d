@@ -7,11 +7,13 @@ the linked file, and `labhq verify` checks that every local image link points at
 
 from __future__ import annotations
 
+import csv
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote, unquote
+from xml.etree import ElementTree
 
 FIGURE_SUFFIXES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
                    ".webp": "image/webp", ".svg": "image/svg+xml"}
@@ -20,6 +22,8 @@ MAX_LINKED_FIGURES = MAX_REPORT_FIGURES  # the bundle keeps this many linked fig
 ABSTRACT_STEM = "graphical_abstract"  # a figure with this file stem is the report's graphical abstract (#608)
 ABSTRACT_FILE = ABSTRACT_STEM + ".svg"  # what labhq draws when the report has none
 DOCUMENTS = ("report.md", "report_appendix.md")
+NO_RESULT_FIGURES_WARNING = "분석 단계에 그림 산출이 있지만 보고서 결과 절에 그림이 없습니다."
+_HANGUL = re.compile(r"[가-힣]")
 
 
 def _balanced(depth: int = 4) -> str:
@@ -177,8 +181,53 @@ def linked_figure_paths(report: str) -> list[str]:
     return list(paths)[:MAX_LINKED_FIGURES]
 
 
+def _result_text(markdown: str) -> str:
+    """The first 결과 section, through the next heading at the same or higher level."""
+    heading = re.search(r"(?im)^(#{1,6})\s*결과(?:\s|$).*", markdown or "")
+    if not heading:
+        return ""
+    level = len(heading.group(1))
+    end = re.search(rf"(?m)^#{{1,{level}}}\s+", markdown[heading.end():])
+    return markdown[heading.end():heading.end() + end.start()] if end else markdown[heading.end():]
+
+
+def _reported_figures(root: Path) -> list[str]:
+    """Copied step-output figures in the bundle manifest, excluding the graphical abstract."""
+    manifest = root / "MANIFEST.tsv"
+    try:
+        with manifest.open(encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle, delimiter="\t"))
+    except (OSError, UnicodeError):
+        rows = []
+        steps = root / "steps"
+        try:
+            for path in steps.glob("*/outputs/**/*"):
+                if path.is_file():
+                    rows.append({"relative_path": path.relative_to(root).as_posix(), "status": "copied"})
+        except OSError:
+            return []
+    found = []
+    for row in rows:
+        value = str(row.get("relative_path") or "").replace("\\", "/")
+        path = PurePosixPath(value)
+        if (row.get("status") == "copied" and len(path.parts) >= 4 and path.parts[0] == "steps"
+                and path.parts[2] == "outputs" and path.suffix.casefold() in FIGURE_SUFFIXES
+                and not is_abstract_target(value) and ".." not in path.parts):
+            found.append(value)
+    return found
+
+
+def _svg_has_hangul_text(path: Path) -> bool:
+    try:
+        root = ElementTree.fromstring(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ElementTree.ParseError):
+        return False
+    return any(element.tag.rsplit("}", 1)[-1].casefold() == "text"
+               and _HANGUL.search("".join(element.itertext())) for element in root.iter())
+
+
 def bundle_figure_check(root: Path) -> dict[str, object]:
-    """``{"linked": n, "problems": [...]}`` for the local image links in a request bundle's documents.
+    """Link problems and SVG-first quality warnings for a request bundle's report figures.
 
     A problem: a link to a path outside the bundle, to a file type a browser does not show, or to a file the bundle does
     not hold as a plain, non-empty file (a link or junction on the way counts as missing)."""
@@ -192,12 +241,19 @@ def bundle_figure_check(root: Path) -> dict[str, object]:
 
     linked = 0
     problems: list[str] = []
+    warnings: list[str] = []
     local: dict[str, None] = {}  # distinct local figures across both documents: the PDF shows MAX_REPORT_FIGURES
+    result_local: dict[str, None] = {}
     for name in DOCUMENTS:
         try:
             text = _plain_file(root, name).read_text(encoding="utf-8")
         except (OSError, UnicodeError):
             continue
+        if name == "report.md":
+            for link in image_links(_result_text(text)):
+                kind, value = classify(link.target, holds)
+                if kind == "local" and not is_abstract_target(value):
+                    result_local[value] = None
         for link in image_links(text):
             kind, value = classify(link.target, holds)
             if kind == "remote":
@@ -216,6 +272,14 @@ def bundle_figure_check(root: Path) -> dict[str, object]:
                     continue
                 if empty:
                     problems.append(f"{name}: 링크한 그림 파일이 비어 있습니다: {value}")
+                    continue
+                suffix = PurePosixPath(value).suffix.casefold()
+                if suffix in {".png", ".jpg", ".jpeg"}:
+                    svg = str(PurePosixPath(value).with_suffix(".svg"))
+                    if not holds(svg):
+                        warnings.append(f"{value}: PNG·JPEG 그림과 같은 이름의 SVG가 없습니다.")
+                elif suffix == ".svg" and not _svg_has_hangul_text(root / value):
+                    warnings.append(f"{value}: SVG의 한글이 <text>에 없습니다.")
     # Without an abstract of its own the PDF and the edition draw one, which takes the 11th place: 10 result figures at
     # most (#611 review). With one, the 11 are its own and 10 results.
     own_abstract = any(is_abstract_target(value) and holds(value) for value in local)
@@ -227,4 +291,7 @@ def bundle_figure_check(root: Path) -> dict[str, object]:
             if own_abstract else
             f"보고서 그림이 {len(local)}장이에요. graphical abstract가 없으면 labhq가 한 장을 그려 넣으므로 결과 그림은 "
             f"{limit}장까지만 넣고, PDF에는 앞의 {limit}장만 들어갑니다.")
-    return {"linked": linked, "problems": list(dict.fromkeys(problems))}
+    if _reported_figures(root) and not result_local:
+        warnings.insert(0, NO_RESULT_FIGURES_WARNING)
+    return {"linked": linked, "problems": list(dict.fromkeys(problems)),
+            "warnings": list(dict.fromkeys(warnings))}

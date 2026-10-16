@@ -812,10 +812,11 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
 
         # The figure check reads the rewritten report: an image linked by its absolute workdir path now points inside the
         # bundle. It is the same check `labhq verify` runs later.
-        figure_problems = bundle_figure_check(temp)["problems"]
-        if figure_problems:
+        figure_check = bundle_figure_check(temp)
+        figure_findings = [*figure_check["problems"], *(f"WARN: {warning}" for warning in figure_check["warnings"])]
+        if figure_findings:
             with (temp / "execution_record.md").open("a", encoding="utf-8", newline="\n") as handle:
-                handle.write("\n\n## 보고서 그림 링크\n\n" + "\n".join(f"- {problem}" for problem in figure_problems))
+                handle.write("\n\n## 보고서 그림 링크\n\n" + "\n".join(f"- {finding}" for finding in figure_findings))
 
         grade, grade_reasons = _grade(rows, ordered_steps, rewrite_by_file, not_copied, rerun_receipt)
         with (temp / "README.md").open("a", encoding="utf-8", newline="\n") as handle:
@@ -890,7 +891,8 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
                 "not_copied": not_copied,
                 "rewritten_files": rewritten_files,
                 "remaining_absolute_paths": sorted(remaining), "superseded": replaced,
-                "conversion_record": "\n".join(bundle_note) + ("\n\n## 보고서 그림 링크\n" + "\n".join(figure_problems) if figure_problems else ""),
+                "conversion_record": "\n".join(bundle_note) + ("\n\n## 보고서 그림 링크\n" + "\n".join(figure_findings)
+                                                                  if figure_findings else ""),
                 **({"crate_warning": crate_warning} if crate_warning else {})}
     except Exception:
         if temp.exists():
