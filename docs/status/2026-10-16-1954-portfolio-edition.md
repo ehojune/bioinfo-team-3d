@@ -1,23 +1,21 @@
 ## 결론
 
-PR #699의 마지막 수정 라운드와 CI 실패 6건을 반영했습니다. Refs #686.
+PR #699의 5차 봇 지적 다섯 건을 고쳤습니다. 이번이 마지막 수정 라운드입니다. Refs #686.
 
 ## 바뀐 것
 
-- 파일을 배치하며 원본→정리본 경로 표를 만들고 inline·image·reference-style 링크의 재작성과 검사를 모두 이 표로 처리합니다.
-- 동명 SVG 둘은 각 원본 경로에 맞는 서로 다른 정리본 파일을 가리킵니다. basename 추정은 제거했습니다.
-- 이전 draft의 `report.md`는 재개할 때 `report/report.md`로 옮겨 `report_url`과 실제 게시 경로를 맞춥니다.
-- 내부 자료 요청은 Markdown·SVG·Python·R·shell만 기본 허용하고 JSON·TXT·HTML·표는 집계 선언과 작은 칸 검사를 요구합니다.
-- README 실패 4건은 동작 회귀였습니다. 진행 기록과 재현 방법을 `run/`에 보존하고 루트 README에서 새 경로로 잇습니다.
-- shutdown 실패 2건은 낡은 fixture였습니다. 새 draft 계약에 맞춰 이전 `report.md`의 자동 이관과 게시 카드 문서를 직접 단언합니다.
+- 새 포트폴리오에서 게시하지 않는 PNG·JPG·WebP 링크를 README와 과학 보고서의 생략 표시로 바꿉니다.
+- PDF는 review 뒤 고른 canonical 과학 원고를 쓰며 그림 링크는 요청 묶음의 `steps/...` 경로로 되돌립니다.
+- 동명 Nextflow 산출물은 단계별 경로에 따로 보존합니다.
+- 이전 draft 이관 때 README의 `report.md` 링크를 `report/report.md`로 고칩니다.
+- 새 포트폴리오의 긴 보고서 안내도 `report/report.md`를 가리킵니다.
 
 ## 확인
 
-- CI 실패 6건은 수정 전 그대로 재현했고 수정 뒤 통과했습니다.
-- 이름에 result_storage·portfolio·late_storage·shutdown·publish·edition·pdf가 든 pytest 16개 파일은 352 passed, Node 4개 파일은 28 passed입니다.
-- `scripts/check_public.sh`, patch-notes, notes-index 검사는 최종 커밋 전에 다시 확인합니다.
-- `docs/manual.md`는 152,528자에서 152,589자로 61자 늘었습니다.
+- 다섯 회귀는 직전 head에서 5 failed, 수정 뒤 5 passed였습니다.
+- 지정된 pytest 18개 파일은 356 passed, Node 4개 파일은 28 passed입니다.
+- `scripts/check_public.sh` 통과. patch-notes·notes-index는 기록 커밋 전에 다시 검사합니다.
 
 ## 남은 것
 
-CI 결과는 최종 push 뒤 확인합니다. 리뷰 재요청과 병합은 하지 않습니다. 이번이 마지막 수정 라운드입니다.
+최종 push 뒤 CI 결과만 확인합니다. 리뷰 요청과 병합은 하지 않습니다.

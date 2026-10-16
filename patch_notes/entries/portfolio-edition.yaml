@@ -18,3 +18,6 @@ rows:
 - sha: 402f08b
   at: 2026-10-16 22:28
   text: 포트폴리오 README의 진행·재현 기록 링크와 이전 draft 이관 회귀를 고친다
+- sha: a55bf0e
+  at: 2026-10-16 23:05
+  text: 새 포트폴리오 그림·PDF·Nextflow·이전 draft 경로를 마지막 리뷰 회귀와 함께 고친다
