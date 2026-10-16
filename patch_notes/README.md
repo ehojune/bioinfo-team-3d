@@ -14,9 +14,16 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 19:12 | [`b0fc244`](https://github.com/ehojune/bioinfo-team-3d/pull/692/commits/b0fc244) | PR #693의 staff-skill schema와 writing-skill prompt 변경에 맞춰 고정 hash를 갱신 |
+| 19:08 | [`2710613`](https://github.com/ehojune/bioinfo-team-3d/pull/692/commits/2710613) | main의 직원 글쓰기 prompt와 한국어 품질 기록을 그림 게시 변경에 함께 병합 |
+| 18:37 | [`bf1c3c9`](https://github.com/ehojune/bioinfo-team-3d/pull/692/commits/bf1c3c9) | 계획에 선언된 핵심 그림만 결과 절 누락 경고 대상으로 삼고 예전 묶음의 기존 규칙을 유지 |
+| 18:25 | [`e657685`](https://github.com/ehojune/bioinfo-team-3d/pull/692/commits/e657685) | 게시용 SVG 비밀값 가림과 선언 그림별 결과 절 누락 경고를 보완함 |
 | 18:16 | [`d9d758c`](https://github.com/ehojune/bioinfo-team-3d/pull/693/commits/d9d758c) | Claude bundled plugin과 읽기 전용 prompt 요약으로 직원 스킬 로딩을 복구 |
+| 18:09 | [`0c62b5b`](https://github.com/ehojune/bioinfo-team-3d/pull/692/commits/0c62b5b) | 그림 WARN 판정, 세로 PDF 표시, SVG 승인 미리보기와 카드 payload 상한을 바로잡음 |
 | 17:34 | [`a12f25e`](https://github.com/ehojune/bioinfo-team-3d/pull/693/commits/a12f25e) | mock 읽기 전용 실행에서 Claude·Codex 전용 스킬 요구를 분리 |
+| 17:26 | [`95057aa`](https://github.com/ehojune/bioinfo-team-3d/pull/692/commits/95057aa) | 그림 선언 규칙 변경에 맞춰 일반 계획 prompt 고정 hash를 갱신함 |
 | 17:15 | [`c0a4eec`](https://github.com/ehojune/bioinfo-team-3d/pull/693/commits/c0a4eec) | 직원에게 humanizer와 graphical-abstract를 장착하고 한국어 문서 QC를 추가 |
+| 17:11 | [`7cebe83`](https://github.com/ehojune/bioinfo-team-3d/pull/692/commits/7cebe83) | 분석 그림을 SVG 텍스트로 선언하고 보고서 QC·PDF가 원본 품질과 크기를 보존하도록 함 |
 | 03:51 | [`75a248b`](https://github.com/ehojune/bioinfo-team-3d/pull/668/commits/75a248b) | StructuredOutput 재시도에서 Windows 경로·명령·정규식 원문을 보존하고 JSON escape만 지시 |
 | 03:49 | [`878972b`](https://github.com/ehojune/bioinfo-team-3d/pull/668/commits/878972b) | 최신 main의 작업 폴더 승인 보정을 StructuredOutput 재시도와 함께 보존 |
 | 03:32 | [`63d6635`](https://github.com/ehojune/bioinfo-team-3d/pull/668/commits/63d6635) | 최신 main의 결과 계약 보정과 StructuredOutput 재시도 순서를 함께 보존 |
