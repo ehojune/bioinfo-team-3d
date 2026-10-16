@@ -351,13 +351,17 @@ function renderStorage(box, value) {
   box._config = JSON.stringify(config);
   box.replaceChildren();
   add(box, 'strong', '결과를 GitHub 저장소로 정리할까요?');
+  if (config.initial_label) add(box, 'p', `처음 선택: ${config.initial_label}`);
   if (config.warning) add(box, 'p', config.warning);
   const modeLabel = add(box, 'label', '저장 위치 '), mode = add(modeLabel, 'select');
-  for (const [key, label] of [['local','로컬만 (기본)'], ['new','새 GitHub 저장소 만들기'], ['existing','기존 GitHub 저장소']]) {
+  const choices = config.allow_keep ? [['keep','처음 선택 유지'], ['local','로컬만'],
+    ['new','새 GitHub 저장소 만들기'], ['existing','기존 GitHub 저장소']] :
+    [['local','로컬만 (기본)'], ['new','새 GitHub 저장소 만들기'], ['existing','기존 GitHub 저장소']];
+  for (const [key, label] of choices) {
     const option = add(mode, 'option', label); option.value = key;
-    option.disabled = key !== 'local' && !config.github_available;
+    option.disabled = !['keep','local'].includes(key) && !config.github_available;
   }
-  mode.value = 'local';
+  mode.value = config.default || 'local';
   const repoLabel = add(box, 'label', '저장소 이름 '), repo = add(repoLabel, 'input');
   repo.value = config.suggested_name || '';
   const visibilityLabel = add(box, 'label', '공개 범위 '), visibility = add(visibilityLabel, 'select');
@@ -366,7 +370,7 @@ function renderStorage(box, value) {
   }
   visibility.value = 'private';
   const update = () => {
-    repoLabel.hidden = visibilityLabel.hidden = mode.value === 'local';
+    repoLabel.hidden = visibilityLabel.hidden = ['keep','local'].includes(mode.value);
     repo.placeholder = mode.value === 'existing' ? '소유자/저장소' : config.suggested_name;
   };
   mode.onchange = () => {repo.value = mode.value === 'new' ? config.suggested_name : ''; update();};

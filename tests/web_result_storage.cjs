@@ -46,6 +46,18 @@ test('PI-opened late storage stays answerable without a countdown',async()=>{
   assert.equal(row._decisionParts.approve.disabled,false);
 });
 
+test('end storage card shows the first choice and can keep or change it',async()=>{
+  const ui=await mod, host=new Element();
+  const card={id:'end',kind:'result_storage',detail:{storage:{github_available:true,default:'keep',allow_keep:true,
+    initial_label:'새 GitHub 저장소 owner/study',suggested_name:'study'}}};
+  const [row]=ui.syncDecisionCards(host,[card]);
+  assert.match(row.textContent,/처음 선택: 새 GitHub 저장소 owner\/study/);
+  assert.equal(ui.storageChoice(row).mode,'keep');
+  const box=row._decisionParts.storage;
+  box._mode.value='local';box._mode.onchange();
+  assert.equal(ui.storageChoice(row).mode,'local');
+});
+
 test('publishing waits for PI review and preserves the editor preview',async()=>{
   const ui=await mod, host=new Element();
   const request={pi_review_pending:true,pi_reviewed_at:null};

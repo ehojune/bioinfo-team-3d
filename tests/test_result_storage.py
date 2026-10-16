@@ -67,6 +67,8 @@ def fake_github(calls, *, forbidden=False, exists=False):
         if req.url.path == "/user":
             return httpx.Response(200, json={"login": "owner"})
         if req.url.path == "/user/repos":
+            if req.method == "POST" and not body:
+                return httpx.Response(422, json={"message": "name must not be blank"})
             return httpx.Response(201 if req.method == "POST" else 200,
                                   json={"full_name": "owner/study", "private": True,
                                         "default_branch": "main"} if req.method == "POST" else [])
@@ -257,7 +259,7 @@ async def test_mock_request_reaches_editor_and_fake_github(tmp_path, monkeypatch
         saved = hub.requests[rid]["result_storage"]
         assert saved["status"] == "published", saved
         assert Path(saved["draft_path"], "README.md").is_file()
-        assert [c["kind"] for c in cards].count("result_storage") == 1
+        assert [c["kind"] for c in cards].count("result_storage") == 2  # planning choice, then reviewed-result choice
         assert [c["kind"] for c in cards].count("result_publish") == 1
         assert any(t.get("payload", {}).get("agent_id") == "editor" and t.get("completed")
                    for t in hub.store.all("task").values())
