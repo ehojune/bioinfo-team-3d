@@ -466,7 +466,7 @@ def _data_licenses(req: dict) -> str:
 
 
 def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_names: list[str],
-            omitted_tables: list[str]) -> str:
+            omitted_tables: list[str], run_documents: Mapping[str, str]) -> str:
     title = report.splitlines()[0].lstrip("#").strip() or "연구 결과"
     abstract = "figures/graphical_abstract.svg" if "figures/graphical_abstract.svg" in figure_names else None
     key = next((name for name in figure_names if name != abstract), None)
@@ -478,9 +478,14 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
     if key:
         lines += ["", f"![핵심 그림]({key})"]
     lines += ["", "## 읽는 순서", "",
-              "1. [과학 보고서](report/report.md) — 논문 형식 보고서와 정정 사항",
-              "2. [실행 기록](run/execution_record.md) — 요청, 결정, 비용과 Nextflow 기록",
-              "3. `code/`, `figures/`, `tables/` — 게시 가능한 코드·SVG·집계표", "",
+              "1. [과학 보고서](report/report.md) — 논문 형식 보고서와 정정 사항"]
+    if "run/progress.md" in run_documents:
+        lines.append("2. [진행 기록](run/progress.md) — 계획 변경과 과학 리뷰 기록")
+    if "run/reproduce.md" in run_documents:
+        lines.append("3. [재현 방법](run/reproduce.md) — 환경, 실행 명령과 입력 출처")
+    lines += ["4. [실행 기록](run/execution_record.md) — 요청, 결정, 비용과 Nextflow 기록",
+              "5. [출처](REFERENCES.md) — PMID, DOI, GEO와 URL",
+              "6. `code/`, `figures/`, `tables/` — 게시 가능한 코드·SVG·집계표", "",
               "## 저장소 지도", "", "```text", "README.md", "report/", "run/", "code/", "figures/", "tables/",
               "REFERENCES.md", "DATA_AND_LICENSES.md", "```", "",
               "## Summary (English)", "",
@@ -521,7 +526,8 @@ def scan_publish_files(files: Mapping[str, str | bytes], *, internal: bool = Fal
 
 def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images: Mapping[str, bytes], *,
                           decisions: Iterable[dict] = (), tasks: Iterable[dict] = (),
-                          bundle: Path | None = None) -> dict[str, str | bytes]:
+                          bundle: Path | None = None,
+                          run_documents: Mapping[str, str] | None = None) -> dict[str, str | bytes]:
     """Return the stable publication layout; raw data and third-party full text never enter it."""
     assets = {name: _clean(body, settings, req) for name, body in assets.items()
               if not _LITERATURE_OUTPUT.search(name.replace("\\", "/"))}
@@ -590,7 +596,12 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
         "REFERENCES.md": _clean(_references(req, report, assets), settings, req),
         "DATA_AND_LICENSES.md": _clean(_data_licenses(req), settings, req),
     })
-    readme = _plain_korean(_readme(req, report, _step_rows(req, assets), figure_names, omitted_tables))
+    run_documents = dict(run_documents or {})
+    for name in ("run/progress.md", "run/reproduce.md"):
+        if name in run_documents:
+            files[name] = _clean(run_documents[name], settings, req)
+    readme = _plain_korean(_readme(
+        req, report, _step_rows(req, assets), figure_names, omitted_tables, run_documents))
     if check_document(readme)["status"] != "PASS":
         raise ValueError("README에 반드시 0이어야 하는 한국어 표현이 남았습니다.")
     files["README.md"] = _clean(readme, settings, req)

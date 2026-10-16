@@ -116,11 +116,13 @@ def portfolio_fixture(tmp_path: Path):
 def test_fixed_request_bundle_builds_the_portfolio_contract(tmp_path):
     settings, request, bundle, assets, images, decisions, tasks = portfolio_fixture(tmp_path)
     files = build_portfolio_files(
-        request, settings, assets, images, decisions=decisions, tasks=tasks, bundle=bundle)
+        request, settings, assets, images, decisions=decisions, tasks=tasks, bundle=bundle,
+        run_documents={"run/progress.md": "# 진행 기록\n\n완료\n",
+                       "run/reproduce.md": "# 재현 방법\n\npython analysis.py\n"})
 
     required = {
         "README.md", "report/report.md", "run/requests.md", "run/decisions.md",
-        "run/execution_record.md", "run/costs.md", "code/analyze.py",
+        "run/execution_record.md", "run/costs.md", "run/progress.md", "run/reproduce.md", "code/analyze.py",
         "figures/graphical_abstract.svg", "figures/volcano.svg",
         "tables/result_summary.tsv", "REFERENCES.md", "DATA_AND_LICENSES.md",
     }
@@ -136,6 +138,8 @@ def test_fixed_request_bundle_builds_the_portfolio_contract(tmp_path):
     assert "| 단계 | 자료 | 결과 |" in readme
     assert "16,242" in readme and "0개" in readme
     assert "통계적으로 유의하지" in readme
+    for target in ("report/report.md", "run/progress.md", "run/reproduce.md", "REFERENCES.md"):
+        assert target in readme
     assert "by_job.tsv" not in files and "patient_summary.tsv" not in files
     assert "내부 자료 영역이라 표 2개는 요청 묶음에만 둠" in readme
     assert not any("outputs/literature" in name or "article.md" in name for name in files)

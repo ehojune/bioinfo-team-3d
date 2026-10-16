@@ -731,8 +731,6 @@ class ResultStorage:
                     }
                     portfolio_req["report"] = edition_figure_links(
                         str(req.get("report") or ""), req, self.s, portfolio_included, "report.md")
-                portfolio = build_portfolio_files(
-                    portfolio_req, self.s, raw_assets, images, decisions=decisions, tasks=tasks, bundle=bundle)
                 internal = request_uses_internal_data(req, self.s)
                 aggregate_tables = declared_aggregate_tables(req)
                 assets = {}
@@ -742,6 +740,24 @@ class ResultStorage:
                     assets[name] = body
                 included = {*assets, *images}
                 docs = draft_documents(req, self.s, included, assets, abstract=bool(drawn))
+                bundle_readme = bundle / "README.md"
+                manifest = bundle_readme.with_name("MANIFEST.tsv")
+                environments = "환경 기록이 없습니다. 실행 환경은 로컬 묶음에서 확인하세요."
+                if plain_path(manifest) and manifest.is_file():
+                    with manifest.open(encoding="utf-8", newline="") as handle:
+                        for row in csv.DictReader(handle, delimiter="\t"):
+                            if row.get("status") == "summary" and row.get("environment_records"):
+                                environments = clean_document(row["environment_records"], self.s, req)
+                                break
+                docs["REPRODUCE.md"] += "\n\n## 환경\n\n" + environments
+                if plain_path(bundle_readme) and bundle_readme.is_file():
+                    docs["REPRODUCE.md"] += "\n\n## 실행 명령·묶음 안내\n\n" + clean_document(bundle_readme.read_text(encoding="utf-8"), self.s, req)
+                else:
+                    docs["REPRODUCE.md"] += "\n\n## 실행 명령\n\n요청 묶음에 기록된 실행 명령이 없습니다."
+                portfolio = build_portfolio_files(
+                    portfolio_req, self.s, raw_assets, images, decisions=decisions, tasks=tasks, bundle=bundle,
+                    run_documents={"run/progress.md": docs["PROGRESS.md"],
+                                   "run/reproduce.md": docs["REPRODUCE.md"]})
                 for name, body in portfolio.items():
                     if isinstance(body, bytes):
                         images[name] = body
@@ -757,20 +773,6 @@ class ResultStorage:
                     if saved.get("mode") != "new":
                         docs["README.md"] += "\n## 그림·표·실행 파일\n\n" + links + "\n"
                     docs["REPRODUCE.md"] += "\n\n## 포함한 파일\n\n" + links + "\n"
-                bundle_readme = bundle / "README.md"
-                manifest = bundle_readme.with_name("MANIFEST.tsv")
-                environments = "환경 기록이 없습니다. 실행 환경은 로컬 묶음에서 확인하세요."
-                if plain_path(manifest) and manifest.is_file():
-                    with manifest.open(encoding="utf-8", newline="") as handle:
-                        for row in csv.DictReader(handle, delimiter="\t"):
-                            if row.get("status") == "summary" and row.get("environment_records"):
-                                environments = clean_document(row["environment_records"], self.s, req)
-                                break
-                docs["REPRODUCE.md"] += "\n\n## 환경\n\n" + environments
-                if plain_path(bundle_readme) and bundle_readme.is_file():
-                    docs["REPRODUCE.md"] += "\n\n## 실행 명령·묶음 안내\n\n" + clean_document(bundle_readme.read_text(encoding="utf-8"), self.s, req)
-                else:
-                    docs["REPRODUCE.md"] += "\n\n## 실행 명령\n\n요청 묶음에 기록된 실행 명령이 없습니다."
                 if "editor" in self.hub.agents:
                     try:
                         result = await self.hub.orchestrator.run_step(Task(

@@ -115,9 +115,13 @@ async def test_late_selection_runs_editor_after_review_then_approval_and_mock_up
         assert publish
         editor.assert_awaited_once()
         docs = publish["detail"]["documents"]
-        assert {"README.md", "PROGRESS.md", "REPRODUCE.md", "SOURCES.md"} <= docs.keys()
-        assert "python analysis.py" in docs["REPRODUCE.md"] and "3.12" in docs["REPRODUCE.md"]
-        for filename in ("report.md", "PROGRESS.md", "REPRODUCE.md", "SOURCES.md"):
+        portfolio_docs = {
+            "report/report.md", "run/progress.md", "run/reproduce.md", "REFERENCES.md",
+        }
+        assert {"README.md", "PROGRESS.md", "REPRODUCE.md", "SOURCES.md", *portfolio_docs} <= docs.keys()
+        assert docs["run/progress.md"] == docs["PROGRESS.md"]
+        assert "python analysis.py" in docs["run/reproduce.md"] and "3.12" in docs["run/reproduce.md"]
+        for filename in portfolio_docs:
             assert filename in docs["README.md"]
         assert not any(method in {"POST", "PUT"} for method, _, _ in calls)
         assert (await client.post(f"/api/approvals/{publish['id']}", json={"approved": True})).status_code == 200
