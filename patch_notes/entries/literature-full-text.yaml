@@ -1,0 +1,5 @@
+pr: 698
+rows:
+- sha: 'a87ed2f'
+  at: 2026-10-16 19:37
+  text: 직원이 Europe PMC 오픈 액세스 본문을 labhq_annot fulltext로 읽고 문헌 표마다 읽은 수준(access_level)을 적게 했다 (#697).
