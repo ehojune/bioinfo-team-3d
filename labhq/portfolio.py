@@ -427,23 +427,37 @@ def _branch_rows(req: dict, specs: list[dict[str, Any]],
         step_ids = folder_steps[folder]
         recorded = [(step_id, results.get(step_id)) for step_id in step_ids
                     if isinstance(results.get(step_id), Mapping)]
-        failure = next((result for _step_id, result in recorded if result.get("ok") is False), None)
-        terminals = [results.get(step_id) for step_id in branch["terminals"]]
-        terminal_missing = any(not isinstance(result, Mapping) for result in terminals)
-        failed = failure is not None or terminal_missing
-        if failed:
-            reason = str((failure or {}).get("error") or "terminal 결과 없음")
-            result_text = reason
-        else:
-            completed = [result for result in terminals if isinstance(result, Mapping)]
+        terminal_records = [(step_id, results.get(step_id)) for step_id in branch["terminals"]]
+        completed = [(step_id, result) for step_id, result in terminal_records
+                     if isinstance(result, Mapping) and result.get("ok") is not False]
+        failures = [
+            (step_id, str(result.get("error") or result.get("text") or "실패 이유 없음"))
+            if isinstance(result, Mapping) else (step_id, "terminal 결과 없음")
+            for step_id, result in terminal_records
+            if not isinstance(result, Mapping) or result.get("ok") is False
+        ]
+        if not terminal_records:
+            completed = [(step_id, result) for step_id, result in recorded
+                         if result.get("ok") is not False]
             if not completed:
-                completed = [result for _step_id, result in recorded if result.get("ok") is not False]
-            result_text = _result_sentence(str((completed[-1] if completed else {}).get("text") or ""))
+                failures = [("terminal", "terminal 결과 없음")]
+        summaries = [_result_sentence(str(result.get("text") or "")) for _step_id, result in completed]
+        if completed and failures:
+            status = "부분"
+            failed_text = "; ".join(f"{step_id}: {reason}" for step_id, reason in failures)
+            result_text = " / ".join(summaries + [failed_text])
+        elif completed:
+            status = "완료"
+            result_text = " / ".join(summaries)
+        else:
+            status = "실패"
+            result_text = (failures[0][1] if len(failures) == 1 else
+                           "; ".join(f"{step_id}: {reason}" for step_id, reason in failures))
         rows.append({
             "id": str(branch.get("id") or "갈래"),
             "question": str(branch.get("question") or "질문 기록 없음"),
             "data": f"{branch.get('data_boundary') or '미기록'} · {branch.get('evidence_type') or '자료 미기록'}",
-            "status": "실패" if failed else "완료",
+            "status": status,
             "result": result_text,
             "folder": folder,
         })

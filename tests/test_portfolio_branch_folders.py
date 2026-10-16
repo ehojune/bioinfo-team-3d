@@ -92,6 +92,25 @@ def test_four_branches_get_study_folders_and_failed_row(tmp_path):
     assert "studies/               갈래별 코드·그림·표·단계 보고서" in files["README.md"]
 
 
+def test_branch_with_one_failed_terminal_is_partial_and_keeps_success(tmp_path):
+    settings, request, assets, images = branched_fixture(tmp_path)
+    request = deepcopy(request)
+    request["plan"]["steps"].insert(1, {
+        "id": "lit_failed", "branch": "A", "instruction": "원문을 추가 확인한다.",
+    })
+    request["results"]["lit_failed"] = {
+        "ok": False, "error": "원문 확보 실패", "text": "",
+    }
+
+    files = build_portfolio_files(request, settings, assets, images)
+
+    index = files["studies/README.md"]
+    assert "| A | 문헌 근거가 있는가? | public · literature | 부분 |" in index
+    assert "직접 근거를 찾지 못했다." in index
+    assert "lit_failed: 원문 확보 실패" in index
+    assert "studies/A-literature/report/stage_report.md" in files
+
+
 def test_same_named_branch_figures_and_report_links_stay_separate(tmp_path):
     settings, request, assets, images = branched_fixture(tmp_path)
 
