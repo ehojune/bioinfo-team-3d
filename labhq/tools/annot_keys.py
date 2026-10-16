@@ -139,7 +139,7 @@ def _within(inner: Path, outer: Path) -> bool:
         return False
 
 
-def check_key_folder(path: Path, keep_out: Iterable[Path] = ()) -> None:
+def check_key_folder(path: Path, keep_out: Iterable[Path] = (), setting: str = "annot.alphagenome_key_file") -> None:
     """Refuse a key folder that is not the key's own: one holding other files, the home folder itself, or one that
     contains (or is) a folder in `keep_out` (labhq state, workspaces, config). Owner-only access on it would spread
     to everything below and cut sandbox and service accounts out."""
@@ -154,13 +154,14 @@ def check_key_folder(path: Path, keep_out: Iterable[Path] = ()) -> None:
                   if p.name != path.name and not (p.name.startswith(f".{path.name}.") and p.name.endswith(".tmp"))]
         if others:
             raise KeyFileError(f"키 파일 폴더에 다른 항목이 {len(others)}개 있습니다. 키만 두는 폴더를 "
-                               "annot.alphagenome_key_file에 지정하세요")
+                               f"{setting}에 지정하세요")
 
 
-def write_key(path: Path, key: str, keep_out: Iterable[Path] = ()) -> None:
-    """Write `key` so only the current account can read it. On any failure nothing new is left at `path`."""
+def write_key(path: Path, key: str, keep_out: Iterable[Path] = (), setting: str = "annot.alphagenome_key_file") -> None:
+    """Write `key` so only the current account can read it. On any failure nothing new is left at `path`.
+    `setting` names the config key that moves the file, for the error message (the GitHub token uses it too, #687)."""
     folder = path.parent
-    check_key_folder(path, keep_out)
+    check_key_folder(path, keep_out, setting)
     folder.mkdir(parents=True, exist_ok=True)
     temporary = folder / f".{path.name}.{uuid.uuid4().hex}.tmp"
     try:

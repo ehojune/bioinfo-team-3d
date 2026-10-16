@@ -13,7 +13,7 @@ from pathlib import Path
 
 import yaml
 
-from . import bioinfo_link, doctor, hpc_consult, init_defaults
+from . import bioinfo_link, doctor, github_token, hpc_consult, init_defaults
 from .adapters.base import _resolve_command
 from .runner.codex_sandbox import codex_command, powershell_executable, setup_hint
 from .settings import HpcSettings, Settings
@@ -107,14 +107,55 @@ def _alphagenome_key(settings: Settings) -> None:
         print("AlphaGenome: 키 형식이 아니라 저장하지 않았습니다 (공백 없는 한 덩어리여야 합니다)")
         return
     try:
-        keep_out = [settings.path(settings.runner.state_dir), settings.path(settings.runner.workspace_root),
-                    settings.path(settings.gateway.state_dir)]
-        if settings.config_path:
-            keep_out.append(Path(settings.config_path).parent)
-        annot_keys.write_key(annot_keys.key_path(settings), key, keep_out)
+        annot_keys.write_key(annot_keys.key_path(settings), key, _key_keep_out(settings))
     except annot_keys.KeyFileError as exc:
         raise InitError(f"AlphaGenome 키를 저장하지 못했습니다: {exc}") from None
     print("AlphaGenome: 키 저장 (이 계정만 읽을 수 있는 파일, 값과 경로 출력 생략)")
+
+
+def _key_keep_out(settings: Settings) -> list[Path]:
+    keep_out = [settings.path(settings.runner.state_dir), settings.path(settings.runner.workspace_root),
+                settings.path(settings.gateway.state_dir)]
+    if settings.config_path:
+        keep_out.append(Path(settings.config_path).parent)
+    return keep_out
+
+
+def _github_token(settings: Settings) -> None:
+    """Ask once per `labhq init` for a GitHub token when none is set (PI request 2026-10-16, #687). Enter skips: results
+    then stay local. The screen lists the permissions a result repository needs before asking; the doctor run right
+    after checks what the token may do. The token is read without echo and kept in an owner-only file, never in the
+    config, and neither the value nor the file's location is printed."""
+    if not _interactive():
+        return
+    source = github_token.token_source(settings)
+    if source == "env":  # the variable wins over any stored file, so asking would change nothing
+        print(f"GitHub: 환경 변수 {settings.github.token_env}의 토큰을 씁니다(값 출력 생략). 권한은 아래 doctor가 확인합니다")
+        return
+    if source == "file":  # an expired or revoked token is replaced here, as doctor's hint says (PR #700 review)
+        print("GitHub: 저장된 토큰이 있습니다(값 출력 생략). 만료·취소됐거나 권한을 바꾼 새 토큰이면 붙여 넣으세요.")
+    else:
+        print("GitHub 토큰(선택): 요청 결과를 GitHub 저장소로 정리하고 이슈로 알릴 때 씁니다. 없으면 결과는 로컬에만 저장합니다.")
+    print("  필요한 권한 — " + github_token.NEEDED_TEXT)
+    print("  만드는 곳 — " + github_token.TOKEN_SETTINGS_URL)
+    question = ("새 GitHub 토큰을 붙여 넣으세요, 그대로 두려면 Enter (입력은 화면에 보이지 않음): " if source == "file"
+                else "GitHub 토큰을 붙여 넣으세요, 없으면 Enter (입력은 화면에 보이지 않음): ")
+    token = getpass.getpass(question).strip()
+    if not token:
+        if source == "file":
+            print("GitHub: 저장된 토큰을 그대로 씁니다. 권한은 아래 doctor가 확인합니다")
+        else:
+            print(f"GitHub: 건너뜀 (결과는 로컬에 저장. 나중에 labhq init을 다시 실행하거나 {settings.github.token_env} "
+                  "환경 변수를 설정하세요)")
+        return
+    if not github_token.valid_token(token):
+        print("GitHub: 토큰 형식이 아니라 저장하지 않았습니다 (github_pat_ 또는 ghp_로 시작하는 한 덩어리여야 합니다)")
+        return
+    try:
+        github_token.save_token(settings, token, _key_keep_out(settings))
+    except annot_keys.KeyFileError as exc:
+        raise InitError(f"GitHub 토큰을 저장하지 못했습니다: {exc}") from None
+    print("GitHub: 토큰 저장 (이 계정만 읽을 수 있는 파일, 값과 경로 출력 생략). 권한은 아래 doctor가 확인합니다")
 
 
 def _absolute(path: str) -> str:
@@ -391,6 +432,7 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
             print("Claude 직원 로그인은 직접 실행하세요(새 창에서): " + doctor.claude_login_command(_is_windows()))
     if not yes and not dry_run:
         _alphagenome_key(settings)
+        _github_token(settings)
     # Initial config creation also precedes the clean-install mock setup. Installation is an explicit
     # doctor --fix step; init must stay offline and must not write skills into the user's home.
     result = doctor.collect(settings, dry_run=dry_run, require_roster=True, require_paper2agent=False)

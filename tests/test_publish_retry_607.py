@@ -10,7 +10,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from labhq import cli, doctor
+from labhq import cli, doctor, github_token
 from labhq.result_storage import (PublishAccessError, ResultStorage, create_denied_text, upload_failed_text,
                                   write_denied_text)
 from labhq.settings import DataZone, Settings
@@ -358,25 +358,44 @@ def quiet_doctor(monkeypatch):
     monkeypatch.setattr(subprocess, "Popen", refuse)
 
 
-def test_doctor_warns_in_one_line_about_a_fine_grained_token_without_showing_it(tmp_path, monkeypatch, quiet_doctor):
+def test_doctor_judges_a_fine_grained_token_by_probes_in_one_line_without_showing_it(tmp_path, monkeypatch,
+                                                                                    quiet_doctor):
+    """#607 warned on the prefix alone; #687 asks GitHub what the token may do. A token that may create repositories
+    but not write contents or issues gets one warning naming what is missing and how to resume a failed publish."""
     token = fine_grained()
     monkeypatch.setenv("GITHUB_TOKEN", token)
+    seen = []
+
+    def probe(settings, value, **kwargs):
+        seen.append(value == token)
+        return github_token.Permissions(kind="fine_grained", create=True, contents=False, issues=False,
+                                        probe_repo="me/notes")
+
+    monkeypatch.setattr(doctor.github_token, "check_permissions", probe)
     result = doctor.collect(doctor_settings(tmp_path))
     rows = [row for row in result["checks"] if row["name"] == "github token"]
-    assert len(rows) == 1 and rows[0]["status"] == "warn"
-    assert "\n" not in rows[0]["detail"] and "fine-grained" in rows[0]["detail"] and "저장소를 먼저 만들고" in rows[0]["detail"]
-    assert "gh repo create" in rows[0]["hint"] and "--republish" in rows[0]["hint"]
-    assert "$env:GITHUB_TOKEN=$null" in rows[0]["hint"] and "--add-readme" in rows[0]["hint"]
+    assert seen == [True] and len(rows) == 1 and rows[0]["status"] == "warn"
+    assert "\n" not in rows[0]["detail"] and "Contents 쓰기" in rows[0]["detail"] and "Issues 쓰기" in rows[0]["detail"]
+    assert "All repositories" in rows[0]["hint"] and "--republish" in rows[0]["hint"]
     shown = json.dumps(result, ensure_ascii=False) + doctor.render(result)
     assert token not in shown and "Z9Z9" not in shown and "github_pat_" not in shown  # not even the prefix
 
 
-@pytest.mark.parametrize("token", ["", "ghp_" + "a1" * 10, "gho_" + "b2" * 10, "fake-token-for-tests"])
-def test_doctor_stays_quiet_for_any_other_token(tmp_path, monkeypatch, quiet_doctor, token):
+@pytest.mark.parametrize("token", ["ghp_" + "a1" * 10, "gho_" + "b2" * 10, "fake-token-for-tests"])
+def test_doctor_shows_a_token_with_every_permission_as_ok(tmp_path, monkeypatch, quiet_doctor, token):
     monkeypatch.setenv("GITHUB_TOKEN", token)
-    assert "github token" not in [row["name"] for row in doctor.collect(doctor_settings(tmp_path))["checks"]]
-    monkeypatch.delenv("GITHUB_TOKEN")
-    assert doctor._github_token_row(Settings()) is None
+    monkeypatch.setattr(doctor.github_token, "check_permissions", lambda *a, **kw: github_token.Permissions(
+        kind="classic", create=True, contents=True, issues=True))
+    rows = [row for row in doctor.collect(doctor_settings(tmp_path))["checks"] if row["name"] == "github token"]
+    assert [row["status"] for row in rows] == ["ok"] and "권한 확인됨" in rows[0]["detail"]
+
+
+def test_without_a_token_doctor_says_results_stay_local_and_asks_nothing(monkeypatch):
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.setattr(doctor.github_token, "check_permissions",
+                        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("probed without a token")))
+    row = doctor._github_token_row(Settings())
+    assert row["status"] == "ok" and "로컬에 저장" in row["detail"] and "labhq init" in row["hint"]
 
 
 def test_doctor_reads_the_token_from_the_configured_variable(monkeypatch):
@@ -384,6 +403,8 @@ def test_doctor_reads_the_token_from_the_configured_variable(monkeypatch):
     settings.github.token_env = "LABHQ_TEST_PUBLISH_TOKEN"
     monkeypatch.setenv("GITHUB_TOKEN", fine_grained())  # not the variable this installation uses
     monkeypatch.delenv("LABHQ_TEST_PUBLISH_TOKEN", raising=False)
-    assert doctor._github_token_row(settings) is None
+    monkeypatch.setattr(doctor.github_token, "check_permissions", lambda *a, **kw: github_token.Permissions(
+        kind="fine_grained", create=False, contents=True, issues=True, probe_repo="me/notes"))
+    assert "토큰 없음" in doctor._github_token_row(settings)["detail"]
     monkeypatch.setenv("LABHQ_TEST_PUBLISH_TOKEN", fine_grained())
     assert doctor._github_token_row(settings)["status"] == "warn"

@@ -20,8 +20,9 @@ def _isolate_home(patch, home):
         patch.setenv(name, str(home / suffix))
     patch.setenv("HOMEDRIVE", home.drive)
     patch.setenv("HOMEPATH", str(home)[len(home.drive):])
-    # Inherited operator overrides must not defeat the isolated default. Tests may set their own.
-    for name in ("LABHQ_STATE_DIR", "LABHQ_CONFIG", "CODEX_HOME", "CLAUDE_CONFIG_DIR"):
+    # Inherited operator overrides must not defeat the isolated default. Tests may set their own. An operator's GitHub
+    # token would make doctor tests probe GitHub for real (#687), so it is dropped too.
+    for name in ("LABHQ_STATE_DIR", "LABHQ_CONFIG", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "GITHUB_TOKEN", "GH_TOKEN"):
         patch.delenv(name, raising=False)
 
 

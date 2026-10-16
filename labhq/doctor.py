@@ -20,7 +20,7 @@ import yaml
 
 from .adapters.base import _resolve_command, codex_app_choice, expand_env
 from .adapters import adapter_preflight_error, get_adapter
-from . import bioinfo_link, instance_guard
+from . import bioinfo_link, github_token, instance_guard
 from .models import AgentSpec, Engine
 from . import private_paths as private_path_module
 from .private_paths import (PrivatePaths, configured_claude_config_dir, in_pi_claude, inside_any,
@@ -120,18 +120,21 @@ def _bioinfo_row(settings: Settings) -> dict:
 FINE_GRAINED_PREFIX = "github_pat_"
 
 
-def _github_token_row(settings: Settings) -> dict | None:
-    """One warning when the GitHub token is a fine-grained PAT (#607). Such a token may be limited to selected repositories,
-    and then it cannot create one: publishing to a new repository needs the repository made first and added to the token.
-    Only the prefix is compared. No request is made, and nothing of the token is shown."""
-    if not os.environ.get(settings.github.token_env, "").startswith(FINE_GRAINED_PREFIX):
-        return None
-    return _row("config", "github token", "warn",
-                "fine-grained 토큰: 새 저장소로 게시하려면 저장소를 먼저 만들고 이 토큰의 저장소 접근에 추가해야 합니다",
-                "PowerShell에서는 `$env:GITHUB_TOKEN=$null; gh repo create <소유자>/<이름> --private --add-readme`, "
-                "bash에서는 `env -u GITHUB_TOKEN -u GH_TOKEN gh repo create <소유자>/<이름> --private --add-readme`를 쓰거나 "
-                "GitHub 웹에서 README를 넣어 만드세요. 토큰 설정에서 그 저장소에 Contents: Read and write를 주세요. "
-                "게시가 실패했다면 그다음 `labhq storage <요청 id> --republish`.")
+def _github_token_row(settings: Settings, dry_run: bool = False) -> dict:
+    """What the GitHub token may do for result repositories (#687), judged by probes that create nothing, not by its
+    prefix (#607 warned every fine-grained token, even one that could create repositories). No token is a valid setup:
+    results stay local. Nothing of the token is shown."""
+    token = github_token.read_token(settings)
+    if not token:
+        return _row("config", "github token", "ok", "GitHub 토큰 없음: 결과는 로컬에 저장합니다",
+                    "결과를 GitHub 저장소로 정리하려면 `labhq init`으로 토큰을 넣으세요. " + github_token.NEEDED_TEXT)
+    if dry_run:
+        return _row("config", "github token", "ok", "GitHub 토큰 있음: dry-run이라 권한은 확인하지 않았습니다",
+                    github_token.NEEDED_TEXT)
+    status, detail, hint = github_token.describe(github_token.check_permissions(settings, token))
+    if status == "warn" and token.startswith(FINE_GRAINED_PREFIX):
+        hint += " 게시가 실패했다면 권한을 고친 뒤 `labhq storage <요청 id> --republish`."
+    return _row("config", "github token", status, detail, hint)
 
 
 def _instance_rows(settings: Settings) -> list[dict]:
@@ -571,8 +574,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
                          "Give the runner a config without gateway.client_token; see docs/runner-account.md."))
     rows.append(_research_row(settings))
     rows.append(_bioinfo_row(settings))
-    if github_row := _github_token_row(settings):
-        rows.append(github_row)
+    rows.append(_github_token_row(settings, dry_run))
     rows.extend(_instance_rows(settings))
     markers = parent_claude_markers(dict(os.environ))
     rows.append(_row("staff", "claude_parent_session_env", "warn" if markers else "ok",
