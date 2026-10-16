@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 21:13 | [`a1cdb76`](https://github.com/ehojune/bioinfo-team-3d/pull/700/commits/a1cdb76) | 저장된 GitHub 토큰이 있으면 init이 새 토큰을 받을지 물어 만료된 토큰을 바꿀 수 있게 했다. |
+| 21:06 | [`1cbf38c`](https://github.com/ehojune/bioinfo-team-3d/pull/700/commits/1cbf38c) | 처음 설정 때 GitHub 토큰을 선택으로 묻고(필요한 권한 안내), doctor가 아무것도 만들지 않는 탐침으로 빠진 권한을 이름으로 알린다 (#687). |
 | 20:17 | [`f05341d`](https://github.com/ehojune/bioinfo-team-3d/pull/698/commits/f05341d) | 연동 목록 원본(scripts/integrations.py)에 labhq_annot의 Europe PMC 논문 본문 조회를 적었다. |
 | 20:05 | [`4630e7d`](https://github.com/ehojune/bioinfo-team-3d/pull/698/commits/4630e7d) | 문헌·생물 직원 지시에 CC 논문의 publisher_copy 링크를 한 번 열어도 된다는 예외를 도구 설명과 맞췄다. |
 | 19:57 | [`aa20a6f`](https://github.com/ehojune/bioinfo-team-3d/pull/698/commits/aa20a6f) | 논문 본문의 표를 칸 격자로 바꿔 rowspan 아래 값이 제 열에 남고, 문단 안 표·그림 뒤 문장이 사라지지 않게 했다. |
