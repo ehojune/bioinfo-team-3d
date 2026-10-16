@@ -14,6 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 03:44 | [`ce6247d`](https://github.com/ehojune/bioinfo-team-3d/pull/705/commits/ce6247d) | 검토 완료 원고를 우선하고 선언된 갈래 보고서와 갈래 상태를 정리본에 보존 |
+| 03:32 | [`7ae9cab`](https://github.com/ehojune/bioinfo-team-3d/pull/705/commits/7ae9cab) | terminal별 성공 여부로 갈래 상태를 나누고 부분 성공의 결과와 실패 이유를 함께 남겼다 |
+| 03:25 | [`2bae4fa`](https://github.com/ehojune/bioinfo-team-3d/pull/705/commits/2bae4fa) | 모든 갈래를 읽는 최종 종합 단계 중 의존 순서상 마지막 원고를 과학 보고서로 골랐다 |
+| 02:28 | [`b5b0351`](https://github.com/ehojune/bioinfo-team-3d/pull/705/commits/b5b0351) | 갈래 계획의 단계 산출물을 갈래별 폴더로 분리하고 실패 갈래도 정리본 목차에 남겼다 |
 | 01:41 | [`8e453f7`](https://github.com/ehojune/bioinfo-team-3d/pull/703/commits/8e453f7) | 모든 갈래 결과를 읽는 종합 단계가 하나는 있어야 갈래 계획을 받는다(종합 단계마다 다른 갈래만 읽는 계획 거절). |
 | 01:33 | [`56fd438`](https://github.com/ehojune/bioinfo-team-3d/pull/703/commits/56fd438) | 갈래 terminal 종합 완결성을 검증하고 실패 산출물 격리와 CP2 중단 기준을 보강했다 |
 | 00:42 | [`99db7fe`](https://github.com/ehojune/bioinfo-team-3d/pull/703/commits/99db7fe) | 갈래 연구 회귀 test 파일 끝의 불필요한 빈 줄을 정리했다 |
