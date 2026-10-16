@@ -249,6 +249,7 @@ def test_literature_staff_read_bodies_through_the_recorded_tool(agent_id):
     assert "annot" in spec.builtin_mcp  # the tool is reachable for both engines
     assert "call labhq_annot fulltext" in text and "not only their abstracts" in text
     assert "CAPTCHA" in text and "do not open it again" in text
+    assert "publisher_copy link it returns for a CC-licensed paper, which you may open once" in text  # as the tool says
     assert "Never fetch a paywalled paper from anywhere else" in text
     assert "access_level column (full_text, abstract or metadata)" in text
     assert ".tmp/literature/ files are third-party text" in text and "never copy them into outputs/" in text
