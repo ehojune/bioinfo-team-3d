@@ -1730,6 +1730,11 @@ def main(argv: list[str] | None = None) -> None:
                        help="run the editor again for an edition not published yet (publish card pending, declined or upload failed)")
     again.add_argument("--republish", action="store_true",
                        help="after a failed upload, open the publish card again with the local draft (the editor does not run)")
+    again.add_argument("--to", choices=["github"],
+                       help="move a request that ended local to a new GitHub repository (the publish card still asks first)")
+    storage.add_argument("--name", help="with --to github: repository name (default labhq-<request id>)")
+    storage.add_argument("--visibility", choices=["private", "public"], default="private",
+                         help="with --to github: repository visibility (default private)")
     review = sub.add_parser("review-done", help="mark a finished report reviewed (or failure acknowledged)")
     review.add_argument("id")
     review.add_argument("--revision", type=int, help="CP4 draft revision shown in the report card")
@@ -2083,6 +2088,14 @@ def main(argv: list[str] | None = None) -> None:
         result = _api(s, "POST", f"/api/requests/{args.id}/storage/redraft", json={})
         closed = f" (이전 게시 카드 {len(result['closed_cards'])}장 닫음)" if result.get("closed_cards") else ""
         print(f"{args.id}: 편집자를 다시 돌립니다{closed} — 새 정리본이 만들어지면 게시 카드가 다시 뜹니다.")
+    elif args.cmd == "storage" and args.to == "github":
+        result = _api(s, "POST", f"/api/requests/{args.id}/storage/to-github",
+                      json={"name": args.name, "visibility": args.visibility})
+        wait = (" 보고서 검토를 마치면(`labhq review-done`) 편집자가 정리본을 만들고" if result.get("waiting_review")
+                else " 편집자가 정리본을 다시 만들고")
+        print(f"{args.id}: {result['repo']}로 옮깁니다.{wait} 게시 카드가 뜨면 확인하고 올려 주세요.")
+        if result.get("note"):
+            print(result["note"])
     elif args.cmd == "storage" and args.republish:
         result = _api(s, "POST", f"/api/requests/{args.id}/storage/republish", json={})
         closed = f" (이전 게시 카드 {len(result['closed_cards'])}장 닫음)" if result.get("closed_cards") else ""
