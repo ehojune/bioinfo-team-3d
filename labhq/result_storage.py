@@ -23,7 +23,7 @@ from .models import ApprovalRequest, Task
 from .policy import touches, restricted_paths
 from . import edition_sources
 from .portfolio import (broken_markdown_links, build_portfolio_files, declared_aggregate_tables, portfolio_root_file,
-                        request_uses_internal_data, scan_publish_files, table_allowed)
+                        publish_file_allowed, request_uses_internal_data, scan_publish_files, table_allowed)
 from .intake import reference_dirs
 from .recruit.provenance import touches_restricted
 from .report_abstract import abstract_first, build_graphical_abstract, with_abstract_link
@@ -699,6 +699,13 @@ class ResultStorage:
                 report_name = "report/report.md" if "report/report.md" in docs else "report.md"
                 if report_name not in docs:
                     raise ValueError("missing editor report")
+                if report_name == "report.md":
+                    legacy = target / "report.md"
+                    migrated = target / "report" / "report.md"
+                    migrated.parent.mkdir(parents=True, exist_ok=True)
+                    legacy.replace(migrated)
+                    docs["report/report.md"] = docs.pop("report.md")
+                    report_name = "report/report.md"
                 from .korean_qc import check_document
                 saved["korean_qc"] = {
                     "README.md": check_document(docs["README.md"]),
@@ -715,8 +722,17 @@ class ResultStorage:
                 store = getattr(self.hub, "store", None)
                 decisions = list(store.all("approval_decision").values()) if store else []
                 tasks = list(store.all("task").values()) if store else []
+                portfolio_req = req
+                if saved.get("mode") != "new":
+                    portfolio_req = dict(req)
+                    portfolio_included = {
+                        *raw_assets,
+                        *(name for name in images if PurePosixPath(name).suffix.lower() == ".svg"),
+                    }
+                    portfolio_req["report"] = edition_figure_links(
+                        str(req.get("report") or ""), req, self.s, portfolio_included, "report.md")
                 portfolio = build_portfolio_files(
-                    req, self.s, raw_assets, images, decisions=decisions, tasks=tasks, bundle=bundle)
+                    portfolio_req, self.s, raw_assets, images, decisions=decisions, tasks=tasks, bundle=bundle)
                 internal = request_uses_internal_data(req, self.s)
                 aggregate_tables = declared_aggregate_tables(req)
                 assets = {}
@@ -995,8 +1011,10 @@ class ResultStorage:
                 if name.startswith("tables/") and body in aggregate_bodies
             )
             compatibility_docs = {name: body for name, body in docs.items()
-                                  if table_allowed(name, body, internal=internal, declared=aggregate_tables)}
-            compatibility_images = dict(images or {})
+                                  if publish_file_allowed(name, body, internal=internal, declared=aggregate_tables)}
+            compatibility_images = {name: body for name, body in (images or {}).items()
+                                    if publish_file_allowed(name, body, internal=internal,
+                                                            declared=aggregate_tables)}
             payloads = []
             if saved.get("mode") == "new":
                 payloads.append(("",

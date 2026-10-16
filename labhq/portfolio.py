@@ -39,6 +39,8 @@ _URL = re.compile(r"https?://[^\s<>\"'\])]+")
 _PAPER_SECTIONS = ("요약", "서론", "방법", "결과", "논의", "결론")
 _LITERATURE_OUTPUT = re.compile(r"(?:^|/)outputs/literature(?:/|$)", re.I)
 _TABLE_SUFFIXES = {".tsv", ".csv", ".xlsx", ".xls"}
+_AGGREGATE_TEXT_SUFFIXES = {".tsv", ".csv", ".json", ".txt", ".html"}
+_INTERNAL_DEFAULT_SUFFIXES = {".md", ".svg", ".py", ".r", ".sh"}
 _CODE_SUFFIXES = {".py", ".r", ".sh"}
 _NEXTFLOW_NAMES = {"report.html", "timeline.html", "trace.txt"}
 
@@ -53,6 +55,9 @@ def _balanced_link_target(depth: int = 4) -> str:
 _MARKDOWN_LINK = re.compile(
     r"(?P<image>!)?\[(?P<label>[^\]\n]*)\]\(\s*(?P<target><[^>\n]*>|" + _balanced_link_target()
     + r")(?P<title>\s+(?:\"[^\"\n]*\"|'[^'\n]*'))?\s*\)")
+_MARKDOWN_REFERENCE_DEFINITION = re.compile(
+    r"(?m)^[ \t]{0,3}\[[^\]\n]+\]:[ \t]*(?P<target><[^>\n]*>|\S+)"
+    r"(?P<title>[ \t]+(?:\"[^\"\n]*\"|'[^'\n]*'|\([^()\n]*\)))?[ \t]*$")
 _MARKDOWN_CODE = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]*`", re.DOTALL)
 _REMOTE_LINK = re.compile(r"(?i)^(?:https?://|data:|mailto:)")
 _PORTFOLIO_TOP = {"README.md", "REFERENCES.md", "DATA_AND_LICENSES.md"}
@@ -95,15 +100,23 @@ def declared_aggregate_tables(req: Mapping[str, Any]) -> set[str]:
     return declared
 
 
-def table_allowed(name: str, body: str, *, internal: bool, declared: set[str] | None = None) -> bool:
-    """Keep public tables; internal tables need an explicit aggregate declaration and a safe cell check."""
+def publish_file_allowed(name: str, body: str | bytes, *, internal: bool,
+                         declared: set[str] | None = None) -> bool:
+    """Keep public outputs; internal outputs follow a small publication allowlist."""
     path = PurePosixPath(name)
     suffix = path.suffix.lower()
-    if suffix not in _TABLE_SUFFIXES or not internal:
+    if not internal or suffix in _INTERNAL_DEFAULT_SUFFIXES:
         return True
-    if path.as_posix() not in (declared or set()) or suffix not in {".tsv", ".csv"}:
+    if path.as_posix() not in (declared or set()) or suffix not in _AGGREGATE_TEXT_SUFFIXES:
         return False
-    return not small_cells(body, suffix)
+    text = body.decode("utf-8", errors="replace") if isinstance(body, bytes) else body
+    return not small_cells(text, suffix)
+
+
+def table_allowed(name: str, body: str | bytes, *, internal: bool,
+                  declared: set[str] | None = None) -> bool:
+    """Compatibility name for the shared publication allowlist."""
+    return publish_file_allowed(name, body, internal=internal, declared=declared)
 
 
 def portfolio_root_file(name: str) -> bool:
@@ -111,63 +124,75 @@ def portfolio_root_file(name: str) -> bool:
     return name in _PORTFOLIO_TOP or name.startswith(_PORTFOLIO_FOLDERS)
 
 
-def _local_link(document: str, target: str, names: set[str]) -> tuple[str | None, str | None]:
+def _markdown_targets(text: str):
+    """Yield inline and reference-definition targets through one parser."""
+    masked = _MARKDOWN_CODE.sub(lambda match: " " * len(match.group()), text)
+    matches = [*_MARKDOWN_LINK.finditer(masked), *_MARKDOWN_REFERENCE_DEFINITION.finditer(masked)]
+    return sorted(matches, key=lambda match: match.start("target"))
+
+
+def _mapping_key(value: str) -> str | None:
+    normalized = posixpath.normpath(value.replace("\\", "/"))
+    if normalized in {"", ".", ".."} or normalized.startswith(("../", "/")):
+        return None
+    return normalized
+
+
+def _local_link(document: str, target: str,
+                source_targets: Mapping[str, str]) -> tuple[str | None, str | None, str]:
     raw = target[1:-1].strip() if target.startswith("<") and target.endswith(">") else target
     if not raw or raw.startswith("#") or _REMOTE_LINK.match(raw):
-        return None, None
-    path = unquote(raw.split("#", 1)[0].split("?", 1)[0]).replace("\\", "/")
+        return None, None, ""
+    cut = min((index for marker in ("?", "#") if (index := raw.find(marker)) >= 0), default=len(raw))
+    suffix = raw[cut:]
+    path = unquote(raw[:cut]).replace("\\", "/")
     if path.startswith("/") or re.match(r"^[A-Za-z]:/", path):
-        return path, None
-    resolved = posixpath.normpath(posixpath.join(posixpath.dirname(document), path))
-    if not resolved.startswith("../") and resolved in names:
-        return path, resolved
-    root = posixpath.normpath(path)
-    if not root.startswith("../") and root in names:
-        return path, root
-    matches = [name for name in names if PurePosixPath(name).name == PurePosixPath(path).name]
-    return (path, matches[0]) if len(matches) == 1 else (path, None)
+        return path, None, suffix
+    relative = _mapping_key(posixpath.join(posixpath.dirname(document), path))
+    root = _mapping_key(path)
+    for key in (relative, root):
+        if key is not None and key in source_targets:
+            return path, source_targets[key], suffix
+    return path, None, suffix
 
 
-def _rewrite_markdown_links(files: Mapping[str, str | bytes]) -> dict[str, str | bytes]:
-    names = set(files)
+def _rewrite_markdown_links(files: Mapping[str, str | bytes],
+                            source_targets: Mapping[str, str]) -> dict[str, str | bytes]:
     rewritten = dict(files)
     for document, body in files.items():
         if not document.lower().endswith(".md") or not isinstance(body, str):
             continue
-        masked = _MARKDOWN_CODE.sub(lambda match: " " * len(match.group()), body)
         pieces: list[str] = []
         last = 0
-        for match in _MARKDOWN_LINK.finditer(masked):
-            _path, resolved = _local_link(document, match.group("target"), names)
+        for match in _markdown_targets(body):
+            _path, resolved, suffix = _local_link(document, match.group("target"), source_targets)
             if resolved is None:
-                if match.group("image") and _path is not None:
-                    pieces.extend((body[last:match.start()], f"*(그림 생략: {match.group('label') or '그림'})*"))
-                    last = match.end()
                 continue
             relative = posixpath.relpath(resolved, posixpath.dirname(document) or ".")
-            encoded = quote(relative, safe="/")
-            original = body[match.start():match.end()]
-            replacement = original[:match.start("target") - match.start()] + encoded + original[match.end("target") - match.start():]
-            if replacement != original:
-                pieces.extend((body[last:match.start()], replacement))
-                last = match.end()
+            encoded = quote(relative, safe="/") + suffix
+            start, end = match.span("target")
+            if body[start:end] != encoded:
+                pieces.extend((body[last:start], encoded))
+                last = end
         if pieces:
             pieces.append(body[last:])
             rewritten[document] = "".join(pieces)
     return rewritten
 
 
-def broken_markdown_links(files: Mapping[str, str | bytes]) -> list[dict[str, str]]:
+def broken_markdown_links(files: Mapping[str, str | bytes],
+                          source_targets: Mapping[str, str] | None = None) -> list[dict[str, str]]:
     """List unresolved relative links in every Markdown document in an edition."""
     names = set(files)
+    mapping = dict(source_targets or {})
+    mapping.update({name: name for name in names})
     broken: list[dict[str, str]] = []
     for document in sorted(names):
         body = files[document]
         if not document.lower().endswith(".md") or not isinstance(body, str):
             continue
-        masked = _MARKDOWN_CODE.sub(lambda match: " " * len(match.group()), body)
-        for match in _MARKDOWN_LINK.finditer(masked):
-            path, resolved = _local_link(document, match.group("target"), names)
+        for match in _markdown_targets(body):
+            path, resolved, _suffix = _local_link(document, match.group("target"), mapping)
             if path is not None and resolved is None:
                 broken.append({"document": document, "target": path})
     return broken
@@ -326,6 +351,26 @@ def _unique_target(folder: str, source: str, used: set[str]) -> str:
 
 
 def small_cells(text: str, suffix: str) -> list[str]:
+    if suffix == ".json":
+        try:
+            pending = [json.loads(text)]
+        except (json.JSONDecodeError, TypeError):
+            return []
+        found = []
+        while pending:
+            value = pending.pop()
+            if isinstance(value, Mapping):
+                pending.extend(value.values())
+            elif isinstance(value, list):
+                pending.extend(value)
+            elif re.fullmatch(r"[1-9]", str(value).strip()):
+                found.append(str(value).strip())
+        return found
+    if suffix == ".html":
+        return re.findall(r"(?is)<(?:td|th)\b[^>]*>\s*([1-9])\s*</(?:td|th)>", text)
+    if suffix == ".txt":
+        return [cell.strip() for line in text.splitlines() for cell in re.split(r"[\t,]", line)
+                if re.fullmatch(r"[1-9]", cell.strip())]
     try:
         rows = csv.reader(io.StringIO(text), delimiter="\t" if suffix == ".tsv" else ",")
         return [cell.strip() for row in rows for cell in row if re.fullmatch(r"[1-9]", cell.strip())]
@@ -452,7 +497,7 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
 
 
 def scan_publish_files(files: Mapping[str, str | bytes], *, internal: bool = False) -> list[dict[str, str]]:
-    """Find credentials, local paths, signed URLs and internal-table cells of 1–9."""
+    """Find credentials, local paths, signed URLs and internal aggregate cells of 1–9."""
     issues: list[dict[str, str]] = []
     for name, body in files.items():
         if isinstance(body, bytes):
@@ -485,6 +530,7 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
         raise ValueError("과학 보고서에 반드시 0이어야 하는 한국어 표현이 남았습니다.")
     files: dict[str, str | bytes] = {"report/report.md": report}
     used = set(files)
+    source_targets: dict[str, str] = {}
     internal = request_uses_internal_data(req, settings)
     aggregate_tables = declared_aggregate_tables(req)
     omitted_tables: list[str] = []
@@ -494,14 +540,21 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
         path = PurePosixPath(name)
         suffix = path.suffix.lower()
         if suffix in _CODE_SUFFIXES and "scripts" in {part.casefold() for part in path.parts}:
-            files[_unique_target("code", name, used)] = body
+            target = _unique_target("code", name, used)
+            files[target] = body
+            source_targets[name] = target
         elif path.name in _NEXTFLOW_NAMES and "pipeline_info" in {part.casefold() for part in path.parts}:
-            files[f"run/nextflow/{path.name}"] = body
+            target = f"run/nextflow/{path.name}"
+            if publish_file_allowed(name, body, internal=internal, declared=aggregate_tables):
+                files[target] = body
+                source_targets[name] = target
         elif suffix in _TABLE_SUFFIXES:
-            if not table_allowed(name, body, internal=internal, declared=aggregate_tables):
+            if not publish_file_allowed(name, body, internal=internal, declared=aggregate_tables):
                 omitted_tables.append(name)
             else:
-                files[_unique_target("tables", name, used)] = body
+                target = _unique_target("tables", name, used)
+                files[target] = body
+                source_targets[name] = target
 
     abstract_source = next((name for name in images
                             if "graphical_abstract" in name.casefold()
@@ -521,6 +574,7 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
             continue
         text = _clean(body.decode("utf-8", errors="strict"), settings, req)
         files[target] = text.encode("utf-8")
+        source_targets[name] = target
         figure_names.append(target)
 
     request_text = _clean(str(req.get("text") or ""), settings, req)
@@ -541,8 +595,21 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
         raise ValueError("README에 반드시 0이어야 하는 한국어 표현이 남았습니다.")
     files["README.md"] = _clean(readme, settings, req)
 
-    files = _rewrite_markdown_links(files)
-    broken = broken_markdown_links(files)
+    results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
+    for step_id, result in results.items():
+        if not isinstance(result, Mapping):
+            continue
+        workdir_value = result.get("workdir") or result.get("workdir_id")
+        if not isinstance(workdir_value, str):
+            continue
+        prefix = f"steps/{step_id}/outputs/"
+        workdir = workdir_value.replace("\\", "/")
+        for source, target in list(source_targets.items()):
+            if source.startswith(prefix):
+                source_targets[f"{workdir}/outputs/{source[len(prefix):]}"] = target
+    source_targets.update({name: name for name in files})
+    files = _rewrite_markdown_links(files, source_targets)
+    broken = broken_markdown_links(files, source_targets)
     if broken:
         detail = ", ".join(f"{row['document']} -> {row['target']}" for row in broken)
         raise ValueError(f"정리본 Markdown 링크가 깨졌습니다: {detail}")

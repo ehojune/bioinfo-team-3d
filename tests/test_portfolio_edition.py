@@ -139,7 +139,7 @@ def test_fixed_request_bundle_builds_the_portfolio_contract(tmp_path):
     assert "by_job.tsv" not in files and "patient_summary.tsv" not in files
     assert "내부 자료 영역이라 표 2개는 요청 묶음에만 둠" in readme
     assert not any("outputs/literature" in name or "article.md" in name for name in files)
-    assert {"run/nextflow/report.html", "run/nextflow/timeline.html", "run/nextflow/trace.txt"} <= files.keys()
+    assert not any(name.startswith("run/nextflow/") for name in files)
     assert check_document(readme)["status"] == "PASS"
     assert check_document(files["report/report.md"])["status"] == "PASS"
 
@@ -191,6 +191,44 @@ def test_markdown_link_check_covers_every_edition_document():
         {"document": "report/report.md", "target": "../figures/missing.svg"},
         {"document": "run/requests.md", "target": "../tables/missing.tsv"},
     ]
+
+
+def test_duplicate_figure_names_keep_their_source_to_target_links(tmp_path):
+    settings, request, bundle, assets, images, decisions, tasks = portfolio_fixture(tmp_path)
+    assets["steps/report/outputs/report/final_report.md"] = PAPER.replace(
+        "## 결과\n\n",
+        "## 결과\n\n![첫 그림](wd1/outputs/plot.svg)\n\n![둘째 그림](wd2/outputs/plot.svg)\n\n",
+    )
+    images = {
+        "wd1/outputs/plot.svg": b'<svg xmlns="http://www.w3.org/2000/svg"><text>one</text></svg>',
+        "wd2/outputs/plot.svg": b'<svg xmlns="http://www.w3.org/2000/svg"><text>two</text></svg>',
+    }
+
+    files = build_portfolio_files(
+        request, settings, assets, images, decisions=decisions, tasks=tasks, bundle=bundle)
+
+    report = files["report/report.md"]
+    assert "![첫 그림](../figures/plot.svg)" in report
+    assert "![둘째 그림](../figures/outputs-plot.svg)" in report
+    assert files["figures/plot.svg"] != files["figures/outputs-plot.svg"]
+
+
+def test_reference_style_links_use_the_same_source_mapping(tmp_path):
+    settings, request, bundle, assets, images, decisions, tasks = portfolio_fixture(tmp_path)
+    assets["steps/report/outputs/report/final_report.md"] = PAPER.replace(
+        "## 결과\n\n", "## 결과\n\n![화산 그림][plot]\n\n[plot]: wd1/outputs/plot.svg\n\n")
+    images = {
+        "wd1/outputs/plot.svg": b'<svg xmlns="http://www.w3.org/2000/svg"><text>plot</text></svg>',
+    }
+
+    files = build_portfolio_files(
+        request, settings, assets, images, decisions=decisions, tasks=tasks, bundle=bundle)
+
+    assert "[plot]: ../figures/plot.svg" in files["report/report.md"]
+    assert portfolio.broken_markdown_links(files) == []
+    assert portfolio.broken_markdown_links({
+        "report/report.md": "![빠진 그림][plot]\n\n[plot]: wd1/outputs/missing.svg\n",
+    }) == [{"document": "report/report.md", "target": "wd1/outputs/missing.svg"}]
 
 
 def test_png_graphical_abstract_gets_a_generated_svg_fallback(tmp_path):

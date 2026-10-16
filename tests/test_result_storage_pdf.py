@@ -248,13 +248,18 @@ async def test_resumed_legacy_draft_uses_report_md_for_korean_qc(tmp_path, monke
     }
     cards = []
     approve_all(hub, cards)
-    service = ResultStorage(hub, fake_github([], exists=True))
+    calls = []
+    service = ResultStorage(hub, fake_github(calls, exists=True))
 
     await service.finish("req_test")
     await service.close()
 
-    assert "report.md" in saved["korean_qc"]
+    assert "report/report.md" in saved["korean_qc"]
     assert cards[0]["detail"]["korean_qc"] == saved["korean_qc"]
+    assert not (edition / "report.md").exists()
+    assert (edition / "report" / "report.md").is_file()
+    assert "labhq/results/req_test/report/report.md" in puts(calls)
+    assert saved["report_url"].endswith("/labhq/results/req_test/report/report.md")
 
 
 async def test_resumed_draft_refuses_a_file_that_is_not_a_pdf(tmp_path, monkeypatch):
