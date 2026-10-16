@@ -547,7 +547,7 @@ class ResultStorage:
             if marker.get("state") not in {"pending", "asked"}:
                 return None
             if (req.get("status") not in {"done", "completed"} or not req.get("pi_reviewed_at")
-                    or req.get("bundle_pending") or saved.get("status") == "published"):
+                    or saved.get("status") == "published"):
                 return None
             for entry in self.hub.approvals.values():
                 approval = entry["approval"]
@@ -606,11 +606,13 @@ class ResultStorage:
         marker = req.get("storage_end_ask") or {}
         if end and marker.get("state") not in {"pending", "asked"}:
             raise ValueError("끝 저장 위치 질문이 없는 요청입니다.")
-        if end and mode == "keep":
+        keep_initial = end and mode == "keep"
+        if keep_initial:
             choice = dict(marker.get("initial") or {})
             mode = choice.get("mode", "local")
-        saved = {"mode": "local", "status": "selected"}
-        if mode in {"new", "existing"}:
+        saved = {**choice, "mode": mode, "status": "selected"} if keep_initial else {
+            "mode": "local", "status": "selected"}
+        if not keep_initial and mode in {"new", "existing"}:
             repo = str(choice.get("repo") or "").strip()
             if end and mode == "new" and "/" in repo:
                 repo = repo.rsplit("/", 1)[-1]

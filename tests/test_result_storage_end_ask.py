@@ -7,9 +7,10 @@ import pytest
 
 from labhq import cli
 from labhq.gateway.server import create_app
-from labhq.result_storage import STORAGE_QUESTION
+from labhq.result_storage import ResultStorage, STORAGE_QUESTION
 from labhq.settings import Settings
 from tests.test_late_github_688 import github, publish_card
+from tests.test_research_cp4 import draft_hub, target
 
 
 def make(tmp_path, monkeypatch, *, create=422):
@@ -87,6 +88,26 @@ async def test_github_plan_choice_can_change_to_local_without_repository_probe(t
     await hub.result_storage.close()
 
 
+async def test_keep_restores_the_complete_initial_choice_for_upload(tmp_path, monkeypatch):
+    app, hub, calls, editor = make(tmp_path, monkeypatch)
+    gh = AsyncMock()
+    gh.repo_info.return_value = {"private": True, "permissions": {"push": True}, "default_branch": "main"}
+    gh.repository_is_empty.return_value = False
+    hub.result_storage.client = lambda: gh
+    initial = {"mode": "existing", "repo": "owner/study", "visibility": "private",
+               "allow_public": False, "branch": "release"}
+    hub.requests["r"].update(status="done", pi_reviewed_at=1,
+                             result_storage={**initial, "status": "selected"},
+                             storage_end_ask={"state": "pending", "initial": initial})
+
+    saved = await hub.result_storage.select("r", {"mode": "keep"}, end=True)
+    await ResultStorage.upload(hub.result_storage, "r", {"README.md": "# Result"})
+
+    assert saved["branch"] == "release"
+    assert gh.put_file.await_args.args[-1] == "release"
+    await hub.result_storage.close()
+
+
 async def test_missing_create_permission_falls_back_to_local_edition(tmp_path, monkeypatch):
     app, hub, calls, editor = make(tmp_path, monkeypatch, create=403)
     await hub.result_storage.select("r", {"mode": "local"})
@@ -145,3 +166,45 @@ def test_cli_review_done_can_answer_the_end_question(monkeypatch, capsys):
     assert calls == [("POST", "/api/requests/r/review-done", {"json": {
         "storage": "github", "name": "study", "visibility": "public"}})]
     assert "저장 위치" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("storage", ["github", "local"])
+async def test_cp4_review_done_keeps_storage_answer_while_bundle_refreshes(tmp_path, monkeypatch, storage):
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token-for-tests")
+    fake = await draft_hub()
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    settings.runner.workspace_root = str(tmp_path / "runs")
+    settings.gateway.client_token = "test-token"
+    calls = []
+    app = create_app(settings, github_transport=github(calls))
+    hub = app.state.hub
+    hub.requests["r"] = fake.requests["r"]
+    await hub.result_storage.select("r", {"mode": "local"})
+    hub.agents["editor"] = {}
+    editor = AsyncMock(return_value=SimpleNamespace(ok=True, structured={"readme": "# Edited summary"}))
+    monkeypatch.setattr(hub.orchestrator, "run_step", editor)
+    monkeypatch.setattr(hub.result_storage, "upload", AsyncMock())
+    monkeypatch.setattr(hub, "_has_bundle_workdir", lambda _rid: True)
+    monkeypatch.setattr(hub, "_bundle_outcome", lambda *_args: {"warning": "test bundle refreshed"})
+    body = {**target(hub.requests["r"]), "storage": storage}
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test",
+                                 headers={"Authorization": "Bearer test-token"}) as client:
+        reply = await client.post("/api/requests/r/review-done", json=body)
+
+    assert reply.status_code == 200
+    assert hub.requests["r"]["storage_end_ask"]["state"] == "answered"
+    for _ in range(100):
+        if not hub.requests["r"].get("bundle_pending"):
+            break
+        await asyncio.sleep(0.01)
+    assert not hub.requests["r"].get("bundle_pending")
+    if storage == "github":
+        card = await publish_card(hub)
+        assert card["detail"]["repo"] == "owner/labhq-r"
+    else:
+        await hub.result_storage.tasks["r"]
+        assert hub.requests["r"]["result_storage"]["status"] == "local"
+    editor.assert_awaited_once()
+    await hub.result_storage.close()
