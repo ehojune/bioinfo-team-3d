@@ -24,7 +24,8 @@ def branched_fixture(tmp_path: Path):
              "data_boundary": "licensed"},
         ],
         "steps": [
-            {"id": "lit", "branch": "A", "instruction": "문헌을 검토한다."},
+            {"id": "lit", "branch": "A", "instruction": "문헌을 검토한다.",
+             "output_types": [{"name": "outputs/report/stage_report.md", "data_type": "report"}]},
             {"id": "omics", "branch": "B", "instruction": "오믹스를 분석한다.",
              "output_types": [{"name": "outputs/tables/summary.tsv", "data_type": "table"}]},
             {"id": "mdis", "branch": "C", "instruction": "내부 자료를 집계한다.",
@@ -92,6 +93,15 @@ def test_four_branches_get_study_folders_and_failed_row(tmp_path):
     assert "studies/               갈래별 코드·그림·표·단계 보고서" in files["README.md"]
 
 
+def test_root_branch_table_shows_status(tmp_path):
+    settings, request, assets, images = branched_fixture(tmp_path)
+
+    readme = build_portfolio_files(request, settings, assets, images)["README.md"]
+
+    assert "| 갈래 | 자료 | 상태 | 결과 | 폴더 |" in readme
+    assert "| D | licensed · ipums | 실패 | 자료 접근이 거절됨 |" in readme
+
+
 def test_branch_with_one_failed_terminal_is_partial_and_keeps_success(tmp_path):
     settings, request, assets, images = branched_fixture(tmp_path)
     request = deepcopy(request)
@@ -125,10 +135,29 @@ def test_same_named_branch_figures_and_report_links_stay_separate(tmp_path):
     assert broken_markdown_links(files) == []
 
 
-def test_final_synthesis_manuscript_wins_over_intermediate_synthesis(tmp_path):
+def test_accepted_request_manuscript_wins_over_stage_synthesis(tmp_path):
     settings, request, assets, images = branched_fixture(tmp_path)
     request = deepcopy(request)
-    request["report"] = "요약만 남은 요청 보고서"
+    request["review"] = {"verdict": "accept"}
+    request["report"] = PAPER.replace("# 공개 오믹스 대체 분석", "# 검토 완료 요청 원고")
+    request["plan"]["steps"][-1] = {
+        "id": "S1", "branch": "synthesis", "instruction": "최종 종합을 쓴다.",
+        "depends_on": ["lit", "omics", "mdis", "ipums"],
+    }
+    request["results"].pop("synth")
+    request["results"]["S1"] = {"ok": True, "text": "최종 종합"}
+    assets = {"steps/S1/outputs/report/final_report.md": PAPER.replace(
+        "# 공개 오믹스 대체 분석", "# 단계 종합 원고")}
+
+    files = build_portfolio_files(request, settings, assets, images)
+
+    assert files["report/report.md"].startswith("# 검토 완료 요청 원고\n")
+
+
+def test_revise_uses_latest_final_synthesis_manuscript(tmp_path):
+    settings, request, assets, images = branched_fixture(tmp_path)
+    request = deepcopy(request)
+    request["review"] = {"verdict": "revise"}
     request["plan"]["steps"][-1] = {
         "id": "S1", "branch": "synthesis", "instruction": "중간 종합을 쓴다.",
         "depends_on": ["lit", "omics", "mdis", "ipums"],
@@ -152,6 +181,19 @@ def test_final_synthesis_manuscript_wins_over_intermediate_synthesis(tmp_path):
     files = build_portfolio_files(request, settings, assets, images)
 
     assert files["report/report.md"].startswith("# 최종 종합 원고\n")
+
+
+def test_declared_branch_report_is_kept_without_report_in_filename(tmp_path):
+    settings, request, assets, images = branched_fixture(tmp_path)
+    request = deepcopy(request)
+    request["plan"]["steps"][0]["output_types"] = [
+        {"name": "outputs/answer.md", "data_type": "report"},
+    ]
+    assets["steps/lit/outputs/answer.md"] = "# 문헌 답변\n\n직접 근거를 찾지 못했다.\n"
+
+    files = build_portfolio_files(request, settings, assets, images)
+
+    assert files["studies/A-literature/report/answer.md"] == assets["steps/lit/outputs/answer.md"]
 
 
 def test_internal_branch_uses_existing_publication_allowlist(tmp_path):

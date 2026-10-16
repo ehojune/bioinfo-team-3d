@@ -65,14 +65,13 @@ _PORTFOLIO_TOP = {"README.md", "REFERENCES.md", "DATA_AND_LICENSES.md"}
 _PORTFOLIO_FOLDERS = ("report/", "run/", "code/", "figures/", "tables/", "studies/")
 
 
-def declared_aggregate_tables(req: Mapping[str, Any]) -> set[str]:
-    """Return tables explicitly declared with the aggregate ``table`` output type."""
+def _declared_outputs(req: Mapping[str, Any], expected_type: str) -> set[str]:
     declared: set[str] = set()
 
     def add(step_id: str, name: Any, data_type: Any) -> None:
         if isinstance(data_type, Mapping):
             data_type = data_type.get("value") if data_type.get("basis") == "declared" else None
-        if not isinstance(name, str) or data_type != "table":
+        if not isinstance(name, str) or data_type != expected_type:
             return
         raw = name.replace("\\", "/")
         normalized = posixpath.normpath(raw[2:] if raw.startswith("./") else raw)
@@ -99,6 +98,11 @@ def declared_aggregate_tables(req: Mapping[str, Any]) -> set[str]:
                 if isinstance(entry, Mapping):
                     add(step_id, name, entry.get("data_type"))
     return declared
+
+
+def declared_aggregate_tables(req: Mapping[str, Any]) -> set[str]:
+    """Return tables explicitly declared with the aggregate ``table`` output type."""
+    return _declared_outputs(req, "table")
 
 
 def publish_file_allowed(name: str, body: str | bytes, *, internal: bool,
@@ -246,13 +250,14 @@ def _paper_like(text: str) -> bool:
                                                    for section in _PAPER_SECTIONS)
 
 
-def _latest_final_synthesis_ids(plan: Mapping[str, Any]) -> tuple[set[str], set[str]]:
+def _latest_final_synthesis_ids(plan: Mapping[str, Any]) -> tuple[list[str], set[str]]:
     branches = [branch for branch in plan.get("branches") or [] if isinstance(branch, Mapping)]
     steps = [step for step in plan.get("steps") or [] if isinstance(step, Mapping)]
     if not branches:
-        return set(), set()
+        return [], set()
     topology = branch_plan_topology(branches, steps)
-    final_ids = set(topology["final_synthesis_ids"])
+    ordered_final_ids = [str(step_id) for step_id in topology["final_synthesis_ids"]]
+    final_ids = set(ordered_final_ids)
     synthesis_ids = set(topology["synthesis_ids"])
     dependencies = {str(step.get("id")): [str(value) for value in step.get("depends_on") or []]
                     for step in steps if step.get("id")}
@@ -270,7 +275,7 @@ def _latest_final_synthesis_ids(plan: Mapping[str, Any]) -> tuple[set[str], set[
 
     superseded = {step_id for other_id in final_ids
                   for step_id in final_ids.intersection(ancestors(other_id))}
-    return final_ids - superseded, synthesis_ids
+    return [step_id for step_id in ordered_final_ids if step_id not in superseded], synthesis_ids
 
 
 def _paper_candidate(req: dict, assets: Mapping[str, str]) -> str:
@@ -293,15 +298,18 @@ def _paper_candidate(req: dict, assets: Mapping[str, str]) -> str:
         if step_branches.get(source_step or "") == "synthesis":
             score += 100
         candidates.append((score, body.strip(), source_step))
-    final_candidates = [row for row in candidates if row[2] in final_synthesis_ids]
-    if final_candidates:
-        return max(final_candidates, key=lambda row: row[0])[1]
-    if synthesis_ids:
-        candidates = [row for row in candidates if row[2] not in synthesis_ids]
+    review = req.get("review") or (req.get("review_progress") or {}).get("review") or {}
     review_ended = (req.get("outcome") == "research_review_revise"
-                    or str((req.get("review") or {}).get("verdict") or "").casefold() == "revise")
-    if candidates and (review_ended or not _paper_like(report)):
-        return max(candidates, key=lambda row: row[0])[1]
+                    or str(review.get("verdict") or "").casefold() == "revise")
+    if review_ended or not _paper_like(report):
+        final_order = {step_id: index for index, step_id in enumerate(final_synthesis_ids)}
+        final_candidates = [row for row in candidates if row[2] in final_order]
+        if final_candidates:
+            return max(final_candidates, key=lambda row: (final_order[row[2]], row[0]))[1]
+        if synthesis_ids:
+            candidates = [row for row in candidates if row[2] not in synthesis_ids]
+        if candidates:
+            return max(candidates, key=lambda row: row[0])[1]
     if _paper_like(report):
         return report
     title = str(req.get("text") or "연구 결과").strip().splitlines()[0][:120] or "연구 결과"
@@ -628,8 +636,9 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
     if abstract:
         lines += [f"![그래픽 초록]({abstract})", ""]
     if branch_rows:
-        lines += ["| 갈래 | 자료 | 결과 | 폴더 |", "|---|---|---|---|"]
-        lines += [f"| {_safe_cell(row['id'])} | {_safe_cell(row['data'])} | {_safe_cell(row['result'])} | "
+        lines += ["| 갈래 | 자료 | 상태 | 결과 | 폴더 |", "|---|---|---|---|---|"]
+        lines += [f"| {_safe_cell(row['id'])} | {_safe_cell(row['data'])} | {_safe_cell(row['status'])} | "
+                  f"{_safe_cell(row['result'])} | "
                   f"[열기](studies/{row['folder']}/README.md) |" for row in branch_rows]
     else:
         lines += ["| 단계 | 자료 | 결과 |", "|---|---|---|"]
@@ -704,6 +713,7 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
     branch_rows = _branch_rows(req, branch_specs, step_folders) if branch_specs else []
     internal = request_uses_internal_data(req, settings)
     aggregate_tables = declared_aggregate_tables(req)
+    declared_reports = _declared_outputs(req, "report")
     omitted_tables: list[str] = []
     figure_names: list[str] = []
 
@@ -716,7 +726,7 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
             target = _unique_target(prefix + "code", name, used)
             files[target] = body
             source_targets[name] = target
-        elif branch_folder and suffix == ".md" and "report" in path.stem.casefold():
+        elif branch_folder and suffix == ".md" and path.as_posix() in declared_reports:
             target = _unique_target(prefix + "report", name, used)
             files[target] = body
             source_targets[name] = target
