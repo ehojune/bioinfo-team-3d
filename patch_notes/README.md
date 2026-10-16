@@ -14,7 +14,13 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 20:17 | [`f05341d`](https://github.com/ehojune/bioinfo-team-3d/pull/698/commits/f05341d) | 연동 목록 원본(scripts/integrations.py)에 labhq_annot의 Europe PMC 논문 본문 조회를 적었다. |
+| 20:05 | [`4630e7d`](https://github.com/ehojune/bioinfo-team-3d/pull/698/commits/4630e7d) | 문헌·생물 직원 지시에 CC 논문의 publisher_copy 링크를 한 번 열어도 된다는 예외를 도구 설명과 맞췄다. |
+| 19:57 | [`aa20a6f`](https://github.com/ehojune/bioinfo-team-3d/pull/698/commits/aa20a6f) | 논문 본문의 표를 칸 격자로 바꿔 rowspan 아래 값이 제 열에 남고, 문단 안 표·그림 뒤 문장이 사라지지 않게 했다. |
+| 19:52 | [`e4057eb`](https://github.com/ehojune/bioinfo-team-3d/pull/698/commits/e4057eb) | 논문 본문을 산출물이 아닌 .tmp/literature/에 두어 직접 실행·정리본에 실리지 않게 하고, 재시도를 다 쓴 본문 조회도 저장하지 않는 초록으로 받는다. |
+| 19:45 | [`fd4c268`](https://github.com/ehojune/bioinfo-team-3d/pull/698/commits/fd4c268) | 일시적인 본문 조회 실패를 초록으로 30일 저장하지 않고, 서로 다른 DOI가 같은 본문 파일을 쓰지 않게 했다. |
 | 19:38 | [`a7a2b65`](https://github.com/ehojune/bioinfo-team-3d/pull/696/commits/a7a2b65) | 계획 크기 상한의 저장소·배포 설정 예시를 일치시킴 |
+| 19:37 | [`a87ed2f`](https://github.com/ehojune/bioinfo-team-3d/pull/698/commits/a87ed2f) | 직원이 Europe PMC 오픈 액세스 본문을 labhq_annot fulltext로 읽고 문헌 표마다 읽은 수준(access_level)을 적게 했다 (#697). |
 | 19:17 | [`1b3f19d`](https://github.com/ehojune/bioinfo-team-3d/pull/696/commits/1b3f19d) | StructuredOutput 실패 원문 보존과 큰 계획 축소 재시도·크기 경고를 추가 |
 | 19:12 | [`b0fc244`](https://github.com/ehojune/bioinfo-team-3d/pull/692/commits/b0fc244) | PR #693의 staff-skill schema와 writing-skill prompt 변경에 맞춰 고정 hash를 갱신 |
 | 19:08 | [`2710613`](https://github.com/ehojune/bioinfo-team-3d/pull/692/commits/2710613) | main의 직원 글쓰기 prompt와 한국어 품질 기록을 그림 게시 변경에 함께 병합 |
