@@ -181,4 +181,3 @@ def test_prompts_cover_branch_reporting_and_hypothesis_aligned_reference():
     assert "analysis-result table" in cso.RESEARCH_REVIEW_PROMPT
     assert "same exposure side" in cso.RESEARCH_REVIEW_PROMPT
     assert "that group versus all others" in cso.RESEARCH_PLAN_PROMPT
-
