@@ -15,3 +15,9 @@ rows:
 - sha: bf1c3c9
   at: 2026-10-16 18:37
   text: 계획에 선언된 핵심 그림만 결과 절 누락 경고 대상으로 삼고 예전 묶음의 기존 규칙을 유지
+- sha: '2710613'
+  at: 2026-10-16 19:08
+  text: main의 직원 글쓰기 prompt와 한국어 품질 기록을 그림 게시 변경에 함께 병합
+- sha: b0fc244
+  at: 2026-10-16 19:12
+  text: 'PR #693의 staff-skill schema와 writing-skill prompt 변경에 맞춰 고정 hash를 갱신'
