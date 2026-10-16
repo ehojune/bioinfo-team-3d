@@ -38,8 +38,7 @@ _GEO = re.compile(r"\b(?:GSE|GSM|GPL)\d+\b", re.I)
 _URL = re.compile(r"https?://[^\s<>\"'\])]+")
 _PAPER_SECTIONS = ("요약", "서론", "방법", "결과", "논의", "결론")
 _LITERATURE_OUTPUT = re.compile(r"(?:^|/)outputs/literature(?:/|$)", re.I)
-_TABLE_AGGREGATE = re.compile(r"(?:aggregate|summary|result|count|stats?|qc|^by[_-])", re.I)
-_TABLE_ROW_LEVEL = re.compile(r"(?:sample|metadata|individual|participant|subject|person|raw)", re.I)
+_TABLE_SUFFIXES = {".tsv", ".csv", ".xlsx", ".xls"}
 _CODE_SUFFIXES = {".py", ".r", ".sh"}
 _NEXTFLOW_NAMES = {"report.html", "timeline.html", "trace.txt"}
 
@@ -60,14 +59,51 @@ _PORTFOLIO_TOP = {"README.md", "REFERENCES.md", "DATA_AND_LICENSES.md"}
 _PORTFOLIO_FOLDERS = ("report/", "run/", "code/", "figures/", "tables/")
 
 
-def table_allowed(name: str, body: str, *, internal: bool) -> bool:
-    """Use the portfolio's aggregate-only privacy rule for every published payload."""
+def declared_aggregate_tables(req: Mapping[str, Any]) -> set[str]:
+    """Return tables explicitly declared with the aggregate ``table`` output type."""
+    declared: set[str] = set()
+
+    def add(step_id: str, name: Any, data_type: Any) -> None:
+        if isinstance(data_type, Mapping):
+            data_type = data_type.get("value") if data_type.get("basis") == "declared" else None
+        if not isinstance(name, str) or data_type != "table":
+            return
+        raw = name.replace("\\", "/")
+        normalized = posixpath.normpath(raw[2:] if raw.startswith("./") else raw)
+        if normalized in {"", ".", ".."} or normalized.startswith(("../", "/", "steps/")):
+            return
+        if not normalized.startswith("outputs/"):
+            normalized = f"outputs/{normalized}"
+        declared.add(f"steps/{step_id}/{normalized}")
+
+    plan = req.get("plan") if isinstance(req.get("plan"), Mapping) else {}
+    for step in plan.get("steps") or []:
+        if not isinstance(step, Mapping) or not isinstance(step.get("id"), str):
+            continue
+        for entry in step.get("output_types") or []:
+            if isinstance(entry, Mapping):
+                add(step["id"], entry.get("name"), entry.get("data_type"))
+    results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
+    for step_id, result in results.items():
+        if not isinstance(step_id, str) or not isinstance(result, Mapping):
+            continue
+        output_types = result.get("output_types")
+        if isinstance(output_types, Mapping):
+            for name, entry in output_types.items():
+                if isinstance(entry, Mapping):
+                    add(step_id, name, entry.get("data_type"))
+    return declared
+
+
+def table_allowed(name: str, body: str, *, internal: bool, declared: set[str] | None = None) -> bool:
+    """Keep public tables; internal tables need an explicit aggregate declaration and a safe cell check."""
     path = PurePosixPath(name)
     suffix = path.suffix.lower()
-    if suffix not in {".tsv", ".csv"}:
+    if suffix not in _TABLE_SUFFIXES or not internal:
         return True
-    return bool(_TABLE_AGGREGATE.search(path.name) and not _TABLE_ROW_LEVEL.search(path.name)
-                and not (internal and small_cells(body, suffix)))
+    if path.as_posix() not in (declared or set()) or suffix not in {".tsv", ".csv"}:
+        return False
+    return not small_cells(body, suffix)
 
 
 def portfolio_root_file(name: str) -> bool:
@@ -298,7 +334,7 @@ def small_cells(text: str, suffix: str) -> list[str]:
 
 
 def request_uses_internal_data(req: dict, settings) -> bool:
-    paths = [zone.path for zone in settings.policy.data_zones if zone.level == "internal"]
+    paths = [zone.path for zone in settings.policy.data_zones if zone.level in {"internal", "restricted"}]
     return bool(paths and touches(
         [req.get("text"), req.get("project_dirs"), req.get("references"), req.get("results")], paths))
 
@@ -411,8 +447,7 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
               "## 원자료 안내", "",
               "원자료는 넣지 않았다. 출처, 이용 조건과 필수 인용은 [DATA_AND_LICENSES.md](DATA_AND_LICENSES.md)에 있다."]
     if omitted_tables:
-        lines += ["", "내부 자료 집계표에서 1–9 칸이 발견되어 다음 표를 게시본에서 뺐다: "
-                  + ", ".join(f"`{PurePosixPath(name).name}`" for name in omitted_tables) + "."]
+        lines += ["", f"내부 자료 영역이라 표 {len(omitted_tables)}개는 요청 묶음에만 둠."]
     return "\n".join(lines) + "\n"
 
 
@@ -451,6 +486,7 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
     files: dict[str, str | bytes] = {"report/report.md": report}
     used = set(files)
     internal = request_uses_internal_data(req, settings)
+    aggregate_tables = declared_aggregate_tables(req)
     omitted_tables: list[str] = []
     figure_names: list[str] = []
 
@@ -461,8 +497,8 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
             files[_unique_target("code", name, used)] = body
         elif path.name in _NEXTFLOW_NAMES and "pipeline_info" in {part.casefold() for part in path.parts}:
             files[f"run/nextflow/{path.name}"] = body
-        elif suffix in {".tsv", ".csv"} and _TABLE_AGGREGATE.search(path.name) and not _TABLE_ROW_LEVEL.search(path.name):
-            if not table_allowed(name, body, internal=internal):
+        elif suffix in _TABLE_SUFFIXES:
+            if not table_allowed(name, body, internal=internal, declared=aggregate_tables):
                 omitted_tables.append(name)
             else:
                 files[_unique_target("tables", name, used)] = body

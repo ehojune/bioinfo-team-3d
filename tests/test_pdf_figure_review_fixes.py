@@ -58,6 +58,28 @@ async def test_the_published_pdf_drops_figures_the_reviewed_edition_leaves_out(t
     assert "![큰 그림](steps/s1/outputs/big.png)" in edition_report
 
 
+async def test_cleaned_markdown_and_pdf_use_the_same_figure_set(tmp_path, monkeypatch):
+    hub, edition = prepare(tmp_path, monkeypatch)
+    pages = []
+    fake_printer(monkeypatch, [4096], pages)
+    approve_all(hub, [])
+
+    await publish(hub, [])
+
+    markdown = (edition / "report.md").read_text(encoding="utf-8")
+    markdown_figures = {
+        (edition / link.target).read_bytes()
+        for link in image_links(markdown)
+        if (edition / link.target).is_file()
+    }
+    pdf_figures = {
+        base64.b64decode(source.split(",", 1)[1])
+        for source, _alt in image_sources(pages[0])
+        if source.startswith("data:")
+    }
+    assert pdf_figures == markdown_figures
+
+
 def test_edition_candidates_is_the_eligibility_edition_assets_copies_by(tmp_path, monkeypatch):
     hub, edition = prepare(tmp_path, monkeypatch)
     bundle = edition.with_name("req_test")

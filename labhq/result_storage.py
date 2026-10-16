@@ -22,7 +22,7 @@ from .interruption import ShutdownInterrupted
 from .models import ApprovalRequest, Task
 from .policy import touches, restricted_paths
 from . import edition_sources
-from .portfolio import (broken_markdown_links, build_portfolio_files, portfolio_root_file,
+from .portfolio import (broken_markdown_links, build_portfolio_files, declared_aggregate_tables, portfolio_root_file,
                         request_uses_internal_data, scan_publish_files, table_allowed)
 from .intake import reference_dirs
 from .recruit.provenance import touches_restricted
@@ -696,6 +696,14 @@ class ResultStorage:
                             docs[name] = path.read_bytes().decode("utf-8")
                 if "README.md" not in docs:
                     raise ValueError("missing editor README")
+                report_name = "report/report.md" if "report/report.md" in docs else "report.md"
+                if report_name not in docs:
+                    raise ValueError("missing editor report")
+                from .korean_qc import check_document
+                saved["korean_qc"] = {
+                    "README.md": check_document(docs["README.md"]),
+                    report_name: check_document(docs[report_name]),
+                }
             else:
                 raw_assets, images = edition_assets(req, self.s)
                 included = {*raw_assets, *images}
@@ -710,9 +718,10 @@ class ResultStorage:
                 portfolio = build_portfolio_files(
                     req, self.s, raw_assets, images, decisions=decisions, tasks=tasks, bundle=bundle)
                 internal = request_uses_internal_data(req, self.s)
+                aggregate_tables = declared_aggregate_tables(req)
                 assets = {}
                 for name, body in raw_assets.items():
-                    if not table_allowed(name, body, internal=internal):
+                    if not table_allowed(name, body, internal=internal, declared=aggregate_tables):
                         continue
                     assets[name] = body
                 included = {*assets, *images}
@@ -776,6 +785,15 @@ class ResultStorage:
                             docs["README.md"] += "\n\n" + missing + "\n"
                         if links and saved.get("mode") != "new":
                             docs["README.md"] += "\n## 그림·표·실행 파일\n\n" + links + "\n"
+                if saved.get("mode") != "new" and (missing := document_links(docs["README.md"])):
+                    docs["README.md"] += "\n\n" + missing + "\n"
+                if (links and saved.get("mode") != "new"
+                        and "## 그림·표·실행 파일" not in docs["README.md"]):
+                    docs["README.md"] += "\n## 그림·표·실행 파일\n\n" + links + "\n"
+                if saved.get("mode") != "new":
+                    lead_figure = next((name for name in images if not is_abstract_target(name)), None)
+                    if lead_figure:
+                        docs["README.md"] += f"\n![대표 그림]({quote(lead_figure, safe='/')})\n"
                 for name in _GENERATED:  # the editor's README and the bundle's own text are linked here as well
                     docs[name] = edition_figure_links(docs[name], req, self.s, included, name)
                 docs.update(assets)
@@ -811,10 +829,11 @@ class ResultStorage:
 
                 for name, body in {**docs, **images}.items():
                     write(name, body)
-                pdf, reason = await self.edition_pdf(rid, req, report_text=docs.get("report/report.md"))
+                pdf, reason = await self.edition_pdf(rid, req)
                 saved = req["result_storage"]  # PI review may replace the persisted request fields while we print.
                 if pdf:
-                    docs["README.md"] += (f"\n[과학 보고서 PDF]({_PORTFOLIO_PDF_NAME})\n"
+                    pdf_link = _PORTFOLIO_PDF_NAME if saved.get("mode") == "new" else _PDF_NAME
+                    docs["README.md"] += (f"\n[과학 보고서 PDF]({pdf_link})\n"
                                           + (f"\n{reason}\n" if reason else ""))
                     write(_PDF_NAME, pdf)
                     write(_PORTFOLIO_PDF_NAME, pdf)
@@ -824,9 +843,10 @@ class ResultStorage:
                         if plain_path(target / name):
                             (target / name).unlink(missing_ok=True)  # a PDF left by an earlier attempt is not this edition's
                 from .korean_qc import check_document
+                report_name = "report/report.md" if "report/report.md" in docs else "report.md"
                 saved["korean_qc"] = {
                     "README.md": check_document(docs["README.md"]),
-                    "report/report.md": check_document(docs["report/report.md"]),
+                    report_name: check_document(docs[report_name]),
                 }
                 write("README.md", docs["README.md"])
                 saved["pdf"] = {"included": bool(pdf), "bytes": len(pdf or b""), "note": "" if pdf else pdf_skip_line(reason),
@@ -964,8 +984,18 @@ class ResultStorage:
             saved["branch"] = branch
             write_branch = None if empty else branch
             internal = request_uses_internal_data(self.hub.requests[rid], self.s)
+            aggregate_tables = declared_aggregate_tables(self.hub.requests[rid])
+            aggregate_bodies = {
+                body for name, body in docs.items()
+                if name in aggregate_tables
+                and table_allowed(name, body, internal=internal, declared=aggregate_tables)
+            }
+            aggregate_tables.update(
+                name for name, body in docs.items()
+                if name.startswith("tables/") and body in aggregate_bodies
+            )
             compatibility_docs = {name: body for name, body in docs.items()
-                                  if table_allowed(name, body, internal=internal)}
+                                  if table_allowed(name, body, internal=internal, declared=aggregate_tables)}
             compatibility_images = dict(images or {})
             payloads = []
             if saved.get("mode") == "new":

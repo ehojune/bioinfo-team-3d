@@ -170,6 +170,9 @@ async def test_new_repository_root_and_compatibility_payload_share_table_selecti
     hub.requests["req_test"].update(
         pi_reviewed_at=1,
         project_dirs=[str(internal)],
+        plan={"steps": [{"id": "s1", "output_types": [
+            {"name": "outputs/result_summary.tsv", "data_type": "table"},
+        ]}]},
         result_storage={"mode": "new", "repo": "owner/study", "allow_public": True},
     )
     calls = []
@@ -200,6 +203,8 @@ async def test_new_repository_root_and_compatibility_payload_share_table_selecti
         "steps/s1/outputs/notes.txt": "allowed compatibility output",
         "steps/s1/outputs/sample_metadata.tsv": "sample\tgroup\ns1\tcase\n",
         "steps/s1/outputs/by_group.tsv": "group\tcount\ncase\t9\n",
+        "steps/s1/outputs/patient_summary.tsv": "patient_id\tage\nP001\t42\nP002\t53\n",
+        "steps/s1/outputs/result_summary.tsv": "group\tcount\nall\t42\n",
     }
 
     await service.upload("req_test", docs)
@@ -210,7 +215,9 @@ async def test_new_repository_root_and_compatibility_payload_share_table_selecti
     compat = "labhq/results/req_test/"
     assert compat + "report.md" in names
     assert compat + "steps/s1/outputs/notes.txt" in names
-    assert not any("sample_metadata.tsv" in name or "by_group.tsv" in name for name in names)
+    assert not any(any(table in name for table in ("sample_metadata.tsv", "by_group.tsv", "patient_summary.tsv"))
+                   for name in names)
+    assert compat + "steps/s1/outputs/result_summary.tsv" in names
 
 
 async def test_public_project_without_permission_stays_local(tmp_path):

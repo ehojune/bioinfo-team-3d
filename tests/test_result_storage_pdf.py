@@ -238,6 +238,25 @@ async def test_resumed_draft_uploads_the_pdf_it_already_printed(tmp_path, monkey
     assert cards[1]["detail"]["pdf"].startswith("포함: report.pdf")
 
 
+async def test_resumed_legacy_draft_uses_report_md_for_korean_qc(tmp_path, monkeypatch):
+    hub, edition = prepare(tmp_path, monkeypatch)
+    edition.mkdir(parents=True)
+    (edition / "README.md").write_text("# 정리본\n", encoding="utf-8")
+    (edition / "report.md").write_text("# 결과\n\n기존 정리본입니다.\n", encoding="utf-8")
+    saved = hub.requests["req_test"]["result_storage"] = {
+        "mode": "existing", "repo": "owner/study", "status": "draft", "draft_path": str(edition),
+    }
+    cards = []
+    approve_all(hub, cards)
+    service = ResultStorage(hub, fake_github([], exists=True))
+
+    await service.finish("req_test")
+    await service.close()
+
+    assert "report.md" in saved["korean_qc"]
+    assert cards[0]["detail"]["korean_qc"] == saved["korean_qc"]
+
+
 async def test_resumed_draft_refuses_a_file_that_is_not_a_pdf(tmp_path, monkeypatch):
     hub, edition = prepare(tmp_path, monkeypatch)
     calls = []

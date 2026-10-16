@@ -57,6 +57,7 @@ def portfolio_fixture(tmp_path: Path):
         "steps/analysis/outputs/scripts/analyze.py": "print('ok')\n",
         "steps/analysis/outputs/stats/result_summary.tsv": "tested\tpassed\n16242\t0\n",
         "steps/analysis/outputs/stats/by_job.tsv": "job\tcount\nA\t5\n",
+        "steps/analysis/outputs/stats/patient_summary.tsv": "patient_id\tage\nP001\t42\nP002\t53\n",
         "steps/pipeline/outputs/pipeline_info/report.html": "<html>Nextflow report</html>",
         "steps/pipeline/outputs/pipeline_info/timeline.html": "<html>timeline</html>",
         "steps/pipeline/outputs/pipeline_info/trace.txt": "task\tstatus\na\tCOMPLETED\n",
@@ -80,7 +81,8 @@ def portfolio_fixture(tmp_path: Path):
         "report": "# 단계 기록 원고\n\n분석 작업을 마쳤다.",
         "project_dirs": [str(internal)],
         "plan": {"steps": [
-            {"id": "analysis", "instruction": "발현과 메틸화를 분석한다."},
+            {"id": "analysis", "instruction": "발현과 메틸화를 분석한다.",
+             "output_types": [{"name": "outputs/stats/result_summary.tsv", "data_type": "table"}]},
             {"id": "report", "instruction": "논문 형식 보고서를 쓴다."},
         ]},
         "results": {
@@ -134,8 +136,8 @@ def test_fixed_request_bundle_builds_the_portfolio_contract(tmp_path):
     assert "| 단계 | 자료 | 결과 |" in readme
     assert "16,242" in readme and "0개" in readme
     assert "통계적으로 유의하지" in readme
-    assert "by_job.tsv" not in files
-    assert "1–9" in readme and "by_job.tsv" in readme
+    assert "by_job.tsv" not in files and "patient_summary.tsv" not in files
+    assert "내부 자료 영역이라 표 2개는 요청 묶음에만 둠" in readme
     assert not any("outputs/literature" in name or "article.md" in name for name in files)
     assert {"run/nextflow/report.html", "run/nextflow/timeline.html", "run/nextflow/trace.txt"} <= files.keys()
     assert check_document(readme)["status"] == "PASS"
@@ -150,6 +152,18 @@ def test_publish_scan_catches_credentials_paths_signed_urls_and_small_cells():
     }
     kinds = {issue["kind"] for issue in scan_publish_files(files, internal=True)}
     assert {"secret", "local_path", "signed_url", "small_cell"} <= kinds
+
+
+def test_public_request_keeps_an_undeclared_row_table(tmp_path):
+    settings, request, bundle, assets, images, decisions, tasks = portfolio_fixture(tmp_path)
+    settings.policy.data_zones = []
+    request["project_dirs"] = []
+    request["text"] = "공개 자료를 정리해 달라."
+
+    files = build_portfolio_files(
+        request, settings, assets, images, decisions=decisions, tasks=tasks, bundle=bundle)
+
+    assert files["tables/patient_summary.tsv"] == "patient_id\tage\nP001\t42\nP002\t53\n"
 
 
 def test_report_figure_links_are_relative_to_the_nested_report(tmp_path):
