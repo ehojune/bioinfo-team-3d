@@ -22,7 +22,7 @@ from ..staff_skills import (BUNDLED_PLUGIN_DIR, BUNDLED_PLUGIN_NAME, bundled_req
 from ..util import event_preview, short, tool_input_fingerprint, tool_input_summary
 from .base import (AgentAdapter, role_footer, RunContext, RunState, SHELL_TOOLS, child_config_dirs, expand_env,
                    note_command_ok, note_failed_output, record_model_id, wrap_cwd)
-from .owned import case_sensitive_directory, is_link
+from .owned import OwnedPathError, awrite_owned, case_sensitive_directory, is_link
 from .read_only import WORKSPACE_INSTRUCTION_RULES, workspace_instruction_paths
 
 PERMISSION_TOOL = "mcp__labhq_approval__approval_prompt"
@@ -37,6 +37,41 @@ SKILL_ISOLATION_FLAGS = ["--setting-sources", "local"]
 # mode and Read,Glob,Grep; with this profile none ran and the --settings deny rules still held.
 READ_ONLY_FLAGS = ["--setting-sources", "", "--disable-slash-commands"]
 PLUGIN_VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _collect_structured_output_delta(event: dict, st: RunState) -> None:
+    """Reassemble invalid tool input before Claude clips it in the final transcript event."""
+    kind = event.get("type")
+    index = event.get("index")
+    if not isinstance(index, int):
+        return
+    if kind == "content_block_start":
+        block = event.get("content_block") or {}
+        if block.get("type") == "tool_use" and block.get("name") == "StructuredOutput":
+            st.structured_output_streams[index] = {"id": str(block.get("id") or ""), "parts": []}
+    elif kind == "content_block_delta" and index in st.structured_output_streams:
+        delta = event.get("delta") or {}
+        part = delta.get("partial_json") if delta.get("type") == "input_json_delta" else None
+        if isinstance(part, str):
+            st.structured_output_streams[index]["parts"].append(part)
+    elif kind == "content_block_stop":
+        block = st.structured_output_streams.pop(index, None)
+        if block and block["id"]:
+            st.structured_output_raw[block["id"]] = "".join(block["parts"])
+
+
+async def _save_structured_output_failure(ctx: RunContext, tool_id: str, raw: str) -> str | None:
+    """Keep the full invalid JSON in the task workspace without copying it into public event logs."""
+    if not raw:
+        return None
+    safe_id = re.sub(r"[^A-Za-z0-9_.-]", "_", tool_id or "unknown")[-60:]
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+    relative = f".tmp/structured_output_failures/{safe_id}-{digest}.json"
+    try:
+        await awrite_owned(ctx.workdir, relative, raw)
+    except (OSError, OwnedPathError):
+        return None
+    return relative
 
 
 def workspace_memory_excludes(workdir: Path) -> list[str]:
@@ -301,6 +336,7 @@ class ClaudeCodeAdapter(AgentAdapter):
         a, t, b = ctx.agent, ctx.task, self.settings.engines.claude_code
         # Prompt goes right after -p; variadic flags (--mcp-config, --add-dir, --allowedTools…) go last.
         cmd = [b.bin, "-p", ctx.prompt, "--output-format", "stream-json", "--verbose",
+               "--include-partial-messages",
                "--permission-mode", a.permission_mode,
                "--append-system-prompt-file", str(ctx.meta_dir / "system_prompt.md")]
         if a.model:
@@ -381,6 +417,11 @@ class ClaudeCodeAdapter(AgentAdapter):
     async def handle_line(self, line: str, st: RunState, ctx: RunContext) -> None:
         ev = json.loads(line)
         typ = ev.get("type")
+        if typ == "stream_event":
+            event = ev.get("event")
+            if isinstance(event, dict):
+                _collect_structured_output_delta(event, st)
+            return
         if typ == "system" and ev.get("subtype") == "init":
             st.session_id = ev.get("session_id")
             record_model_id(st, ctx, ev.get("model"))
@@ -393,6 +434,12 @@ class ClaudeCodeAdapter(AgentAdapter):
                     await ctx.emit("agent.log", {**event_preview("text", block["text"], 2000),
                                                  "subagent": bool(ev.get("parent_tool_use_id"))})
                 elif block.get("type") == "tool_use":
+                    if block.get("name") == "StructuredOutput" and block.get("id"):
+                        unparsed = block.get("input") if isinstance(block.get("input"), dict) else {}
+                        unparsed = unparsed.get("__unparsedToolInput")
+                        fallback = unparsed.get("raw") if isinstance(unparsed, dict) else None
+                        if isinstance(fallback, str):
+                            st.structured_output_raw.setdefault(block["id"], fallback)
                     if block.get("name") in SHELL_TOOLS and block.get("id"):
                         st.shell_calls.add(block["id"])
                     await ctx.emit("agent.tool", {"id": block.get("id"), "name": block.get("name"),
@@ -410,9 +457,25 @@ class ClaudeCodeAdapter(AgentAdapter):
                     raw = str(block.get("content") or "")
                     # Classify before the display preview truncates the tool's original error.
                     parse_error = "StructuredOutput" in raw and "could not be parsed as JSON" in raw
+                    details = {}
+                    if parse_error:
+                        tool_id = str(block.get("tool_use_id") or "")
+                        received = st.structured_output_raw.pop(tool_id, "")
+                        saved = await _save_structured_output_failure(ctx, tool_id, received)
+                        if received:
+                            limit = ctx.settings.orchestrator.plan_max_chars
+                            chars = len(received)
+                            closed = received.rstrip().endswith(("}", "]"))
+                            details = {
+                                "structured_output_chars": chars,
+                                "structured_output_closed": closed,
+                                "structured_output_near_limit": chars >= int(limit * 0.9),
+                                **({"structured_output_failure_path": saved} if saved else {}),
+                            }
                     await ctx.emit("agent.tool_error", {
                         **event_preview("text", block.get("content"), 400),
                         **({"structured_output_parse_error": True} if parse_error else {}),
+                        **details,
                     })
                 elif block.get("tool_use_id") in st.shell_calls:
                     note_command_ok(st)

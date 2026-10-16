@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from labhq.adapters.base import ROLE_FOOTER, RunState
+from labhq.adapters.base import ROLE_FOOTER, RunContext, RunState
 from labhq.adapters.claude_code import ClaudeCodeAdapter
 from labhq.models import AgentSpec, Engine, Task, TaskResult
 from labhq.orchestrator.cso import Orchestrator
@@ -16,7 +16,8 @@ ERROR = "InputValidationError: StructuredOutput was called with input that could
 
 
 def make_runner(tmp_path, monkeypatch, failures, *, limit=2, error=ERROR, session="same-session",
-                valid_on_parse_error=False, final_structured=None):
+                valid_on_parse_error=False, final_structured=None, raw_input=None,
+                plan_max_chars=None):
     cfg = Settings()
     cfg.gateway.state_dir = cfg.runner.state_dir = str(tmp_path / "state")
     cfg.runner.workspace_root = str(tmp_path / "runs")
@@ -24,6 +25,8 @@ def make_runner(tmp_path, monkeypatch, failures, *, limit=2, error=ERROR, sessio
     cfg.runner.talent_dir = str(tmp_path / "talent")
     if limit != 2:
         cfg.runner.structured_output_retries = limit
+    if plan_max_chars is not None:
+        cfg.orchestrator.plan_max_chars = plan_max_chars
     runner = Runner(cfg)
     runner.registry.agents["worker"] = AgentSpec(id="worker", name="worker", role="test", engine=Engine.mock)
     calls = []
@@ -33,9 +36,30 @@ def make_runner(tmp_path, monkeypatch, failures, *, limit=2, error=ERROR, sessio
             calls.append((ctx.task.model_copy(deep=True), ctx.prompt, ctx.resume_baseline, ctx.workdir))
             # Exercise the real Claude event conversion; no CLI, model, or GitHub calls.
             if len(calls) <= failures:
-                await ClaudeCodeAdapter(cfg).handle_line(json.dumps({
+                adapter = ClaudeCodeAdapter(cfg)
+                if raw_input is not None:
+                    state = RunState()
+                    await adapter.handle_line(json.dumps({
+                        "type": "stream_event", "event": {"type": "content_block_start", "index": 0,
+                            "content_block": {"type": "tool_use", "id": "toolu_bad",
+                                              "name": "StructuredOutput", "input": {}}}}), state, ctx)
+                    for start in range(0, len(raw_input), 997):
+                        await adapter.handle_line(json.dumps({
+                            "type": "stream_event", "event": {"type": "content_block_delta", "index": 0,
+                                "delta": {"type": "input_json_delta",
+                                          "partial_json": raw_input[start:start + 997]}}}), state, ctx)
+                    await adapter.handle_line(json.dumps({
+                        "type": "stream_event", "event": {"type": "content_block_stop", "index": 0}}), state, ctx)
+                    await adapter.handle_line(json.dumps({
+                        "type": "assistant", "message": {"content": [{"type": "tool_use",
+                            "id": "toolu_bad", "name": "StructuredOutput",
+                            "input": {"__unparsedToolInput": {"raw": raw_input[:2048]}}}]}}), state, ctx)
+                else:
+                    state = RunState()
+                await adapter.handle_line(json.dumps({
                     "type": "user", "message": {"content": [
-                        {"type": "tool_result", "is_error": True, "content": error}]}}), RunState(), ctx)
+                        {"type": "tool_result", "tool_use_id": "toolu_bad", "is_error": True,
+                         "content": error}]}}), state, ctx)
             ctx.record_run(session_id=session, session_cost_total=len(calls) * 0.1)
             failed = len(calls) <= failures
             structured = final_structured if final_structured is not None else {"answer": "완료"}
@@ -97,10 +121,68 @@ async def test_parse_error_then_resume_succeeds_without_pi_card(tmp_path, monkey
     assert "한 글자도 바꾸지 말고" in retry_prompt
     assert r"역슬래시를 \\로" in retry_prompt
     assert r'따옴표를 \"로' in retry_prompt
+    assert "비ASCII" in retry_prompt and r"\u" in retry_prompt
     assert result.ok and result.structured == {"answer": "완료"}
     assert result.cost_usd == pytest.approx(0.2) and result.usage["input_tokens"] == 20
     assert ERROR in result.tool_errors
     assert hub.approvals == []
+
+
+@pytest.mark.asyncio
+async def test_format_error_saves_complete_raw_input(tmp_path, monkeypatch):
+    raw = '{"plan":"' + ("한글 계획 " * 700) + '"'
+    runner, calls = make_runner(tmp_path, monkeypatch, 1, raw_input=raw)
+
+    await runner.run_task(Task(agent_id="worker", prompt="original", output_schema={"type": "object"},
+                               meta={"kind": "plan"}))
+
+    saved = list((calls[0][3] / ".tmp" / "structured_output_failures").glob("*.json"))
+    assert len(saved) == 1
+    assert saved[0].read_text(encoding="utf-8") == raw
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw", [
+    '{"plan":"' + ("긴 계획 " * 100),
+    '{"plan":' + ("x" * 100) + '}',
+])
+async def test_suspected_truncated_plan_uses_compact_retry(tmp_path, monkeypatch, raw):
+    runner, calls = make_runner(tmp_path, monkeypatch, 1, raw_input=raw, plan_max_chars=100)
+
+    result = await runner.run_task(Task(agent_id="worker", prompt="original", output_schema={"type": "object"},
+                                        meta={"kind": "plan"}))
+
+    assert result.ok and len(calls) == 2
+    retry_prompt = calls[1][1]
+    assert "계획을 줄여 다시" in retry_prompt
+    assert "단계 설명" in retry_prompt and "반복 문구" in retry_prompt and "큰 표" in retry_prompt
+    assert "갈래" in retry_prompt
+
+
+def test_claude_requests_partial_messages_for_full_invalid_json(tmp_path):
+    cfg = Settings()
+    agent = AgentSpec(id="worker", name="worker", role="test", engine=Engine.claude_code)
+    ctx = RunContext(task=Task(agent_id="worker", prompt="original"), agent=agent, workdir=tmp_path,
+                     settings=cfg, mcp_servers=[], env={}, emit=None, prompt="original")
+
+    command = ClaudeCodeAdapter(cfg).build_command(ctx)
+
+    assert "--include-partial-messages" in command
+
+
+@pytest.mark.asyncio
+async def test_large_plan_records_configured_size_warning(tmp_path, monkeypatch):
+    plan = {"answer": "가" * 80}
+    runner, _calls = make_runner(tmp_path, monkeypatch, 0, final_structured=plan, plan_max_chars=40)
+
+    result = await runner.run_task(Task(agent_id="worker", prompt="original", output_schema={"type": "object"},
+                                        meta={"kind": "plan"}))
+
+    assert result.ok
+    warnings = [event["data"] for event in runner.store.pending()
+                if event["type"] == "agent.log" and event["data"].get("code") == "plan_size_limit"]
+    assert len(warnings) == 1
+    assert warnings[0]["limit_chars"] == 40 and warnings[0]["actual_chars"] > 40
 
 
 @pytest.mark.asyncio
