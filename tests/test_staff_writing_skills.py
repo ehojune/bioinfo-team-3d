@@ -5,6 +5,7 @@ from pathlib import Path
 import yaml
 
 from labhq.korean_qc import check_document, check_preservation
+from labhq.adapters.read_only import read_only_profile
 from labhq.models import AgentSpec, Engine, Task
 from labhq.runner.workspace import TaskWorkspace
 from labhq.staff_skills import install_required_skills
@@ -69,6 +70,9 @@ def test_bundled_required_skill_is_copied_for_claude_and_codex(tmp_path):
         assert install_required_skills(workspace, staff) is None
         for base in (".claude/skills", ".agents/skills"):
             assert (workspace.dir / base / "humanizer" / "SKILL.md").is_file()
+
+    forced_mock = staff.model_copy(update={"engine": Engine.mock})
+    assert read_only_profile(forced_mock).required_skills == []
 
 
 def test_korean_qc_warns_outside_quotes_and_passes_quoted_text():
