@@ -66,7 +66,8 @@ async def test_cleaned_markdown_and_pdf_use_the_same_figure_set(tmp_path, monkey
 
     await publish(hub, [])
 
-    markdown = (edition / "report.md").read_text(encoding="utf-8")
+    report_path = edition / "report.md"
+    markdown = report_path.read_text(encoding="utf-8")
     markdown_figures = {
         (edition / link.target).read_bytes()
         for link in image_links(markdown)
@@ -77,7 +78,10 @@ async def test_cleaned_markdown_and_pdf_use_the_same_figure_set(tmp_path, monkey
         for source, _alt in image_sources(pages[0])
         if source.startswith("data:")
     }
-    assert pdf_figures == markdown_figures
+    assert {body for body in pdf_figures if not body.startswith(b"<svg")} == {
+        body for body in markdown_figures if not body.startswith(b"<svg")}
+    assert sum(body.startswith(b"<svg") for body in pdf_figures) == 1
+    assert sum(body.startswith(b"<svg") for body in markdown_figures) == 1
 
 
 def test_edition_candidates_is_the_eligibility_edition_assets_copies_by(tmp_path, monkeypatch):

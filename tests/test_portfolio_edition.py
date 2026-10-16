@@ -245,3 +245,24 @@ def test_png_graphical_abstract_gets_a_generated_svg_fallback(tmp_path):
 
     assert files["figures/graphical_abstract.svg"].startswith(b"<svg")
     assert files["figures/graphical_abstract.svg"] != b"synthetic-png"
+
+
+def test_duplicate_nextflow_outputs_keep_each_steps_provenance(tmp_path):
+    settings, request, bundle, assets, images, decisions, tasks = portfolio_fixture(tmp_path)
+    settings.policy.data_zones = []
+    request["project_dirs"] = []
+    request["text"] = "공개 자료를 정리해 달라."
+    assets.update({
+        "steps/pipeline_a/outputs/pipeline_info/report.html": "<html>pipeline A</html>",
+        "steps/pipeline_b/outputs/pipeline_info/report.html": "<html>pipeline B</html>",
+    })
+
+    files = build_portfolio_files(
+        request, settings, assets, images, decisions=decisions, tasks=tasks, bundle=bundle)
+
+    reports = {name: body for name, body in files.items()
+               if name.startswith("run/nextflow/") and name.endswith("report.html")}
+    assert len(reports) == 3
+    assert set(reports.values()) == {
+        "<html>Nextflow report</html>", "<html>pipeline A</html>", "<html>pipeline B</html>",
+    }

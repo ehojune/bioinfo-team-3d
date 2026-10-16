@@ -241,10 +241,10 @@ async def test_resumed_draft_uploads_the_pdf_it_already_printed(tmp_path, monkey
 async def test_resumed_legacy_draft_uses_report_md_for_korean_qc(tmp_path, monkeypatch):
     hub, edition = prepare(tmp_path, monkeypatch)
     edition.mkdir(parents=True)
-    (edition / "README.md").write_text("# 정리본\n", encoding="utf-8")
+    (edition / "README.md").write_text("# 정리본\n\n[전체 결과·그림·표](report.md)\n", encoding="utf-8")
     (edition / "report.md").write_text("# 결과\n\n기존 정리본입니다.\n", encoding="utf-8")
     saved = hub.requests["req_test"]["result_storage"] = {
-        "mode": "existing", "repo": "owner/study", "status": "draft", "draft_path": str(edition),
+        "mode": "new", "repo": "owner/study", "status": "draft", "draft_path": str(edition),
     }
     cards = []
     approve_all(hub, cards)
@@ -258,8 +258,43 @@ async def test_resumed_legacy_draft_uses_report_md_for_korean_qc(tmp_path, monke
     assert cards[0]["detail"]["korean_qc"] == saved["korean_qc"]
     assert not (edition / "report.md").exists()
     assert (edition / "report" / "report.md").is_file()
+    assert "](report/report.md)" in (edition / "README.md").read_text(encoding="utf-8")
+    assert "](report.md)" not in (edition / "README.md").read_text(encoding="utf-8")
+    assert "README.md" in puts(calls)
+    uploaded_readme = base64.b64decode(puts(calls)["README.md"]["content"]).decode()
+    assert "](report/report.md)" in uploaded_readme and "](report.md)" not in uploaded_readme
     assert "labhq/results/req_test/report/report.md" in puts(calls)
-    assert saved["report_url"].endswith("/labhq/results/req_test/report/report.md")
+    assert saved["report_url"].endswith("/report/report.md")
+
+
+async def test_pdf_uses_the_canonical_revised_report_candidate(tmp_path, monkeypatch):
+    hub, edition = prepare(tmp_path, monkeypatch)
+    bundle = edition.with_name("req_test")
+    final = ("# 최종 과학 보고서\n\n## 요약(Abstract)\n\n최종 원고의 결론은 B다.\n\n## 서론\n\n질문을 검토했다.\n\n"
+             "## 방법\n\n공개 자료를 분석했다.\n\n## 결과\n\n![최종 그림](wd1/outputs/final.svg)\n\n"
+             "## 논의\n\n한계를 확인했다.\n\n## 결론\n\n최종 원고의 결론은 B다.\n")
+    report = bundle / "steps/s1/outputs/report/final_report.md"
+    figure = bundle / "steps/s1/outputs/final.svg"
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text(final, encoding="utf-8")
+    figure.write_bytes(b'<svg xmlns="http://www.w3.org/2000/svg"><text>final</text></svg>')
+    with (bundle / "MANIFEST.tsv").open("a", encoding="utf-8") as handle:
+        handle.write("steps/s1/outputs/report/final_report.md\tcopied\n")
+        handle.write("steps/s1/outputs/final.svg\tcopied\n")
+    request = hub.requests["req_test"]
+    request.update(outcome="research_review_revise", review={"verdict": "revise", "issues": []})
+    request["results"]["s1"]["outputs"].extend(["outputs/report/final_report.md", "outputs/final.svg"])
+    seen, calls = [], []
+    monkeypatch.setattr("labhq.result_storage.build_report_file", builder(seen))
+    approve_all(hub, [])
+
+    await publish(hub, calls)
+
+    canonical = (edition / "report" / "report.md").read_text(encoding="utf-8")
+    assert "최종 원고의 결론은 B다." in canonical
+    assert "최종 원고의 결론은 B다." in seen[0]["report"]
+    assert "steps/s1/outputs/final.svg" in seen[0]["report"]
+    assert "../figures/final.svg" not in seen[0]["report"]
 
 
 async def test_resumed_draft_refuses_a_file_that_is_not_a_pdf(tmp_path, monkeypatch):

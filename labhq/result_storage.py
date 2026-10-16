@@ -23,7 +23,8 @@ from .models import ApprovalRequest, Task
 from .policy import touches, restricted_paths
 from . import edition_sources
 from .portfolio import (broken_markdown_links, build_portfolio_files, declared_aggregate_tables, portfolio_root_file,
-                        publish_file_allowed, request_uses_internal_data, scan_publish_files, table_allowed)
+                        portfolio_report, publish_file_allowed, request_uses_internal_data, scan_publish_files,
+                        table_allowed)
 from .intake import reference_dirs
 from .recruit.provenance import touches_restricted
 from .report_abstract import abstract_first, build_graphical_abstract, with_abstract_link
@@ -219,15 +220,21 @@ def edition_abstract(req: dict, settings, included) -> str | None:
     return build_graphical_abstract(req, report, scrub=lambda text: clean_document(text, settings, req))
 
 
-def pdf_report_text(req: dict, settings) -> str:
+def pdf_report_text(req: dict, settings, report_text: str | None = None) -> str:
     """The report text the edition's PDF is printed from: cleaned like the edition's report.md, but its figure links point
     at the originals in the request bundle (no per-figure size limit, #608), not at the size-limited edition copies.
 
     Only the figures the edition may carry (`edition_candidates`) stay linked; an unreported bundle file, a type the
     edition leaves out or a name it would mask becomes a "그림 생략" note, as in the edition (#611 review)."""
-    text = edition_figure_links(str(req.get("report") or "결과 보고서가 없습니다."), req, settings,
+    source = report_text if report_text is not None else str(req.get("report") or "결과 보고서가 없습니다.")
+    text = edition_figure_links(source, req, settings,
                                 edition_candidates(req, settings).keys())
     return clean_document(text, settings, req)
+
+
+def nested_report_links(text: str) -> str:
+    """Point legacy README links at the migrated canonical report path."""
+    return re.sub(r"(\]\(\s*)(?:\./)?report\.md(?=(?:#[^)]*)?\))", r"\1report/report.md", text)
 
 
 def pdf_skip_line(reason: str) -> str:
@@ -705,6 +712,8 @@ class ResultStorage:
                     migrated.parent.mkdir(parents=True, exist_ok=True)
                     legacy.replace(migrated)
                     docs["report/report.md"] = docs.pop("report.md")
+                    docs["README.md"] = nested_report_links(docs["README.md"])
+                    (target / "README.md").write_text(docs["README.md"], encoding="utf-8")
                     report_name = "report/report.md"
                 from .korean_qc import check_document
                 saved["korean_qc"] = {
@@ -718,19 +727,26 @@ class ResultStorage:
                 if drawn:
                     images[ABSTRACT_FILE] = clean_svg_for_publish(drawn.encode("utf-8"), self.s, req)
                     included.add(ABSTRACT_FILE)
+                portfolio_images = ({name: body for name, body in images.items() if name != ABSTRACT_FILE}
+                                    if drawn else images)
                 bundle = self.s.path(self.s.runner.workspace_root) / "requests" / rid
                 store = getattr(self.hub, "store", None)
                 decisions = list(store.all("approval_decision").values()) if store else []
                 tasks = list(store.all("task").values()) if store else []
-                portfolio_req = req
-                if saved.get("mode") != "new":
-                    portfolio_req = dict(req)
-                    portfolio_included = {
-                        *raw_assets,
-                        *(name for name in images if PurePosixPath(name).suffix.lower() == ".svg"),
-                    }
-                    portfolio_req["report"] = edition_figure_links(
-                        str(req.get("report") or ""), req, self.s, portfolio_included, "report.md")
+                portfolio_included = {
+                    *raw_assets,
+                    *(name for name in images if PurePosixPath(name).suffix.lower() == ".svg"),
+                }
+                portfolio_req = dict(req)
+                portfolio_req["report"] = edition_figure_links(
+                    str(req.get("report") or ""), req, self.s, portfolio_included, "report.md")
+                portfolio_assets = {
+                    name: (edition_figure_links(body, req, self.s, portfolio_included, "report.md")
+                           if PurePosixPath(name).suffix.lower() == ".md" else body)
+                    for name, body in raw_assets.items()
+                }
+                canonical_pdf_report = pdf_report_text(
+                    req, self.s, report_text=portfolio_report(req, self.s, raw_assets))
                 internal = request_uses_internal_data(req, self.s)
                 aggregate_tables = declared_aggregate_tables(req)
                 assets = {}
@@ -755,7 +771,8 @@ class ResultStorage:
                 else:
                     docs["REPRODUCE.md"] += "\n\n## 실행 명령\n\n요청 묶음에 기록된 실행 명령이 없습니다."
                 portfolio = build_portfolio_files(
-                    portfolio_req, self.s, raw_assets, images, decisions=decisions, tasks=tasks, bundle=bundle,
+                    portfolio_req, self.s, portfolio_assets, portfolio_images,
+                    decisions=decisions, tasks=tasks, bundle=bundle,
                     run_documents={"run/progress.md": docs["PROGRESS.md"],
                                    "run/reproduce.md": docs["REPRODUCE.md"]})
                 for name, body in portfolio.items():
@@ -767,7 +784,8 @@ class ResultStorage:
                 if saved.get("mode") != "new" and (missing := document_links(docs["README.md"])):
                     docs["README.md"] += "\n\n" + missing + "\n"
                 if len(str(req.get("report") or "")) > README_EXCERPT_CHARS:
-                    docs["README.md"] += "\n이어지는 내용은 report.md에 있습니다.\n"
+                    report_path = "report/report.md" if saved.get("mode") == "new" else "report.md"
+                    docs["README.md"] += f"\n이어지는 내용은 {report_path}에 있습니다.\n"
                 links = "\n".join(f"- [{name}]({quote(name, safe='/')})" for name in [*assets, *images])
                 if links:
                     if saved.get("mode") != "new":
@@ -847,7 +865,7 @@ class ResultStorage:
 
                 for name, body in {**docs, **images}.items():
                     write(name, body)
-                pdf, reason = await self.edition_pdf(rid, req)
+                pdf, reason = await self.edition_pdf(rid, req, report_text=canonical_pdf_report)
                 saved = req["result_storage"]  # PI review may replace the persisted request fields while we print.
                 if pdf:
                     pdf_link = _PORTFOLIO_PDF_NAME if saved.get("mode") == "new" else _PDF_NAME

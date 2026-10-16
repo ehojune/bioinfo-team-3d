@@ -276,6 +276,11 @@ def _paper_candidate(req: dict, assets: Mapping[str, str]) -> str:
             "## 부록\n\n실행 기록은 run/execution_record.md에 있다.\n")
 
 
+def portfolio_report(req: dict, settings, assets: Mapping[str, str]) -> str:
+    """Return the canonical scientific manuscript used by the portfolio edition."""
+    return _plain_korean(_clean(_corrections(_paper_candidate(req, assets), req), settings, req))
+
+
 def _corrections(report: str, req: dict) -> str:
     review = req.get("review") or (req.get("review_progress") or {}).get("review") or {}
     if str(review.get("verdict") or "").casefold() != "revise" or not review.get("issues"):
@@ -477,6 +482,9 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
     lines += [f"| {_safe_cell(step)} | {_safe_cell(data)} | {_safe_cell(result)} |" for step, data, result in rows]
     if key:
         lines += ["", f"![핵심 그림]({key})"]
+    omitted_figures = list(dict.fromkeys(re.findall(r"\*\(그림 생략: ([^)\n]+)\)\*", report)))
+    if omitted_figures:
+        lines += ["", "## 생략한 그림", "", *[f"- *(그림 생략: {label})*" for label in omitted_figures]]
     lines += ["", "## 읽는 순서", "",
               "1. [과학 보고서](report/report.md) — 논문 형식 보고서와 정정 사항"]
     if "run/progress.md" in run_documents:
@@ -531,7 +539,7 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
     """Return the stable publication layout; raw data and third-party full text never enter it."""
     assets = {name: _clean(body, settings, req) for name, body in assets.items()
               if not _LITERATURE_OUTPUT.search(name.replace("\\", "/"))}
-    report = _plain_korean(_clean(_corrections(_paper_candidate(req, assets), req), settings, req))
+    report = portfolio_report(req, settings, assets)
     if check_document(report)["status"] != "PASS":
         raise ValueError("과학 보고서에 반드시 0이어야 하는 한국어 표현이 남았습니다.")
     files: dict[str, str | bytes] = {"report/report.md": report}
@@ -550,8 +558,8 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
             files[target] = body
             source_targets[name] = target
         elif path.name in _NEXTFLOW_NAMES and "pipeline_info" in {part.casefold() for part in path.parts}:
-            target = f"run/nextflow/{path.name}"
             if publish_file_allowed(name, body, internal=internal, declared=aggregate_tables):
+                target = _unique_target("run/nextflow", name, used)
                 files[target] = body
                 source_targets[name] = target
         elif suffix in _TABLE_SUFFIXES:
