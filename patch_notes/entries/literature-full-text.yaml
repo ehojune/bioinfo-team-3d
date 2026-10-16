@@ -1,0 +1,20 @@
+pr: 698
+rows:
+- sha: 'a87ed2f'
+  at: 2026-10-16 19:37
+  text: 직원이 Europe PMC 오픈 액세스 본문을 labhq_annot fulltext로 읽고 문헌 표마다 읽은 수준(access_level)을 적게 했다 (#697).
+- sha: 'fd4c268'
+  at: 2026-10-16 19:45
+  text: 일시적인 본문 조회 실패를 초록으로 30일 저장하지 않고, 서로 다른 DOI가 같은 본문 파일을 쓰지 않게 했다.
+- sha: 'e4057eb'
+  at: 2026-10-16 19:52
+  text: 논문 본문을 산출물이 아닌 .tmp/literature/에 두어 직접 실행·정리본에 실리지 않게 하고, 재시도를 다 쓴 본문 조회도 저장하지 않는 초록으로 받는다.
+- sha: 'aa20a6f'
+  at: 2026-10-16 19:57
+  text: 논문 본문의 표를 칸 격자로 바꿔 rowspan 아래 값이 제 열에 남고, 문단 안 표·그림 뒤 문장이 사라지지 않게 했다.
+- sha: '4630e7d'
+  at: 2026-10-16 20:05
+  text: 문헌·생물 직원 지시에 CC 논문의 publisher_copy 링크를 한 번 열어도 된다는 예외를 도구 설명과 맞췄다.
+- sha: 'f05341d'
+  at: 2026-10-16 20:17
+  text: 연동 목록 원본(scripts/integrations.py)에 labhq_annot의 Europe PMC 논문 본문 조회를 적었다.
