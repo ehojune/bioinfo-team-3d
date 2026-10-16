@@ -101,7 +101,9 @@ async def test_restart_reuses_saved_draft_without_editor(tmp_path, monkeypatch):
     assert editor.await_count == 1
     assert approval.call_args.kwargs["detail"] == original
     assert upload.call_args.args[1] == original["documents"]
-    assert upload.call_args.args[2] == {"steps/s1/outputs/plot.png": b"original-image"}
+    uploaded_images = upload.call_args.args[2]
+    assert uploaded_images["steps/s1/outputs/plot.png"] == b"original-image"
+    assert uploaded_images["graphical_abstract.svg"].startswith(b"<svg")
     assert before == {p.relative_to(draft): (p.read_bytes(), p.stat().st_mtime_ns) for p in draft.rglob("*") if p.is_file()}
     await restarted.result_storage.close()
 

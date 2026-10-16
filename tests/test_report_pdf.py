@@ -105,9 +105,11 @@ def test_bundle_rewrites_workdir_figure_links_and_verify_accepts_them(tmp_path):
     assert "![code](task_s1_analyst/outputs/fig1.png)" in report  # inside a code fence it stays text
     assert (bundle / "steps/s1/outputs/fig1.png").read_bytes() == PNG
     check = bundle_figure_check(bundle)
-    assert check == {"linked": 2, "problems": []}
+    assert check["linked"] == 2 and check["problems"] == []
+    assert any("같은 이름의 SVG가 없습니다" in warning for warning in check["warnings"])
     verified = verify_request(request, settings)
-    assert verified["exit_code"] == 0, verified["problems"]
+    assert verified["exit_code"] == 0, verified
+    assert verified["warnings"] and verified["reasons"] == []
     assert "보고서 그림: 링크 2개, 모두 묶음 안에 있음" in render_verify(verified)
 
 
@@ -494,7 +496,8 @@ def test_a_figure_name_with_hash_or_question_mark_is_kept_when_the_file_exists(t
     settings, request, _tasks, bundle = build(tmp_path, report, files=files)
     text = (bundle / "report.md").read_text(encoding="utf-8")
     assert "![해시](steps/s1/outputs/a%231.png)" in text and "![조각](steps/s1/outputs/fig1.png)" in text
-    assert bundle_figure_check(bundle) == {"linked": 2, "problems": []}
+    checked = bundle_figure_check(bundle)
+    assert checked["linked"] == 2 and checked["problems"] == [] and len(checked["warnings"]) == 2
     assert linked_figure_paths(text) == ["steps/s1/outputs/a#1.png", "steps/s1/outputs/fig1.png"]
     assert verify_request(request, settings)["exit_code"] == 0
     page, missing = build_report_html(request, bundle)
@@ -521,7 +524,8 @@ def test_figure_targets_with_parentheses_and_angle_brackets_resolve_to_the_copie
     text = (bundle / "report.md").read_text(encoding="utf-8")
     assert "![괄호](steps/s1/outputs/plot%281%29.png)" in text and "![꺾쇠](steps/s1/outputs/my%20plot.png)" in text
     assert '![둘 다](steps/s1/outputs/a%20%282%29.png "제목")' in text
-    assert bundle_figure_check(bundle) == {"linked": 4, "problems": []}
+    checked = bundle_figure_check(bundle)
+    assert checked["linked"] == 4 and checked["problems"] == [] and len(checked["warnings"]) == 3
     assert set(linked_figure_paths(text)) == {f"steps/s1/{name}" for name in files}
     assert verify_request(request, settings)["exit_code"] == 0
     page, missing = build_report_html(request, bundle)
@@ -538,8 +542,9 @@ def test_the_bundle_figure_check_reads_the_report_after_the_absolute_path_rewrit
     settings, request, _tasks, bundle = build(tmp_path, report)
     assert "![절대](steps/s1/outputs/fig1.png)" in (bundle / "report.md").read_text(encoding="utf-8")
     appendix = (bundle / "execution_record.md").read_text(encoding="utf-8")
-    assert "보고서 그림 링크" not in appendix and "묶음 밖" not in appendix
-    assert bundle_figure_check(bundle) == {"linked": 1, "problems": []}
+    assert "WARN:" in appendix and "묶음 밖" not in appendix
+    checked = bundle_figure_check(bundle)
+    assert checked["linked"] == 1 and checked["problems"] == [] and len(checked["warnings"]) == 1
     assert verify_request(request, settings)["exit_code"] == 0
     # a rewritten link to a file the bundle does not hold is still reported in the appendix
     other_dir = tmp_path / "other"

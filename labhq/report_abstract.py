@@ -28,8 +28,7 @@ COLUMNS = (  # (header, accent, soft background): accent, work, hpc and warn tok
     ("3 방법·단계", "#7A3E9D", "#F1E9F6"),
     ("4 핵심 결과", "#7A4A00", "#FFF0D0"),
 )
-FONT = ("'Malgun Gothic','맑은 고딕','Apple SD Gothic Neo','Noto Sans CJK KR','Noto Sans KR','NanumGothic',"
-        "'Segoe UI',sans-serif")
+FONT = "'Malgun Gothic','Apple SD Gothic Neo','Noto Sans KR',sans-serif"
 
 AGENT_LABELS = {
     "analyst": "분석", "bioinfo-agent": "반복 분석", "biologist": "생물학 해석", "chief_of_staff": "브리핑",

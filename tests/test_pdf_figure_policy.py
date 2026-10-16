@@ -1,11 +1,10 @@
-"""The PI's PDF figure policy of 2026-10-15 (#608).
+"""The PI's PDF figure policy of 2026-10-15 and 2026-10-16 (#608, #690).
 
 - Figures in the PDF have no size limit of their own and come from the request bundle's originals, not from the
   size-limited edition copies.
-- The PDF is at most 50 MB: when the first print is bigger the browser re-encodes the figures at a lower resolution and the
-  page is printed again; no figure and no PDF is dropped for its size.
+- The PDF and its original figures are never re-encoded or reduced; a configured size is warning-only.
 - At most 11 figures per report, one of them the graphical abstract; labhq draws one when the report has none.
-- The writer prompts say so, and the edition's PDF goes up to GitHub through the binary put up to 50 MB.
+- The writer prompts say so, and the edition's PDF goes up through the binary put without a labhq size cap.
 
 GitHub is a mock transport and the browser is mocked, except one test that runs a real Edge or Chrome and skips when the
 PC has none."""
@@ -27,8 +26,8 @@ from labhq.orchestrator import cso
 from labhq.report_abstract import UNITS, _width, build_graphical_abstract, with_abstract_link
 from labhq.report_figures import (MAX_LINKED_FIGURES, MAX_REPORT_FIGURES, bundle_figure_check, image_links,
                                   linked_figure_paths)
-from labhq.report_pdf import (NO_BROWSER, SHRINK_LEVELS, FigureEmbedder, build_report_file, build_report_html,
-                              find_browser, print_pdf, print_within_cap, shrink_page)
+from labhq.report_pdf import (NO_BROWSER, FigureEmbedder, build_report_file, build_report_html,
+                              find_browser, print_pdf, print_report)
 from tests.test_report_pdf import PNG, SVG, build
 from tests.test_result_storage_pdf import approve_all, builder, prepare, publish, puts
 
@@ -95,8 +94,8 @@ async def test_large_figures_stay_in_the_pdf_and_come_from_the_bundle_not_the_ed
     # #611 review: the size limit is lifted, the eligibility is not; an unreported output stays out of the PDF as in the edition
     assert base64.b64encode(b"\x89PNG synthetic extra").decode("ascii") not in pages[0]
     assert "(그림 생략: 미보고 그림)" in pages[0]
-    assert not (edition / "steps/s1/outputs/big.png").exists()  # the edition keeps its own limit for copied files
-    assert "*(그림 생략: 큰 그림)*" in (edition / "report.md").read_text(encoding="utf-8")
+    assert (edition / "steps/s1/outputs/big.png").read_bytes() == big
+    assert "![큰 그림](steps/s1/outputs/big.png)" in (edition / "report.md").read_text(encoding="utf-8")
     assert "[그림 없음: 큰 그림" not in pages[0] and "[그림 없음: 미보고 그림" not in pages[0]  # only the remote link is missing
     assert hub.requests["req_test"]["result_storage"]["pdf"]["included"] is True
 
@@ -110,27 +109,23 @@ def test_a_figure_has_no_size_limit_of_its_own(tmp_path):
     assert FigureEmbedder(tmp_path).markup("empty", "steps/s1/outputs/none.png", block=False).startswith("<span")
 
 
-# --- 2. the 50 MB cap and the shrink loop ------------------------------------------------------------------------------
+# --- 2. size warnings never change the PDF -----------------------------------------------------------------------------
 
 MB = 1024 * 1024
 
 
-def test_shrink_loop_is_entered_when_the_first_print_is_over_the_cap_and_ends_within_it(tmp_path, monkeypatch):
+def test_a_pdf_over_the_configured_size_is_printed_once_without_reencoding(tmp_path, monkeypatch):
     settings, request, tasks, bundle = build(tmp_path, "# 결과\n\n![그림](WD/outputs/fig1.png)\n")
     with_cap(settings, 1)
     pages: list[str] = []
-    seen = fake_printer(monkeypatch, [3 * MB, 2 * MB, int(1.5 * MB), 900_000, 800_000], pages)
+    seen = fake_printer(monkeypatch, [3 * MB], pages)
     built = build_report_file(request, settings, tasks)
-    assert seen == [0, 1, 2, 3]  # the plain page first, then each step until the PDF fits
-    assert built.kind == "pdf" and len(built.data) <= 1 * MB and built.shrunk == 3 and not built.over_cap
-    assert any("그림을 3단계 줄여 PDF를" in note for note in built.notes)
-    assert "<script>" not in pages[0] and "script-src" not in pages[0]
-    for step, page in enumerate(pages[1:], 1):
-        edge, quality = SHRINK_LEVELS[step - 1]
-        assert f"MAX={edge},Q={quality}" in page and "script-src 'unsafe-inline'" in page
-        assert page.count("<img ") == pages[0].count("<img ")  # the figures are the same, only their pixels change
+    assert seen == [0] and built.kind == "pdf" and len(built.data) > 1 * MB
+    assert built.shrunk == 0 and built.over_cap
+    assert any("줄이지 않았습니다" in note for note in built.notes)
+    assert "<script>" not in pages[0] and "script-src" not in pages[0] and "labhq-shrink" not in pages[0]
     reread = build_report_file(request, settings, tasks)
-    assert reread.cached and reread.shrunk == 3 and len(seen) == 4  # cached with its shrink step
+    assert reread.cached and reread.shrunk == 0 and len(seen) == 1
 
 
 def test_a_pdf_that_fits_is_printed_once_and_the_figures_stay_as_they_are(tmp_path, monkeypatch):
@@ -141,17 +136,16 @@ def test_a_pdf_that_fits_is_printed_once_and_the_figures_stay_as_they_are(tmp_pa
     assert seen == [0] and built.shrunk == 0 and not built.over_cap and built.notes == ()
 
 
-def test_when_no_step_fits_the_smallest_pdf_is_kept_with_every_figure(tmp_path, monkeypatch):
+def test_over_threshold_pdf_keeps_every_figure_at_original_quality(tmp_path, monkeypatch):
     settings, request, tasks, _bundle = build(tmp_path, "# 결과\n\n![그림](WD/outputs/fig1.png)\n")
     with_cap(settings, 1)
     pages: list[str] = []
-    seen = fake_printer(monkeypatch, [9 * MB, 8 * MB, 7 * MB, 6 * MB, 5 * MB, 4 * MB, 3 * MB], pages)
+    seen = fake_printer(monkeypatch, [9 * MB], pages)
     built = build_report_file(request, settings, tasks)
-    assert seen == list(range(len(SHRINK_LEVELS) + 1))  # every step was tried
-    assert built.kind == "pdf" and built.over_cap and built.shrunk == len(SHRINK_LEVELS)
-    assert len(built.data) == len(b"%PDF-1.7\n") + 3 * MB  # the smallest of them
-    assert any("한도 1 MB를 넘어요. 그림은 하나도 빼지 않았어요" in note for note in built.notes)
-    assert len({page.count("<img ") for page in pages}) == 1  # no figure was dropped on the way
+    assert seen == [0] and built.kind == "pdf" and built.over_cap and built.shrunk == 0
+    assert len(built.data) == len(b"%PDF-1.7\n") + 9 * MB
+    assert any("설정 알림 기준 1 MB" in note and "줄이지 않았습니다" in note for note in built.notes)
+    assert pages[0].count("<img ") == 2  # result figure plus the drawn abstract
 
 
 def test_a_page_without_raster_figures_is_not_printed_again(tmp_path, monkeypatch):
@@ -160,37 +154,35 @@ def test_a_page_without_raster_figures_is_not_printed_again(tmp_path, monkeypatc
     with_cap(settings, 1)
     seen = fake_printer(monkeypatch, [3 * MB])
     built = build_report_file(request, settings, tasks)
-    assert seen == [0] and built.kind == "pdf" and built.over_cap  # shrinking cannot help vector figures
+    assert seen == [0] and built.kind == "pdf" and built.over_cap
 
 
-def test_a_print_that_times_out_is_retried_with_smaller_figures_but_a_crash_is_not(tmp_path, monkeypatch):
+def test_a_print_timeout_or_crash_is_not_retried_at_lower_quality(tmp_path, monkeypatch):
     settings, request, tasks, _bundle = build(tmp_path, "# 결과\n\n![그림](WD/outputs/fig1.png)\n")
     timeout = "브라우저가 60초 안에 PDF를 끝내지 못해 HTML로 드립니다."
-    seen = fake_printer(monkeypatch, [1024], failures={0: timeout, 1: timeout})
+    seen = fake_printer(monkeypatch, [1024], failures={0: timeout})
     built = build_report_file(request, settings, tasks)
-    assert seen == [0, 1, 2] and built.kind == "pdf" and built.shrunk == 2
+    assert seen == [0] and built.kind == "html" and timeout in built.reason
     crash = "브라우저가 PDF를 만들지 못해 HTML로 드립니다(종료 코드 1)."
     seen = fake_printer(monkeypatch, [1024], failures={0: crash})
     built = build_report_file({**request, "report": request["report"] + "\n\n추가"}, settings, tasks)
     assert seen == [0] and built.kind == "html" and "종료 코드 1" in built.reason
 
 
-def test_print_within_cap_without_a_browser_result_returns_the_reason(tmp_path, monkeypatch):
+def test_print_report_without_a_browser_result_returns_the_reason(tmp_path, monkeypatch):
     fake_printer(monkeypatch, [1024], failures={0: NO_BROWSER})
-    pdf, reason, step, over = print_within_cap("b", "<html><body></body></html>", 1 * MB)
-    assert (pdf, reason, step, over) == (b"", NO_BROWSER, 0, False)
+    pdf, reason = print_report("b", "<html><body></body></html>")
+    assert (pdf, reason) == (b"", NO_BROWSER)
 
 
-def test_shrink_page_adds_only_the_script_the_policy_and_the_marker():
+def test_report_page_never_adds_a_reencoding_script_or_shrink_marker(tmp_path, monkeypatch):
     page = ('<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; '
             'img-src data:; style-src \'unsafe-inline\'"></head><body><p>본문</p></body></html>\n')
-    shrunk = shrink_page(page, 2)
-    assert shrunk.count("<script>") == 1 and shrunk.index("<script>") < shrunk.index("</body>")
-    assert "MAX=2000,Q=0.75" in shrunk and 'name="labhq-shrink" content="2"' in shrunk
-    assert "script-src 'unsafe-inline'" in shrunk and "connect-src" not in shrunk and "default-src 'none'" in shrunk
-    assert shrunk.replace(shrunk[shrunk.index("<script>"):shrunk.index("</script>") + 9], "").count("<p>본문</p>") == 1
-    assert "http" not in shrunk[shrunk.index("<script>"):shrunk.index("</script>")]  # no network in the script
-    assert shrink_page(page, 99) == shrink_page(page, len(SHRINK_LEVELS))  # clamped to the last step
+    pages = []
+    fake_printer(monkeypatch, [1024], pages)
+    pdf, reason = print_report("b", page)
+    assert pdf.startswith(b"%PDF-") and reason == "" and pages == [page]
+    assert "<script>" not in pages[0] and "labhq-shrink" not in pages[0]
 
 
 def test_the_cap_is_part_of_the_cache_key(tmp_path, monkeypatch):
@@ -204,7 +196,7 @@ def test_the_cap_is_part_of_the_cache_key(tmp_path, monkeypatch):
 
 
 @pytest.mark.skipif(REAL_FIND_BROWSER() is None, reason="no Edge or Chrome on this PC")
-def test_a_real_browser_shrinks_large_figures_under_the_cap(tmp_path, monkeypatch):
+def test_a_real_browser_keeps_large_figures_at_original_quality(tmp_path, monkeypatch):
     def noise_png(width, height, seed):  # incompressible pixels: the PNG is as big as its pixels
         block = os.urandom(width * 3)
         raw = b"".join(b"\x00" + bytes((byte + row * seed) & 255 for byte in block) for row in range(height))
@@ -217,16 +209,16 @@ def test_a_real_browser_shrinks_large_figures_under_the_cap(tmp_path, monkeypatc
     probe = tmp_path / "probe.html"
     probe.write_text("<!doctype html><title>probe</title><p>probe</p>", encoding="utf-8")
     failed = print_pdf(REAL_FIND_BROWSER(), probe, tmp_path / "probe.pdf", timeout=90)
-    if failed:  # a browser that cannot print at all here (a CI sandbox) says nothing about the shrink loop
+    if failed:  # a browser that cannot print at all here (a CI sandbox) says nothing about figure policy
         pytest.skip(f"the browser cannot print on this machine: {failed}")
     monkeypatch.setattr("labhq.report_pdf.find_browser", REAL_FIND_BROWSER)
     files = {f"outputs/f{index}.png": noise_png(1500, 1000, index + 2) for index in range(3)}
     settings, request, tasks, _bundle = build(tmp_path, figure_report(3), files=files)
-    with_cap(settings, 2)
+    with_cap(settings, 0.001)
     built = build_report_file(request, settings, tasks, timeout=120)
     assert built.kind == "pdf" and built.data.startswith(b"%PDF-"), built.reason
-    assert sum(len(payload) for payload in files.values()) > 10 * MB  # the figures alone are far over the cap
-    assert len(built.data) <= 2 * MB and built.shrunk >= 1 and not built.over_cap
+    assert sum(len(payload) for payload in files.values()) > 10 * MB
+    assert built.shrunk == 0 and built.over_cap and any("줄이지 않았습니다" in note for note in built.notes)
     assert built.data.count(b"/Subtype /Image") + built.data.count(b"/Subtype/Image") >= 3  # none was left out
 
 
@@ -302,7 +294,9 @@ def test_a_writers_abstract_in_the_bundle_replaces_the_drawn_one_and_a_dead_link
     dead = "# 결론과 권고\n\n![Graphical abstract](outputs/graphical_abstract.png)\n\n![그림](WD/outputs/fig1.png)\n"
     _settings, request, _tasks, bundle = build(tmp_path / "dead", dead, files={"outputs/fig1.png": PNG})
     text = (bundle / "report.md").read_text(encoding="utf-8")
-    assert "graphical_abstract" not in text and bundle_figure_check(bundle) == {"linked": 1, "problems": []}
+    checked = bundle_figure_check(bundle)
+    assert "graphical_abstract" not in text and checked["problems"] == []
+    assert any("같은 이름의 SVG가 없습니다" in warning for warning in checked["warnings"])
     page, missing = build_report_html(request, bundle)
     assert missing == [] and "그림 없음" not in page and image_sources(page)[0][1].startswith("Graphical abstract")
     assert image_sources(page)[0][0].startswith("data:image/svg+xml;base64,")  # drawn instead
@@ -318,7 +312,7 @@ def test_with_abstract_link_goes_under_the_first_heading_outside_code():
     assert with_abstract_link("제목 없는 본문").startswith(link + "\n\n제목 없는 본문")
 
 
-async def test_the_edition_uses_a_writers_abstract_and_draws_one_when_it_is_too_large(tmp_path, monkeypatch):
+async def test_the_edition_uses_a_writers_abstract_regardless_of_its_size(tmp_path, monkeypatch):
     hub, edition = prepare(tmp_path, monkeypatch)
     bundle = edition.with_name("req_test")
     outputs = bundle / "steps/s1/outputs"
@@ -352,8 +346,9 @@ async def test_the_edition_uses_a_writers_abstract_and_draws_one_when_it_is_too_
     approve_all(big_hub, [])
     await publish(big_hub, [])
     big_report = (big_edition / "report.md").read_text(encoding="utf-8")
-    assert [link.target for link in image_links(big_report)][0] == "graphical_abstract.svg"  # drawn: the edition cannot hold it
-    assert (big_edition / "graphical_abstract.svg").is_file()
+    assert [link.target for link in image_links(big_report)][0] == "steps/s1/outputs/graphical_abstract.png"
+    assert not (big_edition / "graphical_abstract.svg").exists()
+    assert (big_edition / "steps/s1/outputs/graphical_abstract.png").stat().st_size > 1_000_000
     assert "(steps/s1/outputs/graphical_abstract.png)" in seen[0]["report"]  # the PDF still prints the original
 
 
@@ -439,13 +434,13 @@ def test_writer_prompts_say_eleven_and_ask_for_the_graphical_abstract():
         assert rule in prompt
     assert "at most 11 figures" in rule and "up to 10 key result figures" in rule and "at most 6" not in rule
     assert "graphical abstract" in rule and "question -> data -> methods and steps -> key findings" in rule
-    assert "graphical_abstract.png (or .svg)" in rule and "read-only synthesis" in rule
+    assert "graphical_abstract.svg" in rule and "graphical_abstract.png" not in rule and "read-only synthesis" in rule
     assert "first figure just below the title" in rule and "fallback flowchart" in rule
     assert "<workdir_id>/outputs/<file>" in rule and "never a path that is not listed" in rule
     cso.SYNTH_PROMPT.format(request="r", results="x", review="v", warnings="w", assumptions="a")  # still formats
 
 
-# --- 7. the edition's PDF goes up to GitHub up to 50 MB ----------------------------------------------------------------
+# --- 7. the edition's PDF goes up without a labhq size cap -------------------------------------------------------------
 
 async def test_a_50_mb_pdf_goes_up_in_one_put_with_a_long_write_timeout():
     seen = {}
@@ -484,9 +479,9 @@ async def test_a_file_too_big_for_the_contents_api_is_refused_before_anything_is
     assert sent == ["GET", "PUT"]
 
 
-async def test_the_edition_uploads_a_pdf_at_the_default_cap(tmp_path, monkeypatch):
+async def test_the_edition_uploads_a_pdf_with_the_default_unlimited_setting(tmp_path, monkeypatch):
     hub, _edition = prepare(tmp_path, monkeypatch)
-    assert hub.s.github.edition_pdf_max_mb == 50
+    assert hub.s.github.edition_pdf_max_mb is None
     data = b"%PDF-1.7\n" + b"0" * (5 * MB)
     monkeypatch.setattr("labhq.result_storage.build_report_file", builder([], data))
     approve_all(hub, [])
@@ -499,24 +494,24 @@ async def test_the_edition_uploads_a_pdf_at_the_default_cap(tmp_path, monkeypatc
 def test_example_config_and_manual_state_the_new_default():
     root = Path(__file__).resolve().parent.parent
     for name in ("config/labhq.example.yaml", "labhq/config/labhq.example.yaml"):
-        assert re.search(r"edition_pdf_max_mb:\s+50\b", (root / name).read_text(encoding="utf-8")), name
+        assert re.search(r"edition_pdf_max_mb:\s+null\b", (root / name).read_text(encoding="utf-8")), name
     manual = (root / "docs/manual.md").read_text(encoding="utf-8")
-    assert "`github.edition_pdf_max_mb`, 기본 `50`" in manual and "최대 6개" not in manual
+    assert "`github.edition_pdf_max_mb`" in manual and "기본은 무제한" in manual and "재인코딩" in manual
     assert "graphical abstract" in manual and "11장" in manual
 
 
-def test_gateway_report_pdf_says_when_the_figures_were_shrunk(tmp_path, monkeypatch):
+def test_gateway_report_pdf_warns_without_shrinking(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
     from labhq.gateway.server import create_app
 
     settings, request, _tasks, _bundle = build(tmp_path, "# 결과\n\n![그림](WD/outputs/fig1.png)\n")
     with_cap(settings, 1)
-    fake_printer(monkeypatch, [3 * MB, 500_000])
+    fake_printer(monkeypatch, [3 * MB])
     app = create_app(settings)
     app.state.hub.requests["req_pdf"] = request
     response = TestClient(app).get("/api/requests/req_pdf/report-pdf",
                                    headers={"Authorization": f"Bearer {settings.gateway.client_token}"})
     assert response.status_code == 200 and response.headers["X-Labhq-Report-Kind"] == "pdf"
-    assert "그림을 1단계 줄여 PDF를" in unquote(response.headers["X-Labhq-Reason"])  # the page and the CLI show it
-    assert len(response.content) <= 1 * MB
+    assert "줄이지 않았습니다" in unquote(response.headers["X-Labhq-Reason"])
+    assert len(response.content) > 1 * MB

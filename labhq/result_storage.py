@@ -10,11 +10,13 @@ import os
 from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
 import re
+from typing import Any
 from urllib.parse import quote
 
 import httpx
 
-from .integrations.github import GitHubClient, GitHubHTTPError, publish_clean, sanitize, root_zone_restricted
+from .integrations.github import (GitHubClient, GitHubHTTPError, SECRET_PATTERNS, publish_clean,
+                                  redact_url_credentials, sanitize, root_zone_restricted)
 from .interruption import ShutdownInterrupted
 from .models import ApprovalRequest, Task
 from .policy import touches, restricted_paths
@@ -30,9 +32,14 @@ from .request_bundle import _POSIX_ABS, _WINDOWS_ABS
 _REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\Z")
 _PRIVATE_PATH = re.compile(r"(?<![\w:])(?:[A-Za-z]:[/\\]|\\\\|/(?:home|Users|mnt|srv|data|tmp|var|opt)/|~/)[^\s<>\"'`\])]+")
-_ASSIGNMENT = re.compile(r"(?im)\b((?:api[_-]?key|token|password|secret)\s*[:=]\s*)[^\s,;]+")
+_ASSIGNMENT = re.compile(
+    r"(?im)\b((?:api[_-]?key|token|password|secret)\s*[:=]\s*)"
+    r"(?!<redacted-secret>|&lt;redacted-secret&gt;|\[REDACTED\])[^\s,;<]+")
+_ASSIGNMENT_VALUE = re.compile(
+    r"(?im)\b(?:api[_-]?key|token|password|secret)\s*[:=]\s*(?P<value>[^\s,;<]+)")
 _TEXT_OUTPUTS = {".md", ".txt", ".svg", ".csv", ".tsv", ".py", ".r", ".sh", ".json"}
-_IMAGE_OUTPUTS = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+_IMAGE_OUTPUTS = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp",
+                  ".svg": "image/svg+xml"}
 _DOCUMENT_LINKS = (("report.md", "전체 결과·그림·표"), ("PROGRESS.md", "진행 기록"), ("REPRODUCE.md", "재현 방법"),
                    ("SOURCES.md", "출처"))
 README_EXCERPT_CHARS = 1800  # the deterministic README quotes this much of the report; report.md holds all of it
@@ -40,7 +47,8 @@ EDITOR_REPORT_CHARS = 100_000  # what the editor reads of the report whole; a lo
 EDITOR_OTHER_CHARS = 30_000  # the same bound for each of PROGRESS.md, REPRODUCE.md and SOURCES.md
 _PDF_NAME = "report.pdf"
 _GENERATED = ("README.md", "report.md", "PROGRESS.md", "REPRODUCE.md", "SOURCES.md")  # edition documents that may link a figure
-PDF_UPLOAD_MAX_MB = 75  # base64 of this is 100 MB, the contents API's file limit (#608); settings caps the PDF size there
+PUBLISH_PREVIEW_FILE_MAX_BYTES = 1_000_000
+PUBLISH_PREVIEW_TOTAL_MAX_BYTES = 5_000_000
 
 
 class PublishAccessError(RuntimeError):
@@ -131,11 +139,15 @@ def edition_assets(req, settings):
     for name, path in edition_candidates(req, settings).items():
         suffix = PurePosixPath(name).suffix.lower()
         size = path.stat().st_size
-        if size > 1_000_000 or total + size > 5_000_000:
-            continue
-        total += size
+        unlimited = suffix in _IMAGE_OUTPUTS
+        if not unlimited:
+            if size > 1_000_000 or total + size > 5_000_000:
+                continue
+            total += size
         payload = path.read_bytes()
-        if suffix in _IMAGE_OUTPUTS:
+        if suffix == ".svg":
+            images[name] = clean_svg_for_publish(payload, settings, req)
+        elif suffix in _IMAGE_OUTPUTS:
             images[name] = payload
         else:
             try:
@@ -143,6 +155,22 @@ def edition_assets(req, settings):
             except UnicodeDecodeError:
                 continue
     return assets, images
+
+
+def publish_image_previews(images: Mapping[str, bytes], target: Path) -> tuple[dict[str, str], dict[str, dict[str, Any]]]:
+    """Bound approval-card payloads without changing the full-size files kept in the edition."""
+    previews: dict[str, str] = {}
+    omitted: dict[str, dict[str, Any]] = {}
+    total = 0
+    for name, body in images.items():
+        size = len(body)
+        if size > PUBLISH_PREVIEW_FILE_MAX_BYTES or total + size > PUBLISH_PREVIEW_TOTAL_MAX_BYTES:
+            omitted[name] = {"size_bytes": size, "path": str(target / name)}
+            continue
+        previews[name] = ("data:" + _IMAGE_OUTPUTS[Path(name).suffix.lower()] + ";base64," +
+                          base64.b64encode(body).decode("ascii"))
+        total += size
+    return previews, omitted
 
 
 def edition_figure_links(text: str, req: dict, settings, included) -> str:
@@ -200,6 +228,36 @@ def clean_document(text: str, settings, req: dict) -> str:
     text = _WINDOWS_ABS.sub("<local-path>", text)
     text = _POSIX_ABS.sub("<local-path>", text)
     return _ASSIGNMENT.sub(r"\1<redacted-secret>", _PRIVATE_PATH.sub("<local-path>", text))
+
+
+def _unsafe_publish_text(text: str, settings, req: dict) -> bool:
+    """Whether a cleaned text still matches a publish-time secret or local-path rule."""
+    if any(re.search(pattern, text) for pattern in SECRET_PATTERNS):
+        return True
+    for match in _ASSIGNMENT_VALUE.finditer(text):
+        if not match.group("value").startswith(("<redacted-secret>", "&lt;redacted-secret&gt;", "[REDACTED]")):
+            return True
+    secrets = (os.environ.get(settings.github.token_env, ""), settings.gateway.client_token,
+               settings.gateway.runner_token)
+    if any(secret and len(secret) >= 8 and secret in text for secret in secrets):
+        return True
+    if (_PRIVATE_PATH.search(text) or _WINDOWS_ABS.search(text) or _POSIX_ABS.search(text)
+            or redact_url_credentials(text) != text):
+        return True
+    return clean_document(text, settings, req) != text
+
+
+def clean_svg_for_publish(payload: bytes, settings, req: dict) -> bytes:
+    """Clean the repository/card SVG copy while leaving the request-bundle original untouched."""
+    try:
+        cleaned = clean_document(payload.decode("utf-8"), settings, req)
+    except UnicodeDecodeError as exc:
+        raise ValueError("SVG 게시 사본을 UTF-8 텍스트로 읽을 수 없습니다.") from exc
+    if _unsafe_publish_text(cleaned, settings, req):
+        raise ValueError("SVG 게시 사본에 가리지 못한 비밀값 또는 로컬 경로가 있습니다.")
+    for marker in ("redacted-secret", "restricted-zone", "reference-path", "private-reference", "local-path"):
+        cleaned = cleaned.replace(f"<{marker}>", f"&lt;{marker}&gt;")
+    return cleaned.encode("utf-8")
 
 
 def readme_excerpt(report: str, limit: int = README_EXCERPT_CHARS) -> str:
@@ -608,19 +666,21 @@ class ResultStorage:
                         if name == _PDF_NAME:
                             pdf = path.read_bytes()
                         elif path.suffix.lower() in _IMAGE_OUTPUTS:
-                            images[name] = path.read_bytes()
+                            payload = path.read_bytes()
+                            images[name] = (clean_svg_for_publish(payload, self.s, req)
+                                            if path.suffix.lower() == ".svg" else payload)
                         else:
                             docs[name] = path.read_bytes().decode("utf-8")
                 if "README.md" not in docs:
                     raise ValueError("missing editor README")
-                if pdf is not None and (not pdf.startswith(b"%PDF-") or len(pdf) > PDF_UPLOAD_MAX_MB * 1024 * 1024):
+                if pdf is not None and not pdf.startswith(b"%PDF-"):
                     raise ValueError("invalid editor PDF")
             else:
                 assets, images = edition_assets(req, self.s)
                 included = {*assets, *images}
                 drawn = edition_abstract(req, self.s, included)  # #608: the edition opens with a graphical abstract
                 if drawn:
-                    assets[ABSTRACT_FILE] = drawn
+                    images[ABSTRACT_FILE] = clean_svg_for_publish(drawn.encode("utf-8"), self.s, req)
                     included.add(ABSTRACT_FILE)
                 docs = draft_documents(req, self.s, included, assets, abstract=bool(drawn))
                 links = "\n".join(f"- [{name}]({quote(name, safe='/')})" for name in [*assets, *images])
@@ -711,11 +771,13 @@ class ResultStorage:
             if req.get("revised_to") or (review_required and not req.get("pi_reviewed_at")):
                 return  # review_done schedules this saved draft again.
             if not self.s.github.auto_publish_results:
+                previews, omitted = publish_image_previews(images, target)
                 detail = {"documents": docs, "repo": saved.get("repo"),
                           "korean_qc": saved.get("korean_qc"),
-                          "images": {name: "data:" + _IMAGE_OUTPUTS[Path(name).suffix.lower()] + ";base64," +
-                                     base64.b64encode(body).decode("ascii") for name, body in images.items()},
+                          "images": previews,
                           "visibility": saved.get("visibility"), "local_draft": str(target)}
+                if omitted:
+                    detail["image_preview_omitted"] = omitted
                 pdf_line = (f"포함: {_PDF_NAME} ({len(pdf) / 1024 / 1024:.1f} MB)"
                             + (f" · {(saved.get('pdf') or {}).get('size_note')}" if (saved.get("pdf") or {}).get("size_note") else "")
                             if pdf else str((saved.get("pdf") or {}).get("note") or ""))
@@ -763,9 +825,8 @@ class ResultStorage:
         """``(report.pdf bytes, size note)``, or ``(None, plain Korean reason)``.
 
         The report is printed from the request bundle's original figures, whatever their size, under the edition's cleaned
-        text (#608); the edition's own copies keep their 1 MB and 5 MB limits. The PDF is at most ``github.edition_pdf_max_mb``
-        (50 MB by default): figures are shrunk to fit, never left out, and a PDF still over the cap is kept with a note. Only a
-        PDF past what the GitHub contents API takes is left out, with its size as the reason."""
+        text (#608, #690). Figure copies and the PDF are not size-limited or re-encoded. A configured
+        ``github.edition_pdf_max_mb`` value produces a warning only."""
         bundle = self.s.path(self.s.runner.workspace_root) / "requests" / rid
         text = pdf_report_text(req, self.s)
         shown = copy.deepcopy(req)
@@ -784,10 +845,7 @@ class ResultStorage:
         if built.kind != "pdf" or not built.data.startswith(b"%PDF-"):
             return None, ("이 PC에서 Edge나 Chrome을 찾지 못했어요." if built.reason == NO_BROWSER
                           else "브라우저가 PDF를 만들지 못했어요.")
-        if len(built.data) > PDF_UPLOAD_MAX_MB * 1024 * 1024:
-            return None, (f"PDF가 {len(built.data) / 1024 / 1024:.1f} MB라 GitHub에 올릴 수 있는 한도 "
-                          f"{PDF_UPLOAD_MAX_MB} MB를 넘어요.")
-        return built.data, " ".join(size_notes(built.data, built.shrunk, built.over_cap, pdf_cap_bytes(self.s)))
+        return built.data, " ".join(size_notes(built.data, pdf_cap_bytes(self.s)))
 
     async def upload(self, rid, docs, images=None, pdf=None):
         if not self.hub.requests[rid].get("pi_reviewed_at"):
@@ -836,7 +894,9 @@ class ResultStorage:
                 await gh.put_file(repo, f"labhq/results/{rid}/{name}", body, "연구 결과 정리", write_branch)
                 write_branch = branch
             for name, body in (images or {}).items():
-                await gh.put_image(repo, f"labhq/results/{rid}/{name}", body, write_branch)
+                payload = (clean_svg_for_publish(body, self.s, self.hub.requests[rid])
+                           if Path(name).suffix.lower() == ".svg" else body)
+                await gh.put_image(repo, f"labhq/results/{rid}/{name}", payload, write_branch)
                 write_branch = branch
             if pdf:
                 await gh.put_binary(repo, f"labhq/results/{rid}/{_PDF_NAME}", pdf, write_branch, "연구 결과 PDF")

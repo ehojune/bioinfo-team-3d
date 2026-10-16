@@ -439,10 +439,16 @@ export function renderDetail(container, kind, detail, approval = null) {
         detailEntry(list, name, body, {raw:true, fold:true, open:name === 'README.md', summary:name});
     } else if (kind === 'result_publish' && key === 'images') {
       for (const [name, uri] of Object.entries(detail.images || {})) {
-        if (!/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(uri)) continue;
+        if (!/^data:image\/(png|jpeg|webp|svg\+xml);base64,[A-Za-z0-9+/=]+$/.test(uri)) continue;
         const figure = add(list, 'div'); add(figure, 'p', name);
         const img = add(figure, 'img'); img.src = uri; img.alt = name;
         img.setAttribute?.('style', 'max-width:100%;max-height:420px');
+      }
+    } else if (kind === 'result_publish' && key === 'image_preview_omitted') {
+      for (const [name, item] of Object.entries(detail.image_preview_omitted || {})) {
+        const size = Number(item?.size_bytes || 0);
+        const label = `${name} · ${(size / 1024 / 1024).toFixed(1)} MB · ${String(item?.path || '')}`;
+        detailEntry(list, name, label, {raw:true});
       }
     } else if (kind === 'research_plan' && key === 'plan_canonical') renderResearchPlan(list, detail.plan_canonical);
     else if (kind === 'research_continue' && key === 'p1_issues') renderReviewIssues(list, detail.p1_issues);

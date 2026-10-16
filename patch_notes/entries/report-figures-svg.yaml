@@ -1,0 +1,23 @@
+pr: 692
+rows:
+- sha: 7cebe83
+  at: 2026-10-16 17:11
+  text: 분석 그림을 SVG 텍스트로 선언하고 보고서 QC·PDF가 원본 품질과 크기를 보존하도록 함
+- sha: 95057aa
+  at: 2026-10-16 17:26
+  text: 그림 선언 규칙 변경에 맞춰 일반 계획 prompt 고정 hash를 갱신함
+- sha: 0c62b5b
+  at: 2026-10-16 18:09
+  text: 그림 WARN 판정, 세로 PDF 표시, SVG 승인 미리보기와 카드 payload 상한을 바로잡음
+- sha: e657685
+  at: 2026-10-16 18:25
+  text: 게시용 SVG 비밀값 가림과 선언 그림별 결과 절 누락 경고를 보완함
+- sha: bf1c3c9
+  at: 2026-10-16 18:37
+  text: 계획에 선언된 핵심 그림만 결과 절 누락 경고 대상으로 삼고 예전 묶음의 기존 규칙을 유지
+- sha: '2710613'
+  at: 2026-10-16 19:08
+  text: main의 직원 글쓰기 prompt와 한국어 품질 기록을 그림 게시 변경에 함께 병합
+- sha: b0fc244
+  at: 2026-10-16 19:12
+  text: 'PR #693의 staff-skill schema와 writing-skill prompt 변경에 맞춰 고정 hash를 갱신'

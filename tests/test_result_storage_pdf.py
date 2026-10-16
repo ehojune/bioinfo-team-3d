@@ -124,17 +124,17 @@ async def test_pdf_skipped_with_a_reason_and_publishing_still_goes_through(tmp_p
     assert hub.requests["req_test"]["result_storage"]["status"] == "published"
 
 
-async def test_pdf_over_the_cap_is_kept_with_a_size_note(tmp_path, monkeypatch):
-    """#608: a PDF the figure shrinking could not bring under the cap used to be left out; it is kept and says so."""
+async def test_pdf_over_the_warning_threshold_is_kept_without_shrinking(tmp_path, monkeypatch):
+    """#690: a configured size is warning-only."""
     hub, edition = prepare(tmp_path, monkeypatch)
-    assert hub.s.github.edition_pdf_max_mb == 50
+    assert hub.s.github.edition_pdf_max_mb is None
     hub.s.github.edition_pdf_max_mb = 1
     data = b"%PDF-1.7\n" + b"0" * (1024 * 1024)  # one byte over 1 MB
     seen, calls, cards = [], [], []
-    monkeypatch.setattr("labhq.result_storage.build_report_file", builder(seen, data, shrunk=6, over_cap=True))
+    monkeypatch.setattr("labhq.result_storage.build_report_file", builder(seen, data, shrunk=0, over_cap=True))
     approve_all(hub, cards)
     await publish(hub, calls)
-    note = "그림을 6단계까지 줄여도 PDF가 1.0 MB라 한도 1 MB를 넘어요. 그림은 하나도 빼지 않았어요."
+    note = "PDF가 1.0 MB로 설정 알림 기준 1 MB를 넘지만 그림과 PDF를 줄이지 않았습니다."
     assert cards[0]["detail"]["pdf"] == f"포함: report.pdf (1.0 MB) · {note}"
     assert base64.b64decode(puts(calls)["labhq/results/req_test/report.pdf"]["content"]) == data
     assert note in (edition / "README.md").read_text(encoding="utf-8") and (edition / "report.pdf").read_bytes() == data
@@ -142,16 +142,15 @@ async def test_pdf_over_the_cap_is_kept_with_a_size_note(tmp_path, monkeypatch):
     assert saved["status"] == "published" and saved["pdf"]["included"] and saved["pdf"]["size_note"] == note
 
 
-async def test_pdf_past_what_github_takes_is_left_out_with_its_size(tmp_path, monkeypatch):
+async def test_result_storage_has_no_separate_pdf_size_rejection(tmp_path, monkeypatch):
     hub, edition = prepare(tmp_path, monkeypatch)
-    monkeypatch.setattr("labhq.result_storage.PDF_UPLOAD_MAX_MB", 1)
     seen, calls, cards = [], [], []
     monkeypatch.setattr("labhq.result_storage.build_report_file",
                         builder(seen, b"%PDF-1.7\n" + b"0" * (1024 * 1024)))
     approve_all(hub, cards)
     await publish(hub, calls)
-    assert cards[0]["detail"]["pdf"] == "PDF는 포함하지 않았어요: PDF가 1.0 MB라 GitHub에 올릴 수 있는 한도 1 MB를 넘어요."
-    assert "labhq/results/req_test/report.pdf" not in puts(calls) and not (edition / "report.pdf").exists()
+    assert cards[0]["detail"]["pdf"].startswith("포함: report.pdf")
+    assert "labhq/results/req_test/report.pdf" in puts(calls) and (edition / "report.pdf").exists()
     assert hub.requests["req_test"]["result_storage"]["status"] == "published"
 
 
@@ -167,9 +166,9 @@ async def test_pdf_exactly_at_the_cap_is_kept(tmp_path, monkeypatch):
 
 
 def test_cap_setting_is_positive():
-    assert GitHubSettings().edition_pdf_max_mb == 50  # #608: it was 20
-    assert GitHubSettings(edition_pdf_max_mb=75).edition_pdf_max_mb == 75  # 75 MB is 100 MB as base64
-    for bad in (0, 76):
+    assert GitHubSettings().edition_pdf_max_mb is None
+    assert GitHubSettings(edition_pdf_max_mb=76).edition_pdf_max_mb == 76
+    for bad in (0, -1):
         with pytest.raises(ValueError):
             GitHubSettings(edition_pdf_max_mb=bad)
 

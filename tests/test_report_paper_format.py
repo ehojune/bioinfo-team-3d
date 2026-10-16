@@ -23,7 +23,7 @@ def test_paper_section_order(template):
 @pytest.mark.parametrize("template", [cso.PLAN_PROMPT, cso.REPLAN_PROMPT, cso.RESEARCH_PLAN_PROMPT,
                                       cso.RESEARCH_CP2_PLAN_PROMPT], ids=["plan", "replan", "research", "cp2"])
 def test_plan_assigns_abstract_to_writable_worker(template):
-    assert "outputs/graphical_abstract.png" in template
+    assert "outputs/graphical_abstract.svg" in template
     assert "write-capable" in template and "final report step" in template
 
 

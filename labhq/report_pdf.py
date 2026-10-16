@@ -6,9 +6,9 @@ the installed browser in headless mode; with no browser, or when printing fails,
 Korean reason. No markdown library, LaTeX or GTK is involved: the converter below covers what reports use (headings,
 paragraphs, lists, tables, links, images, code, quotes).
 
-Figure policy (#608): a figure has no size limit and is always the bundle's original, at most 11 go in (the graphical
-abstract included, drawn by `report_abstract` when the report has none), and the PDF is at most 50 MB by shrinking the
-figures in the browser step by step, never by leaving one out.
+Figure policy (#608, #690): a figure has no size limit and is always the bundle's original, at most 11 go in (the
+graphical abstract included, drawn by `report_abstract` when the report has none), and printing never re-encodes or
+shrinks a figure. A configured PDF size is warning-only.
 """
 
 from __future__ import annotations
@@ -34,13 +34,10 @@ from .report_figures import (ABSTRACT_FILE, FIGURE_SUFFIXES, IMAGE_PATTERN, MAX_
                              drop_dead_abstract_links, figure_owners, has_abstract_link, link_workdir_figures,
                              output_exists)
 
-RENDER_VERSION = "2"  # bump when the page's markup or CSS changes: a cached PDF of an older one is not reused
+RENDER_VERSION = "3"  # bump when the page's markup or CSS changes: a cached PDF of an older one is not reused
 PRINT_TIMEOUT_S = 60.0
-_CSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'"  # no network; the shrink variants add one script
+_CSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'"  # no network
 PRINT_SLOW_BYTES_PER_S = 2 * 1024 * 1024  # a page of embedded figures gets one more second of printing per 2 MB (#608)
-PDF_MAX_MB = 50.0  # PI 10-15 (#608): the PDF is at most this big; figures are shrunk to fit, never left out
-# Figure shrink steps tried in order when a print is over the cap: (longest edge in pixels, JPEG quality).
-SHRINK_LEVELS = ((2600, 0.85), (2000, 0.75), (1500, 0.65), (1100, 0.55), (800, 0.45), (600, 0.35))
 MAX_REQUEST_CHARS = 2000
 _LOCK = threading.Lock()  # one print at a time: a headless browser is heavy and the PI has one PC
 
@@ -60,9 +57,9 @@ class ReportFile:
     filename: str
     media_type: str
     cached: bool = False
-    notes: tuple[str, ...] = ()  # figures the page could not embed, and how far the figures were shrunk to fit the cap
-    shrunk: int = 0  # 0: the figures are as they came; n: shrink step n of SHRINK_LEVELS was needed (#608)
-    over_cap: bool = False  # the smallest PDF the steps gave is still over the cap: no figure was left out for it
+    notes: tuple[str, ...] = ()  # figures the page could not embed and warning-only configured size notices
+    shrunk: int = 0  # always 0: report figures are never re-encoded or shrunk (#690)
+    over_cap: bool = False  # a warning-only configured size was exceeded
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -575,72 +572,15 @@ def print_pdf(browser: str, html_path: Path, pdf_path: Path, *, timeout: float =
     return None
 
 
-# The browser re-encodes the page's raster figures before printing (#608): each is drawn onto a canvas no larger than
-# MAX pixels on its longest side and kept as a JPEG of quality Q when that is smaller than the original. A figure that is
-# already small, an SVG and anything that is not an embedded raster are left as they are. The script is added only to the
-# shrink variants of the page; it has no network (the policy still allows none), and the page's own text is never touched.
-_SHRINK_SCRIPT = r"""<script>(function(){var MAX=__MAX__,Q=__Q__;
-document.querySelectorAll('img').forEach(function(el){
-var src=el.getAttribute('src')||'';
-if(!/^data:image\/(png|jpeg|webp|gif);base64,/i.test(src))return;
-var probe=new Image();
-probe.onload=function(){try{
-var w=probe.naturalWidth,h=probe.naturalHeight;if(!w||!h)return;
-var s=Math.min(1,MAX/Math.max(w,h)),cw=Math.max(1,Math.round(w*s)),ch=Math.max(1,Math.round(h*s));
-var c=document.createElement('canvas');c.width=cw;c.height=ch;
-var x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,cw,ch);x.drawImage(probe,0,0,cw,ch);
-var out=c.toDataURL('image/jpeg',Q);
-if(out.length<src.length)el.src=out;
-}catch(e){}};
-probe.src=src;});})();</script>"""
-_RASTER = re.compile(r'src="data:image/(?:png|jpeg|webp|gif);base64,')
-
-
-def shrink_page(page: str, level: int) -> str:
-    """``page`` with shrink step ``level`` (1..len(SHRINK_LEVELS)) of SHRINK_LEVELS applied by the browser as it loads."""
-    level = min(max(level, 1), len(SHRINK_LEVELS))
-    edge, quality = SHRINK_LEVELS[level - 1]
-    script = _SHRINK_SCRIPT.replace("__MAX__", str(edge)).replace("__Q__", str(quality))
-    head, found, tail = page.rpartition("</body>")
-    page = f"{head}{script}{found}{tail}" if found else page + script
-    page = page.replace(_CSP, _CSP + "; script-src 'unsafe-inline'", 1)
-    return page.replace("</head>", f'<meta name="labhq-shrink" content="{level}"></head>', 1)
-
-
-def _timed_out(reason: str) -> bool:
-    return "끝내지 못해" in reason  # print_pdf's timeout wording: a heavy page may print once its figures are smaller
-
-
-def print_within_cap(browser: str, page: str, cap_bytes: int, *, timeout: float = PRINT_TIMEOUT_S
-                     ) -> tuple[bytes, str, int, bool]:
-    """``(pdf, reason, shrink step, over cap)``: the page printed, and while the PDF is over ``cap_bytes`` printed again
-    with the figures shrunk a step further (#608). No figure is dropped and the PDF is never dropped for its size.
-
-    ``reason`` is print_pdf's plain Korean reason when no print worked (then ``pdf`` is empty). When even the last step is
-    over the cap, the smallest PDF is returned with ``over cap`` set. A page with no raster figure is printed once."""
+def print_report(browser: str, page: str, *, timeout: float = PRINT_TIMEOUT_S) -> tuple[bytes, str]:
+    """Print the original page once. No figure is re-encoded, resized, or retried at a lower quality (#690)."""
     work = Path(tempfile.mkdtemp(prefix="labhq-report-"))
-    raster = _RASTER.search(page) is not None
-    best: tuple[int, int, Path] | None = None
-    reason = ""
     try:
-        for level in range(len(SHRINK_LEVELS) + 1):
-            data = (page if level == 0 else shrink_page(page, level)).encode("utf-8")
-            source, target = work / "report.html", work / f"report-{level}.pdf"
-            source.write_bytes(data)
-            failed = print_pdf(browser, source, target, timeout=timeout + len(data) / PRINT_SLOW_BYTES_PER_S)
-            if failed:
-                reason = failed
-                if raster and _timed_out(failed):
-                    continue
-                break
-            size = target.stat().st_size
-            if best is None or size < best[0]:
-                best = (size, level, target)
-            if size <= cap_bytes or not raster:
-                break
-        if best is None:
-            return b"", reason, 0, False
-        return best[2].read_bytes(), "", best[1], best[0] > cap_bytes
+        data = page.encode("utf-8")
+        source, target = work / "report.html", work / "report.pdf"
+        source.write_bytes(data)
+        failed = print_pdf(browser, source, target, timeout=timeout + len(data) / PRINT_SLOW_BYTES_PER_S)
+        return (b"", failed) if failed else (target.read_bytes(), "")
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
@@ -681,16 +621,19 @@ def check_buildable(req: Mapping[str, Any], settings: Any, tasks: Mapping[str, A
         raise ReportRefused("통제 데이터가 포함된 요청은 PDF 보고서를 만들지 않아요. 로컬 요청 묶음의 report.md를 보세요.")
 
 
-def pdf_cap_bytes(settings: Any) -> int:
-    """The PDF size cap from ``github.edition_pdf_max_mb`` (default PDF_MAX_MB), in bytes."""
+def pdf_cap_bytes(settings: Any) -> int | None:
+    """The optional warning threshold from ``github.edition_pdf_max_mb``; ``None`` means unlimited."""
+    value = getattr(getattr(settings, "github", None), "edition_pdf_max_mb", None)
+    if value is None:
+        return None
     try:
-        megabytes = float(getattr(getattr(settings, "github", None), "edition_pdf_max_mb", PDF_MAX_MB))
+        megabytes = float(value)
     except (TypeError, ValueError):
-        megabytes = PDF_MAX_MB
-    return int((megabytes if megabytes > 0 else PDF_MAX_MB) * 1024 * 1024)
+        return None
+    return int(megabytes * 1024 * 1024) if megabytes > 0 else None
 
 
-def _cache_key(req: Mapping[str, Any], bundle: Path | None, cap_bytes: int = 0) -> str:
+def _cache_key(req: Mapping[str, Any], bundle: Path | None, cap_bytes: int | None = None) -> str:
     """Everything the page is built from: the cover's fields and the two documents as `build_report_html` reads them."""
     from .request_status import request_display_label
 
@@ -728,13 +671,11 @@ def _save(folder: Path, name: str, data: bytes) -> None:
     os.replace(partial, folder / name)
 
 
-def size_notes(pdf: bytes, level: int, over_cap: bool, cap_bytes: int) -> tuple[str, ...]:
+def size_notes(pdf: bytes, cap_bytes: int | None) -> tuple[str, ...]:
+    if cap_bytes is None or len(pdf) <= cap_bytes:
+        return ()
     megabytes, cap = len(pdf) / 1024 / 1024, cap_bytes / 1024 / 1024
-    if over_cap:
-        return (f"그림을 {level}단계까지 줄여도 PDF가 {megabytes:.1f} MB라 한도 {cap:g} MB를 넘어요. 그림은 하나도 빼지 않았어요.",)
-    if level:
-        return (f"그림을 {level}단계 줄여 PDF를 {megabytes:.1f} MB로 맞췄어요(한도 {cap:g} MB).",)
-    return ()
+    return (f"PDF가 {megabytes:.1f} MB로 설정 알림 기준 {cap:g} MB를 넘지만 그림과 PDF를 줄이지 않았습니다.",)
 
 
 def build_report_file(req: Mapping[str, Any], settings: Any, tasks: Mapping[str, Any] | None = None, *,
@@ -744,13 +685,11 @@ def build_report_file(req: Mapping[str, Any], settings: Any, tasks: Mapping[str,
     """The PDF of a finished request's report, or its HTML and the reason there is no PDF.
 
     The output is cached next to the request bundle (``requests/<id>-report/``) and reused while the report, the bundle
-    manifest, the size cap and RENDER_VERSION are unchanged. Raises ReportRefused for an unfinished or controlled-data
+    manifest, the optional size-warning threshold and RENDER_VERSION are unchanged. Raises ReportRefused for an unfinished or controlled-data
     request.
 
-    The figures are the originals in the bundle, whatever their size (#608). The PDF is at most ``github.edition_pdf_max_mb``
-    (50 MB by default): when the first print is bigger the browser re-encodes the figures at a lower resolution and the page
-    is printed again, step by step (`print_within_cap`); no figure and no PDF is dropped for size, and the smallest PDF is
-    kept, flagged in ``over_cap``, when no step fits.
+    The figures are the originals in the bundle, whatever their size (#608, #690). The page is printed once without
+    raster re-encoding. ``github.edition_pdf_max_mb`` is optional and warning-only.
 
     ``source``: read the documents and the figures from this folder instead of the request bundle, and neither read nor
     write the cache. ``report_text``: use this report, with no appendix, instead of the documents (the repository
@@ -783,10 +722,11 @@ def build_report_file(req: Mapping[str, Any], settings: Any, tasks: Mapping[str,
         browser = find_browser(getattr(getattr(settings, "gateway", None), "report_browser", None))
         reason, pdf, level, over_cap = NO_BROWSER, b"", 0, False
         if browser:
-            pdf, reason, level, over_cap = print_within_cap(browser, page, cap, timeout=timeout)
+            pdf, reason = print_report(browser, page, timeout=timeout)
+            over_cap = cap is not None and len(pdf) > cap
         kind = "pdf" if pdf else "html"
         if pdf:
-            notes += size_notes(pdf, level, over_cap, cap)
+            notes += size_notes(pdf, cap)
         try:
             if not usable:
                 raise OSError("cache folder is not a plain folder")

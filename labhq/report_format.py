@@ -20,8 +20,9 @@ state each result statistic once, in the results. Format comes first; do not inv
 
 ABSTRACT_PLAN_RULE = (
     "Assign a final report step to a write-capable worker (for example an analyst), depending on the analysis "
-    "steps. It creates outputs/graphical_abstract.png (or .svg) with code and declares it in outputs, along with "
-    "the code. Use short Korean labels for question -> data -> methods -> key findings. CSO synthesis is "
+    "steps. It creates outputs/graphical_abstract.svg with code and declares it in outputs, along with "
+    "the code. Keep every Korean label as SVG <text>. Use short Korean labels for question -> data -> methods -> "
+    "key findings. CSO synthesis is "
     "read-only and only links this artifact; do not assign file creation to CSO. In a re-plan retain an already "
     "completed abstract step if its findings still hold."
 )

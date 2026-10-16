@@ -14,9 +14,9 @@ def _render() -> str:
 
 
 def test_generic_step_prompt_bytes_stay_at_the_main_baseline():
-    # #373 benches A/B: keep artifacts and upstream paths in one block; #423: as inputs/<step id>/ paths, plus an outputs/env/ record.
+    # #690 adds the SVG text/font/no-capture figure contract to every execution step.
     assert hashlib.sha256(STEP_PROMPT.encode()).hexdigest() == (
-        "3f42246163bd0c1fa1497fd32e1706da7fbca6e5dfda60b4730c5e710b11f49a")
+        "f6abaa1c57bb97a0b87a49c7dfe42202adf9930caa80bf08346ba1e1bc7fb57f")
     assert "If an HPC job runs the analysis" in STEP_PROMPT
 
 
@@ -38,9 +38,9 @@ def test_step_prompts_keep_reproducibility_artifacts_out_of_tmp():
 
 
 def test_research_step_prompt_bytes_stay_at_the_previous_baseline():
-    # #373 benches A/B apply both reproducibility rules to the frozen research lane; #423 inputs/ paths and an outputs/env/ record.
+    # #690 adds the SVG text/font/no-capture figure contract to the frozen research lane.
     assert hashlib.sha256(cso.RESEARCH_STEP_PROMPT.encode()).hexdigest() == (
-        "e88d8a951eeb9db9a9d6fa4570ad53654dd3e09fe9e0547bd4f48d053f675a49")
+        "2e0a1ae6b063a687b1c5579302408cbcfcd0524e1d44f6eb55a1af75427a36c8")
     assert "If an HPC job runs the analysis" in cso.RESEARCH_STEP_PROMPT
 
 
