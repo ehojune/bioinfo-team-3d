@@ -540,6 +540,10 @@ class RunState:
     # signatures read it, never successful output.
     failed_outputs: deque = field(default_factory=lambda: deque(maxlen=FAILED_OUTPUTS_KEPT))
     shell_calls: set = field(default_factory=set)  # tool call ids of shell tools, for engines that pair by id
+    # Claude's final transcript clips invalid StructuredOutput input at 2,048 characters. With partial stream
+    # events enabled, keep the transport fragments until its tool_result says whether the call failed.
+    structured_output_streams: dict[int, dict[str, Any]] = field(default_factory=dict)
+    structured_output_raw: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
