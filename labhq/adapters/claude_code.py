@@ -254,6 +254,8 @@ class ClaudeCodeAdapter(AgentAdapter):
                 return f"plugin manifest for {raw} is missing or unreadable (.claude-plugin/plugin.json)"
             found[str(manifest.get("name") or "")] = path
         for skill in ctx.agent.required_skills:
+            if ":" not in skill:
+                continue
             plugin, name = skill.split(":")
             if plugin not in found:
                 return f"required plugin '{plugin}' is not among plugin_dirs"

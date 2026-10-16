@@ -283,8 +283,8 @@ class TaskWorkspace:
             return {step_id: "inputs is a link or not a folder in the workspace" for step_id in upstream}
         return failed
 
-    def install_skill(self, skill_dir: Path) -> str | None:
-        """Install a fresh contract skill copy for this run, without traversing workspace links.
+    def install_skill(self, skill_dir: Path, source_label: str = "contract skill") -> str | None:
+        """Install a fresh skill copy for this run, without traversing workspace links.
 
         A link at the copy itself is replaced. A link above it (`.agents`, `.claude/skills`) refuses the run and
         stays as it is (#190): replacing it would delete what an earlier step put there, and labhq cannot tell
@@ -292,7 +292,7 @@ class TaskWorkspace:
         """
         skill_dir = Path(skill_dir)
         if not skill_dir.name:
-            return "contract skill source has no directory name; execution refused"
+            return f"{source_label} source has no directory name; execution refused"
         destinations = []
         for base in SKILL_DIRS:
             dst = self.dir / base / skill_dir.name
@@ -304,7 +304,7 @@ class TaskWorkspace:
         if not (skill_dir / "SKILL.md").is_file():
             for _, dst in destinations:
                 _remove_entry(dst)
-            return "contract skill source is missing or unreadable; execution refused"
+            return f"{source_label} source is missing or unreadable; execution refused"
         for parent, dst in destinations:  # every run replaces every engine's copy from the source
             fresh = parent / f".{skill_dir.name}.labhq-{uuid.uuid4().hex}"
             try:

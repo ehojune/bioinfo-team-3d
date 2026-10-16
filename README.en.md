@@ -14,6 +14,8 @@
 [![bioRxiv / medRxiv: MCP · preprint search](https://img.shields.io/static/v1?label=bioRxiv%20%2F%20medRxiv&message=MCP%20%C2%B7%20preprint%20search&color=007EC6)](https://www.biorxiv.org/)
 [![bioinfo-agent: Claude Code plugin](https://img.shields.io/static/v1?label=bioinfo-agent&message=Claude%20Code%20plugin&color=8A2BE2)](https://github.com/ehojune/bioinfo-agent)
 [![Paper2Agent: skill · contractor hiring](https://img.shields.io/static/v1?label=Paper2Agent&message=skill%20%C2%B7%20contractor%20hiring&color=228B22)](https://github.com/jmiao24/Paper2Agent)
+[![graphical-abstract: staff skill](https://img.shields.io/static/v1?label=graphical-abstract&message=staff%20skill&color=228B22)](docs/manual.md#연결된-도구)
+[![humanizer: staff skill](https://img.shields.io/static/v1?label=humanizer&message=staff%20skill&color=228B22)](docs/manual.md#연결된-도구)
 
 [![test: GitHub Actions](https://github.com/ehojune/bioinfo-team-3d/actions/workflows/test.yml/badge.svg)](https://github.com/ehojune/bioinfo-team-3d/actions/workflows/test.yml)
 [![Python: 3.10+](https://img.shields.io/static/v1?label=Python&message=3.10%2B&color=3776AB&logo=python)](https://www.python.org/)

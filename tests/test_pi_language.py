@@ -179,9 +179,9 @@ def test_report_humanizer_present_and_absent(tmp_path, monkeypatch):
     skill.write_text('humanizer', encoding='utf8')
     monkeypatch.setattr(report_style, 'humanizer_skill', lambda: skill)
     fixed, note = report_style.check_report(report)
-    assert fixed == '결과가 정리된다.\n> 가지고 있다\n`에 있어서`'
-    assert '고친 1곳' in note
-    assert '통과' in report_style.check_report(fixed)[1]
+    assert fixed == report
+    assert 'WARN' in note and '되어진다 1건' in note
+    assert 'PASS' in report_style.check_report('결과가 정리된다.\n> 가지고 있다\n`에 있어서`')[1]
 
 
 def test_new_item_force_is_not_recursive_delete(tmp_path):
@@ -235,7 +235,7 @@ def test_final_report_keeps_interpretation_cost_and_optional_style_appendix(hub,
     orchestrator.cost['r'] = 0.5
     orchestrator._finish('r', '결과를 가지고 있다.', {}, True)
     assert hub.requests['r']['cost_usd'] == 1.0
-    assert '고친 1곳' in hub.requests['r']['execution_record']
+    assert 'WARN' in hub.requests['r']['execution_record']
 
 
 @pytest.mark.asyncio

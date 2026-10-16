@@ -53,6 +53,7 @@ from ..quota import quota_reset_instant
 from ..recruit.provenance import external_service_refusal, not_yet_active, probation_refusal, restricted_task
 from ..registry import Registry
 from ..settings import MODEL_NAME_PATTERN, Settings, write_staff_config
+from ..staff_skills import install_required_skills
 from ..store import StateStore
 from ..tools.scheduler import MISSING_POLLS_BEFORE_FINISHED, TERMINAL, Scheduler, job_in_family
 from ..util import INPUT_STEP_ID, output_relpath, short
@@ -1463,6 +1464,10 @@ class Runner:
                     "Use the request's paper advice in .agents/skills/paper-*/SKILL.md; cite the paper when used."
                     if plugin else "논문 스킬 장착 불가; 제공된 선행 연구 요약으로 계속하세요.")})
             prompt = await ws.awrite_task_md()
+            if skill_error := install_required_skills(ws, agent):
+                result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=skill_error)
+                await emit_final({"state": "error", "error": skill_error}, result.model_dump(mode="json"))
+                return result
             if agent.contract and agent.contract.skill_dir:
                 skill_error = ws.install_skill(Path(agent.contract.skill_dir))
                 if skill_error:

@@ -98,6 +98,11 @@ def read_only_profile(agent: AgentSpec) -> AgentSpec:
         raise RuntimeError(f"read-only profile does not classify AgentSpec fields: {sorted(unclassified)}")
     kept = {name: copy.deepcopy(getattr(agent, name)) for name in READ_ONLY_KEEPS}
     fields = copy.deepcopy(READ_ONLY_FIELDS)
+    # First-party Markdown skills have no hooks or MCP. Keep only those; plugin requirements stay off.
+    from ..staff_skills import is_bundled_skill
+    fields["required_skills"] = [name for name in agent.required_skills if is_bundled_skill(name)]
+    if fields["required_skills"] and agent.engine == "claude_code":
+        fields["allow_skills"] = True
     if agent.engine == "claude_code":
         fields["builtin_mcp"] = ["approval"]
     elif agent.engine == "codex":
@@ -165,6 +170,15 @@ def labhq_workspace_paths(agent: AgentSpec, engine: str, workdir: Path | None = 
     paths = [f"{base}/{PurePath(skill).name}" for base in SKILL_DIRS] if skill else []
     if skill and workdir is not None:
         paths = [path for path in paths if installed_skill_matches(Path(skill), Path(workdir) / path)]
+    from ..staff_skills import bundled_skill_source
+    for name in agent.required_skills:
+        source = bundled_skill_source(name)
+        if source is None:
+            continue
+        for base in SKILL_DIRS:
+            relative = f"{base}/{name}"
+            if workdir is None or installed_skill_matches(source, Path(workdir) / relative):
+                paths.append(relative)
     if engine == "codex":
         paths.append("AGENTS.md")
     return paths

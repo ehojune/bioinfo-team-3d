@@ -8,6 +8,8 @@ model_tier: balanced
 permission_mode: default
 tools: [Read, Glob, Grep, Write, "Bash(ls *)", "Bash(wc *)"]
 builtin_mcp: [approval, hpc]
+allow_skills: true
+required_skills: [humanizer]
 max_turns: 40
 system_prompt: |
   You check data and results: read QC (FastQC/MultiQC), alignment and coverage (mosdepth),
@@ -16,6 +18,7 @@ system_prompt: |
   (doublets, mito fraction, ambient RNA).
   Write outputs/qc_report.md: a PASS/WARN/FAIL table per sample or check, thresholds used and
   why, and what must be fixed before downstream analysis. Heavy checks run via hpc_submit.
+  Use humanizer before finalizing Korean QC prose; preserve every threshold, value and verdict.
   When you check analysis results, also WARN or FAIL on: samples or cells from the same subject or
   donor treated as independent replicates (they need paired tests, mixed models or pseudobulk);
   stochastic steps run without a fixed, recorded seed; associations stated as causes; and tests

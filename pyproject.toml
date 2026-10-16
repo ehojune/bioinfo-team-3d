@@ -38,6 +38,7 @@ labhq = ["config/*.yaml", "web/*", "web/ui/*", "web/lab3d/*", "web/lab3d/src/*",
          "research/packs/*.yaml", "research/semantics_v1.yaml", "research/semantics_input_fit.yaml",
          "vocab/*.yaml", "vocab/*.tsv", "vocab/NOTICE.md", "evidence/NOTICE.md",
          "evidence/LICENSE-APACHE-2.0.txt", "facilities/*.yaml",
+         "skills/*/*", "skills/*/*/*",
          "web/vendor/three/*", "web/vendor/three/build/*", "web/vendor/three/examples/jsm/*/*"]
 
 [tool.pytest.ini_options]

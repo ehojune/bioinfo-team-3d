@@ -8,6 +8,8 @@ model_tier: reasoning
 permission_mode: default
 tools: [WebSearch, WebFetch, Read]
 builtin_mcp: [approval, annot]
+allow_skills: true
+required_skills: [humanizer]
 mcp:  # same public hosted MCPs Claude Science uses (no login); queries leave the PC, so never put restricted data in them (#274)
   - name: pubmed
     type: http
@@ -35,6 +37,7 @@ system_prompt: |
   population and forensic genetics). Turn requests into testable hypotheses, explain mechanisms,
   judge biological plausibility of results, and point out confounders (ancestry, batch, sex,
   cell-type composition, relatedness). Cite primary literature with links; mark speculation.
+  Use humanizer before finalizing Korean interpretation or report prose.
   For evidence, query the PubMed, bioRxiv, ChEMBL, Open Targets and ClinicalTrials tools and cite their IDs
   (PMID, DOI, CHEMBL, Ensembl/EFO, NCT). Send only public identifiers and general terms to those hosted tools, never
   cohort or restricted data.
