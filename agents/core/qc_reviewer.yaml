@@ -24,6 +24,9 @@ system_prompt: |
   stochastic steps run without a fixed, recorded seed; associations stated as causes; and tests
   reported without multiple-testing correction or effect sizes. Also fix and record the seed of any
   random step you run yourself (doublet detection, subsampling).
+  For a branched research plan, WARN when a branch has an analysis-result table in its step artifacts but that
+  branch's actual analysis and result are absent from the summary or conclusion. Also WARN when the reference
+  category is on the same exposure side as the hypothesis's focal group.
   When results rest on literature, count the studies by access_level (full_text, abstract, metadata) and WARN when
   an effect size, count or confidence interval used in an analysis came from an abstract only, or when a study or
   evidence table has no access_level column; the report's limitations must give those counts.

@@ -115,6 +115,21 @@ function renderResearchPlan(list, canonical) {
   detailEntry(list, '가설', [`주 가설: ${brief.primary_hypothesis ?? ''}`, '대안·귀무:', bullets(brief.null_or_alternatives),
     '가르는 관찰:', bullets(brief.distinguishing_observations)].join('\n'), {raw: true, open: true});
   detailEntry(list, '완료 조건', bullets(brief.completion_conditions), {raw: true});
+  const branches = Array.isArray(plan.branches) ? plan.branches : [];
+  if (branches.length) {
+    add(list, 'dt', `갈래 (${branches.length}개)`);
+    const cell = add(list, 'dd'), table = add(add(cell, 'div', '', 'evidence-wrap'), 'table', '', 'evidence-table');
+    const head = add(add(table, 'thead'), 'tr');
+    for (const label of ['갈래', '질문', '자료', '단계 수', '추정 예산']) add(head, 'th', label);
+    const body = add(table, 'tbody');
+    for (const branch of branches) {
+      const line = add(body, 'tr');
+      const count = steps.filter(step => step.branch === branch.id).length;
+      for (const value of [branch.id, branch.question, `${branch.evidence_type} · ${branch.data_boundary}`,
+        `${count}개`, branch.estimated_budget_usd == null ? '미제공' : `$${Number(branch.estimated_budget_usd).toFixed(2)}`])
+        add(line, 'td', value);
+    }
+  }
   detailEntry(list, '단계', steps.map(step => {
     const outputs = Array.isArray(step.outputs) ? step.outputs.join(', ') : '';
     return `${step.id} · ${step.agent_id || '미배정'} · ${step.instruction || ''}${outputs ? `\n    산출: ${outputs}` : ''}`;
@@ -172,7 +187,8 @@ export function evidenceRows(detail) {
       }
       if (unsupported.has(`${sid}/${claim.id}`)) marks.push('근거 잃음');
       if (!links.length) marks.push('연결된 근거 없음');
-      rows.push({ step: sid, claim: claim.id, statement: String(claim.statement ?? ''),
+      rows.push({ branch: detail?.step_branches?.[sid] || '미분류', step: sid,
+        claim: claim.id, statement: String(claim.statement ?? ''),
         status: CLAIM_STATUS_KO[claim.status] || String(claim.status ?? ''),
         evidence: [...kinds].map(([label, n]) => (n > 1 ? `${label} ×${n}` : label)).join(', '), marks: marks.join(', ') });
     }
@@ -192,10 +208,11 @@ function renderEvidenceTable(list, detail) {
     `표시 있는 claim ${rows.filter(row => row.marks).length}`].join(' · '), 'decision-meta');
   const table = add(add(cell, 'div', '', 'evidence-wrap'), 'table', '', 'evidence-table');
   const head = add(add(table, 'thead'), 'tr');
-  for (const label of ['단계', 'claim', '상태', '근거 종류', '표시']) add(head, 'th', label);
+  for (const label of ['갈래', '단계', 'claim', '상태', '근거 종류', '표시']) add(head, 'th', label);
   const body = add(table, 'tbody');
   for (const row of rows) {
     const line = add(body, 'tr', '', row.marks ? 'flagged' : '');
+    add(line, 'td', row.branch);
     add(line, 'td', row.step);
     const claim = add(line, 'td');
     add(claim, 'div', row.statement);
@@ -548,7 +565,9 @@ export function decisionFacts(value, who = '') {
       let plan = {}; try { plan = JSON.parse(d.plan_canonical || '{}'); } catch {}
       const steps = Array.isArray(plan.steps) ? plan.steps : [];
       const people = new Set(steps.map(s => s.agent_id).filter(Boolean)).size;
-      return [['단계', Array.isArray(plan.steps) ? `${steps.length}개` : missing], ['담당', people ? `${people}명` : missing]];
+      const branches = Array.isArray(plan.branches) ? plan.branches : [];
+      return [['단계', Array.isArray(plan.steps) ? `${steps.length}개` : missing], ['담당', people ? `${people}명` : missing],
+        ...(branches.length ? [['갈래', `${branches.length}개`]] : [])];
     }
     case 'research_evidence': return [['검토 단계', d.results ? `${Object.keys(d.results).length}개` : missing], ['근거를 잃은 주장', Array.isArray(d.unsupported_claims) ? `${d.unsupported_claims.length}개` : missing]];
     case 'research_continue': return [['이번 차수', text(d.round)], ['차수 상한', text(d.limit)]];

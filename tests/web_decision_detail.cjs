@@ -93,7 +93,9 @@ test('research plan card shows the full canonical PLAN in readable sections',asy
       validators:{'single_cell_de.donor_unit':'donor-level pseudobulk'},acceptance:{'single_cell_de.donor_model':'accepted'}}},
     pack_applicability:{'bulk_tumor_normal@1':{applied:false,topics_any:['bulk_rna_seq'],matched_topics:[],reason:'topics_empty'}},
     warnings:['topics is empty; topic-conditioned packs were not applied'],
-    clarifying_questions:[],steps:[{id:'s1'}],recruit:[],notes:'frozen'};
+    clarifying_questions:[],branches:[{id:'omics',question:'Does expression differ?',evidence_type:'public omics',
+      data_boundary:'public counts only',estimated_budget_usd:12.5}],
+    steps:[{id:'s1',branch:'omics'}],recruit:[],notes:'frozen'};
   // Use Python-compatible recursively sorted canonical JSON for the approval payload.
   const sortValue=value=>Array.isArray(value)?value.map(sortValue):value&&typeof value==='object'?
     Object.fromEntries(Object.keys(value).sort().map(key=>[key,sortValue(value[key])])):value;
@@ -101,11 +103,20 @@ test('research plan card shows the full canonical PLAN in readable sections',asy
   const sha=crypto.createHash('sha256').update(canonicalPlan,'utf8').digest('hex');
   const c=await card('research_plan',{gate:'research_plan',target_sha256:sha,plan_canonical:canonicalPlan});
   assert.equal(crypto.createHash('sha256').update(canonicalPlan,'utf8').digest('hex'),sha);
-  for (const label of ['질문','가설','완료 조건','중단 조건','자원 상한','data boundary','topics','pack 적용 판정','경고','pack 값','동결 PLAN 전체'])
+  for (const label of ['질문','가설','완료 조건','갈래 (1개)','갈래질문자료단계 수추정 예산','중단 조건','자원 상한','data boundary','topics','pack 적용 판정','경고','pack 값','동결 PLAN 전체'])
     assert.ok(c.detail.textContent.includes(label),label+' must be visible');
   for (const value of ['Does condition change expression?','Condition changes expression','design not identifiable',
-    'public counts only','metadata.donor_id','raw_counts']) assert.ok(c.detail.textContent.includes(value),value+' must be visible');
+    'Does expression differ?','public omics · public counts only','1개','$12.50','metadata.donor_id','raw_counts']) assert.ok(c.detail.textContent.includes(value),value+' must be visible');
   assert.ok(c.detail.textContent.includes(canonicalPlan),'the exact hash input must remain visible');
+});
+
+test('research evidence card groups claim rows by branch',async()=>{
+  const ledger={claims:[{id:'c1',statement:'no genes passed FDR',status:'supported'}],
+    evidence:[{id:'e1',kind:'experimental',status:'observed'}],links:[{claim_id:'c1',evidence_id:'e1'}]};
+  const c=await card('research_evidence',{results:{omics:ledger,stats:ledger},step_branches:{omics:'public_omics',stats:'domestic_stats'}});
+  const text=c.detail.textContent;
+  for (const value of ['갈래단계claim상태근거 종류표시','public_omics','domestic_stats','no genes passed FDR'])
+    assert.ok(text.includes(value),value+' must be visible: '+text);
 });
 
 test('research_continue lists each review P1 issue by step with its problem and requested fix',async()=>{

@@ -62,6 +62,7 @@ def test_plan_questions_fit_the_phone_card_and_the_research_plan_keeps_its_own_r
     """Plan questions are structured (options are a/b/c/d buttons), so only the length and the order apply."""
     rule = QUESTION_RULE + " Each question must fit the PI's phone card: at most 700 characters, the question itself first."
     args = dict(request="REQ", roster="ROSTER", capabilities="CAPS", briefing="BRIEF", max_steps=3,
+                max_branches=5, max_branch_steps=8, branched_max_steps=43,
                 question_rule=QUESTION_RULE, output_types_rule="", topics_rule="", lab_scope="LAB")
     assert rule in cso.PLAN_PROMPT.format(**args)
     assert "phone card" not in cso.RESEARCH_PLAN_PROMPT.format(**args, intake="INTAKE", packs="PACKS")
@@ -153,6 +154,7 @@ def test_research_plan_questions_carry_the_length_their_validation_enforces():
     rule = (f"Each question is at most {limit} characters (a longer one fails plan validation), "
             "the question itself first.")
     args = dict(request="REQ", roster="ROSTER", capabilities="CAPS", briefing="BRIEF", max_steps=3,
+                max_branches=5, max_branch_steps=8, branched_max_steps=43,
                 question_rule=QUESTION_RULE, output_types_rule="", topics_rule="", intake="INTAKE", packs="PACKS")
     for template in (cso.RESEARCH_PLAN_PROMPT, cso.RESEARCH_CP2_PLAN_PROMPT):
         assert rule in " ".join(template.format(**args).split())
