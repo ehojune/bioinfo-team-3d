@@ -14,6 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 07:42 | [`99f9c40`](https://github.com/ehojune/bioinfo-team-3d/pull/712/commits/99f9c40) | 표 검사의 바이너리 읽기를 내장 open으로 바꿔 인코딩 검사를 통과하게 했다 |
+| 07:20 | [`730eea9`](https://github.com/ehojune/bioinfo-team-3d/pull/712/commits/730eea9) | 탭 대신 쓴 글자 경고는 모든 줄이 그렇게 나뉠 때만 내고, R 행 이름 예외는 TSV에만 두었다 |
+| 07:02 | [`7f2d562`](https://github.com/ehojune/bioinfo-team-3d/pull/712/commits/7f2d562) | 긴 CSV 칸이나 검사 오류가 끝난 task를 실패시키지 않게 하고, 메타 줄의 탭이 탭 대신 쓴 글자 검사를 가리지 않게 했다 |
+| 06:54 | [`9640102`](https://github.com/ehojune/bioinfo-team-3d/pull/712/commits/9640102) | 단계 산출 표가 표로 읽히는지와 문헌을 읽은 수준을 검사해 CP2 카드와 보고서 한계 절에 올렸다 |
 | 03:44 | [`ce6247d`](https://github.com/ehojune/bioinfo-team-3d/pull/705/commits/ce6247d) | 검토 완료 원고를 우선하고 선언된 갈래 보고서와 갈래 상태를 정리본에 보존 |
 | 03:32 | [`7ae9cab`](https://github.com/ehojune/bioinfo-team-3d/pull/705/commits/7ae9cab) | terminal별 성공 여부로 갈래 상태를 나누고 부분 성공의 결과와 실패 이유를 함께 남겼다 |
 | 03:25 | [`2bae4fa`](https://github.com/ehojune/bioinfo-team-3d/pull/705/commits/2bae4fa) | 모든 갈래를 읽는 최종 종합 단계 중 의존 순서상 마지막 원고를 과학 보고서로 골랐다 |
