@@ -85,6 +85,21 @@ async def test_a_local_request_goes_to_a_new_repository_after_the_publish_card(t
     await hub.result_storage.close()
 
 
+async def test_a_branch_inherited_from_a_project_is_not_reused_for_the_new_repository(tmp_path, monkeypatch):
+    app, hub, *_ = make(tmp_path, monkeypatch, storage={"mode": "local", "status": "local", "repo": "lab/project",
+                                                         "branch": "reports"})
+    await hub.result_storage.to_github("r", "study")
+    saved = hub.requests["r"]["result_storage"]
+    assert saved["repo"] == "owner/study" and "branch" not in saved
+    await hub.result_storage.close()
+
+
+def test_the_planning_card_asks_the_same_question():
+    from pathlib import Path
+    cso = (Path(__file__).resolve().parents[1] / "labhq" / "orchestrator" / "cso.py").read_text(encoding="utf-8")
+    assert f'summary="{STORAGE_QUESTION}"' in cso and "이 결과를 어디에 남길까요?" not in cso
+
+
 async def test_an_unreviewed_request_waits_for_review_done(tmp_path, monkeypatch):
     app, hub, calls, editor, upload = make(tmp_path, monkeypatch, reviewed=False)
     reply = await hub.result_storage.to_github("r")

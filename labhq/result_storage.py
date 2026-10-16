@@ -663,7 +663,9 @@ class ResultStorage:
                 if exc.status_code != 422:
                     raise ValueError(f"이 토큰은 저장소를 만들 수 없습니다(HTTP {exc.status_code}). 토큰에 Repository creation"
                                      f"(또는 Administration 쓰기)을 주세요: {github_token.TOKEN_SETTINGS_URL}") from None
-            for key in ("warning", "error_type", "draft_path"):
+            # A branch inherited from a project names a branch of that repository, not of the new one (PR #702 review):
+            # the new repository's default branch is used instead.
+            for key in ("warning", "error_type", "draft_path", "branch"):
                 saved.pop(key, None)
             saved.update(mode="new", repo=f"{login}/{name}", visibility=visibility, allow_public=visibility == "public",
                          status="selected", after_review=True, converted_from="local")
