@@ -16,6 +16,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
+from .. import output_checks
 from ..adapters import READ_ONLY_OVERRIDES, is_read_only_task, read_only_refusal
 from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..artifact_policy import (OUTPUT_ENV_DIR, OUTPUT_REFERENCE_DIR, OUTPUT_SCRIPTS_DIR,
@@ -489,6 +490,8 @@ Contract rules:
   use different evidence types, add `branches` with id, question, evidence_type, data_boundary and optional
   estimated_budget_usd. Assign every step to one branch with `branch`, and assign the final integration steps to
   `branch: "synthesis"`. Do not create branches for a request with one method or one evidence stream.
+  A literature branch or step reads the full text of every paper its conclusions use (labhq_annot.fulltext) and
+  records each paper's access_level; set a data_boundary of abstracts only when the PI asked for it (#697).
   A branched plan has at most {max_branches} branches, {max_branch_steps} steps per branch, and 3 synthesis steps;
   its total limit is actual branch count × {max_branch_steps} + 3 (configured maximum {branched_max_steps}).
   Never silently drop a step to fit any limit: return a complete smaller
@@ -1515,6 +1518,7 @@ def general_report_warnings(steps: list[dict], results: dict[str, TaskResult | d
         if errors:
             first = str(errors[0]).splitlines()[0].strip() or "tool failed"
             lines.append(f"- {sid}: {FAILED_LOOKUP_TITLE} {len(errors)}건; 첫 줄: {short(first, 160)}")
+    lines += [f"- {line}" for line in output_checks.quality_lines(steps, results)]
     return "## 보고서 경고\n" + "\n".join(lines) if lines else ""
 
 
@@ -4378,6 +4382,7 @@ class Orchestrator:
                 if row.get("origin"):
                     warnings.append(f"{step['id']}/{','.join(row['slots'])}: origin: {row['origin']}; "
                                     f"{row.get('attempt_status') or 'unknown'} — {row.get('status_detail')}")
+        warnings += output_checks.quality_lines(steps, results)  # shown on the CP2 card and under 한계 (#697, #710)
         contract["result_warnings"] = warnings
         # CP2 approves these ledgers as results of the plan frozen at CP1, so each must validate under it. A reused
         # continuation result is a copy rebound to the new plan (``carry_over``); this catches any other drift

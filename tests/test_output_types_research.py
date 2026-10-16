@@ -39,7 +39,7 @@ CANARY = "CANARY-research-91c2"
 # #686 adds optional research branches and per-step branch ids; #694 adds the hypothesis-aligned reference rule.
 RESEARCH_PLAN_SCHEMA_SHA = "dc93790d21e41d290e4d75d254d0d5c80c3ca602d30538da2bcaef9a7a44bf26"
 RESEARCH_RESULT_SCHEMA_SHA = "9a767787fade091505fea149a8841845738ce30ce77cf6657cbca0aaa72af64d"
-RESEARCH_PROMPT_SHA = "6ca7cebaae1e0a2dcd73509801b124c505d68820cd59893e82f0b5f8b9b12e1d"
+RESEARCH_PROMPT_SHA = "5df570c9014878b27384ae0eefc6047ab1e02ed745ba13b2a3eedd58266e5488"
 VALID_PLAN_SHA = "f611461cc2dbb17e39159ec1df6a75d8f7b661eb39bbe42c8ed0438c5c45e213"
 
 

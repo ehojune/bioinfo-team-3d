@@ -35,6 +35,7 @@ from ..adapters.owned import (OwnedPathError, is_link, owned_link_error, plain_d
                               awrite_owned_many, remove_entry, write_owned)
 from ..ask_results import read_ask_results, rejected_step
 from ..artifact_policy import unreported_warning_paths
+from .. import output_checks
 from ..facilities import fixes as facility_fixes
 from ..login import LOGIN_PATH_ENV
 from ..models import ASK_MAX_WAIT_S, AgentSpec, ApprovalRequest, AskRequest, Engine, Event, McpServerSpec, Task, TaskResult, waiting
@@ -1783,6 +1784,12 @@ class Runner:
         if warning_outputs:
             await emit("agent.log", {"level": "warn", "text": (
                 "보고하지 않은 관찰 산출물: " + ", ".join(warning_outputs))})
+        # Read back from the runner's disk: the gateway may not share it (#697, #710).
+        result.table_warnings = await asyncio.to_thread(output_checks.table_warnings, ws.dir, result.outputs)
+        if result.table_warnings:
+            await emit("agent.log", {"level": "warn", "text": (
+                "표로 읽히지 않는 산출물: " + "; ".join(result.table_warnings))})
+        result.literature_access = await asyncio.to_thread(output_checks.literature_access, ws.dir)
         for note in dict.fromkeys(output_scan_notes):
             await emit("agent.log", {"level": "warn", "text": note})
         # Only a finished, successful turn: a bundle written before HPC checks or an ask is not final (#301 review).

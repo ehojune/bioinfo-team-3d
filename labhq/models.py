@@ -332,6 +332,10 @@ class TaskResult(BaseModel):
     evidence_path_warnings: list[str] = []
     # One bounded first line per failed tool call, collected for every employee task.
     tool_errors: list[str] = []
+    # "<output>: <problem>" for a collected .tsv/.tab/.csv that does not read as a table (#710).
+    table_warnings: list[str] = []
+    # {paper id: best access_level} from this task's labhq_annot.fulltext lookups (#697).
+    literature_access: dict[str, str] = {}
     provenance: dict[str, Any] = {}  # manifest summary; the gateway may not share the runner's disk
     pipeline_submission: dict[str, Any] | None = None  # gateway-only handoff; stripped before web publication
     partial_results: bool = False
@@ -398,6 +402,10 @@ class TaskResult(BaseModel):
                 data.pop("evidence_path_warnings", None)
             if not data.get("tool_errors"):
                 data.pop("tool_errors", None)
+            if not data.get("table_warnings"):
+                data.pop("table_warnings", None)
+            if not data.get("literature_access"):
+                data.pop("literature_access", None)
             if data.get("pipeline_submission") is None:
                 data.pop("pipeline_submission", None)
             if data.get("quota_reset_at") is None:
