@@ -350,7 +350,7 @@ function renderStorage(box, value) {
   if (!config || box._config === JSON.stringify(config)) return;
   box._config = JSON.stringify(config);
   box.replaceChildren();
-  add(box, 'strong', '이 결과를 어디에 남길까요?');
+  add(box, 'strong', '결과를 GitHub 저장소로 정리할까요?');
   if (config.warning) add(box, 'p', config.warning);
   const modeLabel = add(box, 'label', '저장 위치 '), mode = add(modeLabel, 'select');
   for (const [key, label] of [['local','로컬만 (기본)'], ['new','새 GitHub 저장소 만들기'], ['existing','기존 GitHub 저장소']]) {
@@ -552,7 +552,7 @@ const DECISION_QUESTIONS = {
   research_continue: '연구를 한 차례 더 이어 갈까요?', resume: '중단된 작업을 이어 갈까요?',
   clarify: '어떤 방향으로 진행할까요?', question: '직원에게 어떤 답을 줄까요?',
   scope: '이 범위로 진행할까요?', facilities_fix: '운영 문제 수정을 승인할까요?',
-  result_storage: '결과를 어디에 남길까요?', result_publish: '이 정리본을 올릴까요?',
+  result_storage: '결과를 GitHub 저장소로 정리할까요?', result_publish: '이 정리본을 올릴까요?',
 };
 // Facts come only from received fields; absent resource estimates must never be invented.
 export function decisionFacts(value, who = '') {

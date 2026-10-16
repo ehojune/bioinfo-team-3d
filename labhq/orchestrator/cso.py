@@ -2513,7 +2513,7 @@ class Orchestrator:
         storage = await storage_service.card(rid) if storage_service else None
         if storage and not details:
             decision = await self.hub.request_approval(
-                kind="result_storage", request_id=rid, summary="이 결과를 어디에 남길까요?",
+                kind="result_storage", request_id=rid, summary="결과를 GitHub 저장소로 정리할까요?",  # STORAGE_QUESTION (#688)
                 detail={"storage": storage})
             if not req.get("result_storage"):
                 await storage_service.select(rid, decision.get("storage") or {"mode": "local"})

@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 23:53 | [`c76e711`](https://github.com/ehojune/bioinfo-team-3d/pull/702/commits/c76e711) | 새 저장소로 옮길 때 프로젝트에서 물려받은 branch를 버리고, 계획 단계의 저장 위치 카드도 같은 PI 문구로 묻는다. |
+| 23:48 | [`e1b2b5d`](https://github.com/ehojune/bioinfo-team-3d/pull/702/commits/e1b2b5d) | 로컬로 끝난 요청을 labhq storage <id> --to github로 나중에 새 GitHub 저장소로 옮기고, 저장 위치 카드는 PI 문구로 묻는다 (#688). |
 | 23:05 | [`a55bf0e`](https://github.com/ehojune/bioinfo-team-3d/pull/699/commits/a55bf0e) | 새 포트폴리오 그림·PDF·Nextflow·이전 draft 경로를 마지막 리뷰 회귀와 함께 고친다 |
 | 22:28 | [`402f08b`](https://github.com/ehojune/bioinfo-team-3d/pull/699/commits/402f08b) | 포트폴리오 README의 진행·재현 기록 링크와 이전 draft 이관 회귀를 고친다 |
 | 21:43 | [`efddcee`](https://github.com/ehojune/bioinfo-team-3d/pull/699/commits/efddcee) | 원본-정리본 경로 표, 이전 draft 이관, 내부 산출물 허용 목록을 회귀 test와 함께 고친다 |
