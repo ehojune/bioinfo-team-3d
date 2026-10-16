@@ -9,3 +9,6 @@ rows:
 - sha: 914dbf9
   at: 2026-10-16 20:59
   text: wheel manifest, 게시 payload 선별, Markdown 링크 검사를 회귀 test와 함께 바로잡는다
+- sha: a727c64
+  at: 2026-10-16 21:21
+  text: 내부 표의 명시적 집계 선언, PDF 그림 링크, 이전 정리본 재개를 회귀 test와 함께 고친다
