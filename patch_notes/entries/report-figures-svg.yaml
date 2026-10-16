@@ -6,3 +6,6 @@ rows:
 - sha: 95057aa
   at: 2026-10-16 17:26
   text: 그림 선언 규칙 변경에 맞춰 일반 계획 prompt 고정 hash를 갱신함
+- sha: 0c62b5b
+  at: 2026-10-16 18:09
+  text: 그림 WARN 판정, 세로 PDF 표시, SVG 승인 미리보기와 카드 payload 상한을 바로잡음
