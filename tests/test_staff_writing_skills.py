@@ -96,9 +96,10 @@ def test_bundled_skill_reaches_each_engine_loader(tmp_path):
     claude_adapter.prepare(claude_ctx)
     command = claude_adapter.build_command(claude_ctx)
     plugin_dirs = [Path(command[i + 1]) for i, arg in enumerate(command) if arg == "--plugin-dir"]
-    assert SKILLS.parent in plugin_dirs
-    assert read_plugin_manifest(SKILLS.parent)["name"] == "labhq-bundled-skills"
-    assert skill_file(SKILLS.parent, "humanizer").samefile(SKILLS / "humanizer" / "SKILL.md")
+    assert SKILLS in plugin_dirs
+    assert SKILLS.parent not in plugin_dirs
+    assert read_plugin_manifest(SKILLS)["name"] == "labhq-bundled-skills"
+    assert skill_file(SKILLS, "humanizer").samefile(SKILLS / "humanizer" / "SKILL.md")
 
     codex = AgentSpec(id="writer", name="writer", role="writer", engine=Engine.codex,
                       required_skills=["humanizer"])
@@ -120,8 +121,9 @@ def test_read_only_profile_replaces_bundled_skills_with_prompt_rules(tmp_path):
     for text in ("되어진다", "가지고 있다", "에 있어서", "비유의", "통계적으로 유의하지 않음",
                  "유의차", "통계적으로 유의한 차이", "미보정", "보정 전", "쉼표"):
         assert text in profile.system_prompt
-    for text in ("질문", "자료", "방법", "핵심 결과", "결론", "<title>", "<desc>", "PNG", "캡처", "잘림", "겹침"):
+    for text in ("질문", "자료", "방법", "핵심 결과", "결론", "<title>", "<desc>", "렌더한 미리보기", "결과물은 SVG만", "잘림", "겹침"):
         assert text in profile.system_prompt
+    assert "PNG·캡처에서도" not in profile.system_prompt
 
     task = Task(id="t", request_id="r", agent_id="writer", prompt="review")
     ctx = RunContext(task=task, agent=profile, workdir=tmp_path, settings=Settings(), mcp_servers=[],
