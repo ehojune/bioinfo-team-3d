@@ -1,4 +1,9 @@
 import re
+import json
+import os
+import subprocess
+import shutil
+import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -55,6 +60,48 @@ def test_bundled_writing_skills_have_their_contract_and_license_files():
         assert required in graphical_text
 
 
+def test_built_wheel_installs_complete_bundled_plugin(tmp_path):
+    source = tmp_path / "source"
+    wheel_dir = tmp_path / "wheel"
+    installed = tmp_path / "installed"
+    shutil.copytree(ROOT, source, ignore=shutil.ignore_patterns(
+        ".git", ".pr-drafts", "build", "pip", "*.egg-info", "__pycache__"))
+    wheel_dir.mkdir()
+    env = os.environ.copy()
+    env["PIP_CACHE_DIR"] = str(tmp_path / "pip-cache")
+    subprocess.run(
+        [sys.executable, "-m", "pip", "wheel", ".", "--no-deps", "-w", str(wheel_dir)],
+        cwd=source, env=env, check=True, capture_output=True, text=True,
+    )
+    wheel = next(wheel_dir.glob("labhq-*.whl"))
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--no-deps", "--target", str(installed), str(wheel)],
+        cwd=tmp_path, env=env, check=True, capture_output=True, text=True,
+    )
+    code = """
+import json
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from labhq.plugin_checks import read_plugin_manifest
+from labhq.staff_skills import BUNDLED_PLUGIN_DIR
+manifest = read_plugin_manifest(BUNDLED_PLUGIN_DIR)
+required = [
+    BUNDLED_PLUGIN_DIR / '.claude-plugin/plugin.json',
+    BUNDLED_PLUGIN_DIR / 'humanizer/SKILL.md',
+    BUNDLED_PLUGIN_DIR / 'graphical-abstract/templates/graphical-abstract.svg',
+]
+print(json.dumps({'manifest': manifest, 'required': [path.is_file() for path in required]}))
+"""
+    done = subprocess.run(
+        [sys.executable, "-I", "-c", code, str(installed)],
+        cwd=tmp_path, check=True, capture_output=True, text=True,
+    )
+    result = json.loads(done.stdout)
+    assert result["manifest"]["name"] == "labhq-bundled-skills"
+    assert all(result["required"])
+
+
 def test_staff_require_the_writing_and_figure_skills_and_short_messages_have_inline_rules():
     for name in ("cso", "analyst", "editor"):
         required = set(agent(name).get("required_skills", []))
@@ -96,9 +143,10 @@ def test_bundled_skill_reaches_each_engine_loader(tmp_path):
     claude_adapter.prepare(claude_ctx)
     command = claude_adapter.build_command(claude_ctx)
     plugin_dirs = [Path(command[i + 1]) for i, arg in enumerate(command) if arg == "--plugin-dir"]
-    assert SKILLS.parent in plugin_dirs
-    assert read_plugin_manifest(SKILLS.parent)["name"] == "labhq-bundled-skills"
-    assert skill_file(SKILLS.parent, "humanizer").samefile(SKILLS / "humanizer" / "SKILL.md")
+    assert SKILLS in plugin_dirs
+    assert SKILLS.parent not in plugin_dirs
+    assert read_plugin_manifest(SKILLS)["name"] == "labhq-bundled-skills"
+    assert skill_file(SKILLS, "humanizer").samefile(SKILLS / "humanizer" / "SKILL.md")
 
     codex = AgentSpec(id="writer", name="writer", role="writer", engine=Engine.codex,
                       required_skills=["humanizer"])
@@ -120,8 +168,9 @@ def test_read_only_profile_replaces_bundled_skills_with_prompt_rules(tmp_path):
     for text in ("되어진다", "가지고 있다", "에 있어서", "비유의", "통계적으로 유의하지 않음",
                  "유의차", "통계적으로 유의한 차이", "미보정", "보정 전", "쉼표"):
         assert text in profile.system_prompt
-    for text in ("질문", "자료", "방법", "핵심 결과", "결론", "<title>", "<desc>", "PNG", "캡처", "잘림", "겹침"):
+    for text in ("질문", "자료", "방법", "핵심 결과", "결론", "<title>", "<desc>", "렌더한 미리보기", "결과물은 SVG만", "잘림", "겹침"):
         assert text in profile.system_prompt
+    assert "PNG·캡처에서도" not in profile.system_prompt
 
     task = Task(id="t", request_id="r", agent_id="writer", prompt="review")
     ctx = RunContext(task=task, agent=profile, workdir=tmp_path, settings=Settings(), mcp_servers=[],

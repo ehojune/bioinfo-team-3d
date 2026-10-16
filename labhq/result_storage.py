@@ -7,6 +7,7 @@ import copy
 import csv
 import json
 import os
+import posixpath
 from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
 import re
@@ -21,6 +22,9 @@ from .interruption import ShutdownInterrupted
 from .models import ApprovalRequest, Task
 from .policy import touches, restricted_paths
 from . import edition_sources
+from .portfolio import (broken_markdown_links, build_portfolio_files, declared_aggregate_tables, portfolio_root_file,
+                        portfolio_report, publish_file_allowed, request_uses_internal_data, scan_publish_files,
+                        table_allowed)
 from .intake import reference_dirs
 from .recruit.provenance import touches_restricted
 from .report_abstract import abstract_first, build_graphical_abstract, with_abstract_link
@@ -37,7 +41,7 @@ _ASSIGNMENT = re.compile(
     r"(?!<redacted-secret>|&lt;redacted-secret&gt;|\[REDACTED\])[^\s,;<]+")
 _ASSIGNMENT_VALUE = re.compile(
     r"(?im)\b(?:api[_-]?key|token|password|secret)\s*[:=]\s*(?P<value>[^\s,;<]+)")
-_TEXT_OUTPUTS = {".md", ".txt", ".svg", ".csv", ".tsv", ".py", ".r", ".sh", ".json"}
+_TEXT_OUTPUTS = {".md", ".txt", ".svg", ".csv", ".tsv", ".py", ".r", ".sh", ".json", ".html"}
 _IMAGE_OUTPUTS = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp",
                   ".svg": "image/svg+xml"}
 _DOCUMENT_LINKS = (("report.md", "전체 결과·그림·표"), ("PROGRESS.md", "진행 기록"), ("REPRODUCE.md", "재현 방법"),
@@ -46,7 +50,8 @@ README_EXCERPT_CHARS = 1800  # the deterministic README quotes this much of the 
 EDITOR_REPORT_CHARS = 100_000  # what the editor reads of the report whole; a longer one is sent as outline + sections
 EDITOR_OTHER_CHARS = 30_000  # the same bound for each of PROGRESS.md, REPRODUCE.md and SOURCES.md
 _PDF_NAME = "report.pdf"
-_GENERATED = ("README.md", "report.md", "PROGRESS.md", "REPRODUCE.md", "SOURCES.md")  # edition documents that may link a figure
+_PORTFOLIO_PDF_NAME = "report/report.pdf"
+_GENERATED = ("README.md", "report.md", "report/report.md", "PROGRESS.md", "REPRODUCE.md", "SOURCES.md")  # edition documents that may link a figure
 PUBLISH_PREVIEW_FILE_MAX_BYTES = 1_000_000
 PUBLISH_PREVIEW_TOTAL_MAX_BYTES = 5_000_000
 
@@ -120,6 +125,7 @@ def edition_candidates(req, settings) -> dict[str, Path]:
             rel = PurePosixPath(name)
             if (row.get("status") != "copied" or rel.is_absolute() or ".." in rel.parts or "\\" in name
                     or len(rel.parts) < 4 or rel.parts[0] != "steps" or rel.parts[2] != "outputs"
+                    or (len(rel.parts) > 3 and rel.parts[3].casefold() == "literature")
                     or clean_document(name, settings, req) != name):
                 continue
             suffix = rel.suffix.lower()
@@ -173,7 +179,7 @@ def publish_image_previews(images: Mapping[str, bytes], target: Path) -> tuple[d
     return previews, omitted
 
 
-def edition_figure_links(text: str, req: dict, settings, included) -> str:
+def edition_figure_links(text: str, req: dict, settings, included, document: str = "README.md") -> str:
     """Make every local figure link of an edition document resolve to a file the edition holds (#584).
 
     The report links ``<workdir_id>/outputs/<file>``; `edition_assets` copies a reported output to its bundle path
@@ -187,7 +193,14 @@ def edition_figure_links(text: str, req: dict, settings, included) -> str:
     pieces, last = [], 0
     for link in image_links(text):
         kind, value = classify(link.target, lambda name: name in included)
-        if kind == "remote" or (kind == "local" and value in included):
+        resolved = posixpath.normpath(posixpath.join(posixpath.dirname(document), value)) if kind == "local" else value
+        if kind == "remote" or (kind == "local" and resolved in included):
+            continue
+        if kind == "local" and value in included:
+            relative = quote(posixpath.relpath(value, posixpath.dirname(document) or "."), safe="/")
+            original = text[link.start:link.end]
+            pieces += [text[last:link.start], original.replace(link.target, relative, 1)]
+            last = link.end
             continue
         # a graphical abstract nobody made is not an omitted figure: its link goes without a note (#608)
         note = "" if kind == "local" and is_abstract_target(value) else f"*(그림 생략: {link.alt.strip() or '그림'})*"
@@ -207,15 +220,21 @@ def edition_abstract(req: dict, settings, included) -> str | None:
     return build_graphical_abstract(req, report, scrub=lambda text: clean_document(text, settings, req))
 
 
-def pdf_report_text(req: dict, settings) -> str:
+def pdf_report_text(req: dict, settings, report_text: str | None = None) -> str:
     """The report text the edition's PDF is printed from: cleaned like the edition's report.md, but its figure links point
     at the originals in the request bundle (no per-figure size limit, #608), not at the size-limited edition copies.
 
     Only the figures the edition may carry (`edition_candidates`) stay linked; an unreported bundle file, a type the
     edition leaves out or a name it would mask becomes a "그림 생략" note, as in the edition (#611 review)."""
-    text = edition_figure_links(str(req.get("report") or "결과 보고서가 없습니다."), req, settings,
+    source = report_text if report_text is not None else str(req.get("report") or "결과 보고서가 없습니다.")
+    text = edition_figure_links(source, req, settings,
                                 edition_candidates(req, settings).keys())
     return clean_document(text, settings, req)
+
+
+def nested_report_links(text: str) -> str:
+    """Point legacy README links at the migrated canonical report path."""
+    return re.sub(r"(\]\(\s*)(?:\./)?report\.md(?=(?:#[^)]*)?\))", r"\1report/report.md", text)
 
 
 def pdf_skip_line(reason: str) -> str:
@@ -326,16 +345,20 @@ def fit_record(text: str, budget: int) -> tuple[str, list[str]]:
 
 
 def editor_prompt(docs: dict[str, str], request_text: str) -> str:
-    """What the editor reads: the request and the whole report, PROGRESS, REPRODUCE and SOURCES (#607).
+    """What the editor reads: the request, deterministic README and the complete source records (#607, #686).
 
     A document over its size bound is sent as an outline plus whole sections, and the prompt names exactly which
     sections are not whole, says the published document has them, and tells the editor not to call the record
-    incomplete. The README draft is left out: it quotes only the report's opening."""
+    incomplete. The README is a rewrite target whose numbers, links, citations, headings and table shape stay fixed."""
     parts, omitted = [], []
-    for name, label, budget in (("report.md", "보고서 report.md", EDITOR_REPORT_CHARS),
+    for name, label, budget in (("README.md", "README 초안", EDITOR_OTHER_CHARS),
+                                ("report/report.md", "논문 형식 보고서 report/report.md", EDITOR_REPORT_CHARS),
+                                ("report.md", "호환용 보고서 report.md", EDITOR_REPORT_CHARS),
                                 ("PROGRESS.md", "진행 기록 PROGRESS.md", EDITOR_OTHER_CHARS),
                                 ("REPRODUCE.md", "재현 방법 REPRODUCE.md", EDITOR_OTHER_CHARS),
                                 ("SOURCES.md", "출처 SOURCES.md", EDITOR_OTHER_CHARS)):
+        if name not in docs:
+            continue
         body, cut = fit_record(docs.get(name, ""), budget)
         omitted += [f"{name}의 {title}" for title in cut]
         parts.append(f"===== {label}{' (개요와 일부 절)' if cut else ' (전문)'} =====\n{body.strip()}\n")
@@ -345,7 +368,11 @@ def editor_prompt(docs: dict[str, str], request_text: str) -> str:
                 "자세한 내용은 해당 문서를 보라고 안내하세요.")
     else:
         note = "아래 기록은 전체를 그대로 담았습니다. README에 기록의 길이나 완결성을 문제 삼는 말을 쓰지 마세요."
-    return ("다음 기록만 써서 README를 정리하세요.\n" + note + "\n\n===== 요청 =====\n" + request_text.strip()
+    return ("다음 기록만 써서 README 초안을 윤문하세요. 단계마다 실제 분석과 결과를 표에 남기고, "
+            "통계적으로 유의하지 않은 결과도 검정 수·기준·통과 수와 함께 유지하세요. "
+            "그래픽 초록 링크, 숫자, 링크, 인용, 링크된 제목과 표 모양은 바꾸지 마세요. "
+            "'노출'처럼 뜻이 여러 개인 전문어는 처음에 짧게 정의하세요.\n" + note
+            + "\n\n===== 요청 =====\n" + request_text.strip()
             + "\n\n" + "\n".join(parts))
 
 
@@ -663,8 +690,11 @@ class ResultStorage:
                         raise ValueError("linked editor file")
                     if path.is_file():
                         name = path.relative_to(target).as_posix()
-                        if name == _PDF_NAME:
-                            pdf = path.read_bytes()
+                        if name in {_PDF_NAME, _PORTFOLIO_PDF_NAME}:
+                            payload = path.read_bytes()
+                            if not payload.startswith(b"%PDF-"):
+                                raise ValueError("invalid editor PDF")
+                            pdf = payload
                         elif path.suffix.lower() in _IMAGE_OUTPUTS:
                             payload = path.read_bytes()
                             images[name] = (clean_svg_for_publish(payload, self.s, req)
@@ -673,21 +703,60 @@ class ResultStorage:
                             docs[name] = path.read_bytes().decode("utf-8")
                 if "README.md" not in docs:
                     raise ValueError("missing editor README")
-                if pdf is not None and not pdf.startswith(b"%PDF-"):
-                    raise ValueError("invalid editor PDF")
+                report_name = "report/report.md" if "report/report.md" in docs else "report.md"
+                if report_name not in docs:
+                    raise ValueError("missing editor report")
+                if report_name == "report.md":
+                    legacy = target / "report.md"
+                    migrated = target / "report" / "report.md"
+                    migrated.parent.mkdir(parents=True, exist_ok=True)
+                    legacy.replace(migrated)
+                    docs["report/report.md"] = docs.pop("report.md")
+                    docs["README.md"] = nested_report_links(docs["README.md"])
+                    (target / "README.md").write_text(docs["README.md"], encoding="utf-8")
+                    report_name = "report/report.md"
+                from .korean_qc import check_document
+                saved["korean_qc"] = {
+                    "README.md": check_document(docs["README.md"]),
+                    report_name: check_document(docs[report_name]),
+                }
             else:
-                assets, images = edition_assets(req, self.s)
-                included = {*assets, *images}
+                raw_assets, images = edition_assets(req, self.s)
+                included = {*raw_assets, *images}
                 drawn = edition_abstract(req, self.s, included)  # #608: the edition opens with a graphical abstract
                 if drawn:
                     images[ABSTRACT_FILE] = clean_svg_for_publish(drawn.encode("utf-8"), self.s, req)
                     included.add(ABSTRACT_FILE)
+                portfolio_images = ({name: body for name, body in images.items() if name != ABSTRACT_FILE}
+                                    if drawn else images)
+                bundle = self.s.path(self.s.runner.workspace_root) / "requests" / rid
+                store = getattr(self.hub, "store", None)
+                decisions = list(store.all("approval_decision").values()) if store else []
+                tasks = list(store.all("task").values()) if store else []
+                portfolio_included = {
+                    *raw_assets,
+                    *(name for name in images if PurePosixPath(name).suffix.lower() == ".svg"),
+                }
+                portfolio_req = dict(req)
+                portfolio_req["report"] = edition_figure_links(
+                    str(req.get("report") or ""), req, self.s, portfolio_included, "report.md")
+                portfolio_assets = {
+                    name: (edition_figure_links(body, req, self.s, portfolio_included, "report.md")
+                           if PurePosixPath(name).suffix.lower() == ".md" else body)
+                    for name, body in raw_assets.items()
+                }
+                canonical_pdf_report = pdf_report_text(
+                    req, self.s, report_text=portfolio_report(req, self.s, raw_assets))
+                internal = request_uses_internal_data(req, self.s)
+                aggregate_tables = declared_aggregate_tables(req)
+                assets = {}
+                for name, body in raw_assets.items():
+                    if not table_allowed(name, body, internal=internal, declared=aggregate_tables):
+                        continue
+                    assets[name] = body
+                included = {*assets, *images}
                 docs = draft_documents(req, self.s, included, assets, abstract=bool(drawn))
-                links = "\n".join(f"- [{name}]({quote(name, safe='/')})" for name in [*assets, *images])
-                if links:
-                    docs["README.md"] += "\n## 그림·표·실행 파일\n\n" + links + "\n"
-                    docs["REPRODUCE.md"] += "\n\n## 포함한 파일\n\n" + links + "\n"
-                bundle_readme = self.s.path(self.s.runner.workspace_root) / "requests" / rid / "README.md"
+                bundle_readme = bundle / "README.md"
                 manifest = bundle_readme.with_name("MANIFEST.tsv")
                 environments = "환경 기록이 없습니다. 실행 환경은 로컬 묶음에서 확인하세요."
                 if plain_path(manifest) and manifest.is_file():
@@ -701,6 +770,27 @@ class ResultStorage:
                     docs["REPRODUCE.md"] += "\n\n## 실행 명령·묶음 안내\n\n" + clean_document(bundle_readme.read_text(encoding="utf-8"), self.s, req)
                 else:
                     docs["REPRODUCE.md"] += "\n\n## 실행 명령\n\n요청 묶음에 기록된 실행 명령이 없습니다."
+                portfolio = build_portfolio_files(
+                    portfolio_req, self.s, portfolio_assets, portfolio_images,
+                    decisions=decisions, tasks=tasks, bundle=bundle,
+                    run_documents={"run/progress.md": docs["PROGRESS.md"],
+                                   "run/reproduce.md": docs["REPRODUCE.md"]})
+                for name, body in portfolio.items():
+                    if isinstance(body, bytes):
+                        images[name] = body
+                        included.add(name)
+                    else:
+                        docs[name] = body
+                if saved.get("mode") != "new" and (missing := document_links(docs["README.md"])):
+                    docs["README.md"] += "\n\n" + missing + "\n"
+                if len(str(req.get("report") or "")) > README_EXCERPT_CHARS:
+                    report_path = "report/report.md" if saved.get("mode") == "new" else "report.md"
+                    docs["README.md"] += f"\n이어지는 내용은 {report_path}에 있습니다.\n"
+                links = "\n".join(f"- [{name}]({quote(name, safe='/')})" for name in [*assets, *images])
+                if links:
+                    if saved.get("mode") != "new":
+                        docs["README.md"] += "\n## 그림·표·실행 파일\n\n" + links + "\n"
+                    docs["REPRODUCE.md"] += "\n\n## 포함한 파일\n\n" + links + "\n"
                 if "editor" in self.hub.agents:
                     try:
                         result = await self.hub.orchestrator.run_step(Task(
@@ -717,14 +807,42 @@ class ResultStorage:
                     saved = req["result_storage"]  # PI review may replace the persisted request fields while we wait.
                     readme = (result.structured or {}).get("readme") if result and result.ok else None
                     if isinstance(readme, str) and readme.strip():
-                        docs["README.md"] = clean_document(readme, self.s, req)
-                        if missing := document_links(docs["README.md"]):  # one link line: the editor's own, or ours
+                        from .korean_qc import check_preservation
+                        candidate = clean_document(readme, self.s, req)
+                        preservation = check_preservation(docs["README.md"], candidate)
+                        saved["humanizer_preservation"] = preservation
+                        if preservation["accepted"]:
+                            docs["README.md"] = candidate
+                        elif (candidate.count("\n#") == 0 and not re.search(r"\]\([^)]*\)|\d", candidate)):
+                            # Before #686 the editor returned only a short lead. Keep that lead without replacing
+                            # any protected portfolio fact; new editors receive and preserve the complete draft.
+                            docs["README.md"] = candidate.rstrip() + "\n\n" + docs["README.md"]
+                        if saved.get("mode") != "new" and (missing := document_links(docs["README.md"])):
                             docs["README.md"] += "\n\n" + missing + "\n"
-                        if links:
+                        if links and saved.get("mode") != "new":
                             docs["README.md"] += "\n## 그림·표·실행 파일\n\n" + links + "\n"
+                if saved.get("mode") != "new" and (missing := document_links(docs["README.md"])):
+                    docs["README.md"] += "\n\n" + missing + "\n"
+                if (links and saved.get("mode") != "new"
+                        and "## 그림·표·실행 파일" not in docs["README.md"]):
+                    docs["README.md"] += "\n## 그림·표·실행 파일\n\n" + links + "\n"
+                if saved.get("mode") != "new":
+                    lead_figure = next((name for name in images if not is_abstract_target(name)), None)
+                    if lead_figure:
+                        docs["README.md"] += f"\n![대표 그림]({quote(lead_figure, safe='/')})\n"
                 for name in _GENERATED:  # the editor's README and the bundle's own text are linked here as well
-                    docs[name] = edition_figure_links(docs[name], req, self.s, included)
+                    docs[name] = edition_figure_links(docs[name], req, self.s, included, name)
                 docs.update(assets)
+                if saved.get("mode") == "new":
+                    portfolio_payload = {name: body for name, body in {**docs, **images}.items()
+                                         if portfolio_root_file(name)}
+                    if broken := broken_markdown_links(portfolio_payload):
+                        detail = ", ".join(f"{row['document']} -> {row['target']}" for row in broken)
+                        raise ValueError(f"정리본 Markdown 링크가 깨졌습니다: {detail}")
+                issues = scan_publish_files({**docs, **images}, internal=internal)
+                if issues:
+                    kinds = ", ".join(sorted({issue["kind"] for issue in issues}))
+                    raise ValueError(f"게시 전 검사에 실패했습니다: {kinds}")
                 # The audit bundle's MANIFEST and RO-Crate are already sealed.
                 target = self.s.path(self.s.runner.workspace_root) / "requests" / f"{rid}-editor"
                 if not plain_path(target):
@@ -747,17 +865,25 @@ class ResultStorage:
 
                 for name, body in {**docs, **images}.items():
                     write(name, body)
-                pdf, reason = await self.edition_pdf(rid, req)  # reason: why there is no PDF, else a size note
+                pdf, reason = await self.edition_pdf(rid, req, report_text=canonical_pdf_report)
                 saved = req["result_storage"]  # PI review may replace the persisted request fields while we print.
                 if pdf:
-                    docs["README.md"] += f"\n[보고서 PDF]({_PDF_NAME})\n" + (f"\n{reason}\n" if reason else "")
+                    pdf_link = _PORTFOLIO_PDF_NAME if saved.get("mode") == "new" else _PDF_NAME
+                    docs["README.md"] += (f"\n[과학 보고서 PDF]({pdf_link})\n"
+                                          + (f"\n{reason}\n" if reason else ""))
                     write(_PDF_NAME, pdf)
+                    write(_PORTFOLIO_PDF_NAME, pdf)
                 else:
                     docs["README.md"] += f"\n{pdf_skip_line(reason)}\n"
-                    if plain_path(target / _PDF_NAME):
-                        (target / _PDF_NAME).unlink(missing_ok=True)  # a PDF left by an earlier attempt is not this edition's
+                    for name in (_PDF_NAME, _PORTFOLIO_PDF_NAME):
+                        if plain_path(target / name):
+                            (target / name).unlink(missing_ok=True)  # a PDF left by an earlier attempt is not this edition's
                 from .korean_qc import check_document
-                saved["korean_qc"] = {"README.md": check_document(docs["README.md"])}
+                report_name = "report/report.md" if "report/report.md" in docs else "report.md"
+                saved["korean_qc"] = {
+                    "README.md": check_document(docs["README.md"]),
+                    report_name: check_document(docs[report_name]),
+                }
                 write("README.md", docs["README.md"])
                 saved["pdf"] = {"included": bool(pdf), "bytes": len(pdf or b""), "note": "" if pdf else pdf_skip_line(reason),
                                 "size_note": reason if pdf else ""}
@@ -795,8 +921,10 @@ class ResultStorage:
             finally:
                 self.uploading.discard(rid)
             saved["status"] = "published"
+            report_path = ("report/report.md" if saved.get("mode") == "new"
+                           else f"labhq/results/{rid}/report/report.md")
             saved["report_url"] = (f"https://github.com/{saved['repo']}/blob/{saved.get('branch') or 'main'}/"
-                                   f"labhq/results/{rid}/report.md")
+                                   f"{report_path}")
             if hasattr(self.hub, "rounds"):
                 try:
                     self.hub.rounds.write(rid)
@@ -821,14 +949,15 @@ class ResultStorage:
             await self.hub.publish({"type": "request.storage", "request_id": rid,
                                     "data": {"result_storage": saved}})
 
-    async def edition_pdf(self, rid, req) -> tuple[bytes | None, str]:
+    async def edition_pdf(self, rid, req, *, report_text: str | None = None,
+                          source: Path | None = None) -> tuple[bytes | None, str]:
         """``(report.pdf bytes, size note)``, or ``(None, plain Korean reason)``.
 
         The report is printed from the request bundle's original figures, whatever their size, under the edition's cleaned
         text (#608, #690). Figure copies and the PDF are not size-limited or re-encoded. A configured
         ``github.edition_pdf_max_mb`` value produces a warning only."""
-        bundle = self.s.path(self.s.runner.workspace_root) / "requests" / rid
-        text = pdf_report_text(req, self.s)
+        bundle = source or (self.s.path(self.s.runner.workspace_root) / "requests" / rid)
+        text = clean_document(report_text, self.s, req) if report_text is not None else pdf_report_text(req, self.s)
         shown = copy.deepcopy(req)
         shown.update(text=clean_document(str(req.get("text") or ""), self.s, req), report=text, report_appendix="")
         store = getattr(self.hub, "store", None)
@@ -890,16 +1019,43 @@ class ResultStorage:
                 branch = default_branch
             saved["branch"] = branch
             write_branch = None if empty else branch
-            for name, body in docs.items():
-                await gh.put_file(repo, f"labhq/results/{rid}/{name}", body, "연구 결과 정리", write_branch)
-                write_branch = branch
-            for name, body in (images or {}).items():
-                payload = (clean_svg_for_publish(body, self.s, self.hub.requests[rid])
-                           if Path(name).suffix.lower() == ".svg" else body)
-                await gh.put_image(repo, f"labhq/results/{rid}/{name}", payload, write_branch)
-                write_branch = branch
-            if pdf:
-                await gh.put_binary(repo, f"labhq/results/{rid}/{_PDF_NAME}", pdf, write_branch, "연구 결과 PDF")
+            internal = request_uses_internal_data(self.hub.requests[rid], self.s)
+            aggregate_tables = declared_aggregate_tables(self.hub.requests[rid])
+            aggregate_bodies = {
+                body for name, body in docs.items()
+                if name in aggregate_tables
+                and table_allowed(name, body, internal=internal, declared=aggregate_tables)
+            }
+            aggregate_tables.update(
+                name for name, body in docs.items()
+                if name.startswith("tables/") and body in aggregate_bodies
+            )
+            compatibility_docs = {name: body for name, body in docs.items()
+                                  if publish_file_allowed(name, body, internal=internal, declared=aggregate_tables)}
+            compatibility_images = {name: body for name, body in (images or {}).items()
+                                    if publish_file_allowed(name, body, internal=internal,
+                                                            declared=aggregate_tables)}
+            payloads = []
+            if saved.get("mode") == "new":
+                payloads.append(("",
+                                 {name: body for name, body in compatibility_docs.items() if portfolio_root_file(name)},
+                                 {name: body for name, body in compatibility_images.items() if portfolio_root_file(name)},
+                                 (_PORTFOLIO_PDF_NAME,) if pdf else ()))
+            payloads.append((f"labhq/results/{rid}/", compatibility_docs, compatibility_images,
+                             (_PDF_NAME, _PORTFOLIO_PDF_NAME) if pdf else ()))
+            for base, payload_docs, payload_images, pdf_names in payloads:
+                for name, body in payload_docs.items():
+                    await gh.put_file(repo, base + name, body, "연구 결과 정리", write_branch)
+                    write_branch = branch
+                for name, body in payload_images.items():
+                    payload = (clean_svg_for_publish(body, self.s, self.hub.requests[rid])
+                               if Path(name).suffix.lower() == ".svg" else body)
+                    await gh.put_image(repo, base + name, payload, write_branch)
+                    write_branch = branch
+                if pdf:
+                    for name in pdf_names:
+                        await gh.put_binary(repo, base + name, pdf, write_branch, "연구 결과 PDF")
+                        write_branch = branch
         except (GitHubHTTPError, httpx.HTTPStatusError) as exc:
             denied(exc, write_denied_text(repo, rid))
             raise

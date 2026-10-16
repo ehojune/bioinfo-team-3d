@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 
 SKILLS_DIR = Path(__file__).resolve().with_name("skills")
-BUNDLED_PLUGIN_DIR = SKILLS_DIR.parent
+BUNDLED_PLUGIN_DIR = SKILLS_DIR
 BUNDLED_PLUGIN_NAME = "labhq-bundled-skills"
 SKILL_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 
@@ -25,7 +25,8 @@ READ_ONLY_SKILL_RULES = {
     ),
     "graphical-abstract": (
         "- 그래픽 초록은 질문 → 자료 → 방법 → 핵심 결과 → 결론 순서로 검토합니다. SVG에는 `<title>`과 "
-        "`<desc>` 및 읽을 수 있는 text가 있어야 하며, 두 방향·세 관점과 PNG·캡처에서도 잘림과 겹침을 확인합니다."
+        "`<desc>` 및 읽을 수 있는 text가 있어야 합니다. 두 방향·세 관점으로 검토하고, 렌더한 미리보기로 "
+        "잘림·겹침을 확인합니다(결과물은 SVG만)."
     ),
 }
 

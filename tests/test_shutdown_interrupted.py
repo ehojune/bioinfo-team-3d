@@ -88,15 +88,20 @@ async def test_review_done_schedules_publish_card(tmp_path, monkeypatch, status)
     draft = tmp_path / "draft"
     draft.mkdir()
     (draft / "README.md").write_text("reviewed edition", encoding="utf-8")
+    (draft / "report.md").write_text("reviewed report", encoding="utf-8")
     hub.requests["r"]["result_storage"] = {"mode": "existing", "repo": "owner/study",
         "status": "draft", "draft_path": str(draft)}
     approval = AsyncMock(return_value={"approved": False})
     monkeypatch.setattr(hub, "request_approval", approval)
     await hub.result_storage.finish("r")
     approval.assert_not_awaited()
+    assert not (draft / "report.md").exists()
+    assert (draft / "report" / "report.md").read_text(encoding="utf-8") == "reviewed report"
+    assert hub.requests["r"]["result_storage"]["status"] == "draft"
     hub.review_done("r")
     await hub.result_storage.tasks["r"]
     assert approval.await_args.kwargs["kind"] == "result_publish"
+    assert "report/report.md" in approval.await_args.kwargs["detail"]["documents"]
 
 
 @pytest.mark.parametrize("ending", ["failed", "interrupted", "revise"])

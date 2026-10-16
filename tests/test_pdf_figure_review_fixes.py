@@ -58,6 +58,32 @@ async def test_the_published_pdf_drops_figures_the_reviewed_edition_leaves_out(t
     assert "![큰 그림](steps/s1/outputs/big.png)" in edition_report
 
 
+async def test_cleaned_markdown_and_pdf_use_the_same_figure_set(tmp_path, monkeypatch):
+    hub, edition = prepare(tmp_path, monkeypatch)
+    pages = []
+    fake_printer(monkeypatch, [4096], pages)
+    approve_all(hub, [])
+
+    await publish(hub, [])
+
+    report_path = edition / "report.md"
+    markdown = report_path.read_text(encoding="utf-8")
+    markdown_figures = {
+        (edition / link.target).read_bytes()
+        for link in image_links(markdown)
+        if (edition / link.target).is_file()
+    }
+    pdf_figures = {
+        base64.b64decode(source.split(",", 1)[1])
+        for source, _alt in image_sources(pages[0])
+        if source.startswith("data:")
+    }
+    assert {body for body in pdf_figures if not body.startswith(b"<svg")} == {
+        body for body in markdown_figures if not body.startswith(b"<svg")}
+    assert sum(body.startswith(b"<svg") for body in pdf_figures) == 1
+    assert sum(body.startswith(b"<svg") for body in markdown_figures) == 1
+
+
 def test_edition_candidates_is_the_eligibility_edition_assets_copies_by(tmp_path, monkeypatch):
     hub, edition = prepare(tmp_path, monkeypatch)
     bundle = edition.with_name("req_test")
@@ -117,10 +143,11 @@ async def test_the_edition_opens_with_the_reports_own_abstract_too(tmp_path, mon
     fake_printer(monkeypatch, [4096])
     approve_all(hub, [])
     await publish(hub, [])
-    for name in ("report.md", "README.md"):
-        targets = [link.target for link in image_links((edition / name).read_text(encoding="utf-8"))]
-        assert targets[0] == "steps/s1/outputs/graphical_abstract.png", (name, targets)
-    assert not (edition / "graphical_abstract.svg").exists()  # nothing drawn: the report has its own
+    report_targets = [link.target for link in image_links((edition / "report.md").read_text(encoding="utf-8"))]
+    readme_targets = [link.target for link in image_links((edition / "README.md").read_text(encoding="utf-8"))]
+    assert report_targets[0] == "steps/s1/outputs/graphical_abstract.png"
+    assert readme_targets[0] == "figures/graphical_abstract.svg"
+    assert (edition / "figures/graphical_abstract.svg").exists()  # the portfolio publishes SVG only
 
 
 def test_abstract_first_moves_only_a_valid_abstract_and_keeps_everything_else():

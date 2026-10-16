@@ -1,0 +1,23 @@
+pr: 699
+rows:
+- sha: 364c47a
+  at: 2026-10-16 19:53
+  text: 한 요청의 보고서·운전 기록·코드·SVG·집계표를 게시 안전한 종합 포트폴리오로 정리한다
+- sha: 94bc05b
+  at: 2026-10-16 20:10
+  text: PNG 그래픽 초록만 있는 요청에도 포트폴리오용 SVG 대체본을 만든다
+- sha: 914dbf9
+  at: 2026-10-16 20:59
+  text: wheel manifest, 게시 payload 선별, Markdown 링크 검사를 회귀 test와 함께 바로잡는다
+- sha: a727c64
+  at: 2026-10-16 21:21
+  text: 내부 표의 명시적 집계 선언, PDF 그림 링크, 이전 정리본 재개를 회귀 test와 함께 고친다
+- sha: efddcee
+  at: 2026-10-16 21:43
+  text: 원본-정리본 경로 표, 이전 draft 이관, 내부 산출물 허용 목록을 회귀 test와 함께 고친다
+- sha: 402f08b
+  at: 2026-10-16 22:28
+  text: 포트폴리오 README의 진행·재현 기록 링크와 이전 draft 이관 회귀를 고친다
+- sha: a55bf0e
+  at: 2026-10-16 23:05
+  text: 새 포트폴리오 그림·PDF·Nextflow·이전 draft 경로를 마지막 리뷰 회귀와 함께 고친다

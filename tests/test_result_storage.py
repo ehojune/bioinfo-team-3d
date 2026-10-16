@@ -107,6 +107,63 @@ async def test_new_repo_and_upload_only_after_review(tmp_path, monkeypatch, exis
     await service.close()
 
 
+async def test_new_portfolio_omits_raster_report_figure_without_broken_links(tmp_path, monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token-for-tests")
+    calls = []
+    hub = Hub(tmp_path)
+    service = ResultStorage(hub, fake_github(calls, exists=True))
+    await service.select("req_test", {"mode": "new", "repo": "study", "visibility": "private"})
+    bundle = Path(hub.s.runner.workspace_root) / "requests/req_test"
+    output = bundle / "steps/analysis/outputs/result.png"
+    output.parent.mkdir(parents=True)
+    output.write_bytes(b"synthetic-png")
+    (bundle / "MANIFEST.tsv").write_text(
+        "relative_path\tstatus\nsteps/analysis/outputs/result.png\tcopied\n", encoding="utf-8")
+    paper = ("# 결과 보고서\n\n## 요약(Abstract)\n\n공개 자료 결과다.\n\n## 서론\n\n질문을 검토했다.\n\n"
+             "## 방법\n\n공개 자료를 분석했다.\n\n## 결과\n\n![결과 그림](work-analysis/outputs/result.png)\n\n"
+             "## 논의\n\n한계를 확인했다.\n\n## 결론\n\n결론 문장이다.\n")
+    hub.requests["req_test"].update(
+        status="done", pi_reviewed_at=1, report=paper,
+        results={"analysis": {"workdir": "work-analysis", "outputs": ["outputs/result.png"]}},
+    )
+
+    async def approve(**_kw):
+        return {"approved": True}
+
+    hub.request_approval = approve
+    await service.finish("req_test")
+    draft = Path(hub.requests["req_test"]["result_storage"]["draft_path"])
+    readme = (draft / "README.md").read_text(encoding="utf-8")
+    report = (draft / "report" / "report.md").read_text(encoding="utf-8")
+    assert hub.requests["req_test"]["result_storage"]["status"] == "published"
+    assert "그림 생략: 결과 그림" in readme
+    assert "그림 생략: 결과 그림" in report
+    assert "result.png" not in readme + report
+    await service.close()
+
+
+async def test_new_portfolio_long_report_points_to_nested_report(tmp_path, monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token-for-tests")
+    hub = Hub(tmp_path)
+    service = ResultStorage(hub, fake_github([], exists=True))
+    await service.select("req_test", {"mode": "new", "repo": "study", "visibility": "private"})
+    hub.requests["req_test"].update(
+        status="done", pi_reviewed_at=1,
+        report="# 긴 보고서\n\n" + "공개 자료를 검토했다. " * 160,
+    )
+
+    async def approve(**_kw):
+        return {"approved": True}
+
+    hub.request_approval = approve
+    await service.finish("req_test")
+    draft = Path(hub.requests["req_test"]["result_storage"]["draft_path"])
+    readme = (draft / "README.md").read_text(encoding="utf-8")
+    assert "이어지는 내용은 report/report.md에 있습니다." in readme
+    assert "이어지는 내용은 report.md에 있습니다." not in readme
+    await service.close()
+
+
 async def test_denied_permissions_keep_local(tmp_path, monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "fake-token-for-tests")
     service = ResultStorage(Hub(tmp_path), fake_github([], forbidden=True))

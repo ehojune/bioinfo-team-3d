@@ -12,4 +12,9 @@ def read_plugin_manifest(path: Path) -> dict | None:
 
 
 def skill_file(path: Path, name: str) -> Path:
+    manifest = read_plugin_manifest(path) or {}
+    for entry in manifest.get("skills") or []:
+        candidate = path / str(entry)
+        if candidate.name == name:
+            return candidate / "SKILL.md"
     return path / "skills" / name / "SKILL.md"
