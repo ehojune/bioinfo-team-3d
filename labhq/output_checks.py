@@ -65,8 +65,11 @@ def table_problem(path: Path) -> str | None:
         text = _head_text(path)
     except OSError as exc:
         return f"읽지 못했습니다({type(exc).__name__})"
-    body = [line for line in text.splitlines() if not line.startswith("##")]  # a "##" metadata line may hold a tab
-    if separator == "\t" and not any("\t" in line for line in body) and any("\\t" in line for line in body):
+    # A "##" metadata line may hold a tab. A one-column TSV may hold an escaped "\t" in a cell: the warning needs a
+    # header and every row split by the two characters, as in the 10-17 table (PR #712 review).
+    body = [line for line in text.splitlines() if line.strip() and not line.startswith("##")]
+    if (separator == "\t" and len(body) >= 2 and not any("\t" in line for line in body)
+            and all("\\t" in line for line in body)):
         return "칸 구분이 탭이 아니라 글자 \\t입니다"
     # A hand-joined TSV may hold a lone quote mark in a cell; only CSV quoting is read as quoting.
     quoting = csv.QUOTE_NONE if separator == "\t" else csv.QUOTE_MINIMAL
@@ -80,7 +83,8 @@ def table_problem(path: Path) -> str | None:
         return None
     header = len(rows[0][1])
     widths = {len(row) for _, row in rows[1:]}
-    if widths == {header} or widths == {header + 1}:  # R write.table keeps a header without the row-name column
+    # R write.table(sep="\t") writes a header without the row-name column; write.csv names that column "".
+    if widths == {header} or (separator == "\t" and widths == {header + 1}):
         return None
     number, row = next((number, row) for number, row in rows[1:] if len(row) != header)
     return f"줄마다 칸 수가 다릅니다(머리줄 {header}칸, {number}번째 줄 {len(row)}칸)"

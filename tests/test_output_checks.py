@@ -29,6 +29,7 @@ def test_literal_backslash_t_is_not_a_tab_separator(tmp_path):
     ("lone_quote.tsv", 'a\tb\nsaid "hi\t2\nnext\t3\n'),  # a hand-joined TSV is not read with CSV quoting
     ("vcf_like.tsv", "##meta=1\n#CHROM\tPOS\nchr1\t5\n"),
     ("single.tsv", "id\nA\nB\n"),
+    ("escaped_cell.tsv", "note\ncontains\\tab-escape\nplain\n"),  # one column; "\t" is cell text
     ("empty.csv", ""),
 ])
 def test_well_formed_tables_pass(tmp_path, name, text):
@@ -49,6 +50,11 @@ def test_a_long_field_is_read_and_a_check_that_breaks_is_a_warning_not_an_error(
 
     monkeypatch.setattr("labhq.output_checks.table_problem", broken)
     assert table_warnings(tmp_path, ["seq.csv"]) == ["seq.csv: 검사하지 못했습니다(RuntimeError)"]
+
+
+def test_the_row_name_exception_is_for_tsv_only(tmp_path):
+    path = _write(tmp_path / "extra.csv", "a,b\n1,2,3\n4,5,6\n")
+    assert table_problem(path) == "줄마다 칸 수가 다릅니다(머리줄 2칸, 2번째 줄 3칸)"
 
 
 def test_ragged_rows_name_the_first_bad_line(tmp_path):
