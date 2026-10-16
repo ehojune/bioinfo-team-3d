@@ -99,6 +99,8 @@ bioinfo-agent 폴더는 `--bioinfo-agent <폴더>`, 이미 있는 `BIOINFO_AGENT
 `dev_log.repo`(개발 기록을 올릴 비공개 저장소)는 `init`이 owner/name으로 한 번 묻고 Enter면 비워 둡니다. 비어 있으면 기록은 이 PC에만 남고 `doctor`의 `dev log` 행이 설정하는 법을 알려 줍니다.
 새 설정에서는 pipeline 코드의 공개 PR 기여 동의도 묻습니다. `y`(대소문자 무관)만 동의이며 Enter·`--yes`·그 밖의 답은 끔입니다.
 AlphaGenome API 키가 아직 없으면 마지막에 한 번 묻습니다. Enter로 건너뛸 수 있고, 키 보관은 [공개 자원 조회 도구](#공개-자원-조회-도구)에 있습니다.
+
+GitHub 토큰도 한 번 묻습니다(선택, #687). 요청 결과를 GitHub 저장소로 정리하고 이슈로 알릴 때 씁니다. 묻기 전에 필요한 권한을 보입니다. fine-grained 토큰은 Repository creation(또는 Administration 쓰기)·Contents 쓰기·Issues 쓰기가 필요하고 Repository access는 All repositories여야 합니다. classic 토큰은 `repo` 범위면 됩니다. Enter로 건너뛰면 결과는 로컬에만 저장하고, 나중에 `labhq init`을 다시 돌리거나 `GITHUB_TOKEN` 환경 변수를 설정하면 됩니다. 붙여 넣은 토큰은 AlphaGenome 키처럼 이 계정만 읽는 `github.token_file`(기본 `~/.labhq/secrets-github/github_token`)에만 두고, 설정 파일·화면·로그에는 남기지 않습니다. 환경 변수가 있으면 그쪽이 먼저입니다. 파일의 토큰은 gateway 프로세스만 시작할 때 읽고, 직원·runner·MCP 프로세스에는 넘기지 않습니다. 직원에게는 이 파일이 개인 경로라 읽기가 막힙니다. 바로 이어지는 doctor가 권한을 확인합니다(아래 [결과 저장 위치](#결과-저장-위치) 참고).
 `python scripts/clean_install_check.py`는 임시 HOME의 새 clone·venv에서 init → doctor → mock 요청 → 요청 묶음 → verify → down을 검사하고 모두 지웁니다. 실제 직원 CLI 로그인이나 모델 호출은 하지 않습니다.
 한 PC에서 여러 연구소를 띄우려면 `labhq init --instance <이름>`을 실행한 뒤 각 명령에 같은
 `--instance <이름>`을 붙이세요. 설정·state·runs·talent·포트·token이 인스턴스별로 나뉩니다.
@@ -897,7 +899,7 @@ PDF와 그림은 크기 때문에 줄이지 않습니다. `github.edition_pdf_ma
 `SOURCES.md`는 보고서·부록·`resource_versions` 파일의 URL·DOI·PMID·GEO(GSE/GSM/GPL)·SRA·ArrayExpress·BioProject 번호와 자료 버전을 종류별로 모읍니다. 편집자에게는 보고서 전문을 넘기며, 너무 길면 개요와 온전한 절을 보내고 어느 절이 빠졌는지 알립니다.
 게시 카드가 떠 있거나 거절했거나 게시에 실패한 정리본은 `labhq storage <요청 id> --redraft`로 편집자를 다시 돌려 카드를 새로 만듭니다. 이미 게시한 정리본과 게시가 시작된 정리본은 거부합니다. 끝난 요청의 낡은 재개 카드는 요청이 끝나거나 검토 완료를 표시할 때, 그리고 재시작 때 지웁니다.
 
-**게시에 실패했을 때:** 토큰이 선택한 저장소만 허용하는 fine-grained 토큰(`github_pat_…`)이면 새 저장소를 만들지 못해(403) 게시가 실패합니다. 안내대로 실패한 환경 토큰을 해제한 gh로 `--add-readme`를 붙여 만들거나, GitHub 웹에서 README를 넣어 만드세요. 그 저장소를 토큰의 저장소 접근에 추가하고 Contents: Read and write를 준 뒤 `labhq storage <요청 id> --republish`를 실행합니다. 빈 저장소를 골라도 첫 파일로 기본 branch를 만든 뒤 나머지를 올립니다. 편집자를 다시 돌리려면 `--redraft`를 쓰세요. 이미 게시한 정리본, 통제 데이터 요청, 검토 완료 전 요청은 거부합니다. 기존 저장소에 쓸 권한이 없을 때(403·404)도 같은 방식으로 토큰에 저장소를 추가합니다. `labhq doctor`는 fine-grained 토큰이면 미리 한 줄 경고합니다(토큰 앞부분만 보고 네트워크는 쓰지 않습니다).
+**게시에 실패했을 때:** 토큰이 선택한 저장소만 허용하는 fine-grained 토큰(`github_pat_…`)이면 새 저장소를 만들지 못해(403) 게시가 실패합니다. 안내대로 실패한 환경 토큰을 해제한 gh로 `--add-readme`를 붙여 만들거나, GitHub 웹에서 README를 넣어 만드세요. 그 저장소를 토큰의 저장소 접근에 추가하고 Contents: Read and write를 준 뒤 `labhq storage <요청 id> --republish`를 실행합니다. 빈 저장소를 골라도 첫 파일로 기본 branch를 만든 뒤 나머지를 올립니다. 편집자를 다시 돌리려면 `--redraft`를 쓰세요. 이미 게시한 정리본, 통제 데이터 요청, 검토 완료 전 요청은 거부합니다. 기존 저장소에 쓸 권한이 없을 때(403·404)도 같은 방식으로 토큰에 저장소를 추가합니다. `labhq doctor`는 토큰 앞부분이 아니라 실제 권한으로 판정합니다(#687). 아무것도 만들지 않는 탐침을 씁니다. 이름 없는 `POST /user/repos`, 내 저장소 하나에 내용 없는 `PUT contents`, 제목 없는 `POST issues`를 보내, 권한이 있으면 422, 없으면 403이 옵니다(2026-10-16 실측). classic 토큰은 `X-OAuth-Scopes`의 `repo`로 봅니다. 빠진 권한은 이름으로 한 줄 경고합니다. 네트워크가 안 되면 경고 대신 "처음 게시 때 확인"으로 둡니다. fine-grained 토큰의 접근 범위(선택한 저장소만/All repositories)는 API로 알 수 없어 안내만 붙입니다. 선택한 저장소만 허용하면 토큰이 직접 만든 비공개 저장소에도 접근하지 못합니다(실측 GET 404). 토큰이 없으면 "결과는 로컬에 저장"을 ok로 보입니다.
 
 다음 단계: Notion 저장은 나중에 추가합니다.
 
@@ -911,7 +913,7 @@ PDF와 그림은 크기 때문에 줄이지 않습니다. `github.edition_pdf_ma
 3. 최종 보고서를 `labhq/reports/<날짜>-<request>.md`로 커밋하고, 이슈에 요약·링크를 남긴 뒤 닫기(재시작 시 완료한 작업은 중복 실행하지 않음)
 4. `local_dir`을 주면 에이전트들이 그 프로젝트 클론에서 작업
 
-설정은 `config/labhq.example.yaml`의 `github:`·`projects:`. 토큰은 게이트웨이 호스트의 `GITHUB_TOKEN` 환경변수에서만 읽습니다
+설정은 `config/labhq.example.yaml`의 `github:`·`projects:`. 토큰은 게이트웨이 호스트의 `GITHUB_TOKEN` 환경변수에서 읽고, 없으면 `labhq init`이 저장한 `github.token_file`을 gateway가 시작할 때 읽습니다
 (fine-grained PAT, 해당 저장소의 Issues·Contents·Pull requests 읽기/쓰기). **공개 가드**: 통제접근 경로와 비밀값으로 보이는 문자열(URL의 `token`·`sig`·`X-Amz-*` 같은 query credential, `jsessionid`·`session`·`code` 값, `user:password@` userinfo, Slack·Discord·Teams·Telegram webhook URL의 path 포함. JSON escape된 URL과 다른 URL 안에 percent-encoding된 webhook도 같다)은 가리고,
 `visibility: public` 저장소에는 `allow_public_reports: true`가 없으면 아무것도 올리지 않습니다.
 통제접근 경로 판정은 접근 정책과 같습니다(구분자·대소문자·`.`/`..` 정규화). 그런 경로가 있는 줄은 통째로 가리고,

@@ -1961,6 +1961,10 @@ def main(argv: list[str] | None = None) -> None:
 
             from .security import gateway_log_config
 
+            from .github_token import export_to_env
+
+            # The token `labhq init` stored, for this process only: staff, runner and MCP processes never get it (#687).
+            export_to_env(s)
             try:
                 app = create_app(s)
             except ValueError as exc:  # e.g. a retired research pack version (#170)

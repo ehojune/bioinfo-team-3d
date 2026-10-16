@@ -549,6 +549,9 @@ class GitHubSettings(BaseModel):
     # Optional warning threshold only. Report figures and PDFs are never shrunk to meet it (#690).
     edition_pdf_max_mb: float | None = Field(default=None, gt=0)
     token_env: str = "GITHUB_TOKEN"  # token is read from this env var on the gateway host, never from YAML
+    # Without the variable, the gateway reads the token from this owner-only file, which `labhq init` writes when the PI
+    # pastes one (#687). Its own folder: an owner-only folder holds one secret (tools/annot_keys.py).
+    token_file: str = "~/.labhq/secrets-github/github_token"
     api_url: str = "https://api.github.com"
     dashboard_url: str | None = None  # link back to the web office in issue comments
     codex_mention: str = "@codex"  # only in the one top-level review request; each mention starts a Codex session
