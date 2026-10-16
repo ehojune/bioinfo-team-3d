@@ -208,3 +208,23 @@ async def test_cp4_review_done_keeps_storage_answer_while_bundle_refreshes(tmp_p
         assert hub.requests["r"]["result_storage"]["status"] == "local"
     editor.assert_awaited_once()
     await hub.result_storage.close()
+
+
+@pytest.mark.parametrize("body", [
+    {"storage": "existing"},  # no owner/name
+    {"storage": "github", "name": "bad name"},
+    {"storage": "github", "visibility": "internal"},
+    {"storage": "somewhere"},
+])
+async def test_review_done_rejects_a_bad_storage_answer_before_saving_the_review(tmp_path, monkeypatch, body):
+    app, hub, calls, editor = make(tmp_path, monkeypatch)
+    await hub.result_storage.select("r", {"mode": "local"})
+    await finish_request(hub)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test",
+                                 headers={"Authorization": "Bearer test-token"}) as client:
+        reply = await client.post("/api/requests/r/review-done", json=body)
+    assert reply.status_code == 409
+    assert not hub.requests["r"].get("pi_reviewed_at")
+    assert not any(entry["approval"]["kind"] == "result_storage" for entry in hub.approvals.values())
+    editor.assert_not_awaited()
+    await hub.result_storage.close()

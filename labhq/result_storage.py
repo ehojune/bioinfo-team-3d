@@ -36,6 +36,22 @@ from .request_bundle import _POSIX_ABS, _WINDOWS_ABS
 _REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\Z")
 STORAGE_QUESTION = "결과를 GitHub 저장소로 정리할까요?"  # PI wording 2026-10-16 (#688): the card offers local, new, existing
+
+
+def check_choice(choice: dict, *, end: bool = False) -> None:
+    """Raise ValueError for a storage answer that no request state could accept. The review-done API checks it
+    before it saves the review, so a mistyped ``--storage`` leaves nothing half done (PR #711 review)."""
+    mode = choice.get("mode", "local")
+    if (mode not in ({"keep", "local", "new", "existing"} if end else {"local", "new", "existing"})
+            or choice.get("visibility", "private") not in {"private", "public"}):
+        raise ValueError("저장 위치와 공개 범위를 다시 골라 주세요.")
+    repo = str(choice.get("repo") or "").strip()
+    if end and mode == "new" and "/" in repo:
+        repo = repo.rsplit("/", 1)[-1]
+    if mode == "new" and not _NAME.fullmatch(repo):
+        raise ValueError("새 저장소 이름은 영문·숫자·점·밑줄·하이픈으로 적어 주세요.")
+    if mode == "existing" and (not _REPO.fullmatch(repo) or any(p in {".", ".."} for p in repo.split("/"))):
+        raise ValueError("기존 저장소는 소유자/저장소 이름으로 적어 주세요.")
 _PRIVATE_PATH = re.compile(r"(?<![\w:])(?:[A-Za-z]:[/\\]|\\\\|/(?:home|Users|mnt|srv|data|tmp|var|opt)/|~/)[^\s<>\"'`\])]+")
 _ASSIGNMENT = re.compile(
     r"(?im)\b((?:api[_-]?key|token|password|secret)\s*[:=]\s*)"
@@ -600,9 +616,8 @@ class ResultStorage:
         req = self.hub.requests[rid]
         if late and req.get("result_storage"):
             raise ValueError("이미 저장 위치를 골랐거나 게시한 요청입니다.")
+        check_choice(choice, end=end)
         mode = choice.get("mode", "local")
-        if mode not in ({"keep", "local", "new", "existing"} if end else {"local", "new", "existing"}) or choice.get("visibility", "private") not in {"private", "public"}:
-            raise ValueError("저장 위치와 공개 범위를 다시 골라 주세요.")
         marker = req.get("storage_end_ask") or {}
         if end and marker.get("state") not in {"pending", "asked"}:
             raise ValueError("끝 저장 위치 질문이 없는 요청입니다.")

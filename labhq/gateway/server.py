@@ -4023,17 +4023,20 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             decision = body.get("decision", "accepted")
             if decision not in {"accepted", "rejected"}:
                 raise ValueError("검토 결정은 accepted 또는 rejected입니다")
-            result = hub.review_done(rid, decision=decision, revision=body.get("revision"),
-                                     target_sha256=body.get("target_sha256"))
-            card = await hub.result_storage.open_end_card(rid)
-            storage_choice = body.get("storage")
-            if storage_choice:
-                if card is None:
-                    raise ValueError("이 요청에는 끝 저장 위치 질문이 없습니다")
-                mode = {"github": "new", "existing": "existing"}.get(storage_choice, storage_choice)
+            choice = None
+            if body.get("storage"):
+                from ..result_storage import check_choice
+                mode = {"github": "new", "existing": "existing"}.get(body["storage"], body["storage"])
                 default_name = "labhq-" + rid.removeprefix("req_") if mode == "new" else ""
                 choice = {"mode": mode, "repo": body.get("name") or default_name,
                           "visibility": body.get("visibility", "private")}
+                check_choice(choice, end=True)  # before the review is saved (PR #711 review)
+            result = hub.review_done(rid, decision=decision, revision=body.get("revision"),
+                                     target_sha256=body.get("target_sha256"))
+            card = await hub.result_storage.open_end_card(rid)
+            if choice is not None:
+                if card is None:
+                    raise ValueError("이 요청에는 끝 저장 위치 질문이 없습니다")
                 await hub.resolve_approval(card["id"], True, storage=choice)
                 result["result_storage"] = hub.requests[rid].get("result_storage")
             elif card is not None:
