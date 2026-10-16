@@ -12,7 +12,8 @@ publishes them. Paywalled papers are not fetched from anywhere else.
 
 API (checked 2026-10-16, REST version 6.9): GET /search?query=EXT_ID:<pmid> AND SRC:MED | PMCID:<pmcid> | DOI:"<doi>"
 &resultType=core&format=json gives pmid, pmcid, doi, isOpenAccess, inEPMC, license, abstractText and fullTextUrlList;
-GET /<PMCID>/fullTextXML answers 200 with JATS for an open-access copy and an error status otherwise. A record with a
+GET /<PMCID>/fullTextXML answers 200 with JATS for an open-access copy and 404 when there is none; any other error
+is a failed read, answered with the abstract for that call only and never cached (PR #698 review). A record with a
 CC license can still lack a Europe PMC copy (the publisher hosts it); its publisher link is returned for one manual try.
 """
 
@@ -57,7 +58,11 @@ class PaperId:
         return f'DOI:"{self.value}"'
 
     def file_name(self) -> str:
-        return f"{self.kind}-{re.sub(r'[^A-Za-z0-9._-]+', '_', self.value)}.md"
+        if self.kind != "doi":
+            return f"{self.kind}-{self.value}.md"
+        # A DOI may hold any character; the readable part alone can collide (10.1000/a:b, 10.1000/a/b), the hash cannot.
+        readable = re.sub(r"[^A-Za-z0-9._-]+", "_", self.value)[:80]
+        return f"doi-{readable}-{hashlib.sha256(self.value.encode('utf-8')).hexdigest()[:10]}.md"
 
 
 def parse_paper_id(value: object) -> PaperId:
@@ -213,7 +218,7 @@ class LiteratureAnnotator(Annotator):
             if item.cached_at is not None:
                 continue
             try:
-                item.answer, seen = await self._paper(item.variant)
+                item.answer, seen, item.volatile = await self._paper(item.variant)
                 version = version or seen
             except LookupFailed as exc:
                 item.error, lookup_errors = str(exc), lookup_errors + 1
@@ -227,7 +232,9 @@ class LiteratureAnnotator(Annotator):
                             EUROPEPMC, {}, items, _summary, cache=False,
                             note="본문 파일은 논문 라이선스를 따르는 제3자 글이다. 경로로 인용하고 결과물에 옮겨 싣지 않는다.")
 
-    async def _paper(self, paper: PaperId) -> tuple[dict, str | None]:
+    async def _paper(self, paper: PaperId) -> tuple[dict, str | None, bool]:
+        """The answer, the REST version, and whether the answer must not be cached: a body that should exist but
+        could not be read this time (server error, unusable XML) falls back to the abstract for this call only."""
         response = await self.http.request("europepmc", "GET", f"{EUROPEPMC}/search", params={
             "query": paper.query(), "resultType": "core", "format": "json", "pageSize": 1})
         if response.status_code != 200:
@@ -235,7 +242,7 @@ class LiteratureAnnotator(Annotator):
         data = response.json()
         hits = (data.get("resultList") or {}).get("result") or []
         if not hits:
-            return {"found": False}, data.get("version")
+            return {"found": False}, data.get("version"), False
         rec = hits[0]
         journal = ((rec.get("journalInfo") or {}).get("journal") or {}).get("title")
         meta = {"found": True, "pmid": rec.get("pmid"), "pmcid": rec.get("pmcid"), "doi": rec.get("doi"),
@@ -247,15 +254,20 @@ class LiteratureAnnotator(Annotator):
         header = [f"# {meta['title'] or paper.value}", "",
                   f"- PMID {meta['pmid'] or '-'} · PMCID {meta['pmcid'] or '-'} · DOI {meta['doi'] or '-'}",
                   f"- {meta['journal'] or '-'} {meta['year'] or ''} · license {meta['license'] or '-'}"]
+        volatile = False
         if meta["pmcid"] and (meta["is_open_access"] or meta["in_europepmc"]):
-            xml = await self._fulltext_xml(meta["pmcid"])
+            xml, problem = await self._fulltext_xml(meta["pmcid"])
             if xml is not None:
                 try:
                     markdown, info = jats_markdown(xml, header + ["- access_level: full_text (Europe PMC)", ""])
                 except ValueError as exc:
-                    meta["fulltext_error"] = str(exc)
+                    problem = str(exc)
                 else:
-                    return {**meta, **info, "access_level": "full_text", "markdown": markdown}, data.get("version")
+                    return ({**meta, **info, "access_level": "full_text", "markdown": markdown}, data.get("version"),
+                            False)
+            if problem:
+                meta["fulltext_error"] = problem + " 이번 답은 초록 수준이고 저장하지 않으므로 다시 부르면 본문을 다시 받습니다"
+                volatile = True
         abstract = " ".join((rec.get("abstractText") or "").split())
         abstract = re.sub(r"<[^>]+>", "", abstract)
         level = "abstract" if abstract else "metadata"
@@ -263,13 +275,18 @@ class LiteratureAnnotator(Annotator):
             meta["publisher_copy"] = links  # a CC license without a Europe PMC copy: the publisher may host it
         markdown = "\n".join(header + [f"- access_level: {level} (Europe PMC에 본문 사본 없음)", ""]
                              + (["## Abstract", "", abstract, ""] if abstract else [])) + "\n"
-        return {**meta, "access_level": level, "markdown": markdown}, data.get("version")
+        return {**meta, "access_level": level, "markdown": markdown}, data.get("version"), volatile
 
-    async def _fulltext_xml(self, pmcid: str) -> str | None:
+    async def _fulltext_xml(self, pmcid: str) -> tuple[str | None, str | None]:
+        """(XML, None) for a body; (None, None) when Europe PMC says there is none (404); (None, problem) otherwise."""
         response = await self.http.request("europepmc", "GET", f"{EUROPEPMC}/{pmcid}/fullTextXML")
-        if response.status_code != 200 or len(response.content) > MAX_XML_BYTES:
-            return None
-        return response.text
+        if response.status_code == 404:
+            return None, None
+        if response.status_code != 200:
+            return None, f"본문 조회가 HTTP {response.status_code}로 실패했습니다."
+        if len(response.content) > MAX_XML_BYTES:
+            return None, f"본문 XML이 {MAX_XML_BYTES:,} bytes를 넘어 읽지 않았습니다."
+        return response.text, None
 
     def _write_text(self, paper: PaperId, answer: dict) -> dict:
         """The answer without its text: the text goes to outputs/literature/, the record keeps its path and hash."""

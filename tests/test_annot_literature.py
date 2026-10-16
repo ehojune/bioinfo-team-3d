@@ -85,7 +85,11 @@ def test_paper_ids_are_read_in_the_forms_staff_write_them():
     assert lit.parse_paper_id("https://doi.org/10.1016/S2542-5196(19)30239-6") == lit.PaperId(
         "doi", "10.1016/s2542-5196(19)30239-6")
     assert lit.parse_paper_id("doi:10.1080/X").query() == 'DOI:"10.1080/x"'
-    assert lit.PaperId("doi", "10.1016/s2542-5196(19)30239-6").file_name() == "doi-10.1016_s2542-5196_19_30239-6.md"
+    assert lit.PaperId("pmid", "31868601").file_name() == "pmid-31868601.md"
+    name = lit.PaperId("doi", "10.1016/s2542-5196(19)30239-6").file_name()
+    assert name.startswith("doi-10.1016_s2542-5196_19_30239-6-") and name.endswith(".md")
+    # Different DOIs never share a file (PR #698 review): the readable part alone would.
+    assert lit.PaperId("doi", "10.1000/a:b").file_name() != lit.PaperId("doi", "10.1000/a/b").file_name()
     with pytest.raises(ValueError, match="PMID"):
         lit.parse_paper_id("Irgens 1997")
 
@@ -140,6 +144,29 @@ async def test_an_unusable_body_falls_back_to_the_abstract_and_says_why(tmp_path
     annotator, _ = make(by_query({"PMCID:PMC5": [record("5", "PMC5")]}), tmp_path, "work2")
     row = (await annotator.fulltext(["PMC5"]))["results"][0]
     assert row["access_level"] == "abstract"  # fullTextXML answered 404
+
+
+async def test_a_failed_body_read_is_answered_with_the_abstract_but_not_cached(tmp_path):
+    """A server error on fullTextXML is not "no copy": caching it would keep a key paper at the abstract for 30 days
+    (PR #698 review). A 404 is a real absence and is cached."""
+    def flaky(request):
+        if request.url.path.endswith("/fullTextXML"):
+            return httpx.Response(500)
+        return search_answer([record()])
+
+    first, _ = make(flaky, tmp_path)
+    row = (await first.fulltext(["123"]))["results"][0]
+    assert row["access_level"] == "abstract" and "HTTP 500" in row["fulltext_error"]
+    second, calls = make(by_query({"EXT_ID:123 AND SRC:MED": [record()]}), tmp_path, "again")
+    row = (await second.fulltext(["123"]))["results"][0]
+    assert row["access_level"] == "full_text" and "cached_from" not in row
+    assert [c.url.path.rsplit("/", 1)[-1] for c in calls] == ["search", "fullTextXML"]
+
+    absent, _ = make(by_query({"PMCID:PMC5": [record("5", "PMC5")]}), tmp_path, "absent")
+    await absent.fulltext(["PMC5"])  # 404: cached as abstract
+    third, calls = make(lambda request: httpx.Response(500), tmp_path, "third")
+    row = (await third.fulltext(["PMC5"]))["results"][0]
+    assert calls == [] and row["access_level"] == "abstract" and row["cached_from"]
 
 
 async def test_unknown_and_malformed_ids_do_not_stop_the_rest(tmp_path):
