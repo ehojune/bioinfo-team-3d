@@ -1784,12 +1784,16 @@ class Runner:
         if warning_outputs:
             await emit("agent.log", {"level": "warn", "text": (
                 "보고하지 않은 관찰 산출물: " + ", ".join(warning_outputs))})
-        # Read back from the runner's disk: the gateway may not share it (#697, #710).
-        result.table_warnings = await asyncio.to_thread(output_checks.table_warnings, ws.dir, result.outputs)
+        # Read back from the runner's disk: the gateway may not share it (#697, #710). A check that breaks leaves a
+        # warning; it never turns the finished task into a failure (PR #712 review).
+        try:
+            result.table_warnings = await asyncio.to_thread(output_checks.table_warnings, ws.dir, result.outputs)
+            result.literature_access = await asyncio.to_thread(output_checks.literature_access, ws.dir)
+        except Exception as exc:  # noqa: BLE001
+            await emit("agent.log", {"level": "warn", "text": f"산출 검사를 하지 못했습니다: {type(exc).__name__}"})
         if result.table_warnings:
             await emit("agent.log", {"level": "warn", "text": (
                 "표로 읽히지 않는 산출물: " + "; ".join(result.table_warnings))})
-        result.literature_access = await asyncio.to_thread(output_checks.literature_access, ws.dir)
         for note in dict.fromkeys(output_scan_notes):
             await emit("agent.log", {"level": "warn", "text": note})
         # Only a finished, successful turn: a bundle written before HPC checks or an ask is not final (#301 review).

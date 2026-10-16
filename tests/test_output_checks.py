@@ -35,6 +35,22 @@ def test_well_formed_tables_pass(tmp_path, name, text):
     assert table_problem(_write(tmp_path / name, text)) is None
 
 
+def test_a_tab_in_a_metadata_line_does_not_hide_literal_separators(tmp_path):
+    path = _write(tmp_path / "meta.tsv", "##source\tpipeline\ntheme\\tPMID\nheat\\t123\n")
+    assert table_problem(path) == "칸 구분이 탭이 아니라 글자 \\t입니다"
+
+
+def test_a_long_field_is_read_and_a_check_that_breaks_is_a_warning_not_an_error(tmp_path, monkeypatch):
+    long_cell = "A" * 200_000  # above Python's default csv field limit of 131,072
+    assert table_problem(_write(tmp_path / "seq.csv", f"id,seq\n1,\"{long_cell}\"\n2,ACGT\n")) is None
+
+    def broken(_path):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("labhq.output_checks.table_problem", broken)
+    assert table_warnings(tmp_path, ["seq.csv"]) == ["seq.csv: 검사하지 못했습니다(RuntimeError)"]
+
+
 def test_ragged_rows_name_the_first_bad_line(tmp_path):
     path = _write(tmp_path / "bad.csv", "a,b,c\n1,2,3\n\n4,5\n")
     assert table_problem(path) == "줄마다 칸 수가 다릅니다(머리줄 3칸, 4번째 줄 2칸)"

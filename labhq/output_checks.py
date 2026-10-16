@@ -27,6 +27,9 @@ from typing import Any
 TABLE_SEPARATORS = {".tsv": "\t", ".tab": "\t", ".csv": ","}
 MAX_TABLE_BYTES = 4_000_000  # enough rows to see the shape; a larger table is checked on its first 4 MB
 MAX_TABLE_WARNINGS = 20
+# Python's default field limit (131,072) rejects a valid CSV with one long field (a sequence, a JSON cell).
+CSV_FIELD_LIMIT = MAX_TABLE_BYTES
+csv.field_size_limit(max(csv.field_size_limit(), CSV_FIELD_LIMIT))
 QUERY_LOG = "outputs/annotation_queries.jsonl"
 FULLTEXT_TOOL = "fulltext"
 MAX_RECORD_BYTES = 5_000_000
@@ -62,13 +65,17 @@ def table_problem(path: Path) -> str | None:
         text = _head_text(path)
     except OSError as exc:
         return f"읽지 못했습니다({type(exc).__name__})"
-    if separator == "\t" and "\t" not in text and "\\t" in text:
+    body = [line for line in text.splitlines() if not line.startswith("##")]  # a "##" metadata line may hold a tab
+    if separator == "\t" and not any("\t" in line for line in body) and any("\\t" in line for line in body):
         return "칸 구분이 탭이 아니라 글자 \\t입니다"
     # A hand-joined TSV may hold a lone quote mark in a cell; only CSV quoting is read as quoting.
     quoting = csv.QUOTE_NONE if separator == "\t" else csv.QUOTE_MINIMAL
-    rows = [(number, row) for number, row in enumerate(csv.reader(io.StringIO(text), delimiter=separator,
-                                                                  quoting=quoting), start=1)
-            if row and any(cell.strip() for cell in row) and not row[0].startswith("##")]
+    try:
+        rows = [(number, row) for number, row in enumerate(csv.reader(io.StringIO(text), delimiter=separator,
+                                                                      quoting=quoting), start=1)
+                if row and any(cell.strip() for cell in row) and not row[0].startswith("##")]
+    except csv.Error as exc:  # a NUL byte or a broken quote; a long field fits CSV_FIELD_LIMIT
+        return f"표로 읽지 못했습니다({exc})"
     if len(rows) < 2:
         return None
     header = len(rows[0][1])
@@ -86,7 +93,10 @@ def table_warnings(root: Path, outputs: Iterable[str]) -> list[str]:
         if Path(rel).suffix.lower() not in TABLE_SEPARATORS:
             continue
         path = _inside(Path(root), rel)
-        problem = table_problem(path) if path is not None else None
+        try:
+            problem = table_problem(path) if path is not None else None
+        except Exception as exc:  # noqa: BLE001 - a check never turns a finished task into a failure (PR #712)
+            problem = f"검사하지 못했습니다({type(exc).__name__})"
         if problem:
             warnings.append(f"{rel}: {problem}")
             if len(warnings) >= MAX_TABLE_WARNINGS:
