@@ -163,6 +163,8 @@ class AgentSpec(BaseModel):
 
     @model_validator(mode="after")
     def valid_engine_options(self) -> "AgentSpec":
+        from .staff_skills import is_bundled_skill
+
         efforts = {
             Engine.claude_code: {"low", "medium", "high", "xhigh", "max"},
             Engine.codex: {"low", "medium", "high", "xhigh", "max", "ultra"},
@@ -174,12 +176,21 @@ class AgentSpec(BaseModel):
             if self.effort not in allowed:
                 values = ", ".join(sorted(allowed))
                 raise ValueError(f"unknown {self.engine.value} effort {self.effort!r}; allowed: {values}")
-        if self.engine != Engine.claude_code and (self.plugin_dirs or self.allow_skills or self.required_skills):
-            raise ValueError("plugin_dirs, allow_skills and required_skills require engine: claude_code")
+        bundled, plugin = [], []
         for skill in self.required_skills:
-            if skill.count(":") != 1 or not all(skill.split(":")):
-                raise ValueError(f"required_skills entries are 'plugin:skill', got {skill!r}")
-        if self.required_skills and not (self.plugin_dirs and self.allow_skills):
+            if ":" not in skill and is_bundled_skill(skill):
+                bundled.append(skill)
+            elif skill.count(":") == 1 and all(skill.split(":")):
+                plugin.append(skill)
+            else:
+                raise ValueError(f"required_skills entries are a bundled skill or 'plugin:skill', got {skill!r}")
+        if self.engine != Engine.claude_code and (self.plugin_dirs or self.allow_skills or plugin):
+            raise ValueError("plugin_dirs, allow_skills and plugin required_skills require engine: claude_code")
+        if bundled and self.engine not in (Engine.claude_code, Engine.codex):
+            raise ValueError("bundled required_skills require engine: claude_code or codex")
+        if bundled and self.engine == Engine.claude_code and not self.allow_skills:
+            raise ValueError("bundled required_skills need allow_skills: true for Claude Code")
+        if plugin and not (self.plugin_dirs and self.allow_skills):
             raise ValueError("required_skills needs plugin_dirs and allow_skills: true")
         if self.engine == Engine.antigravity and (self.builtin_mcp or self.mcp):
             raise ValueError("antigravity does not support builtin_mcp or MCP servers")

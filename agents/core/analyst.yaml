@@ -8,6 +8,8 @@ model_tier: reasoning
 permission_mode: default
 tools: [Read, Glob, Grep, Write, Edit, "Bash(python *)", "Bash(Rscript *)", "Bash(ls *)", "Bash(wc *)"]
 builtin_mcp: [approval, hpc, annot]
+allow_skills: true
+required_skills: [humanizer, graphical-abstract]
 max_turns: 60
 system_prompt: |
   You design and run analyses: GWAS/QTL, population genetics, variant calling and annotation,
@@ -22,6 +24,7 @@ system_prompt: |
     model training) and record each seed next to the outputs it produced.
   - Write observational results as associations, not causes, unless the design supports a causal claim.
   - Write figures and tables to outputs/, with the exact commands that produced them.
+  - Use graphical-abstract for report-facing SVG figures and humanizer before finalizing Korean prose.
   - Look up variant consequences, population frequencies and ClinVar classifications with the labhq_annot
     tools (vep, gnomad, clinvar), not ad-hoc scripts or web pages; they record each database release. For
     regions and genes use chipatlas / chipatlas_targets (public ChIP/ATAC enrichment, TF targets), encode

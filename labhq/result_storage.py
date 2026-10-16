@@ -756,6 +756,8 @@ class ResultStorage:
                     docs["README.md"] += f"\n{pdf_skip_line(reason)}\n"
                     if plain_path(target / _PDF_NAME):
                         (target / _PDF_NAME).unlink(missing_ok=True)  # a PDF left by an earlier attempt is not this edition's
+                from .korean_qc import check_document
+                saved["korean_qc"] = {"README.md": check_document(docs["README.md"])}
                 write("README.md", docs["README.md"])
                 saved["pdf"] = {"included": bool(pdf), "bytes": len(pdf or b""), "note": "" if pdf else pdf_skip_line(reason),
                                 "size_note": reason if pdf else ""}
@@ -770,7 +772,9 @@ class ResultStorage:
                 return  # review_done schedules this saved draft again.
             if not self.s.github.auto_publish_results:
                 previews, omitted = publish_image_previews(images, target)
-                detail = {"documents": docs, "repo": saved.get("repo"), "images": previews,
+                detail = {"documents": docs, "repo": saved.get("repo"),
+                          "korean_qc": saved.get("korean_qc"),
+                          "images": previews,
                           "visibility": saved.get("visibility"), "local_draft": str(target)}
                 if omitted:
                     detail["image_preview_omitted"] = omitted

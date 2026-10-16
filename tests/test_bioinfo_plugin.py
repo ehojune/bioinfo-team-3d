@@ -12,6 +12,7 @@ from labhq.adapters.base import RunContext
 from labhq.models import AgentSpec, Engine, Task
 from labhq.registry import Registry
 from labhq.settings import Settings
+from labhq.staff_skills import BUNDLED_PLUGIN_DIR
 from scripts.redact_stream import Redactor
 
 
@@ -60,6 +61,11 @@ def test_core_agent_skill_exception_is_scoped(tmp_path, monkeypatch):
             from labhq.recruit.paper2agent import skill_path
             assert cmd[cmd.index("--plugin-dir") + 1] == str(skill_path("claude_code", ctx.settings).parent.parent)
             assert "--disable-slash-commands" not in cmd
+        elif agent.required_skills:
+            plugin_dirs = [cmd[i + 1] for i, arg in enumerate(cmd) if arg == "--plugin-dir"]
+            assert plugin_dirs == [str(BUNDLED_PLUGIN_DIR)] and "--disable-slash-commands" not in cmd
+            settings = json.loads(cmd[cmd.index("--settings") + 1])
+            assert settings["autoMemoryEnabled"] is False and settings["claudeMdExcludes"]
         else:
             assert "--plugin-dir" not in cmd and "--disable-slash-commands" in cmd
 

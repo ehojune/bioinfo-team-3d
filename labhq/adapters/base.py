@@ -400,7 +400,11 @@ def private_paths_section(labels: list[str] | tuple[str, ...], saved_output_open
 
 def role_footer(ctx: "RunContext") -> str:
     """Common rules, the task's write boundary, and its personal-path section."""
+    bundled = [name for name in ctx.agent.required_skills if ":" not in name]
+    skills = ("\n- Use the required first-party skills before producing their matching deliverables: "
+              + ", ".join(bundled) + ".\n") if bundled else ""
     return (ROLE_FOOTER + (GENERAL_RESULT_RULES if ctx.task.meta.get("general_result_contract") else "") +
+            skills +
             ("\nWrite only in your own task's outputs/ and .tmp/. Inputs, upstream results, other tasks and project "
              "sources are read-only.\n" if ctx.read_only else WORKSPACE_WRITE_RULES) +
             private_paths_section(ctx.private_labels, bool(ctx.private_open_reads)))
