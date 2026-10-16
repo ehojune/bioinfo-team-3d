@@ -12,8 +12,9 @@ import pytest
 import yaml
 
 from labhq.models import AgentSpec
-from labhq.tools import annot_literature as lit
+from labhq.tools import annot, annot_literature as lit
 from tests.test_annot import FakeTime
+from tests.test_direct_outputs import _workspace as direct_workspace
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -101,7 +102,7 @@ async def test_an_open_access_paper_is_written_as_markdown_and_the_record_keeps_
     assert row["ok"] and row["access_level"] == "full_text" and row["pmcid"] == "PMC999"
     assert row["sections"] == ["Introduction", "Results"]
     assert (row["n_tables"], row["n_figures"], row["n_references"]) == (1, 1, 2)
-    assert row["text_file"] == "outputs/literature/pmid-123.md"
+    assert row["text_file"] == ".tmp/literature/pmid-123.md"
     text = (tmp_path / "work" / row["text_file"]).read_text(encoding="utf-8")
     assert "## Results" in text and "### Main model" in text and "The odds ratio was 1.02." in text
     assert "| Group | Boys | aOR | 95% CI |  |" in text  # the spanning header keeps the columns aligned
@@ -116,7 +117,7 @@ async def test_an_open_access_paper_is_written_as_markdown_and_the_record_keeps_
     assert log[0]["tool"] == "fulltext" and log[0]["db"] == "Europe PMC" and log[0]["release_or_version"] == "REST 6.9"
     full = json.loads((tmp_path / "work" / out["full_result"]).read_text(encoding="utf-8"))
     answer = full["results"][0]["answer"]
-    assert "markdown" not in answer  # the text lives once, in outputs/literature/
+    assert "markdown" not in answer  # the text lives once, in .tmp/literature/
     assert answer["text_sha256"] == hashlib.sha256(text.encode("utf-8")).hexdigest()
     assert "결과물에 옮겨 싣지 않는다" in out["note"]
 
@@ -131,7 +132,7 @@ async def test_without_a_europe_pmc_copy_the_file_holds_the_abstract_and_cc_pape
     assert [r["access_level"] for r in rows] == ["abstract", "abstract", "metadata"]
     assert rows[0]["publisher_copy"] == link and "publisher_copy" not in rows[1]
     assert not any(c.url.path.endswith("/fullTextXML") for c in calls)  # nothing open to fetch
-    text = (tmp_path / "work" / "outputs" / "literature" / "pmid-1.md").read_text(encoding="utf-8")
+    text = (tmp_path / "work" / ".tmp" / "literature" / "pmid-1.md").read_text(encoding="utf-8")
     assert "## Abstract" in text and "Boys were 51.2% of births." in text and "access_level: abstract" in text
 
 
@@ -169,6 +170,35 @@ async def test_a_failed_body_read_is_answered_with_the_abstract_but_not_cached(t
     assert calls == [] and row["access_level"] == "abstract" and row["cached_from"]
 
 
+async def test_spent_retries_on_the_body_also_fall_back_to_an_uncached_abstract(tmp_path):
+    """502-504 or a lost connection raise after the retries instead of returning a response (PR #698 review)."""
+    def down(request):
+        if request.url.path.endswith("/fullTextXML"):
+            return httpx.Response(503)
+        return search_answer([record()])
+
+    annotator, calls = make(down, tmp_path)
+    out = await annotator.fulltext(["123"])
+    row = out["results"][0]
+    assert row["ok"] and row["access_level"] == "abstract" and "본문 조회가 실패" in row["fulltext_error"]
+    assert sum(c.url.path.endswith("/fullTextXML") for c in calls) == annot.MAX_ATTEMPTS
+    again, calls = make(by_query({"EXT_ID:123 AND SRC:MED": [record()]}), tmp_path, "again")
+    assert (await again.fulltext(["123"]))["results"][0]["access_level"] == "full_text"
+
+
+async def test_a_direct_run_never_lists_a_paper_text_as_its_output(tmp_path):
+    """A direct run lists every file under outputs/ as a result and the edition publishes reported results, so the
+    third-party text stays under .tmp/ (PR #698 review)."""
+    ws = direct_workspace(tmp_path)
+    client = httpx.AsyncClient(transport=httpx.MockTransport(by_query({"EXT_ID:123 AND SRC:MED": [record()]})))
+    clock = FakeTime()
+    annotator = lit.LiteratureAnnotator(client, ws.dir, tmp_path / "cache", sleep=clock.sleep, clock=clock.clock)
+    row = (await annotator.fulltext(["123"]))["results"][0]
+    assert (ws.dir / row["text_file"]).is_file()
+    found, _note = ws.scan_outputs([], max_entries=100, max_depth=4)
+    assert found and not [path for path in found if "literature" in path]  # the query records are outputs, the text is not
+
+
 async def test_unknown_and_malformed_ids_do_not_stop_the_rest(tmp_path):
     annotator, _ = make(by_query({"EXT_ID:123 AND SRC:MED": [record()]}), tmp_path)
     rows = (await annotator.fulltext(["123", "999", "Irgens 1997"]))["results"]
@@ -184,7 +214,7 @@ async def test_a_cached_answer_writes_the_text_again_without_asking(tmp_path):
     out = await second.fulltext(["PMID:123"])
     row = out["results"][0]
     assert calls == [] and row["cached_from"] and row["access_level"] == "full_text"
-    assert (tmp_path / "other" / "outputs" / "literature" / "pmid-123.md").is_file()
+    assert (tmp_path / "other" / ".tmp" / "literature" / "pmid-123.md").is_file()
     assert out["source"]["release_or_version"] == "REST (cached answers)"
 
 
@@ -208,7 +238,7 @@ def test_literature_staff_read_bodies_through_the_recorded_tool(agent_id):
     assert "CAPTCHA" in text and "do not open it again" in text
     assert "Never fetch a paywalled paper from anywhere else" in text
     assert "access_level column (full_text, abstract or metadata)" in text
-    assert "never list them as outputs" in text
+    assert ".tmp/literature/ files are third-party text" in text and "never copy them into outputs/" in text
 
 
 def test_qc_and_review_weigh_abstract_only_numbers():

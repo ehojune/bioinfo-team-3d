@@ -4,11 +4,13 @@ In the 10-16 trial every literature step read abstracts only: PubMed search and 
 full-text tool 0, and PMC pages opened on the web came back as reCAPTCHA screens. `fulltext` gives staff one recorded
 route to the body of a paper: Europe PMC finds the record for a PMID, PMCID or DOI; an open-access copy in Europe PMC is
 fetched as JATS XML and written as Markdown (sections, tables, figure captions, references) to
-`outputs/literature/<id>.md`. Without such a copy the file holds the abstract, and `access_level` says which one the
+`.tmp/literature/<id>.md`. Without such a copy the file holds the abstract, and `access_level` says which one the
 staff member read: full_text, abstract or metadata.
 
-The files are third-party text under the paper's license: staff cite them by path, and the result edition never
-publishes them. Paywalled papers are not fetched from anywhere else.
+The files are third-party text under the paper's license, so they live in the task's `.tmp/`, not `outputs/`: a direct
+run lists every file under outputs/ as a result and the edition publishes reported results (PR #698 review), while
+nothing under .tmp/ is ever an output, bundled or published. The query log keeps each text's sha256 and IDs, so the
+same text can be fetched again. Paywalled papers are not fetched from anywhere else.
 
 API (checked 2026-10-16, REST version 6.9): GET /search?query=EXT_ID:<pmid> AND SRC:MED | PMCID:<pmcid> | DOI:"<doi>"
 &resultType=core&format=json gives pmid, pmcid, doi, isOpenAccess, inEPMC, license, abstractText and fullTextUrlList;
@@ -29,7 +31,7 @@ from ..adapters.owned import OwnedPathError, write_owned
 from .annot import Annotator, Item, LookupFailed, _now
 
 EUROPEPMC = "https://www.ebi.ac.uk/europepmc/webservices/rest"
-LIT_DIR = "outputs/literature"
+LIT_DIR = ".tmp/literature"  # never outputs/: see the module docstring
 TOOL = "fulltext"
 CACHE_RELEASE = "europepmc-rest"  # Europe PMC has no data release; answers age out instead (annot.CACHE_MAX_AGE_S)
 MAX_PER_CALL = 20
@@ -279,7 +281,10 @@ class LiteratureAnnotator(Annotator):
 
     async def _fulltext_xml(self, pmcid: str) -> tuple[str | None, str | None]:
         """(XML, None) for a body; (None, None) when Europe PMC says there is none (404); (None, problem) otherwise."""
-        response = await self.http.request("europepmc", "GET", f"{EUROPEPMC}/{pmcid}/fullTextXML")
+        try:
+            response = await self.http.request("europepmc", "GET", f"{EUROPEPMC}/{pmcid}/fullTextXML")
+        except LookupFailed as exc:  # retries spent (502-504, connection): the record still has its abstract
+            return None, f"본문 조회가 실패했습니다: {exc}."
         if response.status_code == 404:
             return None, None
         if response.status_code != 200:
@@ -289,7 +294,7 @@ class LiteratureAnnotator(Annotator):
         return response.text, None
 
     def _write_text(self, paper: PaperId, answer: dict) -> dict:
-        """The answer without its text: the text goes to outputs/literature/, the record keeps its path and hash."""
+        """The answer without its text: the text goes to .tmp/literature/, the record keeps its path and hash."""
         answer = dict(answer)
         markdown = answer.pop("markdown", None)
         if markdown is None:

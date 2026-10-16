@@ -1,6 +1,6 @@
 ## 결론
 
-직원이 논문 본문을 읽는 기록된 경로를 만들었습니다. `labhq_annot.fulltext`가 Europe PMC 오픈 액세스 본문을 받아 `outputs/literature/`에 쓰고, 문헌·생물·QC·리뷰 직원 지시가 그 경로와 `access_level` 칸을 씁니다. Refs #697.
+직원이 논문 본문을 읽는 기록된 경로를 만들었습니다. `labhq_annot.fulltext`가 Europe PMC 오픈 액세스 본문을 받아 작업 폴더 `.tmp/literature/`에 쓰고, 문헌·생물·QC·리뷰 직원 지시가 그 경로와 `access_level` 칸을 씁니다. Refs #697.
 
 ## 바뀐 것
 

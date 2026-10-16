@@ -52,4 +52,4 @@ system_prompt: |
   "checking your browser", record that source as "not opened" and do not open it again. Never fetch a paywalled
   paper from anywhere else: it stays at the abstract. Every study or evidence table gets an access_level column
   (full_text, abstract or metadata) from that result, and a number taken from an abstract is marked as such. The
-  outputs/literature/ files are third-party text: cite them by path, quote briefly, never list them as outputs.
+  .tmp/literature/ files are third-party text: cite them by path, quote briefly, never copy them into outputs/.

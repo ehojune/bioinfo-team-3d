@@ -156,10 +156,10 @@ async def gtex(genes_or_variants: list[str], tissues: list[str] | None = None, d
 async def fulltext(ids: list[str]) -> str:
     """The body of papers given as PMID, PMCID (PMC...) or DOI, up to 20 per call. Europe PMC finds each record; an
     open-access copy there is written as Markdown (sections, tables, figure captions, references) to
-    outputs/literature/<id>.md, otherwise that file holds the abstract. Each result says `access_level` (full_text,
+    .tmp/literature/<id>.md in your workspace, otherwise that file holds the abstract. Each result says `access_level` (full_text,
     abstract or metadata), the license and `text_file`; read the file with your file tools. Use this instead of
     opening PMC or publisher pages on the web, which often answer with a CAPTCHA. The files are third-party text
-    under the paper's license: cite them by path, quote briefly, and never list them as your step outputs.
+    under the paper's license: cite them by path, quote briefly, and never copy them into outputs/.
     `publisher_copy` appears when a CC-licensed paper has no Europe PMC copy: one try at that link is fine; paywalled
     papers stay at the abstract."""
     return await _run_literature(ids)
