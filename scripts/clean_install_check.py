@@ -12,6 +12,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 
 
@@ -261,6 +262,24 @@ def rehearse(source: Path, guard_paths: list[Path]) -> str:
         source_head = _run("source HEAD", ["git", "rev-parse", "HEAD"], cwd=source, env=clone_env).strip()
         clone_head = _run("clone HEAD", ["git", "rev-parse", "HEAD"], cwd=checkout, env=clone_env).strip()
         _expect("현재 HEAD clone", source_head == clone_head, f"source {source_head[:12]} != clone {clone_head[:12]}")
+
+        # The former editable install read these files from the checkout, so it could not detect wheel omissions.
+        wheel_dir = root / "wheel"
+        wheel_dir.mkdir()
+        _run("wheel build", [sys.executable, "-m", "pip", "wheel", ".", "--no-deps", "-w", str(wheel_dir)],
+             cwd=checkout, env=clone_env)
+        wheel = next(wheel_dir.glob("labhq-*.whl"), None)
+        _expect("wheel 생성", wheel is not None, "labhq wheel 없음")
+        with zipfile.ZipFile(wheel) as archive:
+            wheel_files = set(archive.namelist())
+        required_plugin_files = {
+            "labhq/skills/.claude-plugin/plugin.json",
+            "labhq/skills/humanizer/SKILL.md",
+            "labhq/skills/graphical-abstract/templates/graphical-abstract.svg",
+        }
+        missing_plugin_files = sorted(required_plugin_files - wheel_files)
+        _expect("wheel bundled plugin", not missing_plugin_files,
+                "누락: " + ", ".join(missing_plugin_files))
 
         create_venv = ["py", "-3", "-m", "venv", ".venv"] if os.name == "nt" else ["python3", "-m", "venv", ".venv"]
         _run("README venv", create_venv, cwd=checkout, env=clone_env)

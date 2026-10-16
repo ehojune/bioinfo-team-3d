@@ -6,10 +6,12 @@ import csv
 import io
 import json
 import os
+import posixpath
 import re
 from collections.abc import Iterable, Mapping
 from pathlib import Path, PurePosixPath
 from typing import Any
+from urllib.parse import quote, unquote
 
 from .integrations.github import SECRET_PATTERNS, publish_clean, redact_url_credentials, sanitize
 from .korean_qc import check_document, check_preservation
@@ -40,6 +42,99 @@ _TABLE_AGGREGATE = re.compile(r"(?:aggregate|summary|result|count|stats?|qc|^by[
 _TABLE_ROW_LEVEL = re.compile(r"(?:sample|metadata|individual|participant|subject|person|raw)", re.I)
 _CODE_SUFFIXES = {".py", ".r", ".sh"}
 _NEXTFLOW_NAMES = {"report.html", "timeline.html", "trace.txt"}
+
+
+def _balanced_link_target(depth: int = 4) -> str:
+    inner = r"[^()\s]*"
+    for _ in range(depth - 1):
+        inner = rf"(?:[^()\s]|\({inner}\))*"
+    return rf"(?:[^()\s]|\({inner}\))+"
+
+
+_MARKDOWN_LINK = re.compile(
+    r"(?P<image>!)?\[(?P<label>[^\]\n]*)\]\(\s*(?P<target><[^>\n]*>|" + _balanced_link_target()
+    + r")(?P<title>\s+(?:\"[^\"\n]*\"|'[^'\n]*'))?\s*\)")
+_MARKDOWN_CODE = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]*`", re.DOTALL)
+_REMOTE_LINK = re.compile(r"(?i)^(?:https?://|data:|mailto:)")
+_PORTFOLIO_TOP = {"README.md", "REFERENCES.md", "DATA_AND_LICENSES.md"}
+_PORTFOLIO_FOLDERS = ("report/", "run/", "code/", "figures/", "tables/")
+
+
+def table_allowed(name: str, body: str, *, internal: bool) -> bool:
+    """Use the portfolio's aggregate-only privacy rule for every published payload."""
+    path = PurePosixPath(name)
+    suffix = path.suffix.lower()
+    if suffix not in {".tsv", ".csv"}:
+        return True
+    return bool(_TABLE_AGGREGATE.search(path.name) and not _TABLE_ROW_LEVEL.search(path.name)
+                and not (internal and small_cells(body, suffix)))
+
+
+def portfolio_root_file(name: str) -> bool:
+    """Whether a builder-selected layout path belongs at a new repository's root."""
+    return name in _PORTFOLIO_TOP or name.startswith(_PORTFOLIO_FOLDERS)
+
+
+def _local_link(document: str, target: str, names: set[str]) -> tuple[str | None, str | None]:
+    raw = target[1:-1].strip() if target.startswith("<") and target.endswith(">") else target
+    if not raw or raw.startswith("#") or _REMOTE_LINK.match(raw):
+        return None, None
+    path = unquote(raw.split("#", 1)[0].split("?", 1)[0]).replace("\\", "/")
+    if path.startswith("/") or re.match(r"^[A-Za-z]:/", path):
+        return path, None
+    resolved = posixpath.normpath(posixpath.join(posixpath.dirname(document), path))
+    if not resolved.startswith("../") and resolved in names:
+        return path, resolved
+    root = posixpath.normpath(path)
+    if not root.startswith("../") and root in names:
+        return path, root
+    matches = [name for name in names if PurePosixPath(name).name == PurePosixPath(path).name]
+    return (path, matches[0]) if len(matches) == 1 else (path, None)
+
+
+def _rewrite_markdown_links(files: Mapping[str, str | bytes]) -> dict[str, str | bytes]:
+    names = set(files)
+    rewritten = dict(files)
+    for document, body in files.items():
+        if not document.lower().endswith(".md") or not isinstance(body, str):
+            continue
+        masked = _MARKDOWN_CODE.sub(lambda match: " " * len(match.group()), body)
+        pieces: list[str] = []
+        last = 0
+        for match in _MARKDOWN_LINK.finditer(masked):
+            _path, resolved = _local_link(document, match.group("target"), names)
+            if resolved is None:
+                if match.group("image") and _path is not None:
+                    pieces.extend((body[last:match.start()], f"*(그림 생략: {match.group('label') or '그림'})*"))
+                    last = match.end()
+                continue
+            relative = posixpath.relpath(resolved, posixpath.dirname(document) or ".")
+            encoded = quote(relative, safe="/")
+            original = body[match.start():match.end()]
+            replacement = original[:match.start("target") - match.start()] + encoded + original[match.end("target") - match.start():]
+            if replacement != original:
+                pieces.extend((body[last:match.start()], replacement))
+                last = match.end()
+        if pieces:
+            pieces.append(body[last:])
+            rewritten[document] = "".join(pieces)
+    return rewritten
+
+
+def broken_markdown_links(files: Mapping[str, str | bytes]) -> list[dict[str, str]]:
+    """List unresolved relative links in every Markdown document in an edition."""
+    names = set(files)
+    broken: list[dict[str, str]] = []
+    for document in sorted(names):
+        body = files[document]
+        if not document.lower().endswith(".md") or not isinstance(body, str):
+            continue
+        masked = _MARKDOWN_CODE.sub(lambda match: " " * len(match.group()), body)
+        for match in _MARKDOWN_LINK.finditer(masked):
+            path, resolved = _local_link(document, match.group("target"), names)
+            if path is not None and resolved is None:
+                broken.append({"document": document, "target": path})
+    return broken
 
 
 def _clean(text: str, settings, req: dict) -> str:
@@ -367,7 +462,7 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
         elif path.name in _NEXTFLOW_NAMES and "pipeline_info" in {part.casefold() for part in path.parts}:
             files[f"run/nextflow/{path.name}"] = body
         elif suffix in {".tsv", ".csv"} and _TABLE_AGGREGATE.search(path.name) and not _TABLE_ROW_LEVEL.search(path.name):
-            if internal and small_cells(body, suffix):
+            if not table_allowed(name, body, internal=internal):
                 omitted_tables.append(name)
             else:
                 files[_unique_target("tables", name, used)] = body
@@ -409,6 +504,12 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
     if check_document(readme)["status"] != "PASS":
         raise ValueError("README에 반드시 0이어야 하는 한국어 표현이 남았습니다.")
     files["README.md"] = _clean(readme, settings, req)
+
+    files = _rewrite_markdown_links(files)
+    broken = broken_markdown_links(files)
+    if broken:
+        detail = ", ".join(f"{row['document']} -> {row['target']}" for row in broken)
+        raise ValueError(f"정리본 Markdown 링크가 깨졌습니다: {detail}")
 
     issues = scan_publish_files(files, internal=internal)
     blocking = [issue for issue in issues if issue["kind"] != "small_cell"]

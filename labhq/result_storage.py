@@ -7,6 +7,7 @@ import copy
 import csv
 import json
 import os
+import posixpath
 from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
 import re
@@ -21,8 +22,8 @@ from .interruption import ShutdownInterrupted
 from .models import ApprovalRequest, Task
 from .policy import touches, restricted_paths
 from . import edition_sources
-from .portfolio import (build_portfolio_files, request_uses_internal_data, scan_publish_files,
-                        small_cells)
+from .portfolio import (broken_markdown_links, build_portfolio_files, portfolio_root_file,
+                        request_uses_internal_data, scan_publish_files, table_allowed)
 from .intake import reference_dirs
 from .recruit.provenance import touches_restricted
 from .report_abstract import abstract_first, build_graphical_abstract, with_abstract_link
@@ -177,7 +178,7 @@ def publish_image_previews(images: Mapping[str, bytes], target: Path) -> tuple[d
     return previews, omitted
 
 
-def edition_figure_links(text: str, req: dict, settings, included) -> str:
+def edition_figure_links(text: str, req: dict, settings, included, document: str = "README.md") -> str:
     """Make every local figure link of an edition document resolve to a file the edition holds (#584).
 
     The report links ``<workdir_id>/outputs/<file>``; `edition_assets` copies a reported output to its bundle path
@@ -191,7 +192,14 @@ def edition_figure_links(text: str, req: dict, settings, included) -> str:
     pieces, last = [], 0
     for link in image_links(text):
         kind, value = classify(link.target, lambda name: name in included)
-        if kind == "remote" or (kind == "local" and value in included):
+        resolved = posixpath.normpath(posixpath.join(posixpath.dirname(document), value)) if kind == "local" else value
+        if kind == "remote" or (kind == "local" and resolved in included):
+            continue
+        if kind == "local" and value in included:
+            relative = quote(posixpath.relpath(value, posixpath.dirname(document) or "."), safe="/")
+            original = text[link.start:link.end]
+            pieces += [text[last:link.start], original.replace(link.target, relative, 1)]
+            last = link.end
             continue
         # a graphical abstract nobody made is not an omitted figure: its link goes without a note (#608)
         note = "" if kind == "local" and is_abstract_target(value) else f"*(그림 생략: {link.alt.strip() or '그림'})*"
@@ -704,8 +712,7 @@ class ResultStorage:
                 internal = request_uses_internal_data(req, self.s)
                 assets = {}
                 for name, body in raw_assets.items():
-                    suffix = PurePosixPath(name).suffix.lower()
-                    if internal and suffix in {".tsv", ".csv"} and small_cells(body, suffix):
+                    if not table_allowed(name, body, internal=internal):
                         continue
                     assets[name] = body
                 included = {*assets, *images}
@@ -716,13 +723,14 @@ class ResultStorage:
                         included.add(name)
                     else:
                         docs[name] = body
-                if missing := document_links(docs["README.md"]):
+                if saved.get("mode") != "new" and (missing := document_links(docs["README.md"])):
                     docs["README.md"] += "\n\n" + missing + "\n"
                 if len(str(req.get("report") or "")) > README_EXCERPT_CHARS:
                     docs["README.md"] += "\n이어지는 내용은 report.md에 있습니다.\n"
                 links = "\n".join(f"- [{name}]({quote(name, safe='/')})" for name in [*assets, *images])
                 if links:
-                    docs["README.md"] += "\n## 그림·표·실행 파일\n\n" + links + "\n"
+                    if saved.get("mode") != "new":
+                        docs["README.md"] += "\n## 그림·표·실행 파일\n\n" + links + "\n"
                     docs["REPRODUCE.md"] += "\n\n## 포함한 파일\n\n" + links + "\n"
                 bundle_readme = bundle / "README.md"
                 manifest = bundle_readme.with_name("MANIFEST.tsv")
@@ -764,13 +772,19 @@ class ResultStorage:
                             # Before #686 the editor returned only a short lead. Keep that lead without replacing
                             # any protected portfolio fact; new editors receive and preserve the complete draft.
                             docs["README.md"] = candidate.rstrip() + "\n\n" + docs["README.md"]
-                        if missing := document_links(docs["README.md"]):
+                        if saved.get("mode") != "new" and (missing := document_links(docs["README.md"])):
                             docs["README.md"] += "\n\n" + missing + "\n"
-                        if links:
+                        if links and saved.get("mode") != "new":
                             docs["README.md"] += "\n## 그림·표·실행 파일\n\n" + links + "\n"
                 for name in _GENERATED:  # the editor's README and the bundle's own text are linked here as well
-                    docs[name] = edition_figure_links(docs[name], req, self.s, included)
+                    docs[name] = edition_figure_links(docs[name], req, self.s, included, name)
                 docs.update(assets)
+                if saved.get("mode") == "new":
+                    portfolio_payload = {name: body for name, body in {**docs, **images}.items()
+                                         if portfolio_root_file(name)}
+                    if broken := broken_markdown_links(portfolio_payload):
+                        detail = ", ".join(f"{row['document']} -> {row['target']}" for row in broken)
+                        raise ValueError(f"정리본 Markdown 링크가 깨졌습니다: {detail}")
                 issues = scan_publish_files({**docs, **images}, internal=internal)
                 if issues:
                     kinds = ", ".join(sorted({issue["kind"] for issue in issues}))
@@ -800,8 +814,7 @@ class ResultStorage:
                 pdf, reason = await self.edition_pdf(rid, req, report_text=docs.get("report/report.md"))
                 saved = req["result_storage"]  # PI review may replace the persisted request fields while we print.
                 if pdf:
-                    docs["README.md"] += (f"\n[과학 보고서 PDF]({_PORTFOLIO_PDF_NAME}) · "
-                                          f"[호환용 PDF]({_PDF_NAME})\n"
+                    docs["README.md"] += (f"\n[과학 보고서 PDF]({_PORTFOLIO_PDF_NAME})\n"
                                           + (f"\n{reason}\n" if reason else ""))
                     write(_PDF_NAME, pdf)
                     write(_PORTFOLIO_PDF_NAME, pdf)
@@ -950,18 +963,29 @@ class ResultStorage:
                 branch = default_branch
             saved["branch"] = branch
             write_branch = None if empty else branch
-            bases = ([""] if saved.get("mode") == "new" else []) + [f"labhq/results/{rid}/"]
-            for base in bases:
-                for name, body in docs.items():
+            internal = request_uses_internal_data(self.hub.requests[rid], self.s)
+            compatibility_docs = {name: body for name, body in docs.items()
+                                  if table_allowed(name, body, internal=internal)}
+            compatibility_images = dict(images or {})
+            payloads = []
+            if saved.get("mode") == "new":
+                payloads.append(("",
+                                 {name: body for name, body in compatibility_docs.items() if portfolio_root_file(name)},
+                                 {name: body for name, body in compatibility_images.items() if portfolio_root_file(name)},
+                                 (_PORTFOLIO_PDF_NAME,) if pdf else ()))
+            payloads.append((f"labhq/results/{rid}/", compatibility_docs, compatibility_images,
+                             (_PDF_NAME, _PORTFOLIO_PDF_NAME) if pdf else ()))
+            for base, payload_docs, payload_images, pdf_names in payloads:
+                for name, body in payload_docs.items():
                     await gh.put_file(repo, base + name, body, "연구 결과 정리", write_branch)
                     write_branch = branch
-                for name, body in (images or {}).items():
+                for name, body in payload_images.items():
                     payload = (clean_svg_for_publish(body, self.s, self.hub.requests[rid])
                                if Path(name).suffix.lower() == ".svg" else body)
                     await gh.put_image(repo, base + name, payload, write_branch)
                     write_branch = branch
                 if pdf:
-                    for name in (_PDF_NAME, _PORTFOLIO_PDF_NAME):
+                    for name in pdf_names:
                         await gh.put_binary(repo, base + name, pdf, write_branch, "연구 결과 PDF")
                         write_branch = branch
         except (GitHubHTTPError, httpx.HTTPStatusError) as exc:

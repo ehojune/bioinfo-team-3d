@@ -1,4 +1,9 @@
 import re
+import json
+import os
+import subprocess
+import shutil
+import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -53,6 +58,48 @@ def test_bundled_writing_skills_have_their_contract_and_license_files():
     for required in ("질문", "자료", "방법", "핵심 결과", "결론", "<title>", "<desc>",
                      "두 방향", "세 관점", "잘림", "겹침", "PNG", "캡처"):
         assert required in graphical_text
+
+
+def test_built_wheel_installs_complete_bundled_plugin(tmp_path):
+    source = tmp_path / "source"
+    wheel_dir = tmp_path / "wheel"
+    installed = tmp_path / "installed"
+    shutil.copytree(ROOT, source, ignore=shutil.ignore_patterns(
+        ".git", ".pr-drafts", "build", "pip", "*.egg-info", "__pycache__"))
+    wheel_dir.mkdir()
+    env = os.environ.copy()
+    env["PIP_CACHE_DIR"] = str(tmp_path / "pip-cache")
+    subprocess.run(
+        [sys.executable, "-m", "pip", "wheel", ".", "--no-deps", "-w", str(wheel_dir)],
+        cwd=source, env=env, check=True, capture_output=True, text=True,
+    )
+    wheel = next(wheel_dir.glob("labhq-*.whl"))
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--no-deps", "--target", str(installed), str(wheel)],
+        cwd=tmp_path, env=env, check=True, capture_output=True, text=True,
+    )
+    code = """
+import json
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from labhq.plugin_checks import read_plugin_manifest
+from labhq.staff_skills import BUNDLED_PLUGIN_DIR
+manifest = read_plugin_manifest(BUNDLED_PLUGIN_DIR)
+required = [
+    BUNDLED_PLUGIN_DIR / '.claude-plugin/plugin.json',
+    BUNDLED_PLUGIN_DIR / 'humanizer/SKILL.md',
+    BUNDLED_PLUGIN_DIR / 'graphical-abstract/templates/graphical-abstract.svg',
+]
+print(json.dumps({'manifest': manifest, 'required': [path.is_file() for path in required]}))
+"""
+    done = subprocess.run(
+        [sys.executable, "-I", "-c", code, str(installed)],
+        cwd=tmp_path, check=True, capture_output=True, text=True,
+    )
+    result = json.loads(done.stdout)
+    assert result["manifest"]["name"] == "labhq-bundled-skills"
+    assert all(result["required"])
 
 
 def test_staff_require_the_writing_and_figure_skills_and_short_messages_have_inline_rules():

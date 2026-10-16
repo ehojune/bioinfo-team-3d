@@ -14,7 +14,7 @@ from labhq.integrations.github import GitHubClient
 from labhq.request_bundle import build_request_bundle
 from labhq.result_storage import ResultStorage
 from labhq.ro_crate import verify_bundle_copy
-from labhq.settings import ProjectSettings, Settings
+from labhq.settings import DataZone, ProjectSettings, Settings
 from tests.test_request_bundle import pending_bundle_fixture
 from tests.test_result_storage import Hub
 
@@ -160,6 +160,57 @@ async def test_direct_upload_rejects_unreviewed_request(tmp_path):
     hub.requests["req_test"]["result_storage"] = {"mode": "new", "repo": "owner/study"}
     with pytest.raises(ValueError, match="검토 완료"):
         await ResultStorage(hub).upload("req_test", {"README.md": "result"})
+
+
+async def test_new_repository_root_and_compatibility_payload_share_table_selection(tmp_path):
+    hub = Hub(tmp_path)
+    internal = tmp_path / "internal"
+    internal.mkdir()
+    hub.s.policy.data_zones = [DataZone(path=str(internal), level="internal")]
+    hub.requests["req_test"].update(
+        pi_reviewed_at=1,
+        project_dirs=[str(internal)],
+        result_storage={"mode": "new", "repo": "owner/study", "allow_public": True},
+    )
+    calls = []
+
+    class GitHub:
+        async def repo_info(self, _repo):
+            return {"private": True, "default_branch": "main"}
+
+        async def repository_is_empty(self, _repo, _branch):
+            return False
+
+        async def put_file(self, _repo, name, body, _message, branch):
+            calls.append((name, body, branch))
+
+        async def put_image(self, _repo, name, body, branch):
+            calls.append((name, body, branch))
+
+        async def put_binary(self, _repo, name, body, branch, _message):
+            calls.append((name, body, branch))
+
+    service = ResultStorage(hub)
+    service.client = lambda: GitHub()
+    docs = {
+        "README.md": "portfolio",
+        "report/report.md": "report",
+        "tables/result_summary.tsv": "group\tcount\nall\t42\n",
+        "report.md": "compatibility",
+        "steps/s1/outputs/notes.txt": "allowed compatibility output",
+        "steps/s1/outputs/sample_metadata.tsv": "sample\tgroup\ns1\tcase\n",
+        "steps/s1/outputs/by_group.tsv": "group\tcount\ncase\t9\n",
+    }
+
+    await service.upload("req_test", docs)
+
+    names = {name for name, _body, _branch in calls}
+    assert {"README.md", "report/report.md", "tables/result_summary.tsv"} <= names
+    assert "report.md" not in names and not any(name.startswith("steps/") for name in names)
+    compat = "labhq/results/req_test/"
+    assert compat + "report.md" in names
+    assert compat + "steps/s1/outputs/notes.txt" in names
+    assert not any("sample_metadata.tsv" in name or "by_group.tsv" in name for name in names)
 
 
 async def test_public_project_without_permission_stays_local(tmp_path):

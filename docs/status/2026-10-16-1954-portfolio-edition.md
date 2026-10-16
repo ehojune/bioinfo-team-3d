@@ -1,21 +1,21 @@
 ## 결론
 
-PR #699에서 한 요청의 결과를 발표·공유용 GitHub 정리본으로 만듭니다. Refs #686.
+PR #699의 봇 지적 네 건을 반영했습니다. Refs #686.
 
 ## 바뀐 것
 
-- `README.md`, `report/`, `run/`, `code/`, `figures/`, `tables/`, 참고문헌과 자료 이용 안내를 고정했습니다.
-- 리뷰 수정 요구 뒤 끝나도 논문 형식 보고서를 우선하고, 남은 지적은 `정정`에 둡니다.
-- 결정 원문·비용·실행 기록을 경로를 가려 남기며 유의하지 않은 결과도 수치와 함께 요약합니다.
-- 비밀값·로컬 경로·서명 URL·내부 자료 1–9 칸을 검사하고 제3자 논문 본문은 제외합니다.
-- bundled plugin root를 `labhq/skills/`로 좁혔습니다.
+- wheel에 bundled plugin manifest·SKILL·template을 싣고 clean-install에서도 wheel 내용을 검사합니다.
+- 새 저장소 루트에는 portfolio 정리본만, 전체 호환 사본은 `labhq/results/<요청 id>/`에만 올립니다.
+- 행 단위 표와 내부 자료의 1–9 칸 표는 두 payload에 같은 규칙으로 제외합니다.
+- 중첩 보고서의 그림 링크를 다시 쓰고 정리본의 모든 Markdown 상대 링크를 검사합니다.
+- PNG 그래픽 초록만 있어도 SVG 대체본을 만듭니다.
 
 ## 확인
 
-- 새 회귀는 수정 전 import 실패, 수정 후 2 passed입니다.
-- 관련 pytest 157 passed, 공개 저장소 검사 통과입니다.
-- `docs/manual.md`는 152,633자에서 152,281자로 352자 줄었습니다.
+- 수정 전 새 회귀 4 failed/1 passed, 수정 후 5 passed.
+- 관련 pytest 41 passed. 실제 wheel을 빌드·설치해 `BUNDLED_PLUGIN_DIR` manifest를 읽었습니다.
+- 기존 clean-install은 editable install이라 wheel 누락을 볼 수 없었습니다.
 
 ## 남은 것
 
-#686 2단계의 여러 갈래 계획·종합과 비교 기준(#694)은 다음 레인입니다. 리뷰 요청과 병합은 하지 않습니다.
+push 뒤 CI 결과를 확인합니다. 리뷰 재요청과 병합은 하지 않습니다.

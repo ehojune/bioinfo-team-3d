@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import labhq.portfolio as portfolio
 from labhq.korean_qc import check_document
 from labhq.portfolio import build_portfolio_files, scan_publish_files
 from labhq.settings import DataZone, Settings
@@ -149,3 +150,42 @@ def test_publish_scan_catches_credentials_paths_signed_urls_and_small_cells():
     }
     kinds = {issue["kind"] for issue in scan_publish_files(files, internal=True)}
     assert {"secret", "local_path", "signed_url", "small_cell"} <= kinds
+
+
+def test_report_figure_links_are_relative_to_the_nested_report(tmp_path):
+    settings, request, bundle, assets, images, decisions, tasks = portfolio_fixture(tmp_path)
+    assets["steps/report/outputs/report/final_report.md"] = PAPER.replace(
+        "## 결과\n\n", "## 결과\n\n![화산 그림](work-analysis/outputs/figures/volcano.svg)\n\n")
+    request["results"]["analysis"].update(
+        workdir="work-analysis", outputs=["outputs/figures/volcano.svg"])
+
+    files = build_portfolio_files(
+        request, settings, assets, images, decisions=decisions, tasks=tasks, bundle=bundle)
+
+    assert "![화산 그림](../figures/volcano.svg)" in files["report/report.md"]
+    assert portfolio.broken_markdown_links(files) == []
+
+
+def test_markdown_link_check_covers_every_edition_document():
+    files = {
+        "README.md": "[보고서](report/report.md)\n",
+        "report/report.md": "![그림](../figures/missing.svg)\n",
+        "run/requests.md": "[표](../tables/missing.tsv)\n",
+    }
+
+    assert portfolio.broken_markdown_links(files) == [
+        {"document": "report/report.md", "target": "../figures/missing.svg"},
+        {"document": "run/requests.md", "target": "../tables/missing.tsv"},
+    ]
+
+
+def test_png_graphical_abstract_gets_a_generated_svg_fallback(tmp_path):
+    settings, request, bundle, assets, images, decisions, tasks = portfolio_fixture(tmp_path)
+    images.pop("steps/report/outputs/graphical_abstract.svg")
+    images["steps/report/outputs/graphical_abstract.png"] = b"synthetic-png"
+
+    files = build_portfolio_files(
+        request, settings, assets, images, decisions=decisions, tasks=tasks, bundle=bundle)
+
+    assert files["figures/graphical_abstract.svg"].startswith(b"<svg")
+    assert files["figures/graphical_abstract.svg"] != b"synthetic-png"
