@@ -14,7 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 06:53 | [`adabdd6`](https://github.com/ehojune/bioinfo-team-3d/pull/733/commits/adabdd6) | 문헌 MCP 도구 고정 기대 목록에 인용 추적과 preprint를 반영 |
+| 06:15 | [`ee4ceac`](https://github.com/ehojune/bioinfo-team-3d/pull/733/commits/ee4ceac) | Europe PMC preprint 조회와 판별을 PPR core의 publisher 필드에 맞춤 |
 | 06:11 | [`b89ba4d`](https://github.com/ehojune/bioinfo-team-3d/pull/731/commits/b89ba4d) | 계획 단계가 아닌 비용을 단계 평균에서 빼고 총액과 예산에는 유지하도록 기록 경로를 보완함 |
+| 06:07 | [`2d6f452`](https://github.com/ehojune/bioinfo-team-3d/pull/733/commits/2d6f452) | Europe PMC 양방향 인용 추적과 bioRxiv·medRxiv 심사 전 검색을 추가 |
 | 05:32 | [`acb4698`](https://github.com/ehojune/bioinfo-team-3d/pull/731/commits/acb4698) | 비용을 계획 단계별로 합치고 DE 약어와 부정 분석의 범위 판정을 바로잡음 |
 | 04:48 | [`951fd59`](https://github.com/ehojune/bioinfo-team-3d/pull/730/commits/951fd59) | 겹치는 통제 구역의 Read 사전 허용을 막음 |
 | 04:05 | [`0c6a342`](https://github.com/ehojune/bioinfo-team-3d/pull/730/commits/0c6a342) | internal 구역을 가리키는 별칭 Read를 승인 게이트로 보냄 |
