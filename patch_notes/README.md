@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 03:24 | [`a3c1e75`](https://github.com/ehojune/bioinfo-team-3d/pull/729/commits/a3c1e75) | 패키지 안 예시 설정에도 진행 branch 설정을 넣어 두 사본을 맞췄다 |
+| 02:49 | [`c929a67`](https://github.com/ehojune/bioinfo-team-3d/pull/729/commits/c929a67) | 선택한 요청의 공개 단계 산출과 진행 표를 별도 GitHub branch에 올리고 실패를 요청 실행과 분리했습니다. |
 | 01:20 | [`b6e63c3`](https://github.com/ehojune/bioinfo-team-3d/pull/727/commits/b6e63c3) | main 변경을 합치며 산출 필수·선택 구분이 바뀐 계획 스키마 고정 hash를 다시 계산했다 |
 | 00:43 | [`09eef3b`](https://github.com/ehojune/bioinfo-team-3d/pull/727/commits/09eef3b) | 대기·결정 turn의 산출 검사를 최종 turn까지 미루고 보조 turn 산출 계약을 분리 |
 | 00:15 | [`e7a549a`](https://github.com/ehojune/bioinfo-team-3d/pull/724/commits/e7a549a) | 요청 범위와 실행 단계를 따로 검사하고 비교 가능한 실측만 써서 비용 상한 과소 추정을 막습니다. |
