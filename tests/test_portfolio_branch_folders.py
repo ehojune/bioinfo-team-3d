@@ -1,7 +1,7 @@
 from copy import deepcopy
 from pathlib import Path
 
-from labhq.portfolio import broken_markdown_links, build_portfolio_files
+from labhq.portfolio import broken_markdown_links, build_portfolio_files, internal_data_steps
 from labhq.settings import DataZone, Settings
 
 from test_portfolio_edition import PAPER, portfolio_fixture
@@ -204,6 +204,104 @@ def test_internal_branch_uses_existing_publication_allowlist(tmp_path):
     assert files["studies/C-mdis/tables/summary.tsv"] == "group\tcount\n전체\t100\n"
     assert not any(name.endswith("people.tsv") for name in files)
     assert "내부 자료 영역이라 표 1개는 요청 묶음에만 둠" in files["README.md"]
+
+
+def test_internal_rules_follow_the_source_step_and_descendants(tmp_path):
+    settings, request, assets, images = branched_fixture(tmp_path)
+    request = deepcopy(request)
+    internal_file = Path(request["project_dirs"][0]) / "births.tsv"
+    request["results"]["mdis"]["text"] += f" 입력은 {internal_file}이다."
+    request["plan"]["steps"][-1].update(
+        depends_on=["omics", "mdis"],
+        output_types=[{"name": "outputs/tables/combined.tsv", "data_type": "table"}],
+    )
+    request["results"]["synth"]["outputs"] = ["outputs/tables/combined.tsv"]
+    assets.update({
+        "steps/omics/outputs/tables/summary.tsv": "gene\trank\nG1\t5\n",
+        "steps/mdis/outputs/tables/summary.tsv": "group\tcount\nA\t5\n",
+        "steps/synth/outputs/tables/combined.tsv": "group\tcount\nA\t5\n",
+    })
+
+    files = build_portfolio_files(request, settings, assets, images)
+
+    assert files["studies/B-omics/tables/summary.tsv"] == "gene\trank\nG1\t5\n"
+    assert not any(name.endswith("C-mdis/tables/summary.tsv") for name in files)
+    assert not any(name.endswith("combined.tsv") for name in files)
+
+
+def test_runner_workspace_inside_internal_zone_is_not_step_input_provenance(tmp_path):
+    settings, request, _assets, _images = branched_fixture(tmp_path)
+    request = deepcopy(request)
+    internal = Path(request["project_dirs"][0])
+    settings.runner.workspace_root = str(internal)
+    request["results"]["mdis"]["text"] += f" 입력은 {internal / 'births.tsv'}이다."
+    for step_id, result in request["results"].items():
+        workdir = internal / "runs" / step_id
+        result.update(
+            workdir=str(workdir),
+            source_workdir=str(workdir),
+            cwd=str(workdir),
+            workspace_root=str(internal),
+        )
+
+    assert internal_data_steps(request, settings) == {"mdis"}
+
+
+def test_missing_step_path_provenance_keeps_request_wide_internal_fallback(tmp_path):
+    settings, request, assets, images = branched_fixture(tmp_path)
+    request = deepcopy(request)
+    request["plan"]["steps"][1].pop("output_types")
+    assets["steps/omics/outputs/tables/summary.tsv"] = "gene\trank\nG1\t5\n"
+
+    files = build_portfolio_files(request, settings, assets, images)
+
+    assert not any(name.endswith("B-omics/tables/summary.tsv") for name in files)
+
+
+def test_two_internal_files_need_concrete_step_attribution(tmp_path):
+    settings, request, assets, images = branched_fixture(tmp_path)
+    request = deepcopy(request)
+    internal = Path(request["project_dirs"][0])
+    births = internal / "births.tsv"
+    deaths = internal / "deaths.tsv"
+    request["text"] = f"{births}와 {deaths}를 서로 다른 단계에서 읽는다."
+    request["plan"]["steps"][1]["input_refs"] = [str(internal)]
+    request["results"]["mdis"]["text"] += f" 입력은 {births}이다."
+    assets["steps/omics/outputs/tables/summary.tsv"] = "gene\trank\nG1\t5\n"
+
+    files = build_portfolio_files(request, settings, assets, images)
+
+    assert not any(name.endswith("B-omics/tables/summary.tsv") for name in files)
+
+
+def test_posix_internal_paths_keep_case_for_step_attribution():
+    settings = Settings()
+    settings.policy.data_zones = [DataZone(path="/srv/internal", level="internal")]
+    request = {
+        "text": "Compare /srv/internal/A.tsv with /srv/internal/a.tsv.",
+        "plan": {"steps": [
+            {"id": "upper", "instruction": "Read the uppercase input."},
+            {"id": "lower", "instruction": "Read the lowercase input."},
+        ]},
+        "results": {
+            "upper": {"text": "Read /srv/internal/A.tsv."},
+            "lower": {"text": "Finished the public comparison."},
+        },
+    }
+
+    assert internal_data_steps(request, settings) is None
+
+
+def test_zone_basename_in_plain_prose_is_not_internal_provenance():
+    settings = Settings()
+    settings.policy.data_zones = [DataZone(path="/home/researcher/.labhq/runs", level="internal")]
+    request = {
+        "text": "Compare public data from three sequencing runs.",
+        "plan": {"steps": [{"id": "public", "instruction": "Analyze public reads."}]},
+        "results": {"public": {"text": "Three sequencing runs passed QC."}},
+    }
+
+    assert internal_data_steps(request, settings) == set()
 
 
 def test_unbranched_request_keeps_the_existing_file_list(tmp_path):

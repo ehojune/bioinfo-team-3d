@@ -228,3 +228,27 @@ async def test_review_done_rejects_a_bad_storage_answer_before_saving_the_review
     assert not any(entry["approval"]["kind"] == "result_storage" for entry in hub.approvals.values())
     editor.assert_not_awaited()
     await hub.result_storage.close()
+
+
+@pytest.mark.parametrize(("request_status", "saved", "command"), [
+    ("done", {"mode": "local", "status": "local"}, "--to github"),
+    ("failed", {"mode": "new", "repo": "owner/study", "status": "failed"}, "--redraft"),
+    ("done", {"mode": "new", "repo": "owner/study", "status": "declined"}, "--redraft"),
+])
+async def test_review_done_storage_without_end_question_never_saves_only_the_review(
+        tmp_path, monkeypatch, request_status, saved, command):
+    app, hub, calls, editor = make(tmp_path, monkeypatch)
+    hub.requests["r"].update(status=request_status, result_storage=saved)
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test",
+                                 headers={"Authorization": "Bearer test-token"}) as client:
+        reply = await client.post("/api/requests/r/review-done", json={
+            "storage": "github", "name": "study", "visibility": "private",
+        })
+
+    assert reply.status_code == 409
+    assert command in reply.json()["detail"]
+    assert not hub.requests["r"].get("pi_reviewed_at")
+    assert not any(entry["approval"]["kind"] == "result_storage" for entry in hub.approvals.values())
+    editor.assert_not_awaited()
+    await hub.result_storage.close()

@@ -225,6 +225,59 @@ async def test_new_repository_root_and_compatibility_payload_share_table_selecti
     assert not any(name.endswith(("rows.json", "samples.txt")) for name in names)
 
 
+async def test_upload_keeps_public_step_small_cells_outside_the_internal_scope(tmp_path):
+    hub = Hub(tmp_path)
+    internal = tmp_path / "internal"
+    internal.mkdir()
+    hub.s.policy.data_zones = [DataZone(path=str(internal), level="internal")]
+    public_table = "studies/B-public/tables/public.tsv"
+    internal_tables = {
+        "studies/A-internal/tables/private.tsv",
+        "tables/synthesis.tsv",
+    }
+    hub.requests["req_test"].update(
+        text=f"{internal / 'cohort.tsv'}와 공개 자료를 비교한다.",
+        project_dirs=[str(internal)],
+        pi_reviewed_at=1,
+        result_storage={
+            "mode": "new", "repo": "owner/study", "allow_public": True,
+            "internal_publication_scope": "step",
+            "internal_files": sorted(internal_tables),
+            "internal_allowed_files": [],
+        },
+    )
+    calls = []
+
+    class GitHub:
+        async def repo_info(self, _repo):
+            return {"private": True, "default_branch": "main"}
+
+        async def repository_is_empty(self, _repo, _branch):
+            return False
+
+        async def put_file(self, _repo, name, body, _message, branch):
+            calls.append(name)
+
+        async def put_image(self, *_args):
+            raise AssertionError("no images")
+
+    service = ResultStorage(hub)
+    service.client = lambda: GitHub()
+    docs = {
+        "README.md": "portfolio",
+        "report/report.md": "report",
+        public_table: "gene\trank\nG1\t5\n",
+        "studies/A-internal/tables/private.tsv": "group\tcount\nA\t5\n",
+        "tables/synthesis.tsv": "group\tcount\nA\t5\n",
+    }
+
+    await service.upload("req_test", docs)
+
+    assert public_table in calls
+    assert f"labhq/results/req_test/{public_table}" in calls
+    assert not any(name.removeprefix("labhq/results/req_test/") in internal_tables for name in calls)
+
+
 async def test_public_payload_keeps_json_and_text_outputs(tmp_path):
     hub = Hub(tmp_path)
     hub.requests["req_test"].update(

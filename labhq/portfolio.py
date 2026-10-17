@@ -9,12 +9,14 @@ import os
 import posixpath
 import re
 from collections.abc import Iterable, Mapping
+from dataclasses import fields
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import quote, unquote
 
 from .integrations.github import SECRET_PATTERNS, publish_clean, redact_url_credentials, sanitize
 from .korean_qc import check_document, check_preservation
+from .models import RunnerPathFields
 from .policy import touches
 from .research.contract import branch_plan_topology
 from .report_abstract import build_graphical_abstract
@@ -61,6 +63,19 @@ _AGGREGATE_TEXT_SUFFIXES = {".tsv", ".csv", ".json", ".txt", ".html"}
 _INTERNAL_DEFAULT_SUFFIXES = {".md", ".svg", ".py", ".r", ".sh"}
 _CODE_SUFFIXES = {".py", ".r", ".sh"}
 _NEXTFLOW_NAMES = {"report.html", "timeline.html", "trace.txt"}
+_RUNNER_EXECUTION_LOCATION_FIELDS = frozenset(
+    {field.name for field in fields(RunnerPathFields)}
+    & {
+        "workdir", "source_workdir", "cwd", "workspace_root", "project_dirs", "plugin_dirs",
+        "reference_roots", "local_dir", "skill_dir", "talent_dir", "mcp_path", "mcp_entry_path",
+        "read_only_roots",
+    }
+)
+_RESULT_INPUT_PROVENANCE_FIELDS = frozenset({
+    "reference_dirs", "upstream_dirs", "upstream_steps", "references", "input_refs", "input_files",
+    "input_records",
+})
+_RESULT_INPUT_PROVENANCE_CONTAINERS = frozenset({"meta", "provenance", "runs"})
 
 
 def _balanced_link_target(depth: int = 4) -> str:
@@ -618,10 +633,142 @@ def small_cells(text: str, suffix: str) -> list[str]:
         return []
 
 
+def _text_values(value: Any) -> Iterable[str]:
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, Mapping):
+        for item in value.values():
+            yield from _text_values(item)
+    elif isinstance(value, Iterable) and not isinstance(value, (bytes, bytearray)):
+        for item in value:
+            yield from _text_values(item)
+
+
+def _result_input_evidence(result: Any) -> list[Any]:
+    """Keep declared/read inputs, not the runner and output locations carried by a result."""
+    if not isinstance(result, Mapping):
+        return [result]
+
+    evidence: list[Any] = [result.get("text")]
+
+    def collect(value: Any) -> None:
+        if isinstance(value, Mapping):
+            for key, item in value.items():
+                if key in _RUNNER_EXECUTION_LOCATION_FIELDS:
+                    continue
+                if key in _RESULT_INPUT_PROVENANCE_FIELDS:
+                    evidence.append(item)
+                elif key in _RESULT_INPUT_PROVENANCE_CONTAINERS:
+                    collect(item)
+        elif isinstance(value, Iterable) and not isinstance(value, (str, bytes, bytearray)):
+            for item in value:
+                collect(item)
+
+    collect(result)
+    return evidence
+
+
+def _path_key(value: str) -> str:
+    value = value.rstrip(".,;:)]}")
+    file_path = re.match(
+        r"^(.*\.[A-Za-z0-9]{1,16})(?:에서|으로|입니다|이다|에게|의|와|과|을|를|은|는|이|가|로)$", value)
+    if file_path:
+        value = file_path.group(1)
+    windows_path = ("\\" in value or bool(re.match(r"^[A-Za-z]:[/\\]", value))
+                    or bool(re.match(r"^//[^/]+/[^/]+(?:/|$)", value)))
+    normalized = posixpath.normpath(value.replace("\\", "/"))
+    return normalized.casefold() if windows_path else normalized
+
+
+def _concrete_internal_paths(value: Any, zone_paths: Iterable[str]) -> set[str]:
+    zones = {_path_key(path) for path in zone_paths}
+    found: set[str] = set()
+    for text in _text_values(value):
+        candidates = set(_WINDOWS_ABS.findall(text))
+        candidates.update(match.group("path") for match in _POSIX_ABS.finditer(text))
+        for candidate in candidates:
+            key = _path_key(candidate)
+            if any(key != zone and key.startswith(zone.rstrip("/") + "/") for zone in zones):
+                found.add(key)
+    return found
+
+
+def _mentions_internal_zone(value: Any, zone_paths: Iterable[str]) -> bool:
+    return bool(touches(value, zone_paths))
+
+
 def request_uses_internal_data(req: dict, settings) -> bool:
     paths = [zone.path for zone in settings.policy.data_zones if zone.level in {"internal", "restricted"}]
-    return bool(paths and touches(
-        [req.get("text"), req.get("project_dirs"), req.get("references"), req.get("results")], paths))
+    plan = req.get("plan") if isinstance(req.get("plan"), Mapping) else {}
+    plan_fields = [[step.get("instruction"), step.get("input_refs")]
+                   for step in plan.get("steps") or [] if isinstance(step, Mapping)]
+    results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
+    result_inputs = [_result_input_evidence(result) for result in results.values()]
+    return bool(paths and _mentions_internal_zone(
+        [req.get("text"), req.get("project_dirs"), req.get("references"), plan_fields, result_inputs], paths))
+
+
+def internal_data_steps(req: dict, settings) -> set[str] | None:
+    """Return proven internal steps and descendants; otherwise require request-wide rules.
+
+    A step is public only when its plan and result avoid internal zones and every concrete internal input named by the
+    request or plan is attributed to a step. A zone root alone is not concrete provenance (#715).
+    """
+    paths = [zone.path for zone in settings.policy.data_zones if zone.level in {"internal", "restricted"}]
+    if not paths or not request_uses_internal_data(req, settings):
+        return set()
+
+    plan = req.get("plan") if isinstance(req.get("plan"), Mapping) else {}
+    steps = [step for step in plan.get("steps") or [] if isinstance(step, Mapping) and step.get("id")]
+    results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
+    request_inputs = _concrete_internal_paths(
+        [req.get("text"), req.get("project_dirs"), req.get("references")], paths)
+    plan_inputs = _concrete_internal_paths(
+        [[step.get("instruction"), step.get("input_refs")] for step in steps], paths)
+    named_inputs = request_inputs | plan_inputs
+    if not named_inputs:
+        return None
+
+    direct: set[str] = set()
+    attributed: set[str] = set()
+    for step in steps:
+        step_id = str(step["id"])
+        evidence = [step.get("instruction"), step.get("input_refs"),
+                    _result_input_evidence(results.get(step_id))]
+        if _mentions_internal_zone(evidence, paths):
+            direct.add(step_id)
+        attributed.update(_concrete_internal_paths(evidence, paths) & named_inputs)
+    if attributed != named_inputs:
+        return None
+
+    internal = set(direct)
+    changed = True
+    while changed:
+        changed = False
+        for step in steps:
+            step_id = str(step["id"])
+            dependencies = {str(value) for value in step.get("depends_on") or []}
+            if step_id not in internal and dependencies & internal:
+                internal.add(step_id)
+                changed = True
+    return internal
+
+
+def source_uses_internal_data(name: str, req: dict, settings,
+                              step_scope: set[str] | None = None) -> bool:
+    """Classify one output by its source step, with request-wide fallback for missing provenance."""
+    if not request_uses_internal_data(req, settings):
+        return False
+    step_scope = internal_data_steps(req, settings) if step_scope is None else step_scope
+    if step_scope is None:
+        return True
+    source_step = _source_step(name, req)
+    plan = req.get("plan") if isinstance(req.get("plan"), Mapping) else {}
+    known_steps = {str(step.get("id")) for step in plan.get("steps") or []
+                   if isinstance(step, Mapping) and step.get("id")}
+    if source_step is None or source_step not in known_steps:
+        return True
+    return source_step in step_scope
 
 
 def _decisions_document(req: dict, decisions: Iterable[dict]) -> str:
@@ -752,7 +899,8 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
     return "\n".join(lines) + "\n"
 
 
-def scan_publish_files(files: Mapping[str, str | bytes], *, internal: bool = False) -> list[dict[str, str]]:
+def scan_publish_files(files: Mapping[str, str | bytes], *,
+                       internal: bool | set[str] = False) -> list[dict[str, str]]:
     """Find credentials, local paths, signed URLs and internal aggregate cells of 1–9."""
     issues: list[dict[str, str]] = []
     for name, body in files.items():
@@ -770,7 +918,8 @@ def scan_publish_files(files: Mapping[str, str | bytes], *, internal: bool = Fal
         if _SIGNED_URL.search(text) or redact_url_credentials(text) != text:
             issues.append({"kind": "signed_url", "path": name})
         suffix = PurePosixPath(name).suffix.lower()
-        if internal and suffix in {".tsv", ".csv"} and small_cells(text, suffix):
+        file_internal = name in internal if isinstance(internal, set) else internal
+        if file_internal and suffix in {".tsv", ".csv"} and small_cells(text, suffix):
             issues.append({"kind": "small_cell", "path": name})
     return issues
 
@@ -778,7 +927,8 @@ def scan_publish_files(files: Mapping[str, str | bytes], *, internal: bool = Fal
 def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images: Mapping[str, bytes], *,
                           decisions: Iterable[dict] = (), tasks: Iterable[dict] = (),
                           bundle: Path | None = None,
-                          run_documents: Mapping[str, str] | None = None) -> dict[str, str | bytes]:
+                          run_documents: Mapping[str, str] | None = None,
+                          internal_files: set[str] | None = None) -> dict[str, str | bytes]:
     """Return the stable publication layout; raw data and third-party full text never enter it."""
     assets = {name: _clean(body, settings, req) for name, body in assets.items()
               if not _LITERATURE_OUTPUT.search(name.replace("\\", "/"))}
@@ -791,6 +941,16 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
     branch_specs, step_folders = _branch_layout(req)
     branch_rows = _branch_rows(req, branch_specs, step_folders) if branch_specs else []
     internal = request_uses_internal_data(req, settings)
+    step_scope = internal_data_steps(req, settings)
+    tracked_internal: set[str] = set()
+
+    def source_internal(name: str) -> bool:
+        return source_uses_internal_data(name, req, settings, step_scope)
+
+    def track(source: str, target: str) -> None:
+        if source_internal(source):
+            tracked_internal.add(target)
+
     aggregate_tables = declared_aggregate_tables(req)
     declared_reports = _declared_outputs(req, "report")
     omitted_tables: list[str] = []
@@ -805,22 +965,26 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
             target = _unique_target(prefix + "code", name, used)
             files[target] = body
             source_targets[name] = target
+            track(name, target)
         elif branch_folder and suffix == ".md" and path.as_posix() in declared_reports:
             target = _unique_target(prefix + "report", name, used)
             files[target] = body
             source_targets[name] = target
+            track(name, target)
         elif path.name in _NEXTFLOW_NAMES and "pipeline_info" in {part.casefold() for part in path.parts}:
-            if publish_file_allowed(name, body, internal=internal, declared=aggregate_tables):
+            if publish_file_allowed(name, body, internal=source_internal(name), declared=aggregate_tables):
                 target = _unique_target(prefix + "run/nextflow", name, used)
                 files[target] = body
                 source_targets[name] = target
+                track(name, target)
         elif suffix in _TABLE_SUFFIXES:
-            if not publish_file_allowed(name, body, internal=internal, declared=aggregate_tables):
+            if not publish_file_allowed(name, body, internal=source_internal(name), declared=aggregate_tables):
                 omitted_tables.append(name)
             else:
                 target = _unique_target(prefix + "tables", name, used)
                 files[target] = body
                 source_targets[name] = target
+                track(name, target)
 
     abstract_source = next((name for name in images
                             if "graphical_abstract" in name.casefold()
@@ -844,6 +1008,7 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
         text = _clean(body.decode("utf-8", errors="strict"), settings, req)
         files[target] = text.encode("utf-8")
         source_targets[name] = target
+        track(name, target)
         if not branch_folder:
             figure_names.append(target)
 
@@ -891,8 +1056,11 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
         detail = ", ".join(f"{row['document']} -> {row['target']}" for row in broken)
         raise EditionCheckError(f"정리본 Markdown 링크가 깨졌습니다: {detail}")
 
-    issues = scan_publish_files(files, internal=internal)
+    issues = scan_publish_files(
+        files, internal=tracked_internal if step_scope is not None else internal)
     blocking = [issue for issue in issues if issue["kind"] != "small_cell"]
     if blocking:
         raise check_failure(blocking)
+    if internal_files is not None:
+        internal_files.update(tracked_internal)
     return files

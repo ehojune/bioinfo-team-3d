@@ -24,8 +24,8 @@ from .policy import touches, restricted_paths
 from . import edition_sources, github_token
 from .portfolio import (PRIVATE_PATH_PATTERN, EditionCheckError, broken_markdown_links, build_portfolio_files,
                         check_failure, declared_aggregate_tables, portfolio_root_file,
-                        portfolio_report, publish_file_allowed, request_uses_internal_data, scan_publish_files,
-                        table_allowed)
+                        internal_data_steps, portfolio_report, publish_file_allowed, request_uses_internal_data,
+                        scan_publish_files, source_uses_internal_data, table_allowed)
 from .intake import reference_dirs
 from .recruit.provenance import touches_restricted
 from .report_abstract import abstract_first, build_graphical_abstract, with_abstract_link
@@ -585,6 +585,25 @@ class ResultStorage:
             await self.hub.publish({"type": "approval.requested", "request_id": rid, "data": approval})
             return approval
 
+    def check_end_choice(self, rid: str, *, decision: str = "accepted") -> None:
+        """Refuse an inline end-storage answer before review persistence when no end card can open (#714)."""
+        req = self.hub.requests[rid]
+        marker = req.get("storage_end_ask") or {}
+        saved = req.get("result_storage") or {}
+        status = req.get("status")
+        if status == "review_pending" and decision == "accepted":
+            status = "done"
+        if (marker.get("state") in {"pending", "asked"} and status in {"done", "completed"}
+                and saved.get("status") != "published"):
+            return
+        if saved.get("mode") == "local" and saved.get("status") == "local":
+            command = f"`labhq storage {rid} --to github`"
+        elif saved.get("status") in {"draft", "declined", "failed"}:
+            command = f"`labhq storage {rid} --redraft`"
+        else:
+            command = f"`labhq review-done {rid}`에서 --storage를 빼고"
+        raise ValueError(f"이 요청에는 끝 저장 위치 질문이 없습니다. 검토 완료는 저장하지 않았습니다. {command} 실행해 주세요.")
+
     async def card(self, rid, *, late=False, end=False):
         req = self.hub.requests[rid]
         if not end and (req.get("result_storage") or (not late and self.inherited(rid))):
@@ -855,6 +874,11 @@ class ResultStorage:
             for key in ("warning", "shutdown_evidence"):
                 saved.pop(key, None)
         editor_connection = self._editor_connection()
+        request_internal = request_uses_internal_data(req, self.s)
+        step_scope = internal_data_steps(req, self.s)
+        scope_mode = saved.get("internal_publication_scope")
+        publication_internal = set(saved.get("internal_files") or [])
+        internal_allowed = set(saved.get("internal_allowed_files") or [])
         try:
             # Controlled inputs never enter the editor prompt or the repository edition.
             if controlled_request(req, self.s):
@@ -929,13 +953,20 @@ class ResultStorage:
                 }
                 canonical_pdf_report = pdf_report_text(
                     req, self.s, report_text=portfolio_report(req, self.s, raw_assets))
-                internal = request_uses_internal_data(req, self.s)
                 aggregate_tables = declared_aggregate_tables(req)
                 assets = {}
                 for name, body in raw_assets.items():
-                    if not table_allowed(name, body, internal=internal, declared=aggregate_tables):
+                    if not table_allowed(
+                            name, body,
+                            internal=source_uses_internal_data(name, req, self.s, step_scope),
+                            declared=aggregate_tables):
                         continue
                     assets[name] = body
+                publication_internal = {
+                    name for name in [*assets, *images]
+                    if source_uses_internal_data(name, req, self.s, step_scope)
+                }
+                internal_allowed = set()
                 included = {*assets, *images}
                 docs = draft_documents(req, self.s, included, assets, abstract=bool(drawn))
                 bundle_readme = bundle / "README.md"
@@ -956,7 +987,9 @@ class ResultStorage:
                     portfolio_req, self.s, portfolio_assets, portfolio_images,
                     decisions=decisions, tasks=tasks, bundle=bundle,
                     run_documents={"run/progress.md": docs["PROGRESS.md"],
-                                   "run/reproduce.md": docs["REPRODUCE.md"]})
+                                   "run/reproduce.md": docs["REPRODUCE.md"]},
+                    internal_files=internal_allowed)
+                publication_internal.update(internal_allowed)
                 for name, body in portfolio.items():
                     if isinstance(body, bytes):
                         images[name] = body
@@ -1021,7 +1054,14 @@ class ResultStorage:
                     if broken := broken_markdown_links(portfolio_payload):
                         detail = ", ".join(f"{row['document']} -> {row['target']}" for row in broken)
                         raise EditionCheckError(f"정리본 Markdown 링크가 깨졌습니다: {detail}")
-                issues = scan_publish_files({**docs, **images}, internal=internal)
+                scope_mode = "request" if request_internal and step_scope is None else "step"
+                saved["internal_publication_scope"] = scope_mode
+                saved["internal_files"] = sorted(publication_internal)
+                saved["internal_allowed_files"] = sorted(internal_allowed)
+                issues = scan_publish_files(
+                    {**docs, **images},
+                    internal=publication_internal if scope_mode == "step" else request_internal,
+                )
                 if issues:
                     raise check_failure(issues)
                 # The audit bundle's MANIFEST and RO-Crate are already sealed.
@@ -1202,21 +1242,32 @@ class ResultStorage:
                 branch = default_branch
             saved["branch"] = branch
             write_branch = None if empty else branch
-            internal = request_uses_internal_data(self.hub.requests[rid], self.s)
+            request = self.hub.requests[rid]
+            internal = request_uses_internal_data(request, self.s)
+            scope_mode = saved.get("internal_publication_scope")
+            internal_files = set(saved.get("internal_files") or [])
+
+            def file_internal(name: str) -> bool:
+                if scope_mode == "step":
+                    return name in internal_files
+                return internal
+
             aggregate_tables = declared_aggregate_tables(self.hub.requests[rid])
+            aggregate_tables.update(saved.get("internal_allowed_files") or [])
             aggregate_bodies = {
                 body for name, body in docs.items()
                 if name in aggregate_tables
-                and table_allowed(name, body, internal=internal, declared=aggregate_tables)
+                and table_allowed(name, body, internal=file_internal(name), declared=aggregate_tables)
             }
             aggregate_tables.update(
                 name for name, body in docs.items()
                 if name.startswith("tables/") and body in aggregate_bodies
             )
             compatibility_docs = {name: body for name, body in docs.items()
-                                  if publish_file_allowed(name, body, internal=internal, declared=aggregate_tables)}
+                                  if publish_file_allowed(name, body, internal=file_internal(name),
+                                                          declared=aggregate_tables)}
             compatibility_images = {name: body for name, body in (images or {}).items()
-                                    if publish_file_allowed(name, body, internal=internal,
+                                    if publish_file_allowed(name, body, internal=file_internal(name),
                                                             declared=aggregate_tables)}
             payloads = []
             if saved.get("mode") == "new":
