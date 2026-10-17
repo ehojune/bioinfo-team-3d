@@ -6,3 +6,6 @@ rows:
 - sha: 9aee6f1
   at: 2026-10-18 00:05
   text: 기존 누락 산출 경로 표기를 보존하고 0 hash 보정과 임의 hash 거부를 구분
+- sha: 09eef3b
+  at: 2026-10-18 00:43
+  text: 대기·결정 turn의 산출 검사를 최종 turn까지 미루고 보조 turn 산출 계약을 분리
