@@ -1,7 +1,7 @@
 from copy import deepcopy
 from pathlib import Path
 
-from labhq.portfolio import broken_markdown_links, build_portfolio_files
+from labhq.portfolio import broken_markdown_links, build_portfolio_files, internal_data_steps
 from labhq.settings import DataZone, Settings
 
 from test_portfolio_edition import PAPER, portfolio_fixture
@@ -227,6 +227,24 @@ def test_internal_rules_follow_the_source_step_and_descendants(tmp_path):
     assert files["studies/B-omics/tables/summary.tsv"] == "gene\trank\nG1\t5\n"
     assert not any(name.endswith("C-mdis/tables/summary.tsv") for name in files)
     assert not any(name.endswith("combined.tsv") for name in files)
+
+
+def test_runner_workspace_inside_internal_zone_is_not_step_input_provenance(tmp_path):
+    settings, request, _assets, _images = branched_fixture(tmp_path)
+    request = deepcopy(request)
+    internal = Path(request["project_dirs"][0])
+    settings.runner.workspace_root = str(internal)
+    request["results"]["mdis"]["text"] += f" 입력은 {internal / 'births.tsv'}이다."
+    for step_id, result in request["results"].items():
+        workdir = internal / "runs" / step_id
+        result.update(
+            workdir=str(workdir),
+            source_workdir=str(workdir),
+            cwd=str(workdir),
+            workspace_root=str(internal),
+        )
+
+    assert internal_data_steps(request, settings) == {"mdis"}
 
 
 def test_missing_step_path_provenance_keeps_request_wide_internal_fallback(tmp_path):

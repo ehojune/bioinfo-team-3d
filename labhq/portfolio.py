@@ -9,12 +9,14 @@ import os
 import posixpath
 import re
 from collections.abc import Iterable, Mapping
+from dataclasses import fields
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import quote, unquote
 
 from .integrations.github import SECRET_PATTERNS, publish_clean, redact_url_credentials, sanitize
 from .korean_qc import check_document, check_preservation
+from .models import RunnerPathFields
 from .policy import touches
 from .research.contract import branch_plan_topology
 from .report_abstract import build_graphical_abstract
@@ -61,6 +63,19 @@ _AGGREGATE_TEXT_SUFFIXES = {".tsv", ".csv", ".json", ".txt", ".html"}
 _INTERNAL_DEFAULT_SUFFIXES = {".md", ".svg", ".py", ".r", ".sh"}
 _CODE_SUFFIXES = {".py", ".r", ".sh"}
 _NEXTFLOW_NAMES = {"report.html", "timeline.html", "trace.txt"}
+_RUNNER_EXECUTION_LOCATION_FIELDS = frozenset(
+    {field.name for field in fields(RunnerPathFields)}
+    & {
+        "workdir", "source_workdir", "cwd", "workspace_root", "project_dirs", "plugin_dirs",
+        "reference_roots", "local_dir", "skill_dir", "talent_dir", "mcp_path", "mcp_entry_path",
+        "read_only_roots",
+    }
+)
+_RESULT_INPUT_PROVENANCE_FIELDS = frozenset({
+    "reference_dirs", "upstream_dirs", "upstream_steps", "references", "input_refs", "input_files",
+    "input_records",
+})
+_RESULT_INPUT_PROVENANCE_CONTAINERS = frozenset({"meta", "provenance", "runs"})
 
 
 def _balanced_link_target(depth: int = 4) -> str:
@@ -629,6 +644,30 @@ def _text_values(value: Any) -> Iterable[str]:
             yield from _text_values(item)
 
 
+def _result_input_evidence(result: Any) -> list[Any]:
+    """Keep declared/read inputs, not the runner and output locations carried by a result."""
+    if not isinstance(result, Mapping):
+        return [result]
+
+    evidence: list[Any] = [result.get("text")]
+
+    def collect(value: Any) -> None:
+        if isinstance(value, Mapping):
+            for key, item in value.items():
+                if key in _RUNNER_EXECUTION_LOCATION_FIELDS:
+                    continue
+                if key in _RESULT_INPUT_PROVENANCE_FIELDS:
+                    evidence.append(item)
+                elif key in _RESULT_INPUT_PROVENANCE_CONTAINERS:
+                    collect(item)
+        elif isinstance(value, Iterable) and not isinstance(value, (str, bytes, bytearray)):
+            for item in value:
+                collect(item)
+
+    collect(result)
+    return evidence
+
+
 def _path_key(value: str) -> str:
     value = value.rstrip(".,;:)]}")
     file_path = re.match(
@@ -667,8 +706,10 @@ def request_uses_internal_data(req: dict, settings) -> bool:
     plan = req.get("plan") if isinstance(req.get("plan"), Mapping) else {}
     plan_fields = [[step.get("instruction"), step.get("input_refs")]
                    for step in plan.get("steps") or [] if isinstance(step, Mapping)]
+    results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
+    result_inputs = [_result_input_evidence(result) for result in results.values()]
     return bool(paths and _mentions_internal_zone(
-        [req.get("text"), req.get("project_dirs"), req.get("references"), plan_fields, req.get("results")], paths))
+        [req.get("text"), req.get("project_dirs"), req.get("references"), plan_fields, result_inputs], paths))
 
 
 def internal_data_steps(req: dict, settings) -> set[str] | None:
@@ -696,7 +737,8 @@ def internal_data_steps(req: dict, settings) -> set[str] | None:
     attributed: set[str] = set()
     for step in steps:
         step_id = str(step["id"])
-        evidence = [step.get("instruction"), step.get("input_refs"), results.get(step_id)]
+        evidence = [step.get("instruction"), step.get("input_refs"),
+                    _result_input_evidence(results.get(step_id))]
         if _mentions_internal_zone(evidence, paths):
             direct.add(step_id)
         attributed.update(_concrete_internal_paths(evidence, paths) & named_inputs)
