@@ -43,6 +43,9 @@ PMCID = re.compile(r"\bPMC\d+\b", re.IGNORECASE)
 PMID = re.compile(r"\bPMID\s*[:=]?\s*(\d+)\b", re.IGNORECASE)
 PUBMED_URL = re.compile(r"(?:pubmed\.ncbi\.nlm\.nih\.gov|ncbi\.nlm\.nih\.gov/pubmed)/(\d+)", re.IGNORECASE)
 DOI = re.compile(r"\b10\.\d{4,9}/[-._;()/:A-Z0-9]+", re.IGNORECASE)
+DOI_VALUE = re.compile(r"10\.\d{1,9}/[-._;()/:A-Z0-9]+", re.IGNORECASE)  # old records allowed short registrants
+PAPER_ALIAS_SEPARATOR = "|"  # not valid in the identifiers above; old one-identifier keys remain valid
+PAPER_ID_ORDER = {"PMID": 0, "PMCID": 1, "DOI": 2, "input": 3}
 
 
 def _inside(root: Path, rel: str) -> Path | None:
@@ -115,25 +118,83 @@ def table_warnings(root: Path, outputs: Iterable[str]) -> list[str]:
     return warnings
 
 
-def _paper_key(answer: Mapping[str, Any], fallback: Any) -> str | None:
-    for prefix, field in (("PMID", "pmid"), ("PMCID", "pmcid"), ("DOI", "doi")):
-        value = answer.get(field)
-        if isinstance(value, (str, int)) and str(value).strip():
-            return f"{prefix}:{str(value).strip()[:100]}"
-    return f"input:{str(fallback).strip()[:100]}" if isinstance(fallback, (str, int)) and str(fallback).strip() else None
+def _normal_named_paper_id(scheme: Any, value: Any) -> str | None:
+    """One comparison spelling for a PMID, PMCID or DOI, including DOI URL input."""
+    if not isinstance(scheme, str) or not isinstance(value, (str, int)):
+        return None
+    kind = scheme.strip().casefold()
+    raw = str(value).strip()
+    if kind == "pmid":
+        raw = re.sub(r"^pmid\s*[:=]?\s*", "", raw, flags=re.IGNORECASE)
+        return f"PMID:{raw}" if raw.isdigit() else None
+    if kind == "pmcid":
+        raw = re.sub(r"^pmcid\s*[:=]?\s*", "", raw, flags=re.IGNORECASE)
+        return f"PMCID:{raw.upper()}" if PMCID.fullmatch(raw) else None
+    if kind == "doi":
+        raw = re.sub(r"^(?:doi\s*[:=]?\s*|https?://(?:dx\.)?doi\.org/)", "", raw, flags=re.IGNORECASE)
+        raw = raw.rstrip(".,;")
+        return f"DOI:{raw.casefold()}" if DOI_VALUE.fullmatch(raw) else None
+    return None
 
 
-def _better(level: str, current: str | None) -> bool:
-    return current is None or LEVELS.index(level) < LEVELS.index(current)
+def _normal_paper_id(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    prefix, separator, raw = value.strip().partition(":")
+    return _normal_named_paper_id(prefix, raw) if separator else None
+
+
+def _paper_key(identifiers: set[str]) -> str:
+    def order(identifier: str) -> tuple[int, str]:
+        return PAPER_ID_ORDER.get(identifier.partition(":")[0], len(PAPER_ID_ORDER)), identifier
+
+    return PAPER_ALIAS_SEPARATOR.join(sorted(identifiers, key=order))
+
+
+def _answer_paper_ids(answer: Mapping[str, Any], fallback: Any) -> set[str]:
+    identifiers = {paper_id for scheme in ("pmid", "pmcid", "doi")
+                   if (paper_id := _normal_named_paper_id(scheme, answer.get(scheme)))}
+    if identifiers:
+        return identifiers
+    normal_fallback = _normal_paper_id(fallback)
+    if normal_fallback:
+        return {normal_fallback}
+    if isinstance(fallback, (str, int)) and str(fallback).strip():
+        return {f"input:{str(fallback).strip()[:100]}"}
+    return set()
+
+
+def _access_paper_ids(key: Any) -> set[str]:
+    """Read a new alias-group key or an old single-identifier key."""
+    if not isinstance(key, str) or not key.strip():
+        return set()
+    identifiers = {paper_id for part in key.split(PAPER_ALIAS_SEPARATOR)
+                   if (paper_id := _normal_paper_id(part))}
+    return identifiers or {key.strip()[:100]}
+
+
+def _merge_access_group(groups: list[tuple[set[str], str]], identifiers: set[str], level: str) -> None:
+    overlap = [index for index, (aliases, _level) in enumerate(groups) if aliases & identifiers]
+    if not overlap:
+        if len(groups) < MAX_PAPERS:
+            groups.append((set(identifiers), level))
+        return
+    aliases, levels = set(identifiers), [level]
+    insert_at = overlap[0]
+    for index in reversed(overlap):
+        previous_aliases, previous_level = groups.pop(index)
+        aliases.update(previous_aliases)
+        levels.append(previous_level)
+    groups.insert(insert_at, (aliases, min(levels, key=LEVELS.index)))
 
 
 def literature_access(root: Path) -> dict[str, str]:
-    """{paper id: best access_level} from the fulltext lookups recorded in this workdir."""
+    """{paper identifier aliases: best access_level} from this workdir's fulltext lookups."""
     root = Path(root)
     log = _inside(root, QUERY_LOG)
     if log is None or log.stat().st_size > MAX_RECORD_BYTES:
         return {}
-    levels: dict[str, str] = {}
+    groups: list[tuple[set[str], str]] = []
     try:
         lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
@@ -156,38 +217,25 @@ def literature_access(root: Path) -> dict[str, str]:
             answer = item.get("answer") if isinstance(item, dict) else None
             if not isinstance(answer, dict) or not answer.get("found") or answer.get("access_level") not in LEVELS:
                 continue
-            key = _paper_key(answer, item.get("input"))
-            if key is None or (key not in levels and len(levels) >= MAX_PAPERS):
+            identifiers = _answer_paper_ids(answer, item.get("input"))
+            if not identifiers:
                 continue
-            if _better(answer["access_level"], levels.get(key)):
-                levels[key] = answer["access_level"]
-    return levels
+            _merge_access_group(groups, identifiers, answer["access_level"])
+    return {_paper_key(identifiers): level for identifiers, level in groups}
 
 
 def _field(result: Any, name: str) -> Any:
     return getattr(result, name, None) if not isinstance(result, Mapping) else result.get(name)
 
 
-def _normal_paper_id(value: Any) -> str | None:
-    if not isinstance(value, str):
-        return None
-    prefix, separator, raw = value.strip().partition(":")
-    if not separator:
-        return None
-    if prefix.upper() == "PMID" and raw.strip().isdigit():
-        return f"PMID:{raw.strip()}"
-    if prefix.upper() == "PMCID" and PMCID.fullmatch(raw.strip()):
-        return f"PMCID:{raw.strip().upper()}"
-    if prefix.upper() == "DOI" and DOI.fullmatch(raw.strip().rstrip(".,;")):
-        return f"DOI:{raw.strip().rstrip('.,;').lower()}"
-    return None
-
-
 def _source_paper_ids(source: Any) -> set[str]:
-    """Paper identifiers written in an evidence source's URI or locator."""
+    """Paper identifiers written in an evidence source's structured id, URI or locator."""
     if not isinstance(source, Mapping):
         return set()
     ids: set[str] = set()
+    structured = _normal_named_paper_id(source.get("id_scheme"), source.get("id_value"))
+    if structured:
+        ids.add(structured)
     for field in ("uri", "locator"):
         value = source.get(field)
         if not isinstance(value, str):
@@ -246,20 +294,20 @@ def conclusion_literature_line(steps: Iterable[Mapping[str, Any]], results: Mapp
     if not papers:
         return None
 
-    access: dict[str, str] = {}
+    access: list[tuple[set[str], str]] = []
     for step in steps:
         result = results.get(step["id"])
         if result is None:
             continue
         for key, level in (_field(result, "literature_access") or {}).items():
-            paper_id = _normal_paper_id(key)
-            if paper_id and level in LEVELS and _better(level, access.get(paper_id)):
-                access[paper_id] = level
+            identifiers = _access_paper_ids(key)
+            if identifiers and level in LEVELS:
+                _merge_access_group(access, identifiers, level)
 
     counts = {level: 0 for level in LEVELS}
     missing = 0
     for paper in papers:
-        found = [access[paper_id] for paper_id in paper if paper_id in access]
+        found = [level for aliases, level in access if aliases & paper]
         if not found:
             missing += 1
             continue
@@ -274,7 +322,7 @@ def conclusion_literature_line(steps: Iterable[Mapping[str, Any]], results: Mapp
 def quality_lines(steps: Iterable[Mapping[str, Any]], results: Mapping[str, Any]) -> list[str]:
     """Report-warning lines: one per step with table problems, one for literature read below full text."""
     lines: list[str] = []
-    levels: dict[str, str] = {}
+    access: list[tuple[set[str], str]] = []
     for step in steps:
         result = results.get(step["id"])
         if result is None:
@@ -284,12 +332,14 @@ def quality_lines(steps: Iterable[Mapping[str, Any]], results: Mapping[str, Any]
             shown = "; ".join(problems[:3]) + (f" (+{len(problems) - 3}개)" if len(problems) > 3 else "")
             lines.append(f"{step['id']}: 표로 읽히지 않는 산출물 {len(problems)}개 — {shown}")
         for key, level in (_field(result, "literature_access") or {}).items():
-            if level in LEVELS and _better(level, levels.get(key)):
-                levels[key] = level
-    below = sum(level != "full_text" for level in levels.values())
+            identifiers = _access_paper_ids(key)
+            if identifiers and level in LEVELS:
+                _merge_access_group(access, identifiers, level)
+    levels = [level for _identifiers, level in access]
+    below = sum(level != "full_text" for level in levels)
     if below:
         counts = ", ".join(f"{LEVEL_NAMES[name]} {n}편" for name in LEVELS
-                           if (n := sum(level == name for level in levels.values())))
+                           if (n := sum(level == name for level in levels)))
         lines.append(f"문헌을 읽은 수준(fulltext로 조회한 {len(levels)}편): {counts}. "
                      f"본문을 읽지 못한 {below}편에서 가져온 수치는 한계로 적는다")
     return lines

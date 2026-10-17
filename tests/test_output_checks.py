@@ -97,7 +97,10 @@ def test_literature_access_keeps_each_papers_best_level(tmp_path):
         {"input": "PMID:66", "answer": {"found": True, "access_level": "abstract", "pmid": "66"}}]}))
     with (work / "outputs/annotation_queries.jsonl").open("a", encoding="utf-8") as handle:
         handle.write("not json\n" + json.dumps({"tool": "fulltext", "result_file": "../escape.json"}) + "\n")
-    assert literature_access(work) == {"PMID:1": "full_text", "DOI:10.1/x": "metadata"}
+    assert literature_access(work) == {
+        "PMID:1|PMCID:PMC5": "full_text",
+        "DOI:10.1/x": "metadata",
+    }
     assert literature_access(tmp_path / "empty") == {}
 
 
@@ -105,8 +108,8 @@ def test_quality_lines_merge_steps_and_skip_an_all_full_text_reading():
     results = {
         "s1": TaskResult(task_id="t1", agent_id="a", ok=True, table_warnings=["outputs/a.tsv: x", "outputs/b.tsv: y",
                                                                              "outputs/c.tsv: z", "outputs/d.tsv: w"],
-                         literature_access={"PMID:1": "abstract", "PMID:2": "full_text"}),
-        "s2": {"ok": True, "literature_access": {"PMID:1": "full_text", "PMID:3": "metadata"}},
+                         literature_access={"PMID:1|PMCID:PMC1": "abstract", "PMID:2": "full_text"}),
+        "s2": {"ok": True, "literature_access": {"PMCID:PMC1": "full_text", "PMID:3": "metadata"}},
     }
     steps = [{"id": "s1"}, {"id": "s2"}, {"id": "s3"}]
     assert quality_lines(steps, results) == [
@@ -138,6 +141,50 @@ def test_conclusion_literature_counts_only_papers_linked_to_citable_claims():
 
     assert conclusion_literature_line([{"id": "s1"}], results, ledgers) == (
         "결론 근거 논문 3편: 본문 1편·초록 1편·서지만 0편·조회 기록 없음 1편. "
+        "결론 claim에 연결된 논문만 센 값이며, 'fulltext로 조회한 논문 전체'와 분모가 다르다"
+    )
+
+
+def test_conclusion_literature_reads_structured_paper_ids():
+    ledgers = {"s1": {
+        "claims": [{"id": "c1", "status": "supported"}],
+        "evidence": [
+            {"id": "pmid", "source": {"id_scheme": "pmid", "id_value": "123"}},
+            {"id": "pmcid", "source": {"id_scheme": "pmcid", "id_value": "pmc456"}},
+            {"id": "doi", "source": {"id_scheme": "doi", "id_value": "https://doi.org/10.1000/ABC"}},
+        ],
+        "links": [{"claim_id": "c1", "evidence_id": evidence_id, "relation": "supports"}
+                  for evidence_id in ("pmid", "pmcid", "doi")],
+    }}
+
+    assert conclusion_literature_line([{"id": "s1"}], {}, ledgers) == (
+        "결론 근거 논문 3편: 본문 0편·초록 0편·서지만 0편·조회 기록 없음 3편. "
+        "결론 claim에 연결된 논문만 센 값이며, 'fulltext로 조회한 논문 전체'와 분모가 다르다"
+    )
+
+
+def test_fulltext_aliases_match_a_structured_doi_evidence(tmp_path):
+    work = tmp_path / "work"
+    _fulltext_record(work, "paper", [{"input": "PMID:123", "answer": {
+        "found": True, "access_level": "full_text", "pmid": "123", "pmcid": "PMC123",
+        "doi": "10.1000/ALIAS",
+    }}])
+    access = literature_access(work)
+    assert access == {"PMID:123|PMCID:PMC123|DOI:10.1000/alias": "full_text"}
+    ledgers = {"s1": {
+        "claims": [{"id": "c1", "status": "supported"}],
+        "evidence": [
+            {"id": "read", "source": {"id_scheme": "doi", "id_value": "https://doi.org/10.1000/ALIAS"}},
+            {"id": "missing", "source": {"uri": "https://pubmed.ncbi.nlm.nih.gov/999/"}},
+        ],
+        "links": [
+            {"claim_id": "c1", "evidence_id": "read", "relation": "supports"},
+            {"claim_id": "c1", "evidence_id": "missing", "relation": "supports"},
+        ],
+    }}
+
+    assert conclusion_literature_line([{"id": "s1"}], {"s1": {"literature_access": access}}, ledgers) == (
+        "결론 근거 논문 2편: 본문 1편·초록 0편·서지만 0편·조회 기록 없음 1편. "
         "결론 claim에 연결된 논문만 센 값이며, 'fulltext로 조회한 논문 전체'와 분모가 다르다"
     )
 
