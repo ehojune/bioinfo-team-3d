@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 09:56 | [`1e40096`](https://github.com/ehojune/bioinfo-team-3d/pull/717/commits/1e40096) | ./data·../data 같은 상대 경로를 개인 경로로 가리지 않게 하고 정리본과 결과 저장의 개인 경로 규칙을 하나로 합쳤다 |
+| 09:45 | [`7aace61`](https://github.com/ehojune/bioinfo-team-3d/pull/717/commits/7aace61) | 상대 경로의 /data/를 로컬 경로로 잡던 정리본 검사를 고치고, 검사가 멈추면 검사 이름과 파일을 경고에 적었다 |
 | 07:51 | [`ab2e7e2`](https://github.com/ehojune/bioinfo-team-3d/pull/711/commits/ab2e7e2) | 잘못된 저장 위치 답이 검토 완료만 남기고 실패하지 않게 입력을 먼저 검사했다 |
 | 07:42 | [`99f9c40`](https://github.com/ehojune/bioinfo-team-3d/pull/712/commits/99f9c40) | 표 검사의 바이너리 읽기를 내장 open으로 바꿔 인코딩 검사를 통과하게 했다 |
 | 07:20 | [`730eea9`](https://github.com/ehojune/bioinfo-team-3d/pull/712/commits/730eea9) | 탭 대신 쓴 글자 경고는 모든 줄이 그렇게 나뉠 때만 내고, R 행 이름 예외는 TSV에만 두었다 |
