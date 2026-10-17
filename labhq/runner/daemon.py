@@ -44,8 +44,8 @@ from ..hooks.control import CONTROL_ENV, add_control_hooks
 from .versions import engine_cli_versions
 from ..intake import (expand_home_references, overlaps_restricted, overlaps_zone, reference_roots,
                       scan_reference_dir, withhold_reference_paths, zone_links)
-from ..policy import (SHELL_TOOLS, claude_deny_links, claude_deny_private, claude_read_only, claude_rule_path,
-                      claude_settings, rule_tool)
+from ..policy import (SHELL_TOOLS, claude_ask_internal_links, claude_deny_links, claude_deny_private,
+                      claude_read_only, claude_rule_path, claude_settings, rule_tool)
 from ..private_paths import ENABLED_ENV_VAR as PRIVATE_ENABLED_ENV, ENV_VAR as PRIVATE_PATHS_ENV, \
     OPEN_READS_ENV_VAR as PRIVATE_OPEN_READS_ENV, plugin_keep_dirs, resolve_private_paths, \
     staff_claude_project_dirs
@@ -66,7 +66,8 @@ from .control import HALT_GRACE_S, ControlNotReady, Controls, steer_prompt
 from .hpc_jobs import submit_job
 from .integrity import ReadOnlyWatch, watch_roots
 from .system_ca import CA_ENV, system_ca_pem
-from .workspace import InputHashCache, TaskWorkspace, nearest_tool_use_id, portable_input_path, restricted_zones
+from .workspace import (InputHashCache, TaskWorkspace, nearest_tool_use_id, portable_input_path, resolved_zones,
+                        restricted_zones)
 
 log = logging.getLogger("labhq.runner")
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -813,6 +814,9 @@ class Runner:
     def _zones(self) -> list[Path]:
         return restricted_zones(self.s)
 
+    def _internal_zones(self) -> list[Path]:
+        return resolved_zones(self.s, {"internal"})
+
     def _upstream_refusal(self, directory: Path, zones: list[Path]) -> str | None:
         """Why an earlier step's workspace is not opened to this step, or None (#132).
 
@@ -1004,7 +1008,7 @@ class Runner:
         return "Saved doctor snapshot (not a live check; skip is unverified):\n" + json.dumps(safe)
 
     async def _project_links(self, directories: list[str], zones: list[Path], emit,
-                             fail_closed: bool = False) -> tuple[list[str], str | None]:
+                             fail_closed: bool = False, ask: bool = False) -> tuple[list[str], str | None]:
         """Links in a writable project folder that lead into a zone, and their aliases, for Claude deny rules (#132).
 
         The folder itself stays open: the task works there, and refusing it would stop every step of the
@@ -1030,18 +1034,22 @@ class Runner:
                     more = f" 외 {len(links) - 5}개" if len(links) > 5 else ""
                     return denied, f"하위 링크가 통제 데이터 구역을 가리키거나 풀 수 없음: {names}{more}"
                 return denied, incomplete
-            key = (str(path), tuple(map(str, links)), incomplete)
+            key = (str(path), tuple(map(str, links)), incomplete, ask)
             if (links or incomplete) and key not in self.project_link_warned:
                 self.project_link_warned.add(key)
                 if links:
                     names = ", ".join(link.relative_to(path).as_posix() for link in links[:5])
+                    action = ("Claude는 그 경로를 승인 게이트로 보내고 다른 표기도 경로 판정을 거칩니다"
+                              if ask else
+                              "Claude는 그 경로를 막고 다른 표기와 셸 명령은 승인 게이트로 보냅니다")
                     await emit("agent.log", {"level": "warn", "text": (
                         f"프로젝트 폴더 {path.name}의 링크 {len(links)}개가 통제 데이터 구역으로 이어지거나 풀 수 없습니다: "
-                        f"{names}. Claude는 그 경로를 막고 다른 표기와 셸 명령은 승인 게이트로 보내지만 다른 엔진은 막지 못합니다")})
+                        f"{names}. {action}")})
                 if incomplete:
                     await emit("agent.log", {"level": "warn", "text": (
                         f"프로젝트 폴더 {path.name}의 링크를 다 확인하지 못했습니다({incomplete}). "
-                        "그 너머의 링크가 통제 구역을 가리켜도 막지 못합니다")})
+                        + ("별칭 Read는 Claude 승인 경로 판정으로 보냅니다" if ask else
+                           "그 너머의 링크가 통제 구역을 가리켜도 막지 못합니다"))})
         return denied, None
 
     def _reference_dirs(self, task: Task, writable: list[str],
@@ -1332,6 +1340,7 @@ class Runner:
                     ws.task = task
             await emit("agent.status", {"state": "working", "task": task.meta.get("title") or short(task.prompt, 120)})
             zones = self._zones()
+            internal_zones = self._internal_zones()
             preclean_started: float | None = None
             preclean_record: dict | None = None
             if reused:
@@ -1450,6 +1459,9 @@ class Runner:
             # Reference paths are readable but never write roots: not in LABHQ_EXTRA_ROOTS, Claude denies edits.
             read_dirs, skipped, refused = self._reference_dirs(task, [str(ws.dir), *extra_dirs],
                                                                needs_rules=agent.engine == Engine.claude_code)
+            asked_links, _internal_incomplete = await self._project_links(
+                [str(ws.dir), *extra_dirs, *read_dirs], internal_zones, emit, ask=True)
+            asked_links = [link for link in asked_links if claude_rule_ready(link)]
             for note in skipped:
                 await emit("agent.log", {"level": "warn", "text": f"참고 경로 제외: {note}"})
             kept = [str(r) for r in task.meta.get("reference_dirs") or [] if str(r) not in refused]
@@ -1595,9 +1607,9 @@ class Runner:
                                      environment_record=environment_record(output_records),
                                      **({"observed_outputs_incomplete": incomplete} if incomplete else {}))
 
-            engine_settings = claude_deny_private(claude_deny_links(claude_read_only(
+            engine_settings = claude_deny_private(claude_ask_internal_links(claude_deny_links(claude_read_only(
                 claude_settings(self.s.policy), [d for d in [*read_dirs, *(extra_dirs if read_only else [])]
-                                               if claude_rule_ready(d)]), denied_links),
+                                               if claude_rule_ready(d)]), denied_links), asked_links),
                 private.paths, open_reads=private.open_reads)
             if hooked:
                 from ..hooks.tool_use import add_claude_hook
@@ -1617,6 +1629,8 @@ class Runner:
                 private_enabled=private.enabled,
                 private_open_reads=list(private.open_reads),
                 denied_links=list(denied_links),
+                asked_links=list(asked_links),
+                gate_internal_reads=bool(internal_zones),
                 shared_environment_protected=task.meta.get("shared_environment_protected") is True,
                 environment_step=task.meta.get("environment_step") is True,
                 gate_non_public_data=("approval" in agent.builtin_mcp and

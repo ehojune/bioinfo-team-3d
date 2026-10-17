@@ -444,6 +444,10 @@ class RunContext:
     # written, so while any is set Claude pre-approves no shell command and no outside read either: another spelling
     # of the link (8.3 `DATA~1`, a case variant) reaches the gate, which compares real paths (#178).
     denied_links: list[str] = field(default_factory=list)
+    # Links into an internal zone get ask rules. While any internal zone is configured, scoped Read rules also
+    # make aliases created after the scan reach the real-path approval gate (#725).
+    asked_links: list[str] = field(default_factory=list)
+    gate_internal_reads: bool = False
     # A request with one shared environment sends non-owner install-capable shell rules through approval.
     shared_environment_protected: bool = False
     environment_step: bool = False

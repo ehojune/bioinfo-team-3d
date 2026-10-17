@@ -60,6 +60,17 @@ def test_a_denied_project_link_sends_other_spellings_to_the_gate(tmp_path):
     assert probes["bare_read_alias"]["pre_approved"] and not probes["scoped_read_alias"]["pre_approved"]
 
 
+def test_an_internal_zone_scopes_read_preapproval_but_no_zone_keeps_bare_read(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    assert "Read" in _allowed_tools(tmp_path, project), "no internal zone keeps the existing pre-approval"
+
+    narrowed = _allowed_tools(tmp_path, project, gate_internal_reads=True)
+    assert "Read" not in narrowed
+    for folder in (tmp_path / "ws", project):
+        assert f"Read(/{claude_rule_path(str(folder.resolve()))}/**)" in narrowed
+
+
 @pytest.mark.asyncio
 async def test_the_runner_hands_claude_the_denied_project_links(tmp_path, monkeypatch):
     zone, project = tmp_path / "zone", tmp_path / "project"
@@ -71,6 +82,35 @@ async def test_the_runner_hands_claude_the_denied_project_links(tmp_path, monkey
                                         meta={"project_dirs": [str(project)]}))
     assert result.ok, result.error
     assert seen["ctx"].denied_links == [str(project / "raw")]
+
+
+@pytest.mark.asyncio
+async def test_internal_project_alias_read_reaches_the_approval_gate(tmp_path, monkeypatch):
+    zone, project = tmp_path / "internal", tmp_path / "project"
+    zone.mkdir()
+    (zone / "raw.tsv").write_text("fake record\n", encoding="utf-8")
+    project.mkdir()
+    alias = project / "alias"
+    try:
+        _link_dir(alias, zone)
+    except OSError as exc:
+        pytest.skip(f"directory symlink or unprivileged junction unavailable: {exc}")
+
+    settings = _zone_settings(tmp_path, zone)
+    settings.policy.data_zones = [DataZone(path=str(zone), level="internal")]
+    runner, seen = _capture_runner(tmp_path, monkeypatch, settings)
+    result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q",
+                                        meta={"project_dirs": [str(project)]}))
+    assert result.ok, result.error
+
+    ctx = seen["ctx"]
+    assert ctx.asked_links == [str(alias)] and ctx.gate_internal_reads
+    ask = ctx.claude_settings["permissions"]["ask"]
+    alias_rule = claude_rule_path(str(alias))
+    assert f"Read(/{alias_rule})" in ask and f"Read(/{alias_rule}/**)" in ask
+    decision = evaluate_tool("Read", {"file_path": "alias/raw.tsv"}, settings.policy,
+                             [str(project)], str(project))
+    assert decision.action == "ask" and "internal" in decision.reason
 
 
 def _zone_link(tmp_path):

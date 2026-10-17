@@ -2149,6 +2149,17 @@ def claude_deny_links(settings: dict, links: Iterable[str]) -> dict:
     return {**settings, "permissions": permissions}
 
 
+def claude_ask_internal_links(settings: dict, links: Iterable[str]) -> dict:
+    """Read/Grep ask rules for aliases inside an open folder that lead into an internal zone (#725)."""
+    rules = [f"{tool}(/{claude_rule_path(link)}{tail})" for link in links
+             for tool in ("Read", "Grep") for tail in ("", "/**")]
+    if not rules:
+        return settings
+    permissions = dict(settings.get("permissions") or {})
+    permissions["ask"] = list(dict.fromkeys([*(permissions.get("ask") or []), *rules]))
+    return {**settings, "permissions": permissions}
+
+
 def claude_deny_private(settings: dict, paths: Iterable[str], home: str | None = None,
                         open_reads: Iterable[str] = ()) -> dict:
     """Read/Edit/Write deny rules for PI personal paths (policy.private_paths), merged into `settings`, plus

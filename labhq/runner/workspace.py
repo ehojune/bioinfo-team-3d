@@ -176,17 +176,21 @@ class InputHashCache:
                     temp.unlink()
 
 
-def restricted_zones(settings: Any) -> list[Path]:
-    """Restricted zones as real paths: a zone written through a symlink or junction
-    (`/data/cohort` -> `/mnt/store/cohort`) must still block the real directory it points at."""
+def resolved_zones(settings: Any, levels: set[str] | frozenset[str]) -> list[Path]:
+    """Configured zones at ``levels`` as real paths, including a symlink/junction spelling."""
     zones: list[Path] = []
     for zone in settings.policy.data_zones:
-        if zone.level == "restricted":
+        if zone.level in levels:
             try:
                 zones.append(Path(os.path.expandvars(os.path.expanduser(zone.path))).resolve())
             except (OSError, RuntimeError, ValueError):
                 continue
     return zones
+
+
+def restricted_zones(settings: Any) -> list[Path]:
+    """Restricted zones as real paths for runner-side containment and link checks."""
+    return resolved_zones(settings, {"restricted"})
 
 
 class TaskWorkspace:
