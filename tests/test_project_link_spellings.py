@@ -8,6 +8,7 @@ real paths, which follow the link whatever its spelling.
 
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -39,7 +40,13 @@ def _allowed_tools(tmp_path, project, **fields):
     ctx = RunContext(task=Task(agent_id=agent.id, prompt="x"), agent=agent, workdir=tmp_path / "ws",
                      settings=Settings(), mcp_servers=[], env={}, emit=None, prompt="x",
                      extra_dirs=[str(project)], claude_settings={}, **fields)
-    cmd = get_adapter(agent.engine, Settings()).build_command(ctx)
+    return _context_allowed_tools(ctx)
+
+
+def _context_allowed_tools(ctx):
+    if not ctx.agent.tools:
+        ctx = replace(ctx, agent=ctx.agent.model_copy(update={"tools": ["Read"]}))
+    cmd = get_adapter(ctx.agent.engine, ctx.settings).build_command(ctx)
     start = cmd.index("--allowedTools") + 1
     end = cmd.index("--disallowedTools") if "--disallowedTools" in cmd else len(cmd)
     return cmd[start:end]
@@ -60,6 +67,17 @@ def test_a_denied_project_link_sends_other_spellings_to_the_gate(tmp_path):
     assert probes["bare_read_alias"]["pre_approved"] and not probes["scoped_read_alias"]["pre_approved"]
 
 
+def test_an_internal_zone_scopes_read_preapproval_but_no_zone_keeps_bare_read(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    assert "Read" in _allowed_tools(tmp_path, project), "no internal zone keeps the existing pre-approval"
+
+    narrowed = _allowed_tools(tmp_path, project, gate_internal_reads=True)
+    assert "Read" not in narrowed
+    for folder in (tmp_path / "ws", project):
+        assert f"Read(/{claude_rule_path(str(folder.resolve()))}/**)" in narrowed
+
+
 @pytest.mark.asyncio
 async def test_the_runner_hands_claude_the_denied_project_links(tmp_path, monkeypatch):
     zone, project = tmp_path / "zone", tmp_path / "project"
@@ -71,6 +89,84 @@ async def test_the_runner_hands_claude_the_denied_project_links(tmp_path, monkey
                                         meta={"project_dirs": [str(project)]}))
     assert result.ok, result.error
     assert seen["ctx"].denied_links == [str(project / "raw")]
+
+
+@pytest.mark.asyncio
+async def test_internal_project_alias_read_reaches_the_approval_gate(tmp_path, monkeypatch):
+    zone, project = tmp_path / "internal", tmp_path / "project"
+    zone.mkdir()
+    (zone / "raw.tsv").write_text("fake record\n", encoding="utf-8")
+    project.mkdir()
+    alias = project / "alias"
+    try:
+        _link_dir(alias, zone)
+    except OSError as exc:
+        pytest.skip(f"directory symlink or unprivileged junction unavailable: {exc}")
+
+    settings = _zone_settings(tmp_path, zone)
+    settings.policy.data_zones = [DataZone(path=str(zone), level="internal")]
+    runner, seen = _capture_runner(tmp_path, monkeypatch, settings)
+    result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q",
+                                        meta={"project_dirs": [str(project)]}))
+    assert result.ok, result.error
+
+    ctx = seen["ctx"]
+    assert ctx.asked_links == [str(alias)] and ctx.gate_internal_reads
+    ask = ctx.claude_settings["permissions"]["ask"]
+    alias_rule = claude_rule_path(str(alias))
+    assert f"Read(/{alias_rule})" in ask and f"Read(/{alias_rule}/**)" in ask
+    decision = evaluate_tool("Read", {"file_path": "alias/raw.tsv"}, settings.policy,
+                             [str(project)], str(project))
+    assert decision.action == "ask" and "internal" in decision.reason
+
+
+@pytest.mark.parametrize("level", ["internal", "restricted"])
+@pytest.mark.asyncio
+async def test_non_public_zone_inside_read_root_gets_no_root_read_preapproval(tmp_path, monkeypatch, level):
+    project = tmp_path / "project"
+    zone = project / "internal"
+    zone.mkdir(parents=True)
+    (zone / "raw.tsv").write_text("fake record\n", encoding="utf-8")
+    settings = _zone_settings(tmp_path, zone)
+    settings.policy.data_zones = [DataZone(path=str(zone), level=level)]
+    runner, seen = _capture_runner(tmp_path, monkeypatch, settings)
+
+    result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q",
+                                        meta={"project_dirs": [str(project)]}))
+    assert result.ok, result.error
+    allowed = _context_allowed_tools(seen["ctx"])
+    project_rule = f"Read(/{claude_rule_path(str(project.resolve()))}/**)"
+    workdir_rule = f"Read(/{claude_rule_path(str(seen['ctx'].workdir.resolve()))}/**)"
+    assert "Read" not in allowed
+    assert project_rule not in allowed
+    assert workdir_rule in allowed, "an unrelated read root keeps its scoped pre-approval"
+
+    if level != "internal":
+        return
+    alias = project / "new"
+    try:
+        _link_dir(alias, zone)
+    except OSError as exc:
+        pytest.skip(f"directory symlink or unprivileged junction unavailable: {exc}")
+    decision = evaluate_tool("Read", {"file_path": str(alias / "raw.tsv")}, settings.policy,
+                             [str(project)], str(project))
+    assert decision.action == "ask" and "internal" in decision.reason
+
+
+@pytest.mark.asyncio
+async def test_internal_zone_outside_read_root_keeps_root_read_preapproval(tmp_path, monkeypatch):
+    project, zone = tmp_path / "project", tmp_path / "internal"
+    project.mkdir()
+    zone.mkdir()
+    settings = _zone_settings(tmp_path, zone)
+    settings.policy.data_zones = [DataZone(path=str(zone), level="internal")]
+    runner, seen = _capture_runner(tmp_path, monkeypatch, settings)
+
+    result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q",
+                                        meta={"project_dirs": [str(project)]}))
+    assert result.ok, result.error
+    allowed = _context_allowed_tools(seen["ctx"])
+    assert f"Read(/{claude_rule_path(str(project.resolve()))}/**)" in allowed
 
 
 def _zone_link(tmp_path):

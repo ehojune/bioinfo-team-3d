@@ -401,9 +401,12 @@ class ClaudeCodeAdapter(AgentAdapter):
         # Bare Write/Edit become Edit rules for the task's write roots, so an outside write reaches the gate (#219).
         # With PI personal paths active, shell rules go and reads narrow to the task's folders (PR #324 review).
         # On with no active path too (PR #327), and while a project link into a zone is denied by rule (#178).
-        on = ctx.private_enabled or bool(ctx.private_paths) or bool(ctx.denied_links)
+        on = (ctx.private_enabled or bool(ctx.private_paths) or bool(ctx.denied_links)
+              or ctx.gate_internal_reads or bool(ctx.gated_read_roots))
         # The task's own project folder in the staff config folder is read-only: Read rules, no Edit rule (#298 ⑤).
-        read_roots = [ctx.workdir, *ctx.extra_dirs, *ctx.read_dirs, *ctx.private_open_reads] if on else None
+        all_read_roots = [ctx.workdir, *ctx.extra_dirs, *ctx.read_dirs, *ctx.private_open_reads]
+        gated = set(ctx.gated_read_roots)
+        read_roots = [root for root in all_read_roots if str(root) not in gated] if on else None
         allowed = [*claude_allowed_tools(
                        a.tools, [ctx.workdir, *ctx.extra_dirs], read_roots,
                        shared_environment_gate=(ctx.shared_environment_protected or ctx.gate_non_public_data)),
