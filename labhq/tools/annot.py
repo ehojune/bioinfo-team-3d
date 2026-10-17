@@ -89,7 +89,9 @@ CACHE_SCHEMA = 2
 # answers also age out.
 CACHE_MAX_AGE_S = {"gnomad": 30 * 24 * 3600.0,
                    # Europe PMC has no release; an open-access copy can appear after embargo (annot_literature.py).
-                   "fulltext": 30 * 24 * 3600.0}
+                   "fulltext": 30 * 24 * 3600.0,
+                   "citation_chase": 30 * 24 * 3600.0,
+                   "preprints": 30 * 24 * 3600.0}
 QUERY_LOG = "outputs/annotation_queries.jsonl"
 RESULT_DIR = "outputs/annotation"
 

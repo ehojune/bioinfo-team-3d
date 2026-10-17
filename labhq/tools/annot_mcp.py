@@ -2,7 +2,7 @@
 
 Variants: Ensembl VEP, gnomAD, ClinVar (`annot.py`). Regions, genes and expression: ChIP-Atlas, ENCODE cCREs, GTEx,
 and AlphaGenome predictions when its key file exists (`annot_regulatory.py`). Papers: Europe PMC open-access full text,
-else the abstract (`annot_literature.py`, #697).
+citation chasing, and bioRxiv/medRxiv preprints (`annot_literature.py`, #697, #720).
 
 Env (set by the runner): LABHQ_WORKDIR (where outputs/annotation_queries.jsonl goes), LABHQ_CONFIG (state_dir for the
 cache, annot.alphagenome_key_file). The AlphaGenome key is read here from that owner-only file, never from the
@@ -45,7 +45,8 @@ server = make_server(
         "(clinical classification) for variants; chipatlas (ChIP-Atlas enrichment of public ChIP/ATAC peaks for a gene "
         "list or regions), chipatlas_targets (target genes of a transcription factor), encode (ENCODE candidate "
         "cis-regulatory elements overlapping regions), gtex (GTEx tissue expression and eQTLs for genes or variants), "
-        "fulltext (the body of a paper by PMID, PMCID or DOI: Europe PMC open-access full text, else the abstract)"
+        "fulltext (the body of a paper by PMID, PMCID or DOI: Europe PMC open-access full text, else the abstract), "
+        "citation_chase (references and citing papers for one paper), preprints (bioRxiv/medRxiv search; 심사 전)"
         + ("; alphagenome_variant (recommended variant effect scores, GRCh38), "
            "alphagenome (legacy track summaries over variants or intervals)" if ALPHAGENOME else "")
         + ". Give variants as chr:pos:ref:alt (VCF-style alleles), HGVS or rsID, and regions as chr:start-end "
@@ -75,12 +76,12 @@ async def _run(method: str, *args: object, **kwargs: object) -> str:
     return json.dumps(result, ensure_ascii=False)
 
 
-async def _run_literature(ids: list[str]) -> str:
+async def _run_literature(method: str, *args: object) -> str:
     async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=20.0), follow_redirects=True,
                                  headers={"User-Agent": annot.USER_AGENT}) as client:
         annotator = annot_literature.LiteratureAnnotator(client, WORKDIR, CACHE_DIR, pace=PACE)
         try:
-            result = await annotator.fulltext(ids)
+            result = await getattr(annotator, method)(*args)
         except (annot.LookupFailed, ValueError) as exc:
             raise tool_failure(str(exc)) from exc
     return json.dumps(result, ensure_ascii=False)
@@ -162,7 +163,22 @@ async def fulltext(ids: list[str]) -> str:
     under the paper's license: cite them by path, quote briefly, and never copy them into outputs/.
     `publisher_copy` appears when a CC-licensed paper has no Europe PMC copy: one try at that link is fine; paywalled
     papers stay at the abstract."""
-    return await _run_literature(ids)
+    return await _run_literature("fulltext", ids)
+
+
+@server.tool()
+async def citation_chase(paper_id: str, limit: int = 100) -> str:
+    """For one PMID, PMCID or DOI, retrieve both references (backward citation chasing) and publications that cite
+    it (forward citation chasing) from Europe PMC. Up to `limit` candidates per direction (1..1000). Results contain
+    compact bibliography, source identifiers and access_level_candidate; use fulltext to confirm the level read."""
+    return await _run_literature("citation_chase", paper_id, limit)
+
+
+@server.tool()
+async def preprints(query: str, limit: int = 25) -> str:
+    """Search bioRxiv and medRxiv through Europe PMC SRC:PPR. Returns up to `limit` candidates (1..100), all marked
+    `심사 전`; do not treat them as peer-reviewed evidence."""
+    return await _run_literature("preprints", query, limit)
 
 
 if ALPHAGENOME is not None:
