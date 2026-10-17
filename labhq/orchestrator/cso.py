@@ -21,7 +21,7 @@ from ..adapters import READ_ONLY_OVERRIDES, is_read_only_task, read_only_refusal
 from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..artifact_policy import (OUTPUT_ENV_DIR, OUTPUT_REFERENCE_DIR, OUTPUT_SCRIPTS_DIR,
                                unreported_warning_paths)
-from ..costs import cost_detail, format_cost, task_cost_item
+from ..costs import cost_detail, format_cost, historical_plan_cost_estimate, task_cost_item
 from ..interruption import ShutdownInterrupted, shutdown_interruption, stopping_marker
 from ..pi_text import PI_TEXT_RULE
 from ..evidence.claims import RESULT_CONTRACT_FIELD_RULES
@@ -45,7 +45,7 @@ from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARC
                                  refresh_plan_approval, research_plan_errors, research_plan_schema,
                                  research_result_errors, salvage_research_result, validate_research_plan,
                                  missing_result_slots, repair_result_slots,
-                                 validate_research_result, with_pack_refs)
+                                 unnegated_analysis_text, validate_research_result, with_pack_refs)
 from ..research import continuation as research_continuation
 from ..security import redact_tokens
 from ..recruit.provenance import (consult_refusal, external_contract_conflicts, external_hosts, not_yet_active,
@@ -73,6 +73,41 @@ SCOPE_SCHEMA: dict[str, Any] = {
 }
 DEFAULT_LAB_SCOPE = ("one-PI bioinformatics lab: genomics, transcriptomics, epigenomics, proteomics, single-cell, "
                      "population and clinical genetics, related literature and methods")
+
+# Explicit analyses and action verbs in the PI's request are a scope contract, not prose the CSO may generalize away.
+REQUEST_ANALYSIS_TERMS: tuple[tuple[str, str, str], ...] = (
+    ("DEG", r"(?i)(?:(?<![A-Za-z0-9])DEGs?(?![A-Za-z0-9])|차등\s*발현|differential(?:ly)?\s+(?:gene\s+)?expression)",
+     r"(?i)(?:(?<![A-Za-z0-9])DEGs?(?![A-Za-z0-9])|차등\s*발현|differential(?:ly)?\s+(?:gene\s+)?expression)"),
+    ("DMP/차등 메틸화", r"(?i)(?:(?<![A-Za-z0-9])DMPs?(?![A-Za-z0-9])|차등\s*메틸화|메틸화\s*분석|differential(?:ly)?\s+methylat)",
+     r"(?i)(?:(?<![A-Za-z0-9])DMPs?(?![A-Za-z0-9])|차등\s*메틸화|메틸화\s*분석|differential(?:ly)?\s+methylat)"),
+    ("경로 분석", r"(?i)(?:경로\s*(?:분석|농축)|pathway\s+(?:analysis|enrichment)|(?<![A-Za-z0-9])GSEA(?![A-Za-z0-9])|(?<![A-Za-z0-9])ORA(?![A-Za-z0-9]))",
+     r"(?i)(?:경로\s*(?:분석|농축)|pathway\s+(?:analysis|enrichment)|(?<![A-Za-z0-9])GSEA(?![A-Za-z0-9])|(?<![A-Za-z0-9])ORA(?![A-Za-z0-9]))"),
+    ("회귀", r"(?i)(?:회귀|regress(?:ion|ed|ing)?)", r"(?i)(?:회귀|regress(?:ion|ed|ing)?)"),
+    ("메타분석", r"(?i)(?:메타\s*분석|meta[ -]?analys(?:is|es))",
+     r"(?i)(?:메타\s*분석|meta[ -]?analys(?:is|es))"),
+    ("생존분석", r"(?i)(?:생존\s*분석|survival\s+analysis|\bCox\b)",
+     r"(?i)(?:생존\s*분석|survival\s+analysis|\bCox\b)"),
+    ("GWAS", r"(?i)(?:(?<![A-Za-z0-9])GWAS(?![A-Za-z0-9])|genome[ -]wide\s+association)",
+     r"(?i)(?:(?<![A-Za-z0-9])GWAS(?![A-Za-z0-9])|genome[ -]wide\s+association)"),
+    ("분석", r"(?i)(?:분석|analy[sz](?:e|ed|ing|is))", r"(?i)(?:분석|analy[sz](?:e|ed|ing|is))"),
+    ("비교", r"(?i)(?:비교|compar(?:e|ed|ing|ison))", r"(?i)(?:비교|compar(?:e|ed|ing|ison))"),
+    ("검정", r"(?i)(?:검정|\btest(?:ed|ing)?\b)", r"(?i)(?:검정|\btest(?:ed|ing)?\b)"),
+    ("추정", r"(?i)(?:추정|estimat(?:e|ed|ing|ion))", r"(?i)(?:추정|estimat(?:e|ed|ing|ion))"),
+    ("예측", r"(?i)(?:예측|predict(?:ed|ing|ion)?)", r"(?i)(?:예측|predict(?:ed|ing|ion)?)"),
+    ("분류", r"(?i)(?:분류|classif(?:y|ied|ication))", r"(?i)(?:분류|classif(?:y|ied|ication))"),
+    ("군집", r"(?i)(?:군집|cluster(?:ed|ing)?)", r"(?i)(?:군집|cluster(?:ed|ing)?)"),
+    ("연관", r"(?i)(?:연관|associat(?:e|ed|ing|ion))", r"(?i)(?:연관|associat(?:e|ed|ing|ion))"),
+    ("상관", r"(?i)(?:상관|correlat(?:e|ed|ing|ion))", r"(?i)(?:상관|correlat(?:e|ed|ing|ion))"),
+    ("검증", r"(?i)(?:검증|validat(?:e|ed|ing|ion))", r"(?i)(?:검증|validat(?:e|ed|ing|ion))"),
+    ("평가", r"(?i)(?:평가|evaluat(?:e|ed|ing|ion))", r"(?i)(?:평가|evaluat(?:e|ed|ing|ion))"),
+)
+SCOPE_COVERAGE_WARNING = "요청 범위 누락: 계획의 범위·단계에서 찾지 못한 분석 항목 — "
+REQUEST_SCOPE_RULE = (
+    "Copy every analysis name and analysis action explicitly written in the PI's request into the scope and at least "
+    "one planned step. Keep names such as DEG, DMP/differential methylation, pathway analysis, regression, "
+    "meta-analysis, survival analysis and GWAS verbatim or with an unambiguous equivalent; never reduce a requested "
+    "analysis to data discovery."
+)
 
 PLAN_SCHEMA: dict[str, Any] = {
     "type": "object", "additionalProperties": False,
@@ -211,6 +246,55 @@ def scope_verdict(plan: Any) -> dict[str, str] | None:
         return None
     return {"verdict": scope["verdict"], "reason": short(str(scope.get("reason") or "").strip(), 500)}
 
+
+def missing_request_analysis_terms(request: str, plan: Any) -> list[str]:
+    """Requested analysis names/actions absent from the plan's scope and executable description (#707)."""
+    request = unnegated_analysis_text(request or "")
+    if not isinstance(plan, dict):
+        return [label for label, request_pattern, _ in REQUEST_ANALYSIS_TERMS
+                if re.search(request_pattern, request)]
+    brief = plan.get("brief") if isinstance(plan.get("brief"), dict) else {}
+
+    def strings(value: Any):
+        if isinstance(value, str):
+            yield value
+        elif isinstance(value, dict):
+            for child in value.values():
+                yield from strings(child)
+        elif isinstance(value, (list, tuple)):
+            for child in value:
+                yield from strings(child)
+
+    scope_text = "\n".join(strings(brief.get("scope")))
+    instruction_text = "\n".join(
+        strings([step.get("instruction") for step in plan.get("steps") or [] if isinstance(step, dict)]))
+    requested = [(label, request_pattern, plan_pattern) for label, request_pattern, plan_pattern in REQUEST_ANALYSIS_TERMS
+                 if re.search(request_pattern, request)]
+    scope_matches = {label: bool(re.search(plan_pattern, scope_text))
+                     for label, _request_pattern, plan_pattern in requested}
+    instruction_matches = {label: bool(re.search(plan_pattern, instruction_text))
+                           for label, _request_pattern, plan_pattern in requested}
+    # A named analysis carried with an unambiguous equivalent also carries the generic request verb "analysis",
+    # but it must do so independently in the scope and in an executable instruction.
+    for matches in (scope_matches, instruction_matches):
+        if matches.get("분석") is False and any(matches.get(label) for label, _, _ in requested[:7]):
+            matches["분석"] = True
+    return [label for label, _request_pattern, _plan_pattern in requested
+            if not scope_matches[label] or not instruction_matches[label]]
+
+
+def with_scope_coverage_warning(plan: Any, request: str) -> Any:
+    """Replace the deterministic scope warning with the one for this plan, without rejecting CP1."""
+    if not isinstance(plan, dict):
+        return plan
+    missing = missing_request_analysis_terms(request, plan)
+    previous = plan.get("warnings") if isinstance(plan.get("warnings"), list) else []
+    kept = [warning for warning in previous
+            if not (isinstance(warning, str) and warning.startswith(SCOPE_COVERAGE_WARNING))]
+    if missing:
+        kept.append(SCOPE_COVERAGE_WARNING + ", ".join(missing))
+    return {**plan, "warnings": kept}
+
 # The reviewer's answer to each declared checklist item and required precedent item (#586). Optional in both review
 # schemas: a review saved before it existed, or one from a request with no checklist, stays valid.
 CHECKLIST_REVIEW_SCHEMA: dict[str, Any] = {
@@ -265,6 +349,7 @@ RESEARCH_LANE_REVIEW_SCHEMA: dict[str, Any] = {
 BRIEFING_PROMPT = """Prepare a briefing (≤400 words) for the CSO on this research request:
 field context, recent developments (search the web if available), which datasets exist and how they can be
 accessed (public vs controlled access, DUA constraints), and feasibility risks.
+Include a short scope line that follows this rule: """ + REQUEST_SCOPE_RULE + """
 
 Current runner capabilities (sanitized summary):
 {capabilities}
@@ -460,6 +545,7 @@ Rules:
   data. Reuse a choice when it fits this request's question; do not copy the original design otherwise. Record in
   `assumptions` only a different choice that could change the result.
 - """ + ROUTE_PLAN_RULE + """
+- """ + REQUEST_SCOPE_RULE + """
 - Judge the request against the lab's scope ({lab_scope}) in `scope`: verdict "in" when it fits, "borderline"
   when it is adjacent work the lab can still do, "out" when it is outside the lab's field; reason is one sentence.
   Plan the steps whatever the verdict (for "out" the PI decides whether they run), and do not ask about scope in
@@ -498,6 +584,7 @@ Contract rules:
   plan. The synthesis reads every branch result and still runs when at least one branch finishes. If a branch needs
   a PI-provided extract or an internal-data folder, ask for it in clarifying_questions before planning that work.
 - The brief states question, purpose, subject, scope, deliverables, and observable completion conditions.
+- """ + REQUEST_SCOPE_RULE + """
 - Explanatory/comparative work states a primary hypothesis, alternatives, and distinguishing observations.
   Exploratory/technical work uses its purpose and does not invent H0/H1.
 - Freeze analysis unit, selection/exclusion, comparators, metrics, validation, resources, stop/approval
@@ -1041,6 +1128,19 @@ def _budget_line(budget: dict[str, Any]) -> str:
         return f"집행 상한 ${cap:.2f}({_plan_cap_sum(budget)}). 넘으면 예산 카드가 뜹니다."
     return (f"집행 상한 ${cap:.2f}({origin.get(budget.get('source'), '요청 예산')} ${cap:.2f}에 맞춰 줄임: "
             f"{_plan_cap_sum(budget)} = ${total:.2f}).")
+
+
+def _cost_estimate_line(estimate: dict[str, Any]) -> str:
+    """Short CP1 evidence for the request estimate; the enforced cap remains the separate budget line."""
+    amount = estimate.get("estimate_usd")
+    if estimate.get("basis") == "historical" and amount is not None:
+        return (f"요청 총비용 추정 ${float(amount):.2f}(비슷한 완료 요청 "
+                f"{int(estimate.get('similar_requests') or 0)}건 · 단계당 평균 "
+                f"${float(estimate.get('average_per_step_usd') or 0):.2f} · 현재 "
+                f"{int(estimate.get('current_steps') or 0)}단계).")
+    if amount is not None:
+        return f"요청 비용은 기존 계획 추정 ${float(amount):.2f} 사용(실측 기록 부족)."
+    return "요청 비용 추정: 실측 기록 부족(계획 추정 없음)."
 
 
 def research_cp2_notes(contract: dict) -> list[tuple[str, str]]:
@@ -3756,6 +3856,26 @@ class Orchestrator:
         _spent, _unknown, bound = self._budget_bound(rid, float(limit))
         return max(0.0, float(limit) - bound)
 
+    def _apply_plan_cost_estimate(self, rid: str, plan: dict) -> dict:
+        """Use completed request costs for the total estimate; preserve the plan estimate when none qualify (#708)."""
+        estimate = historical_plan_cost_estimate(self.hub.requests, plan, self.hub.agents,
+                                                 exclude_request_id=rid)
+        if estimate.get("basis") == "historical" and estimate.get("estimate_usd") is not None:
+            # budget_usd is post-CP1 spending. The historical estimate is the whole request, so subtract the planning
+            # spend already recorded; keep a cent when the observed total has already been reached.
+            remaining = max(float(estimate["estimate_usd"]) - float(self.cost.get(rid, 0.0)), 0.01)
+            planned = plan.get("budget_usd")
+            planned_amount = (float(planned)
+                              if isinstance(planned, (int, float)) and not isinstance(planned, bool) else None)
+            plan = {**plan, "budget_usd": round(max(remaining, planned_amount or 0.0), 2)}
+        else:
+            planned = plan.get("budget_usd")
+            amount = (float(planned) if isinstance(planned, (int, float)) and not isinstance(planned, bool)
+                      else None)
+            estimate = {**estimate, "basis": "fallback", "estimate_usd": amount}
+        self.hub.requests[rid]["plan_cost_estimate"] = estimate
+        return plan
+
     def _research_budget(self, rid: str, req: dict, plan: dict) -> tuple[dict[str, Any], str]:
         """The spending cap a CP1 approval of ``plan`` enforces (PI 점검 R17), and where its configured cap came from.
 
@@ -5298,6 +5418,11 @@ class Orchestrator:
                     summary = ("CP1 연구 계획 승인: 고정할 질문·방법·완료/중단 조건·데이터 범위·적용 pack을 "
                                "확인하고 승인하세요." + (" 고칠 점이 있으면 메모와 함께 수정 요청을 고르세요."
                                                       if can_revise else ""))
+                    scope_warnings = [warning for warning in plan.get("warnings", [])
+                                      if isinstance(warning, str) and warning.startswith(SCOPE_COVERAGE_WARNING)]
+                    if scope_warnings:
+                        summary += "\n" + "\n".join(scope_warnings)
+                    summary += "\n" + _cost_estimate_line(req.get("plan_cost_estimate") or {})
                     paper_line = paper_skills.card_text(plan)
                     hiring_warnings = [w for w in plan.get("warnings", []) if "재배정" in w]
                     if hiring_warnings:
@@ -5326,7 +5451,8 @@ class Orchestrator:
                                     "protocol_revision": plan["protocol"]["revision"],
                                     "packs": plan["protocol"]["packs"],
                                     "scope_status": plan["intake"]["scope_status"],
-                                    "budget": budget, "revise_allowed": can_revise,
+                                    "budget": budget, "cost_estimate": req.get("plan_cost_estimate") or {},
+                                    "revise_allowed": can_revise,
                                     **({"continuation": {
                                         **{key: carried.get(key) for key in
                                            ("round", "from_plan_sha256", "reuse", "rerun", "p1_issues")},
@@ -5818,6 +5944,8 @@ class Orchestrator:
                         plan = prepare_research_declarations(plan, vocab, type_stats)
                         problems = selection_problems + output_problems + plan_problems(plan, candidate_packs)
                         if not problems:
+                            plan = with_scope_coverage_warning(plan, str(req.get("text") or text))
+                            plan = self._apply_plan_cost_estimate(rid, plan)
                             # Part of the frozen plan, so CP1 shows them and the hash covers them (#446).
                             plan = with_checklist_skip_warnings(plan, checklist_catalog,
                                                                 req.get("analysis_precedents"))
@@ -5919,8 +6047,9 @@ class Orchestrator:
                             plan, plan_res = await resolve_plan_questions(plan, plan_res, correction_suffix)
                             if plan is None:
                                 return
-                    req["plan"] = with_checklist_skip_warnings({**plan, "steps": steps, "warnings": warnings},
-                                                               checklist_catalog, req.get("analysis_precedents"))
+                    req["plan"] = with_scope_coverage_warning(with_checklist_skip_warnings(
+                        {**plan, "steps": steps, "warnings": warnings}, checklist_catalog,
+                        req.get("analysis_precedents")), str(req.get("text") or text))
                     if vocab is not None:
                         req["output_types_stats"] = {**type_stats, "vocab": vocab.sha256}
                     # The verdict of the plan that runs, else the first one given (#36, #346 review)
