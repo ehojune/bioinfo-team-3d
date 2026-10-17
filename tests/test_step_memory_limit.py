@@ -1,8 +1,10 @@
 """#709: every staff CLI gets a bounded process tree and a useful failure cause."""
 import asyncio
+import builtins
 import os
 import subprocess
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -13,6 +15,8 @@ from labhq.models import AgentSpec, Task
 from labhq.runner.memory_limit import (
     MEMORY_LIMIT_ENV,
     StepMemoryGuard,
+    _cgroup_memory_bytes,
+    _exec_with_limit,
     configured_limit_bytes,
     usable_memory_bytes,
 )
@@ -81,6 +85,26 @@ def test_posix_guard_wraps_command_and_zero_has_no_wrapper():
     assert wrapped[-len(command):] == command and wrapped[:3] == [sys.executable, "-m", "labhq.runner.memory_limit"]
     assert StepMemoryGuard(0, platform="posix").spawn_kwargs() == {}
     assert StepMemoryGuard(0, platform="posix").wrap_command(command) == command
+
+
+def test_posix_wrapper_distinguishes_a_missing_executable(monkeypatch, capsys):
+    resource = types.SimpleNamespace(
+        RLIMIT_AS=1,
+        RLIM_INFINITY=-1,
+        getrlimit=lambda _kind: (-1, -1),
+        setrlimit=lambda _kind, _value: None,
+    )
+    monkeypatch.setitem(sys.modules, "resource", resource)
+    monkeypatch.setattr(os, "execvpe", lambda *_args: (_ for _ in ()).throw(FileNotFoundError("missing")))
+
+    assert _exec_with_limit(["--exec", "1024", "--", "missing-bin"]) == 127
+    assert "LABHQ_EXEC_NOT_FOUND:" in capsys.readouterr().err
+
+
+def test_cgroup_probe_does_not_use_task_artifact_path_reader(monkeypatch):
+    monkeypatch.setattr(Path, "read_text", lambda *_a, **_kw: pytest.fail("Path.read_text called"))
+    monkeypatch.setattr(builtins, "open", lambda *_a, **_kw: (_ for _ in ()).throw(OSError("absent")))
+    assert _cgroup_memory_bytes() == 0
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX RLIMIT_AS enforcement")

@@ -53,7 +53,10 @@ def _cgroup_memory_bytes() -> int:
     for path in (Path("/sys/fs/cgroup/memory.max"),
                  Path("/sys/fs/cgroup/memory/memory.limit_in_bytes")):
         try:
-            value = path.read_text(encoding="ascii").strip()
+            # Do not use Path.read_text here: callers that forbid task-artifact reads
+            # monkeypatch that API, while this is runner host metadata.
+            with open(path, encoding="ascii") as stream:
+                value = stream.read().strip()
             if value != "max" and int(value) > 0:
                 return int(value)
         except (OSError, UnicodeError, ValueError):
@@ -226,6 +229,10 @@ class StepMemoryGuard:
     def setup_failed(stderr: str) -> bool:
         return "LABHQ_MEMORY_LIMIT_SETUP:" in stderr
 
+    @staticmethod
+    def executable_missing(stderr: str) -> bool:
+        return "LABHQ_EXEC_NOT_FOUND:" in stderr
+
     def close(self) -> None:
         if self._job:
             self._job.close()
@@ -268,6 +275,9 @@ def _exec_with_limit(argv: list[str]) -> int:
         target = min(limit, hard) if hard != resource.RLIM_INFINITY else limit
         resource.setrlimit(resource.RLIMIT_AS, (target, hard))
         os.execvpe(command[0], command, os.environ)
+    except FileNotFoundError as exc:
+        print(f"LABHQ_EXEC_NOT_FOUND: {exc}", file=sys.stderr)
+        return 127
     except (ImportError, OSError, ValueError) as exc:
         print(f"LABHQ_MEMORY_LIMIT_SETUP: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 126

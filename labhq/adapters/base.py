@@ -1147,10 +1147,14 @@ class AgentAdapter(ABC):
                 "작업 폴더의 .labhq가 실행 중에 링크로 바뀌어 stderr 기록을 남기지 않았습니다")})
         stderr = " | ".join(x for x in list(stderr_tail)[-5:] if x)
         stderr_all = "\n".join(stderr_tail)
+        executable_missing = getattr(memory_guard, "executable_missing", lambda _stderr: False)(stderr_all)
         memory_setup_failed = memory_guard.setup_failed(stderr_all)
         memory_exceeded = memory_guard.exceeded(returncode, stderr_all)
         memory_guard.close()
-        if memory_setup_failed:
+        if executable_missing:
+            st.error = (f"executable not found: {cmd[0]!r} — install it on the runner or fix "
+                        f"engines/cli settings for agent {ctx.agent.id!r}")
+        elif memory_setup_failed:
             st.error_kind = "memory_limit_setup"
             st.error = "직원 단계 메모리 상한을 적용하지 못해 실행하지 않았습니다. runner OS 설정을 확인하세요."
         elif memory_exceeded:
