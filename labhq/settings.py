@@ -559,6 +559,7 @@ class AnnotSettings(BaseModel):
 class GitHubSettings(BaseModel):
     ask_storage: bool = False  # general requests opt in; research requests always ask
     auto_publish_results: bool = False  # otherwise review the editor draft in the web office
+    progress_branch: str = "labhq/progress"  # optional per-step edition, separate from the approved final branch
     # Optional warning threshold only. Report figures and PDFs are never shrunk to meet it (#690).
     edition_pdf_max_mb: float | None = Field(default=None, gt=0)
     token_env: str = "GITHUB_TOKEN"  # token is read from this env var on the gateway host, never from YAML
@@ -568,6 +569,14 @@ class GitHubSettings(BaseModel):
     api_url: str = "https://api.github.com"
     dashboard_url: str | None = None  # link back to the web office in issue comments
     codex_mention: str = "@codex"  # only in the one top-level review request; each mention starts a Codex session
+
+    @field_validator("progress_branch")
+    @classmethod
+    def valid_progress_branch(cls, value: str) -> str:
+        if (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,199}", value)
+                or ".." in value or "//" in value or value.endswith(("/", "."))):
+            raise ValueError("github.progress_branch is invalid")
+        return value
 
 
 class DevLogSettings(BaseModel):
