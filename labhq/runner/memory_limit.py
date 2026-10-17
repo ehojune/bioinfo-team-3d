@@ -4,6 +4,8 @@ from __future__ import annotations
 import functools
 import os
 import re
+import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -72,8 +74,27 @@ def usable_memory_bytes() -> int:
     return min(known) if known else GIB  # conservative fallback for an unusual unsupported host
 
 
-def default_step_memory_limit_gb() -> float:
-    return usable_memory_bytes() * 0.60 / GIB
+def default_step_memory_limit_gb(platform: str | None = None) -> float:
+    tree_cap = (platform or os.name) == "nt" or posix_tree_memory_limit_supported()
+    return usable_memory_bytes() * (0.60 if tree_cap else 0.40) / GIB
+
+
+@functools.lru_cache(maxsize=1)
+def posix_tree_memory_limit_supported() -> bool:
+    """Probe an unprivileged user systemd scope with the property the runner will use."""
+    if os.name != "posix" or not shutil.which("systemd-run"):
+        return False
+    try:
+        completed = subprocess.run(
+            ["systemd-run", "--user", "--scope", "--quiet", "--property=MemoryMax=16777216", "--", "true"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
+        )
+        return completed.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 def configured_limit_bytes(runner_settings: Any) -> int:
@@ -195,11 +216,14 @@ class _WindowsJob:
 class StepMemoryGuard:
     limit_bytes: int
     platform: str | None = None
+    posix_tree: bool | None = None
     _job: _WindowsJob | None = None
 
     def __post_init__(self) -> None:
         self.limit_bytes = max(0, int(self.limit_bytes))
         self.platform = self.platform or os.name
+        if self.platform == "posix" and self.enabled and self.posix_tree is None:
+            self.posix_tree = posix_tree_memory_limit_supported()
 
     @property
     def enabled(self) -> bool:
@@ -209,14 +233,21 @@ class StepMemoryGuard:
         return {}
 
     def wrap_command(self, command: list[str]) -> list[str]:
-        """Set RLIMIT_AS in a tiny exec wrapper; avoids preexec_fn in the runner's threaded process."""
-        if not self.enabled or self.platform != "posix":
+        """Put the real CLI below a wrapper that establishes the OS limit before it can create children."""
+        if not self.enabled:
             return command
+        if self.platform == "nt":
+            return [sys.executable, "-m", __name__, "--windows-job", str(self.limit_bytes), "--", *command]
+        if self.platform != "posix":
+            return command
+        if self.posix_tree:
+            return ["systemd-run", "--user", "--scope", "--quiet",
+                    f"--property=MemoryMax={self.limit_bytes}", "--", *command]
         return [sys.executable, "-m", __name__, "--exec", str(self.limit_bytes), "--", *command]
 
     def attach(self, pid: int) -> None:
-        if self.enabled and self.platform == "nt":
-            self._job = _WindowsJob(pid, self.limit_bytes)
+        # Windows is attached by the self-Job wrapper before the real CLI is spawned. POSIX is wrapped too.
+        return None
 
     def exceeded(self, returncode: int | None, stderr: str) -> bool:
         if not self.enabled or returncode in (0, None):
@@ -244,7 +275,12 @@ def step_memory_guard(limit_bytes: int) -> StepMemoryGuard:
 
 
 def memory_limit_mechanism(platform: str | None = None) -> str:
-    return "Windows Job object" if (platform or os.name) == "nt" else "POSIX RLIMIT_AS (ulimit -v equivalent)"
+    platform = platform or os.name
+    if platform == "nt":
+        return "Windows Job object · 단계 트리 합산 상한"
+    if posix_tree_memory_limit_supported():
+        return "systemd-run --user --scope MemoryMax · 단계 트리 합산 상한"
+    return "POSIX RLIMIT_AS (ulimit -v equivalent) · 프로세스별 상한"
 
 
 def memory_limit_supported(platform: str | None = None) -> bool:
@@ -253,6 +289,8 @@ def memory_limit_supported(platform: str | None = None) -> bool:
         if platform == "nt":
             _windows_api()
         else:
+            if posix_tree_memory_limit_supported():
+                return True
             import resource
             getattr(resource, "RLIMIT_AS")
         return True
@@ -284,5 +322,32 @@ def _exec_with_limit(argv: list[str]) -> int:
     return 126
 
 
+def _run_windows_job(argv: list[str]) -> int:
+    """Join this wrapper to a Job before starting the real CLI, whose children inherit that Job."""
+    if len(argv) < 4 or argv[0] != "--windows-job" or argv[2] != "--":
+        print("LABHQ_MEMORY_LIMIT_SETUP: invalid Windows wrapper arguments", file=sys.stderr)
+        return 126
+    # The wrapper intentionally leaves the KILL_ON_CLOSE handle open until process exit. Closing it here would
+    # terminate this Job member before its non-zero child status reaches the runner.
+    job = None
+    try:
+        limit = int(argv[1])
+        command = argv[3:]
+        if limit <= 0 or not command:
+            raise ValueError("missing positive limit or command")
+        job = _WindowsJob(os.getpid(), limit)
+        completed = subprocess.run(command, check=False)
+        if completed.returncode and job.peak_bytes() >= int(limit * 0.98):
+            print("out of memory: Windows Job object limit reached", file=sys.stderr)
+        return int(completed.returncode)
+    except FileNotFoundError as exc:
+        print(f"LABHQ_EXEC_NOT_FOUND: {exc}", file=sys.stderr)
+        return 127
+    except (OSError, ValueError) as exc:
+        print(f"LABHQ_MEMORY_LIMIT_SETUP: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 126
+
+
 if __name__ == "__main__":  # pragma: no cover - exercised as the staff subprocess wrapper
-    raise SystemExit(_exec_with_limit(sys.argv[1:]))
+    entry = _run_windows_job if sys.argv[1:2] == ["--windows-job"] else _exec_with_limit
+    raise SystemExit(entry(sys.argv[1:]))

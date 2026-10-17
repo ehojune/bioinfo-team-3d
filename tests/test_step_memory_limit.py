@@ -20,6 +20,7 @@ from labhq.runner.memory_limit import (
     configured_limit_bytes,
     usable_memory_bytes,
 )
+from labhq.runner import memory_limit
 from labhq.settings import Settings
 
 
@@ -52,12 +53,19 @@ def _context(tmp_path: Path, settings: Settings) -> RunContext:
     )
 
 
-def test_default_limit_is_sixty_percent_of_runner_memory():
+def test_default_limit_matches_the_available_tree_protection():
     settings = Settings()
     total = usable_memory_bytes()
     limit = configured_limit_bytes(settings.runner)
     assert total > 0 and limit > 0
-    assert abs(limit - int(total * 0.60)) <= 2 * 1024 * 1024
+    expected = 0.60 if os.name == "nt" or memory_limit.posix_tree_memory_limit_supported() else 0.40
+    assert abs(limit - int(total * expected)) <= 2 * 1024 * 1024
+
+
+def test_posix_per_process_fallback_default_is_forty_percent(monkeypatch):
+    monkeypatch.setattr(memory_limit, "usable_memory_bytes", lambda: 10 * 1024 ** 3)
+    monkeypatch.setattr(memory_limit, "posix_tree_memory_limit_supported", lambda: False)
+    assert memory_limit.default_step_memory_limit_gb("posix") == 4.0
 
 
 def test_zero_disables_limit_and_negative_is_rejected():
@@ -74,17 +82,73 @@ def test_doctor_reports_limit_mechanism_and_disabled_state():
     settings.runner.step_memory_limit_gb = 1.5
     row = _memory_limit_row(settings)
     assert row["status"] == "ok" and "1.50 GiB" in row["detail"]
-    assert "Job object" in row["detail"] if os.name == "nt" else "RLIMIT_AS" in row["detail"]
+    if os.name == "nt":
+        assert "Job object" in row["detail"] and "단계 트리 합산 상한" in row["detail"]
+    elif memory_limit.posix_tree_memory_limit_supported():
+        assert "MemoryMax" in row["detail"] and "단계 트리 합산 상한" in row["detail"]
+    else:
+        assert "RLIMIT_AS" in row["detail"] and "프로세스별 상한" in row["detail"]
     settings.runner.step_memory_limit_gb = 0
     assert _memory_limit_row(settings)["status"] == "skip"
 
 
+def test_doctor_calls_posix_rlimit_a_per_process_limit(monkeypatch):
+    from labhq.doctor import _memory_limit_row
+
+    mechanism = memory_limit.memory_limit_mechanism
+    monkeypatch.setattr(memory_limit, "posix_tree_memory_limit_supported", lambda: False, raising=False)
+    monkeypatch.setattr(memory_limit, "memory_limit_mechanism", lambda: mechanism("posix"))
+    settings = Settings()
+    settings.runner.step_memory_limit_gb = 1
+    row = _memory_limit_row(settings)
+    assert "POSIX RLIMIT_AS" in row["detail"]
+    assert "프로세스별 상한" in row["detail"]
+
+
 def test_posix_guard_wraps_command_and_zero_has_no_wrapper():
     command = ["python", "job.py"]
-    wrapped = StepMemoryGuard(1024, platform="posix").wrap_command(command)
+    wrapped = StepMemoryGuard(1024, platform="posix", posix_tree=False).wrap_command(command)
     assert wrapped[-len(command):] == command and wrapped[:3] == [sys.executable, "-m", "labhq.runner.memory_limit"]
     assert StepMemoryGuard(0, platform="posix").spawn_kwargs() == {}
     assert StepMemoryGuard(0, platform="posix").wrap_command(command) == command
+
+
+def test_posix_tree_guard_uses_user_systemd_scope():
+    command = ["python", "job.py"]
+    wrapped = StepMemoryGuard(1024, platform="posix", posix_tree=True).wrap_command(command)
+    assert wrapped[:3] == ["systemd-run", "--user", "--scope"]
+    assert "--property=MemoryMax=1024" in wrapped
+    assert wrapped[-len(command):] == command
+
+
+def test_windows_wrapper_joins_job_before_it_starts_cli(monkeypatch):
+    command = ["staff-cli", "run"]
+    wrapped = StepMemoryGuard(1024, platform="nt").wrap_command(command)
+    assert wrapped[-len(command):] == command
+    assert wrapped[:3] == [sys.executable, "-m", "labhq.runner.memory_limit"]
+    assert "--windows-job" in wrapped
+
+    events = []
+
+    class Job:
+        def __init__(self, pid, limit):
+            events.append(("job", pid, limit))
+
+        def peak_bytes(self):
+            return 0
+
+        def close(self):
+            events.append(("close",))
+
+    class Completed:
+        returncode = 0
+
+    monkeypatch.setattr(memory_limit, "_WindowsJob", Job)
+    monkeypatch.setattr(memory_limit.subprocess, "run",
+                        lambda argv, check=False: events.append(("cli", argv, check)) or Completed())
+
+    assert memory_limit._run_windows_job(["--windows-job", "1024", "--", *command]) == 0
+    assert [event[0] for event in events] == ["job", "cli"]
 
 
 def test_posix_wrapper_distinguishes_a_missing_executable(monkeypatch, capsys):

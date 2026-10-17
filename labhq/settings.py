@@ -63,7 +63,7 @@ class RunnerSettings(BaseModel):
     contract_dir: str | None = None  # active contract roster; default agents_dir/contract, per instance (#303)
     broker_port: int = 8788
     task_timeout_s: int = 6 * 3600
-    # 0 disables the process-tree cap. The host/cgroup-aware default is 60% of usable physical memory.
+    # 0 disables the cap. Default: 60% with a tree cap, 40% for per-process POSIX RLIMIT_AS fallback.
     step_memory_limit_gb: float = Field(
         default_factory=_default_step_memory_limit_gb,
         ge=0,
