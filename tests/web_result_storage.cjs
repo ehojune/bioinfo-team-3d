@@ -32,6 +32,18 @@ test('missing token disables GitHub choices and clarify keeps one card',async()=
   assert.equal(row._decisionParts.storage._mode.children[1].disabled,true);
   assert.match(row.textContent,/토큰 설정 필요/);
 });
+test('initial GitHub choice offers opt-in step progress, off by default',async()=>{
+  const ui=await mod, host=new Element();
+  const card={id:'progress',kind:'result_storage',detail:{storage:{github_available:true,
+    suggested_name:'study',progress_available:true,progress_default:false,
+    progress_question:'진행 과정도 단계마다 올릴까요?'}}};
+  const [row]=ui.syncDecisionCards(host,[card]);
+  const box=row._decisionParts.storage;
+  assert.equal(box._progress.checked,false);
+  box._mode.value='new';box._mode.onchange();box._progress.checked=true;
+  assert.deepEqual(ui.storageChoice(row),{mode:'new',repo:'study',visibility:'private',progress_push:true});
+  assert.match(row.textContent,/진행 과정도 단계마다 올릴까요\? \(기본 꺼짐\)/);
+});
 test('both offices pass structured storage choices',()=>{
   assert.match(fs.readFileSync(path.join(web,'index.html'),'utf8'),/storageChoice\(li\)/);
   assert.match(fs.readFileSync(path.join(web,'lab3d/src/live.js'),'utf8'),/if \(storage\) decision\.storage = storage/);

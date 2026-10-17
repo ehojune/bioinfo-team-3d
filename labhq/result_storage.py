@@ -72,6 +72,7 @@ _PORTFOLIO_PDF_NAME = "report/report.pdf"
 _GENERATED = ("README.md", "report.md", "report/report.md", "PROGRESS.md", "REPRODUCE.md", "SOURCES.md")  # edition documents that may link a figure
 PUBLISH_PREVIEW_FILE_MAX_BYTES = 1_000_000
 PUBLISH_PREVIEW_TOTAL_MAX_BYTES = 5_000_000
+_PROGRESS_OUTPUTS = {".md", ".svg", ".py", ".r", ".sh"}
 
 
 class PublishAccessError(RuntimeError):
@@ -510,7 +511,9 @@ class ResultStorage:
 
     @staticmethod
     def _choice_snapshot(saved: dict) -> dict:
-        return {key: saved[key] for key in ("mode", "repo", "visibility", "allow_public", "branch") if key in saved}
+        return {key: saved[key] for key in (
+            "mode", "repo", "visibility", "allow_public", "branch", "progress_push", "progress_branch"
+        ) if key in saved}
 
     def _mark_end_ask(self, req: dict, saved: dict) -> None:
         """Only choices made by a request running on this version get the new end question.
@@ -625,8 +628,12 @@ class ResultStorage:
             except Exception:
                 warning = ("GitHub 권한을 확인하지 못해 로컬에 남깁니다. 토큰이 만료됐거나 권한이 모자랄 수 있습니다"
                            f"({github_token.NEEDED_TEXT}). {later}")
-        return {"default": "local", "suggested_name": "labhq-" + rid.removeprefix("req_"),
+        card = {"default": "local", "suggested_name": "labhq-" + rid.removeprefix("req_"),
                 "github_available": available, "warning": warning}
+        if not end and not late:
+            card.update(progress_question="진행 과정도 단계마다 올릴까요?", progress_default=False,
+                        progress_available=available and not controlled_request(req, self.s))
+        return card
 
     async def select(self, rid, choice, *, late=False, end=False):
         async with self._card_lock:
@@ -692,6 +699,15 @@ class ResultStorage:
             saved["after_review"] = True
             marker["state"] = "answered"
             marker["final"] = self._choice_snapshot(saved)
+        progress_requested = bool(choice.get("progress_push")) and not late and not end
+        if progress_requested and controlled_request(req, self.s):
+            saved.update(progress_push=False,
+                         progress_warning="통제 데이터 요청은 단계별 GitHub 진행 게시를 켤 수 없습니다.")
+        elif progress_requested and mode in {"new", "existing"} and saved.get("mode") in {"new", "existing"}:
+            saved.update(progress_push=True, progress_branch=self.s.github.progress_branch,
+                         progress_status="selected")
+        elif not end:
+            saved["progress_push"] = False
         req["result_storage"] = saved
         if not late and not end:
             self._mark_end_ask(req, saved)
@@ -699,6 +715,194 @@ class ResultStorage:
         if late or end:
             self.schedule(rid)
         return saved
+
+    @staticmethod
+    def _progress_result(req: dict, step_id: str, result: Any | None) -> dict:
+        if result is not None:
+            if hasattr(result, "model_dump"):
+                return result.model_dump(mode="json")
+            if isinstance(result, Mapping):
+                return dict(result)
+        stored = req.get("results") if isinstance(req.get("results"), Mapping) else {}
+        value = stored.get(step_id)
+        return dict(value) if isinstance(value, Mapping) else {}
+
+    def _progress_payload(self, req: dict, step_id: str, result: Any | None = None
+                          ) -> tuple[dict[str, str | bytes], dict[str, list[str]], set[str], dict[str, list[str]]]:
+        """Build one conservative progress update from reported bundle outputs only.
+
+        Progress never carries tables or raster images. An internal step carries no output at all, and a file that
+        trips the publication scan is omitted rather than scrubbed into a misleading partial artifact.
+        """
+        current = self._progress_result(req, step_id, result)
+        shown = dict(req)
+        results = dict(req.get("results") or {})
+        if current:
+            results[step_id] = current
+        shown["results"] = results
+        scope = internal_data_steps(shown, self.s)
+        request_internal = request_uses_internal_data(shown, self.s)
+        internal_steps = ({str(step.get("id")) for step in (shown.get("plan") or {}).get("steps") or []}
+                          if request_internal and scope is None else set(scope or ()))
+        saved = req.get("result_storage") or {}
+        omitted = {str(key): list(value) for key, value in (saved.get("progress_omitted") or {}).items()}
+        published = {str(key): list(value) for key, value in (saved.get("progress_files") or {}).items()}
+        completed_steps = {str(key) for key, value in results.items() if isinstance(value, Mapping)}
+        for completed in completed_steps:
+            omitted.pop(completed, None)
+            published.pop(completed, None)
+        payload: dict[str, str | bytes] = {}
+
+        for name, path in edition_candidates(shown, self.s).items():
+            parts = PurePosixPath(name).parts
+            source_step = parts[1]
+            if (source_step not in completed_steps or source_step in internal_steps
+                    or PurePosixPath(name).suffix.lower() not in _PROGRESS_OUTPUTS):
+                continue
+            suffix = PurePosixPath(name).suffix.lower()
+            raw = path.read_bytes()
+            raw_body: str | bytes = raw if suffix == ".svg" else raw.decode("utf-8", errors="replace")
+            if scan_publish_files({name: raw_body}, internal=False):
+                omitted.setdefault(source_step, []).append(PurePosixPath(name).name)
+                continue
+            try:
+                body = (clean_svg_for_publish(raw, self.s, shown) if suffix == ".svg"
+                        else clean_document(raw.decode("utf-8"), self.s, shown))
+            except (UnicodeDecodeError, ValueError):
+                omitted.setdefault(source_step, []).append(PurePosixPath(name).name)
+                continue
+            if scan_publish_files({name: body}, internal=False):
+                omitted.setdefault(source_step, []).append(PurePosixPath(name).name)
+                continue
+            relative = PurePosixPath(*parts[3:]).as_posix()
+            target = f"progress/steps/{source_step}/{relative}"
+            payload[target] = body
+            published.setdefault(source_step, []).append(target)
+
+        rows = ["# 요청 진행 상황", "", f"- 요청: `{req.get('id')}`",
+                f"- 진행 branch: `{(req.get('result_storage') or {}).get('progress_branch')}`", "",
+                "| 단계 | 상태 | 공개 산출 | 요약 |", "|---|---|---|---|"]
+        plan_steps = (shown.get("plan") or {}).get("steps") or []
+        for step in plan_steps:
+            sid = str(step.get("id") or "단계")
+            value = results.get(sid) if isinstance(results.get(sid), Mapping) else {}
+            if sid in internal_steps:
+                state = "내부 단계 · 올리지 않음"
+                summary = "내부 단계 요약은 로컬 기록에만 둠"
+            elif not value:
+                state = "대기"
+                summary = "-"
+            elif value.get("ok") is False:
+                state = "실패"
+                summary = "실패 이유는 로컬 기록에서 확인"
+            else:
+                state = "완료"
+                raw_summary = str(value.get("text") or "").strip()
+                if raw_summary and scan_publish_files({f"progress/{sid}-summary.md": raw_summary}, internal=False):
+                    if "단계 요약" not in omitted.setdefault(sid, []):
+                        omitted[sid].append("단계 요약")
+                    summary = "검사로 뺌"
+                else:
+                    cleaned_summary = clean_document(raw_summary, self.s, shown) if raw_summary else "요약 없음"
+                    summary = " ".join(cleaned_summary.split())[:240]
+            files = [PurePosixPath(name).name for name in published.get(sid, [])]
+            detail = ", ".join(files) or "없음"
+            if omitted.get(sid):
+                detail += (" · " if detail != "없음" else "") + "검사로 뺌: " + ", ".join(omitted[sid])
+            safe_sid = " ".join(sid.replace("|", "\\|").split())
+            safe_detail = " ".join(detail.replace("|", "\\|").split())
+            safe_summary = " ".join(summary.replace("|", "\\|").split())
+            rows.append(f"| {safe_sid} | {state} | {safe_detail} | {safe_summary} |")
+        readme = "\n".join(rows) + "\n"
+        if issues := scan_publish_files({"progress/README.md": readme}, internal=False):
+            raise check_failure(issues)
+        payload["progress/README.md"] = readme
+        return payload, omitted, internal_steps, published
+
+    async def _progress_branch(self, rid: str, saved: dict, gh: GitHubClient) -> str:
+        repo = saved["repo"]
+        try:
+            info = await gh.repo_info(repo)
+        except GitHubHTTPError as exc:
+            if exc.status_code != 404 or saved.get("mode") != "new":
+                raise
+            try:
+                info = await gh._req("POST", "/user/repos", json={
+                    "name": repo.split("/", 1)[1], "private": saved.get("visibility") != "public",
+                    "auto_init": True,
+                })
+            except GitHubHTTPError as collision:
+                if collision.status_code != 422:
+                    raise
+                info = await gh.repo_info(repo)
+        if not info.get("private", False) and not saved.get("allow_public"):
+            raise PublishAccessError("공개 저장소에 진행 상황을 올리도록 승인하지 않았습니다.")
+        if info.get("permissions") is not None and not info.get("permissions", {}).get("push"):
+            raise PublishAccessError("진행 branch에 쓸 Contents 권한이 없습니다.")
+        default = info.get("default_branch") or "main"
+        branch = saved.get("progress_branch") or self.s.github.progress_branch
+        try:
+            await gh.branch_sha(repo, branch)
+        except GitHubHTTPError as exc:
+            if exc.status_code != 404:
+                raise
+            base = await gh.branch_sha(repo, default)
+            if not base:
+                raise PublishAccessError("진행 branch를 만들 기준 commit이 없습니다.")
+            await gh.create_branch(repo, branch, base)
+        return branch
+
+    async def _progress_warning(self, rid: str, saved: dict, text: str, *, disable: bool) -> None:
+        saved.update(progress_warning=text, progress_status="disabled" if disable else "warning")
+        if disable:
+            saved["progress_push"] = False
+        self.hub.save_request(rid)
+        await self.hub.publish({"type": "request.progress_push", "request_id": rid,
+                                "data": {"ok": False, "warning": text, "disabled": disable}})
+
+    async def progress_step(self, rid: str, step_id: str, result: Any | None = None) -> None:
+        """Best-effort per-step progress upload. No failure escapes into orchestration."""
+        req = self.hub.requests[rid]
+        saved = req.get("result_storage") or {}
+        if not saved.get("progress_push") or saved.get("mode") not in {"new", "existing"}:
+            return
+        if controlled_request(req, self.s):
+            await self._progress_warning(
+                rid, saved, "통제 데이터 요청은 단계별 GitHub 진행 게시를 켤 수 없어 껐습니다.", disable=True)
+            return
+        gh = self.client()
+        if gh is None:
+            await self._progress_warning(
+                rid, saved, "GitHub 토큰이 없어 단계별 진행 게시를 껐습니다. 토큰을 넣은 뒤 다음 요청에서 켜 주세요.",
+                disable=True)
+            return
+        try:
+            branch = await self._progress_branch(rid, saved, gh)
+            payload, omitted, internal_steps, published = self._progress_payload(req, step_id, result)
+            for name, body in payload.items():
+                if isinstance(body, bytes):
+                    await gh.put_binary(saved["repo"], name, body, branch, f"labhq 진행: {step_id}")
+                else:
+                    await gh.put_file(saved["repo"], name, body, f"labhq 진행: {step_id}", branch)
+            saved.update(progress_status="pushed", progress_last_step=step_id,
+                         progress_files=published, progress_omitted=omitted)
+            saved.pop("progress_warning", None)
+            self.hub.save_request(rid)
+            await self.hub.publish({"type": "request.progress_push", "request_id": rid, "data": {
+                "ok": True, "step_id": step_id, "branch": branch,
+                "omitted": omitted.get(step_id, []), "internal": step_id in internal_steps,
+            }})
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            denied = _denial(exc)
+            http_status = (exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else
+                           exc.status_code if isinstance(exc, GitHubHTTPError) else None)
+            permission = bool(denied or isinstance(exc, PublishAccessError)
+                              or http_status in {401, 403, 404})
+            text = ("GitHub 권한이 없어 단계별 진행 게시를 껐습니다. Contents 쓰기 권한을 확인하세요."
+                    if permission else "단계별 GitHub 진행 게시에 실패했습니다. 요청은 계속 진행하며 다음 단계에서 다시 시도합니다.")
+            await self._progress_warning(rid, saved, text, disable=permission)
 
     def schedule(self, rid):
         req = self.hub.requests[rid]

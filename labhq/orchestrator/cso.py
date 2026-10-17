@@ -4472,6 +4472,17 @@ class Orchestrator:
                     if not outcome.ok and failure_kind(outcome) not in {"environment", "login", "quota"}:
                         self._record_dev_failure(rid, sid, outcome.error or "unknown error",
                                                  outcome.error_kind or failure_kind(outcome) or "terminal")
+                    progress_storage = getattr(self.hub, "result_storage", None)
+                    if progress_storage is not None:
+                        try:
+                            await progress_storage.progress_step(rid, sid, outcome)
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception:
+                            saved = (self.hub.requests.get(rid, {}).get("result_storage") or {})
+                            saved["progress_warning"] = (
+                                "단계별 GitHub 진행 게시에 실패했습니다. 요청은 계속 진행합니다.")
+                            self.hub.save_request(rid)
                     environment = None if outcome.ok else environment_problem(outcome)
                     await self._emit(rid, "request.step_done", {"step_id": sid, "ok": results[sid].ok,
                                                                 "agent_id": by_id[sid]["agent_id"],

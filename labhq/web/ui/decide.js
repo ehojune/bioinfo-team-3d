@@ -341,7 +341,8 @@ export function decisionNote(row, approved = true) {
 export function storageChoice(row) {
   const box = row?._decisionParts?.storage;
   if (!box || box.hidden) return null;
-  return {mode: box._mode.value, repo: box._repo.value.trim(), visibility: box._visibility.value};
+  return {mode: box._mode.value, repo: box._repo.value.trim(), visibility: box._visibility.value,
+    ...(box._progress ? {progress_push: box._progress.checked} : {})};
 }
 
 function renderStorage(box, value) {
@@ -369,12 +370,20 @@ function renderStorage(box, value) {
     const option = add(visibility, 'option', label); option.value = key;
   }
   visibility.value = 'private';
+  let progress = null, progressLabel = null;
+  if (config.progress_question) {
+    progressLabel = add(box, 'label', '');
+    progress = add(progressLabel, 'input'); progress.type = 'checkbox';
+    progress.checked = Boolean(config.progress_default); progress.disabled = !config.progress_available;
+    add(progressLabel, 'span', ` ${config.progress_question} (기본 꺼짐)`);
+  }
   const update = () => {
     repoLabel.hidden = visibilityLabel.hidden = ['keep','local'].includes(mode.value);
+    if (progressLabel) progressLabel.hidden = ['keep','local'].includes(mode.value);
     repo.placeholder = mode.value === 'existing' ? '소유자/저장소' : config.suggested_name;
   };
   mode.onchange = () => {repo.value = mode.value === 'new' ? config.suggested_name : ''; update();};
-  box._mode = mode; box._repo = repo; box._visibility = visibility; update();
+  box._mode = mode; box._repo = repo; box._visibility = visibility; box._progress = progress; update();
 }
 
 // CP2 evidence review (#90): the decision is a structured choice; the note is only a memo.
