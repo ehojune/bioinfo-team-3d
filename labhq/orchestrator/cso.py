@@ -45,7 +45,7 @@ from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARC
                                  refresh_plan_approval, research_plan_errors, research_plan_schema,
                                  research_result_errors, salvage_research_result, validate_research_plan,
                                  missing_result_slots, repair_result_slots,
-                                 validate_research_result, with_pack_refs)
+                                 unnegated_analysis_text, validate_research_result, with_pack_refs)
 from ..research import continuation as research_continuation
 from ..security import redact_tokens
 from ..recruit.provenance import (consult_refusal, external_contract_conflicts, external_hosts, not_yet_active,
@@ -249,14 +249,11 @@ def scope_verdict(plan: Any) -> dict[str, str] | None:
 
 def missing_request_analysis_terms(request: str, plan: Any) -> list[str]:
     """Requested analysis names/actions absent from the plan's scope and executable description (#707)."""
+    request = unnegated_analysis_text(request or "")
     if not isinstance(plan, dict):
         return [label for label, request_pattern, _ in REQUEST_ANALYSIS_TERMS
-                if re.search(request_pattern, request or "")]
+                if re.search(request_pattern, request)]
     brief = plan.get("brief") if isinstance(plan.get("brief"), dict) else {}
-    steps = [{key: step.get(key) for key in ("instruction", "checks", "outputs")}
-             for step in plan.get("steps") or [] if isinstance(step, dict)]
-    plan_view = [brief.get("scope") or plan.get("scope"), brief.get("question"), brief.get("deliverables"),
-                 brief.get("completion_conditions"), plan.get("protocol"), steps, plan.get("suggested_next")]
 
     def strings(value: Any):
         if isinstance(value, str):
@@ -268,14 +265,22 @@ def missing_request_analysis_terms(request: str, plan: Any) -> list[str]:
             for child in value:
                 yield from strings(child)
 
-    rendered = "\n".join(strings(plan_view))
+    scope_text = "\n".join(strings(brief.get("scope")))
+    instruction_text = "\n".join(
+        strings([step.get("instruction") for step in plan.get("steps") or [] if isinstance(step, dict)]))
     requested = [(label, request_pattern, plan_pattern) for label, request_pattern, plan_pattern in REQUEST_ANALYSIS_TERMS
-                 if re.search(request_pattern, request or "")]
-    matches = {label: bool(re.search(plan_pattern, rendered)) for label, _request_pattern, plan_pattern in requested}
-    # A named analysis carried with an unambiguous equivalent also carries the generic request verb "analysis".
-    if matches.get("분석") is False and any(matches.get(label) for label, _, _ in requested[:7]):
-        matches["분석"] = True
-    return [label for label, _request_pattern, _plan_pattern in requested if not matches[label]]
+                 if re.search(request_pattern, request)]
+    scope_matches = {label: bool(re.search(plan_pattern, scope_text))
+                     for label, _request_pattern, plan_pattern in requested}
+    instruction_matches = {label: bool(re.search(plan_pattern, instruction_text))
+                           for label, _request_pattern, plan_pattern in requested}
+    # A named analysis carried with an unambiguous equivalent also carries the generic request verb "analysis",
+    # but it must do so independently in the scope and in an executable instruction.
+    for matches in (scope_matches, instruction_matches):
+        if matches.get("분석") is False and any(matches.get(label) for label, _, _ in requested[:7]):
+            matches["분석"] = True
+    return [label for label, _request_pattern, _plan_pattern in requested
+            if not scope_matches[label] or not instruction_matches[label]]
 
 
 def with_scope_coverage_warning(plan: Any, request: str) -> Any:
@@ -3859,7 +3864,10 @@ class Orchestrator:
             # budget_usd is post-CP1 spending. The historical estimate is the whole request, so subtract the planning
             # spend already recorded; keep a cent when the observed total has already been reached.
             remaining = max(float(estimate["estimate_usd"]) - float(self.cost.get(rid, 0.0)), 0.01)
-            plan = {**plan, "budget_usd": round(remaining, 2)}
+            planned = plan.get("budget_usd")
+            planned_amount = (float(planned)
+                              if isinstance(planned, (int, float)) and not isinstance(planned, bool) else None)
+            plan = {**plan, "budget_usd": round(max(remaining, planned_amount or 0.0), 2)}
         else:
             planned = plan.get("budget_usd")
             amount = (float(planned) if isinstance(planned, (int, float)) and not isinstance(planned, bool)

@@ -47,6 +47,27 @@ def test_prelisted_analysis_names_and_request_actions_are_checked(request_text, 
     assert label in missing
 
 
+@pytest.mark.parametrize(("scope", "instruction"), [
+    ("DEG analysis", "collect the public data"),
+    ("donor-level comparison", "run DEG analysis"),
+])
+def test_requested_analysis_must_appear_in_scope_and_an_executable_instruction(scope, instruction):
+    plan = valid_plan(pack_values=valid_pack_values())
+    plan["brief"]["scope"] = scope
+    plan["steps"][0]["instruction"] = instruction
+
+    assert "DEG" in missing_request_analysis_terms("공개 RNA-seq에서 DEG 분석을 해 줘", plan)
+
+
+def test_explicitly_negated_analysis_is_not_a_requested_term():
+    missing = missing_request_analysis_terms(
+        "GEO 논문을 검토하되 별도 분석 없이 원문만 요약해 줘",
+        valid_plan(pack_values=valid_pack_values()),
+    )
+
+    assert "분석" not in missing
+
+
 def test_historical_estimate_scales_completed_cost_by_planned_step_count():
     current = valid_plan(steps=3, pack_values=valid_pack_values())
 
@@ -78,6 +99,47 @@ def test_historical_estimate_uses_employee_and_model_means_when_available():
     assert estimate["average_per_step_usd"] == pytest.approx(8.0)
     assert estimate["estimate_usd"] == pytest.approx(24.0)
     assert any(row["agent_id"] == "b" and row["model"] == "large" and row["average_usd"] == 10.0
+               for row in estimate["worker_model_averages"])
+
+
+def test_historical_estimate_excludes_incomplete_cost_summary():
+    old = _past_request()
+    old["cost_summary"]["unknown_count"] = 1
+
+    estimate = historical_plan_cost_estimate(
+        {"past": old}, valid_plan(pack_values=valid_pack_values()), {})
+
+    assert estimate["basis"] == "insufficient"
+
+
+def test_historical_estimate_requires_a_known_overlapping_topic():
+    old = _past_request()
+    old["plan"]["topics"] = []
+
+    estimate = historical_plan_cost_estimate(
+        {"past": old}, valid_plan(pack_values=valid_pack_values()), {})
+
+    assert estimate["basis"] == "insufficient"
+
+
+def test_historical_signature_average_uses_only_that_signatures_steps():
+    old = _past_request(cost=12.0, steps=2)
+    for step in old["plan"]["steps"]:
+        step["agent_id"] = "a"
+    old["cost_items"] = {
+        "s1": {"task_id": "s1", "status": "actual", "usd": 2.0, "agent_id": "a",
+               "engine": "codex", "model": "small"},
+        "s2": {"task_id": "s2", "status": "actual", "usd": 10.0, "agent_id": "a",
+               "engine": "codex", "model": "large"},
+    }
+    current = valid_plan(pack_values=valid_pack_values())
+    current["steps"][0]["agent_id"] = "a"
+
+    estimate = historical_plan_cost_estimate(
+        {"past": old}, current, {"a": {"engine": "codex", "model": "large"}})
+
+    assert estimate["estimate_usd"] == pytest.approx(10.0)
+    assert any(row["model"] == "large" and row["historical_steps"] == 1
                for row in estimate["worker_model_averages"])
 
 
@@ -139,3 +201,15 @@ async def test_cp1_keeps_the_plan_estimate_when_history_is_insufficient():
     assert card["detail"]["cost_estimate"]["basis"] == "fallback"
     assert card["detail"]["cost_estimate"]["estimate_usd"] == pytest.approx(4.0)
     assert "실측 기록 부족" in card["summary"]
+
+
+@pytest.mark.asyncio
+async def test_historical_estimate_does_not_lower_the_planned_execution_cap():
+    plan = valid_plan(pack_values=valid_pack_values())
+    plan["budget_usd"] = 8.0
+
+    hub = await _run_cp1(plan, text="공개 자료를 비교 분석해 줘", history=True)
+
+    assert hub.requests["r"]["plan_cost_estimate"]["estimate_usd"] == pytest.approx(6.0)
+    assert hub.requests["r"]["plan"]["budget_usd"] == pytest.approx(8.0)
+    assert hub.requests["r"]["research_contract"]["approval"]["budget"]["cap_usd"] == pytest.approx(8.0)

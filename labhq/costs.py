@@ -218,9 +218,9 @@ def historical_plan_cost_estimate(requests: Any, plan: dict, agents: dict[str, d
         old_kind = ((old_plan.get("intake") or {}).get("work_kind")
                     if isinstance(old_plan.get("intake"), dict) else request.get("work_kind"))
         old_topics = set(old_plan.get("topics") or [])
-        if (not old_steps or subtotal is None or subtotal <= 0 or
+        if (not old_steps or subtotal is None or subtotal <= 0 or summary.get("unknown_count") != 0 or
                 (current_kind and old_kind and current_kind != old_kind) or
-                (current_topics and old_topics and current_topics.isdisjoint(old_topics))):
+                (current_topics and current_topics.isdisjoint(old_topics))):
             continue
         comparable.append((request, old_steps, subtotal))
 
@@ -244,7 +244,6 @@ def historical_plan_cost_estimate(requests: Any, plan: dict, agents: dict[str, d
             agent_id = str(step.get("agent_id") or "")
             if agent_id:
                 steps_by_agent[agent_id] = steps_by_agent.get(agent_id, 0) + 1
-        seen_signatures: set[tuple[str, str, str]] = set()
         for item in (request.get("cost_items") or {}).values():
             if not isinstance(item, dict) or item.get("status") not in {"actual", "estimated"}:
                 continue
@@ -259,11 +258,9 @@ def historical_plan_cost_estimate(requests: Any, plan: dict, agents: dict[str, d
             signature_cost[signature] = signature_cost.get(signature, 0.0) + usd
             agent_cost[agent_id] = agent_cost.get(agent_id, 0.0) + usd
             worker_cost += usd
-            seen_signatures.add(signature)
+            signature_steps[signature] = signature_steps.get(signature, 0) + 1
         for agent_id, count in steps_by_agent.items():
             agent_steps[agent_id] = agent_steps.get(agent_id, 0) + count
-        for signature in seen_signatures:
-            signature_steps[signature] = signature_steps.get(signature, 0) + steps_by_agent[signature[0]]
 
     averages = [{"agent_id": key[0], "engine": key[1], "model": key[2],
                  "average_usd": round(value / signature_steps[key], 6),
