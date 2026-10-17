@@ -670,10 +670,10 @@ def apply_declared_output_status(step: dict, result: TaskResult) -> TaskResult:
     if not result.ok or blocking_question(result):
         return result
     collected = {rel for name in result.outputs if (rel := output_relpath(name))}
-    required = [rel for name in step.get("outputs") or [] if (rel := output_relpath(name))]
-    optional = [rel for name in step.get("optional_outputs") or [] if (rel := output_relpath(name))]
-    missing = [path for path in required if path not in collected]
-    missing_optional = [path for path in optional if path not in collected]
+    required = [(str(name), rel) for name in step.get("outputs") or [] if (rel := output_relpath(name))]
+    optional = [(str(name), rel) for name in step.get("optional_outputs") or [] if (rel := output_relpath(name))]
+    missing = [name for name, rel in required if rel not in collected]
+    missing_optional = [name for name, rel in optional if rel not in collected]
     warnings = list(result.step_warnings)
     if missing_optional:
         warnings.append("선택 산출 누락: " + ", ".join(missing_optional))

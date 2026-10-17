@@ -289,7 +289,7 @@ async def test_salvage_that_removes_only_required_row_asks_about_its_gap():
 
 
 @pytest.mark.asyncio
-async def test_bad_plan_binding_never_enters_slot_repair():
+async def test_arbitrary_bad_plan_binding_never_enters_slot_repair():
     hub = slot_hub({})
     hub.s.research.result_corrections = 0
     original = hub.reply
@@ -297,7 +297,7 @@ async def test_bad_plan_binding_never_enters_slot_repair():
     async def reply(task):
         res = await original(task)
         if task.meta['kind'] == 'step':
-            res.structured['plan_sha256'] = '0' * 64
+            res.structured['plan_sha256'] = '1' * 64
         return res
 
     hub.reply = reply
