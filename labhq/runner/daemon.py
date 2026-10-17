@@ -1531,6 +1531,15 @@ class Runner:
             if agent.engine == Engine.claude_code:
                 open_reads.extend(staff_claude_project_dirs(self.s, ws.dir))
             private = resolve_private_paths(self.s, keep, open_reads=open_reads, cwd=ws.dir)
+            gated_read_roots: list[str] = []
+            non_public_zones = [*zones, *internal_zones]
+            for root_path in dict.fromkeys(map(str, [ws.dir, *extra_dirs, *read_dirs, *private.open_reads])):
+                try:
+                    resolved_root = Path(os.path.expandvars(os.path.expanduser(root_path))).resolve()
+                except (OSError, RuntimeError, ValueError):
+                    continue
+                if overlaps_zone(resolved_root, non_public_zones):
+                    gated_read_roots.append(root_path)
             for label in private.skipped:
                 if label not in self.private_skip_warned:
                     self.private_skip_warned.add(label)
@@ -1631,6 +1640,7 @@ class Runner:
                 denied_links=list(denied_links),
                 asked_links=list(asked_links),
                 gate_internal_reads=bool(internal_zones),
+                gated_read_roots=gated_read_roots,
                 shared_environment_protected=task.meta.get("shared_environment_protected") is True,
                 environment_step=task.meta.get("environment_step") is True,
                 gate_non_public_data=("approval" in agent.builtin_mcp and

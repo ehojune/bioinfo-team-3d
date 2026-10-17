@@ -445,9 +445,11 @@ class RunContext:
     # of the link (8.3 `DATA~1`, a case variant) reaches the gate, which compares real paths (#178).
     denied_links: list[str] = field(default_factory=list)
     # Links into an internal zone get ask rules. While any internal zone is configured, scoped Read rules also
-    # make aliases created after the scan reach the real-path approval gate (#725).
+    # make aliases created after the scan reach the real-path approval gate (#725). A root that overlaps a
+    # non-public zone gets no Read pre-approval at all, so same-root aliases also reach that gate.
     asked_links: list[str] = field(default_factory=list)
     gate_internal_reads: bool = False
+    gated_read_roots: list[str] = field(default_factory=list)
     # A request with one shared environment sends non-owner install-capable shell rules through approval.
     shared_environment_protected: bool = False
     environment_step: bool = False
