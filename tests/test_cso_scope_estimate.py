@@ -68,6 +68,24 @@ def test_explicitly_negated_analysis_is_not_a_requested_term():
     assert "분석" not in missing
 
 
+def test_de_abbreviation_is_deg_but_de_inside_another_word_is_not():
+    plan = valid_plan(pack_values=valid_pack_values())
+
+    assert "DEG" in missing_request_analysis_terms("Download metadata and run DE", plan)
+    assert "DEG" not in missing_request_analysis_terms("Run deconvolution on the model", plan)
+
+
+@pytest.mark.parametrize("request_text", [
+    "DEG 분석은 하되 경로 분석은 하지 말아 줘",
+    "Run DEG without pathway analysis",
+])
+def test_named_negated_analysis_is_not_a_requested_term(request_text):
+    missing = missing_request_analysis_terms(request_text, valid_plan(pack_values=valid_pack_values()))
+
+    assert "DEG" in missing
+    assert "경로 분석" not in missing
+
+
 def test_historical_estimate_scales_completed_cost_by_planned_step_count():
     current = valid_plan(steps=3, pack_values=valid_pack_values())
 
@@ -85,8 +103,10 @@ def test_historical_estimate_uses_employee_and_model_means_when_available():
     old["plan"]["steps"][0]["agent_id"] = "a"
     old["plan"]["steps"][1]["agent_id"] = "b"
     old["cost_items"] = {
-        "a": {"status": "actual", "usd": 2.0, "agent_id": "a", "engine": "claude_code", "model": "small"},
-        "b": {"status": "actual", "usd": 10.0, "agent_id": "b", "engine": "codex", "model": "large"},
+        "a": {"step_id": "s1", "status": "actual", "usd": 2.0, "agent_id": "a",
+              "engine": "claude_code", "model": "small"},
+        "b": {"step_id": "s2", "status": "actual", "usd": 10.0, "agent_id": "b",
+              "engine": "codex", "model": "large"},
         "cso": {"status": "actual", "usd": 4.0, "agent_id": "cso", "engine": "claude_code", "model": "cso"},
     }
     current = valid_plan(steps=2, pack_values=valid_pack_values())
@@ -127,9 +147,9 @@ def test_historical_signature_average_uses_only_that_signatures_steps():
     for step in old["plan"]["steps"]:
         step["agent_id"] = "a"
     old["cost_items"] = {
-        "s1": {"task_id": "s1", "status": "actual", "usd": 2.0, "agent_id": "a",
+        "s1": {"task_id": "s1", "step_id": "s1", "status": "actual", "usd": 2.0, "agent_id": "a",
                "engine": "codex", "model": "small"},
-        "s2": {"task_id": "s2", "status": "actual", "usd": 10.0, "agent_id": "a",
+        "s2": {"task_id": "s2", "step_id": "s2", "status": "actual", "usd": 10.0, "agent_id": "a",
                "engine": "codex", "model": "large"},
     }
     current = valid_plan(pack_values=valid_pack_values())
@@ -140,6 +160,30 @@ def test_historical_signature_average_uses_only_that_signatures_steps():
 
     assert estimate["estimate_usd"] == pytest.approx(10.0)
     assert any(row["model"] == "large" and row["historical_steps"] == 1
+               for row in estimate["worker_model_averages"])
+
+
+def test_historical_signature_average_combines_cost_items_for_one_planned_step():
+    old = _past_request(cost=12.0, steps=2)
+    old["plan"]["steps"][0]["agent_id"] = "a"
+    old["plan"]["steps"][1]["agent_id"] = "b"
+    old["cost_items"] = {
+        "first": {"step_id": "s1", "status": "actual", "usd": 4.0, "agent_id": "a",
+                  "engine": "codex", "model": "large"},
+        "retry": {"step_id": "s1", "status": "actual", "usd": 6.0, "agent_id": "a",
+                  "engine": "codex", "model": "large"},
+        "other": {"step_id": "s2", "status": "actual", "usd": 2.0, "agent_id": "b",
+                  "engine": "claude_code", "model": "small"},
+    }
+    current = valid_plan(pack_values=valid_pack_values())
+    current["steps"][0]["agent_id"] = "a"
+
+    estimate = historical_plan_cost_estimate(
+        {"past": old}, current, {"a": {"engine": "codex", "model": "large"}})
+
+    assert estimate["estimate_usd"] == pytest.approx(10.0)
+    assert any(row["agent_id"] == "a" and row["historical_steps"] == 1
+               and row["average_usd"] == pytest.approx(10.0)
                for row in estimate["worker_model_averages"])
 
 

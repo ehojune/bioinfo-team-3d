@@ -1467,6 +1467,18 @@ def test_new_unknown_cost_is_stored_as_none_not_zero(tmp_path):
     assert hub.requests["r"]["cost_summary"]["unknown_count"] == 1
 
 
+def test_task_cost_keeps_the_planned_step_id(tmp_path):
+    hub = Hub(settings(tmp_path))
+    hub.requests["r"] = {"id": "r", "status": "running", "mode": "orchestrate", "text": "work"}
+    hub.store.put("task", "retry-task", {"request_id": "r", "step_id": "s1", "payload": {}})
+
+    hub._record_task_cost("r", "retry-task", TaskResult(
+        task_id="retry-task", agent_id="a", ok=True, cost_usd=2.0, cost_known=True,
+    ))
+
+    assert hub.requests["r"]["cost_items"]["retry-task"]["step_id"] == "s1"
+
+
 @pytest.mark.asyncio
 async def test_resume_waits_for_runner_and_reoffers_after_timeout(tmp_path):
     s = settings(tmp_path)

@@ -77,8 +77,8 @@ DEFAULT_LAB_SCOPE = ("one-PI bioinformatics lab: genomics, transcriptomics, epig
 
 # Explicit analyses and action verbs in the PI's request are a scope contract, not prose the CSO may generalize away.
 REQUEST_ANALYSIS_TERMS: tuple[tuple[str, str, str], ...] = (
-    ("DEG", r"(?i)(?:(?<![A-Za-z0-9])DEGs?(?![A-Za-z0-9])|차등\s*발현|differential(?:ly)?\s+(?:gene\s+)?expression)",
-     r"(?i)(?:(?<![A-Za-z0-9])DEGs?(?![A-Za-z0-9])|차등\s*발현|differential(?:ly)?\s+(?:gene\s+)?expression)"),
+    ("DEG", r"(?i)(?:(?<![A-Za-z0-9])DE(?:Gs?)?(?![A-Za-z0-9])|차등\s*발현|differential(?:ly)?\s+(?:gene\s+)?expression)",
+     r"(?i)(?:(?<![A-Za-z0-9])DE(?:Gs?)?(?![A-Za-z0-9])|차등\s*발현|differential(?:ly)?\s+(?:gene\s+)?expression)"),
     ("DMP/차등 메틸화", r"(?i)(?:(?<![A-Za-z0-9])DMPs?(?![A-Za-z0-9])|차등\s*메틸화|메틸화\s*분석|differential(?:ly)?\s+methylat)",
      r"(?i)(?:(?<![A-Za-z0-9])DMPs?(?![A-Za-z0-9])|차등\s*메틸화|메틸화\s*분석|differential(?:ly)?\s+methylat)"),
     ("경로 분석", r"(?i)(?:경로\s*(?:분석|농축)|pathway\s+(?:analysis|enrichment)|(?<![A-Za-z0-9])GSEA(?![A-Za-z0-9])|(?<![A-Za-z0-9])ORA(?![A-Za-z0-9]))",

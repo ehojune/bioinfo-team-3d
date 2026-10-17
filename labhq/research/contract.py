@@ -49,8 +49,13 @@ _RESEARCH_SIGNALS = (
 # An analysis the request rules out is not a research signal ("별도 분석 없이 원문만 요약", #498 review).
 _NEGATED_ANALYSIS = re.compile(
     r"(별도\s*|추가\s*)?(분석|해석)\s*(없이|하지\s*말고|은\s*빼고|는\s*하지\s*말)|"
-    r"\bwithout (?:any )?(?:further |additional )?(?:analys[ie]s|interpretation)\b|"
-    r"\bno (?:further |additional )?(?:analys[ie]s|interpretation)\b", re.IGNORECASE)
+    r"(?:[가-힣A-Za-z][가-힣A-Za-z0-9/-]*\s*){0,2}(?:분석|해석|농축)(?:은|는|을|를)?\s*"
+    r"(?:하지\s*말(?:고|아(?:\s*줘)?)?|빼고)|"
+    r"\bwithout (?:any )?(?:further |additional )?(?:[a-z][a-z0-9-]*\s+){0,3}"
+    r"(?:analysis|analyses|interpretation|enrichment)\b|"
+    r"\b(?:do not|don't)\s+(?:(?:run|perform|include)\s+)?(?:[a-z][a-z0-9-]*\s+){0,3}"
+    r"(?:analysis|analyses|interpretation|enrichment)\b|"
+    r"\bno (?:further |additional )?(?:analysis|analyses|interpretation)\b", re.IGNORECASE)
 _SIMPLE_SIGNALS = (
     r"형식\s*변환|파일\s*변환|집계|개수\s*(세기|계산)|원문\s*요약|그대로\s*요약|발췌",
     r"\bconvert\b|\breformat\b|\baggregate\b|\bcount\b|\bsummarize (?:the )?(?:source|text)",
