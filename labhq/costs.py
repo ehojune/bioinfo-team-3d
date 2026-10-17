@@ -195,6 +195,103 @@ def request_cost_summary(req: dict) -> dict:
     return aggregate_costs(items)
 
 
+def historical_plan_cost_estimate(requests: Any, plan: dict, agents: dict[str, dict], *,
+                                  exclude_request_id: str | None = None) -> dict:
+    """Estimate one planned request from completed requests with recorded ``cost_summary``.
+
+    The stable fallback is the observed total per planned step. When task rows name employees and models, their
+    per-step means plus shared orchestration overhead refine that baseline for the current assignments. One completed
+    request is enough; without one the caller keeps the planner's existing estimate.
+    """
+    current_steps = [step for step in plan.get("steps") or [] if isinstance(step, dict)]
+    current_topics = set(plan.get("topics") or [])
+    current_kind = ((plan.get("intake") or {}).get("work_kind") if isinstance(plan.get("intake"), dict) else None)
+    rows = requests.values() if isinstance(requests, dict) else requests
+    comparable: list[tuple[dict, list[dict], float]] = []
+    for request in rows or []:
+        if not isinstance(request, dict) or request.get("id") == exclude_request_id or request.get("status") != "done":
+            continue
+        old_plan = request.get("plan") if isinstance(request.get("plan"), dict) else {}
+        old_steps = [step for step in old_plan.get("steps") or [] if isinstance(step, dict)]
+        summary = request.get("cost_summary") if isinstance(request.get("cost_summary"), dict) else {}
+        subtotal = _amount(summary.get("subtotal_usd"))
+        old_kind = ((old_plan.get("intake") or {}).get("work_kind")
+                    if isinstance(old_plan.get("intake"), dict) else request.get("work_kind"))
+        old_topics = set(old_plan.get("topics") or [])
+        if (not old_steps or subtotal is None or subtotal <= 0 or
+                (current_kind and old_kind and current_kind != old_kind) or
+                (current_topics and old_topics and current_topics.isdisjoint(old_topics))):
+            continue
+        comparable.append((request, old_steps, subtotal))
+
+    if not comparable:
+        return {"basis": "insufficient", "similar_requests": 0, "historical_steps": 0,
+                "average_per_step_usd": None, "current_steps": len(current_steps),
+                "worker_model_averages": []}
+
+    total_cost = sum(row[2] for row in comparable)
+    historical_steps = sum(len(row[1]) for row in comparable)
+    overall_mean = total_cost / historical_steps
+    signature_cost: dict[tuple[str, str, str], float] = {}
+    signature_steps: dict[tuple[str, str, str], int] = {}
+    agent_cost: dict[str, float] = {}
+    agent_steps: dict[str, int] = {}
+    worker_cost = overhead_cost = 0.0
+
+    for request, old_steps, _subtotal in comparable:
+        steps_by_agent: dict[str, int] = {}
+        for step in old_steps:
+            agent_id = str(step.get("agent_id") or "")
+            if agent_id:
+                steps_by_agent[agent_id] = steps_by_agent.get(agent_id, 0) + 1
+        seen_signatures: set[tuple[str, str, str]] = set()
+        for item in (request.get("cost_items") or {}).values():
+            if not isinstance(item, dict) or item.get("status") not in {"actual", "estimated"}:
+                continue
+            usd = _amount(item.get("usd"))
+            if usd is None:
+                continue
+            agent_id = str(item.get("agent_id") or "")
+            if agent_id not in steps_by_agent:
+                overhead_cost += usd
+                continue
+            signature = (agent_id, str(item.get("engine") or "unknown"), str(item.get("model") or "unknown"))
+            signature_cost[signature] = signature_cost.get(signature, 0.0) + usd
+            agent_cost[agent_id] = agent_cost.get(agent_id, 0.0) + usd
+            worker_cost += usd
+            seen_signatures.add(signature)
+        for agent_id, count in steps_by_agent.items():
+            agent_steps[agent_id] = agent_steps.get(agent_id, 0) + count
+        for signature in seen_signatures:
+            signature_steps[signature] = signature_steps.get(signature, 0) + steps_by_agent[signature[0]]
+
+    averages = [{"agent_id": key[0], "engine": key[1], "model": key[2],
+                 "average_usd": round(value / signature_steps[key], 6),
+                 "historical_steps": signature_steps[key]}
+                for key, value in sorted(signature_cost.items()) if signature_steps.get(key)]
+    estimate = overall_mean * len(current_steps)
+    if worker_cost and current_steps:
+        shared_per_step = overhead_cost / historical_steps
+        worker_per_step = worker_cost / historical_steps
+        tailored = shared_per_step * len(current_steps)
+        for step in current_steps:
+            agent_id = str(step.get("agent_id") or "")
+            agent = agents.get(agent_id) or {}
+            signature = (agent_id, str(agent.get("engine") or "unknown"), str(agent.get("model") or "unknown"))
+            if signature_steps.get(signature):
+                tailored += signature_cost[signature] / signature_steps[signature]
+            elif agent_steps.get(agent_id):
+                tailored += agent_cost.get(agent_id, 0.0) / agent_steps[agent_id]
+            else:
+                tailored += worker_per_step
+        estimate = tailored
+
+    return {"basis": "historical", "estimate_usd": round(estimate, 2),
+            "similar_requests": len(comparable), "historical_steps": historical_steps,
+            "average_per_step_usd": round(overall_mean, 2), "current_steps": len(current_steps),
+            "worker_model_averages": averages}
+
+
 def request_cost_totals(requests: Iterable[dict]) -> dict:
     """Display totals across requests, including legacy records without task classifications."""
     return _request_cost_totals(requests)
