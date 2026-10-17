@@ -20,9 +20,12 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
+
+from .evidence.report_check import claim_rows
 
 TABLE_SEPARATORS = {".tsv": "\t", ".tab": "\t", ".csv": ","}
 MAX_TABLE_BYTES = 4_000_000  # enough rows to see the shape; a larger table is checked on its first 4 MB
@@ -36,6 +39,10 @@ MAX_RECORD_BYTES = 5_000_000
 MAX_PAPERS = 1000
 LEVELS = ("full_text", "abstract", "metadata")  # best first
 LEVEL_NAMES = {"full_text": "본문", "abstract": "초록", "metadata": "서지만"}
+PMCID = re.compile(r"\bPMC\d+\b", re.IGNORECASE)
+PMID = re.compile(r"\bPMID\s*[:=]?\s*(\d+)\b", re.IGNORECASE)
+PUBMED_URL = re.compile(r"(?:pubmed\.ncbi\.nlm\.nih\.gov|ncbi\.nlm\.nih\.gov/pubmed)/(\d+)", re.IGNORECASE)
+DOI = re.compile(r"\b10\.\d{4,9}/[-._;()/:A-Z0-9]+", re.IGNORECASE)
 
 
 def _inside(root: Path, rel: str) -> Path | None:
@@ -159,6 +166,109 @@ def literature_access(root: Path) -> dict[str, str]:
 
 def _field(result: Any, name: str) -> Any:
     return getattr(result, name, None) if not isinstance(result, Mapping) else result.get(name)
+
+
+def _normal_paper_id(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    prefix, separator, raw = value.strip().partition(":")
+    if not separator:
+        return None
+    if prefix.upper() == "PMID" and raw.strip().isdigit():
+        return f"PMID:{raw.strip()}"
+    if prefix.upper() == "PMCID" and PMCID.fullmatch(raw.strip()):
+        return f"PMCID:{raw.strip().upper()}"
+    if prefix.upper() == "DOI" and DOI.fullmatch(raw.strip().rstrip(".,;")):
+        return f"DOI:{raw.strip().rstrip('.,;').lower()}"
+    return None
+
+
+def _source_paper_ids(source: Any) -> set[str]:
+    """Paper identifiers written in an evidence source's URI or locator."""
+    if not isinstance(source, Mapping):
+        return set()
+    ids: set[str] = set()
+    for field in ("uri", "locator"):
+        value = source.get(field)
+        if not isinstance(value, str):
+            continue
+        ids.update(f"PMID:{match}" for match in PMID.findall(value))
+        ids.update(f"PMID:{match}" for match in PUBMED_URL.findall(value))
+        ids.update(f"PMCID:{match.upper()}" for match in PMCID.findall(value))
+        ids.update(f"DOI:{match.rstrip('.,;').lower()}" for match in DOI.findall(value))
+    return ids
+
+
+def _paper_groups(identifier_sets: Iterable[set[str]]) -> list[set[str]]:
+    """Merge identifiers that co-occur on one evidence row, so PMID plus DOI still counts as one paper."""
+    groups: list[set[str]] = []
+    for identifiers in identifier_sets:
+        if not identifiers:
+            continue
+        overlap = [index for index, group in enumerate(groups) if group & identifiers]
+        if not overlap:
+            if len(groups) < MAX_PAPERS:
+                groups.append(set(identifiers))
+            continue
+        merged = set(identifiers)
+        for index in reversed(overlap):
+            merged.update(groups.pop(index))
+        groups.append(merged)
+    return groups
+
+
+def conclusion_literature_line(steps: Iterable[Mapping[str, Any]], results: Mapping[str, Any],
+                               ledgers: Mapping[str, Any], *, unsupported: Iterable[Any] = (),
+                               refused: Iterable[Any] = ()) -> str | None:
+    """Read-depth warning for papers that actually ground CP2-citable conclusion claims."""
+    citable = {(str(row["step_id"]), str(row["claim"].get("id")))
+               for row in claim_rows(ledgers, unsupported)[0]}
+    refused_rows = {(str(row.get("step_id")), str(row.get("evidence_id")))
+                    for row in refused if isinstance(row, Mapping)}
+    cited_sources: list[set[str]] = []
+    for step_id, ledger in ledgers.items():
+        if not isinstance(ledger, Mapping):
+            continue
+        evidence = {str(row.get("id")): row for row in ledger.get("evidence") or []
+                    if isinstance(row, Mapping) and row.get("id")}
+        for link in ledger.get("links") or []:
+            if (not isinstance(link, Mapping) or link.get("relation") not in {"supports", "contradicts"}
+                    or (str(step_id), str(link.get("claim_id"))) not in citable):
+                continue
+            evidence_id = str(link.get("evidence_id"))
+            if (str(step_id), evidence_id) in refused_rows:
+                continue
+            row = evidence.get(evidence_id)
+            ids = _source_paper_ids(row.get("source") if isinstance(row, Mapping) else None)
+            if ids:
+                cited_sources.append(ids)
+    papers = _paper_groups(cited_sources)
+    if not papers:
+        return None
+
+    access: dict[str, str] = {}
+    for step in steps:
+        result = results.get(step["id"])
+        if result is None:
+            continue
+        for key, level in (_field(result, "literature_access") or {}).items():
+            paper_id = _normal_paper_id(key)
+            if paper_id and level in LEVELS and _better(level, access.get(paper_id)):
+                access[paper_id] = level
+
+    counts = {level: 0 for level in LEVELS}
+    missing = 0
+    for paper in papers:
+        found = [access[paper_id] for paper_id in paper if paper_id in access]
+        if not found:
+            missing += 1
+            continue
+        counts[min(found, key=LEVELS.index)] += 1
+    if not (counts["abstract"] or counts["metadata"] or missing):
+        return None
+    return (f"결론 근거 논문 {len(papers)}편: 본문 {counts['full_text']}편·초록 {counts['abstract']}편·"
+            f"서지만 {counts['metadata']}편·조회 기록 없음 {missing}편. 결론 claim에 연결된 논문만 센 값이며, "
+            "'fulltext로 조회한 논문 전체'와 분모가 다르다")
 
 
 def quality_lines(steps: Iterable[Mapping[str, Any]], results: Mapping[str, Any]) -> list[str]:

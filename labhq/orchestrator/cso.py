@@ -4723,6 +4723,15 @@ class Orchestrator:
                         {"step_id": step["id"], "claim_id": claim.claim.split("@", 1)[0],
                          "reason": "live source defect: " + reason}
                         for claim in checked.claims if evidence_id in claim.verified_evidence]
+        def update_conclusion_depth() -> None:
+            warnings[:] = [line for line in warnings if not line.startswith("결론 근거 논문 ")]
+            conclusion_depth = output_checks.conclusion_literature_line(
+                steps, results, ledgers, unsupported=unsupported, refused=refused)
+            if conclusion_depth:
+                warnings.append(conclusion_depth)
+            contract["result_warnings"] = warnings
+
+        update_conclusion_depth()
         claims = sum(len((ledger or {}).get("claims") or []) for ledger in ledgers.values())
         rows = sum(len((ledger or {}).get("evidence") or []) for ledger in ledgers.values())
         # A revise continues through a new plan and CP1 while research.revise_continuations allows (R10).
@@ -4775,6 +4784,7 @@ class Orchestrator:
             refused_rows = recorded.get("refused_rows") or []
             unsupported = recorded.get("unsupported_claims") or []
             source_verification = recorded.get("source_verification") or source_verification
+            update_conclusion_depth()  # the saved CP2 refusal set is authoritative after a restart
         else:
             cp2: str | None = None
             decision: dict[str, Any] = {}
