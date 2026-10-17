@@ -39,8 +39,18 @@ def paper_id(value: Any) -> str | None:
     doi = re.search(r"(?:doi:\s*|https?://(?:dx\.)?doi\.org/)?(10\.\d{4,9}/\S+)", text, re.I)
     if doi:
         return "doi:" + doi[1].rstrip(".,;").lower()
-    pmid = re.fullmatch(r"(?:PMID:\s*|https?://pubmed\.ncbi\.nlm\.nih\.gov/)(\d+)/?", text, re.I)
+    pmid = re.search(r"(?:\bPMID\s*:\s*|https?://pubmed\.ncbi\.nlm\.nih\.gov/)(\d+)", text, re.I)
     return "pmid:" + pmid[1] if pmid else None
+
+
+def _access_level(paper: dict) -> str | None:
+    levels = [str(paper.get("access_level") or "")]
+    levels += [match.group(1) for citation in paper.get("citations", [])
+               if (match := re.search(r"\baccess_level\s*=\s*(full_text|abstract|metadata)\b",
+                                      str(citation), re.I))]
+    normalized = {level.strip().lower() for level in levels if level.strip()}
+    return "full_text" if "full_text" in normalized else "abstract" if "abstract" in normalized else (
+        "metadata" if "metadata" in normalized else None)
 
 
 def selections(plan: dict, precedents: dict, roster: list[dict]) -> list[dict]:
@@ -61,7 +71,8 @@ def selections(plan: dict, precedents: dict, roster: list[dict]) -> list[dict]:
         if any(r["paper_id"] == pid for r in chosen):
             continue
         chosen.append({**row, "paper_id": pid, "title": papers[pid]["title"], "step_ids": ids,
-                       "agent_ids": list(dict.fromkeys(steps[s]["agent_id"] for s in ids))})
+                       "agent_ids": list(dict.fromkeys(steps[s]["agent_id"] for s in ids)),
+                       "access_level": _access_level(papers[pid])})
         if len(chosen) == 2:
             break
     return chosen
@@ -69,7 +80,31 @@ def selections(plan: dict, precedents: dict, roster: list[dict]) -> list[dict]:
 
 async def prepare_plan(plan: dict, precedents: dict, roster: list[dict], rid: str, settings, run) -> dict:
     rows = []
-    for selected in selections(plan, precedents, roster):
+    accepted = selections(plan, precedents, roster)
+    remaining = {row["paper_id"]: row for row in accepted}
+    selected_rows = []
+    for raw in plan.get("paper_skills") or []:
+        pid = paper_id(raw.get("paper_id")) if isinstance(raw, dict) else None
+        selected = remaining.pop(pid, None) if pid else None
+        if selected is not None:
+            selected_rows.append(selected)
+            continue
+        raw_id = raw.get("paper_id") if isinstance(raw, dict) else None
+        selected_rows.append({**(raw if isinstance(raw, dict) else {}),
+                              "paper_id": pid or str(raw_id or "미확인"),
+                              "title": str((raw or {}).get("title") or raw_id or "미확인")
+                              if isinstance(raw, dict) else "미확인",
+                              "agent_ids": [], "access_level": None, "status": "skipped",
+                              "skip_reason": "선행 연구 식별자 또는 정규직 담당 단계와 일치하지 않음"})
+    for selected in selected_rows:
+        if selected.get("status") == "skipped":
+            rows.append(selected)
+            continue
+        if selected.get("access_level") != "full_text":
+            level = selected.get("access_level") or "미확인"
+            rows.append({**selected, "status": "skipped",
+                         "skip_reason": f"본문 접근 수준이 {level}라 Paper2Skill을 만들지 않음"})
+            continue
         task = Task(agent_id=settings.recruit.agent_id, request_id=rid, prompt="Prepare paper advice",
                     budget_usd=settings.recruit.max_budget_usd,
                     meta={"kind": "paper_skill", "paper_skill": selected, "max_attempts": 1,
@@ -89,7 +124,10 @@ async def prepare_plan(plan: dict, precedents: dict, roster: list[dict], rid: st
         rows.append({**receipt, **selected})
     if not rows:
         return {k: v for k, v in plan.items() if k != "paper_skill_results"}
-    warnings = [UNAVAILABLE if r["status"] == "unavailable" else
+    rows = [{**row, "selected": True, "built": row.get("status") in {"ready", "reused"},
+             "attached_steps": [], "called": False} for row in rows]
+    warnings = [f"논문 스킬 생략: {r['title']} ({r['skip_reason']})" if r["status"] == "skipped" else
+                UNAVAILABLE if r["status"] == "unavailable" else
                 f"논문 스킬 변환 실패: {r['title']} ({r.get('error', '변환 실패')})"
                 for r in rows if r["status"] not in {"ready", "reused"}]
     return {**plan, "paper_skill_results": rows,
@@ -104,8 +142,12 @@ def attachments(plan: dict, step_id: str, agent_id: str, rid: str) -> list[dict]
 
 
 def card_text(plan: dict) -> str:
-    return "\n".join(f"참고 논문 스킬: {r['title']} → {', '.join(r['agent_ids'])}"
-                     for r in plan.get("paper_skill_results", []) if r.get("status") in {"ready", "reused"})
+    return "\n".join(
+        f"참고 논문 스킬: {r['title']} → {', '.join(r.get('agent_ids') or [])}; 선정됨: 예; "
+        f"만들어짐: {'예' if r.get('status') in {'ready', 'reused'} else '아니오'}"
+        + (f" ({r.get('skip_reason') or r.get('error')})" if r.get('status') not in {"ready", "reused"} else "")
+        + f"; 붙을 단계: {', '.join(r.get('step_ids') or []) or '없음'}; 호출됨: 아니오(실행 전)"
+        for r in plan.get("paper_skill_results", []))
 
 
 def records(plan: dict, results: dict | None = None) -> list[dict]:
@@ -113,18 +155,26 @@ def records(plan: dict, results: dict | None = None) -> list[dict]:
     for step_id, result in (results or {}).items():
         for run in (result.get("provenance") or {}).get("runs", {}).values():
             usage.extend({**row, "step_id": step_id} for row in run.get("paper_skills", []))
-    return [{**{k: v for k, v in row.items() if k not in {"skill_dir", "runner_id"}},
-             "usage": [u for u in usage if u.get("paper_id") == row.get("paper_id")]}
-            for row in plan.get("paper_skill_results", [])]
+    records = []
+    for row in plan.get("paper_skill_results", []):
+        used = [u for u in usage if u.get("paper_id") == row.get("paper_id")]
+        records.append({**{k: v for k, v in row.items() if k not in {"skill_dir", "runner_id"}},
+                        "selected": True, "built": row.get("status") in {"ready", "reused"},
+                        "attached_steps": list(dict.fromkeys(u["step_id"] for u in used)),
+                        "called": None if used else False, "usage": used})
+    return records
 
 
 def appendix(plan: dict, results: dict | None = None) -> str:
     rows = records(plan, results)
     return ("참고 논문 스킬 기록:\n" + "\n".join(
-        f"- {r['paper_id']} · {r['title']} → {', '.join(r['agent_ids'])}; {r['status']}; "
+        f"- {r['paper_id']} · {r['title']} → {', '.join(r.get('agent_ids') or [])}; {r['status']}; "
+        f"선정됨: 예; 만들어짐: {'예' if r['built'] else '아니오'}"
+        + (f" ({r.get('skip_reason') or r.get('error')})" if not r['built'] else "") + "; "
         f"Paper2Agent commit: {r.get('paper2agent_commit') or '미기록'}; "
         f"skill hash: {r.get('skill_sha256') or '없음'}; "
-        f"장착 단계: {', '.join(u['step_id'] for u in r['usage']) or '실행 기록 없음'}" for r in rows)) if rows else ""
+        f"붙음: {', '.join(r['attached_steps']) or '아니오'}; "
+        f"호출됨: {'미확인' if r['called'] is None else '아니오'}" for r in rows)) if rows else ""
 
 
 class PaperSkillBuild:

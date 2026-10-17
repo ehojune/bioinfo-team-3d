@@ -161,6 +161,17 @@ def test_enable_shows_the_reason_and_opens_a_new_epoch(tmp_path, config, capsys)
     assert "상태: on · 설정 shadow · 자동 off - · epoch 2" in out
 
 
+def test_enable_explains_that_the_legacy_request_id_false_positive_is_resolved(tmp_path, config, capsys):
+    paths = shadow.ShadowPaths(tmp_path / "state" / "semantics")
+    shadow.read_state(paths)
+    shadow.write_disabled(paths, "info_boundary", 1,
+                          boundary=[{"field": "request_id", "class": "identifier"}])
+
+    code, out = _cli(capsys, config, "enable")
+
+    assert code == 0 and "request_id" in out and "오판" in out and "epoch 2" in out
+
+
 def test_mark_checks_its_arguments_and_wrong_identity_turns_semantics_off(tmp_path, config, capsys):
     _write(tmp_path, [{**_line(1), "request_id": "req_abc"}])
     code, out = _cli(capsys, config, "mark", "req_abc", "outputs/x.tsv", "ok")

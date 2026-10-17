@@ -154,6 +154,43 @@ def test_one_boundary_violation_turns_it_off_and_writes_nothing(tmp_path, monkey
         assert "counts.tsv" not in path.read_text(encoding="utf-8")
 
 
+def test_labhq_generated_request_id_in_another_request_does_not_trip_the_boundary(tmp_path):
+    """#559: an earlier request id is provenance, not private input."""
+    service = _service(tmp_path)
+    service.hub.requests["req_001"]["plan"]["steps"][0]["input_refs"] = ["req_000"]
+
+    _run(service, ["req_000"])
+
+    assert service.latched is None
+    assert [line["request_id"] for line in _lines(tmp_path, "request")] == ["req_000"]
+    assert _disabled(tmp_path) is None
+
+
+def test_labhq_task_approval_and_named_hash_ids_are_not_source_secrets():
+    digest = "a" * 64
+    restricted = "C" + ":/restricted/private.tsv"
+    snap = {
+        "rid": "req_0123456789",
+        "requests": {"req_other": {"id": "req_other", "plan": {"steps": [{
+            "instruction": "use recorded provenance",
+            "input_refs": ["task_0123456789", "appr_0123456789", digest],
+        }]}, "results": {}}},
+        "tasks": {"task_0123456789": {"request_id": "req_0123456789",
+                                        "payload": {"id": "task_0123456789"}, "result": {}}},
+        "approvals": [{"id": "appr_0123456789", "request_id": "req_0123456789"}],
+        "plan_sha256": digest,
+    }
+    sensitive = shadow.sensitive_values(snap)
+    line = {"request_id": "req_0123456789", "objects": {
+        "task": "task_0123456789", "approval": "appr_0123456789", "sha256": digest}}
+
+    assert shadow.boundary_problems(line, sensitive) == []
+    assert shadow.boundary_problems(
+        {"objects": {"unexpected": restricted}},
+        {restricted: "path"},
+    )
+
+
 @pytest.mark.parametrize("value", ["outputs/counts.tsv", "C" + ":" + "\\data", "/" + "home" + "/u", "two words",
                                    "counts.tsv", "request text"])
 def test_the_boundary_check_refuses_paths_free_text_and_known_values(value):

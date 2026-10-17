@@ -299,9 +299,10 @@ def read_state(paths: ShadowPaths) -> dict:
 
 
 def write_disabled(paths: ShadowPaths, reason: str, epoch: int, counts: Mapping[str, int] | None = None, *,
-                   boundary: Iterable[Mapping[str, str]] | None = None) -> None:
+                   boundary: Iterable[Mapping[str, str]] | None = None, ts: float | None = None) -> None:
     paths.root.mkdir(parents=True, exist_ok=True)
-    value = {"reason": reason, "ts": time.time(), "epoch": epoch, "counts": dict(counts or {})}
+    value = {"reason": reason, "ts": time.time() if ts is None else ts,
+             "epoch": epoch, "counts": dict(counts or {})}
     detail = _clean_boundary_details(boundary)
     if detail:
         value["boundary"] = detail
@@ -601,10 +602,38 @@ def _staff_ids(snap: Mapping[str, Any]) -> set[str]:
 def sensitive_values(snap: Mapping[str, Any]) -> dict[str, str]:
     """Forbidden source values mapped to a fixed category; values are never written to the breaker record."""
     found: dict[str, str] = {}
+    owned = {str(snap.get("rid") or "")}
+    for rid, req in (snap.get("requests") or {}).items():
+        owned.update((str(rid), str(req.get("id") or "")))
+    for tid, task in (snap.get("tasks") or {}).items():
+        payload = task.get("payload") if isinstance(task, Mapping) else {}
+        result = task.get("result") if isinstance(task, Mapping) else {}
+        owned.update((str(tid), str(task.get("request_id") or ""),
+                      str((payload or {}).get("id") or ""), str((result or {}).get("task_id") or "")))
+    for approval in snap.get("approvals") or snap.get("pending_approvals") or []:
+        if isinstance(approval, Mapping):
+            owned.update(str(approval.get(key) or "") for key in ("id", "task_id", "request_id"))
+
+    def generated_hashes(value: Any) -> None:
+        if isinstance(value, Mapping):
+            for key, child in value.items():
+                if (isinstance(key, str) and (key == "sha256" or key.endswith("_sha256"))
+                        and isinstance(child, str) and re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", child)):
+                    owned.add(child)
+                generated_hashes(child)
+        elif isinstance(value, (list, tuple)):
+            for child in value:
+                generated_hashes(child)
+
+    generated_hashes(snap)
+    owned.discard("")
 
     def add(value: Any, category: str | None = None) -> None:
         if isinstance(value, str) and len(value.strip()) >= SENSITIVE_MIN:
-            found.setdefault(value.strip(), category or _value_class(value))
+            clean = value.strip()
+            if clean in owned:
+                return
+            found.setdefault(clean, category or _value_class(value))
 
     for agent_id in sorted(_staff_ids(snap)):  # any length, and first, so a staff id keeps its class (#266)
         found[agent_id] = "employee_id"
@@ -2320,6 +2349,57 @@ def configured(settings: Any) -> str:
     return "off" if mode == "off" else "invalid"
 
 
+def _legacy_id_false_positive(disabled: Mapping[str, Any] | None) -> bool:
+    """True only for the #559 breaker shape emitted by releases before generated ids were exempted."""
+    return bool(disabled and disabled.get("reason") == "info_boundary"
+                and _clean_boundary_details(disabled.get("boundary")) == [
+                    {"field": "request_id", "class": "identifier"}])
+
+
+def runtime_state(settings: Any) -> dict[str, Any]:
+    """Small local status shared by doctor and status; never opens the gateway DB or a workspace."""
+    paths = ShadowPaths(shadow_root(settings))
+    try:
+        disabled = read_disabled(paths)
+    except (OSError, ValueError, TypeError):
+        disabled = {"reason": "breaker_storage"}
+    ts = disabled.get("ts") if disabled else None
+    try:
+        stopped_at = datetime.fromtimestamp(float(ts), timezone.utc).astimezone().isoformat(timespec="seconds")
+    except (TypeError, ValueError, OSError, OverflowError):
+        stopped_at = None
+    return {"setting": configured(settings), "stopped": disabled is not None,
+            "reason": (disabled or {}).get("reason"), "stopped_at": stopped_at,
+            "boundary": _clean_boundary_details((disabled or {}).get("boundary")),
+            "reenable_command": "labhq semantics enable",
+            "legacy_false_positive": _legacy_id_false_positive(disabled)}
+
+
+def status_line(settings: Any) -> str | None:
+    """One removable CLI line for a durable stop; healthy shadows stay quiet."""
+    state = runtime_state(settings)
+    if not state["stopped"]:
+        return None
+    boundary = ", ".join(f"{row['field']}:{row['class']}" for row in state["boundary"])
+    return (f"semantics: 멈춤 · {state['reason']} · {state['stopped_at'] or '시각 미기록'}"
+            + (f" · {boundary}" if boundary else "")
+            + f" · 다시 켜기: {state['reenable_command']}")
+
+
+def doctor_row(settings: Any) -> dict[str, str]:
+    """A self-contained doctor row so the optional shadow remains mechanically removable."""
+    state = runtime_state(settings)
+    if not state["stopped"]:
+        return {"group": "config", "name": "semantics", "status": "ok",
+                "detail": f"설정 {state['setting']}; 자동 중단 없음", "hint": ""}
+    boundary = ", ".join(f"{row['field']}:{row['class']}" for row in state["boundary"]) or "기록 없음"
+    recoverable = "; 이 버전에서 해제 가능한 기존 ID 오판" if state["legacy_false_positive"] else ""
+    detail = (f"멈춤: {state['reason']}; 시각 {state['stopped_at'] or '미기록'}; "
+              f"경계 {boundary}{recoverable}")
+    return {"group": "config", "name": "semantics", "status": "warn",
+            "detail": detail, "hint": state["reenable_command"]}
+
+
 def build_report(paths: ShadowPaths, today: date | None = None, setting: str = "unknown") -> dict:
     today = today or date.today()
     lines, broken = read_lines(paths)
@@ -2545,7 +2625,10 @@ def enable(paths: ShadowPaths) -> str:
             stale.unlink()
     append_line(paths, {"v": 1, "type": "enable", "ts": round(time.time(), 3), "epoch": epoch,
                         "previous_reason": (disabled or {}).get("reason")})
-    head = f"꺼진 이유: {disabled['reason']}. " if disabled else "꺼져 있지 않았습니다. "
+    if _legacy_id_false_positive(disabled):
+        head = "꺼진 이유: info_boundary(request_id:identifier) 오판. 이 버전은 labhq 생성 ID를 경계 위반에서 제외합니다. "
+    else:
+        head = f"꺼진 이유: {disabled['reason']}. " if disabled else "꺼져 있지 않았습니다. "
     return head + f"새 epoch {epoch}을 엽니다. 설정 mode가 shadow인 gateway는 다음 요청부터 기록합니다."
 
 

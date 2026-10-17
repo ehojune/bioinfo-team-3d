@@ -13,8 +13,8 @@ from tests.semantics_shadow_lab import run_lab
 
 ROOT = Path(__file__).resolve().parents[1]
 # file -> number of marked lines; a new hook must be marked and counted here
-HOOKS = {"labhq/settings.py": 2, "labhq/gateway/server.py": 9, "labhq/cli.py": 14,
-         "labhq/orchestrator/cso.py": 2}
+HOOKS = {"labhq/settings.py": 2, "labhq/gateway/server.py": 9, "labhq/cli.py": 17,
+         "labhq/doctor.py": 4, "labhq/orchestrator/cso.py": 2}
 # `# semantics-hook: actions` lines of the action layer's shadow (#149 결정 13 A1), gone after `--only actions`
 ACTION_HOOKS = {"labhq/gateway/server.py": 4, "labhq/orchestrator/cso.py": 4, "labhq/cli.py": 8}  # cli: A2 parser (결정 16)
 
@@ -63,13 +63,13 @@ def test_every_hook_is_marked_and_counted():
     assert found == expected_hooks()
 
 
-def test_the_cli_imports_the_shadow_only_for_its_own_command():
+def test_the_cli_imports_the_shadow_only_for_semantics_or_status_commands():
     tree = ast.parse((ROOT / "labhq" / "cli.py").read_text(encoding="utf-8"))
-    branch = next(node for node in ast.walk(tree) if isinstance(node, ast.If) and isinstance(node.test, ast.Compare)
-                  and getattr(node.test.comparators[0], "value", None) == "semantics")
-    inside = {id(n) for stmt in branch.body for n in ast.walk(stmt)}
+    branches = [node for node in ast.walk(tree) if isinstance(node, ast.If) and isinstance(node.test, ast.Compare)
+                and getattr(node.test.comparators[0], "value", None) in {"semantics", "status"}]
+    inside = {id(n) for branch in branches for stmt in branch.body for n in ast.walk(stmt)}
     imports = [n for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and "semantics" in (n.module or "")]
-    assert imports and all(id(n) in inside for n in imports)
+    assert len(branches) == 2 and len(imports) == 2 and all(id(n) in inside for n in imports)
 
 
 def test_removing_the_shadow_leaves_a_working_labhq(removable_lab_state):

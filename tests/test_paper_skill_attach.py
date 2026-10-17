@@ -16,7 +16,8 @@ from tests.test_request_bundle import pending_bundle_fixture, manifest_rows
 
 SELECTED = {"paper_id": "PMID:12345678", "title": "Paired method", "reason": "Preserves donor pairing",
             "step_ids": ["s1"]}
-PRECEDENTS = {"status": "ok", "papers": [{"title": "Paired method", "citations": ["PMID:12345678"]}],
+PRECEDENTS = {"status": "ok", "papers": [{"title": "Paired method", "citations": [
+              "PMID:12345678; access_level=full_text"]}],
               "required": [], "recommended": [], "limitations": []}
 
 
@@ -128,6 +129,37 @@ async def test_selection_conversion_cp1_scope_appendix_and_bundle(runner, tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_enriched_pmid_citations_build_full_text_and_record_abstract_skip(runner):
+    """#660/#670: selection never disappears between PLAN and Paper2Skill."""
+    from labhq.recruit.paper_skills import appendix, card_text, prepare_plan
+
+    r, seen = runner
+    plan = valid_plan()
+    plan["paper_skills"] = [
+        {**SELECTED, "paper_id": "PMID:40119824", "title": "Abstract paper"},
+        {**SELECTED, "paper_id": "PMID:20492728", "title": "Full paper"},
+    ]
+    precedents = {"papers": [
+        {"title": "Abstract paper", "citations": [
+            "PubMed PMID: 40119824; access_level=abstract; n=209"]},
+        {"title": "Full paper", "citations": [
+            "PubMed PMID: 20492728; access_level=full_text; n=16,384"]},
+    ]}
+
+    out = await prepare_plan(plan, precedents, [{"id": "worker"}], "r", r.s, r.run_task)
+
+    rows = out["paper_skill_results"]
+    assert [(row["paper_id"], row["status"]) for row in rows] == [
+        ("pmid:40119824", "skipped"), ("pmid:20492728", "ready")]
+    assert "abstract" in rows[0]["skip_reason"] and len(seen) == 1
+    assert [(row["selected"], row["built"], row["attached_steps"], row["called"]) for row in rows] == [
+        (True, False, [], False), (True, True, [], False)]
+    assert "선정됨" in card_text(out) and "만들어짐" in card_text(out)
+    report = appendix(out, {})
+    assert "붙음" in report and "호출됨" in report and "abstract" in report
+
+
+@pytest.mark.asyncio
 async def test_talent_reuse_checks_hash_and_never_converts_again(runner):
     r, seen = runner
     first = await r.run_task(build_task())
@@ -227,7 +259,8 @@ async def test_two_papers_have_distinct_restart_keys_and_keep_their_own_receipts
     plan = {"steps": [{"id": "s1", "agent_id": "worker"}],
             "paper_skills": [SELECTED, {**SELECTED, "paper_id": "PMID:87654321"}]}
     precedents = {**PRECEDENTS, "papers": [*PRECEDENTS["papers"],
-                  {"title": "Another method", "citations": ["PMID:87654321"]}]}
+                  {"title": "Another method", "citations": [
+                      "PMID:87654321; access_level=full_text"]}]}
     out = await prepare_plan(plan, precedents, [{"id": "worker"}], "r", Settings(), convert)
     first = tasks[0]
     prior = {"request_id": "r", "kind": "paper_skill", "step_id": first.meta["step_id"],
