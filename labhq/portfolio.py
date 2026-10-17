@@ -21,9 +21,12 @@ from .report_abstract import build_graphical_abstract
 from .request_bundle import _POSIX_ABS, _WINDOWS_ABS
 
 
+# The one private-path rule of the edition (result_storage uses it too). `./data/x` and `../data/x` are relative paths:
+# masking them broke the published scripts (PR #717 review).
 _PRIVATE_PATH = re.compile(
-    r"(?<![\w:])(?:[A-Za-z]:[/\\]|\\\\|/(?:home|Users|mnt|srv|data|tmp|var|opt)/|~/)[^\s<>\"'`\])]+"
+    r"(?<![\w:.-])(?:[A-Za-z]:[/\\]|\\\\|/(?:home|Users|mnt|srv|data|tmp|var|opt)/|~/)[^\s<>\"'`\])]+"
 )
+PRIVATE_PATH_PATTERN = _PRIVATE_PATH
 _ASSIGNMENT = re.compile(
     r"(?im)\b((?:api[_-]?key|token|password|secret)\s*[:=]\s*)"
     r"(?!<redacted-secret>|&lt;redacted-secret&gt;|\[REDACTED\])[^\s,;<]+"

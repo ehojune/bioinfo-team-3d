@@ -22,8 +22,8 @@ from .interruption import ShutdownInterrupted
 from .models import ApprovalRequest, Task
 from .policy import touches, restricted_paths
 from . import edition_sources, github_token
-from .portfolio import (EditionCheckError, broken_markdown_links, build_portfolio_files, check_failure,
-                        declared_aggregate_tables, portfolio_root_file,
+from .portfolio import (PRIVATE_PATH_PATTERN, EditionCheckError, broken_markdown_links, build_portfolio_files,
+                        check_failure, declared_aggregate_tables, portfolio_root_file,
                         portfolio_report, publish_file_allowed, request_uses_internal_data, scan_publish_files,
                         table_allowed)
 from .intake import reference_dirs
@@ -53,7 +53,7 @@ def check_choice(choice: dict, *, end: bool = False) -> None:
         raise ValueError("새 저장소 이름은 영문·숫자·점·밑줄·하이픈으로 적어 주세요.")
     if mode == "existing" and (not _REPO.fullmatch(repo) or any(p in {".", ".."} for p in repo.split("/"))):
         raise ValueError("기존 저장소는 소유자/저장소 이름으로 적어 주세요.")
-_PRIVATE_PATH = re.compile(r"(?<![\w:])(?:[A-Za-z]:[/\\]|\\\\|/(?:home|Users|mnt|srv|data|tmp|var|opt)/|~/)[^\s<>\"'`\])]+")
+_PRIVATE_PATH = PRIVATE_PATH_PATTERN  # one rule with the portfolio scan (PR #717 review)
 _ASSIGNMENT = re.compile(
     r"(?im)\b((?:api[_-]?key|token|password|secret)\s*[:=]\s*)"
     r"(?!<redacted-secret>|&lt;redacted-secret&gt;|\[REDACTED\])[^\s,;<]+")
