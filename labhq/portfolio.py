@@ -358,7 +358,41 @@ def _corrections(report: str, req: dict) -> str:
     return report.rstrip() + "\n" + "\n".join(lines) + "\n"
 
 
-def _first_answer(report: str) -> str:
+_VERDICT = re.compile(r"지지(?:되지|하지)\s*않|지지(?:됐|했|된다|한다|합니다|됩니다)|기각")
+_ANCHOR = re.compile(r"\s*\[\[\s*claim\s*:[^\[\]\n]*\]\]", re.I)
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+_CONNECTIVE = re.compile(r"^(?:그래서|따라서|그러므로|결국|즉)\s*,?\s*")
+
+
+def _claim_statements(result: Any) -> list[str]:
+    """The claim statements of a research step's ledger. Its `text` is the ledger JSON itself, which the 10-17 README
+    printed into the branch table (#718)."""
+    if not isinstance(result, Mapping):
+        return []
+    ledger = result.get("structured")
+    if not isinstance(ledger, Mapping):
+        try:
+            ledger = json.loads(str(result.get("text") or ""))
+        except (json.JSONDecodeError, TypeError):
+            return []
+    claims = ledger.get("claims") if isinstance(ledger, Mapping) else None
+    return [str(claim["statement"]) for claim in claims or []
+            if isinstance(claim, Mapping) and str(claim.get("statement") or "").strip()]
+
+
+def _result_text(result: Any) -> str:
+    statements = _claim_statements(result)
+    if statements:
+        return statements[0]
+    text = str(result.get("text") or "") if isinstance(result, Mapping) else ""
+    return "" if text.lstrip().startswith("{") else text
+
+
+def _first_answer(report: str, req: Mapping[str, Any] | None = None) -> str:
+    """The README's one-line answer: the first verdict sentence ("…지지되지 않습니다") of the abstract or the synthesis
+    claims, else the abstract's first paragraph. The 10-17 abstract opened with "세 근거로 살폈습니다", which is not an
+    answer (#718)."""
+    abstract: list[str] = []
     in_abstract = False
     for block in report.split("\n\n"):
         value = block.strip()
@@ -366,8 +400,27 @@ def _first_answer(report: str) -> str:
             in_abstract = "요약" in value or "abstract" in value.casefold()
             continue
         if in_abstract and value and not value.startswith(("#", "![", "|")):
-            return " ".join(value.split())
-    return "결과와 한계는 과학 보고서에 정리했다."
+            abstract.append(" ".join(_ANCHOR.sub("", value).split()))
+    synthesis = []
+    if isinstance(req, Mapping):
+        results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
+        for step in (req.get("plan") or {}).get("steps") or []:
+            if isinstance(step, Mapping) and step.get("branch") == "synthesis":
+                synthesis += [" ".join(_ANCHOR.sub("", text).split())
+                              for text in _claim_statements(results.get(str(step.get("id"))))]
+    for paragraph in [*abstract, *synthesis]:
+        for sentence in _SENTENCE_END.split(paragraph):  # not after 다: "단태아보다 여아" is one sentence
+            if _VERDICT.search(sentence):
+                return _CONNECTIVE.sub("", sentence.strip())
+    return abstract[0] if abstract else "결과와 한계는 과학 보고서에 정리했다."
+
+
+def _claim_summary(result: Any) -> str:
+    """A branch row's result: the first two sentences of its first claim, which is already one short finding."""
+    statements = _claim_statements(result)
+    if not statements:
+        return _result_sentence(_result_text(result))
+    return " ".join(_SENTENCE_END.split(" ".join(statements[0].split()))[:2])[:380]
 
 
 def _result_sentence(text: str) -> str:
@@ -393,7 +446,7 @@ def _step_rows(req: dict, assets: Mapping[str, str]) -> list[tuple[str, str, str
             prefix = f"steps/{sid}/outputs/"
             outputs = [name.removeprefix(prefix) for name in assets if name.startswith(prefix)][:4]
         data = ", ".join(PurePosixPath(str(name)).name for name in outputs[:4]) or "보고서 기록"
-        text = str(result.get("text") or "")
+        text = _result_text(result)
         if not text and "report" in sid.casefold():
             text = str(req.get("report") or "")
         rows.append((sid, data, _result_sentence(text)))
@@ -456,7 +509,7 @@ def _branch_rows(req: dict, specs: list[dict[str, Any]],
         completed = [(step_id, result) for step_id, result in terminal_records
                      if isinstance(result, Mapping) and result.get("ok") is not False]
         failures = [
-            (step_id, str(result.get("error") or result.get("text") or "실패 이유 없음"))
+            (step_id, str(result.get("error") or _result_text(result) or "실패 이유 없음"))
             if isinstance(result, Mapping) else (step_id, "terminal 결과 없음")
             for step_id, result in terminal_records
             if not isinstance(result, Mapping) or result.get("ok") is False
@@ -466,7 +519,7 @@ def _branch_rows(req: dict, specs: list[dict[str, Any]],
                          if result.get("ok") is not False]
             if not completed:
                 failures = [("terminal", "terminal 결과 없음")]
-        summaries = [_result_sentence(str(result.get("text") or "")) for _step_id, result in completed]
+        summaries = [_claim_summary(result) for _step_id, result in completed]
         if completed and failures:
             status = "부분"
             failed_text = "; ".join(f"{step_id}: {reason}" for step_id, reason in failures)
@@ -649,7 +702,7 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
     title = report.splitlines()[0].lstrip("#").strip() or "연구 결과"
     abstract = "figures/graphical_abstract.svg" if "figures/graphical_abstract.svg" in figure_names else None
     key = next((name for name in figure_names if name != abstract), None)
-    lines = [f"# {title}", "", f"**답: {_first_answer(report)}**", ""]
+    lines = [f"# {title}", "", f"**답: {_first_answer(report, req)}**", ""]
     if abstract:
         lines += [f"![그래픽 초록]({abstract})", ""]
     if branch_rows:
