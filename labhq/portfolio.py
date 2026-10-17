@@ -21,17 +21,34 @@ from .report_abstract import build_graphical_abstract
 from .request_bundle import _POSIX_ABS, _WINDOWS_ABS
 
 
+# The one private-path rule of the edition (result_storage uses it too). `./data/x` and `../data/x` are relative paths:
+# masking them broke the published scripts (PR #717 review).
 _PRIVATE_PATH = re.compile(
-    r"(?<![\w:])(?:[A-Za-z]:[/\\]|\\\\|/(?:home|Users|mnt|srv|data|tmp|var|opt)/|~/)[^\s<>\"'`\])]+"
+    r"(?<![\w:.-])(?:[A-Za-z]:[/\\]|\\\\|/(?:home|Users|mnt|srv|data|tmp|var|opt)/|~/)[^\s<>\"'`\])]+"
 )
+PRIVATE_PATH_PATTERN = _PRIVATE_PATH
 _ASSIGNMENT = re.compile(
     r"(?im)\b((?:api[_-]?key|token|password|secret)\s*[:=]\s*)"
     r"(?!<redacted-secret>|&lt;redacted-secret&gt;|\[REDACTED\])[^\s,;<]+"
 )
+# A root folder counts only where a path starts: `inputs/om_fetch/data/x.tsv` is a relative path, and catching its
+# `/data/` stopped the whole 10-17 edition over three analysis scripts (#713).
 _LOCAL_SCAN = re.compile(
     r"(?i)(?:[A-Za-z]:[/\\](?:Users|Documents and Settings|AppData|ProgramData)[/\\]|"
-    r"/(?:home|Users|mnt|srv|data|tmp|var|opt)/|~/|\.labhq[/\\]|C--Users)"
+    r"(?<![\w.-])/(?:home|Users|mnt|srv|data|tmp|var|opt)/|~/|\.labhq[/\\]|C--Users)"
 )
+
+
+class EditionCheckError(ValueError):
+    """A check stopped the edition before anything was written: a broken link or a publication scan. The message names
+    the check and the edition files, never a local path or a value, so it can be shown as the storage warning."""
+
+
+def check_failure(issues: list[dict[str, str]]) -> EditionCheckError:
+    kinds = ", ".join(sorted({issue["kind"] for issue in issues}))
+    names = sorted({issue["path"] for issue in issues})
+    shown = ", ".join(names[:5]) + (f" 외 {len(names) - 5}개" if len(names) > 5 else "")
+    return EditionCheckError(f"게시 전 검사에 실패했습니다: {kinds} — {shown}")
 _SIGNED_URL = re.compile(r"[?&](?:X-Amz-[^=&#\s]+|X-Goog-[^=&#\s]+|Signature|token|sig)=[^&#\s]+", re.I)
 _DOI = re.compile(r"(?i)\b10\.\d{4,9}/[-._;()/:A-Z0-9]+")
 _PMID = re.compile(r"(?i)\bPMID\s*[:#]?\s*(\d{5,9})\b")
@@ -810,11 +827,10 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
     broken = broken_markdown_links(files, source_targets)
     if broken:
         detail = ", ".join(f"{row['document']} -> {row['target']}" for row in broken)
-        raise ValueError(f"정리본 Markdown 링크가 깨졌습니다: {detail}")
+        raise EditionCheckError(f"정리본 Markdown 링크가 깨졌습니다: {detail}")
 
     issues = scan_publish_files(files, internal=internal)
     blocking = [issue for issue in issues if issue["kind"] != "small_cell"]
     if blocking:
-        kinds = ", ".join(sorted({issue["kind"] for issue in blocking}))
-        raise ValueError(f"게시 전 검사에 실패했습니다: {kinds}")
+        raise check_failure(blocking)
     return files
