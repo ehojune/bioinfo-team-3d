@@ -4031,6 +4031,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
                 choice = {"mode": mode, "repo": body.get("name") or default_name,
                           "visibility": body.get("visibility", "private")}
                 check_choice(choice, end=True)  # before the review is saved (PR #711 review)
+                hub.result_storage.check_end_choice(rid, decision=decision)
             result = hub.review_done(rid, decision=decision, revision=body.get("revision"),
                                      target_sha256=body.get("target_sha256"))
             card = await hub.result_storage.open_end_card(rid)

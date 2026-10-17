@@ -624,6 +624,63 @@ def request_uses_internal_data(req: dict, settings) -> bool:
         [req.get("text"), req.get("project_dirs"), req.get("references"), req.get("results")], paths))
 
 
+def internal_data_steps(req: dict, settings) -> set[str] | None:
+    """Return steps that directly cite an internal path, plus every downstream step.
+
+    ``None`` means the request touches an internal zone but its per-step results do not attribute every touched zone.
+    Callers must then keep the request-wide publication rules. This deliberately prefers excluding a public artifact over
+    publishing an internal one when old or incomplete results have no path provenance (#715).
+    """
+    paths = [zone.path for zone in settings.policy.data_zones if zone.level in {"internal", "restricted"}]
+    request_fields = [req.get("text"), req.get("project_dirs"), req.get("references"), req.get("results")]
+    touched_paths = {path for path in paths if touches(request_fields, [path])}
+    if not touched_paths:
+        return set()
+    results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
+    direct: set[str] = set()
+    attributed: set[str] = set()
+    for step_id, result in results.items():
+        if not isinstance(result, Mapping):
+            continue
+        matched = {path for path in touched_paths if touches(result, [path])}
+        if matched:
+            direct.add(str(step_id))
+            attributed.update(matched)
+    if attributed != touched_paths:
+        return None
+
+    plan = req.get("plan") if isinstance(req.get("plan"), Mapping) else {}
+    steps = [step for step in plan.get("steps") or [] if isinstance(step, Mapping) and step.get("id")]
+    internal = set(direct)
+    changed = True
+    while changed:
+        changed = False
+        for step in steps:
+            step_id = str(step["id"])
+            dependencies = {str(value) for value in step.get("depends_on") or []}
+            if step_id not in internal and dependencies & internal:
+                internal.add(step_id)
+                changed = True
+    return internal
+
+
+def source_uses_internal_data(name: str, req: dict, settings,
+                              step_scope: set[str] | None = None) -> bool:
+    """Classify one output by its source step, with request-wide fallback for missing provenance."""
+    if not request_uses_internal_data(req, settings):
+        return False
+    step_scope = internal_data_steps(req, settings) if step_scope is None else step_scope
+    if step_scope is None:
+        return True
+    source_step = _source_step(name, req)
+    plan = req.get("plan") if isinstance(req.get("plan"), Mapping) else {}
+    known_steps = {str(step.get("id")) for step in plan.get("steps") or []
+                   if isinstance(step, Mapping) and step.get("id")}
+    if source_step is None or source_step not in known_steps:
+        return True
+    return source_step in step_scope
+
+
 def _decisions_document(req: dict, decisions: Iterable[dict]) -> str:
     labels = {
         "clarify": "확인 질문 답", "research_plan": "CP1", "research_evidence": "CP2",
@@ -752,7 +809,8 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
     return "\n".join(lines) + "\n"
 
 
-def scan_publish_files(files: Mapping[str, str | bytes], *, internal: bool = False) -> list[dict[str, str]]:
+def scan_publish_files(files: Mapping[str, str | bytes], *,
+                       internal: bool | set[str] = False) -> list[dict[str, str]]:
     """Find credentials, local paths, signed URLs and internal aggregate cells of 1–9."""
     issues: list[dict[str, str]] = []
     for name, body in files.items():
@@ -770,7 +828,8 @@ def scan_publish_files(files: Mapping[str, str | bytes], *, internal: bool = Fal
         if _SIGNED_URL.search(text) or redact_url_credentials(text) != text:
             issues.append({"kind": "signed_url", "path": name})
         suffix = PurePosixPath(name).suffix.lower()
-        if internal and suffix in {".tsv", ".csv"} and small_cells(text, suffix):
+        file_internal = name in internal if isinstance(internal, set) else internal
+        if file_internal and suffix in {".tsv", ".csv"} and small_cells(text, suffix):
             issues.append({"kind": "small_cell", "path": name})
     return issues
 
@@ -778,7 +837,8 @@ def scan_publish_files(files: Mapping[str, str | bytes], *, internal: bool = Fal
 def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images: Mapping[str, bytes], *,
                           decisions: Iterable[dict] = (), tasks: Iterable[dict] = (),
                           bundle: Path | None = None,
-                          run_documents: Mapping[str, str] | None = None) -> dict[str, str | bytes]:
+                          run_documents: Mapping[str, str] | None = None,
+                          internal_files: set[str] | None = None) -> dict[str, str | bytes]:
     """Return the stable publication layout; raw data and third-party full text never enter it."""
     assets = {name: _clean(body, settings, req) for name, body in assets.items()
               if not _LITERATURE_OUTPUT.search(name.replace("\\", "/"))}
@@ -791,6 +851,16 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
     branch_specs, step_folders = _branch_layout(req)
     branch_rows = _branch_rows(req, branch_specs, step_folders) if branch_specs else []
     internal = request_uses_internal_data(req, settings)
+    step_scope = internal_data_steps(req, settings)
+    tracked_internal: set[str] = set()
+
+    def source_internal(name: str) -> bool:
+        return source_uses_internal_data(name, req, settings, step_scope)
+
+    def track(source: str, target: str) -> None:
+        if source_internal(source):
+            tracked_internal.add(target)
+
     aggregate_tables = declared_aggregate_tables(req)
     declared_reports = _declared_outputs(req, "report")
     omitted_tables: list[str] = []
@@ -805,22 +875,26 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
             target = _unique_target(prefix + "code", name, used)
             files[target] = body
             source_targets[name] = target
+            track(name, target)
         elif branch_folder and suffix == ".md" and path.as_posix() in declared_reports:
             target = _unique_target(prefix + "report", name, used)
             files[target] = body
             source_targets[name] = target
+            track(name, target)
         elif path.name in _NEXTFLOW_NAMES and "pipeline_info" in {part.casefold() for part in path.parts}:
-            if publish_file_allowed(name, body, internal=internal, declared=aggregate_tables):
+            if publish_file_allowed(name, body, internal=source_internal(name), declared=aggregate_tables):
                 target = _unique_target(prefix + "run/nextflow", name, used)
                 files[target] = body
                 source_targets[name] = target
+                track(name, target)
         elif suffix in _TABLE_SUFFIXES:
-            if not publish_file_allowed(name, body, internal=internal, declared=aggregate_tables):
+            if not publish_file_allowed(name, body, internal=source_internal(name), declared=aggregate_tables):
                 omitted_tables.append(name)
             else:
                 target = _unique_target(prefix + "tables", name, used)
                 files[target] = body
                 source_targets[name] = target
+                track(name, target)
 
     abstract_source = next((name for name in images
                             if "graphical_abstract" in name.casefold()
@@ -844,6 +918,7 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
         text = _clean(body.decode("utf-8", errors="strict"), settings, req)
         files[target] = text.encode("utf-8")
         source_targets[name] = target
+        track(name, target)
         if not branch_folder:
             figure_names.append(target)
 
@@ -891,8 +966,11 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
         detail = ", ".join(f"{row['document']} -> {row['target']}" for row in broken)
         raise EditionCheckError(f"정리본 Markdown 링크가 깨졌습니다: {detail}")
 
-    issues = scan_publish_files(files, internal=internal)
+    issues = scan_publish_files(
+        files, internal=tracked_internal if step_scope is not None else internal)
     blocking = [issue for issue in issues if issue["kind"] != "small_cell"]
     if blocking:
         raise check_failure(blocking)
+    if internal_files is not None:
+        internal_files.update(tracked_internal)
     return files

@@ -206,6 +206,40 @@ def test_internal_branch_uses_existing_publication_allowlist(tmp_path):
     assert "내부 자료 영역이라 표 1개는 요청 묶음에만 둠" in files["README.md"]
 
 
+def test_internal_rules_follow_the_source_step_and_descendants(tmp_path):
+    settings, request, assets, images = branched_fixture(tmp_path)
+    request = deepcopy(request)
+    internal_file = Path(request["project_dirs"][0]) / "births.tsv"
+    request["results"]["mdis"]["text"] += f" 입력은 {internal_file}이다."
+    request["plan"]["steps"][-1].update(
+        depends_on=["omics", "mdis"],
+        output_types=[{"name": "outputs/tables/combined.tsv", "data_type": "table"}],
+    )
+    request["results"]["synth"]["outputs"] = ["outputs/tables/combined.tsv"]
+    assets.update({
+        "steps/omics/outputs/tables/summary.tsv": "gene\trank\nG1\t5\n",
+        "steps/mdis/outputs/tables/summary.tsv": "group\tcount\nA\t5\n",
+        "steps/synth/outputs/tables/combined.tsv": "group\tcount\nA\t5\n",
+    })
+
+    files = build_portfolio_files(request, settings, assets, images)
+
+    assert files["studies/B-omics/tables/summary.tsv"] == "gene\trank\nG1\t5\n"
+    assert not any(name.endswith("C-mdis/tables/summary.tsv") for name in files)
+    assert not any(name.endswith("combined.tsv") for name in files)
+
+
+def test_missing_step_path_provenance_keeps_request_wide_internal_fallback(tmp_path):
+    settings, request, assets, images = branched_fixture(tmp_path)
+    request = deepcopy(request)
+    request["plan"]["steps"][1].pop("output_types")
+    assets["steps/omics/outputs/tables/summary.tsv"] = "gene\trank\nG1\t5\n"
+
+    files = build_portfolio_files(request, settings, assets, images)
+
+    assert not any(name.endswith("B-omics/tables/summary.tsv") for name in files)
+
+
 def test_unbranched_request_keeps_the_existing_file_list(tmp_path):
     settings, request, bundle, assets, images, decisions, tasks = portfolio_fixture(tmp_path)
     request = deepcopy(request)
