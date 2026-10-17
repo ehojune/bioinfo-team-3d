@@ -1609,6 +1609,9 @@ class Runner:
                 denied_links=list(denied_links),
                 shared_environment_protected=task.meta.get("shared_environment_protected") is True,
                 environment_step=task.meta.get("environment_step") is True,
+                gate_non_public_data=("approval" in agent.builtin_mcp and
+                                      any(z.level in {"internal", "restricted"}
+                                          for z in self.s.policy.data_zones)),
                 use_permission_tool="approval" in agent.builtin_mcp,
                 record_run=lambda **fields: ws.update_run(task.id, **fields),
                 resume_baseline=self._resume_baseline(task, agent, ws),
@@ -1893,13 +1896,25 @@ class Runner:
                 except ValueError:
                     pass  # Invalid install configuration must not prevent an approval from being delivered.
             req.agent_id = ws.task.agent_id
-            req.detail = {**req.detail, 'requester_name': ws.agent.name,
+            from ..tool_explanation import internal_row_output
+            row_output = internal_row_output(
+                str(req.detail.get('tool_name') or ''),
+                req.detail.get('tool_input') or req.detail.get('input') or {},
+                self.s.policy,
+                str(ws.dir),
+            )
+            detail = {**req.detail, 'requester_name': ws.agent.name,
                           'workdir': str(ws.dir),
                           'permission_mode': ws.agent.permission_mode,
                           'task_context': {'kind': meta.get('kind'), 'title': meta.get('title'),
                                            'step_id': meta.get('step_id'),
                                            'paper_title': (meta.get('paper_skill') or {}).get('title')},
                           'path_labels': labels}
+            if row_output:
+                detail['internal_row_output'] = True
+            else:
+                detail.pop('internal_row_output', None)
+            req.detail = detail
             for key, value in approval_copy(req.kind, req.summary, req.detail).items():
                 setattr(req, key, value)
             from ..tool_explanation import needs_interpretation

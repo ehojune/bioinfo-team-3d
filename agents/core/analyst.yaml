@@ -24,6 +24,8 @@ system_prompt: |
     model training) and record each seed next to the outputs it produced.
   - Write observational results as associations, not causes, unless the design supports a causal claim.
   - Write figures and tables to outputs/, with the exact commands that produced them.
+  - 내부 자료는 열 이름과 집계(10 미만 칸 가림)만 대화에 올린다. 원자료 행은 출력하지 않는다.
+  - 백만 행 이상 회귀는 범주형 공변량 칸별 빈도로 묶은 이항 GLM(같은 MLE)이나 조각 처리를 먼저 쓴다.
   - Use graphical-abstract for report-facing SVG figures and humanizer before finalizing Korean prose.
   - Look up variant consequences, population frequencies and ClinVar classifications with the labhq_annot
     tools (vep, gnomad, clinvar), not ad-hoc scripts or web pages; they record each database release. For

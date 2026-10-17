@@ -1879,6 +1879,44 @@ def restricted_paths(policy: PolicySettings) -> list[str]:
     return [_norm(z.path) for z in policy.data_zones if z.level == "restricted"]
 
 
+def non_public_paths(policy: PolicySettings) -> list[str]:
+    """Normalized roots whose records must not be copied into a staff conversation."""
+    return [_norm(z.path) for z in policy.data_zones if z.level in {"internal", "restricted"}]
+
+
+def internal_row_output_hit(tool_name: str, tool_input: dict[str, Any], policy: PolicySettings,
+                            workdir: str | None = None) -> bool:
+    """Whether a tool can put source rows from an internal/restricted zone in its output.
+
+    This classifier only makes the gate stricter. Unknown commands that name a non-public zone stay on the
+    warning side; known header, schema and aggregate forms stay unmarked.
+    """
+    roots = non_public_paths(policy)
+    if not roots:
+        return False
+    hit = touches(tool_input, roots, workdir=workdir) or touches_resolved(
+        tool_input,
+        [zone.path for zone in policy.data_zones if zone.level in {"internal", "restricted"}],
+        workdir=workdir,
+    )
+    if not hit:
+        return False
+    if tool_name == "Read":
+        try:
+            header_only = int(tool_input.get("limit")) == 1 and int(tool_input.get("offset") or 0) == 0
+        except (TypeError, ValueError):
+            header_only = False
+        return not header_only
+    if tool_name == "Glob":
+        return False
+    if tool_name == "Grep":
+        return True
+    if tool_name in SHELL_TOOLS:
+        from .tool_command import command_prints_rows
+        return command_prints_rows(str(tool_input.get("command") or ""), powershell=tool_name == "PowerShell")
+    return False
+
+
 def _strings(obj: Any, path_field: bool = False) -> Iterator[tuple[str, bool]]:
     if isinstance(obj, str):
         yield obj, path_field
@@ -2084,10 +2122,16 @@ def claude_settings(policy: PolicySettings) -> dict:
     Absolute paths in permission rules take a leading `//` (e.g. `Read(//data/cohort/**)`).
     """
     deny: list[str] = []
+    ask: list[str] = []
     for p in restricted_paths(policy):
         for tool in ("Read", "Edit", "Write"):
             deny.append(f"{tool}(/{claude_rule_path(p)}/**)")
-    return {"permissions": {"deny": deny}} if deny else {}
+    for zone in policy.data_zones:
+        if zone.level == "internal":
+            for tool in ("Read", "Grep"):
+                ask.append(f"{tool}(/{claude_rule_path(zone.path)}/**)")
+    permissions = {key: value for key, value in (("deny", deny), ("ask", ask)) if value}
+    return {"permissions": permissions} if permissions else {}
 
 
 def claude_deny_links(settings: dict, links: Iterable[str]) -> dict:
@@ -2620,6 +2664,9 @@ def _evaluate_tool(
             f"'{hit}' is a restricted data zone. Do not read raw records into the conversation; "
             "submit an HPC job (hpc_submit) that writes aggregate/QC summaries and read those instead.",
         )
+
+    if not hit and internal_row_output_hit(tool_name, tool_input, policy, workdir):
+        return Decision("ask", "internal data row output: show only column names or masked aggregates")
 
     if tool_name in {"Bash", "PowerShell"}:
         cmd = str(tool_input.get("command", ""))

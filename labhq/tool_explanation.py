@@ -17,6 +17,15 @@ def tool_input(detail: dict) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def internal_row_output(tool_name: str, data: dict, policy, workdir: str | None = None) -> bool:
+    """Return True when a tool may print records from an internal/restricted data zone.
+
+    The result only adds a warning to an approval card. It never authorizes a call or changes the policy decision.
+    """
+    from .policy import internal_row_output_hit
+    return internal_row_output_hit(tool_name, data, policy, workdir)
+
+
 def explain(detail: dict) -> tuple[str, str, bool]:
     """Action, risk and whether the whole command is covered by templates."""
     from .pi_text import plain_text
@@ -26,6 +35,13 @@ def explain(detail: dict) -> tuple[str, str, bool]:
     command = str(data.get('command') or '')
     labels = detail.get('path_labels') or {}
     workdir = detail.get('workdir')
+    row_warning = detail.get('internal_row_output') is True
+
+    def result(action: str, risk: str, complete: bool) -> tuple[str, str, bool]:
+        if row_warning:
+            action = '내부 자료 행 출력.\n' + action
+            risk = '높음 · 내부 자료 원행이 대화에 노출될 수 있음'
+        return action, risk, complete
 
     def place(path):
         from .private_paths import inside_any, path_field_text, resolved_read_path
@@ -48,7 +64,7 @@ def explain(detail: dict) -> tuple[str, str, bool]:
         path = data.get('file_path') or data.get('path') or data.get('notebook_path') or '.'
         reading = tool in {'Read', 'Glob', 'Grep'}
         verb = {'Read': '파일 읽기', 'Glob': '파일 목록 보기', 'Grep': '파일 내용 검색'}.get(tool, '파일 쓰기·수정')
-        return f'{place(path)}: {verb}.', ('낮음 · 읽기' if reading else '중간 · 쓰기'), True
+        return result(f'{place(path)}: {verb}.', ('낮음 · 읽기' if reading else '중간 · 쓰기'), True)
     parts = commands(command, bash=tool == 'Bash') if tool in ('Bash', 'PowerShell') else None
     reads = read_commands(command) if tool == 'Bash' else None
     if reads is not None:
@@ -64,12 +80,12 @@ def explain(detail: dict) -> tuple[str, str, bool]:
             else:
                 where = ' · '.join(dict.fromkeys(current if p == '.' else place(p) for p in paths))
                 lines.append(f'{where + ": " if where else ""}{names[name]}')
-        return '\n'.join(dict.fromkeys(lines)) + '.', '낮음 · 읽기만(쓰기·삭제·네트워크 없음)', True
+        return result('\n'.join(dict.fromkeys(lines)) + '.', '낮음 · 읽기만(쓰기·삭제·네트워크 없음)', True)
     if tool == 'PowerShell' and parts and len(parts) == 1:
         words = parts[0]
         name, args = words[0].lower(), words[1:]
         if name == 'new-item' and len(args) == 4 and [a.lower() for a in args[:3]] == ['-itemtype', 'directory', '-force']:
-            return f'{plain_text(args[3])} 폴더를 만들려 합니다.', '중간 · 쓰기', True
+            return result(f'{plain_text(args[3])} 폴더를 만들려 합니다.', '중간 · 쓰기', True)
     # Other literal commands get useful action categories, but never a low-risk verdict.
     actions = []
     complete = bool(parts)
@@ -97,8 +113,9 @@ def explain(detail: dict) -> tuple[str, str, bool]:
             actions.insert(0, '작업 위치: ' + ' · '.join(locations))
         if not complete:
             actions.append('추가 명령·옵션의 전체 범위는 자세히 확인')
-        return '\n'.join(dict.fromkeys(actions)) + '.', '높음 · 변경 또는 외부 통신 가능; 세부 범위 확인 필요', complete
-    return '', '미확인 · 스크립트의 읽기·쓰기·삭제·네트워크 범위 확인 필요', False
+        return result('\n'.join(dict.fromkeys(actions)) + '.',
+                      '높음 · 변경 또는 외부 통신 가능; 세부 범위 확인 필요', complete)
+    return result('', '미확인 · 스크립트의 읽기·쓰기·삭제·네트워크 범위 확인 필요', False)
 
 
 def reason(detail: dict, policy_reason: str, risk: str) -> str:
@@ -114,7 +131,11 @@ def reason(detail: dict, policy_reason: str, risk: str) -> str:
     if context.get('step_id'):
         purpose += f" 단계: {plain_text(context['step_id'])}."
     rule = '자동 허용 범위 밖이라 실행 전 확인이 필요합니다.'
-    if 'restricted' in policy_reason.lower() or 'data_zones' in policy_reason or '통제' in policy_reason:
+    if detail.get('internal_row_output') is True:
+        rule = ('내부 자료 원파일의 행이 대화에 올라올 수 있습니다. 거절하고 열 이름이나 '
+                '10 미만 칸을 가린 집계만 읽게 하는 것을 권고합니다.')
+        risk = '높음 · 내부 자료 원행 노출'
+    elif 'restricted' in policy_reason.lower() or 'data_zones' in policy_reason or '통제' in policy_reason:
         rule = '걸린 규칙: 통제 데이터 경계. 보호된 자료 경로에 접근합니다.'
         risk = '높음 · 통제 데이터 노출 확인 필요; ' + risk.split(' · ', 1)[-1]
     elif 'private_paths' in policy_reason:

@@ -42,6 +42,11 @@ class WslSettings(BaseModel):
     gateway_url: str | None = None
 
 
+def _default_step_memory_limit_gb() -> float:
+    from .runner.memory_limit import default_step_memory_limit_gb
+    return default_step_memory_limit_gb()
+
+
 class RunnerSettings(BaseModel):
     id: str = "local"
     wsl: WslSettings = Field(default_factory=WslSettings)
@@ -58,6 +63,12 @@ class RunnerSettings(BaseModel):
     contract_dir: str | None = None  # active contract roster; default agents_dir/contract, per instance (#303)
     broker_port: int = 8788
     task_timeout_s: int = 6 * 3600
+    # 0 disables the process-tree cap. The host/cgroup-aware default is 60% of usable physical memory.
+    step_memory_limit_gb: float = Field(
+        default_factory=_default_step_memory_limit_gb,
+        ge=0,
+        allow_inf_nan=False,
+    )
     structured_output_retries: int = Field(default=2, ge=0)  # JSON transport repair, separate from result_corrections
     # After the CLI's final turn event, how long its process may take to exit before labhq ends its tree and
     # finishes the step with the result already received (#330).

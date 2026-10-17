@@ -406,7 +406,7 @@ class ClaudeCodeAdapter(AgentAdapter):
         read_roots = [ctx.workdir, *ctx.extra_dirs, *ctx.read_dirs, *ctx.private_open_reads] if on else None
         allowed = [*claude_allowed_tools(
                        a.tools, [ctx.workdir, *ctx.extra_dirs], read_roots,
-                       shared_environment_gate=ctx.shared_environment_protected),
+                       shared_environment_gate=(ctx.shared_environment_protected or ctx.gate_non_public_data)),
                    *(f"mcp__{s.name}" for s in ctx.mcp_servers if s.auto_approve)]
         if allowed:
             cmd += ["--allowedTools", *allowed]
