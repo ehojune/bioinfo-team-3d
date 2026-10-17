@@ -14,12 +14,16 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 01:20 | [`b6e63c3`](https://github.com/ehojune/bioinfo-team-3d/pull/727/commits/b6e63c3) | main 변경을 합치며 산출 필수·선택 구분이 바뀐 계획 스키마 고정 hash를 다시 계산했다 |
+| 00:43 | [`09eef3b`](https://github.com/ehojune/bioinfo-team-3d/pull/727/commits/09eef3b) | 대기·결정 turn의 산출 검사를 최종 turn까지 미루고 보조 turn 산출 계약을 분리 |
 | 00:15 | [`e7a549a`](https://github.com/ehojune/bioinfo-team-3d/pull/724/commits/e7a549a) | 요청 범위와 실행 단계를 따로 검사하고 비교 가능한 실측만 써서 비용 상한 과소 추정을 막습니다. |
+| 00:05 | [`9aee6f1`](https://github.com/ehojune/bioinfo-team-3d/pull/727/commits/9aee6f1) | 기존 누락 산출 경로 표기를 보존하고 0 hash 보정과 임의 hash 거부를 구분 |
 
 ## 2026-10-17
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 23:51 | [`80b2686`](https://github.com/ehojune/bioinfo-team-3d/pull/727/commits/80b2686) | 선택 산출 누락은 경고로 진행하고 필수 산출 판정과 연구 원장 hash 계약을 보존 |
 | 23:31 | [`2295395`](https://github.com/ehojune/bioinfo-team-3d/pull/724/commits/2295395) | 범위 규칙에 맞춰 일반 계획 prompt hash를 갱신하고 CP1 카드의 기존 첫 문장을 보존합니다. |
 | 23:13 | [`58b8f20`](https://github.com/ehojune/bioinfo-team-3d/pull/724/commits/58b8f20) | 요청 분석 누락을 CP1에서 경고하고 완료 요청 실측으로 비용을 추정합니다. |
 | 23:04 | [`200c42e`](https://github.com/ehojune/bioinfo-team-3d/pull/723/commits/200c42e) | POSIX MemoryMax 실제 강제 probe와 실행 오류 계약을 보강했다. |
