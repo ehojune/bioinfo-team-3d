@@ -73,3 +73,108 @@ def read_commands(command: str) -> list[tuple[str, list[str]]] | None:
             return None
         out.append((name, paths))
     return out
+
+
+def _head_count(args: list[str]) -> int | None:
+    count = 10
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if re.fullmatch(r"-\d+", arg):
+            count = int(arg[1:])
+        elif arg in {"-n", "--lines"}:
+            if index + 1 >= len(args) or not args[index + 1].isdigit():
+                return None
+            index += 1
+            count = int(args[index])
+        elif arg.startswith("--lines="):
+            value = arg.partition("=")[2]
+            if not value.isdigit():
+                return None
+            count = int(value)
+        index += 1
+    return count
+
+
+def _interpreter_prints_rows(command: str) -> bool:
+    """Conservative Python/R command check: uncertainty is treated as row output."""
+    folded = command.casefold()
+    row_access = re.search(r"(?:\.|\b)(?:head|tail)\s*\(|\biloc\s*\[|\bloc\s*\[", folded)
+    if row_access:
+        return True
+    # A schema token does not make another print in the same interpreter command safe.
+    if re.search(r"\bprint\s*\(\s*[A-Za-z_]\w*\s*\)", command):
+        return True
+    # Column names/schema are an advisory label only; the zone gate is decided elsewhere.
+    if re.search(r"\.columns\b|\.dtypes\b|\.info\s*\(|\b(?:names|colnames)\s*\(", folded):
+        # Multiple output calls are ambiguous even when one of them is a schema expression.
+        return len(re.findall(r"\bprint\s*\(", folded)) > 1
+    if re.search(r"\bnrows\s*=\s*0\b", folded):
+        return False
+    # Group keys and small cells can disclose one record per person. Treat aggregates as rows unless a later,
+    # bounded representation proves otherwise.
+    return True
+
+
+def command_prints_rows(command: str, *, powershell: bool = False) -> bool:
+    """Whether a command may print source records rather than a header or aggregate.
+
+    This is a card-label classifier, not an allow rule. False is reserved for narrow, recognizable
+    metadata/count forms; opaque interpreters and ambiguous syntax return True.
+    """
+    folded = command.casefold()
+    if not folded.strip():
+        return False
+    if powershell and re.search(r"(?<![\w-])(?:get-content|gc|type)(?![\w-])", folded):
+        if re.search(r"\bmeasure-object\b", folded):
+            return False
+        counts = [int(value) for value in re.findall(r"-(?:totalcount|head|first)\s+(\d+)", folded)]
+        return not (counts and max(counts) <= 1)
+
+    # Interpreter commands are opaque unless one shell command matches a narrow schema form above.
+    if re.search(r"(?:^|[;&|]\s*)(?:python(?:\d+(?:\.\d+)*)?|py|rscript|r)(?:\.exe)?(?:\s|$)",
+                 folded):
+        parsed = commands(command, bash=not powershell)
+        if parsed is not None and len(parsed) != 1:
+            return True
+        return _interpreter_prints_rows(command)
+
+    parsed = commands(command, bash=not powershell)
+    if parsed is not None:
+        for words in parsed:
+            name = re.split(r"[\\/]", words[0])[-1].casefold()
+            args = words[1:]
+            if name == "head":
+                if _head_count(args) != 1:
+                    return True
+            elif name in {"cat", "tail", "less", "more", "grep", "egrep", "fgrep", "cut"}:
+                return True
+            elif name == "wc":
+                continue
+            elif name == "sed":
+                script = next((arg for arg in args if not arg.startswith("-")), "")
+                if not ("-n" in args and re.fullmatch(r"\s*1p\s*", script)):
+                    return True
+            elif name in {"awk", "gawk", "mawk"}:
+                script = next((arg for arg in args if not arg.startswith("-")), "")
+                if "print" in script.casefold() and not (
+                        "end" in script.casefold() and re.search(r"(?:\+\+|\+=|\bsum\b|\bcount\b)", script,
+                                                                  re.IGNORECASE)):
+                    return True
+            elif name not in {"cd", "pwd", "ls", "find", "which", "echo", "printf", "stat", "du", "file",
+                              "basename", "dirname"}:
+                return True
+        return False
+
+    # The closed grammar rejected syntax. Recognize only the safe forms; ambiguity gets the warning.
+    if re.search(r"(?:^|[;&|]\s*)wc\s+(?:-[a-z]*l[a-z]*\s+|--lines\s+)", folded):
+        return False
+    if re.search(r"(?:^|[;&|]\s*)head\s+(?:-1\b|-n\s+1\b|--lines(?:=|\s+)1\b)", folded):
+        return False
+    if (re.search(r"(?:^|[;&|]\s*)(?:awk|gawk|mawk)\b", folded)
+            and re.search(r"\bend\b", folded) and "print" in folded
+            and re.search(r"(?:\+\+|\+=|\bsum\b|\bcount\b)", folded)):
+        return False
+    if re.search(r"(?:^|[;&|]\s*)(?:cat|tail|less|more|grep|egrep|fgrep|cut|sed|awk)\b", folded):
+        return True
+    return True

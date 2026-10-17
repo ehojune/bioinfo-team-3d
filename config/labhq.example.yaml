@@ -31,6 +31,7 @@ runner:
   talent_dir: ~/.labhq/talent       # 인재풀 (파견직 빌드 + 계약서 보관)
   broker_port: 8788
   task_timeout_s: 21600
+  # step_memory_limit_gb: 12        # 생략하면 트리 상한 60%, POSIX 프로세스별 fallback 40%; 0이면 끔
   stall_warn_s: 600                 # 이 시간 동안 출력이 없으면 한 번 경고(0이면 끔)
   stall_retry_s: 1200               # 명령이 안 돌 때만 CLI를 끝내고 재시도(0이면 끔)
   job_poll_s: 60

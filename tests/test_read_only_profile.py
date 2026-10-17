@@ -492,7 +492,9 @@ async def test_an_option_in_prefix_args_refuses_a_read_only_run(tmp_path, monkey
 
     engine_bin.prefix_args = ["cli.js"]  # the documented use: the script an interpreter runs
     await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "followup"}))
-    assert len(spawned) == 1 and spawned[0][1] == "cli.js"
+    assert len(spawned) == 1 and "cli.js" in spawned[0]
     engine_bin.prefix_args = ["cli.js", "${LABHQ_TEST_PREFIX_FLAG}"]
     await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"}))
-    assert len(spawned) == 2 and spawned[1][2] == flag, "an ordinary step keeps the PI's launcher"
+    assert len(spawned) == 2
+    pair = tuple(spawned[1][i:i + 2] for i in range(len(spawned[1]) - 1))
+    assert ("cli.js", flag) in pair, "an ordinary step keeps the PI's launcher"

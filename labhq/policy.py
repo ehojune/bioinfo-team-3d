@@ -1879,6 +1879,43 @@ def restricted_paths(policy: PolicySettings) -> list[str]:
     return [_norm(z.path) for z in policy.data_zones if z.level == "restricted"]
 
 
+def non_public_paths(policy: PolicySettings) -> list[str]:
+    """Normalized roots whose records must not be copied into a staff conversation."""
+    return [_norm(z.path) for z in policy.data_zones if z.level in {"internal", "restricted"}]
+
+
+def _zone_hit(tool_input: dict[str, Any], policy: PolicySettings, levels: set[str],
+              workdir: str | None = None):
+    zones = [zone.path for zone in policy.data_zones if zone.level in levels]
+    roots = [_norm(path) for path in zones]
+    return touches(tool_input, roots, workdir=workdir) or touches_resolved(
+        tool_input, zones, workdir=workdir,
+    )
+
+
+def internal_row_output_hit(tool_name: str, tool_input: dict[str, Any], policy: PolicySettings,
+                            workdir: str | None = None) -> bool:
+    """Whether an approval card should warn about non-public source-row output."""
+    return internal_output_classification(tool_name, tool_input, policy, workdir) == "rows"
+
+
+def internal_output_classification(tool_name: str, tool_input: dict[str, Any], policy: PolicySettings,
+                                   workdir: str | None = None) -> str | None:
+    """Advisory card label for a non-public read; never decides allow/ask/deny."""
+    if not _zone_hit(tool_input, policy, {"internal", "restricted"}, workdir):
+        return None
+    if tool_name == "Glob":
+        return "summary"
+    if tool_name in {"Read", "Grep"}:
+        # A first line may be a JSONL record or a headerless table row. Ambiguity stays on the row side.
+        return "rows"
+    if tool_name in SHELL_TOOLS:
+        from .tool_command import command_prints_rows
+        return ("rows" if command_prints_rows(str(tool_input.get("command") or ""),
+                                               powershell=tool_name == "PowerShell") else "summary")
+    return None
+
+
 def _strings(obj: Any, path_field: bool = False) -> Iterator[tuple[str, bool]]:
     if isinstance(obj, str):
         yield obj, path_field
@@ -2084,10 +2121,16 @@ def claude_settings(policy: PolicySettings) -> dict:
     Absolute paths in permission rules take a leading `//` (e.g. `Read(//data/cohort/**)`).
     """
     deny: list[str] = []
+    ask: list[str] = []
     for p in restricted_paths(policy):
         for tool in ("Read", "Edit", "Write"):
             deny.append(f"{tool}(/{claude_rule_path(p)}/**)")
-    return {"permissions": {"deny": deny}} if deny else {}
+    for zone in policy.data_zones:
+        if zone.level == "internal":
+            for tool in ("Read", "Grep"):
+                ask.append(f"{tool}(/{claude_rule_path(zone.path)}/**)")
+    permissions = {key: value for key, value in (("deny", deny), ("ask", ask)) if value}
+    return {"permissions": permissions} if permissions else {}
 
 
 def claude_deny_links(settings: dict, links: Iterable[str]) -> dict:
@@ -2620,6 +2663,11 @@ def _evaluate_tool(
             f"'{hit}' is a restricted data zone. Do not read raw records into the conversation; "
             "submit an HPC job (hpc_submit) that writes aggregate/QC summaries and read those instead.",
         )
+
+    # Internal-zone reads all use one approval flow. Output-shape classification only changes the card wording.
+    internal_hit = _zone_hit(tool_input, policy, {"internal"}, workdir)
+    if internal_hit and tool_name in READ_LIKE | SHELL_TOOLS:
+        return Decision("ask", f"internal data zone read requires approval: {internal_hit}")
 
     if tool_name in {"Bash", "PowerShell"}:
         cmd = str(tool_input.get("command", ""))

@@ -102,6 +102,22 @@ def _row(group: str, name: str, status: str, detail: str, hint: str) -> dict:
     return {"group": group, "name": name, "status": status, "detail": detail, "hint": hint}
 
 
+def _memory_limit_row(settings: Settings) -> dict:
+    from .runner.memory_limit import configured_limit_bytes, memory_limit_mechanism, memory_limit_supported
+
+    memory_bytes = configured_limit_bytes(settings.runner)
+    enabled = memory_bytes > 0
+    supported = memory_limit_supported()
+    return _row(
+        "config",
+        "step memory limit",
+        "skip" if not enabled else ("ok" if supported else "fail"),
+        "꺼짐" if not enabled else f"{memory_bytes / (1024 ** 3):.2f} GiB · {memory_limit_mechanism()}",
+        ("runner.step_memory_limit_gb에 0보다 큰 값을 두세요." if not enabled else
+         "이 OS에서 지원하는 runner를 쓰세요." if not supported else ""),
+    )
+
+
 def _bioinfo_row(settings: Settings) -> dict:
     """Whether the bioinfo-agent plugin is connected (#613): the folder a runner would hand to claude_code."""
     env = {**os.environ, **expand_env(settings.engines.claude_code.env, os.environ)}
@@ -565,6 +581,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
     rows.append(_row("config", "runner account isolation", owner_status, owner_detail,
                      "Default guard is policy.private_paths (docs/manual.md 'PI 개인 경로'). Optional, advanced: a dedicated runner "
                      "account, docs/runner-account.md."))
+    rows.append(_memory_limit_row(settings))
     if settings.gateway.client_token == "change-me-client":
         # The published default is a working client token for anyone while a gateway accepts it, and a runner
         # config that drops the key falls back to it (#304 review).

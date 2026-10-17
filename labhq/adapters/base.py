@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from .. import durable, proc_tree
+from ..runner import memory_limit
 from ..facilities import signatures as env_signatures
 from ..models import AgentSpec, McpServerSpec, Task, TaskResult
 from ..settings import Settings
@@ -446,6 +447,8 @@ class RunContext:
     # A request with one shared environment sends non-owner install-capable shell rules through approval.
     shared_environment_protected: bool = False
     environment_step: bool = False
+    # Non-public zones remove shell pre-approval so the policy can label row-output commands before they run.
+    gate_non_public_data: bool = False
     use_permission_tool: bool = False
     plugin_provenance: list[dict] = field(default_factory=list)  # set by preflight; recorded in the run manifest
     record_run: Callable[..., None] | None = None  # runner hook: persist run fields before the CLI starts
@@ -833,6 +836,9 @@ class AgentAdapter(ABC):
         await durable.run(durable.FILES, self.prepare, ctx)
         cmd = self.build_command(ctx)
         env = self.staff_env(ctx)
+        memory_limit_bytes = memory_limit.configured_limit_bytes(self.settings.runner)
+        env[memory_limit.MEMORY_LIMIT_ENV] = str(memory_limit_bytes)
+        memory_guard = memory_limit.step_memory_guard(memory_limit_bytes)
 
         def resolved(command: list[str]) -> tuple[list[str], list[str]]:
             """The full command and its launcher: everything before the adapter's own arguments."""
@@ -880,26 +886,46 @@ class AgentAdapter(ABC):
         try:
             group_args = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
                           if os.name == "nt" else {"start_new_session": True})
+            group_args.update(memory_guard.spawn_kwargs())
+            spawn_cmd = memory_guard.wrap_command(cmd)
             proc = await asyncio.create_subprocess_exec(
-                *cmd, cwd=str(ctx.workdir), env=env,
+                *spawn_cmd, cwd=str(ctx.workdir), env=env,
                 stdin=asyncio.subprocess.PIPE if payload is not None else asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                 limit=32 * 1024 * 1024, **group_args,
             )
         except FileNotFoundError:
+            memory_guard.close()
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False,
                               error=f"executable not found: {cmd[0]!r} — install it on the runner or fix "
                                     f"engines/cli settings for agent {ctx.agent.id!r}")
         except OSError as exc:
+            memory_guard.close()
             detail = exc.strerror or str(exc)
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False,
                               error=f"could not start executable {cmd[0]!r}: {detail}")
+        try:
+            # Unit adapters use small process doubles; only a real asyncio child has an OS process to constrain.
+            if isinstance(proc, asyncio.subprocess.Process):
+                memory_guard.attach(proc.pid)
+        except OSError as exc:
+            await self._kill(proc)
+            memory_guard.close()
+            return TaskResult(
+                task_id=ctx.task.id,
+                agent_id=ctx.agent.id,
+                ok=False,
+                error_kind="memory_limit_setup",
+                error=("직원 단계 메모리 상한을 설정하지 못해 실행하지 않았습니다: "
+                       f"{exc}. 관리자 권한은 요청하지 않습니다."),
+            )
         ctx.started_command = launcher
         if ctx.on_started:
             try:
                 ctx.on_started()
             except BaseException as exc:  # never leave a started CLI running unsupervised (PR #532 review)
                 await self._kill(proc)
+                memory_guard.close()
                 if not isinstance(exc, Exception):
                     raise
                 return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False,
@@ -1104,6 +1130,7 @@ class AgentAdapter(ABC):
             guard.cancel()
             await self._kill(proc)
             await asyncio.shield(drain)
+            memory_guard.close()
             raise
         finally:
             watch.cancel()
@@ -1119,6 +1146,21 @@ class AgentAdapter(ABC):
             await ctx.emit("agent.log", {"level": "warn", "text": (
                 "작업 폴더의 .labhq가 실행 중에 링크로 바뀌어 stderr 기록을 남기지 않았습니다")})
         stderr = " | ".join(x for x in list(stderr_tail)[-5:] if x)
+        stderr_all = "\n".join(stderr_tail)
+        executable_missing = getattr(memory_guard, "executable_missing", lambda _stderr: False)(stderr_all)
+        memory_setup_failed = memory_guard.setup_failed(stderr_all)
+        memory_exceeded = memory_guard.exceeded(returncode, stderr_all)
+        memory_guard.close()
+        if executable_missing:
+            st.error = (f"executable not found: {cmd[0]!r} — install it on the runner or fix "
+                        f"engines/cli settings for agent {ctx.agent.id!r}")
+        elif memory_setup_failed:
+            st.error_kind = "memory_limit_setup"
+            st.error = "직원 단계 메모리 상한을 적용하지 못해 실행하지 않았습니다. runner OS 설정을 확인하세요."
+        elif memory_exceeded:
+            st.error_kind = "memory_limit"
+            st.error = ("메모리 상한을 넘어 직원 단계가 종료되었습니다. 큰 표는 조각 처리하고, 백만 행 이상 "
+                        "범주형 회귀는 칸별 빈도로 묶은 이항 GLM을 먼저 쓰세요.")
         st.error = st.error or self.stderr_error(stderr)
         st.ended_by_guard = ended_after_result
         res = self.finalize(st, ctx, returncode)
