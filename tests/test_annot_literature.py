@@ -86,6 +86,24 @@ def by_query(table, xml=JATS):
     return handler
 
 
+def chase_handler(request):
+    if request.url.path.endswith("/references"):
+        return httpx.Response(200, json={"version": "6.9", "hitCount": 2, "referenceList": {"reference": [
+            {"source": "MED", "id": "111", "pmid": "111", "title": "Earlier study",
+             "authorString": "Lee A.", "journalAbbreviation": "Old J", "pubYear": 1998},
+            {"source": "PMC", "id": "PMC222", "pmcid": "PMC222", "doi": "10.1000/back",
+             "title": "Open review", "authorString": "Park B.", "journalAbbreviation": "Open J",
+             "pubYear": 2001, "isOpenAccess": "Y"},
+        ]}})
+    if request.url.path.endswith("/citations"):
+        return httpx.Response(200, json={"version": "6.9", "hitCount": 1, "citationList": {"citation": [
+            {"source": "MED", "id": "333", "pmid": "333", "doi": "10.1000/forward",
+             "title": "Later cohort", "authorString": "Kim C.", "journalAbbreviation": "New J",
+             "pubYear": 2022, "abstractText": "A later test."},
+        ]}})
+    return search_answer([{**record(), "source": "MED", "id": "123"}])
+
+
 def test_paper_ids_are_read_in_the_forms_staff_write_them():
     assert lit.parse_paper_id("31868601") == lit.PaperId("pmid", "31868601")
     assert lit.parse_paper_id("PMID: 31868601") == lit.PaperId("pmid", "31868601")
@@ -238,6 +256,62 @@ async def test_more_than_twenty_papers_in_one_call_is_refused(tmp_path):
     assert calls == []
 
 
+async def test_citation_chase_returns_both_directions_as_bibliographic_candidates_and_records_them(tmp_path):
+    annotator, calls = make(chase_handler, tmp_path)
+    out = await annotator.citation_chase("PMID:123", limit=50)
+    row = out["results"][0]
+    assert row["ok"] and row["seed"]["pmid"] == "123"
+    assert row["backward"]["found_count"] == 2 and row["forward"]["found_count"] == 1
+    backward = row["backward"]["candidates"]
+    forward = row["forward"]["candidates"]
+    assert backward[0] == {
+        "source": {"code": "MED", "id": "111"}, "pmid": "111", "title": "Earlier study",
+        "authors": "Lee A.", "journal": "Old J", "year": "1998", "access_level_candidate": "abstract",
+    }
+    assert backward[1]["pmcid"] == "PMC222" and backward[1]["access_level_candidate"] == "full_text"
+    assert forward[0]["doi"] == "10.1000/forward" and forward[0]["access_level_candidate"] == "abstract"
+    assert [c.url.path.rsplit("/", 1)[-1] for c in calls] == ["search", "references", "citations"]
+    log = [json.loads(line) for line in (tmp_path / "work" / "outputs" / "annotation_queries.jsonl")
+           .read_text(encoding="utf-8").splitlines()]
+    assert log[-1]["tool"] == "citation_chase" and log[-1]["db"] == "Europe PMC"
+    full = json.loads((tmp_path / "work" / out["full_result"]).read_text(encoding="utf-8"))
+    assert full["results"][0]["answer"]["forward"]["found_count"] == 1
+    cached, cached_calls = make(lambda request: httpx.Response(500), tmp_path, "chase-again")
+    cached_row = (await cached.citation_chase("123", limit=50))["results"][0]
+    assert cached_calls == [] and cached_row["cached_from"] and cached_row["forward"]["found_count"] == 1
+
+
+async def test_preprint_search_uses_ppr_and_marks_every_result_as_unreviewed(tmp_path):
+    def handler(request):
+        assert request.url.path.endswith("/search")
+        assert "SRC:PPR" in request.url.params["query"]
+        assert 'PUBLISHER:"bioRxiv"' in request.url.params["query"]
+        assert 'PUBLISHER:"medRxiv"' in request.url.params["query"]
+        return httpx.Response(200, json={"version": "6.9", "hitCount": 2, "resultList": {"result": [
+            {"source": "PPR", "id": "PPR1", "doi": "10.1101/1", "title": "A bioRxiv study",
+             "authorString": "Fox A.", "bookOrReportDetails": {"publisher": "bioRxiv"},
+             "pubYear": "2025", "abstractText": "A."},
+            {"source": "PPR", "id": "PPR2", "doi": "10.1101/2", "title": "A medRxiv study",
+             "authorString": "Bear B.", "bookOrReportDetails": {"publisher": "medRxiv"},
+             "pubYear": "2026", "isOpenAccess": "Y"},
+        ]}})
+
+    annotator, calls = make(handler, tmp_path)
+    out = await annotator.preprints("paternal exposure sex ratio", limit=10)
+    row = out["results"][0]
+    assert row["found_count"] == 2 and row["returned_count"] == 2
+    assert {candidate["server"] for candidate in row["candidates"]} == {"bioRxiv", "medRxiv"}
+    assert all(candidate["review_status"] == "심사 전" for candidate in row["candidates"])
+    assert [candidate["access_level_candidate"] for candidate in row["candidates"]] == ["abstract", "full_text"]
+    assert len(calls) == 1
+    log = [json.loads(line) for line in (tmp_path / "work" / "outputs" / "annotation_queries.jsonl")
+           .read_text(encoding="utf-8").splitlines()]
+    assert log[-1]["tool"] == "preprints"
+    cached, cached_calls = make(lambda request: httpx.Response(500), tmp_path, "preprints-again")
+    cached_row = (await cached.preprints("paternal exposure sex ratio", limit=10))["results"][0]
+    assert cached_calls == [] and cached_row["cached_from"] and cached_row["returned_count"] == 2
+
+
 def _prompt(agent_id):
     raw = yaml.safe_load((ROOT / "agents" / "core" / f"{agent_id}.yaml").read_text(encoding="utf-8"))
     return AgentSpec.model_validate(raw), " ".join(AgentSpec.model_validate(raw).system_prompt.split())
@@ -253,6 +327,16 @@ def test_literature_staff_read_bodies_through_the_recorded_tool(agent_id):
     assert "Never fetch a paywalled paper from anywhere else" in text
     assert "access_level column (full_text, abstract or metadata)" in text
     assert ".tmp/literature/ files are third-party text" in text and "never copy them into outputs/" in text
+
+
+@pytest.mark.parametrize("agent_id", ["lit_scout", "biologist"])
+def test_literature_staff_chase_citations_and_search_preprints(agent_id):
+    _spec, text = _prompt(agent_id)
+    assert "call labhq_annot citation_chase once" in text
+    assert "references (backward) and citing papers (forward)" in text
+    assert "found count and newly added count" in text
+    assert "call labhq_annot preprints" in text and "bioRxiv and medRxiv" in text
+    assert "심사 전" in text and "do not present it as peer-reviewed" in text
 
 
 def test_qc_and_review_weigh_abstract_only_numbers():

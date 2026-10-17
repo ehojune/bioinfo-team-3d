@@ -82,7 +82,7 @@ EXTERNAL = {
 BUILTIN = {
     "approval": ("labhq_approval", "PI 승인 요청"),
     "hpc": ("labhq_hpc", "HPC 제출·감시 (scheduler가 none이 아닐 때)"),
-    "annot": ("labhq_annot", "공개 자원 조회: Ensembl VEP·gnomAD·ClinVar·ChIP-Atlas·ENCODE cCRE·GTEx, Europe PMC 논문 본문, API 키가 있으면 변이 효과 예측 모델 (판본 기록·캐시)"),
+    "annot": ("labhq_annot", "공개 자원 조회: Ensembl VEP·gnomAD·ClinVar·ChIP-Atlas·ENCODE cCRE·GTEx, Europe PMC 논문 본문·인용 추적·preprint, API 키가 있으면 변이 효과 예측 모델 (판본 기록·캐시)"),
 }
 ENGINES = {"claude_code": "Claude Code", "codex": "Codex", "gemini": "Gemini CLI",
            "antigravity": "Antigravity", "cli": "자체 CLI", "mock": "mock"}

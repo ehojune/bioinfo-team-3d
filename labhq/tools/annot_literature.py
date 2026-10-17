@@ -36,6 +36,8 @@ TOOL = "fulltext"
 CACHE_RELEASE = "europepmc-rest"  # Europe PMC has no data release; answers age out instead (annot.CACHE_MAX_AGE_S)
 MAX_PER_CALL = 20
 MAX_XML_BYTES = 20_000_000
+MAX_CITATION_RESULTS = 1000
+MAX_PREPRINT_RESULTS = 100
 
 _PMID = re.compile(r"^(?:pmid:?\s*)?([0-9]{1,9})$", re.IGNORECASE)
 _PMCID = re.compile(r"^(?:pmcid:?\s*)?(PMC[0-9]{1,9})$", re.IGNORECASE)
@@ -67,6 +69,15 @@ class PaperId:
         return f"doi-{readable}-{hashlib.sha256(self.value.encode('utf-8')).hexdigest()[:10]}.md"
 
 
+@dataclass(frozen=True)
+class LiteratureSearch:
+    value: str
+
+    @property
+    def key(self) -> str:
+        return hashlib.sha256(self.value.encode("utf-8")).hexdigest()
+
+
 def parse_paper_id(value: object) -> PaperId:
     text = str(value or "").strip()
     for kind, pattern in (("pmcid", _PMCID), ("pmid", _PMID), ("doi", _DOI)):
@@ -75,6 +86,41 @@ def parse_paper_id(value: object) -> PaperId:
             found = match.group(1)
             return PaperId(kind, found.upper() if kind == "pmcid" else found.lower() if kind == "doi" else found)
     raise ValueError(f"논문 식별자를 읽지 못했습니다: {text!r}. {FORMAT_HINT}로 주세요")
+
+
+def _yes(value: object) -> bool:
+    return str(value or "").upper() == "Y"
+
+
+def _bibliography(record: dict, *, preprint: bool = False) -> dict:
+    """One compact discovery candidate. access_level_candidate is where to try reading, not proof it was read."""
+    code = str(record.get("source") or record.get("src") or "").upper()
+    ident = str(record.get("id") or record.get("extId") or "")
+    pmid = record.get("pmid") or (ident if code == "MED" else None)
+    pmcid = record.get("pmcid") or (ident if code == "PMC" else None)
+    doi = record.get("doi")
+    journal_info = record.get("journalInfo") or {}
+    nested_journal = (journal_info.get("journal") or {}).get("title")
+    journal = (record.get("journalTitle") or record.get("journalAbbreviation")
+               or record.get("publicationTitle") or nested_journal)
+    preprint_server = (record.get("bookOrReportDetails") or {}).get("publisher")
+    full_text = _yes(record.get("isOpenAccess")) or _yes(record.get("inEPMC")) or bool(pmcid)
+    abstract = bool(record.get("abstractText")) or bool(pmid) or code in {"MED", "PPR"}
+    out = {
+        "source": {"code": code, "id": ident},
+        "pmid": str(pmid) if pmid else None,
+        "pmcid": str(pmcid) if pmcid else None,
+        "doi": str(doi) if doi else None,
+        "title": record.get("title"),
+        "authors": record.get("authorString"),
+        "journal": journal,
+        "year": str(record["pubYear"]) if record.get("pubYear") is not None else None,
+        "access_level_candidate": "full_text" if full_text else "abstract" if abstract else "metadata",
+    }
+    if preprint:
+        out["server"] = preprint_server
+        out["review_status"] = "심사 전"
+    return {key: value for key, value in out.items() if value not in (None, "")}
 
 
 # ----- JATS to Markdown -----
@@ -270,18 +316,116 @@ class LiteratureAnnotator(Annotator):
                             EUROPEPMC, {}, items, _summary, cache=False,
                             note="본문 파일은 논문 라이선스를 따르는 제3자 글이다. 경로로 인용하고 결과물에 옮겨 싣지 않는다.")
 
-    async def _paper(self, paper: PaperId) -> tuple[dict, str | None, bool]:
-        """The answer, the REST version, and whether the answer must not be cached: a body that should exist but
-        could not be read this time (server error, unusable XML) falls back to the abstract for this call only."""
+    async def citation_chase(self, paper_id: object, limit: int = 100) -> dict:
+        """References (backward) and citing papers (forward) for one seed publication."""
+        paper = parse_paper_id(paper_id)
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= MAX_CITATION_RESULTS:
+            raise ValueError(f"limit은 1..{MAX_CITATION_RESULTS}이어야 합니다")
+        options = {"limit_per_direction": limit}
+        item = Item(paper, paper_id)
+        items = [item]
+        self._from_cache("citation_chase", CACHE_RELEASE, options, items)
+        version = None
+        if item.cached_at is None:
+            record, version = await self._record_for(paper)
+            if record is None:
+                item.answer = {"found": False}
+            else:
+                source, ident = self._canonical_id(record)
+                backward, backward_version = await self._citation_list(source, ident, "references", limit)
+                forward, forward_version = await self._citation_list(source, ident, "citations", limit)
+                version = version or backward_version or forward_version
+                item.answer = {"found": True, "seed": _bibliography(record),
+                               "backward": backward, "forward": forward}
+        self._to_cache("citation_chase", CACHE_RELEASE, options, items, _now())
+        return self._finish(
+            "citation_chase", "Europe PMC", f"REST {version}" if version else "REST (cached answers)",
+            EUROPEPMC, options, items, lambda found: dict(found.answer or {}),
+            note=("backward는 참고문헌, forward는 이 논문을 인용한 논문이다. access_level_candidate는 읽을 "
+                  "경로 후보이며 실제 access_level은 fulltext로 확인한다."), cache=False)
+
+    async def preprints(self, query: object, limit: int = 25) -> dict:
+        """Search bioRxiv and medRxiv records indexed by Europe PMC as SRC:PPR."""
+        terms = str(query or "").strip()
+        if not terms:
+            raise ValueError("preprint 검색어가 비었습니다")
+        if len(terms) > 500:
+            raise ValueError("preprint 검색어는 500자까지 받습니다")
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= MAX_PREPRINT_RESULTS:
+            raise ValueError(f"limit은 1..{MAX_PREPRINT_RESULTS}이어야 합니다")
+        search = LiteratureSearch(terms)
+        item = Item(search, terms)
+        items = [item]
+        options = {"limit": limit, "sources": ["bioRxiv", "medRxiv"]}
+        self._from_cache("preprints", CACHE_RELEASE, options, items)
+        version = None
+        if item.cached_at is None:
+            expression = f'SRC:PPR AND (PUBLISHER:"bioRxiv" OR PUBLISHER:"medRxiv") AND ({terms})'
+            response = await self.http.request("europepmc", "GET", f"{EUROPEPMC}/search", params={
+                "query": expression, "resultType": "core", "format": "json", "pageSize": limit})
+            if response.status_code != 200:
+                raise LookupFailed(f"Europe PMC preprint 검색이 HTTP {response.status_code}로 답했습니다")
+            data = response.json()
+            version = data.get("version")
+            records = (data.get("resultList") or {}).get("result") or []
+            candidates = []
+            for record in records:
+                publisher = str((record.get("bookOrReportDetails") or {}).get("publisher") or "")
+                if publisher.casefold() not in {"biorxiv", "medrxiv"}:
+                    continue
+                candidates.append(_bibliography(record, preprint=True))
+            item.answer = {"found_count": int(data.get("hitCount") or len(candidates)),
+                           "returned_count": len(candidates), "candidates": candidates}
+        self._to_cache("preprints", CACHE_RELEASE, options, items, _now())
+        return self._finish(
+            "preprints", "Europe PMC", f"REST {version}" if version else "REST (cached answers)", EUROPEPMC,
+            options, items, lambda found: dict(found.answer or {}),
+            note="모든 결과는 bioRxiv·medRxiv의 심사 전 preprint다. peer-reviewed 논문처럼 다루지 않는다.",
+            cache=False)
+
+    async def _record_for(self, paper: PaperId) -> tuple[dict | None, str | None]:
         response = await self.http.request("europepmc", "GET", f"{EUROPEPMC}/search", params={
             "query": paper.query(), "resultType": "core", "format": "json", "pageSize": 1})
         if response.status_code != 200:
             raise LookupFailed(f"Europe PMC 검색이 HTTP {response.status_code}로 답했습니다")
         data = response.json()
         hits = (data.get("resultList") or {}).get("result") or []
-        if not hits:
-            return {"found": False}, data.get("version"), False
-        rec = hits[0]
+        return (hits[0] if hits else None), data.get("version")
+
+    @staticmethod
+    def _canonical_id(record: dict) -> tuple[str, str]:
+        source = str(record.get("source") or "").upper()
+        ident = str(record.get("id") or "")
+        if not source or not ident:
+            if record.get("pmid"):
+                source, ident = "MED", str(record["pmid"])
+            elif record.get("pmcid"):
+                source, ident = "PMC", str(record["pmcid"])
+        if not source or not ident:
+            raise LookupFailed("Europe PMC가 인용 추적용 source와 id를 주지 않았습니다")
+        return source, ident
+
+    async def _citation_list(self, source: str, ident: str, endpoint: str, limit: int) -> tuple[dict, str | None]:
+        response = await self.http.request(
+            "europepmc", "GET", f"{EUROPEPMC}/{source}/{ident}/{endpoint}",
+            params={"format": "json", "page": 1, "pageSize": limit})
+        if response.status_code != 200:
+            raise LookupFailed(f"Europe PMC {endpoint} 조회가 HTTP {response.status_code}로 답했습니다")
+        data = response.json()
+        if data.get("errCode") == 404:
+            return {"found_count": 0, "returned_count": 0, "candidates": []}, data.get("version")
+        list_key, row_key = (("referenceList", "reference") if endpoint == "references"
+                             else ("citationList", "citation"))
+        records = (data.get(list_key) or {}).get(row_key) or []
+        return {"found_count": int(data.get("hitCount") or len(records)), "returned_count": len(records),
+                "candidates": [_bibliography(record) for record in records]}, data.get("version")
+
+    async def _paper(self, paper: PaperId) -> tuple[dict, str | None, bool]:
+        """The answer, the REST version, and whether the answer must not be cached: a body that should exist but
+        could not be read this time (server error, unusable XML) falls back to the abstract for this call only."""
+        rec, version = await self._record_for(paper)
+        if rec is None:
+            return {"found": False}, version, False
         journal = ((rec.get("journalInfo") or {}).get("journal") or {}).get("title")
         meta = {"found": True, "pmid": rec.get("pmid"), "pmcid": rec.get("pmcid"), "doi": rec.get("doi"),
                 "title": rec.get("title"), "journal": journal, "year": rec.get("pubYear"),
@@ -301,7 +445,7 @@ class LiteratureAnnotator(Annotator):
                 except ValueError as exc:
                     problem = str(exc)
                 else:
-                    return ({**meta, **info, "access_level": "full_text", "markdown": markdown}, data.get("version"),
+                    return ({**meta, **info, "access_level": "full_text", "markdown": markdown}, version,
                             False)
             if problem:
                 meta["fulltext_error"] = problem + " 이번 답은 초록 수준이고 저장하지 않으므로 다시 부르면 본문을 다시 받습니다"
@@ -313,7 +457,7 @@ class LiteratureAnnotator(Annotator):
             meta["publisher_copy"] = links  # a CC license without a Europe PMC copy: the publisher may host it
         markdown = "\n".join(header + [f"- access_level: {level} (Europe PMC에 본문 사본 없음)", ""]
                              + (["## Abstract", "", abstract, ""] if abstract else [])) + "\n"
-        return {**meta, "access_level": level, "markdown": markdown}, data.get("version"), volatile
+        return {**meta, "access_level": level, "markdown": markdown}, version, volatile
 
     async def _fulltext_xml(self, pmcid: str) -> tuple[str | None, str | None]:
         """(XML, None) for a body; (None, None) when Europe PMC says there is none (404); (None, problem) otherwise."""
