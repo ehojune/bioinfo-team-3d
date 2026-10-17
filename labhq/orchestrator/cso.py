@@ -687,6 +687,12 @@ def apply_declared_output_status(step: dict, result: TaskResult) -> TaskResult:
     return result.model_copy(update=updates)
 
 
+def auxiliary_turn_meta(meta: dict, kind: str, outputs: list[str], **updates: Any) -> dict:
+    """Build a helper turn without inheriting the parent step's output contract."""
+    return {**meta, "kind": kind, "outputs": outputs, "required_outputs": outputs,
+            "optional_outputs": [], **updates}
+
+
 STEP_OUTPUTS_RULE = ("\n\nDeclared required outputs: save each at exactly this path in your workspace; "
                      "missing one makes the step incomplete: {required}. Optional outputs are collected when "
                      "present, but absence is only a warning: {optional}")
@@ -3670,11 +3676,12 @@ class Orchestrator:
                         prompt=continuation_prompt(task, WRAP_PROMPT, resumable=True,
                                                    previous_result=res, context_chars=self.cfg.context_chars_per_step),
                         resume_session_id=res.session_id,
-                        meta={**task.meta, "kind": "wrap_up", "parent_task": res.task_id,
-                              "workdir": res.workdir,
-                              "agent_overrides": {**overrides, "max_turns": min(WRAP_TURNS, turn_limit or WRAP_TURNS)},
-                              "outputs": ["PARTIAL_STATUS.md"],
-                              "collect_direct_outputs": task.meta.get("kind") == "direct"})
+                        meta=auxiliary_turn_meta(
+                            task.meta, "wrap_up", ["PARTIAL_STATUS.md"], parent_task=res.task_id,
+                            workdir=res.workdir,
+                            agent_overrides={**overrides,
+                                             "max_turns": min(WRAP_TURNS, turn_limit or WRAP_TURNS)},
+                            collect_direct_outputs=task.meta.get("kind") == "direct"))
             try:
                 partial = await dispatch_turn(wrap, max_attempts=1)
                 note = ("partial results saved" if partial.outputs else
@@ -4159,9 +4166,10 @@ class Orchestrator:
                                 prompt=("누락된 증거 칸의 시도 여부만 답하세요. 파일·분석·전체 결과 JSON은 고치지 마세요. "
                                         "각 칸 id → {status: attempted_found/attempted_none/not_attempted, "
                                         "reason: 한 줄 이유}. 칸: " + ", ".join(slots)),
-                                meta={**task.meta, "kind": "slot_repair", "max_attempts": 1, "outputs": [],
-                                      "parent_task": current.task_id, "title": f"{step['id']}: 누락 칸 확인",
-                                      **({"workdir": current.workdir} if current.workdir else {})})
+                                meta=auxiliary_turn_meta(
+                                    task.meta, "slot_repair", [], max_attempts=1,
+                                    parent_task=current.task_id, title=f"{step['id']}: 누락 칸 확인",
+                                    **({"workdir": current.workdir} if current.workdir else {})))
                             record["asked"] = True
                             self.hub.save_request(rid)
                             try:
@@ -4251,10 +4259,11 @@ class Orchestrator:
                         prompt=continuation_prompt(task, result_correction(problems),
                                                    resumable=can_resume_correction, previous_result=current,
                                                    context_chars=self.cfg.context_chars_per_step),
-                        meta={**task.meta, "kind": "result_correction", "parse_attempt": correction + 1,
-                              "parent_task": current.task_id, "outputs": [],
-                              "title": f"{step['id']}: 결과 계약 교정 #{correction + 1}",
-                              **({"workdir": current.workdir} if current.workdir else {})},
+                        meta=auxiliary_turn_meta(
+                            task.meta, "result_correction", [], parse_attempt=correction + 1,
+                            parent_task=current.task_id,
+                            title=f"{step['id']}: 결과 계약 교정 #{correction + 1}",
+                            **({"workdir": current.workdir} if current.workdir else {})),
                     )
                     current = await self.run_step(correction_task)
                     if not current.ok and bindable is not None:

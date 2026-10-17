@@ -70,6 +70,8 @@ async def test_missing_slots_get_one_small_question_without_whole_result_correct
     calls = [t for t in hub.calls if t.meta['kind'] == 'slot_repair']
     assert len(calls) == 1
     assert calls[0].resume_session_id == 'slot-session'
+    assert calls[0].meta['required_outputs'] == []
+    assert calls[0].meta['optional_outputs'] == []
     assert set(calls[0].output_schema['properties']) == {'e1'}
     assert not any(t.meta['kind'] == 'result_correction' for t in hub.calls)
     row = hub.requests['r']['results']['s1']['structured']['evidence'][-1]

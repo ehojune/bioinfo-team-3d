@@ -191,6 +191,16 @@ def output_identity(row: dict[str, Any]) -> tuple:
     return (bool(row.get("link")), row.get("size"), row.get("mtime_ns"), row.get("ino"), row.get("ctime_ns"))
 
 
+def _should_check_declared_outputs(result: TaskResult) -> bool:
+    """Whether this successful turn finishes the step and can be held to its declared outputs."""
+    if not result.ok or waiting(result):
+        return False
+    question = result.blocking_decision
+    if not question and isinstance(result.structured, dict):
+        question = result.structured.get("blocking_decision")
+    return not (isinstance(question, str) and question.strip())
+
+
 ENVIRONMENT_LOCK = "outputs/env/requirements.lock.txt"
 
 
@@ -1780,7 +1790,7 @@ class Runner:
         result.output_tool_use_ids = {row["path"]: row["tool_use_id"] for row in observed_outputs
                                       if isinstance(row.get("tool_use_id"), str)}
         collected = set(result.outputs)
-        if result.ok:
+        if _should_check_declared_outputs(result):
             missing_required = [rel for name in required_declared
                                 if (rel := output_relpath(name)) and rel not in collected]
             missing_optional = [rel for name in optional_declared

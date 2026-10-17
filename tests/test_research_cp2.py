@@ -234,6 +234,8 @@ async def test_a_citation_of_an_uncollected_file_gets_a_correction_before_cp2():
     await Orchestrator(hub).run_request("r")
 
     assert [task.meta["kind"] for task in hub.calls] == ["plan", "step", "result_correction"]
+    assert hub.calls[2].meta["required_outputs"] == []
+    assert hub.calls[2].meta["optional_outputs"] == []
     prompt = hub.calls[2].prompt
     assert "outputs/qc/checks.json" in prompt and "CP2 would refuse it" in prompt
     assert "this step's outputs (outputs/result1.tsv)" in prompt

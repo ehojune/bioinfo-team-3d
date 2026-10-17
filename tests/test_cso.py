@@ -1399,6 +1399,8 @@ async def test_max_turns_wraps_once_and_keeps_failure(resume, continuations):
             assert task.resume_session_id == "session-1"
             assert task.meta["agent_overrides"]["max_turns"] == 4
             assert task.meta["workdir"] == "runs/A"
+            assert task.meta["required_outputs"] == ["PARTIAL_STATUS.md"]
+            assert task.meta["optional_outputs"] == []
             return result(task, text="saved", workdir="runs/A", outputs=["outputs/PARTIAL_STATUS.md"])
         return result(task, ok=False, error="turn limit", error_kind="error_max_turns",
                       session_id="session-1", workdir="runs/A")
@@ -1406,7 +1408,10 @@ async def test_max_turns_wraps_once_and_keeps_failure(resume, continuations):
     hub = FakeHub(dispatch)
     hub.supports_resume = lambda agent_id: resume
     res = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="analyze",
-                                                meta={"kind": "step", "step_id": "A"}))
+                                                meta={"kind": "step", "step_id": "A",
+                                                      "outputs": ["report.tsv", "trace.md"],
+                                                      "required_outputs": ["report.tsv"],
+                                                      "optional_outputs": ["trace.md"]}))
     assert not res.ok and res.partial_results is resume
     assert res.outputs == (["outputs/PARTIAL_STATUS.md"] if resume else [])
     assert len(hub.calls) == (2 if resume else 1)
