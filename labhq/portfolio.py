@@ -674,7 +674,10 @@ def _path_key(value: str) -> str:
         r"^(.*\.[A-Za-z0-9]{1,16})(?:에서|으로|입니다|이다|에게|의|와|과|을|를|은|는|이|가|로)$", value)
     if file_path:
         value = file_path.group(1)
-    return posixpath.normpath(value.replace("\\", "/")).casefold()
+    windows_path = ("\\" in value or bool(re.match(r"^[A-Za-z]:[/\\]", value))
+                    or bool(re.match(r"^//[^/]+/[^/]+(?:/|$)", value)))
+    normalized = posixpath.normpath(value.replace("\\", "/"))
+    return normalized.casefold() if windows_path else normalized
 
 
 def _concrete_internal_paths(value: Any, zone_paths: Iterable[str]) -> set[str]:
@@ -691,14 +694,7 @@ def _concrete_internal_paths(value: Any, zone_paths: Iterable[str]) -> set[str]:
 
 
 def _mentions_internal_zone(value: Any, zone_paths: Iterable[str]) -> bool:
-    paths = list(zone_paths)
-    if touches(value, paths):
-        return True
-    labels = {PurePosixPath(path.replace("\\", "/").rstrip("/")).name.casefold()
-              for path in paths}
-    return any(re.search(rf"(?<!\w){re.escape(label)}(?!\w)", text, re.I)
-               for label in labels if label
-               for text in _text_values(value))
+    return bool(touches(value, zone_paths))
 
 
 def request_uses_internal_data(req: dict, settings) -> bool:

@@ -274,6 +274,36 @@ def test_two_internal_files_need_concrete_step_attribution(tmp_path):
     assert not any(name.endswith("B-omics/tables/summary.tsv") for name in files)
 
 
+def test_posix_internal_paths_keep_case_for_step_attribution():
+    settings = Settings()
+    settings.policy.data_zones = [DataZone(path="/srv/internal", level="internal")]
+    request = {
+        "text": "Compare /srv/internal/A.tsv with /srv/internal/a.tsv.",
+        "plan": {"steps": [
+            {"id": "upper", "instruction": "Read the uppercase input."},
+            {"id": "lower", "instruction": "Read the lowercase input."},
+        ]},
+        "results": {
+            "upper": {"text": "Read /srv/internal/A.tsv."},
+            "lower": {"text": "Finished the public comparison."},
+        },
+    }
+
+    assert internal_data_steps(request, settings) is None
+
+
+def test_zone_basename_in_plain_prose_is_not_internal_provenance():
+    settings = Settings()
+    settings.policy.data_zones = [DataZone(path="/home/researcher/.labhq/runs", level="internal")]
+    request = {
+        "text": "Compare public data from three sequencing runs.",
+        "plan": {"steps": [{"id": "public", "instruction": "Analyze public reads."}]},
+        "results": {"public": {"text": "Three sequencing runs passed QC."}},
+    }
+
+    assert internal_data_steps(request, settings) == set()
+
+
 def test_unbranched_request_keeps_the_existing_file_list(tmp_path):
     settings, request, bundle, assets, images, decisions, tasks = portfolio_fixture(tmp_path)
     request = deepcopy(request)
