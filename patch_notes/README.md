@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 20:56 | [`fd429ab`](https://github.com/ehojune/bioinfo-team-3d/pull/722/commits/fd429ab) | semantics 생성 ID 오판을 막고 P2A PMID 선택·생략 기록을 복구 |
 | 10:48 | [`d260bf9`](https://github.com/ehojune/bioinfo-team-3d/pull/719/commits/d260bf9) | 일반 단계가 JSON으로 답한 결과는 그대로 두고 연구 원장일 때만 claim 문장으로 바꿨다 |
 | 10:44 | [`471d9d1`](https://github.com/ehojune/bioinfo-team-3d/pull/719/commits/471d9d1) | 정리본 README의 갈래 표에 원장 JSON 대신 claim 문장을 넣고 맨 위 답은 판정 문장을 고르게 했다 |
 | 09:56 | [`1e40096`](https://github.com/ehojune/bioinfo-team-3d/pull/717/commits/1e40096) | ./data·../data 같은 상대 경로를 개인 경로로 가리지 않게 하고 정리본과 결과 저장의 개인 경로 규칙을 하나로 합쳤다 |
