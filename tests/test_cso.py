@@ -10,8 +10,8 @@ import pytest
 
 from labhq.gateway.server import Hub
 from labhq.models import RunnerUnavailable, Task, TaskResult
-from labhq.orchestrator.cso import (FINISH_PROMPT, BudgetExceeded, Orchestrator, failure_kind, valid_review,
-                                    format_roster, validate_steps)
+from labhq.orchestrator.cso import (FINISH_PROMPT, BudgetExceeded, Orchestrator, failure_kind,
+                                    general_report_warnings, valid_review, format_roster, validate_steps)
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
 from labhq.tools.scheduler import Scheduler
@@ -1399,6 +1399,8 @@ async def test_max_turns_wraps_once_and_keeps_failure(resume, continuations):
             assert task.resume_session_id == "session-1"
             assert task.meta["agent_overrides"]["max_turns"] == 4
             assert task.meta["workdir"] == "runs/A"
+            assert task.meta["required_outputs"] == ["PARTIAL_STATUS.md"]
+            assert task.meta["optional_outputs"] == []
             return result(task, text="saved", workdir="runs/A", outputs=["outputs/PARTIAL_STATUS.md"])
         return result(task, ok=False, error="turn limit", error_kind="error_max_turns",
                       session_id="session-1", workdir="runs/A")
@@ -1406,7 +1408,10 @@ async def test_max_turns_wraps_once_and_keeps_failure(resume, continuations):
     hub = FakeHub(dispatch)
     hub.supports_resume = lambda agent_id: resume
     res = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="analyze",
-                                                meta={"kind": "step", "step_id": "A"}))
+                                                meta={"kind": "step", "step_id": "A",
+                                                      "outputs": ["report.tsv", "trace.md"],
+                                                      "required_outputs": ["report.tsv"],
+                                                      "optional_outputs": ["trace.md"]}))
     assert not res.ok and res.partial_results is resume
     assert res.outputs == (["outputs/PARTIAL_STATUS.md"] if resume else [])
     assert len(hub.calls) == (2 if resume else 1)
@@ -1437,6 +1442,49 @@ async def test_declared_missing_output_is_incomplete_and_skips_dependent():
     assert req["results"]["A"]["missing_outputs"] == ["outputs/table.tsv"]
     assert "A [terminal]" in req["execution_record"] and "table.tsv" in req["execution_record"]
     assert req["results"]["B"]["status"] == "skipped"
+
+
+@pytest.mark.asyncio
+async def test_missing_optional_output_keeps_step_ok_and_reaches_report_warning():
+    steps = [{"id": "A", "agent_id": "worker", "instruction": "convert table", "depends_on": [],
+              "outputs": ["outputs/table.tsv"], "optional_outputs": ["outputs/transform_log.md"]},
+             {"id": "B", "agent_id": "worker", "instruction": "read A", "depends_on": ["A"],
+              "outputs": []}]
+
+    async def dispatch(task):
+        if task.meta["kind"] == "plan":
+            return result(task, structured={"steps": steps})
+        if task.meta["kind"] == "synthesis":
+            return result(task, text="finished")
+        if task.meta["step_id"] == "A":
+            assert task.meta["outputs"] == ["outputs/table.tsv", "outputs/transform_log.md"]
+            assert task.meta["required_outputs"] == ["outputs/table.tsv"]
+            return result(task, text="converted", workdir_id="A", outputs=["outputs/table.tsv"])
+        return result(task, text="used A", workdir_id="B")
+
+    hub = FakeHub(dispatch)
+    hub.s.orchestrator.reviewer_agent = None
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["status"] == "done"
+    assert req["results"]["A"]["status"] == "done"
+    assert req["results"]["A"]["missing_optional_outputs"] == ["outputs/transform_log.md"]
+    assert req["results"]["B"]["status"] == "done"
+    assert "선택 산출 누락: outputs/transform_log.md" in req["execution_record"]
+    assert "실행 경고가 있습니다. 실행 기록 참고." in req["report"]
+
+
+def test_existing_output_declarations_stay_required_and_optional_outputs_are_warned():
+    legacy = TaskResult(task_id="a", agent_id="worker", ok=False,
+                        missing_outputs=["outputs/table.tsv"], error="incomplete")
+    optional = TaskResult(task_id="b", agent_id="worker", ok=True,
+                          missing_optional_outputs=["outputs/log.md"],
+                          step_warnings=["선택 산출 누락: outputs/log.md"])
+    warnings = general_report_warnings([{"id": "legacy"}, {"id": "optional"}],
+                                       {"legacy": legacy, "optional": optional})
+    assert legacy.missing_outputs == ["outputs/table.tsv"]
+    assert "- optional: 선택 산출 누락: outputs/log.md" in warnings
 
 
 @pytest.mark.asyncio

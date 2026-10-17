@@ -208,6 +208,8 @@ class ResearchStep(StrictModel):
     claim_ids: list[str]
     input_refs: list[str]
     outputs: list[str]
+    # Existing ``outputs`` stay required. Only dispensable logs, conversion records and previews belong here.
+    optional_outputs: list[str] = Field(default_factory=list)
     key_figures: list[str] = Field(default_factory=list, min_length=1, max_length=2)
     checks: list[str] = Field(min_length=1)
     evidence_slots: list[EvidenceSlot]
@@ -225,6 +227,8 @@ class ResearchStep(StrictModel):
             data.pop("output_types", None)
         if not data.get("key_figures"):
             data.pop("key_figures", None)
+        if not data.get("optional_outputs"):
+            data.pop("optional_outputs", None)
         if data.get("branch") is None:
             data.pop("branch", None)
         return data
@@ -238,6 +242,9 @@ class ResearchStep(StrictModel):
             raise ValueError(f"step {self.id} declares evidence slot {', '.join(duplicates)} more than once")
         if any(path not in self.outputs for path in self.key_figures):
             raise ValueError(f"step {self.id} key_figures must also be declared in outputs")
+        overlap = sorted(set(self.outputs) & set(self.optional_outputs))
+        if overlap:
+            raise ValueError(f"step {self.id} outputs and optional_outputs overlap: {', '.join(overlap)}")
         return self
 
 
@@ -1290,6 +1297,14 @@ def canonical_plan_json(plan: ResearchPlan | dict[str, Any]) -> str:
 
 def plan_sha256(plan: ResearchPlan | dict[str, Any]) -> str:
     return hashlib.sha256(canonical_plan_json(plan).encode("utf-8")).hexdigest()
+
+
+def normalize_result_plan_sha256(value: Any, *, plan: ResearchPlan | dict[str, Any]) -> tuple[Any, str | None]:
+    """Bind only an all-zero placeholder to the frozen plan and return an audit warning."""
+    if not isinstance(value, dict) or value.get("plan_sha256") != "0" * 64:
+        return value, None
+    return ({**value, "plan_sha256": plan_sha256(plan)},
+            "연구 원장의 0 plan_sha256을 승인된 계획 hash로 보정했습니다")
 
 
 def freeze_plan(plan: ResearchPlan | dict[str, Any], decision: dict[str, Any]) -> dict[str, Any]:

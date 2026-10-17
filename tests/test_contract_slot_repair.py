@@ -70,6 +70,8 @@ async def test_missing_slots_get_one_small_question_without_whole_result_correct
     calls = [t for t in hub.calls if t.meta['kind'] == 'slot_repair']
     assert len(calls) == 1
     assert calls[0].resume_session_id == 'slot-session'
+    assert calls[0].meta['required_outputs'] == []
+    assert calls[0].meta['optional_outputs'] == []
     assert set(calls[0].output_schema['properties']) == {'e1'}
     assert not any(t.meta['kind'] == 'result_correction' for t in hub.calls)
     row = hub.requests['r']['results']['s1']['structured']['evidence'][-1]
@@ -289,7 +291,7 @@ async def test_salvage_that_removes_only_required_row_asks_about_its_gap():
 
 
 @pytest.mark.asyncio
-async def test_bad_plan_binding_never_enters_slot_repair():
+async def test_arbitrary_bad_plan_binding_never_enters_slot_repair():
     hub = slot_hub({})
     hub.s.research.result_corrections = 0
     original = hub.reply
@@ -297,7 +299,7 @@ async def test_bad_plan_binding_never_enters_slot_repair():
     async def reply(task):
         res = await original(task)
         if task.meta['kind'] == 'step':
-            res.structured['plan_sha256'] = '0' * 64
+            res.structured['plan_sha256'] = '1' * 64
         return res
 
     hub.reply = reply

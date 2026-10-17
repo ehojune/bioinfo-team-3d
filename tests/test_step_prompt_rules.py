@@ -72,6 +72,13 @@ def test_plan_prompts_declare_analysis_scripts_as_outputs():
     for prompt in (cso.PLAN_PROMPT, cso.REPLAN_PROMPT, cso.RESEARCH_PLAN_PROMPT):
         assert "analysis step" in prompt
         assert "outputs/scripts/" in prompt
+
+
+def test_plan_prompts_use_one_python_script_for_literal_or_format_conversion():
+    for prompt in (cso.PLAN_PROMPT, cso.REPLAN_PROMPT, cso.RESEARCH_PLAN_PROMPT):
+        assert "one Python script" in prompt
+        assert "sed" in prompt and "shell escaping" in prompt
+        assert "optional_outputs" in prompt
         assert "outputs/reference/" in prompt
 
 

@@ -11,7 +11,8 @@ from pydantic import ValidationError
 from labhq.models import TaskResult
 from labhq.orchestrator.cso import Orchestrator, PLAN_SCHEMA
 from labhq.research.contract import (RESEARCH_PLAN_SCHEMA, ResearchResult, classify_intake,
-                                     freeze_plan, refresh_plan_approval, validate_research_plan)
+                                     freeze_plan, normalize_result_plan_sha256, plan_sha256,
+                                     refresh_plan_approval, validate_research_plan)
 from labhq.research.packs import configured_packs, load_pack_catalog, pack_snapshot, select_packs
 from labhq.settings import Settings
 from labhq.util import openai_strict_schema, strip_optional_nulls
@@ -189,6 +190,30 @@ def test_research_plan_and_result_contracts_are_strict():
         ResearchResult.model_validate({"schema_version": 2, "step_id": "s1", "claims": [], "evidence": [],
                                        "links": [], "artifact_refs": [], "not_established": [], "failures": [],
                                        "method_changes": []})
+
+
+def test_research_plan_accepts_optional_outputs_without_changing_legacy_canonical_form():
+    legacy = valid_plan()
+    legacy_hash = plan_sha256(legacy)
+    assert plan_sha256(validate_research_plan(legacy, max_steps=2, active_packs={})) == legacy_hash
+
+    marked = copy.deepcopy(legacy)
+    marked["steps"][0]["optional_outputs"] = ["outputs/transform_log.md"]
+    parsed = validate_research_plan(marked, max_steps=2, active_packs={})
+    assert parsed.steps[0].outputs == ["result1.tsv"]
+    assert parsed.steps[0].optional_outputs == ["outputs/transform_log.md"]
+
+
+def test_zero_plan_sha256_placeholder_is_rebound_but_other_wrong_hashes_stay_wrong():
+    plan = valid_plan()
+    zero = {"schema_version": 2, "plan_sha256": "0" * 64, "step_id": "s1"}
+    rebound, warning = normalize_result_plan_sha256(zero, plan=plan)
+    assert rebound["plan_sha256"] == plan_sha256(plan)
+    assert warning == "연구 원장의 0 plan_sha256을 승인된 계획 hash로 보정했습니다"
+
+    wrong = {**zero, "plan_sha256": "1" * 64}
+    unchanged, warning = normalize_result_plan_sha256(wrong, plan=plan)
+    assert unchanged == wrong and warning is None
 
 
 def test_plan_approval_is_invalidated_by_any_contract_change():

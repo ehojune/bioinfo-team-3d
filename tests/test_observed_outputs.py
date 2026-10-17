@@ -15,7 +15,7 @@ from labhq.settings import Settings
 
 
 def _runner(tmp_path: Path, monkeypatch, write, *, hash_max_bytes=512 * 1024 * 1024,
-            engine=Engine.claude_code, seen=None) -> Runner:
+            engine=Engine.claude_code, seen=None, reply=None) -> Runner:
     settings = Settings()
     settings.runner.output_hash_max_bytes = hash_max_bytes
     for name in ("state_dir", "workspace_root", "agents_dir", "talent_dir"):
@@ -32,16 +32,17 @@ def _runner(tmp_path: Path, monkeypatch, write, *, hash_max_bytes=512 * 1024 * 1
             if refused:
                 return TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=False, error=refused)
             write(Path(ctx.workdir))
-            return TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=True, text="done")
+            return (reply(ctx) if reply else
+                    TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=True, text="done"))
 
     monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_args: FakeCli())
     return runner
 
 
-def _task(tid="task-o", *, outputs=None, workdir=None) -> Task:
+def _task(tid="task-o", *, outputs=None, workdir=None, **meta) -> Task:
     return Task(id=tid, request_id="r1", agent_id="worker", prompt="write outputs",
                 meta={"kind": "step", "step_id": "s1", "outputs": outputs or [],
-                      **({"workdir": str(workdir)} if workdir else {})})
+                      **({"workdir": str(workdir)} if workdir else {}), **meta})
 
 
 def _write(root: Path, relative: str, body: bytes) -> None:
@@ -75,6 +76,51 @@ async def test_manifest_hashes_declared_and_unreported_fake_cli_outputs(tmp_path
     warnings = [event["data"].get("text", "") for event in runner.store.pending()
                 if event["type"] == "agent.log" and event["data"].get("level") == "warn"]
     assert any("outputs/extra.tsv" in warning for warning in warnings)
+
+
+@pytest.mark.asyncio
+async def test_runner_warns_for_missing_optional_output_but_fails_for_required_output(tmp_path, monkeypatch):
+    runner = _runner(tmp_path, monkeypatch,
+                     lambda workdir: _write(workdir, "outputs/table.tsv", b"done\n"))
+    optional = await runner.run_task(_task(
+        tid="task-optional", outputs=["outputs/table.tsv", "outputs/transform_log.md"],
+        required_outputs=["outputs/table.tsv"], optional_outputs=["outputs/transform_log.md"]))
+
+    assert optional.ok
+    assert optional.missing_outputs == []
+    assert optional.missing_optional_outputs == ["outputs/transform_log.md"]
+    assert optional.step_warnings == ["선택 산출 누락: outputs/transform_log.md"]
+
+    required = await runner.run_task(_task(
+        tid="task-required", outputs=["outputs/table.tsv", "outputs/required.md"],
+        required_outputs=["outputs/table.tsv", "outputs/required.md"], optional_outputs=[]))
+    assert not required.ok
+    assert required.missing_outputs == ["outputs/required.md"]
+    assert required.error == "incomplete: missing outputs: outputs/required.md"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pause", ["job", "blocking_decision"])
+async def test_runner_defers_declared_output_check_until_the_step_turn_is_final(tmp_path, monkeypatch, pause):
+    holder = {}
+
+    def reply(ctx):
+        if pause == "job":
+            holder["runner"].jobs["job-1"] = {"task_id": ctx.task.id}
+        return TaskResult(
+            task_id=ctx.task.id, agent_id=ctx.agent.id, ok=True, text="waiting",
+            structured=({"blocking_decision": "Choose cases or controls"}
+                        if pause == "blocking_decision" else None),
+        )
+
+    runner = holder["runner"] = _runner(tmp_path, monkeypatch, lambda _workdir: None, reply=reply)
+    result = await runner.run_task(_task(
+        tid=f"task-{pause}", outputs=["outputs/table.tsv"],
+        required_outputs=["outputs/table.tsv"], optional_outputs=[]))
+
+    assert result.ok
+    assert result.missing_outputs == []
+    assert result.pending_jobs == (["job-1"] if pause == "job" else [])
 
 
 @pytest.mark.asyncio

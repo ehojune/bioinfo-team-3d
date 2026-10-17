@@ -41,6 +41,7 @@ from ..request_status import is_terminal_request
 from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARCH_STEP_SCHEMA, ResearchPlan,
                                  bind_result_artifacts, branch_plan_topology,
                                  canonical_plan_json, classify_intake, freeze_plan, read_evidence_decision,
+                                 normalize_result_plan_sha256,
                                  plan_sha256 as research_plan_sha256,
                                  refresh_plan_approval, research_plan_errors, research_plan_schema,
                                  research_result_errors, salvage_research_result, validate_research_plan,
@@ -125,6 +126,7 @@ PLAN_SCHEMA: dict[str, Any] = {
             "properties": {"id": {"type": "string"}, "agent_id": {"type": "string"},
                            "instruction": {"type": "string"},
                            "outputs": {"type": "array", "items": {"type": "string"}},
+                           "optional_outputs": {"type": "array", "items": {"type": "string"}},
                            "key_figures": {"type": "array", "minItems": 1, "maxItems": 2,
                                            "items": {"type": "string"}},
                            "depends_on": {"type": "array", "items": {"type": "string"}}},
@@ -468,6 +470,14 @@ DECLARED_OUTPUTS_FALLBACK_RULE = (
     "outputs/data/expression_matrix.tsv.gz) and record the chosen path, scale, and source in the same step's record "
     "(for example outputs/data/fetch_log.md or the file header). Do not declare different filenames per path.")
 
+OPTIONAL_OUTPUTS_PLAN_RULE = (
+    "Keep completion-critical deliverables in outputs (the default and required list). Put only dispensable logs, "
+    "conversion records and previews in optional_outputs; missing optional outputs warn but do not fail the step.")
+
+DETERMINISTIC_TRANSFORM_RULE = (
+    "For literal text replacement or format conversion, tell the employee to write and run one Python script in "
+    "its own work folder. Do not iterate with sed or shell escaping.")
+
 FIGURE_OUTPUT_RULE = (
     "Figures default to SVG and keep Korean labels as SVG <text>. With matplotlib set "
     "rcParams[\"svg.fonttype\"] = \"none\" and font.family to ['Malgun Gothic', 'Apple SD Gothic Neo', "
@@ -530,6 +540,8 @@ Rules:
   outputs/answer.md), and the instruction saves it at that same path. Never declare an absolute path, `..`,
   or a file at the workspace root; a file the request asks to save in the work folder also goes under outputs/.{output_types_rule}{topics_rule}
 - """ + DECLARED_OUTPUTS_FALLBACK_RULE + """
+- """ + OPTIONAL_OUTPUTS_PLAN_RULE + """
+- """ + DETERMINISTIC_TRANSFORM_RULE + """
 - """ + ANALYSIS_REPRODUCIBILITY_PLAN_RULE + """
 - Use HPC jobs only when the assigned agent has labhq_hpc tools and a scheduler is available.
   Local CLI is available for light work. If a step needs unavailable compute, ask the PI in
@@ -598,6 +610,8 @@ Contract rules:
   inside that step's own workspace outputs/ folder, written as outputs/<name>, and the instruction uses that exact
   path. Never declare an absolute path, home path, `..`, or a file at the workspace root.{output_types_rule}{topics_rule}
 - """ + DECLARED_OUTPUTS_FALLBACK_RULE + """
+- """ + OPTIONAL_OUTPUTS_PLAN_RULE + """
+- """ + DETERMINISTIC_TRANSFORM_RULE + """
 - """ + ANALYSIS_REPRODUCIBILITY_PLAN_RULE + """
 - Put QC after data generation. {question_rule} Record the scientific design choices you make in `protocol` rather
   than adding another top-level field. Each question is at most 500 characters (a longer one fails plan
@@ -738,8 +752,37 @@ def attach_general_result(result: TaskResult) -> TaskResult:
     return result.model_copy(update={"general_sections": sections, "evidence_path_warnings": missing})
 
 
-STEP_OUTPUTS_RULE = ("\n\nDeclared outputs: save each at exactly this path in your workspace; "
-                     "labhq collects only these: {paths}")
+def apply_declared_output_status(step: dict, result: TaskResult) -> TaskResult:
+    """Apply the legacy required-output rule and the optional-output warning rule once a turn succeeded."""
+    if not result.ok or blocking_question(result):
+        return result
+    collected = {rel for name in result.outputs if (rel := output_relpath(name))}
+    required = [(str(name), rel) for name in step.get("outputs") or [] if (rel := output_relpath(name))]
+    optional = [(str(name), rel) for name in step.get("optional_outputs") or [] if (rel := output_relpath(name))]
+    missing = [name for name, rel in required if rel not in collected]
+    missing_optional = [name for name, rel in optional if rel not in collected]
+    warnings = list(result.step_warnings)
+    if missing_optional:
+        warnings.append("선택 산출 누락: " + ", ".join(missing_optional))
+    updates: dict[str, Any] = {
+        "missing_optional_outputs": list(dict.fromkeys([*result.missing_optional_outputs, *missing_optional])),
+        "step_warnings": list(dict.fromkeys(warnings)),
+    }
+    if missing:
+        updates.update(ok=False, missing_outputs=list(dict.fromkeys([*result.missing_outputs, *missing])),
+                       error="incomplete: missing outputs: " + ", ".join(missing))
+    return result.model_copy(update=updates)
+
+
+def auxiliary_turn_meta(meta: dict, kind: str, outputs: list[str], **updates: Any) -> dict:
+    """Build a helper turn without inheriting the parent step's output contract."""
+    return {**meta, "kind": kind, "outputs": outputs, "required_outputs": outputs,
+            "optional_outputs": [], **updates}
+
+
+STEP_OUTPUTS_RULE = ("\n\nDeclared required outputs: save each at exactly this path in your workspace; "
+                     "missing one makes the step incomplete: {required}. Optional outputs are collected when "
+                     "present, but absence is only a warning: {optional}")
 
 RESEARCH_RESULT_FIELD_RULES = "\n".join(f"- {rule}" for rule in RESULT_CONTRACT_FIELD_RULES)
 
@@ -794,6 +837,8 @@ Rules:
 - Kept and new steps together are at most {max_steps}. Express order with depends_on.
 - Declare each output as outputs/<name> inside that step's own workspace and save it at that path.{output_types_rule}{topics_rule}
 - """ + DECLARED_OUTPUTS_FALLBACK_RULE + """
+- """ + OPTIONAL_OUTPUTS_PLAN_RULE + """
+- """ + DETERMINISTIC_TRANSFORM_RULE + """
 - """ + ANALYSIS_REPRODUCIBILITY_PLAN_RULE + """
 - Stay within the request, permissions, data boundaries and PI approvals. If scope, cost, compute, data access or an
   approval must change, ask in clarifying_questions and do not plan the blocked work. """ + PI_CARD_QUESTION_RULE + """
@@ -1618,6 +1663,8 @@ def general_report_warnings(steps: list[dict], results: dict[str, TaskResult | d
         if errors:
             first = str(errors[0]).splitlines()[0].strip() or "tool failed"
             lines.append(f"- {sid}: {FAILED_LOOKUP_TITLE} {len(errors)}건; 첫 줄: {short(first, 160)}")
+        step_warnings = result.step_warnings if isinstance(result, TaskResult) else result.get("step_warnings") or []
+        lines.extend(f"- {sid}: {short(str(warning), 300)}" for warning in step_warnings[:5])
     lines += [f"- {line}" for line in output_checks.quality_lines(steps, results)]
     return "## 보고서 경고\n" + "\n".join(lines) if lines else ""
 
@@ -1629,7 +1676,7 @@ def _research_plan_digest(plan: dict) -> str:
     steps = plan.get("steps") or []
     step_table = [{key: step.get(key) for key in ("id", "branch", "depends_on", "phase")} for step in steps]
     step_details = [{key: step.get(key) for key in ("id", "agent_id", "instruction", "claim_ids", "outputs",
-                                                    "evidence_slots")}
+                                                    "optional_outputs", "evidence_slots")}
                     for step in steps]
     frozen = {"brief": plan.get("brief"),
               "branches": plan.get("branches") or [],
@@ -1880,27 +1927,35 @@ def _contain_outputs(step: dict) -> tuple[list[str], str | None]:
     declaration made explicit. An output that leaves outputs/ (absolute, drive, `..`) cannot be fixed here;
     it comes back as a problem for the caller to reject.
     """
-    warnings, bad, ambiguous, outputs, seen = [], [], [], [], set()
-    for name in step["outputs"]:
-        rel = output_relpath(name)
-        if rel is None:
-            bad.append(name)
+    warnings, ambiguous, problems = [], [], []
+    all_seen: dict[str, str] = {}
+    for field in ("outputs", "optional_outputs"):
+        if field not in step:
             continue
-        if rel in seen:
-            warnings.append(f"step {step['id']}: duplicate output {name!r} removed as {rel}")
-            continue
-        seen.add(rel)
-        inner = rel[len("outputs/"):] if rel.startswith("outputs/") else rel
-        instruction, refs, unclear = _rewrite_output_references(step["instruction"], inner, rel)
-        ambiguous.extend(unclear)
-        if refs or name.strip().replace("\\", "/") != rel:
-            step["instruction"] = instruction
-            warnings.append(f"step {step['id']}: output {name!r} moved under outputs/ as {rel}")
-        outputs.append(rel)
-    step["outputs"] = outputs + bad
-    problems = []
-    if bad:
-        problems.append(f"step {step['id']}: outputs {bad} are outside its outputs/ folder")
+        bad, normalized, seen = [], [], set()
+        for name in step.get(field) or []:
+            rel = output_relpath(name)
+            if rel is None:
+                bad.append(name)
+                continue
+            if rel in seen:
+                warnings.append(f"step {step['id']}: duplicate {field} entry {name!r} removed as {rel}")
+                continue
+            seen.add(rel)
+            if rel in all_seen:
+                warnings.append(f"step {step['id']}: {rel} is already in {all_seen[rel]}; removed from {field}")
+                continue
+            all_seen[rel] = field
+            inner = rel[len("outputs/"):] if rel.startswith("outputs/") else rel
+            instruction, refs, unclear = _rewrite_output_references(step["instruction"], inner, rel)
+            ambiguous.extend(unclear)
+            if refs or name.strip().replace("\\", "/") != rel:
+                step["instruction"] = instruction
+                warnings.append(f"step {step['id']}: {field} entry {name!r} moved under outputs/ as {rel}")
+            normalized.append(rel)
+        step[field] = normalized + bad
+        if bad:
+            problems.append(f"step {step['id']}: {field} {bad} are outside its outputs/ folder")
     if ambiguous:
         problems.append(f"step {step['id']}: ambiguous instruction paths {ambiguous} match declared outputs; "
                         "use a distinct input name and an explicit output action with outputs/<name>")
@@ -1916,7 +1971,9 @@ def _normalize_plan_outputs(plan: Any) -> tuple[Any, list[str]]:
     for step in normalized["steps"]:
         if not (isinstance(step, dict) and isinstance(step.get("id"), str) and
                 isinstance(step.get("instruction"), str) and isinstance(step.get("outputs"), list) and
-                all(isinstance(name, str) for name in step["outputs"])):
+                all(isinstance(name, str) for name in step["outputs"]) and
+                isinstance(step.get("optional_outputs", []), list) and
+                all(isinstance(name, str) for name in step.get("optional_outputs", []))):
             continue
         contained, problem = _contain_outputs(step)
         warnings.extend(contained)
@@ -1957,6 +2014,8 @@ def validate_steps(raw: list[dict], known: set[str], max_steps: int,
         steps.append({"id": sid, "agent_id": s.get("agent_id", ""), "instruction": s.get("instruction", ""),
                       "depends_on": [str(d) for d in s.get("depends_on") or []],
                       "outputs": [str(o) for o in s.get("outputs") or []],
+                      **({"optional_outputs": [str(o) for o in s.get("optional_outputs") or []]}
+                         if "optional_outputs" in s else {}),
                       **({"key_figures": [str(o) for o in s.get("key_figures") or []]}
                          if "key_figures" in s else {})})
         raw_types[sid] = s.get("output_types")
@@ -2008,14 +2067,15 @@ def validate_steps(raw: list[dict], known: set[str], max_steps: int,
             warnings.append(f"step {s['id']}: added dependency on {other['id']} referenced in instruction")
     if vocab is not None:  # after _contain_outputs, so names pair with the outputs the runner will collect
         for s in steps:
-            entries, issues = output_types.normalize_entries(s["outputs"], raw_types.get(s["id"]), vocab)
+            declared = [*s["outputs"], *s.get("optional_outputs", [])]
+            entries, issues = output_types.normalize_entries(declared, raw_types.get(s["id"]), vocab)
             if entries:
                 s["output_types"] = entries
             warning = output_types.issue_warning(s["id"], issues)
             if warning:
                 warnings.append(warning)
             if stats is not None:
-                stats.update(output_types.add_stats(stats, output_types.stats(s["outputs"], entries, issues)))
+                stats.update(output_types.add_stats(stats, output_types.stats(declared, entries, issues)))
     # Reject cycles before dispatch.
     indeg = {s["id"]: len(s["depends_on"]) for s in steps}
     children: dict[str, list[str]] = {s["id"]: [] for s in steps}
@@ -2051,7 +2111,8 @@ def prepare_research_declarations(plan: Any, vocab: output_vocab.Vocab | None, s
         raw = step.pop("output_types", None)
         if vocab is None:
             continue
-        outputs = [str(o) for o in step.get("outputs") or []] if isinstance(step.get("outputs"), list) else []
+        outputs = [str(o) for o in [*(step.get("outputs") or []), *(step.get("optional_outputs") or [])]] \
+            if isinstance(step.get("outputs"), list) and isinstance(step.get("optional_outputs", []), list) else []
         entries, issues = output_types.normalize_entries(outputs, raw, vocab)
         if entries:
             step["output_types"] = entries
@@ -3715,11 +3776,12 @@ class Orchestrator:
                         prompt=continuation_prompt(task, WRAP_PROMPT, resumable=True,
                                                    previous_result=res, context_chars=self.cfg.context_chars_per_step),
                         resume_session_id=res.session_id,
-                        meta={**task.meta, "kind": "wrap_up", "parent_task": res.task_id,
-                              "workdir": res.workdir,
-                              "agent_overrides": {**overrides, "max_turns": min(WRAP_TURNS, turn_limit or WRAP_TURNS)},
-                              "outputs": ["PARTIAL_STATUS.md"],
-                              "collect_direct_outputs": task.meta.get("kind") == "direct"})
+                        meta=auxiliary_turn_meta(
+                            task.meta, "wrap_up", ["PARTIAL_STATUS.md"], parent_task=res.task_id,
+                            workdir=res.workdir,
+                            agent_overrides={**overrides,
+                                             "max_turns": min(WRAP_TURNS, turn_limit or WRAP_TURNS)},
+                            collect_direct_outputs=task.meta.get("kind") == "direct"))
             try:
                 partial = await dispatch_turn(wrap, max_attempts=1)
                 note = ("partial results saved" if partial.outputs else
@@ -4075,8 +4137,11 @@ class Orchestrator:
                     prompt += approval_note_block("CP1", [("", cp1.get("note") or "")], CP1_NOTE_RULE)
                 prompt += self._spending_cap_line(rid)
             declared = [rel for rel in map(output_relpath, step.get("outputs") or []) if rel]
-            if declared:
-                prompt += STEP_OUTPUTS_RULE.format(paths=", ".join(f"./{rel}" for rel in declared))
+            optional = [rel for rel in map(output_relpath, step.get("optional_outputs") or []) if rel]
+            if declared or optional:
+                prompt += STEP_OUTPUTS_RULE.format(
+                    required=", ".join(f"./{rel}" for rel in declared) or "(none)",
+                    optional=", ".join(f"./{rel}" for rel in optional) or "(none)")
             decision = decisions.get(step["id"])
             ctx = upstream(step)
             updates = []
@@ -4126,8 +4191,11 @@ class Orchestrator:
                               "title": f"{step['id']}: {step['instruction'][:100]}" + (" (리뷰 반영 수정)" if feedback else ""),
                               "project_dirs": self.hub.requests.get(rid, {}).get("project_dirs", []),
                               "upstream_dirs": upstream_dirs, "upstream_steps": upstream_steps,
-                              "outputs": step.get("outputs", []),
-                              "environment_step": ENV_LOCK_OUTPUT in step.get("outputs", []),
+                              "outputs": [*step.get("outputs", []), *step.get("optional_outputs", [])],
+                              "required_outputs": step.get("outputs", []),
+                              "optional_outputs": step.get("optional_outputs", []),
+                              "environment_step": ENV_LOCK_OUTPUT in [*step.get("outputs", []),
+                                                                        *step.get("optional_outputs", [])],
                               "shared_environment_protected": shared_environment_protected,
                                **({"restricted_inputs": True} if step["id"] in restricted else {}),
                                **({"general_result_contract": True} if not research_plan else {}),
@@ -4151,11 +4219,9 @@ class Orchestrator:
                     return attach_general_result(outcome)
                 if not outcome.ok or blocking_question(outcome):
                     return outcome
-                if step.get("outputs"):
-                    missing = [name for name in step["outputs"] if output_relpath(name) not in outcome.outputs]
-                    if missing:
-                        return outcome.model_copy(update={"ok": False, "missing_outputs": missing,
-                                                          "error": f"incomplete: missing outputs: {', '.join(missing)}"})
+                outcome = apply_declared_output_status(step, outcome)
+                if not outcome.ok:
+                    return outcome
 
                 original = outcome
                 current = outcome
@@ -4179,6 +4245,7 @@ class Orchestrator:
                 # optional correction that fails, touches no collected file but writes others, or ends worse falls
                 # back to it: asking to re-point a citation never fails a step that would have passed before.
                 bindable: tuple[Any, TaskResult] | None = None
+                normalization_warnings: list[str] = []
 
                 def accept(ledger: Any, via: TaskResult) -> TaskResult:
                     save_salvage([], [])
@@ -4186,6 +4253,8 @@ class Orchestrator:
                         "structured": ledger.model_dump(mode="json"),
                         "session_id": via.session_id or original.session_id,
                         "workdir": via.workdir or original.workdir,
+                        "step_warnings": list(dict.fromkeys([
+                            *original.step_warnings, *via.step_warnings, *normalization_warnings])),
                     })
 
                 async def repair_slots(structured: dict, slots: list[str]) -> TaskResult:
@@ -4217,9 +4286,10 @@ class Orchestrator:
                                 prompt=("누락된 증거 칸의 시도 여부만 답하세요. 파일·분석·전체 결과 JSON은 고치지 마세요. "
                                         "각 칸 id → {status: attempted_found/attempted_none/not_attempted, "
                                         "reason: 한 줄 이유}. 칸: " + ", ".join(slots)),
-                                meta={**task.meta, "kind": "slot_repair", "max_attempts": 1, "outputs": [],
-                                      "parent_task": current.task_id, "title": f"{step['id']}: 누락 칸 확인",
-                                      **({"workdir": current.workdir} if current.workdir else {})})
+                                meta=auxiliary_turn_meta(
+                                    task.meta, "slot_repair", [], max_attempts=1,
+                                    parent_task=current.task_id, title=f"{step['id']}: 누락 칸 확인",
+                                    **({"workdir": current.workdir} if current.workdir else {})))
                             record["asked"] = True
                             self.hub.save_request(rid)
                             try:
@@ -4245,6 +4315,13 @@ class Orchestrator:
                                   else extract_json(current.text))
                     if isinstance(structured, dict):  # the step schema's empty question field is not ledger
                         structured = {k: v for k, v in structured.items() if k != "blocking_decision"}
+                    structured, plan_hash_warning = normalize_result_plan_sha256(structured, plan=research_plan)
+                    if plan_hash_warning:
+                        normalization_warnings.append(plan_hash_warning)
+                        current = current.model_copy(update={
+                            "structured": structured,
+                            "step_warnings": list(dict.fromkeys([*current.step_warnings, plan_hash_warning])),
+                        })
                     problems = (["a result correction cannot ask a new blocking_decision; return corrected JSON"]
                                 if asked else research_result_errors(structured, plan=research_plan))
                     slots = ([] if asked else missing_result_slots(
@@ -4302,10 +4379,11 @@ class Orchestrator:
                         prompt=continuation_prompt(task, result_correction(problems),
                                                    resumable=can_resume_correction, previous_result=current,
                                                    context_chars=self.cfg.context_chars_per_step),
-                        meta={**task.meta, "kind": "result_correction", "parse_attempt": correction + 1,
-                              "parent_task": current.task_id, "outputs": [],
-                              "title": f"{step['id']}: 결과 계약 교정 #{correction + 1}",
-                              **({"workdir": current.workdir} if current.workdir else {})},
+                        meta=auxiliary_turn_meta(
+                            task.meta, "result_correction", [], parse_attempt=correction + 1,
+                            parent_task=current.task_id,
+                            title=f"{step['id']}: 결과 계약 교정 #{correction + 1}",
+                            **({"workdir": current.workdir} if current.workdir else {})),
                     )
                     current = await self.run_step(correction_task)
                     if not current.ok and bindable is not None:
@@ -4383,12 +4461,8 @@ class Orchestrator:
                     # A step that stops for a PI decision did not do the blocked work: its question goes to the
                     # PI below and the step re-runs, so outputs and the research ledger are checked on that run.
                     asked = blocking_question(outcome) if outcome.ok else None
-                    if outcome.ok and not asked and by_id[sid].get("outputs"):
-                        missing = [name for name in by_id[sid]["outputs"]
-                                   if output_relpath(name) not in outcome.outputs]
-                        if missing:
-                            outcome = outcome.model_copy(update={"ok": False, "missing_outputs": missing,
-                                                                 "error": f"incomplete: missing outputs: {', '.join(missing)}"})
+                    if outcome.ok and not asked:
+                        outcome = apply_declared_output_status(by_id[sid], outcome)
                     previous = results.get(sid)
                     if (feedback and sid in feedback and previous and previous.ok and not outcome.ok
                             and outcome.error_kind not in PI_STOP_ERROR_KINDS | {"wake_limit"}):
@@ -4403,6 +4477,8 @@ class Orchestrator:
                                                                 "agent_id": by_id[sid]["agent_id"],
                                                                 "attempts": self.attempts.get(rid, {}).get(sid, 0),
                                                                 "reason": results[sid].error,
+                                                                 **({"warnings": results[sid].step_warnings}
+                                                                    if results[sid].step_warnings else {}),
                                                                 **({"environment": environment} if environment
                                                                    else {}),
                                                                 **({"facilities_fix": results[sid].facilities_fix}
@@ -4476,6 +4552,8 @@ class Orchestrator:
         successful = [s for s in steps if s["id"] not in failed]
         warnings = [f"{sid}: 단계 실패 또는 의존 단계 건너뜀 — " +
                     safe_failure_cause(results[sid].error if sid in results else "not run") for sid in failed]
+        warnings += [f"{step['id']}: {warning}" for step in successful
+                     for warning in results[step["id"]].step_warnings]
         pi_stopped = any(sid in results and results[sid].error_kind in PI_STOP_ERROR_KINDS for sid in failed)
         branch_topology = branch_plan_topology(req["plan"].get("branches") or [], steps)
         branch_states = _branch_terminal_states(branch_topology, steps, results)
@@ -5085,6 +5163,8 @@ class Orchestrator:
             detail = f"\nOutputs:\n{artifacts or '- none'}"
             if r and r.missing_outputs:
                 detail += f"\nMissing: {', '.join(r.missing_outputs)}"
+            if r and r.step_warnings:
+                detail += "\nWarnings: " + "; ".join(r.step_warnings)
             if r and r.revision_failed:
                 detail += f"\nRevision failed; retained last successful result: {r.revision_failed}"
             if r and r.partial_results:
@@ -5158,6 +5238,8 @@ class Orchestrator:
                 lines.append("Outputs:\n" + "\n".join(paths))
             if r and r.missing_outputs:
                 lines.append(f"Missing: {short(', '.join(r.missing_outputs), 300)}")
+            if r and r.step_warnings:
+                lines.append("Warnings: " + short("; ".join(r.step_warnings), 300))
             if r and r.revision_failed:
                 lines.append(f"Revision failed; retained last successful result: {short(r.revision_failed, 200)}")
             if r and r.partial_results:
@@ -6710,6 +6792,8 @@ class Orchestrator:
                 line = f"- {step['id']}: {entry.get('status', 'not run')}; outputs: {paths or 'none'}"
                 if entry.get("missing_outputs"):
                     line += f"; missing: {', '.join(entry['missing_outputs'])}"
+                if entry.get("missing_optional_outputs"):
+                    line += f"; optional missing: {', '.join(entry['missing_optional_outputs'])}"
                 if entry.get("revision_failed"):
                     line += f"; revision failed: {short(entry['revision_failed'], 200)}"
                 if entry.get("partial_results"):

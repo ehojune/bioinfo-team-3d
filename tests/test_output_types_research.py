@@ -38,9 +38,10 @@ CANARY = "CANARY-research-91c2"
 # #683 and #690 add declared analysis figures and SVG text/quality rules; #693 then adds staff-skill fields and guidance.
 # #686 adds optional research branches and per-step branch ids; #694 adds the hypothesis-aligned reference rule.
 # #707 requires every analysis name and action in the request to stay explicit in the scope and planned steps.
-RESEARCH_PLAN_SCHEMA_SHA = "dc93790d21e41d290e4d75d254d0d5c80c3ca602d30538da2bcaef9a7a44bf26"
+# #716 adds optional_outputs while legacy plans still serialize to VALID_PLAN_SHA.
+RESEARCH_PLAN_SCHEMA_SHA = "ecaec20a558be2cba0955836579538a13a1785ce5baed14bda3827a054d8f859"
 RESEARCH_RESULT_SCHEMA_SHA = "9a767787fade091505fea149a8841845738ce30ce77cf6657cbca0aaa72af64d"
-RESEARCH_PROMPT_SHA = "742fe02b710013a793729ec02e704562723f731f8e465f311b178e0307483d3d"
+RESEARCH_PROMPT_SHA = "0b9c0c428751a7a01300bc54ebf11f203cd259ea367b09de43991762512eedc4"
 VALID_PLAN_SHA = "f611461cc2dbb17e39159ec1df6a75d8f7b661eb39bbe42c8ed0438c5c45e213"
 
 

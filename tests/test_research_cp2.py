@@ -234,6 +234,8 @@ async def test_a_citation_of_an_uncollected_file_gets_a_correction_before_cp2():
     await Orchestrator(hub).run_request("r")
 
     assert [task.meta["kind"] for task in hub.calls] == ["plan", "step", "result_correction"]
+    assert hub.calls[2].meta["required_outputs"] == []
+    assert hub.calls[2].meta["optional_outputs"] == []
     prompt = hub.calls[2].prompt
     assert "outputs/qc/checks.json" in prompt and "CP2 would refuse it" in prompt
     assert "this step's outputs (outputs/result1.tsv)" in prompt
@@ -769,6 +771,28 @@ async def test_research_step_prompt_carries_the_frozen_protocol():
                  plan["protocol"]["statistics"]["multiple_testing"], "method_changes",
                  "never describe the result as following the pre-specified rule"):
         assert text in prompt
+
+
+@pytest.mark.asyncio
+async def test_zero_plan_hash_is_rebound_without_a_result_correction_turn():
+    hub = _research_hub(_settings(), [CP1, {"approved": False, "choice": "deny", "note": "stop"}])
+    original_reply = hub.reply
+
+    async def zero_hash_reply(task):
+        response = await original_reply(task)
+        if task.meta["kind"] == "step" and response.ok:
+            response.structured["plan_sha256"] = "0" * 64
+        return response
+
+    hub.reply = zero_hash_reply
+    await Orchestrator(hub).run_request("r")
+
+    step = hub.requests["r"]["results"]["s1"]
+    assert step["structured"]["plan_sha256"] == hub.requests["r"]["research_contract"]["plan_sha256"]
+    assert step["step_warnings"] == ["연구 원장의 0 plan_sha256을 승인된 계획 hash로 보정했습니다"]
+    assert not any(task.meta["kind"] == "result_correction" for task in hub.calls)
+    assert any("0 plan_sha256" in warning
+               for warning in hub.requests["r"]["research_contract"]["result_warnings"])
 
 
 def test_the_step_digest_carries_the_cp1_hypotheses_word_for_word():
