@@ -12,5 +12,6 @@
 
 - 새 테스트는 구현 전 collection error 2건, 구현 뒤 30 passed입니다.
 - 관련 pytest는 553 passed, 14 skipped입니다. Windows Job object 실제 강제도 확인했습니다.
+- 첫 CI의 Python 3.10에서 POSIX 래퍼 계약 8건이 실패했습니다. 오류 분류·인자 보존·cgroup 탐침을 고친 뒤 해당 6파일은 200 passed, 1 skipped입니다.
 - `scripts/check_public.sh`와 기록 검사를 통과했습니다.
 - `docs/manual.md`: 155,842자 → 156,097자(+255).
