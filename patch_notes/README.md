@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 04:48 | [`951fd59`](https://github.com/ehojune/bioinfo-team-3d/pull/730/commits/951fd59) | 겹치는 통제 구역의 Read 사전 허용을 막음 |
+| 04:05 | [`0c6a342`](https://github.com/ehojune/bioinfo-team-3d/pull/730/commits/0c6a342) | internal 구역을 가리키는 별칭 Read를 승인 게이트로 보냄 |
 | 03:24 | [`a3c1e75`](https://github.com/ehojune/bioinfo-team-3d/pull/729/commits/a3c1e75) | 패키지 안 예시 설정에도 진행 branch 설정을 넣어 두 사본을 맞췄다 |
 | 02:49 | [`c929a67`](https://github.com/ehojune/bioinfo-team-3d/pull/729/commits/c929a67) | 선택한 요청의 공개 단계 산출과 진행 표를 별도 GitHub branch에 올리고 실패를 요청 실행과 분리했습니다. |
 | 01:20 | [`b6e63c3`](https://github.com/ehojune/bioinfo-team-3d/pull/727/commits/b6e63c3) | main 변경을 합치며 산출 필수·선택 구분이 바뀐 계획 스키마 고정 hash를 다시 계산했다 |
