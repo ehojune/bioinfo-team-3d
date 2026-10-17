@@ -1,0 +1,5 @@
+pr: 730
+rows:
+- sha: 0c6a342
+  at: 2026-10-18 04:05
+  text: internal 구역을 가리키는 별칭 Read를 승인 게이트로 보냄
