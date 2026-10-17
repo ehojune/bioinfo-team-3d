@@ -19,6 +19,9 @@ _MEMORY_FAILURE = re.compile(
     r"allocation failed|not enough memory",
     re.IGNORECASE,
 )
+_SYSTEMD_EXEC_MISSING = re.compile(r"Failed to find executable .+: No such file or directory", re.IGNORECASE)
+_SCOPE_STARTED = "LABHQ_SCOPE_STARTED"
+_SCOPE_UNBOUNDED = "LABHQ_SCOPE_UNBOUNDED"
 
 
 def _physical_memory_bytes() -> int:
@@ -81,18 +84,28 @@ def default_step_memory_limit_gb(platform: str | None = None) -> float:
 
 @functools.lru_cache(maxsize=1)
 def posix_tree_memory_limit_supported() -> bool:
-    """Probe an unprivileged user systemd scope with the property the runner will use."""
+    """Probe an unprivileged user systemd scope and verify that MemoryMax is enforced."""
     if os.name != "posix" or not shutil.which("systemd-run"):
         return False
+    return _systemd_memory_max_probe()
+
+
+def _systemd_memory_max_probe() -> bool:
+    """Require the probe command to start but not finish a deliberately over-limit allocation."""
     try:
         completed = subprocess.run(
-            ["systemd-run", "--user", "--scope", "--quiet", "--property=MemoryMax=16777216", "--", "true"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=5,
+            ["systemd-run", "--user", "--scope", "--quiet", "--property=MemoryMax=50331648", "--",
+             sys.executable, "-c", (f"print('{_SCOPE_STARTED}', flush=True); "
+                                      "x=bytearray(128*1024*1024); "
+                                      f"print('{_SCOPE_UNBOUNDED}', flush=True)")],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10,
             check=False,
         )
-        return completed.returncode == 0
+        stdout = completed.stdout.decode(errors="replace") if isinstance(completed.stdout, bytes) else completed.stdout
+        return (_SCOPE_STARTED in (stdout or "") and _SCOPE_UNBOUNDED not in (stdout or "")
+                and completed.returncode != 0)
     except (OSError, subprocess.TimeoutExpired):
         return False
 
@@ -262,7 +275,7 @@ class StepMemoryGuard:
 
     @staticmethod
     def executable_missing(stderr: str) -> bool:
-        return "LABHQ_EXEC_NOT_FOUND:" in stderr
+        return "LABHQ_EXEC_NOT_FOUND:" in stderr or bool(_SYSTEMD_EXEC_MISSING.search(stderr))
 
     def close(self) -> None:
         if self._job:

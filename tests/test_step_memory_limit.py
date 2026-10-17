@@ -121,6 +121,29 @@ def test_posix_tree_guard_uses_user_systemd_scope():
     assert wrapped[-len(command):] == command
 
 
+def test_systemd_probe_rejects_a_scope_that_does_not_enforce_memorymax(monkeypatch):
+    class Completed:
+        returncode = 0
+        stdout = b"LABHQ_SCOPE_STARTED\nLABHQ_SCOPE_UNBOUNDED\n"
+
+    monkeypatch.setattr(memory_limit.subprocess, "run", lambda *_a, **_kw: Completed())
+    assert not memory_limit._systemd_memory_max_probe()
+
+
+def test_systemd_probe_accepts_a_started_scope_that_blocks_the_allocation(monkeypatch):
+    class Completed:
+        returncode = 1
+        stdout = b"LABHQ_SCOPE_STARTED\n"
+
+    monkeypatch.setattr(memory_limit.subprocess, "run", lambda *_a, **_kw: Completed())
+    assert memory_limit._systemd_memory_max_probe()
+
+
+def test_systemd_missing_executable_keeps_the_runner_error_contract():
+    stderr = "Failed to find executable definitely-not-installed: No such file or directory"
+    assert StepMemoryGuard(1024, platform="posix", posix_tree=True).executable_missing(stderr)
+
+
 def test_windows_wrapper_joins_job_before_it_starts_cli(monkeypatch):
     command = ["staff-cli", "run"]
     wrapped = StepMemoryGuard(1024, platform="nt").wrap_command(command)
