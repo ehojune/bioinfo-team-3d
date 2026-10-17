@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 10:48 | [`d260bf9`](https://github.com/ehojune/bioinfo-team-3d/pull/719/commits/d260bf9) | 일반 단계가 JSON으로 답한 결과는 그대로 두고 연구 원장일 때만 claim 문장으로 바꿨다 |
+| 10:44 | [`471d9d1`](https://github.com/ehojune/bioinfo-team-3d/pull/719/commits/471d9d1) | 정리본 README의 갈래 표에 원장 JSON 대신 claim 문장을 넣고 맨 위 답은 판정 문장을 고르게 했다 |
 | 09:56 | [`1e40096`](https://github.com/ehojune/bioinfo-team-3d/pull/717/commits/1e40096) | ./data·../data 같은 상대 경로를 개인 경로로 가리지 않게 하고 정리본과 결과 저장의 개인 경로 규칙을 하나로 합쳤다 |
 | 09:45 | [`7aace61`](https://github.com/ehojune/bioinfo-team-3d/pull/717/commits/7aace61) | 상대 경로의 /data/를 로컬 경로로 잡던 정리본 검사를 고치고, 검사가 멈추면 검사 이름과 파일을 경고에 적었다 |
 | 07:51 | [`ab2e7e2`](https://github.com/ehojune/bioinfo-team-3d/pull/711/commits/ab2e7e2) | 잘못된 저장 위치 답이 검토 완료만 남기고 실패하지 않게 입력을 먼저 검사했다 |
