@@ -12,3 +12,6 @@ rows:
 - sha: f3d1418
   at: 2026-10-17 22:49
   text: Windows와 POSIX의 단계 메모리 상한 강제 범위를 바로잡았다.
+- sha: 200c42e
+  at: 2026-10-17 23:04
+  text: POSIX MemoryMax 실제 강제 probe와 실행 오류 계약을 보강했다.
