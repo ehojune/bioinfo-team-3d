@@ -1896,8 +1896,8 @@ class Runner:
                 except ValueError:
                     pass  # Invalid install configuration must not prevent an approval from being delivered.
             req.agent_id = ws.task.agent_id
-            from ..tool_explanation import internal_row_output
-            row_output = internal_row_output(
+            from ..tool_explanation import internal_output_classification
+            output_class = internal_output_classification(
                 str(req.detail.get('tool_name') or ''),
                 req.detail.get('tool_input') or req.detail.get('input') or {},
                 self.s.policy,
@@ -1910,7 +1910,11 @@ class Runner:
                                            'step_id': meta.get('step_id'),
                                            'paper_title': (meta.get('paper_skill') or {}).get('title')},
                           'path_labels': labels}
-            if row_output:
+            if output_class:
+                detail['internal_output_classification'] = output_class
+            else:
+                detail.pop('internal_output_classification', None)
+            if output_class == 'rows':
                 detail['internal_row_output'] = True
             else:
                 detail.pop('internal_row_output', None)

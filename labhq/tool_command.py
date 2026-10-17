@@ -102,19 +102,17 @@ def _interpreter_prints_rows(command: str) -> bool:
     row_access = re.search(r"(?:\.|\b)(?:head|tail)\s*\(|\biloc\s*\[|\bloc\s*\[", folded)
     if row_access:
         return True
-    # Column names/schema are safe even if the library internally reads more than the header: only output matters.
+    # A schema token does not make another print in the same interpreter command safe.
+    if re.search(r"\bprint\s*\(\s*[A-Za-z_]\w*\s*\)", command):
+        return True
+    # Column names/schema are an advisory label only; the zone gate is decided elsewhere.
     if re.search(r"\.columns\b|\.dtypes\b|\.info\s*\(|\b(?:names|colnames)\s*\(", folded):
-        return False
+        # Multiple output calls are ambiguous even when one of them is a schema expression.
+        return len(re.findall(r"\bprint\s*\(", folded)) > 1
     if re.search(r"\bnrows\s*=\s*0\b", folded):
         return False
-    # Known aggregate expressions produce group summaries, not source rows.
-    aggregates = (
-        ".value_counts(", "pd.crosstab(", ".pivot_table(", ".describe(", "aggregate(", "table(",
-        "summary(",
-    )
-    grouped = ".groupby(" in folded and re.search(r"\.(?:size|count|sum|mean|median|agg)\s*\(", folded)
-    if grouped or any(token in folded for token in aggregates):
-        return False
+    # Group keys and small cells can disclose one record per person. Treat aggregates as rows unless a later,
+    # bounded representation proves otherwise.
     return True
 
 
@@ -133,9 +131,12 @@ def command_prints_rows(command: str, *, powershell: bool = False) -> bool:
         counts = [int(value) for value in re.findall(r"-(?:totalcount|head|first)\s+(\d+)", folded)]
         return not (counts and max(counts) <= 1)
 
-    # Interpreter commands are opaque unless they match a narrow schema/aggregate form above.
+    # Interpreter commands are opaque unless one shell command matches a narrow schema form above.
     if re.search(r"(?:^|[;&|]\s*)(?:python(?:\d+(?:\.\d+)*)?|py|rscript|r)(?:\.exe)?(?:\s|$)",
                  folded):
+        parsed = commands(command, bash=not powershell)
+        if parsed is not None and len(parsed) != 1:
+            return True
         return _interpreter_prints_rows(command)
 
     parsed = commands(command, bash=not powershell)

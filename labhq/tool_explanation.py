@@ -22,8 +22,13 @@ def internal_row_output(tool_name: str, data: dict, policy, workdir: str | None 
 
     The result only adds a warning to an approval card. It never authorizes a call or changes the policy decision.
     """
-    from .policy import internal_row_output_hit
-    return internal_row_output_hit(tool_name, data, policy, workdir)
+    return internal_output_classification(tool_name, data, policy, workdir) == "rows"
+
+
+def internal_output_classification(tool_name: str, data: dict, policy, workdir: str | None = None) -> str | None:
+    """Return the advisory output label for an internal/restricted read."""
+    from .policy import internal_output_classification as classify
+    return classify(tool_name, data, policy, workdir)
 
 
 def explain(detail: dict) -> tuple[str, str, bool]:
@@ -35,12 +40,17 @@ def explain(detail: dict) -> tuple[str, str, bool]:
     command = str(data.get('command') or '')
     labels = detail.get('path_labels') or {}
     workdir = detail.get('workdir')
-    row_warning = detail.get('internal_row_output') is True
+    output_class = detail.get('internal_output_classification')
+    row_warning = output_class == 'rows' or detail.get('internal_row_output') is True
+    summary_warning = output_class == 'summary'
 
     def result(action: str, risk: str, complete: bool) -> tuple[str, str, bool]:
         if row_warning:
-            action = '내부 자료 행 출력.\n' + action
+            action = '내부 자료 행 출력 — 거절 권고.\n' + action
             risk = '높음 · 내부 자료 원행이 대화에 노출될 수 있음'
+        elif summary_warning:
+            action = '머리줄·집계로 보임 — 출력 범위 확인.\n' + action
+            risk = '중간 · 내부 자료 출력 범위 확인 필요'
         return action, risk, complete
 
     def place(path):
@@ -135,6 +145,9 @@ def reason(detail: dict, policy_reason: str, risk: str) -> str:
         rule = ('내부 자료 원파일의 행이 대화에 올라올 수 있습니다. 거절하고 열 이름이나 '
                 '10 미만 칸을 가린 집계만 읽게 하는 것을 권고합니다.')
         risk = '높음 · 내부 자료 원행 노출'
+    elif detail.get('internal_output_classification') == 'summary':
+        rule = '머리줄·집계로 보이지만 내부 자료의 실제 출력 범위를 승인 전에 확인하세요.'
+        risk = '중간 · 내부 자료 출력 범위 확인 필요'
     elif 'restricted' in policy_reason.lower() or 'data_zones' in policy_reason or '통제' in policy_reason:
         rule = '걸린 규칙: 통제 데이터 경계. 보호된 자료 경로에 접근합니다.'
         risk = '높음 · 통제 데이터 노출 확인 필요; ' + risk.split(' · ', 1)[-1]
