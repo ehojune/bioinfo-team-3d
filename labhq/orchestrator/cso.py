@@ -33,7 +33,8 @@ from ..facilities import fixes as facility_fixes
 from ..intake import (CLARIFYING_QUESTION_SCHEMA, QUESTION_RULE, has_structure,
                       question_detail_lines, questions_summary, reference_dirs, render_references,
                       unanswered_questions)
-from ..models import AskRequest, RunnerUnavailable, Task, TaskResult, hard_stop_kind, new_id, waiting
+from ..models import (AskRequest, RunnerUnavailable, Task, TaskResult, ToolCallCount, hard_stop_kind, new_id,
+                      waiting)
 from ..quota import is_quota_error, received_quota_wait
 from ..login import is_login_error
 from ..report_format import (PAPER_RULE, ABSTRACT_PLAN_RULE, split_appendix, scientific_appendix, add_references)
@@ -1287,6 +1288,39 @@ def unbound_evidence_problems(ledger: dict[str, Any], result: TaskResult, upstre
             "is not collected, and no file written now is collected."]
 
 
+def _turn_tool_calls(result: TaskResult) -> dict[str, dict[str, ToolCallCount]]:
+    if result.tool_call_turns:
+        return result.tool_call_turns
+    return {result.task_id: result.tool_calls} if result.tool_calls else {}
+
+
+def merged_tool_call_update(*results: TaskResult) -> dict[str, Any]:
+    turns: dict[str, dict[str, ToolCallCount]] = {}
+    for result in results:
+        for task_id, counts in _turn_tool_calls(result).items():
+            if task_id not in turns:
+                turns[task_id] = {
+                    name: count if isinstance(count, ToolCallCount) else ToolCallCount.model_validate(count)
+                    for name, count in counts.items()
+                }
+    totals: dict[str, list[int]] = {}
+    for counts in turns.values():
+        for name, count in counts.items():
+            row = totals.setdefault(name, [0, 0])
+            row[0] += count.calls
+            row[1] += count.failures
+    return {
+        "tool_calls": {
+            name: ToolCallCount(calls=row[0], failures=row[1]) for name, row in sorted(totals.items())
+        },
+        "tool_call_turns": turns,
+    }
+
+
+def merged_tool_calls(*results: TaskResult) -> dict[str, ToolCallCount]:
+    return merged_tool_call_update(*results)["tool_calls"]
+
+
 def merged_turn(first: TaskResult, later: TaskResult) -> TaskResult:
     """A later turn of the same step in the same workspace. The runner lists and hashes the declared outputs as they
     are after that turn, so that view replaces the first turn's: a file the later turn removed, or grew past the hash
@@ -1295,6 +1329,7 @@ def merged_turn(first: TaskResult, later: TaskResult) -> TaskResult:
         "unreported_outputs": sorted((set(first.unreported_outputs) | set(later.unreported_outputs))
                                      - set(later.outputs)),
         "tool_errors": [*first.tool_errors, *later.tool_errors],
+        **merged_tool_call_update(first, later),
         "workdir": later.workdir or first.workdir,
         "workdir_id": later.workdir_id or first.workdir_id,
     })
@@ -3575,7 +3610,8 @@ class Orchestrator:
                                  **({"workdir": res.workdir} if res.workdir else {})},
                         "resume_session_id": res.session_id if can_resume else None,
                     })
-                    res = await dispatch_with_retry(current, max_attempts)
+                    earlier = res
+                    res = merged_workspace_rerun(earlier, await dispatch_with_retry(current, max_attempts))
                     tool_errors.extend(res.tool_errors)
                     res = res.model_copy(update={"tool_errors": list(tool_errors)})
                     continue
@@ -3739,6 +3775,7 @@ class Orchestrator:
                     res = retried.model_copy(update={
                         "facilities_fix": final_record,
                         "tool_errors": list(dict.fromkeys([*res.tool_errors, *retried.tool_errors])),
+                        **merged_tool_call_update(res, retried),
                     })
         diagnose = getattr(self.hub, "request_facilities_diagnosis", None)
         if (environment and not propose and not read_only and not res.facilities_fix and
@@ -3800,6 +3837,7 @@ class Orchestrator:
                                              "output_types_stats": (partial.output_types_stats or
                                                                     res.output_types_stats),
                                              "tool_errors": [*res.tool_errors, *partial.tool_errors],
+                                             **merged_tool_call_update(res, partial),
                                              "error": f"{res.error or 'error_max_turns'}; wrap-up: {note}"})
             except BudgetExceeded:
                 pass
@@ -4253,12 +4291,15 @@ class Orchestrator:
                         "structured": ledger.model_dump(mode="json"),
                         "session_id": via.session_id or original.session_id,
                         "workdir": via.workdir or original.workdir,
+                        "tool_errors": list(dict.fromkeys([*original.tool_errors, *via.tool_errors])),
+                        **merged_tool_call_update(original, via),
                         "step_warnings": list(dict.fromkeys([
                             *original.step_warnings, *via.step_warnings, *normalization_warnings])),
                     })
 
                 async def repair_slots(structured: dict, slots: list[str]) -> TaskResult:
                     # Persist before dispatch: a restarted DAG must not ask a second time.
+                    answer: TaskResult | None = None
                     records = req_state["research_contract"].setdefault("slot_repairs", {})
                     record = records.get(step["id"])
                     if record and record.get("plan_sha256") != research_plan_sha256(research_plan):
@@ -4299,15 +4340,22 @@ class Orchestrator:
                             except Exception:
                                 answer = None
                             if answer is not None and answer.unreported_outputs:
-                                return original.model_copy(update={"ok": False, "error_kind": "contract",
-                                    "error": "invalid research result contract: slot repair changed output files"})
+                                return original.model_copy(update={
+                                    "ok": False, "error_kind": "contract",
+                                    "error": "invalid research result contract: slot repair changed output files",
+                                    **merged_tool_call_update(current, answer),
+                                })
                             if answer is not None and answer.ok:
                                 record["answers"] = (answer.structured if isinstance(answer.structured, dict)
                                                      else extract_json(answer.text))
                             self.hub.save_request(rid)
                     ledger = repair_result_slots(structured, slots, record.get("answers"))
                     validate_research_result(ledger.model_dump(mode="json"), plan=research_plan)
-                    return accept(ledger, current)
+                    via = (current if answer is None else current.model_copy(update={
+                        "tool_errors": list(dict.fromkeys([*current.tool_errors, *answer.tool_errors])),
+                        **merged_tool_call_update(current, answer),
+                    }))
+                    return accept(ledger, via)
 
                 for correction in range(limit + 1):
                     asked = blocking_question(current)
@@ -4343,7 +4391,7 @@ class Orchestrator:
                     if not problems and validated_result is not None:
                         return accept(validated_result, current)
                     if correction == limit and bindable is not None:
-                        return accept(*bindable)
+                        return accept(bindable[0], current)
                     if correction == limit:
                         # A result that still asks the PI a blocking question is never salvaged into CP2: the
                         # employee said it cannot go on without that decision (PR #353 review).
@@ -4364,12 +4412,14 @@ class Orchestrator:
                                 "structured": salvaged.model_dump(mode="json"),
                                 "session_id": current.session_id or original.session_id,
                                 "workdir": current.workdir or original.workdir,
+                                **merged_tool_call_update(original, current),
                             })
                         return original.model_copy(update={
                             "ok": False, "error_kind": "contract", "error": "invalid research result contract: " +
                             "; ".join(dict.fromkeys([*problems, *salvage_problems])),
                             "session_id": current.session_id or original.session_id,
                             "workdir": current.workdir or original.workdir,
+                            **merged_tool_call_update(original, current),
                         })
 
                     can_resume_correction = bool(current.session_id and self.hub.supports_resume(step["agent_id"]))
@@ -4385,19 +4435,24 @@ class Orchestrator:
                             title=f"{step['id']}: 결과 계약 교정 #{correction + 1}",
                             **({"workdir": current.workdir} if current.workdir else {})),
                     )
-                    current = await self.run_step(correction_task)
+                    corrected = await self.run_step(correction_task)
+                    current = corrected.model_copy(update={
+                        "tool_errors": list(dict.fromkeys([*current.tool_errors, *corrected.tool_errors])),
+                        **merged_tool_call_update(current, corrected),
+                    })
                     if not current.ok and bindable is not None:
-                        return accept(*bindable)
+                        return accept(bindable[0], current)
                     if not current.ok:
                         return current.model_copy(update={
                             "outputs": original.outputs, "output_sha256": original.output_sha256,
                             "unreported_outputs": original.unreported_outputs,
                             "workdir": current.workdir or original.workdir,
+                            **merged_tool_call_update(original, current),
                             "workdir_id": current.workdir_id or original.workdir_id,
                         })
                     if (current.unreported_outputs and bindable is not None
                             and not set(current.unreported_outputs) & set(original.outputs)):
-                        return accept(*bindable)  # collected files and their hashes are untouched
+                        return accept(bindable[0], current)  # collected files and their hashes are untouched
                     if current.unreported_outputs:
                         # A correction only rewrites the result JSON. A file it changed would no longer match the
                         # hash CP2 binds evidence to, so the step fails instead (PR #352 review).
@@ -4407,6 +4462,7 @@ class Orchestrator:
                                      "it must not touch: " + ", ".join(current.unreported_outputs),
                             "session_id": current.session_id or original.session_id,
                             "workdir": current.workdir or original.workdir,
+                            **merged_tool_call_update(original, current),
                         })
 
         while todo or running:
@@ -4467,7 +4523,9 @@ class Orchestrator:
                     if (feedback and sid in feedback and previous and previous.ok and not outcome.ok
                             and outcome.error_kind not in PI_STOP_ERROR_KINDS | {"wake_limit"}):
                         outcome = previous.model_copy(update={"revision_failed":
-                            f"{outcome.error_kind or failure_kind(outcome) or 'terminal'}: {outcome.error or 'unknown error'}"})
+                            f"{outcome.error_kind or failure_kind(outcome) or 'terminal'}: {outcome.error or 'unknown error'}",
+                            "tool_errors": list(dict.fromkeys([*previous.tool_errors, *outcome.tool_errors])),
+                            **merged_tool_call_update(previous, outcome)})
                     results[sid] = outcome
                     if not outcome.ok and failure_kind(outcome) not in {"environment", "login", "quota"}:
                         self._record_dev_failure(rid, sid, outcome.error or "unknown error",

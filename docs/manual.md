@@ -404,7 +404,7 @@ CSO는 설치·예산·통제 데이터·HPC 같은 권한/비용/접근, PI만 
 
 과학 보고서는 제목 → 요약(Abstract) → 서론(배경·질문) → 방법 → 결과(그림·표) → 논의(해석·한계) → 결론 → 참고 → 부록 순서입니다. `report.md`는 본문, `report_appendix.md`는 점검표 표·리뷰 판정과 지적·가정을 담습니다. 참고는 주어진 accession·PMID·DOI를 `SOURCES.md`와 같은 추출기로 모읍니다. 쉬운 한국어(#569)와 약 4,000자 원칙을 유지하고 결과 수치는 한 번만 적습니다. 지금은 형식을 맞추며 논문 수준의 문헌·서론·논의 품질은 v1 이후 과제입니다.
 
-운전 정보는 `execution_record`와 묶음의 `execution_record.md`에 둡니다. 단계 상태·산출 경로·도구 실패·비용·보고서 경고·묶음 변환을 담고, 웹·CLI에서 과학 부록과 따로 보여 줍니다. 라운드 기록과 labhq-rounds에는 과학 본문 대신 보고서 위치만 남깁니다. 게시된 GitHub 정리본처럼 원격 URL이 있을 때만 링크하고, 묶음·Nextflow 로컬 경로는 가린 경로 텍스트로 표시합니다. 본문에는 경고의 영향과 “실행 기록 참고”만 한 줄 남깁니다. 기존 보고서는 그대로 읽고 claim anchor 검사는 본문만 읽습니다.
+운전 정보는 `execution_record`와 묶음의 `execution_record.md`에 둡니다. 단계 상태·산출 경로·도구 실패·비용·보고서 경고·묶음 변환을 담고, 웹·CLI에서 과학 부록과 따로 보여 줍니다. 직원별 도구 표에는 단계·직원·도구 이름·호출 수·실패 수만 적고 명령·경로·인자는 적지 않습니다. 성공·실패·교정·재개 turn을 task id별로 한 번씩 합치며, id 없는 실패는 `도구 미상 오류`로 셉니다. 라운드 기록과 labhq-rounds에는 과학 본문 대신 보고서 위치만 남깁니다. 게시된 GitHub 정리본처럼 원격 URL이 있을 때만 링크하고, 묶음·Nextflow 로컬 경로는 가린 경로 텍스트로 표시합니다. 본문에는 경고의 영향과 “실행 기록 참고”만 한 줄 남깁니다. 기존 보고서는 그대로 읽고 claim anchor 검사는 본문만 읽습니다.
 
 분석 단계는 실행 스크립트를 `outputs/scripts/`, 결과를 좌우한 대응표·gene set 사본을 `outputs/reference/`에 선언·저장하고, `.tmp`에는 버려도 되는 파일만 둡니다. 스크립트를 돌린 단계는 그 스크립트를 실행한 인터프리터로 판과 패키지 목록(`<인터프리터> --version`·`<인터프리터> -m pip freeze`)을 `outputs/env/<단계 id>.txt`에 남깁니다. 앞 환경 단계의 lock이 쓴 것을 그대로 덮으면 생략하고, 직접 설치한 패키지(`./.pylib` 등)는 언제나 자기 기록에 넣습니다. 요청 묶음의 재현 등급은 이 기록이 있어야 `replayable`이 됩니다. 방법에는 seed와 도구·데이터 버전을 적습니다.
 `outputs/env/`·`outputs/scripts/`·`outputs/reference/` 파일은 선언에서 빠져도 `unreported_outputs`에 남아 요청 묶음·MANIFEST·RO-Crate에 들어갑니다. 같은 작업 폴더에서 retry·질문 답 뒤 재실행·리뷰 수정을 해도 앞 실행 목록을 이어받되, 새 실행에서 정식 산출로 보고한 파일은 뺍니다. runner 로그·CP2 카드·`labhq verify`처럼 사람이 보는 미보고 산출 경고에서만 숨깁니다.
@@ -447,7 +447,7 @@ SQLite는 읽기 연결과 쓰기 연결을 나눠(WAL) 읽기가 커밋을 기�
 | 경로 | 내용 |
 |---|---|
 | `report.md` · `report_appendix.md` | 논문 형식 본문과 과학 부록 |
-| `execution_record.md` | 실행 기록·보고서 경고·묶음 변환 |
+| `execution_record.md` | 단계·직원별 도구 호출 수, 실행 기록·보고서 경고·묶음 변환 |
 | `claims.json` | 연구 요청만. 단계별 claim·근거 원장, CP2 기록, 앵커 검사. 보고서의 `[[claim:<단계>/<claim>]]`은 `ledgers.<단계>.claims`의 `id` |
 | `steps/<step_id>/outputs/` | 최종 단계 결과에 경로와 sha256이 함께 기록된 산출물, 그다음 단계가 보고하지 않고 쓴 산출 |
 | `steps/<step_id>/jobs/*.sh` | runner가 제출하며 sha256을 기록한 HPC 잡 스크립트 |
