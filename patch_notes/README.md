@@ -14,7 +14,12 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 23:04 | [`200c42e`](https://github.com/ehojune/bioinfo-team-3d/pull/723/commits/200c42e) | POSIX MemoryMax 실제 강제 probe와 실행 오류 계약을 보강했다. |
+| 22:49 | [`f3d1418`](https://github.com/ehojune/bioinfo-team-3d/pull/723/commits/f3d1418) | Windows와 POSIX의 단계 메모리 상한 강제 범위를 바로잡았다. |
+| 22:46 | [`f707f42`](https://github.com/ehojune/bioinfo-team-3d/pull/723/commits/f707f42) | 내부 구역 읽기의 승인 흐름과 행 출력 카드 분류를 분리했다. |
 | 22:29 | [`e3ef717`](https://github.com/ehojune/bioinfo-team-3d/pull/721/commits/e3ef717) | POSIX 경로의 대소문자를 보존하고 일반 단어인 zone 폴더 이름을 내부 출처에서 제외함 |
+| 22:12 | [`671543f`](https://github.com/ehojune/bioinfo-team-3d/pull/723/commits/671543f) | POSIX 메모리 래퍼가 기존 실행 오류와 인자 계약을 보존하도록 고쳤다. |
+| 21:54 | [`1323892`](https://github.com/ehojune/bioinfo-team-3d/pull/723/commits/1323892) | 내부 자료 행 출력 경고와 직원 단계 메모리 상한을 추가했다. |
 | 21:48 | [`8e76686`](https://github.com/ehojune/bioinfo-team-3d/pull/721/commits/8e76686) | 실행 위치 메타데이터를 단계별 내부 입력 출처 판정에서 제외함 |
 | 21:08 | [`ef4c35b`](https://github.com/ehojune/bioinfo-team-3d/pull/721/commits/ef4c35b) | 내부 입력의 파일별 단계 귀속을 증명하지 못하면 요청 전체 내부 규칙을 적용함 |
 | 20:56 | [`fd429ab`](https://github.com/ehojune/bioinfo-team-3d/pull/722/commits/fd429ab) | semantics 생성 ID 오판을 막고 P2A PMID 선택·생략 기록을 복구 |
