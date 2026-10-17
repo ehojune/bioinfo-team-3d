@@ -1,17 +1,16 @@
 ## 결론
 
-내부 자료의 행 출력 명령을 승인 카드에서 구분하고, 직원 단계에 메모리 상한을 적용했습니다. Fixes #706. Fixes #709.
+PR #723의 P1 다섯 건을 게이트와 메모리 두 부류로 수정했습니다. Fixes #706. Fixes #709.
 
 ## 바뀐 것
 
-- 내부·제한 구역의 행 출력은 `내부 자료 행 출력`으로 표시하고 거절을 권고합니다. 머리글·열 이름·행 수·집계와 공개 경로는 제외합니다.
-- 기본 상한은 가용 물리 메모리의 60%이며 0이면 끕니다. Windows는 Job object, POSIX/WSL은 `RLIMIT_AS`를 씁니다.
-- 상한 초과 원인과 조각 처리·묶은 이항 GLM 안내를 직원 실패 결과에 남깁니다.
+- 내부 구역 읽기는 출력 모양과 무관하게 같은 승인을 받습니다. 카드는 `내부 자료 행 출력 — 거절 권고` 또는 `머리줄·집계로 보임 — 출력 범위 확인`으로만 구분합니다.
+- Windows는 self-Job wrapper가 실제 CLI보다 먼저 Job에 들어갑니다. POSIX는 user `systemd-run --scope`의 `MemoryMax`를 우선 쓰고, 없으면 기본 40%의 프로세스별 `RLIMIT_AS`로 내립니다.
 
 ## 확인
 
-- 새 테스트는 구현 전 collection error 2건, 구현 뒤 30 passed입니다.
-- 관련 pytest는 553 passed, 14 skipped입니다. Windows Job object 실제 강제도 확인했습니다.
-- 첫 CI의 Python 3.10에서 POSIX 래퍼 계약 8건이 실패했습니다. 오류 분류·인자 보존·cgroup 탐침을 고친 뒤 해당 6파일은 200 passed, 1 skipped입니다.
-- `scripts/check_public.sh`와 기록 검사를 통과했습니다.
-- `docs/manual.md`: 155,842자 → 156,097자(+255).
+- 기존 head에서 새 회귀 test 9건 실패를 확인했습니다.
+- 게이트 관련 pytest: 328 passed, 12 skipped.
+- 메모리·doctor pytest: 69 passed, 1 skipped. Windows 128 MiB 상한도 실제 강제했습니다.
+- `scripts/check_public.sh` 통과. CI는 push 뒤 확인합니다.
+- `docs/manual.md`: 156,110자 → 156,179자(+69).
