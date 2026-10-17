@@ -350,6 +350,9 @@ class TaskResult(BaseModel):
     tool_errors: list[str] = []
     # Tool names and aggregate counts only; arguments, commands and paths never enter this record (#701).
     tool_calls: dict[str, ToolCallCount] = {}
+    # Per-turn source ledger keyed by task id. The gateway unions these keys before deriving ``tool_calls`` so a
+    # result that was already merged cannot make an earlier turn count twice.
+    tool_call_turns: dict[str, dict[str, ToolCallCount]] = {}
     # "<output>: <problem>" for a collected .tsv/.tab/.csv that does not read as a table (#710).
     table_warnings: list[str] = []
     # {paper id: best access_level} from this task's labhq_annot.fulltext lookups (#697).
@@ -422,6 +425,8 @@ class TaskResult(BaseModel):
                 data.pop("tool_errors", None)
             if not data.get("tool_calls"):
                 data.pop("tool_calls", None)
+            if not data.get("tool_call_turns"):
+                data.pop("tool_call_turns", None)
             if not data.get("table_warnings"):
                 data.pop("table_warnings", None)
             if not data.get("literature_access"):

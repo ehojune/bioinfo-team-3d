@@ -5,12 +5,19 @@ import pytest
 
 from labhq.adapters import get_adapter as real_get_adapter
 from labhq.adapters.base import RunState
-from labhq.models import AgentSpec, Engine, Task, TaskResult
+from labhq.models import AgentSpec, Engine, Task, TaskResult, ToolCallCount
 from labhq.portfolio import build_portfolio_files
 from labhq.request_bundle import build_request_bundle
-from labhq.orchestrator.cso import merged_turn
-from labhq.runner.daemon import Runner
+from labhq.orchestrator.cso import Orchestrator, merged_turn
+from labhq.runner.daemon import Runner, ToolCallCounter
 from labhq.settings import Settings
+from tests.test_contract_slot_repair import slot_hub
+from tests.test_cso import FakeHub, replan_hub, result
+from tests.test_research_report import _hub as research_hub
+
+
+def _count(calls: int, failures: int = 0) -> ToolCallCount:
+    return ToolCallCount(calls=calls, failures=failures)
 
 
 def _settings(tmp_path: Path) -> Settings:
@@ -60,6 +67,139 @@ def test_followup_turns_add_tool_counts_without_retaining_inputs():
     assert merged_turn(first, later).model_dump(mode="json")["tool_calls"] == {
         "Read": {"calls": 3, "failures": 0},
         "mcp:pubmed.search_articles": {"calls": 3, "failures": 1},
+    }
+
+
+@pytest.mark.asyncio
+async def test_success_result_counts_its_turn_once_in_the_final_step():
+    hub = research_hub()
+    original = hub.reply
+
+    async def reply(task):
+        outcome = await original(task)
+        if task.meta["kind"] == "step":
+            outcome.tool_calls = {"Read": _count(2)}
+        return outcome
+
+    hub.reply = reply
+    await Orchestrator(hub).run_request("r")
+
+    assert hub.requests["r"]["results"]["s1"]["tool_calls"] == {
+        "Read": {"calls": 2, "failures": 0},
+    }
+
+
+@pytest.mark.asyncio
+async def test_failed_result_correction_keeps_both_turns_once():
+    hub = research_hub(contract_violation=True)
+    hub.s.research.result_corrections = 1
+    original = hub.reply
+
+    async def reply(task):
+        outcome = await original(task)
+        if task.meta["kind"] == "step":
+            outcome.tool_calls = {"Read": _count(1)}
+        elif task.meta["kind"] == "result_correction":
+            outcome.tool_calls = {"shell": _count(2, 1)}
+        return outcome
+
+    hub.reply = reply
+    await Orchestrator(hub).run_request("r")
+
+    assert hub.requests["r"]["results"]["s1"]["tool_calls"] == {
+        "Read": {"calls": 1, "failures": 0},
+        "shell": {"calls": 2, "failures": 1},
+    }
+
+
+@pytest.mark.asyncio
+async def test_rejected_slot_repair_keeps_the_rejected_turn_count():
+    hub = slot_hub({"e1": {"status": "attempted_none", "reason": "not found"}})
+    original = hub.reply
+
+    async def reply(task):
+        outcome = await original(task)
+        if task.meta["kind"] == "step":
+            outcome.tool_calls = {"Read": _count(1)}
+        elif task.meta["kind"] == "slot_repair":
+            outcome = outcome.model_copy(update={
+                "tool_calls": {"shell": _count(1)},
+                "unreported_outputs": ["outputs/rejected.txt"],
+            })
+        return outcome
+
+    hub.reply = reply
+    await Orchestrator(hub).run_request("r")
+
+    assert hub.requests["r"]["results"]["s1"]["tool_calls"] == {
+        "Read": {"calls": 1, "failures": 0},
+        "shell": {"calls": 1, "failures": 0},
+    }
+
+
+@pytest.mark.asyncio
+async def test_halted_step_keeps_pre_halt_and_resumed_turn_counts():
+    async def dispatch(task):
+        if len(hub.calls) == 1:
+            return result(task, ok=False, error="halted", error_kind="halted", session_id="session-1",
+                          workdir="runs/A", tool_calls={"Read": {"calls": 1, "failures": 0}})
+        return result(task, text="done", workdir="runs/A",
+                      tool_calls={"shell": {"calls": 2, "failures": 0}})
+
+    hub = FakeHub(dispatch)
+    hub.supports_resume = lambda _agent: True
+
+    async def wait_halted(*_args):
+        return True
+
+    hub.wait_halted = wait_halted
+    outcome = await Orchestrator(hub).run_step(
+        Task(agent_id="worker", request_id="r", prompt="work", meta={"kind": "step", "step_id": "A"}))
+
+    assert outcome.model_dump(mode="json")["tool_calls"] == {
+        "Read": {"calls": 1, "failures": 0},
+        "shell": {"calls": 2, "failures": 0},
+    }
+
+
+@pytest.mark.asyncio
+async def test_failed_revision_does_not_recount_the_previous_turn():
+    steps = [{"id": "analysis", "agent_id": "worker", "instruction": "analyze", "depends_on": []}]
+
+    def on_step(task):
+        if task.meta["revision"]:
+            return result(task, ok=False, error="revision broke", workdir="runs/analysis",
+                          tool_calls={"shell": {"calls": 1, "failures": 1}})
+        return result(task, text="analysis done", workdir="runs/analysis",
+                      tool_calls={"Read": {"calls": 2, "failures": 0}})
+
+    def on_review(task):
+        revise = task.meta["revision"] == 0
+        return {"verdict": "revise" if revise else "accept",
+                "scores": {"addresses_question": 4, "evidence": 4, "thoroughness": 4},
+                "issues": ([{"step_id": "analysis", "priority": "P1", "problem": "method",
+                              "request": "revise in place"}] if revise else [])}
+
+    hub = replan_hub(steps, on_step, lambda task: pytest.fail("unexpected replan"),
+                     max_replans=0, max_failure_replans=1, on_review=on_review)
+    await Orchestrator(hub).run_request("r")
+
+    assert hub.requests["r"]["results"]["analysis"]["tool_calls"] == {
+        "Read": {"calls": 2, "failures": 0},
+        "shell": {"calls": 1, "failures": 1},
+    }
+
+
+def test_error_without_tool_use_id_is_counted_as_unknown_not_the_latest_tool():
+    counter = ToolCallCounter()
+    counter.observe("agent.tool", {"id": "read-1", "name": "Read"})
+    counter.observe("agent.tool", {"id": "shell-1", "name": "shell"})
+    counter.observe("agent.tool_error", {"text": "earlier overlapping call failed"})
+
+    assert {name: count.model_dump(mode="json") for name, count in counter.summary().items()} == {
+        "Read": {"calls": 1, "failures": 0},
+        "shell": {"calls": 1, "failures": 0},
+        "도구 미상 오류": {"calls": 1, "failures": 1},
     }
 
 

@@ -94,20 +94,21 @@ class ToolCallCounter:
         self.calls: dict[str, int] = {}
         self.failures: dict[str, int] = {}
         self.by_id: dict[str, str] = {}
-        self.last_name: str | None = None
 
     def observe(self, typ: str, data: dict[str, Any]) -> None:
         if typ == "agent.tool":
             name = _recorded_tool_name(data.get("name"))
             self.calls[name] = self.calls.get(name, 0) + 1
-            self.last_name = name
             if data.get("id") is not None:
                 self.by_id[str(data["id"])] = name
         elif typ == "agent.tool_error":
             tool_id = data.get("id")
             name = self.by_id.get(str(tool_id)) if tool_id is not None else None
-            name = name or (_recorded_tool_name(data["name"]) if data.get("name") else self.last_name)
-            if name in self.calls:
+            if name is None:
+                name = "도구 미상 오류"
+                self.calls[name] = self.calls.get(name, 0) + 1
+                self.failures[name] = self.failures.get(name, 0) + 1
+            elif name in self.calls:
                 self.failures[name] = self.failures.get(name, 0) + 1
 
     def summary(self) -> dict[str, ToolCallCount]:
@@ -1941,7 +1942,11 @@ class Runner:
                 await emit("agent.log", {"level": "warn", "text": "output type records unavailable; result kept"})
         if paper_skill_build is not None:
             result = await asyncio.to_thread(paper_skill_build.finish, result)
-        result.tool_calls = tool_calls.summary()
+        counted_tools = tool_calls.summary()
+        result = result.model_copy(update={
+            "tool_calls": counted_tools,
+            "tool_call_turns": ({task.id: counted_tools} if counted_tools else {}),
+        })
         try:
             # Never through a link the agent made (#165). Both files are one job: a cancel cannot write only one.
             await awrite_owned_many(ws.dir, [(f"outputs/{name}", result.text or "")
