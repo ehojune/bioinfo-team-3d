@@ -6,3 +6,6 @@ rows:
 - sha: ee4ceac
   at: 2026-10-18 06:15
   text: Europe PMC preprint 조회와 판별을 PPR core의 publisher 필드에 맞춤
+- sha: adabdd6
+  at: 2026-10-18 06:53
+  text: 문헌 MCP 도구 고정 기대 목록에 인용 추적과 preprint를 반영
