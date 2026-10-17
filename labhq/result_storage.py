@@ -22,7 +22,8 @@ from .interruption import ShutdownInterrupted
 from .models import ApprovalRequest, Task
 from .policy import touches, restricted_paths
 from . import edition_sources, github_token
-from .portfolio import (broken_markdown_links, build_portfolio_files, declared_aggregate_tables, portfolio_root_file,
+from .portfolio import (EditionCheckError, broken_markdown_links, build_portfolio_files, check_failure,
+                        declared_aggregate_tables, portfolio_root_file,
                         portfolio_report, publish_file_allowed, request_uses_internal_data, scan_publish_files,
                         table_allowed)
 from .intake import reference_dirs
@@ -1019,11 +1020,10 @@ class ResultStorage:
                                          if portfolio_root_file(name)}
                     if broken := broken_markdown_links(portfolio_payload):
                         detail = ", ".join(f"{row['document']} -> {row['target']}" for row in broken)
-                        raise ValueError(f"정리본 Markdown 링크가 깨졌습니다: {detail}")
+                        raise EditionCheckError(f"정리본 Markdown 링크가 깨졌습니다: {detail}")
                 issues = scan_publish_files({**docs, **images}, internal=internal)
                 if issues:
-                    kinds = ", ".join(sorted({issue["kind"] for issue in issues}))
-                    raise ValueError(f"게시 전 검사에 실패했습니다: {kinds}")
+                    raise check_failure(issues)
                 # The audit bundle's MANIFEST and RO-Crate are already sealed.
                 target = self.s.path(self.s.runner.workspace_root) / "requests" / f"{rid}-editor"
                 if not plain_path(target):
@@ -1124,7 +1124,9 @@ class ResultStorage:
             raise
         except Exception as exc:
             saved["error_type"] = type(exc).__name__  # the warning never quotes the exception, only the texts above
-            saved.update(status="failed", warning=str(exc) if isinstance(exc, PublishAccessError) else upload_failed_text(rid))
+            # A check that stopped the edition says which check and which files; before #713 it read as a token problem.
+            saved.update(status="failed", warning=str(exc) if isinstance(exc, (PublishAccessError, EditionCheckError))
+                         else upload_failed_text(rid))
         finally:
             self.hub.save_request(rid)
             await self.hub.publish({"type": "request.storage", "request_id": rid,
