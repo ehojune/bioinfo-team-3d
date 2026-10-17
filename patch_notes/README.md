@@ -10,10 +10,18 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-10-18
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 00:15 | [`e7a549a`](https://github.com/ehojune/bioinfo-team-3d/pull/724/commits/e7a549a) | 요청 범위와 실행 단계를 따로 검사하고 비교 가능한 실측만 써서 비용 상한 과소 추정을 막습니다. |
+
 ## 2026-10-17
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 23:31 | [`2295395`](https://github.com/ehojune/bioinfo-team-3d/pull/724/commits/2295395) | 범위 규칙에 맞춰 일반 계획 prompt hash를 갱신하고 CP1 카드의 기존 첫 문장을 보존합니다. |
+| 23:13 | [`58b8f20`](https://github.com/ehojune/bioinfo-team-3d/pull/724/commits/58b8f20) | 요청 분석 누락을 CP1에서 경고하고 완료 요청 실측으로 비용을 추정합니다. |
 | 23:04 | [`200c42e`](https://github.com/ehojune/bioinfo-team-3d/pull/723/commits/200c42e) | POSIX MemoryMax 실제 강제 probe와 실행 오류 계약을 보강했다. |
 | 22:49 | [`f3d1418`](https://github.com/ehojune/bioinfo-team-3d/pull/723/commits/f3d1418) | Windows와 POSIX의 단계 메모리 상한 강제 범위를 바로잡았다. |
 | 22:46 | [`f707f42`](https://github.com/ehojune/bioinfo-team-3d/pull/723/commits/f707f42) | 내부 구역 읽기의 승인 흐름과 행 출력 카드 분류를 분리했다. |
