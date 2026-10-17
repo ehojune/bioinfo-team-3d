@@ -5413,8 +5413,8 @@ class Orchestrator:
                     scope_warnings = [warning for warning in plan.get("warnings", [])
                                       if isinstance(warning, str) and warning.startswith(SCOPE_COVERAGE_WARNING)]
                     if scope_warnings:
-                        summary = "\n".join(scope_warnings) + "\n" + summary
-                    summary = _cost_estimate_line(req.get("plan_cost_estimate") or {}) + "\n" + summary
+                        summary += "\n" + "\n".join(scope_warnings)
+                    summary += "\n" + _cost_estimate_line(req.get("plan_cost_estimate") or {})
                     paper_line = paper_skills.card_text(plan)
                     hiring_warnings = [w for w in plan.get("warnings", []) if "재배정" in w]
                     if hiring_warnings:

@@ -39,7 +39,8 @@ CANARY = "CANARY-7f3a-secret"
 # PR #693 adds staff-skill fields to the canonical plan schema and writing-skill guidance to the prompt.
 PLAN_SCHEMA_SHA = "0c36ef948e2f22f77071fa222a4da33994341d39fa6ebfb3ea1f18173dde2101"
 # Issues #683/#690 intentionally add the SVG figure declaration rules.
-PLAN_PROMPT_SHA = "98a4802cd15ed5fa9b089b2165e96814e7fb0eb9c11494fe2714c3b917de841d"
+# Issue #707 adds the deterministic request-analysis coverage rule.
+PLAN_PROMPT_SHA = "3765803231efe6f7a3926fb4fd669cd33b1c735fc19827c943e5c8bef3c536d4"
 PROMPT_ARGS = dict(request="REQ", roster="ROSTER", capabilities="CAPS", briefing="BRIEF", max_steps=3,
                    question_rule=QUESTION_RULE, lab_scope="LAB", topics_rule=topics.prompt_rule(V))
 
