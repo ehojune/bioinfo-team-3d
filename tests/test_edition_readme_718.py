@@ -26,7 +26,9 @@ def test_claims_replace_the_ledger_json_whether_structured_or_only_text():
         result = research_request(text_only)["results"]["s2"]
         assert p._result_text(result) == LEDGER["claims"][0]["statement"]
         assert p._claim_summary(result) == "두 자료 모두 오즈비가 1을 포함했다. 주 검정 2개 중 통과는 0개다."
-    assert p._result_text({"text": "{broken json"}) == ""
+    assert p._result_text({"text": '{"schema_version": 2, "claims": []}'}) == ""  # a ledger without claims
+    assert p._result_text({"text": '{"genes": ["TP53"]}'}) == '{"genes": ["TP53"]}'  # an ordinary JSON answer
+    assert p._result_text({"text": "{broken json"}) == "{broken json"
     assert p._result_text({"text": "일반 단계 결과."}) == "일반 단계 결과."
 
 

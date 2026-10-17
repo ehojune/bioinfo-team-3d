@@ -380,12 +380,21 @@ def _claim_statements(result: Any) -> list[str]:
             if isinstance(claim, Mapping) and str(claim.get("statement") or "").strip()]
 
 
+def _is_ledger(text: str) -> bool:
+    try:
+        value = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return False
+    return isinstance(value, Mapping) and ("claims" in value or "schema_version" in value)
+
+
 def _result_text(result: Any) -> str:
     statements = _claim_statements(result)
     if statements:
         return statements[0]
     text = str(result.get("text") or "") if isinstance(result, Mapping) else ""
-    return "" if text.lstrip().startswith("{") else text
+    # Only a research ledger is hidden: an ordinary step may answer with a JSON document (PR #719 review).
+    return "" if _is_ledger(text) else text
 
 
 def _first_answer(report: str, req: Mapping[str, Any] | None = None) -> str:
