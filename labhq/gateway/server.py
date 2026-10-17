@@ -1618,6 +1618,11 @@ class Hub:
             return
         agent = self.agents.get(result.agent_id)
         item = outcome_unknown_item(result, agent) if outcome_unknown else task_cost_item(result, agent)
+        store = getattr(self, "store", None)
+        task_entry = store.get("task", tid) if store is not None else None
+        task_entry = task_entry or {}
+        if task_entry.get("step_id"):
+            item["step_id"] = str(task_entry["step_id"])
         item["recorded_at"] = time.time()
         amount = float(item["usd"]) if item["status"] != "unknown" else 0.0
         costs[tid] = amount if item["status"] != "unknown" else None

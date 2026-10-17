@@ -40,6 +40,7 @@ async def test_conversion_cost_reaches_budget_once_even_after_recovery(runner, m
     receipt = await orch.run_step(task)
     assert receipt.structured["status"] == "failed"
     assert orch.cost["r"] == hub.requests["r"]["cost_usd"] == 11
+    assert "step_id" not in next(iter(hub.requests["r"]["cost_items"].values()))
     # Replay the durable result and account for both task IDs again.
     for tid in hub.requests["r"]["cost_by_task"]:
         orch._count_cost("r", tid)

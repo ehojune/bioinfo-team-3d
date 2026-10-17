@@ -239,11 +239,13 @@ def historical_plan_cost_estimate(requests: Any, plan: dict, agents: dict[str, d
     worker_cost = overhead_cost = 0.0
 
     for request, old_steps, _subtotal in comparable:
+        steps_by_id = {str(step.get("id")): step for step in old_steps if step.get("id")}
         steps_by_agent: dict[str, int] = {}
         for step in old_steps:
             agent_id = str(step.get("agent_id") or "")
             if agent_id:
                 steps_by_agent[agent_id] = steps_by_agent.get(agent_id, 0) + 1
+        step_costs: dict[tuple[str, tuple[str, str, str]], float] = {}
         for item in (request.get("cost_items") or {}).values():
             if not isinstance(item, dict) or item.get("status") not in {"actual", "estimated"}:
                 continue
@@ -251,11 +253,17 @@ def historical_plan_cost_estimate(requests: Any, plan: dict, agents: dict[str, d
             if usd is None:
                 continue
             agent_id = str(item.get("agent_id") or "")
-            if agent_id not in steps_by_agent:
+            step_id = str(item.get("step_id") or "")
+            step = steps_by_id.get(step_id)
+            if step is None or agent_id != str(step.get("agent_id") or ""):
                 overhead_cost += usd
                 continue
             signature = (agent_id, str(item.get("engine") or "unknown"), str(item.get("model") or "unknown"))
+            key = (step_id, signature)
+            step_costs[key] = step_costs.get(key, 0.0) + usd
+        for (_step_id, signature), usd in step_costs.items():
             signature_cost[signature] = signature_cost.get(signature, 0.0) + usd
+            agent_id = signature[0]
             agent_cost[agent_id] = agent_cost.get(agent_id, 0.0) + usd
             worker_cost += usd
             signature_steps[signature] = signature_steps.get(signature, 0) + 1
