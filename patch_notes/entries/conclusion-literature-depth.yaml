@@ -3,3 +3,6 @@ rows:
 - sha: 7e46d69
   at: 2026-10-18 07:47
   text: 결론 근거 논문의 읽은 수준을 CP2 claim 연결 기준으로 집계
+- sha: a71f946
+  at: 2026-10-18 08:35
+  text: PMID·PMCID·DOI 별칭으로 결론 근거와 fulltext 조회 기록을 대조
