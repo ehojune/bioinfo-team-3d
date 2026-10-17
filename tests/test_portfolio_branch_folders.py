@@ -240,6 +240,22 @@ def test_missing_step_path_provenance_keeps_request_wide_internal_fallback(tmp_p
     assert not any(name.endswith("B-omics/tables/summary.tsv") for name in files)
 
 
+def test_two_internal_files_need_concrete_step_attribution(tmp_path):
+    settings, request, assets, images = branched_fixture(tmp_path)
+    request = deepcopy(request)
+    internal = Path(request["project_dirs"][0])
+    births = internal / "births.tsv"
+    deaths = internal / "deaths.tsv"
+    request["text"] = f"{births}와 {deaths}를 서로 다른 단계에서 읽는다."
+    request["plan"]["steps"][1]["input_refs"] = [str(internal)]
+    request["results"]["mdis"]["text"] += f" 입력은 {births}이다."
+    assets["steps/omics/outputs/tables/summary.tsv"] = "gene\trank\nG1\t5\n"
+
+    files = build_portfolio_files(request, settings, assets, images)
+
+    assert not any(name.endswith("B-omics/tables/summary.tsv") for name in files)
+
+
 def test_unbranched_request_keeps_the_existing_file_list(tmp_path):
     settings, request, bundle, assets, images, decisions, tasks = portfolio_fixture(tmp_path)
     request = deepcopy(request)

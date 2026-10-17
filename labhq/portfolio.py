@@ -618,39 +618,91 @@ def small_cells(text: str, suffix: str) -> list[str]:
         return []
 
 
+def _text_values(value: Any) -> Iterable[str]:
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, Mapping):
+        for item in value.values():
+            yield from _text_values(item)
+    elif isinstance(value, Iterable) and not isinstance(value, (bytes, bytearray)):
+        for item in value:
+            yield from _text_values(item)
+
+
+def _path_key(value: str) -> str:
+    value = value.rstrip(".,;:)]}")
+    file_path = re.match(
+        r"^(.*\.[A-Za-z0-9]{1,16})(?:에서|으로|입니다|이다|에게|의|와|과|을|를|은|는|이|가|로)$", value)
+    if file_path:
+        value = file_path.group(1)
+    return posixpath.normpath(value.replace("\\", "/")).casefold()
+
+
+def _concrete_internal_paths(value: Any, zone_paths: Iterable[str]) -> set[str]:
+    zones = {_path_key(path) for path in zone_paths}
+    found: set[str] = set()
+    for text in _text_values(value):
+        candidates = set(_WINDOWS_ABS.findall(text))
+        candidates.update(match.group("path") for match in _POSIX_ABS.finditer(text))
+        for candidate in candidates:
+            key = _path_key(candidate)
+            if any(key != zone and key.startswith(zone.rstrip("/") + "/") for zone in zones):
+                found.add(key)
+    return found
+
+
+def _mentions_internal_zone(value: Any, zone_paths: Iterable[str]) -> bool:
+    paths = list(zone_paths)
+    if touches(value, paths):
+        return True
+    labels = {PurePosixPath(path.replace("\\", "/").rstrip("/")).name.casefold()
+              for path in paths}
+    return any(re.search(rf"(?<!\w){re.escape(label)}(?!\w)", text, re.I)
+               for label in labels if label
+               for text in _text_values(value))
+
+
 def request_uses_internal_data(req: dict, settings) -> bool:
     paths = [zone.path for zone in settings.policy.data_zones if zone.level in {"internal", "restricted"}]
-    return bool(paths and touches(
-        [req.get("text"), req.get("project_dirs"), req.get("references"), req.get("results")], paths))
+    plan = req.get("plan") if isinstance(req.get("plan"), Mapping) else {}
+    plan_fields = [[step.get("instruction"), step.get("input_refs")]
+                   for step in plan.get("steps") or [] if isinstance(step, Mapping)]
+    return bool(paths and _mentions_internal_zone(
+        [req.get("text"), req.get("project_dirs"), req.get("references"), plan_fields, req.get("results")], paths))
 
 
 def internal_data_steps(req: dict, settings) -> set[str] | None:
-    """Return steps that directly cite an internal path, plus every downstream step.
+    """Return proven internal steps and descendants; otherwise require request-wide rules.
 
-    ``None`` means the request touches an internal zone but its per-step results do not attribute every touched zone.
-    Callers must then keep the request-wide publication rules. This deliberately prefers excluding a public artifact over
-    publishing an internal one when old or incomplete results have no path provenance (#715).
+    A step is public only when its plan and result avoid internal zones and every concrete internal input named by the
+    request or plan is attributed to a step. A zone root alone is not concrete provenance (#715).
     """
     paths = [zone.path for zone in settings.policy.data_zones if zone.level in {"internal", "restricted"}]
-    request_fields = [req.get("text"), req.get("project_dirs"), req.get("references"), req.get("results")]
-    touched_paths = {path for path in paths if touches(request_fields, [path])}
-    if not touched_paths:
+    if not paths or not request_uses_internal_data(req, settings):
         return set()
-    results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
-    direct: set[str] = set()
-    attributed: set[str] = set()
-    for step_id, result in results.items():
-        if not isinstance(result, Mapping):
-            continue
-        matched = {path for path in touched_paths if touches(result, [path])}
-        if matched:
-            direct.add(str(step_id))
-            attributed.update(matched)
-    if attributed != touched_paths:
-        return None
 
     plan = req.get("plan") if isinstance(req.get("plan"), Mapping) else {}
     steps = [step for step in plan.get("steps") or [] if isinstance(step, Mapping) and step.get("id")]
+    results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
+    request_inputs = _concrete_internal_paths(
+        [req.get("text"), req.get("project_dirs"), req.get("references")], paths)
+    plan_inputs = _concrete_internal_paths(
+        [[step.get("instruction"), step.get("input_refs")] for step in steps], paths)
+    named_inputs = request_inputs | plan_inputs
+    if not named_inputs:
+        return None
+
+    direct: set[str] = set()
+    attributed: set[str] = set()
+    for step in steps:
+        step_id = str(step["id"])
+        evidence = [step.get("instruction"), step.get("input_refs"), results.get(step_id)]
+        if _mentions_internal_zone(evidence, paths):
+            direct.add(step_id)
+        attributed.update(_concrete_internal_paths(evidence, paths) & named_inputs)
+    if attributed != named_inputs:
+        return None
+
     internal = set(direct)
     changed = True
     while changed:
