@@ -93,6 +93,11 @@ def _research_row(settings: Settings) -> dict:
     return _row("config", "research lane", "ok", f"켜짐: CP1 → 단계 → CP2 → 리뷰 → 보고서, pack {packs}", "")
 
 
+def _semantics_row(settings: Settings) -> dict:  # semantics-hook
+    from .research.semantics_shadow import doctor_row  # semantics-hook
+    return doctor_row(settings)  # semantics-hook
+
+
 def _row(group: str, name: str, status: str, detail: str, hint: str) -> dict:
     return {"group": group, "name": name, "status": status, "detail": detail, "hint": hint}
 
@@ -573,6 +578,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
                          "gateway.client_token is set in the runner's config",
                          "Give the runner a config without gateway.client_token; see docs/runner-account.md."))
     rows.append(_research_row(settings))
+    rows.append(_semantics_row(settings))  # semantics-hook
     rows.append(_bioinfo_row(settings))
     rows.append(_github_token_row(settings, dry_run))
     rows.extend(_instance_rows(settings))

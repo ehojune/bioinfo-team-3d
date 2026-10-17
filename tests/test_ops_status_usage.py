@@ -117,6 +117,35 @@ def test_cli_status_shows_running_work_and_approvals(monkeypatch, capsys):
     assert "claude_code 확인 $0.30" in output and "codex 추정 $0.20 + 비용 모름 1건" in output
 
 
+def test_cli_status_shows_stopped_semantics_and_reenable_command(tmp_path, monkeypatch, capsys):
+    from labhq.research import semantics_shadow as shadow
+
+    config = tmp_path / "labhq.yaml"
+    config.write_text(
+        f"gateway: {{state_dir: '{(tmp_path / 'state').as_posix()}'}}\n"
+        "semantics: {mode: ab}\n",
+        encoding="utf-8",
+    )
+    paths = shadow.ShadowPaths(tmp_path / "state" / "semantics")
+    shadow.write_disabled(paths, "info_boundary", 1,
+                          boundary=[{"field": "request_id", "class": "identifier"}], ts=1_797_000_000)
+
+    def api(_settings, _method, path):
+        if path == "/api/health":
+            return {"runners": []}
+        if path == "/api/requests/summary":
+            return {"request_count": 0, "past_count": 0, "session": {}, "total": {}}
+        if path.startswith("/api/requests?") or path == "/api/approvals":
+            return []
+        raise AssertionError(path)
+
+    monkeypatch.setattr("labhq.cli._api", api)
+    main(["--config", str(config), "status"])
+    output = capsys.readouterr().out
+    assert "semantics: 멈춤" in output and "info_boundary" in output and "2026-" in output
+    assert "labhq semantics enable" in output
+
+
 def test_cli_resume_uses_the_existing_hold_endpoint(monkeypatch, capsys):
     calls = []
     monkeypatch.setattr("labhq.cli._api", lambda _s, method, path, **kwargs:

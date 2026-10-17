@@ -2024,6 +2024,9 @@ def main(argv: list[str] | None = None) -> None:
     elif args.cmd == "status":
         for row in _local_process_diagnostics(s):
             print(row["detail"])
+        from .research.semantics_shadow import status_line as semantics_status_line  # semantics-hook
+        semantics_line = semantics_status_line(s)  # semantics-hook
+        if semantics_line: print(semantics_line)  # semantics-hook
         health = _api(s, "GET", "/api/health")
         print("러너: " + (", ".join(health["runners"]) or
                          f"없음 — `{_config_command(s, 'up')}`로 켜야 요청이 진행됩니다"))

@@ -24,6 +24,24 @@ def _settings(tmp_path):
                                     "hpc": {"scheduler": "none"}})
 
 
+def test_doctor_shows_semantics_stop_time_reason_and_reenable_command(tmp_path):
+    from labhq.research import semantics_shadow as shadow
+
+    settings = _settings(tmp_path)
+    settings.semantics = {"mode": "ab"}
+    paths = shadow.ShadowPaths(settings.path(settings.gateway.state_dir) / "semantics")
+    shadow.write_disabled(paths, "info_boundary", 1,
+                          boundary=[{"field": "request_id", "class": "identifier"}], ts=1_797_000_000)
+
+    row = doctor._semantics_row(settings)
+
+    assert row["status"] == "warn"
+    assert "info_boundary" in row["detail"] and "2026-" in row["detail"]
+    assert "request_id:identifier" in row["detail"]
+    assert row["hint"] == "labhq semantics enable"
+    assert "해제 가능" in row["detail"]
+
+
 @pytest.mark.parametrize("empty_roster", [False, True])
 def test_invalid_force_engine_is_failure_and_doctor_finishes(tmp_path, monkeypatch, empty_roster):
     settings = _settings(tmp_path)
