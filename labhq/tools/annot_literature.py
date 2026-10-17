@@ -103,6 +103,7 @@ def _bibliography(record: dict, *, preprint: bool = False) -> dict:
     nested_journal = (journal_info.get("journal") or {}).get("title")
     journal = (record.get("journalTitle") or record.get("journalAbbreviation")
                or record.get("publicationTitle") or nested_journal)
+    preprint_server = (record.get("bookOrReportDetails") or {}).get("publisher")
     full_text = _yes(record.get("isOpenAccess")) or _yes(record.get("inEPMC")) or bool(pmcid)
     abstract = bool(record.get("abstractText")) or bool(pmid) or code in {"MED", "PPR"}
     out = {
@@ -117,7 +118,7 @@ def _bibliography(record: dict, *, preprint: bool = False) -> dict:
         "access_level_candidate": "full_text" if full_text else "abstract" if abstract else "metadata",
     }
     if preprint:
-        out["server"] = journal
+        out["server"] = preprint_server
         out["review_status"] = "심사 전"
     return {key: value for key, value in out.items() if value not in (None, "")}
 
@@ -359,7 +360,7 @@ class LiteratureAnnotator(Annotator):
         self._from_cache("preprints", CACHE_RELEASE, options, items)
         version = None
         if item.cached_at is None:
-            expression = f'SRC:PPR AND (JOURNAL:"bioRxiv" OR JOURNAL:"medRxiv") AND ({terms})'
+            expression = f'SRC:PPR AND (PUBLISHER:"bioRxiv" OR PUBLISHER:"medRxiv") AND ({terms})'
             response = await self.http.request("europepmc", "GET", f"{EUROPEPMC}/search", params={
                 "query": expression, "resultType": "core", "format": "json", "pageSize": limit})
             if response.status_code != 200:
@@ -369,8 +370,8 @@ class LiteratureAnnotator(Annotator):
             records = (data.get("resultList") or {}).get("result") or []
             candidates = []
             for record in records:
-                journal = str(record.get("journalTitle") or record.get("journalAbbreviation") or "")
-                if journal.casefold() not in {"biorxiv", "medrxiv"}:
+                publisher = str((record.get("bookOrReportDetails") or {}).get("publisher") or "")
+                if publisher.casefold() not in {"biorxiv", "medrxiv"}:
                     continue
                 candidates.append(_bibliography(record, preprint=True))
             item.answer = {"found_count": int(data.get("hitCount") or len(candidates)),

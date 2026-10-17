@@ -285,13 +285,15 @@ async def test_preprint_search_uses_ppr_and_marks_every_result_as_unreviewed(tmp
     def handler(request):
         assert request.url.path.endswith("/search")
         assert "SRC:PPR" in request.url.params["query"]
-        assert 'JOURNAL:"bioRxiv"' in request.url.params["query"]
-        assert 'JOURNAL:"medRxiv"' in request.url.params["query"]
+        assert 'PUBLISHER:"bioRxiv"' in request.url.params["query"]
+        assert 'PUBLISHER:"medRxiv"' in request.url.params["query"]
         return httpx.Response(200, json={"version": "6.9", "hitCount": 2, "resultList": {"result": [
             {"source": "PPR", "id": "PPR1", "doi": "10.1101/1", "title": "A bioRxiv study",
-             "authorString": "Fox A.", "journalTitle": "bioRxiv", "pubYear": "2025", "abstractText": "A."},
+             "authorString": "Fox A.", "bookOrReportDetails": {"publisher": "bioRxiv"},
+             "pubYear": "2025", "abstractText": "A."},
             {"source": "PPR", "id": "PPR2", "doi": "10.1101/2", "title": "A medRxiv study",
-             "authorString": "Bear B.", "journalTitle": "medRxiv", "pubYear": "2026", "isOpenAccess": "Y"},
+             "authorString": "Bear B.", "bookOrReportDetails": {"publisher": "medRxiv"},
+             "pubYear": "2026", "isOpenAccess": "Y"},
         ]}})
 
     annotator, calls = make(handler, tmp_path)
