@@ -356,6 +356,33 @@ def _topological_steps(steps: list[Mapping[str, Any]], results: Mapping[str, Any
     return ordered, [by_id[step_id] for step_id in ordered if step_id in by_id]
 
 
+def _tool_calls_section(ordered_ids: list[str], results: Mapping[str, Any]) -> str:
+    """Render aggregate tool names and counts only; raw inputs never enter the request bundle."""
+    rows: list[str] = []
+    for step_id in ordered_ids:
+        result = results.get(step_id)
+        if not isinstance(result, Mapping):
+            continue
+        agent = str(result.get("agent_id") or "-").replace("|", " ").replace("\n", " ")[:160]
+        calls = result.get("tool_calls")
+        if not isinstance(calls, Mapping):
+            continue
+        for tool, raw in sorted(calls.items(), key=lambda item: str(item[0])):
+            if not isinstance(raw, Mapping):
+                continue
+            count, failures = raw.get("calls"), raw.get("failures")
+            if (not isinstance(count, int) or isinstance(count, bool) or count < 0
+                    or not isinstance(failures, int) or isinstance(failures, bool)
+                    or failures < 0 or failures > count):
+                continue
+            name = str(tool).replace("|", " ").replace("\r", " ").replace("\n", " ")[:160]
+            rows.append(f"| {step_id} | {agent} | {name} | {count} | {failures} |")
+    if not rows:
+        return ""
+    return "\n".join(["## 직원별 도구 호출 수", "", "| 단계 | 직원 | 도구 | 호출 | 실패 |",
+                      "|---|---|---|---:|---:|", *rows])
+
+
 def _safe_script_path(path: PurePosixPath) -> bool:
     return all(_SAFE_SCRIPT_COMPONENT.fullmatch(part) for part in path.parts)
 
@@ -746,7 +773,8 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
         report = report_text
         from .report_format import split_appendix
         appendix, legacy = split_appendix(str(req.get("report_appendix") or ""))
-        execution = "\n\n".join(p for p in [str(req.get("execution_record") or ""), legacy] if p)
+        tool_calls = _tool_calls_section(ordered_ids, results)
+        execution = "\n\n".join(p for p in [str(req.get("execution_record") or ""), legacy, tool_calls] if p)
         replaced = _superseded(req, tasks)
         if replaced:
             execution += ("\n\n## 요청 묶음: 대체됨\n\n" +

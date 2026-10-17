@@ -361,7 +361,8 @@ class CodexAdapter(AgentAdapter):
                     note_failed_output(st, item.get("aggregated_output"))
                     if _command_needs_setup(message):
                         _stop_for_setup(st, ELEVATED_SETUP_ERROR)
-                    await ctx.emit("agent.tool_error", {**event_preview("text", message, 400)})
+                    await ctx.emit("agent.tool_error", {"id": item.get("id"),
+                                                         **event_preview("text", message, 400)})
             elif it == "mcp_tool_call" and typ == "item.started":
                 call = {"id": item.get("id"), "name": f"mcp:{item.get('server')}.{item.get('tool')}"}
                 call["input_fingerprint"] = tool_input_fingerprint(call["name"], item.get("arguments"))
@@ -383,7 +384,8 @@ class CodexAdapter(AgentAdapter):
                 # labhq wired the server wrong (openai/codex#24135), so that one fails the task loudly.
                 if "approval policy" in message:
                     st.error = message
-                await ctx.emit("agent.tool_error", {**event_preview("text", message, 400)})
+                await ctx.emit("agent.tool_error", {"id": item.get("id"),
+                                                     **event_preview("text", message, 400)})
             elif it == "file_change" and typ == "item.completed":
                 changes = item.get("changes") or []
                 await ctx.emit("agent.tool", {"name": "edit", "completed": True,

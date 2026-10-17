@@ -38,7 +38,8 @@ from ..artifact_policy import unreported_warning_paths
 from .. import output_checks
 from ..facilities import fixes as facility_fixes
 from ..login import LOGIN_PATH_ENV
-from ..models import ASK_MAX_WAIT_S, AgentSpec, ApprovalRequest, AskRequest, Engine, Event, McpServerSpec, Task, TaskResult, waiting
+from ..models import (ASK_MAX_WAIT_S, AgentSpec, ApprovalRequest, AskRequest, Engine, Event, McpServerSpec, Task,
+                      TaskResult, ToolCallCount, waiting)
 from .breaker import Breaker, trip_text
 from ..hooks.control import CONTROL_ENV, add_control_hooks
 from .versions import engine_cli_versions
@@ -74,6 +75,44 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CONSULT_REF_MAX_FILE_BYTES = 8 * 1024 * 1024
 CONSULT_REFS_MAX_TOTAL_BYTES = 32 * 1024 * 1024
 CONSULT_REF_COPY_CHUNK = 1024 * 1024
+
+
+def _recorded_tool_name(value: object) -> str:
+    """Return one bounded display name, normalizing Claude's MCP spelling to server.tool."""
+    name = str(value or "unknown").replace("\r", " ").replace("\n", " ").replace("|", " ").strip()
+    if name.startswith("mcp__"):
+        parts = name.split("__", 2)
+        if len(parts) == 3 and parts[1] and parts[2]:
+            name = f"mcp:{parts[1]}.{parts[2]}"
+    return name[:160] or "unknown"
+
+
+class ToolCallCounter:
+    """Count normalized runner events without retaining any tool input or output."""
+
+    def __init__(self) -> None:
+        self.calls: dict[str, int] = {}
+        self.failures: dict[str, int] = {}
+        self.by_id: dict[str, str] = {}
+        self.last_name: str | None = None
+
+    def observe(self, typ: str, data: dict[str, Any]) -> None:
+        if typ == "agent.tool":
+            name = _recorded_tool_name(data.get("name"))
+            self.calls[name] = self.calls.get(name, 0) + 1
+            self.last_name = name
+            if data.get("id") is not None:
+                self.by_id[str(data["id"])] = name
+        elif typ == "agent.tool_error":
+            tool_id = data.get("id")
+            name = self.by_id.get(str(tool_id)) if tool_id is not None else None
+            name = name or (_recorded_tool_name(data["name"]) if data.get("name") else self.last_name)
+            if name in self.calls:
+                self.failures[name] = self.failures.get(name, 0) + 1
+
+    def summary(self) -> dict[str, ToolCallCount]:
+        return {name: ToolCallCount(calls=calls, failures=min(self.failures.get(name, 0), calls))
+                for name, calls in sorted(self.calls.items())}
 
 
 @contextlib.asynccontextmanager
@@ -1286,9 +1325,11 @@ class Runner:
             self.task_req[task.id] = task.request_id
 
         tool_errors: list[str] = []
+        tool_calls = ToolCallCounter()
         breaker = Breaker()
 
         async def emit(typ: str, data: dict) -> None:
+            tool_calls.observe(typ, data)
             if typ == "task.result":  # the last event: which steers were delivered, for the gateway's step (#59 ①)
                 data = {**data, "control": self.controls.finish(task.id)}
             if typ == "agent.tool_error" and task.meta.get("general_result_contract"):
@@ -1900,6 +1941,7 @@ class Runner:
                 await emit("agent.log", {"level": "warn", "text": "output type records unavailable; result kept"})
         if paper_skill_build is not None:
             result = await asyncio.to_thread(paper_skill_build.finish, result)
+        result.tool_calls = tool_calls.summary()
         try:
             # Never through a link the agent made (#165). Both files are one job: a cancel cannot write only one.
             await awrite_owned_many(ws.dir, [(f"outputs/{name}", result.text or "")

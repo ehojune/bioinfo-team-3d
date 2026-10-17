@@ -476,6 +476,7 @@ class ClaudeCodeAdapter(AgentAdapter):
                                 **({"structured_output_failure_path": saved} if saved else {}),
                             }
                     await ctx.emit("agent.tool_error", {
+                        "id": block.get("tool_use_id"),
                         **event_preview("text", block.get("content"), 400),
                         **({"structured_output_parse_error": True} if parse_error else {}),
                         **details,

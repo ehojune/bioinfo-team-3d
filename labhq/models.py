@@ -306,6 +306,17 @@ class Task(BaseModel):
     meta: Annotated[dict[str, Any], RunnerPathFields] = {}
 
 
+class ToolCallCount(BaseModel):
+    calls: int = Field(ge=0)
+    failures: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def failures_do_not_exceed_calls(self) -> "ToolCallCount":
+        if self.failures > self.calls:
+            raise ValueError("tool call failures cannot exceed calls")
+        return self
+
+
 class TaskResult(BaseModel):
     task_id: str
     agent_id: str
@@ -337,6 +348,8 @@ class TaskResult(BaseModel):
     evidence_path_warnings: list[str] = []
     # One bounded first line per failed tool call, collected for every employee task.
     tool_errors: list[str] = []
+    # Tool names and aggregate counts only; arguments, commands and paths never enter this record (#701).
+    tool_calls: dict[str, ToolCallCount] = {}
     # "<output>: <problem>" for a collected .tsv/.tab/.csv that does not read as a table (#710).
     table_warnings: list[str] = []
     # {paper id: best access_level} from this task's labhq_annot.fulltext lookups (#697).
@@ -407,6 +420,8 @@ class TaskResult(BaseModel):
                 data.pop("evidence_path_warnings", None)
             if not data.get("tool_errors"):
                 data.pop("tool_errors", None)
+            if not data.get("tool_calls"):
+                data.pop("tool_calls", None)
             if not data.get("table_warnings"):
                 data.pop("table_warnings", None)
             if not data.get("literature_access"):

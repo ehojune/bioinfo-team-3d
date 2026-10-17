@@ -33,7 +33,8 @@ from ..facilities import fixes as facility_fixes
 from ..intake import (CLARIFYING_QUESTION_SCHEMA, QUESTION_RULE, has_structure,
                       question_detail_lines, questions_summary, reference_dirs, render_references,
                       unanswered_questions)
-from ..models import AskRequest, RunnerUnavailable, Task, TaskResult, hard_stop_kind, new_id, waiting
+from ..models import (AskRequest, RunnerUnavailable, Task, TaskResult, ToolCallCount, hard_stop_kind, new_id,
+                      waiting)
 from ..quota import is_quota_error, received_quota_wait
 from ..login import is_login_error
 from ..report_format import (PAPER_RULE, ABSTRACT_PLAN_RULE, split_appendix, scientific_appendix, add_references)
@@ -1287,6 +1288,16 @@ def unbound_evidence_problems(ledger: dict[str, Any], result: TaskResult, upstre
             "is not collected, and no file written now is collected."]
 
 
+def merged_tool_calls(*results: TaskResult) -> dict[str, ToolCallCount]:
+    totals: dict[str, list[int]] = {}
+    for result in results:
+        for name, count in result.tool_calls.items():
+            row = totals.setdefault(name, [0, 0])
+            row[0] += count.calls
+            row[1] += count.failures
+    return {name: ToolCallCount(calls=row[0], failures=row[1]) for name, row in sorted(totals.items())}
+
+
 def merged_turn(first: TaskResult, later: TaskResult) -> TaskResult:
     """A later turn of the same step in the same workspace. The runner lists and hashes the declared outputs as they
     are after that turn, so that view replaces the first turn's: a file the later turn removed, or grew past the hash
@@ -1295,6 +1306,7 @@ def merged_turn(first: TaskResult, later: TaskResult) -> TaskResult:
         "unreported_outputs": sorted((set(first.unreported_outputs) | set(later.unreported_outputs))
                                      - set(later.outputs)),
         "tool_errors": [*first.tool_errors, *later.tool_errors],
+        "tool_calls": merged_tool_calls(first, later),
         "workdir": later.workdir or first.workdir,
         "workdir_id": later.workdir_id or first.workdir_id,
     })
@@ -3739,6 +3751,7 @@ class Orchestrator:
                     res = retried.model_copy(update={
                         "facilities_fix": final_record,
                         "tool_errors": list(dict.fromkeys([*res.tool_errors, *retried.tool_errors])),
+                        "tool_calls": merged_tool_calls(res, retried),
                     })
         diagnose = getattr(self.hub, "request_facilities_diagnosis", None)
         if (environment and not propose and not read_only and not res.facilities_fix and
@@ -3800,6 +3813,7 @@ class Orchestrator:
                                              "output_types_stats": (partial.output_types_stats or
                                                                     res.output_types_stats),
                                              "tool_errors": [*res.tool_errors, *partial.tool_errors],
+                                             "tool_calls": merged_tool_calls(res, partial),
                                              "error": f"{res.error or 'error_max_turns'}; wrap-up: {note}"})
             except BudgetExceeded:
                 pass
@@ -4253,12 +4267,15 @@ class Orchestrator:
                         "structured": ledger.model_dump(mode="json"),
                         "session_id": via.session_id or original.session_id,
                         "workdir": via.workdir or original.workdir,
+                        "tool_errors": list(dict.fromkeys([*original.tool_errors, *via.tool_errors])),
+                        "tool_calls": merged_tool_calls(original, via),
                         "step_warnings": list(dict.fromkeys([
                             *original.step_warnings, *via.step_warnings, *normalization_warnings])),
                     })
 
                 async def repair_slots(structured: dict, slots: list[str]) -> TaskResult:
                     # Persist before dispatch: a restarted DAG must not ask a second time.
+                    answer: TaskResult | None = None
                     records = req_state["research_contract"].setdefault("slot_repairs", {})
                     record = records.get(step["id"])
                     if record and record.get("plan_sha256") != research_plan_sha256(research_plan):
@@ -4307,7 +4324,11 @@ class Orchestrator:
                             self.hub.save_request(rid)
                     ledger = repair_result_slots(structured, slots, record.get("answers"))
                     validate_research_result(ledger.model_dump(mode="json"), plan=research_plan)
-                    return accept(ledger, current)
+                    via = (current if answer is None else current.model_copy(update={
+                        "tool_errors": list(dict.fromkeys([*current.tool_errors, *answer.tool_errors])),
+                        "tool_calls": merged_tool_calls(current, answer),
+                    }))
+                    return accept(ledger, via)
 
                 for correction in range(limit + 1):
                     asked = blocking_question(current)
@@ -4385,7 +4406,11 @@ class Orchestrator:
                             title=f"{step['id']}: 결과 계약 교정 #{correction + 1}",
                             **({"workdir": current.workdir} if current.workdir else {})),
                     )
-                    current = await self.run_step(correction_task)
+                    corrected = await self.run_step(correction_task)
+                    current = corrected.model_copy(update={
+                        "tool_errors": list(dict.fromkeys([*current.tool_errors, *corrected.tool_errors])),
+                        "tool_calls": merged_tool_calls(current, corrected),
+                    })
                     if not current.ok and bindable is not None:
                         return accept(*bindable)
                     if not current.ok:
@@ -4467,7 +4492,9 @@ class Orchestrator:
                     if (feedback and sid in feedback and previous and previous.ok and not outcome.ok
                             and outcome.error_kind not in PI_STOP_ERROR_KINDS | {"wake_limit"}):
                         outcome = previous.model_copy(update={"revision_failed":
-                            f"{outcome.error_kind or failure_kind(outcome) or 'terminal'}: {outcome.error or 'unknown error'}"})
+                            f"{outcome.error_kind or failure_kind(outcome) or 'terminal'}: {outcome.error or 'unknown error'}",
+                            "tool_errors": list(dict.fromkeys([*previous.tool_errors, *outcome.tool_errors])),
+                            "tool_calls": merged_tool_calls(previous, outcome)})
                     results[sid] = outcome
                     if not outcome.ok and failure_kind(outcome) not in {"environment", "login", "quota"}:
                         self._record_dev_failure(rid, sid, outcome.error or "unknown error",
