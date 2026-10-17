@@ -1753,6 +1753,8 @@ class Runner:
         for note in input_notes:
             await emit("agent.log", {"level": "warn", "text": note})
         declared = task.meta.get("outputs", [])
+        required_declared = task.meta.get("required_outputs", declared)
+        optional_declared = task.meta.get("optional_outputs", [])
         found = []
         for name in declared:
             relative = output_relpath(name)
@@ -1778,6 +1780,21 @@ class Runner:
         result.output_tool_use_ids = {row["path"]: row["tool_use_id"] for row in observed_outputs
                                       if isinstance(row.get("tool_use_id"), str)}
         collected = set(result.outputs)
+        if result.ok:
+            missing_required = [rel for name in required_declared
+                                if (rel := output_relpath(name)) and rel not in collected]
+            missing_optional = [rel for name in optional_declared
+                                if (rel := output_relpath(name)) and rel not in collected]
+            if missing_required:
+                result.ok = False
+                result.missing_outputs = list(dict.fromkeys([*result.missing_outputs, *missing_required]))
+                result.error = "incomplete: missing outputs: " + ", ".join(result.missing_outputs)
+            if missing_optional:
+                result.missing_optional_outputs = list(dict.fromkeys([
+                    *result.missing_optional_outputs, *missing_optional]))
+                warning = "선택 산출 누락: " + ", ".join(result.missing_optional_outputs)
+                result.step_warnings = list(dict.fromkeys([*result.step_warnings, warning]))
+                await emit("agent.log", {"level": "warn", "text": warning})
         # Bytecode caches are the interpreter's, not the employee's: 21 unreported files of the v0.5 trial included
         # outputs/lib/__pycache__ (#485). They stay in the observed records.
         result.unreported_outputs = sorted(row["path"] for row in observed_outputs

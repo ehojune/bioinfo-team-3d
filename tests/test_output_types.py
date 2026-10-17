@@ -37,9 +37,10 @@ CANARY = "CANARY-7f3a-secret"
 # #621 adds the approved topic variant_effect, so the topic rule this test renders grows by one entry; the prompt
 # template, the schema and the output-type switch are unchanged (this hash moved on purpose).
 # PR #693 adds staff-skill fields to the canonical plan schema and writing-skill guidance to the prompt.
-PLAN_SCHEMA_SHA = "0c36ef948e2f22f77071fa222a4da33994341d39fa6ebfb3ea1f18173dde2101"
+# #716 adds optional_outputs and deterministic conversion guidance.
+PLAN_SCHEMA_SHA = "3f66aee51285e31aba7126f9e9279d7244ce9b7cf0739a3f4164faba2fc606d4"
 # Issues #683/#690 intentionally add the SVG figure declaration rules.
-PLAN_PROMPT_SHA = "98a4802cd15ed5fa9b089b2165e96814e7fb0eb9c11494fe2714c3b917de841d"
+PLAN_PROMPT_SHA = "7e75cdb116fdd7eae6c1a2ed05dc62f2c3c15512d8bf0c26aaa523339b2d01b9"
 PROMPT_ARGS = dict(request="REQ", roster="ROSTER", capabilities="CAPS", briefing="BRIEF", max_steps=3,
                    question_rule=QUESTION_RULE, lab_scope="LAB", topics_rule=topics.prompt_rule(V))
 

@@ -259,7 +259,10 @@ class RunnerPathFields:
     upstream_dirs: WirePaths
     upstream_steps: WirePathValues
     outputs: WirePaths
+    required_outputs: WirePaths
+    optional_outputs: WirePaths
     missing_outputs: WirePaths
+    missing_optional_outputs: WirePaths
     unreported_outputs: WirePaths
     output_sha256: WirePathKeys
     output_types: WirePathKeys
@@ -321,6 +324,8 @@ class TaskResult(BaseModel):
     workdir_id: str | None = None
     outputs: WirePaths = []  # paths relative to workdir
     missing_outputs: WirePaths = []
+    missing_optional_outputs: WirePaths = []
+    step_warnings: list[str] = []
     # output relpath -> type record (labhq.vocab.declare.runner_records); only for collected outputs (#221)
     output_types: WirePathKeys = {}
     output_types_stats: dict[str, Any] = {}

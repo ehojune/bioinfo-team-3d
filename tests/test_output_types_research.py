@@ -37,9 +37,10 @@ CANARY = "CANARY-research-91c2"
 # prompt template and both schemas are unchanged (RESEARCH_PROMPT_SHA moved on purpose, VALID_PLAN_SHA did not).
 # #683 and #690 add declared analysis figures and SVG text/quality rules; #693 then adds staff-skill fields and guidance.
 # #686 adds optional research branches and per-step branch ids; #694 adds the hypothesis-aligned reference rule.
-RESEARCH_PLAN_SCHEMA_SHA = "dc93790d21e41d290e4d75d254d0d5c80c3ca602d30538da2bcaef9a7a44bf26"
+# #716 adds optional_outputs while legacy plans still serialize to VALID_PLAN_SHA.
+RESEARCH_PLAN_SCHEMA_SHA = "ecaec20a558be2cba0955836579538a13a1785ce5baed14bda3827a054d8f859"
 RESEARCH_RESULT_SCHEMA_SHA = "9a767787fade091505fea149a8841845738ce30ce77cf6657cbca0aaa72af64d"
-RESEARCH_PROMPT_SHA = "5df570c9014878b27384ae0eefc6047ab1e02ed745ba13b2a3eedd58266e5488"
+RESEARCH_PROMPT_SHA = "c3fd6c6959af8d5e52617a5d62aeca73459fd0194a204267bb1da161bd4345b7"
 VALID_PLAN_SHA = "f611461cc2dbb17e39159ec1df6a75d8f7b661eb39bbe42c8ed0438c5c45e213"
 
 
