@@ -61,6 +61,11 @@ _SIMPLE_SIGNALS = (
 )
 
 
+def unnegated_analysis_text(text: str) -> str:
+    """Remove analysis phrases the PI explicitly ruled out before matching analysis terms."""
+    return _NEGATED_ANALYSIS.sub(" ", text)
+
+
 def classify_intake(text: str, requested: str = "auto", *, scope_status: str = "in_scope",
                     mode: str = "orchestrate") -> IntakeDecision:
     """Classify without an extra model call; ambiguous requests enter the research planning lane."""
@@ -70,7 +75,7 @@ def classify_intake(text: str, requested: str = "auto", *, scope_status: str = "
     if mode == "direct":  # the PI picked one staff member: a task for them, not a frozen research plan (R16)
         return IntakeDecision(work_kind="simple", reason="PI sent the request to one staff member directly",
                               scope_status=scope_status, source="explicit")
-    unnegated = _NEGATED_ANALYSIS.sub(" ", text)
+    unnegated = unnegated_analysis_text(text)
     research = any(re.search(pattern, unnegated, re.IGNORECASE) for pattern in _RESEARCH_SIGNALS)
     simple = any(re.search(pattern, text, re.IGNORECASE) for pattern in _SIMPLE_SIGNALS)
     if simple and not research:
