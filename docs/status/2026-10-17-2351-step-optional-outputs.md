@@ -12,6 +12,7 @@ PR #727에서 주 산출이 있는 단계는 선택 산출이 빠져도 진행�
 
 - 새 회귀는 구현 전 실패하고 구현 뒤 7건 통과했습니다.
 - 관련 pytest: 508 passed, 1 skipped.
+- 첫 CI Python 3.12의 호환성 회귀 2건을 고친 뒤 해당 test는 2 passed입니다.
 - `scripts/check_public.sh` 통과.
 - `docs/manual.md`: 157,625자 → 157,816자(+191).
 
