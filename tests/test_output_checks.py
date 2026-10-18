@@ -6,8 +6,8 @@ import pytest
 
 from labhq.models import TaskResult
 from labhq.orchestrator.cso import Orchestrator, general_report_warnings
-from labhq.output_checks import (conclusion_literature_line, literature_access, quality_lines, table_problem,
-                                 table_warnings)
+from labhq.output_checks import (conclusion_literature_line, literature_access, literature_ledger,
+                                 literature_ledger_line, quality_lines, table_problem, table_warnings)
 from tests.test_research_report import _hub
 
 
@@ -102,6 +102,56 @@ def test_literature_access_keeps_each_papers_best_level(tmp_path):
         "DOI:10.1/x": "metadata",
     }
     assert literature_access(tmp_path / "empty") == {}
+
+
+def test_literature_ledger_keeps_candidate_selected_and_acquired_denominators_separate(tmp_path):
+    work = tmp_path / "work"
+    _fulltext_record(work, "discovery", [{"input": "query", "answer": {
+        "found_count": 9, "returned_count": 4, "candidates": [
+            {"openalex_id": "W1", "pmid": "1", "doi": "10.1000/a"},
+            {"openalex_id": "W2", "doi": "10.1000/b"},
+            {"openalex_id": "W3"},
+            {"openalex_id": "W4", "pmid": "4"},
+        ],
+    }}], tool="openalex_works")
+    _fulltext_record(work, "selected", [
+        {"input": "PMID:1", "answer": {"found": True, "access_level": "full_text", "pmid": "1",
+                                         "doi": "10.1000/a"}},
+        {"input": "10.1000/b", "answer": {"found": True, "access_level": "abstract", "doi": "10.1000/b",
+                                             "unread_reason": "subscription_required"}},
+        {"input": "PMID:4", "answer": {"found": True, "access_level": "metadata", "pmid": "4",
+                                         "unread_reason": "format_failure"}},
+    ])
+    assert literature_ledger(work) == {
+        "candidate_ids": ["PMID:1|DOI:10.1000/a|OpenAlex:W1", "DOI:10.1000/b|OpenAlex:W2",
+                          "OpenAlex:W3", "PMID:4|OpenAlex:W4"],
+        "selected_ids": ["PMID:1|DOI:10.1000/a", "DOI:10.1000/b", "PMID:4"],
+        "unread": {"DOI:10.1000/b": "subscription_required", "PMID:4": "format_failure"},
+    }
+
+
+def test_literature_ledger_line_has_four_exact_denominators_and_unread_key_papers():
+    ledgers = {"s1": {
+        "claims": [{"id": "c1", "status": "supported"}],
+        "evidence": [
+            {"id": "full", "source": {"id_scheme": "pmid", "id_value": "1"}},
+            {"id": "closed", "source": {"id_scheme": "doi", "id_value": "10.1000/b"}},
+            {"id": "missing", "source": {"id_scheme": "pmid", "id_value": "9"}},
+        ],
+        "links": [{"claim_id": "c1", "evidence_id": evidence_id, "relation": "supports"}
+                  for evidence_id in ("full", "closed", "missing")],
+    }}
+    results = {"s1": {
+        "literature_access": {"PMID:1": "full_text", "DOI:10.1000/b": "abstract"},
+        "literature_ledger": {
+            "candidate_ids": ["PMID:1", "DOI:10.1000/b", "PMID:9", "OpenAlex:W4"],
+            "selected_ids": ["PMID:1", "DOI:10.1000/b", "PMID:9"],
+            "unread": {"DOI:10.1000/b": "subscription_required"},
+        },
+    }}
+    line = literature_ledger_line([{"id": "s1"}], results, ledgers)
+    assert line.startswith("문헌 접근 실패 원장(서로 다른 분모): 후보 4편·선정 3편·확보 2편(본문 1·초록 1·서지 0)·결론 근거 3편.")
+    assert "DOI:10.1000/b(구독 필요)" in line and "PMID:9(조회 기록 없음)" in line
 
 
 def test_quality_lines_merge_steps_and_skip_an_all_full_text_reading():
@@ -205,7 +255,7 @@ def test_general_report_warnings_show_table_problems():
 
 def test_wire_form_omits_empty_check_fields():
     data = TaskResult(task_id="t", agent_id="a", ok=True).model_dump()
-    assert "table_warnings" not in data and "literature_access" not in data
+    assert "table_warnings" not in data and "literature_access" not in data and "literature_ledger" not in data
 
 
 @pytest.mark.asyncio
@@ -218,6 +268,11 @@ async def test_research_cp2_card_and_report_limits_carry_the_checks():
         if task.meta["kind"] == "step":
             result.table_warnings = ["outputs/lit.tsv: 칸 구분이 탭이 아니라 글자 \\t입니다"]
             result.literature_access = {"PMID:1": "full_text", "PMID:2": "abstract", "PMID:99": "metadata"}
+            result.literature_ledger = {
+                "candidate_ids": ["PMID:1", "PMID:2", "DOI:10.1000/missing", "OpenAlex:W4"],
+                "selected_ids": ["PMID:1", "PMID:2", "DOI:10.1000/missing"],
+                "unread": {"PMID:2": "subscription_required"},
+            }
             result.structured["evidence"] += [
                 {"id": "paper_full", "kind": "literature_claim", "observation": "paper one",
                  "status": "observed", "source": {"uri": "https://pubmed.ncbi.nlm.nih.gov/1/",
@@ -255,5 +310,7 @@ async def test_research_cp2_card_and_report_limits_carry_the_checks():
     assert "표로 읽히지 않는 산출물 1개" in card and "본문 1편, 초록 1편" in card
     depth = "결론 근거 논문 3편: 본문 1편·초록 1편·서지만 0편·조회 기록 없음 1편"
     assert depth in card
+    ledger = "문헌 접근 실패 원장(서로 다른 분모): 후보 4편·선정 3편·확보 3편(본문 1·초록 1·서지 1)·결론 근거 3편"
+    assert ledger in card and "PMID:2(구독 필요)" in card and "DOI:10.1000/missing(조회 기록 없음)" in card
     limits = req["report"].split("## 한계", 1)[1]
-    assert "outputs/lit.tsv" in limits and "fulltext로 조회한 3편" in limits and depth in limits
+    assert "outputs/lit.tsv" in limits and "fulltext로 조회한 3편" in limits and depth in limits and ledger in limits

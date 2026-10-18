@@ -555,6 +555,9 @@ class AnnotSettings(BaseModel):
     key. No key file: the alphagenome tool is not registered."""
 
     alphagenome_key_file: str = "~/.labhq/secrets/alphagenome_api_key"
+    # Unpaywall requires a contact email. It is used only as the API query parameter and is never put in results,
+    # query logs or cache keys. Empty keeps the tool visible but explicitly disabled (#744).
+    unpaywall_email: str = ""
 
 
 class GitHubSettings(BaseModel):

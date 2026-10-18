@@ -2,7 +2,8 @@
 
 Variants: Ensembl VEP, gnomAD, ClinVar (`annot.py`). Regions, genes and expression: ChIP-Atlas, ENCODE cCREs, GTEx,
 and AlphaGenome predictions when its key file exists (`annot_regulatory.py`). Papers: Europe PMC open-access full text,
-citation chasing, and bioRxiv/medRxiv preprints (`annot_literature.py`, #697, #720).
+citation chasing, bioRxiv/medRxiv preprints, OpenAlex discovery, Crossref metadata and Unpaywall legal OA locations
+(`annot_literature.py`, #697, #720, #744).
 
 Env (set by the runner): LABHQ_WORKDIR (where outputs/annotation_queries.jsonl goes), LABHQ_CONFIG (state_dir for the
 cache, annot.alphagenome_key_file). The AlphaGenome key is read here from that owner-only file, never from the
@@ -46,7 +47,9 @@ server = make_server(
         "list or regions), chipatlas_targets (target genes of a transcription factor), encode (ENCODE candidate "
         "cis-regulatory elements overlapping regions), gtex (GTEx tissue expression and eQTLs for genes or variants), "
         "fulltext (the body of a paper by PMID, PMCID or DOI: Europe PMC open-access full text, else the abstract), "
-        "citation_chase (references and citing papers for one paper), preprints (bioRxiv/medRxiv search; 심사 전)"
+        "citation_chase (references and citing papers for one paper), preprints (bioRxiv/medRxiv search; 심사 전), "
+        "openalex_works (broad works search without OA pre-filtering), crossref_doi (version/license/update/retraction "
+        "metadata), unpaywall (legal OA locations; explicitly disabled when annot.unpaywall_email is empty)"
         + ("; alphagenome_variant (recommended variant effect scores, GRCh38), "
            "alphagenome (legacy track summaries over variants or intervals)" if ALPHAGENOME else "")
         + ". Give variants as chr:pos:ref:alt (VCF-style alleles), HGVS or rsID, and regions as chr:start-end "
@@ -79,7 +82,8 @@ async def _run(method: str, *args: object, **kwargs: object) -> str:
 async def _run_literature(method: str, *args: object) -> str:
     async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=20.0), follow_redirects=True,
                                  headers={"User-Agent": annot.USER_AGENT}) as client:
-        annotator = annot_literature.LiteratureAnnotator(client, WORKDIR, CACHE_DIR, pace=PACE)
+        annotator = annot_literature.LiteratureAnnotator(
+            client, WORKDIR, CACHE_DIR, pace=PACE, unpaywall_email=S.annot.unpaywall_email)
         try:
             result = await getattr(annotator, method)(*args)
         except (annot.LookupFailed, ValueError) as exc:
@@ -179,6 +183,28 @@ async def preprints(query: str, limit: int = 25) -> str:
     """Search bioRxiv and medRxiv through Europe PMC SRC:PPR. Returns up to `limit` candidates (1..100), all marked
     `심사 전`; do not treat them as peer-reviewed evidence."""
     return await _run_literature("preprints", query, limit)
+
+
+@server.tool()
+async def openalex_works(query: str, filters: list[str] | None = None, limit: int = 25) -> str:
+    """Search OpenAlex works across disciplines. `filters` are OpenAlex filter expressions, one per list item, and
+    `limit` is 1..200. Results include DOI, PMID, OA status and best_oa_location, citation count, cited-by query URL,
+    and referenced OpenAlex work IDs. OA status is never used to remove a candidate."""
+    return await _run_literature("openalex_works", query, filters, limit)
+
+
+@server.tool()
+async def crossref_doi(dois: list[str]) -> str:
+    """Crossref metadata for up to 50 DOIs: registered version, licenses, relations, update-to records and an
+    explicit retraction flag. Metadata does not prove that a full-text copy was acquired."""
+    return await _run_literature("crossref_doi", dois)
+
+
+@server.tool()
+async def unpaywall(dois: list[str]) -> str:
+    """Unpaywall legal OA locations for up to 50 DOIs. Requires annot.unpaywall_email; without it the call returns
+    enabled=false without contacting the API. The contact email is never written to results, logs or cache keys."""
+    return await _run_literature("unpaywall", dois)
 
 
 if ALPHAGENOME is not None:

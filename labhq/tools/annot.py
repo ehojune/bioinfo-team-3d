@@ -78,7 +78,8 @@ ESUMMARY_BATCH = 100
 # ChIP-Atlas, ENCODE, GTEx, AlphaGenome and Europe PMC publish no hard limit beyond ENCODE's 10 per second; these stay
 # well under it (annot_regulatory.py, annot_literature.py).
 MIN_INTERVAL_S = {"ensembl": 1 / 15, "gnomad": 6.0, "ncbi": 1 / 3,
-                  "chipatlas": 1.0, "encode": 0.1, "gtex": 0.25, "alphagenome": 1.0, "europepmc": 0.2}
+                  "chipatlas": 1.0, "encode": 0.1, "gtex": 0.25, "alphagenome": 1.0, "europepmc": 0.2,
+                  "openalex": 0.1, "crossref": 0.1, "unpaywall": 0.1, "oa_copy": 0.2}
 RETRY_STATUS = frozenset({429, 502, 503, 504})
 MAX_ATTEMPTS = 5
 MAX_WAIT_S = 120.0  # a Retry-After longer than this (an hourly quota spent) fails the lookup instead of waiting
@@ -91,7 +92,10 @@ CACHE_MAX_AGE_S = {"gnomad": 30 * 24 * 3600.0,
                    # Europe PMC has no release; an open-access copy can appear after embargo (annot_literature.py).
                    "fulltext": 30 * 24 * 3600.0,
                    "citation_chase": 30 * 24 * 3600.0,
-                   "preprints": 30 * 24 * 3600.0}
+                   "preprints": 30 * 24 * 3600.0,
+                   "openalex_works": 30 * 24 * 3600.0,
+                   "crossref_doi": 30 * 24 * 3600.0,
+                   "unpaywall": 30 * 24 * 3600.0}
 QUERY_LOG = "outputs/annotation_queries.jsonl"
 RESULT_DIR = "outputs/annotation"
 

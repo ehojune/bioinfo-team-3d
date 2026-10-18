@@ -58,7 +58,7 @@ def record(pmid="123", pmcid="PMC999", oa="Y", license="cc by", abstract="Boys w
             "fullTextUrlList": {"fullTextUrl": links or []}}
 
 
-def make(handler, tmp_path, workdir="work"):
+def make(handler, tmp_path, workdir="work", unpaywall_email=""):
     calls = []
 
     def recorder(request):
@@ -69,7 +69,7 @@ def make(handler, tmp_path, workdir="work"):
     (tmp_path / workdir).mkdir(exist_ok=True)
     client = httpx.AsyncClient(transport=httpx.MockTransport(recorder))
     annotator = lit.LiteratureAnnotator(client, tmp_path / workdir, tmp_path / "cache", sleep=clock.sleep,
-                                        clock=clock.clock)
+                                        clock=clock.clock, unpaywall_email=unpaywall_email)
     return annotator, calls
 
 
@@ -80,6 +80,8 @@ def search_answer(records):
 def by_query(table, xml=JATS):
     """Search answers keyed by the query string; fullTextXML answers `xml` for PMC999 and 404 for anything else."""
     def handler(request):
+        if request.url.host == "api.openalex.org":
+            return httpx.Response(200, json={"meta": {"count": 0}, "results": []})
         if request.url.path.endswith("/fullTextXML"):
             return httpx.Response(200, text=xml) if "PMC999" in request.url.path else httpx.Response(404)
         return search_answer(table.get(request.url.params["query"], []))
@@ -310,6 +312,140 @@ async def test_preprint_search_uses_ppr_and_marks_every_result_as_unreviewed(tmp
     cached, cached_calls = make(lambda request: httpx.Response(500), tmp_path, "preprints-again")
     cached_row = (await cached.preprints("paternal exposure sex ratio", limit=10))["results"][0]
     assert cached_calls == [] and cached_row["cached_from"] and cached_row["returned_count"] == 2
+
+
+async def test_openalex_crossref_and_unpaywall_return_recorded_public_metadata(tmp_path):
+    def handler(request):
+        if request.url.host == "api.openalex.org":
+            assert request.url.params["search"] == "paternal exposure"
+            assert request.url.params["filter"] == "from_publication_date:2020-01-01"
+            assert request.url.params["per-page"] == "5"
+            return httpx.Response(200, json={"meta": {"count": 11}, "results": [{
+                "id": "https://openalex.org/W123", "doi": "https://doi.org/10.1000/OA",
+                "ids": {"pmid": "https://pubmed.ncbi.nlm.nih.gov/321"}, "title": "A broad study",
+                "publication_year": 2025, "type": "article", "cited_by_count": 17,
+                "cited_by_api_url": "https://api.openalex.org/works?filter=cites:W123",
+                "referenced_works": ["https://openalex.org/W10", "https://openalex.org/W11"],
+                "open_access": {"is_oa": True, "oa_status": "gold", "oa_url": "https://oa.example/a.pdf"},
+                "best_oa_location": {"landing_page_url": "https://oa.example/a", "pdf_url": "https://oa.example/a.pdf",
+                                     "license": "cc-by", "version": "publishedVersion",
+                                     "source": {"display_name": "Open Journal"}},
+                "authorships": [{"author": {"display_name": "Kim A."}}],
+            }]})
+        if request.url.host == "api.crossref.org":
+            assert request.url.raw_path.endswith(b"/works/10.1000%2Foa")
+            return httpx.Response(200, json={"message": {
+                "DOI": "10.1000/OA", "title": ["A broad study"], "type": "journal-article",
+                "publisher": "Test Publisher", "container-title": ["Open Journal"], "content-version": "vor",
+                "license": [{"URL": "https://creativecommons.org/licenses/by/4.0/", "start": {"date-time": "2025-01-01"}}],
+                "update-to": [{"DOI": "10.1000/old", "type": "retraction", "updated": {"date-time": "2026-01-01"}}],
+                "relation": {"is-version-of": [{"id": "10.1000/preprint", "id-type": "doi"}]},
+            }})
+        if request.url.host == "api.unpaywall.org":
+            assert request.url.params["email"] == "owner@example.org"
+            return httpx.Response(200, json={
+                "doi": "10.1000/oa", "title": "A broad study", "is_oa": True, "oa_status": "gold",
+                "best_oa_location": {"url": "https://oa.example/a", "url_for_pdf": "https://oa.example/a.pdf",
+                                     "host_type": "publisher", "license": "cc-by", "version": "publishedVersion"},
+                "oa_locations": [{"url": "https://repo.example/a", "url_for_pdf": "https://repo.example/a.pdf",
+                                  "host_type": "repository", "license": "cc-by", "version": "acceptedVersion"}],
+            })
+        raise AssertionError(request.url)
+
+    annotator, _calls = make(handler, tmp_path, unpaywall_email="owner@example.org")
+    openalex = (await annotator.openalex_works(
+        "paternal exposure", ["from_publication_date:2020-01-01"], 5))["results"][0]
+    assert openalex["found_count"] == 11 and openalex["returned_count"] == 1
+    candidate = openalex["candidates"][0]
+    assert candidate["doi"] == "10.1000/oa" and candidate["pmid"] == "321" and candidate["is_oa"] is True
+    assert candidate["best_oa_location"]["pdf_url"] == "https://oa.example/a.pdf"
+    assert candidate["cited_by_count"] == 17 and candidate["references"] == ["W10", "W11"]
+
+    crossref = (await annotator.crossref_doi(["10.1000/OA"]))["results"][0]
+    assert crossref["version"] == "vor" and crossref["licenses"][0]["url"].startswith("https://creativecommons")
+    assert crossref["updates"][0]["type"] == "retraction" and crossref["retracted"] is True
+
+    unpaywall = await annotator.unpaywall(["https://doi.org/10.1000/OA"])
+    assert unpaywall["enabled"] is True
+    assert unpaywall["results"][0]["best_oa_location"]["pdf_url"] == "https://oa.example/a.pdf"
+    assert unpaywall["results"][0]["oa_locations"][0]["host_type"] == "repository"
+
+    log = [json.loads(line) for line in (tmp_path / "work" / "outputs" / "annotation_queries.jsonl")
+           .read_text(encoding="utf-8").splitlines()]
+    assert [row["tool"] for row in log] == ["openalex_works", "crossref_doi", "unpaywall"]
+
+
+async def test_unpaywall_without_contact_email_is_explicitly_disabled_and_does_not_call_the_api(tmp_path):
+    annotator, calls = make(lambda request: (_ for _ in ()).throw(AssertionError(request.url)), tmp_path)
+    out = await annotator.unpaywall(["10.1000/test"])
+    assert out["enabled"] is False and "annot.unpaywall_email" in out["disabled_reason"]
+    assert out["results"][0]["enabled"] is False and calls == []
+    logged = json.loads((tmp_path / "work" / "outputs" / "annotation_queries.jsonl").read_text(encoding="utf-8"))
+    assert logged["tool"] == "unpaywall" and "email" not in json.dumps(logged)
+
+
+async def test_fulltext_uses_a_legal_oa_pdf_after_europe_pmc_has_no_body(tmp_path):
+    pdf = b"%PDF-1.4\n1 0 obj <<>> stream\nBT (Open access full text from the repository.) Tj ET\nendstream\nendobj\n%%EOF"
+
+    def handler(request):
+        if request.url.host == "www.ebi.ac.uk":
+            return search_answer([record("123", None, "N", None)])
+        if request.url.host == "api.unpaywall.org":
+            return httpx.Response(200, json={
+                "doi": "10.1000/test", "is_oa": True, "oa_status": "green",
+                "best_oa_location": {"url_for_pdf": "https://repo.example/paper.pdf", "url": "https://repo.example/paper",
+                                     "host_type": "repository", "license": "cc-by", "version": "acceptedVersion"},
+                "oa_locations": [],
+            })
+        if request.url.host == "api.openalex.org":
+            return httpx.Response(200, json={"meta": {"count": 0}, "results": []})
+        if request.url.host == "repo.example":
+            return httpx.Response(200, content=pdf, headers={"content-type": "application/pdf"})
+        raise AssertionError(request.url)
+
+    annotator, _calls = make(handler, tmp_path, unpaywall_email="owner@example.org")
+    row = (await annotator.fulltext(["PMID:123"]))["results"][0]
+    assert row["access_level"] == "full_text" and row["read_source"] == "Unpaywall"
+    assert row["oa_copy"]["url"] == "https://repo.example/paper.pdf"
+    text = (tmp_path / "work" / row["text_file"]).read_text(encoding="utf-8")
+    assert "Open access full text from the repository." in text and "access_level: full_text" in text
+
+
+@pytest.mark.parametrize(("mode", "reason"), [
+    ("closed", "subscription_required"),
+    ("denied", "access_denied"),
+    ("broken", "format_failure"),
+])
+async def test_fulltext_records_why_a_legal_oa_copy_could_not_be_read(tmp_path, mode, reason):
+    def handler(request):
+        if request.url.host == "www.ebi.ac.uk":
+            oa = "N" if mode == "closed" else "Y"
+            return search_answer([record("123", None, oa, None)])
+        if request.url.host == "api.unpaywall.org":
+            location = None if mode == "closed" else {
+                "url_for_pdf": f"https://repo.example/{mode}.pdf", "host_type": "repository", "license": "cc-by"}
+            return httpx.Response(200, json={"doi": "10.1000/test", "is_oa": mode != "closed",
+                                             "oa_status": "closed" if mode == "closed" else "green",
+                                             "best_oa_location": location, "oa_locations": []})
+        if request.url.host == "api.openalex.org":
+            return httpx.Response(200, json={"meta": {"count": 0}, "results": []})
+        if request.url.host == "repo.example":
+            return (httpx.Response(403) if mode == "denied" else
+                    httpx.Response(200, content=b"not a paper", headers={"content-type": "application/octet-stream"}))
+        raise AssertionError(request.url)
+
+    annotator, _calls = make(handler, tmp_path, workdir=mode, unpaywall_email="owner@example.org")
+    row = (await annotator.fulltext(["123"]))["results"][0]
+    assert row["access_level"] == "abstract" and row["unread_reason"] == reason
+    assert row["unread_detail"]
+
+
+def test_literature_staff_use_openalex_without_oa_prefilter_and_keep_access_failures():
+    _spec, text = _prompt("lit_scout")
+    assert "call labhq_annot openalex_works" in text and "Do not pre-filter candidates by OA status" in text
+    assert "Crossref" in text and "Unpaywall" in text
+    assert "candidate, selected, acquired, and conclusion-evidence denominators" in text
+    assert "key paper" in text and "subscription_required" in text and "format_failure" in text
 
 
 def _prompt(agent_id):

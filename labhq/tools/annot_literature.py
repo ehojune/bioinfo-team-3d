@@ -22,15 +22,22 @@ CC license can still lack a Europe PMC copy (the publisher hosts it); its publis
 from __future__ import annotations
 
 import hashlib
+import io
 import re
+import zlib
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from typing import Any
+from urllib.parse import quote
 
 from ..adapters.owned import OwnedPathError, write_owned
 from .annot import Annotator, Item, LookupFailed, _now
 
 EUROPEPMC = "https://www.ebi.ac.uk/europepmc/webservices/rest"
+OPENALEX = "https://api.openalex.org"
+CROSSREF = "https://api.crossref.org"
+UNPAYWALL = "https://api.unpaywall.org/v2"
 LIT_DIR = ".tmp/literature"  # never outputs/: see the module docstring
 TOOL = "fulltext"
 CACHE_RELEASE = "europepmc-rest"  # Europe PMC has no data release; answers age out instead (annot.CACHE_MAX_AGE_S)
@@ -38,6 +45,10 @@ MAX_PER_CALL = 20
 MAX_XML_BYTES = 20_000_000
 MAX_CITATION_RESULTS = 1000
 MAX_PREPRINT_RESULTS = 100
+MAX_OPENALEX_RESULTS = 200
+MAX_DOI_RESULTS = 50
+MAX_OA_COPY_BYTES = 25_000_000
+MAX_PDF_EXPANDED_BYTES = 50_000_000
 
 _PMID = re.compile(r"^(?:pmid:?\s*)?([0-9]{1,9})$", re.IGNORECASE)
 _PMCID = re.compile(r"^(?:pmcid:?\s*)?(PMC[0-9]{1,9})$", re.IGNORECASE)
@@ -121,6 +132,203 @@ def _bibliography(record: dict, *, preprint: bool = False) -> dict:
         out["server"] = preprint_server
         out["review_status"] = "심사 전"
     return {key: value for key, value in out.items() if value not in (None, "")}
+
+
+def _url_tail(value: object, marker: str) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    lower = text.casefold()
+    index = lower.rfind(marker.casefold())
+    return text[index + len(marker):].strip("/ ") if index >= 0 else text
+
+
+def _oa_location(value: object, *, openalex: bool = False) -> dict | None:
+    if not isinstance(value, dict):
+        return None
+    source = value.get("source") if isinstance(value.get("source"), dict) else {}
+    out = {
+        "landing_page_url": value.get("landing_page_url") if openalex else value.get("url"),
+        "pdf_url": value.get("pdf_url") if openalex else value.get("url_for_pdf"),
+        "source": source.get("display_name") if openalex else value.get("host_type"),
+        "host_type": None if openalex else value.get("host_type"),
+        "license": value.get("license"),
+        "version": value.get("version"),
+    }
+    compact = {key: val for key, val in out.items() if val not in (None, "")}
+    return compact or None
+
+
+def _openalex_candidate(record: dict) -> dict:
+    ids = record.get("ids") if isinstance(record.get("ids"), dict) else {}
+    openalex_id = _url_tail(record.get("id"), "openalex.org/")
+    doi = _url_tail(record.get("doi") or ids.get("doi"), "doi.org/")
+    pmid = _url_tail(ids.get("pmid"), "pubmed.ncbi.nlm.nih.gov/")
+    access = record.get("open_access") if isinstance(record.get("open_access"), dict) else {}
+    references = [_url_tail(value, "openalex.org/") for value in record.get("referenced_works") or []]
+    authors = [str((row.get("author") or {}).get("display_name")) for row in record.get("authorships") or []
+               if isinstance(row, dict) and (row.get("author") or {}).get("display_name")]
+    out = {
+        "openalex_id": openalex_id,
+        "doi": doi.casefold() if doi else None,
+        "pmid": pmid,
+        "title": record.get("title") or record.get("display_name"),
+        "authors": authors,
+        "year": record.get("publication_year"),
+        "type": record.get("type"),
+        "is_oa": bool(access.get("is_oa")),
+        "oa_status": access.get("oa_status"),
+        "oa_url": access.get("oa_url"),
+        "best_oa_location": _oa_location(record.get("best_oa_location"), openalex=True),
+        "cited_by_count": int(record.get("cited_by_count") or 0),
+        "cited_by_url": record.get("cited_by_api_url") or (
+            f"{OPENALEX}/works?filter=cites:{openalex_id}" if openalex_id else None),
+        "references": [value for value in references if value],
+    }
+    return {key: value for key, value in out.items() if value not in (None, "", [])}
+
+
+def _crossref_answer(message: dict) -> dict:
+    def first(name: str) -> object:
+        value = message.get(name)
+        return value[0] if isinstance(value, list) and value else value
+
+    licenses = []
+    for row in message.get("license") or []:
+        if not isinstance(row, dict):
+            continue
+        start = row.get("start") if isinstance(row.get("start"), dict) else {}
+        licenses.append({key: value for key, value in {
+            "url": row.get("URL"), "start": start.get("date-time"), "delay_days": row.get("delay-in-days"),
+            "content_version": row.get("content-version"),
+        }.items() if value not in (None, "")})
+    updates = []
+    for row in message.get("update-to") or []:
+        if not isinstance(row, dict):
+            continue
+        updated = row.get("updated") if isinstance(row.get("updated"), dict) else {}
+        updates.append({key: value for key, value in {
+            "doi": str(row.get("DOI") or "").casefold() or None,
+            "type": row.get("type"), "label": row.get("label"), "updated": updated.get("date-time"),
+        }.items() if value not in (None, "")})
+    update_types = {str(row.get("type") or "").casefold() for row in updates}
+    kind = str(message.get("type") or "").casefold()
+    subtype = str(message.get("subtype") or "").casefold()
+    return {key: value for key, value in {
+        "found": True,
+        "doi": str(message.get("DOI") or "").casefold() or None,
+        "title": first("title"),
+        "type": message.get("type"),
+        "subtype": message.get("subtype"),
+        "publisher": message.get("publisher"),
+        "journal": first("container-title"),
+        "version": message.get("content-version") or message.get("version"),
+        "licenses": licenses,
+        "updates": updates,
+        "relations": message.get("relation") or {},
+        "retracted": "retraction" in kind or "retraction" in subtype or "retraction" in update_types,
+    }.items() if value not in (None, "", [], {})}
+
+
+def _unpaywall_answer(data: dict) -> dict:
+    locations = [_oa_location(row) for row in data.get("oa_locations") or []]
+    return {key: value for key, value in {
+        "found": True,
+        "doi": str(data.get("doi") or "").casefold() or None,
+        "title": data.get("title"),
+        "genre": data.get("genre"),
+        "published_date": data.get("published_date"),
+        "is_oa": bool(data.get("is_oa")),
+        "oa_status": data.get("oa_status"),
+        "best_oa_location": _oa_location(data.get("best_oa_location")),
+        "oa_locations": [row for row in locations if row],
+    }.items() if value not in (None, "", [])}
+
+
+class _HTMLText(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.skip = 0
+        self.parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in {"script", "style", "noscript", "svg"}:
+            self.skip += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"script", "style", "noscript", "svg"} and self.skip:
+            self.skip -= 1
+
+    def handle_data(self, data: str) -> None:
+        if not self.skip and data.strip():
+            self.parts.append(data.strip())
+
+
+def _pdf_unescape(value: bytes) -> str:
+    value = re.sub(rb"\\([0-7]{1,3})", lambda match: bytes([int(match.group(1), 8)]), value)
+    value = re.sub(rb"\\([nrtbf])", lambda match: {b"n": b"\n", b"r": b"\r", b"t": b"\t",
+                                                        b"b": b"\b", b"f": b"\f"}[match.group(1)], value)
+    value = re.sub(rb"\\([()\\])", rb"\1", value)
+    return value.decode("utf-8", errors="replace")
+
+
+def _pdf_text(data: bytes) -> str:
+    """Extract ordinary PDF text without adding a package. pypdf is used when already installed; the bounded
+    fallback handles literal Tj/TJ strings in plain or FlateDecode streams and otherwise reports format failure."""
+    try:
+        from pypdf import PdfReader  # type: ignore[import-not-found]
+    except ImportError:
+        pass
+    else:
+        try:
+            text = "\n".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(data)).pages)
+        except Exception:  # noqa: BLE001 - the bounded fallback may still read a simple PDF
+            text = ""
+        if text.strip():
+            return "\n".join(line.strip() for line in text.splitlines() if line.strip())
+
+    chunks = [data]
+    for match in re.finditer(rb"(?s)(<<.{0,2000}?>>)?\s*stream\r?\n(.*?)\r?\nendstream", data):
+        block, stream = match.group(1) or b"", match.group(2)
+        if b"/FlateDecode" in block:
+            try:
+                decompressor = zlib.decompressobj()
+                stream = decompressor.decompress(stream, MAX_PDF_EXPANDED_BYTES + 1)
+            except zlib.error:
+                continue
+            if len(stream) > MAX_PDF_EXPANDED_BYTES:
+                continue
+        chunks.append(stream)
+    pieces = []
+    literal = rb"\(((?:\\.|[^\\()])*)\)"
+    for chunk in chunks:
+        pieces.extend(_pdf_unescape(match.group(1)) for match in re.finditer(literal + rb"\s*Tj\b", chunk))
+        for array in re.finditer(rb"(?s)\[(.*?)\]\s*TJ\b", chunk):
+            pieces.extend(_pdf_unescape(match.group(1)) for match in re.finditer(literal, array.group(1)))
+    text = " ".join(" ".join(pieces).split())
+    if not text:
+        raise ValueError("PDF에서 텍스트를 추출하지 못했습니다")
+    return text
+
+
+def _copy_text(content: bytes, content_type: str) -> tuple[str, str]:
+    if content.startswith(b"%PDF") or "application/pdf" in content_type:
+        return _pdf_text(content), "PDF"
+    if "html" in content_type or content.lstrip().startswith((b"<!DOCTYPE html", b"<html", b"<HTML")):
+        parser = _HTMLText()
+        parser.feed(content.decode("utf-8", errors="replace"))
+        text = "\n".join(parser.parts)
+        folded = text.casefold()
+        if any(term in folded for term in ("access denied", "checking your browser", "captcha")):
+            raise PermissionError("OA 주소가 접근 거부 화면을 돌려줬습니다")
+        if any(term in folded for term in ("subscribe to read", "purchase access", "institutional login")):
+            raise LookupFailed("OA 주소가 구독·로그인 화면을 돌려줬습니다")
+        compact = "".join(text.split())
+        sections = sum(term in folded for term in ("introduction", "method", "result", "discussion", "references"))
+        if len(compact) < 1000 or sections < 2:
+            raise ValueError("HTML이 논문 본문 구조를 갖추지 않아 추출하지 않았습니다")
+        return text, "HTML"
+    raise ValueError(f"지원하지 않는 본문 형식입니다({content_type or 'content-type 없음'})")
 
 
 # ----- JATS to Markdown -----
@@ -282,6 +490,133 @@ def jats_markdown(xml: str, header: list[str]) -> tuple[str, dict[str, Any]]:
 # ----- lookups -----
 
 class LiteratureAnnotator(Annotator):
+    def __init__(self, *args: Any, unpaywall_email: str = "", **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.unpaywall_email = str(unpaywall_email or "").strip()
+
+    @staticmethod
+    def _doi_items(values: object) -> list[Item]:
+        if isinstance(values, str):
+            values = [values]
+        if not isinstance(values, list) or not values:
+            raise ValueError("DOI 목록이 비었습니다")
+        if len(values) > MAX_DOI_RESULTS:
+            raise ValueError(f"한 번에 DOI {MAX_DOI_RESULTS}개까지 받습니다")
+        items = []
+        for value in values:
+            try:
+                paper = parse_paper_id(value)
+                if paper.kind != "doi":
+                    raise ValueError("DOI가 아닙니다")
+                items.append(Item(paper, value))
+            except ValueError as exc:
+                items.append(Item(None, value, error=f"DOI를 읽지 못했습니다: {exc}"))
+        return items
+
+    async def openalex_works(self, query: object, filters: object = None, limit: int = 25) -> dict:
+        """Broad works search. OA fields describe possible access locations and never filter candidates."""
+        terms = str(query or "").strip()
+        if not terms:
+            raise ValueError("OpenAlex 검색어가 비었습니다")
+        if len(terms) > 500 or "\n" in terms or "\r" in terms:
+            raise ValueError("OpenAlex 검색어는 줄바꿈 없이 500자까지 받습니다")
+        if filters is None:
+            filter_rows: list[str] = []
+        elif isinstance(filters, list) and len(filters) <= 20:
+            filter_rows = [str(value).strip() for value in filters]
+            if any(not value or len(value) > 200 or "\n" in value or "\r" in value or "," in value
+                   for value in filter_rows):
+                raise ValueError("OpenAlex filter는 쉼표·줄바꿈 없이 항목마다 200자까지 받습니다")
+        else:
+            raise ValueError("OpenAlex filters는 문자열 목록(최대 20개)이어야 합니다")
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= MAX_OPENALEX_RESULTS:
+            raise ValueError(f"limit은 1..{MAX_OPENALEX_RESULTS}이어야 합니다")
+        options = {"filters": filter_rows, "limit": limit}
+        item = Item(LiteratureSearch(terms), terms)
+        items = [item]
+        self._from_cache("openalex_works", "openalex-api", options, items)
+        if item.cached_at is None:
+            params = {"search": terms, "per-page": limit}
+            if filter_rows:
+                params["filter"] = ",".join(filter_rows)
+            response = await self.http.request("openalex", "GET", f"{OPENALEX}/works", params=params)
+            if response.status_code != 200:
+                raise LookupFailed(f"OpenAlex works 검색이 HTTP {response.status_code}로 답했습니다")
+            data = response.json()
+            records = data.get("results") or []
+            item.answer = {"found_count": int((data.get("meta") or {}).get("count") or len(records)),
+                           "returned_count": len(records),
+                           "candidates": [_openalex_candidate(row) for row in records if isinstance(row, dict)]}
+        return self._finish(
+            "openalex_works", "OpenAlex", "API (30-day cache)", OPENALEX, options, items,
+            lambda found: dict(found.answer or {}),
+            note=("OA 여부는 후보 제외 조건이 아니다. best_oa_location은 합법 사본 후보이며 실제 확보 수준은 "
+                  "fulltext로 확인한다."))
+
+    async def crossref_doi(self, dois: object) -> dict:
+        items = self._doi_items(dois)
+        self._from_cache("crossref_doi", "crossref-rest", {}, items)
+        lookup_errors = 0
+        for item in items:
+            if item.error is not None or item.cached_at is not None:
+                continue
+            try:
+                response = await self.http.request(
+                    "crossref", "GET", f"{CROSSREF}/works/{quote(item.variant.value, safe='')}")
+                if response.status_code == 404:
+                    item.answer = {"found": False}
+                elif response.status_code != 200:
+                    raise LookupFailed(f"Crossref DOI 조회가 HTTP {response.status_code}로 답했습니다")
+                else:
+                    item.answer = _crossref_answer(response.json().get("message") or {})
+            except LookupFailed as exc:
+                item.error, lookup_errors = str(exc), lookup_errors + 1
+        if self._all_failed(items, lookup_errors):
+            raise LookupFailed("; ".join(item.error for item in items if item.error))
+        return self._finish(
+            "crossref_doi", "Crossref", "REST API (30-day cache)", CROSSREF, {}, items,
+            lambda found: dict(found.answer or {}),
+            note="version·license·update-to와 철회 표시는 Crossref 등록 메타데이터이며 원문 확보 여부와 다르다.")
+
+    async def unpaywall(self, dois: object) -> dict:
+        items = self._doi_items(dois)
+        if not self.unpaywall_email or "@" not in self.unpaywall_email:
+            reason = "annot.unpaywall_email 설정이 없어 Unpaywall 조회가 비활성입니다"
+            for item in items:
+                if item.error is None:
+                    item.answer = {"enabled": False, "reason": reason}
+            out = self._finish(
+                "unpaywall", "Unpaywall", "disabled", UNPAYWALL, {}, items,
+                lambda found: dict(found.answer or {}), cache=False,
+                note="email 값은 요청에만 쓰며 조회 기록·결과·캐시 키에 남기지 않는다.")
+            out.update(enabled=False, disabled_reason=reason)
+            return out
+        self._from_cache("unpaywall", "unpaywall-v2", {}, items)
+        lookup_errors = 0
+        for item in items:
+            if item.error is not None or item.cached_at is not None:
+                continue
+            try:
+                response = await self.http.request(
+                    "unpaywall", "GET", f"{UNPAYWALL}/{quote(item.variant.value, safe='')}",
+                    params={"email": self.unpaywall_email})
+                if response.status_code == 404:
+                    item.answer = {"found": False}
+                elif response.status_code != 200:
+                    raise LookupFailed(f"Unpaywall DOI 조회가 HTTP {response.status_code}로 답했습니다")
+                else:
+                    item.answer = _unpaywall_answer(response.json())
+            except LookupFailed as exc:
+                item.error, lookup_errors = str(exc), lookup_errors + 1
+        if self._all_failed(items, lookup_errors):
+            raise LookupFailed("; ".join(item.error for item in items if item.error))
+        out = self._finish(
+            "unpaywall", "Unpaywall", "API v2 (30-day cache)", UNPAYWALL, {}, items,
+            lambda found: dict(found.answer or {}),
+            note="합법 OA 위치 후보이며 실제로 읽은 수준은 fulltext 결과로 확인한다. email은 기록하지 않는다.")
+        out["enabled"] = True
+        return out
+
     async def fulltext(self, ids: object) -> dict:
         if isinstance(ids, str):
             ids = [ids]
@@ -312,7 +647,8 @@ class LiteratureAnnotator(Annotator):
         for item in valid:
             if item.error is None:
                 item.answer = self._write_text(item.variant, item.answer)
-        return self._finish(TOOL, "Europe PMC", f"REST {version}" if version else "REST (cached answers)",
+        return self._finish(TOOL, "Europe PMC",
+                            f"REST {version}" if version else "REST (cached answers)",
                             EUROPEPMC, {}, items, _summary, cache=False,
                             note="본문 파일은 논문 라이선스를 따르는 제3자 글이다. 경로로 인용하고 결과물에 옮겨 싣지 않는다.")
 
@@ -433,6 +769,7 @@ class LiteratureAnnotator(Annotator):
                 "is_open_access": rec.get("isOpenAccess") == "Y", "in_europepmc": rec.get("inEPMC") == "Y"}
         links = [{"url": u.get("url"), "availability": u.get("availability")}
                  for u in ((rec.get("fullTextUrlList") or {}).get("fullTextUrl") or []) if u.get("url")]
+        subscription_hint = any("subscription" in str(link.get("availability") or "").casefold() for link in links)
         header = [f"# {meta['title'] or paper.value}", "",
                   f"- PMID {meta['pmid'] or '-'} · PMCID {meta['pmcid'] or '-'} · DOI {meta['doi'] or '-'}",
                   f"- {meta['journal'] or '-'} {meta['year'] or ''} · license {meta['license'] or '-'}"]
@@ -450,6 +787,30 @@ class LiteratureAnnotator(Annotator):
             if problem:
                 meta["fulltext_error"] = problem + " 이번 답은 초록 수준이고 저장하지 않으므로 다시 부르면 본문을 다시 받습니다"
                 volatile = True
+        oa_body, oa_state = await self._legal_oa_copy(paper, meta, header)
+        if oa_body is not None:
+            return ({**meta, **oa_state, "access_level": "full_text", "markdown": oa_body}, version, False)
+        if oa_state.get("temporary_error"):
+            volatile = True
+            previous = meta.get("fulltext_error")
+            meta["fulltext_error"] = "; ".join(value for value in (previous, oa_state["temporary_error"]) if value)
+        unread_reason = oa_state.get("unread_reason")
+        if not unread_reason:
+            if subscription_hint or oa_state.get("closed"):
+                unread_reason = "subscription_required"
+            elif meta["is_open_access"] or meta["in_europepmc"] or oa_state.get("oa_known"):
+                unread_reason = "no_copy"
+            else:
+                unread_reason = "no_copy"
+        meta["unread_reason"] = unread_reason
+        meta["unread_detail"] = oa_state.get("unread_detail") or {
+            "subscription_required": "합법 OA 사본 위치를 찾지 못했고 구독이 필요한 논문입니다",
+            "no_copy": "OA로 표시됐지만 읽을 수 있는 합법 사본 위치가 없습니다",
+            "access_denied": "합법 OA 사본 주소가 접근을 거부했습니다",
+            "format_failure": "합법 OA 사본을 받았지만 본문 형식을 읽지 못했습니다",
+        }.get(unread_reason, "본문을 확보하지 못했습니다")
+        if oa_state.get("oa_locations"):
+            meta["oa_locations"] = oa_state["oa_locations"]
         abstract = " ".join((rec.get("abstractText") or "").split())
         abstract = re.sub(r"<[^>]+>", "", abstract)
         level = "abstract" if abstract else "metadata"
@@ -458,6 +819,108 @@ class LiteratureAnnotator(Annotator):
         markdown = "\n".join(header + [f"- access_level: {level} (Europe PMC에 본문 사본 없음)", ""]
                              + (["## Abstract", "", abstract, ""] if abstract else [])) + "\n"
         return {**meta, "access_level": level, "markdown": markdown}, version, volatile
+
+    async def _legal_oa_copy(self, paper: PaperId, meta: dict, header: list[str]) -> tuple[str | None, dict]:
+        """Try legal OA locations only. Provider/API failures are transient; an absent location or a 404 copy is a
+        stable access outcome. The contact email is never returned or recorded."""
+        locations: list[dict] = []
+        state: dict[str, Any] = {"oa_known": False, "oa_locations": []}
+        temporary = []
+        doi = str(meta.get("doi") or "").strip().casefold()
+
+        if doi and self.unpaywall_email and "@" in self.unpaywall_email:
+            try:
+                response = await self.http.request(
+                    "unpaywall", "GET", f"{UNPAYWALL}/{quote(doi, safe='')}", params={"email": self.unpaywall_email})
+                if response.status_code == 200:
+                    answer = _unpaywall_answer(response.json())
+                    state["oa_known"] = state["oa_known"] or bool(answer.get("is_oa"))
+                    state["closed"] = state.get("closed", False) or answer.get("oa_status") == "closed"
+                    for row in [answer.get("best_oa_location"), *(answer.get("oa_locations") or [])]:
+                        if isinstance(row, dict):
+                            locations.append({"provider": "Unpaywall", **row})
+                elif response.status_code != 404:
+                    temporary.append(f"Unpaywall 조회 HTTP {response.status_code}")
+            except LookupFailed as exc:
+                temporary.append(f"Unpaywall 조회 실패: {exc}")
+
+        filter_value = f"doi:{doi}" if doi else f"{paper.kind}:{paper.value}"
+        try:
+            response = await self.http.request(
+                "openalex", "GET", f"{OPENALEX}/works", params={"filter": filter_value, "per-page": 1})
+            if response.status_code == 200:
+                records = response.json().get("results") or []
+                if records:
+                    candidate = _openalex_candidate(records[0])
+                    state["oa_known"] = state["oa_known"] or bool(candidate.get("is_oa"))
+                    location = candidate.get("best_oa_location")
+                    if isinstance(location, dict):
+                        locations.append({"provider": "OpenAlex", **location})
+            else:
+                temporary.append(f"OpenAlex 조회 HTTP {response.status_code}")
+        except LookupFailed as exc:
+            temporary.append(f"OpenAlex 조회 실패: {exc}")
+
+        unique = []
+        seen = set()
+        for location in locations:
+            for key in ("pdf_url", "landing_page_url"):
+                url = str(location.get(key) or "").strip()
+                if not url or url in seen or not url.casefold().startswith(("https://", "http://")):
+                    continue
+                seen.add(url)
+                unique.append({"provider": location["provider"], "url": url, "kind": key,
+                               **{name: location[name] for name in ("source", "license", "version")
+                                  if location.get(name)}})
+        unique.sort(key=lambda row: row["kind"] != "pdf_url")
+        state["oa_locations"] = unique[:20]
+
+        failures: list[tuple[str, str]] = []
+        for location in unique:
+            try:
+                response = await self.http.request(
+                    "oa_copy", "GET", location["url"],
+                    headers={"Accept": "application/pdf,text/html,application/xhtml+xml;q=0.9,*/*;q=0.1"})
+            except LookupFailed as exc:
+                temporary.append(f"{location['provider']} 사본 조회 실패: {exc}")
+                continue
+            if response.status_code in {401, 403, 451}:
+                failures.append(("access_denied", f"{location['provider']} 주소가 HTTP {response.status_code}로 거부됨"))
+                continue
+            if response.status_code == 404:
+                failures.append(("no_copy", f"{location['provider']} 주소에 사본 없음(HTTP 404)"))
+                continue
+            if response.status_code != 200:
+                failures.append(("access_denied", f"{location['provider']} 주소가 HTTP {response.status_code}로 답함"))
+                continue
+            if len(response.content) > MAX_OA_COPY_BYTES:
+                failures.append(("format_failure", f"본문이 {MAX_OA_COPY_BYTES:,} bytes를 넘어 읽지 않음"))
+                continue
+            try:
+                text, body_format = _copy_text(response.content, response.headers.get("content-type", "").casefold())
+            except PermissionError as exc:
+                failures.append(("access_denied", str(exc)))
+                continue
+            except LookupFailed as exc:
+                failures.append(("subscription_required", str(exc)))
+                continue
+            except ValueError as exc:
+                failures.append(("format_failure", str(exc)))
+                continue
+            markdown = "\n".join(header + [
+                f"- access_level: full_text ({location['provider']} legal OA {body_format})",
+                f"- source_url: {location['url']}", "", "## Full text", "", text, "",
+            ])
+            copy = {key: value for key, value in location.items() if key != "kind"}
+            return markdown, {"read_source": location["provider"], "oa_copy": copy}
+
+        if temporary:
+            state["temporary_error"] = "; ".join(temporary)
+        if failures:
+            priority = {"access_denied": 0, "format_failure": 1, "subscription_required": 2, "no_copy": 3}
+            code, detail = min(failures, key=lambda row: priority[row[0]])
+            state.update(unread_reason=code, unread_detail=detail)
+        return None, state
 
     async def _fulltext_xml(self, pmcid: str) -> tuple[str | None, str | None]:
         """(XML, None) for a body; (None, None) when Europe PMC says there is none (404); (None, problem) otherwise."""
@@ -499,5 +962,5 @@ def _summary(item: Item) -> dict:
         return {"found": False}
     keep = ("found", "access_level", "pmid", "pmcid", "doi", "title", "journal", "year", "license", "is_open_access",
             "sections", "n_tables", "n_figures", "n_references", "chars", "text_file", "text_error", "fulltext_error",
-            "publisher_copy")
+            "publisher_copy", "read_source", "oa_copy", "oa_locations", "unread_reason", "unread_detail")
     return {key: answer[key] for key in keep if answer.get(key) not in (None, "", [])}
