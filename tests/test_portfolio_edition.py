@@ -132,7 +132,8 @@ def test_fixed_request_bundle_builds_the_portfolio_contract(tmp_path):
     }
     assert required <= files.keys()
     assert files["report/report.md"].startswith("# 공개 오믹스 대체 분석")
-    assert "## 정정" in files["report/report.md"]
+    assert "## 정정" not in files["report/report.md"]
+    assert "## 검토 종료 때 남은 정정" in files["run/revision_history.md"]
     assert "CP1 원문: 계획대로 진행" in files["run/decisions.md"]
     assert "CP2 원문: 0개도 결과로 기록" in files["run/decisions.md"]
     assert "다음 차수 없이 끝낸다" in files["run/decisions.md"]
@@ -142,10 +143,10 @@ def test_fixed_request_bundle_builds_the_portfolio_contract(tmp_path):
     assert "| 단계 | 자료 | 결과 |" in readme
     assert "16,242" in readme and "0개" in readme
     assert "통계적으로 유의하지" in readme
-    for target in ("report/report.md", "run/progress.md", "run/reproduce.md", "REFERENCES.md"):
+    for target in ("report/report.md", "run/reproduce.md", "DATA_AND_LICENSES.md"):
         assert target in readme
     assert "by_job.tsv" not in files and "patient_summary.tsv" not in files
-    assert "내부 자료 영역이라 표 2개는 요청 묶음에만 둠" in readme
+    assert "뺀 표: by_job.tsv" in readme and "뺀 표: patient_summary.tsv" in readme
     assert not any("outputs/literature" in name or "article.md" in name for name in files)
     assert not any(name.startswith("run/nextflow/") for name in files)
     assert check_document(readme)["status"] == "PASS"

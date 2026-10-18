@@ -82,15 +82,16 @@ def test_four_branches_get_study_folders_and_failed_row(tmp_path):
     folders = ("A-literature", "B-omics", "C-mdis", "D-ipums")
     for folder in folders:
         assert f"studies/{folder}/README.md" in files
-    assert "studies/A-literature/report/stage_report.md" in files
     assert "studies/B-omics/code/omics/outputs/scripts/analyze.py" in files
     assert "studies/C-mdis/code/mdis/outputs/scripts/analyze.py" in files
+    assert "docs/reference/A-literature/stage_report.md" in files
+    assert "studies/A-literature/report/stage_report.md" not in files
     index = files["studies/README.md"]
     assert "| 갈래 | 질문 | 자료 | 상태 | 주요 결과 | 폴더 |" in index
     assert "| D | 해외 자료가 지지하는가? | licensed · ipums | 실패 | 자료 접근이 거절됨 |" in index
     assert "D-ipums/README.md" in index
     assert "[열기](studies/A-literature/README.md)" in files["README.md"]
-    assert "studies/               갈래별 코드·그림·표·단계 보고서" in files["README.md"]
+    assert "[docs/reference/](docs/reference/README.md)" in files["README.md"]
 
 
 def test_root_branch_table_shows_status(tmp_path):
@@ -98,8 +99,8 @@ def test_root_branch_table_shows_status(tmp_path):
 
     readme = build_portfolio_files(request, settings, assets, images)["README.md"]
 
-    assert "| 갈래 | 자료 | 상태 | 결과 | 폴더 |" in readme
-    assert "| D | licensed · ipums | 실패 | 자료 접근이 거절됨 |" in readme
+    assert "| 갈래 | 상태 | 핵심 결과 한 줄 | 폴더 |" in readme
+    assert "| D | 실패 | 자료 접근이 거절됨 |" in readme
 
 
 def test_branch_with_one_failed_terminal_is_partial_and_keeps_success(tmp_path):
@@ -118,7 +119,7 @@ def test_branch_with_one_failed_terminal_is_partial_and_keeps_success(tmp_path):
     assert "| A | 문헌 근거가 있는가? | public · literature | 부분 |" in index
     assert "직접 근거를 찾지 못했다." in index
     assert "lit_failed: 원문 확보 실패" in index
-    assert "studies/A-literature/report/stage_report.md" in files
+    assert "docs/reference/A-literature/stage_report.md" in files
 
 
 def test_same_named_branch_figures_and_report_links_stay_separate(tmp_path):
@@ -193,7 +194,7 @@ def test_declared_branch_report_is_kept_without_report_in_filename(tmp_path):
 
     files = build_portfolio_files(request, settings, assets, images)
 
-    assert files["studies/A-literature/report/answer.md"] == assets["steps/lit/outputs/answer.md"]
+    assert files["docs/reference/A-literature/answer.md"] == assets["steps/lit/outputs/answer.md"]
 
 
 def test_internal_branch_uses_existing_publication_allowlist(tmp_path):
@@ -203,7 +204,7 @@ def test_internal_branch_uses_existing_publication_allowlist(tmp_path):
 
     assert files["studies/C-mdis/tables/summary.tsv"] == "group\tcount\n전체\t100\n"
     assert not any(name.endswith("people.tsv") for name in files)
-    assert "내부 자료 영역이라 표 1개는 요청 묶음에만 둠" in files["README.md"]
+    assert "뺀 표: people.tsv" in files["README.md"]
 
 
 def test_internal_rules_follow_the_source_step_and_descendants(tmp_path):
@@ -318,5 +319,6 @@ def test_unbranched_request_keeps_the_existing_file_list(tmp_path):
         "README.md", "report/report.md", "run/requests.md", "run/decisions.md",
         "run/execution_record.md", "run/costs.md", "run/progress.md", "run/reproduce.md",
         "code/analysis/outputs/scripts/analyze.py", "figures/graphical_abstract.svg", "figures/volcano.svg",
+        "run/revision_history.md", "docs/reference/README.md",
         "tables/result_summary.tsv", "REFERENCES.md", "DATA_AND_LICENSES.md",
     }

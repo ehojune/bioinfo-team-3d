@@ -113,7 +113,7 @@ async def test_pdf_skipped_with_a_reason_and_publishing_still_goes_through(tmp_p
     approve_all(hub, cards)
     await publish(hub, calls)
     line = cards[0]["detail"]["pdf"]
-    assert line.startswith("PDF는 포함하지 않았어요: ") and reason in line and "alice" not in line
+    assert line.startswith("PDF는 포함하지 않았습니다: ") and reason in line and "alice" not in line
     assert not (edition / "report.pdf").exists()
     sent = puts(calls)
     assert "labhq/results/req_test/report.pdf" not in sent

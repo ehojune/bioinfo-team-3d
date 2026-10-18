@@ -101,7 +101,10 @@ _MARKDOWN_REFERENCE_DEFINITION = re.compile(
 _MARKDOWN_CODE = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]*`", re.DOTALL)
 _REMOTE_LINK = re.compile(r"(?i)^(?:https?://|data:|mailto:)")
 _PORTFOLIO_TOP = {"README.md", "REFERENCES.md", "DATA_AND_LICENSES.md"}
-_PORTFOLIO_FOLDERS = ("report/", "run/", "code/", "figures/", "tables/", "studies/")
+_PORTFOLIO_FOLDERS = ("report/", "run/", "code/", "docs/", "figures/", "tables/", "studies/")
+_LICENSE_PLACEHOLDER = re.compile(
+    r"<reference-path>|확인 필요|필수 문구 자리|원 출처의 필수 문구를 넣으세요", re.I
+)
 
 
 def _declared_outputs(req: Mapping[str, Any], expected_type: str) -> set[str]:
@@ -573,25 +576,119 @@ def _paper_candidate(req: dict, assets: Mapping[str, str]) -> str:
             "## 부록\n\n실행 기록은 run/execution_record.md에 있다.\n")
 
 
-def portfolio_report(req: dict, settings, assets: Mapping[str, str]) -> str:
-    """Return the canonical scientific manuscript used by the portfolio edition."""
-    return _plain_korean(_clean(_corrections(_paper_candidate(req, assets), req), settings, req))
+_HISTORY_SECTION = re.compile(r"^(?:정정|수정 이력|이전 차수에서 고친 것|리뷰 참고)$", re.I)
 
 
-def _corrections(report: str, req: dict) -> str:
+def _split_revision_history(report: str) -> tuple[str, list[str]]:
+    """Move publication-process history out of the scientific manuscript without changing the request record."""
+    lines = report.splitlines(keepends=True)
+    kept: list[str] = []
+    moved: list[str] = []
+    index = 0
+    while index < len(lines):
+        heading = re.match(r"^(#{2,6})\s+(.+?)\s*$", lines[index].rstrip("\r\n"))
+        if not heading or not _HISTORY_SECTION.fullmatch(heading.group(2).strip()):
+            kept.append(lines[index])
+            index += 1
+            continue
+        level = len(heading.group(1))
+        block = [lines[index]]
+        index += 1
+        while index < len(lines):
+            following = re.match(r"^(#{1,6})\s+", lines[index])
+            if following and len(following.group(1)) <= level:
+                break
+            block.append(lines[index])
+            index += 1
+        moved.append("".join(block).strip())
+    return "".join(kept).strip() + "\n", moved
+
+
+_ANCHOR = re.compile(r"\s*\[\[\s*claim\s*:([^\[\]\n]*)\]\]", re.I)
+
+
+def _claim_note_id(step_id: str, claim_id: str, ordinal: int) -> str:
+    slug = re.sub(r"[^0-9A-Za-z가-힣_-]+", "-", f"{step_id}-{claim_id}").strip("-").casefold()
+    return f"claim-{slug or ordinal}"
+
+
+def _claim_notes(report: str) -> dict[str, tuple[str, str]]:
+    """Assign stable, collision-free IDs to the unique claim anchors in a report."""
+    notes: dict[str, tuple[str, str]] = {}
+    claims: set[tuple[str, str]] = set()
+    for raw in _ANCHOR.findall(report):
+        step_id, separator, claim_id = (part.strip() for part in raw.strip().rpartition("/"))
+        if not separator:
+            step_id, claim_id = "미확인", raw.strip() or "미확인"
+        claim = (step_id, claim_id)
+        if claim in claims:
+            continue
+        claims.add(claim)
+        base = _claim_note_id(step_id, claim_id, len(notes) + 1)
+        note_id = base
+        suffix = 2
+        while note_id in notes:
+            note_id = f"{base}-{suffix}"
+            suffix += 1
+        notes[note_id] = claim
+    return notes
+
+
+def _publication_claim_footnotes(report: str) -> str:
+    """Replace validation anchors in the publication copy with readable evidence footnotes."""
+    notes = _claim_notes(report)
+    note_ids = {claim: note_id for note_id, claim in notes.items()}
+
+    def replace(match: re.Match[str]) -> str:
+        raw = match.group(1).strip()
+        step_id, separator, claim_id = (part.strip() for part in raw.rpartition("/"))
+        if not separator:
+            step_id, claim_id = "미확인", raw or "미확인"
+        return f"[^{note_ids[(step_id, claim_id)]}]"
+
+    published = _ANCHOR.sub(replace, report).rstrip()
+    if not notes:
+        return published + "\n"
+    definitions = [
+        f"[^{note_id}]: 단계 `{step_id}` · claim `{claim_id}` · "
+        f"[근거 파일](../docs/reference/claim_evidence.md#{note_id})"
+        for note_id, (step_id, claim_id) in notes.items()
+    ]
+    return published + "\n\n" + "\n".join(definitions) + "\n"
+
+
+def _review_history(req: Mapping[str, Any]) -> str:
     review = req.get("review") or (req.get("review_progress") or {}).get("review") or {}
     if str(review.get("verdict") or "").casefold() != "revise" or not review.get("issues"):
-        return report
-    if re.search(r"(?m)^## 정정\s*$", report):
-        return report
-    lines = ["", "## 정정", "", "다음 리뷰 지적은 다음 차수 없이 종료되어 본문을 읽을 때 함께 적용한다.", ""]
+        return ""
+    lines = ["## 검토 종료 때 남은 정정", "", "다음 차수 없이 종료된 리뷰 지적입니다.", ""]
     for issue in review["issues"]:
         lines.append(f"- {issue.get('problem') or '지적'} → {issue.get('request') or '수정 요청'}")
-    return report.rstrip() + "\n" + "\n".join(lines) + "\n"
+    return "\n".join(lines).strip()
+
+
+def _portfolio_report_parts(req: dict, assets: Mapping[str, str]) -> tuple[str, str]:
+    report, moved = _split_revision_history(_paper_candidate(req, assets))
+    review = _review_history(req)
+    history = "\n\n".join([*moved, *([review] if review else [])]).strip()
+    return _publication_claim_footnotes(report), history
+
+
+def portfolio_report(req: dict, settings, assets: Mapping[str, str]) -> str:
+    """Return the publication manuscript; the validated request report itself is never changed."""
+    report, _history = _portfolio_report_parts(req, assets)
+    return _plain_korean(_clean(report, settings, req))
+
+
+def portfolio_revision_history(req: dict, settings, assets: Mapping[str, str]) -> str:
+    """Return review and correction history for ``run/`` instead of the scientific manuscript."""
+    _report, history = _portfolio_report_parts(req, assets)
+    if not history:
+        return ""
+    return _plain_korean(_clean("# 수정 이력\n\n" + history + "\n", settings, req))
 
 
 _VERDICT = re.compile(r"지지(?:되지|하지)\s*않|지지(?:됐|했|된다|한다|합니다|됩니다)|기각")
-_ANCHOR = re.compile(r"\s*\[\[\s*claim\s*:[^\[\]\n]*\]\]", re.I)
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 _CONNECTIVE = re.compile(r"^(?:그래서|따라서|그러므로|결국|즉)\s*,?\s*")
 
@@ -610,6 +707,19 @@ def _claim_statements(result: Any) -> list[str]:
     claims = ledger.get("claims") if isinstance(ledger, Mapping) else None
     return [str(claim["statement"]) for claim in claims or []
             if isinstance(claim, Mapping) and str(claim.get("statement") or "").strip()]
+
+
+def _claim_ledger(result: Any) -> Mapping[str, Any]:
+    if not isinstance(result, Mapping):
+        return {}
+    ledger = result.get("structured")
+    if isinstance(ledger, Mapping):
+        return ledger
+    try:
+        parsed = json.loads(str(result.get("text") or ""))
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    return parsed if isinstance(parsed, Mapping) else {}
 
 
 def _is_ledger(text: str) -> bool:
@@ -676,6 +786,14 @@ def _result_sentence(text: str) -> str:
     return result
 
 
+def _operational_result(text: str) -> bool:
+    """Keep formatting and file-maintenance details out of the README's scientific result rows."""
+    return bool(re.search(
+        r"(?:탭 문자|실제 탭|머리줄|칸 수|열 수|파일명|파일을 (?:만들|고침)|형식(?:을|이) (?:교정|수정))",
+        text, re.I,
+    ))
+
+
 def _step_rows(req: dict, assets: Mapping[str, str]) -> list[tuple[str, str, str]]:
     rows = []
     results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
@@ -734,6 +852,26 @@ def _source_step(name: str, req: dict) -> str | None:
     return None
 
 
+def _add_workdir_source_targets(req: Mapping[str, Any], source_targets: dict[str, str]) -> None:
+    """Add workdir paths as aliases for their published step outputs."""
+    results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
+    aliases: dict[str, str] = {}
+    for step_id, result in results.items():
+        if not isinstance(result, Mapping):
+            continue
+        workdir_value = result.get("workdir") or result.get("workdir_id")
+        if not isinstance(workdir_value, str):
+            continue
+        prefix = f"steps/{step_id}/outputs/"
+        workdir = posixpath.normpath(workdir_value.replace("\\", "/")).rstrip("/")
+        for source, target in source_targets.items():
+            normalized = posixpath.normpath(source.replace("\\", "/"))
+            if normalized.startswith(prefix):
+                aliases[posixpath.join(workdir, "outputs", normalized[len(prefix):])] = target
+    for source, target in aliases.items():
+        source_targets.setdefault(source, target)
+
+
 def _branch_rows(req: dict, specs: list[dict[str, Any]],
                  step_folders: Mapping[str, str]) -> list[dict[str, str]]:
     results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
@@ -761,6 +899,9 @@ def _branch_rows(req: dict, specs: list[dict[str, Any]],
             if not completed:
                 failures = [("terminal", "terminal 결과 없음")]
         summaries = [_claim_summary(result) for _step_id, result in completed]
+        scientific = [summary for summary in summaries if not _operational_result(summary)]
+        if scientific:
+            summaries = scientific
         if completed and failures:
             status = "부분"
             failed_text = "; ".join(f"{step_id}: {reason}" for step_id, reason in failures)
@@ -783,22 +924,98 @@ def _branch_rows(req: dict, specs: list[dict[str, Any]],
     return rows
 
 
-def _study_documents(rows: list[dict[str, str]]) -> dict[str, str]:
+def _step_flow(step: Mapping[str, Any], *, first: bool, terminal: bool) -> str:
+    text = f"{step.get('id', '')} {step.get('instruction', '')}".casefold()
+    if re.search(r"(?:^|[_\s-])qc(?:$|[_\s-])|품질|검토|review|check", text):
+        return "QC"
+    if terminal or re.search(r"보고|report|종합|결론|result", text):
+        return "결과"
+    if first or re.search(r"입력|자료|manifest|download|verify|source", text):
+        return "입력"
+    return "방법"
+
+
+def _markdown_link_from(document: str, target: str, label: str) -> str:
+    relative = posixpath.relpath(target, posixpath.dirname(document) or ".")
+    return f"[{label}]({quote(relative, safe='/')})"
+
+
+def _omitted_table_lines(rows: Iterable[Mapping[str, Any]]) -> list[str]:
+    lines = []
+    for row in rows:
+        columns = ", ".join(row.get("columns") or []) or "미확인"
+        count = row.get("rows")
+        count_text = f"{count}행" if isinstance(count, int) else "행 수 미확인"
+        lines.append(
+            f"- 뺀 표: {row.get('name') or '미확인'} · 사유: {row.get('reason') or '미확인'} · "
+            f"대체 요약: {count_text} · 주요 열: {columns}"
+        )
+    return lines
+
+
+def _study_documents(req: Mapping[str, Any], rows: list[dict[str, str]], specs: list[dict[str, Any]],
+                     step_folders: Mapping[str, str], source_targets: Mapping[str, str],
+                     reference_targets: Mapping[str, list[str]],
+                     omitted_tables: Iterable[Mapping[str, Any]]) -> dict[str, str]:
     index = ["# 갈래별 정리본", "", "| 갈래 | 질문 | 자료 | 상태 | 주요 결과 | 폴더 |",
              "|---|---|---|---|---|---|"]
     files: dict[str, str] = {}
+    plans = (req.get("plan") or {}).get("steps") if isinstance(req.get("plan"), Mapping) else []
+    steps = [step for step in plans or [] if isinstance(step, Mapping)]
+    results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
+    folder_steps: dict[str, list[Mapping[str, Any]]] = collections.defaultdict(list)
+    for step in steps:
+        folder = step_folders.get(str(step.get("id") or ""))
+        if folder:
+            folder_steps[folder].append(step)
+    terminals = {str(spec["folder"]): {str(value) for value in spec.get("terminals") or []} for spec in specs}
+    omitted_by_folder: dict[str, list[Mapping[str, Any]]] = collections.defaultdict(list)
+    for omitted in omitted_tables:
+        if omitted.get("folder"):
+            omitted_by_folder[str(omitted["folder"])].append(omitted)
+
     for row in rows:
         folder = row["folder"]
         target = f"{folder}/README.md"
         index.append("| {id} | {question} | {data} | {status} | {result} | [열기]({target}) |".format(
             **{key: _safe_cell(value) for key, value in row.items()}, target=target))
-        files[f"studies/{folder}/README.md"] = (
+        document = f"studies/{folder}/README.md"
+        connection = ["## 입력→방법→QC→결과 연결표", "", "| 구간 | 단계 | 직원 | 주요 산출 |",
+                      "|---|---|---|---|"]
+        for number, step in enumerate(folder_steps[folder]):
+            step_id = str(step.get("id") or "미확인")
+            result = results.get(step_id) if isinstance(results.get(step_id), Mapping) else {}
+            staff = str(step.get("agent_id") or step.get("agent") or result.get("agent_id") or "미확인")
+            outputs = []
+            for source, output in source_targets.items():
+                if _source_step(source, dict(req)) == step_id and output not in outputs:
+                    outputs.append(output)
+            links = ", ".join(_markdown_link_from(document, output, PurePosixPath(output).name)
+                              for output in outputs[:4]) or "기록 없음"
+            flow = _step_flow(step, first=number == 0, terminal=step_id in terminals.get(folder, set()))
+            connection.append(f"| {flow} | {_safe_cell(step_id)} | {_safe_cell(staff)} | {links} |")
+        reference_index = f"docs/reference/{folder}/README.md"
+        reference_link = _markdown_link_from(document, reference_index, "상세 근거 문서")
+        body = (
             f"# {row['id']} · {row['question']}\n\n"
-            f"- 자료: {row['data']}\n"
-            f"- 상태: {row['status']}\n\n"
-            f"## 주요 결과\n\n{row['result']}\n"
+            f"- 자료: {row['data']}\n- 상태: {row['status']}\n- 근거: {reference_link}\n\n"
+            + "\n".join(connection)
+            + f"\n\n## 주요 결과\n\n{row['result']}\n"
         )
+        omitted = _omitted_table_lines(omitted_by_folder.get(folder, []))
+        if omitted:
+            body += "\n## 뺀 표\n\n" + "\n".join(omitted) + "\n"
+        files[document] = body
+
+        references = reference_targets.get(folder, [])
+        reference_lines = [f"# {row['id']} 상세 근거", "", "이 폴더는 lookup-only입니다. 갈래 README에서 필요한 문서만 여세요.", ""]
+        reference_lines += [f"- {_markdown_link_from(reference_index, item, PurePosixPath(item).name)}"
+                            for item in references] or ["- 기록 없음"]
+        files[reference_index] = "\n".join(reference_lines) + "\n"
     files["studies/README.md"] = "\n".join(index) + "\n"
+    files["docs/reference/README.md"] = (
+        "# 상세 근거 문서\n\n이 폴더는 lookup-only입니다. 단계 보고서와 검토문은 갈래 README에서 찾으세요.\n"
+    )
     return files
 
 
@@ -1064,46 +1281,200 @@ def _references(req: dict, report: str, assets: Mapping[str, str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _data_licenses(req: dict) -> str:
+def _artifact_target(step_id: str, path: str, result: Mapping[str, Any],
+                     source_targets: Mapping[str, str]) -> str | None:
+    normalized = posixpath.normpath(path.replace("\\", "/"))
+    candidates = [normalized]
+    if normalized.startswith("outputs/"):
+        candidates.append(f"steps/{step_id}/{normalized}")
+        workdir = result.get("workdir") or result.get("workdir_id")
+        if isinstance(workdir, str):
+            candidates.append(posixpath.join(workdir.replace("\\", "/"), normalized))
+    return next((source_targets[name] for name in candidates if name in source_targets), None)
+
+
+def _claim_evidence_document(req: dict, assets: Mapping[str, str],
+                             source_targets: Mapping[str, str]) -> str:
+    report, _history = _split_revision_history(_paper_candidate(req, assets))
+    anchors = _claim_notes(report)
+    if not anchors:
+        return ""
+
+    results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
+    lines = ["# Claim 근거", "", "정리본 보고서 각주가 가리키는 단계·claim·근거 파일 목록입니다.", ""]
+    document = "docs/reference/claim_evidence.md"
+    for note_id, (step_id, claim_id) in anchors.items():
+        lines += [f'<a id="{note_id}"></a>', f"## {step_id}/{claim_id}", "",
+                  f"- 단계: `{step_id}`", f"- claim: `{claim_id}`"]
+        result = results.get(step_id) if isinstance(results.get(step_id), Mapping) else {}
+        ledger = _claim_ledger(result)
+        evidence_by_id = {str(row.get("id")): row for row in ledger.get("evidence") or []
+                          if isinstance(row, Mapping)}
+        artifact_paths = {str(row.get("artifact_id")): str(row.get("path") or "")
+                          for row in ledger.get("artifact_refs") or [] if isinstance(row, Mapping)}
+        evidence_ids = [str(link.get("evidence_id")) for link in ledger.get("links") or []
+                        if isinstance(link, Mapping) and str(link.get("claim_id")) == claim_id]
+        evidence_lines = []
+        for evidence_id in dict.fromkeys(evidence_ids):
+            evidence = evidence_by_id.get(evidence_id, {})
+            source = evidence.get("source") if isinstance(evidence.get("source"), Mapping) else {}
+            artifact_id = str(source.get("artifact_id") or "")
+            target = _artifact_target(step_id, artifact_paths.get(artifact_id, ""), result, source_targets)
+            if target:
+                evidence_lines.append(
+                    f"  - `{evidence_id}`: {_markdown_link_from(document, target, PurePosixPath(target).name)}"
+                )
+                continue
+            uri = str(source.get("uri") or "")
+            if uri.startswith(("http://", "https://")):
+                evidence_lines.append(f"  - `{evidence_id}`: [외부 근거]({redact_url_credentials(uri)})")
+                continue
+            scheme, value = str(source.get("id_scheme") or ""), str(source.get("id_value") or "")
+            evidence_lines.append(f"  - `{evidence_id}`: {scheme + ' ' + value if scheme and value else '정리본에 근거 파일 없음'}")
+        lines.append("- 근거 파일:")
+        lines += evidence_lines or ["  - 정리본에 근거 파일 없음"]
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _note_fields(note: Any) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    for part in str(note or "").split(";"):
+        key, separator, value = part.strip().partition("=")
+        if separator and value.strip():
+            fields[key.strip().casefold()] = value.strip()
+    return fields
+
+
+def _zone_for_reference(value: str, settings) -> Any | None:
+    for zone in getattr(settings.policy, "data_zones", []):
+        if touches(value, [zone.path]):
+            return zone
+    return None
+
+
+def _data_licenses(req: dict, settings) -> str:
     refs = req.get("references") or []
-    rows = []
+    rows: list[tuple[str, str, str, str, str]] = []
+    path_number = 0
     for ref in refs:
+        if not isinstance(ref, Mapping):
+            continue
+        kind = str(ref.get("kind") or "자료")
         value = str(ref.get("value") or "").strip()
-        if value:
-            rows.append((str(ref.get("kind") or "자료"), value))
-    lines = ["# 자료와 이용 조건", "", "원자료는 이 정리본에 넣지 않았다. 자료별 이용 조건과 필수 인용문은 게시 전 확인한다.", "",
-             "| 자료 영역 | 출처 | 이용 조건 | 필수 인용 문구 |", "|---|---|---|---|"]
-    lines += [f"| {_safe_cell(kind)} | {_safe_cell(value)} | 확인 필요 | 원 출처의 필수 문구를 넣으세요 |"
-              for kind, value in rows]
+        if not value:
+            continue
+        note = _note_fields(ref.get("note"))
+        source = value
+        access = note.get("접근") or note.get("access") or "미확인"
+        redistribution = note.get("재배포") or note.get("redistribution") or "미확인"
+        citation = note.get("인용") or note.get("citation") or "미확인"
+        if kind == "path":
+            path_number += 1
+            source = f"요청 경로 자료 {path_number}"
+            zone = _zone_for_reference(value, settings)
+            zone_note = _note_fields(getattr(zone, "note", "")) if zone else {}
+            access = note.get("접근") or zone_note.get("접근") or (
+                {"public": "공개 구역", "internal": "승인된 내부 환경", "restricted": "통제 접근 환경"}
+                .get(getattr(zone, "level", ""), "미확인")
+            )
+            redistribution = note.get("재배포") or zone_note.get("재배포") or (
+                "공개 가능한 집계표만" if getattr(zone, "level", "") in {"internal", "restricted"} else "미확인"
+            )
+            citation = note.get("인용") or zone_note.get("인용") or "미확인"
+        elif kind == "doi":
+            source = f"https://doi.org/{value}"
+            access = note.get("접근") or "공개 DOI 메타데이터; 원문은 출처 조건을 따름"
+            redistribution = note.get("재배포") or "서지정보만"
+            citation = note.get("인용") or f"DOI {value}"
+        elif kind == "pmid":
+            source = f"https://pubmed.ncbi.nlm.nih.gov/{value}/"
+            access = note.get("접근") or "PubMed 공개 메타데이터; 원문은 출처 조건을 따름"
+            redistribution = note.get("재배포") or "서지정보만"
+            citation = note.get("인용") or f"PMID {value}"
+        elif kind == "github":
+            source = value if re.match(r"https?://", value, re.I) else f"https://github.com/{value}"
+        rows.append((kind, source, access, redistribution, citation))
+    lines = ["# 자료와 이용 조건", "", "원자료는 이 정리본에 넣지 않습니다. 알려지지 않은 조건은 항목별로 미확인이라고 표시합니다.", "",
+             "| 자료 | 출처 | 접근 조건 | 재배포 범위 | 필수 인용 |", "|---|---|---|---|---|"]
+    lines += [f"| {_safe_cell(kind)} | {_safe_cell(source)} | {_safe_cell(access)} | "
+              f"{_safe_cell(redistribution)} | {_safe_cell(citation)} |"
+              for kind, source, access, redistribution, citation in rows]
     if not rows:
-        lines.append("| 기록 없음 | 요청 기록 확인 | 확인 필요 | 필수 문구 자리 |")
+        lines.append("| 요청 기록에 자료 없음 | 미확인 | 미확인 | 미확인 | 미확인 |")
     return "\n".join(lines) + "\n"
 
 
+def _first_limit(report: str) -> str:
+    scope = ""
+    candidates: dict[str, list[str]] = collections.defaultdict(list)
+    for block in report.split("\n\n"):
+        value = block.strip()
+        if value.startswith("## "):
+            heading = value.casefold()
+            if "한계" in heading or "limitation" in heading:
+                scope = "limit"
+            elif "논의" in heading or "discussion" in heading:
+                scope = "discussion"
+            elif "요약" in heading or "abstract" in heading:
+                scope = "summary"
+            else:
+                scope = ""
+            continue
+        if not scope or not value or value.startswith(("#", "![", "|")):
+            continue
+        plain = " ".join(_ANCHOR.sub("", value).split())
+        candidates[scope].extend(_SENTENCE_END.split(plain))
+    constraint = re.compile(
+        r"한계|제한|제약|limitation|검정력|일반화|편향|교란|설계상|방법상|"
+        r"표본\s*(?:수|크기)?\S{0,12}(?:작|적|부족)|(?:자료|데이터)\S{0,12}부족",
+        re.I,
+    )
+    limited = next((sentence.strip() for name in ("limit", "discussion", "summary")
+                    for sentence in candidates[name] if constraint.search(sentence)), "")
+    return limited or "해석 범위와 남은 한계는 과학 보고서에 적었습니다."
+
+
 def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_names: list[str],
-            omitted_tables: list[str], run_documents: Mapping[str, str],
-            branch_rows: list[dict[str, str]] | None = None) -> str:
+            table_names: list[str], omitted_tables: list[Mapping[str, Any]],
+            run_documents: Mapping[str, str], branch_rows: list[dict[str, str]] | None = None) -> str:
     title = report.splitlines()[0].lstrip("#").strip() or "연구 결과"
     abstract = "figures/graphical_abstract.svg" if "figures/graphical_abstract.svg" in figure_names else None
     key = next((name for name in figure_names if name != abstract), None)
-    lines = [f"# {title}", "", f"**답: {_first_answer(report, req)}**", ""]
+    question = " ".join(str(req.get("text") or "연구 질문이 기록되지 않았습니다.").split())[:500]
+    lines = [f"# {title}", "", f"**질문: {question}**", "",
+             f"**답: {_first_answer(report, req)}**", "", f"**한계: {_first_limit(report)}**", ""]
     if abstract:
         lines += [f"![그래픽 초록]({abstract})", ""]
+    if key:
+        lines += [f"![대표 그림]({key})", ""]
+    lines += ["## 보고서·결과표·재현", "", "- 보고서: [Markdown](report/report.md)"]
+    if table_names:
+        table_links = ", ".join(f"[{PurePosixPath(name).name}]({quote(name, safe='/')})"
+                                for name in table_names)
+        lines.append(f"- 결과표: {table_links}")
+    else:
+        lines.append("- 결과표: 공개 가능한 표가 없습니다.")
+    if "run/reproduce.md" in run_documents:
+        lines.append("- 재현: [안내](run/reproduce.md)")
+    else:
+        lines.append("- 재현: 요청 기록에 안내가 없습니다.")
+    if "run/progress.md" in run_documents:
+        lines.append("- 진행: [기록](run/progress.md)")
+    lines.append("- 참고문헌: [목록](REFERENCES.md)")
+    lines.append("")
     if branch_rows:
-        lines += ["| 갈래 | 자료 | 상태 | 결과 | 폴더 |", "|---|---|---|---|---|"]
-        lines += [f"| {_safe_cell(row['id'])} | {_safe_cell(row['data'])} | {_safe_cell(row['status'])} | "
-                  f"{_safe_cell(row['result'])} | "
+        lines += ["| 갈래 | 상태 | 핵심 결과 한 줄 | 폴더 |", "|---|---|---|---|"]
+        lines += [f"| {_safe_cell(row['id'])} | {_safe_cell(row['status'])} | {_safe_cell(row['result'])} | "
                   f"[열기](studies/{row['folder']}/README.md) |" for row in branch_rows]
     else:
         lines += ["| 단계 | 자료 | 결과 |", "|---|---|---|"]
         lines += [f"| {_safe_cell(step)} | {_safe_cell(data)} | {_safe_cell(result)} |" for step, data, result in rows]
-    if key:
-        lines += ["", f"![핵심 그림]({key})"]
     omitted_figures = list(dict.fromkeys(re.findall(r"\*\(그림 생략: ([^)\n]+)\)\*", report)))
     if omitted_figures:
         lines += ["", "## 생략한 그림", "", *[f"- *(그림 생략: {label})*" for label in omitted_figures]]
     lines += ["", "## 읽는 순서", "",
-              "1. [과학 보고서](report/report.md) — 논문 형식 보고서와 정정 사항"]
+              "1. [과학 보고서](report/report.md) — 논문 형식 보고서와 claim 근거 각주"]
     if "run/progress.md" in run_documents:
         lines.append("2. [진행 기록](run/progress.md) — 계획 변경과 과학 리뷰 기록")
     if "run/reproduce.md" in run_documents:
@@ -1115,18 +1486,70 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
               "7. `code/`, `figures/`, `tables/` — 게시 가능한 코드·SVG·집계표", "",
               "## 저장소 지도", "", "```text", "README.md", "report/", "run/", "code/", "figures/", "tables/",
               *(["studies/               갈래별 코드·그림·표·단계 보고서"] if branch_rows else []),
-              "REFERENCES.md", "DATA_AND_LICENSES.md", "```", "",
+              "docs/reference/", "REFERENCES.md", "DATA_AND_LICENSES.md", "```", "",
               "## Summary (English)", "",
               f"This repository is the publication edition of labhq request {req.get('id')}. "
               "It keeps the scientific report, aggregate results, code, figures, decisions, and execution record together.", "",
               "## 어떻게 만들었나", "",
               f"labhq 요청 `{req.get('id')}`의 결과를 [labhq#686](https://github.com/ehojune/bioinfo-team-3d/issues/686) 규칙으로 정리했다. "
               "정리 직원은 graphical-abstract와 humanizer 규칙을 적용하며 숫자·링크·인용·표 모양 보존 검사를 통과한 문장만 반영한다.", "",
-              "## 원자료 안내", "",
-              "원자료는 넣지 않았다. 출처, 이용 조건과 필수 인용은 [DATA_AND_LICENSES.md](DATA_AND_LICENSES.md)에 있다."]
+              "## 자료 안내", "",
+              "원자료는 넣지 않습니다. 출처·접근 조건·재배포 범위·필수 인용은 "
+              "[DATA_AND_LICENSES.md](DATA_AND_LICENSES.md)에 적었습니다.", "",
+              "상세 단계 보고서와 검토문은 [docs/reference/](docs/reference/README.md)에 모았습니다."]
     if omitted_tables:
-        lines += ["", f"내부 자료 영역이라 표 {len(omitted_tables)}개는 요청 묶음에만 둠."]
+        lines += ["", "## 뺀 표", "", *_omitted_table_lines(omitted_tables)]
     return "\n".join(lines) + "\n"
+
+
+def _table_metadata(name: str, body: str | bytes) -> tuple[int | None, list[str], bool]:
+    suffix = PurePosixPath(name).suffix.lower()
+    if suffix not in {".tsv", ".csv"}:
+        return None, [], True
+    text = body.decode("utf-8", errors="replace") if isinstance(body, bytes) else body
+    delimiter = "\t" if suffix == ".tsv" else ","
+    try:
+        parsed = [row for row in csv.reader(io.StringIO(text), delimiter=delimiter) if any(cell.strip() for cell in row)]
+    except csv.Error:
+        return None, [], False
+    if not parsed:
+        return 0, [], False
+    columns = [cell.strip() for cell in parsed[0]]
+    rectangular = bool(columns) and all(columns) and len(set(columns)) == len(columns)
+    rectangular = rectangular and all(len(row) == len(columns) for row in parsed[1:])
+    return len(parsed) - 1, columns, rectangular
+
+
+def _omitted_table(name: str, body: str | bytes, *, internal: bool, declared: set[str],
+                   folder: str | None) -> dict[str, Any]:
+    rows, columns, _valid = _table_metadata(name, body)
+    text = body.decode("utf-8", errors="replace") if isinstance(body, bytes) else body
+    suffix = PurePosixPath(name).suffix.lower()
+    if internal and name not in declared:
+        reason = "내부 자료이며 집계표로 선언되지 않았습니다."
+    elif internal and suffix in _AGGREGATE_TEXT_SUFFIXES and small_cells(text, suffix):
+        reason = "내부 집계에 1–9 작은 칸이 있습니다."
+    else:
+        reason = "게시 허용 목록에 들지 않습니다."
+    return {"source": name, "name": PurePosixPath(name).name, "reason": reason,
+            "rows": rows, "columns": columns, "folder": folder}
+
+
+def _report_table_issues(files: Mapping[str, str | bytes]) -> list[dict[str, str]]:
+    document = "report/report.md"
+    report = files.get(document)
+    if not isinstance(report, str):
+        return []
+    mapping = {name: name for name in files}
+    issues: list[dict[str, str]] = []
+    for match in _markdown_targets(report):
+        path, resolved, _suffix = _local_link(document, match.group("target"), mapping)
+        if path is None or resolved is None or PurePosixPath(resolved).suffix.lower() not in {".tsv", ".csv"}:
+            continue
+        _rows, _columns, valid = _table_metadata(resolved, files[resolved])
+        if not valid:
+            issues.append({"kind": "table_shape", "path": resolved})
+    return issues
 
 
 def scan_publish_files(files: Mapping[str, str | bytes], *,
@@ -1147,6 +1570,10 @@ def scan_publish_files(files: Mapping[str, str | bytes], *,
             issues.append({"kind": "local_path", "path": name})
         if _SIGNED_URL.search(text) or redact_url_credentials(text) != text:
             issues.append({"kind": "signed_url", "path": name})
+        if name == "DATA_AND_LICENSES.md" and _LICENSE_PLACEHOLDER.search(text):
+            issues.append({"kind": "placeholder", "path": name})
+        if name == "report/report.md" and _ANCHOR.search(text):
+            issues.append({"kind": "claim_anchor", "path": name})
         suffix = PurePosixPath(name).suffix.lower()
         file_internal = name in internal if isinstance(internal, set) else internal
         if file_internal and suffix in {".tsv", ".csv"} and small_cells(text, suffix):
@@ -1163,6 +1590,7 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
     assets = {name: clean_publication_text(name, body, settings, req) for name, body in assets.items()
               if not _LITERATURE_OUTPUT.search(name.replace("\\", "/"))}
     report = portfolio_report(req, settings, assets)
+    revision_history = portfolio_revision_history(req, settings, assets)
     if check_document(report)["status"] != "PASS":
         raise ValueError("과학 보고서에 반드시 0이어야 하는 한국어 표현이 남았습니다.")
     files: dict[str, str | bytes] = {"report/report.md": report}
@@ -1183,8 +1611,10 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
 
     aggregate_tables = declared_aggregate_tables(req)
     declared_reports = _declared_outputs(req, "report")
-    omitted_tables: list[str] = []
+    omitted_tables: list[dict[str, Any]] = []
+    table_names: list[str] = []
     figure_names: list[str] = []
+    reference_targets: dict[str, list[str]] = collections.defaultdict(list)
 
     for name, body in assets.items():
         path = PurePosixPath(name)
@@ -1202,9 +1632,10 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
             source_targets[name] = target
             track(name, target)
         elif branch_folder and suffix == ".md" and path.as_posix() in declared_reports:
-            target = _unique_target(prefix + "report", name, used)
+            target = _unique_target(f"docs/reference/{branch_folder}", name, used)
             files[target] = body
             source_targets[name] = target
+            reference_targets[branch_folder].append(target)
             track(name, target)
         elif path.name in _NEXTFLOW_NAMES and "pipeline_info" in {part.casefold() for part in path.parts}:
             if publish_file_allowed(name, body, internal=source_internal(name), declared=aggregate_tables):
@@ -1214,11 +1645,15 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
                 track(name, target)
         elif suffix in _TABLE_SUFFIXES:
             if not publish_file_allowed(name, body, internal=source_internal(name), declared=aggregate_tables):
-                omitted_tables.append(name)
+                omitted_tables.append(_omitted_table(
+                    name, body, internal=source_internal(name), declared=aggregate_tables,
+                    folder=branch_folder,
+                ))
             else:
                 target = _unique_target(prefix + "tables", name, used)
                 files[target] = body
                 source_targets[name] = target
+                table_names.append(target)
                 track(name, target)
 
     abstract_source = next((name for name in images
@@ -1244,8 +1679,9 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
         files[target] = text.encode("utf-8")
         source_targets[name] = target
         track(name, target)
-        if not branch_folder:
-            figure_names.append(target)
+        figure_names.append(target)
+
+    _add_workdir_source_targets(req, source_targets)
 
     request_text = _clean(str(req.get("text") or ""), settings, req)
     execution = ""
@@ -1258,32 +1694,35 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
         "run/execution_record.md": execution,
         "run/costs.md": _costs_document(req, tasks),
         "REFERENCES.md": _clean(_references(req, report, assets), settings, req),
-        "DATA_AND_LICENSES.md": _clean(_data_licenses(req), settings, req),
+        "DATA_AND_LICENSES.md": _clean(_data_licenses(req, settings), settings, req),
     })
+    if revision_history:
+        files["run/revision_history.md"] = revision_history
     run_documents = dict(run_documents or {})
     for name in ("run/progress.md", "run/reproduce.md", "run/task_record.md"):
         if name in run_documents:
             files[name] = _clean(run_documents[name], settings, req)
+    claim_evidence = _claim_evidence_document(req, assets, source_targets)
+    if claim_evidence:
+        files["docs/reference/claim_evidence.md"] = _clean(claim_evidence, settings, req)
     if branch_rows:
-        files.update({name: _clean(body, settings, req) for name, body in _study_documents(branch_rows).items()})
+        files.update({name: _clean(body, settings, req) for name, body in _study_documents(
+            req, branch_rows, branch_specs, step_folders, source_targets, reference_targets, omitted_tables,
+        ).items()})
+    else:
+        files["docs/reference/README.md"] = (
+            "# 상세 근거 문서\n\n이 폴더는 lookup-only입니다. 보고서 각주가 가리키는 근거만 확인하세요.\n"
+        )
+    readme_req = dict(req)
+    readme_req["text"] = request_text.replace("<local-path>", "내부 자료").replace(
+        "<reference-path>", "참고 자료")
     readme = _plain_korean(_readme(
-        req, report, _step_rows(req, assets), figure_names, omitted_tables, run_documents, branch_rows))
+        readme_req, report, _step_rows(req, assets), figure_names, table_names, omitted_tables,
+        run_documents, branch_rows))
     if check_document(readme)["status"] != "PASS":
         raise ValueError("README에 반드시 0이어야 하는 한국어 표현이 남았습니다.")
     files["README.md"] = _clean(readme, settings, req)
 
-    results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
-    for step_id, result in results.items():
-        if not isinstance(result, Mapping):
-            continue
-        workdir_value = result.get("workdir") or result.get("workdir_id")
-        if not isinstance(workdir_value, str):
-            continue
-        prefix = f"steps/{step_id}/outputs/"
-        workdir = workdir_value.replace("\\", "/")
-        for source, target in list(source_targets.items()):
-            if source.startswith(prefix):
-                source_targets[f"{workdir}/outputs/{source[len(prefix):]}"] = target
     source_targets.update({name: name for name in files})
     if isinstance(files.get("run/reproduce.md"), str):
         files["run/reproduce.md"] = _rewrite_reproduce_commands(
@@ -1293,6 +1732,8 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
     if broken:
         detail = ", ".join(f"{row['document']} -> {row['target']}" for row in broken)
         raise EditionCheckError(f"정리본 Markdown 링크가 깨졌습니다: {detail}")
+    if table_issues := _report_table_issues(files):
+        raise check_failure(table_issues)
 
     issues = code_syntax_issues(files) + scan_publish_files(
         files, internal=tracked_internal if step_scope is not None else internal)

@@ -258,7 +258,20 @@ def nested_report_links(text: str) -> str:
 
 
 def pdf_skip_line(reason: str) -> str:
-    return f"PDF는 포함하지 않았어요: {reason}"
+    return f"PDF는 포함하지 않았습니다: {reason}"
+
+
+def place_pdf_in_readme(readme: str, *, link: str | None = None, reason: str = "") -> str:
+    """Keep the PDF status in the README's fixed report/results/reproduction block."""
+    pattern = re.compile(r"(?m)^- 보고서: \[Markdown\]\(report/report\.md\).*$")
+    if link:
+        replacement = f"- 보고서: [Markdown](report/report.md) · [PDF]({link})"
+    else:
+        replacement = f"- 보고서: [Markdown](report/report.md) · {pdf_skip_line(reason)}"
+    if pattern.search(readme):
+        return pattern.sub(replacement, readme, count=1)
+    fallback = f"[과학 보고서 PDF]({link})" if link else pdf_skip_line(reason)
+    return readme.rstrip() + "\n\n" + fallback + "\n"
 
 
 def clean_document(text: str, settings, req: dict) -> str:
@@ -1382,12 +1395,13 @@ class ResultStorage:
                 saved = req["result_storage"]  # PI review may replace the persisted request fields while we print.
                 if pdf:
                     pdf_link = _PORTFOLIO_PDF_NAME if saved.get("mode") == "new" else _PDF_NAME
-                    docs["README.md"] += (f"\n[과학 보고서 PDF]({pdf_link})\n"
-                                          + (f"\n{reason}\n" if reason else ""))
+                    docs["README.md"] = place_pdf_in_readme(docs["README.md"], link=pdf_link)
+                    if reason:
+                        docs["README.md"] += f"\n{reason}\n"
                     write(_PDF_NAME, pdf)
                     write(_PORTFOLIO_PDF_NAME, pdf)
                 else:
-                    docs["README.md"] += f"\n{pdf_skip_line(reason)}\n"
+                    docs["README.md"] = place_pdf_in_readme(docs["README.md"], reason=reason)
                     for name in (_PDF_NAME, _PORTFOLIO_PDF_NAME):
                         if plain_path(target / name):
                             (target / name).unlink(missing_ok=True)  # a PDF left by an earlier attempt is not this edition's
