@@ -13,10 +13,11 @@ PR #743을 `origin/main`과 합치고 자동 리뷰 지적 8건을 고쳤습니�
 
 - 지적별 회귀는 병합 직후 8 failed, 수정 뒤 14 passed입니다. 웹 회귀 9 passed입니다.
 - 관련 pytest 578 passed·2 skipped, 충돌 회귀 1 passed입니다.
+- 첫 CI의 semantics 제거 검사 2건 실패는 hook 경로를 고쳐 2 passed로 확인했습니다. 보고서 회귀도 12 passed입니다.
 - `git diff --check`와 공개 금지 항목 수동 검사는 통과했습니다.
 - `scripts/check_public.sh`는 Windows Git Bash에서 90초 무출력이라 중단했습니다.
 - `docs/manual.md`: 159,892자 → 159,921자(+29자).
 
 ## 남은 것
 
-- push 뒤 CI 확인과 지적 8곳 답글이 남았습니다. 리뷰 재요청과 병합은 하지 않습니다.
+- 지적 8곳 답글은 마쳤습니다. 수정 head의 CI 확인만 남았고 리뷰 재요청과 병합은 하지 않습니다.
