@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
+import logging
 import time
 from collections.abc import Mapping
 from datetime import datetime, timezone
@@ -16,8 +16,25 @@ from .packs import configured_packs, pack_snapshot
 
 REENABLE = "labhq semantics enable"
 DEVICE = "seman" + "tics"
-_PATH = re.compile(r"(?i)(?:[a-z]:[\\/]|~[\\/]|/(?:[^/\s]+/)+)[^\s,;]*")
-_SECRET = re.compile(r"(?i)\b(?:authorization|bearer|api[_-]?key|access[_-]?token|secret|password)\s*[:=]\s*\S+")
+log = logging.getLogger("labhq.semantic_devices")
+
+_ERRORS: dict[str, tuple[str, str, str]] = {
+    "semantics_config_invalid": (DEVICE, "startup", "semantics 설정을 읽지 못했습니다. 설정을 고친 뒤 gateway를 다시 시작하세요."),
+    "semantics_worker_unavailable": (DEVICE, "startup", "semantics worker를 시작하지 못했습니다. doctor 결과를 확인하세요."),
+    "vocabulary_edam_invalid": ("EDAM map", "load", "EDAM map을 적용하지 못해 local vocabulary만 사용합니다."),
+    "vocabulary_load_failed": ("단어장", "load", "단어장을 불러오지 못했습니다."),
+    "checklist_load_failed": ("체크리스트", "load", "체크리스트를 불러오지 못했습니다."),
+    "checklist_render_failed": ("체크리스트", "render", "체크리스트 판정을 보고서 부록에 만들지 못했습니다."),
+    "pack_load_failed": ("research pack", "load", "research pack을 불러오지 못했습니다."),
+    "pack_snapshot_missing": ("research pack", "resume", "CP1에서 고정한 research pack snapshot을 복원하지 못했습니다."),
+    "semantics_advisory_snapshot_failed": (DEVICE, "advisory_snapshot", "재사용 후보 snapshot을 만들지 못했습니다."),
+    "semantics_observed_state_failed": (DEVICE, "advisory_projection", "재사용 후보 관측 상태를 읽지 못했습니다."),
+    "semantics_provenance_failed": (DEVICE, "advisory_projection", "재사용 후보 provenance 요약을 만들지 못했습니다."),
+    "semantics_advisory_projection_failed": (DEVICE, "advisory_projection", "재사용 후보를 평가하지 못했습니다."),
+    "semantics_advisory_boundary_failed": (DEVICE, "advisory_boundary", "재사용 후보가 정보 경계를 통과하지 못했습니다."),
+}
+_STOP_REASONS = frozenset({"info_boundary", "consecutive_failures", "recent_failures", "worker_stuck",
+                           "worker_busy", "wrong_identity", "breaker_storage", "sqlite_json1_missing"})
 
 
 def _semantics_state(settings: Any) -> dict[str, Any]:
@@ -40,17 +57,14 @@ def _stamp(value: Any = None) -> str:
         return "시각 미기록"
 
 
-def _reason(exc: BaseException) -> str:
-    text = " ".join(str(exc).split()) or type(exc).__name__
-    text = _SECRET.sub("[가림]", text)
-    text = _PATH.sub("<경로>", text)
-    return f"{type(exc).__name__}: {text}"[:240]
+def _issue(code: str, *, at: str | None = None) -> dict[str, str]:
+    device, stage, message = _ERRORS[code]
+    return {"code": code, "device": device, "stage": stage, "at": at or _stamp(), "message": message}
 
 
-def _issue(device: str, path: str, reason: str, *, at: str, impact: str,
-           recovery: str) -> dict[str, str]:
-    return {"device": device, "path": path, "reason": reason, "at": at,
-            "impact": impact, "recovery": recovery}
+def log_exception(code: str, exc: BaseException) -> None:
+    """Keep the exception body in the local redacted log, never in a request or report."""
+    log.warning("meaning device failure %s: %s", code, exc, exc_info=True)
 
 
 def _checklist_digest(catalog: Mapping[str, list[Any]]) -> str:
@@ -73,26 +87,26 @@ def inspect(settings: Any, *, service: Any = None, worker_known: bool = False,
     setting = sem["setting"]
     if sem["stopped"]:
         sem_status = "off"
-        impact = "재사용 후보·객체 연결·행동 판단을 평가하지 않음"
-        issues.append(_issue(DEVICE, "auto_off", str(sem["reason"] or "disabled"),
-                             at=sem["stopped_at"] or checked_at, impact=impact, recovery=REENABLE))
+        reason = str(sem["reason"] or "")
+        code = f"semantics_{reason}" if reason in _STOP_REASONS else "semantics_auto_off"
+        _ERRORS.setdefault(code, (DEVICE, "auto_off", f"semantics 평가가 자동으로 중단됐습니다. {REENABLE}로 다시 켜세요."))
+        issues.append(_issue(code, at=sem["stopped_at"] or checked_at))
     elif setting in {"invalid", "refused"}:
         sem_status = "error"
-        issues.append(_issue(DEVICE, "startup", setting, at=checked_at,
-                             impact="semantics worker가 시작되지 않음", recovery="semantics 설정을 고친 뒤 gateway를 다시 시작하세요"))
+        issues.append(_issue("semantics_config_invalid", at=checked_at))
     elif setting == "off":
         sem_status = "off"
-        issues.append(_issue(DEVICE, "setting", "configured_off", at=checked_at,
-                             impact="semantics 평가를 하지 않음", recovery="semantics.mode를 shadow 또는 ab로 바꾸고 gateway를 다시 시작하세요"))
+        _ERRORS.setdefault("semantics_configured_off", (DEVICE, "setting", "semantics 평가가 설정으로 꺼져 있습니다."))
+        issues.append(_issue("semantics_configured_off", at=checked_at))
     elif worker_known and service is None:
         sem_status = "error"
-        issues.append(_issue(DEVICE, "worker", "worker_unavailable", at=checked_at,
-                             impact="semantics 평가를 시작하지 못함", recovery="doctor 결과를 확인한 뒤 gateway를 다시 시작하세요"))
+        issues.append(_issue("semantics_worker_unavailable", at=checked_at))
     elif service is not None and getattr(service, "latched", None):
         sem_status = "off"
         reason = str(service.latched)
-        issues.append(_issue(DEVICE, "worker", reason, at=checked_at,
-                             impact="semantics 평가를 하지 않음", recovery=REENABLE))
+        code = f"semantics_{reason}" if reason in _STOP_REASONS else "semantics_auto_off"
+        _ERRORS.setdefault(code, (DEVICE, "auto_off", f"semantics 평가가 자동으로 중단됐습니다. {REENABLE}로 다시 켜세요."))
+        issues.append(_issue(code, at=checked_at))
     else:
         sem_status = "on"
     sem_record = {**sem, "status": sem_status,
@@ -109,14 +123,11 @@ def inspect(settings: Any, *, service: Any = None, worker_known: bool = False,
                       "sha256": vocab.sha256, "counts": vocab.counts(),
                       "edam_problem": vocab.edam_problem}
         if vocab.edam_problem:
-            issues.append(_issue("EDAM map", "vocab/edam_subset", vocab.edam_problem, at=checked_at,
-                                 impact="EDAM 식별자를 붙이지 않고 local vocabulary만 사용",
-                                 recovery="EDAM subset을 고친 뒤 gateway를 다시 시작하세요"))
+            issues.append(_issue("vocabulary_edam_invalid", at=checked_at))
     except Exception as exc:  # noqa: BLE001 - the request records the device failure and continues to CP1
-        vocabulary = {"status": "error", "reason": _reason(exc)}
-        issues.append(_issue("단어장", "vocab/output_types", _reason(exc), at=checked_at,
-                             impact="topic·산출 종류 정규화를 적용하지 못함",
-                             recovery="단어장 파일을 고친 뒤 같은 요청을 다시 보내세요"))
+        log_exception("vocabulary_load_failed", exc)
+        vocabulary = {"status": "error", "error_code": "vocabulary_load_failed"}
+        issues.append(_issue("vocabulary_load_failed", at=checked_at))
 
     checklist: dict[str, Any]
     try:
@@ -126,10 +137,9 @@ def inspect(settings: Any, *, service: Any = None, worker_known: bool = False,
         checklist = {"status": "ok", "sha256": _checklist_digest(catalog),
                      "topics": len(catalog), "items": sum(len(items) for items in catalog.values())}
     except Exception as exc:  # noqa: BLE001 - explicit error replaces the old empty checklist
-        checklist = {"status": "error", "reason": _reason(exc)}
-        issues.append(_issue("체크리스트", "vocab/topic_checklists", _reason(exc), at=checked_at,
-                             impact="topic별 점검 항목을 계획·리뷰·부록에 적용하지 못함",
-                             recovery="체크리스트를 고친 뒤 같은 요청을 다시 보내세요"))
+        log_exception("checklist_load_failed", exc)
+        checklist = {"status": "error", "error_code": "checklist_load_failed"}
+        issues.append(_issue("checklist_load_failed", at=checked_at))
 
     packs: dict[str, Any]
     try:
@@ -137,24 +147,23 @@ def inspect(settings: Any, *, service: Any = None, worker_known: bool = False,
         snapshot = pack_snapshot(loaded)
         packs = {"status": "ok", "count": len(snapshot), "sha256": snapshot}
     except Exception as exc:  # noqa: BLE001 - the CP1 card lets the PI choose whether to proceed
-        packs = {"status": "error", "reason": _reason(exc)}
-        issues.append(_issue("research pack", "research/packs", _reason(exc), at=checked_at,
-                             impact="configured pack 규칙과 hash를 계획에 적용하지 못함",
-                             recovery="pack 설정·파일을 고친 뒤 같은 요청을 다시 보내세요"))
+        log_exception("pack_load_failed", exc)
+        packs = {"status": "error", "error_code": "pack_load_failed"}
+        issues.append(_issue("pack_load_failed", at=checked_at))
 
-    status = "error" if any(item["path"] not in {"setting", "auto_off"} for item in issues) else (
+    status = "error" if any(item["stage"] not in {"setting", "auto_off"} for item in issues) else (
         "warning" if issues else "ok")
     return {"version": 1, "phase": phase, "checked_at": checked_at, "status": status,
             DEVICE: sem_record, "vocabulary": vocabulary, "checklist": checklist,
             "packs": packs, "errors": issues}
 
 
-def add_error(record: dict[str, Any], *, device: str, path: str, reason: str,
-              impact: str, recovery: str) -> dict[str, Any]:
-    issue = _issue(device, path, reason, at=_stamp(), impact=impact, recovery=recovery)
+def add_error(record: dict[str, Any], *, code: str) -> dict[str, Any]:
+    if code not in _ERRORS:
+        code = "semantics_advisory_projection_failed"
+    issue = _issue(code)
     errors = record.setdefault("errors", [])
-    if not any((row.get("device"), row.get("path"), row.get("reason")) ==
-               (device, path, reason) for row in errors if isinstance(row, Mapping)):
+    if not any(row.get("code") == code for row in errors if isinstance(row, Mapping)):
         errors.append(issue)
     record["status"] = "error"
     return issue
@@ -166,8 +175,8 @@ def warning(record: Mapping[str, Any] | None) -> str:
         return ""
     first = errors[0]
     extra = f" 외 {len(errors) - 1}건" if len(errors) > 1 else ""
-    return (f"⚠ 의미 장치 중단: {first.get('device')} {first.get('reason')}{extra} · "
-            f"시각 {first.get('at')} · 영향 {first.get('impact')} · 다시 켜기: {first.get('recovery')}")
+    return (f"⚠ 의미 장치 중단: {first.get('device')} {first.get('code')}{extra} · "
+            f"단계 {first.get('stage')} · 시각 {first.get('at')} · {first.get('message')}")
 
 
 def execution_record(record: Mapping[str, Any] | None) -> str:
@@ -175,8 +184,8 @@ def execution_record(record: Mapping[str, Any] | None) -> str:
     if not headline:
         return "의미 장치 점검: 정상"
     errors = record.get("errors") or []
-    lines = [headline, "", "| 장치 | 경로 | 오류·사유 | 영향 | 복구 |",
+    lines = [headline, "", "| 오류 코드 | 장치 | 단계 | 시각 | 설명 |",
              "|---|---|---|---|---|"]
-    lines += [f"| {row.get('device')} | {row.get('path')} | {row.get('reason')} | "
-              f"{row.get('impact')} | {row.get('recovery')} |" for row in errors]
+    lines += [f"| {row.get('code')} | {row.get('device')} | {row.get('stage')} | "
+              f"{row.get('at')} | {row.get('message')} |" for row in errors]
     return "\n".join(lines)

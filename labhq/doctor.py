@@ -109,17 +109,17 @@ def _semantic_device_rows(settings: Settings) -> list[dict]:
         _row("config", "meaning vocabulary", "ok" if vocab["status"] == "ok" else "warn",
              (f"hash {vocab.get('sha256', '-')[:12]}; keys {vocab.get('counts', {}).get('keys', 0)}; "
               f"EDAM {vocab.get('counts', {}).get('edam_terms', 0)}") if vocab["status"] == "ok" else
-             str(vocab.get("reason") or vocab.get("edam_problem") or "불러오기 실패"),
+             str(vocab.get("error_code") or vocab.get("edam_problem") or "불러오기 실패"),
              "단어장·EDAM 파일을 고친 뒤 gateway를 다시 시작하세요."),
         _row("config", "topic checklists", "ok" if checklist["status"] == "ok" else "warn",
              (f"hash {checklist.get('sha256', '-')[:12]}; topic {checklist.get('topics', 0)}; "
               f"items {checklist.get('items', 0)}") if checklist["status"] == "ok" else
-             str(checklist.get("reason") or "불러오기 실패"),
+             str(checklist.get("error_code") or "불러오기 실패"),
              "체크리스트 파일을 고친 뒤 gateway를 다시 시작하세요."),
         _row("config", "research packs", "ok" if packs["status"] == "ok" else "warn",
              (f"loaded {packs.get('count', 0)}; hashes " +
               (", ".join(f"{key}:{value[:12]}" for key, value in packs.get("sha256", {}).items()) or "없음"))
-             if packs["status"] == "ok" else str(packs.get("reason") or "불러오기 실패"),
+              if packs["status"] == "ok" else str(packs.get("error_code") or "불러오기 실패"),
              "pack 설정·파일을 고친 뒤 gateway를 다시 시작하세요."),
     ]
 

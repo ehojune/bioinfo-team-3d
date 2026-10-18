@@ -16,10 +16,28 @@ def test_vocab_checklist_and_pack_failures_are_structured_and_path_safe(tmp_path
 
     record = semantic_devices.inspect(_settings(tmp_path), phase="cp1")
 
-    paths = {row["path"] for row in record["errors"]}
-    assert {"vocab/output_types", "vocab/topic_checklists", "research/packs"} <= paths
+    codes = {row["code"] for row in record["errors"]}
+    assert {"vocabulary_load_failed", "checklist_load_failed", "pack_load_failed"} <= codes
     assert record["vocabulary"]["status"] == record["checklist"]["status"] == record["packs"]["status"] == "error"
-    assert "C:/private" not in str(record) and "<경로>" in str(record)
+    assert "C:/private" not in str(record)
+    assert all(set(row) == {"code", "device", "stage", "at", "message"} for row in record["errors"])
+
+
+def test_exception_body_never_enters_the_public_device_record(tmp_path, monkeypatch):
+    private_text = "DUA participant CASE-SECRET-491"
+    monkeypatch.setattr(semantic_devices, "configured_packs",
+                        lambda settings: (_ for _ in ()).throw(ValueError(private_text)))
+
+    record = semantic_devices.inspect(_settings(tmp_path), phase="cp1")
+
+    assert private_text not in str(record)
+    assert record["errors"][-1] == {
+        "code": "pack_load_failed",
+        "device": "research pack",
+        "stage": "load",
+        "at": record["errors"][-1]["at"],
+        "message": "research pack을 불러오지 못했습니다.",
+    }
 
 
 def test_healthy_devices_include_hashes_and_counts(tmp_path):

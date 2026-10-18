@@ -1085,7 +1085,7 @@ accept면 CSO가 결론·수치 문장마다 `[[claim:<step_id>/<claim_id>]]`를
 
 일반·단독 요청도 `shadow`와 `ab`에서 종료 시 기록합니다. 연구 요청만 A/B 계획 참고를 받으며, 재시작 뒤 재개해 끝난 요청도 같은 종료 경로를 씁니다. epoch는 `semantics enable`로 새로 열 때만 바뀝니다. 다른 설정 파일로 뜬 gateway가 같은 상태 폴더를 쓰면 요청별 보기가 불일치를 알리고 `labhq up`도 성공으로 처리하지 않습니다. 현재 설정이나 PID 기록만으로 과거 설정을 단정하지는 않습니다.
 
-연구 요청은 CP1 전에 semantics 상태·epoch·마지막 기록과 단어장·EDAM·체크리스트·pack의 hash·개수를 점검합니다. 꺼짐이나 오류는 CP1·CP2 카드, 웹 피드, `status`, `doctor`, 요청 실행 기록과 요청별 semantics report에 사유·시각·영향·복구 방법으로 남습니다. advisory 계산 오류는 그 요청만 `평가 안 됨`으로 기록해 다음 요청에서 다시 시도하며, 정보 경계 위반은 계속 자동 중단합니다.
+연구 요청은 CP1 전에 semantics 상태·epoch·마지막 기록과 단어장·EDAM·체크리스트·pack의 hash·개수를 점검합니다. 오류는 CP1·CP2 카드, 웹 피드, `status`, `doctor`, 실행 기록과 요청별 semantics report에 `code·device·stage·at·message`로만 남기며 예외 본문은 요청에 저장하지 않습니다. advisory 오류 요청은 A/B 비교에서 빼고 제외 수로 따로 셉니다. 정보 경계 위반은 계속 자동 중단합니다.
 
 report는 중첩 집계의 구조와 개수(0 이상의 정수)를 확인합니다. 손상된 요청 행은 통째로 제외하고 JSON의 `broken_lines`와 텍스트의 `깨진 줄`에 셉니다. 이전 판본의 선택 필드 부재와 worker가 남긴 `declarations: null`은 허용하며 소수 지연값도 보존합니다. 저장 로그는 바꾸지 않습니다.
 

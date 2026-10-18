@@ -103,7 +103,7 @@ BOUNDARY_FIELDS = frozenset({"unknown", "v", "type", "ts", "epoch", "request_id"
                              "mode", "status", "rows", "busy_skipped", "snapshot_ms", "rows_ms",
                              "vocab_sha256", "objects", "provenance", "hash", "actions", "ms", "phase",
                              "key", "error_kind", "reason", "counts", "arm", "offered", "referenced", "cost_usd",
-                             "cost_known", "provenance.types",
+                             "cost_known", "ab_excluded", "provenance.types",
                              "provenance.declarations", "objects.artifact_types", "input_fit",
                              "input_fit_sha256"})
 BOUNDARY_CLASSES = frozenset({"path", "filename", "url", "doi", "employee_id", "free_text", "identifier",
@@ -379,13 +379,17 @@ def _light_request(req: Mapping[str, Any]) -> dict:
     offered = _ab_offered(req)
     if offered is not None:
         light["ab_offered"] = offered
+    frozen = req.get("semantics_ab")
+    if isinstance(frozen, Mapping) and frozen.get("status") == "error":
+        light["ab_excluded"] = True
     return light
 
 
 def _ab_offered(req: Mapping[str, Any]) -> list[str] | None:
     """The candidate ids frozen on a research request when its plan advisory was built (#149 decision 15)."""
     frozen = req.get("semantics_ab")
-    if not isinstance(frozen, Mapping) or not isinstance(frozen.get("offered"), list):
+    if (not isinstance(frozen, Mapping) or frozen.get("status") == "error"
+            or not isinstance(frozen.get("offered"), list)):
         return None
     return [ref for ref in frozen["offered"] if isinstance(ref, str) and AB_REF.fullmatch(ref)][:MAX_CANDIDATE_REFS]
 
@@ -783,6 +787,14 @@ class AdvisoryFailure(Exception):
     def __init__(self, path: str, kind: str):
         self.path, self.kind = path, kind
         super().__init__(f"{path}:{kind}")
+
+
+def _advisory_error_code(path: str, kind: str) -> str:
+    if kind == "provenance_failed":
+        return "semantics_provenance_failed"
+    return {"observed_state": "semantics_observed_state_failed",
+            "advisory_boundary": "semantics_advisory_boundary_failed"}.get(
+                path, "semantics_advisory_projection_failed")
 
 
 # strictest last; a level the settings do not define ranks above restricted, so it is never allowed
@@ -1583,8 +1595,11 @@ def _add_ab_fields(line: dict, snap: Mapping[str, Any], req: Mapping[str, Any]) 
     shadow arm: the ids it would have been offered), never against candidates recomputed at the end."""
     if snap.get("semantics_mode") != "ab" or req.get("lane") != "research":
         return
+    if req.get("ab_excluded") is True:
+        line.update(arm=ab_arm(str(snap["rid"])), ab_excluded=True)
+        return
     offered = set(req.get("ab_offered") or ())
-    line.update(arm=ab_arm(str(snap["rid"])), offered=len(offered),
+    line.update(arm=ab_arm(str(snap["rid"])), ab_excluded=False, offered=len(offered),
                 referenced=bool(offered & _plan_refs(req.get("plan"))),
                 cost_usd=float(req.get("cost_usd") or 0), cost_known=req.get("cost_known", True) is not False)
 
@@ -1955,7 +1970,7 @@ class ShadowService:
             return snap
         except Exception as exc:  # noqa: BLE001 - advisory is fail-open
             log.warning("semantics advisory skipped (%s)", type(exc).__name__)
-            return {"_error": {"path": "advisory_snapshot", "reason": type(exc).__name__}}
+            return {"_error": {"code": "semantics_advisory_snapshot_failed"}}
 
     def advisory_offer(self, rid: str, snap: dict | None) -> dict | None:
         """Worker side: the B1 selector on ``advisory_snapshot``'s copy, in both arms (#149 decision 15). None
@@ -1974,7 +1989,7 @@ class ShadowService:
             found = self.advisory_candidates(snap) if snap is not None else []
         except AdvisoryFailure as exc:
             return {"arm": arm, "offered": [], "candidates": [], "status": "error",
-                    "error": {"path": exc.path, "reason": exc.kind}}
+                    "error": {"code": _advisory_error_code(exc.path, exc.kind)}}
         return {"arm": arm, "offered": [c["artifact_id"] for c in found],
                 "candidates": found if arm == "advisory" else []}
 
@@ -1997,7 +2012,9 @@ class ShadowService:
                 raise AdvisoryFailure("observed_state", type(exc).__name__) from exc
             summary, _ = compute_provenance(snap, Reader(snap, check), observed if isinstance(observed, dict) else {},
                                              check, include_candidate_details=True)
-            details = summary.get("candidate_details") if summary.get("status") == "ok" else []
+            if summary.get("status") != "ok":
+                raise AdvisoryFailure("advisory_projection", "provenance_failed")
+            details = summary.get("candidate_details")
             if not isinstance(details, list):
                 raise AdvisoryFailure("advisory_projection", "invalid_candidate_details")
             safe = []
@@ -2382,6 +2399,7 @@ def readable_request(line: Mapping[str, Any]) -> bool:
             and all(_count(line.get(k, 0)) for k in ("busy_skipped", "offered"))
             and line.get("arm") in (None, "advisory", "shadow")
             and isinstance(line.get("referenced"), (bool, type(None)))
+            and isinstance(line.get("ab_excluded"), (bool, type(None)))
             and isinstance(line.get("cost_known"), (bool, type(None)))
             and all(_number(m.get("ms")) for m in (prov, objs))
             and _count(prov.get("candidates", 0)) and _number(prov.get("unknown_ratio"))
@@ -2560,7 +2578,8 @@ def build_report(paths: ShadowPaths, today: date | None = None, setting: str = "
     ab_requests = [r for r in requests if r.get("lane") == "research" and r.get("arm") in ("advisory", "shadow")]
 
     def arm_stats(arm: str) -> dict:
-        rows = [r for r in ab_requests if r.get("arm") == arm]
+        arm_rows = [r for r in ab_requests if r.get("arm") == arm]
+        rows = [r for r in arm_rows if r.get("ab_excluded") is not True]
         with_candidates = sum(1 for r in rows if (r.get("offered") or 0) > 0)
         referenced = sum(1 for r in rows if r.get("referenced") is True)
         failed = sum(1 for r in rows if r.get("status") not in ("done", "completed"))
@@ -2569,11 +2588,13 @@ def build_report(paths: ShadowPaths, today: date | None = None, setting: str = "
                 "reference_rate": round(referenced / with_candidates, 4) if with_candidates else None,
                 "failed": failed, "failure_rate": round(failed / len(rows), 4) if rows else None,
                 "cost_usd": round(sum(float(r.get("cost_usd") or 0) for r in known), 6),
-                "cost_unknown": len(rows) - len(known)}
+                "cost_unknown": len(rows) - len(known),
+                "excluded": len(arm_rows) - len(rows)}
 
     arms = {arm: arm_stats(arm) for arm in ("advisory", "shadow")}
     ab_deadline = AB_INTRODUCED + timedelta(days=AB_REVIEW_DAYS)
-    ab_window_reached = len(ab_requests) >= AB_REVIEW_RECORDS or today >= ab_deadline
+    ab_eligible = [r for r in ab_requests if r.get("ab_excluded") is not True]
+    ab_window_reached = len(ab_eligible) >= AB_REVIEW_RECORDS or today >= ab_deadline
     deadline = INTRODUCED + timedelta(days=REVIEW_DAYS)
     proposals = []
     if today >= deadline:
@@ -2614,8 +2635,9 @@ def build_report(paths: ShadowPaths, today: date | None = None, setting: str = "
         "types": {k: dict(sorted(v.items())) for k, v in types.items()}, "declarations": declarations,
         "input_fit": dict(sorted(input_fit.items())),
         "marks": {"reviewed": len(marks), "wrong": wrong},
-        "arms": arms, "ab_window": {"requests": len(ab_requests), "target_requests": AB_REVIEW_RECORDS,
-                                      "deadline": ab_deadline.isoformat(), "reached": ab_window_reached},
+        "arms": arms, "ab_window": {"requests": len(ab_eligible), "excluded": len(ab_requests) - len(ab_eligible),
+                                      "target_requests": AB_REVIEW_RECORDS, "deadline": ab_deadline.isoformat(),
+                                      "reached": ab_window_reached},
         "auto_off": [{"day": _day(l.get("ts")), "epoch": l.get("epoch"), "reason": l.get("reason"),
                       "boundary": _clean_boundary_details(l.get("boundary"))}
                       for l in lines if l.get("type") == "auto_off"],
@@ -2674,18 +2696,19 @@ def render_report(rep: Mapping[str, Any]) -> str:
     ]
     out += [f"- {a['day']} epoch {v(a['epoch'])}: {a['reason']}{boundary(a.get('boundary'))}"
             for a in rep["auto_off"]]
-    if rep.get("arms") and (st.get("setting") == "ab" or rep["ab_window"]["requests"]):
+    if rep.get("arms") and (st.get("setting") == "ab" or rep["ab_window"]["requests"]
+                            or rep["ab_window"]["excluded"]):
         out += ["", "A/B (결정 18: 기록 10건 또는 3주):",
-                "| arm | 요청 | 후보 있음 | 참조 | 참조율 | 실패 | 실패율 | 비용 USD | 비용 미상 |",
-                "|---|---|---|---|---|---|---|---|---|"]
+                "| arm | 요청 | 제외 | 후보 있음 | 참조 | 참조율 | 실패 | 실패율 | 비용 USD | 비용 미상 |",
+                "|---|---|---|---|---|---|---|---|---|---|"]
         for arm in ("advisory", "shadow"):
             row = rep["arms"][arm]
-            out.append(f"| {arm} | {row['requests']} | {row['with_candidates']} | {row['referenced']} | "
+            out.append(f"| {arm} | {row['requests']} | {row['excluded']} | {row['with_candidates']} | {row['referenced']} | "
                        f"{v(row['reference_rate'])} | {row['failed']} | {v(row['failure_rate'])} | "
                        f"{row['cost_usd']} | {row['cost_unknown']} |")
         window = rep["ab_window"]
         out.append(f"판단 창: {window['requests']}/{window['target_requests']}건 · 기한 {window['deadline']} · "
-                   f"{'도달' if window['reached'] else '진행 중'}")
+                   f"{'도달' if window['reached'] else '진행 중'} · advisory 오류 제외 {window['excluded']}건")
     out += ["", f"중간 점검 {rep['midpoint']} · 판정 기한 {rep['deadline']} (기준은 전부 미측정 제안치)"]
     if rep["propose_removal"]:
         out += ["PROPOSE_REMOVAL — 제거 제안(결정은 PI):"] + [f"- {x}" for x in rep["propose_removal"]]

@@ -809,8 +809,7 @@ function apply(ev, replay = false) {
     case 'request.semantic_devices': {
       const q = req(rid), first = (d.errors || [])[0] || {};
       q.semantic_devices = { ...d };
-      const recovery = first.recovery ? ` · 다시 켜기: ${first.recovery}` : '';
-      const message = `의미 장치 중단: ${first.device || '장치'} ${first.reason || '상태 확인 필요'} · 시각 ${first.at || d.checked_at || '미기록'} · 영향 ${first.impact || '평가 안 됨'}${recovery}`;
+      const message = `의미 장치 중단: ${first.device || '장치'} ${first.code || '상태 확인 필요'} · 단계 ${first.stage || '미기록'} · 시각 ${first.at || d.checked_at || '미기록'} · ${first.message || '장치 상태를 확인하세요.'}`;
       feed({ who: 'system', text: short(message, 300), fullText: message, cls: 'alert' }, ts, rid);
       break;
     }

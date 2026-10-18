@@ -78,12 +78,12 @@ test('semantic device stops are large in the request feed',()=>{
   const office=State.createOfficeState({now:()=>100});
   office.apply({type:'request.created',request_id:'r1',data:{text:'연구',mode:'orchestrate'}});
   office.apply({type:'request.semantic_devices',request_id:'r1',data:{checked_at:'2026-10-18T10:00:00+09:00',
-    errors:[{device:'semantics',reason:'info_boundary',at:'2026-10-18T09:59:00+09:00',
-      impact:'평가 안 됨',recovery:'labhq semantics enable'}]}});
+    errors:[{code:'semantics_info_boundary',device:'semantics',stage:'auto_off',
+      at:'2026-10-18T09:59:00+09:00',message:'semantics 평가가 자동으로 중단됐습니다. labhq semantics enable로 다시 켜세요.'}]}});
   const q=office.S.requests.get('r1'), message=office.S.feed[0];
-  assert.equal(q.semantic_devices.errors[0].reason,'info_boundary');
+  assert.equal(q.semantic_devices.errors[0].code,'semantics_info_boundary');
   assert.equal(message.cls,'alert');
-  assert.match(message.fullText,/의미 장치 중단: semantics info_boundary/);
+  assert.match(message.fullText,/의미 장치 중단: semantics semantics_info_boundary/);
   assert.match(message.fullText,/labhq semantics enable/);
 });
 

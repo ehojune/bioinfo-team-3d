@@ -179,6 +179,71 @@ def test_checklist_render_failure_is_recorded_instead_of_empty(monkeypatch):
     assert req["semantic_devices"]["status"] == "error"
 
 
+@pytest.mark.asyncio
+async def test_checklist_render_failure_is_in_the_execution_record(monkeypatch):
+    settings = Settings()
+    hub = MiniHub(settings, lambda task: None, mode="orchestrate", work_kind="research")
+    hub.requests["r"]["plan"] = valid_plan(topics=["dna_methylation"])
+    monkeypatch.setattr(topic_checklists, "load",
+                        lambda *a, **k: (_ for _ in ()).throw(ValueError("PRIVATE CHECKLIST BODY")))
+
+    Orchestrator(hub)._finish("r", "# 결과", {}, ok=True)
+
+    error = hub.requests["r"]["semantic_devices"]["errors"][-1]
+    assert error["code"] == "checklist_render_failed"
+    assert set(error) == {"code", "device", "stage", "at", "message"}
+    assert "checklist_render_failed" in hub.requests["r"]["execution_record"]
+    assert "PRIVATE CHECKLIST BODY" not in str(hub.requests["r"])
+
+
+@pytest.mark.asyncio
+async def test_resume_pack_failure_preserves_the_frozen_snapshot(monkeypatch):
+    settings = Settings()
+    settings.research.enabled = True
+    settings.orchestrator.chief_of_staff_agent = None
+    settings.orchestrator.reviewer_agent = None
+
+    async def reply(task):
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                          structured=valid_plan(topics=[]))
+
+    hub = MiniHub(settings, reply, mode="orchestrate", work_kind="research", text="compare conditions")
+    frozen = {"custom_pack@1": "a" * 64}
+    hub.requests["r"]["research_contract"] = {
+        "work_kind": "research", "execution_enabled": False, "pack_snapshot": dict(frozen)}
+    monkeypatch.setattr("labhq.orchestrator.cso.packs_for_snapshot",
+                        lambda *a, **k: (_ for _ in ()).throw(ValueError("missing frozen pack")))
+
+    await Orchestrator(hub).run_request("r", resume=True)
+
+    assert hub.calls == []
+    assert hub.requests["r"]["research_contract"]["pack_snapshot"] == frozen
+    assert hub.requests["r"]["status"] == "failed"
+    assert hub.requests["r"]["semantic_devices"]["errors"][-1]["code"] == "pack_snapshot_missing"
+
+
+@pytest.mark.asyncio
+async def test_exception_body_is_absent_from_request_cards_and_execution_record(monkeypatch):
+    settings = Settings()
+    settings.research.enabled = True
+    settings.orchestrator.chief_of_staff_agent = None
+    settings.orchestrator.reviewer_agent = None
+    private_text = "DUA participant CASE-SECRET-927"
+
+    async def reply(task):
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=valid_plan())
+
+    hub = MiniHub(settings, reply, mode="orchestrate", work_kind="research", text="compare conditions")
+    monkeypatch.setattr("labhq.research.semantic_devices.configured_packs",
+                        lambda *a, **k: (_ for _ in ()).throw(ValueError(private_text)))
+
+    await Orchestrator(hub).run_request("r")
+
+    public_record = json.dumps({"request": hub.requests["r"], "cards": hub.approvals}, ensure_ascii=False)
+    assert private_text not in public_record
+    assert "pack_load_failed" in hub.requests["r"]["execution_record"]
+
+
 def test_intake_classifies_simple_research_and_ambiguous():
     assert classify_intake("TSV를 CSV로 형식 변환해 줘").work_kind == "simple"
     assert classify_intake("후보 바이오마커를 선택해 줘").work_kind == "research"
