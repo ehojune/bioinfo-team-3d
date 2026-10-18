@@ -11,13 +11,24 @@ from typing import Any
 
 from .. import vocab as output_vocab
 from ..vocab import topic_checklists
-from . import semantics_shadow
 from .packs import configured_packs, pack_snapshot
 
 
 REENABLE = "labhq semantics enable"
 _PATH = re.compile(r"(?i)(?:[a-z]:[\\/]|~[\\/]|/(?:[^/\s]+/)+)[^\s,;]*")
 _SECRET = re.compile(r"(?i)\b(?:authorization|bearer|api[_-]?key|access[_-]?token|secret|password)\s*[:=]\s*\S+")
+
+
+def _semantics_state(settings: Any) -> dict[str, Any]:
+    """Keep every spelling of ``off`` from importing the removable semantics model."""
+    raw = getattr(settings, "semantics", None)
+    mode = raw.get("mode", "off") if isinstance(raw, Mapping) else raw
+    if mode in (None, False, "off"):
+        return {"setting": "off", "stopped": False, "reason": None, "stopped_at": None,
+                "epoch": None, "last_recorded_at": None, "last_ok_at": None, "boundary": [],
+                "reenable_command": REENABLE, "legacy_false_positive": False}
+    from . import semantics_shadow  # semantics-hook
+    return semantics_shadow.runtime_state(settings)
 
 
 def _stamp(value: Any = None) -> str:
@@ -57,7 +68,7 @@ def inspect(settings: Any, *, service: Any = None, worker_known: bool = False,
     """
     checked_at = _stamp()
     issues: list[dict[str, str]] = []
-    sem = semantics_shadow.runtime_state(settings)
+    sem = _semantics_state(settings)
     setting = sem["setting"]
     if sem["stopped"]:
         sem_status = "off"
