@@ -6,3 +6,6 @@ rows:
 - sha: eda518a
   at: 2026-10-19 00:54
   text: Unpaywall email 예시를 배포용 config 복사본에도 반영해 init 결과를 일치시켰다.
+- sha: dcf503d
+  at: 2026-10-19 01:39
+  text: Europe PMC 미등재 논문도 합법 OA 사본을 찾고 OA URL의 내부망 접근과 실패 원장 누락을 막음
