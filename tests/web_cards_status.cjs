@@ -74,6 +74,33 @@ test('a page left open across a gateway restart learns the request is interrupte
   assert.equal(office.S.requests.get('r1').status,'failed');
 });
 
+test('semantic device stops are large in the request feed',()=>{
+  const office=State.createOfficeState({now:()=>100});
+  office.apply({type:'request.created',request_id:'r1',data:{text:'연구',mode:'orchestrate'}});
+  office.apply({type:'request.semantic_devices',request_id:'r1',data:{checked_at:'2026-10-18T10:00:00+09:00',
+    errors:[{code:'info_boundary',device:'semantics',stage:'auto_off',
+      at:'2026-10-18T09:59:00+09:00',message:'semantics 평가가 자동으로 중단됐습니다. labhq semantics enable로 다시 켜세요.'}]}});
+  const q=office.S.requests.get('r1'), message=office.S.feed[0];
+  assert.equal(q.semantic_devices.errors[0].code,'info_boundary');
+  assert.equal(message.cls,'alert');
+  assert.match(message.fullText,/의미 장치 중단: semantics info_boundary/);
+  assert.match(message.fullText,/labhq semantics enable/);
+});
+
+test('snapshot restores semantic device state after its event ages out',()=>{
+  const office=State.createOfficeState({now:()=>100});
+  const semantic_devices={checked_at:'2026-10-18T10:00:00+09:00',status:'error',
+    errors:[{code:'info_boundary',device:'semantics',stage:'auto_off',
+      at:'2026-10-18T09:59:00+09:00',message:'semantics 평가가 자동으로 중단됐습니다.'}]};
+
+  office.apply({type:'snapshot',data:{requests:[{id:'r1',text:'연구',status:'interrupted',
+    mode:'orchestrate',semantic_devices}],recent_events:[]}});
+
+  const restored=office.S.requests.get('r1').semantic_devices;
+  assert.equal(restored.status,'error');
+  assert.equal(restored.errors[0].code,'info_boundary');
+});
+
 test('an alert log raises a toast once, never on replay (R21)',()=>{
   const office=State.createOfficeState({now:()=>100});
   office.apply({type:'snapshot',data:{agents:[{id:'engineer',name:'Engineer Kim'}]}});

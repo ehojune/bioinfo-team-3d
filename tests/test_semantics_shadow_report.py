@@ -78,10 +78,10 @@ def test_ab_report_compares_requests_candidates_reference_failure_and_cost(tmp_p
 
     assert rep["arms"]["advisory"] == {"requests": 1, "with_candidates": 1, "referenced": 1,
                                          "reference_rate": 1.0, "failed": 0, "failure_rate": 0.0,
-                                         "cost_usd": 1.5, "cost_unknown": 0}
+                                         "cost_usd": 1.5, "cost_unknown": 0, "excluded": 0}
     assert rep["arms"]["shadow"]["failure_rate"] == 1.0 and rep["arms"]["shadow"]["cost_unknown"] == 1
-    assert rep["ab_window"] == {"requests": 2, "target_requests": 10, "deadline": "2026-10-23",
-                                 "reached": False}
+    assert rep["ab_window"] == {"requests": 2, "excluded": 0, "target_requests": 10,
+                                 "deadline": "2026-10-23", "reached": False}
 
 
 def test_ab_report_counts_research_requests_only_so_others_cannot_close_the_window(tmp_path):

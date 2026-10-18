@@ -49,6 +49,7 @@ from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARC
                                  missing_result_slots, repair_result_slots,
                                  unnegated_analysis_text, validate_research_result, with_pack_refs)
 from ..research import continuation as research_continuation
+from ..research import semantic_devices
 from ..security import redact_tokens
 from ..recruit.provenance import (consult_refusal, external_contract_conflicts, external_hosts, not_yet_active,
                                   probation_refusal, restricted_input_steps, touches_restricted)
@@ -2738,6 +2739,44 @@ class Orchestrator:
     async def _emit(self, rid: str, typ: str, data: dict) -> None:
         await self.hub.publish({"type": typ, "ts": time.time(), "request_id": rid, "data": data})
 
+    async def _semantic_devices_check(self, rid: str, phase: str) -> dict[str, Any]:
+        """Refresh the request-scoped device record before a PI checkpoint."""
+        req = self.hub.requests[rid]
+        previous = req.get("semantic_devices") if isinstance(req.get("semantic_devices"), dict) else {}
+        previous_errors = {(row.get("code"), row.get("stage"))
+                           for row in previous.get("errors") or [] if isinstance(row, dict)}
+        service = None
+        service = getattr(self.hub, "semantics_shadow", None)  # semantics-hook
+        record = semantic_devices.inspect(self.hub.s, service=service, worker_known=True, phase=phase)
+        # Runtime-only errors such as an advisory projection failure must survive the next durable health refresh.
+        durable = {(row.get("code"), row.get("stage")) for row in record["errors"]}
+        for row in previous.get("errors") or []:
+            key = (row.get("code"), row.get("stage")) if isinstance(row, dict) else None
+            if key and key not in durable and row.get("stage") in {
+                    "advisory_snapshot", "advisory_projection", "advisory_boundary", "load", "render", "resume"}:
+                record["errors"].append(row)
+                record["status"] = "error"
+        req["semantic_devices"] = record
+        checks = req.setdefault("semantic_device_checks", [])
+        checks.append(record)
+        if len(checks) > 4:
+            del checks[:-4]
+        self.hub.save_request(rid)
+        current_errors = {(row.get("code"), row.get("stage"))
+                          for row in record["errors"] if isinstance(row, dict)}
+        if current_errors and current_errors != previous_errors:
+            await self._emit(rid, "request.semantic_devices", record)
+        return record
+
+    async def _semantic_device_error(self, rid: str, *, code: str) -> None:
+        req = self.hub.requests[rid]
+        record = req.get("semantic_devices") if isinstance(req.get("semantic_devices"), dict) else {
+            "version": 1, "phase": "runtime", "checked_at": time.time(), "status": "ok", "errors": []}
+        semantic_devices.add_error(record, code=code)
+        req["semantic_devices"] = record
+        self.hub.save_request(rid)
+        await self._emit(rid, "request.semantic_devices", record)
+
     async def _plan_clarification(self, rid: str, candidate: dict) -> tuple[str, dict | None]:
         """Expose only new plan questions and store one answered card; the caller performs the next re-plan."""
         req = self.hub.requests[rid]
@@ -4745,7 +4784,12 @@ class Orchestrator:
                     f"이어 가기 상한(research.revise_continuations={limit})에 닿아 수정 요청도 요청을 끝냅니다."))
         if warnings:
             summary += f" 경고 {len(warnings)}건: 누락 칸·실패 단계는 한계로 남습니다."
+        device_record = await self._semantic_devices_check(rid, "cp2")
+        device_warning = semantic_devices.warning(device_record)
+        if device_warning:
+            summary = device_warning + "\n\n" + summary
         detail = {"gate": "research_evidence", "plan_sha256": contract["plan_sha256"],
+                  "semantic_devices": device_record,
                   **({"warnings": warnings} if warnings else {}),
                    "choices": list(EVIDENCE_CHOICES), "revise_continues": revise_continues,
                    **({"refused_rows": refused_rows} if refused_rows else {}),
@@ -5466,6 +5510,8 @@ class Orchestrator:
             research_lane = bool(intake and intake.work_kind == "research") or bool(req.get("research_contract"))
             research_execution = bool(research_lane and self.hub.s.research.evidence_checkpoint
                                       and req["mode"] != "plan_only")
+            if research_lane:
+                await self._semantic_devices_check(rid, "request_start")
             if req.get("research_contract") and not research_pilot:
                 req["outcome"] = "research_disabled"
                 self._finish(rid, "This request carries a frozen research contract, but research.enabled is now "
@@ -5506,8 +5552,18 @@ class Orchestrator:
                 x for x in (self.cfg.cso_agent, self.cfg.chief_of_staff_agent, self.cfg.reviewer_agent) if x}
             roster = [a for a in all_agents if a["id"] not in orchestration]
             topic_vocab_for_checks = output_vocab.current()
-            checklist_catalog = (topic_checklists.load(vocab=topic_vocab_for_checks)
-                                 if topic_vocab_for_checks is not None else {})
+            try:
+                checklist_catalog = (topic_checklists.load(vocab=topic_vocab_for_checks)
+                                     if topic_vocab_for_checks is not None else {})
+            except (OSError, ValueError) as exc:
+                checklist_catalog = {}
+                if research_lane:
+                    semantic_devices.log_exception("checklist_load_failed", exc)
+                    record = req.get("semantic_devices") or {}
+                    semantic_devices.add_error(record, code="checklist_load_failed")
+                    req["semantic_devices"] = record
+                    self.hub.save_request(rid)
+                    await self._emit(rid, "request.semantic_devices", record)
             n = self.cfg.context_chars_per_step
             frozen_pack_snapshot = ((req.get("research_contract") or {}).get("pack_snapshot")
                                     if resume and research_lane else None)
@@ -5515,9 +5571,26 @@ class Orchestrator:
             # it was approved under and never gains the record, so a second restart takes the same path (#390 review).
             legacy_pack_contract = (frozen_pack_snapshot is not None
                                     and "pack_applicability" not in (req.get("research_contract") or {}))
-            configured_pack_defs = (packs_for_snapshot(self.hub.s, frozen_pack_snapshot)
-                                    if frozen_pack_snapshot is not None else
-                                    configured_packs(self.hub.s) if research_lane else {})
+            try:
+                configured_pack_defs = (packs_for_snapshot(self.hub.s, frozen_pack_snapshot)
+                                        if frozen_pack_snapshot is not None else
+                                        configured_packs(self.hub.s) if research_lane else {})
+            except (OSError, ValueError) as exc:
+                if research_lane:
+                    code = "pack_snapshot_missing" if frozen_pack_snapshot is not None else "pack_load_failed"
+                    semantic_devices.log_exception(code, exc)
+                    record = req.get("semantic_devices") or {}
+                    semantic_devices.add_error(record, code=code)
+                    req["semantic_devices"] = record
+                    self.hub.save_request(rid)
+                    await self._emit(rid, "request.semantic_devices", record)
+                    if frozen_pack_snapshot is not None:
+                        req["outcome"] = "pack_snapshot_missing"
+                        self._finish(rid, "CP1에서 고정한 research pack snapshot을 복원하지 못해 재개를 중단했습니다. "
+                                     "기존 snapshot은 그대로 보존했습니다.", {}, ok=False,
+                                     error="고정한 research pack snapshot을 복원하지 못했습니다.")
+                        return
+                configured_pack_defs = {}
             packs = configured_pack_defs
             active_pack_hashes = pack_snapshot(packs)
             # The first plan, research plan and re-plan after resume (#271) all use this same snapshot.
@@ -5545,7 +5618,7 @@ class Orchestrator:
                     "execution_enabled": execution_enabled,
                     "final_checkpoint": bool(stored.get("final_checkpoint", (req.get("research_options") or {}).get("final_checkpoint", False)) and execution_enabled),
                     "plan_sha256": approval.get("current_sha256") or approval.get("target_sha256"),
-                    "pack_snapshot": active_pack_hashes,
+                    "pack_snapshot": (frozen_pack_snapshot if frozen_pack_snapshot is not None else active_pack_hashes),
                     **({} if legacy_pack_contract else {"pack_applicability": plan.get("pack_applicability") or {}}),
                     "approval": approval,
                 }
@@ -5575,10 +5648,14 @@ class Orchestrator:
                     req["research_contract"]["approval"] = approval
                     self.hub.save_request(rid)
                 elif approval.get("status") != "approved":
+                    device_record = await self._semantic_devices_check(rid, "cp1")
+                    device_warning = semantic_devices.warning(device_record)
                     # The hash stays in detail.target_sha256; the card shows the plan itself (PI 점검 R10).
                     summary = ("CP1 연구 계획 승인: 고정할 질문·방법·완료/중단 조건·데이터 범위·적용 pack을 "
                                "확인하고 승인하세요." + (" 고칠 점이 있으면 메모와 함께 수정 요청을 고르세요."
                                                       if can_revise else ""))
+                    if device_warning:
+                        summary = device_warning + "\n\n" + summary
                     scope_warnings = [warning for warning in plan.get("warnings", [])
                                       if isinstance(warning, str) and warning.startswith(SCOPE_COVERAGE_WARNING)]
                     if scope_warnings:
@@ -5613,6 +5690,7 @@ class Orchestrator:
                                     "packs": plan["protocol"]["packs"],
                                     "scope_status": plan["intake"]["scope_status"],
                                     "budget": budget, "cost_estimate": req.get("plan_cost_estimate") or {},
+                                    "semantic_devices": device_record,
                                     "revise_allowed": can_revise,
                                     **({"continuation": {
                                         **{key: carried.get(key) for key in
@@ -6000,12 +6078,22 @@ class Orchestrator:
                             draft = prepare_research_declarations(draft, self._output_vocab(), {})
                             snap = service.advisory_snapshot(rid, draft)  # live state, copied on the loop
                             offer = await asyncio.to_thread(service.advisory_offer, rid, snap)
-                        except (ValueError, TypeError, PlanOutputsError):
+                        except (ValueError, TypeError, PlanOutputsError) as exc:
                             offer = None
-                        if offer is not None:  # ab: ids offered (shadow arm: would be), frozen for the end record
+                            semantic_devices.log_exception("semantics_advisory_snapshot_failed", exc)
+                            await self._semantic_device_error(rid, code="semantics_advisory_snapshot_failed")
+                        if offer is not None and offer.get("status") == "error":
+                            error = offer.get("error") if isinstance(offer.get("error"), dict) else {}
+                            req["semantics_ab"] = {"arm": offer.get("arm"), "offered": [], "status": "error",
+                                                   "error": {"code": error.get("code") or
+                                                             "semantics_advisory_projection_failed"}}
+                            self.hub.save_request(rid)
+                            await self._semantic_device_error(
+                                rid, code=str(error.get("code") or "semantics_advisory_projection_failed"))
+                        elif offer is not None:  # ab: ids offered (shadow arm: would be), frozen for the end record
                             req["semantics_ab"] = {"arm": offer["arm"], "offered": list(offer["offered"])}
                             self.hub.save_request(rid)
-                        if offer is not None and offer["offered"]:
+                        if offer is not None and offer.get("status") != "error" and offer["offered"]:
                             # Both arms re-plan once, so they pay for the same CSO calls. Only the advisory arm's
                             # prompt gains the list; the shadow arm sends its first prompt again.
                             candidates = offer["candidates"]
@@ -6688,7 +6776,9 @@ class Orchestrator:
             req["report"] = (summary + "\n\n## 결론과 권고\n요청을 완료하지 못했습니다. 실행 기록의 원인과 "
                              "다음 조치를 확인하세요.\n\n## 결과\n확정할 최종 결과가 없습니다.\n\n## 방법 요약\n"
                              "완료된 단계까지 실행했습니다.\n\n## 한계\n요청 처리 오류가 있습니다. 실행 기록 참고.")
-            req["execution_record"] = "\n\n".join([req["error"], *execution])
+            devices = (semantic_devices.execution_record(req.get("semantic_devices"))
+                       if req.get("semantic_devices") else "")
+            req["execution_record"] = "\n\n".join(part for part in [req["error"], *execution, devices] if part)
             req["report_appendix"] = scientific_appendix("", req, req.get("review"), "")
             # The preserved partial report goes with the event so a connected (or reconnecting) office shows it.
             failed = {"error": safe_failure_cause(req["error"]),
@@ -6771,16 +6861,21 @@ class Orchestrator:
 
     @staticmethod
     def _checklist_section(req: dict, review: dict | None) -> str:
-        """The checklist table for the execution record (#586); "" without declared checks, or if the vocabulary
-        cannot load, which must not stop a request from finishing."""
+        """The checklist table for the execution record (#586), or an explicit load error."""
         plan = req.get("plan") if isinstance(req.get("plan"), dict) else {}
         precedents = req.get("analysis_precedents")
         if not plan.get("topics") and not (isinstance(precedents, dict) and precedents.get("status") == "ok"):
             return ""
         try:
             catalog = topic_checklists.load()
-        except (OSError, ValueError):
-            return ""
+        except (OSError, ValueError) as exc:
+            semantic_devices.log_exception("checklist_render_failed", exc)
+            record = req.get("semantic_devices") if isinstance(req.get("semantic_devices"), dict) else {
+                "version": 1, "phase": "report", "status": "ok", "errors": []}
+            semantic_devices.add_error(record, code="checklist_render_failed")
+            req["semantic_devices"] = record
+            return ("체크리스트 오류: 불러오기 실패. 빈 점검표로 간주하지 않습니다. "
+                    "체크리스트를 고친 뒤 같은 요청을 다시 보내세요.")
         route = req.get("route_decision") or {}
         solo = route.get("mode") == "solo" and not route.get("fallback")  # the plan's steps never ran
         return checklist_appendix(plan, review, catalog, precedents, owner=SOLO_OWNER if solo else None)
@@ -6849,7 +6944,10 @@ class Orchestrator:
                 report = report[:heading.end()] + "\n" + section + "\n" + report[heading.end():]
             else:
                 report = _before_bench_block(report, "## 한계\n" + section)
+        checklist_section = self._checklist_section(req, review)
         metadata = []
+        if req.get("semantic_devices"):
+            metadata.append(semantic_devices.execution_record(req["semantic_devices"]))
         paper_record = paper_skills.appendix(req.get("plan") or {}, results)
         if paper_record:
             metadata.append(paper_record)
@@ -6907,7 +7005,7 @@ class Orchestrator:
             metadata.append(f"Budget: ${outcome['spent_usd']:.2f}{pending} {relation} "
                             f"${outcome['limit_usd']:.2f}; {decision}.")
         req["execution_record"] = "\n\n".join(p for p in [*execution, *metadata] if p).replace(EXECUTION_APPENDIX_TITLE, "## 실행 기록")
-        report_appendix = scientific_appendix(report_appendix, req, review, self._checklist_section(req, review))
+        report_appendix = scientific_appendix(report_appendix, req, review, checklist_section)
         report = add_references(report, report_appendix, req.get("references") or [])
         from ..report_style import check_report
         report, style_note = check_report(report)

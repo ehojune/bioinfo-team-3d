@@ -265,3 +265,67 @@ def test_the_selector_reads_the_snapshot_not_the_live_hub(tmp_path, monkeypatch)
     offer = service.advisory_offer("req_b", snap)
 
     assert len(offer["candidates"]) == 1 and offer["offered"] == [offer["candidates"][0]["artifact_id"]]
+
+
+def test_advisory_snapshot_exception_is_an_error_not_no_candidates(tmp_path, monkeypatch):
+    hub, requests = _typed_pair(tmp_path)
+    service = shadow.ShadowService(hub, shadow.ShadowConfig(mode="ab"),
+                                   shadow.ShadowPaths(tmp_path / "semantics"))
+    monkeypatch.setattr(shadow, "take_snapshot", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    snap = service.advisory_snapshot("req_b", requests["req_b"]["plan"])
+    offer = service.advisory_offer("req_b", snap)
+
+    assert offer["status"] == "error"
+    assert offer["error"] == {"code": "semantics_advisory_snapshot_failed"}
+    assert offer["offered"] == []
+
+
+def test_advisory_projection_exception_is_an_error_not_no_candidates(tmp_path, monkeypatch):
+    hub, requests = _typed_pair(tmp_path)
+    service = shadow.ShadowService(hub, shadow.ShadowConfig(mode="ab"),
+                                   shadow.ShadowPaths(tmp_path / "semantics"))
+    monkeypatch.setattr(shadow, "read_rows", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    offer = service.advisory_offer("req_b", service.advisory_snapshot("req_b", requests["req_b"]["plan"]))
+
+    assert offer["status"] == "error"
+    assert offer["error"] == {"code": "semantics_advisory_projection_failed"}
+    assert offer["offered"] == []
+
+
+def test_failed_provenance_summary_is_an_advisory_error(tmp_path, monkeypatch):
+    hub, requests = _typed_pair(tmp_path)
+    service = shadow.ShadowService(hub, shadow.ShadowConfig(mode="ab"),
+                                   shadow.ShadowPaths(tmp_path / "semantics"))
+    monkeypatch.setattr(shadow, "compute_provenance",
+                        lambda *a, **k: ({"status": "error", "error_kind": "RuntimeError"}, {}))
+
+    offer = service.advisory_offer("req_b", service.advisory_snapshot("req_b", requests["req_b"]["plan"]))
+
+    assert offer["status"] == "error"
+    assert offer["error"] == {"code": "semantics_provenance_failed"}
+    assert offer["offered"] == []
+
+
+def test_failed_advisory_is_excluded_from_ab_summary(tmp_path, monkeypatch):
+    hub, requests = _typed_pair(tmp_path)
+    observed = {}
+    line_for(hub, "req_a", observed)
+    requests["req_b"].update(
+        intake={"work_kind": "research"},
+        semantics_ab={"arm": "advisory", "offered": [], "status": "error",
+                      "error": {"code": "semantics_provenance_failed"}},
+    )
+    monkeypatch.setattr(shadow, "ab_arm", lambda rid: "advisory")
+
+    snap = shadow.take_snapshot(hub, "req_b", shadow.ShadowConfig(mode="ab"))
+    line = shadow.compute_line(snap, observed, lambda: None, epoch=1)
+    paths = shadow.ShadowPaths(tmp_path / "summary")
+    shadow.append_line(paths, line)
+    report = shadow.build_report(paths, setting="ab")
+
+    assert line["ab_excluded"] is True
+    assert report["arms"]["advisory"]["requests"] == 0
+    assert report["arms"]["advisory"]["excluded"] == 1
+    assert report["ab_window"]["requests"] == 0

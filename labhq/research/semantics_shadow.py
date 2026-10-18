@@ -8,8 +8,8 @@ daemon worker thread, which computes two read-only models within a time cap:
 
 Both results go side by side on one JSON line under ``<gateway.state_dir>/semantics/``, outside the git work
 tree. A line carries ids, kinds, hashes and counts only: no prompt, answer, file content, path, data zone
-or reference value. Nothing is read back into a prompt, plan, approval, receipt, round record or the web
-office, and every failure here ends in a warning and a metric, never in the request.
+or reference value. Advisory candidates may enter a plan only through the separately bounded A/B hook. Device
+status and public-safe failure labels reach cards, reports and the web; rejected values never do.
 
 The gateway imports this module only when the setting is not off; every line that wires it in elsewhere
 ends with ``# semantics-hook`` so ``scripts/semantics_shadow_remove.py`` can take it out again.
@@ -18,6 +18,7 @@ ends with ``# semantics-hook`` so ``scripts/semantics_shadow_remove.py`` can tak
 from __future__ import annotations
 
 import argparse
+import asyncio
 import hashlib
 import itertools
 import json
@@ -102,7 +103,7 @@ BOUNDARY_FIELDS = frozenset({"unknown", "v", "type", "ts", "epoch", "request_id"
                              "mode", "status", "rows", "busy_skipped", "snapshot_ms", "rows_ms",
                              "vocab_sha256", "objects", "provenance", "hash", "actions", "ms", "phase",
                              "key", "error_kind", "reason", "counts", "arm", "offered", "referenced", "cost_usd",
-                             "cost_known", "provenance.types",
+                             "cost_known", "ab_excluded", "provenance.types",
                              "provenance.declarations", "objects.artifact_types", "input_fit",
                              "input_fit_sha256"})
 BOUNDARY_CLASSES = frozenset({"path", "filename", "url", "doi", "employee_id", "free_text", "identifier",
@@ -378,13 +379,17 @@ def _light_request(req: Mapping[str, Any]) -> dict:
     offered = _ab_offered(req)
     if offered is not None:
         light["ab_offered"] = offered
+    frozen = req.get("semantics_ab")
+    if isinstance(frozen, Mapping) and frozen.get("status") == "error":
+        light["ab_excluded"] = True
     return light
 
 
 def _ab_offered(req: Mapping[str, Any]) -> list[str] | None:
     """The candidate ids frozen on a research request when its plan advisory was built (#149 decision 15)."""
     frozen = req.get("semantics_ab")
-    if not isinstance(frozen, Mapping) or not isinstance(frozen.get("offered"), list):
+    if (not isinstance(frozen, Mapping) or frozen.get("status") == "error"
+            or not isinstance(frozen.get("offered"), list)):
         return None
     return [ref for ref in frozen["offered"] if isinstance(ref, str) and AB_REF.fullmatch(ref)][:MAX_CANDIDATE_REFS]
 
@@ -774,6 +779,22 @@ class ShadowStop(Exception):
 
 class ShadowTimeout(ShadowStop):
     pass
+
+
+class AdvisoryFailure(Exception):
+    """A public-safe advisory failure label carried to the request record."""
+
+    def __init__(self, path: str, kind: str):
+        self.path, self.kind = path, kind
+        super().__init__(f"{path}:{kind}")
+
+
+def _advisory_error_code(path: str, kind: str) -> str:
+    if kind == "provenance_failed":
+        return "semantics_provenance_failed"
+    return {"observed_state": "semantics_observed_state_failed",
+            "advisory_boundary": "semantics_advisory_boundary_failed"}.get(
+                path, "semantics_advisory_projection_failed")
 
 
 # strictest last; a level the settings do not define ranks above restricted, so it is never allowed
@@ -1574,8 +1595,11 @@ def _add_ab_fields(line: dict, snap: Mapping[str, Any], req: Mapping[str, Any]) 
     shadow arm: the ids it would have been offered), never against candidates recomputed at the end."""
     if snap.get("semantics_mode") != "ab" or req.get("lane") != "research":
         return
+    if req.get("ab_excluded") is True:
+        line.update(arm=ab_arm(str(snap["rid"])), ab_excluded=True)
+        return
     offered = set(req.get("ab_offered") or ())
-    line.update(arm=ab_arm(str(snap["rid"])), offered=len(offered),
+    line.update(arm=ab_arm(str(snap["rid"])), ab_excluded=False, offered=len(offered),
                 referenced=bool(offered & _plan_refs(req.get("plan"))),
                 cost_usd=float(req.get("cost_usd") or 0), cost_known=req.get("cost_known", True) is not False)
 
@@ -1767,6 +1791,8 @@ class ShadowService:
         self.pending = 0  # queued or running jobs
         self.action_backlog: deque = deque()  # semantics-hook: actions (follow-up observations behind the queue)
         self.action_skipped = 0  # semantics-hook: actions (dropped: queue and backlog full)
+        self.event_loop: asyncio.AbstractEventLoop | None = None
+        self.current_request_id: str | None = None
 
     @classmethod
     def start(cls, hub: Any) -> "ShadowService | None":
@@ -1844,6 +1870,7 @@ class ShadowService:
             if stuck:  # the old thread may never return; give the new epoch its own worker
                 self.queue, self.thread, self.pending = queue.Queue(maxsize=1), None, 0
             self.current = None  # an older job belongs to the closed epoch: no stuck check, no watchdog trip
+            self.current_request_id = None
 
     def trip(self, reason: str, *, expected_epoch: int | None = None, **detail: Any) -> None:
         with self.lock:
@@ -1852,6 +1879,7 @@ class ShadowService:
             self.latched, self.gen = reason, self.gen + 1
             counts = {**self.counts, "recent_failures": sum(self.recent), "consecutive": self.consecutive}
             epoch = self.epoch
+            request_id = str(detail.get("request_id") or self.current_request_id or "")
         log.warning("semantics shadow turned itself off: %s%s", reason,
                     f" ({detail['kind']})" if detail.get("kind") else "")
         boundary = _clean_boundary_details(detail.get("boundary")) if reason == "info_boundary" else []
@@ -1867,11 +1895,39 @@ class ShadowService:
             append_line(self.paths, line)
         except OSError:
             pass
+        if request_id and self.event_loop is not None:
+            self.event_loop.call_soon_threadsafe(self._surface_stop, request_id, boundary)
+
+    def _surface_stop(self, rid: str, boundary: list[dict[str, str]]) -> None:
+        """Put a public-safe stop on the request even after its terminal event was committed."""
+        req = getattr(self.hub, "requests", {}).get(rid)
+        if not isinstance(req, dict):
+            return
+        from . import semantic_devices
+
+        record = semantic_devices.inspect(self.hub.s, service=self, worker_known=True, phase="auto_off")
+        if boundary:
+            record["semantics"]["boundary"] = boundary
+        req["semantic_devices"] = record
+        text = semantic_devices.execution_record(record)
+        if text not in str(req.get("execution_record") or ""):
+            req["execution_record"] = "\n\n".join(part for part in (req.get("execution_record"), text) if part)
+        saver = getattr(self.hub, "save_request", None)
+        if callable(saver):
+            saver(rid)
+        publisher = getattr(self.hub, "publish", None)
+        if callable(publisher):
+            asyncio.create_task(publisher({"type": "request.semantic_devices", "ts": time.time(),
+                                           "request_id": rid, "data": record}))
 
     # -- event loop side
     def after_request(self, rid: str) -> None:
         """Queue the finished request for the worker. Never raises, never waits, reads no workspace file."""
         try:
+            try:
+                self.event_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                pass
             self.refresh()
             self.check_stuck()
             if self.latched:
@@ -1894,10 +1950,10 @@ class ShadowService:
                     busy = 0
                     self.ensure_thread()
             if busy >= BUSY_LIMIT:
-                self.trip("worker_busy")
+                self.trip("worker_busy", request_id=rid)
         except Exception as exc:  # noqa: BLE001 - the request already finished; this must not touch it
             log.warning("semantics shadow skipped a request (%s)", type(exc).__name__)
-            self.outcome(failed=True, on_loop=True)
+            self.outcome(failed=True, on_loop=True, request_id=rid)
 
     def advisory_snapshot(self, rid: str, plan: Mapping[str, Any]) -> dict | None:
         """Event-loop side, like ``after_request``: the live state the A/B selector reads, copied with the draft plan.
@@ -1914,7 +1970,7 @@ class ShadowService:
             return snap
         except Exception as exc:  # noqa: BLE001 - advisory is fail-open
             log.warning("semantics advisory skipped (%s)", type(exc).__name__)
-            return None
+            return {"_error": {"code": "semantics_advisory_snapshot_failed"}}
 
     def advisory_offer(self, rid: str, snap: dict | None) -> dict | None:
         """Worker side: the B1 selector on ``advisory_snapshot``'s copy, in both arms (#149 decision 15). None
@@ -1926,7 +1982,14 @@ class ShadowService:
         if self.cfg.mode != "ab":
             return None
         arm = ab_arm(rid)
-        found = self.advisory_candidates(snap) if snap is not None else []
+        if isinstance(snap, Mapping) and isinstance(snap.get("_error"), Mapping):
+            return {"arm": arm, "offered": [], "candidates": [], "status": "error",
+                    "error": dict(snap["_error"])}
+        try:
+            found = self.advisory_candidates(snap) if snap is not None else []
+        except AdvisoryFailure as exc:
+            return {"arm": arm, "offered": [], "candidates": [], "status": "error",
+                    "error": {"code": _advisory_error_code(exc.path, exc.kind)}}
         return {"arm": arm, "offered": [c["artifact_id"] for c in found],
                 "candidates": found if arm == "advisory" else []}
 
@@ -1945,13 +2008,15 @@ class ShadowService:
             read_rows(snap, check)
             try:
                 observed = _read_json(self.paths.observed) if self.paths.observed.exists() else {}
-            except (OSError, ValueError):
-                observed = {}
+            except (OSError, ValueError) as exc:
+                raise AdvisoryFailure("observed_state", type(exc).__name__) from exc
             summary, _ = compute_provenance(snap, Reader(snap, check), observed if isinstance(observed, dict) else {},
                                              check, include_candidate_details=True)
-            details = summary.get("candidate_details") if summary.get("status") == "ok" else []
+            if summary.get("status") != "ok":
+                raise AdvisoryFailure("advisory_projection", "provenance_failed")
+            details = summary.get("candidate_details")
             if not isinstance(details, list):
-                return []
+                raise AdvisoryFailure("advisory_projection", "invalid_candidate_details")
             safe = []
             for item in details:
                 if (isinstance(item, Mapping) and AB_REF.fullmatch(str(item.get("artifact_id")))
@@ -1959,12 +2024,20 @@ class ShadowService:
                         and str(item.get("request_id")) and SAFE_TOKEN.fullmatch(str(item.get("request_id")))):
                     safe.append({k: str(item[k]) for k in ("artifact_id", "data_type", "request_id")})
             safe = safe[:MAX_CANDIDATE_REFS]
-            return [] if boundary_problems({"provenance": {"candidate_details": safe}}, sensitive_values(snap)) else safe
+            line = {"provenance": {"candidate_details": safe}}
+            problems = boundary_problems(line, sensitive_values(snap))
+            if problems:
+                self.trip("info_boundary", boundary=boundary_findings(line, sensitive_values(snap)),
+                          request_id=str(snap.get("rid") or ""))
+                raise AdvisoryFailure("advisory_boundary", "info_boundary")
+            return safe
         except (KeyboardInterrupt, SystemExit):
+            raise
+        except AdvisoryFailure:
             raise
         except Exception as exc:  # noqa: BLE001 - advisory is fail-open
             log.warning("semantics advisory skipped (%s)", type(exc).__name__)
-            return []
+            raise AdvisoryFailure("advisory_projection", type(exc).__name__) from exc
 
     # semantics-actions: begin (#149 결정 13 A1; scripts/semantics_shadow_remove.py --only actions deletes this)
     def after_followup(self, rid: str, fid: str | None, phase: str, outcome: str | None = None) -> None:
@@ -2097,6 +2170,7 @@ class ShadowService:
         deadline = started + self.cfg.timeout_s
         with self.lock:
             self.current = (gen, started)
+            self.current_request_id = str(snap.get("rid") or "")
         watchdog = threading.Timer(self.stuck_s, self.watch, args=(gen, started))
         watchdog.daemon = True
         watchdog.start()
@@ -2189,7 +2263,7 @@ class ShadowService:
             self.outcome(failed=True)
             return
         if problems:
-            self.trip("info_boundary", boundary=boundary)
+            self.trip("info_boundary", boundary=boundary, request_id=str(snap.get("rid") or ""))
             return
         failed = False
         for model in [m for m in MODELS if m in line]:
@@ -2210,11 +2284,14 @@ class ShadowService:
             failed = True
         self.outcome(failed=failed, followup=line.get("type") == "followup")
 
-    def outcome(self, *, failed: bool, on_loop: bool = False, followup: bool = False) -> None:
+    def outcome(self, *, failed: bool, on_loop: bool = False, followup: bool = False,
+                request_id: str | None = None) -> None:
         """Count one job. ``on_loop``: called on the gateway event loop, so breaker.json is written by a short
         daemon thread instead of there (#173). ``followup``: a follow-up observation that succeeded neither resets
         nor dilutes the request window; one that failed still counts (#260)."""
         with self.lock:
+            if request_id:
+                self.current_request_id = request_id
             if failed:
                 self.counts["failures"] += 1
             elif followup:
@@ -2322,6 +2399,7 @@ def readable_request(line: Mapping[str, Any]) -> bool:
             and all(_count(line.get(k, 0)) for k in ("busy_skipped", "offered"))
             and line.get("arm") in (None, "advisory", "shadow")
             and isinstance(line.get("referenced"), (bool, type(None)))
+            and isinstance(line.get("ab_excluded"), (bool, type(None)))
             and isinstance(line.get("cost_known"), (bool, type(None)))
             and all(_number(m.get("ms")) for m in (prov, objs))
             and _count(prov.get("candidates", 0)) and _number(prov.get("unknown_ratio"))
@@ -2368,8 +2446,27 @@ def runtime_state(settings: Any) -> dict[str, Any]:
         stopped_at = datetime.fromtimestamp(float(ts), timezone.utc).astimezone().isoformat(timespec="seconds")
     except (TypeError, ValueError, OSError, OverflowError):
         stopped_at = None
+    try:
+        state = read_state(paths) if paths.state.exists() else {}
+    except (OSError, ValueError, TypeError):
+        state = {}
+    try:
+        lines, _broken = read_lines(paths)
+        recorded = [line.get("ts") for line in lines if line.get("type") in {"request", "followup"}]
+        last_recorded_at = datetime.fromtimestamp(float(max(recorded)), timezone.utc).astimezone().isoformat(
+            timespec="seconds") if recorded else None
+        normal = [line.get("ts") for line in lines if line.get("type") == "request"
+                  and all(isinstance(line.get(model), Mapping) and line[model].get("status") == "ok"
+                          for model in MODELS)]
+        last_ok_at = datetime.fromtimestamp(float(max(normal)), timezone.utc).astimezone().isoformat(
+            timespec="seconds") if normal else None
+    except (OSError, ValueError, TypeError, OverflowError):
+        last_recorded_at = last_ok_at = None
     return {"setting": configured(settings), "stopped": disabled is not None,
             "reason": (disabled or {}).get("reason"), "stopped_at": stopped_at,
+            "epoch": (disabled or {}).get("epoch", state.get("epoch")),
+            "last_recorded_at": last_recorded_at,
+            "last_ok_at": last_ok_at,
             "boundary": _clean_boundary_details((disabled or {}).get("boundary")),
             "reenable_command": "labhq semantics enable",
             "legacy_false_positive": _legacy_id_false_positive(disabled)}
@@ -2382,7 +2479,9 @@ def status_line(settings: Any) -> str | None:
         return None
     boundary = ", ".join(f"{row['field']}:{row['class']}" for row in state["boundary"])
     return (f"semantics: 멈춤 · {state['reason']} · {state['stopped_at'] or '시각 미기록'}"
+            + f" · epoch {state['epoch'] or '미기록'} · 마지막 정상 기록 {state['last_ok_at'] or '없음'}"
             + (f" · {boundary}" if boundary else "")
+            + " · 영향: 재사용 후보·객체 연결·행동 판단 평가 안 됨"
             + f" · 다시 켜기: {state['reenable_command']}")
 
 
@@ -2390,11 +2489,19 @@ def doctor_row(settings: Any) -> dict[str, str]:
     """A self-contained doctor row so the optional shadow remains mechanically removable."""
     state = runtime_state(settings)
     if not state["stopped"]:
-        return {"group": "config", "name": "semantics", "status": "ok",
-                "detail": f"설정 {state['setting']}; 자동 중단 없음", "hint": ""}
+        setting = state["setting"]
+        status = "ok" if setting in {"shadow", "ab"} else "warn"
+        detail = (f"설정 {setting}; 자동 중단 없음; epoch {state['epoch'] or '미기록'}; "
+                  f"마지막 정상 기록 {state['last_ok_at'] or '없음'}")
+        hint = ("semantics.mode를 shadow 또는 ab로 바꾸고 gateway를 다시 시작하세요"
+                if setting == "off" else "semantics 설정과 gateway.state_dir를 확인하세요"
+                if setting in {"invalid", "refused"} else "")
+        return {"group": "config", "name": "semantics", "status": status,
+                "detail": detail, "hint": hint}
     boundary = ", ".join(f"{row['field']}:{row['class']}" for row in state["boundary"]) or "기록 없음"
     recoverable = "; 이 버전에서 해제 가능한 기존 ID 오판" if state["legacy_false_positive"] else ""
     detail = (f"멈춤: {state['reason']}; 시각 {state['stopped_at'] or '미기록'}; "
+              f"epoch {state['epoch'] or '미기록'}; 마지막 정상 기록 {state['last_ok_at'] or '없음'}; "
               f"경계 {boundary}{recoverable}")
     return {"group": "config", "name": "semantics", "status": "warn",
             "detail": detail, "hint": state["reenable_command"]}
@@ -2471,7 +2578,8 @@ def build_report(paths: ShadowPaths, today: date | None = None, setting: str = "
     ab_requests = [r for r in requests if r.get("lane") == "research" and r.get("arm") in ("advisory", "shadow")]
 
     def arm_stats(arm: str) -> dict:
-        rows = [r for r in ab_requests if r.get("arm") == arm]
+        arm_rows = [r for r in ab_requests if r.get("arm") == arm]
+        rows = [r for r in arm_rows if r.get("ab_excluded") is not True]
         with_candidates = sum(1 for r in rows if (r.get("offered") or 0) > 0)
         referenced = sum(1 for r in rows if r.get("referenced") is True)
         failed = sum(1 for r in rows if r.get("status") not in ("done", "completed"))
@@ -2480,11 +2588,13 @@ def build_report(paths: ShadowPaths, today: date | None = None, setting: str = "
                 "reference_rate": round(referenced / with_candidates, 4) if with_candidates else None,
                 "failed": failed, "failure_rate": round(failed / len(rows), 4) if rows else None,
                 "cost_usd": round(sum(float(r.get("cost_usd") or 0) for r in known), 6),
-                "cost_unknown": len(rows) - len(known)}
+                "cost_unknown": len(rows) - len(known),
+                "excluded": len(arm_rows) - len(rows)}
 
     arms = {arm: arm_stats(arm) for arm in ("advisory", "shadow")}
     ab_deadline = AB_INTRODUCED + timedelta(days=AB_REVIEW_DAYS)
-    ab_window_reached = len(ab_requests) >= AB_REVIEW_RECORDS or today >= ab_deadline
+    ab_eligible = [r for r in ab_requests if r.get("ab_excluded") is not True]
+    ab_window_reached = len(ab_eligible) >= AB_REVIEW_RECORDS or today >= ab_deadline
     deadline = INTRODUCED + timedelta(days=REVIEW_DAYS)
     proposals = []
     if today >= deadline:
@@ -2525,8 +2635,9 @@ def build_report(paths: ShadowPaths, today: date | None = None, setting: str = "
         "types": {k: dict(sorted(v.items())) for k, v in types.items()}, "declarations": declarations,
         "input_fit": dict(sorted(input_fit.items())),
         "marks": {"reviewed": len(marks), "wrong": wrong},
-        "arms": arms, "ab_window": {"requests": len(ab_requests), "target_requests": AB_REVIEW_RECORDS,
-                                      "deadline": ab_deadline.isoformat(), "reached": ab_window_reached},
+        "arms": arms, "ab_window": {"requests": len(ab_eligible), "excluded": len(ab_requests) - len(ab_eligible),
+                                      "target_requests": AB_REVIEW_RECORDS, "deadline": ab_deadline.isoformat(),
+                                      "reached": ab_window_reached},
         "auto_off": [{"day": _day(l.get("ts")), "epoch": l.get("epoch"), "reason": l.get("reason"),
                       "boundary": _clean_boundary_details(l.get("boundary"))}
                       for l in lines if l.get("type") == "auto_off"],
@@ -2585,18 +2696,19 @@ def render_report(rep: Mapping[str, Any]) -> str:
     ]
     out += [f"- {a['day']} epoch {v(a['epoch'])}: {a['reason']}{boundary(a.get('boundary'))}"
             for a in rep["auto_off"]]
-    if rep.get("arms") and (st.get("setting") == "ab" or rep["ab_window"]["requests"]):
+    if rep.get("arms") and (st.get("setting") == "ab" or rep["ab_window"]["requests"]
+                            or rep["ab_window"]["excluded"]):
         out += ["", "A/B (결정 18: 기록 10건 또는 3주):",
-                "| arm | 요청 | 후보 있음 | 참조 | 참조율 | 실패 | 실패율 | 비용 USD | 비용 미상 |",
-                "|---|---|---|---|---|---|---|---|---|"]
+                "| arm | 요청 | 제외 | 후보 있음 | 참조 | 참조율 | 실패 | 실패율 | 비용 USD | 비용 미상 |",
+                "|---|---|---|---|---|---|---|---|---|---|"]
         for arm in ("advisory", "shadow"):
             row = rep["arms"][arm]
-            out.append(f"| {arm} | {row['requests']} | {row['with_candidates']} | {row['referenced']} | "
+            out.append(f"| {arm} | {row['requests']} | {row['excluded']} | {row['with_candidates']} | {row['referenced']} | "
                        f"{v(row['reference_rate'])} | {row['failed']} | {v(row['failure_rate'])} | "
                        f"{row['cost_usd']} | {row['cost_unknown']} |")
         window = rep["ab_window"]
         out.append(f"판단 창: {window['requests']}/{window['target_requests']}건 · 기한 {window['deadline']} · "
-                   f"{'도달' if window['reached'] else '진행 중'}")
+                   f"{'도달' if window['reached'] else '진행 중'} · advisory 오류 제외 {window['excluded']}건")
     out += ["", f"중간 점검 {rep['midpoint']} · 판정 기한 {rep['deadline']} (기준은 전부 미측정 제안치)"]
     if rep["propose_removal"]:
         out += ["PROPOSE_REMOVAL — 제거 제안(결정은 PI):"] + [f"- {x}" for x in rep["propose_removal"]]
