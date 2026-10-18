@@ -1,0 +1,5 @@
+pr: 751
+rows:
+- sha: 5eff6dc
+  at: 2026-10-19 03:21
+  text: semantics·그림자 요청 상태를 분리하고 미평가·오류를 A/B 분모에서 제외
