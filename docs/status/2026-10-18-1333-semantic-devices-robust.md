@@ -11,13 +11,16 @@
 | advisory snapshot | 계획 전 복사 | 예외를 `None`으로 삼켜 제안 0건처럼 보임 | 요청별 `error`로 남기고 다음 요청에서 재시도 |
 | advisory projection | 후보 계산 | 예외를 빈 목록으로 삼킴 | 요청별 `error`로 남기며 정보 경계 위반은 계속 중단 |
 | 단어장·EDAM·체크리스트·pack | 계획·부록 | 일부 실패가 기능 off나 빈 부록으로 축약됨 | hash·개수 또는 오류·영향을 카드와 실행 기록에 남김 |
+| 오류 로그 | 장치 load·projection | 예외 본문과 traceback이 남을 수 있음 | 고정 code와 예외 class만 기록 |
+| 웹 재연결 | gateway snapshot | 오래된 장치 event의 중단·경고가 사라짐 | 요청 snapshot에서 같은 상태를 복원 |
+| 계획 뒤 재점검 | CP1·최종 기록 | 일시 복구되면 계획에 영향을 준 load 오류가 사라짐 | 최초 load 오류를 끝까지 보존 |
 
 ## 확인
 
-- 새 회귀 5건: main 기준 5 failed, 수정 뒤 5 passed.
-- 핵심 회귀 7 passed, 웹 카드 16 passed.
-- 관련 pytest 821 passed.
-- `docs/manual.md`: 159,597자 → 159,857자(+260자).
+- 마지막 리뷰 회귀 3건: 직전 head 기준 각각 failed, 수정 뒤 모두 passed.
+- 관련 pytest 89 passed, 웹 카드 17 passed.
+- `check_public.sh`, patch-notes, notes-index 통과.
+- `docs/manual.md`: 159,873자 → 160,037자(+164자).
 
 ## 남은 것
 

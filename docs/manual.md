@@ -1137,6 +1137,8 @@ report는 중첩 집계의 구조와 개수(0 이상의 정수)를 확인합니�
 - **액션 실행 A2** (`semantics.actions: confirm`, #149 결정 16): PI가 터미널에서 `labhq semantics action run request.followup <rid>`를 치면 전제 조건(요청 종료, 실행 중인 이어 묻기 없음, 답할 직원 연결, 읽기 전용 엔진, 앞선 실행 정산)을 그 자리에서 GET으로 다시 보고, 대상·글·비용을 보여 준 뒤 y/N을 받습니다. y면 기존 `POST /api/requests/{rid}/followup`으로 한 번 보냅니다. 실행하는 액션은 이것 하나이고 나머지는 그림자 기록만 하며 `hpc.*`는 늘 거부합니다. 조건에 모름이 하나라도 있으면 보내지 않습니다. 직원 작업의 환경 변수가 있거나, 직원용 설정 사본이거나, TTY가 아니거나, gateway 주소가 loopback이 아니면 거부합니다. 기록은 `gateway.state_dir/semantics/actions/`에 id·상태·조건 참거짓·글자 수만 남기고 글은 남기지 않습니다. 보내기 전에 실행 id를 먼저 쓰고, 응답을 못 받으면 `unknown`으로 두고 다시 보내지 않습니다. 그 요청의 새 실행은 PI가 웹 기록을 확인하고 `labhq semantics action check <id>`로 닫을 때까지 거부합니다. `check`는 서버가 받은 것(accepted)과 이어 묻기가 끝난 것(completion)을 따로 적습니다. y는 그 터미널의 입력일 뿐 보낸 사람의 신원 증명이 아닙니다.
 - **라운드 기록** (`dev_log`): `repo`는 private 기록 저장소, `source_repo`는 labhq commit 링크에 씁니다. `enabled`이고 `repo`가 있으면 doctor와 gateway 시작 시 `github.token_env`·`api_url`로 공개 여부를 조회합니다(전체 5초 제한). private만 `ok`, public·확인 실패(토큰 없음·인증 실패·timeout)는 경고이며 gateway는 실행 인스턴스마다 PI 로그에 한 번 알립니다. 이 조회는 게시 승인이 아니며 매번 쓰기 직전 확인과 `allow_public`은 그대로입니다. direct 요청은 작업 폴더 `outputs/` 아래 산출 경로를 최대 200개까지 기록합니다. GitHub 본문 한도를 넘으면 JSON을 빼고, 그래도 길면 운전 기록 각 절을 줄 단위로 줄여 게시하며 전문은 로컬 `rounds/`에 남깁니다. rate limit은 서버 대기 시간을 따릅니다. 토큰 없이 쌓인 기록은 토큰을 넣고 재시작하면 다시 게시합니다. 종료 조건·절차는 [HANDOFF #69](../HANDOFF.md#개발-라운드-기록-69)를 따릅니다.
 
+- **의미 장치 상태**: 웹은 event가 오래돼도 snapshot에서 요청별 중단·경고를 복원합니다. 계획에 영향을 준 장치 load 오류는 뒤 점검이 성공해도 CP1과 실행 기록에 남습니다. 오류 로그는 고정 code와 예외 class만 남기고 본문·traceback은 버립니다.
+
 ## 비교 bench
 
 PI 결정(2026-10-01, #40)에 따른 기본 비교군입니다. 실제 실행은 PI 머신의 구독을 씁니다.
