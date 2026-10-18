@@ -82,9 +82,10 @@ def test_four_branches_get_study_folders_and_failed_row(tmp_path):
     folders = ("A-literature", "B-omics", "C-mdis", "D-ipums")
     for folder in folders:
         assert f"studies/{folder}/README.md" in files
+    assert "studies/B-omics/code/omics/outputs/scripts/analyze.py" in files
+    assert "studies/C-mdis/code/mdis/outputs/scripts/analyze.py" in files
     assert "docs/reference/A-literature/stage_report.md" in files
-    assert "studies/B-omics/code/analyze.py" in files
-    assert "studies/C-mdis/code/analyze.py" in files
+    assert "studies/A-literature/report/stage_report.md" not in files
     index = files["studies/README.md"]
     assert "| 갈래 | 질문 | 자료 | 상태 | 주요 결과 | 폴더 |" in index
     assert "| D | 해외 자료가 지지하는가? | licensed · ipums | 실패 | 자료 접근이 거절됨 |" in index
@@ -318,7 +319,7 @@ def test_unbranched_request_adds_the_semantic_report_to_the_existing_file_list(t
         "README.md", "report/report.md", "run/requests.md", "run/decisions.md",
         "run/execution_record.md", "run/costs.md", "run/progress.md", "run/reproduce.md",
         "run/semantic_report.md",
+        "code/analysis/outputs/scripts/analyze.py", "figures/graphical_abstract.svg", "figures/volcano.svg",
         "run/revision_history.md", "docs/reference/README.md",
-        "code/analyze.py", "figures/graphical_abstract.svg", "figures/volcano.svg",
         "tables/result_summary.tsv", "REFERENCES.md", "DATA_AND_LICENSES.md",
     }

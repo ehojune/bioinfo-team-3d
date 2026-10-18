@@ -31,14 +31,14 @@ from typing import Any
 
 from .report_abstract import abstract_first, build_graphical_abstract, with_abstract_link
 from .report_figures import (ABSTRACT_FILE, FIGURE_SUFFIXES, IMAGE_PATTERN, MAX_REPORT_FIGURES, classify,
-                             drop_dead_abstract_links, figure_owners, has_abstract_link, link_workdir_figures,
-                             output_exists)
+                             drop_dead_abstract_links, figure_owners, has_abstract_link, is_abstract_target,
+                             link_workdir_figures, output_exists)
 
-RENDER_VERSION = "3"  # bump when the page's markup or CSS changes: a cached PDF of an older one is not reused
+RENDER_VERSION = "4"  # bump when the page's markup or CSS changes: a cached PDF of an older one is not reused
 PRINT_TIMEOUT_S = 60.0
 _CSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'"  # no network
 PRINT_SLOW_BYTES_PER_S = 2 * 1024 * 1024  # a page of embedded figures gets one more second of printing per 2 MB (#608)
-MAX_REQUEST_CHARS = 2000
+MAX_REQUEST_CHARS = 600  # keep the cover on one page; the complete request remains in the edition's run record
 _LOCK = threading.Lock()  # one print at a time: a headless browser is heavy and the PI has one PC
 
 NO_BROWSER = ("이 PC에서 Edge나 Chrome을 찾지 못해 PDF 대신 HTML로 드립니다. HTML을 브라우저로 열어 인쇄(PDF로 저장)하거나 "
@@ -156,7 +156,8 @@ class FigureEmbedder:
             self.missing.append(f"{shown} ({reason})")
             return f'<span class="figure-missing">[그림 없음: {_esc(shown)} — {_esc(reason)}]</span>'
         self.embedded += 1
-        image = f'<img src="{_esc(uri)}" alt="{_esc(shown)}">'
+        css_class = ' class="graphical-abstract"' if is_abstract_target(value) else ""
+        image = f'<img src="{_esc(uri)}" alt="{_esc(shown)}"{css_class}>'
         if block:
             return f"<figure>{image}<figcaption>{_esc(shown)}</figcaption></figure>"
         return image
@@ -415,14 +416,17 @@ thead { display: table-header-group; }
 th, td { border: 1px solid #c9d3e0; padding: .3em .55em; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
 th { background: #eef2f8; }
 tr { break-inside: avoid; }
-figure { break-inside: avoid; text-align: center; }
+figure { break-inside: avoid; break-after: avoid-page; page-break-after: avoid; text-align: center; }
+figure + p { break-before: avoid-page; page-break-before: avoid; }
 figure img, p img { max-width: 100%; max-height: 220mm; }
+.graphical-abstract { width: 100%; max-width: none; max-height: none; }
 figcaption { font-size: 9.5pt; color: #4a5568; margin-top: .3em; }
 a { color: #1d4ed8; text-decoration: none; }
 .anchor { font-size: 7.5pt; color: #8a94a6; }
 .figure-missing { color: #9a3412; font-size: 9.5pt; }
 .ref { color: #1c2430; }
-.cover { min-height: 235mm; display: flex; flex-direction: column; justify-content: center; break-after: page; }
+.cover { min-height: 0; display: flex; flex-direction: column; justify-content: center; break-after: page;
+  padding: 24mm 0 12mm; }
 .cover .kicker { color: #1d4ed8; font-weight: 700; letter-spacing: .04em; margin: 0; }
 .cover h1 { margin: .2em 0 1em; }
 .cover dl { display: grid; grid-template-columns: 8em 1fr; gap: .35em 1em; margin: 0 0 1.5em; }
@@ -441,10 +445,14 @@ def _stamp(value: Any) -> str:
         return "-"
 
 
-def _title(request_text: str, rid: str) -> str:
+def _title(report_text: str, request_text: str, rid: str) -> str:
+    """Use the report's formal H1 in full; the request is only a fallback for older reports."""
+    heading = next((match.group(1).strip() for line in report_text.splitlines()
+                    if (match := re.match(r"^\s*#\s+(.+?)\s*#*\s*$", line))), "")
+    if heading:
+        return heading
     first = next((line.strip() for line in request_text.splitlines() if line.strip()), "")
-    first = re.sub(r"^#+\s*", "", first)
-    return (first[:88] + "…") if len(first) > 88 else (first or rid)
+    return re.sub(r"^#+\s*", "", first) or rid
 
 
 def _read_document(bundle: Path | None, name: str, fallback: str) -> str:
@@ -490,6 +498,7 @@ def build_report_html(req: Mapping[str, Any], bundle: Path | None, *, now: datet
     appendix_label = "과학 부록" if appendix_text.startswith("## 부록\n") else "부록 · 실행 기록"
     made = (now or datetime.now()).astimezone().strftime("%Y-%m-%d %H:%M")
     shown_request = request_text if len(request_text) <= MAX_REQUEST_CHARS else request_text[:MAX_REQUEST_CHARS] + "…"
+    report_title = _title(linked, request_text, rid)
     rows = [("요청 번호", rid or "-"), ("요청 시각", _stamp(req.get("created_at"))),
             ("보고서 만든 시각", made), ("상태", request_display_label(dict(req)))]
     if req.get("bundle_grade"):
@@ -504,11 +513,11 @@ def build_report_html(req: Mapping[str, Any], bundle: Path | None, *, now: datet
 <html lang="ko"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="{_CSP}">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{_esc("labhq 결과 보고서 · " + (rid or _title(request_text, rid)))}</title>
+<title>{_esc("labhq 결과 보고서 · " + (rid or report_title))}</title>
 <style>{CSS}</style></head><body>
 <section class="cover">
 <p class="kicker">labhq 결과 보고서</p>
-<h1>{_esc(_title(request_text, rid))}</h1>
+<h1>{_esc(report_title)}</h1>
 <dl>{cover_rows}</dl>
 {f'<p class="request">{_esc(shown_request)}</p>' if shown_request else ''}
 {notes}
