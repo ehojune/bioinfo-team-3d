@@ -6,3 +6,6 @@ rows:
 - sha: bf260c9
   at: 2026-10-18 13:46
   text: 0행 결과표, 상위 단계 artifact 연결, 한계 분류와 GitHub 출처 URL을 바로잡았습니다.
+- sha: ea96726
+  at: 2026-10-18 14:06
+  text: 정리본 README의 진행·참고문헌 링크를 복원하고 claim anchor 충돌을 막았습니다.
