@@ -21,15 +21,18 @@ CC license can still lack a Europe PMC copy (the publisher hosts it); its publis
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
+import ipaddress
 import re
+import socket
 import zlib
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urljoin, urlsplit
 
 from ..adapters.owned import OwnedPathError, write_owned
 from .annot import Annotator, Item, LookupFailed, _now
@@ -41,6 +44,7 @@ UNPAYWALL = "https://api.unpaywall.org/v2"
 LIT_DIR = ".tmp/literature"  # never outputs/: see the module docstring
 TOOL = "fulltext"
 CACHE_RELEASE = "europepmc-rest"  # Europe PMC has no data release; answers age out instead (annot.CACHE_MAX_AGE_S)
+FULLTEXT_CACHE_RELEASE = "europepmc-rest-oa-v2"
 MAX_PER_CALL = 20
 MAX_XML_BYTES = 20_000_000
 MAX_CITATION_RESULTS = 1000
@@ -49,6 +53,7 @@ MAX_OPENALEX_RESULTS = 200
 MAX_DOI_RESULTS = 50
 MAX_OA_COPY_BYTES = 25_000_000
 MAX_PDF_EXPANDED_BYTES = 50_000_000
+MAX_OA_REDIRECTS = 5
 
 _PMID = re.compile(r"^(?:pmid:?\s*)?([0-9]{1,9})$", re.IGNORECASE)
 _PMCID = re.compile(r"^(?:pmcid:?\s*)?(PMC[0-9]{1,9})$", re.IGNORECASE)
@@ -631,7 +636,7 @@ class LiteratureAnnotator(Annotator):
         valid = [item for item in items if item.error is None]
         if len(valid) > MAX_PER_CALL:
             raise ValueError(f"한 번에 {MAX_PER_CALL}편까지 받습니다({len(valid)}편을 받음). 나눠서 부르세요")
-        self._from_cache(TOOL, CACHE_RELEASE, {}, items)
+        self._from_cache(TOOL, FULLTEXT_CACHE_RELEASE, {}, items)
         version, lookup_errors = None, 0
         for item in valid:
             if item.cached_at is not None:
@@ -643,7 +648,7 @@ class LiteratureAnnotator(Annotator):
                 item.error, lookup_errors = str(exc), lookup_errors + 1
         if self._all_failed(items, lookup_errors):
             raise LookupFailed("; ".join(item.error for item in items if item.error))
-        self._to_cache(TOOL, CACHE_RELEASE, {}, items, _now())
+        self._to_cache(TOOL, FULLTEXT_CACHE_RELEASE, {}, items, _now())
         for item in valid:
             if item.error is None:
                 item.answer = self._write_text(item.variant, item.answer)
@@ -761,7 +766,31 @@ class LiteratureAnnotator(Annotator):
         could not be read this time (server error, unusable XML) falls back to the abstract for this call only."""
         rec, version = await self._record_for(paper)
         if rec is None:
-            return {"found": False}, version, False
+            meta = {
+                "found": True,
+                "pmid": paper.value if paper.kind == "pmid" else None,
+                "pmcid": paper.value if paper.kind == "pmcid" else None,
+                "doi": paper.value if paper.kind == "doi" else None,
+                "title": None,
+                "journal": None,
+                "year": None,
+                "authors": None,
+                "license": None,
+                "is_open_access": False,
+                "in_europepmc": False,
+            }
+            header = [f"# {paper.value}", "", self._identifier_line(meta), "- Europe PMC record: -"]
+            oa_body, oa_state = await self._legal_oa_copy(paper, meta, header)
+            if oa_body is not None:
+                return ({**meta, **oa_state, "access_level": "full_text", "markdown": oa_body}, version, False)
+            answer = {**meta, "found": False, "unread_reason": oa_state.get("unread_reason") or "no_copy"}
+            if oa_state.get("unread_detail"):
+                answer["unread_detail"] = oa_state["unread_detail"]
+            if oa_state.get("oa_locations"):
+                answer["oa_locations"] = oa_state["oa_locations"]
+            if oa_state.get("temporary_error"):
+                answer["fulltext_error"] = oa_state["temporary_error"]
+            return answer, version, bool(oa_state.get("temporary_error"))
         journal = ((rec.get("journalInfo") or {}).get("journal") or {}).get("title")
         meta = {"found": True, "pmid": rec.get("pmid"), "pmcid": rec.get("pmcid"), "doi": rec.get("doi"),
                 "title": rec.get("title"), "journal": journal, "year": rec.get("pubYear"),
@@ -770,8 +799,7 @@ class LiteratureAnnotator(Annotator):
         links = [{"url": u.get("url"), "availability": u.get("availability")}
                  for u in ((rec.get("fullTextUrlList") or {}).get("fullTextUrl") or []) if u.get("url")]
         subscription_hint = any("subscription" in str(link.get("availability") or "").casefold() for link in links)
-        header = [f"# {meta['title'] or paper.value}", "",
-                  f"- PMID {meta['pmid'] or '-'} · PMCID {meta['pmcid'] or '-'} · DOI {meta['doi'] or '-'}",
+        header = [f"# {meta['title'] or paper.value}", "", self._identifier_line(meta),
                   f"- {meta['journal'] or '-'} {meta['year'] or ''} · license {meta['license'] or '-'}"]
         volatile = False
         if meta["pmcid"] and (meta["is_open_access"] or meta["in_europepmc"]):
@@ -819,6 +847,48 @@ class LiteratureAnnotator(Annotator):
         markdown = "\n".join(header + [f"- access_level: {level} (Europe PMC에 본문 사본 없음)", ""]
                              + (["## Abstract", "", abstract, ""] if abstract else [])) + "\n"
         return {**meta, "access_level": level, "markdown": markdown}, version, volatile
+
+    @staticmethod
+    def _identifier_line(meta: dict) -> str:
+        return f"- PMID {meta.get('pmid') or '-'} · PMCID {meta.get('pmcid') or '-'} · DOI {meta.get('doi') or '-'}"
+
+    @staticmethod
+    async def _require_public_oa_url(url: str) -> None:
+        try:
+            parts = urlsplit(url)
+            host, port = parts.hostname, parts.port
+        except ValueError as exc:
+            raise PermissionError("OA 사본 주소 형식이 올바르지 않습니다") from exc
+        if parts.scheme.casefold() not in {"http", "https"} or not host or parts.username or parts.password:
+            raise PermissionError("OA 사본 주소가 공개 HTTP(S) URL이 아닙니다")
+        try:
+            addresses = {ipaddress.ip_address(host)}
+        except ValueError:
+            try:
+                infos = await asyncio.get_running_loop().getaddrinfo(
+                    host, port or (443 if parts.scheme.casefold() == "https" else 80),
+                    type=socket.SOCK_STREAM)
+            except OSError as exc:
+                raise PermissionError(f"OA 사본 host를 확인하지 못했습니다: {host}") from exc
+            addresses = {ipaddress.ip_address(info[4][0].split("%", 1)[0]) for info in infos}
+        if not addresses or any(not address.is_global for address in addresses):
+            raise PermissionError(f"OA 사본 주소가 public network가 아닙니다: {host}")
+
+    async def _request_oa_copy(self, url: str, headers: dict[str, str]):
+        current = url
+        for redirect_count in range(MAX_OA_REDIRECTS + 1):
+            await self._require_public_oa_url(current)
+            response = await self.http.request(
+                "oa_copy", "GET", current, headers=headers, follow_redirects=False)
+            if response.status_code not in {301, 302, 303, 307, 308}:
+                return response
+            location = response.headers.get("location")
+            if not location:
+                return response
+            if redirect_count == MAX_OA_REDIRECTS:
+                raise LookupFailed(f"OA 사본 주소가 redirect {MAX_OA_REDIRECTS}회를 넘었습니다")
+            current = urljoin(current, location)
+        raise AssertionError("unreachable")
 
     async def _legal_oa_copy(self, paper: PaperId, meta: dict, header: list[str]) -> tuple[str | None, dict]:
         """Try legal OA locations only. Provider/API failures are transient; an absent location or a 404 copy is a
@@ -878,9 +948,12 @@ class LiteratureAnnotator(Annotator):
         failures: list[tuple[str, str]] = []
         for location in unique:
             try:
-                response = await self.http.request(
-                    "oa_copy", "GET", location["url"],
-                    headers={"Accept": "application/pdf,text/html,application/xhtml+xml;q=0.9,*/*;q=0.1"})
+                response = await self._request_oa_copy(
+                    location["url"],
+                    {"Accept": "application/pdf,text/html,application/xhtml+xml;q=0.9,*/*;q=0.1"})
+            except PermissionError as exc:
+                failures.append(("access_denied", f"{location['provider']} 주소 차단: {exc}"))
+                continue
             except LookupFailed as exc:
                 temporary.append(f"{location['provider']} 사본 조회 실패: {exc}")
                 continue

@@ -67,7 +67,7 @@ def make(handler, tmp_path, workdir="work", unpaywall_email=""):
 
     clock = FakeTime()
     (tmp_path / workdir).mkdir(exist_ok=True)
-    client = httpx.AsyncClient(transport=httpx.MockTransport(recorder))
+    client = httpx.AsyncClient(transport=httpx.MockTransport(recorder), follow_redirects=True)
     annotator = lit.LiteratureAnnotator(client, tmp_path / workdir, tmp_path / "cache", sleep=clock.sleep,
                                         clock=clock.clock, unpaywall_email=unpaywall_email)
     return annotator, calls
@@ -393,22 +393,92 @@ async def test_fulltext_uses_a_legal_oa_pdf_after_europe_pmc_has_no_body(tmp_pat
         if request.url.host == "api.unpaywall.org":
             return httpx.Response(200, json={
                 "doi": "10.1000/test", "is_oa": True, "oa_status": "green",
-                "best_oa_location": {"url_for_pdf": "https://repo.example/paper.pdf", "url": "https://repo.example/paper",
+                "best_oa_location": {"url_for_pdf": "http://93.184.216.34/paper.pdf", "url": "http://93.184.216.34/paper",
                                      "host_type": "repository", "license": "cc-by", "version": "acceptedVersion"},
                 "oa_locations": [],
             })
         if request.url.host == "api.openalex.org":
             return httpx.Response(200, json={"meta": {"count": 0}, "results": []})
-        if request.url.host == "repo.example":
+        if request.url.host == "93.184.216.34":
             return httpx.Response(200, content=pdf, headers={"content-type": "application/pdf"})
         raise AssertionError(request.url)
 
     annotator, _calls = make(handler, tmp_path, unpaywall_email="owner@example.org")
     row = (await annotator.fulltext(["PMID:123"]))["results"][0]
     assert row["access_level"] == "full_text" and row["read_source"] == "Unpaywall"
-    assert row["oa_copy"]["url"] == "https://repo.example/paper.pdf"
+    assert row["oa_copy"]["url"] == "http://93.184.216.34/paper.pdf"
     text = (tmp_path / "work" / row["text_file"]).read_text(encoding="utf-8")
     assert "Open access full text from the repository." in text and "access_level: full_text" in text
+
+
+async def test_fulltext_tries_oa_providers_when_europe_pmc_has_no_record(tmp_path):
+    pdf = b"%PDF-1.4\nBT (Open access paper outside Europe PMC.) Tj ET\n%%EOF"
+
+    def handler(request):
+        if request.url.host == "www.ebi.ac.uk":
+            return search_answer([])
+        if request.url.host == "api.unpaywall.org":
+            return httpx.Response(200, json={
+                "doi": "10.1000/outside", "is_oa": True, "oa_status": "gold",
+                "best_oa_location": {"url_for_pdf": "http://93.184.216.34/paper.pdf",
+                                     "host_type": "publisher", "license": "cc-by"},
+                "oa_locations": [],
+            })
+        if request.url.host == "api.openalex.org":
+            return httpx.Response(200, json={"meta": {"count": 0}, "results": []})
+        if request.url.host == "93.184.216.34":
+            return httpx.Response(200, content=pdf, headers={"content-type": "application/pdf"})
+        raise AssertionError(request.url)
+
+    annotator, calls = make(handler, tmp_path, unpaywall_email="owner@example.org")
+    row = (await annotator.fulltext(["10.1000/outside"]))["results"][0]
+    assert row["access_level"] == "full_text" and row["doi"] == "10.1000/outside"
+    assert any(call.url.host == "api.unpaywall.org" for call in calls)
+
+
+@pytest.mark.parametrize("blocked_at", ["initial", "redirect"])
+async def test_fulltext_never_requests_a_private_oa_destination(tmp_path, blocked_at):
+    private_url = "http://169.254.169.254/latest/meta-data"
+    public_url = "http://93.184.216.34/paper.pdf"
+
+    def handler(request):
+        if request.url.host == "www.ebi.ac.uk":
+            return search_answer([record("123", None, "Y", None)])
+        if request.url.host == "api.openalex.org":
+            location = private_url if blocked_at == "initial" else public_url
+            return httpx.Response(200, json={"results": [{
+                "id": "https://openalex.org/W1", "open_access": {"is_oa": True},
+                "best_oa_location": {"pdf_url": location, "source": {"display_name": "Repository"}},
+            }]})
+        if request.url.host == "93.184.216.34":
+            return httpx.Response(302, headers={"location": private_url})
+        if request.url.host == "169.254.169.254":
+            return httpx.Response(200, content=b"%PDF-1.4 private", headers={"content-type": "application/pdf"})
+        raise AssertionError(request.url)
+
+    annotator, calls = make(handler, tmp_path, workdir=blocked_at)
+    row = (await annotator.fulltext(["123"]))["results"][0]
+    assert row["access_level"] != "full_text"
+    assert not any(call.url.host == "169.254.169.254" for call in calls)
+
+
+async def test_fulltext_uses_a_new_cache_release_after_oa_fallback(tmp_path, monkeypatch):
+    current_release = lit.FULLTEXT_CACHE_RELEASE
+    calls = []
+    cached_handler = by_query({'EXT_ID:123 AND SRC:MED': [record()]})
+
+    def handler(request):
+        calls.append(request)
+        return cached_handler(request)
+
+    monkeypatch.setattr(lit, "FULLTEXT_CACHE_RELEASE", lit.CACHE_RELEASE)
+    first, _first_calls = make(handler, tmp_path)
+    await first.fulltext(["123"])
+    monkeypatch.setattr(lit, "FULLTEXT_CACHE_RELEASE", current_release)
+    second, _second_calls = make(handler, tmp_path)
+    out = await second.fulltext(["123"])
+    assert out["n_cached"] == 0
+    assert sum(call.url.path.endswith("/search") for call in calls) == 2
 
 
 @pytest.mark.parametrize(("mode", "reason"), [
@@ -423,13 +493,13 @@ async def test_fulltext_records_why_a_legal_oa_copy_could_not_be_read(tmp_path, 
             return search_answer([record("123", None, oa, None)])
         if request.url.host == "api.unpaywall.org":
             location = None if mode == "closed" else {
-                "url_for_pdf": f"https://repo.example/{mode}.pdf", "host_type": "repository", "license": "cc-by"}
+                "url_for_pdf": f"http://93.184.216.34/{mode}.pdf", "host_type": "repository", "license": "cc-by"}
             return httpx.Response(200, json={"doi": "10.1000/test", "is_oa": mode != "closed",
                                              "oa_status": "closed" if mode == "closed" else "green",
                                              "best_oa_location": location, "oa_locations": []})
         if request.url.host == "api.openalex.org":
             return httpx.Response(200, json={"meta": {"count": 0}, "results": []})
-        if request.url.host == "repo.example":
+        if request.url.host == "93.184.216.34":
             return (httpx.Response(403) if mode == "denied" else
                     httpx.Response(200, content=b"not a paper", headers={"content-type": "application/octet-stream"}))
         raise AssertionError(request.url)

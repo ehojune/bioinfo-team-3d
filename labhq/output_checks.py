@@ -147,6 +147,19 @@ def _normal_paper_id(value: Any) -> str | None:
     return _normal_named_paper_id(prefix, raw) if separator else None
 
 
+def _normal_paper_input(value: Any) -> str | None:
+    """Normalize a fulltext input even when it used the documented bare PMID or DOI form."""
+    normal = _normal_paper_id(value)
+    if normal or not isinstance(value, (str, int)):
+        return normal
+    raw = str(value).strip()
+    if raw.isdigit():
+        return _normal_named_paper_id("pmid", raw)
+    if PMCID.fullmatch(raw):
+        return _normal_named_paper_id("pmcid", raw)
+    return _normal_named_paper_id("doi", raw)
+
+
 def _paper_key(identifiers: set[str]) -> str:
     def order(identifier: str) -> tuple[int, str]:
         return PAPER_ID_ORDER.get(identifier.partition(":")[0], len(PAPER_ID_ORDER)), identifier
@@ -159,7 +172,7 @@ def _answer_paper_ids(answer: Mapping[str, Any], fallback: Any) -> set[str]:
                    if (paper_id := _normal_named_paper_id(scheme, answer.get(scheme)))}
     if identifiers:
         return identifiers
-    normal_fallback = _normal_paper_id(fallback)
+    normal_fallback = _normal_paper_input(fallback)
     if normal_fallback:
         return {normal_fallback}
     if isinstance(fallback, (str, int)) and str(fallback).strip():

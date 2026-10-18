@@ -130,6 +130,19 @@ def test_literature_ledger_keeps_candidate_selected_and_acquired_denominators_se
     }
 
 
+def test_literature_ledger_normalizes_failed_fulltext_inputs(tmp_path):
+    work = tmp_path / "work"
+    _fulltext_record(work, "failed", [
+        {"input": "10.1000/Outside", "answer": {"found": False}},
+        {"input": "31868601", "answer": {"found": False}},
+    ])
+    assert literature_ledger(work) == {
+        "candidate_ids": [],
+        "selected_ids": ["DOI:10.1000/outside", "PMID:31868601"],
+        "unread": {"DOI:10.1000/outside": "no_copy", "PMID:31868601": "no_copy"},
+    }
+
+
 def test_literature_ledger_line_has_four_exact_denominators_and_unread_key_papers():
     ledgers = {"s1": {
         "claims": [{"id": "c1", "status": "supported"}],
