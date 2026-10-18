@@ -1,8 +1,10 @@
 """Build and check the publication-oriented repository edition (#686)."""
 from __future__ import annotations
 
+import ast
 import collections
 import csv
+import hashlib
 import io
 import json
 import os
@@ -26,9 +28,14 @@ from .request_bundle import _POSIX_ABS, _WINDOWS_ABS
 # The one private-path rule of the edition (result_storage uses it too). `./data/x` and `../data/x` are relative paths:
 # masking them broke the published scripts (PR #717 review).
 _PRIVATE_PATH = re.compile(
-    r"(?<![\w:.-])(?:[A-Za-z]:[/\\]|\\\\|/(?:home|Users|mnt|srv|data|tmp|var|opt)/|~/)[^\s<>\"'`\])]+"
+    r"(?<![\w:.-])(?:[A-Za-z]:[/\\]|\\\\|/(?:home|Users|mnt|srv|data|tmp|var|opt)/|~/)[^\s<>\"'`\]})]+"
+)
+# String fragments in f-strings may end at the private root (for example ``f"/home/{user}"``).
+_PRIVATE_LITERAL_PATH = re.compile(
+    r"(?<![\w.-])(?:[A-Za-z]:[/\\]|\\\\|/(?:home|Users|mnt|srv|data|tmp|var|opt)/|~/)[^\s<>\"'`\]})]*"
 )
 PRIVATE_PATH_PATTERN = _PRIVATE_PATH
+_MANUAL_PATH_REVIEW = "# LABHQ 수동 확인 필요: 개인 경로를 안전하게 자동 변환하지 못했습니다."
 _ASSIGNMENT = re.compile(
     r"(?im)\b((?:api[_-]?key|token|password|secret)\s*[:=]\s*)"
     r"(?!<redacted-secret>|&lt;redacted-secret&gt;|\[REDACTED\])[^\s,;<]+"
@@ -220,6 +227,69 @@ def _rewrite_markdown_links(files: Mapping[str, str | bytes],
     return rewritten
 
 
+def _step_execution_path(source: str, target: str) -> tuple[str, str, str] | None:
+    source_path = PurePosixPath(source)
+    if (len(source_path.parts) < 5 or source_path.parts[0] != "steps"
+            or source_path.parts[2] != "outputs" or source_path.suffix.lower() not in _CODE_SUFFIXES):
+        return None
+    relative = source_path.parts[2:]
+    target_path = PurePosixPath(target)
+    if len(target_path.parts) <= len(relative) or target_path.parts[-len(relative):] != relative:
+        return None
+    cwd = "/".join(target_path.parts[:-len(relative)])
+    if "/code/" not in f"/{cwd}/":
+        return None
+    return source_path.parts[1], cwd, "/".join(relative)
+
+
+def _rewrite_reproduce_commands(text: str, source_targets: Mapping[str, str],
+                                files: Mapping[str, str | bytes]) -> str:
+    """Keep each recorded command in the published equivalent of its original step cwd."""
+    folders: dict[str, str] = {}
+    for source, target in sorted(source_targets.items()):
+        execution = _step_execution_path(source, target)
+        if execution is None:
+            continue
+        step, cwd, within_step = execution
+        folders.setdefault(step, cwd)
+        path = PurePosixPath(source)
+        command = {".py": "python", ".r": "Rscript", ".sh": "bash"}[path.suffix.lower()]
+        executables = ("python", "python3", "py") if command == "python" else (command,)
+        for executable in executables:
+            published = f"cd {cwd} && {executable} {within_step}"
+            text = text.replace(f"cd steps/{step} && {executable} {within_step}", published)
+            text = text.replace(f"{executable} {source}", published)
+
+    text = text.replace(
+        "정리본 루트에서 아래 순서대로 실행합니다.",
+        "정리본 루트에서 시작하되, 각 명령은 아래 단계별 실행 폴더로 이동해 실행합니다.",
+    )
+    if folders and "## 단계별 실행 폴더" not in text:
+        section = ["## 단계별 실행 폴더", "",
+                   *[f"- `{step}`: `{folder}`" for step, folder in sorted(folders.items())], ""]
+        marker = "## 예상 출력"
+        text = text.replace(marker, "\n".join(section) + "\n" + marker) if marker in text else (
+            text.rstrip() + "\n\n" + "\n".join(section))
+
+    keys = sorted(set(re.findall(
+        r"\bLABHQ_INPUT_[A-Z0-9_]+\b",
+        "\n".join(body for body in files.values() if isinstance(body, str)),
+    )))
+    manual = sorted(name for name, body in files.items()
+                    if isinstance(body, str) and _MANUAL_PATH_REVIEW in body)
+    input_section = ["## 입력 설정", "",
+                     "개인 경로는 코드에 넣지 않습니다. 접근 권한이 있는 로컬 경로나 경로 앞부분을 아래 환경 변수에 지정하세요.", "",
+                     *([f"- `{key}`" for key in keys] or ["- 별도 로컬 입력 경로 설정 없음"])]
+    if manual:
+        input_section += ["", "### 수동 확인 필요", "",
+                          *[f"- `{name}`: 주석이 붙은 줄의 입력 경로를 확인하세요." for name in manual]]
+    replacement = "\n".join(input_section) + "\n\n"
+    text, replaced = re.subn(r"(?ms)^## 입력 설정\n.*?(?=^## )", replacement, text)
+    if not replaced and (keys or manual):
+        text = text.rstrip() + "\n\n" + replacement
+    return text
+
+
 def broken_markdown_links(files: Mapping[str, str | bytes],
                           source_targets: Mapping[str, str] | None = None) -> list[dict[str, str]]:
     """List unresolved relative links in every Markdown document in an edition."""
@@ -244,6 +314,153 @@ def _clean(text: str, settings, req: dict) -> str:
     text = _WINDOWS_ABS.sub("<local-path>", text)
     text = _POSIX_ABS.sub("<local-path>", text)
     return _ASSIGNMENT.sub(r"\1<redacted-secret>", _PRIVATE_PATH.sub("<local-path>", text))
+
+
+def _input_setting(path: str) -> str:
+    """A stable, path-free environment key for one local input literal."""
+    normalized = posixpath.normpath(path.replace("\\", "/"))
+    if re.match(r"^[A-Za-z]:/", normalized) or normalized.startswith("//"):
+        normalized = normalized.casefold()
+    name = normalized.rstrip("/").rsplit("/", 1)[-1]
+    key = re.sub(r"[^A-Za-z0-9]+", "_", name).strip("_").upper() or "PATH"
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:8].upper()
+    return f"LABHQ_INPUT_{key}_{digest}"
+
+
+def _input_expression(value: str) -> tuple[str, bool]:
+    matches = list(_PRIVATE_LITERAL_PATH.finditer(value))
+    if not matches:
+        return repr(value), False
+    # A literal beginning with one local path can contain spaces. It denotes that one input.
+    spans = ([(0, len(value), value)] if len(matches) == 1 and matches[0].start() == 0
+             else [(match.start(), match.end(), match.group(0)) for match in matches])
+    parts: list[str] = []
+    last = 0
+    for start, end, path in spans:
+        if start > last:
+            parts.append(repr(value[last:start]))
+        parts.append(f'__import__("os").environ["{_input_setting(path)}"]')
+        last = end
+    if last < len(value):
+        parts.append(repr(value[last:]))
+    return " + ".join(parts), True
+
+
+def _joined_input_expression(node: ast.JoinedStr) -> tuple[str | None, bool]:
+    parts: list[str] = []
+    changed = False
+    for value in node.values:
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            expression, converted = _input_expression(value.value)
+            parts.append(expression)
+            changed = changed or converted
+        elif isinstance(value, ast.FormattedValue):
+            expression = ast.unparse(ast.JoinedStr(values=[value]))
+            if _PRIVATE_LITERAL_PATH.search(expression):
+                return None, False
+            parts.append(expression)
+        else:
+            return None, False
+    return (" + ".join(parts) if changed else None), changed
+
+
+def _source_offset(lines: list[str], starts: list[int], lineno: int, byte_column: int) -> int:
+    line = lines[lineno - 1]
+    column = len(line.encode("utf-8")[:byte_column].decode("utf-8"))
+    return starts[lineno - 1] + column
+
+
+def _manual_path_comments(text: str) -> str:
+    lines = text.splitlines(keepends=True)
+    rewritten: list[str] = []
+    for line in lines:
+        if _PRIVATE_LITERAL_PATH.search(line) is None:
+            rewritten.append(line)
+            continue
+        indent = line[:len(line) - len(line.lstrip())]
+        ending = "\n" if line.endswith("\n") else ""
+        rewritten.append(f"{indent}{_MANUAL_PATH_REVIEW}{ending}")
+        rewritten.append(_PRIVATE_LITERAL_PATH.sub("<local-path>", line))
+    return "".join(rewritten)
+
+
+def _python_input_settings(text: str) -> str:
+    """Replace private path literals, including raw, joined and f-string fragments."""
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError, TypeError):
+        return _manual_path_comments(text)
+
+    replacements: list[tuple[int, int, str]] = []
+    lines = text.splitlines(keepends=True)
+    starts: list[int] = []
+    offset = 0
+    for line in lines:
+        starts.append(offset)
+        offset += len(line)
+
+    def visit(node: ast.AST) -> None:
+        replacement: str | None = None
+        if isinstance(node, ast.JoinedStr):
+            replacement, _changed = _joined_input_expression(node)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            replacement, changed = _input_expression(node.value)
+            if not changed:
+                replacement = None
+        else:
+            for child in ast.iter_child_nodes(node):
+                visit(child)
+            return
+        if replacement is None:
+            return
+        start = _source_offset(lines, starts, node.lineno, node.col_offset)
+        end = _source_offset(lines, starts, node.end_lineno, node.end_col_offset)
+        replacements.append((start, end, replacement))
+
+    visit(tree)
+    for start, end, replacement in sorted(replacements, reverse=True):
+        text = text[:start] + replacement + text[end:]
+    return _manual_path_comments(text)
+
+
+def _quoted_input_settings(text: str, suffix: str) -> str:
+    """Handle full quoted path literals in R and shell scripts."""
+    pattern = re.compile(r"(?P<quote>['\"])(?P<value>[^'\"\n]*)(?P=quote)")
+
+    def replace(match: re.Match[str]) -> str:
+        value = match.group("value")
+        found = _PRIVATE_PATH.match(value)
+        if found is None or found.start() != 0:
+            return match.group(0)
+        key = _input_setting(value)
+        return f'Sys.getenv("{key}")' if suffix == ".r" else f'"${{{key}:?set {key}}}"'
+
+    return pattern.sub(replace, text)
+
+
+def clean_publication_text(name: str, text: str, settings, req: dict) -> str:
+    """Clean prose normally; keep code executable by replacing only actual private path literals."""
+    suffix = PurePosixPath(name).suffix.lower()
+    if suffix not in _CODE_SUFFIXES:
+        return _clean(text, settings, req)
+    rewritten = (_python_input_settings(text) if suffix == ".py"
+                 else _quoted_input_settings(text, suffix))
+    rewritten = sanitize(rewritten, settings.policy, [os.environ.get(settings.github.token_env, "")], limit=None)
+    rewritten = publish_clean(rewritten, settings, [req], limit=None)
+    return _ASSIGNMENT.sub(r"\1<redacted-secret>", rewritten)
+
+
+def code_syntax_issues(files: Mapping[str, str | bytes]) -> list[dict[str, str]]:
+    """Compile every published Python source before the edition can be written."""
+    issues = []
+    for name, body in files.items():
+        if not name.lower().endswith(".py") or not isinstance(body, str):
+            continue
+        try:
+            compile(body, name, "exec")
+        except (SyntaxError, ValueError, TypeError):
+            issues.append({"kind": "python_syntax", "path": name})
+    return issues
 
 
 def _outside_literals(text: str, transform) -> str:
@@ -822,6 +1039,17 @@ def _unique_target(folder: str, source: str, used: set[str]) -> str:
     return target
 
 
+def _code_target(folder: str, source: str, used: set[str]) -> str:
+    """Keep the step's ``outputs/...`` layout below its published execution folder."""
+    path = PurePosixPath(posixpath.normpath(source.replace("\\", "/")))
+    if len(path.parts) >= 5 and path.parts[0] == "steps" and path.parts[2] == "outputs":
+        target = f"{folder}/{path.parts[1]}/{'/'.join(path.parts[2:])}"
+        if target not in used:
+            used.add(target)
+            return target
+    return _unique_target(folder, source, used)
+
+
 def small_cells(text: str, suffix: str) -> list[str]:
     if suffix == ".json":
         try:
@@ -1245,7 +1473,27 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
     omitted_figures = list(dict.fromkeys(re.findall(r"\*\(그림 생략: ([^)\n]+)\)\*", report)))
     if omitted_figures:
         lines += ["", "## 생략한 그림", "", *[f"- *(그림 생략: {label})*" for label in omitted_figures]]
-    lines += ["", "## 자료 안내", "",
+    lines += ["", "## 읽는 순서", "",
+              "1. [과학 보고서](report/report.md) — 논문 형식 보고서와 claim 근거 각주"]
+    if "run/progress.md" in run_documents:
+        lines.append("2. [진행 기록](run/progress.md) — 계획 변경과 과학 리뷰 기록")
+    if "run/reproduce.md" in run_documents:
+        lines.append("3. [재현 방법](run/reproduce.md) — 환경, 실행 명령과 입력 출처")
+    if "run/task_record.md" in run_documents:
+        lines.append("4. [작업 지시 기록](run/task_record.md) — 단계별 원래 작업 지시")
+    lines += ["5. [실행 기록](run/execution_record.md) — 요청, 결정, 비용과 Nextflow 기록",
+              "6. [출처](REFERENCES.md) — PMID, DOI, GEO와 URL",
+              "7. `code/`, `figures/`, `tables/` — 게시 가능한 코드·SVG·집계표", "",
+              "## 저장소 지도", "", "```text", "README.md", "report/", "run/", "code/", "figures/", "tables/",
+              *(["studies/               갈래별 코드·그림·표·단계 보고서"] if branch_rows else []),
+              "docs/reference/", "REFERENCES.md", "DATA_AND_LICENSES.md", "```", "",
+              "## Summary (English)", "",
+              f"This repository is the publication edition of labhq request {req.get('id')}. "
+              "It keeps the scientific report, aggregate results, code, figures, decisions, and execution record together.", "",
+              "## 어떻게 만들었나", "",
+              f"labhq 요청 `{req.get('id')}`의 결과를 [labhq#686](https://github.com/ehojune/bioinfo-team-3d/issues/686) 규칙으로 정리했다. "
+              "정리 직원은 graphical-abstract와 humanizer 규칙을 적용하며 숫자·링크·인용·표 모양 보존 검사를 통과한 문장만 반영한다.", "",
+              "## 자료 안내", "",
               "원자료는 넣지 않습니다. 출처·접근 조건·재배포 범위·필수 인용은 "
               "[DATA_AND_LICENSES.md](DATA_AND_LICENSES.md)에 적었습니다.", "",
               "상세 단계 보고서와 검토문은 [docs/reference/](docs/reference/README.md)에 모았습니다."]
@@ -1339,7 +1587,7 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
                           run_documents: Mapping[str, str] | None = None,
                           internal_files: set[str] | None = None) -> dict[str, str | bytes]:
     """Return the stable publication layout; raw data and third-party full text never enter it."""
-    assets = {name: _clean(body, settings, req) for name, body in assets.items()
+    assets = {name: clean_publication_text(name, body, settings, req) for name, body in assets.items()
               if not _LITERATURE_OUTPUT.search(name.replace("\\", "/"))}
     report = portfolio_report(req, settings, assets)
     revision_history = portfolio_revision_history(req, settings, assets)
@@ -1374,7 +1622,12 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
         branch_folder = step_folders.get(_source_step(name, req) or "")
         prefix = f"studies/{branch_folder}/" if branch_folder else ""
         if suffix in _CODE_SUFFIXES and "scripts" in {part.casefold() for part in path.parts}:
-            target = _unique_target(prefix + "code", name, used)
+            target = _code_target(prefix + "code", name, used)
+            files[target] = body
+            source_targets[name] = target
+            track(name, target)
+        elif path.name.casefold() == "requirements.lock.txt":
+            target = _unique_target("run/environment", name, used)
             files[target] = body
             source_targets[name] = target
             track(name, target)
@@ -1446,7 +1699,7 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
     if revision_history:
         files["run/revision_history.md"] = revision_history
     run_documents = dict(run_documents or {})
-    for name in ("run/progress.md", "run/reproduce.md"):
+    for name in ("run/progress.md", "run/reproduce.md", "run/task_record.md"):
         if name in run_documents:
             files[name] = _clean(run_documents[name], settings, req)
     claim_evidence = _claim_evidence_document(req, assets, source_targets)
@@ -1471,6 +1724,9 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
     files["README.md"] = _clean(readme, settings, req)
 
     source_targets.update({name: name for name in files})
+    if isinstance(files.get("run/reproduce.md"), str):
+        files["run/reproduce.md"] = _rewrite_reproduce_commands(
+            files["run/reproduce.md"], source_targets, files)
     files = _rewrite_markdown_links(files, source_targets)
     broken = broken_markdown_links(files, source_targets)
     if broken:
@@ -1479,7 +1735,7 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
     if table_issues := _report_table_issues(files):
         raise check_failure(table_issues)
 
-    issues = scan_publish_files(
+    issues = code_syntax_issues(files) + scan_publish_files(
         files, internal=tracked_internal if step_scope is not None else internal)
     blocking = [issue for issue in issues if issue["kind"] != "small_cell"]
     if blocking:

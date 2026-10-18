@@ -1,8 +1,11 @@
+import py_compile
+import re
 from pathlib import Path
 
 import labhq.portfolio as portfolio
 from labhq.korean_qc import check_document
 from labhq.portfolio import build_portfolio_files, scan_publish_files
+from labhq.result_storage import draft_documents
 from labhq.settings import DataZone, Settings
 
 
@@ -122,7 +125,8 @@ def test_fixed_request_bundle_builds_the_portfolio_contract(tmp_path):
 
     required = {
         "README.md", "report/report.md", "run/requests.md", "run/decisions.md",
-        "run/execution_record.md", "run/costs.md", "run/progress.md", "run/reproduce.md", "code/analyze.py",
+        "run/execution_record.md", "run/costs.md", "run/progress.md", "run/reproduce.md",
+        "code/analysis/outputs/scripts/analyze.py",
         "figures/graphical_abstract.svg", "figures/volcano.svg",
         "tables/result_summary.tsv", "REFERENCES.md", "DATA_AND_LICENSES.md",
     }
@@ -147,6 +151,101 @@ def test_fixed_request_bundle_builds_the_portfolio_contract(tmp_path):
     assert not any(name.startswith("run/nextflow/") for name in files)
     assert check_document(readme)["status"] == "PASS"
     assert check_document(files["report/report.md"])["status"] == "PASS"
+
+
+def test_published_python_uses_input_setting_without_touching_archive_members(tmp_path):
+    settings, request, bundle, assets, images, decisions, tasks = portfolio_fixture(tmp_path)
+    assets["steps/analysis/outputs/scripts/build_crosswalk.py"] = (
+        "from pathlib import Path\n"
+        "archive_member = '/Occupation Activities.txt'\n"
+        "source = Path('C:/Users/alice/private/cohort.tsv')\n"
+        "print(archive_member, source)\n"
+    )
+
+    files = build_portfolio_files(
+        request, settings, assets, images, decisions=decisions, tasks=tasks, bundle=bundle)
+
+    name = next(name for name in files if name.endswith("build_crosswalk.py"))
+    code = files[name]
+    assert "/Occupation Activities.txt" in code
+    assert "Activities.txt" in code and "LABHQ_INPUT_COHORT_TSV" in code
+    assert "C:/Users/alice" not in code and "<local-path>" not in code
+    path = tmp_path / "published.py"
+    path.write_text(code, encoding="utf-8")
+    py_compile.compile(str(path), doraise=True)
+
+
+def test_published_python_gives_distinct_paths_distinct_stable_input_settings(tmp_path):
+    settings, request, bundle, assets, images, decisions, tasks = portfolio_fixture(tmp_path)
+    assets["steps/analysis/outputs/scripts/compare_inputs.py"] = (
+        "from pathlib import Path\n"
+        "left = Path('/home/a/data.csv')\n"
+        "right = Path('/srv/b/data.csv')\n"
+        "left_again = Path('/home/a/data.csv')\n"
+    )
+
+    files = build_portfolio_files(
+        request, settings, assets, images, decisions=decisions, tasks=tasks, bundle=bundle)
+
+    name = next(name for name in files if name.endswith("compare_inputs.py"))
+    keys = re.findall(r'LABHQ_INPUT_DATA_CSV_[A-F0-9]{8}', files[name])
+    assert len(set(keys)) == 2
+    assert keys[0] == keys[2]
+
+
+def test_published_python_rewrites_f_raw_and_joined_paths_or_marks_manual_review(tmp_path):
+    settings, request, bundle, assets, images, decisions, tasks = portfolio_fixture(tmp_path)
+    assets["steps/analysis/outputs/scripts/path_forms.py"] = (
+        "user = 'alice'\n"
+        "value = 1\n"
+        "dynamic = f'C:/Users/{user}/data.csv'\n"
+        "raw = r'C:\\\\Users\\\\alice\\\\raw.csv'\n"
+        "joined = ('C:/Users/' 'alice/joined.csv')\n"
+        "formatted = f'{value:C:/Users/alice/private.txt}'\n"
+    )
+
+    files = build_portfolio_files(
+        request, settings, assets, images, decisions=decisions, tasks=tasks, bundle=bundle,
+        run_documents={"run/reproduce.md": "# 재현 방법\n\n## 입력 설정\n\n- 없음\n\n## 예상 출력\n"})
+
+    name = next(name for name in files if name.endswith("path_forms.py"))
+    code = files[name]
+    assert "C:/Users" not in code and r"C:\\Users" not in code
+    assert "LABHQ_INPUT_USERS_" in code
+    assert "LABHQ_INPUT_RAW_CSV_" in code
+    assert "LABHQ_INPUT_JOINED_CSV_" in code
+    assert "# LABHQ 수동 확인 필요:" in code
+    assert "수동 확인 필요" in files["run/reproduce.md"]
+    path = tmp_path / "published_forms.py"
+    path.write_text(code, encoding="utf-8")
+    py_compile.compile(str(path), doraise=True)
+
+
+def test_portfolio_reproduce_links_canonical_code_and_lock_paths(tmp_path):
+    settings, request, bundle, assets, images, decisions, tasks = portfolio_fixture(tmp_path)
+    request["plan"]["steps"][0]["outputs"] = ["outputs/scripts/analyze.py"]
+    assets["steps/env/outputs/env/requirements.lock.txt"] = "pandas==2.2.2\n"
+    docs = draft_documents(
+        request, settings, assets=assets,
+        environment_records={"env": {"python": "3.12"}},
+        bundle_readme=("## 단계 순서\n\n- `analysis` (의존: 없음)\n\n## 다시 실행\n\n"
+                       "- `cd steps/analysis && python outputs/scripts/analyze.py`\n"),
+    )
+
+    files = build_portfolio_files(
+        request, settings, assets, images, decisions=decisions, tasks=tasks, bundle=bundle,
+        run_documents={"run/reproduce.md": docs["REPRODUCE.md"],
+                       "run/task_record.md": docs["TASK_RECORD.md"]},
+    )
+
+    assert files["run/environment/requirements.lock.txt"] == "pandas==2.2.2\n"
+    reproduce = files["run/reproduce.md"]
+    assert "code/analysis/outputs/scripts/analyze.py" in files
+    assert "cd code/analysis && python outputs/scripts/analyze.py" in reproduce
+    assert "`analysis`: `code/analysis`" in reproduce
+    assert "cd steps/analysis" not in reproduce
+    assert "](environment/requirements.lock.txt)" in reproduce
+    assert "run/task_record.md" in files["README.md"]
 
 
 def test_publish_scan_catches_credentials_paths_signed_urls_and_small_cells():
