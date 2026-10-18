@@ -13,8 +13,7 @@ PR #740에서 정리본 저장소의 표·첫 화면·보고서 근거·갈래 �
 
 - 새 회귀 test는 수정 전 3 failed, 수정 뒤 3 passed입니다.
 - 관련 pytest 15파일은 263 passed입니다.
-- `git diff --check`와 비밀값·금지 파일·5MB·데이터 확장자 검사는 통과했습니다.
-- `scripts/check_public.sh`는 Windows Git Bash에서 90초 무출력으로 중단했습니다.
+- `git diff --check`와 `scripts/check_public.sh`는 통과했습니다.
 - `docs/manual.md`: 159,597자 → 159,391자(-206자).
 
 ## 남은 것
