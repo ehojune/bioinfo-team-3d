@@ -14,7 +14,8 @@ from tests.semantics_shadow_lab import run_lab
 ROOT = Path(__file__).resolve().parents[1]
 # file -> number of marked lines; a new hook must be marked and counted here
 HOOKS = {"labhq/settings.py": 2, "labhq/gateway/server.py": 10, "labhq/cli.py": 17,
-         "labhq/doctor.py": 4, "labhq/orchestrator/cso.py": 2}
+         "labhq/doctor.py": 4, "labhq/orchestrator/cso.py": 3,
+         "labhq/research/semantic_devices.py": 2}
 # `# semantics-hook: actions` lines of the action layer's shadow (#149 결정 13 A1), gone after `--only actions`
 ACTION_HOOKS = {"labhq/gateway/server.py": 4, "labhq/orchestrator/cso.py": 4, "labhq/cli.py": 8}  # cli: A2 parser (결정 16)
 

@@ -2,6 +2,7 @@
 across a restart until `labhq semantics enable` opens a new epoch."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import threading
@@ -132,6 +133,30 @@ def test_five_busy_skips_in_a_row_turn_it_off(tmp_path, monkeypatch):
     assert service.latched == "worker_busy" and service.counts["busy"] == 5
     release.set()
     assert service.drain(10)
+
+
+@pytest.mark.asyncio
+async def test_auto_off_updates_the_request_feed_and_execution_record(tmp_path):
+    service = _service(tmp_path)
+    rid = "req_001"
+    events = []
+    service.hub.save_request = lambda request_id: None
+
+    async def publish(event):
+        events.append(event)
+
+    service.hub.publish = publish
+    service.event_loop = asyncio.get_running_loop()
+    service.current_request_id = rid
+
+    service.trip("worker_stuck")
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    req = service.hub.requests[rid]
+    assert req["semantic_devices"]["semantics"]["reason"] == "worker_stuck"
+    assert "의미 장치 중단:" in req["execution_record"]
+    assert events[-1]["type"] == "request.semantic_devices"
 
 
 def test_one_boundary_violation_turns_it_off_and_writes_nothing(tmp_path, monkeypatch):

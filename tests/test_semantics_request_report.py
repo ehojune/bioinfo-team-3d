@@ -134,3 +134,23 @@ def test_unknown_request_report_does_not_create_state(tmp_path, capsys):
     assert stopped.value.code == 1
     assert "요청을 찾지 못했습니다" in capsys.readouterr().out
     assert not (tmp_path / "state").exists()
+
+
+def test_request_report_names_device_error_instead_of_zero_candidates(tmp_path, capsys):
+    settings = config(tmp_path)
+    from labhq.store import StateStore
+    store = StateStore(tmp_path / "state/gateway.sqlite3")
+    store.put("request", "req_error", {"id": "req_error", "status": "done", "mode": "orchestrate",
+              "semantic_devices": {"status": "error", "errors": [{
+                  "code": "semantics_provenance_failed", "device": "semantics",
+                  "stage": "advisory_projection", "at": "2026-10-18T10:00:00+09:00",
+                  "message": "재사용 후보 provenance 요약을 만들지 못했습니다."}]}})
+    store.close()
+
+    with pytest.raises(SystemExit) as stopped:
+        cli.main(["-c", settings.config_path, "semantics", "report", "--request", "req_error"])
+
+    assert stopped.value.code == 0
+    out = capsys.readouterr().out
+    assert "의미 장치 중단:" in out and "semantics_provenance_failed" in out
+    assert "advisory_projection" in out

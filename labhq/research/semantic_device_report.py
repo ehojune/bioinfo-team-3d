@@ -64,7 +64,7 @@ def _mode(settings: Any, devices: Mapping[str, Any]) -> str:
 def _safe_error(row: Any) -> dict[str, str] | None:
     if not isinstance(row, Mapping):
         return None
-    fields = ("device", "path", "reason", "at", "impact", "recovery")
+    fields = ("code", "device", "stage", "at", "message")
     return {field: str(row.get(field) or "기록 없음")[:240] for field in fields}
 
 
@@ -81,8 +81,8 @@ def _off_record(devices: Mapping[str, Any], errors: list[dict[str, str]], mode: 
                 request_time: str) -> dict[str, str] | None:
     health = _dict(devices.get(_MEANING_KEY))
     error = _error_for(errors, _MEANING_KEY)
-    if error and error["path"] in {"setting", "auto_off", "worker"}:
-        return {"reason": error["reason"], "at": error["at"]}
+    if error and error["stage"] in {"setting", "auto_off", "startup"}:
+        return {"reason": error["code"], "at": error["at"]}
     if health.get("stopped") or health.get("status") == "off":
         return {"reason": str(health.get("reason") or "auto_off"),
                 "at": str(health.get("stopped_at") or request_time)}
@@ -142,8 +142,8 @@ def _read_observation(req: Mapping[str, Any], settings: Any, mode: str) -> tuple
         latest = own[-1]
         return ((dict(latest), None) if _valid_observation(latest)
                 else (None, "현재 요청 관측 구조 손상"))
-    except (OSError, TypeError, ValueError) as exc:
-        return None, type(exc).__name__
+    except (OSError, TypeError, ValueError):
+        return None, "관측 파일 읽기 실패"
 
 
 def _plan_refs(plan: Mapping[str, Any]) -> set[str]:
@@ -279,16 +279,25 @@ def _semantic_devices(req: Mapping[str, Any], plan: Mapping[str, Any], settings:
                       ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     mode = _mode(settings, health)
     observation, observation_error = _read_observation(req, settings, mode)
+    observation_issue = None
+    if observation_error:
+        observation_issue = {
+            "code": "semantics_observed_state_failed", "device": _MEANING_KEY,
+            "stage": "advisory_projection", "at": request_time,
+            "message": "현재 요청의 의미 관측을 읽지 못해 요청별 평가를 완료하지 못했습니다.",
+        }
+        if not any(row.get("code") == observation_issue["code"] for row in errors):
+            errors.append(observation_issue)
     off = _off_record(health, errors, mode, request_time)
     semantic_error = _error_for(errors, _MEANING_KEY)
-    if semantic_error and semantic_error.get("path") in {"setting", "auto_off", "worker"}:
+    if semantic_error and semantic_error.get("stage") in {"setting", "auto_off", "startup"}:
         semantic_error = None
     provenance = _dict((observation or {}).get("provenance"))
     objects = _dict((observation or {}).get("objects"))
     fit = _dict((observation or {}).get("input_fit"))
 
     def model_status(model: Mapping[str, Any]) -> str:
-        if semantic_error or observation_error or model.get("status") not in {None, "ok"}:
+        if semantic_error or observation_issue or model.get("status") not in {None, "ok"}:
             return "오류"
         if off:
             return "꺼짐"
@@ -316,7 +325,7 @@ def _semantic_devices(req: Mapping[str, Any], plan: Mapping[str, Any], settings:
                  "request.semantic_devices.errors"],
         observation_at=_stamp((observation or {}).get("ts")), epoch=(observation or {}).get("epoch"),
         **({"off": off} if off else {}),
-        **({"error": semantic_error or {"reason": observation_error}} if semantic_error or observation_error else {}),
+        **({"error": semantic_error or observation_issue} if semantic_error or observation_issue else {}),
     )
 
     ontology_status = model_status(objects)
@@ -333,7 +342,7 @@ def _semantic_devices(req: Mapping[str, Any], plan: Mapping[str, Any], settings:
               (_OBJECTS_MODULE, "build_view")],
         records=["semantic_report.json:devices[operational_ontology]", "state/semantics/shadow.jsonl"],
         **({"off": off} if off else {}),
-        **({"error": semantic_error or {"reason": observation_error}} if semantic_error or observation_error else {}),
+        **({"error": semantic_error or observation_issue} if semantic_error or observation_issue else {}),
     )
 
     ab = _dict(req.get("semantics_ab"))
@@ -479,6 +488,13 @@ def render_report(report: Mapping[str, Any]) -> str:
         records = ", ".join(f"`{item}`" for item in row.get("record_locations") or [])
         lines.append(f"| {_cell(row.get('name'))} | {_cell(row.get('status'))} | {_cell(row.get('inputs'))} | "
                      f"{_cell(decisions)} | {_cell(row.get('impact'))} | {code} | {records} |")
+    errors = [row for row in report.get("errors") or [] if isinstance(row, Mapping)]
+    if errors:
+        lines += ["", "## 오류", "", "| 오류 코드 | 장치 | 단계 | 시각 | 설명 |",
+                  "|---|---|---|---|---|"]
+        lines += [f"| {_cell(row.get('code'))} | {_cell(row.get('device'))} | "
+                  f"{_cell(row.get('stage'))} | {_cell(row.get('at'))} | {_cell(row.get('message'))} |"
+                  for row in errors]
     checklist = next((row for row in report.get("devices") or [] if row.get("id") == "checklist"), {})
     items = checklist.get("items") or []
     if items:

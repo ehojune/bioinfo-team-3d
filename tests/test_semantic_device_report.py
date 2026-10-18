@@ -123,9 +123,9 @@ def test_semantics_off_records_reason_and_time(tmp_path):
     request.pop("semantics_ab")
     request["semantic_devices"] = {
         "semantics": {"setting": "off", "stopped": False, "stopped_at": None},
-        "errors": [{"device": "semantics", "path": "setting", "reason": "configured_off",
-                    "at": "2026-10-18T13:00:00+09:00", "impact": "semantics 평가를 하지 않음",
-                    "recovery": "semantics.mode를 shadow 또는 ab로 바꾸세요"}],
+        "errors": [{"code": "configured_off", "device": "semantics", "stage": "setting",
+                    "at": "2026-10-18T13:00:00+09:00",
+                    "message": "semantics 평가가 설정으로 꺼져 있습니다."}],
     }
 
     report = build_report(request, settings)
@@ -245,7 +245,27 @@ def test_current_request_latest_malformed_observation_is_an_error(tmp_path):
     semantics = next(row for row in report["devices"] if row["id"] == "semantics")
 
     assert semantics["status"] == "오류"
-    assert "손상" in semantics["error"]["reason"]
+    assert semantics["error"] == {
+        "code": "semantics_observed_state_failed", "device": "semantics",
+        "stage": "advisory_projection", "at": "2026-10-18T14:00:00+09:00",
+        "message": "현재 요청의 의미 관측을 읽지 못해 요청별 평가를 완료하지 못했습니다.",
+    }
+    assert report["errors"][-1] == semantics["error"]
+    rendered = render_report(report)
+    assert "| 오류 코드 | 장치 | 단계 | 시각 | 설명 |" in rendered
+    assert "RuntimeError" not in rendered and "Traceback" not in rendered
+
+
+def test_observation_exception_text_is_not_published(tmp_path):
+    settings, request = fixed_request(tmp_path)
+    request.pop("semantics_observation")
+    request["semantics_observation_error"] = "RuntimeError: private cohort path"
+
+    report = build_report(request, settings)
+    payload = json.dumps(report, ensure_ascii=False) + render_report(report)
+
+    assert report["errors"][-1]["code"] == "semantics_observed_state_failed"
+    assert "RuntimeError" not in payload and "private cohort path" not in payload
 
 
 def test_report_uses_the_checklist_snapshot_frozen_with_the_plan(tmp_path, monkeypatch):
