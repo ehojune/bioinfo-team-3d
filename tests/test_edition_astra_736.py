@@ -146,6 +146,33 @@ def test_upstream_workdir_artifact_links_use_published_paths(tmp_path):
     assert f"[summary.tsv](tables/summary.tsv)" in files["studies/B-omics/README.md"]
 
 
+def test_claim_footnotes_and_evidence_share_collision_free_ids(tmp_path):
+    settings, request, assets, images = astra_fixture(tmp_path)
+    request["report"] = request["report"].replace(
+        "두 공개 자료의 결과는 일치했다 [[claim:omics/c1]].",
+        "첫 결과 [[claim:omics/c.1]]와 둘째 결과 [[claim:omics/c-1]]를 확인했다.",
+    )
+    claims = request["results"]["omics"]["structured"]["claims"]
+    claims[:] = [
+        {"id": "c.1", "statement": "첫 결과"},
+        {"id": "c-1", "statement": "둘째 결과"},
+    ]
+    links = request["results"]["omics"]["structured"]["links"]
+    links[:] = [
+        {"claim_id": "c.1", "evidence_id": "e1", "relation": "supports"},
+        {"claim_id": "c-1", "evidence_id": "e1", "relation": "supports"},
+    ]
+
+    files = build_portfolio_files(request, settings, assets, images)
+
+    report = files["report/report.md"]
+    evidence = files["docs/reference/claim_evidence.md"]
+    assert "[^claim-omics-c-1]" in report
+    assert "[^claim-omics-c-1-2]" in report
+    assert '<a id="claim-omics-c-1"></a>' in evidence
+    assert '<a id="claim-omics-c-1-2"></a>' in evidence
+
+
 def test_readme_limit_does_not_use_a_negative_result(tmp_path):
     settings, request, assets, images = astra_fixture(tmp_path)
     request["report"] = request["report"].replace(

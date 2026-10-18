@@ -395,23 +395,39 @@ def _claim_note_id(step_id: str, claim_id: str, ordinal: int) -> str:
     return f"claim-{slug or ordinal}"
 
 
+def _claim_notes(report: str) -> dict[str, tuple[str, str]]:
+    """Assign stable, collision-free IDs to the unique claim anchors in a report."""
+    notes: dict[str, tuple[str, str]] = {}
+    claims: set[tuple[str, str]] = set()
+    for raw in _ANCHOR.findall(report):
+        step_id, separator, claim_id = (part.strip() for part in raw.strip().rpartition("/"))
+        if not separator:
+            step_id, claim_id = "미확인", raw.strip() or "미확인"
+        claim = (step_id, claim_id)
+        if claim in claims:
+            continue
+        claims.add(claim)
+        base = _claim_note_id(step_id, claim_id, len(notes) + 1)
+        note_id = base
+        suffix = 2
+        while note_id in notes:
+            note_id = f"{base}-{suffix}"
+            suffix += 1
+        notes[note_id] = claim
+    return notes
+
+
 def _publication_claim_footnotes(report: str) -> str:
     """Replace validation anchors in the publication copy with readable evidence footnotes."""
-    notes: dict[str, tuple[str, str]] = {}
+    notes = _claim_notes(report)
+    note_ids = {claim: note_id for note_id, claim in notes.items()}
 
     def replace(match: re.Match[str]) -> str:
         raw = match.group(1).strip()
         step_id, separator, claim_id = (part.strip() for part in raw.rpartition("/"))
         if not separator:
             step_id, claim_id = "미확인", raw or "미확인"
-        key = f"{step_id}/{claim_id}"
-        note_id = next((name for name, value in notes.items() if value == (step_id, claim_id)), None)
-        if note_id is None:
-            note_id = _claim_note_id(step_id, claim_id, len(notes) + 1)
-            while note_id in notes:
-                note_id += f"-{len(notes) + 1}"
-            notes[note_id] = (step_id, claim_id)
-        return f"[^{note_id}]"
+        return f"[^{note_ids[(step_id, claim_id)]}]"
 
     published = _ANCHOR.sub(replace, report).rstrip()
     if not notes:
@@ -1051,23 +1067,15 @@ def _artifact_target(step_id: str, path: str, result: Mapping[str, Any],
 
 def _claim_evidence_document(req: dict, assets: Mapping[str, str],
                              source_targets: Mapping[str, str]) -> str:
-    anchors: list[tuple[str, str, str]] = []
-    seen: set[tuple[str, str]] = set()
-    for raw in _ANCHOR.findall(_paper_candidate(req, assets)):
-        step_id, separator, claim_id = (part.strip() for part in raw.rpartition("/"))
-        if not separator:
-            step_id, claim_id = "미확인", raw.strip() or "미확인"
-        if (step_id, claim_id) in seen:
-            continue
-        seen.add((step_id, claim_id))
-        anchors.append((_claim_note_id(step_id, claim_id, len(anchors) + 1), step_id, claim_id))
+    report, _history = _split_revision_history(_paper_candidate(req, assets))
+    anchors = _claim_notes(report)
     if not anchors:
         return ""
 
     results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
     lines = ["# Claim 근거", "", "정리본 보고서 각주가 가리키는 단계·claim·근거 파일 목록입니다.", ""]
     document = "docs/reference/claim_evidence.md"
-    for note_id, step_id, claim_id in anchors:
+    for note_id, (step_id, claim_id) in anchors.items():
         lines += [f'<a id="{note_id}"></a>', f"## {step_id}/{claim_id}", "",
                   f"- 단계: `{step_id}`", f"- claim: `{claim_id}`"]
         result = results.get(step_id) if isinstance(results.get(step_id), Mapping) else {}
@@ -1223,6 +1231,9 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
         lines.append("- 재현: [안내](run/reproduce.md)")
     else:
         lines.append("- 재현: 요청 기록에 안내가 없습니다.")
+    if "run/progress.md" in run_documents:
+        lines.append("- 진행: [기록](run/progress.md)")
+    lines.append("- 참고문헌: [목록](REFERENCES.md)")
     lines.append("")
     if branch_rows:
         lines += ["| 갈래 | 상태 | 핵심 결과 한 줄 | 폴더 |", "|---|---|---|---|"]
