@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 14:06 | [`ea96726`](https://github.com/ehojune/bioinfo-team-3d/pull/740/commits/ea96726) | 정리본 README의 진행·참고문헌 링크를 복원하고 claim anchor 충돌을 막았습니다. |
+| 13:46 | [`bf260c9`](https://github.com/ehojune/bioinfo-team-3d/pull/740/commits/bf260c9) | 0행 결과표, 상위 단계 artifact 연결, 한계 분류와 GitHub 출처 URL을 바로잡았습니다. |
+| 13:31 | [`1e29113`](https://github.com/ehojune/bioinfo-team-3d/pull/740/commits/1e29113) | 정리본의 표 검증, 첫 화면, 근거 각주, 갈래 연결표와 자료 이용 안내를 보강했습니다. |
 | 08:35 | [`a71f946`](https://github.com/ehojune/bioinfo-team-3d/pull/735/commits/a71f946) | PMID·PMCID·DOI 별칭으로 결론 근거와 fulltext 조회 기록을 대조 |
 | 07:47 | [`7e46d69`](https://github.com/ehojune/bioinfo-team-3d/pull/735/commits/7e46d69) | 결론 근거 논문의 읽은 수준을 CP2 claim 연결 기준으로 집계 |
 | 07:05 | [`ecab9e8`](https://github.com/ehojune/bioinfo-team-3d/pull/734/commits/ecab9e8) | turn별 도구 호출을 task id로 중복 없이 합치고 ID 없는 실패를 별도 집계 |
