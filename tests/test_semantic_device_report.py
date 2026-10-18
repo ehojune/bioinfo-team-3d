@@ -282,12 +282,12 @@ def test_failed_shadow_models_do_not_publish_zero_counts_or_runtime_as_relations
     assert ontology["error"] in report["errors"]
     assert semantics["error"] == {
         "code": "semantics_shadow_provenance_failed", "device": "semantics",
-        "stage": "shadow_provenance", "at": "2026-10-18T13:58:20+09:00",
+        "stage": "shadow_provenance", "at": semantics["observation_at"],
         "message": "재사용 후보 provenance 관측이 error로 끝나 계산하지 못했습니다.",
     }
     assert ontology["error"] == {
         "code": "semantics_shadow_objects_failed", "device": "운영 ontology",
-        "stage": "shadow_objects", "at": "2026-10-18T13:58:20+09:00",
+        "stage": "shadow_objects", "at": semantics["observation_at"],
         "message": "객체·관계 관측이 timeout으로 끝나 계산하지 못했습니다.",
     }
 
