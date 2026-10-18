@@ -64,8 +64,9 @@ def _issue(code: str, *, at: str | None = None) -> dict[str, str]:
 
 
 def log_exception(code: str, exc: BaseException) -> None:
-    """Keep the exception body in the local redacted log, never in a request or report."""
-    log.warning("meaning device failure %s: %s", code, exc, exc_info=True)
+    """Log only a public error code and exception class, never its body or traceback."""
+    safe_code = code if code in _ERRORS else "unknown_error"
+    log.warning("meaning device failure %s (%s)", safe_code, type(exc).__name__)
 
 
 def _checklist_digest(catalog: Mapping[str, list[Any]]) -> str:

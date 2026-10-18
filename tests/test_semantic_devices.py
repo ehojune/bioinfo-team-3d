@@ -1,3 +1,5 @@
+import logging
+
 from labhq.research import semantic_devices
 from labhq.settings import Settings
 
@@ -38,6 +40,18 @@ def test_exception_body_never_enters_the_public_device_record(tmp_path, monkeypa
         "at": record["errors"][-1]["at"],
         "message": "research pack을 불러오지 못했습니다.",
     }
+
+
+def test_exception_log_keeps_only_public_code_and_class(caplog):
+    private_text = "DUA participant CASE-SECRET-491"
+
+    with caplog.at_level(logging.WARNING, logger="labhq.semantic_devices"):
+        semantic_devices.log_exception("pack_load_failed", ValueError(private_text))
+
+    row = caplog.records[-1]
+    assert row.getMessage() == "meaning device failure pack_load_failed (ValueError)"
+    assert row.exc_info is None
+    assert private_text not in caplog.text
 
 
 def test_healthy_devices_include_hashes_and_counts(tmp_path):
