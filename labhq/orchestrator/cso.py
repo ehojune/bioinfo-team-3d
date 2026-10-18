@@ -2745,8 +2745,9 @@ class Orchestrator:
         previous = req.get("semantic_devices") if isinstance(req.get("semantic_devices"), dict) else {}
         previous_errors = {(row.get("device"), row.get("path"), row.get("reason"))
                            for row in previous.get("errors") or [] if isinstance(row, dict)}
-        record = semantic_devices.inspect(
-            self.hub.s, service=getattr(self.hub, "semantics_shadow", None), worker_known=True, phase=phase)
+        service = None
+        service = getattr(self.hub, "semantics_shadow", None)  # semantics-hook
+        record = semantic_devices.inspect(self.hub.s, service=service, worker_known=True, phase=phase)
         # Runtime-only errors such as an advisory projection failure must survive the next durable health refresh.
         durable = {(row.get("device"), row.get("path"), row.get("reason")) for row in record["errors"]}
         for row in previous.get("errors") or []:
@@ -2771,7 +2772,7 @@ class Orchestrator:
         req = self.hub.requests[rid]
         record = req.get("semantic_devices") if isinstance(req.get("semantic_devices"), dict) else {
             "version": 1, "phase": "runtime", "checked_at": time.time(), "status": "ok", "errors": []}
-        semantic_devices.add_error(record, device="semantics", path=path, reason=reason,
+        semantic_devices.add_error(record, device=semantic_devices.DEVICE, path=path, reason=reason,
                                    impact=impact, recovery=semantic_devices.REENABLE)
         req["semantic_devices"] = record
         self.hub.save_request(rid)

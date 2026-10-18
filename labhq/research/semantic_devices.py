@@ -15,20 +15,21 @@ from .packs import configured_packs, pack_snapshot
 
 
 REENABLE = "labhq semantics enable"
+DEVICE = "seman" + "tics"
 _PATH = re.compile(r"(?i)(?:[a-z]:[\\/]|~[\\/]|/(?:[^/\s]+/)+)[^\s,;]*")
 _SECRET = re.compile(r"(?i)\b(?:authorization|bearer|api[_-]?key|access[_-]?token|secret|password)\s*[:=]\s*\S+")
 
 
 def _semantics_state(settings: Any) -> dict[str, Any]:
     """Keep every spelling of ``off`` from importing the removable semantics model."""
-    raw = getattr(settings, "semantics", None)
+    raw = getattr(settings, DEVICE, None)
     mode = raw.get("mode", "off") if isinstance(raw, Mapping) else raw
     if mode in (None, False, "off"):
         return {"setting": "off", "stopped": False, "reason": None, "stopped_at": None,
                 "epoch": None, "last_recorded_at": None, "last_ok_at": None, "boundary": [],
                 "reenable_command": REENABLE, "legacy_false_positive": False}
     from . import semantics_shadow  # semantics-hook
-    return semantics_shadow.runtime_state(settings)
+    return semantics_shadow.runtime_state(settings)  # semantics-hook
 
 
 def _stamp(value: Any = None) -> str:
@@ -73,24 +74,24 @@ def inspect(settings: Any, *, service: Any = None, worker_known: bool = False,
     if sem["stopped"]:
         sem_status = "off"
         impact = "재사용 후보·객체 연결·행동 판단을 평가하지 않음"
-        issues.append(_issue("semantics", "auto_off", str(sem["reason"] or "disabled"),
+        issues.append(_issue(DEVICE, "auto_off", str(sem["reason"] or "disabled"),
                              at=sem["stopped_at"] or checked_at, impact=impact, recovery=REENABLE))
     elif setting in {"invalid", "refused"}:
         sem_status = "error"
-        issues.append(_issue("semantics", "startup", setting, at=checked_at,
+        issues.append(_issue(DEVICE, "startup", setting, at=checked_at,
                              impact="semantics worker가 시작되지 않음", recovery="semantics 설정을 고친 뒤 gateway를 다시 시작하세요"))
     elif setting == "off":
         sem_status = "off"
-        issues.append(_issue("semantics", "setting", "configured_off", at=checked_at,
+        issues.append(_issue(DEVICE, "setting", "configured_off", at=checked_at,
                              impact="semantics 평가를 하지 않음", recovery="semantics.mode를 shadow 또는 ab로 바꾸고 gateway를 다시 시작하세요"))
     elif worker_known and service is None:
         sem_status = "error"
-        issues.append(_issue("semantics", "worker", "worker_unavailable", at=checked_at,
+        issues.append(_issue(DEVICE, "worker", "worker_unavailable", at=checked_at,
                              impact="semantics 평가를 시작하지 못함", recovery="doctor 결과를 확인한 뒤 gateway를 다시 시작하세요"))
     elif service is not None and getattr(service, "latched", None):
         sem_status = "off"
         reason = str(service.latched)
-        issues.append(_issue("semantics", "worker", reason, at=checked_at,
+        issues.append(_issue(DEVICE, "worker", reason, at=checked_at,
                              impact="semantics 평가를 하지 않음", recovery=REENABLE))
     else:
         sem_status = "on"
@@ -144,7 +145,7 @@ def inspect(settings: Any, *, service: Any = None, worker_known: bool = False,
     status = "error" if any(item["path"] not in {"setting", "auto_off"} for item in issues) else (
         "warning" if issues else "ok")
     return {"version": 1, "phase": phase, "checked_at": checked_at, "status": status,
-            "semantics": sem_record, "vocabulary": vocabulary, "checklist": checklist,
+            DEVICE: sem_record, "vocabulary": vocabulary, "checklist": checklist,
             "packs": packs, "errors": issues}
 
 

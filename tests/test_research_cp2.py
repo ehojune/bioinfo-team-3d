@@ -187,9 +187,11 @@ async def test_cp2_refuses_evidence_whose_artifact_was_not_collected():
     assert [row["claim_id"] for row in receipt["unsupported_claims"]] == ["c1"]
     assert "Refused evidence (not approved at CP2):\n- s1/e1:" in hub.requests["r"]["report"]
     # R18/R10: the card summary is Korean and says that 수정 요청 re-plans through a new CP1.
-    assert hub.approvals[1]["summary"] == ("CP2 근거 검토: 단계 1개, claim 1개, 근거 1행, 거부 1건. 증거 승인·수정 요청·거부 중 "
-                                           "고르세요. 수정 요청은 메모에 적은 고칠 점으로 CSO가 새 계획을 세워 새 CP1을 "
-                                           "받습니다(바뀐 단계만 다시 실행).")
+    summary = hub.approvals[1]["summary"]
+    assert summary.startswith("⚠ 의미 장치 중단: semantics configured_off")
+    assert summary.endswith("CP2 근거 검토: 단계 1개, claim 1개, 근거 1행, 거부 1건. 증거 승인·수정 요청·거부 중 "
+                            "고르세요. 수정 요청은 메모에 적은 고칠 점으로 CSO가 새 계획을 세워 새 CP1을 "
+                            "받습니다(바뀐 단계만 다시 실행).")
     assert hub.approvals[1]["detail"]["revise_continues"] is True
 
 

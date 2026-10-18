@@ -252,7 +252,8 @@ async def test_the_cp1_card_summary_is_korean_and_keeps_the_hash_in_detail(tmp_p
 
     card = hub.approvals[0]
     plan_hash = hub.requests["r"]["research_contract"]["plan_sha256"]
-    assert card["summary"].startswith("CP1 연구 계획 승인: 고정할 질문·방법·완료/중단 조건·데이터 범위·적용 pack을 ")
+    assert card["summary"].startswith("⚠ 의미 장치 중단: semantics configured_off")
+    assert "CP1 연구 계획 승인: 고정할 질문·방법·완료/중단 조건·데이터 범위·적용 pack을 " in card["summary"]
     assert plan_hash not in card["summary"] and "plan_sha256" not in card["summary"]
     assert card["detail"]["target_sha256"] == plan_hash
 
