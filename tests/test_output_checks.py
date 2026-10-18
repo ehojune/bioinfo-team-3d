@@ -6,7 +6,8 @@ import pytest
 
 from labhq.models import TaskResult
 from labhq.orchestrator.cso import Orchestrator, general_report_warnings
-from labhq.output_checks import literature_access, quality_lines, table_problem, table_warnings
+from labhq.output_checks import (conclusion_literature_line, literature_access, quality_lines, table_problem,
+                                 table_warnings)
 from tests.test_research_report import _hub
 
 
@@ -96,7 +97,10 @@ def test_literature_access_keeps_each_papers_best_level(tmp_path):
         {"input": "PMID:66", "answer": {"found": True, "access_level": "abstract", "pmid": "66"}}]}))
     with (work / "outputs/annotation_queries.jsonl").open("a", encoding="utf-8") as handle:
         handle.write("not json\n" + json.dumps({"tool": "fulltext", "result_file": "../escape.json"}) + "\n")
-    assert literature_access(work) == {"PMID:1": "full_text", "DOI:10.1/x": "metadata"}
+    assert literature_access(work) == {
+        "PMID:1|PMCID:PMC5": "full_text",
+        "DOI:10.1/x": "metadata",
+    }
     assert literature_access(tmp_path / "empty") == {}
 
 
@@ -104,8 +108,8 @@ def test_quality_lines_merge_steps_and_skip_an_all_full_text_reading():
     results = {
         "s1": TaskResult(task_id="t1", agent_id="a", ok=True, table_warnings=["outputs/a.tsv: x", "outputs/b.tsv: y",
                                                                              "outputs/c.tsv: z", "outputs/d.tsv: w"],
-                         literature_access={"PMID:1": "abstract", "PMID:2": "full_text"}),
-        "s2": {"ok": True, "literature_access": {"PMID:1": "full_text", "PMID:3": "metadata"}},
+                         literature_access={"PMID:1|PMCID:PMC1": "abstract", "PMID:2": "full_text"}),
+        "s2": {"ok": True, "literature_access": {"PMCID:PMC1": "full_text", "PMID:3": "metadata"}},
     }
     steps = [{"id": "s1"}, {"id": "s2"}, {"id": "s3"}]
     assert quality_lines(steps, results) == [
@@ -113,6 +117,85 @@ def test_quality_lines_merge_steps_and_skip_an_all_full_text_reading():
         "문헌을 읽은 수준(fulltext로 조회한 3편): 본문 2편, 서지만 1편. 본문을 읽지 못한 1편에서 가져온 수치는 한계로 적는다",
     ]
     assert quality_lines(steps, {"s1": {"literature_access": {"PMID:1": "full_text"}}}) == []
+
+
+def test_conclusion_literature_counts_only_papers_linked_to_citable_claims():
+    ledgers = {"s1": {
+        "claims": [{"id": "supported", "status": "supported"},
+                   {"id": "contradicted", "status": "contradicted"}],
+        "evidence": [
+            {"id": "full", "source": {"uri": "https://pubmed.ncbi.nlm.nih.gov/101/", "locator": "abstract"}},
+            {"id": "abstract", "source": {"uri": "https://example.org/paper", "locator": "DOI:10.1000/a"}},
+            {"id": "missing", "source": {"uri": "https://pmc.ncbi.nlm.nih.gov/articles/PMC303/"}},
+            {"id": "unused", "source": {"uri": "https://doi.org/10.1000/unused"}},
+        ],
+        "links": [
+            {"claim_id": "supported", "evidence_id": "full", "relation": "supports"},
+            {"claim_id": "supported", "evidence_id": "abstract", "relation": "supports"},
+            {"claim_id": "contradicted", "evidence_id": "missing", "relation": "contradicts"},
+        ],
+    }}
+    results = {"s1": {"literature_access": {
+        "PMID:101": "full_text", "DOI:10.1000/a": "abstract", "DOI:10.1000/unused": "metadata",
+    }}}
+
+    assert conclusion_literature_line([{"id": "s1"}], results, ledgers) == (
+        "결론 근거 논문 3편: 본문 1편·초록 1편·서지만 0편·조회 기록 없음 1편. "
+        "결론 claim에 연결된 논문만 센 값이며, 'fulltext로 조회한 논문 전체'와 분모가 다르다"
+    )
+
+
+def test_conclusion_literature_reads_structured_paper_ids():
+    ledgers = {"s1": {
+        "claims": [{"id": "c1", "status": "supported"}],
+        "evidence": [
+            {"id": "pmid", "source": {"id_scheme": "pmid", "id_value": "123"}},
+            {"id": "pmcid", "source": {"id_scheme": "pmcid", "id_value": "pmc456"}},
+            {"id": "doi", "source": {"id_scheme": "doi", "id_value": "https://doi.org/10.1000/ABC"}},
+        ],
+        "links": [{"claim_id": "c1", "evidence_id": evidence_id, "relation": "supports"}
+                  for evidence_id in ("pmid", "pmcid", "doi")],
+    }}
+
+    assert conclusion_literature_line([{"id": "s1"}], {}, ledgers) == (
+        "결론 근거 논문 3편: 본문 0편·초록 0편·서지만 0편·조회 기록 없음 3편. "
+        "결론 claim에 연결된 논문만 센 값이며, 'fulltext로 조회한 논문 전체'와 분모가 다르다"
+    )
+
+
+def test_fulltext_aliases_match_a_structured_doi_evidence(tmp_path):
+    work = tmp_path / "work"
+    _fulltext_record(work, "paper", [{"input": "PMID:123", "answer": {
+        "found": True, "access_level": "full_text", "pmid": "123", "pmcid": "PMC123",
+        "doi": "10.1000/ALIAS",
+    }}])
+    access = literature_access(work)
+    assert access == {"PMID:123|PMCID:PMC123|DOI:10.1000/alias": "full_text"}
+    ledgers = {"s1": {
+        "claims": [{"id": "c1", "status": "supported"}],
+        "evidence": [
+            {"id": "read", "source": {"id_scheme": "doi", "id_value": "https://doi.org/10.1000/ALIAS"}},
+            {"id": "missing", "source": {"uri": "https://pubmed.ncbi.nlm.nih.gov/999/"}},
+        ],
+        "links": [
+            {"claim_id": "c1", "evidence_id": "read", "relation": "supports"},
+            {"claim_id": "c1", "evidence_id": "missing", "relation": "supports"},
+        ],
+    }}
+
+    assert conclusion_literature_line([{"id": "s1"}], {"s1": {"literature_access": access}}, ledgers) == (
+        "결론 근거 논문 2편: 본문 1편·초록 0편·서지만 0편·조회 기록 없음 1편. "
+        "결론 claim에 연결된 논문만 센 값이며, 'fulltext로 조회한 논문 전체'와 분모가 다르다"
+    )
+
+
+def test_conclusion_literature_has_no_line_without_paper_evidence():
+    ledgers = {"s1": {
+        "claims": [{"id": "c1", "status": "supported"}],
+        "evidence": [{"id": "e1", "source": {"artifact_id": "a1", "locator": "row 1"}}],
+        "links": [{"claim_id": "c1", "evidence_id": "e1", "relation": "supports"}],
+    }}
+    assert conclusion_literature_line([{"id": "s1"}], {}, ledgers) is None
 
 
 def test_general_report_warnings_show_table_problems():
@@ -134,7 +217,34 @@ async def test_research_cp2_card_and_report_limits_carry_the_checks():
         result = await original(task)
         if task.meta["kind"] == "step":
             result.table_warnings = ["outputs/lit.tsv: 칸 구분이 탭이 아니라 글자 \\t입니다"]
-            result.literature_access = {"PMID:1": "full_text", "PMID:2": "abstract"}
+            result.literature_access = {"PMID:1": "full_text", "PMID:2": "abstract", "PMID:99": "metadata"}
+            result.structured["evidence"] += [
+                {"id": "paper_full", "kind": "literature_claim", "observation": "paper one",
+                 "status": "observed", "source": {"uri": "https://pubmed.ncbi.nlm.nih.gov/1/",
+                                                      "accessed_at": "2026-10-18", "locator": "results"},
+                 "directness": "direct", "source_level": "primary", "independence_group": "paper1",
+                 "assessment_reason": "supports the conclusion", "slots": []},
+                {"id": "paper_abstract", "kind": "literature_claim", "observation": "paper two",
+                 "status": "observed", "source": {"uri": "https://pubmed.ncbi.nlm.nih.gov/2/",
+                                                      "accessed_at": "2026-10-18", "locator": "abstract"},
+                 "directness": "direct", "source_level": "primary", "independence_group": "paper2",
+                 "assessment_reason": "supports the conclusion", "slots": []},
+                {"id": "paper_missing", "kind": "literature_claim", "observation": "paper three",
+                 "status": "observed", "source": {"uri": "https://doi.org/10.1000/missing",
+                                                      "accessed_at": "2026-10-18", "locator": "discussion"},
+                 "directness": "direct", "source_level": "primary", "independence_group": "paper3",
+                 "assessment_reason": "supports the conclusion", "slots": []},
+                {"id": "paper_unused", "kind": "literature_claim", "observation": "not used in a conclusion",
+                 "status": "observed", "source": {"uri": "https://pubmed.ncbi.nlm.nih.gov/99/",
+                                                      "accessed_at": "2026-10-18", "locator": "abstract"},
+                 "directness": "indirect", "source_level": "primary", "independence_group": "paper99",
+                 "assessment_reason": "background only", "slots": []},
+            ]
+            result.structured["links"] += [
+                {"claim_id": "c1", "claim_revision": 1, "evidence_id": evidence_id,
+                 "relation": "supports", "rationale": "the paper supports the conclusion"}
+                for evidence_id in ("paper_full", "paper_abstract", "paper_missing")
+            ]
         return result
 
     hub.reply = reply
@@ -143,5 +253,7 @@ async def test_research_cp2_card_and_report_limits_carry_the_checks():
     assert req["status"] == "done", req.get("error")
     card = json.dumps(next(a["detail"] for a in hub.approvals if a["kind"] == "research_evidence"), ensure_ascii=False)
     assert "표로 읽히지 않는 산출물 1개" in card and "본문 1편, 초록 1편" in card
+    depth = "결론 근거 논문 3편: 본문 1편·초록 1편·서지만 0편·조회 기록 없음 1편"
+    assert depth in card
     limits = req["report"].split("## 한계", 1)[1]
-    assert "outputs/lit.tsv" in limits and "fulltext로 조회한 2편" in limits
+    assert "outputs/lit.tsv" in limits and "fulltext로 조회한 3편" in limits and depth in limits
