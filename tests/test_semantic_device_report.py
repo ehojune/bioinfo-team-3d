@@ -247,7 +247,7 @@ def test_current_request_latest_malformed_observation_is_an_error(tmp_path):
     assert semantics["status"] == "오류"
     assert semantics["error"] == {
         "code": "semantics_observed_state_failed", "device": "semantics",
-        "stage": "advisory_projection", "at": "2026-10-18T14:00:00+09:00",
+        "stage": "advisory_projection", "at": report["generated_at"],
         "message": "현재 요청의 의미 관측을 읽지 못해 요청별 평가를 완료하지 못했습니다.",
     }
     assert report["errors"][-1] == semantics["error"]
