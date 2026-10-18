@@ -87,6 +87,20 @@ test('semantic device stops are large in the request feed',()=>{
   assert.match(message.fullText,/labhq semantics enable/);
 });
 
+test('snapshot restores semantic device state after its event ages out',()=>{
+  const office=State.createOfficeState({now:()=>100});
+  const semantic_devices={checked_at:'2026-10-18T10:00:00+09:00',status:'error',
+    errors:[{code:'info_boundary',device:'semantics',stage:'auto_off',
+      at:'2026-10-18T09:59:00+09:00',message:'semantics 평가가 자동으로 중단됐습니다.'}]};
+
+  office.apply({type:'snapshot',data:{requests:[{id:'r1',text:'연구',status:'interrupted',
+    mode:'orchestrate',semantic_devices}],recent_events:[]}});
+
+  const restored=office.S.requests.get('r1').semantic_devices;
+  assert.equal(restored.status,'error');
+  assert.equal(restored.errors[0].code,'info_boundary');
+});
+
 test('an alert log raises a toast once, never on replay (R21)',()=>{
   const office=State.createOfficeState({now:()=>100});
   office.apply({type:'snapshot',data:{agents:[{id:'engineer',name:'Engineer Kim'}]}});

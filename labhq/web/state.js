@@ -494,6 +494,7 @@ function apply(ev, replay = false) {
         if (typeof r.error === 'string' && r.error) q.error = r.error;
         if (typeof r.report_appendix === 'string') q.report_appendix = r.report_appendix;
         if (typeof r.execution_record === 'string') q.execution_record = r.execution_record;
+        if (r.semantic_devices && typeof r.semantic_devices === 'object') q.semantic_devices = { ...r.semantic_devices };
         q.bundlePath = r.bundle_path || ''; q.bundleStatus = r.bundle_status || ''; q.bundleGrade = r.bundle_grade || ''; q.bundleGradeReasons = r.bundle_grade_reasons || []; q.bundleWarning = r.bundle_warning || '';
         if (r.report_truncated) Object.assign(q, { report_truncated: true, report_chars: r.report_chars });
         if (r.report_appendix_truncated) Object.assign(q, { report_appendix_truncated: true,
