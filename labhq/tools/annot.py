@@ -189,6 +189,10 @@ def _retry_after(response: httpx.Response) -> float | None:
     return wait if wait is not None and math.isfinite(wait) and wait >= 0 else None
 
 
+class ResponseTooLarge(Exception):
+    """A streamed HTTP response crossed its caller-supplied byte limit."""
+
+
 class Http:
     """Paced requests with retries. One pace per service: Ensembl, gnomAD and NCBI have separate limits."""
 
@@ -206,11 +210,24 @@ class Http:
                 await self.sleep(gap)
         self.last[service] = self.clock()
 
-    async def request(self, service: str, method: str, url: str, **kwargs: Any) -> httpx.Response:
+    async def request(self, service: str, method: str, url: str, *, response_limit: int | None = None,
+                      **kwargs: Any) -> httpx.Response:
         for attempt in range(1, MAX_ATTEMPTS + 1):
             await self._pace(service)
             try:
-                response = await self.client.request(method, url, **kwargs)
+                if response_limit is None:
+                    response = await self.client.request(method, url, **kwargs)
+                else:
+                    async with self.client.stream(method, url, **kwargs) as streamed:
+                        body = bytearray()
+                        if streamed.status_code not in RETRY_STATUS:
+                            async for chunk in streamed.aiter_bytes():
+                                if len(body) + len(chunk) > response_limit:
+                                    raise ResponseTooLarge(response_limit)
+                                body.extend(chunk)
+                        response = httpx.Response(
+                            streamed.status_code, headers=streamed.headers, content=bytes(body),
+                            request=streamed.request, extensions=streamed.extensions)
             except httpx.TransportError as exc:
                 if attempt == MAX_ATTEMPTS:
                     raise LookupFailed(f"{url}에 연결하지 못했습니다({MAX_ATTEMPTS}회): {exc}") from exc

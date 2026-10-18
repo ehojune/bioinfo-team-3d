@@ -35,7 +35,7 @@ from typing import Any
 from urllib.parse import quote, urljoin, urlsplit
 
 from ..adapters.owned import OwnedPathError, write_owned
-from .annot import Annotator, Item, LookupFailed, _now
+from .annot import Annotator, Item, LookupFailed, ResponseTooLarge, _now
 
 EUROPEPMC = "https://www.ebi.ac.uk/europepmc/webservices/rest"
 OPENALEX = "https://api.openalex.org"
@@ -636,7 +636,8 @@ class LiteratureAnnotator(Annotator):
         valid = [item for item in items if item.error is None]
         if len(valid) > MAX_PER_CALL:
             raise ValueError(f"한 번에 {MAX_PER_CALL}편까지 받습니다({len(valid)}편을 받음). 나눠서 부르세요")
-        self._from_cache(TOOL, FULLTEXT_CACHE_RELEASE, {}, items)
+        options = {"unpaywall_enabled": bool(self.unpaywall_email and "@" in self.unpaywall_email)}
+        self._from_cache(TOOL, FULLTEXT_CACHE_RELEASE, options, items)
         version, lookup_errors = None, 0
         for item in valid:
             if item.cached_at is not None:
@@ -648,13 +649,13 @@ class LiteratureAnnotator(Annotator):
                 item.error, lookup_errors = str(exc), lookup_errors + 1
         if self._all_failed(items, lookup_errors):
             raise LookupFailed("; ".join(item.error for item in items if item.error))
-        self._to_cache(TOOL, FULLTEXT_CACHE_RELEASE, {}, items, _now())
+        self._to_cache(TOOL, FULLTEXT_CACHE_RELEASE, options, items, _now())
         for item in valid:
             if item.error is None:
                 item.answer = self._write_text(item.variant, item.answer)
         return self._finish(TOOL, "Europe PMC",
                             f"REST {version}" if version else "REST (cached answers)",
-                            EUROPEPMC, {}, items, _summary, cache=False,
+                            EUROPEPMC, options, items, _summary, cache=False,
                             note="본문 파일은 논문 라이선스를 따르는 제3자 글이다. 경로로 인용하고 결과물에 옮겨 싣지 않는다.")
 
     async def citation_chase(self, paper_id: object, limit: int = 100) -> dict:
@@ -879,7 +880,8 @@ class LiteratureAnnotator(Annotator):
         for redirect_count in range(MAX_OA_REDIRECTS + 1):
             await self._require_public_oa_url(current)
             response = await self.http.request(
-                "oa_copy", "GET", current, headers=headers, follow_redirects=False)
+                "oa_copy", "GET", current, headers=headers, follow_redirects=False,
+                response_limit=MAX_OA_COPY_BYTES)
             if response.status_code not in {301, 302, 303, 307, 308}:
                 return response
             location = response.headers.get("location")
@@ -954,6 +956,9 @@ class LiteratureAnnotator(Annotator):
             except PermissionError as exc:
                 failures.append(("access_denied", f"{location['provider']} 주소 차단: {exc}"))
                 continue
+            except ResponseTooLarge:
+                failures.append(("format_failure", f"본문이 {MAX_OA_COPY_BYTES:,} bytes를 넘어 읽지 않음"))
+                continue
             except LookupFailed as exc:
                 temporary.append(f"{location['provider']} 사본 조회 실패: {exc}")
                 continue
@@ -965,9 +970,6 @@ class LiteratureAnnotator(Annotator):
                 continue
             if response.status_code != 200:
                 failures.append(("access_denied", f"{location['provider']} 주소가 HTTP {response.status_code}로 답함"))
-                continue
-            if len(response.content) > MAX_OA_COPY_BYTES:
-                failures.append(("format_failure", f"본문이 {MAX_OA_COPY_BYTES:,} bytes를 넘어 읽지 않음"))
                 continue
             try:
                 text, body_format = _copy_text(response.content, response.headers.get("content-type", "").casefold())
@@ -1032,7 +1034,9 @@ class LiteratureAnnotator(Annotator):
 def _summary(item: Item) -> dict:
     answer = item.answer or {}
     if not answer.get("found"):
-        return {"found": False}
+        keep = ("found", "pmid", "pmcid", "doi", "oa_locations", "unread_reason", "unread_detail",
+                "fulltext_error")
+        return {key: answer[key] for key in keep if answer.get(key) not in (None, "", [])}
     keep = ("found", "access_level", "pmid", "pmcid", "doi", "title", "journal", "year", "license", "is_open_access",
             "sections", "n_tables", "n_figures", "n_references", "chars", "text_file", "text_error", "fulltext_error",
             "publisher_copy", "read_source", "oa_copy", "oa_locations", "unread_reason", "unread_detail")

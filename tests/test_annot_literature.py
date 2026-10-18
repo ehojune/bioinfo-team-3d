@@ -236,7 +236,7 @@ async def test_unknown_and_malformed_ids_do_not_stop_the_rest(tmp_path):
     annotator, _ = make(by_query({"EXT_ID:123 AND SRC:MED": [record()]}), tmp_path)
     rows = (await annotator.fulltext(["123", "999", "Irgens 1997"]))["results"]
     assert rows[0]["access_level"] == "full_text"
-    assert rows[1] == {"input": "999", "ok": True, "found": False}
+    assert rows[1] == {"input": "999", "ok": True, "found": False, "pmid": "999", "unread_reason": "no_copy"}
     assert rows[2]["ok"] is False and "PMID" in rows[2]["error"]
 
 
@@ -479,6 +479,86 @@ async def test_fulltext_uses_a_new_cache_release_after_oa_fallback(tmp_path, mon
     out = await second.fulltext(["123"])
     assert out["n_cached"] == 0
     assert sum(call.url.path.endswith("/search") for call in calls) == 2
+
+
+async def test_fulltext_cache_key_tracks_unpaywall_activation(tmp_path):
+    pdf = b"%PDF-1.4\nBT (Enabled provider copy.) Tj ET\n%%EOF"
+
+    def handler(request):
+        if request.url.host == "www.ebi.ac.uk":
+            return search_answer([record("123", None, "N", None)])
+        if request.url.host == "api.openalex.org":
+            return httpx.Response(200, json={"meta": {"count": 0}, "results": []})
+        if request.url.host == "api.unpaywall.org":
+            return httpx.Response(200, json={
+                "doi": "10.1000/test", "is_oa": True, "oa_status": "green",
+                "best_oa_location": {"url_for_pdf": "http://93.184.216.34/enabled.pdf"},
+                "oa_locations": [],
+            })
+        if request.url.host == "93.184.216.34":
+            return httpx.Response(200, content=pdf, headers={"content-type": "application/pdf"})
+        raise AssertionError(request.url)
+
+    disabled, _calls = make(handler, tmp_path)
+    first = await disabled.fulltext(["123"])
+    assert first["results"][0]["access_level"] == "abstract"
+
+    enabled, calls = make(handler, tmp_path, unpaywall_email="owner@example.org")
+    second = await enabled.fulltext(["123"])
+    assert second["n_cached"] == 0
+    assert second["results"][0]["access_level"] == "full_text"
+    assert any(call.url.host == "api.unpaywall.org" for call in calls)
+
+
+async def test_fulltext_stops_streaming_oa_copy_at_byte_limit(tmp_path, monkeypatch):
+    class TrackedStream(httpx.AsyncByteStream):
+        def __init__(self):
+            self.yielded = 0
+
+        async def __aiter__(self):
+            for chunk in (b"12345", b"67890", b"must-not-be-read"):
+                self.yielded += 1
+                yield chunk
+
+    stream = TrackedStream()
+    monkeypatch.setattr(lit, "MAX_OA_COPY_BYTES", 8)
+
+    def handler(request):
+        if request.url.host == "www.ebi.ac.uk":
+            return search_answer([record("123", None, "Y", None)])
+        if request.url.host == "api.openalex.org":
+            return httpx.Response(200, json={"results": [{
+                "id": "https://openalex.org/W1", "open_access": {"is_oa": True},
+                "best_oa_location": {"pdf_url": "http://93.184.216.34/large.pdf"},
+            }]})
+        if request.url.host == "93.184.216.34":
+            return httpx.Response(200, stream=stream, headers={"content-type": "application/pdf"})
+        raise AssertionError(request.url)
+
+    annotator, _calls = make(handler, tmp_path)
+    row = (await annotator.fulltext(["123"]))["results"][0]
+    assert row["unread_reason"] == "format_failure"
+    assert stream.yielded == 2
+
+
+async def test_fulltext_found_false_keeps_identifier_and_oa_failure(tmp_path):
+    def handler(request):
+        if request.url.host == "www.ebi.ac.uk":
+            return search_answer([])
+        if request.url.host == "api.openalex.org":
+            return httpx.Response(200, json={"results": [{
+                "id": "https://openalex.org/W1", "open_access": {"is_oa": True},
+                "best_oa_location": {"pdf_url": "http://93.184.216.34/denied.pdf"},
+            }]})
+        if request.url.host == "93.184.216.34":
+            return httpx.Response(403)
+        raise AssertionError(request.url)
+
+    annotator, _calls = make(handler, tmp_path)
+    row = (await annotator.fulltext(["10.1000/outside"]))["results"][0]
+    assert row["found"] is False and row["doi"] == "10.1000/outside"
+    assert row["unread_reason"] == "access_denied" and row["unread_detail"]
+    assert row["oa_locations"][0]["url"] == "http://93.184.216.34/denied.pdf"
 
 
 @pytest.mark.parametrize(("mode", "reason"), [
