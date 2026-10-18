@@ -1,6 +1,6 @@
 ## 결론
 
-PR #743을 `origin/main`과 합치고 자동 리뷰 지적 8건을 고쳤습니다. Fixes #737.
+PR #743을 최신 `origin/main`과 합치고 자동 리뷰 지적 8건을 고쳤습니다. Fixes #737.
 
 ## 바뀐 것
 
@@ -8,15 +8,15 @@ PR #743을 `origin/main`과 합치고 자동 리뷰 지적 8건을 고쳤습니�
 - 현재 요청의 최신 shadow 관측만 판정하고, worker 완료 뒤 관측을 요청 snapshot에 고정합니다.
 - 연구 계약 요청에만 생성하며 실행 당시 checklist 판본을 보존합니다.
 - CP2 카드에서 실제 `semantic_report.md`를 열고 내용을 펼칠 수 있습니다.
+- #742의 오류 형식(`code·device·stage·at·안전한 설명`)을 쓰며 예외 문구는 싣지 않습니다.
 
 ## 확인
 
-- 지적별 회귀는 병합 직후 8 failed, 수정 뒤 14 passed입니다. 웹 회귀 9 passed입니다.
-- 관련 pytest 578 passed·2 skipped, 충돌 회귀 1 passed입니다.
-- 첫 CI의 semantics 제거 검사 2건 실패는 hook 경로를 고쳐 2 passed로 확인했습니다. 보고서 회귀도 12 passed입니다.
+- 최신 main 병합 뒤 충돌 영향 95 passed, 관련 pytest 673 passed·2 skipped입니다.
+- 웹 회귀는 CP2 링크 9 passed, #742 카드 17 passed입니다.
 - `git diff --check`와 공개 금지 항목 수동 검사는 통과했습니다.
 - `scripts/check_public.sh`는 Windows Git Bash에서 90초 무출력이라 중단했습니다.
-- `docs/manual.md`: 159,892자 → 159,921자(+29자).
+- `docs/manual.md`: 최신 main 158,699자 → branch 158,984자(+285자, LF 정규화).
 
 ## 남은 것
 
