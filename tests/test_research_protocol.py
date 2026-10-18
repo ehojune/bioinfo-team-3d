@@ -16,6 +16,7 @@ from labhq.research.contract import (RESEARCH_PLAN_SCHEMA, ResearchResult, class
 from labhq.research.packs import configured_packs, load_pack_catalog, pack_snapshot, select_packs
 from labhq.settings import Settings
 from labhq.util import openai_strict_schema, strip_optional_nulls
+from labhq.vocab import topic_checklists
 
 PACK = "single_cell_de@2"
 
@@ -137,6 +138,45 @@ class MiniHub:
 
     def save_request(self, rid):
         pass
+
+
+@pytest.mark.asyncio
+async def test_stopped_semantics_is_large_on_cp1_feed_and_execution_record(tmp_path):
+    from labhq.research import semantics_shadow as shadow
+
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    settings.semantics = {"mode": "ab"}
+    settings.research.enabled = True
+    settings.research.evidence_checkpoint = False
+    settings.orchestrator.chief_of_staff_agent = None
+    settings.orchestrator.reviewer_agent = None
+    paths = shadow.ShadowPaths(tmp_path / "state" / "semantics")
+    shadow.write_disabled(paths, "info_boundary", 3, ts=1_797_000_000,
+                          boundary=[{"field": "objects", "class": "path"}])
+
+    async def reply(task):
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=valid_plan())
+
+    hub = MiniHub(settings, reply, mode="orchestrate", work_kind="research", text="compare conditions")
+    await Orchestrator(hub).run_request("r")
+
+    card = hub.approvals[0]
+    assert "의미 장치 중단:" in card["summary"] and "info_boundary" in card["summary"]
+    assert "labhq semantics enable" in card["summary"]
+    assert card["detail"]["semantic_devices"]["semantics"]["epoch"] == 3
+    assert any(event["type"] == "request.semantic_devices" for event in hub.events)
+    assert "의미 장치 중단:" in hub.requests["r"]["execution_record"]
+
+
+def test_checklist_render_failure_is_recorded_instead_of_empty(monkeypatch):
+    req = {"plan": {"topics": ["dna_methylation"]}}
+    monkeypatch.setattr(topic_checklists, "load", lambda *a, **k: (_ for _ in ()).throw(ValueError("bad checklist")))
+
+    rendered = Orchestrator._checklist_section(req, None)
+
+    assert "체크리스트 오류" in rendered
+    assert req["semantic_devices"]["status"] == "error"
 
 
 def test_intake_classifies_simple_research_and_ambiguous():
@@ -868,6 +908,39 @@ async def test_cp2_records_approve_revision_or_rejection(cp2, outcome, status):
     # A CP2 ending that is not a success says why in the office feed line; an approval has no error.
     error = hub.requests["r"].get("error")
     assert (error is None) if status == "done" else ("CP2" in error), error
+
+
+@pytest.mark.asyncio
+async def test_auto_off_reason_is_repeated_on_cp1_cp2_and_execution_record(tmp_path):
+    from labhq.research import semantics_shadow as shadow
+
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    settings.semantics = {"mode": "ab"}
+    settings.research.enabled = True
+    settings.research.evidence_checkpoint = True
+    settings.orchestrator.chief_of_staff_agent = None
+    settings.orchestrator.reviewer_agent = None
+    shadow.write_disabled(shadow.ShadowPaths(tmp_path / "state" / "semantics"),
+                          "worker_stuck", 4, ts=1_797_000_000)
+    hub = None
+
+    async def reply(task):
+        if task.meta["kind"] == "plan":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=valid_plan())
+        path = hub.requests["r"]["plan"]["steps"][0]["outputs"][0]
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                          structured=_cp2_result(hub, task), outputs=[path])
+
+    hub = MiniHub(settings, reply, mode="orchestrate", work_kind="research", text="compare conditions")
+    await Orchestrator(hub).run_request("r")
+
+    cards = {card["kind"]: card for card in hub.approvals}
+    for kind in ("research_plan", "research_evidence"):
+        assert "의미 장치 중단:" in cards[kind]["summary"]
+        assert "worker_stuck" in cards[kind]["summary"]
+        assert cards[kind]["detail"]["semantic_devices"]["semantics"]["epoch"] == 4
+    assert "worker_stuck" in hub.requests["r"]["execution_record"]
 
 
 @pytest.mark.asyncio

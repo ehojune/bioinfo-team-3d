@@ -806,6 +806,14 @@ function apply(ev, replay = false) {
       break;
     }
     case 'request.questions': feed({ who: 'cso', text: `확인이 필요해요: ${short((d.questions || []).join(' / '), 150)}`, fullText: `확인이 필요해요: ${(d.questions || []).join(' / ')}`, cls: 'alert' }, ts, rid); break;
+    case 'request.semantic_devices': {
+      const q = req(rid), first = (d.errors || [])[0] || {};
+      q.semantic_devices = { ...d };
+      const recovery = first.recovery ? ` · 다시 켜기: ${first.recovery}` : '';
+      const message = `의미 장치 중단: ${first.device || '장치'} ${first.reason || '상태 확인 필요'} · 시각 ${first.at || d.checked_at || '미기록'} · 영향 ${first.impact || '평가 안 됨'}${recovery}`;
+      feed({ who: 'system', text: short(message, 300), fullText: message, cls: 'alert' }, ts, rid);
+      break;
+    }
     case 'request.facilities_fix': { const detail = stepDetail(rid, d.step_id), status = d.status || (d.ok ? 'succeeded' : 'failed'); detail.facilities_fix = { ...d, status }; const label = status === 'applied' ? '환경 수정 적용' : status === 'succeeded' ? '환경 수정 성공' : '환경 수정 실패'; feed({ who: 'facilities', text: `${label}: ${short((status === 'failed' ? d.error : d.action) || d.fix_id || '', 120)}`, fullText: `${label}: ${(status === 'failed' ? d.error : d.action) || d.fix_id || ''}`, cls: status === 'failed' ? 'alert' : '' }, ts, rid); break; }
     case 'request.step_done': { const q = req(rid), detail = stepDetail(rid, d.step_id); q.steps[d.step_id] = d.ok === false ? 'error' : 'done'; Object.assign(detail, { attempts: d.attempts || detail.attempts, error: d.reason || detail.error }); if (d.ok === false && d.environment) detail.environment = d.environment; else delete detail.environment; if (d.facilities_fix) detail.facilities_fix = d.facilities_fix; delete detail.quota_resume_at; delete detail.quota_engine; delete detail.quota_deadline_at; delete detail.login_resume_at; delete detail.login_engine; delete detail.login_reason; syncHoldStatus(q); break; }
     case 'request.step_skipped': { const q = req(rid); q.steps[d.step_id] = 'skipped'; stepDetail(rid, d.step_id).error = d.reason || ''; syncHoldStatus(q); break; }

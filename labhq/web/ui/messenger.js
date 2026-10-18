@@ -29,6 +29,11 @@ export function messageFromEvent(ev) {
     case 'request.followup': Object.assign(m, {who:'pi', to:d.agent_id || 'cso', text:`이어 묻기: ${d.text || ''}`}); break;
     case 'request.note': Object.assign(m, {who:'pi', to:'cso', text:`실행 중 메모: ${d.text || ''}`}); break;
     case 'request.questions': Object.assign(m, {who:'cso', text:`확인이 필요해요: ${(d.questions || []).join(' / ')}`, cls:'alert'}); break;
+    case 'request.semantic_devices': {
+      const first = (d.errors || [])[0] || {}, recovery = first.recovery ? ` · 다시 켜기: ${first.recovery}` : '';
+      Object.assign(m, {who:'system', cls:'alert', text:`의미 장치 중단: ${first.device || '장치'} ${first.reason || '상태 확인 필요'} · 시각 ${first.at || d.checked_at || '미기록'} · 영향 ${first.impact || '평가 안 됨'}${recovery}`});
+      break;
+    }
     case 'approval.requested': Object.assign(m, {who:d.agent_id || m.who, text:`승인 요청: ${d.pi_summary || d.summary || ''}`, cls:'alert'}); break;
     case 'approval.resolved': {
       const closed = d.state === 'timed_out' ? '시간 초과로 닫혔어요' : ['expired','cancelled'].includes(d.state) ? '답 없이 닫혔어요' : '';

@@ -265,3 +265,30 @@ def test_the_selector_reads_the_snapshot_not_the_live_hub(tmp_path, monkeypatch)
     offer = service.advisory_offer("req_b", snap)
 
     assert len(offer["candidates"]) == 1 and offer["offered"] == [offer["candidates"][0]["artifact_id"]]
+
+
+def test_advisory_snapshot_exception_is_an_error_not_no_candidates(tmp_path, monkeypatch):
+    hub, requests = _typed_pair(tmp_path)
+    service = shadow.ShadowService(hub, shadow.ShadowConfig(mode="ab"),
+                                   shadow.ShadowPaths(tmp_path / "semantics"))
+    monkeypatch.setattr(shadow, "take_snapshot", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    snap = service.advisory_snapshot("req_b", requests["req_b"]["plan"])
+    offer = service.advisory_offer("req_b", snap)
+
+    assert offer["status"] == "error"
+    assert offer["error"]["path"] == "advisory_snapshot"
+    assert offer["offered"] == []
+
+
+def test_advisory_projection_exception_is_an_error_not_no_candidates(tmp_path, monkeypatch):
+    hub, requests = _typed_pair(tmp_path)
+    service = shadow.ShadowService(hub, shadow.ShadowConfig(mode="ab"),
+                                   shadow.ShadowPaths(tmp_path / "semantics"))
+    monkeypatch.setattr(shadow, "read_rows", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    offer = service.advisory_offer("req_b", service.advisory_snapshot("req_b", requests["req_b"]["plan"]))
+
+    assert offer["status"] == "error"
+    assert offer["error"]["path"] == "advisory_projection"
+    assert offer["offered"] == []

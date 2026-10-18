@@ -74,6 +74,19 @@ test('a page left open across a gateway restart learns the request is interrupte
   assert.equal(office.S.requests.get('r1').status,'failed');
 });
 
+test('semantic device stops are large in the request feed',()=>{
+  const office=State.createOfficeState({now:()=>100});
+  office.apply({type:'request.created',request_id:'r1',data:{text:'연구',mode:'orchestrate'}});
+  office.apply({type:'request.semantic_devices',request_id:'r1',data:{checked_at:'2026-10-18T10:00:00+09:00',
+    errors:[{device:'semantics',reason:'info_boundary',at:'2026-10-18T09:59:00+09:00',
+      impact:'평가 안 됨',recovery:'labhq semantics enable'}]}});
+  const q=office.S.requests.get('r1'), message=office.S.feed[0];
+  assert.equal(q.semantic_devices.errors[0].reason,'info_boundary');
+  assert.equal(message.cls,'alert');
+  assert.match(message.fullText,/의미 장치 중단: semantics info_boundary/);
+  assert.match(message.fullText,/labhq semantics enable/);
+});
+
 test('an alert log raises a toast once, never on replay (R21)',()=>{
   const office=State.createOfficeState({now:()=>100});
   office.apply({type:'snapshot',data:{agents:[{id:'engineer',name:'Engineer Kim'}]}});

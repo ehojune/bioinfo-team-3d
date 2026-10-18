@@ -40,6 +40,18 @@ def test_doctor_shows_semantics_stop_time_reason_and_reenable_command(tmp_path):
     assert "request_id:identifier" in row["detail"]
     assert row["hint"] == "labhq semantics enable"
     assert "해제 가능" in row["detail"]
+    assert "epoch 1" in row["detail"] and "마지막 정상 기록" in row["detail"]
+
+
+def test_doctor_warns_when_semantics_is_configured_off(tmp_path):
+    settings = _settings(tmp_path)
+    settings.semantics = {"mode": "off"}
+
+    row = doctor._semantics_row(settings)
+
+    assert row["status"] == "warn"
+    assert "설정 off" in row["detail"]
+    assert "shadow 또는 ab" in row["hint"]
 
 
 @pytest.mark.parametrize("empty_roster", [False, True])
