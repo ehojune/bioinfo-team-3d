@@ -6,3 +6,6 @@ rows:
 - sha: f572c2b
   at: 2026-10-19 03:10
   text: 2시간 PDF 대기는 문헌 MCP에만 적용해 다른 도구의 timeout을 유지함
+- sha: a459993
+  at: 2026-10-19 03:24
+  text: 새 문헌 도구의 등록 목록과 binary PDF 정적 검사를 CI 기대값에 맞춤
