@@ -123,6 +123,58 @@ def test_report_referenced_table_must_have_a_rectangular_shape(tmp_path):
         build_portfolio_files(request, settings, assets, images)
 
 
+def test_report_referenced_table_allows_header_without_result_rows(tmp_path):
+    settings, request, assets, images = astra_fixture(tmp_path)
+    assets["steps/omics/outputs/tables/summary.tsv"] = "gene\tpvalue\n"
+
+    files = build_portfolio_files(request, settings, assets, images)
+
+    assert files["studies/B-omics/tables/summary.tsv"] == "gene\tpvalue\n"
+
+
+def test_upstream_workdir_artifact_links_use_published_paths(tmp_path):
+    settings, request, assets, images = astra_fixture(tmp_path)
+    request["results"]["omics"]["structured"]["artifact_refs"][0]["path"] = (
+        "work-omics/outputs/tables/summary.tsv"
+    )
+
+    files = build_portfolio_files(request, settings, assets, images)
+
+    published = "studies/B-omics/tables/summary.tsv"
+    assert f"[오믹스 집계표](../{published})" in files["report/report.md"]
+    assert f"[summary.tsv](../../{published})" in files["docs/reference/claim_evidence.md"]
+    assert f"[summary.tsv](tables/summary.tsv)" in files["studies/B-omics/README.md"]
+
+
+def test_readme_limit_does_not_use_a_negative_result(tmp_path):
+    settings, request, assets, images = astra_fixture(tmp_path)
+    request["report"] = request["report"].replace(
+        "두 공개 자료의 결과는 일치했다 [[claim:omics/c1]].",
+        "효과는 유의하지 않았다.\n\n두 공개 자료의 결과는 일치했다 [[claim:omics/c1]].",
+    ).replace(
+        "## 논의\n\n",
+        "## 논의\n\n표본 크기가 작다는 방법상 한계가 있다.\n\n",
+    )
+
+    readme = build_portfolio_files(request, settings, assets, images)["README.md"]
+
+    assert "**한계: 표본 크기가 작다는 방법상 한계가 있다." in readme
+    assert "**한계: 효과는 유의하지 않았다." not in readme
+
+
+def test_github_reference_keeps_an_already_normalized_url(tmp_path):
+    settings, request, assets, images = astra_fixture(tmp_path)
+    request["references"].append({
+        "kind": "github",
+        "value": "https://github.com/owner/study",
+    })
+
+    licenses = build_portfolio_files(request, settings, assets, images)["DATA_AND_LICENSES.md"]
+
+    assert "https://github.com/owner/study" in licenses
+    assert "https://github.com/https://github.com/owner/study" not in licenses
+
+
 def test_data_license_placeholders_block_publication():
     issues = scan_publish_files({
         "DATA_AND_LICENSES.md": (

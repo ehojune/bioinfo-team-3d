@@ -619,6 +619,26 @@ def _source_step(name: str, req: dict) -> str | None:
     return None
 
 
+def _add_workdir_source_targets(req: Mapping[str, Any], source_targets: dict[str, str]) -> None:
+    """Add workdir paths as aliases for their published step outputs."""
+    results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
+    aliases: dict[str, str] = {}
+    for step_id, result in results.items():
+        if not isinstance(result, Mapping):
+            continue
+        workdir_value = result.get("workdir") or result.get("workdir_id")
+        if not isinstance(workdir_value, str):
+            continue
+        prefix = f"steps/{step_id}/outputs/"
+        workdir = posixpath.normpath(workdir_value.replace("\\", "/")).rstrip("/")
+        for source, target in source_targets.items():
+            normalized = posixpath.normpath(source.replace("\\", "/"))
+            if normalized.startswith(prefix):
+                aliases[posixpath.join(workdir, "outputs", normalized[len(prefix):])] = target
+    for source, target in aliases.items():
+        source_targets.setdefault(source, target)
+
+
 def _branch_rows(req: dict, specs: list[dict[str, Any]],
                  step_folders: Mapping[str, str]) -> list[dict[str, str]]:
     results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
@@ -1137,7 +1157,7 @@ def _data_licenses(req: dict, settings) -> str:
             redistribution = note.get("재배포") or "서지정보만"
             citation = note.get("인용") or f"PMID {value}"
         elif kind == "github":
-            source = f"https://github.com/{value}"
+            source = value if re.match(r"https?://", value, re.I) else f"https://github.com/{value}"
         rows.append((kind, source, access, redistribution, citation))
     lines = ["# 자료와 이용 조건", "", "원자료는 이 정리본에 넣지 않습니다. 알려지지 않은 조건은 항목별로 미확인이라고 표시합니다.", "",
              "| 자료 | 출처 | 접근 조건 | 재배포 범위 | 필수 인용 |", "|---|---|---|---|---|"]
@@ -1150,20 +1170,32 @@ def _data_licenses(req: dict, settings) -> str:
 
 
 def _first_limit(report: str) -> str:
-    in_scope = False
-    candidates: list[str] = []
+    scope = ""
+    candidates: dict[str, list[str]] = collections.defaultdict(list)
     for block in report.split("\n\n"):
         value = block.strip()
         if value.startswith("## "):
             heading = value.casefold()
-            in_scope = "요약" in heading or "abstract" in heading or "논의" in heading
+            if "한계" in heading or "limitation" in heading:
+                scope = "limit"
+            elif "논의" in heading or "discussion" in heading:
+                scope = "discussion"
+            elif "요약" in heading or "abstract" in heading:
+                scope = "summary"
+            else:
+                scope = ""
             continue
-        if not in_scope or not value or value.startswith(("#", "![", "|")):
+        if not scope or not value or value.startswith(("#", "![", "|")):
             continue
         plain = " ".join(_ANCHOR.sub("", value).split())
-        candidates.extend(_SENTENCE_END.split(plain))
-    limited = next((sentence.strip() for sentence in candidates
-                    if re.search(r"못|않|한계|제한|불가|없|대체|관찰", sentence)), "")
+        candidates[scope].extend(_SENTENCE_END.split(plain))
+    constraint = re.compile(
+        r"한계|제한|제약|limitation|검정력|일반화|편향|교란|설계상|방법상|"
+        r"표본\s*(?:수|크기)?\S{0,12}(?:작|적|부족)|(?:자료|데이터)\S{0,12}부족",
+        re.I,
+    )
+    limited = next((sentence.strip() for name in ("limit", "discussion", "summary")
+                    for sentence in candidates[name] if constraint.search(sentence)), "")
     return limited or "해석 범위와 남은 한계는 과학 보고서에 적었습니다."
 
 
@@ -1226,7 +1258,7 @@ def _table_metadata(name: str, body: str | bytes) -> tuple[int | None, list[str]
     columns = [cell.strip() for cell in parsed[0]]
     rectangular = bool(columns) and all(columns) and len(set(columns)) == len(columns)
     rectangular = rectangular and all(len(row) == len(columns) for row in parsed[1:])
-    return len(parsed) - 1, columns, rectangular and len(parsed) > 1
+    return len(parsed) - 1, columns, rectangular
 
 
 def _omitted_table(name: str, body: str | bytes, *, internal: bool, declared: set[str],
@@ -1385,6 +1417,8 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
         track(name, target)
         figure_names.append(target)
 
+    _add_workdir_source_targets(req, source_targets)
+
     request_text = _clean(str(req.get("text") or ""), settings, req)
     execution = ""
     if bundle is not None and (bundle / "execution_record.md").is_file():
@@ -1425,18 +1459,6 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
         raise ValueError("README에 반드시 0이어야 하는 한국어 표현이 남았습니다.")
     files["README.md"] = _clean(readme, settings, req)
 
-    results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
-    for step_id, result in results.items():
-        if not isinstance(result, Mapping):
-            continue
-        workdir_value = result.get("workdir") or result.get("workdir_id")
-        if not isinstance(workdir_value, str):
-            continue
-        prefix = f"steps/{step_id}/outputs/"
-        workdir = workdir_value.replace("\\", "/")
-        for source, target in list(source_targets.items()):
-            if source.startswith(prefix):
-                source_targets[f"{workdir}/outputs/{source[len(prefix):]}"] = target
     source_targets.update({name: name for name in files})
     files = _rewrite_markdown_links(files, source_targets)
     broken = broken_markdown_links(files, source_targets)
