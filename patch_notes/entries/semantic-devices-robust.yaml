@@ -9,3 +9,6 @@ rows:
 - sha: df961a9
   at: 2026-10-18 14:12
   text: 의미 장치 경고와 제거 경로의 회귀를 맞춤
+- sha: 3aa9b63
+  at: 2026-10-18 15:02
+  text: 의미 장치 오류를 안전한 공통 형식으로 남기고 advisory 실패·pack 재개·checklist 기록을 바로잡음
