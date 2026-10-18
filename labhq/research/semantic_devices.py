@@ -19,6 +19,7 @@ DEVICE = "seman" + "tics"
 log = logging.getLogger("labhq.semantic_devices")
 
 _ERRORS: dict[str, tuple[str, str, str]] = {
+    "configured_off": (DEVICE, "setting", "semantics 평가가 설정으로 꺼져 있습니다."),
     "semantics_config_invalid": (DEVICE, "startup", "semantics 설정을 읽지 못했습니다. 설정을 고친 뒤 gateway를 다시 시작하세요."),
     "semantics_worker_unavailable": (DEVICE, "startup", "semantics worker를 시작하지 못했습니다. doctor 결과를 확인하세요."),
     "vocabulary_edam_invalid": ("EDAM map", "load", "EDAM map을 적용하지 못해 local vocabulary만 사용합니다."),
@@ -88,7 +89,7 @@ def inspect(settings: Any, *, service: Any = None, worker_known: bool = False,
     if sem["stopped"]:
         sem_status = "off"
         reason = str(sem["reason"] or "")
-        code = f"semantics_{reason}" if reason in _STOP_REASONS else "semantics_auto_off"
+        code = reason if reason in _STOP_REASONS else "semantics_auto_off"
         _ERRORS.setdefault(code, (DEVICE, "auto_off", f"semantics 평가가 자동으로 중단됐습니다. {REENABLE}로 다시 켜세요."))
         issues.append(_issue(code, at=sem["stopped_at"] or checked_at))
     elif setting in {"invalid", "refused"}:
@@ -96,15 +97,14 @@ def inspect(settings: Any, *, service: Any = None, worker_known: bool = False,
         issues.append(_issue("semantics_config_invalid", at=checked_at))
     elif setting == "off":
         sem_status = "off"
-        _ERRORS.setdefault("semantics_configured_off", (DEVICE, "setting", "semantics 평가가 설정으로 꺼져 있습니다."))
-        issues.append(_issue("semantics_configured_off", at=checked_at))
+        issues.append(_issue("configured_off", at=checked_at))
     elif worker_known and service is None:
         sem_status = "error"
         issues.append(_issue("semantics_worker_unavailable", at=checked_at))
     elif service is not None and getattr(service, "latched", None):
         sem_status = "off"
         reason = str(service.latched)
-        code = f"semantics_{reason}" if reason in _STOP_REASONS else "semantics_auto_off"
+        code = reason if reason in _STOP_REASONS else "semantics_auto_off"
         _ERRORS.setdefault(code, (DEVICE, "auto_off", f"semantics 평가가 자동으로 중단됐습니다. {REENABLE}로 다시 켜세요."))
         issues.append(_issue(code, at=checked_at))
     else:
