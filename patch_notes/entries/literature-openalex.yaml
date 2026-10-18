@@ -9,3 +9,6 @@ rows:
 - sha: dcf503d
   at: 2026-10-19 01:39
   text: Europe PMC 미등재 논문도 합법 OA 사본을 찾고 OA URL의 내부망 접근과 실패 원장 누락을 막음
+- sha: ca8ffc7
+  at: 2026-10-19 02:10
+  text: OA 본문을 제한된 streaming으로 받고 provider 활성 상태와 실패 원장을 cache·응답에 보존했습니다.
