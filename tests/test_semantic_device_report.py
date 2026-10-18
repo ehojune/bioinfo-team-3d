@@ -93,7 +93,7 @@ def test_fixed_research_request_has_six_auditable_device_rows(tmp_path):
         "vocabulary_edam", "checklist", "analysis_pack", "semantics", "operational_ontology", "shadow_request",
     }
     for row in report["devices"]:
-        assert row["status"] in {"작동", "켜졌으나 미사용", "꺼짐", "오류"}
+        assert row["status"] in {"작동", "켜졌으나 미사용", "꺼짐", "미평가", "오류"}
         assert row["decisions"]
         assert row["code_locations"]
         assert row["record_locations"]
@@ -107,12 +107,13 @@ def test_fixed_research_request_has_six_auditable_device_rows(tmp_path):
     ]
     shadow = next(row for row in report["devices"] if row["id"] == "shadow_request")
     assert shadow["evaluation"] == "평가 완료"
+    assert shadow["evaluation_status"] == "ok"
     assert shadow["offered_count"] == 0
     assert shadow["referenced"] is False
 
     rendered = render_report(report)
     assert "| 단어장·EDAM | 작동 |" in rendered
-    assert "평가 완료 · 후보 0건" in rendered
+    assert "정상인데 후보 0건" in rendered
     assert str(tmp_path) not in rendered
     assert "C:/Users" not in rendered and "should-not-leak" not in rendered
 
@@ -133,7 +134,10 @@ def test_semantics_off_records_reason_and_time(tmp_path):
     shadow = next(row for row in report["devices"] if row["id"] == "shadow_request")
     assert semantics["status"] == "꺼짐"
     assert semantics["off"] == {"reason": "configured_off", "at": "2026-10-18T13:00:00+09:00"}
+    assert shadow["status"] == "미평가"
     assert shadow["evaluation"] == "평가 안 됨"
+    assert shadow["evaluation_status"] == "not_evaluated"
+    assert shadow["reason"] == "configured_off"
     assert "꺼짐: configured_off · 2026-10-18T13:00:00+09:00" in render_report(report)
 
 
@@ -146,6 +150,36 @@ def test_shadow_candidates_and_plan_reference_are_preserved(tmp_path):
     shadow = next(row for row in build_report(request, settings)["devices"] if row["id"] == "shadow_request")
     assert shadow["offered"] == ["sem:0123abcd"]
     assert shadow["offered_count"] == 1 and shadow["referenced"] is True
+
+
+@pytest.mark.parametrize(
+    "semantics_ab,status,evaluation_status,decision",
+    [
+        ({"arm": "advisory", "status": "not_evaluated", "reason": "info_boundary", "offered": []},
+         "미평가", "not_evaluated", "미평가(info_boundary)"),
+        ({"arm": "advisory", "status": "error", "offered": [],
+          "error": {"code": "semantics_advisory_projection_failed"}},
+         "오류", "error", "오류(semantics_advisory_projection_failed)"),
+        ({"arm": "advisory", "status": "ok", "offered": []},
+         "작동", "ok", "정상인데 후보 0건"),
+        ({"arm": "advisory", "status": "ok", "offered": ["sem:0123abcd"]},
+         "작동", "ok", "정상 · 후보 1건"),
+    ],
+    ids=["latched", "error", "normal_zero", "normal_candidate"],
+)
+def test_shadow_report_separates_evaluation_states(
+        tmp_path, semantics_ab, status, evaluation_status, decision):
+    settings, request = fixed_request(tmp_path)
+    request["semantics_ab"] = semantics_ab
+    if evaluation_status != "ok":
+        request.pop("semantics_observation")
+
+    shadow_row = next(row for row in build_report(request, settings)["devices"]
+                      if row["id"] == "shadow_request")
+
+    assert shadow_row["status"] == status
+    assert shadow_row["evaluation_status"] == evaluation_status
+    assert decision in json.dumps(shadow_row["decisions"], ensure_ascii=False)
 
 
 def test_bundle_writes_markdown_json_and_portfolio_publishes_same_markdown(tmp_path):
