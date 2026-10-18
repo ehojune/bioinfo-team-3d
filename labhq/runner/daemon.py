@@ -129,7 +129,12 @@ async def _holding(semaphore: asyncio.Semaphore):
 def labhq_mcp_timeout_s(settings: Settings) -> int:
     """How long a staff CLI may wait on one labhq MCP call: the longest approval or ask wait, plus 120 s for the
     tool's own work. Claude gets it as each server's `timeout` and MCP_TOOL_TIMEOUT, Codex as `tool_timeout_sec`."""
-    return max(settings.policy.approvals.timeout_s, settings.literature.pdf_request_timeout_s, ASK_MAX_WAIT_S) + 120
+    return max(settings.policy.approvals.timeout_s, ASK_MAX_WAIT_S) + 120
+
+
+def literature_mcp_timeout_s(settings: Settings) -> int:
+    """Only the literature MCP may remain blocked on the two-hour PI PDF card."""
+    return max(labhq_mcp_timeout_s(settings), settings.literature.pdf_request_timeout_s + 120)
 
 
 def checked_identity(identity: object) -> dict[str, str]:
@@ -851,7 +856,7 @@ class Runner:
             # Read-only public lookups: no per-call approval, also for variants from restricted zones (PI 2026-10-06).
             servers.append(McpServerSpec(name="labhq_annot", command=sys.executable,
                                          args=["-m", "labhq.tools.annot_mcp"], env=env,
-                                         auto_approve=True, timeout_s=timeout_s))
+                                         auto_approve=True, timeout_s=literature_mcp_timeout_s(self.s)))
         if allow_ask and agent.engine != Engine.antigravity:
             servers.append(McpServerSpec(name="labhq_ask", command=sys.executable,
                                          args=["-m", "labhq.tools.ask_mcp"], env=env,

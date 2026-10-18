@@ -11,7 +11,7 @@ from pydantic import ValidationError
 from labhq.output_checks import literature_access_failures, quality_lines
 from labhq.models import ApprovalRequest
 from labhq.runner.daemon import Runner
-from labhq.runner.daemon import labhq_mcp_timeout_s
+from labhq.runner.daemon import labhq_mcp_timeout_s, literature_mcp_timeout_s
 from labhq.settings import LiteratureSettings, Settings
 from labhq.tools import annot_literature as lit
 from tests.test_private_paths import REAL_LABHQ_ENTRIES
@@ -254,7 +254,8 @@ def test_custom_institution_profile_is_a_private_path_and_extends_the_mcp_wait(t
                                                       pdf_request_timeout_s=8000))
     entries = REAL_LABHQ_ENTRIES(settings, str(tmp_path))
     assert str(profile) in {path for path, _label in entries}
-    assert labhq_mcp_timeout_s(settings) == 8120
+    assert labhq_mcp_timeout_s(settings) == labhq_mcp_timeout_s(Settings())
+    assert literature_mcp_timeout_s(settings) == 8120
 
 
 @pytest.mark.asyncio
