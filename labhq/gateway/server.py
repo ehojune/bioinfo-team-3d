@@ -6,6 +6,7 @@ Run it on a tiny VM or at home behind Tailscale. State stays on the gateway host
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import copy
 import hashlib
@@ -68,7 +69,8 @@ TASK_CANCEL_KEEP_S = 2 * 86400
 # Cards that decide the request itself (PI 점검 R5). They wait policy.approvals.pi_decision_timeout_s instead of the gate
 # timeout, the request waits as waiting_pi meanwhile, and an unanswered card ends as *_timed_out, never as a deny.
 PI_DECISION_KINDS = frozenset({"clarify", "question", "scope", "budget", "research_plan", "research_evidence",
-                               "research_continue", "resume", "result_storage", "result_publish", "recruit_plan"})
+                               "research_continue", "resume", "result_storage", "result_publish", "recruit_plan",
+                               "literature_pdf"})
 # Runner cards that only inform: no hook waits on them, so their task's result does not close them (#521).
 RUNNER_NOTICE_KINDS = frozenset({"codex_sandbox_setup"})
 # Steer, pause, resume and halt of a running task (#59 ①); a steer message is at most this long. The gateway keeps each
@@ -4138,6 +4140,43 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         except ValueError as exc:
             raise HTTPException(422, str(exc))
         return {"ok": True}
+
+    @app.post("/api/approvals/{aid}/literature-pdf/{paper_index}", dependencies=[Depends(auth)])
+    async def upload_literature_pdf(aid: str, paper_index: int, request: Request) -> dict:
+        """Relay one PDF to the card's runner without persisting its body on the gateway."""
+        entry = hub.approvals.get(aid)
+        approval = (entry or {}).get("approval") or {}
+        detail = approval.get("detail") or {}
+        papers = detail.get("papers")
+        if approval.get("kind") != "literature_pdf" or not isinstance(papers, list):
+            raise HTTPException(404, "no such pending PDF request")
+        if not 0 <= paper_index < len(papers):
+            raise HTTPException(422, "paper index is outside this card")
+        origin = (entry or {}).get("origin")
+        if not origin or origin not in hub.runners:
+            raise HTTPException(409, "the task runner is not connected")
+        maximum = int(settings.literature.pdf_max_mb * 1024 * 1024)
+        try:
+            declared = int(request.headers.get("content-length") or 0)
+        except ValueError:
+            raise HTTPException(400, "invalid content length") from None
+        if declared > maximum:
+            raise HTTPException(413, "PDF is larger than the configured limit")
+        payload = bytearray()
+        async for chunk in request.stream():
+            payload.extend(chunk)
+            if len(payload) > maximum:
+                raise HTTPException(413, "PDF is larger than the configured limit")
+        data = bytes(payload)
+        if not data.startswith(b"%PDF-"):
+            raise HTTPException(415, "only a PDF file is accepted")
+        try:
+            await hub.send_runner(origin, {"type": "approval.attachment", "id": aid,
+                                           "paper_index": paper_index,
+                                           "content_b64": base64.b64encode(data).decode("ascii")})
+        except RunnerUnavailable as exc:
+            raise HTTPException(409, "the task runner disconnected") from exc
+        return {"ok": True, "bytes": len(data)}
 
     @app.post("/api/requests/{rid}/cancel", dependencies=[Depends(auth)])
     async def cancel_request(rid: str) -> dict:

@@ -110,6 +110,15 @@ export function startLiveOffice(onState) {
       render(); notice('검토·확인을 마쳤어요');
     } catch (error) { notice(`기록하지 못했어요: ${error.message}`); }
   }
+  async function uploadLiteraturePdf(approval, paperIndex, file) {
+    const response = await fetch(`/api/approvals/${encodeURIComponent(approval.id)}/literature-pdf/${paperIndex}`,
+      {method:'POST', headers:{Authorization:`Bearer ${token}`, 'Content-Type':'application/pdf'}, body:file});
+    if (!response.ok) {
+      let detail = ''; try { detail = (await response.json()).detail; } catch {}
+      throw new Error(typeof detail === 'string' && detail ? detail : String(response.status));
+    }
+    notice('PDF를 작업 폴더에 보냈어요. 카드를 승인하면 바로 읽습니다.', approval.id);
+  }
   function openReview(rid) {
     selectRequest(rid); render();
     requestRow(rid)?.scrollIntoView({block:'start'});
@@ -138,6 +147,7 @@ export function startLiveOffice(onState) {
     $('login-holds').replaceChildren(...holdRows);
     syncDecisionCards($('approvals'), S.approvals.values(), [], { tagName:'article', listTag:'div', kindLabels:KIND_KO,
       nick, requests:S.requests, emptyText:'대기 승인 없음', disabled:a => S.conn !== 'live' || pending.has(a.id),
+      onAttachment: uploadLiteraturePdf,
       onDecision:(a, approved, note, _type, choice, storage) => {
         if (!ws || ws.readyState !== 1 || pending.has(a.id)) return;
         // Structured questions compose their answer in decide.js; an unanswered one yields ''.

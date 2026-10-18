@@ -127,6 +127,11 @@ async def awrite_owned(root: Path, relative: str, text: str) -> Path:
     return await durable.run(durable.FILES, _write_owned_now, root, relative, text)
 
 
+async def awrite_owned_bytes(root: Path, relative: str, data: bytes) -> Path:
+    """Binary counterpart used for a PI-uploaded file; it keeps the same link and atomic-write boundary."""
+    return await durable.run(durable.FILES, _write_owned_bytes_now, root, relative, data)
+
+
 async def awrite_owned_many(root: Path, writes: list[tuple[str, str]]) -> list[Path]:
     """Several labhq files as ONE durable job, in order: a cancel cannot leave some of them written and the rest not."""
     return await durable.run(durable.FILES, _write_owned_many_now, root, writes)
@@ -153,6 +158,35 @@ def _write_owned_now(root: Path, relative: str, text: str) -> Path:
                 with open(fd, "w", encoding="utf-8") as out:
                     fd = -1
                     out.write(text)
+                    out.flush()
+                    os.fsync(out.fileno())
+                parent.replace(temporary, rel.name)
+                parent.fsync()
+            finally:
+                if fd >= 0:
+                    os.close(fd)
+                parent.unlink(temporary)
+    except OwnedPathError:
+        raise
+    except OSError as exc:
+        raise OwnedPathError(f"labhq does not write {rel.as_posix()}: {exc}") from exc
+    return target
+
+
+def _write_owned_bytes_now(root: Path, relative: str, data: bytes) -> Path:
+    rel = PurePath(relative)
+    target = Path(root) / rel
+    temporary = f".{rel.name}.labhq-{uuid.uuid4().hex}.tmp"
+    try:
+        with _held_parent(root, rel) as parent:
+            if os.path.lexists(target) and target.is_dir():
+                raise OwnedPathError(f"labhq does not write {rel.as_posix()}: a folder occupies it")
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+            fd = parent.open_file(temporary, flags, 0o666)
+            try:
+                with open(fd, "wb") as out:
+                    fd = -1
+                    out.write(data)
                     out.flush()
                     os.fsync(out.fileno())
                 parent.replace(temporary, rel.name)

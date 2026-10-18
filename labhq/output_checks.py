@@ -34,6 +34,7 @@ MAX_TABLE_WARNINGS = 20
 CSV_FIELD_LIMIT = MAX_TABLE_BYTES
 csv.field_size_limit(max(csv.field_size_limit(), CSV_FIELD_LIMIT))
 QUERY_LOG = "outputs/annotation_queries.jsonl"
+LITERATURE_ACCESS_LOG = "outputs/literature_access.jsonl"
 FULLTEXT_TOOL = "fulltext"
 MAX_RECORD_BYTES = 5_000_000
 MAX_PAPERS = 1000
@@ -221,7 +222,46 @@ def literature_access(root: Path) -> dict[str, str]:
             if not identifiers:
                 continue
             _merge_access_group(groups, identifiers, answer["access_level"])
+    for entry in _literature_access_entries(root):
+        level = entry.get("access_level")
+        identifiers = _access_paper_ids(str(entry.get("paper_id") or ""))
+        if identifiers and level in LEVELS:
+            _merge_access_group(groups, identifiers, level)
     return {_paper_key(identifiers): level for identifiers, level in groups}
+
+
+def _literature_access_entries(root: Path) -> list[dict]:
+    path = _inside(Path(root), LITERATURE_ACCESS_LOG)
+    if path is None or path.stat().st_size > MAX_RECORD_BYTES:
+        return []
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    entries = []
+    for line in lines[-MAX_PAPERS:]:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            entries.append(row)
+    return entries
+
+
+def literature_access_failures(root: Path) -> dict[str, str]:
+    """Latest failed permitted-access outcome per paper; no title, path, or body is returned to the gateway."""
+    failures: dict[str, str] = {}
+    for entry in _literature_access_entries(root):
+        key = _paper_key(_access_paper_ids(str(entry.get("paper_id") or "")))
+        if not key:
+            continue
+        reason = str(entry.get("failure_reason") or "")
+        if reason:
+            failures[key] = reason[:100]
+        elif entry.get("access_level") == "full_text":
+            failures.pop(key, None)
+    return failures
 
 
 def _field(result: Any, name: str) -> Any:
@@ -323,6 +363,7 @@ def quality_lines(steps: Iterable[Mapping[str, Any]], results: Mapping[str, Any]
     """Report-warning lines: one per step with table problems, one for literature read below full text."""
     lines: list[str] = []
     access: list[tuple[set[str], str]] = []
+    failures: dict[str, str] = {}
     for step in steps:
         result = results.get(step["id"])
         if result is None:
@@ -335,6 +376,8 @@ def quality_lines(steps: Iterable[Mapping[str, Any]], results: Mapping[str, Any]
             identifiers = _access_paper_ids(key)
             if identifiers and level in LEVELS:
                 _merge_access_group(access, identifiers, level)
+        for key, reason in (_field(result, "literature_access_failures") or {}).items():
+            failures[str(key)] = str(reason)
     levels = [level for _identifiers, level in access]
     below = sum(level != "full_text" for level in levels)
     if below:
@@ -342,4 +385,8 @@ def quality_lines(steps: Iterable[Mapping[str, Any]], results: Mapping[str, Any]
                            if (n := sum(level == name for level in levels)))
         lines.append(f"문헌을 읽은 수준(fulltext로 조회한 {len(levels)}편): {counts}. "
                      f"본문을 읽지 못한 {below}편에서 가져온 수치는 한계로 적는다")
+    timed_out = [key for key, reason in failures.items() if reason == "pdf_request_timed_out"]
+    if timed_out:
+        shown = ", ".join(timed_out[:5]) + (f" 외 {len(timed_out) - 5}편" if len(timed_out) > 5 else "")
+        lines.append(f"핵심 논문 PDF 요청이 설정된 대기 상한 뒤 만료되어 초록 또는 다른 OA 논문으로 진행함: {shown}")
     return lines

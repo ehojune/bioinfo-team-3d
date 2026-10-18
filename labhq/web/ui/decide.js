@@ -408,6 +408,8 @@ const DETAIL_LABELS = {
   question: { why_blocked: '막힌 이유', from: '묻는 직원' },
   resume: { created_at: '접수 시각', steps: '남은 단계' },
   result_publish: { pdf: '보고서 PDF' },
+  literature_pdf: { papers: '필요한 논문', inbox: 'PDF를 둘 폴더', wait_seconds: '대기 시간(초)',
+    institution: '기관 접근 조건', external_model_allowed: '외부 모델 읽기 허용', why_blocked: '요청 이유' },
 };
 // A resume card's epoch seconds read as a local date, the way the gateway writes it in the summary.
 const two = n => String(n).padStart(2, '0');
@@ -525,6 +527,8 @@ function createCard(item, options) {
   request.hidden = true;
   const summary = add(body, 'p', '', 'sum');
   const detail = add(body, 'div', '', 'why');
+  const attachment = add(body, 'div', '', 'literature-pdf-upload');
+  attachment.hidden = true;
   const questions = add(body, 'div', '', 'clarify');
   questions.hidden = true;
   const storage = add(body, 'div', '', 'result-storage');
@@ -543,7 +547,7 @@ function createCard(item, options) {
   revise.type = 'button'; revise.hidden = true;
   const deny = add(actions, 'button', '', 'btn');
   deny.type = 'button';
-  row._decisionParts = { title, who, request, summary, detail, questions, storage, assumptions, timing, note, consequence, approve, revise, deny };
+  row._decisionParts = { title, who, request, summary, detail, attachment, questions, storage, assumptions, timing, note, consequence, approve, revise, deny };
   if (options.presentation === 'journal') {
     row.className += ' ui-card decision-card';
     const heading = doc().createElement('h3'); heading.className = 'decision-question';
@@ -560,7 +564,7 @@ function createCard(item, options) {
     approve.className += ' ui-button ui-button--primary decision-primary';
     deny.className += ' ui-button decision-secondary';
     revise.className += ' ui-button decision-secondary';
-    body.replaceChildren(heading, facts, summary, explanation, status, kind, request, questions, storage, assumptions, timing, consequence, actions, memo, source);
+    body.replaceChildren(heading, facts, summary, explanation, status, kind, request, attachment, questions, storage, assumptions, timing, consequence, actions, memo, source);
     Object.assign(row._decisionParts, {heading, facts, reason, outcome});
   }
   return row;
@@ -671,6 +675,7 @@ const DENY_RESULT = {
   research_plan_revise: '수정 요청은 메모를 넣은 새 요청으로 계획을 다시 세워 새 CP1을 받습니다. 거절하면 이 요청은 단계를 돌리지 않고 끝납니다.',
   research_evidence: '수정 요청은 메모로 새 계획을 세워 새 CP1을 받고 바뀐 단계만 다시 돌립니다. 거부하면 요청이 끝납니다.',
   question: '거절하면 직원에게 "진행 불가"로 전합니다.',
+  literature_pdf: 'PDF를 지정 파일에 넣고 승인하면 본문으로 이어 갑니다. 거절하거나 시간이 끝나면 초록 또는 다른 OA 논문으로 진행합니다.',
 };
 // Past research.revise_continuations a CP2 수정 요청 ends the request like 거부 (cso.py).
 const EVIDENCE_REVISE_ENDS = '이어 가기 상한에 닿아 수정 요청과 거부는 둘 다 이 요청을 끝냅니다. 근거를 보강하려면 새 요청을 보내세요.';
@@ -711,6 +716,37 @@ function timingText(approval, options) {
   return `${wait}${countdown}${blocked ? ` · 하류 ${blocked}단계 멈춤` : ''}`;
 }
 
+function renderLiteraturePdfUpload(root, approval, options) {
+  const papers = approval?.kind === 'literature_pdf' && Array.isArray(approval.detail?.papers)
+    ? approval.detail.papers : [];
+  const key = JSON.stringify(papers.map(paper => [paper?.title, paper?.doi, paper?.pdf_file]));
+  if (root.dataset.uploadKey !== key) {
+    root.dataset.uploadKey = key;
+    const rows = papers.map((paper, index) => {
+      const row = doc().createElement('div'); row.className = 'literature-pdf-row';
+      add(row, 'span', `${index + 1}. ${paper?.title || paper?.doi || '논문'}`);
+      const input = add(row, 'input'); input.type = 'file'; input.accept = 'application/pdf,.pdf';
+      const button = add(row, 'button', 'PDF 올리기', 'btn'); button.type = 'button';
+      const status = add(row, 'span', '', 'decision-meta');
+      button.onclick = async () => {
+        const file = input.files?.[0];
+        if (!file) { status.textContent = 'PDF를 골라 주세요.'; return; }
+        if (!options.onAttachment) { status.textContent = '이 화면에서는 파일을 올릴 수 없습니다.'; return; }
+        button.disabled = true; status.textContent = '올리는 중…';
+        try {
+          await options.onAttachment(approval, index, file);
+          status.textContent = '저장됨 · 승인하면 본문으로 이어 갑니다.';
+        } catch (error) {
+          status.textContent = `올리지 못했습니다: ${error?.message || error}`;
+        } finally { button.disabled = false; }
+      };
+      return row;
+    });
+    root.replaceChildren(...rows);
+  }
+  root.hidden = papers.length === 0;
+}
+
 function updateCard(row, item, options) {
   const value = item.value, p = row._decisionParts;
   if (options.avatarHTML && row.children[0]?.className === 'who') {
@@ -734,6 +770,7 @@ function updateCard(row, item, options) {
   renderDetail(p.detail, item.type === 'suggestion' ? 'recruit' : value.kind,
     item.type === 'suggestion' ? {reason: value.reason, repo: value.repo, paper: value.paper} : value.detail,
     approval ? value : {pi_reason: plainPiText(value.reason), pi_outcome: HIRE_RESULT});
+  renderLiteraturePdfUpload(p.attachment, approval ? value : null, options);
   if (p.heading) updateJournalCard(p, value, !approval);
   renderQuestions(p.questions, approval ? value : null);
   renderStorage(p.storage, approval ? value : null);

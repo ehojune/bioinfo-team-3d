@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import httpx
 
@@ -25,6 +25,10 @@ from ._mcpcompat import make_server, tool_failure
 S = Settings.load(os.environ.get("LABHQ_CONFIG"))
 WORKDIR = Path(os.environ["LABHQ_WORKDIR"]).resolve() if os.environ.get("LABHQ_WORKDIR") else None
 CACHE_DIR = S.path(S.runner.state_dir) / "annot_cache"
+BROKER = os.environ.get("LABHQ_BROKER_URL", f"http://127.0.0.1:{S.runner.broker_port}")
+BROKER_TOKEN = os.environ.get("LABHQ_BROKER_TOKEN", "")
+TASK_ID = os.environ.get("LABHQ_TASK_ID")
+AGENT_ID = os.environ.get("LABHQ_AGENT_ID")
 
 
 def _alphagenome() -> annot_regulatory.AlphaGenomeBackend | None:
@@ -46,6 +50,7 @@ server = make_server(
         "list or regions), chipatlas_targets (target genes of a transcription factor), encode (ENCODE candidate "
         "cis-regulatory elements overlapping regions), gtex (GTEx tissue expression and eQTLs for genes or variants), "
         "fulltext (the body of a paper by PMID, PMCID or DOI: Europe PMC open-access full text, else the abstract), "
+        "key_fulltext (for conclusion-critical papers: permitted OA, opt-in institution session, then one PI PDF card), "
         "citation_chase (references and citing papers for one paper), preprints (bioRxiv/medRxiv search; 심사 전)"
         + ("; alphagenome_variant (recommended variant effect scores, GRCh38), "
            "alphagenome (legacy track summaries over variants or intervals)" if ALPHAGENOME else "")
@@ -82,6 +87,44 @@ async def _run_literature(method: str, *args: object) -> str:
         annotator = annot_literature.LiteratureAnnotator(client, WORKDIR, CACHE_DIR, pace=PACE)
         try:
             result = await getattr(annotator, method)(*args)
+        except (annot.LookupFailed, ValueError) as exc:
+            raise tool_failure(str(exc)) from exc
+    return json.dumps(result, ensure_ascii=False)
+
+
+async def _request_pdf(summary: str, detail: dict, timeout_s: int) -> dict:
+    if not BROKER_TOKEN:
+        return {"approved": False, "state": "unavailable", "note": "approval broker token is absent"}
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_s + 30, connect=10)) as client:
+            response = await client.post(f"{BROKER}/approval", headers={"X-Labhq-Token": BROKER_TOKEN}, json={
+                "task_id": TASK_ID, "agent_id": AGENT_ID, "kind": "literature_pdf", "summary": summary,
+                "detail": detail, "timeout_s": timeout_s,
+            })
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPError:
+        return {"approved": False, "state": "unavailable", "note": "PDF request card could not be opened"}
+
+
+async def _run_key_fulltext(papers: list[dict[str, Any]]) -> str:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=20.0), follow_redirects=True,
+                                 headers={"User-Agent": annot.USER_AGENT}) as client:
+        annotator = annot_literature.LiteratureAnnotator(client, WORKDIR, CACHE_DIR, pace=PACE)
+        institution = limiter = None
+        policy = S.literature
+        if policy.institution_enabled and policy.institution_tdm_allowed and policy.external_model_allowed:
+            from ..report_pdf import find_browser
+            institution = annot_literature.BrowserInstitutionTransport(
+                S.path(policy.institution_profile) if policy.institution_profile else None,
+                policy.institution_proxy, find_browser(S.gateway.report_browser))
+            limiter = annot_literature.InstitutionLimiter(
+                CACHE_DIR, policy.institution_request_interval_s, policy.institution_daily_limit)
+        coordinator = annot_literature.KeyFulltextCoordinator(
+            annotator, policy, WORKDIR, CACHE_DIR, institution=institution, limiter=limiter,
+            request_pdf=_request_pdf)
+        try:
+            result = await coordinator.run(papers)
         except (annot.LookupFailed, ValueError) as exc:
             raise tool_failure(str(exc)) from exc
     return json.dumps(result, ensure_ascii=False)
@@ -164,6 +207,17 @@ async def fulltext(ids: list[str]) -> str:
     `publisher_copy` appears when a CC-licensed paper has no Europe PMC copy: one try at that link is fine; paywalled
     papers stay at the abstract."""
     return await _run_literature("fulltext", ids)
+
+
+@server.tool()
+async def key_fulltext(papers: list[dict[str, Any]]) -> str:
+    """Read conclusion-critical papers through permitted routes only. Each item needs id, title, why_key, needed and
+    optional tried. Open access is checked first. When configured, one DOI at a time may use the PI's institution
+    browser profile or proxy within its interval and daily limit. Remaining papers open one PDF request card; the
+    default wait is two hours. Upload each PDF on the card or put it at the exact .tmp/literature/inbox path, then approve.
+    On expiry the result keeps the abstract/metadata, records the access failure, and directs the report to use that
+    limitation or another OA paper. Passwords, cookies and tokens are never accepted or returned."""
+    return await _run_key_fulltext(papers)
 
 
 @server.tool()

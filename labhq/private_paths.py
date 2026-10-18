@@ -124,9 +124,12 @@ def _labhq_entries(settings: Settings, home: str) -> list[tuple[str, str]]:
     staff = staff_claude_config_dir(settings, home)
     if staff:
         entries.append((staff, _label(staff, home)))
-    # The AlphaGenome key (#435): only the labhq_annot server reads it, never the staff member. The GitHub token file
-    # (#687): only the gateway reads it.
-    for raw in (settings.annot.alphagenome_key_file, settings.github.token_file):
+    # The AlphaGenome key (#435) and institution browser profile (#746) are opened only by labhq_annot, never by the
+    # staff member. The GitHub token file (#687) is opened only by the gateway.
+    protected = [settings.annot.alphagenome_key_file, settings.github.token_file]
+    if settings.literature.institution_profile:
+        protected.append(settings.literature.institution_profile)
+    for raw in protected:
         key = _expand(raw, home)
         key = key if os.path.isabs(key) else str(settings.path(key))
         if os.path.lexists(key):
