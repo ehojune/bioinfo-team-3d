@@ -23,7 +23,7 @@ from .models import ApprovalRequest, Task
 from .policy import touches, restricted_paths
 from . import edition_sources, github_token
 from .portfolio import (PRIVATE_PATH_PATTERN, EditionCheckError, broken_markdown_links, build_portfolio_files,
-                        check_failure, declared_aggregate_tables, portfolio_root_file,
+                        check_failure, clean_publication_text, declared_aggregate_tables, portfolio_root_file,
                         internal_data_steps, portfolio_report, publish_file_allowed, request_uses_internal_data,
                         scan_publish_files, source_uses_internal_data, table_allowed)
 from .intake import reference_dirs
@@ -69,7 +69,8 @@ EDITOR_REPORT_CHARS = 100_000  # what the editor reads of the report whole; a lo
 EDITOR_OTHER_CHARS = 30_000  # the same bound for each of PROGRESS.md, REPRODUCE.md and SOURCES.md
 _PDF_NAME = "report.pdf"
 _PORTFOLIO_PDF_NAME = "report/report.pdf"
-_GENERATED = ("README.md", "report.md", "report/report.md", "PROGRESS.md", "REPRODUCE.md", "SOURCES.md")  # edition documents that may link a figure
+_GENERATED = ("README.md", "report.md", "report/report.md", "PROGRESS.md", "REPRODUCE.md", "TASK_RECORD.md",
+              "SOURCES.md")  # edition documents that may link a figure
 PUBLISH_PREVIEW_FILE_MAX_BYTES = 1_000_000
 PUBLISH_PREVIEW_TOTAL_MAX_BYTES = 5_000_000
 _PROGRESS_OUTPUTS = {".md", ".svg", ".py", ".r", ".sh"}
@@ -176,7 +177,7 @@ def edition_assets(req, settings):
             images[name] = payload
         else:
             try:
-                assets[name] = clean_document(payload.decode("utf-8"), settings, req)
+                assets[name] = clean_publication_text(name, payload.decode("utf-8"), settings, req)
             except UnicodeDecodeError:
                 continue
     return assets, images
@@ -395,7 +396,92 @@ def editor_prompt(docs: dict[str, str], request_text: str) -> str:
             + "\n\n" + "\n".join(parts))
 
 
-def draft_documents(req: dict, settings, included=None, assets=None, *, abstract: bool = False) -> dict[str, str]:
+def _bundle_section(text: str, title: str) -> list[str]:
+    match = re.search(rf"(?m)^## {re.escape(title)}\s*$", text or "")
+    if match is None:
+        return []
+    end = re.search(r"(?m)^## ", text[match.end():])
+    body = text[match.end():match.end() + end.start()] if end else text[match.end():]
+    return [line.strip() for line in body.splitlines() if line.strip()]
+
+
+def _task_record(req: dict) -> str:
+    lines = ["# 작업 지시 기록", "", "재현 안내에서 뺀 원래 단계별 작업 지시입니다.", ""]
+    steps = [step for step in ((req.get("plan") or {}).get("steps") or []) if isinstance(step, Mapping)]
+    for step in steps:
+        step_id = str(step.get("id") or "단계")
+        deps = ", ".join(map(str, step.get("depends_on") or [])) or "없음"
+        lines += [f"## {step_id}", "", f"- 의존 단계: {deps}", "", str(step.get("instruction") or "기록 없음"), ""]
+    if not steps:
+        lines.append("단계별 지시가 기록되지 않았습니다.")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _reproduce_document(req: dict, settings, assets: Mapping[str, str],
+                        environment_records: Mapping[str, Any], bundle_readme: str) -> str:
+    steps = [step for step in ((req.get("plan") or {}).get("steps") or []) if isinstance(step, Mapping)]
+    step_ids = [str(step.get("id")) for step in steps if step.get("id")]
+    locks = sorted(name for name in assets if PurePosixPath(name).name.casefold() == "requirements.lock.txt")
+    input_keys = sorted(set(re.findall(
+        r"\bLABHQ_INPUT_[A-Z0-9_]+\b", "\n".join(body for body in assets.values() if isinstance(body, str)))))
+    order = _bundle_section(bundle_readme, "단계 순서")
+    raw_commands = _bundle_section(bundle_readme, "다시 실행")
+    commands = [line if line.startswith("-") else f"- `{line}`" for line in raw_commands
+                if line.startswith("-") or re.match(r"^(?:cd\s+|python(?:3)?\s+|Rscript\s+|bash\s+)", line)]
+    if not order:
+        order = [f"- `{step_id}`" for step_id in step_ids] or ["- 선언된 단계 없음"]
+    if not commands:
+        commands = ["- 기록된 실행 명령 없음"]
+
+    lines = ["# 재현 방법", "", "정리본 루트에서 아래 순서대로 실행합니다. 원래 작업 지시는 [작업 지시 기록](task_record.md)에 따로 두었습니다.", "",
+             "## 고정 환경", ""]
+    if locks:
+        lines += [f"- [{PurePosixPath(name).parts[1]} lock]({name})" for name in locks]
+    else:
+        lines.append("- lock 파일 없음: 요청 묶음의 환경 기록을 확인하세요.")
+    for step_id, record in sorted(environment_records.items()):
+        if not isinstance(record, Mapping):
+            continue
+        summary = {key: record[key] for key in ("python", "python_version", "version", "status") if key in record}
+        lines.append(f"- `{step_id}` 버전 기록: `{json.dumps(summary or dict(record), ensure_ascii=False, sort_keys=True)[:240]}`")
+    lines += ["", "## 입력 설정", "",
+              "개인 경로는 코드에 넣지 않습니다. 접근 권한이 있는 로컬 파일 경로를 아래 환경 변수에 지정하세요.", ""]
+    lines += [f"- `{key}`" for key in input_keys] or ["- 별도 로컬 입력 경로 설정 없음"]
+    public_sources = [f"{row.get('kind')}: {row.get('value')}" for row in req.get("references") or []
+                      if isinstance(row, Mapping) and row.get("kind") in {"url", "github", "doi", "pmid"}
+                      and row.get("value")]
+    lines += ["", "### 공개 입력 출처", "", *(f"- {source}" for source in public_sources)]
+    if not public_sources:
+        lines.append("- 기록 없음")
+    lines += ["", "## 실행 순서와 명령", "", *order, "", *commands,
+              "", "## 예상 출력", "", "| 단계 | 출력 |", "|---|---|"]
+    for step in steps:
+        outputs = [str(value) for value in step.get("outputs") or [] if isinstance(value, str)]
+        outputs += [str(row.get("name")) for row in step.get("output_types") or []
+                    if isinstance(row, Mapping) and row.get("name")]
+        lines.append(f"| {step.get('id') or '-'} | {'<br>'.join(dict.fromkeys(outputs)) or '선언 없음'} |")
+    if not steps:
+        lines.append("| - | 선언 없음 |")
+
+    internal = internal_data_steps(req, settings)
+    request_internal = request_uses_internal_data(req, settings)
+    if internal is None and request_internal:
+        public_steps, restricted_steps = [], step_ids
+    else:
+        restricted = set(internal or ())
+        public_steps = [step_id for step_id in step_ids if step_id not in restricted]
+        restricted_steps = [step_id for step_id in step_ids if step_id in restricted]
+    lines += ["", "## 재현 가능 범위", "", "### 공개 자료로 다시 만들 수 있는 것", "",
+              "- " + (", ".join(public_steps) if public_steps else "없음"), "",
+              "### 접근 제한 자료가 필요한 것", "",
+              "- " + (", ".join(restricted_steps) if restricted_steps else "없음"), "",
+              "원자료와 접근 자격은 정리본에 포함하지 않습니다."]
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def draft_documents(req: dict, settings, included=None, assets=None, *, abstract: bool = False,
+                    environment_records: Mapping[str, Any] | None = None,
+                    bundle_readme: str = "") -> dict[str, str]:
     """Only derived prose enters this edition. Raw bundle data and binary files stay local.
 
     ``included``: the edition's file names; the report's figure links are made to resolve to them (#584).
@@ -414,24 +500,20 @@ def draft_documents(req: dict, settings, included=None, assets=None, *, abstract
                     for entry in req.get("replan_history") or []],
                     "review_progress": req.get("review_progress") or {}}, ensure_ascii=False, indent=2),
                 "", "## 검토", json.dumps(req.get("review") or {}, ensure_ascii=False, indent=2)]
-    sources = [f"{r.get('kind')}: {r.get('value', '')}" for r in req.get("references") or []
-               if r.get("kind") in {"url", "github", "doi", "pmid"}]
-    sources += re.findall(r"https?://[^\s<>\"'\])]+", report)
     bibliography = re.search(r"(?im)^#{1,6}\s+(?:references|bibliography|참고(?:\s*문헌|\s*자료)?|출처)[^\n]*\n", report)
     citations = re.split(r"(?m)^#{1,6}\s+", report[bibliography.end():], maxsplit=1)[0] if bibliography else ""
     found = edition_sources.collect(
         [report, str(req.get("report_appendix") or "")], req.get("references") or [],
         [text for name, text in (assets or {}).items() if edition_sources.is_versions_file(name)])
+    assets = assets or {}
     docs = {
         "README.md": "# 연구 결과\n\n## 무엇을 왜 했나요\n\n" + str(req.get("text") or "") +
             "\n\n## 결과\n\n" + readme_excerpt(report) + "\n\n" + document_links("") + "\n",
         "report.md": report,
         "PROGRESS.md": "\n".join(progress),
-        "REPRODUCE.md": "# 재현 방법\n\n원본 입력·실행 파일은 로컬 요청 묶음에 있습니다. "
-            "묶음의 README.md와 MANIFEST.tsv에서 환경·실행 명령·누락 파일을 확인하세요.\n\n"
-            "이 정리본은 결과 설명용입니다. 원본 데이터나 실행 환경을 포함하지 않아 이것만으로 재실행되지는 않습니다.\n\n"
-            + "\n".join(f"- {s.get('id')}: {s.get('instruction', '')}" for s in steps)
-            + "\n\n## 입력 출처\n\n" + ("\n".join(sources) or "공개 입력 출처가 기록되지 않았습니다."),
+        "REPRODUCE.md": _reproduce_document(
+            req, settings, assets, environment_records or {}, bundle_readme),
+        "TASK_RECORD.md": _task_record(req),
         "SOURCES.md": edition_sources.render(found, citations),
     }
     return {name: clean_document(body, settings, req) for name, body in docs.items()}
@@ -1172,26 +1254,32 @@ class ResultStorage:
                 }
                 internal_allowed = set()
                 included = {*assets, *images}
-                docs = draft_documents(req, self.s, included, assets, abstract=bool(drawn))
                 bundle_readme = bundle / "README.md"
                 manifest = bundle_readme.with_name("MANIFEST.tsv")
-                environments = "환경 기록이 없습니다. 실행 환경은 로컬 묶음에서 확인하세요."
+                environment_records: dict[str, Any] = {}
                 if plain_path(manifest) and manifest.is_file():
                     with manifest.open(encoding="utf-8", newline="") as handle:
                         for row in csv.DictReader(handle, delimiter="\t"):
                             if row.get("status") == "summary" and row.get("environment_records"):
-                                environments = clean_document(row["environment_records"], self.s, req)
+                                try:
+                                    parsed = json.loads(row["environment_records"])
+                                    if isinstance(parsed, dict):
+                                        environment_records = parsed
+                                except (json.JSONDecodeError, TypeError):
+                                    pass
                                 break
-                docs["REPRODUCE.md"] += "\n\n## 환경\n\n" + environments
+                bundle_text = ""
                 if plain_path(bundle_readme) and bundle_readme.is_file():
-                    docs["REPRODUCE.md"] += "\n\n## 실행 명령·묶음 안내\n\n" + clean_document(bundle_readme.read_text(encoding="utf-8"), self.s, req)
-                else:
-                    docs["REPRODUCE.md"] += "\n\n## 실행 명령\n\n요청 묶음에 기록된 실행 명령이 없습니다."
+                    bundle_text = bundle_readme.read_text(encoding="utf-8")
+                docs = draft_documents(
+                    req, self.s, included, assets, abstract=bool(drawn),
+                    environment_records=environment_records, bundle_readme=bundle_text)
                 portfolio = build_portfolio_files(
                     portfolio_req, self.s, portfolio_assets, portfolio_images,
                     decisions=decisions, tasks=tasks, bundle=bundle,
                     run_documents={"run/progress.md": docs["PROGRESS.md"],
-                                   "run/reproduce.md": docs["REPRODUCE.md"]},
+                                   "run/reproduce.md": docs["REPRODUCE.md"],
+                                   "run/task_record.md": docs["TASK_RECORD.md"]},
                     internal_files=internal_allowed)
                 publication_internal.update(internal_allowed)
                 for name, body in portfolio.items():
@@ -1479,8 +1567,9 @@ class ResultStorage:
                                  {name: body for name, body in compatibility_docs.items() if portfolio_root_file(name)},
                                  {name: body for name, body in compatibility_images.items() if portfolio_root_file(name)},
                                  (_PORTFOLIO_PDF_NAME,) if pdf else ()))
-            payloads.append((f"labhq/results/{rid}/", compatibility_docs, compatibility_images,
-                             (_PDF_NAME, _PORTFOLIO_PDF_NAME) if pdf else ()))
+            else:
+                payloads.append((f"labhq/results/{rid}/", compatibility_docs, compatibility_images,
+                                 (_PDF_NAME, _PORTFOLIO_PDF_NAME) if pdf else ()))
             for base, payload_docs, payload_images, pdf_names in payloads:
                 for name, body in payload_docs.items():
                     await gh.put_file(repo, base + name, body, "연구 결과 정리", write_branch)

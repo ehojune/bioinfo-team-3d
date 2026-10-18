@@ -1,6 +1,7 @@
 """Build and check the publication-oriented repository edition (#686)."""
 from __future__ import annotations
 
+import ast
 import collections
 import csv
 import io
@@ -8,6 +9,7 @@ import json
 import os
 import posixpath
 import re
+import tokenize
 from collections.abc import Iterable, Mapping
 from dataclasses import fields
 from pathlib import Path, PurePosixPath
@@ -217,6 +219,22 @@ def _rewrite_markdown_links(files: Mapping[str, str | bytes],
     return rewritten
 
 
+def _rewrite_reproduce_commands(text: str, source_targets: Mapping[str, str]) -> str:
+    """Point recorded bundle commands at the edition's canonical code paths."""
+    for source, target in source_targets.items():
+        path = PurePosixPath(source)
+        if path.suffix.lower() not in _CODE_SUFFIXES or len(path.parts) < 5 \
+                or path.parts[0] != "steps" or path.parts[2] != "outputs":
+            continue
+        step = path.parts[1]
+        within_step = "/".join(path.parts[2:])
+        command = {".py": "python", ".r": "Rscript", ".sh": "bash"}[path.suffix.lower()]
+        for executable in ({"python", "python3"} if command == "python" else {command}):
+            text = text.replace(f"cd steps/{step} && {executable} {within_step}", f"{command} {target}")
+            text = text.replace(f"{executable} {source}", f"{command} {target}")
+    return text
+
+
 def broken_markdown_links(files: Mapping[str, str | bytes],
                           source_targets: Mapping[str, str] | None = None) -> list[dict[str, str]]:
     """List unresolved relative links in every Markdown document in an edition."""
@@ -241,6 +259,92 @@ def _clean(text: str, settings, req: dict) -> str:
     text = _WINDOWS_ABS.sub("<local-path>", text)
     text = _POSIX_ABS.sub("<local-path>", text)
     return _ASSIGNMENT.sub(r"\1<redacted-secret>", _PRIVATE_PATH.sub("<local-path>", text))
+
+
+def _input_setting(path: str) -> str:
+    """A stable, path-free environment key for one local input literal."""
+    name = re.split(r"[/\\]", path.rstrip("/\\"))[-1]
+    key = re.sub(r"[^A-Za-z0-9]+", "_", name).strip("_").upper() or "PATH"
+    return f"LABHQ_INPUT_{key}"
+
+
+def _python_input_settings(text: str) -> str:
+    """Replace private path string literals with required environment lookups without touching other strings."""
+    tokens = []
+    try:
+        source = tokenize.generate_tokens(io.StringIO(text).readline)
+        for token in source:
+            if token.type != tokenize.STRING:
+                tokens.append(token)
+                continue
+            try:
+                value = ast.literal_eval(token.string)
+            except (SyntaxError, ValueError):
+                tokens.append(token)
+                continue
+            if not isinstance(value, str) or not _PRIVATE_PATH.search(value):
+                tokens.append(token)
+                continue
+            matches = list(_PRIVATE_PATH.finditer(value))
+            # A quoted value that starts as one local path may contain spaces; treat the complete literal as that input.
+            if len(matches) == 1 and matches[0].start() == 0:
+                spans = [(0, len(value), value)]
+            else:
+                spans = [(match.start(), match.end(), match.group(0)) for match in matches]
+            parts: list[str] = []
+            last = 0
+            for start, end, path in spans:
+                if start > last:
+                    parts.append(repr(value[last:start]))
+                parts.append(f'__import__("os").environ["{_input_setting(path)}"]')
+                last = end
+            if last < len(value):
+                parts.append(repr(value[last:]))
+            replacement = " + ".join(parts) if parts else token.string
+            tokens.append(token._replace(type=tokenize.NAME, string=replacement))
+        return tokenize.untokenize(tokens)
+    except (IndentationError, tokenize.TokenError):
+        return text
+
+
+def _quoted_input_settings(text: str, suffix: str) -> str:
+    """Handle full quoted path literals in R and shell scripts."""
+    pattern = re.compile(r"(?P<quote>['\"])(?P<value>[^'\"\n]*)(?P=quote)")
+
+    def replace(match: re.Match[str]) -> str:
+        value = match.group("value")
+        found = _PRIVATE_PATH.match(value)
+        if found is None or found.start() != 0:
+            return match.group(0)
+        key = _input_setting(value)
+        return f'Sys.getenv("{key}")' if suffix == ".r" else f'"${{{key}:?set {key}}}"'
+
+    return pattern.sub(replace, text)
+
+
+def clean_publication_text(name: str, text: str, settings, req: dict) -> str:
+    """Clean prose normally; keep code executable by replacing only actual private path literals."""
+    suffix = PurePosixPath(name).suffix.lower()
+    if suffix not in _CODE_SUFFIXES:
+        return _clean(text, settings, req)
+    rewritten = (_python_input_settings(text) if suffix == ".py"
+                 else _quoted_input_settings(text, suffix))
+    rewritten = sanitize(rewritten, settings.policy, [os.environ.get(settings.github.token_env, "")], limit=None)
+    rewritten = publish_clean(rewritten, settings, [req], limit=None)
+    return _ASSIGNMENT.sub(r"\1<redacted-secret>", rewritten)
+
+
+def code_syntax_issues(files: Mapping[str, str | bytes]) -> list[dict[str, str]]:
+    """Compile every published Python source before the edition can be written."""
+    issues = []
+    for name, body in files.items():
+        if not name.lower().endswith(".py") or not isinstance(body, str):
+            continue
+        try:
+            compile(body, name, "exec")
+        except (SyntaxError, ValueError, TypeError):
+            issues.append({"kind": "python_syntax", "path": name})
+    return issues
 
 
 def _outside_literals(text: str, transform) -> str:
@@ -880,9 +984,11 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
         lines.append("2. [진행 기록](run/progress.md) — 계획 변경과 과학 리뷰 기록")
     if "run/reproduce.md" in run_documents:
         lines.append("3. [재현 방법](run/reproduce.md) — 환경, 실행 명령과 입력 출처")
-    lines += ["4. [실행 기록](run/execution_record.md) — 요청, 결정, 비용과 Nextflow 기록",
-              "5. [출처](REFERENCES.md) — PMID, DOI, GEO와 URL",
-              "6. `code/`, `figures/`, `tables/` — 게시 가능한 코드·SVG·집계표", "",
+    if "run/task_record.md" in run_documents:
+        lines.append("4. [작업 지시 기록](run/task_record.md) — 단계별 원래 작업 지시")
+    lines += ["5. [실행 기록](run/execution_record.md) — 요청, 결정, 비용과 Nextflow 기록",
+              "6. [출처](REFERENCES.md) — PMID, DOI, GEO와 URL",
+              "7. `code/`, `figures/`, `tables/` — 게시 가능한 코드·SVG·집계표", "",
               "## 저장소 지도", "", "```text", "README.md", "report/", "run/", "code/", "figures/", "tables/",
               *(["studies/               갈래별 코드·그림·표·단계 보고서"] if branch_rows else []),
               "REFERENCES.md", "DATA_AND_LICENSES.md", "```", "",
@@ -930,7 +1036,7 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
                           run_documents: Mapping[str, str] | None = None,
                           internal_files: set[str] | None = None) -> dict[str, str | bytes]:
     """Return the stable publication layout; raw data and third-party full text never enter it."""
-    assets = {name: _clean(body, settings, req) for name, body in assets.items()
+    assets = {name: clean_publication_text(name, body, settings, req) for name, body in assets.items()
               if not _LITERATURE_OUTPUT.search(name.replace("\\", "/"))}
     report = portfolio_report(req, settings, assets)
     if check_document(report)["status"] != "PASS":
@@ -963,6 +1069,11 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
         prefix = f"studies/{branch_folder}/" if branch_folder else ""
         if suffix in _CODE_SUFFIXES and "scripts" in {part.casefold() for part in path.parts}:
             target = _unique_target(prefix + "code", name, used)
+            files[target] = body
+            source_targets[name] = target
+            track(name, target)
+        elif path.name.casefold() == "requirements.lock.txt":
+            target = _unique_target("run/environment", name, used)
             files[target] = body
             source_targets[name] = target
             track(name, target)
@@ -1026,7 +1137,7 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
         "DATA_AND_LICENSES.md": _clean(_data_licenses(req), settings, req),
     })
     run_documents = dict(run_documents or {})
-    for name in ("run/progress.md", "run/reproduce.md"):
+    for name in ("run/progress.md", "run/reproduce.md", "run/task_record.md"):
         if name in run_documents:
             files[name] = _clean(run_documents[name], settings, req)
     if branch_rows:
@@ -1050,13 +1161,16 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
             if source.startswith(prefix):
                 source_targets[f"{workdir}/outputs/{source[len(prefix):]}"] = target
     source_targets.update({name: name for name in files})
+    if isinstance(files.get("run/reproduce.md"), str):
+        files["run/reproduce.md"] = _rewrite_reproduce_commands(
+            files["run/reproduce.md"], source_targets)
     files = _rewrite_markdown_links(files, source_targets)
     broken = broken_markdown_links(files, source_targets)
     if broken:
         detail = ", ".join(f"{row['document']} -> {row['target']}" for row in broken)
         raise EditionCheckError(f"정리본 Markdown 링크가 깨졌습니다: {detail}")
 
-    issues = scan_publish_files(
+    issues = code_syntax_issues(files) + scan_publish_files(
         files, internal=tracked_internal if step_scope is not None else internal)
     blocking = [issue for issue in issues if issue["kind"] != "small_cell"]
     if blocking:

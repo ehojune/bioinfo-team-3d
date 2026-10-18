@@ -191,6 +191,45 @@ def test_editor_documents_remove_secrets_and_personal_paths(tmp_path, monkeypatc
     assert clean_document(table, hub.s, req) == table  # files are not GitHub comments; never truncate rows
 
 
+def test_reproduce_is_a_short_guide_and_long_instructions_are_separate(tmp_path):
+    hub = Hub(tmp_path)
+    req = hub.requests["req_test"]
+    req.update(
+        plan={"steps": [
+            {"id": "env", "instruction": "환경을 고정한다.",
+             "outputs": ["outputs/env/requirements.lock.txt"]},
+            {"id": "analysis", "depends_on": ["env"],
+             "instruction": "아주 긴 작업 지시 " * 500,
+             "outputs": ["outputs/result.tsv"]},
+        ]},
+        results={"analysis": {"text": "완료"}},
+    )
+    assets = {
+        "steps/env/outputs/env/requirements.lock.txt": "python==3.12\npandas==2.2.2\n",
+        "steps/analysis/outputs/scripts/analyze.py":
+            '__import__("os").environ["LABHQ_INPUT_COHORT_TSV"]\n',
+    }
+    bundle_readme = ("## 단계 순서\n\n- `env` (의존: 없음)\n- `analysis` (의존: env)\n\n"
+                     "## 다시 실행\n\n- `cd steps/analysis && python outputs/scripts/analyze.py`\n")
+
+    docs = draft_documents(
+        req, hub.s, assets=assets,
+        environment_records={"env": {"python": "3.12", "status": "complete"}},
+        bundle_readme=bundle_readme,
+    )
+
+    reproduce = docs["REPRODUCE.md"]
+    for heading in ("## 고정 환경", "## 입력 설정", "## 실행 순서와 명령", "## 예상 출력", "## 재현 가능 범위"):
+        assert heading in reproduce
+    assert "LABHQ_INPUT_COHORT_TSV" in reproduce
+    assert "requirements.lock.txt" in reproduce and "3.12" in reproduce
+    assert "공개 자료로 다시 만들 수 있는 것" in reproduce
+    assert "접근 제한 자료가 필요한 것" in reproduce
+    assert len(reproduce) < 6000
+    assert "아주 긴 작업 지시" not in reproduce
+    assert "아주 긴 작업 지시" in docs["TASK_RECORD.md"]
+
+
 async def test_clarify_and_storage_share_one_card(tmp_path, monkeypatch):
     from labhq.orchestrator.cso import Orchestrator
     from labhq.gateway.server import Hub as RealHub, RequestIn

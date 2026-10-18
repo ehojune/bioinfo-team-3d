@@ -185,7 +185,29 @@ def test_html_embeds_figures_korean_text_and_allows_no_network(tmp_path):
     assert "<script>" not in page and "&lt;script&gt;alert(1)&lt;/script&gt;" in page
     assert 'class="anchor">[s1/c1]' in page
     assert "과학 부록" in page and "과학 리뷰 완료" in page
-    assert page.index("TP53 변이를 사례군") < page.index("결론과 권고") < page.index("과학 부록")
+    assert page.index("<h1>결론과 권고</h1>") < page.index("TP53 변이를 사례군")
+    assert page.index("<main class=\"report\">") < page.index("과학 부록")
+
+
+def test_cover_uses_the_complete_report_title_and_print_css_keeps_figures_readable(tmp_path):
+    title = "아버지의 컴퓨터 직업과 자녀 성비: 인구 출생 자료, 기전 문헌, 정자 메틸화 분석"
+    _settings, request, _tasks, bundle = build(
+        tmp_path,
+        f"# {title}\n\n![그래픽 초록](steps/s1/outputs/graphical_abstract.svg)\n\n그림 설명입니다.\n",
+        files={"outputs/graphical_abstract.svg": SVG.encode("utf-8")},
+    )
+    request["text"] = "이 문장은 정식 연구 제목이 아니라 매우 긴 원 요청입니다. " * 20
+
+    page, missing = build_report_html(request, bundle)
+
+    assert missing == []
+    assert f"<h1>{title}</h1>" in page
+    assert title + "…" not in page
+    assert 'class="graphical-abstract"' in page
+    assert "figure { break-inside: avoid; break-after: avoid-page;" in page
+    assert "figure + p { break-before: avoid-page;" in page
+    assert ".graphical-abstract img { width: 100%; max-width: none; max-height: none;" in page
+    assert ".cover { min-height: 0;" in page
 
 
 def test_html_marks_a_figure_it_cannot_embed_and_never_reads_outside_the_bundle(tmp_path):

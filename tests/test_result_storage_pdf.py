@@ -263,7 +263,7 @@ async def test_resumed_legacy_draft_uses_report_md_for_korean_qc(tmp_path, monke
     assert "README.md" in puts(calls)
     uploaded_readme = base64.b64decode(puts(calls)["README.md"]["content"]).decode()
     assert "](report/report.md)" in uploaded_readme and "](report.md)" not in uploaded_readme
-    assert "labhq/results/req_test/report/report.md" in puts(calls)
+    assert "labhq/results/req_test/report/report.md" not in puts(calls)
     assert saved["report_url"].endswith("/report/report.md")
 
 

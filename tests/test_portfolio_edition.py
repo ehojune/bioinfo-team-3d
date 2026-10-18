@@ -1,8 +1,10 @@
+import py_compile
 from pathlib import Path
 
 import labhq.portfolio as portfolio
 from labhq.korean_qc import check_document
 from labhq.portfolio import build_portfolio_files, scan_publish_files
+from labhq.result_storage import draft_documents
 from labhq.settings import DataZone, Settings
 
 
@@ -146,6 +148,53 @@ def test_fixed_request_bundle_builds_the_portfolio_contract(tmp_path):
     assert not any(name.startswith("run/nextflow/") for name in files)
     assert check_document(readme)["status"] == "PASS"
     assert check_document(files["report/report.md"])["status"] == "PASS"
+
+
+def test_published_python_uses_input_setting_without_touching_archive_members(tmp_path):
+    settings, request, bundle, assets, images, decisions, tasks = portfolio_fixture(tmp_path)
+    assets["steps/analysis/outputs/scripts/build_crosswalk.py"] = (
+        "from pathlib import Path\n"
+        "archive_member = '/Occupation Activities.txt'\n"
+        "source = Path('C:/Users/alice/private/cohort.tsv')\n"
+        "print(archive_member, source)\n"
+    )
+
+    files = build_portfolio_files(
+        request, settings, assets, images, decisions=decisions, tasks=tasks, bundle=bundle)
+
+    name = next(name for name in files if name.endswith("build_crosswalk.py"))
+    code = files[name]
+    assert "/Occupation Activities.txt" in code
+    assert "Activities.txt" in code and "LABHQ_INPUT_COHORT_TSV" in code
+    assert "C:/Users/alice" not in code and "<local-path>" not in code
+    path = tmp_path / "published.py"
+    path.write_text(code, encoding="utf-8")
+    py_compile.compile(str(path), doraise=True)
+
+
+def test_portfolio_reproduce_links_canonical_code_and_lock_paths(tmp_path):
+    settings, request, bundle, assets, images, decisions, tasks = portfolio_fixture(tmp_path)
+    request["plan"]["steps"][0]["outputs"] = ["outputs/scripts/analyze.py"]
+    assets["steps/env/outputs/env/requirements.lock.txt"] = "pandas==2.2.2\n"
+    docs = draft_documents(
+        request, settings, assets=assets,
+        environment_records={"env": {"python": "3.12"}},
+        bundle_readme=("## 단계 순서\n\n- `analysis` (의존: 없음)\n\n## 다시 실행\n\n"
+                       "- `cd steps/analysis && python outputs/scripts/analyze.py`\n"),
+    )
+
+    files = build_portfolio_files(
+        request, settings, assets, images, decisions=decisions, tasks=tasks, bundle=bundle,
+        run_documents={"run/reproduce.md": docs["REPRODUCE.md"],
+                       "run/task_record.md": docs["TASK_RECORD.md"]},
+    )
+
+    assert files["run/environment/requirements.lock.txt"] == "pandas==2.2.2\n"
+    reproduce = files["run/reproduce.md"]
+    assert "python code/analyze.py" in reproduce
+    assert "cd steps/analysis" not in reproduce
+    assert "](environment/requirements.lock.txt)" in reproduce
+    assert "run/task_record.md" in files["README.md"]
 
 
 def test_publish_scan_catches_credentials_paths_signed_urls_and_small_cells():

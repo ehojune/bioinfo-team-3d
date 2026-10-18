@@ -162,7 +162,7 @@ async def test_direct_upload_rejects_unreviewed_request(tmp_path):
         await ResultStorage(hub).upload("req_test", {"README.md": "result"})
 
 
-async def test_new_repository_root_and_compatibility_payload_share_table_selection(tmp_path):
+async def test_new_repository_has_one_canonical_payload_without_compatibility_copy(tmp_path):
     hub = Hub(tmp_path)
     internal = tmp_path / "internal"
     internal.mkdir()
@@ -217,12 +217,42 @@ async def test_new_repository_root_and_compatibility_payload_share_table_selecti
     assert {"README.md", "report/report.md", "tables/result_summary.tsv"} <= names
     assert "report.md" not in names and not any(name.startswith("steps/") for name in names)
     compat = "labhq/results/req_test/"
-    assert compat + "report.md" in names
-    assert compat + "steps/s1/outputs/notes.txt" not in names
+    assert not any(name.startswith(compat) for name in names)
     assert not any(any(table in name for table in ("sample_metadata.tsv", "by_group.tsv", "patient_summary.tsv"))
                    for name in names)
-    assert compat + "steps/s1/outputs/result_summary.tsv" in names
     assert not any(name.endswith(("rows.json", "samples.txt")) for name in names)
+
+
+async def test_existing_repository_keeps_the_compatibility_copy(tmp_path):
+    hub = Hub(tmp_path)
+    hub.requests["req_test"].update(
+        pi_reviewed_at=1,
+        result_storage={"mode": "existing", "repo": "owner/study", "allow_public": True},
+    )
+    names = []
+
+    class GitHub:
+        async def repo_info(self, _repo):
+            return {"private": True, "default_branch": "main"}
+
+        async def repository_is_empty(self, _repo, _branch):
+            return False
+
+        async def put_file(self, _repo, name, _body, _message, _branch):
+            names.append(name)
+
+        async def put_image(self, _repo, name, _body, _branch):
+            names.append(name)
+
+        async def put_binary(self, _repo, name, _body, _branch, _message):
+            names.append(name)
+
+    service = ResultStorage(hub)
+    service.client = lambda: GitHub()
+    await service.upload("req_test", {"README.md": "result", "report.md": "report"})
+
+    assert "labhq/results/req_test/README.md" in names
+    assert "labhq/results/req_test/report.md" in names
 
 
 async def test_upload_keeps_public_step_small_cells_outside_the_internal_scope(tmp_path):
@@ -274,8 +304,8 @@ async def test_upload_keeps_public_step_small_cells_outside_the_internal_scope(t
     await service.upload("req_test", docs)
 
     assert public_table in calls
-    assert f"labhq/results/req_test/{public_table}" in calls
-    assert not any(name.removeprefix("labhq/results/req_test/") in internal_tables for name in calls)
+    assert not any(name.startswith("labhq/results/req_test/") for name in calls)
+    assert not any(name in internal_tables for name in calls)
 
 
 async def test_public_payload_keeps_json_and_text_outputs(tmp_path):
@@ -311,8 +341,7 @@ async def test_public_payload_keeps_json_and_text_outputs(tmp_path):
     await service.upload("req_test", docs)
 
     assert "tables/rows.json" in calls and "run/samples.txt" in calls
-    assert "labhq/results/req_test/tables/rows.json" in calls
-    assert "labhq/results/req_test/run/samples.txt" in calls
+    assert not any(name.startswith("labhq/results/req_test/") for name in calls)
 
 
 async def test_public_project_without_permission_stays_local(tmp_path):
