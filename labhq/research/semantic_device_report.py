@@ -159,6 +159,28 @@ def _count_tree(value: Any) -> Any:
     return None
 
 
+def _model_failure(model: Mapping[str, Any], *, code: str, device: str, stage: str,
+                   label: str, at: str) -> dict[str, str] | None:
+    status = model.get("status")
+    if status in {None, "ok"}:
+        return None
+    outcome = "timeout으로" if status == "timeout" else "error로"
+    return {
+        "code": code, "device": device, "stage": stage, "at": at,
+        "message": f"{label} 관측이 {outcome} 끝나 계산하지 못했습니다.",
+    }
+
+
+def _append_error(errors: list[dict[str, str]], issue: dict[str, str] | None) -> dict[str, str] | None:
+    if issue is None:
+        return None
+    previous = next((row for row in errors if row.get("code") == issue["code"]), None)
+    if previous is not None:
+        return previous
+    errors.append(issue)
+    return issue
+
+
 def _device(device_id: str, name: str, status: str, *, inputs: list[str], decisions: list[Any], impact: str,
             code: list[tuple[str, str]], records: list[str], **extra: Any) -> dict[str, Any]:
     return {
@@ -295,22 +317,33 @@ def _semantic_devices(req: Mapping[str, Any], plan: Mapping[str, Any], settings:
     provenance = _dict((observation or {}).get("provenance"))
     objects = _dict((observation or {}).get("objects"))
     fit = _dict((observation or {}).get("input_fit"))
+    observation_at = _stamp((observation or {}).get("ts"))
+    provenance_error = _append_error(errors, _model_failure(
+        provenance, code=f"{_MEANING_KEY}_shadow_provenance_failed", device=_MEANING_KEY,
+        stage="shadow_provenance", label="재사용 후보 provenance", at=observation_at,
+    )) if observation else None
+    objects_error = _append_error(errors, _model_failure(
+        objects, code=f"{_MEANING_KEY}_shadow_objects_failed", device="운영 ontology",
+        stage="shadow_objects", label="객체·관계", at=observation_at,
+    )) if observation else None
 
-    def model_status(model: Mapping[str, Any]) -> str:
-        if semantic_error or observation_issue or model.get("status") not in {None, "ok"}:
+    def model_status(model_error: Mapping[str, Any] | None) -> str:
+        if semantic_error or observation_issue or model_error:
             return "오류"
         if off:
             return "꺼짐"
         return "작동" if observation else "켜졌으나 미사용"
 
-    sem_status = model_status(provenance)
+    sem_status = model_status(provenance_error)
     sem_decisions: list[Any] = []
-    if observation:
+    if observation and not provenance_error:
         sem_decisions.append({"input_fit": {key: int(fit.get(key) or 0) for key in ("fit", "mismatch", "unknown")}})
         sem_decisions.append({"reuse_candidates": int(provenance.get("candidates") or 0),
                               "excluded": {str(key): int(value)
                                            for key, value in _dict(provenance.get("excluded")).items()
                                            if isinstance(value, int)}})
+    elif provenance_error:
+        sem_decisions.append("재사용 후보 provenance 계산 못 함")
     elif off:
         sem_decisions.append({"off": off})
     else:
@@ -319,30 +352,39 @@ def _semantic_devices(req: Mapping[str, Any], plan: Mapping[str, Any], settings:
         _MEANING_KEY, _MEANING_KEY, sem_status,
         inputs=["request.references", "plan.steps[].input_refs", "results[].output_types", "semantics shadow 기록"],
         decisions=sem_decisions,
-        impact=("입력 적합도와 재사용 후보를 계산" if observation else "요청 행동에 미친 영향 없음; 평가 안 됨"),
+        impact=("입력 적합도와 재사용 후보를 계산하지 못함" if provenance_error else
+                "입력 적합도와 재사용 후보를 계산" if observation else
+                "요청 행동에 미친 영향 없음; 평가 안 됨"),
         code=[(_SHADOW_MODULE, "compute_provenance"), (_INPUT_FIT_MODULE, "evaluate")],
         records=["semantic_report.json:devices[semantics]", "state/semantics/shadow.jsonl",
                  "request.semantic_devices.errors"],
-        observation_at=_stamp((observation or {}).get("ts")), epoch=(observation or {}).get("epoch"),
+        observation_at=observation_at, epoch=(observation or {}).get("epoch"),
         **({"off": off} if off else {}),
-        **({"error": semantic_error or observation_issue} if semantic_error or observation_issue else {}),
+        **({"error": provenance_error or semantic_error or observation_issue}
+           if provenance_error or semantic_error or observation_issue else {}),
     )
 
-    ontology_status = model_status(objects)
-    object_counts = {key: counted for key, value in objects.items() if key not in {"status", "error_kind"}
-                     and (counted := _count_tree(value)) is not None}
-    ontology_decisions: list[Any] = ([{"object_relation_counts": object_counts}]
+    ontology_status = model_status(objects_error)
+    count_fields = ("objects", "links", "artifact_types", "link_total", "unresolved",
+                    "unresolved_by", "pending_approvals", "pending_jobs")
+    object_counts = {key: counted for key in count_fields if key in objects
+                     and (counted := _count_tree(objects[key])) is not None}
+    ontology_decisions: list[Any] = (["객체·관계 집계 계산 못 함"] if objects_error else
+                                     [{"object_relation_counts": object_counts}]
                                      if observation else [{"off": off}] if off else
                                      ["평가 안 됨: 요청별 객체·관계 기록 없음"])
     ontology = _device(
         "operational_ontology", "운영 ontology", ontology_status,
         inputs=["plan", "results", "승인·task 상태의 정규화 객체와 관계"], decisions=ontology_decisions,
-        impact=("객체·관계와 미해결 항목을 집계" if observation else "CSO·직원 행동에 미친 영향 없음; 평가 안 됨"),
+        impact=("객체·관계와 미해결 항목을 계산하지 못함" if objects_error else
+                "객체·관계와 미해결 항목을 집계" if observation else
+                "CSO·직원 행동에 미친 영향 없음; 평가 안 됨"),
         code=[(_SHADOW_MODULE, "compute_objects"),
               (_OBJECTS_MODULE, "build_view")],
         records=["semantic_report.json:devices[operational_ontology]", "state/semantics/shadow.jsonl"],
         **({"off": off} if off else {}),
-        **({"error": semantic_error or observation_issue} if semantic_error or observation_issue else {}),
+        **({"error": objects_error or semantic_error or observation_issue}
+           if objects_error or semantic_error or observation_issue else {}),
     )
 
     ab = _dict(req.get("semantics_ab"))

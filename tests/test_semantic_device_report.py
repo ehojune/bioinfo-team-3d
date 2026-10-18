@@ -256,6 +256,42 @@ def test_current_request_latest_malformed_observation_is_an_error(tmp_path):
     assert "RuntimeError" not in rendered and "Traceback" not in rendered
 
 
+def test_failed_shadow_models_do_not_publish_zero_counts_or_runtime_as_relations(tmp_path):
+    settings, request = fixed_request(tmp_path)
+    request["semantics_observation"]["provenance"] = {
+        "status": "error", "error_kind": "RuntimeError", "ms": 12.5,
+    }
+    request["semantics_observation"]["objects"] = {
+        "status": "timeout", "error_kind": "TimeoutError", "ms": 987.6,
+    }
+
+    report = build_report(request, settings)
+    semantics = next(row for row in report["devices"] if row["id"] == "semantics")
+    ontology = next(row for row in report["devices"] if row["id"] == "operational_ontology")
+
+    assert semantics["status"] == ontology["status"] == "오류"
+    assert all("reuse_candidates" not in decision for decision in semantics["decisions"]
+               if isinstance(decision, dict))
+    assert semantics["impact"] == "입력 적합도와 재사용 후보를 계산하지 못함"
+    assert ontology["decisions"] == ["객체·관계 집계 계산 못 함"]
+    assert ontology["impact"] == "객체·관계와 미해결 항목을 계산하지 못함"
+    assert "object_relation_counts" not in json.dumps(ontology["decisions"], ensure_ascii=False)
+    assert "ms" not in json.dumps(ontology["decisions"], ensure_ascii=False)
+
+    assert semantics["error"] in report["errors"]
+    assert ontology["error"] in report["errors"]
+    assert semantics["error"] == {
+        "code": "semantics_shadow_provenance_failed", "device": "semantics",
+        "stage": "shadow_provenance", "at": "2026-10-18T13:58:20+09:00",
+        "message": "재사용 후보 provenance 관측이 error로 끝나 계산하지 못했습니다.",
+    }
+    assert ontology["error"] == {
+        "code": "semantics_shadow_objects_failed", "device": "운영 ontology",
+        "stage": "shadow_objects", "at": "2026-10-18T13:58:20+09:00",
+        "message": "객체·관계 관측이 timeout으로 끝나 계산하지 못했습니다.",
+    }
+
+
 def test_observation_exception_text_is_not_published(tmp_path):
     settings, request = fixed_request(tmp_path)
     request.pop("semantics_observation")
