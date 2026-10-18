@@ -308,6 +308,7 @@ def test_zone_basename_in_plain_prose_is_not_internal_provenance():
 def test_unbranched_request_adds_the_semantic_report_to_the_existing_file_list(tmp_path):
     settings, request, bundle, assets, images, decisions, tasks = portfolio_fixture(tmp_path)
     request = deepcopy(request)
+    request["research_contract"] = {"schema_version": 1}
 
     files = build_portfolio_files(
         request, settings, assets, images, decisions=decisions, tasks=tasks, bundle=bundle,

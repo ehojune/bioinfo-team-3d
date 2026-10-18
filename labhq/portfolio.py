@@ -1706,7 +1706,7 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
             encoding="utf-8", errors="replace")
     elif "run/semantic_report.md" not in run_documents:
         from .research import semantic_device_report
-        if semantic_device_report.enabled(settings):
+        if semantic_device_report.applies(req, settings):
             run_documents["run/semantic_report.md"] = semantic_device_report.render_report(
                 semantic_device_report.build_report(req, settings))
     for name in (

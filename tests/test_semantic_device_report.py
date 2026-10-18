@@ -1,11 +1,18 @@
+import asyncio
 import json
 import platform
+import threading
 from pathlib import Path
 
+import pytest
+
+from labhq.gateway.server import Hub
 from labhq.portfolio import build_portfolio_files
 from labhq.request_bundle import build_request_bundle
+from labhq.research import semantics_shadow
 from labhq.research.semantic_device_report import build_report, render_report
 from labhq.settings import Settings
+from labhq.vocab.topic_checklists import ChecklistItem
 from tests.test_portfolio_edition import portfolio_fixture
 
 
@@ -167,3 +174,141 @@ def test_semantic_report_is_on_by_default_and_can_be_disabled(tmp_path):
     bundle = Path(build_request_bundle(request, settings)["path"])
     assert not (bundle / "semantic_report.md").exists()
     assert not (bundle / "semantic_report.json").exists()
+
+
+def test_report_redacts_authorization_bearer_and_basic_credentials(tmp_path):
+    settings, request = fixed_request(tmp_path)
+    request["review"]["checklist"][0]["evidence"] = (
+        "Authorization: Bearer bearer-value Bearer standalone-value")
+    request["review"]["checklist"][1]["evidence"] = "Authorization: Basic basic-value"
+
+    payload = json.dumps(build_report(request, settings), ensure_ascii=False)
+
+    assert "bearer-value" not in payload
+    assert "standalone-value" not in payload
+    assert "basic-value" not in payload
+
+
+def test_report_redacts_arbitrary_posix_absolute_paths(tmp_path):
+    settings, request = fixed_request(tmp_path)
+    paths = ["/workspace/team/private.tsv", "/scratch/run/secret.txt",
+             "/project/cohort/sample.csv", "/root/.config/credential"]
+    request["review"]["checklist"][0]["evidence"] = " ".join(paths)
+
+    payload = json.dumps(build_report(request, settings), ensure_ascii=False)
+
+    assert all(path not in payload for path in paths)
+    assert "<local-path>" in payload
+
+
+def test_other_request_broken_shadow_line_does_not_mark_current_request_error(tmp_path):
+    settings, request = fixed_request(tmp_path)
+    request.pop("semantics_observation")
+    settings.semantics = {"mode": "shadow"}
+    root = Path(settings.gateway.state_dir) / "semantics"
+    root.mkdir(parents=True)
+    valid = {
+        "type": "request", "request_id": request["id"], "ts": 1792299500, "epoch": 4,
+        "provenance": {"status": "ok", "candidates": 0, "excluded": {}},
+        "objects": {"status": "ok", "relations": 1},
+        "input_fit": {"fit": 1, "mismatch": 0, "unknown": 0}, "referenced": False,
+    }
+    (root / "shadow.jsonl").write_text(
+        '{"type":"request","request_id":"another-request"\n' + json.dumps(valid) + "\n",
+        encoding="utf-8")
+
+    report = build_report(request, settings)
+    semantics = next(row for row in report["devices"] if row["id"] == "semantics")
+
+    assert semantics["status"] == "작동"
+    assert "error" not in semantics
+
+
+def test_current_request_latest_malformed_observation_is_an_error(tmp_path):
+    settings, request = fixed_request(tmp_path)
+    request.pop("semantics_observation")
+    settings.semantics = {"mode": "shadow"}
+    root = Path(settings.gateway.state_dir) / "semantics"
+    root.mkdir(parents=True)
+    valid = {
+        "type": "request", "request_id": request["id"], "ts": 1792299400, "epoch": 4,
+        "provenance": {"status": "ok", "candidates": 0, "excluded": {}},
+        "objects": {"status": "ok", "relations": 1},
+        "input_fit": {"fit": 1, "mismatch": 0, "unknown": 0}, "referenced": False,
+    }
+    malformed = {**valid, "ts": 1792299500,
+                 "provenance": {"status": "ok", "candidates": -1, "excluded": {}}}
+    (root / "shadow.jsonl").write_text(
+        json.dumps(valid) + "\n" + json.dumps(malformed) + "\n", encoding="utf-8")
+
+    report = build_report(request, settings)
+    semantics = next(row for row in report["devices"] if row["id"] == "semantics")
+
+    assert semantics["status"] == "오류"
+    assert "손상" in semantics["error"]["reason"]
+
+
+def test_report_uses_the_checklist_snapshot_frozen_with_the_plan(tmp_path, monkeypatch):
+    settings, request = fixed_request(tmp_path)
+    request["plan"]["checklist"] = {"frozen_check": "step:qc"}
+    request["review"]["checklist"] = [
+        {"id": "frozen_check", "status": "done", "evidence": "qc/result.tsv"}]
+    request["research_contract"]["checklist_snapshot"] = [
+        {"id": "frozen_check", "check": "실행 당시 점검", "why": "실행 당시 이유",
+         "topic": "dna_methylation"}]
+    monkeypatch.setattr(
+        "labhq.research.semantic_device_report.topic_checklists.load",
+        lambda: {"dna_methylation": [
+            ChecklistItem("new_check", "업데이트 뒤 점검", "새 이유", "dna_methylation")]})
+
+    checklist = next(row for row in build_report(request, settings)["devices"]
+                     if row["id"] == "checklist")
+
+    assert [item["id"] for item in checklist["items"]] == ["frozen_check"]
+
+
+def test_general_request_bundle_has_no_research_semantic_report(tmp_path):
+    settings, request = fixed_request(tmp_path)
+    request.pop("research_contract")
+
+    bundle = Path(build_request_bundle(request, settings)["path"])
+
+    assert not (bundle / "semantic_report.md").exists()
+    assert not (bundle / "semantic_report.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_terminal_bundle_waits_for_shadow_and_freezes_its_observation(tmp_path, monkeypatch):
+    settings, request = fixed_request(tmp_path)
+    settings.semantics = {"mode": "shadow", "timeout_s": 2}
+    request.pop("semantics_observation")
+    hub = Hub(settings)
+    hub.requests[request["id"]] = request
+    started, release, bundle_called = threading.Event(), threading.Event(), threading.Event()
+    captured = {}
+
+    def delayed_work(_gen, _snap):
+        started.set()
+        assert release.wait(5)
+        semantics_shadow.append_line(hub.semantics_shadow.paths, {
+            "type": "request", "request_id": request["id"], "ts": 1792299500, "epoch": 1,
+            "provenance": {"status": "ok", "candidates": 0, "excluded": {}},
+            "objects": {"status": "ok", "relations": 1},
+            "input_fit": {"fit": 1, "mismatch": 0, "unknown": 0}, "referenced": False,
+        })
+
+    def capture_bundle(_rid, frozen, _tasks, _caps):
+        captured["request"] = frozen
+        bundle_called.set()
+        return {"bundle": {"path": str(tmp_path / "bundle"), "status": "complete"}}
+
+    monkeypatch.setattr(hub.semantics_shadow, "work", delayed_work)
+    monkeypatch.setattr(hub, "_bundle_outcome", capture_bundle)
+    task = hub.schedule_terminal(request["id"], "request.completed", {"ok": True})
+    assert task is not None and await asyncio.to_thread(started.wait, 2)
+    await asyncio.to_thread(bundle_called.wait, 0.3)
+    release.set()
+    await asyncio.wait_for(task, 5)
+
+    assert captured["request"]["semantics_observation"]["request_id"] == request["id"]
+    hub.store.close()

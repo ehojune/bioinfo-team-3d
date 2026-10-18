@@ -779,7 +779,7 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
         execution = "\n\n".join(p for p in [str(req.get("execution_record") or ""), legacy, tool_calls] if p)
         from .research import semantic_device_report
         device_report = (semantic_device_report.build_report(req, settings)
-                         if semantic_device_report.enabled(settings) else None)
+                         if semantic_device_report.applies(req, settings) else None)
         replaced = _superseded(req, tasks)
         if replaced:
             execution += ("\n\n## 요청 묶음: 대체됨\n\n" +

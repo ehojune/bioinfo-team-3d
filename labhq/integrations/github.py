@@ -42,6 +42,12 @@ SECRET_PATTERNS = [
     r"AKIA[0-9A-Z]{16}", r"AIza[0-9A-Za-z_\-]{30,}", r"xox[abpr]-[A-Za-z0-9-]{10,}",
     r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----",
 ]
+AUTHORIZATION_CREDENTIAL = re.compile(
+    r"(?i)(\bauthorization\b[\"']?\s*[:=]\s*[\"']?)(?:(?:bearer|basic)\s+)?[^\s,;<}\"']+"
+)
+AUTH_SCHEME_CREDENTIAL = re.compile(
+    r"(?i)(\bbearer\s+)(?!<redacted-secret>)[A-Za-z0-9._~+/=-]{8,}"
+)
 # A credential carried as a URL query or fragment parameter (signed S3/GCS/Azure/CloudFront URLs, API keys,
 # OAuth tokens): the parameter name stays, its value is dropped. Names are compared percent-decoded
 # (`X%2DAmz%2DSignature`), so a separator inside a name never hides the parameter after it.
@@ -99,6 +105,12 @@ def redact_url_credentials(text: str) -> str:
             out += [text[last:m.end()], "<redacted-secret>"]
             last = value.end()
     return "".join(out) + text[last:]
+
+
+def redact_authorization_credentials(text: str) -> str:
+    """Mask Authorization header values and standalone Bearer credentials."""
+    text = AUTHORIZATION_CREDENTIAL.sub(r"\1<redacted-secret>", text)
+    return AUTH_SCHEME_CREDENTIAL.sub(r"\1<redacted-secret>", text)
 
 
 def strip_reference_url_queries(text: str, requests: Any) -> str:
@@ -199,6 +211,7 @@ def sanitize(text: str, policy: PolicySettings, extra_secrets: list[str] | tuple
         out = "\n".join(_sanitize_path_line(line, zones) for line in out.split("\n"))
     for pat in SECRET_PATTERNS:
         out = re.sub(pat, "<redacted-secret>", out)
+    out = redact_authorization_credentials(out)
     out = redact_url_credentials(out)
     for secret in extra_secrets:
         if secret and len(secret) >= 8:

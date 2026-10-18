@@ -2341,6 +2341,13 @@ def checklist_meta(catalog: dict[str, list[topic_checklists.ChecklistItem]]) -> 
     return {"workspace_files": files} if files else {}
 
 
+def checklist_snapshot(plan: Any, catalog: dict[str, list[topic_checklists.ChecklistItem]],
+                       precedents: Any) -> list[dict[str, str]]:
+    """The exact checklist requirements used by this frozen plan."""
+    return [{"id": item.id, "check": item.check, "why": item.why, "topic": item.topic}
+            for item in required_checklist_items(plan, catalog, precedents)]
+
+
 def planning_guidance(catalog: dict[str, list[topic_checklists.ChecklistItem]], precedents: Any) -> str:
     # Every plan sees the public resource reference (PI 2026-10-06, #435 C), with or without a topic checklist.
     resources = public_resources.prompt_rule()
@@ -4747,12 +4754,13 @@ class Orchestrator:
         if warnings:
             summary += f" 경고 {len(warnings)}건: 누락 칸·실패 단계는 한계로 남습니다."
         device_report = None
-        if semantic_device_report.enabled(self.hub.s):
+        if semantic_device_report.applies(req, self.hub.s):
             device_report = semantic_device_report.build_report(req, self.hub.s)
             summary += "\n\n" + semantic_device_report.summary(device_report)
         detail = {"gate": "research_evidence", "plan_sha256": contract["plan_sha256"],
                   **({"semantic_report": {"summary": semantic_device_report.summary(device_report),
-                                            "path": semantic_device_report.REPORT_MD}}
+                                            "path": semantic_device_report.REPORT_MD,
+                                            "content": semantic_device_report.render_report(device_report)}}
                      if device_report is not None else {}),
                   **({"warnings": warnings} if warnings else {}),
                    "choices": list(EVIDENCE_CHOICES), "revise_continues": revise_continues,
@@ -5542,6 +5550,11 @@ class Orchestrator:
                 stored = req.get("research_contract") or {}
                 previous = stored.get("approval")
                 approval = refresh_plan_approval(plan, previous)
+                plan_sha256 = approval.get("current_sha256") or approval.get("target_sha256")
+                frozen_checklist = (stored.get("checklist_snapshot")
+                                    if stored.get("plan_sha256") == plan_sha256
+                                    and isinstance(stored.get("checklist_snapshot"), list)
+                                    else checklist_snapshot(plan, checklist_catalog, req.get("analysis_precedents")))
                 # Fixed with the request: a resume keeps its own execution flag, checkpoint receipts and failure
                 # record. The current config applies only to a request that has no contract yet (#90 CP2).
                 execution_enabled = (bool(stored["execution_enabled"]) if "execution_enabled" in stored
@@ -5552,8 +5565,9 @@ class Orchestrator:
                     "work_kind": "research",
                     "execution_enabled": execution_enabled,
                     "final_checkpoint": bool(stored.get("final_checkpoint", (req.get("research_options") or {}).get("final_checkpoint", False)) and execution_enabled),
-                    "plan_sha256": approval.get("current_sha256") or approval.get("target_sha256"),
+                    "plan_sha256": plan_sha256,
                     "pack_snapshot": active_pack_hashes,
+                    "checklist_snapshot": frozen_checklist,
                     **({} if legacy_pack_contract else {"pack_applicability": plan.get("pack_applicability") or {}}),
                     "approval": approval,
                 }
@@ -6858,7 +6872,7 @@ class Orchestrator:
             else:
                 report = _before_bench_block(report, "## 한계\n" + section)
         metadata = []
-        if req.get("research_contract") and semantic_device_report.enabled(self.hub.s):
+        if semantic_device_report.applies(req, self.hub.s):
             report_request = {**req, "results": results, "review": review}
             metadata.append(semantic_device_report.summary(
                 semantic_device_report.build_report(report_request, self.hub.s)))

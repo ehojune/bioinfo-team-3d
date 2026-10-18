@@ -1198,6 +1198,19 @@ class Hub:
 
     async def _commit_terminal_async(self, rid: str, data: dict, request: dict, tasks: dict,
                                      runner_capabilities: dict) -> None:
+        from ..research import semantic_device_report
+        if self.semantics_shadow is not None and semantic_device_report.applies(request, self.s):
+            timeout = max(5.0, float(self.semantics_shadow.cfg.timeout_s) + 1.0)
+            drained = await asyncio.to_thread(self.semantics_shadow.drain, timeout)
+            if drained:
+                semantic_device_report.freeze_observation(request, self.s)
+            else:
+                request["semantics_observation_error"] = "관측 worker 완료 확인 실패"
+            for key in ("semantics_observation", "semantics_observation_error"):
+                if key in request:
+                    self.requests[rid][key] = copy.deepcopy(request[key])
+                else:
+                    self.requests[rid].pop(key, None)
         outcome = await asyncio.to_thread(
             self._bundle_outcome, rid, request, tasks, runner_capabilities)
         if cp4.summary(request) != cp4.summary(self.requests[rid]):

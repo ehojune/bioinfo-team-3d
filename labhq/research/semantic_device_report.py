@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any
@@ -19,30 +18,28 @@ _MEANING_KEY = 'semantics'
 _SHADOW_MODULE = f"labhq/research/{_MEANING_KEY}_shadow.py"
 _OBJECTS_MODULE = f"labhq/research/{_MEANING_KEY}_objects.py"
 _INPUT_FIT_MODULE = f"labhq/research/{_MEANING_KEY}_input_fit.py"
-_PRIVATE_PATH = re.compile(
-    r"(?i)(?:[A-Za-z]:[\\/][^\s|,;]+|\\\\[^\s|,;]+|~[\\/][^\s|,;]+|"
-    r"/(?:home|Users|mnt|srv|data|tmp|var|opt)/[^\s|,;]+)"
-)
-_SECRET = re.compile(
-    r"(?i)\b(?:authorization|bearer|api[_-]?key|access[_-]?token|secret|password)\s*[:=]\s*\S+"
-)
-
-
 def enabled(settings: Any) -> bool:
     return bool(getattr(getattr(settings, "research", None), "semantic_report", True))
+
+
+def applies(req: Mapping[str, Any], settings: Any) -> bool:
+    """The device audit belongs only to requests that entered the research contract."""
+    return enabled(settings) and isinstance(req.get("research_contract"), Mapping)
 
 
 def _dict(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, Mapping) else {}
 
 
-def _public(value: Any) -> Any:
+def _public(value: Any, settings: Any, req: Mapping[str, Any]) -> Any:
     if isinstance(value, str):
-        return _PRIVATE_PATH.sub("<local-path>", _SECRET.sub("[가림]", value))
+        # Reuse the publication cleaner shared by portfolio and result storage.
+        from ..portfolio import clean_publication_text
+        return clean_publication_text(REPORT_JSON, value, settings, dict(req))
     if isinstance(value, Mapping):
-        return {str(key): _public(item) for key, item in value.items()}
+        return {str(key): _public(item, settings, req) for key, item in value.items()}
     if isinstance(value, list):
-        return [_public(item) for item in value]
+        return [_public(item, settings, req) for item in value]
     return value
 
 
@@ -114,13 +111,15 @@ def _valid_observation(value: Any) -> bool:
 def _read_observation(req: Mapping[str, Any], settings: Any, mode: str) -> tuple[dict[str, Any] | None, str | None]:
     fixed = req.get("semantics_observation")
     if isinstance(fixed, Mapping):
-        return dict(fixed), None
+        return ((dict(fixed), None) if _valid_observation(fixed)
+                else (None, "현재 요청 관측 구조 손상"))
+    if req.get("semantics_observation_error"):
+        return None, str(req["semantics_observation_error"])
     if mode not in {"shadow", "ab"}:
         return None, None
     try:
         root = settings.path(settings.gateway.state_dir) / _MEANING_KEY
-        lines: list[dict[str, Any]] = []
-        broken = 0
+        own: list[dict[str, Any]] = []
         for path in (root / "shadow.1.jsonl", root / "shadow.jsonl"):
             try:
                 text = path.read_text(encoding="utf-8")
@@ -132,15 +131,15 @@ def _read_observation(req: Mapping[str, Any], settings: Any, mode: str) -> tuple
                 try:
                     value = json.loads(raw)
                 except ValueError:
-                    broken += 1
                     continue
-                if isinstance(value, dict):
-                    lines.append(value)
-                else:
-                    broken += 1
-        own = [line for line in lines if line.get("type") == "request" and line.get("request_id") == req.get("id")
-               and _valid_observation(line)]
-        return (dict(own[-1]) if own else None), (f"손상 기록 {broken}건" if broken else None)
+                if (isinstance(value, dict) and value.get("type") == "request"
+                        and value.get("request_id") == req.get("id")):
+                    own.append(value)
+        if not own:
+            return None, None
+        latest = own[-1]
+        return ((dict(latest), None) if _valid_observation(latest)
+                else (None, "현재 요청 관측 구조 손상"))
     except (OSError, TypeError, ValueError) as exc:
         return None, type(exc).__name__
 
@@ -206,8 +205,14 @@ def _checklist_device(req: Mapping[str, Any], plan: Mapping[str, Any], errors: l
     error = _error_for(errors, "체크리스트")
     items: list[dict[str, Any]] = []
     try:
-        catalog = topic_checklists.load()
-        required = topic_checklists.requirements(plan.get("topics"), catalog)
+        contract = _dict(req.get("research_contract"))
+        frozen = contract.get("checklist_snapshot")
+        if isinstance(frozen, list):
+            required = [topic_checklists.ChecklistItem(
+                str(row["id"]), str(row["check"]), str(row["why"]), str(row["topic"]))
+                for row in frozen if isinstance(row, Mapping)]
+        else:
+            required = topic_checklists.requirements(plan.get("topics"), topic_checklists.load())
         answers = plan.get("checklist") if isinstance(plan.get("checklist"), Mapping) else {}
         review = _dict(req.get("review")) or _dict(_dict(req.get("research_contract")).get("review"))
         verdicts = topic_checklists.review_verdicts(review.get("checklist"), required)
@@ -371,6 +376,7 @@ def build_report(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
     contract = _dict(req.get("research_contract"))
     config_basis = {"semantic_report": enabled(settings), "semantics_mode": mode,
                     "pack_snapshot": _dict(contract.get("pack_snapshot")),
+                    "checklist_snapshot": contract.get("checklist_snapshot"),
                     "vocab": _dict(req.get("output_types_stats")).get("vocab")}
     config_hash = hashlib.sha256(json.dumps(config_basis, ensure_ascii=False, sort_keys=True,
                                             separators=(",", ":")).encode()).hexdigest()
@@ -384,7 +390,19 @@ def build_report(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
         "devices": devices, "errors": errors,
         "paths": {"markdown": REPORT_MD, "json": REPORT_JSON, "published": f"run/{REPORT_MD}"},
     }
-    return _public(report)
+    return _public(report, settings, req)
+
+
+def freeze_observation(req: dict[str, Any], settings: Any) -> None:
+    """Freeze the finished shadow row into the terminal request snapshot before its bundle is built."""
+    mode = _mode(settings, _dict(req.get("semantic_devices")))
+    observation, error = _read_observation(req, settings, mode)
+    req.pop("semantics_observation_error", None)
+    if observation is not None:
+        req["semantics_observation"] = observation
+    elif error:
+        req.pop("semantics_observation", None)
+        req["semantics_observation_error"] = error
 
 
 def _brief(value: Any) -> str:
