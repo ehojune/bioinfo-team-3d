@@ -206,7 +206,7 @@ def test_cover_uses_the_complete_report_title_and_print_css_keeps_figures_readab
     assert 'class="graphical-abstract"' in page
     assert "figure { break-inside: avoid; break-after: avoid-page;" in page
     assert "figure + p { break-before: avoid-page;" in page
-    assert ".graphical-abstract img { width: 100%; max-width: none; max-height: none;" in page
+    assert ".graphical-abstract { width: 100%; max-width: none; max-height: none;" in page
     assert ".cover { min-height: 0;" in page
 
 

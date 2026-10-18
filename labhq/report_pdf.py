@@ -156,10 +156,10 @@ class FigureEmbedder:
             self.missing.append(f"{shown} ({reason})")
             return f'<span class="figure-missing">[그림 없음: {_esc(shown)} — {_esc(reason)}]</span>'
         self.embedded += 1
-        image = f'<img src="{_esc(uri)}" alt="{_esc(shown)}">'
+        css_class = ' class="graphical-abstract"' if is_abstract_target(value) else ""
+        image = f'<img src="{_esc(uri)}" alt="{_esc(shown)}"{css_class}>'
         if block:
-            css_class = ' class="graphical-abstract"' if is_abstract_target(value) else ""
-            return f"<figure{css_class}>{image}<figcaption>{_esc(shown)}</figcaption></figure>"
+            return f"<figure>{image}<figcaption>{_esc(shown)}</figcaption></figure>"
         return image
 
 
@@ -419,7 +419,7 @@ tr { break-inside: avoid; }
 figure { break-inside: avoid; break-after: avoid-page; page-break-after: avoid; text-align: center; }
 figure + p { break-before: avoid-page; page-break-before: avoid; }
 figure img, p img { max-width: 100%; max-height: 220mm; }
-.graphical-abstract img { width: 100%; max-width: none; max-height: none; }
+.graphical-abstract { width: 100%; max-width: none; max-height: none; }
 figcaption { font-size: 9.5pt; color: #4a5568; margin-top: .3em; }
 a { color: #1d4ed8; text-decoration: none; }
 .anchor { font-size: 7.5pt; color: #8a94a6; }
