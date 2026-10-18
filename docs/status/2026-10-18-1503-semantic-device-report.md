@@ -13,6 +13,7 @@ PR #743을 최신 `origin/main`과 합치고 자동 리뷰 지적 8건을 고쳤
 ## 확인
 
 - 최신 main 병합 뒤 충돌 영향 95 passed, 관련 pytest 673 passed·2 skipped입니다.
+- CI의 시간대 의존 시각 assertion은 보고서 `generated_at` 기준으로 바꿔 1 passed입니다.
 - 웹 회귀는 CP2 링크 9 passed, #742 카드 17 passed입니다.
 - `git diff --check`와 공개 금지 항목 수동 검사는 통과했습니다.
 - `scripts/check_public.sh`는 Windows Git Bash에서 90초 무출력이라 중단했습니다.
