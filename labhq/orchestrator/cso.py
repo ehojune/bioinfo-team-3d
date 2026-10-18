@@ -2753,7 +2753,7 @@ class Orchestrator:
         for row in previous.get("errors") or []:
             key = (row.get("code"), row.get("stage")) if isinstance(row, dict) else None
             if key and key not in durable and row.get("stage") in {
-                    "advisory_snapshot", "advisory_projection", "advisory_boundary", "render", "resume"}:
+                    "advisory_snapshot", "advisory_projection", "advisory_boundary", "load", "render", "resume"}:
                 record["errors"].append(row)
                 record["status"] = "error"
         req["semantic_devices"] = record

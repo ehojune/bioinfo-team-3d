@@ -244,6 +244,43 @@ async def test_exception_body_is_absent_from_request_cards_and_execution_record(
     assert "pack_load_failed" in hub.requests["r"]["execution_record"]
 
 
+@pytest.mark.asyncio
+async def test_cp1_preserves_load_error_that_already_affected_the_plan(monkeypatch):
+    settings = Settings()
+    hub = MiniHub(settings, lambda task: None, mode="orchestrate", work_kind="research")
+    hub.requests["r"]["semantic_devices"] = {
+        "version": 1,
+        "phase": "request_start",
+        "checked_at": "2026-10-18T10:00:00+09:00",
+        "status": "error",
+        "errors": [{
+            "code": "checklist_load_failed",
+            "device": "체크리스트",
+            "stage": "load",
+            "at": "2026-10-18T10:00:00+09:00",
+            "message": "체크리스트를 불러오지 못했습니다.",
+        }],
+    }
+    healthy = {
+        "version": 1,
+        "phase": "cp1",
+        "checked_at": "2026-10-18T10:01:00+09:00",
+        "status": "ok",
+        "errors": [],
+    }
+    monkeypatch.setattr("labhq.orchestrator.cso.semantic_devices.inspect",
+                        lambda *args, **kwargs: copy.deepcopy(healthy))
+    orchestrator = Orchestrator(hub)
+
+    record = await orchestrator._semantic_devices_check("r", "cp1")
+
+    assert record["status"] == "error"
+    assert record["errors"][0]["code"] == "checklist_load_failed"
+    hub.requests["r"]["plan"] = valid_plan(topics=[])
+    orchestrator._finish("r", "# 결과", {}, ok=True)
+    assert "checklist_load_failed" in hub.requests["r"]["execution_record"]
+
+
 def test_intake_classifies_simple_research_and_ambiguous():
     assert classify_intake("TSV를 CSV로 형식 변환해 줘").work_kind == "simple"
     assert classify_intake("후보 바이오마커를 선택해 줘").work_kind == "research"
