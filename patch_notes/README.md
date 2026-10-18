@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 08:35 | [`a71f946`](https://github.com/ehojune/bioinfo-team-3d/pull/735/commits/a71f946) | PMID·PMCID·DOI 별칭으로 결론 근거와 fulltext 조회 기록을 대조 |
+| 07:47 | [`7e46d69`](https://github.com/ehojune/bioinfo-team-3d/pull/735/commits/7e46d69) | 결론 근거 논문의 읽은 수준을 CP2 claim 연결 기준으로 집계 |
 | 07:05 | [`ecab9e8`](https://github.com/ehojune/bioinfo-team-3d/pull/734/commits/ecab9e8) | turn별 도구 호출을 task id로 중복 없이 합치고 ID 없는 실패를 별도 집계 |
 | 06:53 | [`adabdd6`](https://github.com/ehojune/bioinfo-team-3d/pull/733/commits/adabdd6) | 문헌 MCP 도구 고정 기대 목록에 인용 추적과 preprint를 반영 |
 | 06:26 | [`4d050c8`](https://github.com/ehojune/bioinfo-team-3d/pull/734/commits/4d050c8) | id 없는 도구 오류 이벤트의 기존 wire 형식 유지 |
