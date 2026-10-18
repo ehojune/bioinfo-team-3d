@@ -399,7 +399,8 @@ export function decisionChoice(approval, act) {
 const DETAIL_LABELS = {
   budget: { spent_usd: '지금까지 쓴 비용', limit_usd: '지금 상한', requested_budget_usd: '승인하면 새 상한',
     unknown_count: '비용 모름 작업', unknown_reserve_usd: '비용 모름 작업 1건당 가정 비용' },
-  research_evidence: { ...EVIDENCE_LABELS, plan_sha256: 'plan hash', unreported_outputs: '보고하지 않은 산출',
+  research_evidence: { ...EVIDENCE_LABELS, plan_sha256: 'plan hash', semantic_report: '온톨로지·의미 장치 보고서',
+    unreported_outputs: '보고하지 않은 산출',
     artifact_sha256: '산출 파일 hash', continuation: '이어 가기 차수' },
   research_plan: { target_sha256: 'plan hash', scope_status: '범위 판정', continuation: '이어 가기 차수' },
   recruit_plan: { recruits: '논문·채용 이유·담당 단계', activate_on_pass: '수습 통과하면 바로 투입', target_sha256: '채용 묶음 hash' },
@@ -465,7 +466,14 @@ export function renderDetail(container, kind, detail, approval = null) {
   const list = add(container, 'dl', '', 'approval-detail');
   const labels = DETAIL_LABELS[kind] || {};
   for (const [key, value] of entries) {
-    if (kind === 'result_publish' && key === 'documents') {
+    if (kind === 'research_evidence' && key === 'semantic_report' && detail.semantic_report?.content) {
+      add(list, 'dt', labels[key] || key);
+      const cell = add(list, 'dd');
+      const link = add(cell, 'a', 'semantic_report.md 열기', 'btn');
+      link.href = `data:text/markdown;charset=utf-8,${encodeURIComponent(detail.semantic_report.content)}`;
+      link.download = String(detail.semantic_report.path || 'semantic_report.md').split('/').pop();
+      expandableText(cell, detail.semantic_report.content, {fold:true, summary:'보고서 내용 펼쳐 보기', raw:true});
+    } else if (kind === 'result_publish' && key === 'documents') {
       for (const [name, body] of Object.entries(detail.documents || {}))
         detailEntry(list, name, body, {raw:true, fold:true, open:name === 'README.md', summary:name});
     } else if (kind === 'result_publish' && key === 'images') {

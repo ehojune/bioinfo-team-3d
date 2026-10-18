@@ -1198,6 +1198,9 @@ class Hub:
 
     async def _commit_terminal_async(self, rid: str, data: dict, request: dict, tasks: dict,
                                      runner_capabilities: dict) -> None:
+        from ..research import semantic_device_report
+        freeze_pending = semantic_device_report.freeze_pending_observation
+        await freeze_pending(self.semantics_shadow, request, self.requests[rid], self.s)  # semantics-hook
         outcome = await asyncio.to_thread(
             self._bundle_outcome, rid, request, tasks, runner_capabilities)
         if cp4.summary(request) != cp4.summary(self.requests[rid]):

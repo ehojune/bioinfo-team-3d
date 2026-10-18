@@ -1461,6 +1461,8 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
         lines.append("- 재현: 요청 기록에 안내가 없습니다.")
     if "run/progress.md" in run_documents:
         lines.append("- 진행: [기록](run/progress.md)")
+    if "run/semantic_report.md" in run_documents:
+        lines.append("- 온톨로지·의미 장치: [요청별 보고서](run/semantic_report.md)")
     lines.append("- 참고문헌: [목록](REFERENCES.md)")
     lines.append("")
     if branch_rows:
@@ -1699,7 +1701,17 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
     if revision_history:
         files["run/revision_history.md"] = revision_history
     run_documents = dict(run_documents or {})
-    for name in ("run/progress.md", "run/reproduce.md", "run/task_record.md"):
+    if bundle is not None and (bundle / "semantic_report.md").is_file():
+        run_documents["run/semantic_report.md"] = (bundle / "semantic_report.md").read_text(
+            encoding="utf-8", errors="replace")
+    elif "run/semantic_report.md" not in run_documents:
+        from .research import semantic_device_report
+        if semantic_device_report.applies(req, settings):
+            run_documents["run/semantic_report.md"] = semantic_device_report.render_report(
+                semantic_device_report.build_report(req, settings))
+    for name in (
+        "run/progress.md", "run/reproduce.md", "run/task_record.md", "run/semantic_report.md",
+    ):
         if name in run_documents:
             files[name] = _clean(run_documents[name], settings, req)
     claim_evidence = _claim_evidence_document(req, assets, source_targets)

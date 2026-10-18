@@ -82,3 +82,13 @@ test('tool cards keep the trusted requester role in both office layouts',async()
     assert.deepEqual(decisionFacts(card,'비버')[1],['요청 직원','비버 인사팀']);
   }
 });
+test('CP2 semantic report is an actual Markdown link with its frozen content',async()=>{
+  const {renderDetail}=await mod, parent=new Element();
+  const content='# 온톨로지·의미 장치 보고서\n\n| 장치 | 상태 |\n|---|---|\n';
+  renderDetail(parent,'research_evidence',{semantic_report:{path:'semantic_report.md',content}});
+  const link=nodes(parent).find(n=>n.tagName==='a');
+  assert.ok(link);
+  assert.equal(link.download,'semantic_report.md');
+  assert.match(link.href,/^data:text\/markdown;charset=utf-8,/);
+  assert.ok(decodeURIComponent(link.href.split(',',2)[1]).includes('| 장치 | 상태 |'));
+});

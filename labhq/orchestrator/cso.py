@@ -49,6 +49,7 @@ from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARC
                                  missing_result_slots, repair_result_slots,
                                  unnegated_analysis_text, validate_research_result, with_pack_refs)
 from ..research import continuation as research_continuation
+from ..research import semantic_device_report
 from ..research import semantic_devices
 from ..security import redact_tokens
 from ..recruit.provenance import (consult_refusal, external_contract_conflicts, external_hosts, not_yet_active,
@@ -2339,6 +2340,13 @@ def checklist_meta(catalog: dict[str, list[topic_checklists.ChecklistItem]]) -> 
     """Task meta that has the runner write the checklist TSV the plan prompt names (#420)."""
     files = topic_checklists.workspace_files(catalog)
     return {"workspace_files": files} if files else {}
+
+
+def checklist_snapshot(plan: Any, catalog: dict[str, list[topic_checklists.ChecklistItem]],
+                       precedents: Any) -> list[dict[str, str]]:
+    """The exact checklist requirements used by this frozen plan."""
+    return [{"id": item.id, "check": item.check, "why": item.why, "topic": item.topic}
+            for item in required_checklist_items(plan, catalog, precedents)]
 
 
 def planning_guidance(catalog: dict[str, list[topic_checklists.ChecklistItem]], precedents: Any) -> str:
@@ -4788,8 +4796,16 @@ class Orchestrator:
         device_warning = semantic_devices.warning(device_record)
         if device_warning:
             summary = device_warning + "\n\n" + summary
+        device_report = None
+        if semantic_device_report.applies(req, self.hub.s):
+            device_report = semantic_device_report.build_report(req, self.hub.s)
+            summary += "\n\n" + semantic_device_report.summary(device_report)
         detail = {"gate": "research_evidence", "plan_sha256": contract["plan_sha256"],
                   "semantic_devices": device_record,
+                  **({"semantic_report": {"summary": semantic_device_report.summary(device_report),
+                                            "path": semantic_device_report.REPORT_MD,
+                                            "content": semantic_device_report.render_report(device_report)}}
+                     if device_report is not None else {}),
                   **({"warnings": warnings} if warnings else {}),
                    "choices": list(EVIDENCE_CHOICES), "revise_continues": revise_continues,
                    **({"refused_rows": refused_rows} if refused_rows else {}),
@@ -5607,6 +5623,11 @@ class Orchestrator:
                 stored = req.get("research_contract") or {}
                 previous = stored.get("approval")
                 approval = refresh_plan_approval(plan, previous)
+                plan_sha256 = approval.get("current_sha256") or approval.get("target_sha256")
+                frozen_checklist = (stored.get("checklist_snapshot")
+                                    if stored.get("plan_sha256") == plan_sha256
+                                    and isinstance(stored.get("checklist_snapshot"), list)
+                                    else checklist_snapshot(plan, checklist_catalog, req.get("analysis_precedents")))
                 # Fixed with the request: a resume keeps its own execution flag, checkpoint receipts and failure
                 # record. The current config applies only to a request that has no contract yet (#90 CP2).
                 execution_enabled = (bool(stored["execution_enabled"]) if "execution_enabled" in stored
@@ -5619,6 +5640,7 @@ class Orchestrator:
                     "final_checkpoint": bool(stored.get("final_checkpoint", (req.get("research_options") or {}).get("final_checkpoint", False)) and execution_enabled),
                     "plan_sha256": approval.get("current_sha256") or approval.get("target_sha256"),
                     "pack_snapshot": (frozen_pack_snapshot if frozen_pack_snapshot is not None else active_pack_hashes),
+                    "checklist_snapshot": frozen_checklist,
                     **({} if legacy_pack_contract else {"pack_applicability": plan.get("pack_applicability") or {}}),
                     "approval": approval,
                 }
@@ -6948,6 +6970,10 @@ class Orchestrator:
         metadata = []
         if req.get("semantic_devices"):
             metadata.append(semantic_devices.execution_record(req["semantic_devices"]))
+        if semantic_device_report.applies(req, self.hub.s):
+            report_request = {**req, "results": results, "review": review}
+            metadata.append(semantic_device_report.summary(
+                semantic_device_report.build_report(report_request, self.hub.s)))
         paper_record = paper_skills.appendix(req.get("plan") or {}, results)
         if paper_record:
             metadata.append(paper_record)
