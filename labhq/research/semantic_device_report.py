@@ -1,6 +1,8 @@
 """Request-scoped account of what the six meaning devices actually did (#737)."""
 from __future__ import annotations
 
+import asyncio
+import copy
 import hashlib
 import json
 from collections.abc import Mapping
@@ -403,6 +405,23 @@ def freeze_observation(req: dict[str, Any], settings: Any) -> None:
     elif error:
         req.pop("semantics_observation", None)
         req["semantics_observation_error"] = error
+
+
+async def freeze_pending_observation(shadow: Any, req: dict[str, Any], durable: dict[str, Any],
+                                     settings: Any) -> None:
+    """Wait for the request's shadow row, then copy its fixed result into durable state."""
+    if shadow is None or not applies(req, settings):
+        return
+    timeout = max(5.0, float(shadow.cfg.timeout_s) + 1.0)
+    if await asyncio.to_thread(shadow.drain, timeout):
+        freeze_observation(req, settings)
+    else:
+        req["semantics_observation_error"] = "관측 worker 완료 확인 실패"
+    for key in ("semantics_observation", "semantics_observation_error"):
+        if key in req:
+            durable[key] = copy.deepcopy(req[key])
+        else:
+            durable.pop(key, None)
 
 
 def _brief(value: Any) -> str:
