@@ -49,6 +49,7 @@ from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARC
                                  missing_result_slots, repair_result_slots,
                                  unnegated_analysis_text, validate_research_result, with_pack_refs)
 from ..research import continuation as research_continuation
+from ..research import semantic_device_report
 from ..security import redact_tokens
 from ..recruit.provenance import (consult_refusal, external_contract_conflicts, external_hosts, not_yet_active,
                                   probation_refusal, restricted_input_steps, touches_restricted)
@@ -4745,7 +4746,14 @@ class Orchestrator:
                     f"이어 가기 상한(research.revise_continuations={limit})에 닿아 수정 요청도 요청을 끝냅니다."))
         if warnings:
             summary += f" 경고 {len(warnings)}건: 누락 칸·실패 단계는 한계로 남습니다."
+        device_report = None
+        if semantic_device_report.enabled(self.hub.s):
+            device_report = semantic_device_report.build_report(req, self.hub.s)
+            summary += "\n\n" + semantic_device_report.summary(device_report)
         detail = {"gate": "research_evidence", "plan_sha256": contract["plan_sha256"],
+                  **({"semantic_report": {"summary": semantic_device_report.summary(device_report),
+                                            "path": semantic_device_report.REPORT_MD}}
+                     if device_report is not None else {}),
                   **({"warnings": warnings} if warnings else {}),
                    "choices": list(EVIDENCE_CHOICES), "revise_continues": revise_continues,
                    **({"refused_rows": refused_rows} if refused_rows else {}),
@@ -6850,6 +6858,10 @@ class Orchestrator:
             else:
                 report = _before_bench_block(report, "## 한계\n" + section)
         metadata = []
+        if req.get("research_contract") and semantic_device_report.enabled(self.hub.s):
+            report_request = {**req, "results": results, "review": review}
+            metadata.append(semantic_device_report.summary(
+                semantic_device_report.build_report(report_request, self.hub.s)))
         paper_record = paper_skills.appendix(req.get("plan") or {}, results)
         if paper_record:
             metadata.append(paper_record)

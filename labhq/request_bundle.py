@@ -467,12 +467,14 @@ def _bundle_claims(record: dict[str, Any], results: Mapping[str, Any], copied: s
 
 def _readme(req: Mapping[str, Any], steps: list[Mapping[str, Any]], scripts: list[str],
             unsafe_scripts: list[str], python_unknown: bool, linked: bool = False, claims: bool = False,
-            job_scripts: list[str] | None = None) -> str:
+            job_scripts: list[str] | None = None, semantic_report: bool = False) -> str:
     lines = [
         "# 요청 묶음", "", f"- 요청: `{req.get('id')}`", "- `report.md`: PI용 본문",
         *(["- `claims.json`: 연구 요청의 단계별 claim·근거 원장과 CP2 기록. 보고서의 `[[claim:<단계>/<claim>]]`은 "
            "`ledgers.<단계>.claims`의 `id`입니다"] if claims else []),
         "- `report_appendix.md`: 과학 부록(점검표·리뷰·가정)",
+        *(["- `semantic_report.md`·`semantic_report.json`: 온톨로지·의미 장치의 요청별 판단과 영향"]
+          if semantic_report else []),
         "- `execution_record.md`: 운전 기록과 묶음 변환 기록", "- `steps/<step_id>/`: 단계 workdir 사본",
         "- `MANIFEST.tsv`: 사본의 크기·sha256과 원래 위치",
         "- `INPUTS.tsv`: 단계가 읽을 수 있던 외부 입력의 크기·mtime·sha256 또는 생략 이유", "",
@@ -775,6 +777,9 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
         appendix, legacy = split_appendix(str(req.get("report_appendix") or ""))
         tool_calls = _tool_calls_section(ordered_ids, results)
         execution = "\n\n".join(p for p in [str(req.get("execution_record") or ""), legacy, tool_calls] if p)
+        from .research import semantic_device_report
+        device_report = (semantic_device_report.build_report(req, settings)
+                         if semantic_device_report.enabled(settings) else None)
         replaced = _superseded(req, tasks)
         if replaced:
             execution += ("\n\n## 요청 묶음: 대체됨\n\n" +
@@ -793,6 +798,12 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
         (temp / "report.md").write_text(report, encoding="utf-8", newline="\n")
         (temp / "report_appendix.md").write_text(appendix, encoding="utf-8", newline="\n")
         (temp / "execution_record.md").write_text(execution, encoding="utf-8", newline="\n")
+        if device_report is not None:
+            (temp / semantic_device_report.REPORT_MD).write_text(
+                semantic_device_report.render_report(device_report), encoding="utf-8", newline="\n")
+            (temp / semantic_device_report.REPORT_JSON).write_text(
+                json.dumps(device_report, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8", newline="\n")
         from .recruit.paper_skills import records as paper_skill_records
         paper_records = paper_skill_records(req.get("plan") or {}, results)
         if paper_records:
@@ -836,7 +847,7 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
                 json.dumps({"key_figures": list(dict.fromkeys(key_figures))}, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8", newline="\n")
         (temp / "README.md").write_text(_readme(req, ordered_steps, commands, unsafe, python_unknown, bool(links),
-                                                 claims, copied_job_scripts),
+                                                 claims, copied_job_scripts, device_report is not None),
                                           encoding="utf-8", newline="\n")
 
         rewritten_files = 0
@@ -879,6 +890,8 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
             handle.write("\n".join(bundle_note) + "\n")
 
         generated = [temp / "README.md", temp / "report.md", temp / "report_appendix.md", appendix_path, temp / "INPUTS.tsv",
+                      *([temp / semantic_device_report.REPORT_MD, temp / semantic_device_report.REPORT_JSON]
+                        if device_report is not None else []),
                       *([temp / FIGURE_PLAN_FILE] if (temp / FIGURE_PLAN_FILE).is_file() else []),
                       *([temp / "paper_skills.json"] if paper_records else []),
                       *([temp / "claims.json"] if claims else []),

@@ -533,6 +533,7 @@ class ResearchSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
+    semantic_report: bool = True  # request bundle + published run/ device audit (#737)
     evidence_checkpoint: bool = False  # execute approved research steps and stop at CP2
     final_checkpoint: bool = False  # PI report review accepts a frozen final draft (CP4)
     live_source_check: bool = False  # Crossref/NCBI verification before CP2 and in labhq verify
