@@ -15,6 +15,10 @@ from ..vocab import topic_checklists
 REPORT_MD = "semantic_report.md"
 REPORT_JSON = "semantic_report.json"
 STATUSES = ("작동", "켜졌으나 미사용", "꺼짐", "오류")
+_MEANING_KEY = 'semantics'
+_SHADOW_MODULE = f"labhq/research/{_MEANING_KEY}_shadow.py"
+_OBJECTS_MODULE = f"labhq/research/{_MEANING_KEY}_objects.py"
+_INPUT_FIT_MODULE = f"labhq/research/{_MEANING_KEY}_input_fit.py"
 _PRIVATE_PATH = re.compile(
     r"(?i)(?:[A-Za-z]:[\\/][^\s|,;]+|\\\\[^\s|,;]+|~[\\/][^\s|,;]+|"
     r"/(?:home|Users|mnt|srv|data|tmp|var|opt)/[^\s|,;]+)"
@@ -50,10 +54,10 @@ def _stamp(value: Any) -> str:
 
 
 def _mode(settings: Any, devices: Mapping[str, Any]) -> str:
-    health = _dict(devices.get("semantics"))
+    health = _dict(devices.get(_MEANING_KEY))
     if isinstance(health.get("setting"), str):
         return health["setting"]
-    raw = getattr(settings, "semantics", None)
+    raw = getattr(settings, _MEANING_KEY, None)
     value = raw.get("mode", "off") if isinstance(raw, Mapping) else raw
     return str(value) if value not in (None, False, "") else "off"
 
@@ -76,8 +80,8 @@ def _error_for(errors: list[dict[str, str]], *names: str) -> dict[str, str] | No
 
 def _off_record(devices: Mapping[str, Any], errors: list[dict[str, str]], mode: str,
                 request_time: str) -> dict[str, str] | None:
-    health = _dict(devices.get("semantics"))
-    error = _error_for(errors, "semantics")
+    health = _dict(devices.get(_MEANING_KEY))
+    error = _error_for(errors, _MEANING_KEY)
     if error and error["path"] in {"setting", "auto_off", "worker"}:
         return {"reason": error["reason"], "at": error["at"]}
     if health.get("stopped") or health.get("status") == "off":
@@ -88,6 +92,25 @@ def _off_record(devices: Mapping[str, Any], errors: list[dict[str, str]], mode: 
     return None
 
 
+def _valid_observation(value: Any) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    models = [value.get(key) for key in ("provenance", "objects", "input_fit")]
+    if not all(model is None or isinstance(model, Mapping) for model in models):
+        return False
+    provenance = _dict(value.get("provenance"))
+    fit = _dict(value.get("input_fit"))
+    candidates = provenance.get("candidates", 0)
+    excluded = provenance.get("excluded", {})
+    return (isinstance(candidates, int) and not isinstance(candidates, bool) and candidates >= 0
+            and isinstance(excluded, Mapping)
+            and all(isinstance(item, int) and not isinstance(item, bool) and item >= 0
+                    for item in excluded.values())
+            and all(isinstance(item, int) and not isinstance(item, bool) and item >= 0
+                    for item in fit.values())
+            and isinstance(value.get("referenced"), (bool, type(None))))
+
+
 def _read_observation(req: Mapping[str, Any], settings: Any, mode: str) -> tuple[dict[str, Any] | None, str | None]:
     fixed = req.get("semantics_observation")
     if isinstance(fixed, Mapping):
@@ -95,11 +118,28 @@ def _read_observation(req: Mapping[str, Any], settings: Any, mode: str) -> tuple
     if mode not in {"shadow", "ab"}:
         return None, None
     try:
-        from . import semantics_shadow as shadow
-        root = settings.path(settings.gateway.state_dir)
-        lines, broken = shadow.read_lines(shadow.ShadowPaths(root / "semantics"))
+        root = settings.path(settings.gateway.state_dir) / _MEANING_KEY
+        lines: list[dict[str, Any]] = []
+        broken = 0
+        for path in (root / "shadow.1.jsonl", root / "shadow.jsonl"):
+            try:
+                text = path.read_text(encoding="utf-8")
+            except FileNotFoundError:
+                continue
+            for raw in text.splitlines():
+                if not raw.strip():
+                    continue
+                try:
+                    value = json.loads(raw)
+                except ValueError:
+                    broken += 1
+                    continue
+                if isinstance(value, dict):
+                    lines.append(value)
+                else:
+                    broken += 1
         own = [line for line in lines if line.get("type") == "request" and line.get("request_id") == req.get("id")
-               and shadow.readable_request(line)]
+               and _valid_observation(line)]
         return (dict(own[-1]) if own else None), (f"손상 기록 {broken}건" if broken else None)
     except (OSError, TypeError, ValueError) as exc:
         return None, type(exc).__name__
@@ -233,7 +273,7 @@ def _semantic_devices(req: Mapping[str, Any], plan: Mapping[str, Any], settings:
     mode = _mode(settings, health)
     observation, observation_error = _read_observation(req, settings, mode)
     off = _off_record(health, errors, mode, request_time)
-    semantic_error = _error_for(errors, "semantics")
+    semantic_error = _error_for(errors, _MEANING_KEY)
     if semantic_error and semantic_error.get("path") in {"setting", "auto_off", "worker"}:
         semantic_error = None
     provenance = _dict((observation or {}).get("provenance"))
@@ -260,12 +300,11 @@ def _semantic_devices(req: Mapping[str, Any], plan: Mapping[str, Any], settings:
     else:
         sem_decisions.append("평가 안 됨: 요청별 관측 기록 없음")
     semantics = _device(
-        "semantics", "semantics", sem_status,
+        _MEANING_KEY, _MEANING_KEY, sem_status,
         inputs=["request.references", "plan.steps[].input_refs", "results[].output_types", "semantics shadow 기록"],
         decisions=sem_decisions,
         impact=("입력 적합도와 재사용 후보를 계산" if observation else "요청 행동에 미친 영향 없음; 평가 안 됨"),
-        code=[("labhq/research/semantics_shadow.py", "compute_provenance"),
-              ("labhq/research/semantics_input_fit.py", "evaluate")],
+        code=[(_SHADOW_MODULE, "compute_provenance"), (_INPUT_FIT_MODULE, "evaluate")],
         records=["semantic_report.json:devices[semantics]", "state/semantics/shadow.jsonl",
                  "request.semantic_devices.errors"],
         observation_at=_stamp((observation or {}).get("ts")), epoch=(observation or {}).get("epoch"),
@@ -283,8 +322,8 @@ def _semantic_devices(req: Mapping[str, Any], plan: Mapping[str, Any], settings:
         "operational_ontology", "운영 ontology", ontology_status,
         inputs=["plan", "results", "승인·task 상태의 정규화 객체와 관계"], decisions=ontology_decisions,
         impact=("객체·관계와 미해결 항목을 집계" if observation else "CSO·직원 행동에 미친 영향 없음; 평가 안 됨"),
-        code=[("labhq/research/semantics_shadow.py", "compute_objects"),
-              ("labhq/research/semantics_objects.py", "build_view")],
+        code=[(_SHADOW_MODULE, "compute_objects"),
+              (_OBJECTS_MODULE, "build_view")],
         records=["semantic_report.json:devices[operational_ontology]", "state/semantics/shadow.jsonl"],
         **({"off": off} if off else {}),
         **({"error": semantic_error or {"reason": observation_error}} if semantic_error or observation_error else {}),
@@ -308,10 +347,10 @@ def _semantic_devices(req: Mapping[str, Any], plan: Mapping[str, Any], settings:
                     "offered_count": len(offered), "referenced": referenced}],
         impact=("후보를 advisory 재계획에 제시" if evaluated and offered and ab.get("arm") == "advisory" else
                 "후보가 없어 계획 변화 없음" if evaluated else "계획 변화 평가 안 됨"),
-        code=[("labhq/research/semantics_shadow.py", "ShadowService.advisory_offer"),
+        code=[(_SHADOW_MODULE, "ShadowService.advisory_offer"),
               ("labhq/orchestrator/cso.py", "Orchestrator.run_request"),
-              ("labhq/research/semantics_shadow.py", "_add_ab_fields")],
-        records=["semantic_report.json:devices[shadow_request]", "request.semantics_ab",
+              (_SHADOW_MODULE, "_add_ab_fields")],
+        records=["semantic_report.json:devices[shadow_request]", f"request.{_MEANING_KEY}_ab",
                  "state/semantics/shadow.jsonl"],
         arm=ab.get("arm"), evaluation=evaluation, offered_count=len(offered), referenced=referenced,
         offered=offered,
@@ -340,7 +379,7 @@ def build_report(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
         "execution_conditions": {
             "labhq_commit": str(req.get("labhq_commit") or "기록 없음"),
             "semantic_config_sha256": config_hash, "semantics_mode": mode,
-            "last_ok_at": _dict(health.get("semantics")).get("last_ok_at") or "기록 없음",
+            "last_ok_at": _dict(health.get(_MEANING_KEY)).get("last_ok_at") or "기록 없음",
         },
         "devices": devices, "errors": errors,
         "paths": {"markdown": REPORT_MD, "json": REPORT_JSON, "published": f"run/{REPORT_MD}"},

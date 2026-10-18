@@ -1451,6 +1451,11 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
     if bundle is not None and (bundle / "semantic_report.md").is_file():
         run_documents["run/semantic_report.md"] = (bundle / "semantic_report.md").read_text(
             encoding="utf-8", errors="replace")
+    elif "run/semantic_report.md" not in run_documents:
+        from .research import semantic_device_report
+        if semantic_device_report.enabled(settings):
+            run_documents["run/semantic_report.md"] = semantic_device_report.render_report(
+                semantic_device_report.build_report(req, settings))
     for name in ("run/progress.md", "run/reproduce.md", "run/semantic_report.md"):
         if name in run_documents:
             files[name] = _clean(run_documents[name], settings, req)
