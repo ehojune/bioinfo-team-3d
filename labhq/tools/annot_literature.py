@@ -175,7 +175,7 @@ class BrowserInstitutionTransport:
             if temporary is not None:
                 shutil.rmtree(temporary, ignore_errors=True)
         try:
-            with destination.open("rb") as handle:
+            with open(destination, "rb") as handle:
                 good = destination.stat().st_size >= 1024 and handle.read(5) == b"%PDF-"
         except OSError:
             good = False
