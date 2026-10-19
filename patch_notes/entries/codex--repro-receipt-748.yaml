@@ -9,3 +9,7 @@ rows:
 - sha: 1c8beaa
   at: 2026-10-20 00:13
   text: main의 실행 보고서와 receipt를 함께 보존해 충돌을 풀고 인계 큐·확정 예산·init 기본값 설명을 맞췄다.
+- sha: a369a41
+  at: 2026-10-20 00:35
+  text: bench가 bundle 확정 뒤 receipt를 수집하고 반환된 request ID·선택적 Hub 저장 계약을 지키도록 P1 3건을
+    고쳤다.
