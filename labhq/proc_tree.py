@@ -5,6 +5,10 @@ collected by parent PID alone (the Windows tree-kill command, or a scan of `th32
 long-lived process whose launcher is gone, such as the detached gateway and runner that `labhq up` leaves behind, as a
 child of whatever short-lived process now holds the old PID, and ends it together with that process.
 
+Windows runner images can also attach the system `conhost.exe` to a detached console process. That helper rejects the
+terminate right but exits with its console client, so it is identified by its full system path and not treated as an
+unreachable user process.
+
 Here a process is a child only when its parent PID matches and it was created no earlier than that parent. A process
 older than its claimed parent is a PID-reuse orphan: it and its subtree are left alone.
 
@@ -134,15 +138,17 @@ def kill_tree(pid: int, *, created: int | None = None, spare_ancestors_on_failur
     retry. Processes that are not ancestors of a failure are still ended."""
     result = KillResult()
     held: dict[int, _Handle] = {}
+    readonly: dict[int, _Handle] = {}
     try:
-        _end_tree(pid, created, spare_ancestors_on_failure, result, held)
+        _end_tree(pid, created, spare_ancestors_on_failure, result, held, readonly)
     finally:
-        for handle in held.values():
+        for handle in [*held.values(), *readonly.values()]:
             handle.close()
     return result
 
 
-def _end_tree(pid: int, created: int | None, spare: bool, result: KillResult, held: dict[int, _Handle]) -> None:
+def _end_tree(pid: int, created: int | None, spare: bool, result: KillResult, held: dict[int, _Handle],
+              readonly: dict[int, _Handle]) -> None:
     first = _table()
     candidates = _reachable(pid, first) if first is not None else []
     try:
@@ -162,7 +168,16 @@ def _end_tree(pid: int, created: int | None, spare: bool, result: KillResult, he
         try:
             handle = _open(candidate)
         except OSError as exc:
-            unopened[candidate] = str(exc) or f"PID {candidate}을 열 수 없음"
+            reason = str(exc) or f"PID {candidate}을 열 수 없음"
+            try:
+                query_handle = _open(candidate, terminate=False)
+            except OSError:
+                query_handle = None
+            if query_handle is not None:
+                readonly[candidate] = query_handle
+                if _is_system_console_host(query_handle):
+                    continue  # Windows owns it; it exits when the console client below is ended.
+            unopened[candidate] = reason
             continue
         if handle is not None:
             held[candidate] = handle
@@ -296,6 +311,10 @@ def _kernel():
     kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
     kernel.WaitForSingleObject.restype = wintypes.DWORD
     kernel.GetProcessTimes.argtypes = [wintypes.HANDLE] + [ctypes.POINTER(FileTime)] * 4
+    kernel.QueryFullProcessImageNameW.argtypes = [
+        wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD),
+    ]
+    kernel.QueryFullProcessImageNameW.restype = wintypes.BOOL
     kernel.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
     kernel.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
     kernel.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
@@ -312,6 +331,25 @@ def _creation_ticks(kernel, file_time, handle) -> int | None:
                                   ctypes.byref(kernel_time), ctypes.byref(user_time)):
         return None
     return (created.high << 32) | created.low
+
+
+def _image_path(kernel, handle) -> str | None:
+    """Full executable path available with PROCESS_QUERY_LIMITED_INFORMATION, or None when Windows refuses it."""
+    import ctypes
+    from ctypes import wintypes
+
+    size = wintypes.DWORD(32_768)
+    buffer = ctypes.create_unicode_buffer(size.value)
+    if not kernel.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)):
+        return None
+    return buffer.value
+
+
+def _is_system_console_host(handle: "_Handle") -> bool:
+    """The Windows-owned console host, not a user child that must remain reachable after an Access denied."""
+    path = (getattr(handle, "image_path", None) or "").replace("/", "\\").casefold()
+    system_root = (os.environ.get("SystemRoot") or r"C:\Windows").rstrip("\\/").replace("/", "\\").casefold()
+    return path == system_root + r"\system32\conhost.exe"
 
 
 def _table() -> list[tuple[int, int]] | None:
@@ -361,8 +399,8 @@ class _Handle:
     """An open handle to one process. It pins the process object, so the PID cannot be reused while it is open, and
     both the creation time and the kill come from it."""
 
-    def __init__(self, pid: int, created: int, raw) -> None:
-        self.pid, self.created, self._raw = pid, created, raw
+    def __init__(self, pid: int, created: int, raw, image_path: str | None = None) -> None:
+        self.pid, self.created, self._raw, self.image_path = pid, created, raw, image_path
 
     def terminate(self) -> str:
         """KILLED, or GONE when it had already exited; OSError when it is there and cannot be ended."""
@@ -418,4 +456,4 @@ def _open(pid: int, *, terminate: bool = True) -> _Handle | None:
     if created is None:
         kernel.CloseHandle(raw)
         raise OSError(f"PID {pid}의 생성 시각을 읽을 수 없어 확인하지 못함")
-    return _Handle(pid, created, raw)
+    return _Handle(pid, created, raw, _image_path(kernel, raw))

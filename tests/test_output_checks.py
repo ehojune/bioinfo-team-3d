@@ -205,6 +205,21 @@ def test_quality_lines_merge_steps_and_skip_an_all_full_text_reading():
     assert quality_lines(steps, {"s1": {"literature_access": {"PMID:1": "full_text"}}}) == []
 
 
+def test_quality_lines_drop_an_earlier_timeout_after_alias_full_text_success():
+    steps = [{"id": "early"}, {"id": "late"}]
+    results = {
+        "early": {
+            "literature_access": {"PMID:123|DOI:10.1000/key": "abstract"},
+            "literature_access_failures": {"PMID:123": "pdf_request_timed_out"},
+        },
+        "late": {"literature_access": {"DOI:10.1000/key": "full_text"}},
+    }
+
+    lines = quality_lines(steps, results)
+
+    assert not any("PDF 요청" in line or "PMID:123" in line for line in lines)
+
+
 def test_conclusion_literature_counts_only_papers_linked_to_citable_claims():
     ledgers = {"s1": {
         "claims": [{"id": "supported", "status": "supported"},

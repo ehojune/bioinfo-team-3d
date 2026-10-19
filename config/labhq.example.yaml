@@ -151,6 +151,18 @@ github:
 #   alphagenome_key_file: ~/.labhq/secrets/alphagenome_api_key
 #   unpaywall_email: ""             # 연락용 email. 비우면 Unpaywall 조회는 비활성
 
+# 핵심 논문 전문. 기본은 기관 경로 꺼짐이며 비밀번호·cookie·token은 설정하지 않습니다.
+# literature:
+#   institution_enabled: false
+#   institution_profile: null       # PI가 직접 로그인한 전용 Edge/Chrome profile 폴더
+#   institution_proxy: null         # 예: https://proxy.example/login?url= 또는 ...?url={url}
+#   institution_request_interval_s: 30
+#   institution_daily_limit: 5
+#   institution_tdm_allowed: false  # 기관·출판사 조건을 확인한 뒤에만 true
+#   external_model_allowed: false   # 본문을 직원 모델이 읽어도 될 때만 true
+#   pdf_request_timeout_s: 7200     # 기관 실패 뒤 PI PDF 요청 대기: 기본 2시간
+#   pdf_max_mb: 40
+
 dev_log:
   enabled: true                   # 로컬 rounds 기록은 항상 생성; false면 GitHub 발행 중단
   repo: null                      # 비워 두면 로컬만 기록. PI 예시: ehojune/labhq-rounds (private)

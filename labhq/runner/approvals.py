@@ -42,6 +42,7 @@ class Broker:
                  on_approval_timeout: Handler | None = None):
         self.port = port
         self.pending: dict[str, asyncio.Future] = {}
+        self.pending_requests: dict[str, ApprovalRequest] = {}
         self.pending_asks: dict[str, asyncio.Future] = {}
         self.hibernate_asks: dict[str, str] = {}
         self.task_ask_results: dict[str, list[dict]] = {}
@@ -115,6 +116,7 @@ class Broker:
         req.detail.pop('task_scope_label', None)
         fut = asyncio.get_running_loop().create_future()
         self.pending[req.id] = fut
+        self.pending_requests[req.id] = req
         try:
             await self._on_approval(req)
             return await asyncio.wait_for(asyncio.shield(fut), req.timeout_s)
@@ -126,6 +128,7 @@ class Broker:
             if not fut.done():
                 fut.set_result({'approved': False, 'note': 'approval ended'})
             self.pending.pop(req.id, None)
+            self.pending_requests.pop(req.id, None)
 
     async def request_ask(self, req: AskRequest) -> dict:
         def terminal(answer: dict) -> dict:

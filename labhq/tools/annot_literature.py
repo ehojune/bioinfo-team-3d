@@ -10,13 +10,14 @@ staff member read: full_text, abstract or metadata.
 The files are third-party text under the paper's license, so they live in the task's `.tmp/`, not `outputs/`: a direct
 run lists every file under outputs/ as a result and the edition publishes reported results (PR #698 review), while
 nothing under .tmp/ is ever an output, bundled or published. The query log keeps each text's sha256 and IDs, so the
-same text can be fetched again. Paywalled papers are not fetched from anywhere else.
+same text can be fetched again. The base `fulltext` call does not fetch paywalled copies.
 
 API (checked 2026-10-16, REST version 6.9): GET /search?query=EXT_ID:<pmid> AND SRC:MED | PMCID:<pmcid> | DOI:"<doi>"
 &resultType=core&format=json gives pmid, pmcid, doi, isOpenAccess, inEPMC, license, abstractText and fullTextUrlList;
 GET /<PMCID>/fullTextXML answers 200 with JATS for an open-access copy and 404 when there is none; any other error
 is a failed read, answered with the abstract for that call only and never cached (PR #698 review). A record with a
 CC license can still lack a Europe PMC copy (the publisher hosts it); its publisher link is returned for one manual try.
+For selected key papers, `KeyFulltextCoordinator` adds only the configured institution route and PI-supplied PDF.
 """
 
 from __future__ import annotations
@@ -25,16 +26,24 @@ import asyncio
 import hashlib
 import io
 import ipaddress
+import json
+import os
 import re
+import shutil
 import socket
+import sqlite3
+import subprocess
 import zlib
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from datetime import datetime
 from html.parser import HTMLParser
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urljoin, urlsplit
 
-from ..adapters.owned import OwnedPathError, write_owned
+from ..adapters.owned import OwnedPathError, append_owned, write_owned
+from ..settings import LiteratureSettings
 from .annot import Annotator, Item, LookupFailed, ResponseTooLarge, _now
 
 EUROPEPMC = "https://www.ebi.ac.uk/europepmc/webservices/rest"
@@ -42,6 +51,7 @@ OPENALEX = "https://api.openalex.org"
 CROSSREF = "https://api.crossref.org"
 UNPAYWALL = "https://api.unpaywall.org/v2"
 LIT_DIR = ".tmp/literature"  # never outputs/: see the module docstring
+LIT_ACCESS_LOG = "outputs/literature_access.jsonl"  # metadata/status only; never a paper body
 TOOL = "fulltext"
 CACHE_RELEASE = "europepmc-rest"  # Europe PMC has no data release; answers age out instead (annot.CACHE_MAX_AGE_S)
 FULLTEXT_CACHE_RELEASE = "europepmc-rest-oa-v2"
@@ -92,6 +102,414 @@ class LiteratureSearch:
     @property
     def key(self) -> str:
         return hashlib.sha256(self.value.encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True)
+class InstitutionAttempt:
+    status: str  # success | session_expired | access_denied | unavailable | format_failure
+    detail: str = ""
+
+
+class InstitutionLimiter:
+    """Reserve institution requests across annot processes without recording a DOI or URL."""
+
+    def __init__(self, root: Path, interval_s: float, daily_limit: int, *, clock=_now, sleep=None) -> None:
+        self.path = Path(root) / "institution-quota.sqlite3"
+        self.interval_s, self.daily_limit = interval_s, daily_limit
+        self.clock = clock
+        if sleep is None:
+            import asyncio
+            sleep = asyncio.sleep
+        self.sleep = sleep
+
+    async def acquire(self) -> str | None:
+        now = float(self.clock())
+        day = datetime.fromtimestamp(now).date().isoformat()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(self.path, timeout=10) as db:
+            db.execute("CREATE TABLE IF NOT EXISTS daily(day TEXT PRIMARY KEY, n INTEGER NOT NULL)")
+            db.execute("CREATE TABLE IF NOT EXISTS pace(id INTEGER PRIMARY KEY CHECK(id=1), reserved_at REAL NOT NULL)")
+            db.execute("BEGIN IMMEDIATE")
+            count = int((db.execute("SELECT n FROM daily WHERE day=?", (day,)).fetchone() or (0,))[0])
+            if count >= self.daily_limit:
+                db.rollback()
+                return "daily_limit"
+            last = float((db.execute("SELECT reserved_at FROM pace WHERE id=1").fetchone() or (0.0,))[0])
+            wait = max(0.0, last + self.interval_s - now)
+            reserved = now + wait
+            db.execute("INSERT INTO daily(day,n) VALUES(?,1) ON CONFLICT(day) DO UPDATE SET n=n+1", (day,))
+            db.execute("INSERT INTO pace(id,reserved_at) VALUES(1,?) "
+                       "ON CONFLICT(id) DO UPDATE SET reserved_at=excluded.reserved_at", (reserved,))
+            db.commit()
+        if wait:
+            await self.sleep(wait)
+        return None
+
+
+class BrowserInstitutionTransport:
+    """Let Edge/Chrome use a PI-prepared profile; labhq never opens profile files or exports browser state."""
+
+    def __init__(self, profile: Path | None, proxy: str | None, browser: str | None, *, timeout_s: float = 180) -> None:
+        self.profile, self.proxy, self.browser, self.timeout_s = profile, proxy, browser, timeout_s
+
+    async def fetch(self, doi: str, destination: Path) -> InstitutionAttempt:
+        import asyncio
+        return await asyncio.to_thread(self._fetch, doi, destination)
+
+    def _fetch(self, doi: str, destination: Path) -> InstitutionAttempt:
+        if not self.browser:
+            return InstitutionAttempt("unavailable", "Edge/Chrome not found")
+        if self.profile is not None and not self.profile.is_dir():
+            return InstitutionAttempt("session_expired", "institution profile is missing")
+        target = f"https://doi.org/{quote(doi, safe='/():._-')}"
+        if self.proxy:
+            encoded = quote(target, safe="")
+            target = self.proxy.replace("{url}", encoded) if "{url}" in self.proxy else self.proxy + encoded
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        profile = self.profile
+        temporary = None
+        if profile is None:
+            import tempfile
+            temporary = Path(tempfile.mkdtemp(prefix="labhq-institution-"))
+            profile = temporary
+        command = [self.browser, "--headless=new", "--disable-gpu", "--no-first-run",
+                   "--no-default-browser-check", f"--user-data-dir={profile}",
+                   f"--print-to-pdf={destination}", target]
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            command.insert(2, "--no-sandbox")
+        try:
+            done = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.DEVNULL, timeout=self.timeout_s,
+                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except subprocess.TimeoutExpired:
+            return InstitutionAttempt("session_expired", "browser timed out")
+        except OSError:
+            return InstitutionAttempt("unavailable", "browser could not start")
+        finally:
+            if temporary is not None:
+                shutil.rmtree(temporary, ignore_errors=True)
+        try:
+            with open(destination, "rb") as handle:
+                good = destination.stat().st_size >= 1024 and handle.read(5) == b"%PDF-"
+        except OSError:
+            good = False
+        if not good:
+            destination.unlink(missing_ok=True)
+            return InstitutionAttempt("session_expired" if done.returncode == 0 else "access_denied",
+                                      "session expired, denied, or no printable paper")
+        return InstitutionAttempt("success")
+
+
+def _pdf_literal_text(data: bytes) -> str:
+    """Small dependency-free fallback for simple PDFs; pdftotext is preferred when installed."""
+    streams = [data]
+    for match in re.finditer(rb"stream\r?\n(.*?)\r?\nendstream", data, re.S):
+        chunk = match.group(1)
+        try:
+            streams.append(zlib.decompress(chunk))
+        except zlib.error:
+            streams.append(chunk)
+
+    def literal(raw: bytes) -> str:
+        raw = re.sub(rb"\\([()\\])", rb"\1", raw)
+        raw = re.sub(rb"\\[nrtbf]", b" ", raw)
+        raw = re.sub(rb"\\[0-7]{1,3}", b" ", raw)
+        return raw.decode("utf-8", "replace")
+
+    pieces = []
+    for stream in streams:
+        pieces.extend(literal(found) for found in re.findall(rb"\((.*?)(?<!\\)\)\s*Tj", stream, re.S))
+        for array in re.findall(rb"\[(.*?)\]\s*TJ", stream, re.S):
+            pieces.extend(literal(found) for found in re.findall(rb"\((.*?)(?<!\\)\)", array, re.S))
+    return "\n".join(part.strip() for part in pieces if part.strip())
+
+
+def extract_pdf_text(path: Path) -> tuple[str, str]:
+    """Return locally extracted text and complete|partial_text. No paper text leaves the task workspace here."""
+    target = path.with_suffix(path.suffix + ".txt")
+    command = shutil.which("pdftotext")
+    if command:
+        try:
+            done = subprocess.run([command, "-layout", str(path), str(target)], stdin=subprocess.DEVNULL,
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120,
+                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            if done.returncode == 0:
+                text = target.read_text(encoding="utf-8", errors="replace").strip()
+                if text:
+                    return text, "complete"
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        finally:
+            target.unlink(missing_ok=True)
+    try:
+        text = _pdf_literal_text(path.read_bytes()).strip()
+    except OSError:
+        text = ""
+    return text, "partial_text"
+
+
+class KeyFulltextCoordinator:
+    """OA result → bounded institution session → one PI PDF card → explicit abstract/OA fallback."""
+
+    def __init__(self, annotator, settings: LiteratureSettings, workdir: Path | None, state_dir: Path, *,
+                 institution=None, limiter=None, request_pdf=None, extract_pdf=extract_pdf_text, clock=_now) -> None:
+        self.annotator, self.settings = annotator, settings
+        self.workdir, self.state_dir = Path(workdir) if workdir else None, Path(state_dir)
+        self.institution, self.limiter, self.request_pdf = institution, limiter, request_pdf
+        self.extract_pdf, self.clock = extract_pdf, clock
+
+    @staticmethod
+    def _papers(values: object) -> list[dict]:
+        if not isinstance(values, list) or not values:
+            raise ValueError("핵심 논문 목록이 비었습니다")
+        if len(values) > MAX_PER_CALL:
+            raise ValueError(f"한 카드에 {MAX_PER_CALL}편까지 받습니다")
+        out = []
+        for value in values:
+            if not isinstance(value, dict):
+                raise ValueError("핵심 논문은 id, title, why_key, needed를 가진 객체여야 합니다")
+            row = {key: str(value.get(key) or "").strip() for key in ("id", "title", "why_key", "needed")}
+            if not all(row.values()):
+                raise ValueError("핵심 논문의 id, title, why_key, needed는 비울 수 없습니다")
+            parse_paper_id(row["id"])
+            tried = value.get("tried") or []
+            if not isinstance(tried, list) or len(tried) > 12:
+                raise ValueError("tried는 최대 12개의 경로 목록이어야 합니다")
+            row["tried"] = [str(item)[:200] for item in tried]
+            out.append(row)
+        return out
+
+    def _relative_pdf(self, doi: str, source: str) -> str:
+        paper = PaperId("doi", doi.lower())
+        return f"{LIT_DIR}/{source}-{Path(paper.file_name()).with_suffix('.pdf').name}"
+
+    def _inbox_pdf(self, identifier: str) -> str:
+        paper = parse_paper_id(identifier)
+        return f"{LIT_DIR}/inbox/{Path(paper.file_name()).with_suffix('.pdf').name}"
+
+    @staticmethod
+    def _doi(paper: dict, row: dict) -> str:
+        value = str(row.get("doi") or "").strip()
+        if value:
+            try:
+                parsed = parse_paper_id(value)
+            except ValueError:
+                return ""
+            return parsed.value if parsed.kind == "doi" else ""
+        parsed = parse_paper_id(paper["id"])
+        return parsed.value if parsed.kind == "doi" else ""
+
+    def _inbox_for(self, paper: dict, row: dict) -> str:
+        return self._inbox_pdf(self._doi(paper, row) or paper["id"])
+
+    def _inside(self, relative: str) -> Path | None:
+        if self.workdir is None:
+            return None
+        target = (self.workdir / relative).resolve()
+        root = (self.workdir / LIT_DIR).resolve()
+        return target if target == root or root in target.parents else None
+
+    def _usable_text_file(self, row: dict) -> bool:
+        relative = str(row.get("text_file") or "")
+        path = self._inside(relative) if relative else None
+        return bool(path and path.is_file())
+
+    @staticmethod
+    def _pdf_content_problem(paper: dict, text: str) -> str | None:
+        """Require article content, and the requested locator when one was named."""
+        folded = " ".join(text.casefold().split())
+        landing_markers = (
+            "access denied", "purchase this article", "purchase access", "rent this article",
+            "sign in through your institution", "institutional access", "subscribe to read",
+            "log in to access", "login to access", "buy this article",
+        )
+        if any(marker in folded for marker in landing_markers):
+            return "pdf_access_landing"
+
+        needed = " ".join(str(paper.get("needed") or "").casefold().split())
+        normalized_needed = re.sub(r"[^a-z0-9가-힣]+", " ", needed)
+        normalized_text = re.sub(r"[^a-z0-9가-힣]+", " ", folded)
+        locators = re.findall(
+            r"\b(?:table|figure|fig|supplement(?:ary)?(?: table| figure)?|section)\s*[a-z]?\d+(?:[.-]\d+)?\b",
+            normalized_needed,
+        )
+        if locators:
+            if not all(re.sub(r"\s+", " ", locator).strip() in normalized_text for locator in locators):
+                return "pdf_requested_content_missing"
+            return None
+
+        section_names = {name for name in (
+            "abstract", "introduction", "method", "methods", "result", "results", "discussion",
+            "conclusion", "conclusions", "references",
+        ) if re.search(rf"\b{re.escape(name)}\b", normalized_needed)}
+        if section_names:
+            return None if any(re.search(rf"\b{re.escape(name)}\b", normalized_text)
+                               for name in section_names) else "pdf_requested_content_missing"
+
+        body_markers = sum(bool(re.search(rf"\b{name}\b", normalized_text)) for name in (
+            "abstract", "introduction", "methods", "results", "discussion", "references",
+        ))
+        return None if len(text) >= 1000 and body_markers >= 2 else "pdf_body_missing"
+
+    def _accept_pdf(self, paper: dict, row: dict, relative: str, source: str) -> tuple[dict, str | None]:
+        path = self._inside(relative)
+        if path is None or not path.is_file():
+            return row, "pdf_missing"
+        try:
+            if path.stat().st_size > int(self.settings.pdf_max_mb * 1024 * 1024):
+                return row, "pdf_too_large"
+            pdf = path.read_bytes()
+            if pdf[:5] != b"%PDF-":
+                return row, "not_pdf"
+        except OSError:
+            return row, "pdf_unreadable"
+        row["pdf_sha256"] = hashlib.sha256(pdf).hexdigest()
+        row["pdf_file"] = relative
+        if not self.settings.external_model_allowed:
+            return row, "external_model_not_allowed"
+        text, extraction = self.extract_pdf(path)
+        text = "\n".join(line.rstrip() for line in str(text or "").splitlines()).strip()
+        if not text:
+            row["extraction"] = "partial_text"
+            return row, "empty_pdf_text"
+        doi = str(row.get("doi") or "").strip().lower()
+        folded = " ".join(text.casefold().split())
+        doi_match = bool(doi and doi in folded.replace("https://doi.org/", "").replace("doi:", ""))
+        title_words = [word for word in re.findall(r"[a-z0-9가-힣]+", paper["title"].casefold()) if len(word) >= 3]
+        seen_words = set(re.findall(r"[a-z0-9가-힣]+", folded))
+        needed = len(title_words) if len(title_words) <= 4 else max(3, (len(title_words) * 3 + 4) // 5)
+        title_match = bool(title_words and sum(word in seen_words for word in title_words) >= needed)
+        if not (doi_match or title_match):
+            return row, "pdf_identity_mismatch"
+        content_problem = self._pdf_content_problem(paper, text)
+        if content_problem:
+            return row, content_problem
+        identifier = self._doi(paper, row) or paper["id"]
+        markdown = (f"# {paper['title']}\n\n- 논문 ID {identifier}\n"
+                    f"- access_level: full_text ({source})\n- extraction: {extraction}\n\n{text}\n")
+        text_relative = f"{LIT_DIR}/{parse_paper_id(paper['id']).file_name()}"
+        try:
+            write_owned(self.workdir, text_relative, markdown)
+        except (OwnedPathError, OSError):
+            return row, "text_write_failed"
+        accepted = {**row, "access_level": "full_text", "read_source": source, "pdf_file": relative,
+                    "text_file": text_relative, "chars": len(markdown), "extraction": extraction,
+                    "pdf_sha256": row["pdf_sha256"],
+                    "text_sha256": hashlib.sha256(markdown.encode("utf-8")).hexdigest()}
+        accepted.pop("access_failure", None)
+        accepted.pop("text_error", None)
+        return accepted, None
+
+    def _record(self, paper: dict, row: dict, status: str, reason: str | None, attempts: list[str]) -> None:
+        if self.workdir is None:
+            return
+        ident = parse_paper_id(paper["id"])
+        doi = str(row.get("doi") or (ident.value if ident.kind == "doi" else "")).lower()
+        entry = {"paper_id": f"DOI:{doi}" if doi else ident.key.upper(), "doi": doi or None,
+                 "title": paper["title"], "access_level": row.get("access_level", "metadata"),
+                 "route": row.get("read_source") or "open_access_or_abstract", "request_status": status,
+                 "failure_reason": reason, "fallback": row.get("fallback"), "attempts": attempts[:16],
+                 "extraction": row.get("extraction"), "pdf_sha256": row.get("pdf_sha256"),
+                 "tdm_allowed": self.settings.institution_tdm_allowed,
+                 "external_model_allowed": self.settings.external_model_allowed, "recorded_at": self.clock()}
+        append_owned(self.workdir, LIT_ACCESS_LOG, json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
+
+    async def run(self, values: object) -> dict:
+        papers = self._papers(values)
+        base = await self.annotator.fulltext([paper["id"] for paper in papers])
+        rows = [dict(row) for row in base.get("results") or []]
+        if len(rows) != len(papers):
+            raise LookupFailed("fulltext 결과 수가 핵심 논문 수와 다릅니다")
+        attempts = [list(paper["tried"]) + ["open_access_lookup"] for paper in papers]
+        pending = []
+        institution_active = bool(self.settings.institution_enabled and self.settings.institution_tdm_allowed
+                                  and self.settings.external_model_allowed and self.institution and self.limiter)
+        for index, (paper, row) in enumerate(zip(papers, rows)):
+            if row.get("access_level") == "full_text":
+                if self._usable_text_file(row):
+                    self._record(paper, row, "not_needed", None, attempts[index])
+                    continue
+                attempts[index].append("open_access:text_file_unavailable")
+                row.update(access_level="metadata", access_failure="open_access_text_unavailable")
+                row.pop("text_file", None)
+            doi = self._doi(paper, row)
+            if doi and not row.get("doi"):
+                row["doi"] = doi
+            if institution_active and doi:
+                refusal = await self.limiter.acquire()
+                if refusal:
+                    attempts[index].append(f"institution:{refusal}")
+                else:
+                    relative = self._relative_pdf(doi, "institution")
+                    destination = self._inside(relative)
+                    if destination is None:
+                        raise LookupFailed("기관 PDF 경로가 작업 폴더 밖입니다")
+                    outcome = await self.institution.fetch(doi, destination)
+                    attempts[index].append(f"institution:{outcome.status}")
+                    if outcome.status == "success":
+                        row, problem = self._accept_pdf(paper, row, relative, "institution_session")
+                        rows[index] = row
+                        if problem is None:
+                            self._record(paper, row, "institution_received", None, attempts[index])
+                            continue
+                        attempts[index].append(f"institution:{problem}")
+            pending.append(index)
+
+        if pending and not self.settings.external_model_allowed:
+            for index in pending:
+                row = rows[index]
+                row.update(pdf_request_status="unavailable", fallback="abstract_or_open_access_alternative",
+                           access_failure="external_model_not_allowed")
+                self._record(papers[index], row, "unavailable", "external_model_not_allowed", attempts[index])
+            return {"results": rows, "n_requested": 0,
+                    "note": "논문 본문·PDF는 .tmp/literature/ 안에만 있고 outputs에는 접근 상태만 기록됩니다."}
+
+        still_pending = pending
+
+        decision = None
+        if still_pending:
+            if self.request_pdf is None:
+                decision = {"approved": False, "state": "unavailable"}
+            else:
+                detail_papers = []
+                for index in still_pending:
+                    paper, row = papers[index], rows[index]
+                    doi = self._doi(paper, row)
+                    detail_papers.append({**paper, "doi": doi or None, "tried": attempts[index],
+                                          "pdf_file": self._inbox_for(paper, row)})
+                detail = {"papers": detail_papers, "inbox": f"{LIT_DIR}/inbox/",
+                          "wait_seconds": self.settings.pdf_request_timeout_s,
+                          "institution": {"enabled": self.settings.institution_enabled,
+                                          "profile_configured": bool(self.settings.institution_profile),
+                                          "proxy_configured": bool(self.settings.institution_proxy),
+                                          "tdm_allowed": self.settings.institution_tdm_allowed},
+                          "external_model_allowed": self.settings.external_model_allowed,
+                          "why_blocked": "허용된 공개·기관 경로에서 핵심 논문 본문을 읽지 못했습니다"}
+                summary = f"핵심 논문 {len(detail_papers)}편의 PDF를 요청합니다. 지정 폴더에 넣고 승인해 주세요."
+                decision = await self.request_pdf(summary, detail, self.settings.pdf_request_timeout_s)
+
+            state = str((decision or {}).get("state") or ("approved" if (decision or {}).get("approved") else "declined"))
+            for index in still_pending:
+                paper, row = papers[index], rows[index]
+                problem = None
+                if (decision or {}).get("approved"):
+                    relative = self._inbox_for(paper, row)
+                    accepted, problem = self._accept_pdf(paper, row, relative, "pi_provided_pdf")
+                    if problem is None:
+                        accepted["pdf_request_status"] = "received"
+                        rows[index] = accepted
+                        self._record(paper, accepted, "received", None, attempts[index])
+                        continue
+                status = ("received_invalid" if (decision or {}).get("approved") else
+                          "timed_out" if state == "timed_out" else "declined" if state == "resolved" else state)
+                reason = "pdf_request_timed_out" if status == "timed_out" else (
+                    problem if (decision or {}).get("approved") else f"pdf_request_{status}")
+                row.update(pdf_request_status=status, fallback="abstract_or_open_access_alternative",
+                           access_failure=reason)
+                rows[index] = row
+                self._record(paper, row, status, reason, attempts[index])
+        return {"results": rows, "n_requested": len(still_pending),
+                "note": "논문 본문·PDF는 .tmp/literature/ 안에만 있고 outputs에는 접근 상태만 기록됩니다."}
 
 
 def parse_paper_id(value: object) -> PaperId:

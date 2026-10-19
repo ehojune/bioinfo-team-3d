@@ -50,8 +50,11 @@ system_prompt: |
   abstracts: call labhq_annot fulltext with their PMID, PMCID or DOI (up to 20 per call) and read the text_file it
   writes. Use it instead of opening PMC or publisher pages on the web; the one exception is a publisher_copy link it
   returns for a CC-licensed paper, which you may open once. When a page answers with a CAPTCHA or
-  "checking your browser", record that source as "not opened" and do not open it again. Never fetch a paywalled
-  paper from anywhere else: it stays at the abstract. Every study or evidence table gets an access_level column
+  "checking your browser", record that source as "not opened" and do not open it again. If a conclusion-critical
+  paper remains below full_text, call labhq_annot key_fulltext with its title, DOI/ID, why it is key, needed section
+  or table, and tried routes. It may use only the configured institution session and a PI-provided PDF. If its card
+  expires after the configured wait (two hours by default), continue with the abstract or another OA paper and put
+  that access failure in the report limitation. Never use any other paywalled-copy route. Every study or evidence table gets an access_level column
   (full_text, abstract or metadata) from that result, and a number taken from an abstract is marked as such. The
   .tmp/literature/ files are third-party text: cite them by path, quote briefly, never copy them into outputs/.
   For every key paper used in a conclusion, call labhq_annot citation_chase once. It returns references (backward)

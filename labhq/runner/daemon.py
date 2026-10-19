@@ -7,6 +7,7 @@ task.dispatch, runs the agent's CLI in a per-task workspace, and streams normali
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import contextvars
 import copy
@@ -32,7 +33,7 @@ from ..adapters import (adapter_preflight_error, get_adapter, is_read_only_task,
 from ..adapters.base import RunContext
 from ..adapters.held_dir import HeldDir
 from ..adapters.owned import (OwnedPathError, is_link, owned_link_error, plain_directory, read_owned,
-                              awrite_owned_many, remove_entry, write_owned)
+                              awrite_owned_bytes, awrite_owned_many, remove_entry, write_owned)
 from ..ask_results import read_ask_results, rejected_step
 from ..artifact_policy import unreported_warning_paths
 from .. import output_checks
@@ -129,6 +130,11 @@ def labhq_mcp_timeout_s(settings: Settings) -> int:
     """How long a staff CLI may wait on one labhq MCP call: the longest approval or ask wait, plus 120 s for the
     tool's own work. Claude gets it as each server's `timeout` and MCP_TOOL_TIMEOUT, Codex as `tool_timeout_sec`."""
     return max(settings.policy.approvals.timeout_s, ASK_MAX_WAIT_S) + 120
+
+
+def literature_mcp_timeout_s(settings: Settings) -> int:
+    """Only the literature MCP may remain blocked on the two-hour PI PDF card."""
+    return max(labhq_mcp_timeout_s(settings), settings.literature.pdf_request_timeout_s + 120)
 
 
 def checked_identity(identity: object) -> dict[str, str]:
@@ -647,6 +653,11 @@ class Runner:
                 t.cancel()
         elif typ == "task.control":
             await self._on_control(msg)
+        elif typ == "approval.attachment":
+            ok, note = await self._store_approval_attachment(msg)
+            await self.asend({"type": "approval.attachment.ack", "id": msg.get("id"),
+                              "paper_index": msg.get("paper_index"), "transfer_id": msg.get("transfer_id"),
+                              "ok": ok, "note": note})
         elif typ == "approval.resolved":
             if self.broker.resolve(msg["id"], bool(msg.get("approved")), msg.get("note", ""),
                                    **({'choice': msg['choice']} if msg.get('choice') else {})):
@@ -670,6 +681,36 @@ class Runner:
         elif typ == "contract.update":
             self._contract_update(msg)
             self._send_roster()
+
+    async def _store_approval_attachment(self, msg: dict) -> tuple[bool, str]:
+        """Write only the PDF filename already fixed by this pending card, inside its live task workspace."""
+        approval_id = str(msg.get("id") or "")
+        req = self.broker.pending_requests.get(approval_id)
+        task_id, _agent_id = self.approval_tasks.get(approval_id, (None, None))
+        workspace = self.workspaces.get(task_id or "")
+        papers = req.detail.get("papers") if req and isinstance(req.detail, dict) else None
+        index = msg.get("paper_index")
+        if req is None or req.kind != "literature_pdf" or workspace is None or not isinstance(papers, list):
+            return False, "PDF 요청 카드의 실행 작업을 찾지 못했습니다"
+        if not isinstance(index, int) or isinstance(index, bool) or not 0 <= index < len(papers):
+            return False, "논문 번호가 카드와 맞지 않습니다"
+        relative = str((papers[index] or {}).get("pdf_file") or "") if isinstance(papers[index], dict) else ""
+        path = Path(relative)
+        if (path.is_absolute() or path.suffix.lower() != ".pdf" or
+                path.parts[:3] != (".tmp", "literature", "inbox") or len(path.parts) != 4):
+            return False, "PDF 저장 경로가 요청 안 inbox가 아닙니다"
+        try:
+            data = base64.b64decode(str(msg.get("content_b64") or ""), validate=True)
+        except (ValueError, TypeError):
+            return False, "PDF 전송값을 읽지 못했습니다"
+        maximum = int(self.s.literature.pdf_max_mb * 1024 * 1024)
+        if not data.startswith(b"%PDF-") or not 5 <= len(data) <= maximum:
+            return False, "PDF 형식 또는 크기가 허용 범위와 맞지 않습니다"
+        try:
+            await awrite_owned_bytes(workspace.dir, relative, data)
+        except OwnedPathError:
+            return False, "PDF를 요청 안 inbox에 안전하게 쓰지 못했습니다"
+        return True, "PDF를 요청 안 inbox에 저장했습니다"
 
     CONTROL_RETRY_S = (0.2, 1.0)  # waits before the second and third attempt; then the gateway's resend takes over
 
@@ -816,7 +857,7 @@ class Runner:
             # Read-only public lookups: no per-call approval, also for variants from restricted zones (PI 2026-10-06).
             servers.append(McpServerSpec(name="labhq_annot", command=sys.executable,
                                          args=["-m", "labhq.tools.annot_mcp"], env=env,
-                                         auto_approve=True, timeout_s=timeout_s))
+                                         auto_approve=True, timeout_s=literature_mcp_timeout_s(self.s)))
         if allow_ask and agent.engine != Engine.antigravity:
             servers.append(McpServerSpec(name="labhq_ask", command=sys.executable,
                                          args=["-m", "labhq.tools.ask_mcp"], env=env,
@@ -1885,6 +1926,8 @@ class Runner:
         try:
             result.table_warnings = await asyncio.to_thread(output_checks.table_warnings, ws.dir, result.outputs)
             result.literature_access = await asyncio.to_thread(output_checks.literature_access, ws.dir)
+            result.literature_access_failures = await asyncio.to_thread(
+                output_checks.literature_access_failures, ws.dir)
             result.literature_ledger = await asyncio.to_thread(output_checks.literature_ledger, ws.dir)
         except Exception as exc:  # noqa: BLE001
             await emit("agent.log", {"level": "warn", "text": f"산출 검사를 하지 못했습니다: {type(exc).__name__}"})

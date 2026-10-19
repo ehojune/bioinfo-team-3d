@@ -17,12 +17,33 @@ global.document={createElement:tag=>new Element(tag)};
 const source=fs.readFileSync(path.join(__dirname,'../labhq/web/ui/decide.js'),'utf8');
 const modulePromise=import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
 const nodes=el=>[el,...el.children.flatMap(nodes)];
-async function card(kind,detail) {
+async function card(kind,detail,options={}) {
   const decide=await modulePromise,container=new Element();
   const approval={id:'example',kind,detail};
-  const [row]=decide.syncDecisionCards(container,[approval]);
+  const [row]=decide.syncDecisionCards(container,[approval],[],options);
   return {decide,container,approval,row,detail:row._decisionParts.detail};
 }
+
+test('literature PDF card uploads each selected PDF before approval',async()=>{
+  const uploaded=[];
+  const c=await card('literature_pdf',{papers:[{title:'Key paper',doi:'10.1000/key',
+    pdf_file:'.tmp/literature/inbox/key.pdf'}]},
+    {onAttachment:async(approval,index,file)=>uploaded.push([approval.id,index,file.name])});
+  const input=nodes(c.row).find(n=>n.tagName==='INPUT');
+  const button=nodes(c.row).find(n=>n.tagName==='BUTTON'&&n.textContent==='PDF 올리기');
+  assert.equal(input.accept,'application/pdf,.pdf');
+  input.files=[{name:'key.pdf'}];
+  await button.onclick();
+  assert.deepEqual(uploaded,[['example',0,'key.pdf']]);
+  assert.match(c.row.textContent,/저장됨.*승인하면 본문으로 이어 갑니다/);
+});
+
+test('2.5D office wires the literature PDF upload callback to the gateway endpoint',()=>{
+  const index=fs.readFileSync(path.join(__dirname,'../labhq/web/index.html'),'utf8');
+  assert.match(index,/onAttachment:\s*uploadLiteraturePdf/);
+  assert.match(index,/\/api\/approvals\/\$\{encodeURIComponent\(approval\.id\)\}\/literature-pdf\/\$\{paperIndex\}/);
+  assert.match(index,/Content-Type':\s*'application\/pdf'/);
+});
 
 test('legacy task-scope detail never adds a grant choice', async () => {
   const decide = await modulePromise, container = new Element(), sent = [];

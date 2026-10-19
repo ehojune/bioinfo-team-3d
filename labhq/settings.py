@@ -549,6 +549,38 @@ class ResearchSettings(BaseModel):
     active_packs: list[str] = []  # exact ``id@version`` keys, fixed into the approved plan
 
 
+class LiteratureSettings(BaseModel):
+    """Opt-in access to a PI-prepared institution session and the bounded PDF request fallback.
+
+    The browser profile is passed only to Edge/Chrome. labhq never reads or copies its cookies or credentials.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    institution_enabled: bool = False
+    institution_profile: str | None = None
+    institution_proxy: str | None = None
+    institution_request_interval_s: float = Field(default=30.0, ge=0)
+    institution_daily_limit: int = Field(default=5, ge=1, le=100)
+    institution_tdm_allowed: bool = False
+    external_model_allowed: bool = False
+    pdf_request_timeout_s: int = Field(default=2 * 3600, ge=1, le=7 * 86400)
+    # Base64 relay stays below the runner WebSocket's 64 MiB frame cap even at the configured maximum.
+    pdf_max_mb: float = Field(default=40.0, gt=0, le=45)
+
+    @model_validator(mode="after")
+    def institution_route_is_explicit(self) -> "LiteratureSettings":
+        if self.institution_enabled and not (self.institution_profile or self.institution_proxy):
+            raise ValueError("literature.institution_enabled needs institution_profile or institution_proxy")
+        if self.institution_proxy:
+            from urllib.parse import urlsplit
+            check = self.institution_proxy.replace("{url}", "https://doi.org/10.1000/example")
+            parsed = urlsplit(check)
+            if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
+                raise ValueError("literature.institution_proxy must be an HTTPS prefix without credentials")
+        return self
+
+
 class AnnotSettings(BaseModel):
     """labhq_annot lookups (#435). The AlphaGenome API key lives only in this file, which `labhq init` writes for the
     runner account alone (POSIX 0600, Windows without inherited access); the config holds the location, never the
@@ -637,6 +669,7 @@ class Settings(BaseModel):
     model_tier_prices: ModelTierPrices = Field(default_factory=ModelTierPrices)
     lab: LabSettings = LabSettings()
     research: ResearchSettings = ResearchSettings()
+    literature: LiteratureSettings = LiteratureSettings()
     pi_profile: PiProfileSettings = PiProfileSettings()
     github: GitHubSettings = GitHubSettings()
     annot: AnnotSettings = AnnotSettings()

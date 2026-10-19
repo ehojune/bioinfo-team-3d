@@ -103,6 +103,12 @@ def approval_copy(kind: str, summary: str, detail: dict) -> dict[str, str]:
         one = '필요한 일을 맡길 직원을 추가하려 합니다.'
         reason = korean_text(detail.get('reason'), '현재 직원만으로 맡기기 어려운 일이 있습니다.')
         outcome = '승인하면 제안된 직원의 준비를 시작합니다. 준비가 끝나야 일을 맡깁니다.'
+    elif kind == 'literature_pdf':
+        papers = detail.get('papers') if isinstance(detail.get('papers'), list) else []
+        one = f'핵심 논문 {len(papers)}편의 PDF를 요청합니다.'
+        reason = '허용된 공개·기관 경로에서 결론에 필요한 본문을 읽지 못했습니다.'
+        outcome = ('지정 파일에 PDF를 넣고 승인하면 본문으로 이어 갑니다. 거절하거나 대기 시간이 끝나면 '
+                   '초록 또는 다른 오픈 액세스 논문으로 진행하고 한계에 남깁니다.')
     else:
         one = korean_text(summary, '다음 작업을 진행하기 전에 확인이 필요합니다.')
         reason = korean_text(detail.get('why_blocked') or detail.get('reason'), '진행 방향을 정하려면 PI의 답이 필요합니다.')

@@ -357,6 +357,8 @@ class TaskResult(BaseModel):
     table_warnings: list[str] = []
     # {paper id: best access_level} from this task's labhq_annot.fulltext lookups (#697).
     literature_access: dict[str, str] = {}
+    # Metadata-only failures from outputs/literature_access.jsonl; paper text stays under .tmp/literature/ (#745).
+    literature_access_failures: dict[str, str] = {}
     # Public paper IDs only: discovery candidates, selected fulltext inputs and unread reasons (#744).
     literature_ledger: dict[str, Any] = {}
     provenance: dict[str, Any] = {}  # manifest summary; the gateway may not share the runner's disk
@@ -433,6 +435,8 @@ class TaskResult(BaseModel):
                 data.pop("table_warnings", None)
             if not data.get("literature_access"):
                 data.pop("literature_access", None)
+            if not data.get("literature_access_failures"):
+                data.pop("literature_access_failures", None)
             if not data.get("literature_ledger"):
                 data.pop("literature_ledger", None)
             if data.get("pipeline_submission") is None:

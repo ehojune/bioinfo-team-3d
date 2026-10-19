@@ -680,7 +680,7 @@ def _server_env(tmp_path, key_file, with_package):
 
 
 BASE_TOOLS = {"vep", "gnomad", "clinvar", "chipatlas", "chipatlas_targets", "encode", "gtex", "fulltext",
-              "citation_chase", "preprints", "openalex_works", "crossref_doi", "unpaywall"}
+              "key_fulltext", "citation_chase", "preprints", "openalex_works", "crossref_doi", "unpaywall"}
 
 
 @pytest.mark.parametrize("key,package", [(False, True), (True, False)])

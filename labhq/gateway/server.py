@@ -6,6 +6,7 @@ Run it on a tiny VM or at home behind Tailscale. State stays on the gateway host
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import copy
 import hashlib
@@ -68,7 +69,8 @@ TASK_CANCEL_KEEP_S = 2 * 86400
 # Cards that decide the request itself (PI 점검 R5). They wait policy.approvals.pi_decision_timeout_s instead of the gate
 # timeout, the request waits as waiting_pi meanwhile, and an unanswered card ends as *_timed_out, never as a deny.
 PI_DECISION_KINDS = frozenset({"clarify", "question", "scope", "budget", "research_plan", "research_evidence",
-                               "research_continue", "resume", "result_storage", "result_publish", "recruit_plan"})
+                               "research_continue", "resume", "result_storage", "result_publish", "recruit_plan",
+                               "literature_pdf"})
 # Runner cards that only inform: no hook waits on them, so their task's result does not close them (#521).
 RUNNER_NOTICE_KINDS = frozenset({"codex_sandbox_setup"})
 # Steer, pause, resume and halt of a running task (#59 ①); a steer message is at most this long. The gateway keeps each
@@ -82,6 +84,8 @@ NOT_CONTROLLABLE = "이 작업({kind})은 실행 중 제어를 받지 않습니�
 HALT_WHILE_WAITING = "HPC 잡·질문 대기 중에는 멈출 수 없습니다 — 일시 정지를 쓰세요"
 # How long request cancel waits for the cancelled turns to report, so their cost is counted (R13).
 CANCEL_RESULT_WAIT_S = 10.0
+# A PDF upload succeeds only after the runner confirms its workspace write.
+ATTACHMENT_ACK_TIMEOUT_S = 30.0
 # Statuses a hold sets and _sync_hold_status may lift again.
 HOLD_STATES = frozenset({"waiting_login", "waiting_quota", "waiting_facilities_fix", "waiting_pi"})
 
@@ -273,6 +277,7 @@ class Hub:
         self.task_runner: dict[str, str] = {}
         self.clients: set[WebSocket] = set()
         self.futures: dict[str, asyncio.Future] = {}
+        self.attachment_waiters: dict[str, tuple[str, int, str, asyncio.Future]] = {}
         self.jobs_waiters: dict[str, asyncio.Future] = {}
         self.jobs_done: dict[str, dict] = self.store.all("jobs_done")
         self.ask_waiters: dict[str, asyncio.Future] = {}
@@ -2414,6 +2419,14 @@ class Hub:
             self.set_roster(runner_id, msg.get("agents", []), msg.get("capabilities"))
             await self.publish({"type": "roster.updated", "ts": time.time(), "data": {"agents": list(self.agents.values())}})
             return
+        if typ == "approval.attachment.ack":
+            aid = str(msg.get("id") or "")
+            transfer_id = str(msg.get("transfer_id") or "")
+            pending = self.attachment_waiters.get(transfer_id)
+            waiter = pending[3] if pending else None
+            expected = (aid, msg.get("paper_index"), runner_id)
+            if pending and pending[:3] == expected and waiter and not waiter.done():
+                waiter.set_result({"ok": bool(msg.get("ok")), "note": str(msg.get("note") or "")})
         if typ == "approval.ack":
             self.store.delete("decision", str(msg["id"]))
         if typ == "control.nack":  # the runner does not hold that task: its steer waits for the step's next turn
@@ -4138,6 +4151,58 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         except ValueError as exc:
             raise HTTPException(422, str(exc))
         return {"ok": True}
+
+    @app.post("/api/approvals/{aid}/literature-pdf/{paper_index}", dependencies=[Depends(auth)])
+    async def upload_literature_pdf(aid: str, paper_index: int, request: Request) -> dict:
+        """Relay one PDF to the card's runner without persisting its body on the gateway."""
+        entry = hub.approvals.get(aid)
+        approval = (entry or {}).get("approval") or {}
+        detail = approval.get("detail") or {}
+        papers = detail.get("papers")
+        if approval.get("kind") != "literature_pdf" or not isinstance(papers, list):
+            raise HTTPException(404, "no such pending PDF request")
+        if not 0 <= paper_index < len(papers):
+            raise HTTPException(422, "paper index is outside this card")
+        origin = (entry or {}).get("origin")
+        if not origin or origin not in hub.runners:
+            raise HTTPException(409, "the task runner is not connected")
+        maximum = int(settings.literature.pdf_max_mb * 1024 * 1024)
+        try:
+            declared = int(request.headers.get("content-length") or 0)
+        except ValueError:
+            raise HTTPException(400, "invalid content length") from None
+        if declared > maximum:
+            raise HTTPException(413, "PDF is larger than the configured limit")
+        payload = bytearray()
+        async for chunk in request.stream():
+            payload.extend(chunk)
+            if len(payload) > maximum:
+                raise HTTPException(413, "PDF is larger than the configured limit")
+        data = bytes(payload)
+        if not data.startswith(b"%PDF-"):
+            raise HTTPException(415, "only a PDF file is accepted")
+        transfer_id = new_id("attach")
+        waiter = asyncio.get_running_loop().create_future()
+        hub.attachment_waiters[transfer_id] = (aid, paper_index, origin, waiter)
+        try:
+            try:
+                await hub.send_runner(origin, {"type": "approval.attachment", "id": aid,
+                                               "paper_index": paper_index,
+                                               "transfer_id": transfer_id,
+                                               "content_b64": base64.b64encode(data).decode("ascii")})
+            except RunnerUnavailable as exc:
+                raise HTTPException(409, "the task runner disconnected") from exc
+            try:
+                ack = await asyncio.wait_for(waiter, ATTACHMENT_ACK_TIMEOUT_S)
+            except asyncio.TimeoutError as exc:
+                raise HTTPException(504, "the task runner did not confirm the PDF write") from exc
+        finally:
+            hub.attachment_waiters.pop(transfer_id, None)
+            if not waiter.done():
+                waiter.cancel()
+        if not ack["ok"]:
+            raise HTTPException(422, ack["note"] or "the task runner could not store the PDF")
+        return {"ok": True, "bytes": len(data)}
 
     @app.post("/api/requests/{rid}/cancel", dependencies=[Depends(auth)])
     async def cancel_request(rid: str) -> dict:
