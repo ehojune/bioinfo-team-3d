@@ -44,6 +44,17 @@ P1 3건 가운데 실제 결함 1건은 `4a94324`에서 고쳤습니다. 나머�
 
 script가 hard link나 링크로 만든 산출은 이번 실행이 만든 것이어도 `missing_output`입니다. 산출이 receipt 폴더 밖 파일을 가리키므로 보수적으로 세지 않습니다.
 
+Fixes #663
+
+PR #783, 수정 커밋 `4232731`. YAML은 SafeLoader로 파싱한 런타임 문자열별로 검사하고 다른 소스는 전체 텍스트에서 줄바꿈을 포함해 식별자를 찾습니다. 기존 case·separator·NFKC·한국어 조사 경계와 스캔 대상은 유지합니다.
+
+- 합성 문자열로 기존 checker의 **17 failed·6 passed**를 재현했습니다. 최종 `tests/test_bench_no_answer_leak.py`는 **36 passed**입니다.
+- folded/literal/quoted YAML·escape·alias·여러 문서와 일반 multiline을 확인했습니다. 별도 scalar·주석·일반 단어는 오인하지 않으며 잘못된 YAML은 실패합니다. YAML 위치는 scalar 선언 줄을 가리킵니다.
+- Git 파일 목록만 현재 checkout의 manifest로 대체해 전체 정적 스캔을 수행했습니다. accident guard와 환경 변수 3개 유지, blocked 0건. 전체 실패명·traceback은 로컬 artifact에 보존했습니다.
+- Python 3.10 AST·public·diff·patch-note·notes 검사 PASS. test helper 변경이라 manual 갱신은 없습니다. patch-note는 flat entry 한 개에 기록합니다.
+
+실제 bench/trial·연구·process/proc_tree integration은 미실행입니다. CI·리뷰·병합·배포는 watcher 담당입니다.
+
 Fixes #677
 PR #782.
 

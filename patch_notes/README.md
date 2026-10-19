@@ -16,6 +16,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 |---|---|---|
 | 05:49 | [`aada950`](https://github.com/ehojune/bioinfo-team-3d/pull/776/commits/aada950) | 외부 조회 취소 시 소유 브라우저를 회수하고 완료된 PDF만 반영하며 취소된 AlphaGenome thread도 잔류 상한에 집계한다. |
 | 05:42 | [`4a94324`](https://github.com/ehojune/bioinfo-team-3d/pull/781/commits/4a94324) | 재현 receipt가 hard link나 링크 폴더 아래의 선언 산출을 건드리지도 세지도 않아 receipt 폴더 밖 원본의 시각을 바꾸지 않는다. |
+| 05:38 | [`4232731`](https://github.com/ehojune/bioinfo-team-3d/pull/783/commits/4232731) | 정답 누출 checker가 YAML 런타임 문자열과 다른 소스의 줄바꿈을 검사한다. 기존 정규화·경계를 유지하고 static/mock test 36개를 확인했다. |
 | 05:15 | [`ff9264c`](https://github.com/ehojune/bioinfo-team-3d/pull/782/commits/ff9264c) | 검증된 요청 참고 경로를 shell 읽기에 전달하고 리터럴 읽기·작업 폴더 PowerShell 생성을 기존 경로·실행 파일 검사로 판정했다. mock/static pytest 173건 통과, inline Python·간접 manifest 경로는 승인 카드로 유지했다. |
 | 04:58 | [`7f7a6bc`](https://github.com/ehojune/bioinfo-team-3d/pull/781/commits/7f7a6bc) | 재현 receipt가 같은 단계의 앞 script가 남긴 산출로 산출을 만들지 않은 뒤 script를 pass로 두지 않고, helper 파일 이름 순서와 관계없이 같은 판정을 낸다. |
 | 04:24 | [`e75fe43`](https://github.com/ehojune/bioinfo-team-3d/pull/778/commits/e75fe43) | 모델 재계획의 reference를 입력 필드로 정규화해 저장 메타데이터의 검증 실패를 고치고 mock pytest 46건을 확인했다. |
