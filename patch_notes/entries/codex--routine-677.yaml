@@ -1,0 +1,6 @@
+pr: 782
+rows:
+- sha: ff9264c
+  at: 2026-10-20 05:15
+  text: 검증된 요청 참고 경로를 shell 읽기에 전달하고 리터럴 읽기·작업 폴더 PowerShell 생성을 기존 경로·실행 파일 검사로 판정했다.
+    mock/static pytest 173건 통과, inline Python·간접 manifest 경로는 승인 카드로 유지했다.

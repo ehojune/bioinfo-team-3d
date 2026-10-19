@@ -1605,6 +1605,8 @@ class Runner:
                     *(self.s.path(p.local_dir) for p in self.s.projects if p.local_dir)]
             # Loading code never exempts its containing config/login folder from protection.
             open_reads = plugin_keep_dirs(self.s, agent.plugin_dirs, ws.dir)
+            # Only references that passed the runner's zone/link/scan checks get a shell read grant.
+            open_reads.extend(read_dirs)
             if task.meta.get("kind") == "recruit" or (
                     task.meta.get("kind") == "paper_skill" and agent.id == self.s.recruit.agent_id):
                 from ..recruit.paper2agent import skill_path
