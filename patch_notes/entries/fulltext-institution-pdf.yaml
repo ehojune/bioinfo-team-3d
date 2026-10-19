@@ -9,3 +9,9 @@ rows:
 - sha: a459993
   at: 2026-10-19 03:24
   text: 새 문헌 도구의 등록 목록과 binary PDF 정적 검사를 CI 기대값에 맞춤
+- sha: fc0da2e
+  at: 2026-10-19 11:59
+  text: 최신 main의 문헌·의미 상태 변경을 충돌 없이 통합함
+- sha: 45ce7fc
+  at: 2026-10-19 12:09
+  text: PDF 승인 전 채택을 막고 본문·저장 확인과 fallback 상태를 일치시킴
