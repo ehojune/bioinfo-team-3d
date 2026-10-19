@@ -151,7 +151,7 @@ export function startLiveOffice(onState) {
     syncDecisionCards($('approvals'), S.approvals.values(), [], { tagName:'article', listTag:'div', kindLabels:KIND_KO,
       nick, requests:S.requests, emptyText:'대기 승인 없음', disabled:a => S.conn !== 'live' || pending.has(a.id),
       onAttachment: uploadLiteraturePdf,
-      onDecision:(a, approved, note, _type, choice, storage) => {
+      onDecision:(a, approved, note, _type, choice, storage, model_refusal) => {
         if (!ws || ws.readyState !== 1 || pending.has(a.id)) return;
         // Structured questions compose their answer in decide.js; an unanswered one yields ''.
         if (a.kind === 'clarify' && approved && !note) { notice(a.detail?.questions?.length ? '모든 질문에 답해 주세요.' : '답을 적어 주세요.'); return; }
@@ -163,6 +163,7 @@ export function startLiveOffice(onState) {
         const decision = choice ? {type:'approval.resolve', id:a.id, approved, note, choice}
           : {type:'approval.resolve', id:a.id, approved, note};
         if (storage) decision.storage = storage;
+        if (model_refusal) decision.model_refusal = model_refusal;
         ws.send(JSON.stringify(decision));
         pending.add(a.id); render();
       }});

@@ -210,6 +210,7 @@ class DecisionIn(BaseModel):
     approved: bool
     note: str = ""
     storage: dict | None = None
+    model_refusal: dict | None = None
     # CP2 evidence review reads only this; the note never decides (#90). Other approvals ignore it.
     choice: Literal["approve", "revise", "deny"] | None = None
 
@@ -350,7 +351,7 @@ class Hub:
                 self.approvals.pop(aid)
                 continue
             if (entry.get("origin") is None and entry["approval"].get("kind") not in {
-                    "resume", "facilities_fix", "pipeline_contribute"}
+                    "resume", "facilities_fix", "pipeline_contribute", "model_refused"}
                     and not (entry["approval"].get("detail") or {}).get("late_storage")):
                 self.approvals.pop(aid)
                 self.store.delete("approval", aid)
@@ -1036,6 +1037,9 @@ class Hub:
                    "bundle_grade_reasons": req.get("bundle_grade_reasons") or [],
                    "bundle_warning": req.get("bundle_warning")}
         summary["office_current"] = is_office_request(req)
+        if req.get("outcome") == "model_refused":
+            from ..model_refusal import REASON
+            summary.update(outcome="model_refused", error=REASON)
         summary["session_current"] = (summary["office_current"]
                                       or float(req.get("created_at") or 0) >= self.session_started_at)
         summary.update(self.request_session_cost_fields(req))
@@ -3240,19 +3244,76 @@ class Hub:
                                      "fix_id": record.get("fix_id"), "action": record.get("action"),
                                      "error": record.get("error")}})
 
+    async def offer_model_refusal(self, rid: str) -> None:
+        """A durable PI choice after a failed plan; never launch a fallback automatically."""
+        from ..model_refusal import REASON
+        req = self.requests[rid]
+        if req.get("status") != "failed" or req.get("outcome") != "model_refused":
+            return
+        if req.get("model_refusal_approval_id"):
+            return
+        current = req.get("cso_model") or (self.agents.get(self.s.orchestrator.cso_agent) or {}).get("model")
+        card = ApprovalRequest(kind="model_refused", request_id=rid, summary="계획 거부 뒤 다음 조치를 고르세요.",
+                               detail={"reason": REASON, "current_model": current,
+                                       "models": [m for m in self.s.orchestrator.cso_models if m != current]},
+                               timeout_s=0,
+                               pi_summary="모델 안전장치가 계획을 거부했습니다. 다음 조치를 고르세요.",
+                               pi_reason=REASON,
+                               pi_outcome="새 모델 선택 또는 문구 수정은 새 요청으로 계획합니다. 종료하면 실행하지 않습니다.")
+        self.approvals[card.id] = {"approval": card.model_dump(mode="json"), "origin": None, "future": None}
+        self.save_approval(card.id)
+        req["model_refusal_approval_id"] = card.id
+        self.save_request(rid)
+        await self.publish({"type": "approval.requested", "request_id": rid, "data": card.model_dump(mode="json")})
+
+    def _model_refusal_request(self, rid: str, decision: dict | None) -> str:
+        old = self.requests[rid]
+        if old.get("status") != "failed" or old.get("outcome") != "model_refused":
+            raise ValueError("모델 거부로 끝난 요청에서만 새 계획을 선택할 수 있습니다.")
+        if not isinstance(decision, dict):
+            raise ValueError("다른 CSO 모델 또는 수정한 요청을 명시적으로 선택해 주세요.")
+        action = decision.get("action")
+        text, model = old["text"], old.get("cso_model")
+        if action == "model" and set(decision) == {"action", "cso_model"}:
+            model = decision["cso_model"]
+            current = old.get("cso_model") or (self.agents.get(self.s.orchestrator.cso_agent) or {}).get("model")
+            if not isinstance(model, str) or model not in self.s.orchestrator.cso_models or model == current:
+                raise ValueError("허용된 다른 CSO 모델을 선택해 주세요.")
+        elif action == "edit" and set(decision) == {"action", "text"}:
+            text = decision["text"]
+            if not isinstance(text, str) or not text.strip() or len(text) > 4000 or text.strip() == old["text"].strip():
+                raise ValueError("수정한 요청을 1~4000자로 적어 주세요.")
+            text = text.strip()
+        else:
+            raise ValueError("알 수 없는 계획 거부 후속 선택입니다.")
+        # A crash after creation but before recording the answer must not open a second request.
+        found = next((key for key, req in self.requests.items() if req.get("model_refusal_from") == rid), None)
+        if found:
+            return found
+        fields = {key: old[key] for key in ("mode", "work_kind", "scope_status", "project_dirs", "references",
+                                          "project_id", "route") if key in old}
+        body = RequestIn(**fields, text=text, cso_model=model, default_references=False,
+                         budget_usd=old.get("requested_budget_usd", old.get("budget_usd")))
+        return self.create_request(body, extra={"model_refusal_from": rid})
+
     async def resolve_approval(self, approval_id: str, approved: bool, note: str = "",
-                               choice: str | None = None, storage: dict | None = None) -> None:
+                               choice: str | None = None, storage: dict | None = None,
+                               model_refusal: dict | None = None) -> None:
         pending = self.approvals.get(approval_id)
         if pending and pending["approval"].get("kind") == "result_publish":
             # The answer to a publish card and a redraft of that edition never interleave (#607): a redraft that came
             # first has closed this card (KeyError below), one that comes after sees the upload started and is refused.
             async with self.result_storage.card_lock:
                 return await self._resolve_approval(approval_id, approved, note, choice, storage)
-        return await self._resolve_approval(approval_id, approved, note, choice, storage)
+        return await self._resolve_approval(approval_id, approved, note, choice, storage, model_refusal)
 
     async def _resolve_approval(self, approval_id: str, approved: bool, note: str = "",
-                                choice: str | None = None, storage: dict | None = None) -> None:
+                                choice: str | None = None, storage: dict | None = None,
+                                model_refusal: dict | None = None) -> None:
         pending = self.approvals.get(approval_id)
+        retry_id = None
+        if pending and pending["approval"].get("kind") == "model_refused" and approved:
+            retry_id = self._model_refusal_request(pending["approval"]["request_id"], model_refusal)
         if pending and approved and pending["approval"].get("kind") == "result_publish":
             req = self.requests.get(pending["approval"].get("request_id")) or {}
             if not req.get("pi_reviewed_at"):
@@ -3269,6 +3330,8 @@ class Hub:
         if entry is None:
             raise KeyError(approval_id)
         chosen = {"choice": choice} if choice in DECISION_CHOICES else {}
+        if retry_id:
+            chosen.update(model_refusal=model_refusal, new_request_id=retry_id)
         if storage is not None:
             chosen["storage"] = storage
         self.store.delete("approval", approval_id)
@@ -3946,7 +4009,9 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
                 if msg.get("type") == "approval.resolve":  # phone taps 승인/거절
                     try:
                         await hub.resolve_approval(str(msg.get("id")), bool(msg.get("approved")), msg.get("note", ""),
-                                                   msg.get("choice"), msg.get("storage"))
+                                                   msg.get("choice"), msg.get("storage"),
+                                                   **({"model_refusal": msg["model_refusal"]}
+                                                      if msg.get("model_refusal") is not None else {}))
                     except ValueError as exc:
                         await ws.send_text(json.dumps({"type": "error", "error": str(exc)}, ensure_ascii=False))
                     except KeyError:  # already decided elsewhere (another device, timeout) — keep the socket
@@ -4171,7 +4236,9 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     @app.post("/api/approvals/{aid}", dependencies=[Depends(auth)])
     async def decide(aid: str, body: DecisionIn) -> dict:
         try:
-            await hub.resolve_approval(aid, body.approved, body.note, body.choice, body.storage)
+            await hub.resolve_approval(aid, body.approved, body.note, body.choice, body.storage,
+                                       **({"model_refusal": body.model_refusal}
+                                          if body.model_refusal is not None else {}))
         except KeyError:
             raise HTTPException(404, "no such pending approval")
         except ValueError as exc:
