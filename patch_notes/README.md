@@ -14,12 +14,17 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 02:08 | [`e9ddcf2`](https://github.com/ehojune/bioinfo-team-3d/pull/767/commits/e9ddcf2) | 취소된 부분 보고서의 기존 본문과 신규 receipt 전체 계약을 함께 검증해 CI 회귀를 고치고 관련 mock 8건을 확인했다. |
+| 00:35 | [`a369a41`](https://github.com/ehojune/bioinfo-team-3d/pull/767/commits/a369a41) | bench가 bundle 확정 뒤 receipt를 수집하고 반환된 request ID·선택적 Hub 저장 계약을 지키도록 P1 3건을 고쳤다. |
+| 00:13 | [`1c8beaa`](https://github.com/ehojune/bioinfo-team-3d/pull/767/commits/1c8beaa) | main의 실행 보고서와 receipt를 함께 보존해 충돌을 풀고 인계 큐·확정 예산·init 기본값 설명을 맞췄다. |
 | 00:00 | [`4934d50`](https://github.com/ehojune/bioinfo-team-3d/pull/768/commits/4934d50) | 감독 시작 실패 뒤 정리도 실패하면 PID 기록을 보존하고 종료 오류를 보고한다. mock 회귀 11개와 실제 PR head 기준 patch-note SHA 일치를 재확인했다. |
 
 ## 2026-10-19
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 23:48 | [`7d2113c`](https://github.com/ehojune/bioinfo-team-3d/pull/767/commits/7d2113c) | 재현 receipt PR 767의 완료 상태와 후속 storage rebuild의 공유 파일 순서를 인계 큐에 남겼다. |
+| 23:44 | [`2239558`](https://github.com/ehojune/bioinfo-team-3d/pull/767/commits/2239558) | 언어별 문법·도구·코드/lock hash와 별도 실행 상태 receipt를 정리본·공통 보고·bench manifest에 연결했다. |
 | 23:27 | [`1836a01`](https://github.com/ehojune/bioinfo-team-3d/pull/765/commits/1836a01) | 현재 cgroup v2와 보이는 ancestor의 최소 memory.max를 기본 단계 메모리에 반영하고 기존 fallback을 유지한다. |
 | 23:25 | [`50a3948`](https://github.com/ehojune/bioinfo-team-3d/pull/763/commits/50a3948) | 상대 workspace 게시 검사의 일반 단어·URL 오탐을 고치고 경로 보호 회귀와 기존 CI 검사를 갱신한다. |
 | 22:31 | [`5a2a925`](https://github.com/ehojune/bioinfo-team-3d/pull/764/commits/5a2a925) | 정리본·PDF에 실행된 단계의 파이프라인 모식도·타임라인·실행 보고서를 넣고 Nextflow 네 기록을 모음 |

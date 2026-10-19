@@ -19,6 +19,60 @@ PR #768. 감독 정리 실패 시 PID 기록 보존은 기능 커밋 `4934d50`�
 
 P1 stale 근거를 인라인 답글로 남깁니다. push 뒤 CI snapshot만 확인하고 CI 대기·새 head 리뷰·P1=0 판정·병합·배포는 supervisor에게 넘깁니다. P2는 collector가 issue로 추적합니다. 실제 process/proc_tree integration·PI 운영·HPC·원자료·분석은 실행하지 않았습니다.
 
+Fixes #748
+
+문법 검사와 실행 상태를 분리하는 receipt를 정리본·공통 보고서·bench manifest에 연결합니다. 기존 P1 3건은 a369a41로 수정했습니다.
+
+- CI 회귀: 취소된 부분 보고서에 새 재현 검증 절이 붙으면서 기존 전체 문자열 assertion이 실패했습니다. fixture로 동일 실패 1건을 확인했습니다.
+- 기존 SVG·부분 보고서 본문과 receipt 절을 합친 전체 문자열을 정확히 비교합니다. 연결된 JSON의 빈 코드/lock 목록·missing lock, 저장된 not_applicable/not_rerun, 원래 cancelled 상태·Result 본문도 검증합니다. 기존 SVG·외부 요청 없음 검사는 유지했습니다.
+- 수정 뒤 같은 테스트와 보고서 없는 취소·검토/승인 후 mock 저장 계약까지 pytest 8 passed. 지정 lanes Python·기존 D dependency site를 사용했습니다. public·diff·patch-notes·notes 검사를 적용했습니다.
+- 제품 코드·승인 게이트·공개 필터는 변경하지 않았습니다. 전체 suite·실제 process integration·PI 요청/up-down·설치·원자료·HPC·실제 분석·게시는 미실행입니다. push 후 CI 1회 snapshot만 남기고 종료합니다.
+- HANDOFF 큐에 이번 회귀와 #748 병합 뒤 같은 담당 #682·Opus #754 순서를 반영했습니다. 확정 한도 7M은 유지합니다.
+
+## 남은 지적
+
+- P2 4315249511(Bash 선행 `-` basename)·4315630188(복수 script 공유 출력)은 이번 회귀 범위에서 수정하지 않았습니다.
+- Rscript 실측·실데이터 재실행·수치 동등성은 미검증입니다. fixture PASS는 과학 결과 재현 PASS가 아닙니다.
+- CI 대기·새 리뷰 호출·병합·배포는 하지 않으며 총괄 driver가 최종 CI를 확인합니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
+Fixes #748
+
+재현 receipt를 ReportPackage·정리본·bench manifest에 연결합니다. Python/R/bash 문법과 실행 상태를 분리하고 코드/lock hash·도구·명령·변수 이름(값 제외)을 기록합니다. 기본 not_rerun·입력 누락 blocked_input·도구 없음 unavailable을 유지합니다.
+
+- P1 4315296432: 저장 메서드가 없는 기존 Hub 계약도 benchmark 결과를 유지합니다. 실제 Hub의 save_request는 계속 호출합니다.
+- P1 4315630166: terminal 이후 비동기 bundle 완료를 요청의 남은 제한 시간 안에서 기다리고 최신 request로 수집합니다. 완료 전 빈 receipt를 저장하지 않으며 대기 시간 초과는 실패로 남깁니다.
+- P1 4315630179: 반환된 rid를 수집용 복사본에 보완합니다. 원래 request와 공개 후보 필터는 유지합니다.
+- 신규 회귀 5건이 수정 전 head 5a69d19에서 실패하고 수정 뒤 통과했습니다. 관련 pytest 43 passed(지정 lanes Python·기존 D dependency site), public·diff·patch-notes·notes 검사를 적용했습니다. main은 현재 branch의 조상으로 추가 충돌이 없습니다.
+- mock Hub/Runner/Server·작은 manifest/source fixture만 사용했습니다. PI 요청·프로세스 종료·실제 분석·원자료·다운로드·기관·HPC·실제 게시·설치 미실행입니다. CI는 push 후 조회하며 재리뷰·병합·배포는 총괄 driver가 맡습니다.
+
+## 남은 지적
+
+- P2 4315249511: Bash 선행 `-` basename의 option 해석. 이번 P1 수정에서 건드리지 않았습니다.
+- P2 4315630188: 복수 script의 공유 예상 출력으로 실행 판정이 순서에 의존할 수 있습니다. 이번 P1 수정에서 건드리지 않았습니다.
+- Rscript 실측·실데이터 재실행·수치 동등성 미검증. fixture PASS는 과학 결과 재현 PASS가 아닙니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
+Fixes #748
+
+공개용 소스의 문법 검사와 실행 상태를 분리하는 receipt를 추가했습니다. Python compile·R parse·bash -n, 코드/lock hash, 도구 판본·상대 cwd·변수 이름(값 제외)·명령·예상 출력·시각·결과를 기록하고 ReportPackage·정리본·bench manifest에 연결합니다. 기본 not_rerun, 입력 누락 blocked_input, 도구 없음 unavailable을 유지합니다.
+
+- origin/main 4787231을 merge했습니다. HANDOFF·reference 목차·portfolio 충돌 3곳에서 양쪽 내용을 보존하고 receipt와 실행 보고서를 함께 연결했습니다. receipt/bench 동작과 기존 P2는 바꾸지 않았습니다.
+- HANDOFF 큐에 #767·#765·#766·#768 OPEN을 반영했습니다. #762·#763·#764의 병합·PI 배포는 총괄 인계 근거이며 실제 연구·게시·Nextflow PASS를 뜻하지 않습니다.
+- 10-19 실제 11,376,303/14M, 미사용 2,623,697 → 올림 3M+4M으로 10-20 한도 7M 확정을 HANDOFF/reference에 기록했습니다. README.en 한 문장으로 low-level off와 init preset ab/actions confirm을 구분했습니다. HANDOFF 3,780→3,910자, README.en 19,075→19,161자.
+- 이번 검증: subprocess를 금지한 mock/static pytest 2 passed, Python 3.10 AST 4파일 PASS. public·diff·patch-notes·notes 검사를 적용했습니다. 기존 suite와 실제 process integration은 다시 돌리지 않았습니다. 이전 기능 검증 168 passed/2 skipped는 통합 전 결과입니다.
+- PI 요청·up/down·원자료·실제 분석·다운로드·HPC·기관 접근·실제 게시·Nextflow·설치 미실행. CLI/storage rebuild는 #754 별도 범위입니다. 최종 push 후 CI는 1회 snapshot만 남기고 총괄 driver에게 넘깁니다.
+
+## 남은 지적
+
+- P2 4315249511: `-`로 시작하는 Bash script basename이 option으로 해석될 수 있습니다. 이번 통합 범위에서 수정하지 않았습니다.
+- Rscript 실측·실데이터 재실행·수치 동등성은 미검증입니다. 작은 fixture의 실행 PASS를 과학 결과 재현 PASS로 해석하지 않습니다.
+- CI 대기·봇 호출·병합·배포는 총괄 driver가 맡습니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
 ## 결론
 PR #768. 감독 시작 실패 뒤 정리도 실패하면 PID 기록을 보존하고 오류를 알립니다. 다음 `down`·`up`이 같은 감독을 다시 찾습니다. Fixes #627.
 
@@ -35,6 +89,20 @@ PR #768. 감독 시작 실패 뒤 정리도 실패하면 PID 기록을 보존하
 
 ## 남은 것
 CI·리뷰·병합·배포는 총괄이 이어받습니다. 실제 운영 환경 검증은 하지 않았습니다.
+
+Fixes #748
+
+공개용 소스의 문법 검사와 실제 실행을 구분하는 receipt를 추가했습니다. Python compile·R parse·bash -n, 코드/lock hash, 도구 판본·상대 cwd·변수 이름·명령·예상 출력·시각·결과를 기록합니다. 기본 `not_rerun`, 입력 누락 `blocked_input`, 없는 도구 `unavailable`을 유지합니다.
+
+- 정리본의 `run/reproduction_receipt.json`, 공통 ReportPackage, bench run/score/comparison에 연결했습니다. 실패·도구 없음·미검사를 숨기지 않고 Python 문법 실패의 기존 게시 차단도 유지합니다.
+- 허용된 작은 fixture의 명시적 실행은 exit 0 + 선언 출력 존재만 검증합니다. 원자료·다운로드·기관·HPC·분석 재실행·실제 게시를 실행하지 않았습니다. #754의 CLI/storage rebuild는 별도 범위입니다.
+- 관련 pytest 168 passed, 2 skipped(중복 제외). Rscript가 없어 실제 R parse 두 경우는 skip했으며 명령·도구 없음 경로는 별도 검증했습니다. public·diff·Python 3.10 AST 검사 통과.
+- manual 해당 절·HANDOFF 큐·reference를 갱신했습니다. HANDOFF 3,617→3,780자, manual 161,473→161,875자.
+
+## 남은 지적
+
+- Rscript 실측·실데이터 재실행·수치 동등성 검증은 미실행입니다. fixture의 실행 PASS를 과학 결과 재현 PASS로 해석하지 않습니다.
+- CI 조회 후 대기·봇 호출·병합·배포는 총괄 driver가 맡습니다.
 
 ## 결론
 
