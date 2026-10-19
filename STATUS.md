@@ -6,6 +6,42 @@
 
 ## 결론
 
+PR #763의 P1 `4314357070`을 수정했습니다. `4314357078`은 기존 head의 패치노트 검사 통과로 stale입니다. Refs #752.
+
+- 상대 workspace는 경로 형태일 때 검사합니다. 일반 문장·URL은 통과하며 실제 workspace 경로는 계속 차단합니다.
+- 신규 회귀 7개 실패를 수정했고 관련 pytest 346개 통과·3개 skip을 확인했습니다. 기존 CI 실패 3개도 포함합니다.
+- 기존 API·표시 변경에 맞춰 mock과 Node 검사를 갱신했습니다. 공개 검사·패치노트·notes-index 검사 결과는 PR에 기록합니다.
+- 새 head의 CI 결과는 PR에서 확인합니다. 재리뷰 요청·병합·운영 실행은 하지 않습니다.
+
+## 결론
+
+PR #764. 정리본과 PDF에 실제 실행된 단계만 그린 분석 파이프라인 모식도와 단계별 실행 타임라인·실행 보고서를 넣고, 단계가 남긴 Nextflow report·timeline·trace·dag를 `run/nextflow/`에 모읍니다. Fixes #756, Refs #760.
+
+## 바뀐 것
+
+- 새 `labhq/run_report.py`: `run/pipeline_diagram.svg`(담당·입력·산출·QC 띠·선행 단계), `run/run_timeline.svg`(시작→종료 막대, 걸린 시간·비용), `run/run_report.md`(표·실행하지 않은 계획 단계·Nextflow 절). 한국어는 SVG `<text>`이고 script·외부 글꼴이 없습니다.
+- 값이 없으면 `기록 없음`/`종료 기록 없음`으로 두고 0원·시각을 만들지 않습니다. 비용은 `costs.task_cost_item`의 actual·estimated·unknown을 따릅니다. `run/costs.md`도 요청 비용이 없을 때 `$0.00` 대신 `기록 없음`을 씁니다.
+- 내부 자료 단계는 `내부 자료 단계 N`으로만 그리고 입력·산출 이름을 쓰지 않습니다. 판정은 기존 `internal_data_steps` 규칙(`step_uses_internal_data`로 분리)을 그대로 씁니다.
+- README·`report/report.md`의 답 아래 `분석 파이프라인` 절에 두 그림·실행 보고서·Nextflow를 링크합니다. 그래픽 초록이 첫 그림이라는 #608 규칙 때문에 Markdown에서는 링크로 두고, PDF에는 두 그림을 넣습니다(RENDER_VERSION 7, 캐시 키에 그림 hash 포함).
+- Nextflow: `pipeline_info` 아래 nf-core·`--run_label` 이름까지 인식합니다(예전에는 `report.html`·`timeline.html`·`trace.txt`만, dag 없음). 내부 자료 단계의 기록과 정리 뒤에도 로컬 경로가 남은 기록은 빼고 이유를 적습니다. 정리본 전체는 멈추지 않습니다. 텍스트 1 MB·합계 5 MB 상한 대신 파일당 20 MB 상한을 둡니다. 기록이 없으면 bioinfo-agent 단계는 "사용 여부 미확인", 다른 단계는 "쓰지 않음(산출 기록 기준)"으로 적습니다.
+- 실행 경로 확인: labhq는 Nextflow를 직접 실행하지 않습니다. bioinfo-agent의 기본 `config/local.config`가 report·timeline·trace·dag를 모두 켜고 `${outdir}/pipeline_info/`에 씁니다(코드를 읽어 확인). 그래서 `agents/core/bioinfo-agent.yaml`에 네 파일을 `outputs/pipeline_info/`에 복사해 산출로 선언하라는 세 줄을 프롬프트 끝에 더했습니다. #762도 이 파일의 앞쪽 문단을 고치지만 수정 구간이 겹치지 않습니다.
+- 문서: manual의 결과 계약·정리본·bioinfo-agent 절, `docs/reference/run-report-756.md`(값 출처·수집 규칙·확인 범위), HANDOFF 큐와 Codex 한도(10-19 14M, 10-20 2M). README 한영판은 정리본 구성을 설명하지 않아 그대로 뒀습니다. LF 정규화 Unicode 글자 수: manual 161,060→161,797, HANDOFF 3,617→3,631, README 11,726·README.en 19,075는 변화 없음.
+
+## 확인
+
+- 새 `tests/test_run_report.py` 9개: 가짜 계획·실행 기록에서 실행한 단계만 포함, SVG `<text>`·script 없음, 타임라인 값·누락, Nextflow 수집·경로 차단·내부 자료 제외·없음 표시, README·report·PDF 연결, 저장된 앞부분에 절 삽입, `edition_assets` 크기 상한.
+- 관련 pytest 23개 파일: 661 passed, 2 skipped. 기존 test 4개는 새 그림 수·파일 목록·RENDER_VERSION에 맞춰 기대값을 바꿨고, 두 그림의 이름과 순서, 정리본과 PDF 그림의 동일성을 더 확인합니다.
+- `scripts/integrations.py --check`, 공개 저장소 검사, `git diff --check` 통과.
+- headless Edge로 두 SVG를 PNG로 그려 글자 넘침이 없는지 확인했습니다. 실제 분석·Nextflow·HPC 실행, 실제 요청의 정리본 게시, 웹 화면 확인은 하지 않았습니다.
+
+## 남은 것
+
+- CI와 리뷰는 총괄이 이어받습니다.
+- 실제 bioinfo-agent 실행에서 네 파일이 `outputs/pipeline_info/`에 선언되는지는 다음 실운전에서 확인해야 합니다.
+- lane venv에 `markdown-it-py`가 없어 lane tmp에 `--target`으로 설치해 PYTHONPATH로 썼습니다. 공용 venv는 바꾸지 않았습니다.
+
+## 결론
+
 PR #762의 P1 4312241631 수정을 확인하고 새 P1 4314252458을 `2ca1543e`로 고쳤습니다. Fixes #732. Refs #760.
 
 ## 바뀐 것
@@ -26,6 +62,29 @@ PR #762의 P1 4312241631 수정을 확인하고 새 P1 4314252458을 `2ca1543e`�
 - P2 4312241622: init 질문·manual 앞부분·example config의 일회성 동의 문구.
 - 새 head CI와 병합은 총괄이 확인합니다. 리뷰 재요청·병합·배포·실제 분석·외부 기여 PR은 실행하지 않았습니다.
 - UI는 Node DOM으로 검증했습니다. 실제 브라우저 화면은 UNVERIFIED입니다.
+
+## 결론
+
+PR #763에서 #752의 디스크 점검·init 경로 선택·사용자 지정 workspace 게시 검사·웹 연결 경고를 구현했습니다. Fixes #752.
+
+## 바뀐 것
+
+- doctor: 작업·임시·직원 홈 여유와 설정 가능한 10 GiB/5% 경고.
+- init: 작업 경로를 묻고 작은 Windows 시스템 드라이브에 데이터 볼륨 후보 안내. 자동 이동 없음.
+- 임의 이름 workspace도 게시 검사에 포함. 기존 웹 상태로 gateway/runner 연결 경고.
+- manual 161,060→161,719자. 상세 근거: `docs/reference/disk-preflight-752.md`.
+
+## 확인
+
+- 신규·추가 관련 pytest 41 passed, 기존 관련 묶음 221 passed. 관련 Node 3개 통과.
+- 지정 venv의 markdown_it 누락으로 기존 `-I` 패키징 test 1개 실패. 공유 venv·test는 유지.
+- 실제 운영·외부 알림·브라우저 시각 QA는 미실행. CI·봇 대기·병합·배포 없음.
+
+## 남은 것
+
+- CI가 전체 suite·패키징 test를 확인해야 합니다. 연결 경고는 열어 둔 웹에서만 보입니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
 
 20시 PI 정기 보고 전 문서를 현재 PR·설정과 맞췄습니다. Refs #760.
 

@@ -20,7 +20,7 @@ import yaml
 
 from .adapters.base import _resolve_command, codex_app_choice, expand_env
 from .adapters import adapter_preflight_error, get_adapter
-from . import bioinfo_link, github_token, instance_guard
+from . import bioinfo_link, disk_space, github_token, instance_guard
 from .models import AgentSpec, Engine
 from . import private_paths as private_path_module
 from .private_paths import (PrivatePaths, configured_claude_config_dir, in_pi_claude, inside_any,
@@ -126,6 +126,32 @@ def _semantic_device_rows(settings: Settings) -> list[dict]:
 
 def _row(group: str, name: str, status: str, detail: str, hint: str) -> dict:
     return {"group": group, "name": name, "status": status, "detail": detail, "hint": hint}
+
+
+def _disk_rows(settings: Settings) -> list[dict]:
+    workspace = settings.path(settings.runner.workspace_root)
+    paths = [("workspace disk", workspace), ("temporary disk", Path(tempfile.gettempdir()))]
+    for engine, variable, fallback in (("codex", "CODEX_HOME", ".codex"),
+                                       ("claude_code", "CLAUDE_CONFIG_DIR", ".claude")):
+        env = {**os.environ, **expand_env(getattr(settings.engines, engine).env, os.environ)}
+        raw = os.path.expanduser(env.get(variable) or str(Path.home() / fallback))
+        path = Path(raw)
+        paths.append((f"{engine} staff home disk", path if path.is_absolute() else workspace / path))
+    rows = []
+    runner = settings.runner
+    for name, path in paths:
+        try:
+            space = disk_space.usage(path)
+            status = "warn" if disk_space.low(space, runner.disk_warning_free_gb,
+                                               runner.disk_warning_free_percent) else "ok"
+            detail = (f"여유 {space.free / disk_space.GIB:.1f} GiB / {space.total / disk_space.GIB:.1f} GiB "
+                      f"({100 * space.free / space.total:.1f}%)" if space.total else "용량 확인 불가")
+        except (OSError, ValueError):
+            status, detail = "warn", "드라이브 여유 공간을 확인하지 못했습니다"
+        rows.append(_row("disk", name, status, detail,
+                         "runner.disk_warning_free_gb·disk_warning_free_percent를 확인하고 여유 있는 드라이브를 고르세요. "
+                         "자동 이동·삭제는 하지 않습니다."))
+    return rows
 
 
 def _memory_limit_row(settings: Settings) -> dict:
@@ -626,6 +652,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
     rows.append(_bioinfo_row(settings))
     rows.append(_github_token_row(settings, dry_run))
     rows.extend(_instance_rows(settings))
+    rows.extend(_disk_rows(settings))
     markers = parent_claude_markers(dict(os.environ))
     rows.append(_row("staff", "claude_parent_session_env", "warn" if markers else "ok",
                      f"부모 Claude 세션 마커 {len(markers)}개를 직원 subprocess에서 제거"

@@ -25,3 +25,6 @@ system_prompt: |
   regions and genes use chipatlas / chipatlas_targets (public ChIP/ATAC enrichment, TF targets), encode
   (cCREs), gtex (tissue expression, eQTLs) and, when offered, alphagenome (predicted variant effects).
   They take variants and regions from any data, restricted zones included (PI decision 2026-10-06).
+  After every Nextflow run, keep its report, timeline, trace and DAG on (-with-report, -with-timeline,
+  -with-trace, -with-dag, or the config's report/timeline/trace/dag blocks), copy those four files into
+  outputs/pipeline_info/ and list them as outputs; labhq publishes them with the edition's run report.

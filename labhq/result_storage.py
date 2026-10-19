@@ -30,6 +30,7 @@ from .portfolio import (PRIVATE_PATH_PATTERN, EditionCheckError, broken_markdown
 from .intake import reference_dirs
 from .recruit.provenance import touches_restricted
 from .report_abstract import abstract_first, build_graphical_abstract, with_abstract_link
+from .run_report import nextflow_kind
 from .report_figures import (ABSTRACT_FILE, classify, figure_owners, has_abstract_link, image_links, is_abstract_target,
                              link_workdir_figures, output_exists)
 from .report_pdf import NO_BROWSER, ReportRefused, build_report_file, pdf_cap_bytes, size_notes
@@ -190,6 +191,9 @@ def edition_candidates(req, settings) -> dict[str, Path]:
     return found
 
 
+NEXTFLOW_RECORD_MAX_BYTES = 20_000_000
+
+
 def edition_assets(req, settings):
     """Copy only reported outputs from the already checked bundle, never raw inputs or unreported files."""
     assets, images = {}, {}
@@ -198,7 +202,10 @@ def edition_assets(req, settings):
         suffix = PurePosixPath(name).suffix.lower()
         size = path.stat().st_size
         unlimited = suffix in _IMAGE_OUTPUTS
-        if not unlimited:
+        if nextflow_kind(name):  # an nf-core execution report is often 2-4 MB; it has its own cap, not the text total
+            if size > NEXTFLOW_RECORD_MAX_BYTES:
+                continue
+        elif not unlimited:
             if size > 1_000_000 or total + size > 5_000_000:
                 continue
             total += size
@@ -919,7 +926,7 @@ class ResultStorage:
             suffix = PurePosixPath(name).suffix.lower()
             raw = path.read_bytes()
             raw_body: str | bytes = raw if suffix == ".svg" else raw.decode("utf-8", errors="replace")
-            if scan_publish_files({name: raw_body}, internal=False):
+            if scan_publish_files({name: raw_body}, internal=False, settings=self.s):
                 omitted.setdefault(source_step, []).append(PurePosixPath(name).name)
                 continue
             try:
@@ -928,7 +935,7 @@ class ResultStorage:
             except (UnicodeDecodeError, ValueError):
                 omitted.setdefault(source_step, []).append(PurePosixPath(name).name)
                 continue
-            if scan_publish_files({name: body}, internal=False):
+            if scan_publish_files({name: body}, internal=False, settings=self.s):
                 omitted.setdefault(source_step, []).append(PurePosixPath(name).name)
                 continue
             relative = PurePosixPath(*parts[3:]).as_posix()
@@ -955,7 +962,7 @@ class ResultStorage:
             else:
                 state = "완료"
                 raw_summary = str(value.get("text") or "").strip()
-                if raw_summary and scan_publish_files({f"progress/{sid}-summary.md": raw_summary}, internal=False):
+                if raw_summary and scan_publish_files({f"progress/{sid}-summary.md": raw_summary}, internal=False, settings=self.s):
                     if "단계 요약" not in omitted.setdefault(sid, []):
                         omitted[sid].append("단계 요약")
                     summary = "검사로 뺌"
@@ -971,7 +978,7 @@ class ResultStorage:
             safe_summary = " ".join(summary.replace("|", "\\|").split())
             rows.append(f"| {safe_sid} | {state} | {safe_detail} | {safe_summary} |")
         readme = "\n".join(rows) + "\n"
-        if issues := scan_publish_files({"progress/README.md": readme}, internal=False):
+        if issues := scan_publish_files({"progress/README.md": readme}, internal=False, settings=self.s):
             raise check_failure(issues)
         payload["progress/README.md"] = readme
         return payload, omitted, internal_steps, published
@@ -1437,6 +1444,7 @@ class ResultStorage:
                 issues = scan_publish_files(
                     {**docs, **images},
                     internal=publication_internal if scope_mode == "step" else request_internal,
+                    settings=self.s,
                 )
                 if issues:
                     raise check_failure(issues)

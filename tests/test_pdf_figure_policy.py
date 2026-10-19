@@ -145,7 +145,8 @@ def test_over_threshold_pdf_keeps_every_figure_at_original_quality(tmp_path, mon
     assert seen == [0] and built.kind == "pdf" and built.over_cap and built.shrunk == 0
     assert len(built.data) == len(b"%PDF-1.7\n") + 9 * MB
     assert any("설정 알림 기준 1 MB" in note and "줄이지 않았습니다" in note for note in built.notes)
-    assert pages[0].count("<img ") == 2  # result figure plus the drawn abstract
+    assert pages[0].count("<img ") == 4  # result figure, the drawn abstract and the run pictures (#756)
+    assert [alt for _src, alt in image_sources(pages[0])][1:] == ["분석 파이프라인 모식도", "단계별 실행 타임라인", "그림"]
 
 
 def test_a_page_without_raster_figures_is_not_printed_again(tmp_path, monkeypatch):
@@ -278,7 +279,8 @@ def test_a_request_with_no_figures_still_gets_an_abstract_in_the_pdf(tmp_path, m
     built = build_report_file(request, settings, tasks)
     assert built.kind == "pdf" and built.notes == ()
     sources = image_sources(pages[0])
-    assert len(sources) == 1 and sources[0][0].startswith("data:image/svg+xml;base64,")
+    assert len(sources) == 3 and all(src.startswith("data:image/svg+xml;base64,") for src, _alt in sources)
+    assert [alt for _src, alt in sources[1:]] == ["분석 파이프라인 모식도", "단계별 실행 타임라인"]  # #756
     assert "요약 문장입니다" in base64.b64decode(sources[0][0].split(",", 1)[1]).decode("utf-8")
     assert "<img " in (bundle.parent / "req_pdf-report" / "report.html").read_text(encoding="utf-8")
 

@@ -111,6 +111,8 @@ GitHub 토큰도 한 번 묻습니다(선택, #687). 요청 결과를 GitHub 저
 클러스터가 없으면 `scheduler: none`이고, 무거운 단계는 로컬 CLI로만 돌리며 그럴 수 없는 단계는 CSO가 계획에서 밝힙니다. `ssh_host`·데이터 계정 전환(`submit_prefix`)은 상담이 정하지 않습니다([설정 포인트](#설정-포인트)).
 `--yes`는 기본값을 수락하고 `--dry-run`은 파일 생성 없이 변경과 doctor 점검을 보여 줍니다. 기존 설정은 보존하며 `--force`일 때만 교체합니다.
 Windows에서는 restricted 구역을 빼고, 개인 Codex 지침이 있으면 직원 전용 `CODEX_HOME`을, `~/.claude`가 있으면 Claude 직원 전용 `CLAUDE_CONFIG_DIR`(`~/.labhq/claude-staff`)을 넣고 사람이 실행할 로그인 명령을 안내합니다.
+작업 폴더는 새 설정을 만들 때 `runner.workspace_root`로 묻습니다. Windows 시스템 드라이브가 128 GiB 미만이거나 여유 공간이 경고 기준보다 작으면 여유 있는 고정 데이터 드라이브 후보를 안내합니다. 원하는 드라이브를 포함한 경로를 직접 고르세요. `--yes`는 기존 기본 경로를 유지하며 자동 이동·삭제는 하지 않습니다.
+
 Codex `bin`이 비어 있거나 `auto`이면 Windows 앱에서 판본이 가장 높은 폴더를 고르고, 판본을 비교할 수 없을 때만 mtime을 씁니다. doctor는 고른 경로를 표시합니다. 앱이 없으면 PATH를 사용합니다.
 
 **다른 설정이 겹칠 때(#613).** 한 PC에서 설정 파일이 다른 labhq가 함께 돌면 서로의 기록·승인을 섞거나 엉뚱한 사무실을 열게 됩니다. 실행 중인 gateway와 runner는 시작할 때 자기 *정체*를 적어 둡니다: 시작한 설정 파일, 그리고 `gateway.state_dir`·`runner.state_dir`·`runner.id`·포트의 지문(둘 다 해시이고 비밀값은 없음). 파일은 gateway state 폴더의 `labhq-gateway-owner.json`과 runner state 폴더의 `labhq-runner-owner.json`이고, gateway는 `/api/health`의 `identity`로도 같은 해시를 돌려줍니다(경로·token 없음). `doctor`(`instance` 행)와 `up`은 state 폴더·runner state 폴더·포트를 쥔 쪽의 정체를 지금 설정과 비교해 쉬운 한국어와 고치는 명령으로 알립니다. 읽기만 하고 `doctor`는 네트워크를 쓰지 않습니다.
@@ -121,6 +123,8 @@ Codex `bin`이 비어 있거나 `auto`이면 Windows 앱에서 판본이 가장 
 `up`이 자기 gateway임을 확인한 뒤에만 그 state 폴더에 `labhq-last-config.json`을 남깁니다. 설정 파일이 지워지면 그 기록은 무시합니다.
 
 실행 전 `labhq doctor`로 설정·엔진·직원·계산 도구를 점검하세요. `labhq doctor --json`은 러너 상태 디렉터리에 `capabilities.json`을 쓰고, `--network`를 붙일 때만 공개 데이터 사이트에 접속합니다. 이 manifest의 `runner_capabilities`는 러너가 보고하는 기능과 같은 설정·roster에서 산출한 사실입니다. `research lane` 행은 연구 lane이 끝까지 도는지 알려 줍니다. `research.enabled`만 켜면 CP1 뒤 멈춘다는 warn이 뜨고, `evidence_checkpoint`까지 켜야 CP2·리뷰·보고서로 갑니다. `research` 아래 오타 키는 시작할 때 오류입니다.
+doctor의 `disk` 행은 작업·임시·Codex/Claude 직원 홈의 드라이브 여유를 읽습니다. 폴더가 아직 없으면 가장 가까운 기존 부모를 검사합니다. 기본 경고는 10 GiB 미만 또는 5% 미만이며 `runner.disk_warning_free_gb`·`runner.disk_warning_free_percent`로 바꿉니다(각각 0이면 해당 기준 해제). 조회 실패도 warn입니다. 설정한 작업 폴더는 이름과 무관하게 게시 전 개인 경로 검사에 포함됩니다. [검증 근거](reference/disk-preflight-752.md).
+
 doctor는 roster가 쓰는 엔진만 검사하고, 생략한 네트워크·dry-run 로그인 검사는 한 줄로 묶습니다. fail이 하나라도 있거나, 활성 직원이 없거나, roster 엔진 실행 파일이 하나라도 없으면 끝에 `실행 준비: 아니오`와 이유를 표시합니다. 다른 warn은 준비 여부를 바꾸지 않습니다.
 
 | doctor 항목 | 판정 | 고치는 명령 |
@@ -170,6 +174,8 @@ Windows wrapper는 `.venv\Scripts\python.exe`를 직접 실행하므로 venv 활
 **감독 프로세스(#589):** `up`은 역할(gateway, runner)마다 작은 감독 프로세스를 하나씩 띄우고(`python -m labhq.supervisor`), gateway·runner는 그 감독의 자식으로 시작됩니다. `up`이 끝나면 `up`이 직접 띄운 프로세스는 죽은 `up`의 PID를 부모로 계속 기록합니다. Windows는 그 번호를 다른 프로세스에 다시 줄 수 있고, 부모 PID만 보고 트리를 끄는 도구(테스트 코드의 `/T` 종료 등)가 그 프로세스를 끄면 gateway·runner가 함께 죽습니다. labhq 자신의 종료 경로는 생성 시각을 확인하지만(#597) 밖의 코드는 고칠 수 없으므로, 부모 PID가 재사용되지 않게 합니다. 감독은 gateway·runner가 사는 동안 살아 있어 그 부모 PID는 재사용되지 않고, 감독 자신의 부모(`up`)는 시작할 때 조상 프로세스 4개의 handle을 열어 둬서 재사용되지 않습니다(열린 handle이 있으면 끝난 프로세스의 PID도 반환되지 않습니다). 감독은 gateway·runner가 끝난 시각과 종료 코드도 `<role>-supervisor-diagnostics.jsonl`에 `child_exit`로 남깁니다. 강제 종료는 프로세스 자신의 `exit` 기록을 남기지 못하므로 이것이 유일한 단서입니다. 조상 handle을 열지 못해도(권한·이미 끝난 부모) 역할은 시작하고, 이유는 같은 파일의 `parents_pinned` 행에 남깁니다. `up`은 감독이 조상을 고정하고 역할을 기록할 때까지(최대 20초) 끝나지 않습니다.
 
 `supervisor.restart: true`로 켜면 스스로 끝난(종료 코드 0이 아닌) 역할을 다시 시작합니다. 종료 코드 2는 labhq가 시작을 거부한 경우(설정 거부, 다른 설정이 같은 state 폴더를 쓰고 있다는 #613의 소유 기록)라 같은 거부가 되풀이되므로 다시 시작하지 않고 `restart_skipped`만 남깁니다. 처음엔 `backoff_s`(5초) 뒤에, 이어서 두 배씩 `backoff_cap_s`(120초)까지 기다리고, `restart_window_s`(600초) 안에 `max_restarts`(5)번을 넘기면 그대로 둡니다. **기본은 꺼짐**이라 비정상 종료가 가려지지 않습니다. `down`과 웹 종료로 멈춘 역할은 다시 시작하지 않습니다(`labhq-<role>.stopping` 표시 파일을 먼저 남기고, `up`이 지웁니다). 감독이 다시 시작하는 중에 `up`을 실행하면 감독을 하나 더 띄우지 않고 역할이 응답하길 기다립니다. 이 변경 전에 시작한 gateway·runner는 감독이 없고, `status`가 "감독 없음(감독 도입 전 방식)"이라고 알립니다. `down` 뒤 `up`을 하면 감독 아래로 들어갑니다. 감독 프로세스 기록이 있는데 프로세스가 없고 역할만 살아 있으면 `status`·`doctor`가 경고합니다(보호받지 못하는 상태).
+
+2.5D·3D 웹을 열어 두면 gateway 연결 끊김과 runner 미연결을 별도로 알립니다. 재연결 중에도 경고를 유지하고 연결이 돌아오면 지웁니다. 연결 끊김만으로 종료와 네트워크 문제를 구별하지는 않으며, 웹을 닫았을 때 외부 채널로 알림을 보내지는 않습니다.
 
 **예고 없이 꺼졌을 때:** `status`는 연결을 시도하기 전에, `doctor`는 네트워크 없이 로컬 PID 기록과 마지막 heartbeat·exit를 보여 줍니다. 조회는 PID 기록을 지우지 않습니다. 프로세스가 없고 exit도 없으면 `비정상 종료 의심`입니다. 아래 파일은 설정의 `gateway.state_dir/logs/`에 gateway·runner별로 쌓입니다(직접 실행한 경우도 동일).
 
@@ -442,7 +448,7 @@ SQLite는 읽기 연결과 쓰기 연결을 나눠(WAL) 읽기가 커밋을 기�
 
 ### 보고서 공통 결과 계약
 
-원본·요청 묶음·GitHub 정리본·PDF·웹 보고서는 첫 화면에 `질문 → 답 → 한계 → 대표 그림 → 결과표 → 재현 안내 → 근거 각주 → 실행 기록`을 같은 순서로 표시합니다. 그림·표가 없으면 빈칸 대신 생략 사유를 적습니다. 웹은 이 Markdown을 안전한 HTML로 그리며 `[[claim:…]]` 내부 표기를 독자에게 보이지 않습니다.
+원본·요청 묶음·GitHub 정리본·PDF·웹 보고서는 첫 화면에 `질문 → 답 → 한계 → 대표 그림 → 결과표 → 재현 안내 → 근거 각주 → 실행 기록`을 같은 순서로 표시합니다. 정리본과 PDF는 답 아래에 `분석 파이프라인`을 더합니다. 그림·표가 없으면 빈칸 대신 생략 사유를 적습니다. 웹은 이 Markdown을 안전한 HTML로 그리며 `[[claim:…]]` 내부 표기를 독자에게 보이지 않습니다.
 
 CommonMark 파서로 코드 영역을 나눠 asset·근거 수집과 claim 번호 치환에서 건너뜁니다. CSV·TSV·Excel 링크는 결과표로 분류합니다.
 
@@ -743,6 +749,7 @@ CLI를 띄우기 전에 plugin 이름·version·내용 해시를 run manifest의
 plugin을 읽고 `--disable-slash-commands`를 빼서 `bioinfo:bioinfo-analyze` skill을 씁니다. 이때 setting source는
 `local`만 둡니다(작업공간에 남은 `.claude/skills`가 끼어들지 않게). 다른 직원의 skill 차단과
 `--setting-sources project,local`, 개인 `CLAUDE.md` 제외, auto memory 차단은 그대로입니다.
+Nextflow를 돌리면 report·timeline·trace·DAG 네 파일을 `outputs/pipeline_info/`에 복사해 산출로 선언합니다. bioinfo-agent의 기본 Nextflow 설정이 네 기록을 모두 켭니다.
 
 다른 자체 CLI 직원은 `engine: cli`와 `cli.command`를 사용할 수 있습니다 (`labhq/adapters/cli.py`).
 
@@ -931,13 +938,15 @@ resume 비용·Codex 토큰은 호출별 증분으로 합산합니다(#82). 원 
 |---|---|
 | `README.md` | 연구 질문만 표시한 질문→답·한계→그래픽 초록→대표 그림→보고서·결과표·재현 링크→짧은 갈래 표 순서. 경로·운영 지시는 넣지 않음 |
 | `report/` | 논문 형식 과학 보고서 md·PDF. PDF의 claim 각주는 `[근거 n]`과 끝쪽 목록으로 표시 |
-| `run/` | 짧은 재현 안내, 작업 지시, 요청·결정·실행·비용과 수정 이력. 이전 차수·리뷰 참고·미반영 정정은 여기에 둠 |
+| `run/` | 짧은 재현 안내, 작업 지시, 요청·결정·실행·비용과 수정 이력. 이전 차수·리뷰 참고·미반영 정정은 여기에 둠. 실행 보고서·모식도·타임라인과 `nextflow/` |
 | `code/<단계>/outputs/`·`figures/`·`tables/` | 원래 실행 폴더를 보존한 스크립트, SVG, 공개 가능한 집계표. 보고서가 링크한 표는 존재·열·행 shape를 검사 |
 | `studies/<갈래 id>-<이름>/` | 갈래별 코드·그림·표·상태와 입력→방법→QC→결과 연결표 |
 | `docs/reference/` | lookup-only 단계 보고서·검토문. 갈래 README에서 링크 |
 | `REFERENCES.md`·`DATA_AND_LICENSES.md` | PMID·DOI·GEO와 자료별 출처·접근·재배포·필수 인용. 구조화된 reference가 없으면 입력 README의 완전한 이용 조건 표를 복구 |
 
 갈래 계획이면 종합 산출은 루트에, 갈래 산출은 `studies/`에 둡니다. 뺀 표는 루트·갈래 README에 이름·사유·행 수·주요 열만 적습니다. `outputs/literature/` 원문, 원본 입력, 미보고 파일은 싣지 않습니다. 갈래 보고서는 `output_types: report`로 선언한 Markdown만 `docs/reference/`에 둡니다. `output_types`가 전혀 없는 예전 계획은 공개 자료의 표만 집계 이름·열, 직사각형 shape, 식별 열 부재, 1–9 작은 칸 부재를 확인해 후보로 복구합니다. 내부 자료 표는 집계표 선언이 있어야 합니다. 귀속이 하나라도 빠지면 요청 전체를 내부로 봅니다. 깨진 링크, 잘못된 표 shape, 비밀값·로컬 경로·서명 URL, 자료 안내 자리표시, 보고서 claim anchor, 한국어 금지 표현이 남으면 게시를 멈춥니다. 통제 데이터 요청은 편집자에게 보내거나 게시하지 않습니다.
+
+**실행 보고서(#756):** `run/pipeline_diagram.svg`는 실행 기록이 있는 단계만 담당·입력·산출·QC 띠와 함께 그리고, `run/run_timeline.svg`·`run/run_report.md`는 단계별 시작·종료·걸린 시간·담당·비용을 적습니다. 기록이 없으면 `기록 없음`으로 두고 0원이나 시각을 만들지 않으며, 실행하지 않은 계획 단계는 따로 적습니다. 내부 자료 단계는 `내부 자료 단계 N`으로만 표시합니다. 단계가 `outputs/pipeline_info/`에 남긴 Nextflow report·timeline·trace·DAG는 `run/nextflow/`에 넣습니다(파일당 20 MB). 내부 자료 단계의 기록이나 개인 경로를 바꾸지 못한 기록은 빼고 이유를 적습니다. 기록이 없으면 Nextflow를 쓰지 않았다고 적습니다. README는 답 아래에서 링크해 그래픽 초록이 첫 그림으로 남고, PDF는 두 그림을 넣습니다. 근거는 [실행 보고서 기록](reference/run-report-756.md)에 있습니다.
 
 `run/reproduce.md`에는 lock·버전, 입력 설정, 단계별 실행 폴더·명령, 예상 출력, 공개/접근 제한 재현 범위만 둡니다. 긴 지시는 `run/task_record.md`로 분리합니다. 코드의 개인 절대 경로는 경로마다 고유한 `LABHQ_INPUT_*` 참조로 바꾸며, 자동 변환하지 못한 줄은 경로를 지우고 수동 확인 주석을 붙입니다. Python 사본은 게시 전 compile 검사합니다.
 

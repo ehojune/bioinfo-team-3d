@@ -28,6 +28,7 @@ FRONT_SECTION_TITLES = (
     "근거 각주",
     "실행 기록",
 )
+PIPELINE_TITLE = "분석 파이프라인"  # between 답 and 한계 when labhq drew the executed steps (#756)
 FRONT_START = "<!-- labhq-report-package:v1 -->"
 FRONT_END = "<!-- labhq-report-package:end -->"
 
@@ -116,6 +117,8 @@ class ReportPackage:
     source_report: str = ""
     required: dict[str, str] = field(default_factory=dict)
     markdown_warnings: dict[str, list[str]] = field(default_factory=dict)
+    pipeline: list[ReportAsset] = field(default_factory=list)
+    pipeline_note: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -123,7 +126,7 @@ class ReportPackage:
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "ReportPackage":
         data = dict(value)
-        for key in ("figures", "tables", "files"):
+        for key in ("figures", "tables", "files", "pipeline"):
             data[key] = [item if isinstance(item, ReportAsset) else ReportAsset(**item)
                          for item in data.get(key) or []]
         return cls(**data)
@@ -265,7 +268,8 @@ def _asset_lines(rows: list[ReportAsset], omission: str, label: str, *, image: b
     return [f"- 해당 없음 — {omission or '이 항목이 기록되지 않았습니다.'}"]
 
 
-def render_report_front(package: ReportPackage, *, figures_as_images: bool = False) -> str:
+def render_report_front(package: ReportPackage, *, figures_as_images: bool = False,
+                        pipeline_images: bool = False) -> str:
     """Compact first screen shared by the stored report, bundle, edition, PDF and web view."""
     evidence = ([f"- [근거 {index}] 근거 원장 `{value}`" for index, value in enumerate(package.evidence_notes, 1)]
                 or ["- 근거 각주가 없습니다."])
@@ -279,6 +283,7 @@ def render_report_front(package: ReportPackage, *, figures_as_images: bool = Fal
     sections: list[tuple[str, list[str]]] = [
         ("질문", [package.question]),
         ("답", [package.answer]),
+        *([(PIPELINE_TITLE, pipeline_lines(package, images=pipeline_images))] if package.pipeline else []),
         ("한계", [package.limitations]),
         ("대표 그림", _asset_lines(package.figures, package.omissions.get("figures", ""), "대표 그림",
                                 image=figures_as_images)),
@@ -290,12 +295,32 @@ def render_report_front(package: ReportPackage, *, figures_as_images: bool = Fal
     return "\n\n".join(f"## {title}\n\n" + "\n".join(lines) for title, lines in sections) + "\n"
 
 
-def with_report_front(report: str, package: ReportPackage) -> str:
+def pipeline_lines(package: ReportPackage, *, images: bool = False) -> list[str]:
+    """The drawn pipeline and timeline, then the notes. Markdown links them so the graphical abstract stays the first
+    figure (#608); the PDF, which cannot follow a link, shows them."""
+    shown = [f"![{row.label}]({row.path})" if images else f"- [{row.label}]({row.path})" for row in package.pipeline]
+    return shown + [f"- {note}" for note in package.pipeline_note]
+
+
+def with_pipeline_section(report: str, package: ReportPackage, *, images: bool = False) -> str:
+    """Add the pipeline section to a front rendered without one (a stored bundle report), before its 한계."""
+    start = report.find(FRONT_START)
+    end = report.find(FRONT_END, start)
+    if not package.pipeline or start < 0 or end < 0 or f"## {PIPELINE_TITLE}\n" in report[start:end]:
+        return report
+    limit = report.find("\n## 한계\n", start, end)
+    at = limit + 1 if limit >= 0 else end
+    section = f"## {PIPELINE_TITLE}\n\n" + "\n".join(pipeline_lines(package, images=images)) + "\n\n"
+    return report[:at] + section + report[at:]
+
+
+def with_report_front(report: str, package: ReportPackage, *, pipeline_images: bool = False) -> str:
     source = _without_front(report).strip()
     title = re.match(r"^#\s+.+(?:\n|$)", source)
     lead = title.group(0).strip() if title else f"# {package.title}"
     body = source[title.end():].lstrip() if title else source
-    return f"{lead}\n\n{FRONT_START}\n\n{render_report_front(package)}\n{FRONT_END}\n\n{body}".rstrip() + "\n"
+    front = render_report_front(package, pipeline_images=pipeline_images)
+    return f"{lead}\n\n{FRONT_START}\n\n{front}\n{FRONT_END}\n\n{body}".rstrip() + "\n"
 
 
 def reader_markdown(report: str, *, footnotes: bool = False) -> str:
