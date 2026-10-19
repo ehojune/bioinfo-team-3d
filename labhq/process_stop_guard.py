@@ -11,9 +11,19 @@ DENIAL = (
     "PID와 시작 시각을 다시 확인하고 다른 요청이나 gateway·runner는 종료하지 마세요."
 )
 
-# Keep quoted arguments whole, and inspect every connected command (including fallback branches).
-_WORDS = re.compile(r'''"(?:`.|\\.|[^"\\])*"|'(?:''|[^'])*'|&&|\|\||[;&|(){}\n]|[^\s;&|(){}'"\n]+''')
+# Keep adjacent quoted/escaped fragments in one shell word. Redirections are
+# distinct tokens so their targets are never mistaken for executed commands.
+_REDIRECTION = re.compile(r"(?:\d*(?:<<<|<<-?|>>|<>|>&|<&|>\||[<>])|&>>?)")
+_WORDS = re.compile(
+    _REDIRECTION.pattern + r'''|&&|\|\||[;&|(){}\n]|(?:"(?:`[\s\S]|\\[\s\S]|[^"\\`])*"|'''
+    r"'[^']*'|\\[\s\S]|`[\s\S]|[^\s;&|(){}<>\"'\\`])+"
+)
 _SEPARATOR = re.compile(r"^[;&|(){}\n]+$")
+_KNOWN_COMMANDS = {
+    "pkill", "killall", "taskkill", "get-process", "gps", "ps", "stop-process", "spps", "kill",
+    "sudo", "env", "command", "exec", "nohup", "builtin", "if", "elif", "while", "until", "time",
+    "sh", "bash", "zsh", "cmd", "powershell", "pwsh",
+}
 
 # sudo options with required operands; --preserve-env's optional value uses '='.
 _SUDO_ARGUMENT_OPTIONS = {
@@ -22,14 +32,61 @@ _SUDO_ARGUMENT_OPTIONS = {
 }
 
 
+def _literal_word(word: str) -> str:
+    """Remove literal shell quoting/escapes without expanding variables or running code."""
+    result: list[str] = []
+    quote = None
+    index = 0
+    while index < len(word):
+        char = word[index]
+        if quote == "'":
+            if char == "'":
+                quote = None
+            else:
+                result.append(char)
+        elif char in "\"'" and (quote is None or quote == char):
+            quote = None if quote else char
+        elif char in "\\`" and index + 1 < len(word):
+            following = word[index + 1]
+            if following != "\n":
+                if char == "\\" and quote == '"' and following not in '$`"\\':
+                    result.append(char)
+                result.append(following)
+            index += 1
+        else:
+            result.append(char)
+        index += 1
+    return "".join(result)
+
+
 def _bare(word: str) -> str:
-    return word.strip("\"'").casefold()
+    return _literal_word(word).casefold()
+
+
+def _command_name(word: str) -> str:
+    # Also retain Windows path semantics: a backslash there is a separator,
+    # whereas Bash removes an unquoted backslash before comparing the name.
+    names = [re.split(r"[/\\]", value.casefold())[-1].removesuffix(".exe")
+             for value in (_literal_word(word), word.strip("\"'"))]
+    return next((name for name in names if name in _KNOWN_COMMANDS), names[0])
+
+
+def _without_redirections(words: list[str]) -> list[str]:
+    result = []
+    index = 0
+    while index < len(words):
+        if _REDIRECTION.fullmatch(words[index]):
+            index += 2  # the operator and its literal filename/fd are not argv
+        else:
+            result.append(words[index])
+            index += 1
+    return result
 
 
 def _sudo_command_start(words: list[str], start: int) -> int:
     """Skip literal sudo options/operands and assignments, without executing anything."""
     while start < len(words):
-        option = words[start].strip("\"'")  # -H and -h have different operand rules.
+        option = _literal_word(words[start])  # -H and -h have different operand rules.
         if re.match(r"^[A-Za-z_][A-Za-z_0-9]*=", option):
             start += 1
             continue
@@ -48,6 +105,62 @@ def _sudo_command_start(words: list[str], start: int) -> int:
                     if index == len(option):  # an attached value consumes the rest of the same token
                         start += 1
                     break
+    return start
+
+
+def _env_command_start(words: list[str], start: int) -> tuple[int, str | None]:
+    """Locate env's command, or its literal split-string payload (including -vS)."""
+    while start < len(words):
+        option = _literal_word(words[start])
+        if re.match(r"^[A-Za-z_][A-Za-z_0-9]*=", option):
+            start += 1
+            continue
+        if option == "--":
+            return start + 1, None
+        if not option.startswith("-"):
+            break
+        start += 1
+        split = False
+        value = None
+        if option.startswith("--"):
+            key, attached, value = option.partition("=")
+            split = key == "--split-string"
+            takes_value = split or key in {"--unset", "--chdir", "--argv0"}
+            value = value if attached else None
+        else:
+            takes_value = False
+            for index, flag in enumerate(option[1:], start=2):
+                if flag in "SuCa":
+                    takes_value = True
+                    split = flag == "S"
+                    value = option[index:] if index < len(option) else None
+                    break
+        if takes_value and value is None and start < len(words):
+            value = _literal_word(words[start])
+            start += 1
+        if split:
+            payload = (value or "") + " " + " ".join(words[start:])
+            return len(words), payload
+    return start, None
+
+
+def _wrapper_command_start(words: list[str], start: int, name: str) -> int:
+    start += 1
+    while start < len(words):
+        option = _literal_word(words[start])
+        if option == "--":
+            return start + 1
+        if name in {"command", "time"} and re.fullmatch(r"-p+", option):
+            start += 1
+        elif name == "exec" and re.fullmatch(r"-[cla]+.*", option):
+            start += 1
+            for index, flag in enumerate(option[1:], start=2):
+                if flag == "a":
+                    if index == len(option):
+                        start += 1
+                    break
+        else:
+            break
     return start
 
 
@@ -100,36 +213,30 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
                 input_pending = False
             continue
         pipe_continuation = False
+        group = _without_redirections(group)
         start = 0
         while start < len(group):
             word = _bare(group[start])
-            if re.split(r"[/\\]", word)[-1].removesuffix(".exe") == "sudo":
+            name = _command_name(group[start])
+            if name == "sudo":
                 start = _sudo_command_start(group, start + 1)
                 continue
-            if word == "env":
-                start += 1
-                while start < len(group) and _bare(group[start]).startswith("-"):
-                    option = _bare(group[start])
-                    start += 1
-                    if option == "--":
-                        break
-                    if option in {"-s", "--split-string"} and start < len(group):
-                        payload = group[start].strip("\"'") + " " + " ".join(group[start + 1:])
-                        if broad_process_stop(payload, _depth=_depth + 1):
-                            return True
-                        start = len(group)
-                    elif option in {"-u", "--unset", "-c", "--chdir"}:
-                        start += 1
+            if name == "env":
+                start, payload = _env_command_start(group, start + 1)
+                if payload is not None and broad_process_stop(payload, _depth=_depth + 1):
+                    return True
                 continue
-            if word in {"&", "!", "nohup", "command", "exec", "call", "then", "do"} or re.match(
+            if name in {"command", "exec", "nohup", "time"}:
+                start = _wrapper_command_start(group, start, name)
+                continue
+            if word in {"&", "!", "builtin", "call", "then", "do", "if", "elif", "while", "until"} or re.match(
                     r"^[A-Za-z_][A-Za-z_0-9]*=", group[start]):
                 start += 1
                 continue
             break
         if start >= len(group):
             continue
-        name = re.split(r"[/\\]", _bare(group[start]))[-1]
-        name = name.removesuffix(".exe")
+        name = _command_name(group[start])
         args = [_bare(word) for word in group[start + 1:]]
         if name in {"pkill", "killall"}:
             return True
@@ -165,16 +272,19 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
                           or name == "kill" and any(arg.isdigit() or arg.startswith("$") for arg in args))
             positional_name = (args and not args[0].startswith(("-", "$", "@"))
                                and not args[0].isdigit())
-            if process_pipeline and not pid_target or positional_name:
+            selected_processes = process_pipeline or bool(block_pipeline and block_pipeline[-1])
+            if selected_processes and not pid_target or positional_name:
                 return True
         if name in {"sh", "bash", "zsh", "cmd", "powershell", "pwsh"}:
             for i, arg in enumerate(args[:-1]):
-                if arg in {"-c", "/c", "-command", "-comm", "-c:"}:
+                shell_cluster = name in {"sh", "bash", "zsh"} and re.fullmatch(r"-[^-]*c[^-]*", arg)
+                if shell_cluster or arg in {"-c", "/c", "/k", "-command", "-comm", "-c:"}:
                     payload_words = group[start + i + 2:]
                     # cmd /c and PowerShell -Command consume the remaining command
                     # string; Bash -c consumes one argument (the rest are $0, $1, ...).
-                    payload = (payload_words[0].strip("\"'") if len(payload_words) == 1
-                               or name in {"sh", "bash", "zsh"} else " ".join(payload_words))
+                    payload = _literal_word(payload_words[0])
+                    if name not in {"sh", "bash", "zsh"}:
+                        payload += " " + " ".join(payload_words[1:])
                     if broad_process_stop(payload, _depth=_depth + 1):
                         return True
     return False
