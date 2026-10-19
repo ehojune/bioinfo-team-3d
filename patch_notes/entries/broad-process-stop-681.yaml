@@ -15,3 +15,6 @@ rows:
 - sha: 6bf40b7
   at: '2026-10-20 02:53'
   text: sudo 옵션 뒤 명령과 PowerShell script block의 이름 종료 우회를 막았다. 새 실패 31개를 재현한 뒤 문자열/fake 131개와 승인 정책 정적 test 24개를 확인했다.
+- sha: 0997a9a
+  at: '2026-10-20 03:00'
+  text: script block 출력·filter·앞선 문장의 이름 선택 상태를 보존했다. 추가 실패 9개를 재현한 뒤 문자열/fake 144개와 승인 정책 정적 test 24개를 확인했다.
