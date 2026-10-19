@@ -60,11 +60,15 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
             # Explicit -Id is PID-based. Otherwise the pipeline carries a name-selected set.
             process_pipeline = not any(arg in {"-id", "-pid"} for arg in args)
         if name in {"stop-process", "spps", "kill"}:
-            if any(re.match(r"^-n(?:a(?:m(?:e)?)?)?(?::|$)", arg) for arg in args):
+            # Bash kill -n selects a signal, not a process name.
+            name_option = r"^-name(?::|$)" if name == "kill" else r"^-n(?:a(?:m(?:e)?)?)?(?::|$)"
+            if any(re.match(name_option, arg) for arg in args):
                 return True
+            pid_target = (any(re.match(r"^-id(?::|$)", arg) for arg in args)
+                          or name == "kill" and any(arg.isdigit() or arg.startswith("$") for arg in args))
             positional_name = (args and not args[0].startswith(("-", "$", "@"))
                                and not args[0].isdigit())
-            if process_pipeline or positional_name:
+            if process_pipeline and not pid_target or positional_name:
                 return True
         if name in {"sh", "bash", "zsh", "cmd", "powershell", "pwsh"}:
             for i, arg in enumerate(args[:-1]):

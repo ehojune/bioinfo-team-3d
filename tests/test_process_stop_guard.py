@@ -43,6 +43,7 @@ def test_name_stop_always_denied(command):
     'echo "pkill python"', 'printf "%s" "taskkill /IM python.exe"',
     'rg "Stop-Process -Name python" docs/manual.md', 'python cleanup.py',
     'Get-Process python; Stop-Process -Id $ownedPid',
+    'kill -n 9 1234', 'ps -ef | kill -TERM 1234',
 ])
 def test_pid_cleanup_and_data_are_not_name_stop(command):
     assert not broad_process_stop(command)
