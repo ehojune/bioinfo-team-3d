@@ -4,6 +4,17 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+PR #776: 내장 외부 API 조회에 단계 첫 조회부터 20분 기한·대기 알림·시간 초과 기록을 추가합니다. Refs #676.
+
+- P1 4317534007 수정: 기관 browser를 async subprocess로 기다리며 취소 시 소유한 handle의 종료를 확인합니다. PDF는 정상 완료·형식 검사 뒤 목적 경로에 반영합니다. 취소된 AlphaGenome SDK thread도 기존 잔류 상한에 집계합니다.
+- 이전 P1 4317025129 수정 유지: key_fulltext 자동 조회·기관 간격 대기는 같은 예산을 쓰고 PDF 승인 대기 시간만 제외합니다.
+- 수정 전 취소 회귀 4건 실패를 재현했고 수정 후 관련 mock/static pytest 43 passed. guard 환경 유지, blocked 이벤트 0. 실제 process/proc_tree·browser·SDK·기관·운영·HPC·원자료는 실행하지 않았습니다.
+- Python 3.10 문법·public·diff·patch-notes·notes 검사 통과. manual 163,348→163,450자. 근거: docs/reference/external-wait-676.md.
+- 한계: 원격 SDK 호출 자체의 강제 취소는 보장하지 않으며 잔류 호출을 추적·제한합니다. 직원 직접 스크립트·타사 MCP의 강제 상한이 남아 #676은 유지합니다. CI·fresh-head 리뷰·병합·배포는 supervisor 담당입니다.
+- 남은 지적: P2 4317534020(동시 PDF 승인 대기의 예산 갱신)은 범위 밖이며 supervisor의 영향·비용 판단 대상으로 남깁니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
 # 재현 receipt 산출 격리 리뷰 P1 (#771, PR #781)
 
 ## 결론
@@ -124,6 +135,16 @@ P1 3건 중 실제 결함 1건을 `5b323a3`에서 고쳤습니다. 나머지 2�
 
 `--name`으로 지금과 다른 기존 저장소를 고르면 그 저장소 루트에 올라갑니다. 이는 `--to github`와 같은 동작이고 게시 카드가 저장소 이름을 보여 줍니다. P1 범위 밖으로 남깁니다.
 
+PR #776: 내장 외부 API 조회에 단계 첫 조회부터 20분 기한·대기 알림·시간 초과 기록을 추가합니다. Refs #676.
+
+- P1 4317025129 수정: key_fulltext의 공개 본문 조회·기관 요청 간격 대기·fetch도 같은 예산을 씁니다. PDF 승인 대기 시간만 제외하며 이미 쓴 예산은 유지합니다.
+- 수정 전 자동 조회 3경로의 기한 우회를 재현했습니다. 수정 후 관련 mock/static pytest 40 passed(27+13), 26 deselected. process accident guard 환경을 유지했고 차단 이벤트는 없었습니다.
+- Python 3.10 문법·public·diff·patch-notes·notes 검사 통과. manual 163,275→163,348자. 근거: docs/reference/external-wait-676.md.
+- 직원 직접 스크립트·타사 MCP의 강제 상한은 남아 있어 #676은 열어 둡니다. 실제 프로세스·기관·브라우저·운영·HPC·원자료 검증은 실행하지 않았습니다.
+- CI·fresh-head 리뷰·병합·배포는 supervisor가 이어갑니다. 남은 지적: 이번 작업의 P2 변경은 없습니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
 Fixes #682
 
 모델 안전장치가 CSO 계획을 거부한 요청에 `model_refused` 사유와 안전한 한 줄 설명을 남기고 웹·status에 표시합니다. 최초 계획과 계획 교정 모두 같은 실패 경로로 종료하며 자동 재시도·모델 전환은 하지 않습니다.
@@ -188,6 +209,24 @@ PR #777. `labhq storage <요청 id> --rebuild [--name <새 저장소>] [--visibi
 - 웹 사무실 버튼은 없고 CLI·API만 있습니다.
 - 실제 GitHub 게시, 실제 요청, PI instance는 실행하지 않았습니다.
 - 처음에 `tests/test_cli*.py`를 glob으로 묶어 돌렸을 때 5 failed, 59 passed였습니다. 출력에 보인 실패는 `test_cli_adapter.py`의 2건뿐이고, 나머지 3건의 위치는 확인하지 않았습니다. 이 묶음에는 하위 process를 띄우는 adapter·launch test가 섞여 있어, mock-only 정책에 따라 다시 돌리지 않았습니다. storage CLI 경로는 위의 mock 테스트로 확인했습니다.
+
+## 결론
+
+PR #776에서 내장 외부 API 조회에 단계 첫 조회부터 20분 기한과 대기·시간 초과 기록을 추가했습니다. Refs #676.
+
+## 변경·검증
+
+- 일반 labhq_annot API는 재호출·MCP 재시작 뒤에도 기한을 유지하고 작업판에 경과를 알립니다. 시간 초과는 MCP 오류로 남기며 직원은 남은 작업과 누락 보고를 이어 갑니다.
+- mock/static 관련 pytest 21 passed, 26 deselected. Python 3.10 문법·diff 검사 통과.
+- manual 163,011→163,275자. 상세 근거: `docs/reference/external-wait-676.md`.
+
+## 한계
+
+- 직원 직접 스크립트·타사 MCP는 강제 상한 대상이 아닙니다. 스크립트 timeout 작성 규칙을 추가했고 #676은 열어 둡니다.
+- PI PDF·기관·승인 대기와 안전/게시 gate는 유지합니다. 실제 프로세스·외부 서비스·운영·HPC·원자료는 실행하지 않았습니다.
+- CI·fresh-head 리뷰·P1 판단·P2 수집·병합·배포는 supervisor가 맡습니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
 
 ## 결론
 
