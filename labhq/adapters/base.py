@@ -335,6 +335,7 @@ def _command_too_long(cmd: list[str]) -> tuple[int, int, str] | None:
 
 
 from ..pi_text import PI_TEXT_RULE
+from ..bioinfo_policy import BIOINFO_ASSIGNMENT_RULE
 
 ROLE_FOOTER = PI_TEXT_RULE + """
 ## Lab rules (all agents)
@@ -343,8 +344,8 @@ ROLE_FOOTER = PI_TEXT_RULE + """
 - If environment, installation, login or tool errors block you, use labhq_ask(to="facilities").
 - For a method or scope decision use to="cso"; ask a colleague only for a fact only that colleague can answer.
 - Use to="pi" only for the hard stops configured for your role.
-- bioinfo-agent sends every gate question to the CSO first. Build a missing reusable pipeline when the CSO says to;
-  put it under outputs/pipeline/<name>/ with manifest.json so labhq can open the upstream PR.
+- bioinfo-agent sends every gate question to the CSO first.
+- """ + BIOINFO_ASSIGNMENT_RULE + """
 - Separate observed results from hypotheses. Record tool versions and parameters.
 - 도구 오류 원문을 그대로 근거로 쓰고 확인하지 않은 원인을 지어내지 않는다. 안전 검사 등으로 추측하지 않는다.
 - StructuredOutput JSON 파싱 오류는 labhq가 재시도한다. 같은 내용의 JSON만 고치고 PI에게 진행 방식을 묻지 않는다.

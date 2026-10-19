@@ -52,6 +52,7 @@ from ..private_paths import ENABLED_ENV_VAR as PRIVATE_ENABLED_ENV, ENV_VAR as P
     OPEN_READS_ENV_VAR as PRIVATE_OPEN_READS_ENV, plugin_keep_dirs, resolve_private_paths, \
     staff_claude_project_dirs
 from ..pipeline_pr import collect_pipeline_submission, pipeline_rejection
+from ..bioinfo_policy import PIPELINE_AUTHORS
 from ..quota import quota_reset_instant
 from ..recruit.provenance import external_service_refusal, not_yet_active, probation_refusal, restricted_task
 from ..registry import Registry
@@ -1937,7 +1938,7 @@ class Runner:
         for note in dict.fromkeys(output_scan_notes):
             await emit("agent.log", {"level": "warn", "text": note})
         # Only a finished, successful turn: a bundle written before HPC checks or an ask is not final (#301 review).
-        if (agent.id == "bioinfo-agent" and task.meta.get("pipeline_pr") is True  # the gateway asked (#300)
+        if (agent.id in PIPELINE_AUTHORS and task.meta.get("pipeline_pr") is True  # the gateway asked (#300)
                 and result.ok and not waiting(result)):
             if listed_outputs is None:
                 listed_outputs, output_scan_note = await asyncio.to_thread(

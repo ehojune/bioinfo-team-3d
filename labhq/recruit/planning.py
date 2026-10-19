@@ -20,9 +20,10 @@ PLAN_RULE = (
     "steps. In the draft use the closest core employee's agent_id as the fallback; labhq replaces it with the "
     "active hire before CP1. Never invent a future agent id. Reuse the same paper's talent when available. "
     "If both the existing method and a new implementation are requested, put reproduction (hire) and new "
-    "implementation (bioinfo-agent) in parallel with identical upstream dependencies, then a comparison step "
-    "depending on both. For a Nextflow workflow, sequence the hire's method/tool specification, bioinfo-agent's "
-    "workflow implementation, and the hire's validation using depends_on. These rules also apply outside the "
+    "implementation (engineer or analyst) in parallel with identical upstream dependencies, then a comparison step "
+    "depending on both. For a new Nextflow workflow, sequence the hire's method/tool specification, the engineer's "
+    "or analyst's workflow implementation, and the hire's validation using depends_on. Supported nf-core execution "
+    "stays with bioinfo-agent. These rules also apply outside the "
     "research lane. Unavailable hiring falls back to the named core employee with a plan warning.")
 
 

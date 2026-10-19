@@ -86,6 +86,12 @@ notesSnapshot.apply({type:'snapshot',data:{requests:[{id:'r2',status:'running',p
 assert.equal(notesSnapshot.S.requests.get('r2').piNotes[0].at,1234,'a late client restores PI notes');
 fresh.apply({type:'pipeline.pr',request_id:'r2',data:{status:'pending',name:'tiny',reason:'write permission required'}});
 assert.equal(fresh.S.requests.get('r2').pipelinePr.status,'pending');
+for (const [status, label] of [['awaiting_approval', '승인 대기'], ['declined', '미기여']]) {
+  fresh.apply({type:'pipeline.pr',request_id:'r2',data:{status,name:'tiny',reason:'PI의 기여 선택'}});
+  assert.equal(fresh.S.requests.get('r2').pipelinePr.status,status);
+  assert.ok(fresh.S.feed[0].text.includes(label));
+}
+assert.equal(fresh.KIND_KO.pipeline_contribute,'새 pipeline 기여');
 fresh.apply({type:'pipeline.pr',request_id:'r2',data:{status:'open',name:'tiny',url:'https://example.org/pr/9',number:9}});
 assert.equal(fresh.S.requests.get('r2').github.at(-1).kind,'pipeline_pr');
 { // #301 review: a late client restores the stored status from the snapshot, without a duplicate link

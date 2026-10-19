@@ -62,6 +62,7 @@ from ..research.packs import (assess_pack_applicability, configured_packs, norma
 from ..util import clip, extract_json, input_relpath, output_relpath, short
 from .. import vocab as output_vocab
 from ..recruit import paper_skills, planning as recruit_planning
+from ..bioinfo_policy import BIOINFO_ASSIGNMENT_RULE
 from ..vocab import declare as output_types
 from ..vocab import public_resources, topic_checklists
 from ..vocab import topics as topic_types
@@ -527,7 +528,7 @@ Rules:
 """
 
 
-PLAN_PROMPT = """Decompose the PI's request into steps for your team. You do not analyze anything yourself.
+PLAN_PROMPT = BIOINFO_ASSIGNMENT_RULE + "\n\n" + """Decompose the PI's request into steps for your team. You do not analyze anything yourself.
 
 Team roster (use these agent ids exactly):
 {roster}
@@ -570,7 +571,7 @@ Rules:
 
 PI's request: {request}"""
 
-RESEARCH_PLAN_PROMPT = recruit_planning.PLAN_RULE + "\n\n" + paper_skills.PLAN_RULE + "\n\n" + """Create a frozen research contract for the PI's request. Do not execute or analyze.
+RESEARCH_PLAN_PROMPT = BIOINFO_ASSIGNMENT_RULE + "\n\n" + recruit_planning.PLAN_RULE + "\n\n" + paper_skills.PLAN_RULE + "\n\n" + """Create a frozen research contract for the PI's request. Do not execute or analyze.
 
 Team roster (use these agent ids exactly, never an orchestration role):
 {roster}
@@ -823,7 +824,7 @@ Request: {request}
 Team results:
 {results}"""
 
-REPLAN_PROMPT = """Re-plan only the unfinished part of the PI's request. You do not analyze anything yourself.
+REPLAN_PROMPT = BIOINFO_ASSIGNMENT_RULE + "\n\n" + """Re-plan only the unfinished part of the PI's request. You do not analyze anything yourself.
 
 Team roster (use these agent ids exactly):
 {roster}
@@ -3201,8 +3202,7 @@ class Orchestrator:
         request = self.hub.requests.get(ask.request_id or "", {})
         prompt = CONSULT_PROMPT.format(
             scope_advice=("Diagnose environment failures only." if routed == "facilities" else
-                          "When bioinfo-agent asks whether to build a missing reusable pipeline, "
-                          "answer that it should build it."),
+                          BIOINFO_ASSIGNMENT_RULE),
             sender=ask.agent_id, question=ask.question, why_blocked=ask.why_blocked,
             tried=json.dumps(ask.tried, ensure_ascii=False), options=json.dumps(ask.options, ensure_ascii=False),
             refs=json.dumps(refs, ensure_ascii=False), reference_note=reference_note,
