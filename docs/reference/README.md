@@ -2,6 +2,7 @@
 
 검증 근거·도구 제약·이전 결정을 찾을 때만 읽는 lookup-only 자료입니다. 현재 작업은 [HANDOFF](../../HANDOFF.md)를 봅니다.
 
+- [개발 총괄 운영](lead-operations.md): 담당 재사용·점검·P1/P2·driver·한도 기준.
 - [README 근거·한계](readme-evidence.md): 네 카드와 비교표의 상세 인용·수치.
 - [이전 HANDOFF 큐·결정](handoff-history-2026-10-19.md): 2026-10-19에 보존한 옛 현황표.
 - [문서 일치 점검](docs-refresh-2026-10-19.md): 코드 근거·갱신 범위·전후 글자 수.
