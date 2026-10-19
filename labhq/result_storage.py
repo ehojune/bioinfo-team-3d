@@ -894,7 +894,7 @@ class ResultStorage:
             suffix = PurePosixPath(name).suffix.lower()
             raw = path.read_bytes()
             raw_body: str | bytes = raw if suffix == ".svg" else raw.decode("utf-8", errors="replace")
-            if scan_publish_files({name: raw_body}, internal=False):
+            if scan_publish_files({name: raw_body}, internal=False, settings=self.s):
                 omitted.setdefault(source_step, []).append(PurePosixPath(name).name)
                 continue
             try:
@@ -903,7 +903,7 @@ class ResultStorage:
             except (UnicodeDecodeError, ValueError):
                 omitted.setdefault(source_step, []).append(PurePosixPath(name).name)
                 continue
-            if scan_publish_files({name: body}, internal=False):
+            if scan_publish_files({name: body}, internal=False, settings=self.s):
                 omitted.setdefault(source_step, []).append(PurePosixPath(name).name)
                 continue
             relative = PurePosixPath(*parts[3:]).as_posix()
@@ -930,7 +930,7 @@ class ResultStorage:
             else:
                 state = "완료"
                 raw_summary = str(value.get("text") or "").strip()
-                if raw_summary and scan_publish_files({f"progress/{sid}-summary.md": raw_summary}, internal=False):
+                if raw_summary and scan_publish_files({f"progress/{sid}-summary.md": raw_summary}, internal=False, settings=self.s):
                     if "단계 요약" not in omitted.setdefault(sid, []):
                         omitted[sid].append("단계 요약")
                     summary = "검사로 뺌"
@@ -946,7 +946,7 @@ class ResultStorage:
             safe_summary = " ".join(summary.replace("|", "\\|").split())
             rows.append(f"| {safe_sid} | {state} | {safe_detail} | {safe_summary} |")
         readme = "\n".join(rows) + "\n"
-        if issues := scan_publish_files({"progress/README.md": readme}, internal=False):
+        if issues := scan_publish_files({"progress/README.md": readme}, internal=False, settings=self.s):
             raise check_failure(issues)
         payload["progress/README.md"] = readme
         return payload, omitted, internal_steps, published
@@ -1407,6 +1407,7 @@ class ResultStorage:
                 issues = scan_publish_files(
                     {**docs, **images},
                     internal=publication_internal if scope_mode == "step" else request_internal,
+                    settings=self.s,
                 )
                 if issues:
                     raise check_failure(issues)

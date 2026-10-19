@@ -1655,8 +1655,10 @@ def _report_table_issues(files: Mapping[str, str | bytes]) -> list[dict[str, str
 
 
 def scan_publish_files(files: Mapping[str, str | bytes], *,
-                       internal: bool | set[str] = False) -> list[dict[str, str]]:
+                       internal: bool | set[str] = False, settings=None) -> list[dict[str, str]]:
     """Find credentials, local paths, signed URLs and internal aggregate cells of 1–9."""
+    from .private_paths import mentions_workspace_path
+
     issues: list[dict[str, str]] = []
     for name, body in files.items():
         if isinstance(body, bytes):
@@ -1668,7 +1670,8 @@ def scan_publish_files(files: Mapping[str, str | bytes], *,
         if any(re.search(pattern, text) for pattern in SECRET_PATTERNS) or re.search(
                 r"(?im)\b(?:api[_-]?key|token|password|secret)\s*[:=]\s*(?!<redacted-secret>|\[REDACTED\])\S+", text):
             issues.append({"kind": "secret", "path": name})
-        if _LOCAL_SCAN.search(text) or _PRIVATE_PATH.search(text):
+        if (_LOCAL_SCAN.search(text) or _PRIVATE_PATH.search(text)
+                or settings is not None and mentions_workspace_path(text, settings)):
             issues.append({"kind": "local_path", "path": name})
         if _SIGNED_URL.search(text) or redact_url_credentials(text) != text:
             issues.append({"kind": "signed_url", "path": name})
@@ -1891,7 +1894,7 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
         raise check_failure(table_issues)
 
     issues = code_syntax_issues(files) + scan_publish_files(
-        files, internal=tracked_internal if step_scope is not None else internal)
+        files, internal=tracked_internal if step_scope is not None else internal, settings=settings)
     blocking = [issue for issue in issues if issue["kind"] != "small_cell"]
     if blocking:
         raise check_failure(blocking)
