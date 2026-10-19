@@ -36,6 +36,8 @@ from .report_figures import (ABSTRACT_FILE, classify, figure_owners, has_abstrac
 from .report_pdf import NO_BROWSER, ReportRefused, build_report_file, pdf_cap_bytes, size_notes
 from .report_contract import reader_markdown
 from .request_bundle import _POSIX_ABS, _WINDOWS_ABS
+from .reproduction_receipt import (LANGUAGES, RECEIPT_PATH, build_receipt, expected_outputs, is_lock_file, receipt_json,
+                                   receipt_note, receipt_summary)
 
 _REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\Z")
@@ -180,7 +182,7 @@ def edition_candidates(req, settings) -> dict[str, Path]:
                     or clean_document(name, settings, req) != name):
                 continue
             suffix = rel.suffix.lower()
-            if suffix not in _TEXT_OUTPUTS and suffix not in _IMAGE_OUTPUTS:
+            if suffix not in _TEXT_OUTPUTS and suffix not in _IMAGE_OUTPUTS and not is_lock_file(name):
                 continue
             path = bundle / name
             if not plain_path(path) or not path.is_file():
@@ -218,6 +220,29 @@ def edition_assets(req, settings):
             except UnicodeDecodeError:
                 continue
     return assets, images
+
+
+def collect_reproduction_receipt(req, settings) -> dict:
+    """Inspect only reported source/lock text in the checked bundle; never open data files."""
+    sources = {}
+    omitted = []
+    total = 0
+    for name, path in edition_candidates(req, settings).items():
+        if PurePosixPath(name).suffix.casefold() not in LANGUAGES and not is_lock_file(name):
+            continue
+        size = path.stat().st_size
+        if size > 1_000_000 or total + size > 5_000_000:
+            omitted.append({"path": name, "reason": "size_limit"})
+            continue
+        total += size
+        try:
+            sources[name] = clean_publication_text(name, path.read_text(encoding="utf-8"), settings, req)
+        except UnicodeDecodeError:
+            omitted.append({"path": name, "reason": "not_utf8"})
+            continue
+    receipt = build_receipt(sources, outputs=expected_outputs(req))
+    receipt["omitted_files"].extend(omitted)
+    return receipt
 
 
 def publish_image_previews(images: Mapping[str, bytes], target: Path) -> tuple[dict[str, str], dict[str, dict[str, Any]]]:
@@ -556,6 +581,8 @@ def draft_documents(req: dict, settings, included=None, assets=None, *, abstract
         [report, str(req.get("report_appendix") or "")], req.get("references") or [],
         [text for name, text in (assets or {}).items() if edition_sources.is_versions_file(name)])
     assets = assets or {}
+    receipt = build_receipt({name: clean_publication_text(name, body, settings, req)
+                             for name, body in assets.items()}, outputs=expected_outputs(req))
     docs = {
         "README.md": "# 연구 결과\n\n## 무엇을 왜 했나요\n\n" + str(req.get("text") or "") +
             "\n\n## 결과\n\n" + readme_excerpt(report) + "\n\n" + document_links("") + "\n",
@@ -565,7 +592,12 @@ def draft_documents(req: dict, settings, included=None, assets=None, *, abstract
             req, settings, assets, environment_records or {}, bundle_readme),
         "TASK_RECORD.md": _task_record(req),
         "SOURCES.md": edition_sources.render(found, citations),
+        "REPRODUCTION_RECEIPT.json": receipt_json(receipt),
     }
+    docs["REPRODUCE.md"] += ("\n\n## 재현 검증\n\n" + receipt_note(receipt_summary(receipt))
+                             + "\n\n[검사 receipt](REPRODUCTION_RECEIPT.json)\n")
+    docs["report.md"] += ("\n\n## 재현 검증\n\n" + receipt_note(receipt_summary(receipt))
+                         + "\n\n[검사 receipt](REPRODUCTION_RECEIPT.json)\n")
     return {name: clean_document(body, settings, req) for name, body in docs.items()}
 
 
@@ -1333,6 +1365,11 @@ class ResultStorage:
                                    "run/reproduce.md": docs["REPRODUCE.md"],
                                    "run/task_record.md": docs["TASK_RECORD.md"]},
                     internal_files=internal_allowed, input_readmes=input_readmes)
+                # Keep the final publication paths/hashes, rather than the earlier bundle layout.
+                req["reproduction_receipt"] = json.loads(portfolio[RECEIPT_PATH])
+                saved["reproduction_receipt"] = receipt_summary(req["reproduction_receipt"], path=RECEIPT_PATH)
+                if isinstance(req.get("report_package"), dict):
+                    req["report_package"]["reproduction_receipt"] = saved["reproduction_receipt"]
                 publication_internal.update(internal_allowed)
                 for name, body in portfolio.items():
                     if isinstance(body, bytes):
@@ -1511,6 +1548,9 @@ class ResultStorage:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            if receipt := getattr(exc, "reproduction_receipt", None):
+                req["reproduction_receipt"] = receipt
+                saved["reproduction_receipt"] = receipt_summary(receipt)
             saved["error_type"] = type(exc).__name__  # the warning never quotes the exception, only the texts above
             # A check that stopped the edition says which check and which files; before #713 it read as a token problem.
             saved.update(status="failed", warning=str(exc) if isinstance(exc, (PublishAccessError, EditionCheckError))

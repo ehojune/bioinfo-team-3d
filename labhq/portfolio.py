@@ -26,6 +26,8 @@ from .report_contract import (ReportAsset, ReportPackage, build_report_package, 
                               render_report_front, research_question, with_report_front)
 from .report_markdown import READER_FILENAMES, render_marker_message, rendered_markers
 from .request_bundle import _POSIX_ABS, _WINDOWS_ABS
+from .reproduction_receipt import (RECEIPT_PATH, build_receipt, expected_outputs, is_lock_file,
+                                   receipt_json, receipt_note, receipt_summary)
 from . import run_report
 from .run_report import nextflow_kind
 from .run_report import step_flow as _step_flow
@@ -1498,6 +1500,7 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
             package.figures.append(ReportAsset("대표 그림", fallback))
     package.tables = [ReportAsset(PurePosixPath(name).name, name) for name in table_names]
     package.reproduction = "run/reproduce.md" if "run/reproduce.md" in run_documents else ""
+    package.reproduction_receipt = receipt_summary(req.get("reproduction_receipt"), path=RECEIPT_PATH)
     package.execution_record = "run/execution_record.md"
     if not package.figures:
         package.omissions["figures"] = "게시 가능한 대표 그림이 없습니다."
@@ -1756,7 +1759,7 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
             files[target] = body
             source_targets[name] = target
             track(name, target)
-        elif path.name.casefold() == "requirements.lock.txt":
+        elif is_lock_file(name):
             target = _unique_target("run/environment", name, used)
             files[target] = body
             source_targets[name] = target
@@ -1858,6 +1861,13 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
         files["docs/reference/README.md"] = (
             "# 상세 근거 문서\n\n이 폴더는 lookup-only입니다. 보고서 각주가 가리키는 근거만 확인하세요.\n"
         )
+    receipt = build_receipt(files, outputs=expected_outputs(req))
+    files[RECEIPT_PATH] = receipt_json(receipt)
+    if "run/reproduce.md" in files:
+        files["run/reproduce.md"] = re.sub(r"\n\n## 재현 검증\n.*?(?=\n## |\Z)", "",
+                                            files["run/reproduce.md"], flags=re.S)
+        files["run/reproduce.md"] += ("\n\n## 재현 검증\n\n" + receipt_note(receipt_summary(receipt))
+            + "\n\n[검사 receipt](reproduction_receipt.json)\n")
     stored_package = req.get("report_package")
     report_package = (ReportPackage.from_dict(dict(stored_package)) if isinstance(stored_package, Mapping)
                       else build_report_package(req, report, dict(req.get("results") or {})))
@@ -1867,11 +1877,13 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
     report_package.figures = [ReportAsset(PurePosixPath(name).name, "../" + name) for name in figure_names[:2]]
     report_package.tables = [ReportAsset(PurePosixPath(name).name, "../" + name) for name in table_names]
     report_package.reproduction = "../run/reproduce.md" if "run/reproduce.md" in files else ""
+    report_package.reproduction_receipt = {**receipt_summary(receipt), "path": "../" + RECEIPT_PATH}
     report_package.execution_record = "../run/execution_record.md"
     run_report.add_to_package(report_package, run_summary, "report/report.md")
     files["report/report.md"] = _clean(
         reader_markdown(with_report_front(report, report_package)), settings, req)
     readme_req = dict(req)
+    readme_req["reproduction_receipt"] = receipt
     readme_req["text"] = request_text.replace("<local-path>", "내부 자료").replace(
         "<reference-path>", "참고 자료")
     readme = _plain_korean(_readme(
@@ -1882,6 +1894,7 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
     files["README.md"] = _clean(readme, settings, req)
 
     source_targets.update({name: name for name in files})
+    source_targets["REPRODUCTION_RECEIPT.json"] = RECEIPT_PATH
     if isinstance(files.get("run/reproduce.md"), str):
         files["run/reproduce.md"] = _rewrite_reproduce_commands(
             files["run/reproduce.md"], source_targets, files)
@@ -1889,15 +1902,21 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
     broken = broken_markdown_links(files, source_targets)
     if broken:
         detail = ", ".join(f"{row['document']} -> {row['target']}" for row in broken)
-        raise EditionCheckError(f"정리본 Markdown 링크가 깨졌습니다: {detail}")
+        error = EditionCheckError(f"정리본 Markdown 링크가 깨졌습니다: {detail}")
+        error.reproduction_receipt = receipt
+        raise error
     if table_issues := _report_table_issues(files):
-        raise check_failure(table_issues)
+        error = check_failure(table_issues)
+        error.reproduction_receipt = receipt
+        raise error
 
     issues = code_syntax_issues(files) + scan_publish_files(
         files, internal=tracked_internal if step_scope is not None else internal, settings=settings)
     blocking = [issue for issue in issues if issue["kind"] != "small_cell"]
     if blocking:
-        raise check_failure(blocking)
+        error = check_failure(blocking)
+        error.reproduction_receipt = receipt
+        raise error
     if internal_files is not None:
         internal_files.update(tracked_internal)
     return files

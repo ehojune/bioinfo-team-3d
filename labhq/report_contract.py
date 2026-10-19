@@ -15,6 +15,7 @@ from typing import Any
 from urllib.parse import unquote, urlsplit
 
 from .report_markdown import markdown_body, render_marker_message, rendered_markers, replace_markdown_body
+from .reproduction_receipt import receipt_note, receipt_summary
 
 
 FRONT_SECTION_TITLES = (
@@ -109,6 +110,7 @@ class ReportPackage:
     tables: list[ReportAsset] = field(default_factory=list)
     files: list[ReportAsset] = field(default_factory=list)
     reproduction: str = ""
+    reproduction_receipt: dict[str, Any] = field(default_factory=dict)
     evidence_notes: list[str] = field(default_factory=list)
     execution_record: str = ""
     omissions: dict[str, str] = field(default_factory=dict)
@@ -249,6 +251,7 @@ def build_report_package(request: dict[str, Any], report: str | None = None,
         tables=tables,
         files=files,
         reproduction="README.md#다시-실행" if kind != "failure" else "",
+        reproduction_receipt=receipt_summary(request.get("reproduction_receipt")),
         evidence_notes=anchors,
         execution_record="execution_record.md",
         omissions=omissions,
@@ -272,6 +275,10 @@ def render_report_front(package: ReportPackage, *, figures_as_images: bool = Fal
                 or ["- 근거 각주가 없습니다."])
     reproduction = (f"- [요청 묶음 재현 안내]({package.reproduction})" if package.reproduction else
                     "- 해당 없음 — 실패 요청은 재현 절차를 요구하지 않습니다.")
+    if package.reproduction_receipt:
+        reproduction += "\n- " + receipt_note(package.reproduction_receipt)
+        if path := package.reproduction_receipt.get("path"):
+            reproduction += f"\n- [재현 검증 receipt]({path})"
     execution = (f"- [실행 기록]({package.execution_record})" if package.execution_record else "- 실행 기록이 없습니다.")
     sections: list[tuple[str, list[str]]] = [
         ("질문", [package.question]),

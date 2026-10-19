@@ -11,14 +11,15 @@
 
 큰 변경 때와 **매 PI 보고 전** README 한영판·manual·HANDOFF를 코드·직원 YAML·현재 PR과 대조합니다. 과거 큐와 결정 근거는 [참고 기록](docs/reference/README.md)에 두고 본문에는 현재 권고만 남깁니다.
 
-## 작업 큐 (2026-10-19 22시 점검)
+## 작업 큐 (2026-10-20 통합 점검)
 
 [#760의 이관 요약](https://github.com/ehojune/bioinfo-team-3d/issues/760) 기준입니다. PR의 최신 head·CI·리뷰는 작업 직전에 다시 확인합니다.
 
 | 순서 | 할 일 | 완료 조건·현재 한계 |
 |---|---|---|
-| 1 | #756 모식도·실행 보고서 PR → 배포 | #761 병합 완료. #756 PR은 리뷰·CI 대기. 가짜 기록 test만 확인했고 실제 Nextflow·정리본 게시는 미실행 |
-| 병렬 | #732 구현 PR #762 | CI 통과. 승인 카드에서 실제 후보 코드를 볼 수 없는 P1이 남아 병합 보류 |
+| 완료 | #762(`923a4fa`)·#764(`9d9e973`)·#763(`7b4d866`) 병합·PI 배포 | 총괄 인계: doctor 준비 예, status 요청 0. 새 연구·정리본 게시·Nextflow PASS 근거는 아님 |
+| 진행 | receipt PR #767 OPEN | P1 3건은 `a369a41`로 대응. 취소 보고서의 CI 회귀는 기존 본문+receipt 전체 계약으로 검사해 관련 mock 8건 통과. CI는 driver 확인. 병합 뒤 같은 담당 #682·Opus #754 rebuild 순서 |
+| 병렬 | cgroup #765·guard #766·PID 기록 #768 OPEN | 구현·검증 진행 상태이며 실제 연구·게시·Nextflow PASS로 쓰지 않음 |
 | 2 | 공개 소형 주제 2개를 제시하고 PI 선택 뒤 장치 실운전 | P2A 생성→호출→산출, 의미 모델·그림자 요청·ontology·checklist·EDAM·pack, 문헌/PDF, 보고서·묶음·정리본을 요청별로 대조. **아직 미실행** |
 | 3 | bench dry-run → 준비 게이트 검토 요청 | 동일 입력·판본·PI 답·예산과 arm별 state/workspace 분리, 장치 작동 근거, 예상 시간·비용을 확인 |
 | 4 | 준비 게이트 완료 뒤 [#739](https://github.com/ehojune/bioinfo-team-3d/issues/739) | labhq 혼합 roster와 Astra·Sol·Opus **단독 세션**을 같은 요청으로 비교. CSO만 교체하는 실험과 구분 |
@@ -28,15 +29,15 @@ v0.5 선언(2026-10-08)은 당시 실제 연구 요청 2건과 `labhq verify` ex
 
 ## PI 결정과 다음 확인
 
-[최신 PI 결정(2026-10-19)](https://github.com/ehojune/bioinfo-team-3d/issues/760#issuecomment-6263295610)을 적용합니다.
+[현재 PI 창구](https://github.com/ehojune/bioinfo-team-3d/issues/760)의 결정과 2026-10-20 총괄 인계를 적용합니다.
 
 | 항목 | 결정 |
 |---|---|
 | 개발 총괄 | Codex 고정, Codex·Claude subagent에 여러 작업 위임. 제품 CSO 설정은 별개 |
-| Codex 일일 한도 | 10월 19일 14M, 10월 20일 2M |
+| Codex 일일 한도 | 10-19 실제 11,376,303/14M, 미사용 2,623,697 → M 단위 올림 3M + 4M = **10-20 7M 확정**([근거](docs/reference/reproduction-receipt.md)) |
 | #732 배정 | 표준 생물정보학은 bioinfo-agent/nf-core, 단순 작업은 직접 처리. 없는 복잡한 신규 파이프라인은 직접 코딩한 뒤 **기여 여부를 PI에게 묻고 yes일 때만 bioinfo-agent PR** |
 
-두 정책 선택은 완료됐고 #732는 PR #762의 P1 수정이 남았습니다. 다음 PI 확인은 공개 소형 주제 선택과 dry-run 뒤 bench 준비 게이트입니다. 이전 교대 운영·결정표는 [보존본](docs/reference/handoff-history-2026-10-19.md)에 있습니다.
+#732는 PR #762(`923a4fa`)로 병합됐습니다. #748은 receipt 범위이며 #754의 CLI/storage rebuild는 별도 작업입니다. 다음 PI 확인은 공개 소형 주제 선택과 dry-run 뒤 bench 준비 게이트입니다. 이전 교대 운영·결정표는 [보존본](docs/reference/handoff-history-2026-10-19.md)에 있습니다.
 
 ## 구조 한눈에
 
