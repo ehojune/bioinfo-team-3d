@@ -55,6 +55,8 @@ class RunnerSettings(BaseModel):
     max_parallel: int = 4
     consult_parallel: int = Field(default=2, ge=1)
     workspace_root: str = "~/.labhq/runs"
+    disk_warning_free_gb: float = Field(default=10, ge=0, allow_inf_nan=False)
+    disk_warning_free_percent: float = Field(default=5, ge=0, le=100, allow_inf_nan=False)
     bundle_max_file_mb: float = Field(default=50, gt=0)
     bundle_max_total_mb: float = Field(default=2048, gt=0)
     bundle_max_files: int = Field(default=5000, ge=1)

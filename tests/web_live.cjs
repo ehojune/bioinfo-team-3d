@@ -49,7 +49,16 @@ const source = fs.readFileSync(path.join(root,'lab3d/src/live.js'),'utf8').repla
   let ws=sockets[0]; assert(!ws.url.includes('since='));
   ws.readyState=1;ws.onopen();
   const event = ev => ws.onmessage({data:JSON.stringify(ev)});
-  event({type:'snapshot',seq:10,data:{agents:[{id:'analyst'}]}});
+  event({type:'snapshot',seq:10,data:{agents:[{id:'analyst'}],runners:[]}});
+  assert.match(element('service-warning').textContent,/러너 연결 끊김/);
+  event({type:'runner.online',data:{runner_id:'fake-runner'}});
+  assert.equal(element('service-warning').hidden,true);
+  event({type:'runner.offline',data:{runner_id:'fake-runner'}});
+  assert.match(element('service-warning').textContent,/러너 연결 끊김/);
+  ws.onclose({code:1006});
+  assert.match(element('service-warning').textContent,/게이트웨이 연결 끊김/);
+  timers.pop(); // discard this fake reconnect; later assertions inspect their own render timers
+  ws.onopen();
   event({type:'agent.usage',seq:11,data:{cost_usd:1}});
   event({type:'agent.usage',seq:11,data:{cost_usd:1}});
   assert.equal(S.cost,1,'duplicate seq ignored');

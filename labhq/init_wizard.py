@@ -13,7 +13,7 @@ from pathlib import Path
 
 import yaml
 
-from . import bioinfo_link, doctor, github_token, hpc_consult, init_defaults
+from . import bioinfo_link, disk_space, doctor, github_token, hpc_consult, init_defaults
 from .adapters.base import _resolve_command
 from .runner.codex_sandbox import codex_command, powershell_executable, setup_hint
 from .settings import HpcSettings, Settings
@@ -162,6 +162,31 @@ def _absolute(path: str) -> str:
     """The folder as an absolute path. The claude_code adapter reads a relative plugin folder from each task's own
     work folder, so a path saved as typed (`../bioinfo-agent`) would stop connecting as soon as init's cwd is gone."""
     return os.path.abspath(os.path.expandvars(os.path.expanduser(path)))
+
+
+def _workspace_root(current: str, yes: bool, instance: str | None) -> str:
+    """Suggest another volume without silently changing --yes or existing settings."""
+    limits = Settings().runner
+    try:
+        system = disk_space.usage(Path(os.environ.get("SystemDrive", Path.home().anchor) + "/"))
+        if disk_space.low(system, limits.disk_warning_free_gb, limits.disk_warning_free_percent) or system.total < 128 * disk_space.GIB:
+            print("시스템 드라이브의 용량 또는 여유 공간이 작습니다. 작업 폴더는 여유 있는 데이터 드라이브를 권합니다.")
+            candidates = []
+            for drive in disk_space.data_drives():
+                try:
+                    space = disk_space.usage(drive)
+                    if space.free > system.free and not disk_space.low(
+                            space, limits.disk_warning_free_gb, limits.disk_warning_free_percent):
+                        candidates.append((space.free, drive))
+                except (OSError, ValueError):
+                    continue
+            for free, drive in sorted(candidates, key=lambda item: item[0], reverse=True):
+                folder = drive / ".labhq" / (instance or "") / "runs"
+                print(f"작업 폴더 후보: {folder.as_posix()} (여유 {free / disk_space.GIB:.1f} GiB)")
+    except (OSError, ValueError):
+        pass
+    answer = _ask("작업 폴더 runner.workspace_root (드라이브를 포함한 경로)", current, yes).strip().strip('"')
+    return current if answer == current else _absolute(answer)
 
 
 def _bioinfo_agent(explicit: str | None, yes: bool) -> str | None:
@@ -353,6 +378,8 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
         if scheduler == "slurm":
             print("partition은 hpc.default_queue, 계정·QOS는 hpc.slurm.sbatch_args에 더하세요.")
         print("hpc.scheduler: " + hpc["scheduler"])
+        data["runner"]["workspace_root"] = _workspace_root(
+            existing.runner.workspace_root if existing else data["runner"]["workspace_root"], yes, instance)
         trial = _hpc_consult(hpc, scheduler, dry_run)
         if _is_windows():
             policy = data.setdefault("policy", {})

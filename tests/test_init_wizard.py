@@ -271,10 +271,19 @@ def test_no_personal_claude_folder_no_claude_staff_home(isolated_home, capsys):
     assert "CLAUDE_CONFIG_DIR" not in capsys.readouterr().out
 
 
+def test_chosen_workspace_is_saved_with_internal_zone(tmp_path, monkeypatch):
+    chosen = tmp_path / "arbitrary-folder"
+    monkeypatch.setattr("builtins.input", lambda prompt: str(chosen) if "workspace_root" in prompt else "")
+    wizard.run()
+    data = _data()
+    assert data["runner"]["workspace_root"] == str(chosen)
+    assert any(z["path"] == str(chosen) and z["level"] == "internal" for z in data["policy"]["data_zones"])
+
+
 def test_interactive_plugin_and_scheduler_are_recorded(tmp_path, monkeypatch, capsys):
     plugin = tmp_path / "private-checkout"
     plugin.mkdir()
-    answers = iter(["pbs", str(plugin), "", "n"])  # scheduler, bioinfo-agent folder, dev log repo (empty), consent
+    answers = iter(["pbs", "", str(plugin), "", "n"])  # scheduler, workspace, plugin, dev log, consent
     monkeypatch.setattr("builtins.input", lambda *_: next(answers))
     wizard.run()
     data = _data()

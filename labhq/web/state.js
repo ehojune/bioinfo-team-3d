@@ -17,6 +17,14 @@ function connectionLabel(conn, demo = false) {
   return {live: demo ? '데모(mock)' : '실시간', demo: '데모(mock)', connecting: '연결 중',
     offline: '연결 끊김 · 재시도 중', auth: '토큰을 확인해 주세요'}[conn] || '';
 }
+function serviceWarning(S, demo = false) {
+  if (demo) return '';
+  if (S.conn === 'offline' || (S.conn === 'connecting' && S.runnersKnown))
+    return '게이트웨이 연결 끊김 · 종료 또는 네트워크 문제일 수 있어요. 자동 재연결 중이며 계속되면 labhq status로 확인하세요.';
+  if (S.conn === 'live' && S.runnersKnown && !S.runners.size)
+    return '러너 연결 끊김 · 작업을 진행하지 못하고 있어요. labhq status로 확인한 뒤 labhq up으로 시작하세요.';
+  return '';
+}
 function demoBannerText(status) {
   const base = '데모입니다 — 실제 요청은 labhq up으로 띄운 사무실에서';
   const progress = status?.phase === 'waiting' ? `다음 데모 요청까지 ${status.remaining_s}초`
@@ -1110,6 +1118,6 @@ return { S, apply, selectRequest, ag, visual, stateText, currentTask, currentToo
 root.LabHQState = { createOfficeState, costLabel, engineCostLabel, agentCostLabel, agentSpentLabel, totalCostLabel,
   isActiveRequest, isTerminalRequest, isPastRequest, officeRequests, sessionCostRequests, requestsCostTotal,
   REQUEST_STATUS_KO, requestStatusLabel, requestStatusText, processingLabel,
-  needsPiReview, needsStorage, reviewLabel, staffCharacter, STAFF_NAMES, websocketCloseAction, officeStorageKey, createRequestFocusStorage, sortRequests, requestActivity, requestResumeLabel, connectionLabel, demoBannerText,
+  needsPiReview, needsStorage, reviewLabel, staffCharacter, STAFF_NAMES, websocketCloseAction, officeStorageKey, createRequestFocusStorage, sortRequests, requestActivity, requestResumeLabel, connectionLabel, serviceWarning, demoBannerText,
   safeReportHref, safeReportImageHref, reportMarkdownHTML, reportWithPackage };
 })(globalThis);

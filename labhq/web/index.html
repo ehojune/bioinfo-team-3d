@@ -574,7 +574,9 @@ function renderHeader() {
   $('#cost').title = snapshotLoaded ? `전체 ${cumulativeCost}` : '';
   $('#note').hidden = !IS_DEMO;
   if (IS_DEMO) $('#note').textContent = LabHQState.demoBannerText(S.demoStatus);
-  $('#runner-off').hidden = !(MODE !== 'demo' && S.conn === 'live' && S.runnersKnown && !S.runners.size);  // R15
+  const warning = LabHQState.serviceWarning(S, IS_DEMO);
+  $('#runner-off').textContent = warning;
+  $('#runner-off').hidden = !warning;
   $('#office').classList.toggle('offline', S.conn === 'offline');
   const n = S.approvals.size;
   const title = `${n ? `(${n}) ` : ''}labhq${INSTANCE ? ` ${INSTANCE}` : ''} 사무실`;

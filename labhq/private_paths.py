@@ -634,6 +634,13 @@ def _found(text: str, target: str) -> bool:
     return False
 
 
+def mentions_workspace_path(text: str, settings: Settings) -> bool:
+    """Publication treats a configured workspace as personal regardless of its directory name."""
+    raw = settings.runner.workspace_root
+    path = settings.path(raw)
+    return bool(mentioned_private_path(text, [raw, str(path), str(path.resolve())]))
+
+
 def mentioned_private_path(text: str, paths: Iterable[str], home: str | None = None,
                            environ: Mapping[str, str] | None = None) -> str | None:
     """The first private path `text` names in any common spelling, case-insensitively where the volume is

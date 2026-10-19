@@ -126,6 +126,9 @@ export function startLiveOffice(onState) {
   }
   function render() {
     $('connection').textContent = globalThis.LabHQState.connectionLabel(S.conn, demo);
+    const warning = globalThis.LabHQState.serviceWarning(S, demo);
+    $('service-warning').textContent = warning;
+    $('service-warning').hidden = !warning;
     const allRequests = [...S.requests.values()];
     const costRequests = globalThis.LabHQState.sessionCostRequests(allRequests, S.sessionStartedAt);
     $('session-cost').textContent = S.conn === 'connecting' ? '사용 비용 불러오는 중' : globalThis.LabHQState.totalCostLabel(

@@ -184,6 +184,27 @@ async def test_internal_and_publish_check_failures_are_omitted(tmp_path, monkeyp
     await service.close()
 
 
+async def test_custom_workspace_is_omitted_before_fake_progress_upload(tmp_path, monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token-for-tests")
+    hub = Hub(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    hub.s.runner.workspace_root = "arbitrary-folder"
+    private_literal = "arbitrary-folder/task/input.tsv"
+    req = hub.requests["req_progress"]
+    write_bundle(hub, {"steps/s1/outputs/unsafe.md": private_literal})
+    req["results"]["s1"] = TaskResult(task_id="s1", agent_id="worker", ok=True,
+                                       text=private_literal).model_dump(mode="json")
+    calls = []
+    service = ResultStorage(hub, github_transport(calls))
+    await service.progress_step("req_progress", "s1")
+    puts = [(path, body) for method, path, body in calls if method == "PUT"]
+    assert puts and not any(path.endswith("unsafe.md") for path, _ in puts)
+    bodies = [base64.b64decode(body["content"]).decode() for _path, body in puts]
+    assert all(private_literal not in body for body in bodies)
+    assert any("검사로 뺌" in body for body in bodies)
+    await service.close()
+
+
 async def test_progress_failure_warns_without_raising_and_permission_denial_disables(tmp_path, monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "fake-token-for-tests")
     hub = Hub(tmp_path)
