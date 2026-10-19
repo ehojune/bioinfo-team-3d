@@ -23,6 +23,102 @@ function demoBannerText(status) {
     : status?.phase === 'running' ? 'mock 요청 진행 중' : 'mock 데모 준비 중';
   return `${base} · ${progress}`;
 }
+const reportEsc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+function safeReportHref(value) {
+  const href = String(value || '').trim().replace(/^<|>$/g, '');
+  if (!href || /[\\\u0000-\u001f]/.test(href) || href.startsWith('//')) return '';
+  if (/^(?:https?:|mailto:)/i.test(href) || /^(?:#|\.\.?\/)/.test(href)) return href;
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(href)) return '';
+  return /^[A-Za-z0-9]/.test(href) && !/[\s<>"']/.test(href) ? href : '';
+}
+function safeReportImageHref(value) {
+  const raw = String(value || '').trim().replace(/^<|>$/g, '');
+  if (/^data:image\/(?:png|jpeg|gif|webp|svg\+xml);base64,[A-Za-z0-9+/]*={0,2}$/i.test(raw)) return raw;
+  const href = safeReportHref(raw);
+  return href && !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(href) && !href.startsWith('#') ? href : '';
+}
+function reportInline(value) {
+  const kept = [];
+  const keep = html => `\u0000${kept.push(html) - 1}\u0000`;
+  let text = String(value ?? '').replace(/\u0000/g, '');
+  text = text.replace(/!\[([^\]\n]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, (_all, alt, raw) => {
+    const imageHref = safeReportImageHref(raw);
+    if (imageHref) return keep(`<figure><img src="${reportEsc(imageHref)}" alt="${reportEsc(alt)}"><figcaption>${reportEsc(alt)}</figcaption></figure>`);
+    const linkHref = safeReportHref(raw);
+    return keep(linkHref ? `<a href="${reportEsc(linkHref)}" target="_blank" rel="noopener noreferrer">${reportEsc(alt || raw)}</a>`
+      : `<span class="report-missing">그림 링크를 열 수 없음: ${reportEsc(alt)}</span>`);
+  });
+  text = text.replace(/\[([^\]\n]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, (_all, label, raw) => {
+    const href = safeReportHref(raw);
+    return keep(href ? `<a href="${reportEsc(href)}" target="_blank" rel="noopener noreferrer">${reportEsc(label)}</a>`
+      : reportEsc(label));
+  });
+  text = text.replace(/`([^`\n]+)`/g, (_all, code) => keep(`<code>${reportEsc(code)}</code>`));
+  text = reportEsc(text)
+    .replace(/\*\*(?=\S)(.+?)(?<=\S)\*\*/g, '<strong>$1</strong>')
+    .replace(/~~(?=\S)(.+?)(?<=\S)~~/g, '<del>$1</del>')
+    .replace(/(?<![A-Za-z0-9_*])\*(?=\S)([^*\n]+?)(?<=\S)\*(?![A-Za-z0-9_*])/g, '<em>$1</em>');
+  return text.replace(/\u0000(\d+)\u0000/g, (_all, index) => kept[Number(index)] || '');
+}
+function reportMarkdownHTML(markdown) {
+  const lines = String(markdown || '').replace(/\r\n?/g, '\n')
+    .replace(/\[\[\s*claim\s*:[^\[\]\n]+\]\]/gi, '[근거]').split('\n');
+  const out = [];
+  for (let i = 0; i < lines.length;) {
+    const line = lines[i];
+    const fence = line.match(/^\s{0,3}(`{3,}|~{3,})/);
+    if (fence) {
+      const code = []; i++;
+      while (i < lines.length && !lines[i].trim().startsWith(fence[1])) code.push(lines[i++]);
+      i++; out.push(`<pre><code>${reportEsc(code.join('\n'))}</code></pre>`); continue;
+    }
+    const heading = line.match(/^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
+    if (heading) { const level = Math.min(6, heading[1].length + 1); out.push(`<h${level}>${reportInline(heading[2])}</h${level}>`); i++; continue; }
+    if (i + 1 < lines.length && /^\s*\|?.+\|.+\|?\s*$/.test(line) && /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)+\|?\s*$/.test(lines[i + 1])) {
+      const cells = row => row.trim().replace(/^\||\|$/g, '').split('|').map(cell => cell.trim());
+      const header = cells(line); i += 2; const rows = [];
+      while (i < lines.length && lines[i].includes('|') && lines[i].trim()) rows.push(cells(lines[i++]));
+      out.push(`<table><thead><tr>${header.map(cell => `<th>${reportInline(cell)}</th>`).join('')}</tr></thead><tbody>${rows.map(row => `<tr>${header.map((_cell, n) => `<td>${reportInline(row[n] || '')}</td>`).join('')}</tr>`).join('')}</tbody></table>`); continue;
+    }
+    const item = line.match(/^\s*[-*+]\s+(.+)$/);
+    if (item) {
+      const items = [];
+      while (i < lines.length) { const found = lines[i].match(/^\s*[-*+]\s+(.+)$/); if (!found) break; items.push(found[1]); i++; }
+      out.push(`<ul>${items.map(value => `<li>${reportInline(value)}</li>`).join('')}</ul>`); continue;
+    }
+    if (!line.trim()) { i++; continue; }
+    if (/^!\[[^\]\n]*\]\([^)]+\)$/.test(line.trim())) { out.push(reportInline(line.trim())); i++; continue; }
+    const paragraph = [line.trim()]; i++;
+    while (i < lines.length && lines[i].trim() && !/^\s*(?:#{1,6}\s|[-*+]\s|```|~~~)/.test(lines[i])) paragraph.push(lines[i++].trim());
+    out.push(`<p>${reportInline(paragraph.join(' '))}</p>`);
+  }
+  return `<div class="report-markdown">${out.join('\n')}</div>`;
+}
+function reportWithPackage(markdown, reportPackage) {
+  const source = String(markdown || '');
+  const p = reportPackage && typeof reportPackage === 'object' ? reportPackage : null;
+  if (!p || source.includes('<!-- labhq-report-package:v1 -->')) return source;
+  const assets = (rows, omission) => Array.isArray(rows) && rows.length
+    ? rows.map(row => `- [${String(row.label || row.path || '파일')}](${String(row.path || '')})`).join('\n')
+    : `- 해당 없음 — ${omission || '이 항목이 기록되지 않았습니다.'}`;
+  const evidence = Array.isArray(p.evidence_notes) && p.evidence_notes.length
+    ? p.evidence_notes.map((value, index) => `- [근거 ${index + 1}] 근거 원장 \`${String(value)}\``).join('\n')
+    : '- 근거 각주가 없습니다.';
+  const front = [
+    ['질문', String(p.question || '질문 기록 없음')],
+    ['답', String(p.answer || '답이 기록되지 않았습니다.')],
+    ['한계', String(p.limitations || '해석 범위는 본문을 확인하세요.')],
+    ['대표 그림', assets(p.figures, p.omissions?.figures)],
+    ['결과표', assets(p.tables, p.omissions?.tables)],
+    ['재현 안내', p.reproduction ? `- [요청 묶음 재현 안내](${p.reproduction})` : '- 해당 없음 — 실패 요청은 재현 절차를 요구하지 않습니다.'],
+    ['근거 각주', evidence],
+    ['실행 기록', p.execution_record ? `- [실행 기록](${p.execution_record})` : '- 실행 기록이 없습니다.'],
+  ].map(([title, body]) => `## ${title}\n\n${body}`).join('\n\n');
+  const heading = source.match(/^#\s+.+(?:\n|$)/);
+  const title = heading ? heading[0].trim() : `# ${String(p.title || '결과 보고서')}`;
+  const body = heading ? source.slice(heading[0].length).trimStart() : source;
+  return `${title}\n\n<!-- labhq-report-package:v1 -->\n\n${front}\n\n<!-- labhq-report-package:end -->\n\n${body}`.trimEnd() + '\n';
+}
 const STAFF_NAMES = {cso:'CSO(부엉이)', chief_of_staff:'비서실장', biologist:'생물학자', data_steward:'데이터 관리자', lit_scout:'문헌 조사원', analyst:'분석가', engineer:'엔지니어', qc_reviewer:'품질 리뷰어', sci_reviewer:'과학 리뷰어', recruiter:'카피바라(인사팀)', solo:'사자 단독 처리', facilities:'시설팀', colleague:'동료 직원', 'bioinfo-agent':'생물정보 직원', pi:'나', hpc:'HPC', github:'GitHub', system:'시스템'};
 const STAFF_CHARACTERS = {cso:'owl', chief_of_staff:'penguin', biologist:'bear', data_steward:'squirrel', lit_scout:'fox', analyst:'raccoon', engineer:'octopus', qc_reviewer:'hedgehog', sci_reviewer:'turtle', recruiter:'capybara', editor:'beaver', solo:'lion', 'bioinfo-agent':'otter'};
 function staffCharacter(a) {
@@ -491,6 +587,7 @@ function apply(ev, replay = false) {
         q.resumed = q.resumed || r.status === 'running';
         if (r.route_decision && typeof r.route_decision === 'object') q.processing = { ...r.route_decision };
         if (typeof r.report === 'string') q.report = r.report;
+        if (r.report_package && typeof r.report_package === 'object') q.reportPackage = { ...r.report_package };
         if (typeof r.error === 'string' && r.error) q.error = r.error;
         if (typeof r.report_appendix === 'string') q.report_appendix = r.report_appendix;
         if (typeof r.execution_record === 'string') q.execution_record = r.execution_record;
@@ -880,6 +977,7 @@ function apply(ev, replay = false) {
       applyCostSummary(q, d.cost_summary);
       applySessionCost(q, d, S.sessionStartedAt);
       if (d.report) q.report = d.report;
+      if (d.report_package && typeof d.report_package === 'object') q.reportPackage = { ...d.report_package };
       if (d.report_appendix) q.report_appendix = d.report_appendix;
       if (d.execution_record) q.execution_record = d.execution_record;
       delete q.report_truncated; delete q.report_chars;
@@ -976,6 +1074,10 @@ function fillFollowups(rid, request) {
 function fillRequestDetail(rid, request) {
   const q = S.requests.get(rid);
   let filled = fillFollowups(rid, request);
+  if (q && request?.report_package && typeof request.report_package === 'object') {
+    q.reportPackage = { ...request.report_package };
+    filled++;
+  }
   if (q && typeof request?.error === 'string' && q.error !== request.error) { q.error = request.error; filled++; }
   if (q && typeof request?.report === 'string' && (q.report_truncated || q.report !== request.report)) {
     q.report = request.report;
@@ -1008,5 +1110,6 @@ return { S, apply, selectRequest, ag, visual, stateText, currentTask, currentToo
 root.LabHQState = { createOfficeState, costLabel, engineCostLabel, agentCostLabel, agentSpentLabel, totalCostLabel,
   isActiveRequest, isTerminalRequest, isPastRequest, officeRequests, sessionCostRequests, requestsCostTotal,
   REQUEST_STATUS_KO, requestStatusLabel, requestStatusText, processingLabel,
-  needsPiReview, needsStorage, reviewLabel, staffCharacter, STAFF_NAMES, websocketCloseAction, officeStorageKey, createRequestFocusStorage, sortRequests, requestActivity, requestResumeLabel, connectionLabel, demoBannerText };
+  needsPiReview, needsStorage, reviewLabel, staffCharacter, STAFF_NAMES, websocketCloseAction, officeStorageKey, createRequestFocusStorage, sortRequests, requestActivity, requestResumeLabel, connectionLabel, demoBannerText,
+  safeReportHref, safeReportImageHref, reportMarkdownHTML, reportWithPackage };
 })(globalThis);

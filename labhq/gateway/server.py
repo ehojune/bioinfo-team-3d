@@ -131,6 +131,8 @@ def snapshot_reports(request: dict) -> dict:
     """Stored terminal reports for snapshots, bounded exactly like replayed terminal events."""
     data = {key: request[key] for key in ("report", "report_appendix", "execution_record")
             if isinstance(request.get(key), str)}
+    if isinstance(request.get("report_package"), dict):
+        data["report_package"] = request["report_package"]
     if not data:
         return {}
     return snapshot_event({"type": "request.completed", "request_id": request.get("id"), "data": data})["data"]
@@ -3412,9 +3414,19 @@ class Hub:
         report, appendix = self._cancel_report(req, list(req.get("cancelled_tasks") or []),
                                                dict.fromkeys(pending.get("quota_steps") or []))
         from ..report_format import split_appendix
+        from ..report_contract import (available_result_files, build_report_package, reader_markdown,
+                                       validate_report_package, with_report_front)
         appendix, execution = split_appendix(appendix)
         req.update(report=report, report_appendix=appendix, execution_record=execution)
-        data = {"ok": False, "status": "cancelled", "error": req["error"], **_terminal_reports(rid, report, appendix, execution),
+        package = build_report_package(req, report, dict(req.get("results") or {}))
+        req["report_package"] = package.to_dict()
+        req["report_contract_check"] = validate_report_package(
+            package,
+            available_files=available_result_files(dict(req.get("results") or {})),
+            reader_documents={"web·bundle·PDF": reader_markdown(with_report_front(report, package))},
+        )
+        data = {"ok": False, "status": "cancelled", "error": req["error"],
+                "report_package": req["report_package"], **_terminal_reports(rid, report, appendix, execution),
                 "cost_usd": req.get("cost_usd", 0), "cost_known": req.get("cost_known", True),
                 "cost_summary": req.get("cost_summary"), "usage": req.get("usage", {}),
                 "usage_known": req.get("usage_known", True)}

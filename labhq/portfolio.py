@@ -22,6 +22,8 @@ from .models import RunnerPathFields
 from .policy import touches
 from .research.contract import branch_plan_topology
 from .report_abstract import build_graphical_abstract
+from .report_contract import (ReportAsset, ReportPackage, build_report_package, reader_markdown,
+                              render_report_front, with_report_front)
 from .request_bundle import _POSIX_ABS, _WINDOWS_ABS
 
 
@@ -1437,17 +1439,37 @@ def _first_limit(report: str) -> str:
 
 def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_names: list[str],
             table_names: list[str], omitted_tables: list[Mapping[str, Any]],
-            run_documents: Mapping[str, str], branch_rows: list[dict[str, str]] | None = None) -> str:
+            run_documents: Mapping[str, str], branch_rows: list[dict[str, str]] | None = None,
+            source_targets: Mapping[str, str] | None = None) -> str:
     title = report.splitlines()[0].lstrip("#").strip() or "연구 결과"
     abstract = "figures/graphical_abstract.svg" if "figures/graphical_abstract.svg" in figure_names else None
     key = next((name for name in figure_names if name != abstract), None)
-    question = " ".join(str(req.get("text") or "연구 질문이 기록되지 않았습니다.").split())[:500]
-    lines = [f"# {title}", "", f"**질문: {question}**", "",
-             f"**답: {_first_answer(report, req)}**", "", f"**한계: {_first_limit(report)}**", ""]
-    if abstract:
-        lines += [f"![그래픽 초록]({abstract})", ""]
-    if key:
-        lines += [f"![대표 그림]({key})", ""]
+    stored = req.get("report_package")
+    package = (ReportPackage.from_dict(dict(stored)) if isinstance(stored, Mapping)
+               else build_report_package(req, report, dict(req.get("results") or {})))
+    package.title = title
+    package.answer = _first_answer(report, req)
+    package.limitations = _first_limit(report)
+    package.figures = [ReportAsset("그래픽 초록" if name == abstract else "대표 그림", name)
+                       for name in (abstract, key) if name]
+    if len(package.figures) < 2 and source_targets:
+        original = build_report_package(req, str(req.get("report") or ""), dict(req.get("results") or {}))
+        fallback = next((source_targets.get(asset.path) for asset in original.figures
+                         if source_targets.get(asset.path) and source_targets.get(asset.path) not in {
+                             row.path for row in package.figures}), None)
+        if fallback:
+            package.figures.append(ReportAsset("대표 그림", fallback))
+    package.tables = [ReportAsset(PurePosixPath(name).name, name) for name in table_names]
+    package.reproduction = "run/reproduce.md" if "run/reproduce.md" in run_documents else ""
+    package.execution_record = "run/execution_record.md"
+    if not package.figures:
+        package.omissions["figures"] = "게시 가능한 대표 그림이 없습니다."
+    if not package.tables:
+        package.omissions["tables"] = "공개 가능한 결과표가 없습니다."
+    front = render_report_front(package, figures_as_images=True)
+    for heading, value in (("질문", package.question), ("답", package.answer), ("한계", package.limitations)):
+        front = front.replace(f"## {heading}\n\n{value}", f"## {heading}\n\n**{heading}: {value}**", 1)
+    lines = [f"# {title}", "", front.rstrip(), ""]
     lines += ["## 보고서·결과표·재현", "", "- 보고서: [Markdown](report/report.md)"]
     if table_names:
         table_links = ", ".join(f"[{PurePosixPath(name).name}]({quote(name, safe='/')})"
@@ -1725,12 +1747,23 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
         files["docs/reference/README.md"] = (
             "# 상세 근거 문서\n\n이 폴더는 lookup-only입니다. 보고서 각주가 가리키는 근거만 확인하세요.\n"
         )
+    stored_package = req.get("report_package")
+    report_package = (ReportPackage.from_dict(dict(stored_package)) if isinstance(stored_package, Mapping)
+                      else build_report_package(req, report, dict(req.get("results") or {})))
+    report_package.answer = _first_answer(report, req)
+    report_package.limitations = _first_limit(report)
+    report_package.figures = [ReportAsset(PurePosixPath(name).name, "../" + name) for name in figure_names[:2]]
+    report_package.tables = [ReportAsset(PurePosixPath(name).name, "../" + name) for name in table_names]
+    report_package.reproduction = "../run/reproduce.md" if "run/reproduce.md" in files else ""
+    report_package.execution_record = "../run/execution_record.md"
+    files["report/report.md"] = _clean(
+        reader_markdown(with_report_front(report, report_package)), settings, req)
     readme_req = dict(req)
     readme_req["text"] = request_text.replace("<local-path>", "내부 자료").replace(
         "<reference-path>", "참고 자료")
     readme = _plain_korean(_readme(
         readme_req, report, _step_rows(req, assets), figure_names, table_names, omitted_tables,
-        run_documents, branch_rows))
+        run_documents, branch_rows, source_targets))
     if check_document(readme)["status"] != "PASS":
         raise ValueError("README에 반드시 0이어야 하는 한국어 표현이 남았습니다.")
     files["README.md"] = _clean(readme, settings, req)

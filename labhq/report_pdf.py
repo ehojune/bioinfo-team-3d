@@ -33,8 +33,10 @@ from .report_abstract import abstract_first, build_graphical_abstract, with_abst
 from .report_figures import (ABSTRACT_FILE, FIGURE_SUFFIXES, IMAGE_PATTERN, MAX_REPORT_FIGURES, classify,
                              drop_dead_abstract_links, figure_owners, has_abstract_link, is_abstract_target,
                              link_workdir_figures, output_exists)
+from .report_contract import (FRONT_START, ReportPackage, build_report_package, reader_markdown,
+                              with_report_front)
 
-RENDER_VERSION = "4"  # bump when the page's markup or CSS changes: a cached PDF of an older one is not reused
+RENDER_VERSION = "5"  # bump when the page's markup or CSS changes: a cached PDF of an older one is not reused
 PRINT_TIMEOUT_S = 60.0
 _CSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'"  # no network
 PRINT_SLOW_BYTES_PER_S = 2 * 1024 * 1024  # a page of embedded figures gets one more second of printing per 2 MB (#608)
@@ -484,12 +486,28 @@ def build_report_html(req: Mapping[str, Any], bundle: Path | None, *, now: datet
     # A bundle made before the link rewrite, or the stored report itself, still names figures <workdir_id>/outputs/<file>.
     owners = figure_owners(results)
     source = report_text if report_text is not None else _read_document(bundle, "report.md", str(req.get("report") or ""))
+    stored = req.get("report_package")
+    if report_text is not None:
+        package_request = dict(req)
+        if scrub is not None:
+            source = scrub(source)
+            for key in ("text", "error"):
+                if key in package_request:
+                    package_request[key] = scrub(str(package_request.get(key) or ""))
+        package = build_report_package(package_request, source, dict(results))
+    else:
+        package = (ReportPackage.from_dict(dict(stored)) if isinstance(stored, Mapping)
+                   else build_report_package(dict(req), source, dict(results)))
+    abstract_source = re.sub(r"\[근거 \d+\]", "", package.source_report or source)
+    if FRONT_START not in source:
+        source = with_report_front(source, package)
+    source = reader_markdown(source)
     linked = link_workdir_figures(source, owners, output_exists(results, bundle))
     if has_abstract_link(linked, figures._holds):
         linked = abstract_first(linked, figures._holds)  # the report's own abstract, wherever the writer put it
     else:
         linked = drop_dead_abstract_links(linked, figures._holds)  # a link to a file nobody could make
-        figures.extra[ABSTRACT_FILE] = build_graphical_abstract(req, linked, scrub=scrub).encode("utf-8")
+        figures.extra[ABSTRACT_FILE] = build_graphical_abstract(req, abstract_source, scrub=scrub).encode("utf-8")
         linked = with_abstract_link(linked)
     body = markdown_to_html(linked, figures)
     appendix_text = ("" if report_text is not None

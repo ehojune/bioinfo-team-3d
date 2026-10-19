@@ -1347,7 +1347,9 @@ class ResultStorage:
                         and "## 그림·표·실행 파일" not in docs["README.md"]):
                     docs["README.md"] += "\n## 그림·표·실행 파일\n\n" + links + "\n"
                 if saved.get("mode") != "new":
-                    lead_figure = next((name for name in images if not is_abstract_target(name)), None)
+                    lead_figure = next((name for name in [*images, *assets]
+                                        if PurePosixPath(name).suffix.lower() in _IMAGE_OUTPUTS
+                                        and not is_abstract_target(name)), None)
                     if lead_figure:
                         docs["README.md"] += f"\n![대표 그림]({quote(lead_figure, safe='/')})\n"
                 for name in _GENERATED:  # the editor's README and the bundle's own text are linked here as well

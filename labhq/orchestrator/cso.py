@@ -38,6 +38,8 @@ from ..models import (AskRequest, RunnerUnavailable, Task, TaskResult, ToolCallC
 from ..quota import is_quota_error, received_quota_wait
 from ..login import is_login_error
 from ..report_format import (PAPER_RULE, ABSTRACT_PLAN_RULE, split_appendix, scientific_appendix, add_references)
+from ..report_contract import (available_result_files, build_report_package, reader_markdown,
+                               validate_report_package, with_report_front)
 from ..request_status import is_terminal_request
 from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARCH_STEP_SCHEMA, ResearchPlan,
                                  bind_result_artifacts, branch_plan_topology,
@@ -6846,8 +6848,16 @@ class Orchestrator:
                        if req.get("semantic_devices") else "")
             req["execution_record"] = "\n\n".join(part for part in [req["error"], *execution, devices] if part)
             req["report_appendix"] = scientific_appendix("", req, req.get("review"), "")
+            package = build_report_package(req, req["report"], serialized_saved)
+            req["report_package"] = package.to_dict()
+            req["report_contract_check"] = validate_report_package(
+                package,
+                available_files=available_result_files(serialized_saved),
+                reader_documents={"web·bundle·PDF": reader_markdown(with_report_front(req["report"], package))},
+            )
             # The preserved partial report goes with the event so a connected (or reconnecting) office shows it.
             failed = {"error": safe_failure_cause(req["error"]),
+                      "report_package": req["report_package"],
                       **_terminal_reports(rid, req.get("report") or "", req.get("report_appendix") or "", req.get("execution_record") or ""),
                       "cost_usd": float(req.get("cost_usd") or 0),
                       "cost_known": req.get("cost_known", True), "cost_summary": req.get("cost_summary")}
@@ -7081,6 +7091,17 @@ class Orchestrator:
         report, style_note = check_report(report)
         if style_note:
             req["execution_record"] += "\n\n" + style_note
+        package = build_report_package(req, report, results)
+        contract_check = validate_report_package(
+            package,
+            available_files=available_result_files(results),
+            reader_documents={"web·bundle·PDF": reader_markdown(with_report_front(report, package))},
+        )
+        req["report_package"] = package.to_dict()
+        req["report_contract_check"] = contract_check
+        if contract_check["problems"]:
+            lines = "\n".join(f"- {problem['message']}" for problem in contract_check["problems"])
+            req["execution_record"] += "\n\n## 공통 보고 계약 경고\n\n" + lines
         req.update(status="done" if ok else "failed", report=report, report_appendix=report_appendix,
                    results=results, review=review,
                    cost_usd=max(self.cost.get(rid, 0.0), float(req.get("cost_usd") or 0)), finished_at=time.time())
@@ -7089,14 +7110,16 @@ class Orchestrator:
             contract = req.get("research_contract") or {}
             check, accepted = contract.get("report_check") or {}, contract.get("review") or {}
             if (accepted.get("verdict") == "accept" and "problems" in check and not check["problems"]
-                    and not any(i.get("priority") == "P1" for i in accepted.get("issues") or [])):
+                    and not any(i.get("priority") == "P1" for i in accepted.get("issues") or [])
+                    and contract_check["status"] == "PASS"):
                 cp4.freeze(req, self.hub.s.policy.approvals.pi_decision_timeout_s)
                 req.update(status="review_pending", outcome="research_final_pending",
                            pi_review_pending=True, pi_reviewed_at=None)
             else:
                 req.update(status="failed", outcome="research_final_unverified")
                 ok = False
-        data = {"ok": ok, **_terminal_reports(rid, report, report_appendix, req.get("execution_record") or ""), "cost_usd": req["cost_usd"],
+        data = {"ok": ok, "report_package": req["report_package"],
+                **_terminal_reports(rid, report, report_appendix, req.get("execution_record") or ""), "cost_usd": req["cost_usd"],
                 "cost_known": req.get("cost_known", True), "cost_summary": req.get("cost_summary"),
                 "usage": req.get("usage", {}),
                 "usage_known": req.get("usage_known", True)}

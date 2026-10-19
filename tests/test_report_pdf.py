@@ -183,7 +183,7 @@ def test_html_embeds_figures_korean_text_and_allows_no_network(tmp_path):
     assert "default-src 'none'; img-src data:" in page  # nothing is fetched when the page is printed
     assert "<table>" in page and "<ul><li>첫째<ul><li>중첩</li></ul></li><li>둘째</li></ul>" in page
     assert "<script>" not in page and "&lt;script&gt;alert(1)&lt;/script&gt;" in page
-    assert 'class="anchor">[s1/c1]' in page
+    assert "[[claim:" not in page and "[근거 1]" in page
     assert "과학 부록" in page and "과학 리뷰 완료" in page
     assert page.index("<h1>결론과 권고</h1>") < page.index("TP53 변이를 사례군")
     assert page.index("<main class=\"report\">") < page.index("과학 부록")
