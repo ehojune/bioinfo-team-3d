@@ -9,3 +9,6 @@ rows:
 - sha: 42fb7d0
   at: 2026-10-19 18:57
   text: nf-core 정책 문구의 기존 앵커와 prompt 고정 계약을 함께 맞췄다.
+- sha: d37d164
+  at: 2026-10-19 22:04
+  text: pipeline 승인 카드에 검사를 통과한 후보 소스 전체를 표시함
