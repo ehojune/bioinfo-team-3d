@@ -24,3 +24,6 @@ rows:
 - sha: '93d07f8'
   at: '2026-10-20 04:41'
   text: xargs 옵션·operand 뒤의 literal 종료 명령을 검사한다. 새 실패 회귀 29개를 재현한 뒤 mock/static 283개와 accident guard blocked 0건을 확인했다.
+- sha: '7e08044'
+  at: '2026-10-20 05:27'
+  text: consult 복구 test의 중복 timeout을 facilities 대기 즉시 실패 검증으로 바꾸고 Git provenance를 mock 처리했다. 가상 시계 실패 재현 뒤 관련 mock 4개와 지연 회귀 1개가 통과했다.
