@@ -6,3 +6,6 @@ rows:
 - sha: 7d2113c
   at: 2026-10-19 23:48
   text: 재현 receipt PR 767의 완료 상태와 후속 storage rebuild의 공유 파일 순서를 인계 큐에 남겼다.
+- sha: 1c8beaa
+  at: 2026-10-20 00:13
+  text: main의 실행 보고서와 receipt를 함께 보존해 충돌을 풀고 인계 큐·확정 예산·init 기본값 설명을 맞췄다.
