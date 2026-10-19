@@ -24,7 +24,7 @@ UTF-8을 읽어 LF로 정규화한 Unicode 문자 수입니다. 줄바꿈 포함
 | `README.en.md` | 23,311 | 19,075 | -4,236 |
 | `AGENTS.md` | 1,794 | 1,509 | -285 |
 | `HANDOFF.md` | 10,443 | 3,617 | -6,826 |
-| `docs/manual.md` | 160,046 | 160,629 | +583 |
+| `docs/manual.md` | 160,046 | 160,654 | +608 |
 | `docs/pi-qa.md` | 7,247 | 7,727 | +480 |
 | `docs/reference/README.md` | 542 | 800 | +258 |
 | `CLAUDE.md` | 1,545 | 1,511 | -34 |
