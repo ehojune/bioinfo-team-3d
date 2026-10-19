@@ -42,16 +42,39 @@ def test_b1_selector_returns_only_the_three_allowed_prompt_fields(tmp_path, monk
     candidates = offer["candidates"]
     assert len(candidates) == 1 and set(candidates[0]) == {"artifact_id", "data_type", "request_id"}
     assert candidates[0]["artifact_id"].startswith("sem:")
+    assert offer["status"] == "ok"
     assert offer["arm"] == "advisory" and offer["offered"] == [candidates[0]["artifact_id"]]
     encoded = json.dumps(offer)
     assert "outputs/" not in encoded and "request text" not in encoded and str(tmp_path) not in encoded
     # the shadow arm gets the same selector run: the ids it would have been offered, and nothing for the prompt
     monkeypatch.setattr(shadow, "ab_arm", lambda rid: "shadow")
     assert service.advisory_offer("req_b", service.advisory_snapshot("req_b", requests["req_b"]["plan"])) == {
-        "arm": "shadow", "offered": offer["offered"], "candidates": []}
+        "arm": "shadow", "offered": offer["offered"], "candidates": [], "status": "ok"}
     service.cfg = shadow.ShadowConfig(mode="shadow")
     assert service.advisory_snapshot("req_b", requests["req_b"]["plan"]) is None
-    assert service.advisory_offer("req_b", None) is None
+    assert service.advisory_offer("req_b", None) == {
+        "arm": "shadow", "status": "not_evaluated", "reason": "mode_not_ab"}
+
+
+def test_advisory_distinguishes_latched_zero_and_candidate_states(tmp_path, monkeypatch):
+    hub, requests = _typed_pair(tmp_path)
+    service = shadow.ShadowService(
+        hub, shadow.ShadowConfig(mode="ab"), shadow.ShadowPaths(tmp_path / "semantics"))
+    monkeypatch.setattr(shadow, "ab_arm", lambda rid: "advisory")
+
+    service.latched = "info_boundary"
+    assert service.advisory_snapshot("req_b", requests["req_b"]["plan"]) is None
+    assert service.advisory_offer("req_b", None) == {
+        "arm": "advisory", "status": "not_evaluated", "reason": "info_boundary",
+    }
+    report = shadow.build_report(service.paths, setting="ab")
+    assert report["ab_window"]["requests"] == 0
+    assert report["ab_window"]["excluded_states"] == {"error": 0, "not_evaluated": 1}
+
+    service.latched = None
+    monkeypatch.setattr(service, "advisory_candidates", lambda snap: [])
+    offer = service.advisory_offer("req_b", {"requests": {}})
+    assert offer == {"arm": "advisory", "offered": [], "candidates": [], "status": "ok"}
 
 
 @pytest.mark.asyncio
@@ -64,9 +87,12 @@ async def test_off_shadow_and_ab_shadow_arm_dispatch_the_same_plan_bytes():
             else pytest.fail("request moved out of shadow arm")))
 
     shadow_mode = SimpleNamespace(advisory_snapshot=lambda rid, plan: None, advisory_offer=lambda rid, snap: None)
-    for service, frozen, calls in ((None, None, 1), (shadow_mode, None, 1),
-                                   (ab_shadow_arm([]), {"arm": "shadow", "offered": []}, 1),
-                                   (ab_shadow_arm(["sem:0123abcd"]), {"arm": "shadow", "offered": ["sem:0123abcd"]}, 2)):
+    for service, frozen, calls in (
+            (None, {"status": "not_evaluated", "reason": "configured_off"}, 1),
+            (shadow_mode, {"status": "not_evaluated", "reason": "snapshot_unavailable"}, 1),
+            (ab_shadow_arm([]), {"arm": "shadow", "offered": [], "status": "ok"}, 1),
+            (ab_shadow_arm(["sem:0123abcd"]),
+             {"arm": "shadow", "offered": ["sem:0123abcd"], "status": "ok"}, 2)):
         hub, _ = research_hub([plan_with([])] * calls, declare_on=False)
         hub.requests["r0"] = hub.requests.pop("r")
         if service is not None:
@@ -75,8 +101,33 @@ async def test_off_shadow_and_ab_shadow_arm_dispatch_the_same_plan_bytes():
         captures.append(_payload(hub.calls[0]))
         assert [task.meta["kind"] for task in hub.calls] == ["plan"] * calls
         assert all(task.prompt == captures[0]["prompt"] for task in hub.calls)  # a re-plan sends the same bytes
-        assert hub.requests["r0"].get("semantics_ab") == frozen  # off and shadow mode add nothing to the request
+        assert hub.requests["r0"].get("semantics_ab") == frozen
+        advisory = hub.approvals[0]["detail"]["semantic_devices"]["advisory"]
+        assert advisory["status"] == frozen["status"]
+        assert advisory["label"] in hub.approvals[0]["summary"]
     assert captures[0] == captures[1] == captures[2] == captures[3]
+
+
+@pytest.mark.asyncio
+async def test_missing_ab_worker_has_stable_arm_and_error_exclusion(tmp_path):
+    hub, _ = research_hub([plan_with([])], declare_on=False)
+    hub.s.semantics = {"mode": "ab"}
+    hub.s.gateway.state_dir = str(tmp_path / "state")
+
+    await Orchestrator(hub).run_request("r")
+
+    frozen = hub.requests["r"]["semantics_ab"]
+    assert frozen == {
+        "arm": shadow.ab_arm("r"), "offered": [], "status": "error",
+        "error": {"code": "semantics_worker_unavailable"},
+    }
+    report = shadow.build_report(
+        shadow.ShadowPaths(tmp_path / "state" / "semantics"), setting="ab")
+    assert report["arms"][frozen["arm"]]["requests"] == 0
+    assert report["arms"][frozen["arm"]]["excluded_states"] == {
+        "error": 1, "not_evaluated": 0,
+    }
+    assert report["ab_window"]["excluded_states"] == {"error": 1, "not_evaluated": 0}
 
 
 @pytest.mark.asyncio
@@ -107,7 +158,8 @@ async def test_advisory_prompt_has_no_path_or_request_body_and_does_not_change_c
     assert "outputs/" not in plans[1].prompt.split("Optional reusable artifacts", 1)[1]
     assert hub.requests["r"]["outcome"] == "plan_approved" and len(hub.approvals) == 1
     assert hub.requests["r"]["plan"]["steps"][0]["input_refs"] == ["sem:0123abcd"]
-    assert hub.requests["r"]["semantics_ab"] == {"arm": "advisory", "offered": ["sem:0123abcd"]}
+    assert hub.requests["r"]["semantics_ab"] == {
+        "arm": "advisory", "offered": ["sem:0123abcd"], "status": "ok"}
 
 
 def test_ab_line_records_arm_reference_and_cost(tmp_path, monkeypatch):
@@ -250,6 +302,19 @@ async def test_live_state_is_copied_on_the_event_loop_and_only_the_selector_runs
     assert service.seen["snapshot"] == threading.get_ident() != service.seen["offer"]
 
 
+@pytest.mark.asyncio
+async def test_cp_card_shows_advisory_error_code():
+    hub, _ = research_hub([plan_with([])], declare_on=False)
+    hub.semantics_shadow = _stub({"arm": "advisory", "status": "error", "offered": [],
+                                  "error": {"code": "semantics_advisory_projection_failed"}})
+
+    await Orchestrator(hub).run_request("r")
+
+    advisory = hub.approvals[0]["detail"]["semantic_devices"]["advisory"]
+    assert advisory["label"] == "오류(semantics_advisory_projection_failed)"
+    assert advisory["label"] in hub.approvals[0]["summary"]
+
+
 def test_the_selector_reads_the_snapshot_not_the_live_hub(tmp_path, monkeypatch):
     hub, requests = _typed_pair(tmp_path)
     observed = {}
@@ -279,6 +344,8 @@ def test_advisory_snapshot_exception_is_an_error_not_no_candidates(tmp_path, mon
     assert offer["status"] == "error"
     assert offer["error"] == {"code": "semantics_advisory_snapshot_failed"}
     assert offer["offered"] == []
+    report = shadow.build_report(service.paths, setting="ab")
+    assert report["ab_window"]["excluded_states"] == {"error": 1, "not_evaluated": 0}
 
 
 def test_advisory_projection_exception_is_an_error_not_no_candidates(tmp_path, monkeypatch):
@@ -328,4 +395,6 @@ def test_failed_advisory_is_excluded_from_ab_summary(tmp_path, monkeypatch):
     assert line["ab_excluded"] is True
     assert report["arms"]["advisory"]["requests"] == 0
     assert report["arms"]["advisory"]["excluded"] == 1
+    assert report["arms"]["advisory"]["excluded_states"] == {"error": 1, "not_evaluated": 0}
     assert report["ab_window"]["requests"] == 0
+    assert report["ab_window"]["excluded_states"] == {"error": 1, "not_evaluated": 0}

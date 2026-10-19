@@ -15,7 +15,7 @@ from ..vocab import topic_checklists
 
 REPORT_MD = "semantic_report.md"
 REPORT_JSON = "semantic_report.json"
-STATUSES = ("작동", "켜졌으나 미사용", "꺼짐", "오류")
+STATUSES = ("작동", "켜졌으나 미사용", "꺼짐", "미평가", "오류")
 _MEANING_KEY = 'semantics'
 _SHADOW_MODULE = f"labhq/research/{_MEANING_KEY}_shadow.py"
 _OBJECTS_MODULE = f"labhq/research/{_MEANING_KEY}_objects.py"
@@ -388,20 +388,23 @@ def _semantic_devices(req: Mapping[str, Any], plan: Mapping[str, Any], settings:
     )
 
     ab = _dict(req.get("semantics_ab"))
-    ab_error = _dict(ab.get("error")) if ab.get("status") == "error" else {}
+    from . import semantic_devices
+    advisory = semantic_devices.advisory_state(ab, health.get(_MEANING_KEY))
+    evaluation_status = advisory["status"]
+    ab_error = _dict(ab.get("error")) if evaluation_status == "error" else {}
     offered = [value for value in ab.get("offered") or [] if isinstance(value, str)]
-    evaluated = bool(ab) and not ab_error
+    evaluated = evaluation_status == "ok"
     referenced = ((observation or {}).get("referenced")
                   if isinstance((observation or {}).get("referenced"), bool)
                   else bool(set(offered) & _plan_refs(plan)) if evaluated else None)
     shadow_off = off or ({"reason": "mode_not_ab", "at": request_time} if mode != "ab" else None)
-    shadow_status = ("오류" if ab_error else "꺼짐" if shadow_off else "작동" if evaluated
-                     else "켜졌으나 미사용")
+    shadow_status = "오류" if evaluation_status == "error" else "작동" if evaluated else "미평가"
     evaluation = "평가 완료" if evaluated else "평가 안 됨"
     shadow = _device(
         "shadow_request", "그림자 요청", shadow_status,
         inputs=["첫 연구 plan", "semantics advisory 후보", "재계획 plan.input_refs"],
         decisions=[{"arm": ab.get("arm") or "기록 없음", "evaluation": evaluation,
+                    "state": advisory["label"],
                     "offered_count": len(offered), "referenced": referenced}],
         impact=("후보를 advisory 재계획에 제시" if evaluated and offered and ab.get("arm") == "advisory" else
                 "후보가 없어 계획 변화 없음" if evaluated else "계획 변화 평가 안 됨"),
@@ -410,8 +413,10 @@ def _semantic_devices(req: Mapping[str, Any], plan: Mapping[str, Any], settings:
               (_SHADOW_MODULE, "_add_ab_fields")],
         records=["semantic_report.json:devices[shadow_request]", f"request.{_MEANING_KEY}_ab",
                  "state/semantics/shadow.jsonl"],
-        arm=ab.get("arm"), evaluation=evaluation, offered_count=len(offered), referenced=referenced,
+        arm=ab.get("arm"), evaluation=evaluation, evaluation_status=evaluation_status,
+        offered_count=len(offered) if evaluated else None, referenced=referenced,
         offered=offered,
+        **({"reason": advisory["reason"]} if advisory.get("reason") else {}),
         **({"off": shadow_off} if shadow_off else {}), **({"error": ab_error} if ab_error else {}),
     )
     return semantics, ontology, shadow
@@ -522,8 +527,8 @@ def render_report(report: Mapping[str, Any]) -> str:
         elif row.get("id") == "analysis_pack":
             decisions = f"적용 {_brief(row.get('applied'))} · 제외 {_brief(row.get('excluded'))}"
         if row.get("id") == "shadow_request":
-            decisions = (f"{row.get('evaluation')} · 후보 {row.get('offered_count', 0)}건 · "
-                         f"참조 {_brief(row.get('referenced'))} / {decisions}")
+            state = _dict((row.get("decisions") or [{}])[0]).get("state")
+            decisions = f"{state} · 참조 {_brief(row.get('referenced'))} / {decisions}"
         if row.get("off"):
             decisions = f"꺼짐: {row['off'].get('reason')} · {row['off'].get('at')} / {decisions}"
         code = ", ".join(f"`{item.get('module')}:{item.get('function')}`" for item in row.get("code_locations") or [])
