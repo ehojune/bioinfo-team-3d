@@ -486,10 +486,11 @@ def build_report_html(req: Mapping[str, Any], bundle: Path | None, *, now: datet
     # A bundle made before the link rewrite, or the stored report itself, still names figures <workdir_id>/outputs/<file>.
     owners = figure_owners(results)
     source = report_text if report_text is not None else _read_document(bundle, "report.md", str(req.get("report") or ""))
+    stored = req.get("report_package")
+    package = (ReportPackage.from_dict(dict(stored)) if isinstance(stored, Mapping)
+               else build_report_package(dict(req), source, dict(results)))
+    abstract_source = re.sub(r"\[근거 \d+\]", "", package.source_report or source)
     if FRONT_START not in source:
-        stored = req.get("report_package")
-        package = (ReportPackage.from_dict(dict(stored)) if isinstance(stored, Mapping)
-                   else build_report_package(dict(req), source, dict(results)))
         source = with_report_front(source, package)
     source = reader_markdown(source)
     linked = link_workdir_figures(source, owners, output_exists(results, bundle))
@@ -497,7 +498,7 @@ def build_report_html(req: Mapping[str, Any], bundle: Path | None, *, now: datet
         linked = abstract_first(linked, figures._holds)  # the report's own abstract, wherever the writer put it
     else:
         linked = drop_dead_abstract_links(linked, figures._holds)  # a link to a file nobody could make
-        figures.extra[ABSTRACT_FILE] = build_graphical_abstract(req, linked, scrub=scrub).encode("utf-8")
+        figures.extra[ABSTRACT_FILE] = build_graphical_abstract(req, abstract_source, scrub=scrub).encode("utf-8")
         linked = with_abstract_link(linked)
     body = markdown_to_html(linked, figures)
     appendix_text = ("" if report_text is not None

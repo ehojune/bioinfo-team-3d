@@ -1466,7 +1466,10 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
         package.omissions["figures"] = "게시 가능한 대표 그림이 없습니다."
     if not package.tables:
         package.omissions["tables"] = "공개 가능한 결과표가 없습니다."
-    lines = [f"# {title}", "", render_report_front(package, figures_as_images=True).rstrip(), ""]
+    front = render_report_front(package, figures_as_images=True)
+    for heading, value in (("질문", package.question), ("답", package.answer), ("한계", package.limitations)):
+        front = front.replace(f"## {heading}\n\n{value}", f"## {heading}\n\n**{heading}: {value}**", 1)
+    lines = [f"# {title}", "", front.rstrip(), ""]
     lines += ["## 보고서·결과표·재현", "", "- 보고서: [Markdown](report/report.md)"]
     if table_names:
         table_links = ", ".join(f"[{PurePosixPath(name).name}]({quote(name, safe='/')})"
