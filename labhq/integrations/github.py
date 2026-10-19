@@ -609,7 +609,8 @@ class ProjectReporter:
                 summary=f"완성한 {submission['name']} pipeline을 bioinfo-agent에 기여할까요?",
                 detail={"name": submission["name"], "repo": policy.pipeline_repo,
                         "base": policy.pipeline_base_branch, "fingerprint": fingerprint,
-                        "files": [item["path"] for item in submission["files"]]},
+                        "files": [{"path": item["path"], "content": item["content"]}
+                                  for item in submission["files"]]},
                 ).model_dump(mode="json", exclude={"timeout_s"})
             # Save the binding before publishing the card; replay repairs a crash between these writes.
             entry.update(approval_id=card["id"], approval_fingerprint=fingerprint)

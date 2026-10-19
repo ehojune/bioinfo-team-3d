@@ -107,6 +107,18 @@ async def test_candidate_waits_without_any_github_request_and_duplicates_reuse_t
         await close(hub)
 
 
+async def test_contribution_card_contains_the_exact_candidate_source_before_yes(tmp_path):
+    calls = []
+    submission = pipeline()
+    hub = await candidate(tmp_path, calls)
+    try:
+        detail = card(hub)["detail"]
+        assert detail["files"] == submission["files"]
+        assert calls == []
+    finally:
+        await close(hub)
+
+
 @pytest.mark.parametrize("approved", [False, True])
 async def test_one_decision_controls_one_contribution_and_survives_duplicate_results(tmp_path, approved):
     calls = []
