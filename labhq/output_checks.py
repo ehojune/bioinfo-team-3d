@@ -295,7 +295,7 @@ def literature_ledger(root: Path) -> dict[str, Any]:
                 if level in {"abstract", "metadata"}:
                     unread.append((identifiers, str(answer.get("unread_reason") or "unknown")))
                 elif answer.get("found") is False:
-                    unread.append((identifiers, "no_copy"))
+                    unread.append((identifiers, str(answer.get("unread_reason") or "no_copy")))
                 continue
             blocks = ([answer.get("candidates")]
                       if entry.get("tool") in {"openalex_works", "preprints"}

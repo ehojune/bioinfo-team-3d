@@ -143,6 +143,15 @@ def test_literature_ledger_normalizes_failed_fulltext_inputs(tmp_path):
     }
 
 
+def test_literature_ledger_keeps_found_false_failure_reason(tmp_path):
+    work = tmp_path / "work"
+    _fulltext_record(work, "failed", [{
+        "input": "10.1000/outside",
+        "answer": {"found": False, "doi": "10.1000/outside", "unread_reason": "access_denied"},
+    }])
+    assert literature_ledger(work)["unread"] == {"DOI:10.1000/outside": "access_denied"}
+
+
 def test_literature_ledger_line_has_four_exact_denominators_and_unread_key_papers():
     ledgers = {"s1": {
         "claims": [{"id": "c1", "status": "supported"}],

@@ -541,6 +541,41 @@ async def test_fulltext_stops_streaming_oa_copy_at_byte_limit(tmp_path, monkeypa
     assert stream.yielded == 2
 
 
+def test_pdf_text_caps_total_flate_expansion(monkeypatch):
+    monkeypatch.setattr(lit, "MAX_PDF_EXPANDED_BYTES", 24)
+    streams = [lit.zlib.compress(b"(first text) Tj"), lit.zlib.compress(b"(second text) Tj")]
+    pdf = b"%PDF-1.4\n" + b"\n".join(
+        b"<< /Filter /FlateDecode >>\nstream\n" + stream + b"\nendstream" for stream in streams)
+
+    with pytest.raises(ValueError, match="PDF.*24"):
+        lit._pdf_text(pdf)
+
+
+async def test_fulltext_does_not_cache_oa_copy_server_errors(tmp_path):
+    copy_calls = 0
+
+    def handler(request):
+        nonlocal copy_calls
+        if request.url.host == "www.ebi.ac.uk":
+            return search_answer([record("123", None, "Y", None)])
+        if request.url.host == "api.openalex.org":
+            return httpx.Response(200, json={"results": [{
+                "id": "https://openalex.org/W1", "open_access": {"is_oa": True},
+                "best_oa_location": {"pdf_url": "http://93.184.216.34/temporary.pdf"},
+            }]})
+        if request.url.host == "93.184.216.34":
+            copy_calls += 1
+            return httpx.Response(500)
+        raise AssertionError(request.url)
+
+    annotator, _calls = make(handler, tmp_path)
+    first = await annotator.fulltext(["123"])
+    second = await annotator.fulltext(["123"])
+    assert "OpenAlex 사본 조회 HTTP 500" in first["results"][0].get("fulltext_error", "")
+    assert second["n_cached"] == 0
+    assert copy_calls == 2
+
+
 async def test_fulltext_found_false_keeps_identifier_and_oa_failure(tmp_path):
     def handler(request):
         if request.url.host == "www.ebi.ac.uk":

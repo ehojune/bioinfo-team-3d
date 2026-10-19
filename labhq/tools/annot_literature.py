@@ -280,6 +280,22 @@ def _pdf_unescape(value: bytes) -> str:
 def _pdf_text(data: bytes) -> str:
     """Extract ordinary PDF text without adding a package. pypdf is used when already installed; the bounded
     fallback handles literal Tj/TJ strings in plain or FlateDecode streams and otherwise reports format failure."""
+    chunks = [data]
+    expanded_bytes = 0
+    for match in re.finditer(rb"(?s)(<<.{0,2000}?>>)?\s*stream\r?\n(.*?)\r?\nendstream", data):
+        block, stream = match.group(1) or b"", match.group(2)
+        if b"/FlateDecode" in block:
+            try:
+                decompressor = zlib.decompressobj()
+                stream = decompressor.decompress(stream, MAX_PDF_EXPANDED_BYTES - expanded_bytes + 1)
+            except zlib.error:
+                continue
+            expanded_bytes += len(stream)
+            if expanded_bytes > MAX_PDF_EXPANDED_BYTES:
+                raise ValueError(
+                    f"PDF 압축 해제 결과가 전체 {MAX_PDF_EXPANDED_BYTES:,} bytes를 넘어 읽지 않았습니다")
+        chunks.append(stream)
+
     try:
         from pypdf import PdfReader  # type: ignore[import-not-found]
     except ImportError:
@@ -292,18 +308,6 @@ def _pdf_text(data: bytes) -> str:
         if text.strip():
             return "\n".join(line.strip() for line in text.splitlines() if line.strip())
 
-    chunks = [data]
-    for match in re.finditer(rb"(?s)(<<.{0,2000}?>>)?\s*stream\r?\n(.*?)\r?\nendstream", data):
-        block, stream = match.group(1) or b"", match.group(2)
-        if b"/FlateDecode" in block:
-            try:
-                decompressor = zlib.decompressobj()
-                stream = decompressor.decompress(stream, MAX_PDF_EXPANDED_BYTES + 1)
-            except zlib.error:
-                continue
-            if len(stream) > MAX_PDF_EXPANDED_BYTES:
-                continue
-        chunks.append(stream)
     pieces = []
     literal = rb"\(((?:\\.|[^\\()])*)\)"
     for chunk in chunks:
@@ -967,6 +971,9 @@ class LiteratureAnnotator(Annotator):
                 continue
             if response.status_code == 404:
                 failures.append(("no_copy", f"{location['provider']} 주소에 사본 없음(HTTP 404)"))
+                continue
+            if 500 <= response.status_code < 600:
+                temporary.append(f"{location['provider']} 사본 조회 HTTP {response.status_code}")
                 continue
             if response.status_code != 200:
                 failures.append(("access_denied", f"{location['provider']} 주소가 HTTP {response.status_code}로 답함"))
