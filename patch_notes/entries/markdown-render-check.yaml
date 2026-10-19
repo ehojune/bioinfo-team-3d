@@ -1,0 +1,5 @@
+pr: 759
+rows:
+- sha: bd592e0
+  at: 2026-10-19 16:54
+  text: CommonMark 코드 영역 공유와 Markdown 렌더 검사로 강조 노출·claim 코드 치환 오류를 막고 결과 하위 음성을 허용
