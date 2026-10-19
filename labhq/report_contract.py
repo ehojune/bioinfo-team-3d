@@ -45,6 +45,13 @@ _MARKDOWN_LINK = re.compile(
     r"(?P<image>!)?\[(?P<label>[^\]\n]*)\]\(\s*(?P<target><[^>\n]*>|" + _balanced_link_target()
     + r")(?P<title>\s+(?:\"[^\"\n]*\"|'[^'\n]*'))?\s*\)"
 )
+_MARKDOWN_CODE = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]*`", re.DOTALL)
+_FOOTNOTE_DEFINITION = re.compile(r"^\[\^([^\]\n]+)\]:\s*(.*)$")
+_FOOTNOTE_REFERENCE = re.compile(r"\[\^([^\]\n]+)\]")
+_QUESTION_CUTOFF = re.compile(
+    r"(?im)^\s*(?:reference pointers?\b.*|참고\s*(?:자료\s*)?경로\b.*|운영\s*지시\b.*|"
+    r"PI가 이미 답한 질문\b.*|never write\b.*)$"
+)
 _AUDIO_SUFFIXES = {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".aac"}
 _FIGURE_SUFFIXES = {".svg", ".png", ".jpg", ".jpeg", ".webp", ".gif"}
 _TABLE_SUFFIXES = {".tsv", ".csv", ".xlsx", ".xls"}
@@ -135,6 +142,14 @@ def _plain(value: str) -> str:
     return " ".join(value.split()).strip()
 
 
+def research_question(value: str) -> str:
+    """Return the reader-facing scientific question, without appended path or operating instructions."""
+    text = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+    if cutoff := _QUESTION_CUTOFF.search(text):
+        text = text[:cutoff.start()]
+    return _plain(text)[:1000] or "질문 기록 없음"
+
+
 def _title(report: str, request: dict[str, Any]) -> str:
     found = _HEADING.search(markdown_body(report))
     return _plain(found.group(2)) if found else _plain(str(request.get("text") or ""))[:120] or "결과 보고서"
@@ -222,7 +237,7 @@ def build_report_package(request: dict[str, Any], report: str | None = None,
         schema_version=1,
         kind=kind,
         title=_title(source, request),
-        question=_plain(str(request.get("text") or "질문 기록 없음"))[:1000],
+        question=research_question(str(request.get("text") or "")),
         answer=_first_text(source, ("요약", "abstract", "결론", "결과"),
                            "요청을 완료하지 못했습니다." if kind == "failure" else "답이 기록되지 않았습니다."),
         limitations=_first_text(source, ("한계", "limitation", "논의", "discussion"),
@@ -276,8 +291,41 @@ def with_report_front(report: str, package: ReportPackage) -> str:
     return f"{lead}\n\n{FRONT_START}\n\n{render_report_front(package)}\n{FRONT_END}\n\n{body}".rstrip() + "\n"
 
 
-def reader_markdown(report: str) -> str:
-    """Replace audit-only claim syntax while retaining a numbered evidence trail."""
+def reader_markdown(report: str, *, footnotes: bool = False) -> str:
+    """Replace audit-only claim syntax; PDFs may also render Markdown footnotes as endnotes."""
+    code: list[str] = []
+
+    def stash(match: re.Match[str]) -> str:
+        code.append(match.group(0))
+        return f"\x00labhq-code-{len(code) - 1}\x00"
+
+    rendered = report
+    if footnotes:
+        rendered = _MARKDOWN_CODE.sub(stash, rendered)
+        definitions: dict[str, str] = {}
+        body: list[str] = []
+        for line in rendered.splitlines():
+            found = _FOOTNOTE_DEFINITION.match(line)
+            if found:
+                definitions.setdefault(found.group(1).strip(), found.group(2).strip())
+            else:
+                body.append(line)
+        rendered = "\n".join(body)
+        numbered: dict[str, int] = {}
+
+        def replace_footnote(match: re.Match[str]) -> str:
+            value = match.group(1).strip()
+            numbered.setdefault(value, len(numbered) + 1)
+            return f"[근거 {numbered[value]}]"
+
+        rendered = _FOOTNOTE_REFERENCE.sub(replace_footnote, rendered)
+        if numbered:
+            notes = "\n".join(
+                f"{number}. {definitions.get(value, '근거 원장은 저장소의 docs/reference/claim_evidence.md에 있습니다.')}"
+                for value, number in numbered.items()
+            )
+            rendered = rendered.rstrip() + "\n\n## Claim 근거\n\n" + notes + "\n"
+
     seen: dict[str, int] = {}
 
     def replace(match: re.Match[str]) -> str:
@@ -285,10 +333,12 @@ def reader_markdown(report: str) -> str:
         seen.setdefault(value, len(seen) + 1)
         return f"[근거 {seen[value]}]"
 
-    rendered = replace_markdown_body(report, lambda body: _ANCHOR.sub(replace, body))
+    rendered = replace_markdown_body(rendered, lambda body: _ANCHOR.sub(replace, body))
     if seen and FRONT_START not in rendered:
         notes = "\n".join(f"- [근거 {number}] 근거 원장 `{value}`" for value, number in seen.items())
         rendered = rendered.rstrip() + "\n\n## 근거 각주\n\n" + notes + "\n"
+    for index, value in enumerate(code):
+        rendered = rendered.replace(f"\x00labhq-code-{index}\x00", value)
     return rendered
 
 

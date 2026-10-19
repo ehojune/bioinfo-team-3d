@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 17:29 | [`7b66827`](https://github.com/ehojune/bioinfo-team-3d/pull/758/commits/7b66827) | 예전 계획의 자동 표 복구를 공개 자료로 제한하고 내부 자료 표는 집계표 선언을 요구하도록 고쳤습니다. |
+| 17:11 | [`51b42b8`](https://github.com/ehojune/bioinfo-team-3d/pull/758/commits/51b42b8) | PDF 렌더 판본을 올린 변경에 맞춰 기존 무효화 회귀 검사의 기대값을 갱신했습니다. |
+| 16:52 | [`a8ba139`](https://github.com/ehojune/bioinfo-team-3d/pull/758/commits/a8ba139) | v2 재구성의 PDF 각주, 예전 결과표, 연구 질문, 그림 배치, 이용 조건 복구를 편집기에 반영했습니다. |
 | 15:56 | [`5696cb0`](https://github.com/ehojune/bioinfo-team-3d/pull/753/commits/5696cb0) | 보고서 claim 수집에서 코드 예시를 제외하고 Excel 링크를 결과표로 분류했다 |
 | 13:42 | [`1c8b27e`](https://github.com/ehojune/bioinfo-team-3d/pull/753/commits/1c8b27e) | 정리본 PDF package를 정화된 입력에서 다시 만들고 외부 보고서 이미지의 자동 요청을 막았습니다. |
 | 13:33 | [`450c7f3`](https://github.com/ehojune/bioinfo-team-3d/pull/750/commits/450c7f3) | Windows 시스템 콘솔 호스트를 사용자 프로세스 종료 실패와 구분해 CI 오탐을 막음 |

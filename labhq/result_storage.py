@@ -23,7 +23,8 @@ from .models import ApprovalRequest, Task
 from .policy import touches, restricted_paths
 from . import edition_sources, github_token
 from .portfolio import (PRIVATE_PATH_PATTERN, EditionCheckError, broken_markdown_links, build_portfolio_files,
-                        check_failure, clean_publication_text, declared_aggregate_tables, portfolio_root_file,
+                        check_failure, clean_publication_text, declared_aggregate_tables, legacy_aggregate_tables,
+                        portfolio_root_file,
                         internal_data_steps, portfolio_report, publish_file_allowed, request_uses_internal_data,
                         scan_publish_files, source_uses_internal_data, table_allowed)
 from .intake import reference_dirs
@@ -118,6 +119,34 @@ def upload_failed_text(rid: str) -> str:
 def plain_path(path):
     from .adapters.owned import is_link
     return not any((p.exists() or p.is_symlink()) and is_link(p) for p in [path, *path.parents])
+
+
+def edition_input_readmes(req: Mapping[str, Any]) -> dict[str, str]:
+    """Read only small, top-level README files of legacy input roots when structured references are absent."""
+    if req.get("references"):
+        return {}
+    found: dict[str, str] = {}
+    for raw in req.get("project_dirs") or []:
+        if len(found) >= 8:
+            break
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        root = Path(raw)
+        if not plain_path(root):
+            continue
+        if root.is_file():
+            root = root.parent
+        for filename in ("README.md", "README", "README.txt"):
+            candidate = root / filename
+            try:
+                if (not plain_path(candidate) or not candidate.is_file()
+                        or candidate.stat().st_size > 256_000):
+                    continue
+                found[str(candidate)] = candidate.read_text(encoding="utf-8", errors="replace")
+                break
+            except OSError:
+                continue
+    return found
 
 
 def controlled_request(req, settings):
@@ -1254,6 +1283,7 @@ class ResultStorage:
                 canonical_pdf_report = pdf_report_text(
                     req, self.s, report_text=portfolio_report(req, self.s, raw_assets))
                 aggregate_tables = declared_aggregate_tables(req)
+                aggregate_tables.update(legacy_aggregate_tables(req, raw_assets))
                 assets = {}
                 for name, body in raw_assets.items():
                     if not table_allowed(
@@ -1285,6 +1315,7 @@ class ResultStorage:
                 bundle_text = ""
                 if plain_path(bundle_readme) and bundle_readme.is_file():
                     bundle_text = bundle_readme.read_text(encoding="utf-8")
+                input_readmes = edition_input_readmes(req)
                 docs = draft_documents(
                     req, self.s, included, assets, abstract=bool(drawn),
                     environment_records=environment_records, bundle_readme=bundle_text)
@@ -1294,7 +1325,7 @@ class ResultStorage:
                     run_documents={"run/progress.md": docs["PROGRESS.md"],
                                    "run/reproduce.md": docs["REPRODUCE.md"],
                                    "run/task_record.md": docs["TASK_RECORD.md"]},
-                    internal_files=internal_allowed)
+                    internal_files=internal_allowed, input_readmes=input_readmes)
                 publication_internal.update(internal_allowed)
                 for name, body in portfolio.items():
                     if isinstance(body, bytes):
