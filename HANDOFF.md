@@ -18,7 +18,7 @@
 | 순서 | 할 일 | 완료 조건·현재 한계 |
 |---|---|---|
 | 완료 | #762(`923a4fa`)·#764(`9d9e973`)·#763(`7b4d866`) 병합·PI 배포 | 총괄 인계: doctor 준비 예, status 요청 0. 새 연구·정리본 게시·Nextflow PASS 근거는 아님 |
-| 진행 | receipt PR #767 OPEN | P1 3건을 bundle 완료 대기·request ID·Hub 저장 계약 수정으로 대응, 신규 회귀 5건·관련 43건 통과. push 후 CI는 driver 확인. 공유 리포팅·storage는 #748 뒤 #754 rebuild 순서 |
+| 진행 | receipt PR #767 OPEN | P1 3건은 `a369a41`로 대응. 취소 보고서의 CI 회귀는 기존 본문+receipt 전체 계약으로 검사해 관련 mock 8건 통과. CI는 driver 확인. 병합 뒤 같은 담당 #682·Opus #754 rebuild 순서 |
 | 병렬 | cgroup #765·guard #766·PID 기록 #768 OPEN | 구현·검증 진행 상태이며 실제 연구·게시·Nextflow PASS로 쓰지 않음 |
 | 2 | 공개 소형 주제 2개를 제시하고 PI 선택 뒤 장치 실운전 | P2A 생성→호출→산출, 의미 모델·그림자 요청·ontology·checklist·EDAM·pack, 문헌/PDF, 보고서·묶음·정리본을 요청별로 대조. **아직 미실행** |
 | 3 | bench dry-run → 준비 게이트 검토 요청 | 동일 입력·판본·PI 답·예산과 arm별 state/workspace 분리, 장치 작동 근거, 예상 시간·비용을 확인 |

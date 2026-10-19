@@ -198,9 +198,20 @@ async def test_cancelled_finish_edits_partial_report(setup):
     saved = hub.requests["r"]["result_storage"]
     assert saved["status"] == "local"
     edition = Path(saved["draft_path"])
-    # #608: the edition opens with the graphical abstract labhq draws when the report has none; the report text is as it was
+    # #608/#748: preserve the abstract and partial report, then append truthful receipt evidence.
     assert (edition / "report.md").read_text(encoding="utf-8") == (
-        "![Graphical abstract — 질문 → 데이터 → 방법 → 핵심 결과](graphical_abstract.svg)\n\nResult")
+        "![Graphical abstract — 질문 → 데이터 → 방법 → 핵심 결과](graphical_abstract.svg)\n\nResult"
+        "\n\n## 재현 검증\n\n"
+        "문법 검사: not_applicable · 실행: not_rerun · lock: missing · 문법 실패 0 · 도구 없음 0 · "
+        "미검사 0 · 누락 입력 0. 문법 PASS는 실행 PASS가 아닙니다."
+        "\n\n[검사 receipt](REPRODUCTION_RECEIPT.json)\n")
+    receipt = json.loads((edition / "REPRODUCTION_RECEIPT.json").read_text(encoding="utf-8"))
+    assert receipt["schema_version"] == 1
+    assert receipt["files"] == [] and receipt["locks"] == [] and receipt["lock_status"] == "missing"
+    assert saved["reproduction_receipt"]["syntax"] == "not_applicable"
+    assert saved["reproduction_receipt"]["execution"] == "not_rerun"
+    assert hub.requests["r"]["status"] == "cancelled"
+    assert hub.requests["r"]["report"] == "Result"
     assert (edition / "graphical_abstract.svg").read_text(encoding="utf-8").startswith("<svg ")
     assert not calls
 
