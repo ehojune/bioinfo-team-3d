@@ -109,6 +109,32 @@ def test_workspace_prefix_and_relative_output_are_not_private(tmp_path):
         assert not scan_publish_files({"README.md": text}, settings=settings)
 
 
+@pytest.mark.parametrize("root", ["runs", "./runs"])
+@pytest.mark.parametrize("text", [
+    "The workflow runs successfully.",
+    "https://example.org/runs",
+    "https://example.org/runs/results",
+    "outputs/runs/summary.tsv",
+])
+def test_relative_workspace_name_is_not_a_word_or_url(tmp_path, root, text):
+    settings = Settings(runner={"workspace_root": root}, config_base=str(tmp_path))
+    assert not private_paths.mentions_workspace_path(text, settings)
+    assert not scan_publish_files({"README.md": text}, settings=settings)
+
+
+@pytest.mark.parametrize("root", ["runs", "./runs"])
+@pytest.mark.parametrize("spelling", ["relative", "dot", "backslash", "absolute", "resolved"])
+def test_relative_workspace_paths_still_block_publication(tmp_path, root, spelling):
+    settings = Settings(runner={"workspace_root": root}, config_base=str(tmp_path))
+    text = {"relative": "runs/task/input.txt", "dot": "./runs/task/input.txt",
+            "backslash": r"runs\task\input.txt",
+            "absolute": str(settings.path(root) / "task/input.txt"),
+            "resolved": str(settings.path(root).resolve() / "task/input.txt")}[spelling]
+    assert private_paths.mentions_workspace_path(text, settings)
+    assert {"kind": "local_path", "path": "README.md"} in scan_publish_files(
+        {"README.md": text}, settings=settings)
+
+
 def test_edition_never_publishes_custom_workspace_after_cleaning(tmp_path):
     settings = Settings(runner={"workspace_root": "/analysis/odd-name"}, config_base=str(tmp_path))
     request = {"id": "req_example", "text": "Public result", "report": "Result: /analysis/odd-name/task/input.txt"}

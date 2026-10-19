@@ -21,7 +21,8 @@ def test_root_folders_count_only_where_a_path_starts(text, flagged):
 
 async def test_a_stopped_edition_says_which_check_and_files(tmp_path, monkeypatch):
     monkeypatch.setattr("labhq.result_storage.scan_publish_files",
-                        lambda files, internal=False: [{"kind": "local_path", "path": "steps/s1/outputs/run.py"}])
+                        lambda files, internal=False, settings=None:
+                        [{"kind": "local_path", "path": "steps/s1/outputs/run.py"}])
     hub, saved = await run_finish(tmp_path, monkeypatch, NEW, fake_github([]))
     assert saved["status"] == "failed" and saved["error_type"] == "EditionCheckError"
     assert saved["warning"] == "게시 전 검사에 실패했습니다: local_path — steps/s1/outputs/run.py"

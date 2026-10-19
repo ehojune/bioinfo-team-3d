@@ -638,7 +638,18 @@ def mentions_workspace_path(text: str, settings: Settings) -> bool:
     """Publication treats a configured workspace as personal regardless of its directory name."""
     raw = settings.runner.workspace_root
     path = settings.path(raw)
-    return bool(mentioned_private_path(text, [raw, str(path), str(path.resolve())]))
+    paths = [str(path), str(path.resolve())]
+    if posixpath.isabs(raw) or ntpath.isabs(raw) or raw.startswith(("~", "$", "%")):
+        paths.append(raw)
+    else:
+        # A relative root is a path only with a child separator and a path-start boundary.
+        # Resolve those mentions against the config, without treating prose or URL segments as paths.
+        fold = _case_insensitive(str(path))
+        text = _canonical_text(text, host_home(), os.environ, fold)
+        relative = posixpath.normpath(_fold(raw, fold))
+        text = re.sub(rf"(?<![\w./:~-])(?:\./)?{re.escape(relative)}(?=/)",
+                      lambda _m: str(path), text)
+    return bool(mentioned_private_path(text, paths))
 
 
 def mentioned_private_path(text: str, paths: Iterable[str], home: str | None = None,

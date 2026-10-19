@@ -184,6 +184,26 @@ async def test_internal_and_publish_check_failures_are_omitted(tmp_path, monkeyp
     await service.close()
 
 
+async def test_relative_workspace_word_and_url_survive_fake_progress_upload(tmp_path, monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token-for-tests")
+    monkeypatch.chdir(tmp_path)
+    hub = Hub(tmp_path)
+    hub.s.runner.workspace_root = "runs"
+    text = "The workflow runs successfully. https://example.org/runs/results"
+    write_bundle(hub, {"steps/s1/outputs/safe.md": text})
+    result = TaskResult(task_id="s1", agent_id="worker", ok=True, text=text)
+    hub.requests["req_progress"]["results"]["s1"] = result.model_dump(mode="json")
+    calls = []
+    service = ResultStorage(hub, github_transport(calls))
+    try:
+        await service.progress_step("req_progress", "s1", result)
+        puts = [(path, body) for method, path, body in calls if method == "PUT"]
+        assert any(path.endswith("safe.md") for path, _ in puts)
+        assert any(text in base64.b64decode(body["content"]).decode() for _, body in puts)
+    finally:
+        await service.close()
+
+
 async def test_custom_workspace_is_omitted_before_fake_progress_upload(tmp_path, monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "fake-token-for-tests")
     hub = Hub(tmp_path)
