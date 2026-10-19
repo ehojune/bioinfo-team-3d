@@ -29,7 +29,7 @@
 Detailed docs (manual, PI Q&A) and the web UI are in Korean.
 
 labhq is a bioinformatics **multi-agent orchestration platform** that runs Claude Code and Codex like **lab staff**.
-Write a request in the web office and the CSO makes a plan, staff split the work and run it, a model from another company reviews it, and a report comes out.
+Write a request in the web office and the CSO plans it, staff split the execution, and science review leads to a report.
 Risky or costly actions are approved by the PI on the web or a phone.
 
 | 2.5D office (`/`) | 3D office (`/3d`) |
@@ -43,7 +43,7 @@ Still frames: [2.5D](docs/media/office-25d.png) · [3D](docs/media/office-3d.png
 
 ![How a request flows: PI request → briefing → CSO plan → staff steps → science review → final report. Below, where PI decision inbox cards come in](docs/media/en/request-flow.svg)
 
-- 11 staff, each role with its own engine, model, and tools. The science reviewer is deliberately a model from another company.
+- The default roster defines 13 roles: 8 on Claude Code and 5 on Codex. [Staff YAML](agents/core/) is the source for engines, models, and tools; local solo staff and contractors are separate.
 - Routine, well-defined analyses go to the [bioinfo-agent](https://github.com/ehojune/bioinfo-agent) staff member. It is a Claude Code agent built by this project's PI: given an analysis in plain words, it picks a matching nf-core Nextflow pipeline, writes a plan with estimated time and disk, and after approval runs it and returns a MultiQC QC verdict.
 - If the team lacks a method, a paper or its code is turned into an agent with [Paper2Agent](https://github.com/jmiao24/Paper2Agent) and hired as a **contractor**.
 - When a job is submitted to HPC (SGE, PBS, Slurm), the staff session rests until the job ends, then resumes the same session.
@@ -62,15 +62,9 @@ labhq chose to layer its checks and keep evidence that can be re-verified, over 
 
 **Catch bad evidence early**
 
-Two layers of checks catch AI mistakes, such as inventing or misreading a citation (hallucination), before the report. The science reviewer (GPT-6-Astra) opens the PubMed source and checks each citation against it, and a request cannot pass while a finding that would change the conclusion (P1) remains. Using the claim ledger and output sha256 records (MIT) taken from [The Virtual Biotech](https://github.com/harrisongzhang/TheVirtualBiotech) (Science 2026), `labhq verify` re-checks the report's evidence anchors and hashes.
+Science review, a claim ledger, and output sha256 records help check report evidence. `labhq verify` re-checks anchors and file hashes.
 
-<details><summary>Evidence and limits</summary>
-
-<sub>Evidence: [11th trial run](https://github.com/ehojune/bioinfo-team-3d/issues/298#issuecomment-5969847101) (GSE19804): the reviewer checked against the PubMed source and caught that the literature step had reversed the direction of SEMA5A in the original paper and missed the Yang 2018 hub list, so the request stopped before it produced a report · [Example GSE10072](docs/examples/gse10072/README.md): `labhq verify` re-checked the hashes of 58 outputs · [#339](https://github.com/ehojune/bioinfo-team-3d/pull/339) (verify)</sub>
-
-<sub>Limits: Evidence anchors and PI evidence approval (CP2) run only in the research lane, which is off by default. `verify` only checks that files are unchanged; it does not prove the content is correct. The share of errors the review misses has not been measured.</sub>
-
-</details>
+Limits: anchors and CP2 require the research lane. Matching hashes do not prove content correct, and the review miss rate is unmeasured. [Evidence and limits](docs/reference/readme-evidence.md#card-1)
 
 </td>
 <td width="50%" valign="top">
@@ -79,15 +73,9 @@ Two layers of checks catch AI mistakes, such as inventing or misreading a citati
 
 **Start from papers**
 
-Before planning, the prior-research staff pull the analyses that must be done from a few papers and reviews on the same topic and put them in the checklist, and the report gets a "prior-research baseline" section with citations. If the team lacks a method, after PI approval you can bring in a term-limited **contractor** who holds that paper's code as a tool, using [Paper2Agent](https://github.com/jmiao24/Paper2Agent).
+Before planning, papers and reviews supply a checklist of required analyses. With PI approval, Paper2Agent contractors can fill missing methods.
 
-<details><summary>Evidence and limits</summary>
-
-<sub>Evidence: [#395](https://github.com/ehojune/bioinfo-team-3d/pull/395) (prior-research step) · [Manual: prior-research baseline](docs/manual.md#topic-%EC%A0%90%EA%B2%80%ED%91%9C%EC%99%80-%EC%84%A0%ED%96%89-%EC%97%B0%EA%B5%AC-%EA%B8%B0%EC%A4%80) · [Manual: contractor system](docs/manual.md#%ED%8C%8C%EA%B2%AC%EC%A7%81-%EC%A0%9C%EB%8F%84-paper2agent)</sub>
-
-<sub>Limits: The prior-research step has run on only 4 test requests. The contractor flow has passed only mock tests and has never gone as far as hiring from a real paper, and the Paper2Agent skill must be installed separately.</sub>
-
-</details>
+Limits: prior-research steps were checked on four test requests. Hiring from a real paper remains unverified and requires the separately installed skill. [Evidence and limits](docs/reference/readme-evidence.md#card-2)
 
 </td>
 </tr>
@@ -98,15 +86,9 @@ Before planning, the prior-research staff pull the analyses that must be done fr
 
 **Same bar at every handoff**
 
-The CSO writes a domain tag (topic key) on every plan. The key is picked from the 43 topics of a PI-reviewed vocabulary (123 keys, 79 of them linked to the [EDAM](https://github.com/edamontology/edamontology) ontology). The topics were widened from a survey of 63 papers, 4 textbooks and 66 web sources ([#420](https://github.com/ehojune/bioinfo-team-3d/issues/420)), and each topic now has at least 30 supporting papers, 1286 in all ([#446](https://github.com/ehojune/bioinfo-team-3d/pull/446), [list](docs/reference/topic_papers.md)). Code uses that key to choose a checklist and passes the same list to planning, review, and single-staff runs, and items answered by assumption are left in the report's "Limitations". The research lane's (off by default) domain rule packs attach by the same key.
+A topic key passes the same checklist to planning, science review, and solo handling. The checklist covers 43 domains and 124 items; research-lane domain packs use the same keys.
 
-<details><summary>Evidence and limits</summary>
-
-<sub>Evidence: [#390](https://github.com/ehojune/bioinfo-team-3d/pull/390) (topic required, 100-key vocabulary) · [#369](https://github.com/ehojune/bioinfo-team-3d/issues/369) (a bypass where one line in the plan text dropped the domain rules, closed with a topic check)</sub>
-
-<sub>Limits: The checklist covers 43 domains and 124 items ([#402](https://github.com/ehojune/bioinfo-team-3d/pull/402), [#420](https://github.com/ehojune/bioinfo-team-3d/issues/420)). The 40 domains beyond the first three have not run on real requests. Whether omissions decreased has not been measured. The semantic model, which uses relations between tags, is a [shadow stage](#annotation-semantics-ontology) that is off by default, and no result shows it beats a plain SQL baseline.</sub>
-
-</details>
+Limits: 40 domains beyond the first three have not run on real requests. Reduced omissions and an advantage over the semantic baseline remain unmeasured. [Evidence and limits](docs/reference/readme-evidence.md#card-3)
 
 </td>
 <td width="50%" valign="top">
@@ -115,15 +97,9 @@ The CSO writes a domain tag (topic key) on every plan. The key is picked from th
 
 **Resumable and bundled**
 
-Requests, steps, and approvals are stored in SQLite. If the PC stops, one PI resume card skips the finished steps and continues from the step that stopped; on a subscription limit or login expiry, the request is held and goes again once that clears. When a request ends, hash-verified outputs and the analysis code are gathered in one folder ([request bundle](docs/manual.md#%EC%9A%94%EC%B2%AD-%EB%AC%B6%EC%9D%8C)), and paths between steps are rewritten as relative paths.
+SQLite preserves requests, steps, and approvals for resume. A request bundle gathers hash-checked outputs and code.
 
-<details><summary>Evidence and limits</summary>
-
-<sub>Evidence: [v0.25 rehearsal](docs/status/2026-10-04-0458-release-v025.md) request 2: after the PC stopped and labhq was fully shut down, one resume card brought it back and it went on to a review pass (accept) · [Bench A, round 2](https://github.com/ehojune/bioinfo-team-3d/issues/373#issuecomment-5975156477): labhq reproducibility 2 → 4 points ([#384](https://github.com/ehojune/bioinfo-team-3d/pull/384)), while Astra alone got 4 and 3 points from two scorings of the same report · [#389](https://github.com/ehojune/bioinfo-team-3d/pull/389) (request bundle)</sub>
-
-<sub>Limits: Waiting on limits and login was fixed after a real login expiry on 10-05 failed 4 requests, and was confirmed only by tests. Re-login is done by a person. The request bundle gathers only outputs from the same PC runner, and reproducibility was not re-scored after it was added.</sub>
-
-</details>
+Limits: the limit/login-wait fixes have only test evidence and re-login needs a person. Bundles gather outputs from the same PC runner; verified reruns need a separate receipt. [Evidence and limits](docs/reference/readme-evidence.md#card-4)
 
 </td>
 </tr>
@@ -141,13 +117,10 @@ Requests, steps, and approvals are stored in SQLite. If the PC stops, one PI res
 | Literature | ⚠️ Search and citation only | ⚠️ Depends on attached tools | ✅ Library, PDF, screening |
 | Speed / cost | ❌ Big task 144 min, $31 | ✅ Same task 19 min | — |
 
-The research workbench column was filled in from the [open-science](https://github.com/aipoch/open-science) v0.35.0 README and ROADMAP; the app was not run (2026-10, [#316](https://github.com/ehojune/bioinfo-team-3d/issues/316)). Speed and cost were not measured, so they are marked —. Whether labhq's checklists reduce omissions has not been measured yet.
-\* Based on the outputs of the 8 Claude staff. Outputs of the 3 Codex staff, including the literature staff, are reviewed by a reviewer from the same company (OpenAI).
-The standalone column's speed and evidence-trail values were measured on the bench baseline (GPT-6-Astra alone). Scoring was done once per task by GPT-6.1-Sol with sources hidden ([#373](https://github.com/ehojune/bioinfo-team-3d/issues/373)).
+\* The default reviewer is Codex/GPT-6-Astra: another vendor for Claude analysis and the same vendor for Codex analysis. Workbench features came from documentation; the app was not run.
 
-**When labhq fits**: when you must hand results to someone else together with their evidence, or want to leave a multi-hour analysis running and make only the decisions from your phone. In the v0.25 rehearsal, the 4 accepted requests had 0 to 1 PI cards per request, not counting install, budget, and resume cards ([rehearsal](docs/status/2026-10-04-0458-release-v025.md)).
-
-**Where it still loses**: scored blind on the same tasks, the standalone session led on total score (21 to 26 on the big task, and on all three small tasks). On the big task, labhq spends over 7 times the time on other-vendor review, PI control, and the evidence ledger ([#373](https://github.com/ehojune/bioinfo-team-3d/issues/373)). For small requests, you can turn on a mode (from [#388](https://github.com/ehojune/bioinfo-team-3d/pull/388)) where one strong model finishes them directly, but it skips review by default and its effect has not been measured. If your work centers on a literature library and PDF management, a workbench fits better.
+**Fits**: handing over evidence and reproduction materials, or approving long analyses from the web or phone.
+**Remaining gaps**: standalone Astra led on total score and speed in the earlier blind bench. Reproduction materials and report length have since changed; a new comparison is pending. The optional solo route skips review by default. [Conditions, scores, and limits](docs/reference/readme-evidence.md#comparison-evidence)
 
 ## Example: analyzing public lung adenocarcinoma data
 
@@ -185,7 +158,7 @@ py -3 -m venv .venv
 .\labhq demo --web
 ```
 
-On POSIX, use `python3 -m venv .venv`, `./.venv/bin/python -m pip install -e ".[dev]"`, and `./labhq.sh demo --web`. If 8787 is busy, the demo selects a free port.
+On POSIX, use `python3 -m venv .venv`, `./.venv/bin/python -m pip install -e ".[dev]"`, and `./labhq.sh demo --web`. The demo selects a separate free port even if a real office is running. Open only the URL printed by the demo terminal. Its mock banner remains visible during the roughly 15–30 second request.
 
 ### 2. Install and configure
 
@@ -196,7 +169,7 @@ You need: Python 3.10 or later, Git, and the CLIs you will use as staff (Claude 
 .\labhq -c config\labhq.yaml doctor
 ```
 
-`labhq init` asks for the HPC and bioinfo-agent paths. If you need a login folder dedicated to staff, it also tells you the login commands a person has to type.
+`labhq init` creates a new configuration with the research lane (CP1, CP2, domain packs), semantic A/B mode, and output-kind declarations enabled. It discovers bioinfo-agent or asks for its path (`--bioinfo-agent <folder>`); an unresolved connection stays disabled. It also asks for HPC, an optional AlphaGenome key, and an optional private development-log repository. Existing configurations stay unchanged. `doctor` and `up` explain conflicting state folders, ports, or primary configurations. For an isolated check without real models, run `python scripts/clean_install_check.py`.
 
 ### 3. Start it
 
@@ -223,7 +196,7 @@ If the runner is off, a **러너 꺼짐** (Runner off) bar shows at the top of t
 
 1. Type a request in the input box below. A small public-data request is a good start (e.g. "public penguin data QC summary").
 2. If the CSO asks a clarifying question, choose an option and press **답하고 진행** (Reply and continue).
-3. Things to approve arrive as cards in the **결정** (Decisions) tab on the right. Approve or reject to carry on. Clarifying, budget, CP1 and CP2 cards wait up to 7 days (`policy.approvals.pi_decision_timeout_s`), so stepping away does not fail the request.
+3. Approval cards arrive in the **결정** (Decisions) tab on the right. Approval continues the request; rejecting a clarifying, budget, resume, CP1, or CP2 card ends it. Clarifying, budget, CP1 and CP2 cards wait up to 7 days (`policy.approvals.pi_decision_timeout_s`), so stepping away does not fail the request.
 4. Watch step progress and outputs on the **작업판** (Workboard), and open the **최종 보고서** (Final report) when it ends. To ask more about the report, use **이어 묻기** (Follow up).
 5. To stop a request sent by mistake, use **요청 취소** (Cancel request) on the request, or `labhq cancel <request id>`. It stops running work and keeps the finished steps in a short report.
 6. If you pick a running request that the CSO is handling, the input box default is **이 요청에 메모** (Note on this request). A note is delivered from the next plan or step on, not to a turn that is already running. For a request given directly to one staff member, use **이어 묻기** after it ends.
@@ -236,7 +209,7 @@ Phone setup is in the manual's [Launch and connect](docs/manual.md#%EB%9D%84%EC%
 
 - The PI decides on HPC submission, risky shell commands, writes outside the work folder, budget overruns, and contractor hiring.
 - Original controlled-access (DUA) data is never opened with file tools; it is handled only inside HPC jobs.
-- Staff run under the PI's account, but personal paths such as `~/.ssh` and browser profiles are hidden. This block applies to Claude staff; Codex staff (3 of the default 11) only receive guidance. The path guard is not a sandbox, so it cannot stop a staff member that is determined.
+- Staff run under the PI's account, but personal paths such as `~/.ssh` and browser profiles are hidden. Claude staff have three layers of path checks. Codex staff (5 of the default 13 roles) receive sandbox read denials and guidance on Windows elevated sandbox, and guidance alone elsewhere. The path guard is not a sandbox, so it cannot stop a staff member that is determined.
 
 Details are in [Safety measures](docs/manual.md#%EC%95%88%EC%A0%84-%EC%9E%A5%EC%B9%98).
 
@@ -264,6 +237,8 @@ Each version has pass criteria, and meeting them moves it on to the next version
 | [References](docs/references.en.md) | Literature and projects used for design, implementation, and tool connections |
 | [Vocabulary, topics, checklists](docs/vocabulary.md) (Korean) | Readers who want tables of what each topic is, its checklist, and the key vocabulary terms |
 | [Patch notes](patch_notes/README.md) | What changed |
-| [AGENTS.md](AGENTS.md) · [HANDOFF.md](HANDOFF.md) | Agents developing this repository |
+| [AGENTS.md](AGENTS.md) · [HANDOFF.md](HANDOFF.md) | Development rules, structure, and current queue |
+| [PI channel #760](https://github.com/ehojune/bioinfo-team-3d/issues/760) | Current decisions and progress, at 00/04/08/12/16/20 KST |
+| [Reference records](docs/reference/README.md) | Evidence and historical decisions, for lookup only |
 
 The code is [GPL-3.0-or-later](LICENSE); docs, figures, and data tables are [CC BY-SA 4.0](LICENSE-CC-BY-SA-4.0.txt). Exceptions are in the [manual's license section](docs/manual.md#%EB%9D%BC%EC%9D%B4%EC%84%A0%EC%8A%A4).

@@ -3,8 +3,8 @@
 시작 전에 `HANDOFF.md`와 `STATUS.md`를 읽는다.
 
 - 문서는 읽는 사람별로 나뉜다: `README.md`(처음 써 보는 사람), `docs/manual.md`(깊이 보려는 사람), `docs/pi-qa.md`(PI), 이 파일·`AGENTS.md`·`HANDOFF.md`(개발). 동작을 바꾸면 manual의 해당 절을 고친다.
-- 작업 순서는 HANDOFF.md의 작업 큐를, PI 확인이 필요한 것은 그 파일의 "결정 대기"를 따른다. 개발 총괄은 Claude와 Codex가 번갈아 맡는다.
-- 단계마다 브랜치에서 작업하고 PR을 연다. main에 직접 push하지 않는다. PI 위임(2026-09-28, 2026-10-01): 병합은 개발 총괄(Claude 또는 Codex, 번갈아 맡음)이 판단한다. 자동 병합 워크플로는 껐다.
+- 작업 순서와 PI 확인은 HANDOFF.md를 따른다. 개발 총괄은 Codex 고정이며 Codex·Claude subagent에 작업을 위임한다(PI 2026-10-19).
+- 단계마다 브랜치에서 작업하고 PR을 연다. main에 직접 push하지 않는다. PI 위임에 따라 병합은 Codex 개발 총괄이 판단한다. 자동 병합 워크플로는 껐다.
 - 변경 후 `pytest -q`를 돌린다. 테스트를 지우거나 약하게 만들지 않는다.
 - 단계를 끝내면 PR 본문과 `docs/status/<YYYY-MM-DD>-<HHMM>-<branch>.md`에 같은 보고를 남긴다. `STATUS.md`는 main에서 자동 생성되므로 직접 고치지 않는다.
 - 커밋마다 `patch_notes/entries/<branch>.yaml`에 한 줄을 남긴다(기록만 고친 커밋은 제외). `patch_notes/README.md`는 main에서 자동 생성되므로 직접 고치지 않는다. main 커밋 3개 안에 README나 `docs/manual.md`를 한 번은 갱신한다. 행 초안은 `python scripts/patch_notes.py rows --pr N`, 검사는 `python scripts/patch_notes.py check`(CI의 `patch-notes` job).

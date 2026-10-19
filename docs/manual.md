@@ -613,6 +613,8 @@ runner PC에 무언가 없어서 실패한 단계는 `environment` 실패입니�
 
 ## 직원과 도구
 
+기본 역할 설정은 13개(Claude Code 8개·Codex 5개)입니다. 아래 로컬 `solo`와 파견직은 이 수에 넣지 않습니다. 실제 등록 인원은 설치·로그인·엔진 준비에 따라 다릅니다.
+
 | 캐릭터 | id | 직무 | 기본 엔진/모델 | Codex sandbox | 도구 |
 |---|---|---|---|---|---|
 | 🦉 부엉이 CSO | `cso` | 질문 설계·업무 배분·증거 통합 (분석 안 함) | Claude Code / opus | — | Read·Glob·Grep만 |
@@ -628,7 +630,10 @@ runner PC에 무언가 없어서 실패한 단계는 `environment` 실패입니�
 | 카피바라 인사팀 | `recruiter` | Paper2Agent 변환·검증 | Claude Code / opus | — | Skill·Agent |
 | 🦁 사자 단독 처리 | `solo` | 한 요청을 계획부터 보고까지 단독 처리 | 로컬 설정 | 로컬 설정 | 로컬 설정 |
 | 🐹 시설팀 | `facilities` | 환경 오류 진단·PI 조치 안내 | Codex / gpt-6-sol | read-only | 전달된 진단 근거만 |
+| 🦫 비버 편집자 | `editor` | 끝난 요청의 결과·재현 방법·출처 정리 | Codex / gpt-6-luna | read-only | 전달된 정리 자료·prompt 점검 규칙 |
 | 🐥 파견직 | `c_<slug>` | 논문의 방법 적용 | Claude Code / sonnet | — | 논문 MCP·skill |
+
+PI 2026-10-19 승인 배정 기준([#732](https://github.com/ehojune/bioinfo-team-3d/issues/760#issuecomment-6263295610)): 표준 생물정보학은 bioinfo-agent/nf-core, 단순 작업은 직접 처리합니다. 없는 복잡한 파이프라인은 직접 코딩한 뒤 기여 여부를 PI에게 묻고 yes일 때만 bioinfo-agent PR을 엽니다. 실제 담당은 CSO 계획에서 확인합니다.
 
 엔진·모델·도구는 `agents/core/*.yaml`에서 직원별로 바꿉니다. (예: `engine: codex`, `model: gpt-6-luna`)
 단독 처리 직원을 쓰려면 gitignore 대상인 `agents/core/solo.local.yaml`에 `id: solo`, `name`, `role`, `engine`, `model`, `sandbox`, `system_prompt`를 적고 `orchestrator.solo_agent: solo`로 지정합니다. `character`를 생략해도 웹에는 사자로 나옵니다.
@@ -1163,7 +1168,7 @@ report는 중첩 집계의 구조와 개수(0 이상의 정수)를 확인합니�
   재사용 후보는 이미 기록된 산출 hash·공개 link·각 요청이 끝날 때 같은 host runner의 허용 reference에서 관측한 입력 hash와, PI가 이름을 적은 산출의 선언 data type이 모두 같을 때만 셉니다. direct 요청의 목표 type은 그 요청이 실제로 만든 이름 있는 산출의 직원 선언에서 읽습니다. 선언이 없으면 이전처럼 `type_unknown` 또는 `target_type_unknown`입니다. 과거 입력은 다시 읽지 않으며 근거가 없으면 각각 `input_unknown`·`target_type_unknown`으로 제외한 뒤 순위를 매깁니다. 앞선 산출을 입력으로 쓴 요청은 계획의 `input_refs` edge(일반 요청 포함, #268)나 그 산출 경로 자체를 가리킨 허용 reference가 있을 때만 그 산출의 root 입력으로 바꿔 비교하고, bytes만 같은 입력은 제 hash로 셉니다(#269). 직원 ID는 길이와 무관하게 정보 경계에서 막습니다(6자 미만은 값 전체가 같을 때만, #266). `info_boundary` 기록과 report에는 걸린 칸 이름·부류만 남고 값은 남지 않습니다.
 - **액션 층 그림자** (`semantics.actions`, 기본 `off`, #149 결정 13 A1): `semantics: {mode: shadow, actions: shadow}`면 객체 뷰 위의 기존 액션 7종(`approval.decide`·`ask.answer`·`request.followup`·`task.cancel`·`recruit.start`·`contract.update`·`hpc.submit`)이 그때 가능했는지와 전제 조건을 계산해 기록만 합니다. 관측은 요청이 끝날 때(같은 B1 줄의 `actions` 칸)와 이어 묻기가 접수·거부·종료될 때(`type: followup` 줄)뿐이고, B1 경계대로 고정 이름·참거짓·개수만 남깁니다. 기록에 없는 시점의 조건은 unknown으로 두고 지금 roster로 채우지 않습니다. 실행 허용 목록은 비어 있어 어떤 설정으로도 늘지 않고, `hpc.*`는 P3 결정 전까지 늘 `refused_p3`입니다. `actions: confirm`은 shadow처럼 기록하면서 PI CLI의 A2 실행을 허락합니다(아래). 다른 값은 actions만 끄고 B1은 그대로 둡니다. 계산 실패·timeout은 B1 breaker 창에서 함께 세고, 성공한 이어 묻기 관측은 창에 넣지 않습니다(#260). `labhq semantics report`에 A1 절(창·taken·불일치·미관측·A2 검토 자료)이 붙습니다. 끄려면 `actions: off`나 키 삭제, 지우려면 `python scripts/semantics_shadow_remove.py --only actions --check`로 확인한 뒤 `--check` 없이 돌리고 설정의 `actions` 키를 지웁니다(남기면 semantics 전체가 off).
 - **액션 실행 A2** (`semantics.actions: confirm`, #149 결정 16): PI가 터미널에서 `labhq semantics action run request.followup <rid>`를 치면 전제 조건(요청 종료, 실행 중인 이어 묻기 없음, 답할 직원 연결, 읽기 전용 엔진, 앞선 실행 정산)을 그 자리에서 GET으로 다시 보고, 대상·글·비용을 보여 준 뒤 y/N을 받습니다. y면 기존 `POST /api/requests/{rid}/followup`으로 한 번 보냅니다. 실행하는 액션은 이것 하나이고 나머지는 그림자 기록만 하며 `hpc.*`는 늘 거부합니다. 조건에 모름이 하나라도 있으면 보내지 않습니다. 직원 작업의 환경 변수가 있거나, 직원용 설정 사본이거나, TTY가 아니거나, gateway 주소가 loopback이 아니면 거부합니다. 기록은 `gateway.state_dir/semantics/actions/`에 id·상태·조건 참거짓·글자 수만 남기고 글은 남기지 않습니다. 보내기 전에 실행 id를 먼저 쓰고, 응답을 못 받으면 `unknown`으로 두고 다시 보내지 않습니다. 그 요청의 새 실행은 PI가 웹 기록을 확인하고 `labhq semantics action check <id>`로 닫을 때까지 거부합니다. `check`는 서버가 받은 것(accepted)과 이어 묻기가 끝난 것(completion)을 따로 적습니다. y는 그 터미널의 입력일 뿐 보낸 사람의 신원 증명이 아닙니다.
-- **라운드 기록** (`dev_log`): `repo`는 private 기록 저장소, `source_repo`는 labhq commit 링크에 씁니다. `enabled`이고 `repo`가 있으면 doctor와 gateway 시작 시 `github.token_env`·`api_url`로 공개 여부를 조회합니다(전체 5초 제한). private만 `ok`, public·확인 실패(토큰 없음·인증 실패·timeout)는 경고이며 gateway는 실행 인스턴스마다 PI 로그에 한 번 알립니다. 이 조회는 게시 승인이 아니며 매번 쓰기 직전 확인과 `allow_public`은 그대로입니다. direct 요청은 작업 폴더 `outputs/` 아래 산출 경로를 최대 200개까지 기록합니다. GitHub 본문 한도를 넘으면 JSON을 빼고, 그래도 길면 운전 기록 각 절을 줄 단위로 줄여 게시하며 전문은 로컬 `rounds/`에 남깁니다. rate limit은 서버 대기 시간을 따릅니다. 토큰 없이 쌓인 기록은 토큰을 넣고 재시작하면 다시 게시합니다. 종료 조건·절차는 [HANDOFF #69](../HANDOFF.md#개발-라운드-기록-69)를 따릅니다.
+- **라운드 기록** (`dev_log`): `repo`는 private 기록 저장소, `source_repo`는 labhq commit 링크에 씁니다. `enabled`이고 `repo`가 있으면 doctor와 gateway 시작 시 `github.token_env`·`api_url`로 공개 여부를 조회합니다(전체 5초 제한). private만 `ok`, public·확인 실패(토큰 없음·인증 실패·timeout)는 경고이며 gateway는 실행 인스턴스마다 PI 로그에 한 번 알립니다. 이 조회는 게시 승인이 아니며 매번 쓰기 직전 확인과 `allow_public`은 그대로입니다. direct 요청은 작업 폴더 `outputs/` 아래 산출 경로를 최대 200개까지 기록합니다. GitHub 본문 한도를 넘으면 JSON을 빼고, 그래도 길면 운전 기록 각 절을 줄 단위로 줄여 게시하며 전문은 로컬 `rounds/`에 남깁니다. rate limit은 서버 대기 시간을 따릅니다. 토큰 없이 쌓인 기록은 토큰을 넣고 재시작하면 다시 게시합니다. 종료 조건·절차는 [라운드 기록 #69](reference/handoff-history-2026-10-19.md#개발-라운드-기록-69)를 따릅니다.
 
 - **의미 장치 상태**: 웹은 event가 오래돼도 snapshot에서 요청별 중단·경고를 복원합니다. 계획에 영향을 준 장치 load 오류는 뒤 점검이 성공해도 CP1과 실행 기록에 남습니다. 오류 로그는 고정 code와 예외 class만 남기고 본문·traceback은 버립니다.
 
@@ -1304,8 +1309,8 @@ Claude baseline은 자기 arm의 파일 쓰기·단순 명령을 허용합니다
 | 버전 | 정의 | 통과 기준 | 지금 | 남은 것 |
 |---|---|---|---|---|
 | v0.25 | PI가 공개 데이터로 labhq를 시험한다 | PI 공개 데이터 요청 5건 중 4건 이상이 개발자 손 없이 보고서까지 간다. 요청당 승인 카드 3장 이하(설치·예산 질문 제외) | **2026-10-04 선언.** 근거는 PI 본인 시운전 전 총괄 리허설: PI 요청 세트 5건 중 4건이 리뷰 accept까지 갔고, 카드는 요청당 0~1장(설치·예산 제외)이었다. 리허설에서 나온 결함(게이트 오탐, 수정 라운드의 위 단계 결과, 웹 토큰 진입, CSO의 PC 사정 인식, 단계 실패 재계획)을 고쳤다. 그 전에 같은 계정 실행의 개인 경로 차단, 직원 전용 설정 폴더, 모의 시운전 2~12차 결함 수정이 들어갔다 | PI 본인 시운전 결과를 #373에 붙이기 |
-| v0.5 | PI가 자기 공개 데이터로 로컬에서 연구한다 | 연구 lane 2건을 CP2 승인·보고서까지 완주하고 `labhq verify`가 문제 없음(exit 0) | **2026-10-08 선언.** 근거: 실제 CLI로 연구 요청 2건이 CP1 → 12단계 → CP2 → 리뷰 accept → claim 앵커 보고서까지 갔고 `labhq verify`가 exit 0이었다. 10차 모의 시운전(GSE10072, 앵커 58·문제 0)과 v0.5 시운전 8차(GSE19804 60쌍 + 검증 GSE32863, claim 22·근거 31·거부 1, 앵커 48·문제 0, 산출 67개 hash 일치, RO-Crate·MANIFEST 대조 통과). 두 번째 요청의 1~7차는 실제 요청에서만 드러난 결함으로 멈췄고 모두 고쳤다(#467 #470 #474 #476 #478 #480 #483 #486). 연구 lane은 `evidence_checkpoint`를 켜면 CP2 승인 뒤 리뷰와 claim 앵커를 검사한 보고서까지 간다. 단계 근거가 수집 안 된 파일을 인용하면 CP2 전에 한 번 고치게 한다(#487). 요청 묶음은 RO-Crate(Process Run Crate)와 MANIFEST로 기술하고 `labhq verify`가 사본을 대조한다(#471). 패키지가 필요한 요청은 계획 첫머리 환경 단계만 공유 environment에 설치하고, 뒤 단계의 추가 설치는 자기 폴더로 격리한다(#344, #456). revise 뒤에는 PI가 새 CP1로 이어 갈 수 있고 바뀐 단계만 다시 돈다(코드·test; 두 요청 모두 리뷰가 accept여서 실제 CLI 미실측). CP4는 opt-in 검토 완료에 연결했다(모의 검증). CP3는 없다. pack은 `single_cell_de@3`과 `bulk_tumor_normal@3` 둘. topic별 근거 논문은 43 topic 모두 30편 이상, 모두 1286편([목록](reference/topic_papers.md)) | 이어 가기 실측, PI 본인 시운전 결과를 #435에 붙이기 |
-| v0.75 | PI가 HPC에서 **공개** 데이터로 연구한다 | 클러스터 러너로 공개 데이터 분석 잡 1건 이상을 내고 끝까지 받아 보고서에 넣는다 | Slurm은 가짜 fixture로만 확인했다. 실제 HPC 접근 방식이 정해지기 전에는 분석 잡을 내지 않는다 | HPC 접근 방식 PI 결정([HANDOFF](../HANDOFF.md) 결정 대기 1), Linux 클러스터 러너, 실제 제출 |
+| v0.5 | PI가 자기 공개 데이터로 로컬에서 연구한다 | 연구 lane 2건을 CP2 승인·보고서까지 완주하고 `labhq verify`가 문제 없음(exit 0) | **2026-10-08 선언.** 근거: 실제 CLI로 연구 요청 2건이 CP1 → 12단계 → CP2 → 리뷰 accept → claim 앵커 보고서까지 갔고 `labhq verify`가 exit 0이었다. 10차 모의 시운전(GSE10072, 앵커 58·문제 0)과 v0.5 시운전 8차(GSE19804 60쌍 + 검증 GSE32863, claim 22·근거 31·거부 1, 앵커 48·문제 0, 산출 67개 hash 일치, RO-Crate·MANIFEST 대조 통과). 두 번째 요청의 1~7차는 실제 요청에서만 드러난 결함으로 멈췄고 모두 고쳤다(#467 #470 #474 #476 #478 #480 #483 #486). 연구 lane은 `evidence_checkpoint`를 켜면 CP2 승인 뒤 리뷰와 claim 앵커를 검사한 보고서까지 간다. 단계 근거가 수집 안 된 파일을 인용하면 CP2 전에 한 번 고치게 한다(#487). 요청 묶음은 RO-Crate(Process Run Crate)와 MANIFEST로 기술하고 `labhq verify`가 사본을 대조한다(#471). 패키지가 필요한 요청은 계획 첫머리 환경 단계만 공유 environment에 설치하고, 뒤 단계의 추가 설치는 자기 폴더로 격리한다(#344, #456). revise 뒤에는 PI가 새 CP1로 이어 갈 수 있고 바뀐 단계만 다시 돈다(코드·test; 두 요청 모두 리뷰가 accept여서 실제 CLI 미실측). CP4는 opt-in 검토 완료에 연결했다(모의 검증). CP3는 없다. pack은 `single_cell_de@3`과 `bulk_tumor_normal@3` 둘. topic별 근거 논문은 43 topic 모두 30편 이상, 모두 1286편([목록](reference/topic_papers.md)) | 이어 가기 실측, PI 본인 시운전 결과를 현재 창구 [#760](https://github.com/ehojune/bioinfo-team-3d/issues/760)에 붙이기 |
+| v0.75 | PI가 HPC에서 **공개** 데이터로 연구한다 | 클러스터 러너로 공개 데이터 분석 잡 1건 이상을 내고 끝까지 받아 보고서에 넣는다 | Slurm은 가짜 fixture로만 확인했다. 실제 HPC 접근 방식이 정해지기 전에는 분석 잡을 내지 않는다 | HPC 접근·제출 조건 확인([이전 논의](reference/handoff-history-2026-10-19.md#결정-대기-pi)), Linux 클러스터 러너, 실제 제출 |
 | v0.9 | PI가 통제 데이터로 연구한다(HPC 위) | 통제 데이터 연구 1건을 끝내고, 원본이 클러스터 밖이나 LLM 대화로 나가지 않았음을 감사 기록으로 보인다 | Windows 러너는 restricted 구역이 있으면 뜨지 않는다. topic별 근거 논문은 43 topic 모두 30편 이상 | 러너 계정 분리, 통제 데이터 시험 |
 | v0.95 | 다른 연구자가 문서만 보고 설치해 공개 데이터로 한 건을 끝낸다 | 개발자 개입 없이 설치·doctor fail 0·요청 1건 완주 | Windows 새 clone·venv에서 mock 요청·묶음·verify·down까지 자동 리허설한다. `labhq init`·doctor와 Windows 러너 전용 계정 절차서가 있다 | 실제 외부 연구자 완주, 계정 분리 자동화 |
 | v1 | 다른 일반 연구자가 자기 통제 데이터로 연구 문제를 두 개까지 푼다 | 연구 문제 2건 완주 | 없음 | v0.9·v0.95 위에서 진행 |
@@ -1378,7 +1383,7 @@ labhq/
   recruit/      paper2agent (채용 → 수습 → 계약)
   facilities/   signatures (환경 실패 오류 서명 표)
 vocab/        산출 데이터 종류 key(output_types.yaml) · 선언 정규화(declare) · optional subset loader
-agents/core/*.yaml       정규직 11명 (bioinfo-agent 포함)
+agents/core/*.yaml       기본 역할 13개 (Claude Code 8·Codex 5, bioinfo-agent 포함)
 agents/contract/         파견직 계약서 (+ 템플릿, 호스팅 AlphaGenome 예시)
 config/labhq.example.yaml
 scripts/                 publish_github.sh · check_public.sh

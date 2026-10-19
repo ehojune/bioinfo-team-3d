@@ -1,6 +1,10 @@
 # 참고 기록
 
-검증 근거와 도구 제약을 찾을 때만 읽는 자료다.
+검증 근거·도구 제약·이전 결정을 찾을 때만 읽는 lookup-only 자료입니다. 현재 작업은 [HANDOFF](../../HANDOFF.md)를 봅니다.
+
+- [README 근거·한계](readme-evidence.md): 네 카드와 비교표의 상세 인용·수치.
+- [이전 HANDOFF 큐·결정](handoff-history-2026-10-19.md): 2026-10-19에 보존한 옛 현황표.
+- [문서 일치 점검](docs-refresh-2026-10-19.md): 코드 근거·갱신 범위·전후 글자 수.
 
 - [AlphaGenome 변이 점수](alphagenome-variant.md): SDK 계약·quantile 해석·API 이용 조건(#621 B).
 
