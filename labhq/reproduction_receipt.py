@@ -118,6 +118,49 @@ def _run(command: list[str], cwd: Path, env: dict[str, str], timeout: float) -> 
         return {"status": "unavailable", "returncode": None}
 
 
+def _own_output(folder: Path, name: str) -> os.stat_result | None:
+    """A declared output that is only this step folder's file: not a link, not under a linked folder, no other hard link.
+
+    An alias names a file outside the receipt folder (an input or an operator file). It is never touched and never counted
+    as an output (PR #781 review)."""
+    path = folder / name
+    try:
+        if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(folder.resolve()):
+            return None
+        stat = path.stat()
+    except OSError:
+        return None
+    return stat if stat.st_nlink == 1 else None
+
+
+def _mark_outputs(folder: Path, expected: Sequence[str]) -> dict[str, tuple[int, int]]:
+    """Declared outputs an earlier script of the same step left in the shared folder (#771).
+
+    Their modification time is reset first, so a rewrite by the next run shows even with the same bytes in the same clock
+    tick. Only the folder's own files are reset (`_own_output`). The folder is shared on purpose: sibling sources and
+    undeclared intermediates stay for a later script."""
+    marks = {}
+    for name in expected:
+        if _own_output(folder, name) is None:
+            continue
+        try:
+            os.utime(folder / name, ns=(0, 0))
+        except OSError:
+            pass
+        stat = (folder / name).stat()
+        marks[name] = (stat.st_mtime_ns, stat.st_size)
+    return marks
+
+
+def _wrote_outputs(folder: Path, expected: Sequence[str], marks: Mapping[str, tuple[int, int]]) -> bool:
+    """Every declared output is the folder's own file this run created or rewrote; one only an earlier script wrote does not
+    count."""
+    def written(name: str) -> bool:
+        stat = _own_output(folder, name)
+        return stat is not None and marks.get(name) != (stat.st_mtime_ns, stat.st_size)
+    return bool(expected) and all(written(name) for name in expected)
+
+
 def _version(executable: str, root: Path, env: dict[str, str], timeout: float) -> str | None:
     try:
         result = subprocess.run([executable, "--version"], cwd=root, env=env, stdin=subprocess.DEVNULL,
@@ -192,10 +235,10 @@ def build_receipt(files: Mapping[str, str | bytes], *, outputs: Mapping[str, Seq
                 if syntax["status"] != "pass":
                     execution["status"] = "blocked_syntax"
                 else:
+                    marks = _mark_outputs(root / cwd, expected)
                     execution = _run([executable, *runtime_args], root / cwd,
                                      _environment(root, {key: inputs[key] for key in names}), timeout)
-                    if execution["status"] == "pass" and (not expected or any(
-                            not (root / cwd / path).is_file() or (root / cwd / path).is_symlink() for path in expected)):
+                    if execution["status"] == "pass" and not _wrote_outputs(root / cwd, expected, marks):
                         execution["status"] = "missing_output"
             receipt["files"].append({"path": shown, "sha256": _hash(body), "language": language,
                 "cwd": cwd, "input_variables": names, "missing_inputs": missing,
@@ -203,7 +246,7 @@ def build_receipt(files: Mapping[str, str | bytes], *, outputs: Mapping[str, Seq
                 "tool": {"name": tool_name, "version": versions.get(language)},
                 "checked_at": datetime.now(timezone.utc).isoformat(),
                 "syntax": {**syntax, "command": [tool_name, *static_args]},
-                "execution": {**execution, "output_check": "declared_files_exist_only"}})
+                "execution": {**execution, "output_check": "declared_files_written_by_this_run"}})
     receipt["checked_at"] = datetime.now(timezone.utc).isoformat()
     return receipt
 

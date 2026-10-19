@@ -1,0 +1,8 @@
+pr: 781
+rows:
+- sha: 7f7a6bc
+  at: 2026-10-20 04:58
+  text: 재현 receipt가 같은 단계의 앞 script가 남긴 산출로 산출을 만들지 않은 뒤 script를 pass로 두지 않고, helper 파일 이름 순서와 관계없이 같은 판정을 낸다.
+- sha: 4a94324
+  at: 2026-10-20 05:42
+  text: 재현 receipt가 hard link나 링크 폴더 아래의 선언 산출을 건드리지도 세지도 않아 receipt 폴더 밖 원본의 시각을 바꾸지 않는다.
