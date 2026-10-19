@@ -12,3 +12,6 @@ rows:
 - sha: 91edaee
   at: '2026-10-20 02:06'
   text: unquoted wrapper payload·env 옵션·줄바꿈 pipeline·InputObject 식의 이름 종료 우회를 막고 문자열/fake 회귀 85개를 확인했다.
+- sha: 6bf40b7
+  at: '2026-10-20 02:53'
+  text: sudo 옵션 뒤 명령과 PowerShell script block의 이름 종료 우회를 막았다. 새 실패 31개를 재현한 뒤 문자열/fake 131개와 승인 정책 정적 test 24개를 확인했다.
