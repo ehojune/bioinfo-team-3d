@@ -487,8 +487,17 @@ def build_report_html(req: Mapping[str, Any], bundle: Path | None, *, now: datet
     owners = figure_owners(results)
     source = report_text if report_text is not None else _read_document(bundle, "report.md", str(req.get("report") or ""))
     stored = req.get("report_package")
-    package = (ReportPackage.from_dict(dict(stored)) if isinstance(stored, Mapping)
-               else build_report_package(dict(req), source, dict(results)))
+    if report_text is not None:
+        package_request = dict(req)
+        if scrub is not None:
+            source = scrub(source)
+            for key in ("text", "error"):
+                if key in package_request:
+                    package_request[key] = scrub(str(package_request.get(key) or ""))
+        package = build_report_package(package_request, source, dict(results))
+    else:
+        package = (ReportPackage.from_dict(dict(stored)) if isinstance(stored, Mapping)
+                   else build_report_package(dict(req), source, dict(results)))
     abstract_source = re.sub(r"\[근거 \d+\]", "", package.source_report or source)
     if FRONT_START not in source:
         source = with_report_front(source, package)

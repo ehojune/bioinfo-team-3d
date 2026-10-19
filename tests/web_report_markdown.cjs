@@ -49,6 +49,14 @@ test('report markdown escapes HTML and rejects executable links', () => {
   assert.match(html, /href="https:\/\/example.org\/result"/);
 });
 
+test('external report images become links without automatic requests', () => {
+  const html = globalThis.LabHQState.reportMarkdownHTML(
+    '![외부 그림](https://tracker.example/pixel.png?request=secret)');
+  assert.doesNotMatch(html, /<img[^>]+tracker\.example/);
+  assert.match(html, /<a href="https:\/\/tracker\.example\/pixel\.png\?request=secret"/);
+  assert.match(html, />외부 그림<\/a>/);
+});
+
 test('stored source report receives the shared first screen at display time', () => {
   const packaged = globalThis.LabHQState.reportWithPackage('# 원본\n\n## 결과\n\n본문', {
     title: '원본', question: '질문', answer: '답', limitations: '한계',

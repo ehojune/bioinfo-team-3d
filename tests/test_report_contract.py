@@ -120,6 +120,29 @@ def test_bundle_edition_pdf_and_original_use_the_same_first_screen_order() -> No
     assert "[[claim:" not in pdf_html
 
 
+def test_edition_pdf_rebuilds_the_front_from_cleaned_inputs() -> None:
+    request, report, results = fixed_request()
+    private = "Authorization: Bearer secret-token C:\\private\\cohort.tsv"
+    unsafe_request = {**request, "text": private}
+    unsafe_report = report.replace("두 집단의 차이는 3입니다", private)
+    stored = build_report_package(unsafe_request, unsafe_report, results).to_dict()
+    scrub = lambda text: text.replace("Authorization: Bearer secret-token", "[credential]").replace(
+        "C:\\private\\cohort.tsv", "[path]"
+    )
+    shown = {**unsafe_request, "text": scrub(private), "report_package": stored, "results": results}
+
+    pdf_html, _missing = build_report_html(
+        shown,
+        None,
+        report_text=scrub(unsafe_report),
+        scrub=scrub,
+    )
+
+    assert "secret-token" not in pdf_html
+    assert "C:\\private\\cohort.tsv" not in pdf_html
+    assert "[credential] [path]" in pdf_html
+
+
 def test_contract_check_catches_missing_table_bad_shape_and_reader_marker() -> None:
     request, report, results = fixed_request()
     package = build_report_package(request, report, results)

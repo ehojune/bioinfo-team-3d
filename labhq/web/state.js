@@ -31,13 +31,21 @@ function safeReportHref(value) {
   if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(href)) return '';
   return /^[A-Za-z0-9]/.test(href) && !/[\s<>"']/.test(href) ? href : '';
 }
+function safeReportImageHref(value) {
+  const raw = String(value || '').trim().replace(/^<|>$/g, '');
+  if (/^data:image\/(?:png|jpeg|gif|webp|svg\+xml);base64,[A-Za-z0-9+/]*={0,2}$/i.test(raw)) return raw;
+  const href = safeReportHref(raw);
+  return href && !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(href) && !href.startsWith('#') ? href : '';
+}
 function reportInline(value) {
   const kept = [];
   const keep = html => `\u0000${kept.push(html) - 1}\u0000`;
   let text = String(value ?? '').replace(/\u0000/g, '');
   text = text.replace(/!\[([^\]\n]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, (_all, alt, raw) => {
-    const href = safeReportHref(raw);
-    return keep(href ? `<figure><img src="${reportEsc(href)}" alt="${reportEsc(alt)}"><figcaption>${reportEsc(alt)}</figcaption></figure>`
+    const imageHref = safeReportImageHref(raw);
+    if (imageHref) return keep(`<figure><img src="${reportEsc(imageHref)}" alt="${reportEsc(alt)}"><figcaption>${reportEsc(alt)}</figcaption></figure>`);
+    const linkHref = safeReportHref(raw);
+    return keep(linkHref ? `<a href="${reportEsc(linkHref)}" target="_blank" rel="noopener noreferrer">${reportEsc(alt || raw)}</a>`
       : `<span class="report-missing">그림 링크를 열 수 없음: ${reportEsc(alt)}</span>`);
   });
   text = text.replace(/\[([^\]\n]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, (_all, label, raw) => {
@@ -1103,5 +1111,5 @@ root.LabHQState = { createOfficeState, costLabel, engineCostLabel, agentCostLabe
   isActiveRequest, isTerminalRequest, isPastRequest, officeRequests, sessionCostRequests, requestsCostTotal,
   REQUEST_STATUS_KO, requestStatusLabel, requestStatusText, processingLabel,
   needsPiReview, needsStorage, reviewLabel, staffCharacter, STAFF_NAMES, websocketCloseAction, officeStorageKey, createRequestFocusStorage, sortRequests, requestActivity, requestResumeLabel, connectionLabel, demoBannerText,
-  safeReportHref, reportMarkdownHTML, reportWithPackage };
+  safeReportHref, safeReportImageHref, reportMarkdownHTML, reportWithPackage };
 })(globalThis);
