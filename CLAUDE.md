@@ -10,6 +10,6 @@
 - 커밋마다 `patch_notes/entries/<branch>.yaml`에 한 줄을 남긴다(기록만 고친 커밋은 제외). `patch_notes/README.md`는 main에서 자동 생성되므로 직접 고치지 않는다. main 커밋 3개 안에 README나 `docs/manual.md`를 한 번은 갱신한다. 행 초안은 `python scripts/patch_notes.py rows --pr N`, 검사는 `python scripts/patch_notes.py check`(CI의 `patch-notes` job).
 - 이 저장소는 public이다. 커밋 전에 `scripts/check_public.sh`를 돌리고, 비밀값은 환경변수로만 다루며, `config/labhq.yaml`은 커밋하지 않는다.
 - 통제접근(DUA) 데이터의 원본은 클러스터 밖이나 LLM 대화·프롬프트·로그로 가져오지 않는다. 경로 가드는 sandbox가 아니므로 코드 가드만 믿지 않는다.
-- 리뷰는 [AGENTS.md](AGENTS.md)를 따른다. 같은 담당자가 P1을 고치고 새 head 리뷰를 받아 P1=0까지 반복한다. 남은 P2는 중복 없는 후속 issue로만 남긴다. CI·봇 대기는 driver에 넘기며 실행 중 재호출하지 않는다. 인라인·PR 본문·커밋에는 봇 멘션을 쓰지 않는다.
+- 리뷰는 [AGENTS.md](AGENTS.md)를 따른다. 같은 담당자가 P1을 고치고 새 head 리뷰를 받아 P1=0까지 반복한다. P2는 AGENTS의 기준으로 총괄이 선별한 것만 issue로 남긴다. 경미·추정·중복은 원 PR 댓글에 남기고 새 issue를 만들지 않는다. CI·봇 대기는 driver에 넘기며 실행 중 재호출하지 않는다. 인라인·PR 본문·커밋에는 봇 멘션을 쓰지 않는다.
 - `labhq/web/`은 빌드 없는 정적 파일이다. 2.5D와 3D가 `state.js` reducer를 공유한다.
 - 보고는 한국어로, 기술 용어는 영어 그대로.
