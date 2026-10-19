@@ -362,3 +362,38 @@ def test_a_link_an_earlier_script_left_is_not_touched_or_counted(tmp_path, monke
                                temp_root=tmp_path, rerun=True, outputs={"a": ["result.txt"]})
     assert statuses(receipt) == {"a_link.py": "missing_output", "b_idle.py": "missing_output"}
     assert outside.stat().st_mtime_ns == 10**18
+
+
+def directory_link(target, link):
+    """A symbolic link to a folder, or a junction on Windows where this account cannot make symbolic links."""
+    try:
+        os.symlink(target, link, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        if os.name != "nt":
+            pytest.skip("this account cannot make directory links")
+        import _winapi
+        _winapi.CreateJunction(str(target), str(link))
+
+
+@pytest.mark.parametrize("alias", ["hard_link", "linked_parent"])
+def test_an_output_that_aliases_a_file_outside_the_step_folder_is_neither_touched_nor_counted(tmp_path, monkeypatch, alias):
+    """PR #781 review: resetting the time of a hard link or of a file under a linked folder changed the original outside."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    original = outside / "result.txt"
+    original.write_text("explicit input, not a receipt output", encoding="utf-8")
+    os.utime(original, ns=(10**18, 10**18))
+    declared = "result.txt" if alias == "hard_link" else "out/result.txt"
+
+    def make_alias(folder):
+        if alias == "hard_link":
+            os.link(original, folder / "result.txt")
+        else:
+            directory_link(outside, folder / "out")
+        return 0
+
+    monkeypatch.setattr(subprocess, "run", FakeInterpreter({"a_alias.py": make_alias}))
+    receipt = rr.build_receipt({"code/a/a_alias.py": "a()\n", "code/a/b_idle.py": "x = 1\n"}, tools=python_tools(),
+                               temp_root=tmp_path, rerun=True, outputs={"a": [declared]})
+    assert original.stat().st_mtime_ns == 10**18
+    assert statuses(receipt) == {"a_alias.py": "missing_output", "b_idle.py": "missing_output"}
