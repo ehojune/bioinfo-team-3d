@@ -1,5 +1,8 @@
 pr: 775
 rows:
+- sha: 51caada
+  at: 2026-10-20 02:27
+  text: HANDOFF의 Astra 전체 검토를 원 PI 결정대로 bench 비교 앞으로 정정
 - sha: cb6fd90
   at: 2026-10-20 02:20
   text: 개발 총괄의 점검·담당 재사용·P1 반복 리뷰 운영 규칙 갱신
