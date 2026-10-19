@@ -4,6 +4,19 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+Fixes #677
+PR #782.
+
+검사된 요청 참고 경로를 shell 읽기 판정에 전달하고, 작업 폴더의 PowerShell 디렉터리 생성을 절대·상대경로로 판정합니다. `grep -c`·`wc`·제한된 `od`·직접 파일 hash·`*.zip` 읽기와 신뢰 검사를 통과한 `python --version`을 기존 닫힌 문법에 추가했습니다.
+
+- 수정 전 새 회귀 8 failed → 수정 후 관련 mock/static pytest 173 passed, 12 skipped, 24 deselected. 전체 traceback은 작업 로컬 로그에 보존했습니다.
+- 참고 쓰기·credential·통제 구역·read-only task·외부 읽기와 쓰기의 혼합·실행 파일 신뢰 검사·PowerShell 배열/splatting 차단을 유지합니다. 검사 거부·미선택 참고 경로는 읽기 권한을 받지 않습니다.
+- Inline Python/heredoc·manifest 내부 경로를 여는 `sha256sum -c`·초기 `cd` 뒤 `;` 연결은 승인 카드로 유지합니다. AST만으로 import 대상·부작용을 증명하는 기능은 추가하지 않았습니다.
+- manual의 해당 절만 갱신했습니다(165,919→166,393자). public·diff·Python 3.10 AST·patch-notes·notes 검사를 적용합니다.
+- 실제 명령/process integration·PI 요청·기관/HPC·원자료·연구·게시·설치·배포 미실행. CI·리뷰·병합은 총괄이 맡습니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
 Fixes #682
 
 명시적 모델 계획 거부를 model_refused 사유로 남기고 웹·status에 표시합니다. 자동 재시도·모델 전환 없이 PI가 허용된 다른 CSO 모델 또는 수정 문구를 선택·승인해야 기존 게이트를 거친 새 요청을 만듭니다. 원래 실패는 보존합니다.

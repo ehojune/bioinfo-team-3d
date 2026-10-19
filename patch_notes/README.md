@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 05:15 | [`ff9264c`](https://github.com/ehojune/bioinfo-team-3d/pull/782/commits/ff9264c) | 검증된 요청 참고 경로를 shell 읽기에 전달하고 리터럴 읽기·작업 폴더 PowerShell 생성을 기존 경로·실행 파일 검사로 판정했다. mock/static pytest 173건 통과, inline Python·간접 manifest 경로는 승인 카드로 유지했다. |
 | 04:24 | [`e75fe43`](https://github.com/ehojune/bioinfo-team-3d/pull/778/commits/e75fe43) | 모델 재계획의 reference를 입력 필드로 정규화해 저장 메타데이터의 검증 실패를 고치고 mock pytest 46건을 확인했다. |
 | 03:49 | [`5b323a3`](https://github.com/ehojune/bioinfo-team-3d/pull/777/commits/5b323a3) | storage --rebuild --name이 대소문자만 다르거나 이름을 바꾼 지금 저장소를 새 저장소로 받아 루트를 덮어쓰지 않게 막았다. |
 | 03:38 | [`9d2bb18`](https://github.com/ehojune/bioinfo-team-3d/pull/778/commits/9d2bb18) | 확장된 선택 인자를 CP2 전달 검사에 반영하고 모델 재계획 payload가 CP2 결정에 섞이지 않음을 검증해 CI 회귀를 고쳤다. |
