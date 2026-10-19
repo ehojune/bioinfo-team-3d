@@ -27,6 +27,10 @@ from labhq.settings import PolicySettings
     'Get-Process python | Stop-Process; echo done',
     'env LABEL=cleanup pkill python', 'nohup killall python',
     'Stop-Process -n python', 'Get-Process python | kill',
+    'kill -n python', 'kill -na python', 'kill -nam python',
+    'kill -n:python', 'kill -na:python', 'kill -nam:python',
+    'kill -n "python" -Force', 'kill -n python,python3',
+    'pwsh -Command "kill -n python"',
 ])
 def test_name_stop_always_denied(command):
     assert broad_process_stop(command)
@@ -44,6 +48,7 @@ def test_name_stop_always_denied(command):
     'rg "Stop-Process -Name python" docs/manual.md', 'python cleanup.py',
     'Get-Process python; Stop-Process -Id $ownedPid',
     'kill -n 9 1234', 'ps -ef | kill -TERM 1234',
+    'kill -n "9" 1234', 'kill -n 15 $ownedPid',
 ])
 def test_pid_cleanup_and_data_are_not_name_stop(command):
     assert not broad_process_stop(command)

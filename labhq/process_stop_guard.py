@@ -64,6 +64,17 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
             name_option = r"^-name(?::|$)" if name == "kill" else r"^-n(?:a(?:m(?:e)?)?)?(?::|$)"
             if any(re.match(name_option, arg) for arg in args):
                 return True
+            if name == "kill":
+                for i, arg in enumerate(args):
+                    abbreviated = re.fullmatch(r"-(n|na|nam)(?::(.*))?", arg)
+                    if abbreviated:
+                        value = abbreviated.group(2)
+                        if value is None:
+                            value = args[i + 1] if i + 1 < len(args) else ""
+                        # PowerShell kill aliases Stop-Process; only Bash's numeric
+                        # -n SIGNAL is exempt from its literal Name abbreviations.
+                        if abbreviated.group(1) != "n" or not value.isdigit():
+                            return True
             pid_target = (any(re.match(r"^-id(?::|$)", arg) for arg in args)
                           or name == "kill" and any(arg.isdigit() or arg.startswith("$") for arg in args))
             positional_name = (args and not args[0].startswith(("-", "$", "@"))
