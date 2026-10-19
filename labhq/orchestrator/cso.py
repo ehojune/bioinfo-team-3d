@@ -23,6 +23,7 @@ from ..artifact_policy import (OUTPUT_ENV_DIR, OUTPUT_REFERENCE_DIR, OUTPUT_SCRI
                                unreported_warning_paths)
 from ..costs import cost_detail, format_cost, historical_plan_cost_estimate, task_cost_item
 from ..interruption import ShutdownInterrupted, shutdown_interruption, stopping_marker
+from ..model_refusal import REASON as MODEL_REFUSAL_REASON, ModelRefused, is_model_refusal
 from ..pi_text import PI_TEXT_RULE
 from ..evidence.claims import RESULT_CONTRACT_FIELD_RULES
 from ..evidence.report_check import (FAILED_LOOKUP_TITLE, anchor, check_report, claim_rows, failed_lookup_lines,
@@ -2602,6 +2603,8 @@ def failure_kind(outcome: TaskResult | BaseException, engine: str = "") -> str |
         return "transient"
     if isinstance(outcome, BaseException):
         return "terminal"
+    if is_model_refusal(outcome):
+        return "terminal"
     if outcome.error_kind in PI_STOP_ERROR_KINDS or outcome.error_kind == "structured_output_format":
         # PI stops and exhausted JSON repair must not enter another retry/facilities loop.
         return "terminal"
@@ -3580,6 +3583,9 @@ class Orchestrator:
                     kind = failure_kind(exc, engine)
                     offline = isinstance(exc, RunnerUnavailable)
                 else:
+                    if is_model_refusal(res):
+                        res = res.model_copy(update={"ok": False, "error_kind": "model_refused",
+                                                     "error": MODEL_REFUSAL_REASON})
                     kind = failure_kind(res, engine)
                     if kind != "login":  # a rejected login never starts a billed model turn
                         self._count_cost(rid, res.task_id, res)
@@ -6053,6 +6059,8 @@ class Orchestrator:
                         req["cso_session_id"] = planned.session_id
                         req["cso_workdir"] = planned.workdir
                         self.hub.save_request(rid)
+                    if planned.error_kind == "model_refused":
+                        raise ModelRefused(planned)
                     return planned
 
                 async def resolve_plan_questions(candidate: dict, current: TaskResult,
@@ -6094,7 +6102,9 @@ class Orchestrator:
 
                 plan_res = await make_plan(text)
                 if not plan_res.ok:
-                    self._finish(rid, f"계획 실패: {plan_res.error}", {"plan": plan_res.model_dump(mode="json")}, ok=False)
+                    reason = plan_res.error or "계획 결과를 받지 못했습니다."
+                    self._finish(rid, f"계획 실패: {reason}", {"plan": plan_res.model_dump(mode="json")},
+                                 ok=False, error=reason)
                     return
                 if rid in self.budget_denials:
                     self._finish(rid, "계획 뒤 예산 승인 거부", {"plan": plan_res.model_dump(mode="json")}, ok=False)
@@ -6820,6 +6830,11 @@ class Orchestrator:
             report = _append_report_metadata(body, [review_appendix]) if review_appendix else body
             self._finish(rid, report, serialized_results(),
                          ok=final.ok and rid not in self.budget_denials, review=review)
+        except ModelRefused as exc:
+            req["outcome"] = "model_refused"
+            self._finish(rid, MODEL_REFUSAL_REASON, {"plan": exc.result.model_dump(mode="json")},
+                         ok=False, error=MODEL_REFUSAL_REASON)
+            await self.hub.offer_model_refusal(rid)
         except ShutdownInterrupted as exc:
             await asyncio.gather(*self.cancel_steps(rid), return_exceptions=True)
             await self.hub._set_status(rid, "interrupted", evidence=exc.evidence)

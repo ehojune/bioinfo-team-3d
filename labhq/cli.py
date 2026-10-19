@@ -2052,6 +2052,10 @@ def main(argv: list[str] | None = None) -> None:
                 print(f"    비용: {cost_text(req.get('cost_usd'), req.get('cost_known'), summary)}"
                       + (f" {cost_detail(summary)}" if summary else ""))
         recent = _api(s, "GET", "/api/requests?status=all&limit=200")
+        for req in recent:
+            if req.get("outcome") == "model_refused":
+                from .model_refusal import REASON
+                print(f"  {req['id']} [model_refused] {REASON}")
         totals = _api(s, "GET", "/api/requests/summary")
         print(f"이번 세션·진행 중 비용: {_request_cost_totals_overview(totals.get('session') or {})}")
         if totals.get("past_count"):

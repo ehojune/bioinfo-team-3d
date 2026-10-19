@@ -56,6 +56,27 @@ const clarify = (id, created_at) => ({id, kind: 'clarify', agent_id: 'cso', summ
   detail: {questions: [{question: '어느 코호트로 할까요?', options: ['cases', 'controls']}]}});
 const budget = (id, created_at) => ({id, kind: 'budget', agent_id: 'cso', summary: `예산 ${id}`, created_at});
 
+test('model refusal requires a PI choice and keeps the draft through refreshes', async () => {
+  const decide = await import('data:text/javascript;base64,' + Buffer.from(fs.readFileSync(path.join(root, 'ui/decide.js'), 'utf8')).toString('base64'));
+  const container = doc.getElementById('refusal'), decisions = [];
+  const card = {id:'refusal', kind:'model_refused', request_id:'r', summary:'거부', detail:{models:['gpt-6-astra', '<script>bad()</script>']}};
+  const options = {now:()=>100, onDecision:(...args)=>decisions.push(args)};
+  decide.syncDecisionCards(container, [card], [], options);
+  const row = rowsOf(container)[0], p = row._decisionParts, inputs = p.refusal._refusalInputs;
+  assert.deepEqual(decide.modelRefusalChoice(row), {});
+  assert.equal(decisions.length, 0);
+  assert.equal(inputs.model.children[2].textContent, '<script>bad()</script>');
+  inputs.action.value = 'model'; inputs.action.onchange(); inputs.model.value = 'gpt-6-astra';
+  p.approve.onclick();
+  assert.deepEqual(decisions[0][6], {action:'model', cso_model:'gpt-6-astra'});
+  inputs.action.value = 'edit'; inputs.action.onchange(); inputs.text.value = 'Revised public request';
+  decide.syncDecisionCards(container, [card], [], options);
+  assert.equal(row._decisionParts.refusal._refusalInputs, inputs);
+  assert.deepEqual(decide.modelRefusalChoice(row), {action:'edit', text:'Revised public request'});
+  p.deny.onclick(); assert.equal(decisions[1][1], false);
+  assert.equal(p.deny.textContent, '그대로 종료');
+});
+
 // The PI is midway through answering: one option picked, free text and a memo typed, cursor in the memo.
 function startAnswer(row) {
   const p = row._decisionParts, answer = p.questions._answers[0];
@@ -147,4 +168,12 @@ test('3D decision panel keeps the answer through live events and its one-second 
   state.p.approve.onclick();
   assert.deepEqual(ws.sent.at(-1), {type: 'approval.resolve', id: 'b1', approved: true,
     note: 'Q1. b) controls — donors > 3 only\n메모: 쓰던 메모'});
+  event('approval.requested', {id:'refusal-3d', kind:'model_refused', request_id:'r',
+    summary:'모델 거부', detail:{models:['gpt-6-astra']}});
+  const refused = rowsOf(container).find(row => row.dataset.id === 'refusal-3d')._decisionParts;
+  refused.refusal._refusalInputs.action.value = 'model';
+  refused.refusal._refusalInputs.model.value = 'gpt-6-astra';
+  refused.approve.onclick();
+  assert.deepEqual(ws.sent.at(-1), {type:'approval.resolve', id:'refusal-3d', approved:true, note:'',
+    model_refusal:{action:'model', cso_model:'gpt-6-astra'}});
 });

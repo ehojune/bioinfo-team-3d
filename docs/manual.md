@@ -348,6 +348,8 @@ labhq talent                 # 인재풀
 labhq contract extend c_scanpy --days 14    # extend | release | activate | rehire
 ```
 
+모델 안전장치가 계획을 거부하면 `model_refused` 사유를 저장하고 웹·`status`에 표시합니다. 자동 재시도나 모델 전환은 하지 않습니다. 결정 카드에서 허용된 다른 CSO 모델 또는 수정한 요청 문구를 직접 고르고 승인하면 새 요청으로 계획하며 기존 승인·안전 검사를 다시 거칩니다. ‘그대로 종료’는 새 요청을 만들지 않습니다. 원래 실패 기록은 보존합니다.
+
 `labhq send`(기다리는 기본 동작)와 `labhq watch <request_id>`는 요청이 끝났다는 줄과 보고서 뒤에, 이어서 오는 요청 묶음 경로와 재현 등급(`요청 묶음:`·`재현 등급:`)까지 출력하고 끝납니다. gateway는 끝났다는 기록을 먼저 저장한 뒤 묶음을 만들기 때문에 이 정보는 별도 `request.bundle` 이벤트로 늦게 오며, CLI는 그 이벤트(또는 요청 기록의 묶음 필드)를 최대 60초 기다립니다. 단계를 하나도 돌리지 않아 묶음이 없는 요청은 기다리지 않고, 60초 안에 끝나지 않으면 "요청 묶음을 아직 만드는 중"이라고 알리고 끝나며 경로는 나중에 `labhq status`에 나옵니다.
 
 `send --dry-run`은 로컬 설정과 직원 YAML만 읽습니다. 브리핑·선행 연구 조사·첫 CSO 계획까지의 호출과 직원별 수를 보여 주고, 모델이 계획을 만들어야 알 수 있는 뒤 단계는 **미정**으로 남깁니다. `agents/core/*.yaml`의 `model_tier`와 파견직의 `recruit.contract_model_tier`는 `fast`·`balanced`·`reasoning` 중 하나입니다. 호출당 범위는 `model_tier_prices` 한 곳에서 읽으며, 공식 출처와 확인일을 적지 않았거나 값이 비어 있으면 **비용 모름**입니다.

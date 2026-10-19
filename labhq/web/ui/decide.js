@@ -35,6 +35,41 @@ function add(parent, tag, text = '', className = '') {
   return el;
 }
 
+function renderModelRefusal(parent, approval) {
+  parent.hidden = approval?.kind !== 'model_refused';
+  if (parent.hidden) return;
+  const key = JSON.stringify([approval.id, approval.detail?.models]);
+  if (parent._refusalKey === key) return;
+  parent._refusalKey = key;
+  parent.replaceChildren();
+  const actionLabel = add(parent, 'label', '다음 조치 ');
+  const action = add(actionLabel, 'select');
+  for (const [value, text] of [['', '선택해 주세요'], ['model', '다른 CSO 모델로 다시 계획'], ['edit', '문구를 바꿔 새 요청']]) {
+    const option = add(action, 'option', text); option.value = value;
+  }
+  action.value = '';
+  const modelLabel = add(parent, 'label', 'CSO 모델 ');
+  const model = add(modelLabel, 'select');
+  add(model, 'option', '모델을 선택해 주세요').value = '';
+  for (const value of approval.detail?.models || []) {
+    if (typeof value === 'string') add(model, 'option', value).value = value;
+  }
+  model.value = '';
+  const textLabel = add(parent, 'label', '수정한 요청 ');
+  const text = add(textLabel, 'textarea'); text.maxLength = 4000; text.rows = 3;
+  modelLabel.hidden = textLabel.hidden = true;
+  action.onchange = () => { modelLabel.hidden = action.value !== 'model'; textLabel.hidden = action.value !== 'edit'; };
+  parent._refusalInputs = {action, model, text};
+}
+
+export function modelRefusalChoice(row) {
+  const inputs = row?._decisionParts?.refusal?._refusalInputs;
+  if (row?.dataset.kind !== 'model_refused' || !inputs) return null;
+  if (inputs.action.value === 'model') return {action: 'model', cso_model: inputs.model.value};
+  if (inputs.action.value === 'edit') return {action: 'edit', text: inputs.text.value};
+  return {};  // The server rejects an unselected action; the note never starts a request.
+}
+
 // Native summary provides click, Enter and Space activation; only received text is used.
 export function expandableText(parent, value, options = {}) {
   if (options.pi) return piText(parent, value, options);
@@ -535,6 +570,8 @@ function createCard(item, options) {
   storage.hidden = true;
   const assumptions = add(body, 'div', '', 'plan-assumptions');
   assumptions.hidden = true;
+  const refusal = add(body, 'div', '', 'model-refusal');
+  refusal.hidden = true;
   const timing = add(body, 'p', '', 'decision-meta');
   const note = add(body, 'textarea', '', 'ans');
   note.rows = item.value.kind === 'clarify' ? 3 : 2;
@@ -547,7 +584,7 @@ function createCard(item, options) {
   revise.type = 'button'; revise.hidden = true;
   const deny = add(actions, 'button', '', 'btn');
   deny.type = 'button';
-  row._decisionParts = { title, who, request, summary, detail, attachment, questions, storage, assumptions, timing, note, consequence, approve, revise, deny };
+  row._decisionParts = { title, who, request, summary, detail, attachment, questions, storage, assumptions, refusal, timing, note, consequence, approve, revise, deny };
   if (options.presentation === 'journal') {
     row.className += ' ui-card decision-card';
     const heading = doc().createElement('h3'); heading.className = 'decision-question';
@@ -564,7 +601,7 @@ function createCard(item, options) {
     approve.className += ' ui-button ui-button--primary decision-primary';
     deny.className += ' ui-button decision-secondary';
     revise.className += ' ui-button decision-secondary';
-    body.replaceChildren(heading, facts, summary, explanation, status, kind, request, attachment, questions, storage, assumptions, timing, consequence, actions, memo, source);
+    body.replaceChildren(heading, facts, summary, explanation, status, kind, request, attachment, questions, storage, assumptions, refusal, timing, consequence, actions, memo, source);
     Object.assign(row._decisionParts, {heading, facts, reason, outcome});
   }
   return row;
@@ -756,7 +793,7 @@ function updateCard(row, item, options) {
   row.dataset.kind = value.kind || item.type;
   const labels = options.kindLabels || {};
   const approval = item.type === 'approval';
-  p.title.textContent = item.type === 'suggestion' ? '파견직 채용 제안' : (labels[value.kind] || value.kind || '결정');
+  p.title.textContent = item.type === 'suggestion' ? '파견직 채용 제안' : (labels[value.kind] || (value.kind === 'model_refused' ? '모델 계획 거부' : value.kind) || '결정');
   p.who.textContent = (value.kind === 'tool_permission' && value.detail?.requester_name) ||
     (options.nick ? options.nick(value.agent_id) || 'CSO' : value.agent_id || 'CSO');
   // Parallel CP1/CP2 cards look alike; the request text tells them apart (data already in the web state).
@@ -774,6 +811,7 @@ function updateCard(row, item, options) {
   if (p.heading) updateJournalCard(p, value, !approval);
   renderQuestions(p.questions, approval ? value : null);
   renderStorage(p.storage, approval ? value : null);
+  renderModelRefusal(p.refusal, approval ? value : null);
   renderAssumptions(p.assumptions, approval ? value : null);
   p.timing.textContent = approval ? timingText(value, options) : '';
   p.note.placeholder = value.kind === 'question' ? (p.questions._questions?.length
@@ -793,6 +831,11 @@ function updateCard(row, item, options) {
   p.deny.textContent = item.type === 'suggestion' ? '나중에' : evidence ? '거부' : scope ? '중단' : '거절';
   if (value.kind === 'result_storage') {p.approve.textContent = '선택하고 진행'; p.deny.textContent = '로컬만';}
   if (value.kind === 'result_publish') {p.approve.textContent = '확인했어요 · 올리기'; p.deny.textContent = '로컬에만 남기기';}
+  if (value.kind === 'model_refused') {
+    p.approve.textContent = '새 요청으로 계획'; p.deny.textContent = '그대로 종료';
+    p.consequence.textContent = '모델 또는 수정한 문구를 직접 선택해야 새 요청을 만듭니다. 원래 요청은 실패 상태로 남고 새 요청도 기존 승인·안전 검사를 거칩니다.';
+    p.consequence.hidden = false;
+  }
   // CP2 수정 요청 re-plans through a new CP1 until the continuation cap, then ends the request like 거부 (R10).
   p.revise.textContent = reviseContinues(value) ? '수정 요청' : '수정 요청(요청 끝남)'; p.revise.hidden = !(evidence || planRevise);
   p.approve.dataset.act = item.type === 'suggestion' ? 'hire' : 'approve';
@@ -806,7 +849,7 @@ function updateCard(row, item, options) {
     p.consequence.hidden = false;
   }
   if (options.onDecision) {
-    p.approve.onclick = () => options.onDecision(value, true, decisionNote(row, true), item.type, decisionChoice(value, 'approve'), storageChoice(row));
+    p.approve.onclick = () => options.onDecision(value, true, decisionNote(row, true), item.type, decisionChoice(value, 'approve'), storageChoice(row), modelRefusalChoice(row));
     p.revise.onclick = () => options.onDecision(value, false, decisionNote(row, false), item.type, decisionChoice(value, 'revise'));
     p.deny.onclick = () => options.onDecision(value, false, decisionNote(row, false), item.type, decisionChoice(value, 'deny'));
   }
