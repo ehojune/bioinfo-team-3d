@@ -20,6 +20,7 @@
 | 완료 | #762(`923a4fa`)·#764(`9d9e973`)·#763(`7b4d866`) 병합·PI 배포 | 총괄 인계: doctor 준비 예, status 요청 0. 새 연구·정리본 게시·Nextflow PASS 근거는 아님 |
 | 완료 | receipt PR #767 병합(`3291673`) | 문법·실행 상태를 분리한 receipt와 mock 검증 근거. 실제 연구 재현 PASS는 아님 |
 | 진행 | #682 모델 계획 거부 사유·다음 선택 | 자동 재시도 없이 사유 표시·PI 건별 선택으로 새 계획. mock/static 검증 뒤 PR, 리뷰·CI·병합은 총괄 담당. #754 rebuild는 Opus 별도 범위 |
+| 진행 | #677 참고 읽기·작업 폴더 PowerShell 승인 판정 | 검사를 통과한 참고만 읽기 권한 전달. mock/static 검증 뒤 PR, inline Python·간접 manifest 경로는 카드 유지. CI·리뷰·병합은 총괄 담당 |
 | 병렬 | cgroup #765·guard #766·PID 기록 #768 OPEN | 구현·검증 진행 상태이며 실제 연구·게시·Nextflow PASS로 쓰지 않음 |
 | 2 | 공개 소형 주제 2개를 제시하고 PI 선택 뒤 장치 실운전 | P2A 생성→호출→산출, 의미 모델·그림자 요청·ontology·checklist·EDAM·pack, 문헌/PDF, 보고서·묶음·정리본을 요청별로 대조. **아직 미실행** |
 | 3 | bench dry-run → 준비 게이트 검토 요청 | 동일 입력·판본·PI 답·예산과 arm별 state/workspace 분리, 장치 작동 근거, 예상 시간·비용을 확인 |
