@@ -22,7 +22,7 @@ import httpx
 from ..settings import Settings
 from . import annot, annot_keys, annot_literature, annot_regulatory
 from ._mcpcompat import make_server, tool_failure
-from .external_wait import LookupTimeout, run_lookup
+from .external_wait import LookupTimeout, exclude_human_wait, run_lookup
 
 S = Settings.load(os.environ.get("LABHQ_CONFIG"))
 WORKDIR = Path(os.environ["LABHQ_WORKDIR"]).resolve() if os.environ.get("LABHQ_WORKDIR") else None
@@ -133,6 +133,12 @@ async def _request_pdf(summary: str, detail: dict, timeout_s: int) -> dict:
 
 
 async def _run_key_fulltext(papers: list[dict[str, Any]]) -> str:
+    async def automatic(operation):
+        return await run_lookup(operation, tool="key_fulltext", workdir=WORKDIR, notify=_lookup_progress)
+
+    async def request_pdf(summary, detail, timeout_s):
+        return await exclude_human_wait(lambda: _request_pdf(summary, detail, timeout_s), workdir=WORKDIR)
+
     async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=20.0), follow_redirects=True,
                                  headers={"User-Agent": annot.USER_AGENT}) as client:
         annotator = annot_literature.LiteratureAnnotator(client, WORKDIR, CACHE_DIR, pace=PACE)
@@ -147,10 +153,10 @@ async def _run_key_fulltext(papers: list[dict[str, Any]]) -> str:
                 CACHE_DIR, policy.institution_request_interval_s, policy.institution_daily_limit)
         coordinator = annot_literature.KeyFulltextCoordinator(
             annotator, policy, WORKDIR, CACHE_DIR, institution=institution, limiter=limiter,
-            request_pdf=_request_pdf)
+            request_pdf=request_pdf, automatic_lookup=automatic)
         try:
             result = await coordinator.run(papers)
-        except (annot.LookupFailed, ValueError) as exc:
+        except (annot.LookupFailed, LookupTimeout, ValueError) as exc:
             raise tool_failure(str(exc)) from exc
     return json.dumps(result, ensure_ascii=False)
 

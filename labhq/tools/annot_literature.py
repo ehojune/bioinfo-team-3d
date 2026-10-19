@@ -252,11 +252,18 @@ class KeyFulltextCoordinator:
     """OA result → bounded institution session → one PI PDF card → explicit abstract/OA fallback."""
 
     def __init__(self, annotator, settings: LiteratureSettings, workdir: Path | None, state_dir: Path, *,
-                 institution=None, limiter=None, request_pdf=None, extract_pdf=extract_pdf_text, clock=_now) -> None:
+                 institution=None, limiter=None, request_pdf=None, extract_pdf=extract_pdf_text, clock=_now,
+                 automatic_lookup=None) -> None:
         self.annotator, self.settings = annotator, settings
         self.workdir, self.state_dir = Path(workdir) if workdir else None, Path(state_dir)
         self.institution, self.limiter, self.request_pdf = institution, limiter, request_pdf
         self.extract_pdf, self.clock = extract_pdf, clock
+        self.automatic_lookup = automatic_lookup
+
+    async def _automatic(self, operation):
+        if self.automatic_lookup is not None:
+            return await self.automatic_lookup(operation)
+        return await operation()
 
     @staticmethod
     def _papers(values: object) -> list[dict]:
@@ -416,7 +423,7 @@ class KeyFulltextCoordinator:
 
     async def run(self, values: object) -> dict:
         papers = self._papers(values)
-        base = await self.annotator.fulltext([paper["id"] for paper in papers])
+        base = await self._automatic(lambda: self.annotator.fulltext([paper["id"] for paper in papers]))
         rows = [dict(row) for row in base.get("results") or []]
         if len(rows) != len(papers):
             raise LookupFailed("fulltext 결과 수가 핵심 논문 수와 다릅니다")
@@ -436,7 +443,7 @@ class KeyFulltextCoordinator:
             if doi and not row.get("doi"):
                 row["doi"] = doi
             if institution_active and doi:
-                refusal = await self.limiter.acquire()
+                refusal = await self._automatic(self.limiter.acquire)
                 if refusal:
                     attempts[index].append(f"institution:{refusal}")
                 else:
@@ -444,7 +451,7 @@ class KeyFulltextCoordinator:
                     destination = self._inside(relative)
                     if destination is None:
                         raise LookupFailed("기관 PDF 경로가 작업 폴더 밖입니다")
-                    outcome = await self.institution.fetch(doi, destination)
+                    outcome = await self._automatic(lambda: self.institution.fetch(doi, destination))
                     attempts[index].append(f"institution:{outcome.status}")
                     if outcome.status == "success":
                         row, problem = self._accept_pdf(paper, row, relative, "institution_session")

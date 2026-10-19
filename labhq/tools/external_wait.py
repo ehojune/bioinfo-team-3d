@@ -18,6 +18,23 @@ class LookupTimeout(TimeoutError):
     pass
 
 
+async def exclude_human_wait(operation, *, workdir: Path | None, clock=time.time):
+    """Exclude only the explicit PDF decision wait, retaining the spent automatic budget."""
+    started = clock()
+    try:
+        return await operation()
+    finally:
+        if workdir is not None:
+            saved = read_owned(workdir, BUDGET_FILE)
+            if saved is not None:
+                state = json.loads(saved)
+                stamp = float(state["started_at"])
+                if not math.isfinite(stamp) or stamp > clock():
+                    raise ValueError("외부 조회 대기 기록이 올바르지 않습니다")
+                state["started_at"] = stamp + max(0, clock() - started)
+                write_owned(workdir, BUDGET_FILE, json.dumps(state) + "\n")
+
+
 async def run_lookup(operation, *, tool: str, workdir: Path | None, notify=None,
                      timeout_s: float = TIMEOUT_S, progress_s: float = 60,
                      clock=time.time):

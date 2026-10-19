@@ -4,6 +4,7 @@ import importlib
 import inspect
 import json
 from unittest.mock import AsyncMock
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -11,6 +12,7 @@ import pytest
 from labhq.adapters.owned import OwnedPathError, write_owned
 from labhq.tools import annot, annot_keys, external_wait as wait
 from labhq.tools._mcpcompat import NOT_EVIDENCE, ToolError
+from labhq.settings import LiteratureSettings
 
 
 def records(root):
@@ -58,6 +60,69 @@ async def test_retries_different_services_and_restart_do_not_reset_deadline(tmp_
         await wait.run_lookup(after_restart, tool="gtex", workdir=tmp_path, clock=lambda: now[0])
     after_restart.assert_not_called()
     assert records(tmp_path)[-1]["status"] == "timeout"
+
+
+@pytest.mark.parametrize("decision", ["declined", "timed_out"])
+async def test_key_fulltext_pdf_wait_is_excluded_without_resetting_shared_budget(
+        tmp_path, monkeypatch, mcp_module, decision):
+    now = [100.0]
+
+    async def short_budget(operation, **kwargs):
+        return await wait.run_lookup(operation, timeout_s=.08, progress_s=.005,
+                                     clock=lambda: now[0], **kwargs)
+
+    async def human_wait(operation, **kwargs):
+        return await wait.exclude_human_wait(operation, clock=lambda: now[0], **kwargs)
+
+    class Backend:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def fulltext(self, ids):
+            return {"results": [{"access_level": "abstract"}]}
+
+    async def approval(_summary, _detail, timeout_s):
+        assert timeout_s == 7200
+        await asyncio.sleep(.12)  # Longer than the automatic deadline: never wrap the human wait.
+        now[0] += 7200
+        return {"approved": False, "state": decision}
+
+    monkeypatch.setattr(mcp_module, "S", SimpleNamespace(
+        literature=LiteratureSettings(external_model_allowed=True)))
+    monkeypatch.setattr(mcp_module, "CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(mcp_module.annot_literature, "LiteratureAnnotator", Backend)
+    monkeypatch.setattr(mcp_module, "_request_pdf", approval)
+    monkeypatch.setattr(mcp_module, "run_lookup", short_budget)
+    monkeypatch.setattr(mcp_module, "exclude_human_wait", human_wait)
+    monkeypatch.setattr(mcp_module, "_lookup_progress", AsyncMock())
+
+    await short_budget(AsyncMock(return_value=True), tool="prior_service", workdir=tmp_path)
+    now[0] += .02  # Already spent budget must survive the PDF wait.
+    result = json.loads(await mcp_module._run_key_fulltext([
+        {"id": "10.1000/key", "title": "Public fixture", "why_key": "fixture", "needed": "table"}]))
+    assert result["results"][0]["pdf_request_status"] == decision
+    now[0] += .05
+    assert await short_budget(AsyncMock(return_value=True), tool="next_service", workdir=tmp_path)
+    now[0] += .02
+    operation = AsyncMock()
+    with pytest.raises(wait.LookupTimeout):
+        await short_budget(operation, tool="next_service", workdir=tmp_path)
+    operation.assert_not_called()
+
+
+async def test_cancelled_pdf_wait_preserves_spent_budget(tmp_path):
+    now = [100.0]
+    await wait.run_lookup(AsyncMock(), tool="fulltext", workdir=tmp_path, clock=lambda: now[0])
+    now[0] += 60
+
+    async def cancelled():
+        now[0] += 7200
+        raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        await wait.exclude_human_wait(cancelled, workdir=tmp_path, clock=lambda: now[0])
+    state = json.loads((tmp_path / wait.BUDGET_FILE).read_text(encoding="utf-8"))
+    assert now[0] - state["started_at"] == 60
 
 
 async def test_transient_failure_is_recorded_but_not_absence(tmp_path):
@@ -151,5 +216,60 @@ async def test_mcp_timeout_is_an_error_with_mock_board_events(tmp_path, monkeypa
 
 
 def test_human_pdf_approval_path_is_not_wrapped(mcp_module):
-    assert "run_lookup" not in inspect.getsource(mcp_module._run_key_fulltext)
     assert "run_lookup" not in inspect.getsource(mcp_module._request_pdf)
+
+
+@pytest.mark.parametrize("hung_phase", ["fulltext", "limiter", "institution"])
+async def test_key_fulltext_automatic_phases_use_task_deadline(
+        tmp_path, monkeypatch, mcp_module, hung_phase):
+    """Real coordinator control flow, fake transports only; never launch a browser or request approval."""
+    async def automatic(phase, value):
+        if phase == hung_phase:
+            await asyncio.Event().wait()
+        return value
+
+    class Backend:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def fulltext(self, ids):
+            return await automatic("fulltext", {"results": [{"access_level": "abstract"}]})
+
+    class Institution:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def fetch(self, doi, destination):
+            return await automatic("institution", SimpleNamespace(status="session_expired"))
+
+    class Limiter:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def acquire(self):
+            return await automatic("limiter", None)
+
+    policy = LiteratureSettings(institution_enabled=True, institution_proxy="https://institution.invalid",
+                                institution_tdm_allowed=True,
+                                external_model_allowed=True)
+    monkeypatch.setattr(mcp_module, "S", SimpleNamespace(literature=policy,
+                                                       gateway=SimpleNamespace(report_browser=None)))
+    monkeypatch.setattr(mcp_module, "CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(mcp_module.annot_literature, "LiteratureAnnotator", Backend)
+    monkeypatch.setattr(mcp_module.annot_literature, "BrowserInstitutionTransport", Institution)
+    monkeypatch.setattr(mcp_module.annot_literature, "InstitutionLimiter", Limiter)
+    approval = AsyncMock(side_effect=AssertionError("automatic timeout must not open an approval"))
+    monkeypatch.setattr(mcp_module, "_request_pdf", approval)
+    monkeypatch.setattr(mcp_module, "_lookup_progress", AsyncMock())
+
+    async def short_budget(operation, **kwargs):
+        return await wait.run_lookup(operation, timeout_s=.08, progress_s=.005,
+                                     clock=lambda: 100.0, **kwargs)
+
+    monkeypatch.setattr(mcp_module, "run_lookup", short_budget)
+    papers = [{"id": "10.1000/key", "title": "Public fixture", "why_key": "fixture", "needed": "table"}]
+    with pytest.raises(ToolError, match="조회 불가\\(시간 초과\\)") as error:
+        await asyncio.wait_for(mcp_module._run_key_fulltext(papers), 1)
+    assert NOT_EVIDENCE in str(error.value)
+    approval.assert_not_called()
+    assert records(tmp_path)[-1]["status"] == "timeout"
