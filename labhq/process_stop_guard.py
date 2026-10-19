@@ -22,7 +22,14 @@ _SEPARATOR = re.compile(r"^[;&|(){}\n]+$")
 _KNOWN_COMMANDS = {
     "pkill", "killall", "taskkill", "get-process", "gps", "ps", "stop-process", "spps", "kill",
     "sudo", "env", "command", "exec", "nohup", "builtin", "if", "elif", "while", "until", "time",
-    "sh", "bash", "zsh", "cmd", "powershell", "pwsh",
+    "sh", "bash", "zsh", "cmd", "powershell", "pwsh", "xargs",
+}
+_XARGS_ARGUMENT_OPTIONS = {
+    "--arg-file", "--delimiter", "--max-args", "--max-procs", "--max-chars", "--process-slot-var",
+}
+_XARGS_OPTIONS = _XARGS_ARGUMENT_OPTIONS | {
+    "--eof", "--replace", "--max-lines", "--null", "--open-tty", "--interactive",
+    "--no-run-if-empty", "--verbose", "--exit", "--show-limits",
 }
 
 # sudo options with required operands; --preserve-env's optional value uses '='.
@@ -164,6 +171,38 @@ def _wrapper_command_start(words: list[str], start: int, name: str) -> int:
     return start
 
 
+def _xargs_command_start(words: list[str], start: int) -> int:
+    """Locate xargs' literal command; optional -e/-i/-l values must be attached."""
+    while start < len(words):
+        option = _literal_word(words[start])
+        if option == "--":
+            return start + 1
+        if not option.startswith("-") or option == "-":
+            break
+        if option.startswith("--"):
+            key, attached, _value = option.partition("=")
+            matches = [key] if key in _XARGS_OPTIONS else [
+                name for name in _XARGS_OPTIONS if name.startswith(key)]
+            if len(matches) != 1:
+                break  # includes --help/--version, which do not execute a command
+            start += 1
+            if matches[0] in _XARGS_ARGUMENT_OPTIONS and not attached:
+                start += 1
+        else:
+            option_index = start
+            start += 1
+            for index, flag in enumerate(option[1:], start=2):
+                if flag in "adEILnPs":
+                    if index == len(option):
+                        start += 1
+                    break
+                if flag in "eil":  # any remaining characters are the optional value
+                    break
+                if flag not in "0oprtx":
+                    return option_index
+    return start
+
+
 def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
     """Recognize literal shell stop commands, not prose or PID-based cleanup.
 
@@ -225,6 +264,9 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
                 start, payload = _env_command_start(group, start + 1)
                 if payload is not None and broad_process_stop(payload, _depth=_depth + 1):
                     return True
+                continue
+            if name == "xargs":
+                start = _xargs_command_start(group, start + 1)
                 continue
             if name in {"command", "exec", "nohup", "time"}:
                 start = _wrapper_command_start(group, start, name)
