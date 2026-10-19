@@ -1,5 +1,8 @@
 pr: 775
 rows:
+- sha: e2a836d
+  at: 2026-10-20 02:44
+  text: P2 후속 issue를 실사용 영향과 수정 가치로 총괄 선별
 - sha: 51caada
   at: 2026-10-20 02:27
   text: HANDOFF의 Astra 전체 검토를 원 PI 결정대로 bench 비교 앞으로 정정
