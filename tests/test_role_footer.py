@@ -64,6 +64,12 @@ def test_every_staff_footer_covers_failed_and_empty_lookups_and_weaker_methods(t
     assert "부재 증명" not in ROLE_FOOTER  # the built-in tool failure line (#339) stays on the tool error only
 
 
+def test_every_staff_footer_warns_about_fragile_markdown_emphasis():
+    assert "강조는 짧은 낱말만" in ROLE_FOOTER
+    assert "문장부호 뒤에 닫는 `**`" in ROLE_FOOTER
+    assert "바로 조사를 붙이지 않는다" in ROLE_FOOTER
+
+
 @pytest.mark.parametrize("read_only", [False, True])
 def test_only_ordinary_steps_get_the_lightweight_result_rule(tmp_path, read_only):
     general = role_footer(_ctx(tmp_path, Engine.codex, read_only=read_only, general=True))

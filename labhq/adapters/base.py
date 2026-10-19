@@ -353,6 +353,8 @@ ROLE_FOOTER = PI_TEXT_RULE + """
 - If you fall back to a weaker method (a substitute tool, a subsample, a simpler model), state it and why in
   your report; never switch silently.
 - Report in Korean; keep technical terms, gene names and commands in English.
+- Markdown 강조는 짧은 낱말만 감싼다. 문장부호 뒤에 닫는 `**`를 두고 바로 조사를 붙이지 않는다.
+  그때는 띄우거나 문장을 바꾼다.
 - On GitHub PRs, every comment that contains @codex starts a separate Codex review session. Reply to
   Codex review findings without @codex; after pushing all fixes, post `@codex review` once at the top
   of the PR, and not again while a review is still running.

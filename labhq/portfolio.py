@@ -24,6 +24,7 @@ from .research.contract import branch_plan_topology
 from .report_abstract import build_graphical_abstract
 from .report_contract import (ReportAsset, ReportPackage, build_report_package, reader_markdown,
                               render_report_front, with_report_front)
+from .report_markdown import READER_FILENAMES, render_marker_message, rendered_markers
 from .request_bundle import _POSIX_ABS, _WINDOWS_ABS
 
 
@@ -59,7 +60,8 @@ def check_failure(issues: list[dict[str, str]]) -> EditionCheckError:
     kinds = ", ".join(sorted({issue["kind"] for issue in issues}))
     names = sorted({issue["path"] for issue in issues})
     shown = ", ".join(names[:5]) + (f" 외 {len(names) - 5}개" if len(names) > 5 else "")
-    return EditionCheckError(f"게시 전 검사에 실패했습니다: {kinds} — {shown}")
+    repairs = " ".join(issue["message"] for issue in issues[:5] if issue.get("kind") == "markdown_render")
+    return EditionCheckError(f"게시 전 검사에 실패했습니다: {kinds} — {shown}" + (f". {repairs}" if repairs else ""))
 _SIGNED_URL = re.compile(r"[?&](?:X-Amz-[^=&#\s]+|X-Goog-[^=&#\s]+|Signature|token|sig)=[^&#\s]+", re.I)
 _DOI = re.compile(r"(?i)\b10\.\d{4,9}/[-._;()/:A-Z0-9]+")
 _PMID = re.compile(r"(?i)\bPMID\s*[:#]?\s*(\d{5,9})\b")
@@ -1598,6 +1600,9 @@ def scan_publish_files(files: Mapping[str, str | bytes], *,
             issues.append({"kind": "placeholder", "path": name})
         if name == "report/report.md" and _ANCHOR.search(text):
             issues.append({"kind": "claim_anchor", "path": name})
+        if PurePosixPath(name).name.casefold() in READER_FILENAMES:
+            issues.extend({"kind": "markdown_render", "path": name, "message": render_marker_message(name, hit)}
+                          for hit in rendered_markers(text))
         suffix = PurePosixPath(name).suffix.lower()
         file_internal = name in internal if isinstance(internal, set) else internal
         if file_internal and suffix in {".tsv", ".csv"} and small_cells(text, suffix):

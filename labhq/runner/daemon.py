@@ -1925,6 +1925,8 @@ class Runner:
         # warning; it never turns the finished task into a failure (PR #712 review).
         try:
             result.table_warnings = await asyncio.to_thread(output_checks.table_warnings, ws.dir, result.outputs)
+            result.markdown_warnings = await asyncio.to_thread(
+                output_checks.markdown_warnings, ws.dir, [*result.outputs, *result.unreported_outputs])
             result.literature_access = await asyncio.to_thread(output_checks.literature_access, ws.dir)
             result.literature_access_failures = await asyncio.to_thread(
                 output_checks.literature_access_failures, ws.dir)

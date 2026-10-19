@@ -121,6 +121,25 @@ def test_report_claim_anchors_preserve_real_evidence_next_to_code_examples() -> 
     assert "analysis/main" in render_report_front(package)
 
 
+def test_reader_claim_replacement_does_not_touch_code_examples() -> None:
+    report = """결론입니다 [[claim:analysis/main]].
+
+`[[claim:example/inline]]`
+
+```markdown
+[[claim:example/fenced]]
+```
+"""
+
+    rendered = reader_markdown(report)
+
+    assert "결론입니다 [근거 1]." in rendered
+    assert "`[[claim:example/inline]]`" in rendered
+    assert "```markdown\n[[claim:example/fenced]]\n```" in rendered
+    assert "근거 원장 `analysis/main`" in rendered
+    assert "example/inline`" not in rendered.split("## 근거 각주", 1)[-1]
+
+
 @pytest.mark.parametrize("suffix", [".xlsx", ".xls", ".XLSX", ".XLS"])
 def test_excel_report_assets_are_classified_as_tables(suffix: str) -> None:
     request, report, results = fixed_request()
@@ -224,6 +243,35 @@ def test_contract_check_catches_missing_table_bad_shape_and_reader_marker() -> N
     assert any(row["code"] == "internal_marker" for row in malformed["problems"])
 
 
+@pytest.mark.parametrize("document", [
+    "결론은 **(차이가 큽니다.)**이 맞습니다.",
+    "**전체 문장에 **중요** 표시를 넣었습니다.**이 이어집니다.",
+    "문장 안 __강조__는 그대로 보입니다.",
+    "남은 [[자리표시]]를 고칩니다.",
+])
+@pytest.mark.parametrize("surface", ["README.md", "report.md", "RESULT.md", "web"])
+def test_contract_check_rejects_emphasis_markers_left_on_screen(document: str, surface: str) -> None:
+    request, report, results = fixed_request()
+    package = build_report_package(request, report, results)
+
+    checked = validate_report_package(package, reader_documents={surface: document})
+
+    problem = next(row for row in checked["problems"] if row["code"] == "markdown_render")
+    assert problem["field"] == surface
+    assert "1줄" in problem["message"]
+    assert "고치" in problem["message"] or "문장부호" in problem["message"] or "치환" in problem["message"]
+
+
+def test_contract_check_ignores_render_markers_inside_code() -> None:
+    request, report, results = fixed_request()
+    package = build_report_package(request, report, results)
+    document = "본문은 **정상 강조**입니다.\n\n```markdown\n**코드 예시** [[그대로]]\n```\n"
+
+    checked = validate_report_package(package, reader_documents={"RESULT.md": document})
+
+    assert not any(row["code"] in {"markdown_render", "internal_marker"} for row in checked["problems"])
+
+
 def test_audio_result_must_be_in_the_result_section() -> None:
     request, report, results = fixed_request()
     report = report.replace("## 결과", "[녹음](wd_analysis/outputs/result.wav)\n\n## 결과")
@@ -240,6 +288,31 @@ def test_audio_result_must_be_in_the_result_section() -> None:
         file_contents={"wd_analysis/outputs/results.tsv": "gene\tvalue\nA\t1\n"},
     )
     assert any(row["code"] == "audio_outside_results" for row in check["problems"])
+
+
+@pytest.mark.parametrize("heading", ["## 결과", "# Results"])
+def test_audio_is_allowed_under_a_result_subheading(heading: str) -> None:
+    request, report, results = fixed_request()
+    report = report.replace(
+        "![대표 그림](wd_analysis/outputs/plot.svg)",
+        "### 음성 판독\n\n[녹음](wd_analysis/outputs/result.wav)\n\n"
+        "![대표 그림](wd_analysis/outputs/plot.svg)",
+    )
+    report = report.replace("## 결과", heading)
+    results["analysis"]["outputs"].append("outputs/result.wav")
+    package = build_report_package(request, report, results)
+
+    check = validate_report_package(package)
+
+    assert not any(row["code"] == "audio_outside_results" for row in check["problems"])
+
+
+def test_audio_after_the_result_section_is_rejected() -> None:
+    request, report, results = fixed_request()
+    report += "\n## 참고\n\n### 녹음\n\n[음성](outside.wav)\n"
+    checked = validate_report_package(build_report_package(request, report, results))
+    assert any(row["code"] == "audio_outside_results" and row["field"] == "outside.wav"
+               for row in checked["problems"])
 
 
 def test_request_kind_required_matrix_distinguishes_not_applicable() -> None:

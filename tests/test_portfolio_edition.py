@@ -2,6 +2,8 @@ import py_compile
 import re
 from pathlib import Path
 
+import pytest
+
 import labhq.portfolio as portfolio
 from labhq.korean_qc import check_document
 from labhq.portfolio import build_portfolio_files, scan_publish_files
@@ -256,6 +258,18 @@ def test_publish_scan_catches_credentials_paths_signed_urls_and_small_cells():
     }
     kinds = {issue["kind"] for issue in scan_publish_files(files, internal=True)}
     assert {"secret", "local_path", "signed_url", "small_cell"} <= kinds
+
+
+@pytest.mark.parametrize("name", ["README.md", "report/report.md", "outputs/RESULT.md"])
+def test_publish_scan_blocks_visible_markdown_markers_before_writing(name):
+    from labhq.portfolio import check_failure
+
+    issues = scan_publish_files({name: "첫 줄\n\n**(강조 문장)**이 깨집니다."})
+    problem = next(issue for issue in issues if issue["kind"] == "markdown_render")
+    assert problem["path"] == name
+    assert f"{name} 3줄" in str(check_failure(issues))
+    assert "문장부호" in str(check_failure(issues))
+    assert not scan_publish_files({name: "```md\n** __ [[ 코드\n```\n"})
 
 
 def test_public_request_keeps_an_undeclared_row_table(tmp_path):
