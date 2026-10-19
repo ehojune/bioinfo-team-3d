@@ -14,9 +14,15 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 15:56 | [`5696cb0`](https://github.com/ehojune/bioinfo-team-3d/pull/753/commits/5696cb0) | 보고서 claim 수집에서 코드 예시를 제외하고 Excel 링크를 결과표로 분류했다 |
+| 13:42 | [`1c8b27e`](https://github.com/ehojune/bioinfo-team-3d/pull/753/commits/1c8b27e) | 정리본 PDF package를 정화된 입력에서 다시 만들고 외부 보고서 이미지의 자동 요청을 막았습니다. |
 | 13:33 | [`450c7f3`](https://github.com/ehojune/bioinfo-team-3d/pull/750/commits/450c7f3) | Windows 시스템 콘솔 호스트를 사용자 프로세스 종료 실패와 구분해 CI 오탐을 막음 |
+| 13:03 | [`22c14bb`](https://github.com/ehojune/bioinfo-team-3d/pull/753/commits/22c14bb) | 보고서 Markdown asset parser가 code 예시를 무시하고 공백 경로를 보존하도록 고쳤다 |
+| 12:18 | [`9214e2f`](https://github.com/ehojune/bioinfo-team-3d/pull/753/commits/9214e2f) | Markdown 보고서 컨테이너의 기존 세로 여백을 복원해 웹 화면 높이를 유지했다 |
 | 12:09 | [`45ce7fc`](https://github.com/ehojune/bioinfo-team-3d/pull/750/commits/45ce7fc) | PDF 승인 전 채택을 막고 본문·저장 확인과 fallback 상태를 일치시킴 |
+| 12:02 | [`4e88594`](https://github.com/ehojune/bioinfo-team-3d/pull/753/commits/4e88594) | 공통 앞면과 기존 정리본·그래픽 초록·PDF·웹 표시 계약의 호환성을 복원했다 |
 | 11:59 | [`fc0da2e`](https://github.com/ehojune/bioinfo-team-3d/pull/750/commits/fc0da2e) | 최신 main의 문헌·의미 상태 변경을 충돌 없이 통합함 |
+| 11:42 | [`fe638f2`](https://github.com/ehojune/bioinfo-team-3d/pull/753/commits/fe638f2) | 원본·묶음·정리본·PDF·웹이 공유하는 결과 구조와 종료 검사를 추가했다 |
 | 11:15 | [`010d81a`](https://github.com/ehojune/bioinfo-team-3d/pull/749/commits/010d81a) | 부분 PDF를 본문으로 오인하지 않고 OpenAlex OA 대체 위치와 문헌 후보 분모·ID를 보존했습니다. |
 | 10:40 | [`47799db`](https://github.com/ehojune/bioinfo-team-3d/pull/751/commits/47799db) | worker 시작 실패도 고정 arm의 A/B 오류 제외로 기록해 분모 누락을 막음 |
 | 10:36 | [`9c9682d`](https://github.com/ehojune/bioinfo-team-3d/pull/749/commits/9c9682d) | PDF 압축 해제 누적 크기를 제한하고 OA 서버 오류와 실제 접근 실패 사유를 보존했습니다. |
