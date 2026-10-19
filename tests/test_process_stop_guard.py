@@ -54,6 +54,52 @@ def test_name_stop_always_denied(command):
 
 
 @pytest.mark.parametrize("command", [
+    'sudo -u nobody pkill python',
+    'sudo -- pkill python',
+    'sudo --user nobody killall python',
+    'sudo --user=nobody pkill python',
+    'sudo -unobody pkill python',
+    'sudo -nu nobody pkill python',
+    'sudo -nHu nobody pkill python',
+    'sudo -g staff -u nobody pkill python',
+    'sudo -h localhost pkill python',
+    'sudo -D /tmp -C 3 pkill python',
+    'sudo --chdir /tmp --command-timeout=30 pkill python',
+    'sudo --preserve-env pkill python',
+    'sudo --preserve-env=LANG pkill python',
+    'sudo LABEL=cleanup -u nobody pkill python',
+    'sudo -u nobody -- env -i pkill python',
+    'env -i sudo -u nobody pkill python',
+    'sudo -u nobody bash -c "pkill python"',
+    '/usr/bin/sudo -u nobody pkill python',
+])
+def test_sudo_options_do_not_hide_name_stop(command):
+    assert broad_process_stop(command)
+    for tool in ("Bash", "PowerShell"):
+        decision = evaluate_tool(tool, {"command": command}, PolicySettings(), workdir=".")
+        assert decision.action == "deny" and decision.reason == DENIAL
+
+
+@pytest.mark.parametrize("command", [
+    '& { Stop-Process -Name python }',
+    '&{Stop-Process -Name python}',
+    '. { Stop-Process -Name python }',
+    '& { & { Stop-Process -Name python } }',
+    '& { Get-Process python | Stop-Process }',
+    '& {Stop-Process python}',
+    'pwsh -Command "& { Stop-Process -Name python }"',
+    '& { pkill python }',
+    '& { taskkill /IM python.exe }',
+    '& { Stop-Process -InputObject (Get-Process python) }',
+])
+def test_script_blocks_do_not_hide_name_stop(command):
+    assert broad_process_stop(command)
+    for tool in ("Bash", "PowerShell"):
+        decision = evaluate_tool(tool, {"command": command}, PolicySettings(), workdir=".")
+        assert decision.action == "deny" and decision.reason == DENIAL
+
+
+@pytest.mark.parametrize("command", [
     'taskkill /PID 1234 /F', 'taskkill //PID 1234 //F', 'kill -TERM 1234',
     'Stop-Process -Id 1234', 'Stop-Process -Id $ownedPid -Force',
     'Get-Process -Id $ownedPid | Stop-Process',
@@ -74,6 +120,20 @@ def test_name_stop_always_denied(command):
     'cmd /c "echo taskkill /IM python.exe"',
     'bash -c "echo safe" "pkill python"',
     'env -u',
+    'sudo -u nobody kill -TERM 1234',
+    'sudo -- taskkill /PID 1234 /F',
+    'sudo -H kill -n 9 1234',
+    'sudo -u pkill echo python',
+    'sudo --prompt "pkill python" echo ready',
+    'sudo --user=nobody echo "pkill python"',
+    'sudo --preserve-env echo "pkill python"',
+    'sudo -u',
+    'sudo --',
+    '& { Stop-Process -Id 1234 }',
+    '& { Get-Process -Id $ownedPid | Stop-Process }',
+    '& { echo "Stop-Process -Name python" }',
+    'Write-Output "& { Stop-Process -Name python }"',
+    "echo '& { pkill python }'",
 ])
 def test_pid_cleanup_and_data_are_not_name_stop(command):
     assert not broad_process_stop(command)
@@ -88,6 +148,10 @@ def test_pid_cleanup_and_data_are_not_name_stop(command):
     {"command": "env -i pkill python"},
     {"command": "Get-Process python |\n Stop-Process"},
     {"command": "Stop-Process -InputObject (Get-Process python)"},
+    {"command": "sudo -u nobody pkill python"},
+    {"tool_input": {"command": "sudo -- pkill python"}},
+    {"command": "& { Stop-Process -Name python }"},
+    {"tool_input": {"command": "pwsh -Command \"& { Stop-Process -Name python }\""}},
 ])
 async def test_broker_denies_without_card_or_pending_future(detail):
     async def forbidden(*args):

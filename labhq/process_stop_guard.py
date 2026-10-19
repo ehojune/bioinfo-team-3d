@@ -12,12 +12,43 @@ DENIAL = (
 )
 
 # Keep quoted arguments whole, and inspect every connected command (including fallback branches).
-_WORDS = re.compile(r'''"(?:`.|\\.|[^"\\])*"|'(?:''|[^'])*'|&&|\|\||[;&|()\n]|[^\s;&|()'"\n]+''')
-_SEPARATOR = re.compile(r"^[;&|()\n]+$")
+_WORDS = re.compile(r'''"(?:`.|\\.|[^"\\])*"|'(?:''|[^'])*'|&&|\|\||[;&|(){}\n]|[^\s;&|(){}'"\n]+''')
+_SEPARATOR = re.compile(r"^[;&|(){}\n]+$")
+
+# sudo options with required operands; --preserve-env's optional value uses '='.
+_SUDO_ARGUMENT_OPTIONS = {
+    "--auth-type", "--close-from", "--login-class", "--chdir", "--group", "--host",
+    "--other-user", "--prompt", "--chroot", "--role", "--command-timeout", "--type", "--user",
+}
 
 
 def _bare(word: str) -> str:
     return word.strip("\"'").casefold()
+
+
+def _sudo_command_start(words: list[str], start: int) -> int:
+    """Skip literal sudo options/operands and assignments, without executing anything."""
+    while start < len(words):
+        option = words[start].strip("\"'")  # -H and -h have different operand rules.
+        if re.match(r"^[A-Za-z_][A-Za-z_0-9]*=", option):
+            start += 1
+            continue
+        if option == "--":
+            return start + 1
+        if not option.startswith("-") or option == "-":
+            break
+        start += 1
+        if option.startswith("--"):
+            # getopt_long also accepts unambiguous abbreviations of these options.
+            if "=" not in option and any(name.startswith(option) for name in _SUDO_ARGUMENT_OPTIONS):
+                start += 1
+        else:
+            for index, flag in enumerate(option[1:], start=2):
+                if flag in "aCcDghpRrTtUu":
+                    if index == len(option):  # an attached value consumes the rest of the same token
+                        start += 1
+                    break
+    return start
 
 
 def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
@@ -63,6 +94,9 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
         start = 0
         while start < len(group):
             word = _bare(group[start])
+            if re.split(r"[/\\]", word)[-1].removesuffix(".exe") == "sudo":
+                start = _sudo_command_start(group, start + 1)
+                continue
             if word == "env":
                 start += 1
                 while start < len(group) and _bare(group[start]).startswith("-"):
@@ -78,7 +112,7 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
                     elif option in {"-u", "--unset", "-c", "--chdir"}:
                         start += 1
                 continue
-            if word in {"&", "!", "sudo", "nohup", "command", "exec", "call", "then", "do"} or re.match(
+            if word in {"&", "!", "nohup", "command", "exec", "call", "then", "do"} or re.match(
                     r"^[A-Za-z_][A-Za-z_0-9]*=", group[start]):
                 start += 1
                 continue
