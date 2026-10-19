@@ -14,10 +14,16 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 13:33 | [`450c7f3`](https://github.com/ehojune/bioinfo-team-3d/pull/750/commits/450c7f3) | Windows 시스템 콘솔 호스트를 사용자 프로세스 종료 실패와 구분해 CI 오탐을 막음 |
+| 12:09 | [`45ce7fc`](https://github.com/ehojune/bioinfo-team-3d/pull/750/commits/45ce7fc) | PDF 승인 전 채택을 막고 본문·저장 확인과 fallback 상태를 일치시킴 |
+| 11:59 | [`fc0da2e`](https://github.com/ehojune/bioinfo-team-3d/pull/750/commits/fc0da2e) | 최신 main의 문헌·의미 상태 변경을 충돌 없이 통합함 |
 | 11:15 | [`010d81a`](https://github.com/ehojune/bioinfo-team-3d/pull/749/commits/010d81a) | 부분 PDF를 본문으로 오인하지 않고 OpenAlex OA 대체 위치와 문헌 후보 분모·ID를 보존했습니다. |
 | 10:40 | [`47799db`](https://github.com/ehojune/bioinfo-team-3d/pull/751/commits/47799db) | worker 시작 실패도 고정 arm의 A/B 오류 제외로 기록해 분모 누락을 막음 |
 | 10:36 | [`9c9682d`](https://github.com/ehojune/bioinfo-team-3d/pull/749/commits/9c9682d) | PDF 압축 해제 누적 크기를 제한하고 OA 서버 오류와 실제 접근 실패 사유를 보존했습니다. |
+| 03:24 | [`a459993`](https://github.com/ehojune/bioinfo-team-3d/pull/750/commits/a459993) | 새 문헌 도구의 등록 목록과 binary PDF 정적 검사를 CI 기대값에 맞춤 |
 | 03:21 | [`5eff6dc`](https://github.com/ehojune/bioinfo-team-3d/pull/751/commits/5eff6dc) | semantics·그림자 요청 상태를 분리하고 미평가·오류를 A/B 분모에서 제외 |
+| 03:10 | [`f572c2b`](https://github.com/ehojune/bioinfo-team-3d/pull/750/commits/f572c2b) | 2시간 PDF 대기는 문헌 MCP에만 적용해 다른 도구의 timeout을 유지함 |
+| 03:04 | [`fcf4523`](https://github.com/ehojune/bioinfo-team-3d/pull/750/commits/fcf4523) | 기관 세션과 PI PDF 요청 카드로 핵심 논문 전문을 허용 경로에서 읽게 함 |
 | 02:10 | [`ca8ffc7`](https://github.com/ehojune/bioinfo-team-3d/pull/749/commits/ca8ffc7) | OA 본문을 제한된 streaming으로 받고 provider 활성 상태와 실패 원장을 cache·응답에 보존했습니다. |
 | 01:39 | [`dcf503d`](https://github.com/ehojune/bioinfo-team-3d/pull/749/commits/dcf503d) | Europe PMC 미등재 논문도 합법 OA 사본을 찾고 OA URL의 내부망 접근과 실패 원장 누락을 막음 |
 | 00:54 | [`eda518a`](https://github.com/ehojune/bioinfo-team-3d/pull/749/commits/eda518a) | Unpaywall email 예시를 배포용 config 복사본에도 반영해 init 결과를 일치시켰다. |
