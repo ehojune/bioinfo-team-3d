@@ -14,4 +14,5 @@ BIOINFO_ASSIGNMENT_RULE = (
     "The manifest uses schema 1, name matching its folder, title and summary; the bundle includes main.nf, "
     "nextflow.config and README.md. "
     "Only a separate per-candidate PI yes permits a bioinfo-agent contribution PR; the global pipeline_pr setting "
-    "only enables this approval path. Never open the upstream PR yourself or treat CP1/CP2 as contribution consent.")
+    "only enables this approval path. Never open the upstream PR yourself or treat a plan or evidence checkpoint "
+    "approval as contribution consent.")

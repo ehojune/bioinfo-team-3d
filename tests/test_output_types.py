@@ -41,7 +41,7 @@ CANARY = "CANARY-7f3a-secret"
 PLAN_SCHEMA_SHA = "3f66aee51285e31aba7126f9e9279d7244ce9b7cf0739a3f4164faba2fc606d4"
 # Issues #683/#690 intentionally add the SVG figure declaration rules.
 # Issue #707 adds the deterministic request-analysis coverage rule.
-PLAN_PROMPT_SHA = "aa79dba4f18886d4e1a63d035f04ac127798bccfca155b1673619c8e9df80d68"
+PLAN_PROMPT_SHA = "d2548cdde6b7bb167477a4dd7f4b4a6b4a517f5e38f3e5446f8e9fa24635d921"
 PROMPT_ARGS = dict(request="REQ", roster="ROSTER", capabilities="CAPS", briefing="BRIEF", max_steps=3,
                    question_rule=QUESTION_RULE, lab_scope="LAB", topics_rule=topics.prompt_rule(V))
 

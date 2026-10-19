@@ -721,7 +721,7 @@ Codex 직원은 `tools`에 `WebSearch`나 `WebFetch`가 있으면 `web_search="l
 도구 배정, `max_turns`, 모델 등급은 아직 검증하지 않았으며 #40 bench에서 잽니다. 엔진은 MCP·resume·hook·예산 상한
 지원 여부로 고릅니다(#39). 첫 실험(#27)에서는 bioinfo-agent가 배정되지 않고 읽기 전용 리뷰어에게 쓰기 작업이 갔습니다.
 
-### bioinfo-agent 연결과 pipeline 기여 승인
+### bioinfo-agent 연결하기
 
 표준 bioinformatics 분석은 bioinfo-agent가 지원하는 nf-core pipeline을 우선 씁니다. 단순 수집·가공·조회는 알맞은 직원에게 바로 맡기고,
 지원 밖의 복잡한 신규 구현은 engineer나 analyst에게 배정합니다. 선택한 pipeline이나 다른 배정 사유는 계획에 남깁니다.
