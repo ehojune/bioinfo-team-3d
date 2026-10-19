@@ -18,3 +18,6 @@ rows:
 - sha: 0997a9a
   at: '2026-10-20 03:00'
   text: script block 출력·filter·앞선 문장의 이름 선택 상태를 보존했다. 추가 실패 9개를 재현한 뒤 문자열/fake 144개와 승인 정책 정적 test 24개를 확인했다.
+- sha: 67813c8
+  at: '2026-10-20 03:52'
+  text: 조건문·redirection·wrapper 옵션·literal quote removal 우회를 보강하고 mock/static 235개를 확인했다. 원문 ForEach 지적의 stale 근거를 보존한다.
