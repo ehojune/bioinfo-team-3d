@@ -4,6 +4,18 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+20시 PI 정기 보고 전 문서를 현재 PR·설정과 맞췄습니다. Refs #760.
+
+- #758·#759 병합, #732 구현 PR #762의 코드 미리보기 P1 보류를 HANDOFF에 반영했습니다.
+- AGENTS의 기본 절차를 리뷰 1회·P1 수정 1회·남은 P1은 병합 보류로 맞췄습니다.
+- #69 종료 절차를 reference에 보존하고 manual의 깨진 링크를 복구했습니다(지적 4312079758).
+- README 한영판은 13개 역할·현재 채널과 일치해 그대로 뒀습니다.
+- 주요 3문서: 이번 16,962→16,852자, 최초 28,310→16,852자(LF 정규화 Unicode).
+
+새 실운전·bench·HPC·PI 배포는 하지 않았습니다. #756은 다음 승인 예산 뒤입니다. 검증 결과와 길이는 docs/reference/docs-refresh-2026-10-19.md에 있습니다.
+
+확인: 공개 검사·notes-index validate·diff check 통과. 새 head의 CI는 세션 밖 병합 단계에 맡깁니다.
+
 ## 결론
 
 PR #759의 CI 실패 4건을 수정하고 main의 편집기 보정을 합쳤습니다. Refs #757.
@@ -23,6 +35,14 @@ PR #759의 CI 실패 4건을 수정하고 main의 편집기 보정을 합쳤습�
 ## 남은 것
 
 - 최종 head의 CI 결과는 PR에 기록합니다. 리뷰 요청과 병합은 총괄이 이어받습니다.
+
+README의 11명 표기와 오래된 HANDOFF를 현재 13개 역할(Claude 8·Codex 5), Codex 고정 총괄, PI 창구 #760에 맞췄습니다. 큰 변경과 매 PI 보고 전 문서 일치 점검을 AGENTS/HANDOFF에 명시했습니다. Refs #760.
+
+- 최신 PI 결정: 10월 19일 9M·20일 2M, #732 배정·기여 정책 승인 반영(코드·검증 진행 중). 제품 CSO·직원 설정은 그대로입니다.
+- 네 카드·이미지를 유지하고 긴 인용·비교 수치를 reference로 옮겼습니다. 주요 3문서는 28,310→16,962자(LF 정규화 Unicode), 영문 README는 23,311→19,075자입니다.
+- 옛 큐·결정은 조회용 보존본으로 옮기고 현재 PR 순서와 장치 실운전→bench 준비 게이트→#739를 적었습니다. 공개 소형 실운전은 아직 미실행입니다. #758은 18:03 KST Linux CI 2개 PASS·Windows 대기·리뷰 P1 없음입니다.
+
+확인: `tests/test_integrations.py` 기존 33 passed, integrations/vocab 생성기, notes_index validate, patch_notes 규칙, 공개 저장소 검사, diff check 통과. 로컬 파일 링크 142개도 모두 존재합니다. 전후 글자 수와 근거는 `docs/reference/docs-refresh-2026-10-19.md`에 있습니다.
 
 ## 결론
 

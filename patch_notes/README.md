@@ -14,8 +14,12 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 20:05 | [`3e154f3`](https://github.com/ehojune/bioinfo-team-3d/pull/761/commits/3e154f3) | 문서 길이 측정표를 최종 파일과 맞춤 |
+| 20:04 | [`437ff42`](https://github.com/ehojune/bioinfo-team-3d/pull/761/commits/437ff42) | 20시 현황과 리뷰 절차를 갱신하고 라운드 종료 링크를 복구 |
 | 18:12 | [`3a6f730`](https://github.com/ehojune/bioinfo-team-3d/pull/759/commits/3a6f730) | main 편집기의 PDF 각주·질문 정리와 CommonMark 코드 영역 보호를 함께 유지해 충돌 해결 |
 | 18:09 | [`5a067a2`](https://github.com/ehojune/bioinfo-team-3d/pull/759/commits/5a067a2) | 호환 보고서의 claim을 독자용 근거로 변환하고 binary 읽기 표기를 맞춰 CI 실패 4건 수정 |
+| 18:05 | [`7151f5d`](https://github.com/ehojune/bioinfo-team-3d/pull/761/commits/7151f5d) | 문서에서 정책 승인과 구현 진행을 구분하고 PR 현황 갱신 |
+| 17:53 | [`e0b3a8b`](https://github.com/ehojune/bioinfo-team-3d/pull/761/commits/e0b3a8b) | 문서를 현재 직원 구성과 Codex 총괄 운영에 맞추고 근거를 분리 |
 | 17:29 | [`7b66827`](https://github.com/ehojune/bioinfo-team-3d/pull/758/commits/7b66827) | 예전 계획의 자동 표 복구를 공개 자료로 제한하고 내부 자료 표는 집계표 선언을 요구하도록 고쳤습니다. |
 | 17:11 | [`51b42b8`](https://github.com/ehojune/bioinfo-team-3d/pull/758/commits/51b42b8) | PDF 렌더 판본을 올린 변경에 맞춰 기존 무효화 회귀 검사의 기대값을 갱신했습니다. |
 | 17:06 | [`a203edb`](https://github.com/ehojune/bioinfo-team-3d/pull/759/commits/a203edb) | 현재 RESULT 저장 뒤 Markdown을 검사하고 전체 경고·표시 위치 수를 제한 |
