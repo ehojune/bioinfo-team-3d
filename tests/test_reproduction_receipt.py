@@ -267,3 +267,98 @@ async def test_failed_storage_keeps_the_receipt_without_publishing(tmp_path, mon
         assert not any(method in {"POST", "PUT", "PATCH"} for method, _, _ in calls)
     finally:
         await service.close()
+
+
+# ----- #771: scripts sharing one step folder are judged by what each run wrote -----
+
+class FakeInterpreter:
+    """A fake `subprocess.run`: `--version` and the compile check pass, and running a script does what `actions` says
+    for its name in the step folder (`cwd`). No interpreter or process starts."""
+
+    def __init__(self, actions):
+        self.actions, self.runs = actions, []
+
+    def __call__(self, command, *, cwd, **kwargs):
+        if command[-1] == "--version":
+            return subprocess.CompletedProcess(command, 0, b"Python 3.12.0", b"")
+        if "-c" in command:
+            return subprocess.CompletedProcess(command, 0, b"", b"")
+        script = command[-1]
+        self.runs.append((script, Path(cwd)))
+        return subprocess.CompletedProcess(command, self.actions.get(script, lambda folder: 0)(Path(cwd)), b"", b"")
+
+
+def write_result(folder):
+    (folder / "result.txt").write_text("table", encoding="utf-8")
+    return 0
+
+
+def statuses(receipt):
+    return {row["path"].rsplit("/", 1)[-1]: row["execution"]["status"] for row in receipt["files"]}
+
+
+@pytest.mark.parametrize("helper", ["aa_helper.py", "zz_helper.py"])
+def test_a_script_that_writes_no_declared_output_never_passes_on_files_an_earlier_script_left(tmp_path, monkeypatch, helper):
+    fake = FakeInterpreter({"make.py": write_result})
+    monkeypatch.setattr(subprocess, "run", fake)
+    receipt = rr.build_receipt({"code/a/make.py": "make()\n", f"code/a/{helper}": "def util(): pass\n"},
+                               tools=python_tools(), temp_root=tmp_path, rerun=True, outputs={"a": ["result.txt"]})
+    assert [script for script, _ in fake.runs] == sorted(["make.py", helper])
+    # The same verdicts whether the helper sorts before or after the script that writes the output.
+    assert statuses(receipt) == {"make.py": "pass", helper: "missing_output"}
+    assert rr.receipt_summary(receipt)["execution"] == "missing_output"
+    assert {row["execution"]["output_check"] for row in receipt["files"]} == {"declared_files_written_by_this_run"}
+
+
+def test_two_scripts_that_each_write_the_same_bytes_both_pass(tmp_path, monkeypatch):
+    monkeypatch.setattr(subprocess, "run", FakeInterpreter({"one.py": write_result, "two.py": write_result}))
+    receipt = rr.build_receipt({"code/a/one.py": "w()\n", "code/a/two.py": "w()\n"}, tools=python_tools(),
+                               temp_root=tmp_path, rerun=True, outputs={"a": ["result.txt"]})
+    assert statuses(receipt) == {"one.py": "pass", "two.py": "pass"}
+    assert rr.receipt_summary(receipt)["execution"] == "pass"
+
+
+def test_a_later_script_still_reads_intermediates_and_sibling_sources_in_the_shared_step_folder(tmp_path, monkeypatch):
+    def prepare(folder):
+        (folder / "work" / "raw.tsv").parent.mkdir()
+        (folder / "work" / "raw.tsv").write_text("x\t1\n", encoding="utf-8")  # not a declared output
+        return 0
+
+    def analyze(folder):
+        if not (folder / "work" / "raw.tsv").is_file() or not (folder / "lib" / "util.py").is_file():
+            return 1
+        return write_result(folder)
+
+    fake = FakeInterpreter({"01_prepare.py": prepare, "02_analyze.py": analyze})
+    monkeypatch.setattr(subprocess, "run", fake)
+    receipt = rr.build_receipt({"code/a/01_prepare.py": "p()\n", "code/a/02_analyze.py": "import lib.util\n",
+                                "code/a/lib/util.py": "def u(): pass\n", "code/b/other.py": "x = 1\n"},
+                               tools=python_tools(), temp_root=tmp_path, rerun=True,
+                               outputs={"a": ["result.txt"], "b": ["other.txt"]})
+    assert statuses(receipt) == {"01_prepare.py": "missing_output", "02_analyze.py": "pass",
+                                 "util.py": "missing_output", "other.py": "missing_output"}
+    folders = {script: folder for script, folder in fake.runs}
+    assert folders["01_prepare.py"] == folders["02_analyze.py"] and folders["01_prepare.py"].name == "a"
+    assert all(folder.is_relative_to(tmp_path) for folder in folders.values())
+
+
+def test_a_link_an_earlier_script_left_is_not_touched_or_counted(tmp_path, monkeypatch):
+    outside = tmp_path / "outside.txt"
+    outside.write_text("not in the receipt folder", encoding="utf-8")
+    os.utime(outside, ns=(10**18, 10**18))
+
+    def link(folder):
+        os.symlink(outside, folder / "result.txt")
+        return 0
+
+    probe = tmp_path / "probe"
+    try:
+        os.symlink(outside, probe)
+    except (OSError, NotImplementedError):
+        pytest.skip("this account cannot make symbolic links")
+    probe.unlink()
+    monkeypatch.setattr(subprocess, "run", FakeInterpreter({"a_link.py": link}))
+    receipt = rr.build_receipt({"code/a/a_link.py": "l()\n", "code/a/b_idle.py": "x = 1\n"}, tools=python_tools(),
+                               temp_root=tmp_path, rerun=True, outputs={"a": ["result.txt"]})
+    assert statuses(receipt) == {"a_link.py": "missing_output", "b_idle.py": "missing_output"}
+    assert outside.stat().st_mtime_ns == 10**18
