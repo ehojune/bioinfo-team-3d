@@ -27,3 +27,6 @@ rows:
 - sha: '7e08044'
   at: '2026-10-20 05:27'
   text: consult 복구 test의 중복 timeout을 facilities 대기 즉시 실패 검증으로 바꾸고 Git provenance를 mock 처리했다. 가상 시계 실패 재현 뒤 관련 mock 4개와 지연 회귀 1개가 통과했다.
+- sha: '71e08b0'
+  at: '2026-10-20 06:28'
+  text: late-storage 승인 순서 test에서 PDF 준비·Git provenance를 mock 처리했다. 미완료 PDF 조건의 실패를 재현한 뒤 관련 mock 4개와 지연 재현 1개가 통과했다.
