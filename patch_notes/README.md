@@ -14,8 +14,12 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 18:12 | [`3a6f730`](https://github.com/ehojune/bioinfo-team-3d/pull/759/commits/3a6f730) | main 편집기의 PDF 각주·질문 정리와 CommonMark 코드 영역 보호를 함께 유지해 충돌 해결 |
+| 18:09 | [`5a067a2`](https://github.com/ehojune/bioinfo-team-3d/pull/759/commits/5a067a2) | 호환 보고서의 claim을 독자용 근거로 변환하고 binary 읽기 표기를 맞춰 CI 실패 4건 수정 |
 | 17:29 | [`7b66827`](https://github.com/ehojune/bioinfo-team-3d/pull/758/commits/7b66827) | 예전 계획의 자동 표 복구를 공개 자료로 제한하고 내부 자료 표는 집계표 선언을 요구하도록 고쳤습니다. |
 | 17:11 | [`51b42b8`](https://github.com/ehojune/bioinfo-team-3d/pull/758/commits/51b42b8) | PDF 렌더 판본을 올린 변경에 맞춰 기존 무효화 회귀 검사의 기대값을 갱신했습니다. |
+| 17:06 | [`a203edb`](https://github.com/ehojune/bioinfo-team-3d/pull/759/commits/a203edb) | 현재 RESULT 저장 뒤 Markdown을 검사하고 전체 경고·표시 위치 수를 제한 |
+| 16:54 | [`bd592e0`](https://github.com/ehojune/bioinfo-team-3d/pull/759/commits/bd592e0) | CommonMark 코드 영역 공유와 Markdown 렌더 검사로 강조 노출·claim 코드 치환 오류를 막고 결과 하위 음성을 허용 |
 | 16:52 | [`a8ba139`](https://github.com/ehojune/bioinfo-team-3d/pull/758/commits/a8ba139) | v2 재구성의 PDF 각주, 예전 결과표, 연구 질문, 그림 배치, 이용 조건 복구를 편집기에 반영했습니다. |
 | 15:56 | [`5696cb0`](https://github.com/ehojune/bioinfo-team-3d/pull/753/commits/5696cb0) | 보고서 claim 수집에서 코드 예시를 제외하고 Excel 링크를 결과표로 분류했다 |
 | 13:42 | [`1c8b27e`](https://github.com/ehojune/bioinfo-team-3d/pull/753/commits/1c8b27e) | 정리본 PDF package를 정화된 입력에서 다시 만들고 외부 보고서 이미지의 자동 요청을 막았습니다. |
