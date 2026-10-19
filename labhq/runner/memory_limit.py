@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Any
 
 
@@ -54,18 +54,69 @@ def _physical_memory_bytes() -> int:
         return 0
 
 
-def _cgroup_memory_bytes() -> int:
-    for path in (Path("/sys/fs/cgroup/memory.max"),
-                 Path("/sys/fs/cgroup/memory/memory.limit_in_bytes")):
-        try:
-            # Do not use Path.read_text here: callers that forbid task-artifact reads
-            # monkeypatch that API, while this is runner host metadata.
-            with open(path, encoding="ascii") as stream:
-                value = stream.read().strip()
-            if value != "max" and int(value) > 0:
-                return int(value)
-        except (OSError, UnicodeError, ValueError):
+def _read_cgroup_metadata(path: str) -> str:
+    try:
+        # Do not use Path.read_text: task-artifact read guards patch that API.
+        with open(path, encoding="utf-8", errors="surrogateescape") as stream:
+            return stream.read().strip()
+    except (OSError, UnicodeError, ValueError):
+        return ""
+
+
+def _cgroup_path(value: str) -> PurePosixPath | None:
+    # Parse Linux paths independently of the host OS (also used by fixture tests).
+    if not value.startswith("/") or value.startswith("//") or "\0" in value:
+        return None
+    if any(part in {".", ".."} for part in value.split("/")):
+        return None
+    return PurePosixPath(value)
+
+
+def _v2_memory_paths():
+    membership = next((line[3:] for line in _read_cgroup_metadata("/proc/self/cgroup").splitlines()
+                       if line.startswith("0::")), "")
+    current = _cgroup_path(membership)
+    if current is None:
+        return
+    for line in _read_cgroup_metadata("/proc/self/mountinfo").splitlines():
+        left, separator, right = line.partition(" - ")
+        if not separator or right.split()[:1] != ["cgroup2"]:
             continue
+        fields = left.split()
+        if len(fields) < 6:
+            continue
+        # mountinfo escapes spaces, tabs, newlines and backslashes as octal.
+        root, mount = (_cgroup_path(re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), field))
+                       for field in fields[3:5])
+        if root is None or mount is None:
+            continue
+        try:
+            directory = mount / current.relative_to(root)
+        except ValueError:
+            continue  # an unrelated subtree bind mount, not this process's cgroup
+        while True:
+            yield str(directory / "memory.max")
+            if directory == mount:
+                break  # never interpret filesystem parents as cgroup ancestors
+            directory = directory.parent
+
+
+def _memory_ceiling(path: str) -> int:
+    value = _read_cgroup_metadata(path)
+    try:
+        return max(0, int(value)) if value != "max" else 0
+    except ValueError:
+        return 0
+
+
+def _cgroup_memory_bytes() -> int:
+    limits = [value for path in _v2_memory_paths() if (value := _memory_ceiling(path)) > 0]
+    if limits:
+        return min(limits)
+    # Preserve fixed-root v2 and v1 support when proc metadata or limits are unavailable.
+    for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        if value := _memory_ceiling(path):
+            return value
     return 0
 
 
