@@ -149,5 +149,5 @@ def test_pdf_over_configured_50_mb_is_printed_once_without_shrinking(tmp_path, m
 
 def test_pdf_fits_tall_figures_without_resampling_and_invalidates_old_cache():
     assert "max-height: 220mm" in CSS
-    assert RENDER_VERSION == "5"
+    assert RENDER_VERSION == "6"
     assert GitHubSettings().edition_pdf_max_mb is None
