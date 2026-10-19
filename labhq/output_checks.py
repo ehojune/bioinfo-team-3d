@@ -44,6 +44,9 @@ PMID = re.compile(r"\bPMID\s*[:=]?\s*(\d+)\b", re.IGNORECASE)
 PUBMED_URL = re.compile(r"(?:pubmed\.ncbi\.nlm\.nih\.gov|ncbi\.nlm\.nih\.gov/pubmed)/(\d+)", re.IGNORECASE)
 DOI = re.compile(r"\b10\.\d{4,9}/[-._;()/:A-Z0-9]+", re.IGNORECASE)
 DOI_VALUE = re.compile(r"10\.\d{1,9}/[-._;()/:A-Z0-9]+", re.IGNORECASE)  # old records allowed short registrants
+OPENALEX = re.compile(
+    r"(?:https?://(?:api\.)?openalex\.org/(?:works/)?|\bOpenAlex\s*[:=]\s*)(W\d+)\b", re.IGNORECASE)
+OPENALEX_VALUE = re.compile(r"(?:https?://(?:api\.)?openalex\.org/(?:works/)?)?(W\d+)", re.IGNORECASE)
 PAPER_ALIAS_SEPARATOR = "|"  # not valid in the identifiers above; old one-identifier keys remain valid
 PAPER_ID_ORDER = {"PMID": 0, "PMCID": 1, "DOI": 2, "OpenAlex": 3, "source": 4, "input": 5}
 DISCOVERY_TOOLS = frozenset({"openalex_works", "citation_chase", "preprints"})
@@ -137,6 +140,9 @@ def _normal_named_paper_id(scheme: Any, value: Any) -> str | None:
         raw = re.sub(r"^(?:doi\s*[:=]?\s*|https?://(?:dx\.)?doi\.org/)", "", raw, flags=re.IGNORECASE)
         raw = raw.rstrip(".,;")
         return f"DOI:{raw.casefold()}" if DOI_VALUE.fullmatch(raw) else None
+    if kind == "openalex":
+        match = OPENALEX_VALUE.fullmatch(raw)
+        return f"OpenAlex:{match.group(1).upper()}" if match else None
     return None
 
 
@@ -170,6 +176,9 @@ def _paper_key(identifiers: set[str]) -> str:
 def _answer_paper_ids(answer: Mapping[str, Any], fallback: Any) -> set[str]:
     identifiers = {paper_id for scheme in ("pmid", "pmcid", "doi")
                    if (paper_id := _normal_named_paper_id(scheme, answer.get(scheme)))}
+    openalex = _normal_named_paper_id("openalex", answer.get("openalex_id"))
+    if openalex:
+        identifiers.add(openalex)
     if identifiers:
         return identifiers
     normal_fallback = _normal_paper_input(fallback)
@@ -184,9 +193,6 @@ def _candidate_paper_ids(candidate: Any) -> set[str]:
     if not isinstance(candidate, Mapping):
         return set()
     identifiers = _answer_paper_ids(candidate, None)
-    openalex = candidate.get("openalex_id")
-    if isinstance(openalex, str) and openalex.strip():
-        identifiers.add(f"OpenAlex:{openalex.strip()[:100]}")
     source = candidate.get("source")
     if not identifiers and isinstance(source, Mapping) and source.get("code") and source.get("id"):
         identifiers.add(f"source:{str(source['code'])[:20]}:{str(source['id'])[:80]}")
@@ -306,7 +312,7 @@ def literature_ledger(root: Path) -> dict[str, Any]:
                     identifiers = _candidate_paper_ids(candidate)
                     if identifiers:
                         candidates.append(identifiers)
-    candidate_groups = _paper_groups(candidates)
+    candidate_groups = _paper_groups(candidates, limit=None)
     selected_groups = _paper_groups(selected)
     unread_groups: list[tuple[set[str], str]] = []
     for identifiers, reason in unread:
@@ -350,10 +356,11 @@ def _source_paper_ids(source: Any) -> set[str]:
         ids.update(f"PMID:{match}" for match in PUBMED_URL.findall(value))
         ids.update(f"PMCID:{match.upper()}" for match in PMCID.findall(value))
         ids.update(f"DOI:{match.rstrip('.,;').lower()}" for match in DOI.findall(value))
+        ids.update(f"OpenAlex:{match.upper()}" for match in OPENALEX.findall(value))
     return ids
 
 
-def _paper_groups(identifier_sets: Iterable[set[str]]) -> list[set[str]]:
+def _paper_groups(identifier_sets: Iterable[set[str]], *, limit: int | None = MAX_PAPERS) -> list[set[str]]:
     """Merge identifiers that co-occur on one evidence row, so PMID plus DOI still counts as one paper."""
     groups: list[set[str]] = []
     for identifiers in identifier_sets:
@@ -361,7 +368,7 @@ def _paper_groups(identifier_sets: Iterable[set[str]]) -> list[set[str]]:
             continue
         overlap = [index for index, group in enumerate(groups) if group & identifiers]
         if not overlap:
-            if len(groups) < MAX_PAPERS:
+            if limit is None or len(groups) < limit:
                 groups.append(set(identifiers))
             continue
         merged = set(identifiers)
@@ -455,7 +462,7 @@ def literature_ledger_line(steps: Iterable[Mapping[str, Any]], results: Mapping[
                 _merge_access_group(access, identifiers, level)
     if not candidate_sets and not selected_sets:
         return None
-    candidates = _paper_groups(candidate_sets)
+    candidates = _paper_groups(candidate_sets, limit=None)
     selected = _paper_groups(selected_sets)
     papers = _conclusion_papers(ledgers, unsupported, refused)
     counts = {level: sum(level == found for _aliases, found in access) for level in LEVELS}

@@ -164,6 +164,18 @@ def _oa_location(value: object, *, openalex: bool = False) -> dict | None:
     return compact or None
 
 
+def _openalex_oa_locations(record: dict) -> list[dict]:
+    """Normalized legal-copy candidates; closed locations are never requested."""
+    locations = []
+    for row in record.get("locations") or []:
+        if not isinstance(row, dict) or row.get("is_oa") is not True:
+            continue
+        location = _oa_location(row, openalex=True)
+        if location:
+            locations.append(location)
+    return locations
+
+
 def _openalex_candidate(record: dict) -> dict:
     ids = record.get("ids") if isinstance(record.get("ids"), dict) else {}
     openalex_id = _url_tail(record.get("id"), "openalex.org/")
@@ -317,6 +329,11 @@ def _pdf_text(data: bytes) -> str:
     text = " ".join(" ".join(pieces).split())
     if not text:
         raise ValueError("PDF에서 텍스트를 추출하지 못했습니다")
+    compact = "".join(text.split())
+    folded = text.casefold()
+    sections = sum(term in folded for term in ("introduction", "method", "result", "discussion", "references"))
+    if len(compact) < 1000 or sections < 2:
+        raise ValueError("PDF fallback이 논문 본문 구조를 충분히 확인하지 못했습니다")
     return text
 
 
@@ -927,11 +944,12 @@ class LiteratureAnnotator(Annotator):
             if response.status_code == 200:
                 records = response.json().get("results") or []
                 if records:
-                    candidate = _openalex_candidate(records[0])
+                    record = records[0]
+                    candidate = _openalex_candidate(record)
                     state["oa_known"] = state["oa_known"] or bool(candidate.get("is_oa"))
-                    location = candidate.get("best_oa_location")
-                    if isinstance(location, dict):
-                        locations.append({"provider": "OpenAlex", **location})
+                    for location in [candidate.get("best_oa_location"), *_openalex_oa_locations(record)]:
+                        if isinstance(location, dict):
+                            locations.append({"provider": "OpenAlex", **location})
             else:
                 temporary.append(f"OpenAlex 조회 HTTP {response.status_code}")
         except LookupFailed as exc:

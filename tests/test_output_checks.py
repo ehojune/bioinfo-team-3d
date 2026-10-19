@@ -152,6 +152,20 @@ def test_literature_ledger_keeps_found_false_failure_reason(tmp_path):
     assert literature_ledger(work)["unread"] == {"DOI:10.1000/outside": "access_denied"}
 
 
+def test_literature_ledger_does_not_truncate_two_citation_directions(tmp_path):
+    work = tmp_path / "work"
+    backward = [{"openalex_id": f"W{number}"} for number in range(1, 1001)]
+    forward = [{"openalex_id": "W1001"}, {"openalex_id": "W1002"}]
+    _fulltext_record(work, "chase", [{"input": "PMID:1", "answer": {
+        "backward": {"candidates": backward}, "forward": {"candidates": forward},
+    }}], tool="citation_chase")
+
+    ledger = literature_ledger(work)
+    assert len(ledger["candidate_ids"]) == 1002
+    line = literature_ledger_line([{"id": "s1"}], {"s1": {"literature_ledger": ledger}}, {})
+    assert line.startswith("문헌 접근 실패 원장(서로 다른 분모): 후보 1002편")
+
+
 def test_literature_ledger_line_has_four_exact_denominators_and_unread_key_papers():
     ledgers = {"s1": {
         "claims": [{"id": "c1", "status": "supported"}],
@@ -231,6 +245,23 @@ def test_conclusion_literature_reads_structured_paper_ids():
 
     assert conclusion_literature_line([{"id": "s1"}], {}, ledgers) == (
         "결론 근거 논문 3편: 본문 0편·초록 0편·서지만 0편·조회 기록 없음 3편. "
+        "결론 claim에 연결된 논문만 센 값이며, 'fulltext로 조회한 논문 전체'와 분모가 다르다"
+    )
+
+
+def test_conclusion_literature_reads_openalex_ids_and_urls():
+    ledgers = {"s1": {
+        "claims": [{"id": "c1", "status": "supported"}],
+        "evidence": [
+            {"id": "structured", "source": {"id_scheme": "openalex", "id_value": "W123"}},
+            {"id": "url", "source": {"uri": "https://openalex.org/W456"}},
+        ],
+        "links": [{"claim_id": "c1", "evidence_id": evidence_id, "relation": "supports"}
+                  for evidence_id in ("structured", "url")],
+    }}
+
+    assert conclusion_literature_line([{"id": "s1"}], {}, ledgers) == (
+        "결론 근거 논문 2편: 본문 0편·초록 0편·서지만 0편·조회 기록 없음 2편. "
         "결론 claim에 연결된 논문만 센 값이며, 'fulltext로 조회한 논문 전체'와 분모가 다르다"
     )
 

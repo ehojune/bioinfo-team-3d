@@ -77,6 +77,11 @@ def search_answer(records):
     return httpx.Response(200, json={"version": "6.9", "hitCount": len(records), "resultList": {"result": records}})
 
 
+def complete_fallback_pdf(label="Repository full text"):
+    body = f"Introduction {label}. Methods " + ("complete study body " * 80) + " Results complete findings."
+    return b"%PDF-1.4\nBT (" + body.encode("ascii") + b") Tj ET\n%%EOF"
+
+
 def by_query(table, xml=JATS):
     """Search answers keyed by the query string; fullTextXML answers `xml` for PMC999 and 404 for anything else."""
     def handler(request):
@@ -385,7 +390,7 @@ async def test_unpaywall_without_contact_email_is_explicitly_disabled_and_does_n
 
 
 async def test_fulltext_uses_a_legal_oa_pdf_after_europe_pmc_has_no_body(tmp_path):
-    pdf = b"%PDF-1.4\n1 0 obj <<>> stream\nBT (Open access full text from the repository.) Tj ET\nendstream\nendobj\n%%EOF"
+    pdf = complete_fallback_pdf("Open access full text from the repository")
 
     def handler(request):
         if request.url.host == "www.ebi.ac.uk":
@@ -411,8 +416,13 @@ async def test_fulltext_uses_a_legal_oa_pdf_after_europe_pmc_has_no_body(tmp_pat
     assert "Open access full text from the repository." in text and "access_level: full_text" in text
 
 
+def test_pdf_fallback_rejects_a_single_partial_literal():
+    with pytest.raises(ValueError, match="PDF.*본문 구조"):
+        lit._pdf_text(b"%PDF-1.4\nBT (Cover title only.) Tj ET\n%%EOF")
+
+
 async def test_fulltext_tries_oa_providers_when_europe_pmc_has_no_record(tmp_path):
-    pdf = b"%PDF-1.4\nBT (Open access paper outside Europe PMC.) Tj ET\n%%EOF"
+    pdf = complete_fallback_pdf("Open access paper outside Europe PMC")
 
     def handler(request):
         if request.url.host == "www.ebi.ac.uk":
@@ -434,6 +444,34 @@ async def test_fulltext_tries_oa_providers_when_europe_pmc_has_no_record(tmp_pat
     row = (await annotator.fulltext(["10.1000/outside"]))["results"][0]
     assert row["access_level"] == "full_text" and row["doi"] == "10.1000/outside"
     assert any(call.url.host == "api.unpaywall.org" for call in calls)
+
+
+async def test_fulltext_tries_alternate_openalex_oa_locations(tmp_path):
+    def handler(request):
+        if request.url.host == "www.ebi.ac.uk":
+            return search_answer([record("123", None, "Y", None)])
+        if request.url.host == "api.openalex.org":
+            return httpx.Response(200, json={"results": [{
+                "id": "https://openalex.org/W1", "open_access": {"is_oa": True},
+                "best_oa_location": {"is_oa": True, "pdf_url": "http://93.184.216.34/best.pdf"},
+                "locations": [
+                    {"is_oa": True, "pdf_url": "http://93.184.216.34/best.pdf"},
+                    {"is_oa": True, "pdf_url": "http://93.184.216.34/repository.pdf",
+                     "source": {"display_name": "Repository"}},
+                    {"is_oa": False, "pdf_url": "http://93.184.216.34/closed.pdf"},
+                ],
+            }]})
+        if request.url.path == "/best.pdf":
+            return httpx.Response(403)
+        if request.url.path == "/repository.pdf":
+            return httpx.Response(200, content=complete_fallback_pdf(), headers={"content-type": "application/pdf"})
+        raise AssertionError(request.url)
+
+    annotator, calls = make(handler, tmp_path)
+    row = (await annotator.fulltext(["123"]))["results"][0]
+    assert row["access_level"] == "full_text"
+    assert row["oa_copy"]["url"] == "http://93.184.216.34/repository.pdf"
+    assert not any(call.url.path == "/closed.pdf" for call in calls)
 
 
 @pytest.mark.parametrize("blocked_at", ["initial", "redirect"])
@@ -482,7 +520,7 @@ async def test_fulltext_uses_a_new_cache_release_after_oa_fallback(tmp_path, mon
 
 
 async def test_fulltext_cache_key_tracks_unpaywall_activation(tmp_path):
-    pdf = b"%PDF-1.4\nBT (Enabled provider copy.) Tj ET\n%%EOF"
+    pdf = complete_fallback_pdf("Enabled provider copy")
 
     def handler(request):
         if request.url.host == "www.ebi.ac.uk":
