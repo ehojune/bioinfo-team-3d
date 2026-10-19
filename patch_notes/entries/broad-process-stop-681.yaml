@@ -6,3 +6,6 @@ rows:
 - sha: f092389
   at: '2026-10-19 23:42'
   text: Bash kill의 signal 옵션과 명시 PID를 이름 종료로 오인하지 않도록 구분한다. 마지막 두 문자열 회귀는 CI 검증에 맡긴다.
+- sha: 0db50c6
+  at: '2026-10-19 23:48'
+  text: PowerShell kill alias의 literal Name 약어를 거부하고 Bash 숫자 signal PID 종료를 유지한다. 문자열 guard 회귀 53개를 확인했다.
