@@ -5,6 +5,7 @@
 - [README 근거·한계](readme-evidence.md): 네 카드와 비교표의 상세 인용·수치.
 - [이전 HANDOFF 큐·결정](handoff-history-2026-10-19.md): 2026-10-19에 보존한 옛 현황표.
 - [문서 일치 점검](docs-refresh-2026-10-19.md): 코드 근거·갱신 범위·전후 글자 수.
+- [실행 보고서·파이프라인 모식도](run-report-756.md): 값 출처·Nextflow 수집 규칙·확인 범위(#756).
 
 - [AlphaGenome 변이 점수](alphagenome-variant.md): SDK 계약·quantile 해석·API 이용 조건(#621 B).
 

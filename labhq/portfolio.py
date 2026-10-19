@@ -26,6 +26,9 @@ from .report_contract import (ReportAsset, ReportPackage, build_report_package, 
                               render_report_front, research_question, with_report_front)
 from .report_markdown import READER_FILENAMES, render_marker_message, rendered_markers
 from .request_bundle import _POSIX_ABS, _WINDOWS_ABS
+from . import run_report
+from .run_report import nextflow_kind
+from .run_report import step_flow as _step_flow
 
 
 # The one private-path rule of the edition (result_storage uses it too). `./data/x` and `../data/x` are relative paths:
@@ -73,7 +76,6 @@ _TABLE_SUFFIXES = {".tsv", ".csv", ".xlsx", ".xls"}
 _AGGREGATE_TEXT_SUFFIXES = {".tsv", ".csv", ".json", ".txt", ".html"}
 _INTERNAL_DEFAULT_SUFFIXES = {".md", ".svg", ".py", ".r", ".sh"}
 _CODE_SUFFIXES = {".py", ".r", ".sh"}
-_NEXTFLOW_NAMES = {"report.html", "timeline.html", "trace.txt"}
 _RUNNER_EXECUTION_LOCATION_FIELDS = frozenset(
     {field.name for field in fields(RunnerPathFields)}
     & {
@@ -928,17 +930,6 @@ def _branch_rows(req: dict, specs: list[dict[str, Any]],
     return rows
 
 
-def _step_flow(step: Mapping[str, Any], *, first: bool, terminal: bool) -> str:
-    text = f"{step.get('id', '')} {step.get('instruction', '')}".casefold()
-    if re.search(r"(?:^|[_\s-])qc(?:$|[_\s-])|품질|검토|review|check", text):
-        return "QC"
-    if terminal or re.search(r"보고|report|종합|결론|result", text):
-        return "결과"
-    if first or re.search(r"입력|자료|manifest|download|verify|source", text):
-        return "입력"
-    return "방법"
-
-
 def _markdown_link_from(document: str, target: str, label: str) -> str:
     relative = posixpath.relpath(target, posixpath.dirname(document) or ".")
     return f"[{label}]({quote(relative, safe='/')})"
@@ -1206,18 +1197,23 @@ def internal_data_steps(req: dict, settings) -> set[str] | None:
 def source_uses_internal_data(name: str, req: dict, settings,
                               step_scope: set[str] | None = None) -> bool:
     """Classify one output by its source step, with request-wide fallback for missing provenance."""
+    return step_uses_internal_data(_source_step(name, req), req, settings, step_scope)
+
+
+def step_uses_internal_data(step_id: str | None, req: dict, settings,
+                            step_scope: set[str] | None = None) -> bool:
+    """One step's rule: an unknown step, or a request without step-level provenance, counts as internal."""
     if not request_uses_internal_data(req, settings):
         return False
     step_scope = internal_data_steps(req, settings) if step_scope is None else step_scope
     if step_scope is None:
         return True
-    source_step = _source_step(name, req)
     plan = req.get("plan") if isinstance(req.get("plan"), Mapping) else {}
     known_steps = {str(step.get("id")) for step in plan.get("steps") or []
                    if isinstance(step, Mapping) and step.get("id")}
-    if source_step is None or source_step not in known_steps:
+    if step_id is None or step_id not in known_steps:
         return True
-    return source_step in step_scope
+    return step_id in step_scope
 
 
 def _decisions_document(req: dict, decisions: Iterable[dict]) -> str:
@@ -1253,11 +1249,14 @@ def _costs_document(req: dict, tasks: Iterable[dict]) -> str:
     for task in tasks:
         if task.get("request_id") == req.get("id"):
             counts[str(task.get("agent_id") or (task.get("payload") or {}).get("agent_id") or "미확인")] += 1
-    lines = ["# 비용·직원 작업", "", f"- 요청 비용: ${float(req.get('cost_usd') or 0):.2f}", "",
+    cost = req.get("cost_usd")
+    shown = f"${float(cost):.2f}" if isinstance(cost, (int, float)) and not isinstance(cost, bool) else "기록 없음"
+    lines = ["# 비용·직원 작업", "", f"- 요청 비용: {shown}",
+             f"- 단계별 시작·종료·비용: [실행 보고서]({PurePosixPath(run_report.REPORT_FILE).name})", "",
              "| 직원 | 작업 수 |", "|---|---:|"]
     lines += [f"| {name} | {count} |" for name, count in sorted(counts.items())]
     if not counts:
-        lines.append("| 기록 없음 | 0 |")
+        lines.append("| 기록 없음 | - |")
     return "\n".join(lines) + "\n"
 
 
@@ -1476,7 +1475,8 @@ def _first_limit(report: str) -> str:
 def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_names: list[str],
             table_names: list[str], omitted_tables: list[Mapping[str, Any]],
             run_documents: Mapping[str, str], branch_rows: list[dict[str, str]] | None = None,
-            source_targets: Mapping[str, str] | None = None) -> str:
+            source_targets: Mapping[str, str] | None = None,
+            run: run_report.RunSummary | None = None) -> str:
     title = report.splitlines()[0].lstrip("#").strip() or "연구 결과"
     abstract = "figures/graphical_abstract.svg" if "figures/graphical_abstract.svg" in figure_names else None
     key = next((name for name in figure_names if name != abstract), None)
@@ -1503,6 +1503,8 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
         package.omissions["figures"] = "게시 가능한 대표 그림이 없습니다."
     if not package.tables:
         package.omissions["tables"] = "공개 가능한 결과표가 없습니다."
+    if run is not None:
+        run_report.add_to_package(package, run, "README.md")
     front = render_report_front(package, figures_as_images=True)
     for heading, value in (("질문", package.question), ("답", package.answer), ("한계", package.limitations)):
         front = front.replace(f"## {heading}\n\n{value}", f"## {heading}\n\n**{heading}: {value}**", 1)
@@ -1542,9 +1544,11 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
         lines.append("3. [재현 방법](run/reproduce.md) — 환경, 실행 명령과 입력 출처")
     if "run/task_record.md" in run_documents:
         lines.append("4. [작업 지시 기록](run/task_record.md) — 단계별 원래 작업 지시")
-    lines += ["5. [실행 기록](run/execution_record.md) — 요청, 결정, 비용과 Nextflow 기록",
-              "6. [출처](REFERENCES.md) — PMID, DOI, GEO와 URL",
-              "7. `code/`, `figures/`, `tables/` — 게시 가능한 코드·SVG·집계표", "",
+    if run is not None:
+        lines.append(f"5. [실행 보고서]({run_report.REPORT_FILE}) — 실행된 단계의 모식도, 타임라인과 Nextflow 보고서")
+    lines += ["6. [실행 기록](run/execution_record.md) — 요청, 결정과 비용",
+              "7. [출처](REFERENCES.md) — PMID, DOI, GEO와 URL",
+              "8. `code/`, `figures/`, `tables/` — 게시 가능한 코드·SVG·집계표", "",
               "## 저장소 지도", "", "```text", "README.md", "report/", "run/", "code/", "figures/", "tables/",
               *(["studies/               갈래별 코드·그림·표·단계 보고서"] if branch_rows else []),
               "docs/reference/", "REFERENCES.md", "DATA_AND_LICENSES.md", "```", "",
@@ -1720,6 +1724,24 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
     table_names: list[str] = []
     figure_names: list[str] = []
     reference_targets: dict[str, list[str]] = collections.defaultdict(list)
+    nextflow_targets: dict[str, dict[str, str]] = collections.defaultdict(dict)
+    withheld: list[str] = []
+
+    def add_nextflow(name: str, body: str | bytes, prefix: str) -> None:
+        """Copy one Nextflow run record unless it comes from internal data or keeps a private path after cleaning."""
+        step_id = _source_step(name, req) or "기타"
+        kind = nextflow_kind(name) or "report"
+        if source_internal(name):
+            withheld.append(f"{kind} — 내부 자료 단계의 Nextflow 기록이라 게시하지 않음")
+            return
+        text = body.decode("utf-8", errors="replace") if isinstance(body, bytes) else body
+        if _LOCAL_SCAN.search(text) or _PRIVATE_PATH.search(text):
+            withheld.append(f"{kind} — 개인 경로를 바꾸지 못해 넣지 않음")
+            return
+        target = _unique_target(prefix + "run/nextflow", name, used)
+        files[target] = body
+        source_targets[name] = target
+        nextflow_targets[step_id].setdefault(kind, target)
 
     for name, body in assets.items():
         path = PurePosixPath(name)
@@ -1742,12 +1764,8 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
             source_targets[name] = target
             reference_targets[branch_folder].append(target)
             track(name, target)
-        elif path.name in _NEXTFLOW_NAMES and "pipeline_info" in {part.casefold() for part in path.parts}:
-            if publish_file_allowed(name, body, internal=source_internal(name), declared=aggregate_tables):
-                target = _unique_target(prefix + "run/nextflow", name, used)
-                files[target] = body
-                source_targets[name] = target
-                track(name, target)
+        elif nextflow_kind(name):
+            add_nextflow(name, body, prefix)
         elif suffix in _TABLE_SUFFIXES:
             if not publish_file_allowed(name, body, internal=source_internal(name), declared=aggregate_tables):
                 omitted_tables.append(_omitted_table(
@@ -1775,6 +1793,10 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
         if _LITERATURE_OUTPUT.search(name.replace("\\", "/")) or PurePosixPath(name).suffix.lower() != ".svg":
             continue
         branch_folder = step_folders.get(_source_step(name, req) or "")
+        if nextflow_kind(name):
+            add_nextflow(name, _clean(body.decode("utf-8", errors="strict"), settings, req).encode("utf-8"),
+                         f"studies/{branch_folder}/" if branch_folder else "")
+            continue
         figure_folder = f"studies/{branch_folder}/figures" if branch_folder else "figures"
         target = ("figures/graphical_abstract.svg" if not branch_folder and
                   "graphical_abstract" in name.casefold() else _unique_target(figure_folder, name, used))
@@ -1803,6 +1825,11 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
     })
     if revision_history:
         files["run/revision_history.md"] = revision_history
+    run_summary, run_files = run_report.build(
+        req, hidden=lambda step_id: step_uses_internal_data(step_id, req, settings, step_scope),
+        scrub=lambda value: _clean(value, settings, req), nextflow=nextflow_targets, withheld=withheld)
+    files.update({name: (_clean(body, settings, req) if isinstance(body, str) else body)
+                  for name, body in run_files.items()})
     run_documents = dict(run_documents or {})
     if bundle is not None and (bundle / "semantic_report.md").is_file():
         run_documents["run/semantic_report.md"] = (bundle / "semantic_report.md").read_text(
@@ -1838,6 +1865,7 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
     report_package.tables = [ReportAsset(PurePosixPath(name).name, "../" + name) for name in table_names]
     report_package.reproduction = "../run/reproduce.md" if "run/reproduce.md" in files else ""
     report_package.execution_record = "../run/execution_record.md"
+    run_report.add_to_package(report_package, run_summary, "report/report.md")
     files["report/report.md"] = _clean(
         reader_markdown(with_report_front(report, report_package)), settings, req)
     readme_req = dict(req)
@@ -1845,7 +1873,7 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
         "<reference-path>", "참고 자료")
     readme = _plain_korean(_readme(
         readme_req, report, _step_rows(req, assets), figure_names, table_names, omitted_tables,
-        run_documents, branch_rows, source_targets))
+        run_documents, branch_rows, source_targets, run_summary))
     if check_document(readme)["status"] != "PASS":
         raise ValueError("README에 반드시 0이어야 하는 한국어 표현이 남았습니다.")
     files["README.md"] = _clean(readme, settings, req)

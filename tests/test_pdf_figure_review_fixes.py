@@ -80,7 +80,9 @@ async def test_cleaned_markdown_and_pdf_use_the_same_figure_set(tmp_path, monkey
     }
     assert {body for body in pdf_figures if not body.startswith(b"<svg")} == {
         body for body in markdown_figures if not body.startswith(b"<svg")}
-    assert sum(body.startswith(b"<svg") for body in pdf_figures) == 1
+    run_pictures = {(edition / name).read_bytes() for name in ("run/pipeline_diagram.svg", "run/run_timeline.svg")}
+    assert run_pictures <= pdf_figures  # the edition carries the run pictures the PDF shows (#756)
+    assert sum(body.startswith(b"<svg") for body in pdf_figures - run_pictures) == 1
     assert sum(body.startswith(b"<svg") for body in markdown_figures) == 1
 
 
