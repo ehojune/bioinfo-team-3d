@@ -1252,7 +1252,7 @@ class ResultStorage:
             note = ""
             if name is not None:
                 choice, note = await self._new_github_choice(rid, name.strip(), visibility)
-                if choice["repo"] == previous.get("repo"):
+                if await self._same_repository(choice["repo"], previous.get("repo")):
                     raise ValueError("새 저장소 이름이 지금 저장소와 같습니다. 같은 저장소에 새 판으로 올리려면 --name 없이 실행하세요.")
             else:
                 choice = {}
@@ -1267,6 +1267,32 @@ class ResultStorage:
             self.tasks[rid] = asyncio.create_task(self.finish(rid))
             return {"request_id": rid, "status": "rebuilding", "repo": saved.get("repo"),
                     "new_repository": bool(choice), "note": note}
+
+    async def _same_repository(self, new: str, current: str | None) -> bool:
+        """Whether a `--rebuild --name` target is the current repository (PR #777 review). A new edition goes to the
+        repository root, so an alias would overwrite the current repository's root files. GitHub names are
+        case-insensitive and a renamed repository still answers its old name, so the canonical `full_name` decides."""
+        if not current:
+            return False
+        if new.casefold() == current.casefold():
+            return True
+        gh = self.client()
+        if gh is None:
+            return False  # nothing can be uploaded without a token; the upload asks GitHub again
+        try:
+            found = (await gh.repo_info(new)).get("full_name") or new
+            if found.casefold() == current.casefold():
+                return True
+            existing = (await gh.repo_info(current)).get("full_name") or current
+        except GitHubHTTPError as exc:
+            if exc.status_code == 404:
+                return False  # no repository answers the new name (or the current one is gone): it is not the current one
+            raise ValueError(f"새 저장소가 지금 저장소와 다른지 GitHub에서 확인하지 못했습니다(HTTP {exc.status_code}). "
+                             "잠시 뒤 다시 실행하세요.") from None
+        except httpx.HTTPError:
+            raise ValueError("새 저장소가 지금 저장소와 다른지 GitHub에서 확인하지 못했습니다(연결 실패). "
+                             "잠시 뒤 다시 실행하세요.") from None
+        return found.casefold() == existing.casefold()
 
     def publish_cards(self, rid) -> list[str]:
         return [aid for aid, entry in self.hub.approvals.items()

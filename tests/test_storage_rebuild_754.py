@@ -4,11 +4,18 @@ import httpx
 import pytest
 
 from labhq import cli, result_storage
+from labhq.integrations.github import GitHubHTTPError
 from labhq.result_storage import place_rebuild_note, rebuild_note
 from labhq.settings import DataZone, Settings
 from tests.test_edition_quality_607 import publish_card, redraft_hub
 
 EDITOR = {"version": "0.5.0", "commit": "abc1234"}
+
+
+@pytest.fixture(autouse=True)
+def _no_git(monkeypatch):
+    """Publishing writes the run record, whose environment names the loaded commit with `git rev-parse`: no process here."""
+    monkeypatch.setattr("labhq.integrations.rounds._git_commit", lambda: "abc1234" + "0" * 33)
 
 
 async def published(tmp_path, monkeypatch, replies, app=False):
@@ -149,6 +156,83 @@ async def test_rebuild_refuses_and_changes_nothing(tmp_path, monkeypatch):
         await service.redraft("req_test")
     with pytest.raises(ValueError, match="--rebuild"):
         await service.republish("req_test")
+
+
+class Repos:
+    """GitHub's repository lookup: names are case-insensitive and a renamed repository still answers its old name."""
+
+    def __init__(self, canonical):
+        self.canonical, self.asked = canonical, []
+
+    async def repo_info(self, repo):
+        self.asked.append(repo)
+        for alias, full_name in self.canonical.items():
+            if alias.casefold() == repo.casefold():
+                return {"full_name": full_name}
+        raise GitHubHTTPError("GET", f"/repos/{repo}", httpx.Response(404, request=httpx.Request("GET", "http://x")))
+
+
+@pytest.mark.parametrize("current, name, canonical", [
+    ("Owner/Study", "study", {}),  # a case-only alias, without a token to ask GitHub
+    ("owner/old-name", "study-v2", {"owner/old-name": "owner/study-v2", "owner/study-v2": "owner/study-v2"}),  # renamed
+])
+async def test_rebuild_refuses_a_new_name_that_is_the_current_repository(tmp_path, monkeypatch, current, name, canonical):
+    """`mode: new` uploads to the repository root, so an alias of the current repository would overwrite its root files."""
+    monkeypatch.setattr(result_storage, "editor_edition", lambda: dict(EDITOR))
+    hub, editor, _ = redraft_hub(tmp_path, monkeypatch, [])
+    service, saved = hub.result_storage, hub.requests["req_test"]["result_storage"]
+    saved.update(repo=current, status="published")
+    snapshot = dict(saved)
+    repos = Repos(canonical)
+    monkeypatch.setattr(service, "client", lambda: repos if canonical else None)
+
+    async def choice(rid, new, visibility):
+        return {"mode": "new", "repo": f"owner/{new}", "visibility": visibility, "status": "selected"}, ""
+
+    monkeypatch.setattr(service, "_new_github_choice", choice)
+    with pytest.raises(ValueError, match="지금 저장소와 같습니다"):
+        await service.rebuild("req_test", name)
+    assert saved == snapshot and editor.await_count == 0 and "req_test" not in service.tasks
+
+
+async def test_rebuild_to_a_really_new_repository_asks_github_once_and_goes_on(tmp_path, monkeypatch):
+    monkeypatch.setattr(result_storage, "editor_edition", lambda: dict(EDITOR))
+    hub, editor, _ = redraft_hub(tmp_path, monkeypatch, ["# 새 저장소"])
+    service, saved = hub.result_storage, hub.requests["req_test"]["result_storage"]
+    saved.update(repo="owner/study", status="published")
+    repos = Repos({"owner/study": "owner/study"})
+    monkeypatch.setattr(service, "client", lambda: repos)
+
+    async def choice(rid, new, visibility):
+        return {"mode": "new", "repo": f"owner/{new}", "visibility": visibility, "status": "selected"}, ""
+
+    monkeypatch.setattr(service, "_new_github_choice", choice)
+    assert (await service.rebuild("req_test", "study-v2"))["repo"] == "owner/study-v2"
+    assert repos.asked == ["owner/study-v2"]  # the new name does not exist, so the current one is not asked
+    await publish_card(hub)
+    await service.close()
+
+
+async def test_rebuild_refuses_when_github_cannot_say_whether_the_new_name_is_the_current_repository(tmp_path, monkeypatch):
+    monkeypatch.setattr(result_storage, "editor_edition", lambda: dict(EDITOR))
+    hub, editor, _ = redraft_hub(tmp_path, monkeypatch, [])
+    service, saved = hub.result_storage, hub.requests["req_test"]["result_storage"]
+    saved.update(repo="owner/study", status="published")
+    snapshot = dict(saved)
+
+    class Down:
+        async def repo_info(self, repo):
+            raise GitHubHTTPError("GET", f"/repos/{repo}", httpx.Response(502, request=httpx.Request("GET", "http://x")))
+
+    monkeypatch.setattr(service, "client", lambda: Down())
+
+    async def choice(rid, new, visibility):
+        return {"mode": "new", "repo": f"owner/{new}", "visibility": visibility, "status": "selected"}, ""
+
+    monkeypatch.setattr(service, "_new_github_choice", choice)
+    with pytest.raises(ValueError, match="확인하지 못했습니다"):
+        await service.rebuild("req_test", "study-v2")
+    assert saved == snapshot and "req_test" not in service.tasks
 
 
 def test_the_rebuild_line_sits_under_the_title_once():
