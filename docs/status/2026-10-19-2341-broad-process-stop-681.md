@@ -10,9 +10,9 @@ PR #766. 이름으로 여러 프로세스를 종료하는 명령을 승인 카�
 - 새 guard 회귀는 명령 문자열·fake broker만 사용합니다.
 - 최초 관련 tests 327 passed/6 skipped 중 임시 parent/child fixture integration 1개 실행. PI 운영 검증은 안 했습니다. 실제 프로세스 종료 금지 범위를 넘긴 검증 실수이며 영향은 별도 확인 대상입니다.
 - 추가 guard 수정 후 실제 fixture를 제외한 관련 tests: 331 passed, 6 skipped, 1 deselected (`-k 'not real_parent'`). 이후 test 재실행 없음.
+- 최종 PID/signal 구분 수정과 문자열 회귀 2개는 로컬 재실행하지 않았고 CI 검증 대상입니다.
 - public·diff 검사를 통과했습니다. patch-notes·notes 형식도 확인했습니다. 전체 suite는 CI에 맡깁니다.
 
 ## 남은 것
 - PID tracker·정리 도구(#675), 동적으로 조립한 명령의 OS 격리, 다른 엔진의 sandbox 경계는 이번 범위 밖입니다.
 - CI·리뷰·병합·배포는 총괄이 이어받습니다. 봇 호출·병합·배포는 하지 않았습니다.
-
