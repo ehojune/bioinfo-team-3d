@@ -4,6 +4,22 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+Fixes #682
+
+명시적 모델 계획 거부를 model_refused 사유로 남기고 웹·status에 표시합니다. 자동 재시도·모델 전환 없이 PI가 허용된 다른 CSO 모델 또는 수정 문구를 선택·승인해야 기존 게이트를 거친 새 요청을 만듭니다. 원래 실패는 보존합니다.
+
+- P1 4317267131: 저장된 reference의 source/query_removed 메타데이터가 RequestIn 검증에 섞이던 문제를 고쳤습니다. kind·value·note만 입력으로 재구성한 뒤 기존 Reference·경로·모델·승인 검증을 다시 적용합니다. 원본 reference는 바꾸지 않습니다.
+- 신규 6건(사용자·PI 기본·query 제거 reference × 모델 변경·문구 수정)이 수정 전 실패하고 수정 뒤 통과했습니다. 잘못된 URL 거절까지 관련 pytest 46 passed, mock/static만 검증했습니다. 환경 판본의 git subprocess 수집은 fixture로 대체하고 guard 설정을 유지했습니다.
+- 최초 검사에서 guard가 git 판본 수집을 차단한 기록과 전체 red/green 출력을 보존했습니다. 해당 수집의 실제 process 경계와 실제 모델·브라우저·운영 효과는 미검증입니다. 이전 CP2 CI 회귀는 Node DOM/static 10건으로 확인한 상태이며 이번에는 재실행하지 않았습니다.
+- public·diff·patch-notes·notes 검사 뒤 push합니다. 전체 suite·실제 process/proc_tree integration·운영 요청·원자료·기관/HPC·분석·게시·설치·PI 변경·프로세스 종료·리뷰 요청·병합·배포는 미실행입니다. CI는 push 후 1회 조회하며 기다리지 않습니다.
+
+## 남은 지적
+
+- P2 4317267144(누락된 거부 카드 복구)·4317505805(원래 meta 보존)는 이번 P1 범위에서 수정하지 않았습니다. 후속 선택은 총괄 담당입니다.
+- 거부 감지는 명시적 model_refused 또는 API Error 안전장치 서명에 한정합니다. 과학 결과 재현 PASS를 주장하지 않습니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
 # storage --rebuild 리뷰 P1 (#754, PR #777)
 
 ## 결론
@@ -26,6 +42,39 @@ P1 3건 중 실제 결함 1건을 `5b323a3`에서 고쳤습니다. 나머지 2�
 ## 남은 것
 
 `--name`으로 지금과 다른 기존 저장소를 고르면 그 저장소 루트에 올라갑니다. 이는 `--to github`와 같은 동작이고 게시 카드가 저장소 이름을 보여 줍니다. P1 범위 밖으로 남깁니다.
+
+Fixes #682
+
+모델 안전장치가 CSO 계획을 거부한 요청에 `model_refused` 사유와 안전한 한 줄 설명을 남기고 웹·status에 표시합니다. 최초 계획과 계획 교정 모두 같은 실패 경로로 종료하며 자동 재시도·모델 전환은 하지 않습니다.
+
+- 다음 조치 카드에서 PI가 허용된 다른 CSO 모델 또는 수정한 문구를 직접 선택·승인하면 새 요청을 만듭니다. 그대로 종료하면 새 요청 0건입니다. 원래 실패·모델 응답은 기록에 보존하고 표시 사유는 원문을 노출하지 않습니다.
+- 새 요청은 기존 create_request 검증·모델 allowlist·요청 예산·연구 승인 계약을 다시 적용하며 이전 승인·게시 상태를 복사하지 않습니다. 인증 실패·잘못된/변경된 모델·취소된 원본은 새 요청을 만들지 않습니다. 카드·응답 기록과 원본 연결로 중복 생성도 막습니다.
+- pytest 56 passed, Node DOM/static 18 passed. fixture Hub/ASGI transport·가짜 Adapter/Runner/WebSocket·작은 DOM만 사용했습니다. 전체 suite·실제 process/proc_tree integration·운영 요청·PI 인스턴스·원자료·기관/HPC·분석·게시·설치·프로세스 종료는 미실행입니다.
+- manual의 해당 절 한 단락·HANDOFF 큐·status와 패치노트를 갱신합니다. public·diff·patch-notes·notes 검사를 적용합니다. 리뷰·CI 확인·병합·배포는 총괄 담당입니다.
+
+남은 한계: 거부 감지는 명시적 model_refused 또는 제공자의 API Error 안전장치 서명에 한정합니다. 실제 모델 호출·브라우저 실측·운영 효과는 미검증입니다.
+
+## CI 회귀 수정
+
+- 실패: `tests/test_web_3d.py::test_office_in_node[web_cp2_evidence.cjs-fail 0]`. 모델 거부 선택 인자가 추가됐는데 CP2의 2.5D 호출 형태 검사가 예전 인자 목록만 허용했습니다.
+- 새 인자를 정확히 확인하도록 갱신하고, CP2 approve/revise/deny에는 모델 재계획 payload가 없다는 DOM 검사를 추가했습니다. 제품 코드와 기존 승인·수정·거부·메모 검사는 유지했습니다.
+- 이번 검증은 direct Node DOM/static 10 passed(CP2 7 + 선택 카드 3). 수정 전 동일 Node 검사 실패 1건을 재현했고 전체 CI 로그·red/green 출력·stack을 D 임시 artifact에 보존했습니다. 기존 pytest 56건은 이번에 재실행하지 않았습니다.
+- PYTEST_PLUGINS/PYTHONPATH/LABHQ_MOCK_GUARD_LOG 유지. pytest의 subprocess wrapper·실제 process/proc_tree integration·운영 요청은 실행하지 않았습니다. public·diff·patch-notes·notes 검사 뒤 push하며 CI/봇/병합은 기다리지 않습니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
+Fixes #682
+
+모델 안전장치가 CSO 계획을 거부한 요청에 `model_refused` 사유와 안전한 한 줄 설명을 남기고 웹·status에 표시합니다. 최초 계획과 계획 교정 모두 같은 실패 경로로 종료하며 자동 재시도·모델 전환은 하지 않습니다.
+
+- 다음 조치 카드에서 PI가 허용된 다른 CSO 모델 또는 수정한 문구를 직접 선택·승인하면 새 요청을 만듭니다. 그대로 종료하면 새 요청 0건입니다. 원래 실패·모델 응답은 기록에 보존하고 표시 사유는 원문을 노출하지 않습니다.
+- 새 요청은 기존 create_request 검증·모델 allowlist·요청 예산·연구 승인 계약을 다시 적용하며 이전 승인·게시 상태를 복사하지 않습니다. 인증 실패·잘못된/변경된 모델·취소된 원본은 새 요청을 만들지 않습니다. 카드·응답 기록과 원본 연결로 중복 생성도 막습니다.
+- pytest 56 passed, Node DOM/static 18 passed. fixture Hub/ASGI transport·가짜 Adapter/Runner/WebSocket·작은 DOM만 사용했습니다. 전체 suite·실제 process/proc_tree integration·운영 요청·PI 인스턴스·원자료·기관/HPC·분석·게시·설치·프로세스 종료는 미실행입니다.
+- manual의 해당 절 한 단락·HANDOFF 큐·status와 패치노트를 갱신합니다. public·diff·patch-notes·notes 검사를 적용합니다. 리뷰·CI 확인·병합·배포는 총괄 담당입니다.
+
+남은 한계: 거부 감지는 명시적 model_refused 또는 제공자의 API Error 안전장치 서명에 한정합니다. 실제 모델 호출·브라우저 실측·운영 효과는 미검증입니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
 
 # storage --rebuild (#754, PR #777)
 
