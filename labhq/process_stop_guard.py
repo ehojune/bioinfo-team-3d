@@ -68,6 +68,7 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
             groups[-1].append(word)
     process_pipeline = False
     pipe_continuation = False
+    block_pipeline: list[bool] = []
     input_expression: list[bool] = []
     input_pending = False
     for group in groups:
@@ -75,13 +76,21 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
             continue
         if _SEPARATOR.fullmatch(group[0]):
             separator = group[0]
-            if separator == "(":
+            if separator in {"(", "{"}:
                 input_expression.append(input_pending or bool(input_expression and input_expression[-1]))
                 input_pending = False
-                process_pipeline = False
-            elif separator == ")":
+                if separator == "{":
+                    block_pipeline.append(process_pipeline)
+                else:
+                    process_pipeline = False
+            elif separator in {")", "}"}:
                 if input_expression:
                     input_expression.pop()
+                if separator == "}" and block_pipeline:
+                    process_pipeline = process_pipeline or block_pipeline[-1]
+                    block_pipeline.pop()
+                    if block_pipeline:
+                        block_pipeline[-1] |= process_pipeline
             elif separator == "|":
                 pipe_continuation = True
                 input_pending = False
@@ -129,6 +138,9 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
         if name in {"get-process", "gps", "ps"}:
             # Explicit -Id is PID-based. Otherwise the pipeline carries a name-selected set.
             process_pipeline = not any(re.match(r"^-(?:id|pid)(?::|$)", arg) for arg in args)
+            if process_pipeline and block_pipeline:
+                # A block can emit process objects before its final statement.
+                block_pipeline[-1] = True
             if process_pipeline and input_expression and input_expression[-1]:
                 return True
         if name in {"stop-process", "spps", "kill"}:

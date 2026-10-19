@@ -100,6 +100,29 @@ def test_script_blocks_do_not_hide_name_stop(command):
 
 
 @pytest.mark.parametrize("command", [
+    '& { Get-Process python } | Stop-Process',
+    '& { & { Get-Process python } } | Stop-Process',
+])
+def test_script_block_output_keeps_name_selection(command):
+    assert broad_process_stop(command)
+    decision = evaluate_tool("PowerShell", {"command": command}, PolicySettings(), workdir=".")
+    assert decision.action == "deny" and decision.reason == DENIAL
+
+
+@pytest.mark.parametrize("command", [
+    'Get-Process python | Where-Object { $_.Name -eq "python" } | Stop-Process',
+    'Get-Process python | Where-Object { & { $true } } | Stop-Process',
+    'Get-Process python | Where-Object {\n $_.Name -eq "python"\n } | Stop-Process',
+    'Get-Process python | ForEach-Object { $_ } | Stop-Process',
+    '& { Get-Process python; echo ready } | Stop-Process',
+])
+def test_script_block_filters_and_earlier_outputs_keep_name_selection(command):
+    assert broad_process_stop(command)
+    decision = evaluate_tool("PowerShell", {"command": command}, PolicySettings(), workdir=".")
+    assert decision.action == "deny" and decision.reason == DENIAL
+
+
+@pytest.mark.parametrize("command", [
     'taskkill /PID 1234 /F', 'taskkill //PID 1234 //F', 'kill -TERM 1234',
     'Stop-Process -Id 1234', 'Stop-Process -Id $ownedPid -Force',
     'Get-Process -Id $ownedPid | Stop-Process',
@@ -134,6 +157,10 @@ def test_script_blocks_do_not_hide_name_stop(command):
     '& { echo "Stop-Process -Name python" }',
     'Write-Output "& { Stop-Process -Name python }"',
     "echo '& { pkill python }'",
+    '& { Get-Process -Id $ownedPid } | Stop-Process',
+    '& { echo "Get-Process python" } | Stop-Process',
+    'Get-Process -Id $ownedPid | Where-Object { $_.Id -eq 1234 } | Stop-Process',
+    '& { Get-Process -Id $ownedPid; echo ready } | Stop-Process',
 ])
 def test_pid_cleanup_and_data_are_not_name_stop(command):
     assert not broad_process_stop(command)
@@ -152,6 +179,8 @@ def test_pid_cleanup_and_data_are_not_name_stop(command):
     {"tool_input": {"command": "sudo -- pkill python"}},
     {"command": "& { Stop-Process -Name python }"},
     {"tool_input": {"command": "pwsh -Command \"& { Stop-Process -Name python }\""}},
+    {"command": "& { Get-Process python } | Stop-Process"},
+    {"tool_input": {"command": 'Get-Process python | Where-Object { $_.Name -eq "python" } | Stop-Process'}},
 ])
 async def test_broker_denies_without_card_or_pending_future(detail):
     async def forbidden(*args):
