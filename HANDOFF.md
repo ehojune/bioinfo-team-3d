@@ -1,137 +1,60 @@
 # labhq 인수인계 — 개발 총괄에게
 
-저장소 https://github.com/ehojune/bioinfo-team-3d (public) · 패키지와 CLI 이름은 `labhq`
+공개 저장소 [ehojune/bioinfo-team-3d](https://github.com/ehojune/bioinfo-team-3d) · 패키지/CLI `labhq` · 현재 버전 v0.5.
+2026-10-19 PI 결정으로 **Codex가 총괄을 고정 담당**하며 Codex·Claude subagent에 위임합니다. 현재 창구는 [#760](https://github.com/ehojune/bioinfo-team-3d/issues/760), 이전 기록은 #298 → #435입니다.
 
-개발 총괄은 Claude와 Codex가 번갈아 맡습니다(PI 결정 2026-10-01). 한쪽의 주간 사용량이 차면 다른 쪽이 이어받습니다.
-이 파일은 공개해도 되는 인수인계입니다. PI PC의 로컬 경로·진행 중 작업·보조 스크립트는 저장소 밖 노트에 있고,
-`CLAUDE.local.md`(Claude)와 PI의 Codex 전역 지침이 그 노트를 가리킵니다. 결정은 GitHub issue에, 진행 보고는 PR과 `docs/status/`에 남깁니다.
+## 시작과 종료
 
-## 시작할 때
+1. `AGENTS.md`, `STATUS.md` 상단, 열린 PR, #760의 최근 댓글을 읽습니다. 설치 PC의 로컬 인계 문서가 있으면 그 문서가 지정한 범위만 추가로 읽습니다.
+2. 아래 큐를 따릅니다. test는 바꾼 곳만, 전체 suite는 CI에 맡깁니다. 실제 설정·PI 인스턴스·원자료는 업무 범위와 승인 없이 건드리지 않습니다.
+3. 끝날 때 PR과 `docs/status/`에 결과를 쓰고 이 문서의 큐·PI 결정을 갱신합니다. 로컬 진행 노트와 gitignore 대상 `HARVEST.md`도 갱신하되 커밋하지 않습니다.
 
-1. `STATUS.md` 맨 위 몇 항목, 열린 PR(`gh pr list`), 고정 issue #69
-2. 아래 작업 큐와 PI 결정
-3. 설정이 있는 PC면 `labhq doctor`. test는 바꾼 곳과 관련된 파일만 돌리고 전체 suite는 CI에 맡긴다(AGENTS.md)
-4. 끝낼 때: 진행 중인 것을 로컬 노트의 "지금 진행 중"에 적고, 새로 안 것은 `HARVEST.md`(gitignore)에 적는다
+큰 변경 때와 **매 PI 보고 전** README 한영판·manual·HANDOFF를 코드·직원 YAML·현재 PR과 대조합니다. 과거 큐와 결정 근거는 [참고 기록](docs/reference/README.md)에 두고 본문에는 현재 권고만 남깁니다.
 
-## 작업 방식 — 규칙(CLAUDE.md·AGENTS.md)에 더해 겪어서 안 것
+## 작업 큐 (2026-10-19)
 
-- test 홈·state는 `tests/conftest.py`가 격리한다. subprocess에도 격리 환경을 넘기고 사용자 `.labhq` 접근 guard를 우회하지 않는다.
+[#760의 이관 요약](https://github.com/ehojune/bioinfo-team-3d/issues/760) 기준입니다. PR의 최신 head·CI·리뷰는 작업 직전에 다시 확인합니다.
 
-| 무엇 | 어떻게 |
-|---|---|
-| PR 한 개의 흐름 | 브랜치 → 코드 커밋 → push·PR 열기(패치노트 링크에 PR 번호가 필요) → `patch_notes/entries/<branch>.yaml`·`docs/status/` 기록 커밋 → CI(pytest 3.10·3.12·Windows, patch-notes) → squash 병합 |
-| 패치노트 | 줄에 커밋 해시가 들어가서 코드 커밋 뒤에 브랜치 전용 YAML을 쓴다. `python scripts/patch_notes.py rows --pr N`이 초안을 만든다. 공유 `patch_notes/README.md`는 main에서 자동 생성한다 |
-| README 주기 | 생성 목차만 갱신한 main 커밋은 빼고, main 커밋 3개 안에 README나 `docs/manual.md`를 한 번 고쳐야 CI가 통과한다 |
-| 리뷰 봇 깊이 | 고정 상한은 없다. 새 라운드는 직전 수정 확인이나 다른 부류의 결함이 있을 때만. 같은 부류가 더 좁게 반복되면 그 부류를 구조로 한 번 닫고 병합한다. 보통 2~3회에 끝나고, 5회를 넘기면 계속할지 판단한 이유를 PR에 적는다 |
-| Codex에 통째 위임 | Codex sandbox는 `.git`에 쓸 수 없다. 지시서에 "commit하지 말고 `.pr-drafts/commits.json`에 [{message, files}]"를 넣고, 받는 쪽이 커밋한다. 커밋 제목을 `#`로 시작하지 않는다(rebase가 주석으로 지운다) |
-| 병렬 PR | 같은 설정을 두 PR이 다른 규칙으로 넣으면 충돌 없이 한쪽이 덮인다(#76의 MCP timeout). 병합 뒤 겹친 규칙을 테스트로 확인한다 |
-| Python 3.10 | 여러 줄 f-string 치환식, `fromisoformat("...Z")`는 3.10에서 깨진다. 3.12 CI만 보면 놓친다 |
-| Windows 직원 CLI | 표준 npm `.cmd` shim은 JS entrypoint와 Node로 풀어서 실행하고, 인식하지 못한 batch만 거부한다. npm이 아닌 Codex 앱 exe는 업데이트마다 폴더가 바뀐다(#73) |
-| Codex 직원 | 개인 `~/.codex/AGENTS.md`가 있는 PC는 직원 전용 `CODEX_HOME`에 로그인해야 preflight를 통과한다. 개인 skill 폴더는 여전히 읽히는데 PI는 괜찮다고 했다(#55) |
-| 문서 나눔 | `README.md`는 처음 써 보는 사람(웹으로 시작, 10KB 안팎), `docs/manual.md`는 깊이 보려는 사람, `docs/pi-qa.md`는 PI 질문·결정이다. 동작을 바꾸면 manual의 해당 절을 고치고 README에는 쌓지 않는다 |
-| 연결된 도구 표·배지 | 직원 설정을 바꾸면 `python scripts/integrations.py --write`로 README 배지와 manual의 표를 갱신하고 `--check`로 확인한다. 배지는 같은 설정과 `pyproject.toml`·`labhq/settings.py`·`.github/workflows`에서 만든다 |
-| 어휘·점검표 표 | `labhq/vocab/`의 어휘·점검표·공개 자원을 고치면 `python scripts/vocab_tables.py --write`로 `docs/vocabulary.md`를 다시 만든다. `tests/test_vocab_tables.py`가 어긋남을 잡는다 |
-| 느린 test | 90초 MCP 실측은 `LABHQ_SLOW_TESTS=1 pytest -q tests/test_long_mcp_call.py`. CI에서는 별도 job(`pytest-slow`)이 돌린다 |
-| 실측 fixture | Windows 11 실측 스트림은 `tests/fixtures/real/`에 있다. 재캡처: `python scripts/probe_engines.py antigravity --output-dir <저장소 밖 경로> --redact` |
-| PI에게 물을 때 | 지금 무엇이 일어나고, 각 선택이 PI에게 무엇을 바꾸는지를 먼저 한 줄씩 쓴다. 비슷한 말(개발 기록 저장소 vs 프로젝트별 저장소)은 구분해 쓴다 |
-| PI 창구 감시 | 창구는 고정 issue #435. 세션 시작·문맥 요약 뒤·PI가 채팅을 떠날 때 창구 감시를 켠다. 10-06 새벽 감시가 꺼진 채 결정 요청을 올려 PI 댓글 둘을 1시간 넘게 늦게 봤다 |
-| Windows Codex sandbox | Codex 위임 전에 UAC 승인 창(`consent.exe`)이 떠 있는지 본다. 떠 있으면 Codex 셸이 실패가 아니라 무기한 멈춰 토큰만 쓴다(10-06, #382). 승인은 PI만 한다 |
-| CI 실패가 이상할 때 | Linux job 셋이 같은 시각에 step 없이 실패하면 GitHub runner 미배정이다(check-run 요약 "not acquired by Runner"). 로그가 없으니 요약부터 보고 실패 job만 다시 돌린다. test flake는 같은 SHA 재실행 성공을 확인하고 실제시간 제한 대신 event·task 완료를 기다린다 |
-
-## 작업 큐 (2026-10-06 갱신)
-
-[매뉴얼 로드맵](docs/manual.md#로드맵)의 버전 순서를 따릅니다. 병합된 PR은 뺐습니다.
-
-| 버전 | 상태 | issue / PR | 내용 |
-|---|---|---|---|
-| v0.25 | 완료 | #298 | 개발 총괄의 모의 시운전 3~11차(2026-10-03). 결함은 그날 고쳐 병합(#350–#361) |
-| v0.25 | 완료 | #379 | v0.25 선언(태그 v0.25.0). README를 읽는 사람별로 나눔(#349) |
-| v0.25 | 진행 | #373 | 방향 점검 후속: 단독 라우팅·질문 세 범주·topic 점검표·선행 연구·요청 묶음·로그인 대기(#386–#407). 벤치 C 큰 과제 22:28(재현성 2:4, 읽기 3:5). 보고서 길이는 #438(리뷰 참고 중복 제거, 본문 약 4,000자 기준). 남은 것: #423 반영 뒤 t6 재실행·재채점(Codex 직원 sandbox 준비 뒤). 점검표(#402)는 병합, PI 리뷰 중 |
-| v0.25 | PI 대기 | #435 | PI 시운전. 그 전에 PI가 Claude 직원 폴더에 로그인(#335) |
-| v0.25 | 운영 | #435 | PI 소통 창구(2): 결정 대기와 진행 보고. #298은 2026-10-06에 닫고 남은 일을 옮김 |
-| v0.25 | 실측 | #276 #37 | 실제 Codex 장시간 MCP probe, 로그의 token 노출(폰 원격 접속은 보류) |
-| v0.25 | 진행 | #382 | Windows에서 두 CODEX_HOME의 sandbox 재설정 반복. 10-06 새벽 UAC 창 27개가 쌓여 Codex 셸이 무기한 멈춤(PI가 05:40쯤 승인). 멈춤 경고는 #433. 원인: 한 PC에 elevated 홈이 둘. PI 결정 A(직원 홈만 elevated, 10-06): PI가 Codex 설정 변경·직원 홈 준비 한 번. 탐지는 #437(낡은 직원 홈은 실행 전 거부, doctor). 남은 것: 개인 경로를 Codex deny-read로(브랜치 준비, A 적용 뒤 canary 실측) |
-| v0.5 | 완료 | #90 #58 | 실제 CLI 연구 lane 완주 2/2: 10차(GSE10072, 앵커 58)와 v0.5 시운전 8차 req_7ccde78be0(GSE19804, 앵커 48), 둘 다 `labhq verify` exit 0. #58 ①~⑥ 완료. 남은 것: CP3·CP4, 이어 가기 실측(두 요청 모두 리뷰 accept) |
-| v0.5 | 완료 | #435 | v0.5 선언(태그 v0.5.0, PI 결정 1A·2A 2026-10-08). trial 설정은 연구 lane·그림자 on, engineer gpt-5.6-sol 유지 |
-| v0.5 | 진행 | #423 | 재현성: inputs/ 링크·미보고 산출·`link_inputs.py`(#429), 묶음 재현 등급(#431), 환경 기록 규칙(#432) 병합. 입력 sha256(#442: 실행 전 hash, cache는 파일 ID까지). 남은 것: `rerun_verified` |
-| v0.5 | 근거 완료 | #420 | topic 43개·이름만 넣는 프롬프트(#440), 점검표 124항목(#446). 근거 논문은 1286편, 43 topic 모두 30편 이상([목록](docs/reference/topic_papers.md)). v0.9 논문 목표까지 채움 |
-| v0.5 | 다음 | #35 | 시설팀: PI 결정 A(내부 구조, A2A는 #79 때). 1단계 #433 병합. 다음: environment 실패 종류·오류 서명 표(Codex 레인 지시서 준비) → 시설팀 직원(Codex read-only)과 `facilities_fix` allowlist |
-| v0.5 | 다음 | #221 #150 #151 #149 | 산출 종류 선언을 켜기 전 probe, 의미 모델 그림자·A/B 판단 창 |
-| v0.5 | 다음 | #57 #300 | 웹 Command Center 6–8, 새 pipeline 기여를 PI에게 묻기 |
-| v0.75 | 결정 대기 | P3 · #273 | HPC 접근 방식. #273은 지금 기존 HPC 유지(A) |
-| v0.75 | 다음 | #59 | 실행 중 직원 제어와 폭주 차단기 |
-| v0.75 | 후속 | #430 | 공유 계정 HPC 잡(`hpc.submit_prefix`)이 private인 앞 단계 산출을 못 읽음. HPC 연동 시험 때 stage 또는 권한 |
-| v0.9 | 실측 | #178 | project 링크 거부 규칙의 다른 경로 표기 |
-| v0.9 | 다음 | — | 러너 계정 분리, 통제 데이터 시험 |
-| v0.95 | 다음 | #300 | 설치·온보딩 문서와 계정 분리 자동화, 기여 여부 묻기 |
-| v1 | 나중 | #60 | 요청 간 기억 |
-| 버전 밖 | 장기 | #62 #61 #79 #70 #121 #275 #316 #69 | fan-out, 트리거, 클라우드 에이전트, 보고 채널, ontology 재평가, 신약 사업부(#90·#58 뒤), 참고 조사, 기록 저장소 운영 |
-
-## PI 결정 (최근)
-
-| 날짜 | 결정 | 기록 |
+| 순서 | 할 일 | 완료 조건·현재 한계 |
 |---|---|---|
-| 2026-10-07 | topic 점검표는 지나치게 엄격하지 않게: 자료가 허락하는 점검은 하고, 못 하면 계획에 이유를 적고 labhq가 경고한다 | #446 |
-| 2026-10-07 | topic별 근거 논문 수: v0.5에 topic당 10편, v0.9에 topic당 30편 | #446, #420 |
-| 2026-10-06 | Codex sandbox 승인 창: 안 A(직원 홈만 elevated, PI 홈 unelevated). 한 PC에 elevated 홈은 하나 | #435, #382 |
-| 2026-10-06 | topic 후보 중 출처 3개 이상인 23개 채택(A) | #435, #420 |
-| 2026-10-06 | 시설팀은 내부 구조 먼저(A). A2A는 외부 agent와 공생(#79) 때 | #298, #35 |
-| 2026-10-06 | 방향: 벤치에서 단독 Astra를 모든 면에서 이기기보다 안정화·재현성·웹검색·P2A 활용·standard/trendy 문헌·시설팀. HPC 연동·대규모 작업은 나중에 시험 | #298 |
-| 2026-10-06 | #423은 inputs/ 방식으로 Claude 구현. README 네 꼭지 유지, 첫 문장에 멀티 에이전트 오케스트레이션 플랫폼, bioinfo-agent 소개, 영문 README | #298, #428, #429 |
-| 2026-10-05 | topic 상한을 두지 않는다. topic·점검표는 TSV로, 계획 프롬프트엔 topic 이름만 | #420 |
-| 2026-10-05 | topic 점검표 17 topic·48항목 승인 | #298, #402 |
-| 2026-10-05 | 공개 데이터의 원 연구 Methods는 참고만 한다. 갈래별 필수·권장 분석은 선행 연구 논문에서 찾는다 | #298, #395 |
-| 2026-10-04 | 작은 요청은 단독 직원(GPT-6-Astra)이 한 턴에 처리하고, 실패하면 팀 계획으로(안 A) | #298, #388 |
-| 2026-10-04 | 어휘 확장안(100키, topic 포함) 그대로 승인 | #298, #390 |
-| 2026-10-04 | v0.25 선언. PI 본인 시운전 전에 총괄 리허설(PI 요청 세트 5건 중 4건 accept)을 근거로 하고, PI 질문(자세한·짧은 요청, 단일 Astra, CSO 질문, 실행 중 메시지)은 P1 #373에서 다룬다 | #298, #373 |
-| 2026-10-04 | 벤치마킹 안 A: v0.25 뒤 큰 과제 1개를 labhq와 GPT-6-Astra 단독에 같은 문장으로 주고 결과·비용·시간·카드를 비교 | #298 |
-| 2026-10-04 | 산출 데이터 종류 어휘는 PI 검토판 41키(상한 45). 넓히기는 bioinfo-agent 파이프라인 기준 후보→PI 검토→실제 요청 순서(#375) | #374, #375 |
-| 2026-10-03 | README를 읽는 사람별로 나눔(README·manual·pi-qa·개발 문서). 그래서 10-01의 README 갱신 주기는 README나 `docs/manual.md` 갱신으로 센다 | #298 |
-| 2026-10-03 | 로드맵 ⑥ 나: 버전마다 통과 기준, v0.75(HPC 공개 데이터)·v0.9(통제 데이터)로 나눔, v1 앞에 v0.95(다른 사람의 설치·온보딩) | manual 로드맵, #298 |
-| 2026-10-03 | 버전 정의 v0.25·v0.5·v0.75·v1·v1.25. 작업 큐는 이 순서를 따른다 | manual 로드맵 |
-| 2026-10-03 | 실행 계정: 별도 계정 대신 PI와 같은 계정 + 개인 경로 차단(`policy.private_paths`) | #298 ③, PR #324 |
-| 2026-10-02 | 계산 backend: 지금은 기존 HPC 유지(A). Colab(E)은 나중. GBox·Bio-Express(C·D)는 API 계획이 없어 안 할 수 있다. Scheduler 일반화(B)는 두 번째 backend가 생길 때 | #273 |
-| 2026-10-02 | 신약개발 사업부는 지금 만들지 않는다(A). #90·#58을 끝낸 뒤 다시 본다 | #275 |
-| 2026-10-02 | 한 PC 여러 인스턴스(`--instance`)와 구독 한도 대기·자동 재개 | #37, #298 |
-| 2026-10-01 | 개발 총괄은 Claude·Codex 교대. Codex(Pro)에 생산 작업을 적극 위임, 모델·effort는 총괄이 고른다 | 이 파일 |
-| 2026-10-01 | Gemini/Antigravity 은퇴, lit_scout는 Codex gpt-6-luna | #49 |
-| 2026-10-01 | 커밋마다 패치노트, README는 main 커밋 3개 안에 갱신, README에 동작 화면 | #52, #63 |
-| 2026-10-01 | 직원 OS 격리는 하지 않는다. 하네싱·승인 게이트는 나중에 '과업' 단위로 | #55 댓글 |
-| 2026-10-01 | 개발 기록은 private `labhq-rounds`, 종료 조건은 #69. 프로젝트별 보고 저장소는 유지 | #43, #69, #70 |
-| 2026-10-01 | labhq_ask: CSO가 먼저 답하고 위험한 것만 PI. 그래서 CSO에 가장 높은 등급 모델 | #39 |
-| 2026-10-01 | bench 기준선: Opus 5.5·gpt-6-astra 단일 세션. Virtual Biotech 실행은 안 함 | #40 |
-| 2026-10-01 | 클라우드 상주 에이전트는 장기 과제. 공개 데이터 + PI 명시 동의 job부터 | #79 |
-| 2026-09-28 | 병합은 총괄이 판단, 고정 라운드 상한 없음 | CLAUDE.md |
+| 1 | #758 보안 수정 → #759 렌더 수정 → #756 모식도·실행 보고서 → 배포 | #758 head `56869a4`는 CI·리뷰 대기, #759는 CI 실패 처리 필요. 앞 PR의 검사 뒤 다음으로 진행 |
+| 2 | 공개 소형 주제 2개를 제시하고 PI 선택 뒤 장치 실운전 | P2A 생성→호출→산출, 의미 모델·그림자 요청·ontology·checklist·EDAM·pack, 문헌/PDF, 보고서·묶음·정리본을 요청별로 대조. **아직 미실행** |
+| 3 | bench dry-run → 준비 게이트 검토 요청 | 동일 입력·판본·PI 답·예산과 arm별 state/workspace 분리, 장치 작동 근거, 예상 시간·비용을 확인 |
+| 4 | 준비 게이트 완료 뒤 [#739](https://github.com/ehojune/bioinfo-team-3d/issues/739) | labhq 혼합 roster와 Astra·Sol·Opus **단독 세션**을 같은 요청으로 비교. CSO만 교체하는 실험과 구분 |
+| 5 | Astra의 README·코드·구조 전체 검토 | 비교 결과와 실제 결함을 근거로 후속 개선 |
 
-## 결정 대기 (PI)
+v0.5 선언(2026-10-08)은 당시 실제 연구 요청 2건과 `labhq verify` exit 0의 근거입니다. 이후 장치의 구현·CI 통과는 새 실운전 PASS를 뜻하지 않습니다. 버전별 기준은 [매뉴얼 로드맵](docs/manual.md#로드맵)에 있습니다.
 
-1. P3 실제 HPC: 러너 전용 계정은 받을 수 없다(2026-09-28). 권고안은 에이전트를 클러스터 밖에 두고 기관 게이트웨이 broker로만 접근하는 것이다. 확정 전에는 실제 제출을 하지 않는다. 어떤 안이든 통제 데이터 원본은 클러스터 밖·LLM 대화로 나오지 않는다(설계와 검증 중에도).
-2. 거버넌스(정부) 층과 Yuan 구성(보류)
-3. ~~실제 bench 실행 시점과 한도~~ → 2026-10-04 안 A로 결정(위 표)
+## PI 결정과 다음 확인
+
+[최신 PI 결정(2026-10-19)](https://github.com/ehojune/bioinfo-team-3d/issues/760#issuecomment-6263295610)을 적용합니다.
+
+| 항목 | 결정 |
+|---|---|
+| 개발 총괄 | Codex 고정, Codex·Claude subagent에 여러 작업 위임. 제품 CSO 설정은 별개 |
+| Codex 일일 한도 | 10월 19일 9M, 10월 20일 2M |
+| #732 배정 | 표준 생물정보학은 bioinfo-agent/nf-core, 단순 작업은 직접 처리. 없는 복잡한 신규 파이프라인은 직접 코딩한 뒤 **기여 여부를 PI에게 묻고 yes일 때만 bioinfo-agent PR** |
+
+#732와 한도 질문은 해결됐습니다. 다음 PI 확인은 공개 소형 주제 선택과 dry-run 뒤 bench 준비 게이트입니다. 이전 교대 운영·결정표는 [보존본](docs/reference/handoff-history-2026-10-19.md)에 있습니다.
 
 ## 구조 한눈에
 
-| 층 | 파일 | 역할 |
-|---|---|---|
-| 게이트웨이 | `labhq/gateway/server.py` | WebSocket(러너·클라이언트), REST, 웹 사무실 서빙, 승인·결정 이력 |
-| 오케스트레이터 | `labhq/orchestrator/cso.py` | 브리핑 → 계획(JSON DAG) → 병렬 실행 → 리뷰 → 보고, HPC 수면/기상, 예산, 질의 라우팅 |
-| 러너 | `labhq/runner/daemon.py`, `versions.py` | 게이트웨이에 outbound 접속, 태스크 실행, MCP 배선, 잡 감시, CLI 버전 보고 |
-| 어댑터 | `labhq/adapters/*.py` | claude_code · codex · cli(자체 에이전트) · antigravity · gemini · mock |
-| 도구 | `labhq/tools/*.py` | SGE/PBS/Slurm 스케줄러, hpc_mcp, approval_mcp(권한 프롬프트) |
-| 파견직 | `labhq/recruit/paper2agent.py` | 채용 → 오퍼레터 → 수습 → 계약 → 인재풀 |
-| GitHub·기록 | `labhq/integrations/github.py`, `rounds.py` | 프로젝트 보고, 공개 가드, 개발 라운드 기록 |
-| 점검 | `labhq/doctor.py` | 실행 전 점검과 capability manifest |
-| 웹 | `labhq/web/index.html`, `state.js`, `ui/`, `lab3d/` | 공유 reducer, 2.5D·3D 사무실, 결정·작업판·메신저 탭 |
-| 직원 | `agents/core/*.yaml` | 정규직 11명(엔진·모델·도구·프롬프트), 역할 기준은 manual '직원과 도구' |
-| 패치노트 | `patch_notes/entries/`, `docs/status/`, `scripts/notes_index.py` | PR별 기록과 공유 목차 자동 생성 |
+CSO는 gateway 안에서 계획과 의존관계를 관리하고 runner가 실제 CLI를 병렬 실행합니다. 단계별 폴더·SQLite 상태·승인과 근거 기록을 거쳐 리뷰·보고서·요청 묶음으로 이어집니다.
 
-이벤트 프로토콜과 설정은 `docs/manual.md`의 '구조와 이벤트'·'설정 포인트', 알려진 한계는 '알려진 한계'를 보세요.
+| 위치 | 역할 |
+|---|---|
+| `labhq/gateway/`, `labhq/web/` | WS·REST·승인·상태. 2.5D/3D는 `state.js` reducer 공유 |
+| `labhq/orchestrator/`, `labhq/registry.py` | 브리핑·계획 DAG·배정·리뷰·보고. 직원 정의 로드 |
+| `labhq/runner/`, `labhq/adapters/`, `labhq/tools/` | CLI/MCP 배선·작업 격리·SGE/PBS/Slurm 제출·감시 |
+| `agents/core/*.yaml` | 기본 역할 13개: Claude Code 8·Codex 5. 로컬 solo·파견직 별도 |
+| `labhq/research/`, `labhq/vocab/`, `labhq/recruit/` | 연구 계약·checkpoint·분야 규칙·의미 모델·Paper2Agent |
+| `labhq/report_contract.py`, `portfolio.py`, `result_storage.py` | 보고 구조·정리본·PDF·결과 저장 |
+| `labhq/integrations/`, `patch_notes/entries/`, `docs/status/` | GitHub 보고·공개 가드·개발 기록과 생성 목차 |
 
-## 개발 라운드 기록 (#69)
+직원 내부의 임의 agent 확장은 막습니다. Claude의 `Agent` 허용은 Paper2Agent 변환 담당 recruiter에만 있고 Codex 직원의 `multi_agent`는 꺼집니다. **개발 총괄의 별도 clone·위임 레인**과 제품 직원의 실행 경계는 다릅니다. 직원별 모델·도구는 [매뉴얼](docs/manual.md#직원과-도구)과 YAML이 기준입니다.
 
-`dev_log.repo`에 private 기록 저장소를, `dev_log.source_repo`에 이 labhq 저장소의 `owner/name`을 적고
-`github.token_env`의 환경변수로 토큰을 줍니다. YAML에는 토큰을 넣지 않습니다.
+## 작업 규칙
 
-다음 중 하나면 기록 저장소를 끝냅니다: labhq v1.0, #40 bench 확정 뒤 20 rounds 동안 새 교훈 없음,
-또는 별도 보고 채널로 이전. `dev_log.enabled: false` → 남은 교훈 Yuan 수확 → 저장소 archive → #69 종료 순서입니다.
-기록 저장소는 공개로 바꾸지 않습니다. 이미 올린 기록은 되돌릴 수 없습니다(#69 댓글).
+PR·패치노트·관련 test·CI·리뷰·공개 검사 규칙은 [AGENTS.md](AGENTS.md)를 따릅니다. 생성 파일 `STATUS.md`·`patch_notes/README.md`는 직접 고치지 않습니다. 직원 설정은 `scripts/integrations.py --check`, 기록은 `scripts/patch_notes.py check`·`scripts/notes_index.py --validate`로 확인합니다.
+
+이벤트·안전 경계·설치·알려진 한계는 [매뉴얼](docs/manual.md), 옛 큐·결정은 [보존본](docs/reference/handoff-history-2026-10-19.md)에 있습니다.

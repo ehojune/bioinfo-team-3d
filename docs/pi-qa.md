@@ -1,7 +1,11 @@
 # PI Q&A
 
-PI가 묻고 개발 총괄이 답한 것과 PI가 내린 결정을 모았습니다. 원문은 [#435 PI 소통 창구](https://github.com/ehojune/bioinfo-team-3d/issues/435)에 있습니다(10-06까지는 [#298](https://github.com/ehojune/bioinfo-team-3d/issues/298)). 폰 접속은 [#37](https://github.com/ehojune/bioinfo-team-3d/issues/37)이 풀릴 때까지 보류이므로 PC 브라우저로 씁니다.
+PI 질문·답과 결정을 모았습니다. 현재 창구는 [#760](https://github.com/ehojune/bioinfo-team-3d/issues/760)(2026-10-19~)이며 한국 시각 00·04·08·12·16·20시에 보고합니다. 이전 기록은 [#435](https://github.com/ehojune/bioinfo-team-3d/issues/435)(10-06~10-19), [#298](https://github.com/ehojune/bioinfo-team-3d/issues/298)(10-06까지)에 있습니다. 폰 접속은 [#37](https://github.com/ehojune/bioinfo-team-3d/issues/37)이 풀릴 때까지 보류이므로 PC 브라우저로 씁니다.
 처음 바란 모습: The Virtual Biotech 같은 팀을 귀여운 웹 인터페이스 위에서 돌린다. 그래서 보통 작업은 웹에서 하고 명령줄은 [매뉴얼](manual.md)로 보냈습니다.
+
+## 현재 운영 (2026-10-19)
+
+[PI 결정](https://github.com/ehojune/bioinfo-team-3d/issues/760#issuecomment-6263295610): 개발 총괄은 Codex 고정이며 Codex·Claude subagent에 위임합니다. Codex 한도는 10월 19일 9M·20일 2M입니다. #732 배정 기준도 승인됐고 자세한 적용 순서는 [HANDOFF](../HANDOFF.md#pi-결정과-다음-확인)를 봅니다. 아래 날짜가 붙은 답은 당시 기록입니다.
 
 ## 물은 것과 답
 
@@ -68,7 +72,7 @@ PI가 묻고 개발 총괄이 답한 것과 PI가 내린 결정을 모았습니�
 
 ### Codex가 한도에 걸려도 Claude는 일하나? (10-04)
 
-- 한다. Codex 레인과 따로, Claude도 늘 자기 issue나 PR을 하나 이상 진행합니다. Codex 한도에 닿으면 바로 #435에 알리고 묻습니다.
+- 한다. Codex 레인과 따로, Claude도 늘 자기 issue나 PR을 하나 이상 진행합니다. Codex 한도에 닿으면 현재 PI 창구에 알리고 묻습니다.
 - 10-04 오후·밤과 10-05 아침에 Claude가 기다리기만 한 시간이 있었습니다. 원인과 고친 방식은 #298(옛 창구)에 적었습니다.
 
 ### Claude 직원 로그인이 만료되면 어떻게 되나? (10-05)
@@ -96,7 +100,7 @@ PI가 묻고 개발 총괄이 답한 것과 PI가 내린 결정을 모았습니�
 
 ## 내린 결정
 
-#298(10-02~10-06)과 #435(10-06~)에서 물은 것입니다. 10-05 이후 결정은 [HANDOFF](../HANDOFF.md) 결정표에도 있습니다.
+아래는 #298(10-02~10-06)과 #435(10-06~10-19)에서 내린 결정입니다. 현재 결정·대기는 [HANDOFF](../HANDOFF.md), 이전 결정표는 [참고 기록](reference/handoff-history-2026-10-19.md#pi-결정-최근)에 있습니다.
 
 | # | 물음 | PI 답 | 반영 |
 |---|---|---|---|
@@ -109,7 +113,7 @@ PI가 묻고 개발 총괄이 답한 것과 PI가 내린 결정을 모았습니�
 | ⑤ | Claude 직원 설정 폴더(`~/.claude`) | 나(전용 폴더) | `~/.labhq/claude-staff`(PR #335). PI 로그인 1회 필요 |
 | ⑥ | 로드맵 조정(통과 기준, v0.75 나누기, v1 앞 단계) | 나(셋 다 반영) | 버전마다 통과 기준, v0.75·v0.9·v0.95로 나눔(PR #347). [로드맵](manual.md#로드맵) |
 
-그 밖의 결정입니다. 날짜순 전체 목록은 [HANDOFF의 PI 결정](../HANDOFF.md#pi-결정-최근)에 있습니다.
+그 밖의 결정입니다. 이전 날짜순 목록은 [참고 기록](reference/handoff-history-2026-10-19.md#pi-결정-최근)에 있습니다.
 
 | 날짜 | 결정 | 반영 |
 |---|---|---|
