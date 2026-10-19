@@ -656,7 +656,8 @@ class Runner:
         elif typ == "approval.attachment":
             ok, note = await self._store_approval_attachment(msg)
             await self.asend({"type": "approval.attachment.ack", "id": msg.get("id"),
-                              "paper_index": msg.get("paper_index"), "ok": ok, "note": note})
+                              "paper_index": msg.get("paper_index"), "transfer_id": msg.get("transfer_id"),
+                              "ok": ok, "note": note})
         elif typ == "approval.resolved":
             if self.broker.resolve(msg["id"], bool(msg.get("approved")), msg.get("note", ""),
                                    **({'choice': msg['choice']} if msg.get('choice') else {})):

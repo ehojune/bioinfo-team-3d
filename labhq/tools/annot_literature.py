@@ -309,6 +309,48 @@ class KeyFulltextCoordinator:
         root = (self.workdir / LIT_DIR).resolve()
         return target if target == root or root in target.parents else None
 
+    def _usable_text_file(self, row: dict) -> bool:
+        relative = str(row.get("text_file") or "")
+        path = self._inside(relative) if relative else None
+        return bool(path and path.is_file())
+
+    @staticmethod
+    def _pdf_content_problem(paper: dict, text: str) -> str | None:
+        """Require article content, and the requested locator when one was named."""
+        folded = " ".join(text.casefold().split())
+        landing_markers = (
+            "access denied", "purchase this article", "purchase access", "rent this article",
+            "sign in through your institution", "institutional access", "subscribe to read",
+            "log in to access", "login to access", "buy this article",
+        )
+        if any(marker in folded for marker in landing_markers):
+            return "pdf_access_landing"
+
+        needed = " ".join(str(paper.get("needed") or "").casefold().split())
+        normalized_needed = re.sub(r"[^a-z0-9가-힣]+", " ", needed)
+        normalized_text = re.sub(r"[^a-z0-9가-힣]+", " ", folded)
+        locators = re.findall(
+            r"\b(?:table|figure|fig|supplement(?:ary)?(?: table| figure)?|section)\s*[a-z]?\d+(?:[.-]\d+)?\b",
+            normalized_needed,
+        )
+        if locators:
+            if not all(re.sub(r"\s+", " ", locator).strip() in normalized_text for locator in locators):
+                return "pdf_requested_content_missing"
+            return None
+
+        section_names = {name for name in (
+            "abstract", "introduction", "method", "methods", "result", "results", "discussion",
+            "conclusion", "conclusions", "references",
+        ) if re.search(rf"\b{re.escape(name)}\b", normalized_needed)}
+        if section_names:
+            return None if any(re.search(rf"\b{re.escape(name)}\b", normalized_text)
+                               for name in section_names) else "pdf_requested_content_missing"
+
+        body_markers = sum(bool(re.search(rf"\b{name}\b", normalized_text)) for name in (
+            "abstract", "introduction", "methods", "results", "discussion", "references",
+        ))
+        return None if len(text) >= 1000 and body_markers >= 2 else "pdf_body_missing"
+
     def _accept_pdf(self, paper: dict, row: dict, relative: str, source: str) -> tuple[dict, str | None]:
         path = self._inside(relative)
         if path is None or not path.is_file():
@@ -339,6 +381,9 @@ class KeyFulltextCoordinator:
         title_match = bool(title_words and sum(word in seen_words for word in title_words) >= needed)
         if not (doi_match or title_match):
             return row, "pdf_identity_mismatch"
+        content_problem = self._pdf_content_problem(paper, text)
+        if content_problem:
+            return row, content_problem
         identifier = self._doi(paper, row) or paper["id"]
         markdown = (f"# {paper['title']}\n\n- 논문 ID {identifier}\n"
                     f"- access_level: full_text ({source})\n- extraction: {extraction}\n\n{text}\n")
@@ -347,10 +392,13 @@ class KeyFulltextCoordinator:
             write_owned(self.workdir, text_relative, markdown)
         except (OwnedPathError, OSError):
             return row, "text_write_failed"
-        return ({**row, "access_level": "full_text", "read_source": source, "pdf_file": relative,
-                 "text_file": text_relative, "chars": len(markdown), "extraction": extraction,
-                 "pdf_sha256": row["pdf_sha256"],
-                 "text_sha256": hashlib.sha256(markdown.encode("utf-8")).hexdigest()}, None)
+        accepted = {**row, "access_level": "full_text", "read_source": source, "pdf_file": relative,
+                    "text_file": text_relative, "chars": len(markdown), "extraction": extraction,
+                    "pdf_sha256": row["pdf_sha256"],
+                    "text_sha256": hashlib.sha256(markdown.encode("utf-8")).hexdigest()}
+        accepted.pop("access_failure", None)
+        accepted.pop("text_error", None)
+        return accepted, None
 
     def _record(self, paper: dict, row: dict, status: str, reason: str | None, attempts: list[str]) -> None:
         if self.workdir is None:
@@ -378,8 +426,12 @@ class KeyFulltextCoordinator:
                                   and self.settings.external_model_allowed and self.institution and self.limiter)
         for index, (paper, row) in enumerate(zip(papers, rows)):
             if row.get("access_level") == "full_text":
-                self._record(paper, row, "not_needed", None, attempts[index])
-                continue
+                if self._usable_text_file(row):
+                    self._record(paper, row, "not_needed", None, attempts[index])
+                    continue
+                attempts[index].append("open_access:text_file_unavailable")
+                row.update(access_level="metadata", access_failure="open_access_text_unavailable")
+                row.pop("text_file", None)
             doi = self._doi(paper, row)
             if doi and not row.get("doi"):
                 row["doi"] = doi
@@ -403,17 +455,16 @@ class KeyFulltextCoordinator:
                         attempts[index].append(f"institution:{problem}")
             pending.append(index)
 
-        # A prior card may already have been answered by placing the named file; consume it before opening another.
-        still_pending = []
-        for index in pending:
-            relative = self._inbox_for(papers[index], rows[index])
-            accepted, problem = self._accept_pdf(papers[index], rows[index], relative, "pi_provided_pdf")
-            if problem is None:
-                accepted["pdf_request_status"] = "received"
-                rows[index] = accepted
-                self._record(papers[index], accepted, "received", None, attempts[index])
-            else:
-                still_pending.append(index)
+        if pending and not self.settings.external_model_allowed:
+            for index in pending:
+                row = rows[index]
+                row.update(pdf_request_status="unavailable", fallback="abstract_or_open_access_alternative",
+                           access_failure="external_model_not_allowed")
+                self._record(papers[index], row, "unavailable", "external_model_not_allowed", attempts[index])
+            return {"results": rows, "n_requested": 0,
+                    "note": "논문 본문·PDF는 .tmp/literature/ 안에만 있고 outputs에는 접근 상태만 기록됩니다."}
+
+        still_pending = pending
 
         decision = None
         if still_pending:
@@ -440,13 +491,15 @@ class KeyFulltextCoordinator:
             state = str((decision or {}).get("state") or ("approved" if (decision or {}).get("approved") else "declined"))
             for index in still_pending:
                 paper, row = papers[index], rows[index]
-                relative = self._inbox_for(paper, row)
-                accepted, problem = self._accept_pdf(paper, row, relative, "pi_provided_pdf")
-                if problem is None:
-                    accepted["pdf_request_status"] = "received"
-                    rows[index] = accepted
-                    self._record(paper, accepted, "received", None, attempts[index])
-                    continue
+                problem = None
+                if (decision or {}).get("approved"):
+                    relative = self._inbox_for(paper, row)
+                    accepted, problem = self._accept_pdf(paper, row, relative, "pi_provided_pdf")
+                    if problem is None:
+                        accepted["pdf_request_status"] = "received"
+                        rows[index] = accepted
+                        self._record(paper, accepted, "received", None, attempts[index])
+                        continue
                 status = ("received_invalid" if (decision or {}).get("approved") else
                           "timed_out" if state == "timed_out" else "declined" if state == "resolved" else state)
                 reason = "pdf_request_timed_out" if status == "timed_out" else (

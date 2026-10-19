@@ -38,6 +38,13 @@ test('literature PDF card uploads each selected PDF before approval',async()=>{
   assert.match(c.row.textContent,/저장됨.*승인하면 본문으로 이어 갑니다/);
 });
 
+test('2.5D office wires the literature PDF upload callback to the gateway endpoint',()=>{
+  const index=fs.readFileSync(path.join(__dirname,'../labhq/web/index.html'),'utf8');
+  assert.match(index,/onAttachment:\s*uploadLiteraturePdf/);
+  assert.match(index,/\/api\/approvals\/\$\{encodeURIComponent\(approval\.id\)\}\/literature-pdf\/\$\{paperIndex\}/);
+  assert.match(index,/Content-Type':\s*'application\/pdf'/);
+});
+
 test('legacy task-scope detail never adds a grant choice', async () => {
   const decide = await modulePromise, container = new Element(), sent = [];
   const approval = {id:'task-class', kind:'tool_permission', detail:{task_scope_label:'bundle.py execution'}};

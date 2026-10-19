@@ -677,7 +677,8 @@ function renderApprovals() {
   const holdList = document.createElement('div'); holdList.className = 'list'; holdList.replaceChildren(...holdRows);
   $('#engine-holds').replaceChildren(...(holdRows.length ? [holdList] : []));
   syncDecisionCards($('#approvals'), items, sugs, { presentation:'journal', now, nick, kindLabels: KIND_KO, requests: S.requests,
-    taskStep: S.taskStep, avatarHTML: (value, type) => headSVG(type === 'suggestion' ? 'owl' : kindOf(ag(value.agent_id) || {id:value.agent_id})),
+    taskStep: S.taskStep, onAttachment: uploadLiteraturePdf,
+    avatarHTML: (value, type) => headSVG(type === 'suggestion' ? 'owl' : kindOf(ag(value.agent_id) || {id:value.agent_id})),
     emptyText: snapshotLoaded ? (reviews.length ? '추가 승인 대기는 없어요.' : '지금은 결정할 일이 없어요. 승인이 필요하면 여기에 바로 떠요.') : loadingText('결정할 일') });
   syncDecisionHistory($('#approval-history'), decisionHistory, { presentation:'journal', kindLabels: KIND_KO, requests: S.requests,
     visibility: historyVisibility, onOpenRequest: id => { officeState.selectRequest(id); reqKey = ''; renderRequest(); schedule(); showTab('tasks'); $('#request').scrollIntoView({block: 'start'}); } });
@@ -926,6 +927,11 @@ function toast(text, approvalId = null) {
   clearTimeout(toastTimer); toastTimer = setTimeout(hideToast, 2600);
 }
 function hideToast() { clearTimeout(toastTimer); toastApproval = null; $('#toast').classList.remove('show'); }
+async function uploadLiteraturePdf(approval, paperIndex, file) {
+  if (!api?.uploadLiteraturePdf) throw new Error('이 화면에서는 파일을 올릴 수 없습니다.');
+  await api.uploadLiteraturePdf(approval, paperIndex, file);
+  toast('PDF를 작업 폴더에 보냈어요. 카드를 승인하면 바로 읽습니다.', approval.id);
+}
 /* reference pointers (#36): chips go with the next request; the gateway checks kinds and runner paths */
 const refs = { items: [], useDefaults: true };
 let refsKey = '';
@@ -1257,6 +1263,15 @@ function startLive() {
       if (storage) decision.storage = storage;
       if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'approval.resolve', id, ...decision }));
       else await post(`/api/approvals/${encodeURIComponent(id)}`, decision);
+    },
+    uploadLiteraturePdf: async (approval, paperIndex, file) => {
+      const response = await fetch(`/api/approvals/${encodeURIComponent(approval.id)}/literature-pdf/${paperIndex}`,
+        {method:'POST', headers:{Authorization:`Bearer ${token}`, 'Content-Type':'application/pdf'}, body:file});
+      if (!response.ok) {
+        let detail = ''; try { detail = (await response.json()).detail; } catch {}
+        throw new Error(typeof detail === 'string' && detail ? detail : String(response.status));
+      }
+      return response.json();
     },
     recruit: s => post('/api/recruit', { paper: s.paper || null, repo: s.repo || null, focus: s.focus || null, request_id: s.request_id || null }),
     contract: (id, action, days) => post(`/api/contracts/${encodeURIComponent(id)}`, { action, days }),

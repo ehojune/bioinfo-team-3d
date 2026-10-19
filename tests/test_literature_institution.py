@@ -68,7 +68,7 @@ def paper():
 
 
 def coordinator(tmp_path, settings, institution, approval, *,
-                extract=lambda _path: ("Key paper DOI 10.1000/key. Full paper text", "complete")):
+                extract=lambda _path: ("Key paper DOI 10.1000/key. Results. Table 2. Full paper text", "complete")):
     workdir = tmp_path / "work"
     workdir.mkdir()
     return lit.KeyFulltextCoordinator(
@@ -85,12 +85,26 @@ async def test_disabled_setting_never_calls_the_institution_route(tmp_path):
         assert timeout_s == 7200
         return {"approved": False, "state": "timed_out"}
 
-    flow = coordinator(tmp_path, LiteratureSettings(), institution, timed_out)
+    flow = coordinator(tmp_path, LiteratureSettings(external_model_allowed=True), institution, timed_out)
     row = (await flow.run([paper()]))["results"][0]
 
     assert institution.calls == []
     assert row["access_level"] == "abstract"
     assert row["pdf_request_status"] == "timed_out"
+
+
+@pytest.mark.asyncio
+async def test_external_model_off_skips_the_pdf_card_and_falls_back_immediately(tmp_path):
+    async def must_not_open(*_args):
+        raise AssertionError("an unreadable PDF card must not open while external model access is disabled")
+
+    result = await coordinator(tmp_path, LiteratureSettings(), FakeInstitution(), must_not_open).run([paper()])
+    row = result["results"][0]
+
+    assert result["n_requested"] == 0
+    assert row["access_level"] == "abstract"
+    assert row["pdf_request_status"] == "unavailable"
+    assert row["access_failure"] == "external_model_not_allowed"
 
 
 @pytest.mark.asyncio
@@ -204,6 +218,78 @@ async def test_wrong_or_unreadable_pdf_does_not_replace_the_abstract(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_paywall_landing_pdf_does_not_replace_the_abstract(tmp_path):
+    async def provide(_summary, detail, _timeout_s):
+        supplied = tmp_path / "work" / detail["papers"][0]["pdf_file"]
+        supplied.parent.mkdir(parents=True, exist_ok=True)
+        supplied.write_bytes(PDF)
+        return {"approved": True, "state": "resolved"}
+
+    flow = coordinator(
+        tmp_path, LiteratureSettings(external_model_allowed=True), FakeInstitution(), provide,
+        extract=lambda _path: (
+            "Key paper DOI 10.1000/key. Sign in through your institution or purchase this article.", "complete"),
+    )
+    row = (await flow.run([paper()]))["results"][0]
+
+    assert row["access_level"] == "abstract"
+    assert row["pdf_request_status"] == "received_invalid"
+    assert row["access_failure"] == "pdf_access_landing"
+
+
+@pytest.mark.asyncio
+async def test_declined_pdf_is_never_read_even_when_the_file_was_uploaded(tmp_path):
+    async def decline(_summary, detail, _timeout_s):
+        supplied = tmp_path / "work" / detail["papers"][0]["pdf_file"]
+        supplied.parent.mkdir(parents=True, exist_ok=True)
+        supplied.write_bytes(PDF)
+        return {"approved": False, "state": "resolved"}
+
+    row = (await coordinator(
+        tmp_path, LiteratureSettings(external_model_allowed=True), FakeInstitution(), decline,
+    ).run([paper()]))["results"][0]
+
+    assert row["access_level"] == "abstract"
+    assert row["pdf_request_status"] == "declined"
+    assert row["access_failure"] == "pdf_request_declined"
+    assert row.get("read_source") != "pi_provided_pdf"
+    assert (tmp_path / "work" / row["text_file"]).read_text(encoding="utf-8") == "# Abstract only\n"
+
+
+@pytest.mark.asyncio
+async def test_oa_full_text_without_a_readable_file_uses_the_pdf_fallback(tmp_path):
+    class FullTextWithoutFile(AbstractOnly):
+        async def fulltext(self, ids):
+            result = await super().fulltext(ids)
+            result["results"][0].update(access_level="full_text", text_error="write failed")
+            result["results"][0].pop("text_file")
+            return result
+
+    seen = []
+
+    async def provide(_summary, detail, _timeout_s):
+        seen.append(detail)
+        supplied = tmp_path / "work" / detail["papers"][0]["pdf_file"]
+        supplied.parent.mkdir(parents=True, exist_ok=True)
+        supplied.write_bytes(PDF)
+        return {"approved": True, "state": "resolved"}
+
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    flow = lit.KeyFulltextCoordinator(
+        FullTextWithoutFile(workdir), LiteratureSettings(external_model_allowed=True), workdir,
+        tmp_path / "state", request_pdf=provide,
+        extract_pdf=lambda _path: ("Key paper DOI 10.1000/key. Results. Table 2. Full text", "complete"),
+    )
+    row = (await flow.run([paper()]))["results"][0]
+
+    assert len(seen) == 1
+    assert row["access_level"] == "full_text" and row["read_source"] == "pi_provided_pdf"
+    assert "access_failure" not in row and "text_error" not in row
+    assert (workdir / row["text_file"]).is_file()
+
+
+@pytest.mark.asyncio
 async def test_partial_pdf_text_is_identified_and_kept_inside_tmp(tmp_path):
     async def provide(_summary, detail, _timeout_s):
         supplied = tmp_path / "work" / detail["papers"][0]["pdf_file"]
@@ -213,7 +299,8 @@ async def test_partial_pdf_text_is_identified_and_kept_inside_tmp(tmp_path):
 
     settings = LiteratureSettings(external_model_allowed=True)
     flow = coordinator(tmp_path, settings, FakeInstitution(), provide,
-                       extract=lambda _path: ("Key paper DOI 10.1000/key. One page only.", "partial_text"))
+                       extract=lambda _path: (
+                           "Key paper DOI 10.1000/key. Results. Table 2. One page only.", "partial_text"))
     row = (await flow.run([paper()]))["results"][0]
 
     assert row["access_level"] == "full_text" and row["extraction"] == "partial_text"
@@ -276,7 +363,7 @@ async def test_institution_limiter_enforces_spacing_and_daily_cap_without_storin
 
 
 @pytest.mark.asyncio
-async def test_pdf_card_upload_is_relayed_without_gateway_persistence(tmp_path):
+async def test_pdf_card_upload_is_relayed_without_gateway_persistence(tmp_path, monkeypatch):
     import httpx
 
     from labhq.gateway.server import create_app
@@ -290,6 +377,17 @@ async def test_pdf_card_upload_is_relayed_without_gateway_persistence(tmp_path):
                               detail={"papers": [{**paper(), "doi": "10.1000/key",
                                                    "pdf_file": ".tmp/literature/inbox/key.pdf"}]})
     await hub.on_runner_message("local", {"type": "approval.requested", "data": request.model_dump(mode="json")})
+    send_runner = hub.send_runner
+
+    async def send_and_ack(origin, message):
+        await send_runner(origin, message)
+        if message.get("type") == "approval.attachment":
+            await hub.on_runner_message(origin, {"type": "approval.attachment.ack", "id": message["id"],
+                                                 "paper_index": message["paper_index"],
+                                                 "transfer_id": message["transfer_id"], "ok": True,
+                                                 "note": "stored"})
+
+    monkeypatch.setattr(hub, "send_runner", send_and_ack)
     headers = {"Authorization": f"Bearer {settings.gateway.client_token}", "Content-Type": "application/pdf"}
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gw") as client:
         bad = await client.post(f"/api/approvals/{request.id}/literature-pdf/0", headers=headers, content=b"not pdf")
@@ -301,6 +399,40 @@ async def test_pdf_card_upload_is_relayed_without_gateway_persistence(tmp_path):
     assert base64.b64decode(relayed["content_b64"]) == PDF
     state_files = [path for path in Path(settings.gateway.state_dir).rglob("*") if path.is_file()]
     assert request.id in hub.approvals and not any(b"Full paper" in path.read_bytes() for path in state_files)
+
+
+@pytest.mark.asyncio
+async def test_pdf_upload_returns_the_runner_write_failure(tmp_path, monkeypatch):
+    import httpx
+
+    from labhq.gateway.server import create_app
+
+    settings = _settings(tmp_path)
+    app = create_app(settings)
+    hub = app.state.hub
+    hub.register_runner("local", CaptureSocket(), ROSTER, "inc")
+    request = ApprovalRequest(kind="literature_pdf", summary="PDF", task_id="t1", agent_id="worker",
+                              detail={"papers": [{**paper(), "doi": "10.1000/key",
+                                                   "pdf_file": ".tmp/literature/inbox/key.pdf"}]})
+    await hub.on_runner_message("local", {"type": "approval.requested", "data": request.model_dump(mode="json")})
+    send_runner = hub.send_runner
+
+    async def send_and_reject(origin, message):
+        await send_runner(origin, message)
+        if message.get("type") == "approval.attachment":
+            await hub.on_runner_message(origin, {"type": "approval.attachment.ack", "id": message["id"],
+                                                 "paper_index": message["paper_index"],
+                                                 "transfer_id": message["transfer_id"], "ok": False,
+                                                 "note": "workspace write failed"})
+
+    monkeypatch.setattr(hub, "send_runner", send_and_reject)
+    headers = {"Authorization": f"Bearer {settings.gateway.client_token}", "Content-Type": "application/pdf"}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gw") as client:
+        response = await client.post(
+            f"/api/approvals/{request.id}/literature-pdf/0", headers=headers, content=PDF)
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "workspace write failed"
 
 
 @pytest.mark.asyncio

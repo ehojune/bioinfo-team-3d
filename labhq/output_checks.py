@@ -543,6 +543,9 @@ def quality_lines(steps: Iterable[Mapping[str, Any]], results: Mapping[str, Any]
                 _merge_access_group(access, identifiers, level)
         for key, reason in (_field(result, "literature_access_failures") or {}).items():
             failures[str(key)] = str(reason)
+    full_text = [identifiers for identifiers, level in access if level == "full_text"]
+    failures = {key: reason for key, reason in failures.items()
+                if not any(_access_paper_ids(key) & identifiers for identifiers in full_text)}
     levels = [level for _identifiers, level in access]
     below = sum(level != "full_text" for level in levels)
     if below:

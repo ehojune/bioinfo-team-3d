@@ -84,6 +84,8 @@ NOT_CONTROLLABLE = "이 작업({kind})은 실행 중 제어를 받지 않습니�
 HALT_WHILE_WAITING = "HPC 잡·질문 대기 중에는 멈출 수 없습니다 — 일시 정지를 쓰세요"
 # How long request cancel waits for the cancelled turns to report, so their cost is counted (R13).
 CANCEL_RESULT_WAIT_S = 10.0
+# A PDF upload succeeds only after the runner confirms its workspace write.
+ATTACHMENT_ACK_TIMEOUT_S = 30.0
 # Statuses a hold sets and _sync_hold_status may lift again.
 HOLD_STATES = frozenset({"waiting_login", "waiting_quota", "waiting_facilities_fix", "waiting_pi"})
 
@@ -275,6 +277,7 @@ class Hub:
         self.task_runner: dict[str, str] = {}
         self.clients: set[WebSocket] = set()
         self.futures: dict[str, asyncio.Future] = {}
+        self.attachment_waiters: dict[str, tuple[str, int, str, asyncio.Future]] = {}
         self.jobs_waiters: dict[str, asyncio.Future] = {}
         self.jobs_done: dict[str, dict] = self.store.all("jobs_done")
         self.ask_waiters: dict[str, asyncio.Future] = {}
@@ -2416,6 +2419,14 @@ class Hub:
             self.set_roster(runner_id, msg.get("agents", []), msg.get("capabilities"))
             await self.publish({"type": "roster.updated", "ts": time.time(), "data": {"agents": list(self.agents.values())}})
             return
+        if typ == "approval.attachment.ack":
+            aid = str(msg.get("id") or "")
+            transfer_id = str(msg.get("transfer_id") or "")
+            pending = self.attachment_waiters.get(transfer_id)
+            waiter = pending[3] if pending else None
+            expected = (aid, msg.get("paper_index"), runner_id)
+            if pending and pending[:3] == expected and waiter and not waiter.done():
+                waiter.set_result({"ok": bool(msg.get("ok")), "note": str(msg.get("note") or "")})
         if typ == "approval.ack":
             self.store.delete("decision", str(msg["id"]))
         if typ == "control.nack":  # the runner does not hold that task: its steer waits for the step's next turn
@@ -4170,12 +4181,27 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         data = bytes(payload)
         if not data.startswith(b"%PDF-"):
             raise HTTPException(415, "only a PDF file is accepted")
+        transfer_id = new_id("attach")
+        waiter = asyncio.get_running_loop().create_future()
+        hub.attachment_waiters[transfer_id] = (aid, paper_index, origin, waiter)
         try:
-            await hub.send_runner(origin, {"type": "approval.attachment", "id": aid,
-                                           "paper_index": paper_index,
-                                           "content_b64": base64.b64encode(data).decode("ascii")})
-        except RunnerUnavailable as exc:
-            raise HTTPException(409, "the task runner disconnected") from exc
+            try:
+                await hub.send_runner(origin, {"type": "approval.attachment", "id": aid,
+                                               "paper_index": paper_index,
+                                               "transfer_id": transfer_id,
+                                               "content_b64": base64.b64encode(data).decode("ascii")})
+            except RunnerUnavailable as exc:
+                raise HTTPException(409, "the task runner disconnected") from exc
+            try:
+                ack = await asyncio.wait_for(waiter, ATTACHMENT_ACK_TIMEOUT_S)
+            except asyncio.TimeoutError as exc:
+                raise HTTPException(504, "the task runner did not confirm the PDF write") from exc
+        finally:
+            hub.attachment_waiters.pop(transfer_id, None)
+            if not waiter.done():
+                waiter.cancel()
+        if not ack["ok"]:
+            raise HTTPException(422, ack["note"] or "the task runner could not store the PDF")
         return {"ok": True, "bytes": len(data)}
 
     @app.post("/api/requests/{rid}/cancel", dependencies=[Depends(auth)])
