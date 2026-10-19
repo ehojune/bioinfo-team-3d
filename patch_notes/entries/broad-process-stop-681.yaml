@@ -21,3 +21,6 @@ rows:
 - sha: 67813c8
   at: '2026-10-20 03:52'
   text: 조건문·redirection·wrapper 옵션·literal quote removal 우회를 보강하고 mock/static 235개를 확인했다. 원문 ForEach 지적의 stale 근거를 보존한다.
+- sha: '93d07f8'
+  at: '2026-10-20 04:41'
+  text: xargs 옵션·operand 뒤의 literal 종료 명령을 검사한다. 새 실패 회귀 29개를 재현한 뒤 mock/static 283개와 accident guard blocked 0건을 확인했다.
