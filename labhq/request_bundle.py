@@ -23,6 +23,8 @@ from .evidence.audit import claims_record, locate_workdir
 from .evidence.claims import normalize_artifact_path
 from .report_figures import (FIGURE_PLAN_FILE, bundle_figure_check, drop_dead_abstract_links, figure_owners,
                              link_workdir_figures, linked_figure_paths, output_exists)
+from .report_contract import (ReportPackage, build_report_package, reader_markdown, render_report_front,
+                              with_report_front)
 from .ro_crate import FORMAT_MARKER, METADATA_FILE, write_ro_crate
 
 
@@ -468,8 +470,13 @@ def _bundle_claims(record: dict[str, Any], results: Mapping[str, Any], copied: s
 def _readme(req: Mapping[str, Any], steps: list[Mapping[str, Any]], scripts: list[str],
             unsafe_scripts: list[str], python_unknown: bool, linked: bool = False, claims: bool = False,
             job_scripts: list[str] | None = None, semantic_report: bool = False) -> str:
+    stored = req.get("report_package")
+    package = (ReportPackage.from_dict(dict(stored)) if isinstance(stored, Mapping)
+               else build_report_package(dict(req), str(req.get("report") or ""),
+                                         dict(req.get("results") or {})))
     lines = [
-        "# 요청 묶음", "", f"- 요청: `{req.get('id')}`", "- `report.md`: PI용 본문",
+        "# 요청 묶음", "", render_report_front(package).rstrip(), "", "## 묶음 파일", "",
+        f"- 요청: `{req.get('id')}`", "- `report.md`: PI용 본문",
         *(["- `claims.json`: 연구 요청의 단계별 claim·근거 원장과 CP2 기록. 보고서의 `[[claim:<단계>/<claim>]]`은 "
            "`ledgers.<단계>.claims`의 `id`입니다"] if claims else []),
         "- `report_appendix.md`: 과학 부록(점검표·리뷰·가정)",
@@ -772,7 +779,10 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
             input_summary += " (" + ", ".join(
                 f"{reason} {count}" for reason, count in sorted(skipped_by_reason.items())) + ")"
 
-        report = report_text
+        stored_package = req.get("report_package")
+        package = (ReportPackage.from_dict(dict(stored_package)) if isinstance(stored_package, Mapping)
+                   else build_report_package(dict(req), report_text, dict(results)))
+        report = reader_markdown(with_report_front(report_text, package))
         from .report_format import split_appendix
         appendix, legacy = split_appendix(str(req.get("report_appendix") or ""))
         tool_calls = _tool_calls_section(ordered_ids, results)

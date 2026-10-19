@@ -216,7 +216,7 @@ a{color:var(--sleep-ink)}
 details.report{margin-top:8px}
 details.report summary{cursor:pointer;font-weight:500}
 details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;max-height:340px;overflow:auto}
-.pi-report{margin-top:8px}.pi-report h3{margin:0 0 6px}.pi-report>pre,.report-appendix pre{white-space:pre-wrap;font:14px/1.65 var(--ui);background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;max-height:340px;overflow:auto}.report-appendix{margin-top:8px}.report-appendix summary{cursor:pointer;font-weight:500}
+.pi-report{margin-top:8px}.pi-report h3{margin:0 0 6px}.report-markdown{font:14px/1.65 var(--ui);background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;max-height:520px;overflow:auto}.report-markdown h2,.report-markdown h3,.report-markdown h4{margin:14px 0 6px}.report-markdown h2:first-child{margin-top:0}.report-markdown table{border-collapse:collapse;width:100%;display:block;overflow:auto}.report-markdown th,.report-markdown td{border:1px solid var(--line);padding:5px 7px;text-align:left}.report-markdown img{max-width:100%;max-height:360px}.report-markdown figure{margin:10px 0;text-align:center}.report-markdown figcaption{color:var(--muted);font-size:12px}.report-missing{color:var(--danger)}.report-appendix pre{white-space:pre-wrap;font:14px/1.65 var(--ui);background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;max-height:340px;overflow:auto}.report-appendix{margin-top:8px}.report-appendix summary{cursor:pointer;font-weight:500}
 .msg{display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:2px 8px;align-items:start;padding:7px 0;border-bottom:1px solid var(--line)}
 .msg .av svg,.glyph{width:28px;height:28px;display:block}
 .glyph{display:grid;place-items:center;border-radius:50%;background:var(--wall);font:600 10px var(--ui);color:var(--muted)}
@@ -731,7 +731,8 @@ function followupHTML(q) {
 <button class="btn" id="fu-send" type="button"${busy ? ' disabled' : ''}>이어 묻기</button></div>` : '';
   return list || form ? `<section class="followups" aria-label="이어 묻기">${list ? `<ol>${list}</ol>` : ''}${form}</section>` : '';
 }
-const reportHTML = q => !q.report ? '' : `<section class="pi-report"><h3>PI용 보고서</h3><pre>${esc(q.report)}${q.report_truncated ? '…' : ''}</pre>${
+const reportHTML = q => !q.report ? '' : `<section class="pi-report"><h3>PI용 보고서</h3>${
+  globalThis.LabHQState?.reportMarkdownHTML?.(globalThis.LabHQState?.reportWithPackage?.(q.report, q.reportPackage) + (q.report_truncated ? '\n\n…' : '')) || `<pre>${esc(q.report)}${q.report_truncated ? '…' : ''}</pre>`}${
   q.report_truncated ? `<p class="fu-more">앞 ${[...q.report].length.toLocaleString()}자만 보여요${q.report_chars ? ` (전체 ${Number(q.report_chars).toLocaleString()}자)` : ''}${
     api?.requestDetail ? ` <button class="btn report-full" type="button" data-rid="${esc(q.id)}"${fuLoading.has(q.id) ? ' disabled' : ''}>전문 보기</button>` : ''}</p>` : ''}${q.report_appendix ?
     `<details class="report-appendix"><summary>${q.report_appendix.startsWith('## 부록\n') ? '과학 부록' : '실행 기록'}</summary><pre>${esc(q.report_appendix)}${q.report_appendix_truncated ? '…' : ''}</pre>${q.report_appendix_truncated && api?.requestDetail ?
@@ -777,7 +778,7 @@ function renderRequest() {
   const statusText = q ? LabHQState.requestStatusText(q, S.approvals) : '';
   const all = LabHQState.sortRequests(S.requests.values());
   const requestDigest = all.map(r => [r.id, r.status, r.text, r.pi_review_pending, r.pi_reviewed_at, Math.round(r.cost * 100), r.costKnown]);
-  const key = q ? JSON.stringify([S.requests.size, staffNames, statusText, requestDigest, q.id, q.phase, q.status, q.error, q.steps, details, q.github.length, q.pipelinePr, q.report, q.report_appendix, q.execution_record, q.bundlePath, q.bundleStatus, q.bundleGrade, q.bundleGradeReasons, q.bundleWarning, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes, q.processing]) : snapshotLoaded ? `none:${JSON.stringify(requestDigest)}` : `loading:${S.conn}`;
+  const key = q ? JSON.stringify([S.requests.size, staffNames, statusText, requestDigest, q.id, q.phase, q.status, q.error, q.steps, details, q.github.length, q.pipelinePr, q.report, q.reportPackage, q.report_appendix, q.execution_record, q.bundlePath, q.bundleStatus, q.bundleGrade, q.bundleGradeReasons, q.bundleWarning, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes, q.processing]) : snapshotLoaded ? `none:${JSON.stringify(requestDigest)}` : `loading:${S.conn}`;
   if (key === reqKey) return;
   reqKey = key;
   const current = all.filter(r => !LabHQState.isPastRequest(r)), past = all.filter(LabHQState.isPastRequest);
