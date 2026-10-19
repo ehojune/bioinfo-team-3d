@@ -12,3 +12,6 @@ rows:
 - sha: d37d164
   at: 2026-10-19 22:04
   text: pipeline 승인 카드에 검사를 통과한 후보 소스 전체를 표시함
+- sha: 2ca1543
+  at: 2026-10-19 22:23
+  text: 공개용 reference 정리를 승인 전에 적용해 카드·fingerprint·업로드 소스를 맞추고 긴 코드를 보존했다.
