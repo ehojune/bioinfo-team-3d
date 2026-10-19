@@ -19,6 +19,20 @@ PR #768. 감독 정리 실패 시 PID 기록 보존은 기능 커밋 `4934d50`�
 
 P1 stale 근거를 인라인 답글로 남깁니다. push 뒤 CI snapshot만 확인하고 CI 대기·새 head 리뷰·P1=0 판정·병합·배포는 supervisor에게 넘깁니다. P2는 collector가 issue로 추적합니다. 실제 process/proc_tree integration·PI 운영·HPC·원자료·분석은 실행하지 않았습니다.
 
+AGENTS의 고정 리뷰·수정 1회와 P2 issue 금지, CLAUDE의 반복 리뷰 종료 규칙을 최신 PI 운영 정책에 맞추고 Astra 전체 repo 검토를 bench 비교 앞으로 바로잡았습니다. Refs #760, #739.
+
+- Codex 고정 총괄, 10분 점검·후속, 같은 담당자 재사용, 기본 Codex 2(gpt-6.1-sol)·Opus 1/상한 4·2를 명시했습니다.
+- 같은 담당자가 P1을 수정하고 새 head 리뷰를 받아 P1=0까지 반복합니다. P2는 실사용 영향·수정 비용 대비 이득으로 총괄이 선별하며 경미·추정·중복은 원 PR 댓글에 남깁니다. CI·봇 대기는 driver가 맡습니다.
+- 한도에서는 새 투입만 멈추고 진행 중 작업을 기다립니다. PI 보고는 한국 시각 00·04·08·12·16·20시이며 중요한 분기만 선택지·권고를 붙여 묻습니다.
+
+- 순서는 공개 소형 dry-run·필수 gate → Astra의 labhq 코드·README·구조 전체 검토 → 동일 요청 bench 비교입니다. 생성 결과 repo blind review는 실행 뒤 별도입니다. HANDOFF 24–25행의 원 PI 승인 링크로 확인합니다.
+
+정책 위치: AGENTS 5–6·13–14행, CLAUDE 6·13행, lookup-only `docs/reference/lead-operations.md`, HANDOFF 24–25행. README 한영판·manual과 HANDOFF 현황·예산 행은 수정하지 않았습니다.
+
+문자 수(LF 정규화 Unicode): AGENTS 1,509→1,828, CLAUDE 1,511→1,394, reference 목차 874→938, 새 운영 기준 0→759, HANDOFF 3,631→3,852. 주요 3문서(README·AGENTS·HANDOFF)는 16,866→17,406자입니다.
+
+검사: public·diff·notes validate·patch_notes 규칙 PASS. 정책 문서 변경으로 test는 실행하지 않았습니다. 미해결: 최종 head의 P1=0 리뷰·CI 확인은 총괄/driver가 이어받습니다.
+
 Fixes #748
 
 문법 검사와 실행 상태를 분리하는 receipt를 정리본·공통 보고서·bench manifest에 연결합니다. 기존 P1 3건은 a369a41로 수정했습니다.

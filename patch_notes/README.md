@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 02:44 | [`e2a836d`](https://github.com/ehojune/bioinfo-team-3d/pull/775/commits/e2a836d) | P2 후속 issue를 실사용 영향과 수정 가치로 총괄 선별 |
+| 02:27 | [`51caada`](https://github.com/ehojune/bioinfo-team-3d/pull/775/commits/51caada) | HANDOFF의 Astra 전체 검토를 원 PI 결정대로 bench 비교 앞으로 정정 |
+| 02:20 | [`cb6fd90`](https://github.com/ehojune/bioinfo-team-3d/pull/775/commits/cb6fd90) | 개발 총괄의 점검·담당 재사용·P1 반복 리뷰 운영 규칙 갱신 |
 | 02:08 | [`e9ddcf2`](https://github.com/ehojune/bioinfo-team-3d/pull/767/commits/e9ddcf2) | 취소된 부분 보고서의 기존 본문과 신규 receipt 전체 계약을 함께 검증해 CI 회귀를 고치고 관련 mock 8건을 확인했다. |
 | 00:35 | [`a369a41`](https://github.com/ehojune/bioinfo-team-3d/pull/767/commits/a369a41) | bench가 bundle 확정 뒤 receipt를 수집하고 반환된 request ID·선택적 Hub 저장 계약을 지키도록 P1 3건을 고쳤다. |
 | 00:13 | [`1c8beaa`](https://github.com/ehojune/bioinfo-team-3d/pull/767/commits/1c8beaa) | main의 실행 보고서와 receipt를 함께 보존해 충돌을 풀고 인계 큐·확정 예산·init 기본값 설명을 맞췄다. |
