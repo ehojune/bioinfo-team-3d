@@ -6110,10 +6110,18 @@ class Orchestrator:
                         reasons = [row.get("code") for row in health.get("errors") or []
                                    if isinstance(row, dict) and row.get("device") == semantic_devices.DEVICE]
                         reason = str(sem.get("reason") or (reasons[0] if reasons else "worker_unavailable"))
+                        exclusion = "not_evaluated" if sem.get("status") == "off" else "error"
+                        arm = None
+                        if sem.get("setting") == "ab":
+                            shadow_module = __import__(f"labhq.research.{semantic_devices.DEVICE}_shadow",
+                                                       fromlist=["record_ab_evaluation"])
+                            arm = shadow_module.record_ab_evaluation(self.hub.s, rid, exclusion)
                         offer = ({"status": "not_evaluated", "reason": reason}
                                  if sem.get("status") == "off" else
                                  {"status": "error", "error": {"code": reasons[0] if reasons else
                                                                   "semantics_worker_unavailable"}})
+                        if arm:
+                            offer["arm"] = arm
                     else:
                         try:
                             draft, _ = _normalize_plan_outputs(plan)

@@ -1583,6 +1583,26 @@ def ab_arm(rid: str) -> str:
     return "advisory" if hashlib.sha256(rid.encode("utf-8")).digest()[0] < 128 else "shadow"
 
 
+def write_ab_evaluation(paths: ShadowPaths, rid: str, arm: str, state: str,
+                        *, epoch: int | None = None) -> None:
+    """Persist one plan-time denominator exclusion even when no terminal shadow row can be written."""
+    append_line(paths, {"v": 1, "type": "ab_evaluation", "ts": round(time.time(), 3),
+                        "epoch": epoch, "request_id": rid, "lane": "research",
+                        "arm": arm, "ab_excluded": True, "ab_state": state})
+
+
+def record_ab_evaluation(settings: Any, rid: str, state: str) -> str:
+    """Assign and persist an exclusion when AB startup left no service object."""
+    arm = ab_arm(rid)
+    try:
+        paths = ShadowPaths(shadow_root(settings))
+        if not inside_git_tree(paths.root):
+            write_ab_evaluation(paths, rid, arm, state)
+    except (OSError, TypeError, ValueError) as exc:
+        log.warning("semantics A/B exclusion not written (%s)", type(exc).__name__)
+    return arm
+
+
 def _plan_refs(plan: Any) -> set[str]:
     refs: set[str] = set()
     if not isinstance(plan, Mapping):
@@ -2011,9 +2031,7 @@ class ShadowService:
         """Keep denominator exclusions even when a latched worker cannot write the terminal request row."""
         try:
             with self.record_lock:
-                append_line(self.paths, {"v": 1, "type": "ab_evaluation", "ts": round(time.time(), 3),
-                                         "epoch": self.epoch, "request_id": rid, "lane": "research",
-                                         "arm": arm, "ab_excluded": True, "ab_state": state})
+                write_ab_evaluation(self.paths, rid, arm, state, epoch=self.epoch)
         except OSError as exc:
             log.warning("semantics A/B exclusion not written (%s)", type(exc).__name__)
 

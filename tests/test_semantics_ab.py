@@ -109,6 +109,28 @@ async def test_off_shadow_and_ab_shadow_arm_dispatch_the_same_plan_bytes():
 
 
 @pytest.mark.asyncio
+async def test_missing_ab_worker_has_stable_arm_and_error_exclusion(tmp_path):
+    hub, _ = research_hub([plan_with([])], declare_on=False)
+    hub.s.semantics = {"mode": "ab"}
+    hub.s.gateway.state_dir = str(tmp_path / "state")
+
+    await Orchestrator(hub).run_request("r")
+
+    frozen = hub.requests["r"]["semantics_ab"]
+    assert frozen == {
+        "arm": shadow.ab_arm("r"), "offered": [], "status": "error",
+        "error": {"code": "semantics_worker_unavailable"},
+    }
+    report = shadow.build_report(
+        shadow.ShadowPaths(tmp_path / "state" / "semantics"), setting="ab")
+    assert report["arms"][frozen["arm"]]["requests"] == 0
+    assert report["arms"][frozen["arm"]]["excluded_states"] == {
+        "error": 1, "not_evaluated": 0,
+    }
+    assert report["ab_window"]["excluded_states"] == {"error": 1, "not_evaluated": 0}
+
+
+@pytest.mark.asyncio
 async def test_advisory_prompt_has_no_path_or_request_body_and_does_not_change_cp1_gate():
     refs = []
 
