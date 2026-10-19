@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 23:27 | [`1836a01`](https://github.com/ehojune/bioinfo-team-3d/pull/765/commits/1836a01) | 현재 cgroup v2와 보이는 ancestor의 최소 memory.max를 기본 단계 메모리에 반영하고 기존 fallback을 유지한다. |
 | 23:25 | [`50a3948`](https://github.com/ehojune/bioinfo-team-3d/pull/763/commits/50a3948) | 상대 workspace 게시 검사의 일반 단어·URL 오탐을 고치고 경로 보호 회귀와 기존 CI 검사를 갱신한다. |
 | 22:31 | [`5a2a925`](https://github.com/ehojune/bioinfo-team-3d/pull/764/commits/5a2a925) | 정리본·PDF에 실행된 단계의 파이프라인 모식도·타임라인·실행 보고서를 넣고 Nextflow 네 기록을 모음 |
 | 22:23 | [`2ca1543`](https://github.com/ehojune/bioinfo-team-3d/pull/762/commits/2ca1543) | 공개용 reference 정리를 승인 전에 적용해 카드·fingerprint·업로드 소스를 맞추고 긴 코드를 보존했다. |
