@@ -18,7 +18,7 @@
 | 순서 | 할 일 | 완료 조건·현재 한계 |
 |---|---|---|
 | 1 | 문서 #761 → #756 모식도·실행 보고서 → 배포 | #758·#759 병합 완료. #756은 다음 승인 예산에서 재개. 새 실운전은 아직 미실행 |
-| 병렬 | #748 재현 검증 receipt | 언어별 문법·실행 상태와 코드/lock hash를 기록. 공유 리포팅·storage는 #748 뒤 #754 rebuild 순서 |
+| 병렬 | #748 재현 검증 receipt · PR #767 | 구현·관련 test 완료, CI/리뷰 뒤 driver 병합. 공유 리포팅·storage는 #748 뒤 #754 rebuild 순서 |
 | 2 | 공개 소형 주제 2개를 제시하고 PI 선택 뒤 장치 실운전 | P2A 생성→호출→산출, 의미 모델·그림자 요청·ontology·checklist·EDAM·pack, 문헌/PDF, 보고서·묶음·정리본을 요청별로 대조. **아직 미실행** |
 | 3 | bench dry-run → 준비 게이트 검토 요청 | 동일 입력·판본·PI 답·예산과 arm별 state/workspace 분리, 장치 작동 근거, 예상 시간·비용을 확인 |
 | 4 | 준비 게이트 완료 뒤 [#739](https://github.com/ehojune/bioinfo-team-3d/issues/739) | labhq 혼합 roster와 Astra·Sol·Opus **단독 세션**을 같은 요청으로 비교. CSO만 교체하는 실험과 구분 |
