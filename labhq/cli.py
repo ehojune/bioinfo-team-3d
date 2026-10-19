@@ -1726,7 +1726,7 @@ def main(argv: list[str] | None = None) -> None:
     wr = sub.add_parser("wsl-runner", help="이 설정의 WSL runner 시작·종료")
     wr.add_argument("action", choices=("start", "stop"))
     sub.add_parser("agents")
-    storage = sub.add_parser("storage", help="open the storage choice card for a finished request, or redraft or republish its edition")
+    storage = sub.add_parser("storage", help="open the storage choice card for a finished request, or redraft, republish or rebuild its edition")
     storage.add_argument("id")
     again = storage.add_mutually_exclusive_group()
     again.add_argument("--redraft", action="store_true",
@@ -1735,9 +1735,13 @@ def main(argv: list[str] | None = None) -> None:
                        help="after a failed upload, open the publish card again with the local draft (the editor does not run)")
     again.add_argument("--to", choices=["github"],
                        help="move a request that ended local to a new GitHub repository (the publish card still asks first)")
-    storage.add_argument("--name", help="with --to github: repository name (default labhq-<request id>)")
+    again.add_argument("--rebuild", action="store_true",
+                       help="make a published edition again with the current editor: a new commit in the same repository, "
+                            "or with --name a new repository (the publish card still asks first)")
+    storage.add_argument("--name", help="with --to github: repository name (default labhq-<request id>); "
+                                        "with --rebuild: a new repository instead of the same one")
     storage.add_argument("--visibility", choices=["private", "public"], default="private",
-                         help="with --to github: repository visibility (default private)")
+                         help="with --to github or --rebuild --name: repository visibility (default private)")
     review = sub.add_parser("review-done", help="mark a finished report reviewed (or failure acknowledged)")
     review.add_argument("id")
     review.add_argument("--revision", type=int, help="CP4 draft revision shown in the report card")
@@ -2105,6 +2109,15 @@ def main(argv: list[str] | None = None) -> None:
         wait = (" 보고서 검토를 마치면(`labhq review-done`) 편집자가 정리본을 만들고" if result.get("waiting_review")
                 else " 편집자가 정리본을 다시 만들고")
         print(f"{args.id}: {result['repo']}로 옮깁니다.{wait} 게시 카드가 뜨면 확인하고 올려 주세요.")
+        if result.get("note"):
+            print(result["note"])
+    elif args.cmd == "storage" and args.rebuild:
+        result = _api(s, "POST", f"/api/requests/{args.id}/storage/rebuild",
+                      json={"name": args.name, "visibility": args.visibility})
+        where = (f"새 저장소 {result['repo']}에" if result.get("new_repository")
+                 else f"같은 저장소 {result['repo']}에 새 판으로")
+        print(f"{args.id}: 지금 편집기로 정리본을 다시 만들어 {where} 올립니다. 게시 카드가 뜨면 확인하고 올려 주세요. "
+              "이전 판에만 있던 파일은 지우지 않습니다.")
         if result.get("note"):
             print(result["note"])
     elif args.cmd == "storage" and args.republish:
