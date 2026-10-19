@@ -1,6 +1,7 @@
 """PI #732: standard workflows first, and one durable consent per contribution."""
 
 import asyncio
+import base64
 import json
 from pathlib import Path
 
@@ -8,6 +9,7 @@ import httpx
 import pytest
 
 from labhq.gateway.server import Hub
+from labhq.integrations.github import publish_clean
 from labhq.models import AskRequest, TaskResult
 from labhq.orchestrator.cso import PLAN_PROMPT, REPLAN_PROMPT, RESEARCH_PLAN_PROMPT
 from tests.test_bioinfo_pipeline_pr import fake_pipeline_api, pipeline, settings
@@ -115,6 +117,49 @@ async def test_contribution_card_contains_the_exact_candidate_source_before_yes(
         detail = card(hub)["detail"]
         assert detail["files"] == submission["files"]
         assert calls == []
+    finally:
+        await close(hub)
+
+
+@pytest.mark.parametrize("case", ["query", "private_reference", "long_source"])
+async def test_card_fingerprint_and_upload_use_the_same_final_public_source(tmp_path, case):
+    from labhq.intake import Reference
+    from labhq.pipeline_pr import pipeline_fingerprint
+
+    calls = []
+    configured = settings(tmp_path, pipeline_pr=True)
+    references = [{"kind": "url", "value": "https://example.test/public/input.bam"}]
+    if case == "query":
+        extra = [{"path": "pipelines/tiny/assets/samplesheet.csv",
+                  "content": "sample,file\nsmoke,https://example.test/public/input.bam?format=bam\n"}]
+    elif case == "private_reference":
+        configured.pi_profile.references = [Reference(kind="url", value="https://wiki.example.test/private")]
+        extra = [{"path": "pipelines/tiny/docs/method.md", "content": "See https://wiki.example.test/private\n"}]
+    else:
+        extra = [{"path": "pipelines/tiny/modules/long.nf", "content": "// source line\n" * 5000 + "// final line\n"}]
+    submission = pipeline(extra=extra)
+    expected = [{"path": item["path"], "content": publish_clean(item["content"], configured,
+                [{"references": references}], limit=None)} for item in submission["files"]]
+    hub = Hub(configured, github_transport=fake_pipeline_api(calls))
+    hub.requests["r"] = {"id": "r", "status": "done", "references": references}
+    hub.store.put("pipeline_submission", "t", {"request_id": "r", "task_id": "t",
+        "agent_id": "engineer", "state": "ready", "submission": submission})
+    try:
+        await hub.publish(READY)
+        await hub.reporter.drain()
+        approval = card(hub)
+        assert calls == []
+        assert approval["detail"]["files"] == expected
+        saved = hub.store.get("pipeline_submission", "t")["submission"]
+        assert approval["detail"]["fingerprint"] == pipeline_fingerprint(saved, configured)
+        await hub.resolve_approval(approval["id"], True)
+        await hub.reporter.drain()
+        puts = [(path, body) for method, path, body in calls if method == "PUT"]
+        assert len(puts) == len(expected)
+        for item in expected:
+            body = next(body for path, body in puts if path.endswith("/contents/" + item["path"]))
+            assert base64.b64decode(body["content"]).decode("utf-8") == item["content"]
+        assert sum(method == "POST" and path.endswith("/pulls") for method, path, _ in calls) == 1
     finally:
         await close(hub)
 

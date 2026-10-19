@@ -286,13 +286,14 @@ class GitHubClient:
             "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "labhq",
         })
 
-    async def _req(self, method: str, path: str, **kw: Any) -> Any:
+    async def _req(self, method: str, path: str, *,
+                   content_cleaner: Callable[[str], str] | None = None, **kw: Any) -> Any:
         if method in {"POST", "PUT", "PATCH", "DELETE"}:
             if "json" in kw:
                 if method == "PUT" and "/contents/" in path:
                     payload = dict(kw["json"])
                     content = base64.b64decode(payload["content"]).decode("utf-8")
-                    guarded = base64.b64encode(self.clean(content).encode("utf-8")).decode("ascii")
+                    guarded = base64.b64encode((content_cleaner or self.clean)(content).encode("utf-8")).decode("ascii")
                     kw["json"] = self._clean_value({k: v for k, v in payload.items() if k != "content"})
                     kw["json"]["content"] = guarded
                 else:
@@ -366,8 +367,9 @@ class GitHubClient:
         issue = await self._req("GET", f"/repos/{repo}/issues/{number}")
         return issue.get("state") == "closed"
 
-    async def put_file(self, repo: str, path: str, content: str, message: str, branch: str | None) -> dict:
-        path, content = self.clean(path), self.clean(content)  # branch is a ref, not published text
+    async def put_file(self, repo: str, path: str, content: str, message: str, branch: str | None, *,
+                       content_cleaner: Callable[[str], str] | None = None) -> dict:
+        path, content = self.clean(path), (content_cleaner or self.clean)(content)  # branch is a ref, not published text
         path = quote(path, safe="/")
         sha = None
         params = {"ref": branch} if branch else None
@@ -384,7 +386,7 @@ class GitHubClient:
             body["branch"] = branch
         if sha:
             body["sha"] = sha
-        return await self._req("PUT", f"/repos/{repo}/contents/{path}", json=body)
+        return await self._req("PUT", f"/repos/{repo}/contents/{path}", json=body, content_cleaner=content_cleaner)
 
     async def repo_info(self, repo: str) -> dict:
         return await self._req("GET", f"/repos/{repo}")
@@ -632,6 +634,22 @@ class ProjectReporter:
         if reason:
             await self._pipeline_status(entry, "rejected", reason)
             return True
+        # Review the final public bytes, without the report/comment length cap. Keep the original
+        # rejection above: normalization must never turn a forbidden source bundle into an allowed one.
+        def clean_source(text: str) -> str:
+            return publish_clean(text, self.s, self.hub.requests.values(), limit=None)
+
+        public_submission = {**submission, "files": [
+            {**item, "path": clean_source(item["path"]), "content": clean_source(item["content"])}
+            for item in submission["files"]]}
+        reason = self._pipeline_rejection(public_submission)
+        if reason:
+            await self._pipeline_status(entry, "rejected", reason)
+            return True
+        if public_submission != submission:
+            entry["submission"] = public_submission
+            self.hub.store.put("pipeline_submission", entry["task_id"], entry)
+        submission = public_submission
         if not await self._pipeline_approved(entry):
             return entry.get("state") == "declined"
         gh = self.client()
@@ -664,7 +682,7 @@ class ProjectReporter:
                         raise
                 for item in submission["files"]:
                     await gh.put_file(repo, item["path"], item["content"],
-                                      f"{name} pipeline: add generated file", branch)
+                                      f"{name} pipeline: add generated file", branch, content_cleaner=clean_source)
                 body = (f"labhq에서 구현하고 PI가 건별 기여를 승인한 `{name}` pipeline입니다.\n\n"
                         f"{submission.get('summary') or ''}\n\n{marker}")
                 existing = await gh.create_pull(repo, submission.get("title") or f"{name} pipeline 추가",

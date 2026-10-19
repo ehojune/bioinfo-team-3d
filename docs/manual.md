@@ -968,7 +968,7 @@ PDF 표지는 보고서의 정식 제목 전체를 쓰고 자동 줄바꿈합니
 이슈 제목·본문·코멘트·보고서·커밋 메시지를 모두 검사합니다. `/`나 `E:/` 같은 루트를 통제 구역으로 두면 아무것도 게시하지 않습니다.
 
 bioinfo-agent는 지원하는 nf-core pipeline을 우선 쓰고, 지원 밖의 복잡한 신규 구현은 engineer나 analyst에게 배정합니다. 통제 데이터 구역·비용 상한 초과·프로그램 설치만 PI에게 올립니다.
-새 pipeline은 `outputs/pipeline/<name>/manifest.json`과 같은 폴더의 UTF-8 text 파일로 넘깁니다. `policy.bioinfo_agent.pipeline_pr: true`는 자동 기여 동의가 아니라 후보별 승인 경로만 활성화합니다. 완성된 후보마다 코드·대상 저장소·base를 표시한 승인 카드를 열고, PI가 별도로 `yes`라고 답하면 게이트웨이가 자기 GitHub token으로 branch·PR을 만듭니다. 승인 전이나 거절 뒤에는 GitHub를 호출하지 않습니다. 코드(`.nf`·`.config`·`.groovy`·`.py`·`.R`·`.sh`)와 정해진 자리의 pipeline 파일(`README.md`·`docs/*.md`·`nextflow_schema.json` 등), 행마다 https 테스트 데이터를 가리키는 `assets/samplesheet*.csv`만 받습니다. 그 밖의 파일·비밀값·절대경로가 있으면 거부하고, 마치지 못했거나 실패한 turn의 산출은 올리지 않습니다. 승인 뒤 쓰기 권한이 없으면 요청은 그대로 끝나고 웹에 `pipeline PR 대기`로 남습니다.
+새 pipeline은 `outputs/pipeline/<name>/manifest.json`과 같은 폴더의 UTF-8 text 파일로 넘깁니다. `policy.bioinfo_agent.pipeline_pr: true`는 자동 기여 동의가 아니라 후보별 승인 경로만 활성화합니다. 완성된 후보마다 공개용 reference 정리를 마친 소스 전문·fingerprint·대상 저장소·base를 승인 카드에 표시합니다. PI가 별도로 `yes`라고 답하면 게이트웨이가 승인한 소스를 자르지 않고 자기 GitHub token으로 branch·PR을 만듭니다. 승인 전이나 거절 뒤에는 GitHub를 호출하지 않습니다. 코드(`.nf`·`.config`·`.groovy`·`.py`·`.R`·`.sh`)와 정해진 자리의 pipeline 파일(`README.md`·`docs/*.md`·`nextflow_schema.json` 등), 행마다 https 테스트 데이터를 가리키는 `assets/samplesheet*.csv`만 받습니다. 그 밖의 파일·비밀값·절대경로가 있으면 거부하고, 마치지 못했거나 실패한 turn의 산출은 올리지 않습니다. 승인 뒤 쓰기 권한이 없으면 요청은 그대로 끝나고 웹에 `pipeline PR 대기`로 남습니다.
 
 `labhq codex-review <project> <PR번호>`로 그 프로젝트 PR에 Codex 리뷰 요청 댓글을 한 번 남깁니다. 직원도 같은 규칙을 따릅니다(직원 공통 규칙). 리뷰 지적에는 멘션 없이 답하고, 수정을 모두 push한 뒤 PR 상단에 리뷰 요청을 한 번만 남기며, 리뷰가 도는 동안에는 다시 부르지 않습니다. 멘션이 든 댓글마다 리뷰 세션이 따로 뜨기 때문입니다.
 
