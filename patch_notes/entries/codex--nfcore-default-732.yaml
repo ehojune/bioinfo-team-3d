@@ -6,3 +6,6 @@ rows:
 - sha: 6d77762
   at: 2026-10-19 18:24
   text: 건별 pipeline 기여 승인과 nf-core 우선 배정 절차를 매뉴얼에 반영했다.
+- sha: 42fb7d0
+  at: 2026-10-19 18:57
+  text: nf-core 정책 문구의 기존 앵커와 prompt 고정 계약을 함께 맞췄다.
