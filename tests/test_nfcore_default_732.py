@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from pathlib import Path
 
 import httpx
 import pytest
@@ -13,6 +14,24 @@ from tests.test_bioinfo_pipeline_pr import fake_pipeline_api, pipeline, settings
 
 
 READY = {"type": "pipeline.ready", "request_id": "r", "task_id": "t"}
+
+
+def test_manual_matches_assignment_and_per_candidate_contribution_policy():
+    manual = (Path(__file__).parents[1] / "docs" / "manual.md").read_text(encoding="utf-8")
+    for current in (
+        "지원하는 nf-core pipeline을 우선",
+        "지원 밖의 복잡한 신규 구현은 engineer나 analyst",
+        "후보마다 PI가 별도로 `yes`",
+        "후보별 승인 경로만 활성화",
+    ):
+        assert current in manual
+    for stale in (
+        "공개 기여에 동의하면 `policy.bioinfo_agent.pipeline_pr: true`",
+        "신규 구현(bioinfo-agent)",
+        "bioinfo-agent의 workflow 구현",
+        "새 pipeline 생성 여부는 CSO가 답합니다",
+    ):
+        assert stale not in manual
 
 
 async def close(hub):

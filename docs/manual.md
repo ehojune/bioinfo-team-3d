@@ -721,10 +721,15 @@ Codex 직원은 `tools`에 `WebSearch`나 `WebFetch`가 있으면 `web_search="l
 도구 배정, `max_turns`, 모델 등급은 아직 검증하지 않았으며 #40 bench에서 잽니다. 엔진은 MCP·resume·hook·예산 상한
 지원 여부로 고릅니다(#39). 첫 실험(#27)에서는 bioinfo-agent가 배정되지 않고 읽기 전용 리뷰어에게 쓰기 작업이 갔습니다.
 
-### bioinfo-agent 연결하기
+### bioinfo-agent 연결과 pipeline 기여 승인
 
-`init`에서 공개 기여에 동의하면 `policy.bioinfo_agent.pipeline_pr: true`로 저장합니다. 기존 동의값과 대상은 `--force`에서도 보존하며, 바꾸려면 설정을 직접 고치세요. 거절하면 pipeline 내용 수집·전송과 GitHub 호출을 하지 않습니다.
-현재 fork 자동 생성은 지원하지 않아 공개 upstream 쓰기 권한이 필요합니다. 권한이 없으면 `pipeline PR 대기`로 남습니다.
+표준 bioinformatics 분석은 bioinfo-agent가 지원하는 nf-core pipeline을 우선 씁니다. 단순 수집·가공·조회는 알맞은 직원에게 바로 맡기고,
+지원 밖의 복잡한 신규 구현은 engineer나 analyst에게 배정합니다. 선택한 pipeline이나 다른 배정 사유는 계획에 남깁니다.
+
+`policy.bioinfo_agent.pipeline_pr: true`는 후보별 승인 경로만 활성화합니다. 완성된 pipeline 후보가 manifest와 소스 파일을 명시하면
+승인 카드가 열리고, 후보마다 PI가 별도로 `yes`라고 답한 뒤에만 기존 공개·비밀값·자료 검사를 거쳐 GitHub에 보냅니다.
+승인 전이나 거절 뒤에는 GitHub를 호출하지 않습니다. 현재 fork 자동 생성은 지원하지 않아 승인 뒤에도 공개 upstream 쓰기 권한이 필요하며,
+권한이 없으면 `pipeline PR 대기`로 남습니다.
 러너 환경변수 `BIOINFO_AGENT_DIR`에 bioinfo Claude Code plugin 디렉터리를 지정합니다(`labhq init`이 찾아 `engines.claude_code.env`에 넣고, 못 찾으면 묻습니다). 실행 전에
 plugin 이름(`bioinfo`)과 `required_skills`의 skill이 실제로 있는지 확인하고, 없으면 시작하지 않습니다(오류에는 경로를 싣지 않음).
 CLI를 띄우기 전에 plugin 이름·version·내용 해시를 run manifest의 `plugins`에 남깁니다. 이 직원만 `--plugin-dir`로
@@ -791,8 +796,8 @@ flowchart LR
    올라가면 **이번 요청**의 해당 단계를 맡고 계획을 확정합니다. 채용 거절·실패·시간 초과는 정규직 재배정으로,
    Paper2Agent doctor 실패는 채용 생략으로 처리하며 이유를 계획·CP1에 적습니다. 채용 대기 상한은 `runner.task_timeout_s`입니다.
 
-   기존 방법 재현(파견직)과 신규 구현(bioinfo-agent)은 병렬로 돌린 뒤 비교합니다. Nextflow는 파견직의 방법·툴 명세 →
-   bioinfo-agent의 workflow 구현 → 파견직 검증 순서입니다. 수동 채용 API(`POST /api/recruit`)도 유지합니다.
+   기존 방법 재현(파견직)과 구현 담당은 병렬로 일한 뒤 비교합니다. Nextflow는 지원하는 nf-core pipeline이면 bioinfo-agent가 맡고,
+   지원 밖의 복잡한 신규 구현은 engineer나 analyst가 맡습니다. 파견직은 방법·툴 명세와 검증을 담당합니다. 수동 채용 API(`POST /api/recruit`)도 유지합니다.
 
    | 항목 | 출처 |
    |---|---|
@@ -962,8 +967,8 @@ PDF 표지는 보고서의 정식 제목 전체를 쓰고 자동 줄바꿈합니
 통제접근 경로 판정은 접근 정책과 같습니다(구분자·대소문자·`.`/`..` 정규화). 그런 경로가 있는 줄은 통째로 가리고,
 이슈 제목·본문·코멘트·보고서·커밋 메시지를 모두 검사합니다. `/`나 `E:/` 같은 루트를 통제 구역으로 두면 아무것도 게시하지 않습니다.
 
-bioinfo-agent의 일반 질문과 새 pipeline 생성 여부는 CSO가 답합니다. 통제 데이터 구역·비용 상한 초과·프로그램 설치만 PI에게 올립니다.
-새 pipeline은 `outputs/pipeline/<name>/manifest.json`과 같은 폴더의 UTF-8 text 파일로 넘깁니다. 공개 bioinfo-agent 저장소로 가는 자동 PR은 **기본 꺼짐**이고, 켜는 설정은 게이트웨이 설정의 `policy.bioinfo_agent.pipeline_pr: true` 하나입니다. 켜면 게이트웨이가 자기 GitHub token으로 branch·PR을 만듭니다. 코드(`.nf`·`.config`·`.groovy`·`.py`·`.R`·`.sh`)와 정해진 자리의 pipeline 파일(`README.md`·`docs/*.md`·`nextflow_schema.json` 등), 행마다 https 테스트 데이터를 가리키는 `assets/samplesheet*.csv`만 받습니다. 그 밖의 파일·비밀값·절대경로가 있으면 거부하고, 마치지 못했거나 실패한 turn의 산출은 올리지 않습니다. 쓰기 권한이 없으면 요청은 그대로 끝나고 웹에 `pipeline PR 대기`로 남습니다.
+bioinfo-agent는 지원하는 nf-core pipeline을 우선 쓰고, 지원 밖의 복잡한 신규 구현은 engineer나 analyst에게 배정합니다. 통제 데이터 구역·비용 상한 초과·프로그램 설치만 PI에게 올립니다.
+새 pipeline은 `outputs/pipeline/<name>/manifest.json`과 같은 폴더의 UTF-8 text 파일로 넘깁니다. `policy.bioinfo_agent.pipeline_pr: true`는 자동 기여 동의가 아니라 후보별 승인 경로만 활성화합니다. 완성된 후보마다 코드·대상 저장소·base를 표시한 승인 카드를 열고, PI가 별도로 `yes`라고 답하면 게이트웨이가 자기 GitHub token으로 branch·PR을 만듭니다. 승인 전이나 거절 뒤에는 GitHub를 호출하지 않습니다. 코드(`.nf`·`.config`·`.groovy`·`.py`·`.R`·`.sh`)와 정해진 자리의 pipeline 파일(`README.md`·`docs/*.md`·`nextflow_schema.json` 등), 행마다 https 테스트 데이터를 가리키는 `assets/samplesheet*.csv`만 받습니다. 그 밖의 파일·비밀값·절대경로가 있으면 거부하고, 마치지 못했거나 실패한 turn의 산출은 올리지 않습니다. 승인 뒤 쓰기 권한이 없으면 요청은 그대로 끝나고 웹에 `pipeline PR 대기`로 남습니다.
 
 `labhq codex-review <project> <PR번호>`로 그 프로젝트 PR에 Codex 리뷰 요청 댓글을 한 번 남깁니다. 직원도 같은 규칙을 따릅니다(직원 공통 규칙). 리뷰 지적에는 멘션 없이 답하고, 수정을 모두 push한 뒤 PR 상단에 리뷰 요청을 한 번만 남기며, 리뷰가 도는 동안에는 다시 부르지 않습니다. 멘션이 든 댓글마다 리뷰 세션이 따로 뜨기 때문입니다.
 
