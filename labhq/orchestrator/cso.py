@@ -2764,6 +2764,8 @@ class Orchestrator:
                     "advisory_snapshot", "advisory_projection", "advisory_boundary", "load", "render", "resume"}:
                 record["errors"].append(row)
                 record["status"] = "error"
+        record["advisory"] = semantic_devices.advisory_state(
+            req.get("semantics_ab"), record.get(semantic_devices.DEVICE))
         req["semantic_devices"] = record
         checks = req.setdefault("semantic_device_checks", [])
         checks.append(record)
@@ -2781,6 +2783,8 @@ class Orchestrator:
         record = req.get("semantic_devices") if isinstance(req.get("semantic_devices"), dict) else {
             "version": 1, "phase": "runtime", "checked_at": time.time(), "status": "ok", "errors": []}
         semantic_devices.add_error(record, code=code)
+        record["advisory"] = semantic_devices.advisory_state(
+            req.get("semantics_ab"), record.get(semantic_devices.DEVICE))
         req["semantic_devices"] = record
         self.hub.save_request(rid)
         await self._emit(rid, "request.semantic_devices", record)
@@ -4771,11 +4775,15 @@ class Orchestrator:
                          "reason": "live source defect: " + reason}
                         for claim in checked.claims if evidence_id in claim.verified_evidence]
         def update_conclusion_depth() -> None:
-            warnings[:] = [line for line in warnings if not line.startswith("결론 근거 논문 ")]
+            warnings[:] = [line for line in warnings if not line.startswith(("결론 근거 논문 ", "문헌 접근 실패 원장("))]
             conclusion_depth = output_checks.conclusion_literature_line(
                 steps, results, ledgers, unsupported=unsupported, refused=refused)
             if conclusion_depth:
                 warnings.append(conclusion_depth)
+            access_ledger = output_checks.literature_ledger_line(
+                steps, results, ledgers, unsupported=unsupported, refused=refused)
+            if access_ledger:
+                warnings.append(access_ledger)
             contract["result_warnings"] = warnings
 
         update_conclusion_depth()
@@ -4795,7 +4803,9 @@ class Orchestrator:
         device_record = await self._semantic_devices_check(rid, "cp2")
         device_warning = semantic_devices.warning(device_record)
         if device_warning:
-            summary = device_warning + "\n\n" + summary
+            summary = device_warning + "\n" + semantic_devices.card_line(device_record) + "\n\n" + summary
+        else:
+            summary = semantic_devices.card_line(device_record) + "\n" + summary
         device_report = None
         if semantic_device_report.applies(req, self.hub.s):
             device_report = semantic_device_report.build_report(req, self.hub.s)
@@ -5677,7 +5687,10 @@ class Orchestrator:
                                "확인하고 승인하세요." + (" 고칠 점이 있으면 메모와 함께 수정 요청을 고르세요."
                                                       if can_revise else ""))
                     if device_warning:
-                        summary = device_warning + "\n\n" + summary
+                        summary = (device_warning + "\n" + semantic_devices.card_line(device_record)
+                                   + "\n\n" + summary)
+                    else:
+                        summary = semantic_devices.card_line(device_record) + "\n" + summary
                     scope_warnings = [warning for warning in plan.get("warnings", [])
                                       if isinstance(warning, str) and warning.startswith(SCOPE_COVERAGE_WARNING)]
                     if scope_warnings:
@@ -6094,49 +6107,80 @@ class Orchestrator:
                 # semantics-shadow: begin (#149 decision 15 advisory A/B)
                 if research_lane and not continuation:  # the A/B arm was fixed by the request's first plan
                     service = getattr(self.hub, "semantics_" + "shadow", None)
-                    if service is not None:
+                    if service is None:
+                        health = req.get("semantic_devices") if isinstance(req.get("semantic_devices"), dict) else {}
+                        sem = health.get(semantic_devices.DEVICE)
+                        sem = sem if isinstance(sem, dict) else {}
+                        reasons = [row.get("code") for row in health.get("errors") or []
+                                   if isinstance(row, dict) and row.get("device") == semantic_devices.DEVICE]
+                        reason = str(sem.get("reason") or (reasons[0] if reasons else "worker_unavailable"))
+                        exclusion = "not_evaluated" if sem.get("status") == "off" else "error"
+                        arm = None
+                        if sem.get("setting") == "ab":
+                            shadow_module = __import__(f"labhq.research.{semantic_devices.DEVICE}_shadow",
+                                                       fromlist=["record_ab_evaluation"])
+                            arm = shadow_module.record_ab_evaluation(self.hub.s, rid, exclusion)
+                        offer = ({"status": "not_evaluated", "reason": reason}
+                                 if sem.get("status") == "off" else
+                                 {"status": "error", "error": {"code": reasons[0] if reasons else
+                                                                  "semantics_worker_unavailable"}})
+                        if arm:
+                            offer["arm"] = arm
+                    else:
                         try:
                             draft, _ = _normalize_plan_outputs(plan)
                             draft = prepare_research_declarations(draft, self._output_vocab(), {})
                             snap = service.advisory_snapshot(rid, draft)  # live state, copied on the loop
                             offer = await asyncio.to_thread(service.advisory_offer, rid, snap)
+                            if offer is None:
+                                offer = {"status": "not_evaluated",
+                                         "reason": str(getattr(service, "latched", None) or
+                                                       "snapshot_unavailable")}
                         except (ValueError, TypeError, PlanOutputsError) as exc:
-                            offer = None
+                            offer = {"status": "error",
+                                     "error": {"code": "semantics_advisory_snapshot_failed"}}
                             semantic_devices.log_exception("semantics_advisory_snapshot_failed", exc)
-                            await self._semantic_device_error(rid, code="semantics_advisory_snapshot_failed")
-                        if offer is not None and offer.get("status") == "error":
-                            error = offer.get("error") if isinstance(offer.get("error"), dict) else {}
-                            req["semantics_ab"] = {"arm": offer.get("arm"), "offered": [], "status": "error",
-                                                   "error": {"code": error.get("code") or
-                                                             "semantics_advisory_projection_failed"}}
-                            self.hub.save_request(rid)
-                            await self._semantic_device_error(
-                                rid, code=str(error.get("code") or "semantics_advisory_projection_failed"))
-                        elif offer is not None:  # ab: ids offered (shadow arm: would be), frozen for the end record
-                            req["semantics_ab"] = {"arm": offer["arm"], "offered": list(offer["offered"])}
-                            self.hub.save_request(rid)
-                        if offer is not None and offer.get("status") != "error" and offer["offered"]:
-                            # Both arms re-plan once, so they pay for the same CSO calls. Only the advisory arm's
-                            # prompt gains the list; the shadow arm sends its first prompt again.
-                            candidates = offer["candidates"]
-                            if candidates:
-                                lines = ["\n\nOptional reusable artifacts (advisory only; ignore any or all of them).",
-                                         "If you use one, copy its artifact_id exactly into the relevant step's "
-                                         "input_refs:"]
-                                lines += [f"- artifact_id={c['artifact_id']} data_type={c['data_type']} "
-                                          f"created_request_id={c['request_id']}" for c in candidates[:5]]
-                                reuse_advisory = "\n".join(lines)
-                            plan_res = await make_plan(text)
-                            if not plan_res.ok:
-                                self._finish(rid, f"A/B re-plan failed: {plan_res.error}", {}, ok=False)
-                                return
-                            if rid in self.budget_denials:
-                                self._finish(rid, "A/B 재계획 뒤 예산 승인 거부",
-                                             {"plan": plan_res.model_dump(mode="json")}, ok=False)
-                                return
-                            plan = _carry_assumptions(
-                                plan, plan_res.structured if isinstance(plan_res.structured, dict)
-                                else extract_json(plan_res.text) or {})
+                    if offer is not None and offer.get("status") == "error":
+                        error = offer.get("error") if isinstance(offer.get("error"), dict) else {}
+                        req["semantics_ab"] = {"arm": offer.get("arm"), "offered": [], "status": "error",
+                                               "error": {"code": error.get("code") or
+                                                         "semantics_advisory_projection_failed"}}
+                        self.hub.save_request(rid)
+                        await self._semantic_device_error(
+                            rid, code=str(error.get("code") or "semantics_advisory_projection_failed"))
+                    elif offer is not None and offer.get("status") == "not_evaluated":
+                        req["semantics_ab"] = {
+                            **({"arm": offer["arm"]} if offer.get("arm") else {}),
+                            "status": "not_evaluated",
+                            "reason": str(offer.get("reason") or "snapshot_unavailable"),
+                        }
+                        self.hub.save_request(rid)
+                    elif offer is not None:  # ab: ids offered (shadow arm: would be), frozen for the end record
+                        req["semantics_ab"] = {"arm": offer["arm"], "offered": list(offer["offered"]),
+                                               "status": "ok"}
+                        self.hub.save_request(rid)
+                    if offer is not None and offer.get("status", "ok") == "ok" and offer["offered"]:
+                        # Both arms re-plan once, so they pay for the same CSO calls. Only the advisory arm's
+                        # prompt gains the list; the shadow arm sends its first prompt again.
+                        candidates = offer["candidates"]
+                        if candidates:
+                            lines = ["\n\nOptional reusable artifacts (advisory only; ignore any or all of them).",
+                                     "If you use one, copy its artifact_id exactly into the relevant step's "
+                                     "input_refs:"]
+                            lines += [f"- artifact_id={c['artifact_id']} data_type={c['data_type']} "
+                                      f"created_request_id={c['request_id']}" for c in candidates[:5]]
+                            reuse_advisory = "\n".join(lines)
+                        plan_res = await make_plan(text)
+                        if not plan_res.ok:
+                            self._finish(rid, f"A/B re-plan failed: {plan_res.error}", {}, ok=False)
+                            return
+                        if rid in self.budget_denials:
+                            self._finish(rid, "A/B 재계획 뒤 예산 승인 거부",
+                                         {"plan": plan_res.model_dump(mode="json")}, ok=False)
+                            return
+                        plan = _carry_assumptions(
+                            plan, plan_res.structured if isinstance(plan_res.structured, dict)
+                            else extract_json(plan_res.text) or {})
                 # semantics-shadow: end
                 plan, plan_res = await resolve_plan_questions(plan, plan_res)
                 if plan is None:

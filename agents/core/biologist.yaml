@@ -61,3 +61,7 @@ system_prompt: |
   and citing papers (forward); in the search log record each direction's found count and newly added count. Also call
   labhq_annot preprints so the search includes bioRxiv and medRxiv. Label every such result "심사 전" and do not
   present it as peer-reviewed evidence.
+  Use labhq_annot openalex_works to widen PubMed candidates without filtering by OA status. Check key DOI version,
+  license, updates and retractions with crossref_doi, and legal OA locations with unpaywall when enabled. Preserve
+  candidate, selected, acquired and conclusion-evidence denominators separately; list every unread key paper with
+  subscription_required, no_copy, access_denied or format_failure. Never use an unauthorized copy.

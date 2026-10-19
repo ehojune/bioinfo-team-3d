@@ -36,6 +36,8 @@ _ERRORS: dict[str, tuple[str, str, str]] = {
 }
 _STOP_REASONS = frozenset({"info_boundary", "consecutive_failures", "recent_failures", "worker_stuck",
                            "worker_busy", "wrong_identity", "breaker_storage", "sqlite_json1_missing"})
+_ADVISORY_REASONS = _STOP_REASONS | frozenset({"configured_off", "mode_not_ab", "snapshot_unavailable",
+                                                "worker_unavailable", "missing_evaluation_evidence"})
 
 
 def _semantics_state(settings: Any) -> dict[str, Any]:
@@ -168,6 +170,41 @@ def add_error(record: dict[str, Any], *, code: str) -> dict[str, Any]:
         errors.append(issue)
     record["status"] = "error"
     return issue
+
+
+def advisory_state(value: Any, semantics: Any = None) -> dict[str, Any]:
+    """Normalize the request's plan-time evidence without turning an absent evaluation into zero candidates."""
+    frozen = value if isinstance(value, Mapping) else {}
+    sem = semantics if isinstance(semantics, Mapping) else {}
+    arm = frozen.get("arm") if frozen.get("arm") in {"advisory", "shadow"} else None
+    raw_status = frozen.get("status")
+    status = str(raw_status or ("ok" if isinstance(frozen.get("offered"), list) else "not_evaluated"))
+    if status == "error":
+        error = frozen.get("error") if isinstance(frozen.get("error"), Mapping) else {}
+        code = str(error.get("code") or "semantics_advisory_projection_failed")
+        return {"status": "error", "label": f"오류({code})", "code": code,
+                **({"arm": arm} if arm else {})}
+    if status != "ok":
+        reason = str(frozen.get("reason") or sem.get("reason") or
+                     ("configured_off" if sem.get("status") == "off" or sem.get("setting") == "off"
+                      else "missing_evaluation_evidence"))
+        if reason not in _ADVISORY_REASONS:
+            reason = "snapshot_unavailable"
+        return {"status": "not_evaluated", "label": f"미평가({reason})", "reason": reason,
+                **({"arm": arm} if arm else {})}
+    offered = [item for item in frozen.get("offered") or [] if isinstance(item, str)]
+    label = "정상인데 후보 0건" if not offered else f"정상 · 후보 {len(offered)}건"
+    return {"status": "ok", "label": label, "offered_count": len(offered),
+            **({"arm": arm} if arm else {})}
+
+
+def card_line(record: Mapping[str, Any] | None) -> str:
+    if not isinstance(record, Mapping):
+        return ""
+    sem = record.get(DEVICE) if isinstance(record.get(DEVICE), Mapping) else {}
+    sem_label = "꺼짐" if sem.get("status") == "off" else "오류" if sem.get("status") == "error" else "켜짐"
+    advisory = record.get("advisory") if isinstance(record.get("advisory"), Mapping) else {}
+    return f"의미 장치 상태: semantics {sem_label} · 그림자 요청 {advisory.get('label') or '미평가(missing_evaluation_evidence)'}"
 
 
 def warning(record: Mapping[str, Any] | None) -> str:

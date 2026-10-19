@@ -380,15 +380,19 @@ def _light_request(req: Mapping[str, Any]) -> dict:
     if offered is not None:
         light["ab_offered"] = offered
     frozen = req.get("semantics_ab")
-    if isinstance(frozen, Mapping) and frozen.get("status") == "error":
-        light["ab_excluded"] = True
+    if isinstance(frozen, Mapping):
+        status = str(frozen.get("status") or ("ok" if isinstance(frozen.get("offered"), list)
+                                              else "not_evaluated"))
+        light["ab_state"] = status if status in {"ok", "not_evaluated", "error"} else "not_evaluated"
+        if light["ab_state"] != "ok":
+            light["ab_excluded"] = True
     return light
 
 
 def _ab_offered(req: Mapping[str, Any]) -> list[str] | None:
     """The candidate ids frozen on a research request when its plan advisory was built (#149 decision 15)."""
     frozen = req.get("semantics_ab")
-    if (not isinstance(frozen, Mapping) or frozen.get("status") == "error"
+    if (not isinstance(frozen, Mapping) or frozen.get("status") in {"error", "not_evaluated"}
             or not isinstance(frozen.get("offered"), list)):
         return None
     return [ref for ref in frozen["offered"] if isinstance(ref, str) and AB_REF.fullmatch(ref)][:MAX_CANDIDATE_REFS]
@@ -1579,6 +1583,26 @@ def ab_arm(rid: str) -> str:
     return "advisory" if hashlib.sha256(rid.encode("utf-8")).digest()[0] < 128 else "shadow"
 
 
+def write_ab_evaluation(paths: ShadowPaths, rid: str, arm: str, state: str,
+                        *, epoch: int | None = None) -> None:
+    """Persist one plan-time denominator exclusion even when no terminal shadow row can be written."""
+    append_line(paths, {"v": 1, "type": "ab_evaluation", "ts": round(time.time(), 3),
+                        "epoch": epoch, "request_id": rid, "lane": "research",
+                        "arm": arm, "ab_excluded": True, "ab_state": state})
+
+
+def record_ab_evaluation(settings: Any, rid: str, state: str) -> str:
+    """Assign and persist an exclusion when AB startup left no service object."""
+    arm = ab_arm(rid)
+    try:
+        paths = ShadowPaths(shadow_root(settings))
+        if not inside_git_tree(paths.root):
+            write_ab_evaluation(paths, rid, arm, state)
+    except (OSError, TypeError, ValueError) as exc:
+        log.warning("semantics A/B exclusion not written (%s)", type(exc).__name__)
+    return arm
+
+
 def _plan_refs(plan: Any) -> set[str]:
     refs: set[str] = set()
     if not isinstance(plan, Mapping):
@@ -1596,10 +1620,11 @@ def _add_ab_fields(line: dict, snap: Mapping[str, Any], req: Mapping[str, Any]) 
     if snap.get("semantics_mode") != "ab" or req.get("lane") != "research":
         return
     if req.get("ab_excluded") is True:
-        line.update(arm=ab_arm(str(snap["rid"])), ab_excluded=True)
+        line.update(arm=ab_arm(str(snap["rid"])), ab_excluded=True,
+                    ab_state=req.get("ab_state") or "not_evaluated")
         return
     offered = set(req.get("ab_offered") or ())
-    line.update(arm=ab_arm(str(snap["rid"])), ab_excluded=False, offered=len(offered),
+    line.update(arm=ab_arm(str(snap["rid"])), ab_excluded=False, ab_state="ok", offered=len(offered),
                 referenced=bool(offered & _plan_refs(req.get("plan"))),
                 cost_usd=float(req.get("cost_usd") or 0), cost_known=req.get("cost_known", True) is not False)
 
@@ -1784,6 +1809,7 @@ class ShadowService:
         self.observed: dict[str, dict] | None = None
         self.observed_dirty = False
         self.window_lock = threading.Lock()  # orders breaker.json writes without holding self.lock
+        self.record_lock = threading.Lock()  # serializes request, auto-off and plan-time exclusion JSONL writes
         self.window_seq = self.window_saved = 0
         self.state_mtime: float | None = None
         self.counts = {"lines": 0, "failures": 0, "busy": 0, "discarded": 0}
@@ -1892,7 +1918,8 @@ class ShadowService:
                     "reason": reason, "counts": counts}
             if boundary:
                 line["boundary"] = boundary
-            append_line(self.paths, line)
+            with self.record_lock:
+                append_line(self.paths, line)
         except OSError:
             pass
         if request_id and self.event_loop is not None:
@@ -1906,6 +1933,7 @@ class ShadowService:
         from . import semantic_devices
 
         record = semantic_devices.inspect(self.hub.s, service=self, worker_known=True, phase="auto_off")
+        record["advisory"] = semantic_devices.advisory_state(req.get("semantics_ab"), record.get("semantics"))
         if boundary:
             record["semantics"]["boundary"] = boundary
         req["semantic_devices"] = record
@@ -1958,7 +1986,7 @@ class ShadowService:
     def advisory_snapshot(self, rid: str, plan: Mapping[str, Any]) -> dict | None:
         """Event-loop side, like ``after_request``: the live state the A/B selector reads, copied with the draft plan.
 
-        None outside ab mode, while off, or on a failure; the request is then offered nothing."""
+        None outside ab mode or while latched. The offer records that as not evaluated."""
         if self.cfg.mode != "ab":
             return None
         try:
@@ -1979,19 +2007,33 @@ class ShadowService:
         ``offered`` is the id set the advisory arm is shown and the shadow arm would have been shown; the orchestrator
         freezes it on the request so the end record judges the plan against it. ``candidates`` (artifact id, data
         type, creating request id) goes into the prompt, in the advisory arm only. A failure offers nothing."""
-        if self.cfg.mode != "ab":
-            return None
         arm = ab_arm(rid)
+        if self.cfg.mode != "ab":
+            return {"arm": arm, "status": "not_evaluated", "reason": "mode_not_ab"}
         if isinstance(snap, Mapping) and isinstance(snap.get("_error"), Mapping):
+            self._record_ab_evaluation(rid, arm, "error")
             return {"arm": arm, "offered": [], "candidates": [], "status": "error",
                     "error": dict(snap["_error"])}
+        if snap is None:
+            reason = str(self.latched or "snapshot_unavailable")
+            self._record_ab_evaluation(rid, arm, "not_evaluated")
+            return {"arm": arm, "status": "not_evaluated", "reason": reason}
         try:
-            found = self.advisory_candidates(snap) if snap is not None else []
+            found = self.advisory_candidates(snap)
         except AdvisoryFailure as exc:
+            self._record_ab_evaluation(rid, arm, "error")
             return {"arm": arm, "offered": [], "candidates": [], "status": "error",
                     "error": {"code": _advisory_error_code(exc.path, exc.kind)}}
         return {"arm": arm, "offered": [c["artifact_id"] for c in found],
-                "candidates": found if arm == "advisory" else []}
+                "candidates": found if arm == "advisory" else [], "status": "ok"}
+
+    def _record_ab_evaluation(self, rid: str, arm: str, state: str) -> None:
+        """Keep denominator exclusions even when a latched worker cannot write the terminal request row."""
+        try:
+            with self.record_lock:
+                write_ab_evaluation(self.paths, rid, arm, state, epoch=self.epoch)
+        except OSError as exc:
+            log.warning("semantics A/B exclusion not written (%s)", type(exc).__name__)
 
     def advisory_candidates(self, snap: dict) -> list[dict[str, str]]:
         """The selector's prompt fields from the snapshot, its database rows and files only (never live state).
@@ -2276,7 +2318,8 @@ class ShadowService:
             if self.gen != gen or self.external_off():
                 self.counts["discarded"] += 1
                 return
-            append_line(self.paths, line)
+            with self.record_lock:
+                append_line(self.paths, line)
             self.save_observed()
             self.counts["lines"] += 1
         except OSError as exc:
@@ -2400,6 +2443,7 @@ def readable_request(line: Mapping[str, Any]) -> bool:
             and line.get("arm") in (None, "advisory", "shadow")
             and isinstance(line.get("referenced"), (bool, type(None)))
             and isinstance(line.get("ab_excluded"), (bool, type(None)))
+            and line.get("ab_state") in (None, "ok", "not_evaluated", "error")
             and isinstance(line.get("cost_known"), (bool, type(None)))
             and all(_number(m.get("ms")) for m in (prov, objs))
             and _count(prov.get("candidates", 0)) and _number(prov.get("unknown_ratio"))
@@ -2512,6 +2556,13 @@ def build_report(paths: ShadowPaths, today: date | None = None, setting: str = "
     lines, broken = read_lines(paths)
     requests = [l for l in lines if l.get("type") == "request" and readable_request(l)]
     broken += sum(1 for l in lines if l.get("type") == "request") - len(requests)
+    raw_ab_evaluations = [l for l in lines if l.get("type") == "ab_evaluation"]
+    valid_ab_evaluations = [l for l in raw_ab_evaluations if l.get("lane") == "research"
+                            and isinstance(l.get("request_id"), str) and l.get("request_id")
+                            and l.get("arm") in {"advisory", "shadow"} and l.get("ab_excluded") is True
+                            and l.get("ab_state") in {"error", "not_evaluated"}]
+    broken += len(raw_ab_evaluations) - len(valid_ab_evaluations)
+    ab_evaluations = list({l["request_id"]: l for l in valid_ab_evaluations}.values())
     try:
         disabled = read_disabled(paths)
     except (OSError, ValueError):
@@ -2575,11 +2626,16 @@ def build_report(paths: ShadowPaths, today: date | None = None, setting: str = "
     total_ms = [float(r.get("ms") or 0) for r in requests]
     unknown_median = model_stats("provenance")["unknown_ratio_median"]
     # research requests only, as the line writes them; "with candidates" is the plan-time offer, not the end set
+    recorded_request_ids = {r.get("request_id") for r in requests}
     ab_requests = [r for r in requests if r.get("lane") == "research" and r.get("arm") in ("advisory", "shadow")]
+    ab_requests += [r for r in ab_evaluations if r.get("request_id") not in recorded_request_ids]
 
     def arm_stats(arm: str) -> dict:
         arm_rows = [r for r in ab_requests if r.get("arm") == arm]
         rows = [r for r in arm_rows if r.get("ab_excluded") is not True]
+        excluded_states = {state: sum(r.get("ab_excluded") is True and r.get("ab_state") == state
+                                      for r in arm_rows)
+                           for state in ("error", "not_evaluated")}
         with_candidates = sum(1 for r in rows if (r.get("offered") or 0) > 0)
         referenced = sum(1 for r in rows if r.get("referenced") is True)
         failed = sum(1 for r in rows if r.get("status") not in ("done", "completed"))
@@ -2589,7 +2645,7 @@ def build_report(paths: ShadowPaths, today: date | None = None, setting: str = "
                 "failed": failed, "failure_rate": round(failed / len(rows), 4) if rows else None,
                 "cost_usd": round(sum(float(r.get("cost_usd") or 0) for r in known), 6),
                 "cost_unknown": len(rows) - len(known),
-                "excluded": len(arm_rows) - len(rows)}
+                "excluded": len(arm_rows) - len(rows), "excluded_states": excluded_states}
 
     arms = {arm: arm_stats(arm) for arm in ("advisory", "shadow")}
     ab_deadline = AB_INTRODUCED + timedelta(days=AB_REVIEW_DAYS)
@@ -2636,6 +2692,10 @@ def build_report(paths: ShadowPaths, today: date | None = None, setting: str = "
         "input_fit": dict(sorted(input_fit.items())),
         "marks": {"reviewed": len(marks), "wrong": wrong},
         "arms": arms, "ab_window": {"requests": len(ab_eligible), "excluded": len(ab_requests) - len(ab_eligible),
+                                      "excluded_states": {
+                                          state: sum(r.get("ab_excluded") is True and r.get("ab_state") == state
+                                                     for r in ab_requests)
+                                          for state in ("error", "not_evaluated")},
                                       "target_requests": AB_REVIEW_RECORDS, "deadline": ab_deadline.isoformat(),
                                       "reached": ab_window_reached},
         "auto_off": [{"day": _day(l.get("ts")), "epoch": l.get("epoch"), "reason": l.get("reason"),
@@ -2699,16 +2759,20 @@ def render_report(rep: Mapping[str, Any]) -> str:
     if rep.get("arms") and (st.get("setting") == "ab" or rep["ab_window"]["requests"]
                             or rep["ab_window"]["excluded"]):
         out += ["", "A/B (결정 18: 기록 10건 또는 3주):",
-                "| arm | 요청 | 제외 | 후보 있음 | 참조 | 참조율 | 실패 | 실패율 | 비용 USD | 비용 미상 |",
+                "| arm | 요청 | 제외(오류/미평가) | 후보 있음 | 참조 | 참조율 | 실패 | 실패율 | 비용 USD | 비용 미상 |",
                 "|---|---|---|---|---|---|---|---|---|---|"]
         for arm in ("advisory", "shadow"):
             row = rep["arms"][arm]
-            out.append(f"| {arm} | {row['requests']} | {row['excluded']} | {row['with_candidates']} | {row['referenced']} | "
+            states = row["excluded_states"]
+            out.append(f"| {arm} | {row['requests']} | {row['excluded']}({states['error']}/{states['not_evaluated']}) | "
+                       f"{row['with_candidates']} | {row['referenced']} | "
                        f"{v(row['reference_rate'])} | {row['failed']} | {v(row['failure_rate'])} | "
                        f"{row['cost_usd']} | {row['cost_unknown']} |")
         window = rep["ab_window"]
+        states = window["excluded_states"]
         out.append(f"판단 창: {window['requests']}/{window['target_requests']}건 · 기한 {window['deadline']} · "
-                   f"{'도달' if window['reached'] else '진행 중'} · advisory 오류 제외 {window['excluded']}건")
+                   f"{'도달' if window['reached'] else '진행 중'} · 제외 {window['excluded']}건"
+                   f"(오류 {states['error']} · 미평가 {states['not_evaluated']})")
     out += ["", f"중간 점검 {rep['midpoint']} · 판정 기한 {rep['deadline']} (기준은 전부 미측정 제안치)"]
     if rep["propose_removal"]:
         out += ["PROPOSE_REMOVAL — 제거 제안(결정은 PI):"] + [f"- {x}" for x in rep["propose_removal"]]

@@ -514,7 +514,8 @@ async def test_stdio_server_lists_tools_and_answers_malformed_items_offline(tmp_
     # #435 C ③ added the regional tools, #697 fulltext and #720 literature discovery; without a key alphagenome is
     # not registered.
     assert set(tools) == {"vep", "gnomad", "clinvar", "chipatlas", "chipatlas_targets", "encode", "gtex",
-                          "fulltext", "key_fulltext", "citation_chase", "preprints"}
+                          "fulltext", "key_fulltext", "citation_chase", "preprints", "openalex_works",
+                          "crossref_doi", "unpaywall"}
     params = StdioServerParameters(command=sys.executable, args=["-m", "labhq.tools.annot_mcp"],
                                    env={**os.environ, **env})
     async with stdio_client(params) as streams:

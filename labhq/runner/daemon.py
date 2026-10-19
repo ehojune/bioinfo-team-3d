@@ -1927,6 +1927,7 @@ class Runner:
             result.literature_access = await asyncio.to_thread(output_checks.literature_access, ws.dir)
             result.literature_access_failures = await asyncio.to_thread(
                 output_checks.literature_access_failures, ws.dir)
+            result.literature_ledger = await asyncio.to_thread(output_checks.literature_ledger, ws.dir)
         except Exception as exc:  # noqa: BLE001
             await emit("agent.log", {"level": "warn", "text": f"산출 검사를 하지 못했습니다: {type(exc).__name__}"})
         if result.table_warnings:

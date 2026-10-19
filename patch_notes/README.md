@@ -10,6 +10,19 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-10-19
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 11:15 | [`010d81a`](https://github.com/ehojune/bioinfo-team-3d/pull/749/commits/010d81a) | 부분 PDF를 본문으로 오인하지 않고 OpenAlex OA 대체 위치와 문헌 후보 분모·ID를 보존했습니다. |
+| 10:40 | [`47799db`](https://github.com/ehojune/bioinfo-team-3d/pull/751/commits/47799db) | worker 시작 실패도 고정 arm의 A/B 오류 제외로 기록해 분모 누락을 막음 |
+| 10:36 | [`9c9682d`](https://github.com/ehojune/bioinfo-team-3d/pull/749/commits/9c9682d) | PDF 압축 해제 누적 크기를 제한하고 OA 서버 오류와 실제 접근 실패 사유를 보존했습니다. |
+| 03:21 | [`5eff6dc`](https://github.com/ehojune/bioinfo-team-3d/pull/751/commits/5eff6dc) | semantics·그림자 요청 상태를 분리하고 미평가·오류를 A/B 분모에서 제외 |
+| 02:10 | [`ca8ffc7`](https://github.com/ehojune/bioinfo-team-3d/pull/749/commits/ca8ffc7) | OA 본문을 제한된 streaming으로 받고 provider 활성 상태와 실패 원장을 cache·응답에 보존했습니다. |
+| 01:39 | [`dcf503d`](https://github.com/ehojune/bioinfo-team-3d/pull/749/commits/dcf503d) | Europe PMC 미등재 논문도 합법 OA 사본을 찾고 OA URL의 내부망 접근과 실패 원장 누락을 막음 |
+| 00:54 | [`eda518a`](https://github.com/ehojune/bioinfo-team-3d/pull/749/commits/eda518a) | Unpaywall email 예시를 배포용 config 복사본에도 반영해 init 결과를 일치시켰다. |
+| 00:36 | [`43ba701`](https://github.com/ehojune/bioinfo-team-3d/pull/749/commits/43ba701) | OpenAlex·Crossref·Unpaywall 문헌 검색과 합법 OA 접근 실패 원장을 추가했습니다. |
+
 ## 2026-10-18
 
 | 시간 | 커밋 | 주요 변경사항 |

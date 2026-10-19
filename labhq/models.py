@@ -359,6 +359,8 @@ class TaskResult(BaseModel):
     literature_access: dict[str, str] = {}
     # Metadata-only failures from outputs/literature_access.jsonl; paper text stays under .tmp/literature/ (#745).
     literature_access_failures: dict[str, str] = {}
+    # Public paper IDs only: discovery candidates, selected fulltext inputs and unread reasons (#744).
+    literature_ledger: dict[str, Any] = {}
     provenance: dict[str, Any] = {}  # manifest summary; the gateway may not share the runner's disk
     pipeline_submission: dict[str, Any] | None = None  # gateway-only handoff; stripped before web publication
     partial_results: bool = False
@@ -435,6 +437,8 @@ class TaskResult(BaseModel):
                 data.pop("literature_access", None)
             if not data.get("literature_access_failures"):
                 data.pop("literature_access_failures", None)
+            if not data.get("literature_ledger"):
+                data.pop("literature_ledger", None)
             if data.get("pipeline_submission") is None:
                 data.pop("pipeline_submission", None)
             if data.get("quota_reset_at") is None:
