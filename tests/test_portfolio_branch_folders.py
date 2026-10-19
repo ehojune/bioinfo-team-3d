@@ -322,5 +322,6 @@ def test_unbranched_request_adds_the_semantic_report_to_the_existing_file_list(t
         "run/semantic_report.md",
         "code/analysis/outputs/scripts/analyze.py", "figures/graphical_abstract.svg", "figures/volcano.svg",
         "run/revision_history.md", "docs/reference/README.md",
+        "run/run_report.md", "run/pipeline_diagram.svg", "run/run_timeline.svg",
         "tables/result_summary.tsv", "REFERENCES.md", "DATA_AND_LICENSES.md",
     }

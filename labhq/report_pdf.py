@@ -34,9 +34,9 @@ from .report_figures import (ABSTRACT_FILE, FIGURE_SUFFIXES, IMAGE_PATTERN, MAX_
                              drop_dead_abstract_links, figure_owners, has_abstract_link, is_abstract_target,
                              link_workdir_figures, output_exists)
 from .report_contract import (FRONT_START, ReportPackage, build_report_package, reader_markdown,
-                              research_question, with_report_front)
+                              research_question, with_pipeline_section, with_report_front)
 
-RENDER_VERSION = "6"  # bump when the page's markup or CSS changes: a cached PDF of an older one is not reused
+RENDER_VERSION = "7"  # bump when the page's markup or CSS changes: a cached PDF of an older one is not reused
 PRINT_TIMEOUT_S = 60.0
 _CSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'"  # no network
 PRINT_SLOW_BYTES_PER_S = 2 * 1024 * 1024  # a page of embedded figures gets one more second of printing per 2 MB (#608)
@@ -479,9 +479,22 @@ def _read_document(bundle: Path | None, name: str, fallback: str) -> str:
     return fallback
 
 
+def run_figures(req: Mapping[str, Any], settings: Any, scrub: Callable[[str], str] | None = None
+                ) -> tuple[Any, dict[str, bytes]]:
+    """The executed-step summary and its two drawn pictures, named as the PDF links them (#756)."""
+    from . import run_report
+    from .portfolio import internal_data_steps, step_uses_internal_data
+
+    scope = internal_data_steps(dict(req), settings)
+    summary, files = run_report.build(
+        req, hidden=lambda step_id: step_uses_internal_data(step_id, dict(req), settings, scope),
+        scrub=scrub or (lambda text: text), nextflow=run_report.nextflow_outputs(req))
+    return summary, {name: body for name, body in files.items() if isinstance(body, bytes)}
+
+
 def build_report_html(req: Mapping[str, Any], bundle: Path | None, *, now: datetime | None = None,
-                      report_text: str | None = None, scrub: Callable[[str], str] | None = None
-                      ) -> tuple[str, list[str]]:
+                      report_text: str | None = None, scrub: Callable[[str], str] | None = None,
+                      run: tuple[Any, Mapping[str, bytes]] | None = None) -> tuple[str, list[str]]:
     """The single-file report page and the figures it could not embed. ``bundle`` is the request bundle folder.
 
     The report always opens with a graphical abstract (#608): the one the report links, or else the diagram labhq draws
@@ -513,8 +526,15 @@ def build_report_html(req: Mapping[str, Any], bundle: Path | None, *, now: datet
                    else build_report_package(reader_request, source, dict(results)))
     package.question = request_text
     abstract_source = re.sub(r"\[근거 \d+\]", "", package.source_report or source)
+    if run is not None:
+        from . import run_report
+
+        summary, drawn = run
+        figures.extra.update(drawn)  # by their edition names, which no bundle output can take (outputs sit in steps/)
+        run_report.add_to_package(package, summary, "report.md", report=None)
+        source = with_pipeline_section(source, package, images=True)
     if FRONT_START not in source:
-        source = with_report_front(source, package)
+        source = with_report_front(source, package, pipeline_images=True)
     source = reader_markdown(source, footnotes=True)
     linked = link_workdir_figures(source, owners, output_exists(results, bundle))
     if has_abstract_link(linked, figures._holds):
@@ -745,7 +765,9 @@ def build_report_file(req: Mapping[str, Any], settings: Any, tasks: Mapping[str,
     bundle = bundle if _plain_dir(bundle) else None
     cache = requests_root / f"{rid}-report"
     cap = pdf_cap_bytes(settings)
-    key = _cache_key(req, bundle, cap)
+    run = run_figures(req, settings, scrub)
+    key = hashlib.sha256((_cache_key(req, bundle, cap) + "".join(
+        hashlib.sha256(body).hexdigest() for body in run[1].values())).encode("ascii")).hexdigest()
     usable = source is None and report_text is None and _cache_usable(requests_root, cache)
     with _LOCK:
         try:
@@ -758,7 +780,7 @@ def build_report_file(req: Mapping[str, Any], settings: Any, tasks: Mapping[str,
                                   shrunk=int(meta.get("shrunk") or 0), over_cap=bool(meta.get("over_cap")))
         except (OSError, ValueError, AttributeError, TypeError):
             pass
-        page, missing = build_report_html(req, bundle, now=now, report_text=report_text, scrub=scrub)
+        page, missing = build_report_html(req, bundle, now=now, report_text=report_text, scrub=scrub, run=run)
         data = page.encode("utf-8")
         notes = tuple(missing)
         browser = find_browser(getattr(getattr(settings, "gateway", None), "report_browser", None))

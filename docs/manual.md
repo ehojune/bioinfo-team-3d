@@ -442,7 +442,7 @@ SQLite는 읽기 연결과 쓰기 연결을 나눠(WAL) 읽기가 커밋을 기�
 
 ### 보고서 공통 결과 계약
 
-원본·요청 묶음·GitHub 정리본·PDF·웹 보고서는 첫 화면에 `질문 → 답 → 한계 → 대표 그림 → 결과표 → 재현 안내 → 근거 각주 → 실행 기록`을 같은 순서로 표시합니다. 그림·표가 없으면 빈칸 대신 생략 사유를 적습니다. 웹은 이 Markdown을 안전한 HTML로 그리며 `[[claim:…]]` 내부 표기를 독자에게 보이지 않습니다.
+원본·요청 묶음·GitHub 정리본·PDF·웹 보고서는 첫 화면에 `질문 → 답 → 한계 → 대표 그림 → 결과표 → 재현 안내 → 근거 각주 → 실행 기록`을 같은 순서로 표시합니다. 정리본과 PDF는 답 아래에 `분석 파이프라인`을 더합니다. 그림·표가 없으면 빈칸 대신 생략 사유를 적습니다. 웹은 이 Markdown을 안전한 HTML로 그리며 `[[claim:…]]` 내부 표기를 독자에게 보이지 않습니다.
 
 CommonMark 파서로 코드 영역을 나눠 asset·근거 수집과 claim 번호 치환에서 건너뜁니다. CSV·TSV·Excel 링크는 결과표로 분류합니다.
 
@@ -738,6 +738,7 @@ CLI를 띄우기 전에 plugin 이름·version·내용 해시를 run manifest의
 plugin을 읽고 `--disable-slash-commands`를 빼서 `bioinfo:bioinfo-analyze` skill을 씁니다. 이때 setting source는
 `local`만 둡니다(작업공간에 남은 `.claude/skills`가 끼어들지 않게). 다른 직원의 skill 차단과
 `--setting-sources project,local`, 개인 `CLAUDE.md` 제외, auto memory 차단은 그대로입니다.
+Nextflow를 돌리면 report·timeline·trace·DAG 네 파일을 `outputs/pipeline_info/`에 복사해 산출로 선언합니다. bioinfo-agent의 기본 Nextflow 설정이 네 기록을 모두 켭니다.
 
 다른 자체 CLI 직원은 `engine: cli`와 `cli.command`를 사용할 수 있습니다 (`labhq/adapters/cli.py`).
 
@@ -926,13 +927,15 @@ resume 비용·Codex 토큰은 호출별 증분으로 합산합니다(#82). 원 
 |---|---|
 | `README.md` | 연구 질문만 표시한 질문→답·한계→그래픽 초록→대표 그림→보고서·결과표·재현 링크→짧은 갈래 표 순서. 경로·운영 지시는 넣지 않음 |
 | `report/` | 논문 형식 과학 보고서 md·PDF. PDF의 claim 각주는 `[근거 n]`과 끝쪽 목록으로 표시 |
-| `run/` | 짧은 재현 안내, 작업 지시, 요청·결정·실행·비용과 수정 이력. 이전 차수·리뷰 참고·미반영 정정은 여기에 둠 |
+| `run/` | 짧은 재현 안내, 작업 지시, 요청·결정·실행·비용과 수정 이력. 이전 차수·리뷰 참고·미반영 정정은 여기에 둠. 실행 보고서·모식도·타임라인과 `nextflow/` |
 | `code/<단계>/outputs/`·`figures/`·`tables/` | 원래 실행 폴더를 보존한 스크립트, SVG, 공개 가능한 집계표. 보고서가 링크한 표는 존재·열·행 shape를 검사 |
 | `studies/<갈래 id>-<이름>/` | 갈래별 코드·그림·표·상태와 입력→방법→QC→결과 연결표 |
 | `docs/reference/` | lookup-only 단계 보고서·검토문. 갈래 README에서 링크 |
 | `REFERENCES.md`·`DATA_AND_LICENSES.md` | PMID·DOI·GEO와 자료별 출처·접근·재배포·필수 인용. 구조화된 reference가 없으면 입력 README의 완전한 이용 조건 표를 복구 |
 
 갈래 계획이면 종합 산출은 루트에, 갈래 산출은 `studies/`에 둡니다. 뺀 표는 루트·갈래 README에 이름·사유·행 수·주요 열만 적습니다. `outputs/literature/` 원문, 원본 입력, 미보고 파일은 싣지 않습니다. 갈래 보고서는 `output_types: report`로 선언한 Markdown만 `docs/reference/`에 둡니다. `output_types`가 전혀 없는 예전 계획은 공개 자료의 표만 집계 이름·열, 직사각형 shape, 식별 열 부재, 1–9 작은 칸 부재를 확인해 후보로 복구합니다. 내부 자료 표는 집계표 선언이 있어야 합니다. 귀속이 하나라도 빠지면 요청 전체를 내부로 봅니다. 깨진 링크, 잘못된 표 shape, 비밀값·로컬 경로·서명 URL, 자료 안내 자리표시, 보고서 claim anchor, 한국어 금지 표현이 남으면 게시를 멈춥니다. 통제 데이터 요청은 편집자에게 보내거나 게시하지 않습니다.
+
+**실행 보고서(#756):** `run/pipeline_diagram.svg`는 실행 기록이 있는 단계만 담당·입력·산출·QC 띠와 함께 그리고, `run/run_timeline.svg`·`run/run_report.md`는 단계별 시작·종료·걸린 시간·담당·비용을 적습니다. 기록이 없으면 `기록 없음`으로 두고 0원이나 시각을 만들지 않으며, 실행하지 않은 계획 단계는 따로 적습니다. 내부 자료 단계는 `내부 자료 단계 N`으로만 표시합니다. 단계가 `outputs/pipeline_info/`에 남긴 Nextflow report·timeline·trace·DAG는 `run/nextflow/`에 넣습니다(파일당 20 MB). 내부 자료 단계의 기록이나 개인 경로를 바꾸지 못한 기록은 빼고 이유를 적습니다. 기록이 없으면 Nextflow를 쓰지 않았다고 적습니다. README는 답 아래에서 링크해 그래픽 초록이 첫 그림으로 남고, PDF는 두 그림을 넣습니다. 근거는 [실행 보고서 기록](reference/run-report-756.md)에 있습니다.
 
 `run/reproduce.md`에는 lock·버전, 입력 설정, 단계별 실행 폴더·명령, 예상 출력, 공개/접근 제한 재현 범위만 둡니다. 긴 지시는 `run/task_record.md`로 분리합니다. 코드의 개인 절대 경로는 경로마다 고유한 `LABHQ_INPUT_*` 참조로 바꾸며, 자동 변환하지 못한 줄은 경로를 지우고 수동 확인 주석을 붙입니다. Python 사본은 게시 전 compile 검사합니다.
 

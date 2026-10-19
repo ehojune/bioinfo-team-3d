@@ -30,6 +30,7 @@ from .portfolio import (PRIVATE_PATH_PATTERN, EditionCheckError, broken_markdown
 from .intake import reference_dirs
 from .recruit.provenance import touches_restricted
 from .report_abstract import abstract_first, build_graphical_abstract, with_abstract_link
+from .run_report import nextflow_kind
 from .report_figures import (ABSTRACT_FILE, classify, figure_owners, has_abstract_link, image_links, is_abstract_target,
                              link_workdir_figures, output_exists)
 from .report_pdf import NO_BROWSER, ReportRefused, build_report_file, pdf_cap_bytes, size_notes
@@ -188,6 +189,9 @@ def edition_candidates(req, settings) -> dict[str, Path]:
     return found
 
 
+NEXTFLOW_RECORD_MAX_BYTES = 20_000_000
+
+
 def edition_assets(req, settings):
     """Copy only reported outputs from the already checked bundle, never raw inputs or unreported files."""
     assets, images = {}, {}
@@ -196,7 +200,10 @@ def edition_assets(req, settings):
         suffix = PurePosixPath(name).suffix.lower()
         size = path.stat().st_size
         unlimited = suffix in _IMAGE_OUTPUTS
-        if not unlimited:
+        if nextflow_kind(name):  # an nf-core execution report is often 2-4 MB; it has its own cap, not the text total
+            if size > NEXTFLOW_RECORD_MAX_BYTES:
+                continue
+        elif not unlimited:
             if size > 1_000_000 or total + size > 5_000_000:
                 continue
             total += size
