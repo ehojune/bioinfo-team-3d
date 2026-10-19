@@ -13,3 +13,6 @@ rows:
   at: 2026-10-20 00:35
   text: bench가 bundle 확정 뒤 receipt를 수집하고 반환된 request ID·선택적 Hub 저장 계약을 지키도록 P1 3건을
     고쳤다.
+- sha: e9ddcf2
+  at: 2026-10-20 02:08
+  text: 취소된 부분 보고서의 기존 본문과 신규 receipt 전체 계약을 함께 검증해 CI 회귀를 고치고 관련 mock 8건을 확인했다.
