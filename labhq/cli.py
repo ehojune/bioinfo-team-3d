@@ -715,7 +715,8 @@ def _await_child_record(s: Settings, role: str, *, supervisor_pid: int, supervis
 
     The supervisor pins its own ancestors and then starts and records the role, so a record means both are done.
     `up` is one of those ancestors and must still be alive while it happens: a PID that is already free cannot be
-    held (#589). A supervisor that ended first, or never recorded anything, is stopped and removed."""
+    held (#589). A supervisor that ended first, or never recorded anything, is stopped; its record is removed only
+    after cleanup succeeds, so a failed cleanup can be retried (#627)."""
     supervisor = _supervisor_role(role)
     deadline = time.monotonic() + (_CHILD_RECORD_WAIT_SECONDS if timeout is None else timeout)
     while True:
@@ -735,9 +736,11 @@ def _await_child_record(s: Settings, role: str, *, supervisor_pid: int, supervis
         time.sleep(0.1)
     try:
         _terminate_tree(supervisor_pid, created=supervisor_created)
-    except OSError:
-        pass
-    _pid_file(s, supervisor).unlink(missing_ok=True)
+    except OSError as exc:
+        reason += (f"; {supervisor} PID {supervisor_pid} 정리 실패: {exc}; "
+                   "다시 시도할 수 있게 PID 기록을 유지했습니다")
+    else:
+        _pid_file(s, supervisor).unlink(missing_ok=True)
     print(f"{role}을 시작하지 못했습니다: {reason}. 로그: {_launch_state(s) / 'logs' / (supervisor + '.log')}",
           file=sys.stderr)
     raise SystemExit(2)

@@ -122,6 +122,43 @@ def test_up_gives_up_on_a_supervisor_that_never_records_the_role(tmp_path, monke
     assert "기록을 남기지 않았습니다" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("role", ["gateway", "runner"])
+@pytest.mark.parametrize("identity", ["alive", "gone", "unreadable"])
+def test_up_keeps_supervisor_record_and_reports_cleanup_failure(tmp_path, monkeypatch, capsys, role, identity):
+    settings = _settings(tmp_path)
+    supervisor = _record(settings, f"{role}-supervisor", SUP)
+    saved = supervisor.read_bytes()
+    calls = []
+
+    def process_created(pid):
+        if identity == "unreadable":
+            raise cli.ProcessIdentityError("fixture identity unavailable")
+        return f"created:{pid}" if identity == "alive" else None
+
+    def refuse(pid, *, created=None):
+        calls.append((pid, created))
+        raise OSError("fixture cleanup refused")
+
+    monkeypatch.setattr(cli, "_process_created", process_created)
+    monkeypatch.setattr(cli, "_terminate_tree", refuse)
+
+    with pytest.raises(SystemExit) as stopped:
+        cli._await_child_record(settings, role, supervisor_pid=SUP,
+                                supervisor_created=f"created:{SUP}", timeout=0)
+
+    assert stopped.value.code == 2
+    assert calls == [(SUP, f"created:{SUP}")]
+    assert supervisor.read_bytes() == saved  # retry keeps the same PID, creation time and config
+    error = capsys.readouterr().err
+    assert f"{role}을 시작하지 못했습니다" in error
+    assert f"{role}-supervisor PID {SUP} 정리 실패" in error
+    assert "fixture cleanup refused" in error and "PID 기록을 유지" in error
+    assert f"{role}-supervisor.log" in error
+    assert ("감독 프로세스가 먼저 끝났습니다" if identity == "gone" else "기록을 남기지 않았습니다") in error
+    if identity == "alive":
+        assert cli._supervised(settings, role)  # the next up still finds the original supervisor
+
+
 def test_up_does_not_start_a_second_supervisor_while_the_first_is_restarting_its_role(tmp_path, monkeypatch, capsys):
     settings = _settings(tmp_path)
     _record(settings, "gateway-supervisor", SUP)  # alive, but the role's own record is gone: a restart is pending
