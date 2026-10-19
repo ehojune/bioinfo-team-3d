@@ -1,0 +1,8 @@
+pr: 767
+rows:
+- sha: '2239558'
+  at: 2026-10-19 23:44
+  text: 언어별 문법·도구·코드/lock hash와 별도 실행 상태 receipt를 정리본·공통 보고·bench manifest에 연결했다.
+- sha: 7d2113c
+  at: 2026-10-19 23:48
+  text: 재현 receipt PR 767의 완료 상태와 후속 storage rebuild의 공유 파일 순서를 인계 큐에 남겼다.
