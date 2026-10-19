@@ -389,8 +389,8 @@ class AlphaGenomeUnavailable(Exception):
 
 
 async def _alphagenome_call(fn: Callable[..., Any], *args: Any) -> Any:
-    """`fn(*args)` on a fresh daemon thread, waited for at most AG_TIMEOUT_S. A timed-out thread is left running
-    (daemon, so it never holds up exit) and counted in `_AG_STUCK` until it ends."""
+    """`fn(*args)` on a fresh daemon thread, waited for at most AG_TIMEOUT_S. A timed-out or cancelled thread
+    cannot be killed; it is counted in `_AG_STUCK` until it ends and never holds up exit."""
     _AG_STUCK[:] = [thread for thread in _AG_STUCK if thread.is_alive()]
     if len(_AG_STUCK) >= AG_MAX_STUCK:
         raise AlphaGenomeUnavailable(f"앞서 시간이 초과된 AlphaGenome 호출 {len(_AG_STUCK)}개가 아직 끝나지 않았습니다. "
@@ -420,7 +420,7 @@ async def _alphagenome_call(fn: Callable[..., Any], *args: Any) -> Any:
     thread.start()
     try:
         return await asyncio.wait_for(future, AG_TIMEOUT_S)
-    except asyncio.TimeoutError:
+    except (asyncio.TimeoutError, asyncio.CancelledError):
         if thread.is_alive():
             _AG_STUCK.append(thread)
         raise

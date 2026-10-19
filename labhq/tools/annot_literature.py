@@ -153,10 +153,6 @@ class BrowserInstitutionTransport:
         self.profile, self.proxy, self.browser, self.timeout_s = profile, proxy, browser, timeout_s
 
     async def fetch(self, doi: str, destination: Path) -> InstitutionAttempt:
-        import asyncio
-        return await asyncio.to_thread(self._fetch, doi, destination)
-
-    def _fetch(self, doi: str, destination: Path) -> InstitutionAttempt:
         if not self.browser:
             return InstitutionAttempt("unavailable", "Edge/Chrome not found")
         if self.profile is not None and not self.profile.is_dir():
@@ -166,38 +162,51 @@ class BrowserInstitutionTransport:
             encoded = quote(target, safe="")
             target = self.proxy.replace("{url}", encoded) if "{url}" in self.proxy else self.proxy + encoded
         destination.parent.mkdir(parents=True, exist_ok=True)
-        profile = self.profile
-        temporary = None
-        if profile is None:
-            import tempfile
-            temporary = Path(tempfile.mkdtemp(prefix="labhq-institution-"))
-            profile = temporary
+        import tempfile
+        temporary = Path(tempfile.mkdtemp(prefix=".labhq-institution-", dir=destination.parent))
+        profile = self.profile if self.profile is not None else temporary
+        # Publish only after a completed, valid fetch. Cancellation can never leave a late accepted PDF.
+        staged = temporary / "paper.pdf"
         command = [self.browser, "--headless=new", "--disable-gpu", "--no-first-run",
                    "--no-default-browser-check", f"--user-data-dir={profile}",
-                   f"--print-to-pdf={destination}", target]
+                   f"--print-to-pdf={staged}", target]
         if hasattr(os, "geteuid") and os.geteuid() == 0:
             command.insert(2, "--no-sandbox")
+        launch = asyncio.create_task(asyncio.create_subprocess_exec(
+            *command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)))
+        proc = None
         try:
-            done = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                  stderr=subprocess.DEVNULL, timeout=self.timeout_s,
-                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        except subprocess.TimeoutExpired:
-            return InstitutionAttempt("session_expired", "browser timed out")
-        except OSError:
-            return InstitutionAttempt("unavailable", "browser could not start")
+            try:
+                # Retain the launch result even when cancellation arrives while the process is starting.
+                proc = await asyncio.shield(launch)
+                await asyncio.wait_for(proc.wait(), self.timeout_s)
+            except (asyncio.TimeoutError, asyncio.CancelledError) as exc:
+                if proc is None:
+                    proc = await asyncio.shield(launch)
+                if proc.returncode is None:
+                    try:
+                        proc.kill()  # Only this fetch's owned process handle; never a PID/tree scan.
+                    except ProcessLookupError:
+                        pass
+                await asyncio.shield(proc.wait())
+                if isinstance(exc, asyncio.CancelledError):
+                    raise
+                return InstitutionAttempt("session_expired", "browser timed out")
+            except OSError:
+                return InstitutionAttempt("unavailable", "browser could not start")
+            try:
+                with open(staged, "rb") as handle:
+                    good = staged.stat().st_size >= 1024 and handle.read(5) == b"%PDF-"
+            except OSError:
+                good = False
+            if not good:
+                return InstitutionAttempt("session_expired" if proc.returncode == 0 else "access_denied",
+                                          "session expired, denied, or no printable paper")
+            staged.replace(destination)
+            return InstitutionAttempt("success")
         finally:
-            if temporary is not None:
-                shutil.rmtree(temporary, ignore_errors=True)
-        try:
-            with open(destination, "rb") as handle:
-                good = destination.stat().st_size >= 1024 and handle.read(5) == b"%PDF-"
-        except OSError:
-            good = False
-        if not good:
-            destination.unlink(missing_ok=True)
-            return InstitutionAttempt("session_expired" if done.returncode == 0 else "access_denied",
-                                      "session expired, denied, or no printable paper")
-        return InstitutionAttempt("success")
+            shutil.rmtree(temporary, ignore_errors=True)
 
 
 def _pdf_literal_text(data: bytes) -> str:

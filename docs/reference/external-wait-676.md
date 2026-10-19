@@ -8,3 +8,5 @@
 - 검증: 새 coroutine/owned-file/mock HTTP 및 기존 ChIP-Atlas MockTransport만 21 passed, 26 deselected. 기한 재설정 방지·대기 알림·오류/부재 구분·취소 전파·owned guard·인간 승인 경로 제외를 확인했다. P1 후속은 수정 전 자동 조회 3경로에서 실패를 재현했고, 수정 후 관련 mock/static 40건이 통과했다. 승인 거절·만료·취소 뒤 예산 보존과 기존 PDF 접근 검사를 포함한다. 실제 서비스·프로세스/proc_tree·기관·HPC·원자료·운영·PI 인스턴스는 실행하지 않았다.
 - manual 163,011→163,275자(+264, LF Unicode). 상세 근거는 lookup-only로 보관한다.
 - PR #776 P1 후속 manual 163,275→163,348자(LF Unicode). 실제 기관·브라우저·프로세스는 실행하지 않았다.
+- P1 `4317534007`: 기관 fetch의 executor thread를 async subprocess 대기로 바꿨다. 실행 중·시작 도중 취소 시 소유한 handle만 종료·회수하고, 임시 PDF는 정상 완료·형식 검사 뒤 목적 경로에 반영한다. PID/tree 스캔은 없다. AlphaGenome은 외부 취소도 기존 `_AG_STUCK`에 집계하여 상한에서 새 호출을 거부하고 완료된 thread는 제외한다. 원격 SDK 호출 자체의 강제 취소는 보장하지 않는다.
+- 검증: 수정 전 취소 회귀 4건 실패, 수정 후 fake process/thread·기존 coroutine·PDF gate mock/static 43 passed. 실제 browser/process/proc_tree/SDK·기관·운영 실행은 없다. manual 163,348→163,450자. P2 동시 승인 예산은 supervisor 판단 대상으로 남긴다.
