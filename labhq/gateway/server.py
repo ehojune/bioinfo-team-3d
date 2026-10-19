@@ -3290,8 +3290,11 @@ class Hub:
         found = next((key for key, req in self.requests.items() if req.get("model_refusal_from") == rid), None)
         if found:
             return found
-        fields = {key: old[key] for key in ("mode", "work_kind", "scope_status", "project_dirs", "references",
+        fields = {key: old[key] for key in ("mode", "work_kind", "scope_status", "project_dirs",
                                           "project_id", "route") if key in old}
+        # Stored provenance is not input: revalidate only the public Reference fields.
+        fields["references"] = [{key: ref[key] for key in ("kind", "value", "note") if key in ref}
+                                for ref in old.get("references") or []]
         body = RequestIn(**fields, text=text, cso_model=model, default_references=False,
                          budget_usd=old.get("requested_budget_usd", old.get("budget_usd")))
         return self.create_request(body, extra={"model_refusal_from": rid})

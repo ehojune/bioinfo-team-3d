@@ -1,4 +1,5 @@
 import asyncio
+import copy
 from unittest.mock import AsyncMock
 
 import httpx
@@ -6,6 +7,7 @@ import pytest
 
 from labhq.cli import main
 from labhq.gateway.server import Hub, create_app
+from labhq.intake import Reference, effective_references
 from labhq.model_refusal import REASON, is_model_refusal
 from labhq.models import TaskResult
 from labhq.orchestrator.cso import Orchestrator, failure_kind
@@ -75,6 +77,7 @@ async def test_refusal_during_plan_correction_uses_the_same_terminal_choice():
 
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
+    monkeypatch.setattr("labhq.integrations.rounds._git_commit", lambda: "0" * 40)
     settings = Settings()
     settings.gateway.state_dir = str(tmp_path / "state")
     settings.runner.workspace_root = str(tmp_path / "runs")
@@ -203,3 +206,57 @@ def test_status_prints_refusal_without_bundle_or_private_provider_text(setup, mo
     main(["status"])
     output = capsys.readouterr().out
     assert "[model_refused]" in output and REASON in output and "private" not in output
+
+
+@pytest.mark.parametrize("origin", ["request", "pi_profile", "query_removed"])
+@pytest.mark.parametrize("decision", [
+    {"action": "model", "cso_model": "gpt-6-astra"},
+    {"action": "edit", "text": "Revised public reference fixture"},
+])
+async def test_replan_normalises_stored_references_before_input_validation(setup, origin, decision):
+    """P1 4317267131: persisted provenance fields are not RequestIn fields."""
+    app, hub, launches = setup
+    reference = Reference(kind="doi", value="10.1234/fixture", note="Public fixture")
+    if origin == "pi_profile":
+        hub.s.pi_profile.references = [reference]
+        stored = effective_references([], True, hub.s)
+    else:
+        if origin == "query_removed":
+            reference = Reference(kind="url", value="https://example.org/fixture?view=fixture", note="Public URL")
+        stored = effective_references([reference], False, hub.s)
+    before = copy.deepcopy(stored)
+    hub.requests["r"].update(references=stored, default_references=True)
+    assert all("source" in item for item in stored)
+    if origin == "query_removed":
+        assert stored[0]["query_removed"] is True
+    await hub.offer_model_refusal("r")
+    aid = hub.requests["r"]["model_refusal_approval_id"]
+    assert not launches
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
+        response = await client.post(f"/api/approvals/{aid}", json={"approved": True, "model_refusal": decision},
+                                     headers={"Authorization": "Bearer fixture-client"})
+    assert response.status_code == 200, response.text
+    assert len(launches) == 1
+    child = hub.requests[launches[0]]
+    assert [{key: item.get(key) for key in ("kind", "value", "note")} for item in child["references"]] == [
+        {key: item.get(key) for key in ("kind", "value", "note")} for item in before]
+    assert child["default_references"] is False  # the effective snapshot is not added twice
+    assert "?" not in child["references"][0]["value"]
+    assert hub.requests["r"]["references"] == before
+    assert hub.requests["r"]["status"] == "failed"
+    assert child["research_options"]["final_checkpoint"] and "research_contract" not in child
+    await hub.result_storage.close()
+
+
+async def test_replan_still_rejects_an_invalid_saved_reference(setup):
+    app, hub, launches = setup
+    hub.requests["r"]["references"] = [{"kind": "url", "value": "javascript:alert(1)", "source": "request"}]
+    await hub.offer_model_refusal("r")
+    aid = hub.requests["r"]["model_refusal_approval_id"]
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
+        response = await client.post(f"/api/approvals/{aid}", json={"approved": True,
+            "model_refusal": {"action": "model", "cso_model": "gpt-6-astra"}},
+            headers={"Authorization": "Bearer fixture-client"})
+    assert response.status_code == 422
+    assert len(hub.requests) == 1 and not launches and aid in hub.approvals
+    await hub.result_storage.close()
