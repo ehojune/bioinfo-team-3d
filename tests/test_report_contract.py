@@ -64,6 +64,35 @@ def test_common_front_order_and_reader_copy_are_shared() -> None:
     assert package.kind == "research"
 
 
+def test_report_assets_ignore_markdown_examples_inside_code() -> None:
+    request, report, results = fixed_request()
+    report = report.replace(
+        "![대표 그림](wd_analysis/outputs/plot.svg)",
+        "인라인 예시 `![그림](example.png)`\n\n```markdown\n![그림](fenced.png)\n```",
+    )
+    results["analysis"]["outputs"] = ["outputs/results.tsv"]
+
+    package = build_report_package(request, report, results)
+    checked = validate_report_package(package, available_files={"wd_analysis/outputs/results.tsv"})
+
+    assert package.figures == []
+    assert not any(row["code"] == "missing_figure" for row in checked["problems"])
+
+
+def test_report_assets_keep_spaced_angle_bracket_destination() -> None:
+    request, report, results = fixed_request()
+    report = report.replace(
+        "wd_analysis/outputs/plot.svg",
+        "<wd_analysis/outputs/my plot.svg>",
+    )
+    results["analysis"]["outputs"][0] = "outputs/my plot.svg"
+
+    package = build_report_package(request, report, results)
+
+    assert [figure.path for figure in package.figures] == ["wd_analysis/outputs/my plot.svg"]
+    assert "figures" not in package.omissions
+
+
 def test_bundle_edition_pdf_and_original_use_the_same_first_screen_order() -> None:
     request, report, results = fixed_request()
     package = build_report_package(request, report, results)

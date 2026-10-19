@@ -30,8 +30,20 @@ FRONT_END = "<!-- labhq-report-package:end -->"
 
 _ANCHOR = re.compile(r"\[\[\s*claim\s*:([^\[\]\n]+)\]\]", re.I)
 _HEADING = re.compile(r"(?m)^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
-_IMAGE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
-_LINK = re.compile(r"(?<!!)\[([^\]]+)\]\(([^)]+)\)")
+
+
+def _balanced_link_target(depth: int = 4) -> str:
+    inner = r"[^()\s]*"
+    for _ in range(depth - 1):
+        inner = rf"(?:[^()\s]|\({inner}\))*"
+    return rf"(?:[^()\s]|\({inner}\))+"
+
+
+_MARKDOWN_LINK = re.compile(
+    r"(?P<image>!)?\[(?P<label>[^\]\n]*)\]\(\s*(?P<target><[^>\n]*>|" + _balanced_link_target()
+    + r")(?P<title>\s+(?:\"[^\"\n]*\"|'[^'\n]*'))?\s*\)"
+)
+_MARKDOWN_CODE = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]*`", re.DOTALL)
 _AUDIO_SUFFIXES = {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".aac"}
 _FIGURE_SUFFIXES = {".svg", ".png", ".jpg", ".jpeg", ".webp", ".gif"}
 _TABLE_SUFFIXES = {".tsv", ".csv"}
@@ -144,7 +156,9 @@ def _first_text(report: str, names: tuple[str, ...], fallback: str) -> str:
 
 
 def _target(raw: str) -> str:
-    value = raw.strip().strip("<>").split(maxsplit=1)[0]
+    value = raw.strip()
+    if value.startswith("<") and value.endswith(">"):
+        value = value[1:-1].strip()
     split = urlsplit(value)
     if split.scheme or split.netloc or value.startswith("#"):
         return ""
@@ -156,18 +170,27 @@ def _target(raw: str) -> str:
     return clean.removeprefix("./")
 
 
+def _markdown_links(report: str):
+    masked = _MARKDOWN_CODE.sub(lambda match: "".join("\n" if char == "\n" else " "
+                                                        for char in match.group()), report)
+    return _MARKDOWN_LINK.finditer(masked)
+
+
 def _assets(report: str) -> tuple[list[ReportAsset], list[ReportAsset], list[ReportAsset]]:
-    figures = [ReportAsset(_plain(label) or PurePosixPath(path).name, path)
-               for label, raw in _IMAGE.findall(report) if (path := _target(raw))
-               and PurePosixPath(path).suffix.casefold() in _FIGURE_SUFFIXES]
+    figures: list[ReportAsset] = []
     tables: list[ReportAsset] = []
     files: list[ReportAsset] = []
-    for label, raw in _LINK.findall(report):
-        path = _target(raw)
+    for match in _markdown_links(report):
+        path = _target(match.group("target"))
         if not path:
             continue
-        asset = ReportAsset(_plain(label) or PurePosixPath(path).name, path)
-        (tables if PurePosixPath(path).suffix.casefold() in _TABLE_SUFFIXES else files).append(asset)
+        suffix = PurePosixPath(path).suffix.casefold()
+        asset = ReportAsset(_plain(match.group("label")) or PurePosixPath(path).name, path)
+        if match.group("image"):
+            if suffix in _FIGURE_SUFFIXES:
+                figures.append(asset)
+        else:
+            (tables if suffix in _TABLE_SUFFIXES else files).append(asset)
     unique = lambda rows: list({row.path: row for row in rows}.values())
     return unique(figures), unique(tables), unique(files)
 
@@ -290,12 +313,14 @@ def _table_shape(text: str, suffix: str) -> bool:
 def _audio_outside_results(report: str) -> list[str]:
     scope = ""
     problems: list[str] = []
-    for line in report.splitlines():
+    masked = _MARKDOWN_CODE.sub(lambda match: "".join("\n" if char == "\n" else " "
+                                                       for char in match.group()), report)
+    for line in masked.splitlines():
         heading = _HEADING.match(line)
         if heading:
             scope = heading.group(2).strip().casefold()
-        for _label, raw in [*_IMAGE.findall(line), *_LINK.findall(line)]:
-            path = _target(raw)
+        for match in _MARKDOWN_LINK.finditer(line):
+            path = _target(match.group("target"))
             if path and PurePosixPath(path).suffix.casefold() in _AUDIO_SUFFIXES \
                     and not any(word in scope for word in ("결과", "result")):
                 problems.append(path)
