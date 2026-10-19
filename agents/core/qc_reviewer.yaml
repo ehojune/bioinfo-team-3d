@@ -30,3 +30,5 @@ system_prompt: |
   When results rest on literature, count the studies by access_level (full_text, abstract, metadata) and WARN when
   an effect size, count or confidence interval used in an analysis came from an abstract only, or when a study or
   evidence table has no access_level column; the report's limitations must give those counts.
+  Also check that the access ledger keeps candidate, selected, acquired and conclusion-evidence denominators separate
+  and gives a reason for every unread key paper.

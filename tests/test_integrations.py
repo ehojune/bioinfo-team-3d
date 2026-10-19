@@ -53,6 +53,7 @@ def test_repository_readme_passes_cli_check():
     assert result.returncode == 0, result.stderr
     content = render(ROOT / "agents")
     assert "PubMed" in content and "bioRxiv / medRxiv" in content
+    assert "OpenAlex·Crossref·Unpaywall" in content
     assert "bioinfo-agent (`bioinfo`)" in content and "Paper2Agent" in content
     assert "labhq_ask" in content and "AlphaGenome" not in content  # labhq_ask is wired by the runner (#39)
     assert "img.shields.io" not in content  # count badges are gone from the table; targets live at the top

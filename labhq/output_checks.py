@@ -44,8 +44,14 @@ PMID = re.compile(r"\bPMID\s*[:=]?\s*(\d+)\b", re.IGNORECASE)
 PUBMED_URL = re.compile(r"(?:pubmed\.ncbi\.nlm\.nih\.gov|ncbi\.nlm\.nih\.gov/pubmed)/(\d+)", re.IGNORECASE)
 DOI = re.compile(r"\b10\.\d{4,9}/[-._;()/:A-Z0-9]+", re.IGNORECASE)
 DOI_VALUE = re.compile(r"10\.\d{1,9}/[-._;()/:A-Z0-9]+", re.IGNORECASE)  # old records allowed short registrants
+OPENALEX = re.compile(
+    r"(?:https?://(?:api\.)?openalex\.org/(?:works/)?|\bOpenAlex\s*[:=]\s*)(W\d+)\b", re.IGNORECASE)
+OPENALEX_VALUE = re.compile(r"(?:https?://(?:api\.)?openalex\.org/(?:works/)?)?(W\d+)", re.IGNORECASE)
 PAPER_ALIAS_SEPARATOR = "|"  # not valid in the identifiers above; old one-identifier keys remain valid
-PAPER_ID_ORDER = {"PMID": 0, "PMCID": 1, "DOI": 2, "input": 3}
+PAPER_ID_ORDER = {"PMID": 0, "PMCID": 1, "DOI": 2, "OpenAlex": 3, "source": 4, "input": 5}
+DISCOVERY_TOOLS = frozenset({"openalex_works", "citation_chase", "preprints"})
+UNREAD_NAMES = {"subscription_required": "구독 필요", "no_copy": "사본 없음", "access_denied": "접근 거부",
+                "format_failure": "형식 실패", "not_looked_up": "조회 기록 없음", "unknown": "사유 미기록"}
 
 
 def _inside(root: Path, rel: str) -> Path | None:
@@ -134,6 +140,9 @@ def _normal_named_paper_id(scheme: Any, value: Any) -> str | None:
         raw = re.sub(r"^(?:doi\s*[:=]?\s*|https?://(?:dx\.)?doi\.org/)", "", raw, flags=re.IGNORECASE)
         raw = raw.rstrip(".,;")
         return f"DOI:{raw.casefold()}" if DOI_VALUE.fullmatch(raw) else None
+    if kind == "openalex":
+        match = OPENALEX_VALUE.fullmatch(raw)
+        return f"OpenAlex:{match.group(1).upper()}" if match else None
     return None
 
 
@@ -142,6 +151,19 @@ def _normal_paper_id(value: Any) -> str | None:
         return None
     prefix, separator, raw = value.strip().partition(":")
     return _normal_named_paper_id(prefix, raw) if separator else None
+
+
+def _normal_paper_input(value: Any) -> str | None:
+    """Normalize a fulltext input even when it used the documented bare PMID or DOI form."""
+    normal = _normal_paper_id(value)
+    if normal or not isinstance(value, (str, int)):
+        return normal
+    raw = str(value).strip()
+    if raw.isdigit():
+        return _normal_named_paper_id("pmid", raw)
+    if PMCID.fullmatch(raw):
+        return _normal_named_paper_id("pmcid", raw)
+    return _normal_named_paper_id("doi", raw)
 
 
 def _paper_key(identifiers: set[str]) -> str:
@@ -154,14 +176,27 @@ def _paper_key(identifiers: set[str]) -> str:
 def _answer_paper_ids(answer: Mapping[str, Any], fallback: Any) -> set[str]:
     identifiers = {paper_id for scheme in ("pmid", "pmcid", "doi")
                    if (paper_id := _normal_named_paper_id(scheme, answer.get(scheme)))}
+    openalex = _normal_named_paper_id("openalex", answer.get("openalex_id"))
+    if openalex:
+        identifiers.add(openalex)
     if identifiers:
         return identifiers
-    normal_fallback = _normal_paper_id(fallback)
+    normal_fallback = _normal_paper_input(fallback)
     if normal_fallback:
         return {normal_fallback}
     if isinstance(fallback, (str, int)) and str(fallback).strip():
         return {f"input:{str(fallback).strip()[:100]}"}
     return set()
+
+
+def _candidate_paper_ids(candidate: Any) -> set[str]:
+    if not isinstance(candidate, Mapping):
+        return set()
+    identifiers = _answer_paper_ids(candidate, None)
+    source = candidate.get("source")
+    if not identifiers and isinstance(source, Mapping) and source.get("code") and source.get("id"):
+        identifiers.add(f"source:{str(source['code'])[:20]}:{str(source['id'])[:80]}")
+    return identifiers
 
 
 def _access_paper_ids(key: Any) -> set[str]:
@@ -224,6 +259,83 @@ def literature_access(root: Path) -> dict[str, str]:
     return {_paper_key(identifiers): level for identifiers, level in groups}
 
 
+def literature_ledger(root: Path) -> dict[str, Any]:
+    """Bounded public-ID ledger reconstructed from this step's discovery and fulltext query records."""
+    root = Path(root)
+    log = _inside(root, QUERY_LOG)
+    if log is None or log.stat().st_size > MAX_RECORD_BYTES:
+        return {}
+    candidates: list[set[str]] = []
+    selected: list[set[str]] = []
+    unread: list[tuple[set[str], str]] = []
+    try:
+        lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return {}
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(entry, dict) or entry.get("tool") not in DISCOVERY_TOOLS | {FULLTEXT_TOOL}:
+            continue
+        record = _inside(root, str(entry.get("result_file") or ""))
+        if record is None or record.stat().st_size > MAX_RECORD_BYTES:
+            continue
+        try:
+            rows = json.loads(record.read_text(encoding="utf-8")).get("results") or []
+        except (OSError, ValueError, AttributeError):
+            continue
+        for item in rows if isinstance(rows, list) else []:
+            if not isinstance(item, Mapping):
+                continue
+            answer = item.get("answer")
+            if not isinstance(answer, Mapping):
+                continue
+            if entry.get("tool") == FULLTEXT_TOOL:
+                identifiers = _answer_paper_ids(answer, item.get("input"))
+                if not identifiers:
+                    continue
+                selected.append(identifiers)
+                level = answer.get("access_level")
+                if level in {"abstract", "metadata"}:
+                    unread.append((identifiers, str(answer.get("unread_reason") or "unknown")))
+                elif answer.get("found") is False:
+                    unread.append((identifiers, str(answer.get("unread_reason") or "no_copy")))
+                continue
+            blocks = ([answer.get("candidates")]
+                      if entry.get("tool") in {"openalex_works", "preprints"}
+                      else [(answer.get("backward") or {}).get("candidates"),
+                            (answer.get("forward") or {}).get("candidates")])
+            for block in blocks:
+                for candidate in block if isinstance(block, list) else []:
+                    identifiers = _candidate_paper_ids(candidate)
+                    if identifiers:
+                        candidates.append(identifiers)
+    candidate_groups = _paper_groups(candidates, limit=None)
+    selected_groups = _paper_groups(selected)
+    unread_groups: list[tuple[set[str], str]] = []
+    for identifiers, reason in unread:
+        overlap = [index for index, (aliases, _reason) in enumerate(unread_groups) if aliases & identifiers]
+        if not overlap:
+            unread_groups.append((set(identifiers), reason))
+            continue
+        aliases = set(identifiers)
+        reasons = [reason]
+        insert_at = overlap[0]
+        for index in reversed(overlap):
+            previous_aliases, previous_reason = unread_groups.pop(index)
+            aliases.update(previous_aliases)
+            reasons.append(previous_reason)
+        chosen = next((value for value in reasons if value != "unknown"), "unknown")
+        unread_groups.insert(insert_at, (aliases, chosen))
+    return {
+        "candidate_ids": [_paper_key(group) for group in candidate_groups],
+        "selected_ids": [_paper_key(group) for group in selected_groups],
+        "unread": {_paper_key(group): reason for group, reason in unread_groups},
+    }
+
+
 def _field(result: Any, name: str) -> Any:
     return getattr(result, name, None) if not isinstance(result, Mapping) else result.get(name)
 
@@ -244,10 +356,11 @@ def _source_paper_ids(source: Any) -> set[str]:
         ids.update(f"PMID:{match}" for match in PUBMED_URL.findall(value))
         ids.update(f"PMCID:{match.upper()}" for match in PMCID.findall(value))
         ids.update(f"DOI:{match.rstrip('.,;').lower()}" for match in DOI.findall(value))
+        ids.update(f"OpenAlex:{match.upper()}" for match in OPENALEX.findall(value))
     return ids
 
 
-def _paper_groups(identifier_sets: Iterable[set[str]]) -> list[set[str]]:
+def _paper_groups(identifier_sets: Iterable[set[str]], *, limit: int | None = MAX_PAPERS) -> list[set[str]]:
     """Merge identifiers that co-occur on one evidence row, so PMID plus DOI still counts as one paper."""
     groups: list[set[str]] = []
     for identifiers in identifier_sets:
@@ -255,7 +368,7 @@ def _paper_groups(identifier_sets: Iterable[set[str]]) -> list[set[str]]:
             continue
         overlap = [index for index, group in enumerate(groups) if group & identifiers]
         if not overlap:
-            if len(groups) < MAX_PAPERS:
+            if limit is None or len(groups) < limit:
                 groups.append(set(identifiers))
             continue
         merged = set(identifiers)
@@ -265,10 +378,8 @@ def _paper_groups(identifier_sets: Iterable[set[str]]) -> list[set[str]]:
     return groups
 
 
-def conclusion_literature_line(steps: Iterable[Mapping[str, Any]], results: Mapping[str, Any],
-                               ledgers: Mapping[str, Any], *, unsupported: Iterable[Any] = (),
-                               refused: Iterable[Any] = ()) -> str | None:
-    """Read-depth warning for papers that actually ground CP2-citable conclusion claims."""
+def _conclusion_papers(ledgers: Mapping[str, Any], unsupported: Iterable[Any],
+                       refused: Iterable[Any]) -> list[set[str]]:
     citable = {(str(row["step_id"]), str(row["claim"].get("id")))
                for row in claim_rows(ledgers, unsupported)[0]}
     refused_rows = {(str(row.get("step_id")), str(row.get("evidence_id")))
@@ -287,10 +398,17 @@ def conclusion_literature_line(steps: Iterable[Mapping[str, Any]], results: Mapp
             if (str(step_id), evidence_id) in refused_rows:
                 continue
             row = evidence.get(evidence_id)
-            ids = _source_paper_ids(row.get("source") if isinstance(row, Mapping) else None)
-            if ids:
-                cited_sources.append(ids)
-    papers = _paper_groups(cited_sources)
+            identifiers = _source_paper_ids(row.get("source") if isinstance(row, Mapping) else None)
+            if identifiers:
+                cited_sources.append(identifiers)
+    return _paper_groups(cited_sources)
+
+
+def conclusion_literature_line(steps: Iterable[Mapping[str, Any]], results: Mapping[str, Any],
+                               ledgers: Mapping[str, Any], *, unsupported: Iterable[Any] = (),
+                               refused: Iterable[Any] = ()) -> str | None:
+    """Read-depth warning for papers that actually ground CP2-citable conclusion claims."""
+    papers = _conclusion_papers(ledgers, unsupported, refused)
     if not papers:
         return None
 
@@ -317,6 +435,53 @@ def conclusion_literature_line(steps: Iterable[Mapping[str, Any]], results: Mapp
     return (f"결론 근거 논문 {len(papers)}편: 본문 {counts['full_text']}편·초록 {counts['abstract']}편·"
             f"서지만 {counts['metadata']}편·조회 기록 없음 {missing}편. 결론 claim에 연결된 논문만 센 값이며, "
             "'fulltext로 조회한 논문 전체'와 분모가 다르다")
+
+
+def literature_ledger_line(steps: Iterable[Mapping[str, Any]], results: Mapping[str, Any],
+                           ledgers: Mapping[str, Any], *, unsupported: Iterable[Any] = (),
+                           refused: Iterable[Any] = ()) -> str | None:
+    """One CP2/report line with four deliberately separate denominators and unread key-paper reasons."""
+    candidate_sets: list[set[str]] = []
+    selected_sets: list[set[str]] = []
+    unread: list[tuple[set[str], str]] = []
+    access: list[tuple[set[str], str]] = []
+    for step in steps:
+        result = results.get(step["id"])
+        if result is None:
+            continue
+        ledger = _field(result, "literature_ledger") or {}
+        for key in ledger.get("candidate_ids") or []:
+            candidate_sets.append(set(str(key).split(PAPER_ALIAS_SEPARATOR)))
+        for key in ledger.get("selected_ids") or []:
+            selected_sets.append(set(str(key).split(PAPER_ALIAS_SEPARATOR)))
+        for key, reason in (ledger.get("unread") or {}).items():
+            unread.append((set(str(key).split(PAPER_ALIAS_SEPARATOR)), str(reason)))
+        for key, level in (_field(result, "literature_access") or {}).items():
+            identifiers = _access_paper_ids(key)
+            if identifiers and level in LEVELS:
+                _merge_access_group(access, identifiers, level)
+    if not candidate_sets and not selected_sets:
+        return None
+    candidates = _paper_groups(candidate_sets, limit=None)
+    selected = _paper_groups(selected_sets)
+    papers = _conclusion_papers(ledgers, unsupported, refused)
+    counts = {level: sum(level == found for _aliases, found in access) for level in LEVELS}
+    missed = []
+    for paper in papers:
+        found = next((level for aliases, level in access if aliases & paper), None)
+        if found == "full_text":
+            continue
+        reason = next((value for aliases, value in unread if aliases & paper), "not_looked_up" if found is None else "unknown")
+        display = min(paper, key=lambda value: (PAPER_ID_ORDER.get(value.partition(":")[0], 99), value))
+        missed.append(f"{display}({UNREAD_NAMES.get(reason, reason)})")
+    acquired = sum(counts.values())
+    line = (f"문헌 접근 실패 원장(서로 다른 분모): 후보 {len(candidates)}편·선정 {len(selected)}편·"
+            f"확보 {acquired}편(본문 {counts['full_text']}·초록 {counts['abstract']}·서지 {counts['metadata']})·"
+            f"결론 근거 {len(papers)}편.")
+    if missed:
+        shown = ", ".join(missed[:5]) + (f" 외 {len(missed) - 5}편" if len(missed) > 5 else "")
+        line += f" 못 읽은 핵심 논문: {shown}."
+    return line
 
 
 def quality_lines(steps: Iterable[Mapping[str, Any]], results: Mapping[str, Any]) -> list[str]:

@@ -37,3 +37,6 @@ system_prompt: |
   the PubMed and bioRxiv tools return the record itself.
   When conclusions rest on literature, check the access_level column of each study or evidence table: an effect
   size taken from an abstract only is weaker evidence, and a table without access_level is a revision request.
+  Check that OpenAlex broadening did not pre-filter on OA status. Require separate candidate, selected, acquired and
+  conclusion-evidence denominators, plus an access-failure reason for every unread key paper. Crossref metadata and
+  Unpaywall/OpenAlex locations are discovery evidence, not proof that the paper body was read.

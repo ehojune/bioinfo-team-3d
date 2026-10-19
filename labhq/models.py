@@ -357,6 +357,8 @@ class TaskResult(BaseModel):
     table_warnings: list[str] = []
     # {paper id: best access_level} from this task's labhq_annot.fulltext lookups (#697).
     literature_access: dict[str, str] = {}
+    # Public paper IDs only: discovery candidates, selected fulltext inputs and unread reasons (#744).
+    literature_ledger: dict[str, Any] = {}
     provenance: dict[str, Any] = {}  # manifest summary; the gateway may not share the runner's disk
     pipeline_submission: dict[str, Any] | None = None  # gateway-only handoff; stripped before web publication
     partial_results: bool = False
@@ -431,6 +433,8 @@ class TaskResult(BaseModel):
                 data.pop("table_warnings", None)
             if not data.get("literature_access"):
                 data.pop("literature_access", None)
+            if not data.get("literature_ledger"):
+                data.pop("literature_ledger", None)
             if data.get("pipeline_submission") is None:
                 data.pop("pipeline_submission", None)
             if data.get("quota_reset_at") is None:

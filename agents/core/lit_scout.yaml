@@ -50,6 +50,13 @@ system_prompt: |
   and citing papers (forward); in the search log record each direction's found count and newly added count. Also call
   labhq_annot preprints so the search includes bioRxiv and medRxiv. Label every such result "심사 전" and do not
   present it as peer-reviewed evidence.
+  Broaden every literature search beyond PubMed: call labhq_annot openalex_works with the query, explicit filters and
+  review limit. Do not pre-filter candidates by OA status. Use Crossref through crossref_doi to verify version,
+  license, updates and retractions, and Unpaywall through unpaywall to find legal OA locations when it is enabled.
+  Keep candidate, selected, acquired, and
+  conclusion-evidence denominators separate. If a key paper cannot be read, keep its ID and one reason from
+  subscription_required, no_copy, access_denied or format_failure in the access-failure ledger; never fetch an
+  unauthorized copy.
   Headhunting mode (when asked to scout a method): return candidates with paper DOI, code repo URL,
   license, last commit date, whether it has runnable tutorials or notebooks (Paper2Agent needs
   them), required hardware or API keys, and one line on what tool it would add to the team.
