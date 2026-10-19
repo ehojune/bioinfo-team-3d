@@ -1,6 +1,6 @@
 ## 결론
 
-현재 cgroup v2부터 보이는 mount 루트까지의 최소 memory.max를 usable_memory_bytes()에 반영했습니다. Fixes #726.
+PR #765에서 현재 cgroup v2부터 보이는 mount 루트까지의 최소 memory.max를 usable_memory_bytes()에 반영했습니다. Fixes #726.
 
 ## 바뀐 것
 
