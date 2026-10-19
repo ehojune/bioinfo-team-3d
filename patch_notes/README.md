@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 22:31 | [`5a2a925`](https://github.com/ehojune/bioinfo-team-3d/pull/764/commits/5a2a925) | 정리본·PDF에 실행된 단계의 파이프라인 모식도·타임라인·실행 보고서를 넣고 Nextflow 네 기록을 모음 |
 | 22:23 | [`2ca1543`](https://github.com/ehojune/bioinfo-team-3d/pull/762/commits/2ca1543) | 공개용 reference 정리를 승인 전에 적용해 카드·fingerprint·업로드 소스를 맞추고 긴 코드를 보존했다. |
 | 22:04 | [`d37d164`](https://github.com/ehojune/bioinfo-team-3d/pull/762/commits/d37d164) | pipeline 승인 카드에 검사를 통과한 후보 소스 전체를 표시함 |
 | 20:05 | [`3e154f3`](https://github.com/ehojune/bioinfo-team-3d/pull/761/commits/3e154f3) | 문서 길이 측정표를 최종 파일과 맞춤 |
