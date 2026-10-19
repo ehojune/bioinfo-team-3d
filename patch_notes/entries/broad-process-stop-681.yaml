@@ -9,3 +9,6 @@ rows:
 - sha: 0db50c6
   at: '2026-10-19 23:48'
   text: PowerShell kill alias의 literal Name 약어를 거부하고 Bash 숫자 signal PID 종료를 유지한다. 문자열 guard 회귀 53개를 확인했다.
+- sha: 91edaee
+  at: '2026-10-20 02:06'
+  text: unquoted wrapper payload·env 옵션·줄바꿈 pipeline·InputObject 식의 이름 종료 우회를 막고 문자열/fake 회귀 85개를 확인했다.
