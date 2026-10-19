@@ -168,7 +168,14 @@ async def run_submission(tmp_path, submission, transport, pipeline_pr=True):
     hub.store.put("pipeline_submission", "t", {"request_id": "r", "task_id": "t",
                                                 "agent_id": "bioinfo-agent", "state": "ready",
                                                 "submission": submission})
-    delivered = await hub.reporter.handle({"type": "pipeline.ready", "request_id": "r", "task_id": "t"})
+    event = {"type": "pipeline.ready", "request_id": "r", "task_id": "t"}
+    # These tests exercise the public-source guard/API after explicit consent; #732 tests the waiting/deny path.
+    hub.reporter.submit = lambda _ev: None
+    delivered = await hub.reporter.handle(event)
+    row = hub.store.get("pipeline_submission", "t")
+    if row.get("state") == "awaiting_approval":
+        await hub.resolve_approval(row["approval_id"], True)
+        delivered = await hub.reporter.handle(event)
     return hub, delivered
 
 
@@ -366,27 +373,32 @@ async def test_default_settings_attempt_no_pipeline_pr_and_send_nothing(tmp_path
 
 
 @pytest.mark.parametrize("enabled", [False, True])
-async def test_gateway_asks_the_runner_for_pipeline_files_only_when_turned_on(tmp_path, enabled):
+@pytest.mark.parametrize("agent_id", ["bioinfo-agent", "engineer", "analyst", "data_steward"])
+async def test_gateway_asks_the_runner_for_pipeline_files_only_when_turned_on(tmp_path, enabled, agent_id):
     hub = Hub(settings(tmp_path, pipeline_pr=enabled))
     sent = []
 
     async def send(_runner_id, message):
         sent.append(message)
         task_id = message["task"]["id"]
-        hub.futures[task_id].set_result(TaskResult(task_id=task_id, agent_id="bioinfo-agent", ok=True, text="done"))
+        hub.futures[task_id].set_result(TaskResult(task_id=task_id, agent_id=agent_id, ok=True, text="done"))
 
     hub.send_runner = send
-    hub.agent_runner["bioinfo-agent"] = "runner"
+    hub.agent_runner[agent_id] = "runner"
     try:
-        await hub.dispatch(Task(agent_id="bioinfo-agent", request_id="r", prompt="build", meta={"kind": "direct"}))
+        await hub.dispatch(Task(agent_id=agent_id, request_id="r", prompt="build", meta={"kind": "direct"}))
         assert sent[0]["type"] == "task.dispatch"
-        assert sent[0]["task"]["meta"].get("pipeline_pr") is (True if enabled else None)
+        assert sent[0]["task"]["meta"].get("pipeline_pr") is (
+            True if enabled and agent_id != "data_steward" else None)
     finally:
         hub.store.close()
 
 
-@pytest.mark.parametrize(("enabled", "outcome"), [(False, "ok"), (True, "ok"), (True, "failed"), (True, "waiting")])
-async def test_runner_attaches_pipeline_files_only_when_the_gateway_asks(tmp_path, monkeypatch, enabled, outcome):
+@pytest.mark.parametrize(("enabled", "outcome"), [
+    (False, "ok"), (True, "ok"), (True, "failed"), (True, "waiting"), (True, "ordinary")])
+@pytest.mark.parametrize("agent_id", ["bioinfo-agent", "engineer", "analyst", "data_steward"])
+async def test_runner_attaches_pipeline_files_only_when_the_gateway_asks(
+        tmp_path, monkeypatch, enabled, outcome, agent_id):
     """Off unless the gateway asks (#300), and only from a finished successful turn (#301 review)."""
     from labhq.runner.daemon import Runner
 
@@ -394,13 +406,14 @@ async def test_runner_attaches_pipeline_files_only_when_the_gateway_asks(tmp_pat
     for name in ("agents_dir", "talent_dir"):
         setattr(configured.runner, name, str(tmp_path / name))
     runner = Runner(configured)
-    agent = AgentSpec(id="bioinfo-agent", name="bio", role="pipeline", engine=Engine.claude_code, builtin_mcp=[])
+    agent = AgentSpec(id=agent_id, name="bio", role="pipeline", engine=Engine.claude_code, builtin_mcp=[])
 
     class Adapter:
         async def run(self, ctx):
             folder = Path(ctx.workdir) / "outputs" / "pipeline" / "tiny"
             folder.mkdir(parents=True)
-            (folder / "manifest.json").write_text(json.dumps({"schema": 1, "name": "tiny"}), encoding="utf-8")
+            if outcome != "ordinary":
+                (folder / "manifest.json").write_text(json.dumps({"schema": 1, "name": "tiny"}), encoding="utf-8")
             for name in ("main.nf", "nextflow.config", "README.md"):
                 (folder / name).write_text("x\n", encoding="utf-8")
             if outcome == "waiting":  # an HPC job is still out: the bundle is not validated yet
@@ -414,7 +427,7 @@ async def test_runner_attaches_pipeline_files_only_when_the_gateway_asks(tmp_pat
                             lambda *_args, **_kwargs: pytest.fail("pipeline content collected without consent"))
     meta = {"kind": "direct", **({"pipeline_pr": True} if enabled else {})}
     result = await runner.run_task(Task(id="t", request_id="r", agent_id=agent.id, prompt="build", meta=meta))
-    if enabled and outcome == "ok":
+    if enabled and outcome == "ok" and agent_id != "data_steward":
         assert result.pipeline_submission["state"] == "ready"
     else:
         assert result.pipeline_submission is None

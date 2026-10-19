@@ -25,7 +25,8 @@ import httpx
 
 from ..costs import cost_detail, cost_text
 from ..intake import mask_published_references, public_url, url_pattern
-from ..pipeline_pr import pipeline_rejection
+from ..models import ApprovalRequest
+from ..pipeline_pr import pipeline_fingerprint, pipeline_rejection
 from ..policy import _PathTextScan, _scan_mentions_zone, _scan_path_text, restricted_paths
 from ..research import final_checkpoint as cp4
 from ..settings import PolicySettings, ProjectSettings, Settings
@@ -570,6 +571,10 @@ class ProjectReporter:
         previous, previous_reason = entry.get("state"), entry.get("reason")
         entry.update(state=status, reason=reason, url=url, number=number, updated_at=time.time())
         self.hub.store.put("pipeline_submission", entry["task_id"], entry)
+        if status in {"open", "rejected", "declined"}:
+            for event in self.hub.store.all("reporter_delivery").values():
+                if event.get("type") == "pipeline.ready" and event.get("task_id") == entry["task_id"]:
+                    self.hub.ack_reporter_delivery(event)
         if previous == status and previous_reason == reason:
             return
         await self.hub.publish({"type": "pipeline.pr", "ts": time.time(),
@@ -578,15 +583,56 @@ class ProjectReporter:
                                 "data": {"status": status, "name": (entry.get("submission") or {}).get("name"),
                                          "reason": reason, "url": url, "number": number}})
 
+    async def _pipeline_approved(self, entry: dict) -> bool:
+        """One non-blocking, durable PI card per candidate and destination; no GitHub client before yes."""
+        fingerprint = pipeline_fingerprint(entry["submission"], self.s)
+        aid = entry.get("approval_id")
+        if aid and entry.get("approval_fingerprint") != fingerprint:
+            await self.hub.close_approval(aid, "기여 후보나 게시 대상이 바뀌어 다시 확인합니다")
+            aid = None
+        decision = self.hub.store.get("approval_decision", aid) if aid else None
+        if decision:
+            card = decision.get("approval") or {}
+            if (card.get("kind") == "pipeline_contribute" and card.get("task_id") == entry["task_id"]
+                    and card.get("request_id") == entry.get("request_id")
+                    and (card.get("detail") or {}).get("fingerprint") == fingerprint):
+                if decision.get("approved") is True:
+                    return True
+                await self._pipeline_status(entry, "declined", "PI가 이 pipeline의 기여를 승인하지 않았습니다")
+                return False
+            aid = None  # a decision for another candidate never grants consent
+        if not aid or aid not in self.hub.approvals:
+            submission = entry["submission"]
+            policy = self.s.policy.bioinfo_agent
+            card = ApprovalRequest(**({"id": aid} if aid else {}), kind="pipeline_contribute",
+                task_id=entry["task_id"], request_id=entry.get("request_id"), agent_id=entry.get("agent_id"),
+                summary=f"완성한 {submission['name']} pipeline을 bioinfo-agent에 기여할까요?",
+                detail={"name": submission["name"], "repo": policy.pipeline_repo,
+                        "base": policy.pipeline_base_branch, "fingerprint": fingerprint,
+                        "files": [item["path"] for item in submission["files"]]},
+                ).model_dump(mode="json", exclude={"timeout_s"})
+            # Save the binding before publishing the card; replay repairs a crash between these writes.
+            entry.update(approval_id=card["id"], approval_fingerprint=fingerprint)
+            self.hub.store.put("pipeline_submission", entry["task_id"], entry)
+            self.hub.approvals[card["id"]] = {"approval": card, "origin": None}
+            self.hub.save_approval(card["id"])
+            await self.hub.publish({"type": "approval.requested", "request_id": entry.get("request_id"),
+                                    "data": card})
+        await self._pipeline_status(entry, "awaiting_approval", "PI의 건별 기여 승인을 기다립니다")
+        return False
+
     async def _handle_pipeline(self, ev: dict) -> bool:
         entry = self.hub.store.get("pipeline_submission", str(ev.get("task_id") or ""))
-        if not self.s.policy.bioinfo_agent.pipeline_pr or not entry or entry.get("state") in {"open", "rejected"}:
+        if (not self.s.policy.bioinfo_agent.pipeline_pr or not self.enabled() or not entry
+                or entry.get("state") in {"open", "rejected", "declined"}):
             return True
         submission = entry.get("submission") or {}
         reason = self._pipeline_rejection(submission)
         if reason:
             await self._pipeline_status(entry, "rejected", reason)
             return True
+        if not await self._pipeline_approved(entry):
+            return entry.get("state") == "declined"
         gh = self.client()
         if gh is None:
             await self._pipeline_status(entry, "pending", f"{self.s.github.token_env} is not set")
@@ -595,7 +641,7 @@ class ProjectReporter:
         repo = self.s.policy.bioinfo_agent.pipeline_repo
         base = self.s.policy.bioinfo_agent.pipeline_base_branch
         name = submission["name"]
-        branch = f"labhq-{name}-{str(entry.get('request_id') or entry['task_id'])[-8:]}"
+        branch = f"labhq-{name}-{entry['approval_fingerprint'][:12]}-{entry['task_id'][-8:]}"
         marker = f"<!-- labhq pipeline {entry['task_id']} -->"
         try:
             info = await gh.repo_info(repo)
@@ -618,7 +664,7 @@ class ProjectReporter:
                 for item in submission["files"]:
                     await gh.put_file(repo, item["path"], item["content"],
                                       f"{name} pipeline: add generated file", branch)
-                body = (f"labhq bioinfo-agent가 만든 `{name}` pipeline입니다.\n\n"
+                body = (f"labhq에서 구현하고 PI가 건별 기여를 승인한 `{name}` pipeline입니다.\n\n"
                         f"{submission.get('summary') or ''}\n\n{marker}")
                 existing = await gh.create_pull(repo, submission.get("title") or f"{name} pipeline 추가",
                                                 body, branch, base)

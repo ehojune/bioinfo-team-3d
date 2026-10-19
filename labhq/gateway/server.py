@@ -34,6 +34,7 @@ from ..integrations.rounds import RoundRecorder, environment_snapshot, is_resear
 from ..integrations.visibility import dev_log_visibility
 from ..login import login_command
 from ..ask_results import ask_result, read_ask_results, rejected_step
+from ..bioinfo_policy import PIPELINE_AUTHORS
 from ..costs import (outcome_unknown_item, request_cost_summary, request_cost_totals,
                      request_session_cost_totals, task_cost_item)
 from ..models import ApprovalRequest, AskRequest, RunnerNotSent, RunnerUnavailable, Task, TaskResult, new_id, waiting
@@ -348,7 +349,8 @@ class Hub:
                 self.store.delete("approval", aid)
                 self.approvals.pop(aid)
                 continue
-            if (entry.get("origin") is None and entry["approval"].get("kind") not in {"resume", "facilities_fix"}
+            if (entry.get("origin") is None and entry["approval"].get("kind") not in {
+                    "resume", "facilities_fix", "pipeline_contribute"}
                     and not (entry["approval"].get("detail") or {}).get("late_storage")):
                 self.approvals.pop(aid)
                 self.store.delete("approval", aid)
@@ -1284,6 +1286,12 @@ class Hub:
                                        "request_id": rid, "data": {}})
         for event in pending:
             self.reporter.submit(event)
+        pending_pipelines = {event.get("task_id") for event in pending if event["type"] == "pipeline.ready"}
+        if self.reporter.enabled():
+            for tid, entry in self.store.all("pipeline_submission").items():
+                if tid not in pending_pipelines and entry.get("state") not in {"open", "rejected", "declined"}:
+                    self.reporter.submit({"type": "pipeline.ready", "request_id": entry.get("request_id"),
+                                          "task_id": tid, "data": {}})
         for event in sorted(self.store.all("terminal_delivery").values(), key=lambda ev: ev["seq"]):
             self._queue_terminal_delivery(event)
 
@@ -2498,12 +2506,15 @@ class Hub:
                     pass  # an HPC or answer wait keeps its pause: the wake turn still waits for resume (PR #532 review)
                 elif self.task_controls.pop(tid, None) is not None:
                     self.store.delete("task_control_state", tid)
-            if (result.pipeline_submission is not None and self.s.policy.bioinfo_agent.pipeline_pr
+            if (result.pipeline_submission is not None and result.agent_id in PIPELINE_AUTHORS
+                    and self.s.policy.bioinfo_agent.pipeline_pr
                     and result.ok and not waiting(result)):
-                self.store.put("pipeline_submission", tid, {
-                    "request_id": rid, "task_id": tid, "agent_id": result.agent_id,
-                    "state": "ready", "submission": result.pipeline_submission,
-                })
+                if self.store.get("pipeline_submission", tid) is None:
+                    # A replayed result cannot replace the candidate or erase its PI decision.
+                    self.store.put("pipeline_submission", tid, {
+                        "request_id": rid, "task_id": tid, "agent_id": result.agent_id,
+                        "state": "ready", "submission": result.pipeline_submission,
+                    })
                 pipeline_event = {"type": "pipeline.ready", "ts": time.time(), "task_id": tid,
                                   "agent_id": result.agent_id, "request_id": rid,
                                   "data": {"name": result.pipeline_submission.get("name")}}
@@ -2695,7 +2706,7 @@ class Hub:
         refused = self._session_pin_refusal(task, rid)
         if refused:
             return refused
-        if task.agent_id == "bioinfo-agent" and self.s.policy.bioinfo_agent.pipeline_pr:
+        if task.agent_id in PIPELINE_AUTHORS and self.s.policy.bioinfo_agent.pipeline_pr:
             # Off by default (#300). The gateway's one setting decides; a runner sends pipeline files only when asked.
             task.meta["pipeline_pr"] = True
         task = self._attach_steers(task)
@@ -3297,6 +3308,9 @@ class Hub:
             self._restore_unstarted_continuation(rid, self.requests[rid])
             self.requests[rid].update(status="failed", error="resume declined", finished_at=time.time())
             self.schedule_terminal(rid, "request.failed", {"error": "resume declined"})
+        if a.get("kind") == "pipeline_contribute":
+            await self.publish({"type": "pipeline.ready", "ts": time.time(), "task_id": a.get("task_id"),
+                                "request_id": a.get("request_id"), "data": {}})
 
     async def close_publish_cards(self, rid: str) -> None:
         for aid in self.result_storage.publish_cards(rid):
@@ -3688,7 +3702,7 @@ class Hub:
         latest: dict[str, dict] = {}
         for entry in self.store.all("pipeline_submission").values():
             rid = entry.get("request_id")
-            if not rid or entry.get("state") not in {"pending", "open", "rejected"}:
+            if not rid or entry.get("state") not in {"pending", "awaiting_approval", "open", "rejected", "declined"}:
                 continue
             if rid not in latest or (entry.get("updated_at") or 0) >= (latest[rid].get("updated_at") or 0):
                 latest[rid] = entry

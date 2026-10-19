@@ -283,7 +283,7 @@ function resetSnapshotState() {
 }
 const STATE_KO = { idle: '쉬는 중', queued: '순서 기다림', working: '작업 중', waiting: '승인 기다림',
   hibernating: 'HPC 기다리는 중', done: '완료', error: '문제 발생' };
-const KIND_KO = { result_storage: '결과 저장 위치', result_publish: '편집자 정리본 확인', hpc_submit: 'HPC 제출', tool_permission: '도구 권한', budget: '예산 초과', recruit: '채용', recruit_plan: '계획 전 채용', download: '대용량 다운로드', clarify: 'PI 질문', scope: '범위 확인', research_plan: 'CP1 계획 승인', research_evidence: 'CP2 증거 검토', research_continue: '리뷰 뒤 이어 가기', literature_pdf: '핵심 논문 PDF 요청', codex_sandbox_setup: 'Codex sandbox 준비', facilities_fix: '환경 자동 수정', resume: '중단된 요청 재개', question: '직원 질문 · PI 확인' };
+const KIND_KO = { pipeline_contribute: '새 pipeline 기여', result_storage: '결과 저장 위치', result_publish: '편집자 정리본 확인', hpc_submit: 'HPC 제출', tool_permission: '도구 권한', budget: '예산 초과', recruit: '채용', recruit_plan: '계획 전 채용', download: '대용량 다운로드', clarify: 'PI 질문', scope: '범위 확인', research_plan: 'CP1 계획 승인', research_evidence: 'CP2 증거 검토', research_continue: '리뷰 뒤 이어 가기', literature_pdf: '핵심 논문 PDF 요청', codex_sandbox_setup: 'Codex sandbox 준비', facilities_fix: '환경 자동 수정', resume: '중단된 요청 재개', question: '직원 질문 · PI 확인' };
 const JOB_KO = { queued: '대기', running: '실행 중', completed: '완료', failed: '실패', held: '보류', suspended: '일시정지',
   cancelled: '취소', unknown_finished: '종료 (확인 필요)', error: '오류', missing: '확인 중' };
 const GH_KO = { issue: 'GitHub에 이 요청의 이슈를 열었어요', plan: '이슈에 계획을 올렸어요', review: '이슈에 리뷰 결과를 올렸어요',
@@ -1041,10 +1041,10 @@ function apply(ev, replay = false) {
     case 'github.failed': feed({ who: 'github', text: `GitHub 업데이트 실패: ${short(d.error, 110)}`, fullText: `GitHub 업데이트 실패: ${d.error || ''}`, cls: 'alert' }, ts, rid); break;
     case 'pipeline.pr': {
       setPipelinePr(req(rid), d);
+      const label = { pending: '대기', awaiting_approval: '승인 대기', declined: '미기여' }[d.status] || '거부';
       feed({ who: 'github', text: d.status === 'open' ? `새 pipeline PR을 열었어요: ${d.name}`
-        : d.status === 'pending' ? `새 pipeline PR 대기: ${short(d.reason, 100)}`
-        : `새 pipeline PR 거부: ${short(d.reason, 100)}`,
-        fullText: d.status === 'open' ? undefined : `새 pipeline PR ${d.status === 'pending' ? '대기' : '거부'}: ${d.reason || ''}`,
+        : `새 pipeline PR ${label}: ${short(d.reason, 100)}`,
+        fullText: d.status === 'open' ? undefined : `새 pipeline PR ${label}: ${d.reason || ''}`,
         cls: d.status === 'open' ? '' : 'alert', url: d.url || undefined }, ts, rid);
       break;
     }

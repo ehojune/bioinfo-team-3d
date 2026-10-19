@@ -103,6 +103,10 @@ def approval_copy(kind: str, summary: str, detail: dict) -> dict[str, str]:
         one = '필요한 일을 맡길 직원을 추가하려 합니다.'
         reason = korean_text(detail.get('reason'), '현재 직원만으로 맡기기 어려운 일이 있습니다.')
         outcome = '승인하면 제안된 직원의 준비를 시작합니다. 준비가 끝나야 일을 맡깁니다.'
+    elif kind == 'pipeline_contribute':
+        one = f"완성한 {plain_text(detail.get('name'))} pipeline을 bioinfo-agent에 기여할까요?"
+        reason = '새 pipeline의 코드를 공개 저장소에 보내기 전에 건별 동의를 받습니다.'
+        outcome = '승인하면 이 후보의 코드로 PR을 엽니다. 거절하면 기여하지 않고 분석 결과를 보관합니다.'
     elif kind == 'literature_pdf':
         papers = detail.get('papers') if isinstance(detail.get('papers'), list) else []
         one = f'핵심 논문 {len(papers)}편의 PDF를 요청합니다.'
