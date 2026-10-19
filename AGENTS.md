@@ -9,5 +9,5 @@
 - 단계 끝에는 PR 본문과 `docs/status/<YYYY-MM-DD>-<HHMM>-<branch>.md`에 같은 보고를 쓴다. `STATUS.md`는 main 자동 생성이므로 직접 고치지 않는다.
 - 기록만 바꾼 커밋을 빼고 커밋마다 `patch_notes/entries/<branch>.yaml`에 한 줄. 생성 `patch_notes/README.md`는 직접 고치지 않는다. main 3커밋 안에 README나 manual을 갱신한다. 초안은 `python scripts/patch_notes.py rows --pr N`, 검사는 `python scripts/patch_notes.py check`.
 - public 저장소다. 커밋 전 `scripts/check_public.sh`를 실행한다. 비밀값은 env로만, 실제 `config/labhq.yaml`·로컬 노트는 커밋 금지. DUA 원본은 클러스터 밖·LLM 대화·프롬프트·로그에 가져오지 않는다. 경로 가드는 sandbox가 아니다.
-- P1은 해당 PR에서 고친다. P2는 PR “남은 지적”에 한 줄, issue는 만들지 않는다. 봇 리뷰는 push 묶음마다 상단 댓글 한 번만 요청하고 Running 중 재호출하지 않는다. 인라인·PR 본문·커밋에는 봇 멘션을 쓰지 않는다. 고정 라운드 상한은 없다. 직전 수정 확인·다른 결함 종류일 때만 새 라운드를 부른다. 같은 종류가 좁게 반복되면 그 종류를 닫는 수정 뒤 병합하고 한계를 적는다. 판단이 안 서는 쟁점만 PI에게 묻는다. `scripts/pr_gate.py --dry-run`은 보조 도구다.
+- 기본은 리뷰 1회 → 실제 P1 수정 1회 → CI → 병합이다. P1이 남으면 병합을 보류한다. 보안 등 큰 수정만 재리뷰 예외로 두고 실행 중에는 재호출하지 않는다. P2는 PR “남은 지적”에 한 줄, issue는 만들지 않는다. 인라인·PR 본문·커밋에는 봇 멘션을 쓰지 않는다. `scripts/pr_gate.py --dry-run`은 보조 도구다.
 - `labhq/web/`은 빌드 없는 정적 파일이며 2.5D·3D가 `state.js` reducer를 공유한다. 보고는 한국어, 기술 용어는 영어 그대로 쓴다.
