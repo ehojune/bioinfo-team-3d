@@ -72,6 +72,43 @@ async def test_a_direct_run_reports_the_files_it_left_in_outputs(tmp_path, monke
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["direct", "step"])
+async def test_markdown_check_reads_the_current_generated_result_on_first_run_and_retry(tmp_path, monkeypatch, kind):
+    runner = _runner(tmp_path, monkeypatch, lambda _wd: None)
+    responses = iter(["**(잘못된 강조)**이 남습니다.", "본문 **정상**입니다."])
+
+    class Adapter:
+        async def run(self, ctx):
+            return TaskResult(task_id=ctx.task.id, agent_id="worker", ok=True, text=next(responses))
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_args: Adapter())
+    task = Task(id="markdown", request_id="r1", agent_id="worker", prompt="report", meta={"kind": kind})
+    first = await runner.run_task(task)
+    assert (Path(first.workdir) / "outputs/RESULT.md").read_text(encoding="utf-8") == first.text
+    assert len(first.markdown_warnings) == 1
+    assert "outputs/RESULT.md 1줄" in first.markdown_warnings[0]
+    # The stale file must be overwritten before checking the fixed response.
+    retry = await runner.run_task(task.model_copy(update={"meta": {"kind": kind, "workdir": first.workdir}}))
+    assert (Path(retry.workdir) / "outputs/RESULT.md").read_text(encoding="utf-8") == retry.text
+    assert retry.markdown_warnings == []
+
+
+@pytest.mark.asyncio
+async def test_markdown_check_uses_the_final_structured_response(tmp_path, monkeypatch):
+    runner = _runner(tmp_path, monkeypatch, lambda _wd: None)
+
+    class Adapter:
+        async def run(self, ctx):
+            return TaskResult(task_id=ctx.task.id, agent_id="worker", ok=True, text="original response",
+                              structured={"response": "**(최종 응답)**이 깨집니다.", "output_types": []})
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_args: Adapter())
+    result = await runner.run_task(_direct("typed-markdown", output_types_vocab="test"))
+    assert result.text == "**(최종 응답)**이 깨집니다."
+    assert any("outputs/RESULT.md 1줄" in warning for warning in result.markdown_warnings)
+
+
+@pytest.mark.asyncio
 async def test_direct_result_declares_collected_output_types_when_the_option_is_on(tmp_path, monkeypatch):
     runner = _runner(tmp_path, monkeypatch, lambda _wd: None)
     runner.s.plan.declare_output_types = True

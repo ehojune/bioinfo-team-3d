@@ -7,7 +7,7 @@ import pytest
 from labhq.models import TaskResult
 from labhq.orchestrator.cso import Orchestrator, general_report_warnings
 from labhq.output_checks import (conclusion_literature_line, literature_access, literature_ledger,
-                                 literature_ledger_line, quality_lines, table_problem, table_warnings)
+                                 literature_ledger_line, markdown_warnings, quality_lines, table_problem, table_warnings)
 from tests.test_research_report import _hub
 
 
@@ -70,6 +70,73 @@ def test_table_warnings_check_only_collected_tables_inside_the_workdir(tmp_path)
     _write(tmp_path / "outside.tsv", "a\\tb\n")
     assert table_warnings(work, ["outputs/lit.tsv", "outputs/notes.md", "../outside.tsv", "outputs/gone.tsv"]) == [
         "outputs/lit.tsv: 칸 구분이 탭이 아니라 글자 \\t입니다"]
+
+
+def test_markdown_check_reads_reader_outputs_and_keeps_only_locations_and_fixes(tmp_path):
+    work = tmp_path / "work"
+    _write(work / "outputs/README.md", "첫 줄\n\n**(검사 문장)**이 깨집니다.")
+    _write(work / "outputs/report.md", "```md\n** __ [[ 코드\n```\n")
+    _write(work / "RESULT.md", "본문 __밑줄__이 깨집니다.")
+    _write(tmp_path / "README.md", "**(외부 문장)**이 깨집니다.")
+    warnings = markdown_warnings(work, ["outputs/README.md", "outputs/report.md", "RESULT.md", "../README.md"])
+    assert len(warnings) == 2
+    assert "outputs/README.md 3줄" in warnings[0]
+    assert "RESULT.md 1줄" in warnings[1]
+    assert all("문장부호" in warning for warning in warnings)
+    assert not any("검사 문장" in warning or "외부 문장" in warning for warning in warnings)
+
+
+@pytest.mark.parametrize("files", [1, 30])
+def test_markdown_warning_budget_is_global_and_summarizes_overflow(tmp_path, monkeypatch, files):
+    import labhq.output_checks as checks
+
+    outputs = [f"outputs/{index}/README.md" for index in range(files)]
+    for rel in outputs:
+        _write(tmp_path / rel, "**\n\n" * (30 if files == 1 else 1))
+    counts = []
+    original = checks.rendered_markers
+
+    def scan(source, **kwargs):
+        hits = original(source, **kwargs)
+        counts.append(len(hits))
+        return hits
+
+    monkeypatch.setattr(checks, "rendered_markers", scan)
+    warnings = markdown_warnings(tmp_path, outputs)
+    assert len(warnings) == 21  # 20 locations plus one overflow notice, across all files
+    assert "추가 Markdown 경고" in warnings[-1]
+    assert "생략" in warnings[-1]
+    assert sum(counts) <= 21  # cap hit construction too, before formatting long warning messages
+    assert all("1줄" in warning or "줄." in warning for warning in warnings[:-1])
+
+
+def test_markdown_warning_budget_also_caps_oversize_file_notices(tmp_path, monkeypatch):
+    monkeypatch.setattr("labhq.output_checks.MAX_RECORD_BYTES", 1)
+    outputs = [f"outputs/{index}/report.md" for index in range(30)]
+    for rel in outputs:
+        _write(tmp_path / rel, "oversize")
+    warnings = markdown_warnings(tmp_path, outputs)
+    assert len(warnings) == 21
+    assert "추가 Markdown 경고" in warnings[-1]
+
+
+@pytest.mark.asyncio
+async def test_markdown_artifact_failure_reaches_the_terminal_contract():
+    hub = _hub()
+    original = hub.reply
+
+    async def reply(task):
+        result = await original(task)
+        if task.meta.get("kind") == "step":
+            result.markdown_warnings = ["Markdown 렌더 화면: outputs/RESULT.md 3줄. 강조를 고치세요."]
+        return result
+
+    hub.reply = reply
+    await Orchestrator(hub).run_request("r")
+    checked = hub.requests["r"]["report_contract_check"]
+    assert checked["status"] == "FAIL"
+    assert any(problem["code"] == "markdown_render" and "RESULT.md 3줄" in problem["message"]
+               for problem in checked["problems"])
 
 
 def _fulltext_record(work, name, results, tool="fulltext"):

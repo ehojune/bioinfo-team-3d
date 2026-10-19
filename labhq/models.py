@@ -355,6 +355,8 @@ class TaskResult(BaseModel):
     tool_call_turns: dict[str, dict[str, ToolCallCount]] = {}
     # "<output>: <problem>" for a collected .tsv/.tab/.csv that does not read as a table (#710).
     table_warnings: list[str] = []
+    # Reader Markdown marker locations and repair instructions only (#757).
+    markdown_warnings: list[str] = []
     # {paper id: best access_level} from this task's labhq_annot.fulltext lookups (#697).
     literature_access: dict[str, str] = {}
     # Metadata-only failures from outputs/literature_access.jsonl; paper text stays under .tmp/literature/ (#745).
@@ -433,6 +435,8 @@ class TaskResult(BaseModel):
                 data.pop("tool_call_turns", None)
             if not data.get("table_warnings"):
                 data.pop("table_warnings", None)
+            if not data.get("markdown_warnings"):
+                data.pop("markdown_warnings", None)
             if not data.get("literature_access"):
                 data.pop("literature_access", None)
             if not data.get("literature_access_failures"):

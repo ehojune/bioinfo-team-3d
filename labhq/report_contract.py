@@ -14,6 +14,8 @@ from pathlib import PurePosixPath
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
+from .report_markdown import markdown_body, render_marker_message, rendered_markers, replace_markdown_body
+
 
 FRONT_SECTION_TITLES = (
     "질문",
@@ -111,6 +113,7 @@ class ReportPackage:
     omissions: dict[str, str] = field(default_factory=dict)
     source_report: str = ""
     required: dict[str, str] = field(default_factory=dict)
+    markdown_warnings: dict[str, list[str]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -148,14 +151,15 @@ def research_question(value: str) -> str:
 
 
 def _title(report: str, request: dict[str, Any]) -> str:
-    found = _HEADING.search(report)
+    found = _HEADING.search(markdown_body(report))
     return _plain(found.group(2)) if found else _plain(str(request.get("text") or ""))[:120] or "결과 보고서"
 
 
 def _section_blocks(report: str) -> list[tuple[str, str]]:
-    matches = list(_HEADING.finditer(report))
-    return [(match.group(2).strip().casefold(), report[match.end(): matches[index + 1].start()
-                                                        if index + 1 < len(matches) else len(report)].strip())
+    body = markdown_body(report)
+    matches = list(_HEADING.finditer(body))
+    return [(match.group(2).strip().casefold(), body[match.end(): matches[index + 1].start()
+                                                      if index + 1 < len(matches) else len(body)].strip())
             for index, match in enumerate(matches)]
 
 
@@ -184,15 +188,8 @@ def _target(raw: str) -> str:
     return clean.removeprefix("./")
 
 
-def _without_markdown_code(report: str) -> str:
-    return _MARKDOWN_CODE.sub(
-        lambda match: "".join("\n" if char == "\n" else " " for char in match.group()),
-        report,
-    )
-
-
 def _markdown_links(report: str):
-    return _MARKDOWN_LINK.finditer(_without_markdown_code(report))
+    return _MARKDOWN_LINK.finditer(markdown_body(report))
 
 
 def _assets(report: str) -> tuple[list[ReportAsset], list[ReportAsset], list[ReportAsset]]:
@@ -227,7 +224,7 @@ def build_report_package(request: dict[str, Any], report: str | None = None,
     kind = report_kind(request)
     figures, tables, files = _assets(source)
     anchors = list(dict.fromkeys(
-        value.strip() for value in _ANCHOR.findall(_without_markdown_code(source))
+        value.strip() for value in _ANCHOR.findall(markdown_body(source))
     ))
     omissions: dict[str, str] = {}
     if kind == "research" and not figures:
@@ -254,6 +251,8 @@ def build_report_package(request: dict[str, Any], report: str | None = None,
         omissions=omissions,
         source_report=source,
         required=dict(REQUIRED_BY_KIND[kind]),
+        markdown_warnings={step_id: result["markdown_warnings"] for step_id, result in (results or {}).items()
+                           if isinstance(result, dict) and result.get("markdown_warnings")},
     )
 
 
@@ -334,7 +333,7 @@ def reader_markdown(report: str, *, footnotes: bool = False) -> str:
         seen.setdefault(value, len(seen) + 1)
         return f"[근거 {seen[value]}]"
 
-    rendered = _ANCHOR.sub(replace, rendered)
+    rendered = replace_markdown_body(rendered, lambda body: _ANCHOR.sub(replace, body))
     if seen and FRONT_START not in rendered:
         notes = "\n".join(f"- [근거 {number}] 근거 원장 `{value}`" for value, number in seen.items())
         rendered = rendered.rstrip() + "\n\n## 근거 각주\n\n" + notes + "\n"
@@ -367,17 +366,21 @@ def _table_shape(text: str, suffix: str) -> bool:
 
 
 def _audio_outside_results(report: str) -> list[str]:
-    scope = ""
+    scopes: list[tuple[int, str]] = []
     problems: list[str] = []
-    masked = _without_markdown_code(report)
+    masked = markdown_body(report)
     for line in masked.splitlines():
         heading = _HEADING.match(line)
         if heading:
-            scope = heading.group(2).strip().casefold()
+            level = len(heading.group(1))
+            scopes = [(old_level, title) for old_level, title in scopes if old_level < level]
+            scopes.append((level, heading.group(2).strip().casefold()))
         for match in _MARKDOWN_LINK.finditer(line):
             path = _target(match.group("target"))
             if path and PurePosixPath(path).suffix.casefold() in _AUDIO_SUFFIXES \
-                    and not any(word in scope for word in ("결과", "result")):
+                    and not any((level >= 2 or title in {"결과", "result", "results"}) and word in title
+                                for level, title in scopes
+                                for word in ("결과", "result")):
                 problems.append(path)
     return problems
 
@@ -411,8 +414,14 @@ def validate_report_package(package: ReportPackage, *, available_files: set[str]
         problems.append({"code": "audio_outside_results", "field": path,
                          "message": f"음성 결과는 결과 절에 두어야 합니다: {path}"})
     for name, document in (reader_documents or {}).items():
-        if _ANCHOR.search(document or ""):
-            problems.append({"code": "internal_marker", "field": name,
-                             "message": f"독자 화면에 내부 claim 표기가 남았습니다: {name}"})
+        for hit in rendered_markers(document or ""):
+            internal = hit.marker == "[[" and _ANCHOR.search(markdown_body(document or ""))
+            problems.append({
+                "code": "internal_marker" if internal else "markdown_render",
+                "field": name,
+                "message": render_marker_message(name, hit),
+            })
+    for step_id, warnings in package.markdown_warnings.items():
+        problems.extend({"code": "markdown_render", "field": step_id, "message": message} for message in warnings)
     return {"status": "FAIL" if problems else "PASS", "schema_version": package.schema_version,
             "kind": package.kind, "problems": problems}

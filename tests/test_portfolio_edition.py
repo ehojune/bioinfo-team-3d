@@ -2,6 +2,8 @@ import py_compile
 import re
 from pathlib import Path
 
+import pytest
+
 import labhq.portfolio as portfolio
 from labhq.korean_qc import check_document
 from labhq.portfolio import build_portfolio_files, scan_publish_files
@@ -43,6 +45,26 @@ PMID:21674046 · DOI:10.1371/journal.pone.0020280 · GEO:GSE26982
 
 작은 집단을 비교했다.
 """
+
+
+def test_compatibility_report_converts_claims_before_publication_scan():
+    request = {"report": "Result [[claim:s1/c1]].\n\n`[[claim:s1/example]]`\n"}
+
+    docs = draft_documents(request, Settings())
+
+    assert "Result [근거 1]." in docs["report.md"]
+    assert "근거 원장 `s1/c1`" in docs["report.md"]
+    assert "`[[claim:s1/example]]`" in docs["report.md"]
+    assert not scan_publish_files({name: docs[name] for name in ("README.md", "report.md")})
+    assert request["report"].startswith("Result [[claim:s1/c1]].")
+
+
+@pytest.mark.parametrize("marker", ["**(broken)**text", "[[placeholder]]"])
+def test_compatibility_report_still_blocks_render_errors(marker):
+    docs = draft_documents({"report": f"Result [[claim:s1/c1]].\n\n{marker}"}, Settings())
+
+    assert any(issue["kind"] == "markdown_render" and issue["path"] == "report.md"
+               for issue in scan_publish_files(docs))
 
 
 def portfolio_fixture(tmp_path: Path):
@@ -256,6 +278,18 @@ def test_publish_scan_catches_credentials_paths_signed_urls_and_small_cells():
     }
     kinds = {issue["kind"] for issue in scan_publish_files(files, internal=True)}
     assert {"secret", "local_path", "signed_url", "small_cell"} <= kinds
+
+
+@pytest.mark.parametrize("name", ["README.md", "report/report.md", "outputs/RESULT.md"])
+def test_publish_scan_blocks_visible_markdown_markers_before_writing(name):
+    from labhq.portfolio import check_failure
+
+    issues = scan_publish_files({name: "첫 줄\n\n**(강조 문장)**이 깨집니다."})
+    problem = next(issue for issue in issues if issue["kind"] == "markdown_render")
+    assert problem["path"] == name
+    assert f"{name} 3줄" in str(check_failure(issues))
+    assert "문장부호" in str(check_failure(issues))
+    assert not scan_publish_files({name: "```md\n** __ [[ 코드\n```\n"})
 
 
 def test_public_request_keeps_an_undeclared_row_table(tmp_path):
