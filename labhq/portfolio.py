@@ -1707,7 +1707,9 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
             tracked_internal.add(target)
 
     aggregate_tables = declared_aggregate_tables(req)
-    aggregate_tables.update(legacy_aggregate_tables(req, assets))
+    # Shape and column names cannot prove that internal rows are aggregated.
+    aggregate_tables.update(name for name in legacy_aggregate_tables(req, assets)
+                            if not source_internal(name))
     declared_reports = _declared_outputs(req, "report")
     omitted_tables: list[dict[str, Any]] = []
     table_names: list[str] = []

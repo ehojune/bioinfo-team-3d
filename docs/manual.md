@@ -925,7 +925,7 @@ resume 비용·Codex 토큰은 호출별 증분으로 합산합니다(#82). 원 
 | `docs/reference/` | lookup-only 단계 보고서·검토문. 갈래 README에서 링크 |
 | `REFERENCES.md`·`DATA_AND_LICENSES.md` | PMID·DOI·GEO와 자료별 출처·접근·재배포·필수 인용. 구조화된 reference가 없으면 입력 README의 완전한 이용 조건 표를 복구 |
 
-갈래 계획이면 종합 산출은 루트에, 갈래 산출은 `studies/`에 둡니다. 뺀 표는 루트·갈래 README에 이름·사유·행 수·주요 열만 적습니다. `outputs/literature/` 원문, 원본 입력, 미보고 파일은 싣지 않습니다. 갈래 보고서는 `output_types: report`로 선언한 Markdown만 `docs/reference/`에 둡니다. `output_types`가 전혀 없는 예전 계획은 집계 이름·열, 직사각형 shape, 식별 열 부재, 1–9 작은 칸 부재를 모두 확인한 표만 후보로 복구합니다. 귀속이 하나라도 빠지면 요청 전체를 내부로 봅니다. 깨진 링크, 잘못된 표 shape, 비밀값·로컬 경로·서명 URL, 자료 안내 자리표시, 보고서 claim anchor, 한국어 금지 표현이 남으면 게시를 멈춥니다. 통제 데이터 요청은 편집자에게 보내거나 게시하지 않습니다.
+갈래 계획이면 종합 산출은 루트에, 갈래 산출은 `studies/`에 둡니다. 뺀 표는 루트·갈래 README에 이름·사유·행 수·주요 열만 적습니다. `outputs/literature/` 원문, 원본 입력, 미보고 파일은 싣지 않습니다. 갈래 보고서는 `output_types: report`로 선언한 Markdown만 `docs/reference/`에 둡니다. `output_types`가 전혀 없는 예전 계획은 공개 자료의 표만 집계 이름·열, 직사각형 shape, 식별 열 부재, 1–9 작은 칸 부재를 확인해 후보로 복구합니다. 내부 자료 표는 집계표 선언이 있어야 합니다. 귀속이 하나라도 빠지면 요청 전체를 내부로 봅니다. 깨진 링크, 잘못된 표 shape, 비밀값·로컬 경로·서명 URL, 자료 안내 자리표시, 보고서 claim anchor, 한국어 금지 표현이 남으면 게시를 멈춥니다. 통제 데이터 요청은 편집자에게 보내거나 게시하지 않습니다.
 
 `run/reproduce.md`에는 lock·버전, 입력 설정, 단계별 실행 폴더·명령, 예상 출력, 공개/접근 제한 재현 범위만 둡니다. 긴 지시는 `run/task_record.md`로 분리합니다. 코드의 개인 절대 경로는 경로마다 고유한 `LABHQ_INPUT_*` 참조로 바꾸며, 자동 변환하지 못한 줄은 경로를 지우고 수동 확인 주석을 붙입니다. Python 사본은 게시 전 compile 검사합니다.
 

@@ -3,6 +3,8 @@
 from copy import deepcopy
 from pathlib import Path
 
+import pytest
+
 from labhq.portfolio import build_portfolio_files
 from labhq.report_contract import build_report_package, reader_markdown
 from labhq.report_pdf import CSS, FigureEmbedder, build_report_html, markdown_to_html
@@ -28,11 +30,12 @@ def test_pdf_claim_footnotes_become_numbered_endnotes() -> None:
     assert "단계 `analysis` · claim `main`" in rendered
 
 
-def test_legacy_plan_recovers_only_rectangular_aggregate_tables_without_small_cells(tmp_path) -> None:
+def test_legacy_plan_checks_candidates_without_relaxing_internal_publication(tmp_path) -> None:
     from labhq.portfolio import legacy_aggregate_tables
 
     settings, request, assets, images = astra_fixture(tmp_path)
     request = deepcopy(request)
+    request["plan"]["steps"][2]["input_refs"] = [request["references"][0]["value"]]
     for step in request["plan"]["steps"]:
         step.pop("output_types", None)
     for result in request["results"].values():
@@ -50,9 +53,33 @@ def test_legacy_plan_recovers_only_rectangular_aggregate_tables_without_small_ce
 
     assert good in candidates
     assert malformed not in candidates and small not in candidates
-    assert "studies/C-mdis/tables/summary.tsv" in files
+    assert "studies/B-omics/tables/summary.tsv" in files
+    assert "studies/C-mdis/tables/summary.tsv" not in files
+    assert "내부 자료이며 집계표로 선언되지 않았습니다." in files["studies/C-mdis/README.md"]
     assert not any(name.endswith(("malformed.tsv", "small.tsv")) for name in files)
     assert not any(name.endswith("people.tsv") for name in files)
+
+
+@pytest.mark.parametrize("column", ["case_id", "group"])
+@pytest.mark.parametrize("source", ["mdis", "unattributed"])
+def test_legacy_internal_rows_are_not_published_from_summary_hints(tmp_path, column, source) -> None:
+    settings, request, assets, images = astra_fixture(tmp_path)
+    request = deepcopy(request)
+    request["plan"]["steps"][2]["input_refs"] = [request["references"][0]["value"]]
+    for step in request["plan"]["steps"]:
+        step.pop("output_types", None)
+    for result in request["results"].values():
+        if isinstance(result, dict):
+            result.pop("output_types", None)
+    name = f"steps/{source}/outputs/tables/model_summary.csv"
+    assets[name] = f"{column},mean\nexample-a,42.5\nexample-b,55.5\n"
+
+    files = build_portfolio_files(request, settings, assets, images)
+
+    assert not any(path.endswith("model_summary.csv") for path in files)
+    assert all("example-a,42.5" not in body for body in files.values() if isinstance(body, str))
+    assert "model_summary.csv" in files["README.md"]
+    assert "studies/B-omics/tables/summary.tsv" in files
 
 
 def test_readme_and_pdf_show_only_plain_research_question(tmp_path) -> None:
