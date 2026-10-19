@@ -14,8 +14,13 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 22:23 | [`2ca1543`](https://github.com/ehojune/bioinfo-team-3d/pull/762/commits/2ca1543) | 공개용 reference 정리를 승인 전에 적용해 카드·fingerprint·업로드 소스를 맞추고 긴 코드를 보존했다. |
+| 22:04 | [`d37d164`](https://github.com/ehojune/bioinfo-team-3d/pull/762/commits/d37d164) | pipeline 승인 카드에 검사를 통과한 후보 소스 전체를 표시함 |
 | 20:05 | [`3e154f3`](https://github.com/ehojune/bioinfo-team-3d/pull/761/commits/3e154f3) | 문서 길이 측정표를 최종 파일과 맞춤 |
 | 20:04 | [`437ff42`](https://github.com/ehojune/bioinfo-team-3d/pull/761/commits/437ff42) | 20시 현황과 리뷰 절차를 갱신하고 라운드 종료 링크를 복구 |
+| 18:57 | [`42fb7d0`](https://github.com/ehojune/bioinfo-team-3d/pull/762/commits/42fb7d0) | nf-core 정책 문구의 기존 앵커와 prompt 고정 계약을 함께 맞췄다. |
+| 18:24 | [`6d77762`](https://github.com/ehojune/bioinfo-team-3d/pull/762/commits/6d77762) | 건별 pipeline 기여 승인과 nf-core 우선 배정 절차를 매뉴얼에 반영했다. |
+| 18:13 | [`4383a60`](https://github.com/ehojune/bioinfo-team-3d/pull/762/commits/4383a60) | 지원 nf-core 우선 배정과 새 pipeline의 건별 PI 기여 승인·중복·재시작 복구 |
 | 18:12 | [`3a6f730`](https://github.com/ehojune/bioinfo-team-3d/pull/759/commits/3a6f730) | main 편집기의 PDF 각주·질문 정리와 CommonMark 코드 영역 보호를 함께 유지해 충돌 해결 |
 | 18:09 | [`5a067a2`](https://github.com/ehojune/bioinfo-team-3d/pull/759/commits/5a067a2) | 호환 보고서의 claim을 독자용 근거로 변환하고 binary 읽기 표기를 맞춰 CI 실패 4건 수정 |
 | 18:05 | [`7151f5d`](https://github.com/ehojune/bioinfo-team-3d/pull/761/commits/7151f5d) | 문서에서 정책 승인과 구현 진행을 구분하고 PR 현황 갱신 |
