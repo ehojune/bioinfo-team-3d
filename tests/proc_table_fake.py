@@ -11,9 +11,10 @@ from labhq.proc_tree import Proc
 
 
 class FakeHandle:
-    def __init__(self, world: "FakeProcessTable", proc: Proc) -> None:
+    def __init__(self, world: "FakeProcessTable", proc: Proc, image_path: str | None = None) -> None:
         self.world, self.proc = world, proc
         self.pid, self.created = proc.pid, proc.created
+        self.image_path = image_path
         self.closed = False
 
     def terminate(self) -> str:
@@ -27,6 +28,10 @@ class FakeHandle:
         world.killed_procs.append(self.proc)
         if world.live.get(self.pid) is self.proc:
             del world.live[self.pid]
+        for child in list(world.auto_exit_with_parent):
+            if child in world.live and world.live[child].ppid == self.pid:
+                del world.live[child]
+                world.auto_exit_with_parent.remove(child)
         return proc_tree.KILLED
 
     def close(self) -> None:
@@ -46,6 +51,9 @@ class FakeProcessTable:
         self.dead: set[int] = set()
         self.refuse: dict[int, str] = {}  # pid -> why terminate raises
         self.unreadable: set[int] = set()  # PIDs OpenProcess is denied for
+        self.terminate_denied: set[int] = set()  # queryable, but PROCESS_TERMINATE is denied
+        self.image_paths: dict[int, str] = {}
+        self.auto_exit_with_parent: set[int] = set()
         self.opened: list[int] = []
         self.opened_for_query_only: list[int] = []  # PIDs opened without the right to end them (`terminate=False`)
         self.opened_handles: list[FakeHandle] = []
@@ -70,10 +78,12 @@ class FakeProcessTable:
             self.opened_for_query_only.append(pid)
         if pid in self.unreadable:
             raise OSError("Access is denied")
+        if terminate and pid in self.terminate_denied:
+            raise OSError("Access is denied")
         proc = self.live.get(pid)
         if proc is None:
             return None
-        handle = FakeHandle(self, proc)
+        handle = FakeHandle(self, proc, self.image_paths.get(pid))
         self.opened_handles.append(handle)
         return handle
 

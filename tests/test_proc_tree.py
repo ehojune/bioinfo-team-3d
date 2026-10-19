@@ -210,6 +210,32 @@ def test_a_denied_process_under_something_that_is_not_ours_is_not_a_failure(worl
     assert not result.failed and result.killed == [GRANDKID, KID, ROOT]
 
 
+def test_the_system_console_host_exits_with_its_client_instead_of_blocking_the_tree(monkeypatch):
+    world = FakeProcessTable(_two_branches()).install(monkeypatch)
+    world.terminate_denied.add(GRANDKID)
+    system_root = os.environ.get("SystemRoot") or r"C:\Windows"
+    world.image_paths[GRANDKID] = str(Path(system_root) / "System32" / "conhost.exe")
+    world.auto_exit_with_parent.add(GRANDKID)
+
+    result = proc_tree.kill_tree(ROOT, spare_ancestors_on_failure=True)
+
+    assert not result.failed and not result.spared
+    assert result.killed == [SIBKID, SIB, KID, ROOT] and GRANDKID not in world.live
+    assert GRANDKID in world.opened_for_query_only and world.leaked_handles == 0
+
+
+def test_a_queryable_user_child_without_terminate_right_still_blocks_its_ancestors(monkeypatch):
+    world = FakeProcessTable(_two_branches()).install(monkeypatch)
+    world.terminate_denied.add(GRANDKID)
+    world.image_paths[GRANDKID] = r"C:\tools\worker.exe"
+
+    result = proc_tree.kill_tree(ROOT, spare_ancestors_on_failure=True)
+
+    assert result.failed == {GRANDKID: "Access is denied"}
+    assert result.killed == [SIBKID, SIB] and result.spared == [KID, ROOT]
+    assert {ROOT, KID, GRANDKID} <= set(world.live) and world.leaked_handles == 0
+
+
 def test_a_root_that_cannot_be_opened_is_reported_as_failed(world):
     world.unreadable.add(ROOT)
     result = proc_tree.kill_tree(ROOT)
