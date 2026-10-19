@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from labhq.report_contract import (
     FRONT_SECTION_TITLES,
     build_report_package,
@@ -77,6 +79,64 @@ def test_report_assets_ignore_markdown_examples_inside_code() -> None:
 
     assert package.figures == []
     assert not any(row["code"] == "missing_figure" for row in checked["problems"])
+
+
+@pytest.mark.parametrize("example", [
+    "인라인 예시 `[[claim:example/inline]]`입니다.",
+    "```markdown\n[[claim:example/fenced]]\n```",
+    "~~~markdown\n[[claim:example/tilde]]\n~~~",
+])
+def test_report_claim_anchors_ignore_markdown_examples_inside_code(example: str) -> None:
+    request, report, results = fixed_request()
+    report = report.replace(
+        "두 집단의 차이는 3입니다 [[claim:analysis/main]].",
+        example,
+    )
+
+    package = build_report_package(request, report, results)
+    checked = validate_report_package(
+        package,
+        available_files={
+            "wd_analysis/outputs/plot.svg",
+            "wd_analysis/outputs/results.tsv",
+        },
+    )
+
+    assert package.evidence_notes == []
+    assert package.source_report == report
+    assert checked["status"] == "FAIL"
+    assert any(
+        row["code"] == "required_missing" and row["field"] == "evidence_notes"
+        for row in checked["problems"]
+    )
+
+
+def test_report_claim_anchors_preserve_real_evidence_next_to_code_examples() -> None:
+    request, report, results = fixed_request()
+    report += "\n`[[claim:example/inline]]`\n\n~~~markdown\n[[claim:example/fenced]]\n~~~\n"
+
+    package = build_report_package(request, report, results)
+
+    assert package.evidence_notes == ["analysis/main"]
+    assert "analysis/main" in render_report_front(package)
+
+
+@pytest.mark.parametrize("suffix", [".xlsx", ".xls", ".XLSX", ".XLS"])
+def test_excel_report_assets_are_classified_as_tables(suffix: str) -> None:
+    request, report, results = fixed_request()
+    excel_report = report.replace("results.tsv", f"results{suffix}")
+    table_path = f"wd_analysis/outputs/results{suffix}"
+    results["analysis"]["outputs"][1] = f"outputs/results{suffix}"
+    package = build_report_package(request, excel_report, results)
+
+    assert [table.path for table in package.tables] == [table_path]
+    assert all(row.path != table_path for row in package.files)
+    assert "tables" not in package.omissions
+    assert f"[전체 결과표]({table_path})" in render_report_front(package)
+    missing = validate_report_package(
+        package, available_files={"wd_analysis/outputs/plot.svg"},
+    )
+    assert any(row["code"] == "missing_table" for row in missing["problems"])
 
 
 def test_report_assets_keep_spaced_angle_bracket_destination() -> None:

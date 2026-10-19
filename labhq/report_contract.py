@@ -46,7 +46,7 @@ _MARKDOWN_LINK = re.compile(
 _MARKDOWN_CODE = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]*`", re.DOTALL)
 _AUDIO_SUFFIXES = {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".aac"}
 _FIGURE_SUFFIXES = {".svg", ".png", ".jpg", ".jpeg", ".webp", ".gif"}
-_TABLE_SUFFIXES = {".tsv", ".csv"}
+_TABLE_SUFFIXES = {".tsv", ".csv", ".xlsx", ".xls"}
 
 REQUIRED_BY_KIND: dict[str, dict[str, str]] = {
     "research": {
@@ -170,10 +170,15 @@ def _target(raw: str) -> str:
     return clean.removeprefix("./")
 
 
+def _without_markdown_code(report: str) -> str:
+    return _MARKDOWN_CODE.sub(
+        lambda match: "".join("\n" if char == "\n" else " " for char in match.group()),
+        report,
+    )
+
+
 def _markdown_links(report: str):
-    masked = _MARKDOWN_CODE.sub(lambda match: "".join("\n" if char == "\n" else " "
-                                                        for char in match.group()), report)
-    return _MARKDOWN_LINK.finditer(masked)
+    return _MARKDOWN_LINK.finditer(_without_markdown_code(report))
 
 
 def _assets(report: str) -> tuple[list[ReportAsset], list[ReportAsset], list[ReportAsset]]:
@@ -207,7 +212,9 @@ def build_report_package(request: dict[str, Any], report: str | None = None,
     source = _without_front(str(report if report is not None else request.get("report") or ""))
     kind = report_kind(request)
     figures, tables, files = _assets(source)
-    anchors = list(dict.fromkeys(value.strip() for value in _ANCHOR.findall(source)))
+    anchors = list(dict.fromkeys(
+        value.strip() for value in _ANCHOR.findall(_without_markdown_code(source))
+    ))
     omissions: dict[str, str] = {}
     if kind == "research" and not figures:
         omissions["figures"] = "보고서가 대표 그림을 참조하지 않았습니다."
@@ -313,8 +320,7 @@ def _table_shape(text: str, suffix: str) -> bool:
 def _audio_outside_results(report: str) -> list[str]:
     scope = ""
     problems: list[str] = []
-    masked = _MARKDOWN_CODE.sub(lambda match: "".join("\n" if char == "\n" else " "
-                                                       for char in match.group()), report)
+    masked = _without_markdown_code(report)
     for line in masked.splitlines():
         heading = _HEADING.match(line)
         if heading:
