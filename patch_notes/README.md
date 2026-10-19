@@ -10,6 +10,13 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-10-19
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 10:40 | [`47799db`](https://github.com/ehojune/bioinfo-team-3d/pull/751/commits/47799db) | worker 시작 실패도 고정 arm의 A/B 오류 제외로 기록해 분모 누락을 막음 |
+| 03:21 | [`5eff6dc`](https://github.com/ehojune/bioinfo-team-3d/pull/751/commits/5eff6dc) | semantics·그림자 요청 상태를 분리하고 미평가·오류를 A/B 분모에서 제외 |
+
 ## 2026-10-18
 
 | 시간 | 커밋 | 주요 변경사항 |
