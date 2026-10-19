@@ -22,8 +22,8 @@
 | 병렬 | cgroup #765·guard #766·PID 기록 #768 OPEN | 구현·검증 진행 상태이며 실제 연구·게시·Nextflow PASS로 쓰지 않음 |
 | 2 | 공개 소형 주제 2개를 제시하고 PI 선택 뒤 장치 실운전 | P2A 생성→호출→산출, 의미 모델·그림자 요청·ontology·checklist·EDAM·pack, 문헌/PDF, 보고서·묶음·정리본을 요청별로 대조. **아직 미실행** |
 | 3 | bench dry-run → 준비 게이트 검토 요청 | 동일 입력·판본·PI 답·예산과 arm별 state/workspace 분리, 장치 작동 근거, 예상 시간·비용을 확인 |
-| 4 | 준비 게이트 완료 뒤 [#739](https://github.com/ehojune/bioinfo-team-3d/issues/739) | labhq 혼합 roster와 Astra·Sol·Opus **단독 세션**을 같은 요청으로 비교. CSO만 교체하는 실험과 구분 |
-| 5 | Astra의 README·코드·구조 전체 검토 | 비교 결과와 실제 결함을 근거로 후속 개선 |
+| 4 | 공개 소형 dry-run·필수 gate → Astra 전체 repo 검토 | labhq 코드·README·구조 전체를 검토([PI 승인](https://github.com/ehojune/bioinfo-team-3d/issues/435#issuecomment-6251776665), [#739 확인](https://github.com/ehojune/bioinfo-team-3d/issues/739#issuecomment-6251808284)) |
+| 5 | 동일 요청 bench 비교([#739](https://github.com/ehojune/bioinfo-team-3d/issues/739)) | labhq 혼합 roster와 Astra·Sol·Opus **단독 세션**을 비교(CSO-only와 구분). 생성 결과 repo blind review는 실행 뒤 별도 |
 
 v0.5 선언(2026-10-08)은 당시 실제 연구 요청 2건과 `labhq verify` exit 0의 근거입니다. 이후 장치의 구현·CI 통과는 새 실운전 PASS를 뜻하지 않습니다. 버전별 기준은 [매뉴얼 로드맵](docs/manual.md#로드맵)에 있습니다.
 
