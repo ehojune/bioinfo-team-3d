@@ -12,7 +12,7 @@ DENIAL = (
 )
 
 # Keep quoted arguments whole, and inspect every connected command (including fallback branches).
-_WORDS = re.compile(r'''"(?:`.|\\.|[^"\\])*"|'(?:''|[^'])*'|[;&|()\n]+|[^\s;&|()'"\n]+''')
+_WORDS = re.compile(r'''"(?:`.|\\.|[^"\\])*"|'(?:''|[^'])*'|&&|\|\||[;&|()\n]|[^\s;&|()'"\n]+''')
 _SEPARATOR = re.compile(r"^[;&|()\n]+$")
 
 
@@ -36,18 +36,54 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
         else:
             groups[-1].append(word)
     process_pipeline = False
+    pipe_continuation = False
+    input_expression: list[bool] = []
+    input_pending = False
     for group in groups:
         if not group:
             continue
         if _SEPARATOR.fullmatch(group[0]):
-            if group[0] != "|":
+            separator = group[0]
+            if separator == "(":
+                input_expression.append(input_pending or bool(input_expression and input_expression[-1]))
+                input_pending = False
                 process_pipeline = False
+            elif separator == ")":
+                if input_expression:
+                    input_expression.pop()
+            elif separator == "|":
+                pipe_continuation = True
+                input_pending = False
+            elif separator != "\n" or not pipe_continuation:
+                process_pipeline = False
+                pipe_continuation = False
+                input_pending = False
             continue
+        pipe_continuation = False
         start = 0
-        while start < len(group) and (_bare(group[start]) in {"&", "!", "sudo", "env", "nohup", "command", "exec", "call", "then", "do"}
-                                     or re.match(r"^[A-Za-z_][A-Za-z_0-9]*=", group[start])):
-            start += 1
-        if start == len(group):
+        while start < len(group):
+            word = _bare(group[start])
+            if word == "env":
+                start += 1
+                while start < len(group) and _bare(group[start]).startswith("-"):
+                    option = _bare(group[start])
+                    start += 1
+                    if option == "--":
+                        break
+                    if option in {"-s", "--split-string"} and start < len(group):
+                        payload = group[start].strip("\"'") + " " + " ".join(group[start + 1:])
+                        if broad_process_stop(payload, _depth=_depth + 1):
+                            return True
+                        start = len(group)
+                    elif option in {"-u", "--unset", "-c", "--chdir"}:
+                        start += 1
+                continue
+            if word in {"&", "!", "sudo", "nohup", "command", "exec", "call", "then", "do"} or re.match(
+                    r"^[A-Za-z_][A-Za-z_0-9]*=", group[start]):
+                start += 1
+                continue
+            break
+        if start >= len(group):
             continue
         name = re.split(r"[/\\]", _bare(group[start]))[-1]
         name = name.removesuffix(".exe")
@@ -58,8 +94,12 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
             return True
         if name in {"get-process", "gps", "ps"}:
             # Explicit -Id is PID-based. Otherwise the pipeline carries a name-selected set.
-            process_pipeline = not any(arg in {"-id", "-pid"} for arg in args)
+            process_pipeline = not any(re.match(r"^-(?:id|pid)(?::|$)", arg) for arg in args)
+            if process_pipeline and input_expression and input_expression[-1]:
+                return True
         if name in {"stop-process", "spps", "kill"}:
+            input_pending = any(arg.startswith("-") and len(arg.strip("-:")) >= 2
+                                and "inputobject".startswith(arg.strip("-:")) for arg in args)
             # Bash kill -n selects a signal, not a process name.
             name_option = r"^-name(?::|$)" if name == "kill" else r"^-n(?:a(?:m(?:e)?)?)?(?::|$)"
             if any(re.match(name_option, arg) for arg in args):
@@ -84,6 +124,11 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
         if name in {"sh", "bash", "zsh", "cmd", "powershell", "pwsh"}:
             for i, arg in enumerate(args[:-1]):
                 if arg in {"-c", "/c", "-command", "-comm", "-c:"}:
-                    if broad_process_stop(group[start + i + 2].strip("\"'"), _depth=_depth + 1):
+                    payload_words = group[start + i + 2:]
+                    # cmd /c and PowerShell -Command consume the remaining command
+                    # string; Bash -c consumes one argument (the rest are $0, $1, ...).
+                    payload = (payload_words[0].strip("\"'") if len(payload_words) == 1
+                               or name in {"sh", "bash", "zsh"} else " ".join(payload_words))
+                    if broad_process_stop(payload, _depth=_depth + 1):
                         return True
     return False

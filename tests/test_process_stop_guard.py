@@ -31,6 +31,19 @@ from labhq.settings import PolicySettings
     'kill -n:python', 'kill -na:python', 'kill -nam:python',
     'kill -n "python" -Force', 'kill -n python,python3',
     'pwsh -Command "kill -n python"',
+    'cmd /c taskkill /IM python.exe',
+    'cmd.exe /d /s /c taskkill //F //IM python.exe',
+    'pwsh -Command Stop-Process -Name python',
+    'env -i pkill python', 'env --ignore-environment pkill python',
+    'env -u EXAMPLE pkill python', 'env -C /tmp killall python',
+    'env -S "pkill python"',
+    'Get-Process python |\n Stop-Process',
+    'Get-Process python | \n Stop-Process',
+    'Get-Process python |\r\n Stop-Process',
+    'Stop-Process -InputObject (Get-Process python)',
+    'Stop-Process -InputObject (Get-Process python | Where-Object Name -eq python)',
+    'Stop-Process -InputObject ((Get-Process python))',
+    'kill -InputObject (gps python)',
 ])
 def test_name_stop_always_denied(command):
     assert broad_process_stop(command)
@@ -49,6 +62,18 @@ def test_name_stop_always_denied(command):
     'Get-Process python; Stop-Process -Id $ownedPid',
     'kill -n 9 1234', 'ps -ef | kill -TERM 1234',
     'kill -n "9" 1234', 'kill -n 15 $ownedPid',
+    'cmd /c taskkill /PID 1234 /F',
+    'env -i kill -TERM 1234', 'env -u EXAMPLE kill -TERM 1234',
+    'env -S "echo pkill python"',
+    'Get-Process -Id $ownedPid |\n Stop-Process',
+    'Get-Process python\n Stop-Process -Id $ownedPid',
+    'Stop-Process -InputObject (Get-Process -Id $ownedPid)',
+    'Stop-Process -InputObject $ownedProcess; Get-Process python',
+    'Stop-Process -InputObject (Get-Process -Id:1234)',
+    'env -i echo "pkill python"',
+    'cmd /c "echo taskkill /IM python.exe"',
+    'bash -c "echo safe" "pkill python"',
+    'env -u',
 ])
 def test_pid_cleanup_and_data_are_not_name_stop(command):
     assert not broad_process_stop(command)
@@ -59,6 +84,10 @@ def test_pid_cleanup_and_data_are_not_name_stop(command):
     {"command": "taskkill //IM python.exe"},
     {"tool_input": {"command": "Get-Process python | Stop-Process"}},
     {"command": "taskkill /IM python.exe", "tool_input": {}},
+    {"command": "cmd /c taskkill /IM python.exe"},
+    {"command": "env -i pkill python"},
+    {"command": "Get-Process python |\n Stop-Process"},
+    {"command": "Stop-Process -InputObject (Get-Process python)"},
 ])
 async def test_broker_denies_without_card_or_pending_future(detail):
     async def forbidden(*args):
