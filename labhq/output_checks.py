@@ -137,7 +137,7 @@ def markdown_warnings(root: Path, outputs: Iterable[str]) -> list[str]:
         if path is None:
             continue
         try:
-            with path.open("rb") as handle:
+            with open(path, "rb") as handle:
                 data = handle.read(MAX_RECORD_BYTES + 1)
             if len(data) > MAX_RECORD_BYTES:
                 warnings.append(f"{rel}: Markdown 전체를 검사하지 못했습니다. 문서를 나누고 다시 검사하세요.")

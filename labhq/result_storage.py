@@ -32,6 +32,7 @@ from .report_abstract import abstract_first, build_graphical_abstract, with_abst
 from .report_figures import (ABSTRACT_FILE, classify, figure_owners, has_abstract_link, image_links, is_abstract_target,
                              link_workdir_figures, output_exists)
 from .report_pdf import NO_BROWSER, ReportRefused, build_report_file, pdf_cap_bytes, size_notes
+from .report_contract import reader_markdown
 from .request_bundle import _POSIX_ABS, _WINDOWS_ABS
 
 _REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
@@ -500,7 +501,7 @@ def draft_documents(req: dict, settings, included=None, assets=None, *, abstract
     ``included``: the edition's file names; the report's figure links are made to resolve to them (#584).
     ``assets``: the edition's text outputs by name; its ``resource_versions`` files feed SOURCES.md (#607).
     ``abstract``: the edition holds the drawn graphical abstract (`edition_abstract`); it is the report's first figure (#608)."""
-    report =str(req.get("report") or "결과 보고서가 없습니다.")
+    report = reader_markdown(str(req.get("report") or "결과 보고서가 없습니다."))
     if included is not None:
         report = edition_figure_links(report, req, settings, included)  # before cleaning, which would cut a path's ")"
         report = with_abstract_link(report) if abstract else abstract_first(report, lambda name: name in included)

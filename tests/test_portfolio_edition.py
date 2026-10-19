@@ -47,6 +47,26 @@ PMID:21674046 · DOI:10.1371/journal.pone.0020280 · GEO:GSE26982
 """
 
 
+def test_compatibility_report_converts_claims_before_publication_scan():
+    request = {"report": "Result [[claim:s1/c1]].\n\n`[[claim:s1/example]]`\n"}
+
+    docs = draft_documents(request, Settings())
+
+    assert "Result [근거 1]." in docs["report.md"]
+    assert "근거 원장 `s1/c1`" in docs["report.md"]
+    assert "`[[claim:s1/example]]`" in docs["report.md"]
+    assert not scan_publish_files({name: docs[name] for name in ("README.md", "report.md")})
+    assert request["report"].startswith("Result [[claim:s1/c1]].")
+
+
+@pytest.mark.parametrize("marker", ["**(broken)**text", "[[placeholder]]"])
+def test_compatibility_report_still_blocks_render_errors(marker):
+    docs = draft_documents({"report": f"Result [[claim:s1/c1]].\n\n{marker}"}, Settings())
+
+    assert any(issue["kind"] == "markdown_render" and issue["path"] == "report.md"
+               for issue in scan_publish_files(docs))
+
+
 def portfolio_fixture(tmp_path: Path):
     settings = Settings()
     settings.runner.workspace_root = str(tmp_path / "runs")
