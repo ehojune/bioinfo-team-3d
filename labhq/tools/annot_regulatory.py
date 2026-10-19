@@ -47,7 +47,7 @@ from typing import Any, Callable
 
 import httpx
 
-from .annot import Annotator, Cache, Item, LookupFailed, Variant, _error_text, _now, _sha256, parse_variant
+from .annot import Annotator, Cache, Item, LookupFailed, LookupTimedOut, Variant, _error_text, _now, _sha256, parse_variant
 
 CHIPATLAS_WABI = "https://dtn1.ddbj.nig.ac.jp/wabi/chipatlas/"
 CHIPATLAS_DATA = "https://chip-atlas.dbcls.jp/data"
@@ -682,8 +682,9 @@ class RegulatoryAnnotator(Annotator):
             if response.status_code not in (200, 404):
                 raise LookupFailed(f"ChIP-Atlas 결과 HTTP {response.status_code}: {text[:200]}")
             if self.http.clock() - started + CHIPATLAS_POLL_S > wait_s:
-                raise LookupFailed(f"ChIP-Atlas 분석이 {wait_s:.0f}초 안에 끝나지 않았습니다. 같은 입력·옵션에 "
-                                   f"request_id=\"{request_id}\"를 붙여 다시 부르면 결과를 이어 받습니다")
+                raise LookupTimedOut(f"조회 불가(시간 초과): ChIP-Atlas 분석이 {wait_s:.0f}초 안에 끝나지 않았습니다. "
+                                          f"request_id=\"{request_id}\". 자동 재시도하지 말고 빠진 조회로 기록한 뒤 "
+                                          "남은 작업을 진행하세요. 명시적으로 요청받았을 때만 같은 입력으로 이어 받으세요.")
             await self.http.sleep(CHIPATLAS_POLL_S)
 
     # ----- ChIP-Atlas target genes -----
