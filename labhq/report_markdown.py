@@ -162,7 +162,7 @@ def _html_text(value: str) -> str:
     return "".join(parser.parts)
 
 
-def rendered_markers(source: str) -> list[RenderedMarker]:
+def rendered_markers(source: str, *, limit: int | None = None) -> list[RenderedMarker]:
     """Find marker text that remains visible after CommonMark rendering, excluding code."""
     found: list[RenderedMarker] = []
     for token in _COMMONMARK.parse(source):
@@ -177,4 +177,6 @@ def rendered_markers(source: str) -> list[RenderedMarker]:
         for marker in RENDERED_MARKERS:
             if marker in visible:
                 found.append(RenderedMarker(marker, line + visible[:visible.index(marker)].count("\n")))
+                if limit is not None and len(found) >= limit:
+                    return found
     return found

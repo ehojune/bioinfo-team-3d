@@ -86,6 +86,40 @@ def test_markdown_check_reads_reader_outputs_and_keeps_only_locations_and_fixes(
     assert not any("검사 문장" in warning or "외부 문장" in warning for warning in warnings)
 
 
+@pytest.mark.parametrize("files", [1, 30])
+def test_markdown_warning_budget_is_global_and_summarizes_overflow(tmp_path, monkeypatch, files):
+    import labhq.output_checks as checks
+
+    outputs = [f"outputs/{index}/README.md" for index in range(files)]
+    for rel in outputs:
+        _write(tmp_path / rel, "**\n\n" * (30 if files == 1 else 1))
+    counts = []
+    original = checks.rendered_markers
+
+    def scan(source, **kwargs):
+        hits = original(source, **kwargs)
+        counts.append(len(hits))
+        return hits
+
+    monkeypatch.setattr(checks, "rendered_markers", scan)
+    warnings = markdown_warnings(tmp_path, outputs)
+    assert len(warnings) == 21  # 20 locations plus one overflow notice, across all files
+    assert "추가 Markdown 경고" in warnings[-1]
+    assert "생략" in warnings[-1]
+    assert sum(counts) <= 21  # cap hit construction too, before formatting long warning messages
+    assert all("1줄" in warning or "줄." in warning for warning in warnings[:-1])
+
+
+def test_markdown_warning_budget_also_caps_oversize_file_notices(tmp_path, monkeypatch):
+    monkeypatch.setattr("labhq.output_checks.MAX_RECORD_BYTES", 1)
+    outputs = [f"outputs/{index}/report.md" for index in range(30)]
+    for rel in outputs:
+        _write(tmp_path / rel, "oversize")
+    warnings = markdown_warnings(tmp_path, outputs)
+    assert len(warnings) == 21
+    assert "추가 Markdown 경고" in warnings[-1]
+
+
 @pytest.mark.asyncio
 async def test_markdown_artifact_failure_reaches_the_terminal_contract():
     hub = _hub()

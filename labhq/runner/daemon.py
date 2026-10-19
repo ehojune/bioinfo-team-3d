@@ -1925,8 +1925,6 @@ class Runner:
         # warning; it never turns the finished task into a failure (PR #712 review).
         try:
             result.table_warnings = await asyncio.to_thread(output_checks.table_warnings, ws.dir, result.outputs)
-            result.markdown_warnings = await asyncio.to_thread(
-                output_checks.markdown_warnings, ws.dir, [*result.outputs, *result.unreported_outputs])
             result.literature_access = await asyncio.to_thread(output_checks.literature_access, ws.dir)
             result.literature_access_failures = await asyncio.to_thread(
                 output_checks.literature_access_failures, ws.dir)
@@ -2001,6 +1999,15 @@ class Runner:
             error = "작업 폴더의 outputs가 실행 중에 링크로 바뀌어 결과 파일을 쓰지 않았습니다"
             await emit("agent.log", {"level": "alert", "text": error})
             result = result.model_copy(update={"ok": False, "error": error})
+        else:
+            # RESULT.md is runner-owned and absent from the staff output scan. Check it only after all response
+            # normalization and the owned write, so a retry never checks the preceding turn's response.
+            try:
+                result.markdown_warnings = await asyncio.to_thread(
+                    output_checks.markdown_warnings, ws.dir,
+                    [*result.outputs, *result.unreported_outputs, "outputs/RESULT.md"])
+            except Exception as exc:  # noqa: BLE001 - keep an incomplete check visible to the terminal contract
+                result.markdown_warnings = [f"Markdown 검사 실패({type(exc).__name__}). 문서를 다시 검사하세요."]
         await ws.aupdate_run(task.id, ended_at=time.time(), ok=result.ok, error=result.error,
                              cost_usd=result.cost_usd,
                              cost_known=result.cost_known if result.cost_known is not None

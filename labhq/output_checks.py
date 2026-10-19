@@ -31,6 +31,7 @@ from .report_markdown import READER_FILENAMES, render_marker_message, rendered_m
 TABLE_SEPARATORS = {".tsv": "\t", ".tab": "\t", ".csv": ","}
 MAX_TABLE_BYTES = 4_000_000  # enough rows to see the shape; a larger table is checked on its first 4 MB
 MAX_TABLE_WARNINGS = 20
+MAX_MARKDOWN_WARNINGS = 20
 # Python's default field limit (131,072) rejects a valid CSV with one long field (a sequence, a JSON cell).
 CSV_FIELD_LIMIT = MAX_TABLE_BYTES
 csv.field_size_limit(max(csv.field_size_limit(), CSV_FIELD_LIMIT))
@@ -140,11 +141,16 @@ def markdown_warnings(root: Path, outputs: Iterable[str]) -> list[str]:
                 data = handle.read(MAX_RECORD_BYTES + 1)
             if len(data) > MAX_RECORD_BYTES:
                 warnings.append(f"{rel}: Markdown 전체를 검사하지 못했습니다. 문서를 나누고 다시 검사하세요.")
-                continue
-            warnings.extend(render_marker_message(rel, hit)
-                            for hit in rendered_markers(data.decode("utf-8-sig", errors="replace")))
+            else:
+                # One extra hit detects overflow without building every hit/message in a repetitive document.
+                hits = rendered_markers(data.decode("utf-8-sig", errors="replace"),
+                                        limit=MAX_MARKDOWN_WARNINGS + 1 - len(warnings))
+                warnings.extend(render_marker_message(rel, hit) for hit in hits)
         except Exception as exc:  # noqa: BLE001 - retain a failed check without failing the completed task
             warnings.append(f"{rel}: Markdown 검사 실패({type(exc).__name__}). 문서를 확인하고 다시 검사하세요.")
+        if len(warnings) > MAX_MARKDOWN_WARNINGS:
+            return [*warnings[:MAX_MARKDOWN_WARNINGS],
+                    "추가 Markdown 경고와 남은 파일 검사는 생략했습니다. 표시된 문제를 고친 뒤 다시 검사하세요."]
     return warnings
 
 
