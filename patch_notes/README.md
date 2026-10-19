@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 03:49 | [`5b323a3`](https://github.com/ehojune/bioinfo-team-3d/pull/777/commits/5b323a3) | storage --rebuild --name이 대소문자만 다르거나 이름을 바꾼 지금 저장소를 새 저장소로 받아 루트를 덮어쓰지 않게 막았다. |
+| 03:04 | [`b448227`](https://github.com/ehojune/bioinfo-team-3d/pull/777/commits/b448227) | labhq storage --rebuild가 게시한 정리본을 지금 편집기로 다시 만들어 게시 카드 승인 뒤 같은 저장소의 새 판이나 새 저장소로 올리고, README에 편집기 판본과 원본 저장소를 적는다. |
 | 02:44 | [`e2a836d`](https://github.com/ehojune/bioinfo-team-3d/pull/775/commits/e2a836d) | P2 후속 issue를 실사용 영향과 수정 가치로 총괄 선별 |
 | 02:27 | [`51caada`](https://github.com/ehojune/bioinfo-team-3d/pull/775/commits/51caada) | HANDOFF의 Astra 전체 검토를 원 PI 결정대로 bench 비교 앞으로 정정 |
 | 02:20 | [`cb6fd90`](https://github.com/ehojune/bioinfo-team-3d/pull/775/commits/cb6fd90) | 개발 총괄의 점검·담당 재사용·P1 반복 리뷰 운영 규칙 갱신 |
