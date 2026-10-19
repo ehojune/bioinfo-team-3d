@@ -6,6 +6,15 @@
 
 ## 결론
 
+PR #763의 P1 `4314357070`을 수정했습니다. `4314357078`은 기존 head의 패치노트 검사 통과로 stale입니다. Refs #752.
+
+- 상대 workspace는 경로 형태일 때 검사합니다. 일반 문장·URL은 통과하며 실제 workspace 경로는 계속 차단합니다.
+- 신규 회귀 7개 실패를 수정했고 관련 pytest 346개 통과·3개 skip을 확인했습니다. 기존 CI 실패 3개도 포함합니다.
+- 기존 API·표시 변경에 맞춰 mock과 Node 검사를 갱신했습니다. 공개 검사·패치노트·notes-index 검사 결과는 PR에 기록합니다.
+- 새 head의 CI 결과는 PR에서 확인합니다. 재리뷰 요청·병합·운영 실행은 하지 않습니다.
+
+## 결론
+
 PR #764. 정리본과 PDF에 실제 실행된 단계만 그린 분석 파이프라인 모식도와 단계별 실행 타임라인·실행 보고서를 넣고, 단계가 남긴 Nextflow report·timeline·trace·dag를 `run/nextflow/`에 모읍니다. Fixes #756, Refs #760.
 
 ## 바뀐 것
@@ -53,6 +62,29 @@ PR #762의 P1 4312241631 수정을 확인하고 새 P1 4314252458을 `2ca1543e`�
 - P2 4312241622: init 질문·manual 앞부분·example config의 일회성 동의 문구.
 - 새 head CI와 병합은 총괄이 확인합니다. 리뷰 재요청·병합·배포·실제 분석·외부 기여 PR은 실행하지 않았습니다.
 - UI는 Node DOM으로 검증했습니다. 실제 브라우저 화면은 UNVERIFIED입니다.
+
+## 결론
+
+PR #763에서 #752의 디스크 점검·init 경로 선택·사용자 지정 workspace 게시 검사·웹 연결 경고를 구현했습니다. Fixes #752.
+
+## 바뀐 것
+
+- doctor: 작업·임시·직원 홈 여유와 설정 가능한 10 GiB/5% 경고.
+- init: 작업 경로를 묻고 작은 Windows 시스템 드라이브에 데이터 볼륨 후보 안내. 자동 이동 없음.
+- 임의 이름 workspace도 게시 검사에 포함. 기존 웹 상태로 gateway/runner 연결 경고.
+- manual 161,060→161,719자. 상세 근거: `docs/reference/disk-preflight-752.md`.
+
+## 확인
+
+- 신규·추가 관련 pytest 41 passed, 기존 관련 묶음 221 passed. 관련 Node 3개 통과.
+- 지정 venv의 markdown_it 누락으로 기존 `-I` 패키징 test 1개 실패. 공유 venv·test는 유지.
+- 실제 운영·외부 알림·브라우저 시각 QA는 미실행. CI·봇 대기·병합·배포 없음.
+
+## 남은 것
+
+- CI가 전체 suite·패키징 test를 확인해야 합니다. 연결 경고는 열어 둔 웹에서만 보입니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
 
 20시 PI 정기 보고 전 문서를 현재 PR·설정과 맞췄습니다. Refs #760.
 
