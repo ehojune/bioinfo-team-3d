@@ -34,9 +34,9 @@ from .report_figures import (ABSTRACT_FILE, FIGURE_SUFFIXES, IMAGE_PATTERN, MAX_
                              drop_dead_abstract_links, figure_owners, has_abstract_link, is_abstract_target,
                              link_workdir_figures, output_exists)
 from .report_contract import (FRONT_START, ReportPackage, build_report_package, reader_markdown,
-                              with_report_front)
+                              research_question, with_report_front)
 
-RENDER_VERSION = "5"  # bump when the page's markup or CSS changes: a cached PDF of an older one is not reused
+RENDER_VERSION = "6"  # bump when the page's markup or CSS changes: a cached PDF of an older one is not reused
 PRINT_TIMEOUT_S = 60.0
 _CSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'"  # no network
 PRINT_SLOW_BYTES_PER_S = 2 * 1024 * 1024  # a page of embedded figures gets one more second of printing per 2 MB (#608)
@@ -389,7 +389,16 @@ def markdown_to_html(markdown: str, figures: FigureEmbedder, *, top_level: int =
             fenced = not fenced
         elif not fenced and (found := _HEADING.match(line)):
             levels.append(len(found.group(1)))
-    return _blocks(lines, figures, top_level - min(levels) if levels else 0)
+    rendered = _blocks(lines, figures, top_level - min(levels) if levels else 0)
+    pattern = re.compile(r"(?P<figures>(?:<figure>.*?</figure>\s*){2,})(?P<paragraph><p>.*?</p>)", re.DOTALL)
+
+    def keep_together(match: re.Match[str]) -> str:
+        plain = re.sub(r"<[^>]+>", "", match.group("paragraph"))
+        if len(html.unescape(plain).strip()) > 320:
+            return match.group(0)
+        return f'<section class="figure-run">{match.group("figures")}{match.group("paragraph")}</section>'
+
+    return pattern.sub(keep_together, rendered)
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -421,6 +430,8 @@ tr { break-inside: avoid; }
 figure { break-inside: avoid; break-after: avoid-page; page-break-after: avoid; text-align: center; }
 figure + p { break-before: avoid-page; page-break-before: avoid; }
 figure img, p img { max-width: 100%; max-height: 220mm; }
+.figure-run { break-inside: avoid; page-break-inside: avoid; }
+.figure-run figure img { max-width: 80%; max-height: 95mm; }
 .graphical-abstract { width: 100%; max-width: none; max-height: none; }
 figcaption { font-size: 9.5pt; color: #4a5568; margin-top: .3em; }
 a { color: #1d4ed8; text-decoration: none; }
@@ -480,7 +491,9 @@ def build_report_html(req: Mapping[str, Any], bundle: Path | None, *, now: datet
     from .request_status import request_display_label
 
     rid = str(req.get("id") or "")
-    request_text = str(req.get("text") or "").strip()
+    request_text = research_question(str(req.get("text") or ""))
+    reader_request = dict(req)
+    reader_request["text"] = request_text
     figures = FigureEmbedder(bundle)
     results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
     # A bundle made before the link rewrite, or the stored report itself, still names figures <workdir_id>/outputs/<file>.
@@ -488,7 +501,7 @@ def build_report_html(req: Mapping[str, Any], bundle: Path | None, *, now: datet
     source = report_text if report_text is not None else _read_document(bundle, "report.md", str(req.get("report") or ""))
     stored = req.get("report_package")
     if report_text is not None:
-        package_request = dict(req)
+        package_request = dict(reader_request)
         if scrub is not None:
             source = scrub(source)
             for key in ("text", "error"):
@@ -497,17 +510,19 @@ def build_report_html(req: Mapping[str, Any], bundle: Path | None, *, now: datet
         package = build_report_package(package_request, source, dict(results))
     else:
         package = (ReportPackage.from_dict(dict(stored)) if isinstance(stored, Mapping)
-                   else build_report_package(dict(req), source, dict(results)))
+                   else build_report_package(reader_request, source, dict(results)))
+    package.question = request_text
     abstract_source = re.sub(r"\[근거 \d+\]", "", package.source_report or source)
     if FRONT_START not in source:
         source = with_report_front(source, package)
-    source = reader_markdown(source)
+    source = reader_markdown(source, footnotes=True)
     linked = link_workdir_figures(source, owners, output_exists(results, bundle))
     if has_abstract_link(linked, figures._holds):
         linked = abstract_first(linked, figures._holds)  # the report's own abstract, wherever the writer put it
     else:
         linked = drop_dead_abstract_links(linked, figures._holds)  # a link to a file nobody could make
-        figures.extra[ABSTRACT_FILE] = build_graphical_abstract(req, abstract_source, scrub=scrub).encode("utf-8")
+        figures.extra[ABSTRACT_FILE] = build_graphical_abstract(
+            reader_request, abstract_source, scrub=scrub).encode("utf-8")
         linked = with_abstract_link(linked)
     body = markdown_to_html(linked, figures)
     appendix_text = ("" if report_text is not None

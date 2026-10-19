@@ -23,7 +23,7 @@ from .policy import touches
 from .research.contract import branch_plan_topology
 from .report_abstract import build_graphical_abstract
 from .report_contract import (ReportAsset, ReportPackage, build_report_package, reader_markdown,
-                              render_report_front, with_report_front)
+                              render_report_front, research_question, with_report_front)
 from .request_bundle import _POSIX_ABS, _WINDOWS_ABS
 
 
@@ -1355,7 +1355,39 @@ def _zone_for_reference(value: str, settings) -> Any | None:
     return None
 
 
-def _data_licenses(req: dict, settings) -> str:
+def _readme_license_rows(input_readmes: Mapping[str, str] | None) -> list[tuple[str, str, str, str, str]]:
+    aliases = {
+        "자료": "kind", "data": "kind", "dataset": "kind",
+        "출처": "source", "source": "source",
+        "접근": "access", "접근 조건": "access", "access": "access", "access conditions": "access",
+        "재배포": "redistribution", "재배포 범위": "redistribution", "redistribution": "redistribution",
+        "인용": "citation", "필수 인용": "citation", "citation": "citation", "required citation": "citation",
+    }
+    recovered: list[tuple[str, str, str, str, str]] = []
+    for text in (input_readmes or {}).values():
+        lines = str(text).replace("\r\n", "\n").replace("\r", "\n").splitlines()
+        for index in range(len(lines) - 1):
+            if "|" not in lines[index] or not re.fullmatch(r"\s*\|?\s*:?-+.*", lines[index + 1]):
+                continue
+            headers = [" ".join(cell.strip().casefold().split()) for cell in lines[index].strip().strip("|").split("|")]
+            keys = [aliases.get(header, "") for header in headers]
+            if not {"source", "access", "redistribution", "citation"}.issubset(keys):
+                continue
+            for line in lines[index + 2:]:
+                if "|" not in line or not line.strip():
+                    break
+                cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+                if len(cells) != len(keys):
+                    break
+                row = {key: cells[position] for position, key in enumerate(keys) if key and cells[position]}
+                if all(row.get(key) for key in ("source", "access", "redistribution", "citation")):
+                    recovered.append((row.get("kind", "README"), row["source"], row["access"],
+                                      row["redistribution"], row["citation"]))
+            break
+    return list(dict.fromkeys(recovered))
+
+
+def _data_licenses(req: dict, settings, input_readmes: Mapping[str, str] | None = None) -> str:
     refs = req.get("references") or []
     rows: list[tuple[str, str, str, str, str]] = []
     path_number = 0
@@ -1397,6 +1429,8 @@ def _data_licenses(req: dict, settings) -> str:
         elif kind == "github":
             source = value if re.match(r"https?://", value, re.I) else f"https://github.com/{value}"
         rows.append((kind, source, access, redistribution, citation))
+    if not rows:
+        rows.extend(_readme_license_rows(input_readmes))
     lines = ["# 자료와 이용 조건", "", "원자료는 이 정리본에 넣지 않습니다. 알려지지 않은 조건은 항목별로 미확인이라고 표시합니다.", "",
              "| 자료 | 출처 | 접근 조건 | 재배포 범위 | 필수 인용 |", "|---|---|---|---|---|"]
     lines += [f"| {_safe_cell(kind)} | {_safe_cell(source)} | {_safe_cell(access)} | "
@@ -1448,6 +1482,7 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
     package = (ReportPackage.from_dict(dict(stored)) if isinstance(stored, Mapping)
                else build_report_package(req, report, dict(req.get("results") or {})))
     package.title = title
+    package.question = research_question(str(req.get("text") or ""))
     package.answer = _first_answer(report, req)
     package.limitations = _first_limit(report)
     package.figures = [ReportAsset("그래픽 초록" if name == abstract else "대표 그림", name)
@@ -1544,6 +1579,43 @@ def _table_metadata(name: str, body: str | bytes) -> tuple[int | None, list[str]
     return len(parsed) - 1, columns, rectangular
 
 
+def legacy_aggregate_tables(req: Mapping[str, Any], assets: Mapping[str, str | bytes]) -> set[str]:
+    """Recover safe table candidates only for plans that predate output type declarations."""
+    plan = req.get("plan") if isinstance(req.get("plan"), Mapping) else {}
+    results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
+    if any(isinstance(step, Mapping) and step.get("output_types")
+           for step in plan.get("steps") or []):
+        return set()
+    if any(isinstance(result, Mapping) and result.get("output_types")
+           for result in results.values()):
+        return set()
+    candidates: set[str] = set()
+    name_hint = re.compile(
+        r"(?i)(?:aggregate|summary|result|model|estimate|count|frequency|rate|stat|qc|inventory|"
+        r"feasibility|hypothesis|literature|enrichment|differential|fraction)"
+    )
+    sensitive_column = re.compile(
+        r"(?i)^(?:person|patient|participant|subject|individual|respondent|household|record|sample)"
+        r"(?:[_ -]?(?:id|identifier|name|number))?$|^(?:name|address|email|phone|dob|birth[_ -]?date|주민번호|이름)$"
+    )
+    metric_column = re.compile(
+        r"(?i)^(?:n|count|total|estimate|effect|rate|ratio|odds|or|hr|rr|ci|p|pvalue|p_value|padj|fdr|"
+        r"mean|median|sd|se|statistic|frequency|fraction|percent|percentage)$"
+    )
+    for name, body in assets.items():
+        suffix = PurePosixPath(name).suffix.lower()
+        if suffix not in {".tsv", ".csv"}:
+            continue
+        _rows, columns, rectangular = _table_metadata(name, body)
+        text = body.decode("utf-8", errors="replace") if isinstance(body, bytes) else body
+        aggregate_hint = bool(name_hint.search(PurePosixPath(name).stem) or any(metric_column.fullmatch(column.strip())
+                                                                                  for column in columns))
+        if (rectangular and aggregate_hint and not any(sensitive_column.fullmatch(column.strip()) for column in columns)
+                and not small_cells(text, suffix)):
+            candidates.add(name)
+    return candidates
+
+
 def _omitted_table(name: str, body: str | bytes, *, internal: bool, declared: set[str],
                    folder: str | None) -> dict[str, Any]:
     rows, columns, _valid = _table_metadata(name, body)
@@ -1609,7 +1681,8 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
                           decisions: Iterable[dict] = (), tasks: Iterable[dict] = (),
                           bundle: Path | None = None,
                           run_documents: Mapping[str, str] | None = None,
-                          internal_files: set[str] | None = None) -> dict[str, str | bytes]:
+                          internal_files: set[str] | None = None,
+                          input_readmes: Mapping[str, str] | None = None) -> dict[str, str | bytes]:
     """Return the stable publication layout; raw data and third-party full text never enter it."""
     assets = {name: clean_publication_text(name, body, settings, req) for name, body in assets.items()
               if not _LITERATURE_OUTPUT.search(name.replace("\\", "/"))}
@@ -1634,6 +1707,7 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
             tracked_internal.add(target)
 
     aggregate_tables = declared_aggregate_tables(req)
+    aggregate_tables.update(legacy_aggregate_tables(req, assets))
     declared_reports = _declared_outputs(req, "report")
     omitted_tables: list[dict[str, Any]] = []
     table_names: list[str] = []
@@ -1718,7 +1792,7 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
         "run/execution_record.md": execution,
         "run/costs.md": _costs_document(req, tasks),
         "REFERENCES.md": _clean(_references(req, report, assets), settings, req),
-        "DATA_AND_LICENSES.md": _clean(_data_licenses(req, settings), settings, req),
+        "DATA_AND_LICENSES.md": _clean(_data_licenses(req, settings, input_readmes), settings, req),
     })
     if revision_history:
         files["run/revision_history.md"] = revision_history
@@ -1750,6 +1824,7 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
     stored_package = req.get("report_package")
     report_package = (ReportPackage.from_dict(dict(stored_package)) if isinstance(stored_package, Mapping)
                       else build_report_package(req, report, dict(req.get("results") or {})))
+    report_package.question = research_question(str(req.get("text") or ""))
     report_package.answer = _first_answer(report, req)
     report_package.limitations = _first_limit(report)
     report_package.figures = [ReportAsset(PurePosixPath(name).name, "../" + name) for name in figure_names[:2]]
