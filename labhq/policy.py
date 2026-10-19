@@ -2352,6 +2352,10 @@ def evaluate_tool(
     read_only: bool = False,
 ) -> Decision:
     allowed_roots = list(allowed_roots)
+    if tool_name in SHELL_TOOLS:
+        from .process_stop_guard import DENIAL, broad_process_stop
+        if broad_process_stop(str(tool_input.get("command", ""))):
+            return Decision("deny", DENIAL)
     judged = claude_write_input(tool_name, tool_input, workdir, allowed_roots, windows=windows, environ=environ)
     # Every check reads a Git Bash command with its drive paths spelled the Windows way, zones and private paths
     # included: converting only the write targets let `cp /c/<zone>/raw /c/<root>/out` through (PR #364 review).
