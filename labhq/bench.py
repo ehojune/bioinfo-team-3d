@@ -365,13 +365,22 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
                                            budget_usd=float(case["budget_usd"]),
                                            meta={"case_id": case["id"]}))
         timeout = float(case.get("timeout_s", settings.runner.task_timeout_s))
+        request_started = time.monotonic()
         await _until(lambda: is_terminal_request(hub.requests[rid]["status"]), timeout,
                      f"benchmark request timed out after {timeout:g}s")
+        # Terminal status is committed before the asynchronous bundle/manifest.
+        # Use the remaining request budget and never cache a premature empty receipt.
+        await _until(lambda: not hub.requests[rid].get("bundle_pending"),
+                     max(0.0, timeout - (time.monotonic() - request_started)),
+                     f"benchmark bundle timed out after {timeout:g}s")
         request = hub.requests[rid]
         if not request.get("reproduction_receipt"):
             from .result_storage import collect_reproduction_receipt
-            request["reproduction_receipt"] = await asyncio.to_thread(collect_reproduction_receipt, request, settings)
-            hub.save_request(rid)
+            request["reproduction_receipt"] = await asyncio.to_thread(
+                collect_reproduction_receipt, {**request, "id": rid}, settings)
+            save_request = getattr(hub, "save_request", None)
+            if callable(save_request):
+                save_request(rid)
         record = hub.rounds.write(rid)
         answer = case["mock_answer"].strip() if engines == "mock" else str(request.get("report") or "").strip()
         (arm_dir / "answer.md").write_text(answer + "\n", encoding="utf-8")
