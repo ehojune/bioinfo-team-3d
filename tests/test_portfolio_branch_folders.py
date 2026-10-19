@@ -319,7 +319,7 @@ def test_unbranched_request_adds_the_semantic_report_to_the_existing_file_list(t
     assert set(files) == {
         "README.md", "report/report.md", "run/requests.md", "run/decisions.md",
         "run/execution_record.md", "run/costs.md", "run/progress.md", "run/reproduce.md",
-        "run/semantic_report.md",
+        "run/semantic_report.md", "run/reproduction_receipt.json",
         "code/analysis/outputs/scripts/analyze.py", "figures/graphical_abstract.svg", "figures/volcano.svg",
         "run/revision_history.md", "docs/reference/README.md",
         "tables/result_summary.tsv", "REFERENCES.md", "DATA_AND_LICENSES.md",

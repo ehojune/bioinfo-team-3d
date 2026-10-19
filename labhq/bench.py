@@ -23,6 +23,7 @@ from .bench_permissions import inside
 from .costs import aggregate_costs, classify_cost, cost_detail, format_cost
 from .policy import WRITE_LIKE
 from .request_status import is_terminal_request
+from .reproduction_receipt import receipt_json, receipt_note, receipt_summary
 from .util import atomic_write_text, free_port, merge_staff_env, parent_claude_markers
 
 REPO = Path(__file__).resolve().parents[1]
@@ -367,6 +368,10 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
         await _until(lambda: is_terminal_request(hub.requests[rid]["status"]), timeout,
                      f"benchmark request timed out after {timeout:g}s")
         request = hub.requests[rid]
+        if not request.get("reproduction_receipt"):
+            from .result_storage import collect_reproduction_receipt
+            request["reproduction_receipt"] = await asyncio.to_thread(collect_reproduction_receipt, request, settings)
+            hub.save_request(rid)
         record = hub.rounds.write(rid)
         answer = case["mock_answer"].strip() if engines == "mock" else str(request.get("report") or "").strip()
         (arm_dir / "answer.md").write_text(answer + "\n", encoding="utf-8")
@@ -383,6 +388,7 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
             "duration_s": round(time.monotonic() - started, 3),
             "round_json": str(hub.rounds.directory / f"{rid}.json"),
             "round_status": record["result"]["status"],
+            "reproduction_receipt": request.get("reproduction_receipt"),
         }
         (arm_dir / "run.json").write_text(json.dumps(run, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         return run
@@ -623,6 +629,8 @@ async def _score(case: dict[str, Any], arm_dir: Path, run: dict[str, Any]) -> di
         "staff_model": run.get("staff_model"), "staff_models": run.get("staff_models"),
         "artifact_exists": answer.is_file() and bool(answer_text.strip()),
         "checks_passed": bool(structured["format_passed"] and structured["content_passed"]),
+        "reproduction_verification": receipt_summary(run.get("reproduction_receipt"),
+                                                    path="reproduction_receipt.json" if run.get("reproduction_receipt") else ""),
         "format_passed": structured["format_passed"],
         "content_passed": structured["content_passed"],
         "narrative_passed": checked.returncode == 0,
@@ -694,6 +702,9 @@ def _comparison_markdown(result: dict[str, Any]) -> str:
                      f"{pi_questions} | "
                      f"{row.get('unscripted_approvals', 0)} | {row.get('budget_approvals', 0)} | {cost} | {ratio_text} | "
                      f"{cap} | {row['token_total']} | {row['duration_s']:.3f} |")
+    lines += ["", "## 재현 검증", "", *[
+        f"- {row['engine']}: {receipt_note(row.get('reproduction_verification') or receipt_summary(None))}"
+        for row in result["rows"]]]
     details = [f"- {row['engine']}: {format_cost(summary, digits=4)} {cost_detail(summary, digits=4)}"
                for row in result["rows"] if (summary := row.get("cost_summary") or {}).get("by_engine")
                and (len(summary["by_engine"]) > 1 or summary.get("estimated_usd") or summary.get("unknown_count"))]
@@ -781,7 +792,8 @@ async def rescore_case(case_id: str, output_root: Path, run_id: str | None = Non
             else:
                 row.update({key: checked[key] for key in (
                     "artifact_exists", "checks_passed", "format_passed", "content_passed",
-                    "narrative_passed", "format_detail", "content_detail", "check_output", "check")})
+                    "narrative_passed", "format_detail", "content_detail", "check_output", "check",
+                    "reproduction_verification")})
             row["run_id"] = run_dir.name
             row["rescored_at"] = datetime.now(timezone.utc).isoformat()
             history = list(row.get("score_history") or [])
@@ -842,6 +854,11 @@ async def run_case(case_id: str, output_root: Path, engines: str = "real",
                    "duration_s": round(time.monotonic() - started, 3),
                    "error": f"{type(exc).__name__}: {exc}"}
         run["mode"] = engines
+        run.setdefault("reproduction_receipt", None)
+        verification = receipt_summary(run.get("reproduction_receipt"))
+        run["reproduction_verification"] = verification
+        if verification["present"]:
+            atomic_write_text(arm_dir / "reproduction_receipt.json", receipt_json(run["reproduction_receipt"]))
         if arm == "labhq":
             run["staff_model"] = dict(settings.bench.staff_model)
         else:

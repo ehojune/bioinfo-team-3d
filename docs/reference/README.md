@@ -5,6 +5,7 @@
 - [README 근거·한계](readme-evidence.md): 네 카드와 비교표의 상세 인용·수치.
 - [이전 HANDOFF 큐·결정](handoff-history-2026-10-19.md): 2026-10-19에 보존한 옛 현황표.
 - [문서 일치 점검](docs-refresh-2026-10-19.md): 코드 근거·갱신 범위·전후 글자 수.
+- [재현 검증 receipt](reproduction-receipt.md): 문법·실행 상태, 기록 항목과 #748의 범위.
 
 - [AlphaGenome 변이 점수](alphagenome-variant.md): SDK 계약·quantile 해석·API 이용 조건(#621 B).
 
