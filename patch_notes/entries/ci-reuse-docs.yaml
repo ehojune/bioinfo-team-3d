@@ -12,3 +12,6 @@ rows:
   - sha: 435af38
     at: '2026-10-20 11:59'
     text: 'binary urllib 응답 API만 encoding 검사에서 구분하고 filesystem 강제·UTF-8 JSON·redirect/auth·응답 크기 경계 검증'
+  - sha: '8869961'
+    at: '2026-10-20 12:48'
+    text: 'fork PR은 전체 gate를 유지하며 manifest만 생략하고 설명 뒤 명령 변경도 full로 판정, 기존 README 제목 회귀 확인'
