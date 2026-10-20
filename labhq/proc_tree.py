@@ -202,10 +202,17 @@ def _end_tree(pid: int, created: int | None, spare: bool, result: KillResult, he
                 ancestor = parent_of.get(ancestor)  # the root has no entry: the chain ends there
 
     ours = {pid, *parent_of}
+    created_of = {pid: root.created, **{p.pid: p.created for p in validated}}
     for candidate, reason in unopened.items():
         # Unchecked, so never touched. Still a child of the root or of a validated descendant, with the parent PID it
         # had in both reads: it may be a survivor. Gone, or hanging off something that is not ours: not a failure.
         if candidate in after and after[candidate] == before.get(candidate) and after[candidate] in ours:
+            query = readonly.get(candidate)
+            if query is not None and query.created < created_of[after[candidate]]:
+                # Queryable, so its age is known from the held handle: older than its claimed parent, it is a PID-reuse
+                # orphan like the ones `validated_descendants` drops (a boot-time system process under a reused PID,
+                # PR #800 Windows CI), not a survivor of this tree.
+                continue
             parent_of[candidate] = after[candidate]
             failed(candidate, reason)
     for victim in [p.pid for p in reversed(validated)] + [pid]:
