@@ -494,13 +494,27 @@ def produce_manifest(current: dict, needs: dict, event: dict) -> dict:
     checkout = current["checkout_sha"]
     run = {"id": int(os.environ["GITHUB_RUN_ID"]), "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])}
     result = expected_manifest(run, current, snapshot, checkout)
-    if not (SHA.fullmatch(checkout) and run["id"] > 0 and run["run_attempt"] > 0
-            and os.environ["GITHUB_WORKFLOW_SHA"] == checkout
-            and os.environ["GITHUB_WORKFLOW_REF"] == result["workflow_ref"]
-            and git("rev-list", "--parents", "-n", "1", "HEAD").split() ==
-                [checkout, snapshot["base_sha"], snapshot["head_sha"]]
-            and git("rev-parse", f"{os.environ['GITHUB_WORKFLOW_SHA']}:{WORKFLOW}") == result["workflow_blob"]):
-        raise ValueError("unbound checkout/workflow identity")
+    source = os.environ["GITHUB_WORKFLOW_SHA"]
+    ref = os.environ["GITHUB_WORKFLOW_REF"]
+    checks = (("checkout-sha", bool(SHA.fullmatch(checkout))), ("run-id", run["id"] > 0),
+              ("run-attempt", run["run_attempt"] > 0), ("workflow-sha", source == checkout),
+              ("workflow-ref", ref == result["workflow_ref"]))
+    failed = [name for name, valid in checks if not valid]
+    if failed:
+        # Fixed role labels only: never dump environment/event payloads or an
+        # arbitrary revision. A head/base source remains rejected, not trusted.
+        source_role = next((name for name, value in (("checkout", checkout),
+                           ("pr-head", snapshot["head_sha"]), ("pr-base", snapshot["base_sha"]))
+                            if source == value), "other")
+        head_ref = f"{REPOSITORY}/{WORKFLOW}@refs/heads/{event['pull_request']['head'].get('ref', '')}"
+        ref_role = "pr-merge" if ref == result["workflow_ref"] else "pr-head" if ref == head_ref else "other"
+        raise ValueError("unbound checkout/workflow identity: " + ", ".join(failed)
+                         + f" (source={source_role}, ref={ref_role})")
+    if (git("rev-list", "--parents", "-n", "1", "HEAD").split()
+            != [checkout, snapshot["base_sha"], snapshot["head_sha"]]):
+        raise ValueError("unbound checkout/workflow identity: checkout-parents")
+    if git("rev-parse", f"{source}:{WORKFLOW}") != result["workflow_blob"]:
+        raise ValueError("unbound checkout/workflow identity: workflow-blob")
     return result
 
 
