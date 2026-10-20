@@ -39,7 +39,7 @@ def stopping_marker(settings, since: float) -> bool:
     return False
 
 
-def watch_shutdown_signals(mark, *, interrupt=True):
+def watch_shutdown_signals(mark, *, interrupt=True, default_handler=None, disposition=None):
     """Mark before delegating to the CLI/uvicorn's existing shutdown handler."""
     previous = {}
     for name in (("SIGINT", "SIGTERM", "SIGHUP") if interrupt else ("SIGTERM", "SIGHUP")):
@@ -47,11 +47,14 @@ def watch_shutdown_signals(mark, *, interrupt=True):
         if sig is None:
             continue
         handler = signal.getsignal(sig)
-        if not callable(handler):
-            continue
+        original = disposition(sig, handler) if disposition is not None else handler
+        if not callable(original):
+            if original not in (signal.SIG_DFL, signal.SIG_IGN) or default_handler is None:
+                continue
         previous[sig] = handler
+        delegate = handler if callable(original) else default_handler
 
-        def wrapped(signum, frame, handler=handler):
+        def wrapped(signum, frame, handler=delegate):
             mark()
             return handler(signum, frame)
 

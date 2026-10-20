@@ -4,6 +4,40 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## PR #790 P1 4320895582
+
+첫 await 전에 dispatch 완료 future를 등록하고 acceptance·중단 결과 기록까지 종료 drain이 기다리도록 고쳤습니다. 기존 task 정리 중 들어온 handler도 재검사하며 ACK·5초 제한·미확인 outbox와 게시/승인 gate를 유지합니다. timeout은 handler의 completion future를 취소하지 않습니다.
+
+검증: 기존 head에서 회귀 5 failed/1 passed, 추가 drain interleaving 1 failed를 확인했습니다. 수정 후 메모리 store·coroutine barrier 및 기존 fake signal callback을 포함한 mock/static 19 passed. Python 3.10 AST·encoding 검사가 통과했고 guard를 유지했습니다. 실제 writer thread·신호·process·운영·PI·HPC는 미실행입니다. 이전 guard 차단 startup 테스트는 재실행하지 않았습니다.
+
+CI는 push 뒤 한 번만 조회하며 완료를 기다리지 않습니다. fresh-head 리뷰·병합·배포는 총괄이 맡습니다. 근거: docs/reference/runner-signals-664.md.
+
+## 단계
+읽는 사람별 문서 정비(PI 요청) — 문서만 변경, PR #801
+
+## 한 일
+- main(#800·#803·#805·#806)을 합치고 HANDOFF 충돌을 현재 우선순위로 풀었습니다. #805의 manual 독자 분리·다이어그램·수치와 #806 hook 안내는 그대로입니다.
+- README 한영판: PR 번호·감사 공지·PI 창구 행을 빼고 "v0.5 뒤 기능은 실제 연구 요청으로 재확인 전"이라는 안정적 한계를 적었습니다. 영문판은 한국어판 구성에 맞췄습니다.
+- HANDOFF: 접수 중지, 병합 전 열린 PR 7개, 보류 항목, 접수 재개 뒤 순서만 남겼습니다. token 수치는 빼고 운영 기준·#760으로 보냈습니다.
+- AGENTS·CLAUDE는 개발 절차만, 점검 주기·동시 투입·한도·접수 중지는 `docs/reference/lead-operations.md`로 옮겼습니다.
+- manual: #796 문단을 PR #803 병합 사실로 고치고, 어휘 수를 코드 기준 125개(topic 45, EDAM 연결 79)로 맞췄습니다.
+- 총괄 최종 대조: manual의 CP1 입력 검증/사후 그림자 측정 설명을 구분하고, PI Q&A 현재 운영의 옛 한도·깨진 HANDOFF anchor를 고쳤습니다. 날짜가 붙은 과거 답은 보존했습니다.
+- 감사 우선순위 reference에 10-20 진행을 날짜 붙여 더했습니다(기존 표는 보존).
+
+## 확인
+- 코드 대조: `agents/core/*.yaml`(Claude Code 8·Codex 5, 리뷰어 Codex gpt-6-astra), `labhq/vocab/output_types.yaml`(125 key)·`edam_subset.yaml`(79 연결)·`topic_checklists.yaml`(45 분야·135 항목), `labhq/init_defaults.py`(`semantics.mode: ab`).
+- `integrations.py --check`·`vocab_tables.py --check`·`notes_index.py --validate`·`patch_notes.py check`·`check_public.sh`·`git diff --check` 통과. 수정 문서 8개의 상대 링크·manual anchor 0건 깨짐.
+- `tests/test_integrations.py`·`tests/test_project_link_spellings.py` 39 passed. CLI를 하위 프로세스로 띄우는 2개는 mock guard가 막았고 같은 검사(`integrations.py --check`)를 직접 통과했습니다.
+- 글자 수(main → 후): 개발 문서(AGENTS·CLAUDE·HANDOFF) 8,368 → 6,845, README 한영판 포함 39,255 → 36,127.
+
+## 남은 것
+- 열린 PR #766·#790·#791·#793·#802·#807·#812가 병합되면 manual 해당 절과 HANDOFF 표를 그때 갱신해야 합니다.
+- README 한영판은 badge·이중 언어 때문에 목표 15k보다 큽니다. badge 블록은 생성물이라 줄이지 않았습니다.
+
+PI가15:44 신규 일반 작업 보류를 해제했다. HANDOFF·운영 기준·PI Q&A만 최신 결정으로 맞췄다. 실제 연구·bench는 별도 승인, README는 이번 운영 정정으로 늘리지 않았다.
+
+16시 대조: #812 병합, #815 draft 준비와 #798 순서를 개발 문서에 갱신했다. 실제 요청 성능·배포 성공은 미확인이다.
+
 ## 2026-10-20 14:40 — `pi-language-linear`
 
 ## 단계
@@ -141,6 +175,20 @@ PR #803. CP1 `cab83e7`, 분리 `2070c23`, 공유 fixture `bab83c2`.
 
 🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
 
+## 단계
+개발 감사 우선순위 반영 — 문서만 변경
+
+## 한 일
+#794–#799를 #739 체크리스트에 연결하고 HANDOFF의 낡은 큐·7M 한도를 현재 15M 승인으로 맞췄습니다. Shadow는 실측 동안 유지/확장 동결, 효용 판정 뒤 관측 코드 정리입니다. README 한영·AGENTS·관련 manual도 같은 범위로 갱신했습니다.
+
+## 검증
+직원 설정 일치·공개 검사·기록 형식·diff 검사 통과. 제품 코드 변경이 없어 로컬 pytest는 실행하지 않았습니다. 최종 head CI·리뷰·P1=0·병합은 별도 gate입니다.
+
+## 한계
+P1 수정·현재 PI 가동·새 실운전·장치 효용·bench PASS를 선언하지 않습니다. Job Object 원인은 가설이며 벤치 A/C 수치를 분리했습니다. 연구·HPC·실프로세스 fixture는 실행하지 않았습니다.
+
+문서 글자 수: HANDOFF 4,415→3,888; README 한영·AGENTS·HANDOFF 합계 37,130→37,053. 상세 근거는 docs/reference/audit-priorities-2026-10-20.md에 둡니다.
+
 # 재현 receipt 실행 site-packages (#794, PR #800)
 
 ## 결론
@@ -185,6 +233,35 @@ PR #789가 `-I`를 `-E -s`로 풀었지만 `-S`를 남겼습니다. `-S`는 `sit
 - **실제 분석 rerun PASS가 아닙니다.** 실제 interpreter 검증은 tmp fixture 하나뿐입니다. numpy 같은 과학 패키지로 실제 분석을 다시 돌린 것이 아닙니다.
 - **interpreter 환경의 `.pth` 파일도 처리됩니다.** `-S`를 빼면 site-packages의 `.pth`도 처리되는데, 이는 일반 `python script.py`와 같습니다.
 - #773과 다른 감사 항목은 다루지 않았습니다.
+
+PR #790 · Fixes #664
+
+- 표준 runner의 기본·무시 TERM/HUP을 종료 경로에 연결하고 사용자 handler·Ctrl+C·게시·승인 gate를 유지합니다. 결과 ACK를 최대 5초 기다리며 미확인 결과는 durable outbox에 남깁니다.
+- P1 4320639315 수정: diagnostics wrapper의 원래 disposition을 구분해 기본 TERM을 graceful 종료로 보내고 진단 기록·사용자 handler·복원을 보존합니다.
+- P1 4320639321 수정: durable acceptance 뒤 stopping을 재검사하여 늦은 dispatch를 실행하지 않고 종료 증거가 있는 결과를 기록합니다. 중복 dispatch도 기존 결과를 보존합니다.
+- P1 4320639324·4320639329는 stale입니다. 83d5bf89에 기능 행·status가 있고 그 head의 patch-notes 검사가 통과했습니다.
+- 검증: 수정 전 후속 회귀 3건 실패·2건 통과, 수정 후 관련 mock/static 24 passed·1 deselected. Python 3.10 문법·public·diff 검사 통과. manual 165,710→165,749자. 근거 docs/reference/runner-signals-664.md.
+- 한계: 기존 tests/test_shutdown_recovery.py::test_startup_uses_common_interruption_and_keeps_card는 이전 검증에서 guard가 subprocess.Popen.__init__을 차단해 재실행하지 않았습니다. 실패 전체 로그를 보존했습니다. 실제 신호·POSIX/WSL startup·process/proc_tree·운영·HPC 검증은 없습니다.
+- CI·fresh-head 리뷰·병합·배포는 supervisor 담당입니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
+PR #790
+
+## 변경
+
+표준 runner의 TERM/HUP handler가 SIG_DFL·SIG_IGN이면 종료 경로를 설치합니다. stopping 표시→작업 취소·종료 증거→기존 interrupted·재개 카드로 연결합니다. 연결된 gateway의 결과 확인을 최대 5초 기다리고 미확인 결과는 durable outbox에 남깁니다. 사용자 handler·Ctrl+C·게시·승인 gate는 유지합니다.
+
+Fixes #664
+
+## 검증·한계
+
+- 수정 전 기본·무시 TERM/HUP 회귀 4건 실패, 수정 후 mock/static pytest 19 passed, 1 deselected. signal 등록·호출과 gateway 전달은 가짜이며 실제 process·신호·HPC·운영 실행은 없습니다.
+- 기존 tests/test_shutdown_recovery.py::test_startup_uses_common_interruption_and_keeps_card는 process guard가 subprocess.Popen.__init__을 차단했습니다. 전체 실패 로그를 보관했고 이 테스트는 재실행하지 않았습니다. 실제 POSIX/WSL startup 통합은 미검증입니다.
+- Python 3.10 문법·public·diff 검사 통과. manual 165,483→165,710자. 근거: docs/reference/runner-signals-664.md.
+- CI·리뷰·병합·배포는 supervisor 담당입니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
 
 Refs #786. 기능 커밋 `06c5a64`는 Ubuntu Python 3.10 pytest의 진단·대기 상한만 추가합니다.
 

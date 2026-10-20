@@ -298,6 +298,7 @@ class Runner:
         self.project_link_warned: set[tuple] = set()
         self.outbox: asyncio.Queue[str] = asyncio.Queue()
         self.tasks: dict[str, asyncio.Task] = {}
+        self._dispatches: set[asyncio.Future] = set()  # Acceptance/result writes not yet represented by a task.
         self.workspaces: dict[str, TaskWorkspace] = {}
         # Events of a task whose reused workspace is still being checked: written to its events.jsonl, in order,
         # once the check passes (#193), and dropped with the workspace when it fails.
@@ -393,6 +394,28 @@ class Runner:
         self.broker.stop()
         for t in self.tasks.values():
             t.cancel()
+
+    async def shutdown(self, timeout_s: float = 5) -> None:
+        """Cancel tasks with shutdown evidence before closing the connection; retain any unacked results."""
+        self.stop()
+
+        async def finish():
+            while True:
+                while self._dispatches:
+                    # A connection handler outlives one dispatch. Wait only for that dispatch's durable result,
+                    # without cancelling its completion future when this bounded shutdown times out.
+                    await asyncio.gather(*(asyncio.shield(done) for done in tuple(self._dispatches)))
+                await asyncio.gather(*list(self.tasks.values()), return_exceptions=True)
+                if self._dispatches:  # Another dispatch may have entered while cancelled tasks were draining.
+                    continue
+                if not self.connected.is_set() or not any(e.get("type") == "task.result" for e in self.store.pending()):
+                    return
+                await asyncio.sleep(.05)
+
+        try:
+            await asyncio.wait_for(finish(), timeout_s)
+        except asyncio.TimeoutError:
+            pass  # Durable outbox replay remains the fallback when the gateway cannot acknowledge in time.
 
     def send(self, obj: dict) -> None:
         if obj.get("type") not in {"runner.roster"}:
@@ -631,23 +654,33 @@ class Runner:
     async def _on_message(self, msg: dict) -> None:
         typ = msg.get("type")
         if typ == "task.dispatch":
-            task = Task.model_validate(msg["task"])
-            prior = self.store.get("accepted_task", task.id)
-            await self._send_durably(
-                {"type": "task.accepted", "task_id": task.id, "request_id": task.request_id},
-                before=(("accepted_task", task.id, {"state": "running", "task": task.model_dump(mode="json")})
-                        if prior is None else None))
-            if prior is None:
-                self.tasks[task.id] = asyncio.create_task(self._run_guarded(task))
-            elif prior.get("state") == "running" and task.id not in self.tasks:
-                has_result = any(e.get("type") == "task.result" and e.get("task_id") == task.id
-                                 for e in self.store.pending())
-                if not has_result:
-                    await self._send_durably(
-                        {"type": "task.result", "task_id": task.id, "agent_id": task.agent_id,
-                         "request_id": task.request_id,
-                         "data": self._interrupted_result(task.id, task.agent_id).model_dump(mode="json")},
-                        after=("accepted_task", task.id, {"state": "finished"}))
+            done = asyncio.get_running_loop().create_future()
+            self._dispatches.add(done)  # Before the first await, including acceptance already on the writer lane.
+            try:
+                task = Task.model_validate(msg["task"])
+                prior = self.store.get("accepted_task", task.id)
+                await self._send_durably(
+                    {"type": "task.accepted", "task_id": task.id, "request_id": task.request_id},
+                    before=(("accepted_task", task.id, {"state": "running", "task": task.model_dump(mode="json")})
+                            if prior is None else None))
+                # Acceptance is durable (and may yield): check shutdown again before starting any staff work.
+                if prior is None and not self._stopping:
+                    self.tasks[task.id] = asyncio.create_task(self._run_guarded(task))
+                elif (prior is None or prior.get("state") == "running") and task.id not in self.tasks:
+                    has_result = any(e.get("type") == "task.result" and e.get("task_id") == task.id
+                                     for e in self.store.pending())
+                    if not has_result:
+                        result = (self._shutdown_result(TaskResult(task_id=task.id, agent_id=task.agent_id,
+                                      ok=False, error="runner stopping: task not started"), cancelled=True)
+                                  if self._stopping else self._interrupted_result(task.id, task.agent_id))
+                        await self._send_durably(
+                            {"type": "task.result", "task_id": task.id, "agent_id": task.agent_id,
+                             "request_id": task.request_id,
+                             "data": result.model_dump(mode="json")},
+                            after=("accepted_task", task.id, {"state": "finished"}))
+            finally:
+                self._dispatches.discard(done)
+                done.set_result(None)
         elif typ == "task.cancel":
             t = self.tasks.get(msg.get("task_id", ""))
             if t:

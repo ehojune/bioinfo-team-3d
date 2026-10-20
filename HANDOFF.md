@@ -1,45 +1,42 @@
 # labhq 인수인계 — 개발 총괄에게
 
 공개 저장소 [ehojune/bioinfo-team-3d](https://github.com/ehojune/bioinfo-team-3d) · 패키지/CLI `labhq` · 현재 버전 v0.5.
-2026-10-19 PI 결정으로 **Codex가 총괄을 고정 담당**하며 Codex·Claude subagent에 위임합니다. 현재 창구는 [#760](https://github.com/ehojune/bioinfo-team-3d/issues/760), 이전 기록은 #298 → #435입니다.
+2026-10-19 PI 결정으로 **Codex가 총괄을 고정 담당**하며 Codex·Claude subagent에 위임합니다. 현재 창구는 [#760](https://github.com/ehojune/bioinfo-team-3d/issues/760)입니다.
 
 ## 시작과 종료
 
-1. `AGENTS.md`, `STATUS.md` 상단, 열린 PR, #760의 최근 댓글을 읽습니다. 설치 PC의 로컬 인계 문서가 있으면 그 문서가 지정한 범위만 추가로 읽습니다.
-2. 아래 큐를 따릅니다. test는 바꾼 곳만, 전체 suite는 CI에 맡깁니다. 실제 설정·PI 인스턴스·원자료는 업무 범위와 승인 없이 건드리지 않습니다.
-3. 끝날 때 PR과 `docs/status/`에 결과를 쓰고 이 문서의 큐·PI 결정을 갱신합니다. 로컬 진행 노트와 gitignore 대상 `HARVEST.md`도 갱신하되 커밋하지 않습니다.
+1. `AGENTS.md`, `STATUS.md` 상단, 열린 PR, #760의 최근 댓글을 읽습니다. 위임·점검·한도는 [운영 기준](docs/reference/lead-operations.md)을 따릅니다.
+2. test는 바꾼 곳만, 전체 suite는 CI에 맡깁니다. 실제 설정·PI 인스턴스·원자료는 업무 범위와 승인 없이 건드리지 않습니다.
+3. 끝날 때 PR과 `docs/status/`에 결과를 쓰고 이 문서의 우선순위를 갱신합니다. 지난 큐·결정은 [참고 기록](docs/reference/README.md)에 두고 여기에는 현재 것만 남깁니다.
 
-큰 변경 때와 **매 PI 보고 전** README 한영판·manual·HANDOFF를 코드·직원 YAML·현재 PR과 대조합니다. 과거 큐와 결정 근거는 [참고 기록](docs/reference/README.md)에 두고 본문에는 현재 권고만 남깁니다.
+## 현재 우선순위 (2026-10-20)
 
-## 작업 큐 (2026-10-20 통합 점검)
+PI가 신규 일반 작업 보류를 해제했습니다. 승인 예산 안에서 열린 PR을 마무리하고 같은 담당자에게 관련 후속 작업을 이어 배정합니다. 시운전 체크리스트는 [#739](https://github.com/ehojune/bioinfo-team-3d/issues/739)입니다.
 
-[#760의 이관 요약](https://github.com/ehojune/bioinfo-team-3d/issues/760) 기준입니다. PR의 최신 head·CI·리뷰는 작업 직전에 다시 확인합니다.
+| 열린 PR | 내용 (병합 전이므로 manual·README에 출시 동작으로 쓰지 않음) |
+|---|---|
+| #766 | 승인 전 광역 프로세스 종료 거부(#681 일부) |
+| #790 · #791 | POSIX runner TERM·HUP 종료 기록(#664) · 조상 단계 산출의 읽기 전용 inputs 복사(#665) |
+| #793 | 문서 전용 변경의 CI 검사와 같은 tree 검증 재사용 |
+| #802 | Windows Job 탈출 검증과 doctor 운영 준비 판정 분리(#795) |
+| #807 | 후속 연구 재사용 검증과 CP1 승인 snapshot 일치(#797) |
+| #815 | 응집형 분석 계획·비교 측정 계약(#799), draft |
+| #801 | 이 문서 정비 |
 
-| 순서 | 할 일 | 완료 조건·현재 한계 |
-|---|---|---|
-| 완료 | #762→#764→#763 및 후속 #765·#768·#767·#775·#777·#778·#781·#782·#783 병합 | PI 반영본 `e0fa7e48`에서 doctor 준비·필수 WSL 연결·요청 0 확인. 실제 연구·재현·성능 PASS는 별도 |
-| 완료 | #682 거부 선택(#778)·#677 참고 읽기 승인(#782)·#676 내장 조회 상한(#776)·#754 rebuild(#777) | 구현·CI·병합 완료. #676의 임의 스크립트/외부 MCP와 #771의 helper/output 계약은 일부 미해결 |
-| 진행 | #681 광역 종료 차단 PR #766 | `e0512fd7` Windows CI 통과, 3.10 재실행에서 외부 조회 limiter test 실패. 같은 담당자가 mock 검증·수정 후 최종 CI/리뷰·P1=0 확인 |
-| 다음 | Codex #665→#673·#664→#674, Opus #772 | 같은 담당자·정확한 세션 재사용. 사용량+예약+점검/보고 여유를 포함해 배정하고 부족하면 기존 큐를 보존 |
-| 2 | 공개 소형 주제 2개를 제시하고 PI 선택 뒤 장치 실운전 | P2A 생성→호출→산출, 의미 모델·그림자 요청·ontology·checklist·EDAM·pack, 문헌/PDF, 보고서·묶음·정리본을 요청별로 대조. **아직 미실행** |
-| 3 | bench dry-run → 준비 게이트 검토 요청 | 동일 입력·판본·PI 답·예산과 arm별 state/workspace 분리, 장치 작동 근거, 예상 시간·비용을 확인 |
-| 4 | 공개 소형 dry-run·필수 gate → Astra 전체 repo 검토 | labhq 코드·README·구조 전체를 검토([PI 승인](https://github.com/ehojune/bioinfo-team-3d/issues/435#issuecomment-6251776665), [#739 확인](https://github.com/ehojune/bioinfo-team-3d/issues/739#issuecomment-6251808284)) |
-| 5 | 동일 요청 bench 비교([#739](https://github.com/ehojune/bioinfo-team-3d/issues/739)) | labhq 혼합 roster와 Astra·Sol·Opus **단독 세션**을 비교(CSO-only와 구분). 생성 결과 repo blind review는 실행 뒤 별도 |
-| 진행 | #796 CP1 input-fit·최소 기여 기록 | PR #803: 기존 2회 CP1 검증·증거/미측정 기록. mainline 평가기를 optional Shadow adapter와 분리해 off·제거 뒤에도 검증 유지. 실제 제거/import 통합은 CI, 리뷰·병합은 총괄. #797/#798 실행은 별도 |
+#812는 병합됐습니다(`8cc845b2`). #799는 Opus가 #815에서 계획 예제·측정 계약과 이미 승인된 응집형 정책을 보완합니다. #811은 Codex1이 #807·#791 통합 뒤 맡고 #798은 CP1 공유 코드를 순차 통합합니다. 감사 항목별 경계와 진행은 [감사 우선순위](docs/reference/audit-priorities-2026-10-20.md)에 있습니다.
 
-v0.5 선언(2026-10-08)은 당시 실제 연구 요청 2건과 `labhq verify` exit 0의 근거입니다. 이후 장치의 구현·CI 통과는 새 실운전 PASS를 뜻하지 않습니다. 버전별 기준은 [매뉴얼 로드맵](docs/manual.md#로드맵)에 있습니다.
+개발 준비가 끝나고 PI가 실운전을 승인한 뒤의 순서는 공개 소형 주제 실운전 → bench dry-run·필수 게이트 → Astra의 코드·README·구조 전체 검토 → 동일 요청 bench 비교(labhq 혼합 roster 대 Astra·Sol·Opus 단독 세션)입니다. 현재 실운전 가동은 #795 해결 뒤 다시 확인합니다. v0.5 선언(2026-10-08) 이후 장치의 구현·CI 통과는 새 실운전 PASS를 뜻하지 않습니다([로드맵](docs/manual.md#로드맵)).
 
-## PI 결정과 다음 확인
-
-[현재 PI 창구](https://github.com/ehojune/bioinfo-team-3d/issues/760)의 결정과 2026-10-20 총괄 인계를 적용합니다.
+## PI 결정
 
 | 항목 | 결정 |
 |---|---|
-| 개발 총괄 | Codex 고정, Codex·Claude subagent에 여러 작업 위임. 제품 CSO 설정은 별개 |
-| Codex 일일 한도 | 10-19 실제 11,376,303/14M, 미사용 2,623,697 → M 단위 올림 3M + 4M = **10-20 7M 확정**([PI 승인](https://github.com/ehojune/bioinfo-team-3d/issues/760#issuecomment-6269465875)) |
-| #732 배정 | 표준 생물정보학은 bioinfo-agent/nf-core, 단순 작업은 직접 처리. 없는 복잡한 신규 파이프라인은 직접 코딩한 뒤 **기여 여부를 PI에게 묻고 yes일 때만 bioinfo-agent PR** |
+| 개발 총괄 | Codex 고정, Codex·Claude subagent에 위임. 제품 CSO 설정과 별개 |
+| token 한도 | PI가 #760에서 정한 일일 한도와 남은 주간 여유 안에서 admission. 기준은 [운영 기준](docs/reference/lead-operations.md) |
+| 분석 배정(#732) | 표준 생물정보학은 bioinfo-agent/nf-core, 단순 작업은 직접. 없는 복잡한 파이프라인은 직접 코딩한 뒤 기여 여부를 PI에게 묻고 yes일 때만 bioinfo-agent PR([매뉴얼](docs/manual.md#직원과-도구)) |
+| 의미 장치 | 측정용 Shadow는 유지하고 부가 확장은 동결. 연구 이점은 미측정 |
 
-#732는 PR #762(`923a4fa`)로 병합됐습니다. #748 receipt와 #754 CLI/storage rebuild(#777)는 병합됐고, #771의 script별 출력 판정은 일부 해결 상태입니다. 다음 PI 확인은 공개 소형 주제 선택과 dry-run 뒤 bench 준비 게이트입니다. 이전 교대 운영·결정표는 [보존본](docs/reference/handoff-history-2026-10-19.md)에 있습니다.
+이전 결정은 [보존본](docs/reference/handoff-history-2026-10-19.md)에 있습니다.
 
 ## 구조 한눈에
 
@@ -52,15 +49,11 @@ CSO는 gateway 안에서 계획과 의존관계를 관리하고 runner가 실제
 | `labhq/runner/`, `labhq/adapters/`, `labhq/tools/` | CLI/MCP 배선·작업 격리·SGE/PBS/Slurm 제출·감시 |
 | `agents/core/*.yaml` | 기본 역할 13개: Claude Code 8·Codex 5. 로컬 solo·파견직 별도 |
 | `labhq/research/`, `labhq/vocab/`, `labhq/recruit/` | 연구 계약·checkpoint·분야 규칙·의미 모델·Paper2Agent |
-| `labhq/report_contract.py`, `portfolio.py`, `result_storage.py` | 보고 구조·정리본·PDF·결과 저장 |
+| `labhq/report_contract.py`, `portfolio.py`, `result_storage.py`, `reproduction_receipt.py` | 보고 구조·정리본·PDF·결과 저장·재현 receipt |
 | `labhq/integrations/`, `patch_notes/entries/`, `docs/status/` | GitHub 보고·공개 가드·개발 기록과 생성 목차 |
 
-직원 내부의 임의 agent 확장은 막습니다. Claude의 `Agent` 허용은 Paper2Agent 변환 담당 recruiter에만 있고 Codex 직원의 `multi_agent`는 꺼집니다. **개발 총괄의 별도 clone·위임 레인**과 제품 직원의 실행 경계는 다릅니다. 직원별 모델·도구는 [매뉴얼](docs/manual.md#직원과-도구)과 YAML이 기준입니다.
+직원 내부의 임의 agent 확장은 막습니다. Claude의 `Agent` 허용은 Paper2Agent 변환 담당 recruiter에만 있고 Codex 직원의 `multi_agent`는 꺼집니다. 개발 총괄의 위임 레인과 제품 직원의 실행 경계는 다릅니다. 직원별 모델·도구는 [매뉴얼](docs/manual.md#직원과-도구)과 YAML이 기준입니다.
 
-## 작업 규칙
+작업 규칙은 [AGENTS.md](AGENTS.md)를 따릅니다. 직원 설정은 `scripts/integrations.py --check`, 기록은 `scripts/patch_notes.py check`·`scripts/notes_index.py --validate`로 확인합니다.
 
-PR·패치노트·관련 test·CI·리뷰·공개 검사 규칙은 [AGENTS.md](AGENTS.md)를 따릅니다. 생성 파일 `STATUS.md`·`patch_notes/README.md`는 직접 고치지 않습니다. 직원 설정은 `scripts/integrations.py --check`, 기록은 `scripts/patch_notes.py check`·`scripts/notes_index.py --validate`로 확인합니다.
-
-[#788 CI 정책](docs/reference/ci-reuse.md)은 예제·보호 markup이 그대로인 prose와 정해진 기록만 축소하고 main은 동일 tree의 완전한 PR 검증만 재사용합니다. 증거가 없으면 full이며 #787의 3.10 stall 진단은 유지합니다.
-
-이벤트·안전 경계·설치·알려진 한계는 [매뉴얼](docs/manual.md), 옛 큐·결정은 [보존본](docs/reference/handoff-history-2026-10-19.md)에 있습니다.
+[#788 CI 정책](docs/reference/ci-reuse.md)은 보호 예제가 같은 prose·정해진 기록만 축소하고 main 재사용은 동일 tree·전체 gate 증거를 요구합니다. 불명확하면 full이며 #787의 3.10 진단을 유지합니다.
