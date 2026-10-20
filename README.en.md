@@ -216,7 +216,7 @@ Details are in [Safety measures](docs/manual.md#%EC%95%88%EC%A0%84-%EC%9E%A5%EC%
 | v1 | Another researcher solves up to two research problems on their own controlled data |
 | v1.25 | Goes beyond research to write papers |
 
-Each version has pass criteria, and meeting them moves it on to the next version. Features added after the v0.5 declaration passed tests and CI but have not been re-checked on real research requests. The criteria, current status, and remaining work are in the [manual's roadmap](docs/manual.md#%EB%A1%9C%EB%93%9C%EB%A7%B5).
+Each version has pass criteria, and meeting them moves it on to the next version. Features merged since the v0.5 declaration passed tests and CI; their behavior and scientific benefit on real research requests remain unverified. The criteria, current status, and remaining work are in the [manual's roadmap](docs/manual.md#%EB%A1%9C%EB%93%9C%EB%A7%B5).
 
 ## Further reading
 
