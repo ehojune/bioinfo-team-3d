@@ -30,7 +30,8 @@ PLAN_RULE = (
     "Prefer papers with available code or data. For each give paper_id (DOI or PMID from the supplied citations), "
     "title, reason (why its method fits), and step_ids assigned to core employees. Use [] when none fits. "
     "These are Paper2Skill consultant skills attached only to those steps for this request, without hiring. "
-    "Do not invent identifiers or put conversion receipts in the plan; labhq prepares them before CP1.")
+    "Do not invent identifiers or put conversion receipts in the plan; labhq checks metadata before CP1 "
+    "and builds selected skills only when their approved steps dispatch.")
 UNAVAILABLE = "스킬 장착 불가(Paper2Agent 미설치)"
 
 
@@ -105,10 +106,31 @@ async def prepare_plan(plan: dict, precedents: dict, roster: list[dict], rid: st
             rows.append({**selected, "status": "skipped",
                          "skip_reason": f"본문 접근 수준이 {level}라 Paper2Skill을 만들지 않음"})
             continue
-        task = Task(agent_id=settings.recruit.agent_id, request_id=rid, prompt="Prepare paper advice",
-                    budget_usd=settings.recruit.max_budget_usd,
+        # No filesystem, fulltext fetch or model turn before CP1. This descriptor, not a future build,
+        # is part of the approved plan hash. Execution receipts never mutate the frozen plan.
+        digest = hashlib.sha256(json.dumps(selected, ensure_ascii=False, sort_keys=True,
+                                            separators=(",", ":")).encode()).hexdigest()
+        rows.append({**selected, "status": "deferred", "selection_sha256": digest})
+    if not rows:
+        return {k: v for k, v in plan.items() if k != "paper_skill_results"}
+    rows = [{**row, "selected": True, "built": False, "attached_steps": [], "called": False} for row in rows]
+    warnings = [f"논문 스킬 생략: {r['title']} ({r['skip_reason']})" for r in rows if r["status"] == "skipped"]
+    return {**plan, "paper_skill_results": rows,
+            "warnings": list(dict.fromkeys([*(plan.get("warnings") or []), *warnings]))}
+
+
+async def resolve_attachments(rows: list[dict], settings, run) -> list[dict]:
+    """Resolve only a dispatched step's approved descriptors, through ordinary bounded CSO tasks."""
+    resolved = []
+    for selected in rows:
+        if selected.get("status") != "deferred":
+            resolved.append(selected)
+            continue
+        key = selected["selection_sha256"] + ":" + selected["step_id"]
+        task = Task(agent_id=settings.recruit.agent_id, request_id=selected["request_id"],
+                    prompt="Prepare approved paper advice", budget_usd=settings.recruit.max_budget_usd,
                     meta={"kind": "paper_skill", "paper_skill": selected, "max_attempts": 1,
-                          "step_id": "paper_skill_" + hashlib.sha256(selected["paper_id"].encode()).hexdigest()[:24],
+                          "step_id": "paper_skill_" + hashlib.sha256(key.encode()).hexdigest()[:24],
                           "title": f"참고 논문 스킬: {selected['title']}"})
         try:
             result = await run(task)
@@ -121,23 +143,16 @@ async def prepare_plan(plan: dict, precedents: dict, roster: list[dict], rid: st
             raise
         except Exception as exc:
             receipt = {"status": "failed", "error": f"Paper2Skill 변환 실패 ({type(exc).__name__})"}
-        rows.append({**receipt, **selected})
-    if not rows:
-        return {k: v for k, v in plan.items() if k != "paper_skill_results"}
-    rows = [{**row, "selected": True, "built": row.get("status") in {"ready", "reused"},
-             "attached_steps": [], "called": False} for row in rows]
-    warnings = [f"논문 스킬 생략: {r['title']} ({r['skip_reason']})" if r["status"] == "skipped" else
-                UNAVAILABLE if r["status"] == "unavailable" else
-                f"논문 스킬 변환 실패: {r['title']} ({r.get('error', '변환 실패')})"
-                for r in rows if r["status"] not in {"ready", "reused"}]
-    return {**plan, "paper_skill_results": rows,
-            "warnings": list(dict.fromkeys([*(plan.get("warnings") or []), *warnings]))}
+        # The converter cannot change the approved paper, employee, step or request.
+        resolved.append({**receipt, **selected, "status": receipt["status"],
+                         **({"error": receipt["error"]} if receipt.get("error") else {})})
+    return resolved
 
 
 def attachments(plan: dict, step_id: str, agent_id: str, rid: str) -> list[dict]:
     return [{**row, "request_id": rid, "agent_id": agent_id, "step_id": step_id}
             for row in plan.get("paper_skill_results", [])
-            if row.get("status") in {"ready", "reused"} and step_id in row.get("step_ids", [])
+            if row.get("status") in {"deferred", "ready", "reused"} and step_id in row.get("step_ids", [])
             and agent_id in row.get("agent_ids", [])]
 
 
@@ -145,7 +160,8 @@ def card_text(plan: dict) -> str:
     return "\n".join(
         f"참고 논문 스킬: {r['title']} → {', '.join(r.get('agent_ids') or [])}; 선정됨: 예; "
         f"만들어짐: {'예' if r.get('status') in {'ready', 'reused'} else '아니오'}"
-        + (f" ({r.get('skip_reason') or r.get('error')})" if r.get('status') not in {"ready", "reused"} else "")
+        + (" (승인 후 담당 단계 실행 때 생성; 현재는 본문 접근 metadata만 확인)" if r.get('status') == 'deferred'
+           else f" ({r.get('skip_reason') or r.get('error')})" if r.get('status') not in {"ready", "reused"} else "")
         + f"; 붙을 단계: {', '.join(r.get('step_ids') or []) or '없음'}; 호출됨: 아니오(실행 전)"
         for r in plan.get("paper_skill_results", []))
 
@@ -157,24 +173,44 @@ def records(plan: dict, results: dict | None = None) -> list[dict]:
             usage.extend({**row, "step_id": step_id} for row in run.get("paper_skills", []))
     records = []
     for row in plan.get("paper_skill_results", []):
-        used = [u for u in usage if u.get("paper_id") == row.get("paper_id")]
+        used = [u for u in usage if u.get("paper_id") == row.get("paper_id")
+                and u.get("step_id") in row.get("step_ids", [u.get("step_id")])
+                and (not row.get("selection_sha256") or u.get("selection_sha256") == row["selection_sha256"])]
+        called = [u for u in used if u.get("called") is True and u.get("call_status") == "referenced"
+                  and all(re.fullmatch(r"[a-f0-9]{64}", str(u.get(k) or ''))
+                          for k in ('skill_sha256', 'document_sha256'))
+                  and re.fullmatch(r"paper-[a-f0-9]{24}", str(u.get('skill_id') or ''))
+                  and u.get("evidence") == reference_token(u)]
+        built = any(u.get("skill_sha256") for u in used) or row.get("status") in {"ready", "reused"}
+        build_status = (used[-1].get('status') if used else None) or row.get('status')
         records.append({**{k: v for k, v in row.items() if k not in {"skill_dir", "runner_id"}},
-                        "selected": True, "built": row.get("status") in {"ready", "reused"},
-                        "attached_steps": list(dict.fromkeys(u["step_id"] for u in used)),
-                        "called": None if used else False, "usage": used})
+                        "selected": True, "built": built, "status": build_status,
+                        "attached_steps": list(dict.fromkeys(u["step_id"] for u in used if u.get("input_ref"))),
+                        "called": bool(called), "call_status": "referenced" if called else
+                        "unverified" if used or any(sid in (results or {}) for sid in row.get('step_ids', []))
+                        else "not_dispatched",
+                        "usage": used})
     return records
 
 
 def appendix(plan: dict, results: dict | None = None) -> str:
     rows = records(plan, results)
+    def values(row: dict, key: str, fallback: str) -> str:
+        return ', '.join(dict.fromkeys(str(u[key]) for u in [row, *row['usage']] if u.get(key))) or fallback
     return ("참고 논문 스킬 기록:\n" + "\n".join(
         f"- {r['paper_id']} · {r['title']} → {', '.join(r.get('agent_ids') or [])}; {r['status']}; "
         f"선정됨: 예; 만들어짐: {'예' if r['built'] else '아니오'}"
         + (f" ({r.get('skip_reason') or r.get('error')})" if not r['built'] else "") + "; "
-        f"Paper2Agent commit: {r.get('paper2agent_commit') or '미기록'}; "
-        f"skill hash: {r.get('skill_sha256') or '없음'}; "
+        f"Paper2Agent commit: {values(r, 'paper2agent_commit', '미기록')}; "
+        f"skill hash: {values(r, 'skill_sha256', '없음')}; "
         f"붙음: {', '.join(r['attached_steps']) or '아니오'}; "
-        f"호출됨: {'미확인' if r['called'] is None else '아니오'}" for r in rows)) if rows else ""
+        f"호출됨: {'예(결과의 정확한 참조 확인)' if r['called'] else '아니오'} ({r['call_status']})"
+        for r in rows)) if rows else ""
+
+
+def reference_token(row: dict) -> str:
+    """A result reference proves attribution, not tool execution or scientific efficacy."""
+    return f"[paper-skill:{row.get('skill_id')}:{row.get('skill_sha256')}:{row.get('document_sha256')}]"
 
 
 class PaperSkillBuild:

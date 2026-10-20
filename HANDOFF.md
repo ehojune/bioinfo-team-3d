@@ -20,6 +20,8 @@ PI가 신규 일반 작업 보류를 해제했습니다. 승인 예산 안에서
 
 병합된 감사 항목의 구현·검증 범위는 [감사 우선순위](docs/reference/audit-priorities-2026-10-20.md)에 있습니다. #811의 queued-halt 검사는 executor 대기와 분리됐으며 [검증 경계](docs/reference/shadow-test-cost-811.md)를 따릅니다.
 
+#798의 승인 뒤 논문 스킬 생성·결과 참조 receipt·검증 문서 읽기 권한은 #821에서 검증 중입니다([계약과 검증 범위](docs/reference/paper-skills-798.md)). 병합 전이며 현재 head의 최종 CI·리뷰·병합은 총괄 관제가 맡습니다.
+
 개발 준비가 끝나고 PI가 실운전을 승인한 뒤의 순서는 공개 소형 주제 실운전 → bench dry-run·필수 게이트 → Astra의 코드·README·구조 전체 검토 → 동일 요청 bench 비교(labhq 혼합 roster 대 Astra·Sol·Opus 단독 세션)입니다. 가동 전에는 배포 인스턴스의 `doctor --runtime` 준비 판정을 다시 확인합니다. v0.5 선언(2026-10-08) 이후 장치의 구현·CI 통과는 새 실운전 PASS를 뜻하지 않습니다([로드맵](docs/manual.md#로드맵)).
 
 ## PI 결정

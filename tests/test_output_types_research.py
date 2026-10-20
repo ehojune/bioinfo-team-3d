@@ -44,7 +44,8 @@ CANARY = "CANARY-research-91c2"
 # 72274c0b…, and both schemas and VALID_PLAN_SHA are unchanged.
 RESEARCH_PLAN_SCHEMA_SHA = "ecaec20a558be2cba0955836579538a13a1785ce5baed14bda3827a054d8f859"
 RESEARCH_RESULT_SCHEMA_SHA = "9a767787fade091505fea149a8841845738ce30ce77cf6657cbca0aaa72af64d"
-RESEARCH_PROMPT_SHA = "d4f716696622b635ad8d6b30fc601eaa292e4002232579c545ba6aaf582c2f47"
+# #798 changes only paper conversion timing; reverse it below to verify the exact previous prompt.
+RESEARCH_PROMPT_SHA = "a00381711998ac579e148a4188048a628d1f65edf4452b397ce42d2319788adb"
 VALID_PLAN_SHA = "f611461cc2dbb17e39159ec1df6a75d8f7b661eb39bbe42c8ed0438c5c45e213"
 
 
@@ -65,7 +66,13 @@ def test_engine_schemas_and_prompt_off_are_those_of_main():
     args = dict(request="REQ", roster="ROSTER", capabilities="CAPS", briefing="BRIEF", max_steps=3,
                 max_branches=5, max_branch_steps=8, branched_max_steps=43,
                 question_rule=QUESTION_RULE, intake="INTAKE", packs="PACKS", topics_rule=topics.prompt_rule(V))
-    assert raw_sha(cso.RESEARCH_PLAN_PROMPT.format(**args, output_types_rule="")) == RESEARCH_PROMPT_SHA
+    prompt = cso.RESEARCH_PLAN_PROMPT.format(**args, output_types_rule="")
+    assert raw_sha(prompt) == RESEARCH_PROMPT_SHA
+    phase = ("labhq checks metadata before CP1 "
+             "and builds selected skills only when their approved steps dispatch.")
+    assert prompt.count(phase) == 1
+    assert raw_sha(prompt.replace(phase, "labhq prepares them before CP1.")) == (
+        "d4f716696622b635ad8d6b30fc601eaa292e4002232579c545ba6aaf582c2f47")
 
 
 def test_on_schema_offers_optional_entries_without_the_version_field():

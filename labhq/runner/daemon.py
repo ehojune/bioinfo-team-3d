@@ -1626,7 +1626,7 @@ class Runner:
                 for note in skill_warnings:
                     await emit("agent.log", {"level": "warn", "text": note})
                 task = ws.task = task.model_copy(update={"context": task.context + "\n\n" + (
-                    "Use the request's paper advice in .agents/skills/paper-*/SKILL.md; cite the paper when used."
+                    ws.paper_skill_instructions()
                     if plugin else "논문 스킬 장착 불가; 제공된 선행 연구 요약으로 계속하세요.")})
             prompt = await ws.awrite_task_md()
             if skill_error := install_required_skills(ws, agent):
@@ -1666,6 +1666,8 @@ class Runner:
             # Only references that passed the runner's zone/link/scan checks get a shell read grant.
             open_reads.extend(read_dirs)
             open_reads.extend(staged_inputs)
+            paper_inputs = ws.paper_skill_read_files() if task.meta.get('paper_skills') else []
+            open_reads.extend(paper_inputs)
             if task.meta.get("kind") == "recruit" or (
                     task.meta.get("kind") == "paper_skill" and agent.id == self.s.recruit.agent_id):
                 from ..recruit.paper2agent import skill_path
@@ -1788,7 +1790,7 @@ class Runner:
                 mcp_servers=self._mcp_servers(agent, env, allow_ask=not read_only),
                 env={**env, "MCP_TOOL_TIMEOUT": str(labhq_mcp_timeout_s(self.s) * 1000)},
                 emit=emit, prompt=prompt, prompt_pointer=ws.prompt_pointer, extra_dirs=extra_dirs,
-                read_dirs=read_dirs, read_only_inputs=(staged_inputs or
+                read_dirs=read_dirs, read_only_inputs=([*staged_inputs, *paper_inputs] or
                     ([str(ws.dir / 'inputs')] if os.path.lexists(ws.dir / 'inputs') else [])),
                 # Other engines never read these rules; only paths a rule can name go in (#177).
                 claude_settings=engine_settings,
@@ -2093,6 +2095,8 @@ class Runner:
                              else result.cost_usd is not None,
                              usage=result.usage, usage_known=result.usage_known,
                              session_id=result.session_id, pending_jobs=pending)
+        if task.meta.get("paper_skills"):
+            ws.record_paper_skill_usage(result)
         result.provenance = ws.provenance()
         if task.meta.get("paper_skills"):
             ws.clear_paper_skills()  # before task.result can release a dependent step
