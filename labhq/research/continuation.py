@@ -76,6 +76,16 @@ def node_context(plan: Mapping[str, Any], step: Mapping[str, Any]) -> str:
     context['intake'] = plan.get('intake') or {}
     # Free-form assumptions can affect every node; do not infer that a new one is irrelevant.
     context['assumptions'] = plan.get('assumptions') or []
+    # Paper selections and conversion receipts are method inputs, delivered via task metadata.
+    # Keep complete rows and their order; scope exactly to this node's selection/attachment targets.
+    # Only a digest enters the prompt context, never local skill paths or receipt values.
+    context['paper_method_sha256'] = _digest({
+        'selections': [row for row in plan.get('paper_skills') or []
+                       if step.get('id') in (row.get('step_ids') or [])],
+        'results': [row for row in plan.get('paper_skill_results') or []
+                    if step.get('id') in (row.get('step_ids') or [])
+                    and step.get('agent_id') in (row.get('agent_ids') or [])],
+    })
     relevant = {step.get("id"), *_ancestors(plan.get("steps") or []).get(step.get("id"), set())}
     branches = {s.get("branch") for s in plan.get("steps") or [] if s.get("id") in relevant}
     if "synthesis" not in branches:
@@ -104,9 +114,9 @@ def tool_signatures(plan: Mapping[str, Any], agents: Mapping[str, Any], engines:
                     continue
                 if config is not None:
                     payload = {'agent': payload, 'engine': config.model_dump(mode='json')}
-                # Version the executed prompt contract too: pre-scoped historical results cannot prove that
-                # another branch's full definition was absent from their input.
-                signatures[step["id"]] = _digest({'node_context': 1, 'configuration': payload})
+                # Version the executed prompt contract too: historical signatures without the scoped
+                # branch/paper-method context cannot prove the current execution-input contract.
+                signatures[step["id"]] = _digest({'node_context': 2, 'configuration': payload})
             except (TypeError, ValueError):
                 pass  # an unrecordable declaration supplies no reuse proof
     return signatures
