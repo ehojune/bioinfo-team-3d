@@ -52,7 +52,66 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - run: pip install -e ".[dev]"
-      - run: pytest -q --durations=15  # the 15 slowest tests, to find what to speed up
+      - if: matrix.python-version != '3.10'
+        run: pytest -q --durations=15  # the 15 slowest tests, to find what to speed up
+      - name: Pytest 3.10 with bounded stall diagnostics
+        if: matrix.python-version == '3.10'
+        timeout-minutes: 25  # Normal rerun: 13m47s; allow 11m13s headroom (Refs #786).
+        run: |
+          python -u - <<'PY'
+          import asyncio
+          import faulthandler
+          import gc
+          import os
+          import threading
+          import pytest
+
+          class StallDiagnostics:
+              def __init__(self, stream):
+                  self.stream = stream
+                  self.context = "collection"
+                  self.stop = threading.Event()
+                  self.worker = None
+
+              def pytest_sessionstart(self):
+                  self.worker = threading.Thread(target=self.watch, name="ci-stall-diagnostics", daemon=True)
+                  self.worker.start()
+
+              def pytest_runtest_logstart(self, nodeid, location):
+                  self.context = f"{nodeid} [setup]"
+
+              def pytest_runtest_logreport(self, report):
+                  self.context = f"{report.nodeid} [after {report.when}]"
+
+              def pytest_sessionfinish(self):
+                  self.stop.set()
+                  if self.worker is not None:
+                      self.worker.join(timeout=1)
+
+              def watch(self):
+                  while not self.stop.wait(300):
+                      try:
+                          print(f"\nCI snapshot: {self.context}", file=self.stream, flush=True)
+                          faulthandler.dump_traceback(file=self.stream, all_threads=True)
+                          shown = 0
+                          for value in gc.get_objects():
+                              if isinstance(value, asyncio.Task) and not value.done():
+                                  if shown == 50:
+                                      print("Further pending tasks omitted", file=self.stream)
+                                      break
+                                  value.print_stack(limit=20, file=self.stream)
+                                  shown += 1
+                          print(f"Pending task stacks shown: {shown}", file=self.stream, flush=True)
+                      except Exception as error:
+                          print(f"CI snapshot failed: {type(error).__name__}", file=self.stream, flush=True)
+
+          if __name__ == "__main__":
+              # Duplicate stderr before pytest redirects fd 2: snapshots must survive a hung captured test.
+              stream = os.fdopen(os.dup(2), "w", buffering=1)
+              raise SystemExit(pytest.main(
+                  ["-vv", "--durations=15", "-o", "faulthandler_timeout=300"],
+                  plugins=[StallDiagnostics(stream)]))
+          PY
 
   pytest-windows:
     needs: changes
