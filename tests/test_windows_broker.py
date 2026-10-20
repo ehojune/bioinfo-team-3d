@@ -130,6 +130,24 @@ def test_failed_open_never_terminates_wmi_returned_pid(world):
     world.native.k.TerminateProcess.assert_not_called()
 
 
+def test_create_timeout_is_unknown_and_never_retried_or_treated_as_owned(world):
+    import subprocess
+
+    failure = subprocess.TimeoutExpired("fake-powershell", 10)
+    world.create.side_effect = failure
+    with pytest.raises(broker.BrokerFailure, match="native_or_protocol") as caught:
+        launch(world)
+    assert caught.value.__cause__ is failure
+    world.create.assert_called_once()
+    world.native.open_process.assert_not_called()
+    world.native.k.TerminateProcess.assert_not_called()
+    assert not list((world.state / ".launch").iterdir())  # No ACK/control files survive an uncommitted launch.
+    rows = [json.loads(line) for line in (world.state / "logs/detached-launch.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [row["status"] for row in rows] == ["wmi_attempt", "wmi_failed"]
+    assert rows[-1]["error"] == "TimeoutExpired"
+    assert not any("child_pid" in row for row in rows)
+
+
 @pytest.mark.parametrize("code", [2, 3, 8, 9, 21, -1])
 def test_wmi_return_code_is_not_a_success_pid(tmp_path, monkeypatch, code):
     root = tmp_path / "windows"
