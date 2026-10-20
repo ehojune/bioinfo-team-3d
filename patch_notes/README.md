@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 13:43 | [`ade4f03`](https://github.com/ehojune/bioinfo-team-3d/pull/805/commits/ade4f03) | docs: 아키텍처 다이어그램의 store·resume·ws 경로 수정 및 readme-evidence 수치 동기화 |
+| 13:35 | [`6e522b2`](https://github.com/ehojune/bioinfo-team-3d/pull/805/commits/6e522b2) | docs: 매뉴얼 내 개발 에이전트 규칙 분리, 전체 계층 구조·다크 다이어그램 및 v0.5 모듈/어휘 수 최신화 |
 | 13:16 | [`bab83c2`](https://github.com/ehojune/bioinfo-team-3d/pull/803/commits/bab83c2) | C3의 6954ab6 원본 두 테스트와 98f70d96의 second-parent 대비 external_wait 테스트 diff만 재사용했다. 원본/applied patch hash 일치, private polling clock·deadline·취소·timeout progress 증거를 보존했다. 관련 mock/static 36건 통과; 제품/CP1 분리 변경 없이 새 통합 CI는 총괄에게 넘긴다. |
 | 12:42 | [`2070c23`](https://github.com/ehojune/bioinfo-team-3d/pull/803/commits/2070c23) | CP1 평가기·관계표를 mainline으로 옮기고 optional Shadow adapter와 같은 aggregate API·의미 hash를 공유했다. off·전체 제거 후 CP1 교정, actions-only 제거 후 base observer 보존을 메모리/AST·mock으로 검증했다. 관련 68건·공개 경로 5건 통과, 실제 제거·process 통합은 CI에 맡긴다. |
 | 12:04 | [`cab83e7`](https://github.com/ehojune/bioinfo-team-3d/pull/803/commits/cab83e7) | CP1의 기존 2회 계획 검증에 입력 불일치 진단·교정·전후 경고를 연결하고, 기존 semantic_report와 bench 비교에 분모·근거·미측정을 구분한 기여 기록을 추가했다. 관련 mock/static 52건·최종 thread 금지 mock 14건 통과, 과학 성능 효과는 미측정이다. |
