@@ -1,7 +1,7 @@
-"""Shadow-only input-kind versus operation fit counts (#149 decision 17, #151).
+"""Reviewed input-kind versus operation fit rules for CP1 and observation (#149, #151).
 
 The relation table uses local vocabulary keys. EDAM identifiers are optional metadata and never drive a
-verdict. This module returns counts only; callers must not publish step ids, values, paths or declarations.
+verdict. ``evaluate`` retains its counts-only contract; CP1 diagnostics are a separate, request-local API.
 A declaration made under another vocabulary version reads as unknown, and ``table_sha256`` is the table's meaning
 digest, written beside the counts so a table change never silently reinterprets older lines.
 """
@@ -107,17 +107,16 @@ def _operation(step: Mapping[str, Any], plan: Mapping[str, Any], table: Mapping[
     return None
 
 
-def evaluate(plan: Any, *, vocab: Vocab | None = None) -> dict[str, int]:
-    """Return one verdict per plan step, as aggregate counts only."""
+def _assess(plan: Any, *, vocab: Vocab | None = None) -> tuple[dict[str, int], list[dict[str, str]]]:
     if not isinstance(plan, Mapping):
-        return {key: 0 for key in VERDICTS}
+        return {key: 0 for key in VERDICTS}, []
     steps = [step for step in plan.get("steps") or [] if isinstance(step, Mapping)]
     vocab = vocab or current()
     if vocab is None:
-        return _unknown(plan)
+        return _unknown(plan), []
     table = relation_table(vocab)
     if table is None:
-        return _unknown(plan)
+        return _unknown(plan), []
 
     declared: dict[tuple[str, str], str] = {}
     for source in steps:
@@ -132,6 +131,7 @@ def evaluate(plan: Any, *, vocab: Vocab | None = None) -> dict[str, int]:
                 declared[(sid, name)] = data_type
 
     counts = {key: 0 for key in VERDICTS}
+    diagnostics = []
     for step in steps:
         operation = _operation(step, plan, table)
         refs = step.get("input_refs") if isinstance(step.get("input_refs"), list) else []
@@ -152,7 +152,31 @@ def evaluate(plan: Any, *, vocab: Vocab | None = None) -> dict[str, int]:
                 states.append("fit")
             else:
                 states.append("unknown")
+            if isinstance(step.get("id"), str) and data_type and rule and states[-1] != 'unknown':
+                row = {'step_id': step['id'], 'input_ref': ref, 'data_type': data_type,
+                       'operation': operation, 'verdict': states[-1]}
+                if row not in diagnostics:
+                    diagnostics.append(row)
         verdict = ("mismatch" if "mismatch" in states else "fit" if states and all(s == "fit" for s in states)
                    else "unknown")
         counts[verdict] += 1
-    return counts
+    return counts, diagnostics
+
+
+def evaluate(plan: Any, *, vocab: Vocab | None = None) -> dict[str, int]:
+    """Return one verdict per plan step, as aggregate counts only (including unknown)."""
+    return _assess(plan, vocab=vocab)[0]
+
+
+def mismatch_diagnostics(plan: Any, *, vocab: Vocab | None = None) -> list[dict[str, str]]:
+    """Deterministic actual mismatching inputs, never step identities inferred from totals."""
+    return [{key: value for key, value in row.items() if key != 'verdict'}
+            for row in _assess(plan, vocab=vocab)[1] if row['verdict'] == 'mismatch']
+
+
+def resolved_mismatches(plan: Any, previous: list[dict[str, str]], *, vocab: Vocab | None = None
+                        ) -> list[dict[str, str]]:
+    """An earlier mismatching edge counts as corrected only if that same edge now has a proven fit."""
+    fits = {(row['step_id'], row['input_ref']) for row in _assess(plan, vocab=vocab)[1]
+            if row['verdict'] == 'fit'}
+    return [row for row in previous if (row.get('step_id'), row.get('input_ref')) in fits]
