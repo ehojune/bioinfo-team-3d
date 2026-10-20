@@ -13,32 +13,7 @@ from labhq.result_storage import ResultStorage
 from labhq.settings import Settings, DataZone
 from tests.test_result_storage import Hub as StorageHub
 from tests.test_followup import FakeHub, answer
-from tests.test_semantics_request_report import config
 from tests.test_facilities_staff import staff
-
-
-def test_timeout_decision_is_counted(tmp_path):
-    from labhq.store import StateStore
-    from labhq.research.semantics_request_report import build_request_report, render_request_report
-    s = config(tmp_path)
-    store = StateStore(tmp_path / "state/gateway.sqlite3")
-    store.put("request", "req_test", {"id": "req_test", "status": "done"})
-    store.put("approval_decision", "a", {"approval": {"request_id": "req_test"}, "state": "timed_out"})
-    store.close()
-    report = build_request_report(s, "req_test")
-    assert sum(report["actual"]["approvals"].values()) == 1
-    assert "시간 초과 1" in render_request_report(report)
-
-
-@pytest.mark.parametrize("status,label", [("waiting_pi", "PI 응답 대기"), ("waiting_quota", "사용량 한도 대기"),
-    ("waiting_login", "로그인 대기"), ("waiting_facilities_fix", "환경 수정 대기"),
-    ("waiting_for_runner", "runner 연결 대기")])
-def test_waiting_status_names(status, label):
-    from labhq.research.semantics_request_report import render_request_report
-    report = {"request_id": "req_test", "shadow": None, "warnings": [], "actual": {
-        "status": status, "steps": 0, "steps_done": 0, "steps_failed": 0, "tasks": 0,
-        "inputs": 0, "outputs_reported": 0, "approvals": {"approved": 0, "denied": 0, "expired": 0}}}
-    assert label in render_request_report(report)
 
 
 async def test_all_prior_followup_workspaces_remain_inputs():

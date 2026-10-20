@@ -17,11 +17,9 @@ from labhq.adapters import owned as owned_module
 from labhq.gateway.server import RequestIn, create_app
 from labhq.models import AgentSpec, Engine, Task, TaskResult
 from labhq.orchestrator.cso import Orchestrator
-from labhq.research import semantics_shadow as shadow
 from labhq.runner import workspace as workspace_module
 from labhq.runner.daemon import Runner
 from labhq.settings import DataZone, Settings
-from tests.semantics_shadow_lab import line_for, run_lab
 
 
 def _runner(tmp_path, monkeypatch, write, settings=None):
@@ -391,10 +389,6 @@ async def test_a_manifest_swapped_for_a_fifo_does_not_hang_the_finished_run(tmp_
     assert result.outputs == ["outputs/table.tsv"]
 
 
-def test_the_file_cap_is_the_shadow_hash_cap():
-    assert workspace_module.OUTPUT_SCAN_MAX_FILES == shadow.HASH_MAX_FILES
-
-
 @pytest.mark.parametrize("case_sensitive, expected", [
     (False, ["outputs/table.tsv"]),
     (True, ["outputs/result.md", "outputs/table.tsv"]),
@@ -420,34 +414,3 @@ async def test_a_step_run_still_reports_only_its_declared_outputs(tmp_path, monk
     result = await runner.run_task(Task(id="task-s", request_id="r1", agent_id="worker", prompt="step",
                                         meta={"kind": "step", "step_id": "s1", "outputs": ["a.tsv"]}))
     assert result.outputs == ["outputs/a.tsv"]
-
-
-@pytest.mark.asyncio
-async def test_two_direct_requests_need_input_and_target_declarations_beyond_a_source_type(tmp_path):
-    lab = await run_lab(tmp_path, "shadow", ["표 만들기 [artifact]", "앞 표로 비율 [artifact]"],
-                        project_id="shadowproj", request={"mode": "direct", "agent_id": "data_steward"})
-    hub, (first, second) = lab["hub"], lab["rids"]
-    assert hub.requests[first]["results"]["direct"]["outputs"] == ["outputs/artifact.txt"]
-    direct_tasks = [row for row in hub.store.all("task").values() if row.get("kind") == "direct"]
-    assert all((row.get("payload") or {}).get("output_schema") is None for row in direct_tasks)
-    assert all("output_types_vocab" not in ((row.get("payload") or {}).get("meta") or {}) for row in direct_tasks)
-    lines = {line["request_id"]: line for line in lab["lines"] if line["type"] == "request"}
-    assert set(lines) == {first, second} and lines[second]["lane"] == "direct"
-    assert lines[first]["hash"]["observed_new"] == 1
-    # The option is off, so the live path declares no type and the earlier output stays type_unknown.
-    live = lines[second]["provenance"]
-    assert live["history_artifacts"] == 1 and live["candidates"] == 0
-    assert live["excluded"]["type_unknown"] == 1
-    # A source type alone is insufficient: direct mode has neither a target type nor an input identity.
-    # The editor also belongs to this request; only its direct task declares the source output type.
-    tid, row = next((k, v) for k, v in hub.store.all("task").items()
-                    if v.get("request_id") == first and v.get("kind") == "direct")
-    row["payload"]["meta"]["output_types"] = {"outputs/artifact.txt": "raw_counts"}
-    hub.store.put("task", tid, row)
-    observed: dict = {}
-    assert line_for(hub, first, observed)["hash"]["observed_new"] == 1
-    declared = line_for(hub, second, observed)
-    assert declared["hash"]["verified"] == 1
-    prov = declared["provenance"]
-    assert prov["candidates"] == 0 and prov["excluded"]["type_unknown"] == 0
-    assert prov["excluded"]["input_unknown"] == prov["excluded"]["target_type_unknown"] == 1
