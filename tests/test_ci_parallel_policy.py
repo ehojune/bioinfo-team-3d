@@ -67,15 +67,43 @@ def test_selection_keeps_every_node_of_unknown_files_and_both_full_profiles(monk
 
 
 def test_actual_profile_exclusions_have_reviewed_digest_and_no_boundary_marker():
-    reviewed = selection.policy()["reviewed_pure"]
+    data = json.loads((ROOT / selection.PROFILE).read_text(encoding="utf-8"))
+    reviewed = data["reviewed_pure"]
     assert len(reviewed) == 3  # conservative initial review, not a complete purity audit
+    implementation_matches = data["implementation_sha256"] == selection.implementation_digest()
+    nodes, expected = [], []
     for path, row in reviewed.items():
-        source = (ROOT / path).read_text(encoding="utf-8")
-        assert selection.source_digest(source) == row["sha256"]
-        assert selection.include_windows(path, source, reviewed) == (False, row["reason"])
+        node = SimpleNamespace(path=ROOT / path, nodeid=path + "::synthetic-collection")
+        nodes.append(node)
+        if (ROOT / path).is_file():
+            source = (ROOT / path).read_text(encoding="utf-8")
+            eligible = implementation_matches and not selection.include_windows(path, source, reviewed)[0]
+        else:
+            eligible = False
+        if not eligible:
+            expected.append(node)
+    # A stale implementation/source review must run more tests, not fail the
+    # test suite or demand that a product PR refresh its own exclusion approval.
+    chosen, omitted, _ = suite.select(nodes, "windows-boundary-v1")
+    assert chosen == expected and len(chosen) + len(omitted) == len(nodes)
     for path in ("tests/test_windows_job_ci.py", "tests/test_supervisor_process.py", "tests/test_state_isolation.py",
                  "tests/test_private_paths.py", "tests/test_reproduction_receipt.py", "tests/test_durable_writer.py"):
         assert selection.include_windows(path, (ROOT / path).read_text(encoding="utf-8"), reviewed)[0]
+
+
+def test_profile_contract_accepts_full_fallback_after_an_unrelated_runtime_change(monkeypatch):
+    monkeypatch.setattr(selection, "implementation_digest", lambda root=ROOT: "0" * 64)
+    test_actual_profile_exclusions_have_reviewed_digest_and_no_boundary_marker()
+
+
+def test_runtime_fingerprint_uses_identical_case_sensitive_order_on_every_os(tmp_path):
+    folder = tmp_path / "labhq"
+    folder.mkdir()
+    for name in ("a.py", "B.py"):
+        (folder / name).write_text("assert 1", encoding="utf-8")
+    rows = [("labhq/" + name, selection.source_digest("assert 1")) for name in ("B.py", "a.py")]
+    expected = selection.source_digest(json.dumps(rows, separators=(",", ":")))
+    assert selection.implementation_digest(tmp_path) == expected
 
 
 @pytest.mark.parametrize("workerinput", [{}, {"labhq_operator_home": "/different"}])

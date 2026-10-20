@@ -34,7 +34,7 @@ def implementation_digest(root=ROOT) -> str:
     No call-graph guess: an unchanged test may exercise newly OS-sensitive code.
     Unreviewed runtime additions also force the full Windows cohort.
     """
-    files = sorted((root / "labhq").rglob("*.py"))
+    files = sorted((root / "labhq").rglob("*.py"), key=lambda p: p.relative_to(root).as_posix())
     if (root / "pyproject.toml").is_file():
         files.append(root / "pyproject.toml")
     rows = []
