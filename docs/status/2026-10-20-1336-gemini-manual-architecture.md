@@ -3,7 +3,7 @@
 **[Gemini]**
 
 ## 단계
-문서 및 아키텍처 매뉴얼 정리 — `docs/manual.md` · `README.md` · `README.en.md` · `AGENTS.md`
+문서 및 아키텍처 매뉴얼 정리 — `docs/manual.md` · `README.md` · `README.en.md` · `docs/reference/readme-evidence.md` · `AGENTS.md`
 
 ## 한 일
 - **매뉴얼(`docs/manual.md`) 내 개발 에이전트 전용 규칙 분리**:
@@ -11,9 +11,10 @@
   - 목차에서 누락되어 있던 `[PI에게 보이는 글](#pi에게-보이는-글)`을 목차에 추가하고, 프롬프트 지시문 어조 대신 `labhq/pi_language.py`와 `labhq/korean_qc.py`의 평문 변환·문체 점검 동작 설명으로 다듬었습니다.
 - **전체 계층 구조와 모듈 아키텍처 및 다크 다이어그램 추가**:
   - `docs/manual.md`의 `## 구조와 이벤트` 아래에 `### 전체 계층 구조와 모듈 아키텍처` 절을 신설하고, 검정 바탕·흰색 글씨(`theme: dark`, `#0b0f19`/`#111827`)의 4계층(`PI 접점` ↔ `Gateway·SQLite WAL·CSO·Policy` ↔ `Research & Meaning Devices 6종` ↔ `Runner·CLI Adapters·HPC`) Mermaid 다이어그램과 계층별 핵심 모듈·책임 표를 반영했습니다.
+  - Codex 리뷰 지적(P2 4건)을 반영해 다이어그램 및 표의 CLI 명령(`resume`), SQLite 저장소 경로(`labhq/store.py`·`labhq/request_bundle.py`), 클라이언트 WebSocket 엔드포인트(`/ws/client`)를 실제 코드와 일치시켰습니다.
 - **오래된 수치 및 파일 구조 최신화**:
-  - `labhq/vocab/output_types.yaml` 및 `topic_checklists.yaml`(`docs/vocabulary.md`)의 현행 기준인 **45개 분야·135항목**, **어휘 125개 key(79개 EDAM 연결)**를 `README.md`, `README.en.md`, `docs/manual.md`에 일치시켰습니다.
-  - `docs/manual.md`의 `## 파일 구조` 트리에 `supervisor.py`, `durable.py`, `verify.py`, `reproduction_receipt.py`, `portfolio.py`, `result_storage.py`, `korean_qc.py`, `labhq/research/`, `labhq/evidence/`, `labhq/recruit/paper_skills`, `labhq/skills/` 등 v0.5 모듈 구성을 반영했습니다.
+  - `labhq/vocab/output_types.yaml` 및 `topic_checklists.yaml`(`docs/vocabulary.md`)의 현행 기준인 **45개 분야·135항목**, **어휘 125개 key(79개 EDAM 연결)**를 `README.md`, `README.en.md`, `docs/manual.md`, `docs/reference/readme-evidence.md`에 일치시켰습니다.
+  - `docs/manual.md`의 `## 파일 구조` 트리에 `supervisor.py`, `store.py`, `durable.py`, `verify.py`, `request_bundle.py`, `reproduction_receipt.py`, `portfolio.py`, `result_storage.py`, `korean_qc.py`, `labhq/research/`, `labhq/evidence/`, `labhq/recruit/paper_skills`, `labhq/skills/` 등 v0.5 모듈 구성을 반영했습니다.
 
 ## 테스트 결과
 - [x] `pytest -q tests/test_integrations.py tests/test_direct_outputs.py tests/test_nfcore_default_732.py tests/test_pdf_figure_policy.py tests/test_staff_writing_skills.py tests/test_vocab_tables.py`: `115 passed, 2 skipped`
@@ -23,6 +24,7 @@
 - `docs/manual.md`
 - `README.md`
 - `README.en.md`
+- `docs/reference/readme-evidence.md`
 - `AGENTS.md`
 - `patch_notes/entries/gemini-manual-architecture.yaml`
 - `docs/status/2026-10-20-1336-gemini-manual-architecture.md`
