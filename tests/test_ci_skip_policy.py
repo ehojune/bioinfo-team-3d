@@ -513,6 +513,51 @@ def test_artifact_is_bounded_data_and_redirect_carries_no_credential():
         cs.manifest_json(b"x" * (cs.MAX_BYTES + 1))
 
 
+@pytest.mark.parametrize("binary", [False, True])
+def test_api_reads_bounded_binary_response_with_original_handlers(monkeypatch, binary):
+    monkeypatch.setenv("GH_TOKEN", "synthetic-fixture")
+    monkeypatch.setenv("GITHUB_REPOSITORY", cs.REPOSITORY)
+    opener = object()
+    calls = []
+    payload = b"\xff\x00" if binary else '{"text":"한국어"}'.encode("utf-8")
+    class Response(io.BytesIO):
+        def read(self, size):
+            calls.append(size)
+            return super().read(size)
+    def build(handler):
+        assert isinstance(handler, cs.ArtifactRedirect)
+        return opener
+    def open_response(actual_opener, request, *, timeout):
+        assert actual_opener is opener and timeout == 15
+        assert request.full_url == f"https://api.github.com/repos/{cs.REPOSITORY}/fixture"
+        assert request.get_header("Authorization") == "Bearer synthetic-fixture"
+        return Response(payload)
+    monkeypatch.setattr(cs.urllib.request, "build_opener", build)
+    monkeypatch.setattr(cs.urllib.request.OpenerDirector, "open", open_response)
+    assert cs.api("fixture", binary=binary) == (payload if binary else {"text": "한국어"})
+    assert calls == [(cs.MAX_BYTES if binary else cs.MAX_API_BYTES) + 1]
+
+
+@pytest.mark.parametrize("binary", [False, True])
+def test_api_rejects_oversized_response(monkeypatch, binary):
+    monkeypatch.setenv("GH_TOKEN", "synthetic-fixture")
+    monkeypatch.setenv("GITHUB_REPOSITORY", cs.REPOSITORY)
+    limit = cs.MAX_BYTES if binary else cs.MAX_API_BYTES
+    monkeypatch.setattr(cs.urllib.request.OpenerDirector, "open",
+                        lambda *args, **kwargs: io.BytesIO(b"x" * (limit + 1)))
+    with pytest.raises(ValueError, match="oversized CI evidence"):
+        cs.api("fixture", binary=binary)
+
+
+def test_api_json_requires_utf8_not_implicit_utf16_detection(monkeypatch):
+    monkeypatch.setenv("GH_TOKEN", "synthetic-fixture")
+    monkeypatch.setenv("GITHUB_REPOSITORY", cs.REPOSITORY)
+    monkeypatch.setattr(cs.urllib.request.OpenerDirector, "open",
+                        lambda *args, **kwargs: io.BytesIO('{"text":"fixture"}'.encode("utf-16")))
+    with pytest.raises(UnicodeDecodeError):
+        cs.api("fixture")
+
+
 def test_workflow_preserves_all_required_gates_and_pins_checkout():
     workflow = yaml.safe_load((Path(__file__).resolve().parents[1] / cs.WORKFLOW).read_text(encoding="utf-8"))
     jobs = workflow["jobs"]

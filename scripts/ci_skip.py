@@ -246,11 +246,12 @@ def api(path: str, binary: bool = False):
                                  headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"})
     opener = urllib.request.build_opener(ArtifactRedirect())
     limit = MAX_BYTES if binary else MAX_API_BYTES
-    with opener.open(req, timeout=15) as response:
+    # Explicit binary HTTP response API, using the same redirect/auth handlers.
+    with urllib.request.OpenerDirector.open(opener, req, timeout=15) as response:
         data = response.read(limit + 1)
     if len(data) > limit:
         raise ValueError("oversized CI evidence")
-    return data if binary else json.loads(data)
+    return data if binary else json.loads(data.decode("utf-8"))
 
 
 def manifest_json(data: bytes) -> dict:
