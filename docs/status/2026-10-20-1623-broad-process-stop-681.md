@@ -1,5 +1,5 @@
 ## 단계
-PR #766 광역 종료 guard 후속 — `715e89e`, Refs #681.
+PR #766 광역 종료 guard 후속, Refs #681.
 
 ## 수정
 - P1 4321811293·4321811304: 이름 선택 expression의 Id와 process substitution의 PID를 종료 consumer에 연결합니다.
@@ -15,4 +15,4 @@ PR #766 광역 종료 guard 후속 — `715e89e`, Refs #681.
 ## 한계
 실제 process/proc_tree·shell·PI·연구·HPC는 실행하지 않았습니다. 동적 명령 OS 격리·PID tracker #675·기존 P2는 별도 범위입니다. 새 head CI는 조회·대기하지 않으며 controller가 CI·리뷰·병합·배포를 맡습니다.
 
-🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+🤖 Co-Authored-By: Codex (gpt-6-luna) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>

@@ -48,6 +48,6 @@ rows:
 - sha: 'd16dd8e'
   at: '2026-10-20 14:33'
   text: 'skill 이름 선택 종료와 pidof PID 전달을 거부하고 option operand·조회·명시 PID를 구분한다. 새 실패 22개 재현 뒤 mock/static 544개와 guard blocked 0건을 확인했다.'
-- sha: '715e89e'
+- sha: 'e307580'
   at: '2026-10-20 16:23'
   text: '이름 선택 식·process substitution·Invoke-Expression·watch·nonpositive PID·Process.Kill 소비의 P1 우회를 거부한다. 새 실패 43개 재현 뒤 mock/static 587개와 guard 환경 유지를 확인했다.'
