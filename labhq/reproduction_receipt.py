@@ -72,9 +72,12 @@ def input_variables(source: str, language: str) -> list[str]:
             tree = ast.parse(source)
         except (SyntaxError, ValueError):
             tree = ast.Module(body=[], type_ignores=[])
+        # AugAssign reads the old value even though its target has Store context.
+        read_targets = {node.target for node in ast.walk(tree) if isinstance(node, ast.AugAssign)}
         for node in ast.walk(tree):
             key = None
-            if isinstance(node, ast.Subscript) and ast.unparse(node.value) in {"os.environ", "environ"}:
+            if (isinstance(node, ast.Subscript) and (isinstance(node.ctx, ast.Load) or node in read_targets)
+                    and ast.unparse(node.value) in {"os.environ", "environ"}):
                 key = node.slice
             elif isinstance(node, ast.Call) and ast.unparse(node.func) in {
                     "os.getenv", "getenv", "os.environ.get", "environ.get"} and node.args:

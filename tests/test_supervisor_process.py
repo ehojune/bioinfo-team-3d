@@ -194,9 +194,60 @@ def _start_script(settings: Settings, script, args) -> _ScriptProcess:
     output = _logs(settings) / f"{Path(script).stem}-fixture.log"
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("a", encoding="utf-8") as stream:
-        child = windows_launch.spawn([sys.executable, str(script), *args], state=cli._launch_state(settings),
-                                     role="gateway-supervisor", stdout=stream, **cli._launch_options(settings))
+        try:
+            child = windows_launch.spawn([sys.executable, str(script), *args], state=cli._launch_state(settings),
+                                         role="gateway-supervisor", stdout=stream, **cli._launch_options(settings))
+        except windows_launch.LaunchError as exc:
+            try:
+                evidence = _failure_evidence(settings)[-8192:]
+            except (OSError, ValueError) as error:
+                evidence = f"fixture evidence unavailable: {type(error).__name__}"
+            raise AssertionError(f"detached fixture launch failed before supervisor startup\n{evidence}") from exc
     return _ScriptProcess(child, output, settings)
+
+
+@pytest.mark.parametrize("evidence_kind", ["absent", "journal", "oversize", "unreadable"])
+def test_detached_fixture_launch_failure_exposes_existing_evidence_without_retry(tmp_path, monkeypatch, evidence_kind):
+    """Fake launch only: an unknown Create outcome must remain a failure, with its original cause."""
+    from unittest.mock import Mock
+
+    state = tmp_path / "state"
+    logs = state / "logs"
+    logs.mkdir(parents=True)
+    if evidence_kind == "journal":
+        (logs / "detached-launch.jsonl").write_text(
+            '{"status":"wmi_attempt"}\n'
+            '{"status":"wmi_failed","error":"TimeoutExpired","reason":"native_or_protocol"}\n',
+            encoding="utf-8")
+    failure = windows_launch.LaunchError("WMI Create outcome unknown")
+    failure.__cause__ = subprocess.TimeoutExpired("fake-powershell", 10)
+    spawn = Mock(side_effect=failure)
+    monkeypatch.setattr(windows_launch, "spawn", spawn)
+    monkeypatch.setattr(cli, "_launch_state", lambda settings: state)
+    monkeypatch.setattr(cli, "_launch_options", lambda settings: {})
+    if evidence_kind == "oversize":
+        monkeypatch.setattr(sys.modules[__name__], "_failure_evidence", lambda settings: "x" * 20000 + "END")
+    elif evidence_kind == "unreadable":
+        def unreadable(settings):
+            raise OSError("fake unreadable journal")
+        monkeypatch.setattr(sys.modules[__name__], "_failure_evidence", unreadable)
+
+    with pytest.raises(AssertionError, match="before supervisor startup") as caught:
+        _start_script(object(), tmp_path / "supervise.py", [])
+
+    assert caught.value.__cause__ is failure
+    assert isinstance(failure.__cause__, subprocess.TimeoutExpired)
+    if evidence_kind in {"absent", "journal"}:
+        assert 'supervisor=[]' in str(caught.value)
+    if evidence_kind == "journal":
+        assert 'wmi_attempt' in str(caught.value) and 'TimeoutExpired' in str(caught.value)
+    elif evidence_kind == "oversize":
+        assert str(caught.value).endswith("END") and len(str(caught.value)) < 8300
+    elif evidence_kind == "unreadable":
+        assert "evidence unavailable: OSError" in str(caught.value)
+    spawn.assert_called_once()
+    assert spawn.call_args.kwargs["stdout"].closed
+    assert not list(state.glob("*.pid"))  # No invented process/readiness record or retry.
 
 
 def _wait_until(check, seconds: float = 60.0):
