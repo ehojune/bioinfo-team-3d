@@ -1,0 +1,176 @@
+"""Fake signal callbacks and coroutines only; never send signals or launch processes."""
+import asyncio
+import signal
+from types import SimpleNamespace
+from unittest.mock import Mock
+
+import pytest
+
+from labhq.cli import _run_runner_with_interrupts
+from labhq.interruption import watch_shutdown_signals
+from labhq.runner.daemon import Runner
+
+
+@pytest.fixture
+def signals(monkeypatch):
+    monkeypatch.setattr(signal, "SIGHUP", 1, raising=False)
+    handlers = {signal.SIGINT: signal.default_int_handler,
+                signal.SIGTERM: signal.SIG_DFL, signal.SIGHUP: signal.SIG_DFL}
+    monkeypatch.setattr(signal, "getsignal", handlers.__getitem__)
+    monkeypatch.setattr(signal, "signal", lambda sig, handler: handlers.__setitem__(sig, handler))
+    return handlers
+
+
+@pytest.mark.parametrize("sig_name", ["SIGTERM", "SIGHUP"])
+@pytest.mark.parametrize("initial", [signal.SIG_DFL, signal.SIG_IGN])
+async def test_default_runner_signal_enters_graceful_shutdown(signals, sig_name, initial):
+    sig = getattr(signal, sig_name)
+    signals[sig] = initial
+    original = dict(signals)
+    calls = []
+
+    class FakeRunner:
+        tasks = {}
+        _stopping = False
+
+        async def run_forever(self):
+            handler = signals[sig]
+            assert callable(handler), "standard TERM/HUP must install a shutdown handler"
+            handler(sig, None)
+            await asyncio.Event().wait()
+
+        async def shutdown(self):
+            assert self._stopping
+            calls.append("graceful shutdown")
+
+        def stop(self):
+            calls.append("stop")
+
+    diagnostics = SimpleNamespace(attach_loop=Mock(), note_signal=Mock())
+    await asyncio.wait_for(_run_runner_with_interrupts(FakeRunner(), diagnostics), 1)
+    assert calls == ["graceful shutdown", "stop"]
+    diagnostics.note_signal.assert_called_once_with(sig)
+    assert signals == original
+
+
+async def test_custom_handler_is_marked_and_delegated_without_forcing_shutdown(signals):
+    calls = []
+    runner = SimpleNamespace(_stopping=False, tasks={})
+
+    def custom(signum, frame):
+        assert runner._stopping
+        calls.append((signum, frame))
+
+    signals[signal.SIGTERM] = custom
+    original = dict(signals)
+
+    async def run_forever():
+        signals[signal.SIGTERM](signal.SIGTERM, None)
+
+    runner.run_forever = run_forever
+    runner.stop = Mock()
+    runner.shutdown = Mock(side_effect=AssertionError("custom handler owns shutdown"))
+    await _run_runner_with_interrupts(runner)
+    assert calls == [(signal.SIGTERM, None)]
+    runner.shutdown.assert_not_called()
+    assert signals == original
+
+
+def test_generic_watcher_still_leaves_default_handlers_untouched(signals):
+    original = dict(signals)
+    restore = watch_shutdown_signals(Mock(), interrupt=False)
+    assert signals == original
+    restore()
+    assert signals == original
+
+
+@pytest.mark.parametrize("sig_name", ["SIGTERM", "SIGHUP"])
+async def test_standard_entry_cancels_with_evidence_and_mock_gateway_opens_resume(
+        tmp_path, monkeypatch, signals, sig_name):
+    from labhq.models import Task, TaskResult
+    from tests.test_shutdown_recovery import make_hub, runner_for, run_request_with_result, resume_cards
+
+    hub = make_hub(tmp_path)
+    runner = runner_for(hub, tmp_path)
+    runner.connected.set()
+    started = asyncio.Event()
+    observed = []
+    task = Task(id="signal-task", agent_id="cso", request_id="r", prompt="mock work")
+
+    async def work(_task):
+        started.set()
+        await asyncio.Event().wait()
+
+    async def run_forever():
+        runner.tasks[task.id] = asyncio.create_task(runner._run_guarded(task))
+        await started.wait()
+        signals[getattr(signal, sig_name)](getattr(signal, sig_name), None)
+        await asyncio.Event().wait()
+
+    async def fake_gateway():
+        while True:
+            rows = runner.store.pending()
+            results = [row for row in rows if row["type"] == "task.result"]
+            if results:
+                result = TaskResult.model_validate(results[0]["data"])
+                observed.append(result)
+                await run_request_with_result(hub, result, monkeypatch)
+                await runner._on_message({"type": "runner.ack", "runner_seq": max(r["runner_seq"] for r in rows)})
+                return
+            await asyncio.sleep(.001)
+
+    monkeypatch.setattr(runner, "run_task", work)
+    monkeypatch.setattr(runner, "run_forever", run_forever)
+    await asyncio.wait_for(asyncio.gather(_run_runner_with_interrupts(runner), fake_gateway()), 3)
+    assert observed[0].shutdown_evidence["stopping"] is True
+    assert observed[0].shutdown_evidence["cancelled"] is True
+    assert hub.requests["r"]["status"] == "interrupted"
+    assert len(resume_cards(hub)) == 1
+    assert runner.store.pending() == []
+
+
+@pytest.mark.parametrize("connected", [True, False])
+async def test_shutdown_keeps_unacknowledged_results_and_has_a_bounded_wait(connected):
+    pending = [{"type": "task.result"}]
+    runner = SimpleNamespace(tasks={}, connected=SimpleNamespace(is_set=lambda: connected),
+                             store=SimpleNamespace(pending=lambda: pending), stop=Mock())
+    await asyncio.wait_for(Runner.shutdown(runner, timeout_s=.02), 1)
+    runner.stop.assert_called_once_with()
+    assert pending == [{"type": "task.result"}]
+
+
+async def test_repeated_signal_starts_only_one_shutdown(signals):
+    shutdown = Mock()
+
+    class FakeRunner:
+        tasks = {}
+
+        async def run_forever(self):
+            signals[signal.SIGTERM](signal.SIGTERM, None)
+            signals[signal.SIGTERM](signal.SIGTERM, None)
+            await asyncio.Event().wait()
+
+        async def shutdown(self):
+            shutdown()
+
+        def stop(self):
+            pass
+
+    await asyncio.wait_for(_run_runner_with_interrupts(FakeRunner()), 1)
+    shutdown.assert_called_once_with()
+
+
+async def test_runner_may_finish_while_graceful_shutdown_is_still_draining(signals):
+    class FakeRunner:
+        tasks = {}
+
+        async def run_forever(self):
+            signals[signal.SIGTERM](signal.SIGTERM, None)
+
+        async def shutdown(self):
+            await asyncio.sleep(.01)
+
+        def stop(self):
+            pass
+
+    await asyncio.wait_for(_run_runner_with_interrupts(FakeRunner()), 1)

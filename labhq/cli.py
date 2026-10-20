@@ -1352,6 +1352,23 @@ async def _run_runner_with_interrupts(runner, diagnostics=None) -> None:
         diagnostics.attach_loop()
     previous = signal.getsignal(signal.SIGINT)
     last_warning = 0.0
+    owner = asyncio.current_task()
+    shutdown_job = None
+    finishing = False
+
+    async def shutdown() -> None:
+        try:
+            await runner.shutdown()
+        finally:
+            if not finishing:
+                owner.cancel()
+
+    def on_shutdown(signum, _frame) -> None:
+        nonlocal shutdown_job
+        if shutdown_job is None:
+            if diagnostics:
+                diagnostics.note_signal(signum)
+            shutdown_job = asyncio.create_task(shutdown())
 
     def on_interrupt(_signum, _frame) -> None:
         nonlocal last_warning
@@ -1369,16 +1386,25 @@ async def _run_runner_with_interrupts(runner, diagnostics=None) -> None:
               "10초 안에 Ctrl+C를 다시 누르면 종료합니다.", file=sys.stderr, flush=True)
 
     from .interruption import watch_shutdown_signals
-    restore_signals = watch_shutdown_signals(lambda: setattr(runner, "_stopping", True), interrupt=False)
+    restore_signals = watch_shutdown_signals(lambda: setattr(runner, "_stopping", True), interrupt=False,
+                                             default_handler=on_shutdown)
     # Keep the interactive handler last. SIGTERM/SIGHUP mark an external shutdown;
     # SIGINT still warns once while work is active and exits on the second press.
     signal.signal(signal.SIGINT, on_interrupt)
     try:
         await runner.run_forever()
+    except asyncio.CancelledError:
+        if shutdown_job is None:
+            raise
     finally:
-        restore_signals()
-        signal.signal(signal.SIGINT, previous)
-        runner.stop()
+        finishing = True
+        try:
+            if shutdown_job is not None:
+                await asyncio.shield(shutdown_job)
+        finally:
+            restore_signals()
+            signal.signal(signal.SIGINT, previous)
+            runner.stop()
 
 
 # ---------------- demo (no API keys, no cluster) ----------------

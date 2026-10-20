@@ -394,6 +394,20 @@ class Runner:
         for t in self.tasks.values():
             t.cancel()
 
+    async def shutdown(self, timeout_s: float = 5) -> None:
+        """Cancel tasks with shutdown evidence before closing the connection; retain any unacked results."""
+        self.stop()
+
+        async def finish():
+            await asyncio.gather(*list(self.tasks.values()), return_exceptions=True)
+            while self.connected.is_set() and any(e.get("type") == "task.result" for e in self.store.pending()):
+                await asyncio.sleep(.05)
+
+        try:
+            await asyncio.wait_for(finish(), timeout_s)
+        except asyncio.TimeoutError:
+            pass  # Durable outbox replay remains the fallback when the gateway cannot acknowledge in time.
+
     def send(self, obj: dict) -> None:
         if obj.get("type") not in {"runner.roster"}:
             self.store.enqueue(obj, self.s.runner.outbox_limit)
