@@ -17,11 +17,10 @@
 
 | 순서 | 할 일 | 완료 조건·현재 한계 |
 |---|---|---|
-| 완료 | #762(`923a4fa`)·#764(`9d9e973`)·#763(`7b4d866`) 병합·PI 배포 | 총괄 인계: doctor 준비 예, status 요청 0. 새 연구·정리본 게시·Nextflow PASS 근거는 아님 |
-| 완료 | receipt PR #767 병합(`3291673`) | 문법·실행 상태를 분리한 receipt와 mock 검증 근거. 실제 연구 재현 PASS는 아님 |
-| 진행 | #682 모델 계획 거부 사유·다음 선택 | 자동 재시도 없이 사유 표시·PI 건별 선택으로 새 계획. mock/static 검증 뒤 PR, 리뷰·CI·병합은 총괄 담당. #754 rebuild는 Opus 별도 범위 |
-| 진행 | #677 참고 읽기·작업 폴더 PowerShell 승인 판정 | 검사를 통과한 참고만 읽기 권한 전달. mock/static 검증 뒤 PR, inline Python·간접 manifest 경로는 카드 유지. CI·리뷰·병합은 총괄 담당 |
-| 병렬 | cgroup #765·guard #766·PID 기록 #768 OPEN | 구현·검증 진행 상태이며 실제 연구·게시·Nextflow PASS로 쓰지 않음 |
+| 완료 | #762→#764→#763 및 후속 #765·#768·#767·#775·#777·#778·#781·#782·#783 병합 | PI 반영본 `e0fa7e48`에서 doctor 준비·필수 WSL 연결·요청 0 확인. 실제 연구·재현·성능 PASS는 별도 |
+| 완료 | #682 거부 선택(#778)·#677 참고 읽기 승인(#782)·#676 내장 조회 상한(#776)·#754 rebuild(#777) | 구현·CI·병합 완료. #676의 임의 스크립트/외부 MCP와 #771의 helper/output 계약은 일부 미해결 |
+| 진행 | #681 광역 종료 차단 PR #766 | `e0512fd7` Windows CI 통과, 3.10 재실행에서 외부 조회 limiter test 실패. 같은 담당자가 mock 검증·수정 후 최종 CI/리뷰·P1=0 확인 |
+| 다음 | Codex #665→#673·#664→#674, Opus #772 | 같은 담당자·정확한 세션 재사용. 사용량+예약+점검/보고 여유를 포함해 배정하고 부족하면 기존 큐를 보존 |
 | 2 | 공개 소형 주제 2개를 제시하고 PI 선택 뒤 장치 실운전 | P2A 생성→호출→산출, 의미 모델·그림자 요청·ontology·checklist·EDAM·pack, 문헌/PDF, 보고서·묶음·정리본을 요청별로 대조. **아직 미실행** |
 | 3 | bench dry-run → 준비 게이트 검토 요청 | 동일 입력·판본·PI 답·예산과 arm별 state/workspace 분리, 장치 작동 근거, 예상 시간·비용을 확인 |
 | 4 | 공개 소형 dry-run·필수 gate → Astra 전체 repo 검토 | labhq 코드·README·구조 전체를 검토([PI 승인](https://github.com/ehojune/bioinfo-team-3d/issues/435#issuecomment-6251776665), [#739 확인](https://github.com/ehojune/bioinfo-team-3d/issues/739#issuecomment-6251808284)) |
@@ -36,10 +35,10 @@ v0.5 선언(2026-10-08)은 당시 실제 연구 요청 2건과 `labhq verify` ex
 | 항목 | 결정 |
 |---|---|
 | 개발 총괄 | Codex 고정, Codex·Claude subagent에 여러 작업 위임. 제품 CSO 설정은 별개 |
-| Codex 일일 한도 | 10-19 실제 11,376,303/14M, 미사용 2,623,697 → M 단위 올림 3M + 4M = **10-20 7M 확정**([근거](docs/reference/reproduction-receipt.md)) |
+| Codex 일일 한도 | 10-19 실제 11,376,303/14M, 미사용 2,623,697 → M 단위 올림 3M + 4M = **10-20 7M 확정**([PI 승인](https://github.com/ehojune/bioinfo-team-3d/issues/760#issuecomment-6269465875)) |
 | #732 배정 | 표준 생물정보학은 bioinfo-agent/nf-core, 단순 작업은 직접 처리. 없는 복잡한 신규 파이프라인은 직접 코딩한 뒤 **기여 여부를 PI에게 묻고 yes일 때만 bioinfo-agent PR** |
 
-#732는 PR #762(`923a4fa`)로 병합됐습니다. #748은 receipt 범위이며 #754의 CLI/storage rebuild는 별도 작업입니다. 다음 PI 확인은 공개 소형 주제 선택과 dry-run 뒤 bench 준비 게이트입니다. 이전 교대 운영·결정표는 [보존본](docs/reference/handoff-history-2026-10-19.md)에 있습니다.
+#732는 PR #762(`923a4fa`)로 병합됐습니다. #748 receipt와 #754 CLI/storage rebuild(#777)는 병합됐고, #771의 script별 출력 판정은 일부 해결 상태입니다. 다음 PI 확인은 공개 소형 주제 선택과 dry-run 뒤 bench 준비 게이트입니다. 이전 교대 운영·결정표는 [보존본](docs/reference/handoff-history-2026-10-19.md)에 있습니다.
 
 ## 구조 한눈에
 
