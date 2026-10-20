@@ -1,6 +1,8 @@
 """Fake recruiter/Paper2Skill only: no download, CLI conversion, contract or trial instance."""
+import asyncio
 import copy
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -19,6 +21,20 @@ SELECTED = {"paper_id": "PMID:12345678", "title": "Paired method", "reason": "Pr
 PRECEDENTS = {"status": "ok", "papers": [{"title": "Paired method", "citations": [
               "PMID:12345678; access_level=full_text"]}],
               "required": [], "recommended": [], "limitations": []}
+
+
+@pytest.fixture(autouse=True)
+def deterministic_paper_io(monkeypatch):
+    """Fake external/native boundaries; keep real owned writes, fsync and SQLite semantics."""
+    monkeypatch.setattr('labhq.adapters.claude_code._git', lambda *args: None)
+    monkeypatch.setattr('labhq.integrations.rounds._git_commit', lambda: 'a' * 40)
+    monkeypatch.setattr('labhq.runner.workspace.platform.node', lambda: 'fixture-host')
+    async def inline(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+    async def commit(_lane, fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+    monkeypatch.setattr(asyncio, 'to_thread', inline)
+    monkeypatch.setattr('labhq.durable.run', commit)
 
 
 @pytest.fixture
@@ -56,7 +72,9 @@ def runner(tmp_path, monkeypatch):
                     assert "--plugin-dir" in command and "--disable-slash-commands" not in command
                 else:
                     assert "--ignore-user-config" in command and str(ctx.workdir) in command
-            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=True, cost_usd=0, text="done")
+            text = (re.search(r'\[paper-skill:[^\]]+\]', ctx.task.context)[0]
+                    if copies and ctx.task.meta.get('test_reference') else 'done')
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=True, cost_usd=0, text=text)
 
     monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *a: Adapter())
     return r, seen
@@ -94,13 +112,13 @@ async def test_selection_conversion_cp1_scope_appendix_and_bundle(runner, tmp_pa
     req = hub.requests["r"]
     assert req["status"] == "done", req.get("report")
     rows = req["plan"].get("paper_skill_results", [])
-    assert len(rows) == 1 and rows[0]["status"] == "ready"
-    assert rows[0]["paper2agent_commit"] == "a" * 40
-    assert [t.meta["kind"] for t in hub.calls] == ["precedent", "plan", "paper_skill"]
+    assert len(rows) == 1 and rows[0]["status"] == "deferred" and not seen
+    assert [t.meta["kind"] for t in hub.calls] == ["precedent", "plan"]
     cp1 = next(c for c in hub.approvals if c["kind"] == "research_plan")
     assert "참고 논문 스킬: Paired method → worker" in cp1["summary"]
-    assert rows[0]["skill_sha256"] in cp1["detail"]["plan_canonical"]
-    assert rows[0]["skill_sha256"] in req["execution_record"]
+    assert rows[0]["selection_sha256"] in cp1["detail"]["plan_canonical"]
+    assert '승인 후' in cp1['summary']
+    frozen = copy.deepcopy(req['plan'])
 
     # Exercise the actual DAG dispatch and runner; another step and request get no copies.
     dag = FakeHub(reply)
@@ -108,23 +126,30 @@ async def test_selection_conversion_cp1_scope_appendix_and_bundle(runner, tmp_pa
     dag.requests["r"]["plan"] = req["plan"]
     steps = [{"id": "s1", "agent_id": "worker", "instruction": "use method", "depends_on": []},
              {"id": "s2", "agent_id": "other", "instruction": "independent", "depends_on": []}]
-    await Orchestrator(dag).run_dag("r", "request", steps, {})
+    dag_results = {}
+    await Orchestrator(dag).run_dag("r", "request", steps, dag_results)
     contexts = {ctx.task.agent_id: ctx for ctx in seen if ctx.task.meta.get("kind") == "step"}
     assert contexts["worker"].task.meta["test_copies"] == 1
+    assert req['plan'] == frozen  # deferred build never edits the CP1-frozen plan
+    built = contexts['worker'].task.meta['paper_skills'][0]
+    assert built['paper2agent_commit'] == 'a' * 40
     assert contexts["other"].task.meta["test_copies"] == 0
     assert not list(contexts["worker"].workdir.glob(".agents/skills/paper-*/SKILL.md"))
     assert r.registry.agents["worker"].plugin_dirs == []
     assert not list(r.registry.contract_dir.glob("*.yaml"))
-    assert seen[0].task.budget_usd == s.recruit.max_budget_usd
-    assert seen[0].settings.runner.task_timeout_s == s.runner.task_timeout_s
+    conversion = next(ctx for ctx in seen if ctx.task.meta.get('kind') == 'paper_skill')
+    assert conversion.task.budget_usd == s.recruit.max_budget_usd
+    assert conversion.settings.runner.task_timeout_s == s.runner.task_timeout_s
 
     bs, request, task = pending_bundle_fixture(tmp_path / "bundle", "r")
     request["plan"] = req["plan"]
     request["execution_record"] = req["execution_record"]
+    request['results']['s1'] = dag_results['s1'].model_dump(mode='json')
     from labhq.request_bundle import build_request_bundle
     bundle = Path(build_request_bundle(request, bs, {"task-r": task})["path"])
     record = json.loads((bundle / "paper_skills.json").read_text(encoding="utf-8"))[0]
-    assert record["paper_id"] == "pmid:12345678" and record["skill_sha256"] == rows[0]["skill_sha256"]
+    assert record["paper_id"] == "pmid:12345678" and record['built']
+    assert record['usage'][0]['skill_sha256'] == built['skill_sha256'] and record['called'] is False
     assert "skill_dir" not in record and "paper_skills.json" in manifest_rows(bundle)
 
 
@@ -150,10 +175,10 @@ async def test_enriched_pmid_citations_build_full_text_and_record_abstract_skip(
 
     rows = out["paper_skill_results"]
     assert [(row["paper_id"], row["status"]) for row in rows] == [
-        ("pmid:40119824", "skipped"), ("pmid:20492728", "ready")]
-    assert "abstract" in rows[0]["skip_reason"] and len(seen) == 1
+        ("pmid:40119824", "skipped"), ("pmid:20492728", "deferred")]
+    assert "abstract" in rows[0]["skip_reason"] and not seen
     assert [(row["selected"], row["built"], row["attached_steps"], row["called"]) for row in rows] == [
-        (True, False, [], False), (True, True, [], False)]
+        (True, False, [], False), (True, False, [], False)]
     assert "선정됨" in card_text(out) and "만들어짐" in card_text(out)
     report = appendix(out, {})
     assert "붙음" in report and "호출됨" in report and "abstract" in report
@@ -200,10 +225,12 @@ async def test_conversion_failure_or_missing_install_keeps_plan_running(runner, 
     assert hub.requests["r"]["status"] == "done"
     assert any(card["kind"] == "research_plan" for card in hub.approvals)
     out = hub.requests["r"]["plan"]
-    assert out["paper_skill_results"][0]["status"] == ("unavailable" if missing else "failed")
-    assert out["warnings"]
+    assert out["paper_skill_results"][0]["status"] == 'deferred' and not seen
+    from labhq.recruit.paper_skills import attachments, resolve_attachments
+    resolved = await resolve_attachments(attachments(out, 's1', 'worker', 'r'), r.s, r.run_task)
+    assert resolved[0]['status'] == ('unavailable' if missing else 'failed')
     if missing:
-        assert out["warnings"] == ["스킬 장착 불가(Paper2Agent 미설치)"] and not seen
+        assert resolved[0]['error'] == '스킬 장착 불가(Paper2Agent 미설치)' and not seen
 
 
 @pytest.mark.asyncio
@@ -247,7 +274,7 @@ async def test_attachment_scope_rejects_wrong_request_employee_or_step(runner, f
 
 @pytest.mark.asyncio
 async def test_two_papers_have_distinct_restart_keys_and_keep_their_own_receipts():
-    from labhq.recruit.paper_skills import prepare_plan
+    from labhq.recruit.paper_skills import prepare_plan, resolve_attachments, attachments
     from labhq.gateway.server import Hub
     tasks = []
 
@@ -262,12 +289,14 @@ async def test_two_papers_have_distinct_restart_keys_and_keep_their_own_receipts
                   {"title": "Another method", "citations": [
                       "PMID:87654321; access_level=full_text"]}]}
     out = await prepare_plan(plan, precedents, [{"id": "worker"}], "r", Settings(), convert)
+    assert not tasks
+    resolved = await resolve_attachments(attachments(out, 's1', 'worker', 'r'), Settings(), convert)
     first = tasks[0]
     prior = {"request_id": "r", "kind": "paper_skill", "step_id": first.meta["step_id"],
              "payload": first.model_dump(mode="json")}
     assert Hub._matches_recovery(first, prior)
     assert not Hub._matches_recovery(tasks[1], prior)
-    assert out["paper_skill_results"][1]["status"] == "failed"
+    assert resolved[1]["status"] == "failed"
 
 
 @pytest.mark.asyncio
@@ -283,17 +312,22 @@ async def test_optional_paper_conversion_does_not_park_on_staff_account_hold(hol
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("engine", [Engine.claude_code, Engine.codex])
-async def test_each_staff_engine_gets_local_skill_and_usage_receipt_only_for_its_task(runner, engine):
+@pytest.mark.parametrize('referenced', [False, True])
+async def test_each_staff_engine_gets_local_skill_and_usage_receipt_only_for_its_task(runner, engine, referenced):
     r, seen = runner
     built = await r.run_task(build_task())
     assert built.structured.get("status") == "ready"
     r.registry.agents["worker"].engine = engine
     row = {**built.structured, "request_id": "r", "agent_id": "worker", "step_id": "s1"}
     result = await r.run_task(Task(agent_id="worker", request_id="r", prompt="p",
-                                  meta={"kind": "step", "step_id": "s1", "paper_skills": [row]}))
+                                  meta={"kind": "step", "step_id": "s1", "paper_skills": [row],
+                                        'test_reference': referenced}))
     assert result.ok and seen[-1].task.meta["test_copies"] == 1
     usage = result.provenance["runs"][result.task_id]["paper_skills"]
-    assert usage == [{key: row[key] for key in ("paper_id", "paper2agent_commit", "skill_sha256")}]
+    assert [{key: item[key] for key in ('paper_id', 'paper2agent_commit', 'skill_sha256')} for item in usage] == [
+        {key: row[key] for key in ('paper_id', 'paper2agent_commit', 'skill_sha256')}]
+    assert usage[0]['called'] is referenced
+    assert usage[0]['reason'] == ('result_reference' if referenced else 'no_result_reference')
     workdir = seen[-1].workdir
     assert not list(workdir.glob(".agents/skills/paper-*/SKILL.md"))
     assert not list(workdir.glob(".labhq-paper-skills/skills/*/SKILL.md"))

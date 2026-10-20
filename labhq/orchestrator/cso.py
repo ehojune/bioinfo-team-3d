@@ -244,7 +244,7 @@ def replan_schema(declare: bool) -> dict[str, Any]:
     Scope is judged once, on the first plan; a re-plan neither returns nor re-asks it (#36)."""
     schema = json.loads(json.dumps(plan_schema(declare)))
     schema["properties"].pop("scope")
-    schema["properties"].pop("paper_skills")  # new paper conversions belong before the first plan/CP1
+    schema["properties"].pop("paper_skills")  # new paper selections belong before the first plan/CP1
     schema["properties"]["drop"] = {"type": "array", "items": {"type": "string"}}
     schema["required"] = [*(key for key in schema["required"] if key != "scope"), "drop"]
     return schema
@@ -3585,6 +3585,8 @@ class Orchestrator:
                         if not carried.get('dispatch_started'):
                             carried['dispatch_started'] = True
                             self.hub.save_request(rid)
+                if current.meta.get('kind') in {'step', 'result_correction', 'slot_repair'} and current.meta.get('paper_skills'):
+                    attempt_task = await self._resolve_step_paper_skills(attempt_task)
                 offline = False
                 # Observe the configuration at the actual dispatch boundary, including every retry/wake/repair.
                 # A mixed or unproved execution must never inherit the configuration shown before CP1 waited.
@@ -4169,6 +4171,39 @@ class Orchestrator:
         return spent, unknown, spent + unknown * self._unknown_reserve(limit)
 
     # ---------- DAG ----------
+    async def _resolve_step_paper_skills(self, task: Task) -> Task:
+        """The approved dispatch boundary, never CP1 preparation. Keep the frozen plan unchanged."""
+        rid = task.request_id
+        req = self.hub.requests[rid]
+        selected = task.meta['paper_skills']
+
+        def check_selection() -> None:
+            plan = req.get('plan') or {}
+            contract = req.get('research_contract') or {}
+            approval = contract.get('approval') or {}
+            matches = selected == paper_skills.attachments(plan, task.meta['step_id'], task.agent_id, rid)
+            if contract:
+                matches = (matches and approval.get('approved') is True
+                           and approval.get('target_sha256') == contract.get('plan_sha256')
+                           == research_plan_sha256(plan))
+            if not matches:
+                if contract:
+                    contract['approval'] = {**approval, 'approved': False, 'status': 'approval_required'}
+                req['outcome'] = 'reuse_approval_required'
+                self.hub.save_request(rid)
+                raise research_continuation.ReuseApprovalRequired('paper selection changed; renewed approval required')
+
+        check_selection()
+        resolved = await paper_skills.resolve_attachments(selected, self.hub.s, self.run_step)
+        check_selection()  # approval or selection may change while the bounded conversion awaits
+        await self._check_budget(rid)
+        contract = req.get('research_contract') or {}
+        if (contract.get('continuation') or {}).get('reuse_snapshot'):
+            if not await self._verify_research_reuse(rid, req['plan']):
+                raise research_continuation.ReuseApprovalRequired('reuse proof changed during paper build')
+        check_selection()  # budget/reuse checks above may themselves await an approval or file proof
+        return task.model_copy(update={'meta': {**task.meta, 'paper_skills': resolved}})
+
     async def run_dag(self, rid: str, request: str, steps: list[dict], results: dict[str, TaskResult],
                       only: set[str] | None = None, feedback: dict[str, str] | None = None) -> None:
         by_id = {s["id"]: s for s in steps}
@@ -4397,7 +4432,13 @@ class Orchestrator:
                 bindable: tuple[Any, TaskResult] | None = None
                 normalization_warnings: list[str] = []
 
+                def collect_paper_usage(via: TaskResult) -> None:
+                    if task.meta.get('paper_skills'):
+                        original.provenance = {**original.provenance, 'runs': {
+                            **original.provenance.get('runs', {}), **via.provenance.get('runs', {})}}
+
                 def accept(ledger: Any, via: TaskResult) -> TaskResult:
+                    collect_paper_usage(via)
                     save_salvage([], [])
                     return original.model_copy(update={
                         "structured": ledger.model_dump(mode="json"),
@@ -4447,6 +4488,8 @@ class Orchestrator:
                             self.hub.save_request(rid)
                             try:
                                 answer = await self.run_step(question)
+                            except (ShutdownInterrupted, research_continuation.ReuseApprovalRequired):
+                                raise
                             except BudgetExceeded:
                                 answer = None
                             except Exception:
@@ -4458,6 +4501,7 @@ class Orchestrator:
                                     **merged_tool_call_update(current, answer),
                                 })
                             if answer is not None and answer.ok:
+                                collect_paper_usage(answer)
                                 record["answers"] = (answer.structured if isinstance(answer.structured, dict)
                                                      else extract_json(answer.text))
                             self.hub.save_request(rid)
@@ -4548,6 +4592,7 @@ class Orchestrator:
                             **({"workdir": current.workdir} if current.workdir else {})),
                     )
                     corrected = await self.run_step(correction_task)
+                    collect_paper_usage(corrected)
                     current = corrected.model_copy(update={
                         "tool_errors": list(dict.fromkeys([*current.tool_errors, *corrected.tool_errors])),
                         **merged_tool_call_update(current, corrected),

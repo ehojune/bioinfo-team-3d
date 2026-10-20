@@ -10,13 +10,30 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-10-21
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 00:28 | [`1079d5b`](https://github.com/ehojune/bioinfo-team-3d/pull/821/commits/1079d5b) | **테스트가 자체 진단과 정리까지 차단하던 문제를 고쳤습니다.**<br>Paper2Agent 사전 검사 trap을 staff/cache 경로와 호출 내부 context로 제한하고 git fake를 해당 모듈로 격리했다. 무관한 진단 간섭 6건 red 뒤 기존 guard·진단·예외 복원/조기 I/O·git 차단 16건 및 관련 HOME guard 3건 통과. 제품 guard·승인/hash 계약은 유지한다. 선행 CI E/F traceback은 없어 전체 원인은 미확정이며 실제 설치/process·전체 CI는 미검증이다. |
+
 ## 2026-10-20
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 23:04 | [`dd853d0`](https://github.com/ehojune/bioinfo-team-3d/pull/821/commits/dd853d0) | **최신 안내 문서와 논문 스킬 설명이 함께 남도록 문서 충돌을 풀었습니다.**<br>main의 감사·queued-halt 안내와 PR821의 승인 뒤 논문 스킬 계약을 보존했다. 제품 코드·테스트는 이전 검토 head와 같고 자동 목차는 main과 같다. 최종 CI는 새 head에서 확인한다. |
+| 21:52 | [`a9d0e56`](https://github.com/ehojune/bioinfo-team-3d/pull/821/commits/a9d0e56) | **논문 스킬을 승인 뒤 만드는 흐름에 맞춰 중단 검사를 고쳤습니다.**<br>이전 prompt의 생성 시점 문장만 반영하고 역변환 digest와 schema·output_types off/on 검사를 보존했다. 승인 전 callback 미호출과 승인된 CSO step의 shutdown/cancellation 전파·연구 미dispatch·계획 hash 보존을 검증했다. CI 네 실패 mock 재현 뒤 같은 4건 및 관련 17건 통과; 제품 코드·권한 경계는 그대로이며 실제 process·연구와 최종 head CI는 미검증이다. |
+| 21:16 | [`5b412a9`](https://github.com/ehojune/bioinfo-team-3d/commit/5b412a9) | **새 기록을 보존하고 자동 생성 목차는 main에서 갱신하도록 맞췄습니다.**<br>STATUS와 패치노트 목차의 PR 변경 금지 규칙에 맞춰 최신 main 생성본을 보존했다. 양쪽 기록 원본은 유지하며 병합 뒤 main의 notes-index workflow가 목차에 반영한다. |
+| 21:13 | [`7da94e1`](https://github.com/ehojune/bioinfo-team-3d/commit/7da94e1) | **최신 변경 기록을 보존하면서 인계 문서의 충돌과 오래된 개발 상태를 정리했습니다.**<br>main 8151f23을 병합하고 HANDOFF 충돌에서 queued-halt 검증 근거를 보존했다. 열린 큐는 |
+| 21:10 | [`df2a51c`](https://github.com/ehojune/bioinfo-team-3d/pull/821/commits/df2a51c) | **최신 main과 논문 스킬 변경을 함께 반영하도록 충돌을 풀었습니다.**<br>main 8151f23을 merge해 PR818 queued-halt/Shadow 검사와 PR819 external-wait 변경을 보존했다. HANDOFF 한 충돌만 양쪽 검증/논문 입력 설명을 살려 해결했고 manual은 자동 병합했다. main 관련 14파일·PR821 제품/계약 9파일 동일성, mock/static 63건·3.10 AST 7파일 통과; 실제 process/CLI/연구·CI 조회는 미실행이다. |
+| 20:58 | [`6b37d70`](https://github.com/ehojune/bioinfo-team-3d/pull/821/commits/6b37d70) | **승인된 논문 문서가 읽기 차단에 걸리던 문제를 고쳤습니다.**<br>root core_structure의 DAG 입력 Read 거부 P1을 수정했다. policy 구성 때 owned 문서의 길이·내용 hash·무링크 handle을 재검사해 정확한 파일만 기존 read grant에 연결한다. 조상 namespace·inputs 보호·native 쓰기 제한과 called 의미를 유지한다. 4건 red 뒤 관련 mock/static 80건 및 최종 권한/profile 14건 통과; 실제 CLI/process 실행은 하지 않았다. |
+| 20:39 | [`c878148`](https://github.com/ehojune/bioinfo-team-3d/pull/821/commits/c878148) | **논문 스킬을 승인 뒤 만들고 실제 결과의 참조 여부를 기록합니다.**<br>CP1을 metadata 확인으로 제한하고 승인 뒤 논문 스킬을 생성한다. owned 입력과 결과의 ID·폴더/문서 hash 참조 receipt, 교정·재승인 예외 보존, 지연 스킬 재사용 제외를 구현했다. 관련 mock/static 66건 통과; 실제 PDF·네트워크·연구·process·성능은 미검증이다. |
+| 20:17 | [`2b6d9c3`](https://github.com/ehojune/bioinfo-team-3d/commit/2b6d9c3) | **병합된 승인 게이트 작업을 개발 대기 목록에서 뺐습니다.**<br>총괄이 확인한 |
+| 20:14 | [`20a434e`](https://github.com/ehojune/bioinfo-team-3d/commit/20a434e) | **이미 반영된 기능을 아직 개발 중으로 안내하던 문서를 바로잡았습니다.**<br>HANDOFF의 병합 완료 PR과 대기 순서를 정리하고 매뉴얼의 |
+| 19:52 | [`1b343b0`](https://github.com/ehojune/bioinfo-team-3d/pull/818/commits/1b343b0) | queued halt 검사가 Windows worker 대기에 흔들리지 않도록 분리했습니다. 기술: halt 판정 뒤 t3 input scan executor 대기의 TimeoutError를 모의 재현하고, 해당 테스트만 offload/write job을 직접 실행한다. fsync·SQLite write와 기존 assertion 6개/deadline 5개를 보존하고 순서 assertion 2개를 추가했다. 관련 mock/static 11건 통과, 제품 control 변경·실제 process/thread 실행은 없다. |
 | 19:37 | [`49d5324`](https://github.com/ehojune/bioinfo-team-3d/pull/819/commits/49d5324) | **같은 단계의 조회와 승인 대기를 순서대로 처리해 대기 시간이 두 번 빠지는 문제를 막았습니다.**<br>동일 MCP event loop·작업 폴더의 자동 조회와 PDF 승인 대기를 slot으로 직렬화하고 예산 파일·취소·timeout·progress 종료 flag를 유지한다. 관련 mock 검사 27개가 통과했으며 실제 서비스 성능은 미검증이다. |
 | 19:04 | [`692c8ed`](https://github.com/ehojune/bioinfo-team-3d/pull/807/commits/692c8ed) | 논문 스킬 방법이 바뀌면 이전 결과를 재사용하지 않도록 고쳤습니다. 기술: 단계/직원에 연결된 selection·변환 receipt 전체와 순서를 노드 context hash에 결속했다. 해당 단계/후속은 거절하고 독립 후보는 보존하며 구 signature·승인 후 변경은 재승인을 요구한다. 회귀 15건 red 뒤 mock/static 129건 통과, 실제 변환/설치/연구는 미실행이다. |
 | 19:03 | [`45f35f0`](https://github.com/ehojune/bioinfo-team-3d/pull/766/commits/45f35f0) | 괄호 안에서 고른 process의 Kill 호출·ionice wrapper·locale quote 실행 우회를 막는다. 앞선 출력의 선택 상태와 명시 PID·조회·데이터 구분을 유지하고 새 실패 31개 재현 뒤 mock/static 710개를 확인했다. |
+| 18:53 | [`3d7571f`](https://github.com/ehojune/bioinfo-team-3d/pull/818/commits/3d7571f) | Shadow 비교 검사에서 같은 기준 실행의 반복을 줄였습니다. 기술: off 결과를 불변 JSON으로 공유해 네 비교의 lab 호출을 8→5로 줄이고 on·fresh-process·fail-open·개인정보/읽기 경계를 보존했다. 제거 검사는 전체 수집과 compile/잔여 참조/상태/핵심 E2E를 유지하면서 child node를 좁혔다. 4건 red 뒤 mock/static 79건 통과, CI 시간 절감과 실제 제거/E2E는 미검증이다. |
 | 18:08 | [`c6e68b8`](https://github.com/ehojune/bioinfo-team-3d/commit/c6e68b8) | **운영체제별 줄바꿈 차이로 문서 전체가 바뀐 것처럼 보이지 않도록 정리했습니다.**<br>패치노트 생성기·검사·작성 기준·변경 기록의 저장 줄바꿈을 LF로 정규화했다. 기술 내용은 바꾸지 않았다. |
 | 18:03 | [`3761731`](https://github.com/ehojune/bioinfo-team-3d/commit/3761731) | **패치노트에 쉬운 설명을 먼저 보여주고 기존 기술 설명을 아래에 남깁니다.**<br>기존 1,440개 항목의 기술 설명·시각·SHA·링크를 보존하고 선택 summary 필드와 표 렌더·검증·작성 기준을 추가했다. 관련 15건 통과, 실제 연구 실행이나 성능 개선 주장은 없다. |
 | 17:46 | [`79970c4`](https://github.com/ehojune/bioinfo-team-3d/pull/807/commits/79970c4) | HANDOFF의 PR 807 현황을 요청 입력 증거 누락 차단과 관련 mock/static 112건 검증으로 갱신하고 P1 수정·미실행 경계를 status에 기록했다. |

@@ -175,6 +175,8 @@ async def test_real_asyncio_cancellation_still_propagates(hub, caller):
 @pytest.mark.parametrize("caller", ["recruit_check", "plan_recruit", "paper_skill"])
 @pytest.mark.parametrize("cancelled", [False, True])
 async def test_plan_preparation_callbacks_propagate_interruption(hub, caller, cancelled):
+    import copy
+    from labhq.research.contract import plan_sha256
     from tests.test_paper_skill_attach import PRECEDENTS, SELECTED
     from tests.test_recruit_before_plan import proposal
 
@@ -183,7 +185,10 @@ async def test_plan_preparation_callbacks_propagate_interruption(hub, caller, ca
     hub.agents["recruiter"] = {"id": "recruiter", "engine": "mock"}
     hub.request_approval = AsyncMock(return_value={"approved": True})
 
+    dispatched = []
+
     async def dispatch(task):
+        dispatched.append(task.meta["kind"])
         if task.meta["kind"] == caller:
             if cancelled:
                 raise asyncio.CancelledError
@@ -191,12 +196,32 @@ async def test_plan_preparation_callbacks_propagate_interruption(hub, caller, ca
         return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured={"status": "ready"})
 
     hub.dispatch = dispatch
+    if caller == "paper_skill":
+        from tests.test_research_protocol import valid_plan
+
+        # #798: preparation cannot extract. The callback moves to the approved step,
+        # where runner shutdown/cancellation must still escape instead of becoming a failed receipt.
+        plan = {**valid_plan(), "paper_skills": [copy.deepcopy(SELECTED)]}
+        prepare_callback = AsyncMock(wraps=hub.orchestrator.run_step)
+        plan = await paper_skills.prepare_plan(plan, PRECEDENTS, list(hub.agents.values()), "r", hub.s,
+                                               prepare_callback)
+        prepare_callback.assert_not_awaited()
+        assert dispatched == [] and plan["paper_skill_results"][0]["status"] == "deferred"
+        frozen = copy.deepcopy(plan)
+        digest = plan_sha256(plan)
+        hub.requests["r"].update(plan=plan, research_contract={"plan_sha256": digest,
+            "approval": {"approved": True, "target_sha256": digest}})
+        job = hub.orchestrator.run_step(Task(agent_id="worker", request_id="r", prompt="approved fixture",
+            meta={"kind": "step", "step_id": "s1",
+                  "paper_skills": paper_skills.attachments(plan, "s1", "worker", "r")}))
+    else:
+        job = planning.prepare_plan(plan, "r", hub, hub.orchestrator.run_step)
     with pytest.raises(asyncio.CancelledError if cancelled else ShutdownInterrupted):
-        if caller == "paper_skill":
-            await paper_skills.prepare_plan(plan, PRECEDENTS, list(hub.agents.values()), "r", hub.s,
-                                            hub.orchestrator.run_step)
-        else:
-            await planning.prepare_plan(plan, "r", hub, hub.orchestrator.run_step)
+        await job
+    if caller == "paper_skill":
+        assert dispatched == ["paper_skill"]  # The interrupted build never dispatches the research step.
+        assert plan == frozen and plan_sha256(plan) == digest
+        assert hub.requests["r"]["research_contract"]["approval"]["target_sha256"] == digest
 
 
 async def test_precedent_shutdown_interrupts_request_before_planning(tmp_path):

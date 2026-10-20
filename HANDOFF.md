@@ -15,17 +15,14 @@ PI가 신규 일반 작업 보류를 해제했습니다. 승인 예산 안에서
 
 | 열린 PR | 내용 (병합 전이므로 manual·README에 출시 동작으로 쓰지 않음) |
 |---|---|
-| #766 | 승인 전 광역 프로세스 종료 거부(#681 일부) |
-| #790 · #791 | POSIX runner TERM·HUP 종료 기록(#664) · 조상 inputs 복사(#665). #791 native 보호·retry 증거·부분 정리·hash 상한 [검증](docs/status/2026-10-20-1638-codex-routine-665-review.md); CI fixture 보정; 최종 CI·리뷰는 controller |
 | #793 | 문서 전용 변경의 CI 검사와 같은 tree 검증 재사용 |
-| #802 | Windows Job 탈출 검증과 doctor 운영 준비 판정 분리(#795) |
-| #807 | 후속 연구 재사용·CP1 snapshot 일치(#797). 요청 외부 입력 증거와 단계별 paper-skill selection/receipt를 검증하며 승인 후 변경은 중단. [P1 수정·129건 mock 검증](docs/status/2026-10-20-1901-codex-continuation-797-paper-inputs.md); CI·새 head 리뷰는 controller |
-| #815 | 응집형 분석 계획·비교 측정 계약(#799), draft |
-| #801 | 이 문서 정비 |
+| #821 | 논문 스킬을 승인 뒤 생성하고 결과 참조를 기록(#798) |
 
-#812는 병합됐습니다(`8cc845b2`). #799는 Opus가 #815에서 계획 예제·측정 계약과 이미 승인된 응집형 정책을 보완합니다. #811은 Codex1이 #807·#791 통합 뒤 맡고 #798은 CP1 공유 코드를 순차 통합합니다. 감사 항목별 경계와 진행은 [감사 우선순위](docs/reference/audit-priorities-2026-10-20.md)에 있습니다.
+병합된 감사 항목의 구현·검증 범위는 [감사 우선순위](docs/reference/audit-priorities-2026-10-20.md)에 있습니다. #811의 queued-halt 검사는 executor 대기와 분리됐으며 [검증 경계](docs/reference/shadow-test-cost-811.md)를 따릅니다.
 
-개발 준비가 끝나고 PI가 실운전을 승인한 뒤의 순서는 공개 소형 주제 실운전 → bench dry-run·필수 게이트 → Astra의 코드·README·구조 전체 검토 → 동일 요청 bench 비교(labhq 혼합 roster 대 Astra·Sol·Opus 단독 세션)입니다. 현재 실운전 가동은 #795 해결 뒤 다시 확인합니다. v0.5 선언(2026-10-08) 이후 장치의 구현·CI 통과는 새 실운전 PASS를 뜻하지 않습니다([로드맵](docs/manual.md#로드맵)).
+#798의 승인 뒤 논문 스킬 생성·결과 참조 receipt·검증 문서 읽기 권한은 #821에서 검증 중입니다([계약과 검증 범위](docs/reference/paper-skills-798.md)). 병합 전이며 현재 head의 최종 CI·리뷰·병합은 총괄 관제가 맡습니다.
+
+개발 준비가 끝나고 PI가 실운전을 승인한 뒤의 순서는 공개 소형 주제 실운전 → bench dry-run·필수 게이트 → Astra의 코드·README·구조 전체 검토 → 동일 요청 bench 비교(labhq 혼합 roster 대 Astra·Sol·Opus 단독 세션)입니다. 가동 전에는 배포 인스턴스의 `doctor --runtime` 준비 판정을 다시 확인합니다. v0.5 선언(2026-10-08) 이후 장치의 구현·CI 통과는 새 실운전 PASS를 뜻하지 않습니다([로드맵](docs/manual.md#로드맵)).
 
 ## PI 결정
 
