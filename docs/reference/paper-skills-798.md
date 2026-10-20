@@ -9,3 +9,9 @@
 - 결과의 `[paper-skill:<id>:<folder_sha256>:<document_sha256>]` 표기와 유지된 사본이 일치하고 단계가 성공해야 `called=true`다. 결과의 출처 표기이며 실제 tool 호출이나 과학적 성능 향상을 뜻하지 않는다.
 - `false`는 확인된 참조가 없다는 뜻이다. `usage[].reason`은 `no_result_reference`, `input_changed`, `step_failed`, build/장착 실패를 구분한다. 구형 receipt나 runner 증거 부족은 `unverified`, 미실행은 `not_dispatched`다.
 - 검증 범위: 합성 metadata·파일과 fake adapter/Hub. PDF·네트워크·실제 연구·성능·process 실행은 확인하지 않았다. Windows/Python 3.10 전체 회귀는 CI가 담당한다.
+
+## CI 계약 보정
+
+- 두 prompt snapshot은 `labhq prepares them before CP1.`을 metadata 확인·승인된 단계 dispatch 문장으로 바꾼 차이만 반영한다. 문장을 되돌리면 이전 digest와 일치한다는 assertion도 유지하며 schema·output_types off/on 계약은 바꾸지 않는다.
+- paper 중단 검사는 metadata 준비에서 callback 미호출을 확인한 뒤 승인 hash를 붙인 실제 CSO step 경계로 이동했다. fake dispatch의 runner shutdown과 asyncio cancellation이 모두 전파되고 연구 단계는 dispatch되지 않으며 계획·승인 hash는 유지된다. 제품 예외 처리는 이미 이 계약을 지켜 수정하지 않았다.
+- 원 head의 네 실패를 mock으로 재현한 뒤 같은 네 node와 관련 17건이 통과했다. 로컬 timing은 각각 1.55초·4.06초이며 CI 성능이나 실제 process 중단의 검증은 아니다.
