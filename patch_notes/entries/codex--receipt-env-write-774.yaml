@@ -12,3 +12,9 @@ rows:
     미확정 시 단일 호출·미소유·무성공 기록을 fake로 검증했다. 관련 mock 6개와 Python 3.10 AST가 통과했으며 실제 Windows
     timeout 원인은 미해결이다.
   summary: Windows 검사에서 프로그램 시작이 실패해도 기존 진단 기록을 함께 보여 주도록 고쳤습니다.
+- sha: 5fbddd5
+  at: 2026-10-21 00:47
+  text: supervisor fixture 계약이 AssertionError와 원래 LaunchError의 cause 동일성을 검사하도록 맞췄다.
+    spawn 1회·stream close·raw retry 금지와 무 PID 종료·무 ACK를 검증한다. 관련 mock 14개가 통과했으며 원래
+    WMI timeout 원인은 UNVERIFIED다.
+  summary: 프로그램 시작 실패에 진단을 덧붙인 동작과 모의 검사의 기대를 맞췄습니다.
