@@ -4,6 +4,17 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+Fixes #797
+Refs #672, #680
+PR #807: P1 4323683886 — paper-skill 방법이 바뀌면 이전 결과를 재사용하지 않도록 수정했습니다.
+
+- 해당 단계의 `paper_skills` selection과 step/agent에 연결된 `paper_skill_results` receipt 전체·순서를 context hash에 넣습니다. CP1 후보 identity와 실행 context가 같은 hash를 쓰며 prompt에는 receipt 경로/값을 추가하지 않습니다.
+- 방법 변경은 그 단계와 의존 단계의 재사용을 거절하고 다른 단계의 별도 skill 변경은 독립 후보를 유지합니다. 구 실행 signature는 새 계약의 증거로 쓰지 않습니다. 승인 뒤 현재/보관 plan의 해당 입력이 바뀌면 중단·새 CP1을 요구하며 조용히 재실행하지 않습니다.
+- 기존 head 새 회귀 15건 red 뒤 새 18건을 포함한 관련 mock/static **129 passed**. 선언·실제 attachment metadata 대조, CP1 후보/snapshot·승인 후 변경·기존 요청 입력 차단·재개/예산 rollback을 확인했습니다. Python 3.10 AST·public·diff·patch-notes·notes 검사 근거를 기록했습니다.
+- Paper2Skill 변환/설치·실제 source bytes 읽기·process/thread/Hub 운영·PI·연구/bench/HPC/원자료는 미실행입니다. 기존 hash/path·승인·보안·bounded loop를 유지하고 실행 확장·P2·다른 owner 범위는 건드리지 않았습니다. 최종 head CI·새 리뷰/P1=0·병합/배포는 controller 담당입니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 ## 단계
 패치노트 가독성 개선
 
@@ -33,6 +44,17 @@
 
 🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 
+Fixes #797
+Refs #672, #680
+PR #807: P1 4323035753 — 요청 단위 외부 입력이 재사용 증거에서 빠지던 문제를 수정했습니다(`04fbc087`).
+
+- `references`·`project_dirs`는 모든 step에 전달되므로 내용 증거가 없으면 CP1 전에 재사용 후보에서 제외합니다. 외부 입력을 열거나 hash를 추정하지 않습니다.
+- dispatch에서 입력 부재만 기록해 retry/repair·archive·재승인에 보존합니다. 기록 없는 과거 결과도 제외합니다. metadata 삭제로 미검증 입력 이력을 지우지 못하며, 승인 후 입력 추가는 중단·새 CP1을 요구합니다. 새 기록·snapshot에 입력 경로/값을 넣지 않습니다.
+- 기존 head에서 새 mock 회귀 20건 red, 수정 뒤 새 23건을 포함한 관련 mock/static **112 passed**. CP1/input-fit·재개·예산 rollback을 확인했습니다. Python 3.10 AST·public·diff·patch-notes·notes 검사 통과. 전체 red/green 로그는 로컬 D: 산출에 보존했습니다.
+- 실제 process/thread/Hub 운영·PI·연구/bench·원자료/HPC는 미실행입니다. 기존 승인·보안 경계를 유지하며 #798/#811·P2·다른 owner 범위는 건드리지 않았습니다. 최종 head CI·리뷰/P1=0·병합/배포는 controller 담당입니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 Fixes #665
 PR #791: 조상 입력 보호·성공 retry 증거·부분 정리·입력 hash 계약을 유지하고 CI fixture만 보정했습니다.
 
@@ -41,6 +63,17 @@ PR #791: 조상 입력 보호·성공 retry 증거·부분 정리·입력 hash �
 - 같은 두 실패를 mock으로 재현한 뒤 관련 **31 passed**, 최신 main 통합 뒤 같은 **31 passed**. 새 hash 허용·상한 거절·partial cleanup·native profile 구성·retry identity 회귀를 함께 확인했습니다. 전체 traceback은 작업별 D: artifact에 보존했고 기존 guard 환경을 유지했습니다.
 - main `b9abcec7`의 #801 문서·#790 종료 기록 변경을 보존해 합쳤습니다. HANDOFF 충돌은 main 우선순위 표와 #791 검증 기록을 함께 남겨 해결했습니다(LF 4,748→3,439자). manual에는 #791 병합 전 구현임을 표시합니다.
 - public·diff·Python 3.10 AST·patch-notes·notes 검사 통과. 실제 process/thread/signal/proc_tree·직원 CLI·PI·원자료/HPC·연구/bench·설치·게시·배포는 실행하지 않았으며 #790의 process/signal 테스트도 로컬에서 돌리지 않았습니다. native/전체 Windows 검증·최종 head CI·새 리뷰/P1=0·병합은 controller 담당입니다. 기존 SyntaxWarning·P2는 범위 밖입니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+Fixes #797
+Refs #672, #680
+PR #807: CP1 전 후보 검증·계획/승인 seal, dispatch 도구 증거와 부분 완료 결과 보존을 유지합니다.
+
+- 최신 main `3e924495`를 merge해 HANDOFF 충돌을 해결했습니다. main의 독자별 안내·현행 큐와 #807의 context/도구/현재 차수 결과 보존 근거를 함께 남겼습니다. HANDOFF는 LF 기준 4,690→3,314자로 줄었으며 이전 검증 기록 링크를 유지합니다. manual은 #807 구현이 병합 전임을 표시합니다.
+- 이번에는 제품 코드·테스트·고정 hash/계약 항목을 바꾸지 않았습니다. CP1/input-fit·승인 후 drift·부분 완료 보존·Shadow 분리 관련 mock/static **38 passed**. 실제 process/thread/proc_tree·Hub·연구/bench·PI·원자료/HPC는 실행하지 않았습니다.
+- 시작 시 head `2787ef08`에서 Linux 3.10/3.12 등 완료 CI는 SUCCESS, Windows는 IN_PROGRESS였고 실패 job은 없었습니다. 요청한 `gh run view --log-failed`도 실행 중이라 로그를 제공하지 않았습니다. 실패를 추정해 코드를 고치거나 CI를 기다리지 않았습니다.
+- public·diff·patch-notes·notes 검사 통과. 전체 실패/검증 artifact는 작업별 D: 임시 폴더에 보존했습니다. 최종 head CI·새 리뷰/P1=0·병합/배포는 controller 담당이며 실제 연구 효용·native/Windows 전체 실행은 별도 검증 경계입니다. #798/#811·P2·다른 owner 범위 미착수입니다.
 
 🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 
@@ -145,6 +178,20 @@ PR #815(draft), 정책 커밋 `7330e77`. #799의 최종 범위입니다. 공통 
 - **기록기 미구현:** task 기록 대리값과 runner의 실제 CLI 시작·byte를 arm 폴더에 쓰는 코드는 없습니다. bench dry-run 전 별도 작업이며, 그때까지 해당 칸은 `미수집`입니다.
 - **효과 미측정:** 새 문장으로 실제 CSO 계획이 응집되는지, 속도·비용·품질이 달라지는지는 측정하지 않았습니다. 실제 arm 측정은 PI의 별도 bench 실행 승인이 필요합니다.
 - **목차 링크:** `docs/reference/README.md` 목차와 manual 반영은 #801 등 다른 PR이 그 파일을 고치는 동안 미뤘습니다.
+
+Fixes #797
+Refs #672, #680
+
+PR #807: CP1 재사용 계약 `232690b`, 복구/예산 경계 `d175432`, 리뷰 수정 `ea0f289`.
+
+- 실행 prompt와 identity가 같은 노드별 과학 context를 사용합니다. scoped prompt 이전의 도구 signature는 증거로 인정하지 않습니다.
+- 도구·engine 설정은 CP1 대기 전 대신 실제 dispatch에서 기록합니다. retry/wake/결과 교정의 혼합 설정, 설정 변경 중 실행·증거 없는 복구는 재사용을 거절합니다.
+- 부분 실행 뒤 drift는 진행 중인 차수와 완료 결과를 보존합니다. 새 CP1은 현재 차수의 완료 결과도 입력·도구·산출 증거를 검사해 snapshot에 포함하며, 증거가 깨져 있으면 기록을 남긴 채 중단합니다. 조용한 재실행이나 승인 우회는 없습니다.
+- 기존 head에서 실제 실패 패턴 **8 failed**를 재현한 뒤 관련 mock/static **113 passed**. 현재 차수 완료 결과의 재승인·중복 dispatch 방지, CP1 카드/seal, 새 계획 전 restart, 예산 rollback, #796 input-fit/지표·Shadow 분리를 확인했습니다. 지적 4321664411은 기존 `d175432`와 복구 회귀 테스트로 해결을 확인했습니다.
+- Python 3.10 AST·public·diff·patch-notes·notes 검사 통과. 최신 main의 #810 변경을 merge로 보존했습니다. 전체 traceback은 작업별 local artifact에 보존했고 mock guard의 blocked는 0건입니다.
+- 실제 process/thread/Hub·연구/bench·PI·원자료/HPC 실행 없음. Windows/3.10 실행·전체 suite·최종 head CI/리뷰·P1=0 판단은 controller 담당입니다. 파일 변경을 잠그지 않으며 실제 도구 설치 판본·과학 효용은 미검증입니다. 기존 P2와 #798/#811은 범위 밖입니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 
 ## PR #790 P1 4320895582
 
@@ -255,6 +302,20 @@ P1 — 긴 보고서의 경로 판별 지연 제거. Fixes #810.
 ## 확인
 - 공개 검사·patch-notes·notes-index 검사 통과. Python 3.10·Linux 실행은 CI 확인 전입니다.
 - 연구·PI 실행·HPC·bench·배포는 하지 않았습니다. 최종 CI·리뷰·병합은 총괄이 이어갑니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+Fixes #797
+Refs #672, #680
+PR #807. 재사용 계약 `232690b`, CI 회귀 수정 `d175432`.
+
+CP1 전에 검증한 노드별 재사용 snapshot을 계획/승인 hash와 묶습니다. 승인 뒤·재개·dispatch 직전 증거가 달라지면 재실행 대신 중단·새 CP1을 요구합니다. 과학 계약·도구/engine 설정·의존 산출 hash를 비교하고, 증거 없는 입력·manifest 없는 디렉터리는 제외합니다.
+
+- CI 회귀: 무조건적인 request 조회를 연구 step 경계 안의 안전한 조회로 바꿔 consult/wake/nonresearch 동작을 보존했습니다. 새 계획 채택 전 보관 차수의 이미 결정된 checkpoint 복구만 구분하며, 채택된 계획의 새 CP1·snapshot 검증은 유지합니다.
+- 해시 증명과 실행 진행을 구분했습니다. 예산 거절 전에는 실행 준비 완료로 표시하지 않아 이전 계획·승인·집행 상한을 rollback합니다. 실제 dispatch 뒤의 drift는 중단하되 그 차수를 되돌리지 않습니다.
+- 실제 CI 패턴에서 누락 request mock 16건과 연구 복구/예산 4건, 합계 **20 failed**를 재현한 뒤 관련 mock/static **100 passed**. 새/동일 hash 계획 CP1, CP1/CP2 revise·resume, 예산 상한 rollback, 승인/dispatch 뒤 drift, #796 input-fit/지표·Shadow 분리를 검사했습니다. 기존 연구 실패 테스트의 assertion은 유지했습니다.
+- Python 3.10 AST·public·diff·patch-notes·notes 검사 통과. git probe는 명시 mock, native thread 시작 금지·to_thread 인라인 mock, 기존 guard 환경 유지·blocked 0건입니다. 전체 실패/성공 trace는 local artifact에 보존했습니다.
+- 실제 Hub를 구성하는 ask 37건·process/thread/signal·전체 suite·Windows/3.10 실행은 CI 경계입니다. PI·원자료/HPC·연구/bench·봇 요청/대기·병합·배포는 하지 않았습니다. #798/#811·다른 owner 범위 미착수. 실제 과학 효용·도구 설치 판본은 미검증이며 파일 변경을 잠그지 않습니다. 최종 CI·리뷰·P1=0·병합은 controller 담당입니다.
 
 🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 
