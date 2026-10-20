@@ -3600,6 +3600,12 @@ class Orchestrator:
                         recorded[execution_step] = execution_signature
                     elif recorded[execution_step] != execution_signature:
                         recorded[execution_step] = None  # sticky: this node ran with mixed configurations
+                    # Request references/project directories reach every step, even without input_refs.
+                    # Record absence at execution, never infer it later from mutable request metadata.
+                    absence = execution_req.setdefault('reuse_no_request_inputs', {})
+                    absence[execution_step] = (absence.get(execution_step, True) is True
+                        and not research_continuation.has_request_inputs(execution_req)
+                        and not research_continuation.has_request_inputs(attempt_task.meta))
                     self.hub.save_request(rid)
                 try:
                     dispatched = (attempt_task if current.meta.get("facilities_diagnosis") else
@@ -3613,10 +3619,15 @@ class Orchestrator:
                     offline = isinstance(exc, RunnerUnavailable)
                     if execution_step and execution_req.get('research_contract'):
                         execution_req['reuse_tools'][execution_step] = None
+                        execution_req['reuse_no_request_inputs'][execution_step] = False
                         self.hub.save_request(rid)
                 else:
                     if execution_step and execution_req.get('research_contract'):
                         after = self._research_reuse_tools(rid, execution_req.get('plan') or {}).get(execution_step)
+                        if (research_continuation.has_request_inputs(execution_req)
+                                or research_continuation.has_request_inputs(dispatched.meta)):
+                            execution_req['reuse_no_request_inputs'][execution_step] = False
+                            self.hub.save_request(rid)
                         if after != execution_signature or res.task_id != attempt_task.id:
                             execution_req['reuse_tools'][execution_step] = None
                             self.hub.save_request(rid)
@@ -5253,10 +5264,11 @@ class Orchestrator:
         req["results"] = carry.results
         # Preserve only the execution proof belonging to retained results. A rerun starts without any
         # historical signature; dispatch will record what it actually uses.
-        recorded = req.get('reuse_tools') or {}
-        previous = (contract.get('rounds') or [{}])[-1].get('reuse_tools') or {}
         completed = contract['continuation'].get('completed') or []
-        req['reuse_tools'] = {sid: (recorded if sid in completed else previous).get(sid) for sid in carry.reuse}
+        for key in ('reuse_tools', 'reuse_no_request_inputs'):
+            recorded = req.get(key) or {}
+            previous = (contract.get('rounds') or [{}])[-1].get(key) or {}
+            req[key] = {sid: (recorded if sid in completed else previous).get(sid) for sid in carry.reuse}
         self._forget_step_state(rid, (set(carry.rerun) | set(also_forget)) - set(carry.reuse))
 
     def _forget_step_state(self, rid: str, steps: set[str]) -> None:
@@ -5290,7 +5302,7 @@ class Orchestrator:
         refused = dict(sealed.get('rerun') or {}) if sealed else {}
         carry = research_continuation.carry_over(previous, plan, contract.get('pack_snapshot'),
                                                 carried.get('p1_issues') or [], refused)
-        refused.update(research_continuation.proof_problems(previous, plan, carry, tools))
+        refused.update(research_continuation.proof_problems(previous, plan, carry, tools, req))
         carry = research_continuation.carry_over(previous, plan, contract.get('pack_snapshot'),
                                                 carried.get('p1_issues') or [], refused)
         try:
@@ -5311,7 +5323,7 @@ class Orchestrator:
             current = {**req, 'plan_sha256': contract['plan_sha256'],
                        'pack_snapshot': contract.get('pack_snapshot'), 'round': contract.get('round')}
             retained = research_continuation.carry_over(current, plan, contract.get('pack_snapshot'), [])
-            problems = research_continuation.proof_problems(current, plan, retained, tools)
+            problems = research_continuation.proof_problems(current, plan, retained, tools, req)
             for step in plan['steps']:
                 sid = step['id']
                 if sid not in completed:

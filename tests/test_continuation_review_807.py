@@ -113,6 +113,7 @@ async def test_reapproval_keeps_completed_current_round_and_seals_it(monkeypatch
     completed['structured'] = _ledger(plan_sha256(req['plan']), req['plan']['steps'][1])
     req['results']['s2'] = completed
     req.setdefault('reuse_tools', {})['s2'] = c.tool_signatures(req['plan'], hub.agents, hub.s.engines)['s2']
+    req.setdefault('reuse_no_request_inputs', {})['s2'] = True  # synthetic current-round execution
     carried.update(dispatch_started=True, verified=True)
     # A changed execution configuration invalidates the old CP1, after s2 completed.
     hub.agents['worker']['tools'] = ['changed']
@@ -216,6 +217,7 @@ async def test_failed_current_round_proof_keeps_the_original_record(monkeypatch,
     row['task_id'] = 'completed-current-s2'
     req['results']['s2'] = row
     req['reuse_tools']['s2'] = c.tool_signatures(req['plan'], hub.agents, hub.s.engines)['s2']
+    req.setdefault('reuse_no_request_inputs', {})['s2'] = True  # synthetic current-round execution
     req['research_contract']['continuation']['dispatch_started'] = True
     if failure == 'tool':
         req['reuse_tools']['s2'] = None

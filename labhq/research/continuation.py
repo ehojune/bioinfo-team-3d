@@ -35,7 +35,7 @@ class ReuseApprovalRequired(RuntimeError):
 # dispatch puts them back; the CP2 receipt lives under ``checkpoints.cp2`` and is archived as ``cp2``.
 ROUND_CONTRACT_FIELDS = ("plan_sha256", "approval", "pack_snapshot", "pack_applicability", "review")
 # The request fields one frozen plan owns.
-ROUND_REQUEST_FIELDS = ("plan", "output_types_stats", "reuse_tools")
+ROUND_REQUEST_FIELDS = ("plan", "output_types_stats", "reuse_tools", "reuse_no_request_inputs")
 
 
 def _canonical(value: Any) -> str:
@@ -129,8 +129,13 @@ def _artifacts(step: Mapping[str, Any], result: Mapping[str, Any]) -> dict[str, 
     return {path: hashes[path] for path in sorted(outputs)}
 
 
+def has_request_inputs(request: Mapping[str, Any]) -> bool:
+    """These inputs reach every step; no content-hash proof is currently available for them."""
+    return any(request.get(key) for key in ('references', 'reference_dirs', 'project_dirs'))
+
+
 def proof_problems(previous: Mapping[str, Any], plan: Mapping[str, Any], carry: Carry,
-                   tools: Mapping[str, str]) -> dict[str, str]:
+                   tools: Mapping[str, str], current_request: Mapping[str, Any] | None = None) -> dict[str, str]:
     """Fail closed on unproved external inputs, dependencies or historical tool configuration."""
     old_tools = previous.get("reuse_tools") or {}
     steps = {s["id"]: s for s in plan.get("steps") or []}
@@ -139,6 +144,10 @@ def proof_problems(previous: Mapping[str, Any], plan: Mapping[str, Any], carry: 
     for sid in carry.reuse:
         step = steps[sid]
         try:
+            absence = previous.get('reuse_no_request_inputs')
+            if (has_request_inputs(previous) or has_request_inputs(current_request or {})
+                    or not isinstance(absence, Mapping) or absence.get(sid) is not True):
+                raise ValueError('request-level input content proof is unavailable (including legacy execution)')
             if previous.get('plan_sha256') != plan_sha256(previous.get('plan') or {}):
                 raise ValueError('archived plan identity is missing or changed')
             original = (previous.get('results') or {}).get(sid) or {}

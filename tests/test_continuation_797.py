@@ -33,6 +33,7 @@ def archive():
     plan['steps'][2].update(depends_on=['s1'], input_refs=['step:s1/result1.tsv'])
     old = _round_one(plan)
     old['reuse_tools'] = c.tool_signatures(plan, AGENTS)
+    old['reuse_no_request_inputs'] = {s['id']: True for s in plan['steps']}  # synthetic input-free executions
     for sid, result in old['results'].items():
         path = 'outputs/result' + sid[1:] + '.tsv'
         result.update(outputs=[path], output_sha256={path: sid[1:] * 64})
