@@ -2,6 +2,7 @@ import pytest
 
 # Capture the operator home before imports/collection can expand a default path.
 from labhq import test_guard
+from scripts.ci_isolation import operator_home
 
 _OPERATOR_HOME = str(test_guard._ORIGINAL_HOME)
 _SESSION_ENV = pytest.MonkeyPatch()
@@ -27,7 +28,13 @@ def _isolate_home(patch, home):
 
 
 def pytest_sessionstart(session):
+    operator_home(_OPERATOR_HOME, getattr(session.config, "workerinput", None))
     _isolate_home(_SESSION_ENV, session.config._tmp_path_factory.getbasetemp() / "collection-home")
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_configure_node(node):
+    node.workerinput["labhq_operator_home"] = _OPERATOR_HOME
 
 
 def pytest_unconfigure(config):

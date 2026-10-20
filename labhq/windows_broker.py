@@ -5,6 +5,7 @@ import base64
 import ctypes as C
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import runpy
@@ -31,13 +32,23 @@ class BrokerFailure(LaunchError):
 WMI_SCRIPT = r'''
 $ErrorActionPreference = 'Stop'
 [Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
+$clock = [Diagnostics.Stopwatch]::StartNew()
+function Write-Phase([string]$phase) {
+  [Console]::Out.WriteLine((@{phase=$phase; elapsed_ms=$clock.Elapsed.TotalMilliseconds} | ConvertTo-Json -Compress))
+  [Console]::Out.Flush()
+}
 try {
+  Write-Phase 'powershell_started'
   $r = [Console]::In.ReadToEnd() | ConvertFrom-Json
+  Write-Phase 'input_accepted'
   $startup = ([wmiclass]'\\.\root\cimv2:Win32_ProcessStartup').CreateInstance()
   $startup.CreateFlags = [uint32]$r.flags
   $startup.ShowWindow = 0
   $startup.EnvironmentVariables = [string[]]$r.environment
-  $p = ([wmiclass]'\\.\root\cimv2:Win32_Process').Create($r.command, $r.cwd, $startup)
+  $process = [wmiclass]'\\.\root\cimv2:Win32_Process'
+  Write-Phase 'create_entered'
+  $p = $process.Create($r.command, $r.cwd, $startup)
+  Write-Phase 'create_returned'
   [Console]::Out.Write((@{code=[uint32]$p.ReturnValue; pid=[uint32]$p.ProcessId} | ConvertTo-Json -Compress))
 } catch { [Console]::Out.Write('{"code":-1,"pid":0}'); exit 1 }
 '''
@@ -197,7 +208,48 @@ def _powershell():
     return Path(buffer.value) / "WindowsPowerShell/v1.0/powershell.exe"
 
 
-def _create(command, cwd, environment):
+_PROVIDER_PHASES = ("powershell_started", "input_accepted", "create_entered", "create_returned")
+
+
+def _provider_output(output, diagnostics, *, complete):
+    """Keep only bounded, ordered fixed phases; partial stdout never establishes a returned PID."""
+    phases = diagnostics["phases"] = []
+    diagnostics["trace_status"] = "absent"
+    try:
+        if output is None and not complete:
+            return None
+        if not isinstance(output, bytes) or len(output) > 8192:
+            raise ValueError
+        lines = output.decode("utf-8-sig").splitlines()
+        if len(lines) > 5:
+            raise ValueError
+        reply = None
+        for index, line in enumerate(lines):
+            row = json.loads(line)
+            if isinstance(row, dict) and "phase" in row:
+                elapsed = row.get("elapsed_ms")
+                if (len(phases) >= 4 or row["phase"] != _PROVIDER_PHASES[len(phases)]
+                        or set(row) != {"phase", "elapsed_ms"} or type(elapsed) not in (int, float)
+                        or not 0 <= elapsed <= 60000 or not math.isfinite(elapsed)
+                        or (phases and elapsed < phases[-1]["elapsed_ms"])):
+                    raise ValueError
+                phases.append({"phase": row["phase"], "elapsed_ms": elapsed})
+            elif index == len(lines) - 1 and isinstance(row, dict):
+                reply = row
+            else:
+                raise ValueError
+        if complete and reply is None:
+            raise ValueError
+        diagnostics["trace_status"] = "phases_complete" if len(phases) == 4 else "partial" if phases else "absent"
+        return reply if complete else None
+    except (ValueError, UnicodeError):
+        diagnostics["trace_status"] = "invalid_or_partial"
+        if complete:
+            raise ValueError("WMI provider protocol invalid") from None
+        return None
+
+
+def _create(command, cwd, environment, *, diagnostics=None):
     shell = _powershell()
     if not shell.is_absolute() or not shell.is_file():
         raise LaunchError("WMI broker requires the system Windows PowerShell executable")
@@ -205,10 +257,19 @@ def _create(command, cwd, environment):
             "flags": BREAKAWAY | DETACHED | 0x400,
             "environment": [f"{key}={value}" for key, value in environment.items()]}
     encoded = base64.b64encode(WMI_SCRIPT.encode("utf-16-le")).decode("ascii")
-    result = subprocess.run([str(shell), "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
-                            input=json.dumps(data, ensure_ascii=True).encode(), stdout=subprocess.PIPE,
-                            stderr=subprocess.DEVNULL, timeout=10, creationflags=0x08000000, check=False)
-    reply = json.loads(result.stdout.decode("utf-8-sig"))
+    diagnostics = {} if diagnostics is None else diagnostics
+    started = time.monotonic()
+    try:
+        try:
+            result = subprocess.run([str(shell), "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+                                    input=json.dumps(data, ensure_ascii=True).encode(), stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL, timeout=10, creationflags=0x08000000, check=False)
+        except subprocess.TimeoutExpired as exc:
+            _provider_output(exc.output, diagnostics, complete=False)
+            raise  # Create may have succeeded. Never retry or use a partial returned PID.
+        reply = _provider_output(result.stdout, diagnostics, complete=True)
+    finally:
+        diagnostics["elapsed_ms"] = round((time.monotonic() - started) * 1000, 3)
     code = reply.get("code")
     if result.returncode or type(code) is not int or code != 0:
         raise BrokerFailure("create_failed", code if type(code) is int else None)
@@ -243,6 +304,7 @@ def launch(command, *, state, role, **options):
     root = Path(state) / ".launch"
     root.mkdir(parents=True, exist_ok=True)
     process, owned, committed = None, False, False
+    provider = {}
     outcome(state, role, "wmi_attempt")
     folder = Path(tempfile.mkdtemp(prefix="wmi-", dir=root))
     try:
@@ -256,7 +318,8 @@ def launch(command, *, state, role, **options):
         control = folder / "request.json"
         _write(control, request)  # No environment values or credentials on disk.
         try:
-            pid = _create([command[0], "-I", "-S", str(Path(__file__).resolve()), str(control)], cwd, environment)
+            pid = _create([command[0], "-I", "-S", str(Path(__file__).resolve()), str(control)], cwd, environment,
+                          diagnostics=provider)
             handle = native.open_process(pid)
             process = Process(native, pid, handle, None)
             identity = native.identity(handle)
@@ -278,7 +341,7 @@ def launch(command, *, state, role, **options):
             if member is not False or not native.alive(handle):
                 outcome(state, role, "wmi_unverified", child_in_job=member, child_job_query=diagnostics)
                 raise BrokerFailure("job_unverified")
-            outcome(state, role, "wmi_verified", child_pid=pid, child_in_job=False)
+            outcome(state, role, "wmi_verified", child_pid=pid, child_in_job=False, provider=provider)
             process.folder = folder
             _write(folder / "ack.json", receipt)  # Commit point: no wait/failable work and no rollback kill after ACK.
             committed = True
@@ -286,7 +349,7 @@ def launch(command, *, state, role, **options):
         except (OSError, ValueError, TypeError, subprocess.SubprocessError) as exc:
             reason, code = getattr(exc, "reason", "native_or_protocol"), getattr(exc, "code", getattr(exc, "errno", None))
             try:
-                outcome(state, role, "wmi_failed", error=type(exc).__name__, reason=reason, code=code)
+                outcome(state, role, "wmi_failed", error=type(exc).__name__, reason=reason, code=code, provider=provider)
             finally:  # A full/unwritable journal must never prevent owned-handle cleanup before ACK.
                 if process:
                     try:

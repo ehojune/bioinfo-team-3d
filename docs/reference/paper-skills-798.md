@@ -8,7 +8,7 @@
 - 일반 DAG도 policy 구성 시 길이·내용 hash·무링크 handle로 재검사한 문서 파일만 기존 읽기 grant에 넣는다. `inputs/` 보호·조상 권한·native 쓰기 제한은 유지하고 조상 namespace가 겹치면 장착을 생략한다. 파일 불변을 보장하는 것은 아니며 결과 귀속 때 hash를 다시 검사한다.
 - 결과의 `[paper-skill:<id>:<folder_sha256>:<document_sha256>]` 표기와 유지된 사본이 일치하고 단계가 성공해야 `called=true`다. 결과의 출처 표기이며 실제 tool 호출이나 과학적 성능 향상을 뜻하지 않는다.
 - `false`는 확인된 참조가 없다는 뜻이다. `usage[].reason`은 `no_result_reference`, `input_changed`, `step_failed`, build/장착 실패를 구분한다. 구형 receipt나 runner 증거 부족은 `unverified`, 미실행은 `not_dispatched`다.
-- 검증 범위: 합성 metadata·파일과 fake adapter/Hub. PDF·네트워크·실제 연구·성능·process 실행은 확인하지 않았다. Windows/Python 3.10 전체 회귀는 CI가 담당한다.
+- 검증: 합성 metadata·파일과 fake adapter/Hub. [#821](https://github.com/ehojune/bioinfo-team-3d/pull/821) 병합 시 Linux 3.10·3.12·Windows CI가 통과했다. 실제 PDF·네트워크·연구·성능은 미확인이다.
 
 ## CI 계약 보정
 
@@ -20,4 +20,4 @@
 
 - Linux 3.12 job 118674733476의 terminal error는 테스트의 전역 `Path` trap이 pytest traceback·cache·정리까지 차단한 것이다. 기존 staff-path 6조합은 단독 통과했고 무관한 진단 I/O를 끼운 mock 6건은 같은 메시지로 실패했다. 선행 E/F의 원 traceback은 로그에 없어 원인 전체를 확정하지 않는다.
 - trap은 테스트 대상 staff/cache 경로로 한정하고 git fake는 해당 모듈에만 연결했다. 호출 내부 context에서 복원하므로 예상 밖 예외도 정상 보고한다. 실제 HOME/staff 사전 거부와 guard 전 I/O 금지는 유지하며 제품 코드는 바꾸지 않았다.
-- 수정 뒤 16건은 정상 진단·실패 시 복원·조기 staff/cache 읽기·git 차단을 검사했고 관련 HOME guard 3건도 통과했다. 실제 설치/git·process 실행과 전체 Linux 3.12 재검증은 수행하지 않았다.
+- 당시 로컬 검사 16건은 정상 진단·실패 시 복원·조기 staff/cache 읽기·git 차단을 확인했고 관련 HOME guard 3건도 통과했다. 실제 설치/git·process 실행은 수행하지 않았다.
