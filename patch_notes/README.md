@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 13:59 | [`df48ec6`](https://github.com/ehojune/bioinfo-team-3d/pull/806/commits/df48ec6) | Codex·Gemini 커밋의 공동 작성자 trailer를 GitHub이 인식하는 봇 주소로 맞추는 commit-msg 훅을 추가해 커밋 작성자에 에이전트 아이콘이 함께 보이게 했다. |
 | 13:43 | [`ade4f03`](https://github.com/ehojune/bioinfo-team-3d/pull/805/commits/ade4f03) | docs: 아키텍처 다이어그램의 store·resume·ws 경로 수정 및 readme-evidence 수치 동기화 |
 | 13:35 | [`6e522b2`](https://github.com/ehojune/bioinfo-team-3d/pull/805/commits/6e522b2) | docs: 매뉴얼 내 개발 에이전트 규칙 분리, 전체 계층 구조·다크 다이어그램 및 v0.5 모듈/어휘 수 최신화 |
 | 13:16 | [`bab83c2`](https://github.com/ehojune/bioinfo-team-3d/pull/803/commits/bab83c2) | C3의 6954ab6 원본 두 테스트와 98f70d96의 second-parent 대비 external_wait 테스트 diff만 재사용했다. 원본/applied patch hash 일치, private polling clock·deadline·취소·timeout progress 증거를 보존했다. 관련 mock/static 36건 통과; 제품/CP1 분리 변경 없이 새 통합 CI는 총괄에게 넘긴다. |
