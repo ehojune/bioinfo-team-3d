@@ -1,6 +1,6 @@
 # 외부 감사 반영 — 조회용 근거
 
-현재 큐는 [#739](https://github.com/ehojune/bioinfo-team-3d/issues/739), PI 결정은 [#760](https://github.com/ehojune/bioinfo-team-3d/issues/760#issuecomment-6281989709)가 정본이다.
+시운전 준비는 [#739](https://github.com/ehojune/bioinfo-team-3d/issues/739), PI 결정은 [#760](https://github.com/ehojune/bioinfo-team-3d/issues/760#issuecomment-6281989709)가 정본이다.
 
 | 과제 | 확인·완료 경계 |
 |---|---|
@@ -15,7 +15,7 @@
 
 144분/19분과 21:26은 [벤치 A 2차](https://github.com/ehojune/bioinfo-team-3d/issues/373#issuecomment-5975156477), 22:28은 [벤치 C t6 재채점](https://github.com/ehojune/bioinfo-team-3d/issues/373#issuecomment-5999676070)이다. C의 [원 보고 시간은 85.9분](https://github.com/ehojune/bioinfo-team-3d/issues/373#issuecomment-5993720748)이다. 서로 다른 회차를 묶지 않으며 과분할의 인과 기여는 미측정이다.
 
-## 2026-10-20 갱신 (문서 정비 #801)
+## 2026-10-20 병합 상태
 
 위 표는 감사 당시의 경계로 둡니다. 같은 날 진행은 다음과 같습니다.
 
@@ -23,8 +23,9 @@
 |---|---|
 | #794 | PR #800으로 병합(`28a25fba`). 실행 `-E -s -B`, 문법 검사 `-I -S -B`, 실제 interpreter CI test 1개. 같은 PR에서 Windows tree-kill의 PID 재사용 고아 판정과 외부 조회 progress 종료(Python 3.10)도 고침 |
 | #796 | PR #803으로 병합(`9acf873b`). CP1 전 기존 검증에 입력 불일치 진단·교정 연결, 보고서에 근거·미측정 구분. 효용은 미측정 |
-| #795 | PR #802 열림(병합 전) |
-| #797 | PR #807 열림(병합 전) |
-| #798 · #799 | PI가 개발 접수를 재개. #798은 #797 공유 코드 통합 뒤, #799는 PR #815 draft(계획 예제·측정 계약·응집형 정책 보완). 실제 성능은 미측정 |
+| #795 | PR #802로 병합(`b797687`). 설정·운영 준비 판정을 나누고 현재 PID의 Windows Job 비소속을 검증. 배포 인스턴스의 준비 확인은 별도([근거](windows-runtime-795.md)) |
+| #797 | PR #807로 병합(`1b07874b`). 입력·단계별 paper-skill 근거를 재사용 snapshot에 묶고 승인 후 변경은 중단([검증](../status/2026-10-20-1901-codex-continuation-797-paper-inputs.md)) |
+| #798 | PR #821에서 승인 뒤 논문 스킬 준비와 결과 참조 기록을 검토 중. 장착·실제 참조·효용은 구분해서 검증 |
+| #799 | PR #815로 병합(`f67e4cf`). 응집형 분석 정책과 [4-arm 측정 계약](bench-coarse-contract.md)을 보완. 기록기·실측은 후속이며 성능은 미측정 |
 
-열린 PR이 병합되면 manual의 해당 절과 HANDOFF 표를 그때 갱신합니다.
+현재 개발 큐는 [HANDOFF](../../HANDOFF.md)에 둡니다. 병합·CI 통과는 실운전이나 성능 검증을 뜻하지 않습니다.
