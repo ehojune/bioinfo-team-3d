@@ -1,0 +1,8 @@
+pr: 818
+rows:
+- sha: 3d7571f
+  at: 2026-10-20 18:53
+  text: 'Shadow 비교 검사에서 같은 기준 실행의 반복을 줄였습니다. 기술: off 결과를 불변 JSON으로 공유해 네 비교의 lab 호출을
+    8→5로 줄이고 on·fresh-process·fail-open·개인정보/읽기 경계를 보존했다. 제거 검사는 전체 수집과 compile/잔여
+    참조/상태/핵심 E2E를 유지하면서 child node를 좁혔다. 4건 red 뒤 mock/static 79건 통과, CI 시간 절감과 실제
+    제거/E2E는 미검증이다.'
