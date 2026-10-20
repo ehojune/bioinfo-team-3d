@@ -88,6 +88,7 @@ def test_codex_profiles_keep_same_scoped_read_grants(layout, monkeypatch, read_o
     cfg.engines.codex.isolate_user_config = True
     monkeypatch.setattr(codex, '_is_windows', lambda: True)
     ctx = SimpleNamespace(agent=SimpleNamespace(id='recruiter', sandbox=sandbox), read_only=read_only,
+                          read_only_inputs=[],
                           workdir=build, private_paths=private.paths, private_open_reads=private.open_reads)
     flags = codex.CodexAdapter(cfg).sandbox_flags(ctx)
     profile = next(v for v in flags if v.startswith('permissions.labhq_staff='))

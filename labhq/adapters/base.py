@@ -436,6 +436,8 @@ class RunContext:
     # Readable, never writable (#36 path references). Claude gets --add-dir plus deny rules; Codex reads
     # outside its workspace without --add-dir, which would grant write access.
     read_dirs: list[str] = field(default_factory=list)
+    # Runner-verified ancestor snapshots inside cwd. Native sandboxes must not grant writes to their parent.
+    read_only_inputs: list[str] = field(default_factory=list)
     claude_settings: dict = field(default_factory=dict)
     # `~` labels of the PI personal paths closed to this task (policy.private_paths); they go in the role footer.
     private_labels: list[str] = field(default_factory=list)

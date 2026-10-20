@@ -39,6 +39,8 @@ async def _run(tmp_path: Path, monkeypatch, write, *, outputs: tuple[str, ...] =
     settings = _settings(tmp_path)
     if hash_max_bytes is not None:
         settings.runner.output_hash_max_bytes = hash_max_bytes
+        # Explicitly cap future-input hashing too; the missing/unrecorded assertions exercise this bound.
+        settings.runner.input_hash_max_file_bytes = hash_max_bytes
     runner = Runner(settings)
     agent = AgentSpec(id="analyst", name="Analyst", role="test", engine=Engine.claude_code, builtin_mcp=[])
     monkeypatch.setattr(runner, "_resolve_agent", lambda _task: agent)

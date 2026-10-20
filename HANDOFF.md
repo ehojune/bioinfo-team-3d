@@ -16,7 +16,7 @@ PI가 신규 일반 작업 보류를 해제했습니다. 승인 예산 안에서
 | 열린 PR | 내용 (병합 전이므로 manual·README에 출시 동작으로 쓰지 않음) |
 |---|---|
 | #766 | 승인 전 광역 프로세스 종료 거부(#681 일부) |
-| #790 · #791 | POSIX runner TERM·HUP 종료 기록(#664) · 조상 단계 산출의 읽기 전용 inputs 복사(#665) |
+| #790 · #791 | POSIX runner TERM·HUP 종료 기록(#664) · 조상 inputs 복사(#665). #791 native 보호·retry 증거·부분 정리·hash 상한 [검증](docs/status/2026-10-20-1638-codex-routine-665-review.md); CI fixture 보정; 최종 CI·리뷰는 controller |
 | #793 | 문서 전용 변경의 CI 검사와 같은 tree 검증 재사용 |
 | #802 | Windows Job 탈출 검증과 doctor 운영 준비 판정 분리(#795) |
 | #807 | 후속 연구 재사용 검증과 CP1 승인 snapshot 일치(#797) |
