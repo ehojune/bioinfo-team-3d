@@ -6,3 +6,6 @@ rows:
 - sha: 6cf6c8a
   at: 2026-10-20 12:26
   text: Windows tree-kill이 재사용된 PID를 부모로 적은 부팅 때 system 프로세스를 실패로 세지 않아, 멈춘 gateway를 강제로 끝낼 수 있다(PR 800 Windows CI).
+- sha: 1bbb061
+  at: 2026-10-20 13:00
+  text: 외부 조회 진행 기록이 Python 3.10에서 잃어버린 취소로 끝없이 돌며 조회를 멈추던 문제를 막았다(PR 800 3.10 CI 멈춤).
