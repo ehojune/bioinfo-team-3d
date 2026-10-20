@@ -54,3 +54,6 @@ rows:
 - sha: '2b6b8b4'
   at: '2026-10-20 17:27'
   text: 'EncodedCommand의 bounded UTF-16LE Base64 payload·ForEach-Object MemberName Kill·stdbuf 실행 우회를 거부한다. 원래 head의 새 실패 37개 재현 뒤 mock/static 649개와 guard 환경 유지를 확인했다.'
+- sha: '45f35f0'
+  at: '2026-10-20 19:03'
+  text: '괄호 안에서 고른 process의 Kill 호출·ionice wrapper·locale quote 실행 우회를 막는다. 앞선 출력의 선택 상태와 명시 PID·조회·데이터 구분을 유지하고 새 실패 31개 재현 뒤 mock/static 710개를 확인했다.'
