@@ -8,36 +8,45 @@ on:
 
 permissions:
   contents: read
-  checks: read  # ci_skip.py reads the earlier commit's pytest results
+  actions: read  # same-repository run, job and manifest evidence; never execute artifacts
 
 jobs:
   changes:
-    # A push that only adds patch notes or resolves STATUS/patch_notes conflicts does not rerun pytest (PI 2026-10-02).
+    # Fail closed: prose-only documents or a complete, trusted, identical-tree PR result (#788).
     runs-on: ubuntu-latest
     outputs:
       skip: ${{ steps.check.outputs.skip }}
-      readme: ${{ steps.check.outputs.readme }}
+      reason: ${{ steps.check.outputs.reason }}
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # the base branch history decides whether a merge came from it
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pyyaml
       - id: check
-        if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python scripts/ci_skip.py "${{ github.event.pull_request.head.sha }}" "${{ github.event.pull_request.base.sha }}" >> "$GITHUB_OUTPUT"
+        run: python scripts/ci_skip.py >> "$GITHUB_OUTPUT"
 
   pytest:
     needs: changes
     if: needs.changes.outputs.skip != 'true'
     runs-on: ubuntu-latest
+    outputs:
+      tree: ${{ steps.identity.outputs.tree }}
     strategy:
       fail-fast: false
       matrix:
         python-version: ['3.10', '3.12']
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - id: identity
+        run: echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -49,8 +58,15 @@ jobs:
     needs: changes
     if: needs.changes.outputs.skip != 'true'
     runs-on: windows-latest
+    outputs:
+      tree: ${{ steps.identity.outputs.tree }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - id: identity
+        shell: bash
+        run: echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -63,10 +79,16 @@ jobs:
     needs: changes
     if: needs.changes.outputs.skip != 'true'
     runs-on: windows-latest
+    outputs:
+      tree: ${{ steps.identity.outputs.tree }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.sha }}
+      - id: identity
+        shell: bash
+        run: echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -76,10 +98,16 @@ jobs:
     needs: changes
     if: needs.changes.outputs.skip != 'true'
     runs-on: ubuntu-latest
+    outputs:
+      tree: ${{ steps.identity.outputs.tree }}
     env:
       LABHQ_ROCRATE_VALIDATOR: '1'
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - id: identity
+        run: echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -93,10 +121,16 @@ jobs:
     needs: changes
     if: needs.changes.outputs.skip != 'true'
     runs-on: ubuntu-latest
+    outputs:
+      tree: ${{ steps.identity.outputs.tree }}
     env:
       LABHQ_SLOW_TESTS: '1'
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - id: identity
+        run: echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -105,18 +139,22 @@ jobs:
       - run: pytest -q tests/test_long_mcp_call.py
 
   readme:
-    # Full suite skipped but README.md changed: run the one file that reads it (PI 2026-10-02).
+    # README/document and record validators still run for documents and reused results.
     needs: changes
-    if: needs.changes.outputs.skip == 'true' && needs.changes.outputs.readme == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           cache: pip
       - run: pip install -e ".[dev]"
       - run: pytest -q tests/test_integrations.py
+      - run: python scripts/integrations.py --check
+      - run: python scripts/notes_index.py --validate
+      - run: bash scripts/check_public.sh
 
   patch-notes:
     # PI 결정(2026-10-01): 커밋마다 패치노트 한 줄, main 커밋 3개 안에 README나 docs/manual.md 갱신.
@@ -133,3 +171,26 @@ jobs:
       - run: pip install pyyaml
       - run: python scripts/patch_notes.py check --base origin/${{ github.base_ref }} --head HEAD
       - run: pip install pyyaml && python scripts/notes_index.py --validate  # the generator on main must not fail after merge
+
+  validation-manifest:
+    # Only a fresh full PR run can produce reusable evidence; no reuse chains.
+    needs: [changes, pytest, pytest-windows, clean-install, ro-crate-validator, pytest-slow, readme, patch-notes]
+    if: github.event_name == 'pull_request' && needs.changes.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pyyaml
+      - run: python scripts/ci_skip.py manifest
+        env:
+          CI_NEEDS: ${{ toJSON(needs) }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-full-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ci-result.json
+          if-no-files-found: error
+          retention-days: 7
