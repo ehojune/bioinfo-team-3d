@@ -14,12 +14,27 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 13:59 | [`df48ec6`](https://github.com/ehojune/bioinfo-team-3d/pull/806/commits/df48ec6) | Codex·Gemini 커밋의 공동 작성자 trailer를 GitHub이 인식하는 봇 주소로 맞추는 commit-msg 훅을 추가해 커밋 작성자에 에이전트 아이콘이 함께 보이게 했다. |
+| 13:43 | [`ade4f03`](https://github.com/ehojune/bioinfo-team-3d/pull/805/commits/ade4f03) | docs: 아키텍처 다이어그램의 store·resume·ws 경로 수정 및 readme-evidence 수치 동기화 |
+| 13:35 | [`6e522b2`](https://github.com/ehojune/bioinfo-team-3d/pull/805/commits/6e522b2) | docs: 매뉴얼 내 개발 에이전트 규칙 분리, 전체 계층 구조·다크 다이어그램 및 v0.5 모듈/어휘 수 최신화 |
+| 13:16 | [`bab83c2`](https://github.com/ehojune/bioinfo-team-3d/pull/803/commits/bab83c2) | C3의 6954ab6 원본 두 테스트와 98f70d96의 second-parent 대비 external_wait 테스트 diff만 재사용했다. 원본/applied patch hash 일치, private polling clock·deadline·취소·timeout progress 증거를 보존했다. 관련 mock/static 36건 통과; 제품/CP1 분리 변경 없이 새 통합 CI는 총괄에게 넘긴다. |
+| 12:42 | [`2070c23`](https://github.com/ehojune/bioinfo-team-3d/pull/803/commits/2070c23) | CP1 평가기·관계표를 mainline으로 옮기고 optional Shadow adapter와 같은 aggregate API·의미 hash를 공유했다. off·전체 제거 후 CP1 교정, actions-only 제거 후 base observer 보존을 메모리/AST·mock으로 검증했다. 관련 68건·공개 경로 5건 통과, 실제 제거·process 통합은 CI에 맡긴다. |
+| 12:04 | [`cab83e7`](https://github.com/ehojune/bioinfo-team-3d/pull/803/commits/cab83e7) | CP1의 기존 2회 계획 검증에 입력 불일치 진단·교정·전후 경고를 연결하고, 기존 semantic_report와 bench 비교에 분모·근거·미측정을 구분한 기여 기록을 추가했다. 관련 mock/static 52건·최종 thread 금지 mock 14건 통과, 과학 성능 효과는 미측정이다. |
+| 10:30 | [`f5425c5`](https://github.com/ehojune/bioinfo-team-3d/pull/789/commits/f5425c5) | 재현 receipt 실행이 함께 게시한 Python sibling module을 import할 수 있게 script 폴더만 import 경로에 두고, PYTHONPATH·사용자 site·호출한 폴더는 계속 뺐다. |
+| 10:03 | [`06c5a64`](https://github.com/ehojune/bioinfo-team-3d/commit/06c5a64) | Ubuntu Python 3.10 pytest step을 25분으로 제한하고 test·thread·asyncio task 진단을 남긴다. mock/static 검사 14개를 확인했으며 정체 원인은 미확정이다. Refs |
+| 08:12 | [`e5cd527`](https://github.com/ehojune/bioinfo-team-3d/pull/785/commits/e5cd527) | PI 보고 전에 HANDOFF의 병합·배포·후속 큐와 예산 근거를 갱신하고 README 한영·AGENTS·관련 manual을 현재 코드와 대조했다. |
+| 05:49 | [`aada950`](https://github.com/ehojune/bioinfo-team-3d/pull/776/commits/aada950) | 외부 조회 취소 시 소유 브라우저를 회수하고 완료된 PDF만 반영하며 취소된 AlphaGenome thread도 잔류 상한에 집계한다. |
+| 05:42 | [`4a94324`](https://github.com/ehojune/bioinfo-team-3d/pull/781/commits/4a94324) | 재현 receipt가 hard link나 링크 폴더 아래의 선언 산출을 건드리지도 세지도 않아 receipt 폴더 밖 원본의 시각을 바꾸지 않는다. |
+| 05:38 | [`4232731`](https://github.com/ehojune/bioinfo-team-3d/pull/783/commits/4232731) | 정답 누출 checker가 YAML 런타임 문자열과 다른 소스의 줄바꿈을 검사한다. 기존 정규화·경계를 유지하고 static/mock test 36개를 확인했다. |
 | 05:15 | [`ff9264c`](https://github.com/ehojune/bioinfo-team-3d/pull/782/commits/ff9264c) | 검증된 요청 참고 경로를 shell 읽기에 전달하고 리터럴 읽기·작업 폴더 PowerShell 생성을 기존 경로·실행 파일 검사로 판정했다. mock/static pytest 173건 통과, inline Python·간접 manifest 경로는 승인 카드로 유지했다. |
+| 04:58 | [`7f7a6bc`](https://github.com/ehojune/bioinfo-team-3d/pull/781/commits/7f7a6bc) | 재현 receipt가 같은 단계의 앞 script가 남긴 산출로 산출을 만들지 않은 뒤 script를 pass로 두지 않고, helper 파일 이름 순서와 관계없이 같은 판정을 낸다. |
 | 04:24 | [`e75fe43`](https://github.com/ehojune/bioinfo-team-3d/pull/778/commits/e75fe43) | 모델 재계획의 reference를 입력 필드로 정규화해 저장 메타데이터의 검증 실패를 고치고 mock pytest 46건을 확인했다. |
 | 03:49 | [`5b323a3`](https://github.com/ehojune/bioinfo-team-3d/pull/777/commits/5b323a3) | storage --rebuild --name이 대소문자만 다르거나 이름을 바꾼 지금 저장소를 새 저장소로 받아 루트를 덮어쓰지 않게 막았다. |
+| 03:41 | [`5399c64`](https://github.com/ehojune/bioinfo-team-3d/pull/776/commits/5399c64) | key_fulltext 자동 조회와 기관 간격 대기를 단계 기한에 포함하고 PDF 승인 대기만 제외해 사용 예산을 보존한다. |
 | 03:38 | [`9d2bb18`](https://github.com/ehojune/bioinfo-team-3d/pull/778/commits/9d2bb18) | 확장된 선택 인자를 CP2 전달 검사에 반영하고 모델 재계획 payload가 CP2 결정에 섞이지 않음을 검증해 CI 회귀를 고쳤다. |
 | 03:15 | [`8a41a11`](https://github.com/ehojune/bioinfo-team-3d/pull/778/commits/8a41a11) | 모델 계획 거부를 model_refused로 기록하고 PI의 명시적 선택 뒤 기존 게이트를 거친 새 요청을 만들도록 했다. |
 | 03:04 | [`b448227`](https://github.com/ehojune/bioinfo-team-3d/pull/777/commits/b448227) | labhq storage --rebuild가 게시한 정리본을 지금 편집기로 다시 만들어 게시 카드 승인 뒤 같은 저장소의 새 판이나 새 저장소로 올리고, README에 편집기 판본과 원본 저장소를 적는다. |
+| 02:49 | [`7c1322a`](https://github.com/ehojune/bioinfo-team-3d/pull/776/commits/7c1322a) | 내장 외부 API 조회의 단계 기한·대기 알림·시간 초과 기록을 추가하고 자동 재호출을 멈추도록 안내한다. |
 | 02:44 | [`e2a836d`](https://github.com/ehojune/bioinfo-team-3d/pull/775/commits/e2a836d) | P2 후속 issue를 실사용 영향과 수정 가치로 총괄 선별 |
 | 02:27 | [`51caada`](https://github.com/ehojune/bioinfo-team-3d/pull/775/commits/51caada) | HANDOFF의 Astra 전체 검토를 원 PI 결정대로 bench 비교 앞으로 정정 |
 | 02:20 | [`cb6fd90`](https://github.com/ehojune/bioinfo-team-3d/pull/775/commits/cb6fd90) | 개발 총괄의 점검·담당 재사용·P1 반복 리뷰 운영 규칙 갱신 |

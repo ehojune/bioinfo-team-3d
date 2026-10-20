@@ -53,6 +53,7 @@ from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARC
                                  unnegated_analysis_text, validate_research_result, with_pack_refs)
 from ..research import continuation as research_continuation
 from ..research import semantic_device_report
+from ..research import input_fit
 from ..research import semantic_devices
 from ..security import redact_tokens
 from ..recruit.provenance import (consult_refusal, external_contract_conflicts, external_hosts, not_yet_active,
@@ -5732,6 +5733,9 @@ class Orchestrator:
                                     "plan_canonical": canonical_plan_json(plan),
                                     "pack_applicability": plan.get("pack_applicability") or {},
                                     "warnings": plan.get("warnings") or [],
+                                    **({"plan_warnings": req.get("plan_warnings") or [],
+                                        "plan_validation": req["plan_validation"]}
+                                       if req.get("plan_validation", {}).get("semantic_checks") else {}),
                                     "paper_skills": paper_skills.records(plan),
                                     "protocol_revision": plan["protocol"]["revision"],
                                     "packs": plan["protocol"]["packs"],
@@ -6229,6 +6233,7 @@ class Orchestrator:
                                                          req.get("analysis_precedents")))
                         return problems
 
+                    semantic_checks: list[dict[str, Any]] = []
                     for attempt in (1, 2):
                         type_stats = {}
                         selection_problems = []
@@ -6273,7 +6278,46 @@ class Orchestrator:
                         # Declarations are normalized (or, when off, removed) after output paths, so names pair
                         # with the exact artifacts the runner will collect.
                         plan = prepare_research_declarations(plan, vocab, type_stats)
+                        fit_counts = input_fit.evaluate(plan, vocab=topic_vocab)
+                        mismatches = input_fit.mismatch_diagnostics(plan, vocab=topic_vocab)
+                        fit_warnings = [
+                            f"input_fit mismatch: step {row['step_id']} input {row['input_ref']} "
+                            f"has {row['data_type']}, incompatible with operation {row['operation']}. "
+                            "Correct the input/method or evidence-backed declaration; do not merely relabel it."
+                            for row in mismatches]
+                        initial = semantic_checks[0]['mismatches'] if semantic_checks else []
+                        resolved = input_fit.resolved_mismatches(plan, initial, vocab=topic_vocab)
+                        required = required_checklist_items(plan, checklist_catalog, req.get("analysis_precedents"))
+                        step_ids = [step.get('id') for step in plan.get('steps', []) if isinstance(step, dict)]
+                        checklist_slots = [
+                            (f"{slot.topic}.{item.id}" if slot.topic else item.id,
+                             not topic_checklists.answer_errors({item.id: slot.answer}, [item], step_ids))
+                            for item in required for slot in topic_checklists.check_slots(plan.get('checklist'), item, {})]
+                        semantic_checks.append({
+                            "attempt": attempt, "input_fit": fit_counts, "mismatches": mismatches,
+                            "resolved_mismatches": resolved, "warnings": fit_warnings,
+                            "vocab_sha256": topic_vocab.sha256 if topic_vocab else None,
+                            "table_sha256": input_fit.table_sha256(topic_vocab),
+                            "checklist": {"required": [key for key, _ in checklist_slots],
+                                          "missing": [key for key, answered in checklist_slots if not answered]},
+                        })
+                        req["plan_validation"] = {"attempts": attempt, "semantic_checks": semantic_checks}
+                        req["plan_warnings"] = list(dict.fromkeys(
+                            warning for check in semantic_checks for warning in check['warnings']))
+                        raw_warnings = plan.get('warnings') or []
+                        if any(not isinstance(w, str) for w in raw_warnings):
+                            output_problems.append('plan warnings must contain only strings')
+                        current_warnings = [w for w in raw_warnings
+                                            if isinstance(w, str) and not w.startswith('input_fit ')]
+                        if initial:
+                            current_warnings.append(
+                                f"input_fit pre-CP1: {len(initial)} initial mismatching inputs; "
+                                f"{len(resolved)} same inputs now fit; remaining resolutions unverified. "
+                                "This trace is not evidence of scientific performance gain.")
+                        plan = {**plan, 'warnings': list(dict.fromkeys([*current_warnings, *fit_warnings]))}
+                        req['plan_warnings'] = list(dict.fromkeys([*req['plan_warnings'], *plan['warnings']]))
                         problems = selection_problems + output_problems + plan_problems(plan, candidate_packs)
+                        problems.extend(fit_warnings)
                         if not problems:
                             plan = with_scope_coverage_warning(plan, str(req.get("text") or text))
                             plan = self._apply_plan_cost_estimate(rid, plan)
@@ -6290,7 +6334,7 @@ class Orchestrator:
                             break
                         if attempt == 2:
                             req["outcome"] = "plan_invalid"
-                            req["plan_validation"] = {"attempts": attempt, "errors": problems}
+                            req["plan_validation"].update(errors=problems)
                             report = plan_invalid_report(problems, configured_pack_defs)
                             self._finish(rid, report, {}, ok=False, error=report.split("\n", 1)[0])
                             return

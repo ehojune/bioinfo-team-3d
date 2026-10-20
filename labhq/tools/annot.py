@@ -113,6 +113,10 @@ class LookupFailed(Exception):
     """A lookup that did not reach an answer (network, server, quota). Never a negative result."""
 
 
+class LookupTimedOut(LookupFailed):
+    error_kind = "timeout"
+
+
 @dataclass(frozen=True)
 class Variant:
     raw: str

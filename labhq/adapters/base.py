@@ -350,6 +350,9 @@ ROLE_FOOTER = PI_TEXT_RULE + """
 - 도구 오류 원문을 그대로 근거로 쓰고 확인하지 않은 원인을 지어내지 않는다. 안전 검사 등으로 추측하지 않는다.
 - StructuredOutput JSON 파싱 오류는 labhq가 재시도한다. 같은 내용의 JSON만 고치고 PI에게 진행 방식을 묻지 않는다.
 - A lookup that failed (error, timeout, refused access) is a failure, never a negative result; report it as one.
+  Bound external API/remote-service polling to 20 minutes per step; include a wall-clock timeout in scripts too.
+  On timeout, record "조회 불가(시간 초과)", skip that lookup and continue the remaining work without automatic retries.
+  Name each missing lookup and outputs/external_lookup_status.jsonl (when present) in the final report; never invent results.
   A search that found nothing goes in the report with what was searched: source, query, scope and filters.
 - If you fall back to a weaker method (a substitute tool, a subsample, a simpler model), state it and why in
   your report; never switch silently.

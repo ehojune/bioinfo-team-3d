@@ -22,6 +22,7 @@ import httpx
 from ..settings import Settings
 from . import annot, annot_keys, annot_literature, annot_regulatory
 from ._mcpcompat import make_server, tool_failure
+from .external_wait import LookupTimeout, exclude_human_wait, run_lookup
 
 S = Settings.load(os.environ.get("LABHQ_CONFIG"))
 WORKDIR = Path(os.environ["LABHQ_WORKDIR"]).resolve() if os.environ.get("LABHQ_WORKDIR") else None
@@ -61,7 +62,10 @@ server = make_server(
         "(1-based, inclusive). A malformed item comes back as that item's error and the rest are still looked up. "
         "Each result names the database release under `source` and is logged to outputs/annotation_queries.jsonl, "
         "with the full answer under outputs/annotation/; cite those files. An item error is a failed lookup, not a "
-        "negative result; found=false means the lookup succeeded and the database has no entry."
+        "negative result; found=false means the lookup succeeded and the database has no entry. "
+        "Automatic API lookups share a 20-minute deadline from the first lookup in this step, including retries. "
+        "On timeout, skip that lookup, continue remaining work and name the missing query and "
+        "outputs/external_lookup_status.jsonl in the report. Human PDF/approval waits keep their own policy."
     ),
 )
 
@@ -71,14 +75,30 @@ server = make_server(
 PACE: dict[str, float] = {}
 
 
+async def _lookup_progress(data: dict) -> None:
+    if not BROKER_TOKEN:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            response = await client.post(f"{BROKER}/event", headers={"X-Labhq-Token": BROKER_TOKEN}, json={
+                "task_id": TASK_ID, "agent_id": AGENT_ID, "type": "agent.log",
+                "data": {"level": "warn" if data["status"] == "timeout" else "info",
+                         "text": data["text"], "external_lookup": data},
+            })
+            response.raise_for_status()
+    except httpx.HTTPError:
+        pass  # Local status records and the deadline do not depend on the broker.
+
+
 async def _run(method: str, *args: object, **kwargs: object) -> str:
     async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=20.0),
                                  headers={"User-Agent": annot.USER_AGENT}) as client:
         annotator = annot_regulatory.RegulatoryAnnotator(client, WORKDIR, CACHE_DIR, pace=PACE,
                                                          alphagenome=ALPHAGENOME)
         try:
-            result = await getattr(annotator, method)(*args, **kwargs)
-        except (annot.LookupFailed, ValueError) as exc:
+            result = await run_lookup(lambda: getattr(annotator, method)(*args, **kwargs),
+                                      tool=method, workdir=WORKDIR, notify=_lookup_progress)
+        except (annot.LookupFailed, LookupTimeout, ValueError) as exc:
             message = ALPHAGENOME.redact(str(exc)) if ALPHAGENOME else str(exc)
             raise tool_failure(message) from exc
     return json.dumps(result, ensure_ascii=False)
@@ -90,8 +110,9 @@ async def _run_literature(method: str, *args: object) -> str:
         annotator = annot_literature.LiteratureAnnotator(
             client, WORKDIR, CACHE_DIR, pace=PACE, unpaywall_email=S.annot.unpaywall_email)
         try:
-            result = await getattr(annotator, method)(*args)
-        except (annot.LookupFailed, ValueError) as exc:
+            result = await run_lookup(lambda: getattr(annotator, method)(*args),
+                                      tool=method, workdir=WORKDIR, notify=_lookup_progress)
+        except (annot.LookupFailed, LookupTimeout, ValueError) as exc:
             raise tool_failure(str(exc)) from exc
     return json.dumps(result, ensure_ascii=False)
 
@@ -112,6 +133,12 @@ async def _request_pdf(summary: str, detail: dict, timeout_s: int) -> dict:
 
 
 async def _run_key_fulltext(papers: list[dict[str, Any]]) -> str:
+    async def automatic(operation):
+        return await run_lookup(operation, tool="key_fulltext", workdir=WORKDIR, notify=_lookup_progress)
+
+    async def request_pdf(summary, detail, timeout_s):
+        return await exclude_human_wait(lambda: _request_pdf(summary, detail, timeout_s), workdir=WORKDIR)
+
     async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=20.0), follow_redirects=True,
                                  headers={"User-Agent": annot.USER_AGENT}) as client:
         annotator = annot_literature.LiteratureAnnotator(client, WORKDIR, CACHE_DIR, pace=PACE)
@@ -126,10 +153,10 @@ async def _run_key_fulltext(papers: list[dict[str, Any]]) -> str:
                 CACHE_DIR, policy.institution_request_interval_s, policy.institution_daily_limit)
         coordinator = annot_literature.KeyFulltextCoordinator(
             annotator, policy, WORKDIR, CACHE_DIR, institution=institution, limiter=limiter,
-            request_pdf=_request_pdf)
+            request_pdf=request_pdf, automatic_lookup=automatic)
         try:
             result = await coordinator.run(papers)
-        except (annot.LookupFailed, ValueError) as exc:
+        except (annot.LookupFailed, LookupTimeout, ValueError) as exc:
             raise tool_failure(str(exc)) from exc
     return json.dumps(result, ensure_ascii=False)
 
@@ -168,8 +195,9 @@ async def chipatlas(genes_or_regions: list[str], genome: str = "hg38", antigen_c
     distance_kb, against all RefSeq genes) or a set of regions chr:start-end (against random permutations) more than
     expected. antigen_class: TFs and others, Histone, RNA polymerase, Input control, ATAC-Seq, DNase-seq or
     Bisulfite-Seq; cell_class: All cell types, Blood, Liver, ... The analysis runs as a job on the DDBJ server and
-    usually takes minutes; the call waits up to wait_s seconds (max 1500). If it times out, call again with the same
-    inputs and the returned request_id to fetch the result. Do not mix genes and regions in one call."""
+    usually takes minutes; the call waits up to wait_s seconds (max 1500), within the task's 20-minute external
+    lookup deadline. On timeout, report the missing lookup and continue; do not automatically poll again.
+    request_id resumes a job only when explicitly requested. Do not mix genes and regions in one call."""
     return await _run("chipatlas", genes_or_regions, genome, antigen_class, cell_class, threshold, distance_kb,
                       permutations, wait_s, request_id)
 
