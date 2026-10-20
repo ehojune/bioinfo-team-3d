@@ -45,3 +45,6 @@ rows:
 - sha: '73bb72b'
   at: '2026-10-20 13:49'
   text: 'find bare placeholder 뒤 후속 action과 이름 선택 pipeline에서 유래한 Id 소비를 거부한다. 새 실패 17개 재현 뒤 기존 회귀 포함 mock/static 492개와 guard blocked 0건을 확인했다.'
+- sha: 'd16dd8e'
+  at: '2026-10-20 14:33'
+  text: 'skill 이름 선택 종료와 pidof PID 전달을 거부하고 option operand·조회·명시 PID를 구분한다. 새 실패 22개 재현 뒤 mock/static 544개와 guard blocked 0건을 확인했다.'
