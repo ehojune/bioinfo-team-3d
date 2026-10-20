@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 16:35 | [`fb5e47c`](https://github.com/ehojune/bioinfo-team-3d/pull/816/commits/fb5e47c) | 재현 receipt가 공개 source의 안전한 유니코드·구두점 경로를 문법 검사·실행하고, 절대·traversal·제어 문자·Windows 장치 이름·끝 점/공백·NFC가 아닌 경로는 계속 막는다. |
 | 16:05 | [`9ff21ce`](https://github.com/ehojune/bioinfo-team-3d/pull/801/commits/9ff21ce) | 16시 대조에서 병합된 언어 지연 수정과 감사 후속 배정 상태를 개발 문서에 맞췄다. |
 | 16:03 | [`0d8ddaa`](https://github.com/ehojune/bioinfo-team-3d/pull/790/commits/0d8ddaa) | 종료 drain이 durable acceptance 중인 dispatch의 결과 기록과 ACK를 기다리며 task 정리 중 새 handler를 재검사하고 timeout·outbox·보호 gate를 유지한다. |
 | 15:49 | [`182382d`](https://github.com/ehojune/bioinfo-team-3d/pull/801/commits/182382d) | PI의 일반 개발 재개 결정을 개발 인계·운영 기준·PI Q&A에 맞췄다. |
