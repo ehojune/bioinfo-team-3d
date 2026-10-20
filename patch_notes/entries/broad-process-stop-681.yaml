@@ -30,3 +30,6 @@ rows:
 - sha: '71e08b0'
   at: '2026-10-20 06:28'
   text: late-storage 승인 순서 test에서 PDF 준비·Git provenance를 mock 처리했다. 미완료 PDF 조건의 실패를 재현한 뒤 관련 mock 4개와 지연 재현 1개가 통과했다.
+- sha: '98f70d9'
+  at: '2026-10-20 09:27'
+  text: 외부 조회 deadline test의 progress 주기를 제품 기본값으로 되돌리고 operation 취소·timeout 알림을 검증한다. 취소 경합 모사 회귀 3개와 mock/static 20개를 확인했다.
