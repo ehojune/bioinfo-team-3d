@@ -4,6 +4,63 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-20 13:36 — `gemini-manual-architecture`
+
+**[Gemini]**
+
+## 단계
+문서 및 아키텍처 매뉴얼 정리 — `docs/manual.md` · `README.md` · `README.en.md` · `docs/reference/readme-evidence.md` · `AGENTS.md`
+
+## 한 일
+- **매뉴얼(`docs/manual.md`) 내 개발 에이전트 전용 규칙 분리**:
+  - `## 설정 포인트`에 섞여 있던 개발용 `pytest` 홈/캐시 격리 규칙 및 Ubuntu Python 3.10 CI 진단·대기 상한 안내, `signatures.yaml`·`topic_checklists.yaml`의 테스트/fixture 작성 지시를 `AGENTS.md`로 이관하고 매뉴얼은 `labhq`를 깊이 공부·운영하려는 사용자 관점 설명으로 정리했습니다.
+  - 목차에서 누락되어 있던 `[PI에게 보이는 글](#pi에게-보이는-글)`을 목차에 추가하고, 프롬프트 지시문 어조 대신 `labhq/pi_language.py`와 `labhq/korean_qc.py`의 평문 변환·문체 점검 동작 설명으로 다듬었습니다.
+- **전체 계층 구조와 모듈 아키텍처 및 다크 다이어그램 추가**:
+  - `docs/manual.md`의 `## 구조와 이벤트` 아래에 `### 전체 계층 구조와 모듈 아키텍처` 절을 신설하고, 검정 바탕·흰색 글씨(`theme: dark`, `#0b0f19`/`#111827`)의 4계층(`PI 접점` ↔ `Gateway·SQLite WAL·CSO·Policy` ↔ `Research & Meaning Devices 6종` ↔ `Runner·CLI Adapters·HPC`) Mermaid 다이어그램과 계층별 핵심 모듈·책임 표를 반영했습니다.
+  - Codex 리뷰 지적(P2 4건)을 반영해 다이어그램 및 표의 CLI 명령(`resume`), SQLite 저장소 경로(`labhq/store.py`·`labhq/request_bundle.py`), 클라이언트 WebSocket 엔드포인트(`/ws/client`)를 실제 코드와 일치시켰습니다.
+- **오래된 수치 및 파일 구조 최신화**:
+  - `labhq/vocab/output_types.yaml` 및 `topic_checklists.yaml`(`docs/vocabulary.md`)의 현행 기준인 **45개 분야·135항목**, **어휘 125개 key(79개 EDAM 연결)**를 `README.md`, `README.en.md`, `docs/manual.md`, `docs/reference/readme-evidence.md`에 일치시켰습니다.
+  - `docs/manual.md`의 `## 파일 구조` 트리에 `supervisor.py`, `store.py`, `durable.py`, `verify.py`, `request_bundle.py`, `reproduction_receipt.py`, `portfolio.py`, `result_storage.py`, `korean_qc.py`, `labhq/research/`, `labhq/evidence/`, `labhq/recruit/paper_skills`, `labhq/skills/` 등 v0.5 모듈 구성을 반영했습니다.
+
+## 테스트 결과
+- [x] `pytest -q tests/test_integrations.py tests/test_direct_outputs.py tests/test_nfcore_default_732.py tests/test_pdf_figure_policy.py tests/test_staff_writing_skills.py tests/test_vocab_tables.py`: `115 passed, 2 skipped`
+- [x] `python scripts/integrations.py --check` · `python scripts/vocab_tables.py --check` · `python scripts/patch_notes.py check` · `python scripts/notes_index.py --validate`: 통과
+
+## 바꾼 파일
+- `docs/manual.md`
+- `README.md`
+- `README.en.md`
+- `docs/reference/readme-evidence.md`
+- `AGENTS.md`
+- `patch_notes/entries/gemini-manual-architecture.yaml`
+- `docs/status/2026-10-20-1336-gemini-manual-architecture.md`
+
+## 막힌 점
+- 없음
+
+## PI·Claude에게 물을 것
+- 없음
+
+## 확인
+- [x] `scripts/check_public.sh` 통과 (비밀값, 실제 설정, 데이터 파일 없음)
+- [x] `docs/status/2026-10-20-1336-gemini-manual-architecture.md`에 같은 보고 추가
+- [x] ⛔ 체크포인트에 해당하면 PI 확인을 받았음
+
+<!-- author:gemini -->
+
+Fixes #796
+PR #803. CP1 `cab83e7`, 분리 `2070c23`, 공유 fixture `bab83c2`.
+
+- CP1 전 기존 2회 검증에 실제 입력 mismatch 진단·교정·전후 경고를 연결합니다. unknown·예산·승인·중단 경계를 보존합니다.
+- mainline input_fit·관계표와 optional Shadow adapter는 같은 aggregate API·의미 hash를 씁니다. off·전체 제거 후에도 CP1 검증을 유지하고 actions-only 제거는 base observer를 보존합니다.
+- 기존 semantic_report·bench 기록은 checklist·선언/fit·고정 pack·재사용 근거를 구분합니다. 독립 충족·실제 사용·과학 성능 효과는 증거 없으면 미측정입니다.
+- 추가 변경은 테스트 3개 파일뿐입니다. `6954ab6aa3ce7314744d754dea16d26e45c0731d`의 두 파일과 `98f70d96a937e5c6ee8fb650a31d5bf63c0eecbe^2`→해당 merge의 `tests/test_external_wait.py` diff만 그대로 적용했습니다. 각 원본/applied patch SHA-256 일치; merge·제품 변경은 가져오지 않았습니다.
+- 관련 mock/static **36 passed**: private clock의 reconnect/timeout/cancel, mock 자동 조회 deadline·취소·timeout progress, CP1의 optional import 차단·메모리 삭제 변환. Python 3.10 AST·public·diff·patch-notes·notes 검사 통과, guard 환경 유지.
+- `8d0084cd` 실제 3.10/3.12 로그에는 종전 분리/제거 실패가 없고 각 1건의 timing fixture 실패만 남았습니다. 새 head 통합 CI·리뷰·P1=0 확인은 controller 담당입니다.
+- 실제 Hub/process·제거/import 통합·전체 suite·Windows/3.10 실행·PI/연구/bench/원자료/HPC·봇 호출·병합·배포는 로컬 미실행입니다. #797/#798·#804 범위를 추가하지 않았습니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
 Refs #786. 기능 커밋 `06c5a64`는 Ubuntu Python 3.10 pytest의 진단·대기 상한만 추가합니다.
 
 - pytest step을 **25분**으로 제한합니다. 관측된 정상 재실행 13분 47초보다 11분 13초 여유가 있습니다([step timeout 의미](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepstimeout-minutes)).
