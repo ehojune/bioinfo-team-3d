@@ -531,12 +531,12 @@ flowchart TB
 
     subgraph UI["PI 접점 (Web / Mobile / CLI)"]
         Web["2.5D/3D 웹 오피스 & 모바일 결재<br/>(labhq/web/)"]:::darkNode
-        CLI["labhq CLI<br/>(up / down / status / doctor / verify / continue)"]:::darkNode
+        CLI["labhq CLI<br/>(up / down / status / doctor / verify / resume)"]:::darkNode
     end
 
     subgraph GW["Gateway 계층 (FastAPI + SQLite WAL)"]
         Server["Gateway Server<br/>(labhq/gateway/server.py)"]:::darkNode
-        DB[("SQLite WAL<br/>(labhq/gateway/storage.py)")]:::storageNode
+        DB[("SQLite WAL<br/>(labhq/store.py)")]:::storageNode
         CSO["CSO Orchestrator<br/>(labhq/orchestrator/cso.py)"]:::darkNode
         Policy["Policy & Private Path Guard<br/>(labhq/policy.py)"]:::darkNode
     end
@@ -555,7 +555,7 @@ flowchart TB
         HPC["HPC Schedulers<br/>(SGE / PBS / Slurm)"]:::darkNode
     end
 
-    UI <-->|"HTTP / WebSocket (/ws)"| Server
+    UI <-->|"HTTP / WebSocket (/ws/client)"| Server
     Server <--> DB
     Server <--> CSO
     CSO <--> Contract
@@ -577,13 +577,13 @@ flowchart TB
 | 계층 | 핵심 모듈 | 주요 책임 |
 |---|---|---|
 | **Orchestrator** | `labhq/orchestrator/cso.py` | 요청 분류(simple/research), `PLAN_SCHEMA` DAG 생성, CP1·CP2 관문, 이종 벤더 교차 리뷰, 최종 보고서 합성 |
-| **Gateway & Storage** | `labhq/gateway/server.py`, `storage.py`, `durable.py` | FastAPI REST·WebSocket 브로드캐스트, 승인·질문 수명주기, SQLite WAL 상태 원장 및 비동기 fsync 쓰기 큐 |
+| **Gateway & Storage** | `labhq/gateway/server.py`, `labhq/store.py`, `durable.py` | FastAPI REST·WebSocket(`/ws/client`·`/ws/runner`) 브로드캐스트, 승인·질문 수명주기, SQLite WAL 상태 원장(`StateStore`) 및 비동기 fsync 쓰기 큐 |
 | **Policy & Guard** | `labhq/policy.py`, `private_paths.py` | Bash·PowerShell 명령 구문 검사와 경로 추출, 외부·민감 경로(`private_paths`) 및 데이터 구역(`data_zones`) 차단 |
 | **Runner & Adapters** | `labhq/runner/daemon.py`, `workspace.py`, `labhq/adapters/` | 단계별 격리 작업 폴더(`inputs/`·`outputs/`), JSON schema 정형 출력 계약과 슬롯 복구(`slot_repair`), CLI·WSL·HPC 실행 |
 | **CLI & Lifecycle** | `labhq/cli.py`, `supervisor.py`, `doctor.py` | 백그라운드 데몬 기동·중지·상태 확인, 자식 프로세스 감시·종료 코드 기록, 환경·로그인·런타임 준비도 점검 |
 | **Research Contract** | `labhq/research/contract.py`, `continuation.py`, `labhq/evidence/claims.py` | CP1 계획 해시 동결, `result v2` 주장·근거·산출물 sha256 대조, 독립 근거 그룹 판정, 이어 가기(continuation) 재사용 |
 | **Meaning Devices (6종)** | `labhq/vocab/`, `labhq/research/packs.py`, `semantics*`, `semantic_device_report.py` | 단어장·EDAM 어노테이션(`output_types.yaml`), 45개 분야 점검표(`topic_checklists.yaml`), 도메인 분석 pack, 입력–연산 적합성(`input_fit`), 의미 장치 감사 보고서(`semantic_report.md`), 출처·객체 그림자 및 A/B 관측 |
-| **Bundle & Publication** | `labhq/portfolio.py`, `result_storage.py`, `reproduction_receipt.py`, `verify.py` | 요청 묶음·RO-Crate 생성, 오프라인 무결성 재검증(`labhq verify`), 재현 검증 receipt, GitHub 연구소 정리본·PDF 출판 |
+| **Bundle & Publication** | `labhq/request_bundle.py`, `portfolio.py`, `result_storage.py`, `reproduction_receipt.py`, `verify.py` | 요청 묶음·RO-Crate 생성, 오프라인 무결성 재검증(`labhq verify`), 재현 검증 receipt, GitHub 연구소 정리본·PDF 출판 |
 
 단계 산출은 그 단계 작업 폴더의 `outputs/` 아래에서만 셉니다. 계획의 `outputs`는 필수이며, 로그·변환 기록·미리보기는 `optional_outputs`로 선언할 수 있습니다. 선택 산출이 빠지면 단계는 진행하고 단계·보고서 경고에 남기지만, 필수 산출 누락은 지금처럼 incomplete입니다. CSO 계획이 선언한 산출을 작업 폴더 루트(`./answer.md`)에 쓰라고 하면 실행 전에 `./outputs/answer.md`로 고치고 `request.plan` 경고에 남깁니다. 단계 prompt에도 선언한 산출 경로가 그대로 실립니다. 절대 경로나 `..`처럼 `outputs/` 밖을 선언한 계획은 CSO에게 한 번 다시 받고, 그래도 틀리면 어떤 단계도 보내지 않고 요청을 실패로 끝냅니다(#220). 글자 치환·형식 변환은 직원이 자기 작업 폴더의 Python 스크립트 하나로 처리합니다(#716).
 
@@ -1466,14 +1466,14 @@ Stanford Zou 연구실의 Virtual Biotech(bioRxiv 2026, 저자 중 Jiacheng Miao
 ```
 labhq/
   settings.py  models.py  policy.py  private_paths.py  registry.py  cli.py
-  supervisor.py  durable.py  doctor.py  verify.py  reproduction_receipt.py
+  supervisor.py  store.py  durable.py  doctor.py  verify.py  request_bundle.py  reproduction_receipt.py
   portfolio.py  result_storage.py  report_contract.py  report_pdf.py  korean_qc.py
   web/          index.html·state.js·ui/*.js (2.5D 사무실) · lab3d/ (3D) · vendor/three · manifest · icon
   integrations/ github · rounds (프로젝트 이슈·정리본/보고서 커밋·공개 가드·라운드 기록·Codex 리뷰 요청)
   adapters/     base · claude_code · codex · gemini · antigravity · cli (자체 에이전트) · read_only · mock
   runner/       daemon (게이트웨이 연결·실행·잡 감시) · approvals (로컬 브로커) · workspace (실험노트·산출 스캔) · bioinfo_agent
   tools/        scheduler (SGE/PBS/Slurm) · hpc_mcp · approval_mcp · ask_mcp · annot_mcp · _mcpcompat
-  gateway/      server (FastAPI · WS · REST) · storage (SQLite WAL · 요청 묶음 · RO-Crate)
+  gateway/      server (FastAPI · WS · REST) · shutdown (종료 처리)
   orchestrator/ cso (브리핑 → 선행 연구/파견직 → 계획 DAG → CP1/CP2 → 리뷰 → 보고)
   research/     contract (CP1·CP2·result v2) · continuation (단계 재사용) · packs (도메인 규칙) ·
                 semantics* (출처/객체 그림자·입력 적합성·A/B) · semantic_device_report (의미 장치 보고서)
