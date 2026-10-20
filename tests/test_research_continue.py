@@ -36,6 +36,8 @@ DAY = "2026-10-06"
 
 def _plan(round_no: int, extra: dict | None = None) -> dict:
     plan = {**valid_plan(steps=2), **(extra or {})}
+    for step in plan['steps']:
+        step['input_refs'] = []  # synthetic generator: no unproved external "public-input"
     plan["steps"][1]["depends_on"] = ["s1"]  # s2 reads s1, so the run order is fixed
     if round_no >= 2:
         plan["steps"][1]["instruction"] = FIXED
@@ -256,11 +258,13 @@ async def test_reuse_is_refused_when_a_reused_output_changed_after_the_first_rou
 
     req = hub.requests["r"]
     carried = req["research_contract"]["continuation"]
-    assert _steps(hub) == ["plan", "s1", "s2", "review", "plan", "s1", "s2", "review", "synthesis"]
-    assert carried["reuse"] == [] and carried["rerun"]["s1"].startswith("output hash check:")
-    assert "mismatch" in carried["refused_reuse"][0]["reason"]
-    assert req["results"]["s1"]["task_id"] != req["research_contract"]["rounds"][0]["results"]["s1"]["task_id"]
-    assert req["outcome"] == "research_reported"
+    assert _steps(hub) == ["plan", "s1", "s2", "review", "plan"]
+    assert carried["reuse"] == ["s1"] and not carried["verified"]  # preserve what the PI approved
+    assert carried["declined_plan"]["approval"]["status"] == "approval_required"
+    assert carried["ended_before_dispatch"]["outcome"] == "reuse_approval_required"
+    assert req["results"]["s1"]["task_id"] == req["research_contract"]["rounds"][0]["results"]["s1"]["task_id"]
+    assert req["outcome"] == "research_review_revise" and "새 CP1" in req["report"]
+
 
 
 class _Restart(BaseException):
@@ -528,9 +532,8 @@ async def test_an_identical_continuation_plan_still_needs_a_new_cp1_cp2_and_revi
 
 
 @pytest.mark.asyncio
-async def test_a_refused_reuse_drops_the_steps_earlier_pi_decision(tmp_path):
-    """s1 answered a blocking question in round 1, then its file changed: it re-runs fresh, not as the round-1
-    session in the folder whose file changed (PR #448 review)."""
+async def test_post_approval_drift_never_reuses_an_earlier_pi_decision_to_rerun(tmp_path):
+    """s1 answered a blocking question in round 1; later drift authorizes neither a fresh run nor that session."""
     hub = _hub(tmp_path, [CP1, APPROVE, CONTINUE, CP1, APPROVE])
     old: dict = {}
 
@@ -547,10 +550,10 @@ async def test_a_refused_reuse_drops_the_steps_earlier_pi_decision(tmp_path):
 
     req = hub.requests["r"]
     rerun = [task for task in hub.calls[4:] if task.meta.get("step_id") == "s1"]
-    assert len(rerun) == 1 and rerun[0].meta.get("workdir") != old["workdir"]
-    assert rerun[0].resume_session_id is None and "which cohort?" not in rerun[0].prompt
-    assert "s1" not in (req.get("step_decisions") or {})
-    assert req["outcome"] == "research_reported"
+    assert not rerun  # neither a fresh dispatch nor the earlier PI session is authorized
+    assert _steps(hub)[4:] == ["plan"]
+    assert req["research_contract"]["continuation"]["ended_before_dispatch"]["outcome"] == "reuse_approval_required"
+    assert req["outcome"] == "research_review_revise" and "새 CP1" in req["report"]
 
 
 @pytest.mark.asyncio

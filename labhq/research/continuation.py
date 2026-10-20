@@ -1,38 +1,24 @@
-"""Continue a research request after its scientific review ended with "revise" (#90, #58) or the PI chose revise at
-CP2 (PI 점검 R10).
+"""Continue a review/CP2 revision through a new CP1 (#90, #797).
 
-After a review "revise" the PI approves the continuation on a card (gate ``research_continue``) and the CSO writes a
-complete new research PLAN that carries the reviewer's P1 issues. After a CP2 revise the PI's CP2 note is the revision
-request (``continuation.pi_request``) and no extra card is asked. Either way the PI approves the new plan at a new CP1
-(a new plan_sha256), and both count against ``research.revise_continuations``. A completed step of the previous plan
-is reused instead of run again only when all of these hold; anything else re-runs:
+Reuse requires the normalized node specification, exact scientific brief/hypotheses/protocol/pack contract,
+its own/ancestor branches, declared tool configuration, completed bound ledger and proved dependency artifacts.
+No fuzzy wording equivalence is inferred. Unproved external inputs and directory outputs are declined before CP1.
 
-- the new plan keeps the step byte-identical (canonical JSON of every field) under the same frozen question, scope,
-  hypotheses, protocol and pack values, which together are exactly what the step was dispatched with apart from its upstream
-  results, the PI's CP1 note and the spending cap (``frozen_context``; neither changes the plan, so a new round's
-  note or cap does not re-run a reused step), and under the same domain pack snapshot (``protocol.packs`` with each pack's sha256,
-  and the contract's ``pack_snapshot``): a pack whose definition changed under the same ``id@version`` re-runs every
-  step, since a step does not declare which pack rule its result rests on;
-- no P1 issue of the review names the step;
-- the previous round left the step a completed result;
-- every step it depends on, directly or not, is reused too;
-- the previous result, rebound to the new plan (``structured.plan_sha256``), validates under the new plan;
-- just before dispatch, after the new CP1 approval, every output file the step recorded still has the sha256 labhq
-  recorded for it (``refused_reuse``). A step that cannot be checked on this PC re-runs.
+``carry_over`` is provisional structural selection. The orchestrator checks input proof and ``verify_reuse``
+before CP1, seals the executable candidates to that plan hash, and rechecks the approved seal on resume and before
+dispatch. Drift stops for renewed approval; it never silently replaces reuse with a rerun. Files can still change
+between checks: this is verification at boundaries, not a filesystem lock.
 
-``carry_over`` alone decides this, from the archived round, on every path: adopting the new plan, the hash check
-after its CP1, and a restart between them. A reused result is a copy bound to the current plan, so CP2, the report,
-``labhq verify`` and the semantics records read one plan with its own results; the round and plan it ran under stay
-in ``continuation.reused_from`` and in the round archive. A continuation that ends before any step ran puts the
-archived round back whole (``restore_round``) and keeps its declined draft in ``continuation.declined_plan``.
-The archive also keeps the request's spending cap (``budget_usd``), which a new CP1 may have lowered, so that rollback
-puts it back too (PR #499 review).
+Reused results bind to the new plan; ``reused_from`` keeps their original round/task. If a continuation stops before
+any dispatch, ``restore_round`` restores the archived plan/receipts/results/budget and keeps the declined draft.
 """
 
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -41,11 +27,15 @@ from .contract import ResearchPlan, plan_sha256, validate_research_result
 
 CONTINUE_GATE = "research_continue"
 
+
+class ReuseApprovalRequired(RuntimeError):
+    """An approved reuse candidate changed; stop instead of dispatching a replacement."""
+
 # The research_contract fields one frozen plan owns. A round archive keeps them, and a continuation that ends before
 # dispatch puts them back; the CP2 receipt lives under ``checkpoints.cp2`` and is archived as ``cp2``.
 ROUND_CONTRACT_FIELDS = ("plan_sha256", "approval", "pack_snapshot", "pack_applicability", "review")
 # The request fields one frozen plan owns.
-ROUND_REQUEST_FIELDS = ("plan", "output_types_stats")
+ROUND_REQUEST_FIELDS = ("plan", "output_types_stats", "reuse_tools", "reuse_no_request_inputs")
 
 
 def _canonical(value: Any) -> str:
@@ -73,6 +63,149 @@ def pack_context(plan: Mapping[str, Any], snapshot: Mapping[str, Any] | None) ->
     contract's pack snapshot. Not in the step prompt, so not in ``frozen_context``."""
     return {"packs": (plan.get("protocol") or {}).get("packs") or [],
             "pack_snapshot": dict(snapshot) if isinstance(snapshot, Mapping) else None}
+
+
+def node_context(plan: Mapping[str, Any], step: Mapping[str, Any]) -> str:
+    """Exact scientific context; only explicitly independent branches are scoped per node.
+
+    No wording is treated as semantically equivalent. Synthesis sees all branches.
+    """
+    context = frozen_context(plan)
+    context['brief'] = plan.get('brief') or {}
+    context['topics'] = sorted(plan.get('topics') or [])
+    context['intake'] = plan.get('intake') or {}
+    # Free-form assumptions can affect every node; do not infer that a new one is irrelevant.
+    context['assumptions'] = plan.get('assumptions') or []
+    # Paper selections and conversion receipts are method inputs, delivered via task metadata.
+    # Keep complete rows and their order; scope exactly to this node's selection/attachment targets.
+    # Only a digest enters the prompt context, never local skill paths or receipt values.
+    context['paper_method_sha256'] = _digest({
+        'selections': [row for row in plan.get('paper_skills') or []
+                       if step.get('id') in (row.get('step_ids') or [])],
+        'results': [row for row in plan.get('paper_skill_results') or []
+                    if step.get('id') in (row.get('step_ids') or [])
+                    and step.get('agent_id') in (row.get('agent_ids') or [])],
+    })
+    relevant = {step.get("id"), *_ancestors(plan.get("steps") or []).get(step.get("id"), set())}
+    branches = {s.get("branch") for s in plan.get("steps") or [] if s.get("id") in relevant}
+    if "synthesis" not in branches:
+        context["branches"] = [b for b in context["branches"] if b.get("id") in branches]
+    return _canonical(context)
+
+
+def _digest(value: Any) -> str:
+    return hashlib.sha256(_canonical(value).encode("utf-8")).hexdigest()
+
+
+def tool_signatures(plan: Mapping[str, Any], agents: Mapping[str, Any], engines: Any = None) -> dict[str, str]:
+    """Declared agent/tool/purpose configuration, per node; no other agent invalidates it.
+
+    Hash the complete configured record rather than guessing which tool/skill fields matter.
+    This is not proof of an external tool installation/version.
+    """
+    signatures = {}
+    for step in plan.get("steps") or []:
+        agent = agents.get(step.get("agent_id"))
+        if isinstance(agent, Mapping) and agent.get("engine"):
+            try:
+                payload = dict(agent)
+                config = getattr(engines, str(agent['engine']), None) if engines is not None else None
+                if engines is not None and config is None and agent['engine'] != 'mock':
+                    continue
+                if config is not None:
+                    payload = {'agent': payload, 'engine': config.model_dump(mode='json')}
+                # Version the executed prompt contract too: historical signatures without the scoped
+                # branch/paper-method context cannot prove the current execution-input contract.
+                signatures[step["id"]] = _digest({'node_context': 2, 'configuration': payload})
+            except (TypeError, ValueError):
+                pass  # an unrecordable declaration supplies no reuse proof
+    return signatures
+
+
+def _artifacts(step: Mapping[str, Any], result: Mapping[str, Any]) -> dict[str, str]:
+    """Recorded regular-file proof only. Directory outputs deliberately have no reuse contract."""
+    from ..util import output_relpath
+
+    outputs = result.get("outputs") or []
+    hashes = result.get("output_sha256") or {}
+    required = [output_relpath(path) for path in step.get("outputs") or []]
+    if (not required or None in required or not outputs or len(set(outputs)) != len(outputs)
+            or not set(required) <= set(outputs) or not isinstance(hashes, Mapping)):
+        raise ValueError("missing or ambiguous output proof")
+    for path in outputs:
+        if (not isinstance(path, str) or output_relpath(path) != path
+                or not isinstance(hashes.get(path), str) or not re.fullmatch(r"[0-9a-f]{64}", hashes[path])):
+            raise ValueError("missing file hash (directory outputs need a verified manifest; reuse declined)")
+    return {path: hashes[path] for path in sorted(outputs)}
+
+
+def has_request_inputs(request: Mapping[str, Any]) -> bool:
+    """These inputs reach every step; no content-hash proof is currently available for them."""
+    return any(request.get(key) for key in ('references', 'reference_dirs', 'project_dirs'))
+
+
+def proof_problems(previous: Mapping[str, Any], plan: Mapping[str, Any], carry: Carry,
+                   tools: Mapping[str, str], current_request: Mapping[str, Any] | None = None) -> dict[str, str]:
+    """Fail closed on unproved external inputs, dependencies or historical tool configuration."""
+    old_tools = previous.get("reuse_tools") or {}
+    steps = {s["id"]: s for s in plan.get("steps") or []}
+    ancestors = _ancestors(list(steps.values()))
+    problems = {}
+    for sid in carry.reuse:
+        step = steps[sid]
+        try:
+            absence = previous.get('reuse_no_request_inputs')
+            if (has_request_inputs(previous) or has_request_inputs(current_request or {})
+                    or not isinstance(absence, Mapping) or absence.get(sid) is not True):
+                raise ValueError('request-level input content proof is unavailable (including legacy execution)')
+            if previous.get('plan_sha256') != plan_sha256(previous.get('plan') or {}):
+                raise ValueError('archived plan identity is missing or changed')
+            original = (previous.get('results') or {}).get(sid) or {}
+            ledger = original.get('structured') or {}
+            if (ledger.get('plan_sha256') != previous['plan_sha256'] or ledger.get('step_id') != sid
+                    or original.get('agent_id') != step.get('agent_id') or not original.get('task_id')):
+                raise ValueError('result identity does not match the archived node')
+            if not tools.get(sid) or tools[sid] != old_tools.get(sid):
+                raise ValueError("missing or changed declared tool configuration")
+            _artifacts(step, carry.results[sid])
+            for dep in ancestors[sid]:
+                if dep not in carry.results:
+                    raise ValueError("missing dependency result")
+                _artifacts(steps[dep], carry.results[dep])
+            for ref in step.get("input_refs") or []:
+                if not isinstance(ref, str) or not ref.startswith("step:"):
+                    raise ValueError("external input has no verified content proof")
+                source, sep, path = ref[5:].partition("/")
+                from ..util import output_relpath
+                normalized = output_relpath(path) if sep else None
+                if (source not in ancestors[sid] or source not in carry.results or normalized is None
+                        or normalized not in _artifacts(steps[source], carry.results[source])):
+                    raise ValueError("missing or ambiguous declared dependency input")
+        except (ValueError, TypeError, KeyError) as exc:
+            problems[sid] = str(exc)
+    return problems
+
+
+def reuse_snapshot(plan: Mapping[str, Any], pack_snapshot: Mapping[str, Any], carry: Carry,
+                   tools: Mapping[str, str]) -> dict[str, Any]:
+    """A deterministic executable candidate set, sealed to the exact CP1 plan and result records."""
+    normalized = ResearchPlan.model_validate(plan)
+    ancestors = _ancestors(plan.get("steps") or [])
+    steps = {s["id"]: s for s in plan["steps"]}
+    nodes = {}
+    for step in normalized.steps:
+        sid = step.id
+        if sid not in carry.reuse:
+            continue
+        inputs = {dep: _artifacts(steps[dep], carry.results[dep]) for dep in sorted(ancestors[sid])}
+        nodes[sid] = {"identity_sha256": _digest({"step": step.model_dump(mode="json"),
+                       "context": node_context(plan, steps[sid]), "packs": pack_context(plan, pack_snapshot),
+                       "tool": tools[sid], "upstream_artifacts": inputs}),
+                      "result_sha256": _digest(carry.results[sid]),
+                      "outputs": _artifacts(steps[sid], carry.results[sid])}
+    snapshot = {"version": 1, "plan_sha256": plan_sha256(normalized), "nodes": nodes,
+                "reuse": list(carry.reuse), "rerun": dict(carry.rerun)}
+    return {**snapshot, "sha256": _digest(snapshot)}
 
 
 def p1_issues(review: Mapping[str, Any] | None) -> list[dict[str, Any]]:
@@ -125,7 +258,7 @@ def carry_over(previous: Mapping[str, Any], plan: Mapping[str, Any], pack_snapsh
     """Which steps of ``plan`` reuse the archived round ``previous`` (a ``rounds`` entry) and the results they take.
 
     The one reuse rule (module docstring) for every path. ``refused`` names steps the caller already refused with
-    the reason, e.g. the output hash check after CP1; a refusal also re-runs every step below it."""
+    the reason, e.g. the output hash check before CP1; a refusal also excludes every step below it."""
     refused = dict(refused or {})
     parsed = ResearchPlan.model_validate(plan)
     target = plan_sha256(parsed)
@@ -134,11 +267,12 @@ def carry_over(previous: Mapping[str, Any], plan: Mapping[str, Any], pack_snapsh
     old = {step["id"]: step for step in previous_plan.get("steps") or [] if isinstance(step, Mapping)}
     previous_results = previous.get("results") or {}
     named = {issue.get("step_id") for issue in issues if issue.get("step_id")}
-    context = ("question, scope, hypotheses, protocol or pack values changed"
-               if _canonical(frozen_context(previous_plan)) != _canonical(frozen_context(plan)) else
-               "domain pack snapshot changed"
+    context = ("domain pack snapshot changed"
                if _canonical(pack_context(previous_plan, previous.get("pack_snapshot"))) !=
                _canonical(pack_context(plan, pack_snapshot)) else None)
+    old_parsed = ResearchPlan.model_validate(previous_plan)
+    normalized_old = {step.id: step.model_dump(mode="json") for step in old_parsed.steps}
+    normalized_new = {step.id: step.model_dump(mode="json") for step in parsed.steps}
     earlier = (previous.get("continuation") or {}).get("reused_from") or {}
     carry = Carry()
     own: dict[str, str | None] = {}
@@ -147,7 +281,9 @@ def carry_over(previous: Mapping[str, Any], plan: Mapping[str, Any], pack_snapsh
         sid = step["id"]
         result = previous_results.get(sid) or {}
         reason = ("new step" if sid not in old else
-                  "spec changed" if _canonical(old[sid]) != _canonical(step) else
+                  "spec changed" if _canonical(normalized_old[sid]) != _canonical(normalized_new[sid]) else
+                  "question, scope, hypotheses, protocol or pack values changed"
+                  if node_context(previous_plan, old[sid]) != node_context(plan, step) else
                   context or ("named by a P1 review issue" if sid in named else
                               "no completed result in the previous round" if not result.get("ok") else
                               refused.get(sid)))
@@ -249,8 +385,10 @@ def verify_reuse(results: Mapping[str, Mapping[str, Any]], settings: Any) -> dic
     an output without a recorded hash, or a work folder this PC cannot see."""
     from ..evidence.audit import OK, verify_request
 
+    empty = {sid: "missing recorded output proof" for sid, result in results.items()
+             if not result.get("outputs") or not result.get("output_sha256")}
     report = verify_request({"results": dict(results)}, settings)
-    refused: dict[str, str] = {}
+    refused: dict[str, str] = dict(empty)
     for reason in report["reasons"]:
         sid, _, detail = str(reason).partition(": ")
         refused.setdefault(sid, detail or str(reason))
@@ -271,7 +409,7 @@ def plan_prompt(previous_plan: Mapping[str, Any], previous_sha256: str, issues: 
                "approves it at a new CP1.\n")
         named = ""
         scope = ("Change or add only the steps the request needs. A step the request asks to run again must change "
-                 "(give it instructions that address the request), since a byte-identical step keeps its previous "
+                 "(give it instructions that address the request), since an unchanged step with verified inputs may keep its previous "
                  "result. Use a new id for a step that does different work.\n")
         listed = "PI revision request (CP2):\n" + pi_request
     else:
@@ -287,13 +425,13 @@ def plan_prompt(previous_plan: Mapping[str, Any], previous_sha256: str, issues: 
         listed = "P1 issues:\n" + ("\n".join(lines) or "- (none)")
     return (
         f"\n\nContinuation (research round {round_no}). " + why +
-        "labhq reuses a previous step's result without running it again only when your plan keeps that step "
-        "byte-identical (same id and every field), keeps brief.question, brief.scope, brief.primary_hypothesis, "
-        "brief.null_or_alternatives, brief.distinguishing_observations, protocol and pack_values "
-        f"unchanged, {named}and every step it depends on is reused too. Any change to brief.question, brief.scope, "
-        "brief.primary_hypothesis, brief.null_or_alternatives, brief.distinguishing_observations, protocol or "
-        "pack_values "
-        "re-runs every step, so change them only when the request or an issue needs it. " + scope +
+        "labhq can reuse a result only for the same normalized node specification and declared inputs, "
+        "under the exact scientific brief, brief.primary_hypothesis, brief.null_or_alternatives, "
+        "brief.distinguishing_observations, protocol and pack_values, with the same tool configuration. "
+        f"It also requires verified artifact hashes, {named}and every dependency reused too. "
+        "Independent unrelated node/branch changes do not invalidate a candidate; no fuzzy wording equivalence "
+        "is inferred. Unproved inputs or directory outputs are declined before CP1. CP1 shows only verified "
+        "candidates; changes after approval require renewed approval, never a silent rerun. " + scope +
         listed + f"\n\nPrevious frozen plan (plan_sha256 {previous_sha256}):\n{_canonical(previous_plan)}")
 
 
