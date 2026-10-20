@@ -1387,7 +1387,8 @@ async def _run_runner_with_interrupts(runner, diagnostics=None) -> None:
 
     from .interruption import watch_shutdown_signals
     restore_signals = watch_shutdown_signals(lambda: setattr(runner, "_stopping", True), interrupt=False,
-                                             default_handler=on_shutdown)
+                                            default_handler=on_shutdown,
+                                            disposition=getattr(diagnostics, "signal_disposition", None))
     # Keep the interactive handler last. SIGTERM/SIGHUP mark an external shutdown;
     # SIGINT still warns once while work is active and exits on the second press.
     signal.signal(signal.SIGINT, on_interrupt)

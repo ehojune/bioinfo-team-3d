@@ -2,7 +2,7 @@
 import asyncio
 import signal
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -174,3 +174,81 @@ async def test_runner_may_finish_while_graceful_shutdown_is_still_draining(signa
             pass
 
     await asyncio.wait_for(_run_runner_with_interrupts(FakeRunner()), 1)
+
+
+@pytest.mark.parametrize("initial", [signal.SIG_DFL, signal.SIG_IGN, "custom"])
+async def test_diagnostics_context_preserves_runner_shutdown_disposition(tmp_path, monkeypatch, signals, initial):
+    from labhq import process_diagnostics as module
+
+    custom = Mock()
+    signals[signal.SIGTERM] = custom if initial == "custom" else initial
+    if hasattr(signal, "SIGBREAK"):
+        signals[signal.SIGBREAK] = signal.SIG_DFL
+    original = dict(signals)
+    monkeypatch.setattr(module, "_resources", lambda: {})
+    monkeypatch.setattr(module.threading, "Thread", lambda **kw: SimpleNamespace(start=Mock(), join=Mock()))
+    monkeypatch.setattr(module.faulthandler, "is_enabled", lambda: False)
+    monkeypatch.setattr(module.faulthandler, "enable", Mock())
+    monkeypatch.setattr(module.faulthandler, "disable", Mock())
+    graceful = Mock()
+
+    class FakeRunner:
+        tasks = {}
+
+        async def run_forever(self):
+            signals[signal.SIGTERM](signal.SIGTERM, None)
+            if initial != "custom":
+                await asyncio.Event().wait()
+
+        async def shutdown(self):
+            assert self._stopping
+            graceful()
+
+        def stop(self):
+            pass
+
+    with module.ProcessDiagnostics(tmp_path / "logs", "runner") as diagnostics:
+        installed = dict(signals)
+        try:
+            await asyncio.wait_for(_run_runner_with_interrupts(FakeRunner(), diagnostics), 1)
+        except SystemExit:
+            pytest.fail("diagnostics must not turn the default TERM disposition into immediate exit")
+        assert signals == installed
+    assert signals == original
+    assert graceful.call_count == (initial != "custom")
+    assert custom.call_count == (initial == "custom")
+    assert diagnostics.reason == "signal:SIGTERM"
+
+
+@pytest.mark.parametrize("stop_at", ["before_dispatch", "during_accept"])
+async def test_shutdown_refuses_new_dispatch_even_if_stopping_changes_during_accept(
+        tmp_path, monkeypatch, stop_at):
+    from labhq.models import Task, TaskResult
+    from tests.test_shutdown_recovery import make_hub, runner_for
+
+    runner = runner_for(make_hub(tmp_path), tmp_path)
+    task = Task(id="late", agent_id="cso", request_id="r", prompt="must not execute")
+    launch = AsyncMock()
+    monkeypatch.setattr(runner, "_run_guarded", launch)
+    send = runner._send_durably
+
+    async def accept_then_stop(message, **kwargs):
+        await send(message, **kwargs)
+        if message["type"] == "task.accepted" and stop_at == "during_accept":
+            runner._stopping = True
+
+    monkeypatch.setattr(runner, "_send_durably", accept_then_stop)
+    runner._stopping = stop_at == "before_dispatch"
+    message = {"type": "task.dispatch", "task": task.model_dump(mode="json")}
+    await runner._on_message(message)
+    await asyncio.sleep(0)
+    launch.assert_not_called()
+    assert task.id not in runner.tasks
+    results = [row for row in runner.store.pending() if row["type"] == "task.result"]
+    assert len(results) == 1
+    result = TaskResult.model_validate(results[0]["data"])
+    assert not result.ok and result.shutdown_evidence["stopping"] is True
+    assert runner.store.get("accepted_task", task.id)["state"] == "finished"
+    await runner._on_message(message)  # A duplicate cannot start work or overwrite the shutdown result.
+    launch.assert_not_called()
+    assert len([row for row in runner.store.pending() if row["type"] == "task.result"]) == 1

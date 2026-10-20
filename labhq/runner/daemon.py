@@ -651,16 +651,20 @@ class Runner:
                 {"type": "task.accepted", "task_id": task.id, "request_id": task.request_id},
                 before=(("accepted_task", task.id, {"state": "running", "task": task.model_dump(mode="json")})
                         if prior is None else None))
-            if prior is None:
+            # Acceptance is durable (and may yield): check shutdown again before starting any staff work.
+            if prior is None and not self._stopping:
                 self.tasks[task.id] = asyncio.create_task(self._run_guarded(task))
-            elif prior.get("state") == "running" and task.id not in self.tasks:
+            elif (prior is None or prior.get("state") == "running") and task.id not in self.tasks:
                 has_result = any(e.get("type") == "task.result" and e.get("task_id") == task.id
                                  for e in self.store.pending())
                 if not has_result:
+                    result = (self._shutdown_result(TaskResult(task_id=task.id, agent_id=task.agent_id,
+                                  ok=False, error="runner stopping: task not started"), cancelled=True)
+                              if self._stopping else self._interrupted_result(task.id, task.agent_id))
                     await self._send_durably(
                         {"type": "task.result", "task_id": task.id, "agent_id": task.agent_id,
                          "request_id": task.request_id,
-                         "data": self._interrupted_result(task.id, task.agent_id).model_dump(mode="json")},
+                         "data": result.model_dump(mode="json")},
                         after=("accepted_task", task.id, {"state": "finished"}))
         elif typ == "task.cancel":
             t = self.tasks.get(msg.get("task_id", ""))
