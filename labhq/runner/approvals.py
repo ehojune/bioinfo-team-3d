@@ -112,6 +112,14 @@ class Broker:
         return app
 
     async def request_approval(self, req: ApprovalRequest) -> dict:
+        if req.kind == "tool_permission":
+            from ..process_stop_guard import DENIAL, broad_process_stop
+            tool_input = req.detail.get("tool_input")
+            commands = [req.detail.get("command", "")]
+            if isinstance(tool_input, dict):
+                commands.append(tool_input.get("command", ""))
+            if any(broad_process_stop(str(command)) for command in commands):
+                return {"approved": False, "note": DENIAL, "state": "denied"}
         # A task process cannot add UI-only fields. Old runners may still send this removed field.
         req.detail.pop('task_scope_label', None)
         fut = asyncio.get_running_loop().create_future()
