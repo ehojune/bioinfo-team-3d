@@ -4,6 +4,152 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# PR #793 exit logging 전용 fixture (local only)
+
+- 기준 fc70f4a6. 새 trace는 powershell_started만 관측했고 입력 read/EOF·JSON·스케줄링·관측을 구분하지 못한다. Create 결과·provider timeout 원인은 UNVERIFIED다.
+- logging test 한 건에만 일반 Popen과 정확한 fake gateway 명령용 launcher를 사용한다. 기존 assertions 8개·teardown과 다른 기존 함수/fixture 20개는 그대로다.
+- 실제 breakaway·nested Job 생존·거부·ACK 전 차단 gates와 제품/CI policy는 변경하지 않았다. 이것은 WMI timeout 수정이나 native 성공 증거가 아니다.
+- 새 회귀 5 failed → 관련 fake/static 74 passed. Python 3.10 AST·public·기록/diff 검사를 수행한다. real process/WMI/PI/WSL/연구/bench는 실행하지 않았다.
+- root exact-head 검토 전 push 금지: commit만 한다. CI 조회·재시도·PR/thread 쓰기·병합·배포 없음. [근거·유지한 gate](../reference/exit-logging-fixture-793.md).
+
+# PR #793 자동 조회 deadline 검사 분리
+
+Refs #788 · source `6be0f39` · base `d3cc0ba4` · 미게시.
+
+- [Linux3.12 실패](https://github.com/ehojune/bioinfo-team-3d/actions/runs/39491594456/job/118866006138)는 limiter의 Event.wait가 outer 1초 watchdog에 취소돼 TimeoutError가 된 경로입니다. 특정 지연 원인과 제품 결함은 미확정이며 #800과 같은 원인이라고 판단하지 않았습니다. 변경 전 세 case는 로컬 3 passed로 CI red를 재현하지 못했습니다.
+- test-only module-local timer에서 operation awaitable을 명시 등록하고 phase별 start/tick/heartbeat event를 새로 만듭니다. real coordinator는 그대로이며 완료 phase마다 가상 20ms를 소비합니다. 기존 80ms logical budget의 remaining은 80→60→40ms, 같은 deadline은 100.08입니다. hung operation의 시작·suspend를 확인한 뒤 가상 deadline에 취소하고 await로 정리합니다. 60초 production cadence는 유지해 80ms 안에 heartbeat를 만들지 않습니다.
+- outer watchdog은 logical deadline과 분리한 10초로 한정했습니다. coordinator 전체에는 동기 durable 기록도 포함되므로 1초 wall 시간을 logical timeout 증명으로 사용하지 않습니다. bound 증가만으로 통과시키지 않고 pending/cancel·모든 operation/progress task 완료·ToolError+NOT_EVIDENCE·무승인·phase 순서·progress/저장 status 일치를 검사합니다. 완료된 작업의 거짓 timeout 거부와 시작 통지 누락 중 caller 취소/정리도 별도 검사합니다.
+- `tests/test_external_wait.py` guarded mocked coroutine **23 passed**. 기존 shared deadline/retry/PDF human-wait 제외/취소/progress 검사를 보존했고 실제 network/process/thread는 실행하지 않았습니다. Python3.10 AST·public·기록·patch-note·diff를 검사하고 native red·baseline·intermediate/final 전체 로그와 guard 환경을 보존했습니다.
+
+제품 external_wait/annot_mcp와 classifier·CI trust/workflow/isolation·Windows·CPU guard·README/manual/다른 owner 파일은 변경하지 않았습니다. 10초 watchdog은 cooperative coroutine 교착 감시이며 OS/동기 I/O 시간의 강제 중단 보장은 아닙니다. 새 native CI는 미검증이며 **push·GitHub 답글/resolve·CI 조회 없이** root의 exact-head 검토와 게시를 기다립니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+# PR #793 한국어 설명문 허용 범위 축소
+
+Refs #788 · source `8b8e883` · base `205c51af` · 미게시/P1 검토 대기.
+
+- `조립하고 결과를 확인합니다.→분해하고 결과를 확인합니다.`는 기존 실제 parser에서 양방향 document-only였습니다. 임의 Hangul prefix와 행동/보고 꼬리를 없애고 고정된 문서 주어+정도 표현+형용사 하나만 후보로 남겼습니다. 붙여 쓴 지시문 제목도 전체 문단 보호 대상으로 보냅니다. 도구/행동 denylist를 늘리지 않았습니다.
+- 실제 MarkdownIt의 targeted red는 **37 failed / 13 passed**, 수정 뒤 관련 pure/fake/static **563 passed**입니다. 생소한 action chain·단순 행동·띄어쓰기·목록/제목·앞뒤 설명문을 섞은 경우를 양방향 검사했습니다. 형용사 prose와 같은 Markdown reflow는 유지하고 새로운 형용사 형태나 붙여 쓴 fragment의 기존 full fallback도 넓히지 않았습니다.
+- 실제 README의 기존 동작 서술 수정은 이제 full을 요구합니다. 원래 입력은 그대로 negative로 강화하고 같은 README의 별도 형용사 변경을 positive로 추가해 기존 code/link/HTML 예제 주변의 유효한 문서 절감을 유지했습니다. README 원본과 기존 normative·markup·provenance/consumer·Windows·CPU 보호는 변경하지 않았습니다.
+- Python3.10 AST·public·기록·patch-note·diff를 검사했습니다. 실제 parser/positive control과 guard 환경을 확인하고 전체 red/green·중간 contract 실패 로그를 보존했습니다. 기존 함수/class 중 `descriptive_prose`만 바뀌었고 나머지 24개의 AST는 같습니다.
+
+한계: 무해한 한국어 행동/보고 서술도 보수적으로 full입니다. 자연어 전체를 판별한다거나 P1 전체가 해결됐다고 주장하지 않습니다. 새 native CI는 실행/조회하지 않았으며 **push·답글·resolve·PR 수정 없이** root의 combined exact-head 검토를 기다립니다. 로컬 native/process/thread/실제 git fixture/xdist·PI/WSL/연구/bench/HPC·전체 suite는 실행하지 않았습니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+# PR #793 command-shaped prose 보호
+
+Refs #788 · source `2620947` · base `678abc7c` · 미게시.
+
+- P1 4321519440의 `assemble→publish`는 기존에도 full이었지만 `assemble→clean/bundle`은 실제 MarkdownIt에서 document-only였습니다. 새 도구·동사를 열거하지 않고, 수정 가능한 문단을 작은 설명문 grammar로 제한했습니다. 분류하지 못한 문단은 inline signature와 container 전체를 묶어 양방향 수정·추가·삭제를 full로 보냅니다.
+- 영어 copular 설명·짧은 문서 명사구와 검토한 한국어 설명/기록 서술형은 유지합니다. 그 밖의 무해한 prose·혼합 언어도 full일 수 있습니다. 자연어/명령을 완전히 해석하는 규칙은 아닙니다. 별도 설명 문단과 동일 Markdown soft reflow는 유지하며 기존 normative·code/link/HTML·dependency 오류 보호는 바꾸지 않았습니다.
+- frozen `678abc7c`와 실제 parser의 최종 회귀는 **63 failed / 97 passed**, 수정 뒤 관련 pure-string/fake/static **512 passed**입니다. 원래 Gradle·생소한 도구/동사·전치사/다중 문장/제목/목록·한국어 지시문과 일반 prose를 양방향 검사했습니다. #labhq heading의 기존 pure/fake-git 회귀도 그대로 통과했습니다.
+- bare lane Python의 `ModuleNotFoundError: markdown_it`는 별도 실패 로그로 보존하고 PASS에 포함하지 않았습니다. 기존 task dependency의 실제 parser를 확인한 뒤 green을 기록했으며 mock guard 환경과 전체 red/green trace를 유지했습니다. Python3.10 AST·public·기록·patch-note·diff 검사를 수행했습니다.
+
+CI provenance/tree/profile/run/attempt/digest/consumer, workflow·Windows/native safety·CPU guard와 다른 owner의 코드/문서 및 `678abc7c` merge graph는 보존했습니다. 새 HEAD CI는 실행/조회하지 않았습니다. **push·PR 본문·thread 답글/resolve는 하지 않았으며 root가 exact-head 검토와 게시·최종 CI·병합을 맡습니다.** 로컬 native/process/thread/xdist·실제 git fixture·PI/연구/bench/HPC·전체 suite는 실행하지 않았습니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+Refs #788, #793
+
+C3 CPU scan 개선, 로컬 검토가 끝난 Windows fixture 전달 수정, README 한영·매뉴얼의 Paper2Skill 설명을 기존 PR에 함께 통합했다. 원본 source commit ID를 보존해 패치노트 근거를 유지했고 실제 검토된 head에서 새 CI를 받는다.
+
+Windows fixture 수정은 실제 함수 AST/fake 검증과 독립 정적 P1=0이며 native 실행은 하지 않았다. scanner 동등성·CPU 측정은 C3의 로컬 근거다. 실제 Windows·manifest/재사용·WMI timeout 해결·연구 효용은 미검증이다. 사용자 매뉴얼의 순간 개발 문구는 상시 진단 안내로 바꾸고 상세 근거는 reference에 둔다. 자동 STATUS/패치노트 목차는 직접 고치지 않았다.
+
+# PR #793 scanner CPU 비용 수정
+
+Refs #788 · source `a6a52b1` · tested base `2642fa16`.
+
+- [Linux3.12 실패](https://github.com/ehojune/bioinfo-team-3d/actions/runs/39473571463/job/118803767425)는 `touches`의 None 검사를 통과한 뒤 CPU 2.019318592초로 `< 2`를 넘겼습니다. 경합 원인이나 superlinear 경로가 확인된 것은 아닙니다.
+- `_token_candidates`의 chunk 끝·colon run 끝 탐색 두 곳만 bounded 단일 character-class regex로 바꿨습니다. drive colon·URI·trim·escape·정규화와 731,072자 입력·CPU clock·결과 assertion·엄격한 2초 한도는 그대로입니다. 다른 함수·class 94개의 AST도 같습니다.
+- 기존 구현과 AST가 같은 frozen oracle을 기준으로 생성 문자열 3,107개의 후보 순서·scan metadata·lexical zone 판정이 일치했습니다. URI/drive/UNC/ADS/traversal·인접 separator·따옴표/escape·허용/제한 경계와 기존 clock 회귀를 포함해 guarded mock/pure-string/static **59 passed**입니다. 변경 전 비교 회귀 13개도 통과했으며 로컬에서 기존 CI 실패를 재현했다고 주장하지 않습니다.
+- Windows/Python3.12.10에서 같은 긴 입력을 구현별 7표본·표본당 8회, 순서를 번갈아 측정했습니다. `touches`의 호출당 CPU 중앙값은 **0.109375→0.0703125초(35.7% 감소)**, token 추출은 **0.04296875→0.005859375초**입니다. 로컬 측정이며 CI 소요 시간·복잡도 증명이 아닙니다.
+- Python3.10 AST·integrations·public·기록·patch-note·diff 검사를 수행했습니다. guard 환경과 native 실패/로컬 전체 로그를 보존했습니다. 새 fixture의 unquoted-space 기대값 오류는 기존 token 경계와 대조해 바로잡았으며 기존 test/assertion은 수정하지 않았습니다.
+
+CI workflow·manifest의 tree/ordered parent/run/attempt/digest/trusted-base 조건·worker 격리·Windows/WMI 보호는 변경하지 않았습니다. runtime fingerprint는 갱신하지 않아 Windows는 보수적인 full fallback 대상입니다. Linux 전수·Windows nightly/dispatch 전수·설치/validator/MCP gate도 유지합니다.
+
+한계: 새 head native CI, Windows 결과와 manifest/no-reuse 실증은 미검증입니다. snapshot 갱신 시점과 CI CPU 초과의 환경 원인도 UNKNOWN입니다. native process/thread/xdist·PI·연구·bench/HPC·전체 suite·CI polling·review 요청·merge 없이 종료하며 root가 exact-head CI와 독립 보안 검토를 맡습니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+Refs #788, #793
+
+실제 Windows job118803767466의 두 실패는 diagnostics를 받지 않는 기존 fixture 래퍼가 Create 전에 거부한 문제다. 전달 인자만 맞추고 모든 기존 assertion·1회 Create·no-ACK/미소유 PID 보호를 유지했다.
+
+원래 함수 AST의 fake-only 검증: 수정 전 TypeError, 수정 뒤 전달 identity·1회 fake Create·receipt/identity assertion PASS. Python3.10 AST·diff PASS. 실제 native fixture 재실행·push·CI·병합·배포는 하지 않았다. C3 policy 작업과 독립된 로컬 커밋이며 root가 C3 완료 뒤 결합한다. 원래 WMI timeout 원인은 미확인이다.
+
+# PR #793 Windows WMI timeout 진단
+
+- 원본 bd333485와 실제 검사 merge 7c9ccbb9를 구분하고, main 2ce87786을 포함한 검사 merge로 fast-forward 통합했다. C3의 기존 변경은 보존했다.
+- PowerShell script 진입·입력 수신·Create 진입·반환의 고정 phase와 child Stopwatch/부모 monotonic 경과 시간을 기록한다. raw argv·env·stderr는 기록하지 않는다.
+- timeout·미확인 Create는 계속 실패한다. 단일 Create·소유 handle/nonce/identity/ANY-Job·ACK/cleanup 경계를 유지한다. workflow·CI policy는 수정하지 않았다.
+- 새 회귀 수정 전 16 failed, 관련 mock/static 최종 72 passed. Python 3.10 AST·공개/기록/diff 검사를 수행한다. 실제 Windows/WMI는 로컬 미실행이다.
+- 원래 timeout 원인·Create 결과와 새 no-reuse 실증은 UNVERIFIED다. CI 조회·재실행·리뷰 요청·병합·배포하지 않는다. [해석·한계](../reference/windows-provider-793.md).
+
+PR #793 · Refs #788 · source `2bc8476`.
+
+기존 CI 정책은 Linux 3.10/3.12 전수 병렬화, Windows 경계 및 nightly/dispatch 전수, 검증 tree·workflow/profile·run/attempt·전체 gate receipt에 묶인 재사용입니다. 이번 수정은 재사용할 수 없는 snapshot drift를 별도 결과로 구분합니다.
+
+- b842e56의 run39461236144는 선행 9개 job이 성공했고 validation-manifest만 실패했습니다. 보존된 event 진단·run association·현재 PR base는 `d0c834a`, immutable checkout `f480761`의 ordered parents는 `[2ce8778, b842e56]`입니다. PR merge SHA도 같은 checkout이고 main ref·forward compare는 두 커밋 전진을 확인합니다. 두 parent가 모두 있어 fetch-depth 문제가 아니며 GitHub의 snapshot 갱신 시점은 미확정입니다.
+- producer는 기존 receipt/tree/profile·checkout/source/ref/blob 검사를 유지합니다. parent mismatch는 여전히 manifest를 만들지 않습니다. 같은 repo/workflow/run/attempt·9개 성공 job·immutable ordered parents/tree·현재 PR merge SHA/head·main ref·완전한 forward compare를 독립 확인한 경우에만 `reusable=false`로 종료하고 upload도 하지 않습니다. API 장애·부분/위조 증거·다른 manifest 오류는 계속 실패합니다.
+- 안정된 binding은 기존 v3 manifest를 그대로 생성합니다. consumer의 expected tree/parents·workflow·attempt·coverage·artifact digest·사전 trusted-base policy 검사는 AST가 동일합니다. no-reuse에는 artifact가 없으므로 main은 full로 복귀합니다. observed parent로 event base를 대체하거나 자기 인증하지 않습니다([정책](https://github.com/ehojune/bioinfo-team-3d/blob/codex/ci-reuse-docs/docs/reference/ci-reuse.md)).
+- 새 회귀는 수정 전 **3 failed/35 passed**, 수정 뒤 관련 guarded mock/static **607 passed**입니다. malformed/forged/부분 job·API 장애·임의 오류·stray file upload 방지와 consumer full fallback을 검사했습니다. Python3.10 AST/YAML·기존 gate job 동일성·integrations·public·기록·patch-note·diff PASS. 전체 실패 로그와 guard 환경을 보존했습니다. lookup-only reference는 6,618 → 7,177자이며 read-often docs는 늘리지 않았습니다.
+
+한계: 새 head의 native CI와 실제 no-reuse/artifact 왕복은 미검증입니다. 제품·worker 격리·다른 owner 파일은 변경하지 않았고 main 통합/profile refresh도 하지 않았습니다. helper/runtime fingerprint가 달라 Windows 전수 fallback을 예상하며 과거 selected 수를 새 CI 범위로 주장하지 않습니다. 로컬 native/process/thread/xdist·PI·WSL·연구·bench/HPC·전체 suite·dispatch·CI polling·review 요청·merge 없이 종료하며 root가 exact-head CI·독립 검토·후속 P1·land를 맡습니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+PR #793 · Refs #788 · source `56d65ee`.
+
+기존 CI 정책은 Linux 3.10/3.12 전수 병렬화, Windows 경계 및 nightly/dispatch 전수, 검증 tree·workflow/profile·run/attempt·전체 gate receipt에 묶인 재사용입니다. 이번 수정은 아래 CPU clock 회귀뿐이며 [정책](https://github.com/ehojune/bioinfo-team-3d/blob/codex/ci-reuse-docs/docs/reference/ci-reuse.md)의 보호 조건은 그대로입니다.
+
+- 완료된 run39458103661의 Linux3.12 두 실패는 반환값 검사를 통과한 뒤 wall-clock 2초를 2.032/2.049초로 넘겼습니다. 같은 run의 3.10은 10,193 passed/43 skipped·4 workers·422.13초, 3.12는 2 failed/10,191 passed/43 skipped·4 workers·479.57초입니다. 실패 구간의 CPU 소모 시간은 없어 경합 원인은 미확정입니다.
+- 동기 string scanner의 `_assert_linear`만 `perf_counter`에서 `process_time`으로 바꿨습니다. 긴 입력·`is None`·엄격한 `< 2`·기존 test/assertion은 유지합니다. [현재 process의 CPU clock](https://docs.python.org/3.10/library/time.html#time.process_time)으로 비용을 검사하며 한 크기 입력의 시간 예산을 선형 복잡도의 증명으로 보지 않습니다.
+- 새 fake 회귀는 적은 CPU/긴 wall 시간의 허용, 정확히 2초와 초과 CPU의 거부, 잘못된 반환값의 거부를 확인합니다. 수정 전 3 failed/2 passed, 수정 뒤 관련 pure-string·encoding **51 passed**. 기존 mock guard 환경과 전체 실패 로그를 보존했습니다. Python3.10 AST·public·기록·patch-note·diff PASS.
+- 제품·workflow·manifest·profile·worker 격리와 S1/S2/DOCS798 파일은 변경하지 않았습니다. main 통합/profile refresh도 하지 않았습니다. origin/main 2ce8778(#822 d2289f2)의 runtime 변경은 현재 broad fingerprint를 만료시키므로 synthetic merge에서는 Windows 전수 fallback을 예상하며 과거 selected 수를 새 CI 범위로 제시하지 않습니다.
+
+한계: 새 병렬 CI는 미조회이며 parent mismatch 원인은 UNKNOWN입니다. 로컬 xdist/native process/thread·Windows/WSL·PI·연구·bench/HPC·전체 suite·dispatch·CI polling·review 요청·merge 없이 종료합니다. exact-head CI·검토·후속 P1·land는 root 담당입니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+PR #793 · Refs #788 · source `7b5ac01` + `7b99cbd` · main `d0c834a` 통합.
+
+- job.env의 runner.temp가 workflow 시작을 막았습니다. 경로는 첫 step env에서 받아 UTF-8 GITHUB_ENV에 씁니다. job.env context 허용 목록과 POSIX/Windows 공백·따옴표 경로를 fake I/O로 검사했습니다. 추가 startup 진단은 jobs=0/workflow-file failure뿐이며 native 검증은 다음 CI에 맡깁니다([공식 context 규칙](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#context-availability)).
+- Windows PR/main은 검토된 pure 10파일만 digest·이유에 따라 제외합니다. 새 test·바뀐 source·hard OS/path/Job/shell/SQLite/lock/내구성 경계는 포함합니다. runtime·schema/catalog·scripts·pyproject·관련 fixture helper가 바뀌면 Windows 전수로 복귀하는 보수적 만료를 유지합니다. Linux 두 버전 전수·Windows nightly/dispatch 전수·독립 안전/설치/validator/MCP gate는 그대로입니다.
+- Hub/Runner/ASGI mock 이름·import·문자열 대신 alias를 해석한 port/process capability 호출과 관련 helper를 직렬화합니다. 현재 같은 tree에서 lock 대상은 **220파일/7,781 node → 77파일/2,591 node**입니다. HOME/temp/state/DB/output 격리와 #787 진단·25분 상한을 유지했습니다.
+- guarded mock/static **559 passed**. serial collection **10,201 → 9,718 nodes**, 306 → 296 files(10파일·483 node 제외). 이전 published head는 10,114 → 10,074 node·lock 217파일/7,694 node였습니다. main 통합과 새 회귀로 full 수가 달라졌습니다. Python3.10 AST·profile hash·integrations·public·기록·patch-note·diff PASS. 최초 12 failed/7 passed와 중간 1 failed/53 passed 전체 trace도 보존했습니다.
+- main의 #821·제품·S1/S2 소유 test는 main과 동일하며 직접 수정하지 않았습니다. manifest helper와 conftest는 이전 head와 동일합니다. strict ordered parent·workflow/run/attempt/profile/tree/전체 receipt 보호를 완화하지 않았습니다. lookup-only reference는 6,229 → 6,618자이며 read-often docs는 늘리지 않았습니다.
+
+한계: checkout-parents의 실제 mismatch 원인은 여전히 UNKNOWN입니다. startup 실패는 그 경로의 새 증거가 아닙니다. 실제 병렬 안전·CPU/worker 수·Windows 시간/5분 목표·성공 manifest/reuse는 미검증입니다. 제외율은 4.7%로 대부분의 Windows 검사가 남습니다. 로컬 native fixture/worker/process/thread·PI·연구·HPC·bench·전체 suite·dispatch·CI polling·review 요청·ready·merge 없이 종료하며 root가 exact-head CI·독립 검토·후속 P1·land를 맡습니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+Refs #798, #821
+
+논문 스킬 문서를 병합된 동작에 맞췄습니다(8aba20b).
+
+- CP1 metadata 확인 → 승인된 단계에서 생성 → 검증 문서의 읽기 전용 주입 → 성공 결과의 정확한 ID·폴더/문서 hash 참조를 설명합니다. 승인·취소 경계와 참조 receipt/실제 tool 호출·과학 효용의 구분을 유지합니다.
+- README 한영판은 CI 통과 대상을 병합된 기능으로 한정합니다. 실제 연구 동작·효용은 미검증입니다. 운영 큐·예산·작업자 정책은 독자 문서에 추가하지 않았습니다.
+- LF 문자 수: README 11,684→11,686, README.en 17,598→17,627, manual 175,212→175,153. 독자 문서 합계 204,494→204,466(-28); reference 2,188→2,218(+30).
+- 병합 코드 대조·로컬 링크/heading·diff·public·patch-notes·notes 검사. 제품·테스트·AGENTS·HANDOFF·CI 파일과 생성 목차는 변경하지 않았으며 새 테스트·pytest·실제 연구/bench/native fixture를 실행하지 않았습니다.
+- 독립 검토 P1=0 뒤 읽기 권한 설명을 검증된 주입 문서로 한정했습니다.
+- 로컬 커밋만 준비했습니다. #793 CI 정책 적용 전 불필요한 전체 Windows 실행을 막기 위해 push·PR 생성은 총괄이 나중에 진행합니다. 이번 작업에서 CI 조회·병합·배포는 하지 않습니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+PR #793 · Refs #788 · source `d60e4e4` + `3fa6e27` · CI 정책을 한 head로 통합합니다.
+
+- Ubuntu 3.10/3.12 전수는 CI outer 명령에만 `-n auto --dist loadfile`을 씁니다. global addopts 없이 nested pytest는 직렬입니다. Windows PR/main은 `windows-boundary-v1`, nightly/dispatch는 `windows-full-v1`이며 clean-install·공식 validator·긴 MCP gate를 유지합니다.
+- Windows 제외는 검토된 pure 3파일의 source digest·이유와 runtime Python/pyproject fingerprint에 묶었습니다. 변경·신규·미분류·OS/safety 파일은 포함하고, implementation review가 낡으면 전수로 복귀합니다. 현재 대부분의 Windows test를 포함하므로 full과 동등하거나 5분이라고 주장하지 않습니다.
+- controller/worker 원래 HOME identity와 worker별 temp/state/cache/DB/log 격리를 유지합니다. port/process test 및 local helper는 job 공유 lock으로 setup~teardown을 직렬화합니다. production fsync·SQLite FULL·atomic replace·Job 코드와 S1/S2 소유 파일은 바꾸지 않았습니다.
+- v3 manifest는 coverage profile·workflow/selector/profile/dependency/conftest/guard blob까지 결합하고 자기 인증·fork·다른 run/attempt/tree/profile 재사용을 거부합니다. worker별 full/selected node 목록, CPU/실제 worker 수, setup/pytest/job queue, failures/skips·최장 파일·lock 대기를 CI artifact에 기록합니다. #787 controller class와 25분 상한은 그대로이며 worker에도 제한된 stack 진단을 추가했습니다.
+- 검증: guarded mock/static **531 passed**. 로컬 serial collection **10,114 → 10,074 nodes**, 303 → 300 files(검토된 3파일·40 node 제외). 이는 native CI/병렬 실행 증거가 아닙니다. Python 3.10 AST·workflow/기존 진단 동일성·integrations·public·기록·diff PASS, guard와 전체 로그 보존. lookup-only CI reference는 4,127 → 6,229자이며 read-often 문서는 한 줄만 추가했습니다.
+
+manifest 실제 원인은 **UNKNOWN**입니다. [실패 job](https://github.com/ehojune/bioinfo-team-3d/actions/runs/39421039549/job/118639548051)의 checkout API는 `[8151f236…, 853edf98…]`와 gate와 같은 tree를 확인했지만 event snapshot은 없고 run association base는 `233ac70…`입니다. ordered parent 비교를 그대로 거부하며 안전한 actual/expected SHA 진단만 보강했습니다. 실제 worker HOME/port 격리·Windows 안전/소요 시간·성공 manifest/reuse는 미검증입니다. 로컬 worker/process/thread·PI·연구·HPC·bench·전체 suite 실행과 CI polling은 하지 않았습니다. root가 새 exact-head native CI·독립 검토·후속 P1·병합을 맡습니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 # PR #822 Linux fake fixture 계약 수정
 
 - 제공된 Linux 3.10·3.12 로그의 동일 3건을 로컬 mock으로 재현했다. 진단 wrapper가 추가한 AssertionError 대신 기존 LaunchError를 기대한 test 계약 오류였다.
@@ -79,6 +225,17 @@ Fixes #774
 
 🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 
+PR #793 · Refs #788 · test proxy 수정 `d566299`.
+
+- [Python 3.10 실패 job](https://github.com/ehojune/bioinfo-team-3d/actions/runs/39417966579/job/118611596303)의 다섯 traceback은 모두 `lookup_runtime` proxy에 `get_running_loop`가 없어 새 `_step_slot()`에서 발생한 AttributeError입니다. CI 결과는 5 failed / 10009 passed / 43 skipped, 13분24초입니다. timing 문제로 취급하지 않았습니다.
+- fixture가 module-local monkeypatch 전에 원래 `asyncio.get_running_loop`와 `asyncio.Lock`을 캡처해 proxy에 전달합니다. fake timer·notification/cancellation handshake는 그대로입니다. 새 회귀는 원래 API·같은 step의 실제 coroutine lock·queued decision의 직렬화와 declined 반환을 확인합니다.
+- 수정 전 focused file은 **6 failed / 15 passed**(기존 CI 5건과 새 회귀 1건). 수정 후 해당 file 21건과 기존 overlap/직렬화 6건을 합쳐 **27 passed**입니다. Python 3.10 AST로 기존 test/helper·fixture의 나머지 본문과 assertion이 동일함을 확인했습니다.
+- 제품·workflow·manifest helper·기존 overlap test는 `80b6ff5e`와 byte-identical입니다. deadline/timeout을 늘리거나 assertion·lock·gate를 약화하지 않았습니다. guard 환경과 전체 CI/red/green 로그를 보존했고 public·patch-note·기록·diff 검사가 통과했습니다.
+
+한계: 실제 manifest 원인은 여전히 UNKNOWN입니다. 성공 manifest/reuse·새 native CI는 미확인입니다. 실제 process/thread·PI·연구·HPC·bench·전체 suite 실행이나 CI polling 없이 종료하며 root가 새 head 검토·CI·병합을 맡습니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 ## 단계
 PR #820 최신 main 통합
 
@@ -128,6 +285,17 @@ PR #821 · 기능 c878148 · 읽기 권한 P1 수정 6b37d70
 
 🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 
+PR #793 · Refs #788 · main `233ac70` 명시 통합 `0c404e4`.
+
+- 시작 worktree는 clean·MERGE_HEAD 없음이었습니다. latest main을 fetch하고 실제 merge에서 `tests/test_consult_restart.py`의 optional Git provenance fixture 한 곳을 해결했습니다. main의 단일 `None` mock을 택해 실제 Git process 접근을 막았습니다.
+- PR의 event/adoption handshake·provider 중복 금지·60초 outer watchdog과 main의 facilities 대기 즉시 실패·CSO routing 계약을 함께 보존했습니다. 양쪽 parent의 모든 assertion과 각 함수의 출처를 AST로 대조했습니다. timeout/제품 코드를 추가 수정하지 않았습니다.
+- 제품 코드는 incoming main과 동일합니다. workflow·`scripts/ci_skip.py`는 `1c4917f0`와 byte-identical로 full gate receipts·exact tree/head/base/checkout/workflow binding·제한된 identity 진단을 유지합니다. halt/supervisor test를 별도로 고치거나 옛 버전으로 복원하지 않았습니다.
+- consult mock 3건과 관련 CI policy/manifest/encoding을 합쳐 **316 passed**. guard 환경·전체 로그 보존. Python 3.10 AST·양쪽 assertion 보존·integrations·public·patch-note·기록·diff 검사 PASS. main의 문서·패치노트 변경은 통합 결과로 보존했습니다.
+
+한계: 실제 manifest 원인은 여전히 UNKNOWN이며 성공 manifest/reuse를 확인하지 않았습니다. 실제 process/thread·PI·연구·HPC·bench·전체 suite·새 CI polling은 하지 않았습니다. root가 새 exact-head native CI 진단·독립 리뷰·최종 병합을 맡습니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 Fixes #798
 PR #821 · 기능 커밋 c878148
 
@@ -141,6 +309,18 @@ PR #821 · 기능 커밋 c878148
 
 변경: paper_skills·CSO·runner workspace/daemon·continuation proof 한 조건, 관련 tests와 manual/reference/HANDOFF·기록.
 한계: 실제 사용은 결과의 출처 표기로만 판정합니다. 실제 전환 지연·과학적 효용·Windows/Python 3.10 런타임은 미검증이며 CI·새 head 리뷰는 controller가 맡습니다. CI/리뷰 대기·봇 호출·병합·배포는 하지 않습니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+PR #793 · Refs #788 · 진단 수정 `fcf645d` · manifest 원인은 아직 미확정입니다.
+
+- [실패 job](https://github.com/ehojune/bioinfo-team-3d/actions/runs/39408450974/job/118593337549)은 full gate receipts를 통과한 뒤 복합 identity 검사에서 실패했습니다. Windows·Python 3.10/3.12·설치·slow·validator 등 나머지 9개 job은 success입니다.
+- checkout `b7bf2ad7`의 API tree는 gate receipts와 같은 `b3b10c22`이며 parent 순서는 base `5877bb2f`, head `ad93b423`입니다. REST run의 PR association base는 `b9abcec7`로 달라 event payload의 base 증거로 대체하지 않았습니다.
+- [해당 run의 workflow 화면](https://github.com/ehojune/bioinfo-team-3d/actions/runs/39408450974/workflow)은 `ad93b423`를 가리킵니다. head/checkout workflow blob은 같지만 로그에 실제 `GITHUB_WORKFLOW_SHA/REF`가 없어 환경변수 불일치는 단정하지 않습니다. [공식 정의](https://docs.github.com/en/actions/reference/workflows-and-actions/variables)는 workflow source SHA와 event checkout SHA를 구분합니다.
+- 원인을 추측해 허용 분기를 추가하지 않았습니다. 기존 metadata·ordered parents·workflow blob 검사를 그대로 유지하고 실패 조건명과 고정 source/ref 역할명만 출력합니다. 환경·event 원문이나 임의 값을 출력하지 않습니다. manifest/reuse 성공 주장은 없습니다.
+- 회귀는 수정 전 **13 failed / 8 passed**, 수정 후 관련 pure mock/static **313 passed**입니다. 실제 git/API/프로세스 fixture 없이 정상 manifest 동일성·각 identity 거부·모든 gate 거부·diagnostic 비노출을 확인했습니다. Python 3.10 AST·나머지 함수 동일성·encoding·integrations·public·patch-note·기록·diff 검사 PASS, guard와 전체 실패 로그 보존.
+
+미해결: 실행 환경변수와 event payload를 확인할 다음 exact-head 진단이 필요합니다. fetch한 main `3eaa6f9`와 `tests/test_consult_restart.py` 충돌도 확인했으나 현재 소유 밖이라 worktree에 merge/수정하지 않았습니다. controller가 통합·새 CI·리뷰·원인 수정을 이어야 합니다. 기존 run 재실행·새 CI polling·실제 process/thread·PI·연구·bench·HPC·전체 suite는 하지 않았습니다.
 
 🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 
@@ -183,6 +363,18 @@ Shadow 비교의 기준 실행을 공유하고 제거 검사를 계약 node로 �
 fake clock·notification·coroutine gate 회귀는 수정 전 5 failed/1 passed, 수정 후 관련 27 passed입니다. 겹친 승인 뒤 후속 조회·잔여 예산 소진, 승인/조회 양쪽 순서, queued/active 취소와 다른 단계를 검사했습니다. 로컬은 mock/static만 실행했습니다.
 
 실제 서비스·PDF·MCP server·네트워크·process·PI·연구·HPC·성능은 미검증입니다. 독립 process/event loop 사이의 동시 실행은 이 slot의 직렬화 범위 밖입니다. 근거 docs/reference/approval-wait-784.md. draft PR을 열며 CI/리뷰 대기·병합·배포는 총괄 소관입니다.
+
+PR #793 · Fixes #788 · P1 수정 `d2ddfc3`.
+
+- 4321974288: 주제 명사 목록과 별개로 영어·한국어의 요구·허용·금지 표현을 이전/새 본문 양쪽에서 보호합니다. 규범 inline 문단의 문구·문맥·강조·container 변경은 full CI이며, 내용·Markdown 구조가 같은 soft wrapping만 허용합니다.
+- Authentication mandatory→optional, Widget prohibited→permitted, 한국어 필수 검토→생략 허용과 추가/삭제·역방향 회귀를 확인했습니다. 별도 일반 prose와 같은 의미의 reflow는 유지하며 규범 문단 안의 부수 prose 수정도 보수적으로 full로 남깁니다.
+- 4321519440: 정확한 Gradle assemble→publish 사례는 기존 `5e55e9d`의 publish 규칙으로 full입니다. 4320728990: 기존 `5d7bd7a` 이후 그대로인 README 제목에 prose만 추가하면 document-only입니다. 시작 head `fafd36b`의 실제 parser·fake git 회귀 **2 passed**로 검증했습니다.
+- 새 회귀는 원래 head에서 **70 failed, 20 passed**, 수정 후 관련 mock/static **448 passed**입니다. Markdown 의존성을 직접 import·parse하므로 dependency 오류의 fallback False를 증거로 삼지 않았습니다. 설치·실제 git fixture 실행 없이 기존 의존성을 재사용했습니다.
+- Python 3.10 AST·integrations·public·patch-note·기록 원본·diff PASS. workflow·외부 요청/redirect 보호·REST/artifact/exact-tree/workflow/gate·manifest 함수와 기존 assertions는 그대로이며 guard 환경·전체 실패 로그를 보존했습니다.
+
+한계: 실제 process/thread·PI·연구·bench·HPC·전체 suite는 실행하지 않았습니다. 새 CI/리뷰는 조회·대기하지 않으며 controller가 후속 검증·병합을 맡습니다. 실제 artifact 재사용 효율은 미측정입니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 
 PR #766 · Refs #681 · P1 수정 `45f35f0`.
 
@@ -284,6 +476,17 @@ PR #791: 조상 입력 보호·성공 retry 증거·부분 정리·입력 hash �
 
 🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 
+PR #793 · Fixes #788 · main `b9abcec` 통합 `aaa0469`.
+
+- HANDOFF 충돌에서 main의 독자별 안내와 PR의 fail-closed CI 정책 링크를 함께 보존했습니다. 정규화한 문자 수는 이전 PR 4,755 → 병합본 3,457(main 3,313)입니다.
+- workflow·CI helper·consult/deadline test는 이전 PR head와 동일합니다. main의 #790 signal 코드·test도 그대로입니다. 전체 Windows/Python 3.10·안전 gate와 #787 진단은 유지합니다.
+- 관련 mock/static **358 passed**, 사고 guard·환경 유지. 최초 검사는 Markdown 의존성 import에서 358 setup error로 중단됐고, 기존 임시 의존성을 재사용해 통과했습니다. 전체 실패 로그를 보존했고 설치·공통 fixture 수정은 하지 않았습니다.
+- Python 3.10 AST·integrations·public·patch-note·기록 원본·diff 검사 PASS. 기존 consult mock 8건 통과 기록은 그대로이며 재실행하지 않았습니다.
+
+한계: 기존 `3e5532c` CI는 확인 시 8건 통과·Windows 실행 중이었고 실패 job은 없었습니다. 통합 head의 새 CI·리뷰는 controller가 확인합니다. 실제 process/thread·PI·연구·bench·전체 suite는 실행하지 않았습니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 Fixes #797
 Refs #672, #680
 PR #807: CP1 전 후보 검증·계획/승인 seal, dispatch 도구 증거와 부분 완료 결과 보존을 유지합니다.
@@ -372,6 +575,17 @@ PR #766 광역 종료 guard 후속, Refs #681.
 실제 process/proc_tree·shell·PI·연구·HPC는 실행하지 않았습니다. 동적 명령 OS 격리·PID tracker #675·기존 P2는 별도 범위입니다. 새 head CI는 조회·대기하지 않으며 controller가 CI·리뷰·병합·배포를 맡습니다.
 
 🤖 Co-Authored-By: Codex (gpt-6-luna) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+PR #793 · Fixes #788 · Windows consult fixture 후속 · 수정 `0e1a3f8`.
+
+- `07e43ede` 실패는 late reconnect 뒤 fixture의 `settle()` 3초 watchdog에서 발생했습니다. 제품 결함은 확인되지 않아 이번 수정은 test에 한정했습니다.
+- runner 대기와 adoption future 설치를 event로 확인하고, adoption 알림을 제어된 gate로 지연시켜 새 provider가 겹치지 않는지 검사합니다. 대상 두 parameter만 60초 outer watchdog을 쓰며 다른 test의 `settle()` 제한과 기존 assertion 8개는 그대로입니다.
+- 최초 로컬 검증은 Git HEAD 조회의 Popen을 guard가 2건 차단했습니다. optional Git provenance만 module-local fake로 바꾼 뒤 **8 passed**입니다. 원래 process fixture는 재실행하지 않았고 guard 환경·전체 실패 로그를 보존했습니다.
+- main `4436b23`(#812 `8cc845b` 포함)을 병합했습니다. workflow와 CI helper는 병합 전과 동일하며 공통 fixture·제품 recovery 코드는 수정하지 않았습니다.
+
+검증: same-generation·late reconnect·세대 변경 격리·다른 ask/agent 배제·비용 회수 mock 8건, Python 3.10 AST·기존 assertion/helper 동일성·workflow/helper 동일성·integrations·public·patch-note·notes·diff 검사 PASS.
+
+한계: CI Windows의 원래 3초 지연 원인은 미확정입니다. 실제 process/thread·provider·PI·연구·bench·전체 suite는 실행하지 않았습니다. 새 head CI·리뷰·병합은 lead가 맡습니다.
 
 # 응집형 분석 스텝 정책과 bench 계약 최종 범위 (#799)
 
@@ -512,6 +726,19 @@ PI가15:44 신규 일반 작업 보류를 해제했다. HANDOFF·운영 기준·
 
 16시 대조: #812 병합, #815 draft 준비와 #798 순서를 개발 문서에 갱신했다. 실제 요청 성능·배포 성공은 미확인이다.
 
+PR #793 · Fixes #788 · Refs #786 · 수정 `5e55e9d`.
+
+- workflow+PR 번호별 concurrency를 두고 pull_request만 취소합니다. main·dispatch는 run/attempt별 group입니다. checkout/workflow/helper·artifact/run/attempt·전체 gate 증명은 유지합니다.
+- 첫 PR의 전체 base diff로 prose를 판별합니다. manual·AGENTS/HANDOFF·정책 문서는 내용·구조·예제가 같은 문장 경계 줄바꿈만 후보입니다. 정책 표현 변경은 일반 문서에서도 full이며 [좁은 fallback](../reference/ci-reuse.md)을 명시했습니다.
+- 실제 AGENTS·HANDOFF·CI reference의 줄바꿈 positive를 확인했습니다. 현재 manual은 기존 inline markup의 모호성 때문에 full입니다. #805 내용을 고치거나 parser 지원 범위를 넓히지 않았습니다.
+- 가벼운 gate에 vocab·topic checklist·private-path 기본값·encoding 검사를 보강했습니다. README/integrations·notes·public·PR patch-note 검사는 유지합니다.
+- `.005` polling 세 곳을 module-local fake clock·heartbeat·취소 handshake로 바꿨습니다. 실제 deadline 인자·취소 완료·PDF 승인 대기 제외·누적 예산을 검증하며 main의 limiter 회귀는 동일합니다. 제품 코드는 수정하지 않았습니다.
+- main `b4947c6`을 병합했습니다. #805 문서 구조와 #787의 3.10 25분 제한·faulthandler·stall snapshot을 보존했습니다.
+
+검증: 새 CI 계약 수정 전 8건, 경로와 무관한 정책 문장 회귀 18건 실패를 재현했습니다. 수정 후 CI 계약·기존 판별/재사용·encoding·external_wait·notes·vocab·private-path·topic mock/static **388 passed**, integrations **31 passed / subprocess CLI 2건 제외**입니다. Python 3.10 AST·#787 step 동일성·integrations/vocab CLI·public·patch-note·notes·diff 검사 PASS. guard 환경은 그대로이며 실패 전문은 로컬에 보존했습니다.
+
+남은 경계: PR800은 OPEN입니다. `1bbb0615`의 stopped-flag 제품 수정은 가져오지 않았으며 병합 후 새 head 전체 CI가 필요합니다. Windows 실패는 stdout reader의 EOF 대기 timeout까지 확인했습니다. current main에도 CDP 응답/close의 무기한 대기가 있으나 실제 원인은 **UNVERIFIED**입니다. browser/process/thread·실제 Python 3.10/Windows·전체 suite·artifact 왕복은 로컬에서 실행하지 않았습니다. 후속 CI·리뷰·병합은 lead가 맡습니다.
+
 ## supervisor fixture 후속
 
 PR #802의 fake-role 시작과 parent-pin chain을 raw Popen에서 기존 verified spawn으로 연결했습니다. direct/WMI의 보유 handle과 file output을 함께 다루며 실패 시 기존 Job journal·fixture traceback을 제공합니다. 제품 gate와 lifecycle/restart/parent-pin 단정은 유지합니다.
@@ -634,6 +861,22 @@ PR #766 이름 기반 광역 종료 guard — `73bb72b`, Refs #681.
 
 <!-- author:gemini -->
 
+## 단계
+CI 문서 판별·동일 tree 재사용 — Fixes #788, PR #793. 이번 수정: `b357555`.
+
+## 수정
+- P1 4321302443: CLI 이름을 추가하는 대신 실행 지시어와 파일·경로·옵션·따옴표 형태의 변경 문장을 full로 판정합니다. 미등록 CLI의 변경·추가·삭제와 fake git의 전체 diff 판정을 검증했습니다.
+- 일반 prose·그대로인 미등록 CLI/inline/fenced 예제는 축소 가능 사례를 유지합니다. 지시어·argv 형태가 있는 일반 prose도 full이 되는 보수적 경계는 [정책](../reference/ci-reuse.md)에 명시했습니다.
+- 4320728990은 기존 `5d7bd7a` 수정과 stale 근거 답글이 있어 제외했습니다. README 제목 fake git 회귀도 계속 통과합니다.
+- workflow는 수정하지 않았습니다. #787의 25분 제한·faulthandler·stall snapshot은 origin/main과 동일하며 전체 gate·checkout/workflow/manifest 증명은 유지합니다.
+
+## 검증
+- 새 회귀: 수정 전 **42 failed, 3 passed**. 수정 후 `tests/test_ci_unlisted_commands.py tests/test_ci_pr_policy_p1.py tests/test_ci_skip_policy.py tests/test_text_encoding.py`: **253 passed**.
+- Python 3.10 AST·workflow 동일성·integrations·public·patch-note·notes·diff 검사 PASS. guard 환경 3개 유지·blocked 0건, 전체 실패명·traceback을 로컬에 보존했습니다.
+
+## 한계
+실제 artifact 왕복·native git fixture·전체 suite·process/thread/signal 통합은 실행하지 않았습니다. CI·새 head 리뷰·병합은 controller가 맡습니다.
+
 ## encoding·공용 fixture 후속
 
 기존 encoding checker를 바꾸지 않고 `journal.open(mode="rb")`와 native `open_process`로 의미를 명시했습니다. 64 KiB tail bound·ownership/ACK/cleanup·started_here=False는 유지합니다. PR #793의 HTTP binary lint 변경은 가져오거나 덮어쓰지 않았습니다.
@@ -702,6 +945,22 @@ CI-only 증거 pending: nested outer non-breakaway/inner silent-breakaway에서 
 manual 166,295→166,466자, reference 3,029→3,010자(LF Unicode). [근거·제약](docs/reference/windows-runtime-795.md). 배포는 하지 않았습니다. root는 doctor --runtime rc0/runtime_readiness.ready, 실제 WSL, 명시적 idle0·global deploy lock을 별도로 확인해야 합니다.
 
 🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
+## 단계
+CI 문서 판별·동일 tree 재사용 — Fixes #788, PR #793. 이번 수정: `8869961`.
+
+## 한 일
+- P1 4320958323: 같은 저장소 이름·ID를 확인한 PR만 manifest를 생성합니다. fork PR의 Ubuntu 두 버전·Windows·설치·validator·MCP gate와 문서 검사는 유지합니다.
+- P1 4320958329: 설명 뒤 명령도 변경·추가·삭제하면 full입니다. 기존 제목·명령·inline/fenced 예제를 유지한 prose 변경은 계속 허용합니다.
+- P1 4320728990: 기존 `5d7bd7a`가 전체 본문 검사 대신 변경 prose만 검사하도록 고쳤습니다. 기존 README 제목에 문장만 추가하는 원래 사례를 fake git으로 재현해 시작 head에서도 PASS를 확인했습니다.
+- #787의 Ubuntu 3.10 25분 제한·faulthandler·stall snapshot은 origin/main과 동일합니다. checkout·workflow·전체 gate 증명과 redirect/auth 보호도 유지합니다.
+
+## 검증
+- 새 회귀 검사: 수정 전 **16 failed, 5 passed**. 수정 후 `tests/test_ci_pr_policy_p1.py tests/test_ci_skip_policy.py tests/test_text_encoding.py`: **208 passed**.
+- Python 3.10 AST·workflow 동일성·integrations·공개·기록·diff 검사 PASS. mock guard 환경과 전체 실패 로그를 보존했습니다.
+
+## 한계
+실제 artifact 왕복·native git fixture·전체 suite·별도 external_wait 문제는 이번 검증 범위 밖입니다. 이전 encoding 수정과 external_wait 근거는 [이전 기록](2026-10-20-1159-ci-reuse-docs.md)에 있습니다. CI·새 head 리뷰·병합은 controller가 맡습니다.
 
 # PR #800 Windows CI 실패 수정 (proc_tree)
 
@@ -773,6 +1032,21 @@ PR #803. CP1 `cab83e7`, 분리 `2070c23`, 공유 fixture `bab83c2`.
 
 🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
 
+## 단계
+CI 문서 판별·동일 tree 재사용 — Fixes #788, PR #793 DRAFT. 이번 수정: `435af38`.
+
+## 한 일
+- PR branch head·synthetic checkout·workflow identity·전체 gate 증명과 README prose 보호를 유지했습니다. #787의 3.10 25분 제한·faulthandler·stall snapshot 단계도 그대로입니다.
+- binary 응답을 여는 정확한 stdlib `urllib.request.OpenerDirector.open`만 구분합니다. 일반 `.open`·`read_text`·`write_text`의 encoding 강제는 유지하고 JSON은 UTF-8로 명시해서 decode합니다. redirect/auth·응답 크기 제한은 유지합니다.
+
+## 테스트 결과
+- 초기 encoding 검사: 1 failed, 1 passed. 최종 guarded `tests/test_text_encoding.py tests/test_ci_skip_policy.py`: **187 passed**. raw binary·UTF-8 JSON·잘못된 encoding·크기 초과·filesystem 음성 사례 포함.
+- Python 3.10 AST·workflow/#787 동일성·공개·기록·diff 검사 PASS. guard 환경과 전체 실패 로그를 보존했습니다.
+
+## 미해결·한계
+- 별도 `external_wait[fulltext]` 수정은 이 브랜치에 없습니다. 현재 [fixture](https://github.com/ehojune/bioinfo-team-3d/blob/119106cfc2781589a4f1ab000b438765644c411e/tests/test_external_wait.py#L264-L272)는 실제 80ms/5ms timer와 바깥 1초 기한을 씁니다. CI에서는 내부 timeout 뒤 [progress task 정리](https://github.com/ehojune/bioinfo-team-3d/blob/119106cfc2781589a4f1ab000b438765644c411e/labhq/tools/external_wait.py#L82-L86) 중 바깥 기한이 취소하여 예상 `ToolError` 대신 `TimeoutError`가 났습니다. 정리가 늦어진 세부 원인은 UNVERIFIED이며 별도 담당 확인이 필요합니다.
+- 해당 coroutine fixture·실제 process/thread/signal fixture·전체 suite는 실행하지 않았습니다. 전체 CI 수정 완료 주장은 하지 않으며 DRAFT 유지·CI/review/ready/병합 결정은 root가 맡습니다.
+
 PR #802
 
 ## 변경
@@ -791,6 +1065,22 @@ Fixes #795
 - 실제 PI state/daemon/Job·기관·연구·HPC·raw data는 건드리지 않았습니다. CI·fresh-head 리뷰·배포·병합은 root 담당이며 breakaway 거부 시 독립 콘솔이 필요합니다.
 
 🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
+## 단계
+CI 문서 판별·동일 tree 재사용 — Fixes #788, PR #793. 기능 수정: `5d7bd7a`.
+
+## 한 일
+- REST run/job의 branch head와 실제 synthetic checkout을 분리했습니다. manifest v2는 PR head/base·run/attempt·checkout의 두 parent/tree·workflow SHA/ref/blob·전체 gate를 묶습니다. 누락·불일치·fork·부분 검증은 full입니다.
+- fenced/inline/indented 예제가 그대로면 README prose를 줄입니다. 예제·보호 markup의 추가·삭제·수정과 불명확한 문법은 full이며 문서 validator는 유지합니다.
+- 최신 main을 병합했고 #787의 Ubuntu 3.10 25분 제한·faulthandler·stall snapshot 단계가 그대로임을 정적으로 확인했습니다.
+
+## 테스트 결과
+- 초기 회귀 재현: 6 failed, 97 passed. 최종 guarded mock/static: **202 passed, 2 deselected**. 실제 REST 형태의 sparse repository·단일 parent branch와 잘못된 identity/gate 사례를 포함합니다.
+- Workflow YAML·Python 3.10 AST·#787 동일성, integrations, 공개·기록·diff 검사 PASS. guard 환경 유지, 전체 실패 로그 로컬 보존.
+
+## 한계
+- real-git test 파일·subprocess integration 2개·전체 suite·실제 GitHub artifact 왕복은 로컬 미검증입니다. CI·review·병합은 controller가 맡습니다.
+- 중첩 block 예제·HTML 내부 수정·새 inline 식별자/link가 있는 생성 Markdown은 full입니다. 실제 절감량은 미측정입니다. [판별·증거 정책](https://github.com/ehojune/bioinfo-team-3d/blob/5d7bd7adbfc63e284426348cffe6252e2eac1d83/docs/reference/ci-reuse.md).
 
 ## 단계
 개발 감사 우선순위 반영 — 문서만 변경
@@ -883,6 +1173,22 @@ PR #791.
 - 실제 process/proc_tree integration·PI 요청·HPC·기관 접근·원자료·연구·게시·설치·배포 미실행. CI·리뷰·병합은 총괄 담당입니다.
 
 🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
+## 단계
+CI 정책 — Fixes #788.
+
+## 한 일
+- 예제 없는 prose·schema에 맞는 기록만 문서 검사로 줄입니다. 코드·설정·workflow·test·안전/승인 정책은 full입니다.
+- main 재사용은 같은 저장소의 성공한 전체 PR run, 실제 synthetic merge tree, 기존 workflow/helper, 최신 attempt의 모든 gate와 versioned manifest가 맞을 때만 허용합니다. 누락·실패·fork·부분 검증은 full입니다.
+- README/문서·기록·공개 검사는 유지합니다. #787을 main에서 합쳐 3.10의 25분 제한·5분 간격 진단을 보존했습니다.
+
+## 테스트 결과
+- Guarded mock/static: **131 passed, 2 deselected**. fake git/API/manifest 음성 사례 포함, guard 환경 유지.
+- Workflow YAML/AST와 #787 동일성, integrations, 공개 검사, patch-note/기록 검사, diff 검사 PASS.
+
+## 한계
+- real-git test 파일과 subprocess integrations 2개는 로컬에서 실행하지 않았습니다. 전체 suite·실제 artifact 왕복·절감 시간은 미검증이며 CI 확인은 controller가 맡습니다.
+- 예제·inline code·불명확한 fragment가 있는 문서도 full입니다. 상세 기준: [CI 정책](../reference/ci-reuse.md).
 
 PR #790
 
