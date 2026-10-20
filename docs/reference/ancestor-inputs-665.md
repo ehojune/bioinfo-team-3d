@@ -10,5 +10,5 @@ Lookup-only evidence for the [manual](../manual.md).
 | Hash admission | For a step declaring outputs, collection hashes through `max(output_hash_max_bytes, min(input_hash_max_file_bytes, input_hash_max_total_bytes))`. No collection setting is silently changed. Copy still checks both input byte caps, recorded digest and protected paths/links |
 
 Tests use bounded synthetic text files, fake adapters and command/profile construction; worker threads are mocked.
-Existing cap/growth assertions remain; their fixture bounds both collection and input admission explicitly.
+Existing cap/growth/missing assertions remain; fixtures bound collection/input caps together and declare the mock `read_only_inputs=[]` field explicitly.
 Native sandbox execution, full supported-platform integration and scientific use remain CI/authorized-run boundaries.

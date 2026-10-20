@@ -110,6 +110,10 @@ class ProcessDiagnostics:
         self.reason, self.code = f"signal:{signal.Signals(sig).name}", 128 + sig
         self.write("signal", reason=self.reason, code=self.code)
 
+    def signal_disposition(self, sig, installed):
+        """Expose only our own wrapper's prior disposition so a role can provide graceful defaults."""
+        return self._signals.get(sig, installed) if installed == self._signal else installed
+
     def _signal(self, sig, frame) -> None:
         self.note_signal(sig)
         previous = self._signals[sig]
