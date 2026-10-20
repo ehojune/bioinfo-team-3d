@@ -16,3 +16,7 @@ rows:
   at: 2026-10-20 13:19
   text: binary journal mode와 native process-handle 이름을 명시해 encoding 검사를 유지하고 승인된 recruit
     receipt clock·external_wait test-only delta를 원문 재사용한다.
+- sha: 05b3d64
+  at: 2026-10-20 14:42
+  text: supervisor 통합 fixture와 parent-pin chain을 기존 Job 검증 launch로 연결하고 file output·실패
+    진단·mock 회귀를 추가하며 lifecycle·restart·소유 handle 보호를 유지한다.
