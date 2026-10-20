@@ -18,3 +18,6 @@ rows:
   - sha: 'b357555'
     at: '2026-10-20 13:33'
     text: '미등록 CLI도 실행 지시어·파일/경로·옵션·따옴표 형태면 full로 판정하고 일반 prose·그대로인 예제 회귀를 보존, mock/static 253개 확인'
+  - sha: '5e55e9d'
+    at: '2026-10-20 14:53'
+    text: 'PR별 concurrency와 첫 실행 문서 정합성 gate를 보강하고 정책은 내용 동일 reflow만 허용, 조회 polling을 fake-clock 회귀로 교체, mock/static 419개 확인'
