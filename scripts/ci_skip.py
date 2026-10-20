@@ -5,6 +5,7 @@ Downloaded ZIP evidence is bounded JSON, never extracted or executed.
 """
 from __future__ import annotations
 
+import difflib
 import hashlib
 import io
 import json
@@ -16,6 +17,7 @@ import urllib.parse
 import urllib.request
 import zipfile
 from datetime import datetime, timedelta, timezone
+from html.parser import HTMLParser
 from pathlib import Path
 
 import yaml
@@ -23,7 +25,7 @@ import yaml
 REPOSITORY = "ehojune/bioinfo-team-3d"
 WORKFLOW = ".github/workflows/test.yml"
 POLICY_FILES = (WORKFLOW, "scripts/ci_skip.py")
-VERSION = 1
+VERSION = 2
 GATE_IDS = ("pytest", "pytest-windows", "clean-install", "ro-crate-validator", "pytest-slow")
 REQUIRED_JOBS = ("pytest (3.10)", "pytest (3.12)", "pytest-windows", "clean-install",
                  "ro-crate-validator", "pytest-slow", "changes", "readme", "patch-notes", "validation-manifest")
@@ -72,12 +74,120 @@ def record(text: str) -> bool:
                and bool(row["text"].strip()) and "\n" not in row["text"] for row in data["rows"])
 
 
-def document_change(path: str, before: str, after: str) -> bool:
-    """Only prose without examples, or schema-checked patch records, is cheap.
+class BalancedHTML(HTMLParser):
+    """Unchanged HTML is protected; incomplete/optional-close markup runs full."""
+    def __init__(self):
+        super().__init__(convert_charrefs=False)
+        self.stack = []
 
-    Even unchanged code/inline-code/HTML conservatively runs full. Policy and
-    instruction documents and executable/package locations never qualify.
-    """
+    def handle_starttag(self, tag, attrs):
+        if tag not in {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}:
+            self.stack.append(tag)
+
+    def handle_startendtag(self, tag, attrs):
+        pass
+
+    def handle_endtag(self, tag):
+        if not self.stack or self.stack.pop() != tag:
+            raise ValueError("ambiguous HTML nesting")
+
+
+def markdown_parts(text: str) -> tuple:
+    # This is already a project dependency. Import lazily: manifest creation
+    # needs only PyYAML, while the changes job also installs markdown-it-py.
+    from markdown_it import MarkdownIt
+    lines = text.splitlines(keepends=True)
+    env = {}
+    tokens = MarkdownIt("commonmark").enable("table").parse(text, env)
+    protected, prose = [], []
+    html = BalancedHTML()
+    heading = False
+    for token in tokens:
+        if token.type == "heading_open":
+            heading = True
+        elif token.type == "heading_close":
+            heading = False
+        elif token.type in {"fence", "code_block", "html_block"}:
+            raw = "".join(lines[token.map[0]:token.map[1]])
+            if token.type in {"fence", "code_block"} and token.level:
+                raise ValueError("nested block examples require full CI")
+            if token.type == "fence" and (token.map[1] - token.map[0] < 2 or not re.fullmatch(
+                    r" {0,3}" + re.escape(token.markup[0]) + "{" + str(len(token.markup)) + r",}\s*",
+                    lines[token.map[1] - 1].rstrip("\r\n"))):
+                raise ValueError("unclosed code fence")
+            protected.append((token.type, token.info, raw))
+            if token.type == "html_block":
+                if raw.count("<!--") != raw.count("-->"):
+                    raise ValueError("unclosed HTML comment")
+                html.feed(raw)
+        elif token.type == "inline":
+            # CommonMark normalizes spaces/newlines in inline code. Protect
+            # the original spans as well, so normalization cannot hide edits.
+            spans = re.findall(r"(?<!`)(`+)(?!`)(.*?)(?<!`)\1(?!`)", token.content, re.DOTALL)
+            if len(spans) != sum(c.type == "code_inline" for c in token.children):
+                raise ValueError("ambiguous inline code source")
+            protected.extend(("inline_source", delimiter, content) for delimiter, content in spans)
+            plain = ""
+            for child in token.children:
+                if child.type == "text":
+                    # Unmatched delimiters may hide an incomplete example.
+                    if re.search(r"[`<]", child.content):
+                        raise ValueError("ambiguous inline markup")
+                    plain += child.content
+                elif child.type in {"softbreak", "hardbreak"}:
+                    plain += "\n"
+                elif child.type in {"code_inline", "html_inline", "image", "link_open"}:
+                    protected.append((child.type, child.markup, child.content, child.attrs))
+                    plain += " "
+                    if child.type == "html_inline":
+                        if child.content.count("<!--") != child.content.count("-->"):
+                            raise ValueError("unclosed HTML comment")
+                        html.feed(child.content)
+                elif child.type not in {"link_close", "em_open", "em_close", "strong_open", "strong_close"}:
+                    raise ValueError("unsupported inline token")
+            for line in plain.splitlines():
+                if re.match(r"\s*\.\.\s", line):
+                    raise ValueError("unsupported directive")
+                if line.strip():
+                    prose.append((line.strip(), heading))
+        elif token.type not in {
+                "paragraph_open", "paragraph_close", "bullet_list_open", "bullet_list_close",
+                "ordered_list_open", "ordered_list_close", "list_item_open", "list_item_close",
+                "blockquote_open", "blockquote_close", "hr", "table_open", "table_close",
+                "thead_open", "thead_close", "tbody_open", "tbody_close", "tr_open", "tr_close",
+                "th_open", "th_close", "td_open", "td_close"}:
+            raise ValueError("unsupported block token")
+    html.close()
+    if html.stack:
+        raise ValueError("unclosed HTML element")
+    # Definitions do not produce inline tokens. Bind their destinations too.
+    references = {key: {k: v for k, v in value.items() if k != "map"}
+                  for key, value in env.get("references", {}).items()}
+    if env.get("duplicate_refs"):
+        raise ValueError("ambiguous link definitions")
+    return protected, references, prose
+
+
+def prose_change(before: str, after: str) -> bool:
+    old, new = markdown_parts(before), markdown_parts(after)
+    if old[:2] != new[:2]:
+        return False
+    code = (r"[{}=:;|]|#!|\w+\(|^(?:[$>%&!]|~/|\.\.?/|\.\. |"
+            r"(?:python\d*|pip\d*|pytest|git|bash|sh|npm|node|uv|curl|wget|echo|exec|sudo|"
+            r"make|cmake|docker|chmod|rm|cp|mv|cat|taskkill|cmd|pwsh|powershell|labhq|import|[a-z]+-[a-z]+)\b)")
+    for tag, a, b, c, d in difflib.SequenceMatcher(a=old[2], b=new[2], autojunk=False).get_opcodes():
+        if tag == "equal":
+            continue
+        for line, heading in old[2][a:b] + new[2][c:d]:
+            if re.search(code, line, re.IGNORECASE) or (not heading and len(line.split()) < 2):
+                return False
+            if not heading and not line.endswith((".", "!", "?", "。")):
+                return False
+    return True
+
+
+def document_change(path: str, before: str, after: str) -> bool:
+    """Prose may change only while protected examples/markup remain identical."""
     try:
         if max(len(before), len(after)) > MAX_BYTES or "\x00" in before + after:
             return False
@@ -86,26 +196,12 @@ def document_change(path: str, before: str, after: str) -> bool:
         if path not in {"README.md", "README.en.md", "STATUS.md", "patch_notes/README.md"}:
             if not re.fullmatch(r"docs/(?:[\w-]+/)*[\w-]+\.md", path):
                 return False
-            if re.search(r"example|policy|ci[-_. /]|guard|approval|safety|security|operations|instruction|contract|protocol",
+            if path == "docs/manual.md" or re.search(
+                         r"example|policy|ci[-_. /]|guard|approval|safety|security|operations|instruction|contract|protocol|"
+                         r"config|package|runtime|dependenc|(?:^|/)(?:tests?|agents|handoff)(?:[./_-]|$)",
                          path, re.IGNORECASE):
                 return False
-        # Prefer false negatives to guessing what a snippet executes.
-        code = (r"[`~<{}=:;|]|#!|\w+\(|(?:^|\n)(?: {4}|\t|\s*(?:[$>%&!]|\.\.?/|\.\. |"
-                r"(?:python\d*|pip\d*|pytest|git|bash|sh|npm|node|uv|curl|wget|echo|exec|sudo|"
-                r"make|cmake|docker|chmod|rm|cp|mv|cat|taskkill|cmd|pwsh|powershell|labhq|[a-z]+-[a-z]+)\b))")
-        text = before + "\n" + after
-        unmarked = re.sub(r"(?m)^ {0,3}(?:#{1,6} |[-*+] |\d+\. )", "", text)
-        if re.search(code, text, re.IGNORECASE) or re.search(code, unmarked, re.IGNORECASE):
-            return False
-        for line in text.splitlines():
-            line = line.strip()
-            if not line or re.fullmatch(r"#{1,6} .+", line):
-                continue
-            # Bare fragments could be unknown commands or config examples.
-            line = re.sub(r"^(?:[-*+] |\d+\. )", "", line)
-            if len(line.split()) < 2 or not line.endswith((".", "!", "?", "。")):
-                return False
-        return True
+        return prose_change(before, after)
     except Exception:
         return False  # malformed records also run full
 
@@ -172,9 +268,28 @@ def manifest_json(data: bytes) -> dict:
         return json.loads(archive.read(files[0]), object_pairs_hook=unique)
 
 
-def expected_manifest(run: dict, current: dict) -> dict:
+def pr_snapshot(pr: dict, *, rest: bool = False) -> dict:
+    repo = pr["base"]["repo"]
+    # Actions REST associations contain id/name/url, not full repository objects.
+    # The webhook producer and commits/{sha}/pulls use full_name instead.
+    repositories = (repo, pr["head"]["repo"])
+    names_match = (all(r["url"] == f"https://api.github.com/repos/{REPOSITORY}"
+                       and r["name"] == REPOSITORY.split("/")[1] for r in repositories) if rest
+                   else all(r["full_name"] == REPOSITORY for r in repositories))
+    if not (pr["base"]["ref"] == "main" and names_match
+            and type(repo["id"]) is int and repo["id"] > 0 and repo["id"] == pr["head"]["repo"]["id"]
+            and type(pr["number"]) is int and pr["number"] > 0
+            and SHA.fullmatch(pr["base"]["sha"]) and SHA.fullmatch(pr["head"]["sha"])):
+        raise ValueError("untrusted PR snapshot")
+    return {"number": pr["number"], "base_sha": pr["base"]["sha"],
+            "head_sha": pr["head"]["sha"], "repository_id": repo["id"]}
+
+
+def expected_manifest(run: dict, current: dict, snapshot: dict, checkout_sha: str) -> dict:
     return {"version": VERSION, "repository": REPOSITORY, "run_id": run["id"], "attempt": run["run_attempt"],
-            "event": "pull_request", "checkout_sha": run["head_sha"], "workflow_sha": run["head_sha"],
+            "event": "pull_request", "checkout_sha": checkout_sha, "workflow_sha": checkout_sha,
+            "workflow_ref": f"{REPOSITORY}/{WORKFLOW}@refs/pull/{snapshot['number']}/merge",
+            "workflow_blob": current["policy"][WORKFLOW], "pr": snapshot,
             "tree": current["tree"], "policy": current["policy"],
             "gates": {name: {"result": "success", "tree": current["tree"]} for name in GATE_IDS}}
 
@@ -195,14 +310,13 @@ def valid_run(run: dict, pr: dict, current: dict, workflow_id: int, request, now
     if not (snapshot["base"]["ref"] == "main"
             and snapshot["base"]["repo"]["id"] == snapshot["head"]["repo"]["id"] == repo_id):
         return False
-    commit = request("git/commits/" + run["head_sha"])
-    if not (commit["sha"] == run["head_sha"] and commit["tree"]["sha"] == current["tree"]
-            and [p["sha"] for p in commit["parents"]] == [snapshot["base"]["sha"], snapshot["head"]["sha"]]):
+    snapshot = pr_snapshot(snapshot, rest=True)
+    if run["head_sha"] != snapshot["head_sha"]:
         return False
     # The producer must already have been trusted on main before this PR ran.
     # Workflow/helper-changing PRs cannot certify their own new reuse policy.
     for path, blob_sha in current["policy"].items():
-        source = request(f"contents/{path}?ref={snapshot['base']['sha']}")
+        source = request(f"contents/{path}?ref={snapshot['base_sha']}")
         if source.get("type") != "file" or source.get("sha") != blob_sha:
             return False
     jobs = request(f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs?per_page=100")
@@ -216,14 +330,37 @@ def valid_run(run: dict, pr: dict, current: dict, workflow_id: int, request, now
     artifacts = request(f"actions/runs/{run['id']}/artifacts?per_page=100")
     if artifacts["total_count"] != len(artifacts["artifacts"]):
         return False
-    name = f"ci-full-v1-{run['id']}-{run['run_attempt']}"
+    name = f"ci-full-v{VERSION}-{run['id']}-{run['run_attempt']}"
     candidates = [a for a in artifacts["artifacts"] if a["name"] == name]
     if len(candidates) != 1 or candidates[0]["expired"] or candidates[0]["size_in_bytes"] > MAX_BYTES:
         return False
     artifact = candidates[0]
     data = request(f"actions/artifacts/{artifact['id']}/zip", binary=True)
-    return (artifact.get("digest") == "sha256:" + hashlib.sha256(data).hexdigest()
-            and manifest_json(data) == expected_manifest(run, current))
+    if artifact.get("digest") != "sha256:" + hashlib.sha256(data).hexdigest():
+        return False
+    manifest = manifest_json(data)
+    checkout = manifest["checkout_sha"]
+    if not SHA.fullmatch(checkout) or checkout in {snapshot["base_sha"], snapshot["head_sha"]}:
+        return False
+    if json.dumps(manifest, sort_keys=True) != json.dumps(expected_manifest(run, current, snapshot, checkout), sort_keys=True):
+        return False
+    # REST run/job head_sha denotes the branch commit, NOT GITHUB_SHA. Only
+    # the producer's immutable checkout may prove the tested synthetic merge.
+    commit = request("git/commits/" + checkout)
+    if not (commit["sha"] == checkout and commit["tree"]["sha"] == current["tree"]
+            and [p["sha"] for p in commit["parents"]] == [snapshot["base_sha"], snapshot["head_sha"]]):
+        return False
+    branch = request("git/commits/" + run["head_sha"])
+    if branch["sha"] != snapshot["head_sha"]:
+        return False
+    # Normal pull_request workflows use the synthetic merge workflow source.
+    # Other source identities deliberately miss, even if their blobs match.
+    # Bind both source and executed helper to the already-trusted base policy.
+    for path, blob in current["policy"].items():
+        source = request(f"contents/{path}?ref={manifest['workflow_sha']}")
+        if source.get("type") != "file" or source.get("sha") != blob:
+            return False
+    return True
 
 
 def reuse_main(current: dict, request=api, now: datetime | None = None) -> bool:
@@ -275,7 +412,7 @@ def decide(event_name: str, event: dict, current: dict) -> str:
     return "documents" if can_skip(current["checkout_sha"], base) else "full"
 
 
-def produce_manifest(current: dict, needs: dict) -> dict:
+def produce_manifest(current: dict, needs: dict, event: dict) -> dict:
     if not (os.environ["GITHUB_EVENT_NAME"] == "pull_request"
             and os.environ["GITHUB_REPOSITORY"] == REPOSITORY
             and current["checkout_sha"] == os.environ["GITHUB_SHA"]
@@ -283,18 +420,26 @@ def produce_manifest(current: dict, needs: dict) -> dict:
             and all(needs[j]["result"] == "success" for j in (*GATE_IDS, "changes", "readme", "patch-notes"))
             and all(needs[j]["outputs"]["tree"] == current["tree"] for j in GATE_IDS)):
         raise ValueError("incomplete full gate receipts")
-    run = {"id": int(os.environ["GITHUB_RUN_ID"]), "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
-           "head_sha": current["checkout_sha"]}
-    result = expected_manifest(run, current)
-    result["workflow_sha"] = os.environ["GITHUB_WORKFLOW_SHA"]
-    return result  # unexpected workflow identity cannot match the consumer's expected manifest
+    snapshot = pr_snapshot(event["pull_request"])
+    checkout = current["checkout_sha"]
+    run = {"id": int(os.environ["GITHUB_RUN_ID"]), "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])}
+    result = expected_manifest(run, current, snapshot, checkout)
+    if not (SHA.fullmatch(checkout) and run["id"] > 0 and run["run_attempt"] > 0
+            and os.environ["GITHUB_WORKFLOW_SHA"] == checkout
+            and os.environ["GITHUB_WORKFLOW_REF"] == result["workflow_ref"]
+            and git("rev-list", "--parents", "-n", "1", "HEAD").split() ==
+                [checkout, snapshot["base_sha"], snapshot["head_sha"]]
+            and git("rev-parse", f"{os.environ['GITHUB_WORKFLOW_SHA']}:{WORKFLOW}") == result["workflow_blob"]):
+        raise ValueError("unbound checkout/workflow identity")
+    return result
 
 
 def main() -> None:
     if sys.argv[1:] == ["identity"]:
         print("tree=" + identity()["tree"])
     elif sys.argv[1:] == ["manifest"]:
-        result = produce_manifest(identity(), json.loads(os.environ["CI_NEEDS"]))
+        event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
+        result = produce_manifest(identity(), json.loads(os.environ["CI_NEEDS"]), event)
         Path("ci-result.json").write_text(json.dumps(result, sort_keys=True), encoding="utf-8")
     else:
         try:

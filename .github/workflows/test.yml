@@ -25,7 +25,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install pyyaml
+      - run: pip install pyyaml 'markdown-it-py>=3.0'
       - id: check
         env:
           GH_TOKEN: ${{ github.token }}
@@ -239,6 +239,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          fetch-depth: 2  # producer verifies both synthetic merge parents locally
           ref: ${{ github.sha }}
       - uses: actions/setup-python@v5
         with:
@@ -249,7 +250,7 @@ jobs:
           CI_NEEDS: ${{ toJSON(needs) }}
       - uses: actions/upload-artifact@v4
         with:
-          name: ci-full-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ci-full-v2-${{ github.run_id }}-${{ github.run_attempt }}
           path: ci-result.json
           if-no-files-found: error
           retention-days: 7

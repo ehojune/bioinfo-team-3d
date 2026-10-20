@@ -25,17 +25,24 @@ def evidence():
     pr = {"number": 788, "merged_at": "2026-10-20T00:00:00Z", "merge_commit_sha": sha("a"),
           "base": {"ref": "main", "repo": repo, "sha": sha("c")},
           "head": {"repo": repo, "sha": sha("d")}}
+    association = copy.deepcopy(pr)
+    for side in ("base", "head"):
+        association[side]["repo"] = {"id": 123, "name": "bioinfo-team-3d",
+                                      "url": "https://api.github.com/repos/" + cs.REPOSITORY}
     run = {"id": 42, "run_attempt": 1, "workflow_id": 9, "path": cs.WORKFLOW,
            "event": "pull_request", "status": "completed", "conclusion": "success",
-           "head_sha": sha("e"), "repository": repo, "head_repository": repo,
-           "updated_at": "2026-10-20T00:00:00Z", "pull_requests": [pr]}
+           "head_sha": sha("d"), "repository": repo, "head_repository": repo,
+           "updated_at": "2026-10-20T00:00:00Z", "pull_requests": [association]}
     manifest = {"version": cs.VERSION, "repository": cs.REPOSITORY, "run_id": 42,
                 "attempt": 1, "event": "pull_request", "checkout_sha": sha("e"),
                 "workflow_sha": sha("e"), "tree": identity["tree"], "policy": identity["policy"],
+                "workflow_ref": cs.REPOSITORY + "/" + cs.WORKFLOW + "@refs/pull/788/merge",
+                "workflow_blob": identity["policy"][cs.WORKFLOW],
+                "pr": {"number": 788, "head_sha": sha("d"), "base_sha": sha("c"), "repository_id": 123},
                 "gates": {name: {"result": "success", "tree": identity["tree"]}
                           for name in cs.GATE_IDS}}
     jobs = [{"name": name, "status": "completed", "conclusion": "success", "run_attempt": 1,
-             "run_id": 42, "head_sha": sha("e")}
+             "run_id": 42, "head_sha": sha("d")}
             for name in cs.REQUIRED_JOBS]
     commit = {"sha": sha("e"), "tree": {"sha": identity["tree"]},
               "parents": [{"sha": sha("c")}, {"sha": sha("d")}]}
@@ -55,7 +62,7 @@ class API:
     def __init__(self, evidence):
         self.identity, self.pr, self.run, self.manifest, self.jobs, self.commit = evidence
         self.zip = archive(self.manifest)
-        self.artifact = {"id": 7, "name": "ci-full-v1-42-1", "expired": False,
+        self.artifact = {"id": 7, "name": f"ci-full-v{cs.VERSION}-42-1", "expired": False,
                          "size_in_bytes": len(self.zip),
                          "digest": "sha256:" + hashlib.sha256(self.zip).hexdigest()}
         self.calls = []
@@ -70,6 +77,9 @@ class API:
             return {"workflow_runs": [self.run]}
         if path == "git/commits/" + sha("e"):
             return self.commit
+        if path == "git/commits/" + sha("d"):
+            # Real REST run.head_sha is the branch commit, often with ONE parent.
+            return {"sha": sha("d"), "tree": {"sha": sha("9")}, "parents": [{"sha": sha("8")}]}
         if path.startswith("contents/"):
             name = path.removeprefix("contents/").split("?")[0]
             return {"type": "file", "sha": self.identity["policy"][name]}
@@ -88,9 +98,12 @@ def reuse(api):
 
 def test_exact_synthetic_merge_tree_can_be_reused_after_squash(evidence):
     api = API(evidence)
-    assert api.identity["checkout_sha"] != api.run["head_sha"] != api.pr["head"]["sha"]
+    assert api.run["head_sha"] == api.pr["head"]["sha"]
+    assert "full_name" not in api.run["pull_requests"][0]["base"]["repo"]
+    assert api.manifest["checkout_sha"] != api.run["head_sha"]
+    assert api.identity["checkout_sha"] != api.manifest["checkout_sha"]  # squash on main
     assert reuse(api)
-    assert "git/commits/" + api.run["head_sha"] in api.calls
+    assert "git/commits/" + api.manifest["checkout_sha"] in api.calls
     assert any("attempts/1/jobs" in path for path in api.calls)
 
 
@@ -101,7 +114,7 @@ def test_exact_synthetic_merge_tree_can_be_reused_after_squash(evidence):
     ("run", "updated_at", "2026-10-01T00:00:00Z"), ("run", "updated_at", "2099-01-01T00:00:00Z"),
     ("run", "run_attempt", 2), ("pr", "merged_at", None),
     ("pr", "merge_commit_sha", sha("f")), ("artifact", "expired", True),
-    ("artifact", "digest", "sha256:" + "0" * 64), ("artifact", "name", "ci-full-v1-42-0"),
+    ("artifact", "digest", "sha256:" + "0" * 64), ("artifact", "name", f"ci-full-v{cs.VERSION}-42-0"),
 ])
 def test_untrusted_or_incomplete_run_falls_back(evidence, target, key, value):
     api = API(evidence)
@@ -162,9 +175,20 @@ def test_prose_documents(path):
     assert cs.document_change(path, "# Guide\nOld prose.\n", "# Guide\nNew prose.\n")
 
 
+def test_native_status_fixture_remains_document_only_without_running_git(monkeypatch):
+    def git(*args):
+        if args[0] == "diff":
+            return ":000000 100644 zero new A\0docs/status/2026-10-02-1000-pr.md\0"
+        assert args == ("show", "head:docs/status/2026-10-02-1000-pr.md")
+        return "## done\n"
+    monkeypatch.setattr(cs, "git", git)
+    assert cs.can_skip("head", "base")
+
+
 @pytest.mark.parametrize("path", ["AGENTS.md", "HANDOFF.md", ".github/workflows/test.yml", "pyproject.toml",
     "config/example.yaml", "agents/core/example.yaml", "tests/example.md", "labhq/example.md",
-    "docs/example.py", "docs/examples/usage.md", "requirements.txt", "docs/policy.md"])
+    "docs/example.py", "docs/examples/usage.md", "requirements.txt", "docs/policy.md", "docs/AGENTS.md",
+    "docs/HANDOFF.md", "docs/manual.md", "docs/runtime.md", "docs/config.md", "docs/tests.md"])
 def test_paths_fail_closed(path):
     assert not cs.document_change(path, "old", "new")
 
@@ -172,8 +196,65 @@ def test_paths_fail_closed(path):
 @pytest.mark.parametrize("example", ["```python\nprint(1)\n```", "~~~sh\necho hi\n~~~", "    echo hi",
     "Run `python demo.py`.", "<script>demo()</script>", ".. code-block:: python", "$ python demo.py",
     ">>> demo()", "python demo.py", "<!-- doctest -->"])
+def test_added_or_deleted_executable_examples_run_full(example):
+    assert not cs.document_change("docs/guide.md", "Old prose.\n", example + "\nNew prose.\n")
+    assert not cs.document_change("docs/guide.md", example + "\nOld prose.\n", "New prose.\n")
+
+
+@pytest.mark.parametrize("example", ["```python\nprint(1)\n```", "~~~sh\necho hi\n~~~", "    echo hi",
+    "Run `python demo.py`.", "<script>demo()</script>", ".. code-block:: python", "$ python demo.py",
+    ">>> demo()", "python demo.py", "<!-- doctest -->"])
 def test_any_executable_example_runs_full_even_if_only_prose_changed(example):
+    # Keep the original negative: bare old/new fragments remain ambiguous.
+    # The new positive cases above use complete prose around stable examples.
     assert not cs.document_change("docs/guide.md", example + "\nold", example + "\nnew")
+
+
+@pytest.mark.parametrize("example", ["```python\nprint(1)\n```", "~~~sh\necho hi\n~~~",
+                                     "    echo hi\n", "Run `python demo.py`."])
+def test_prose_with_unchanged_executable_examples_is_document_only(example):
+    assert cs.document_change("README.md", "Old prose.\n\n" + example,
+                              "New prose.\n\n" + example)
+    assert not cs.document_change("README.md", "Old prose.\n\n" + example,
+                                  "New prose.\n\n" + example.replace("hi", "bye").replace("1", "2").replace("demo", "other"))
+
+
+def test_actual_readme_prose_edit_preserves_existing_examples():
+    before = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+    assert "```" in before and "`" in before
+    sentence = "단계마다 점검하고 근거를 다시 확인하도록 남깁니다."
+    assert sentence in before
+    after = before.replace(sentence, "단계마다 점검하고 남긴 근거를 다시 확인합니다.", 1)
+    assert cs.document_change("README.md", before, after)
+
+
+@pytest.mark.parametrize("text", ["```python\nprint(1)", "```", "Text with `unclosed code.",
+                                  "<!-- unclosed comment", "<p>Unclosed HTML.", ".. code-block:: python",
+                                  "> ```sh\n> echo hi\n> ```"])
+def test_ambiguous_markdown_is_full_even_with_only_prose_changes(text):
+    assert not cs.document_change("README.md", "Old prose.\n\n" + text,
+                                  "New prose.\n\n" + text)
+
+
+@pytest.mark.parametrize("path", ["STATUS.md", "patch_notes/README.md"])
+def test_generated_markdown_prose_with_unchanged_identifiers(path):
+    before = "<!-- generated -->\n# Progress\n\n| Head | Result |\n|---|---|\n| `abcdef0` | Old result. |\n"
+    assert cs.document_change(path, before, before.replace("Old result.", "New result."))
+    # New/changed inline identifiers are deliberately not assumed non-executable.
+    assert not cs.document_change(path, before, before.replace("abcdef0", "1234567"))
+
+
+@pytest.mark.parametrize("before,after", [
+    ("```sh\necho hi\n```", "```python\necho hi\n```"),
+    ("Run ``echo hi``.", "Run `echo hi`."),
+    ("Run `python\ndemo.py`.", "Run `python demo.py`."),
+    ("Run ` python demo.py `.", "Run `python demo.py`."),
+    ("[Guide](guide.md)", "[Guide](other.md)"),
+    ("[Guide][ref]\n\n[ref]: guide.md\n", "[Guide][ref]\n\n[ref]: other.md\n"),
+    ("<!-- stable -->", "<!-- changed -->"),
+])
+def test_changed_protected_markup_is_full(before, after):
+    assert not cs.document_change("README.md", "Old prose.\n\n" + before, "New prose.\n\n" + after)
 
 
 @pytest.mark.parametrize("example", ["echo hello", "Remove-Item example.txt", "Python demo.py", "print('hi')",
@@ -300,28 +381,121 @@ def test_event_decisions_bind_actual_checkout_and_entire_push(monkeypatch, evide
 
 def test_manifest_requires_fresh_full_gates_on_the_checkout(monkeypatch, evidence):
     current = evidence[0]
+    event = {"pull_request": evidence[1]}
     for key, value in {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_SHA": current["checkout_sha"],
                        "GITHUB_REPOSITORY": cs.REPOSITORY,
+                       "GITHUB_WORKFLOW_REF": cs.REPOSITORY + "/" + cs.WORKFLOW + "@refs/pull/788/merge",
                        "GITHUB_WORKFLOW_SHA": current["checkout_sha"], "GITHUB_RUN_ID": "42",
                        "GITHUB_RUN_ATTEMPT": "1"}.items():
         monkeypatch.setenv(key, value)
+    monkeypatch.setattr(cs, "git", lambda *args: (
+        f"{current['checkout_sha']} {sha('c')} {sha('d')}" if args[0] == "rev-list"
+        else current["policy"][cs.WORKFLOW]))
     needs = {name: {"result": "success", "outputs": {"tree": current["tree"]}}
              for name in (*cs.GATE_IDS, "changes", "readme", "patch-notes")}
     needs["changes"]["outputs"]["skip"] = "false"
-    assert cs.produce_manifest(current, needs)["tree"] == current["tree"]
+    manifest = cs.produce_manifest(current, needs, event)
+    assert manifest["tree"] == current["tree"]
+    assert manifest["pr"]["head_sha"] == evidence[2]["head_sha"]
+    assert manifest["checkout_sha"] != manifest["pr"]["head_sha"]
     for gate in cs.GATE_IDS:
         for bad_result in ("failure", "cancelled", "skipped"):
             changed = copy.deepcopy(needs)
             changed[gate]["result"] = bad_result
             with pytest.raises(ValueError):
-                cs.produce_manifest(current, changed)
+                cs.produce_manifest(current, changed, event)
         changed = copy.deepcopy(needs)
         changed[gate]["outputs"]["tree"] = sha("f")
         with pytest.raises(ValueError):
-            cs.produce_manifest(current, changed)
+            cs.produce_manifest(current, changed, event)
     needs["changes"]["outputs"]["skip"] = "true"
     with pytest.raises(ValueError):
-        cs.produce_manifest(current, needs)
+        cs.produce_manifest(current, needs, event)
+
+
+@pytest.mark.parametrize("case", ["checkout", "coherent-checkout", "branch-as-checkout", "base-as-checkout", "workflow-ref",
+                                  "workflow-blob", "snapshot-head", "snapshot-base", "snapshot-number",
+                                  "snapshot-repository", "attempt", "run-head", "one-parent", "reverse-parents",
+                                  "wrong-base-parent", "source-blob", "missing-gate", "boolean-attempt", "old-manifest",
+                                  "workflow-base-commit", "association-url"])
+def test_real_rest_shape_identity_tampering_runs_full(evidence, case):
+    api = API(evidence)
+    if case in {"checkout", "coherent-checkout"}:
+        api.manifest["checkout_sha"] = sha("f")
+        if case == "coherent-checkout":
+            api.manifest["workflow_sha"] = sha("f")
+    elif case in {"branch-as-checkout", "base-as-checkout"}:
+        api.manifest["checkout_sha"] = sha("d") if case == "branch-as-checkout" else sha("c")
+        api.manifest["workflow_sha"] = api.manifest["checkout_sha"]
+    elif case == "workflow-ref":
+        api.manifest["workflow_ref"] = api.manifest["workflow_ref"].replace("788", "789")
+    elif case == "workflow-blob":
+        api.manifest["workflow_blob"] = sha("f")
+    elif case.startswith("snapshot-"):
+        key = {"head": "head_sha", "base": "base_sha", "number": "number", "repository": "repository_id"}[case[9:]]
+        api.manifest["pr"][key] = sha("f") if key.endswith("sha") else 999
+    elif case == "attempt":
+        api.manifest["attempt"] = 2
+    elif case == "run-head":
+        api.run["head_sha"] = sha("f")
+    elif case == "one-parent":
+        api.commit["parents"].pop()
+    elif case == "reverse-parents":
+        api.commit["parents"].reverse()
+    elif case == "wrong-base-parent":
+        api.commit["parents"][0]["sha"] = sha("f")
+    elif case == "missing-gate":
+        del api.manifest["gates"]["pytest-slow"]
+    elif case == "boolean-attempt":
+        api.manifest["attempt"] = True
+    elif case == "old-manifest":
+        api.manifest["version"] = 1
+    elif case == "workflow-base-commit":
+        api.manifest["workflow_sha"] = sha("c")
+    elif case == "association-url":
+        api.run["pull_requests"][0]["base"]["repo"]["url"] = "https://api.github.com/repos/someone/fork"
+    api.zip = archive(api.manifest)
+    api.artifact["digest"] = "sha256:" + hashlib.sha256(api.zip).hexdigest()
+    def request(path, binary=False):
+        if case == "source-blob" and path.startswith("contents/") and path.endswith(sha("e")):
+            return {"type": "file", "sha": sha("f")}
+        if case == "coherent-checkout" and path == "git/commits/" + sha("f"):
+            return api.commit  # API contradicts the altered producer identity
+        return api(path, binary)
+    assert not cs.reuse_main(api.identity, request, now=datetime(2026, 10, 20, 1, tzinfo=timezone.utc))
+
+
+@pytest.mark.parametrize("case", ["checkout", "workflow-sha", "workflow-ref", "workflow-blob", "parents",
+                                  "head", "base", "fork", "attempt", "run", "readme", "patch-notes"])
+def test_producer_rejects_unbound_identity_or_incomplete_receipts(monkeypatch, evidence, case):
+    current, pr = evidence[:2]
+    env = {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_REPOSITORY": cs.REPOSITORY,
+           "GITHUB_SHA": current["checkout_sha"], "GITHUB_WORKFLOW_SHA": current["checkout_sha"],
+           "GITHUB_WORKFLOW_REF": cs.REPOSITORY + "/" + cs.WORKFLOW + "@refs/pull/788/merge",
+           "GITHUB_RUN_ID": "42", "GITHUB_RUN_ATTEMPT": "1"}
+    env_key = {"checkout": "GITHUB_SHA", "workflow-sha": "GITHUB_WORKFLOW_SHA",
+               "workflow-ref": "GITHUB_WORKFLOW_REF", "attempt": "GITHUB_RUN_ATTEMPT", "run": "GITHUB_RUN_ID"}
+    if case in env_key:
+        env[env_key[case]] = "0" if case in {"attempt", "run"} else sha("f")
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    def git(*args):
+        if args[0] == "rev-list":
+            return f"{current['checkout_sha']} {sha('c')} {sha('f') if case == 'parents' else sha('d')}"
+        assert args == ("rev-parse", current["checkout_sha"] + ":" + cs.WORKFLOW)
+        return sha("f") if case == "workflow-blob" else current["policy"][cs.WORKFLOW]
+    monkeypatch.setattr(cs, "git", git)
+    if case in {"head", "base"}:
+        pr[case]["sha"] = sha("f")
+    if case == "fork":
+        pr["head"]["repo"] = {"id": 999, "full_name": "someone/fork"}
+    needs = {name: {"result": "success", "outputs": {"tree": current["tree"]}}
+             for name in (*cs.GATE_IDS, "changes", "readme", "patch-notes")}
+    needs["changes"]["outputs"]["skip"] = "false"
+    if case in {"readme", "patch-notes"}:
+        needs[case]["result"] = "skipped"
+    with pytest.raises(ValueError):
+        cs.produce_manifest(current, needs, {"pull_request": pr})
 
 
 def test_artifact_is_bounded_data_and_redirect_carries_no_credential():
@@ -362,6 +536,8 @@ def test_workflow_preserves_all_required_gates_and_pins_checkout():
         assert jobs[name]["outputs"]["tree"] == "${{ steps.identity.outputs.tree }}"
     assert "if" not in jobs["readme"]
     producer = jobs["validation-manifest"]
+    checkout = next(s for s in producer["steps"] if s.get("uses", "").startswith("actions/checkout@"))
+    assert checkout["with"]["fetch-depth"] == 2  # rev-list must see both parents
     assert set(producer["needs"]) == {*cs.GATE_IDS, "changes", "readme", "patch-notes"}
     assert "needs.changes.outputs.skip != 'true'" in producer["if"]
     assert any(s.get("uses", "").startswith("actions/upload-artifact@v4") for s in producer["steps"])

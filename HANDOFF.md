@@ -60,6 +60,6 @@ CSO는 gateway 안에서 계획과 의존관계를 관리하고 runner가 실제
 
 PR·패치노트·관련 test·CI·리뷰·공개 검사 규칙은 [AGENTS.md](AGENTS.md)를 따릅니다. 생성 파일 `STATUS.md`·`patch_notes/README.md`는 직접 고치지 않습니다. 직원 설정은 `scripts/integrations.py --check`, 기록은 `scripts/patch_notes.py check`·`scripts/notes_index.py --validate`로 확인합니다.
 
-[#788 CI 정책](docs/reference/ci-reuse.md)은 순수 문서만 축소하고 main은 동일 tree의 완전한 PR 검증만 재사용합니다. 증거가 없으면 full이며 #787의 3.10 stall 진단은 별도로 유지합니다.
+[#788 CI 정책](docs/reference/ci-reuse.md)은 예제·보호 markup이 그대로인 prose와 정해진 기록만 축소하고 main은 동일 tree의 완전한 PR 검증만 재사용합니다. 증거가 없으면 full이며 #787의 3.10 stall 진단은 유지합니다.
 
 이벤트·안전 경계·설치·알려진 한계는 [매뉴얼](docs/manual.md), 옛 큐·결정은 [보존본](docs/reference/handoff-history-2026-10-19.md)에 있습니다.
