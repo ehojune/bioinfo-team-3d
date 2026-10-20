@@ -23,6 +23,8 @@ def records(root):
 @pytest.fixture
 def lookup_runtime(monkeypatch):
     """Advance only the lookup's fake timers; notify and cancellation use real coroutine handshakes."""
+    get_running_loop, lock_type = asyncio.get_running_loop, asyncio.Lock
+
     class Runtime:
         now = 100.0
         expire = False
@@ -76,9 +78,37 @@ def lookup_runtime(monkeypatch):
     # Replace only this module's timer interface, never asyncio or the HTTP client's global timers.
     proxy = SimpleNamespace(**{name: getattr(asyncio, name) for name in
         ("create_task", "gather", "TimeoutError", "CancelledError")})
+    proxy.get_running_loop, proxy.Lock = get_running_loop, lock_type
     proxy.sleep, proxy.wait_for = runtime.sleep, runtime.wait_for
     monkeypatch.setattr(wait, "asyncio", proxy)
     return runtime
+
+
+async def test_lookup_runtime_preserves_real_step_slot_serialization(tmp_path, lookup_runtime):
+    assert wait.asyncio.get_running_loop is asyncio.get_running_loop
+    assert wait.asyncio.Lock is asyncio.Lock
+    slot = wait._step_slot(tmp_path)
+    assert isinstance(slot, asyncio.Lock)
+    assert wait._step_slot(tmp_path) is slot
+    entered = asyncio.Event()
+
+    async def decision():
+        entered.set()
+        return "declined"
+
+    queued = None
+    try:
+        async with slot:
+            queued = asyncio.create_task(wait.exclude_human_wait(
+                decision, workdir=tmp_path, clock=lambda: lookup_runtime.now))
+            await asyncio.sleep(0)  # let the coroutine reach the held lock, never poll elapsed time
+            assert not entered.is_set() and not queued.done()
+        assert await asyncio.wait_for(queued, 1) == "declined"
+        assert entered.is_set() and not slot.locked()
+    finally:
+        if queued is not None and not queued.done():
+            queued.cancel()
+            await asyncio.gather(queued, return_exceptions=True)
 
 
 async def test_success_keeps_result_and_logs_progress_without_inputs(tmp_path):
