@@ -1626,7 +1626,7 @@ class Runner:
                 for note in skill_warnings:
                     await emit("agent.log", {"level": "warn", "text": note})
                 task = ws.task = task.model_copy(update={"context": task.context + "\n\n" + (
-                    "Use the request's paper advice in .agents/skills/paper-*/SKILL.md; cite the paper when used."
+                    ws.paper_skill_instructions()
                     if plugin else "논문 스킬 장착 불가; 제공된 선행 연구 요약으로 계속하세요.")})
             prompt = await ws.awrite_task_md()
             if skill_error := install_required_skills(ws, agent):
@@ -2093,6 +2093,8 @@ class Runner:
                              else result.cost_usd is not None,
                              usage=result.usage, usage_known=result.usage_known,
                              session_id=result.session_id, pending_jobs=pending)
+        if task.meta.get("paper_skills"):
+            ws.record_paper_skill_usage(result)
         result.provenance = ws.provenance()
         if task.meta.get("paper_skills"):
             ws.clear_paper_skills()  # before task.result can release a dependent step

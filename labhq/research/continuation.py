@@ -154,6 +154,12 @@ def proof_problems(previous: Mapping[str, Any], plan: Mapping[str, Any], carry: 
     for sid in carry.reuse:
         step = steps[sid]
         try:
+            # A lazy selection has no CP1-fixed content hash. Do not mistake the unchanged
+            # descriptor (or an ancestor's descriptor) for proof of the method actually delivered.
+            if any(row.get('status') == 'deferred' and
+                   set(row.get('step_ids') or []) & {sid, *ancestors[sid]}
+                   for row in plan.get('paper_skill_results') or []):
+                raise ValueError('deferred paper skill has no pre-approval content proof')
             absence = previous.get('reuse_no_request_inputs')
             if (has_request_inputs(previous) or has_request_inputs(current_request or {})
                     or not isinstance(absence, Mapping) or absence.get(sid) is not True):

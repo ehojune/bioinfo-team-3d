@@ -31,7 +31,7 @@ from typing import Any
 from .. import __version__, durable
 from ..adapters.held_dir import HeldDir, NotPlainFolder
 from ..adapters.owned import (OwnedPathError, append_owned, case_sensitive_directory, plain_directory, read_owned,
-                              awrite_owned, write_owned)
+                              awrite_owned, write_owned, write_owned_bytes)
 from ..adapters.owned import is_link as _is_link
 from ..adapters.owned import remove_entry as _remove_entry
 from ..adapters.read_only import SKILL_DIRS
@@ -329,15 +329,27 @@ class TaskWorkspace:
         plugin = self.dir / ".labhq-paper-skills"
         installed = False
         for row in rows:
+            receipt = {k: row.get(k) for k in ("paper_id", "paper2agent_commit", "selection_sha256")}
+            receipt.update(called=False, call_status="not_attached", status=row.get("status"))
+            receipts.append(receipt)
             if (row.get("request_id") != self.task.request_id or row.get("agent_id") != self.agent.id
-                    or row.get("step_id") != self.task.meta.get("step_id")
-                    or row.get("runner_id") != runner_id or self.agent.contract):
+                    or row.get("step_id") != self.task.meta.get("step_id") or self.agent.contract):
                 warnings.append("논문 스킬 장착 범위 불일치")
+                receipt["reason"] = "scope_mismatch"
+                continue
+            if row.get("status") in {"failed", "unavailable", "skipped"}:
+                receipt["reason"] = "build_" + row["status"]
+                warnings.append("논문 스킬 생성 불가: " + str(row.get("paper_id")))
+                continue
+            if row.get('runner_id') != runner_id:
+                receipt['reason'] = 'runner_mismatch'
+                warnings.append('논문 스킬 러너 불일치')
                 continue
             digest = row.get("skill_sha256")
             src = Path(row.get("skill_dir") or "")
             if not digest or not (src / "SKILL.md").is_file() or folder_sha256(src) != digest:
                 warnings.append("논문 스킬 hash 불일치: " + str(row.get("paper_id")))
+                receipt["reason"] = "hash_mismatch"
                 continue
             name = "paper-" + hashlib.sha256(str(row.get("paper_id")).encode()).hexdigest()[:24]
             destinations = []
@@ -353,15 +365,61 @@ class TaskWorkspace:
                     if folder_sha256(dst) != digest:
                         raise ValueError("논문 스킬 복사 hash 불일치")
                 write_owned(plugin, ".claude-plugin/plugin.json", '{"name":"labhq-paper-skills"}\n')
+                # An explicit owned input, not just an engine's optional skill discovery directory.
+                document = read_owned(destinations[0], "SKILL.md")
+                if document is None:
+                    raise ValueError("논문 스킬 문서를 읽을 수 없음")
+                input_ref = f"inputs/paper_skills/{name}.md"
+                target = write_owned_bytes(self.dir, input_ref, document.encode())
+                destinations.append(target)
                 self._paper_skill_copies.extend(destinations)
-                receipts.append({k: row.get(k) for k in ("paper_id", "paper2agent_commit", "skill_sha256")})
+                receipt.update(skill_id=name, skill_sha256=digest,
+                               document_sha256=hashlib.sha256(document.encode()).hexdigest(),
+                               input_ref=input_ref, call_status="pending")
                 installed = True
             except (OSError, ValueError, OwnedPathError) as exc:
                 for dst in destinations:
                     _remove_entry(dst)
                 warnings.append(f"논문 스킬 장착 실패 ({type(exc).__name__})")
+                receipt["reason"] = "installation_failed"
+        self._paper_skill_receipts = receipts
         self.update_run(self.task.id, paper_skills=receipts, paper_skill_warnings=warnings)
         return (plugin if installed else None), warnings
+
+    def paper_skill_instructions(self) -> str:
+        from ..recruit.paper_skills import reference_token
+        return "\n".join(
+            f"Paper advice {r['paper_id']}: read {r['input_ref']}. If you actually use this advice, "
+            f"include the exact attribution {reference_token(r)} in your result narrative. "
+            f"Supporting files: .agents/skills/{r['skill_id']}/. "
+            "Do not copy it merely because the skill was assigned. This records a result reference, not a tool call."
+            for r in getattr(self, "_paper_skill_receipts", []) if r.get("input_ref"))
+
+    def record_paper_skill_usage(self, result) -> None:
+        """Evaluate the current turn's result against the runner's original installation receipt."""
+        from ..recruit.paper_skills import reference_token
+        from ..recruit.provenance import folder_sha256
+        rows = copy.deepcopy(getattr(self, "_paper_skill_receipts", []))
+        for row in rows:
+            if not row.get("input_ref"):
+                continue
+            try:
+                document = read_owned(self.dir, row["input_ref"])
+                unchanged = (document is not None
+                             and folder_sha256(self.dir / row['input_ref']) == row['document_sha256']
+                             and all(plain_directory(self.dir, f"{base}/{row['skill_id']}") is not None
+                                     and folder_sha256(self.dir / base / row['skill_id']) == row['skill_sha256']
+                                     for base in ('.labhq-paper-skills/skills', '.agents/skills')))
+            except (OSError, ValueError, OwnedPathError):
+                unchanged = False
+            matched = reference_token(row) in result.text
+            row.update(called=bool(result.ok and unchanged and matched),
+                       call_status='referenced' if result.ok and unchanged and matched else 'unverified',
+                       reason='result_reference' if result.ok and unchanged and matched else
+                       'input_changed' if not unchanged else 'step_failed' if not result.ok else 'no_result_reference')
+            if row['called']:
+                row['evidence'] = reference_token(row)
+        self.update_run(self.task.id, paper_skills=rows)
 
     def clear_paper_skills(self) -> None:
         for dst in getattr(self, "_paper_skill_copies", []):
