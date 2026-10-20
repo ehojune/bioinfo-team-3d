@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 19:37 | [`49d5324`](https://github.com/ehojune/bioinfo-team-3d/pull/819/commits/49d5324) | **같은 단계의 조회와 승인 대기를 순서대로 처리해 대기 시간이 두 번 빠지는 문제를 막았습니다.**<br>동일 MCP event loop·작업 폴더의 자동 조회와 PDF 승인 대기를 slot으로 직렬화하고 예산 파일·취소·timeout·progress 종료 flag를 유지한다. 관련 mock 검사 27개가 통과했으며 실제 서비스 성능은 미검증이다. |
 | 19:04 | [`692c8ed`](https://github.com/ehojune/bioinfo-team-3d/pull/807/commits/692c8ed) | 논문 스킬 방법이 바뀌면 이전 결과를 재사용하지 않도록 고쳤습니다. 기술: 단계/직원에 연결된 selection·변환 receipt 전체와 순서를 노드 context hash에 결속했다. 해당 단계/후속은 거절하고 독립 후보는 보존하며 구 signature·승인 후 변경은 재승인을 요구한다. 회귀 15건 red 뒤 mock/static 129건 통과, 실제 변환/설치/연구는 미실행이다. |
 | 19:03 | [`45f35f0`](https://github.com/ehojune/bioinfo-team-3d/pull/766/commits/45f35f0) | 괄호 안에서 고른 process의 Kill 호출·ionice wrapper·locale quote 실행 우회를 막는다. 앞선 출력의 선택 상태와 명시 PID·조회·데이터 구분을 유지하고 새 실패 31개 재현 뒤 mock/static 710개를 확인했다. |
 | 18:08 | [`c6e68b8`](https://github.com/ehojune/bioinfo-team-3d/commit/c6e68b8) | **운영체제별 줄바꿈 차이로 문서 전체가 바뀐 것처럼 보이지 않도록 정리했습니다.**<br>패치노트 생성기·검사·작성 기준·변경 기록의 저장 줄바꿈을 LF로 정규화했다. 기술 내용은 바꾸지 않았다. |
