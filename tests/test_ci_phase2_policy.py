@@ -102,11 +102,21 @@ def test_reviewed_cohort_is_bounded_and_explained_without_exempting_hard_boundar
     assert 10 <= len(reviewed) <= 25
     for path, row in reviewed.items():
         assert row["reason"].strip()
-        assert selection.source_digest((ROOT / path).read_text(encoding="utf-8")) == row["sha256"]
-        assert not selection.include_windows(path, (ROOT / path).read_text(encoding="utf-8"), reviewed)[0]
+        assert len(row["sha256"]) == 64 and set(row["sha256"]) <= set("0123456789abcdef")
+        if (ROOT / path).is_file():
+            source = (ROOT / path).read_text(encoding="utf-8")
+            included, _ = selection.include_windows(path, source, reviewed)
+            # Changed source is a normal full-inclusion fallback. A future
+            # product PR must not need to approve its own exclusion to pass CI.
+            assert included == (selection.source_digest(source) != row["sha256"])
     for path in ("tests/test_windows_job_ci.py", "tests/test_state_isolation.py", "tests/test_supervisor_process.py",
                  "tests/test_cli.py", "tests/test_reproduction_receipt.py", "tests/test_durable_writer.py"):
         assert selection.include_windows(path, "", reviewed)[0]
+
+
+def test_cohort_contract_accepts_changed_reviewed_sources(monkeypatch):
+    monkeypatch.setattr(selection, "source_digest", lambda text: "0" * 64)
+    test_reviewed_cohort_is_bounded_and_explained_without_exempting_hard_boundaries()
 
 
 @pytest.mark.parametrize("dependency", ["scripts/check.py", "config/schema.yaml", "labhq/catalog.yaml",
