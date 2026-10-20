@@ -421,6 +421,22 @@ def _find_payloads(words: list[str]):
     yield from payloads
 
 
+def _find_continuation(groups: list[list[str]], index: int) -> list[str]:
+    """Recover find argv split by bare {} without changing shell/block tokenization."""
+    words = (word for group in groups[index + 1:] for word in group)
+    result = []
+    for word in words:
+        if word == "{":
+            if next(words, None) != "}":
+                break
+            result.append("'{}'")  # a literal placeholder, including in later actions
+        elif _SEPARATOR.fullmatch(word):
+            break
+        else:
+            result.append(word)
+    return result
+
+
 def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
     """Recognize literal shell stop commands, not prose or PID-based cleanup.
 
@@ -464,7 +480,7 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
     input_pending = False
     assignment: tuple[str, int] | None = None
     assignment_waiting = False
-    for group in groups:
+    for group_index, group in enumerate(groups):
         if not group:
             continue
         if _SEPARATOR.fullmatch(group[0]):
@@ -512,7 +528,9 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
         references = set(re.findall(r"\$([a-z_][a-z_0-9:]*)", " ".join(group).casefold()))
         for reference in tuple(references):
             references.update(substitution_references.get(reference, ()))
-        selected_reference = bool(references & selected_variables)
+        pipeline_reference = (bool(references & {"_", "psitem"})
+                              and (process_pipeline or bool(block_pipeline and block_pipeline[-1])))
+        selected_reference = bool(references & selected_variables) or pipeline_reference
         if selected_reference:
             if assignment:
                 selected_variables.add(assignment[0])
@@ -567,9 +585,15 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
             if (len(handlers) > 1 and (end_options or not _literal_word(handlers[0]).startswith("-"))
                     and broad_process_stop(_literal_word(handlers[0]), _depth=_depth + 1)):
                 return True
-        if name == "find" and any(broad_process_stop(payload, _depth=_depth + 1)
-                                  for payload in _find_payloads(group[start + 1:])):
-            return True
+        if name == "find":
+            payloads = list(_find_payloads(group[start + 1:]))
+            continuation = _find_continuation(groups, group_index)
+            if continuation:
+                # Keep the original prefix analysis too: extending argv must not
+                # erase an existing denial (for example via a later help token).
+                payloads.extend(_find_payloads(group[start + 1:] + continuation))
+            if any(broad_process_stop(payload, _depth=_depth + 1) for payload in payloads):
+                return True
         if name in {"pkill", "killall"}:
             return True
         if name == "taskkill" and any(re.match(r"^/{1,2}im(?::|$)", arg) for arg in args):
@@ -586,10 +610,12 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
             if process_pipeline and input_expression and input_expression[-1]:
                 return True
         if name in {"stop-process", "spps", "kill"}:
+            selected_processes = process_pipeline or bool(block_pipeline and block_pipeline[-1])
             if selected_reference:
                 return True
             input_pending = any(arg.startswith("-") and len(arg.strip("-:")) >= 2
                                 and "inputobject".startswith(arg.strip("-:")) for arg in args)
+            input_pending |= selected_processes and any(re.match(r"^-id(?::|$)", arg) for arg in args)
             # Bash kill -n selects a signal, not a process name.
             name_option = r"^-name(?::|$)" if name == "kill" else r"^-n(?:a(?:m(?:e)?)?)?(?::|$)"
             if any(re.match(name_option, arg) for arg in args):
@@ -609,7 +635,6 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
                           or name == "kill" and any(arg.isdigit() or arg.startswith("$") for arg in args))
             positional_name = (args and not args[0].startswith(("-", "$", "@"))
                                and not args[0].isdigit())
-            selected_processes = process_pipeline or bool(block_pipeline and block_pipeline[-1])
             if selected_processes and (not pid_target or pipeline_arguments) or positional_name:
                 return True
         if name in {"sh", "bash", "zsh", "dash", "cmd", "powershell", "pwsh"}:
