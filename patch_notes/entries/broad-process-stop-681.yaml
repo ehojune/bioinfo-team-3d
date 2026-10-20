@@ -42,3 +42,6 @@ rows:
 - sha: 'd83da2b'
   at: '2026-10-20 13:00'
   text: 'else 실행 위치·PowerShell literal 변수·Bash $()의 이름 선택 PID 종료를 거부했다. 원래 head에서 실패 26개를 재현한 뒤 관련 mock/static 463개와 guard blocked 0건을 확인했다.'
+- sha: '73bb72b'
+  at: '2026-10-20 13:49'
+  text: 'find bare placeholder 뒤 후속 action과 이름 선택 pipeline에서 유래한 Id 소비를 거부한다. 새 실패 17개 재현 뒤 기존 회귀 포함 mock/static 492개와 guard blocked 0건을 확인했다.'
