@@ -216,7 +216,7 @@ PC를 다시 켜도 저장소 폴더에서 같은 `up`·`open` 명령을 씁니�
 | v1 | 다른 연구자가 자기 통제 데이터로 연구 문제를 두 개까지 푼다 |
 | v1.25 | 연구를 넘어 논문을 쓴다 |
 
-버전마다 통과 기준이 있고, 채우면 다음 버전으로 넘어갑니다. 기준과 지금 상태, 남은 일은 [매뉴얼의 로드맵](docs/manual.md#로드맵)에 있습니다.
+버전마다 통과 기준이 있고, 채우면 다음 버전으로 넘어갑니다. v0.5 선언 뒤 들어간 기능은 test·CI를 통과했지만 실제 연구 요청으로 다시 확인한 것은 아닙니다. 기준과 지금 상태, 남은 일은 [매뉴얼의 로드맵](docs/manual.md#로드맵)에 있습니다.
 
 ## 더 읽기
 
@@ -228,8 +228,7 @@ PC를 다시 켜도 저장소 폴더에서 같은 `up`·`open` 명령을 씁니�
 | [참고 자료 (References)](docs/references.md) | 설계·구현·도구 연결에 참고한 문헌과 프로젝트 |
 | [어휘·topic·점검표](docs/vocabulary.md) | topic이 무엇인지, topic별 점검표, 핵심 단어(어휘 키)를 표로 보려는 사람 |
 | [패치노트](patch_notes/README.md) | 바뀐 내용 |
-| [AGENTS.md](AGENTS.md) · [HANDOFF.md](HANDOFF.md) | 개발 규칙·구조·현재 작업 순서 |
-| [PI 소통 창구 #760](https://github.com/ehojune/bioinfo-team-3d/issues/760) | 현재 결정·진행 보고(한국 시각 00·04·08·12·16·20시) |
+| [AGENTS.md](AGENTS.md) · [HANDOFF.md](HANDOFF.md) | labhq를 고치는 개발자: 규칙·구조·현재 작업 순서 |
 | [참고 기록](docs/reference/README.md) | 검증 근거와 이전 결정이 필요할 때만 조회 |
 
 코드는 [GPL-3.0-or-later](LICENSE), 문서·그림·데이터 표는 [CC BY-SA 4.0](LICENSE-CC-BY-SA-4.0.txt)입니다. 예외는 [매뉴얼의 라이선스](docs/manual.md#라이선스)에 있습니다.
