@@ -11,6 +11,7 @@ import base64
 import contextlib
 import contextvars
 import copy
+from dataclasses import replace
 import json
 import logging
 import os
@@ -50,7 +51,7 @@ from ..policy import (SHELL_TOOLS, claude_ask_internal_links, claude_deny_links,
                       claude_read_only, claude_rule_path, claude_settings, rule_tool)
 from ..private_paths import ENABLED_ENV_VAR as PRIVATE_ENABLED_ENV, ENV_VAR as PRIVATE_PATHS_ENV, \
     OPEN_READS_ENV_VAR as PRIVATE_OPEN_READS_ENV, plugin_keep_dirs, resolve_private_paths, \
-    staff_claude_project_dirs
+    staff_claude_project_dirs, scoped_open_reads
 from ..pipeline_pr import collect_pipeline_submission, pipeline_rejection
 from ..bioinfo_policy import PIPELINE_AUTHORS
 from ..quota import quota_reset_instant
@@ -69,6 +70,7 @@ from .control import HALT_GRACE_S, ControlNotReady, Controls, steer_prompt
 from .hpc_jobs import submit_job
 from .integrity import ReadOnlyWatch, watch_roots
 from .system_ca import CA_ENV, system_ca_pem
+from .step_inputs import stage_inputs
 from .workspace import (InputHashCache, TaskWorkspace, nearest_tool_use_id, portable_input_path, resolved_zones,
                         restricted_zones)
 
@@ -1505,7 +1507,10 @@ class Runner:
                 await emit_final({"state": "error", "error": short(error, 200)}, result.model_dump(mode="json"))
                 return result
             root = self.ws_root.resolve()
-            for directory in task.meta.get("upstream_dirs", []):
+            artifact_contract = (task.meta.get("kind") == "step" and
+                                 isinstance(task.meta.get("upstream_artifacts"), dict))
+            staged_inputs: list[str] = []
+            for directory in ([] if artifact_contract else task.meta.get("upstream_dirs", [])):
                 upstream = Path(directory).resolve()
                 if upstream.is_dir() and upstream.is_relative_to(root):
                     reason = await asyncio.to_thread(self._upstream_refusal, upstream, zones)
@@ -1514,7 +1519,26 @@ class Runner:
                         continue
                     extra_dirs.append(str(upstream))
             upstream_steps = task.meta.get("upstream_steps")
-            if isinstance(upstream_steps, dict) and upstream_steps and not read_only:
+            if artifact_contract:
+                artifacts = task.meta["upstream_artifacts"]
+                steps = upstream_steps if isinstance(upstream_steps, dict) else {}
+                accepted = {sid: row for sid, row in artifacts.items()
+                            if isinstance(row, dict) and row.get("workdir") == steps.get(sid)}
+                staged_inputs, unavailable = await asyncio.to_thread(
+                    stage_inputs, ws, accepted, root, [*zones, *internal_zones],
+                    list(resolve_private_paths(self.s, [], cwd=ws.dir).paths),
+                    self.s.runner.input_hash_max_file_bytes, self.s.runner.input_hash_max_total_bytes)
+                unavailable.update({str(sid): f"inputs/{sid} unavailable (ancestor mapping mismatch)"
+                                    for sid in artifacts if sid not in accepted})
+                note = ("Read collected ancestor artifacts only through inputs/<step_id>/. "
+                        "These copies are read-only; do not read sibling workspaces. "
+                        "If an input is unavailable, ask the CSO; there is no direct-path fallback.")
+                if unavailable:
+                    note += "\n" + "\n".join(unavailable.values())
+                    for reason in unavailable.values():
+                        await emit("agent.log", {"level": "warn", "text": reason})
+                task = ws.task = task.model_copy(update={"context": task.context + "\n\n" + note})
+            elif isinstance(upstream_steps, dict) and upstream_steps and not read_only:
                 # The step prompt names upstream files as inputs/<step id>/... (#423); link the folders opened above.
                 links: dict[str, Path] = {}
                 unlinked: dict[str, str] = {}
@@ -1607,6 +1631,7 @@ class Runner:
             open_reads = plugin_keep_dirs(self.s, agent.plugin_dirs, ws.dir)
             # Only references that passed the runner's zone/link/scan checks get a shell read grant.
             open_reads.extend(read_dirs)
+            open_reads.extend(staged_inputs)
             if task.meta.get("kind") == "recruit" or (
                     task.meta.get("kind") == "paper_skill" and agent.id == self.s.recruit.agent_id):
                 from ..recruit.paper2agent import skill_path
@@ -1617,6 +1642,13 @@ class Runner:
             if agent.engine == Engine.claude_code:
                 open_reads.extend(staff_claude_project_dirs(self.s, ws.dir))
             private = resolve_private_paths(self.s, keep, open_reads=open_reads, cwd=ws.dir)
+            if artifact_contract:
+                # Reuse the existing private/read-root machinery; inputs never become write roots.
+                private = replace(private, paths=tuple(dict.fromkeys([
+                                      *private.paths, str(root), str(ws.dir / "inputs")])),
+                                  labels=(*private.labels, "선행 단계 읽기 전용 입력"), enabled=True,
+                                  open_reads=tuple(scoped_open_reads(self.s, [
+                                      *private.open_reads, str(ws.dir), *staged_inputs], cwd=ws.dir)))
             gated_read_roots: list[str] = []
             non_public_zones = [*zones, *internal_zones]
             for root_path in dict.fromkeys(map(str, [ws.dir, *extra_dirs, *read_dirs, *private.open_reads])):
@@ -1756,6 +1788,8 @@ class Runner:
                 except (OSError, RuntimeError, ValueError):
                     continue
             input_roots: list[tuple[Path, str]] = []
+            input_roots.extend((Path(directory), "inputs/" + Path(directory).name)
+                               for directory in staged_inputs)
             own_dir = os.path.normcase(str(ws.dir.resolve()))
             for directory in [*extra_dirs, *read_dirs]:
                 try:

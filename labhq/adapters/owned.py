@@ -132,6 +132,11 @@ async def awrite_owned_bytes(root: Path, relative: str, data: bytes) -> Path:
     return await durable.run(durable.FILES, _write_owned_bytes_now, root, relative, data)
 
 
+def write_owned_bytes(root: Path, relative: str, data: bytes) -> Path:
+    """Synchronous binary write with the same held-parent and durable boundary."""
+    return durable.call(durable.FILES, _write_owned_bytes_now, root, relative, data)
+
+
 async def awrite_owned_many(root: Path, writes: list[tuple[str, str]]) -> list[Path]:
     """Several labhq files as ONE durable job, in order: a cancel cannot leave some of them written and the rest not."""
     return await durable.run(durable.FILES, _write_owned_many_now, root, writes)
