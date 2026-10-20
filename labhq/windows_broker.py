@@ -108,7 +108,7 @@ class Native:
         finally:
             self.k.LocalFree(descriptor)
 
-    def open(self, pid, *, terminate=True):
+    def open_process(self, pid, *, terminate=True):
         handle = self.k.OpenProcess(0x1000 | 0x100000 | (1 if terminate else 0), False, pid)
         self.require(handle)
         return handle
@@ -257,7 +257,7 @@ def launch(command, *, state, role, **options):
         _write(control, request)  # No environment values or credentials on disk.
         try:
             pid = _create([command[0], "-I", "-S", str(Path(__file__).resolve()), str(control)], cwd, environment)
-            handle = native.open(pid)
+            handle = native.open_process(pid)
             process = Process(native, pid, handle, None)
             identity = native.identity(handle)
             deadline = time.monotonic() + TIMEOUT
@@ -314,7 +314,7 @@ def _bootstrap(control):
     request = _read(control)
     native = Native()
     mine = native.identity(native.k.GetCurrentProcess())
-    parent = native.open(request["caller_pid"], terminate=False)
+    parent = native.open_process(request["caller_pid"], terminate=False)
     try:
         caller = native.identity(parent)
         if (caller["created"] != request["caller_created"] or caller["image"] != request["image"]

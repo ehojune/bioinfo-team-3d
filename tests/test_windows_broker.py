@@ -20,7 +20,7 @@ def world(tmp_path, monkeypatch):
     native = SimpleNamespace(k=SimpleNamespace(GetCurrentProcess=Mock(return_value=1), CloseHandle=Mock(),
         TerminateProcess=Mock(return_value=1), WaitForSingleObject=Mock(return_value=0), GetExitCodeProcess=Mock(return_value=1)),
         identity=Mock(side_effect=lambda handle: caller if handle == 1 else child), private=Mock(),
-        open=Mock(return_value=2), alive=Mock(return_value=True), require=lambda value: value or pytest.fail("native failure"))
+        open_process=Mock(return_value=2), alive=Mock(return_value=True), require=lambda value: value or pytest.fail("native failure"))
     monkeypatch.setattr(broker, "Native", lambda: native)
     monkeypatch.setattr(broker, "job_membership", lambda *a, **kw: False)
     state = tmp_path / "state"
@@ -124,7 +124,7 @@ def test_ack_write_failure_reaps_only_already_proven_bootstrap(world, monkeypatc
 
 
 def test_failed_open_never_terminates_wmi_returned_pid(world):
-    world.native.open.side_effect = OSError("fixture")
+    world.native.open_process.side_effect = OSError("fixture")
     with pytest.raises(win.LaunchError):
         launch(world)
     world.native.k.TerminateProcess.assert_not_called()
@@ -208,7 +208,7 @@ def test_bootstrap_cannot_enter_role_before_live_caller_nonce_ack_and_job_check(
     if mode == "environment":
         monkeypatch.setattr(broker, "_digest", lambda env: "mismatch")
     if mode == "open_failed":
-        world.native.open.side_effect = OSError("fixture")
+        world.native.open_process.side_effect = OSError("fixture")
     monkeypatch.setattr(broker, "job_membership", lambda *a, **kw: None if mode == "unknown_job" else mode == "job")
     enter = Mock(return_value=42)
     monkeypatch.setattr(broker, "_enter", enter)

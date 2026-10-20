@@ -283,7 +283,7 @@ def test_real_wmi_bootstrap_never_enters_fake_role_without_verified_ack(tmp_path
     observed = []
     def observe(command, cwd, environment):
         pid = create(command, cwd, environment)
-        handle = native.open(pid)
+        handle = native.open_process(pid)
         identity = native.identity(handle)
         control = Path(command[-1])
         request = read(control)

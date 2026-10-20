@@ -17,7 +17,7 @@ def inspect(settings) -> dict:
         history = supervisor != "missing" or process != "missing"
         journal = root / "logs" / "detached-launch.jsonl"
         try:
-            with journal.open("rb") as stream:
+            with journal.open(mode="rb") as stream:
                 size = stream.seek(0, 2)
                 stream.seek(max(0, size - 65536))
                 if size > 65536:

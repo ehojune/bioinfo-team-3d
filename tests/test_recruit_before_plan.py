@@ -2,6 +2,7 @@
 import copy
 import asyncio
 import time
+from types import FunctionType, SimpleNamespace
 
 import pytest
 
@@ -15,6 +16,31 @@ from tests.test_paper_skill_attach import runner
 def proposal(paper="PMID:12345678", steps=None):
     return {"paper": paper, "repo": "", "focus": "reproduce the paper", "reason": "PI asks for reproduction",
             "step_ids": steps or ["s1"]}
+
+
+class ResumePollingClock:
+    """Control only the resume coroutine's clock; leave real asyncio watchdogs alone."""
+    def __init__(self):
+        self.now = 0.0
+        self.polled = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def sleep(self, delay):
+        assert 0 < delay <= 0.1
+        self.polled.set()
+        await self.release.wait()
+        self.now += delay
+        await asyncio.sleep(0)
+
+    def bind(self, hub):
+        method = hub.resume_when_ready.__func__
+        # Execute the unchanged production code, with private clock/sleep globals.
+        # Other Hub methods, background timers and the event loop keep real asyncio.
+        namespace = {**method.__globals__, "asyncio": SimpleNamespace(
+            get_running_loop=lambda: SimpleNamespace(time=lambda: self.now), sleep=self.sleep)}
+        controlled = FunctionType(method.__code__, namespace, method.__name__,
+                                  method.__defaults__, method.__closure__)
+        return controlled.__get__(hub)
 
 
 @pytest.mark.asyncio
@@ -371,16 +397,19 @@ async def test_resume_waits_for_active_recruit_receipt(tmp_path, mode, reconnect
     restored.runners["core"] = object()
     for aid in ("worker", "cso", "sci_reviewer", "chief_of_staff", "precedent"):
         restored.agent_runner[aid] = "core"
+    clock = ResumePollingClock()
     try:
-        resumed = asyncio.create_task(restored.resume_when_ready("r"))
+        resumed = asyncio.create_task(clock.bind(restored)("r"))
         await asyncio.sleep(0)
         if contract_state == "active":
+            await asyncio.wait_for(clock.polled.wait(), 2)
             assert not called
             assert restored.requests["r"]["status"] == "waiting_for_runner"
         if reconnect and contract_state == "active":
             restored.runners["hire"] = object()
             restored.agent_runner["c_paper"] = "hire"
             restored.agents["c_paper"] = {"id": "c_paper", "employment": "contract", "contract_status": "active"}
+        clock.release.set()
         await asyncio.wait_for(resumed, 2)
         req = restored.requests["r"]
         if contract_state != "active":
@@ -392,10 +421,12 @@ async def test_resume_waits_for_active_recruit_receipt(tmp_path, mode, reconnect
             assert set(restored.approvals) == initial_approvals  # no second resume card
             assert await prepare_plan(req["plan"], "r", restored, forbidden) == req["plan"]
         elif reconnect:
+            assert clock.now < settings.gateway.resume_wait_s
             assert called == ["r"]
             assert req["plan"]["steps"][0]["agent_id"] == "c_paper"
             assert not req["plan"].get("warnings")
         else:
+            assert clock.now == settings.gateway.resume_wait_s
             assert not called and req["status"] == "interrupted"
             assert req["plan_recruitment"][key]["results"][paper_key(proposal()["paper"])]["status"] == "active"
     finally:
