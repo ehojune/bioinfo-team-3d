@@ -493,3 +493,67 @@ def test_the_helper_ends_exactly_a_real_parent_and_child_and_not_a_sibling(tmp_p
             popen.wait(timeout=15)
         if child_pid is not None and child_created:
             proc_tree.kill_tree(child_pid, created=proc_tree.parse_created(child_created))
+
+
+# --- #800 Windows CI: a reused root PID still named as parent by older system processes ------------------------
+
+def _reused_root_with_old_system_children():
+    """ROOT got a PID that a boot-time process once held. Two system processes started by that old holder still name
+    ROOT's PID as their parent; they are older than ROOT, can be queried but refuse the terminate right, and are not the
+    console host. KID is ROOT's real child."""
+    return {ROOT: (N + 1, 1000), KID: (ROOT, 1100), ORPHAN: (ROOT, 10), ORPHAN_CHILD: (ROOT, 20)}
+
+
+def test_an_older_process_that_refuses_terminate_under_a_reused_root_pid_is_not_a_failure(monkeypatch):
+    """PR #800 Windows CI: the watcher's sleeper got PID 752 and two boot-time processes (PID 760, 856) still named 752
+    as their parent. They were denied, recorded as failed without their creation time being checked, ROOT was spared on
+    purpose and the watcher answered 2. The age rule that already leaves an opened orphan alone applies to them too."""
+    world = FakeProcessTable(_reused_root_with_old_system_children()).install(monkeypatch)
+    world.terminate_denied.update({ORPHAN, ORPHAN_CHILD})
+    world.image_paths.update({ORPHAN: r"C:\Windows\System32\svchost.exe", ORPHAN_CHILD: r"C:\Windows\System32\lsass.exe"})
+
+    result = proc_tree.kill_tree(ROOT, created=1000, spare_ancestors_on_failure=True)
+
+    assert not result.failed and not result.spared and result.killed == [KID, ROOT]
+    assert {ORPHAN, ORPHAN_CHILD} <= set(world.live) and world.killed == [KID, ROOT]  # never touched
+    assert {ORPHAN, ORPHAN_CHILD} <= set(world.opened_for_query_only) and world.leaked_handles == 0
+
+
+@pytest.mark.parametrize("created", [1000, 1100])
+def test_a_denied_child_as_old_as_or_younger_than_its_parent_still_blocks_its_ancestors(monkeypatch, created):
+    """Equal creation time counts as a child, as in `validated_descendants`: only a strictly older process is skipped."""
+    world = FakeProcessTable({ROOT: (N + 1, 1000), KID: (ROOT, created)}).install(monkeypatch)
+    world.terminate_denied.add(KID)
+    world.image_paths[KID] = r"C:\tools\worker.exe"
+    result = proc_tree.kill_tree(ROOT, created=1000, spare_ancestors_on_failure=True)
+    assert result.failed == {KID: "Access is denied"} and result.spared == [ROOT] and result.killed == []
+    assert {ROOT, KID} <= set(world.live) and world.leaked_handles == 0
+
+
+def test_an_older_denied_process_under_a_real_descendant_is_skipped_against_that_parents_age(monkeypatch):
+    world = FakeProcessTable({ROOT: (N + 1, 1000), KID: (ROOT, 1100), GRANDKID: (KID, 1050)}).install(monkeypatch)
+    world.terminate_denied.add(GRANDKID)  # older than KID, though younger than ROOT: KID's PID was reused
+    result = proc_tree.kill_tree(ROOT, created=1000, spare_ancestors_on_failure=True)
+    assert not result.failed and result.killed == [KID, ROOT] and GRANDKID in world.live
+
+
+def test_the_watcher_stops_a_stalled_gateway_whose_reused_pid_old_system_processes_still_name(monkeypatch, tmp_path,
+                                                                                              capsys):
+    """The failing CI case end to end with a fake process table and a fake clock check: 1, the record is dropped."""
+    from labhq.gateway import shutdown
+    from labhq.settings import Settings
+
+    world = FakeProcessTable(_reused_root_with_old_system_children()).install(monkeypatch)
+    world.terminate_denied.update({ORPHAN, ORPHAN_CHILD})
+    monkeypatch.setattr(sys, "platform", "win32")
+    ends = iter([False, True])  # stalled past the grace, then gone after the kill
+    monkeypatch.setattr(cli, "_wait_for_process_end", lambda pid, created, timeout: next(ends))
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    record = cli._pid_file(settings, "gateway")
+    record.parent.mkdir(parents=True)
+    record.write_text(f'{{"pid": {ROOT}, "role": "gateway", "created": "windows:1000"}}\n', encoding="utf-8")
+
+    assert shutdown.watch_gateway_exit(settings, ROOT, "windows:1000", grace=0.5) == 1
+    assert world.killed == [KID, ROOT] and {ORPHAN, ORPHAN_CHILD} <= set(world.live) and not record.exists()
+    assert "강제로 종료" in capsys.readouterr().out
