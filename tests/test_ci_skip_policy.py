@@ -36,6 +36,7 @@ def evidence():
     manifest = {"version": cs.VERSION, "repository": cs.REPOSITORY, "run_id": 42,
                 "attempt": 1, "event": "pull_request", "checkout_sha": sha("e"),
                 "workflow_sha": sha("e"), "tree": identity["tree"], "policy": identity["policy"],
+                "coverage": dict(cs.COVERAGE),
                 "workflow_ref": cs.REPOSITORY + "/" + cs.WORKFLOW + "@refs/pull/788/merge",
                 "workflow_blob": identity["policy"][cs.WORKFLOW],
                 "pr": {"number": 788, "head_sha": sha("d"), "base_sha": sha("c"), "repository_id": 123},
@@ -105,6 +106,26 @@ def test_exact_synthetic_merge_tree_can_be_reused_after_squash(evidence):
     assert reuse(api)
     assert "git/commits/" + api.manifest["checkout_sha"] in api.calls
     assert any("attempts/1/jobs" in path for path in api.calls)
+
+
+@pytest.mark.parametrize("gate,value", [("pytest", "linux-full-serial-legacy"),
+                                       ("pytest-windows", "windows-full-v1")])
+def test_different_coverage_is_not_exchangeable_even_for_the_same_tree(evidence, gate, value):
+    api = API(evidence)
+    api.manifest["coverage"][gate] = value
+    api.zip = archive(api.manifest)
+    api.artifact["digest"] = "sha256:" + hashlib.sha256(api.zip).hexdigest()
+    assert not reuse(api)
+
+
+@pytest.mark.parametrize("policy_path", cs.POLICY_FILES)
+def test_each_new_policy_component_must_already_be_trusted_on_base(evidence, policy_path):
+    api = API(evidence)
+    def request(path, binary=False):
+        if path == f"contents/{policy_path}?ref={sha('c')}":
+            return {"type": "file", "sha": sha("f")}
+        return api(path, binary)
+    assert not cs.reuse_main(api.identity, request, now=datetime(2026, 10, 20, 1, tzinfo=timezone.utc))
 
 
 @pytest.mark.parametrize("target,key,value", [
@@ -391,7 +412,7 @@ def test_manifest_requires_fresh_full_gates_on_the_checkout(monkeypatch, evidenc
     monkeypatch.setattr(cs, "git", lambda *args: (
         f"{current['checkout_sha']} {sha('c')} {sha('d')}" if args[0] == "rev-list"
         else current["policy"][cs.WORKFLOW]))
-    needs = {name: {"result": "success", "outputs": {"tree": current["tree"]}}
+    needs = {name: {"result": "success", "outputs": {"tree": current["tree"], **({"profile": cs.COVERAGE[name]} if name in cs.COVERAGE else {})}}
              for name in (*cs.GATE_IDS, "changes", "readme", "patch-notes")}
     needs["changes"]["outputs"]["skip"] = "false"
     manifest = cs.produce_manifest(current, needs, event)
@@ -489,7 +510,7 @@ def test_producer_rejects_unbound_identity_or_incomplete_receipts(monkeypatch, e
         pr[case]["sha"] = sha("f")
     if case == "fork":
         pr["head"]["repo"] = {"id": 999, "full_name": "someone/fork"}
-    needs = {name: {"result": "success", "outputs": {"tree": current["tree"]}}
+    needs = {name: {"result": "success", "outputs": {"tree": current["tree"], **({"profile": cs.COVERAGE[name]} if name in cs.COVERAGE else {})}}
              for name in (*cs.GATE_IDS, "changes", "readme", "patch-notes")}
     needs["changes"]["outputs"]["skip"] = "false"
     if case in {"readme", "patch-notes"}:

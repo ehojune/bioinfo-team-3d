@@ -6,6 +6,7 @@
 - 문서는 README 한영판(처음 쓰는 사람), `docs/manual.md`(상세), `docs/pi-qa.md`(PI), AGENTS·HANDOFF(개발)로 나눈다. 동작 변경은 manual에 반영하고 **큰 변경·매 PI 보고 전** 코드·직원 YAML·PR과 대조한다. 병합 전 PR의 동작은 manual·README에 출시된 것으로 쓰지 않는다. 상세 근거·옛 결정은 `docs/reference/`에 두고 링크한다.
 - 브랜치에서 작업하고 PR을 연다. main 직접 push 금지. 병합은 Codex 총괄이 판단하며 CI 통과가 조건이다. 자동 병합 workflow는 꺼져 있다.
 - 관련 test만 로컬에서 돌리고 전체 suite는 CI(3.10·3.12·Windows)에 맡긴다. test를 삭제·약화하지 않는다. `tests/conftest.py`의 홈·캐시·state 격리를 지키고 사용자 `.labhq` 접근 guard를 우회하지 않는다.
+- CI의 Linux 전수/Windows 경계·nightly full profile과 worker HOME/port 격리는 [CI 정책](docs/reference/ci-reuse.md)을 따릅니다. 로컬 worker/process 실행은 별도 허가 없이 하지 않습니다.
 - CI 축소는 예제·보호 markup이 그대로인 prose와 정해진 기록, main 재사용은 같은 tree·workflow/policy·전체 gate 증거에 한정한다([정책](docs/reference/ci-reuse.md)). 불명확하면 full이며 assertions·안전·설치·validator·MCP gate를 줄이지 않는다.
 - 단계 끝에는 PR 본문과 `docs/status/<YYYY-MM-DD>-<HHMM>-<branch>.md`에 같은 보고를 쓴다. `STATUS.md`는 main 자동 생성이므로 직접 고치지 않는다.
 - 기록만 바꾼 커밋을 빼고 커밋마다 `patch_notes/entries/<branch>.yaml`에 한 줄(branch의 `/`는 `--`). 생성 `patch_notes/README.md`는 직접 고치지 않는다. main 3커밋 안에 README나 manual을 갱신한다. 초안은 `python scripts/patch_notes.py rows --pr N`, 검사는 `python scripts/patch_notes.py check`.

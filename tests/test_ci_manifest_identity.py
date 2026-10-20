@@ -15,7 +15,7 @@ def producer(monkeypatch):
     event = {"pull_request": {"number": 793,
              "base": {"ref": "main", "sha": sha("c"), "repo": repo},
              "head": {"ref": "feature", "sha": sha("d"), "repo": repo}}}
-    needs = {name: {"result": "success", "outputs": {"tree": current["tree"]}}
+    needs = {name: {"result": "success", "outputs": {"tree": current["tree"], **({"profile": cs.COVERAGE[name]} if name in cs.COVERAGE else {})}}
              for name in (*cs.GATE_IDS, "changes", "readme", "patch-notes")}
     needs["changes"]["outputs"]["skip"] = "false"
     env = {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_REPOSITORY": cs.REPOSITORY,
@@ -101,3 +101,24 @@ def test_identity_diagnostics_do_not_bypass_any_gate(producer, gate):
     with pytest.raises(ValueError, match="incomplete full gate receipts"):
         cs.produce_manifest(current, changed, event)
     assert not calls
+
+
+@pytest.mark.parametrize("gate", cs.GATE_IDS)
+@pytest.mark.parametrize("profile", [None, "windows-full-v1", "serial-legacy"])
+def test_coverage_receipts_must_match_every_expected_gate(producer, gate, profile):
+    current, needs, event, _, calls = producer
+    needs[gate]["outputs"]["profile"] = profile
+    with pytest.raises(ValueError, match="coverage profile receipts"):
+        cs.produce_manifest(current, needs, event)
+    assert not calls
+
+
+def test_parent_mismatch_stays_denied_and_logs_only_bounded_public_shas(producer, capsys):
+    current, needs, event, values, _ = producer
+    values["parents"] = f"{current['checkout_sha']} {'f' * 40} {'d' * 40} arbitrary-private-value"
+    with pytest.raises(ValueError, match="checkout-parents"):
+        cs.produce_manifest(current, needs, event)
+    output = capsys.readouterr().err
+    assert '"length": 4' in output and '"expected":' in output
+    assert 'f' * 40 in output and 'c' * 40 in output
+    assert "arbitrary-private-value" not in output and len(output) < 500

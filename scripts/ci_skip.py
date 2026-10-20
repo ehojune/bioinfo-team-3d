@@ -24,9 +24,13 @@ import yaml
 
 REPOSITORY = "ehojune/bioinfo-team-3d"
 WORKFLOW = ".github/workflows/test.yml"
-POLICY_FILES = (WORKFLOW, "scripts/ci_skip.py")
-VERSION = 2
+POLICY_FILES = (WORKFLOW, "scripts/ci_skip.py", "scripts/ci_suite.py", "scripts/ci_selection.py",
+                "scripts/ci_isolation.py", "config/ci/windows-boundary-v1.json", "pyproject.toml",
+                "tests/conftest.py", "labhq/test_guard.py")
+VERSION = 3
 GATE_IDS = ("pytest", "pytest-windows", "clean-install", "ro-crate-validator", "pytest-slow")
+COVERAGE = dict(zip(GATE_IDS, ("linux-full-v1", "windows-boundary-v1", "clean-install-v1",
+                              "official-validator-v1", "long-mcp-v1")))
 REQUIRED_JOBS = ("pytest (3.10)", "pytest (3.12)", "pytest-windows", "clean-install",
                  "ro-crate-validator", "pytest-slow", "changes", "readme", "patch-notes", "validation-manifest")
 SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -80,11 +84,13 @@ def record(text: str) -> bool:
         return False
     if not isinstance(data["rows"], list):
         return False
-    return all(isinstance(row, dict) and set(row) == {"sha", "at", "text"}
+    return all(isinstance(row, dict) and set(row) in ({"sha", "at", "text"}, {"sha", "at", "text", "summary"})
                and all(isinstance(value, str) for value in row.values())
                and re.fullmatch(r"[0-9a-f]{7}", row["sha"])
                and re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", row["at"])
-               and bool(row["text"].strip()) and "\n" not in row["text"] for row in data["rows"])
+               and bool(row["text"].strip()) and "\n" not in row["text"]
+               and ("summary" not in row or (bool(row["summary"].strip()) and "\n" not in row["summary"]))
+               for row in data["rows"])
 
 
 class BalancedHTML(HTMLParser):
@@ -360,7 +366,7 @@ def expected_manifest(run: dict, current: dict, snapshot: dict, checkout_sha: st
             "event": "pull_request", "checkout_sha": checkout_sha, "workflow_sha": checkout_sha,
             "workflow_ref": f"{REPOSITORY}/{WORKFLOW}@refs/pull/{snapshot['number']}/merge",
             "workflow_blob": current["policy"][WORKFLOW], "pr": snapshot,
-            "tree": current["tree"], "policy": current["policy"],
+            "tree": current["tree"], "policy": current["policy"], "coverage": COVERAGE,
             "gates": {name: {"result": "success", "tree": current["tree"]} for name in GATE_IDS}}
 
 
@@ -490,6 +496,8 @@ def produce_manifest(current: dict, needs: dict, event: dict) -> dict:
             and all(needs[j]["result"] == "success" for j in (*GATE_IDS, "changes", "readme", "patch-notes"))
             and all(needs[j]["outputs"]["tree"] == current["tree"] for j in GATE_IDS)):
         raise ValueError("incomplete full gate receipts")
+    if any(needs[j]["outputs"].get("profile") != COVERAGE[j] for j in GATE_IDS):
+        raise ValueError("incomplete coverage profile receipts")
     snapshot = pr_snapshot(event["pull_request"])
     checkout = current["checkout_sha"]
     run = {"id": int(os.environ["GITHUB_RUN_ID"]), "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])}
@@ -510,8 +518,13 @@ def produce_manifest(current: dict, needs: dict, event: dict) -> dict:
         ref_role = "pr-merge" if ref == result["workflow_ref"] else "pr-head" if ref == head_ref else "other"
         raise ValueError("unbound checkout/workflow identity: " + ", ".join(failed)
                          + f" (source={source_role}, ref={ref_role})")
-    if (git("rev-list", "--parents", "-n", "1", "HEAD").split()
-            != [checkout, snapshot["base_sha"], snapshot["head_sha"]]):
+    parents = git("rev-list", "--parents", "-n", "1", "HEAD").split()
+    expected_parents = [checkout, snapshot["base_sha"], snapshot["head_sha"]]
+    if parents != expected_parents:
+        # Bounded public commit identifiers only; no raw event/environment dump.
+        print("ci_skip: checkout-parents " + json.dumps({
+            "actual": [p if SHA.fullmatch(p) else "<invalid>" for p in parents[:3]],
+            "expected": expected_parents, "length": len(parents)}), file=sys.stderr)
         raise ValueError("unbound checkout/workflow identity: checkout-parents")
     if git("rev-parse", f"{source}:{WORKFLOW}") != result["workflow_blob"]:
         raise ValueError("unbound checkout/workflow identity: workflow-blob")

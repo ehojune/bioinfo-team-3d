@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "profile": "windows-boundary-v1",
+  "default": "include",
+  "reviewed_pure": {
+    "tests/test_report_markdown.py": {
+      "sha256": "2d044ce45c9f7048f9bb00d39cc2acbab01b28dc64ef1eb6c2f9a91575311684",
+      "reason": "Reviewed CommonMark string regions/rendered marker transformations; synthetic text, no OS I/O."
+    },
+    "tests/test_literal_check.py": {
+      "sha256": "54dcec1e7dfde37be5e031be086318c8b810719a05301f31070fc1cf3716a79a",
+      "reason": "Reviewed numeric/Unicode quote normalization and Python grammar introspection; no operational I/O."
+    },
+    "tests/test_research_review.py": {
+      "sha256": "4545dd725f3a8ca06a41a8a28dc89119876e18b6d6563857b65da77259724669",
+      "reason": "Reviewed in-memory Pydantic result/reviewer binding and evidence-check validation; no execution or storage."
+    }
+  },
+  "implementation_sha256": "8b85ad3a583b4078ae2fa6e383c98d7a2857396c94ecf891d9afc05c4cee3b26"
+}
