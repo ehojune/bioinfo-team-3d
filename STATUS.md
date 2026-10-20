@@ -103,6 +103,49 @@ PR #816(draft), 커밋 `fb5e47c`. 재현 receipt가 공개 source의 안전한 �
 - **NFD 이름:** macOS 등에서 NFD로 만들어진 이름은 `blocked_path`로 남습니다(보수적).
 - #774는 별도입니다.
 
+# 응집형 분석 스텝 정책과 bench 계약 최종 범위 (#799)
+
+## 결론
+
+PR #815(draft), 정책 커밋 `7330e77`. #799의 최종 범위입니다. 공통 계획 정책에 응집형 분석 스텝 문장을 더했고, 4-arm bench에서 무엇을 셀지 정한 계약과 결정적 계획 예제 test를 두었습니다. Refs #799.
+
+**bench·실운전·모델 실행은 하지 않았고, 속도·비용·품질 효과는 측정하지 않았습니다.**
+
+- **근거:** [#799](https://github.com/ehojune/bioinfo-team-3d/issues/799)의 PI 10-20 외부 감사 요구(데이터 탐색·전처리·핵심 통계처럼 강하게 결합된 작업은 같은 분석 스텝에서 잇고, 이종 벤더 qa-gate/critic·CP2는 유지)와 [#760 반영 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/760#issuecomment-6281989709).
+- **승인:** 총괄 확인 [#760 재개·배정](https://github.com/ehojune/bioinfo-team-3d/issues/760#issuecomment-6285136614). 이 승인은 정책·준비 작업까지이며, 연구·bench 실행 승인이 아닙니다.
+
+## 바꾼 것
+
+- **`labhq/bioinfo_policy.py`** (`BIOINFO_ASSIGNMENT_RULE`)
+  - 같은 데이터·질문의 탐색·전처리·핵심 통계는 한 분석 단계에 두고, 데이터셋·질문·근거 갈래가 다른 진짜 독립 작업만 나눈다는 문장을 더했습니다.
+  - 생물학적 해석, 독립 technical·scientific QC 단계, 다른 회사 과학 리뷰, CP1·CP2 승인·근거 검사는 따로 둡니다.
+  - 같은 상수라 일반·연구·연구 CP2·재계획 prompt와 continuation이 모두 받습니다. `cso.py`는 고치지 않았습니다.
+  - 직원 공통 규칙에도 들어가므로 "In a plan,"으로 시작합니다.
+  - nf-core 배정과 건별 기여 승인 문장은 그대로입니다.
+- **`tests/test_coarse_plan_799.py`** (결정적, 9개)
+  - 새 문장과 경계 문구가 모든 계획 template에 있고, nf-core·기여 승인 문구가 남는지 확인합니다.
+  - 최초·재계획·continuation 계획 예제로 split 후보와 유지 경계를 셉니다.
+  - continuation의 rerun 수는 **계획상 기대 dispatch**이지 실제 CLI 시작 수가 아님을 명시했습니다(리뷰 P2).
+- **`docs/reference/bench-coarse-contract.md`**
+  - 계획 기대값, task 기록 대리값, 실제 관측값(runner의 CLI 시작·byte)을 나눕니다.
+  - 관측하지 않은 재시도·consult·CLI 시작·byte는 0이 아니라 `미수집`으로 둡니다(리뷰 P2).
+  - arm별 값의 수집 위치(각 arm 폴더의 `run.json` 옆)와 기록기 미구현을 적었습니다.
+  - 기존 수치(144/19·21:26 벤치 A, 22:28 벤치 C 재채점, C 원 보고 85.9분)는 출처와 함께 두고 인과 결론은 내리지 않았습니다.
+
+## 확인 (로컬 mock/static만)
+
+- 새 정책 test는 수정 전 문장에서 실패했고(1 failed, 8 passed), 수정 뒤 통과합니다.
+- `test_coarse_plan_799`·`test_role_footer`·`test_ask_policy`·`test_step_prompt_rules`: 45 passed.
+- `test_nfcore_default_732`: 14 passed. 모든 계획 경로의 nf-core 배정 test를 포함합니다. 실제 하위 프로세스를 쓰는 restart test 5개는 mock guard가 막았고 다시 돌리지 않았습니다.
+- Python 3.10 문법, `check_public.sh`, `git diff --check`, `patch_notes.py check`, `notes_index.py --validate` 통과. 계약 문서 링크 깨짐 0건.
+- 독립 리뷰 P1=0은 `41475fd4` 기준이며, 이 head는 그 뒤 변경입니다.
+
+## 남은 것·한계
+
+- **기록기 미구현:** task 기록 대리값과 runner의 실제 CLI 시작·byte를 arm 폴더에 쓰는 코드는 없습니다. bench dry-run 전 별도 작업이며, 그때까지 해당 칸은 `미수집`입니다.
+- **효과 미측정:** 새 문장으로 실제 CSO 계획이 응집되는지, 속도·비용·품질이 달라지는지는 측정하지 않았습니다. 실제 arm 측정은 PI의 별도 bench 실행 승인이 필요합니다.
+- **목차 링크:** `docs/reference/README.md` 목차와 manual 반영은 #801 등 다른 PR이 그 파일을 고치는 동안 미뤘습니다.
+
 ## PR #790 P1 4320895582
 
 첫 await 전에 dispatch 완료 future를 등록하고 acceptance·중단 결과 기록까지 종료 drain이 기다리도록 고쳤습니다. 기존 task 정리 중 들어온 handler도 재검사하며 ACK·5초 제한·미확인 outbox와 게시/승인 gate를 유지합니다. timeout은 handler의 completion future를 취소하지 않습니다.
@@ -110,6 +153,46 @@ PR #816(draft), 커밋 `fb5e47c`. 재현 receipt가 공개 source의 안전한 �
 검증: 기존 head에서 회귀 5 failed/1 passed, 추가 drain interleaving 1 failed를 확인했습니다. 수정 후 메모리 store·coroutine barrier 및 기존 fake signal callback을 포함한 mock/static 19 passed. Python 3.10 AST·encoding 검사가 통과했고 guard를 유지했습니다. 실제 writer thread·신호·process·운영·PI·HPC는 미실행입니다. 이전 guard 차단 startup 테스트는 재실행하지 않았습니다.
 
 CI는 push 뒤 한 번만 조회하며 완료를 기다리지 않습니다. fresh-head 리뷰·병합·배포는 총괄이 맡습니다. 근거: docs/reference/runner-signals-664.md.
+
+# 4-arm bench 준비: 응집형 분석 스텝·handoff 기록 계약 (#799)
+
+## 결론
+
+PR #815(draft), 커밋 `38145a4`. #799의 결정적 준비만 했습니다. 4-arm bench에서 응집형 분석 스텝과 handoff 비용을 무엇으로 셀지 정한 계약 문서와, 기존 정책(#732)을 검증하는 계획 예제 test입니다. Refs #799.
+
+**bench·실운전·모델 실행은 하지 않았고, 어떤 성능 수치도 측정하지 않았습니다.**
+
+## 바꾼 것
+
+- `docs/reference/bench-coarse-contract.md`
+  - 기존 `BIOINFO_ASSIGNMENT_RULE`의 주입 경로를 정리했습니다.
+  - 계획 모양 셈법: 단계, handoff, 유지 경계, 응집·pipeline split 후보, 넘기는 산출 수.
+  - arm별 기록 항목: 단계 수, CLI 시작 수, 전달 문맥량, 계획/skill/승인 대기/분석/review/보고 시간·비용. 항목마다 지금 얻는 곳과 기록기 유무를 적었습니다.
+  - 고정 조건(같은 입력·판본·예산·PI 답·blind rubric·arm 격리)과 합치지 않는 경계(QC, 생물학적 해석, 다른 회사 리뷰, CP1·CP2)를 적었습니다.
+  - 기존 수치(144/19·21:26 벤치 A, 22:28 벤치 C 재채점, C 원 보고 85.9분)는 출처와 함께 두고, 인과 결론은 내리지 않았습니다.
+- `tests/test_coarse_plan_799.py` (결정적, 8개)
+  - 규칙이 일반·연구·연구 CP2·재계획 prompt 맨 앞에 붙고, continuation은 연구 계획 prompt에 덧붙는 구조임을 확인합니다.
+  - 최초 계획: 과분할 대 응집 예제, pipeline 준비·technical QC 분할 예제, 병렬 독립 분석 예제.
+  - 재계획: 유지+새 단계를 함께 셉니다.
+  - continuation: 기존 재사용 규칙(`split_reuse`)으로, 분석을 나누면 CLI 시작이 하나 늘어남을 보입니다.
+  - 예제는 모두 `validate_steps`를 통과하는 실제 형식의 계획입니다.
+
+## 결정 필요
+
+pipeline이 아닌 분석의 탐색·전처리·핵심 통계를 한 단계로 이으라는 문장은 정책에 없습니다. 넣으면 모든 요청의 계획 prompt가 바뀌므로 정책 문장은 바꾸지 않았습니다. bench 전에 총괄·PI가 정해 주세요.
+
+## 확인 (로컬 mock/static만)
+
+- `tests/test_coarse_plan_799.py` 8 passed. 모델·CLI·하위 프로세스 없음, mock guard 유지.
+- Python 3.10 문법(`ast.parse(feature_version=(3, 10))`), `scripts/check_public.sh`, `git diff --check`, `patch_notes.py check`, `notes_index.py --validate` 통과.
+- 계약 문서의 상대 링크 깨짐 0건.
+
+## 남은 것·한계
+
+- **기록기 미구현:** §3의 기록기(task 기록에서 단계별 시간·비용·CLI 시작·prompt 크기를 뽑는 코드)는 구현하지 않았습니다. `labhq/bench.py`와 `orchestrator/cso.py`는 범위 밖이라 건드리지 않았습니다.
+- **예제는 손으로 만든 것:** 실제 CSO가 이런 계획을 내는지는 bench dry-run에서 확인해야 합니다.
+- **목차 링크:** `docs/reference/README.md` 목차 링크는 #801이 같은 파일을 고치고 있어 그 병합 뒤에 더해야 합니다.
+- **README·manual:** #801 진행 중이라 건드리지 않았습니다.
 
 ## ancestor fixture import 경로
 
