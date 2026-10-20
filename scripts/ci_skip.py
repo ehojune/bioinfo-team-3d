@@ -168,7 +168,7 @@ def markdown_parts(text: str) -> tuple:
     return protected, references, prose
 
 
-def prose_change(before: str, after: str) -> bool:
+def prose_change(before: str, after: str, *, reflow: bool = False) -> bool:
     old, new = markdown_parts(before), markdown_parts(after)
     if old[:2] != new[:2]:
         return False
@@ -180,16 +180,50 @@ def prose_change(before: str, after: str) -> bool:
     instruction = (r"\b(?:run|execute|invoke|launch|start|use|call|try|type|enter|install)\b|"
                    r"(?:실행|호출|입력|사용)[가-힣]*|[\w-]+[./\\][\w./\\-]+|"
                    r"(?<!\w)--?[A-Za-z]\w*|['\"]")
+    policy = (r"\b(?:approv\w*|authoriz\w*|permission\w*|polic\w*|safety|security|redact\w*|"
+              r"publish\w*|publication|credential\w*|secret\w*|token\w*|guard\w*|gate\w*|"
+              r"sandbox\w*|restrict\w*|config\w*|timeout\w*|deadline\w*|budget\w*|assert\w*|"
+              r"validat\w*|allow\w*|deny|denied|cancel\w*|dependenc\w*|workflow\w*|ci|test\w*)\b|"
+              r"승인|권한|정책|안전|보안|비밀|게시|통제|설정|상한|예산|검증|허용|거부|취소|의존성")
     for tag, a, b, c, d in difflib.SequenceMatcher(a=old[2], b=new[2], autojunk=False).get_opcodes():
         if tag == "equal":
             continue
         for line, heading in old[2][a:b] + new[2][c:d]:
             if (re.search(code, line, re.IGNORECASE) or re.search(instruction, line, re.IGNORECASE)
+                    or (not reflow and re.search(policy, line, re.IGNORECASE))
                     or (not heading and len(line.split()) < 2)):
                 return False
             if not heading and not line.endswith((".", "!", "?", "。")):
                 return False
     return True
+
+
+def reflow_change(before: str, after: str) -> bool:
+    """Policy-bearing documents permit only identical Markdown semantics, never rewritten policy."""
+    from markdown_it import MarkdownIt
+    if not before.strip() or not after.strip() or not prose_change(before, after, reflow=True):
+        return False
+
+    def signature(text):
+        result = []
+        for token in MarkdownIt("commonmark").enable("table").parse(text):
+            content = token.content
+            if token.type == "inline":
+                atoms, plain = [], ""
+                for child in token.children:
+                    if child.type in {"text", "softbreak"}:
+                        plain += child.content if child.type == "text" else " "
+                    else:
+                        atoms.append(("text", re.sub(r"[ \t\r\n]+", " ", plain)))
+                        plain = ""
+                        atoms.append((child.type, child.tag, child.nesting, child.markup, child.content, child.attrs))
+                atoms.append(("text", re.sub(r"[ \t\r\n]+", " ", plain)))
+                content = atoms
+            result.append((token.type, token.tag, token.nesting, token.hidden,
+                           token.markup, token.info, token.attrs, content))
+        return result
+
+    return signature(before) == signature(after)
 
 
 def document_change(path: str, before: str, after: str) -> bool:
@@ -199,6 +233,8 @@ def document_change(path: str, before: str, after: str) -> bool:
             return False
         if re.fullmatch(r"patch_notes/entries/[^/]+\.yaml", path):
             return record(before) and record(after)
+        if path in {"AGENTS.md", "HANDOFF.md"}:
+            return reflow_change(before, after)
         if path not in {"README.md", "README.en.md", "STATUS.md", "patch_notes/README.md"}:
             if not re.fullmatch(r"docs/(?:[\w-]+/)*[\w-]+\.md", path):
                 return False
@@ -206,7 +242,7 @@ def document_change(path: str, before: str, after: str) -> bool:
                          r"example|policy|ci[-_. /]|guard|approval|safety|security|operations|instruction|contract|protocol|"
                          r"config|package|runtime|dependenc|(?:^|/)(?:tests?|agents|handoff)(?:[./_-]|$)",
                          path, re.IGNORECASE):
-                return False
+                return reflow_change(before, after)
         return prose_change(before, after)
     except Exception:
         return False  # malformed records also run full

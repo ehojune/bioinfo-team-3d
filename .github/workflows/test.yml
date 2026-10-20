@@ -10,6 +10,11 @@ permissions:
   contents: read
   actions: read  # same-repository run, job and manifest evidence; never execute artifacts
 
+concurrency:
+  # PR heads supersede only their own workflow. Unique non-PR groups also avoid pending-run cancellation.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}-{1}', github.run_id, github.run_attempt) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   changes:
     # Fail closed: prose-only documents or a complete, trusted, identical-tree PR result (#788).
@@ -212,6 +217,12 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: pytest -q tests/test_integrations.py
       - run: python scripts/integrations.py --check
+      - run: python scripts/vocab_tables.py --check
+      - name: Static document and safety consistency
+        run: >-
+          pytest -q tests/test_text_encoding.py
+          tests/test_private_paths.py::test_absent_key_means_the_default_list_and_an_empty_list_turns_it_off
+          tests/test_topic_checklists_precedents.py::test_every_approved_topic_has_checks_with_a_cited_basis
       - run: python scripts/notes_index.py --validate
       - run: bash scripts/check_public.sh
 
