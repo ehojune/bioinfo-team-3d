@@ -30,3 +30,6 @@ rows:
   - sha: 'd2ddfc3'
     at: '2026-10-20 19:25'
     text: '문서에서 필수·허용·금지 조건을 바꾸면 전체 검사를 거칩니다. 영·한 규범 문단의 문구·container를 보호하고 exact Markdown reflow만 허용하며, 실제 parser와 fake git/API를 쓴 관련 mock/static 448개로 검증했습니다.'
+  - sha: 'fcf645d'
+    at: '2026-10-20 20:21'
+    text: '검증 증명서 실패가 어느 신원 검사에서 발생했는지 구분합니다. manifest의 기존 허용 조건을 유지하고 SHA·workflow ref·순서 있는 parent·blob 오류를 제한된 역할명으로 진단하며 관련 mock/static 313개를 통과했습니다. 실제 실패 원인은 미확정입니다.'
