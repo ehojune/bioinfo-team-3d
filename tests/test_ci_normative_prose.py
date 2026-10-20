@@ -118,6 +118,96 @@ def test_4321519440_exact_gradle_change_is_already_full_with_real_parser():
     assert not cs.document_change('README.md', before, after)
 
 
+COMMAND_EDITS = (
+    ('Build with gradle assemble.', 'Build with gradle clean.'),
+    ('Build with gradle assemble.', 'Build with gradle bundle.'),
+    ('Frobnicate with zorb weave.', 'Frobnicate with zorb unweave.'),
+    ('Construct via zerbit plonk.', 'Construct via zerbit sprock.'),
+    ('Mogrify zephyr weave.', 'Mogrify zephyr unweave.'),
+    ('zephyr weave.', 'zephyr unweave.'),
+    ('Using zorb, weave.', 'Using zorb, sprock.'),
+    ('After quux prepare, zorb weave.', 'After quux prepare, zorb sprock.'),
+    ('Please frobnicate zephyr weave.', 'Please frobnicate zephyr unweave.'),
+    ('The next step is zorb weave.', 'The next step is zorb unweave.'),
+    ('The diagram is clearer. Mogrify zephyr weave.',
+     'The diagram is clearer. Mogrify zephyr unweave.'),
+    ('The overview is clearer, then frobnicate zephyr weave.',
+     'The overview is shorter, then frobnicate zephyr weave.'),
+    ('## Frobnicate zephyr weave', '## Frobnicate zephyr unweave'),
+    ('- Mogrify zephyr weave.', '- Mogrify zephyr unweave.'),
+    ('프롭으로 위젯을 조립하세요.', '프롭으로 위젯을 분해하세요.'),
+    ('프롭을 조립하십시오.', '프롭을 분해하십시오.'),
+    ('프롭으로 위젯을 조립합니다.', '프롭으로 위젯을 분해합니다.'),
+    ('zorb로 위젯을 조립합니다.', 'zorb로 위젯을 분해합니다.'),
+)
+
+
+@pytest.mark.parametrize('path', PATHS)
+@pytest.mark.parametrize('before,after', COMMAND_EDITS)
+def test_unclassified_instructions_are_protected_in_both_directions(path, before, after):
+    assert not cs.document_change(path, before, after)
+    assert not cs.document_change(path, after, before)
+    plain = 'The overview is clearer.'
+    assert not cs.document_change(path, before, plain)
+    assert not cs.document_change(path, plain, before)
+
+
+@pytest.mark.parametrize('before,after', COMMAND_EDITS[:6])
+def test_unclassified_instruction_reaches_full_decision_with_only_fake_git(monkeypatch, before, after):
+    def git(*args):
+        if args[0] == 'diff':
+            return ':100644 100644 old new M\0README.md\0'
+        assert args[0] == 'show'
+        return {'base:README.md': before, 'head:README.md': after}[args[1]]
+    monkeypatch.setattr(cs, 'git', git)
+    assert not cs.can_skip('head', 'base')
+
+
+@pytest.mark.parametrize('before,after', [
+    ('The diagram is clearer.', 'The diagram is shorter.'),
+    ('This paragraph is easier to read.', 'This paragraph is more concise.'),
+    ('The explanations are clearer.', 'The explanations are more concise.'),
+    ('A runner description.', 'A runner explanation.'),
+    ('More prose.', 'New prose.'),
+])
+def test_reviewed_descriptive_forms_remain_document_only_in_both_directions(before, after):
+    assert cs.document_change('README.md', before, after)
+    assert cs.document_change('README.md', after, before)
+
+
+def test_unchanged_unclassified_instruction_is_protected_but_independent_prose_can_change():
+    before = 'Build with gradle assemble.\n\nThe diagram is clearer.'
+    after = before.replace('The diagram is clearer.', 'The diagram is shorter.')
+    assert cs.document_change('README.md', before, after)
+    assert cs.document_change('README.md', after, before)
+    assert cs.document_change('README.md', 'Build with gradle assemble.', 'Build with\ngradle assemble.')
+
+
+def test_missing_real_parser_is_a_full_fallback_not_green_classification_evidence(monkeypatch):
+    import builtins
+    original = builtins.__import__
+
+    def missing_parser(name, *args, **kwargs):
+        if name == 'markdown_it':
+            raise ModuleNotFoundError('synthetic missing markdown_it')
+        return original(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', missing_parser)
+    with pytest.raises(ModuleNotFoundError, match='synthetic missing markdown_it'):
+        cs.markdown_parts('The overview is clearer.')
+    assert not cs.document_change('README.md', 'The overview is clearer.', 'The overview is shorter.')
+
+
+@pytest.mark.parametrize('text', [
+    'The overview sparkles brightly.',  # possibly harmless, outside the small grammar
+    'Description inconnue et ambiguë.',
+    '위젯을 조립합니다.',
+])
+def test_unreviewed_sentence_forms_conservatively_run_full(text):
+    assert not cs.document_change('README.md', 'The overview is clearer.', text)
+    assert not cs.document_change('README.md', text, 'The overview is clearer.')
+
+
 def test_4320728990_unchanged_readme_heading_is_already_document_only_with_fake_git(monkeypatch):
     before, after = '# labhq\n', '# labhq\nMore prose.\n'
     assert cs.document_change('README.md', before, after)

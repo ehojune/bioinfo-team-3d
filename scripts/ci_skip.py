@@ -125,6 +125,35 @@ def inline_signature(children) -> list:
     return atoms
 
 
+def descriptive_prose(text: str, *, heading: bool) -> bool:
+    """A small positive grammar, not a detector for arbitrary CLI/NL syntax.
+
+    Unclassified blocks retain their complete Markdown identity. New tools or
+    imperative verbs therefore do not need to be added to a command denylist.
+    """
+    text = re.sub(r"[ \t\r\n]+", " ", text).strip()
+    if heading and re.fullmatch(r"[^\W\d_]+", text):
+        return True  # single-word headings; argv-shaped headings stay protected
+    subject = r"(?:The|A|An|This|That|These|Those) (?:[A-Za-z]+ ){1,6}"
+    descriptive = (
+        subject + r"(?:is|are|was|were) (?:(?:more|less|much) )?"
+        r"(?:clear|clearer|concise|short|shorter|long|longer|detailed|readable|helpful|easier to read)|"
+        + subject + r"contains (?:more|fewer|clearer) (?:examples|diagrams|illustrations|details)|"
+        r"(?:Old|New|More|Plain|Ordinary) (?:prose|result|row)|"
+        r"(?:A|An) [A-Za-z]+ (?:description|explanation)"
+    )
+    for sentence in re.split(r"(?<=[.!?。]) ", text):
+        if re.fullmatch(r"(?:" + descriptive + r")[.!?。]", sentence):
+            continue
+        # Only descriptive/reporting endings, not every polite verb, qualify.
+        # Mixed-language argv and unfamiliar/imperative predicates stay full.
+        if re.fullmatch(r"[가-힣 ]+(?:명확해졌습니다|짧아졌습니다|명확합니다|간결합니다|"
+                        r"짧습니다|보입니다|설명합니다|담습니다|남깁니다|확인합니다)[.!?。]", sentence):
+            continue
+        return False
+    return bool(text)
+
+
 def markdown_parts(text: str) -> tuple:
     # This is already a project dependency. Import lazily: manifest creation
     # needs only PyYAML, while the changes job also installs markdown-it-py.
@@ -185,6 +214,10 @@ def markdown_parts(text: str) -> tuple:
                 # Protect the complete inline block on BOTH sides, including
                 # context/conditions/emphasis; no subject noun is assumed safe.
                 protected.append(("normative", tuple(containers), inline_signature(token.children)))
+            elif not descriptive_prose(plain, heading=heading):
+                # Protect the whole block, including surrounding words and
+                # structure; line diffs must not hide an unfamiliar instruction.
+                protected.append(("unclassified", tuple(containers), inline_signature(token.children)))
             for line in plain.splitlines():
                 if re.match(r"\s*\.\.\s", line):
                     raise ValueError("unsupported directive")
