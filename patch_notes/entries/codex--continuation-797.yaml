@@ -10,3 +10,8 @@ rows:
   text: 807 CI의 consult/wake 누락 request 조회와 새 계획 채택 전 복구, 예산 거절 rollback 회귀를 수정했다.
     CP1 사전 snapshot 검증·승인 후 drift 중단은 유지하고 실제 dispatch 진행을 구분했다. 실제 실패 패턴 mock 20건
     red 뒤 관련 mock/static 100건 통과, 실제 Hub/process 통합은 CI에 맡긴다.
+- sha: ea0f289
+  at: 2026-10-20 16:02
+  text: 실행 prompt와 노드별 재사용 identity를 일치시키고 dispatch/결과 시점의 도구·engine 증거를 기록했다. 부분
+    실행 뒤 재승인은 완료 결과를 검증·seal하여 보존하며 증거 누락/변경은 중단한다. 현재 head 실패 8건 재현 뒤 관련 mock/static
+    113건 통과. 실제 연구·process는 미실행이다.
