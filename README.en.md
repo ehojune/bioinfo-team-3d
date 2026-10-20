@@ -215,6 +215,8 @@ Details are in [Safety measures](docs/manual.md#%EC%95%88%EC%A0%84-%EC%9E%A5%EC%
 
 ## Roadmap
 
+The [trial checklist and audit queue](https://github.com/ehojune/bioinfo-team-3d/issues/739) track readiness. Receipt execution and Windows runtime P1 issues (#794, #795) take priority; a new live-trial pass remains unverified.
+
 | Version | Goal |
 |---|---|
 | v0.25 | The PI trials labhq on public data — **declared 2026-10-04** |

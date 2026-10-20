@@ -11,20 +11,20 @@
 
 큰 변경 때와 **매 PI 보고 전** README 한영판·manual·HANDOFF를 코드·직원 YAML·현재 PR과 대조합니다. 과거 큐와 결정 근거는 [참고 기록](docs/reference/README.md)에 두고 본문에는 현재 권고만 남깁니다.
 
-## 작업 큐 (2026-10-20 통합 점검)
+## 작업 큐 (2026-10-20 외부 감사 반영)
 
-[#760의 이관 요약](https://github.com/ehojune/bioinfo-team-3d/issues/760) 기준입니다. PR의 최신 head·CI·리뷰는 작업 직전에 다시 확인합니다.
+[시운전 체크리스트 #739](https://github.com/ehojune/bioinfo-team-3d/issues/739)가 현재 큐의 정본입니다. 이전 후속 자동 배정은 보류하고 진행 중 P1 수정·CI는 보존합니다.
 
 | 순서 | 할 일 | 완료 조건·현재 한계 |
 |---|---|---|
-| 완료 | #762→#764→#763 및 후속 #765·#768·#767·#775·#777·#778·#781·#782·#783 병합 | PI 반영본 `e0fa7e48`에서 doctor 준비·필수 WSL 연결·요청 0 확인. 실제 연구·재현·성능 PASS는 별도 |
-| 완료 | #682 거부 선택(#778)·#677 참고 읽기 승인(#782)·#676 내장 조회 상한(#776)·#754 rebuild(#777) | 구현·CI·병합 완료. #676의 임의 스크립트/외부 MCP와 #771의 helper/output 계약은 일부 미해결 |
-| 진행 | #681 광역 종료 차단 PR #766 | `e0512fd7` Windows CI 통과, 3.10 재실행에서 외부 조회 limiter test 실패. 같은 담당자가 mock 검증·수정 후 최종 CI/리뷰·P1=0 확인 |
-| 다음 | Codex #665→#673·#664→#674, Opus #772 | 같은 담당자·정확한 세션 재사용. 사용량+예약+점검/보고 여유를 포함해 배정하고 부족하면 기존 큐를 보존 |
-| 2 | 공개 소형 주제 2개를 제시하고 PI 선택 뒤 장치 실운전 | P2A 생성→호출→산출, 의미 모델·그림자 요청·ontology·checklist·EDAM·pack, 문헌/PDF, 보고서·묶음·정리본을 요청별로 대조. **아직 미실행** |
-| 3 | bench dry-run → 준비 게이트 검토 요청 | 동일 입력·판본·PI 답·예산과 arm별 state/workspace 분리, 장치 작동 근거, 예상 시간·비용을 확인 |
-| 4 | 공개 소형 dry-run·필수 gate → Astra 전체 repo 검토 | labhq 코드·README·구조 전체를 검토([PI 승인](https://github.com/ehojune/bioinfo-team-3d/issues/435#issuecomment-6251776665), [#739 확인](https://github.com/ehojune/bioinfo-team-3d/issues/739#issuecomment-6251808284)) |
-| 5 | 동일 요청 bench 비교([#739](https://github.com/ehojune/bioinfo-team-3d/issues/739)) | labhq 혼합 roster와 Astra·Sol·Opus **단독 세션**을 비교(CSO-only와 구분). 생성 결과 repo blind review는 실행 뒤 별도 |
+| 1·병렬 | #794 receipt venv import / #795 Windows 생존·doctor | 같은 Opus / Codex2. 실제 격리 CI·최종 head 리뷰/P1=0 뒤 병합. #789는 이미 병합되어 후속 PR로 수정 |
+| 2 | #796 CP1 input-fit·장치 최소 기여 지표 | Codex1, 예산 admission 뒤 진행. 현재는 측정용 Shadow 유지·부가 확장 동결, 효용 판정 뒤 관측 코드 정리 |
+| 3 | #797 재사용 → #798 Paper2Skill | CP1 공유 코드를 순차 통합. 카드 전 재사용 검증·승인 hash 보존·실제 참조 근거 |
+| 유지 | #766·#790·#791·#793의 진행 중 수정·CI | 기존 결과 보존. #793은 실제 검증 일치·실패 CI 교정 전 DRAFT, 후속 우선순위는 감사 뒤 |
+| 시운전 전 | 선택 경로 P1 수정·배포·소형 주제/계약 확정 | 11:27 gateway 연결 불가로 현재 가동·요청0 미확인. 마지막 성공 receipt e0fa7e48을 현재 가동 증거로 쓰지 않음 |
+| bench 전 | #799 응집형 분석 정책 이행·handoff 비용 | 동일 입력/판본/예산/PI 답의 labhq·Astra·Sol·Opus 네 arm. 이종 벤더 review·CP2 유지 |
+
+소형 장치 실운전 → bench dry-run·필수 게이트 → Astra의 README·코드·구조 전체 검토 → 비교 실행 순서입니다. 전체 백로그 종료를 소형 시운전 조건으로 넓히지 않습니다. [감사 근거·해석 경계](docs/reference/audit-priorities-2026-10-20.md).
 
 v0.5 선언(2026-10-08)은 당시 실제 연구 요청 2건과 `labhq verify` exit 0의 근거입니다. 이후 장치의 구현·CI 통과는 새 실운전 PASS를 뜻하지 않습니다. 버전별 기준은 [매뉴얼 로드맵](docs/manual.md#로드맵)에 있습니다.
 
@@ -35,10 +35,10 @@ v0.5 선언(2026-10-08)은 당시 실제 연구 요청 2건과 `labhq verify` ex
 | 항목 | 결정 |
 |---|---|
 | 개발 총괄 | Codex 고정, Codex·Claude subagent에 여러 작업 위임. 제품 CSO 설정은 별개 |
-| Codex 일일 한도 | 10-19 실제 11,376,303/14M, 미사용 2,623,697 → M 단위 올림 3M + 4M = **10-20 7M 확정**([PI 승인](https://github.com/ehojune/bioinfo-team-3d/issues/760#issuecomment-6269465875)) |
+| Codex 일일 한도 | **10-20 10M(기존7M+추가3M)**. 사용량+예약+점검/보고 여유로 admission. 21일 미승인. [PI 결정](https://github.com/ehojune/bioinfo-team-3d/issues/760#issuecomment-6281199397) |
 | #732 배정 | 표준 생물정보학은 bioinfo-agent/nf-core, 단순 작업은 직접 처리. 없는 복잡한 신규 파이프라인은 직접 코딩한 뒤 **기여 여부를 PI에게 묻고 yes일 때만 bioinfo-agent PR** |
 
-#732는 PR #762(`923a4fa`)로 병합됐습니다. #748 receipt와 #754 CLI/storage rebuild(#777)는 병합됐고, #771의 script별 출력 판정은 일부 해결 상태입니다. 다음 PI 확인은 공개 소형 주제 선택과 dry-run 뒤 bench 준비 게이트입니다. 이전 교대 운영·결정표는 [보존본](docs/reference/handoff-history-2026-10-19.md)에 있습니다.
+다음 PI 확인은 소형 주제 선택과 dry-run 뒤 준비 게이트입니다. [이전 결정](docs/reference/handoff-history-2026-10-19.md).
 
 ## 구조 한눈에
 

@@ -2,7 +2,7 @@
 
 시작 전에 `HANDOFF.md`·`STATUS.md` 상단과 현재 PI 창구 [#760](https://github.com/ehojune/bioinfo-team-3d/issues/760)의 최근 댓글을 읽는다.
 
-- 개발 총괄은 **Codex 고정**이며 Codex·Claude subagent에 위임한다. 제품 안의 연구 CSO·직원 설정과 구분한다. 작업 순서는 HANDOFF, 위임·리뷰는 [운영 기준](docs/reference/lead-operations.md)을 따른다.
+- 개발 총괄은 **Codex 고정**이며 Codex·Claude subagent에 위임한다. 제품 안의 연구 CSO·직원 설정과 구분한다. 현재 우선 큐는 [#739](https://github.com/ehojune/bioinfo-team-3d/issues/739)·HANDOFF, 위임·리뷰는 [운영 기준](docs/reference/lead-operations.md)을 따른다.
 - 10분마다 worker·PR·문제·예산·다음 일을 점검하고 후속 조치를 한다. 완료 뒤 같은 담당자에게 다음 일을 잇는다. 기본 Codex 2(gpt-6.1-sol)·Opus 1, 상한은 각각 4·2다. 중요한 분기만 선택지·영향·권고를 정리해 PI에게 묻는다.
 - 문서는 README 한영판(처음 쓰는 사람), `docs/manual.md`(상세), `docs/pi-qa.md`(PI), AGENTS·HANDOFF(개발)로 나눈다. 동작 변경은 manual에 반영하고 **큰 변경·매 PI 보고 전** 코드·직원 YAML·PR과 대조한다. 상세 근거·옛 결정은 `docs/reference/`에 두고 링크한다.
 - 브랜치에서 작업하고 PR을 연다. main 직접 push 금지. 병합은 Codex 총괄이 판단하며 CI 통과가 조건이다. 자동 병합 workflow는 꺼져 있다.
