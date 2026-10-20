@@ -11,3 +11,9 @@ rows:
     기존 read grant에 연결한다. 조상 namespace·inputs 보호·native 쓰기 제한과 called 의미를 유지한다. 4건 red 뒤 관련 mock/static 80건 및 최종
     권한/profile 14건 통과; 실제 CLI/process 실행은 하지 않았다.
   summary: 승인된 논문 문서가 읽기 차단에 걸리던 문제를 고쳤습니다.
+- sha: df2a51c
+  at: 2026-10-20 21:10
+  text: main 8151f23을 merge해 PR818 queued-halt/Shadow 검사와 PR819 external-wait 변경을 보존했다. HANDOFF 한 충돌만 양쪽 검증/논문 입력
+    설명을 살려 해결했고 manual은 자동 병합했다. main 관련 14파일·PR821 제품/계약 9파일 동일성, mock/static 63건·3.10 AST 7파일 통과; 실제 process/CLI/연구·CI
+    조회는 미실행이다.
+  summary: 최신 main과 논문 스킬 변경을 함께 반영하도록 충돌을 풀었습니다.
