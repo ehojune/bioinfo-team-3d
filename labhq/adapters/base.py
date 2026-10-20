@@ -484,6 +484,19 @@ class RunContext:
     halt_grace_s: float = 0.0
     # Runner hook: the CLI process started, so the steers in its prompt reached the engine.
     on_started: Callable[[], None] | None = None
+    # Explicit benchmark runner only. Callback accepts identifiers/counts, never prompt/command text.
+    bench_observer: Callable[..., None] | None = None
+
+    def bench_spawn(self, spawn_id, state: str, argv: list[str], payload: bytes | None) -> None:
+        if self.bench_observer is not None:
+            try:
+                self.bench_observer(task_id=self.task.id, request_id=self.task.request_id,
+                                    spawn_id=spawn_id, state=state,
+                                    prompt_bytes=len(self.prompt.encode("utf-8")),
+                                    argv_bytes=sum(len(arg.encode("utf-8")) + 1 for arg in argv),
+                                    stdin_bytes=len(payload) if payload is not None else 0)
+            except Exception:
+                pass  # Optional measurement cannot change execution or cancellation policy.
 
     @property
     def meta_dir(self) -> Path:
@@ -897,11 +910,13 @@ class AgentAdapter(ABC):
         if ctx.halt is not None and ctx.halt.is_set():  # halted while labhq prepared the run: nothing starts
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error_kind="halted",
                               error="halted before the CLI started", session_id=ctx.task.resume_session_id)
+        bench_spawn_id = object() if ctx.bench_observer is not None else None
         try:
             group_args = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
                           if os.name == "nt" else {"start_new_session": True})
             group_args.update(memory_guard.spawn_kwargs())
             spawn_cmd = memory_guard.wrap_command(cmd)
+            ctx.bench_spawn(bench_spawn_id, "attempt", spawn_cmd, payload)
             proc = await asyncio.create_subprocess_exec(
                 *spawn_cmd, cwd=str(ctx.workdir), env=env,
                 stdin=asyncio.subprocess.PIPE if payload is not None else asyncio.subprocess.DEVNULL,
@@ -909,15 +924,18 @@ class AgentAdapter(ABC):
                 limit=32 * 1024 * 1024, **group_args,
             )
         except FileNotFoundError:
+            ctx.bench_spawn(bench_spawn_id, "failed", cmd, payload)
             memory_guard.close()
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False,
                               error=f"executable not found: {cmd[0]!r} — install it on the runner or fix "
                                     f"engines/cli settings for agent {ctx.agent.id!r}")
         except OSError as exc:
+            ctx.bench_spawn(bench_spawn_id, "failed", cmd, payload)
             memory_guard.close()
             detail = exc.strerror or str(exc)
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False,
                               error=f"could not start executable {cmd[0]!r}: {detail}")
+        ctx.bench_spawn(bench_spawn_id, "started", spawn_cmd, payload)
         try:
             # Unit adapters use small process doubles; only a real asyncio child has an OS process to constrain.
             if isinstance(proc, asyncio.subprocess.Process):

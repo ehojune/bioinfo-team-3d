@@ -1816,6 +1816,7 @@ class Runner:
                 halt=self.controls.halt_event(task.id),
                 halt_grace_s=HALT_GRACE_S if hooked else 0.0,
                 on_started=lambda: self.controls.started(task.id),
+                bench_observer=getattr(self, "_bench_observer", None),
             )
             # External folders exposed to this step are its reproducibility inputs. Upstream outputs use the same
             # inputs/<step> spelling the bundle restores; other runner paths use ~/... under the runner account.
