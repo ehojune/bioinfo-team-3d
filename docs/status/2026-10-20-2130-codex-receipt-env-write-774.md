@@ -8,7 +8,7 @@
 ## 테스트 결과
 - 수정 전 새 회귀: 9 failed / 15 passed. 수정 후 지정 AST·FakeInterpreter 검사: 28 passed.
 - Python 3.10 AST·diff 검사 통과. 실제 interpreter·서비스·성능은 미검증.
-- public·patch-notes·notes 검사는 완료 후 PR에 기록한다. CI·리뷰는 조회하지 않는다.
+- public·patch-notes·notes·diff 검사 통과. CI·리뷰는 조회하지 않는다.
 
 ## 바꾼 파일
 reproduction_receipt.py, 해당 focused test, manual 한 문장, reference·status·patch entry.

@@ -1,0 +1,8 @@
+pr: 822
+rows:
+- sha: 7ed32e1
+  at: 2026-10-20 21:31
+  text: Python 환경변수 Store/Del을 입력에서 제외하되 Load·get/getenv·AugAssign과 LABHQ_INPUT_*
+    선언을 유지한다. AST·FakeInterpreter 28개 검사와 Python 3.10 AST 검사가 통과했고 실제 interpreter·서비스·성능은
+    미검증이다.
+  summary: 코드가 환경변수를 설정하거나 지우기만 해도 입력이 없다고 막히던 문제를 고쳤습니다.
