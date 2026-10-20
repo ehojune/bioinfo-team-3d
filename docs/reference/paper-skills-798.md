@@ -15,3 +15,9 @@
 - 두 prompt snapshot은 `labhq prepares them before CP1.`을 metadata 확인·승인된 단계 dispatch 문장으로 바꾼 차이만 반영한다. 문장을 되돌리면 이전 digest와 일치한다는 assertion도 유지하며 schema·output_types off/on 계약은 바꾸지 않는다.
 - paper 중단 검사는 metadata 준비에서 callback 미호출을 확인한 뒤 승인 hash를 붙인 실제 CSO step 경계로 이동했다. fake dispatch의 runner shutdown과 asyncio cancellation이 모두 전파되고 연구 단계는 dispatch되지 않으며 계획·승인 hash는 유지된다. 제품 예외 처리는 이미 이 계약을 지켜 수정하지 않았다.
 - 원 head의 네 실패를 mock으로 재현한 뒤 같은 네 node와 관련 17건이 통과했다. 로컬 timing은 각각 1.55초·4.06초이며 CI 성능이나 실제 process 중단의 검증은 아니다.
+
+## 10-21 staff-path 검사 격리
+
+- Linux 3.12 job 118674733476의 terminal error는 테스트의 전역 `Path` trap이 pytest traceback·cache·정리까지 차단한 것이다. 기존 staff-path 6조합은 단독 통과했고 무관한 진단 I/O를 끼운 mock 6건은 같은 메시지로 실패했다. 선행 E/F의 원 traceback은 로그에 없어 원인 전체를 확정하지 않는다.
+- trap은 테스트 대상 staff/cache 경로로 한정하고 git fake는 해당 모듈에만 연결했다. 호출 내부 context에서 복원하므로 예상 밖 예외도 정상 보고한다. 실제 HOME/staff 사전 거부와 guard 전 I/O 금지는 유지하며 제품 코드는 바꾸지 않았다.
+- 수정 뒤 16건은 정상 진단·실패 시 복원·조기 staff/cache 읽기·git 차단을 검사했고 관련 HOME guard 3건도 통과했다. 실제 설치/git·process 실행과 전체 Linux 3.12 재검증은 수행하지 않았다.
