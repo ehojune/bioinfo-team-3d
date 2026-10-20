@@ -79,3 +79,7 @@ rows:
     at: '2026-10-21 03:52'
     summary: '긴 문자열의 경로 검사 비용을 줄이고 기존 보호 판정을 유지했습니다.'
     text: 'chunk 끝과 colon run 끝만 같은 범위의 단일 character-class search로 찾는다. 원본 AST와 같은 oracle을 기준으로 3,107개 문자열의 후보·metadata·zone 결과가 일치하고 관련 guarded pure-string/static 59개를 통과했다. 같은 731,072자 입력의 로컬 touches CPU 중앙값은 0.109375→0.0703125초다. 기존 clock·None assertion·엄격한 2초 한도·CI/Windows 보호는 유지하며 새 native CI 통과를 뜻하지 않는다.'
+  - sha: '2620947'
+    at: '2026-10-21 04:55'
+    summary: '생소한 명령 지시문이 문서 수정으로 분류돼 검사를 건너뛰지 않도록 좁혔습니다.'
+    text: '수정 가능한 prose를 작은 설명문 grammar로 제한하고 미분류 문단의 inline signature·container 전체를 보호한다. Gradle clean/bundle·생소한 argv/지시문을 양방향 검사하며 frozen 기존 head의 63 failed/97 passed에서 관련 pure/fake/static 512 passed로 바뀌었다. 실제 MarkdownIt과 dependency 실패를 구분했고 기존 normative·markup·reflow·CI 신원/Windows 보호는 유지한다. 자연어 전체 해석이나 새 native CI 성공을 뜻하지 않는다.'
