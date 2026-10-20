@@ -12,3 +12,7 @@ rows:
   at: 2026-10-20 12:51
   text: 확인된 direct 실패에만 소유 자식을 회수한 뒤 nonce·PID 생성 시각·사용자·실행 파일·전체 Job 비소속을 검사하는 임시
     WMI bootstrap을 한 번 시도하며 venv와 fail-closed를 유지한다.
+- sha: a358267
+  at: 2026-10-20 13:19
+  text: binary journal mode와 native process-handle 이름을 명시해 encoding 검사를 유지하고 승인된 recruit
+    receipt clock·external_wait test-only delta를 원문 재사용한다.
