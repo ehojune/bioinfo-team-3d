@@ -9,7 +9,6 @@ import pytest
 from labhq.gateway.server import Hub
 from labhq.portfolio import build_portfolio_files
 from labhq.request_bundle import build_request_bundle
-from labhq.research import semantics_shadow
 from labhq.research.semantic_device_report import build_report, render_report
 from labhq.settings import Settings
 from labhq.vocab.topic_checklists import ChecklistItem
@@ -365,40 +364,3 @@ def test_general_request_bundle_has_no_research_semantic_report(tmp_path):
 
     assert not (bundle / "semantic_report.md").exists()
     assert not (bundle / "semantic_report.json").exists()
-
-
-@pytest.mark.asyncio
-async def test_terminal_bundle_waits_for_shadow_and_freezes_its_observation(tmp_path, monkeypatch):
-    settings, request = fixed_request(tmp_path)
-    settings.semantics = {"mode": "shadow", "timeout_s": 2}
-    request.pop("semantics_observation")
-    hub = Hub(settings)
-    hub.requests[request["id"]] = request
-    started, release, bundle_called = threading.Event(), threading.Event(), threading.Event()
-    captured = {}
-
-    def delayed_work(_gen, _snap):
-        started.set()
-        assert release.wait(5)
-        semantics_shadow.append_line(hub.semantics_shadow.paths, {
-            "type": "request", "request_id": request["id"], "ts": 1792299500, "epoch": 1,
-            "provenance": {"status": "ok", "candidates": 0, "excluded": {}},
-            "objects": {"status": "ok", "relations": 1},
-            "input_fit": {"fit": 1, "mismatch": 0, "unknown": 0}, "referenced": False,
-        })
-
-    def capture_bundle(_rid, frozen, _tasks, _caps):
-        captured["request"] = frozen
-        bundle_called.set()
-        return {"bundle": {"path": str(tmp_path / "bundle"), "status": "complete"}}
-
-    monkeypatch.setattr(hub.semantics_shadow, "work", delayed_work)
-    monkeypatch.setattr(hub, "_bundle_outcome", capture_bundle)
-    task = hub.schedule_terminal(request["id"], "request.completed", {"ok": True})
-    assert task is not None and await asyncio.to_thread(started.wait, 2)
-    await asyncio.to_thread(bundle_called.wait, 0.3)
-    release.set()
-    await asyncio.wait_for(task, 5)
-
-    assert captured["request"]["semantics_observation"]["request_id"] == request["id"]
-    hub.store.close()

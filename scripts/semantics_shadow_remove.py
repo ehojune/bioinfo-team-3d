@@ -46,6 +46,7 @@ OWNED = [
     "tests/test_semantics_ab.py",
     "tests/test_semantics_shadow_remove.py",
     "tests/test_semantics_input_fit.py",
+    "tests/test_input_fit_boundary_796.py",  # optional removal harness; mainline CP1 tests remain below
     *ACTIONS_OWNED,
     "scripts/semantics_shadow_remove.py",
 ]
@@ -53,14 +54,39 @@ HOOK = "# semantics-hook"
 BEGIN, END = "# semantics-shadow: begin", "# semantics-shadow: end"
 ACTIONS_HOOK = "# semantics-hook: actions"
 ACTIONS_BEGIN, ACTIONS_END = "# semantics-actions: begin", "# semantics-actions: end"
-COPY = ["labhq", "tests", "scripts", "agents", "config", "pyproject.toml"]
+# Whole-suite collection imports tests that inspect public repository context at module scope.
+# Never copy .git, local drafts/state or real configuration; the config ignore below still applies.
+COPY = ["labhq", "tests", "scripts", "agents", "config", "pyproject.toml", "docs", "bench",
+        "README.md", "README.en.md", "AGENTS.md", "CLAUDE.md", "HANDOFF.md", "STATUS.md",
+        "patch_notes", ".github", ".githooks", ".gitignore", ".gitattributes",
+        "LICENSE", "LICENSE-CC-BY-SA-4.0.txt", "labhq.cmd", "labhq.sh"]
 # The output type vocabulary and declarations are core (#221): they must outlive the shadow.
-CHECK_TESTS = ["tests/test_e2e_mock.py", "tests/test_semantics_pilot.py", "tests/test_cso.py",
-               "tests/test_output_vocab.py", "tests/test_output_types.py", "tests/test_output_types_research.py",
-               "tests/test_cp1_input_fit_796.py"]
-ACTIONS_CHECK_TESTS = ["tests/test_semantics_shadow_settings.py", "tests/test_semantics_shadow_report.py",
-                       "tests/test_semantics_shadow_breaker.py", "tests/test_semantics_pilot.py",
-                       "tests/test_followup.py", "tests/test_e2e_mock.py", "tests/test_cp1_input_fit_796.py"]
+# The ordinary suite still runs in CI. A transformed tree needs these boundary contracts and E2E,
+# not another recursive run of whole model/CSO/followup suites. Collection covers *all* surviving tests.
+CORE_CHECK_TESTS = [
+    "tests/test_e2e_mock.py::test_full_lab_flow_with_mock_agents",
+    "tests/test_semantics_pilot.py::test_existing_modules_reach_the_model_only_through_a_lazy_marked_hook",
+    "tests/test_semantics_pilot.py::test_execution_path_imports_do_not_load_the_pilot",
+    "tests/test_cp1_input_fit_796.py",
+]
+CHECK_TESTS = [*CORE_CHECK_TESTS,
+    "tests/test_cso.py::test_plan_waits_for_answer_and_replans_before_dispatch",
+    "tests/test_cso.py::test_review_unparsed_twice_cannot_pass",
+    "tests/test_output_vocab.py::test_packaged_vocabulary_loads_with_counts_under_the_cap",
+    "tests/test_output_types.py::test_valid_entries_pair_with_outputs_and_carry_the_version",
+    "tests/test_output_types_research.py::test_plans_approved_before_221_keep_their_canonical_json_and_hash",
+    "tests/test_output_types_research.py::test_off_removes_declarations_and_freezes_the_plan_of_main",
+    "tests/test_output_types_research.py::test_on_freezes_valid_declarations_with_their_version_into_cp1",
+]
+ACTIONS_CHECK_TESTS = [*CORE_CHECK_TESTS,
+    "tests/test_semantics_shadow_settings.py::test_shadow",
+    "tests/test_semantics_shadow_settings.py::test_a_bad_value_loads_turns_semantics_off_and_warns_once",
+    "tests/test_semantics_shadow_report.py::test_the_report_tables_both_models_and_the_auto_off_history",
+    "tests/test_semantics_shadow_report.py::test_info_boundary_report_names_only_the_field_and_category",
+    "tests/test_semantics_shadow_breaker.py::test_three_failures_in_a_row_turn_it_off",
+    "tests/test_semantics_shadow_breaker.py::test_one_boundary_violation_turns_it_off_and_writes_nothing",
+    "tests/test_followup.py::test_followup_end_to_end_with_mock_runner",
+]
 SMOKE = """
 import asyncio, json, sys
 from pathlib import Path
@@ -199,6 +225,11 @@ def check(state_dir: Path | None = None, only: str | None = None) -> dict:
                 if any(word in p.read_text(encoding="utf-8") for word in words)]
         if left:
             raise SystemExit(f"shadow references left after removal: {left}")
+        collected = _ok(subprocess.run([sys.executable, "-m", "pytest", "--collect-only", "-q",
+                                        "-p", "no:cacheprovider", "tests"],
+                                       cwd=copy, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                       env=env, timeout=300), "pytest collection")
+        summary["collection"] = collected.stdout.strip().splitlines()[-1]
         if state_dir is not None:
             done = _ok(subprocess.run([sys.executable, "-c", ACTIONS_SMOKE if only == "actions" else SMOKE,
                                        str(Path(tmp) / "labhq.yaml"), state_dir.as_posix()],
