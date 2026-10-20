@@ -8,6 +8,7 @@ where dependencies allow (hibernate on HPC jobs, resume when they finish) → sc
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import json
 import re
@@ -3572,6 +3573,13 @@ class Orchestrator:
                             previous_result=previous_result, context_chars=self.cfg.context_chars_per_step),
                         "context": "", "resume_session_id": previous_session if can_resume else None})
                 await self._emit(rid, "request.step_attempt", {"step_id": key, "attempt": attempt})
+                req = self.hub.requests[rid]
+                contract = req.get('research_contract') or {}
+                carried = contract.get('continuation') or {}
+                if (current.meta.get('kind') == 'step' and carried.get('plan_sha256')
+                        and carried['plan_sha256'] == contract.get('plan_sha256')
+                        and not await self._verify_research_reuse(rid, req['plan'])):
+                    raise research_continuation.ReuseApprovalRequired('reuse proof changed; renewed CP1 required')
                 offline = False
                 try:
                     dispatched = (attempt_task if current.meta.get("facilities_diagnosis") else
@@ -4565,7 +4573,7 @@ class Orchestrator:
                     except BudgetExceeded as e:
                         await skip(sid, str(e))
                         continue
-                    except ShutdownInterrupted:
+                    except (ShutdownInterrupted, research_continuation.ReuseApprovalRequired):
                         for pending in running.values():
                             pending.cancel()
                         await asyncio.gather(*running.values(), return_exceptions=True)
@@ -5180,7 +5188,7 @@ class Orchestrator:
         """Pair the new plan with the previous round's results: keep only reusable steps' results (#90).
 
         Called before the save that stores the new plan, so a restart sees the plan and its pruned results together.
-        The reuse is not final until the output hashes are checked after the new CP1 (``_verify_research_reuse``).
+        The reuse is provisional until input/output proof is checked before CP1 (``_prepare_research_reuse``).
         ``pack_hashes`` is the pack snapshot the new plan is frozen with; a changed pack re-runs every step.
 
         The previous round's CP1 approval, CP2 receipt, review and continue decision are dropped in the same save:
@@ -5194,6 +5202,8 @@ class Orchestrator:
                                                  carried.get("p1_issues") or [])
         carried.update(plan_sha256=research_plan_sha256(plan), verified=False)
         carried.pop("refused_reuse", None)
+        carried.pop("reuse_snapshot", None)
+        carried.pop("approval_required", None)
         contract["pack_snapshot"] = dict(pack_hashes)  # the new plan's packs, saved with it
         for key in ("approval", "review", "continue_decision"):
             contract.pop(key, None)
@@ -5225,35 +5235,69 @@ class Orchestrator:
         for sid in steps:
             self.attempts.get(rid, {}).pop(sid, None)
 
-    async def _verify_research_reuse(self, rid: str, plan: dict) -> None:
-        """After the new CP1, before dispatch: hash every reused step's recorded outputs again (#90).
-
-        A step whose files changed, vanished or cannot be checked on this PC, and every step below it, loses its
-        reused result and runs. The decision is ``carry_over`` again, from the round archive and the frozen pack
-        snapshot, with the hash refusals added: the same rule as at adoption, so a restart in between agrees with it,
-        and reuse can only shrink from what the CP1 card showed."""
+    async def _continuation_candidates(self, rid: str, plan: dict, sealed: dict | None = None):
+        """Structural identity, declared-input proof, then the existing safe output walker."""
         req = self.hub.requests[rid]
-        contract = req["research_contract"]
-        carried = contract["continuation"]
-        saved = req.get("results") or {}
-        reused = [sid for sid in carried.get("reuse") or [] if sid in saved]
+        contract = req['research_contract']
+        carried = contract['continuation']
+        previous = contract['rounds'][-1]
+        tools = research_continuation.tool_signatures(plan, self.hub.agents, self.hub.s.engines)
+        refused = dict(sealed.get('rerun') or {}) if sealed else {}
+        carry = research_continuation.carry_over(previous, plan, contract.get('pack_snapshot'),
+                                                carried.get('p1_issues') or [], refused)
+        refused.update(research_continuation.proof_problems(previous, plan, carry, tools))
+        carry = research_continuation.carry_over(previous, plan, contract.get('pack_snapshot'),
+                                                carried.get('p1_issues') or [], refused)
         try:
-            hashes = (await asyncio.to_thread(research_continuation.verify_reuse,
-                                              {sid: saved[sid] for sid in reused}, self.hub.s)
-                      if reused else {})
-        except Exception as error:  # nothing reused that labhq could not check
-            hashes = {sid: f"hash check failed: {type(error).__name__}: {error}" for sid in reused}
-        refused = {sid: f"output hash check: {why}" for sid, why in hashes.items()}
-        adopted = carried.get("rerun") or {}
-        refused.update({step["id"]: adopted.get(step["id"]) or "not reused at CP1" for step in plan.get("steps") or []
-                        if step["id"] not in reused and step["id"] not in refused})
-        carry = research_continuation.carry_over(contract["rounds"][-1], plan, contract.get("pack_snapshot"),
-                                                 carried.get("p1_issues") or [], refused=refused)
-        # A refused step runs fresh, not as the round-1 session in the folder whose file changed (PR #448 review).
+            failures = (await asyncio.to_thread(research_continuation.verify_reuse, carry.results, self.hub.s)
+                        if carry.reuse else {})
+        except Exception:
+            failures = {sid: 'output verification unavailable' for sid in carry.reuse}
+        refused.update({sid: f'output hash check: {reason}' for sid, reason in failures.items()})
+        carry = research_continuation.carry_over(previous, plan, contract.get('pack_snapshot'),
+                                                carried.get('p1_issues') or [], refused)
+        snapshot = research_continuation.reuse_snapshot(plan, contract.get('pack_snapshot') or {}, carry, tools)
+        return carry, snapshot
+
+    async def _prepare_research_reuse(self, rid: str, plan: dict) -> None:
+        """Before CP1: only verified executable candidates enter the card and saved result set."""
+        carry, snapshot = await self._continuation_candidates(rid, plan)
         self._apply_carry(rid, carry)
-        carried.update(verified=True, refused_reuse=[{"step_id": sid, "reason": carry.rerun[sid]}
-                                                     for sid in reused if sid not in carry.reuse])
+        self.hub.requests[rid]['research_contract']['continuation'].update(
+            reuse_snapshot=snapshot, verified=False)
         self.hub.save_request(rid)
+
+    async def _verify_research_reuse(self, rid: str, plan: dict) -> bool:
+        """Recheck the CP1 seal on every resume/dispatch boundary; never downgrade reuse to a rerun."""
+        req = self.hub.requests[rid]
+        contract = req['research_contract']
+        carried = contract['continuation']
+        sealed = carried.get('reuse_snapshot')
+        approval = contract.get('approval') or {}
+        valid = False
+        try:
+            if (approval.get('approved') and isinstance(sealed, dict)
+                    and approval.get('target_sha256') == contract['plan_sha256']
+                    and approval.get('reuse_snapshot_sha256') == sealed.get('sha256')
+                    and sealed.get('plan_sha256') == research_plan_sha256(plan) == contract['plan_sha256']
+                    and research_plan_sha256(req['plan']) == contract['plan_sha256']):
+                _, current = await self._continuation_candidates(rid, plan, sealed)
+                saved = req.get('results') or {}
+                valid = (current == sealed and carried.get('reuse') == sealed['reuse']
+                         and all(research_continuation._digest(saved.get(sid)) == node['result_sha256']
+                                 for sid, node in sealed['nodes'].items()))
+        except (KeyError, TypeError, ValueError):
+            valid = False
+        if not valid:
+            carried['verified'] = False
+            carried['approval_required'] = 'reuse snapshot/proof changed after CP1; renewed approval required'
+            contract['approval'] = {**approval, 'approved': False, 'status': 'approval_required'}
+            req['outcome'] = 'reuse_approval_required'
+            self.hub.save_request(rid)
+            return False
+        carried.update(verified=True, refused_reuse=[])
+        self.hub.save_request(rid)
+        return True
 
     @staticmethod
     def _unbound_research_results(req: dict, steps: list[dict],
@@ -5666,8 +5710,17 @@ class Orchestrator:
                 self.hub.save_request(rid)
                 plan_hash = req["research_contract"]["plan_sha256"]
                 carried = req["research_contract"].get("continuation") or {}
-                # This plan continues a revised one and its reuse is not yet checked against the files (#90).
-                reuse_pending = carried.get("plan_sha256") == plan_hash and not carried.get("verified")
+                # Every continuation CP1/resume uses the same sealed executable reuse contract (#797).
+                reuse_pending = carried.get("plan_sha256") == plan_hash
+                if carried and not reuse_pending:
+                    await self._verify_research_reuse(rid, plan)
+                    self._finish(rid, "이어 가기 계획과 재사용 snapshot이 다릅니다. 새 CP1 승인이 필요합니다.",
+                                 {}, ok=False, error="reuse approval required")
+                    return False
+                if reuse_pending and approval.get("status") != "approved":
+                    await self._prepare_research_reuse(rid, plan)
+                if approval.get("status") != "approved":
+                    req["reuse_tools"] = research_continuation.tool_signatures(plan, self.hub.agents, self.hub.s.engines)
                 # Restarted after a CP1 수정 요청 had already opened its new request (found by its first save).
                 lookup = getattr(self.hub, "revised_request_of", None)
                 revised_to = req.get("revised_to") or (lookup(rid) if callable(lookup) else None)
@@ -5689,6 +5742,8 @@ class Orchestrator:
                     req["research_contract"]["approval"] = approval
                     self.hub.save_request(rid)
                 elif approval.get("status") != "approved":
+                    offered_reuse_sha = ((carried.get('reuse_snapshot') or {}).get('sha256')
+                                         if reuse_pending else None)
                     device_record = await self._semantic_devices_check(rid, "cp1")
                     device_warning = semantic_devices.warning(device_record)
                     # The hash stays in detail.target_sha256; the card shows the plan itself (PI 점검 R10).
@@ -5740,9 +5795,10 @@ class Orchestrator:
                                     "semantic_devices": device_record,
                                     "revise_allowed": can_revise,
                                     **({"continuation": {
-                                        **{key: carried.get(key) for key in
+                                        **{key: copy.deepcopy(carried.get(key)) for key in
                                            ("round", "from_plan_sha256", "reuse", "rerun", "p1_issues")},
-                                        **{key: carried[key] for key in ("trigger", "pi_request") if key in carried}}}
+                                        **{key: copy.deepcopy(carried[key]) for key in
+                                           ("trigger", "pi_request", "reuse_snapshot") if key in carried}}}
                                        if reuse_pending else {})})
 
                     decision = await ask_cp1()
@@ -5753,6 +5809,8 @@ class Orchestrator:
                             break
                         decision = await ask_cp1("수정 요청에 메모가 없어 다시 묻습니다. 고칠 점을 메모에 적어 주세요. ")
                     approval = freeze_plan(plan, decision)
+                    if reuse_pending:
+                        approval['reuse_snapshot_sha256'] = offered_reuse_sha
                     if can_revise and decision.get("choice") == "revise" and not approval["approved"]:
                         approval["choice"] = "revise"
                     approval.update(request_id=rid, protocol_revision=plan["protocol"]["revision"])
@@ -5795,6 +5853,11 @@ class Orchestrator:
                                  (f"\nPI 메모: {note}" if note else ""), {}, ok=False,
                                  error="연구 계획(CP1) 거절")
                     return False
+                if reuse_pending and not await self._verify_research_reuse(rid, plan):
+                    self._finish(rid, "재사용 산출 또는 승인 snapshot의 증거가 바뀌어 중단했습니다. "
+                                 "재실행하지 않았으며, 새 CP1 승인이 필요합니다.", {}, ok=False,
+                                 error="reuse approval required")
+                    return False
                 # The cost so far is judged against the cap CP1 just set, before any end without dispatch: a plan_only
                 # or checkpoint-off request would otherwise finish over its approved budget without a card (#499).
                 await self._check_budget(rid, block=False)
@@ -5812,8 +5875,6 @@ class Orchestrator:
                     self._finish(rid, "Research plan frozen and approved. Evidence checkpoint is off, so the "
                                  "request stops before employee dispatch.", {}, ok=True)
                     return False
-                if reuse_pending:
-                    await self._verify_research_reuse(rid, plan)
                 req["outcome"] = "research_running"
                 self.hub.save_request(rid)
                 return True
@@ -6874,6 +6935,9 @@ class Orchestrator:
             report = _append_report_metadata(body, [review_appendix]) if review_appendix else body
             self._finish(rid, report, serialized_results(),
                          ok=final.ok and rid not in self.budget_denials, review=review)
+        except research_continuation.ReuseApprovalRequired:
+            self._finish(rid, "재사용 증거가 바뀌어 단계를 보내지 않았습니다. 새 CP1 승인이 필요합니다.",
+                         req.get('results') or {}, ok=False, error="reuse approval required")
         except ModelRefused as exc:
             req["outcome"] = "model_refused"
             self._finish(rid, MODEL_REFUSAL_REASON, {"plan": exc.result.model_dump(mode="json")},
