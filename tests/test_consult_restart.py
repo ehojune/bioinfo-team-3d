@@ -13,6 +13,12 @@ from labhq.settings import Settings
 ROSTER = [{"id": "cso", "engine": "claude_code"}, {"id": "worker", "engine": "claude_code"}]
 
 
+@pytest.fixture(autouse=True)
+def _mock_consult_git_provenance(monkeypatch):
+    # Consult protocol fixtures need the durable record, not a git child process for its optional HEAD field.
+    monkeypatch.setattr("labhq.integrations.rounds._git_commit", lambda: "1" * 40)
+
+
 class CaptureSocket:
     def __init__(self):
         self.sent = []
@@ -97,37 +103,76 @@ async def approve_resume(hub):
 
 
 @pytest.mark.parametrize("runner", ["same_generation", "late_reconnect"])
-async def test_restart_adopts_running_consult_instead_of_overlapping(tmp_path, runner):
+async def test_restart_adopts_running_consult_instead_of_overlapping(tmp_path, runner, monkeypatch):
+    # Only an outer deadlock watchdog: readiness is established by events, never elapsed sleeps.
+    await asyncio.wait_for(_restart_adopts_running_consult(tmp_path, runner, monkeypatch), 60)
+
+
+async def _restart_adopts_running_consult(tmp_path, runner, monkeypatch):
     s = settings(tmp_path)
     workdir = str(tmp_path / "cso-workdir")
     ask, running = await start_consult_then_crash(s, workdir)
 
     second = Hub(s)
     socket = CaptureSocket()
+    waiting_for_runner = asyncio.Event()
+    adoption_entered, release_adoption, adoption_ready = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    wait_online, publish = second.wait_agent_online, second.publish
+
+    async def observe_online(agent_id, timeout_s, still_waiting=None):
+        assert agent_id == "cso" and timeout_s == s.gateway.resume_wait_s
+        waiting_for_runner.set()
+        return await wait_online(agent_id, timeout_s, still_waiting=still_waiting)
+
+    async def observe_publish(event, **kwargs):
+        adopting = (event["type"] == "request.step_wait"
+                    and event.get("data", {}).get("step_id") == "consult")
+        if adopting:
+            # _await_prior_task installs the old task's result future before publishing this event.
+            assert running["id"] in second.futures
+            adoption_entered.set()
+            await release_adoption.wait()  # inject delayed readiness without a wall-clock race
+        await publish(event, **kwargs)
+        if adopting:
+            adoption_ready.set()
+
+    monkeypatch.setattr(second, "wait_agent_online", observe_online)
+    monkeypatch.setattr(second, "publish", observe_publish)
     try:
         assert second.requests["r"]["status"] == "interrupted"
         if runner == "same_generation":
             second.register_runner("local", socket, ROSTER, "inc-1")
         await approve_resume(second)
-        await asyncio.sleep(0.1)
         if runner == "late_reconnect":
+            await waiting_for_runner.wait()
             assert second.store.get("ask", ask.id)["state"] == "working", "wait for the runner, do not fail"
+            assert not adoption_entered.is_set() and consults(socket) == []
             second.register_runner("local", socket, ROSTER, "inc-1")
-            await asyncio.sleep(0.1)
+        await adoption_entered.wait()
+        assert not adoption_ready.is_set()
+        assert not second.futures[running["id"]].done()
         # The old consult still owns the CSO session and workdir on the runner.
         for task in consults(socket):
             assert task["id"] == running["id"] or (
                 task["resume_session_id"] != "shared-session" and task["meta"].get("workdir") != workdir)
         assert [task for task in consults(socket) if task["id"] != running["id"]] == []
 
+        release_adoption.set()
+        await adoption_ready.wait()
         await second.on_runner_message("local", result_frame(running["id"], "Use cohort C7", "rotated-session"))
-        await settle(second)
+        # The entire scenario has a watchdog; completion must not race a separate three-second timer.
+        await asyncio.gather(*list(second.ask_tasks.values()))
+        await asyncio.sleep(0)
         entry = second.store.get("ask", ask.id)
         assert entry["state"] == "resolved"
         assert entry["answer"]["status"] == "answered" and entry["answer"]["answer"] == "Use cohort C7"
         assert second.requests["r"]["cso_session_id"] == "rotated-session"
         assert [frame["type"] for frame in socket.sent].count("task.dispatch") == 0
     finally:
+        tasks = list(second.ask_tasks.values())
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         second.store.close()
 
 
