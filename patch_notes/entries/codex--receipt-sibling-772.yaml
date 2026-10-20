@@ -1,0 +1,5 @@
+pr: 789
+rows:
+- sha: f5425c5
+  at: 2026-10-20 10:30
+  text: 재현 receipt 실행이 함께 게시한 Python sibling module을 import할 수 있게 script 폴더만 import 경로에 두고, PYTHONPATH·사용자 site·호출한 폴더는 계속 뺐다.
