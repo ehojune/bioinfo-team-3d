@@ -18,7 +18,7 @@
 | 순서 | 할 일 | 완료 조건·현재 한계 |
 |---|---|---|
 | 1·병렬 | #794 receipt venv import / #795 Windows 생존·doctor | 같은 Opus / Codex2. 실제 격리 CI·최종 head 리뷰/P1=0 뒤 병합. #789는 이미 병합되어 후속 PR로 수정 |
-| 2 | #796 CP1 input-fit·장치 최소 기여 지표 | Codex1, 예산 admission 뒤 진행. 현재는 측정용 Shadow 유지·부가 확장 동결, 효용 판정 뒤 관측 코드 정리 |
+| 2 | #796 CP1 input-fit·장치 최소 기여 지표 | Codex1, 10-20 11:50 기존 세션으로 착수. 현재는 측정용 Shadow 유지·부가 확장 동결, 효용 판정 뒤 관측 코드 정리 |
 | 3 | #797 재사용 → #798 Paper2Skill | CP1 공유 코드를 순차 통합. 카드 전 재사용 검증·승인 hash 보존·실제 참조 근거 |
 | 유지 | #766·#790·#791·#793의 진행 중 수정·CI | 기존 결과 보존. #793은 실제 검증 일치·실패 CI 교정 전 DRAFT, 후속 우선순위는 감사 뒤 |
 | 시운전 전 | 선택 경로 P1 수정·배포·소형 주제/계약 확정 | 11:27 gateway 연결 불가로 현재 가동·요청0 미확인. 마지막 성공 receipt e0fa7e48을 현재 가동 증거로 쓰지 않음 |
@@ -35,7 +35,7 @@ v0.5 선언(2026-10-08)은 당시 실제 연구 요청 2건과 `labhq verify` ex
 | 항목 | 결정 |
 |---|---|
 | 개발 총괄 | Codex 고정, Codex·Claude subagent에 여러 작업 위임. 제품 CSO 설정은 별개 |
-| Codex 일일 한도 | **10-20 10M(기존7M+추가3M)**. 사용량+예약+점검/보고 여유로 admission. 21일 미승인. [PI 결정](https://github.com/ehojune/bioinfo-team-3d/issues/760#issuecomment-6281199397) |
+| Codex 일일 한도 | **10-20 15M(7M+3M+긴급5M)**. 사용량+예약+점검/보고 여유로 admission. 21일 미승인. [PI 결정](https://github.com/ehojune/bioinfo-team-3d/issues/760#issuecomment-6282176214) |
 | #732 배정 | 표준 생물정보학은 bioinfo-agent/nf-core, 단순 작업은 직접 처리. 없는 복잡한 신규 파이프라인은 직접 코딩한 뒤 **기여 여부를 PI에게 묻고 yes일 때만 bioinfo-agent PR** |
 
 다음 PI 확인은 소형 주제 선택과 dry-run 뒤 준비 게이트입니다. [이전 결정](docs/reference/handoff-history-2026-10-19.md).
