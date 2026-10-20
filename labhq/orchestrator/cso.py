@@ -53,7 +53,7 @@ from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARC
                                  unnegated_analysis_text, validate_research_result, with_pack_refs)
 from ..research import continuation as research_continuation
 from ..research import semantic_device_report
-from ..research import semantics_input_fit as input_fit
+from ..research import input_fit
 from ..research import semantic_devices
 from ..security import redact_tokens
 from ..recruit.provenance import (consult_refusal, external_contract_conflicts, external_hosts, not_yet_active,

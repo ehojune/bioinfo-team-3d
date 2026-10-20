@@ -6,7 +6,7 @@ import pytest
 
 from labhq.models import TaskResult
 from labhq.orchestrator.cso import Orchestrator
-from labhq.research import semantics_input_fit as fit
+from labhq.research import input_fit as fit
 from labhq.settings import Settings
 from tests.test_research_protocol import PACK, MiniHub, valid_pack_values, valid_plan
 
@@ -18,8 +18,10 @@ def no_native_workers(monkeypatch):
     monkeypatch.setattr(threading.Thread, 'start', denied)
 
 
-async def run_plans(types, *, missing_check=False, budget=None):
+async def run_plans(types, *, missing_check=False, budget=None, orchestrator=Orchestrator, observer=None):
     settings = Settings()
+    if 'semantics' in Settings.model_fields:  # the optional switch is absent after full removal
+        settings.semantics = observer
     settings.research.enabled = True
     settings.research.active_packs = [PACK]
     settings.plan.declare_output_types = True
@@ -44,7 +46,7 @@ async def run_plans(types, *, missing_check=False, budget=None):
             hub.approvals.append(kwargs)
             return {'approved': False, 'note': 'fixture denial', 'approval_id': 'budget_no', 'decided_at': 1.0}
         hub.request_approval = deny
-    await Orchestrator(hub).run_request('r')
+    await orchestrator(hub).run_request('r')
     return hub, hub.requests['r']
 
 
@@ -93,7 +95,11 @@ async def test_lost_declaration_is_not_counted_as_a_proven_correction():
 
 
 def test_diagnostics_share_verdict_rules_without_changing_aggregate_contract():
-    from tests.test_semantics_input_fit import plan
+    def plan(data_type):
+        return {'protocol': {'packs': [{'id': 'single_cell_de', 'version': '2'}]}, 'steps': [
+            {'id': 'source', 'output_types': [] if data_type is None else [
+                {'name': 'outputs/source.tsv', 'data_type': data_type, 'vocab': fit.current().sha256}]},
+            {'id': 'analysis', 'agent_id': 'analyst', 'input_refs': ['step:source/outputs/source.tsv']}]}
     draft = plan('sequence_reads')
     rows = fit.mismatch_diagnostics(draft)
     assert fit.evaluate(draft) == {'fit': 0, 'mismatch': 1, 'unknown': 1}

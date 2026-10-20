@@ -19,7 +19,7 @@ STATUSES = ("작동", "켜졌으나 미사용", "꺼짐", "미평가", "오류")
 _MEANING_KEY = 'semantics'
 _SHADOW_MODULE = f"labhq/research/{_MEANING_KEY}_shadow.py"
 _OBJECTS_MODULE = f"labhq/research/{_MEANING_KEY}_objects.py"
-_INPUT_FIT_MODULE = f"labhq/research/{_MEANING_KEY}_input_fit.py"
+_INPUT_FIT_MODULE = "labhq/research/input_fit.py"
 def enabled(settings: Any) -> bool:
     return bool(getattr(getattr(settings, "research", None), "semantic_report", True))
 
