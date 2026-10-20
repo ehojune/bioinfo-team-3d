@@ -69,3 +69,9 @@ rows:
     at: '2026-10-21 02:31'
     summary: '모든 검사가 끝났어도 snapshot이 다르면 검증 결과를 재사용하지 않도록 구분했습니다.'
     text: '실제 event/tested-base drift를 확인하고 immutable merge·main 전진·PR/run/attempt/workflow·전체 gate 증거가 교차 확인될 때만 no-reuse로 종료한다. manifest·artifact를 만들지 않으며 기존 parent/digest/trusted-base 조건과 consumer는 유지한다. 새 회귀는 3 failed/35 passed에서 관련 mock/static 607 passed로 바뀌었다. 임의 오류는 계속 실패하며 native 새 head는 미검증이다.'
+  - sha: 698579b
+    at: 2026-10-21 03:14
+    summary: Windows 프로그램 시작이 멈춘 단계를 확인하도록 진단을 추가했습니다.
+    text: 실제 실패 merge 7c9ccbb9를 통합하고 WMI의 고정 phase·Stopwatch/monotonic 시간만 제한해 기록한다.
+      단일 Create·timeout 실패·소유권/Job/ACK/cleanup은 유지하며 raw 값은 기록하지 않는다. 새 회귀 16 failed에서
+      관련 mock/static 72 passed가 됐고 실제 timeout 원인·Create 결과·no-reuse 실증은 미확정이다.
