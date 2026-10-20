@@ -16,6 +16,11 @@ from labhq.tools._mcpcompat import NOT_EVIDENCE, ToolError
 from labhq.settings import LiteratureSettings
 
 
+# A deadlock watchdog, not the automatic lookup budget. Durable owned-file
+# writes may delay an event loop; logical deadline assertions never use this.
+DEADLOCK_WATCHDOG_S = 10
+
+
 def records(root):
     return [json.loads(line) for line in (root / wait.STATUS_FILE).read_text(encoding="utf-8").splitlines()]
 
@@ -32,23 +37,42 @@ def lookup_runtime(monkeypatch):
 
         def __init__(self):
             self.bounds, self.progress_delays = [], []
-            self.tick, self.heartbeat_recorded = asyncio.Event(), asyncio.Event()
+            self.phases, self.timed_awaitables = [], set()
+            self.handshake, self.notification_timeout = False, 5
+
+        def timed(self, operation):
+            # Explicit identity distinguishes an 80ms operation from its 80ms
+            # notify wait; notification/HTTP/global timers are never guessed.
+            def start():
+                awaitable = operation()
+                self.timed_awaitables.add(awaitable)
+                return awaitable
+            return start
 
         async def sleep(self, delay):
             assert delay == 60  # retain the production progress cadence
             self.progress_delays.append(delay)
-            if len(self.progress_delays) == 2:
-                self.heartbeat_recorded.set()  # preceding record/notify has completed
-            await self.tick.wait()
-            self.tick.clear()
+            phase = self.phases[-1]
+            phase.progress_delays.append(delay)
+            phase.watches.add(asyncio.current_task())
+            if len(phase.progress_delays) == 2:
+                phase.heartbeat_recorded.set()  # preceding record/notify has completed
+            await phase.tick.wait()
+            phase.tick.clear()
             self.now += delay
 
         async def wait_for(self, awaitable, timeout):
-            if timeout <= 5:  # notification, not the automatic operation
-                assert timeout == 5
+            if awaitable in self.timed_awaitables:
+                self.timed_awaitables.remove(awaitable)
+            elif timeout <= 5:  # notification, not the automatic operation
+                assert timeout == self.notification_timeout
                 return await awaitable
             self.bounds.append(timeout)
             deadline = self.now + timeout
+            phase = SimpleNamespace(started=asyncio.Event(), tick=asyncio.Event(),
+                                    heartbeat_recorded=asyncio.Event(), progress_delays=[], watches=set(),
+                                    deadline=deadline)
+            self.phases.append(phase)
             async def marked_operation():
                 token = self.automatic.set(True)
                 try:
@@ -56,14 +80,22 @@ def lookup_runtime(monkeypatch):
                 finally:
                     self.automatic.reset(token)
             task = asyncio.create_task(marked_operation())
+            phase.task = task
             try:
-                await asyncio.sleep(0)  # scheduling handoff, never a wall-clock polling delay
+                if self.handshake:
+                    await phase.started.wait()
+                else:
+                    await asyncio.sleep(0)  # scheduling handoff, never a wall-clock polling delay
                 if not self.expire:
                     assert task.done(), "non-timeout fixtures must complete without external waits"
                     return task.result()
                 assert not task.done(), "timeout fixtures must actually suspend"
-                self.tick.set()
-                await self.heartbeat_recorded.wait()
+                if timeout >= 60:
+                    phase.tick.set()
+                    await phase.heartbeat_recorded.wait()
+                else:
+                    # An 80ms deadline precedes the unchanged 60s heartbeat.
+                    assert not phase.heartbeat_recorded.is_set()
                 self.now = deadline
                 task.cancel()
                 with pytest.raises(asyncio.CancelledError):
@@ -327,16 +359,25 @@ def test_human_pdf_approval_path_is_not_wrapped(mcp_module):
 
 @pytest.mark.parametrize("hung_phase", ["fulltext", "limiter", "institution"])
 async def test_key_fulltext_automatic_phases_use_task_deadline(
-        tmp_path, monkeypatch, mcp_module, hung_phase):
+        tmp_path, monkeypatch, mcp_module, hung_phase, lookup_runtime):
     """Real coordinator control flow, fake transports only; never launch a browser or request approval."""
     cancelled = asyncio.Event()
+    never_complete = asyncio.Event()
+    phases_seen = []
+    lookup_runtime.handshake = True
+    lookup_runtime.notification_timeout = .08
 
     async def automatic(phase, value):
+        assert lookup_runtime.automatic.get()
+        phases_seen.append(phase)
+        lookup_runtime.phases[-1].started.set()
         if phase == hung_phase:
+            lookup_runtime.expire = True
             try:
-                await asyncio.Event().wait()
+                await never_complete.wait()
             finally:
                 cancelled.set()
+        lookup_runtime.now += .02  # completed phases spend the SAME task budget
         return value
 
     class Backend:
@@ -375,16 +416,88 @@ async def test_key_fulltext_automatic_phases_use_task_deadline(
     monkeypatch.setattr(mcp_module, "_lookup_progress", progress)
 
     async def short_budget(operation, **kwargs):
-        # Keep the production progress cadence; this test bounds the operation, not board refreshes.
-        return await wait.run_lookup(operation, timeout_s=.08,
-                                     clock=lambda: 100.0, **kwargs)
+        # Same 80ms logical budget, deterministic expiry after start/suspend;
+        # the production progress cadence remains 60s, so no tick is due here.
+        return await wait.run_lookup(lookup_runtime.timed(operation), timeout_s=.08,
+                                     clock=lambda: lookup_runtime.now, **kwargs)
 
     monkeypatch.setattr(mcp_module, "run_lookup", short_budget)
     papers = [{"id": "10.1000/key", "title": "Public fixture", "why_key": "fixture", "needed": "table"}]
-    with pytest.raises(ToolError, match="조회 불가\\(시간 초과\\)") as error:
-        await asyncio.wait_for(mcp_module._run_key_fulltext(papers), 1)
+    coordinator = asyncio.create_task(mcp_module._run_key_fulltext(papers))
+    try:
+        with pytest.raises(ToolError, match="조회 불가\\(시간 초과\\)") as error:
+            await asyncio.wait_for(coordinator, DEADLOCK_WATCHDOG_S)
+    finally:
+        if not coordinator.done():
+            coordinator.cancel()
+            await asyncio.gather(coordinator, return_exceptions=True)
+        assert all(p.task.done() and all(w.done() for w in p.watches) for p in lookup_runtime.phases)
     assert NOT_EVIDENCE in str(error.value)
     assert cancelled.is_set()
+    assert not never_complete.is_set()
+    phase_order = ["fulltext", "limiter", "institution"]
+    expected = phase_order[:phase_order.index(hung_phase) + 1]
+    assert phases_seen == expected
+    assert lookup_runtime.bounds == pytest.approx([.08 - .02 * i for i in range(len(expected))])
+    assert all(p.started.is_set() and p.deadline == pytest.approx(100.08) for p in lookup_runtime.phases)
+    assert lookup_runtime.phases[-1].task.cancelled()
+    assert all(not p.task.cancelled() for p in lookup_runtime.phases[:-1])
+    assert len({id(p.tick) for p in lookup_runtime.phases}) == len(expected)
+    assert len({id(p.heartbeat_recorded) for p in lookup_runtime.phases}) == len(expected)
+    assert all(p.progress_delays == [60] and not p.tick.is_set()
+               and not p.heartbeat_recorded.is_set() for p in lookup_runtime.phases)
+    assert not lookup_runtime.timed_awaitables
     approval.assert_not_called()
     assert progress.await_args_list[-1].args[0]["status"] == "timeout"
-    assert records(tmp_path)[-1]["status"] == "timeout"
+    rows = records(tmp_path)
+    assert rows[-1]["status"] == "timeout"
+    assert rows[-1]["elapsed_s"] == pytest.approx(.08)
+    assert rows[-1]["timeout_s"] == .08
+    expected_statuses = [status for _ in expected[:-1] for status in ("waiting", "ok")]
+    assert [r["status"] for r in rows] == expected_statuses + ["waiting", "timeout"]
+    assert [call.args[0] for call in progress.await_args_list] == rows
+
+
+async def test_lookup_runtime_rejects_fake_timeout_of_an_operation_that_completed(tmp_path, lookup_runtime):
+    lookup_runtime.handshake, lookup_runtime.expire = True, True
+
+    async def completed():
+        lookup_runtime.phases[-1].started.set()
+        return "finished without suspending"
+
+    with pytest.raises(AssertionError, match="timeout fixtures must actually suspend"):
+        await asyncio.wait_for(wait.run_lookup(lookup_runtime.timed(completed), tool="fixture", workdir=tmp_path,
+                                              timeout_s=.08, clock=lambda: lookup_runtime.now), DEADLOCK_WATCHDOG_S)
+    assert lookup_runtime.phases[-1].task.done() and not lookup_runtime.phases[-1].task.cancelled()
+    assert all(w.done() for p in lookup_runtime.phases for w in p.watches)
+    assert records(tmp_path)[-1]["status"] == "failed"
+
+
+async def test_lookup_runtime_parent_cancel_drains_suspended_operation_and_progress(tmp_path, lookup_runtime):
+    lookup_runtime.handshake = True
+    entered, cancelled = asyncio.Event(), asyncio.Event()
+
+    async def hung_without_start_notification():
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    caller = asyncio.create_task(wait.run_lookup(lookup_runtime.timed(hung_without_start_notification),
+        tool="fixture", workdir=tmp_path, timeout_s=.08, clock=lambda: lookup_runtime.now))
+    try:
+        await asyncio.wait_for(entered.wait(), DEADLOCK_WATCHDOG_S)
+        assert not lookup_runtime.phases[-1].task.done()
+        caller.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(caller, DEADLOCK_WATCHDOG_S)
+    finally:
+        if not caller.done():
+            caller.cancel()
+            await asyncio.gather(caller, return_exceptions=True)
+    assert cancelled.is_set() and caller.cancelled()
+    assert lookup_runtime.phases[-1].task.cancelled()
+    assert all(w.done() for p in lookup_runtime.phases for w in p.watches)
+    assert not lookup_runtime.timed_awaitables
+    assert records(tmp_path)[-1]["status"] == "cancelled"
