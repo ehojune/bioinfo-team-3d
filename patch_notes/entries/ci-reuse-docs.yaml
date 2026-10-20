@@ -65,3 +65,7 @@ rows:
     at: '2026-10-21 01:49'
     summary: '문자열 검사 비용을 다른 작업자의 대기 시간과 구분해 확인합니다.'
     text: '동기 scanner 회귀의 clock 두 곳만 process_time으로 바꾸고 긴 입력·None 결과·엄격한 2초 예산을 보존했다. fake CPU/wall·반환값 회귀는 수정 전 3 failed/2 passed, 수정 후 관련 pure-string·encoding 51 passed다. 제품·CI gate·profile은 그대로이며 실제 경합과 parent mismatch 원인은 미확정이다. 최신 main runtime 변경으로 Windows 전수 fallback을 예상하고 profile은 재승인하지 않았다.'
+  - sha: '2bc8476'
+    at: '2026-10-21 02:31'
+    summary: '모든 검사가 끝났어도 snapshot이 다르면 검증 결과를 재사용하지 않도록 구분했습니다.'
+    text: '실제 event/tested-base drift를 확인하고 immutable merge·main 전진·PR/run/attempt/workflow·전체 gate 증거가 교차 확인될 때만 no-reuse로 종료한다. manifest·artifact를 만들지 않으며 기존 parent/digest/trusted-base 조건과 consumer는 유지한다. 새 회귀는 3 failed/35 passed에서 관련 mock/static 607 passed로 바뀌었다. 임의 오류는 계속 실패하며 native 새 head는 미검증이다.'
