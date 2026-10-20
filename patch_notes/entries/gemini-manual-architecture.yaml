@@ -1,0 +1,8 @@
+pr: 805
+rows:
+- sha: ade4f03
+  at: 2026-10-20 13:43
+  text: 'docs: 아키텍처 다이어그램의 store·resume·ws 경로 수정 및 readme-evidence 수치 동기화'
+- sha: 6e522b2
+  at: 2026-10-20 13:35
+  text: 'docs: 매뉴얼 내 개발 에이전트 규칙 분리, 전체 계층 구조·다크 다이어그램 및 v0.5 모듈/어휘 수 최신화'

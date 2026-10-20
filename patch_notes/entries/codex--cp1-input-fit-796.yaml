@@ -1,0 +1,17 @@
+pr: 803
+rows:
+- sha: cab83e7
+  at: 2026-10-20 12:04
+  text: CP1의 기존 2회 계획 검증에 입력 불일치 진단·교정·전후 경고를 연결하고, 기존 semantic_report와 bench 비교에
+    분모·근거·미측정을 구분한 기여 기록을 추가했다. 관련 mock/static 52건·최종 thread 금지 mock 14건 통과, 과학 성능
+    효과는 미측정이다.
+- sha: 2070c23
+  at: 2026-10-20 12:42
+  text: CP1 평가기·관계표를 mainline으로 옮기고 optional Shadow adapter와 같은 aggregate API·의미 hash를
+    공유했다. off·전체 제거 후 CP1 교정, actions-only 제거 후 base observer 보존을 메모리/AST·mock으로 검증했다.
+    관련 68건·공개 경로 5건 통과, 실제 제거·process 통합은 CI에 맡긴다.
+- sha: bab83c2
+  at: 2026-10-20 13:16
+  text: C3의 6954ab6 원본 두 테스트와 98f70d96의 second-parent 대비 external_wait 테스트 diff만 재사용했다.
+    원본/applied patch hash 일치, private polling clock·deadline·취소·timeout progress 증거를
+    보존했다. 관련 mock/static 36건 통과; 제품/CP1 분리 변경 없이 새 통합 CI는 총괄에게 넘긴다.

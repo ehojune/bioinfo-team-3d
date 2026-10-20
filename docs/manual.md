@@ -5,6 +5,7 @@ PI의 질문과 결정은 [PI Q&A](pi-qa.md)에, 개발 규칙과 작업 큐는 
 
 | 장 | 무엇 |
 |---|---|
+| [PI에게 보이는 글](#pi에게-보이는-글) | 평문 변환(`pi_language.py`)과 한국어 문체 점검(`korean_qc.py`) |
 | [핵심 개념](#핵심-개념) | 자주 나오는 말 |
 | [둘러보기: mock 데모](#둘러보기-mock-데모) | API 키 없이 사무실 보기 |
 | [설치와 첫 설정](#설치와-첫-설정) | `labhq init`, 인스턴스, HPC 상담, doctor |
@@ -26,11 +27,13 @@ PI의 질문과 결정은 [PI Q&A](pi-qa.md)에, 개발 규칙과 작업 큐는 
 
 ## PI에게 보이는 글
 
-- 승인 카드·질문·메신저·보고 알림은 쉬운 한국어 평문으로 씁니다. 무엇을 하려는지 → 왜 → 승인하면/끝나면 무슨 결과 순서입니다.
-- 마크다운 제목·굵게·표 기호는 지웁니다. 명령과 코드 원문은 카드와 메신저의 ‘자세히’에서 확인합니다.
-- 도구·계산 서버·예산·채용 카드는 한 줄 설명, 이유, 결과를 보여 줍니다. 설명은 승인 권한이나 실행 명령을 바꾸지 않습니다.
-- 단순한 명령은 규칙으로 설명합니다. 복잡한 명령은 직원 설명과 원문을 함께 남기며 작업 폴더 밖에 영향이 없다고 추측하지 않습니다.
-- 직원은 영어 출력도 한국어로 설명합니다. 규칙을 지키지 않은 영어 답변은 한국어 안내와 원문으로 표시하며 자동 번역으로 가장하지 않습니다.
+`labhq`는 웹·모바일 결정함과 메신저에서 PI가 읽는 모든 안내문을 쉬운 한국어 평문으로 정리하고(`labhq/pi_language.py`), 보고서·정리본의 문체를 검사합니다(`labhq/korean_qc.py`, 내장 `humanizer` 스킬).
+
+- 승인 카드·질문·메신저·보고 알림은 `무엇을 하려는지 → 왜 → 승인하면/끝나면 무슨 결과` 순서의 평문으로 변환되어 표시됩니다.
+- 카드 요약에서는 마크다운 제목·굵게·표 기호를 걷어내고, 실행 명령과 코드 원문은 카드와 메신저의 ‘자세히’ 펼침 영역에 보존합니다.
+- 도구·계산 서버·예산·채용 카드는 한 줄 설명, 이유, 결과를 함께 보여 주며, 평문 요약이 실제 승인 권한이나 실행 명령을 바꾸지는 않습니다.
+- 단순한 셸·파일 명령은 규칙 기반으로 요약하고, 복합 명령은 직원이 적은 설명과 명령 원문을 함께 남기며 작업 폴더 밖에 영향이 없다고 임의로 단정하지 않습니다.
+- 직원이 영어로 답한 경우에도 자동 번역문으로 가장하지 않고 한국어 안내와 영어 원문을 구분해 표시합니다.
 
 ## 핵심 개념
 
@@ -57,7 +60,7 @@ PI의 질문과 결정은 [PI Q&A](pi-qa.md)에, 개발 규칙과 작업 큐는 
 | 인스턴스 | `--instance <이름>`으로 한 PC에 연구소를 여럿 띄운다. 설정·state·포트·token은 나뉘고 엔진 로그인·한도는 공유한다 | [설치](#설치와-첫-설정) |
 | 구독 한도 대기 | 엔진 구독 한도에 걸린 단계를 reset 시각까지 세워 두었다가 자동으로 재개한다 | [구성요소](#구성요소와-상태) |
 | 의미 모델 | 끝난 요청의 기록을 다시 읽는 두 모델. 출처 모델은 산출의 계보와 재사용 후보를, 객체 뷰는 직원·요청·잡·승인 사이의 연결을 센다 | [의미 모델](#의미-모델과-온톨로지) · [설정](#설정-포인트) |
-| ontology·EDAM | PI가 검토한 어휘 123개 key(`labhq/vocab/`)와, 그중 79개 key를 이은 공개 생명정보 ontology EDAM | [의미 모델](#의미-모델과-온톨로지) · [설정](#설정-포인트) |
+| ontology·EDAM | PI가 검토한 어휘 125개 key(`labhq/vocab/`)와, 그중 79개 key를 이은 공개 생명정보 ontology EDAM(용어 75개) | [의미 모델](#의미-모델과-온톨로지) · [설정](#설정-포인트) |
 | 데이터 종류 선언 | CSO가 단계 산출에 data_type·format key를 적는 선택 기능(`plan.declare_output_types`, 기본 꺼짐) | [설정](#설정-포인트) |
 | 입력–방법 적합성 | 단계 입력의 선언 종류가 그 방법에 맞는지 `fit`·`mismatch`·`unknown`으로 세는 판정. 그림자로만 돈다 | [의미 모델](#의미-모델과-온톨로지) · [설정](#설정-포인트) |
 | 그림자(shadow) | 계산해 기록만 하고 계획·승인·실행에는 쓰지 않는 방식. 기본은 `semantics: off` | [의미 모델](#의미-모델과-온톨로지) · [설정](#설정-포인트) |
@@ -441,7 +444,7 @@ SQLite는 읽기 연결과 쓰기 연결을 나눠(WAL) 읽기가 커밋을 기�
 
 ### topic 점검표와 선행 연구 기준
 
-점검표는 `labhq/vocab/topic_checklists.yaml`의 `topic → [{id, check, why}]`이고, 승인된 topic 45개 모두에 항목이 있습니다(135항목). 항목의 근거 문헌은 [topic 점검표 근거](reference/topic_checklists_sources.md)에 있습니다. topic마다 PMID를 검증한 근거 논문 목록(30편 이상, #446)은 [topic별 근거 논문](reference/topic_papers.md)에 있습니다. 여러 topic이 같은 id를 쓰면 bare `id` 답 하나를 모두에 적용하거나, 선언한 모든 topic에 `topic.id` 답을 하나씩 냅니다. 점검 내용이 다르면(ATAC와 ChIP의 `library_qc` 등) 교정 메시지에서 두 내용을 ` / `로 잇습니다. 새 항목은 먼저 `output_types.yaml`의 승인된 topic key 아래에 넣고 test를 보탭니다. 계획·재계획 프롬프트에는 점검 내용을 싣지 않습니다. 러너가 CSO 작업 폴더에 `topic_checklists.tsv`(topic, id, check, why)를 쓰고, 프롬프트는 "선언한 topic의 줄만 읽어라"라고만 적습니다(PI 결정 2026-10-05, #420). 그래서 topic이 늘어도 프롬프트는 약 650자로 같습니다. 답이 빠지면 고침 요청에 그 점검 내용을 붙입니다. PLAN의 답은 `checklist: {id: "step:<step id>" | "assumption: <한 줄>" | "not_applicable: <이유>"}`입니다. 일반 lane은 누락 시 한 번 고친 뒤 경고로 진행하고, 연구 lane은 PLAN 검증 오류로 멈춥니다. `assumption` 답은 보고서 한계에 한 줄씩 남습니다. `not_applicable`은 요청에 해당하지 않는 점검이라 한계로 쓰지 않고 보고서 본문에서 뺍니다. 해당하는데 못 한 점검(예: 독립 코호트가 없음)은 `assumption: <이유>`로 답합니다(벤치 C, #373).
+점검표는 `labhq/vocab/topic_checklists.yaml`의 `topic → [{id, check, why}]`이고, 승인된 topic 45개 모두에 항목이 있습니다(135항목). 항목의 근거 문헌은 [topic 점검표 근거](reference/topic_checklists_sources.md)에 있습니다. topic마다 PMID를 검증한 근거 논문 목록(30편 이상, #446)은 [topic별 근거 논문](reference/topic_papers.md)에 있습니다. 여러 topic이 같은 id를 쓰면 bare `id` 답 하나를 모두에 적용하거나, 선언한 모든 topic에 `topic.id` 답을 하나씩 냅니다. 점검 내용이 다르면(ATAC와 ChIP의 `library_qc` 등) 교정 메시지에서 두 내용을 ` / `로 잇습니다. 각 항목은 `output_types.yaml`의 승인된 topic key 아래에 정의되며 전체 표는 [어휘·topic·점검표](vocabulary.md)에서 볼 수 있습니다. 계획·재계획 프롬프트에는 점검 내용을 싣지 않습니다. 러너가 CSO 작업 폴더에 `topic_checklists.tsv`(topic, id, check, why)를 쓰고, 프롬프트는 "선언한 topic의 줄만 읽어라"라고만 적습니다(PI 결정 2026-10-05, #420). 그래서 topic이 늘어도 프롬프트는 약 650자로 같습니다. 답이 빠지면 고침 요청에 그 점검 내용을 붙입니다. PLAN의 답은 `checklist: {id: "step:<step id>" | "assumption: <한 줄>" | "not_applicable: <이유>"}`입니다. 일반 lane은 누락 시 한 번 고친 뒤 경고로 진행하고, 연구 lane은 PLAN 검증 오류로 멈춥니다. `assumption` 답은 보고서 한계에 한 줄씩 남습니다. `not_applicable`은 요청에 해당하지 않는 점검이라 한계로 쓰지 않고 보고서 본문에서 뺍니다. 해당하는데 못 한 점검(예: 독립 코호트가 없음)은 `assumption: <이유>`로 답합니다(벤치 C, #373).
 
 `variant_effect`(#621)는 특정 변이의 효과를 해석하는 요청(SNV·indel, missense, 조절, 스플라이싱)에 붙습니다. 점검은 여섯 가지입니다: 집단 빈도(gnomAD), ClinVar 분류와 review status, VEP의 MANE transcript 주석, 암호화 missense의 AlphaMissense, 비암호화·스플라이싱 변이의 AlphaGenome(키가 있을 때)이나 SpliceAI 같은 예측, 증거끼리의 일치와 한계. 예측은 임상 근거가 아니라고 한계에 적고, ACMG/AMP 분류는 요청이 있을 때만 합니다. id는 다른 topic과 겹치지 않습니다.
 
@@ -518,6 +521,72 @@ flowchart LR
 ```
 
 러너가 게이트웨이로 **나가는** 연결만 쓰므로 연구실 PC나 HPC에 포트를 열 필요가 없습니다.
+
+### 전체 계층 구조와 모듈 아키텍처
+
+코드베이스는 크게 **PI 접점(Web·Mobile·CLI)**, **Gateway·CSO 제어 계층**, **연구 계약·의미 장치(Meaning Devices) 계층**, **Runner·실행 계층**의 네 층으로 나뉩니다. 아래 다이어그램은 요청·승인·연구 계약·의미 장치·실행 데몬이 코드 모듈 사이에서 어떻게 맞물리는지 보여 줍니다.
+
+```mermaid
+%%{init: {'theme': 'dark', 'themeVariables': {'background': '#0b0f19', 'primaryColor': '#111827', 'primaryTextColor': '#ffffff', 'primaryBorderColor': '#60a5fa', 'lineColor': '#93c5fd', 'secondaryColor': '#1f2937', 'tertiaryColor': '#0f172a', 'mainBkg': '#111827', 'nodeBorder': '#60a5fa', 'clusterBkg': '#0b0f19', 'clusterBorder': '#475569', 'titleColor': '#ffffff', 'edgeLabelBackground': '#111827'}}}%%
+flowchart TB
+    classDef darkNode fill:#111827,stroke:#60a5fa,stroke-width:1.5px,color:#ffffff;
+    classDef storageNode fill:#1e293b,stroke:#93c5fd,stroke-width:1.5px,color:#ffffff;
+
+    subgraph UI["PI 접점 (Web / Mobile / CLI)"]
+        Web["2.5D/3D 웹 오피스 & 모바일 결재<br/>(labhq/web/)"]:::darkNode
+        CLI["labhq CLI<br/>(up / down / status / doctor / verify / resume)"]:::darkNode
+    end
+
+    subgraph GW["Gateway 계층 (FastAPI + SQLite WAL)"]
+        Server["Gateway Server<br/>(labhq/gateway/server.py)"]:::darkNode
+        DB[("SQLite WAL<br/>(labhq/store.py)")]:::storageNode
+        CSO["CSO Orchestrator<br/>(labhq/orchestrator/cso.py)"]:::darkNode
+        Policy["Policy & Private Path Guard<br/>(labhq/policy.py)"]:::darkNode
+    end
+
+    subgraph Research["Research & Meaning Devices (labhq/research/, labhq/vocab/)"]
+        Contract["Research Contract / CP1·CP2<br/>(labhq/research/contract.py)"]:::darkNode
+        Cont["Continuation & Step Reuse<br/>(labhq/research/continuation.py)"]:::darkNode
+        Vocab["Data Annotation / EDAM / Checklists<br/>(labhq/vocab/)"]:::darkNode
+        Sem["Semantics / Input-Fit / Shadow<br/>(labhq/research/semantics*)"]:::darkNode
+        Recruit["Paper2Agent & Paper2Skill<br/>(labhq/recruit/)"]:::darkNode
+    end
+
+    subgraph Exec["Runner 계층 (labhq/runner/)"]
+        Daemon["Runner Daemon (Outbound WS)<br/>(labhq/runner/daemon.py)"]:::darkNode
+        Adapters["CLI Adapters<br/>(claude_code / codex / bioinfo_agent)"]:::darkNode
+        HPC["HPC Schedulers<br/>(SGE / PBS / Slurm)"]:::darkNode
+    end
+
+    UI <-->|"HTTP / WebSocket (/ws/client)"| Server
+    Server <--> DB
+    Server <--> CSO
+    CSO <--> Contract
+    CSO <--> Cont
+    CSO <--> Vocab
+    CSO <--> Sem
+    CSO <--> Recruit
+    Server <-->|"Outbound WS (/ws/runner)"| Daemon
+    Daemon --> Policy
+    Daemon --> Adapters
+    Daemon --> HPC
+
+    style UI fill:#0b0f19,stroke:#475569,stroke-width:1.5px,color:#ffffff
+    style GW fill:#0b0f19,stroke:#475569,stroke-width:1.5px,color:#ffffff
+    style Research fill:#0b0f19,stroke:#475569,stroke-width:1.5px,color:#ffffff
+    style Exec fill:#0b0f19,stroke:#475569,stroke-width:1.5px,color:#ffffff
+```
+
+| 계층 | 핵심 모듈 | 주요 책임 |
+|---|---|---|
+| **Orchestrator** | `labhq/orchestrator/cso.py` | 요청 분류(simple/research), `PLAN_SCHEMA` DAG 생성, CP1·CP2 관문, 이종 벤더 교차 리뷰, 최종 보고서 합성 |
+| **Gateway & Storage** | `labhq/gateway/server.py`, `labhq/store.py`, `durable.py` | FastAPI REST·WebSocket(`/ws/client`·`/ws/runner`) 브로드캐스트, 승인·질문 수명주기, SQLite WAL 상태 원장(`StateStore`) 및 비동기 fsync 쓰기 큐 |
+| **Policy & Guard** | `labhq/policy.py`, `private_paths.py` | Bash·PowerShell 명령 구문 검사와 경로 추출, 외부·민감 경로(`private_paths`) 및 데이터 구역(`data_zones`) 차단 |
+| **Runner & Adapters** | `labhq/runner/daemon.py`, `workspace.py`, `labhq/adapters/` | 단계별 격리 작업 폴더(`inputs/`·`outputs/`), JSON schema 정형 출력 계약과 슬롯 복구(`slot_repair`), CLI·WSL·HPC 실행 |
+| **CLI & Lifecycle** | `labhq/cli.py`, `supervisor.py`, `doctor.py` | 백그라운드 데몬 기동·중지·상태 확인, 자식 프로세스 감시·종료 코드 기록, 환경·로그인·런타임 준비도 점검 |
+| **Research Contract** | `labhq/research/contract.py`, `continuation.py`, `labhq/evidence/claims.py` | CP1 계획 해시 동결, `result v2` 주장·근거·산출물 sha256 대조, 독립 근거 그룹 판정, 이어 가기(continuation) 재사용 |
+| **Meaning Devices (6종)** | `labhq/vocab/`, `labhq/research/packs.py`, `semantics*`, `semantic_device_report.py` | 단어장·EDAM 어노테이션(`output_types.yaml`), 45개 분야 점검표(`topic_checklists.yaml`), 도메인 분석 pack, 입력–연산 적합성(`input_fit`), 의미 장치 감사 보고서(`semantic_report.md`), 출처·객체 그림자 및 A/B 관측 |
+| **Bundle & Publication** | `labhq/request_bundle.py`, `portfolio.py`, `result_storage.py`, `reproduction_receipt.py`, `verify.py` | 요청 묶음·RO-Crate 생성, 오프라인 무결성 재검증(`labhq verify`), 재현 검증 receipt, GitHub 연구소 정리본·PDF 출판 |
 
 단계 산출은 그 단계 작업 폴더의 `outputs/` 아래에서만 셉니다. 계획의 `outputs`는 필수이며, 로그·변환 기록·미리보기는 `optional_outputs`로 선언할 수 있습니다. 선택 산출이 빠지면 단계는 진행하고 단계·보고서 경고에 남기지만, 필수 산출 누락은 지금처럼 incomplete입니다. CSO 계획이 선언한 산출을 작업 폴더 루트(`./answer.md`)에 쓰라고 하면 실행 전에 `./outputs/answer.md`로 고치고 `request.plan` 경고에 남깁니다. 단계 prompt에도 선언한 산출 경로가 그대로 실립니다. 절대 경로나 `..`처럼 `outputs/` 밖을 선언한 계획은 CSO에게 한 번 다시 받고, 그래도 틀리면 어떤 단계도 보내지 않고 요청을 실패로 끝냅니다(#220). 글자 치환·형식 변환은 직원이 자기 작업 폴더의 Python 스크립트 하나로 처리합니다(#716).
 
@@ -622,7 +691,7 @@ runner PC에 무언가 없어서 실패한 단계는 `environment` 실패입니�
 - Python은 그 단계 interpreter로 `-m pip install --target ./.pylib <검증된 distribution>`을 실행하고 `./.pylib`을 import 경로 맨 앞에 둡니다. R은 CRAN이면 `install.packages()`, Bioconductor면 `BiocManager::install()`을 `./.rlib`에 실행합니다. runner는 직원 산출물이나 작업 폴더 안 실행 파일을 실행하지 않으며 패키지를 직접 설치하지 않습니다. 버전·URL·경로·옵션은 거부합니다.
 - `disk_full`만 runner가 직접 작업 폴더의 임시 캐시를 비웁니다. event·`manifest.json`보다 먼저 정리하고, 앞선 기록은 메모리에 두었다가 정리 뒤 씁니다.
 - 재시작 뒤 승인·거절·시간 초과는 모두 저장된 결정을 소비하며 원 요청을 재개합니다. 거절·시간 초과·수정 실패·두 번째 환경 실패는 원래 `environment` 실패로 끝납니다. 연구 계획 hash와 예산 gate는 바꾸지 않습니다.
-- 서명 추가: `signatures.yaml`의 `pattern`은 실제 오류 줄 첫머리에 맞추고, fixture에 실제 문구를 둡니다. 인용 줄(pytest `E `·`>`, `파일:줄:`, 로그 grep)은 매칭 전에 뺍니다. 자동 수정은 별도 allowlist 항목과 검증·가짜 실행 test가 있어야 `fix`에 연결합니다.
+- 서명 매칭 규칙: `signatures.yaml`의 `pattern`은 인용 줄(`pytest` `E `·`>`, `파일:줄:`, 로그 `grep`)을 먼저 걷어낸 뒤 실제 오류 줄 첫머리에 맞춰 대조하며, 자동 수정은 별도 allowlist(`fixes.yaml`)에 등록된 항목만 `fix`로 연결됩니다.
 
 ## 직원과 도구
 
@@ -972,7 +1041,7 @@ PDF 표지는 보고서의 정식 제목과 연구 질문만 쓰고 자동 줄�
 
 **게시한 정리본을 지금 편집기로 다시 만들기(#754):** `labhq storage <요청 id> --rebuild [--name <새 저장소 이름>] [--visibility public]`. 이미 게시한 요청만 받습니다. 편집자를 다시 돌려 지금 편집기로 정리본을 새로 만들고, 게시 카드에서 승인한 뒤에만 올립니다(`auto_publish_results`를 켜도 카드를 띄움). `--name`이 없으면 같은 저장소에 새 커밋으로 올립니다. 이전 판에만 있던 파일은 지우지 않습니다. `--name`이 있으면 `--to github`와 같은 토큰 탐침 뒤 새 저장소(기본 비공개)에 올리고, 원본 저장소는 건드리지 않습니다. 다시 만든 판의 README 제목 아래에는 labhq 판본·commit, 다시 만든 날짜, 원본 저장소를 한 줄로 적습니다. 이전 판의 저장소·branch·보고서 주소는 요청의 `result_storage.editions`에 남습니다. 검토 완료 전, 묶음 갱신 중, 수정 요청으로 이어진 요청, 통제 데이터 요청, 정리·게시가 진행 중인 요청은 거부합니다. 카드를 거절하거나 게시에 실패하면 `--redraft`·`--republish`를 그대로 씁니다.
 
-**재현 검증 receipt(#748):** 정리본의 `run/reproduction_receipt.json`은 공개용 코드·lock hash, Python compile·R parse·`bash -n` 결과, 도구 판본과 실행 조건을 기록합니다. Rscript/bash가 없으면 `unavailable`입니다. 기본 실행 상태는 `not_rerun`, 필요한 입력 변수가 없으면 `blocked_input`이며 변수값·개인 경로는 싣지 않습니다. 실행하면 script마다 선언한 산출을 그 실행이 직접 만들거나 다시 써야 `pass`이고, 같은 단계의 앞 script가 남긴 파일은 세지 않습니다(#771). Python 실행은 script 폴더(함께 게시한 module)만 import 경로에 두고 `PYTHONPATH`·사용자 site·호출한 폴더는 쓰지 않습니다(#772). 공통 보고서와 bench의 `run.json`·`score.json`·`comparison.json`에 실패·도구 없음·미검사도 남깁니다. bench는 요청 제한 시간 안에 비동기 bundle 결과가 확정된 뒤 수집하며, bundle 대기 시간 초과를 빈 receipt로 기록하지 않습니다. 문법 PASS는 실행 PASS가 아닙니다. [검사 범위와 근거](reference/reproduction-receipt.md).
+**재현 검증 receipt(#748):** 정리본의 `run/reproduction_receipt.json`은 공개용 코드·lock hash, Python compile·R parse·`bash -n` 결과, 도구 판본과 실행 조건을 기록합니다. Rscript/bash가 없으면 `unavailable`입니다. 기본 실행 상태는 `not_rerun`, 필요한 입력 변수가 없으면 `blocked_input`이며 변수값·개인 경로는 싣지 않습니다. 실행하면 script마다 선언한 산출을 그 실행이 직접 만들거나 다시 써야 `pass`이고, 같은 단계의 앞 script가 남긴 파일은 세지 않습니다(#771). Python 실행은 script 폴더(함께 게시한 module)와 실행 interpreter의 site-packages만 import 경로에 두고 `PYTHONPATH`·사용자 site·호출한 폴더는 쓰지 않습니다(#772, #794). 공통 보고서와 bench의 `run.json`·`score.json`·`comparison.json`에 실패·도구 없음·미검사도 남깁니다. bench는 요청 제한 시간 안에 비동기 bundle 결과가 확정된 뒤 수집하며, bundle 대기 시간 초과를 빈 receipt로 기록하지 않습니다. 문법 PASS는 실행 PASS가 아닙니다. [검사 범위와 근거](reference/reproduction-receipt.md).
 
 **게시 전 검사가 멈췄을 때(#713):** 비밀값·로컬 경로·서명 URL, Python 문법(내부 자료면 1–9 작은 칸까지)을 검사합니다. 코드의 개인 경로를 바꾼 뒤에도 남은 항목은 게시를 막습니다. 걸리면 저장 상태를 `failed`로 두고 검사·파일 이름을 알립니다. 고친 뒤 `--redraft`로 다시 만드세요.
 **게시에 실패했을 때:** 토큰이 선택한 저장소만 허용하는 fine-grained 토큰(`github_pat_…`)이면 새 저장소를 만들지 못해(403) 게시가 실패합니다. 안내대로 실패한 환경 토큰을 해제한 gh로 `--add-readme`를 붙여 만들거나, GitHub 웹에서 README를 넣어 만드세요. 그 저장소를 토큰의 저장소 접근에 추가하고 Contents: Read and write를 준 뒤 `labhq storage <요청 id> --republish`를 실행합니다. 빈 저장소를 골라도 첫 파일로 기본 branch를 만든 뒤 나머지를 올립니다. 편집자를 다시 돌리려면 `--redraft`를 쓰세요. 이미 게시한 정리본, 통제 데이터 요청, 검토 완료 전 요청은 거부합니다. 기존 저장소에 쓸 권한이 없을 때(403·404)도 같은 방식으로 토큰에 저장소를 추가합니다. `labhq doctor`는 토큰 앞부분이 아니라 실제 권한으로 판정합니다(#687). 아무것도 만들지 않는 탐침을 씁니다. 이름 없는 `POST /user/repos`, 내 저장소 하나에 내용 없는 `PUT contents`, 제목 없는 `POST issues`를 보내, 권한이 있으면 422, 없으면 403이 옵니다(2026-10-16 실측). classic 토큰은 `X-OAuth-Scopes`의 `repo`로 봅니다. 빠진 권한은 이름으로 한 줄 경고합니다. 네트워크가 안 되면 경고 대신 "처음 게시 때 확인"으로 둡니다. fine-grained 토큰의 접근 범위(선택한 저장소만/All repositories)는 API로 알 수 없어 안내만 붙입니다. 선택한 저장소만 허용하면 토큰이 직접 만든 비공개 저장소에도 접근하지 못합니다(실측 GET 404). 토큰이 없으면 "결과는 로컬에 저장"을 ok로 보입니다.
@@ -998,7 +1067,7 @@ PDF 표지는 보고서의 정식 제목과 연구 질문만 쓰고 자동 줄�
 bioinfo-agent는 지원하는 nf-core pipeline을 우선 쓰고, 지원 밖의 복잡한 신규 구현은 engineer나 analyst에게 배정합니다. 통제 데이터 구역·비용 상한 초과·프로그램 설치만 PI에게 올립니다.
 새 pipeline은 `outputs/pipeline/<name>/manifest.json`과 같은 폴더의 UTF-8 text 파일로 넘깁니다. `policy.bioinfo_agent.pipeline_pr: true`는 자동 기여 동의가 아니라 후보별 승인 경로만 활성화합니다. 완성된 후보마다 공개용 reference 정리를 마친 소스 전문·fingerprint·대상 저장소·base를 승인 카드에 표시합니다. PI가 별도로 `yes`라고 답하면 게이트웨이가 승인한 소스를 자르지 않고 자기 GitHub token으로 branch·PR을 만듭니다. 승인 전이나 거절 뒤에는 GitHub를 호출하지 않습니다. 코드(`.nf`·`.config`·`.groovy`·`.py`·`.R`·`.sh`)와 정해진 자리의 pipeline 파일(`README.md`·`docs/*.md`·`nextflow_schema.json` 등), 행마다 https 테스트 데이터를 가리키는 `assets/samplesheet*.csv`만 받습니다. 그 밖의 파일·비밀값·절대경로가 있으면 거부하고, 마치지 못했거나 실패한 turn의 산출은 올리지 않습니다. 승인 뒤 쓰기 권한이 없으면 요청은 그대로 끝나고 웹에 `pipeline PR 대기`로 남습니다.
 
-`labhq codex-review <project> <PR번호>`로 그 프로젝트 PR에 Codex 리뷰 요청 댓글을 한 번 남깁니다. 직원도 같은 규칙을 따릅니다(직원 공통 규칙). 리뷰 지적에는 멘션 없이 답하고, 수정을 모두 push한 뒤 PR 상단에 리뷰 요청을 한 번만 남기며, 리뷰가 도는 동안에는 다시 부르지 않습니다. 멘션이 든 댓글마다 리뷰 세션이 따로 뜨기 때문입니다.
+`labhq codex-review <project> <PR번호>`로 그 프로젝트 PR에 Codex 리뷰 요청 댓글을 한 번 남깁니다. 내장 직원 공통 규칙(`labhq/adapters/base.py`의 `ROLE_FOOTER`)도 같은 방식으로 동작합니다: 인라인 리뷰 지적에는 멘션 없이 답하고, 수정을 모두 push한 뒤 PR 상단에 리뷰 요청을 한 번만 남기며, 리뷰가 도는 동안에는 다시 부르지 않습니다. 멘션이 든 댓글마다 리뷰 세션이 따로 뜨기 때문입니다.
 
 ## 연구 lane과 검증
 
@@ -1125,7 +1194,7 @@ accept면 CSO가 결론·수치 문장마다 `[[claim:<step_id>/<claim_id>]]`를
 | 온톨로지 | 지도에 쓰는 낱말 사전. labhq 어휘(`labhq/vocab/output_types.yaml`)는 data 30·format 28·operation 22·topic 43, 총 123개 key다(PI 검토 2026-10-04, topic 23개는 2026-10-06 #420). branch 상한은 data 36·format 32·operation 24이고 topic은 상한이 없다(PI 2026-10-05). 계획 프롬프트에는 topic 이름만 들어가고, 조사에서 나온 별칭(`hic` → `hi_c` 등)은 승인된 키로 바뀐다 |
 | EDAM | 생물정보학 공용 ontology. 123개 key 중 79개가 EDAM 용어 75개에 이어진다(`edam_subset.yaml`). 판정은 로컬 key로 하고 EDAM ID는 메타데이터로만 붙인다 |
 | 데이터 종류 선언 | CSO가 단계 산출에 종류 key를 적는다(`plan.declare_output_types`, 기본 꺼짐). 선언이 없으면 아래 판정은 모두 "모름"이다 |
-| 입력–방법 맞춤 | 단계 입력의 선언 종류를 로컬 관계표(`labhq/research/semantics_input_fit.yaml`)와 대조해 맞음·틀림·모름 개수만 센다. 막지 않는다 |
+| 입력–방법 맞춤 | 단계 입력의 선언 종류를 로컬 관계표(`labhq/research/input_fit.yaml`)와 대조한다. CP1 전 기존 2회 검증에서 알려진 불일치를 교정하고, 그림자는 개수만 관측한다 |
 | 그림자 | `semantics: shadow`. 요청이 끝난 뒤 gateway가 따로 계산해 `state_dir/semantics/`에 ID·종류·hash·개수만 남긴다. 계획·승인·실행·웹 화면은 꺼 둔 때와 같다 |
 | A/B·판단 창 | `semantics: ab`. 연구 요청을 ID hash로 반씩 나눠 한쪽(advisory)에만 재사용 후보(artifact ID·data type·만든 요청 ID)를 CSO 계획 참고로 준다. 10건 또는 3주 가운데 먼저 오는 쪽에서 버릴지·둘지·넓힐지 정한다 |
 
@@ -1138,7 +1207,7 @@ accept면 CSO가 결론·수치 문장마다 `[[claim:<step_id>/<claim_id>]]`를
 데이터 원본·경로·요청 본문은 기록에 들어가지 않고, 통제 구역 파일은 hash도 읽지 않습니다. 다만 request ID와 hash는 남으니 `state_dir`을 공개 위치에 두지 않습니다.
 보는 법: `labhq semantics report`는 전체 집계, `labhq semantics report --request req_...`는 요청 하나의 비교입니다(`--json` 지원). 켜고 끄는 값과 자동 중단 조건은 [설정 포인트](#설정-포인트), 한계는 [알려진 한계](#알려진-한계)를 봅니다.
 
-연구 계약이 있는 요청만 `semantic_report.md`·`semantic_report.json`에 단어장·EDAM, 체크리스트, 분석 pack, semantics, 운영 ontology, 그림자 요청의 판단과 영향을 기록합니다. CP2 카드에서 실제 Markdown을 열 수 있고, 종료 묶음은 실행 당시 체크리스트와 완료된 shadow 관측을 고정합니다. 정리본 경로는 `run/semantic_report.md`이며 `research.semantic_report: false`로 끌 수 있습니다.
+연구 계약이 있는 요청만 `semantic_report.md`·`semantic_report.json`에 단어장·EDAM, 체크리스트, 분석 pack, semantics, 운영 ontology, 그림자 요청의 판단과 영향을 기록합니다. CP2 카드에서 실제 Markdown을 열 수 있고, 종료 묶음은 실행 당시 체크리스트와 완료된 shadow 관측을 고정합니다. 정리본 경로는 `run/semantic_report.md`이며 `research.semantic_report: false`로 끌 수 있습니다. #796: CP1의 mainline 평가기(`research/input_fit.py`)는 Shadow off·제거와 독립이며 observer adapter와 같은 관계표·의미 hash를 씁니다. 기존 두 번의 계획 검증에서 알려진 입력 종류–operation 불일치를 교정하고 전후 경고를 카드에 남깁니다. 모르는 선언은 unverified이며 EDAM 매핑 자체는 fit 증거가 아닙니다. 같은 보고서와 bench 비교는 checklist 초기 누락/교정·review 판정, 선언/fit, 고정 pack 값, 재사용 후보/계획 채택을 분모·근거와 함께 표시합니다. 독립 기준 충족·실제 사용·과학 성능 효과는 미측정이면 그대로 적습니다. 현재 Shadow 관측은 효용 측정용으로 유지하되 actions/Shadow 부가 확장은 동결하고, 효용 판정 뒤 비활성화·정리를 검토합니다. 지금 observer를 지우거나 제거 스크립트를 실행하지 않습니다.
 
 요청별 보기는 저장된 그림자의 입력–방법 판정·산출 종류·재사용 후보·경고·행동 판단과 실제 단계·보고된 산출·승인 결정을 평문으로 보여 줍니다. 기록이 없으면 그대로 알리며 재계산으로 채우지 않습니다. 입력 종류별 목록은 기존 그림자 기록에 없어 확인 불가로 표시합니다. 파일 내용 검증은 하지 않습니다.
 
@@ -1150,9 +1219,7 @@ report는 중첩 집계의 구조와 개수(0 이상의 정수)를 확인합니�
 
 ## 설정 포인트
 
-설정 파일(`config/labhq.yaml`)의 항목입니다. 안전 관련 항목은 [안전 장치](#안전-장치), 연구 규약은 [연구 lane](#연구-lane과-검증)에 있습니다. pytest는 홈을 임시 폴더로 격리하며 명시한 설정·instance·cache·skill·doctor 경로도 실제 사용자 `.labhq`를 가리키면 파일 조회 전에 거부합니다.
-
-Ubuntu Python 3.10 CI의 진단·대기 상한은 [검증 기록](status/2026-10-20-0955-ci-stall-786.md)을 따릅니다.
+설정 파일(`config/labhq.yaml`)의 항목입니다. 안전 관련 항목은 [안전 장치](#안전-장치), 연구 규약은 [연구 lane](#연구-lane과-검증)에 있습니다.
 
 테스트 요청 정리는 `python scripts/purge_test_requests.py --database <gateway.sqlite3>`로 후보만 확인합니다. 기본 표지는 정확한 문구 `save outputs/counts.tsv`·agent `worker`·mode `direct` 세 가지입니다. 삭제는 gateway를 끈 유지보수 시간에만 `--apply --gateway-stopped --config <설정> --backup <새 파일>`을 붙입니다. 먼저 SQLite 백업을 만들고 일치한 요청과 이벤트만 지웁니다. 데모 문구는 자동 선택하지 않습니다.
 
@@ -1187,9 +1254,9 @@ Ubuntu Python 3.10 CI의 진단·대기 상한은 [검증 기록](status/2026-10
 - **참고 자료** (`pi_profile.references`, `runner.reference_roots`, #36): 요청의 `references`(`labhq send --ref`, 웹 **참고** 칩)와 PI 기본 참고를 브리핑·계획·단계 prompt에 포인터로 넣습니다. 종류는 `github`(URL과 branch만 적고 clone하지 않음)·`doi`·`pmid`·`url`·`path`입니다. `url`은 signed URL의 credential이 새지 않게 query·fragment를 떼고 scheme·host·path만 저장·표시·prompt·게시에 쓰며, 원문은 게이트웨이 내부 저장소에만 남깁니다. `path`는 `reference_roots`나 프로젝트 `local_dir` 안이어야 하고, 통제 데이터 구역과 겹치면 거부합니다. `~`로 시작하는 경로는 게이트웨이가 풀지 않고 적은 그대로 저장하고 러너가 자기 계정 home으로 풉니다. 게이트웨이와 러너가 다른 호스트·계정(WSL, HPC)이어도 되고, 게이트웨이 쪽 루트가 `~/refs`나 `/home/<계정>/refs`면 home 기준으로 비교합니다. 러너가 실제 경로로 다시 확인한 뒤 쓰기 권한 없이 엽니다. 열기 전에 폴더 안을 훑어 폴더 밖이나 통제 구역으로 풀리는 symlink·junction, 하위 mount가 하나라도 있거나 상한(`runner.reference_scan_max_entries` 20,000개, `reference_scan_max_depth` 16단계)을 넘으면 그 참고를 열지 않고 prompt에서도 지운 뒤 이유를 남깁니다. 링크로 적힌 통제 구역도 실제 경로로 비교하고, 작업 폴더나 프로젝트 폴더를 품은 참고는 빼고 이유를 남깁니다. Claude에는 `--add-dir`과 Edit·Write 거부 규칙을 주고, Codex는 `--add-dir` 없이 읽고, 승인 게이트는 그 안으로의 셸 쓰기를 PI에게 묻습니다. 미리 허용된 셸 명령(`Bash(python *)` 등)은 sandbox가 아니어서 막지 못하므로, 완전한 읽기 전용은 OS 권한으로 둡니다. 러너는 쓰기 가능한 참고 경로를 경로마다 한 번 경고합니다. 기본 참고는 요청이 만들어질 때 고정되고 `default_references: false`(`--no-default-refs`)로 뺍니다. 비공개 경로는 커밋하지 않는 `config/labhq.yaml`에만 적습니다. 프로젝트 GitHub 보고와 라운드 기록은 path를 POSIX·Windows·UNC·home 표기와 무관하게 `<reference-path>`로 가립니다(다른 계정 home 이름에 공백이나 JSON escape가 있어도, #183). PI 기본 `github`는 URL·`owner/repo`·clone 폴더명을, `url`은 URL을 `<private-reference>`로 가립니다. host 첫 이름이 `github`·`gitlab`·`gitea`·`git` 같은 코드 저장소(`github.example.edu`)인 `url`은 저장소로 보고 `owner/repo`·clone 폴더명도 가립니다(#181). 요청에 직접 붙인 github·url과 DOI·PMID는 그대로 둡니다.
   #677: 요청에 붙고 러너 검사를 통과한 참고 폴더의 리터럴 읽기에는 같은 경로 검사를 적용합니다. 맨 앞 `cd`는 `&&`로만 연결하며, `cat`·`grep -c`·`wc`·`od -N`·파일을 직접 지정한 `sha256sum`과 최대 128개 `*.zip` 입력을 판정합니다. 참고 폴더 쓰기·외부 읽기와 쓰기를 섞은 명령·credential·통제 구역은 자동 허용하지 않습니다. PowerShell은 작업 폴더 안 `New-Item -ItemType Directory [-Force] <경로> | Out-Null`을 절대·상대경로로 판정합니다. `python --version`도 기존 시스템 실행 파일 신뢰 검사를 통과해야 합니다. Inline Python·heredoc은 AST만으로 import 대상과 부작용을 보장하지 못하고, `sha256sum -c`는 manifest 안의 경로를 간접적으로 여므로 승인 카드에 남깁니다.
 - **요청 topic과 pack 적용** (#375): 일반·연구 PLAN의 `topics`는 assay/modality·분야 key입니다. labhq가 중복을 없애고 정렬하며, 일반 lane의 모르는 key는 버리고 경고하고 연구 lane은 교정 PLAN을 받습니다. `applies_when.topics_any`와 하나라도 맞는 pack만 적용하고 그 pack의 `pack_values`만 요구합니다. topic이 비면 조건부 pack을 적용하지 않고 CP1에 경고를 보이며, 판정과 근거 topic은 PLAN·감사 기록에 고정합니다. 옛 문자열 `applies_when`은 topic 조건이 없는 pack으로 읽고, topic 이전처럼 PLAN이 값이나 `{"not_applicable": "<이유>"}` 하나로 답합니다(topic으로 강제 적용하지 않음). topic 이전에 승인된 연구는 그때의 pack 규칙으로 재개합니다. 판 번호 없이 쓴 pack id(설정된 판이 하나일 때)와 `topic.id`·`topic/id`로 쓴 점검표 답은 검증 전에 정확한 키로 바꿉니다.
-- **산출 데이터 종류 선언** (`plan.declare_output_types`, 기본 `false`, #221·#151): 켜면 CSO 계획 단계와 direct 직원 응답에 `output_types: [{name, data_type, format}]`가 붙고 data·format key 목록이 전달됩니다. direct 응답은 보통 답을 `response`에, 실제로 저장한 파일 선언을 `output_types`에 둡니다. 값은 key만 받습니다. 모르는 key·다른 가지·짝 없는 이름·같은 파일의 중복·산출 수보다 많은 엔트리·8KiB 초과는 버리고, 계획 경고와 요청의 `output_types_stats`에는 고정 코드와 개수만 남깁니다. 선언 때문에 계약 검증이 실패하거나 교정 계획을 다시 받지는 않습니다. 엔진이 schema 단계에서 거절하는 경우는 막지 못하니 켜기 전에 두 엔진 probe가 필요합니다. 러너는 실제로 모은 산출에만 기록을 붙이고, format 선언이 없으면 같은 어휘 판본일 때만 확장자로 채웁니다(`inferred`, `.gz` 한 겹, `.txt`는 채우지 않음). data_type은 추론하지 않고 pack 값으로도 채우지 않습니다. 연구 계획의 선언은 어휘 판본(`vocab`)과 함께 CP1 hash에 들어가고, 빈 선언은 직렬화에서 빠져 이전에 승인된 계획의 hash가 그대로입니다. 끄면 direct를 포함해 prompt·schema·dispatch meta가 이전과 같습니다. 선언은 그림자 모델만 읽고 권한·예산·zone·dispatch·리뷰·claim에는 쓰지 않습니다. 선택적인 `labhq/vocab/edam_subset.yaml`이 없거나 깨지면 key는 local로 남고 선언은 그대로 동작합니다. 어휘나 매핑이 바뀌면 판본 hash가 바뀌고, 다른 판본의 선언은 다시 해석하지 않고 unknown(`vocab_changed`)으로 읽습니다. EDAM 표(`edam_map.yaml`·`edam_subset.yaml`, 123개 key 중 79개가 EDAM 용어 75개에 이어짐)는 CC BY-SA 4.0이며 출처·판본은 `labhq/vocab/NOTICE.md`에 있습니다.
+- **산출 데이터 종류 선언** (`plan.declare_output_types`, 기본 `false`, #221·#151): 켜면 CSO 계획 단계와 direct 직원 응답에 `output_types: [{name, data_type, format}]`가 붙고 data·format key 목록이 전달됩니다. direct 응답은 보통 답을 `response`에, 실제로 저장한 파일 선언을 `output_types`에 둡니다. 값은 key만 받습니다. 모르는 key·다른 가지·짝 없는 이름·같은 파일의 중복·산출 수보다 많은 엔트리·8KiB 초과는 버리고, 계획 경고와 요청의 `output_types_stats`에는 고정 코드와 개수만 남깁니다. 모르는·잘못된 선언 자체로 계약 검증을 실패시키지는 않습니다. 알려진 입력–operation 불일치는 기존 CP1 검증에서 교정합니다. 엔진이 schema 단계에서 거절하는 경우는 막지 못하니 켜기 전에 두 엔진 probe가 필요합니다. 러너는 실제로 모은 산출에만 기록을 붙이고, format 선언이 없으면 같은 어휘 판본일 때만 확장자로 채웁니다(`inferred`, `.gz` 한 겹, `.txt`는 채우지 않음). data_type은 추론하지 않고 pack 값으로도 채우지 않습니다. 연구 계획의 선언은 어휘 판본(`vocab`)과 함께 CP1 hash에 들어가고, 빈 선언은 직렬화에서 빠져 이전에 승인된 계획의 hash가 그대로입니다. 끄면 direct를 포함해 prompt·schema·dispatch meta가 이전과 같습니다. 선언은 CP1 입력 종류 검증과 그림자 모델이 읽으며 권한·예산·zone·dispatch·리뷰·claim에는 쓰지 않습니다. 선택적인 `labhq/vocab/edam_subset.yaml`이 없거나 깨지면 key는 local로 남고 선언은 그대로 동작합니다. 어휘나 매핑이 바뀌면 판본 hash가 바뀌고, 다른 판본의 선언은 다시 해석하지 않고 unknown(`vocab_changed`)으로 읽습니다. EDAM 표(`edam_map.yaml`·`edam_subset.yaml`, 123개 key 중 79개가 EDAM 용어 75개에 이어짐)는 CC BY-SA 4.0이며 출처·판본은 `labhq/vocab/NOTICE.md`에 있습니다.
 - **의미 모델 그림자** (`semantics`, 기본 `off`, #150): `semantics: shadow`면 요청이 끝난 뒤(실패·취소된 단계로 끝난 요청 포함) gateway의 daemon thread 하나가 `timeout_s`(기본 5초, 최대 10초) 안에 두 모델을 계산합니다. 출처 의미 모델(#136)은 앞선 산출의 재사용 후보와 이번 산출의 감사 계보를, 객체·링크 뷰는 직원·요청·단계·task·잡·데이터 자산·승인·산출물과 그 연결을 세고, 깨어난 task의 잡은 checkpoint가 지워진 뒤에도 대기로 세지 않습니다. 결과는 `gateway.state_dir/semantics/shadow.jsonl`에 ID·종류·hash·개수로만 남고, prompt·계획·승인·결과·round 기록·웹 화면은 off와 같습니다. `state_dir`이 git work tree 안이면(링크로 가리켜도) 켜지지 않습니다. 산출 hash는 runner가 같은 PC(`manifest.json`의 host 일치, gateway 설정의 `runner.workspace_root` 안)이고 작업 폴더가 허용 구역일 때만 읽습니다. public project는 `public` 구역만, 그 밖은 `public`·`internal`만 읽으니 hash를 재려면 `workspace_root`를 `policy.data_zones`에 `internal`로 적습니다. direct 요청은 계획이 산출을 선언하지 않으므로, runner가 작업 폴더 `outputs/` 아래 정규 파일을 결과 outputs로 남깁니다(#221). symlink·junction·mount와 통제 구역은 따라가지 않고, labhq가 쓰는 `RESULT*.md`와 UTF-8로 읽을 수 없는 이름은 빼며, 최대 200개(그림자 hash 상한)와 `runner.reference_scan_max_entries`·`reference_scan_max_depth` 안에서만 셉니다. 상한에 닿으면 작업 로그에 경고가 남습니다. hash는 `timeout_s`의 절반까지만 읽고, 넘으면 그 요청을 incomplete로 남긴 채 두 모델 계산은 끝까지 갑니다. 연속 3건 실패, 최근 20건 중 3건, 10초 넘게 멈춘 작업, 연속 5건 busy, 정보 경계 위반 1건, `wrong_identity` 표시 1건, 시작할 때 SQLite JSON1 함수 없음(`sqlite_json1_missing`) 가운데 하나면 재배포 없이 꺼지고 `disabled.json`에 이유가 남습니다. 요청·task·승인 ID와 labhq가 만든 hash는 정보 경계 원문으로 다시 보지 않습니다. `doctor`와 `status`는 중단 이유·시각·`labhq semantics enable`을 보이며, 예전 `request_id:identifier` 오판은 해제 가능하다고 알리되 자동으로 켜지 않습니다. 연속·최근 실패 수는 `breaker.json`에 남아 gateway를 다시 켜도 같은 epoch 안에서 이어 셉니다. `labhq semantics report`가 요청 수·두 모델 지표·자동 off 이력·제거 제안을 보여 줍니다. `labhq semantics mark`는 그 요청 줄에 기록된 후보 ref만 받고, 없는 요청·ref는 아무것도 쓰지 않고 거부합니다. 값이 틀리면 semantics만 꺼지고 경고가 한 번 뜹니다. 지울 때는 `python scripts/semantics_shadow_remove.py --check`로 확인한 뒤 `--check` 없이 돌립니다.
-  단계 입력의 선언 종류와 로컬 operation 관계표(`labhq/research/semantics_input_fit.yaml`)를 비교해 `fit`·`mismatch`·`unknown` 개수와 관계표 판본 hash만 같은 그림자 줄에 남기고, report는 판본별로 따로 셉니다(#151). 단계 agent에 정해진 operation이 pack보다 먼저이고, 다른 어휘 판본의 선언은 unknown으로 읽습니다. EDAM 표가 없어도 로컬 key 판정은 같고, 결과는 계획·승인·dispatch·실행에 쓰이지 않습니다.
+  단계 입력의 선언 종류와 로컬 operation 관계표(`labhq/research/input_fit.yaml`)를 비교해 `fit`·`mismatch`·`unknown` 개수와 관계표 판본 hash만 같은 그림자 줄에 남기고, report는 판본별로 따로 셉니다(#151). 단계 agent에 정해진 operation이 pack보다 먼저이고, 다른 어휘 판본의 선언은 unknown으로 읽습니다. EDAM 표가 없어도 로컬 key 판정은 같습니다. 이 사후 관측은 계획·승인·dispatch·실행을 바꾸지 않으며, 별도 mainline CP1 검증은 Shadow 없이도 유지됩니다.
   `semantics: ab`는 연구 요청 ID hash로 절반을 advisory, 절반을 기존 shadow arm에 고정합니다(#149 결정 15). advisory arm에 #267 selector 후보가 있으면 artifact ID·data type·생성 요청 ID만 CSO 계획 참고로 주며, 경로·파일 내용·요청 본문은 보내지 않습니다.
   두 arm 모두 계획 때 고른 후보 ID(shadow arm은 보여 줬을 ID)를 요청에 고정하고, 그림자 줄에는 arm·그 후보 수·계획이 그중 하나를 썼는지·비용만 남깁니다. 일반·direct 요청은 advisory가 없으니 arm도 없습니다.
   후보가 있으면 두 arm 모두 계획을 한 번 더 받습니다(shadow arm은 같은 prompt). 그래서 CSO 호출 수가 같고, 두 arm의 차이는 후보 목록뿐입니다.
@@ -1401,23 +1468,30 @@ Stanford Zou 연구실의 Virtual Biotech(bioRxiv 2026, 저자 중 Jiacheng Miao
 
 ```
 labhq/
-  settings.py  models.py  policy.py  registry.py  util.py  cli.py
+  settings.py  models.py  policy.py  private_paths.py  registry.py  cli.py
+  supervisor.py  store.py  durable.py  doctor.py  verify.py  request_bundle.py  reproduction_receipt.py
+  portfolio.py  result_storage.py  report_contract.py  report_pdf.py  korean_qc.py
   web/          index.html·state.js·ui/*.js (2.5D 사무실) · lab3d/ (3D) · vendor/three · manifest · icon
-  integrations/ github (프로젝트 이슈·보고서 커밋·공개 가드·Codex 리뷰 요청)
-  adapters/     base · claude_code · codex · gemini · antigravity · cli (자체 에이전트) · mock
-  runner/       daemon (게이트웨이 연결·실행·잡 감시) · approvals (로컬 브로커) · workspace (실험노트)
-  tools/        scheduler (SGE/PBS/Slurm) · hpc_mcp · approval_mcp · ask_mcp · _mcpcompat (mcp 1.x/2.x 호환)
-  gateway/      server (FastAPI · WS · REST)
-  orchestrator/ cso (브리핑 → 계획 → DAG → 리뷰 → 보고)
-  recruit/      paper2agent (채용 → 수습 → 계약)
-  facilities/   signatures (환경 실패 오류 서명 표)
-vocab/        산출 데이터 종류 key(output_types.yaml) · 선언 정규화(declare) · optional subset loader
+  integrations/ github · rounds (프로젝트 이슈·정리본/보고서 커밋·공개 가드·라운드 기록·Codex 리뷰 요청)
+  adapters/     base · claude_code · codex · gemini · antigravity · cli (자체 에이전트) · read_only · mock
+  runner/       daemon (게이트웨이 연결·실행·잡 감시) · approvals (로컬 브로커) · workspace (실험노트·산출 스캔) · bioinfo_agent
+  tools/        scheduler (SGE/PBS/Slurm) · hpc_mcp · approval_mcp · ask_mcp · annot_mcp · _mcpcompat
+  gateway/      server (FastAPI · WS · REST) · shutdown (종료 처리)
+  orchestrator/ cso (브리핑 → 선행 연구/파견직 → 계획 DAG → CP1/CP2 → 리뷰 → 보고)
+  research/     contract (CP1·CP2·result v2) · continuation (단계 재사용) · packs (도메인 규칙) ·
+                semantics* (출처/객체 그림자·입력 적합성·A/B) · semantic_device_report (의미 장치 보고서)
+  evidence/     claims (주장·근거 원장 검증) · literal_check (인용·수치 대조)
+  recruit/      paper2agent (논문 MCP 채용·수습·계약) · paper_skills (논문 방법론 자문 스킬)
+  facilities/   signatures · fixes · packages (환경 실패 오류 서명·자동 복구 allowlist)
+  vocab/        output_types.yaml (125개 key) · topic_checklists.yaml (45개 분야·135항목) ·
+                edam_subset.yaml · public_resources.tsv · declare · topic_checklists
+  skills/       내장 작성·도해 스킬 플러그인 (humanizer · graphical-abstract)
 agents/core/*.yaml       기본 역할 13개 (Claude Code 8·Codex 5, bioinfo-agent 포함)
 agents/contract/         파견직 계약서 (+ 템플릿, 호스팅 AlphaGenome 예시)
 config/labhq.example.yaml
-scripts/                 publish_github.sh · check_public.sh
-tests/                   스케줄러 파서 · 정책 · 레지스트리 · MCP 서버 · 어댑터(fake CLI) · 자체 에이전트 CLI ·
-                         GitHub 보고(fake API) · 웹 · 전체 흐름(mock)
+scripts/                 publish_github.sh · check_public.sh · integrations.py · vocab_tables.py · patch_notes.py
+tests/                   스케줄러 파서 · 정책 · 레지스트리 · 연구 계약/의미 모델 · MCP 서버 · 어댑터(fake CLI) ·
+                         GitHub 보고/정리본(fake API) · 웹(Node/브라우저) · 전체 흐름(mock)
 ```
 
 ## 라이선스
