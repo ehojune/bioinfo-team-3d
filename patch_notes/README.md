@@ -14,6 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 21:16 | [`5b412a9`](https://github.com/ehojune/bioinfo-team-3d/commit/5b412a9) | **새 기록을 보존하고 자동 생성 목차는 main에서 갱신하도록 맞췄습니다.**<br>STATUS와 패치노트 목차의 PR 변경 금지 규칙에 맞춰 최신 main 생성본을 보존했다. 양쪽 기록 원본은 유지하며 병합 뒤 main의 notes-index workflow가 목차에 반영한다. |
+| 21:13 | [`7da94e1`](https://github.com/ehojune/bioinfo-team-3d/commit/7da94e1) | **최신 변경 기록을 보존하면서 인계 문서의 충돌과 오래된 개발 상태를 정리했습니다.**<br>main 8151f23을 병합하고 HANDOFF 충돌에서 queued-halt 검증 근거를 보존했다. 열린 큐는 |
+| 20:17 | [`2b6d9c3`](https://github.com/ehojune/bioinfo-team-3d/commit/2b6d9c3) | **병합된 승인 게이트 작업을 개발 대기 목록에서 뺐습니다.**<br>총괄이 확인한 |
+| 20:14 | [`20a434e`](https://github.com/ehojune/bioinfo-team-3d/commit/20a434e) | **이미 반영된 기능을 아직 개발 중으로 안내하던 문서를 바로잡았습니다.**<br>HANDOFF의 병합 완료 PR과 대기 순서를 정리하고 매뉴얼의 |
 | 19:52 | [`1b343b0`](https://github.com/ehojune/bioinfo-team-3d/pull/818/commits/1b343b0) | queued halt 검사가 Windows worker 대기에 흔들리지 않도록 분리했습니다. 기술: halt 판정 뒤 t3 input scan executor 대기의 TimeoutError를 모의 재현하고, 해당 테스트만 offload/write job을 직접 실행한다. fsync·SQLite write와 기존 assertion 6개/deadline 5개를 보존하고 순서 assertion 2개를 추가했다. 관련 mock/static 11건 통과, 제품 control 변경·실제 process/thread 실행은 없다. |
 | 19:37 | [`49d5324`](https://github.com/ehojune/bioinfo-team-3d/pull/819/commits/49d5324) | **같은 단계의 조회와 승인 대기를 순서대로 처리해 대기 시간이 두 번 빠지는 문제를 막았습니다.**<br>동일 MCP event loop·작업 폴더의 자동 조회와 PDF 승인 대기를 slot으로 직렬화하고 예산 파일·취소·timeout·progress 종료 flag를 유지한다. 관련 mock 검사 27개가 통과했으며 실제 서비스 성능은 미검증이다. |
 | 19:04 | [`692c8ed`](https://github.com/ehojune/bioinfo-team-3d/pull/807/commits/692c8ed) | 논문 스킬 방법이 바뀌면 이전 결과를 재사용하지 않도록 고쳤습니다. 기술: 단계/직원에 연결된 selection·변환 receipt 전체와 순서를 노드 context hash에 결속했다. 해당 단계/후속은 거절하고 독립 후보는 보존하며 구 signature·승인 후 변경은 재승인을 요구한다. 회귀 15건 red 뒤 mock/static 129건 통과, 실제 변환/설치/연구는 미실행이다. |
