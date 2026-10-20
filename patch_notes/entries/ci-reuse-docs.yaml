@@ -1,4 +1,4 @@
-pr: null
+pr: 793
 rows:
   - sha: 8662c87
     at: '2026-10-20 10:45'
@@ -6,3 +6,6 @@ rows:
   - sha: 80b6daa
     at: '2026-10-20 10:53'
     text: 'CI 문서 판별에서 제목·목록의 command 예제와 설정 fragment도 full로 처리'
+  - sha: 5d7bd7a
+    at: '2026-10-20 11:40'
+    text: 'CI 재사용의 REST branch head와 실제 merge checkout·workflow 증명을 분리하고 기존 예제가 같은 prose 변경 허용'
