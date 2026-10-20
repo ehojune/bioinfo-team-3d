@@ -5,7 +5,7 @@ PI 질문·답과 결정을 모았습니다. 현재 창구는 [#760](https://git
 
 ## 현재 운영 (2026-10-20)
 
-개발 총괄은 Codex 고정이며 Codex·Claude subagent에 위임합니다. [최신 PI 방침](https://github.com/ehojune/bioinfo-team-3d/issues/760#issuecomment-6284732442)에 따라 새 일반 개발 배정은 보류하고 열린 PR 마무리·긴급 수정·문서 정리를 진행합니다. 날짜별 한도와 접수 재개 결정은 #760, 현재 작업 순서는 [HANDOFF](../HANDOFF.md), #732 분석 배정은 [PI 결정](../HANDOFF.md#pi-결정)을 봅니다. 아래 날짜가 붙은 답은 당시 기록입니다.
+개발 총괄은 Codex 고정이며 Codex·Claude subagent에 위임합니다. [최신 PI 방침](https://github.com/ehojune/bioinfo-team-3d/issues/760#issuecomment-6285136614)에 따라 일반 개발 배정을 재개했습니다. 열린 PR과 실제 실패를 우선하며 같은 담당자에게 관련 후속 작업을 이어 배정합니다. 날짜별 한도와 접수 재개 결정은 #760, 현재 작업 순서는 [HANDOFF](../HANDOFF.md), #732 분석 배정은 [PI 결정](../HANDOFF.md#pi-결정)을 봅니다. 아래 날짜가 붙은 답은 당시 기록입니다.
 
 ## 물은 것과 답
 
