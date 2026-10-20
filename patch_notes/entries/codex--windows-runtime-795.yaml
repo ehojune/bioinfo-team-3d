@@ -20,3 +20,7 @@ rows:
   at: 2026-10-20 14:42
   text: supervisor 통합 fixture와 parent-pin chain을 기존 Job 검증 launch로 연결하고 file output·실패
     진단·mock 회귀를 추가하며 lifecycle·restart·소유 handle 보호를 유지한다.
+- sha: 2e26626
+  at: 2026-10-20 15:51
+  text: ancestor fixture가 전달받은 checkout root를 helper import 전에 넣고 fresh-script 경로를
+    import cache 없이 검증해 parent-pin CI의 tests 모듈 누락을 고친다.
