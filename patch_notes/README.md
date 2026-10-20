@@ -14,23 +14,30 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 16:45 | [`2130b8e`](https://github.com/ehojune/bioinfo-team-3d/pull/802/commits/2130b8e) | post-spawn 로그 오류에도 소유 handle을 정리하고 인증된 현재 연결로 과거 이력만 해소하며 Windows runtime에 현재 PID 생성 시각·생존·전체 Job 비소속 증명을 요구한다. |
 | 16:35 | [`fb5e47c`](https://github.com/ehojune/bioinfo-team-3d/pull/816/commits/fb5e47c) | 재현 receipt가 공개 source의 안전한 유니코드·구두점 경로를 문법 검사·실행하고, 절대·traversal·제어 문자·Windows 장치 이름·끝 점/공백·NFC가 아닌 경로는 계속 막는다. |
 | 16:05 | [`9ff21ce`](https://github.com/ehojune/bioinfo-team-3d/pull/801/commits/9ff21ce) | 16시 대조에서 병합된 언어 지연 수정과 감사 후속 배정 상태를 개발 문서에 맞췄다. |
 | 16:03 | [`0d8ddaa`](https://github.com/ehojune/bioinfo-team-3d/pull/790/commits/0d8ddaa) | 종료 drain이 durable acceptance 중인 dispatch의 결과 기록과 ACK를 기다리며 task 정리 중 새 handler를 재검사하고 timeout·outbox·보호 gate를 유지한다. |
+| 15:51 | [`2e26626`](https://github.com/ehojune/bioinfo-team-3d/pull/802/commits/2e26626) | ancestor fixture가 전달받은 checkout root를 helper import 전에 넣고 fresh-script 경로를 import cache 없이 검증해 parent-pin CI의 tests 모듈 누락을 고친다. |
 | 15:49 | [`182382d`](https://github.com/ehojune/bioinfo-team-3d/pull/801/commits/182382d) | PI의 일반 개발 재개 결정을 개발 인계·운영 기준·PI Q&A에 맞췄다. |
 | 15:31 | [`f38813a`](https://github.com/ehojune/bioinfo-team-3d/pull/801/commits/f38813a) | 영문 README의 비교 실행 중이라는 오해를 막고 효과 미측정 상태를 명시했다. |
 | 15:29 | [`463756e`](https://github.com/ehojune/bioinfo-team-3d/pull/801/commits/463756e) | 매뉴얼의 CP1 입력 검증과 사후 그림자 측정을 구분하고 PI Q&A의 현재 운영 링크를 갱신했다. |
 | 15:25 | [`30afc9f`](https://github.com/ehojune/bioinfo-team-3d/pull/801/commits/30afc9f) | docs: README 한영판은 처음 보는 사람용으로, HANDOFF는 현재 우선순위만, AGENTS는 개발 절차만 남기고 manual의 #796·어휘 수를 코드와 맞췄다 |
+| 14:42 | [`05b3d64`](https://github.com/ehojune/bioinfo-team-3d/pull/802/commits/05b3d64) | supervisor 통합 fixture와 parent-pin chain을 기존 Job 검증 launch로 연결하고 file output·실패 진단·mock 회귀를 추가하며 lifecycle·restart·소유 handle 보호를 유지한다. |
 | 14:41 | [`602ee02`](https://github.com/ehojune/bioinfo-team-3d/pull/812/commits/602ee02) | fix: 긴 PI 문장의 경로 판별을 고정 길이 패턴으로 바꾸고 끝쪽 경로·코드 감지 회귀 검사 추가 |
 | 13:59 | [`df48ec6`](https://github.com/ehojune/bioinfo-team-3d/pull/806/commits/df48ec6) | Codex·Gemini 커밋의 공동 작성자 trailer를 GitHub이 인식하는 봇 주소로 맞추는 commit-msg 훅을 추가해 커밋 작성자에 에이전트 아이콘이 함께 보이게 했다. |
 | 13:43 | [`ade4f03`](https://github.com/ehojune/bioinfo-team-3d/pull/805/commits/ade4f03) | docs: 아키텍처 다이어그램의 store·resume·ws 경로 수정 및 readme-evidence 수치 동기화 |
 | 13:35 | [`6e522b2`](https://github.com/ehojune/bioinfo-team-3d/pull/805/commits/6e522b2) | docs: 매뉴얼 내 개발 에이전트 규칙 분리, 전체 계층 구조·다크 다이어그램 및 v0.5 모듈/어휘 수 최신화 |
+| 13:19 | [`a358267`](https://github.com/ehojune/bioinfo-team-3d/pull/802/commits/a358267) | binary journal mode와 native process-handle 이름을 명시해 encoding 검사를 유지하고 승인된 recruit receipt clock·external_wait test-only delta를 원문 재사용한다. |
 | 13:16 | [`bab83c2`](https://github.com/ehojune/bioinfo-team-3d/pull/803/commits/bab83c2) | C3의 6954ab6 원본 두 테스트와 98f70d96의 second-parent 대비 external_wait 테스트 diff만 재사용했다. 원본/applied patch hash 일치, private polling clock·deadline·취소·timeout progress 증거를 보존했다. 관련 mock/static 36건 통과; 제품/CP1 분리 변경 없이 새 통합 CI는 총괄에게 넘긴다. |
 | 13:00 | [`1bbb061`](https://github.com/ehojune/bioinfo-team-3d/pull/800/commits/1bbb061) | 외부 조회 진행 기록이 Python 3.10에서 잃어버린 취소로 끝없이 돌며 조회를 멈추던 문제를 막았다(PR 800 3.10 CI 멈춤). |
+| 12:51 | [`ed8c201`](https://github.com/ehojune/bioinfo-team-3d/pull/802/commits/ed8c201) | 확인된 direct 실패에만 소유 자식을 회수한 뒤 nonce·PID 생성 시각·사용자·실행 파일·전체 Job 비소속을 검사하는 임시 WMI bootstrap을 한 번 시도하며 venv와 fail-closed를 유지한다. |
 | 12:42 | [`2070c23`](https://github.com/ehojune/bioinfo-team-3d/pull/803/commits/2070c23) | CP1 평가기·관계표를 mainline으로 옮기고 optional Shadow adapter와 같은 aggregate API·의미 hash를 공유했다. off·전체 제거 후 CP1 교정, actions-only 제거 후 base observer 보존을 메모리/AST·mock으로 검증했다. 관련 68건·공개 경로 5건 통과, 실제 제거·process 통합은 CI에 맡긴다. |
 | 12:26 | [`6cf6c8a`](https://github.com/ehojune/bioinfo-team-3d/pull/800/commits/6cf6c8a) | Windows tree-kill이 재사용된 PID를 부모로 적은 부팅 때 system 프로세스를 실패로 세지 않아, 멈춘 gateway를 강제로 끝낼 수 있다(PR 800 Windows CI). |
+| 12:12 | [`45240fb`](https://github.com/ehojune/bioinfo-team-3d/pull/802/commits/45240fb) | runtime health 검증에 started_here=False를 넘기고 실제 함수·autospec 회귀와 Job 조회 오류 진단을 추가하며 Windows CI의 생존·거부 증거를 분리한다. |
 | 12:04 | [`cab83e7`](https://github.com/ehojune/bioinfo-team-3d/pull/803/commits/cab83e7) | CP1의 기존 2회 계획 검증에 입력 불일치 진단·교정·전후 경고를 연결하고, 기존 semantic_report와 bench 비교에 분모·근거·미측정을 구분한 기여 기록을 추가했다. 관련 mock/static 52건·최종 thread 금지 mock 14건 통과, 과학 성능 효과는 미측정이다. |
 | 12:03 | [`1220e10`](https://github.com/ehojune/bioinfo-team-3d/pull/801/commits/1220e10) | docs: 긴급 15M 승인과 CP1 작업 착수 반영 |
+| 11:53 | [`8f72071`](https://github.com/ehojune/bioinfo-team-3d/pull/802/commits/8f72071) | Windows detached 실행의 Job breakaway와 자식 비소속을 확인하고 설정 준비·인증된 runtime 준비를 나눠 비정상 소멸을 실패로 판정한다. |
 | 11:38 | [`f4e46cb`](https://github.com/ehojune/bioinfo-team-3d/pull/801/commits/f4e46cb) | docs: 외부 감사 우선순위와 측정용 Shadow 유지 방침 반영 |
 | 11:32 | [`64f1527`](https://github.com/ehojune/bioinfo-team-3d/pull/800/commits/64f1527) | 재현 receipt의 Python 실행이 -S를 빼 interpreter site-packages(numpy 등)를 불러오고, 문법 검사는 -I -S -B를 유지하며, 실제 interpreter 격리 test를 CI에 더했다. |
 | 11:27 | [`05c192e`](https://github.com/ehojune/bioinfo-team-3d/pull/790/commits/05c192e) | diagnostics가 감싼 기본 SIGTERM을 graceful 종료로 연결하고 durable acceptance 뒤 종료 중 dispatch를 실행하지 않도록 막는다. |

@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## PR #802 P1 후속
+
+4321008909는 기존 45240fb9의 started_here=False와 실제 함수/autospec 회귀로 stale입니다. 나머지 세 건을 수정했습니다: post-spawn 로그 실패도 소유 handle cleanup을 실행하고, PID 기록 없는 과거 이력은 현재 인증·runner 연결이 확인된 경우만 해소하며, Windows role·supervisor는 현재 PID 생성 시각·생존·ANY-Job 비소속을 조회합니다. unknown·stale·조회 오류는 실패하고 WMI 신원 미확정 PID에는 종료 권한을 부여하지 않습니다.
+
+수정 전 새 회귀 20 failed/6 passed, 수정 후 관련 mock/static 191 passed. guard 유지·blocked 0, Python 3.10 AST 5파일·encoding 검사 PASS. 실제 Native/WMI/process/thread/signal·PI·연구·HPC는 로컬 미실행입니다. 기존 positive/nested CI gate는 그대로입니다.
+
+manual 172,387→172,624자, reference 4,357→5,000자(LF Unicode). 근거 docs/reference/windows-runtime-795.md. push 뒤 CI를 한 번 조회하고 총괄에게 인계하며 봇 요청·대기·병합·배포는 하지 않습니다.
+
 # 재현 receipt 유니코드 source 경로 (#773, PR #816)
 
 ## 결론
@@ -51,6 +59,14 @@ PR #816(draft), 커밋 `fb5e47c`. 재현 receipt가 공개 source의 안전한 �
 
 CI는 push 뒤 한 번만 조회하며 완료를 기다리지 않습니다. fresh-head 리뷰·병합·배포는 총괄이 맡습니다. 근거: docs/reference/runner-signals-664.md.
 
+## ancestor fixture import 경로
+
+확정 원인: detached direct child의 script 경로는 임시 폴더이며 pytest/WMI caller의 sys.path는 상속되지 않습니다. parent-fixture.log의 tests import 실패를 재현했습니다. launcher·parent가 이미 전달받는 checkout root를 helper import 전에 추가합니다. 제품 코드·Job gate·소유 handle·parent-pin 단정은 유지합니다.
+
+로컬 mock/static 13 passed. 새 회귀 2개는 import cache를 우회한 경로 검색으로 수정 전 ModuleNotFoundError, 수정 뒤 통과를 확인합니다. 기존 fixture contract·Python 3.10 AST·encoding 검사도 통과했습니다. guard 유지·blocked 0, 실제 process/WMI는 로컬 미실행입니다.
+
+03828116의 제공된 Windows 로그는 positive·nested Job-close 생존 PASS, 1 failed/8510 passed/48 skipped입니다. 새 head CI는 미확인이고 조회·대기·봇·병합·배포는 하지 않습니다. 수정 범위는 해당 test와 필수 기록뿐입니다.
+
 ## 단계
 읽는 사람별 문서 정비(PI 요청) — 문서만 변경, PR #801
 
@@ -76,6 +92,14 @@ CI는 push 뒤 한 번만 조회하며 완료를 기다리지 않습니다. fres
 PI가15:44 신규 일반 작업 보류를 해제했다. HANDOFF·운영 기준·PI Q&A만 최신 결정으로 맞췄다. 실제 연구·bench는 별도 승인, README는 이번 운영 정정으로 늘리지 않았다.
 
 16시 대조: #812 병합, #815 draft 준비와 #798 순서를 개발 문서에 갱신했다. 실제 요청 성능·배포 성공은 미확인이다.
+
+## supervisor fixture 후속
+
+PR #802의 fake-role 시작과 parent-pin chain을 raw Popen에서 기존 verified spawn으로 연결했습니다. direct/WMI의 보유 handle과 file output을 함께 다루며 실패 시 기존 Job journal·fixture traceback을 제공합니다. 제품 gate와 lifecycle/restart/parent-pin 단정은 유지합니다.
+
+확정한 결함은 fixture의 launch 경계 우회입니다. redirector Job이 네 실패의 직접 원인인지는 기존 로그로 확정하지 않습니다. d5954101 Windows 로그의 positive·nested WMI 생존은 PASS지만 수정 fixture의 실제 CI는 미확인입니다.
+
+로컬 mock/static 155 passed, guard 유지·blocked 0. Python 3.10 AST·public·diff·기록 검사 결과는 [근거](../reference/windows-runtime-795.md)에 연결합니다. reference 3,702→4,357자(LF Unicode), manual 166,480자 유지. 실제 process/WMI는 로컬 미실행이며 CI 조회·봇·병합·배포는 총괄 소관입니다. manual·#805 문서는 수정하지 않았습니다.
 
 ## 2026-10-20 14:40 — `pi-language-linear`
 
@@ -143,6 +167,16 @@ P1 — 긴 보고서의 경로 판별 지연 제거. Fixes #810.
 
 <!-- author:gemini -->
 
+## encoding·공용 fixture 후속
+
+기존 encoding checker를 바꾸지 않고 `journal.open(mode="rb")`와 native `open_process`로 의미를 명시했습니다. 64 KiB tail bound·ownership/ACK/cleanup·started_here=False는 유지합니다. PR #793의 HTTP binary lint 변경은 가져오거나 덮어쓰지 않았습니다.
+
+승인된 test 원문만 재사용했습니다: `6954ab6aa3ce7314744d754dea16d26e45c0731d`의 recruit/receipt-clock 2파일과 `98f70d96a937e5c6ee8fb650a31d5bf63c0eecbe`의 **second parent 대비 external_wait 1파일 delta**. 세 결과 blob은 원본과 일치합니다. 공용 product 변경·merge commit은 가져오지 않았고 clock/cancellation/progress timeout 단정은 보존했습니다.
+
+후속 검증: 실제 encoding classifier·잘못된 text I/O 반례·bounded-tail fake, receipt-clock fake reconnect/timeout/cancel, external_wait의 mock 3phase와 WMI/runtime mock을 포함해 **110 passed**, guard 3개 유지·blocked 0. 수정 전 실패와 수정 후 전체 출력을 보존했습니다. Python 3.10 AST(embedded CI scripts 포함)·public·diff·patch-notes·notes PASS. Hub/process/WMI 실제 fixture는 로컬 미실행입니다.
+
+reference 3,010→3,702자(LF Unicode), manual 동작 설명은 유지합니다. 실제 Windows survival·Hub 재개·fresh-head CI 증거는 root가 확인해야 합니다. CI 조회·watcher·봇·병합·배포는 하지 않았습니다. root는 이 head 확인 뒤 후속 watcher 하나를 맡습니다.
+
 # PR #800 Python 3.10 CI 멈춤 수정 (external_wait)
 
 ## 결론
@@ -170,6 +204,20 @@ P1 — 긴 보고서의 경로 판별 지연 제거. Fixes #810.
 
 - 경합이라 수정 전에도 매번 멈추지는 않습니다. 원인은 stall snapshot과 3.10 `wait_for` 동작으로 판단했습니다.
 - PR #766이 `tests/test_external_wait.py`를 고치고 있어 그 파일은 건드리지 않고 새 test 파일을 만들었습니다.
+
+Windows detached launch와 설정/runtime 준비를 분리합니다. `started_here=False`의 실제 health 함수·autospec 회귀, auth/identity·ANY-Job gate, foreground/POSIX를 유지합니다. Fixes #795.
+
+후속: direct를 먼저 시도하고 확인된 WinError 5 또는 Job 잔류에만 소유 handle로 자식 종료·회수를 마친 뒤 transient local WMI를 한 번 시도합니다. base interpreter와 venv carrier로 redirector의 별도 PID/Job을 피합니다. nonce receipt·보유 PID handle의 생성 시각/실행 파일/current-user·모든 Job 비소속 확인 전에는 ACK하지 않습니다. bootstrap은 ACK 뒤 같은 PID로 supervisor에 진입하며 caller 소멸/만료에는 self-abort합니다. unknown·정리 실패·provider 거부에 unsafe retry는 없습니다.
+
+환경 값은 PowerShell stdin/Startup.EnvironmentVariables 메모리로 전달하며 파일·argv·진단에는 쓰지 않습니다. 임시 control은 instance state의 current-user-only DACL과 만료를 갖습니다. site/PYTHONPATH 없이 bootstrap하고 기존 path/prefix를 복구하나 초기 isolated/no-site flags는 유지됩니다. 서비스·Task Scheduler·설치·승격·host 정책 변경은 없습니다.
+
+검증: 로컬 mock/static **146 passed**, guard 3개 유지·blocked 0. direct cleanup/one attempt, WMI codes, nonce/creation/image/owner·timeout·unknown, native identity reader와 DACL, 같은 PID 전환을 fake로 확인했습니다. Python 3.10 AST(embedded CI scripts 포함)·public·diff·patch-notes·notes 검사 PASS. 로컬 실제 process/thread/signal/WMI·PI 상태 접근은 없습니다.
+
+CI-only 증거 pending: nested outer non-breakaway/inner silent-breakaway에서 WMI launch 성공 후 부모 Job들을 닫고 fake supervisor와 child role의 생존·소유 handle cleanup을 요구합니다. 별도 실제 bootstrap unknown/timeout은 ACK/role 진입을 막습니다. 실제 direct 거부+mock provider 거부는 별도이며 survival PASS로 세지 않습니다. [0bf4c97d clean-install 실패](https://github.com/ehojune/bioinfo-team-3d/actions/runs/39363311454/job/118434304160)의 child_in_job=True는 실제 잔류이며 ancestor flags는 unknown입니다. **이번 head의 실제 탈출·clean-install 해결은 아직 미검증**이고 WMI provider도 차단할 수 있습니다. CI·리뷰·병합은 root 담당입니다.
+
+manual 166,295→166,466자, reference 3,029→3,010자(LF Unicode). [근거·제약](docs/reference/windows-runtime-795.md). 배포는 하지 않았습니다. root는 doctor --runtime rc0/runtime_readiness.ready, 실제 WSL, 명시적 idle0·global deploy lock을 별도로 확인해야 합니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
 
 # PR #800 Windows CI 실패 수정 (proc_tree)
 
@@ -201,6 +249,18 @@ P1 — 긴 보고서의 경로 판별 지연 제거. Fixes #810.
 - CI의 760·856이 정말 부팅 때 생긴 프로세스였는지는 로그에 생성 시각이 없어 확인하지 못했습니다. 실패 장면과 코드 경로가 맞는다는 근거로 판단했습니다.
 - Windows + Python 3.10 조합 job은 CI에 없습니다.
 
+Windows detached launch에 BREAKAWAY를 요청하고 자식의 모든 Job 비소속 확인 뒤 PID를 기록합니다. 거부·잔류·unknown은 성공 기록 없이 실패하며 foreground/POSIX·identity guard를 유지합니다. 설정 준비와 runtime 준비를 구분하고 stale/missing/unknown managed daemon을 실패로 판정합니다. Fixes #795.
+
+후속 수정 `45240fb9`: 읽기 전용 health 검증에 필수 `started_here=False`를 전달합니다. 실제 check_health와 autospec으로 정상·타 identity·identity 없음, remote/foreground·WSL을 검증합니다. Job 조회는 pointer/BOOL 규격을 확인하고 native/binding 오류와 잔류를 출력합니다. Windows CI positive는 launch 성공→부모 Job close→child 생존→소유 handle 정리를 요구하며 거부/unknown을 PASS로 받아들이지 않습니다. denied는 별도 test입니다.
+
+검증: 로컬 mock/static **107 passed**, guard 3개 유지·blocked 0. 수정 전 health 5건 TypeError 재현 로그와 수정 뒤 전체 출력을 보존했습니다. Python 3.10 AST(embedded CI script 포함)·public·diff·기록 검사 PASS. 실제 process/thread/signal/Job fixture는 로컬에서 실행하지 않았습니다.
+
+한계: [완료된 clean-install CI](https://github.com/ehojune/bioinfo-team-3d/actions/runs/39361662285/job/118429060176)는 launch exit 2로 실패했습니다. 이전 출력에는 child membership/native 오류가 없어 원인은 미확정이며 **이 회귀가 해결됐다는 근거는 아직 없습니다**. 실제 생존·새 head CI는 root 확인 대상입니다. 배포 gate는 `doctor --runtime` exit 0 및 `runtime_readiness.ready=true`입니다. PI 상태 변경·배포·봇 호출·병합은 하지 않았습니다.
+
+manual 166,205→166,295자, reference 1,811→3,029자(LF Unicode). [근거·남은 CI 확인](docs/reference/windows-runtime-795.md). workflow·host Job 정책·broker/service 변경은 없습니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
 Fixes #796
 PR #803. CP1 `cab83e7`, 분리 `2070c23`, 공유 fixture `bab83c2`.
 
@@ -211,6 +271,25 @@ PR #803. CP1 `cab83e7`, 분리 `2070c23`, 공유 fixture `bab83c2`.
 - 관련 mock/static **36 passed**: private clock의 reconnect/timeout/cancel, mock 자동 조회 deadline·취소·timeout progress, CP1의 optional import 차단·메모리 삭제 변환. Python 3.10 AST·public·diff·patch-notes·notes 검사 통과, guard 환경 유지.
 - `8d0084cd` 실제 3.10/3.12 로그에는 종전 분리/제거 실패가 없고 각 1건의 timing fixture 실패만 남았습니다. 새 head 통합 CI·리뷰·P1=0 확인은 controller 담당입니다.
 - 실제 Hub/process·제거/import 통합·전체 suite·Windows/3.10 실행·PI/연구/bench/원자료/HPC·봇 호출·병합·배포는 로컬 미실행입니다. #797/#798·#804 범위를 추가하지 않았습니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
+PR #802
+
+## 변경
+
+Windows detached 실행은 CREATE_BREAKAWAY_FROM_JOB을 요청하고 소유한 자식 handle의 전체 Job 비소속을 확인한 뒤 PID를 기록합니다. 거부·잔류·unknown은 성공 PID/readiness 없이 실패하며 안전하지 않은 flag 재시도는 없습니다. 호출자 Job membership·immediate limits와 launch 단계를 기록합니다. lifecycle exit 기록 부재만으로 과거 Job 강제 종료 원인을 확정하지 않습니다.
+
+설정 준비와 runtime 준비를 분리하고 `doctor --runtime`을 배포 점검 계약으로 추가합니다. 과거 managed daemon의 stale/missing/unknown 신원은 실패, pristine·정상 down은 별도 상태입니다. remote/foreground는 로컬 PID 없이 인증된 gateway·runner로 확인하며 켜진 WSL runner 연결도 확인합니다. foreground/POSIX·PID identity guard는 유지합니다.
+
+Fixes #795
+
+## 검증·한계
+
+- 로컬: guard 환경을 유지한 mock/static 100 passed, blocked 0. Python 3.10 AST(실제 CI subprocess script 문자열 포함)·public·diff 검사 통과. 실제 process/thread/signal/Job fixture는 실행하지 않았습니다.
+- CI 전용 Windows 테스트: 임시 fake daemon·state·소유 kill-on-close Job의 breakaway 허용/거부, Job close 뒤 생존 또는 명시적 실패, PID/readiness 부재와 생성 시각을 확인한 handle의 정리. 상위 CI Job이 허용 경로를 막으면 명시적 실패를 출력하며 이 경우 생존은 미검증입니다. 실제 CI 결과는 아직 확인 전입니다.
+- manual 165,668→166,205자. 상세 근거·Microsoft 문서: docs/reference/windows-runtime-795.md. workflow·CI 정책은 변경하지 않았습니다.
+- 실제 PI state/daemon/Job·기관·연구·HPC·raw data는 건드리지 않았습니다. CI·fresh-head 리뷰·배포·병합은 root 담당이며 breakaway 거부 시 독립 콘솔이 필요합니다.
 
 🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
 
