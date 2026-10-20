@@ -115,7 +115,7 @@ Windows에서는 restricted 구역을 빼고, 개인 Codex 지침이 있으면 �
 
 Codex `bin`이 비어 있거나 `auto`이면 Windows 앱에서 판본이 가장 높은 폴더를 고르고, 판본을 비교할 수 없을 때만 mtime을 씁니다. doctor는 고른 경로를 표시합니다. 앱이 없으면 PATH를 사용합니다.
 
-**다른 설정이 겹칠 때(#613).** 한 PC에서 설정 파일이 다른 labhq가 함께 돌면 서로의 기록·승인을 섞거나 엉뚱한 사무실을 열게 됩니다. 실행 중인 gateway와 runner는 시작할 때 자기 *정체*를 적어 둡니다: 시작한 설정 파일, 그리고 `gateway.state_dir`·`runner.state_dir`·`runner.id`·포트의 지문(둘 다 해시이고 비밀값은 없음). 파일은 gateway state 폴더의 `labhq-gateway-owner.json`과 runner state 폴더의 `labhq-runner-owner.json`이고, gateway는 `/api/health`의 `identity`로도 같은 해시를 돌려줍니다(경로·token 없음). `doctor`(`instance` 행)와 `up`은 state 폴더·runner state 폴더·포트를 쥔 쪽의 정체를 지금 설정과 비교해 쉬운 한국어와 고치는 명령으로 알립니다. 읽기만 하고 `doctor`는 네트워크를 쓰지 않습니다.
+**다른 설정이 겹칠 때(#613).** 한 PC에서 설정 파일이 다른 labhq가 함께 돌면 서로의 기록·승인을 섞거나 엉뚱한 사무실을 열게 됩니다. 실행 중인 gateway와 runner는 시작할 때 자기 *정체*를 적어 둡니다: 시작한 설정 파일, 그리고 `gateway.state_dir`·`runner.state_dir`·`runner.id`·포트의 지문(둘 다 해시이고 비밀값은 없음). 파일은 gateway state 폴더의 `labhq-gateway-owner.json`과 runner state 폴더의 `labhq-runner-owner.json`이고, gateway는 `/api/health`의 `identity`로도 같은 해시를 돌려줍니다(경로·token 없음). `doctor`(`instance` 행)와 `up`은 state 폴더·runner state 폴더·포트를 쥔 쪽의 정체를 지금 설정과 비교해 쉬운 한국어와 고치는 명령으로 알립니다. 읽기만 하며 기본 `doctor`는 네트워크를 쓰지 않습니다. `--runtime`은 인증된 gateway 상태를 확인합니다.
 - 같은 state 폴더: 다른 정체의 프로세스가 살아 있으면 `up`은 시작하지 않고 `labhq -c <그 설정> open`·`down`을 안내합니다. 이 설정 파일이 시작한 뒤 바뀐 설정으로 아직 돌고 있으면 `down` 뒤 `up`을 안내합니다. 살아 있지는 않지만 마지막으로 그 폴더를 쓴 설정이 다르면 경고만 합니다.
 - 같은 runner state 폴더: `runner-<id>.sqlite3`, control 폴더, 입력 hash cache를 두 runner가 함께 쓰면 안 되므로 `runner.id`가 달라도 막습니다. `labhq runner`·`labhq gateway`를 직접 띄워도 시작할 때 같은 검사를 하고 막힌 채로 시작하지 않습니다.
 - 같은 포트: 다른 설정의 gateway가 이 포트에서 돌면(그 설정의 프로세스 기록이 그 설정을 가리킬 때만) `up`이 멈추고 어느 설정인지와 `labhq -c <그 설정> open`을 알립니다. 같은 token으로 답하는 gateway도 `identity`가 이 설정과 다르면 쓰지 않고, 정체를 알려 주지 않는 이전 판 gateway는 이 설정의 프로세스 기록이 보증할 때만 받아들입니다. 받아들이지 않은 gateway는 `labhq-last-config.json`·주 설정에 적지 않습니다.
@@ -123,6 +123,7 @@ Codex `bin`이 비어 있거나 `auto`이면 Windows 앱에서 판본이 가장 
 `up`이 자기 gateway임을 확인한 뒤에만 그 state 폴더에 `labhq-last-config.json`을 남깁니다. 설정 파일이 지워지면 그 기록은 무시합니다.
 
 실행 전 `labhq doctor`로 설정·엔진·직원·계산 도구를 점검하세요. `labhq doctor --json`은 러너 상태 디렉터리에 `capabilities.json`을 쓰고, `--network`를 붙일 때만 공개 데이터 사이트에 접속합니다. 이 manifest의 `runner_capabilities`는 러너가 보고하는 기능과 같은 설정·roster에서 산출한 사실입니다. `research lane` 행은 연구 lane이 끝까지 도는지 알려 줍니다. `research.enabled`만 켜면 CP1 뒤 멈춘다는 warn이 뜨고, `evidence_checkpoint`까지 켜야 CP2·리뷰·보고서로 갑니다. `research` 아래 오타 키는 시작할 때 오류입니다.
+doctor는 **설정 준비**와 **운영 준비**를 나눠 표시합니다. 배포 전에는 `doctor --runtime`을 사용하세요. 이전에 시작한 daemon의 신원이 stale·missing·unknown이면 실패하며 pristine·정상 down은 별도로 표시합니다. remote·foreground 역할은 로컬 PID를 요구하지 않고 인증된 gateway와 runner 연결로 확인합니다(켜진 WSL runner도 포함).
 doctor의 `disk` 행은 작업·임시·Codex/Claude 직원 홈의 드라이브 여유를 읽습니다. 폴더가 아직 없으면 가장 가까운 기존 부모를 검사합니다. 기본 경고는 10 GiB 미만 또는 5% 미만이며 `runner.disk_warning_free_gb`·`runner.disk_warning_free_percent`로 바꿉니다(각각 0이면 해당 기준 해제). 조회 실패도 warn입니다. 설정한 작업 폴더는 이름과 무관하게 게시 전 개인 경로 검사에 포함됩니다. [검증 근거](reference/disk-preflight-752.md).
 
 doctor는 roster가 쓰는 엔진만 검사하고, 생략한 네트워크·dry-run 로그인 검사는 한 줄로 묶습니다. fail이 하나라도 있거나, 활성 직원이 없거나, roster 엔진 실행 파일이 하나라도 없으면 끝에 `실행 준비: 아니오`와 이유를 표시합니다. 다른 warn은 준비 여부를 바꾸지 않습니다.
@@ -178,6 +179,8 @@ Windows wrapper는 `.venv\Scripts\python.exe`를 직접 실행하므로 venv 활
 `supervisor.restart: true`로 켜면 스스로 끝난(종료 코드 0이 아닌) 역할을 다시 시작합니다. 종료 코드 2는 labhq가 시작을 거부한 경우(설정 거부, 다른 설정이 같은 state 폴더를 쓰고 있다는 #613의 소유 기록)라 같은 거부가 되풀이되므로 다시 시작하지 않고 `restart_skipped`만 남깁니다. 처음엔 `backoff_s`(5초) 뒤에, 이어서 두 배씩 `backoff_cap_s`(120초)까지 기다리고, `restart_window_s`(600초) 안에 `max_restarts`(5)번을 넘기면 그대로 둡니다. **기본은 꺼짐**이라 비정상 종료가 가려지지 않습니다. `down`과 웹 종료로 멈춘 역할은 다시 시작하지 않습니다(`labhq-<role>.stopping` 표시 파일을 먼저 남기고, `up`이 지웁니다). 감독이 다시 시작하는 중에 `up`을 실행하면 감독을 하나 더 띄우지 않고 역할이 응답하길 기다립니다. 이 변경 전에 시작한 gateway·runner는 감독이 없고, `status`가 "감독 없음(감독 도입 전 방식)"이라고 알립니다. `down` 뒤 `up`을 하면 감독 아래로 들어갑니다. 감독 프로세스 기록이 있는데 프로세스가 없고 역할만 살아 있으면 `status`·`doctor`가 경고합니다(보호받지 못하는 상태).
 
 2.5D·3D 웹을 열어 두면 gateway 연결 끊김과 runner 미연결을 별도로 알립니다. 재연결 중에도 경고를 유지하고 연결이 돌아오면 지웁니다. 연결 끊김만으로 종료와 네트워크 문제를 구별하지는 않으며, 웹을 닫았을 때 외부 채널로 알림을 보내지는 않습니다.
+
+Windows `up`은 Job breakaway를 요청하고 자식의 Job 비소속을 확인한 뒤 PID를 기록합니다. 거부·잔류·확인 불가 시 실패하며 flag를 빼고 재시도하지 않습니다. 독립 콘솔과 Job 정책을 확인하세요. `logs/detached-launch.jsonl`에는 시도·거부·검증 단계를 남깁니다. 기록 없는 소멸만으로 Job 강제 종료를 확정하지 않습니다. [근거·검증 경계](reference/windows-runtime-795.md).
 
 **예고 없이 꺼졌을 때:** `status`는 연결을 시도하기 전에, `doctor`는 네트워크 없이 로컬 PID 기록과 마지막 heartbeat·exit를 보여 줍니다. 조회는 PID 기록을 지우지 않습니다. 프로세스가 없고 exit도 없으면 `비정상 종료 의심`입니다. 아래 파일은 설정의 `gateway.state_dir/logs/`에 gateway·runner별로 쌓입니다(직접 실행한 경우도 동일).
 

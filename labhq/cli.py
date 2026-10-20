@@ -682,8 +682,10 @@ def _launch_options(s: Settings) -> dict:
         "env": env, "close_fds": True,
     }
     if sys.platform == "win32":
+        from .windows_launch import BREAKAWAY, CHECK_ENV
+        env[CHECK_ENV] = "1"
         options["creationflags"] = (getattr(subprocess, "DETACHED_PROCESS", 0x00000008) |
-                                    getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200))
+                                    getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200) | BREAKAWAY)
     else:
         options["start_new_session"] = True
     return options
@@ -760,8 +762,13 @@ def _start_background(s: Settings, role: str, *, popen=None) -> int:
     supervisor = _supervisor_role(role)
     _clear_stopping(s, role)
     command, options = _supervisor_launch(s, role)
-    with (logs / f"{supervisor}.log").open("a", encoding="utf-8") as output:
-        process = (popen or subprocess.Popen)(command, stdout=output, **options)
+    from .windows_launch import LaunchError, spawn
+    try:
+        with (logs / f"{supervisor}.log").open("a", encoding="utf-8") as output:
+            process = spawn(command, state=state, role=supervisor, popen=popen, stdout=output, **options)
+    except LaunchError as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from None
     try:
         created = _process_created(process.pid)
     except ProcessIdentityError as exc:
@@ -781,6 +788,8 @@ def _start_background(s: Settings, role: str, *, popen=None) -> int:
     record = {"pid": int(process.pid), "role": supervisor, "created": created, "config": s.config_path}
     atomic_write_text(_pid_file(s, supervisor), json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
     _await_child_record(s, role, supervisor_pid=int(process.pid), supervisor_created=created)
+    from .windows_launch import outcome
+    outcome(state, supervisor, "recorded", child_pid=int(process.pid))
     return int(process.pid)
 
 
@@ -1759,6 +1768,7 @@ def main(argv: list[str] | None = None) -> None:
     doctor.add_argument("--json", action="store_true", help="write state_dir/capabilities.json")
     doctor.add_argument("--network", action="store_true", help="check public data source reachability")
     doctor.add_argument("--fix", action="store_true", help="install missing Paper2Agent for the recruiter and recheck")
+    doctor.add_argument("--runtime", action="store_true", help="require live authenticated gateway/runner and valid managed process identities")
     sp = sub.add_parser("send")
     sp.add_argument("text")
     sp.add_argument("--agent", help="direct mode: send to one agent")
@@ -1956,7 +1966,7 @@ def main(argv: list[str] | None = None) -> None:
         from .doctor import collect, render, save
 
         requested = args.config or os.environ.get("LABHQ_CONFIG")
-        result = collect(s, requested_config=requested, network=args.network, fix=args.fix)
+        result = collect(s, requested_config=requested, network=args.network, fix=args.fix, runtime=args.runtime)
         if args.json:
             try:
                 save(result, s)
@@ -1966,9 +1976,11 @@ def main(argv: list[str] | None = None) -> None:
                                          "hint": "Set runner.state_dir to a writable directory outside the repository."})
                 result["summary"]["fail"] += 1
         print(render(result))
-        if result["summary"]["fail"]:
+        if result["summary"]["fail"] or (args.runtime and not result["readiness"]["ready"]):
             raise SystemExit(1)
     elif args.cmd == "gateway":
+        from .windows_launch import require_detached_job
+        require_detached_job()
         from .process_diagnostics import ProcessDiagnostics
 
         with ProcessDiagnostics(_launch_state(s) / "logs", "gateway") as diagnostics:
@@ -2017,6 +2029,8 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit(2)
         print(_open_web_office(s, args.config or os.environ.get("LABHQ_CONFIG"), three_d=args.three_d))
     elif args.cmd == "runner":
+        from .windows_launch import require_detached_job
+        require_detached_job()
         from .process_diagnostics import ProcessDiagnostics
 
         with ProcessDiagnostics(_launch_state(s) / "logs", "runner") as diagnostics:

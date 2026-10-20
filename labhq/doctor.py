@@ -600,7 +600,7 @@ def _paper2agent_row(settings: Settings, agents: list[AgentSpec], fix: bool = Fa
 
 def collect(settings: Settings, *, requested_config: str | None = None, network: bool = False,
             dry_run: bool = False, require_roster: bool = False, fix: bool = False,
-            require_paper2agent: bool = True, github_transport=None) -> dict:
+            require_paper2agent: bool = True, github_transport=None, runtime: bool = False) -> dict:
     rows: list[dict] = []
     from .cli import _local_process_diagnostics
 
@@ -874,8 +874,28 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
     missing_engines = sorted(name for name in roster_engines if name != "mock" and not available.get(name, False))
     if missing_engines:
         readiness_reasons.append("roster engine 실행 파일 없음: " + ", ".join(missing_engines))
+    from . import runtime_readiness, windows_launch
+    config_reasons = list(readiness_reasons)
+    config_failures = sum(r["status"] == "fail" for r in rows)
+    if config_failures:
+        config_reasons.append(f"fail {config_failures}건")
+    operational = runtime_readiness.inspect(settings)
+    if runtime:
+        operational = runtime_readiness.deployment(settings, operational)
+    rows.append(_row("runtime", "daemon identity", "fail" if operational["reasons"] or (
+        runtime and operational["ready"] is not True) else "ok" if operational["ready"] else "skip",
+        operational["status"] + (": " + "; ".join(operational["reasons"]) if operational["reasons"] else ""),
+        "labhq doctor --runtime; inspect PID identity and detached-launch.jsonl; normal down differs from disappearance."))
+    if sys.platform == "win32":
+        job = windows_launch.current_job()
+        rows.append(_row("runtime", "Windows Job (doctor)", "ok" if job["in_job"] is False else "warn",
+                         json.dumps(job), "Limits describe only the immediate job, not the cause of a past exit."))
+    readiness_reasons.extend(operational["reasons"])
     return {"schema_version": 1, "runner_capabilities": runner_capabilities, "checks": rows,
-            "readiness": {"ready": not readiness_reasons, "reasons": readiness_reasons},
+            "configuration_readiness": {"ready": not config_reasons, "reasons": config_reasons},
+            "runtime_readiness": operational,
+            "readiness": {"ready": not config_reasons and not operational["reasons"] and (
+                not runtime or operational["ready"] is True), "reasons": readiness_reasons},
             "summary": {status: sum(r["status"] == status for r in rows)
                         for status in ("ok", "warn", "fail", "skip")}}
 
@@ -888,6 +908,12 @@ def render(manifest: dict) -> str:
     fail_count = manifest.get("summary", {}).get("fail")
     if fail_count is None:
         fail_count = sum(row.get("status") == "fail" for row in manifest["checks"])
+    if "configuration_readiness" in manifest:
+        configured = manifest["configuration_readiness"]
+        runtime = manifest["runtime_readiness"]
+        lines.append(f"설정 준비: {'예' if configured['ready'] else '아니오'}")
+        lines.append(f"운영 준비: {'예' if runtime['ready'] is True else '아니오' if runtime['ready'] is False else '미확인'} "
+                     f"({runtime['status']})")
     readiness = manifest.get("readiness")
     if readiness is None:  # manifests written before readiness reasons were recorded
         lines.append(f"실행 준비: {'예' if fail_count == 0 else f'아니오(fail {fail_count}건)'}")
