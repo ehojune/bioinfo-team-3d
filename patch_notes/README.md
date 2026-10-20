@@ -15,6 +15,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
 | 16:05 | [`9ff21ce`](https://github.com/ehojune/bioinfo-team-3d/pull/801/commits/9ff21ce) | 16시 대조에서 병합된 언어 지연 수정과 감사 후속 배정 상태를 개발 문서에 맞췄다. |
+| 16:03 | [`0d8ddaa`](https://github.com/ehojune/bioinfo-team-3d/pull/790/commits/0d8ddaa) | 종료 drain이 durable acceptance 중인 dispatch의 결과 기록과 ACK를 기다리며 task 정리 중 새 handler를 재검사하고 timeout·outbox·보호 gate를 유지한다. |
 | 15:49 | [`182382d`](https://github.com/ehojune/bioinfo-team-3d/pull/801/commits/182382d) | PI의 일반 개발 재개 결정을 개발 인계·운영 기준·PI Q&A에 맞췄다. |
 | 15:31 | [`f38813a`](https://github.com/ehojune/bioinfo-team-3d/pull/801/commits/f38813a) | 영문 README의 비교 실행 중이라는 오해를 막고 효과 미측정 상태를 명시했다. |
 | 15:29 | [`463756e`](https://github.com/ehojune/bioinfo-team-3d/pull/801/commits/463756e) | 매뉴얼의 CP1 입력 검증과 사후 그림자 측정을 구분하고 PI Q&A의 현재 운영 링크를 갱신했다. |
@@ -31,6 +32,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 12:03 | [`1220e10`](https://github.com/ehojune/bioinfo-team-3d/pull/801/commits/1220e10) | docs: 긴급 15M 승인과 CP1 작업 착수 반영 |
 | 11:38 | [`f4e46cb`](https://github.com/ehojune/bioinfo-team-3d/pull/801/commits/f4e46cb) | docs: 외부 감사 우선순위와 측정용 Shadow 유지 방침 반영 |
 | 11:32 | [`64f1527`](https://github.com/ehojune/bioinfo-team-3d/pull/800/commits/64f1527) | 재현 receipt의 Python 실행이 -S를 빼 interpreter site-packages(numpy 등)를 불러오고, 문법 검사는 -I -S -B를 유지하며, 실제 interpreter 격리 test를 CI에 더했다. |
+| 11:27 | [`05c192e`](https://github.com/ehojune/bioinfo-team-3d/pull/790/commits/05c192e) | diagnostics가 감싼 기본 SIGTERM을 graceful 종료로 연결하고 durable acceptance 뒤 종료 중 dispatch를 실행하지 않도록 막는다. |
+| 10:38 | [`aa5207f`](https://github.com/ehojune/bioinfo-team-3d/pull/790/commits/aa5207f) | POSIX runner 기본 TERM·HUP을 작업 취소·종료 증거 경로에 연결하고 gateway 결과 확인과 미확인 outbox 보존을 추가한다. |
 | 10:30 | [`f5425c5`](https://github.com/ehojune/bioinfo-team-3d/pull/789/commits/f5425c5) | 재현 receipt 실행이 함께 게시한 Python sibling module을 import할 수 있게 script 폴더만 import 경로에 두고, PYTHONPATH·사용자 site·호출한 폴더는 계속 뺐다. |
 | 10:03 | [`06c5a64`](https://github.com/ehojune/bioinfo-team-3d/commit/06c5a64) | Ubuntu Python 3.10 pytest step을 25분으로 제한하고 test·thread·asyncio task 진단을 남긴다. mock/static 검사 14개를 확인했으며 정체 원인은 미확정이다. Refs |
 | 08:12 | [`e5cd527`](https://github.com/ehojune/bioinfo-team-3d/pull/785/commits/e5cd527) | PI 보고 전에 HANDOFF의 병합·배포·후속 큐와 예산 근거를 갱신하고 README 한영·AGENTS·관련 manual을 현재 코드와 대조했다. |

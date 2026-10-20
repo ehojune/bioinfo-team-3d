@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## PR #790 P1 4320895582
+
+첫 await 전에 dispatch 완료 future를 등록하고 acceptance·중단 결과 기록까지 종료 drain이 기다리도록 고쳤습니다. 기존 task 정리 중 들어온 handler도 재검사하며 ACK·5초 제한·미확인 outbox와 게시/승인 gate를 유지합니다. timeout은 handler의 completion future를 취소하지 않습니다.
+
+검증: 기존 head에서 회귀 5 failed/1 passed, 추가 drain interleaving 1 failed를 확인했습니다. 수정 후 메모리 store·coroutine barrier 및 기존 fake signal callback을 포함한 mock/static 19 passed. Python 3.10 AST·encoding 검사가 통과했고 guard를 유지했습니다. 실제 writer thread·신호·process·운영·PI·HPC는 미실행입니다. 이전 guard 차단 startup 테스트는 재실행하지 않았습니다.
+
+CI는 push 뒤 한 번만 조회하며 완료를 기다리지 않습니다. fresh-head 리뷰·병합·배포는 총괄이 맡습니다. 근거: docs/reference/runner-signals-664.md.
+
 ## 단계
 읽는 사람별 문서 정비(PI 요청) — 문서만 변경, PR #801
 
@@ -225,6 +233,35 @@ PR #789가 `-I`를 `-E -s`로 풀었지만 `-S`를 남겼습니다. `-S`는 `sit
 - **실제 분석 rerun PASS가 아닙니다.** 실제 interpreter 검증은 tmp fixture 하나뿐입니다. numpy 같은 과학 패키지로 실제 분석을 다시 돌린 것이 아닙니다.
 - **interpreter 환경의 `.pth` 파일도 처리됩니다.** `-S`를 빼면 site-packages의 `.pth`도 처리되는데, 이는 일반 `python script.py`와 같습니다.
 - #773과 다른 감사 항목은 다루지 않았습니다.
+
+PR #790 · Fixes #664
+
+- 표준 runner의 기본·무시 TERM/HUP을 종료 경로에 연결하고 사용자 handler·Ctrl+C·게시·승인 gate를 유지합니다. 결과 ACK를 최대 5초 기다리며 미확인 결과는 durable outbox에 남깁니다.
+- P1 4320639315 수정: diagnostics wrapper의 원래 disposition을 구분해 기본 TERM을 graceful 종료로 보내고 진단 기록·사용자 handler·복원을 보존합니다.
+- P1 4320639321 수정: durable acceptance 뒤 stopping을 재검사하여 늦은 dispatch를 실행하지 않고 종료 증거가 있는 결과를 기록합니다. 중복 dispatch도 기존 결과를 보존합니다.
+- P1 4320639324·4320639329는 stale입니다. 83d5bf89에 기능 행·status가 있고 그 head의 patch-notes 검사가 통과했습니다.
+- 검증: 수정 전 후속 회귀 3건 실패·2건 통과, 수정 후 관련 mock/static 24 passed·1 deselected. Python 3.10 문법·public·diff 검사 통과. manual 165,710→165,749자. 근거 docs/reference/runner-signals-664.md.
+- 한계: 기존 tests/test_shutdown_recovery.py::test_startup_uses_common_interruption_and_keeps_card는 이전 검증에서 guard가 subprocess.Popen.__init__을 차단해 재실행하지 않았습니다. 실패 전체 로그를 보존했습니다. 실제 신호·POSIX/WSL startup·process/proc_tree·운영·HPC 검증은 없습니다.
+- CI·fresh-head 리뷰·병합·배포는 supervisor 담당입니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
+PR #790
+
+## 변경
+
+표준 runner의 TERM/HUP handler가 SIG_DFL·SIG_IGN이면 종료 경로를 설치합니다. stopping 표시→작업 취소·종료 증거→기존 interrupted·재개 카드로 연결합니다. 연결된 gateway의 결과 확인을 최대 5초 기다리고 미확인 결과는 durable outbox에 남깁니다. 사용자 handler·Ctrl+C·게시·승인 gate는 유지합니다.
+
+Fixes #664
+
+## 검증·한계
+
+- 수정 전 기본·무시 TERM/HUP 회귀 4건 실패, 수정 후 mock/static pytest 19 passed, 1 deselected. signal 등록·호출과 gateway 전달은 가짜이며 실제 process·신호·HPC·운영 실행은 없습니다.
+- 기존 tests/test_shutdown_recovery.py::test_startup_uses_common_interruption_and_keeps_card는 process guard가 subprocess.Popen.__init__을 차단했습니다. 전체 실패 로그를 보관했고 이 테스트는 재실행하지 않았습니다. 실제 POSIX/WSL startup 통합은 미검증입니다.
+- Python 3.10 문법·public·diff 검사 통과. manual 165,483→165,710자. 근거: docs/reference/runner-signals-664.md.
+- CI·리뷰·병합·배포는 supervisor 담당입니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
 
 Refs #786. 기능 커밋 `06c5a64`는 Ubuntu Python 3.10 pytest의 진단·대기 상한만 추가합니다.
 
