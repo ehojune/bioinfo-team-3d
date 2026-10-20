@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 10:30 | [`f5425c5`](https://github.com/ehojune/bioinfo-team-3d/pull/789/commits/f5425c5) | 재현 receipt 실행이 함께 게시한 Python sibling module을 import할 수 있게 script 폴더만 import 경로에 두고, PYTHONPATH·사용자 site·호출한 폴더는 계속 뺐다. |
 | 10:03 | [`06c5a64`](https://github.com/ehojune/bioinfo-team-3d/commit/06c5a64) | Ubuntu Python 3.10 pytest step을 25분으로 제한하고 test·thread·asyncio task 진단을 남긴다. mock/static 검사 14개를 확인했으며 정체 원인은 미확정이다. Refs |
 | 08:12 | [`e5cd527`](https://github.com/ehojune/bioinfo-team-3d/pull/785/commits/e5cd527) | PI 보고 전에 HANDOFF의 병합·배포·후속 큐와 예산 근거를 갱신하고 README 한영·AGENTS·관련 manual을 현재 코드와 대조했다. |
 | 05:49 | [`aada950`](https://github.com/ehojune/bioinfo-team-3d/pull/776/commits/aada950) | 외부 조회 취소 시 소유 브라우저를 회수하고 완료된 PDF만 반영하며 취소된 AlphaGenome thread도 잔류 상한에 집계한다. |
