@@ -14,7 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 00:47 | [`5fbddd5`](https://github.com/ehojune/bioinfo-team-3d/pull/822/commits/5fbddd5) | **프로그램 시작 실패에 진단을 덧붙인 동작과 모의 검사의 기대를 맞췄습니다.**<br>supervisor fixture 계약이 AssertionError와 원래 LaunchError의 cause 동일성을 검사하도록 맞췄다. spawn 1회·stream close·raw retry 금지와 무 PID 종료·무 ACK를 검증한다. 관련 mock 14개가 통과했으며 원래 WMI timeout 원인은 UNVERIFIED다. |
 | 00:28 | [`1079d5b`](https://github.com/ehojune/bioinfo-team-3d/pull/821/commits/1079d5b) | **테스트가 자체 진단과 정리까지 차단하던 문제를 고쳤습니다.**<br>Paper2Agent 사전 검사 trap을 staff/cache 경로와 호출 내부 context로 제한하고 git fake를 해당 모듈로 격리했다. 무관한 진단 간섭 6건 red 뒤 기존 guard·진단·예외 복원/조기 I/O·git 차단 16건 및 관련 HOME guard 3건 통과. 제품 guard·승인/hash 계약은 유지한다. 선행 CI E/F traceback은 없어 전체 원인은 미확정이며 실제 설치/process·전체 CI는 미검증이다. |
+| 00:23 | [`e877a70`](https://github.com/ehojune/bioinfo-team-3d/pull/822/commits/e877a70) | **Windows 검사에서 프로그램 시작이 실패해도 기존 진단 기록을 함께 보여 주도록 고쳤습니다.**<br>supervisor fixture가 launch 실패 시 기존 journal 끝 8192자와 예외 체인을 보존한다. timeout 결과 미확정 시 단일 호출·미소유·무성공 기록을 fake로 검증했다. 관련 mock 6개와 Python 3.10 AST가 통과했으며 실제 Windows timeout 원인은 미해결이다. |
 
 ## 2026-10-20
 
@@ -22,6 +24,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 |---|---|---|
 | 23:04 | [`dd853d0`](https://github.com/ehojune/bioinfo-team-3d/pull/821/commits/dd853d0) | **최신 안내 문서와 논문 스킬 설명이 함께 남도록 문서 충돌을 풀었습니다.**<br>main의 감사·queued-halt 안내와 PR821의 승인 뒤 논문 스킬 계약을 보존했다. 제품 코드·테스트는 이전 검토 head와 같고 자동 목차는 main과 같다. 최종 CI는 새 head에서 확인한다. |
 | 21:52 | [`a9d0e56`](https://github.com/ehojune/bioinfo-team-3d/pull/821/commits/a9d0e56) | **논문 스킬을 승인 뒤 만드는 흐름에 맞춰 중단 검사를 고쳤습니다.**<br>이전 prompt의 생성 시점 문장만 반영하고 역변환 digest와 schema·output_types off/on 검사를 보존했다. 승인 전 callback 미호출과 승인된 CSO step의 shutdown/cancellation 전파·연구 미dispatch·계획 hash 보존을 검증했다. CI 네 실패 mock 재현 뒤 같은 4건 및 관련 17건 통과; 제품 코드·권한 경계는 그대로이며 실제 process·연구와 최종 head CI는 미검증이다. |
+| 21:31 | [`7ed32e1`](https://github.com/ehojune/bioinfo-team-3d/pull/822/commits/7ed32e1) | **코드가 환경변수를 설정하거나 지우기만 해도 입력이 없다고 막히던 문제를 고쳤습니다.**<br>Python 환경변수 Store/Del을 입력에서 제외하되 Load·get/getenv·AugAssign과 LABHQ_INPUT_* 선언을 유지한다. AST·FakeInterpreter 28개 검사와 Python 3.10 AST 검사가 통과했고 실제 interpreter·서비스·성능은 미검증이다. |
 | 21:16 | [`5b412a9`](https://github.com/ehojune/bioinfo-team-3d/commit/5b412a9) | **새 기록을 보존하고 자동 생성 목차는 main에서 갱신하도록 맞췄습니다.**<br>STATUS와 패치노트 목차의 PR 변경 금지 규칙에 맞춰 최신 main 생성본을 보존했다. 양쪽 기록 원본은 유지하며 병합 뒤 main의 notes-index workflow가 목차에 반영한다. |
 | 21:13 | [`7da94e1`](https://github.com/ehojune/bioinfo-team-3d/commit/7da94e1) | **최신 변경 기록을 보존하면서 인계 문서의 충돌과 오래된 개발 상태를 정리했습니다.**<br>main 8151f23을 병합하고 HANDOFF 충돌에서 queued-halt 검증 근거를 보존했다. 열린 큐는 |
 | 21:10 | [`df2a51c`](https://github.com/ehojune/bioinfo-team-3d/pull/821/commits/df2a51c) | **최신 main과 논문 스킬 변경을 함께 반영하도록 충돌을 풀었습니다.**<br>main 8151f23을 merge해 PR818 queued-halt/Shadow 검사와 PR819 external-wait 변경을 보존했다. HANDOFF 한 충돌만 양쪽 검증/논문 입력 설명을 살려 해결했고 manual은 자동 병합했다. main 관련 14파일·PR821 제품/계약 9파일 동일성, mock/static 63건·3.10 AST 7파일 통과; 실제 process/CLI/연구·CI 조회는 미실행이다. |

@@ -4,6 +4,13 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# PR #822 Linux fake fixture 계약 수정
+
+- 제공된 Linux 3.10·3.12 로그의 동일 3건을 로컬 mock으로 재현했다. 진단 wrapper가 추가한 AssertionError 대신 기존 LaunchError를 기대한 test 계약 오류였다.
+- AssertionError와 원래 LaunchError의 cause 동일성을 검사한다. spawn 1회·stream close·raw retry 금지·미확인 PID 종료 금지·PID/ACK 기록 부재를 유지한다.
+- 수정 전 3 failed, 수정 후 관련 mock 14 passed. Python 3.10 AST·public·diff·기록 검사를 수행한다.
+- 제품·Windows integration·CI/conftest·#774 수정은 변경하지 않았다. 원래 WMI timeout 원인·Create 결과는 UNVERIFIED이며 새 CI는 조회하지 않는다.
+
 CP1에서 논문 스킬 생성이 끝날 때까지 기다리던 흐름을 바꿉니다. CP1에서는 메타데이터만 확인하고 승인 뒤 스킬을 준비합니다. 담당 스텝은 hash와 소유권을 확인한 문서만 읽으며, 결과의 참조 receipt로 사용 여부를 기록합니다.
 
 - 승인 전 준비 금지, 승인된 계획·hash, 취소 전파와 읽기 전용 입력 경계를 유지합니다. 파일 배치만으로 `called=true`를 기록하지 않습니다.
@@ -23,6 +30,14 @@ Fixes #798
 
 🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 
+# PR #822 Windows CI 진단 보완
+
+- Windows 실패는 exit-code assertion 전 PowerShell WMI 호출의 10초 timeout이다. Create 성공 여부·근본 원인은 미확정이며 #774 AST 수정과의 연결 근거는 없다.
+- supervisor fixture가 시작 실패 때 기존 진단 끝 8192자를 첨부하도록 보완했다. 제품 timeout·재시도·소유권·Job 안전 경계와 실제 CI assertions는 바꾸지 않았다.
+- 수정 전 새 회귀 2 failed, 수정 후 관련 mock 6 passed. Python 3.10 AST 통과. 실제 WMI·프로세스는 실행하지 않았고 Windows 실패는 미해결이다.
+- public·diff·patch-notes·notes 검사 결과는 PR 본문에 기록한다. CI 조회·재시도·병합·배포는 하지 않는다.
+- [원인과 한계](../reference/ci822-launch-evidence.md). 원래 #774 수정과 다른 작업자의 파일은 보존했다.
+
 # PR #821 문서 충돌 통합
 
 - main의 감사·queued-halt 안내와 PR의 논문 스킬 계약을 함께 보존했다.
@@ -39,6 +54,28 @@ PR #821 · CI 보정 a9d0e56
 - 준비 callback 미호출 뒤 승인 hash가 있는 CSO step에서 runner shutdown·asyncio cancellation을 주입합니다. 두 예외의 전파, 연구 단계 미dispatch, 계획·승인 hash 보존을 검사합니다. 제품 예외 처리는 이미 맞아 수정하지 않았습니다.
 - 검증: 원 head에서 네 실패 재현 → 같은 네 node PASS(로컬 1.55초), 관련 mock/static 17건 PASS(4.06초). Python 3.10 AST/compile 3파일·public·diff·patch-notes·notes 검사도 통과했습니다. 전체 실패 trace는 레인 로컬 로그에 보존했습니다.
 - 한계: 실제 process/thread·CLI·PDF·네트워크·PI·연구·bench·HPC는 미실행입니다. Windows/Python 3.10 실행·최종 head CI·독립 재리뷰는 controller가 맡습니다. CI 조회·대기·봇 호출·병합·배포는 하지 않습니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+## 단계
+#774 — 환경변수 입력 판별 수정 (draft)
+
+## 한 일
+- 최신 main을 통합한 뒤 Python 단순 대입·삭제를 외부 입력에서 제외했다.
+- Load·get/getenv·AugAssign 읽기와 LABHQ_INPUT_* 선언, 기존 격리·redaction을 유지했다.
+
+## 테스트 결과
+- 수정 전 새 회귀: 9 failed / 15 passed. 수정 후 지정 AST·FakeInterpreter 검사: 28 passed.
+- Python 3.10 AST·diff 검사 통과. 실제 interpreter·서비스·성능은 미검증.
+- public·patch-notes·notes·diff 검사 통과. CI·리뷰는 조회하지 않는다.
+
+## 바꾼 파일
+reproduction_receipt.py, 해당 focused test, manual 한 문장, reference·status·patch entry.
+
+## 막힌 점
+없음. 실제 실행 검증과 CI 판정은 총괄에게 맡긴다.
+
+Fixes #774
 
 🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 
