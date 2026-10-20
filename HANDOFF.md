@@ -52,3 +52,5 @@ CSO는 gateway 안에서 계획과 의존관계를 관리하고 runner가 실제
 직원 내부의 임의 agent 확장은 막습니다. Claude의 `Agent` 허용은 Paper2Agent 변환 담당 recruiter에만 있고 Codex 직원의 `multi_agent`는 꺼집니다. 개발 총괄의 위임 레인과 제품 직원의 실행 경계는 다릅니다. 직원별 모델·도구는 [매뉴얼](docs/manual.md#직원과-도구)과 YAML이 기준입니다.
 
 작업 규칙은 [AGENTS.md](AGENTS.md)를 따릅니다. 직원 설정은 `scripts/integrations.py --check`, 기록은 `scripts/patch_notes.py check`·`scripts/notes_index.py --validate`로 확인합니다.
+
+[#788 CI 정책](docs/reference/ci-reuse.md)은 보호 예제가 같은 prose·정해진 기록만 축소하고 main 재사용은 동일 tree·전체 gate 증거를 요구합니다. 불명확하면 full이며 #787의 3.10 진단을 유지합니다.

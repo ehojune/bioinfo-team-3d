@@ -19,7 +19,7 @@ dependencies = [
 Repository = "https://github.com/ehojune/bioinfo-team-3d"
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "pytest-xdist==3.8.0", "filelock>=3.16,<4"]
 alphagenome = ["alphagenome"]
 
 [project.scripts]
