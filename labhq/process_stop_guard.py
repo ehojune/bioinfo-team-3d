@@ -25,7 +25,7 @@ _KNOWN_COMMANDS = {
     "pkill", "killall", "taskkill", "get-process", "gps", "ps", "stop-process", "spps", "kill",
     "sudo", "env", "command", "exec", "nohup", "builtin", "if", "elif", "while", "until", "time",
     "sh", "bash", "zsh", "dash", "cmd", "powershell", "pwsh", "xargs",
-    "coproc", "eval", "trap", "timeout", "nice", "setsid", "find", "pgrep",
+    "coproc", "eval", "trap", "timeout", "nice", "setsid", "find", "pgrep", "pidof", "skill",
 }
 _XARGS_ARGUMENT_OPTIONS = {
     "--arg-file", "--delimiter", "--max-args", "--max-procs", "--max-chars", "--process-slot-var",
@@ -437,6 +437,59 @@ def _find_continuation(groups: list[list[str]], index: int) -> list[str]:
     return result
 
 
+def _skill_selection(words: list[str]) -> tuple[bool, bool]:
+    """Return (can signal, name/wide selection), keeping option operands as data."""
+    options = {
+        "--command": "c", "--debug": "d", "--fast": "f", "--interactive": "i",
+        "--list": "l", "--no-action": "n", "--pid": "p", "--table": "L",
+        "--tty": "t", "--user": "u", "--ns": "N", "--nslist": "S",
+        "--verbose": "v", "--warnings": "w", "--help": "h", "--version": "V",
+    }
+    selected = no_action = end_options = False
+    index = 0
+    while index < len(words):
+        option = _literal_word(words[index])
+        index += 1
+        if not end_options and option == "--":
+            end_options = True
+            continue
+        if end_options or not option.startswith("-") or option == "-":
+            selected |= not option.isdigit()  # bare expressions can select command names
+            continue
+        if option.startswith("--"):
+            key, attached, _value = option.partition("=")
+            matches = [key] if key in options else [name for name in options if name.startswith(key)]
+            if len(matches) != 1:
+                selected = True  # unsupported/ambiguous syntax cannot prove a PID-only stop
+                continue
+            flag = options[matches[0]]
+            if flag in "hVlL":
+                return False, False
+            if flag == "n":
+                no_action = True
+            if flag in "cptuNS":
+                selected |= flag != "p"
+                if not attached:
+                    index += 1  # required operand is never a help/no-action switch
+        elif re.fullmatch(r"-(?:\d+|[A-Z]{2,}[A-Z0-9]*)", option):
+            continue  # literal -9/-KILL/-SIGTERM signal selectors, not option clusters
+        else:
+            for offset, flag in enumerate(option[1:], start=2):
+                if flag in "hVlL":
+                    return False, False
+                if flag == "n":
+                    no_action = True
+                elif flag in "cptu":
+                    selected |= flag != "p"
+                    if offset == len(option):
+                        index += 1
+                    break  # the rest of this token is an operand, not more flags
+                elif flag not in "dfivw":
+                    selected = True
+                    break
+    return not no_action, selected
+
+
 def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
     """Recognize literal shell stop commands, not prose or PID-based cleanup.
 
@@ -596,11 +649,17 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
                 return True
         if name in {"pkill", "killall"}:
             return True
+        skill_selected = False
+        if name == "skill":
+            acts, skill_selected = _skill_selection(group[start + 1:])
+            if acts and (skill_selected or selected_reference or pipeline_arguments):
+                return True
         if name == "taskkill" and any(re.match(r"^/{1,2}im(?::|$)", arg) for arg in args):
             return True
-        if name in {"get-process", "gps", "ps", "pgrep"}:
+        if name in {"get-process", "gps", "ps", "pgrep", "pidof"} or skill_selected:
             # Explicit -Id is PID-based. Otherwise the pipeline carries a name-selected set.
-            process_pipeline = name == "pgrep" or not any(re.match(r"^-(?:id|pid)(?::|$)", arg) for arg in args)
+            process_pipeline = (skill_selected or name in {"pgrep", "pidof"}
+                                or not any(re.match(r"^-(?:id|pid)(?::|$)", arg) for arg in args))
             if process_pipeline and assignment:
                 # Retain taint across statements/overwrites: branch execution is not proven.
                 selected_variables.add(assignment[0])

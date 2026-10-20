@@ -19,6 +19,8 @@ lookup-only 기록입니다. 명령은 모두 test 문자열이며 shell·프로
 | 4321129633 | balanced $()의 실행 payload와 이름 선택 PID를 외부 consumer에 연결. 중첩·double quote도 검사 |
 | 4321387908 | find의 bare {} 뒤 후속 action을 이어 읽음. shell/block lexer와 기존 prefix 거부는 유지 |
 | 4321387934 | 이름 선택 pipeline의 $_/PSItem·복사 변수·괄호식에서 유래한 Id 소비도 거부 |
+| 4321588842 | skill 이름/광역 선택 종료 검사. operand와 no-action·help/version·signal listing을 구분 |
+| 4321588847 | pidof를 이름 선택 PID producer로 추적해 $()·pipeline·xargs 소비와 연결 |
 
 `tests/test_process_stop_guard_followup.py`가 지적별 case ID, policy deny, flat/nested fake broker의 card/event/submit 미호출·pending 없음과 PID·데이터 음성 사례를 확인합니다. 기존 회귀도 유지합니다. 전체 실패명·traceback은 로컬 로그에 보존합니다.
 
@@ -33,3 +35,5 @@ lookup-only 기록입니다. 명령은 모두 test 문자열이며 shell·프로
 문자열·fake policy/broker만 검증합니다. 동적 명령 OS 격리와 PID tracker #675, 실제 process/proc_tree·PI·HPC·연구 실행은 범위 밖입니다. 기존 P2는 변경하지 않으며 후속 선정은 총괄이 맡습니다.
 
 문법 근거: [Bash builtins(eval/trap)](https://www.gnu.org/software/bash/manual/html_node/Bourne-Shell-Builtins.html), [command substitution](https://www.gnu.org/software/bash/manual/html_node/Command-Substitution.html), [ANSI-C quoting](https://www.gnu.org/software/bash/manual/html_node/ANSI_002dC-Quoting.html), [timeout](https://www.gnu.org/s/coreutils/manual/html_node/timeout-invocation.html), [nice](https://www.gnu.org/s/coreutils/manual/html_node/nice-invocation.html), [setsid 구현](https://github.com/util-linux/util-linux/blob/master/sys-utils/setsid.c).
+
+procps 근거: [skill option/operand·no-action 구현](https://gitlab.com/procps-ng/procps/-/blob/master/src/skill.c), [skill 계약](https://man7.org/linux/man-pages/man1/skill.1.html), [pidof 이름 선택](https://man7.org/linux/man-pages/man1/pidof.1.html). `tests/test_process_stop_guard_procps.py`는 조회와 PID 정리를 유지하며, skill no-action의 이름 선택 출력을 종료에 전달할 때도 거부하는지 확인합니다. 도구 자체는 실행하지 않았습니다.
