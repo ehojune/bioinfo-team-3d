@@ -27,3 +27,6 @@ rows:
   - sha: 'aaa0469'
     at: '2026-10-20 17:01'
     text: '최신 main의 문서·signal 변경을 통합하고 HANDOFF 충돌을 짧은 안내와 CI 정책 링크로 해결, workflow/helper·기존 fixture 보존 및 mock/static 358개 확인'
+  - sha: 'd2ddfc3'
+    at: '2026-10-20 19:25'
+    text: '문서에서 필수·허용·금지 조건을 바꾸면 전체 검사를 거칩니다. 영·한 규범 문단의 문구·container를 보호하고 exact Markdown reflow만 허용하며, 실제 parser와 fake git/API를 쓴 관련 mock/static 448개로 검증했습니다.'
