@@ -3,3 +3,4 @@ rows:
 - sha: 1836a01
   at: 2026-10-19 23:27
   text: 현재 cgroup v2와 보이는 ancestor의 최소 memory.max를 기본 단계 메모리에 반영하고 기존 fallback을 유지한다.
+  summary: 컨테이너와 상위 환경의 메모리 제한을 읽어 단계별 기본 메모리에 반영합니다.

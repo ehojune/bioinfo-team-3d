@@ -1,8 +1,10 @@
 pr: 520
 rows:
-  - sha: "2381232"
-    at: "2026-10-12 02:37"
-    text: "승인 게이트가 백그라운드 셸 출력을 읽거나 멈추는 BashOutput·KillShell·TaskOutput·TaskStop을 기본 허용한다(#518 후속)."
-  - sha: "e2a0906"
-    at: "2026-10-12 02:46"
-    text: "labhq init이 #518 템플릿 목록을 그대로 적은 설정도 load 때 백그라운드 셸 도구를 받는다(#520 리뷰)."
+- sha: '2381232'
+  at: 2026-10-12 02:37
+  text: 승인 게이트가 백그라운드 셸 출력을 읽거나 멈추는 BashOutput·KillShell·TaskOutput·TaskStop을 기본 허용한다(#518 후속).
+  summary: 백그라운드 셸의 출력을 읽거나 멈추는 도구는 기본 허용합니다.
+- sha: e2a0906
+  at: 2026-10-12 02:46
+  text: 'labhq init이 #518 템플릿 목록을 그대로 적은 설정도 load 때 백그라운드 셸 도구를 받는다(#520 리뷰).'
+  summary: 초기 설정의 도구 목록을 그대로 써도 백그라운드 셸 제어 도구가 허용됩니다.

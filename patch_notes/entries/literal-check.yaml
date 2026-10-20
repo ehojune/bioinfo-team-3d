@@ -2,5 +2,5 @@ pr: 645
 rows:
 - sha: a9e286e
   at: 2026-10-15 19:06
-  text: OKF Loremaster의 인용문·수치 원문 대조기를 Unicode·Python 3.10에 맞춰 이식하고 Apache-2.0 출처를
-    동봉
+  text: OKF Loremaster의 인용문·수치 원문 대조기를 Unicode·Python 3.10에 맞춰 이식하고 Apache-2.0 출처를 동봉
+  summary: 인용문과 수치를 원문과 대조하는 검사기를 옮기고 원본 라이선스를 함께 담았습니다.

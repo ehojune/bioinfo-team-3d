@@ -2,10 +2,13 @@ pr: 539
 rows:
 - sha: 1da9abb
   at: 2026-10-12 14:39
-  text: "quota·stall·mock-lab test를 실제시간 상한 대신 완료 event와 task로 동기화"
+  text: quota·stall·mock-lab test를 실제시간 상한 대신 완료 event와 task로 동기화
+  summary: 한도·멈춤·모의 연구 검사를 짧은 실제 시간 대신 완료 신호에 맞췄습니다.
 - sha: 2217a18
   at: 2026-10-12 15:04
-  text: "로그인 재시도 test를 두 번째 dispatch 완료 event로 동기화"
-- sha: "7abdd1e"
-  at: "2026-10-12 15:16"
-  text: "완료 신호를 기다리는 test에 60~120초 바깥 상한을 다시 둬, 회귀 때 CI가 멈추지 않고 실패로 끝난다."
+  text: 로그인 재시도 test를 두 번째 dispatch 완료 event로 동기화
+  summary: 로그인 재시도 검사를 두 번째 작업 전송 완료 신호에 맞춰 진행합니다.
+- sha: 7abdd1e
+  at: 2026-10-12 15:16
+  text: 완료 신호를 기다리는 test에 60~120초 바깥 상한을 다시 둬, 회귀 때 CI가 멈추지 않고 실패로 끝난다.
+  summary: 완료 신호를 기다리는 검사에도 최종 시간 제한을 두어 오류 때 무한 대기를 막습니다.

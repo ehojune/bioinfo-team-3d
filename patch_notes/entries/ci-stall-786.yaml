@@ -1,5 +1,6 @@
 pr: null
 rows:
-- sha: '06c5a64'
-  at: '2026-10-20 10:03'
-  text: Ubuntu Python 3.10 pytest step을 25분으로 제한하고 test·thread·asyncio task 진단을 남긴다. mock/static 검사 14개를 확인했으며 정체 원인은 미확정이다. Refs #786.
+- sha: 06c5a64
+  at: 2026-10-20 10:03
+  text: Ubuntu Python 3.10 pytest step을 25분으로 제한하고 test·thread·asyncio task 진단을 남긴다. mock/static 검사 14개를 확인했으며 정체 원인은 미확정이다. Refs
+  summary: 끝나지 않는 자동 검사에 시간 제한과 진단 기록을 더했으며 원인은 아직 미확정입니다.

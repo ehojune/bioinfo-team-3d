@@ -2,5 +2,5 @@ pr: 624
 rows:
 - sha: 925e877
   at: 2026-10-15 13:54
-  text: OKF Loremaster를 검토해 참고 자료에 올리고, 가져갈 것의 매핑과 라이선스 조건을 docs/reference에 남겼다(코드
-    변경 없음).
+  text: OKF Loremaster를 검토해 참고 자료에 올리고, 가져갈 것의 매핑과 라이선스 조건을 docs/reference에 남겼다(코드 변경 없음).
+  summary: 참고 도구의 활용 후보와 라이선스 조건을 문서에 정리했으며 코드는 바꾸지 않았습니다.

@@ -2,16 +2,17 @@ pr: 626
 rows:
 - sha: '6339168'
   at: 2026-10-15 14:31
-  text: 사람 GRCh38 VEP가 AlphaMissense 점수·분류를 함께 받아 변이마다 쉬운 한국어로 보여 주고, 라이선스·임상 근거 아님
-    고지를 기록한다(#621 A).
+  text: 사람 GRCh38 VEP가 AlphaMissense 점수·분류를 함께 받아 변이마다 쉬운 한국어로 보여 주고, 라이선스·임상 근거 아님 고지를 기록한다(#621 A).
+  summary: 사람 변이의 AlphaMissense 점수를 한국어로 보여 주며 이용 조건과 해석 한계도 남깁니다.
 - sha: cb94a32
   at: 2026-10-15 14:31
-  text: 변이 해석 요청에 붙는 variant_effect 분야와 점검표 6항목(빈도·ClinVar·VEP·AlphaMissense·AlphaGenome·한계)을
-    더한다(#621 C).
+  text: 변이 해석 요청에 붙는 variant_effect 분야와 점검표 6항목(빈도·ClinVar·VEP·AlphaMissense·AlphaGenome·한계)을 더한다(#621 C).
+  summary: 변이 해석 분야와 빈도·임상 정보·예측 점수·한계에 관한 점검표를 추가했습니다.
 - sha: 877c2e6
   at: 2026-10-15 14:31
   text: manual과 status에 AlphaMissense 사용법, Ensembl REST 확인 결과, 라이선스 확인 내용을 적는다(#621).
+  summary: 매뉴얼과 상태 문서에 AlphaMissense 사용법과 외부 서비스·라이선스 확인을 기록했습니다.
 - sha: 8dbe72d
   at: 2026-10-15 15:28
-  text: 선택된 VEP transcript에 AlphaMissense 점수가 없으면 주 요약은 점수 없음으로 두고, 다른 transcript의
-    점수·등급은 별도 필드로 분리한다.
+  text: 선택된 VEP transcript에 AlphaMissense 점수가 없으면 주 요약은 점수 없음으로 두고, 다른 transcript의 점수·등급은 별도 필드로 분리한다.
+  summary: 선택한 전사체에 점수가 없으면 없다고 표시하고 다른 전사체 점수와 구분합니다.
