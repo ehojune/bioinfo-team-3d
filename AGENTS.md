@@ -2,14 +2,14 @@
 
 시작 전에 `HANDOFF.md`·`STATUS.md` 상단과 현재 PI 창구 [#760](https://github.com/ehojune/bioinfo-team-3d/issues/760)의 최근 댓글을 읽는다.
 
-- 개발 총괄은 **Codex 고정**이며 Codex·Claude subagent에 위임한다. 제품 안의 연구 CSO·직원 설정과 구분한다. 현재 우선 큐는 [#739](https://github.com/ehojune/bioinfo-team-3d/issues/739)·HANDOFF, 위임·리뷰는 [운영 기준](docs/reference/lead-operations.md)을 따른다.
-- 10분마다 worker·PR·문제·예산·다음 일을 점검하고 후속 조치를 한다. 완료 뒤 같은 담당자에게 다음 일을 잇는다. 기본 Codex 2(gpt-6.1-sol)·Opus 1, 상한은 각각 4·2다. 중요한 분기만 선택지·영향·권고를 정리해 PI에게 묻는다.
-- 문서는 README 한영판(처음 쓰는 사람), `docs/manual.md`(상세), `docs/pi-qa.md`(PI), AGENTS·HANDOFF(개발)로 나눈다. 동작 변경은 manual에 반영하고 **큰 변경·매 PI 보고 전** 코드·직원 YAML·PR과 대조한다. 상세 근거·옛 결정은 `docs/reference/`에 두고 링크한다.
+- 개발 총괄은 **Codex 고정**이며 Codex·Claude subagent에 위임한다. 제품 안의 연구 CSO·직원 설정과 구분한다. 현재 우선순위는 HANDOFF, 점검 주기·동시 투입·한도·P2 선별은 [운영 기준](docs/reference/lead-operations.md)을 따른다.
+- 문서는 README 한영판(처음 쓰는 사람), `docs/manual.md`(상세), `docs/pi-qa.md`(PI), AGENTS·HANDOFF(개발)로 나눈다. 동작 변경은 manual에 반영하고 **큰 변경·매 PI 보고 전** 코드·직원 YAML·PR과 대조한다. 병합 전 PR의 동작은 manual·README에 출시된 것으로 쓰지 않는다. 상세 근거·옛 결정은 `docs/reference/`에 두고 링크한다.
 - 브랜치에서 작업하고 PR을 연다. main 직접 push 금지. 병합은 Codex 총괄이 판단하며 CI 통과가 조건이다. 자동 병합 workflow는 꺼져 있다.
 - 관련 test만 로컬에서 돌리고 전체 suite는 CI(3.10·3.12·Windows)에 맡긴다. test를 삭제·약화하지 않는다. `tests/conftest.py`의 홈·캐시·state 격리를 지키고 사용자 `.labhq` 접근 guard를 우회하지 않는다.
 - 단계 끝에는 PR 본문과 `docs/status/<YYYY-MM-DD>-<HHMM>-<branch>.md`에 같은 보고를 쓴다. `STATUS.md`는 main 자동 생성이므로 직접 고치지 않는다.
-- 기록만 바꾼 커밋을 빼고 커밋마다 `patch_notes/entries/<branch>.yaml`에 한 줄. 생성 `patch_notes/README.md`는 직접 고치지 않는다. main 3커밋 안에 README나 manual을 갱신한다. 초안은 `python scripts/patch_notes.py rows --pr N`, 검사는 `python scripts/patch_notes.py check`.
+- 기록만 바꾼 커밋을 빼고 커밋마다 `patch_notes/entries/<branch>.yaml`에 한 줄(branch의 `/`는 `--`). 생성 `patch_notes/README.md`는 직접 고치지 않는다. main 3커밋 안에 README나 manual을 갱신한다. 초안은 `python scripts/patch_notes.py rows --pr N`, 검사는 `python scripts/patch_notes.py check`.
+- 공동 작성자 trailer는 `.githooks/commit-msg`가 GitHub이 인식하는 봇 주소로 맞춘다(Codex 이메일 치환, Gemini 추가). 새 clone은 `git config core.hooksPath .githooks` 한 번.
 - public 저장소다. 커밋 전 `scripts/check_public.sh`를 실행한다. 비밀값은 env로만, 실제 `config/labhq.yaml`·로컬 노트는 커밋 금지. DUA 원본은 클러스터 밖·LLM 대화·프롬프트·로그에 가져오지 않는다. 경로 가드는 sandbox가 아니다.
-- P1은 같은 담당자가 고치고 새 head 리뷰를 받아 **P1=0까지 반복**한다. 남은 P2는 총괄이 실사용 재현 가능성·결과 정확성·보안·반복 중단 영향과 수정 비용 대비 이득을 따져 가치 있는 것만 issue로 남긴다. 경미·추정·중복은 원 PR 댓글에 남기고 새 issue를 만들지 않는다. CI·봇 대기는 driver가 맡는다. 실행 중 재호출과 인라인·PR 본문·커밋의 봇 멘션은 금지한다. `scripts/pr_gate.py --dry-run`은 보조 도구다.
-- 한도에서는 새 투입만 멈추고 진행 중 작업·CI·리뷰·배포는 기다린다. PI 보고는 한국 시각 00·04·08·12·16·20시를 유지한다.
+- P1은 같은 담당자가 고치고 새 head 리뷰를 받아 **P1=0까지 반복**한다. 남은 P2는 총괄이 선별한 것만 issue로 남기고 경미·추정·중복은 원 PR 댓글에 둔다. CI·봇 대기는 driver가 맡는다. 실행 중 재호출과 인라인·PR 본문·커밋의 봇 멘션은 금지한다. `scripts/pr_gate.py --dry-run`은 보조 도구다.
 - `labhq/web/`은 빌드 없는 정적 파일이며 2.5D·3D가 `state.js` reducer를 공유한다. 보고는 한국어, 기술 용어는 영어 그대로 쓴다.
+- `docs/manual.md`는 `labhq`를 깊이 공부하고 운영하는 사용자를 위한 문서다. 개발 에이전트 전용 규칙(`pytest` 홈·`.labhq` 격리, [Ubuntu 3.10 CI 진단·대기 상한](docs/status/2026-10-20-0955-ci-stall-786.md), `signatures.yaml`·`topic_checklists.yaml` 수정 시 fixture와 가짜 실행 test 추가 규칙)은 매뉴얼에 섞지 않고 이 문서에서 따른다.

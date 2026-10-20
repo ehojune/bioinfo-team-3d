@@ -65,10 +65,15 @@ async def run_lookup(operation, *, tool: str, workdir: Path | None, notify=None,
             except Exception:
                 pass  # Display outages must not extend or reset the local deadline.
 
+    stopped = False
+
     async def progress():
-        while True:
+        # The flag, not only the cancel, ends this loop: Python 3.10's wait_for drops a cancel that lands while
+        # `record`'s notify completes, and the loop then ran forever (PR #800 3.10 CI hang).
+        while not stopped:
             await asyncio.sleep(progress_s)
-            await record("waiting")
+            if not stopped:
+                await record("waiting")
 
     await record("waiting")
     remaining = min(timeout_s, timeout_s - (clock() - started))
@@ -81,6 +86,7 @@ async def run_lookup(operation, *, tool: str, workdir: Path | None, notify=None,
         try:
             result = await asyncio.wait_for(operation(), remaining)
         finally:
+            stopped = True
             watch.cancel()
             await asyncio.gather(watch, return_exceptions=True)
     except asyncio.TimeoutError as exc:

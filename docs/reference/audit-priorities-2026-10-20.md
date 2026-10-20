@@ -14,3 +14,17 @@
 실제 프로세스 통합 검사는 #794·#795의 임시 state/fake child를 쓰는 격리 CI 범위다. 로컬 mock guard를 해제하거나 PI 인스턴스·연구 요청을 검사 fixture로 쓰지 않는다. 작업자는 지정 모델·정확한 세션을 재사용하며 같은 파일 수정은 순차 처리한다.
 
 144분/19분과 21:26은 [벤치 A 2차](https://github.com/ehojune/bioinfo-team-3d/issues/373#issuecomment-5975156477), 22:28은 [벤치 C t6 재채점](https://github.com/ehojune/bioinfo-team-3d/issues/373#issuecomment-5999676070)이다. C의 [원 보고 시간은 85.9분](https://github.com/ehojune/bioinfo-team-3d/issues/373#issuecomment-5993720748)이다. 서로 다른 회차를 묶지 않으며 과분할의 인과 기여는 미측정이다.
+
+## 2026-10-20 갱신 (문서 정비 #801)
+
+위 표는 감사 당시의 경계로 둡니다. 같은 날 진행은 다음과 같습니다.
+
+| 과제 | 상태 |
+|---|---|
+| #794 | PR #800으로 병합(`28a25fba`). 실행 `-E -s -B`, 문법 검사 `-I -S -B`, 실제 interpreter CI test 1개. 같은 PR에서 Windows tree-kill의 PID 재사용 고아 판정과 외부 조회 progress 종료(Python 3.10)도 고침 |
+| #796 | PR #803으로 병합(`9acf873b`). CP1 전 기존 검증에 입력 불일치 진단·교정 연결, 보고서에 근거·미측정 구분. 효용은 미측정 |
+| #795 | PR #802 열림(병합 전) |
+| #797 | PR #807 열림(병합 전) |
+| #798 · #799 | 보류(PI가 접수를 다시 열 때까지) |
+
+열린 PR이 병합되면 manual의 해당 절과 HANDOFF 표를 그때 갱신합니다.

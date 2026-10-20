@@ -1,0 +1,5 @@
+pr: 806
+rows:
+- sha: df48ec6
+  at: 2026-10-20 13:59
+  text: Codex·Gemini 커밋의 공동 작성자 trailer를 GitHub이 인식하는 봇 주소로 맞추는 commit-msg 훅을 추가해 커밋 작성자에 에이전트 아이콘이 함께 보이게 했다.
