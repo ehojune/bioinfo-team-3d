@@ -27,3 +27,9 @@ rows:
   at: "2026-10-20 23:04"
   summary: "최신 안내 문서와 논문 스킬 설명이 함께 남도록 문서 충돌을 풀었습니다."
   text: "main의 감사·queued-halt 안내와 PR821의 승인 뒤 논문 스킬 계약을 보존했다. 제품 코드·테스트는 이전 검토 head와 같고 자동 목차는 main과 같다. 최종 CI는 새 head에서 확인한다."
+- sha: 1079d5b
+  at: 2026-10-21 00:28
+  summary: 테스트가 자체 진단과 정리까지 차단하던 문제를 고쳤습니다.
+  text: Paper2Agent 사전 검사 trap을 staff/cache 경로와 호출 내부 context로 제한하고 git fake를 해당 모듈로 격리했다. 무관한 진단 간섭 6건 red 뒤 기존
+    guard·진단·예외 복원/조기 I/O·git 차단 16건 및 관련 HOME guard 3건 통과. 제품 guard·승인/hash 계약은 유지한다. 선행 CI E/F traceback은 없어 전체
+    원인은 미확정이며 실제 설치/process·전체 CI는 미검증이다.
