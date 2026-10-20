@@ -73,6 +73,26 @@ def test_the_coupled_step_rule_opens_every_plan_template():
         assert getattr(cso, name).startswith(BIOINFO_ASSIGNMENT_RULE), name
 
 
+COHESIVE = ("keep tightly coupled non-pipeline analysis of the same data and question (exploration, preprocessing "
+            "and core statistics) in one analysis step")
+
+
+def test_the_cohesive_analysis_rule_reaches_every_plan_template_with_its_boundaries():
+    """PI's #799 requirement: coupled exploration, preprocessing and core statistics stay in one analysis step, while
+    independent work, interpretation, QC, the other-vendor review and CP1/CP2 stay separate."""
+    assert COHESIVE in BIOINFO_ASSIGNMENT_RULE
+    for kept in ("split only work that is truly independent", "biological interpretation",
+                 "independent technical or scientific QC step", "other-vendor science review",
+                 "CP1/CP2 approval and evidence checks"):
+        assert kept in BIOINFO_ASSIGNMENT_RULE, kept
+    for name in ("PLAN_PROMPT", "RESEARCH_PLAN_PROMPT", "RESEARCH_CP2_PLAN_PROMPT", "REPLAN_PROMPT"):
+        assert COHESIVE in getattr(cso, name), name
+    # The nf-core assignment and the per-candidate contribution consent are unchanged.
+    for boundary in ("nf-core", "Keep a supported pipeline's input preparation, execution and technical QC together",
+                     "engineer or analyst, not bioinfo-agent", "Only a separate per-candidate PI yes"):
+        assert boundary in BIOINFO_ASSIGNMENT_RULE, boundary
+
+
 def test_a_continuation_appends_to_the_research_plan_and_does_not_replace_the_rule():
     plan = valid_plan(steps=2)
     note = continuation.plan_prompt(plan, "a" * 64, [{"step_id": "s2", "problem": "p", "request": "r"}], 2)
@@ -172,7 +192,10 @@ def _research(agents_phases: list[tuple[str, str]], depends: dict[str, list[str]
     return plan
 
 
-def test_a_continuation_that_keeps_the_analysis_whole_reruns_fewer_cli_starts_than_one_that_splits_it():
+def test_a_continuation_that_keeps_the_analysis_whole_expects_fewer_step_dispatches_than_one_that_splits_it():
+    """The rerun list is the plan's EXPECTED step dispatches. It is not an observed CLI start count: retries, consults,
+    finish/wake turns and review/report tasks add to the real count, which only the task records and the runner show
+    (contract §3). Nothing here observes them, so they are not counted at all rather than counted as zero."""
     old = _research([("data_steward", "evidence"), ("analyst", "analysis"), ("qc_reviewer", "validation")],
                     {"s2": ["s1"], "s3": ["s2"]})
     results = _round_one(old)["results"]
@@ -181,7 +204,7 @@ def test_a_continuation_that_keeps_the_analysis_whole_reruns_fewer_cli_starts_th
     revised = copy.deepcopy(old)
     revised["steps"][1]["instruction"] = "work 2, with the paired design the reviewer asked for"
     reuse, rerun = continuation.split_reuse(old, revised, results, issue)
-    assert reuse == ["s1"] and sorted(rerun) == ["s2", "s3"]  # 2 CLI starts in the new round
+    assert reuse == ["s1"] and sorted(rerun) == ["s2", "s3"]  # 2 expected step dispatches in the new round
     assert plan_shape(revised["steps"])["coupled_splits"] == 0
 
     split = copy.deepcopy(revised)
@@ -191,6 +214,6 @@ def test_a_continuation_that_keeps_the_analysis_whole_reruns_fewer_cli_starts_th
     split["steps"].insert(2, extra)
     split["steps"][3]["depends_on"] = ["s4"]
     reuse, rerun = continuation.split_reuse(old, split, results, issue)
-    assert reuse == ["s1"] and sorted(rerun) == ["s2", "s3", "s4"]  # one more CLI start and one more handoff
+    assert reuse == ["s1"] and sorted(rerun) == ["s2", "s3", "s4"]  # one more expected dispatch and handoff
     shape = plan_shape(split["steps"])
     assert shape["coupled_splits"] == 1 and shape["boundary_handoffs"] == 1
