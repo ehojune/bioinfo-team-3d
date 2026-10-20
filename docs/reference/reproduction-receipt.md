@@ -7,6 +7,7 @@
 | 범위 | 전달받은 공개용 소스·lock만 임시 폴더에 복사. Python compile, R parse, bash -n은 코드를 실행하지 않음 |
 | 판본·경로 | 도구 이름·숫자 판본, publication-relative cwd·명령·예상 출력, 코드/lock SHA-256, UTC 검사 시각 |
 | 입력 | 코드가 참조한 변수 이름과 명시적으로 제공한 값의 유무만 검사. 호스트 환경값을 물려주거나 원자료 존재·권한을 탐색하지 않음 |
+| 개발 중 #774 | Python 환경변수 subscript의 단순 대입·삭제는 입력에서 제외. Load·get/getenv·AugAssign의 기존 값 읽기와 LABHQ_INPUT_* 선언은 유지. AST·FakeInterpreter 회귀만 검증했으며 실제 interpreter·서비스·성능은 미검증 |
 | 상태 | 문법 pass/fail/unavailable/timeout, 기본 실행 not_rerun, 누락 입력 blocked_input. 누락 lock·건너뛴 소스도 표시 |
 | 실제 실행 | 별도 `rerun=True` 승인 호출만 수행. 이번 검증은 작은 fixture뿐. 실행 pass는 exit 0 + 선언한 출력 파일 존재이며 수치·과학 결과의 동등성 검증은 아님 |
 | Python flag (#772·#794) | 문법 검사 `-I -S -B -c compile`(import 없음). 실행 `-E -s -B <script>`: script의 staged 폴더와 실행 interpreter의 site-packages는 import 경로에 둠. `PYTHONPATH` 등 `PYTHON*` 환경(입력으로 넘겨도), 사용자 site, 호출한 폴더, 다른 step 폴더는 제외. `-S`를 두면 venv·conda의 numpy 등이 사라져 실제 분석 rerun이 모두 fail이었음(#794). 실제 interpreter 검증은 mock guard가 없는 CI의 `test_a_real_isolated_rerun_imports_site_packages_and_siblings_but_not_the_callers_paths` 하나(tmp fixture만)이며 실제 분석 rerun PASS가 아님 |

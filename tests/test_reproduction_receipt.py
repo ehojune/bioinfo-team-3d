@@ -136,6 +136,48 @@ def test_variable_names_and_declared_outputs_are_value_free():
     assert rr.expected_outputs({"plan": {"steps": [{"id": "a", "outputs": ["run.py", "uv.lock", "result.tsv"]}]}}) == {"a": ["result.tsv"]}
 
 
+@pytest.mark.parametrize("source,expected", [
+    ('os.environ["MODE"] = "test"', []),
+    ('environ["MODE"]: str = "test"', []),
+    ('del os.environ["MODE"]', []),
+    ('del environ["MODE"]', []),
+    ('mode = os.environ["MODE"]', ["MODE"]),
+    ('mode = environ["MODE"]', ["MODE"]),
+    ('os.environ["MODE"] += "test"', ["MODE"]),
+    ('environ["MODE"] *= 2', ["MODE"]),
+    ('os.environ["MODE"] = os.environ["SOURCE"]', ["SOURCE"]),
+    ('os.environ[os.getenv("KEY")] = "test"', ["KEY"]),
+    ('os.environ["MODE"][0] = "x"', ["MODE"]),
+    ('x = os.environ.get("A"); y = environ.get("B"); z = getenv("C")', ["A", "B", "C"]),
+    ('os.environ["LABHQ_INPUT_DATA"] = "test"', ["LABHQ_INPUT_DATA"]),
+    ('del os.environ["LABHQ_INPUT_DATA"]', ["LABHQ_INPUT_DATA"]),
+])
+def test_python_environment_inputs_distinguish_reads_from_writes(source, expected):
+    assert rr.input_variables(source, "python") == expected
+
+
+@pytest.mark.parametrize("statement,missing", [
+    ('os.environ["MODE"] = "test"', []),
+    ('del os.environ["MODE"]', []),
+    ('mode = os.environ["MODE"]', ["MODE"]),
+    ('os.environ["MODE"] += "test"', ["MODE"]),
+    ('os.environ["LABHQ_INPUT_DATA"] = "test"', ["LABHQ_INPUT_DATA"]),
+])
+@pytest.mark.parametrize("rerun", [False, True])
+def test_environment_input_context_controls_receipt_without_running_source(tmp_path, monkeypatch, statement, missing, rerun):
+    fake = FakeInterpreter({"run.py": write_result})
+    monkeypatch.setattr(subprocess, "run", fake)
+    monkeypatch.setenv("MODE", "operator-value-never-inherit")
+    receipt = rr.build_receipt({"run.py": "import os\n" + statement + "\n"},
+                               tools=python_tools(), temp_root=tmp_path, rerun=rerun, outputs={"": ["result.txt"]})
+    row = receipt["files"][0]
+    assert row["input_variables"] == row["missing_inputs"] == missing
+    assert row["execution"]["status"] == ("blocked_input" if missing else "pass" if rerun else "not_rerun")
+    assert [name for name, _ in fake.runs] == (["run.py"] if rerun and not missing else [])
+    assert "operator-value-never-inherit" not in rr.receipt_json(receipt)
+    assert not list(tmp_path.iterdir())
+
+
 def test_missing_or_malformed_receipts_never_become_execution_pass():
     for value in (None, {}, {"schema_version": 1, "files": [{"syntax": "pass"}]}):
         summary = rr.receipt_summary(value)
