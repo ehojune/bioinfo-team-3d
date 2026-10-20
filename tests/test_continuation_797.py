@@ -228,7 +228,8 @@ async def test_card_uses_verified_candidates_and_drift_never_silently_reruns(tmp
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('mutation', ['file', 'tools', 'record', 'missing_seal', 'plan'])
-async def test_resume_revalidates_even_previously_verified_snapshot(monkeypatch, mutation):
+@pytest.mark.parametrize('dispatched', [False, True])
+async def test_resume_revalidates_even_previously_verified_snapshot(monkeypatch, mutation, dispatched):
     old = archive()
     plan = old['plan']
     async def reply(task):
@@ -246,7 +247,9 @@ async def test_resume_revalidates_even_previously_verified_snapshot(monkeypatch,
     req['research_contract']['approval'] = {'approved': True, 'target_sha256': plan_sha256(plan),
         'reuse_snapshot_sha256': carried['reuse_snapshot']['sha256']}
     assert await orch._verify_research_reuse('r', plan)
-    assert carried['verified']
+    assert not carried['verified']  # proof alone cannot cross the CP1 budget gate
+    assert orch._continuation_unstarted(req)
+    carried.update(verified=True, dispatch_started=dispatched)  # approved execution/resume boundary
     if mutation == 'file':
         monkeypatch.setattr(c, 'verify_reuse', lambda *a: {'s1': 'mismatch'})
     elif mutation == 'tools':
@@ -260,3 +263,4 @@ async def test_resume_revalidates_even_previously_verified_snapshot(monkeypatch,
     assert not await orch._verify_research_reuse('r', plan)
     assert req['outcome'] == 'reuse_approval_required'
     assert not req['research_contract']['approval']['approved'] and not hub.calls
+    assert orch._continuation_unstarted(req) is (not dispatched)  # never roll back a dispatched round

@@ -3573,13 +3573,17 @@ class Orchestrator:
                             previous_result=previous_result, context_chars=self.cfg.context_chars_per_step),
                         "context": "", "resume_session_id": previous_session if can_resume else None})
                 await self._emit(rid, "request.step_attempt", {"step_id": key, "attempt": attempt})
-                req = self.hub.requests[rid]
-                contract = req.get('research_contract') or {}
-                carried = contract.get('continuation') or {}
-                if (current.meta.get('kind') == 'step' and carried.get('plan_sha256')
-                        and carried['plan_sha256'] == contract.get('plan_sha256')
-                        and not await self._verify_research_reuse(rid, req['plan'])):
-                    raise research_continuation.ReuseApprovalRequired('reuse proof changed; renewed CP1 required')
+                if current.meta.get('kind') == 'step':
+                    req = self.hub.requests.get(rid) or {}
+                    contract = req.get('research_contract') or {}
+                    carried = contract.get('continuation') or {}
+                    if (carried.get('plan_sha256')
+                            and carried['plan_sha256'] == contract.get('plan_sha256')):
+                        if not await self._verify_research_reuse(rid, req['plan']):
+                            raise research_continuation.ReuseApprovalRequired('reuse proof changed; renewed CP1 required')
+                        if not carried.get('dispatch_started'):
+                            carried['dispatch_started'] = True
+                            self.hub.save_request(rid)
                 offline = False
                 try:
                     dispatched = (attempt_task if current.meta.get("facilities_diagnosis") else
@@ -5200,7 +5204,7 @@ class Orchestrator:
         carried = contract["continuation"]
         carry = research_continuation.carry_over(contract["rounds"][-1], plan, pack_hashes,
                                                  carried.get("p1_issues") or [])
-        carried.update(plan_sha256=research_plan_sha256(plan), verified=False)
+        carried.update(plan_sha256=research_plan_sha256(plan), verified=False, dispatch_started=False)
         carried.pop("refused_reuse", None)
         carried.pop("reuse_snapshot", None)
         carried.pop("approval_required", None)
@@ -5295,7 +5299,7 @@ class Orchestrator:
             req['outcome'] = 'reuse_approval_required'
             self.hub.save_request(rid)
             return False
-        carried.update(verified=True, refused_reuse=[])
+        carried['refused_reuse'] = []
         self.hub.save_request(rid)
         return True
 
@@ -5712,7 +5716,9 @@ class Orchestrator:
                 carried = req["research_contract"].get("continuation") or {}
                 # Every continuation CP1/resume uses the same sealed executable reuse contract (#797).
                 reuse_pending = carried.get("plan_sha256") == plan_hash
-                if carried and not reuse_pending:
+                archived_before_adoption = (carried and not carried.get('plan_sha256')
+                                            and self._archived_continuation_decision(req))
+                if carried and not reuse_pending and not archived_before_adoption:
                     await self._verify_research_reuse(rid, plan)
                     self._finish(rid, "이어 가기 계획과 재사용 snapshot이 다릅니다. 새 CP1 승인이 필요합니다.",
                                  {}, ok=False, error="reuse approval required")
@@ -5875,6 +5881,9 @@ class Orchestrator:
                     self._finish(rid, "Research plan frozen and approved. Evidence checkpoint is off, so the "
                                  "request stops before employee dispatch.", {}, ok=True)
                     return False
+                if reuse_pending:
+                    # Proof alone does not authorize execution: rollback must still cover a denied budget card.
+                    carried['verified'] = True
                 req["outcome"] = "research_running"
                 self.hub.save_request(rid)
                 return True
@@ -6995,14 +7004,15 @@ class Orchestrator:
     def _continuation_unstarted(req: dict, dispatched: bool | None = None) -> bool:
         """A continuation round is on and none of its steps has been dispatched.
 
-        ``dispatched`` is the gateway task ledger's answer for this round's step tasks. Without it, a reuse check not
-        yet done stands in: it runs right before the first dispatch in this process. A gateway that stopped between
-        the two must ask the ledger (PR #527 review)."""
+        ``dispatched`` is the gateway task ledger's authoritative answer. In-process, ``verified`` means the CP1
+        proof AND budget gates passed; ``dispatch_started`` preserves a dispatch attempt even if later drift
+        invalidates the proof. A gateway stopped between these boundaries must ask the ledger (PR #527 review)."""
         contract = req.get("research_contract") or {}
         carried = contract.get("continuation") or {}
         if not (carried and contract.get("rounds")):
             return False
-        return not dispatched if dispatched is not None else not carried.get("verified")
+        return (not dispatched if dispatched is not None else
+                not (carried.get("verified") or carried.get("dispatch_started")))
 
     @staticmethod
     def _archived_continuation_decision(req: dict) -> bool:
