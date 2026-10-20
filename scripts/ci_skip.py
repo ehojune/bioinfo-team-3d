@@ -34,6 +34,19 @@ MAX_BYTES = 256 * 1024
 MAX_API_BYTES = 2 * 1024 * 1024
 MAX_AGE = timedelta(days=7)
 
+# Modality, not a subject-noun inventory: an unfamiliar subject can still carry
+# a requirement, permission or prohibition. Ambiguous capability/advice is full.
+NORMATIVE = re.compile(
+    r"\b(?:(?:must|shall|should|may|might|can|could|would|will|ought|need)(?:n['’]t)?|needs|needed|needing|"
+    r"always|never|do(?:es)?\s+not|"
+    r"cannot|requir\w*|(?:un)?necessar\w*|mandator\w*|optional\w*|compulsor\w*|"
+    r"oblig\w*|prohibit\w*|forbid\w*|permi\w*|recommend\w*)\b|"
+    r"필수|의무|선택|금지|불가|필요|가능|생략|면제|반드시|권장|"
+    r"[가-힣]+야\s*(?:하|합|한|할|함|되|된|됩)|"
+    r"[가-힣]+도\s*(?:되|된|됩|괜찮|좋)|"
+    r"[가-힣]+(?:면|서는|선)\s*안\s*(?:되|된|됩)|"
+    r"[가-힣]+지\s*(?:말|마|못)|(?:할|될|[가-힣]+을)\s*수\s*(?:있|없)", re.IGNORECASE)
+
 
 def git(*args: str) -> str:
     return subprocess.run(["git", *args], capture_output=True, text=True, encoding="utf-8",
@@ -92,6 +105,20 @@ class BalancedHTML(HTMLParser):
             raise ValueError("ambiguous HTML nesting")
 
 
+def inline_signature(children) -> list:
+    """Bind wording and inline structure while treating soft wrapping as spaces."""
+    atoms, plain = [], ""
+    for child in children:
+        if child.type in {"text", "softbreak"}:
+            plain += child.content if child.type == "text" else " "
+        else:
+            atoms.append(("text", re.sub(r"[ \t\r\n]+", " ", plain)))
+            plain = ""
+            atoms.append((child.type, child.tag, child.nesting, child.markup, child.content, child.attrs))
+    atoms.append(("text", re.sub(r"[ \t\r\n]+", " ", plain)))
+    return atoms
+
+
 def markdown_parts(text: str) -> tuple:
     # This is already a project dependency. Import lazily: manifest creation
     # needs only PyYAML, while the changes job also installs markdown-it-py.
@@ -100,9 +127,12 @@ def markdown_parts(text: str) -> tuple:
     env = {}
     tokens = MarkdownIt("commonmark").enable("table").parse(text, env)
     protected, prose = [], []
+    containers = []
     html = BalancedHTML()
     heading = False
     for token in tokens:
+        if token.nesting == 1:
+            containers.append((token.type, token.tag, token.markup, token.attrs))
         if token.type == "heading_open":
             heading = True
         elif token.type == "heading_close":
@@ -145,6 +175,10 @@ def markdown_parts(text: str) -> tuple:
                         html.feed(child.content)
                 elif child.type not in {"link_close", "em_open", "em_close", "strong_open", "strong_close"}:
                     raise ValueError("unsupported inline token")
+            if NORMATIVE.search(plain):
+                # Protect the complete inline block on BOTH sides, including
+                # context/conditions/emphasis; no subject noun is assumed safe.
+                protected.append(("normative", tuple(containers), inline_signature(token.children)))
             for line in plain.splitlines():
                 if re.match(r"\s*\.\.\s", line):
                     raise ValueError("unsupported directive")
@@ -157,6 +191,8 @@ def markdown_parts(text: str) -> tuple:
                 "thead_open", "thead_close", "tbody_open", "tbody_close", "tr_open", "tr_close",
                 "th_open", "th_close", "td_open", "td_close"}:
             raise ValueError("unsupported block token")
+        if token.nesting == -1:
+            containers.pop()
     html.close()
     if html.stack:
         raise ValueError("unclosed HTML element")
@@ -191,9 +227,9 @@ def prose_change(before: str, after: str, *, reflow: bool = False) -> bool:
         for line, heading in old[2][a:b] + new[2][c:d]:
             if (re.search(code, line, re.IGNORECASE) or re.search(instruction, line, re.IGNORECASE)
                     or (not reflow and re.search(policy, line, re.IGNORECASE))
-                    or (not heading and len(line.split()) < 2)):
+                    or (not reflow and not heading and len(line.split()) < 2)):
                 return False
-            if not heading and not line.endswith((".", "!", "?", "。")):
+            if not reflow and not heading and not line.endswith((".", "!", "?", "。")):
                 return False
     return True
 
@@ -209,16 +245,7 @@ def reflow_change(before: str, after: str) -> bool:
         for token in MarkdownIt("commonmark").enable("table").parse(text):
             content = token.content
             if token.type == "inline":
-                atoms, plain = [], ""
-                for child in token.children:
-                    if child.type in {"text", "softbreak"}:
-                        plain += child.content if child.type == "text" else " "
-                    else:
-                        atoms.append(("text", re.sub(r"[ \t\r\n]+", " ", plain)))
-                        plain = ""
-                        atoms.append((child.type, child.tag, child.nesting, child.markup, child.content, child.attrs))
-                atoms.append(("text", re.sub(r"[ \t\r\n]+", " ", plain)))
-                content = atoms
+                content = inline_signature(token.children)
             result.append((token.type, token.tag, token.nesting, token.hidden,
                            token.markup, token.info, token.attrs, content))
         return result
@@ -243,7 +270,7 @@ def document_change(path: str, before: str, after: str) -> bool:
                          r"config|package|runtime|dependenc|(?:^|/)(?:tests?|agents|handoff)(?:[./_-]|$)",
                          path, re.IGNORECASE):
                 return reflow_change(before, after)
-        return prose_change(before, after)
+        return prose_change(before, after) or reflow_change(before, after)
     except Exception:
         return False  # malformed records also run full
 

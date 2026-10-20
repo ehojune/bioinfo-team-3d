@@ -12,11 +12,12 @@ lookup-only 정책 근거입니다. `.github/workflows/test.yml`과 `scripts/ci_
 
 - PR은 실제 synthetic merge의 base부터 checkout까지, main은 push의 before부터 checkout까지 전부 비교합니다. 마지막 notes commit만 보지 않습니다.
 - README 한영판·STATUS·생성 patch-note Markdown·docs Markdown과 정해진 schema의 평면 patch entry만 후보입니다. 실행 mode·symlink·submodule·알 수 없는 경로는 full입니다.
-- 코드·설정·패키지·dependency·workflow·test 변경은 full입니다. manual·AGENTS/HANDOFF·정책 경로는 문장 경계의 줄바꿈만 후보이며, Markdown 내용·문단·목록·제목·예제·link가 모두 같아야 합니다. 내용 변경·명령 줄바꿈·모호한 markup은 full입니다.
+- 코드·설정·패키지·dependency·workflow·test 변경은 full입니다. manual·AGENTS/HANDOFF·정책 경로는 내용이 같은 줄바꿈만 후보이며, Markdown 내용·문단·목록·제목·예제·link가 모두 같아야 합니다. 내용 변경·명령 줄바꿈·모호한 markup은 full입니다.
 - 기존 dependency인 markdown-it-py로 fenced/indented/inline code, HTML, link·image 목적지와 reference 정의를 보호합니다. 그 내용·순서가 같으면 README처럼 예제가 있는 문서도 prose만 바꿀 수 있습니다. 예제 추가·삭제·수정은 full입니다.
 - 바뀐 본문은 문장부호로 끝나는 문장만 허용합니다. CLI 이름 목록과 별개로 실행 지시어·파일/경로·옵션·따옴표가 있는 변경 문장은 모호하므로 full입니다. 이런 표현을 쓴 일반 prose도 보수적으로 full이지만, 그대로인 예제 주변의 일반 문장은 줄입니다. 기존 명령·설정 형태, 짧은 fragment, 닫히지 않은 fence/backtick/HTML, 중첩 block 예제와 지원하지 않는 directive도 full입니다. HTML 내부 prose도 보호됩니다.
 - 생성 STATUS·patch-note Markdown도 같은 기준입니다. 기존 식별자가 그대로인 prose 수정은 줄지만, inline 식별자·link를 새로 넣는 생성 변경은 full입니다. schema에 맞는 patch-entry YAML은 별도로 판별합니다.
 - 승인·안전·게시·가림·설정·상한·검증 등 정책 표현이 바뀐 문장은 README·일반 reference에서도 full입니다. PR 첫 실행부터 전체 base diff로 판별하며 이전 run은 필요하지 않습니다.
+- 주제 명사와 별개로 영어·한국어의 요구·허용·금지 표현을 이전/새 본문 양쪽에서 검사합니다. 해당 inline 문단의 문구·문맥·강조·container가 바뀌면 full이며, capability·권고처럼 의미가 모호한 표현도 보호합니다. 같은 문단의 일반 문구를 바꾸는 경우도 full로 남깁니다. 내용과 Markdown 구조가 모두 같은 soft wrapping만 허용하며 별도 일반 prose 문단의 수정은 기존 기준을 따릅니다. 회귀는 `tests/test_ci_normative_prose.py`입니다.
 - 축소 compatibility suite는 없습니다. assertions와 safety fixtures는 기존 전체 suite에 그대로 남습니다.
 
 ## 재사용 증거
