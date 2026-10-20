@@ -90,7 +90,8 @@ async def test_a_control_the_runner_could_not_apply_is_nacked_and_its_steer_stay
 
 
 @pytest.mark.asyncio
-async def test_a_halt_for_a_task_waiting_for_a_run_slot_takes_effect_at_once(tmp_path, monkeypatch):
+async def test_a_halt_for_a_task_waiting_for_a_run_slot_takes_effect_at_once(
+        tmp_path, monkeypatch, queued_control_io):
     release, first_started, slot_waiting = asyncio.Event(), asyncio.Event(), asyncio.Event()
     started = []
 
@@ -118,6 +119,7 @@ async def test_a_halt_for_a_task_waiting_for_a_run_slot_takes_effect_at_once(tmp
     await runner._on_message(_msg("t2", "halt"))
     result = await asyncio.wait_for(queued, 2)
     assert result.error_kind == "halted" and result.session_id == "S2" and started == ["t1"]
+    assert not release.is_set() and not first.done()  # halt must finish while the owner still holds the slot
     logs = [e["data"]["text"] for e in runner.store.pending() if e["type"] == "agent.log" and e["task_id"] == "t2"]
     assert any("시작하기 전에 멈췄어요" in text for text in logs)
     assert not any("프로세스를 끝냅니다" in text for text in logs)  # nothing claims it stopped before it did
@@ -125,6 +127,27 @@ async def test_a_halt_for_a_task_waiting_for_a_run_slot_takes_effect_at_once(tmp
     assert (await asyncio.wait_for(first, 2)).ok
     # The slot the halted task never took is still there for the next one.
     assert (await asyncio.wait_for(runner.run_task(_task("t3")), 2)).ok
+    assert started == ["t1", "t3"] and not runner.sem.locked()
+
+
+@pytest.fixture
+def queued_control_io(monkeypatch):
+    """This one control test measures semaphore/halt ordering, not executor/disk throughput.
+
+    Windows CI timed out in t3's empty input scan *after* the queued halt assertions passed.
+    Run this test's offloaded jobs inline; execute their real bodies, including fsync/SQLite writes.
+    Native writer/executor scheduling and durability retain their separate integration coverage.
+    """
+    from labhq import durable
+
+    async def offload(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    async def commit(_lane, fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", offload)
+    monkeypatch.setattr(durable, "run", commit)
 
 
 @pytest.mark.asyncio

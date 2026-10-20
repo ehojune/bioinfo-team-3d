@@ -23,7 +23,9 @@ PI가 신규 일반 작업 보류를 해제했습니다. 승인 예산 안에서
 | #815 | 응집형 분석 계획·비교 측정 계약(#799), draft |
 | #801 | 이 문서 정비 |
 
-#812는 병합됐습니다(`8cc845b2`). #799는 Opus가 #815에서 계획 예제·측정 계약과 이미 승인된 응집형 정책을 보완합니다. #811 후속 CI는 native owner가 맡습니다. #798은 Codex1이 #807 병합 후 논문 스킬의 승인 뒤 지연 생성·결과 참조 receipt를 구현하며 [계약과 검증 범위](docs/reference/paper-skills-798.md)를 남깁니다. 감사 항목별 경계와 진행은 [감사 우선순위](docs/reference/audit-priorities-2026-10-20.md)에 있습니다.
+#812는 병합됐습니다(`8cc845b2`). #799는 Opus가 #815에서 계획 예제·측정 계약과 이미 승인된 응집형 정책을 보완합니다. #811은 Codex1이 #818에서 queued-halt 검사를 executor 대기와 분리해 보완했고 병합됐습니다(`2e7b983`, [검증 경계](docs/reference/shadow-test-cost-811.md)).
+
+#798은 #807 병합 후 #821에서 승인 뒤 논문 스킬 생성·결과 참조 receipt와 검증된 문서의 읽기 전용 grant를 구현했습니다([계약과 검증 범위](docs/reference/paper-skills-798.md)). 최신 main 통합 뒤 새 head 검토·CI는 총괄/native owner가 맡습니다. 감사 항목별 경계와 진행은 [감사 우선순위](docs/reference/audit-priorities-2026-10-20.md)에 있습니다.
 
 개발 준비가 끝나고 PI가 실운전을 승인한 뒤의 순서는 공개 소형 주제 실운전 → bench dry-run·필수 게이트 → Astra의 코드·README·구조 전체 검토 → 동일 요청 bench 비교(labhq 혼합 roster 대 Astra·Sol·Opus 단독 세션)입니다. 현재 실운전 가동은 #795 해결 뒤 다시 확인합니다. v0.5 선언(2026-10-08) 이후 장치의 구현·CI 통과는 새 실운전 PASS를 뜻하지 않습니다([로드맵](docs/manual.md#로드맵)).
 
