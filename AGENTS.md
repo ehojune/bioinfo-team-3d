@@ -9,6 +9,7 @@
 - 관련 test만 로컬에서 돌리고 전체 suite는 CI(3.10·3.12·Windows)에 맡긴다. test를 삭제·약화하지 않는다. `tests/conftest.py`의 홈·캐시·state 격리를 지키고 사용자 `.labhq` 접근 guard를 우회하지 않는다.
 - 단계 끝에는 PR 본문과 `docs/status/<YYYY-MM-DD>-<HHMM>-<branch>.md`에 같은 보고를 쓴다. `STATUS.md`는 main 자동 생성이므로 직접 고치지 않는다.
 - 기록만 바꾼 커밋을 빼고 커밋마다 `patch_notes/entries/<branch>.yaml`에 한 줄. 생성 `patch_notes/README.md`는 직접 고치지 않는다. main 3커밋 안에 README나 manual을 갱신한다. 초안은 `python scripts/patch_notes.py rows --pr N`, 검사는 `python scripts/patch_notes.py check`.
+- 공동 작성자 trailer는 `.githooks/commit-msg`가 GitHub이 인식하는 봇 주소로 맞춘다(Codex 이메일 치환, Gemini 추가). 새 clone은 `git config core.hooksPath .githooks` 한 번.
 - public 저장소다. 커밋 전 `scripts/check_public.sh`를 실행한다. 비밀값은 env로만, 실제 `config/labhq.yaml`·로컬 노트는 커밋 금지. DUA 원본은 클러스터 밖·LLM 대화·프롬프트·로그에 가져오지 않는다. 경로 가드는 sandbox가 아니다.
 - P1은 같은 담당자가 고치고 새 head 리뷰를 받아 **P1=0까지 반복**한다. 남은 P2는 총괄이 실사용 재현 가능성·결과 정확성·보안·반복 중단 영향과 수정 비용 대비 이득을 따져 가치 있는 것만 issue로 남긴다. 경미·추정·중복은 원 PR 댓글에 남기고 새 issue를 만들지 않는다. CI·봇 대기는 driver가 맡는다. 실행 중 재호출과 인라인·PR 본문·커밋의 봇 멘션은 금지한다. `scripts/pr_gate.py --dry-run`은 보조 도구다.
 - 한도에서는 새 투입만 멈추고 진행 중 작업·CI·리뷰·배포는 기다린다. PI 보고는 한국 시각 00·04·08·12·16·20시를 유지한다.
