@@ -14,15 +14,18 @@ DENIAL = (
 # Keep adjacent quoted/escaped fragments in one shell word. Redirections are
 # distinct tokens so their targets are never mistaken for executed commands.
 _REDIRECTION = re.compile(r"(?:\d*(?:<<<|<<-?|>>|<>|>&|<&|>\||[<>])|&>>?)")
+_ANSI_QUOTE = re.compile(r"\$'(?:\\[\s\S]|[^'\\])*'")
 _WORDS = re.compile(
-    _REDIRECTION.pattern + r'''|&&|\|\||[;&|(){}\n]|(?:"(?:`[\s\S]|\\[\s\S]|[^"\\`])*"|'''
+    _REDIRECTION.pattern + r'|&&|\|\||[;&|(){}\n]|(?:' + _ANSI_QUOTE.pattern
+    + r'''|"(?:`[\s\S]|\\[\s\S]|[^"\\`])*"|'''
     r"'[^']*'|\\[\s\S]|`[\s\S]|[^\s;&|(){}<>\"'\\`])+"
 )
 _SEPARATOR = re.compile(r"^[;&|(){}\n]+$")
 _KNOWN_COMMANDS = {
     "pkill", "killall", "taskkill", "get-process", "gps", "ps", "stop-process", "spps", "kill",
     "sudo", "env", "command", "exec", "nohup", "builtin", "if", "elif", "while", "until", "time",
-    "sh", "bash", "zsh", "cmd", "powershell", "pwsh", "xargs",
+    "sh", "bash", "zsh", "dash", "cmd", "powershell", "pwsh", "xargs",
+    "coproc", "eval", "trap", "timeout", "nice", "setsid", "find", "pgrep",
 }
 _XARGS_ARGUMENT_OPTIONS = {
     "--arg-file", "--delimiter", "--max-args", "--max-procs", "--max-chars", "--process-slot-var",
@@ -38,6 +41,43 @@ _SUDO_ARGUMENT_OPTIONS = {
     "--other-user", "--prompt", "--chroot", "--role", "--command-timeout", "--type", "--user",
 }
 
+_EXEC_OPTIONS = {
+    # long argument options, long switches, short argument flags, short switches
+    "timeout": ({"--signal", "--kill-after"}, {"--foreground", "--preserve-status", "--verbose"}, "sk", "fpv"),
+    "nice": ({"--adjustment"}, set(), "n", ""),
+    "setsid": (set(), {"--ctty", "--fork", "--wait"}, "", "cfw"),
+}
+_FIND_ARGUMENTS = dict.fromkeys((
+    "-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename", "-regex", "-iregex",
+    "-type", "-xtype", "-user", "-uid", "-group", "-gid", "-size", "-perm", "-links", "-inum",
+    "-samefile", "-fstype", "-newer", "-anewer", "-cnewer", "-mtime", "-mmin", "-atime", "-amin",
+    "-ctime", "-cmin", "-used", "-context", "-printf", "-fprint", "-fprint0", "-fls", "-regextype",
+    "-maxdepth", "-mindepth", "-files0-from", "-D",
+), 1)
+_FIND_ARGUMENTS["-fprintf"] = 2
+
+
+def _ansi_literal(text: str) -> str:
+    escapes = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n",
+               "r": "\r", "t": "\t", "v": "\v", "\\": "\\", "'": "'", '"': '"', "?": "?"}
+
+    def decode(match: re.Match) -> str:
+        value = match.group()[1:]
+        if value in escapes:
+            return escapes[value]
+        if value.startswith("c"):
+            return chr(127 if value[1] == "?" else ord(value[1]) & 31)
+        try:
+            if value[0] in "xuU":
+                return chr(int(value[1:], 16))
+            return chr(int(value, 8) % 256)
+        except (ValueError, OverflowError):
+            return match.group()
+
+    decoded = re.sub(r"\\(?:[abefnrtvE\\'\"?]|[0-7]{1,3}|x[0-9a-fA-F]{1,2}|u[0-9a-fA-F]{1,4}|U[0-9a-fA-F]{1,8}|c[\s\S])",
+                     decode, text)
+    return decoded.split("\x00", 1)[0]  # Bash words cannot retain a NUL inside this fragment.
+
 
 def _literal_word(word: str) -> str:
     """Remove literal shell quoting/escapes without expanding variables or running code."""
@@ -46,6 +86,11 @@ def _literal_word(word: str) -> str:
     index = 0
     while index < len(word):
         char = word[index]
+        ansi = _ANSI_QUOTE.match(word, index) if quote is None else None
+        if ansi:
+            result.append(_ansi_literal(ansi.group()[2:-1]))
+            index = ansi.end()
+            continue
         if quote == "'":
             if char == "'":
                 quote = None
@@ -64,6 +109,41 @@ def _literal_word(word: str) -> str:
             result.append(char)
         index += 1
     return "".join(result)
+
+
+def _backquote_payloads(command: str):
+    """Find literal Bash substitutions, respecting single quotes and escaped delimiters."""
+    quote = None
+    index = 0
+    while index < len(command):
+        char = command[index]
+        ansi = _ANSI_QUOTE.match(command, index) if quote is None else None
+        if ansi:
+            index = ansi.end()
+            continue
+        if quote == "'":
+            if char == "'":
+                quote = None
+        elif char == "\\":
+            index += 1
+        elif char == "'" and quote is None:
+            quote = "'"
+        elif char == '"':
+            quote = None if quote else '"'
+        elif char == "`":
+            end = index + 1
+            while end < len(command):
+                if command[end] == "\\":
+                    end += 2
+                elif command[end] == "`":
+                    break
+                else:
+                    end += 1
+            if end < len(command):
+                # Old-style substitutions remove these backslashes before parsing.
+                yield re.sub(r"\\([$`\\])", r"\1", command[index + 1:end])
+                index = end
+        index += 1
 
 
 def _bare(word: str) -> str:
@@ -203,6 +283,67 @@ def _xargs_command_start(words: list[str], start: int) -> int:
     return start
 
 
+def _execution_command_start(words: list[str], start: int, name: str) -> int:
+    """Locate the command of timeout/nice/setsid; their option values are data."""
+    arguments, switches, short_arguments, short_switches = _EXEC_OPTIONS[name]
+    options = arguments | switches | {"--help", "--version"}
+    start += 1
+    while start < len(words):
+        option = _literal_word(words[start])
+        if option == "--":
+            start += 1
+            break
+        if not option.startswith("-") or option == "-":
+            break
+        start += 1
+        if name == "nice" and re.fullmatch(r"--?\d+", option):
+            continue  # obsolete -ADJUSTMENT syntax, including a negative adjustment
+        if option.startswith("--"):
+            key, attached, _value = option.partition("=")
+            matches = [key] if key in options else [value for value in options if value.startswith(key)]
+            if len(matches) != 1 or matches[0] in {"--help", "--version"}:
+                return len(words)
+            if matches[0] in arguments and not attached:
+                start += 1
+        else:
+            for index, flag in enumerate(option[1:], start=2):
+                if flag in short_arguments:
+                    if index == len(option):
+                        start += 1
+                    break
+                if flag not in short_switches:
+                    return len(words)  # includes help/version, which never run COMMAND
+    return start + (name == "timeout")  # DURATION precedes timeout's COMMAND
+
+
+def _find_payloads(words: list[str]):
+    """Find literal -exec/-execdir/-ok/-okdir actions, not predicate/format operands."""
+    index = 0
+    payloads = []
+    while index < len(words):
+        word = _literal_word(words[index])
+        if word in {"-help", "--help", "-version", "--version"}:
+            return  # find exits during expression parsing, before executing any action
+        if word in {"-exec", "-execdir", "-ok", "-okdir"}:
+            start = index + 1
+            index = start
+            while index < len(words):
+                value = _literal_word(words[index])
+                if value == ";" or (value == "+" and index > start and _literal_word(words[index - 1]) == "{}"):
+                    payloads.append(" ".join(words[start:index]))
+                    break
+                index += 1
+            if index == len(words):
+                # The existing group lexer can split an unquoted {} placeholder.
+                # Inspect the action's command prefix without changing that lexer.
+                payloads.append(" ".join(words[start:index]))
+            index += 1
+        else:
+            arity = _FIND_ARGUMENTS.get(word, 1 if re.fullmatch(r"-newer[a-zA-Z]{2}", word) else 0)
+            index += 1 + arity
+    yield from payloads
+
+
 def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
     """Recognize literal shell stop commands, not prose or PID-based cleanup.
 
@@ -210,7 +351,9 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
     executables still need the existing interpreter/unknown-command approval policy.
     """
     if _depth > 8:
-        return False
+        return True  # excessive literal nesting must not turn a denied command into allow
+    if any(broad_process_stop(payload, _depth=_depth + 1) for payload in _backquote_payloads(command)):
+        return True
     words = _WORDS.findall(command)
     groups: list[list[str]] = [[]]
     for word in words:
@@ -254,6 +397,7 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
         pipe_continuation = False
         group = _without_redirections(group)
         start = 0
+        pipeline_arguments = False
         while start < len(group):
             word = _bare(group[start])
             name = _command_name(group[start])
@@ -267,11 +411,15 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
                 continue
             if name == "xargs":
                 start = _xargs_command_start(group, start + 1)
+                pipeline_arguments = pipeline_arguments or process_pipeline
+                continue
+            if name in _EXEC_OPTIONS:
+                start = _execution_command_start(group, start, name)
                 continue
             if name in {"command", "exec", "nohup", "time"}:
                 start = _wrapper_command_start(group, start, name)
                 continue
-            if word in {"&", "!", "builtin", "call", "then", "do", "if", "elif", "while", "until"} or re.match(
+            if word in {"&", "!", "builtin", "call", "then", "do", "if", "elif", "while", "until", "coproc"} or re.match(
                     r"^[A-Za-z_][A-Za-z_0-9]*=", group[start]):
                 start += 1
                 continue
@@ -280,13 +428,31 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
             continue
         name = _command_name(group[start])
         args = [_bare(word) for word in group[start + 1:]]
+        if name == "eval":
+            payload_words = group[start + 1:]
+            if payload_words and _literal_word(payload_words[0]) == "--":
+                payload_words = payload_words[1:]
+            payload = " ".join(_literal_word(word) for word in payload_words)
+            if broad_process_stop(payload, _depth=_depth + 1):
+                return True
+        if name == "trap":
+            handlers = group[start + 1:]
+            end_options = bool(handlers and _literal_word(handlers[0]) == "--")
+            if end_options:
+                handlers = handlers[1:]
+            if (len(handlers) > 1 and (end_options or not _literal_word(handlers[0]).startswith("-"))
+                    and broad_process_stop(_literal_word(handlers[0]), _depth=_depth + 1)):
+                return True
+        if name == "find" and any(broad_process_stop(payload, _depth=_depth + 1)
+                                  for payload in _find_payloads(group[start + 1:])):
+            return True
         if name in {"pkill", "killall"}:
             return True
         if name == "taskkill" and any(re.match(r"^/{1,2}im(?::|$)", arg) for arg in args):
             return True
-        if name in {"get-process", "gps", "ps"}:
+        if name in {"get-process", "gps", "ps", "pgrep"}:
             # Explicit -Id is PID-based. Otherwise the pipeline carries a name-selected set.
-            process_pipeline = not any(re.match(r"^-(?:id|pid)(?::|$)", arg) for arg in args)
+            process_pipeline = name == "pgrep" or not any(re.match(r"^-(?:id|pid)(?::|$)", arg) for arg in args)
             if process_pipeline and block_pipeline:
                 # A block can emit process objects before its final statement.
                 block_pipeline[-1] = True
@@ -315,17 +481,17 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
             positional_name = (args and not args[0].startswith(("-", "$", "@"))
                                and not args[0].isdigit())
             selected_processes = process_pipeline or bool(block_pipeline and block_pipeline[-1])
-            if selected_processes and not pid_target or positional_name:
+            if selected_processes and (not pid_target or pipeline_arguments) or positional_name:
                 return True
-        if name in {"sh", "bash", "zsh", "cmd", "powershell", "pwsh"}:
+        if name in {"sh", "bash", "zsh", "dash", "cmd", "powershell", "pwsh"}:
             for i, arg in enumerate(args[:-1]):
-                shell_cluster = name in {"sh", "bash", "zsh"} and re.fullmatch(r"-[^-]*c[^-]*", arg)
+                shell_cluster = name in {"sh", "bash", "zsh", "dash"} and re.fullmatch(r"-[^-]*c[^-]*", arg)
                 if shell_cluster or arg in {"-c", "/c", "/k", "-command", "-comm", "-c:"}:
                     payload_words = group[start + i + 2:]
                     # cmd /c and PowerShell -Command consume the remaining command
                     # string; Bash -c consumes one argument (the rest are $0, $1, ...).
                     payload = _literal_word(payload_words[0])
-                    if name not in {"sh", "bash", "zsh"}:
+                    if name not in {"sh", "bash", "zsh", "dash"}:
                         payload += " " + " ".join(payload_words[1:])
                     if broad_process_stop(payload, _depth=_depth + 1):
                         return True
