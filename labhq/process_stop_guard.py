@@ -146,6 +146,83 @@ def _backquote_payloads(command: str):
         index += 1
 
 
+def _substitution_end(command: str, start: int, depth: int = 0) -> int | None:
+    """Locate a balanced $() without evaluating it; inner quoting is independent."""
+    if depth > 8:
+        raise ValueError("excessive substitution nesting")
+    quote = None
+    parentheses = 1
+    index = start + 2
+    while index < len(command):
+        char = command[index]
+        ansi = _ANSI_QUOTE.match(command, index) if quote is None else None
+        if ansi:
+            index = ansi.end()
+            continue
+        if quote == "'":
+            if char == "'":
+                quote = None
+        elif char == "\\":
+            index += 1
+        elif char == "'" and quote is None:
+            quote = "'"
+        elif char == '"':
+            quote = None if quote else '"'
+        elif char == "`":
+            backquote = re.match(r"`(?:\\[\s\S]|[^`\\])*`", command[index:])
+            if backquote:
+                index += len(backquote.group())
+                continue
+        elif command.startswith("$(", index):
+            end = _substitution_end(command, index, depth + 1)
+            if end is None:
+                return None
+            index = end
+            continue
+        elif quote is None:
+            if char == "(":
+                parentheses += 1
+            elif char == ")":
+                parentheses -= 1
+                if not parentheses:
+                    return index + 1
+        index += 1
+    return None
+
+
+def _substitution_spans(command: str):
+    """Yield outer executed $() spans; quoted/escaped data and backquotes stay separate."""
+    quote = None
+    index = 0
+    while index < len(command):
+        char = command[index]
+        ansi = _ANSI_QUOTE.match(command, index) if quote is None else None
+        if ansi:
+            index = ansi.end()
+            continue
+        if quote == "'":
+            if char == "'":
+                quote = None
+        elif char == "\\":
+            index += 1
+        elif char == "'" and quote is None:
+            quote = "'"
+        elif char == '"':
+            quote = None if quote else '"'
+        elif char == "`":
+            backquote = re.match(r"`(?:\\[\s\S]|[^`\\])*`", command[index:])
+            if backquote:
+                index += len(backquote.group())
+                continue
+        elif command.startswith("$(", index):
+            end = _substitution_end(command, index)
+            if end is not None:
+                yield index, end, command[index + 2:end - 1]
+                index = end
+                continue
+        index += 1
+
+
 def _bare(word: str) -> str:
     return _literal_word(word).casefold()
 
@@ -354,6 +431,25 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
         return True  # excessive literal nesting must not turn a denied command into allow
     if any(broad_process_stop(payload, _depth=_depth + 1) for payload in _backquote_payloads(command)):
         return True
+    selected_variables: set[str] = set()
+    substitution_references: dict[str, set[str]] = {}
+    fragments = []
+    previous = 0
+    try:
+        for index, (start, end, payload) in enumerate(_substitution_spans(command)):
+            if broad_process_stop(payload, _depth=_depth + 1):
+                return True
+            marker = f"__labhq_selection_{index}"
+            substitution_references[marker] = set(re.findall(
+                r"\$([a-z_][a-z_0-9:]*)", payload.casefold()))
+            # Reuse the existing InputObject producer analysis, never a shell.
+            if broad_process_stop(f"Stop-Process -InputObject ({payload})", _depth=_depth + 1):
+                selected_variables.add(marker)
+            fragments.extend((command[previous:start], "$" + marker))
+            previous = end
+    except ValueError:
+        return True  # excessive parsing depth must fail closed
+    command = "".join(fragments) + command[previous:]
     words = _WORDS.findall(command)
     groups: list[list[str]] = [[]]
     for word in words:
@@ -366,6 +462,8 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
     block_pipeline: list[bool] = []
     input_expression: list[bool] = []
     input_pending = False
+    assignment: tuple[str, int] | None = None
+    assignment_waiting = False
     for group in groups:
         if not group:
             continue
@@ -393,9 +491,35 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
                 process_pipeline = False
                 pipe_continuation = False
                 input_pending = False
+            if (separator in {";", "\n"} and assignment and len(input_expression) <= assignment[1]
+                    and (separator != "\n" or not assignment_waiting)):
+                assignment = None
             continue
         pipe_continuation = False
         group = _without_redirections(group)
+        if not group:
+            continue
+        assignment_waiting = False
+        assigned = re.fullmatch(r"\$([A-Za-z_][A-Za-z_0-9:]*)=(.*)", group[0])
+        if not assigned and len(group) > 1:
+            assigned = re.fullmatch(r"\$([A-Za-z_][A-Za-z_0-9:]*)=(.*)", group[0] + group[1])
+            if assigned:
+                group = [group[0] + group[1]] + group[2:]
+        if assigned:
+            assignment = (assigned.group(1).casefold(), len(input_expression))
+            group = ([assigned.group(2)] if assigned.group(2) else []) + group[1:]
+            assignment_waiting = not group
+        references = set(re.findall(r"\$([a-z_][a-z_0-9:]*)", " ".join(group).casefold()))
+        for reference in tuple(references):
+            references.update(substitution_references.get(reference, ()))
+        selected_reference = bool(references & selected_variables)
+        if selected_reference:
+            if assignment:
+                selected_variables.add(assignment[0])
+            if input_expression and input_expression[-1]:
+                return True
+            if group and _bare(group[0]).startswith("$"):
+                process_pipeline = True
         start = 0
         pipeline_arguments = False
         while start < len(group):
@@ -419,7 +543,7 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
             if name in {"command", "exec", "nohup", "time"}:
                 start = _wrapper_command_start(group, start, name)
                 continue
-            if word in {"&", "!", "builtin", "call", "then", "do", "if", "elif", "while", "until", "coproc"} or re.match(
+            if word in {"&", "!", "builtin", "call", "then", "else", "do", "if", "elif", "while", "until", "coproc"} or re.match(
                     r"^[A-Za-z_][A-Za-z_0-9]*=", group[start]):
                 start += 1
                 continue
@@ -453,12 +577,17 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
         if name in {"get-process", "gps", "ps", "pgrep"}:
             # Explicit -Id is PID-based. Otherwise the pipeline carries a name-selected set.
             process_pipeline = name == "pgrep" or not any(re.match(r"^-(?:id|pid)(?::|$)", arg) for arg in args)
+            if process_pipeline and assignment:
+                # Retain taint across statements/overwrites: branch execution is not proven.
+                selected_variables.add(assignment[0])
             if process_pipeline and block_pipeline:
                 # A block can emit process objects before its final statement.
                 block_pipeline[-1] = True
             if process_pipeline and input_expression and input_expression[-1]:
                 return True
         if name in {"stop-process", "spps", "kill"}:
+            if selected_reference:
+                return True
             input_pending = any(arg.startswith("-") and len(arg.strip("-:")) >= 2
                                 and "inputobject".startswith(arg.strip("-:")) for arg in args)
             # Bash kill -n selects a signal, not a process name.

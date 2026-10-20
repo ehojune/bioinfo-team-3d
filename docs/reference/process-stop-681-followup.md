@@ -14,8 +14,13 @@ lookup-only 기록입니다. 명령은 모두 test 문자열이며 shell·프로
 | 4320283761 | trap literal handler 검사. listing/reset·옵션 종료 구분 |
 | 4320283767 | pgrep producer를 downstream xargs kill과 연결. 고정 PID 뒤에 추가되는 선택 PID도 거부 |
 | 4320283775 | ANSI-C literal executable fragment와 octal/hex/Unicode escape 정규화 |
+| 4320847541 | else 뒤의 실행 위치도 wrapper와 함께 검사 |
+| 4320847550 | literal 변수의 이름 선택을 저장·복사·pipeline·InputObject/Id 소비까지 보수적으로 추적 |
+| 4321129633 | balanced $()의 실행 payload와 이름 선택 PID를 외부 consumer에 연결. 중첩·double quote도 검사 |
 
 `tests/test_process_stop_guard_followup.py`가 지적별 case ID, policy deny, flat/nested fake broker의 card/event/submit 미호출·pending 없음과 PID·데이터 음성 사례를 확인합니다. 기존 회귀도 유지합니다. 전체 실패명·traceback은 로컬 로그에 보존합니다.
+
+추가 회귀는 `tests/test_process_stop_guard_selection.py`에 있습니다. 변수 덮어쓰기는 분기 실행이 증명되지 않으므로 이름 선택 상태를 지우지 않습니다. $() 안의 single/ANSI-C quote·escaped dollar는 데이터로 구분하며, 기존 backquote·불명확한 문법의 보수적 거부는 완화하지 않습니다.
 
 ## PowerShell 원문 판정
 
