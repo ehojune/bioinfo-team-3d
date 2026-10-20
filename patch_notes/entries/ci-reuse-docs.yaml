@@ -87,3 +87,7 @@ rows:
     at: '2026-10-21 05:09'
     summary: '한국어 실행 지시가 보고형 문장으로 끝나 검사를 줄이던 경로를 좁혔습니다.'
     text: '임의 Hangul prefix와 행동/보고 꼬리를 제거하고 문서 주어+정도 표현+형용사 하나만 후보로 남겼다. 붙여 쓴 지시문 제목도 보호하며 action-chain 회귀는 실제 parser에서 37 failed/13 passed, 수정 뒤 관련 pure/fake/static 563 passed다. 실제 README의 동작 서술은 full로 강화하고 별도 형용사 positive·동일 Markdown reflow·기존 fragment fallback을 유지했다. P1 전체 해결이나 새 native CI 성공은 아직 주장하지 않는다.'
+  - sha: '6be0f39'
+    at: '2026-10-21 05:50'
+    summary: '조회 시간 초과 검사를 실제 대기 대신 시작과 취소 신호로 확인합니다.'
+    text: '세 automatic phase의 80ms logical budget과 80→60→40ms remaining을 유지하고 module-local timer·phase별 event로 시작/suspend/cancel/drain을 검사한다. 60초 progress cadence는 그대로이며 10초 outer watchdog은 durable 기록을 포함한 coordinator 교착 감시로 분리했다. 완료 작업의 거짓 timeout 거부·caller 취소 cleanup을 포함해 mocked coroutine 23 passed다. 기존 CI 실패는 로컬 재현되지 않았고 제품·classifier·CI/Windows 보호는 바꾸지 않았다.'
