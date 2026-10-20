@@ -5,3 +5,9 @@ rows:
   text: CP1을 metadata 확인으로 제한하고 승인 뒤 논문 스킬을 생성한다. owned 입력과 결과의 ID·폴더/문서 hash 참조 receipt, 교정·재승인 예외 보존, 지연 스킬 재사용
     제외를 구현했다. 관련 mock/static 66건 통과; 실제 PDF·네트워크·연구·process·성능은 미검증이다.
   summary: 논문 스킬을 승인 뒤 만들고 실제 결과의 참조 여부를 기록합니다.
+- sha: 6b37d70
+  at: 2026-10-20 20:58
+  text: root core_structure의 DAG 입력 Read 거부 P1을 수정했다. policy 구성 때 owned 문서의 길이·내용 hash·무링크 handle을 재검사해 정확한 파일만
+    기존 read grant에 연결한다. 조상 namespace·inputs 보호·native 쓰기 제한과 called 의미를 유지한다. 4건 red 뒤 관련 mock/static 80건 및 최종
+    권한/profile 14건 통과; 실제 CLI/process 실행은 하지 않았다.
+  summary: 승인된 논문 문서가 읽기 차단에 걸리던 문제를 고쳤습니다.
