@@ -39,3 +39,6 @@ rows:
 - sha: '6954ab6'
   at: '2026-10-20 12:14'
   text: 'recruit resume fixture만 가상 polling 시계로 고정했다. 기존 assertion·0.2초 기한·2초 watchdog을 보존하고 순수 mock 6개를 확인했다. 원본 Hub fixture는 Popen guard 차단 뒤 재실행하지 않았다.'
+- sha: 'd83da2b'
+  at: '2026-10-20 13:00'
+  text: 'else 실행 위치·PowerShell literal 변수·Bash $()의 이름 선택 PID 종료를 거부했다. 원래 head에서 실패 26개를 재현한 뒤 관련 mock/static 463개와 guard blocked 0건을 확인했다.'
