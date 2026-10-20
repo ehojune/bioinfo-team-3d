@@ -1,9 +1,11 @@
 import re
 import subprocess
 import unicodedata
+from bisect import bisect_right
 from collections import defaultdict
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -80,19 +82,69 @@ def _identifier_patterns(identifier):
     return patterns
 
 
+class _RuntimeString(str):
+    def __new__(cls, value, line):
+        result = super().__new__(cls, value)
+        result.line = line
+        return result
+
+
+class _RuntimeStringLoader(yaml.SafeLoader):
+    pass
+
+
+def _construct_runtime_string(loader, node):
+    return _RuntimeString(loader.construct_scalar(node), node.start_mark.line + 1)
+
+
+_RuntimeStringLoader.add_constructor("tag:yaml.org,2002:str", _construct_runtime_string)
+
+
+def _source_strings(path):
+    text = path.read_text(encoding="utf-8")
+    if path.suffix.lower() not in {".yaml", ".yml"}:
+        yield None, text
+        return
+
+    def strings(value, seen):
+        if isinstance(value, _RuntimeString):
+            # Folding/escapes change offsets; report the scalar's source declaration.
+            yield value.line, value
+        elif isinstance(value, (dict, list, tuple, set)) and id(value) not in seen:
+            seen.add(id(value))  # YAML aliases can share containers or form cycles.
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    yield from strings(key, seen)
+                    yield from strings(item, seen)
+            else:
+                for item in value:
+                    yield from strings(item, seen)
+
+    for document in yaml.load_all(text, Loader=_RuntimeStringLoader):
+        yield from strings(document, set())
+
+
 def _find_leaks(repo_root, relative_paths, answers):
     patterns = {identifier: _identifier_patterns(identifier) for identifier in answers}
     leaks = []
     for relative in relative_paths:
         path = repo_root / relative
-        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            normalized_line, _ = _identifier_forms(line)
-            for identifier, identifier_patterns in patterns.items():
-                if any(pattern.search(normalized_line) for pattern in identifier_patterns):
-                    if (relative.as_posix(), identifier) in ALLOWED_OCCURRENCES:
-                        continue
-                    cases = ", ".join(sorted(answers[identifier]))
-                    leaks.append(f"{relative.as_posix()}:{line_number}: {identifier} ({cases})")
+        matches = set()
+        for scalar_line, text in _source_strings(path):
+            normalized, _ = _identifier_forms(text)
+            line_starts = [0]
+            for line in normalized.splitlines(keepends=True):
+                line_starts.append(line_starts[-1] + len(line))
+            for order, (identifier, identifier_patterns) in enumerate(patterns.items()):
+                if (relative.as_posix(), identifier) in ALLOWED_OCCURRENCES:
+                    continue
+                for pattern in identifier_patterns:
+                    for match in pattern.finditer(normalized):
+                        line_number = scalar_line or bisect_right(line_starts, match.start())
+                        matches.add((line_number, order, identifier))
+        for line_number, _, identifier in sorted(matches):
+            cases = ", ".join(sorted(answers[identifier]))
+            leaks.append(f"{relative.as_posix()}:{line_number}: {identifier} ({cases})")
     return leaks
 
 
@@ -201,3 +253,80 @@ def test_short_identifiers_do_not_use_separator_removed_matching(tmp_path):
     copied_path.write_text("label = 'A-B-C'\n", encoding="utf-8")
 
     assert _find_leaks(copied_root, [relative], {"ABC": {"case.field"}}) == []
+
+
+def _synthetic_source(tmp_path, suffix, source):
+    relative = Path("agents") / f"synthetic{suffix}"
+    path = tmp_path / relative
+    path.parent.mkdir(parents=True)
+    path.write_text(source, encoding="utf-8")
+    return relative
+
+
+@pytest.mark.parametrize("suffix,source,line", [
+    (".yaml", "prompt: >-\n  ZXQ\n  42\n", 1),
+    (".yml", "questions:\n  - >-\n    zxq-\n    ４２을 확인\n", 2),
+    (".YAML", "prompt: |\n  ZXQ\n  42\n", 1),
+    (".yaml", 'prompt: "ZXQ\n  42"\n', 1),
+    (".yaml", 'prompt: "ZXQ\\\n  42"\n', 1),
+    (".yaml", 'prompt: "ZXQ\\u0034\\u0032"\n', 1),
+    (".yaml", '"ZXQ\\u0034\\u0032": safe\n', 1),
+    (".yaml", "prompt: |\n  # ZXQ42\n", 1),
+    (".yaml", "values: !!set\n  ? >-\n    ZXQ\n    42\n", 2),
+    (".yaml", "values: !!pairs\n  - prompt: >-\n      ZXQ\n      42\n", 2),
+    (".yaml", "values: !!omap\n  - prompt: >-\n      ZXQ\n      42\n", 2),
+    (".py", "safe = True\nprompt = '''ZXQ\n42을 확인'''\n", 2),
+    (".md", "safe\n(ZXQ-\n４２과)\n", 2),
+    (".txt", "safe\nZ\nX\nQ\n4\n2\n", 2),
+    (".txt", "safe\nZXQ\r\n42\n", 2),
+])
+def test_leak_check_matches_synthetic_runtime_strings_across_lines(tmp_path, suffix, source, line):
+    relative = _synthetic_source(tmp_path, suffix, source)
+
+    assert _find_leaks(tmp_path, [relative], {"ZXQ42": {"synthetic.field"}}) == [
+        f"{relative.as_posix()}:{line}: ZXQ42 (synthetic.field)",
+    ]
+
+
+@pytest.mark.parametrize("suffix,source", [
+    (".yaml", "parts:\n  - ZXQ\n  - '42'\n"),
+    (".yaml", "first: ZXQ\nsecond: '42'\n"),
+    (".yaml", "prompt: safe  # ZXQ42\n"),
+    (".yaml", "prompt: ZXQ42\nprompt: safe\n"),
+    (".yaml", "prompt: >-\n  preZXQ\n  42post\n"),
+    (".yaml", "---\nZXQ\n---\n'42'\n"),
+    (".yaml", "prompt: null\nother: []\n"),
+    (".txt", "preZXQ\n42post\n"),
+    (".txt", "ZXQ\n42x\n"),
+    (".txt", "ZXQ\nnot a separator\n42\n"),
+])
+def test_leak_check_preserves_synthetic_multiline_negatives(tmp_path, suffix, source):
+    relative = _synthetic_source(tmp_path, suffix, source)
+
+    assert _find_leaks(tmp_path, [relative], {"ZXQ42": {"synthetic.field"}}) == []
+
+
+def test_leak_check_handles_recursive_yaml_aliases_and_multiple_documents(tmp_path):
+    source = "root: &loop\n  self: *loop\n  prompt: >-\n    ZXQ\n    42\n---\nprompt: ZXQ42\n"
+    relative = _synthetic_source(tmp_path, ".yaml", source)
+
+    assert _find_leaks(tmp_path, [relative], {"ZXQ42": {"synthetic.field"}}) == [
+        f"{relative.as_posix()}:3: ZXQ42 (synthetic.field)",
+        f"{relative.as_posix()}:7: ZXQ42 (synthetic.field)",
+    ]
+
+
+def test_leak_check_reports_each_multiline_match_start_once(tmp_path):
+    relative = _synthetic_source(tmp_path, ".txt", "ZXQ42 ZXQ42\nZXQ\n42\n")
+
+    assert _find_leaks(tmp_path, [relative], {"ZXQ42": {"synthetic.field"}}) == [
+        f"{relative.as_posix()}:1: ZXQ42 (synthetic.field)",
+        f"{relative.as_posix()}:2: ZXQ42 (synthetic.field)",
+    ]
+
+
+def test_leak_check_does_not_silently_skip_invalid_yaml(tmp_path):
+    relative = _synthetic_source(tmp_path, ".yaml", "prompt: [broken\n")
+
+    with pytest.raises(yaml.YAMLError):
+        _find_leaks(tmp_path, [relative], {"ZXQ42": {"synthetic.field"}})

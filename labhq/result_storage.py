@@ -5,6 +5,7 @@ import asyncio
 import base64
 import copy
 import csv
+import datetime
 import json
 import os
 import posixpath
@@ -36,6 +37,8 @@ from .report_figures import (ABSTRACT_FILE, classify, figure_owners, has_abstrac
 from .report_pdf import NO_BROWSER, ReportRefused, build_report_file, pdf_cap_bytes, size_notes
 from .report_contract import reader_markdown
 from .request_bundle import _POSIX_ABS, _WINDOWS_ABS
+from .reproduction_receipt import (LANGUAGES, RECEIPT_PATH, build_receipt, expected_outputs, is_lock_file, receipt_json,
+                                   receipt_note, receipt_summary)
 
 _REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\Z")
@@ -180,7 +183,7 @@ def edition_candidates(req, settings) -> dict[str, Path]:
                     or clean_document(name, settings, req) != name):
                 continue
             suffix = rel.suffix.lower()
-            if suffix not in _TEXT_OUTPUTS and suffix not in _IMAGE_OUTPUTS:
+            if suffix not in _TEXT_OUTPUTS and suffix not in _IMAGE_OUTPUTS and not is_lock_file(name):
                 continue
             path = bundle / name
             if not plain_path(path) or not path.is_file():
@@ -218,6 +221,29 @@ def edition_assets(req, settings):
             except UnicodeDecodeError:
                 continue
     return assets, images
+
+
+def collect_reproduction_receipt(req, settings) -> dict:
+    """Inspect only reported source/lock text in the checked bundle; never open data files."""
+    sources = {}
+    omitted = []
+    total = 0
+    for name, path in edition_candidates(req, settings).items():
+        if PurePosixPath(name).suffix.casefold() not in LANGUAGES and not is_lock_file(name):
+            continue
+        size = path.stat().st_size
+        if size > 1_000_000 or total + size > 5_000_000:
+            omitted.append({"path": name, "reason": "size_limit"})
+            continue
+        total += size
+        try:
+            sources[name] = clean_publication_text(name, path.read_text(encoding="utf-8"), settings, req)
+        except UnicodeDecodeError:
+            omitted.append({"path": name, "reason": "not_utf8"})
+            continue
+    receipt = build_receipt(sources, outputs=expected_outputs(req))
+    receipt["omitted_files"].extend(omitted)
+    return receipt
 
 
 def publish_image_previews(images: Mapping[str, bytes], target: Path) -> tuple[dict[str, str], dict[str, dict[str, Any]]]:
@@ -309,6 +335,40 @@ def place_pdf_in_readme(readme: str, *, link: str | None = None, reason: str = "
         return pattern.sub(replacement, readme, count=1)
     fallback = f"[과학 보고서 PDF]({link})" if link else pdf_skip_line(reason)
     return readme.rstrip() + "\n\n" + fallback + "\n"
+
+
+def editor_edition() -> dict:
+    """The editor version a rebuilt edition names (#754): this labhq version and the commit the gateway loaded."""
+    from . import __version__
+    from .integrations.rounds import _git_commit
+    commit = _git_commit()
+    return {"version": __version__, "commit": commit[:7] if commit else None}
+
+
+def rebuild_note(rebuild: Mapping) -> str:
+    """The line a rebuilt edition's README opens with: the editor that made it and the edition it replaces (#754)."""
+    editor = rebuild.get("editor") or {}
+    made = f"labhq {editor.get('version') or '버전 기록 없음'}"
+    if editor.get("commit"):
+        made += f"(commit {editor['commit']})"
+    previous = str(rebuild.get("from_repo") or "")
+    if previous and previous != rebuild.get("repo"):
+        source = f"원본 저장소: [{previous}](https://github.com/{previous})"
+    else:
+        source = "이전 판은 이 저장소의 커밋 기록에 있습니다"
+    when = f"{rebuild['date']}에 " if rebuild.get("date") else ""
+    return f"> 이 판은 {made} 편집기로 {when}다시 만든 판입니다. {source}."
+
+
+def place_rebuild_note(readme: str, note: str) -> str:
+    """Put the rebuild line under the README's title, once."""
+    if note in readme:
+        return readme
+    title, _, rest = readme.partition("\n")
+    if not title.startswith("# "):
+        return f"{note}\n\n{readme}"
+    rest = rest.lstrip("\n")
+    return f"{title}\n\n{note}\n\n{rest}" if rest else f"{title}\n\n{note}\n"
 
 
 def clean_document(text: str, settings, req: dict) -> str:
@@ -556,6 +616,8 @@ def draft_documents(req: dict, settings, included=None, assets=None, *, abstract
         [report, str(req.get("report_appendix") or "")], req.get("references") or [],
         [text for name, text in (assets or {}).items() if edition_sources.is_versions_file(name)])
     assets = assets or {}
+    receipt = build_receipt({name: clean_publication_text(name, body, settings, req)
+                             for name, body in assets.items()}, outputs=expected_outputs(req))
     docs = {
         "README.md": "# 연구 결과\n\n## 무엇을 왜 했나요\n\n" + str(req.get("text") or "") +
             "\n\n## 결과\n\n" + readme_excerpt(report) + "\n\n" + document_links("") + "\n",
@@ -565,7 +627,12 @@ def draft_documents(req: dict, settings, included=None, assets=None, *, abstract
             req, settings, assets, environment_records or {}, bundle_readme),
         "TASK_RECORD.md": _task_record(req),
         "SOURCES.md": edition_sources.render(found, citations),
+        "REPRODUCTION_RECEIPT.json": receipt_json(receipt),
     }
+    docs["REPRODUCE.md"] += ("\n\n## 재현 검증\n\n" + receipt_note(receipt_summary(receipt))
+                             + "\n\n[검사 receipt](REPRODUCTION_RECEIPT.json)\n")
+    docs["report.md"] += ("\n\n## 재현 검증\n\n" + receipt_note(receipt_summary(receipt))
+                         + "\n\n[검사 receipt](REPRODUCTION_RECEIPT.json)\n")
     return {name: clean_document(body, settings, req) for name, body in docs.items()}
 
 
@@ -894,7 +961,7 @@ class ResultStorage:
             suffix = PurePosixPath(name).suffix.lower()
             raw = path.read_bytes()
             raw_body: str | bytes = raw if suffix == ".svg" else raw.decode("utf-8", errors="replace")
-            if scan_publish_files({name: raw_body}, internal=False):
+            if scan_publish_files({name: raw_body}, internal=False, settings=self.s):
                 omitted.setdefault(source_step, []).append(PurePosixPath(name).name)
                 continue
             try:
@@ -903,7 +970,7 @@ class ResultStorage:
             except (UnicodeDecodeError, ValueError):
                 omitted.setdefault(source_step, []).append(PurePosixPath(name).name)
                 continue
-            if scan_publish_files({name: body}, internal=False):
+            if scan_publish_files({name: body}, internal=False, settings=self.s):
                 omitted.setdefault(source_step, []).append(PurePosixPath(name).name)
                 continue
             relative = PurePosixPath(*parts[3:]).as_posix()
@@ -930,7 +997,7 @@ class ResultStorage:
             else:
                 state = "완료"
                 raw_summary = str(value.get("text") or "").strip()
-                if raw_summary and scan_publish_files({f"progress/{sid}-summary.md": raw_summary}, internal=False):
+                if raw_summary and scan_publish_files({f"progress/{sid}-summary.md": raw_summary}, internal=False, settings=self.s):
                     if "단계 요약" not in omitted.setdefault(sid, []):
                         omitted[sid].append("단계 요약")
                     summary = "검사로 뺌"
@@ -946,7 +1013,7 @@ class ResultStorage:
             safe_summary = " ".join(summary.replace("|", "\\|").split())
             rows.append(f"| {safe_sid} | {state} | {safe_detail} | {safe_summary} |")
         readme = "\n".join(rows) + "\n"
-        if issues := scan_publish_files({"progress/README.md": readme}, internal=False):
+        if issues := scan_publish_files({"progress/README.md": readme}, internal=False, settings=self.s):
             raise check_failure(issues)
         payload["progress/README.md"] = readme
         return payload, omitted, internal_steps, published
@@ -1090,7 +1157,8 @@ class ResultStorage:
             saved = req.get("result_storage") or {}
             status = saved.get("status")
             if status == "published":
-                raise ValueError("이미 게시한 정리본은 다시 만들 수 없습니다. 저장소에 올라간 파일을 이 명령이 바꾸지 않습니다.")
+                raise ValueError("이미 게시한 정리본은 다시 만들 수 없습니다. 저장소에 올라간 파일을 이 명령이 바꾸지 않습니다. "
+                                 f"지금 편집기로 새 판을 만들려면 `labhq storage {rid} --rebuild`를 쓰세요.")
             if status not in {"draft", "declined", "failed"}:
                 raise ValueError("다시 만들 정리본이 없습니다. 정리본을 만든 뒤 게시 승인을 기다리거나, 거절했거나, 게시에 실패한 요청만 "
                                  f"다시 만들 수 있습니다(저장 상태: {status or '선택 없음'}).")
@@ -1132,7 +1200,8 @@ class ResultStorage:
                 raise ValueError(f"아직 저장 위치를 고르지 않은 요청입니다. `labhq storage {rid}`로 저장 위치 카드를 여세요.")
             if saved.get("mode") != "local" or saved.get("status") != "local":
                 raise ValueError(f"로컬에 남긴 정리본만 GitHub로 옮깁니다(저장 위치 {saved.get('mode')}, 상태 {saved.get('status')}). "
-                                 f"게시에 실패했으면 `labhq storage {rid} --republish`, 정리본을 다시 만들려면 `--redraft`를 쓰세요.")
+                                 f"게시에 실패했으면 `labhq storage {rid} --republish`, 정리본을 다시 만들려면 `--redraft`, "
+                                 "게시한 정리본을 지금 편집기로 다시 만들려면 `--rebuild`를 쓰세요.")
             if req.get("status") not in {"done", "completed", "failed", "cancelled"} or req.get("cancelling"):
                 raise ValueError("끝난 요청만 GitHub로 옮길 수 있습니다.")
             if controlled_request(req, self.s):
@@ -1152,6 +1221,79 @@ class ResultStorage:
             return {"request_id": rid, "status": "converting", "repo": saved["repo"],
                     "waiting_review": bool(not req.get("pi_reviewed_at") or req.get("bundle_pending")), "note": note}
 
+    async def rebuild(self, rid, name: str | None = None, visibility: str = "private") -> dict:
+        """Make a published edition again with the editor as it is now (#754). On 10-19 the PI asked for a request
+        published before #736's editor fixes; `redraft` refuses a published edition, so the lead rebuilt it by hand.
+
+        Without ``name`` the new edition goes to the same repository as a new commit; with ``name`` to a new repository,
+        checked first like `to_github`. The old repository is never changed in the second case. Either way the publish card
+        asks before anything is uploaded, even with ``auto_publish_results``, and the README names the editor version and
+        the edition it replaces. Files only the old edition had stay in the repository: this command does not delete."""
+        async with self.card_lock:
+            req = self.hub.requests[rid]
+            saved = req.get("result_storage") or {}
+            if saved.get("status") != "published":
+                raise ValueError(f"게시한 정리본만 다시 만듭니다(저장 상태: {saved.get('status') or '선택 없음'}). "
+                                 f"아직 게시하지 않았으면 `labhq storage {rid} --redraft`, 로컬에 남겼으면 `--to github`를 쓰세요.")
+            if req.get("status") not in {"done", "completed", "failed", "cancelled"} or req.get("cancelling"):
+                raise ValueError("끝난 요청만 정리본을 다시 만들 수 있습니다.")
+            if not req.get("pi_reviewed_at") or req.get("bundle_pending"):
+                raise ValueError("보고서 검토 완료와 묶음 갱신 뒤에 다시 만들 수 있습니다.")
+            if req.get("revised_to"):
+                raise ValueError(f"수정 요청 {req['revised_to']}로 이어진 요청입니다. 그 요청의 정리본을 다시 만드세요.")
+            if (req.get("storage_end_ask") or {}).get("state") in {"pending", "asked"}:
+                raise ValueError("끝 저장 위치 질문에 먼저 답해 주세요.")
+            if controlled_request(req, self.s):
+                raise ValueError("통제 데이터가 포함된 요청은 편집자에게 보내지 않습니다.")
+            running = self.tasks.get(rid)
+            if rid in self.uploading or (running is not None and not running.done()):
+                raise ValueError("정리 작업이 진행 중입니다. 끝난 뒤 다시 실행하세요.")
+            previous = {key: saved[key] for key in ("mode", "repo", "branch", "visibility", "report_url") if key in saved}
+            note = ""
+            if name is not None:
+                choice, note = await self._new_github_choice(rid, name.strip(), visibility)
+                if await self._same_repository(choice["repo"], previous.get("repo")):
+                    raise ValueError("새 저장소 이름이 지금 저장소와 같습니다. 같은 저장소에 새 판으로 올리려면 --name 없이 실행하세요.")
+            else:
+                choice = {}
+            for key in ("draft_path", "pdf", "warning", "error_type", "report_url", "round_warning",
+                        *(("branch",) if choice else ())):  # a new repository uses its own default branch
+                saved.pop(key, None)
+            saved.update(choice, status="selected", after_review=True)
+            saved.setdefault("editions", []).append(previous)
+            saved["rebuild"] = {"from_repo": previous.get("repo"), "from_url": previous.get("report_url"),
+                                "repo": saved.get("repo"), "editor": editor_edition(), "date": datetime.date.today().isoformat()}
+            self.hub.save_request(rid)
+            self.tasks[rid] = asyncio.create_task(self.finish(rid))
+            return {"request_id": rid, "status": "rebuilding", "repo": saved.get("repo"),
+                    "new_repository": bool(choice), "note": note}
+
+    async def _same_repository(self, new: str, current: str | None) -> bool:
+        """Whether a `--rebuild --name` target is the current repository (PR #777 review). A new edition goes to the
+        repository root, so an alias would overwrite the current repository's root files. GitHub names are
+        case-insensitive and a renamed repository still answers its old name, so the canonical `full_name` decides."""
+        if not current:
+            return False
+        if new.casefold() == current.casefold():
+            return True
+        gh = self.client()
+        if gh is None:
+            return False  # nothing can be uploaded without a token; the upload asks GitHub again
+        try:
+            found = (await gh.repo_info(new)).get("full_name") or new
+            if found.casefold() == current.casefold():
+                return True
+            existing = (await gh.repo_info(current)).get("full_name") or current
+        except GitHubHTTPError as exc:
+            if exc.status_code == 404:
+                return False  # no repository answers the new name (or the current one is gone): it is not the current one
+            raise ValueError(f"새 저장소가 지금 저장소와 다른지 GitHub에서 확인하지 못했습니다(HTTP {exc.status_code}). "
+                             "잠시 뒤 다시 실행하세요.") from None
+        except httpx.HTTPError:
+            raise ValueError("새 저장소가 지금 저장소와 다른지 GitHub에서 확인하지 못했습니다(연결 실패). "
+                             "잠시 뒤 다시 실행하세요.") from None
+        return found.casefold() == existing.casefold()
+
     def publish_cards(self, rid) -> list[str]:
         return [aid for aid, entry in self.hub.approvals.items()
                 if entry["approval"].get("request_id") == rid and entry["approval"].get("kind") == "result_publish"]
@@ -1168,7 +1310,8 @@ class ResultStorage:
             saved = req.get("result_storage") or {}
             status = saved.get("status")
             if status == "published":
-                raise ValueError("이미 게시한 정리본은 다시 올릴 수 없습니다. 저장소에 올라간 파일을 이 명령이 바꾸지 않습니다.")
+                raise ValueError("이미 게시한 정리본은 다시 올릴 수 없습니다. 저장소에 올라간 파일을 이 명령이 바꾸지 않습니다. "
+                                 f"지금 편집기로 새 판을 만들려면 `labhq storage {rid} --rebuild`를 쓰세요.")
             if status != "failed":
                 raise ValueError(f"게시에 실패한 정리본만 다시 올릴 수 있습니다(저장 상태: {status or '선택 없음'}). "
                                  f"게시 카드가 떠 있거나 거절한 정리본은 `labhq storage {rid} --redraft`로 다시 만드세요.")
@@ -1333,6 +1476,11 @@ class ResultStorage:
                                    "run/reproduce.md": docs["REPRODUCE.md"],
                                    "run/task_record.md": docs["TASK_RECORD.md"]},
                     internal_files=internal_allowed, input_readmes=input_readmes)
+                # Keep the final publication paths/hashes, rather than the earlier bundle layout.
+                req["reproduction_receipt"] = json.loads(portfolio[RECEIPT_PATH])
+                saved["reproduction_receipt"] = receipt_summary(req["reproduction_receipt"], path=RECEIPT_PATH)
+                if isinstance(req.get("report_package"), dict):
+                    req["report_package"]["reproduction_receipt"] = saved["reproduction_receipt"]
                 publication_internal.update(internal_allowed)
                 for name, body in portfolio.items():
                     if isinstance(body, bytes):
@@ -1391,6 +1539,8 @@ class ResultStorage:
                                         and not is_abstract_target(name)), None)
                     if lead_figure:
                         docs["README.md"] += f"\n![대표 그림]({quote(lead_figure, safe='/')})\n"
+                if saved.get("rebuild"):  # after the editor, so its rewrite never drops the line (#754)
+                    docs["README.md"] = place_rebuild_note(docs["README.md"], rebuild_note(saved["rebuild"]))
                 for name in _GENERATED:  # the editor's README and the bundle's own text are linked here as well
                     docs[name] = edition_figure_links(docs[name], req, self.s, included, name)
                 docs.update(assets)
@@ -1407,6 +1557,7 @@ class ResultStorage:
                 issues = scan_publish_files(
                     {**docs, **images},
                     internal=publication_internal if scope_mode == "step" else request_internal,
+                    settings=self.s,
                 )
                 if issues:
                     raise check_failure(issues)
@@ -1464,7 +1615,7 @@ class ResultStorage:
                 self.hub, "result_review_required", False)
             if req.get("revised_to") or (review_required and not req.get("pi_reviewed_at")):
                 return  # review_done schedules this saved draft again.
-            if not self.s.github.auto_publish_results:
+            if not self.s.github.auto_publish_results or saved.get("rebuild"):  # a rebuilt edition always asks (#754)
                 previews, omitted = publish_image_previews(images, target)
                 detail = {"documents": docs, "repo": saved.get("repo"),
                           "korean_qc": saved.get("korean_qc"),
@@ -1510,6 +1661,9 @@ class ResultStorage:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            if receipt := getattr(exc, "reproduction_receipt", None):
+                req["reproduction_receipt"] = receipt
+                saved["reproduction_receipt"] = receipt_summary(receipt)
             saved["error_type"] = type(exc).__name__  # the warning never quotes the exception, only the texts above
             # A check that stopped the edition says which check and which files; before #713 it read as a token problem.
             saved.update(status="failed", warning=str(exc) if isinstance(exc, (PublishAccessError, EditionCheckError))

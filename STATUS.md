@@ -4,6 +4,382 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+PR #776: 내장 외부 API 조회에 단계 첫 조회부터 20분 기한·대기 알림·시간 초과 기록을 추가합니다. Refs #676.
+
+- P1 4317534007 수정: 기관 browser를 async subprocess로 기다리며 취소 시 소유한 handle의 종료를 확인합니다. PDF는 정상 완료·형식 검사 뒤 목적 경로에 반영합니다. 취소된 AlphaGenome SDK thread도 기존 잔류 상한에 집계합니다.
+- 이전 P1 4317025129 수정 유지: key_fulltext 자동 조회·기관 간격 대기는 같은 예산을 쓰고 PDF 승인 대기 시간만 제외합니다.
+- 수정 전 취소 회귀 4건 실패를 재현했고 수정 후 관련 mock/static pytest 43 passed. guard 환경 유지, blocked 이벤트 0. 실제 process/proc_tree·browser·SDK·기관·운영·HPC·원자료는 실행하지 않았습니다.
+- Python 3.10 문법·public·diff·patch-notes·notes 검사 통과. manual 163,348→163,450자. 근거: docs/reference/external-wait-676.md.
+- 한계: 원격 SDK 호출 자체의 강제 취소는 보장하지 않으며 잔류 호출을 추적·제한합니다. 직원 직접 스크립트·타사 MCP의 강제 상한이 남아 #676은 유지합니다. CI·fresh-head 리뷰·병합·배포는 supervisor 담당입니다.
+- 남은 지적: P2 4317534020(동시 PDF 승인 대기의 예산 갱신)은 범위 밖이며 supervisor의 영향·비용 판단 대상으로 남깁니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
+# 재현 receipt 산출 격리 리뷰 P1 (#771, PR #781)
+
+## 결론
+
+P1 3건 가운데 실제 결함 1건은 `4a94324`에서 고쳤습니다. 나머지 2건(패치노트 행, 단계 보고)은 리뷰 대상 `7f7a6bc` 바로 다음 커밋 `7c2d170`에 이미 들어 있어 현재 head에서 재현되지 않습니다.
+
+## 지적별
+
+- 4318264421 (alias 경로의 시각): 앞 script가 선언 산출을 hard link로 만들거나 상위 폴더를 symlink·junction으로 두면, `os.utime`이 receipt 폴더 밖 원본의 시각을 0으로 바꿨습니다. 이제 선언 산출은 다음 세 조건을 모두 만족할 때만 시각을 돌리고 산출로 셉니다.
+  - 링크가 아니다.
+  - 실제 위치(`resolve`)가 단계 폴더 안이다.
+  - `st_nlink == 1`이다.
+
+  alias 산출은 건드리지 않고 `missing_output`으로 둡니다. 고침: `4a94324`.
+- 4318264432 (patch-note 행): `patch_notes/entries/codex--receipt-isolation-771.yaml`의 `7f7a6bc` 행이 `7c2d170`에 있습니다. `patch_notes.py check --base origin/main` PASS. `entries/codex/` 아래에 두면 `notes_index.py`가 거부합니다.
+- 4318264448 (단계 보고): `docs/status/2026-10-20-0505-codex--receipt-isolation-771.md`가 `7c2d170`에 있습니다.
+
+## 검증 (mock/static만, 가짜 `subprocess.run` 사용)
+
+- 새 test 2개(hard link, 링크 폴더)는 수정 전 head에서 2 failed였습니다. 원본 시각이 0으로 바뀌었습니다. 수정 뒤에는 #771 test와 mock test 12 passed, 1 skipped입니다.
+  - 링크 폴더 test는 symlink 권한이 없으면 Windows junction으로 만듭니다.
+  - skip된 1개는 symlink 권한이 필요한 끝 경로 링크 test입니다.
+- 실제 interpreter를 띄우는 기존 receipt test는 mock guard가 막아 다시 돌리지 않았습니다. CI가 확인합니다.
+- `check_public.sh`, `git diff --check`, `patch_notes.py check`, `notes_index.py --validate` 통과.
+
+## 남은 것
+
+script가 hard link나 링크로 만든 산출은 이번 실행이 만든 것이어도 `missing_output`입니다. 산출이 receipt 폴더 밖 파일을 가리키므로 보수적으로 세지 않습니다.
+
+Fixes #663
+
+PR #783, 수정 커밋 `4232731`. YAML은 SafeLoader로 파싱한 런타임 문자열별로 검사하고 다른 소스는 전체 텍스트에서 줄바꿈을 포함해 식별자를 찾습니다. 기존 case·separator·NFKC·한국어 조사 경계와 스캔 대상은 유지합니다.
+
+- 합성 문자열로 기존 checker의 **17 failed·6 passed**를 재현했습니다. 최종 `tests/test_bench_no_answer_leak.py`는 **36 passed**입니다.
+- folded/literal/quoted YAML·escape·alias·여러 문서와 일반 multiline을 확인했습니다. 별도 scalar·주석·일반 단어는 오인하지 않으며 잘못된 YAML은 실패합니다. YAML 위치는 scalar 선언 줄을 가리킵니다.
+- Git 파일 목록만 현재 checkout의 manifest로 대체해 전체 정적 스캔을 수행했습니다. accident guard와 환경 변수 3개 유지, blocked 0건. 전체 실패명·traceback은 로컬 artifact에 보존했습니다.
+- Python 3.10 AST·public·diff·patch-note·notes 검사 PASS. test helper 변경이라 manual 갱신은 없습니다. patch-note는 flat entry 한 개에 기록합니다.
+
+실제 bench/trial·연구·process/proc_tree integration은 미실행입니다. CI·리뷰·병합·배포는 watcher 담당입니다.
+
+Fixes #677
+PR #782.
+
+검사된 요청 참고 경로를 shell 읽기 판정에 전달하고, 작업 폴더의 PowerShell 디렉터리 생성을 절대·상대경로로 판정합니다. `grep -c`·`wc`·제한된 `od`·직접 파일 hash·`*.zip` 읽기와 신뢰 검사를 통과한 `python --version`을 기존 닫힌 문법에 추가했습니다.
+
+- 수정 전 새 회귀 8 failed → 수정 후 관련 mock/static pytest 173 passed, 12 skipped, 24 deselected. 전체 traceback은 작업 로컬 로그에 보존했습니다.
+- 참고 쓰기·credential·통제 구역·read-only task·외부 읽기와 쓰기의 혼합·실행 파일 신뢰 검사·PowerShell 배열/splatting 차단을 유지합니다. 검사 거부·미선택 참고 경로는 읽기 권한을 받지 않습니다.
+- Inline Python/heredoc·manifest 내부 경로를 여는 `sha256sum -c`·초기 `cd` 뒤 `;` 연결은 승인 카드로 유지합니다. AST만으로 import 대상·부작용을 증명하는 기능은 추가하지 않았습니다.
+- manual의 해당 절만 갱신했습니다(165,919→166,393자). public·diff·Python 3.10 AST·patch-notes·notes 검사를 적용합니다.
+- 실제 명령/process integration·PI 요청·기관/HPC·원자료·연구·게시·설치·배포 미실행. CI·리뷰·병합은 총괄이 맡습니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
+# 재현 receipt script별 산출 격리 (#771, PR #781)
+
+## 결론
+
+PR #781, 기능 커밋 `7f7a6bc`. 재현 receipt에서 같은 단계의 script 여러 개가 한 폴더와 같은 선언 산출을 함께 쓸 때 생기는 false PASS를 막았습니다. 산출을 만들지 않은 script가 앞 script가 남긴 파일 덕분에 `pass`가 되던 문제입니다. 이제 helper 파일 이름 순서와 관계없이 판정이 같습니다. Refs #771.
+
+## 재현 (현재 main)
+
+`labhq/reproduction_receipt.py`는 script를 파일 이름 순서로 같은 `steps/<id>`·`code/<id>` 폴더에서 실행했고, 산출은 파일이 있는지만 봤습니다. 새 test에서 `make.py`가 `result.txt`를 쓰면 다음 결과가 나왔습니다.
+- `zz_helper.py`: `pass` (거짓)
+- `aa_helper.py`: `missing_output`
+
+## 바꾼 것
+
+- script를 실행하기 전에, 앞 script가 남긴 선언 산출의 수정 시각을 0으로 돌려 둡니다. 실행 뒤에는 모든 선언 산출을 그 실행이 만들거나 다시 썼을 때만 `pass`로 봅니다. 같은 바이트를 같은 시각에 다시 써도 구분됩니다.
+- 링크와 폴더는 건드리지도 세지도 않습니다.
+- 폴더 공유는 그대로 둡니다. 형제 소스(`lib/util.py`)와 선언하지 않은 중간 파일은 뒤 script가 그대로 읽습니다. 소스만 임시 폴더에 두는 것, 입력을 명시하는 것, 경로 검사는 바꾸지 않았습니다.
+- `execution.output_check` 값을 `declared_files_exist_only`에서 `declared_files_written_by_this_run`으로 바꿨습니다. receipt schema와 summary 집계는 그대로입니다.
+- `docs/manual.md`의 receipt 단락에 한 문장을 더했습니다.
+
+## 검증 (mock/static만, 가짜 `subprocess.run` 사용)
+
+- 새 test 5개를 만들었고, 수정 전 실행에서 3 failed, 1 passed, 1 skipped였습니다.
+  - helper가 앞에 오든 뒤에 오든(`aa_`/`zz_`) 판정이 같은지
+  - 두 script가 같은 바이트를 써도 둘 다 `pass`인지
+  - 중간 파일, 형제 소스, 폴더 위치가 그대로인지
+  - 앞 script가 남긴 링크를 건드리지도 세지도 않는지
+- 수정 뒤에는 4 passed, 1 skipped입니다.
+- 링크 test는 이 계정이 symlink를 만들 수 없어 skip됐습니다. 링크 경로는 로컬에서 확인하지 못했습니다.
+- `scripts/check_public.sh`, `git diff --check`, `patch_notes.py check`, `notes_index.py --validate` 통과.
+
+## 남은 것·한계
+
+- **기존 receipt test는 로컬에서 확인하지 못했습니다.** 같은 파일의 기존 test 16개는 실제 Python/bash interpreter를 띄우므로 mock guard가 막았습니다. 다시 돌리지 않았고, CI에 맡깁니다.
+- **helper 행은 항상 `missing_output`입니다.** 지금은 helper가 앞에 정렬될 때만 그랬는데, 이제 순서와 관계없이 그렇습니다. 그래서 helper가 있는 단계의 요약은 `missing_output`입니다. 어느 script가 entrypoint인지, 어느 산출을 쓰는지는 계획에 정해진 칸이 없어서, 그 계약은 만들지 않았습니다.
+- **산출을 나눠 만드는 단계도 `missing_output`입니다.** script마다 "선언한 산출 전부"를 요구하는 기존 규칙은 그대로라, 여러 script가 산출을 나눠 만드는 단계는 각 행이 `missing_output`입니다(지금과 같음).
+- **조건부로 쓰는 script는 놓칠 수 있습니다.** 파일이 이미 있으면 쓰지 않는 script는 앞 script 뒤에 실행되면 `missing_output`이 됩니다. 거짓 PASS가 아니라 보수적으로 틀리는 쪽입니다.
+- #772–#774는 다루지 않았습니다.
+
+Fixes #682
+
+명시적 모델 계획 거부를 model_refused 사유로 남기고 웹·status에 표시합니다. 자동 재시도·모델 전환 없이 PI가 허용된 다른 CSO 모델 또는 수정 문구를 선택·승인해야 기존 게이트를 거친 새 요청을 만듭니다. 원래 실패는 보존합니다.
+
+- P1 4317267131: 저장된 reference의 source/query_removed 메타데이터가 RequestIn 검증에 섞이던 문제를 고쳤습니다. kind·value·note만 입력으로 재구성한 뒤 기존 Reference·경로·모델·승인 검증을 다시 적용합니다. 원본 reference는 바꾸지 않습니다.
+- 신규 6건(사용자·PI 기본·query 제거 reference × 모델 변경·문구 수정)이 수정 전 실패하고 수정 뒤 통과했습니다. 잘못된 URL 거절까지 관련 pytest 46 passed, mock/static만 검증했습니다. 환경 판본의 git subprocess 수집은 fixture로 대체하고 guard 설정을 유지했습니다.
+- 최초 검사에서 guard가 git 판본 수집을 차단한 기록과 전체 red/green 출력을 보존했습니다. 해당 수집의 실제 process 경계와 실제 모델·브라우저·운영 효과는 미검증입니다. 이전 CP2 CI 회귀는 Node DOM/static 10건으로 확인한 상태이며 이번에는 재실행하지 않았습니다.
+- public·diff·patch-notes·notes 검사 뒤 push합니다. 전체 suite·실제 process/proc_tree integration·운영 요청·원자료·기관/HPC·분석·게시·설치·PI 변경·프로세스 종료·리뷰 요청·병합·배포는 미실행입니다. CI는 push 후 1회 조회하며 기다리지 않습니다.
+
+## 남은 지적
+
+- P2 4317267144(누락된 거부 카드 복구)·4317505805(원래 meta 보존)는 이번 P1 범위에서 수정하지 않았습니다. 후속 선택은 총괄 담당입니다.
+- 거부 감지는 명시적 model_refused 또는 API Error 안전장치 서명에 한정합니다. 과학 결과 재현 PASS를 주장하지 않습니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
+# storage --rebuild 리뷰 P1 (#754, PR #777)
+
+## 결론
+
+P1 3건 중 실제 결함 1건을 `5b323a3`에서 고쳤습니다. 나머지 2건(패치노트 행, 단계 보고)은 리뷰 대상 `b448227` 다음 커밋 `0745184`에서 이미 들어가 현재 head에서 재현되지 않습니다.
+
+## 지적별
+
+- 4317176241 (case-only 별칭): `--rebuild --name`의 새 저장소가 지금 저장소와 같은지 대소문자를 무시해 비교합니다. 토큰이 있으면 GitHub `full_name`으로 이름을 바꾼 저장소의 옛 이름도 같은 저장소로 봅니다. 새 이름이 404면 새 저장소로 진행하고, 그 밖의 HTTP·연결 실패는 저장 상태를 바꾸지 않고 거부합니다. 고침: `5b323a3`.
+- 4317176231 (기능 커밋 patch-note 행): `patch_notes/entries/codex--storage-rebuild-754.yaml`의 `b448227` 행이 `0745184`에 있습니다. `patch_notes.py check --base origin/main --head 0745184` PASS. 지적의 `d367480`은 이 저장소에 없는 커밋입니다. 기능 커밋 단독 범위(`b448227^..b448227`)는 행이 그 뒤 커밋에 있어 실패하며, PR 범위 검사가 기준입니다.
+- 4317176235 (단계 보고): `docs/status/2026-10-20-0310-codex--storage-rebuild-754.md`가 `0745184`에 있습니다.
+
+## 검증 (mock/static만)
+
+- 새 test 4개(대소문자 별칭, 이름을 바꾼 저장소, 진짜 새 저장소는 새 이름만 조회, GitHub 오류 시 거부)는 수정 전 코드에서 4 failed, 수정 뒤 `tests/test_storage_rebuild_754.py` 10 passed.
+- 같은 파일의 게시 경로 test는 실행 기록이 `git rev-parse`(`integrations.rounds._git_commit`)를 부르므로 그 함수를 stub했습니다.
+- mock guard 아래에서 기존 storage test 4개 파일 중 8건이 guard 차단으로 실패했습니다. 차단된 호출은 이 PR이 바꾸지 않은 `rounds._git_commit`과 `runner/versions._run_probe`입니다. 규칙대로 guard 없이 다시 돌리지 않았고, 이 경계는 CI가 확인합니다.
+- `check_public.sh`, `git diff --check`, `patch_notes.py check` 통과.
+
+## 남은 것
+
+`--name`으로 지금과 다른 기존 저장소를 고르면 그 저장소 루트에 올라갑니다. 이는 `--to github`와 같은 동작이고 게시 카드가 저장소 이름을 보여 줍니다. P1 범위 밖으로 남깁니다.
+
+PR #776: 내장 외부 API 조회에 단계 첫 조회부터 20분 기한·대기 알림·시간 초과 기록을 추가합니다. Refs #676.
+
+- P1 4317025129 수정: key_fulltext의 공개 본문 조회·기관 요청 간격 대기·fetch도 같은 예산을 씁니다. PDF 승인 대기 시간만 제외하며 이미 쓴 예산은 유지합니다.
+- 수정 전 자동 조회 3경로의 기한 우회를 재현했습니다. 수정 후 관련 mock/static pytest 40 passed(27+13), 26 deselected. process accident guard 환경을 유지했고 차단 이벤트는 없었습니다.
+- Python 3.10 문법·public·diff·patch-notes·notes 검사 통과. manual 163,275→163,348자. 근거: docs/reference/external-wait-676.md.
+- 직원 직접 스크립트·타사 MCP의 강제 상한은 남아 있어 #676은 열어 둡니다. 실제 프로세스·기관·브라우저·운영·HPC·원자료 검증은 실행하지 않았습니다.
+- CI·fresh-head 리뷰·병합·배포는 supervisor가 이어갑니다. 남은 지적: 이번 작업의 P2 변경은 없습니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
+Fixes #682
+
+모델 안전장치가 CSO 계획을 거부한 요청에 `model_refused` 사유와 안전한 한 줄 설명을 남기고 웹·status에 표시합니다. 최초 계획과 계획 교정 모두 같은 실패 경로로 종료하며 자동 재시도·모델 전환은 하지 않습니다.
+
+- 다음 조치 카드에서 PI가 허용된 다른 CSO 모델 또는 수정한 문구를 직접 선택·승인하면 새 요청을 만듭니다. 그대로 종료하면 새 요청 0건입니다. 원래 실패·모델 응답은 기록에 보존하고 표시 사유는 원문을 노출하지 않습니다.
+- 새 요청은 기존 create_request 검증·모델 allowlist·요청 예산·연구 승인 계약을 다시 적용하며 이전 승인·게시 상태를 복사하지 않습니다. 인증 실패·잘못된/변경된 모델·취소된 원본은 새 요청을 만들지 않습니다. 카드·응답 기록과 원본 연결로 중복 생성도 막습니다.
+- pytest 56 passed, Node DOM/static 18 passed. fixture Hub/ASGI transport·가짜 Adapter/Runner/WebSocket·작은 DOM만 사용했습니다. 전체 suite·실제 process/proc_tree integration·운영 요청·PI 인스턴스·원자료·기관/HPC·분석·게시·설치·프로세스 종료는 미실행입니다.
+- manual의 해당 절 한 단락·HANDOFF 큐·status와 패치노트를 갱신합니다. public·diff·patch-notes·notes 검사를 적용합니다. 리뷰·CI 확인·병합·배포는 총괄 담당입니다.
+
+남은 한계: 거부 감지는 명시적 model_refused 또는 제공자의 API Error 안전장치 서명에 한정합니다. 실제 모델 호출·브라우저 실측·운영 효과는 미검증입니다.
+
+## CI 회귀 수정
+
+- 실패: `tests/test_web_3d.py::test_office_in_node[web_cp2_evidence.cjs-fail 0]`. 모델 거부 선택 인자가 추가됐는데 CP2의 2.5D 호출 형태 검사가 예전 인자 목록만 허용했습니다.
+- 새 인자를 정확히 확인하도록 갱신하고, CP2 approve/revise/deny에는 모델 재계획 payload가 없다는 DOM 검사를 추가했습니다. 제품 코드와 기존 승인·수정·거부·메모 검사는 유지했습니다.
+- 이번 검증은 direct Node DOM/static 10 passed(CP2 7 + 선택 카드 3). 수정 전 동일 Node 검사 실패 1건을 재현했고 전체 CI 로그·red/green 출력·stack을 D 임시 artifact에 보존했습니다. 기존 pytest 56건은 이번에 재실행하지 않았습니다.
+- PYTEST_PLUGINS/PYTHONPATH/LABHQ_MOCK_GUARD_LOG 유지. pytest의 subprocess wrapper·실제 process/proc_tree integration·운영 요청은 실행하지 않았습니다. public·diff·patch-notes·notes 검사 뒤 push하며 CI/봇/병합은 기다리지 않습니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
+Fixes #682
+
+모델 안전장치가 CSO 계획을 거부한 요청에 `model_refused` 사유와 안전한 한 줄 설명을 남기고 웹·status에 표시합니다. 최초 계획과 계획 교정 모두 같은 실패 경로로 종료하며 자동 재시도·모델 전환은 하지 않습니다.
+
+- 다음 조치 카드에서 PI가 허용된 다른 CSO 모델 또는 수정한 문구를 직접 선택·승인하면 새 요청을 만듭니다. 그대로 종료하면 새 요청 0건입니다. 원래 실패·모델 응답은 기록에 보존하고 표시 사유는 원문을 노출하지 않습니다.
+- 새 요청은 기존 create_request 검증·모델 allowlist·요청 예산·연구 승인 계약을 다시 적용하며 이전 승인·게시 상태를 복사하지 않습니다. 인증 실패·잘못된/변경된 모델·취소된 원본은 새 요청을 만들지 않습니다. 카드·응답 기록과 원본 연결로 중복 생성도 막습니다.
+- pytest 56 passed, Node DOM/static 18 passed. fixture Hub/ASGI transport·가짜 Adapter/Runner/WebSocket·작은 DOM만 사용했습니다. 전체 suite·실제 process/proc_tree integration·운영 요청·PI 인스턴스·원자료·기관/HPC·분석·게시·설치·프로세스 종료는 미실행입니다.
+- manual의 해당 절 한 단락·HANDOFF 큐·status와 패치노트를 갱신합니다. public·diff·patch-notes·notes 검사를 적용합니다. 리뷰·CI 확인·병합·배포는 총괄 담당입니다.
+
+남은 한계: 거부 감지는 명시적 model_refused 또는 제공자의 API Error 안전장치 서명에 한정합니다. 실제 모델 호출·브라우저 실측·운영 효과는 미검증입니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
+# storage --rebuild (#754, PR #777)
+
+## 결론
+
+PR #777. `labhq storage <요청 id> --rebuild [--name <새 저장소>] [--visibility public]`를 넣었습니다. 이미 게시한 요청의 정리본을 지금 편집기로 다시 만들고, 게시 카드에서 승인한 뒤에만 같은 저장소의 새 커밋이나 새 저장소로 올립니다. Fixes #754.
+
+## 바꾼 것
+
+- `ResultStorage.rebuild`, `POST /api/requests/{id}/storage/rebuild`, CLI `--rebuild`를 추가했습니다. `--redraft`·`--republish`·`--to`와 함께 쓸 수 없습니다.
+  - `--name`이 없으면 같은 저장소와 branch를 씁니다.
+  - `--name`이 있으면 `--to github`와 같은 탐침(`GET /user`, 이름 없는 `POST /user/repos`)을 거친 뒤 새 저장소를 고릅니다. 새 저장소는 기본 비공개이고, 원본 저장소는 바꾸지 않습니다. 지금 저장소와 이름이 같으면 거부합니다.
+- 게시 카드: 다시 만든 판은 `auto_publish_results`가 켜져 있어도 카드를 띄웁니다.
+- README: 편집자가 README를 고친 뒤 제목 아래에 한 줄을 넣습니다. labhq 판본·commit, 다시 만든 날짜, 원본 저장소 링크입니다. 같은 저장소에 올렸다면 원본 링크 대신 "이전 판은 이 저장소의 커밋 기록에 있습니다"라고 적습니다.
+- 이전 판의 mode·repo·branch·report_url은 `result_storage.editions`에 남기고, `result_storage.rebuild`에는 편집기 판본을 기록합니다.
+- 거부하는 경우: 게시하지 않은 요청(`--redraft`·`--to github` 안내), 끝나지 않은 요청, 검토 완료 전 요청, 묶음 갱신 중인 요청, `revised_to`가 있는 요청, 끝 저장 위치 질문이 남은 요청, 통제 데이터 요청, 정리·게시가 진행 중인 요청. 거부하면 저장 상태를 바꾸지 않습니다.
+- `--redraft`·`--republish`가 게시한 요청을 거부할 때, 그리고 `--to github` 안내에서 `--rebuild`를 알려 줍니다.
+- 문서: `docs/manual.md`의 정리본 절에 한 단락을 더했고, #688 단락의 안내를 고쳤습니다.
+
+## 검증 (mock/static만)
+
+- 새 `tests/test_storage_rebuild_754.py` 6개: 같은 저장소에 새 판, `--name`으로 새 저장소, 자동 게시 설정에서도 카드를 띄우는지, 거부 경우와 상태 불변, README 줄 위치, API(401/404/409/200)와 CLI. 편집자·GitHub 업로드·토큰 탐침·편집기 판본(git)은 mock이고, 브라우저는 conftest가 막습니다.
+- storage 관련 기존 테스트 24개 파일: 466 passed, 3 skipped. CLI mock 테스트 2개 파일: 10 passed.
+- `scripts/check_public.sh` 통과, `git diff --check` 통과.
+
+## 남은 것·한계
+
+- 같은 저장소에 올리면 이전 판에만 있던 파일이 남습니다. 지우는 것은 되돌리기 어려운 작업이라 이번에 넣지 않았고, CLI 출력과 manual에 적었습니다.
+- 편집기 commit은 gateway가 처음 읽은 HEAD(`integrations.rounds._git_commit`)입니다. git checkout이 아니면 판본만 적습니다.
+- 웹 사무실 버튼은 없고 CLI·API만 있습니다.
+- 실제 GitHub 게시, 실제 요청, PI instance는 실행하지 않았습니다.
+- 처음에 `tests/test_cli*.py`를 glob으로 묶어 돌렸을 때 5 failed, 59 passed였습니다. 출력에 보인 실패는 `test_cli_adapter.py`의 2건뿐이고, 나머지 3건의 위치는 확인하지 않았습니다. 이 묶음에는 하위 process를 띄우는 adapter·launch test가 섞여 있어, mock-only 정책에 따라 다시 돌리지 않았습니다. storage CLI 경로는 위의 mock 테스트로 확인했습니다.
+
+## 결론
+
+PR #776에서 내장 외부 API 조회에 단계 첫 조회부터 20분 기한과 대기·시간 초과 기록을 추가했습니다. Refs #676.
+
+## 변경·검증
+
+- 일반 labhq_annot API는 재호출·MCP 재시작 뒤에도 기한을 유지하고 작업판에 경과를 알립니다. 시간 초과는 MCP 오류로 남기며 직원은 남은 작업과 누락 보고를 이어 갑니다.
+- mock/static 관련 pytest 21 passed, 26 deselected. Python 3.10 문법·diff 검사 통과.
+- manual 163,011→163,275자. 상세 근거: `docs/reference/external-wait-676.md`.
+
+## 한계
+
+- 직원 직접 스크립트·타사 MCP는 강제 상한 대상이 아닙니다. 스크립트 timeout 작성 규칙을 추가했고 #676은 열어 둡니다.
+- PI PDF·기관·승인 대기와 안전/게시 gate는 유지합니다. 실제 프로세스·외부 서비스·운영·HPC·원자료는 실행하지 않았습니다.
+- CI·fresh-head 리뷰·P1 판단·P2 수집·병합·배포는 supervisor가 맡습니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
+## 결론
+
+PR #768. 감독 정리 실패 시 PID 기록 보존은 기능 커밋 `4934d50`에 있습니다. P1 [4316951093](https://github.com/ehojune/bioinfo-team-3d/pull/768#discussion_r4316951093)의 patch-note SHA 불일치는 검토 대상 head `7c3f439e`에서 재현되지 않았습니다. 이번 변경은 공개 기록뿐입니다. Fixes #627.
+
+## 근거·검증
+
+- 공개 PR commits는 `4934d50`·`7c3f439e`이며, 기존 patch-note 행은 기능 커밋 `4934d50`과 일치합니다. 댓글의 `deacc2e`는 로컬 revision과 공개 commit API에서 찾지 못했습니다.
+- `patch_notes.py check`: `origin/main..7c3f439e`, `4934d50^..7c3f439e`, `7c3f439e^..7c3f439e` 모두 PASS. `notes_index.py --validate` PASS.
+- 선택한 mock-only pytest 11 passed. 최초 collection은 `markdown_it` 부재로 실패했고, 기존 임시 의존성을 읽기 전용 PYTHONPATH로 사용해 재실행했습니다. 설치·공용 venv 변경은 없습니다.
+- stale 지적으로 분류해 새 실패 test와 기능 수정을 추가하지 않았습니다. 기존 test와 안전 gate는 유지합니다. patch-note는 중첩 디렉터리를 금지하는 notes gate에 맞춰 기존 `patch_notes/entries/supervisor-record-627.yaml`에 둡니다.
+
+## 남은 것
+
+P1 stale 근거를 인라인 답글로 남깁니다. push 뒤 CI snapshot만 확인하고 CI 대기·새 head 리뷰·P1=0 판정·병합·배포는 supervisor에게 넘깁니다. P2는 collector가 issue로 추적합니다. 실제 process/proc_tree integration·PI 운영·HPC·원자료·분석은 실행하지 않았습니다.
+
+AGENTS의 고정 리뷰·수정 1회와 P2 issue 금지, CLAUDE의 반복 리뷰 종료 규칙을 최신 PI 운영 정책에 맞추고 Astra 전체 repo 검토를 bench 비교 앞으로 바로잡았습니다. Refs #760, #739.
+
+- Codex 고정 총괄, 10분 점검·후속, 같은 담당자 재사용, 기본 Codex 2(gpt-6.1-sol)·Opus 1/상한 4·2를 명시했습니다.
+- 같은 담당자가 P1을 수정하고 새 head 리뷰를 받아 P1=0까지 반복합니다. P2는 실사용 영향·수정 비용 대비 이득으로 총괄이 선별하며 경미·추정·중복은 원 PR 댓글에 남깁니다. CI·봇 대기는 driver가 맡습니다.
+- 한도에서는 새 투입만 멈추고 진행 중 작업을 기다립니다. PI 보고는 한국 시각 00·04·08·12·16·20시이며 중요한 분기만 선택지·권고를 붙여 묻습니다.
+
+- 순서는 공개 소형 dry-run·필수 gate → Astra의 labhq 코드·README·구조 전체 검토 → 동일 요청 bench 비교입니다. 생성 결과 repo blind review는 실행 뒤 별도입니다. HANDOFF 24–25행의 원 PI 승인 링크로 확인합니다.
+
+정책 위치: AGENTS 5–6·13–14행, CLAUDE 6·13행, lookup-only `docs/reference/lead-operations.md`, HANDOFF 24–25행. README 한영판·manual과 HANDOFF 현황·예산 행은 수정하지 않았습니다.
+
+문자 수(LF 정규화 Unicode): AGENTS 1,509→1,828, CLAUDE 1,511→1,394, reference 목차 874→938, 새 운영 기준 0→759, HANDOFF 3,631→3,852. 주요 3문서(README·AGENTS·HANDOFF)는 16,866→17,406자입니다.
+
+검사: public·diff·notes validate·patch_notes 규칙 PASS. 정책 문서 변경으로 test는 실행하지 않았습니다. 미해결: 최종 head의 P1=0 리뷰·CI 확인은 총괄/driver가 이어받습니다.
+
+Fixes #748
+
+문법 검사와 실행 상태를 분리하는 receipt를 정리본·공통 보고서·bench manifest에 연결합니다. 기존 P1 3건은 a369a41로 수정했습니다.
+
+- CI 회귀: 취소된 부분 보고서에 새 재현 검증 절이 붙으면서 기존 전체 문자열 assertion이 실패했습니다. fixture로 동일 실패 1건을 확인했습니다.
+- 기존 SVG·부분 보고서 본문과 receipt 절을 합친 전체 문자열을 정확히 비교합니다. 연결된 JSON의 빈 코드/lock 목록·missing lock, 저장된 not_applicable/not_rerun, 원래 cancelled 상태·Result 본문도 검증합니다. 기존 SVG·외부 요청 없음 검사는 유지했습니다.
+- 수정 뒤 같은 테스트와 보고서 없는 취소·검토/승인 후 mock 저장 계약까지 pytest 8 passed. 지정 lanes Python·기존 D dependency site를 사용했습니다. public·diff·patch-notes·notes 검사를 적용했습니다.
+- 제품 코드·승인 게이트·공개 필터는 변경하지 않았습니다. 전체 suite·실제 process integration·PI 요청/up-down·설치·원자료·HPC·실제 분석·게시는 미실행입니다. push 후 CI 1회 snapshot만 남기고 종료합니다.
+- HANDOFF 큐에 이번 회귀와 #748 병합 뒤 같은 담당 #682·Opus #754 순서를 반영했습니다. 확정 한도 7M은 유지합니다.
+
+## 남은 지적
+
+- P2 4315249511(Bash 선행 `-` basename)·4315630188(복수 script 공유 출력)은 이번 회귀 범위에서 수정하지 않았습니다.
+- Rscript 실측·실데이터 재실행·수치 동등성은 미검증입니다. fixture PASS는 과학 결과 재현 PASS가 아닙니다.
+- CI 대기·새 리뷰 호출·병합·배포는 하지 않으며 총괄 driver가 최종 CI를 확인합니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
+Fixes #748
+
+재현 receipt를 ReportPackage·정리본·bench manifest에 연결합니다. Python/R/bash 문법과 실행 상태를 분리하고 코드/lock hash·도구·명령·변수 이름(값 제외)을 기록합니다. 기본 not_rerun·입력 누락 blocked_input·도구 없음 unavailable을 유지합니다.
+
+- P1 4315296432: 저장 메서드가 없는 기존 Hub 계약도 benchmark 결과를 유지합니다. 실제 Hub의 save_request는 계속 호출합니다.
+- P1 4315630166: terminal 이후 비동기 bundle 완료를 요청의 남은 제한 시간 안에서 기다리고 최신 request로 수집합니다. 완료 전 빈 receipt를 저장하지 않으며 대기 시간 초과는 실패로 남깁니다.
+- P1 4315630179: 반환된 rid를 수집용 복사본에 보완합니다. 원래 request와 공개 후보 필터는 유지합니다.
+- 신규 회귀 5건이 수정 전 head 5a69d19에서 실패하고 수정 뒤 통과했습니다. 관련 pytest 43 passed(지정 lanes Python·기존 D dependency site), public·diff·patch-notes·notes 검사를 적용했습니다. main은 현재 branch의 조상으로 추가 충돌이 없습니다.
+- mock Hub/Runner/Server·작은 manifest/source fixture만 사용했습니다. PI 요청·프로세스 종료·실제 분석·원자료·다운로드·기관·HPC·실제 게시·설치 미실행입니다. CI는 push 후 조회하며 재리뷰·병합·배포는 총괄 driver가 맡습니다.
+
+## 남은 지적
+
+- P2 4315249511: Bash 선행 `-` basename의 option 해석. 이번 P1 수정에서 건드리지 않았습니다.
+- P2 4315630188: 복수 script의 공유 예상 출력으로 실행 판정이 순서에 의존할 수 있습니다. 이번 P1 수정에서 건드리지 않았습니다.
+- Rscript 실측·실데이터 재실행·수치 동등성 미검증. fixture PASS는 과학 결과 재현 PASS가 아닙니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
+Fixes #748
+
+공개용 소스의 문법 검사와 실행 상태를 분리하는 receipt를 추가했습니다. Python compile·R parse·bash -n, 코드/lock hash, 도구 판본·상대 cwd·변수 이름(값 제외)·명령·예상 출력·시각·결과를 기록하고 ReportPackage·정리본·bench manifest에 연결합니다. 기본 not_rerun, 입력 누락 blocked_input, 도구 없음 unavailable을 유지합니다.
+
+- origin/main 4787231을 merge했습니다. HANDOFF·reference 목차·portfolio 충돌 3곳에서 양쪽 내용을 보존하고 receipt와 실행 보고서를 함께 연결했습니다. receipt/bench 동작과 기존 P2는 바꾸지 않았습니다.
+- HANDOFF 큐에 #767·#765·#766·#768 OPEN을 반영했습니다. #762·#763·#764의 병합·PI 배포는 총괄 인계 근거이며 실제 연구·게시·Nextflow PASS를 뜻하지 않습니다.
+- 10-19 실제 11,376,303/14M, 미사용 2,623,697 → 올림 3M+4M으로 10-20 한도 7M 확정을 HANDOFF/reference에 기록했습니다. README.en 한 문장으로 low-level off와 init preset ab/actions confirm을 구분했습니다. HANDOFF 3,780→3,910자, README.en 19,075→19,161자.
+- 이번 검증: subprocess를 금지한 mock/static pytest 2 passed, Python 3.10 AST 4파일 PASS. public·diff·patch-notes·notes 검사를 적용했습니다. 기존 suite와 실제 process integration은 다시 돌리지 않았습니다. 이전 기능 검증 168 passed/2 skipped는 통합 전 결과입니다.
+- PI 요청·up/down·원자료·실제 분석·다운로드·HPC·기관 접근·실제 게시·Nextflow·설치 미실행. CLI/storage rebuild는 #754 별도 범위입니다. 최종 push 후 CI는 1회 snapshot만 남기고 총괄 driver에게 넘깁니다.
+
+## 남은 지적
+
+- P2 4315249511: `-`로 시작하는 Bash script basename이 option으로 해석될 수 있습니다. 이번 통합 범위에서 수정하지 않았습니다.
+- Rscript 실측·실데이터 재실행·수치 동등성은 미검증입니다. 작은 fixture의 실행 PASS를 과학 결과 재현 PASS로 해석하지 않습니다.
+- CI 대기·봇 호출·병합·배포는 총괄 driver가 맡습니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
+## 결론
+PR #768. 감독 시작 실패 뒤 정리도 실패하면 PID 기록을 보존하고 오류를 알립니다. 다음 `down`·`up`이 같은 감독을 다시 찾습니다. Fixes #627.
+
+## 변경
+- `_await_child_record`는 `_terminate_tree`가 성공했을 때만 감독 PID 파일을 지웁니다.
+- 정리 실패 시 기존 시작 실패 이유와 감독 역할·PID·종료 오류·기록 보존 안내를 stderr에 쓰고 exit 2로 끝납니다.
+- manual에 실패 후 기록 보존을 설명했습니다. LF 기준 162,210→162,351자(+141).
+
+## 검증
+- 새 mock 회귀 6개: gateway·runner × 감독 alive/gone/identity unreadable. 수정 전 6 failed → 수정 후 통과.
+- 기존 성공·중복 감독 방지·종료 실패 회귀를 포함해 선택한 mock-only tests 11 passed. PID 기록 원문·종료 호출 인자·stderr·exit 2·기존 감독 재인식을 확인했습니다.
+- 실제 process 생성·종료, proc_tree/supervisor integration, PI up/down/status, 원자료·HPC·연구 실행·설치는 하지 않았습니다. 전체 suite는 CI에 맡깁니다.
+- Python 3.10 AST·public·diff·patch-notes·notes 형식 검사를 확인했습니다.
+
+## 남은 것
+CI·리뷰·병합·배포는 총괄이 이어받습니다. 실제 운영 환경 검증은 하지 않았습니다.
+
+Fixes #748
+
+공개용 소스의 문법 검사와 실제 실행을 구분하는 receipt를 추가했습니다. Python compile·R parse·bash -n, 코드/lock hash, 도구 판본·상대 cwd·변수 이름·명령·예상 출력·시각·결과를 기록합니다. 기본 `not_rerun`, 입력 누락 `blocked_input`, 없는 도구 `unavailable`을 유지합니다.
+
+- 정리본의 `run/reproduction_receipt.json`, 공통 ReportPackage, bench run/score/comparison에 연결했습니다. 실패·도구 없음·미검사를 숨기지 않고 Python 문법 실패의 기존 게시 차단도 유지합니다.
+- 허용된 작은 fixture의 명시적 실행은 exit 0 + 선언 출력 존재만 검증합니다. 원자료·다운로드·기관·HPC·분석 재실행·실제 게시를 실행하지 않았습니다. #754의 CLI/storage rebuild는 별도 범위입니다.
+- 관련 pytest 168 passed, 2 skipped(중복 제외). Rscript가 없어 실제 R parse 두 경우는 skip했으며 명령·도구 없음 경로는 별도 검증했습니다. public·diff·Python 3.10 AST 검사 통과.
+- manual 해당 절·HANDOFF 큐·reference를 갱신했습니다. HANDOFF 3,617→3,780자, manual 161,473→161,875자.
+
+## 남은 지적
+
+- Rscript 실측·실데이터 재실행·수치 동등성 검증은 미실행입니다. fixture의 실행 PASS를 과학 결과 재현 PASS로 해석하지 않습니다.
+- CI 조회 후 대기·봇 호출·병합·배포는 총괄 driver가 맡습니다.
+
+## 결론
+
+PR #765에서 현재 cgroup v2부터 보이는 mount 루트까지의 최소 memory.max를 usable_memory_bytes()에 반영했습니다. Fixes #726.
+
+## 바뀐 것
+
+- membership·mount root·octal escape를 해석하고 mount 경계 안에서 상위 한도를 읽습니다.
+- unlimited·누락·잘못된 파일을 건너뛰며 기존 v1·고정 경로 fallback과 Windows 동작을 유지합니다.
+- manual 161,473→161,615자. 상세 근거: `docs/reference/cgroup-memory-726.md`.
+
+## 확인·남은 것
+
+- 수정 전 fixture 11 failed·10 passed → 최종 관련 pytest 30 passed. Python 3.10 문법 통과.
+- 실제 cgroup 변경·프로세스 종료·HPC·운영 인스턴스 검증은 미실행. 보이지 않는 ancestor는 추정하지 않습니다.
+- 전체 suite는 CI에 맡깁니다. CI는 최종 head에서 한 번만 조회하며 봇·병합·배포는 driver가 맡습니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
+## 결론
+
+PR #763의 P1 `4314357070`을 수정했습니다. `4314357078`은 기존 head의 패치노트 검사 통과로 stale입니다. Refs #752.
+
+- 상대 workspace는 경로 형태일 때 검사합니다. 일반 문장·URL은 통과하며 실제 workspace 경로는 계속 차단합니다.
+- 신규 회귀 7개 실패를 수정했고 관련 pytest 346개 통과·3개 skip을 확인했습니다. 기존 CI 실패 3개도 포함합니다.
+- 기존 API·표시 변경에 맞춰 mock과 Node 검사를 갱신했습니다. 공개 검사·패치노트·notes-index 검사 결과는 PR에 기록합니다.
+- 새 head의 CI 결과는 PR에서 확인합니다. 재리뷰 요청·병합·운영 실행은 하지 않습니다.
+
 ## 결론
 
 PR #764. 정리본과 PDF에 실제 실행된 단계만 그린 분석 파이프라인 모식도와 단계별 실행 타임라인·실행 보고서를 넣고, 단계가 남긴 Nextflow report·timeline·trace·dag를 `run/nextflow/`에 모읍니다. Fixes #756, Refs #760.
@@ -53,6 +429,29 @@ PR #762의 P1 4312241631 수정을 확인하고 새 P1 4314252458을 `2ca1543e`�
 - P2 4312241622: init 질문·manual 앞부분·example config의 일회성 동의 문구.
 - 새 head CI와 병합은 총괄이 확인합니다. 리뷰 재요청·병합·배포·실제 분석·외부 기여 PR은 실행하지 않았습니다.
 - UI는 Node DOM으로 검증했습니다. 실제 브라우저 화면은 UNVERIFIED입니다.
+
+## 결론
+
+PR #763에서 #752의 디스크 점검·init 경로 선택·사용자 지정 workspace 게시 검사·웹 연결 경고를 구현했습니다. Fixes #752.
+
+## 바뀐 것
+
+- doctor: 작업·임시·직원 홈 여유와 설정 가능한 10 GiB/5% 경고.
+- init: 작업 경로를 묻고 작은 Windows 시스템 드라이브에 데이터 볼륨 후보 안내. 자동 이동 없음.
+- 임의 이름 workspace도 게시 검사에 포함. 기존 웹 상태로 gateway/runner 연결 경고.
+- manual 161,060→161,719자. 상세 근거: `docs/reference/disk-preflight-752.md`.
+
+## 확인
+
+- 신규·추가 관련 pytest 41 passed, 기존 관련 묶음 221 passed. 관련 Node 3개 통과.
+- 지정 venv의 markdown_it 누락으로 기존 `-I` 패키징 test 1개 실패. 공유 venv·test는 유지.
+- 실제 운영·외부 알림·브라우저 시각 QA는 미실행. CI·봇 대기·병합·배포 없음.
+
+## 남은 것
+
+- CI가 전체 suite·패키징 test를 확인해야 합니다. 연결 경고는 열어 둔 웹에서만 보입니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
 
 20시 PI 정기 보고 전 문서를 현재 PR·설정과 맞췄습니다. Refs #760.
 

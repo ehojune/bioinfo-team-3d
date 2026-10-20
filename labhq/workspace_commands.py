@@ -12,7 +12,8 @@ from .private_paths import _managed_operand, credential_path, inside_any, resolv
 
 _LITERAL_COMMANDS = {'cd', 'set-location', 'rm', 'remove-item', 'cat', 'ls', 'head', 'tail',
                      'mkdir', 'touch', 'cp', 'mv', 'grep', 'sed', 'find', 'pwd', 'which',
-                     'invoke-webrequest'}
+                     'invoke-webrequest', 'new-item', 'out-null', 'python', 'python3',
+                     'wc', 'od', 'sha256sum'}
 
 
 def _environment_value(environ, name, default=''):
@@ -70,7 +71,8 @@ def _executable_writable(path: Path) -> bool:
 def _resolve_executable(name, base, environ, powershell):
     """Resolve once against the inherited staff PATH; never execute a workspace candidate."""
     builtins = ({'cd', 'pwd', 'set-location', 'remove-item', 'invoke-webrequest',
-                 'rm', 'cat', 'ls', 'cp', 'mv', 'mkdir'} if powershell else {'cd', 'pwd'})
+                 'rm', 'cat', 'ls', 'cp', 'mv', 'mkdir', 'new-item', 'out-null'}
+                if powershell else {'cd', 'pwd'})
     if name in builtins:
         return True, name + '=shell builtin'
     if not re.fullmatch(r'[A-Za-z][A-Za-z0-9-]*', name):
@@ -164,7 +166,7 @@ def workspace_command_reason(command: str, workdir: str | None, private_paths=()
                 try:
                     if (os.name == 'nt' and re.match(r'^[A-Za-z]:[/\\]', operand)
                             and ':' not in operand[2:] and workdir
-                            and inside_any(resolved_read_path(operand), [workdir])):
+                            and inside_any(resolved_read_path(operand), [workdir, *read_roots])):
                         continue
                 except (OSError, ValueError, RuntimeError):
                     pass
@@ -186,7 +188,7 @@ def workspace_command(command: str, workdir: str | None, private_paths=(), **kwa
 
 def _workspace_command(parts, workdir: str | None, private_paths=(), *, powershell=False,
                       read_roots=(), forbidden=(), environ=None, evidence=None) -> bool:
-    """Prove every path stays in the current, existing task folder (never a read-only grant).
+    """Prove writes stay task-local and reads stay in finalized task/reference grants.
 
     The shell is not a sandbox. This exception deliberately accepts only a small literal grammar;
     dynamic commands, interpreters and scripts keep the existing approval behavior.
@@ -205,8 +207,13 @@ def _workspace_command(parts, workdir: str | None, private_paths=(), *, powershe
 
     def local(value: str, *, delete=False, reading=False) -> bool:
         nonlocal external_read
+        # PowerShell arrays/splatting may turn one apparent operand into multiple paths/options.
+        if powershell and (',' in value or value.startswith('@')):
+            return False
         roots = [root, *read_roots] if reading else [root]
-        if reading and value.endswith(('/*', '/*.py')):
+        if reading and value == '*.zip':
+            value = './*.zip'
+        if reading and value.endswith(('/*', '/*.py', '/*.zip')):
             directory, pattern = value.rsplit('/', 1)
             if not local(directory, reading=True):
                 return False
@@ -284,7 +291,7 @@ def _workspace_command(parts, workdir: str | None, private_paths=(), *, powershe
         if any(set(word) <= set(';&|<>') for word in args):
             return False
         if name in {'cd', 'set-location'}:
-            if len(args) != 1 or not local(args[0]):
+            if len(args) != 1 or not local(args[0], reading=True):
                 return False
             # Only an initial cd followed by && reaches this point.
             base = os.path.abspath(os.path.join(base, args[0]))
@@ -311,7 +318,7 @@ def _workspace_command(parts, workdir: str | None, private_paths=(), *, powershe
                 if arg.startswith('-') or not local(arg, reading=reading):
                     return False
         elif name in {'grep', 'sed'}:
-            flags = {'-n', '-E', '-nE', '-En', '-i'} if name == 'grep' else {'-n'}
+            flags = {'-n', '-E', '-nE', '-En', '-i', '-c'} if name == 'grep' else {'-n'}
             operands = args[:]
             while operands and operands[0] in flags:
                 operands.pop(0)
@@ -328,6 +335,52 @@ def _workspace_command(parts, workdir: str | None, private_paths=(), *, powershe
                 return False
         elif name == 'pwd':
             if args:
+                return False
+        elif name in {'wc', 'sha256sum', 'od'}:
+            # No manifest/list-file options: they introduce unchecked indirect paths.
+            flags = ({'-l', '-w', '-c', '-m', '-L'} if name == 'wc' else
+                     {'-b', '-t'} if name == 'sha256sum' else {'-An', '-tx1', '-c'})
+            index = 0
+            while index < len(args):
+                arg = args[index]
+                if arg in flags:
+                    index += 1
+                    continue
+                if name == 'od' and arg == '-N' and index + 1 < len(args) and args[index + 1].isdigit():
+                    index += 2
+                    continue
+                if arg.startswith('-') or not local(arg, reading=True):
+                    return False
+                index += 1
+        elif name == 'new-item' and powershell:
+            writes = True
+            # Only directory creation, no links, providers, values or abbreviated parameters.
+            operands, seen = [], set()
+            index = 0
+            while index < len(args):
+                arg = args[index]
+                flag = arg.casefold()
+                if flag in {'-itemtype', '-force'}:
+                    if flag in seen:
+                        return False
+                    seen.add(flag)
+                    if flag == '-itemtype':
+                        index += 1
+                        if index == len(args) or args[index].casefold() != 'directory':
+                            return False
+                else:
+                    if arg.startswith('-') or not local(arg):
+                        return False
+                    operands.append(arg)
+                index += 1
+            if '-itemtype' not in seen or len(operands) != 1:
+                return False
+        elif name == 'out-null' and powershell:
+            if args:
+                return False
+        elif name in {'python', 'python3'}:
+            # --version exits before imports/site initialization. Code and scripts still need a card.
+            if args != ['--version']:
                 return False
         elif name == 'which':
             if not args or not all(re.fullmatch(r'[A-Za-z0-9_.+-]+', a) and not a.startswith('-') for a in args):

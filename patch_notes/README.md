@@ -10,12 +10,41 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-10-20
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 05:49 | [`aada950`](https://github.com/ehojune/bioinfo-team-3d/pull/776/commits/aada950) | 외부 조회 취소 시 소유 브라우저를 회수하고 완료된 PDF만 반영하며 취소된 AlphaGenome thread도 잔류 상한에 집계한다. |
+| 05:42 | [`4a94324`](https://github.com/ehojune/bioinfo-team-3d/pull/781/commits/4a94324) | 재현 receipt가 hard link나 링크 폴더 아래의 선언 산출을 건드리지도 세지도 않아 receipt 폴더 밖 원본의 시각을 바꾸지 않는다. |
+| 05:38 | [`4232731`](https://github.com/ehojune/bioinfo-team-3d/pull/783/commits/4232731) | 정답 누출 checker가 YAML 런타임 문자열과 다른 소스의 줄바꿈을 검사한다. 기존 정규화·경계를 유지하고 static/mock test 36개를 확인했다. |
+| 05:15 | [`ff9264c`](https://github.com/ehojune/bioinfo-team-3d/pull/782/commits/ff9264c) | 검증된 요청 참고 경로를 shell 읽기에 전달하고 리터럴 읽기·작업 폴더 PowerShell 생성을 기존 경로·실행 파일 검사로 판정했다. mock/static pytest 173건 통과, inline Python·간접 manifest 경로는 승인 카드로 유지했다. |
+| 04:58 | [`7f7a6bc`](https://github.com/ehojune/bioinfo-team-3d/pull/781/commits/7f7a6bc) | 재현 receipt가 같은 단계의 앞 script가 남긴 산출로 산출을 만들지 않은 뒤 script를 pass로 두지 않고, helper 파일 이름 순서와 관계없이 같은 판정을 낸다. |
+| 04:24 | [`e75fe43`](https://github.com/ehojune/bioinfo-team-3d/pull/778/commits/e75fe43) | 모델 재계획의 reference를 입력 필드로 정규화해 저장 메타데이터의 검증 실패를 고치고 mock pytest 46건을 확인했다. |
+| 03:49 | [`5b323a3`](https://github.com/ehojune/bioinfo-team-3d/pull/777/commits/5b323a3) | storage --rebuild --name이 대소문자만 다르거나 이름을 바꾼 지금 저장소를 새 저장소로 받아 루트를 덮어쓰지 않게 막았다. |
+| 03:41 | [`5399c64`](https://github.com/ehojune/bioinfo-team-3d/pull/776/commits/5399c64) | key_fulltext 자동 조회와 기관 간격 대기를 단계 기한에 포함하고 PDF 승인 대기만 제외해 사용 예산을 보존한다. |
+| 03:38 | [`9d2bb18`](https://github.com/ehojune/bioinfo-team-3d/pull/778/commits/9d2bb18) | 확장된 선택 인자를 CP2 전달 검사에 반영하고 모델 재계획 payload가 CP2 결정에 섞이지 않음을 검증해 CI 회귀를 고쳤다. |
+| 03:15 | [`8a41a11`](https://github.com/ehojune/bioinfo-team-3d/pull/778/commits/8a41a11) | 모델 계획 거부를 model_refused로 기록하고 PI의 명시적 선택 뒤 기존 게이트를 거친 새 요청을 만들도록 했다. |
+| 03:04 | [`b448227`](https://github.com/ehojune/bioinfo-team-3d/pull/777/commits/b448227) | labhq storage --rebuild가 게시한 정리본을 지금 편집기로 다시 만들어 게시 카드 승인 뒤 같은 저장소의 새 판이나 새 저장소로 올리고, README에 편집기 판본과 원본 저장소를 적는다. |
+| 02:49 | [`7c1322a`](https://github.com/ehojune/bioinfo-team-3d/pull/776/commits/7c1322a) | 내장 외부 API 조회의 단계 기한·대기 알림·시간 초과 기록을 추가하고 자동 재호출을 멈추도록 안내한다. |
+| 02:44 | [`e2a836d`](https://github.com/ehojune/bioinfo-team-3d/pull/775/commits/e2a836d) | P2 후속 issue를 실사용 영향과 수정 가치로 총괄 선별 |
+| 02:27 | [`51caada`](https://github.com/ehojune/bioinfo-team-3d/pull/775/commits/51caada) | HANDOFF의 Astra 전체 검토를 원 PI 결정대로 bench 비교 앞으로 정정 |
+| 02:20 | [`cb6fd90`](https://github.com/ehojune/bioinfo-team-3d/pull/775/commits/cb6fd90) | 개발 총괄의 점검·담당 재사용·P1 반복 리뷰 운영 규칙 갱신 |
+| 02:08 | [`e9ddcf2`](https://github.com/ehojune/bioinfo-team-3d/pull/767/commits/e9ddcf2) | 취소된 부분 보고서의 기존 본문과 신규 receipt 전체 계약을 함께 검증해 CI 회귀를 고치고 관련 mock 8건을 확인했다. |
+| 00:35 | [`a369a41`](https://github.com/ehojune/bioinfo-team-3d/pull/767/commits/a369a41) | bench가 bundle 확정 뒤 receipt를 수집하고 반환된 request ID·선택적 Hub 저장 계약을 지키도록 P1 3건을 고쳤다. |
+| 00:13 | [`1c8beaa`](https://github.com/ehojune/bioinfo-team-3d/pull/767/commits/1c8beaa) | main의 실행 보고서와 receipt를 함께 보존해 충돌을 풀고 인계 큐·확정 예산·init 기본값 설명을 맞췄다. |
+| 00:00 | [`4934d50`](https://github.com/ehojune/bioinfo-team-3d/pull/768/commits/4934d50) | 감독 시작 실패 뒤 정리도 실패하면 PID 기록을 보존하고 종료 오류를 보고한다. mock 회귀 11개와 실제 PR head 기준 patch-note SHA 일치를 재확인했다. |
+
 ## 2026-10-19
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 23:48 | [`7d2113c`](https://github.com/ehojune/bioinfo-team-3d/pull/767/commits/7d2113c) | 재현 receipt PR 767의 완료 상태와 후속 storage rebuild의 공유 파일 순서를 인계 큐에 남겼다. |
+| 23:44 | [`2239558`](https://github.com/ehojune/bioinfo-team-3d/pull/767/commits/2239558) | 언어별 문법·도구·코드/lock hash와 별도 실행 상태 receipt를 정리본·공통 보고·bench manifest에 연결했다. |
+| 23:27 | [`1836a01`](https://github.com/ehojune/bioinfo-team-3d/pull/765/commits/1836a01) | 현재 cgroup v2와 보이는 ancestor의 최소 memory.max를 기본 단계 메모리에 반영하고 기존 fallback을 유지한다. |
+| 23:25 | [`50a3948`](https://github.com/ehojune/bioinfo-team-3d/pull/763/commits/50a3948) | 상대 workspace 게시 검사의 일반 단어·URL 오탐을 고치고 경로 보호 회귀와 기존 CI 검사를 갱신한다. |
 | 22:31 | [`5a2a925`](https://github.com/ehojune/bioinfo-team-3d/pull/764/commits/5a2a925) | 정리본·PDF에 실행된 단계의 파이프라인 모식도·타임라인·실행 보고서를 넣고 Nextflow 네 기록을 모음 |
 | 22:23 | [`2ca1543`](https://github.com/ehojune/bioinfo-team-3d/pull/762/commits/2ca1543) | 공개용 reference 정리를 승인 전에 적용해 카드·fingerprint·업로드 소스를 맞추고 긴 코드를 보존했다. |
+| 22:20 | [`5dbf77d`](https://github.com/ehojune/bioinfo-team-3d/pull/763/commits/5dbf77d) | 디스크 여유 점검·init 작업 경로 선택·임의 workspace 게시 보호와 웹 연결 경고를 추가한다. |
 | 22:04 | [`d37d164`](https://github.com/ehojune/bioinfo-team-3d/pull/762/commits/d37d164) | pipeline 승인 카드에 검사를 통과한 후보 소스 전체를 표시함 |
 | 20:05 | [`3e154f3`](https://github.com/ehojune/bioinfo-team-3d/pull/761/commits/3e154f3) | 문서 길이 측정표를 최종 파일과 맞춤 |
 | 20:04 | [`437ff42`](https://github.com/ehojune/bioinfo-team-3d/pull/761/commits/437ff42) | 20시 현황과 리뷰 절차를 갱신하고 라운드 종료 링크를 복구 |

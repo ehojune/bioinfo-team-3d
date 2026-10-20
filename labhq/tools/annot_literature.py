@@ -153,10 +153,6 @@ class BrowserInstitutionTransport:
         self.profile, self.proxy, self.browser, self.timeout_s = profile, proxy, browser, timeout_s
 
     async def fetch(self, doi: str, destination: Path) -> InstitutionAttempt:
-        import asyncio
-        return await asyncio.to_thread(self._fetch, doi, destination)
-
-    def _fetch(self, doi: str, destination: Path) -> InstitutionAttempt:
         if not self.browser:
             return InstitutionAttempt("unavailable", "Edge/Chrome not found")
         if self.profile is not None and not self.profile.is_dir():
@@ -166,38 +162,51 @@ class BrowserInstitutionTransport:
             encoded = quote(target, safe="")
             target = self.proxy.replace("{url}", encoded) if "{url}" in self.proxy else self.proxy + encoded
         destination.parent.mkdir(parents=True, exist_ok=True)
-        profile = self.profile
-        temporary = None
-        if profile is None:
-            import tempfile
-            temporary = Path(tempfile.mkdtemp(prefix="labhq-institution-"))
-            profile = temporary
+        import tempfile
+        temporary = Path(tempfile.mkdtemp(prefix=".labhq-institution-", dir=destination.parent))
+        profile = self.profile if self.profile is not None else temporary
+        # Publish only after a completed, valid fetch. Cancellation can never leave a late accepted PDF.
+        staged = temporary / "paper.pdf"
         command = [self.browser, "--headless=new", "--disable-gpu", "--no-first-run",
                    "--no-default-browser-check", f"--user-data-dir={profile}",
-                   f"--print-to-pdf={destination}", target]
+                   f"--print-to-pdf={staged}", target]
         if hasattr(os, "geteuid") and os.geteuid() == 0:
             command.insert(2, "--no-sandbox")
+        launch = asyncio.create_task(asyncio.create_subprocess_exec(
+            *command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)))
+        proc = None
         try:
-            done = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                  stderr=subprocess.DEVNULL, timeout=self.timeout_s,
-                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        except subprocess.TimeoutExpired:
-            return InstitutionAttempt("session_expired", "browser timed out")
-        except OSError:
-            return InstitutionAttempt("unavailable", "browser could not start")
+            try:
+                # Retain the launch result even when cancellation arrives while the process is starting.
+                proc = await asyncio.shield(launch)
+                await asyncio.wait_for(proc.wait(), self.timeout_s)
+            except (asyncio.TimeoutError, asyncio.CancelledError) as exc:
+                if proc is None:
+                    proc = await asyncio.shield(launch)
+                if proc.returncode is None:
+                    try:
+                        proc.kill()  # Only this fetch's owned process handle; never a PID/tree scan.
+                    except ProcessLookupError:
+                        pass
+                await asyncio.shield(proc.wait())
+                if isinstance(exc, asyncio.CancelledError):
+                    raise
+                return InstitutionAttempt("session_expired", "browser timed out")
+            except OSError:
+                return InstitutionAttempt("unavailable", "browser could not start")
+            try:
+                with open(staged, "rb") as handle:
+                    good = staged.stat().st_size >= 1024 and handle.read(5) == b"%PDF-"
+            except OSError:
+                good = False
+            if not good:
+                return InstitutionAttempt("session_expired" if proc.returncode == 0 else "access_denied",
+                                          "session expired, denied, or no printable paper")
+            staged.replace(destination)
+            return InstitutionAttempt("success")
         finally:
-            if temporary is not None:
-                shutil.rmtree(temporary, ignore_errors=True)
-        try:
-            with open(destination, "rb") as handle:
-                good = destination.stat().st_size >= 1024 and handle.read(5) == b"%PDF-"
-        except OSError:
-            good = False
-        if not good:
-            destination.unlink(missing_ok=True)
-            return InstitutionAttempt("session_expired" if done.returncode == 0 else "access_denied",
-                                      "session expired, denied, or no printable paper")
-        return InstitutionAttempt("success")
+            shutil.rmtree(temporary, ignore_errors=True)
 
 
 def _pdf_literal_text(data: bytes) -> str:
@@ -252,11 +261,18 @@ class KeyFulltextCoordinator:
     """OA result → bounded institution session → one PI PDF card → explicit abstract/OA fallback."""
 
     def __init__(self, annotator, settings: LiteratureSettings, workdir: Path | None, state_dir: Path, *,
-                 institution=None, limiter=None, request_pdf=None, extract_pdf=extract_pdf_text, clock=_now) -> None:
+                 institution=None, limiter=None, request_pdf=None, extract_pdf=extract_pdf_text, clock=_now,
+                 automatic_lookup=None) -> None:
         self.annotator, self.settings = annotator, settings
         self.workdir, self.state_dir = Path(workdir) if workdir else None, Path(state_dir)
         self.institution, self.limiter, self.request_pdf = institution, limiter, request_pdf
         self.extract_pdf, self.clock = extract_pdf, clock
+        self.automatic_lookup = automatic_lookup
+
+    async def _automatic(self, operation):
+        if self.automatic_lookup is not None:
+            return await self.automatic_lookup(operation)
+        return await operation()
 
     @staticmethod
     def _papers(values: object) -> list[dict]:
@@ -416,7 +432,7 @@ class KeyFulltextCoordinator:
 
     async def run(self, values: object) -> dict:
         papers = self._papers(values)
-        base = await self.annotator.fulltext([paper["id"] for paper in papers])
+        base = await self._automatic(lambda: self.annotator.fulltext([paper["id"] for paper in papers]))
         rows = [dict(row) for row in base.get("results") or []]
         if len(rows) != len(papers):
             raise LookupFailed("fulltext 결과 수가 핵심 논문 수와 다릅니다")
@@ -436,7 +452,7 @@ class KeyFulltextCoordinator:
             if doi and not row.get("doi"):
                 row["doi"] = doi
             if institution_active and doi:
-                refusal = await self.limiter.acquire()
+                refusal = await self._automatic(self.limiter.acquire)
                 if refusal:
                     attempts[index].append(f"institution:{refusal}")
                 else:
@@ -444,7 +460,7 @@ class KeyFulltextCoordinator:
                     destination = self._inside(relative)
                     if destination is None:
                         raise LookupFailed("기관 PDF 경로가 작업 폴더 밖입니다")
-                    outcome = await self.institution.fetch(doi, destination)
+                    outcome = await self._automatic(lambda: self.institution.fetch(doi, destination))
                     attempts[index].append(f"institution:{outcome.status}")
                     if outcome.status == "success":
                         row, problem = self._accept_pdf(paper, row, relative, "institution_session")
