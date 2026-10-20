@@ -3,6 +3,8 @@ rows:
 - sha: 814da29
   at: 2026-10-04 05:37
   text: runner의 로컬 소프트웨어 요약이 labhq 자체 venv 대신 직원이 쓰는 PATH python을 검사한다.
+  summary: 환경 안내가 프로그램 자체 대신 실제 직원이 사용하는 Python을 확인합니다.
 - sha: 96170e0
   at: 2026-10-04 05:59
   text: 매뉴얼에 runner 요약이 검사하는 python의 순서(python3, python, py)와 예외를 적었다.
+  summary: 실행 환경에서 어떤 Python을 먼저 검사하는지 매뉴얼에 밝혔습니다.

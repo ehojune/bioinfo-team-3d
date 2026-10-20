@@ -2,20 +2,21 @@ pr: 610
 rows:
 - sha: bb88f35
   at: 2026-10-15 10:38
-  text: 편집자 정리본의 SOURCES.md가 DOI·PMID·GEO·SRA 번호와 자료 버전까지 모으고, 편집자에게 보고서 전문을 보내며,
-    README 링크 줄을 한 번만 쓰고, labhq storage --redraft로 게시 전 정리본을 다시 만든다(#607).
+  text: 편집자 정리본의 SOURCES.md가 DOI·PMID·GEO·SRA 번호와 자료 버전까지 모으고, 편집자에게 보고서 전문을 보내며, README 링크 줄을 한 번만 쓰고, labhq storage --redraft로 게시 전 정리본을 다시 만든다(#607).
+  summary: 정리본에 논문·데이터 번호와 판본을 모으고 게시 전에 다시 편집하게 했습니다.
 - sha: 24c721a
   at: 2026-10-15 10:38
   text: 요청이 끝나거나 검토 완료를 표시하거나 게이트웨이를 시작할 때 끝난 요청의 낡은 재개 카드를 지우고 이벤트로 남긴다(#607).
+  summary: 끝난 요청에 남아 있던 재개 승인 화면을 자동으로 정리하고 이력을 남깁니다.
 - sha: 6919ffc
   at: 2026-10-15 11:11
-  text: resource_versions의 출처 열·칸 안 주소에도 비공개 호스트와 자격 증명 쿼리 거름을 적용하고, 링크 안의 DOI는 쿼리
-    없이 하나로만 적는다(#607).
+  text: resource_versions의 출처 열·칸 안 주소에도 비공개 호스트와 자격 증명 쿼리 거름을 적용하고, 링크 안의 DOI는 쿼리 없이 하나로만 적는다(#607).
+  summary: 자원 판본 표의 주소도 비공개 서버와 자격 정보가 드러나지 않게 거릅니다.
 - sha: 4bf0768
   at: 2026-10-15 12:11
-  text: main의 PDF 그림 정책(#611·#616)을 합치고, 편집자 입력·출처 추출·--redraft와 함께 draft_documents·finish가
-    초록과 출처 assets를 모두 받게 한다(#607).
+  text: main의 PDF 그림 정책(#611·#616)을 합치고, 편집자 입력·출처 추출·--redraft와 함께 draft_documents·finish가 초록과 출처 assets를 모두 받게 한다(#607).
+  summary: PDF 그림 정책을 합치고 초록과 출처 파일이 편집부터 최종 저장까지 전달되게 했습니다.
 - sha: 34e8b20
   at: 2026-10-15 13:10
-  text: 출처 호스트 거름을 하나(public_link)로 닫고(끝 점·IPv6·IPv4 변형·userinfo), 괄호 있는 DOI와 짧은 PMID를
-    받으며, 게시 카드 답과 --redraft를 같은 lock으로 직렬화해 게시 시작 뒤 재작성을 거부한다(#607).
+  text: 출처 호스트 거름을 하나(public_link)로 닫고(끝 점·IPv6·IPv4 변형·userinfo), 괄호 있는 DOI와 짧은 PMID를 받으며, 게시 카드 답과 --redraft를 같은 lock으로 직렬화해 게시 시작 뒤 재작성을 거부한다(#607).
+  summary: 공개 출처 링크 검사를 통일하고 게시가 시작된 뒤에는 초안을 다시 쓰지 못하게 했습니다.

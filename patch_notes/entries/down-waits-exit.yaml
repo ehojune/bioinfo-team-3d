@@ -2,14 +2,17 @@ pr: 643
 rows:
 - sha: 3f007d7
   at: 2026-10-15 18:48
-  text: Windows down이 supervisor·role·자식 프로세스의 실제 종료를 확인하고 clean-install이 남은 venv
-    프로세스를 검출하게 했다.
+  text: Windows down이 supervisor·role·자식 프로세스의 실제 종료를 확인하고 clean-install이 남은 venv 프로세스를 검출하게 했다.
+  summary: Windows 종료 명령이 자식까지 실제 종료됐는지 확인하고 남은 가상환경 작업도 찾습니다.
 - sha: 9442c95
   at: 2026-10-15 18:50
   text: clean-install 임의 포트에서 PI 인스턴스 포트 8787·55921을 제외했다.
+  summary: 격리 설치 검사에서 실제 책임자 인스턴스가 쓰는 포트를 선택하지 않게 했습니다.
 - sha: 5c2ff24
   at: 2026-10-15 19:06
   text: Windows 종료 대기 test의 process 확인을 mock으로 격리해 Linux CI에서도 같은 계약을 검증하게 했다.
+  summary: Windows 종료 대기의 프로세스 검사를 모의 처리해 Linux 자동 검사에서도 확인합니다.
 - sha: f5cf6bc
   at: 2026-10-16 00:55
   text: Windows venv launcher가 자식 종료 뒤 끝나는 동안의 Access denied를 종료 완료로 판정하게 했다.
+  summary: Windows 가상환경 자식이 이미 끝났다면 뒤늦은 접근 거부를 종료 실패로 오인하지 않습니다.

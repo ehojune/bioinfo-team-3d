@@ -3,9 +3,12 @@ rows:
 - sha: c0a4eec
   at: 2026-10-16 17:15
   text: 직원에게 humanizer와 graphical-abstract를 장착하고 한국어 문서 QC를 추가
+  summary: 직원에게 자연스러운 한국어와 그림 초록 작성 스킬을 주고 한국어 문서 검사를 더했습니다.
 - sha: a12f25e
   at: 2026-10-16 17:34
   text: mock 읽기 전용 실행에서 Claude·Codex 전용 스킬 요구를 분리
+  summary: 읽기 전용 모의 검사에서 Claude와 Codex에 필요한 스킬을 각각 확인합니다.
 - sha: d9d758c
   at: 2026-10-16 18:16
   text: Claude bundled plugin과 읽기 전용 prompt 요약으로 직원 스킬 로딩을 복구
+  summary: Claude에 함께 설치된 기능과 읽기 전용 안내를 써서 직원 스킬 불러오기를 복구했습니다.

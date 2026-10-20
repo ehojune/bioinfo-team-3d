@@ -3,7 +3,8 @@ rows:
 - sha: 21007da
   at: 2026-10-02 19:54
   text: consult 대기를 이벤트로 깨우고 최신 turn·직원 session·재시작 roster를 안전하게 이어 씀(#205~#209)
+  summary: 검토 대기는 완료 신호로 깨우고 최근 대화와 재시작 뒤 직원 명단을 이어 씁니다.
 - sha: 16d12b4
   at: 2026-10-02 20:00
-  text: 'session 대기: 알던 holder가 끝나면 원장을 한 번 더 확인해, 새 task id로 이어진 작업이 잡은 session을
-    놓지 않음'
+  text: 'session 대기: 알던 holder가 끝나면 원장을 한 번 더 확인해, 새 task id로 이어진 작업이 잡은 session을 놓지 않음'
+  summary: 대화 점유 작업이 바뀌었으면 새 작업을 다시 확인해 중복 사용을 막습니다.

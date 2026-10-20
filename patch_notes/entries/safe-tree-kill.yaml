@@ -2,21 +2,21 @@ pr: 597
 rows:
 - sha: '7184136'
   at: 2026-10-14 18:01
-  text: Windows 종료(adapter 취소·버전 조사 시간 초과·down)가 taskkill /T 대신 생성 시각을 검증하는 helper를
-    써서, 재사용된 부모 PID 때문에 PI의 gateway·runner가 함께 죽던 문제를 막는다(#589).
+  text: Windows 종료(adapter 취소·버전 조사 시간 초과·down)가 taskkill /T 대신 생성 시각을 검증하는 helper를 써서, 재사용된 부모 PID 때문에 PI의 gateway·runner가 함께 죽던 문제를 막는다(#589).
+  summary: Windows 종료 대상을 생성 시각으로 확인해 번호가 재사용된 다른 작업을 죽이지 않습니다.
 - sha: d13de19
   at: 2026-10-14 18:02
-  text: status·doctor가 venv launcher의 자식이 쓴 heartbeat를 읽어 살아 있는 gateway를 '기록 없음'으로
-    보이지 않게 한다(#589).
+  text: status·doctor가 venv launcher의 자식이 쓴 heartbeat를 읽어 살아 있는 gateway를 '기록 없음'으로 보이지 않게 한다(#589).
+  summary: 가상환경 실행기가 띄운 서버의 생존 기록을 읽어 상태 누락으로 보이지 않게 했습니다.
 - sha: fc10f13
   at: 2026-10-14 18:39
-  text: down이 launcher 밑 자식 프로세스의 종료 실패도 실패로 알리고 PID 기록을 남겨, runner가 살아남은 채 성공으로 끝나지
-    않게 한다(#589 봇 P1).
+  text: down이 launcher 밑 자식 프로세스의 종료 실패도 실패로 알리고 PID 기록을 남겨, runner가 살아남은 채 성공으로 끝나지 않게 한다(#589 봇 P1).
+  summary: 실행기의 자식 종료에 실패하면 기록을 남기고 종료 명령도 실패로 알립니다.
 - sha: '1593224'
   at: 2026-10-14 19:19
-  text: tree-kill이 후보 handle을 열어 PID를 고정하고 두 번째 표로 부모 PID를 다시 확인한 뒤 그 handle로 종료하며,
-    실패한 프로세스의 조상 전체를 남겨 재시도가 닿게 한다(#589 봇 P1 2건).
+  text: tree-kill이 후보 handle을 열어 PID를 고정하고 두 번째 표로 부모 PID를 다시 확인한 뒤 그 handle로 종료하며, 실패한 프로세스의 조상 전체를 남겨 재시도가 닿게 한다(#589 봇 P1 2건).
+  summary: 종료할 대상의 신원을 재확인하고 실패하면 상위 기록을 남겨 다시 종료하게 했습니다.
 - sha: b247ef0
   at: 2026-10-14 20:24
-  text: 열 수 없는(Access denied) 후손도 종료 실패와 똑같이 실패로 기록하고 조상을 보존해 down이 살아남은 자식을 두고 성공하지
-    않게 한다(#589 봇 P1).
+  text: 열 수 없는(Access denied) 후손도 종료 실패와 똑같이 실패로 기록하고 조상을 보존해 down이 살아남은 자식을 두고 성공하지 않게 한다(#589 봇 P1).
+  summary: 접근이 거부된 자식도 종료 실패로 기록해 살아 있는 작업을 두고 성공하지 않게 합니다.

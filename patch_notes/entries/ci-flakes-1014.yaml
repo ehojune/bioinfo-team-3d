@@ -2,16 +2,17 @@ pr: 598
 rows:
 - sha: 8f49942
   at: 2026-10-14 22:14
-  text: CI에서 같은 test가 2번 이상 흔들린 원인인 1~2초 실제 시계 경계를 사건 대기로 바꿨다(login·quota wait, stall
-    watch, topic checklist, round records, followup e2e, Chrome 시작).
+  text: CI에서 같은 test가 2번 이상 흔들린 원인인 1~2초 실제 시계 경계를 사건 대기로 바꿨다(login·quota wait, stall watch, topic checklist, round records, followup e2e, Chrome 시작).
+  summary: 짧은 실제 시간에 기대던 검사를 사건 대기로 바꿔 반복 검사 흔들림을 줄였습니다.
 - sha: 41b379e
   at: 2026-10-14 22:14
-  text: Windows에서 백신·색인기가 방금 쓴 파일을 붙들어 os.replace가 PermissionError로 거부되면 최대 약 1초 기다린다(라운드
-    기록·atomic_write_text).
+  text: Windows에서 백신·색인기가 방금 쓴 파일을 붙들어 os.replace가 PermissionError로 거부되면 최대 약 1초 기다린다(라운드 기록·atomic_write_text).
+  summary: Windows에서 백신 등이 파일을 잠깐 잡고 있으면 저장 교체를 짧게 기다렸다 재시도합니다.
 - sha: f7e8537
   at: 2026-10-14 23:05
   text: CI flake 정리 상태 기록을 docs/status에 추가했다.
+  summary: 불안정한 자동 검사를 정리한 상태를 개발 문서에 기록했습니다.
 - sha: c0da1ed
   at: 2026-10-14 23:20
-  text: POSIX에서 SIGKILL 직후 /proc/<pid>/stat이 ESRCH를 돌려주면 신원 불명(2)이 아니라 이미 끝난 프로세스(0)로
-    본다(gateway 종료 watcher).
+  text: POSIX에서 SIGKILL 직후 /proc/<pid>/stat이 ESRCH를 돌려주면 신원 불명(2)이 아니라 이미 끝난 프로세스(0)로 본다(gateway 종료 watcher).
+  summary: 강제 종료 직후 사라진 프로세스를 신원 불명이 아닌 종료 완료로 판단합니다.

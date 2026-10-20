@@ -3,11 +3,12 @@ rows:
 - sha: 0aece30
   at: 2026-10-02 18:27
   text: 연구 요청을 advisory와 shadow로 반씩 고정 배정하고 안전한 재사용 후보 참고와 arm별 효과·실패·비용 보고를 추가
+  summary: 연구 계획의 재사용 조언을 비교 실험하고 방식별 효과·실패·비용을 보고합니다.
 - sha: bb9d71b
   at: 2026-10-02 18:47
-  text: A/B arm은 연구 요청에만 붙이고, 참조율은 계획 때 요청에 고정한 후보 ID로 판정하며, 그 ID를 쓴 계획이 정보 경계에 걸려
-    꺼지지 않게 함
+  text: A/B arm은 연구 요청에만 붙이고, 참조율은 계획 때 요청에 고정한 후보 ID로 판정하며, 그 ID를 쓴 계획이 정보 경계에 걸려 꺼지지 않게 함
+  summary: 연구 요청에만 비교 실험을 적용하고 처음 고정한 재사용 후보를 기준으로 평가합니다.
 - sha: e0d71e0
   at: 2026-10-02 18:58
-  text: 후보가 있으면 shadow arm도 같은 prompt로 한 번 더 계획해 두 arm의 CSO 호출 수를 맞추고, A/B selector가
-    읽는 live 상태는 event loop에서 복사
+  text: 후보가 있으면 shadow arm도 같은 prompt로 한 번 더 계획해 두 arm의 CSO 호출 수를 맞추고, A/B selector가 읽는 live 상태는 event loop에서 복사
+  summary: 비교 실험의 두 방식에 같은 횟수의 계획 기회를 주고 상태를 안전하게 복사합니다.

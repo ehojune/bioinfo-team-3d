@@ -3,3 +3,4 @@ rows:
 - sha: fd429ab
   at: 2026-10-17 20:56
   text: semantics 생성 ID 오판을 막고 P2A PMID 선택·생략 기록을 복구
+  summary: 자동 생성한 번호의 오판을 막고 논문 선택·생략 기록을 복구했습니다.

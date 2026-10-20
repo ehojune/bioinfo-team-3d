@@ -1,5 +1,6 @@
 pr: 577
 rows:
-- sha: "bbb5dd9"
+- sha: bbb5dd9
   at: 2026-10-13 22:09
   text: init에서 새 pipeline 공개 기여 동의를 묻고 기존 동의값·대상을 보존
+  summary: 초기 설정에서 새 분석 흐름의 공개 기여 동의를 묻고 기존 동의와 대상을 보존합니다.

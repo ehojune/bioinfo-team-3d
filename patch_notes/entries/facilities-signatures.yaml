@@ -1,11 +1,14 @@
 pr: 447
 rows:
-- sha: '9f3b7f0'
+- sha: 9f3b7f0
   at: 2026-10-06 17:14
   text: '단계 실패에 environment 종류와 오류 서명 표를 넣고, 재시도 대신 "환경 문제: 원인 — 할 일"을 웹·보고서·labhq status에 보인다 (#35)'
-- sha: 'c3be2fa'
+  summary: 환경 문제로 실패하면 무작정 재시도하지 않고 원인과 해야 할 일을 화면·보고서에 보여 줍니다.
+- sha: c3be2fa
   at: 2026-10-06 17:29
-  text: '환경 서명이 한국어 Windows 문구를 잡고, 인용만 한 줄·건너뛴 단계·이미 넘어간 실패 명령·timeout 같은 일시 오류는 환경 문제로 세지 않는다 (#35)'
-- sha: '195418c'
+  text: 환경 서명이 한국어 Windows 문구를 잡고, 인용만 한 줄·건너뛴 단계·이미 넘어간 실패 명령·timeout 같은 일시 오류는 환경 문제로 세지 않는다 (#35)
+  summary: 한국어 환경 오류를 찾되 단순 인용·이미 지난 실패·일시 시간 초과는 오인하지 않습니다.
+- sha: 195418c
   at: 2026-10-06 17:48
-  text: 'CLI stderr의 옛 환경 서명은 권한 거부·승인·예산 같은 명시적 원인에 양보하고, Antigravity 오류 객체의 message와 직원 CLI 실행 파일 누락(executable not found)도 환경 문제로 잡는다 (#35)'
+  text: CLI stderr의 옛 환경 서명은 권한 거부·승인·예산 같은 명시적 원인에 양보하고, Antigravity 오류 객체의 message와 직원 CLI 실행 파일 누락(executable not found)도 환경 문제로 잡는다 (#35)
+  summary: 명확한 권한·예산 오류를 우선 알리고 도구의 오류 메시지와 실행 파일 누락도 환경 문제로 찾습니다.

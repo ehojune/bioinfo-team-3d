@@ -3,9 +3,12 @@ rows:
 - sha: 64f1527
   at: 2026-10-20 11:32
   text: 재현 receipt의 Python 실행이 -S를 빼 interpreter site-packages(numpy 등)를 불러오고, 문법 검사는 -I -S -B를 유지하며, 실제 interpreter 격리 test를 CI에 더했다.
+  summary: 재현 검사에서 설치된 Python 패키지를 쓰되 문법 검사의 격리는 유지합니다.
 - sha: 6cf6c8a
   at: 2026-10-20 12:26
   text: Windows tree-kill이 재사용된 PID를 부모로 적은 부팅 때 system 프로세스를 실패로 세지 않아, 멈춘 gateway를 강제로 끝낼 수 있다(PR 800 Windows CI).
+  summary: Windows 프로세스 번호 재사용으로 멈춘 서버를 종료하지 못하던 오류를 고쳤습니다.
 - sha: 1bbb061
   at: 2026-10-20 13:00
   text: 외부 조회 진행 기록이 Python 3.10에서 잃어버린 취소로 끝없이 돌며 조회를 멈추던 문제를 막았다(PR 800 3.10 CI 멈춤).
+  summary: Python 3.10에서 외부 조회 취소를 놓쳐 검사가 끝없이 멈추던 문제를 고쳤습니다.

@@ -2,22 +2,25 @@ pr: 339
 rows:
 - sha: 51c0946
   at: 2026-10-03 07:24
-  text: 내장 hpc 도구의 모든 실패와 ask 도구의 broker 연결 실패를 isError로 돌리고 "이 실패는 증거도 부재 증명도 아닙니다"
-    줄을 붙였다. approval은 deny로 두고 같은 줄만 붙였다.
+  text: 내장 hpc 도구의 모든 실패와 ask 도구의 broker 연결 실패를 isError로 돌리고 "이 실패는 증거도 부재 증명도 아닙니다" 줄을 붙였다. approval은 deny로 두고 같은 줄만 붙였다.
+  summary: 계산·질문 도구의 실패를 오류로 돌려주고 근거로 오해하지 않게 알립니다.
 - sha: 59d671c
   at: 2026-10-03 07:24
-  text: 'labhq verify: 요청의 산출을 이 PC에서 다시 해시해 기록과 비교하고 보고서 앵커를 다시 검사하며, --bundle로 감사
-    번들 zip을 만든다.'
+  text: 'labhq verify: 요청의 산출을 이 PC에서 다시 해시해 기록과 비교하고 보고서 앵커를 다시 검사하며, --bundle로 감사 번들 zip을 만든다.'
+  summary: 기록한 결과 파일을 다시 확인해 식별값·보고서 근거를 검사하고 감사 묶음을 만듭니다.
 - sha: 9cae5b5
   at: 2026-10-03 07:24
   text: 'README·HANDOFF에 labhq verify 사용법과 #58 남은 항목을 적었다.'
+  summary: 결과 재현 검사 사용법과 아직 남은 근거 검증 작업을 문서에 적었습니다.
 - sha: d59cba0
   at: 2026-10-03 07:41
   text: ask broker 연결 실패 test를 ToolError 계약에 맞추고 400 경로의 공유 producer 단언을 따로 두었다.
+  summary: 질문 중계 연결 실패 검사가 실제 오류 형식과 맞도록 수정했습니다.
 - sha: 53abc40
   at: 2026-10-03 07:41
-  text: 'labhq verify: 기록 해시가 없는 산출도 지금 없으면 missing으로 본다(거짓 missing은 폴더 산출·통제 구역·대소문자
-    규칙으로 막음).'
+  text: 'labhq verify: 기록 해시가 없는 산출도 지금 없으면 missing으로 본다(거짓 missing은 폴더 산출·통제 구역·대소문자 규칙으로 막음).'
+  summary: 예전 식별값이 없어도 결과 파일이 지금 사라졌으면 누락으로 표시합니다.
 - sha: 7788c97
   at: 2026-10-03 07:54
   text: 'verify: 기록된 작업 폴더 경로를 조회 전에 글자로 검사, 번들은 배타적 임시 파일로, wrap-up 해시 정리(봇 P1 둘)'
+  summary: 재현 검사가 경로를 먼저 확인하고 감사 파일 생성·마지막 식별값 처리를 보강합니다.

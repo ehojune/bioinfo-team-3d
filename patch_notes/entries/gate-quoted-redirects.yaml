@@ -2,21 +2,25 @@ pr: 481
 rows:
 - sha: ff24e21
   at: 2026-10-03 07:36
-  text: 셸 쓰기 검사가 따옴표·주석·heredoc 본문·PowerShell here-string 안의 '>'를 리다이렉트로 보지 않게 했다(모의
-    시운전 승인 카드 오탐 두 건). 셸이 다르게 읽을 여지가 있으면 예전처럼 원문을 훑고, 원문 훑기도 '>'마다 대상을 읽는다.
+  text: 셸 쓰기 검사가 따옴표·주석·heredoc 본문·PowerShell here-string 안의 '>'를 리다이렉트로 보지 않게 했다(모의 시운전 승인 카드 오탐 두 건). 셸이 다르게 읽을 여지가 있으면 예전처럼 원문을 훑고, 원문 훑기도 '>'마다 대상을 읽는다.
+  summary: 인용문 속 꺾쇠를 파일 쓰기로 오해하지 않되 불확실한 명령은 계속 검사합니다.
 - sha: 8c191a2
   at: 2026-10-03 08:27
-  text: 가리기를 줄의 모든 명령이 인용문을 텍스트로만 읽을 때로 좁히고(허용 목록), 구분자에 $가 있는 heredoc·괄호 안 '<<'·줄
-    끝 CR·$(( )) 안의 따옴표·토큰 중간의 here-string 머리는 원문을 훑게 해 가린 뒤 리다이렉트가 숨는 입력을 막았다.
+  text: 가리기를 줄의 모든 명령이 인용문을 텍스트로만 읽을 때로 좁히고(허용 목록), 구분자에 $가 있는 heredoc·괄호 안 '<<'·줄 끝 CR·$(( )) 안의 따옴표·토큰 중간의 here-string 머리는 원문을 훑게 해 가린 뒤 리다이렉트가 숨는 입력을 막았다.
+  summary: 복잡한 셸 문법 뒤에 파일 쓰기가 숨어 검사에서 빠지지 않게 보강했습니다.
 - sha: e8d7c17
   at: 2026-10-03 08:39
   text: '게이트: PowerShell 호출 연산자·dot-source·[scriptblock]이 있으면 따옴표를 가리지 않음(봇 P1)'
+  summary: PowerShell이 인용문을 실행할 때는 내용을 숨기지 않고 쓰기를 검사합니다.
 - sha: 162b23a
   at: 2026-10-03 08:48
   text: 'README: 셸 쓰기 검사가 따옴표·heredoc 안의 > 를 다루는 방식'
+  summary: 명령 안의 인용문과 여러 줄 문자열을 검사하는 기준을 문서에 적었습니다.
 - sha: 6048f4b
   at: 2026-10-08 03:11
   text: 따옴표·quoted heredoc의 redirect 오탐을 줄이고 sed·curl·wget의 실제 쓰기 대상을 판별
-- sha: 'caba362'
+  summary: 따옴표 안 기호를 파일 쓰기로 오인하지 않고 실제 수정·다운로드 대상을 판별합니다.
+- sha: caba362
   at: 2026-10-08 03:42
-  text: 'sed의 붙여 쓴 option·따옴표 script를 한 shell word로 해석하고, 미확정 sed·curl·wget option은 원문 검사로 되돌림'
+  text: sed의 붙여 쓴 option·따옴표 script를 한 shell word로 해석하고, 미확정 sed·curl·wget option은 원문 검사로 되돌림
+  summary: 따옴표와 붙은 옵션을 정확히 읽고 불명확한 수정·다운로드 명령은 원문으로 검사합니다.
