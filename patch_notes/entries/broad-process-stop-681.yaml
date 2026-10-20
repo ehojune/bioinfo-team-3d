@@ -36,3 +36,6 @@ rows:
 - sha: 'c484256'
   at: '2026-10-20 11:16'
   text: 'literal 실행 payload·wrapper·find action·pgrep pipeline·ANSI-C quote P1 우회를 차단한다. 실패 57개를 재현한 뒤 mock/static 368개를 확인했고 positional Name 원문은 공식 계약의 stale 근거를 남긴다.'
+- sha: '6954ab6'
+  at: '2026-10-20 12:14'
+  text: 'recruit resume fixture만 가상 polling 시계로 고정했다. 기존 assertion·0.2초 기한·2초 watchdog을 보존하고 순수 mock 6개를 확인했다. 원본 Hub fixture는 Popen guard 차단 뒤 재실행하지 않았다.'
