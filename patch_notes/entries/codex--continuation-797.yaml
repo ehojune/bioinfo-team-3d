@@ -20,3 +20,8 @@ rows:
   text: 최신 main의 독자별 안내·현행 큐와 PR 807 재사용 계약/검증 근거를 함께 보존해 HANDOFF 충돌을 해결했다. manual에
     병합 전 구현을 표시했다. 제품/테스트 변경 없이 관련 mock/static 38건 통과, 초기 완료 CI는 성공·Windows 진행 중이며
     실제 실행/CI 대기는 하지 않았다.
+- sha: 04fbc08
+  at: 2026-10-20 17:44
+  text: 요청 references/project_dirs의 내용 증거가 없으면 CP1 재사용에서 제외하고 dispatch 입력 부재 기록을 보존한다.
+    과거 증거 누락과 승인 후 입력 추가는 중단하며 metadata 삭제로 미검증 이력을 지우지 못한다. 새 회귀 20건 red 뒤 관련 mock/static
+    112건 통과, 실제 입력/연구/process는 미실행이다.

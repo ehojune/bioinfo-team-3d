@@ -19,7 +19,7 @@ PI가 신규 일반 작업 보류를 해제했습니다. 승인 예산 안에서
 | #790 · #791 | POSIX runner TERM·HUP 종료 기록(#664) · 조상 단계 산출의 읽기 전용 inputs 복사(#665) |
 | #793 | 문서 전용 변경의 CI 검사와 같은 tree 검증 재사용 |
 | #802 | Windows Job 탈출 검증과 doctor 운영 준비 판정 분리(#795) |
-| #807 | 후속 연구 재사용·CP1 snapshot 일치(#797). 노드 context·dispatch 도구 증거·현재 차수 완료 결과 보존. [검증·한계](docs/status/2026-10-20-1603-codex-continuation-797-review.md); CI·새 head 리뷰는 controller |
+| #807 | 후속 연구 재사용·CP1 snapshot 일치(#797). 요청 외부 입력·과거 부재 증거 누락도 제외하고 승인 뒤 변경은 중단. [P1 수정·112건 mock 검증](docs/status/2026-10-20-1744-codex-continuation-797-request-inputs.md); CI·새 head 리뷰는 controller |
 | #815 | 응집형 분석 계획·비교 측정 계약(#799), draft |
 | #801 | 이 문서 정비 |
 
