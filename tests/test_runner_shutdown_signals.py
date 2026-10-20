@@ -132,7 +132,7 @@ async def test_standard_entry_cancels_with_evidence_and_mock_gateway_opens_resum
 @pytest.mark.parametrize("connected", [True, False])
 async def test_shutdown_keeps_unacknowledged_results_and_has_a_bounded_wait(connected):
     pending = [{"type": "task.result"}]
-    runner = SimpleNamespace(tasks={}, connected=SimpleNamespace(is_set=lambda: connected),
+    runner = SimpleNamespace(tasks={}, _dispatches=set(), connected=SimpleNamespace(is_set=lambda: connected),
                              store=SimpleNamespace(pending=lambda: pending), stop=Mock())
     await asyncio.wait_for(Runner.shutdown(runner, timeout_s=.02), 1)
     runner.stop.assert_called_once_with()
