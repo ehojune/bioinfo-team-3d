@@ -1507,7 +1507,7 @@ class Runner:
                 await emit_final({"state": "error", "error": short(error, 200)}, result.model_dump(mode="json"))
                 return result
             root = self.ws_root.resolve()
-            artifact_contract = (task.meta.get("kind") == "step" and
+            artifact_contract = (task.meta.get("kind") in {"step", "result_correction", "slot_repair"} and
                                  isinstance(task.meta.get("upstream_artifacts"), dict))
             staged_inputs: list[str] = []
             for directory in ([] if artifact_contract else task.meta.get("upstream_dirs", [])):
@@ -1532,6 +1532,7 @@ class Runner:
                                     for sid in artifacts if sid not in accepted})
                 note = ("Read collected ancestor artifacts only through inputs/<step_id>/. "
                         "These copies are read-only; do not read sibling workspaces. "
+                        "Save scripts and intermediate files only in outputs/ or .tmp/. "
                         "If an input is unavailable, ask the CSO; there is no direct-path fallback.")
                 if unavailable:
                     note += "\n" + "\n".join(unavailable.values())
@@ -1694,6 +1695,12 @@ class Runner:
             output_records: list[dict[str, Any]] = []
             observed_outputs: list[dict[str, Any]] = []
             output_scan_notes: list[str] = []
+            # A declared step artifact is a future ancestor input. Hash through the same admission cap;
+            # Steps without declared artifacts retain their configured observation/output cap.
+            artifact_hash_limit = self.s.runner.output_hash_max_bytes
+            if task.meta.get('kind') == 'step' and task.meta.get('outputs'):
+                artifact_hash_limit = max(artifact_hash_limit, min(
+                    self.s.runner.input_hash_max_file_bytes, self.s.runner.input_hash_max_total_bytes))
 
             def before_spawn() -> str | None:
                 """Take both baselines after adapter preparation, immediately before its CLI spawn."""
@@ -1712,12 +1719,12 @@ class Runner:
                 if output_before is None:
                     records, _note = await asyncio.to_thread(
                         ws.scan_output_records, zones, self.s.runner.reference_scan_max_entries,
-                        self.s.runner.reference_scan_max_depth, self.s.runner.output_hash_max_bytes)
+                        self.s.runner.reference_scan_max_depth, artifact_hash_limit)
                     await ws.aupdate_run(task.id, environment_record=environment_record(records))
                     return
                 output_records, note = await asyncio.to_thread(
                     ws.scan_output_records, zones, self.s.runner.reference_scan_max_entries,
-                    self.s.runner.reference_scan_max_depth, self.s.runner.output_hash_max_bytes)
+                    self.s.runner.reference_scan_max_depth, artifact_hash_limit)
                 if note:
                     output_scan_notes.append(note)
                 observed_at_ns = time.time_ns()
@@ -1748,7 +1755,8 @@ class Runner:
                 mcp_servers=self._mcp_servers(agent, env, allow_ask=not read_only),
                 env={**env, "MCP_TOOL_TIMEOUT": str(labhq_mcp_timeout_s(self.s) * 1000)},
                 emit=emit, prompt=prompt, prompt_pointer=ws.prompt_pointer, extra_dirs=extra_dirs,
-                read_dirs=read_dirs,
+                read_dirs=read_dirs, read_only_inputs=(staged_inputs or
+                    ([str(ws.dir / 'inputs')] if os.path.lexists(ws.dir / 'inputs') else [])),
                 # Other engines never read these rules; only paths a rule can name go in (#177).
                 claude_settings=engine_settings,
                 private_labels=list(private.labels),
@@ -1827,6 +1835,7 @@ class Runner:
 
             ctx.wait_ready = wait_ready
             await ws.aupdate_run(task.id, started_at=time.time(), runner_id=self.s.runner.id,
+                                 request_id=task.request_id, step_id=task.meta.get('step_id'),
                                  engine=agent.engine.value, model=agent.model,
                                  engine_cli_version=(self.engine_versions or {}).get(agent.engine.value),
                                  resume_of=task.resume_session_id, kind=task.meta.get("kind"),

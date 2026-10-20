@@ -136,10 +136,15 @@ def stage_inputs(ws, artifacts, workspace_root, zones, private_paths, max_file, 
     staged, refused, remaining = [], {}, [max_total]
     root = Path(workspace_root).resolve(strict=True)
     for step, artifact in artifacts.items():
+        owned = False
         try:
             if (not isinstance(step, str) or not INPUT_STEP_ID.fullmatch(step) or step != step.rstrip(' .') or
                     sum(str(s).casefold() == step.casefold() for s in artifacts) != 1):
                 raise ValueError('invalid ancestor step id')
+            # A refused ancestor must not expose an older snapshot either. Unknown/unowned files still refuse
+            # this reset and are never removed. Once owned, every failure below clears all copies from this step.
+            _reset(ws.dir, step, [])
+            owned = True
             source = Path(artifact['workdir']).absolute()
             source_parts = source.relative_to(root).parts
             if not source_parts or source == ws.dir.resolve() or source != source.resolve(strict=True):
@@ -147,9 +152,14 @@ def stage_inputs(ws, artifacts, workspace_root, zones, private_paths, max_file, 
             with _folder(root, source_parts) as held:
                 manifest = _json(held, 'manifest.json')
             task = manifest.get('task') or {}
-            run = (manifest.get('runs') or {}).get(task.get('id')) or {}
+            source_task = artifact['task_id']
+            if not isinstance(source_task, str) or not source_task.strip():
+                raise ValueError('successful source task identity is missing')
+            run = (manifest.get('runs') or {}).get(source_task) or {}
             if (not ws.task.request_id or task.get('request_id') != ws.task.request_id or
-                    (task.get('meta') or {}).get('step_id') != step or run.get('ok') is not True):
+                    (task.get('meta') or {}).get('step_id') != step or run.get('ok') is not True or
+                    run.get('request_id', task.get('request_id')) != ws.task.request_id or
+                    run.get('step_id', (task.get('meta') or {}).get('step_id')) != step):
                 raise ValueError('source is not a successful step of this request')
             outputs, hashes = artifact['outputs'], artifact['output_sha256']
             if not isinstance(outputs, list) or not outputs or len(outputs) > MAX_FILES:
@@ -176,6 +186,12 @@ def stage_inputs(ws, artifacts, workspace_root, zones, private_paths, max_file, 
                       f'inputs/{step}/{name}', expected, max_file, remaining)
             staged.append(str(ws.dir / 'inputs' / step))
         except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+            if owned:
+                try:
+                    _reset(ws.dir, step, [])
+                except (OSError, ValueError, TypeError, KeyError, AttributeError) as cleanup:
+                    # Do not start a staff adapter when a rejected partial snapshot could still be read.
+                    raise RuntimeError('refused ancestor input snapshot could not be cleared') from cleanup
             detail = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
             refused[str(step)] = f'inputs/{step} unavailable ({detail})'
     return staged, refused

@@ -1386,7 +1386,8 @@ async def test_a_step_gets_inputs_links_for_ancestors_it_reaches_through_other_s
     assert prep.meta["upstream_steps"] == {"qc": "runs/qc", "fetch": "runs/fetch", "pair": "runs/pair"}
     assert prep.meta["upstream_dirs"] == ["runs/qc", "runs/fetch", "runs/pair"]  # direct first, then plan order
     assert prep.meta["upstream_artifacts"] == {
-        sid: {"workdir": f"runs/{sid}", "outputs": [f"outputs/{sid}.tsv"], "output_sha256": {}}
+        sid: {"task_id": outcomes[sid].task_id, "workdir": f"runs/{sid}",
+              "outputs": [f"outputs/{sid}.tsv"], "output_sha256": {}}
         for sid in ("qc", "fetch", "pair")}
     assert "## qc · worker\n" in prep.context and "qc done" in prep.context
     assert "## fetch · worker (earlier step, files only)" in prep.context

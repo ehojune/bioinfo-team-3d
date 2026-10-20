@@ -18,6 +18,8 @@ def _runner(tmp_path: Path, monkeypatch, write, *, hash_max_bytes=512 * 1024 * 1
             engine=Engine.claude_code, seen=None, reply=None) -> Runner:
     settings = Settings()
     settings.runner.output_hash_max_bytes = hash_max_bytes
+    # Bound both output observation and future ancestor-input admission in these cap fixtures (#791).
+    settings.runner.input_hash_max_file_bytes = hash_max_bytes
     for name in ("state_dir", "workspace_root", "agents_dir", "talent_dir"):
         setattr(settings.runner, name, str(tmp_path / name))
     runner = Runner(settings)

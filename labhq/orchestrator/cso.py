@@ -4290,6 +4290,7 @@ class Orchestrator:
                               "project_dirs": self.hub.requests.get(rid, {}).get("project_dirs", []),
                               "upstream_dirs": upstream_dirs, "upstream_steps": upstream_steps,
                               "upstream_artifacts": {d: {
+                                  "task_id": results[d].task_id,
                                   "workdir": results[d].workdir, "outputs": list(results[d].outputs),
                                   "output_sha256": dict(results[d].output_sha256),
                               } for d in upstream_steps},

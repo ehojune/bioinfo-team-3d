@@ -21,7 +21,7 @@ def source(root, step='fetch', request='r'):
         'task': {'id': 't-' + step, 'request_id': request, 'meta': {'step_id': step}},
         'runs': {'t-' + step: {'ok': True}},
     }), encoding='utf-8')
-    return folder, {'workdir': str(folder), 'outputs': ['outputs/table.tsv'],
+    return folder, {'task_id': 't-' + step, 'workdir': str(folder), 'outputs': ['outputs/table.tsv'],
                     'output_sha256': {'outputs/table.tsv': hashlib.sha256(b'gene\nfixture\n').hexdigest()}}
 
 
