@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from labhq import cli, proc_tree
+from labhq import cli, proc_tree, windows_launch
 from labhq.process_diagnostics import latest_child_exit
 from labhq.settings import Settings
 
@@ -42,13 +42,16 @@ raise SystemExit(supervisor.main([config, "gateway"]))
 # ancestors, and exits; the launcher waits for the parent and exits too, so nothing but the supervisor can still hold
 # a handle on the parent's process object.
 PARENT = """
-import subprocess, sys, time
+import sys, time
 from pathlib import Path
 
 supervise, config, logs, root = sys.argv[1:5]
-subprocess.Popen([sys.executable, supervise, config, "import time; time.sleep(120)"], cwd=root,
-                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT, close_fds=True,
-                 creationflags=0x00000208)
+sys.path.insert(0, root)  # Fresh direct children do not inherit the WMI caller's pytest sys.path.
+from labhq.windows_launch import require_detached_job
+from tests.test_supervisor_process import _start_script, Settings
+
+require_detached_job()
+child = _start_script(Settings.load(config), supervise, [config, "import time; time.sleep(120)"])
 target = Path(logs) / "gateway-supervisor-diagnostics.jsonl"
 deadline = time.monotonic() + 90
 while time.monotonic() < deadline:
@@ -58,15 +61,54 @@ while time.monotonic() < deadline:
     except OSError:
         pass
     time.sleep(0.1)
+child.close()  # Release our handle; the supervisor alone must keep its exited ancestors pinned.
 """
 LAUNCHER = """
-import subprocess, sys
+import sys
 
-child = subprocess.Popen([sys.executable, *sys.argv[1:6]], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, close_fds=True, creationflags=0x00000208)
+parent, supervise, config, logs, root = sys.argv[1:6]
+sys.path.insert(0, root)  # Also support direct launch, not only WMI's restored caller path.
+from labhq.windows_launch import require_detached_job
+from tests.test_supervisor_process import _start_script, Settings
+
+require_detached_job()
+child = _start_script(Settings.load(config), parent, [supervise, config, logs, root])
 print(child.pid, flush=True)
-child.wait()
+try:
+    child.wait(timeout=120)
+finally:
+    child.close()
 """
+
+
+@pytest.mark.parametrize("script", ["PARENT", "LAUNCHER"])
+def test_ancestor_script_imports_checkout_helper_without_inherited_path(tmp_path, monkeypatch, script):
+    """Mock/static only: cached test modules must not mask a fresh script's missing checkout path."""
+    import ast
+    import builtins
+    from importlib.machinery import PathFinder
+
+    args = ["parent.py", "supervise.py", "config.yaml", "logs", str(ROOT)]
+    monkeypatch.setattr(sys, "argv", ["launcher.py", *args] if script == "LAUNCHER" else args)
+    # A direct Python script starts with its temporary directory, not pytest's injected checkout root.
+    monkeypatch.setattr(sys, "path", [str(tmp_path), *(p for p in sys.path if p and Path(p).resolve() != ROOT)])
+    original_import, checked = builtins.__import__, []
+
+    def checked_import(name, *args, **kwargs):
+        if name == "tests.test_supervisor_process":
+            spec = PathFinder.find_spec("tests", sys.path)  # Bypass sys.modules' already imported fixture.
+            if spec is None or str(ROOT / "tests") not in list(spec.submodule_search_locations or []):
+                raise ModuleNotFoundError("No module named 'tests' in the detached checkout path")
+            checked.append(name)
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", checked_import)
+    tree = ast.parse(globals()[script], feature_version=(3, 10))
+    end = next(i for i, node in enumerate(tree.body)
+               if isinstance(node, ast.ImportFrom) and node.module == "tests.test_supervisor_process")
+    # Execute imports/bootstrap only. No launch, Job query, wait, thread or signal may run here.
+    exec(compile(ast.Module(body=tree.body[:end + 1], type_ignores=[]), f"<{script}-imports>", "exec"), {})
+    assert checked == ["tests.test_supervisor_process"] and sys.path[0] == str(ROOT)
 
 
 def _free_port() -> int:
@@ -106,6 +148,57 @@ def _events(settings: Settings) -> list[str]:
     return [row["event"] for row in _rows(settings)]
 
 
+def _failure_evidence(settings: Settings) -> str:
+    """Include existing safe Job/launch facts instead of only child_start_failed's exception class."""
+    launch = _logs(settings) / "detached-launch.jsonl"
+    files = [launch, *(_logs(settings) / f"{name}-fixture.log" for name in ("launcher", "parent", "supervise"))]
+    return f"supervisor={json.dumps(_rows(settings))}\n" + "\n".join(
+        f"{path.name}={path.read_text(encoding='utf-8')}" for path in files if path.exists())
+
+
+class _ScriptProcess:
+    """File-backed output works for both a Popen and the broker's retained-handle process."""
+    def __init__(self, child, output, settings):
+        self.child, self.output, self.settings = child, output, settings
+        self.pid = child.pid
+
+    @property
+    def returncode(self):
+        return self.child.poll()
+
+    def poll(self):
+        return self.child.poll()
+
+    def wait(self, timeout):
+        return self.child.wait(timeout=timeout)
+
+    def kill(self):
+        self.child.kill()
+
+    def communicate(self, timeout):
+        self.wait(timeout)
+        return self.output.read_text(encoding="utf-8") + "\n" + _failure_evidence(self.settings), None
+
+    def close(self):
+        close = getattr(self.child, "close", None)
+        if close is not None:
+            close()
+
+
+def _start_script(settings: Settings, script, args) -> _ScriptProcess:
+    """Use the production boundary, including base interpreter, BREAKAWAY and ANY-Job verification.
+
+    Raw venv Popen can put the supervisor in the redirector's Job before it starts a fake role.
+    The ancestor test starts its entire chain here; no intermediary reintroduces that redirector.
+    """
+    output = _logs(settings) / f"{Path(script).stem}-fixture.log"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("a", encoding="utf-8") as stream:
+        child = windows_launch.spawn([sys.executable, str(script), *args], state=cli._launch_state(settings),
+                                     role="gateway-supervisor", stdout=stream, **cli._launch_options(settings))
+    return _ScriptProcess(child, output, settings)
+
+
 def _wait_until(check, seconds: float = 60.0):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
@@ -124,14 +217,13 @@ def _role_record(settings: Settings) -> dict | None:
 @pytest.fixture
 def run(tmp_path):
     """Start the supervisor script with a fake gateway; whatever is still running afterwards is ended."""
-    started: list[tuple[subprocess.Popen, Settings]] = []
+    started: list[tuple[_ScriptProcess, Settings]] = []
 
-    def start(child_code: str, supervisor_section: str = "") -> tuple[subprocess.Popen, Settings]:
+    def start(child_code: str, supervisor_section: str = "") -> tuple[_ScriptProcess, Settings]:
         settings = _settings(tmp_path, supervisor_section)
         script = tmp_path / "supervise.py"
         script.write_text(SUPERVISE, encoding="utf-8")
-        process = subprocess.Popen([sys.executable, str(script), settings.config_path, child_code], cwd=ROOT,
-                                   stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        process = _start_script(settings, script, [settings.config_path, child_code])
         started.append((process, settings))
         return process, settings
 
@@ -149,8 +241,7 @@ def run(tmp_path):
                 except ProcessLookupError:
                     pass
         process.wait(timeout=30)
-        if process.stdout:
-            process.stdout.close()
+        process.close()
 
 
 def _end_role(settings: Settings, record: dict) -> None:
@@ -169,6 +260,7 @@ def test_the_supervisor_logs_the_exit_code_of_a_role_that_fails(run):
     rows = _rows(settings)
     events = [row["event"] for row in rows]
     assert events[0] == "start"
+    assert "child_start" in events and "child_exit" in events, output
     assert events.index("parents_pinned") < events.index("child_start") < events.index("child_exit")
     ended = next(row for row in rows if row["event"] == "child_exit")
     assert ended["code"] == 7 and ended["stop_requested"] is False and ended["child"] == "gateway"
@@ -186,7 +278,7 @@ def test_with_restarting_on_a_role_that_keeps_failing_is_started_again_and_then_
 
     assert process.returncode == 1, output
     events = _events(settings)
-    assert events.count("child_start") == 3 and events.count("child_exit") == 3  # the start and two restarts
+    assert events.count("child_start") == 3 and events.count("child_exit") == 3, output  # start and two restarts
     assert events.count("restart_scheduled") == 2 and events[-2:] == ["restart_giving_up", "exit"]
     assert {row["code"] for row in _rows(settings) if row["event"] == "child_exit"} == {3}
 
@@ -194,7 +286,7 @@ def test_with_restarting_on_a_role_that_keeps_failing_is_started_again_and_then_
 def test_a_role_killed_from_outside_is_restarted_but_one_stopped_on_purpose_is_not(run):
     process, settings = run(SLEEP, "supervisor:\n  restart: true\n  backoff_s: 0\n  backoff_cap_s: 0\n")
     first = _wait_until(lambda: _role_record(settings))
-    assert first, process.poll()
+    assert first, _failure_evidence(settings)
 
     def restarted():
         record = _role_record(settings)
@@ -202,7 +294,7 @@ def test_a_role_killed_from_outside_is_restarted_but_one_stopped_on_purpose_is_n
 
     _end_role(settings, first)  # an outside kill: nobody asked for this stop
     second = _wait_until(restarted)
-    assert second, _events(settings)
+    assert second, _failure_evidence(settings)
 
     cli._mark_stopping(settings, "gateway")  # what `down` writes before it ends anything
     _end_role(settings, second)
@@ -255,17 +347,20 @@ def test_the_supervisor_holds_its_exited_parent_so_that_pid_is_never_handed_out(
     scripts = {"supervise.py": SUPERVISE, "parent.py": PARENT, "launcher.py": LAUNCHER}
     for name, text in scripts.items():
         (tmp_path / name).write_text(text, encoding="utf-8")
-    launcher = subprocess.Popen(
-        [sys.executable, str(tmp_path / "launcher.py"), str(tmp_path / "parent.py"), str(tmp_path / "supervise.py"),
-         settings.config_path, str(_logs(settings)), str(ROOT)],
-        cwd=ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    launcher = _start_script(settings, tmp_path / "launcher.py",
+                             [str(tmp_path / "parent.py"), str(tmp_path / "supervise.py"),
+                              settings.config_path, str(_logs(settings)), str(ROOT)])
     supervisor_pid = None
     try:
-        parent_pid = int(launcher.stdout.readline())
+        def parent_started():
+            text = launcher.output.read_text(encoding="utf-8").strip()
+            return int(text) if text.isdecimal() else None
+        parent_pid = _wait_until(parent_started)
+        assert parent_pid is not None, _failure_evidence(settings)
         launcher.wait(timeout=120)  # the launcher ends once the parent has: nobody else holds the parent now
 
         assert _wait_until(lambda: exited_but_held(parent_pid)), (
-            f"the exited parent {parent_pid} was not held by the supervisor: {_events(settings)}")
+            f"the exited parent {parent_pid} was not held by the supervisor: {_failure_evidence(settings)}")
         pinned = next(row for row in _rows(settings) if row["event"] == "parents_pinned")
         assert parent_pid in pinned["pinned"], pinned
         for _ in range(10):  # and it stays held for as long as the supervisor lives
@@ -276,7 +371,7 @@ def test_the_supervisor_holds_its_exited_parent_so_that_pid_is_never_handed_out(
         if launcher.poll() is None:
             launcher.kill()
         launcher.wait(timeout=30)
-        launcher.stdout.close()
+        launcher.close()
         if supervisor_pid is None:
             starts = [row for row in _rows(settings) if row["event"] == "start"]
             supervisor_pid = starts[0]["pid"] if starts else None

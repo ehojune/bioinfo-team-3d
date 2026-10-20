@@ -160,6 +160,9 @@ def test_watch_shows_a_revise_choice_and_a_timeout_apart_from_a_refusal(capsys):
 
 
 def test_up_and_down_manage_only_their_process_records_and_clean_runner_path(tmp_path, monkeypatch, capsys):
+    from labhq import windows_launch
+    monkeypatch.setattr(windows_launch, "current_job", lambda: {"in_job": False})
+    monkeypatch.setattr(windows_launch, "child_job_membership", lambda child, **kw: False)
     settings = Settings.load(str(_config(tmp_path)))
     monkeypatch.setattr(cli, "_health", lambda _settings: None)
     monkeypatch.setattr(

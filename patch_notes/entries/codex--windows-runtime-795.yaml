@@ -1,0 +1,30 @@
+pr: 802
+rows:
+- sha: 8f72071
+  at: 2026-10-20 11:53
+  text: Windows detached 실행의 Job breakaway와 자식 비소속을 확인하고 설정 준비·인증된 runtime 준비를 나눠
+    비정상 소멸을 실패로 판정한다.
+- sha: 45240fb
+  at: 2026-10-20 12:12
+  text: runtime health 검증에 started_here=False를 넘기고 실제 함수·autospec 회귀와 Job 조회 오류 진단을
+    추가하며 Windows CI의 생존·거부 증거를 분리한다.
+- sha: ed8c201
+  at: 2026-10-20 12:51
+  text: 확인된 direct 실패에만 소유 자식을 회수한 뒤 nonce·PID 생성 시각·사용자·실행 파일·전체 Job 비소속을 검사하는 임시
+    WMI bootstrap을 한 번 시도하며 venv와 fail-closed를 유지한다.
+- sha: a358267
+  at: 2026-10-20 13:19
+  text: binary journal mode와 native process-handle 이름을 명시해 encoding 검사를 유지하고 승인된 recruit
+    receipt clock·external_wait test-only delta를 원문 재사용한다.
+- sha: 05b3d64
+  at: 2026-10-20 14:42
+  text: supervisor 통합 fixture와 parent-pin chain을 기존 Job 검증 launch로 연결하고 file output·실패
+    진단·mock 회귀를 추가하며 lifecycle·restart·소유 handle 보호를 유지한다.
+- sha: 2e26626
+  at: 2026-10-20 15:51
+  text: ancestor fixture가 전달받은 checkout root를 helper import 전에 넣고 fresh-script 경로를
+    import cache 없이 검증해 parent-pin CI의 tests 모듈 누락을 고친다.
+- sha: 2130b8e
+  at: 2026-10-20 16:45
+  text: post-spawn 로그 오류에도 소유 handle을 정리하고 인증된 현재 연결로 과거 이력만 해소하며 Windows runtime에
+    현재 PID 생성 시각·생존·전체 Job 비소속 증명을 요구한다.
