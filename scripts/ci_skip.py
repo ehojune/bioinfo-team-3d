@@ -132,7 +132,7 @@ def descriptive_prose(text: str, *, heading: bool) -> bool:
     imperative verbs therefore do not need to be added to a command denylist.
     """
     text = re.sub(r"[ \t\r\n]+", " ", text).strip()
-    if heading and re.fullmatch(r"[^\W\d_]+", text):
+    if heading and re.fullmatch(r"[A-Za-z]+", text):
         return True  # single-word headings; argv-shaped headings stay protected
     subject = r"(?:The|A|An|This|That|These|Those) (?:[A-Za-z]+ ){1,6}"
     descriptive = (
@@ -145,10 +145,11 @@ def descriptive_prose(text: str, *, heading: bool) -> bool:
     for sentence in re.split(r"(?<=[.!?。]) ", text):
         if re.fullmatch(r"(?:" + descriptive + r")[.!?。]", sentence):
             continue
-        # Only descriptive/reporting endings, not every polite verb, qualify.
-        # Mixed-language argv and unfamiliar/imperative predicates stay full.
-        if re.fullmatch(r"[가-힣 ]+(?:명확해졌습니다|짧아졌습니다|명확합니다|간결합니다|"
-                        r"짧습니다|보입니다|설명합니다|담습니다|남깁니다|확인합니다)[.!?。]", sentence):
+        # One document subject + optional degree + one adjective. An arbitrary
+        # prefix or a reporting tail can conceal action chains, even unspaced.
+        if re.fullmatch(r"(?:설명|문서|문단|그림|도표|개요)(?:은|는|이|가) *"
+                        r"(?:(?:더|덜|매우) *)?(?:명확(?:합니다|해졌습니다)|"
+                        r"간결합니다|짧(?:습니다|아졌습니다))[.!?。]", sentence):
             continue
         return False
     return bool(text)

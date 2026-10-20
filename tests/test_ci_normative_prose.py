@@ -208,6 +208,84 @@ def test_unreviewed_sentence_forms_conservatively_run_full(text):
     assert not cs.document_change('README.md', text, 'The overview is clearer.')
 
 
+KOREAN_ACTION_EDITS = (
+    ('프롭으로 위젯을 조립하고 결과를 확인합니다.',
+     '프롭으로 위젯을 분해하고 결과를 확인합니다.'),
+    ('젤룩으로 프라븐을 돌리고 내용을 설명합니다.',
+     '젤룩으로 프라븐을 묶고 내용을 설명합니다.'),
+    ('브룬을 플룩하고 조각을 담습니다.', '브룬을 글룩하고 조각을 담습니다.'),
+    ('트룹을 조립하고 기록을 남깁니다.', '트룹을 분해하고 기록을 남깁니다.'),
+    ('위젯을 확인합니다.', '부품을 확인합니다.'),
+    ('위젯을 설명합니다.', '부품을 설명합니다.'),
+    ('위젯을 담습니다.', '부품을 담습니다.'),
+    ('위젯을 남깁니다.', '부품을 남깁니다.'),
+    ('프롭으로위젯을조립하고결과를확인합니다.',
+     '프롭으로위젯을분해하고결과를확인합니다.'),
+    ('설명이조립하고결과를확인합니다.', '설명이분해하고결과를확인합니다.'),
+    ('설명이 더 명확해졌습니다. 프롭으로 위젯을 조립하고 결과를 확인합니다.',
+     '설명이 더 명확해졌습니다. 프롭으로 위젯을 분해하고 결과를 확인합니다.'),
+    ('설명이 더 명확해졌습니다.프롭으로 위젯을 조립하고 결과를 확인합니다.',
+     '설명이 더 명확해졌습니다.프롭으로 위젯을 분해하고 결과를 확인합니다.'),
+    ('프롭으로 위젯을 조립하고 결과를 확인합니다. 설명이 더 명확해졌습니다.',
+     '프롭으로 위젯을 분해하고 결과를 확인합니다. 설명이 더 명확해졌습니다.'),
+    ('## 프롭으로위젯을조립하고결과를확인합니다',
+     '## 프롭으로위젯을분해하고결과를확인합니다'),
+    ('- 프롭으로 위젯을 조립하고 결과를 확인합니다.',
+     '- 프롭으로 위젯을 분해하고 결과를 확인합니다.'),
+)
+
+
+@pytest.mark.parametrize('path', PATHS)
+@pytest.mark.parametrize('before,after', KOREAN_ACTION_EDITS)
+def test_korean_action_chains_cannot_be_descriptions_by_their_report_tail(path, before, after):
+    assert not cs.document_change(path, before, after)
+    assert not cs.document_change(path, after, before)
+    plain = '설명이 더 명확해졌습니다.'
+    assert not cs.document_change(path, plain, after)
+    assert not cs.document_change(path, before, plain)
+
+
+def test_korean_action_chain_reaches_full_diff_decision_with_fake_git(monkeypatch):
+    before, after = KOREAN_ACTION_EDITS[0]
+    def git(*args):
+        if args[0] == 'diff':
+            return ':100644 100644 old new M\0README.md\0'
+        assert args[0] == 'show'
+        return {'base:README.md': before, 'head:README.md': after}[args[1]]
+    monkeypatch.setattr(cs, 'git', git)
+    assert not cs.can_skip('head', 'base')
+
+
+@pytest.mark.parametrize('before,after', [
+    ('설명이 더 명확해졌습니다.', '설명이 더 짧아졌습니다.'),
+    ('문서는 간결합니다.', '문서는 짧습니다.'),
+])
+def test_small_korean_adjective_grammar_remains_document_only(before, after):
+    assert cs.document_change('README.md', before, after)
+    assert cs.document_change('README.md', after, before)
+
+
+def test_small_korean_unspaced_adjectives_retain_the_existing_fragment_fallback():
+    # Do not loosen the existing single-token/full fallback to admit new prose.
+    before, after = '설명이더명확해졌습니다.', '설명이더짧아졌습니다.'
+    assert not cs.document_change('README.md', before, after)
+    assert not cs.document_change('README.md', after, before)
+
+
+def test_small_korean_grammar_does_not_add_a_previously_unsupported_adjective_form():
+    before, after = '문서는 간결합니다.', '문서는 간결해졌습니다.'
+    assert not cs.document_change('README.md', before, after)
+    assert not cs.document_change('README.md', after, before)
+
+
+def test_korean_action_text_can_only_reflow_with_identical_markdown_semantics():
+    before, changed = KOREAN_ACTION_EDITS[0]
+    wrapped = before.replace('결과를 확인합니다.', '결과를\n확인합니다.')
+    assert cs.document_change('README.md', before, wrapped)
+    assert cs.document_change('README.md', wrapped, before)
+    assert not cs.document_change('README.md', wrapped, changed)
+
+
 def test_4320728990_unchanged_readme_heading_is_already_document_only_with_fake_git(monkeypatch):
     before, after = '# labhq\n', '# labhq\nMore prose.\n'
     assert cs.document_change('README.md', before, after)

@@ -246,7 +246,14 @@ def test_actual_readme_prose_edit_preserves_existing_examples():
     sentence = "단계마다 점검하고 근거를 다시 확인하도록 남깁니다."
     assert sentence in before
     after = before.replace(sentence, "단계마다 점검하고 남긴 근거를 다시 확인합니다.", 1)
+    # Operational/reporting prose is now ambiguous/full; keep the original
+    # real README input covered rather than allowing an action-tail bypass.
+    assert not cs.document_change("README.md", before, after)
+    # The same README's examples still permit an independent adjective edit.
+    before += "\n\n설명이 더 명확해졌습니다.\n"
+    after = before.replace("설명이 더 명확해졌습니다.", "설명이 더 짧아졌습니다.")
     assert cs.document_change("README.md", before, after)
+    assert cs.document_change("README.md", after, before)
 
 
 @pytest.mark.parametrize("text", ["```python\nprint(1)", "```", "Text with `unclosed code.",
