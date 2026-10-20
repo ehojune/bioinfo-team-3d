@@ -33,3 +33,7 @@ rows:
   - sha: 'fcf645d'
     at: '2026-10-20 20:21'
     text: '검증 증명서 실패가 어느 신원 검사에서 발생했는지 구분합니다. manifest의 기존 허용 조건을 유지하고 SHA·workflow ref·순서 있는 parent·blob 오류를 제한된 역할명으로 진단하며 관련 mock/static 313개를 통과했습니다. 실제 실패 원인은 미확정입니다.'
+  - sha: '0c404e4'
+    at: '2026-10-20 20:48'
+    summary: '최신 변경을 합치면서 상담 복구 검사와 검증 증명서의 보호 조건을 유지했습니다.'
+    text: 'main 233ac70을 명시 통합하고 consult fixture 충돌을 단일 None provenance mock으로 해결했다. PR의 event adoption·중복 provider 금지와 main의 facilities 대기 금지 계약, 양쪽 assertion을 보존했으며 관련 mock/static 316개를 통과했다. workflow/helper는 1c4917f0와 동일하고 manifest 원인은 여전히 미확정이다.'
