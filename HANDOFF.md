@@ -26,7 +26,7 @@
 | 4 | 공개 소형 dry-run·필수 gate → Astra 전체 repo 검토 | labhq 코드·README·구조 전체를 검토([PI 승인](https://github.com/ehojune/bioinfo-team-3d/issues/435#issuecomment-6251776665), [#739 확인](https://github.com/ehojune/bioinfo-team-3d/issues/739#issuecomment-6251808284)) |
 | 5 | 동일 요청 bench 비교([#739](https://github.com/ehojune/bioinfo-team-3d/issues/739)) | labhq 혼합 roster와 Astra·Sol·Opus **단독 세션**을 비교(CSO-only와 구분). 생성 결과 repo blind review는 실행 뒤 별도 |
 | 완료 | #796 CP1 input-fit·최소 기여 기록 | #803 `9acf873` 병합. mainline/Shadow 분리 유지; 실제 장치 효용 PASS는 별도 |
-| 진행 | #797 continuation 재사용·CP1 일치 | 승인 전 검증 snapshot·노드별 증거·승인 후 drift 중단. mock/static 뒤 PR, CI·리뷰·병합은 controller; #798·#804 별도 |
+| 진행 | #797 continuation 재사용·CP1 일치 / PR #807 | 실행 context·identity 일치, dispatch 도구 기록, 부분 완료 결과 재승인 보존 보강. 관련 mock/static 113건 통과; CI·새 head 리뷰·병합은 controller. #798·#804 별도 |
 
 v0.5 선언(2026-10-08)은 당시 실제 연구 요청 2건과 `labhq verify` exit 0의 근거입니다. 이후 장치의 구현·CI 통과는 새 실운전 PASS를 뜻하지 않습니다. 버전별 기준은 [매뉴얼 로드맵](docs/manual.md#로드맵)에 있습니다.
 

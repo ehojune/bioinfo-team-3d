@@ -104,7 +104,9 @@ def tool_signatures(plan: Mapping[str, Any], agents: Mapping[str, Any], engines:
                     continue
                 if config is not None:
                     payload = {'agent': payload, 'engine': config.model_dump(mode='json')}
-                signatures[step["id"]] = _digest(payload)
+                # Version the executed prompt contract too: pre-scoped historical results cannot prove that
+                # another branch's full definition was absent from their input.
+                signatures[step["id"]] = _digest({'node_context': 1, 'configuration': payload})
             except (TypeError, ValueError):
                 pass  # an unrecordable declaration supplies no reuse proof
     return signatures
