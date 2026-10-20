@@ -24,3 +24,6 @@ rows:
   - sha: '0e1a3f8'
     at: '2026-10-20 16:16'
     text: 'consult 재시작 fixture의 고정 sleep·3초 완료 경합을 runner/adoption event와 대상별 outer watchdog으로 교체, 선택적 Git provenance만 mock, 관련 8개 검증'
+  - sha: 'aaa0469'
+    at: '2026-10-20 17:01'
+    text: '최신 main의 문서·signal 변경을 통합하고 HANDOFF 충돌을 짧은 안내와 CI 정책 링크로 해결, workflow/helper·기존 fixture 보존 및 mock/static 358개 확인'
