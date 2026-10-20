@@ -86,9 +86,9 @@ Limits: prior-research steps were checked on four test requests. Hiring from a r
 
 **Same bar at every handoff**
 
-A topic key passes the same checklist to planning, science review, and solo handling. The checklist covers 43 domains and 124 items; research-lane domain packs use the same keys.
+A topic key passes the same checklist to planning, science review, and solo handling. The checklist covers 45 domains and 135 items; research-lane domain packs use the same keys.
 
-Limits: 40 domains beyond the first three have not run on real requests. Reduced omissions and an advantage over the semantic baseline remain unmeasured. [Evidence and limits](docs/reference/readme-evidence.md#card-3)
+Limits: 42 domains beyond the first three have not run on real requests. Reduced omissions and an advantage over the semantic baseline remain unmeasured. [Evidence and limits](docs/reference/readme-evidence.md#card-3)
 
 </td>
 <td width="50%" valign="top">
@@ -140,7 +140,7 @@ Records get meaning in three layers. The lower the layer, the firmer; the higher
 
 | Layer | What it is | In labhq |
 |---|---|---|
-| Annotation | Tags attached to data and evidence | A 123-term vocabulary (PI-reviewed; 79 keys linked to terms of [EDAM](https://github.com/edamontology/edamontology), a shared bioinformatics dictionary), kind and source level of evidence, output file sha256 |
+| Annotation | Tags attached to data and evidence | A 125-term vocabulary (PI-reviewed; 79 keys linked to terms of [EDAM](https://github.com/edamontology/edamontology), a shared bioinformatics dictionary), kind and source level of evidence, output file sha256 |
 | Semantics | Agreements on what to judge with the tags | Hash freeze of the PI-approved plan (CP1), rule packs per analysis type (single-cell DE, bulk tumor-vs-normal; applied by the request's topic key), a match / mismatch / unknown verdict on whether a step's input fits the method, report evidence anchors |
 | Ontology | Relations between tags | Only a few parent-child relations. The map that groups a finished request into a provenance model ("who made it, and can it be reused") and an object view ("who owns what, and what awaits approval") is computed only as a shadow |
 

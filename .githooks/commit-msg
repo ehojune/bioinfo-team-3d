@@ -1,0 +1,52 @@
+#!/bin/sh
+# commit-msg 훅 — 에이전트 공동 작성자 trailer를 GitHub이 인식하는 주소로 맞춘다.
+#
+# GitHub은 Co-authored-by 이메일을 계정에 매칭해야 아이콘과 "A and B committed"를 보여준다.
+#   Claude  noreply@anthropic.com            → github.com/claude 에 연결돼 있어 그대로 둔다.
+#   Codex   noreply@openai.com               → 어느 계정에도 없어 무시된다. 봇 주소로 치환한다.
+#   Gemini  trailer 자체가 없다              → 세션이 Gemini면 봇 주소로 추가한다.
+# 봇 주소 형식: <계정id>+<login>@users.noreply.github.com (gh api users/<login> 의 id)
+#
+# 어느 에이전트가 커밋하는지는 환경변수로 안다.
+#   LABHQ_COMMIT_AGENT=claude|codex|gemini  (래퍼가 export; 최우선)
+#   LABHQ_COMMIT_MODEL=<모델>               (있으면 이름 뒤 괄호에 적는다)
+#   CLAUDECODE=1 → claude, CODEX_* → codex, GEMINI_CLI=1 → gemini
+# 활성화: git config core.hooksPath .githooks  (clone마다 한 번. worktree는 공유)
+# 항상 exit 0 — 커밋을 막지 않는다.
+
+MSG="$1"
+[ -f "$MSG" ] || exit 0
+
+CODEX_MAIL='199175422+chatgpt-codex-connector[bot]@users.noreply.github.com'
+GEMINI_MAIL='176961590+gemini-code-assist[bot]@users.noreply.github.com'
+CLAUDE_MAIL='noreply@anthropic.com'
+
+# 1. Codex가 붙인 trailer의 이메일만 치환한다. 이름(모델 포함)은 그대로.
+if grep -qi 'co-authored-by:.*<noreply@openai\.com>' "$MSG"; then
+  sed -i.bak -E "/^[Cc]o-[Aa]uthored-[Bb]y:/ s#<noreply@openai\.com>#<$CODEX_MAIL>#" "$MSG" && rm -f "$MSG.bak"
+fi
+
+# 2. 세션의 에이전트를 정한다.
+AGENT="$LABHQ_COMMIT_AGENT"
+if [ -z "$AGENT" ]; then
+  if [ -n "$CLAUDECODE" ]; then AGENT=claude
+  elif [ -n "$CODEX_SANDBOX" ] || [ -n "$CODEX_SANDBOX_NETWORK_DISABLED" ] || [ -n "$CODEX_THREAD_ID" ]; then AGENT=codex
+  elif [ -n "$GEMINI_CLI" ]; then AGENT=gemini
+  fi
+fi
+[ -z "$AGENT" ] && exit 0
+
+case "$AGENT" in
+  claude) NAME=Claude; MAIL="$CLAUDE_MAIL"; MARK='noreply@anthropic\.com' ;;
+  codex)  NAME=Codex;  MAIL="$CODEX_MAIL";  MARK='chatgpt-codex-connector' ;;
+  gemini) NAME=Gemini; MAIL="$GEMINI_MAIL"; MARK='gemini-code-assist' ;;
+  *) exit 0 ;;
+esac
+[ -n "$LABHQ_COMMIT_MODEL" ] && NAME="$NAME ($LABHQ_COMMIT_MODEL)"
+
+# 3. 그 에이전트의 trailer가 이미 있으면(모델이 직접 붙인 경우) 손대지 않는다.
+grep -qi "co-authored-by:.*$MARK" "$MSG" && exit 0
+
+git interpret-trailers --in-place --if-exists addIfDifferent \
+  --trailer "Co-authored-by: $NAME <$MAIL>" "$MSG" 2>/dev/null
+exit 0

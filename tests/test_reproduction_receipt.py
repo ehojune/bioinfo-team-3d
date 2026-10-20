@@ -397,3 +397,188 @@ def test_an_output_that_aliases_a_file_outside_the_step_folder_is_neither_touche
                                temp_root=tmp_path, rerun=True, outputs={"a": [declared]})
     assert original.stat().st_mtime_ns == 10**18
     assert statuses(receipt) == {"a_alias.py": "missing_output", "b_idle.py": "missing_output"}
+
+
+# ----- #772: a staged entrypoint imports its published siblings, and nothing from the caller -----
+
+class FakeImporter:
+    """A fake `python <flags> <script>` that resolves `import <module>` with CPython's documented `sys.path` rules from the
+    flags and environment it is given: the script's folder unless `-I`/`-P`, `PYTHONPATH` unless `-I`/`-E`, the
+    interpreter's site-packages unless `-S` (#794), the user site unless `-S`/`-I`/`-s`/`PYTHONNOUSERSITE`. The caller's
+    working folder is never on `sys.path` for a script. No process: the real interpreter is tested in CI below."""
+
+    def __init__(self, imports, user_site=None, site_packages=None):
+        self.imports, self.user_site, self.site_packages, self.calls = imports, user_site, site_packages, []
+
+    def search_path(self, command, cwd, env):
+        flags, script = command[1:-1], command[-1]
+        isolated = "-I" in flags
+        path = [] if isolated or "-P" in flags else [(Path(cwd) / script).parent]
+        if not isolated and "-E" not in flags:
+            path += [Path(entry) for entry in env.get("PYTHONPATH", "").split(os.pathsep) if entry]
+        site = "-S" not in flags
+        if self.site_packages and site:
+            path.append(self.site_packages)
+        if self.user_site and site and not isolated and "-s" not in flags and not env.get("PYTHONNOUSERSITE"):
+            path.append(self.user_site)
+        return path
+
+    def __call__(self, command, *, cwd, env, **kwargs):
+        if command[-1] == "--version":
+            return subprocess.CompletedProcess(command, 0, b"Python 3.12.0", b"")
+        if "-c" in command:
+            return subprocess.CompletedProcess(command, 0, b"", b"")
+        self.calls.append((command, Path(cwd), dict(env)))
+        path = self.search_path(command, cwd, env)
+        for module in self.imports.get(command[-1], []):
+            relative = Path(*module.split("."))
+            if not any((folder / relative).with_suffix(".py").is_file()
+                       or (folder / relative / "__init__.py").is_file() for folder in path):
+                return subprocess.CompletedProcess(command, 1, b"", b"ModuleNotFoundError")
+        (Path(cwd) / "result.txt").write_text("ok", encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, b"", b"")
+
+
+@pytest.mark.parametrize("files, imports", [
+    ({"code/a/run.py": "import helper\n", "code/a/helper.py": "X = 1\n"}, ["helper"]),
+    ({"code/a/run.py": "import lib.util\n", "code/a/lib/__init__.py": "", "code/a/lib/util.py": "X = 1\n"}, ["lib.util"]),
+    ({"steps/s1/scripts/run.py": "import helper\n", "steps/s1/scripts/helper.py": "X = 1\n"}, ["helper"]),
+])
+def test_a_staged_entrypoint_imports_its_published_sibling_module(tmp_path, monkeypatch, files, imports):
+    entry = next(name for name in files if name.endswith("run.py"))
+    fake = FakeImporter({rr._location(entry)[1]: imports})
+    monkeypatch.setattr(subprocess, "run", fake)
+    receipt = rr.build_receipt(files, tools=python_tools(), temp_root=tmp_path, rerun=True,
+                               outputs={rr._location(entry)[2]: ["result.txt"]})
+    row = next(row for row in receipt["files"] if row["path"] == entry)
+    assert row["execution"]["status"] == "pass"
+    assert row["command"] == ["python", "-E", "-s", "-B", rr._location(entry)[1]]
+    command, cwd, _ = next(call for call in fake.calls if call[0][-1] == rr._location(entry)[1])
+    assert cwd.is_relative_to(tmp_path) and "-I" not in command and "-P" not in command
+
+
+def test_the_entrypoint_imports_nothing_from_the_caller_folder_pythonpath_user_site_or_other_steps(tmp_path, monkeypatch):
+    def helper_in(folder):
+        folder.mkdir(parents=True)
+        (folder / "helper.py").write_text("X = 'outside'\n", encoding="utf-8")
+        return folder
+
+    caller = helper_in(tmp_path / "caller")
+    monkeypatch.chdir(caller)
+    monkeypatch.setenv("PYTHONPATH", str(helper_in(tmp_path / "pythonpath")))
+    for name in ("PYTHONHOME", "PYTHONSTARTUP", "PYTHONUSERBASE", "PYTHONSAFEPATH"):
+        monkeypatch.setenv(name, str(caller))
+    fake = FakeImporter({"run.py": ["helper"]}, user_site=helper_in(tmp_path / "user-site"))
+    (tmp_path / "receipt").mkdir()
+    monkeypatch.setattr(subprocess, "run", fake)
+    receipt = rr.build_receipt({"code/a/run.py": "import helper\n", "code/b/helper.py": "X = 'other step'\n"},
+                               tools=python_tools(), temp_root=tmp_path / "receipt", rerun=True,
+                               outputs={"a": ["result.txt"], "b": ["other.txt"]})
+    assert statuses(receipt)["run.py"] == "fail"  # helper.py exists only outside code/a, so the import must not resolve
+    command, cwd, env = next(call for call in fake.calls if call[0][-1] == "run.py")
+    assert cwd != caller and cwd.is_relative_to(tmp_path / "receipt")
+    assert not {"PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "PYTHONUSERBASE", "PYTHONSAFEPATH"} & set(env)
+    assert env["PYTHONNOUSERSITE"] == "1" and {"-E", "-s"} <= set(command) and "-S" not in command
+    assert [folder.name for folder in fake.search_path(command, cwd, {**env, "PYTHONPATH": str(caller)})] == ["a"]
+
+
+def test_the_syntax_check_stays_fully_isolated_and_does_not_import(tmp_path, monkeypatch):
+    fake = FakeImporter({})
+    monkeypatch.setattr(subprocess, "run", fake)
+    receipt = rr.build_receipt({"code/a/run.py": "import helper\n", "code/a/helper.py": "X = 1\n"},
+                               tools=python_tools(), temp_root=tmp_path)
+    assert {tuple(row["syntax"]["command"][:4]) for row in receipt["files"]} == {("python", "-I", "-S", "-B")}
+    assert fake.calls == [] and {row["execution"]["status"] for row in receipt["files"]} == {"not_rerun"}
+
+
+# ----- #794: a rerun keeps the interpreter's site-packages; only the syntax check drops it -----
+
+def test_a_rerun_imports_the_interpreters_site_packages(tmp_path, monkeypatch):
+    """PR #789 kept `-S`, so `import numpy` in a real analysis script failed: the fake above did not model site-packages."""
+    site_packages = tmp_path / "site-packages"
+    (site_packages / "numpy").mkdir(parents=True)
+    (site_packages / "numpy" / "__init__.py").write_text("", encoding="utf-8")
+    fake = FakeImporter({"run.py": ["helper", "numpy"]}, site_packages=site_packages)
+    monkeypatch.setattr(subprocess, "run", fake)
+    receipt = rr.build_receipt({"code/a/run.py": "import helper, numpy\n", "code/a/helper.py": "X = 1\n"},
+                               tools=python_tools(), temp_root=tmp_path, rerun=True, outputs={"a": ["result.txt"]})
+    row = next(row for row in receipt["files"] if row["path"] == "code/a/run.py")
+    assert row["execution"]["status"] == "pass"
+    assert row["command"] == ["python", "-E", "-s", "-B", "run.py"]
+    assert row["syntax"]["command"][:4] == ["python", "-I", "-S", "-B"]
+
+
+GUARDED = bool(os.environ.get("LABHQ_MOCK_GUARD_LOG")) or "labhq_mock_only_guard" in os.environ.get("PYTEST_PLUGINS", "")
+
+RERUN_PROBE = """import json
+import os
+import sys
+from pathlib import Path
+
+import helper
+import yaml
+
+leaked = {}
+for name in ("caller_mod", "pythonpath_mod", "usersite_mod", "other_step_mod"):
+    try:
+        __import__(name)
+        leaked[name] = True
+    except ImportError:
+        leaked[name] = False
+report = {"helper": helper.VALUE, "site_module": yaml.__file__, "leaked": leaked, "sys_path": sys.path,
+          "pythonpath_given": os.environ.get("PYTHONPATH") is not None,
+          "userbase_given": os.environ.get("PYTHONUSERBASE") is not None}
+Path(os.environ["LABHQ_INPUT_REPORT"]).write_text(json.dumps(report), encoding="utf-8")
+Path("result.txt").write_text("ok", encoding="utf-8")
+sys.exit(1 if any(leaked.values()) else 0)
+"""
+
+
+@pytest.mark.skipif(GUARDED, reason="starts the real interpreter: runs in CI, not under the local mock-only guard (#794)")
+def test_a_real_isolated_rerun_imports_site_packages_and_siblings_but_not_the_callers_paths(tmp_path, monkeypatch):
+    """The one genuine process check of the rerun command (#794): tmp fixture files only, the current interpreter with the
+    receipt's own flags and minimal environment. The script's environment variables make the receipt hand `PYTHONPATH`
+    and `PYTHONUSERBASE` to the child as inputs, so `-E`/`-s` themselves are what keep those folders out."""
+    import site
+    import sysconfig
+
+    import yaml
+
+    def norm(path):
+        return os.path.normcase(os.path.realpath(path))
+
+    def module_in(folder, name):
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / f"{name}.py").write_text("VALUE = 'outside'\n", encoding="utf-8")
+        return folder
+
+    site_dirs = {norm(path) for path in site.getsitepackages()}
+    assert any(norm(yaml.__file__).startswith(folder + os.sep) for folder in site_dirs)  # a site-packages module
+    caller = module_in(tmp_path / "caller", "caller_mod")
+    pythonpath = module_in(tmp_path / "pythonpath", "pythonpath_mod")
+    userbase = tmp_path / "userbase"
+    user_site = module_in(Path(sysconfig.get_path("purelib", f"{os.name}_user", vars={"userbase": str(userbase)})),
+                          "usersite_mod")
+    monkeypatch.chdir(caller)
+    monkeypatch.setenv("PYTHONPATH", str(pythonpath))
+    monkeypatch.setenv("PYTHONUSERBASE", str(userbase))
+    report_path = tmp_path / "report.json"
+    (tmp_path / "receipt").mkdir()
+
+    receipt = rr.build_receipt(
+        {"code/a/run.py": RERUN_PROBE, "code/a/helper.py": "VALUE = 'staged sibling'\n",
+         "code/b/other_step_mod.py": "VALUE = 'other step'\n"},
+        tools=python_tools(), temp_root=tmp_path / "receipt", rerun=True, timeout=120,
+        inputs={"LABHQ_INPUT_REPORT": str(report_path), "PYTHONPATH": str(pythonpath), "PYTHONUSERBASE": str(userbase)},
+        outputs={"a": ["result.txt"], "b": ["other.txt"]})
+
+    row = next(row for row in receipt["files"] if row["path"] == "code/a/run.py")
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["helper"] == "staged sibling" and norm(report["site_module"]) == norm(yaml.__file__)
+    assert report["leaked"] == dict.fromkeys(["caller_mod", "pythonpath_mod", "usersite_mod", "other_step_mod"], False)
+    assert report["pythonpath_given"] and report["userbase_given"]  # the child had them; the flags ignored them
+    shown = {norm(entry) for entry in report["sys_path"] if entry}
+    assert not shown & {norm(caller), norm(pythonpath), norm(user_site)}
+    assert shown & site_dirs
+    assert row["execution"]["status"] == "pass" and row["command"] == ["python", "-E", "-s", "-B", "run.py"]
+    assert row["syntax"]["status"] == "pass" and row["syntax"]["command"][:4] == ["python", "-I", "-S", "-B"]

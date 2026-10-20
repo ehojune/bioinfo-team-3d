@@ -14,6 +14,15 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 13:59 | [`df48ec6`](https://github.com/ehojune/bioinfo-team-3d/pull/806/commits/df48ec6) | Codex·Gemini 커밋의 공동 작성자 trailer를 GitHub이 인식하는 봇 주소로 맞추는 commit-msg 훅을 추가해 커밋 작성자에 에이전트 아이콘이 함께 보이게 했다. |
+| 13:43 | [`ade4f03`](https://github.com/ehojune/bioinfo-team-3d/pull/805/commits/ade4f03) | docs: 아키텍처 다이어그램의 store·resume·ws 경로 수정 및 readme-evidence 수치 동기화 |
+| 13:35 | [`6e522b2`](https://github.com/ehojune/bioinfo-team-3d/pull/805/commits/6e522b2) | docs: 매뉴얼 내 개발 에이전트 규칙 분리, 전체 계층 구조·다크 다이어그램 및 v0.5 모듈/어휘 수 최신화 |
+| 13:16 | [`bab83c2`](https://github.com/ehojune/bioinfo-team-3d/pull/803/commits/bab83c2) | C3의 6954ab6 원본 두 테스트와 98f70d96의 second-parent 대비 external_wait 테스트 diff만 재사용했다. 원본/applied patch hash 일치, private polling clock·deadline·취소·timeout progress 증거를 보존했다. 관련 mock/static 36건 통과; 제품/CP1 분리 변경 없이 새 통합 CI는 총괄에게 넘긴다. |
+| 12:42 | [`2070c23`](https://github.com/ehojune/bioinfo-team-3d/pull/803/commits/2070c23) | CP1 평가기·관계표를 mainline으로 옮기고 optional Shadow adapter와 같은 aggregate API·의미 hash를 공유했다. off·전체 제거 후 CP1 교정, actions-only 제거 후 base observer 보존을 메모리/AST·mock으로 검증했다. 관련 68건·공개 경로 5건 통과, 실제 제거·process 통합은 CI에 맡긴다. |
+| 12:04 | [`cab83e7`](https://github.com/ehojune/bioinfo-team-3d/pull/803/commits/cab83e7) | CP1의 기존 2회 계획 검증에 입력 불일치 진단·교정·전후 경고를 연결하고, 기존 semantic_report와 bench 비교에 분모·근거·미측정을 구분한 기여 기록을 추가했다. 관련 mock/static 52건·최종 thread 금지 mock 14건 통과, 과학 성능 효과는 미측정이다. |
+| 10:30 | [`f5425c5`](https://github.com/ehojune/bioinfo-team-3d/pull/789/commits/f5425c5) | 재현 receipt 실행이 함께 게시한 Python sibling module을 import할 수 있게 script 폴더만 import 경로에 두고, PYTHONPATH·사용자 site·호출한 폴더는 계속 뺐다. |
+| 10:03 | [`06c5a64`](https://github.com/ehojune/bioinfo-team-3d/commit/06c5a64) | Ubuntu Python 3.10 pytest step을 25분으로 제한하고 test·thread·asyncio task 진단을 남긴다. mock/static 검사 14개를 확인했으며 정체 원인은 미확정이다. Refs |
+| 08:12 | [`e5cd527`](https://github.com/ehojune/bioinfo-team-3d/pull/785/commits/e5cd527) | PI 보고 전에 HANDOFF의 병합·배포·후속 큐와 예산 근거를 갱신하고 README 한영·AGENTS·관련 manual을 현재 코드와 대조했다. |
 | 05:49 | [`aada950`](https://github.com/ehojune/bioinfo-team-3d/pull/776/commits/aada950) | 외부 조회 취소 시 소유 브라우저를 회수하고 완료된 PDF만 반영하며 취소된 AlphaGenome thread도 잔류 상한에 집계한다. |
 | 05:42 | [`4a94324`](https://github.com/ehojune/bioinfo-team-3d/pull/781/commits/4a94324) | 재현 receipt가 hard link나 링크 폴더 아래의 선언 산출을 건드리지도 세지도 않아 receipt 폴더 밖 원본의 시각을 바꾸지 않는다. |
 | 05:38 | [`4232731`](https://github.com/ehojune/bioinfo-team-3d/pull/783/commits/4232731) | 정답 누출 checker가 YAML 런타임 문자열과 다른 소스의 줄바꿈을 검사한다. 기존 정규화·경계를 유지하고 static/mock test 36개를 확인했다. |

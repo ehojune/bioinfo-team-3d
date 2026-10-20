@@ -4,6 +4,119 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-20 13:36 — `gemini-manual-architecture`
+
+**[Gemini]**
+
+## 단계
+문서 및 아키텍처 매뉴얼 정리 — `docs/manual.md` · `README.md` · `README.en.md` · `docs/reference/readme-evidence.md` · `AGENTS.md`
+
+## 한 일
+- **매뉴얼(`docs/manual.md`) 내 개발 에이전트 전용 규칙 분리**:
+  - `## 설정 포인트`에 섞여 있던 개발용 `pytest` 홈/캐시 격리 규칙 및 Ubuntu Python 3.10 CI 진단·대기 상한 안내, `signatures.yaml`·`topic_checklists.yaml`의 테스트/fixture 작성 지시를 `AGENTS.md`로 이관하고 매뉴얼은 `labhq`를 깊이 공부·운영하려는 사용자 관점 설명으로 정리했습니다.
+  - 목차에서 누락되어 있던 `[PI에게 보이는 글](#pi에게-보이는-글)`을 목차에 추가하고, 프롬프트 지시문 어조 대신 `labhq/pi_language.py`와 `labhq/korean_qc.py`의 평문 변환·문체 점검 동작 설명으로 다듬었습니다.
+- **전체 계층 구조와 모듈 아키텍처 및 다크 다이어그램 추가**:
+  - `docs/manual.md`의 `## 구조와 이벤트` 아래에 `### 전체 계층 구조와 모듈 아키텍처` 절을 신설하고, 검정 바탕·흰색 글씨(`theme: dark`, `#0b0f19`/`#111827`)의 4계층(`PI 접점` ↔ `Gateway·SQLite WAL·CSO·Policy` ↔ `Research & Meaning Devices 6종` ↔ `Runner·CLI Adapters·HPC`) Mermaid 다이어그램과 계층별 핵심 모듈·책임 표를 반영했습니다.
+  - Codex 리뷰 지적(P2 4건)을 반영해 다이어그램 및 표의 CLI 명령(`resume`), SQLite 저장소 경로(`labhq/store.py`·`labhq/request_bundle.py`), 클라이언트 WebSocket 엔드포인트(`/ws/client`)를 실제 코드와 일치시켰습니다.
+- **오래된 수치 및 파일 구조 최신화**:
+  - `labhq/vocab/output_types.yaml` 및 `topic_checklists.yaml`(`docs/vocabulary.md`)의 현행 기준인 **45개 분야·135항목**, **어휘 125개 key(79개 EDAM 연결)**를 `README.md`, `README.en.md`, `docs/manual.md`, `docs/reference/readme-evidence.md`에 일치시켰습니다.
+  - `docs/manual.md`의 `## 파일 구조` 트리에 `supervisor.py`, `store.py`, `durable.py`, `verify.py`, `request_bundle.py`, `reproduction_receipt.py`, `portfolio.py`, `result_storage.py`, `korean_qc.py`, `labhq/research/`, `labhq/evidence/`, `labhq/recruit/paper_skills`, `labhq/skills/` 등 v0.5 모듈 구성을 반영했습니다.
+
+## 테스트 결과
+- [x] `pytest -q tests/test_integrations.py tests/test_direct_outputs.py tests/test_nfcore_default_732.py tests/test_pdf_figure_policy.py tests/test_staff_writing_skills.py tests/test_vocab_tables.py`: `115 passed, 2 skipped`
+- [x] `python scripts/integrations.py --check` · `python scripts/vocab_tables.py --check` · `python scripts/patch_notes.py check` · `python scripts/notes_index.py --validate`: 통과
+
+## 바꾼 파일
+- `docs/manual.md`
+- `README.md`
+- `README.en.md`
+- `docs/reference/readme-evidence.md`
+- `AGENTS.md`
+- `patch_notes/entries/gemini-manual-architecture.yaml`
+- `docs/status/2026-10-20-1336-gemini-manual-architecture.md`
+
+## 막힌 점
+- 없음
+
+## PI·Claude에게 물을 것
+- 없음
+
+## 확인
+- [x] `scripts/check_public.sh` 통과 (비밀값, 실제 설정, 데이터 파일 없음)
+- [x] `docs/status/2026-10-20-1336-gemini-manual-architecture.md`에 같은 보고 추가
+- [x] ⛔ 체크포인트에 해당하면 PI 확인을 받았음
+
+<!-- author:gemini -->
+
+Fixes #796
+PR #803. CP1 `cab83e7`, 분리 `2070c23`, 공유 fixture `bab83c2`.
+
+- CP1 전 기존 2회 검증에 실제 입력 mismatch 진단·교정·전후 경고를 연결합니다. unknown·예산·승인·중단 경계를 보존합니다.
+- mainline input_fit·관계표와 optional Shadow adapter는 같은 aggregate API·의미 hash를 씁니다. off·전체 제거 후에도 CP1 검증을 유지하고 actions-only 제거는 base observer를 보존합니다.
+- 기존 semantic_report·bench 기록은 checklist·선언/fit·고정 pack·재사용 근거를 구분합니다. 독립 충족·실제 사용·과학 성능 효과는 증거 없으면 미측정입니다.
+- 추가 변경은 테스트 3개 파일뿐입니다. `6954ab6aa3ce7314744d754dea16d26e45c0731d`의 두 파일과 `98f70d96a937e5c6ee8fb650a31d5bf63c0eecbe^2`→해당 merge의 `tests/test_external_wait.py` diff만 그대로 적용했습니다. 각 원본/applied patch SHA-256 일치; merge·제품 변경은 가져오지 않았습니다.
+- 관련 mock/static **36 passed**: private clock의 reconnect/timeout/cancel, mock 자동 조회 deadline·취소·timeout progress, CP1의 optional import 차단·메모리 삭제 변환. Python 3.10 AST·public·diff·patch-notes·notes 검사 통과, guard 환경 유지.
+- `8d0084cd` 실제 3.10/3.12 로그에는 종전 분리/제거 실패가 없고 각 1건의 timing fixture 실패만 남았습니다. 새 head 통합 CI·리뷰·P1=0 확인은 controller 담당입니다.
+- 실제 Hub/process·제거/import 통합·전체 suite·Windows/3.10 실행·PI/연구/bench/원자료/HPC·봇 호출·병합·배포는 로컬 미실행입니다. #797/#798·#804 범위를 추가하지 않았습니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
+Refs #786. 기능 커밋 `06c5a64`는 Ubuntu Python 3.10 pytest의 진단·대기 상한만 추가합니다.
+
+- pytest step을 **25분**으로 제한합니다. 관측된 정상 재실행 13분 47초보다 11분 13초 여유가 있습니다([step timeout 의미](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepstimeout-minutes)).
+- `-vv`로 현재 test를 표시하고 pytest 내장 faulthandler는 test가 5분을 넘으면 thread stack을 출력합니다. 별도 watchdog은 5분마다 test/phase·전체 thread·대기 task 최대 50개(stack limit 20)를 출력합니다. capture 전 stderr를 복제하고 종료 시 join은 최대 1초만 기다립니다.
+- 다른 matrix/job·test/assertion·권한·설치는 유지합니다. pytest 종료 코드 0–5를 그대로 전달하고 새 의존성은 없습니다.
+- 문서 갱신 gate에 맞춰 매뉴얼의 기존 pytest 설명 뒤에 이 기록 링크 한 문장만 추가했습니다. LF 기준 Unicode 문자 수는 165,483→165,572(+89)입니다.
+- mock/static **14 passed**: 실제 hook 규격 등록, 합성 coroutine stack, 종료 코드·출력·범위·상한 검증. 실제 thread·signal·process fixture는 미실행입니다. guard 환경 3개 유지·blocked 0건이며 전체 로그를 로컬 artifact에 보존했습니다. YAML·Python 3.10 AST·Bash·integrations·public·records·diff 검사 PASS.
+
+정체의 근본 원인과 실제 Actions timeout/stack 출력은 아직 미검증입니다. #766 limiter fixture 수정과 별도이며 CI·리뷰·병합은 controller 담당입니다.
+
+# PI 보고 전 문서 현황 대조
+
+- 결론: HANDOFF의 병합·배포·남은 큐와 일일 상한 근거 링크를 갱신했다.
+- 기준: main `e0fa7e48`, PR #776·#777·#778·#781·#782·#783 병합, #766은 CI 수정 단계다.
+- README 한·영판과 AGENTS의 기본 역할 13개는 추적 중인 core YAML 13개와 맞는다. 관련 manual의 거부·참고 읽기·외부 조회 상한 설명도 변경 코드와 대조했다.
+- 구현·CI·배포와 실제 연구·재현·장치 효과는 구분했다. 새 실운전·bench는 하지 않았다.
+- 검증: 공개·직원 표·기록 검사를 적용한다. 제품 코드 변경과 로컬 전체 suite 실행은 없다.
+
+# 재현 receipt sibling import (#772, PR #789)
+
+## 결론
+
+PR #789, 기능 커밋 `f5425c5`. 재현 receipt 실행에서, staged Python entrypoint가 함께 게시한 sibling module(`helper.py`, `lib/util.py`)을 import해도 `fail`로 기록되지 않습니다. Refs #772.
+
+## 재현 (현재 main)
+
+실행 명령이 `python -I -S -B <script>`였습니다. `-I`는 Python 3.11+에서 `-P`를 포함하고, 3.10에서도 script 폴더를 `sys.path`에서 뺍니다. 그래서 같은 폴더의 `helper.py`를 import하는 정상 재현이 `ModuleNotFoundError`로 `fail`이 됐습니다. 새 test 3개가 현재 main에서 모두 `fail`이었습니다.
+
+## 바꾼 것
+
+- Python 실행 명령을 `-E -s -S -B <script>`로 바꿨습니다. `-I`에서 `-P`만 뺀 조합입니다.
+  - script의 staged 폴더만 `sys.path` 앞에 옵니다.
+  - `-E`로 `PYTHONPATH` 같은 `PYTHON*` 환경을 무시하고, `-s`로 사용자 site를 뺍니다.
+  - script를 실행할 때 호출한 폴더는 `sys.path`에 들어가지 않습니다.
+- 넘기는 환경은 지금처럼 최소 목록(`PATH` 등과 `PYTHONNOUSERSITE=1`)입니다.
+- 문법 검사는 그대로 `-I -S -B -c compile`이고 import하지 않습니다.
+- receipt의 `command` 값만 바뀝니다. schema, 상태 이름, 요약은 그대로입니다.
+- PR #781의 산출 판정(script별로 이번 실행이 쓴 산출만 셈)과 hard link·링크 폴더 보호는 손대지 않았습니다.
+- `docs/manual.md` receipt 단락에 한 문장을 더했습니다.
+
+## 검증 (mock/static만)
+
+- 가짜 `subprocess.run`이 받은 flag와 환경으로 CPython 문서의 `sys.path` 규칙을 흉내 내 import를 풉니다. 실제 interpreter는 띄우지 않았습니다.
+  - sibling, 하위 패키지, `steps/<id>/scripts/` 3경우: 수정 전 `fail`, 수정 뒤 `pass`.
+  - 격리 test: 호출한 폴더, `PYTHONPATH`, 사용자 site, 다른 step 폴더에만 `helper.py`가 있으면 계속 `fail`입니다. 넘긴 환경에 `PYTHONPATH`·`PYTHONHOME`·`PYTHONSTARTUP`·`PYTHONUSERBASE`·`PYTHONSAFEPATH`가 없는지 확인합니다. 수정 전에는 flag 확인에서 실패했습니다.
+  - 문법 검사는 `-I`를 유지하고 실행하지 않는지 확인합니다(회귀 방지).
+- #771·#781 test를 포함한 mock receipt test는 17 passed, 1 skipped입니다. skip은 symlink 권한이 필요한 test입니다.
+- `scripts/check_public.sh`, `git diff --check`, `patch_notes.py check`, `notes_index.py --validate` 통과.
+
+## 남은 것·한계
+
+- **실제 import는 로컬에서 확인하지 못했습니다.** 실제 interpreter의 import 동작은 실행하지 않았습니다. 같은 파일의 기존 실제 interpreter test는 mock guard가 막으므로 CI가 확인합니다.
+- **script 폴더 밖 module은 여전히 import되지 않습니다.** script 폴더만 경로에 들어가므로, 다른 step이나 상위 폴더의 module은 import되지 않습니다(일반 `python script.py`와 같음).
+- **링크 처리는 Python 규칙을 따릅니다.** 앞 script가 script 파일을 receipt 폴더 밖을 가리키는 링크로 바꾸면, Python 규칙상 링크를 푼 폴더가 `sys.path[0]`이 됩니다. receipt는 sandbox가 아니라는 기존 전제(모듈 docstring) 안의 일이라 새 상태를 만들지 않았습니다.
+- #773·#774는 다루지 않았습니다.
+
 PR #776: 내장 외부 API 조회에 단계 첫 조회부터 20분 기한·대기 알림·시간 초과 기록을 추가합니다. Refs #676.
 
 - P1 4317534007 수정: 기관 browser를 async subprocess로 기다리며 취소 시 소유한 handle의 종료를 확인합니다. PDF는 정상 완료·형식 검사 뒤 목적 경로에 반영합니다. 취소된 AlphaGenome SDK thread도 기존 잔류 상한에 집계합니다.
