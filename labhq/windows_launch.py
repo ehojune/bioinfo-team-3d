@@ -32,6 +32,7 @@ class ExtendedLimits(C.Structure):
 
 def _kernel():
     kernel = C.WinDLL("kernel32", use_last_error=True)
+    kernel.GetCurrentProcess.argtypes = []
     kernel.GetCurrentProcess.restype = C.c_void_p
     kernel.IsProcessInJob.argtypes = [C.c_void_p, C.c_void_p, C.POINTER(C.c_int)]
     kernel.IsProcessInJob.restype = C.c_int
@@ -40,41 +41,52 @@ def _kernel():
     return kernel
 
 
-def job_membership(handle=None) -> bool | None:
+def job_membership(handle=None, *, diagnostics=None) -> bool | None:
     """NULL job tests membership in ANY job, including a remaining ancestor after partial breakaway."""
+    facts = diagnostics if diagnostics is not None else {}
     try:
         kernel = _kernel()
         result = C.c_int()
         if kernel.IsProcessInJob(handle if handle is not None else kernel.GetCurrentProcess(),
                                  None, C.byref(result)):
             return bool(result.value)
-    except (OSError, AttributeError):
-        pass
+        facts.update(query_error="IsProcessInJob", winerror=C.get_last_error())
+    except (OSError, AttributeError, TypeError, ValueError, C.ArgumentError) as exc:
+        facts.update(query_error=type(exc).__name__, winerror=getattr(exc, "winerror", None))
     return None
 
 
 def current_job() -> dict:
     if sys.platform != "win32":
         return {"in_job": False, "scope": "not_windows", "limit_flags": None}
-    member = job_membership()
+    diagnostics = {}
+    member = job_membership(diagnostics=diagnostics)
     facts = {"in_job": member, "scope": "immediate_job_only", "limit_flags": None,
-             "kill_on_close": None, "breakaway_ok": None, "silent_breakaway_ok": None}
+             "kill_on_close": None, "breakaway_ok": None, "silent_breakaway_ok": None,
+             "membership_query": diagnostics}
     if member is True:
         try:
             limits = ExtendedLimits()
-            if _kernel().QueryInformationJobObject(None, 9, C.byref(limits), C.sizeof(limits), None):
+            kernel = _kernel()
+            if kernel.QueryInformationJobObject(None, 9, C.byref(limits), C.sizeof(limits), None):
                 flags = limits.basic.flags
                 facts.update(limit_flags=flags, kill_on_close=bool(flags & KILL_ON_CLOSE),
                              breakaway_ok=bool(flags & BREAKAWAY_OK),
                              silent_breakaway_ok=bool(flags & SILENT_BREAKAWAY_OK))
-        except (OSError, AttributeError):
-            pass
+            else:
+                facts["limits_query"] = {"query_error": "QueryInformationJobObject", "winerror": C.get_last_error()}
+        except (OSError, AttributeError, TypeError, ValueError, C.ArgumentError) as exc:
+            facts["limits_query"] = {"query_error": type(exc).__name__, "winerror": getattr(exc, "winerror", None)}
     return facts
 
 
-def child_job_membership(child) -> bool | None:
+def child_job_membership(child, *, diagnostics=None) -> bool | None:
     handle = getattr(child, "_handle", None)
-    return job_membership(handle) if handle is not None else None
+    if handle is None:
+        if diagnostics is not None:
+            diagnostics.update(query_error="missing_child_handle", winerror=None)
+        return None
+    return job_membership(handle, diagnostics=diagnostics)
 
 
 class LaunchError(OSError):
@@ -106,11 +118,13 @@ def spawn(command, *, state: Path, role: str, popen=None, **options):
         outcome(state, role, "denied" if isinstance(exc, PermissionError) else "spawn_failed",
                 error=type(exc).__name__, winerror=getattr(exc, "winerror", None))
         raise LaunchError("Windows detached 실행 거부: Job breakaway가 허용된 독립 콘솔에서 실행하세요. "
+                          f"winerror={getattr(exc, 'winerror', None)}; parent_job={json.dumps(parent)}. "
                           "분리 flag를 빼고 재시도하지 않습니다.") from exc
-    member = child_job_membership(child)
+    diagnostics = {}
+    member = child_job_membership(child, diagnostics=diagnostics)
     if member is not False:
         # The retained Popen handle owns this exact child; no PID/tree scan or unrelated process is touched.
-        outcome(state, role, "unverified", child_in_job=member)
+        outcome(state, role, "unverified", child_in_job=member, child_job_query=diagnostics)
         try:
             child.kill()
             child.wait(timeout=5)
@@ -118,6 +132,7 @@ def spawn(command, *, state: Path, role: str, popen=None, **options):
             outcome(state, role, "cleanup_failed", error=type(exc).__name__)
             raise LaunchError("Windows 미확인 자식 정리 실패. detached-launch.jsonl을 확인하고 독립 콘솔에서 점검하세요.") from exc
         raise LaunchError("Windows 자식의 Job 탈출을 확인하지 못해 실행을 취소했습니다. "
-                          "독립 콘솔에서 실행하고 Job 정책을 확인하세요.")
+                          f"child_in_job={member}; query={json.dumps(diagnostics)}; "
+                          f"parent_job={json.dumps(parent)}. 독립 콘솔에서 실행하고 상위 Job 정책을 확인하세요.")
     outcome(state, role, "job_verified", child_pid=child.pid, child_in_job=False)
     return child

@@ -180,7 +180,7 @@ Windows wrapper는 `.venv\Scripts\python.exe`를 직접 실행하므로 venv 활
 
 2.5D·3D 웹을 열어 두면 gateway 연결 끊김과 runner 미연결을 별도로 알립니다. 재연결 중에도 경고를 유지하고 연결이 돌아오면 지웁니다. 연결 끊김만으로 종료와 네트워크 문제를 구별하지는 않으며, 웹을 닫았을 때 외부 채널로 알림을 보내지는 않습니다.
 
-Windows `up`은 Job breakaway를 요청하고 자식의 Job 비소속을 확인한 뒤 PID를 기록합니다. 거부·잔류·확인 불가 시 실패하며 flag를 빼고 재시도하지 않습니다. 독립 콘솔과 Job 정책을 확인하세요. `logs/detached-launch.jsonl`에는 시도·거부·검증 단계를 남깁니다. 기록 없는 소멸만으로 Job 강제 종료를 확정하지 않습니다. [근거·검증 경계](reference/windows-runtime-795.md).
+Windows `up`은 Job breakaway를 요청하고 자식의 Job 비소속을 확인한 뒤 PID를 기록합니다. 거부·잔류·확인 불가 시 실패하며 flag를 빼고 재시도하지 않습니다. 독립 콘솔과 Job 정책을 확인하세요. `logs/detached-launch.jsonl`에는 시도·거부·검증 단계와 Job 잔류/조회 오류를 남깁니다. 배포는 `doctor --runtime` exit 0과 `runtime_readiness.ready=true`를 모두 확인해야 합니다. 기록 없는 소멸만으로 Job 강제 종료를 확정하지 않습니다. [근거·검증 경계](reference/windows-runtime-795.md).
 
 **예고 없이 꺼졌을 때:** `status`는 연결을 시도하기 전에, `doctor`는 네트워크 없이 로컬 PID 기록과 마지막 heartbeat·exit를 보여 줍니다. 조회는 PID 기록을 지우지 않습니다. 프로세스가 없고 exit도 없으면 `비정상 종료 의심`입니다. 아래 파일은 설정의 `gateway.state_dir/logs/`에 gateway·runner별로 쌓입니다(직접 실행한 경우도 동일).
 

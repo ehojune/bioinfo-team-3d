@@ -81,7 +81,7 @@ def test_up_redirects_both_streams_and_unbuffers_child(tmp_path, monkeypatch):
     the role's own in tests/test_supervisor.py."""
     from labhq import windows_launch
     monkeypatch.setattr(windows_launch, "current_job", lambda: {"in_job": False})
-    monkeypatch.setattr(windows_launch, "child_job_membership", lambda child: False)
+    monkeypatch.setattr(windows_launch, "child_job_membership", lambda child, **kw: False)
     settings = _settings(tmp_path)
     monkeypatch.setattr(cli, "_process_created", lambda pid: "created")
     monkeypatch.setattr(cli, "_await_child_record", lambda *args, **kwargs: None)  # no supervisor runs in this test

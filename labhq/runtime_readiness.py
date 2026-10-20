@@ -60,7 +60,7 @@ def deployment(settings, local: dict) -> dict:
     result = {**local, "reasons": list(local["reasons"])}
     try:
         health = cli._health(settings)
-        confirmed = bool(health) and instance_guard.check_health(settings, health)[1]
+        confirmed = bool(health) and instance_guard.check_health(settings, health, started_here=False)[1]
     except (OSError, SystemExit):
         confirmed, health = False, None
     if not confirmed:

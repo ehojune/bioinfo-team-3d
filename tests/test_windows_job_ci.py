@@ -1,11 +1,13 @@
 """Real owned Job/process integration: GitHub Windows CI ONLY. Never execute locally."""
 import ctypes as C
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -56,7 +58,8 @@ from labhq.cli import _process_created
 import json, os
 require_detached_job()
 root = Path(sys.argv[1])
-(root / "ready").write_text(json.dumps({"pid": os.getpid(), "created": _process_created(os.getpid())}), encoding="utf-8")
+(root / "ready.tmp").write_text(json.dumps({"pid": os.getpid(), "created": _process_created(os.getpid())}), encoding="utf-8")
+(root / "ready.tmp").replace(root / "ready")
 deadline = time.monotonic() + 60
 while not (root / "stop").exists() and time.monotonic() < deadline:
     time.sleep(.02)
@@ -108,12 +111,12 @@ def wait_result(path):
     raise AssertionError("owned launcher produced no outcome")
 
 
-@pytest.mark.parametrize("allow_breakaway", [True, False], ids=["allowed", "denied"])
-def test_owned_kill_on_close_job_survival_or_explicit_failure(tmp_path, capsys, allow_breakaway):
+@contextmanager
+def owned_launch(tmp_path, *, allow_breakaway):
     dll = kernel()
     job = dll.CreateJobObjectW(None, None)  # Unnamed, non-inheritable; only this test owns its lifetime.
     assert job, C.get_last_error()
-    parent = child_handle = None
+    case = SimpleNamespace(dll=dll, job=job, parent=None, child_handle=None)
     (tmp_path / "daemon.py").write_text(DAEMON, encoding="utf-8")
     script = tmp_path / "parent.py"
     script.write_text(PARENT, encoding="utf-8")
@@ -123,60 +126,71 @@ def test_owned_kill_on_close_job_survival_or_explicit_failure(tmp_path, capsys, 
         limits = win.ExtendedLimits()
         limits.basic.flags = win.KILL_ON_CLOSE | (win.BREAKAWAY_OK if allow_breakaway else 0)
         assert dll.SetInformationJobObject(job, 9, C.byref(limits), C.sizeof(limits)), C.get_last_error()
-        parent = subprocess.Popen([sys.executable, str(script), str(tmp_path)], env=env,
-                                  stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                  stderr=subprocess.DEVNULL, close_fds=True)
+        with (tmp_path / "parent.log").open("wb") as log:
+            case.parent = subprocess.Popen([sys.executable, str(script), str(tmp_path)], env=env,
+                                           stdin=subprocess.DEVNULL, stdout=log,
+                                           stderr=subprocess.STDOUT, close_fds=True)
         # The parent waits for go: no descendant can start before assignment to our owned Job.
-        assert dll.AssignProcessToJobObject(job, int(parent._handle)), C.get_last_error()
+        assert dll.AssignProcessToJobObject(job, int(case.parent._handle)), C.get_last_error()
         (tmp_path / "go").touch()
-        result = wait_result(tmp_path / "result.json")
-        assert result["parent_job"]["in_job"] is True
-        assert result["parent_job"]["kill_on_close"] is True
-        assert result["parent_job"]["breakaway_ok"] is allow_breakaway
-        pid_file = tmp_path / "state/labhq-gateway-supervisor.pid"
-        if result["success"]:
-            assert allow_breakaway
-            child_handle = hold_recorded_child(dll, json.loads(pid_file.read_text()))
-            assert child_handle, C.get_last_error()
-            assert win.job_membership(child_handle) is False
-            assert pid_file.is_file() and (tmp_path / "ready").is_file()
-        else:
-            assert not pid_file.exists() and not (tmp_path / "ready").exists()
-            events = [json.loads(line) for line in (tmp_path / "state/logs/detached-launch.jsonl").read_text().splitlines()]
-            assert events[-1]["status"] in ("denied", "unverified")
-            if events[-1]["status"] == "denied":
-                assert events[-1]["winerror"] == 5  # Do not mistake a broken executable/fixture for Job denial.
-            if not allow_breakaway:
-                assert events[-1]["status"] == "denied"
-            assert not any(e["status"] in ("recorded", "job_verified") for e in events)
-        assert dll.CloseHandle(job)
-        job = None  # Closing the last owned Job handle must kill only our assigned parent.
-        parent.wait(timeout=10)
-        if child_handle:
-            assert dll.WaitForSingleObject(child_handle, 300) == 258  # child survives parent/Job close
-        with capsys.disabled():
-            print(f"WIN795 allow_breakaway={allow_breakaway}: "
-                  + ("verified child survived Job close" if result["success"] else
-                     "explicit failure, no PID/readiness; outer Job may disallow full breakaway"))
+        case.result = wait_result(tmp_path / "result.json")
+        assert case.result["parent_job"]["in_job"] is True
+        assert case.result["parent_job"]["kill_on_close"] is True
+        assert case.result["parent_job"]["breakaway_ok"] is allow_breakaway
+        case.pid_file = tmp_path / "state/labhq-gateway-supervisor.pid"
+        case.events = [json.loads(line) for line in (tmp_path / "state/logs/detached-launch.jsonl").read_text().splitlines()]
+        yield case
     finally:
         (tmp_path / "stop").touch()  # Normal exit for the fake daemon; never a real labhq role.
-        if not child_handle and (tmp_path / "ready").exists():
+        if not case.child_handle and (tmp_path / "ready").exists():
             # Also reap a child if an assertion/timeout interrupted the parent before its result was read.
             try:
-                child_handle = hold_recorded_child(dll, json.loads((tmp_path / "ready").read_text()))
+                case.child_handle = hold_recorded_child(dll, json.loads((tmp_path / "ready").read_text()))
             except (OSError, ValueError):
                 pass
         try:
-            if child_handle:
-                if dll.WaitForSingleObject(child_handle, 5000) == 258:
-                    assert dll.TerminateProcess(child_handle, 1)  # Retained owned handle, never a PID scan.
-                assert dll.WaitForSingleObject(child_handle, 5000) == 0
+            if case.child_handle:
+                if dll.WaitForSingleObject(case.child_handle, 5000) == 258:
+                    assert dll.TerminateProcess(case.child_handle, 1)  # Retained owned handle, never a PID scan.
+                assert dll.WaitForSingleObject(case.child_handle, 5000) == 0
         finally:
-            if child_handle:
-                dll.CloseHandle(child_handle)
-            if job:
-                dll.CloseHandle(job)
-            if parent:
-                if parent.poll() is None:
-                    parent.kill()  # Only the Popen owned by this test, including failed assignment.
-                parent.wait(timeout=10)
+            if case.child_handle:
+                assert dll.CloseHandle(case.child_handle)
+            if case.job:
+                assert dll.CloseHandle(case.job)
+            if case.parent:
+                if case.parent.poll() is None:
+                    case.parent.kill()  # Only the Popen owned by this test, including failed assignment.
+                case.parent.wait(timeout=10)
+
+
+def close_parent_job(case):
+    assert case.dll.CloseHandle(case.job)
+    case.job = None  # Last owned Job handle: the assigned parent must exit, but the escaped child must not.
+    case.parent.wait(timeout=10)
+
+
+def test_allowed_breakaway_child_survives_parent_job_close(tmp_path, capsys):
+    with owned_launch(tmp_path, allow_breakaway=True) as case:
+        # Denial/unknown is NOT evidence for survival. An incompatible outer host fails this positive test.
+        assert case.result["success"], "UNVERIFIED positive survival: " + json.dumps(case.events)
+        assert case.pid_file.is_file() and (tmp_path / "ready").is_file()
+        case.child_handle = hold_recorded_child(case.dll, json.loads(case.pid_file.read_text()))
+        assert case.child_handle, C.get_last_error()
+        assert win.job_membership(case.child_handle) is False
+        assert [e["status"] for e in case.events] == ["attempt", "job_verified", "recorded"]
+        close_parent_job(case)
+        assert case.dll.WaitForSingleObject(case.child_handle, 300) == 258
+        with capsys.disabled():
+            print("WIN795 POSITIVE: successful launch, parent Job closed, child survived; owned cleanup follows")
+
+
+def test_denied_breakaway_records_no_pid_or_readiness(tmp_path, capsys):
+    with owned_launch(tmp_path, allow_breakaway=False) as case:
+        assert not case.result["success"]
+        assert not case.pid_file.exists() and not (tmp_path / "ready").exists()
+        assert [e["status"] for e in case.events] == ["attempt", "denied"]
+        assert case.events[-1]["winerror"] == 5  # A missing/broken executable is not Job denial evidence.
+        close_parent_job(case)
+        with capsys.disabled():
+            print("WIN795 DENIED: WinError 5, no PID/readiness; this does not establish positive survival")

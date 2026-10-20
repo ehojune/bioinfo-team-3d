@@ -45,7 +45,7 @@ def _record(settings, role, pid, created=None):
 def safety(monkeypatch):
     from labhq import windows_launch
     monkeypatch.setattr(windows_launch, "current_job", lambda: {"in_job": False})
-    monkeypatch.setattr(windows_launch, "child_job_membership", lambda child: False)
+    monkeypatch.setattr(windows_launch, "child_job_membership", lambda child, **kw: False)
     def forbidden(name):
         def fail(*args, **kwargs):
             raise AssertionError(f"{name} reached a real process")

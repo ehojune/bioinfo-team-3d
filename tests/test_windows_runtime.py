@@ -1,9 +1,12 @@
 """Mock-only launch/runtime contracts; native Job integration is a separate CI-only file."""
 import ctypes as C
+from contextlib import nullcontext
+import importlib.util
 import json
 import os
+from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, create_autospec
 
 import pytest
 
@@ -29,7 +32,7 @@ def test_detached_windows_options_require_breakaway_and_child_gate(settings, mon
 def test_unverified_child_is_reaped_without_success_pid(settings, monkeypatch, member):
     monkeypatch.setattr(win.sys, "platform", "win32")
     monkeypatch.setattr(win, "current_job", lambda: {"in_job": True, "limit_flags": win.KILL_ON_CLOSE})
-    monkeypatch.setattr(win, "child_job_membership", lambda child: member)
+    monkeypatch.setattr(win, "child_job_membership", lambda child, **kw: member)
     child = SimpleNamespace(pid=123, kill=Mock(), wait=Mock())
     with pytest.raises(SystemExit) as stopped:
         cli._start_background(settings, "gateway", popen=Mock(return_value=child))
@@ -56,7 +59,7 @@ def test_denied_breakaway_never_retries_or_records_success(settings, monkeypatch
 def test_verified_launch_records_identity_only_after_job_check(settings, monkeypatch):
     monkeypatch.setattr(win.sys, "platform", "win32")
     monkeypatch.setattr(win, "current_job", lambda: {"in_job": True})
-    monkeypatch.setattr(win, "child_job_membership", lambda child: False)
+    monkeypatch.setattr(win, "child_job_membership", lambda child, **kw: False)
     monkeypatch.setattr(cli, "_process_created", lambda pid: "windows:123")
     monkeypatch.setattr(cli, "_await_child_record", lambda *a, **kw: None)
     assert cli._start_background(settings, "gateway", popen=Mock(return_value=SimpleNamespace(pid=123))) == 123
@@ -65,7 +68,7 @@ def test_verified_launch_records_identity_only_after_job_check(settings, monkeyp
 
 def test_posix_and_foreground_do_not_require_job_escape(settings, monkeypatch):
     monkeypatch.setattr(win.sys, "platform", "linux")
-    monkeypatch.setattr(win, "job_membership", lambda *a: pytest.fail("native Job query"))
+    monkeypatch.setattr(win, "job_membership", lambda *a, **kw: pytest.fail("native Job query"))
     assert cli._launch_options(settings)["start_new_session"] is True
     child = object()
     assert win.spawn([], state=cli._launch_state(settings), role="gateway", popen=lambda *a, **kw: child) is child
@@ -93,7 +96,7 @@ def test_readonly_diagnostics_mark_limits_as_immediate_only(monkeypatch):
             C.cast(pointer, C.POINTER(win.ExtendedLimits)).contents.basic.flags = win.KILL_ON_CLOSE | win.BREAKAWAY_OK
             return 1
     monkeypatch.setattr(win.sys, "platform", "win32")
-    monkeypatch.setattr(win, "job_membership", lambda *a: True)
+    monkeypatch.setattr(win, "job_membership", lambda *a, **kw: True)
     monkeypatch.setattr(win, "_kernel", Kernel)
     facts = win.current_job()
     assert facts["kill_on_close"] and facts["breakaway_ok"] and not facts["silent_breakaway_ok"]
@@ -102,6 +105,7 @@ def test_readonly_diagnostics_mark_limits_as_immediate_only(monkeypatch):
 
 @pytest.mark.parametrize("reply,expected", [(0, None), (1, False), (2, True)])
 def test_job_membership_api_failure_stays_unknown(monkeypatch, reply, expected):
+    monkeypatch.setattr(C, "get_last_error", lambda: 6, raising=False)
     class Kernel:
         def GetCurrentProcess(self):
             return 1
@@ -113,8 +117,91 @@ def test_job_membership_api_failure_stays_unknown(monkeypatch, reply, expected):
     assert win.job_membership() is expected
 
 
+def test_native_bindings_use_pointer_sized_handles_and_bool_output(monkeypatch):
+    kernel = SimpleNamespace(GetCurrentProcess=Mock(), IsProcessInJob=Mock(), QueryInformationJobObject=Mock())
+    loader = Mock(return_value=kernel)
+    monkeypatch.setattr(C, "WinDLL", loader, raising=False)
+    assert win._kernel() is kernel
+    loader.assert_called_once_with("kernel32", use_last_error=True)
+    assert kernel.GetCurrentProcess.argtypes == []
+    assert kernel.GetCurrentProcess.restype is C.c_void_p
+    assert kernel.IsProcessInJob.argtypes == [C.c_void_p, C.c_void_p, C.POINTER(C.c_int)]
+    assert kernel.IsProcessInJob.restype is C.c_int
+    assert kernel.QueryInformationJobObject.argtypes == [C.c_void_p, C.c_int, C.c_void_p, C.c_uint32, C.c_void_p]
+    assert kernel.QueryInformationJobObject.restype is C.c_int
+
+
+def test_ctypes_preserves_subprocess_int_subclass_handle_above_32_bits(monkeypatch):
+    class Handle(int):  # subprocess.Handle is an int subclass; no OS handle is opened here.
+        pass
+    value = 0x1234567887654321
+    calls = []
+    @C.CFUNCTYPE(C.c_int, C.c_void_p, C.c_void_p, C.POINTER(C.c_int))
+    def query(handle, job, result):
+        calls.append((handle, job))
+        result[0] = 0
+        return 1
+    monkeypatch.setattr(win, "_kernel", lambda: SimpleNamespace(IsProcessInJob=query))
+    assert win.child_job_membership(SimpleNamespace(_handle=Handle(value))) is False
+    assert calls == [(value, None)]
+
+
+@pytest.mark.parametrize("error", [6, 5])
+def test_membership_failure_retains_native_error_and_fails_closed(settings, monkeypatch, error):
+    monkeypatch.setattr(win.sys, "platform", "win32")
+    monkeypatch.setattr(win, "current_job", lambda: {"in_job": True, "scope": "immediate_job_only"})
+    monkeypatch.setattr(C, "get_last_error", lambda: error, raising=False)
+    monkeypatch.setattr(win, "_kernel", lambda: SimpleNamespace(IsProcessInJob=lambda *a: 0))
+    child = SimpleNamespace(pid=123, _handle=987, kill=Mock(), wait=Mock())
+    with pytest.raises(win.LaunchError, match=f'"winerror": {error}'):
+        win.spawn([], state=cli._launch_state(settings), role="gateway", popen=Mock(return_value=child))
+    child.kill.assert_called_once_with()
+    child.wait.assert_called_once_with(timeout=5)
+    events = [json.loads(line) for line in (cli._launch_state(settings) / "logs/detached-launch.jsonl").read_text().splitlines()]
+    assert events[-1]["child_in_job"] is None
+    assert events[-1]["child_job_query"] == {"query_error": "IsProcessInJob", "winerror": error}
+    assert not any(e["status"] in ("job_verified", "recorded") for e in events)
+
+
+def test_binding_error_is_unknown_with_explicit_diagnostic(monkeypatch):
+    monkeypatch.setattr(win, "_kernel", lambda: SimpleNamespace(IsProcessInJob=Mock(side_effect=C.ArgumentError("fixture"))))
+    facts = {}
+    assert win.job_membership(123, diagnostics=facts) is None
+    assert facts == {"query_error": "ArgumentError", "winerror": None}
+
+
+@pytest.mark.parametrize("outcome", ["denied", "unverified", "verified"])
+def test_ci_positive_contract_cannot_pass_on_denial_or_unknown(tmp_path, monkeypatch, capsys, outcome):
+    # Import only definitions; replace the entire owned Job fixture before exercising its assertions.
+    path = Path(__file__).with_name("test_windows_job_ci.py")
+    spec = importlib.util.spec_from_file_location("win795_ci_contract", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    pid_file = tmp_path / "pid.json"
+    pid_file.write_text('{"pid": 123, "created": "windows:123"}')
+    (tmp_path / "ready").touch()
+    events = ([{"status": status} for status in ("attempt", "job_verified", "recorded")]
+              if outcome == "verified" else [{"status": outcome}])
+    wait, close = Mock(return_value=258), Mock()
+    case = SimpleNamespace(result={"success": outcome == "verified"}, events=events, pid_file=pid_file,
+                           dll=SimpleNamespace(WaitForSingleObject=wait), child_handle=None)
+    monkeypatch.setattr(module, "owned_launch", lambda *a, **kw: nullcontext(case))
+    monkeypatch.setattr(module, "hold_recorded_child", lambda *a: 123)
+    monkeypatch.setattr(module, "close_parent_job", close)
+    monkeypatch.setattr(win, "job_membership", lambda *a: False)
+    if outcome == "verified":
+        module.test_allowed_breakaway_child_survives_parent_job_close(tmp_path, SimpleNamespace(disabled=nullcontext))
+        close.assert_called_once_with(case)
+        wait.assert_called_once_with(123, 300)
+    else:
+        with pytest.raises(AssertionError, match="UNVERIFIED positive survival"):
+            module.test_allowed_breakaway_child_survives_parent_job_close(tmp_path, capsys)
+        close.assert_not_called()
+        wait.assert_not_called()
+
+
 def test_missing_child_handle_is_not_a_query_of_the_parent(monkeypatch):
-    monkeypatch.setattr(win, "job_membership", lambda *a: pytest.fail("missing child handle must stay unknown"))
+    monkeypatch.setattr(win, "job_membership", lambda *a, **kw: pytest.fail("missing child handle must stay unknown"))
     assert win.child_job_membership(SimpleNamespace(_handle=None)) is None
 
 
@@ -160,23 +247,42 @@ def test_runtime_uses_authenticated_gateway_for_roles_without_local_pids(setting
     local = {"ready": None, "status": "unmanaged", "roles": {}, "reasons": []}
     settings.gateway.url = "ws://gateway.invalid:1234" if role_mode == "remote" else "ws://127.0.0.1:1234"
     monkeypatch.setattr(cli, "_health", lambda s: {"runners": [s.runner.id]})
-    monkeypatch.setattr(instance_guard, "check_health", lambda *a: ([], True))
+    check = create_autospec(instance_guard.check_health, return_value=([], True))
+    monkeypatch.setattr(instance_guard, "check_health", check)
     assert runtime.deployment(settings, local)["ready"] is True
-    monkeypatch.setattr(instance_guard, "check_health", lambda *a: ([], False))
+    assert check.call_args.kwargs == {"started_here": False}
+    check.return_value = ([], False)
     assert runtime.deployment(settings, local)["ready"] is False
 
 
 def test_unknown_local_identity_is_not_overridden_by_healthy_gateway(settings, monkeypatch):
     monkeypatch.setattr(cli, "_health", lambda s: {"runners": [s.runner.id]})
-    monkeypatch.setattr(instance_guard, "check_health", lambda *a: ([], True))
+    monkeypatch.setattr(instance_guard, "check_health", create_autospec(instance_guard.check_health, return_value=([], True)))
     assert runtime.deployment(settings, {"ready": False, "status": "unhealthy", "reasons": ["unknown"]})["ready"] is False
+
+
+@pytest.mark.parametrize("identity_kind,expected", [("ours", True), ("foreign", False), ("missing", False)])
+def test_runtime_calls_real_health_identity_guard_readonly(settings, monkeypatch, tmp_path, identity_kind, expected):
+    settings.config_path = str(tmp_path / "config.yaml")
+    health = {"runners": [settings.runner.id], "identity": instance_guard.public_identity(settings)}
+    if identity_kind == "foreign":
+        health["identity"] = {"config_id": "foreign", "fingerprint": "foreign"}
+    elif identity_kind == "missing":
+        health.pop("identity")
+    monkeypatch.setattr(cli, "_health", lambda s: health)
+    # No process/registry discovery: exercise the real check_health signature and identity decisions.
+    monkeypatch.setattr(instance_guard, "_gateway_state_owners", lambda s: [])
+    monkeypatch.setattr(instance_guard, "_known_config", lambda *a: None)
+    result = runtime.deployment(settings, {"ready": None, "status": "pristine", "reasons": []})
+    assert result["ready"] is expected
+    assert bool(result["reasons"]) is (not expected)
 
 
 @pytest.mark.parametrize("connected", [True, False])
 def test_enabled_wsl_requires_authenticated_connection_without_executing_wsl(settings, monkeypatch, connected):
     settings.runner.wsl.enabled = True
     monkeypatch.setattr(cli, "_health", lambda s: {"runners": [s.runner.id] + ([s.runner.wsl.id] if connected else [])})
-    monkeypatch.setattr(instance_guard, "check_health", lambda *a: ([], True))
+    monkeypatch.setattr(instance_guard, "check_health", create_autospec(instance_guard.check_health, return_value=([], True)))
     result = runtime.deployment(settings, {"ready": None, "status": "pristine", "reasons": []})
     assert result["ready"] is connected
     assert any("WSL runner" in r for r in result["reasons"]) is (not connected)
