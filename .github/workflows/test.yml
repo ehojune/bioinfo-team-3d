@@ -43,7 +43,6 @@ jobs:
     if: needs.changes.outputs.skip != 'true'
     runs-on: ubuntu-latest
     env:
-      CI_SUITE_ARTIFACT_DIR: ${{ runner.temp }}/ci-linux-${{ matrix.python-version }}
       CI_JOB_LABEL: pytest (${{ matrix.python-version }})
       PYTHONHASHSEED: '0'
     outputs:
@@ -55,7 +54,9 @@ jobs:
         python-version: ['3.10', '3.12']
     steps:
       - name: Record CI setup start
-        run: python -c "import os,time; print('CI_SETUP_STARTED='+str(time.time()), file=open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8'))"
+        env:
+          CI_ARTIFACT_ROOT: ${{ runner.temp }}/ci-linux-${{ matrix.python-version }}
+        run: python -c "import os,time; print('CI_SETUP_STARTED='+str(time.time())+'\nCI_SUITE_ARTIFACT_DIR='+os.environ['CI_ARTIFACT_ROOT'], file=open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8'))"
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
@@ -148,7 +149,6 @@ jobs:
     if: needs.changes.outputs.skip != 'true'
     runs-on: windows-latest
     env:
-      CI_SUITE_ARTIFACT_DIR: ${{ runner.temp }}/ci-windows
       CI_JOB_LABEL: pytest-windows
       PYTHONHASHSEED: '0'
       CI_COVERAGE_PROFILE: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'windows-full-v1' || 'windows-boundary-v1' }}
@@ -157,7 +157,9 @@ jobs:
       profile: ${{ steps.identity.outputs.profile }}
     steps:
       - name: Record CI setup start
-        run: python -c "import os,time; print('CI_SETUP_STARTED='+str(time.time()), file=open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8'))"
+        env:
+          CI_ARTIFACT_ROOT: ${{ runner.temp }}/ci-windows
+        run: python -c "import os,time; print('CI_SETUP_STARTED='+str(time.time())+'\nCI_SUITE_ARTIFACT_DIR='+os.environ['CI_ARTIFACT_ROOT'], file=open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8'))"
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}

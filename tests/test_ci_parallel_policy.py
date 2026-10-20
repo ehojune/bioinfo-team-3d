@@ -69,7 +69,7 @@ def test_selection_keeps_every_node_of_unknown_files_and_both_full_profiles(monk
 def test_actual_profile_exclusions_have_reviewed_digest_and_no_boundary_marker():
     data = json.loads((ROOT / selection.PROFILE).read_text(encoding="utf-8"))
     reviewed = data["reviewed_pure"]
-    assert len(reviewed) == 3  # conservative initial review, not a complete purity audit
+    assert len(reviewed) == 10  # bounded reviewed cohort, not a complete purity audit
     implementation_matches = data["implementation_sha256"] == selection.implementation_digest()
     nodes, expected = [], []
     for path, row in reviewed.items():

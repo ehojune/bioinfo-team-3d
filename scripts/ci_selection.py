@@ -19,9 +19,6 @@ BOUNDARY = re.compile(
     r"windows|win32|sys\.platform|os\.name|ctypes|msvcrt|ntpath|junction|mklink|powershell|cmd\.exe|"
     r"subprocess|Popen|proc_tree|runner|\.cli|MCP|mcp|sqlite|fsync|durable|StateStore|"
     r"reproduction_receipt|doctor|wsl|hook|private_paths|shell|quoting", re.I)
-HOST_RESOURCE = re.compile(r"free_port|socket|uvicorn|websockets|Popen|subprocess|create_app|\bHub\b|"
-                           r"\bRunner\b|TestClient|AsyncClient|start_server|labhq\.(?:cli|gateway|runner)|"
-                           r"supervisor|proc_tree|windows_(?:broker|launch)")
 
 
 def source_digest(text: str) -> str:
@@ -34,7 +31,16 @@ def implementation_digest(root=ROOT) -> str:
     No call-graph guess: an unchanged test may exercise newly OS-sensitive code.
     Unreviewed runtime additions also force the full Windows cohort.
     """
-    files = sorted((root / "labhq").rglob("*.py"), key=lambda p: p.relative_to(root).as_posix())
+    # Runtime schemas/catalogs and scanner helpers also affect reviewed tests.
+    # Keep the broad expiry instead of guessing a production call graph.
+    files = sorted((p for folder in ("labhq", "scripts", "config")
+                    for p in (root / folder).rglob("*") if p.is_file()
+                    and p.relative_to(root).as_posix() != PROFILE
+                    and p.suffix in {".py", ".yaml", ".yml", ".json", ".txt"}),
+                   key=lambda p: p.relative_to(root).as_posix())
+    for name in ("tests/conftest.py", "tests/test_research_protocol.py", "tests/test_research_cp1.py"):
+        if (root / name).is_file():
+            files.append(root / name)  # reviewed schema-cohort helper fixtures
     if (root / "pyproject.toml").is_file():
         files.append(root / "pyproject.toml")
     rows = []
@@ -77,23 +83,68 @@ def include_windows(path: str, text: str, reviewed: dict) -> tuple[bool, str]:
 
 
 def host_resource(path: Path, root=ROOT, seen=None) -> bool:
-    """Port-bearing tests and their local test helpers share a CI-only lock."""
+    """Serialize host capability calls, not mock class names or quoted prose.
+
+    Imports resolve aliases; local test helpers are followed conservatively.
+    Per-worker files/DBs and in-process ASGI clients do not share a host port.
+    This is scheduling protection, not permission to execute any fixture.
+    """
+    path = path.resolve()
     seen = set() if seen is None else seen
     if path in seen:
         return False
     seen.add(path)
     try:
         text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
+        tree = ast.parse(text)
+    except (OSError, UnicodeError, SyntaxError):
         return True
-    if HOST_RESOURCE.search(text):
-        return True
-    for node in ast.walk(ast.parse(text)):
-        names = ([node.module] if isinstance(node, ast.ImportFrom) else
-                 [n.name for n in node.names] if isinstance(node, ast.Import) else [])
-        for name in names:
-            if name:
-                helper = root / "tests" / (name.replace(".", "/") + ".py")
+    aliases, imports = {}, []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for name in node.names:
+                aliases[name.asname or name.name.split(".")[0]] = name.name if name.asname else name.name.split(".")[0]
+                imports.append(name.name)
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            imports.append(module)
+            for name in node.names:
+                qualified = ".".join(p for p in (module, name.name) if p)
+                aliases[name.asname or name.name] = qualified
+                imports.append(qualified)
+                # Port reservation helpers often escape to fixtures/callbacks.
+                if name.name == "free_port":
+                    return True
+    def qualified(node):
+        if isinstance(node, ast.Name):
+            return aliases.get(node.id, "free_port" if node.id == "free_port" else "")
+        if isinstance(node, ast.Attribute):
+            return qualified(node.value) + "." + node.attr
+        return ""
+    capabilities = {
+        "socket.socket", "socket.create_server", "socket.create_connection",
+        "asyncio.start_server", "asyncio.start_unix_server",
+        "asyncio.create_subprocess_exec", "asyncio.create_subprocess_shell",
+        "uvicorn.run", "uvicorn.Server", "websockets.serve", "websockets.connect",
+        "websockets.asyncio.server.serve", "websockets.asyncio.client.connect",
+        "subprocess.Popen", "subprocess.run", "subprocess.call", "subprocess.check_call", "subprocess.check_output",
+        "os.kill", "os.killpg", "os.system", "os.fork", "psutil.process_iter", "psutil.Process",
+    }
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            name = qualified(node.func)
+            if (name in capabilities or name.endswith(".free_port") or name == "free_port"
+                    or isinstance(node.func, ast.Attribute) and node.func.attr in {
+                        "bind", "listen", "serve_forever", "create_server", "create_subprocess_exec", "create_subprocess_shell"}):
+                return True
+    for name in imports:
+        parts = name.split(".")
+        if parts[0] == "tests":
+            parts = parts[1:]
+        # Try the imported module and its parent (from helper import symbol).
+        for count in (len(parts), len(parts) - 1):
+            if count > 0:
+                helper = root / "tests" / Path(*parts[:count]).with_suffix(".py")
                 if helper.is_file() and host_resource(helper, root, seen):
                     return True
     return False
