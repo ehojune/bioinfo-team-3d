@@ -1,0 +1,8 @@
+pr: null
+rows:
+  - sha: 8662c87
+    at: '2026-10-20 10:45'
+    text: 'CI 순수 문서 판별과 동일 tree·workflow·전체 gate manifest에 묶인 main 재사용, 불명확하면 full'
+  - sha: 80b6daa
+    at: '2026-10-20 10:53'
+    text: 'CI 문서 판별에서 제목·목록의 command 예제와 설정 fragment도 full로 처리'
