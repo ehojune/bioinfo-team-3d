@@ -4,6 +4,32 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 단계
+읽는 사람별 문서 정비(PI 요청) — 문서만 변경, PR #801
+
+## 한 일
+- main(#800·#803·#805·#806)을 합치고 HANDOFF 충돌을 현재 우선순위로 풀었습니다. #805의 manual 독자 분리·다이어그램·수치와 #806 hook 안내는 그대로입니다.
+- README 한영판: PR 번호·감사 공지·PI 창구 행을 빼고 "v0.5 뒤 기능은 실제 연구 요청으로 재확인 전"이라는 안정적 한계를 적었습니다. 영문판은 한국어판 구성에 맞췄습니다.
+- HANDOFF: 접수 중지, 병합 전 열린 PR 7개, 보류 항목, 접수 재개 뒤 순서만 남겼습니다. token 수치는 빼고 운영 기준·#760으로 보냈습니다.
+- AGENTS·CLAUDE는 개발 절차만, 점검 주기·동시 투입·한도·접수 중지는 `docs/reference/lead-operations.md`로 옮겼습니다.
+- manual: #796 문단을 PR #803 병합 사실로 고치고, 어휘 수를 코드 기준 125개(topic 45, EDAM 연결 79)로 맞췄습니다.
+- 총괄 최종 대조: manual의 CP1 입력 검증/사후 그림자 측정 설명을 구분하고, PI Q&A 현재 운영의 옛 한도·깨진 HANDOFF anchor를 고쳤습니다. 날짜가 붙은 과거 답은 보존했습니다.
+- 감사 우선순위 reference에 10-20 진행을 날짜 붙여 더했습니다(기존 표는 보존).
+
+## 확인
+- 코드 대조: `agents/core/*.yaml`(Claude Code 8·Codex 5, 리뷰어 Codex gpt-6-astra), `labhq/vocab/output_types.yaml`(125 key)·`edam_subset.yaml`(79 연결)·`topic_checklists.yaml`(45 분야·135 항목), `labhq/init_defaults.py`(`semantics.mode: ab`).
+- `integrations.py --check`·`vocab_tables.py --check`·`notes_index.py --validate`·`patch_notes.py check`·`check_public.sh`·`git diff --check` 통과. 수정 문서 8개의 상대 링크·manual anchor 0건 깨짐.
+- `tests/test_integrations.py`·`tests/test_project_link_spellings.py` 39 passed. CLI를 하위 프로세스로 띄우는 2개는 mock guard가 막았고 같은 검사(`integrations.py --check`)를 직접 통과했습니다.
+- 글자 수(main → 후): 개발 문서(AGENTS·CLAUDE·HANDOFF) 8,368 → 6,845, README 한영판 포함 39,255 → 36,127.
+
+## 남은 것
+- 열린 PR #766·#790·#791·#793·#802·#807·#812가 병합되면 manual 해당 절과 HANDOFF 표를 그때 갱신해야 합니다.
+- README 한영판은 badge·이중 언어 때문에 목표 15k보다 큽니다. badge 블록은 생성물이라 줄이지 않았습니다.
+
+PI가15:44 신규 일반 작업 보류를 해제했다. HANDOFF·운영 기준·PI Q&A만 최신 결정으로 맞췄다. 실제 연구·bench는 별도 승인, README는 이번 운영 정정으로 늘리지 않았다.
+
+16시 대조: #812 병합, #815 draft 준비와 #798 순서를 개발 문서에 갱신했다. 실제 요청 성능·배포 성공은 미확인이다.
+
 ## 2026-10-20 14:40 — `pi-language-linear`
 
 ## 단계
@@ -140,6 +166,20 @@ PR #803. CP1 `cab83e7`, 분리 `2070c23`, 공유 fixture `bab83c2`.
 - 실제 Hub/process·제거/import 통합·전체 suite·Windows/3.10 실행·PI/연구/bench/원자료/HPC·봇 호출·병합·배포는 로컬 미실행입니다. #797/#798·#804 범위를 추가하지 않았습니다.
 
 🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
+## 단계
+개발 감사 우선순위 반영 — 문서만 변경
+
+## 한 일
+#794–#799를 #739 체크리스트에 연결하고 HANDOFF의 낡은 큐·7M 한도를 현재 15M 승인으로 맞췄습니다. Shadow는 실측 동안 유지/확장 동결, 효용 판정 뒤 관측 코드 정리입니다. README 한영·AGENTS·관련 manual도 같은 범위로 갱신했습니다.
+
+## 검증
+직원 설정 일치·공개 검사·기록 형식·diff 검사 통과. 제품 코드 변경이 없어 로컬 pytest는 실행하지 않았습니다. 최종 head CI·리뷰·P1=0·병합은 별도 gate입니다.
+
+## 한계
+P1 수정·현재 PI 가동·새 실운전·장치 효용·bench PASS를 선언하지 않습니다. Job Object 원인은 가설이며 벤치 A/C 수치를 분리했습니다. 연구·HPC·실프로세스 fixture는 실행하지 않았습니다.
+
+문서 글자 수: HANDOFF 4,415→3,888; README 한영·AGENTS·HANDOFF 합계 37,130→37,053. 상세 근거는 docs/reference/audit-priorities-2026-10-20.md에 둡니다.
 
 # 재현 receipt 실행 site-packages (#794, PR #800)
 
