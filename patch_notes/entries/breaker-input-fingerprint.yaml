@@ -1,8 +1,10 @@
 pr: 564
 rows:
-- sha: 'c07ece2'
+- sha: c07ece2
   at: 2026-10-13 17:56
   text: 폭주 감지에서 원본 입력 fingerprint를 preview와 분리하고 잘린 legacy 이벤트를 제외
-- sha: '3cf6134'
+  summary: 반복 실행 감지는 잘린 미리보기 대신 원래 입력 식별값으로 판단합니다.
+- sha: 3cf6134
   at: 2026-10-13 18:20
   text: 실측 Codex 스트림의 전체 이벤트 기대값에 정확한 입력 fingerprint 추가
+  summary: 실제 Codex 이벤트 검사의 기대값에 정확한 입력 식별값을 추가했습니다.

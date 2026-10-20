@@ -2,17 +2,21 @@ pr: 343
 rows:
 - sha: 33b0593
   at: 2026-10-03 08:50
-  text: '일반 lane PI 질문: JSON 문자열 안 실제 줄바꿈도 질문으로 읽는다(extract_json strict 인자, blocking_question만
-    strict=False)'
+  text: '일반 lane PI 질문: JSON 문자열 안 실제 줄바꿈도 질문으로 읽는다(extract_json strict 인자, blocking_question만 strict=False)'
+  summary: 질문 안에 줄바꿈이 들어 있어도 일반 작업의 승인 질문으로 읽습니다.
 - sha: 8218a6d
   at: 2026-10-03 08:50
   text: '재계획 프롬프트: PI 질문 폰 카드 규칙을 계획과 같은 상수로 공유'
+  summary: 계획을 다시 짤 때도 휴대전화에서 읽기 쉬운 질문 형식을 씁니다.
 - sha: f84c361
   at: 2026-10-03 08:51
   text: '연구 계획 프롬프트: PI 질문은 500자 이하, 질문을 맨 앞에'
+  summary: 연구 계획의 승인 질문을 짧게 쓰고 질문부터 보여주도록 지시했습니다.
 - sha: 077f0d8
   at: 2026-10-03 08:53
   text: '결정 카드: summary 줄바꿈을 2.5D·3D 모두 그대로 보여 준다'
+  summary: 결정 카드의 줄바꿈을 두 웹 화면에서 그대로 보여줍니다.
 - sha: a712690
   at: 2026-10-03 08:53
   text: CI가 돌리지 않던 Node test 8개를 등록한다
+  summary: 빠져 있던 웹 기능 검사 여덟 개를 자동 검사에 포함했습니다.

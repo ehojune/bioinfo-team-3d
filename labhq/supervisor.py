@@ -149,9 +149,12 @@ class Supervisor:
         try:
             logs.mkdir(parents=True, exist_ok=True)
             with (logs / f"{self.role}.log").open("a", encoding="utf-8") as output:
-                child = self._popen(command, stdout=output, **options)
+                from .windows_launch import spawn
+                child = spawn(command, state=cli._launch_state(self.settings), role=self.role,
+                              popen=self._popen, stdout=output, **options)
         except OSError as exc:
-            self.diag.write("child_start_failed", child=self.role, attempt=attempt, reason=type(exc).__name__)
+            self.diag.write("child_start_failed", child=self.role, attempt=attempt,
+                            reason=type(exc.__cause__ or exc).__name__)
             return None
         try:
             created = cli._process_created(child.pid)
@@ -229,6 +232,8 @@ def _install_signal_flag(stop: threading.Event) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from .windows_launch import require_detached_job
+    require_detached_job()
     args = sys.argv[1:] if argv is None else argv
     if len(args) != 2 or args[1] not in ROLES:
         print("usage: python -m labhq.supervisor CONFIG ROLE", file=sys.stderr)

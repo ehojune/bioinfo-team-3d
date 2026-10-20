@@ -1,8 +1,10 @@
 pr: 451
 rows:
-- sha: "8860134"
+- sha: '8860134'
   at: 2026-10-07 01:37
-  text: "Windows elevated sandbox의 Codex 직원 실행은 개인 경로를 permission profile의 읽기 거부로 받는다(실측에서 canary 읽기 거부, 승인 창 0). 기본 개인 경로에 ~/.gemini·~/.env를 더했다."
-- sha: "02ff93f"
+  text: Windows elevated sandbox의 Codex 직원 실행은 개인 경로를 permission profile의 읽기 거부로 받는다(실측에서 canary 읽기 거부, 승인 창 0). 기본 개인 경로에 ~/.gemini·~/.env를 더했다.
+  summary: Windows Codex 직원의 개인 경로 읽기를 막고 기본 보호 경로에 Gemini 설정과 환경 파일을 더했습니다.
+- sha: 02ff93f
   at: 2026-10-07 01:37
-  text: "doctor가 직원 Codex 홈이 낡았을 때도 다른 elevated 홈을 알리고, 안내에 한 PC 한 elevated 홈 규칙을 적는다."
+  text: doctor가 직원 Codex 홈이 낡았을 때도 다른 elevated 홈을 알리고, 안내에 한 PC 한 elevated 홈 규칙을 적는다.
+  summary: 낡은 Codex 설정을 진단할 때 다른 관리자 권한 설정도 알리고 한 PC 한 설정 규칙을 안내합니다.

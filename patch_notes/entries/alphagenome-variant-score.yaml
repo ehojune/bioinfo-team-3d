@@ -3,3 +3,4 @@ rows:
 - sha: bf10257
   at: 2026-10-15 16:16
   text: AlphaGenome 권장 변이 점수·한국어 요약·tidy 표와 크기 상한·판본 캐시를 추가하고 variant_effect 안내를 연결
+  summary: AlphaGenome 권장 점수와 한국어 요약·표를 더하고 크기 제한과 판본별 저장을 적용했습니다.

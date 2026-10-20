@@ -1,0 +1,20 @@
+pr: 791
+rows:
+- sha: c81a787
+  at: 2026-10-20 10:47
+  text: 같은 요청의 완료된 조상 단계 수집 산출을 hash 검증 뒤 읽기 전용 inputs 복사본으로 전달하고 직접 sibling 읽기는 차단했다.
+    관련 mock/static 190건과 최종 입력 15건을 확인했다.
+- sha: 4068db4
+  at: 2026-10-20 15:18
+  text: 검증된 main 병합 후 HANDOFF 충돌에서 조상 산출 입력의 진행 상태를 보존했다.
+- sha: 7ec4a59
+  at: 2026-10-20 16:38
+  text: Codex 조상 입력을 native read-only 기반 profile로 보호하고 성공한 retry task의 manifest run을
+    검증했다. 거부된 부분/이전 snapshot은 소유 목록만 정리하며 정리 실패는 실행을 중단한다. 선언 단계의 수집 hash를 input 허용
+    상한까지 보장했다. 회귀 14건 red 뒤 관련 mock/static 67건 통과·권한 fixture 1건 skip, 실제 native/연구
+    실행은 미검증이다.
+- sha: 9cd9913
+  at: 2026-10-20 17:04
+  text: 현재 CI의 verify hash cap과 Codex profile stand-in 회귀 2건을 fixture 기본값/상한 보정으로
+    수정했다. 기존 assertion·안전 gate는 유지했다. 2건 red 뒤 관련 mock 31건 통과, main의 문서·POSIX 종료 기록을
+    보존해 HANDOFF 충돌을 해결한 뒤 같은 31건 통과. 실제 process/signal은 미실행이다.

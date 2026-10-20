@@ -3,3 +3,4 @@ rows:
 - sha: 7501cb2
   at: 2026-10-15 17:50
   text: Windows CI의 디스크 쓰기 liveness test를 벽시계 임계값 대신 Event 사건 순서로 검증한다.
+  summary: Windows 디스크 쓰기 검사를 시간 속도 대신 사건 순서로 확인해 흔들림을 줄였습니다.

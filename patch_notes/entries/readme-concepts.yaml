@@ -2,7 +2,9 @@ pr: 326
 rows:
 - sha: f0f3e8c
   at: 2026-10-03 01:59
-  text: README에 핵심 개념 표와 PI 버전 정의(v0.25~v1.25) 로드맵을 넣고, HANDOFF 작업 큐를 버전 순으로 정리하며 #273·#275 결정을 반영
+  text: README에 핵심 개념 표와 PI 버전 정의(v0.25~v1.25) 로드맵을 넣고, HANDOFF 작업 큐를 버전 순으로 정리하며
+  summary: 주요 개념과 버전별 목표를 안내서에 넣고 개발 작업 순서를 정리했습니다.
 - sha: eee1549
   at: 2026-10-03 02:20
-  text: 사실 확인 반영. CP2는 `evidence_checkpoint`를 켤 때만이고 실제 CLI로는 CP1까지 확인했다고 고치고, HANDOFF 큐에 #325를 넣고 #59를 실측에서 뗐으며, 10-03 실행 계정 결정을 적음
+  text: 사실 확인 반영. CP2는 `evidence_checkpoint`를 켤 때만이고 실제 CLI로는 CP1까지 확인했다고 고치고, HANDOFF 큐에
+  summary: 결과 승인의 사용 조건과 실제 명령으로 확인한 범위를 문서에서 바로잡았습니다.

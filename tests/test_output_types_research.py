@@ -40,9 +40,11 @@ CANARY = "CANARY-research-91c2"
 # #707 requires every analysis name and action in the request to stay explicit in the scope and planned steps.
 # #716 adds optional_outputs while legacy plans still serialize to VALID_PLAN_SHA.
 # #732 adds the shared nf-core assignment and per-candidate contribution rule; schemas and stored plans do not change.
+# #799 adds the shared cohesive-analysis sentence; with main's policy text the prompt still hashes to the previous
+# 72274c0b…, and both schemas and VALID_PLAN_SHA are unchanged.
 RESEARCH_PLAN_SCHEMA_SHA = "ecaec20a558be2cba0955836579538a13a1785ce5baed14bda3827a054d8f859"
 RESEARCH_RESULT_SCHEMA_SHA = "9a767787fade091505fea149a8841845738ce30ce77cf6657cbca0aaa72af64d"
-RESEARCH_PROMPT_SHA = "72274c0bf4e8cfc7203b061dc55aa7b5d1f1ebc6e485f089b97bf3dfe48d5aa2"
+RESEARCH_PROMPT_SHA = "d4f716696622b635ad8d6b30fc601eaa292e4002232579c545ba6aaf582c2f47"
 VALID_PLAN_SHA = "f611461cc2dbb17e39159ec1df6a75d8f7b661eb39bbe42c8ed0438c5c45e213"
 
 

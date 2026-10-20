@@ -14,9 +14,9 @@ ROSTER = [{"id": "cso", "engine": "claude_code"}, {"id": "worker", "engine": "cl
 
 
 @pytest.fixture(autouse=True)
-def _mock_consult_git_provenance(monkeypatch):
-    # Consult protocol fixtures need the durable record, not a git child process for its optional HEAD field.
-    monkeypatch.setattr("labhq.integrations.rounds._git_commit", lambda: "1" * 40)
+def fake_git_provenance(monkeypatch):
+    # Fake consult recovery does not depend on checkout metadata or a Git process.
+    monkeypatch.setattr("labhq.integrations.rounds._git_commit", lambda: None)
 
 
 class CaptureSocket:
@@ -774,18 +774,26 @@ async def test_restart_keeps_a_facilities_ask_with_facilities_across_a_late_reco
         second.store.close()
 
 
-async def test_facilities_ask_without_facilities_goes_to_the_cso_without_waiting(tmp_path):
+async def test_facilities_ask_without_facilities_goes_to_the_cso_without_waiting(tmp_path, monkeypatch):
     s = settings(tmp_path)
-    s.gateway.resume_wait_s = 30  # a wait for facilities would outlast every bound below
+    s.gateway.resume_wait_s = 30
     ask, running = await start_facilities_ask_then_crash(s, with_facilities=False)
     second = Hub(s)
     waits = record_runner_waits(second)
+    recorded_wait = second.wait_agent_online
+
+    async def no_facilities_wait(agent_id, timeout_s):
+        if agent_id == "facilities":
+            pytest.fail("an ask already routed to CSO must not wait for facilities")
+        return await recorded_wait(agent_id, timeout_s)
+
+    monkeypatch.setattr(second, "wait_agent_online", no_facilities_wait)
     local = CaptureSocket()
     try:
         second.register_runner("local", local, ROSTER, "inc-1")
         await approve_resume(second)
         await second.on_runner_message("local", result_frame(running["id"], "Use bay 2", "cso-next"))
-        await asyncio.wait_for(settle(second), 2)
+        await settle(second)
         answer = second.store.get("ask", ask.id)["answer"]
         assert answer["answer"] == "Use bay 2" and answer["from"] == "cso"
         assert consults(local) == [] and "facilities" not in waits

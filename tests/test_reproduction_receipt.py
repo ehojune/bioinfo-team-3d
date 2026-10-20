@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import unicodedata
 
 import pytest
 
@@ -582,3 +583,70 @@ def test_a_real_isolated_rerun_imports_site_packages_and_siblings_but_not_the_ca
     assert shown & site_dirs
     assert row["execution"]["status"] == "pass" and row["command"] == ["python", "-E", "-s", "-B", "run.py"]
     assert row["syntax"]["status"] == "pass" and row["syntax"]["command"][:4] == ["python", "-I", "-S", "-B"]
+
+
+# ----- #773: safe Unicode and punctuation names in published sources; escapes and OS ambiguity stay blocked -----
+
+SAFE_NAMES = [
+    "code/analysis/outputs/scripts/분석.py",  # the edition keeps a published basename as it is (_code_target)
+    "code/a/run (v2).py",
+    "code/a/análise-ß_№1.py",
+    "code/a/data,final+v1;draft@2#3.py",
+    "code/a/한국어 폴더/run.py",
+    "code/a/.hidden.py",
+]
+UNSAFE_NAMES = [
+    "/etc/run.py", "C:/run.py", "C:run.py", "c:\run.py", "\\server\share\run.py", "//server/share/run.py",
+    "code\a\run.py", "../run.py", "code/../../run.py", "code/a/.labhq/run.py",
+    "code/a\x00.py", "code/a\nb.py", "code/a\tb.py", "code/a\u202eyp.py", "code/a\u200b.py", "code/a\u2028b.py",
+    "code/a\u00a0b.py", "code/a\ud800.py",
+    "code/CON.py", "code/con.tar.py", "code/lpt1.py", "code/Aux", "code/a./run.py", "code/a /run.py",
+    "code/run.py.", "code/run.py ", " code/run.py", "code/a:stream.py", "code/a?.py", "code/<a>.py", "code/a|b.py",
+    'code/"a".py', "code/a*.py", "code/" + "가" * 90 + ".py",
+    unicodedata.normalize("NFD", "code/분석.py"),
+]
+
+
+@pytest.mark.parametrize("name", SAFE_NAMES)
+def test_a_safe_relative_unicode_or_punctuation_name_is_kept_as_published(name):
+    assert rr._path(name) == name
+
+
+@pytest.mark.parametrize("name", UNSAFE_NAMES)
+def test_an_absolute_traversal_device_control_or_ambiguous_name_stays_blocked(name):
+    assert rr._path(name) is None
+
+
+def test_a_unicode_source_is_staged_checked_and_run_under_its_published_name(tmp_path, monkeypatch):
+    seen = []
+
+    def run_named(folder):
+        seen.append(sorted(p.relative_to(folder).as_posix() for p in folder.rglob("*.py")))
+        (folder / "결과.tsv").write_text("ok", encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr(subprocess, "run", FakeInterpreter({"outputs/scripts/분석.py": run_named}))
+    name = "code/analysis/outputs/scripts/분석.py"
+    receipt = rr.build_receipt({name: "x = 1\n"}, tools=python_tools(), temp_root=tmp_path, rerun=True,
+                               outputs={"analysis": ["outputs/scripts/결과.tsv", "결과.tsv"]})
+    row = receipt["files"][0]
+    assert row["path"] == name and row["syntax"]["status"] == "pass"
+    assert row["cwd"] == "code/analysis" and row["command"][-1] == "outputs/scripts/분석.py"
+    assert row["execution"]["status"] == "missing_output"  # outputs/scripts/결과.tsv was never written
+    assert row["expected_outputs"] == ["outputs/scripts/결과.tsv", "결과.tsv"] and seen == [["outputs/scripts/분석.py"]]
+    assert rr.receipt_summary(receipt)["failed_files"] == [] and "분석.py" in rr.receipt_json(receipt)
+
+
+def test_a_blocked_name_is_redacted_never_staged_and_keeps_its_result_unknown(tmp_path, monkeypatch):
+    fake = FakeInterpreter({})
+    monkeypatch.setattr(subprocess, "run", fake)
+    names = ["code/a\u202eyp.py", "code/CON.py", "C:run.py", unicodedata.normalize("NFD", "code/분석.py")]
+    receipt = rr.build_receipt({name: "x = 1\n" for name in names}, tools=python_tools(), temp_root=tmp_path,
+                               rerun=True, outputs={"a": ["result.txt"]})
+    assert {row["syntax"]["status"] for row in receipt["files"]} == {"blocked_path"}
+    assert {row["execution"]["status"] for row in receipt["files"]} == {"blocked_syntax"}  # never reported as run
+    assert all(row["path"].startswith("redacted-") for row in receipt["files"]) and fake.runs == []
+    text = rr.receipt_json(receipt)
+    assert "\u202e" not in text and "CON.py" not in text and "C:run" not in text
+    assert rr.receipt_summary(receipt)["syntax"] == "blocked_path"
+    assert not any(tmp_path.rglob("*.py"))  # nothing was written under any name

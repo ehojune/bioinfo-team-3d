@@ -2,5 +2,5 @@ pr: 604
 rows:
 - sha: b8dcfd7
   at: 2026-10-15 05:24
-  text: 편집자 정리본에 보고서 PDF(report.pdf)를 넣고 그림 링크가 정리본 안의 파일만 가리키게 한다. PDF를 못 만들거나 크기
-    한도(github.edition_pdf_max_mb)를 넘으면 이유 한 줄만 남기고 PDF 없이 게시한다(#584).
+  text: 편집자 정리본에 보고서 PDF(report.pdf)를 넣고 그림 링크가 정리본 안의 파일만 가리키게 한다. PDF를 못 만들거나 크기 한도(github.edition_pdf_max_mb)를 넘으면 이유 한 줄만 남기고 PDF 없이 게시한다(#584).
+  summary: 정리본에 PDF를 넣고 만들 수 없거나 너무 크면 이유를 남긴 채 게시합니다.

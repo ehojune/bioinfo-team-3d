@@ -2352,6 +2352,10 @@ def evaluate_tool(
     read_only: bool = False,
 ) -> Decision:
     allowed_roots = list(allowed_roots)
+    if tool_name in SHELL_TOOLS:
+        from .process_stop_guard import DENIAL, broad_process_stop
+        if broad_process_stop(str(tool_input.get("command", ""))):
+            return Decision("deny", DENIAL)
     judged = claude_write_input(tool_name, tool_input, workdir, allowed_roots, windows=windows, environ=environ)
     # Every check reads a Git Bash command with its drive paths spelled the Windows way, zones and private paths
     # included: converting only the write targets let `cp /c/<zone>/raw /c/<root>/out` through (PR #364 review).
@@ -2467,8 +2471,11 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
     Written and resolved destinations must stay open. The task's own file-write grant remains scoped to its
     workdir; other shell/write rules are unchanged.
     """
-    from .private_paths import holds_open_read, mentioned_private_path, open_read_allowed, path_field_text, \
+    from .private_paths import holds_open_read, inside_any, mentioned_private_path, open_read_allowed, path_field_text, \
         registry_access, credential_path, managed_shell_read, resolved_read_path
+
+    input_hint = (" 선행 단계 산출물은 읽기 전용 inputs/<step_id>/ 경로를 사용하세요."
+                  if workdir and (Path(workdir) / 'inputs').is_dir() else "")
 
     if tool_name in READ_LIKE | WRITE_LIKE:
         # Keep the existing file-write grant for this task, never for all managed folders.
@@ -2485,8 +2492,10 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
                 return True
             if mentioned_private_path(spelled, closed, home, environ):
                 return True
-            return bool(holders and mentioned_private_path(spelled, holders, home, environ)
-                        and not open_read_allowed(spelled, open_reads))
+            # A broad task read grant cannot reopen an explicitly protected child (e.g. inputs/).
+            return any(mentioned_private_path(spelled, [holder], home, environ)
+                       and not open_read_allowed(spelled, [r for r in open_reads if inside_any(r, [holder])])
+                       for holder in holders)
 
         # (value, folder a relative value starts from): path fields from the workdir, a Glob pattern from its path.
         values = [(tool_input.get(key), workdir) for key in _PRIVATE_PATH_KEYS]
@@ -2509,7 +2518,8 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
                     pass
             if any(private(s) for s in spellings):
                 return Decision("deny", f"{tool_name} path is a PI personal path (policy.private_paths); it is "
-                                        "outside every staff task. Do not open it; ask the CSO if the task needs it.")
+                                        "outside every staff task. Do not open it; ask the CSO if the task needs it."
+                                        + input_hint)
         return None
     if tool_name in SHELL_TOOLS:
         cmd = str(tool_input.get("command", ""))
@@ -2520,14 +2530,15 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
             if managed is True:
                 return None
             if managed is False:
-                return Decision('ask', 'Bash reaches a closed or credential path (policy.private_paths)')
+                return Decision('ask', 'Bash reaches a closed or credential path (policy.private_paths)' + input_hint)
         if private_paths and mentioned_private_path(cmd, private_paths, home, environ):
-            return Decision("ask", f"{tool_name} names a PI personal path (policy.private_paths): `{cmd[:200]}`")
+            return Decision("ask", f"{tool_name} names a PI personal path (policy.private_paths): `{cmd[:200]}`"
+                            + input_hint)
         # A link in the workspace (`alias -> ~/.ssh`) names no private path; its real path does.
         hit = private_paths and touches_resolved({"command": cmd}, private_paths, workdir=workdir)
         if hit:
             return Decision("ask", f"{tool_name} reaches a PI personal path (policy.private_paths) through a link, or "
-                                   f"its paths were not all resolved: `{cmd[:200]}`")
+                                   f"its paths were not all resolved: `{cmd[:200]}`" + input_hint)
         if private_paths and _cd_reaches_private(cmd, private_paths, workdir, home, environ):
             return Decision("ask", f"{tool_name} changes into a folder from which it names a PI personal path "
                                    f"(policy.private_paths), or changes folder too often to judge: `{cmd[:200]}`")

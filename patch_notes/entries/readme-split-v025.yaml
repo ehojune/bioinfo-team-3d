@@ -3,48 +3,60 @@ rows:
 - sha: 17d113f
   at: 2026-10-03 10:28
   text: '개념 그림 3장 추가: 요청 흐름, 승인 게이트, 연구 lane'
+  summary: 요청 처리와 승인·연구 진행 과정을 세 그림으로 설명했습니다.
 - sha: 4f8377a
   at: 2026-10-03 10:28
-  text: README를 처음 써 보는 사람용으로 줄이고 본문을 docs/manual.md로 옮김, 배지는 README에 연결된 도구 표는 매뉴얼에
-    생성
+  text: README를 처음 써 보는 사람용으로 줄이고 본문을 docs/manual.md로 옮김, 배지는 README에 연결된 도구 표는 매뉴얼에 생성
+  summary: 첫 안내서는 짧게 줄이고 자세한 기능 설명과 도구 표는 매뉴얼로 옮겼습니다.
 - sha: 264c567
   at: 2026-10-03 10:28
   text: README 절 번호(§8·§10·§14)를 가리키던 doctor 힌트·HPC 안내·설정 주석·절차서를 매뉴얼 절 이름으로 바꿈
+  summary: 진단 안내와 설정 설명의 문서 링크가 새 매뉴얼 위치를 가리키게 했습니다.
 - sha: 47d5f18
   at: 2026-10-03 10:28
   text: 'docs/pi-qa.md 추가: PI가 물은 것과 답, ①~⑥ 결정을 표로 정리'
+  summary: 책임자가 물은 내용과 답변·결정을 별도 문서의 표로 정리했습니다.
 - sha: 17bc8a4
   at: 2026-10-03 10:28
-  text: README의 개발 전용 단락(느린 test, 도구 표 갱신, fixture 재캡처)을 HANDOFF 작업 방식 표로, 문서 나눔 규칙을
-    AGENTS.md로
+  text: README의 개발 전용 단락(느린 test, 도구 표 갱신, fixture 재캡처)을 HANDOFF 작업 방식 표로, 문서 나눔 규칙을 AGENTS.md로
+  summary: 개발자 전용 설명은 인수인계 문서로 옮기고 문서 작성 규칙을 정했습니다.
 - sha: a03f571
   at: 2026-10-03 10:28
   text: 문서 갱신 주기 검사가 README 대신 docs/manual.md 수정도 세도록 함
+  summary: 자동 문서 점검이 매뉴얼의 갱신도 인정하도록 고쳤습니다.
 - sha: 8ad2e42
   at: 2026-10-03 10:37
   text: 요청 흐름 그림의 revise는 지적된 단계로 되돌리고, 승인 게이트 그림의 주석은 Claude 직원 범위로 좁힘
+  summary: 작업 흐름 그림에서 수정할 단계와 승인 규칙이 적용되는 직원을 정확히 표시합니다.
 - sha: 6de2a0e
   at: 2026-10-03 10:37
   text: '의미 모델과 온톨로지: README에 짧은 소개와 그림(semantics-model.svg), 매뉴얼에 자세한 절'
+  summary: 데이터의 뜻과 표준 용어 연결을 그림과 매뉴얼로 설명했습니다.
 - sha: 95d4ed3
   at: 2026-10-03 10:37
-  text: README 걸림돌 정리(두 번째 터미널의 LABHQ_CONFIG, 폰 데모 조건), 로드맵 요약을 ⑥에 맞추고 매뉴얼 리뷰 규칙을
-    한 곳으로
+  text: README 걸림돌 정리(두 번째 터미널의 LABHQ_CONFIG, 폰 데모 조건), 로드맵 요약을 ⑥에 맞추고 매뉴얼 리뷰 규칙을 한 곳으로
+  summary: 처음 실행할 때 필요한 설정과 데모 조건을 밝히고 중복 검토 규칙을 모았습니다.
 - sha: 7f62cc2
   at: 2026-10-03 10:37
   text: 'PI Q&A에 ⑥ 결정(PR #347 반영)과 온톨로지 요청을 반영하고 개인 경로 답의 범위를 Claude 직원으로 밝힘'
+  summary: 책임자 질의응답에 최신 결정을 반영하고 개인 경로 보호의 적용 범위를 밝혔습니다.
 - sha: 06df67a
   at: 2026-10-03 10:37
   text: CLAUDE.md에 문서 나눔과 README·매뉴얼 갱신 주기를 넣고 HANDOFF 결정 표에 범위 변경 기록
+  summary: 문서를 나누는 기준과 갱신 주기·범위 변경 결정을 개발 지침에 남겼습니다.
 - sha: 351a0ad
   at: 2026-10-03 10:42
   text: 'HANDOFF 큐 #57을 6–8로 되돌리고 병합된 #346 행을 뺌, 매뉴얼에 lab.scope'
+  summary: 인수인계 작업 목록을 바로잡고 연구 범위 설정을 매뉴얼에 적었습니다.
 - sha: 8ac590a
   at: 2026-10-04 00:37
   text: 'main 병합: README는 분리 판 유지, 그사이 main README 변경(조상 단계 결합, 리다이렉트, Codex strict schema, Windows CA, 로드맵)을 매뉴얼로 옮김'
+  summary: 안내서의 간단한 구성은 유지하고 합쳐진 기술 변경은 매뉴얼에 옮겼습니다.
 - sha: 873146a
   at: 2026-10-04 00:41
-  text: 'README에 예시 절(요청 한 문장 → 결과 세 줄)과 docs/examples/gse10072(요청 원문·카드·그림 3장·보고서 원문)'
+  text: README에 예시 절(요청 한 문장 → 결과 세 줄)과 docs/examples/gse10072(요청 원문·카드·그림 3장·보고서 원문)
+  summary: 실제 요청과 결과를 따라 읽도록 예시 보고서와 그림을 안내서에 더했습니다.
 - sha: 7e55568
   at: 2026-10-04 02:30
   text: 'main 병합: README는 분리 판 유지, 그사이 main README 변경(벌크 pack, 관찰 산출 tool_use_id, 감사 번들, CA 변수, 로드맵)을 매뉴얼로 옮김'
+  summary: 첫 안내서를 짧게 유지하고 추가 기술 설명은 매뉴얼로 옮겼습니다.

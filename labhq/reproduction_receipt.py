@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import unicodedata
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -25,6 +26,9 @@ LOCK_NAMES = frozenset({"requirements.lock.txt", "renv.lock", "uv.lock", "poetry
                         "environment.lock.yml", "environment.lock.yaml"})
 RECEIPT_PATH = "run/reproduction_receipt.json"
 _VARIABLE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+_UNSAFE_PATH_CHARS = frozenset('\\:<>"|?*')  # backslash, drive/stream colon and the other Windows-reserved characters
+_UNSAFE_PATH_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp", "Zs"})  # Zs except the plain space
+_WINDOWS_DEVICE = re.compile(r"(?i)(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(\..*)?")
 _PY_COMPILE = "import pathlib,sys; compile(pathlib.Path(sys.argv[1]).read_bytes(), sys.argv[1], 'exec')"
 _R_PARSE = "parse(file=commandArgs(TRUE)[1], keep.source=FALSE)"
 _SYNTAX = {"pass", "fail", "unavailable", "timeout", "blocked_path", "not_applicable"}
@@ -38,11 +42,21 @@ def is_lock_file(name: str) -> bool:
 
 
 def _path(value: str) -> str | None:
-    # Logical publication-relative paths only. Never expand an operator's path or open an input.
-    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_./ -]+", value):
+    """A logical publication-relative path, or None. Never expands an operator's path or opens an input.
+
+    The edition keeps a published file's basename as it is, so safe Unicode and punctuation names are kept (#773).
+    Refused: absolute, drive, UNC and backslash forms, `..` and `.labhq`, control/format/separator characters and
+    non-ASCII spaces, Windows-reserved characters and device names, parts that end in a dot or space (Windows drops
+    them), non-NFC text (one name, two spellings) and parts longer than 255 UTF-8 bytes."""
+    if not isinstance(value, str) or not value or unicodedata.normalize("NFC", value) != value:
+        return None
+    if any(char in _UNSAFE_PATH_CHARS or (char != " " and unicodedata.category(char) in _UNSAFE_PATH_CATEGORIES)
+           for char in value):
         return None
     path = PurePosixPath(value)
-    if path.is_absolute() or any(part in {"..", ".labhq"} for part in path.parts):
+    if path.is_absolute() or any(
+            part in {"..", ".labhq"} or part != part.strip() or part.endswith(".") or _WINDOWS_DEVICE.fullmatch(part)
+            or len(part.encode("utf-8")) > 255 for part in path.parts):
         return None
     return path.as_posix() if path.parts and path.as_posix() != "." else None
 

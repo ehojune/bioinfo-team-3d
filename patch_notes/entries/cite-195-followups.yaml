@@ -3,3 +3,4 @@ rows:
 - sha: f002a0c
   at: 2026-10-02 20:44
   text: accession version 재인용과 URI 혼합 후보를 판정하고 pack_dirs를 시작 시 검증
+  summary: 문헌·데이터 식별자의 여러 표기를 구분하고 분석 규칙 폴더를 시작 때 검사합니다.
