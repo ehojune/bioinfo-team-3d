@@ -23,3 +23,7 @@ rows:
   text: 이전 prompt의 생성 시점 문장만 반영하고 역변환 digest와 schema·output_types off/on 검사를 보존했다. 승인 전 callback 미호출과
     승인된 CSO step의 shutdown/cancellation 전파·연구 미dispatch·계획 hash 보존을 검증했다. CI 네 실패 mock 재현 뒤 같은 4건 및 관련
     17건 통과; 제품 코드·권한 경계는 그대로이며 실제 process·연구와 최종 head CI는 미검증이다.
+- sha: "dd853d0"
+  at: "2026-10-20 23:04"
+  summary: "최신 안내 문서와 논문 스킬 설명이 함께 남도록 문서 충돌을 풀었습니다."
+  text: "main의 감사·queued-halt 안내와 PR821의 승인 뒤 논문 스킬 계약을 보존했다. 제품 코드·테스트는 이전 검토 head와 같고 자동 목차는 main과 같다. 최종 CI는 새 head에서 확인한다."
