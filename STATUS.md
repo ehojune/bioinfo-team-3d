@@ -4,6 +4,58 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 단계
+20시 보고 전 문서 현행화
+
+## 한 일
+- HANDOFF에서 병합된 PR과 오래된 통합 대기를 빼고 열린 #793·#818·#819만 남겼습니다. #766 병합 확인도 반영했습니다.
+- 매뉴얼의 #791·#807 병합 전 표식을 제거하고 감사 기록의 #802·#807·#815 상태를 갱신했습니다. 구현·CI와 배포 준비·실운전·성능 측정은 구분합니다.
+- 세 문서의 LF 정규화 문자 수: HANDOFF 3,614→3,044, 매뉴얼 174,343→174,281, 감사 기록 2,044→2,360. 합계 180,001→179,685(-316)입니다.
+
+## 검사
+- 문서 상태·병합 commit의 ancestry·변경한 상대 링크·추가 문장의 비밀값·개인 경로 검사와 `git diff --check` 통과.
+- patch-notes·notes-index 원본 검증 통과.
+- `scripts/check_public.sh`는 35초 제한 실행에서 출력 없이 비정상 종료(exit 1)해 전체 검사는 미확인입니다.
+
+## 한계
+문서만 바꿨습니다. pytest·서비스·PI 인스턴스·배포·실운전·bench·HPC는 실행하지 않았습니다. CI·리뷰·병합은 총괄이 관제합니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+Fixes #811
+Refs #804
+PR #818
+
+Shadow 비교의 기준 실행을 공유하고 제거 검사를 계약 node로 좁혔습니다. queued-halt CI 검사는 executor 대기와 분리했습니다.
+
+- off는 불변 JSON 한 번만 공유하고 on 네 경우는 독립 실행합니다(lab 호출 구조 8→5). fresh-process off/import·fail-open·privacy/read-scope·제거 compile/잔여 참조/상태·핵심 E2E는 유지하며 제거 뒤 전체 테스트 수집을 추가했습니다. Shadow 전용 검증 5개는 assertion을 유지해 observer suite로 이동했습니다.
+- 완료 Windows job 118566758410은 8659 passed·48 skipped 뒤 한 건 실패했습니다(2031.72초). queued halt·세션·미dispatch assertion은 통과했고, 다음 t3의 빈 input scan executor 대기에 2초 전체 task 제한이 걸렸습니다. 제품 halt 결함을 뒷받침하는 trace는 없습니다.
+- 해당 control 테스트만 worker job 본문을 직접 실행하도록 opt-in fixture를 적용했습니다. 기존 assertion 6개·deadline 5개를 모두 보존하고 첫 task가 슬롯을 보유한 채 halt 완료·나중에도 t2 미dispatch를 추가 검증합니다. fsync/SQLite write는 실제 본문 그대로이며 전역 no-op·정책·production control 코드 변경은 없습니다.
+- 모의 executor stall로 원 head에서 같은 TimeoutError red 재현, 수정 뒤 관련 mock/static **11 passed**. #800 done-event 방어와 #811 계약도 확인했습니다. 앞선 #811 mock/static 79 passed·1 skipped 근거는 reference/status에 남겼습니다. Python 3.10 AST·public·diff·patch-notes·notes 검사를 기록했습니다.
+- 로컬 실제 subprocess/thread fixture·제거/E2E·PI/연구/bench/HPC/원자료는 미실행입니다. Windows/native scheduling·durability 통합과 CI 시간 절감은 새 CI 검증 경계입니다. CI/리뷰를 조회·대기하거나 봇 호출·병합·배포하지 않습니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+## 승인 대기와 외부 조회 예산 (#784, 개발 초안)
+
+동일 MCP event loop·작업 폴더의 자동 조회와 PDF 승인 대기를 하나씩 처리해 겹친 시간을 두 번 제외하지 않도록 했습니다. 대기열에 있던 조회는 승인 종료 뒤 기존 잔여 예산으로 시작하며 별도 단계 예산은 독립적입니다. 기존 timeout/error/cancellation과 #800 progress 종료 flag는 유지합니다.
+
+fake clock·notification·coroutine gate 회귀는 수정 전 5 failed/1 passed, 수정 후 관련 27 passed입니다. 겹친 승인 뒤 후속 조회·잔여 예산 소진, 승인/조회 양쪽 순서, queued/active 취소와 다른 단계를 검사했습니다. 로컬은 mock/static만 실행했습니다.
+
+실제 서비스·PDF·MCP server·네트워크·process·PI·연구·HPC·성능은 미검증입니다. 독립 process/event loop 사이의 동시 실행은 이 slot의 직렬화 범위 밖입니다. 근거 docs/reference/approval-wait-784.md. draft PR을 열며 CI/리뷰 대기·병합·배포는 총괄 소관입니다.
+
+PR #766 · Refs #681 · P1 수정 `45f35f0`.
+
+- 4323699194: 이름 선택 괄호식·선택 변수 receiver의 Kill()을 거부합니다. 괄호식의 앞선 출력도 추적하며 명시 PID·인용된 변수 문자열·호출 없는 member 조회는 구분합니다.
+- 4323699213: ionice의 class/classdata·ignore option 뒤 실행 command를 검사합니다. PID/PGID/UID 대상 지정·option operand·help/version은 실행형과 구분합니다.
+- 4323699225: Bash locale quote의 비번역 literal을 double quote처럼 정규화합니다. 인접 fragment와 escaped/single-quoted 데이터도 구분합니다. 4318107934는 기존 stale 근거 답글로 제외합니다([근거·회귀](https://github.com/ehojune/bioinfo-team-3d/blob/codex/broad-process-stop-681/docs/reference/process-stop-681-followup.md)).
+- 검증: 원래 head에서 **31 failed, 30 passed**, 수정 뒤 guard 10개 파일·text encoding **710 passed**. policy·flat/nested fake broker의 deny·card/event/submit 미호출·pending 없음을 확인했습니다. 기존 test·assertion과 guard 환경은 유지했습니다.
+- Python 3.10 AST·integrations·public·patch-note·기록 원본·diff 검사 PASS. policy·runner·workflow·공통 fixture와 #800 반영을 보존했습니다. main과 충돌은 없었습니다.
+
+한계: 실제 process/proc_tree·shell·번역 catalog·PI·연구·HPC는 실행하지 않았습니다. OS 격리·PID tracker #675·P2는 별도 범위입니다. 새 CI·새 head 리뷰/P1=0·병합은 controller가 맡습니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 Fixes #797
 Refs #672, #680
 PR #807: P1 4323683886 — paper-skill 방법이 바뀌면 이전 결과를 재사용하지 않도록 수정했습니다.
@@ -12,6 +64,20 @@ PR #807: P1 4323683886 — paper-skill 방법이 바뀌면 이전 결과를 재�
 - 방법 변경은 그 단계와 의존 단계의 재사용을 거절하고 다른 단계의 별도 skill 변경은 독립 후보를 유지합니다. 구 실행 signature는 새 계약의 증거로 쓰지 않습니다. 승인 뒤 현재/보관 plan의 해당 입력이 바뀌면 중단·새 CP1을 요구하며 조용히 재실행하지 않습니다.
 - 기존 head 새 회귀 15건 red 뒤 새 18건을 포함한 관련 mock/static **129 passed**. 선언·실제 attachment metadata 대조, CP1 후보/snapshot·승인 후 변경·기존 요청 입력 차단·재개/예산 rollback을 확인했습니다. Python 3.10 AST·public·diff·patch-notes·notes 검사 근거를 기록했습니다.
 - Paper2Skill 변환/설치·실제 source bytes 읽기·process/thread/Hub 운영·PI·연구/bench/HPC/원자료는 미실행입니다. 기존 hash/path·승인·보안·bounded loop를 유지하고 실행 확장·P2·다른 owner 범위는 건드리지 않았습니다. 최종 head CI·새 리뷰/P1=0·병합/배포는 controller 담당입니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+Fixes #811
+Refs #804
+Draft PR #818
+
+Shadow 비교 검사에서 같은 off 실행의 반복을 줄였습니다. on 비교와 안전·제거 검증은 유지합니다.
+
+- off 기준은 독립 상태에서 한 번 계산한 JSON 문자열만 공유합니다(비교 네 경우: lab 호출 8→5). on 네 실행은 각각 새 상태이며 fresh-process off/import·fail-open·privacy/read-scope 검사는 유지합니다.
+- 제거 뒤 compile·잔여 참조·상태 복구·resume 승인·필수 E2E를 유지하고 child 실행은 계약 node로 좁혔습니다. 전체 생존 테스트 수집을 추가했습니다. #804의 script 의존 boundary harness는 script와 함께 제거하고 mainline CP1 검사는 남깁니다.
+- 수집을 깨던 mixed-suite의 Shadow 전용 테스트 5개를 observer 테스트로 이동했습니다. AST 대조로 이동한 본문·assertion과 기존 함수 68개의 보존을 확인했습니다. CI workflow/classifier·Shadow 동작·fsync/SQLite 정책은 변경하지 않았습니다.
+- 기존 head에서 새 계약 4건 red, 수정 뒤 관련 mock/static 79 passed·1 skipped(로컬 비공개 단어 목록 미설정)·2 deselected(실제 제거/E2E). 로컬 subset은 7.13초이며 CI 시간 절감은 미측정입니다. Python 3.10 AST·public·diff·patch-notes·notes 검사 결과는 기록에 남깁니다.
+- 실제 subprocess/thread·제거·Hub/PI 운영·연구/bench/HPC/원자료는 실행하지 않았습니다. 변경된 child 선택의 실제 수집/상태/E2E·Windows/3.10 통합과 전후 CI duration은 controller 검증 경계입니다. Draft로 제출하며 CI·리뷰를 기다리거나 봇 호출·병합·배포하지 않습니다.
 
 🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 
@@ -52,6 +118,18 @@ PR #807: P1 4323035753 — 요청 단위 외부 입력이 재사용 증거에서
 - dispatch에서 입력 부재만 기록해 retry/repair·archive·재승인에 보존합니다. 기록 없는 과거 결과도 제외합니다. metadata 삭제로 미검증 입력 이력을 지우지 못하며, 승인 후 입력 추가는 중단·새 CP1을 요구합니다. 새 기록·snapshot에 입력 경로/값을 넣지 않습니다.
 - 기존 head에서 새 mock 회귀 20건 red, 수정 뒤 새 23건을 포함한 관련 mock/static **112 passed**. CP1/input-fit·재개·예산 rollback을 확인했습니다. Python 3.10 AST·public·diff·patch-notes·notes 검사 통과. 전체 red/green 로그는 로컬 D: 산출에 보존했습니다.
 - 실제 process/thread/Hub 운영·PI·연구/bench·원자료/HPC는 미실행입니다. 기존 승인·보안 경계를 유지하며 #798/#811·P2·다른 owner 범위는 건드리지 않았습니다. 최종 head CI·리뷰/P1=0·병합/배포는 controller 담당입니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+PR #766 · Refs #681 · P1 수정 `2b6b8b4`.
+
+- 4322864519: EncodedCommand·e/ec·약어의 literal UTF-16LE Base64를 실행 없이 decode해 검사합니다. host 옵션·script 인수를 구분하고 decode 크기·재귀 상한과 불명확한 encoded 입력 거부를 유지합니다.
+- 4322864528: 이름 선택 객체의 ForEach-Object/foreach/% MemberName·positional Kill·wildcard 호출을 거부합니다. common parameter operand와 명시 PID·조회·데이터는 구분합니다.
+- 4322864535: stdbuf의 short/long option operand 뒤 literal command를 기존 검사에 연결합니다. 4318107934는 기존 공식 계약의 stale 근거 답글로 제외합니다([근거·회귀](https://github.com/ehojune/bioinfo-team-3d/blob/codex/broad-process-stop-681/docs/reference/process-stop-681-followup.md)).
+- 검증: 원래 head에서 새 회귀 **37 failed, 25 passed**, 수정 뒤 guard 9개 파일·text encoding **649 passed**. policy·flat/nested fake broker의 deny·card/event/submit 미호출·pending 없음을 확인했습니다. 기존 test·assertion은 유지했습니다.
+- Python 3.10 AST·integrations·public·patch-note·기록 원본·diff 검사 PASS. guard 환경을 유지하고 전체 실패 로그를 보존했습니다. 초기 oversized test ID의 Windows 환경 변수 길이 오류는 짧은 ID로 고쳤으며 assertion은 그대로입니다.
+
+한계: 실제 process/proc_tree·shell·PI·연구·HPC는 실행하지 않았습니다. OS 격리·PID tracker #675·P2는 별도 범위입니다. 새 CI·새 head 리뷰/P1=0·병합은 controller가 맡습니다.
 
 🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 
@@ -135,6 +213,25 @@ PR #816(draft), 커밋 `fb5e47c`. 재현 receipt가 공개 source의 안전한 �
 - **실제 interpreter·R·bash에 유니코드 이름 전달:** 로컬에서 실행하지 않았습니다. 실제 interpreter test는 CI에서만 돕니다.
 - **NFD 이름:** macOS 등에서 NFD로 만들어진 이름은 `blocked_path`로 남습니다(보수적).
 - #774는 별도입니다.
+
+## 단계
+PR #766 광역 종료 guard 후속, Refs #681.
+
+## 수정
+- P1 4321811293·4321811304: 이름 선택 expression의 Id와 process substitution의 PID를 종료 consumer에 연결합니다.
+- P1 4322020342·4322020348: Invoke-Expression·watch의 literal 실행 payload를 검사합니다.
+- P1 4322020355·4322020358: kill의 nonpositive PID와 이름 선택 객체의 Kill()을 거부합니다. 조회·signal operand·명시 PID·문자열 데이터의 음성 회귀를 유지합니다.
+- 4318107934는 기존 [공식 계약의 stale 근거 답글](https://github.com/ehojune/bioinfo-team-3d/pull/766#discussion_r4320835135)로 제외합니다. [세부 근거](../reference/process-stop-681-followup.md). manual은 기존 정책 문단만 갱신했습니다.
+
+## 검증
+- 새 문자열/fake 회귀: 수정 전 **43 failed, 41 passed**. 수정 후 guard 8개 파일·text encoding: **587 passed**. 원래 test·assertion은 수정하지 않았습니다.
+- policy와 flat/nested fake broker가 card/event/submit·pending 없이 deny합니다. 사고 guard 로드·환경 변수 3개 유지, 전체 실패명·traceback을 로컬에 보존했습니다.
+- Python 3.10 AST·integrations·public·patch-note·기록 원본·diff 검사 PASS. #800 merge의 ancestry를 확인했습니다. workflow·runner·공통 fixture는 변경하지 않았습니다.
+
+## 한계
+실제 process/proc_tree·shell·PI·연구·HPC는 실행하지 않았습니다. 동적 명령 OS 격리·PID tracker #675·기존 P2는 별도 범위입니다. 새 head CI는 조회·대기하지 않으며 controller가 CI·리뷰·병합·배포를 맡습니다.
+
+🤖 Co-Authored-By: Codex (gpt-6-luna) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 
 # 응집형 분석 스텝 정책과 bench 계약 최종 범위 (#799)
 
@@ -305,6 +402,24 @@ P1 — 긴 보고서의 경로 판별 지연 제거. Fixes #810.
 
 🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 
+## 단계
+PR #766 이름 기반 광역 종료 guard — `d16dd8e`, Refs #681.
+
+## 수정
+- P1 4321588842: skill의 이름/광역 선택 종료를 거부합니다. short/long option·붙인 operand·약어를 읽고 no-action·help/version·signal listing과 명시 PID를 구분합니다. operand로 쓰인 조회 표식은 예외가 아닙니다.
+- P1 4321588847: pidof를 이름 선택 PID producer로 추적해 command substitution·pipeline·xargs와 연결합니다. skill no-action의 이름 선택 PID를 종료에 넘기는 경로도 거부합니다.
+- 4318107934는 기존 공식 parameter 계약의 stale 근거 답글이 있어 제외했습니다. [근거·회귀·경계](../reference/process-stop-681-followup.md). manual은 해당 정책 문단만 갱신했습니다.
+
+## 검증
+- 새 회귀: 수정 전 **22 failed, 30 passed**. 수정 후 guard 7개 파일과 `tests/test_approval_closed_grammar.py`: **544 passed**.
+- policy·flat/nested fake broker가 card/event/submit·pending 없이 deny합니다. guard 환경 3개 유지·blocked 0건, 전체 실패명·traceback을 로컬에 보존했습니다.
+- Python 3.10 AST·integrations·public·patch-note·notes·diff 검사 PASS.
+
+## 한계
+실제 skill/pidof·process/proc_tree·PI·연구·HPC는 실행하지 않았습니다. 동적 명령 OS 격리·PID tracker #675·기존 P2는 별도 범위입니다. CI·새 head 리뷰·병합·배포는 controller가 맡습니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 Fixes #797
 Refs #672, #680
 PR #807. 재사용 계약 `232690b`, CI 회귀 수정 `d175432`.
@@ -318,6 +433,22 @@ CP1 전에 검증한 노드별 재사용 snapshot을 계획/승인 hash와 묶�
 - 실제 Hub를 구성하는 ask 37건·process/thread/signal·전체 suite·Windows/3.10 실행은 CI 경계입니다. PI·원자료/HPC·연구/bench·봇 요청/대기·병합·배포는 하지 않았습니다. #798/#811·다른 owner 범위 미착수. 실제 과학 효용·도구 설치 판본은 미검증이며 파일 변경을 잠그지 않습니다. 최종 CI·리뷰·P1=0·병합은 controller 담당입니다.
 
 🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+## 단계
+PR #766 이름 기반 광역 종료 guard — `73bb72b`, Refs #681.
+
+## 수정
+- P1 4321387908: find의 unquoted `{}` 뒤 후속 action을 이어 검사합니다. exec/execdir/ok/okdir·batch·wrapper 회귀를 추가했고 기존 prefix 거부와 shell/block lexer는 유지합니다.
+- P1 4321387934: 이름 선택 pipeline의 `$_`/`PSItem`에서 나온 ID를 직접·괄호식·복사 변수로 전달해도 거부합니다. 명시 PID 조회와 이름 선택에서 유래하지 않은 PID는 기존 경계를 유지합니다.
+- 4318107934는 공식 parameter 계약의 stale 근거 답글이 있어 제외했습니다. [지적별 근거·경계](../reference/process-stop-681-followup.md).
+
+## 검증
+- 새 회귀: 수정 전 **17 failed, 12 passed**. 수정 후 guard 6개 파일과 `tests/test_approval_closed_grammar.py`: **492 passed**.
+- policy·flat/nested fake broker가 card/event/submit·pending 없이 deny합니다. guard 환경 3개 유지·blocked 0건, 전체 실패명·traceback을 로컬에 보존했습니다.
+- Python 3.10 AST·integrations·public·patch-note·notes·diff 검사 PASS. 기존 정책의 누락 경로를 고쳤으며 상세 근거만 갱신했습니다.
+
+## 한계
+실제 shell/process/proc_tree·PI·연구·HPC는 실행하지 않았습니다. 동적 명령 OS 격리·PID tracker #675·기존 P2는 별도 범위입니다. CI·새 head 리뷰·병합·배포는 controller가 맡습니다.
 
 ## 2026-10-20 13:36 — `gemini-manual-architecture`
 
@@ -401,6 +532,23 @@ reference 3,010→3,702자(LF Unicode), manual 동작 설명은 유지합니다.
 - 경합이라 수정 전에도 매번 멈추지는 않습니다. 원인은 stall snapshot과 3.10 `wait_for` 동작으로 판단했습니다.
 - PR #766이 `tests/test_external_wait.py`를 고치고 있어 그 파일은 건드리지 않고 새 test 파일을 만들었습니다.
 
+## 단계
+PR #766 이름 기반 광역 종료 guard — `d83da2b`, Refs #681.
+
+## 수정
+- P1 4320847541: `else` 뒤의 literal 실행 명령과 wrapper를 검사합니다.
+- P1 4320847550: 공백·줄바꿈을 구분해 literal 변수의 이름 선택·복사·pipeline·InputObject/Id 소비를 연결합니다. 덮어쓰기만으로 선택 상태를 지우지 않습니다.
+- P1 4321129633: 중첩·double quote를 구분해 `$()` payload를 검사하고 이름 선택 PID를 외부 종료 명령에 연결합니다. 기존 backquote 거부와 PID·단순 조회·데이터 음성 사례를 유지합니다.
+- 4318107934는 공식 parameter 계약의 stale 근거 답글이 이미 있어 제외했습니다. [지적별 근거·경계](../reference/process-stop-681-followup.md).
+
+## 검증
+- 원래 head `fea7042` 코드로 최종 새 회귀 52건을 재현: **26 failed, 26 passed**. 수정 뒤 guard 5개 파일과 `tests/test_approval_closed_grammar.py`: **463 passed**.
+- policy·flat/nested fake broker가 card/event/submit·pending 없이 deny합니다. guard 환경 3개 유지·blocked 0건, 전체 실패명·traceback을 로컬에 보존했습니다.
+- Python 3.10 AST·integrations·public·patch-note·notes·diff 검사 PASS. manual은 해당 정책 문단만 갱신했습니다.
+
+## 한계
+실제 shell/process/proc_tree·PI·연구·HPC는 실행하지 않았습니다. 동적 명령 OS 격리·PID tracker #675·기존 P2와 이전 Hub 통합 검증은 별도 범위입니다. CI·새 head 리뷰·병합·배포는 controller가 맡습니다.
+
 Windows detached launch와 설정/runtime 준비를 분리합니다. `started_here=False`의 실제 health 함수·autospec 회귀, auth/identity·ANY-Job gate, foreground/POSIX를 유지합니다. Fixes #795.
 
 후속: direct를 먼저 시도하고 확인된 WinError 5 또는 Job 잔류에만 소유 handle로 자식 종료·회수를 마친 뒤 transient local WMI를 한 번 시도합니다. base interpreter와 venv carrier로 redirector의 별도 PID/Job을 피합니다. nonce receipt·보유 PID handle의 생성 시각/실행 파일/current-user·모든 Job 비소속 확인 전에는 ACK하지 않습니다. bootstrap은 ACK 뒤 같은 PID로 supervisor에 진입하며 caller 소멸/만료에는 self-abort합니다. unknown·정리 실패·provider 거부에 unsafe retry는 없습니다.
@@ -456,6 +604,21 @@ Windows detached launch에 BREAKAWAY를 요청하고 자식의 모든 Job 비소
 manual 166,205→166,295자, reference 1,811→3,029자(LF Unicode). [근거·남은 CI 확인](docs/reference/windows-runtime-795.md). workflow·host Job 정책·broker/service 변경은 없습니다.
 
 🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
+## 단계
+PR #766 CI fixture 보정 — `6954ab6`, Refs #681.
+
+## 한 일
+- 지정 head의 artifact는 Windows `test_resume_waits_for_active_recruit_receipt[active-True-plan_only]` 실패였습니다. 안내된 limiter fixture는 이미 `98f70d9`에서 수정됐고 이번에도 세 phase가 통과했습니다.
+- 원본 resume coroutine의 code를 그대로 실행하되 그 coroutine의 polling 시계만 가상으로 고정했습니다. 중간 상태 확인은 barrier로 동기화합니다. product·기존 assertion·16개 matrix·0.2초 기한·2초 실제 watchdog은 유지합니다.
+
+## 테스트 결과
+- `tests/test_resume_receipt_clock.py`와 `tests/test_external_wait.py::test_key_fulltext_automatic_phases_use_task_deadline`: **6 passed**. FakeHub의 재개·기한 만료·취소를 검증했습니다.
+- Python 3.10 AST·기존 assertion/matrix/기한 보존 비교·public·patch-note·notes·diff 검사 PASS. guard 환경과 전체 로컬 실패 로그를 보존했습니다.
+
+## 한계
+- 원본 Hub fixture의 로컬 실행은 `subprocess.Popen` guard에서 1회 차단됐으며 재실행하지 않았습니다. 전체 Hub/Windows 통합 결과는 미검증입니다.
+- 실제 process/proc_tree·PI·연구·HPC와 late-storage/PDF 테스트는 실행하지 않았습니다. 전체 CI·fresh-head 리뷰·병합·배포는 controller가 맡습니다.
 
 Fixes #796
 PR #803. CP1 `cab83e7`, 분리 `2070c23`, 공유 fixture `bab83c2`.
@@ -560,6 +723,14 @@ PR #790 · Fixes #664
 
 🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
 
+PR #766, 고침: `c484256`. Refs #681.
+
+- 지정 P1 10건 중 9건을 수정했습니다. coproc·eval·backquote·timeout/nice/setsid·find action·dash·trap·pgrep→xargs kill·ANSI-C literal quote를 검사합니다. 재귀 상한 초과도 거부합니다.
+- 4318107934는 원문의 positional Name 전제가 공식 5.1·7.5 계약과 7.5.3 소스에 맞지 않아 stale 근거를 답글로 남깁니다. 명시한 Name이 switch 뒤에 오는 경우는 현재도 deny합니다. [지적별 근거](../reference/process-stop-681-followup.md).
+- 현재 head `d4317ec`의 mock baseline에서 **57 failed**를 재현했고, 수정 후 기존 회귀 포함 **368 passed**입니다. policy와 flat/nested fake broker가 카드·event·submit·pending 없이 deny하며 PID·데이터·조회 음성 사례를 유지합니다. guard 환경 3개 유지·blocked 0건, 전체 실패명·traceback 로컬 보존.
+- Python 3.10 AST·integrations·public·diff·patch-note·notes 검사 PASS. 기록은 저장소 검사에 맞춰 기존 평면 entry에 추가했습니다. 현재 main과 충돌이 없습니다.
+- 실제 shell/process/proc_tree·PI·연구·HPC는 미검증입니다. 동적 명령 격리·PID tracker #675와 기존 P2는 범위 밖이며 CI·fresh-head 리뷰·병합·배포는 supervisor 담당입니다.
+
 Fixes #665
 PR #791.
 
@@ -599,6 +770,15 @@ Refs #786. 기능 커밋 `06c5a64`는 Ubuntu Python 3.10 pytest의 진단·대�
 - mock/static **14 passed**: 실제 hook 규격 등록, 합성 coroutine stack, 종료 코드·출력·범위·상한 검증. 실제 thread·signal·process fixture는 미실행입니다. guard 환경 3개 유지·blocked 0건이며 전체 로그를 로컬 artifact에 보존했습니다. YAML·Python 3.10 AST·Bash·integrations·public·records·diff 검사 PASS.
 
 정체의 근본 원인과 실제 Actions timeout/stack 출력은 아직 미검증입니다. #766 limiter fixture 수정과 별도이며 CI·리뷰·병합은 controller 담당입니다.
+
+PR #766, 수정 `98f70d9`. [Python 3.10 실패](https://github.com/ehojune/bioinfo-team-3d/actions/runs/39328092592/job/118352072701)의 전체 traceback을 확인했습니다. 앞선 수정·한계는 [이전 기록](https://github.com/ehojune/bioinfo-team-3d/blob/e0512fd7b9c80bffe68d3ee4bf811e39880467cc/docs/status/2026-10-20-0628-broad-process-stop-681.md)을 따릅니다.
+
+- operation timeout 뒤 progress task 정리 중 외부 1초 제한이 만료됐습니다. 해당 test의 5ms progress override를 제거해 제품 기본 60초 주기를 사용합니다. **80ms deadline·1초 외부 제한은 유지**하고 operation 취소·timeout 알림 assertion을 추가했습니다.
+- 완료된 알림의 취소를 놓치는 Python 3.10 경로를 coroutine mock으로 모사해 **1 failed → 3 passed**. 실제 3.10 재실행은 controller 담당입니다. 로컬 Python 3.12에서 `tests/test_external_wait.py` **20 passed**, guard 환경 3개 유지·blocked 0건. 전체 실패명·traceback을 로컬 artifact에 보존했습니다.
+- test가 이후 main의 #776에 추가돼 main `e0fa7e4`를 충돌 없이 통합했습니다. 자동 통합 tree와 비교한 직접 수정은 해당 test 하나뿐입니다. 제품 코드는 직접 수정하지 않았으며 late-storage/PDF test는 재실행하지 않았습니다.
+- Python 3.10 AST·public·diff·patch-note·notes 검사 PASS.
+
+[#786](https://github.com/ehojune/bioinfo-team-3d/issues/786)의 장기 정체와 같은 원인인지는 **UNVERIFIED**입니다. 실제 subprocess/proc_tree·PI·연구 실행은 미검증이며 CI·리뷰·병합·배포는 controller 담당입니다.
 
 # PI 보고 전 문서 현황 대조
 
@@ -645,6 +825,14 @@ PR #789, 기능 커밋 `f5425c5`. 재현 receipt 실행에서, staged Python ent
 - **script 폴더 밖 module은 여전히 import되지 않습니다.** script 폴더만 경로에 들어가므로, 다른 step이나 상위 폴더의 module은 import되지 않습니다(일반 `python script.py`와 같음).
 - **링크 처리는 Python 규칙을 따릅니다.** 앞 script가 script 파일을 receipt 폴더 밖을 가리키는 링크로 바꾸면, Python 규칙상 링크를 푼 폴더가 `sys.path[0]`이 됩니다. receipt는 sandbox가 아니라는 기존 전제(모듈 docstring) 안의 일이라 새 상태를 만들지 않았습니다.
 - #773·#774는 다루지 않았습니다.
+
+PR #766. test 커밋 `71e08b0`으로 [Windows 실패](https://github.com/ehojune/bioinfo-team-3d/actions/runs/39319738372/job/118290456835)를 보완했습니다. 앞선 guard·consult 수정과 남은 범위는 [이전 기록](https://github.com/ehojune/bioinfo-team-3d/blob/24e076a22473352bae72251eb09ae35cb384efad/docs/status/2026-10-20-0527-broad-process-stop-681.md)을 따릅니다.
+
+- `test_late_selection_runs_editor_after_review_then_approval_and_mock_upload`에서 PDF 준비를 Event로 보류해 CI와 같은 `assert publish` 실패를 재현했습니다. PDF 생성·Git 판본 조회를 mock으로 격리한 뒤 **1 failed → 1 passed**, review/status 조합 **4 passed**입니다.
+- 기존 검토 전 편집 금지·게시 승인 전 업로드 금지·문서·게시 결과 검증을 유지하고 PDF 호출 1회 검증을 추가했습니다. 제품 코드·timeout은 바꾸지 않았습니다.
+- accident guard와 환경 변수 3개 유지, blocked **0건**. 전체 실패명·traceback은 로컬 artifact에 보존했습니다. Python 3.10 AST·public·diff·patch-note·notes 검사 PASS.
+
+실제 PDF 생성·process/proc_tree integration·PI 운영·연구 실행은 미검증입니다. push 후 CI·봇·리뷰 대기와 병합·배포는 supervisor 담당입니다.
 
 PR #776: 내장 외부 API 조회에 단계 첫 조회부터 20분 기한·대기 알림·시간 초과 기록을 추가합니다. Refs #676.
 
@@ -696,6 +884,21 @@ PR #783, 수정 커밋 `4232731`. YAML은 SafeLoader로 파싱한 런타임 문�
 - Python 3.10 AST·public·diff·patch-note·notes 검사 PASS. test helper 변경이라 manual 갱신은 없습니다. patch-note는 flat entry 한 개에 기록합니다.
 
 실제 bench/trial·연구·process/proc_tree integration은 미실행입니다. CI·리뷰·병합·배포는 watcher 담당입니다.
+
+## 결론
+
+PR #766의 [Windows 실패](https://github.com/ehojune/bioinfo-team-3d/actions/runs/39313316682/job/118268363866)를 test 커밋 `7e08044`로 보완했습니다. 제품 코드는 변경하지 않았습니다. 앞선 process-stop 수정·남은 범위는 [이전 기록](2026-10-20-0441-broad-process-stop-681.md)을 따릅니다.
+
+## 변경·검증
+
+- `test_facilities_ask_without_facilities_goes_to_the_cso_without_waiting`의 마지막 yield에서 중복 2초 timeout이 만료됐습니다. facilities 대기는 즉시 실패시키고 ask 작업의 기존 3초 제한과 답변·라우팅 검증은 유지합니다.
+- 가상 시계로 같은 TimeoutError를 재현해 **1 failed → 1 passed**. 관련 facilities mock test는 **4 passed**. Git provenance 조회도 mock으로 격리했습니다.
+- 최초 시도에서 Git 메타데이터용 subprocess를 accident guard가 1건 차단했습니다. 실제 실행 없이 경계를 mock으로 바꾼 뒤 추가 차단은 0건입니다. guard와 환경 변수 3개를 유지했고 전체 실패명·traceback은 로컬 artifact에 보존했습니다.
+- Python 3.10 AST·diff·공개 검사 PASS. patch-note는 기존 flat entry에 기록합니다.
+
+## 한계
+
+실제 process/proc_tree integration·운영 실행은 하지 않았습니다. push 후 CI 대기·재리뷰·P1=0 판정·병합·배포는 supervisor가 맡습니다.
 
 Fixes #677
 PR #782.
@@ -749,6 +952,21 @@ PR #781, 기능 커밋 `7f7a6bc`. 재현 receipt에서 같은 단계의 script �
 - **조건부로 쓰는 script는 놓칠 수 있습니다.** 파일이 이미 있으면 쓰지 않는 script는 앞 script 뒤에 실행되면 `missing_output`이 됩니다. 거짓 PASS가 아니라 보수적으로 틀리는 쪽입니다.
 - #772–#774는 다루지 않았습니다.
 
+## 결론
+
+PR #766. 기능 커밋 `93d07f8`로 P1 [4317627951](https://github.com/ehojune/bioinfo-team-3d/pull/766#discussion_r4317627951)의 xargs literal command 우회를 막습니다. 광역 종료는 승인 카드 없이 거부합니다. Refs #681.
+
+## 변경·검증
+
+- xargs의 short/long 옵션·묶인 flag·붙임/분리 operand·`--`를 넘겨 실제 command를 검사합니다. 선택값 `-e/-i/-l`은 다음 command를 삼키지 않습니다([GNU 옵션 문서](https://www.gnu.org/software/findutils/manual/html_node/find_html/xargs-options.html)). 중첩 wrapper와 shell payload는 기존 검사로 이어집니다.
+- head `3bd818c`에 새 회귀를 추가해 **29 failed·19 passed → 최종 관련 mock/static 283 passed**. guard·policy·flat/nested fake broker의 카드 없는 deny와 pending 없음 확인. 명시 PID·기본 echo·조회·출력용 문구·옵션의 파일명/치환 문자열을 보존했습니다.
+- accident guard 로드 및 환경 변수 3개 유지 확인, blocked event **0건**. 실패명·traceback 전체를 로컬 test artifact에 보존했습니다. 설치·공용 venv 변경은 없습니다.
+- Python 3.10 AST·공개·diff·patch-notes·notes 검사 PASS. manual LF 기준 162,703→162,709자(+6). 중첩 entry를 금지하는 notes gate에 맞춰 기존 flat patch-note 파일을 사용합니다.
+
+## 남은 것
+
+P2 [4317627961](https://github.com/ehojune/bioinfo-team-3d/pull/766#discussion_r4317627961)의 here-document 오인은 수정하지 않았습니다. issue 전환은 lead의 영향·비용 선택 뒤 collector가 맡습니다. 실제 shell/process/proc_tree integration·PI 운영·HPC·원자료·분석은 미실행이며 PID tracker #675·동적 명령 OS 격리는 별도 범위입니다. CI 대기·새 head 리뷰·P1=0 판정·병합·배포는 supervisor 담당입니다.
+
 Fixes #682
 
 명시적 모델 계획 거부를 model_refused 사유로 남기고 웹·status에 표시합니다. 자동 재시도·모델 전환 없이 PI가 허용된 다른 CSO 모델 또는 수정 문구를 선택·승인해야 기존 게이트를 거친 새 요청을 만듭니다. 원래 실패는 보존합니다.
@@ -764,6 +982,33 @@ Fixes #682
 - 거부 감지는 명시적 model_refused 또는 API Error 안전장치 서명에 한정합니다. 과학 결과 재현 PASS를 주장하지 않습니다.
 
 🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
+## 결론
+
+PR #766. 기능 커밋 `67813c8`로 literal 실행 위치·quote removal 검사를 보강했습니다. 배정된 P1 여섯 건을 수정하고, 원문 ForEach 지적 한 건은 기존 `0997a9a`의 stale 근거를 확인했습니다. 광역 종료는 승인 카드 없이 거부합니다. Refs #681.
+
+## 지적별 근거
+
+| 댓글 | 처리 |
+|---|---|
+| 4317094579 | shell의 결합형 `-lc`와 cmd `/k` payload 검사 |
+| 4317094587 | `command -p`·`--` 및 기존 wrapper의 옵션·operand 처리 |
+| 4317094594 | 원문은 head `2941c7e`에서 이미 deny. 새 exact 회귀로 확인; 줄바꿈·앞선 문장이 있는 block도 보강 |
+| 4317155926 | `if`·`elif`·`while`·`until`·`time`의 실행 위치 검사 |
+| 4317155937 | redirection·파일/fd operand를 argv와 구분 |
+| 4317155944 | `env -vS`·붙임값·long option split-string 재귀 검사 |
+| 4317155962 | quote/escape fragment를 한 word로 읽고 literal quote removal 적용; Windows 경로 판정 유지 |
+
+## 검증
+
+- 기존 head에 새 회귀를 추가해 45 failed·22 passed → 수정 후 전용 문자열/fake 211 passed. 승인 정책의 정적 test 24개를 포함한 최종 실행은 **235 passed**입니다.
+- 각 새 실행 사례에서 guard·policy·flat/nested fake broker의 카드 없는 deny와 pending 없음 확인. PID·조회 명령·인용한 출력 문구를 보존했습니다.
+- accident guard 로드 확인, `PYTEST_PLUGINS`·`PYTHONPATH`·`LABHQ_MOCK_GUARD_LOG` 유지, blocked event 0건. 실패명·traceback 전체는 로컬 artifact에 보존했습니다. 설치·공용 venv 변경은 없습니다.
+- Python 3.10 AST·공개·diff·patch-notes·notes 검사 PASS. manual LF 기준 162,629→162,703자(+74). 중첩 entry를 금지하는 notes gate에 맞춰 기존 flat patch-note 파일을 사용합니다.
+
+## 남은 것
+
+실제 shell/process/proc_tree integration·PI 운영·HPC·원자료·분석은 실행하지 않았습니다. PID tracker #675·동적 명령 OS 격리는 별도 범위입니다. P2는 lead의 영향·비용 선택 뒤 collector가 처리합니다. CI 대기·새 head 리뷰·P1=0 판정·병합·배포는 supervisor 담당입니다.
 
 # storage --rebuild 리뷰 P1 (#754, PR #777)
 
@@ -862,6 +1107,27 @@ PR #777. `labhq storage <요청 id> --rebuild [--name <새 저장소>] [--visibi
 - 웹 사무실 버튼은 없고 CLI·API만 있습니다.
 - 실제 GitHub 게시, 실제 요청, PI instance는 실행하지 않았습니다.
 - 처음에 `tests/test_cli*.py`를 glob으로 묶어 돌렸을 때 5 failed, 59 passed였습니다. 출력에 보인 실패는 `test_cli_adapter.py`의 2건뿐이고, 나머지 3건의 위치는 확인하지 않았습니다. 이 묶음에는 하위 process를 띄우는 adapter·launch test가 섞여 있어, mock-only 정책에 따라 다시 돌리지 않았습니다. storage CLI 경로는 위의 mock 테스트로 확인했습니다.
+
+## 결론
+
+PR #766. 기능 커밋 `6bf40b7`·`0997a9a`로 P1 [4316642063](https://github.com/ehojune/bioinfo-team-3d/pull/766#discussion_r4316642063)·[4316642076](https://github.com/ehojune/bioinfo-team-3d/pull/766#discussion_r4316642076)의 sudo 옵션·PowerShell script block 우회를 막습니다. 이름 기반 광역 종료는 승인 카드 없이 거부합니다. Refs #681.
+
+## 변경
+
+- sudo 옵션의 operand·붙임값·묶인 short flag·`--`·환경변수를 넘긴 뒤 실제 명령을 검사합니다. 대소문자를 구분해 `-H`와 `-h`를 다르게 처리합니다([upstream parser](https://github.com/sudo-project/sudo/blob/main/src/parse_args.c)).
+- 인용 문자열은 통째로 유지하고 `{`·`}`를 명령 경계로 읽어 script block 내부를 검사합니다. block 출력·filter·앞선 문장의 이름 선택 상태도 보존합니다([PowerShell call operator](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_operators?view=powershell-7.5#call-operator-)).
+- policy·broker는 같은 guard를 유지합니다. 새 allow 분기는 없으며 명시 PID·숫자 signal·출력용 문구를 보존합니다. manual은 LF 기준 162,588→162,629자(+41)입니다.
+
+## 검증
+
+- 기존 head `516dbdd`에서 새 문자열/fake broker 회귀 31개 실패를 재현했습니다. block 출력·filter 연결 회귀 9개도 각 수정 전 실패를 확인했습니다. 최종 전용 test 144 passed, 승인 정책의 기존 정적 test 24 passed.
+- fake broker는 두 우회를 카드·event·submit handler에 보내지 않고 pending 기록도 남기지 않음을 확인합니다.
+- 최초 setup은 `markdown_it` 부재로 실패했습니다. 기존 임시 의존성을 읽기 전용 PYTHONPATH로 사용했으며 설치·공용 venv 변경은 없습니다.
+- Python 3.10 AST·공개·diff·patch-notes·notes 형식 검사 PASS. patch-note는 중첩 경로를 금지하는 notes gate에 맞춰 기존 `patch_notes/entries/broad-process-stop-681.yaml`에 둡니다.
+
+## 남은 것
+
+검증은 문자열·fake·정적 검사뿐입니다. 실제 shell/process/proc_tree integration·PI 운영·HPC·원자료·분석은 실행하지 않았습니다. 이전 검증 범위 이탈 기록은 [기존 보고](2026-10-19-2341-broad-process-stop-681.md)에 보존합니다. PID tracker #675·동적 명령 OS 격리는 별도 범위입니다. P2 positional PID 배열은 collector가 issue로 추적합니다. push 뒤 CI snapshot만 확인하며 CI 대기·새 head 리뷰·병합·배포는 supervisor 담당입니다.
 
 ## 결론
 
@@ -994,6 +1260,26 @@ Fixes #748
 
 - Rscript 실측·실데이터 재실행·수치 동등성 검증은 미실행입니다. fixture의 실행 PASS를 과학 결과 재현 PASS로 해석하지 않습니다.
 - CI 조회 후 대기·봇 호출·병합·배포는 총괄 driver가 맡습니다.
+
+## 결론
+PR #766. 이름으로 여러 프로세스를 종료하는 명령을 승인 카드 전에 거부하고 자기 작업 폴더의 PID·시작 시각 확인을 안내합니다. Refs #681. 백그라운드 PID tracker(#675)는 남아 있어 부분 해결입니다.
+
+## 변경
+- `taskkill /IM`·`//IM`(필터 포함), `pkill`·`killall`, PowerShell 이름·pipeline 종료를 정적으로 검사합니다. 연결·fallback·shell wrapper도 확인합니다.
+- policy와 broker에서 같은 guard를 쓰며 거부 시 pending future나 승인 카드를 만들지 않습니다.
+- PID 지정 명령과 기존 runner의 PID·시작 시각 검증 cleanup은 유지합니다. manual 162,210→162,588자(LF).
+
+## 검증
+- 새 guard 회귀는 명령 문자열·fake broker만 사용합니다.
+- 최초 관련 tests 327 passed/6 skipped 중 임시 parent/child fixture integration 1개 실행. PI 운영 검증은 안 했습니다. 실제 프로세스 종료 금지 범위를 넘긴 검증 실수이며 영향은 별도 확인 대상입니다.
+- 추가 guard 수정 후 실제 fixture를 제외한 관련 tests: 331 passed, 6 skipped, 1 deselected (`-k 'not real_parent'`). 이후 넓은 tests 재실행 없음.
+- 최종 P1 수정: unquoted cmd/PowerShell wrapper의 전체 payload, env 옵션 뒤 명령, 여러 줄 pipeline, InputObject의 이름 기반 producer를 검사합니다. 새 실패 회귀 19개를 재현한 뒤 전용 문자열/fake broker tests 85 passed를 확인했습니다. 기존 숫자 signal·명시 PID·인용한 문구는 유지합니다. 실제 shell·프로세스 종료는 실행하지 않았습니다.
+- public·diff 검사를 통과했습니다. patch-notes·notes 형식도 확인했습니다. 전체 suite는 CI에 맡깁니다.
+
+## 남은 것
+- PID tracker·정리 도구(#675), 동적으로 조립한 명령의 OS 격리, 다른 엔진의 sandbox 경계는 이번 범위 밖입니다.
+- 남은 지적(P2): `Stop-Process 1234,5678`의 positional PID 배열을 이름으로 오인합니다. 단일 PID나 명시 `-Id`를 쓰며 이 후속에서 범위를 넓히지 않았습니다.
+- CI·리뷰·병합·배포는 총괄이 이어받습니다. 봇 호출·병합·배포는 하지 않았습니다.
 
 ## 결론
 

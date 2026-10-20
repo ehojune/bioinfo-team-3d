@@ -16,10 +16,9 @@ PI가 신규 일반 작업 보류를 해제했습니다. 승인 예산 안에서
 | 열린 PR | 내용 (병합 전이므로 manual·README에 출시 동작으로 쓰지 않음) |
 |---|---|
 | #793 | 문서 전용 변경의 CI 검사와 같은 tree 검증 재사용 |
-| #818 | Shadow off 기준 공유·제거 계약 검사 비용 축소(#811) |
-| #819 | 같은 단계의 외부 조회·PDF 승인 대기를 직렬화해 예산 중복 차감 방지(#784) |
+| #821 | 논문 스킬을 승인 뒤 생성하고 결과 참조를 기록(#798) |
 
-병합된 감사 항목의 구현·검증 범위는 [감사 우선순위](docs/reference/audit-priorities-2026-10-20.md)에 있습니다. #798은 CP1 공유 코드를 순차 통합합니다.
+병합된 감사 항목의 구현·검증 범위는 [감사 우선순위](docs/reference/audit-priorities-2026-10-20.md)에 있습니다. #811의 queued-halt 검사는 executor 대기와 분리됐으며 [검증 경계](docs/reference/shadow-test-cost-811.md)를 따릅니다.
 
 개발 준비가 끝나고 PI가 실운전을 승인한 뒤의 순서는 공개 소형 주제 실운전 → bench dry-run·필수 게이트 → Astra의 코드·README·구조 전체 검토 → 동일 요청 bench 비교(labhq 혼합 roster 대 Astra·Sol·Opus 단독 세션)입니다. 가동 전에는 배포 인스턴스의 `doctor --runtime` 준비 판정을 다시 확인합니다. v0.5 선언(2026-10-08) 이후 장치의 구현·CI 통과는 새 실운전 PASS를 뜻하지 않습니다([로드맵](docs/manual.md#로드맵)).
 

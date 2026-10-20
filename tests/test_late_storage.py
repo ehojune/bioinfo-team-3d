@@ -78,6 +78,10 @@ async def test_unreviewable_request_cannot_open(setup, status):
 @pytest.mark.parametrize("reviewed", [False, True])
 async def test_late_selection_runs_editor_after_review_then_approval_and_mock_upload(setup, monkeypatch, reviewed, status):
     app, hub, calls = setup
+    monkeypatch.setattr("labhq.integrations.rounds._git_commit", lambda: None)
+    # PDF rendering has dedicated tests; this test checks review/approval/upload ordering.
+    pdf = AsyncMock(return_value=(None, "PDF unavailable in this mock"))
+    monkeypatch.setattr(hub.result_storage, "edition_pdf", pdf)
     hub.requests["r"]["status"] = status
     if reviewed:
         hub.requests["r"]["pi_reviewed_at"] = 1
@@ -114,6 +118,7 @@ async def test_late_selection_runs_editor_after_review_then_approval_and_mock_up
             await asyncio.sleep(0.01)
         assert publish
         editor.assert_awaited_once()
+        pdf.assert_awaited_once()
         docs = publish["detail"]["documents"]
         portfolio_docs = {
             "report/report.md", "run/progress.md", "run/reproduce.md", "REFERENCES.md",
