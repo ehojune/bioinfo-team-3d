@@ -178,7 +178,9 @@ def test_any_executable_example_runs_full_even_if_only_prose_changed(example):
 
 @pytest.mark.parametrize("example", ["echo hello", "Remove-Item example.txt", "Python demo.py", "print('hi')",
                                       "./demo --example", "> echo hi", "#!/bin/bash", "ENV=value",
-                                      "import os", "custom-command argument", "timeout: 20"])
+                                      "import os", "custom-command argument", "timeout: 20",
+                                      "## python demo.py", "- echo hello.", "1. git status.",
+                                      "## mode: enforce", "- labhq doctor."])
 def test_unfenced_commands_also_run_full(example):
     assert not cs.document_change("docs/guide.md", "Old prose.", example)
 

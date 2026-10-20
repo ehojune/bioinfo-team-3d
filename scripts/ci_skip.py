@@ -90,11 +90,12 @@ def document_change(path: str, before: str, after: str) -> bool:
                          path, re.IGNORECASE):
                 return False
         # Prefer false negatives to guessing what a snippet executes.
-        code = (r"[`~<{}=;|]|#!|\w+\(|(?:^|\n)(?: {4}|\t|\s*(?:[$>%&!]|\.\.?/|\.\. |"
+        code = (r"[`~<{}=:;|]|#!|\w+\(|(?:^|\n)(?: {4}|\t|\s*(?:[$>%&!]|\.\.?/|\.\. |"
                 r"(?:python\d*|pip\d*|pytest|git|bash|sh|npm|node|uv|curl|wget|echo|exec|sudo|"
-                r"make|cmake|docker|chmod|rm|cp|mv|cat|taskkill|cmd|pwsh|powershell|[a-z]+-[a-z]+)\b))")
+                r"make|cmake|docker|chmod|rm|cp|mv|cat|taskkill|cmd|pwsh|powershell|labhq|[a-z]+-[a-z]+)\b))")
         text = before + "\n" + after
-        if re.search(code, text, re.IGNORECASE):
+        unmarked = re.sub(r"(?m)^ {0,3}(?:#{1,6} |[-*+] |\d+\. )", "", text)
+        if re.search(code, text, re.IGNORECASE) or re.search(code, unmarked, re.IGNORECASE):
             return False
         for line in text.splitlines():
             line = line.strip()
