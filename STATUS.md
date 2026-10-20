@@ -48,6 +48,64 @@
 
 <!-- author:gemini -->
 
+# PR #800 Python 3.10 CI 멈춤 수정 (external_wait)
+
+## 결론
+
+`pytest (3.10)`이 `tests/test_external_wait.py::test_mcp_timeout_is_an_error_with_mock_board_events[False]`에서 25분 상한까지 멈췄습니다. #794·proc_tree 변경과 무관한 `labhq/tools/external_wait.py` 결함이었고, `1bbb061`에서 고쳤습니다.
+
+## 원인
+
+- CI stall snapshot에 남은 pending task는 `run_lookup.<locals>.progress()` 하나였고, gather callback이 붙어 있었습니다. `finally: watch.cancel(); await gather(watch)`까지 갔는데 progress가 끝나지 않은 것입니다.
+- progress는 `record` → `asyncio.wait_for(notify(...))`로 5ms마다 게시합니다. Python 3.10의 `wait_for`는 바깥 취소가 안쪽 완료와 같은 순간에 오면 결과를 돌려주고 취소를 버립니다(3.12는 구현이 바뀌어 없음). 그래서 progress가 계속 돌았습니다.
+
+## 수정
+
+- progress 반복을 cancel뿐 아니라 `stopped` 표시로도 끝냅니다.
+- 조회 상한, 시간 초과·취소 기록, 표시 실패 무시는 그대로입니다.
+
+## 검증
+
+- **로컬 (asyncio mock만):** 새 `tests/test_external_wait_cancel.py`는 취소를 한 번 삼키는 가짜 notify로 3.10과 같은 장면을 만듭니다. 수정 전에는 2초 bound에서 TimeoutError(멈춤)였고, 수정 뒤 통과했습니다(5회 반복 모두 통과).
+- 기존 `tests/test_external_wait.py`와 함께 21 passed. guard 차단 없음.
+- `ast.parse(feature_version=(3, 10))`, `check_public.sh`, `git diff --check` 통과.
+- **CI:** 실제 Python 3.10에서의 확인은 CI `pytest (3.10)`에 맡깁니다.
+
+## 남은 것
+
+- 경합이라 수정 전에도 매번 멈추지는 않습니다. 원인은 stall snapshot과 3.10 `wait_for` 동작으로 판단했습니다.
+- PR #766이 `tests/test_external_wait.py`를 고치고 있어 그 파일은 건드리지 않고 새 test 파일을 만들었습니다.
+
+# PR #800 Windows CI 실패 수정 (proc_tree)
+
+## 결론
+
+`pytest-windows`의 `test_the_watcher_stops_a_gateway_that_never_finishes_its_shutdown` 실패는 #794 변경과 무관한 `labhq/proc_tree.py` 판정 결함이었습니다. `6cf6c8a`에서 고쳤습니다.
+
+## 원인
+
+- 테스트 sleeper가 재사용된 PID 752를 받았습니다. 부팅 때 그 PID의 옛 주인이 띄운 system 프로세스 760·856이 아직 752를 부모로 적고 있었습니다.
+- `kill_tree`는 terminate가 거부된 후보를, 조회 handle로 나이를 읽을 수 있어도 생성 시각을 보지 않고 `failed`로 기록했습니다.
+- 그래서 `spare_ancestors_on_failure`가 root를 일부러 남겼고, watcher는 2를 돌려줬습니다. 엉뚱한 프로세스를 죽이지는 않았지만, 멈춘 gateway를 끝내지 못했습니다.
+
+## 수정
+
+- 거부된 후보 가운데 조회 handle이 있는 것은, 열린 후보와 같은 규칙으로 판정합니다(부모보다 먼저 생긴 프로세스는 PID 재사용 고아). 고아는 건너뛰고 건드리지 않습니다.
+- 부모와 같은 시각이나 그 뒤에 생긴 거부 후보, 조회도 안 되는 후보는 지금처럼 실패로 남겨 조상을 살려 둡니다.
+- AccessDenied를 무시하거나 신원·자손 검사를 줄이지 않았습니다.
+
+## 검증
+
+- **로컬 (mock만):** 가짜 process table로 새 test 5개를 만들었습니다. CI와 같은 장면(`kill_tree`, 가짜 시계를 쓴 `watch_gateway_exit`)에서 수정 전 3 failed였습니다. 나머지 2개는 정상 차단을 지키는 회귀 test입니다. 수정 뒤 `tests/test_proc_tree.py`·`tests/test_no_tree_kill.py` mock test 64 passed입니다.
+  - 기존 실제 프로세스 test `test_the_helper_ends_exactly_a_real_parent_and_child_and_not_a_sibling`은 mock guard가 막아 다시 돌리지 않았습니다.
+  - `ast.parse(feature_version=(3, 10))`, `check_public.sh`, `git diff --check` 통과.
+- **CI:** 실제 Windows에서 실패한 test는 GitHub CI `pytest-windows`에서 다시 확인해야 합니다. 이 기록을 쓸 때는 결과가 없습니다.
+
+## 남은 것
+
+- CI의 760·856이 정말 부팅 때 생긴 프로세스였는지는 로그에 생성 시각이 없어 확인하지 못했습니다. 실패 장면과 코드 경로가 맞는다는 근거로 판단했습니다.
+- Windows + Python 3.10 조합 job은 CI에 없습니다.
+
 Fixes #796
 PR #803. CP1 `cab83e7`, 분리 `2070c23`, 공유 fixture `bab83c2`.
 
@@ -60,6 +118,51 @@ PR #803. CP1 `cab83e7`, 분리 `2070c23`, 공유 fixture `bab83c2`.
 - 실제 Hub/process·제거/import 통합·전체 suite·Windows/3.10 실행·PI/연구/bench/원자료/HPC·봇 호출·병합·배포는 로컬 미실행입니다. #797/#798·#804 범위를 추가하지 않았습니다.
 
 🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
+# 재현 receipt 실행 site-packages (#794, PR #800)
+
+## 결론
+
+PR #800, 기능 커밋 `64f1527`. 재현 receipt 실행(`rerun=True`)의 Python 명령에서 `-S`를 뺐습니다(`-E -s -S -B` → `-E -s -B`). 이제 실행 interpreter(venv·conda)의 site-packages를 불러옵니다. 문법 검사는 `-I -S -B` 그대로입니다. Refs #794.
+
+## 재현 (현재 main `eb09e52`)
+
+PR #789가 `-I`를 `-E -s`로 풀었지만 `-S`를 남겼습니다. `-S`는 `site` 초기화를 건너뛰므로 venv의 site-packages가 `sys.path`에 들어가지 않습니다. 그래서 numpy·pandas처럼 외부 패키지를 쓰는 실제 분석 rerun은 모두 `ModuleNotFoundError`로 `fail`이었습니다. PR #789의 fake importer는 site-packages를 다루지 않아 이 결함을 놓쳤습니다.
+
+## 바꾼 것
+
+- `labhq/reproduction_receipt.py`: 실행 명령을 `-E -s -B <script>`로 바꿨습니다. 그대로 둔 것은 다음과 같습니다.
+  - staged sibling import(script 폴더가 `sys.path` 앞에 옴)
+  - script별 산출 판정과 hard link·링크 폴더 보호(#771·#781)
+  - `PYTHONPATH`·사용자 site·호출한 폴더 격리
+  - 문법 검사의 `-I -S -B`
+- receipt `command` 값만 바뀌고 schema·상태·요약은 그대로입니다.
+- 문서: `docs/manual.md`의 #772 문장 하나를 사실에 맞게 고쳤습니다. 상세는 `docs/reference/reproduction-receipt.md`에 한 줄로 더했습니다.
+
+## 검증: 로컬 (mock/static만)
+
+- fake importer가 `-S`일 때 site-packages를 빼도록 고치고, mock test를 하나 더했습니다. 수정 전 코드에서는 site-packages module import가 `fail`이었고, 기존 #772 test의 명령 기대값도 실패했습니다(5 failed). 수정 뒤에는 #771·#781·#772 test를 포함해 18 passed, 2 skipped입니다.
+  - skip 하나는 symlink 권한이 필요한 test입니다.
+  - 다른 하나는 아래의 실제 interpreter test입니다. mock guard가 켜져 있으면 프로세스를 띄우기 전에 skip하도록 했고, guard 로그에도 이 test의 기록이 없습니다.
+- Python 3.10 문법(`ast.parse(feature_version=(3, 10))`), `scripts/check_public.sh`, `git diff --check`, `patch_notes.py check`, `notes_index.py --validate` 통과.
+
+## 검증: CI (실제 interpreter, PI가 이 test로 한정해 승인)
+
+- 실제 interpreter test는 `test_a_real_isolated_rerun_imports_site_packages_and_siblings_but_not_the_callers_paths` 하나입니다.
+- tmp fixture만 쓰고, 현재 interpreter를 receipt의 flag와 최소 환경으로 띄웁니다.
+- 확인하는 것:
+  - staged `helper.py`를 import하는지
+  - site-packages의 `yaml`을 import하는지(그 파일이 `site.getsitepackages()` 아래에 있는지 먼저 확인)
+  - 호출한 폴더, `PYTHONPATH`, 사용자 site(`PYTHONUSERBASE`), 다른 step 폴더의 module이 import되지 않고 `sys.path`에도 없는지
+  - `PYTHONPATH`와 `PYTHONUSERBASE`를 receipt 입력으로 넘겨 자식 환경에 실제로 들어가게 했는지. 그래서 `-E -s`가 막는 것을 직접 확인합니다.
+- CI에서 이 test는 `pytest (3.10)`·`pytest (3.12)`(Ubuntu)와 `pytest-windows`(3.12)에서 돕니다. 이 PR을 열 때 CI 결과는 아직 없습니다.
+
+## 남은 것·한계
+
+- **Windows + Python 3.10 조합은 CI에 없습니다.** 지금 CI의 Windows job은 3.12 하나뿐입니다. workflow는 이 PR의 담당 범위 밖이라 바꾸지 않았습니다.
+- **실제 분석 rerun PASS가 아닙니다.** 실제 interpreter 검증은 tmp fixture 하나뿐입니다. numpy 같은 과학 패키지로 실제 분석을 다시 돌린 것이 아닙니다.
+- **interpreter 환경의 `.pth` 파일도 처리됩니다.** `-S`를 빼면 site-packages의 `.pth`도 처리되는데, 이는 일반 `python script.py`와 같습니다.
+- #773과 다른 감사 항목은 다루지 않았습니다.
 
 Refs #786. 기능 커밋 `06c5a64`는 Ubuntu Python 3.10 pytest의 진단·대기 상한만 추가합니다.
 
