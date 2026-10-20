@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+import fnmatch
 import re
 
 
@@ -26,7 +29,7 @@ _KNOWN_COMMANDS = {
     "sudo", "env", "command", "exec", "nohup", "builtin", "if", "elif", "while", "until", "time",
     "sh", "bash", "zsh", "dash", "cmd", "powershell", "pwsh", "xargs",
     "coproc", "eval", "trap", "timeout", "nice", "setsid", "find", "pgrep", "pidof", "skill",
-    "watch", "invoke-expression", "iex",
+    "watch", "invoke-expression", "iex", "stdbuf", "foreach-object", "foreach", "%",
 }
 _XARGS_ARGUMENT_OPTIONS = {
     "--arg-file", "--delimiter", "--max-args", "--max-procs", "--max-chars", "--process-slot-var",
@@ -47,6 +50,7 @@ _EXEC_OPTIONS = {
     "timeout": ({"--signal", "--kill-after"}, {"--foreground", "--preserve-status", "--verbose"}, "sk", "fpv"),
     "nice": ({"--adjustment"}, set(), "n", ""),
     "setsid": (set(), {"--ctty", "--fork", "--wait"}, "", "cfw"),
+    "stdbuf": ({"--input", "--output", "--error"}, set(), "ioe", ""),
 }
 _FIND_ARGUMENTS = dict.fromkeys((
     "-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename", "-regex", "-iregex",
@@ -362,7 +366,7 @@ def _xargs_command_start(words: list[str], start: int) -> int:
 
 
 def _execution_command_start(words: list[str], start: int, name: str) -> int:
-    """Locate the command of timeout/nice/setsid; their option values are data."""
+    """Locate an execution wrapper's command; its option values are data."""
     arguments, switches, short_arguments, short_switches = _EXEC_OPTIONS[name]
     options = arguments | switches | {"--help", "--version"}
     start += 1
@@ -453,6 +457,69 @@ def _invoke_expression_payload(words: list[str]) -> str | None:
         if matches[0] in values and not attached:
             index += 1
     return None
+
+
+def _encoded_powershell_payload(words: list[str]) -> str | None:
+    """Decode a literal host command, never script arguments or another option's data."""
+    values = {"configurationname": "config", "configurationfile": "configurationf",
+              "custompipename": "custompipename", "executionpolicy": "ex", "inputformat": "inp",
+              "outputformat": "o", "windowstyle": "w", "workingdirectory": "wo",
+              "settingsfile": "settings", "encodedarguments": "encodeda", "version": "v"}
+    aliases = {"config", "ep", "ex", "if", "of", "wd", "wo", "ea", "v"}
+    index = 0
+    while index < len(words):
+        option = _literal_word(words[index])
+        index += 1
+        if not option.startswith(("-", "/")):
+            return None  # an implicit script path ends the host options
+        key = option[1:].casefold()
+        if not key or "command".startswith(key) or key in {"cwa", "commandwithargs"} or "file".startswith(key):
+            return None  # remaining words belong to the script/command
+        if key == "ec" or "encodedcommand".startswith(key):
+            if index == len(words):
+                raise ValueError("missing encoded command")
+            value = _literal_word(words[index])  # Base64 is case sensitive
+            if len(value) > 131072:
+                raise ValueError("encoded command exceeds static decoding bound")
+            value = re.sub(r"[ \t\r\n]", "", value)
+            return base64.b64decode(value, validate=True).decode("utf-16-le").lstrip("\ufeff")
+        if key in aliases or any(value.startswith(key) and key.startswith(minimum)
+                                 for value, minimum in values.items()):
+            index += 1
+    return None
+
+
+def _foreach_kill_member(words: list[str]) -> bool:
+    """ForEach-Object may invoke a member positionally or via MemberName (including wildcards)."""
+    values = {"membername", "inputobject", "argumentlist", "erroraction", "warningaction",
+              "informationaction", "progressaction", "errorvariable", "warningvariable",
+              "informationvariable", "outvariable", "outbuffer", "pipelinevariable"}
+    switches = {"verbose", "debug", "whatif", "confirm"}
+    aliases = {"args": "argumentlist", "ea": "erroraction", "ev": "errorvariable",
+               "wa": "warningaction", "wv": "warningvariable", "ia": "informationaction",
+               "iv": "informationvariable", "ov": "outvariable", "ob": "outbuffer",
+               "pv": "pipelinevariable", "vb": "verbose", "db": "debug", "wi": "whatif", "cf": "confirm"}
+    index = 0
+    while index < len(words):
+        value = _literal_word(words[index]).casefold()
+        index += 1
+        if not value.startswith("-"):
+            return fnmatch.fnmatchcase("kill", value)
+        key, attached, operand = value.lstrip("-").partition(":")
+        options = values | switches
+        if key in aliases:
+            key = aliases[key]
+        matches = [key] if key in options else list(
+            {name for name in options if name.startswith(key)}
+            | {name for alias, name in aliases.items() if alias.startswith(key)})
+        if len(matches) != 1:
+            return False
+        if matches[0] == "membername":
+            member = operand if attached else (_literal_word(words[index]).casefold() if index < len(words) else "")
+            return fnmatch.fnmatchcase("kill", member)
+        if matches[0] in values and not attached:
+            index += 1
+    return False
 
 
 def _nonpositive_kill_target(args: list[str]) -> bool:
@@ -717,6 +784,10 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
             continue
         name = _command_name(group[start])
         args = [_bare(word) for word in group[start + 1:]]
+        if (name in {"foreach-object", "foreach", "%"}
+                and (process_pipeline or selected_reference or bool(block_pipeline and block_pipeline[-1]))
+                and _foreach_kill_member(group[start + 1:])):
+            return True
         if (selected_reference and group[start].startswith("$")
                 and re.fullmatch(r"\$[a-z_][a-z_0-9:]*\.kill", name)
                 and groups[group_index + 1:group_index + 2] == [["("]]):
@@ -809,6 +880,13 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
             if selected_processes and (not pid_target or pipeline_arguments) or positional_name:
                 return True
         if name in {"sh", "bash", "zsh", "dash", "cmd", "powershell", "pwsh"}:
+            if name in {"powershell", "pwsh"}:
+                try:
+                    payload = _encoded_powershell_payload(group[start + 1:])
+                except (ValueError, binascii.Error, UnicodeError):
+                    return True  # undecodable/oversized literal execution cannot prove a safe command
+                if payload is not None and broad_process_stop(payload, _depth=_depth + 1):
+                    return True
             for i, arg in enumerate(args[:-1]):
                 shell_cluster = name in {"sh", "bash", "zsh", "dash"} and re.fullmatch(r"-[^-]*c[^-]*", arg)
                 if shell_cluster or arg in {"-c", "/c", "/k", "-command", "-comm", "-c:"}:

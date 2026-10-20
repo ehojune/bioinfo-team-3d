@@ -27,6 +27,9 @@ lookup-only 기록입니다. 명령은 모두 test 문자열이며 shell·프로
 | 4322020348 | watch의 option operand·직접 argv와 기본 shell 문자열 실행을 구분해 검사 |
 | 4322020355 | kill의 signal option과 target을 구분해 PID 0·음수 process-group/all selector 거부 |
 | 4322020358 | 이름 선택 pipeline의 $_/PSItem·선택 변수의 Kill() 호출 거부 |
+| 4322864519 | EncodedCommand·e/ec 및 약어의 UTF-16LE Base64 payload를 정적으로 decode해 재귀 검사 |
+| 4322864528 | ForEach-Object·foreach·%의 MemberName/positional Kill 및 wildcard 호출 거부 |
+| 4322864535 | stdbuf의 short/long option operand 뒤 literal command 검사 |
 
 `tests/test_process_stop_guard_followup.py`가 지적별 case ID, policy deny, flat/nested fake broker의 card/event/submit 미호출·pending 없음과 PID·데이터 음성 사례를 확인합니다. 기존 회귀도 유지합니다. 전체 실패명·traceback은 로컬 로그에 보존합니다.
 
@@ -45,3 +48,5 @@ lookup-only 기록입니다. 명령은 모두 test 문자열이며 shell·프로
 procps 근거: [skill option/operand·no-action 구현](https://gitlab.com/procps-ng/procps/-/blob/master/src/skill.c), [skill 계약](https://man7.org/linux/man-pages/man1/skill.1.html), [pidof 이름 선택](https://man7.org/linux/man-pages/man1/pidof.1.html). `tests/test_process_stop_guard_procps.py`는 조회와 PID 정리를 유지하며, skill no-action의 이름 선택 출력을 종료에 전달할 때도 거부하는지 확인합니다. 도구 자체는 실행하지 않았습니다.
 
 이번 consumer 회귀는 `tests/test_process_stop_guard_consumers.py`에 있습니다. 계약: [process substitution](https://www.gnu.org/s/bash/manual/html_node/Process-Substitution.html), [Invoke-Expression](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/invoke-expression?view=powershell-7.5), [watch option·argv/shell 구현](https://gitlab.com/procps-ng/procps/-/raw/master/src/watch.c), [Linux nonpositive PID 의미](https://raw.githubusercontent.com/torvalds/linux/master/kernel/signal.c), [Process.Kill](https://learn.microsoft.com/en-us/dotnet/api/system.diagnostics.process.kill). actual shell/process 검증은 하지 않았습니다.
+
+`tests/test_process_stop_guard_payloads.py`는 [EncodedCommand 계약](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_pwsh?view=powershell-7.5#-encodedcommand--e--ec), [MemberName 호출](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/foreach-object?view=powershell-7.5#-membername), [stdbuf option 구현](https://github.com/coreutils/coreutils/blob/master/src/stdbuf.c)을 문자열·fake broker로 검증합니다. Base64의 대소문자는 보존하고 host 옵션과 script/command 인수를 구분합니다. encoded operand는 131,072자까지 정적으로 decode하며 초과·잘못된 Base64/UTF-16LE는 보수적으로 거부합니다. 기존 재귀 상한도 유지합니다.
