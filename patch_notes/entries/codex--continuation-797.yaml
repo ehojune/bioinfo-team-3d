@@ -5,3 +5,8 @@ rows:
   text: 후속 연구의 노드별 사양·과학 계약·도구 설정·의존 산출 증거를 CP1 전에 검증하고 후보 snapshot을 계획/승인에 고정했다.
     승인 후·재개·dispatch 직전 drift는 조용한 재실행 대신 중단·재승인을 요구한다. 디렉터리·증거 없는 입력은 제외하며 관련 mock/static
     72건과 보강 directory fixture 1건 통과, 실제 과학 효용은 미측정이다.
+- sha: d175432
+  at: 2026-10-20 14:46
+  text: 807 CI의 consult/wake 누락 request 조회와 새 계획 채택 전 복구, 예산 거절 rollback 회귀를 수정했다.
+    CP1 사전 snapshot 검증·승인 후 drift 중단은 유지하고 실제 dispatch 진행을 구분했다. 실제 실패 패턴 mock 20건
+    red 뒤 관련 mock/static 100건 통과, 실제 Hub/process 통합은 CI에 맡긴다.

@@ -1,13 +1,13 @@
 Fixes #797
 Refs #672, #680
-PR #807. 기능 `232690b`.
+PR #807. 재사용 계약 `232690b`, CI 회귀 수정 `d175432`.
 
-CP1 카드 전에 재사용 후보의 선언 입력·의존 산출 hash·과거 ledger/task/agent·선언 도구/engine 설정을 검증합니다. 검증한 snapshot을 계획 hash와 승인 receipt에 묶고 카드에 사본을 표시합니다. 승인 뒤·재개·dispatch 직전 증거가 바뀌면 중단하여 새 CP1을 요구하며, 재사용 단계를 조용히 재실행하지 않습니다.
+CP1 전에 검증한 노드별 재사용 snapshot을 계획/승인 hash와 묶습니다. 승인 뒤·재개·dispatch 직전 증거가 달라지면 재실행 대신 중단·새 CP1을 요구합니다. 과학 계약·도구/engine 설정·의존 산출 hash를 비교하고, 증거 없는 입력·manifest 없는 디렉터리는 제외합니다.
 
-- 노드 사양은 Pydantic 기본값으로 정규화합니다. 독립 노드/갈래 수정은 영향 없는 후보를 보존합니다. 과학적 brief·scope·가설·topic·가정·protocol·pack의 차이는 문구 유사도로 무시하지 않습니다.
-- 내용 증거 없는 외부 입력, 과거 도구 설정이 없는 기록, manifest 없는 디렉터리는 승인 전에 재사용을 거절합니다. 기존 zone/path/link/hash 안전 walker·승인/예산 경계와 #796 input-fit·지표·Shadow 분리를 유지합니다.
-- 기존 소스를 메모리에서 실행해 기본값/독립 갈래/과학 목적 회귀 3건 red를 재현했습니다. 관련 mock/static **72 passed**; 실제 child hash를 쓴 소형 디렉터리 fixture 보강 뒤 **1 passed**. 첫 계획·CP1 수정·CP2 수정·재개, 승인 후/dispatch 직전 drift·unknown·#796 분리를 검사했습니다. Thread 시작 금지·to_thread 인라인 mock·기존 guard 환경 유지, 전체 실패/성공 로그 보존.
-- Python 3.10 AST·public·diff·patch-notes·notes 검사 통과. manual LF 문자 수 166,243→166,380(+137); 상세 계약은 `docs/reference/continuation-reuse-797.md`입니다.
-- 파일 변경을 잠그지 않으며 실제 설치된 도구 판본은 별도 검증 대상입니다. process/thread/signal·실제 Hub·PI/연구/원자료/HPC/bench·전체 suite·Windows/3.10 실행은 로컬 미실행입니다. 과학 효과·#672/#680 전체 해결을 주장하지 않습니다. #798/Shadow 확장 미착수; 새 head CI·리뷰·P1=0·병합·배포는 controller 담당입니다.
+- CI 회귀: 무조건적인 request 조회를 연구 step 경계 안의 안전한 조회로 바꿔 consult/wake/nonresearch 동작을 보존했습니다. 새 계획 채택 전 보관 차수의 이미 결정된 checkpoint 복구만 구분하며, 채택된 계획의 새 CP1·snapshot 검증은 유지합니다.
+- 해시 증명과 실행 진행을 구분했습니다. 예산 거절 전에는 실행 준비 완료로 표시하지 않아 이전 계획·승인·집행 상한을 rollback합니다. 실제 dispatch 뒤의 drift는 중단하되 그 차수를 되돌리지 않습니다.
+- 실제 CI 패턴에서 누락 request mock 16건과 연구 복구/예산 4건, 합계 **20 failed**를 재현한 뒤 관련 mock/static **100 passed**. 새/동일 hash 계획 CP1, CP1/CP2 revise·resume, 예산 상한 rollback, 승인/dispatch 뒤 drift, #796 input-fit/지표·Shadow 분리를 검사했습니다. 기존 연구 실패 테스트의 assertion은 유지했습니다.
+- Python 3.10 AST·public·diff·patch-notes·notes 검사 통과. git probe는 명시 mock, native thread 시작 금지·to_thread 인라인 mock, 기존 guard 환경 유지·blocked 0건입니다. 전체 실패/성공 trace는 local artifact에 보존했습니다.
+- 실제 Hub를 구성하는 ask 37건·process/thread/signal·전체 suite·Windows/3.10 실행은 CI 경계입니다. PI·원자료/HPC·연구/bench·봇 요청/대기·병합·배포는 하지 않았습니다. #798/#811·다른 owner 범위 미착수. 실제 과학 효용·도구 설치 판본은 미검증이며 파일 변경을 잠그지 않습니다. 최종 CI·리뷰·P1=0·병합은 controller 담당입니다.
 
-🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
