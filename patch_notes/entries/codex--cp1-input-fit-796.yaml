@@ -1,0 +1,7 @@
+pr: 803
+rows:
+- sha: cab83e7
+  at: 2026-10-20 12:04
+  text: CP1의 기존 2회 계획 검증에 입력 불일치 진단·교정·전후 경고를 연결하고, 기존 semantic_report와 bench 비교에
+    분모·근거·미측정을 구분한 기여 기록을 추가했다. 관련 mock/static 52건·최종 thread 금지 mock 14건 통과, 과학 성능
+    효과는 미측정이다.
