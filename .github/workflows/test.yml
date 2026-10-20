@@ -314,10 +314,13 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install pyyaml
-      - run: python scripts/ci_skip.py manifest
+      - id: manifest
+        run: python scripts/ci_skip.py manifest
         env:
+          GH_TOKEN: ${{ github.token }}
           CI_NEEDS: ${{ toJSON(needs) }}
       - uses: actions/upload-artifact@v4
+        if: steps.manifest.outputs.reusable == 'true'
         with:
           name: ci-full-v3-${{ github.run_id }}-${{ github.run_attempt }}
           path: ci-result.json

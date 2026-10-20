@@ -39,9 +39,11 @@ main의 해당 commit에 병합된 같은 저장소 PR의 최신 matching run만
 - Windows-only 회귀가 제외 파일에 생기면 nightly/dispatch에서 늦게 발견될 위험이 남습니다. Linux 전수는 Windows 실행의 증거가 아닙니다. 5분은 목표이며 미측정입니다. 안전 검증을 줄여 시간을 맞추지 않습니다.
 - controller가 원래 operator HOME을 workerinput으로 전달하고 worker는 inherited guard 신원과 일치해야 collection을 시작합니다. collection/per-test HOME·state·cache·DB/log는 기존 worker별 basetemp/tmp_path 안입니다. AST가 확인한 port/process capability 호출·free_port 예약과 관련 local test helper는 job별 file lock으로 setup~teardown을 직렬화합니다. Hub/Runner/ASGI mock 이름·import·문자열만으로 lock하지 않습니다. 호출 판별은 보수적이며 외부 fixture의 완전한 정적 증명을 뜻하지 않습니다. production fsync·SQLite FULL·atomic replace·Job 코드는 바꾸지 않습니다.
 - 각 CI job artifact에는 full/selected node 목록·제외 이유, CPU·실제 worker 수·platform, setup/pytest/job queue 시간, 실패/skip 수·최장 파일·host-resource lock 대기가 남습니다. worker collection 목록은 서로 같아야 합니다. 3.10 controller 진단과 25분 상한을 유지하고 worker도 5분마다 node/thread/task stack을 별도 기록합니다.
-- v3 manifest는 Linux full/loadfile·Windows boundary 등 gate별 profile과 위 모든 policy blob을 결합합니다. Windows full·과거 serial/v2·다른 workflow/profile/tree 결과는 교환하지 않습니다. 변경한 정책의 자기 인증은 허용하지 않으므로 첫 main 검증은 전수 gate 경로입니다. 실제 manifest 부모 불일치 원인은 UNKNOWN이며 mismatch를 허용하지 않고 제한된 actual/expected SHA 진단만 보강했습니다.
+- v3 manifest는 Linux full/loadfile·Windows boundary 등 gate별 profile과 위 모든 policy blob을 결합합니다. Windows full·과거 serial/v2·다른 workflow/profile/tree 결과는 교환하지 않습니다. 변경한 정책의 자기 인증은 허용하지 않으므로 첫 main 검증은 전수 gate 경로입니다. parent/identity mismatch를 재사용 증거로 허용하지 않습니다. 확인된 snapshot drift의 no-reuse 결과는 아래처럼 별도로 처리합니다.
 
 근거: [xdist distribution](https://pytest-xdist.readthedocs.io/en/stable/distribution.html), [worker isolation](https://pytest-xdist.readthedocs.io/en/stable/how-to.html), [3.8.0 Python >=3.9](https://pypi.org/project/pytest-xdist/3.8.0/). 병렬 실행·Windows 성능·artifact 재사용은 실제 CI 확인 전입니다.
+
+run 39461236144에서는 event·run association·현재 PR의 base가 `d0c834a`, 검증 merge의 첫 parent와 main ref가 `2ce8778`인 snapshot drift를 확인했습니다. GitHub 갱신 시점과 이전 run의 원인은 미확정입니다. 같은 repo/run/attempt/workflow·9개 성공 job·동일 tree/순서 있는 merge parents·PR merge SHA/head·main ref·완전한 forward compare를 독립 확인한 경우만 producer가 `reusable=false`로 종료합니다. event base를 바꾸거나 재사용 manifest를 쓰지 않으며 upload도 하지 않습니다. consumer는 artifact가 없으면 full입니다. API 증거가 없거나 다르거나 다른 manifest 오류가 있으면 기존 실패를 유지합니다. 안정된 binding의 manifest 형식과 consumer의 기존 trusted-base policy·digest·identity 검사는 그대로입니다.
 
 Concurrency는 workflow와 PR 번호로 묶어 PR 후속 head만 이전 실행을 취소합니다. main·dispatch는 run/attempt별 group으로 분리해 대기 중 실행도 서로 취소하지 않습니다. #787의 3.10 25분 제한·faulthandler·stall snapshot은 그대로입니다.
 

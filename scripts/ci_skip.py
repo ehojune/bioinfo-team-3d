@@ -488,6 +488,68 @@ def decide(event_name: str, event: dict, current: dict) -> str:
     return "documents" if can_skip(current["checkout_sha"], base) else "full"
 
 
+class NonReusableBaseDrift(ValueError):
+    """Independently confirmed full-test checkout, never reusable evidence."""
+
+
+def confirmed_base_drift(current: dict, snapshot: dict, parents: list[str], run: dict) -> bool:
+    """Recognize only the observed forward-main/event snapshot drift.
+
+    This does NOT repair the event base, certify a policy, or return a manifest.
+    A moved PR/main, partial API response or any uncertain binding stays an error.
+    """
+    checkout = current["checkout_sha"]
+    if not (len(parents) == 3 and all(SHA.fullmatch(p) for p in parents)
+            and parents[0] == checkout and parents[2] == snapshot["head_sha"]
+            and len(set(parents)) == 3 and parents[1] != snapshot["base_sha"]):
+        return False
+    base = parents[1]
+    try:
+        workflow = api("actions/workflows/test.yml")
+        actual = api(f"actions/runs/{run['id']}")
+        if not (type(workflow["id"]) is int and workflow["id"] > 0
+                and workflow["path"] == WORKFLOW and workflow["state"] == "active"
+                and type(actual["id"]) is int and actual["id"] == run["id"]
+                and type(actual["run_attempt"]) is int and actual["run_attempt"] == run["run_attempt"]
+                and actual["workflow_id"] == workflow["id"] and actual["path"] == WORKFLOW
+                and actual["event"] == "pull_request" and actual["status"] == "in_progress"
+                and actual["conclusion"] is None and actual["head_sha"] == snapshot["head_sha"]
+                and all(r["id"] == snapshot["repository_id"] and r["full_name"] == REPOSITORY
+                        for r in (actual["repository"], actual["head_repository"]))
+                and len(actual["pull_requests"]) == 1
+                and pr_snapshot(actual["pull_requests"][0], rest=True) == snapshot):
+            return False
+        commit = api("git/commits/" + checkout)
+        pr = api(f"pulls/{snapshot['number']}")
+        main = api("git/ref/heads/main")
+        if not (commit["sha"] == checkout and commit["tree"]["sha"] == current["tree"]
+                and [p["sha"] for p in commit["parents"]] == parents[1:]
+                and pr_snapshot(pr) == snapshot and pr["merge_commit_sha"] == checkout
+                and main["ref"] == "refs/heads/main" and main["object"]["type"] == "commit"
+                and main["object"]["sha"] == base):
+            return False
+        forward = api(f"compare/{snapshot['base_sha']}...{base}")
+        count = forward["total_commits"]
+        if not (forward["status"] == "ahead" and type(forward["behind_by"]) is int and forward["behind_by"] == 0
+                and type(count) is int and 0 < count <= 250
+                and type(forward["ahead_by"]) is int and forward["ahead_by"] == count == len(forward["commits"])
+                and forward["base_commit"]["sha"] == forward["merge_base_commit"]["sha"] == snapshot["base_sha"]
+                and forward["commits"][-1]["sha"] == base):
+            return False
+        jobs = api(f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs?per_page=100")
+        rows = jobs["jobs"]
+        return (jobs["total_count"] == len(rows) == len(REQUIRED_JOBS)
+                and {j["name"] for j in rows} == set(REQUIRED_JOBS)
+                and all(type(j["run_id"]) is int and j["run_id"] == run["id"]
+                        and type(j["run_attempt"]) is int and j["run_attempt"] == run["run_attempt"]
+                        and j["head_sha"] == snapshot["head_sha"]
+                        and ((j["status"] == "in_progress" and j["conclusion"] is None)
+                             if j["name"] == "validation-manifest" else
+                             (j["status"] == "completed" and j["conclusion"] == "success")) for j in rows))
+    except (KeyError, TypeError, ValueError, IndexError, OSError):
+        return False  # API unavailability/malformed evidence cannot green an unbound checkout.
+
+
 def produce_manifest(current: dict, needs: dict, event: dict) -> dict:
     if not (os.environ["GITHUB_EVENT_NAME"] == "pull_request"
             and os.environ["GITHUB_REPOSITORY"] == REPOSITORY
@@ -525,6 +587,10 @@ def produce_manifest(current: dict, needs: dict, event: dict) -> dict:
         print("ci_skip: checkout-parents " + json.dumps({
             "actual": [p if SHA.fullmatch(p) else "<invalid>" for p in parents[:3]],
             "expected": expected_parents, "length": len(parents)}), file=sys.stderr)
+        if confirmed_base_drift(current, snapshot, parents, run):
+            if git("rev-parse", f"{source}:{WORKFLOW}") != result["workflow_blob"]:
+                raise ValueError("unbound checkout/workflow identity: workflow-blob")
+            raise NonReusableBaseDrift("independently confirmed base drift; no reusable manifest")
         raise ValueError("unbound checkout/workflow identity: checkout-parents")
     if git("rev-parse", f"{source}:{WORKFLOW}") != result["workflow_blob"]:
         raise ValueError("unbound checkout/workflow identity: workflow-blob")
@@ -536,8 +602,16 @@ def main() -> None:
         print("tree=" + identity()["tree"])
     elif sys.argv[1:] == ["manifest"]:
         event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
-        result = produce_manifest(identity(), json.loads(os.environ["CI_NEEDS"]), event)
-        Path("ci-result.json").write_text(json.dumps(result, sort_keys=True), encoding="utf-8")
+        try:
+            result = produce_manifest(identity(), json.loads(os.environ["CI_NEEDS"]), event)
+        except NonReusableBaseDrift:
+            print("ci_skip: confirmed event/tested-base drift; no reusable manifest", file=sys.stderr)
+            output = "reusable=false\nreason=base-drift\n"
+        else:
+            Path("ci-result.json").write_text(json.dumps(result, sort_keys=True), encoding="utf-8")
+            output = "reusable=true\nreason=bound\n"
+        with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as stream:
+            stream.write(output)
     else:
         try:
             event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
