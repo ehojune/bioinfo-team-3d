@@ -345,6 +345,10 @@ class TaskWorkspace:
                 receipt['reason'] = 'runner_mismatch'
                 warnings.append('논문 스킬 러너 불일치')
                 continue
+            if 'paper_skills' in (self.task.meta.get('upstream_artifacts') or {}):
+                receipt['reason'] = 'input_namespace_conflict'
+                warnings.append('논문 스킬 입력 이름이 선행 단계와 겹쳐 장착하지 않음')
+                continue
             digest = row.get("skill_sha256")
             src = Path(row.get("skill_dir") or "")
             if not digest or not (src / "SKILL.md").is_file() or folder_sha256(src) != digest:
@@ -375,6 +379,7 @@ class TaskWorkspace:
                 self._paper_skill_copies.extend(destinations)
                 receipt.update(skill_id=name, skill_sha256=digest,
                                document_sha256=hashlib.sha256(document.encode()).hexdigest(),
+                               document_bytes=len(document.encode()),
                                input_ref=input_ref, call_status="pending")
                 installed = True
             except (OSError, ValueError, OwnedPathError) as exc:
@@ -385,6 +390,33 @@ class TaskWorkspace:
         self._paper_skill_receipts = receipts
         self.update_run(self.task.id, paper_skills=receipts, paper_skill_warnings=warnings)
         return (plugin if installed else None), warnings
+
+    def paper_skill_read_files(self) -> list[str]:
+        """Recheck runner-owned receipts at policy composition; grant exact documents, never inputs/.
+
+        Use the existing no-link held handles and a recorded size bound. Mutable task metadata and the
+        workspace manifest cannot nominate another read path. Native/gate write protection remains separate.
+        """
+        verified = []
+        for row in getattr(self, '_paper_skill_receipts', []):
+            name = str(row.get('skill_id') or '')
+            relative = f'inputs/paper_skills/{name}.md'
+            if (not re.fullmatch(r'paper-[a-f0-9]{24}', name) or row.get('input_ref') != relative
+                    or row.get('call_status') != 'pending'):
+                continue
+            try:
+                with (HeldDir.hold(self.dir) as root, root.child('inputs') as inputs,
+                      inputs.child('paper_skills') as skills):
+                    with os.fdopen(skills.open_read_file(name + '.md'), 'rb') as opened:
+                        info = os.fstat(opened.fileno())
+                        if info.st_nlink != 1 or info.st_size != row['document_bytes']:
+                            continue
+                        data = opened.read(row['document_bytes'] + 1)
+                if hashlib.sha256(data).hexdigest() == row['document_sha256']:
+                    verified.append(str(self.dir / relative))
+            except (OSError, ValueError, KeyError):
+                continue
+        return verified
 
     def paper_skill_instructions(self) -> str:
         from ..recruit.paper_skills import reference_token

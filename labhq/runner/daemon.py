@@ -1666,6 +1666,8 @@ class Runner:
             # Only references that passed the runner's zone/link/scan checks get a shell read grant.
             open_reads.extend(read_dirs)
             open_reads.extend(staged_inputs)
+            paper_inputs = ws.paper_skill_read_files() if task.meta.get('paper_skills') else []
+            open_reads.extend(paper_inputs)
             if task.meta.get("kind") == "recruit" or (
                     task.meta.get("kind") == "paper_skill" and agent.id == self.s.recruit.agent_id):
                 from ..recruit.paper2agent import skill_path
@@ -1788,7 +1790,7 @@ class Runner:
                 mcp_servers=self._mcp_servers(agent, env, allow_ask=not read_only),
                 env={**env, "MCP_TOOL_TIMEOUT": str(labhq_mcp_timeout_s(self.s) * 1000)},
                 emit=emit, prompt=prompt, prompt_pointer=ws.prompt_pointer, extra_dirs=extra_dirs,
-                read_dirs=read_dirs, read_only_inputs=(staged_inputs or
+                read_dirs=read_dirs, read_only_inputs=([*staged_inputs, *paper_inputs] or
                     ([str(ws.dir / 'inputs')] if os.path.lexists(ws.dir / 'inputs') else [])),
                 # Other engines never read these rules; only paths a rule can name go in (#177).
                 claude_settings=engine_settings,
