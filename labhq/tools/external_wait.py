@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import nullcontext
 import json
 import math
 import time
 from pathlib import Path
+from weakref import WeakValueDictionary
 
 from ..adapters.owned import append_owned, read_owned, write_owned
 
@@ -13,12 +15,32 @@ TIMEOUT_S = 20 * 60
 BUDGET_FILE = ".labhq/external_lookup_budget.json"
 STATUS_FILE = "outputs/external_lookup_status.jsonl"
 
+# One MCP event loop serializes automatic work and PDF decisions for each step. Keep no idle workspace/loop alive.
+_STEP_SLOTS: WeakValueDictionary = WeakValueDictionary()
+
+
+def _step_slot(workdir):
+    if workdir is None:  # No persisted shared budget; independent callers need no common slot.
+        return nullcontext()
+    key = (asyncio.get_running_loop(), workdir.resolve())
+    slot = _STEP_SLOTS.get(key)
+    if slot is None:
+        slot = asyncio.Lock()
+        _STEP_SLOTS[key] = slot
+    return slot
+
 
 class LookupTimeout(TimeoutError):
     pass
 
 
 async def exclude_human_wait(operation, *, workdir: Path | None, clock=time.time):
+    """Serialize a step's decision wait with lookups; queued time is not excluded a second time."""
+    async with _step_slot(workdir):
+        return await _exclude_human_wait(operation, workdir=workdir, clock=clock)
+
+
+async def _exclude_human_wait(operation, *, workdir, clock):
     """Exclude only the explicit PDF decision wait, retaining the spent automatic budget."""
     started = clock()
     try:
@@ -38,6 +60,13 @@ async def exclude_human_wait(operation, *, workdir: Path | None, clock=time.time
 async def run_lookup(operation, *, tool: str, workdir: Path | None, notify=None,
                      timeout_s: float = TIMEOUT_S, progress_s: float = 60,
                      clock=time.time):
+    """Within one MCP loop, a step has at most one active lookup or human decision wait."""
+    async with _step_slot(workdir):
+        return await _run_lookup(operation, tool=tool, workdir=workdir, notify=notify,
+                                 timeout_s=timeout_s, progress_s=progress_s, clock=clock)
+
+
+async def _run_lookup(operation, *, tool, workdir, notify, timeout_s, progress_s, clock):
     """One task-wide deadline, retained across retries/MCP restarts; human approval is excluded."""
     started = clock()
     if workdir is not None:
