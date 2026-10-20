@@ -1,0 +1,5 @@
+pr: null
+rows:
+- sha: f4e46cb
+  at: 2026-10-20 11:38
+  text: 'docs: 외부 감사 우선순위와 측정용 Shadow 유지 방침 반영'
