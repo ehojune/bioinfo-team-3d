@@ -44,10 +44,12 @@ raise SystemExit(supervisor.main([config, "gateway"]))
 PARENT = """
 import sys, time
 from pathlib import Path
+
+supervise, config, logs, root = sys.argv[1:5]
+sys.path.insert(0, root)  # Fresh direct children do not inherit the WMI caller's pytest sys.path.
 from labhq.windows_launch import require_detached_job
 from tests.test_supervisor_process import _start_script, Settings
 
-supervise, config, logs, root = sys.argv[1:5]
 require_detached_job()
 child = _start_script(Settings.load(config), supervise, [config, "import time; time.sleep(120)"])
 target = Path(logs) / "gateway-supervisor-diagnostics.jsonl"
@@ -63,10 +65,12 @@ child.close()  # Release our handle; the supervisor alone must keep its exited a
 """
 LAUNCHER = """
 import sys
+
+parent, supervise, config, logs, root = sys.argv[1:6]
+sys.path.insert(0, root)  # Also support direct launch, not only WMI's restored caller path.
 from labhq.windows_launch import require_detached_job
 from tests.test_supervisor_process import _start_script, Settings
 
-parent, supervise, config, logs, root = sys.argv[1:6]
 require_detached_job()
 child = _start_script(Settings.load(config), parent, [supervise, config, logs, root])
 print(child.pid, flush=True)
@@ -75,6 +79,36 @@ try:
 finally:
     child.close()
 """
+
+
+@pytest.mark.parametrize("script", ["PARENT", "LAUNCHER"])
+def test_ancestor_script_imports_checkout_helper_without_inherited_path(tmp_path, monkeypatch, script):
+    """Mock/static only: cached test modules must not mask a fresh script's missing checkout path."""
+    import ast
+    import builtins
+    from importlib.machinery import PathFinder
+
+    args = ["parent.py", "supervise.py", "config.yaml", "logs", str(ROOT)]
+    monkeypatch.setattr(sys, "argv", ["launcher.py", *args] if script == "LAUNCHER" else args)
+    # A direct Python script starts with its temporary directory, not pytest's injected checkout root.
+    monkeypatch.setattr(sys, "path", [str(tmp_path), *(p for p in sys.path if p and Path(p).resolve() != ROOT)])
+    original_import, checked = builtins.__import__, []
+
+    def checked_import(name, *args, **kwargs):
+        if name == "tests.test_supervisor_process":
+            spec = PathFinder.find_spec("tests", sys.path)  # Bypass sys.modules' already imported fixture.
+            if spec is None or str(ROOT / "tests") not in list(spec.submodule_search_locations or []):
+                raise ModuleNotFoundError("No module named 'tests' in the detached checkout path")
+            checked.append(name)
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", checked_import)
+    tree = ast.parse(globals()[script], feature_version=(3, 10))
+    end = next(i for i, node in enumerate(tree.body)
+               if isinstance(node, ast.ImportFrom) and node.module == "tests.test_supervisor_process")
+    # Execute imports/bootstrap only. No launch, Job query, wait, thread or signal may run here.
+    exec(compile(ast.Module(body=tree.body[:end + 1], type_ignores=[]), f"<{script}-imports>", "exec"), {})
+    assert checked == ["tests.test_supervisor_process"] and sys.path[0] == str(ROOT)
 
 
 def _free_port() -> int:
