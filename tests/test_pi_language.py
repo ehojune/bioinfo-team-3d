@@ -11,7 +11,9 @@ from labhq.policy import evaluate_tool
 
 
 @pytest.fixture
-def hub(tmp_path):
+def hub(tmp_path, monkeypatch):
+    # Provenance is synthetic here; interpretation tests must not launch Git.
+    monkeypatch.setattr('labhq.integrations.rounds._git_commit', lambda: 'test-commit')
     cfg = Settings()
     cfg.gateway.state_dir = str(tmp_path / 'state')
     value = Hub(cfg)
