@@ -29,7 +29,7 @@ _KNOWN_COMMANDS = {
     "sudo", "env", "command", "exec", "nohup", "builtin", "if", "elif", "while", "until", "time",
     "sh", "bash", "zsh", "dash", "cmd", "powershell", "pwsh", "xargs",
     "coproc", "eval", "trap", "timeout", "nice", "setsid", "find", "pgrep", "pidof", "skill",
-    "watch", "invoke-expression", "iex", "stdbuf", "foreach-object", "foreach", "%",
+    "watch", "invoke-expression", "iex", "stdbuf", "foreach-object", "foreach", "%", "ionice",
 }
 _XARGS_ARGUMENT_OPTIONS = {
     "--arg-file", "--delimiter", "--max-args", "--max-procs", "--max-chars", "--process-slot-var",
@@ -51,6 +51,7 @@ _EXEC_OPTIONS = {
     "nice": ({"--adjustment"}, set(), "n", ""),
     "setsid": (set(), {"--ctty", "--fork", "--wait"}, "", "cfw"),
     "stdbuf": ({"--input", "--output", "--error"}, set(), "ioe", ""),
+    "ionice": ({"--class", "--classdata"}, {"--ignore"}, "cn", "t"),
 }
 _FIND_ARGUMENTS = dict.fromkeys((
     "-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename", "-regex", "-iregex",
@@ -95,6 +96,9 @@ def _literal_word(word: str) -> str:
         if ansi:
             result.append(_ansi_literal(ansi.group()[2:-1]))
             index = ansi.end()
+            continue
+        if quote is None and word.startswith('$"', index):
+            index += 1  # untranslated/C-locale $"..." has ordinary double-quote semantics
             continue
         if quote == "'":
             if char == "'":
@@ -680,6 +684,8 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
     pipe_continuation = False
     block_pipeline: list[bool] = []
     input_expression: list[bool] = []
+    expression_selection: list[bool] = []
+    receiver_selection = False
     input_pending = False
     assignment: tuple[str, int] | None = None
     assignment_waiting = False
@@ -688,7 +694,9 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
             continue
         if _SEPARATOR.fullmatch(group[0]):
             separator = group[0]
+            receiver_selection = False
             if separator in {"(", "{"}:
+                expression_selection.append(False)
                 input_expression.append(input_pending or bool(input_expression and input_expression[-1]))
                 input_pending = False
                 if separator == "{":
@@ -696,6 +704,10 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
                 else:
                     process_pipeline = False
             elif separator in {")", "}"}:
+                emitted_selection = expression_selection.pop() if expression_selection else False
+                receiver_selection = separator == ")" and emitted_selection
+                if expression_selection:
+                    expression_selection[-1] |= emitted_selection
                 if input_expression:
                     input_expression.pop()
                 if separator == "}" and block_pipeline:
@@ -738,6 +750,13 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
         pipeline_reference = (bool(references & {"_", "psitem"})
                               and (process_pipeline or bool(block_pipeline and block_pipeline[-1])))
         selected_reference = bool(references & selected_variables) or pipeline_reference
+        if expression_selection and selected_reference:
+            # Quoted variable interpolation produces text, not a Process receiver.
+            active_references = set(re.findall(r"\$([a-z_][a-z_0-9:]*)", " ".join(
+                word for word in group if word.startswith("$")).casefold()))
+            expression_selection[-1] |= bool(active_references & selected_variables) or bool(
+                active_references & {"_", "psitem"}
+                and (process_pipeline or bool(block_pipeline and block_pipeline[-1])))
         if selected_reference:
             if assignment:
                 selected_variables.add(assignment[0])
@@ -784,6 +803,10 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
             continue
         name = _command_name(group[start])
         args = [_bare(word) for word in group[start + 1:]]
+        if (receiver_selection and name == ".kill" and group[start].startswith(".")
+                and groups[group_index - 1:group_index] == [[")"]]
+                and groups[group_index + 1:group_index + 2] == [["("]]):
+            return True
         if (name in {"foreach-object", "foreach", "%"}
                 and (process_pipeline or selected_reference or bool(block_pipeline and block_pipeline[-1]))
                 and _foreach_kill_member(group[start + 1:])):
@@ -841,6 +864,8 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
             # Explicit -Id is PID-based. Otherwise the pipeline carries a name-selected set.
             process_pipeline = (skill_selected or name in {"pgrep", "pidof"}
                                 or not any(re.match(r"^-(?:id|pid)(?::|$)", arg) for arg in args))
+            if process_pipeline and expression_selection:
+                expression_selection[-1] = True  # earlier emitted objects survive later statements
             if process_pipeline and assignment:
                 # Retain taint across statements/overwrites: branch execution is not proven.
                 selected_variables.add(assignment[0])

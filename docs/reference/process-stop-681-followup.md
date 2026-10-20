@@ -30,6 +30,9 @@ lookup-only 기록입니다. 명령은 모두 test 문자열이며 shell·프로
 | 4322864519 | EncodedCommand·e/ec 및 약어의 UTF-16LE Base64 payload를 정적으로 decode해 재귀 검사 |
 | 4322864528 | ForEach-Object·foreach·%의 MemberName/positional Kill 및 wildcard 호출 거부 |
 | 4322864535 | stdbuf의 short/long option operand 뒤 literal command 검사 |
+| 4323699194 | 이름 선택 괄호식·선택 변수 receiver의 Kill() 거부. 앞서 출력된 객체도 선택 상태 유지 |
+| 4323699213 | ionice의 class/classdata·ignore option 뒤 literal command 검사. PID/PGID/UID 대상 지정은 실행 wrapper와 구분 |
+| 4323699225 | Bash locale quote fragment의 비번역 literal을 double quote처럼 정규화. 인접 fragment·데이터 인용 구분 |
 
 `tests/test_process_stop_guard_followup.py`가 지적별 case ID, policy deny, flat/nested fake broker의 card/event/submit 미호출·pending 없음과 PID·데이터 음성 사례를 확인합니다. 기존 회귀도 유지합니다. 전체 실패명·traceback은 로컬 로그에 보존합니다.
 
@@ -50,3 +53,5 @@ procps 근거: [skill option/operand·no-action 구현](https://gitlab.com/procp
 이번 consumer 회귀는 `tests/test_process_stop_guard_consumers.py`에 있습니다. 계약: [process substitution](https://www.gnu.org/s/bash/manual/html_node/Process-Substitution.html), [Invoke-Expression](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/invoke-expression?view=powershell-7.5), [watch option·argv/shell 구현](https://gitlab.com/procps-ng/procps/-/raw/master/src/watch.c), [Linux nonpositive PID 의미](https://raw.githubusercontent.com/torvalds/linux/master/kernel/signal.c), [Process.Kill](https://learn.microsoft.com/en-us/dotnet/api/system.diagnostics.process.kill). actual shell/process 검증은 하지 않았습니다.
 
 `tests/test_process_stop_guard_payloads.py`는 [EncodedCommand 계약](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_pwsh?view=powershell-7.5#-encodedcommand--e--ec), [MemberName 호출](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/foreach-object?view=powershell-7.5#-membername), [stdbuf option 구현](https://github.com/coreutils/coreutils/blob/master/src/stdbuf.c)을 문자열·fake broker로 검증합니다. Base64의 대소문자는 보존하고 host 옵션과 script/command 인수를 구분합니다. encoded operand는 131,072자까지 정적으로 decode하며 초과·잘못된 Base64/UTF-16LE는 보수적으로 거부합니다. 기존 재귀 상한도 유지합니다.
+
+`tests/test_process_stop_guard_receivers.py`는 괄호식 receiver·ionice·locale quote 회귀입니다. [member-access enumeration](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_member-access_enumeration?view=powershell-7.5), [ionice option·실행/대상 지정 분기](https://github.com/util-linux/util-linux/blob/master/schedutils/ionice.c), [Bash 비번역 locale quote 계약](https://www.gnu.org/s/bash/manual/html_node/Locale-Translation.html)에 근거하며 실제 번역 catalog나 shell은 실행하지 않습니다.
