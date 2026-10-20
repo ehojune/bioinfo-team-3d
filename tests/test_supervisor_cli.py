@@ -76,7 +76,10 @@ def test_up_starts_the_supervisor_records_it_and_waits_for_the_role_it_starts(tm
     assert cli._start_background(settings, "runner", popen=popen) == SUP
 
     command, options, log = calls[0]
-    assert command == [sys.executable, "-m", "labhq.supervisor", settings.config_path, "runner"]
+    executable = getattr(sys, "_base_executable", sys.executable) if sys.platform == "win32" else sys.executable
+    assert command == [executable, "-m", "labhq.supervisor", settings.config_path, "runner"]
+    if sys.platform == "win32":
+        assert options["env"]["__PYVENV_LAUNCHER__"] == sys.executable
     assert log.endswith("runner-supervisor.log") and options["stderr"] == subprocess.STDOUT
     assert options["stdin"] == subprocess.DEVNULL and options["close_fds"] is True
     assert ("creationflags" in options) != ("start_new_session" in options)

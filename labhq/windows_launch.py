@@ -110,6 +110,26 @@ def outcome(state: Path, role: str, status: str, **facts) -> None:
 def spawn(command, *, state: Path, role: str, popen=None, **options):
     if sys.platform != "win32":
         return (popen or subprocess.Popen)(command, **options)
+    # Windows venv python.exe is a redirector which creates a child and a kill-on-close Job.
+    # Start the actual interpreter while retaining CPython's supported venv-selection carrier.
+    if command and command[0] == sys.executable:
+        executable = getattr(sys, "_base_executable", sys.executable)
+        if not isinstance(executable, str) or not Path(executable).is_absolute():
+            raise LaunchError("Windows detached interpreter must be absolute")
+        command = [executable, *command[1:]]
+        options["env"] = {**options.get("env", os.environ), "__PYVENV_LAUNCHER__": sys.executable}
+
+    def broker():
+        from .windows_broker import launch
+        if role not in ("gateway-supervisor", "runner-supervisor"):
+            raise LaunchError("Only a supervisor can use the transient WMI bootstrap")
+        try:
+            return launch(command, state=state, role=role, **options)
+        except LaunchError:
+            raise
+        except (OSError, ValueError, TypeError, subprocess.SubprocessError) as exc:
+            outcome(state, role, "wmi_failed", error=type(exc).__name__)
+            raise LaunchError("Windows WMI bootstrap unavailable; no successful launch recorded") from exc
     parent = current_job()
     outcome(state, role, "attempt", parent_job=parent)
     try:
@@ -117,6 +137,8 @@ def spawn(command, *, state: Path, role: str, popen=None, **options):
     except OSError as exc:
         outcome(state, role, "denied" if isinstance(exc, PermissionError) else "spawn_failed",
                 error=type(exc).__name__, winerror=getattr(exc, "winerror", None))
+        if isinstance(exc, PermissionError) and getattr(exc, "winerror", None) == 5:
+            return broker()  # CreateProcess denied the request: no direct child exists.
         raise LaunchError("Windows detached 실행 거부: Job breakaway가 허용된 독립 콘솔에서 실행하세요. "
                           f"winerror={getattr(exc, 'winerror', None)}; parent_job={json.dumps(parent)}. "
                           "분리 flag를 빼고 재시도하지 않습니다.") from exc
@@ -127,10 +149,14 @@ def spawn(command, *, state: Path, role: str, popen=None, **options):
         outcome(state, role, "unverified", child_in_job=member, child_job_query=diagnostics)
         try:
             child.kill()
-            child.wait(timeout=5)
+            reaped = child.wait(timeout=5)
         except (OSError, subprocess.SubprocessError) as exc:
             outcome(state, role, "cleanup_failed", error=type(exc).__name__)
             raise LaunchError("Windows 미확인 자식 정리 실패. detached-launch.jsonl을 확인하고 독립 콘솔에서 점검하세요.") from exc
+        if (member is True and isinstance(getattr(child, "_handle", None), int)
+                and child._handle > 0 and type(reaped) is int):
+            outcome(state, role, "direct_reaped")
+            return broker()  # Never retry for unknown membership/identity or failed owned-handle cleanup.
         raise LaunchError("Windows 자식의 Job 탈출을 확인하지 못해 실행을 취소했습니다. "
                           f"child_in_job={member}; query={json.dumps(diagnostics)}; "
                           f"parent_job={json.dumps(parent)}. 독립 콘솔에서 실행하고 상위 Job 정책을 확인하세요.")

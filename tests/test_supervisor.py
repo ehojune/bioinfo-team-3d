@@ -185,10 +185,14 @@ def test_the_role_is_started_the_way_up_used_to_start_it_and_recorded_for_down(t
     run.run()
 
     command, options = cli._child_launch(settings, "runner")
+    if supervisor.sys.platform == "win32":
+        command[0] = getattr(supervisor.sys, "_base_executable", supervisor.sys.executable)
     call = popen.calls[0]
     assert call["command"] == command and command[-3:] == ["-c", settings.config_path, "runner"]
     assert call["stdout_name"].endswith("runner.log")
     assert options["stderr"] == subprocess.STDOUT and call["options"]["stderr"] == subprocess.STDOUT
+    if supervisor.sys.platform == "win32":
+        assert call["options"]["env"]["__PYVENV_LAUNCHER__"] == supervisor.sys.executable
     assert call["options"]["env"]["PYTHONUNBUFFERED"] == "1" and call["options"]["close_fds"] is True
     assert ("creationflags" in call["options"]) != ("start_new_session" in call["options"])  # detached either way
     record = json.loads(cli._pid_file(settings, "runner").read_text(encoding="utf-8"))

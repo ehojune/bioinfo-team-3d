@@ -1,0 +1,362 @@
+"""One-shot local WMI bootstrap. No service, persistent environment, or PID-only cleanup."""
+from __future__ import annotations
+
+import base64
+import ctypes as C
+import hashlib
+import json
+import os
+from pathlib import Path
+import runpy
+import secrets
+import subprocess
+import sys
+import tempfile
+import time
+
+# Executed as a file by the base interpreter, before site/PYTHONPATH imports or descendants.
+if __name__ == "__main__":
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from labhq.windows_launch import BREAKAWAY, DETACHED, LaunchError, job_membership, outcome
+
+TIMEOUT = 20
+
+
+class BrokerFailure(LaunchError):
+    def __init__(self, reason, code=None):
+        self.reason, self.code = reason, code
+        super().__init__(f"Windows WMI bootstrap: {reason}; code={code}")
+
+
+WMI_SCRIPT = r'''
+$ErrorActionPreference = 'Stop'
+[Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
+try {
+  $r = [Console]::In.ReadToEnd() | ConvertFrom-Json
+  $startup = ([wmiclass]'\\.\root\cimv2:Win32_ProcessStartup').CreateInstance()
+  $startup.CreateFlags = [uint32]$r.flags
+  $startup.ShowWindow = 0
+  $startup.EnvironmentVariables = [string[]]$r.environment
+  $p = ([wmiclass]'\\.\root\cimv2:Win32_Process').Create($r.command, $r.cwd, $startup)
+  [Console]::Out.Write((@{code=[uint32]$p.ReturnValue; pid=[uint32]$p.ProcessId} | ConvertTo-Json -Compress))
+} catch { [Console]::Out.Write('{"code":-1,"pid":0}'); exit 1 }
+'''
+
+
+def _bind(dll, name, args, result=C.c_int):
+    function = getattr(dll, name)
+    function.argtypes, function.restype = args, result
+
+
+class Native:
+    """All identity and cleanup operations use the retained, non-inheritable process handle."""
+    def __init__(self):
+        self.k = C.WinDLL("kernel32", use_last_error=True)
+        self.a = C.WinDLL("advapi32", use_last_error=True)
+        for name, args, result in (
+            ("GetCurrentProcess", [], C.c_void_p),
+            ("OpenProcess", [C.c_uint32, C.c_int, C.c_uint32], C.c_void_p),
+            ("CloseHandle", [C.c_void_p], C.c_int),
+            ("GetProcessTimes", [C.c_void_p] * 5, C.c_int),
+            ("GetExitCodeProcess", [C.c_void_p, C.POINTER(C.c_uint32)], C.c_int),
+            ("QueryFullProcessImageNameW", [C.c_void_p, C.c_uint32, C.c_wchar_p, C.POINTER(C.c_uint32)], C.c_int),
+            ("WaitForSingleObject", [C.c_void_p, C.c_uint32], C.c_uint32),
+            ("TerminateProcess", [C.c_void_p, C.c_uint32], C.c_int),
+            ("LocalFree", [C.c_void_p], C.c_void_p)):
+            _bind(self.k, name, args, result)
+        for name, args in (
+            ("OpenProcessToken", [C.c_void_p, C.c_uint32, C.POINTER(C.c_void_p)]),
+            ("GetTokenInformation", [C.c_void_p, C.c_int, C.c_void_p, C.c_uint32, C.POINTER(C.c_uint32)]),
+            ("ConvertSidToStringSidW", [C.c_void_p, C.POINTER(C.c_void_p)]),
+            ("ConvertStringSecurityDescriptorToSecurityDescriptorW", [C.c_wchar_p, C.c_uint32, C.POINTER(C.c_void_p), C.c_void_p]),
+            ("SetFileSecurityW", [C.c_wchar_p, C.c_uint32, C.c_void_p])):
+            _bind(self.a, name, args)
+
+    @staticmethod
+    def require(ok):
+        if not ok:
+            raise OSError(C.get_last_error(), "Windows broker native operation failed")
+
+    def identity(self, handle):
+        times = [C.c_uint64() for _ in range(4)]
+        self.require(self.k.GetProcessTimes(handle, *(C.byref(t) for t in times)))
+        image, size = C.create_unicode_buffer(32768), C.c_uint32(32768)
+        self.require(self.k.QueryFullProcessImageNameW(handle, 0, image, C.byref(size)))
+        token, length = C.c_void_p(), C.c_uint32()
+        self.require(self.a.OpenProcessToken(handle, 8, C.byref(token)))
+        try:
+            self.a.GetTokenInformation(token, 1, None, 0, C.byref(length))
+            self.require(0 < length.value <= 65536)
+            data = C.create_string_buffer(length.value)
+            self.require(self.a.GetTokenInformation(token, 1, data, length.value, C.byref(length)))
+            sid = C.c_void_p()
+            self.require(self.a.ConvertSidToStringSidW(C.c_void_p.from_buffer(data), C.byref(sid)))
+            try:
+                owner = C.wstring_at(sid)
+            finally:
+                self.k.LocalFree(sid)
+        finally:
+            self.k.CloseHandle(token)
+        return {"created": f"windows:{times[0].value}", "image": os.path.normcase(os.path.realpath(image.value)), "owner": owner}
+
+    def private(self, folder, owner):
+        descriptor = C.c_void_p()
+        self.require(self.a.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            f"D:P(A;OICI;FA;;;{owner})", 1, C.byref(descriptor), None))
+        try:
+            self.require(self.a.SetFileSecurityW(str(folder), 0x80000004, descriptor))
+        finally:
+            self.k.LocalFree(descriptor)
+
+    def open(self, pid, *, terminate=True):
+        handle = self.k.OpenProcess(0x1000 | 0x100000 | (1 if terminate else 0), False, pid)
+        self.require(handle)
+        return handle
+
+    def alive(self, handle):
+        result = self.k.WaitForSingleObject(handle, 0)
+        if result not in (0, 258):
+            self.require(False)
+        return result == 258
+
+
+class Process:
+    def __init__(self, native, pid, handle, created):
+        self.native, self.pid, self._handle, self.created = native, pid, handle, created
+
+    def kill(self):
+        if self.native.alive(self._handle):
+            self.native.require(self.native.k.TerminateProcess(self._handle, 1))
+
+    terminate = kill
+
+    def wait(self, timeout=None):
+        result = self.native.k.WaitForSingleObject(self._handle, int((timeout or TIMEOUT) * 1000))
+        if result == 258:
+            raise subprocess.TimeoutExpired("owned WMI bootstrap", timeout)
+        self.native.require(result == 0)
+        code = C.c_uint32()
+        self.native.require(self.native.k.GetExitCodeProcess(self._handle, C.byref(code)))
+        return code.value
+
+    def poll(self):
+        return None if self.native.alive(self._handle) else self.wait(timeout=0)
+
+    def close(self):
+        if self._handle:
+            self.native.k.CloseHandle(self._handle)
+            self._handle = None
+        if getattr(self, "folder", None):
+            try:
+                _cleanup(self.folder)
+            except OSError:
+                pass  # No environment/credentials on disk; the bootstrap also removes its bounded control files.
+
+    def __del__(self):
+        self.close()  # Release only; never kill on finalization.
+
+
+def _write(path, value):
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(value), encoding="utf-8")
+    temporary.replace(path)
+
+
+def _read(path):
+    try:
+        if path.stat().st_size > 131072:
+            raise LaunchError("WMI bootstrap record exceeds its bound")
+        return json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+
+
+def _digest(environment):
+    # CPython consumes this interpreter-selection carrier during startup.
+    pairs = sorted((key.upper(), value) for key, value in environment.items() if key.upper() != "__PYVENV_LAUNCHER__")
+    return hashlib.sha256(json.dumps(pairs, ensure_ascii=True).encode()).hexdigest()
+
+
+def _cleanup(folder):
+    for name in ("request", "receipt", "ack", "accepted"):
+        for suffix in (".json", ".tmp"):
+            (folder / (name + suffix)).unlink(missing_ok=True)
+    try:
+        folder.rmdir()
+    except OSError:
+        pass
+
+
+def _powershell():
+    kernel = C.WinDLL("kernel32", use_last_error=True)
+    _bind(kernel, "GetSystemDirectoryW", [C.c_wchar_p, C.c_uint32], C.c_uint32)
+    buffer = C.create_unicode_buffer(32768)
+    size = kernel.GetSystemDirectoryW(buffer, len(buffer))
+    if not 0 < size < len(buffer):
+        raise BrokerFailure("system_directory_unknown")
+    return Path(buffer.value) / "WindowsPowerShell/v1.0/powershell.exe"
+
+
+def _create(command, cwd, environment):
+    shell = _powershell()
+    if not shell.is_absolute() or not shell.is_file():
+        raise LaunchError("WMI broker requires the system Windows PowerShell executable")
+    data = {"command": subprocess.list2cmdline(command), "cwd": str(cwd),
+            "flags": BREAKAWAY | DETACHED | 0x400,
+            "environment": [f"{key}={value}" for key, value in environment.items()]}
+    encoded = base64.b64encode(WMI_SCRIPT.encode("utf-16-le")).decode("ascii")
+    result = subprocess.run([str(shell), "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+                            input=json.dumps(data, ensure_ascii=True).encode(), stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL, timeout=10, creationflags=0x08000000, check=False)
+    reply = json.loads(result.stdout.decode("utf-8-sig"))
+    code = reply.get("code")
+    if result.returncode or type(code) is not int or code != 0:
+        raise BrokerFailure("create_failed", code if type(code) is int else None)
+    pid = reply.get("pid")
+    if type(pid) is not int or pid <= 0:
+        raise BrokerFailure("invalid_returned_pid")
+    return pid
+
+
+def launch(command, *, state, role, **options):
+    """At most one provider request. Unknown processes are never terminated by their returned PID."""
+    native = Native()
+    caller = native.identity(native.k.GetCurrentProcess())
+    cwd = Path(options["cwd"])
+    if not cwd.is_absolute() or not Path(command[0]).is_absolute():
+        raise LaunchError("WMI requires absolute interpreter and cwd")
+    if (len(command) < 2 or any(not isinstance(arg, str) or "\0" in arg for arg in command)
+            or (command[1] == "-m" and len(command) < 3)
+            or (command[1] != "-m" and not Path(command[1]).is_absolute())):
+        raise LaunchError("WMI requires a structured Python module or absolute script entry")
+    # Bypass the CPython venv redirector: it creates another process and its own Job.
+    if os.path.normcase(os.path.realpath(command[0])) != caller["image"]:
+        raise LaunchError("WMI interpreter does not match the caller's actual process image")
+    log = Path(options["stdout"].name).resolve()
+    if not log.is_relative_to(Path(state).resolve()):
+        raise LaunchError("WMI output must belong to the instance state")
+    environment = dict(options["env"])
+    if any(not isinstance(key, str) or not key or "=" in key or "\0" in key
+           or not isinstance(value, str) or "\0" in value for key, value in environment.items()):
+        raise LaunchError("WMI environment cannot be represented safely")
+    nonce = secrets.token_hex(32)
+    root = Path(state) / ".launch"
+    root.mkdir(parents=True, exist_ok=True)
+    process, owned, committed = None, False, False
+    outcome(state, role, "wmi_attempt")
+    folder = Path(tempfile.mkdtemp(prefix="wmi-", dir=root))
+    try:
+        native.private(folder, caller["owner"])
+        request = {"nonce": nonce, "expires": time.time() + TIMEOUT,
+                   "caller_pid": os.getpid(), "caller_created": caller["created"],
+                   "image": caller["image"], "owner": caller["owner"], "argv": list(command[1:]),
+                   "env_digest": _digest(environment), "cwd": str(cwd), "log": str(log),
+                   "executable": sys.executable, "prefix": sys.prefix, "exec_prefix": sys.exec_prefix,
+                   "sys_path": [str(Path(p or os.getcwd()).resolve()) for p in sys.path]}
+        control = folder / "request.json"
+        _write(control, request)  # No environment values or credentials on disk.
+        try:
+            pid = _create([command[0], "-I", "-S", str(Path(__file__).resolve()), str(control)], cwd, environment)
+            handle = native.open(pid)
+            process = Process(native, pid, handle, None)
+            identity = native.identity(handle)
+            deadline = time.monotonic() + TIMEOUT
+            while True:
+                receipt = _read(folder / "receipt.json")
+                if receipt is not None:
+                    break
+                if not native.alive(handle) or time.monotonic() >= deadline:
+                    raise BrokerFailure("receipt_timeout")
+                time.sleep(.02)
+            if (receipt != {"nonce": nonce, "pid": pid, "created": identity["created"]}
+                    or identity["image"] != caller["image"] or identity["owner"] != caller["owner"]):
+                raise BrokerFailure("identity_mismatch")
+            owned = True  # Nonce + retained-handle creation/image/owner identity; safe to clean up from here.
+            process.created = identity["created"]
+            diagnostics = {}
+            member = job_membership(handle, diagnostics=diagnostics)
+            if member is not False or not native.alive(handle):
+                outcome(state, role, "wmi_unverified", child_in_job=member, child_job_query=diagnostics)
+                raise BrokerFailure("job_unverified")
+            outcome(state, role, "wmi_verified", child_pid=pid, child_in_job=False)
+            process.folder = folder
+            _write(folder / "ack.json", receipt)  # Commit point: no wait/failable work and no rollback kill after ACK.
+            committed = True
+            return process
+        except (OSError, ValueError, TypeError, subprocess.SubprocessError) as exc:
+            reason, code = getattr(exc, "reason", "native_or_protocol"), getattr(exc, "code", getattr(exc, "errno", None))
+            outcome(state, role, "wmi_failed", error=type(exc).__name__, reason=reason, code=code)
+            if process:
+                try:
+                    if owned:
+                        process.kill()
+                        process.wait(timeout=5)
+                finally:
+                    process.close()
+            raise BrokerFailure(reason, code) from exc
+    finally:
+        if not committed:
+            try:
+                _cleanup(folder)
+            except OSError as exc:
+                outcome(state, role, "wmi_control_cleanup_failed", error=type(exc).__name__)
+
+
+def bootstrap(control):
+    try:
+        return _bootstrap(control)
+    except BaseException:
+        _cleanup(control.parent)
+        raise
+
+
+def _bootstrap(control):
+    request = _read(control)
+    native = Native()
+    mine = native.identity(native.k.GetCurrentProcess())
+    parent = native.open(request["caller_pid"], terminate=False)
+    try:
+        caller = native.identity(parent)
+        if (caller["created"] != request["caller_created"] or caller["image"] != request["image"]
+                or caller["owner"] != mine["owner"] or mine["owner"] != request["owner"]
+                or mine["image"] != request["image"] or _digest(os.environ) != request["env_digest"]):
+            raise LaunchError("WMI bootstrap caller/environment mismatch")
+        receipt = {"nonce": request["nonce"], "pid": os.getpid(), "created": mine["created"]}
+        _write(control.parent / "receipt.json", receipt)
+        deadline = time.monotonic() + TIMEOUT
+        while True:
+            if not native.alive(parent) or time.time() >= request["expires"] or time.monotonic() >= deadline:
+                raise LaunchError("WMI bootstrap caller exited or ACK expired")
+            if _read(control.parent / "ack.json") == receipt:
+                break
+            time.sleep(.02)
+        if job_membership() is not False or not native.alive(parent):
+            raise LaunchError("WMI bootstrap final Job/caller check failed")
+        _cleanup(control.parent)  # ACK consumed; parent no longer reads control files. No persistent nonce.
+    finally:
+        native.k.CloseHandle(parent)
+    return _enter(request)
+
+
+def _enter(request):
+    # Same interpreter/PID/creation identity. No subprocess and no role ownership before ACK.
+    os.chdir(request["cwd"])
+    sys.path[:] = request["sys_path"]
+    sys.executable, sys.prefix, sys.exec_prefix = request["executable"], request["prefix"], request["exec_prefix"]
+    os.environ.pop("__PYVENV_LAUNCHER__", None)  # Do not leak the consumed CPython carrier to arbitrary staff CLIs.
+    log = open(request["log"], "a", encoding="utf-8", buffering=1)
+    sys.stdout = sys.stderr = log  # Keep open through interpreter shutdown, including target SystemExit.
+    sys.stdin = open(os.devnull, encoding="utf-8")
+    argv = request["argv"]
+    if argv[0] == "-m":
+        sys.argv = argv[1:]
+        return runpy.run_module(argv[1], run_name="__main__", alter_sys=True)
+    sys.argv = argv
+    return runpy.run_path(argv[0], run_name="__main__")
+
+
+if __name__ == "__main__":
+    try:
+        bootstrap(Path(sys.argv[1]))
+    except Exception:
+        raise SystemExit(2) from None  # No argv, environment, credentials, or paths in bootstrap diagnostics.
