@@ -6,3 +6,9 @@ rows:
     선언을 유지한다. AST·FakeInterpreter 28개 검사와 Python 3.10 AST 검사가 통과했고 실제 interpreter·서비스·성능은
     미검증이다.
   summary: 코드가 환경변수를 설정하거나 지우기만 해도 입력이 없다고 막히던 문제를 고쳤습니다.
+- sha: e877a70
+  at: 2026-10-21 00:23
+  text: supervisor fixture가 launch 실패 시 기존 journal 끝 8192자와 예외 체인을 보존한다. timeout 결과
+    미확정 시 단일 호출·미소유·무성공 기록을 fake로 검증했다. 관련 mock 6개와 Python 3.10 AST가 통과했으며 실제 Windows
+    timeout 원인은 미해결이다.
+  summary: Windows 검사에서 프로그램 시작이 실패해도 기존 진단 기록을 함께 보여 주도록 고쳤습니다.
