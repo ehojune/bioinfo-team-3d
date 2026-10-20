@@ -8,6 +8,8 @@ import pytest
 from pydantic import ValidationError
 
 from labhq.models import TaskResult
+from labhq.bioinfo_policy import BIOINFO_ASSIGNMENT_RULE
+from labhq.orchestrator import cso
 from labhq.orchestrator.cso import Orchestrator
 from labhq.evidence.verify import SourceRecord, SourceUpdate, StaticResolver
 from labhq.research.contract import plan_sha256, research_result_errors, salvage_research_result
@@ -1220,7 +1222,11 @@ async def test_research_plan_prompt_matches_the_evidence_checkpoint(on):
         assert cp1_only not in prompt and "Research steps will not run" not in prompt
         assert "stops at CP2" in prompt and "artifact_refs path must be one of that step's declared outputs" in prompt
     else:
-        assert cp1_only in prompt and "CP2" not in prompt
+        # The CP1 pilot contract, not the evidence checkpoint. The shared planning policy names CP1/CP2 as review
+        # boundaries (#799); that does not switch evidence mode, so only the mode-specific rule text is checked.
+        assert cp1_only in prompt and cso.RESEARCH_CP2_RULE not in prompt
+        assert "stops at CP2" not in prompt and "artifact_refs path must be one of that step's declared outputs" not in prompt
+        assert BIOINFO_ASSIGNMENT_RULE in prompt and "CP2" not in prompt.replace(BIOINFO_ASSIGNMENT_RULE, "")
 
 
 @pytest.mark.asyncio
