@@ -6,7 +6,7 @@ import re
 
 
 DENIAL = (
-    "이름으로 여러 프로세스를 종료하는 명령은 승인 카드 없이 거부합니다. "
+    "이름이나 광역 PID 선택자로 여러 프로세스를 종료하는 명령은 승인 카드 없이 거부합니다. "
     "자기 작업 폴더 경로가 명령줄에 있는지 확인한 PID만 지정해 종료하세요. "
     "PID와 시작 시각을 다시 확인하고 다른 요청이나 gateway·runner는 종료하지 마세요."
 )
@@ -26,6 +26,7 @@ _KNOWN_COMMANDS = {
     "sudo", "env", "command", "exec", "nohup", "builtin", "if", "elif", "while", "until", "time",
     "sh", "bash", "zsh", "dash", "cmd", "powershell", "pwsh", "xargs",
     "coproc", "eval", "trap", "timeout", "nice", "setsid", "find", "pgrep", "pidof", "skill",
+    "watch", "invoke-expression", "iex",
 }
 _XARGS_ARGUMENT_OPTIONS = {
     "--arg-file", "--delimiter", "--max-args", "--max-procs", "--max-chars", "--process-slot-var",
@@ -147,7 +148,7 @@ def _backquote_payloads(command: str):
 
 
 def _substitution_end(command: str, start: int, depth: int = 0) -> int | None:
-    """Locate a balanced $() without evaluating it; inner quoting is independent."""
+    """Locate a balanced command/process substitution without evaluating it."""
     if depth > 8:
         raise ValueError("excessive substitution nesting")
     quote = None
@@ -173,7 +174,7 @@ def _substitution_end(command: str, start: int, depth: int = 0) -> int | None:
             if backquote:
                 index += len(backquote.group())
                 continue
-        elif command.startswith("$(", index):
+        elif command.startswith("$(", index) or (quote is None and command[index:index + 2] in {"<(", ">("}):
             end = _substitution_end(command, index, depth + 1)
             if end is None:
                 return None
@@ -191,7 +192,7 @@ def _substitution_end(command: str, start: int, depth: int = 0) -> int | None:
 
 
 def _substitution_spans(command: str):
-    """Yield outer executed $() spans; quoted/escaped data and backquotes stay separate."""
+    """Yield executed substitutions; process substitution is active only outside quotes."""
     quote = None
     index = 0
     while index < len(command):
@@ -214,7 +215,7 @@ def _substitution_spans(command: str):
             if backquote:
                 index += len(backquote.group())
                 continue
-        elif command.startswith("$(", index):
+        elif command.startswith("$(", index) or (quote is None and command[index:index + 2] in {"<(", ">("}):
             end = _substitution_end(command, index)
             if end is not None:
                 yield index, end, command[index + 2:end - 1]
@@ -393,6 +394,88 @@ def _execution_command_start(words: list[str], start: int, name: str) -> int:
     return start + (name == "timeout")  # DURATION precedes timeout's COMMAND
 
 
+def _watch_command_start(words: list[str], start: int) -> tuple[int, bool]:
+    """Respect watch's getopt operands and optional attached -d value; -x uses argv."""
+    options = {"--color": "c", "--no-color": "C", "--differences": "d", "--help": "h",
+               "--interval": "n", "--beep": "b", "--errexit": "e", "--follow": "f",
+               "--chgexit": "g", "--equexit": "q", "--exec": "x", "--precise": "p",
+               "--no-rerun": "r", "--shotsdir": "s", "--no-title": "t", "--no-wrap": "w",
+               "--version": "v"}
+    direct = False
+    start += 1
+    while start < len(words):
+        option = _literal_word(words[start])
+        if option == "--":
+            return start + 1, direct
+        if not option.startswith("-") or option == "-":
+            break
+        start += 1
+        if option.startswith("--"):
+            key, attached, _value = option.partition("=")
+            matches = [key] if key in options else [name for name in options if name.startswith(key)]
+            if len(matches) != 1:
+                return len(words), direct
+            flags = options[matches[0]]
+        else:
+            flags, attached = option[1:], False
+        for index, flag in enumerate(flags, start=1):
+            if flag in "hv" or flag not in options.values():
+                return len(words), direct
+            direct |= flag == "x"
+            if flag in "nqs":
+                if not attached and index == len(flags):
+                    start += 1
+                break
+            if flag == "d":
+                break  # an optional value must be attached, never the following command
+    return start, direct
+
+
+def _invoke_expression_payload(words: list[str]) -> str | None:
+    """Only Command is executed; common parameter operands are ordinary data."""
+    values = {"command", "erroraction", "warningaction", "informationaction", "progressaction",
+              "errorvariable", "warningvariable", "informationvariable", "outvariable", "outbuffer",
+              "pipelinevariable"}
+    options = values | {"verbose", "debug"}
+    index = 0
+    while index < len(words):
+        value = _literal_word(words[index])
+        index += 1
+        if not value.startswith("-"):
+            return value
+        key, attached, operand = value.lstrip("-").partition(":")
+        key = key.casefold()
+        matches = [key] if key in options else [name for name in options if name.startswith(key)]
+        if len(matches) != 1:
+            return None
+        if matches[0] == "command":
+            return operand if attached else (_literal_word(words[index]) if index < len(words) else None)
+        if matches[0] in values and not attached:
+            index += 1
+    return None
+
+
+def _nonpositive_kill_target(args: list[str]) -> bool:
+    """Separate signal options from PID/group operands, without invoking kill."""
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg in {"-l", "-L", "--list", "--table", "-p", "--pid", "--help", "--version"}:
+            return False  # query/help operand zero is not a process-group stop
+        if arg == "--":
+            index += 1
+            break
+        if arg in {"-s", "-n", "--signal"}:
+            index += 2
+            break
+        if re.match(r"^(?:--signal=|-[sn].+)", arg) or re.fullmatch(r"-(?:[0-9]+|[a-z]+)", arg):
+            index += 1  # the initial -1 means SIGHUP, not a negative PID
+            break
+        break
+    return any(re.fullmatch(r"[+-]?[0-9]+", arg)
+               and (arg.startswith("-") or not arg.lstrip("+").strip("0")) for arg in args[index:])
+
+
 def _find_payloads(words: list[str]):
     """Find literal -exec/-execdir/-ok/-okdir actions, not predicate/format operands."""
     index = 0
@@ -565,6 +648,10 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
                 assignment = None
             continue
         pipe_continuation = False
+        redirected_processes = any(
+            operator in {"<", "0<", "<>", "0<>"}
+            and bool(set(re.findall(r"\$([a-z_][a-z_0-9:]*)", target.casefold())) & selected_variables)
+            for operator, target in zip(group, group[1:]))
         group = _without_redirections(group)
         if not group:
             continue
@@ -606,7 +693,14 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
                 continue
             if name == "xargs":
                 start = _xargs_command_start(group, start + 1)
-                pipeline_arguments = pipeline_arguments or process_pipeline
+                pipeline_arguments = pipeline_arguments or process_pipeline or redirected_processes
+                continue
+            if name == "watch":
+                start, direct = _watch_command_start(group, start)
+                if not direct:
+                    payload = " ".join(_literal_word(word) for word in group[start:])
+                    if broad_process_stop(payload, _depth=_depth + 1):
+                        return True
                 continue
             if name in _EXEC_OPTIONS:
                 start = _execution_command_start(group, start, name)
@@ -623,6 +717,22 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
             continue
         name = _command_name(group[start])
         args = [_bare(word) for word in group[start + 1:]]
+        if (selected_reference and group[start].startswith("$")
+                and re.fullmatch(r"\$[a-z_][a-z_0-9:]*\.kill", name)
+                and groups[group_index + 1:group_index + 2] == [["("]]):
+            return True
+        if name in {"invoke-expression", "iex"}:
+            payload = _invoke_expression_payload(group[start + 1:])
+            if payload is None:
+                previous_groups = [g for g in groups[:group_index] if g and g != ["\n"]][-2:]
+                if len(previous_groups) == 2 and previous_groups[-1] == ["|"]:
+                    producer = previous_groups[0]
+                    if (len(producer) == 2 and _command_name(producer[0]) in {"echo", "write-output"}):
+                        producer = producer[1:]
+                    if len(producer) == 1 and producer[0].startswith(("'", '"')):
+                        payload = _literal_word(producer[0])
+            if payload is not None and broad_process_stop(payload, _depth=_depth + 1):
+                return True
         if name == "eval":
             payload_words = group[start + 1:]
             if payload_words and _literal_word(payload_words[0]) == "--":
@@ -669,17 +779,19 @@ def broad_process_stop(command: str, *, _depth: int = 0) -> bool:
             if process_pipeline and input_expression and input_expression[-1]:
                 return True
         if name in {"stop-process", "spps", "kill"}:
-            selected_processes = process_pipeline or bool(block_pipeline and block_pipeline[-1])
+            selected_processes = process_pipeline or pipeline_arguments or bool(block_pipeline and block_pipeline[-1])
             if selected_reference:
                 return True
             input_pending = any(arg.startswith("-") and len(arg.strip("-:")) >= 2
                                 and "inputobject".startswith(arg.strip("-:")) for arg in args)
-            input_pending |= selected_processes and any(re.match(r"^-id(?::|$)", arg) for arg in args)
+            input_pending |= any(re.match(r"^-id(?::|$)", arg) for arg in args)
             # Bash kill -n selects a signal, not a process name.
             name_option = r"^-name(?::|$)" if name == "kill" else r"^-n(?:a(?:m(?:e)?)?)?(?::|$)"
             if any(re.match(name_option, arg) for arg in args):
                 return True
             if name == "kill":
+                if _nonpositive_kill_target(args):
+                    return True
                 for i, arg in enumerate(args):
                     abbreviated = re.fullmatch(r"-(n|na|nam)(?::(.*))?", arg)
                     if abbreviated:
