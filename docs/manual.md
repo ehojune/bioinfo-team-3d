@@ -126,7 +126,7 @@ Codex `bin`이 비어 있거나 `auto`이면 Windows 앱에서 판본이 가장 
 `up`이 자기 gateway임을 확인한 뒤에만 그 state 폴더에 `labhq-last-config.json`을 남깁니다. 설정 파일이 지워지면 그 기록은 무시합니다.
 
 실행 전 `labhq doctor`로 설정·엔진·직원·계산 도구를 점검하세요. `labhq doctor --json`은 러너 상태 디렉터리에 `capabilities.json`을 쓰고, `--network`를 붙일 때만 공개 데이터 사이트에 접속합니다. 이 manifest의 `runner_capabilities`는 러너가 보고하는 기능과 같은 설정·roster에서 산출한 사실입니다. `research lane` 행은 연구 lane이 끝까지 도는지 알려 줍니다. `research.enabled`만 켜면 CP1 뒤 멈춘다는 warn이 뜨고, `evidence_checkpoint`까지 켜야 CP2·리뷰·보고서로 갑니다. `research` 아래 오타 키는 시작할 때 오류입니다.
-doctor는 **설정 준비**와 **운영 준비**를 나눠 표시합니다. 배포 전에는 `doctor --runtime`을 사용하세요. 이전에 시작한 daemon의 신원이 stale·missing·unknown이면 실패하며 pristine·정상 down은 별도로 표시합니다. remote·foreground 역할은 로컬 PID를 요구하지 않고 인증된 gateway와 runner 연결로 확인합니다(켜진 WSL runner도 포함).
+doctor는 **설정 준비**와 **운영 준비**를 나눠 표시합니다. 배포 전에는 `doctor --runtime`을 사용하세요. daemon의 stale·unknown PID 정체는 실패하며 pristine·정상 down은 별도로 표시합니다. remote·foreground 역할은 로컬 PID를 요구하지 않고 인증된 gateway와 runner 연결로 확인합니다(켜진 WSL runner도 포함). PID 기록이 모두 없는 과거 up/down 이력은 이 인증·연결이 확인된 경우만 해소하며, 인증 없는 missing과 이력 조회 오류는 계속 실패합니다.
 doctor의 `disk` 행은 작업·임시·Codex/Claude 직원 홈의 드라이브 여유를 읽습니다. 폴더가 아직 없으면 가장 가까운 기존 부모를 검사합니다. 기본 경고는 10 GiB 미만 또는 5% 미만이며 `runner.disk_warning_free_gb`·`runner.disk_warning_free_percent`로 바꿉니다(각각 0이면 해당 기준 해제). 조회 실패도 warn입니다. 설정한 작업 폴더는 이름과 무관하게 게시 전 개인 경로 검사에 포함됩니다. [검증 근거](reference/disk-preflight-752.md).
 
 doctor는 roster가 쓰는 엔진만 검사하고, 생략한 네트워크·dry-run 로그인 검사는 한 줄로 묶습니다. fail이 하나라도 있거나, 활성 직원이 없거나, roster 엔진 실행 파일이 하나라도 없으면 끝에 `실행 준비: 아니오`와 이유를 표시합니다. 다른 warn은 준비 여부를 바꾸지 않습니다.
@@ -183,7 +183,7 @@ Windows wrapper는 `.venv\Scripts\python.exe`를 직접 실행하므로 venv 활
 
 2.5D·3D 웹을 열어 두면 gateway 연결 끊김과 runner 미연결을 별도로 알립니다. 재연결 중에도 경고를 유지하고 연결이 돌아오면 지웁니다. 연결 끊김만으로 종료와 네트워크 문제를 구별하지는 않으며, 웹을 닫았을 때 외부 채널로 알림을 보내지는 않습니다.
 
-Windows `up`은 실제 Python interpreter로 Job breakaway를 먼저 요청합니다(venv 선택 유지). 확인된 거부·잔류에만 direct 자식을 소유 handle로 정리한 뒤 임시 local WMI bootstrap을 한 번 시도합니다. nonce·생성 시각·실행 파일·현재 사용자·모든 Job 비소속 확인 뒤 ACK하며 bootstrap은 같은 PID로 supervisor에 진입합니다. unknown·정리 실패는 중단하고 flag를 빼지 않습니다. 서비스·Task Scheduler·승격은 없습니다. `logs/detached-launch.jsonl`에는 시도·거부·검증 단계와 Job 잔류/조회 오류를 남깁니다. 배포는 `doctor --runtime` exit 0과 `runtime_readiness.ready=true`를 모두 확인해야 합니다. 기록 없는 소멸만으로 Job 강제 종료를 확정하지 않습니다. [근거·검증 경계](reference/windows-runtime-795.md).
+Windows `up`은 실제 Python interpreter로 Job breakaway를 먼저 요청합니다(venv 선택 유지). 확인된 거부·잔류에만 direct 자식을 소유 handle로 정리한 뒤 임시 local WMI bootstrap을 한 번 시도합니다. nonce·생성 시각·실행 파일·현재 사용자·모든 Job 비소속 확인 뒤 ACK하며 bootstrap은 같은 PID로 supervisor에 진입합니다. unknown·정리 실패는 중단하고 flag를 빼지 않습니다. 서비스·Task Scheduler·승격은 없습니다. `logs/detached-launch.jsonl`에는 시도·거부·검증 단계와 Job 잔류/조회 오류를 남기며, 반환 전 로그 쓰기가 실패해도 소유 자식의 정리를 시도합니다. 운영 준비는 role·supervisor의 현재 PID와 생성 시각을 고정한 조회 전용 handle로 모든 Job 비소속을 확인합니다. 과거 로그나 HTTP 인증만으로 대신하지 않으며 확인 불가하면 검증된 경로로 재시작해야 합니다. 배포는 `doctor --runtime` exit 0과 `runtime_readiness.ready=true`를 모두 확인해야 합니다. 기록 없는 소멸만으로 Job 강제 종료를 확정하지 않습니다. [근거·검증 경계](reference/windows-runtime-795.md).
 
 **예고 없이 꺼졌을 때:** `status`는 연결을 시도하기 전에, `doctor`는 네트워크 없이 로컬 PID 기록과 마지막 heartbeat·exit를 보여 줍니다. 조회는 PID 기록을 지우지 않습니다. 프로세스가 없고 exit도 없으면 `비정상 종료 의심`입니다. 아래 파일은 설정의 `gateway.state_dir/logs/`에 gateway·runner별로 쌓입니다(직접 실행한 경우도 동일).
 

@@ -93,6 +93,26 @@ class LaunchError(OSError):
     pass
 
 
+def record_job_membership(record) -> bool | None:
+    """Read-only current proof on one retained process generation; never infer it from an old journal."""
+    from .windows_broker import Native
+
+    if not isinstance(record, dict) or type(record.get("pid")) is not int or record["pid"] <= 0:
+        return None
+    native, handle = None, None
+    try:
+        native = Native()
+        handle = native.open_process(record["pid"], terminate=False)
+        if native.identity(handle)["created"] != record.get("created") or not native.alive(handle):
+            return None
+        return job_membership(handle)
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+    finally:
+        if handle is not None:
+            native.k.CloseHandle(handle)
+
+
 def require_detached_job() -> None:
     """Child-side gate before a managed role can claim ownership or start its own children."""
     requested = os.environ.pop(CHECK_ENV, None) == "1"  # Do not leak the managed-entry gate to staff/foreground CLIs.
@@ -142,23 +162,37 @@ def spawn(command, *, state: Path, role: str, popen=None, **options):
         raise LaunchError("Windows detached 실행 거부: Job breakaway가 허용된 독립 콘솔에서 실행하세요. "
                           f"winerror={getattr(exc, 'winerror', None)}; parent_job={json.dumps(parent)}. "
                           "분리 flag를 빼고 재시도하지 않습니다.") from exc
-    diagnostics = {}
-    member = child_job_membership(child, diagnostics=diagnostics)
-    if member is not False:
-        # The retained Popen handle owns this exact child; no PID/tree scan or unrelated process is touched.
-        outcome(state, role, "unverified", child_in_job=member, child_job_query=diagnostics)
-        try:
-            child.kill()
-            reaped = child.wait(timeout=5)
-        except (OSError, subprocess.SubprocessError) as exc:
-            outcome(state, role, "cleanup_failed", error=type(exc).__name__)
-            raise LaunchError("Windows 미확인 자식 정리 실패. detached-launch.jsonl을 확인하고 독립 콘솔에서 점검하세요.") from exc
-        if (member is True and isinstance(getattr(child, "_handle", None), int)
-                and child._handle > 0 and type(reaped) is int):
-            outcome(state, role, "direct_reaped")
-            return broker()  # Never retry for unknown membership/identity or failed owned-handle cleanup.
-        raise LaunchError("Windows 자식의 Job 탈출을 확인하지 못해 실행을 취소했습니다. "
-                          f"child_in_job={member}; query={json.dumps(diagnostics)}; "
-                          f"parent_job={json.dumps(parent)}. 독립 콘솔에서 실행하고 상위 Job 정책을 확인하세요.")
-    outcome(state, role, "job_verified", child_pid=child.pid, child_in_job=False)
-    return child
+    cleanup_attempted = False
+
+    def reap():
+        nonlocal cleanup_attempted
+        cleanup_attempted = True
+        child.kill()  # Retained Popen handle, never a PID/tree lookup.
+        return child.wait(timeout=5)
+
+    try:
+        diagnostics = {}
+        member = child_job_membership(child, diagnostics=diagnostics)
+        if member is not False:
+            outcome(state, role, "unverified", child_in_job=member, child_job_query=diagnostics)
+            try:
+                reaped = reap()
+            except (OSError, subprocess.SubprocessError) as exc:
+                outcome(state, role, "cleanup_failed", error=type(exc).__name__)
+                raise LaunchError("Windows 미확인 자식 정리 실패. detached-launch.jsonl을 확인하고 독립 콘솔에서 점검하세요.") from exc
+            if (member is True and isinstance(getattr(child, "_handle", None), int)
+                    and child._handle > 0 and type(reaped) is int):
+                outcome(state, role, "direct_reaped")
+                return broker()  # Never retry for unknown membership/identity or failed owned-handle cleanup.
+            raise LaunchError("Windows 자식의 Job 탈출을 확인하지 못해 실행을 취소했습니다. "
+                              f"child_in_job={member}; query={json.dumps(diagnostics)}; "
+                              f"parent_job={json.dumps(parent)}. 독립 콘솔에서 실행하고 상위 Job 정책을 확인하세요.")
+        outcome(state, role, "job_verified", child_pid=child.pid, child_in_job=False)
+        return child
+    except BaseException:
+        if not cleanup_attempted:
+            try:
+                reap()
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise LaunchError("Windows launch failed and owned child cleanup failed; no successful launch recorded") from exc
+        raise

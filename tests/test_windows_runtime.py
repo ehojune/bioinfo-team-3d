@@ -221,6 +221,7 @@ def test_supervisor_child_denial_never_records_a_role_pid(settings, monkeypatch)
     ("unknown", "unhealthy", False), ("pristine", "pristine", None), ("down", "down", False),
     ("foreground", "unmanaged", None), ("missing_supervisor", "unhealthy", False)])
 def test_local_readiness_matrix(settings, monkeypatch, mode, expected, ready):
+    monkeypatch.setattr(win, "record_job_membership", lambda record: False)  # Proof is exercised with handles separately.
     root = cli._launch_state(settings)
     states = {"gateway": "missing", "runner": "missing", "gateway-supervisor": "missing", "runner-supervisor": "missing"}
     if mode in ("healthy", "stale", "unknown", "missing_supervisor"):

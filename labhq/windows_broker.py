@@ -285,14 +285,16 @@ def launch(command, *, state, role, **options):
             return process
         except (OSError, ValueError, TypeError, subprocess.SubprocessError) as exc:
             reason, code = getattr(exc, "reason", "native_or_protocol"), getattr(exc, "code", getattr(exc, "errno", None))
-            outcome(state, role, "wmi_failed", error=type(exc).__name__, reason=reason, code=code)
-            if process:
-                try:
-                    if owned:
-                        process.kill()
-                        process.wait(timeout=5)
-                finally:
-                    process.close()
+            try:
+                outcome(state, role, "wmi_failed", error=type(exc).__name__, reason=reason, code=code)
+            finally:  # A full/unwritable journal must never prevent owned-handle cleanup before ACK.
+                if process:
+                    try:
+                        if owned:
+                            process.kill()
+                            process.wait(timeout=5)
+                    finally:
+                        process.close()
             raise BrokerFailure(reason, code) from exc
     finally:
         if not committed:

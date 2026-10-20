@@ -34,3 +34,14 @@ binary tail은 `open(mode="rb")`, Native handle은 `open_process`로 명시해 �
 확정: 시작 fixture와 parent-pin chain이 raw venv Popen으로 검증 경계를 우회했습니다. redirector Job이 네 실패의 직접 원인인지는 기존 로그만으로 확정하지 않습니다. fixture 전체 chain을 기존 verified spawn으로 연결하고 file-backed output으로 direct/WMI handle을 함께 지원합니다. 실패 단정에는 기존 Job journal·fixture traceback을 붙입니다. 제품 gate·lifecycle/restart/parent-pin 단정은 바꾸지 않았습니다.
 
 로컬 mock/static **155 passed**, guard blocked 0: 실제 spawn 함수에 fake Popen을 주입해 base interpreter·BREAKAWAY·Job 판정·POSIX 옵션과 chain을 검사하고 거부/unknown/timeout 전파를 확인했습니다. Python 3.10 AST 포함. 실제 process/WMI는 로컬 미실행이며 수정 fixture의 Windows CI는 미확인입니다.
+
+## P1 후속
+
+| 지적 | 처리 |
+|---|---|
+| 4321008909 | 기존 started_here=False·실제 함수/autospec 회귀로 stale. |
+| 4321008913 | direct의 post-spawn 실패와 WMI 실패 로그 오류도 보유 handle cleanup을 막지 못한다. WMI 신원 미확정 PID는 종료하지 않고 ACK도 하지 않는다. |
+| 4321320409 | PID 기록이 모두 없는 과거 이력만 인증된 현재 gateway·runner 연결로 해소한다. unknown·stale·이력 조회 오류는 해소하지 않는다. |
+| 4321448020 | 현재 role·supervisor PID를 query/synchronize 권한으로 열고 생성 시각·생존과 ANY-Job 비소속을 확인한다. 과거 로그를 증명으로 쓰지 않는다. |
+
+새 회귀 수정 전 20 failed/6 passed, 수정 후 관련 mock/static 191 passed. 로그 실패·소유/미확정 handle·인증/연결 거부·Job 잔류/unknown·PID 재사용·소멸·조회 거부를 검사했다. 실제 Native/WMI/process/thread/signal·운영 검증은 미실행이며 fresh-head CI는 총괄 확인 대상이다.
