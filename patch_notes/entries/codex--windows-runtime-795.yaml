@@ -1,0 +1,6 @@
+pr: 802
+rows:
+- sha: 8f72071
+  at: 2026-10-20 11:53
+  text: Windows detached 실행의 Job breakaway와 자식 비소속을 확인하고 설정 준비·인증된 runtime 준비를 나눠
+    비정상 소멸을 실패로 판정한다.
