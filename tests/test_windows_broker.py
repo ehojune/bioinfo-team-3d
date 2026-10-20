@@ -29,7 +29,7 @@ def world(tmp_path, monkeypatch):
     options = {"cwd": str(tmp_path), "env": {"FAKE": "fixture", "PYTHONPATH": os.environ.get("PYTHONPATH", "")}, "stdout": stream}
     record = SimpleNamespace(native=native, caller=caller, child=child, state=state,
                              command=[image, "-m", "labhq.supervisor", "config.yaml", "gateway"], options=options)
-    def create(command, cwd, environment):
+    def create(command, cwd, environment, *, diagnostics=None):
         record.control = Path(command[-1])
         record.request = broker._read(record.control)
         broker._write(record.control.parent / "receipt.json",
@@ -86,8 +86,8 @@ def test_identity_mismatch_never_acknowledges_or_kills_unproven_pid(world, monke
         world.child[mismatch] = "different"
     else:
         original = world.create.side_effect
-        def create(*args):
-            pid = original(*args)
+        def create(*args, **kwargs):
+            pid = original(*args, **kwargs)
             path = world.control.parent / "receipt.json"
             receipt = broker._read(path)
             receipt[mismatch] = "different"
