@@ -175,11 +175,17 @@ def prose_change(before: str, after: str) -> bool:
     code = (r"[{}=:;|]|#!|\w+\(|^(?:[$>%&!]|~/|\.\.?/|\.\. )|"
             r"(?<![\w-])(?:python\d*|pip\d*|pytest|git|bash|sh|npm|node|uv|curl|wget|echo|exec|sudo|"
             r"make|cmake|docker|chmod|rm|cp|mv|cat|taskkill|cmd|pwsh|powershell|labhq|import|[a-z]+-[a-z]+)\b")
+    # CLI names are unbounded. Instructions and argv-shaped text are ambiguous
+    # even when the executable is absent from the known-command pattern above.
+    instruction = (r"\b(?:run|execute|invoke|launch|start|use|call|try|type|enter|install)\b|"
+                   r"(?:실행|호출|입력|사용)[가-힣]*|[\w-]+[./\\][\w./\\-]+|"
+                   r"(?<!\w)--?[A-Za-z]\w*|['\"]")
     for tag, a, b, c, d in difflib.SequenceMatcher(a=old[2], b=new[2], autojunk=False).get_opcodes():
         if tag == "equal":
             continue
         for line, heading in old[2][a:b] + new[2][c:d]:
-            if re.search(code, line, re.IGNORECASE) or (not heading and len(line.split()) < 2):
+            if (re.search(code, line, re.IGNORECASE) or re.search(instruction, line, re.IGNORECASE)
+                    or (not heading and len(line.split()) < 2)):
                 return False
             if not heading and not line.endswith((".", "!", "?", "。")):
                 return False

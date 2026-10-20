@@ -14,7 +14,7 @@ lookup-only 정책 근거입니다. `.github/workflows/test.yml`과 `scripts/ci_
 - README 한영판·STATUS·생성 patch-note Markdown·docs Markdown과 정해진 schema의 평면 patch entry만 후보입니다. 실행 mode·symlink·submodule·알 수 없는 경로는 full입니다.
 - 코드·설정·패키지·dependency·workflow·test·AGENTS/HANDOFF와 manual·정책·안전·승인·계약·example 경로는 full입니다.
 - 기존 dependency인 markdown-it-py로 fenced/indented/inline code, HTML, link·image 목적지와 reference 정의를 보호합니다. 그 내용·순서가 같으면 README처럼 예제가 있는 문서도 prose만 바꿀 수 있습니다. 예제 추가·삭제·수정은 full입니다.
-- 바뀐 본문은 문장부호로 끝나는 문장만 허용합니다. 설명 뒤에 나오는 명령도 full이며, 명령 이름을 언급한 prose도 보수적으로 full입니다. 설정 형태, 짧은 fragment, 닫히지 않은 fence/backtick/HTML, 중첩 block 예제와 지원하지 않는 directive도 full입니다. HTML 내부 prose도 보호됩니다.
+- 바뀐 본문은 문장부호로 끝나는 문장만 허용합니다. CLI 이름 목록과 별개로 실행 지시어·파일/경로·옵션·따옴표가 있는 변경 문장은 모호하므로 full입니다. 이런 표현을 쓴 일반 prose도 보수적으로 full이지만, 그대로인 예제 주변의 일반 문장은 줄입니다. 기존 명령·설정 형태, 짧은 fragment, 닫히지 않은 fence/backtick/HTML, 중첩 block 예제와 지원하지 않는 directive도 full입니다. HTML 내부 prose도 보호됩니다.
 - 생성 STATUS·patch-note Markdown도 같은 기준입니다. 기존 식별자가 그대로인 prose 수정은 줄지만, inline 식별자·link를 새로 넣는 생성 변경은 full입니다. schema에 맞는 patch-entry YAML은 별도로 판별합니다.
 - 축소 compatibility suite는 없습니다. assertions와 safety fixtures는 기존 전체 suite에 그대로 남습니다.
 
