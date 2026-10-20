@@ -91,3 +91,9 @@ rows:
     at: '2026-10-21 05:50'
     summary: '조회 시간 초과 검사를 실제 대기 대신 시작과 취소 신호로 확인합니다.'
     text: '세 automatic phase의 80ms logical budget과 80→60→40ms remaining을 유지하고 module-local timer·phase별 event로 시작/suspend/cancel/drain을 검사한다. 60초 progress cadence는 그대로이며 10초 outer watchdog은 durable 기록을 포함한 coordinator 교착 감시로 분리했다. 완료 작업의 거짓 timeout 거부·caller 취소 cleanup을 포함해 mocked coroutine 23 passed다. 기존 CI 실패는 로컬 재현되지 않았고 제품·classifier·CI/Windows 보호는 바꾸지 않았다.'
+  - sha: a2b4888
+    at: 2026-10-21 06:52
+    summary: 종료 코드 검사를 Windows 분리 실행 검증과 나누었습니다.
+    text: logging 한 건만 일반 Popen·정확한 fake gateway 명령용 launcher를 사용하며 기존 assertions 8개·teardown·실제
+      Job/ACK/생존 gates를 유지한다. 새 회귀 5 failed에서 관련 fake/static 74 passed로 바뀌었다. 제품·CI
+      policy는 그대로이고 provider timeout/실제 Windows 검증은 미해결이다. root 검토 전 local commit만 남긴다.
