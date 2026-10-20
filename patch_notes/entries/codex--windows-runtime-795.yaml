@@ -8,3 +8,7 @@ rows:
   at: 2026-10-20 12:12
   text: runtime health 검증에 started_here=False를 넘기고 실제 함수·autospec 회귀와 Job 조회 오류 진단을
     추가하며 Windows CI의 생존·거부 증거를 분리한다.
+- sha: ed8c201
+  at: 2026-10-20 12:51
+  text: 확인된 direct 실패에만 소유 자식을 회수한 뒤 nonce·PID 생성 시각·사용자·실행 파일·전체 Job 비소속을 검사하는 임시
+    WMI bootstrap을 한 번 시도하며 venv와 fail-closed를 유지한다.
