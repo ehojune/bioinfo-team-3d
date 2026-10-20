@@ -1,0 +1,6 @@
+pr: 793
+rows:
+  - sha: 61bbf15
+    at: "2026-10-21 03:48"
+    summary: "Windows 기동 테스트가 새 진단 인자를 전달하도록 고쳤습니다."
+    text: "기존 native fixture의 observe 래퍼가 diagnostics를 받지 못해 실제 Create 전에 실패하던 계약을 맞췄다. 실제 래퍼의 AST를 추출한 fake 검사는 수정 전 TypeError에서 전달·1회 호출 검증 통과로 바뀌었고 기존 no-ACK·소유권 검증은 보존했다. 실제 Windows/WMI와 원래 timeout은 아직 미확인이다."

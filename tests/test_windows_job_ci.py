@@ -281,8 +281,8 @@ def test_real_wmi_bootstrap_never_enters_fake_role_without_verified_ack(tmp_path
     caller = native.identity(native.k.GetCurrentProcess())
     create, read = broker._create, broker._read
     observed = []
-    def observe(command, cwd, environment):
-        pid = create(command, cwd, environment)
+    def observe(command, cwd, environment, *, diagnostics=None):
+        pid = create(command, cwd, environment, diagnostics=diagnostics)
         handle = native.open_process(pid)
         identity = native.identity(handle)
         control = Path(command[-1])
