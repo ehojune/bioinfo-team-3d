@@ -172,9 +172,9 @@ def prose_change(before: str, after: str) -> bool:
     old, new = markdown_parts(before), markdown_parts(after)
     if old[:2] != new[:2]:
         return False
-    code = (r"[{}=:;|]|#!|\w+\(|^(?:[$>%&!]|~/|\.\.?/|\.\. |"
-            r"(?:python\d*|pip\d*|pytest|git|bash|sh|npm|node|uv|curl|wget|echo|exec|sudo|"
-            r"make|cmake|docker|chmod|rm|cp|mv|cat|taskkill|cmd|pwsh|powershell|labhq|import|[a-z]+-[a-z]+)\b)")
+    code = (r"[{}=:;|]|#!|\w+\(|^(?:[$>%&!]|~/|\.\.?/|\.\. )|"
+            r"(?<![\w-])(?:python\d*|pip\d*|pytest|git|bash|sh|npm|node|uv|curl|wget|echo|exec|sudo|"
+            r"make|cmake|docker|chmod|rm|cp|mv|cat|taskkill|cmd|pwsh|powershell|labhq|import|[a-z]+-[a-z]+)\b")
     for tag, a, b, c, d in difflib.SequenceMatcher(a=old[2], b=new[2], autojunk=False).get_opcodes():
         if tag == "equal":
             continue

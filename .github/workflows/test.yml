@@ -232,9 +232,9 @@ jobs:
       - run: pip install pyyaml && python scripts/notes_index.py --validate  # the generator on main must not fail after merge
 
   validation-manifest:
-    # Only a fresh full PR run can produce reusable evidence; no reuse chains.
+    # Only a fresh full same-repository PR run can produce evidence; forks still run all gates.
     needs: [changes, pytest, pytest-windows, clean-install, ro-crate-validator, pytest-slow, readme, patch-notes]
-    if: github.event_name == 'pull_request' && needs.changes.outputs.skip != 'true'
+    if: github.event_name == 'pull_request' && needs.changes.outputs.skip != 'true' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.repo.id == github.event.pull_request.base.repo.id
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -14,13 +14,13 @@ lookup-only 정책 근거입니다. `.github/workflows/test.yml`과 `scripts/ci_
 - README 한영판·STATUS·생성 patch-note Markdown·docs Markdown과 정해진 schema의 평면 patch entry만 후보입니다. 실행 mode·symlink·submodule·알 수 없는 경로는 full입니다.
 - 코드·설정·패키지·dependency·workflow·test·AGENTS/HANDOFF와 manual·정책·안전·승인·계약·example 경로는 full입니다.
 - 기존 dependency인 markdown-it-py로 fenced/indented/inline code, HTML, link·image 목적지와 reference 정의를 보호합니다. 그 내용·순서가 같으면 README처럼 예제가 있는 문서도 prose만 바꿀 수 있습니다. 예제 추가·삭제·수정은 full입니다.
-- 바뀐 본문은 문장부호로 끝나는 문장만 허용합니다. 명령·설정 형태, 짧은 fragment, 닫히지 않은 fence/backtick/HTML, 중첩 block 예제와 지원하지 않는 directive는 full입니다. HTML 내부 prose도 보호되므로 바꾸면 full입니다.
+- 바뀐 본문은 문장부호로 끝나는 문장만 허용합니다. 설명 뒤에 나오는 명령도 full이며, 명령 이름을 언급한 prose도 보수적으로 full입니다. 설정 형태, 짧은 fragment, 닫히지 않은 fence/backtick/HTML, 중첩 block 예제와 지원하지 않는 directive도 full입니다. HTML 내부 prose도 보호됩니다.
 - 생성 STATUS·patch-note Markdown도 같은 기준입니다. 기존 식별자가 그대로인 prose 수정은 줄지만, inline 식별자·link를 새로 넣는 생성 변경은 full입니다. schema에 맞는 patch-entry YAML은 별도로 판별합니다.
 - 축소 compatibility suite는 없습니다. assertions와 safety fixtures는 기존 전체 suite에 그대로 남습니다.
 
 ## 재사용 증거
 
-main의 해당 commit에 병합된 같은 저장소 PR의 최신 matching run만 후보입니다. 허용 workflow는 같은 저장소의 `test.yml` ID·path이며 event는 pull_request입니다.
+main의 해당 commit에 병합된 같은 저장소 PR의 최신 matching run만 후보입니다. 허용 workflow는 같은 저장소의 `test.yml` ID·path이며 event는 pull_request입니다. fork PR은 전체 gate를 유지하고 재사용 manifest 생성만 생략합니다.
 
 1. GitHub run이 완료·성공이고 7일 이내이며 fork가 아니어야 합니다. 더 최신 matching run이 실패·취소·진행 중이면 이전 성공으로 돌아가지 않습니다.
 2. REST run/job의 head SHA는 PR branch head입니다. producer는 이벤트의 PR 번호·저장소 ID·head/base snapshot과 실제 `GITHUB_SHA` checkout을 따로 기록합니다. commit API에서 checkout의 두 parent가 그 base/head이고 tree가 main과 같은지 검증합니다. squash SHA가 달라도 tree는 같아야 합니다.
