@@ -109,11 +109,16 @@ def test_fixture_propagates_launch_failure_without_raw_retry(tmp_path, monkeypat
     spawn = Mock(side_effect=fail)
     monkeypatch.setattr(win, "spawn", spawn)
     monkeypatch.setattr(fixture.subprocess, "Popen", lambda *a, **kw: pytest.fail("unsafe retry"))
-    with pytest.raises(win.LaunchError) as caught:
+    kill = Mock(side_effect=AssertionError("unowned PID termination"))
+    monkeypatch.setattr(fixture.os, "kill", kill)
+    monkeypatch.setattr(fixture.proc_tree, "kill_tree", kill)
+    with pytest.raises(AssertionError, match="detached fixture launch failed before supervisor startup") as caught:
         fixture._start_script(settings, tmp_path / "supervise.py", [])
-    assert caught.value is failure and streams[0].closed
+    assert caught.value.__cause__ is failure and streams[0].closed
     spawn.assert_called_once()
+    kill.assert_not_called()
     assert not cli._pid_file(settings, "gateway-supervisor").exists()
+    assert not list(tmp_path.rglob("ack.json"))
 
 
 def test_embedded_scripts_and_fixture_keep_python310_syntax():
