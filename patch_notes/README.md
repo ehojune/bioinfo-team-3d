@@ -14,6 +14,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 16:05 | [`9ff21ce`](https://github.com/ehojune/bioinfo-team-3d/pull/801/commits/9ff21ce) | 16시 대조에서 병합된 언어 지연 수정과 감사 후속 배정 상태를 개발 문서에 맞췄다. |
+| 15:49 | [`182382d`](https://github.com/ehojune/bioinfo-team-3d/pull/801/commits/182382d) | PI의 일반 개발 재개 결정을 개발 인계·운영 기준·PI Q&A에 맞췄다. |
+| 15:31 | [`f38813a`](https://github.com/ehojune/bioinfo-team-3d/pull/801/commits/f38813a) | 영문 README의 비교 실행 중이라는 오해를 막고 효과 미측정 상태를 명시했다. |
+| 15:29 | [`463756e`](https://github.com/ehojune/bioinfo-team-3d/pull/801/commits/463756e) | 매뉴얼의 CP1 입력 검증과 사후 그림자 측정을 구분하고 PI Q&A의 현재 운영 링크를 갱신했다. |
+| 15:25 | [`30afc9f`](https://github.com/ehojune/bioinfo-team-3d/pull/801/commits/30afc9f) | docs: README 한영판은 처음 보는 사람용으로, HANDOFF는 현재 우선순위만, AGENTS는 개발 절차만 남기고 manual의 #796·어휘 수를 코드와 맞췄다 |
 | 14:41 | [`602ee02`](https://github.com/ehojune/bioinfo-team-3d/pull/812/commits/602ee02) | fix: 긴 PI 문장의 경로 판별을 고정 길이 패턴으로 바꾸고 끝쪽 경로·코드 감지 회귀 검사 추가 |
 | 13:59 | [`df48ec6`](https://github.com/ehojune/bioinfo-team-3d/pull/806/commits/df48ec6) | Codex·Gemini 커밋의 공동 작성자 trailer를 GitHub이 인식하는 봇 주소로 맞추는 commit-msg 훅을 추가해 커밋 작성자에 에이전트 아이콘이 함께 보이게 했다. |
 | 13:43 | [`ade4f03`](https://github.com/ehojune/bioinfo-team-3d/pull/805/commits/ade4f03) | docs: 아키텍처 다이어그램의 store·resume·ws 경로 수정 및 readme-evidence 수치 동기화 |
@@ -23,6 +28,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 12:42 | [`2070c23`](https://github.com/ehojune/bioinfo-team-3d/pull/803/commits/2070c23) | CP1 평가기·관계표를 mainline으로 옮기고 optional Shadow adapter와 같은 aggregate API·의미 hash를 공유했다. off·전체 제거 후 CP1 교정, actions-only 제거 후 base observer 보존을 메모리/AST·mock으로 검증했다. 관련 68건·공개 경로 5건 통과, 실제 제거·process 통합은 CI에 맡긴다. |
 | 12:26 | [`6cf6c8a`](https://github.com/ehojune/bioinfo-team-3d/pull/800/commits/6cf6c8a) | Windows tree-kill이 재사용된 PID를 부모로 적은 부팅 때 system 프로세스를 실패로 세지 않아, 멈춘 gateway를 강제로 끝낼 수 있다(PR 800 Windows CI). |
 | 12:04 | [`cab83e7`](https://github.com/ehojune/bioinfo-team-3d/pull/803/commits/cab83e7) | CP1의 기존 2회 계획 검증에 입력 불일치 진단·교정·전후 경고를 연결하고, 기존 semantic_report와 bench 비교에 분모·근거·미측정을 구분한 기여 기록을 추가했다. 관련 mock/static 52건·최종 thread 금지 mock 14건 통과, 과학 성능 효과는 미측정이다. |
+| 12:03 | [`1220e10`](https://github.com/ehojune/bioinfo-team-3d/pull/801/commits/1220e10) | docs: 긴급 15M 승인과 CP1 작업 착수 반영 |
+| 11:38 | [`f4e46cb`](https://github.com/ehojune/bioinfo-team-3d/pull/801/commits/f4e46cb) | docs: 외부 감사 우선순위와 측정용 Shadow 유지 방침 반영 |
 | 11:32 | [`64f1527`](https://github.com/ehojune/bioinfo-team-3d/pull/800/commits/64f1527) | 재현 receipt의 Python 실행이 -S를 빼 interpreter site-packages(numpy 등)를 불러오고, 문법 검사는 -I -S -B를 유지하며, 실제 interpreter 격리 test를 CI에 더했다. |
 | 10:30 | [`f5425c5`](https://github.com/ehojune/bioinfo-team-3d/pull/789/commits/f5425c5) | 재현 receipt 실행이 함께 게시한 Python sibling module을 import할 수 있게 script 폴더만 import 경로에 두고, PYTHONPATH·사용자 site·호출한 폴더는 계속 뺐다. |
 | 10:03 | [`06c5a64`](https://github.com/ehojune/bioinfo-team-3d/commit/06c5a64) | Ubuntu Python 3.10 pytest step을 25분으로 제한하고 test·thread·asyncio task 진단을 남긴다. mock/static 검사 14개를 확인했으며 정체 원인은 미확정이다. Refs |
