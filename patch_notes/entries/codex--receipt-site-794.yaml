@@ -3,3 +3,6 @@ rows:
 - sha: 64f1527
   at: 2026-10-20 11:32
   text: 재현 receipt의 Python 실행이 -S를 빼 interpreter site-packages(numpy 등)를 불러오고, 문법 검사는 -I -S -B를 유지하며, 실제 interpreter 격리 test를 CI에 더했다.
+- sha: 6cf6c8a
+  at: 2026-10-20 12:26
+  text: Windows tree-kill이 재사용된 PID를 부모로 적은 부팅 때 system 프로세스를 실패로 세지 않아, 멈춘 gateway를 강제로 끝낼 수 있다(PR 800 Windows CI).
