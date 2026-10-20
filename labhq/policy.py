@@ -1734,6 +1734,8 @@ class _PathTextScan:
 _URI_PREFIX = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*)://")
 _TOKEN_BREAKS = frozenset(" \t\r\n'\"`|;&<>")
 _CHUNK_BREAKS = frozenset("=<>(),")
+_CHUNK_END = re.compile(r"[=<>(),]")
+_COLON_RUN_END = re.compile(r"[^:]")
 _SCHEME_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+.-")
 
 
@@ -1759,9 +1761,9 @@ def _token_candidates(token: str) -> Iterator[str]:
             chunk_start += 1
         if chunk_start >= length:
             break
-        chunk_end = chunk_start
-        while chunk_end < length and token[chunk_end] not in _CHUNK_BREAKS:
-            chunk_end += 1
+        # Fixed character classes scan long runs in C, within the same bounds.
+        boundary = _CHUNK_END.search(token, chunk_start, length)
+        chunk_end = boundary.start() if boundary else length
         left, right = chunk_start, chunk_end
         while left < right and token[left] in "[]{}":
             left += 1
@@ -1791,9 +1793,8 @@ def _token_candidates(token: str) -> Iterator[str]:
                 break
             if colon > part_start:
                 yield token[part_start:colon]
-            part_start = colon + 1
-            while part_start < right and token[part_start] == ":":
-                part_start += 1
+            boundary = _COLON_RUN_END.search(token, colon + 1, right)
+            part_start = boundary.start() if boundary else right
         chunk_start = chunk_end + 1
 
 
