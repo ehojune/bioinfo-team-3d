@@ -4,6 +4,20 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+Fixes #811
+Refs #804
+PR #818
+
+Shadow 비교의 기준 실행을 공유하고 제거 검사를 계약 node로 좁혔습니다. queued-halt CI 검사는 executor 대기와 분리했습니다.
+
+- off는 불변 JSON 한 번만 공유하고 on 네 경우는 독립 실행합니다(lab 호출 구조 8→5). fresh-process off/import·fail-open·privacy/read-scope·제거 compile/잔여 참조/상태·핵심 E2E는 유지하며 제거 뒤 전체 테스트 수집을 추가했습니다. Shadow 전용 검증 5개는 assertion을 유지해 observer suite로 이동했습니다.
+- 완료 Windows job 118566758410은 8659 passed·48 skipped 뒤 한 건 실패했습니다(2031.72초). queued halt·세션·미dispatch assertion은 통과했고, 다음 t3의 빈 input scan executor 대기에 2초 전체 task 제한이 걸렸습니다. 제품 halt 결함을 뒷받침하는 trace는 없습니다.
+- 해당 control 테스트만 worker job 본문을 직접 실행하도록 opt-in fixture를 적용했습니다. 기존 assertion 6개·deadline 5개를 모두 보존하고 첫 task가 슬롯을 보유한 채 halt 완료·나중에도 t2 미dispatch를 추가 검증합니다. fsync/SQLite write는 실제 본문 그대로이며 전역 no-op·정책·production control 코드 변경은 없습니다.
+- 모의 executor stall로 원 head에서 같은 TimeoutError red 재현, 수정 뒤 관련 mock/static **11 passed**. #800 done-event 방어와 #811 계약도 확인했습니다. 앞선 #811 mock/static 79 passed·1 skipped 근거는 reference/status에 남겼습니다. Python 3.10 AST·public·diff·patch-notes·notes 검사를 기록했습니다.
+- 로컬 실제 subprocess/thread fixture·제거/E2E·PI/연구/bench/HPC/원자료는 미실행입니다. Windows/native scheduling·durability 통합과 CI 시간 절감은 새 CI 검증 경계입니다. CI/리뷰를 조회·대기하거나 봇 호출·병합·배포하지 않습니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 ## 승인 대기와 외부 조회 예산 (#784, 개발 초안)
 
 동일 MCP event loop·작업 폴더의 자동 조회와 PDF 승인 대기를 하나씩 처리해 겹친 시간을 두 번 제외하지 않도록 했습니다. 대기열에 있던 조회는 승인 종료 뒤 기존 잔여 예산으로 시작하며 별도 단계 예산은 독립적입니다. 기존 timeout/error/cancellation과 #800 progress 종료 flag는 유지합니다.
@@ -32,6 +46,20 @@ PR #807: P1 4323683886 — paper-skill 방법이 바뀌면 이전 결과를 재�
 - 방법 변경은 그 단계와 의존 단계의 재사용을 거절하고 다른 단계의 별도 skill 변경은 독립 후보를 유지합니다. 구 실행 signature는 새 계약의 증거로 쓰지 않습니다. 승인 뒤 현재/보관 plan의 해당 입력이 바뀌면 중단·새 CP1을 요구하며 조용히 재실행하지 않습니다.
 - 기존 head 새 회귀 15건 red 뒤 새 18건을 포함한 관련 mock/static **129 passed**. 선언·실제 attachment metadata 대조, CP1 후보/snapshot·승인 후 변경·기존 요청 입력 차단·재개/예산 rollback을 확인했습니다. Python 3.10 AST·public·diff·patch-notes·notes 검사 근거를 기록했습니다.
 - Paper2Skill 변환/설치·실제 source bytes 읽기·process/thread/Hub 운영·PI·연구/bench/HPC/원자료는 미실행입니다. 기존 hash/path·승인·보안·bounded loop를 유지하고 실행 확장·P2·다른 owner 범위는 건드리지 않았습니다. 최종 head CI·새 리뷰/P1=0·병합/배포는 controller 담당입니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+Fixes #811
+Refs #804
+Draft PR #818
+
+Shadow 비교 검사에서 같은 off 실행의 반복을 줄였습니다. on 비교와 안전·제거 검증은 유지합니다.
+
+- off 기준은 독립 상태에서 한 번 계산한 JSON 문자열만 공유합니다(비교 네 경우: lab 호출 8→5). on 네 실행은 각각 새 상태이며 fresh-process off/import·fail-open·privacy/read-scope 검사는 유지합니다.
+- 제거 뒤 compile·잔여 참조·상태 복구·resume 승인·필수 E2E를 유지하고 child 실행은 계약 node로 좁혔습니다. 전체 생존 테스트 수집을 추가했습니다. #804의 script 의존 boundary harness는 script와 함께 제거하고 mainline CP1 검사는 남깁니다.
+- 수집을 깨던 mixed-suite의 Shadow 전용 테스트 5개를 observer 테스트로 이동했습니다. AST 대조로 이동한 본문·assertion과 기존 함수 68개의 보존을 확인했습니다. CI workflow/classifier·Shadow 동작·fsync/SQLite 정책은 변경하지 않았습니다.
+- 기존 head에서 새 계약 4건 red, 수정 뒤 관련 mock/static 79 passed·1 skipped(로컬 비공개 단어 목록 미설정)·2 deselected(실제 제거/E2E). 로컬 subset은 7.13초이며 CI 시간 절감은 미측정입니다. Python 3.10 AST·public·diff·patch-notes·notes 검사 결과는 기록에 남깁니다.
+- 실제 subprocess/thread·제거·Hub/PI 운영·연구/bench/HPC/원자료는 실행하지 않았습니다. 변경된 child 선택의 실제 수집/상태/E2E·Windows/3.10 통합과 전후 CI duration은 controller 검증 경계입니다. Draft로 제출하며 CI·리뷰를 기다리거나 봇 호출·병합·배포하지 않습니다.
 
 🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 

@@ -14,9 +14,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 19:52 | [`1b343b0`](https://github.com/ehojune/bioinfo-team-3d/pull/818/commits/1b343b0) | queued halt 검사가 Windows worker 대기에 흔들리지 않도록 분리했습니다. 기술: halt 판정 뒤 t3 input scan executor 대기의 TimeoutError를 모의 재현하고, 해당 테스트만 offload/write job을 직접 실행한다. fsync·SQLite write와 기존 assertion 6개/deadline 5개를 보존하고 순서 assertion 2개를 추가했다. 관련 mock/static 11건 통과, 제품 control 변경·실제 process/thread 실행은 없다. |
 | 19:37 | [`49d5324`](https://github.com/ehojune/bioinfo-team-3d/pull/819/commits/49d5324) | **같은 단계의 조회와 승인 대기를 순서대로 처리해 대기 시간이 두 번 빠지는 문제를 막았습니다.**<br>동일 MCP event loop·작업 폴더의 자동 조회와 PDF 승인 대기를 slot으로 직렬화하고 예산 파일·취소·timeout·progress 종료 flag를 유지한다. 관련 mock 검사 27개가 통과했으며 실제 서비스 성능은 미검증이다. |
 | 19:04 | [`692c8ed`](https://github.com/ehojune/bioinfo-team-3d/pull/807/commits/692c8ed) | 논문 스킬 방법이 바뀌면 이전 결과를 재사용하지 않도록 고쳤습니다. 기술: 단계/직원에 연결된 selection·변환 receipt 전체와 순서를 노드 context hash에 결속했다. 해당 단계/후속은 거절하고 독립 후보는 보존하며 구 signature·승인 후 변경은 재승인을 요구한다. 회귀 15건 red 뒤 mock/static 129건 통과, 실제 변환/설치/연구는 미실행이다. |
 | 19:03 | [`45f35f0`](https://github.com/ehojune/bioinfo-team-3d/pull/766/commits/45f35f0) | 괄호 안에서 고른 process의 Kill 호출·ionice wrapper·locale quote 실행 우회를 막는다. 앞선 출력의 선택 상태와 명시 PID·조회·데이터 구분을 유지하고 새 실패 31개 재현 뒤 mock/static 710개를 확인했다. |
+| 18:53 | [`3d7571f`](https://github.com/ehojune/bioinfo-team-3d/pull/818/commits/3d7571f) | Shadow 비교 검사에서 같은 기준 실행의 반복을 줄였습니다. 기술: off 결과를 불변 JSON으로 공유해 네 비교의 lab 호출을 8→5로 줄이고 on·fresh-process·fail-open·개인정보/읽기 경계를 보존했다. 제거 검사는 전체 수집과 compile/잔여 참조/상태/핵심 E2E를 유지하면서 child node를 좁혔다. 4건 red 뒤 mock/static 79건 통과, CI 시간 절감과 실제 제거/E2E는 미검증이다. |
 | 18:08 | [`c6e68b8`](https://github.com/ehojune/bioinfo-team-3d/commit/c6e68b8) | **운영체제별 줄바꿈 차이로 문서 전체가 바뀐 것처럼 보이지 않도록 정리했습니다.**<br>패치노트 생성기·검사·작성 기준·변경 기록의 저장 줄바꿈을 LF로 정규화했다. 기술 내용은 바꾸지 않았다. |
 | 18:03 | [`3761731`](https://github.com/ehojune/bioinfo-team-3d/commit/3761731) | **패치노트에 쉬운 설명을 먼저 보여주고 기존 기술 설명을 아래에 남깁니다.**<br>기존 1,440개 항목의 기술 설명·시각·SHA·링크를 보존하고 선택 summary 필드와 표 렌더·검증·작성 기준을 추가했다. 관련 15건 통과, 실제 연구 실행이나 성능 개선 주장은 없다. |
 | 17:46 | [`79970c4`](https://github.com/ehojune/bioinfo-team-3d/pull/807/commits/79970c4) | HANDOFF의 PR 807 현황을 요청 입력 증거 누락 차단과 관련 mock/static 112건 검증으로 갱신하고 P1 수정·미실행 경계를 status에 기록했다. |
