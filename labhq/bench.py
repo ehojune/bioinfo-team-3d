@@ -24,6 +24,7 @@ from .costs import aggregate_costs, classify_cost, cost_detail, format_cost
 from .policy import WRITE_LIKE
 from .request_status import is_terminal_request
 from .reproduction_receipt import receipt_json, receipt_note, receipt_summary
+from .research import semantic_device_report
 from .util import atomic_write_text, free_port, merge_staff_env, parent_claude_markers
 
 REPO = Path(__file__).resolve().parents[1]
@@ -398,6 +399,9 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
             "round_json": str(hub.rounds.directory / f"{rid}.json"),
             "round_status": record["result"]["status"],
             "reproduction_receipt": request.get("reproduction_receipt"),
+            "semantic_impact_metrics": (semantic_device_report.build_report(
+                {**request, "id": rid}, settings).get("impact_metrics")
+                if semantic_device_report.applies(request, settings) else None),
         }
         (arm_dir / "run.json").write_text(json.dumps(run, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         return run
@@ -640,6 +644,7 @@ async def _score(case: dict[str, Any], arm_dir: Path, run: dict[str, Any]) -> di
         "checks_passed": bool(structured["format_passed"] and structured["content_passed"]),
         "reproduction_verification": receipt_summary(run.get("reproduction_receipt"),
                                                     path="reproduction_receipt.json" if run.get("reproduction_receipt") else ""),
+        "semantic_impact_metrics": run.get("semantic_impact_metrics"),
         "format_passed": structured["format_passed"],
         "content_passed": structured["content_passed"],
         "narrative_passed": checked.returncode == 0,
@@ -714,6 +719,10 @@ def _comparison_markdown(result: dict[str, Any]) -> str:
     lines += ["", "## 재현 검증", "", *[
         f"- {row['engine']}: {receipt_note(row.get('reproduction_verification') or receipt_summary(None))}"
         for row in result["rows"]]]
+    lines += ['', '## 의미 장치 기여 비교 (저장된 기록만)', '']
+    for row in result['rows']:
+        lines += [f"### {row['engine']}", '',
+                  semantic_device_report.render_impact_metrics(row.get('semantic_impact_metrics'))]
     details = [f"- {row['engine']}: {format_cost(summary, digits=4)} {cost_detail(summary, digits=4)}"
                for row in result["rows"] if (summary := row.get("cost_summary") or {}).get("by_engine")
                and (len(summary["by_engine"]) > 1 or summary.get("estimated_usd") or summary.get("unknown_count"))]

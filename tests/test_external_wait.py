@@ -223,9 +223,14 @@ def test_human_pdf_approval_path_is_not_wrapped(mcp_module):
 async def test_key_fulltext_automatic_phases_use_task_deadline(
         tmp_path, monkeypatch, mcp_module, hung_phase):
     """Real coordinator control flow, fake transports only; never launch a browser or request approval."""
+    cancelled = asyncio.Event()
+
     async def automatic(phase, value):
         if phase == hung_phase:
-            await asyncio.Event().wait()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
         return value
 
     class Backend:
@@ -260,10 +265,12 @@ async def test_key_fulltext_automatic_phases_use_task_deadline(
     monkeypatch.setattr(mcp_module.annot_literature, "InstitutionLimiter", Limiter)
     approval = AsyncMock(side_effect=AssertionError("automatic timeout must not open an approval"))
     monkeypatch.setattr(mcp_module, "_request_pdf", approval)
-    monkeypatch.setattr(mcp_module, "_lookup_progress", AsyncMock())
+    progress = AsyncMock()
+    monkeypatch.setattr(mcp_module, "_lookup_progress", progress)
 
     async def short_budget(operation, **kwargs):
-        return await wait.run_lookup(operation, timeout_s=.08, progress_s=.005,
+        # Keep the production progress cadence; this test bounds the operation, not board refreshes.
+        return await wait.run_lookup(operation, timeout_s=.08,
                                      clock=lambda: 100.0, **kwargs)
 
     monkeypatch.setattr(mcp_module, "run_lookup", short_budget)
@@ -271,5 +278,7 @@ async def test_key_fulltext_automatic_phases_use_task_deadline(
     with pytest.raises(ToolError, match="조회 불가\\(시간 초과\\)") as error:
         await asyncio.wait_for(mcp_module._run_key_fulltext(papers), 1)
     assert NOT_EVIDENCE in str(error.value)
+    assert cancelled.is_set()
     approval.assert_not_called()
+    assert progress.await_args_list[-1].args[0]["status"] == "timeout"
     assert records(tmp_path)[-1]["status"] == "timeout"

@@ -14,7 +14,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 PATTERNS = ["labhq/research/semantics*", "tests/*semantics*", "scripts/semantics*", "docs/reference/semantics*",
-            "tests/fixtures/semantics/**/*"]
+            "tests/fixtures/semantics/**/*", "labhq/research/input_fit.*", "tests/test_input_fit_boundary_796.py"]
 
 # Built from pieces so this file does not match itself.
 DRIVE = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]:[\\/](?![\\/])")

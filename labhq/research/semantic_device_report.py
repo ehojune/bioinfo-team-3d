@@ -19,7 +19,7 @@ STATUSES = ("작동", "켜졌으나 미사용", "꺼짐", "미평가", "오류")
 _MEANING_KEY = 'semantics'
 _SHADOW_MODULE = f"labhq/research/{_MEANING_KEY}_shadow.py"
 _OBJECTS_MODULE = f"labhq/research/{_MEANING_KEY}_objects.py"
-_INPUT_FIT_MODULE = f"labhq/research/{_MEANING_KEY}_input_fit.py"
+_INPUT_FIT_MODULE = "labhq/research/input_fit.py"
 def enabled(settings: Any) -> bool:
     return bool(getattr(getattr(settings, "research", None), "semantic_report", True))
 
@@ -337,11 +337,17 @@ def _semantic_devices(req: Mapping[str, Any], plan: Mapping[str, Any], settings:
     sem_status = model_status(provenance_error)
     sem_decisions: list[Any] = []
     if observation and not provenance_error:
-        sem_decisions.append({"input_fit": {key: int(fit.get(key) or 0) for key in ("fit", "mismatch", "unknown")}})
-        sem_decisions.append({"reuse_candidates": int(provenance.get("candidates") or 0),
-                              "excluded": {str(key): int(value)
-                                           for key, value in _dict(provenance.get("excluded")).items()
-                                           if isinstance(value, int)}})
+        if all(type(fit.get(key)) is int and fit[key] >= 0 for key in ("fit", "mismatch", "unknown")):
+            sem_decisions.append({"input_fit": {key: fit[key] for key in ("fit", "mismatch", "unknown")}})
+        else:
+            sem_decisions.append({"input_fit_status": "unmeasured"})
+        if type(provenance.get('candidates')) is int:
+            sem_decisions.append({"reuse_candidates": provenance['candidates'],
+                                  "excluded": {str(key): int(value)
+                                               for key, value in _dict(provenance.get("excluded")).items()
+                                               if isinstance(value, int)}})
+        else:
+            sem_decisions.append({"reuse_candidates_status": "unmeasured"})
     elif provenance_error:
         sem_decisions.append("재사용 후보 provenance 계산 못 함")
     elif off:
@@ -445,10 +451,127 @@ def build_report(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
             "semantic_config_sha256": config_hash, "semantics_mode": mode,
             "last_ok_at": _dict(health.get(_MEANING_KEY)).get("last_ok_at") or "기록 없음",
         },
-        "devices": devices, "errors": errors,
+        "devices": devices, "errors": errors, "impact_metrics": impact_metrics(req, devices),
         "paths": {"markdown": REPORT_MD, "json": REPORT_JSON, "published": f"run/{REPORT_MD}"},
     }
     return _public(report, settings, req)
+
+
+def _metric(value: int | None, denominator: int | None, reason: str) -> dict[str, Any]:
+    return {"value": value, "denominator": denominator,
+            "status": "measured" if value is not None else "not_applicable" if denominator == 0 else "unmeasured",
+            "reason": reason}
+
+
+def impact_metrics(req: Mapping[str, Any], devices: list[dict[str, Any]]) -> dict[str, Any]:
+    """Project existing plan-validation/review/observation records; no extra telemetry or causal claims."""
+    by_id = {row['id']: row for row in devices}
+    checks = [row for row in _dict(req.get('plan_validation')).get('semantic_checks', [])
+              if isinstance(row, Mapping)]
+    first, last = (checks[0], checks[-1]) if checks else ({}, {})
+    initial, final = _dict(first.get('checklist')), _dict(last.get('checklist'))
+    initial_known = all(isinstance(initial.get(key), list) for key in ('required', 'missing'))
+    required = set(initial.get('required') or []) if initial_known else set()
+    missing = set(initial.get('missing') or []) if initial_known else set()
+    corrected = (len(missing & set(final.get('required') or []) - set(final.get('missing') or []))
+                 if initial_known and all(isinstance(final.get(k), list) for k in ('required', 'missing')) else None)
+    items = by_id['checklist'].get('items') or []
+    performed = [row for row in items if row.get('owner_steps')]
+    reviewed = [row for row in performed if row.get('review_status') in {'done', 'partly', 'not_done'}
+                and row.get('review_evidence') not in {None, '', '기록 없음'}]
+    review_known = bool(reviewed) or not performed
+    review_denominator = len(performed) if by_id['checklist']['status'] != '오류' else None
+    review_known = review_known and review_denominator is not None
+    checklist = {
+        'initial_required': _metric(len(required) if initial_known else None,
+                                    len(required) if initial_known else None, 'initial CP1 requirement slots'),
+        'initial_missing': _metric(len(missing) if initial_known else None,
+                                   len(required) if initial_known else None, 'initial required slots with no valid answer'),
+        'corrected': _metric(corrected, len(missing) if initial_known else None,
+                             'same initially missing item remains required and is answered in final draft; '
+                             'no initial trace means unmeasured'),
+        'review_pass': _metric(sum(r['review_status'] == 'done' for r in reviewed) if review_known else None,
+                               review_denominator, 'step-owned checks with reviewer verdict and evidence'),
+        'review_fail': _metric(sum(r['review_status'] in {'partly', 'not_done'} for r in reviewed)
+                               if review_known else None, review_denominator, 'partly/not_done on step-owned checks; '
+                               'assumption/not_applicable are not failed performed checks'),
+        'review_unverified': _metric(len(performed) - len(reviewed) if review_denominator is not None else None,
+                                     review_denominator, 'missing verdict or evidence'),
+    }
+    counts = _dict(last.get('input_fit'))
+    sem = by_id['semantics']
+    if not counts:
+        counts = next((_dict(row.get('input_fit')) for row in sem['decisions']
+                       if isinstance(row, Mapping) and 'input_fit' in row), {})
+    valid_counts = all(type(counts.get(key)) is int and counts[key] >= 0 for key in ('fit', 'mismatch', 'unknown'))
+    denominator = sum(counts[key] for key in ('fit', 'mismatch', 'unknown')) if valid_counts else None
+    fit = {name: _metric(counts[key] if valid_counts else None, denominator,
+                        'one verdict per plan step under the reviewed local relation table; '
+                        'missing/unrecognized declarations stay unknown; EDAM mapping is not fit proof')
+           for key, name in [('fit', 'fit_steps'), ('mismatch', 'mismatch_steps'), ('unknown', 'unverified_steps')]}
+    declarations = _dict(req.get('output_types_stats'))
+    fit['declared_outputs'] = _metric(
+        declarations.get('data_declared') if type(declarations.get('data_declared')) is int else None,
+        declarations.get('outputs') if type(declarations.get('outputs')) is int else None,
+        'normalized data-type declarations / declared outputs; annotation or EDAM mapping alone is not fit proof')
+    corrections_known = isinstance(first.get('mismatches'), list) and isinstance(last.get('resolved_mismatches'), list)
+    fit['pre_plan_corrections'] = _metric(
+        len(last['resolved_mismatches']) if corrections_known else None,
+        len(first['mismatches']) if corrections_known else None,
+        'initial mismatching input edge explicitly fits in final pre-CP1 draft; removal/unknown is not success')
+    plan, contract = _dict(req.get('plan')), _dict(req.get('research_contract'))
+    applied = by_id['analysis_pack']['applied'] or list(_dict(contract.get('pack_snapshot')))
+    values = _dict(plan.get('pack_values'))
+    fields_known = all(isinstance(_dict(values.get(key)).get('fields'), Mapping) for key in applied)
+    fields = {key: _dict(_dict(values.get(key)).get('fields')) for key in applied} if fields_known else {}
+    field_count = sum(len(row) for row in fields.values()) if fields_known else None
+    approval = _dict(contract.get('approval'))
+    from .contract import plan_sha256
+    frozen = (approval.get('status') == 'approved' and
+              approval.get('target_sha256') == contract.get('plan_sha256') == plan_sha256(plan))
+    acceptance_known = all(isinstance(_dict(values.get(key)).get('acceptance'), Mapping) for key in applied)
+    criteria = (sum(len(_dict(values[key]['acceptance'])) for key in applied) if acceptance_known else None)
+    packs = {
+        'frozen_protocol_values': _metric(field_count if frozen else None, field_count,
+                                         'field values in the hash-matched PI-approved plan; otherwise unmeasured'),
+        'protocol_values': fields if frozen else {},
+        'independently_checked_fulfillment': _metric(None, criteria,
+            'no independent per-criterion result record; planner acceptance text and overall review accept '
+            'are not independent fulfillment checks'),
+    }
+    candidates = next((row.get('reuse_candidates') for row in sem['decisions']
+                       if isinstance(row, Mapping) and type(row.get('reuse_candidates')) is int), None)
+    shadow = by_id['shadow_request']
+    offered = set(shadow.get('offered') or [])
+    adoption_known = shadow.get('evaluation_status') == 'ok' and shadow.get('arm') == 'advisory'
+    reuse = {
+        'candidates': _metric(candidates, candidates, 'valid existing provenance candidate count, not adoption'),
+        'adopted_in_plan': _metric(len(offered & _plan_refs(plan)) if adoption_known else None,
+                                   len(offered) if adoption_known else None, 'distinct offered IDs referenced in plan'),
+        'actual_use': _metric(None, len(offered) if adoption_known else None,
+                              'plan reference alone does not prove artifact consumption or scientific benefit'),
+    }
+    return {'checklist': checklist, 'input_fit': fit, 'packs': packs, 'reuse': reuse,
+            'scientific_performance_gain': _metric(None, None,
+                'counts and before/after traces do not establish causal scientific performance improvement')}
+
+
+def render_impact_metrics(metrics: Mapping[str, Any] | None) -> str:
+    lines = ['## 장치 기여 기록 (과학 성능 향상은 미측정)', '',
+             '건수·전후 기록은 인과 효과나 실연구 성능 PASS를 뜻하지 않습니다.', '',
+             '| 영역 | 지표 | 상태 | 건수 / 분모 | 근거·한계 |', '|---|---|---|---|---|']
+    for group in ('checklist', 'input_fit', 'packs', 'reuse'):
+        rows = _dict(_dict(metrics).get(group))
+        if not rows:
+            rows = {'record': _metric(None, None, 'saved impact evidence unavailable')}
+        for name, metric in rows.items():
+            if not isinstance(metric, Mapping) or 'status' not in metric:
+                continue
+            value = '미측정' if metric.get('value') is None else metric['value']
+            denominator = '모름' if metric.get('denominator') is None else metric['denominator']
+            lines.append(f"| {group} | {name} | {_cell(metric.get('status'))} | {value} / {denominator} | "
+                         f"{_cell(metric.get('reason'))} |")
+    return '\n'.join(lines) + '\n'
 
 
 def freeze_observation(req: dict[str, Any], settings: Any) -> None:
@@ -552,4 +675,5 @@ def render_report(report: Mapping[str, Any]) -> str:
             lines.append(f"| `{_cell(item['id'])}` | {'예' if item['plan_included'] else '아니요'} | "
                          f"{_cell(item['owner_steps'])} | {_cell(item['plan_answer'])} | "
                          f"{_cell(item['review_status'])} | {_cell(item['review_evidence'])} |")
+    lines += ['', render_impact_metrics(_dict(report.get('impact_metrics')))]
     return "\n".join(lines) + "\n"

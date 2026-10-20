@@ -221,7 +221,10 @@ def build_receipt(files: Mapping[str, str | bytes], *, outputs: Mapping[str, Seq
             static_args = {"python": ["-I", "-S", "-B", "-c", _PY_COMPILE, script],
                            "r": ["--vanilla", "-e", _R_PARSE, script],
                            "bash": ["--noprofile", "--norc", "-n", script]}[language]
-            runtime_args = {"python": ["-I", "-S", "-B", script], "r": ["--vanilla", script],
+            # `-E -s` is `-I` without `-P`: the script's own staged folder stays first on sys.path so it imports the
+            # siblings published with it (#772); PYTHONPATH, the user site and the caller's folder stay out. No `-S`
+            # here: the interpreter's site-packages (numpy, pandas, ...) must load for a real rerun (#794).
+            runtime_args = {"python": ["-E", "-s", "-B", script], "r": ["--vanilla", script],
                             "bash": ["--noprofile", "--norc", script]}[language]
             tool_name = {"python": "python", "r": "Rscript", "bash": "bash"}[language]
             executable = supplied.get(language)

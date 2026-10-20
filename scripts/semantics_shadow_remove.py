@@ -34,7 +34,6 @@ OWNED = [
     "labhq/research/semantics_request_report.py",
     "labhq/research/semantics_objects.py",
     "labhq/research/semantics_input_fit.py",
-    "labhq/research/semantics_input_fit.yaml",
     "tests/semantics_shadow_lab.py",
     "tests/test_semantics_shadow_settings.py",
     "tests/test_semantics_shadow_worker.py",
@@ -57,10 +56,11 @@ ACTIONS_BEGIN, ACTIONS_END = "# semantics-actions: begin", "# semantics-actions:
 COPY = ["labhq", "tests", "scripts", "agents", "config", "pyproject.toml"]
 # The output type vocabulary and declarations are core (#221): they must outlive the shadow.
 CHECK_TESTS = ["tests/test_e2e_mock.py", "tests/test_semantics_pilot.py", "tests/test_cso.py",
-               "tests/test_output_vocab.py", "tests/test_output_types.py", "tests/test_output_types_research.py"]
+               "tests/test_output_vocab.py", "tests/test_output_types.py", "tests/test_output_types_research.py",
+               "tests/test_cp1_input_fit_796.py"]
 ACTIONS_CHECK_TESTS = ["tests/test_semantics_shadow_settings.py", "tests/test_semantics_shadow_report.py",
                        "tests/test_semantics_shadow_breaker.py", "tests/test_semantics_pilot.py",
-                       "tests/test_followup.py", "tests/test_e2e_mock.py"]
+                       "tests/test_followup.py", "tests/test_e2e_mock.py", "tests/test_cp1_input_fit_796.py"]
 SMOKE = """
 import asyncio, json, sys
 from pathlib import Path
@@ -133,6 +133,29 @@ def _scope(only: str | None) -> tuple[list[str], str, list[tuple[str, str]]]:
     return OWNED, HOOK, [(BEGIN, END), (ACTIONS_BEGIN, ACTIONS_END)]
 
 
+def strip_hooks(text: str, only: str | None = None) -> tuple[str, int, int]:
+    """Pure removal transform, also usable for static/in-memory contract checks."""
+    _, hook, pairs = _scope(only)
+    kept, end = [], None
+    lines = blocks = 0
+    for line in text.splitlines(keepends=True):
+        if end is not None:
+            if end in line:
+                end = None
+            continue
+        begin = next((pair for pair in pairs if pair[0] in line), None)
+        if begin is not None:
+            end, blocks = begin[1], blocks + 1
+            continue
+        if hook in line:
+            lines += 1
+            continue
+        kept.append(line)
+    if end is not None:
+        raise ValueError(f"block without {end}")
+    return "".join(kept), lines, blocks
+
+
 def remove(root: Path, only: str | None = None) -> dict:
     owned, hook, pairs = _scope(only)
     removed = [rel for rel in owned if (root / rel).exists()]
@@ -143,23 +166,13 @@ def remove(root: Path, only: str | None = None) -> dict:
         text = path.read_text(encoding="utf-8")
         if hook not in text and not any(begin in text for begin, _ in pairs):
             continue
-        kept, end = [], None
-        for line in text.splitlines(keepends=True):
-            if end is not None:
-                if end in line:
-                    end = None
-                continue
-            begin = next((pair for pair in pairs if pair[0] in line), None)
-            if begin is not None:
-                end, blocks = begin[1], blocks + 1
-                continue
-            if hook in line:
-                lines += 1
-                continue
-            kept.append(line)
-        if end is not None:
-            raise SystemExit(f"{path.relative_to(root)}: block without {end}")
-        path.write_text("".join(kept), encoding="utf-8", newline="")
+        try:
+            stripped, count_lines, count_blocks = strip_hooks(text, only)
+        except ValueError as exc:
+            raise SystemExit(f"{path.relative_to(root)}: {exc}") from exc
+        lines += count_lines
+        blocks += count_blocks
+        path.write_text(stripped, encoding="utf-8", newline="")
     return {"files": removed, "hook_lines": lines, "blocks": blocks}
 
 
