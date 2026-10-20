@@ -217,3 +217,16 @@ def test_a_continuation_that_keeps_the_analysis_whole_expects_fewer_step_dispatc
     assert reuse == ["s1"] and sorted(rerun) == ["s2", "s3", "s4"]  # one more expected dispatch and handoff
     shape = plan_shape(split["steps"])
     assert shape["coupled_splits"] == 1 and shape["boundary_handoffs"] == 1
+
+
+def test_the_manual_describes_the_cohesive_analysis_rule_next_to_the_assignment_policy():
+    """PR #815 review P1: the rule changes how every plan is split, so the user manual's assignment paragraph (#732)
+    states it with the boundaries it keeps."""
+    from pathlib import Path
+
+    manual = (Path(__file__).resolve().parents[1] / "docs" / "manual.md").read_text(encoding="utf-8")
+    section = manual.split("## 직원과 도구", 1)[1].split("\n## ", 1)[0]
+    paragraph = next(line for line in section.splitlines() if "#732" in line)
+    for phrase in ("탐색·전처리·핵심 통계", "한 분석 단계", "독립", "생물학적 해석", "QC", "다른 회사 과학 리뷰",
+                   "CP1·CP2", "#799"):
+        assert phrase in paragraph, phrase

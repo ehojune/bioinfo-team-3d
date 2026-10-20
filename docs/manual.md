@@ -713,7 +713,7 @@ runner PC에 무언가 없어서 실패한 단계는 `environment` 실패입니�
 | 🦫 비버 편집자 | `editor` | 끝난 요청의 결과·재현 방법·출처 정리 | Codex / gpt-6-luna | read-only | 전달된 정리 자료·prompt 점검 규칙 |
 | 🐥 파견직 | `c_<slug>` | 논문의 방법 적용 | Claude Code / sonnet | — | 논문 MCP·skill |
 
-PI 2026-10-19 승인 배정 기준([#732](https://github.com/ehojune/bioinfo-team-3d/issues/760#issuecomment-6263295610)): 표준 생물정보학은 bioinfo-agent/nf-core, 단순 작업은 직접 처리합니다. 없는 복잡한 파이프라인은 직접 코딩한 뒤 기여 여부를 PI에게 묻고 yes일 때만 bioinfo-agent PR을 엽니다. 실제 담당은 CSO 계획에서 확인합니다.
+PI 2026-10-19 승인 배정 기준([#732](https://github.com/ehojune/bioinfo-team-3d/issues/760#issuecomment-6263295610)): 표준 생물정보학은 bioinfo-agent/nf-core, 단순 작업은 직접 처리합니다. 없는 복잡한 파이프라인은 직접 코딩한 뒤 기여 여부를 PI에게 묻고 yes일 때만 bioinfo-agent PR을 엽니다. pipeline이 아닌 분석도 같은 데이터·질문의 탐색·전처리·핵심 통계는 직원 사이에 넘기지 않고 한 분석 단계로 계획하며, 데이터셋·질문·근거 갈래가 다른 독립 작업만 나눕니다. 생물학적 해석, 독립 technical·scientific QC 단계, 다른 회사 과학 리뷰, CP1·CP2 승인·근거 검사는 따로 둡니다([#799](https://github.com/ehojune/bioinfo-team-3d/issues/799), 속도·품질 효과는 미측정). 실제 담당은 CSO 계획에서 확인합니다.
 
 엔진·모델·도구는 `agents/core/*.yaml`에서 직원별로 바꿉니다. (예: `engine: codex`, `model: gpt-6-luna`)
 단독 처리 직원을 쓰려면 gitignore 대상인 `agents/core/solo.local.yaml`에 `id: solo`, `name`, `role`, `engine`, `model`, `sandbox`, `system_prompt`를 적고 `orchestrator.solo_agent: solo`로 지정합니다. `character`를 생략해도 웹에는 사자로 나옵니다.
