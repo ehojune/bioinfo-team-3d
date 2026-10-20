@@ -21,3 +21,6 @@ rows:
   - sha: '5e55e9d'
     at: '2026-10-20 14:53'
     text: 'PR별 concurrency와 첫 실행 문서 정합성 gate를 보강하고 정책은 내용 동일 reflow만 허용, 조회 polling을 fake-clock 회귀로 교체, mock/static 419개 확인'
+  - sha: '0e1a3f8'
+    at: '2026-10-20 16:16'
+    text: 'consult 재시작 fixture의 고정 sleep·3초 완료 경합을 runner/adoption event와 대상별 outer watchdog으로 교체, 선택적 Git provenance만 mock, 관련 8개 검증'
