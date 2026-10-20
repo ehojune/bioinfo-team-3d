@@ -14,7 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 17:04 | [`9cd9913`](https://github.com/ehojune/bioinfo-team-3d/pull/791/commits/9cd9913) | 현재 CI의 verify hash cap과 Codex profile stand-in 회귀 2건을 fixture 기본값/상한 보정으로 수정했다. 기존 assertion·안전 gate는 유지했다. 2건 red 뒤 관련 mock 31건 통과, main의 문서·POSIX 종료 기록을 보존해 HANDOFF 충돌을 해결한 뒤 같은 31건 통과. 실제 process/signal은 미실행이다. |
 | 16:45 | [`2130b8e`](https://github.com/ehojune/bioinfo-team-3d/pull/802/commits/2130b8e) | post-spawn 로그 오류에도 소유 handle을 정리하고 인증된 현재 연결로 과거 이력만 해소하며 Windows runtime에 현재 PID 생성 시각·생존·전체 Job 비소속 증명을 요구한다. |
+| 16:38 | [`7ec4a59`](https://github.com/ehojune/bioinfo-team-3d/pull/791/commits/7ec4a59) | Codex 조상 입력을 native read-only 기반 profile로 보호하고 성공한 retry task의 manifest run을 검증했다. 거부된 부분/이전 snapshot은 소유 목록만 정리하며 정리 실패는 실행을 중단한다. 선언 단계의 수집 hash를 input 허용 상한까지 보장했다. 회귀 14건 red 뒤 관련 mock/static 67건 통과·권한 fixture 1건 skip, 실제 native/연구 실행은 미검증이다. |
 | 16:35 | [`fb5e47c`](https://github.com/ehojune/bioinfo-team-3d/pull/816/commits/fb5e47c) | 재현 receipt가 공개 source의 안전한 유니코드·구두점 경로를 문법 검사·실행하고, 절대·traversal·제어 문자·Windows 장치 이름·끝 점/공백·NFC가 아닌 경로는 계속 막는다. |
 | 16:05 | [`9ff21ce`](https://github.com/ehojune/bioinfo-team-3d/pull/801/commits/9ff21ce) | 16시 대조에서 병합된 언어 지연 수정과 감사 후속 배정 상태를 개발 문서에 맞췄다. |
 | 16:03 | [`0d8ddaa`](https://github.com/ehojune/bioinfo-team-3d/pull/790/commits/0d8ddaa) | 종료 drain이 durable acceptance 중인 dispatch의 결과 기록과 ACK를 기다리며 task 정리 중 새 handler를 재검사하고 timeout·outbox·보호 gate를 유지한다. |
@@ -23,6 +25,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 15:31 | [`f38813a`](https://github.com/ehojune/bioinfo-team-3d/pull/801/commits/f38813a) | 영문 README의 비교 실행 중이라는 오해를 막고 효과 미측정 상태를 명시했다. |
 | 15:29 | [`463756e`](https://github.com/ehojune/bioinfo-team-3d/pull/801/commits/463756e) | 매뉴얼의 CP1 입력 검증과 사후 그림자 측정을 구분하고 PI Q&A의 현재 운영 링크를 갱신했다. |
 | 15:25 | [`30afc9f`](https://github.com/ehojune/bioinfo-team-3d/pull/801/commits/30afc9f) | docs: README 한영판은 처음 보는 사람용으로, HANDOFF는 현재 우선순위만, AGENTS는 개발 절차만 남기고 manual의 #796·어휘 수를 코드와 맞췄다 |
+| 15:18 | [`4068db4`](https://github.com/ehojune/bioinfo-team-3d/pull/791/commits/4068db4) | 검증된 main 병합 후 HANDOFF 충돌에서 조상 산출 입력의 진행 상태를 보존했다. |
 | 14:42 | [`05b3d64`](https://github.com/ehojune/bioinfo-team-3d/pull/802/commits/05b3d64) | supervisor 통합 fixture와 parent-pin chain을 기존 Job 검증 launch로 연결하고 file output·실패 진단·mock 회귀를 추가하며 lifecycle·restart·소유 handle 보호를 유지한다. |
 | 14:41 | [`602ee02`](https://github.com/ehojune/bioinfo-team-3d/pull/812/commits/602ee02) | fix: 긴 PI 문장의 경로 판별을 고정 길이 패턴으로 바꾸고 끝쪽 경로·코드 감지 회귀 검사 추가 |
 | 13:59 | [`df48ec6`](https://github.com/ehojune/bioinfo-team-3d/pull/806/commits/df48ec6) | Codex·Gemini 커밋의 공동 작성자 trailer를 GitHub이 인식하는 봇 주소로 맞추는 commit-msg 훅을 추가해 커밋 작성자에 에이전트 아이콘이 함께 보이게 했다. |
@@ -41,6 +44,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 11:38 | [`f4e46cb`](https://github.com/ehojune/bioinfo-team-3d/pull/801/commits/f4e46cb) | docs: 외부 감사 우선순위와 측정용 Shadow 유지 방침 반영 |
 | 11:32 | [`64f1527`](https://github.com/ehojune/bioinfo-team-3d/pull/800/commits/64f1527) | 재현 receipt의 Python 실행이 -S를 빼 interpreter site-packages(numpy 등)를 불러오고, 문법 검사는 -I -S -B를 유지하며, 실제 interpreter 격리 test를 CI에 더했다. |
 | 11:27 | [`05c192e`](https://github.com/ehojune/bioinfo-team-3d/pull/790/commits/05c192e) | diagnostics가 감싼 기본 SIGTERM을 graceful 종료로 연결하고 durable acceptance 뒤 종료 중 dispatch를 실행하지 않도록 막는다. |
+| 10:47 | [`c81a787`](https://github.com/ehojune/bioinfo-team-3d/pull/791/commits/c81a787) | 같은 요청의 완료된 조상 단계 수집 산출을 hash 검증 뒤 읽기 전용 inputs 복사본으로 전달하고 직접 sibling 읽기는 차단했다. 관련 mock/static 190건과 최종 입력 15건을 확인했다. |
 | 10:38 | [`aa5207f`](https://github.com/ehojune/bioinfo-team-3d/pull/790/commits/aa5207f) | POSIX runner 기본 TERM·HUP을 작업 취소·종료 증거 경로에 연결하고 gateway 결과 확인과 미확인 outbox 보존을 추가한다. |
 | 10:30 | [`f5425c5`](https://github.com/ehojune/bioinfo-team-3d/pull/789/commits/f5425c5) | 재현 receipt 실행이 함께 게시한 Python sibling module을 import할 수 있게 script 폴더만 import 경로에 두고, PYTHONPATH·사용자 site·호출한 폴더는 계속 뺐다. |
 | 10:03 | [`06c5a64`](https://github.com/ehojune/bioinfo-team-3d/commit/06c5a64) | Ubuntu Python 3.10 pytest step을 25분으로 제한하고 test·thread·asyncio task 진단을 남긴다. mock/static 검사 14개를 확인했으며 정체 원인은 미확정이다. Refs |

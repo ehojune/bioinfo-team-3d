@@ -4,6 +4,17 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+Fixes #665
+PR #791: 조상 입력 보호·성공 retry 증거·부분 정리·입력 hash 계약을 유지하고 CI fixture만 보정했습니다.
+
+- 현재 head CI의 Linux 3.10/3.12는 같은 두 테스트에서 실패했습니다: `test_deleted_output_without_a_recorded_hash_is_missing`, `test_codex_profiles_keep_same_scoped_read_grants[False-workspace-write]`. 실행 중 run의 `--log-failed`는 제공되지 않아 완료된 job 로그를 API로 보존했습니다.
+- `RunContext` stand-in에 실제 기본값 `read_only_inputs=[]`를 명시하고, 작은 hash fixture의 output/input cap을 함께 고정했습니다. missing/unrecorded·exit code·scoped read/deny assertion은 그대로입니다. production에 누락 필드를 허용하는 분기는 추가하지 않았습니다.
+- 같은 두 실패를 mock으로 재현한 뒤 관련 **31 passed**, 최신 main 통합 뒤 같은 **31 passed**. 새 hash 허용·상한 거절·partial cleanup·native profile 구성·retry identity 회귀를 함께 확인했습니다. 전체 traceback은 작업별 D: artifact에 보존했고 기존 guard 환경을 유지했습니다.
+- main `b9abcec7`의 #801 문서·#790 종료 기록 변경을 보존해 합쳤습니다. HANDOFF 충돌은 main 우선순위 표와 #791 검증 기록을 함께 남겨 해결했습니다(LF 4,748→3,439자). manual에는 #791 병합 전 구현임을 표시합니다.
+- public·diff·Python 3.10 AST·patch-notes·notes 검사 통과. 실제 process/thread/signal/proc_tree·직원 CLI·PI·원자료/HPC·연구/bench·설치·게시·배포는 실행하지 않았으며 #790의 process/signal 테스트도 로컬에서 돌리지 않았습니다. native/전체 Windows 검증·최종 head CI·새 리뷰/P1=0·병합은 controller 담당입니다. 기존 SyntaxWarning·P2는 범위 밖입니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 ## PR #802 P1 후속
 
 4321008909는 기존 45240fb9의 started_here=False와 실제 함수/autospec 회귀로 stale입니다. 나머지 세 건을 수정했습니다: post-spawn 로그 실패도 소유 handle cleanup을 실행하고, PID 기록 없는 과거 이력은 현재 인증·runner 연결이 확인된 경우만 해소하며, Windows role·supervisor는 현재 PID 생성 시각·생존·ANY-Job 비소속을 조회합니다. unknown·stale·조회 오류는 실패하고 WMI 신원 미확정 PID에는 종료 권한을 부여하지 않습니다.
@@ -11,6 +22,18 @@
 수정 전 새 회귀 20 failed/6 passed, 수정 후 관련 mock/static 191 passed. guard 유지·blocked 0, Python 3.10 AST 5파일·encoding 검사 PASS. 실제 Native/WMI/process/thread/signal·PI·연구·HPC는 로컬 미실행입니다. 기존 positive/nested CI gate는 그대로입니다.
 
 manual 172,387→172,624자, reference 4,357→5,000자(LF Unicode). 근거 docs/reference/windows-runtime-795.md. push 뒤 CI를 한 번 조회하고 총괄에게 인계하며 봇 요청·대기·병합·배포는 하지 않습니다.
+
+Fixes #665
+PR #791 · 리뷰 수정 `7ec4a59`.
+
+- Codex 입력 snapshot은 POSIX/Windows·resume에 같은 native `:read-only` 기반 profile을 적용하며 `outputs/`·`.tmp/`만 씁니다. 추가 write root·사용자 config·extra CLI args로 넓히지 않고, 작업 폴더를 재사용하는 후속 turn도 입력을 보호합니다. 실제 sandbox 실행 검증은 별도입니다.
+- 조상 metadata에 결과 task id를 전달해 첫 실패 run 대신 해당 성공 retry run을 검사합니다. manifest의 요청·step·성공 상태·파일 hash와 최신 per-run identity 검사를 유지합니다.
+- 거부된 조상의 부분 복사·이전 snapshot은 inventory 소유 파일만 지웁니다. 원본·알 수 없는 파일은 보존하고 정리 실패는 직원 실행 전에 중단합니다. 선언 단계의 수집 hash 상한은 input의 파일/총량 허용 상한까지 보장합니다.
+- 원래 head에서 보강 회귀 **14 failed** → 관련 mock/static **67 passed, 1 skipped**. 성공 retry·누락/다른 run·부분 실패/정리 실패·큰 입력 허용과 상한 거절·profile 구성·DAG task binding을 검사했습니다. 기존 hash cap/growth assertion은 유지하고 fixture의 output/input cap을 함께 고정했습니다.
+- 지적 4320685868은 기존 head의 patch-notes 검사 통과와 현재 entry를 확인해 stale 근거로 답글을 남깁니다. Python 3.10 AST·public·diff·patch-notes·notes 검사 통과. 최신 main #810 변경을 merge로 보존했습니다. 실패 traceback은 작업별 local artifact에 보존했고 mock guard blocked는 0건입니다.
+- 실제 process/thread/proc_tree·직원 CLI·PI·원자료/HPC·연구/bench·설치·게시·배포 미실행. 권한 fixture skip·전체 suite·native sandbox·Windows/3.10 실제 실행은 CI/별도 승인 경계입니다. 기존 SyntaxWarning은 범위 밖이며 P2·다른 owner 변경은 건드리지 않았습니다. 최종 head CI·새 리뷰·P1=0·병합은 controller 담당입니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 
 # 재현 receipt 유니코드 source 경로 (#773, PR #816)
 
@@ -361,6 +384,19 @@ PR #790 · Fixes #664
 - 검증: 수정 전 후속 회귀 3건 실패·2건 통과, 수정 후 관련 mock/static 24 passed·1 deselected. Python 3.10 문법·public·diff 검사 통과. manual 165,710→165,749자. 근거 docs/reference/runner-signals-664.md.
 - 한계: 기존 tests/test_shutdown_recovery.py::test_startup_uses_common_interruption_and_keeps_card는 이전 검증에서 guard가 subprocess.Popen.__init__을 차단해 재실행하지 않았습니다. 실패 전체 로그를 보존했습니다. 실제 신호·POSIX/WSL startup·process/proc_tree·운영·HPC 검증은 없습니다.
 - CI·fresh-head 리뷰·병합·배포는 supervisor 담당입니다.
+
+🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
+
+Fixes #665
+PR #791.
+
+새 DAG dispatch가 같은 요청의 성공한 조상 단계에서 수집한 산출 목록·hash를 전달합니다. runner는 요청·step·완료 상태와 hash를 확인한 파일만 `inputs/<step_id>/`로 복사하고, 기존 private/read-root 게이트로 복사본 쓰기와 직접 sibling 읽기를 막습니다. 차단 안내도 `inputs/` 경로를 가리킵니다.
+
+- 링크를 따르지 않는 held handle로 읽고 씁니다. credential·private·비공개 zone·상한 초과·hash 누락/불일치는 입력을 열지 않고 이유를 남깁니다. 재시도는 이전 labhq 복사 목록만 갱신하고 원본과 알 수 없는 기존 입력은 보존합니다.
+- 수정 전 mock 재현 9 failed → 관련 mock/static 190 passed, 12 skipped, 24 deselected. 마지막 파일명 판정 변경 뒤 입력 테스트 15 passed를 재확인했습니다. 전체 실패 원문은 작업 로컬 로그에 보존했고 process guard는 유지했습니다.
+- 기존 닫힌 shell 문법·read-only task·승인/게시 gate는 유지합니다. 구형 dispatch는 기존 링크 방식을 유지합니다. 새 계약은 입력이 없거나 거부되면 CSO에게 묻게 하며 직접 경로 fallback을 주지 않습니다.
+- manual의 단계 입력 절만 갱신했습니다. public·diff·Python 3.10 AST·patch-notes·notes 검사를 적용합니다.
+- 실제 process/proc_tree integration·PI 요청·HPC·기관 접근·원자료·연구·게시·설치·배포 미실행. CI·리뷰·병합은 총괄 담당입니다.
 
 🤖 Generated with Codex (gpt-6.1-sol) for the labhq dev lead
 
