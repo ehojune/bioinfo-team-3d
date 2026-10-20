@@ -33,3 +33,6 @@ rows:
 - sha: '98f70d9'
   at: '2026-10-20 09:27'
   text: 외부 조회 deadline test의 progress 주기를 제품 기본값으로 되돌리고 operation 취소·timeout 알림을 검증한다. 취소 경합 모사 회귀 3개와 mock/static 20개를 확인했다.
+- sha: 'c484256'
+  at: '2026-10-20 11:16'
+  text: 'literal 실행 payload·wrapper·find action·pgrep pipeline·ANSI-C quote P1 우회를 차단한다. 실패 57개를 재현한 뒤 mock/static 368개를 확인했고 positional Name 원문은 공식 계약의 stale 근거를 남긴다.'
