@@ -6,3 +6,6 @@ rows:
 - sha: 1220e10
   at: 2026-10-20 12:03
   text: "docs: 긴급 15M 승인과 CP1 작업 착수 반영"
+- sha: 30afc9f
+  at: 2026-10-20 15:25
+  text: "docs: README 한영판은 처음 보는 사람용으로, HANDOFF는 현재 우선순위만, AGENTS는 개발 절차만 남기고 manual의 #796·어휘 수를 코드와 맞췄다"
