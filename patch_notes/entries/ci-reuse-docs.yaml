@@ -9,3 +9,6 @@ rows:
   - sha: 5d7bd7a
     at: '2026-10-20 11:40'
     text: 'CI 재사용의 REST branch head와 실제 merge checkout·workflow 증명을 분리하고 기존 예제가 같은 prose 변경 허용'
+  - sha: 435af38
+    at: '2026-10-20 11:59'
+    text: 'binary urllib 응답 API만 encoding 검사에서 구분하고 filesystem 강제·UTF-8 JSON·redirect/auth·응답 크기 경계 검증'
