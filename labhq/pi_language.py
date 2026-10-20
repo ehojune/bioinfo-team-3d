@@ -22,8 +22,10 @@ def technical(text: str) -> bool:
 
 
 def code_or_path(text: str) -> bool:
+    # Every slash path has a path character on either side of one slash.
+    # A fixed-width witness avoids retrying a greedy segment at every character.
     return bool(re.search(
-        r"```|~~~|`[^`]+`|[A-Za-z]:[\\/]|(?:[\w.-]+/)+[\w.-]+|"
+        r"```|~~~|`[^`]+`|[A-Za-z]:[\\/]|[\w.-]/[\w.-]|"
         r"(?:^|\n)\s*(?:\$\w+\s*=|import |from .+ import |def |print\(|New-Item |Remove-Item )", text))
 
 
