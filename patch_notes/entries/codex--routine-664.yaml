@@ -8,3 +8,7 @@ rows:
   at: 2026-10-20 11:27
   text: diagnostics가 감싼 기본 SIGTERM을 graceful 종료로 연결하고 durable acceptance 뒤 종료 중 dispatch를
     실행하지 않도록 막는다.
+- sha: 0d8ddaa
+  at: 2026-10-20 16:03
+  text: 종료 drain이 durable acceptance 중인 dispatch의 결과 기록과 ACK를 기다리며 task 정리 중 새 handler를
+    재검사하고 timeout·outbox·보호 gate를 유지한다.
