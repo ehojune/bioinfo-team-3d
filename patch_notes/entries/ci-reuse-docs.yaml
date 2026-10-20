@@ -41,3 +41,7 @@ rows:
     at: '2026-10-20 21:14'
     summary: '조회 대기 모의 검사가 최신 공유 잠금과 함께 작동하도록 고쳤습니다.'
     text: 'lookup_runtime proxy에 원래 asyncio.get_running_loop·Lock을 monkeypatch 전에 캡처해 전달하고 실제 coroutine lock 직렬화 회귀를 추가했다. 기존 CI 5건과 새 회귀의 6 failed/15 passed를 재현한 뒤 focused·overlap mock 27개를 통과했다. 제품·기존 assertion·deadline·manifest 보호는 그대로이며 manifest 원인은 미확정이다.'
+  - sha: 'd60e4e4'
+    at: '2026-10-21 00:51'
+    summary: '검사를 여러 작업자로 나누고 Windows 범위와 실제 소요 시간을 추적하도록 바꿨습니다.'
+    text: 'Linux 전수 xdist/loadfile·Windows 경계 및 nightly/dispatch 전수·원래 HOME/공유 자원 격리와 관측을 통합했다. v3 profile/policy 증거·자기 인증 거부를 유지하고 parent mismatch 진단을 보강했다. mock/static 529개와 serial collection 10112→10072 node를 확인했으며 실제 병렬/Windows 성능·manifest 원인은 미검증이다.'
