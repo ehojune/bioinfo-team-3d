@@ -15,3 +15,8 @@ rows:
   text: 실행 prompt와 노드별 재사용 identity를 일치시키고 dispatch/결과 시점의 도구·engine 증거를 기록했다. 부분
     실행 뒤 재승인은 완료 결과를 검증·seal하여 보존하며 증거 누락/변경은 중단한다. 현재 head 실패 8건 재현 뒤 관련 mock/static
     113건 통과. 실제 연구·process는 미실행이다.
+- sha: 12039f3
+  at: 2026-10-20 16:53
+  text: 최신 main의 독자별 안내·현행 큐와 PR 807 재사용 계약/검증 근거를 함께 보존해 HANDOFF 충돌을 해결했다. manual에
+    병합 전 구현을 표시했다. 제품/테스트 변경 없이 관련 mock/static 38건 통과, 초기 완료 CI는 성공·Windows 진행 중이며
+    실제 실행/CI 대기는 하지 않았다.
