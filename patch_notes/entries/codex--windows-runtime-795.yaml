@@ -24,3 +24,7 @@ rows:
   at: 2026-10-20 15:51
   text: ancestor fixture가 전달받은 checkout root를 helper import 전에 넣고 fresh-script 경로를
     import cache 없이 검증해 parent-pin CI의 tests 모듈 누락을 고친다.
+- sha: 2130b8e
+  at: 2026-10-20 16:45
+  text: post-spawn 로그 오류에도 소유 handle을 정리하고 인증된 현재 연결로 과거 이력만 해소하며 Windows runtime에
+    현재 PID 생성 시각·생존·전체 Job 비소속 증명을 요구한다.
