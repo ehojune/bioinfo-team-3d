@@ -16,7 +16,7 @@
 
 설정 준비와 runtime 준비는 별도입니다. stale/missing/unknown managed daemon은 실패하고 pristine·정상 down은 구별합니다. `started_here=False`의 실제 health 함수·autospec 회귀를 유지합니다. remote/foreground와 켜진 WSL은 인증된 gateway 연결로 확인합니다.
 
-[head 0bf4c97d clean-install](https://github.com/ehojune/bioinfo-team-3d/actions/runs/39363311454/job/118434304160)은 child_in_job=True/query={}로 실패했습니다. 조회는 성공했고 SOME Job에 남았습니다. parent immediate flags 12288은 KILL_ON_CLOSE|SILENT_BREAKAWAY_OK이며 **상위 Job flags는 모릅니다**. 새 broker가 이 환경에서 성공한다는 근거는 아직 없습니다.
+[head 0bf4c97d clean-install](https://github.com/ehojune/bioinfo-team-3d/actions/runs/39363311454/job/118434304160)은 child_in_job=True/query={}로 실패했습니다. parent immediate flags 12288은 KILL_ON_CLOSE|SILENT_BREAKAWAY_OK이며 **상위 Job flags는 모릅니다**. 후속 d5954101 Windows 로그 415–417행에서는 positive·nested WMI 생존이 실제 PASS했습니다. 전체 결과는 supervisor fixture 4 failed / 8461 passed / 48 skipped입니다.
 
 broker 단계 로컬은 guard 3개를 유지한 mock/static 146 passed, blocked 0과 Python 3.10 AST만 검증했습니다. 실제 WMI/process/thread/signal은 실행하지 않았습니다. CI 전용 positive는 fake supervisor/role의 launch 성공·부모 Job close 뒤 생존·소유 handle 정리를 요구합니다. nested outer non-breakaway/inner silent-breakaway WMI positive와 별도 unknown/timeout·direct 실제 거부+provider mock 거부가 있습니다. 거부를 생존 PASS로 세지 않습니다. WMI provider가 탈출을 막으면 CI는 실패하며 안전 gate를 낮추지 않습니다. workflow는 바꾸지 않습니다.
 
@@ -28,3 +28,9 @@ root 배포 gate: `doctor --runtime` rc0/runtime_readiness.ready, 실제 WSL, �
 binary tail은 `open(mode="rb")`, Native handle은 `open_process`로 명시해 기존 encoding classifier를 그대로 통과합니다. 64 KiB seek/tail과 ACK·ownership·cleanup은 유지합니다. `tests/test_text_encoding.py`를 고치지 않아 PR #793의 HTTP binary 범위와 충돌하지 않습니다. 실제 classifier의 잘못된 text I/O 반례와 bounded-tail fake도 검사합니다.
 
 공용 test만 원문 재사용: `6954ab6aa3ce7314744d754dea16d26e45c0731d`의 recruit/receipt-clock 2파일, `98f70d96a937e5c6ee8fb650a31d5bf63c0eecbe`의 **second parent 대비 external_wait 1파일 delta**. 결과 blob을 원본과 대조했습니다. timeout을 늘리지 않고 controlled clock·취소·progress timeout 단정을 보존합니다. 새 focused mock/static 110 passed, guard blocked 0. 실제 Hub/process/WMI fixture와 fresh-head CI는 root 확인 대상입니다.
+
+## supervisor fixture 후속
+
+확정: 시작 fixture와 parent-pin chain이 raw venv Popen으로 검증 경계를 우회했습니다. redirector Job이 네 실패의 직접 원인인지는 기존 로그만으로 확정하지 않습니다. fixture 전체 chain을 기존 verified spawn으로 연결하고 file-backed output으로 direct/WMI handle을 함께 지원합니다. 실패 단정에는 기존 Job journal·fixture traceback을 붙입니다. 제품 gate·lifecycle/restart/parent-pin 단정은 바꾸지 않았습니다.
+
+로컬 mock/static **155 passed**, guard blocked 0: 실제 spawn 함수에 fake Popen을 주입해 base interpreter·BREAKAWAY·Job 판정·POSIX 옵션과 chain을 검사하고 거부/unknown/timeout 전파를 확인했습니다. Python 3.10 AST 포함. 실제 process/WMI는 로컬 미실행이며 수정 fixture의 Windows CI는 미확인입니다.
