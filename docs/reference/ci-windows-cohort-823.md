@@ -2,6 +2,16 @@
 
 OS 경계와 변경 test를 선택하는 제안입니다. Windows full과 동등하지 않으며 실제 속도는 미측정입니다.
 
+## 현재 변경안: routine Windows 10분 (#825)
+
+- PR/main은 필수 file/node와 변경된 Windows 관련 test만 한 번 실행합니다. 정책 변경도 full+preview로 확대하지 않습니다. Linux 3.10/3.12 전수·Windows nightly/manual 전수는 유지합니다.
+- profile schema5/boundary-v5·manifest7입니다. 알려진 web shutdown·WMI escape/ACK 5개 callable 누락, 잘못된 range·미등록 test·만료 pin은 실패이며 전수 fallback이나 false-green이 아닙니다. 실제 native assertions·fsync/SQLite·host lock은 바꾸지 않습니다.
+- routine job10분/test step7분으로 report/upload 여유를 둡니다. timeout은 실패이며 완료 시간을 줄였다는 측정이 아닙니다. hard job 취소 시 마지막 업로드가 남지 않을 위험도 있습니다.
+- 기존 cached corpus에 대한 변경 없는 range 가정은 **3,252/10,762(30.2%)**, 7,510개 제외입니다. 예전 4,716개와 달리 generic schema/research/Shadow·미변경 비필수 node는 Linux/nightly에 남깁니다. 새 native parameter와 실제 PR 변경 test는 이 과거 분모에 없는 추가량입니다. 10분 성공·실제 selected count·host wait/job 시간은 root 통합 head CI에서 확인해야 합니다.
+- [현재 선택·증거 계약](ci-reuse.md)을 따릅니다. 아래 phase4 수치와 full+preview 설명은 이전 제안의 보존 기록이며 현재 실행 정책이 아닙니다.
+
+## 이전 phase4·preview 근거 (대체됨)
+
 | phase4 정적 collection/선택 (`c29e2e3a`) | 값 |
 |---|---|
 | 이번: 변경 test 없는 유효 range 가정 | 4,716/10,762개(43.8%), 175파일; 6,046개 제외 |

@@ -27,9 +27,9 @@ WORKFLOW = ".github/workflows/test.yml"
 POLICY_FILES = (WORKFLOW, "scripts/ci_skip.py", "scripts/ci_suite.py", "scripts/ci_selection.py",
                 "scripts/ci_isolation.py", "config/ci/windows-boundary-v1.json", "pyproject.toml",
                 "tests/conftest.py", "labhq/test_guard.py")
-VERSION = 6
+VERSION = 7
 GATE_IDS = ("pytest", "pytest-windows", "clean-install", "ro-crate-validator", "pytest-slow")
-COVERAGE = dict(zip(GATE_IDS, ("linux-full-v1", "windows-boundary-v4", "clean-install-v1",
+COVERAGE = dict(zip(GATE_IDS, ("linux-full-v1", "windows-boundary-v5", "clean-install-v1",
                               "official-validator-v1", "long-mcp-v1")))
 REQUIRED_JOBS = ("pytest (3.10)", "pytest (3.12)", "pytest-windows", "clean-install",
                  "ro-crate-validator", "pytest-slow", "changes", "readme", "patch-notes", "validation-manifest")

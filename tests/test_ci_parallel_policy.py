@@ -16,8 +16,10 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_unknown_and_os_boundary_sources_are_included_even_with_a_matching_review():
     from tests.test_ci_cohort823 import review
     for text in ('import sys\nassert sys.platform','import sqlite3\nsqlite3.connect("x")','import os\nos.fsync(1)'):
-        assert selection.include_windows('tests/test_new.py',text,review(text),node='test_math')[0]
-        assert selection.include_windows('tests/test_math.py',text,review(text),node='test_math')[0]
+        with pytest.raises(ValueError):
+            selection.include_windows('tests/test_new.py',text,review(text),node='test_math')
+        with pytest.raises(ValueError):
+            selection.include_windows('tests/test_math.py',text,review(text),node='test_math')
 
 
 def test_only_unchanged_reviewed_text_can_be_excluded():
@@ -25,8 +27,10 @@ def test_only_unchanged_reviewed_text_can_be_excluded():
     source='def test_math():\n    assert 1+1==2\n'; data=review(source)
     assert not selection.include_windows('tests/test_math.py',source,data,node='test_math')[0]
     assert not selection.include_windows('tests/test_math.py',source.replace('\n','\r\n'),data,node='test_math')[0]
-    assert selection.include_windows('tests/test_math.py',source+'def test_new(): pass\n',data,node='test_math')[0]
-    assert selection.include_windows('tests/test_renamed.py',source,data,node='test_math')[0]
+    with pytest.raises(ValueError):
+        selection.include_windows('tests/test_math.py',source+'def test_new(): pass\n',data,node='test_math')
+    with pytest.raises(ValueError):
+        selection.include_windows('tests/test_renamed.py',source,data,node='test_math')
 
 
 def test_unchanged_pure_review_is_local_to_source_and_helpers_not_all_runtime(tmp_path):
@@ -43,7 +47,8 @@ def test_unchanged_pure_review_is_local_to_source_and_helpers_not_all_runtime(tm
     runtime.write_text("def calculate(): return 2", encoding="utf-8")
     assert suite.select(nodes, selection.WINDOWS_BOUNDARY, tmp_path, changed=set())[0] == []
     test.write_text(source + "\ndef test_new(): assert True", encoding="utf-8")
-    assert suite.select(nodes, selection.WINDOWS_BOUNDARY, tmp_path, changed=set()) == (nodes, [], {})
+    with pytest.raises(pytest.UsageError):
+        suite.select(nodes, selection.WINDOWS_BOUNDARY, tmp_path, changed=set())
 
 
 def test_selection_keeps_every_node_of_unknown_files_and_both_full_profiles(monkeypatch,tmp_path):
@@ -54,8 +59,8 @@ def test_selection_keeps_every_node_of_unknown_files_and_both_full_profiles(monk
     pure.write_text(source,encoding='utf-8'); unknown.write_text('assert 2',encoding='utf-8')
     nodes=[SimpleNamespace(path=pure,nodeid='tests/test_math.py::test_math'),
            SimpleNamespace(path=unknown,nodeid='tests/test_new.py::test_c')]
-    chosen,omitted,reasons=suite.select(nodes,selection.WINDOWS_BOUNDARY,tmp_path,changed=set())
-    assert chosen==nodes[1:] and omitted==nodes[:1] and reasons
+    with pytest.raises(pytest.UsageError):
+        suite.select(nodes,selection.WINDOWS_BOUNDARY,tmp_path,changed=set())
     for profile in ('linux-full-v1','windows-full-v1'):
         assert suite.select(nodes,profile,tmp_path)==(nodes,[],{})
 
@@ -80,12 +85,13 @@ def test_profile_contract_includes_changed_source_without_refreshing_approval(mo
     data=selection.policy()
     monkeypatch.setattr(selection,'source_digest',lambda text:'0'*64)
     for path in data['mixed_nodes']:
-        assert selection.include_windows(path,(ROOT/path).read_text(encoding='utf-8'),data,node='test_math')[0]
+        with pytest.raises(ValueError):
+            selection.include_windows(path,(ROOT/path).read_text(encoding='utf-8'),data,node='test_math')
 
 
 def test_policy_file_is_versioned_and_not_a_runtime_fingerprint():
     data=selection.policy()
-    assert data['version']==4 and data['profile']==selection.WINDOWS_BOUNDARY
+    assert data['version']==5 and data['profile']==selection.WINDOWS_BOUNDARY
     assert 'implementation_sha256' not in data and data['default']=='boundary'
 
 
@@ -192,7 +198,7 @@ def test_report_records_job_queue_separately_from_setup_and_pytest(monkeypatch, 
     monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
     monkeypatch.setenv("CI_JOB_LABEL", "pytest-windows")
     monkeypatch.setattr(sys, "argv", ["ci_suite", "report"])
-    metrics = {"profile": "windows-boundary-v4", "workers": 3, "cpu_logical": 8,
+    metrics = {"profile": "windows-boundary-v5", "workers": 3, "cpu_logical": 8,
                "setup_s": 80, "pytest_s": 250, "results": {"passed": 1}, "longest_files": [["a.py", 250]]}
     monkeypatch.setattr(suite, "summarize", lambda path: metrics)
     def api(path):
@@ -210,12 +216,13 @@ def test_report_records_job_queue_separately_from_setup_and_pytest(monkeypatch, 
 def test_unrecognized_selection_policy_cannot_reduce_coverage(tmp_path):
     path = tmp_path / selection.PROFILE
     path.parent.mkdir(parents=True)
-    path.write_text('{"version":1,"profile":"windows-boundary-v4","default":"exclude","reviewed_pure":{}}',
+    path.write_text('{"version":1,"profile":"windows-boundary-v5","default":"exclude","reviewed_pure":{}}',
                     encoding="utf-8")
     with pytest.raises(ValueError):
         selection.policy(tmp_path)
     nodes = [SimpleNamespace(path=tmp_path / "new.py", nodeid="new.py::test_new")]
-    assert suite.select(nodes, "windows-boundary-v4", tmp_path) == (nodes, [], {})
+    with pytest.raises(pytest.UsageError):
+        suite.select(nodes, "windows-boundary-v5", tmp_path)
     path.write_text('{"version":1,"version":2}', encoding="utf-8")
     with pytest.raises(ValueError, match="duplicate"):
         selection.policy(tmp_path)
@@ -237,11 +244,11 @@ def test_workflow_parallelizes_only_explicit_outer_suites_and_keeps_full_windows
         assert any(s.get("if") == "always()" and s.get("uses", "").startswith("actions/upload-artifact")
                    for s in jobs[name]["steps"])
     condition = jobs["pytest-windows"]["env"]["CI_COVERAGE_PROFILE"]
-    assert all(word in condition for word in ("schedule", "workflow_dispatch", "windows-full-v1", "windows-boundary-v4"))
+    assert all(word in condition for word in ("schedule", "workflow_dispatch", "windows-full-v1", "windows-boundary-v5"))
     assert "schedule:" in (ROOT / cs.WORKFLOW).read_text(encoding="utf-8")
     project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert '"pytest-xdist==3.8.0"' in project and "addopts" not in project
-    assert cs.COVERAGE["pytest-windows"] == "windows-boundary-v4" and cs.VERSION == 6
+    assert cs.COVERAGE["pytest-windows"] == "windows-boundary-v5" and cs.VERSION == 7
     assert all(p in cs.POLICY_FILES for p in (selection.PROFILE, "scripts/ci_suite.py", "tests/conftest.py", "pyproject.toml"))
 
 

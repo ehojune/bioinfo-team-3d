@@ -12,7 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 # Retain the policy path; its schema/profile version, not its filename, is identity.
 PROFILE = "config/ci/windows-boundary-v1.json"
-WINDOWS_BOUNDARY = "windows-boundary-v4"
+WINDOWS_BOUNDARY = "windows-boundary-v5"
 WINDOWS_PREVIEW = "windows-boundary-preview-v4"
 PROFILES = ("linux-full-v1", WINDOWS_BOUNDARY, "windows-full-v1", WINDOWS_PREVIEW)
 # The preview may cross these policy edits only; shared fixtures/dependencies
@@ -42,14 +42,18 @@ def _unique(pairs):
 
 def policy(root=ROOT) -> dict:
     data = json.loads((root / PROFILE).read_text(encoding="utf-8"), object_pairs_hook=_unique)
-    if (set(data) != {"version", "profile", "default", "known_tests", "mixed_nodes", "boundary_cohorts"}
+    if (set(data) != {"version", "profile", "default", "known_tests", "mixed_nodes", "boundary_cohorts", "mandatory_nodes"}
             or data["default"] != "boundary" or type(data["version"]) is not int
-            or data["version"] != 4 or data["profile"] != WINDOWS_BOUNDARY
+            or data["version"] != 5 or data["profile"] != WINDOWS_BOUNDARY
             or not isinstance(data["mixed_nodes"], dict)
             or not isinstance(data["known_tests"], list) or not data["known_tests"]
             or not all(isinstance(p, str) and re.fullmatch(r'tests/test_[\w]+\.py', p) for p in data['known_tests'])
             or data['known_tests'] != sorted(set(data['known_tests']))
-            or not isinstance(data["boundary_cohorts"], dict) or not data["boundary_cohorts"]):
+            or not isinstance(data["boundary_cohorts"], dict) or not data["boundary_cohorts"]
+            or not isinstance(data['mandatory_nodes'], list)
+            or not all(isinstance(n, str) and re.fullmatch(r'tests/test_[\w]+\.py::[\w]+', n)
+                       for n in data['mandatory_nodes'])
+            or data['mandatory_nodes'] != sorted(set(data['mandatory_nodes']))):
         raise ValueError("unknown Windows selection policy")
     for pattern, reason in data["boundary_cohorts"].items():
         if (not isinstance(pattern, str) or not re.fullmatch(r"tests/test_[\w*]+\.py", pattern)
@@ -66,6 +70,30 @@ def policy(root=ROOT) -> dict:
             if (not isinstance(node, str) or not re.fullmatch(r'[\w]+(?:::[\w]+)*', node)
                     or not isinstance(reason, str) or not reason.strip()):
                 raise ValueError('invalid protected node')
+    return data
+
+
+def validate_profile(root=ROOT):
+    """Fail before pytest startup for missing/stale maintained contracts."""
+    data = policy(root)
+    files = {p.relative_to(root).as_posix() for p in (root / 'tests').glob('test_*.py')}
+    for pattern in data['boundary_cohorts']:
+        if not any(fnmatchcase(path, pattern) for path in files):
+            raise ValueError('missing essential Windows file contract: ' + pattern)
+    for path in files - set(data['known_tests']):
+        if not any(fnmatchcase(path, pattern) for pattern in data['boundary_cohorts']):
+            raise ValueError('new test requires Windows inventory review: ' + path)
+    for path, row in data['mixed_nodes'].items():
+        source = (root / path).read_text(encoding='utf-8')
+        if source_digest(source) != row['sha256']:
+            raise ValueError('stale mixed Windows contract: ' + path)
+        tree = _syntax(source)
+        for node in row['nodes']:
+            _boundary_scope(tree, node, aliases(tree))
+    for contract in data['mandatory_nodes']:
+        path, node = contract.split('::', 1)
+        tree = _syntax((root / path).read_text(encoding='utf-8'))
+        _boundary_scope(tree, node, aliases(tree))
     return data
 
 
@@ -208,49 +236,74 @@ def intrinsic_boundary(text, *, node=None, root=None, seen=None):
 
 
 def include_windows(path, text, data, *, root=ROOT, changed=frozenset(), node=None):
-    """Explicit boundary union + native API backstop + changed tests.
+    """Maintained essential contracts + direct OS APIs, never product transitivity.
 
-    known_tests is a collection inventory, NOT per-file pure certification.
-    New/unlisted collection and unavailable range stay full. Reviewed mixed
-    modules pin their entire source; drift restores their whole-file boundary.
+    Changed Windows-relevant tests stay included. Changed ordinary logic is
+    covered by both full Linux suites and nightly/manual full Windows.
+    Missing inventory/scope evidence fails, rather than silently expanding full.
     """
-    if path in changed:
-        return True, "changed test in validated event range"
-    if any(p.startswith('tests/') and not re.fullmatch(r'tests/test_[\w]+\.py', p)
-           for p in changed):
-        return True, 'shared helper changed; full validation'
-    if path not in data['known_tests']:
-        return True, 'new or unknown collection'
     row = data['mixed_nodes'].get(path)
+    symbol = node.split('[', 1)[0] if node is not None else None
+    if any(n == path + '::' + symbol if symbol is not None else n.startswith(path + '::')
+           for n in data['mandatory_nodes']):
+        return True, 'mandatory native regression contract'
     if row:
-        if source_digest(text) != row['sha256'] or node is None:
-            return True, 'mixed-module source changed or node unavailable'
+        if source_digest(text) != row['sha256']:
+            raise ValueError('mixed-module contract drift; update reviewed profile')
+        if path in changed or node is None:
+            return True, 'changed Windows-relevant mixed test or file contract'
         symbol = node.split('[', 1)[0]
         if symbol in row['nodes']:
             return True, row['nodes'][symbol]
         try:
-            if intrinsic_boundary(text, node=symbol, root=root):
+            if intrinsic_boundary(text, node=symbol):
                 return True, 'native API backstop in mixed-module test/helper'
-        except (OSError, UnicodeError, ValueError, SyntaxError):
-            return True, 'unresolved mixed-module scope'
+        except (OSError, UnicodeError, ValueError, SyntaxError) as exc:
+            raise ValueError('unresolved mixed-module contract') from exc
         parts = symbol.split('::')
         body = _syntax(text).body
         for part in parts:
             found = next((n for n in body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
                           and n.name == part), None)
             if found is None:
-                return True, 'unknown mixed-module node'
+                raise ValueError('unknown mixed-module node')
             body = found.body
         return False, row['reason']
     if any(fnmatchcase(path, pattern) for pattern in data['boundary_cohorts']):
-        return True, "reviewed OS/runtime/safety boundary cohort"
-    if intrinsic_boundary(text, node=node.split('[', 1)[0] if node else None, root=root):
-        return True, "explicit OS/runtime API in test/helper scope"
-    return False, 'outside audited Windows boundary; Linux/full Windows retain this contract'
+        return True, "maintained essential Windows/OS contract"
+    if path not in data['known_tests']:
+        raise ValueError('unlisted collection; update Windows policy inventory')
+    if node is not None:
+        _boundary_scope(_syntax(text), node.split('[', 1)[0], aliases(_syntax(text)))
+    if path in changed and intrinsic_boundary(text, node=node.split('[', 1)[0] if node else None):
+        return True, "direct OS/runtime API in test/local fixture scope"
+    # Direct helper edits retain their consumers, without a speculative
+    # transitive walk through arbitrary product/runtime implementations.
+    for statement in ast.walk(_syntax(text)):
+        if isinstance(statement, ast.ImportFrom):
+            module = (statement.module or '').replace('.', '/')
+            imports = {module + '.py', module + '/__init__.py'}
+            imports.update(module + '/' + alias.name + '.py' for alias in statement.names)
+            if statement.level or not module.startswith('tests/'):
+                imports |= {'tests/' + name for name in tuple(imports)}
+            dependencies = imports.intersection(changed)
+        elif isinstance(statement, ast.Import):
+            dependencies = {alias.name.replace('.', '/') + '.py' for alias in statement.names}.intersection(changed)
+        else:
+            continue
+        for dependency in dependencies:
+            if dependency.startswith('tests/'):
+                helper = root / dependency
+                helper.resolve().relative_to(root.resolve())
+                if helper.is_symlink():
+                    raise ValueError('unreviewed linked test helper')
+                if intrinsic_boundary(helper.read_text(encoding='utf-8')):
+                    return True, 'directly imported changed OS test helper'
+    return False, 'ordinary logic/schema/text; full Linux and nightly/manual Windows'
 
 
 def change_range(event_name, event, checkout, git, *, preview=False):
-    """Immutable local Git + event snapshot. Missing/drifted range runs full.
+    """Immutable local Git + event snapshot. Missing/drifted range is an error.
 
     This evidence selects tests only; it never authorizes artifact reuse.
     git is injected in tests; this function never fetches or contacts GitHub.
@@ -282,10 +335,10 @@ def change_range(event_name, event, checkout, git, *, preview=False):
     paths = raw.split("\0")[:-1] if raw else []
     if len(paths) != len(set(paths)) or any(not PATH.fullmatch(p) or any(x in {".", ".."} for x in p.split("/")) for p in paths):
         raise ValueError("invalid changed path evidence")
-    # Shared collection fixtures, policy and dependencies require initial full
-    # validation. An ordinary product edit no longer expires the entire cohort.
+    # The retired preview command still accepts only its original narrow range.
+    # Routine policy/fixture edits run maintained essentials, not full Windows.
     from scripts.ci_skip import POLICY_FILES
-    if any(p in POLICY_FILES and not (preview and p in PREVIEW_POLICY)
+    if preview and any(p in POLICY_FILES and p not in PREVIEW_POLICY
            or p.startswith("tests/") and not re.fullmatch(r"tests/test_[\w]+\.py", p)
            for p in paths):
         raise ValueError("shared fixture/policy changed; full validation")
@@ -317,7 +370,7 @@ def read_changes(directory, checkout, *, preview=False):
             or type(data["version"]) is not int
             or data["version"] != 1 or not isinstance(checkout, str) or not SHA.fullmatch(checkout)
             or data["checkout"] != checkout or not isinstance(data["base"], str)
-            or not SHA.fullmatch(data["base"]) or data["base"] == "0" * 40
+            or not SHA.fullmatch(data["base"]) or data["base"] in {"0" * 40, checkout}
             or not isinstance(data["paths"], list) or not all(isinstance(p, str) and PATH.fullmatch(p)
                 and all(x not in {".", ".."} for x in p.split("/")) for p in data["paths"])
             or data["paths"] != sorted(set(data["paths"]))):
@@ -590,10 +643,19 @@ def main():
             result = preview_range(os.environ["GITHUB_EVENT_NAME"], event, os.environ["GITHUB_SHA"], git, os.environ)
         else:
             result = change_range(os.environ["GITHUB_EVENT_NAME"], event, os.environ["GITHUB_SHA"], git)
+        validate_profile()
     except Exception as exc:
-        # Missing evidence is explicitly not a reusable/eligible receipt.
-        result = {"full": True, "reason": type(exc).__name__}
-        print("ci_selection: invalid/unavailable change range; full Windows", file=sys.stderr)
+        # Our ValueError messages name validation checks; never emit raw event,
+        # environment, command output or an arbitrary exception message.
+        check = str(exc).split(':', 1)[0] if type(exc) is ValueError else type(exc).__name__
+        if os.environ.get("CI_SUITE_ARTIFACT_DIR"):
+            directory = Path(os.environ["CI_SUITE_ARTIFACT_DIR"])
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / "selection-error.json").write_text(json.dumps({
+                "status": "invalid-selection", "reusable": False,
+                "error": type(exc).__name__, "check": check}), encoding="utf-8")
+        print("ci_selection: invalid selection; refusing routine Windows (" + check + ")", file=sys.stderr)
+        raise SystemExit(2) from exc
     if args.command == "preview-plan":
         print("enabled=" + str(result.get("mode") == "preview").lower())
         return

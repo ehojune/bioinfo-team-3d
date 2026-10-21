@@ -38,8 +38,8 @@ def receipt(tmp_path, data):
 
 
 def review(text):
-    return {'version':4, 'profile':s.WINDOWS_BOUNDARY, 'default':'boundary',
-            'known_tests':['tests/test_math.py'], 'boundary_cohorts':{},
+    return {'version':5, 'profile':s.WINDOWS_BOUNDARY, 'default':'boundary',
+            'known_tests':['tests/test_math.py'], 'boundary_cohorts':{}, 'mandatory_nodes':[],
             'mixed_nodes':{'tests/test_math.py':{'sha256':s.source_digest(text),
                 'reason':'synthetic arithmetic review', 'nodes':{'test_native':'native boundary'}}}}
 
@@ -84,8 +84,11 @@ def test_unknown_or_drifted_merge_range_is_not_selection_evidence(parents):
                                   ('pyproject.toml',)])
 def test_malformed_paths_or_shared_fixture_policy_changes_require_full(paths):
     git, _ = fake_git(paths)
-    with pytest.raises(ValueError):
-        s.change_range('pull_request', event(), H, git)
+    if any('..' in path.split('/') or path.startswith('/') for path in paths) or len(set(paths)) != len(paths):
+        with pytest.raises(ValueError):
+            s.change_range('pull_request', event(), H, git)
+    else:
+        assert s.change_range('pull_request', event(), H, git)['paths'] == sorted(paths)
 
 
 @pytest.mark.parametrize('kind', ['schedule', 'workflow_dispatch', 'unknown'])
@@ -106,7 +109,8 @@ def test_invalid_range_receipt_cannot_select_a_subset(tmp_path, monkeypatch, mut
     mutation(data); receipt(tmp_path, data)
     monkeypatch.setenv('CI_SUITE_ARTIFACT_DIR', str(tmp_path)); monkeypatch.setenv('GITHUB_SHA', H)
     items = [SimpleNamespace(path=p, nodeid='tests/test_math.py::test_math')]
-    assert suite.select(items, s.WINDOWS_BOUNDARY, tmp_path) == (items, [], {})
+    with pytest.raises(pytest.UsageError):
+        suite.select(items, s.WINDOWS_BOUNDARY, tmp_path)
 
 
 def test_changed_reviewed_tests_helpers_and_unknown_tests_are_always_included(tmp_path):
@@ -116,10 +120,13 @@ def test_changed_reviewed_tests_helpers_and_unknown_tests_are_always_included(tm
     items=[SimpleNamespace(path=p,nodeid='tests/test_math.py::test_math')]
     assert suite.select(items,s.WINDOWS_BOUNDARY,tmp_path,changed=set())[1]==items
     assert suite.select(items,s.WINDOWS_BOUNDARY,tmp_path,changed={'tests/test_math.py'})[0]==items
-    assert suite.select(items,s.WINDOWS_BOUNDARY,tmp_path,changed={'tests/helper.py'})[0]==items
+    # An unrelated shared helper edit no longer expands every file.
+    assert suite.select(items,s.WINDOWS_BOUNDARY,tmp_path,changed={'tests/helper.py'})[1]==items
     p.write_text(source+'\ndef test_new(): assert 2',encoding='utf-8')
-    assert suite.select(items,s.WINDOWS_BOUNDARY,tmp_path,changed=set())[0]==items
-    assert s.include_windows('tests/test_unreviewed.py',source,data,node='test_math')[0]
+    with pytest.raises(pytest.UsageError):
+        suite.select(items,s.WINDOWS_BOUNDARY,tmp_path,changed=set())
+    with pytest.raises(ValueError):
+        s.include_windows('tests/test_unreviewed.py',source,data,node='test_math')
 
 
 def test_unrelated_product_edit_does_not_expire_every_reviewed_file(tmp_path):
@@ -135,7 +142,8 @@ def test_unrelated_product_edit_does_not_expire_every_reviewed_file(tmp_path):
     'from labhq.runner import daemon', 'from labhq.cli import main', 'from mcp import ClientSession',
     'import os\nos.fsync(1)', 'import os\nos.symlink("a", "b")'])
 def test_os_boundaries_cannot_be_approved_away_by_a_matching_review(source):
-    assert s.include_windows('tests/test_math.py',source,review(source),node='test_math')[0]
+    with pytest.raises(ValueError):
+        s.include_windows('tests/test_math.py',source,review(source),node='test_math')
 
 
 @pytest.mark.parametrize('source', [
@@ -190,7 +198,7 @@ def test_import_time_global_scan_is_protected_even_when_definition_is_unused(tmp
 def test_python310_policy_profile_and_manifest_epoch_are_bound():
     for path in ('scripts/ci_selection.py', 'scripts/ci_suite.py'):
         ast.parse((s.ROOT / path).read_text(encoding='utf-8-sig'), feature_version=(3, 10))
-    assert cs.VERSION == 6 and cs.COVERAGE['pytest-windows'] == s.WINDOWS_BOUNDARY
+    assert cs.VERSION == 7 and cs.COVERAGE['pytest-windows'] == s.WINDOWS_BOUNDARY
     assert s.PROFILE in cs.POLICY_FILES
     assert s.WINDOWS_BOUNDARY != 'windows-boundary-v1'
 
@@ -264,9 +272,11 @@ def test_external_collection_and_missing_range_run_full(tmp_path, monkeypatch):
     source = 'def test_math(): assert 1 + 1 == 2'
     policy_file(tmp_path, source)
     outside = SimpleNamespace(path=tmp_path.parent / 'external-test.py', nodeid='external::test_case')
-    assert suite.select([outside], s.WINDOWS_BOUNDARY, tmp_path, changed=set()) == ([outside], [], {})
+    with pytest.raises(pytest.UsageError):
+        suite.select([outside], s.WINDOWS_BOUNDARY, tmp_path, changed=set())
     monkeypatch.setenv('CI_SUITE_ARTIFACT_DIR', str(tmp_path)); monkeypatch.setenv('GITHUB_SHA', H)
-    assert suite.select([outside], s.WINDOWS_BOUNDARY, tmp_path) == ([outside], [], {})
+    with pytest.raises(pytest.UsageError):
+        suite.select([outside], s.WINDOWS_BOUNDARY, tmp_path)
 
 
 @pytest.mark.parametrize('source,locked', [
@@ -287,7 +297,8 @@ def test_listener_start_is_distinct_from_configuration_and_unknown_broker_port(t
 @pytest.mark.parametrize('text', ['new test', 'import sys\nsys.platform', 'import sqlite3', 'runner', 'MCP',
     'fsync', 'windows', 'doctor', 'wsl', 'hook', 'private_paths'])
 def test_all_original_unknown_source_controls_stay_included(text):
-    assert s.include_windows('tests/test_unknown.py',text,review(text),node='test_unknown')[0]
+    with pytest.raises(ValueError):
+        s.include_windows('tests/test_unknown.py',text,review(''),node='test_math')
 
 
 @pytest.mark.parametrize('port,locked', [(0, False), (8787, True)])
@@ -322,8 +333,12 @@ def test_hybrid_encoding_atomic_redaction_and_path_contracts_remain_windows_boun
         for node in data['mixed_nodes'][path]['nodes']:
             assert s.include_windows(path,source,data,node=node)[0]
     else:
-        assert path in data['boundary_cohorts']
-        assert s.include_windows(path,source,data)[0]
+        # Nonessential hybrid suites remain intact in both full profiles. Their
+        # native primitives are represented by durable/private/receipt contracts.
+        assert path not in data['boundary_cohorts']
+        item=SimpleNamespace(path=s.ROOT/path,nodeid=path+'::test_contract')
+        for profile in ('linux-full-v1','windows-full-v1'):
+            assert suite.select([item],profile)==([item],[],{})
 
 
 @pytest.mark.parametrize('source,locked', [
@@ -425,8 +440,9 @@ def test_include_only_union_preserves_ordinary_logic_without_per_file_pure_proof
     source = 'def test_math(): assert schema.validate({"field": 2})'
     assert not s.include_windows('tests/test_math.py', source, data)[0]
     assert not s.include_windows('tests/test_math.py', source + '\n# unrelated prose', data)[0]
-    assert s.include_windows('tests/test_math.py', source, data, changed={'tests/test_math.py'})[0]
-    assert s.include_windows('tests/test_new.py', source, data)[0]
+    assert not s.include_windows('tests/test_math.py', source, data, changed={'tests/test_math.py'})[0]
+    with pytest.raises(ValueError):
+        s.include_windows('tests/test_new.py', source, data)
 
 
 @pytest.mark.parametrize('source', ['import os\ndef test_math(): os.fsync(fd)',
@@ -436,7 +452,7 @@ def test_include_only_union_preserves_ordinary_logic_without_per_file_pure_proof
     'import ctypes as native\ndef test_math(): native.windll.kernel32'])
 def test_include_only_backstop_protects_qualified_native_api_aliases(source):
     data = review(source); data['mixed_nodes'] = {}
-    assert s.include_windows('tests/test_math.py', source, data)[0]
+    assert s.include_windows('tests/test_math.py', source, data, changed={'tests/test_math.py'})[0]
 
 
 def test_mixed_modules_keep_native_nodes_and_restore_full_on_drift_or_unknown_node():
@@ -449,8 +465,10 @@ def test_mixed_modules_keep_native_nodes_and_restore_full_on_drift_or_unknown_no
         for node in row['nodes']:
             assert s.include_windows(path, source, data, node=node)[0]
         assert any(not s.include_windows(path, source, data, node=node)[0] for node in declared - set(row['nodes']))
-        assert s.include_windows(path, source, data, node='unrecognized_collector_node')[0]
-        assert s.include_windows(path, source + '\n# drift', data, node=next(iter(declared)))[0]
+        with pytest.raises(ValueError):
+            s.include_windows(path, source, data, node='unrecognized_collector_node')
+        with pytest.raises(ValueError):
+            s.include_windows(path, source + '\n# drift', data, node=next(iter(declared)))
 
 
 @pytest.mark.parametrize('case', ['v4-manifest', 'v2-profile', 'v4-artifact'])
@@ -479,7 +497,8 @@ def test_boundary_backstop_is_per_node_and_follows_used_native_helpers(tmp_path)
               'def test_native(): launch()\n'
               'def test_pure(): assert data()=={"field":2}\n')
     policy = review(source); policy['mixed_nodes'] = {}
-    assert s.include_windows('tests/test_math.py', source, policy, root=tmp_path, node='test_native')[0]
+    assert not s.include_windows('tests/test_math.py', source, policy, root=tmp_path, node='test_native')[0]
+    assert s.include_windows('tests/test_math.py', source, policy, root=tmp_path, changed={'tests/helpers.py'}, node='test_native')[0]
     assert not s.include_windows('tests/test_math.py', source, policy, root=tmp_path, node='test_pure')[0]
 
 
@@ -490,7 +509,7 @@ def test_import_time_native_call_and_autouse_fixture_remain_boundaries(tmp_path)
         'def start(): subprocess.run(["owned-child"])\ndef test_pure(): assert 1',
         'import subprocess\ndef start(): subprocess.run(["owned-child"])\n'
         'GLOBAL=start()\ndef test_pure(): assert 1'):
-        assert s.include_windows('tests/test_math.py', source, policy, root=tmp_path, node='test_pure')[0]
+        assert s.include_windows('tests/test_math.py', source, policy, root=tmp_path, changed={'tests/test_math.py'}, node='test_pure')[0]
 
 
 def test_unused_native_sibling_is_not_a_boundary_for_a_pure_test():
@@ -498,7 +517,7 @@ def test_unused_native_sibling_is_not_a_boundary_for_a_pure_test():
               'def test_pure(): assert 1+1==2\ndef test_native(): unused()')
     policy = review(source); policy['mixed_nodes'] = {}
     assert not s.include_windows('tests/test_math.py', source, policy, node='test_pure')[0]
-    assert s.include_windows('tests/test_math.py', source, policy, node='test_native')[0]
+    assert s.include_windows('tests/test_math.py', source, policy, changed={'tests/test_math.py'}, node='test_native')[0]
 
 
 def test_suite_node_cache_cannot_apply_first_pure_decision_to_native_sibling(tmp_path):
@@ -511,5 +530,5 @@ def test_suite_node_cache_cannot_apply_first_pure_decision_to_native_sibling(tmp
     pure = SimpleNamespace(path=path, nodeid='tests/test_math.py::test_pure')
     native = SimpleNamespace(path=path, nodeid='tests/test_math.py::test_native')
     for items in ([pure, native], [native, pure]):
-        chosen, omitted, _ = suite.select(items, s.WINDOWS_BOUNDARY, tmp_path, changed=set())
+        chosen, omitted, _ = suite.select(items, s.WINDOWS_BOUNDARY, tmp_path, changed={'tests/test_math.py'})
         assert chosen == [native] and omitted == [pure]

@@ -41,16 +41,17 @@ def safe_worker(value):
 
 
 def select(items, profile, root=ROOT, *, changed=None):
-    if profile not in {WINDOWS_BOUNDARY, WINDOWS_PREVIEW}:
+    if profile in {"linux-full-v1", "windows-full-v1"}:
         return list(items), [], {}
+    if profile not in {WINDOWS_BOUNDARY, WINDOWS_PREVIEW}:
+        raise pytest.UsageError("unknown CI selection profile")
     try:
         data = policy(root)
         if changed is None:
             changed = read_changes(os.environ["CI_SUITE_ARTIFACT_DIR"], os.environ.get("GITHUB_SHA"),
                                    preview=profile == WINDOWS_PREVIEW)
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):
-        print("ci_suite: selection policy unavailable; include all nodes", file=sys.stderr)
-        return list(items), [], {}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        raise pytest.UsageError("invalid Windows selection evidence; refusing full fallback") from exc
     chosen, omitted, reasons = [], [], {}
     cache, sources = {}, {}
     for item in items:
@@ -59,8 +60,7 @@ def select(items, profile, root=ROOT, *, changed=None):
         try:
             relative = path.relative_to(root.resolve()).as_posix()
         except ValueError:
-            chosen.append(item)  # external/unclassified collection is never omitted
-            continue
+            raise pytest.UsageError("Windows selection source is outside checkout") from None
         symbol = item.nodeid.split('::', 1)[1] if '::' in item.nodeid else None
         key = (relative, symbol.split('[', 1)[0] if symbol else None)
         if key not in cache:
@@ -71,8 +71,8 @@ def select(items, profile, root=ROOT, *, changed=None):
                     sources[relative] = path.read_text(encoding="utf-8")
                 cache[key] = include_windows(relative, sources[relative], data,
                                             root=root, changed=changed, node=symbol)
-            except (OSError, UnicodeError, ValueError, KeyError, SyntaxError):
-                cache[key] = (True, "unreadable source included")
+            except (OSError, UnicodeError, ValueError, KeyError, SyntaxError) as exc:
+                raise pytest.UsageError("invalid Windows selection source: " + relative) from exc
         included, reason = cache[key]
         if included:
             chosen.append(item)
@@ -105,7 +105,23 @@ class Observation:
 
     def pytest_collection_modifyitems(self, session, config, items):
         full = [i.nodeid for i in items]
-        chosen, omitted, reasons = select(items, self.profile)
+        try:
+            chosen, omitted, reasons = select(items, self.profile)
+            if self.profile == WINDOWS_BOUNDARY:
+                data = policy()
+                from fnmatch import fnmatchcase
+                paths = {Path(i.path).resolve().relative_to(ROOT).as_posix() for i in items}
+                if any(not any(fnmatchcase(p, pattern) for p in paths)
+                       for pattern in data['boundary_cohorts']):
+                    raise pytest.UsageError("missing essential Windows cohort in collection")
+                selected = {i.nodeid.split('[', 1)[0] for i in chosen}
+                if not set(data['mandatory_nodes']) <= selected:
+                    raise pytest.UsageError("missing mandatory native Windows regression")
+                if not chosen:
+                    raise pytest.UsageError("empty essential Windows selection")
+        except pytest.UsageError:
+            self.write("selection-error", {"profile": self.profile, "status": "invalid-selection", "reusable": False})
+            raise
         if omitted:
             config.hook.pytest_deselected(items=omitted)
             items[:] = chosen
@@ -243,10 +259,22 @@ def main():
     parser.add_argument("command", choices=["report"])
     args = parser.parse_args()
     directory = Path(os.environ["CI_SUITE_ARTIFACT_DIR"])
-    result = summarize(directory)
+    try:
+        result = summarize(directory)
+    except (OSError, ValueError, KeyError) as exc:
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "report-error.json").write_text(json.dumps({
+            "status": "incomplete", "reusable": False, "error": type(exc).__name__}), encoding="utf-8")
+        raise
     preview = result["profile"] == WINDOWS_PREVIEW
     if preview:
         result.update(reusable=False, timing_scope="warm preview after mandatory full suite; not cold PR timing")
+    result["over_ten_minutes"] = result["setup_s"] + result["pytest_s"] > 600
+    result["duration_scope"] = "setup + pytest; final report/upload tail requires completed GitHub job duration"
+    # Save measured local receipts before the optional timing metadata lookup.
+    # Even an API/report failure must leave the upload step something to retain.
+    summary = directory / ("preview-summary.json" if preview else "summary.json")
+    summary.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     # Read current run scheduling metadata once; this does not wait on any CI.
     from scripts.ci_skip import api
     jobs = api(f"actions/runs/{os.environ['GITHUB_RUN_ID']}/attempts/{os.environ['GITHUB_RUN_ATTEMPT']}/jobs?per_page=100")
@@ -257,7 +285,7 @@ def main():
     result["job_queue_s"] = (stamp(rows[0]["started_at"]) - stamp(rows[0]["created_at"])).total_seconds()
     result["queue_scope"] = "job created to runner start, separate from setup and pytest"
     result["over_five_minutes"] = result["setup_s"] + result["pytest_s"] > 300
-    (directory / ("preview-summary.json" if preview else "summary.json")).write_text(
+    summary.write_text(
         json.dumps(result, indent=2) + "\n", encoding="utf-8")
     text = json.dumps(result, indent=2)
     print(text)

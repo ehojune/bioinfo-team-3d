@@ -44,8 +44,7 @@ def workflow_env():
 def test_preview_retains_real_policy_and_changed_test_paths_but_normal_range_stays_full():
     paths = (s.PROFILE, 'tests/test_math.py', 'labhq/neutral.py')
     git, _ = fake_git(paths)
-    with pytest.raises(ValueError, match='policy'):
-        s.change_range('pull_request', trusted(), H, git)
+    assert s.change_range('pull_request', trusted(), H, git)['paths'] == sorted(paths)
     result = s.preview_range('pull_request', trusted(), H, git, workflow_env())
     assert result == {'version': 1, 'checkout': H, 'base': A, 'paths': sorted(paths),
                       'mode': 'preview', 'reusable': False}
@@ -108,13 +107,16 @@ def test_preview_and_authoritative_selection_receipts_are_not_interchangeable(tm
     (directory / 'preview-changes.json').write_text(json.dumps(receipt), encoding='utf-8')
     monkeypatch.setenv('CI_SUITE_ARTIFACT_DIR', str(directory)); monkeypatch.setenv('GITHUB_SHA', H)
     assert suite.select(items, s.WINDOWS_PREVIEW, tmp_path)[1] == items
-    assert suite.select(items, s.WINDOWS_BOUNDARY, tmp_path) == (items, [], {})
+    with pytest.raises(pytest.UsageError):
+        suite.select(items, s.WINDOWS_BOUNDARY, tmp_path)
     # Renaming cannot disguise a preview receipt as authoritative selection.
     (directory / 'changes.json').write_text(json.dumps(receipt), encoding='utf-8')
-    assert suite.select(items, s.WINDOWS_BOUNDARY, tmp_path) == (items, [], {})
+    with pytest.raises(pytest.UsageError):
+        suite.select(items, s.WINDOWS_BOUNDARY, tmp_path)
     receipt['reusable'] = True
     (directory / 'preview-changes.json').write_text(json.dumps(receipt), encoding='utf-8')
-    assert suite.select(items, s.WINDOWS_PREVIEW, tmp_path) == (items, [], {})
+    with pytest.raises(pytest.UsageError):
+        suite.select(items, s.WINDOWS_PREVIEW, tmp_path)
 
 
 def test_preview_keeps_changed_pure_test_and_unknown_nodes(tmp_path):
@@ -149,22 +151,15 @@ def test_reuse_refuses_preview_artifacts_even_with_same_tree_and_valid_digest(ev
 def test_workflow_preview_is_conditional_step_with_separate_namespace_and_unchanged_full_receipt():
     workflow = yaml.safe_load((s.ROOT/cs.WORKFLOW).read_text(encoding='utf-8'))
     jobs = workflow['jobs']; steps = jobs['pytest-windows']['steps']
-    # No extra job is allowed to alter the exact required-job receipt set.
     assert set(jobs) == {'changes', 'pytest', 'pytest-windows', 'clean-install', 'ro-crate-validator',
                          'pytest-slow', 'readme', 'patch-notes', 'validation-manifest'}
-    plan = next(x for x in jobs['changes']['steps'] if x.get('id') == 'preview')
-    assert all(x in plan['if'] for x in ("reason == 'full'", "'pull_request'", 'head.repo.full_name', 'head.repo.id'))
-    setup = next(x for x in steps if x.get('id') == 'preview_setup')
-    assert setup['if'] == "needs.changes.outputs.boundary_preview == 'true'"
-    normal = next(x for x in steps if x.get('run','').startswith('pytest ') and '--ci-profile $' in x['run'])
-    preview = next(x for x in steps if '--ci-profile windows-boundary-preview' in x.get('run',''))
-    assert steps.index(normal) < steps.index(setup) < steps.index(preview)
-    assert 'always' not in setup['if'] and 'continue-on-error' not in preview
-    assert preview['env']['CI_SUITE_ARTIFACT_DIR'] == '${{ env.CI_PREVIEW_ARTIFACT_DIR }}'
+    assert 'boundary_preview' not in jobs['changes']['outputs']
+    assert not any('preview' in str(step).lower() for step in steps)
+    normal = [x for x in steps if x.get('run','').startswith('pytest ') and '--ci-profile $' in x['run']]
+    assert len(normal) == 1 and 'continue-on-error' not in normal[0]
     assert jobs['pytest-windows']['outputs']['profile'] == '${{ steps.identity.outputs.profile }}'
     uploads = [x['with'] for x in steps if x.get('uses','').startswith('actions/upload-artifact')]
-    assert len(uploads) == 2 and uploads[0]['name'].startswith('coverage-windows-')
-    assert uploads[1]['name'].startswith('boundary-preview-') and uploads[0]['path'] != uploads[1]['path']
+    assert len(uploads) == 1 and uploads[0]['name'].startswith('coverage-windows-')
     manifest = jobs['validation-manifest']['steps'][-1]['with']
     assert manifest['name'].startswith(f'ci-full-v{cs.VERSION}-') and manifest['path'] == 'ci-result.json'
 
@@ -182,7 +177,8 @@ def test_workflow_preview_is_conditional_step_with_separate_namespace_and_unchan
 def test_audited_mixed_pure_nodes_only_omit_with_exact_source_and_unchanged_test(path,node):
     data = s.policy(); source = (s.ROOT/path).read_text(encoding='utf-8')
     assert not s.include_windows(path, source, data, root=s.ROOT, node=node)[0]
-    assert s.include_windows(path, source+'\n# drift', data, root=s.ROOT, node=node)[0]
+    with pytest.raises(ValueError):
+        s.include_windows(path, source+'\n# drift', data, root=s.ROOT, node=node)
     assert s.include_windows(path, source, data, root=s.ROOT, changed={path}, node=node)[0]
 
 
@@ -208,8 +204,13 @@ def test_plan_cli_emits_only_conditional_output_with_real_range_no_dummy_receipt
         monkeypatch.setenv(key,value)
     git,_=fake_git((s.PROFILE,) if allowed else ('labhq/neutral.py',))
     monkeypatch.setattr(cs,'git',git); monkeypatch.setattr(sys,'argv',['ci_selection','preview-plan'])
-    s.main()
-    assert capsys.readouterr().out == f'enabled={str(allowed).lower()}\n'
+    if allowed:
+        s.main()
+        assert capsys.readouterr().out == 'enabled=true\n'
+    else:
+        with pytest.raises(SystemExit):
+            s.main()
+        assert capsys.readouterr().out == ''
     assert not list(tmp_path.glob('*changes.json'))
 
 
