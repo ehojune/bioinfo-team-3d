@@ -267,6 +267,7 @@ def _create(command, cwd, environment, *, diagnostics=None):
         except subprocess.TimeoutExpired as exc:
             _provider_output(exc.output, diagnostics, complete=False)
             raise  # Create may have succeeded. Never retry or use a partial returned PID.
+        diagnostics["returncode"] = result.returncode if type(result.returncode) is int else None
         reply = _provider_output(result.stdout, diagnostics, complete=True)
     finally:
         diagnostics["elapsed_ms"] = round((time.monotonic() - started) * 1000, 3)
@@ -317,12 +318,16 @@ def launch(command, *, state, role, **options):
                    "sys_path": [str(Path(p or os.getcwd()).resolve()) for p in sys.path]}
         control = folder / "request.json"
         _write(control, request)  # No environment values or credentials on disk.
+        phase = "provider_create"
         try:
             pid = _create([command[0], "-I", "-S", str(Path(__file__).resolve()), str(control)], cwd, environment,
                           diagnostics=provider)
+            phase = "process_open"
             handle = native.open_process(pid)
             process = Process(native, pid, handle, None)
+            phase = "process_identity"
             identity = native.identity(handle)
+            phase = "receipt_wait"
             deadline = time.monotonic() + TIMEOUT
             while True:
                 receipt = _read(folder / "receipt.json")
@@ -331,25 +336,42 @@ def launch(command, *, state, role, **options):
                 if not native.alive(handle) or time.monotonic() >= deadline:
                     raise BrokerFailure("receipt_timeout")
                 time.sleep(.02)
+            phase = "identity_verify"
             if (receipt != {"nonce": nonce, "pid": pid, "created": identity["created"]}
                     or identity["image"] != caller["image"] or identity["owner"] != caller["owner"]):
                 raise BrokerFailure("identity_mismatch")
             owned = True  # Nonce + retained-handle creation/image/owner identity; safe to clean up from here.
             process.created = identity["created"]
             diagnostics = {}
+            phase = "job_verify"
             member = job_membership(handle, diagnostics=diagnostics)
             if member is not False or not native.alive(handle):
                 outcome(state, role, "wmi_unverified", child_in_job=member, child_job_query=diagnostics)
                 raise BrokerFailure("job_unverified")
             outcome(state, role, "wmi_verified", child_pid=pid, child_in_job=False, provider=provider)
             process.folder = folder
+            phase = "ack_write"
             _write(folder / "ack.json", receipt)  # Commit point: no wait/failable work and no rollback kill after ACK.
             committed = True
             return process
         except (OSError, ValueError, TypeError, subprocess.SubprocessError) as exc:
-            reason, code = getattr(exc, "reason", "native_or_protocol"), getattr(exc, "code", getattr(exc, "errno", None))
+            if isinstance(exc, BrokerFailure):
+                reason = exc.reason
+            elif isinstance(exc, subprocess.TimeoutExpired):
+                reason = "provider_timeout"
+            elif isinstance(exc, (ValueError, TypeError)):
+                reason = "provider_protocol" if phase == "provider_create" else "protocol_error"
+            else:
+                reason = "native_error" if isinstance(exc, OSError) else "provider_subprocess"
+            code = getattr(exc, "code", getattr(exc, "errno", None))
+            if type(code) is not int:
+                code = None
+            # Exception messages/commands/output are deliberately never journaled.
+            error = next((kind.__name__ for kind in (BrokerFailure, subprocess.TimeoutExpired,
+                subprocess.CalledProcessError, subprocess.SubprocessError, PermissionError,
+                FileNotFoundError, TimeoutError, OSError, ValueError, TypeError) if isinstance(exc, kind)), "OtherError")
             try:
-                outcome(state, role, "wmi_failed", error=type(exc).__name__, reason=reason, code=code, provider=provider)
+                outcome(state, role, "wmi_failed", error=error, reason=reason, code=code, phase=phase, provider=provider)
             finally:  # A full/unwritable journal must never prevent owned-handle cleanup before ACK.
                 if process:
                     try:

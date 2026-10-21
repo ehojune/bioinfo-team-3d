@@ -4,6 +4,45 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+Refs #799 · PR #824
+
+새 Windows 실패는 이전 supervisor 조기 종료와 달리 WMI spawn broker에서 발생했습니다. 원인 수정이 아니라 진단 보강입니다.
+
+- Broker는 provider timeout·protocol·native 오류와 실패 단계를 구분하고, provider가 반환한 경우에만 returncode를 기록합니다. 명령·PowerShell 원문·환경값·원문 stdout/stderr·예외 메시지는 새 진단에 넣지 않습니다.
+- 시작 fixture는 detached-launch journal 끝 16 KiB에서 최대 4개 행의 allowlist 사실만 출력합니다. 누락·읽기 실패·잘못된 JSON과 잘린 tail을 표시하며 원래 예외를 유지합니다.
+- 새/수정 회귀 11건 red→green, 관련 fake 계약 20건 PASS(총 31개 고유 case); 최종 journal 5건을 다시 확인했습니다. 기존 UTF-8/재채점 검증은 변경 없이 보존하며 반복하지 않았습니다. 전체 오류 trace는 로컬 산출에 남깁니다.
+- 성공 경로의 nonce/envhash·identity·Job·ACK 순서, deadline·단일 시도, retained-handle 및 승인 후 정리는 그대로입니다. 기존 native 함수/assertions·시작/health/PID 순서는 AST로 대조했고 Python 3.10 문법/compile 4파일과 public·diff·기록 검사를 수행했습니다.
+- Windows API·process/thread·WMI/WSL·PI·연구·bench·HPC는 실행하지 않았습니다. 실제 원인과 새 head의 native CI 결과는 미확인입니다. C3 CI/policy는 변경하지 않았으며 push·PR 변경·CI/리뷰 조회·병합·배포 없이 로컬 커밋만 준비합니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+Refs #799 · PR #824
+
+Windows CI 회귀 중 테스트의 UTF-8 읽기를 고치고 시작 실패 진단을 보완했습니다. 제품 동작은 변경하지 않았습니다.
+
+- `test_bench_metrics.py`의 JSON 읽기 3곳에 UTF-8을 명시했습니다. receipt/sidecar 바이트 보존·미수집과 0 구분·재계측 금지 assertions는 유지합니다. 전역 locale/UTF-8 설정을 바꾸지 않고 fake cp1252 기본 reader로 두 재채점 실패를 재현했습니다.
+- `_start_gateway` 시작 실패 때 임시 supervisor/gateway 로그를 stderr에 남기고 원래 예외·traceback을 다시 전달합니다. 로그 누락·읽기 오류가 원래 실패를 가리지 않도록 fake 회귀 6건을 추가했습니다. 기존 모든 native 함수·assertion과 start/health/record 순서는 AST 대조로 보존을 확인했습니다.
+- 수정 전 8건 실패 → 관련 fake 24건 PASS(로컬 1.62초). Python 3.10 AST/compile 2파일·public·diff·기록 검사를 수행했습니다. 전체 traceback은 로컬 산출에 보존합니다.
+- Windows 실제 gateway 실패는 shutdown 전 supervisor 종료이며 로그 본문이 없어 원인 미확인입니다. 제품 CLI·Job/ACK·timeout·retry는 바꾸지 않았고 native fixture·실제 process/thread·PI·연구·bench·HPC는 실행하지 않았습니다. 최종 Windows 검증과 원인 확인은 CI에 남습니다.
+- C3 소유 CI/policy와 다른 담당자 변경은 유지했습니다. 로컬 커밋만 준비하며 push·PR 변경·CI/리뷰 조회·병합·배포는 하지 않습니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+Refs #799, #739
+
+최신 main c8a33a8을 정상 merge해 #793 CI 정책과 #821/#822 변경을 보존했습니다. Recorder 소스는 기존 검토본 그대로이며 실제 bench는 실행하지 않았습니다.
+
+- HANDOFF의 닫힌 PR 큐·Paper2Skill 병합 전 표기를 정리했습니다. 매뉴얼은 Linux 전수·Windows 기본 경계/선택 범위 검증 실패 시 전수·nightly/수동 전수를 구분합니다. README 한영판·C3 정책/CI 소스·생성 목차는 main과 같습니다.
+- 집중 fake/coroutine/static 29건 PASS(로컬 1.98초). 성공/실패 spawn·누락과 0·arm 격리·재채점 receipt/sidecar 보존을 확인했습니다. Python 3.10 AST/compile 6파일과 변경 runtime 2파일 정답 누출 정적 검사 PASS.
+- LF 문자 수: HANDOFF 3349→3333(-16), manual 175613→175667(+54); README 11686, 영문 17627로 변동 없습니다. main에 반영된 Paper2Skill 설명은 유지했습니다.
+- 기존 git subprocess fixture 차단은 재실행하지 않았습니다. 실제 process/thread·PI·연구·bench·HPC·원자료·network fixture 미실행이며 속도·효용과 이번 head의 Linux/Windows CI는 미검증입니다. #799는 OPEN입니다.
+- Public·diff·patch-notes·notes 결과는 로컬 검증 산출에 기록합니다. Push·PR 생성·CI 조회·리뷰 호출·병합·배포 없이 총괄에게 로컬 head를 넘깁니다.
+
+- 총괄 독립 정적 검토에서 코드 P1=0을 확인했습니다. 참고 계약의 기록기 미구현 표기를 opt-in 구현/실측 미실행으로 바로잡았습니다.
+- 동일 main Git 본문/LF 기준 README 한영·manual 합계 204926→204981자입니다. 실제 bench·효용은 미검증입니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 # PR #793 exit logging 전용 fixture (local only)
 
 - 기준 fc70f4a6. 새 trace는 powershell_started만 관측했고 입력 read/EOF·JSON·스케줄링·관측을 구분하지 못한다. Create 결과·provider timeout 원인은 UNVERIFIED다.
@@ -97,6 +136,20 @@ PR #793 · Refs #788 · source `2bc8476`.
 - 새 회귀는 수정 전 **3 failed/35 passed**, 수정 뒤 관련 guarded mock/static **607 passed**입니다. malformed/forged/부분 job·API 장애·임의 오류·stray file upload 방지와 consumer full fallback을 검사했습니다. Python3.10 AST/YAML·기존 gate job 동일성·integrations·public·기록·patch-note·diff PASS. 전체 실패 로그와 guard 환경을 보존했습니다. lookup-only reference는 6,618 → 7,177자이며 read-often docs는 늘리지 않았습니다.
 
 한계: 새 head의 native CI와 실제 no-reuse/artifact 왕복은 미검증입니다. 제품·worker 격리·다른 owner 파일은 변경하지 않았고 main 통합/profile refresh도 하지 않았습니다. helper/runtime fingerprint가 달라 Windows 전수 fallback을 예상하며 과거 selected 수를 새 CI 범위로 주장하지 않습니다. 로컬 native/process/thread/xdist·PI·WSL·연구·bench/HPC·전체 suite·dispatch·CI polling·review 요청·merge 없이 종료하며 root가 exact-head CI·독립 검토·후속 P1·land를 맡습니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+Refs #799, #739
+
+bench별 기록기 연결을 로컬 구현했습니다(76437b0). 실제 bench·연구·속도/효용 검증은 하지 않았습니다.
+
+- `bench_metrics.py`가 기존 #815 계획 모양 셈법을 공유하고, hash 일치 승인 snapshot·task ledger·결과/승인 event를 arm별로 집계합니다. 최초/재계획/continuation 기대 dispatch, hosted task·attempt retry·consult·skill·분석·review·보고·승인 대기, known 비용·unknown 개수를 구분합니다.
+- bench가 만든 runner에만 opt-in callback을 연결합니다. 성공한 OS spawn 뒤 시작 수와 argv UTF-8 표현·stdin byte만 셉니다. 단독 엔진도 직접 계측합니다. task/prepared prompt·context 크기는 대리값이며 원문·명령·경로·secret·다른 요청은 새 receipt에 저장하지 않습니다.
+- 누락은 `not_collected`, 단독 arm의 labhq 단계와 mock의 실제 CLI는 `not_applicable`입니다. 실패 spawn과 미관측 attempt를 구분하고 재전송을 중복 집계하지 않습니다. `run.json`·arm별 `bench_metrics.json/.md`·comparison에 전달하며 재채점은 관측과 sidecar를 보존합니다.
+- 집중 fake/static 28건과 실제 `result_editor` kind 연결 1건 PASS. Python 3.10 AST/compile 6파일·변경된 비-bench runtime 2파일 정답 누출 정적 검사·public·diff·patch-notes·notes 검사를 기록했습니다. Reference LF 문자 수 4833→4780(-53).
+- 기존 `test_bench_answer_identifiers_do_not_leak_into_non_bench_runtime_files`는 내부 git subprocess fixture가 mock guard에 차단됐습니다. 로그/실패명을 보존하고 재실행하지 않았으며 동일 검사 함수의 위 두 파일 정적 대조로 대체했습니다. 원 pytest node와 Linux/Windows 실제 process 통합은 CI 경계입니다.
+- 남은 범위: canonical 승인 snapshot이 없는 일반 lane 계획·재계획 rerun 증거, 실제 파일/환경·SDK 내부 전달량·baseline 내부 turn은 미수집입니다. launch 성공은 내부 CLI 인증·tool 성공의 증거가 아니며 단계 시간은 중첩되는 task elapsed 합입니다. #799는 계측 공백과 승인된 실제 비교가 남아 OPEN으로 둡니다.
+- CSO 정책·승인/hash·DB schema·CI/conftest/pyproject·의존성·PI 상태는 변경하지 않았습니다. 실제 process/thread/포트·설치·PI·연구·bench·HPC·원자료·network fixture 미실행. #793 정책 준비 전까지 로컬 커밋만 보존하고 push/PR·CI polling·병합·배포를 하지 않습니다.
 
 🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 

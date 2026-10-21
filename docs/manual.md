@@ -1465,7 +1465,7 @@ Stanford Zou 연구실의 Virtual Biotech(bioRxiv 2026, 저자 중 Jiacheng Miao
 
 ## 내 저장소로 올리기
 
-개발 CI는 첫 PR 실행부터 예제·보호 markup이 그대로인 prose와 정해진 기록만 문서 검사로 줄입니다. manual·개발 지침·정책 문서는 내용과 구조가 같은 문장 경계 줄바꿈만 후보입니다. main은 같은 checkout tree·기존 workflow/policy·필수 gate 전체의 성공 증거가 있을 때만 PR 결과를 재사용합니다. 불명확하면 Ubuntu 3.10/3.12·Windows 3.12 전체 suite와 clean-install·공식 validator·MCP gate를 실행합니다([판별·증거 경계](reference/ci-reuse.md)).
+개발 CI는 보호 예제·markup이 같은 prose와 정해진 기록만 축소합니다. manual·개발 지침·정책은 내용·구조가 같은 문장 경계 줄바꿈만 후보입니다. main 재사용에는 동일 checkout tree·workflow/policy·필수 gate 전체의 성공 근거가 필요합니다. 불명확하면 축소·재사용하지 않습니다. Linux 3.10/3.12는 전수, Windows 3.12는 기본 경계 profile이며 선택 범위를 검증하지 못하면 전수입니다. Windows nightly·workflow_dispatch도 전수이며 clean-install·공식 validator·MCP gate는 유지합니다([판별·증거 경계](reference/ci-reuse.md)).
 
 ```bash
 ./scripts/publish_github.sh          # gh CLI로 public 저장소 <내 계정>/labhq 생성 + push
