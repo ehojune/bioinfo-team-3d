@@ -152,6 +152,7 @@ def _path_starts(scan: _PathTextScan) -> Iterable[int]:
 
 
 _SEPARATOR_RUN_END = re.compile(r"[^/\\]")
+_SEPARATOR_ONLY_LINE = re.compile(r"[/\\:]*")
 
 
 def _literal_zone_end(text: str, start: int, zone: str) -> int | None:
@@ -195,6 +196,14 @@ def _literal_zone_start(text: str, zones: Iterable[str], scan: _PathTextScan) ->
 
 
 def _sanitize_path_line(line: str, zones: Iterable[str]) -> str:
+    zones = tuple(zones)
+    # Inspect the WHOLE line in C. These characters cannot name a zone with
+    # any other component character, even after lexical normalization. A
+    # separator-only zone (e.g. /:) still needs the original classifier.
+    # Any other character, however late, sends the full line through it too.
+    if (_SEPARATOR_ONLY_LINE.fullmatch(line)
+            and not any(_SEPARATOR_ONLY_LINE.fullmatch(zone) for zone in zones)):
+        return line
     scan = _scan_path_text(line)
     if _scan_mentions_zone(line, zones, scan):
         return "<restricted-zone>"
