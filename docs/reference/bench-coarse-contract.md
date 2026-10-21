@@ -66,7 +66,7 @@
 - 22:28은 [벤치 C t6 재채점](https://github.com/ehojune/bioinfo-team-3d/issues/373#issuecomment-5999676070)이고, C의 [원 보고 시간은 85.9분](https://github.com/ehojune/bioinfo-team-3d/issues/373#issuecomment-5993720748)입니다.
 - 서로 다른 회차의 수치를 한 비교로 묶지 않습니다. 과분할이 속도 차이의 원인이라는 결론은 통제 비교 전까지 내리지 않습니다.
 
-## 7. 아직 없는 것
+## 7. 구현과 실측의 경계
 
-- §3의 기록기(task 기록 대리값과 runner의 실제 CLI 시작·byte를 arm 폴더에 쓰는 코드)는 구현하지 않았습니다. 그때까지 해당 칸은 `미수집`입니다.
+- §3 기록기는 bench에서 명시적으로 켰을 때 arm 폴더에 task·실제 CLI 시작·전달 byte를 기록합니다. 기록이 없으면 `미수집`으로 남깁니다. 실제 bench는 아직 실행하지 않았습니다.
 - 계획 예제는 손으로 만든 dict입니다. 새 응집형 문장으로 실제 CSO가 이런 계획을 내는지, 속도·비용·품질이 달라지는지는 측정하지 않았습니다. dry-run과 승인된 bench에서 확인합니다.
