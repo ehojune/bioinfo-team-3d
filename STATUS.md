@@ -4,6 +4,12 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+Refs #833
+
+Browser startup 실패 때 server/profile을 정리하고 listen 오류를 반환하도록 고쳤습니다. 실제 main timeout 원인은 미확정입니다. [로그 구분·정리 계약·reuse 거부 근거](../reference/node-main833.md)를 남겼으며 새 PR과 병합 main의 native 검증이 필요합니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 브라우저에 정상 종료를 요청한 뒤 실제 종료를 확인합니다. [종료 계약·진단 한계](../reference/browser-fixture-cleanup.md)를 참고하세요.
 
 # 개발 문서 현행화
