@@ -145,6 +145,103 @@ class PhaseCheckpoints:
                 self.warned = True
 
 
+class StageDiagnostics:
+    """Failed and slowest stages of one pytest process, written as they happen (#823).
+
+    A pool cancelled by its step timeout leaves no master metrics and prints no FAILURES section (PR #837). This
+    file keeps each failure's stage, duration and first message line, and the slowest stages. It is diagnostic
+    only and never reusable: proof, metrics, receipt and reuse readers glob collection-/metrics-/*error* names
+    and never read it. A record or write failure never changes a test outcome.
+    """
+    SCHEMA = 'ci-stage-diagnostics-v1'
+    STAGES = ('setup', 'call', 'teardown')
+    OUTCOMES = ('passed', 'failed', 'skipped')
+    MAX_FAILURES = 50
+    MAX_SLOWEST = 30
+    MAX_NODEID = 512
+    MAX_MESSAGE = 300
+    MAX_SECONDS = 86400.0
+    KIND = re.compile(r'([A-Za-z_][\w.]{0,127})(?::|$)')
+    TOKEN = re.compile(r'gh[pousr]_[A-Za-z0-9]{16,}|github_pat_\w{16,}|(?i:bearer)\s+\S+')
+
+    def __init__(self, path, phase, worker, *, clock=None, interval=5):
+        self.path, self.clock, self.interval = path, clock or time.monotonic, interval
+        self.origin = self.clock()
+        self.last_write = None
+        self.warned = False
+        self.data = dict(diagnostic_only=True, reusable=False, schema=self.SCHEMA, phase=phase, worker=worker,
+                         clock='process-local monotonic elapsed seconds', reports=0, failures=[],
+                         failures_dropped=0, duplicate_reports=0, slowest=[], slowest_limit=self.MAX_SLOWEST,
+                         session_finished=False)
+        self.flush()
+
+    def _seconds(self, value):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        value = float(value)
+        return round(value, 6) if value == value and 0 <= value <= self.MAX_SECONDS else None
+
+    def _crash(self, report):
+        """Exception kind and the first line of pytest's crash message only; no captured output or traceback."""
+        crash = getattr(getattr(report, 'longrepr', None), 'reprcrash', None)
+        text = getattr(crash, 'message', None)
+        if not isinstance(text, str):
+            text = str(getattr(report, 'longrepr', '') or '')
+            lines = [line for line in text.splitlines() if line.strip()]
+            text = lines[-1] if lines else ''
+        line = next((line.strip() for line in text.splitlines() if line.strip()), '')
+        line = self.TOKEN.sub('[redacted]', ''.join(c if c.isprintable() else ' ' for c in line))
+        kind = self.KIND.match(line)
+        return dict(kind=kind.group(1) if kind else None, message=line[:self.MAX_MESSAGE],
+                    message_truncated=len(line) > self.MAX_MESSAGE)
+
+    def record(self, report):
+        nodeid = str(report.nodeid)
+        row = dict(nodeid=nodeid[:self.MAX_NODEID], nodeid_truncated=len(nodeid) > self.MAX_NODEID,
+                   stage=report.when if report.when in self.STAGES else 'other',
+                   outcome=report.outcome if report.outcome in self.OUTCOMES else 'other',
+                   duration_s=self._seconds(getattr(report, 'duration', None)),
+                   ended_s=round(self.clock() - self.origin, 6))
+        key = (row['nodeid'], row['stage'])
+        failures, slowest = self.data['failures'], self.data['slowest']
+        if any((r['nodeid'], r['stage']) == key for r in failures + slowest):
+            self.data['duplicate_reports'] += 1  # a kept stage reported again is counted once
+            return
+        self.data['reports'] += 1
+        urgent = False
+        if row['outcome'] == 'failed':
+            if len(failures) < self.MAX_FAILURES:
+                failures.append({**row, **self._crash(report)})
+                urgent = True
+            else:
+                self.data['failures_dropped'] += 1
+        if row['duration_s'] is not None:
+            slowest.append(row)
+            slowest.sort(key=lambda r: (-r['duration_s'], r['nodeid'], r['stage']))
+            del slowest[self.MAX_SLOWEST:]
+        now = self.clock()
+        if urgent or self.last_write is None or now - self.last_write >= self.interval:
+            self.flush()
+
+    def finish(self, exitstatus):
+        self.data['session_finished'] = True
+        self.data['exitstatus'] = int(exitstatus)
+        self.flush()
+
+    def flush(self):
+        """Replace the file whole, so a cancelled process leaves the last complete record."""
+        temporary = self.path.with_name('.' + self.path.name + '.tmp')
+        try:
+            temporary.write_text(json.dumps(self.data, ensure_ascii=False, allow_nan=False, indent=1) + '\n',
+                                 encoding='utf-8')
+            os.replace(temporary, self.path)
+            self.last_write = self.clock()
+        except (OSError, ValueError):
+            if not self.warned:
+                print('CI stage diagnostics write unavailable (diagnostic only)', file=sys.stderr)
+                self.warned = True
+
+
 def collection_arguments(config, phase):
     """Bind real pytest discovery, not a caller's claim of complete coverage."""
     expected = list(windows.TARGETS) if phase == 'critical' else ['tests']
@@ -201,6 +298,11 @@ class Observation:
         self.resource_waits = defaultdict(float)
         self.checkpoints = (PhaseCheckpoints(self.directory / f'checkpoints-{self.worker}.json',
                             self.context_identity, self.phase, self.worker) if self.phase else None)
+        try:
+            self.diagnostics = StageDiagnostics(self.directory / f'diagnostics-{self.worker}.json',
+                                                self.phase, self.worker)
+        except Exception:  # noqa: BLE001 - a diagnostic never changes the run
+            self.diagnostics = None
 
     @pytest.hookimpl(wrapper=True, tryfirst=True)
     def pytest_collection(self, session):
@@ -332,6 +434,11 @@ class Observation:
             self.checkpoints.stage(item.nodeid, 'teardown', 'started')
 
     def pytest_runtest_logreport(self, report):
+        if self.diagnostics:
+            try:
+                self.diagnostics.record(report)
+            except Exception:  # noqa: BLE001 - a diagnostic never changes the run
+                pass
         if self.checkpoints:
             self.checkpoints.stage(report.nodeid, report.when, 'completed')
         self.stage_reports.append([report.nodeid, report.when, report.outcome])
@@ -367,6 +474,11 @@ class Observation:
                   "longest_files": sorted(self.files.items(), key=lambda p: (-p[1], p[0]))[:20]})
         if self.checkpoints:
             self.checkpoints.mark('session_finished')
+        if self.diagnostics:
+            try:
+                self.diagnostics.finish(exitstatus)
+            except Exception:  # noqa: BLE001 - a diagnostic never changes the run
+                pass
 
     def write(self, name, value):
         (self.directory / f"{name}-{self.worker}.json").write_text(

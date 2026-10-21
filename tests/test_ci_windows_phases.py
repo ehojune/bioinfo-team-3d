@@ -519,6 +519,114 @@ def test_diagnostic_write_failure_does_not_mask_an_interrupted_stage(tmp_path, c
     assert capsys.readouterr().err.count('checkpoint write unavailable') == 1
 
 
+def fake_report(nodeid, when='call', outcome='passed', duration=0.01, longrepr=None):
+    return SimpleNamespace(nodeid=nodeid, when=when, outcome=outcome, duration=duration, longrepr=longrepr,
+                           passed=outcome == 'passed', failed=outcome == 'failed', skipped=outcome == 'skipped')
+
+
+def crash(message):
+    return SimpleNamespace(reprcrash=SimpleNamespace(message=message))
+
+
+def test_a_failure_is_on_disk_with_stage_duration_and_first_line_before_the_session_ends(tmp_path):
+    clock = SimpleNamespace(now=50.0)
+    path = tmp_path / 'diagnostics-gw3.json'
+    diagnostics = suite.StageDiagnostics(path, 'parallel', 'gw3', clock=lambda: clock.now)
+    clock.now += 1
+    diagnostics.record(fake_report('tests/test_fake.py::test_ok', duration=0.5))
+    clock.now += 2
+    message = ('asyncio.exceptions.TimeoutError: waited\x1b[31m ghp_' + 'a' * 30 + ' Bearer abc.def '
+               + 'x' * 400 + '\nsecond line with a payload')
+    diagnostics.record(fake_report('tests/test_fake.py::test_slow_fallback', outcome='failed', duration=2.25,
+                                   longrepr=crash(message)))
+    # No interval passed and no sessionfinish: the failure was written at once (a cancelled pool keeps it).
+    saved = json.loads(path.read_text(encoding='utf-8'))
+    assert saved['diagnostic_only'] is True and saved['reusable'] is False and saved['session_finished'] is False
+    assert saved['schema'] == 'ci-stage-diagnostics-v1' and saved['phase'] == 'parallel' and saved['worker'] == 'gw3'
+    failure, = saved['failures']
+    assert failure['nodeid'] == 'tests/test_fake.py::test_slow_fallback' and failure['stage'] == 'call'
+    assert failure['outcome'] == 'failed' and failure['duration_s'] == 2.25 and failure['ended_s'] == 3
+    assert failure['kind'] == 'asyncio.exceptions.TimeoutError'
+    assert len(failure['message']) == 300 and failure['message_truncated'] is True
+    assert 'ghp_' not in failure['message'] and 'abc.def' not in failure['message'] and '\x1b' not in failure['message']
+    assert 'second line' not in json.dumps(saved)  # only the first line, never the traceback or captured output
+    assert [row['nodeid'] for row in saved['slowest']] == ['tests/test_fake.py::test_slow_fallback',
+                                                          'tests/test_fake.py::test_ok']
+    diagnostics.finish(2)
+    saved = json.loads(path.read_text(encoding='utf-8'))
+    assert saved['session_finished'] is True and saved['exitstatus'] == 2
+    assert not list(tmp_path.glob('.*.tmp'))  # the whole file was replaced, no partial write left behind
+
+
+@pytest.mark.parametrize('longrepr,kind,message', [
+    ('E   assert 1 == 2\nE   +  where 1\n\ntests/test_fake.py:9: AssertionError', None,
+     'tests/test_fake.py:9: AssertionError'),  # a location is not an exception kind
+    (crash('assert [1] == [2]'), None, 'assert [1] == [2]'),
+    (None, None, ''),
+])
+def test_a_failure_without_a_crash_line_keeps_only_a_bounded_last_line(tmp_path, longrepr, kind, message):
+    diagnostics = suite.StageDiagnostics(tmp_path / 'diagnostics-master.json', None, 'master', clock=lambda: 0)
+    diagnostics.record(fake_report('t::x', when='setup', outcome='failed', longrepr=longrepr))
+    failure, = diagnostics.data['failures']
+    assert (failure['kind'], failure['message'], failure['stage']) == (kind, message, 'setup')
+
+
+def test_stage_diagnostics_are_bounded_deduplicated_and_throttled(tmp_path, monkeypatch):
+    clock = SimpleNamespace(now=0.0)
+    path = tmp_path / 'diagnostics-gw0.json'
+    monkeypatch.setattr(suite.StageDiagnostics, 'MAX_FAILURES', 3)
+    diagnostics = suite.StageDiagnostics(path, 'parallel', 'gw0', clock=lambda: clock.now)
+    for i in range(200):
+        diagnostics.record(fake_report(str(i) + 'n' * 2000, duration=float(i)))
+    assert json.loads(path.read_text(encoding='utf-8'))['reports'] < 200  # passed stages do not write each time
+    for bad in (float('nan'), float('inf'), -1.0, True, '3', None, 1e9):
+        diagnostics.record(fake_report(f'bad::{bad!r}', duration=bad))
+    for i in range(5):
+        diagnostics.record(fake_report(f'f::{i}', outcome='failed', duration=0.0, longrepr=crash('E')))
+    diagnostics.record(fake_report('f::0', outcome='failed', duration=0.0, longrepr=crash('E')))
+    diagnostics.finish(1)  # dropped failures beyond the cap wait for the normal throttle or the session end
+    saved = json.loads(path.read_text(encoding='utf-8'))
+    assert len(saved['failures']) == 3 and saved['failures_dropped'] == 2 and saved['duplicate_reports'] == 1
+    assert len(saved['slowest']) == 30 and saved['slowest'][0]['duration_s'] == 199.0
+    assert [row['duration_s'] for row in saved['slowest']] == sorted((row['duration_s'] for row in saved['slowest']),
+                                                                    reverse=True)
+    assert all(len(row['nodeid']) == 512 and row['nodeid_truncated'] for row in saved['slowest'])
+    assert not any(row['nodeid'].startswith('bad::') for row in saved['slowest'])
+    assert saved['reports'] == 200 + 7 + 5 and len(path.read_bytes()) < 100_000
+
+
+def test_a_stage_diagnostics_write_failure_never_changes_the_run(tmp_path, capsys):
+    diagnostics = suite.StageDiagnostics(tmp_path / 'missing' / 'diagnostics-master.json', None, 'master',
+                                         clock=lambda: 0)
+    diagnostics.record(fake_report('t::x', outcome='failed', longrepr=crash('AssertionError')))
+    diagnostics.finish(1)
+    assert diagnostics.data['failures'][0]['kind'] == 'AssertionError'
+    assert capsys.readouterr().err.count('stage diagnostics write unavailable') == 1
+
+    class Broken:
+        def record(self, report):
+            raise RuntimeError('diagnostic bug')
+
+        def finish(self, exitstatus):
+            raise RuntimeError('diagnostic bug')
+
+    observation = SimpleNamespace(diagnostics=Broken(), checkpoints=None, stage_reports=[], context='',
+                                  files=suite.defaultdict(float), results=suite.defaultdict(set))
+    report = fake_report('t::x', outcome='failed', duration=1.0)
+    suite.Observation.pytest_runtest_logreport(observation, report)
+    assert observation.stage_reports == [['t::x', 'call', 'failed']] and observation.results['failed'] == {'t::x'}
+
+
+def test_stage_diagnostics_cannot_replace_or_modify_phase_receipt_proof(receipts):
+    expected = p.combine(receipts)
+    for phase in ('critical', 'parallel'):
+        for worker in ('master', 'gw0'):
+            (receipts / phase / f'diagnostics-{worker}.json').write_text('{not a receipt', encoding='utf-8')
+        suite.StageDiagnostics(receipts / phase / 'diagnostics-gw1.json', phase, 'gw1', clock=lambda: 0).record(
+            fake_report('t::x', outcome='failed', longrepr=crash('AssertionError')))
+    assert p.combine(receipts) == expected
+
+
 def fake_collection_config(phase, **options):
     return SimpleNamespace(rootpath=suite.ROOT, args=list(p.TARGETS) if phase == 'critical' else ['tests'],
         option=SimpleNamespace(**options), getini=lambda key: {
