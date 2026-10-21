@@ -183,7 +183,7 @@ Windows wrapper는 `.venv\Scripts\python.exe`를 직접 실행하므로 venv 활
 
 2.5D·3D 웹을 열어 두면 gateway 연결 끊김과 runner 미연결을 별도로 알립니다. 재연결 중에도 경고를 유지하고 연결이 돌아오면 지웁니다. 연결 끊김만으로 종료와 네트워크 문제를 구별하지는 않으며, 웹을 닫았을 때 외부 채널로 알림을 보내지는 않습니다.
 
-Windows `up`은 실제 Python interpreter로 Job breakaway를 먼저 요청합니다(venv 선택 유지). 확인된 거부·잔류에만 direct 자식을 소유 handle로 정리한 뒤 임시 local WMI bootstrap을 한 번 시도합니다. nonce·생성 시각·실행 파일·현재 사용자·모든 Job 비소속 확인 뒤 ACK하며 bootstrap은 같은 PID로 supervisor에 진입합니다. unknown·정리 실패는 중단하고 flag를 빼지 않습니다. 서비스·Task Scheduler·승격은 없습니다. `logs/detached-launch.jsonl`에는 시도·거부·검증 단계와 Job 잔류/조회 오류를 남기며, 반환 전 로그 쓰기가 실패해도 소유 자식의 정리를 시도합니다. 운영 준비는 role·supervisor의 현재 PID와 생성 시각을 고정한 조회 전용 handle로 모든 Job 비소속을 확인합니다. 과거 로그나 HTTP 인증만으로 대신하지 않으며 확인 불가하면 검증된 경로로 재시작해야 합니다. 배포는 `doctor --runtime` exit 0과 `runtime_readiness.ready=true`를 모두 확인해야 합니다. 기록 없는 소멸만으로 Job 강제 종료를 확정하지 않습니다. [근거·검증 경계](reference/windows-runtime-795.md).
+Windows `up`은 실제 Python interpreter로 Job breakaway를 먼저 요청합니다(venv 선택 유지). 확인된 거부·잔류에만 direct 자식을 소유 handle로 정리한 뒤 임시 local WMI bootstrap을 한 번 시도합니다. nonce·생성 시각·실행 파일·현재 사용자·모든 Job 비소속 확인 뒤 ACK하며 bootstrap은 같은 PID로 supervisor에 진입합니다. unknown·정리 실패는 중단하고 flag를 빼지 않습니다. 서비스·Task Scheduler·승격은 없습니다. `logs/detached-launch.jsonl`에는 시도·거부·검증 단계와 Job 잔류/조회 오류를 남기며, 반환 전 로그 쓰기가 실패해도 소유 자식의 정리를 시도합니다. 운영 준비는 role·supervisor의 현재 PID와 생성 시각을 고정한 조회 전용 handle로 모든 Job 비소속을 확인합니다. 과거 로그나 HTTP 인증만으로 대신하지 않으며 확인 불가하면 검증된 경로로 재시작해야 합니다. 배포는 `doctor --runtime` exit 0과 `runtime_readiness.ready=true`를 모두 확인해야 합니다. 기록 없는 소멸만으로 Job 강제 종료를 확정하지 않습니다. [근거·검증 경계](reference/windows-runtime-795.md). WMI 기동이 지연되면 고정 단계와 경과 시간을 확인합니다. timeout은 계속 실패로 처리합니다([진단 한계](reference/windows-provider-793.md)).
 
 **예고 없이 꺼졌을 때:** `status`는 연결을 시도하기 전에, `doctor`는 네트워크 없이 로컬 PID 기록과 마지막 heartbeat·exit를 보여 줍니다. 조회는 PID 기록을 지우지 않습니다. 프로세스가 없고 exit도 없으면 `비정상 종료 의심`입니다. 아래 파일은 설정의 `gateway.state_dir/logs/`에 gateway·runner별로 쌓입니다(직접 실행한 경우도 동일).
 
@@ -862,12 +862,12 @@ flowchart LR
 | 풀패키지 `full` | 둘 다 | 둘 다 | 위 전부 |
 
 ### 작동 방식
-선행 연구의 지식은 채용 없이 이번 요청에 먼저 씁니다(#549 C).
+선행 연구의 방법은 채용 없이 이번 요청의 참고 스킬로 씁니다(#549 C).
 
-- CSO는 방법이 직접 맞는 논문을 최대 2편 골라 계획 `paper_skills`에 DOI/PMID·선정 이유·담당 단계를 적습니다. 선행 연구의 citation에 붙은 PMID와 `access_level`도 읽습니다.
-- 개발 중(#798, 병합 전): CP1 전에는 DOI/PMID·담당 단계·`full_text` 접근 metadata만 확인합니다. 초록·metadata뿐이거나 접근 수준이 없으면 이유를 남겨 건너뜁니다. 무거운 Paper2Skill 변환은 승인된 담당 단계가 실행될 때 수행하며 승인 계획은 바꾸지 않습니다.
-- 지정 정규직의 임시 스킬과 `inputs/paper_skills/<skill_id>.md`만 주입하고 실행 뒤 제거합니다. 개발 중인 `called=true`는 성공한 단계 결과에 스킬 ID·내용 hash의 정확한 출처 표기가 있고 사본도 유지됐다는 뜻입니다. 장착만으로는 참이 되지 않으며 실제 tool 호출·과학적 효용의 증거는 아닙니다. 참조 없음·실패·증거 부족은 `false`와 이유로 기록합니다([계약](reference/paper-skills-798.md)).
-- 변환·hash 확인·장착 실패는 경고로 남기고 계속합니다. 같은 논문의 인재풀 스킬은 hash 확인 후 재사용하며 수습·계약은 만들지 않습니다.
+- CSO는 방법이 맞는 논문을 최대 2편 골라 `paper_skills`에 DOI/PMID·이유·담당 단계를 적습니다.
+- CP1 전에는 식별자·배정·`full_text` 접근 metadata만 확인하며 증거가 없으면 이유와 함께 생략합니다. Paper2Skill 변환은 승인된 담당 단계 실행 때 수행하고 승인 계획·hash는 유지합니다.
+- 소유권·hash를 확인한 임시 스킬과 `inputs/paper_skills/<skill_id>.md`를 해당 단계에 주입하고 실행 뒤 제거합니다. 주입 문서에는 읽기 권한만 줍니다. 성공 결과의 정확한 스킬 ID·폴더/문서 hash 참조와 유지된 사본이 일치해야 `called=true`입니다. 증거가 없으면 `false`와 이유를 남깁니다. 이는 결과 참조 기록이며 실제 tool 호출·과학적 효용의 증거는 아닙니다([계약](reference/paper-skills-798.md)).
+- 일반 변환·hash 확인·장착 실패는 경고로 남기며 같은 논문의 인재풀 스킬은 hash 확인 뒤 재사용합니다(수습·계약 없음). 승인·선정 변경은 중단·재승인이 필요하며 shutdown·취소는 그대로 전파합니다.
 
 별도 직원을 채용하는 흐름은 다음과 같습니다.
 
@@ -1464,6 +1464,8 @@ Stanford Zou 연구실의 Virtual Biotech(bioRxiv 2026, 저자 중 Jiacheng Miao
 | — | 폰 승인 게이트, 예산 캡, 데이터 구역, 실험노트 | 한 사람이 감독 가능한 형태 |
 
 ## 내 저장소로 올리기
+
+개발 CI는 보호 예제·markup이 같은 prose와 정해진 기록만 축소합니다. manual·개발 지침·정책은 내용·구조가 같은 문장 경계 줄바꿈만 후보입니다. main 재사용에는 동일 checkout tree·workflow/policy·필수 gate 전체의 성공 근거가 필요합니다. 불명확하면 축소·재사용하지 않습니다. Linux 3.10/3.12는 전수, Windows 3.12는 기본 경계 profile이며 선택 근거가 없거나 바뀌면 전수입니다. Windows nightly·workflow_dispatch도 전수이며 clean-install·공식 validator·MCP gate는 유지합니다([판별·증거 경계](reference/ci-reuse.md)).
 
 ```bash
 ./scripts/publish_github.sh          # gh CLI로 public 저장소 <내 계정>/labhq 생성 + push

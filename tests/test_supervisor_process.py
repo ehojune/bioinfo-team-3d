@@ -38,6 +38,23 @@ cli._child_launch = lambda settings, role: ([sys.executable, "-c", child_code], 
 raise SystemExit(supervisor.main([config, "gateway"]))
 """
 
+# Only the finite exit-code logging contract uses this foreground harness. It makes no detachment claim.
+LOGGING_SUPERVISE = """
+import sys, subprocess
+sys.path.insert(0, sys.argv[3])
+from labhq import cli, supervisor, windows_launch
+from tests.test_supervisor_process import _logging_options
+
+config, child_code = sys.argv[1:3]
+fake_command = [sys.executable, "-c", child_code]
+def spawn_fake_gateway(command, *, state, role, popen=None, **options):
+    assert role == "gateway" and command == fake_command
+    return (popen or subprocess.Popen)(command, **options)
+cli._child_launch = lambda settings, role: (fake_command, _logging_options())
+windows_launch.spawn = spawn_fake_gateway
+raise SystemExit(supervisor.main([config, "gateway"]))
+"""
+
 # Windows: launcher -> parent -> supervisor. The parent starts the supervisor, waits until it has pinned its
 # ancestors, and exits; the launcher waits for the parent and exits too, so nothing but the supervisor can still hold
 # a handle on the parent's process object.
@@ -206,6 +223,22 @@ def _start_script(settings: Settings, script, args) -> _ScriptProcess:
     return _ScriptProcess(child, output, settings)
 
 
+def _logging_options():
+    options = {"cwd": str(ROOT), "stdin": subprocess.DEVNULL, "stderr": subprocess.STDOUT, "close_fds": True}
+    if sys.platform != "win32":
+        options["start_new_session"] = True  # Keep the existing POSIX teardown's owned role group.
+    return options
+
+
+def _start_logging_script(settings: Settings, script, args) -> _ScriptProcess:
+    assert os.environ.get(windows_launch.CHECK_ENV) != "1"  # Never remove a requested managed-entry guard.
+    output = _logs(settings) / "exit-logging-fixture.log"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("a", encoding="utf-8") as stream:
+        child = subprocess.Popen([sys.executable, str(script), *args, str(ROOT)], stdout=stream, **_logging_options())
+    return _ScriptProcess(child, output, settings)
+
+
 @pytest.mark.parametrize("evidence_kind", ["absent", "journal", "oversize", "unreadable"])
 def test_detached_fixture_launch_failure_exposes_existing_evidence_without_retry(tmp_path, monkeypatch, evidence_kind):
     """Fake launch only: an unknown Create outcome must remain a failure, with its original cause."""
@@ -295,15 +328,24 @@ def run(tmp_path):
         process.close()
 
 
+@pytest.fixture
+def logging_run(run, monkeypatch):
+    """Only exit logging: ordinary owned Popen, finite fake role, and the unchanged run fixture teardown."""
+    module = sys.modules[__name__]
+    monkeypatch.setattr(module, "SUPERVISE", LOGGING_SUPERVISE)
+    monkeypatch.setattr(module, "_start_script", _start_logging_script)
+    return run
+
+
 def _end_role(settings: Settings, record: dict) -> None:
     """End the supervised role, one PID: the one its record names, after checking that it is still that process."""
     assert cli._process_created(record["pid"]) == record["created"]
     os.kill(record["pid"], signal.SIGTERM)
 
 
-def test_the_supervisor_logs_the_exit_code_of_a_role_that_fails(run):
+def test_the_supervisor_logs_the_exit_code_of_a_role_that_fails(logging_run):
     # It lingers for a second so its record is written before it ends: a role that ends sooner has no record to read.
-    process, settings = run("import sys, time; time.sleep(1); sys.exit(7)")
+    process, settings = logging_run("import sys, time; time.sleep(1); sys.exit(7)")
 
     output, _ = process.communicate(timeout=120)
 

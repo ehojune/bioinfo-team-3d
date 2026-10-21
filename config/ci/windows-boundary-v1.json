@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "profile": "windows-boundary-v1",
+  "default": "include",
+  "reviewed_pure": {
+    "tests/test_report_markdown.py": {
+      "sha256": "2d044ce45c9f7048f9bb00d39cc2acbab01b28dc64ef1eb6c2f9a91575311684",
+      "reason": "Reviewed CommonMark string regions/rendered marker transformations; synthetic text, no OS I/O."
+    },
+    "tests/test_literal_check.py": {
+      "sha256": "54dcec1e7dfde37be5e031be086318c8b810719a05301f31070fc1cf3716a79a",
+      "reason": "Reviewed numeric/Unicode quote normalization and Python grammar introspection; no operational I/O."
+    },
+    "tests/test_research_review.py": {
+      "sha256": "4545dd725f3a8ca06a41a8a28dc89119876e18b6d6563857b65da77259724669",
+      "reason": "Reviewed in-memory Pydantic result/reviewer binding and evidence-check validation; no execution or storage."
+    },
+    "tests/test_ci_normative_prose.py": {
+      "sha256": "268a96d05b80cd9bb2b64a644c39402f43675b96ae7d25c0e0c9fa2eabdfa157",
+      "reason": "Reviewed CommonMark parser and English/Korean normative sentence/reflow decisions; fake git only, no command or OS filesystem behavior."
+    },
+    "tests/test_pi_language_bounds.py": {
+      "sha256": "bb02c51aa492172198bbe0828d96915caba0b188a5336b0c1ba84bbda6a4b7ee",
+      "reason": "Reviewed synthetic Unicode/code/path-shaped strings, regex predicates and perf_counter limits; no native path access or operational requests."
+    },
+    "tests/test_research_evidence.py": {
+      "sha256": "c2f042888c2230d5cf525432537762898a18f487cf8c4d9f9398fa0a15a561ba",
+      "reason": "Reviewed Pydantic claim/evidence/quantity/revision/URI canonicalization of in-memory dictionaries; no artifact file is opened, no execution or native filesystem assertion."
+    },
+    "tests/test_pr_gate.py": {
+      "sha256": "9e65743519654129249f89db4a5e69a889a1fb7f5ee3acdf5a6cc6f00290a763",
+      "reason": "Reviewed JSON decision tables, trusted-head/review data and fake GitHub; transport/snapshot/apply patched, fixture JSON reads only, no native OS boundary."
+    },
+    "tests/test_research_bulk_pack.py": {
+      "sha256": "0b7c7cba4f62197044065a90624de1cdc09e3f2aa920fc0da4a305bf5a822032",
+      "reason": "Reviewed schema/closed-model table and topic routing; MiniHub uses in-memory dict/list/no-op save_request and mock dispatch/approval, pack YAML reads only; no runner or SQLite."
+    },
+    "tests/test_edam_subset.py": {
+      "sha256": "735cdac8047239c37857919bf487ba1ac232e3758bd9b87dbc2903d658956e46",
+      "reason": "Reviewed offline synthetic XML graph/parser/schema and deterministic YAML serialization; network patched, ordinary tmp_path inputs/read-only catalogs, no atomic replacement or native path assertions."
+    },
+    "tests/test_cso_scope_estimate.py": {
+      "sha256": "d12ed42fdd33c6164451847b910149b6d055976ee2f2039339eb06ecfdea741d",
+      "reason": "Reviewed synthetic text scope matching and cost arithmetic with MiniHub fake dispatch; in-memory task/plan/settings only, no native process/storage APIs."
+    }
+  },
+  "implementation_sha256": "c045b17bc2999403b655ae6de14ae6e5fa4d480dca8f16d65af0dea706c3b4c7"
+}

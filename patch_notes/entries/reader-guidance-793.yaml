@@ -1,0 +1,6 @@
+pr: 793
+rows:
+  - sha: 0cd9cf3
+    at: "2026-10-21 04:03"
+    summary: "Windows 기동 안내를 사용자용 설명으로 정리했습니다."
+    text: "매뉴얼의 일시적인 개발 상태 문구를 고정 단계·경과 시간 안내와 근거 링크로 바꿨다. 검토가 끝난 Paper2Skill 독자 문서와 WMI fixture 전달 계약 수정은 기존 CI PR에 함께 통합해 별도 중복 CI를 줄인다. 실제 WMI timeout 원인·새 CI·장치 효용은 아직 미확인이다."

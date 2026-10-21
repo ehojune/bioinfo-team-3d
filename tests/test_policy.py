@@ -1,5 +1,6 @@
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -20,9 +21,38 @@ def _long_separator_runs():
 
 
 def _assert_linear(call):
-    started = time.perf_counter()
+    # Budget these synchronous scans' CPU cost, excluding other workers' scheduling
+    # delays. A fixed-input cost regression does not prove asymptotic linearity.
+    started = time.process_time()
     assert call(_long_separator_runs()) is None
-    assert time.perf_counter() - started < 2, "path scanning must stay linear in the text length"
+    assert time.process_time() - started < 2, "path scanning must stay linear in the text length"
+
+
+@pytest.mark.parametrize("cpu_elapsed,wall_elapsed,result,reject", [
+    (0.125, 900, None, False),
+    (2, 0.125, None, True),
+    (2.125, 0.125, None, True),
+    (0.125, 0.125, False, True),
+    (0.125, 0.125, None, False),
+])
+def test_linear_scan_budget_uses_cpu_and_preserves_result_and_strict_limit(
+        monkeypatch, cpu_elapsed, wall_elapsed, result, reject):
+    cpu, wall = iter((0, cpu_elapsed)), iter((0, wall_elapsed))
+    # Replace only this module's time object; pytest's real clocks stay intact.
+    monkeypatch.setitem(globals(), "time", SimpleNamespace(
+        process_time=lambda: next(cpu), perf_counter=lambda: next(wall)))
+    seen = []
+
+    def scan(text):
+        seen.append(text)
+        return result
+
+    if reject:
+        with pytest.raises(AssertionError):
+            _assert_linear(scan)
+    else:
+        _assert_linear(scan)
+    assert seen == [_long_separator_runs()]
 
 
 def test_mentions_zone_stays_linear_on_long_separator_runs():
