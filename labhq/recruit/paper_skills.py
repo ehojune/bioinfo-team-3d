@@ -1,6 +1,8 @@
 """Request-scoped paper advice, without a contract or a probationary employee (#549)."""
 from __future__ import annotations
 
+import asyncio
+import copy
 import hashlib
 import json
 import re
@@ -31,7 +33,7 @@ PLAN_RULE = (
     "title, reason (why its method fits), and step_ids assigned to core employees. Use [] when none fits. "
     "These are Paper2Skill consultant skills attached only to those steps for this request, without hiring. "
     "Do not invent identifiers or put conversion receipts in the plan; labhq checks metadata before CP1 "
-    "and builds selected skills only when their approved steps dispatch.")
+    "and prepares selected skills after approval alongside the approved steps. A late skill is omitted from that step.")
 UNAVAILABLE = "스킬 장착 불가(Paper2Agent 미설치)"
 
 
@@ -173,6 +175,15 @@ async def prepare_plan(plan: dict, precedents: dict, roster: list[dict], rid: st
             "warnings": list(dict.fromkeys([*(plan.get("warnings") or []), *warnings]))}
 
 
+def build_task(selected: dict, settings) -> Task:
+    # One approved descriptor, not one converter per assigned step. No cross-plan semantic inference.
+    return Task(agent_id=settings.recruit.agent_id, request_id=selected["request_id"],
+                prompt="Prepare approved paper advice", budget_usd=settings.recruit.max_budget_usd,
+                meta={"kind": "paper_skill", "paper_skill": copy.deepcopy(selected), "max_attempts": 1,
+                      "step_id": "paper_skill_" + selected["selection_sha256"][:24],
+                      "title": f"참고 논문 스킬: {selected['title']}"})
+
+
 async def resolve_attachments(rows: list[dict], settings, run) -> list[dict]:
     """Resolve only a dispatched step's approved descriptors, through ordinary bounded CSO tasks."""
     resolved = []
@@ -180,12 +191,7 @@ async def resolve_attachments(rows: list[dict], settings, run) -> list[dict]:
         if selected.get("status") != "deferred":
             resolved.append(selected)
             continue
-        key = selected["selection_sha256"] + ":" + selected["step_id"]
-        task = Task(agent_id=settings.recruit.agent_id, request_id=selected["request_id"],
-                    prompt="Prepare approved paper advice", budget_usd=settings.recruit.max_budget_usd,
-                    meta={"kind": "paper_skill", "paper_skill": selected, "max_attempts": 1,
-                          "step_id": "paper_skill_" + hashlib.sha256(key.encode()).hexdigest()[:24],
-                          "title": f"참고 논문 스킬: {selected['title']}"})
+        task = build_task(selected, settings)
         try:
             result = await run(task)
             receipt = result.structured if result.ok and isinstance(result.structured, dict) else {}
@@ -206,6 +212,117 @@ async def resolve_attachments(rows: list[dict], settings, run) -> list[dict]:
     return resolved
 
 
+class ApprovedBuilds:
+    """One DAG invocation's owned, bounded preparations; delivery snapshots never change in flight."""
+
+    def __init__(self, rows: list[dict], settings):
+        self.settings = settings
+        self.rows = {r['selection_sha256']: copy.deepcopy(r) for r in rows if r.get('status') == 'deferred'}
+        self.tasks = {key: build_task(row, settings) for key, row in self.rows.items()}
+        self.jobs: dict[str, asyncio.Task] = {}
+        self.disabled: dict[str, str] = {}
+        def descriptor(row):
+            return {k: v for k, v in row.items() if k not in {'step_id', 'agent_id'}}
+        for row in rows:
+            if row.get('status') != 'deferred':
+                continue
+            key = row['selection_sha256']
+            if descriptor(row) != descriptor(self.rows[key]):
+                self.disabled[key] = 'paper_skill_ambiguous_selection'
+        if len(self.rows) > 2:
+            self.disabled.update({key: 'paper_skill_selection_limit' for key in self.rows})
+        if settings.runner.task_timeout_s <= 0:
+            self.disabled.update({key: 'invalid_task_timeout' for key in self.rows})
+        if min(settings.runner.max_parallel, settings.orchestrator.max_parallel_steps) <= 0:
+            self.disabled.update({key: 'paper_skill_parallel_unavailable' for key in self.rows})
+        self.started: set[str] = set()
+        self.stopped: set[str] = set()
+        self.finished: set[str] = set()
+        self.delivered: dict[tuple, dict] = {}
+        self.deadline = 0.0
+
+    async def start(self, run, spawn, cancel, progress, grace_s: float) -> None:
+        self.spawn, self.cancel, self.progress, self.grace_s = spawn, cancel, progress, grace_s
+        timeout = self.settings.runner.task_timeout_s
+        self.deadline = asyncio.get_running_loop().time() + max(0, timeout)
+        self.finished = set(self.disabled)
+        parallel = max(1, min(2, self.settings.runner.max_parallel,
+                              self.settings.orchestrator.max_parallel_steps))
+        sem = asyncio.Semaphore(parallel)
+
+        async def build(key):
+            async with sem:
+                if asyncio.get_running_loop().time() >= self.deadline:
+                    return {**self.rows[key], 'status': 'unavailable', 'error': 'paper_skill_late'}
+                async def admitted(_task):
+                    self.started.add(key)
+                    return await run(self.tasks[key])
+                result = (await resolve_attachments([self.rows[key]], self.settings, admitted))[0]
+                if asyncio.get_running_loop().time() >= self.deadline:
+                    result = {**self.rows[key], 'status': 'unavailable', 'error': 'paper_skill_late'}
+                self.finished.add(key)
+                await progress(len(self.finished), len(self.rows))
+                return result
+
+        for key in self.rows:
+            if key not in self.disabled:
+                self.jobs[key] = spawn(build(key))
+        await progress(len(self.finished), len(self.rows))
+
+    async def resolve(self, rows: list[dict]) -> list[dict]:
+        out = []
+        for selected in rows:
+            if selected.get('status') != 'deferred':
+                out.append(copy.deepcopy(selected))
+                continue
+            key = selected.get('selection_sha256')
+            delivery = (key, selected.get('step_id'), selected.get('agent_id'))
+            if delivery not in self.delivered:
+                job = self.jobs.get(key)
+                receipt = {'status': 'unavailable', 'error': self.disabled.get(key, 'paper_skill_late')}
+                if job is not None and key not in self.disabled:
+                    done, _ = await asyncio.wait([job], timeout=max(
+                        0, self.deadline - asyncio.get_running_loop().time()))
+                    if key in self.disabled:
+                        pass  # another assigned step already sealed the late fallback
+                    elif done:
+                        receipt = job.result()  # shutdown/cancellation must propagate
+                    else:
+                        self.disabled[key] = 'paper_skill_late'
+                        await self._stop([key])
+                        self.finished.add(key)
+                        await self.progress(len(self.finished), len(self.rows))
+                # A receipt from another assigned step cannot replace this step's approved identity.
+                self.delivered[delivery] = copy.deepcopy({**receipt, **selected,
+                    'status': receipt['status'], **({'error': receipt['error']} if receipt.get('error') else {})})
+            out.append(copy.deepcopy(self.delivered[delivery]))
+        return out
+
+    async def _stop(self, keys: list[str]) -> None:
+        pending = [key for key in keys if not self.jobs[key].done()]
+        stopping = [key for key in keys if key not in self.stopped and key in self.started
+                    and (not self.jobs[key].done() or self.jobs[key].cancelled())]
+        self.stopped.update(stopping)
+        stops = [self.spawn(self.cancel(self.tasks[key])) for key in stopping]
+        for key in pending:
+            self.jobs[key].cancel()
+        owned = [*stops, *(self.jobs[key] for key in pending)]
+        if owned:
+            done, waiting = await asyncio.wait(owned, timeout=self.grace_s)
+            for job in done:
+                if not job.cancelled():
+                    job.exception()  # retrieve background failures without masking the caller's exception
+            # Keep resistant jobs owned by the request; never await cancellation without a bound.
+            for job in waiting:
+                job.cancel()
+
+    async def close(self) -> None:
+        await self._stop(list(self.jobs))
+        for job in self.jobs.values():
+            if job.done() and not job.cancelled():
+                job.exception()
+
+
 def attachments(plan: dict, step_id: str, agent_id: str, rid: str) -> list[dict]:
     return [{**row, "request_id": rid, "agent_id": agent_id, "step_id": step_id}
             for row in plan.get("paper_skill_results", [])
@@ -217,7 +334,7 @@ def card_text(plan: dict) -> str:
     return "\n".join(
         f"참고 논문 스킬: {r['title']} → {', '.join(r.get('agent_ids') or [])}; 선정됨: 예; "
         f"만들어짐: {'예' if r.get('status') in {'ready', 'reused'} else '아니오'}"
-        + (" (승인 후 담당 단계 실행 때 생성; 현재는 receipt 선언만 확인; 읽음/효용 미확인)" if r.get('status') == 'deferred'
+        + (" (승인 후 병렬 준비; 늦으면 해당 단계에서 생략; 현재는 receipt 선언만 확인; 읽음/효용 미확인)" if r.get('status') == 'deferred'
            else f" ({r.get('skip_reason') or r.get('error')})" if r.get('status') not in {"ready", "reused"} else "")
         + f"; 붙을 단계: {', '.join(r.get('step_ids') or []) or '없음'}; 호출됨: 아니오(실행 전)"
         for r in plan.get("paper_skill_results", []))
@@ -250,6 +367,26 @@ def records(plan: dict, results: dict | None = None) -> list[dict]:
     return records
 
 
+def with_preparation_outcome(result: TaskResult, task: Task) -> TaskResult:
+    """Retain late/budget fallback in the existing step receipt, without inventing runner read evidence."""
+    omitted = [row for row in task.meta.get('paper_skills', []) if row.get('status') == 'unavailable']
+    if not omitted:
+        return result
+    provenance = copy.deepcopy(result.provenance)
+    run = provenance.setdefault('runs', {}).setdefault(result.task_id, {})
+    usage = run.setdefault('paper_skills', [])
+    for selected in omitted:
+        row = next((u for u in usage if u.get('paper_id') == selected['paper_id']
+                    and u.get('selection_sha256') == selected['selection_sha256']), None)
+        if row is None:
+            row = {k: selected[k] for k in ('paper_id', 'selection_sha256', 'status')}
+            usage.append(row)
+        row.update(status='unavailable', called=False, call_status='not_attached', reason='build_unavailable')
+        row.pop('input_ref', None)  # a task approved without this input cannot attest an attached input
+        row['preparation_error'] = selected.get('error') or 'paper_skill_unavailable'
+    return result.model_copy(update={'provenance': provenance})
+
+
 def appendix(plan: dict, results: dict | None = None) -> str:
     rows = records(plan, results)
     def values(row: dict, key: str, fallback: str) -> str:
@@ -257,7 +394,8 @@ def appendix(plan: dict, results: dict | None = None) -> str:
     return ("참고 논문 스킬 기록:\n" + "\n".join(
         f"- {r['paper_id']} · {r['title']} → {', '.join(r.get('agent_ids') or [])}; {r['status']}; "
         f"선정됨: 예; 만들어짐: {'예' if r['built'] else '아니오'}"
-        + (f" ({r.get('skip_reason') or r.get('error')})" if not r['built'] else "") + "; "
+        + (f" ({values(r, 'preparation_error', r.get('skip_reason') or r.get('error') or '미완료')})"
+           if not r['built'] else "") + "; "
         f"Paper2Agent commit: {values(r, 'paper2agent_commit', '미기록')}; "
         f"skill hash: {values(r, 'skill_sha256', '없음')}; "
         f"붙음: {', '.join(r['attached_steps']) or '아니오'}; "
@@ -332,7 +470,8 @@ class PaperSkillBuild:
             "with kind=consultant, the absolute skill_dir, exact verification_status and limitations; "
             "use null/empty arrays for absent MCP and repository parts. Never put credentials in files or output.")
         return self.task.model_copy(update={
-            "prompt": prompt, "output_schema": paper2agent.OFFER_SCHEMA, "budget_usd": s.recruit.max_budget_usd,
+            "prompt": prompt, "output_schema": paper2agent.OFFER_SCHEMA,
+            "budget_usd": min(self.task.budget_usd or s.recruit.max_budget_usd, s.recruit.max_budget_usd),
             "meta": {**self.task.meta, "agent_overrides": {"permission_mode": s.recruit.permission_mode}}}), build, None
 
     def finish(self, result: TaskResult) -> TaskResult:

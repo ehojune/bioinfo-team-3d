@@ -43,7 +43,8 @@ PLAN_SCHEMA_SHA = "3f66aee51285e31aba7126f9e9279d7244ce9b7cf0739a3f4164faba2fc60
 # Issue #707 adds the deterministic request-analysis coverage rule.
 # #799 adds the shared cohesive-analysis sentence to BIOINFO_ASSIGNMENT_RULE; with main's policy text the prompt
 # still hashes to the previous d2548cdd…, and the schema is unchanged.
-# #798 moves paper conversion after approval; the reverse-delta assertion below preserves the previous baseline.
+# #798 moves paper conversion after approval; #671 changes only that sentence to parallel/late advice.
+# Normalize that explicit delta to retain both exact earlier baselines and off/on schema separation.
 PLAN_PROMPT_SHA = "6c3ad9f57a50d2a9c6b13750a97910147d954b77dc565208bfad66428ca4351c"
 PROMPT_ARGS = dict(request="REQ", roster="ROSTER", capabilities="CAPS", briefing="BRIEF", max_steps=3,
                    question_rule=QUESTION_RULE, lab_scope="LAB", topics_rule=topics.prompt_rule(V))
@@ -117,10 +118,12 @@ def test_prompt_rule_lists_local_keys_only():
 def test_off_keeps_the_plan_schema_and_prompt_of_main():
     assert sha(cso.PLAN_SCHEMA) == PLAN_SCHEMA_SHA and cso.plan_schema(False) is cso.PLAN_SCHEMA
     prompt = cso.PLAN_PROMPT.format(**PROMPT_ARGS, output_types_rule="")
-    assert sha(prompt) == PLAN_PROMPT_SHA
     phase = ("labhq checks metadata before CP1 "
-             "and builds selected skills only when their approved steps dispatch.")
+             "and prepares selected skills after approval alongside the approved steps. A late skill is omitted from that step.")
+    previous = ("labhq checks metadata before CP1 "
+                "and builds selected skills only when their approved steps dispatch.")
     assert prompt.count(phase) == 1
+    assert sha(prompt.replace(phase, previous)) == PLAN_PROMPT_SHA
     assert sha(prompt.replace(phase, "labhq prepares them before CP1.")) == (
         "a7c48eaef68becc0f72e1bd33c76d565a50f204b6aa7d1bc41a195a855e99a68")
     assert Settings().plan.declare_output_types is False
