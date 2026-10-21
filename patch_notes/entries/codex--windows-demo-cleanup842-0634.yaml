@@ -16,3 +16,7 @@ rows:
     at: "2026-10-22 07:20"
     summary: "Windows 자동 검사에서 브라우저 정리 검사가 몰래 건너뛰어진 채 통과하지 않게 합니다."
     text: "hosted Windows(os.name nt, GITHUB_ACTIONS true)에서 web_office_focus_layout.cjs와 web_visual_tooling.cjs만 TAP '# skipped 0'을 추가로 요구해 내부 skip이 부모 PASS로 숨지 않게 했다. 기존 returncode·fail 0·기능 단언·node id·상한과 Linux·로컬의 선택적 Chrome은 그대로이고 test_web_3d.py의 Windows mixed digest만 갱신했다."
+  - sha: c7a18c6
+    at: "2026-10-22 07:30"
+    summary: "브라우저를 띄우기 전에 실패한 검사 정리가 쓸데없는 대기 timer 때문에 다른 오류로 바뀌지 않게 합니다."
+    text: "PR843 첫 CI의 3플랫폼 공통 실패(web_visual_tooling startup fake 5·6·7이 원래 오류 대신 demo startup and cleanup failed)는 Chrome이 없는 부분 시작에서도 3초 강제 단계 timer를 만들어 5초 deadline만 허용하는 sandbox 계약을 깬 회귀였다. 소유 Chrome을 획득했을 때만 그 timer를 만든다. 5초·3초·실제 close 판정은 그대로다."
