@@ -6,7 +6,7 @@ CLI, process or network. The counting rules are the ones in docs/reference/bench
 from __future__ import annotations
 
 import copy
-from collections import defaultdict
+from labhq.bench_metrics import plan_shape
 
 from labhq.bioinfo_policy import BIOINFO_ASSIGNMENT_RULE
 from labhq.orchestrator import cso
@@ -21,37 +21,6 @@ PIPELINE = "bioinfo-agent"
 # Kept boundaries (contract): an independent QC check, biological interpretation, research validation/report phases.
 BOUNDARY_ROLES = {"qc_reviewer", "biologist"}
 BOUNDARY_PHASES = {"validation", "report"}
-
-
-def plan_shape(steps: list[dict]) -> dict:
-    """Bench counts for one plan (contract §2): steps, role handoffs, kept boundaries, split candidates and the
-    outputs a handoff passes on."""
-    by_id = {step["id"]: step for step in steps}
-    children: dict[str, list[str]] = defaultdict(list)
-    for step in steps:
-        for parent in step.get("depends_on") or []:
-            if parent in by_id:
-                children[parent].append(step["id"])
-    shape = {"steps": len(steps), "handoffs": 0, "boundary_handoffs": 0, "handoff_outputs": 0,
-             "coupled_splits": 0, "pipeline_splits": 0}
-    for step in steps:
-        parents = [parent for parent in step.get("depends_on") or [] if parent in by_id]
-        for parent_id in parents:
-            parent = by_id[parent_id]
-            linear = parents == [parent_id] and children[parent_id] == [step["id"]]
-            if parent["agent_id"] != step["agent_id"]:
-                shape["handoffs"] += 1
-                shape["handoff_outputs"] += len(parent.get("outputs") or [])
-                if step["agent_id"] in BOUNDARY_ROLES or step.get("phase") in BOUNDARY_PHASES:
-                    shape["boundary_handoffs"] += 1
-                    continue
-            if not linear:
-                continue
-            if step["agent_id"] == PIPELINE and parent["agent_id"] in ANALYSIS | {PIPELINE}:
-                shape["pipeline_splits"] += 1  # pipeline input preparation, execution or technical QC split apart
-            elif step["agent_id"] in ANALYSIS and parent["agent_id"] in ANALYSIS:
-                shape["coupled_splits"] += 1  # exploration, preprocessing and core statistics split apart
-    return shape
 
 
 def step(sid, agent, instruction, outputs, depends_on=()):

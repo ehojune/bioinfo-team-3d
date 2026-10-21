@@ -97,11 +97,173 @@ def _wait_until(check, seconds: float = 20.0) -> bool:
     return check()
 
 
+def _launch_journal(path: Path) -> str:
+    """Bounded test diagnostics: project fixed facts, never provider output or commands."""
+    try:
+        with path.open("rb") as stream:
+            stream.seek(0, 2)
+            start = max(0, stream.tell() - 16384)
+            stream.seek(start)
+            raw = stream.read(16384)
+        if start:
+            raw = raw.partition(b"\n")[2]  # discard a possibly truncated first frame
+    except FileNotFoundError:
+        return "(journal missing)"
+    except OSError:
+        return "(journal unreadable)"
+    enums = {
+        "status": ("attempt", "denied", "spawn_failed", "unverified", "cleanup_failed", "direct_reaped",
+                   "job_verified", "wmi_attempt", "wmi_unverified", "wmi_verified", "wmi_failed", "wmi_control_cleanup_failed"),
+        "phase": ("provider_create", "process_open", "process_identity", "receipt_wait", "identity_verify", "job_verify", "ack_write"),
+        "reason": ("provider_timeout", "provider_protocol", "protocol_error", "native_error", "provider_subprocess",
+                   "create_failed", "invalid_returned_pid", "receipt_timeout", "identity_mismatch", "job_unverified",
+                   "system_directory_unknown", "native_or_protocol"),
+        "error": ("BrokerFailure", "TimeoutExpired", "CalledProcessError", "SubprocessError", "PermissionError",
+                  "FileNotFoundError", "TimeoutError", "OSError", "ValueError", "TypeError", "OtherError"),
+        "trace_status": ("absent", "partial", "phases_complete", "invalid_or_partial"),
+    }
+    def facts(row):
+        result = {key: row[key] for key, allowed in enums.items() if row.get(key) in allowed}
+        for key in ("code", "returncode", "elapsed_ms"):
+            value = row.get(key)
+            valid = (type(value) in (int, float) and 0 <= value <= 60000) if key == "elapsed_ms" else (
+                type(value) is int and -2**32 <= value <= 2**32)
+            if valid:
+                result[key] = value
+        return result
+    rows = [{"journal": "tail_only"}] if start else []
+    for line in raw.splitlines()[-4:]:
+        try:
+            row = json.loads(line)
+        except (ValueError, UnicodeError, RecursionError):
+            rows.append({"journal": "malformed"})
+            continue
+        if not isinstance(row, dict):
+            rows.append({"journal": "malformed"})
+            continue
+        if row.get("role") != "gateway-supervisor":
+            continue
+        safe = facts(row)
+        provider = row.get("provider")
+        if isinstance(provider, dict):
+            safe["provider"] = facts(provider)
+            phases = provider.get("phases")
+            if isinstance(phases, list):
+                valid = []
+                for index, step in enumerate(phases[:4]):
+                    if not isinstance(step, dict) or step.get("phase") != (
+                            "powershell_started", "input_accepted", "create_entered", "create_returned")[index]:
+                        break
+                    elapsed = facts(step).get("elapsed_ms")
+                    if elapsed is None or (valid and elapsed < valid[-1]["elapsed_ms"]):
+                        break
+                    valid.append({"phase": step["phase"], "elapsed_ms": elapsed})
+                safe["provider"]["phases"] = valid
+        rows.append(safe)
+    return json.dumps(rows)
+
+
 def _start_gateway(settings, children) -> tuple[int, str]:
-    cli._start_background(settings, "gateway", popen=_reaping_popen(children))
-    assert cli._wait_for_health(settings, runner=False, timeout=90) is not None, _text(_logs(settings) / "gateway.log")
-    record = json.loads(cli._pid_file(settings, "gateway").read_text(encoding="utf-8"))
-    return record["pid"], record["created"]
+    try:
+        cli._start_background(settings, "gateway", popen=_reaping_popen(children))
+        assert cli._wait_for_health(settings, runner=False, timeout=90) is not None, _text(_logs(settings) / "gateway.log")
+        record = json.loads(cli._pid_file(settings, "gateway").read_text(encoding="utf-8"))
+        return record["pid"], record["created"]
+    except (Exception, SystemExit):
+        for name in ("gateway-supervisor.log", "gateway.log"):
+            try:
+                text = _text(_logs(settings) / name) or "(missing or empty)"
+            except OSError as exc:
+                text = f"(could not read log: {exc})"
+            print(f"\n--- {name} ---\n{text}", file=sys.stderr)
+        print("\n--- detached-launch.jsonl ---\n" + _launch_journal(_logs(settings) / "detached-launch.jsonl"),
+              file=sys.stderr)
+        raise  # keep the original exception and traceback, including SystemExit(2)
+
+
+@pytest.mark.parametrize("failure", [SystemExit, RuntimeError])
+@pytest.mark.parametrize("logs", ["present", "missing", "unreadable"])
+def test_start_gateway_failure_keeps_the_exception_and_reports_logs(tmp_path, monkeypatch, capsys, failure, logs):
+    # Only the start boundary is faked: no native fixture, port, process or thread.
+    settings, children, popen = object(), [], object()
+    error = failure(2 if failure is SystemExit else "synthetic startup failure")
+    calls = []
+    monkeypatch.setattr(__name__ + "._logs", lambda _: tmp_path)
+    monkeypatch.setattr(__name__ + "._reaping_popen", lambda items: popen if items is children else None)
+
+    def start(actual_settings, role, **kwargs):
+        calls.append((actual_settings, role, kwargs))
+        raise error
+
+    monkeypatch.setattr(cli, "_start_background", start)
+    monkeypatch.setattr(cli, "_wait_for_health", lambda *a, **kw: pytest.fail("startup failed before health"))
+    if logs == "present":
+        (tmp_path / "gateway-supervisor.log").write_bytes("supervisor 상태\n".encode("utf-8") + b"\xff")
+        (tmp_path / "gateway.log").write_text("gateway fixture cause", encoding="utf-8")
+    elif logs == "unreadable":
+        def unreadable(_path):
+            raise PermissionError("fixture log denied")
+        monkeypatch.setattr(__name__ + "._text", unreadable)
+
+    with pytest.raises(failure) as caught:
+        _start_gateway(settings, children)
+    assert caught.value is error
+    assert calls == [(settings, "gateway", {"popen": popen})]  # no retry or launcher bypass
+    stderr = capsys.readouterr().err
+    assert "gateway-supervisor.log" in stderr and "gateway.log" in stderr
+    if logs == "present":
+        assert "supervisor 상태\n\ufffd" in stderr and "gateway fixture cause" in stderr
+    elif logs == "missing":
+        assert stderr.count("missing or empty") == 2
+    else:
+        assert stderr.count("fixture log denied") == 2
+
+
+@pytest.mark.parametrize("journal", ["present", "missing", "unreadable", "malformed", "oversize"])
+def test_start_gateway_reports_only_bounded_allowlisted_launch_facts(tmp_path, monkeypatch, capsys, journal):
+    error = SystemExit(2)
+    monkeypatch.setattr(__name__ + "._logs", lambda _: tmp_path)
+    monkeypatch.setattr(__name__ + "._reaping_popen", lambda _: object())
+    def fail(*a, **kw):
+        raise error
+    monkeypatch.setattr(cli, "_start_background", fail)
+    path = tmp_path / "detached-launch.jsonl"
+    row = {"role": "gateway-supervisor", "status": "wmi_failed", "phase": "provider_create",
+           "reason": "provider_timeout", "error": "TimeoutExpired", "code": None,
+           "cmd": "SECRET-command", "stdout": "SECRET-stdout", "env": {"SECRET": "value"},
+           "provider": {"elapsed_ms": 10000, "trace_status": "partial", "stderr": "SECRET-stderr",
+                        "phases": [{"phase": "powershell_started", "elapsed_ms": 1},
+                                   {"phase": "SECRET-phase", "elapsed_ms": 2}]}}
+    if journal in ("present", "oversize"):
+        # Invalid fields and foreign roles never become diagnostic text.
+        unsafe = {"role": "gateway-supervisor", "status": "wmi_failed", "error": "SECRET-class",
+                  "reason": "SECRET-reason", "code": "SECRET-code", "phase": "SECRET-phase",
+                  "provider": {"returncode": "SECRET-returncode", "elapsed_ms": float('inf')}}
+        path.write_text(("SECRET-prefix\n" * 2000 if journal == "oversize" else "")
+                        + json.dumps(unsafe) + "\n" + json.dumps({**row, "role": "SECRET-role"})
+                        + "\n" + json.dumps(row) + "\n", encoding="utf-8")
+    elif journal == "malformed":
+        path.write_bytes(b'SECRET-malformed{\xff\n')
+    elif journal == "unreadable":
+        original = Path.open
+        def denied(p, *a, **kw):
+            if p == path:
+                raise PermissionError("SECRET-file-message")
+            return original(p, *a, **kw)
+        monkeypatch.setattr(Path, "open", denied)
+    with pytest.raises(SystemExit) as caught:
+        _start_gateway(object(), [])
+    assert caught.value is error
+    stderr = capsys.readouterr().err
+    assert "detached-launch.jsonl" in stderr and "SECRET" not in stderr
+    assert len(stderr) < 4096
+    if journal in ("present", "oversize"):
+        assert '"reason": "provider_timeout"' in stderr and '"elapsed_ms": 10000' in stderr
+        assert '"phase": "powershell_started"' in stderr
+        if journal == "oversize":
+            assert '"journal": "tail_only"' in stderr
+    else:
+        assert journal in stderr
 
 
 def _gateway_events(settings) -> set[str]:

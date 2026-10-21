@@ -25,6 +25,7 @@ from .policy import WRITE_LIKE
 from .request_status import is_terminal_request
 from .reproduction_receipt import receipt_json, receipt_note, receipt_summary
 from .research import semantic_device_report
+from . import bench_metrics
 from .util import atomic_write_text, free_port, merge_staff_env, parent_claude_markers
 
 REPO = Path(__file__).resolve().parents[1]
@@ -320,10 +321,12 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
     budget_approvals = 0
     workdir_write_approvals = 0
     original_publish = hub.publish
+    metrics = bench_metrics.Recorder("labhq")
 
     async def publish(event: dict, *args, **kwargs) -> None:
         nonlocal interventions, unscripted_approvals, budget_approvals, workdir_write_approvals
         await original_publish(event, *args, **kwargs)
+        metrics.event(event)
         if event.get("type") == "approval.requested":
             interventions += 1
             data = event.get("data") or {}
@@ -365,6 +368,8 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
         rid = hub.create_request(RequestIn(text=_prompt(case),
                                            budget_usd=float(case["budget_usd"]),
                                            meta={"case_id": case["id"]}))
+        metrics.request_id = rid
+        runner._bench_observer = metrics.spawn
         timeout = float(case.get("timeout_s", settings.runner.task_timeout_s))
         request_started = time.monotonic()
         await _until(lambda: is_terminal_request(hub.requests[rid]["status"]), timeout,
@@ -403,6 +408,11 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
                 {**request, "id": rid}, settings).get("impact_metrics")
                 if semantic_device_report.applies(request, settings) else None),
         }
+        run["bench_metrics"] = bench_metrics.collect(
+            metrics, mode=engines, tasks=hub.store.all("task") if hasattr(hub, "store") else None,
+            approvals=({**hub.store.all("approval"), **hub.store.all("approval_decision")}
+                       if hasattr(hub, "store") else None))
+        bench_metrics.save(arm_dir, run["bench_metrics"])
         (arm_dir / "run.json").write_text(json.dumps(run, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         return run
     finally:
@@ -453,6 +463,7 @@ def _parse_codex(raw: str, answer_path: Path) -> tuple[str, dict[str, int]]:
 async def _run_baseline(case: dict[str, Any], arm: str, arm_dir: Path, engines: str,
                         command: list[str], settings) -> dict[str, Any]:
     started = time.monotonic()
+    metrics = bench_metrics.Recorder(arm)
     if engines == "mock":
         (arm_dir / "answer.md").write_text(case["mock_answer"].strip() + "\n", encoding="utf-8")
         run = {"engine": arm, "mode": "mock", "status": "done", "pi_interventions": 0,
@@ -479,10 +490,27 @@ async def _run_baseline(case: dict[str, Any], arm: str, arm_dir: Path, engines: 
         timeout = float(case.get("timeout_s", settings.runner.task_timeout_s))
         group_args = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
                       if os.name == "nt" else {"start_new_session": True})
-        process = await asyncio.create_subprocess_exec(*command, cwd=arm_dir, env=env,
-                                                       stdin=asyncio.subprocess.DEVNULL,
-                                                       stdout=asyncio.subprocess.PIPE,
-                                                       stderr=asyncio.subprocess.PIPE, **group_args)
+        spawn = {"task_id": arm, "request_id": None, "spawn_id": object(),
+                 "argv_bytes": sum(len(arg.encode("utf-8")) + 1 for arg in command)}
+        metrics.spawn(**spawn, state="attempt")
+        try:
+            process = await asyncio.create_subprocess_exec(*command, cwd=arm_dir, env=env,
+                                                           stdin=asyncio.subprocess.DEVNULL,
+                                                           stdout=asyncio.subprocess.PIPE,
+                                                           stderr=asyncio.subprocess.PIPE, **group_args)
+        except OSError:
+            metrics.spawn(**spawn, state="failed")
+            run = {"engine": arm, "mode": "real", "status": "failed", "error": "CLI spawn failed",
+                   "pi_interventions": 0, "cost_usd": None, "cost_known": False, "usage": {},
+                   "duration_s": round(time.monotonic() - started, 3),
+                   "bench_metrics": bench_metrics.collect(metrics)}
+            definition = settings.bench.arms[arm]
+            run.update(model=definition.model, effort=definition.effort, cli_engine=definition.engine,
+                       pi_questions_observable=False)
+            bench_metrics.save(arm_dir, run["bench_metrics"])
+            (arm_dir / "run.json").write_text(json.dumps(run, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            return run
+        metrics.spawn(**spawn, state="started")
         drain = asyncio.create_task(process.communicate())
         error = None
         try:
@@ -523,6 +551,8 @@ async def _run_baseline(case: dict[str, Any], arm: str, arm_dir: Path, engines: 
     run["pi_questions_observable"] = False  # Noninteractive CLI: no question/answer channel.
     definition = settings.bench.arms[arm]
     run.update(model=definition.model, effort=definition.effort, cli_engine=definition.engine)
+    run["bench_metrics"] = bench_metrics.collect(metrics, mode=engines)
+    bench_metrics.save(arm_dir, run["bench_metrics"])
     (arm_dir / "run.json").write_text(json.dumps(run, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return run
 
@@ -645,6 +675,7 @@ async def _score(case: dict[str, Any], arm_dir: Path, run: dict[str, Any]) -> di
         "reproduction_verification": receipt_summary(run.get("reproduction_receipt"),
                                                     path="reproduction_receipt.json" if run.get("reproduction_receipt") else ""),
         "semantic_impact_metrics": run.get("semantic_impact_metrics"),
+        "bench_metrics": run.get("bench_metrics"),
         "format_passed": structured["format_passed"],
         "content_passed": structured["content_passed"],
         "narrative_passed": checked.returncode == 0,
@@ -723,6 +754,9 @@ def _comparison_markdown(result: dict[str, Any]) -> str:
     for row in result['rows']:
         lines += [f"### {row['engine']}", '',
                   semantic_device_report.render_impact_metrics(row.get('semantic_impact_metrics'))]
+    lines += ["", "## Bench 기록 (저장된 관측만)", ""]
+    for row in result["rows"]:
+        lines += [f"### {row['engine']}", "", bench_metrics.render(row.get("bench_metrics"))]
     details = [f"- {row['engine']}: {format_cost(summary, digits=4)} {cost_detail(summary, digits=4)}"
                for row in result["rows"] if (summary := row.get("cost_summary") or {}).get("by_engine")
                and (len(summary["by_engine"]) > 1 or summary.get("estimated_usd") or summary.get("unknown_count"))]
@@ -813,6 +847,8 @@ async def rescore_case(case_id: str, output_root: Path, run_id: str | None = Non
                     "narrative_passed", "format_detail", "content_detail", "check_output", "check",
                     "reproduction_verification")})
             row["run_id"] = run_dir.name
+            if "bench_metrics" not in row and "bench_metrics" in run:
+                row["bench_metrics"] = run["bench_metrics"]
             row["rescored_at"] = datetime.now(timezone.utc).isoformat()
             history = list(row.get("score_history") or [])
             if old is not None:

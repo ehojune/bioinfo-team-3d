@@ -135,7 +135,7 @@ def test_create_timeout_is_unknown_and_never_retried_or_treated_as_owned(world):
 
     failure = subprocess.TimeoutExpired("fake-powershell", 10)
     world.create.side_effect = failure
-    with pytest.raises(broker.BrokerFailure, match="native_or_protocol") as caught:
+    with pytest.raises(broker.BrokerFailure, match="provider_timeout") as caught:
         launch(world)
     assert caught.value.__cause__ is failure
     world.create.assert_called_once()
