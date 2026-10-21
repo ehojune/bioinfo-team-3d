@@ -6,13 +6,19 @@ import hashlib
 import json
 import os
 import re
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 # Retain the policy path; its schema/profile version, not its filename, is identity.
 PROFILE = "config/ci/windows-boundary-v1.json"
-WINDOWS_BOUNDARY = "windows-boundary-v3"
-PROFILES = ("linux-full-v1", WINDOWS_BOUNDARY, "windows-full-v1")
+WINDOWS_BOUNDARY = "windows-boundary-v4"
+WINDOWS_PREVIEW = "windows-boundary-preview-v4"
+PROFILES = ("linux-full-v1", WINDOWS_BOUNDARY, "windows-full-v1", WINDOWS_PREVIEW)
+# The preview may cross these policy edits only; shared fixtures/dependencies
+# still require full selection. It cannot produce reusable validation evidence.
+PREVIEW_POLICY = frozenset({".github/workflows/test.yml", "scripts/ci_skip.py",
+    "scripts/ci_selection.py", "scripts/ci_suite.py", PROFILE})
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 PATH = re.compile(r"(?:[\w.-]+/)*[\w.-]+\Z")
 
@@ -38,7 +44,7 @@ def policy(root=ROOT) -> dict:
     data = json.loads((root / PROFILE).read_text(encoding="utf-8"), object_pairs_hook=_unique)
     if (set(data) != {"version", "profile", "default", "known_tests", "mixed_nodes", "boundary_cohorts"}
             or data["default"] != "boundary" or type(data["version"]) is not int
-            or data["version"] != 3 or data["profile"] != WINDOWS_BOUNDARY
+            or data["version"] != 4 or data["profile"] != WINDOWS_BOUNDARY
             or not isinstance(data["mixed_nodes"], dict)
             or not isinstance(data["known_tests"], list) or not data["known_tests"]
             or not all(isinstance(p, str) and re.fullmatch(r'tests/test_[\w]+\.py', p) for p in data['known_tests'])
@@ -243,7 +249,7 @@ def include_windows(path, text, data, *, root=ROOT, changed=frozenset(), node=No
     return False, 'outside audited Windows boundary; Linux/full Windows retain this contract'
 
 
-def change_range(event_name, event, checkout, git):
+def change_range(event_name, event, checkout, git, *, preview=False):
     """Immutable local Git + event snapshot. Missing/drifted range runs full.
 
     This evidence selects tests only; it never authorizes artifact reuse.
@@ -251,6 +257,11 @@ def change_range(event_name, event, checkout, git):
     """
     if not isinstance(checkout, str) or not SHA.fullmatch(checkout) or git("rev-parse", "HEAD") != checkout:
         raise ValueError("unbound selection checkout")
+    if preview:
+        from scripts.ci_skip import pr_snapshot
+        if event_name != "pull_request":
+            raise ValueError("preview requires a trusted PR")
+        pr_snapshot(event["pull_request"])
     if event_name == "pull_request":
         pr = event["pull_request"]
         base, head = pr["base"]["sha"], pr["head"]["sha"]
@@ -274,15 +285,36 @@ def change_range(event_name, event, checkout, git):
     # Shared collection fixtures, policy and dependencies require initial full
     # validation. An ordinary product edit no longer expires the entire cohort.
     from scripts.ci_skip import POLICY_FILES
-    if any(p in POLICY_FILES or p.startswith("tests/") and not re.fullmatch(r"tests/test_[\w]+\.py", p)
+    if any(p in POLICY_FILES and not (preview and p in PREVIEW_POLICY)
+           or p.startswith("tests/") and not re.fullmatch(r"tests/test_[\w]+\.py", p)
            for p in paths):
         raise ValueError("shared fixture/policy changed; full validation")
-    return {"version": 1, "checkout": checkout, "base": base, "paths": sorted(paths)}
+    result = {"version": 1, "checkout": checkout, "base": base, "paths": sorted(paths)}
+    if preview:
+        if not PREVIEW_POLICY.intersection(paths):
+            raise ValueError("no policy change to preview")
+        result.update(mode="preview", reusable=False)
+    return result
 
 
-def read_changes(directory, checkout):
-    data = json.loads((Path(directory) / "changes.json").read_text(encoding="utf-8"), object_pairs_hook=_unique)
-    if (set(data) != {"version", "checkout", "base", "paths"} or type(data["version"]) is not int
+def preview_range(event_name, event, checkout, git, environ):
+    """Exact same-repository merge/workflow, with the real changed paths retained."""
+    from scripts.ci_skip import REPOSITORY, WORKFLOW
+    result = change_range(event_name, event, checkout, git, preview=True)
+    number = event["pull_request"]["number"]
+    if (environ.get("GITHUB_REPOSITORY") != REPOSITORY
+            or environ.get("GITHUB_WORKFLOW_SHA") != checkout
+            or environ.get("GITHUB_WORKFLOW_REF") != f"{REPOSITORY}/{WORKFLOW}@refs/pull/{number}/merge"):
+        raise ValueError("unbound preview workflow")
+    return result
+
+
+def read_changes(directory, checkout, *, preview=False):
+    name = "preview-changes.json" if preview else "changes.json"
+    data = json.loads((Path(directory) / name).read_text(encoding="utf-8"), object_pairs_hook=_unique)
+    keys = {"version", "checkout", "base", "paths"} | ({"mode", "reusable"} if preview else set())
+    if (set(data) != keys or (preview and (data["mode"] != "preview" or data["reusable"] is not False))
+            or type(data["version"]) is not int
             or data["version"] != 1 or not isinstance(checkout, str) or not SHA.fullmatch(checkout)
             or data["checkout"] != checkout or not isinstance(data["base"], str)
             or not SHA.fullmatch(data["base"]) or data["base"] == "0" * 40
@@ -547,14 +579,29 @@ def host_resource(path: Path, root=ROOT, seen=None, symbols=None) -> bool:
 def main():
     # Invoked only in normal CI. Local tests inject git into change_range.
     from scripts.ci_skip import git
-    destination = Path(os.environ["CI_SUITE_ARTIFACT_DIR"]) / "changes.json"
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("command", nargs="?", choices=["preview-plan", "preview"])
+    args = parser.parse_args()
+    preview = args.command is not None
     try:
         event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
-        result = change_range(os.environ["GITHUB_EVENT_NAME"], event, os.environ["GITHUB_SHA"], git)
+        if preview:
+            result = preview_range(os.environ["GITHUB_EVENT_NAME"], event, os.environ["GITHUB_SHA"], git, os.environ)
+        else:
+            result = change_range(os.environ["GITHUB_EVENT_NAME"], event, os.environ["GITHUB_SHA"], git)
     except Exception as exc:
         # Missing evidence is explicitly not a reusable/eligible receipt.
         result = {"full": True, "reason": type(exc).__name__}
-        print("ci_selection: invalid/unavailable change range; full Windows")
+        print("ci_selection: invalid/unavailable change range; full Windows", file=sys.stderr)
+    if args.command == "preview-plan":
+        print("enabled=" + str(result.get("mode") == "preview").lower())
+        return
+    if preview and result.get("mode") != "preview":
+        raise ValueError("preview range unavailable; compulsory full validation is unchanged")
+    directory = Path(os.environ["CI_SUITE_ARTIFACT_DIR"])
+    directory.mkdir(parents=True, exist_ok=True)
+    destination = directory / ("preview-changes.json" if preview else "changes.json")
     destination.write_text(json.dumps(result, sort_keys=True), encoding="utf-8")
 
 

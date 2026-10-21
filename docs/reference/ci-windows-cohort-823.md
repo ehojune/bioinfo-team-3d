@@ -1,25 +1,27 @@
 # Windows cohort 후속 (#823 · 미게시)
 
-명시한 OS 경계와 변경 test를 선택하는 제안입니다. Windows full과 동등하지 않으며 실제 속도는 미측정입니다.
+OS 경계와 변경 test를 선택하는 제안입니다. Windows full과 동등하지 않으며 실제 속도는 미측정입니다.
 
-| 증거 | 값 |
+| 정적 collection/선택 | 값 |
 |---|---|
-| 기존 PR Windows job 118911719909 | 4 workers, 10,461 전수, 10,413 PASS/48 skip, pytest 1,427.53초 |
-| main 39510024326 보존 artifact | pytest 1,536.07초, lock 대기 합 2,949.22 worker-seconds/77파일 |
-| 이전 로컬 선택 | 9,270/10,554개(87.8%), 272파일 |
-| 이번 정적 선택 | 4,566/10,578개(43.2%), 171파일; 6,012개 제외 |
-| 이번 보호 범위 | 명시 cohort 3,869 + 혼합 파일 경계 15 + native API backstop 682 |
-| host lock 정적 판정 | 22파일/456노드 → 23파일/139노드; durable_writer 28노드는 lock 불필요 |
+| 직전 | 4,566/10,578개(43.2%), 171파일 |
+| 이번: 변경 test 없는 유효 range 가정 | 4,592/10,638개(43.2%), 173파일; 6,046개 제외 |
+| 현재 local main diff의 변경 test 포함 예상 | 4,990개; 실제 GitHub event 증거 아님 |
+| 이번 검토가 유지한 명시 경계 | cohort 3,031 + mixed 819 = 3,850개(36.2%) |
+| host lock | 139노드/23파일, 모두 선택; 직전과 같음 |
 
-**30%·2–3천 개 목표는 미달입니다.** 이번 검토가 유지한 명시 경계만 3,884개(36.7%)입니다. 모든 가능한 정책의 최솟값을 증명한 수치는 아닙니다. 설치 경로 497개, 경로 policy 256개, private path 254개, shell quoting 217개와 process/Job/ACK·receipt·SQLite·CLI/MCP 경계를 더 줄일 근거는 이번 범위에서 확보하지 못했습니다.
+**30%·2–3천 개 목표는 미달입니다.** 3,850개는 이번 검토의 보호 범위이며 보편적 최솟값을 증명하지 않습니다. 새 회귀 60개는 미검토 신규 파일이므로 모두 포함합니다.
 
-- [profile](../../config/ci/windows-boundary-v1.json)은 schema 3 / `windows-boundary-v3`입니다. `known_tests`는 collection 목록이며 순수성 인증이 아닙니다. 경계 cohort·native API·PR/push 변경 test를 포함합니다. 일반 schema/prose/logic 파일마다 제외 승인을 요구하지 않습니다. 새 파일·미확정 node는 포함합니다.
-- API backstop은 test와 참조한 test helper/fixture, import-time 코드를 읽습니다. 클래스는 전체를 남깁니다. 미사용 native sibling 때문에 순수 node를 모두 포함하지 않으며 별칭·autouse·usefixtures도 검사합니다. 임의 제품 구현의 완전한 동적 call graph 증명은 아닙니다.
-- 혼합 파일은 bulk pack 128→1(UTF-8), environment signatures 102→10(CLI/adapter), evidence verify 79→2(separator/case), semantics objects 18→2(경로 가림·동일성)로 좁혔습니다. source digest가 다르거나 scope를 해석하지 못하면 파일 전체를 포함합니다. Linux 전수와 Windows nightly/manual 전수는 유지합니다.
-- checkout과 PR ordered base/head 또는 push before/after·ancestor가 맞아야 변경 range를 인정합니다. 증거 누락·불일치와 공유 test helper/fixture data·policy/dependency 변경은 전수입니다. 제품 변경 하나로 전역 runtime fingerprint가 만료되지는 않습니다.
-- host lock은 node와 사용 fixture/helper의 setup~teardown을 감쌉니다. 고정·미확정 listener와 global snapshot, `watch_gateway_exit → cli._terminate_tree → proc_tree.kill_tree`를 보호합니다. 지역 Settings에 포트 0을 한 번 무조건 지정하고 생성 전 escape/rebind가 없음을 확인한 Runner만 broker 전역 lock에서 제외합니다.
-- manifest/artifact v5는 v3 profile과 기존 tree/workflow/policy/run/attempt/digest/ordered parents·성공 gate 조건을 묶습니다. main before=검증 PR base도 유지합니다. v4 manifest/v2 profile은 재사용하지 않습니다.
+- paper-skill sandbox/private/namespace/link/hash 8개 누락을 명시 cohort로 복구했습니다. 설치 497→462(인용 Bash 데이터·비설치 인수 35개 제외), policy 256→250(fake clock·수치 6개 제외), web_3d 93→92(JS 문자열 1개 제외)입니다. 실제 installer/PowerShell·junction/경로·security·browser/Node·packaging 경계는 유지합니다.
+- init 104개는 유지합니다. defaults의 순수 body 후보도 autouse HOME/경로·doctor 교체 fixture를 거칩니다. fixture 우회나 추가 추론 규칙 없이 줄일 근거는 확보하지 못했습니다. policy_scan_cost 31개와 나머지 web 46개도 유지합니다.
+- [profile](../../config/ci/windows-boundary-v1.json)은 schema 4 / `windows-boundary-v4`입니다. 혼합 source digest가 다르거나 node를 해석하지 못하면 포함합니다. native test/helper·fixture·import-time backstop, 변경 test·미검토 파일 포함, 잘못된 range·공유 fixture/dependency의 full fallback은 유지합니다. Linux 3.10/3.12와 Windows nightly/manual은 전수입니다.
+- host lock의 scoped helper·고정/미확정 listener·global snapshot 보호와 setup~teardown 범위는 변경하지 않았습니다. 지역 포트 0·전용 subprocess는 자동 전역 lock 사유가 아닙니다. production fsync·SQLite·Job 로직은 바꾸지 않았습니다.
+- manifest/artifact v6는 v4 profile과 기존 tree/workflow/policy/run/attempt/digest/ordered parents·trusted base·성공 gate를 묶습니다. 구형/preview 증거는 교환하지 않습니다.
 
-guarded mock/static 415 PASS. 바뀐 CI 계약 175개만 재수집하고 나머지는 직전 collection을 재사용했습니다. 제품 test는 변경하지 않았습니다. 실제 Windows·xdist·경합·대기 절감·5분 달성은 미검증입니다. 보존 main 대기 합과 전달받은 2,450초의 차이 원인도 미확정입니다.
+## 정책 변경 PR의 측정
 
-정책 변경 PR의 첫 실행은 전수 fallback입니다. 게시 뒤 유효한 일반 PR/push range에서 경계 실행의 full/selected 목록·profile·worker 수·setup/pytest/queue 시간·lock 대기를 artifact로 확인해야 합니다. static 예상치로 실행 성능을 대신하지 않습니다. 게시 전 총괄의 #824 이후 main 통합·exact-head 검토가 남습니다.
+필수 Windows full 성공 뒤 같은 job에서 preview만 추가합니다. 일반 PR/main·nightly/dispatch는 중복 실행하지 않습니다. preview는 same-repository PR의 실제 checkout·ordered base/head·workflow SHA/ref와 실제 변경 경로를 검증합니다. 좁은 CI policy 변경만 예외로 선택하며 공유 fixture/dependency 변경·불명확한 range에는 실행하지 않습니다.
+
+`windows-boundary-preview-v4`·`preview-changes.json`·`boundary-preview-*`·`preview-summary.json`으로 분리하고 `reusable=false`를 기록합니다. full gate output/manifest upload는 그대로이며 producer/consumer가 preview를 거부합니다. full/selected/excluded·workers·host wait·setup/pytest/queue를 따로 보고합니다. 같은 job의 warm 후속 실행이므로 cold PR 성능과 같지 않습니다. preview 실패도 job 실패이며 숨기지 않습니다.
+
+mock/static 475 PASS, 마지막 소규모 확인은 status에 기록합니다. 바뀐 CI 계약 235개만 재수집하고 나머지 collection은 재사용했습니다. 실제 Windows/xdist·경합·5분 달성은 미검증입니다. #824 이후 총괄의 main 통합·exact-head 검토·게시·원격 CI가 남습니다.

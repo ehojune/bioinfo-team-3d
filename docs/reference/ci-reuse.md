@@ -38,11 +38,12 @@ main의 해당 commit에 병합된 같은 저장소 PR의 최신 matching run만
 #823 branch의 미게시 후속 설계입니다. 실제 Windows·병렬 성능은 새 CI 전까지 미검증이며 [정적 근거와 한계](ci-windows-cohort-823.md)를 봅니다.
 
 - CI outer Linux 3.10/3.12 전수는 `pytest-xdist==3.8.0`의 `-n auto --dist loadfile`로 실행합니다. global addopts/PYTEST_ADDOPTS는 없고 nested pytest는 직렬 기본값입니다. auto worker 수는 측정값으로 기록하며 4개로 가정하지 않습니다.
-- Windows PR/main은 `windows-boundary-v3`, nightly/dispatch는 `windows-full-v1`입니다. 명시 cohort·native API·변경 test를 포함하고, 기존 collection 밖의 파일·미확정 node와 공유 fixture/policy 변경은 full입니다. 일반 schema/prose/logic에 파일별 순수성 승인을 요구하지 않습니다. 혼합 파일의 node 검토만 source digest로 보호합니다.
+- Windows PR/main은 `windows-boundary-v4`, nightly/dispatch는 `windows-full-v1`입니다. 명시 cohort·native API·변경 test를 포함하고, 기존 collection 밖의 파일·미확정 node와 공유 fixture/policy 변경은 full입니다. 일반 schema/prose/logic에 파일별 순수성 승인을 요구하지 않습니다. 혼합 파일의 node 검토만 source digest로 보호합니다.
 - Windows-only 회귀가 제외 파일에 생기면 nightly/dispatch에서 늦게 발견될 위험이 남습니다. Linux 전수는 Windows 실행의 증거가 아닙니다. 5분은 목표이며 미측정입니다. 안전 검증을 줄여 시간을 맞추지 않습니다.
 - controller의 원래 operator HOME 신원과 worker별 HOME/state/cache/DB/log 격리는 유지합니다. 전용 subprocess·임의 포트·사용하지 않는 test helper import는 전역 lock 근거가 아닙니다. 참조된 helper/fixture·import-time 실행·별칭을 따라 고정/미확정 listener 포트와 전역 process scan을 보호합니다. 실제 Runner broker의 mutable port가 입증되지 않은 경우도 잠급니다. lock은 setup~teardown을 감싸며 정적 분석의 완전한 동적 증명을 뜻하지 않습니다. production fsync·SQLite FULL·atomic replace·Job은 바꾸지 않습니다.
 - 각 CI job artifact에는 full/selected node 목록·제외 이유, CPU·실제 worker 수·platform, setup/pytest/job queue 시간, 실패/skip 수·최장 파일·host-resource lock 대기가 남습니다. worker collection 목록은 서로 같아야 합니다. 3.10 controller 진단과 25분 상한을 유지하고 worker도 5분마다 node/thread/task stack을 별도 기록합니다.
-- v5 manifest/artifact는 gate별 profile·policy blob·tree·run/attempt·workflow·digest·ordered parents와 모든 성공 gate를 결합합니다. main push before도 검증된 PR base와 같아야 변경 test 집합을 재사용합니다. Windows full·v1 boundary·구형 manifest·다른 증거는 교환하지 않습니다. 바뀐 정책의 자기 인증은 허용하지 않아 첫 검증은 전수 경로입니다. 확인된 snapshot drift의 no-reuse 결과는 아래처럼 별도로 처리합니다.
+- v6 manifest/artifact는 gate별 profile·policy blob·tree·run/attempt·workflow·digest·ordered parents와 모든 성공 gate를 결합합니다. main push before도 검증된 PR base와 같아야 변경 test 집합을 재사용합니다. Windows full·v1 boundary·구형 manifest·다른 증거는 교환하지 않습니다. 바뀐 정책의 자기 인증은 허용하지 않아 첫 검증은 전수 경로입니다. 확인된 snapshot drift의 no-reuse 결과는 아래처럼 별도로 처리합니다.
+- 정책 변경 same-repository PR만 필수 Windows full 성공 뒤 별도 boundary preview를 실행합니다. 실제 checkout·ordered base/head·workflow를 검증하고 변경 test를 유지합니다. preview는 `reusable=false`·별도 profile/receipt/artifact/summary이며 full gate·재사용 근거로 쓰지 않습니다. 같은 job의 warm 실행이므로 일반 PR의 cold 실행 시간과 같다고 보지 않습니다. 공유 fixture/dependency 변경·불명확한 range에서는 preview를 생략하고 full을 유지합니다.
 
 근거: [xdist distribution](https://pytest-xdist.readthedocs.io/en/stable/distribution.html), [worker isolation](https://pytest-xdist.readthedocs.io/en/stable/how-to.html), [3.8.0 Python >=3.9](https://pypi.org/project/pytest-xdist/3.8.0/). 병렬 실행·Windows 성능·artifact 재사용은 실제 CI 확인 전입니다.
 

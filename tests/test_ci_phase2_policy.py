@@ -118,4 +118,4 @@ def test_profile_is_bound_by_manifest_policy_and_version():
     from scripts import ci_skip
     assert selection.PROFILE in ci_skip.POLICY_FILES
     assert ci_skip.COVERAGE["pytest-windows"] == selection.WINDOWS_BOUNDARY
-    assert ci_skip.VERSION == 5
+    assert ci_skip.VERSION == 6

@@ -24,6 +24,7 @@ jobs:
     outputs:
       skip: ${{ steps.check.outputs.skip }}
       reason: ${{ steps.check.outputs.reason }}
+      boundary_preview: ${{ steps.preview.outputs.enabled }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -37,6 +38,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python scripts/ci_skip.py >> "$GITHUB_OUTPUT"
+      - id: preview
+        if: steps.check.outputs.reason == 'full' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.repo.id == github.event.pull_request.base.repo.id
+        run: python -m scripts.ci_selection preview-plan >> "$GITHUB_OUTPUT"
 
   pytest:
     needs: changes
@@ -151,7 +155,7 @@ jobs:
     env:
       CI_JOB_LABEL: pytest-windows
       PYTHONHASHSEED: '0'
-      CI_COVERAGE_PROFILE: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'windows-full-v1' || 'windows-boundary-v3' }}
+      CI_COVERAGE_PROFILE: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'windows-full-v1' || 'windows-boundary-v4' }}
     outputs:
       tree: ${{ steps.identity.outputs.tree }}
       profile: ${{ steps.identity.outputs.profile }}
@@ -188,6 +192,39 @@ jobs:
         with:
           name: coverage-windows-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.CI_SUITE_ARTIFACT_DIR }}
+          retention-days: 7
+
+      # Only policy-changing same-repository PRs: mandatory full run above stays
+      # authoritative. Separate receipts/profile/artifacts cannot authorize reuse.
+      - name: Initialize non-reusable boundary preview
+        id: preview_setup
+        if: needs.changes.outputs.boundary_preview == 'true'
+        env:
+          CI_PREVIEW_ROOT: ${{ runner.temp }}/ci-windows-boundary-preview
+        run: python -c "import os,time; print('CI_PREVIEW_STARTED='+str(time.time())+'\nCI_PREVIEW_ARTIFACT_DIR='+os.environ['CI_PREVIEW_ROOT'], file=open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8'))"
+      - name: Bind real policy preview range
+        if: steps.preview_setup.outcome == 'success'
+        env:
+          CI_SUITE_ARTIFACT_DIR: ${{ env.CI_PREVIEW_ARTIFACT_DIR }}
+        run: python -m scripts.ci_selection preview
+      - name: Measure non-reusable boundary preview
+        if: steps.preview_setup.outcome == 'success'
+        env:
+          CI_SUITE_ARTIFACT_DIR: ${{ env.CI_PREVIEW_ARTIFACT_DIR }}
+          CI_SETUP_STARTED: ${{ env.CI_PREVIEW_STARTED }}
+        run: pytest -q --durations=15 -n auto --dist loadfile -p scripts.ci_suite --ci-profile windows-boundary-preview-v4
+      - name: Report non-reusable boundary preview
+        if: always() && steps.preview_setup.outcome == 'success'
+        env:
+          CI_SUITE_ARTIFACT_DIR: ${{ env.CI_PREVIEW_ARTIFACT_DIR }}
+          GH_TOKEN: ${{ github.token }}
+        run: python -m scripts.ci_suite report
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.preview_setup.outcome == 'success'
+        with:
+          name: boundary-preview-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.CI_PREVIEW_ARTIFACT_DIR }}
+          if-no-files-found: error
           retention-days: 7
 
   clean-install:
@@ -325,7 +362,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: steps.manifest.outputs.reusable == 'true'
         with:
-          name: ci-full-v5-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ci-full-v6-${{ github.run_id }}-${{ github.run_attempt }}
           path: ci-result.json
           if-no-files-found: error
           retention-days: 7

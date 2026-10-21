@@ -19,7 +19,7 @@ import time
 
 import pytest
 
-from scripts.ci_selection import ROOT, PROFILES, WINDOWS_BOUNDARY, host_resource, include_windows, policy, read_changes
+from scripts.ci_selection import ROOT, PROFILES, WINDOWS_BOUNDARY, WINDOWS_PREVIEW, host_resource, include_windows, policy, read_changes
 
 
 def pytest_addoption(parser):
@@ -41,12 +41,13 @@ def safe_worker(value):
 
 
 def select(items, profile, root=ROOT, *, changed=None):
-    if profile != WINDOWS_BOUNDARY:
+    if profile not in {WINDOWS_BOUNDARY, WINDOWS_PREVIEW}:
         return list(items), [], {}
     try:
         data = policy(root)
         if changed is None:
-            changed = read_changes(os.environ["CI_SUITE_ARTIFACT_DIR"], os.environ.get("GITHUB_SHA"))
+            changed = read_changes(os.environ["CI_SUITE_ARTIFACT_DIR"], os.environ.get("GITHUB_SHA"),
+                                   preview=profile == WINDOWS_PREVIEW)
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         print("ci_suite: selection policy unavailable; include all nodes", file=sys.stderr)
         return list(items), [], {}
@@ -108,7 +109,8 @@ class Observation:
         if omitted:
             config.hook.pytest_deselected(items=omitted)
             items[:] = chosen
-        self.write("collection", {"profile": self.profile, "full_nodes": full,
+        self.write("collection", {"profile": self.profile,
+                                  **({"reusable": False} if self.profile == WINDOWS_PREVIEW else {}), "full_nodes": full,
                                   "selected_nodes": [i.nodeid for i in chosen],
                                   "excluded_files": reasons})
 
@@ -163,6 +165,7 @@ class Observation:
         if self.stall:
             self.stall.close()
         self.write("metrics", {"profile": self.profile, "worker": self.worker,
+                  **({"reusable": False} if self.profile == WINDOWS_PREVIEW else {}),
                   "workers": self.worker_count, "cpu_logical": os.cpu_count(),
                   "python_version": platform.python_version(),
                   "platform": platform.platform(), "runner_image": os.environ.get("ImageVersion"),
@@ -241,6 +244,9 @@ def main():
     args = parser.parse_args()
     directory = Path(os.environ["CI_SUITE_ARTIFACT_DIR"])
     result = summarize(directory)
+    preview = result["profile"] == WINDOWS_PREVIEW
+    if preview:
+        result.update(reusable=False, timing_scope="warm preview after mandatory full suite; not cold PR timing")
     # Read current run scheduling metadata once; this does not wait on any CI.
     from scripts.ci_skip import api
     jobs = api(f"actions/runs/{os.environ['GITHUB_RUN_ID']}/attempts/{os.environ['GITHUB_RUN_ATTEMPT']}/jobs?per_page=100")
@@ -251,11 +257,13 @@ def main():
     result["job_queue_s"] = (stamp(rows[0]["started_at"]) - stamp(rows[0]["created_at"])).total_seconds()
     result["queue_scope"] = "job created to runner start, separate from setup and pytest"
     result["over_five_minutes"] = result["setup_s"] + result["pytest_s"] > 300
-    (directory / "summary.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    (directory / ("preview-summary.json" if preview else "summary.json")).write_text(
+        json.dumps(result, indent=2) + "\n", encoding="utf-8")
     text = json.dumps(result, indent=2)
     print(text)
     with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as stream:
-        stream.write("### CI coverage and timing (measured)\n\n```json\n" + text + "\n```\n")
+        heading = "Boundary preview (diagnostic; reusable=false)" if preview else "CI coverage and timing (measured)"
+        stream.write("### " + heading + "\n\n```json\n" + text + "\n```\n")
 
 
 if __name__ == "__main__":
