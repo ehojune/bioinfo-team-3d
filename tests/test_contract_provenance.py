@@ -764,3 +764,74 @@ def test_a_cached_checkout_whose_origin_cannot_be_read_is_cloned_fresh(install):
     assert paper2agent.origin_url(install.repo) == SOURCE
     for dst in install.destinations.values():
         assert _marker(dst)["source"] == SOURCE and (dst / "SKILL.md").read_text(encoding="utf-8") == "verified skill\n"
+
+
+# ---------------- labhq talent lists built paper skills (#660) ----------------
+
+def _paper_skill_receipt(talent: Path, pid: str, **fields) -> Path:
+    import hashlib
+    from labhq.recruit.paper_skills import paper_id
+    folder = talent / ("paper-skill-" + hashlib.sha256(paper_id(pid).encode()).hexdigest()[:24])
+    folder.mkdir(parents=True)
+    row = {"paper_id": paper_id(pid), "status": "ready", "skill_dir": str(folder / "skill" / ("b" * 64)),
+           "skill_sha256": "b" * 64, "runner_id": "local", "paper2agent_commit": "c" * 40,
+           "fulltext_receipt": {"text_file": "/private/paper.md"}, "fulltext_receipt_sha256": "d" * 64, **fields}
+    (folder / "paper-skill.json").write_text(json.dumps(row), encoding="utf-8")
+    return folder
+
+
+def test_talent_lists_contracts_and_built_paper_skills_without_claiming_use(tmp_path):
+    from labhq.cli import talent_lines
+    reg, _ = _hired(tmp_path)
+    folder = _paper_skill_receipt(tmp_path / "talent", "PMID:12345678")
+    lines = talent_lines(reg)
+    assert lines[0].startswith("🐥 tissue")  # the existing contract line is unchanged and first
+    paper, = [line for line in lines if line.startswith("📄")]
+    assert folder.name in paper and "pmid:12345678" in paper and "생성됨" in paper
+    assert "skill=" + "b" * 12 in paper and "commit=ccccccc" in paper and "요청별 기록 참조" in paper
+    assert "호출됨" not in paper and "called" not in paper  # built is not used, read or useful
+    assert "/private/paper.md" not in paper and "skill/" not in paper and "local" not in paper  # no paths/receipt
+
+
+def test_talent_marks_broken_or_foreign_paper_skill_receipts_without_echoing_them(tmp_path):
+    from labhq.cli import talent_lines
+    talent = tmp_path / "talent"
+    _paper_skill_receipt(talent, "PMID:1", status="failed")
+    _paper_skill_receipt(talent, "PMID:2", skill_sha256="not-a-hash")
+    broken = _paper_skill_receipt(talent, "PMID:3")
+    (broken / "paper-skill.json").write_text("{\x1b[31m not json", encoding="utf-8")
+    foreign = _paper_skill_receipt(talent, "PMID:4")
+    (foreign / "paper-skill.json").write_text(json.dumps({"paper_id": "pmid:99", "status": "ready",
+                                                          "skill_sha256": "e" * 64}), encoding="utf-8")
+    huge = _paper_skill_receipt(talent, "PMID:5")
+    (huge / "paper-skill.json").write_text(" " * (256 * 1024 + 1), encoding="utf-8")
+    (talent / "paper-skill-unfinished").mkdir()  # a failed build writes no receipt: not listed
+    lines = talent_lines(SimpleNamespace(talent_pool=lambda: [], talent_dir=talent))
+    assert len(lines) == 5 and all(line.startswith("📄") and "표시 생략" in line for line in lines)
+    assert sum("다른 논문" in line for line in lines) == 1
+    assert not any(token in "".join(lines) for token in ("\x1b", "pmid:99", "not-a-hash", "failed", "e" * 12))
+
+
+def test_talent_lists_a_paper_skill_once_when_a_contract_already_holds_it(tmp_path):
+    from labhq.cli import talent_lines
+    talent = tmp_path / "talent"
+    folder = _paper_skill_receipt(talent, "PMID:7", skill_sha256="f" * 64)
+    contract = SimpleNamespace(id="c_p", name="P", contract=SimpleNamespace(
+        talent_dir=str(talent / "p"), kind="consultant", paper="PMID: 7", source_commit=None, external_services=[],
+        skill_sha256="f" * 64))
+    lines = talent_lines(SimpleNamespace(talent_pool=lambda: [contract], talent_dir=talent))
+    assert len(lines) == 1 and lines[0].startswith("🐥 p")
+    (folder / "contract.yaml").write_text("", encoding="utf-8")  # a contract in the same folder is the contract line
+    assert talent_lines(SimpleNamespace(talent_pool=lambda: [], talent_dir=talent)) == []
+
+
+def test_talent_command_prints_the_same_lines(tmp_path, capsys):
+    from labhq import cli
+    _paper_skill_receipt(tmp_path / "talent", "doi:10.1000/xyz")
+    (tmp_path / "agents" / "core").mkdir(parents=True)
+    config = tmp_path / "labhq.yaml"
+    config.write_text(yaml.safe_dump({"runner": {"agents_dir": str(tmp_path / "agents"),
+                                                 "talent_dir": str(tmp_path / "talent")}}), encoding="utf-8")
+    cli.main(["-c", str(config), "talent"])
+    out = capsys.readouterr().out.splitlines()
+    assert len(out) == 1 and "doi:10.1000/xyz" in out[0] and "생성됨" in out[0]

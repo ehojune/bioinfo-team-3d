@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import ipaddress
 import json
 import logging
@@ -279,6 +280,61 @@ def _api(s: Settings, method: str, path: str, *, raw_errors: bool = False, **kw)
             raise
         print("gateway 응답을 읽을 수 없습니다.", file=sys.stderr)
         raise SystemExit(2) from None
+
+
+PAPER_SKILL_RECEIPT_MAX_BYTES = 256 * 1024  # a ready receipt holds ids, hashes and one fulltext receipt
+
+
+def _talent_text(value, n: int = 120) -> str:
+    """One printable line: a receipt value never moves the cursor or floods the terminal."""
+    return short("".join(c if c.isprintable() else " " for c in str(value)), n)
+
+
+def talent_lines(registry) -> list[str]:
+    """`labhq talent`: past contracts, then paper skills built by Paper2Skill (#660).
+
+    A built paper skill leaves only talent/paper-skill-<key>/paper-skill.json, no contract.yaml, so the contract
+    pool alone never listed it. A line says the skill was built; whether a step used it or it helped is recorded per
+    request (run record/appendix), not here. A receipt that does not belong to its folder or lacks a field gets one
+    line saying so; its values are not echoed."""
+    from .recruit.paper_skills import paper_id
+
+    lines, contract_skills = [], set()
+    for spec in registry.talent_pool():
+        c = spec.contract
+        if c and c.skill_sha256:
+            contract_skills.add((paper_id(c.paper), c.skill_sha256))
+        lines.append(f"🐥 {Path(c.talent_dir).name if c and c.talent_dir else spec.id:<24} {spec.name:<24} "
+                     f"{c.kind if c else ''}  paper={c.paper if c else ''}"
+                     f"  commit={(c.source_commit or '-')[:7] if c else '-'}"
+                     f"  external={','.join(x.host for x in c.external_services) if c and c.external_services else '-'}")
+    for folder in sorted(registry.talent_dir.glob("paper-skill-*")):
+        receipt = folder / "paper-skill.json"
+        if not folder.is_dir() or (folder / "contract.yaml").exists() or not receipt.is_file():
+            continue  # listed above as a contract, or no build finished here (failures write no receipt)
+        name = _talent_text(folder.name, 40)
+        try:
+            if receipt.is_symlink() or receipt.stat().st_size > PAPER_SKILL_RECEIPT_MAX_BYTES:
+                raise ValueError
+            row = json.loads(receipt.read_text(encoding="utf-8"))
+            pid = paper_id(row.get("paper_id")) if isinstance(row, dict) else None
+            digest = row.get("skill_sha256") if isinstance(row, dict) else None
+            if (not pid or row.get("status") != "ready" or not isinstance(digest, str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", digest)):
+                raise ValueError
+        except (OSError, UnicodeError, ValueError):
+            lines.append(f"📄 {name:<24} 논문 스킬 기록 불완전·손상(표시 생략)")
+            continue
+        if folder.name != "paper-skill-" + hashlib.sha256(pid.encode()).hexdigest()[:24]:
+            lines.append(f"📄 {name:<24} 논문 스킬 기록이 폴더와 다른 논문을 가리킴(표시 생략)")
+            continue
+        if (pid, digest) in contract_skills:
+            continue  # the same skill already appears as a contract line
+        commit = row.get("paper2agent_commit")
+        commit = commit[:7] if isinstance(commit, str) and re.fullmatch(r"[0-9a-f]{40}", commit) else "-"
+        lines.append(f"📄 {name:<24} 논문 자문 스킬 생성됨  paper={_talent_text(pid)}  skill={digest[:12]}"
+                     f"  commit={commit}  사용·효용=요청별 기록 참조")
+    return lines
 
 
 def _run_websocket(s: Settings, command) -> None:
@@ -2306,12 +2362,8 @@ def main(argv: list[str] | None = None) -> None:
 
         reg = Registry(s.path(s.runner.agents_dir), s.path(s.runner.talent_dir),
                        s.path(s.runner.contract_dir) if s.runner.contract_dir else None)
-        for spec in reg.talent_pool():
-            c = spec.contract
-            print(f"🐥 {Path(c.talent_dir).name if c and c.talent_dir else spec.id:<24} {spec.name:<24} "
-                  f"{c.kind if c else ''}  paper={c.paper if c else ''}"
-                  f"  commit={(c.source_commit or '-')[:7] if c else '-'}"
-                  f"  external={','.join(x.host for x in c.external_services) if c and c.external_services else '-'}")
+        for line in talent_lines(reg):
+            print(line)
     elif args.cmd == "setup-paper2agent":
         from .recruit.paper2agent import setup_paper2agent, SOURCE_MARKER
 
