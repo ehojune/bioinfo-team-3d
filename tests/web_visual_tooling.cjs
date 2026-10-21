@@ -48,6 +48,83 @@ test('demo lifecycle observer and clock failures cannot replace an operation fai
   }
 });
 
+test('one startup and load fit the trace bound while an incomplete startup invents no ready stage', () => {
+  const rows = [];
+  let now = 0;
+  const trace = demoLifecycleTrace(row => rows.push(row), () => now++);
+  const stages = ['open-start','profile-ready','server-ready','chrome-spawned','debug-port-ready',
+    'target-ready','socket-ready','protocol-ready','open-ready','navigate-start','navigate-ready',
+    'boot-start','boot-ready','frames-start','frames-ready'];
+  stages.forEach(trace);
+  assert.deepEqual(rows.map(row => row.stage), stages);
+  assert.equal(rows.at(-1).elapsed_ms, 14);
+  const incomplete = [];
+  const partial = demoLifecycleTrace(row => incomplete.push(row), () => now++);
+  stages.slice(0, 4).forEach(partial);
+  assert.deepEqual(incomplete.map(row => row.stage), stages.slice(0, 4));
+  assert.equal(incomplete.some(row => row.stage === 'debug-port-ready'), false);
+});
+
+// Evaluate the actual driver in an isolated VM with only owned synthetic
+// resources. These async contracts run in CI; they launch no browser/service.
+function startupFixture({port = 55921, listenError = null, closeError = null} = {}) {
+  const events = [], profile = path.join('owned-root', 'owned-profile');
+  let onError;
+  const server = {
+    once(name, fn) { assert.equal(name, 'error'); onError = fn; },
+    removeListener(name, fn) { assert.equal(name, 'error'); assert.equal(fn, onError); onError = null; },
+    listen(port, host, ready) {
+      assert.equal(port, 0); assert.equal(host, '127.0.0.1');
+      events.push('listen');
+      if (listenError) { const fail = onError; onError = null; fail(listenError); }
+      else ready();
+    },
+    address: () => ({port}),
+    close(done) { events.push('server-close'); done(closeError); }
+  };
+  const fakeFs = {
+    existsSync: name => name === 'owned-chrome',
+    mkdtempSync() { events.push('profile-create'); return profile; },
+    rmSync(dir) { assert.equal(dir, profile); events.push('profile-remove'); }
+  };
+  const modules = {'node:fs':fakeFs, 'node:path':path, 'node:os':{tmpdir:() => 'owned-root'},
+    'node:http':{createServer:() => server},
+    'node:child_process':{spawn() { throw new Error('unexpected browser spawn'); }},
+    './test_font.cjs':{}, './mini_ws.cjs':{}};
+  const sandbox = {module:{exports:{}}, __dirname,
+    require(name) { assert.ok(Object.hasOwn(modules, name), name); return modules[name]; },
+    process:{env:{LABHQ_TEST_CHROME:'owned-chrome'}, getActiveResourcesInfo:() => []},
+    console:{error() {}},
+    setTimeout(fn, ms) { assert.equal(ms, 5000); events.push('timer-set'); return 7; },
+    clearTimeout(id) { assert.equal(id, 7); events.push('timer-clear'); }};
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'support/demo_driver.cjs'), 'utf8'), sandbox);
+  return {open:sandbox.module.exports.openDemo, events, hasListenErrorHandler:() => Boolean(onError)};
+}
+
+test('reserved-port startup failure closes its acquired server before removing the profile', async () => {
+  const f = startupFixture();
+  await assert.rejects(f.open(), /static server landed on a reserved port 55921/);
+  assert.deepEqual(f.events, ['profile-create','listen','timer-set','server-close','timer-clear','profile-remove']);
+  assert.equal(f.hasListenErrorHandler(), false);
+});
+
+test('listen failure rejects startup and removes the profile without pretending a server was acquired', async () => {
+  const failure = new Error('synthetic bind failure');
+  const f = startupFixture({listenError:failure});
+  await assert.rejects(f.open(), error => error === failure);
+  assert.deepEqual(f.events, ['profile-create','listen','timer-set','timer-clear','profile-remove']);
+  assert.equal(f.hasListenErrorHandler(), false);
+});
+
+test('startup cleanup failure retains both errors and does not remove an unclosed profile', async () => {
+  const failure = new Error('synthetic server close failure');
+  const f = startupFixture({closeError:failure});
+  await assert.rejects(f.open(), error => error.message === 'demo startup and cleanup failed' &&
+    error.errors[0].message.includes('reserved port 55921') && error.errors[1].errors.includes(failure));
+  assert.equal(f.events.filter(event => event === 'server-close').length, 1);
+  assert.equal(f.events.includes('profile-remove'), false);
+});
+
 // ---- layout_snapshot: colors are #rrggbb hex bytes ----
 test('sameColor reads #rrggbb as one hex byte per channel', () => {
   assert.deepEqual(colorChannels('#1d6b40'), [0x1d, 0x6b, 0x40, 1]);
