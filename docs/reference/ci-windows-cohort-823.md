@@ -7,11 +7,11 @@
 | 기존 PR Windows job 118911719909 | 4 workers, 10,461 전수, 10,413 PASS/48 skip, pytest 1,427.53초 |
 | main 39510024326 보존 artifact | pytest 1,536.07초, lock 대기 합 2,949.22 worker-seconds/77파일 |
 | 이전 로컬 선택 | 9,270/10,554개(87.8%), 272파일 |
-| 이번 정적 선택 | 4,531/10,578개(42.8%), 169파일; 6,047개 제외 |
-| 이번 보호 범위 | 명시 cohort 3,812 + 혼합 파일 경계 15 + native API backstop 704 |
+| 이번 정적 선택 | 4,566/10,578개(43.2%), 171파일; 6,012개 제외 |
+| 이번 보호 범위 | 명시 cohort 3,869 + 혼합 파일 경계 15 + native API backstop 682 |
 | host lock 정적 판정 | 22파일/456노드 → 23파일/139노드; durable_writer 28노드는 lock 불필요 |
 
-**30%·2–3천 개 목표는 미달입니다.** 이번 검토가 유지한 명시 경계만 3,827개(36.2%)입니다. 모든 가능한 정책의 최솟값을 증명한 수치는 아닙니다. 설치 경로 497개, 경로 policy 256개, private path 254개, shell quoting 217개와 process/Job/ACK·receipt·SQLite·CLI/MCP 경계를 더 줄일 근거는 이번 범위에서 확보하지 못했습니다.
+**30%·2–3천 개 목표는 미달입니다.** 이번 검토가 유지한 명시 경계만 3,884개(36.7%)입니다. 모든 가능한 정책의 최솟값을 증명한 수치는 아닙니다. 설치 경로 497개, 경로 policy 256개, private path 254개, shell quoting 217개와 process/Job/ACK·receipt·SQLite·CLI/MCP 경계를 더 줄일 근거는 이번 범위에서 확보하지 못했습니다.
 
 - [profile](../../config/ci/windows-boundary-v1.json)은 schema 3 / `windows-boundary-v3`입니다. `known_tests`는 collection 목록이며 순수성 인증이 아닙니다. 경계 cohort·native API·PR/push 변경 test를 포함합니다. 일반 schema/prose/logic 파일마다 제외 승인을 요구하지 않습니다. 새 파일·미확정 node는 포함합니다.
 - API backstop은 test와 참조한 test helper/fixture, import-time 코드를 읽습니다. 클래스는 전체를 남깁니다. 미사용 native sibling 때문에 순수 node를 모두 포함하지 않으며 별칭·autouse·usefixtures도 검사합니다. 임의 제품 구현의 완전한 동적 call graph 증명은 아닙니다.

@@ -70,7 +70,9 @@ def test_actual_profile_exclusions_have_reviewed_digest_and_keep_os_boundaries()
         for node in row['nodes']:
             assert selection.include_windows(path,source,data,node=node)[0]
     for path in ('tests/test_windows_job_ci.py','tests/test_supervisor_process.py','tests/test_state_isolation.py',
-                 'tests/test_private_paths.py','tests/test_reproduction_receipt.py','tests/test_durable_writer.py'):
+                 'tests/test_private_paths.py','tests/test_reproduction_receipt.py','tests/test_durable_writer.py',
+                 'tests/test_continuation_review_807.py','tests/test_resume_receipt_clock.py',
+                 'tests/test_stall_watch.py','tests/test_step_memory_limit.py'):
         assert selection.include_windows(path,(ROOT/path).read_text(encoding='utf-8'),data)[0]
 
 

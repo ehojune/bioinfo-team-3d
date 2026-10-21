@@ -315,6 +315,10 @@
     "tests/test_wsl_shared.py"
   ],
   "boundary_cohorts": {
+    "tests/test_continuation_review_807.py": "Resume/dispatch runner identity and shared-host fixture boundaries.",
+    "tests/test_resume_receipt_clock.py": "Runner reconnect/deadline/cancel recovery fixture contracts.",
+    "tests/test_stall_watch.py": "Adapter process snapshots, idle/UAC safety and cancellation.",
+    "tests/test_step_memory_limit.py": "Process-tree limits and native Job/adapter protection.",
     "tests/test_windows*.py": "Native Windows API, Job/ACK, identity, quoting and encoding contracts.",
     "tests/test_process*.py": "Process-stop policy and OS process identity/cleanup safety.",
     "tests/test_proc_tree.py": "Native process tree boundaries.",
