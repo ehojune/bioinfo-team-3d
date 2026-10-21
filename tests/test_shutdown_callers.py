@@ -187,7 +187,9 @@ async def test_plan_preparation_callbacks_propagate_interruption(hub, caller, ca
 
     dispatched = []
 
-    async def dispatch(task):
+    async def dispatch(task, *, bind_identity=None):
+        if bind_identity is not None:
+            bind_identity(task.id)
         dispatched.append(task.meta["kind"])
         if task.meta["kind"] == caller:
             if cancelled:
@@ -199,8 +201,8 @@ async def test_plan_preparation_callbacks_propagate_interruption(hub, caller, ca
     if caller == "paper_skill":
         from tests.test_research_protocol import valid_plan
 
-        # #798: preparation cannot extract. The callback moves to the approved step,
-        # where runner shutdown/cancellation must still escape instead of becoming a failed receipt.
+        # #798/#671: metadata cannot extract. An already observed interruption in the approved
+        # background preparation propagates; ready-step admission must not wait for that preparation.
         plan = {**valid_plan(), "paper_skills": [copy.deepcopy(SELECTED)]}
         prepare_callback = AsyncMock(wraps=hub.orchestrator.run_step)
         plan = await paper_skills.prepare_plan(plan, PRECEDENTS, list(hub.agents.values()), "r", hub.s,
@@ -211,9 +213,14 @@ async def test_plan_preparation_callbacks_propagate_interruption(hub, caller, ca
         digest = plan_sha256(plan)
         hub.requests["r"].update(plan=plan, research_contract={"plan_sha256": digest,
             "approval": {"approved": True, "target_sha256": digest}})
-        job = hub.orchestrator.run_step(Task(agent_id="worker", request_id="r", prompt="approved fixture",
-            meta={"kind": "step", "step_id": "s1",
-                  "paper_skills": paper_skills.attachments(plan, "s1", "worker", "r")}))
+        async def approved_preparation():
+            batch = await hub.orchestrator._start_paper_builds(
+                "r", paper_skills.attachments(plan, "s1", "worker", "r"))
+            try:
+                await asyncio.gather(*batch.jobs.values())
+            finally:
+                await hub.orchestrator._close_paper_builds("r", batch)
+        job = approved_preparation()
     else:
         job = planning.prepare_plan(plan, "r", hub, hub.orchestrator.run_step)
     with pytest.raises(asyncio.CancelledError if cancelled else ShutdownInterrupted):

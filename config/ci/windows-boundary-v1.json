@@ -157,6 +157,9 @@
     "tests/test_paper_skill_attach.py",
     "tests/test_paper_skill_lazy.py",
     "tests/test_paper_skill_read_scope.py",
+    "tests/test_paper_skill_recovery_identity.py",
+    "tests/test_paper_skill_waiting.py",
+    "tests/test_paper_skill_waiting_static.py",
     "tests/test_patch_notes.py",
     "tests/test_pdf_figure_policy.py",
     "tests/test_pdf_figure_review_fixes.py",
@@ -371,7 +374,9 @@
     "tests/test_continuation_review_807.py": "Essential runner recovery/receipt or Windows installation path contract.",
     "tests/test_resume_receipt_clock.py": "Essential runner recovery/receipt or Windows installation path contract.",
     "tests/test_init_wizard.py": "Essential runner recovery/receipt or Windows installation path contract.",
-    "tests/test_init_defaults.py": "Essential installed configuration defaults, references and Windows path setup."
+    "tests/test_init_defaults.py": "Essential installed configuration defaults, references and Windows path setup.",
+    "tests/test_paper_skill_waiting.py": "Approved paper preparation ownership, asynchronous lifetime and cancellation contracts; synthetic jobs, no live service.",
+    "tests/test_paper_skill_recovery_identity.py": "Gateway recovered durable-task identity, cancellation and budget-hold boundary; fake dispatch, no live runner."
   },
   "mixed_nodes": {
     "tests/test_environment_signatures.py": {

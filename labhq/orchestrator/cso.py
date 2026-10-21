@@ -2762,6 +2762,9 @@ class Orchestrator:
         self.budget_denials: dict[str, str] = {}
         self.budget_outcomes: dict[str, list[dict]] = {}
         self.step_tasks: dict[str, set[asyncio.Task]] = {}  # tasks a request runs beside its own (R13 cancel)
+        self.paper_builds: dict[str, paper_skills.ApprovedBuilds] = {}
+        self.paper_budget_holds: dict[str, dict[str, float]] = {}
+        self.paper_task_ids: dict[str, dict[str, str]] = {}
         self.consult_locks: dict[tuple[str | None, str], tuple[asyncio.Lock, int]] = {}
 
     def _step_task(self, rid: str, coro) -> asyncio.Task:
@@ -3587,7 +3590,7 @@ class Orchestrator:
                 attempt_task = current.model_copy(update={"id": current.id if attempt == 1 else new_id("task"),
                                                   "resume_session_id": previous_session,
                                                   "request_budget_remaining_usd": (
-                                                      None if optional_support else
+                                                      current.request_budget_remaining_usd if optional_support else
                                                       self._request_budget_remaining(rid)),
                                                   "meta": {**current.meta, "attempt": attempt,
                                                            **({"workdir": previous_workdir} if previous_workdir else {})}})
@@ -3613,6 +3616,13 @@ class Orchestrator:
                             self.hub.save_request(rid)
                 if current.meta.get('kind') in {'step', 'result_correction', 'slot_repair'} and current.meta.get('paper_skills'):
                     attempt_task = await self._resolve_step_paper_skills(attempt_task)
+                if current.meta.get('kind') == 'paper_skill':
+                    selected = current.meta['paper_skill']
+                    plan = (self.hub.requests.get(rid) or {}).get('plan') or {}
+                    approved = paper_skills.attachments(plan, selected['step_id'], selected['agent_id'], rid)
+                    if selected not in approved:
+                        self._check_paper_selection(rid, [selected])  # rejects drift, never substitutes a paper
+                    self._check_paper_selection(rid, approved)  # after queued/attempt-event awaits, before dispatch
                 offline = False
                 # Observe the configuration at the actual dispatch boundary, including every retry/wake/repair.
                 # A mixed or unproved execution must never inherit the configuration shown before CP1 waited.
@@ -3638,7 +3648,13 @@ class Orchestrator:
                 try:
                     dispatched = (attempt_task if current.meta.get("facilities_diagnosis") else
                                   with_pi_notes(attempt_task, self.hub.requests.get(rid) or {}))
-                    res = await self.hub.dispatch(dispatched)
+                    tracked = getattr(self.hub, 'dispatch_with_identity', None)
+                    if current.meta.get('kind') == 'paper_skill' and tracked is not None:
+                        res = await tracked(dispatched, lambda tid: self._bind_paper_dispatch_identity(
+                            rid, current.id, tid))
+                    else:
+                        res = await self.hub.dispatch(dispatched)
+                    res = paper_skills.with_preparation_outcome(res, attempt_task)
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
@@ -4194,9 +4210,119 @@ class Orchestrator:
         """Counted dollars, unaccounted tasks, and the total the cap is judged on: never $0 for an unknown task."""
         spent = self.cost.get(rid, 0.0)
         unknown = len(self.cost_unknown.get(rid) or ())
-        return spent, unknown, spent + unknown * self._unknown_reserve(limit)
+        # Parallel paper preparations reserve dollars before dispatch. A recorded result replaces its hold;
+        # cancellation/delivery uncertainty retains it until the durable task cost can be counted.
+        held = sum(amount for tid, amount in self.paper_budget_holds.get(rid, {}).items()
+                   if tid not in self.cost_tasks.get(rid, set()))
+        return spent, unknown, spent + unknown * self._unknown_reserve(limit) + held
 
     # ---------- DAG ----------
+    def _bind_paper_dispatch_identity(self, rid: str, requested: str, durable: str) -> None:
+        """Gateway-selected identity, before its recovery wait; no claim of remote termination."""
+        self.paper_task_ids.setdefault(rid, {})[requested] = durable
+        holds = self.paper_budget_holds.setdefault(rid, {})
+        amount = holds.pop(requested, 0.0)
+        if amount:
+            holds[durable] = max(holds.get(durable, 0.0), amount)
+
+    def _check_paper_selection(self, rid: str, selected: list[dict],
+                               expected: tuple[str, str] | None = None) -> None:
+        req = self.hub.requests[rid]
+        if req.get('status') == 'cancelled':
+            raise asyncio.CancelledError
+        plan = req.get('plan') or {}
+        contract = req.get('research_contract') or {}
+        approval = contract.get('approval') or {}
+        scopes = {(row['step_id'], row['agent_id']) for row in selected}
+        matches = all([row for row in selected if (row['step_id'], row['agent_id']) == (sid, aid)]
+                      == paper_skills.attachments(plan, sid, aid, rid) for sid, aid in scopes)
+        if expected is not None:
+            matches = matches and selected == paper_skills.attachments(plan, expected[0], expected[1], rid)
+        if contract:
+            matches = (matches and approval.get('approved') is True
+                       and approval.get('target_sha256') == contract.get('plan_sha256')
+                       == research_plan_sha256(plan))
+        if not matches:
+            if contract:
+                contract['approval'] = {**approval, 'approved': False, 'status': 'approval_required'}
+            req['outcome'] = 'reuse_approval_required'
+            self.hub.save_request(rid)
+            raise research_continuation.ReuseApprovalRequired('paper selection changed; renewed approval required')
+
+    def _paper_build_allowance(self, rid: str, execution_slots: int) -> float:
+        per_task = self.hub.s.policy.budget.per_task_usd
+        caps = [self.hub.s.recruit.max_budget_usd]
+        if per_task and per_task > 0:
+            caps.append(per_task)
+        remaining = self._request_budget_remaining(rid)
+        if remaining is not None:
+            req = self.hub.requests.get(rid) or {}
+            limit = req.get('budget_usd') or self.hub.s.policy.budget.per_request_usd
+            # Optional preparation must leave a conservative normal-turn allowance for the DAG slots.
+            reserve = self._unknown_reserve(limit) * max(1, execution_slots)
+            caps.append(max(0.0, remaining - reserve))
+        return min(caps)
+
+    async def _start_paper_builds(self, rid: str, rows: list[dict],
+                                 execution_slots: int = 1) -> paper_skills.ApprovedBuilds:
+        batch = paper_skills.ApprovedBuilds(rows, self.hub.s)
+        # Admission cannot open a budget card or raise the CP1 cap. Reserve before starting any build.
+        async with self.budget_locks.setdefault(rid, asyncio.Lock()):
+            self._check_paper_selection(rid, rows)  # approval may change while waiting for this lock
+            self._count_recorded_costs(rid)
+            for key, task in batch.tasks.items():
+                if key in batch.disabled:
+                    continue
+                cap = self._paper_build_allowance(rid, execution_slots)
+                if rid in self.budget_denials or not 0 < cap < float('inf'):
+                    batch.disabled[key] = 'paper_skill_budget_unavailable'
+                    continue
+                batch.tasks[key] = task.model_copy(update={
+                    'budget_usd': cap, 'request_budget_remaining_usd': cap})
+                self.paper_budget_holds.setdefault(rid, {})[task.id] = cap
+
+        async def run(task):
+            self._check_paper_selection(rid, rows)
+            result = await self.run_step(task)
+            if task.id not in self.paper_task_ids.get(rid, {}):  # legacy/fake dispatch without the binding hook
+                self._bind_paper_dispatch_identity(rid, task.id, result.task_id)
+            self._count_cost(rid, result.task_id, result)
+            durable = self.paper_task_ids[rid][task.id]
+            if result.task_id == durable:
+                self.paper_budget_holds.get(rid, {}).pop(durable, None)
+            return result
+
+        async def cancel(task):
+            # Durable runner cancellation survives disconnect/reconnect; cancelling an asyncio waiter alone
+            # is not proof that a remotely dispatched converter has stopped spending.
+            cancel_task = getattr(self.hub, 'cancel_task', None)
+            if cancel_task is not None:
+                await cancel_task(self.paper_task_ids.get(rid, {}).get(task.id, task.id))
+
+        async def progress(done, total):
+            text = (f'논문 스킬 준비 종료 {min(done, total)}/{total}(생략 포함); '
+                    f'준비 수명 상한 {self.hub.s.runner.task_timeout_s}초; 단계 시작 때 미완료면 생략')
+            await self.hub.publish({'type': 'agent.log', 'ts': time.time(), 'request_id': rid,
+                'agent_id': self.cfg.cso_agent, 'data': {'level': 'info', 'text': text}})
+            for row in batch.rows.values():
+                for sid in row['step_ids']:
+                    await self._emit(rid, 'request.step_wait', {'step_id': sid,
+                                                              'reason': text})
+
+        try:
+            await batch.start(run, lambda coro: self._step_task(rid, coro), cancel, progress,
+                              PRECEDENT_CANCEL_GRACE_S)
+        except BaseException:
+            await self._close_paper_builds(rid, batch)
+            raise
+        return batch
+
+    async def _close_paper_builds(self, rid: str, batch: paper_skills.ApprovedBuilds) -> None:
+        await batch.close()
+        for key, task in batch.tasks.items():
+            if key not in batch.started:  # no run_step/dispatch was ever entered
+                self.paper_budget_holds.get(rid, {}).pop(task.id, None)
+
     async def _resolve_step_paper_skills(self, task: Task) -> Task:
         """The approved dispatch boundary, never CP1 preparation. Keep the frozen plan unchanged."""
         rid = task.request_id
@@ -4204,23 +4330,12 @@ class Orchestrator:
         selected = task.meta['paper_skills']
 
         def check_selection() -> None:
-            plan = req.get('plan') or {}
-            contract = req.get('research_contract') or {}
-            approval = contract.get('approval') or {}
-            matches = selected == paper_skills.attachments(plan, task.meta['step_id'], task.agent_id, rid)
-            if contract:
-                matches = (matches and approval.get('approved') is True
-                           and approval.get('target_sha256') == contract.get('plan_sha256')
-                           == research_plan_sha256(plan))
-            if not matches:
-                if contract:
-                    contract['approval'] = {**approval, 'approved': False, 'status': 'approval_required'}
-                req['outcome'] = 'reuse_approval_required'
-                self.hub.save_request(rid)
-                raise research_continuation.ReuseApprovalRequired('paper selection changed; renewed approval required')
+            self._check_paper_selection(rid, selected, (task.meta['step_id'], task.agent_id))
 
         check_selection()
-        resolved = await paper_skills.resolve_attachments(selected, self.hub.s, self.run_step)
+        # No lead time outside a DAG cohort: omit deferred advice rather than start and wait here.
+        batch = self.paper_builds.get(rid) or paper_skills.ApprovedBuilds(selected, self.hub.s)
+        resolved = await batch.resolve(selected)
         check_selection()  # approval or selection may change while the bounded conversion awaits
         await self._check_budget(rid)
         contract = req.get('research_contract') or {}
@@ -4232,6 +4347,32 @@ class Orchestrator:
 
     async def run_dag(self, rid: str, request: str, steps: list[dict], results: dict[str, TaskResult],
                       only: set[str] | None = None, feedback: dict[str, str] | None = None) -> None:
+        plan = (self.hub.requests.get(rid) or {}).get('plan') or {}
+        rows = [row for step in steps if (only is None or step['id'] in only)
+                and (only is not None or not (results.get(step['id']) and results[step['id']].ok))
+                for row in paper_skills.attachments(plan, step['id'], step['agent_id'], rid)]
+        if not any(row.get('status') == 'deferred' for row in rows):
+            return await self._run_dag(rid, request, steps, results, only, feedback)
+        req = self.hub.requests[rid]
+        contract = req.get('research_contract') or {}
+        approval = contract.get('approval') or {}
+        if contract and not (approval.get('approved') is True
+                             and approval.get('target_sha256') == contract.get('plan_sha256')
+                             == research_plan_sha256(plan)):
+            raise research_continuation.ReuseApprovalRequired('paper preparation requires renewed CP1 approval')
+        if (contract.get('continuation') or {}).get('reuse_snapshot'):
+            if not await self._verify_research_reuse(rid, plan):
+                raise research_continuation.ReuseApprovalRequired('reuse proof changed before paper preparation')
+        batch = await self._start_paper_builds(rid, rows, min(self.cfg.max_parallel_steps, len(steps)))
+        self.paper_builds[rid] = batch
+        try:
+            await self._run_dag(rid, request, steps, results, only, feedback)
+        finally:
+            self.paper_builds.pop(rid, None)
+            await self._close_paper_builds(rid, batch)  # end/replan keeps durable runner cancellation
+
+    async def _run_dag(self, rid: str, request: str, steps: list[dict], results: dict[str, TaskResult],
+                       only: set[str] | None = None, feedback: dict[str, str] | None = None) -> None:
         by_id = {s["id"]: s for s in steps}
         todo = {s["id"] for s in steps if only is None or s["id"] in only}
         running: dict[str, asyncio.Task] = {}

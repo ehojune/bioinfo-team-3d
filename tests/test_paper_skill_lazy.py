@@ -32,6 +32,17 @@ async def deferred():
     return out
 
 
+async def prepared_during_lead_time(orch, plan, sid='s1'):
+    """Fake approved preparation completes before dispatch; dispatch itself must never await it."""
+    batch = await orch._start_paper_builds('r', ps.attachments(plan, sid, 'worker', 'r'))
+    try:
+        await asyncio.gather(*batch.jobs.values())
+    finally:
+        await orch._close_paper_builds('r', batch)
+    orch.paper_builds['r'] = batch
+    return batch
+
+
 @pytest.mark.asyncio
 async def test_cp1_preparation_is_metadata_only_and_seals_selection():
     plan = await deferred()
@@ -120,7 +131,7 @@ def test_assignment_receipt_alone_is_not_called_or_unknown():
 @pytest.mark.asyncio
 @pytest.mark.parametrize('kind', ['step', 'result_correction', 'slot_repair'])
 @pytest.mark.parametrize('approval,mutate', [(True, False), (False, False), (True, True)])
-async def test_approved_dispatch_builds_lazily_and_plan_drift_stops_before_step(approval, mutate, kind):
+async def test_approved_preparation_and_dispatch_plan_drift_stops_before_step(approval, mutate, kind):
     plan = await ps.prepare_plan({**valid_plan(), 'paper_skills': [copy.deepcopy(SELECTED)]}, PRECEDENTS,
                                  [{'id': 'worker'}], 'r', Settings(), AsyncMock())
     before = copy.deepcopy(plan)
@@ -141,6 +152,8 @@ async def test_approved_dispatch_builds_lazily_and_plan_drift_stops_before_step(
     orch = Orchestrator(hub)
     task = Task(agent_id='worker', request_id='r', prompt='approved fixture step', meta={
         'kind': kind, 'step_id': 's1', 'paper_skills': ps.attachments(plan, 's1', 'worker', 'r')})
+    if approval:
+        await prepared_during_lead_time(orch, plan)
     if not approval or mutate:
         with pytest.raises(continuation.ReuseApprovalRequired):
             await orch.run_step(task)
@@ -194,6 +207,7 @@ async def test_reuse_proof_drift_during_build_stops_before_research_dispatch(mon
         return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
                           structured={'status': 'unavailable', 'error': 'fixture'})
     hub.reply = reply
+    await prepared_during_lead_time(orch, req['plan'], 's2')
     with pytest.raises(continuation.ReuseApprovalRequired):
         await orch.run_step(Task(agent_id='worker', request_id='r', prompt='approved fixture', meta={
             'kind': 'step', 'step_id': 's2', 'paper_skills': ps.attachments(req['plan'], 's2', 'worker', 'r')}))
@@ -244,7 +258,9 @@ async def test_correction_reference_survives_the_final_research_ledger():
     async def reply(task):
         if task.meta['kind'] == 'paper_skill':
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
-                              structured={'paper_id': 'pmid:12345678', 'status': 'unavailable'})
+                              structured={'paper_id': 'pmid:12345678', 'status': 'ready',
+                                  'skill_sha256': receipt['skill_sha256'],
+                                  'fulltext_receipt_sha256': ps.evidence_sha256(task.meta['paper_skill']['fulltext_receipt'])})
         structured = _invalid_result(hub, task) if task.meta['kind'] == 'step' else _cp2_result(hub, task)
         return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=structured,
             workdir='fixture/s1', outputs=['outputs/result1.tsv'], output_sha256={'outputs/result1.tsv': 'd' * 64},
@@ -255,7 +271,13 @@ async def test_correction_reference_survives_the_final_research_ledger():
         'plan_sha256': plan_sha256(plan), 'approval': {
         'approved': True, 'target_sha256': plan_sha256(plan)}})
     results = {}
-    await Orchestrator(hub).run_dag('r', 'fixture', plan['steps'], results)
+    orch = Orchestrator(hub)
+    run = orch._run_dag
+    async def after_fake_lead_time(*args, **kwargs):
+        await asyncio.gather(*orch.paper_builds['r'].jobs.values())
+        return await run(*args, **kwargs)
+    orch._run_dag = after_fake_lead_time
+    await orch.run_dag('r', 'fixture', plan['steps'], results)
     assert results['s1'].ok, results['s1'].error
     assert any(t.meta['kind'] == 'result_correction' for t in hub.calls)
     assert ps.records(plan, {'s1': results['s1'].model_dump(mode='json')})[0]['called'] is True
@@ -272,13 +294,12 @@ async def test_slot_repair_cannot_swallow_renewed_approval_required():
     async def reply(task):
         if task.meta['kind'] == 'paper_skill':
             builds.append(task)
-            if len(builds) == 2:
-                plan['paper_skills'][0]['reason'] += ' changed during slot repair'
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, cost_usd=0,
                               structured={'status': 'unavailable', 'error': 'fixture'})
         assert task.meta['kind'] == 'step'  # a changed plan must never reach the repair dispatch
         structured = _cp2_result(hub, task)
         structured.update(claims=[], evidence=[], links=[], artifact_refs=[])
+        plan['paper_skills'][0]['reason'] += ' changed before slot repair'
         return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, cost_usd=0,
             session_id='fixture-session', structured=structured, workdir='fixture/s1',
             outputs=['outputs/result1.tsv'], output_sha256={'outputs/result1.tsv': 'd' * 64})
@@ -288,11 +309,17 @@ async def test_slot_repair_cannot_swallow_renewed_approval_required():
     hub.requests['r'].update(plan=plan, research_contract={'execution_enabled': True,
         'plan_sha256': plan_sha256(plan), 'approval': {'approved': True, 'target_sha256': plan_sha256(plan)}})
     stopped = None
+    orch = Orchestrator(hub)
+    run = orch._run_dag
+    async def after_fake_lead_time(*args, **kwargs):
+        await asyncio.gather(*orch.paper_builds['r'].jobs.values())
+        return await run(*args, **kwargs)
+    orch._run_dag = after_fake_lead_time
     try:
-        await Orchestrator(hub).run_dag('r', 'fixture', plan['steps'], {})
+        await orch.run_dag('r', 'fixture', plan['steps'], {})
     except continuation.ReuseApprovalRequired as exc:
         stopped = exc
-    assert len(builds) == 2, [t.meta['kind'] for t in hub.calls]
+    assert len(builds) == 1 and not any(t.meta['kind'] == 'slot_repair' for t in hub.calls)
     assert stopped is not None and not hub.requests['r']['research_contract']['approval']['approved']
 
 

@@ -12,6 +12,7 @@ from labhq.models import AgentSpec, ContractInfo, Employment, Engine, Task, Task
 from labhq.orchestrator.cso import Orchestrator
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
+from labhq.util import output_relpath
 from tests.test_cso import FakeHub
 from tests.test_research_protocol import MiniHub, valid_plan
 from tests.test_request_bundle import pending_bundle_fixture, manifest_rows
@@ -73,6 +74,12 @@ def runner(tmp_path, monkeypatch):
                 return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=True, cost_usd=0.25,
                                   structured={"kind": "consultant", "skill_dir": str(skill),
                                               "verification_status": "verified"})
+            for name in ctx.task.meta.get('required_outputs', []):
+                relative = output_relpath(name)
+                assert relative is not None
+                target = ctx.workdir / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text('Synthetic fixture output\n', encoding='utf-8')
             copies = list(ctx.workdir.glob(".agents/skills/paper-*/SKILL.md"))
             ctx.task.meta["test_copies"] = len(copies)
             if copies:
@@ -99,7 +106,9 @@ def build_task(rid="r"):
 @pytest.mark.asyncio
 async def test_selection_conversion_cp1_scope_appendix_and_bundle(runner, tmp_path):
     r, seen = runner
-    plan = valid_plan()
+    plan = valid_plan(steps=2)
+    plan['steps'][0]['depends_on'] = ['s2']
+    plan['steps'][1]['agent_id'] = 'other'
     plan["paper_skills"] = [copy.deepcopy(SELECTED)]
     s = r.s
     s.research.enabled = True
@@ -114,9 +123,15 @@ async def test_selection_conversion_cp1_scope_appendix_and_bundle(runner, tmp_pa
         if task.meta["kind"] == "plan":
             assert "paper_skills" in task.prompt
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=plan, cost_usd=0)
+        if task.meta['kind'] == 'step' and task.meta['step_id'] == 's2':
+            # Fake upstream work supplies lead time. The selected ready step never waits for conversion.
+            batch = orch.paper_builds['r']
+            assert len(batch.jobs) == 1
+            await asyncio.gather(*batch.jobs.values())
         return await r.run_task(task)
 
     hub = MiniHub(s, reply, mode="plan_only", work_kind="research")
+    hub.requests['r']['budget_usd'] = 15  # approved upfront: two normal slots plus one optional turn
     hub.agents.update({name: {"id": name, "name": name, "role": "test", "engine": "mock"}
                        for name in ("lit_scout", "recruiter", "other")})
     await Orchestrator(hub).run_request("r")
@@ -134,11 +149,16 @@ async def test_selection_conversion_cp1_scope_appendix_and_bundle(runner, tmp_pa
     # Exercise the actual DAG dispatch and runner; another step and request get no copies.
     dag = FakeHub(reply)
     dag.s = s
-    dag.requests["r"]["plan"] = req["plan"]
-    steps = [{"id": "s1", "agent_id": "worker", "instruction": "use method", "depends_on": []},
-             {"id": "s2", "agent_id": "other", "instruction": "independent", "depends_on": []}]
+    dag.requests['r'].update(plan=req['plan'], budget_usd=req['budget_usd'], research_contract={
+        key: copy.deepcopy(req['research_contract'][key]) for key in ('plan_sha256', 'approval')})
+    steps = req['plan']['steps']  # execute exactly the dependency/agent scope shown at CP1
     dag_results = {}
-    await Orchestrator(dag).run_dag("r", "request", steps, dag_results)
+    orch = Orchestrator(dag)
+    await orch.run_dag("r", "request", steps, dag_results)
+    assert set(dag_results) == {'s1', 's2'} and all(result.ok for result in dag_results.values())
+    assert all(result.outputs for result in dag_results.values())
+    assert sum(ctx.task.meta.get('kind') == 'paper_skill' for ctx in seen) == 1
+    assert not orch.paper_builds and not any(orch.paper_budget_holds.values())
     contexts = {ctx.task.agent_id: ctx for ctx in seen if ctx.task.meta.get("kind") == "step"}
     assert contexts["worker"].task.meta["test_copies"] == 1
     assert req['plan'] == frozen  # deferred build never edits the CP1-frozen plan
@@ -149,7 +169,7 @@ async def test_selection_conversion_cp1_scope_appendix_and_bundle(runner, tmp_pa
     assert r.registry.agents["worker"].plugin_dirs == []
     assert not list(r.registry.contract_dir.glob("*.yaml"))
     conversion = next(ctx for ctx in seen if ctx.task.meta.get('kind') == 'paper_skill')
-    assert conversion.task.budget_usd == s.recruit.max_budget_usd
+    assert conversion.task.budget_usd == min(s.recruit.max_budget_usd, s.policy.budget.per_task_usd) == 5
     assert conversion.settings.runner.task_timeout_s == s.runner.task_timeout_s
 
     bs, request, task = pending_bundle_fixture(tmp_path / "bundle", "r")
