@@ -4,3 +4,7 @@ rows:
   at: 2026-10-21 10:45
   summary: 최신 CI 정책을 벤치마크 기록기와 합치고 문서의 오래된 진행 상태를 정리했습니다.
   text: 'main c8a33a8을 충돌 없이 merge했다. 기존 opt-in 기록기와 성공 spawn·미수집/0·arm 격리·재채점 보존 계약은 변경하지 않았다. 집중 fake/static 29건(로컬 1.98초), 3.10 AST 6파일·누출 정적 검사·public·diff·기록 검사 통과. HANDOFF -16자, manual +54자; 닫힌 PR 큐·논문 스킬 구현/효용 구분·Windows 기본 경계와 전수 fallback을 반영했다. 실제 bench·효용·최종 head CI는 미검증이며 #799 OPEN, 로컬 커밋만 준비했다.'
+  - sha: '9cc5422'
+    at: '2026-10-21 10:47'
+    summary: '기록기가 준비됐다는 설명과 실제 측정이 남았다는 설명을 구분했습니다.'
+    text: 'bench 기록기의 opt-in 구현·미수집 한계를 바로잡고 Windows 경계 검증 실패 때 전수 검사한다는 안내를 명확히 했습니다. 실제 bench는 실행하지 않았습니다.'
