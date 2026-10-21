@@ -26,12 +26,13 @@ lookup-only 정책 근거입니다. `.github/workflows/test.yml`과 `scripts/ci_
 main의 해당 commit에 병합된 같은 저장소 PR의 최신 matching run만 후보입니다. 허용 workflow는 같은 저장소의 `test.yml` ID·path이며 event는 pull_request입니다. fork PR은 전체 gate를 유지하고 재사용 manifest 생성만 생략합니다.
 
 1. GitHub run이 완료·성공이고 7일 이내이며 fork가 아니어야 합니다. 더 최신 matching run이 실패·취소·진행 중이면 이전 성공으로 돌아가지 않습니다.
-2. REST run/job의 head SHA는 PR branch head입니다. producer는 이벤트의 PR 번호·저장소 ID·head/base snapshot과 실제 `GITHUB_SHA` checkout을 따로 기록합니다. commit API에서 checkout의 두 parent가 그 base/head이고 tree가 main과 같은지 검증합니다. squash SHA가 달라도 tree는 같아야 합니다.
-3. `GITHUB_WORKFLOW_SHA/REF`와 workflow blob도 기록합니다. 지원하는 source는 그 synthetic merge의 같은 저장소·같은 PR merge ref입니다. workflow/helper·selector/profile·dev dependency·conftest/guard의 blob이 source·당시 main base·현재 checkout에서 모두 같아야 합니다. 다른 source commit은 blob이 같아도 full이며, 정책을 바꾼 PR의 첫 main 실행도 full입니다.
-4. 최신 attempt의 Ubuntu 두 버전·Windows·clean-install·공식 validator·MCP와 changes·문서·기록·manifest job이 각각 하나씩 전부 성공해야 합니다. 모든 test job은 같은 immutable checkout을 고정하고 tree를 출력합니다.
-5. 전체 gate 성공 뒤 producer가 version 5 JSON을 artifact로 올립니다. run/attempt 이름·API SHA-256 digest·만료 여부·완전한 gate/tree/profile receipt를 확인합니다. ZIP은 크기를 제한하고 JSON 하나만 메모리에서 읽으며 추출·실행하지 않습니다. 외부 storage redirect에는 GitHub credential을 보내지 않습니다.
+2. run의 PR association이 정확한 빈 목록일 때만 같은 head를 검색 후보로 삼고 `/pulls/N`을 추가 조회합니다. 해당 PR의 merged 상태·main merge SHA·시각·번호·repo ID/name·base/head가 commit 연결 응답과 같아야 하며 아래 증거도 전부 필요합니다. branch/head만으로 허용하지 않습니다. association 필드 누락·malformed·nonempty 불일치는 full입니다.
+3. REST run/job의 head SHA는 PR branch head입니다. producer는 이벤트의 PR 번호·저장소 ID·head/base snapshot과 실제 `GITHUB_SHA` checkout을 따로 기록합니다. commit API에서 checkout의 두 parent가 그 base/head이고 tree가 main과 같은지 검증합니다. squash SHA가 달라도 tree는 같아야 합니다.
+4. `GITHUB_WORKFLOW_SHA/REF`와 workflow blob도 기록합니다. 지원하는 source는 그 synthetic merge의 같은 저장소·같은 PR merge ref입니다. workflow/helper·selector/profile·dev dependency·conftest/guard의 blob이 source·당시 main base·현재 checkout에서 모두 같아야 합니다. 다른 source commit은 blob이 같아도 full이며, 정책을 바꾼 PR의 첫 main 실행도 full입니다.
+5. 최신 attempt의 Ubuntu 두 버전·Windows·clean-install·공식 validator·MCP와 changes·문서·기록·manifest job이 각각 하나씩 전부 성공해야 합니다. 모든 test job은 같은 immutable checkout을 고정하고 tree를 출력합니다.
+6. 전체 gate 성공 뒤 producer가 version 6 JSON을 artifact로 올립니다. run/attempt 이름·API SHA-256 digest·만료 여부·완전한 gate/tree/profile receipt를 확인합니다. ZIP은 크기를 제한하고 JSON 하나만 메모리에서 읽으며 추출·실행하지 않습니다. 외부 storage redirect에는 GitHub credential을 보내지 않습니다.
 
-검색은 최근 20 run, API 응답은 2 MiB, artifact는 256 KiB ZIP·32 KiB JSON으로 제한합니다. REST의 PR 연결 정보가 나중 head로 바뀌거나 merge object를 읽지 못해도 full입니다. API 오류·범위 초과·누락·중복·불일치·부분 rerun도 full입니다. 재사용 결과로 새 manifest를 만들지 않습니다. 실제 artifact 왕복·절감 시간·재사용률은 아직 측정하지 않았습니다.
+검색은 최근 20 run, API 응답은 2 MiB, artifact는 256 KiB ZIP·32 KiB JSON으로 제한합니다. REST의 PR 연결 정보가 나중 head로 바뀌거나 merge object를 읽지 못해도 full입니다. 빈 association의 예외도 authoritative PR·artifact 증거가 없으면 full입니다. API 오류·범위 초과·누락·중복·불일치·부분 rerun도 full입니다. 재사용 결과로 새 manifest를 만들지 않습니다. 실제 artifact 왕복·절감 시간·재사용률은 아직 측정하지 않았습니다.
 
 ## 병렬 실행·Windows 경계 (개발 중)
 

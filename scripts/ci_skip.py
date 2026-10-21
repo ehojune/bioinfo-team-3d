@@ -410,18 +410,32 @@ def valid_run(run: dict, pr: dict, current: dict, workflow_id: int, request, now
             and run["status"] == "completed" and run["conclusion"] == "success"
             and run["repository"]["id"] == run["head_repository"]["id"] == repo_id
             and run["repository"]["full_name"] == run["head_repository"]["full_name"] == REPOSITORY
+            and type(run["id"]) is int and run["id"] > 0
             and type(run["run_attempt"]) is int and run["run_attempt"] > 0
             and timedelta(0) <= now - datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00")) <= MAX_AGE):
         return False
     prs = run["pull_requests"]
-    if len(prs) != 1 or prs[0]["number"] != pr["number"] or prs[0]["head"]["sha"] != pr["head"]["sha"]:
+    if not isinstance(prs, list):
         return False
-    snapshot = prs[0]
-    if not (snapshot["base"]["ref"] == "main"
-            and snapshot["base"]["repo"]["id"] == snapshot["head"]["repo"]["id"] == repo_id):
-        return False
-    snapshot = pr_snapshot(snapshot, rest=True)
-    if run["head_sha"] != snapshot["head_sha"]:
+    if not prs:
+        # REST can omit the association even for a completed pull_request run.
+        # An empty list is a discovery gap, not proof: independently re-read the
+        # merged PR, then require the unchanged authenticated manifest, ordered
+        # checkout parents, trusted-base policy and complete gate checks below.
+        snapshot = pr_snapshot(pr)
+        if not pr.get("merged_at") or pr["merge_commit_sha"] != current["checkout_sha"]:
+            return False
+        authoritative = request(f"pulls/{snapshot['number']}")
+        if not (authoritative["merged"] is True
+                and authoritative["merge_commit_sha"] == current["checkout_sha"]
+                and authoritative["merged_at"] == pr["merged_at"]
+                and pr_snapshot(authoritative) == snapshot):
+            return False
+    else:
+        if len(prs) != 1 or prs[0]["number"] != pr["number"] or prs[0]["head"]["sha"] != pr["head"]["sha"]:
+            return False
+        snapshot = pr_snapshot(prs[0], rest=True)
+    if snapshot["repository_id"] != repo_id or run["head_sha"] != snapshot["head_sha"]:
         return False
     # v4 includes changed tests as well as the static Windows cohort. Equal
     # trees alone cannot prove equal base-to-tree change sets: require the
@@ -494,7 +508,8 @@ def reuse_main(current: dict, request=api, now: datetime | None = None) -> bool:
             return False
         runs = request(f"actions/workflows/{workflow['id']}/runs?event=pull_request&per_page=20")["workflow_runs"]
         matches = [run for run in runs if any(p.get("number") == allowed[0]["number"]
-                                              for p in run.get("pull_requests", []))]
+                                              for p in run.get("pull_requests", []))
+                   or (run.get("pull_requests") == [] and run.get("head_sha") == allowed[0]["head"]["sha"])]
         if matches:
             # An older run may have been rerun more recently than a newly created one.
             latest = max(matches, key=lambda r: (datetime.fromisoformat(r["updated_at"].replace("Z", "+00:00")), r["id"]))

@@ -358,6 +358,8 @@ def test_a_recent_failed_rerun_of_an_older_run_also_prevents_reuse(evidence):
 def test_other_provenance_gaps(evidence, case):
     api = API(evidence)
     if case == "no-pr":
+        # No authoritative merged-PR endpoint exists in this fake: an empty
+        # association alone still cannot authorize reuse.
         api.run["pull_requests"] = []
     elif case == "old-pr-head":
         api.run["pull_requests"] = copy.deepcopy(api.run["pull_requests"])
