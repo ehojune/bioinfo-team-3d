@@ -4,11 +4,36 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## #835 / #671 — 첫 CI의 fixture 계약 보정
+
+- Waiting/recovery 17건의 필수 plan·step 누락을 공유 순수 builder로 고쳤다. Strict ResearchPlan·승인 hash·제품 동작은 유지한다.
+- Attachment 검사는 승인된 upstream 단계의 준비 시간 뒤 실제 DAG 변환 1회·장착·격리·bundle을 확인한다. Ready-step 대기나 늦은 주입을 되살리지 않는다.
+- 로컬: 원 fixture 16/24/32 schema 오류→4형태 검증·hash 일치, 새 동기 순수 2 PASS, Python 3.10 AST/compile 4파일. Async·runner 실행은 하지 않았으며 18건의 green은 새 CI가 필요하다.
+- Root의 inventory 6건 보정·config는 보존했다. 실제 빌드·비용/효용·진행 화면·원격 종료·세 번째 빌드 원인은 미확인이고 #671을 닫지 않는다. [근거](../reference/paper-skill-waiting-671.md).
+
+새 논문 스킬 검사3파일을 등록하고 수명·복구 계약2모듈을 Windows 경계에 포함했습니다. 정적 선택 검증은 통과했고 새 head CI를 확인합니다. 필수26·10분 상한은 유지합니다. Refs #671.
+
+## #671 — 단계 시작 snapshot·복구 ID P1 보정
+
+- Ready-step은 완료된 스킬만 snapshot하고 미완료면 즉시 생략한다. 같은 단계는 나중 완료돼도 바뀌지 않으며 백그라운드 빌드의 기존 수명·취소 한도는 별도로 유지한다. 6시간을 단계 대기 시간으로 쓰지 않는다.
+- Gateway가 recovery await 전에 고른 durable ID에 취소·예약을 연결한다. 복구 결과/미확인 비용과 중복 계상하지 않으며 취소 요청을 종료 증거로 보지 않는다.
+- 새 동기 source/pure P1 2건은 기준 `5fa1844e` red→green. 이전 8건은 반복하지 않았다. Python 3.10 AST/compile 8파일, DAG·선정/호출·금액 정책·gateway recovery 14함수 AST 동일 확인.
+- Async fake는 CI용이다. 실제 빌드·UI·청구·원격 종료와 당시 세 번째 빌드의 원인은 미확인이다. 두 편은 기존처럼 계획당 선정 상한이며 #671을 닫지 않는다.
+- manual 176,703→176,731자(+28). [조건·근거](../reference/paper-skill-waiting-671.md). 다른 owner의 Node/CI 파일은 바꾸지 않는다.
+
 Refs #833
 
 Browser startup 실패 때 server/profile을 정리하고 listen 오류를 반환하도록 고쳤습니다. 실제 main timeout 원인은 미확정입니다. [로그 구분·정리 계약·reuse 거부 근거](../reference/node-main833.md)를 남겼으며 새 PR과 병합 main의 native 검증이 필요합니다.
 
 🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+## #671 — 승인 뒤 논문 스킬 준비·대기 변경안
+
+- CP1 metadata·선정 hash를 유지하며 승인 뒤 DAG에서 최대 두 논문을 병렬 준비한다. 같은 descriptor의 담당 단계는 빌드를 공유한다.
+- 기존 task timeout 뒤에는 `unavailable/paper_skill_late`를 단계 입력·receipt에 고정한다. 기존 runner cancel·정리 유예를 쓰며 본 작업 몫을 남겨 논문 비용을 예약한다. 확인 안 된 비용은 지우지 않는다.
+- 로컬: 기존 cap 문제 2건 red → 동기 source/pure 8 PASS, Python 3.10 AST/compile 6파일. 기존 DAG 본문·metadata/선정/본문/호출 판정의 AST 동일성을 확인했다.
+- async fake lifecycle은 CI용이며 로컬 미실행. 실제 runner·논문·UI·금액/효용·당시 세 번째 빌드는 미검증이다. 기본 6시간보다 짧은 전용 대기 상한은 PI 결정이 필요하다.
+- manual 176,305 → 176,460자(+155). [상세·미해결 조건](../reference/paper-skill-waiting-671.md). 로컬 커밋만 준비하며 issue 종료·게시·배포는 하지 않는다.
 
 브라우저에 정상 종료를 요청한 뒤 실제 종료를 확인합니다. [종료 계약·진단 한계](../reference/browser-fixture-cleanup.md)를 참고하세요.
 
