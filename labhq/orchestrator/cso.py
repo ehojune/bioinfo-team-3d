@@ -4235,7 +4235,22 @@ class Orchestrator:
             self.hub.save_request(rid)
             raise research_continuation.ReuseApprovalRequired('paper selection changed; renewed approval required')
 
-    async def _start_paper_builds(self, rid: str, rows: list[dict]) -> paper_skills.ApprovedBuilds:
+    def _paper_build_allowance(self, rid: str, execution_slots: int) -> float:
+        per_task = self.hub.s.policy.budget.per_task_usd
+        caps = [self.hub.s.recruit.max_budget_usd]
+        if per_task and per_task > 0:
+            caps.append(per_task)
+        remaining = self._request_budget_remaining(rid)
+        if remaining is not None:
+            req = self.hub.requests.get(rid) or {}
+            limit = req.get('budget_usd') or self.hub.s.policy.budget.per_request_usd
+            # Optional preparation must leave a conservative normal-turn allowance for the DAG slots.
+            reserve = self._unknown_reserve(limit) * max(1, execution_slots)
+            caps.append(max(0.0, remaining - reserve))
+        return min(caps)
+
+    async def _start_paper_builds(self, rid: str, rows: list[dict],
+                                 execution_slots: int = 1) -> paper_skills.ApprovedBuilds:
         batch = paper_skills.ApprovedBuilds(rows, self.hub.s)
         # Admission cannot open a budget card or raise the CP1 cap. Reserve before starting any build.
         async with self.budget_locks.setdefault(rid, asyncio.Lock()):
@@ -4244,14 +4259,7 @@ class Orchestrator:
             for key, task in batch.tasks.items():
                 if key in batch.disabled:
                     continue
-                per_task = self.hub.s.policy.budget.per_task_usd
-                caps = [self.hub.s.recruit.max_budget_usd]
-                if per_task and per_task > 0:
-                    caps.append(per_task)
-                remaining = self._request_budget_remaining(rid)
-                if remaining is not None:
-                    caps.append(remaining)
-                cap = min(caps)
+                cap = self._paper_build_allowance(rid, execution_slots)
                 if rid in self.budget_denials or not 0 < cap < float('inf'):
                     batch.disabled[key] = 'paper_skill_budget_unavailable'
                     continue
@@ -4343,7 +4351,7 @@ class Orchestrator:
         if (contract.get('continuation') or {}).get('reuse_snapshot'):
             if not await self._verify_research_reuse(rid, plan):
                 raise research_continuation.ReuseApprovalRequired('reuse proof changed before paper preparation')
-        batch = await self._start_paper_builds(rid, rows)
+        batch = await self._start_paper_builds(rid, rows, min(self.cfg.max_parallel_steps, len(steps)))
         self.paper_builds[rid] = batch
         try:
             await self._run_dag(rid, request, steps, results, only, feedback)

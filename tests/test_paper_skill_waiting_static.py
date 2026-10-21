@@ -87,7 +87,8 @@ class WaitingStatic(unittest.TestCase):
     def test_inflight_dollars_are_not_zero_or_double_counted_as_recorded_cost(self):
         tree = ast.parse((ROOT / 'labhq/orchestrator/cso.py').read_text(encoding='utf-8'))
         cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'Orchestrator')
-        cls.body = [n for n in cls.body if getattr(n, 'name', None) in {'_budget_bound', '_unknown_reserve'}]
+        cls.body = [n for n in cls.body if getattr(n, 'name', None) in {
+            '_budget_bound', '_unknown_reserve', '_request_budget_remaining', '_paper_build_allowance'}]
         scope = {}
         exec(compile(ast.Module(body=[cls], type_ignores=[]), '<budget-contract>', 'exec'), scope)
         owner = scope['Orchestrator']()
@@ -101,6 +102,16 @@ class WaitingStatic(unittest.TestCase):
         self.assertEqual(owner._budget_bound('r', 10), (1, 1, 6))
         owner.cost_unknown, owner.cost = {}, {'r': 3}
         self.assertEqual(owner._budget_bound('r', 10), (3, 0, 3))
+        owner.hub.requests = {'r': {'budget_usd': 10}}
+        owner.hub.s.recruit = SimpleNamespace(max_budget_usd=25)
+        owner.cost, owner.cost_tasks, owner.paper_budget_holds = {}, {}, {}
+        self.assertEqual(owner._paper_build_allowance('r', 1), 5)
+        owner.paper_budget_holds = {'r': {'first': 5}}
+        self.assertEqual(owner._paper_build_allowance('r', 1), 0)
+        self.assertEqual(owner._request_budget_remaining('r'), 5)  # reserved for actual work, not a second paper
+        owner.hub.requests['r']['budget_usd'] = 15
+        self.assertEqual(owner._paper_build_allowance('r', 1), 5)
+        self.assertEqual(owner._paper_build_allowance('r', 2), 0)
 
     def test_preparation_cannot_replace_the_task_cap_with_the_larger_recruit_cap(self):
         tree = ast.parse((ROOT / 'labhq/recruit/paper_skills.py').read_text(encoding='utf-8'))

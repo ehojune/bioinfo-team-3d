@@ -61,6 +61,7 @@ async def test_approved_dag_prepares_both_papers_concurrently_and_deduplicates_a
     first = row()
     first['step_ids'].append('s3')
     hub = Hub([first, row(2, 's2')])
+    hub.requests['r']['budget_usd'] = 25  # three normal DAG slots plus two optional paper turns
     before = copy.deepcopy(hub.plan)
     orch = Orchestrator(hub)
     entered = {pid: asyncio.Event() for pid in ('pmid:1', 'pmid:2')}
@@ -75,7 +76,7 @@ async def test_approved_dag_prepares_both_papers_concurrently_and_deduplicates_a
 
     async def dag(*_):
         await asyncio.wait_for(asyncio.gather(*(e.wait() for e in entered.values())), hub.s.runner.task_timeout_s)
-        assert len(calls) == 2 and orch._request_budget_remaining('r') == 0
+        assert len(calls) == 2 and orch._request_budget_remaining('r') == 15
         assert all(t.budget_usd == t.request_budget_remaining_usd == 5 for t in calls)
         release.set()
         for sid in ('s1', 's2', 's3'):
@@ -95,6 +96,7 @@ async def test_approved_dag_prepares_both_papers_concurrently_and_deduplicates_a
 @pytest.mark.asyncio
 async def test_paper_parallelism_never_exceeds_either_existing_limit(limiter):
     hub = Hub([row(), row(2, 's2')])
+    hub.requests['r']['budget_usd'] = 15  # direct batch leaves one normal turn's allowance
     if limiter == 'runner':
         hub.s.runner.max_parallel = 1
     else:
@@ -207,6 +209,22 @@ async def test_exhausted_budget_records_unavailable_without_dispatch_or_new_budg
     assert resolved.meta['paper_skills'][0]['error'] == 'paper_skill_budget_unavailable'
     orch.run_step.assert_not_awaited()
     assert hub.requests['r']['budget_usd'] == 10
+
+
+@pytest.mark.asyncio
+async def test_optional_papers_leave_the_existing_normal_turn_budget_without_retrying_a_denied_build():
+    hub = Hub([row(), row(2, 's2')])
+    orch = Orchestrator(hub)
+    orch.run_step = AsyncMock(side_effect=ready)
+    rows = [*ps.attachments(hub.plan, 's1', 'worker', 'r'),
+            *ps.attachments(hub.plan, 's2', 'worker', 'r')]
+    batch = await orch._start_paper_builds('r', rows)
+    assert orch._request_budget_remaining('r') == 5
+    resolved = await batch.resolve(rows)
+    await orch._close_paper_builds('r', batch)
+    assert [r['status'] for r in resolved] == ['ready', 'unavailable']
+    assert resolved[1]['error'] == 'paper_skill_budget_unavailable'
+    assert orch.run_step.await_count == 1 and hub.requests['r']['budget_usd'] == 10
 
 
 @pytest.mark.asyncio

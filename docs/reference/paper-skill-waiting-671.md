@@ -7,7 +7,7 @@ Lookup-only. [원 요구](https://github.com/ehojune/bioinfo-team-3d/issues/671)
 | 빠른 CP1 | 기존 metadata-only 준비 유지. 승인 hash·선정·재사용 증명을 확인한 뒤 DAG 준비 시작 |
 | 병렬·중복 | 승인된 descriptor마다 DAG당 한 빌드. 동시 수는 2, runner 및 DAG 병렬 한도의 최솟값. runner의 실제 슬롯·정책은 그대로 |
 | 늦은 준비 | DAG 시작부터 `runner.task_timeout_s`까지(기본 6시간). 취소 정리는 기존 10초 유예를 쓰며 기다리는 취소를 무한 await하지 않음. 짧은 전용 준비 상한은 새 PI 결정 필요. 만료 시 `unavailable/paper_skill_late`, 단계 receipt·입력 고정. 나중 완료해도 실행 중 주입 없음 |
-| 비용 | recruiter 한도·양수 per-task 한도·남은 요청 예산 중 최솟값 예약. 금액 상향 승인 없음. runner 변환도 이 task cap 유지. 미확인 취소 비용은 예약 유지, 확정 비용과 중복 합산하지 않음. 시간 제한이 금융 상한을 보장하지는 않음 |
+| 비용 | 남은 요청 예산에서 기존 per-task 예약액 × DAG 실행 슬롯 몫을 먼저 남긴다. 그 나머지·recruiter 한도·양수 per-task 한도 중 최솟값을 논문에 예약한다. 금액 상향 승인 없음. runner 변환도 task cap 유지. 미확인 취소 비용은 예약 유지, 확정 비용과 중복 합산하지 않음. 시간 제한은 금액 상한이 아니며 엔진별 실제 청구·집행은 미검증 |
 | 진행 | 기존 task dispatch/title, CSO `agent.log`, 단계 `request.step_wait`에 준비 종료 수/총수·상한. 종료 수에는 실패·생략도 포함 |
 | 종료·재계획 | DAG 종료/예외/요청 취소 시 기존 durable runner cancel 및 bounded waiter 정리. 취소 요청은 원격 종료 확인과 다름. 불확실한 비용은 0으로 처리하지 않음 |
 | 호출 증거 | 기존 소유권·hash·정확한 결과 참조 유지. 준비·장착·배정만으로 `called=true` 아님 |
