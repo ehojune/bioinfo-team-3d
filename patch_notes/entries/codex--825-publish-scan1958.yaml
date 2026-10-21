@@ -4,3 +4,8 @@ rows:
   at: '2026-10-21 20:10'
   summary: 긴 구분자만 있는 게시 문장을 검사할 때 불필요한 반복을 줄였습니다.
   text: 구분자 전용 줄 전체를 C fullmatch로 확인해 다른 문자가 필요한 zone의 후보 순회만 생략한다. 특수 zone과 늦은 위치의 path/credential은 기존 전체 classifier에 전달하며 secret/auth/URL·clip 순서를 보존한다. 지정 pure 43건, 출력 동등성 6320조합, 기존 36 함수(test 32개·helper 4개)·CPU 2초 계약 AST 보존과 Python 3.10·public·diff를 확인했다. 새 Linux CI는 미확인이다.
+
+- sha: 'a915da0'
+  at: '2026-10-21 20:13'
+  summary: 검사 기록에서 test와 helper의 수를 구분했습니다.
+  text: AST가 보존된 기존 함수 36개를 test 32개와 helper 4개로 바로잡았다. 제품 코드와 실제 pure 43건 PASS 결과는 그대로다.
