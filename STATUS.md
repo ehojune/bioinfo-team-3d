@@ -33,6 +33,13 @@
 - 미실행: runner fake CLI와 연구 CP2·한계 async 흐름(`tests/test_external_lookup_flow_676.py`)은 CI에 맡긴다. 실제 제품, process, MCP, 네트워크, WSL, HPC, 과거 95분 요청, 실제 작업판 표시와 뒤 단계 진행은 확인하지 않았다.
 - 한계: 직원이 직접 쓴 스크립트·curl과 타사 MCP는 공통 상한·기록 밖에 있다. #676은 열어 둔다. [근거](../reference/external-wait-676.md)
 
+## #831 — 공개 전 검사 대기 줄이기
+
+- 전: `check_public.sh`가 추적 파일마다 `find`를 띄워 Windows에서 84초(1,891개) 걸렸다. 목록이 공백·따옴표로 쪼개져 `-`로 시작하거나 공백·따옴표·비ASCII가 든 이름은 비밀값·크기 검사에서 조용히 빠졌다. Windows xargs가 여러 묶음으로 나뉘면 비밀값을 출력하고도 ✓로 끝났다.
+- 후: NUL 구분 목록과 묶음 단위 `grep`/`find`로 약 4초. 위 이름들과 여러 묶음에서도 exit 1이다. 없거나 읽지 못하는 추적 파일과 끊긴 링크도 실패로 판정한다. 5MB 경계(`find -size +5M`), 링크 자체 크기, 종료 코드 0/1, 데이터 확장자 규칙은 그대로다. bash와 GNU식 xargs/find/grep(Git Bash, Linux CI)을 가정한다.
+- 로컬: 정적 검사 1건의 본문을 순수 실행해 옛 스크립트 FAIL, 새 스크립트 PASS를 확인했다(pytest는 이 환경에 없음). Python 3.10 AST와 compile 통과. Git Bash synthetic 사례 11가지를 옛/새로 대조했고 저장소 자체 검사도 통과했다. 공개 검사는 자기 자신을 승인하는 근거가 아니며, 근거는 사례별 대조다.
+- CI 남음: `tests/test_private_paths.py`의 subprocess 계약 검사 12건은 작성만 했다. 줄바꿈 이름·끊긴 링크·권한 000·링크 크기 검사는 POSIX만 실행되며 Linux/Windows CI 결과가 필요하다.
+
 # 논문 스킬 안내·검증 근거 갱신
 
 논문 준비를 기다리지 않고 분석을 시작하는 동작과 #835의 실제 CI 통과 근거를 안내서에 반영했습니다. Refs #671.
