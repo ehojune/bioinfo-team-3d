@@ -1,0 +1,6 @@
+pr: 825
+rows:
+- sha: 'e017c44'
+  at: 2026-10-21 20:56
+  summary: 브라우저 fixture가 소유한 자원의 close 완료를 기다리도록 고쳤습니다.
+  text: '#825: 생성 때부터 WebSocket close·Chrome/stdio close를 추적하고 HTTP server callback까지 기다린 뒤 profile을 지운다. 정리는 한 번만 요청하며 기존 종료 요청을 재사용하고, 새5초 cleanup watchdog은 실패·pending 자원 이름을 남기며 timer를 정리한다. Close/삭제 오류와 원래 startup 오류를 보존하고 진단은 bounded resource 종류만 기록한다. 이전 source gap2건 red, 순수 V8 fake7·Python wrapper/static11 PASS. 실제 CI의 잔여 handle과 개선 여부는 미확정이며 Node/browser 실행 없이 원래 세 subtest·단언·30초/native5000ms·CI600초를 보존했다.'
