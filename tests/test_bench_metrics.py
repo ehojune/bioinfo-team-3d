@@ -220,7 +220,7 @@ async def test_baseline_writes_isolated_receipt_at_the_fake_spawn_boundary(tmp_p
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_spawn)
     result = await bench._run_baseline({"timeout_s": 1}, "sonnet-max", tmp_path, "real",
                                        ["fixture", "PRIVATE"], Settings())
-    receipt = json.loads((tmp_path / "bench_metrics.json").read_text())
+    receipt = json.loads((tmp_path / "bench_metrics.json").read_text(encoding="utf-8"))
     assert result["bench_metrics"] == receipt
     assert receipt["cli"]["spawn_successes"]["value"] == (0 if fail else 1)
     if not fail:
@@ -281,6 +281,6 @@ async def test_rescore_preserves_execution_receipt_without_reinstrumenting(tmp_p
     monkeypatch.setattr(bm, "collect", Mock(side_effect=AssertionError("rescore cannot rerun collection")))
     await bench.rescore_case(case["id"], tmp_path)
     assert before == {name: (arm / name).read_bytes() for name in before}
-    saved = json.loads((arm / "score.json").read_text())
+    saved = json.loads((arm / "score.json").read_text(encoding="utf-8"))
     assert saved["bench_metrics"] == metrics and saved["cost_usd"] == 1.25 and saved["cost_known"] is False
-    assert json.loads((arm.parent / "comparison.json").read_text())["rows"][0]["bench_metrics"] == metrics
+    assert json.loads((arm.parent / "comparison.json").read_text(encoding="utf-8"))["rows"][0]["bench_metrics"] == metrics

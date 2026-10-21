@@ -98,10 +98,57 @@ def _wait_until(check, seconds: float = 20.0) -> bool:
 
 
 def _start_gateway(settings, children) -> tuple[int, str]:
-    cli._start_background(settings, "gateway", popen=_reaping_popen(children))
-    assert cli._wait_for_health(settings, runner=False, timeout=90) is not None, _text(_logs(settings) / "gateway.log")
-    record = json.loads(cli._pid_file(settings, "gateway").read_text(encoding="utf-8"))
-    return record["pid"], record["created"]
+    try:
+        cli._start_background(settings, "gateway", popen=_reaping_popen(children))
+        assert cli._wait_for_health(settings, runner=False, timeout=90) is not None, _text(_logs(settings) / "gateway.log")
+        record = json.loads(cli._pid_file(settings, "gateway").read_text(encoding="utf-8"))
+        return record["pid"], record["created"]
+    except (Exception, SystemExit):
+        for name in ("gateway-supervisor.log", "gateway.log"):
+            try:
+                text = _text(_logs(settings) / name) or "(missing or empty)"
+            except OSError as exc:
+                text = f"(could not read log: {exc})"
+            print(f"\n--- {name} ---\n{text}", file=sys.stderr)
+        raise  # keep the original exception and traceback, including SystemExit(2)
+
+
+@pytest.mark.parametrize("failure", [SystemExit, RuntimeError])
+@pytest.mark.parametrize("logs", ["present", "missing", "unreadable"])
+def test_start_gateway_failure_keeps_the_exception_and_reports_logs(tmp_path, monkeypatch, capsys, failure, logs):
+    # Only the start boundary is faked: no native fixture, port, process or thread.
+    settings, children, popen = object(), [], object()
+    error = failure(2 if failure is SystemExit else "synthetic startup failure")
+    calls = []
+    monkeypatch.setattr(__name__ + "._logs", lambda _: tmp_path)
+    monkeypatch.setattr(__name__ + "._reaping_popen", lambda items: popen if items is children else None)
+
+    def start(actual_settings, role, **kwargs):
+        calls.append((actual_settings, role, kwargs))
+        raise error
+
+    monkeypatch.setattr(cli, "_start_background", start)
+    monkeypatch.setattr(cli, "_wait_for_health", lambda *a, **kw: pytest.fail("startup failed before health"))
+    if logs == "present":
+        (tmp_path / "gateway-supervisor.log").write_bytes("supervisor 상태\n".encode("utf-8") + b"\xff")
+        (tmp_path / "gateway.log").write_text("gateway fixture cause", encoding="utf-8")
+    elif logs == "unreadable":
+        def unreadable(_path):
+            raise PermissionError("fixture log denied")
+        monkeypatch.setattr(__name__ + "._text", unreadable)
+
+    with pytest.raises(failure) as caught:
+        _start_gateway(settings, children)
+    assert caught.value is error
+    assert calls == [(settings, "gateway", {"popen": popen})]  # no retry or launcher bypass
+    stderr = capsys.readouterr().err
+    assert "gateway-supervisor.log" in stderr and "gateway.log" in stderr
+    if logs == "present":
+        assert "supervisor 상태\n\ufffd" in stderr and "gateway fixture cause" in stderr
+    elif logs == "missing":
+        assert stderr.count("missing or empty") == 2
+    else:
+        assert stderr.count("fixture log denied") == 2
 
 
 def _gateway_events(settings) -> set[str]:
