@@ -4,6 +4,102 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## #842 — Windows Job wrapper의 표준 handle 전달 (source 87146f4)
+
+- root 최종검토 P1: 제품 `labhq/runner/memory_limit.py`의 `_run_windows_job`은 `subprocess.run(command)`를 표준 handle 인자 없이 부른다. 그래서 Windows CPython 3.12의 `_get_handles`가 모두 -1을 돌려주고, `STARTF_USESTDHANDLES`도 없고 `close_fds=True`라 Chrome은 Node의 stderr pipe를 상속하지 않는다. root가 stdlib source로 확인했고 이전 1ab33f8 기록에서 미확인으로 둔 한계다. 그 상태에서는 Chrome 오류 출력이 사라지고, stdio close는 wrapper 종료만 뜻한다.
+- 수정: 제품 코드는 그대로다. test 전용 `tests/support/windows_job_browser.py`(stdlib)가 제품 `_WindowsJob`을 그 source 파일에서 불러 재사용하고, child에 자기 stdin/stdout/stderr만 명시해 넘긴다. CPython은 이 세 handle만 상속 목록에 넣는다.
+  - 인자 검사, 오류 줄, 종료 코드(126/127, child 코드), KILL_ON_CLOSE, 메모리 상한, 비상속 Job handle은 제품과 같다. Job 준비에 실패하면 child를 만들지 않는다. 광범위 `close_fds=False`는 쓰지 않는다.
+  - driver의 `LABHQ_TEST_PYTHON` 실패 시 차단, 5/3초 정리 예산, 실제 close 판정, 30/170/90초, noskip, 필수 26, Linux 직접 경로는 그대로다.
+- 검사: 새 순수 `tests/test_demo_windows_job.py` 11 passed(표준 handle 명시 전달, Job 실패 시 child 없음, 잘못된 인자, 제품 코드·줄, 제품 Job class 재사용)와 Windows inventory 등록. VM fake의 `__dirname`을 driver 폴더로 바로잡았다. bundled Node `--check`, 정적 CI 210 passed, 3.10 AST, profile·public·diff 검사 통과.
+- 미확인: 실제 Windows에서 Chrome stderr가 Node까지 오는지, Job close 뒤 2초 안에 stdio close가 오는지. 새 head 전체 CI가 필요하다.
+
+## #842/#843 — Windows demo Chrome 소유 Job과 supervisor 시작 실패 진단 (source 1193f98, c8751ad)
+
+- 이전 실패: PR843 첫 CI(18abfff)의 Windows forced 실Chrome 회귀는 소유 launcher exit 뒤에도 stdio pipe가 마감 후 13초 열려 있었다. 소유 범위 밖에 남은 하위가 쥐었을 가능성이 높지만 미확인이다.
+- 선택: C1 설계안을 root가 채택했다.
+  - Windows에서만 Chrome을 제품의 `labhq/runner/memory_limit.py --windows-job` 아래에서 띄운다. 실소스 확인: 자기 자신을 Job에 넣은 뒤 Chrome을 시작하고, Job handle은 비상속이며, `JOB_MEMORY|KILL_ON_CLOSE`다. 메모리 상한은 소유 목적의 큰 값(64 GiB)이다.
+  - 소유 child는 wrapper다. forced 정리는 그 wrapper만 끝낸다. 정상 graceful 경로의 Node kill은 0이다.
+  - interpreter는 `test_web_3d.py`가 넘기는 `LABHQ_TEST_PYTHON`(=`sys.executable`)만 쓴다. PATH나 Store alias로 대체하지 않으며, 없으면 profile·server를 만들기 전에 실패한다.
+  - Linux 경로는 바뀌지 않았다. 제품 Job 코드도 바꾸지 않았다.
+- 유지: 실제 exit·stdio close·socket·server close와 profile 정리로만 완료한다. 5초(3+2), 30/170초, noskip, 필수 26은 그대로이고 회귀 제거는 없다.
+- 함께: `tests/test_supervisor_process.py`의 실 gateway 시작 실패(`SystemExit: 2`, 감독 프로세스가 기록 전에 종료) 때 이 test 자신의 supervisor 로그 꼬리를 남기는 진단(C3 patch 검토 후 통합). 원래 예외와 90초 단언은 그대로다.
+- 검사: bundled Node `--check`(CJS 2개), fake 갱신(Windows 실행 명령 형태, 실패 5종은 자원 생성 전, Linux 직접 실행). 정적 CI 계약 199 passed, supervisor 순수 검사 1 passed, 3.10 AST·profile·public·diff 검사 통과.
+- 미확인: 실제 Windows에서 Job close 뒤 2초 안에 stdio close가 오는지, Chrome 하위가 Job을 벗어나지 않는지, supervisor 재발 여부와 원인. 새 head 전체 CI가 필요하며 이전 head 결과는 재사용하지 않는다.
+
+## #842 — PR843 첫 CI 실패 분리 (source c7a18c6, 첫 CI는 18abfff run 39684337037)
+
+- 수정(3플랫폼 공통): `web_visual_tooling.cjs` startup fake 5·6·7은 내 예산 배분 회귀였다. Chrome이 없는 부분 시작에서도 3초 phase timer를 만들어, 5초 deadline 하나만 허용하는 VM sandbox의 `setTimeout` 단언이 cleanup 안에서 실패했다. 지금은 소유 Chrome을 획득했을 때만 그 timer를 만든다.
+- 미해결(Windows): 새 실Chrome forced test 42가 실패했다(5.6초, `demo cleanup incomplete`).
+  - 기록: forced(3초) → timeout(5초) → `late-chrome-stdio-close` `after_deadline_ms` 13030. `late-chrome-exit` 행은 없다. 따라서 소유 launcher의 exit는 마감 전에 관측됐고, 그 뒤 stdio pipe가 약 13초 더 열려 있었다(#832와 같은 형태).
+  - 정직한 완료 규칙(실제 stdio close 필요)으로는 Windows forced 경로가 5초 안에 끝날 수 없다. 규칙 결정이 필요하다(lookup842-ci-fix0728.md).
+- 별도: Windows `test_supervisor_process.py::test_a_real_gateway_runs_as_its_supervisors_child_and_down_ends_both`가 `SystemExit: 2`로 실패했다. 이 PR 범위 밖이라 보고만 한다.
+- 검사: bundled Node `--check` 통과, 정적 CI 계약 199 passed, profile·public·diff 검사 통과. 실제 JS·Chrome·CI는 미실행이다.
+- 새 head에 전체 CI가 다시 필요하다. 18abfff의 결과와 리뷰는 새 head의 성공 근거로 쓰지 않는다.
+
+## #842 — hosted Windows에서 정리 실Chrome 회귀의 내부 skip 금지 (source 06a8a22)
+
+- 빈틈: focus layout과 visual tooling의 실Chrome test는 `skipReason()`으로 안에서 건너뛰어도 `fail 0`을 출력해 부모 pytest가 PASS한다. 그래서 새 forced 회귀가 실제로 돌았다는 직접 증명이 없었다(C3 hook 0710·peer 0714). critical resizable의 Chrome 조건은 정황일 뿐이다.
+- 수정: `test_office_in_node`가 hosted Windows(`os.name == 'nt'`이고 `GITHUB_ACTIONS == 'true'`, `test_windows_job_ci.py`와 같은 판정)에서 두 파일만 TAP `# skipped 0`을 추가로 요구한다. returncode·`fail 0`·기능 단언·node id·30/170초 상한·필수 26은 그대로다. Linux와 로컬의 선택적 Chrome은 넓히지 않았다.
+- 등록: `config/ci/windows-boundary-v1.json`에서 `test_web_3d.py` mixed digest 한 줄만 바꿨다. 보호 node와 선택 규칙은 그대로다. 이 PR에서는 바뀐 mixed 파일이라 기존 규칙대로 파일 전체가 Windows에서 돈다.
+- 검사: AST로 추출한 순수 실행(가짜 subprocess·os) 8경우가 기대대로였다. 새 head에서는 hosted Windows 내부 skip이 FAIL이고, 이전 head에서는 같은 경우가 PASS였다(빈틈 재현). 정적 CI 계약 199 passed, Python 3.10 AST, profile 검증, public·diff 검사 통과. guard blocked 0.
+- 미실행: 실제 Node·Chrome·Windows. 이전 head의 CI 성공은 이 빈틈 전 결과라 새 head 성공으로 재사용하지 않는다. #842는 열어 둔다.
+
+## #842 — 강제 정리 회귀 위치 조정 (source 3dd6180)
+
+- peer P2: 새 실Chrome 회귀가 focus layout 파일의 30초 상한 여유를 줄였다. 그 파일은 #839 진단과 #834·#835·main 로그에서 Windows 실측 6.6~12초다.
+- 같은 회귀를 `web_visual_tooling.cjs`로 옮겼다. 이 파일은 driver 자체 계약 파일이고 실Chrome 검사 1개가 이미 있다. Windows 실측은 3.3~5.6초, pytest 상한은 170초다. focus 파일은 `95346f0` 상태(두 demo·기능 단언·시작 trace)와 같다.
+- 5초 cleanup, 3초 graceful, 30/170초 상한, `test_web_3d.py`·config, Windows 선택(`test_office_in_node` 보호 node)은 바뀌지 않았다.
+- 검사: bundled Node의 parser 전용 `--check`로 변경 CJS 3개를 통과했다(NODE_OPTIONS·NODE_PATH·NODE_COMPILE_CACHE 제거, 프로그램은 실행하지 않음). 정적 CI 계약 199 passed, public·diff 검사 통과, guard blocked 0.
+- 미실행: 실제 Node·Chrome·Windows 실행 결과. #842는 열어 둔다.
+
+## #842 — demo cleanup 5초 예산 배분 (source 21afaa2, 앞선 진단 95346f0)
+
+- 구조 원인(확인): 5초 전부를 graceful `Browser.close` 대기에 쓰고, 마감 콜백에서야 소유 child를 `kill()`한 뒤 같은 콜백에서 바로 실패했다. 그래서 kill 결과를 관측할 시간이 0이었다(C3 `lookup-842-cleanup-design-0650.md`).
+- 수정: 총 5초 마감은 그대로다. graceful 3초가 지나도 끝나지 않았으면 소유 ChildProcess와 CDP socket만 한 번 닫는다. 그 뒤 남은 2초 안에 실제 child stdio `close`·socket `close`·server close가 모두 와야만 완료한다.
+  - kill 반환값, `killed`, 예외 삼킴으로는 성공하지 않는다.
+  - exit만 오고 stdio가 열린 #832 형태는 실패다.
+  - 정상 graceful 경로의 kill은 0회, forced 경로는 1회다. 마감 콜백은 kill을 다시 하지 않는다.
+  - 늦은 관측(`late-*`)은 유지한다.
+- 검사:
+  - fake 계약(`web_visual_tooling.cjs`): forced 뒤 마감 전 close가 오면 PASS(이전 구조에는 3초 phase가 없어 FAIL). kill이 아무것도 반환하지 않거나, true를 반환하거나, 예외를 던져도 close가 없으면 FAIL. exit만 있고 stdio가 열려 있으면 FAIL. graceful이면 kill 0. phase timer 해제.
+  - 실제 Chrome 회귀 1개(`web_office_focus_layout.cjs`의 세 번째 test): 테스트 전용 `testWithholdBrowserClose`로 forced 경로를 타고, `['forced','closed']`를 관측해야 성공한다. 기존 두 demo와 기능 단언은 그대로다.
+  - 로컬: 정적 CI 계약 199 passed, JS 정적 괄호 균형, public·diff 검사 통과. guard 유지, blocked 0.
+- 미실행·미확인:
+  - 실제 Node·Chrome·Windows 결과
+  - Chrome이 graceful로 닫히지 않는 내부 원인
+  - forced close가 Windows에서 2초 안에 오는지. 하위 프로세스가 pipe를 쥐면 계속 실패한다.
+  - 새 회귀가 Chrome 시작 1회와 graceful 3초를 더해 focus 파일의 30초 상한 여유를 줄이는 정도
+- #842는 열어 둔다.
+
+## #842 — Windows demo cleanup 실패의 다음 근거 (source 95346f0, base 99f1c49)
+
+- #841 run 39677646617 job 119491647712에서 확정된 사실:
+  - focus layout 하위 5검사는 ok였다.
+  - `Browser.close` 5초 뒤에도 소유 Chrome의 `exit`가 관측되지 않았다. `stderr_closed=false`, active는 PipeWrap×3, ProcessWrap, Timeout이었다. 그래서 `demo cleanup incomplete`였다.
+  - 부모 test는 11.87초에 끝났지만 node는 30초 상한까지 끝나지 않았다.
+  - `websocket` pending은 graceful 경로에서 Chrome close를 기다리는 설계에서 나온 것이다. 별도 원인이 아니다.
+  - #832 실패는 이와 달랐다. exit는 관측됐지만(ProcessWrap 없음) stdio pipe가 열린 채였다.
+- 미확인:
+  - Chrome이 5초 안에 끝나지 않은 원인
+  - kill 뒤 exit·stdio close가 실제로 왔는지
+  - 남은 18초가 어디에 쓰였는지(두 번째 demo 시작이었는지, 남은 pipe가 node를 붙잡았는지). 두 번째 test의 TAP는 없다.
+- 그래서 수정은 미루고 근거만 더했다.
+  - `closeDemoResources`가 마감 시점에 아직 오지 않은 소유 Chrome `exit`·stdio `close`·CDP socket `close`만 fallback kill 전에 관측하고, `late-*` 행에 `after_deadline_ms`를 stderr로 남긴다.
+  - `web_office_focus_layout.cjs`는 두 demo의 시작 단계 시각을 stderr로 남긴다.
+  - 늦은 이벤트는 실패를 뒤집지 않고 profile을 지우지 않으며 closed를 표시하지 않는다. timer나 handle도 늘리지 않는다.
+  - 5초·30초·job 10분·parallel 7분·필수 26·Windows 선택은 그대로다.
+- 검사: `web_visual_tooling.cjs`에 fake 계약 2건을 더했다(실행은 CI). 정적 검사 `test_ci_windows10m` 계약 2줄을 더했다. 로컬 CI 정책 199 passed, JS 괄호·문자열 정적 균형 HEAD와 새 파일 모두 balanced, public·diff 검사를 통과했다. guard는 유지했고 blocked는 0이다.
+- 미실행: 실제 Node·Chrome·Windows. #842는 다음 Windows 실패 기록이나 원인 확인 전까지 열어 둔다. #833과 같은 원인이라고 단정하지 않는다.
+
+## #660 — `labhq talent`에 빌드된 논문 자문 스킬 표시 (base c16dcdb)
+
+- 변경: `labhq/cli.py`의 `talent_lines`가 기존 contract 줄 뒤에 `paper-skill.json` receipt를 한 줄씩 출력한다. "생성됨"만 뜻하며 사용·효용은 요청 기록에서 본다. 손상·폴더 불일치·대용량 receipt는 값 없이 표시하고 중복은 한 번만 나온다. [참고](../reference/paper-skills-798.md#10-22-labhq-talent의-논문-스킬-목록-660).
+- 로컬: 새 테스트 4건의 본문을 in-process로 직접 실행해 PASS를 확인했다(pytest 미설치, 무거운 test 모듈 import는 `markdown_it` 미설치로 불가해 helper만 잘라 실행). Python 3.10 AST, `check_public.sh`, `git diff --check`를 통과했다.
+- 미실행: pytest 전체, 실제 Paper2Skill 빌드·스킬 사용·효용, 웹 UI. #660의 선행문헌 목록 UI와 실요청 효용 확인이 남아 있어 닫지 않는다.
+- 통합: 승인 main `99f1c49`(#840 `18b4fbd` 후손, 이후는 생성 목차만)를 merge `37f7ce0`로 명시 통합했다. 양쪽 patch-id와 merge-tree가 일치하고 `cli.py`·새 테스트 blob은 그대로다. #840의 직원 env 수정도 그대로 들어 있다.
+- 이전 CI: head `7217330` run 39677646617은 Linux PASS, Windows 실패 1건(`test_web_3d.py` focus_layout의 demo cleanup 미완료, Chrome stdio·websocket 미종료로 30초 초과)이었다. `labhq/cli.py`와 새 테스트와는 무관한 기존 정리 실패다.
+- 2차 통합: 승인 main `e18af0e`(#843 `bf51c58` 후손, 이후는 생성 목차만)를 merge `98af4d2`로 명시 통합해 #843의 Windows 정리 helper를 받았다. 충돌은 없고 main 대비 차이는 이 branch의 6파일뿐이다. `cli.py`와 새 테스트 blob은 그대로다. 옛 Windows 실패의 해소는 새 CI로만 판정하고, #844(감독 조기 종료) 원인 미확정은 별도로 남는다.
+
 ## #813 — 직원 세션의 GitHub 봇 신원 제외 (source 0299a33)
 
 - 변경: `AgentAdapter.staff_env`가 제품 직원 자식 환경의 최종 값을 `LABHQ_COMMIT_AGENT=none`으로 고정한다. 상속값·engine env·task env와 대소문자 변형을 지우고 하나만 남기며, 읽기 전용 직원도 같다. #301 token 제거, 상위 `CLAUDE*`/`CODEX_*` 정리, 부모 env·입력 dict 불변은 그대로다. 개발 CLI·lead·PC 래퍼·OAuth·gateway token은 바꾸지 않았다. [참고](../reference/staff-gh-identity-813.md).

@@ -6,7 +6,8 @@ const fs = require('node:fs'), os = require('node:os'), path = require('node:pat
 const {DEFAULT_TOLERANCE, diffView, sameColor, colorChannels} = require('./support/layout_snapshot.cjs');
 const {updateBaseline} = require('../scripts/update_visual_baseline.cjs');
 const vm = require('node:vm');
-const {openDemo, skipReason, CLOCK_SOURCE, closeDemoResources, demoLifecycleTrace, requestBrowserShutdown} = require('./support/demo_driver.cjs');
+const {openDemo, skipReason, CLOCK_SOURCE, closeDemoResources, demoLifecycleTrace, requestBrowserShutdown,
+  CLEANUP_MS, GRACEFUL_CLEANUP_MS} = require('./support/demo_driver.cjs');
 
 // Synchronous fake clock/observer only; no browser, timer or event loop.
 test('demo lifecycle trace measures from its own origin and between observed boundaries', () => {
@@ -67,7 +68,8 @@ test('one startup and load fit the trace bound while an incomplete startup inven
 
 // Evaluate the actual driver in an isolated VM with only owned synthetic
 // resources. These async contracts run in CI; they launch no browser/service.
-function startupFixture({port = 55921, listenError = null, closeError = null} = {}) {
+function startupFixture({port = 55921, listenError = null, closeError = null, platform, env = {}, existing = [],
+  wrapperPresent = false, spawned = null} = {}) {
   const events = [], profile = path.join('owned-root', 'owned-profile');
   let onError;
   const server = {
@@ -83,22 +85,29 @@ function startupFixture({port = 55921, listenError = null, closeError = null} = 
     close(done) { events.push('server-close'); done(closeError); }
   };
   const fakeFs = {
-    existsSync: name => name === 'owned-chrome',
+    existsSync: name => name === 'owned-chrome' || existing.includes(name)
+      || (wrapperPresent && name.endsWith(path.join('support', 'windows_job_browser.py'))),
+    mkdirSync() {},
     mkdtempSync() { events.push('profile-create'); return profile; },
     rmSync(dir) { assert.equal(dir, profile); events.push('profile-remove'); }
   };
   const modules = {'node:fs':fakeFs, 'node:path':path, 'node:os':{tmpdir:() => 'owned-root'},
     'node:http':{createServer:() => server},
-    'node:child_process':{spawn() { throw new Error('unexpected browser spawn'); }},
+    'node:child_process':{spawn(command, args, options) {
+      if (!spawned) throw new Error('unexpected browser spawn');
+      spawned.push({command, args, options});
+      throw new Error('stop after spawn');  // only the launch command is under test; no browser runs
+    }},
     './test_font.cjs':{}, './mini_ws.cjs':{}};
-  const sandbox = {module:{exports:{}}, __dirname,
+  const sandbox = {module:{exports:{}}, __dirname:path.join(__dirname, 'support'),  // the driver's own folder
     require(name) { assert.ok(Object.hasOwn(modules, name), name); return modules[name]; },
-    process:{env:{LABHQ_TEST_CHROME:'owned-chrome'}, getActiveResourcesInfo:() => []},
+    process:{env:{LABHQ_TEST_CHROME:'owned-chrome', ...env}, platform, getActiveResourcesInfo:() => []},
     console:{error() {}},
     setTimeout(fn, ms) { assert.equal(ms, 5000); events.push('timer-set'); return 7; },
     clearTimeout(id) { assert.equal(id, 7); events.push('timer-clear'); }};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'support/demo_driver.cjs'), 'utf8'), sandbox);
-  return {open:sandbox.module.exports.openDemo, events, hasListenErrorHandler:() => Boolean(onError)};
+  return {open:sandbox.module.exports.openDemo, exports:sandbox.module.exports, events,
+    hasListenErrorHandler:() => Boolean(onError)};
 }
 
 test('reserved-port startup failure closes its acquired server before removing the profile', async () => {
@@ -123,6 +132,58 @@ test('startup cleanup failure retains both errors and does not remove an unclose
     error.errors[0].message.includes('reserved port 55921') && error.errors[1].errors.includes(failure));
   assert.equal(f.events.filter(event => event === 'server-close').length, 1);
   assert.equal(f.events.includes('profile-remove'), false);
+});
+
+// ---- #842/#843: Windows Chrome under the product's owned KILL_ON_CLOSE Job wrapper (launch command only) ----
+const PYTHON = 'C:/hosted/python.exe';  // forward slashes: still an absolute Windows path
+
+test('Windows starts the owned Chrome under the Job wrapper with the explicit interpreter', async () => {
+  const spawned = [];
+  const f = startupFixture({port:40000, platform:'win32', env:{LABHQ_TEST_PYTHON:PYTHON}, existing:[PYTHON],
+    wrapperPresent:true, spawned});
+  await assert.rejects(f.open(), /stop after spawn/);
+  assert.equal(spawned.length, 1);
+  const {command, args, options} = spawned[0];
+  assert.equal(command, PYTHON);
+  // Arrays built inside the vm context are copied into this realm before a strict deep comparison.
+  assert.deepEqual(Array.from(args.slice(0, 6)), ['-I', f.exports.WINDOWS_JOB_WRAPPER, '--windows-job',
+    String(f.exports.WINDOWS_JOB_LIMIT_BYTES), '--', 'owned-chrome']);
+  assert.ok(f.exports.WINDOWS_JOB_WRAPPER.endsWith(path.join('support', 'windows_job_browser.py')));
+  assert.equal(args[6], '--headless=new');
+  assert.equal(args.at(-1), 'about:blank');
+  assert.deepEqual(Array.from(options.stdio), ['ignore', 'ignore', 'pipe'], 'the owned stdio and its close proof stay');
+  assert.equal(options.windowsHide, true);
+  // The spawn failed before a child existed: the acquired server and profile are still cleaned up.
+  assert.deepEqual(f.events, ['profile-create','listen','timer-set','server-close','timer-clear','profile-remove']);
+});
+
+for (const [label, env, existing, wrapperPresent] of [
+  ['no interpreter', {}, [], true],
+  ['a relative interpreter', {LABHQ_TEST_PYTHON:'python'}, ['python'], true],
+  ['a Store alias', {LABHQ_TEST_PYTHON:'C:/Users/x/AppData/Local/Microsoft/WindowsApps/python.exe'},
+    ['C:/Users/x/AppData/Local/Microsoft/WindowsApps/python.exe'], true],
+  ['a missing interpreter', {LABHQ_TEST_PYTHON:PYTHON}, [], true],
+  ['a missing wrapper', {LABHQ_TEST_PYTHON:PYTHON}, [PYTHON], false],
+]) {
+  test(`Windows refuses to start Chrome with ${label}, before any profile, server or browser exists`, async () => {
+    const spawned = [];
+    const f = startupFixture({port:40000, platform:'win32', env, existing, wrapperPresent, spawned});
+    await assert.rejects(f.open(), /LABHQ_TEST_PYTHON must name|owned Windows Job wrapper is missing/);
+    assert.deepEqual(f.events, []);
+    assert.deepEqual(spawned, []);
+  });
+}
+
+test('Linux keeps spawning Chrome directly, whatever LABHQ_TEST_PYTHON says', async () => {
+  const spawned = [];
+  const f = startupFixture({port:40000, platform:'linux', env:{LABHQ_TEST_PYTHON:PYTHON}, spawned});
+  await assert.rejects(f.open(), /stop after spawn/);
+  assert.equal(spawned[0].command, 'owned-chrome');
+  assert.equal(spawned[0].args[0], '--headless=new');
+  assert.equal(spawned[0].args.includes('--windows-job'), false);
+  const [direct, directArgs] = f.exports.browserCommand('owned-chrome', ['a'], null);
+  assert.equal(direct, 'owned-chrome');
+  assert.deepEqual(Array.from(directArgs), ['a']);
 });
 
 // ---- layout_snapshot: colors are #rrggbb hex bytes ----
@@ -258,7 +319,8 @@ test('shutdown send and owned-child fallback errors are retained', () => {
 
 function cleanupFixture() {
   const events = [], diagnostics = [];
-  let socketAck, chromeAck, serverAck, fireTimer;
+  let socketAck, chromeAck, serverAck, fireTimer, firePhase;
+  const phaseCleared = [];
   const wsClosed = new Promise(resolve => { socketAck = resolve; });
   const chromeClosed = new Promise(resolve => { chromeAck = resolve; });
   const resources = {profile: 'owned-profile', wsClosed, chromeClosed,
@@ -266,12 +328,20 @@ function cleanupFixture() {
     chrome: {exitCode: null, signalCode: null, kill() { events.push('chrome-request'); }},
     server: {close(callback) { events.push('server-request'); serverAck = callback; }}};
   const options = {removeProfile: async profile => { assert.equal(profile, 'owned-profile'); events.push('removed'); },
-    setTimer(callback, milliseconds) { assert.equal(milliseconds, 5000); fireTimer = callback; return 17; },
-    clearTimer(id) { assert.equal(id, 17); events.push('timer-cleared'); },
+    // One 5 s deadline (id 17) and the graceful phase inside it (id 16); no other timer.
+    setTimer(callback, milliseconds) {
+      if (milliseconds === GRACEFUL_CLEANUP_MS) { firePhase = callback; return 16; }
+      assert.equal(milliseconds, CLEANUP_MS); fireTimer = callback; return 17;
+    },
+    clearTimer(id) {
+      if (id === 16) { phaseCleared.push(id); return; }
+      assert.equal(id, 17); events.push('timer-cleared');
+    },
     diagnostic: (stage, pending) => diagnostics.push({stage, pending})};
   const tick = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
-  return {resources, options, events, diagnostics, socketAck, chromeAck, tick,
-    serverAck: error => serverAck(error), timeout: () => fireTimer()};
+  return {resources, options, events, diagnostics, socketAck, chromeAck, tick, phaseCleared,
+    serverAck: error => serverAck(error), timeout: () => fireTimer(), phase: () => firePhase(),
+    phaseSet: () => firePhase !== undefined};
 }
 
 test('cleanup waits for socket, child stdio and server acknowledgements before removing its profile', async () => {
@@ -342,6 +412,7 @@ test('partial startup still waits for its server and preserves a server-close er
   await f.tick(); f.serverAck(failure);
   await assert.rejects(closing, error => error instanceof AggregateError && error.errors.includes(failure));
   assert.deepEqual(f.events, ['server-request', 'timer-cleared']);
+  assert.equal(f.phaseSet(), false, 'no owned Chrome was acquired, so there is no forced phase to wait for');
 });
 
 test('a diagnostic failure cannot hide the original incomplete cleanup', async () => {
@@ -389,6 +460,118 @@ test('stalled graceful cleanup keeps the five-second failure and requests owned-
   f.chromeAck(); f.socketAck(); await f.tick();
   assert.equal(f.events.filter(x => x === 'ws-request').length, 1);
   assert.equal(f.events.includes('removed'), false, 'late acknowledgements cannot reverse timeout failure');
+});
+
+function lateFixture() {
+  const {EventEmitter} = require('node:events');
+  const f = cleanupFixture(), rows = [], clock = {now: 100};
+  const chrome = Object.assign(new EventEmitter(), {exitCode: null, signalCode: null,
+    kill() { f.events.push('chrome-request'); }});
+  f.resources.chrome = chrome;
+  f.resources.requestBrowserClose = () => { f.events.push('Browser.close'); return true; };
+  f.options.clock = () => clock.now;
+  f.options.diagnostic = (stage, pending, extra) => rows.push({stage, pending, ...(extra || {})});
+  return {...f, chrome, rows, clock};
+}
+
+test('after the deadline, late owned exit and closes are recorded with their delay but stay a failure (#842)', async () => {
+  const f = lateFixture();
+  const closing = closeDemoResources(f.resources, f.options);
+  await f.tick(); f.serverAck(); await f.tick(); f.timeout();
+  await assert.rejects(closing, error => error instanceof AggregateError &&
+    error.errors.some(item => item.message === 'demo cleanup did not close: chrome-stdio, websocket'));
+  // The deadline's fallback still terminates the owned child once; observation was attached before it.
+  assert.equal(f.events.filter(x => x === 'chrome-request').length, 1);
+  // Without a fired graceful phase the deadline keeps its fallback, recorded as forced after the timeout row.
+  assert.deepEqual(f.rows, [{stage: 'timeout', pending: ['chrome-stdio', 'websocket']},
+                            {stage: 'forced', pending: ['chrome-stdio', 'websocket']}]);
+  f.clock.now = 130; f.chrome.exitCode = 1; f.chrome.emit('exit', 1, null);
+  f.clock.now = 180; f.chromeAck(); await f.tick();
+  f.clock.now = 200; f.socketAck(); await f.tick();
+  assert.deepEqual(f.rows.slice(2).map(row => [row.stage, row.after_deadline_ms]),
+    [['late-chrome-exit', 30], ['late-chrome-stdio-close', 80], ['late-socket-close', 100]]);
+  assert.equal(f.rows.some(row => row.stage === 'closed'), false);
+  assert.equal(f.events.includes('removed'), false, 'a late acknowledgement never removes the profile');
+});
+
+test('an exit that is never observed leaves only the timeout record, and earlier acknowledgements are not late', async () => {
+  const f = lateFixture();
+  f.socketAck();  // the CDP socket closed before the deadline; only the owned child is still open
+  const closing = closeDemoResources(f.resources, f.options);
+  await f.tick(); f.serverAck(); await f.tick(); f.timeout();
+  await assert.rejects(closing, error => error instanceof AggregateError &&
+    error.errors.some(item => item.message.startsWith('demo cleanup did not close:')));
+  await f.tick();
+  assert.deepEqual(f.rows.map(row => row.stage), ['timeout', 'forced']);
+  assert.equal(f.chrome.listenerCount('exit'), 1, 'only the observation waits; nothing claims the child closed');
+  assert.equal(f.events.includes('removed'), false);
+});
+
+// ---- #842 cleanup budget: graceful part, then the owned child's forced close inside the same 5 s ----
+const kills = f => f.events.filter(x => x === 'chrome-request').length;
+
+test('a stalled graceful close is forced inside the deadline and completes only on the actual close (#842)', async () => {
+  assert.ok(GRACEFUL_CLEANUP_MS < CLEANUP_MS && CLEANUP_MS === 5000);
+  const f = lateFixture();
+  let completed = false;
+  const closing = closeDemoResources(f.resources, f.options).then(() => { completed = true; });
+  await f.tick(); f.serverAck(); await f.tick();
+  assert.equal(kills(f), 0, 'graceful first');
+  f.phase();  // the graceful part of the budget ran out; the 5 s deadline has not
+  assert.equal(kills(f), 1);
+  assert.equal(f.events.filter(x => x === 'ws-request').length, 1);
+  assert.deepEqual(f.rows.map(row => row.stage), ['forced']);
+  f.chrome.exitCode = 1; f.chrome.emit('exit', 1, null); await f.tick();
+  assert.equal(completed, false, 'exit alone is not the stdio close');
+  f.chromeAck(); await f.tick();
+  assert.equal(completed, false, 'the socket acknowledgement is still required');
+  f.socketAck(); await closing;
+  assert.equal(kills(f), 1, 'one forced termination, never repeated');
+  assert.equal(f.events.filter(x => x === 'removed').length, 1);
+  assert.deepEqual(f.rows.map(row => row.stage), ['forced', 'closed']);
+  assert.deepEqual(f.phaseCleared, [16]);
+  assert.equal(f.events.at(-1), 'removed');
+});
+
+for (const [name, kill] of [['returns nothing', () => undefined], ['returns true', () => true],
+  ['throws', () => { throw new Error('kill failed'); }]]) {
+  test(`a forced kill that ${name} without an actual close still fails at the deadline (#842)`, async () => {
+    const f = lateFixture();
+    f.chrome.kill = () => { f.events.push('chrome-request'); f.chrome.killed = true; return kill(); };
+    const closing = closeDemoResources(f.resources, f.options);
+    await f.tick(); f.serverAck(); await f.tick();
+    f.phase(); await f.tick(); f.timeout();
+    await assert.rejects(closing, error => error instanceof AggregateError &&
+      error.message === 'demo cleanup incomplete' &&
+      error.errors.some(item => item.message.startsWith('demo cleanup did not close: chrome-stdio')) &&
+      (name !== 'throws' || error.errors.some(item => item.message === 'kill failed')));
+    assert.equal(kills(f), 1, 'the deadline does not kill again after the forced phase');
+    assert.equal(f.events.includes('removed'), false);
+    assert.equal(f.rows.some(row => row.stage === 'closed'), false);
+  });
+}
+
+test('an observed exit with a still open stdio pipe stays a failure, as in #832', async () => {
+  const f = lateFixture();
+  const closing = closeDemoResources(f.resources, f.options);
+  await f.tick(); f.serverAck(); await f.tick();
+  f.phase();
+  f.chrome.exitCode = 1; f.chrome.emit('exit', 1, null); f.socketAck(); await f.tick();
+  f.timeout();
+  await assert.rejects(closing, error => error instanceof AggregateError &&
+    error.errors.some(item => item.message.startsWith('demo cleanup did not close: chrome-stdio')));
+  assert.equal(f.events.includes('removed'), false);
+  assert.equal(f.rows.some(row => row.stage === 'closed'), false);
+});
+
+test('a graceful close inside its part of the budget never kills the owned child', async () => {
+  const f = lateFixture();
+  const closing = closeDemoResources(f.resources, f.options);
+  await f.tick(); f.serverAck(); f.chromeAck(); f.socketAck(); await closing;
+  assert.equal(kills(f), 0);
+  assert.deepEqual(f.rows.map(row => row.stage), ['closed']);
+  assert.deepEqual(f.phaseCleared, [16], 'the unused forced phase is cleared, so it can never fire later');
+  assert.equal(f.events.filter(x => x === 'removed').length, 1);
 });
 
 // ---- demo_driver: an exception in a virtual timer callback is a page error ----
@@ -469,4 +652,19 @@ test('the driver lists a timer callback exception in errors, so the visual test 
     } finally {
       await d.close();
     }
+  });
+
+// #842: the owned Chrome's forced close must be observed inside the same 5 s cleanup deadline. Browser.close is
+// withheld here (test only) so cleanup takes the forced path; close() rejects unless the actual child stdio,
+// socket and server closes arrive in time. Every other real demo keeps the normal graceful path.
+test('cleanup forces an owned Chrome whose graceful close never takes effect, within the same deadline',
+  {skip: skipReason() || false, timeout: 150000}, async () => {
+    const stages = [];
+    const d = await openDemo({width: 800, height: 600, testWithholdBrowserClose: true,
+      cleanupDiagnostic: (stage, pending, extra) => {
+        stages.push(stage);
+        console.error('forced cleanup: ' + JSON.stringify({stage, pending, ...(extra || {})}));
+      }});
+    await d.close();
+    assert.deepEqual(stages, ['forced', 'closed']);
   });
