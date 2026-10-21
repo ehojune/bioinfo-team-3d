@@ -865,7 +865,9 @@ flowchart LR
 선행 연구의 방법은 채용 없이 이번 요청의 참고 스킬로 씁니다(#549 C).
 
 - CSO는 방법이 맞는 논문을 최대 2편 골라 `paper_skills`에 DOI/PMID·이유·담당 단계를 적습니다.
-- CP1 전에는 식별자·배정·`full_text` 접근 metadata만 확인하며 증거가 없으면 이유와 함께 생략합니다. Paper2Skill 변환은 승인된 담당 단계 실행 때 수행하고 승인 계획·hash는 유지합니다.
+- CP1 전에는 논문 ID·저장 본문 hash·추출 상태·방법/QC 줄 범위를 담은 receipt 선언만 확인합니다. `access_level=full_text` 문자열만 있거나 부분 추출·필요 근거 누락이면 자료 요청 사유를 남기고 생략합니다. 보충자료에 의존하는 근거는 별도 artifact 연결 전까지 자료를 요청합니다. 본문만으로 충분하면 보충자료를 요구하지 않습니다. 자동 PDF·HTML 추출은 일부 텍스트 확보만으로 완료가 되지 않습니다. 원문 범위가 partial/unknown이면 논문 스킬을 만들지 않습니다.
+- 기관/PI PDF는 확보 성공과 추출 범위를 구분합니다. `pdftotext` 성공도 unknown이므로 스킬 입력에는 쓰지 않습니다. 필요한 Methods/QC가 있는 지원 JATS 본문을 확보하거나 PDF 범위 검증·OCR을 추가해야 합니다(미구현).
+- Paper2Skill은 승인 뒤 담당 단계에서 도구가 본문 옆에 저장한 원본 receipt와 접근·추출 상태를 대조하고 실제 본문과 변환 입력 hash·근거 범위를 검사합니다. 재사용도 동일 receipt와 skill hash가 필요하며 구 receipt·본문 변경/실종은 재확인으로 멈춥니다. CP1 승인 계획은 유지합니다. 이 검사는 독해·tool 호출·연구 효용의 증거가 아닙니다.
 - 소유권·hash를 확인한 임시 스킬과 `inputs/paper_skills/<skill_id>.md`를 해당 단계에 주입하고 실행 뒤 제거합니다. 주입 문서에는 읽기 권한만 줍니다. 성공 결과의 정확한 스킬 ID·폴더/문서 hash 참조와 유지된 사본이 일치해야 `called=true`입니다. 증거가 없으면 `false`와 이유를 남깁니다. 이는 결과 참조 기록이며 실제 tool 호출·과학적 효용의 증거는 아닙니다([계약](reference/paper-skills-798.md)).
 - 일반 변환·hash 확인·장착 실패는 경고로 남기며 같은 논문의 인재풀 스킬은 hash 확인 뒤 재사용합니다(수습·계약 없음). 승인·선정 변경은 중단·재승인이 필요하며 shutdown·취소는 그대로 전파합니다.
 
@@ -1467,7 +1469,7 @@ Stanford Zou 연구실의 Virtual Biotech(bioRxiv 2026, 저자 중 Jiacheng Miao
 
 ## 내 저장소로 올리기
 
-개발 CI는 보호 예제·markup이 같은 prose와 정해진 기록만 축소합니다. manual·개발 지침·정책은 내용·구조가 같은 문장 경계 줄바꿈만 후보입니다. main 재사용에는 동일 checkout tree·workflow/policy·필수 gate 전체의 성공 근거가 필요합니다. 불명확하면 축소·재사용하지 않습니다. Linux 3.10/3.12는 전수, Windows 3.12는 기본 경계 profile이며 선택 범위를 검증하지 못하면 전수입니다. Windows nightly·workflow_dispatch도 전수이며 clean-install·공식 validator·MCP gate는 유지합니다([판별·증거 경계](reference/ci-reuse.md)).
+개발 CI는 보호 예제·markup이 같은 prose와 정해진 기록만 축소합니다. manual·개발 지침·정책은 내용·구조가 같은 문장 경계 줄바꿈만 후보입니다. main 재사용에는 동일 tree·workflow/policy·coverage와 필수 gate 성공 증거가 필요합니다. PR825 변경안은 Linux 3.10/3.12 전수와 Windows nightly·workflow_dispatch 전수를 유지하면서, routine Windows를 필수 OS 경계 검사 한 번과 10분 job 상한으로 제한합니다. 선택 증거가 틀리면 빠르게 실패하며 전수로 확대하지 않습니다. timeout도 실패입니다. 실제 10분 이내 성공은 아직 미측정이며 clean-install·공식 validator·MCP gate는 유지합니다([판별·증거 경계](reference/ci-reuse.md)).
 
 ```bash
 ./scripts/publish_github.sh          # gh CLI로 public 저장소 <내 계정>/labhq 생성 + push

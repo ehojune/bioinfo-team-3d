@@ -383,6 +383,21 @@ PRECEDENT_SCHEMA: dict[str, Any] = {
             "type": "object", "additionalProperties": False,
             "properties": {"title": {"type": "string"},
                            "repo": {"type": "string"}, "data_url": {"type": "string"},
+                           "fulltext_receipt": {"type": "object", "additionalProperties": False,
+                               "properties": {
+                                   "coverage_version": {"type": "integer", "minimum": 2, "maximum": 2},
+                                   "paper_id": {"type": "string"}, "source": {"type": "string"},
+                                   "access_level": {"type": "string"}, "extraction": {"type": "string"},
+                                   "text_file": {"type": "string"}, "text_sha256": {"type": "string"},
+                                   "supplements_required": {"type": "boolean"}, "supplements": {"type": "string"},
+                                   "evidence": {"type": "array", "items": {
+                                       "type": "object", "additionalProperties": False,
+                                       "properties": {"kind": {"type": "string", "enum": ["methods", "qc"]},
+                                                      "start_line": {"type": "integer", "minimum": 1},
+                                                      "end_line": {"type": "integer", "minimum": 1}},
+                                       "required": ["kind", "start_line", "end_line"]}}},
+                               "required": ["coverage_version", "paper_id", "source", "access_level", "extraction", "text_file",
+                                            "text_sha256", "evidence", "supplements_required", "supplements"]},
                            "citations": {"type": "array", "items": {"type": "string"}}},
             "required": ["title", "citations"]}},
         "required": {"type": "array", "items": {
@@ -407,6 +422,13 @@ PMID, DOI, or direct URL. Verify the sources rather than relying on search-resul
 find something, say so in limitations; never invent it. Return only the structured JSON.
 For each paper include its DOI/PMID when available and optional repo/data_url links when verified, so the CSO can
 prefer a method with accessible code or data for a request-scoped Paper2Skill.
+When a stored fulltext tool receipt exists, copy it as fulltext_receipt and locate the actual methods/QC evidence
+with 1-based inclusive line ranges in that exact text_file. Preserve all original receipt fields;
+only add evidence line ranges and the supplements_required dependency decision. Never relabel access or extraction.
+Set supplements_required only when those claims depend
+on supplements, and mark their availability honestly. A receipt establishes artifact access, not comprehension.
+Without readable evidence, leave methods/QC and parameters unverified and request material; never infer them from
+an access_level string, abstract, title, or memory. Omit fulltext_receipt when no stored artifact exists.
 
 Request: {request}"""
 
@@ -2222,6 +2244,8 @@ def valid_review(value: Any, schema: dict[str, Any] = REVIEW_SCHEMA) -> bool:
             return all(matches(v, props[k]) for k, v in item.items())
         if typ == "array":
             return isinstance(item, list) and all(matches(v, schema["items"]) for v in item)
+        if typ == "boolean":
+            return type(item) is bool
         if typ == "integer":
             return (type(item) is int and schema.get("minimum", item) <= item <= schema.get("maximum", item))
         if typ == "string":
@@ -2265,9 +2289,11 @@ def analysis_precedents_text(record: Any) -> str:
         return ""
     if record.get("status") != "ok":
         return "Analysis precedents:\n- unavailable; continue without precedent requirements."
-    lines = ["Analysis precedents:", "Papers:"]
+    lines = ["Analysis precedents:",
+             "Paper access/receipt declarations are unverified until artifact hash/ranges are checked after approval. "
+             "Do not invent method/QC parameters; request missing evidence.", "Papers:"]
     lines.extend(f"- {row.get('title')}: {_citations(row)}" +
-                 "".join(f"; {key}: {row[key]}" for key in ("repo", "data_url") if row.get(key))
+                 "".join(f"; {key}: {row[key]}" for key in ("repo", "data_url", "fulltext_receipt") if row.get(key))
                  for row in record.get("papers") or [])
     lines.append("Required analyses (answer each id in `checklist`; if one cannot be done, say why):")
     lines.extend(f"- {row.get('id')}: {row.get('analysis')} — {row.get('why')} [{_citations(row)}]"

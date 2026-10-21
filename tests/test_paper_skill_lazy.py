@@ -48,7 +48,8 @@ async def test_dispatch_builds_only_assigned_selection_without_mutating_approved
     plan = await deferred()
     before = copy.deepcopy(plan)
     build = AsyncMock(side_effect=lambda t: TaskResult(task_id=t.id, agent_id=t.agent_id, ok=True,
-        structured={'status': 'ready', 'paper_id': 'pmid:12345678', 'skill_sha256': 'a' * 64}))
+        structured={'status': 'ready', 'paper_id': 'pmid:12345678', 'skill_sha256': 'a' * 64,
+                    'fulltext_receipt_sha256': ps.evidence_sha256(t.meta['paper_skill']['fulltext_receipt'])}))
     rows = await ps.resolve_attachments(ps.attachments(plan, 's1', 'worker', 'r'), Settings(), build)
     assert len(rows) == 1 and rows[0]['status'] == 'ready'
     assert build.await_count == 1 and build.call_args.args[0].meta['max_attempts'] == 1

@@ -36,11 +36,18 @@ test('2.5D shell exposes two token-styled accessible splitters and leaves phone 
   assert.match(components, /@media \(max-width:\s*620px\)[\s\S]*\.panel-splitter[^}]*display:\s*none/);
 });
 
+// The critical Windows phase requires a real browser, never an optional skip.
+if (process.env.LABHQ_REQUIRE_RESIZABLE_BROWSER === '1' && skipReason()) {
+  throw new Error(`required resizable browser unavailable: ${skipReason()}`);
+}
 test('desktop splitter drags, responds to arrows, persists and resets while phone hides it',
   {skip: skipReason() || false, timeout: 60000}, async () => {
+    console.error('resizable browser: desktop open');
     const desktop = await openDemo({width: 1440, height: 900, reducedMotion: true});
     try {
+      console.error('resizable browser: desktop load');
       await desktop.load();
+      console.error('resizable browser: desktop assertions');
       const before = await desktop.evaluate("document.querySelector('#office').getBoundingClientRect().width");
       const box = await desktop.evaluate("(()=>{const b=document.querySelector('#main-splitter').getBoundingClientRect();return {x:b.x+b.width/2,y:b.y+b.height/2}})()");
       await desktop.cdp('Input.dispatchMouseEvent', {type:'mousePressed', x:box.x, y:box.y, button:'left', buttons:1, clickCount:1});
@@ -67,14 +74,25 @@ test('desktop splitter drags, responds to arrows, persists and resets while phon
       await desktop.evaluate("document.querySelector('#staff-splitter').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))");
       await desktop.frames();
       assert.equal(await desktop.evaluate("localStorage.getItem('labhq_demo:panel_sizes:')"), '{}');
-    } finally { await desktop.close(); }
+    } finally {
+      console.error('resizable browser: desktop close');
+      await desktop.close();
+      console.error('resizable browser: desktop closed');
+    }
 
+    console.error('resizable browser: phone open');
     const phone = await openDemo({width: 390, height: 844, reducedMotion: true});
     try {
+      console.error('resizable browser: phone load');
       await phone.load();
+      console.error('resizable browser: phone assertions');
       assert.equal(await phone.evaluate("getComputedStyle(document.querySelector('#main-splitter')).display"), 'none');
       const widths = await phone.evaluate("(()=>{const l=document.querySelector('.layout'),s=getComputedStyle(l);return [l.clientWidth-parseFloat(s.paddingLeft)-parseFloat(s.paddingRight),document.querySelector('#office').clientWidth]})()");
       assert.ok(Math.abs(widths[0] - widths[1]) <= 2, widths.join(' vs '));
-    } finally { await phone.close(); }
+    } finally {
+      console.error('resizable browser: phone close');
+      await phone.close();
+      console.error('resizable browser: phone closed');
+    }
   });
 

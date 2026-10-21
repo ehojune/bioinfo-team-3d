@@ -54,7 +54,7 @@ LIT_DIR = ".tmp/literature"  # never outputs/: see the module docstring
 LIT_ACCESS_LOG = "outputs/literature_access.jsonl"  # metadata/status only; never a paper body
 TOOL = "fulltext"
 CACHE_RELEASE = "europepmc-rest"  # Europe PMC has no data release; answers age out instead (annot.CACHE_MAX_AGE_S)
-FULLTEXT_CACHE_RELEASE = "europepmc-rest-oa-v2"
+FULLTEXT_CACHE_RELEASE = "europepmc-rest-oa-v3"
 MAX_PER_CALL = 20
 MAX_XML_BYTES = 20_000_000
 MAX_CITATION_RESULTS = 1000
@@ -234,7 +234,7 @@ def _pdf_literal_text(data: bytes) -> str:
 
 
 def extract_pdf_text(path: Path) -> tuple[str, str]:
-    """Return locally extracted text and complete|partial_text. No paper text leaves the task workspace here."""
+    """Return locally extracted text and unknown|partial_text. No paper text leaves the task workspace here."""
     target = path.with_suffix(path.suffix + ".txt")
     command = shutil.which("pdftotext")
     if command:
@@ -245,7 +245,8 @@ def extract_pdf_text(path: Path) -> tuple[str, str]:
             if done.returncode == 0:
                 text = target.read_text(encoding="utf-8", errors="replace").strip()
                 if text:
-                    return text, "complete"
+                    # Exit success proves text extraction ran, not coverage of scanned pages/regions.
+                    return text, "unknown"
         except (OSError, subprocess.TimeoutExpired):
             pass
         finally:
@@ -412,6 +413,7 @@ class KeyFulltextCoordinator:
                     "text_file": text_relative, "chars": len(markdown), "extraction": extraction,
                     "pdf_sha256": row["pdf_sha256"],
                     "text_sha256": hashlib.sha256(markdown.encode("utf-8")).hexdigest()}
+        accepted["fulltext_receipt"] = fulltext_receipt(paper["id"], accepted, self.workdir)
         accepted.pop("access_failure", None)
         accepted.pop("text_error", None)
         return accepted, None
@@ -724,6 +726,11 @@ def _pdf_unescape(value: bytes) -> str:
 
 
 def _pdf_text(data: bytes) -> str:
+    """Compatibility text-only view; callers making access decisions must retain coverage."""
+    return _pdf_text_coverage(data)[0]
+
+
+def _pdf_text_coverage(data: bytes) -> tuple[str, str]:
     """Extract ordinary PDF text without adding a package. pypdf is used when already installed; the bounded
     fallback handles literal Tj/TJ strings in plain or FlateDecode streams and otherwise reports format failure."""
     chunks = [data]
@@ -748,11 +755,14 @@ def _pdf_text(data: bytes) -> str:
         pass
     else:
         try:
-            text = "\n".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(data)).pages)
+            pages = [page.extract_text() or "" for page in PdfReader(io.BytesIO(data)).pages]
+            text = "\n".join(pages)
         except Exception:  # noqa: BLE001 - the bounded fallback may still read a simple PDF
             text = ""
         if text.strip():
-            return "\n".join(line.strip() for line in text.splitlines() if line.strip())
+            # Nonempty pages do not prove that encoded glyphs or image-only regions were extracted.
+            coverage = "partial_text" if any(not page.strip() for page in pages) else "unknown"
+            return "\n".join(line.strip() for line in text.splitlines() if line.strip()), coverage
 
     pieces = []
     literal = rb"\(((?:\\.|[^\\()])*)\)"
@@ -768,12 +778,13 @@ def _pdf_text(data: bytes) -> str:
     sections = sum(term in folded for term in ("introduction", "method", "result", "discussion", "references"))
     if len(compact) < 1000 or sections < 2:
         raise ValueError("PDF fallback이 논문 본문 구조를 충분히 확인하지 못했습니다")
-    return text
+    return text, "partial_text"
 
 
-def _copy_text(content: bytes, content_type: str) -> tuple[str, str]:
+def _copy_text(content: bytes, content_type: str) -> tuple[str, str, str]:
     if content.startswith(b"%PDF") or "application/pdf" in content_type:
-        return _pdf_text(content), "PDF"
+        text, coverage = _pdf_text_coverage(content)
+        return text, "PDF", coverage
     if "html" in content_type or content.lstrip().startswith((b"<!DOCTYPE html", b"<html", b"<HTML")):
         parser = _HTMLText()
         parser.feed(content.decode("utf-8", errors="replace"))
@@ -787,7 +798,7 @@ def _copy_text(content: bytes, content_type: str) -> tuple[str, str]:
         sections = sum(term in folded for term in ("introduction", "method", "result", "discussion", "references"))
         if len(compact) < 1000 or sections < 2:
             raise ValueError("HTML이 논문 본문 구조를 갖추지 않아 추출하지 않았습니다")
-        return text, "HTML"
+        return text, "HTML", "unknown"
     raise ValueError(f"지원하지 않는 본문 형식입니다({content_type or 'content-type 없음'})")
 
 
@@ -942,8 +953,13 @@ def jats_markdown(xml: str, header: list[str]) -> tuple[str, dict[str, Any]]:
             out.append(f"- {cite}" + (f" ({extra})" if extra else ""))
         out.append("")
     license_node = root.find(".//permissions/license")
-    info = {"sections": titles, "n_tables": counts["tables"], "n_figures": counts["figures"],
-            "n_references": len(refs), "license_text": _text(license_node)[:300] if license_node is not None else ""}
+    # Certify only text-bearing body blocks handled above; unfamiliar omitted blocks are partial.
+    supported = {"title", "p", "sec", "table-wrap", "fig", "list", "boxed-text", "disp-quote"}
+    body_supported = {"sec", "p", "table-wrap", "fig", "list"}
+    skipped = any(_text(child) for parent in [body, *body.iter("sec")] for child in parent
+                  if child.tag not in (body_supported if parent is body else supported))
+    info = {"extraction": "partial_text" if skipped else "complete", "sections": titles,
+            "n_tables": counts["tables"], "n_figures": counts["figures"], "n_references": len(refs), "license_text": _text(license_node)[:300] if license_node is not None else ""}
     return "\n".join(out).rstrip() + "\n", info
 
 
@@ -1431,7 +1447,8 @@ class LiteratureAnnotator(Annotator):
                 failures.append(("access_denied", f"{location['provider']} 주소가 HTTP {response.status_code}로 답함"))
                 continue
             try:
-                text, body_format = _copy_text(response.content, response.headers.get("content-type", "").casefold())
+                text, body_format, extraction = _copy_text(
+                    response.content, response.headers.get("content-type", "").casefold())
             except PermissionError as exc:
                 failures.append(("access_denied", str(exc)))
                 continue
@@ -1446,7 +1463,7 @@ class LiteratureAnnotator(Annotator):
                 f"- source_url: {location['url']}", "", "## Full text", "", text, "",
             ])
             copy = {key: value for key, value in location.items() if key != "kind"}
-            return markdown, {"read_source": location["provider"], "oa_copy": copy}
+            return markdown, {"read_source": location["provider"], "oa_copy": copy, "extraction": extraction}
 
         if temporary:
             state["temporary_error"] = "; ".join(temporary)
@@ -1487,7 +1504,31 @@ class LiteratureAnnotator(Annotator):
             answer["text_error"] = f"본문 파일을 쓰지 못했습니다: {exc}"
         else:
             answer["text_file"] = relative
+            answer["fulltext_receipt"] = fulltext_receipt(paper.key, answer, self.workdir)
         return answer
+
+
+def fulltext_receipt(paper_id: str, row: dict, workdir: Path | None) -> dict | None:
+    """Artifact provenance only; a scout must locate required method/QC evidence after reading."""
+    if workdir is None or not row.get("text_file") or not row.get("text_sha256"):
+        return None
+    path = (Path(workdir) / row["text_file"]).resolve()
+    try:
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+    receipt = {"coverage_version": 2, "paper_id": paper_id, "source": row.get("read_source") or "fulltext tool (stored artifact)",
+            "access_level": row.get("access_level", "metadata"),
+            "extraction": row.get("extraction") or "unknown",
+            "text_file": str(path),
+            "text_sha256": digest, "evidence": [],
+            "supplements_required": False, "supplements": "unknown"}
+    try:
+        write_owned(Path(workdir), row["text_file"] + ".receipt.json",
+                    json.dumps(receipt, ensure_ascii=False, sort_keys=True))
+    except (OwnedPathError, OSError):
+        return None
+    return receipt
 
 
 def _summary(item: Item) -> dict:
@@ -1498,5 +1539,5 @@ def _summary(item: Item) -> dict:
         return {key: answer[key] for key in keep if answer.get(key) not in (None, "", [])}
     keep = ("found", "access_level", "pmid", "pmcid", "doi", "title", "journal", "year", "license", "is_open_access",
             "sections", "n_tables", "n_figures", "n_references", "chars", "text_file", "text_error", "fulltext_error",
-            "publisher_copy", "read_source", "oa_copy", "oa_locations", "unread_reason", "unread_detail")
+            "text_sha256", "extraction", "fulltext_receipt", "publisher_copy", "read_source", "oa_copy", "oa_locations", "unread_reason", "unread_detail")
     return {key: answer[key] for key in keep if answer.get(key) not in (None, "", [])}

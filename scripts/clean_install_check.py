@@ -75,6 +75,93 @@ def _expect(stage: str, condition: bool, detail: str) -> None:
     print(f"PASS {stage}")
 
 
+def _startup_journal(path: Path) -> dict:
+    """Project existing launch evidence before scratch cleanup; never print raw logs."""
+    try:
+        with path.open(mode="rb") as stream:
+            stream.seek(0, 2)
+            start = max(0, stream.tell() - 16384)
+            stream.seek(start)
+            raw = stream.read(16384)
+        if start:
+            raw = raw.partition(b"\n")[2]
+    except FileNotFoundError:
+        return {"journal": "missing", "events": []}
+    except OSError:
+        return {"journal": "unreadable", "events": []}
+    enums = {
+        "role": ("gateway-supervisor", "runner-supervisor"),
+        "status": ("attempt", "denied", "spawn_failed", "unverified", "cleanup_failed", "direct_reaped",
+                   "job_verified", "recorded", "wmi_attempt", "wmi_unverified", "wmi_verified", "wmi_failed",
+                   "wmi_control_cleanup_failed"),
+        "phase": ("provider_create", "process_open", "process_identity", "receipt_wait", "identity_verify",
+                  "job_verify", "ack_write"),
+        "reason": ("provider_timeout", "provider_protocol", "protocol_error", "native_error", "provider_subprocess",
+                   "create_failed", "invalid_returned_pid", "receipt_timeout", "identity_mismatch", "job_unverified",
+                   "system_directory_unknown", "native_or_protocol", "request_too_large"),
+        "error": ("BrokerFailure", "TimeoutExpired", "CalledProcessError", "SubprocessError", "PermissionError",
+                  "FileNotFoundError", "TimeoutError", "OSError", "ValueError", "TypeError", "OtherError"),
+        "trace_status": ("absent", "partial", "phases_complete", "invalid_or_partial"),
+    }
+
+    def facts(row):
+        safe = {key: row[key] for key, allowed in enums.items() if row.get(key) in allowed}
+        for key in ("code", "returncode", "elapsed_ms"):
+            value = row.get(key)
+            valid = (type(value) in (int, float) and 0 <= value <= 60000) if key == "elapsed_ms" else (
+                type(value) is int and -2**32 <= value <= 2**32)
+            if valid:
+                safe[key] = value
+        return safe
+
+    result = {"journal": "tail_only" if start else "present", "events": []}
+    for line in raw.splitlines()[-8:]:
+        try:
+            row = json.loads(line)
+        except (ValueError, UnicodeError, RecursionError):
+            row = None
+        if not isinstance(row, dict):
+            result["events"].append({"journal": "malformed"})
+            continue
+        if row.get("role") not in enums["role"]:
+            continue
+        safe = facts(row)
+        provider = row.get("provider")
+        if isinstance(provider, dict):
+            safe["provider"] = facts(provider)
+            phases = provider.get("phases")
+            if isinstance(phases, list):
+                valid = []
+                for index, step in enumerate(phases[:7]):
+                    if not isinstance(step, dict) or step.get("phase") != (
+                            "powershell_started", "stdin_open", "header_read", "input_read", "input_accepted",
+                            "create_entered", "create_returned")[index]:
+                        break
+                    elapsed = facts(step).get("elapsed_ms")
+                    if elapsed is None or (valid and elapsed < valid[-1]["elapsed_ms"]):
+                        break
+                    valid.append({"phase": step["phase"], "elapsed_ms": elapsed})
+                safe["provider"]["phases"] = valid
+        result["events"].append(safe)
+    while len(json.dumps(result, ensure_ascii=True)) > 4096:
+        result["events"].pop(0)
+        result["journal"] = "tail_only"
+    return result
+
+
+def _start_services(root: Path, checkout: Path, env: dict[str, str]) -> None:
+    try:
+        _run("gateway와 runner 시작", _labhq_command(checkout, "-c", "config/labhq.yaml", "up"),
+             cwd=checkout, env=env, timeout=120)
+    except CheckFailure:
+        try:
+            facts = _startup_journal(root / "state/gateway/logs/detached-launch.jsonl")
+            print("STARTUP_DIAGNOSTIC " + json.dumps(facts, ensure_ascii=True), file=sys.stderr)
+        except Exception:
+            pass  # Diagnostics must never replace the actual startup failure.
+        raise
+
+
 def _free_port() -> int:
     while True:
         with socket.socket() as sock:
@@ -315,13 +402,7 @@ def rehearse(source: Path, guard_paths: list[Path]) -> str:
             _expect("doctor fail 0", " fail " not in doctor, "doctor에 fail 항목 있음")
             _expect("doctor 실행 준비", "실행 준비: 예" in doctor, "실행 준비가 아님")
 
-            _run(
-                "gateway와 runner 시작",
-                _labhq_command(checkout, "-c", "config/labhq.yaml", "up"),
-                cwd=checkout,
-                env=env,
-                timeout=120,
-            )
+            _start_services(root, checkout, env)
             started = True
             sent = _run(
                 "공개 데이터 형태 mock 요청",

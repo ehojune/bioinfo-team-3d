@@ -22,8 +22,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.fixture
 def drift(monkeypatch, tmp_path):
+    from tests.test_ci_windows_phases import fake_context, make_receipts
+    from scripts import ci_windows_phases as phases
     current = {"checkout_sha": CHECKOUT, "tree": TREE,
-               "policy": {p: str(i + 1) * 40 for i, p in enumerate(cs.POLICY_FILES)}}
+               "policy": {p: f'{i + 1:x}' * 40 for i, p in enumerate(cs.POLICY_FILES)}}
     repo = {"id": 1386409627, "full_name": cs.REPOSITORY}
     pr = {"number": 793, "base": {"ref": "main", "sha": EVENT_BASE, "repo": repo},
           "head": {"ref": "codex/ci-reuse-docs", "sha": HEAD, "repo": repo}}
@@ -64,6 +66,12 @@ def drift(monkeypatch, tmp_path):
     needs = {n: {"result": "success", "outputs": {"tree": TREE, **({"profile": cs.COVERAGE[n]} if n in cs.COVERAGE else {})}}
              for n in (*cs.GATE_IDS, "changes", "readme", "patch-notes")}
     needs["changes"]["outputs"]["skip"] = "false"
+    context = fake_context(current, checkout=CHECKOUT, head=HEAD)
+    context.update(run_id=RUN, workflow_ref=f'{cs.REPOSITORY}/{cs.WORKFLOW}@refs/pull/793/merge')
+    directory = tmp_path/'windows'
+    proof = make_receipts(directory, context)
+    monkeypatch.setenv('CI_WINDOWS_RECEIPT_DIR', str(directory))
+    needs['pytest-windows']['outputs'].update(execution=phases.EXECUTION, receipt=phases.digest(proof))
     event_path, output = tmp_path / "event.json", tmp_path / "github-output"
     event_path.write_text(json.dumps(event), encoding="utf-8")
     for key, value in {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_REPOSITORY": cs.REPOSITORY,
@@ -93,8 +101,9 @@ def test_bound_producer_still_writes_only_the_original_reusable_manifest(drift):
     values["parents"] = f"{CHECKOUT} {EVENT_BASE} {HEAD}"
     cs.main()
     assert output.read_text(encoding="utf-8") == "reusable=true\nreason=bound\n"
-    assert json.loads(Path("ci-result.json").read_text(encoding="utf-8")) == cs.expected_manifest(
-        {"id": RUN, "run_attempt": 1}, current, cs.pr_snapshot(event["pull_request"]), CHECKOUT)
+    result = json.loads(Path("ci-result.json").read_text(encoding="utf-8"))
+    assert result == cs.expected_manifest(
+        {"id": RUN, "run_attempt": 1}, current, cs.pr_snapshot(event["pull_request"]), CHECKOUT, result['windows_execution'])
     assert not calls
 
 

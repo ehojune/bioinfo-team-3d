@@ -144,7 +144,7 @@ async def _wait_for_bench_process_tree(pids_file, processes, timeout=30):
                 pids = list(map(int, raw.split()))
             except ValueError:
                 pids = []
-        if len(pids) == 3 and all(not _bench_process_exited(pid) for pid in pids):
+        if len(pids) == 3 and all(_bench_process_exited(pid) is False for pid in pids):
             return pids
         if time.monotonic() >= deadline:
             raise TimeoutError(
@@ -165,6 +165,47 @@ async def _wait_for_bench_processes(pids, processes=(), timeout=30):
         await asyncio.sleep(0.05)
 
 
+async def _ready_bench_spawn(spawn, args, kwargs, pids_file, processes, started, kill):
+    """The fixture owns startup; product deadlines start only after a verified live tree."""
+    proc = await spawn(*args, **kwargs)
+    processes.append(proc)  # Retain ownership even if readiness fails or is cancelled.
+    try:
+        pids = await _wait_for_bench_process_tree(pids_file, processes)
+    except BaseException as startup_error:
+        try:
+            await kill(proc)
+        except BaseException as cleanup_error:
+            if not started.done():
+                started.set_exception(cleanup_error)
+            raise cleanup_error from startup_error
+        if not started.done():
+            started.set_exception(startup_error)
+        raise
+    communicate = proc.communicate
+
+    async def communicate_started():
+        if (pids[0] != proc.pid or proc.returncode is not None
+                or any(_bench_process_exited(pid) is not False for pid in pids)):
+            raise AssertionError("verified CLI tree exited before the baseline drain started")
+        started.set_result(pids)  # Product has its process/drain and its cancellation finally block now.
+        return await communicate()
+
+    proc.communicate = communicate_started
+    return proc
+
+
+def _bench_startup_finished(task, started):
+    """An early task failure/return must not leave the readiness waiter hanging."""
+    if started.done():
+        return
+    if task.cancelled():
+        started.cancel()
+    elif task.exception() is not None:
+        started.set_exception(task.exception())
+    else:
+        started.set_exception(AssertionError("baseline exited before verified CLI tree readiness"))
+
+
 def test_wait_for_bench_processes_reports_remaining_pids(monkeypatch):
     monkeypatch.setattr(sys.modules[__name__], "_bench_process_exited", lambda _pid: False)
     with pytest.raises(TimeoutError, match=r"live pids: \[11, 12\]"):
@@ -183,19 +224,24 @@ def test_wait_for_bench_process_tree_reports_partial_pid_state(tmp_path, monkeyp
 @pytest.mark.parametrize("stop", ["case-timeout", "runner-timeout", "cancel"])
 def test_baseline_timeout_and_cancel_kill_cli_tree(tmp_path, monkeypatch, arm, stop):
     from labhq.settings import Settings
+    from labhq.adapters.base import AgentAdapter
 
     pids_file = tmp_path / "pids.txt"
     script = tmp_path / "stalled_cli.py"
     script.write_text(
         "import os, pathlib, subprocess, sys, time\n"
         "pids = pathlib.Path(sys.argv[1])\n"
+        "def publish(path, text):\n"
+        "    pending = path.with_suffix(path.suffix + '.tmp')\n"
+        "    pending.write_text(text, encoding='utf-8')\n"
+        "    pending.replace(path)\n"
         "if len(sys.argv) > 2:\n"
         "    child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
-        "    pids.with_suffix('.child').write_text(f'{os.getpid()} {child.pid}')\n"
+        "    publish(pids.with_suffix('.child'), f'{os.getpid()} {child.pid}')\n"
         "else:\n"
         "    child = subprocess.Popen([sys.executable, __file__, str(pids), 'child'])\n"
         "    while not pids.with_suffix('.child').is_file(): time.sleep(0.01)\n"
-        "    pids.write_text(f'{os.getpid()} ' + pids.with_suffix('.child').read_text())\n"
+        "    publish(pids, f'{os.getpid()} ' + pids.with_suffix('.child').read_text(encoding='utf-8'))\n"
         "time.sleep(60)\n", encoding="utf-8")
     case = bench.load_case("public-protein-qc")
     settings = Settings()
@@ -204,25 +250,29 @@ def test_baseline_timeout_and_cancel_kill_cli_tree(tmp_path, monkeypatch, arm, s
         case["timeout_s"] = 1
     monkeypatch.setattr("labhq.adapters.base.child_config_dirs", lambda *args: [tmp_path])
     processes = []
+    started = None
+    kill = AgentAdapter._kill
     original_spawn = asyncio.create_subprocess_exec
 
     async def spawn(*args, **kwargs):
         if (os.name == "nt" and args[0] == "taskkill"
                 and stop == "cancel" and arm == "sonnet-max"):
             raise MemoryError
-        proc = await original_spawn(*args, **kwargs)
         if args[0] == sys.executable:
-            processes.append(proc)
-        return proc
+            return await _ready_bench_spawn(original_spawn, args, kwargs, pids_file, processes, started, kill)
+        return await original_spawn(*args, **kwargs)
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
 
     async def exercise():
+        nonlocal started
+        started = asyncio.get_running_loop().create_future()
         task = asyncio.create_task(bench._run_baseline(
             case, arm, tmp_path, "real", [sys.executable, str(script), str(pids_file)], settings))
+        task.add_done_callback(lambda done: _bench_startup_finished(done, started))
         pids = []
         try:
-            pids = await _wait_for_bench_process_tree(pids_file, processes)
+            pids = await asyncio.wait_for(asyncio.shield(started), 30)
             if stop == "cancel":
                 task.cancel()  # asyncio.run translates Ctrl+C into cancellation of the main task.
                 try:
@@ -250,6 +300,8 @@ def test_baseline_timeout_and_cancel_kill_cli_tree(tmp_path, monkeypatch, arm, s
             await _wait_for_bench_processes(pids, processes)
         finally:
             # Keep a failed assertion from leaking its fake CLI.
+            if not started.done():
+                started.cancel()
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
             if not pids and pids_file.is_file():
@@ -266,6 +318,252 @@ def test_baseline_timeout_and_cancel_kill_cli_tree(tmp_path, monkeypatch, arm, s
                 await asyncio.wait_for(proc.wait(), 10)
 
     asyncio.run(exercise())
+
+
+def _bench_readiness_fake_helpers():
+    """Extract only fixture code; every process/event/clock capability is fake."""
+    import ast
+
+    source = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    names = {"_wait_for_bench_process_tree", "_ready_bench_spawn", "_bench_startup_finished"}
+    nodes = [node for node in source.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+             and node.name in names]
+    fixture = next(node for node in source.body if getattr(node, "name", "") ==
+                   "test_baseline_timeout_and_cancel_kill_cli_tree")
+    spawn = next(node for node in ast.walk(fixture) if isinstance(node, ast.AsyncFunctionDef)
+                 and node.name == "spawn")
+    nodes.append(spawn)
+    events, processes = [], []
+
+    class Ready:
+        value = error = None
+        finished = False
+
+        def done(self):
+            return self.finished
+
+        def set_result(self, value):
+            assert not self.finished
+            self.finished, self.value = True, value
+            events.append("ready")
+
+        def set_exception(self, error):
+            assert not self.finished
+            self.finished, self.error = True, error
+            events.append("error")
+
+        def cancel(self):
+            self.finished = True
+            events.append("cancel")
+
+    async def communicate():
+        events.append("communicate")
+        return b"", b""
+
+    proc = SimpleNamespace(pid=11, returncode=None, communicate=communicate)
+
+    async def original_spawn(*args, **kwargs):
+        events.append("spawn")
+        return proc
+
+    async def kill(process):
+        assert process is proc
+        events.append("kill")
+
+    async def ready_tree(*args, **kwargs):
+        events.append("tree")
+        return [11, 12, 13]
+
+    namespace = {"original_spawn": original_spawn, "processes": processes, "started": Ready(),
+                 "pids_file": object(), "kill": kill, "stop": "runner-timeout", "arm": "sonnet-max",
+                 "os": SimpleNamespace(name="posix"), "sys": SimpleNamespace(executable="fake-python")}
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), __file__, "exec"), namespace)
+    namespace["_wait_for_bench_process_tree"] = ready_tree
+    return SimpleNamespace(namespace=namespace, events=events, processes=processes, proc=proc,
+                           started=namespace["started"])
+
+
+def _bench_finish_fake(coroutine):
+    try:
+        try:
+            coroutine.send(None)
+        except StopIteration as ended:
+            return ended.value
+        raise AssertionError("unexpected suspension in immediate fake")
+    finally:
+        coroutine.close()
+
+
+def test_bench_spawn_defers_deadline_until_live_tree_and_communicate():
+    fake = _bench_readiness_fake_helpers()
+
+    class TreeReady:
+        def __await__(self):
+            yield "waiting-for-tree"
+            return [11, 12, 13]
+
+    async def wait(*args):
+        fake.events.append("wait-tree")
+        return await TreeReady()
+
+    fake.namespace["_wait_for_bench_process_tree"] = wait
+    fake.namespace["_bench_process_exited"] = lambda pid: False
+    spawn = fake.namespace["spawn"]("fake-python")
+    try:
+        assert spawn.send(None) == "waiting-for-tree"
+        assert fake.processes == [fake.proc] and not fake.started.done()
+        with pytest.raises(StopIteration) as done:
+            spawn.send(None)
+        assert done.value.value is fake.proc
+        assert not fake.started.done()  # Product must first receive the retained process and start its drain.
+        assert _bench_finish_fake(fake.proc.communicate()) == (b"", b"")
+        assert fake.started.value == [11, 12, 13]
+        assert fake.events == ["spawn", "wait-tree", "ready", "communicate"]
+    finally:
+        spawn.close()
+
+
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_bench_startup_failure_cleans_owned_process_before_publishing_error(cleanup_fails, cancelled):
+    fake = _bench_readiness_fake_helpers()
+    startup_error = asyncio.CancelledError() if cancelled else TimeoutError("tree not ready")
+    cleanup_error = RuntimeError("cleanup failed")
+
+    async def wait(*args):
+        raise startup_error
+
+    async def kill(process):
+        assert process is fake.proc
+        fake.events.append("kill")
+        if cleanup_fails:
+            raise cleanup_error
+
+    fake.namespace.update(_wait_for_bench_process_tree=wait, kill=kill)
+    expected = cleanup_error if cleanup_fails else startup_error
+    with pytest.raises(type(expected)) as failed:
+        _bench_finish_fake(fake.namespace["spawn"]("fake-python"))
+    assert failed.value is expected and fake.started.error is expected
+    assert fake.events == ["spawn", "kill", "error"]
+    if cleanup_fails:
+        assert failed.value.__cause__ is startup_error
+
+
+@pytest.mark.parametrize("state", [None, True])
+def test_bench_tree_lost_before_drain_cannot_signal_readiness(state):
+    fake = _bench_readiness_fake_helpers()
+    fake.namespace["_bench_process_exited"] = lambda pid: state
+    assert _bench_finish_fake(fake.namespace["spawn"]("fake-python")) is fake.proc
+    with pytest.raises(AssertionError, match="exited before"):
+        _bench_finish_fake(fake.proc.communicate())
+    assert not fake.started.done()
+    error = RuntimeError("product task failed")
+    fake.namespace["_bench_startup_finished"](
+        SimpleNamespace(cancelled=lambda: False, exception=lambda: error), fake.started)
+    assert fake.started.error is error and fake.events == ["spawn", "tree", "error"]
+
+
+@pytest.mark.parametrize("outcome", ["error", "cancelled", "returned", "already-ready"])
+def test_bench_early_task_exit_cannot_leave_readiness_pending_or_replace_success(outcome):
+    fake = _bench_readiness_fake_helpers()
+    error = RuntimeError("launch failed")
+    task = SimpleNamespace(cancelled=lambda: outcome == "cancelled", exception=lambda: (
+        error if outcome == "error" else None))
+    if outcome == "already-ready":
+        fake.started.set_result([11, 12, 13])
+    fake.namespace["_bench_startup_finished"](task, fake.started)
+    assert fake.started.done()
+    if outcome == "error":
+        assert fake.started.error is error
+    elif outcome == "returned":
+        assert isinstance(fake.started.error, AssertionError)
+    elif outcome == "already-ready":
+        assert fake.started.value == [11, 12, 13] and fake.events == ["ready"]
+    else:
+        assert fake.events == ["cancel"]
+
+
+@pytest.mark.parametrize("state", [None, True, False])
+def test_bench_readiness_requires_three_known_live_pids_with_bounded_fake_clock(state):
+    import ast
+
+    fake = _bench_readiness_fake_helpers()
+    # Extract the original readiness helper too; do not execute any native probe.
+    node = next(n for n in ast.parse(Path(__file__).read_text(encoding="utf-8")).body
+                if getattr(n, "name", "") == "_wait_for_bench_process_tree")
+    clock = [0]
+
+    async def sleep(delay):
+        clock[0] += delay
+
+    fake.namespace.update(time=SimpleNamespace(monotonic=lambda: clock[0]),
+                          asyncio=SimpleNamespace(sleep=sleep),
+                          _bench_process_exited=lambda pid: state,
+                          _bench_process_state=lambda *args: {"fake": True})
+    exec(compile(ast.Module(body=[node], type_ignores=[]), __file__, "exec"), fake.namespace)
+    path = SimpleNamespace(is_file=lambda: True, read_text=lambda **kwargs: "11 12 13")
+    pending = fake.namespace["_wait_for_bench_process_tree"](path, [], timeout=0.1)
+    if state is False:
+        assert _bench_finish_fake(pending) == [11, 12, 13] and clock[0] == 0
+    else:
+        with pytest.raises(TimeoutError):
+            _bench_finish_fake(pending)
+        assert clock[0] == 0.1
+
+
+@pytest.mark.parametrize("raw", ["11182 ", "11 12", "not-pids"])
+def test_bench_partial_readiness_failure_keeps_original_diagnostics(raw):
+    import ast
+
+    fake = _bench_readiness_fake_helpers()
+    node = next(n for n in ast.parse(Path(__file__).read_text(encoding="utf-8")).body
+                if getattr(n, "name", "") == "_wait_for_bench_process_tree")
+    fake.namespace.update(time=SimpleNamespace(monotonic=lambda: 0),
+                          _bench_process_exited=lambda pid: False,
+                          _bench_process_state=lambda *args: {
+                              "pids": {11182: "exited"}, "spawned_returncodes": [-15]})
+    exec(compile(ast.Module(body=[node], type_ignores=[]), __file__, "exec"), fake.namespace)
+    path = SimpleNamespace(is_file=lambda: True, read_text=lambda **kwargs: raw)
+    with pytest.raises(TimeoutError) as failure:
+        _bench_finish_fake(fake.namespace["_wait_for_bench_process_tree"](path, [], timeout=0))
+    assert f"pids_file={raw!r}" in str(failure.value)
+    assert "'spawned_returncodes': [-15]" in str(failure.value)
+
+
+def test_bench_pid_publication_is_complete_before_it_becomes_visible():
+    import ast
+
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    fixture = next(n for n in tree.body if getattr(n, "name", "") ==
+                   "test_baseline_timeout_and_cancel_kill_cli_tree")
+    write = next(n for n in ast.walk(fixture) if isinstance(n, ast.Call)
+                 and isinstance(n.func, ast.Attribute) and n.func.attr == "write_text")
+    script = ast.parse(ast.literal_eval(write.args[0]))
+    publish = next(n for n in script.body if getattr(n, "name", "") == "publish")
+    records, observations = {}, []
+
+    class File:
+        suffix = ".child"
+
+        def __init__(self, name):
+            self.name = name
+
+        def with_suffix(self, suffix):
+            return File("pids" + suffix)
+
+        def write_text(self, text, *, encoding):
+            assert encoding == "utf-8"
+            records[self.name] = ""  # An observer can see a newly opened file before its content.
+            observations.append(records.get("pids.child"))
+            records[self.name] = text
+
+        def replace(self, target):
+            records[target.name] = records.pop(self.name)
+
+    namespace = {}
+    exec(compile(ast.Module(body=[publish], type_ignores=[]), __file__, "exec"), namespace)
+    namespace["publish"](File("pids.child"), "12 13")
+    assert observations == [None] and records == {"pids.child": "12 13"}
 
 
 def test_scripted_pi_requires_kind_and_keeps_explicit_denial():

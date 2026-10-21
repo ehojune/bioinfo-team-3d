@@ -44,14 +44,67 @@ def paper_id(value: Any) -> str | None:
     return "pmid:" + pmid[1] if pmid else None
 
 
-def _access_level(paper: dict) -> str | None:
-    levels = [str(paper.get("access_level") or "")]
-    levels += [match.group(1) for citation in paper.get("citations", [])
-               if (match := re.search(r"\baccess_level\s*=\s*(full_text|abstract|metadata)\b",
-                                      str(citation), re.I))]
-    normalized = {level.strip().lower() for level in levels if level.strip()}
-    return "full_text" if "full_text" in normalized else "abstract" if "abstract" in normalized else (
-        "metadata" if "metadata" in normalized else None)
+def evidence_problem(receipt: Any, pid: str | None = None) -> str | None:
+    """Validate declarations only before CP1; bytes are checked after approval."""
+    if not isinstance(receipt, dict):
+        return "본문 receipt 없음; 자료 요청 필요"
+    if type(receipt.get("coverage_version")) is not int or receipt["coverage_version"] != 2:
+        return "본문 추출 범위 receipt 구판 또는 미확인; 재확인 필요"
+    if pid and paper_id(receipt.get("paper_id")) != pid:
+        return "본문 receipt 논문 ID 불일치"
+    if receipt.get("access_level") != "full_text" or receipt.get("extraction") != "complete":
+        return "본문 추출 범위 미확인 또는 부분 추출; 자료 요청 필요"
+    if type(receipt.get("supplements_required")) is not bool:
+        return "보충자료 의존 여부 미확인; 자료 요청 필요"
+    if receipt.get("supplements_required") is True:
+        return "보충자료 의존 근거는 artifact 연결 미지원; 자료 요청 필요"
+    if not receipt.get("source") or not receipt.get("text_file") or not re.fullmatch(
+            r"[a-f0-9]{64}", str(receipt.get("text_sha256") or "")):
+        return "본문 artifact/hash 미확인; 자료 요청 필요"
+    spans = receipt.get("evidence")
+    if not isinstance(spans, list) or not spans or any(
+            not isinstance(span, dict) or span.get("kind") not in {"methods", "qc"}
+            or type(span.get("start_line")) is not int or type(span.get("end_line")) is not int
+            or not 1 <= span["start_line"] <= span["end_line"] for span in spans):
+        return "방법/QC 근거 위치 미확인; 자료 요청 필요"
+    if {span["kind"] for span in spans} != {"methods", "qc"}:
+        return "방법/QC 근거 위치 미확인; 자료 요청 필요"
+    return None
+
+
+def evidence_sha256(receipt: dict) -> str:
+    return hashlib.sha256(json.dumps(receipt, ensure_ascii=False, sort_keys=True,
+                                    separators=(",", ":")).encode()).hexdigest()
+
+
+def verified_text(receipt: dict, root: Path, pid: str) -> bytes:
+    problem = evidence_problem(receipt, pid)
+    if problem:
+        raise ValueError(problem)
+    path = Path(receipt["text_file"])
+    if not path.is_absolute():
+        raise ValueError("본문 artifact 절대 경로 필요")
+    if path.is_symlink():
+        raise ValueError("본문 artifact link는 허용하지 않음")
+    path = path.resolve()
+    if not path.is_relative_to(root.resolve()):
+        raise ValueError("본문 artifact가 runner workspace 밖에 있음")
+    original_path = path.with_name(path.name + ".receipt.json")
+    if original_path.is_symlink():
+        raise ValueError("본문 원본 receipt link는 허용하지 않음")
+    original = json.loads(original_path.read_text(encoding="utf-8"))
+    immutable = ("coverage_version", "paper_id", "source", "access_level", "extraction", "text_file", "text_sha256", "supplements")
+    if not isinstance(original, dict) or any(original.get(key) != receipt.get(key) for key in immutable):
+        raise ValueError("도구 원본 본문 receipt 불일치; 재확인 필요")
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != receipt["text_sha256"]:
+        raise ValueError("본문 artifact hash 변경; 재확인 필요")
+    lines = data.decode("utf-8").splitlines()
+    for span in receipt["evidence"]:
+        if span["end_line"] > len(lines) or not any(
+                line.strip() for line in lines[span["start_line"] - 1:span["end_line"]]):
+            raise ValueError("방법/QC 근거 범위 없음; 자료 요청 필요")
+    return data
 
 
 def selections(plan: dict, precedents: dict, roster: list[dict]) -> list[dict]:
@@ -73,7 +126,8 @@ def selections(plan: dict, precedents: dict, roster: list[dict]) -> list[dict]:
             continue
         chosen.append({**row, "paper_id": pid, "title": papers[pid]["title"], "step_ids": ids,
                        "agent_ids": list(dict.fromkeys(steps[s]["agent_id"] for s in ids)),
-                       "access_level": _access_level(papers[pid])})
+                       "access_level": "full_text" if isinstance(papers[pid].get("fulltext_receipt"), dict) else None,
+                       "fulltext_receipt": papers[pid].get("fulltext_receipt")})
         if len(chosen) == 2:
             break
     return chosen
@@ -101,10 +155,10 @@ async def prepare_plan(plan: dict, precedents: dict, roster: list[dict], rid: st
         if selected.get("status") == "skipped":
             rows.append(selected)
             continue
-        if selected.get("access_level") != "full_text":
-            level = selected.get("access_level") or "미확인"
+        problem = evidence_problem(selected.get("fulltext_receipt"), selected["paper_id"])
+        if problem:
             rows.append({**selected, "status": "skipped",
-                         "skip_reason": f"본문 접근 수준이 {level}라 Paper2Skill을 만들지 않음"})
+                         "skip_reason": problem})
             continue
         # No filesystem, fulltext fetch or model turn before CP1. This descriptor, not a future build,
         # is part of the approved plan hash. Execution receipts never mutate the frozen plan.
@@ -137,8 +191,11 @@ async def resolve_attachments(rows: list[dict], settings, run) -> list[dict]:
             receipt = result.structured if result.ok and isinstance(result.structured, dict) else {}
             if receipt.get("status") not in {"ready", "reused", "failed", "unavailable"}:
                 receipt = {"status": "failed", "error": result.error or "Paper2Skill 변환 실패"}
-            if receipt.get("status") in {"ready", "reused"} and receipt.get("paper_id") != selected["paper_id"]:
-                receipt = {"status": "failed", "error": "Paper2Skill 논문 ID 불일치"}
+            if receipt.get("status") in {"ready", "reused"}:
+                if receipt.get("paper_id") != selected["paper_id"]:
+                    receipt = {"status": "failed", "error": "Paper2Skill 논문 ID 불일치"}
+                elif receipt.get("fulltext_receipt_sha256") != evidence_sha256(selected["fulltext_receipt"]):
+                    receipt = {"status": "failed", "error": "Paper2Skill 본문 receipt 불일치; 재확인 필요"}
         except ShutdownInterrupted:
             raise
         except Exception as exc:
@@ -160,7 +217,7 @@ def card_text(plan: dict) -> str:
     return "\n".join(
         f"참고 논문 스킬: {r['title']} → {', '.join(r.get('agent_ids') or [])}; 선정됨: 예; "
         f"만들어짐: {'예' if r.get('status') in {'ready', 'reused'} else '아니오'}"
-        + (" (승인 후 담당 단계 실행 때 생성; 현재는 본문 접근 metadata만 확인)" if r.get('status') == 'deferred'
+        + (" (승인 후 담당 단계 실행 때 생성; 현재는 receipt 선언만 확인; 읽음/효용 미확인)" if r.get('status') == 'deferred'
            else f" ({r.get('skip_reason') or r.get('error')})" if r.get('status') not in {"ready", "reused"} else "")
         + f"; 붙을 단계: {', '.join(r.get('step_ids') or []) or '없음'}; 호출됨: 아니오(실행 전)"
         for r in plan.get("paper_skill_results", []))
@@ -234,6 +291,13 @@ class PaperSkillBuild:
         agents = list(self.runner.registry.agents.values())
         if _paper2agent_row(s, agents)["status"] == "fail":
             return self.task, None, self.result({"status": "unavailable", "error": UNAVAILABLE})
+        evidence = self.task.meta["paper_skill"].get("fulltext_receipt")
+        try:
+            text = verified_text(evidence, s.path(s.runner.workspace_root), self.pid)
+        except (OSError, ValueError, UnicodeError) as exc:
+            return self.task, None, self.result({"status": "failed", "error": str(exc)})
+        self.evidence = evidence
+        self.evidence_hash = evidence_sha256(evidence)
         candidates = []
         if self.receipt.is_file():
             candidates.append(json.loads(self.receipt.read_text(encoding="utf-8")))
@@ -245,17 +309,24 @@ class PaperSkillBuild:
                                    "paper2agent_commit": c.verification.get("paper2agent_commit")})
         for row in candidates:
             if (row.get("paper_id") == self.pid and row.get("skill_sha256")
+                    and row.get("fulltext_receipt_sha256") == self.evidence_hash
                     and (Path(row["skill_dir"]) / "SKILL.md").is_file()
                     and provenance.folder_sha256(row["skill_dir"]) == row["skill_sha256"]):
                 return self.task, None, self.result({**row, "status": "reused", "runner_id": s.runner.id})
         if candidates:  # retain the original evidence; never silently rebuild a changed talent skill
-            return self.task, None, self.result({"status": "failed", "error": "인재풀 skill hash 불일치"})
+            return self.task, None, self.result({"status": "failed", "error": "인재풀 skill 또는 본문 receipt 불일치; 재확인 필요"})
         build = self.talent / "build" / self.task.id
         build.mkdir(parents=True, exist_ok=True)
+        source = build / "paper-input.md"
+        source.write_bytes(text)
         prompt = (
             "Use the installed Paper2Agent paper2skill skill to make a consultant skill from this paper.\n"
             f"Paper: {self.pid}\nTitle: {self.task.meta['paper_skill']['title']}\n"
             f"Method fit: {self.task.meta['paper_skill']['reason']}\nOutput directory: {build}\n"
+            f"Verified paper input: {source}\nText SHA256: {evidence['text_sha256']}\n"
+            f"Evidence line ranges (methods/QC): {json.dumps(evidence['evidence'])}\n"
+            "Use this exact paper input. Missing methods/QC or supplements must remain unverified; "
+            "request material rather than invent parameters or fill gaps from memory. "
             "Deliver SKILL.md with reviewed paper text, figures and tables. Do not build MCP tools, execute the "
             "paper's analysis, register a client, or create an employment contract. Return the offer-letter JSON "
             "with kind=consultant, the absolute skill_dir, exact verification_status and limitations; "
@@ -269,6 +340,10 @@ class PaperSkillBuild:
         try:
             if not result.ok or not isinstance(offer, dict):
                 raise ValueError("Paper2Skill 변환 실패")
+            verified_text(self.evidence, self.runner.s.path(self.runner.s.runner.workspace_root), self.pid)
+            source = self.talent / "build" / self.task.id / "paper-input.md"
+            if hashlib.sha256(source.read_bytes()).hexdigest() != self.evidence["text_sha256"]:
+                raise ValueError("변환 입력 hash 변경; 재확인 필요")
             src = Path(offer.get("skill_dir") or "")
             passed, reason = paper2agent.probation("consultant", [], str(src), offer.get("verification_status"))
             if not passed or not (src / "SKILL.md").is_file():
@@ -284,6 +359,7 @@ class PaperSkillBuild:
             engine = paper2agent.recruiter_engine(self.runner.s, self.runner.registry.agents.get(self.task.agent_id))
             row = {"paper_id": self.pid, "status": "ready", "skill_dir": str(dst), "skill_sha256": digest,
                    "runner_id": self.runner.s.runner.id,
+                   "fulltext_receipt": self.evidence, "fulltext_receipt_sha256": self.evidence_hash,
                    "paper2agent_commit": paper2agent.installed_commit(engine, self.runner.s) if engine != "mock" else None}
             atomic_write_text(self.receipt, json.dumps(row, ensure_ascii=False, indent=2))
         except (OSError, ValueError) as exc:

@@ -1,0 +1,54 @@
+pr: 825
+rows:
+- sha: 15b12a8
+  at: 2026-10-21 11:17
+  summary: Windows 검사 범위와 공유 자원 대기 기준을 따로 정했습니다.
+  text: '#823: 전역 runtime 만료 대신 검토한 source/helper pin과 실제 변경 range를 사용하고, manifest v4는 같은 비교 base도 요구한다. 전용 subprocess·임의 포트·미사용 helper import의 전역 lock을 없애고 고정·미확정 listener와 host scan은 보호한다. mock/static 556 PASS, 정적 선택 9261/10545로 목표 미달이며 실제 병렬 성능은 미검증이다.'
+- sha: 3e827e4
+  at: 2026-10-21 11:27
+  summary: 공유 프로세스 목록을 읽는 프로젝트 호출도 검사 대기 대상으로 지정했습니다.
+  text: '#823: CreateToolhelp32Snapshot을 쓰는 proc_tree 진입점과 adapter snapshot 호출을 명시해 보호하고 module/model import·순수 변환은 제외한다. 가짜 AST 회귀 포함 565 PASS, 정적 선택 9270/10554·lock 후보 22파일/456노드이며 native 실행은 미검증이다.'
+- sha: 9c70d83
+  at: 2026-10-21 12:20
+  summary: Windows 검사 범위를 경계 테스트와 변경된 테스트 중심으로 바꿨습니다.
+  text: '#823: 명시 cohort·node/helper API backstop·변경 range를 결합하고 혼합 4파일의 경계를 source digest로 보호한다. profile v3/manifest v5와 기존 증거 검증을 묶고 공유 fixture data 변경은 full로 둔다. shutdown snapshot wrapper를 잠그고 지역 포트 0 Runner와 무관한 node의 전역 lock을 제외한다. mock/static 415 PASS, 정적 선택 4531/10578(42.8%)로 목표 미달·lock 456→139노드이며 Windows 실행 성능은 미검증이다.'
+- sha: 686b5ac
+  at: 2026-10-21 12:27
+  summary: 안전과 복구 검사가 Windows 선택 범위에서 빠지지 않도록 보완했습니다.
+  text: '#823: continuation/reconnect와 idle/UAC·process memory-limit 4파일을 명시 경계로 남겨 host lock 대상 139노드를 모두 선택에 포함한다. mock/static 415 PASS, 정적 선택 4566/10578(43.2%)·명시 보호 범위 3884개로 목표 미달이며 실제 Windows/병렬 성능은 미검증이다.'
+- sha: 28b6a1b
+  at: 2026-10-21 13:05
+  summary: Windows 문서 접근 보호 검사를 복구하고 정책 변경의 측정 결과를 따로 남깁니다.
+  text: '#823: paper-skill 8개를 복구하고 hash-fixed 혼합 노드 42개만 더 제외한다. 필수 full 뒤 별도 preview profile/실제 range/receipt/artifact/summary를 쓰고 reusable=false로 manifest 증거에서 배제한다. profile v4/manifest v6와 기존 trust 조건을 유지한다. mock/static 475 PASS·최종 소규모 77 PASS, 정적 선택 4592/10638(43.2%)·lock 139노드로 목표 미달이며 실제 Windows/병렬 성능은 미검증이다.'
+- sha: e20f044
+  at: 2026-10-21 13:08
+  summary: 검사 범위와 아직 확인하지 못한 실행 결과를 문서에 맞췄습니다.
+  text: '#823: source 28b6a1b의 mock/static 475 PASS·최종 subset 77 PASS, 정적 선택 4592/10638과 별도 preview의 미검증 한계를 reference/status에 반영한다. 실행 코드와 검사 계약은 바꾸지 않는다.'
+- sha: e09cbb8
+  at: 2026-10-21 13:25
+  summary: 실행 기록의 PR 연결이 비어 있어도 독립된 병합 증거를 모두 확인한 결과만 재사용합니다.
+  text: '#823: main56914c7b(PR824 8baefd07 포함)를 충돌 없이 통합한다. 정확한 빈 PR 목록만 authoritative merged PR 재조회와 결합하며 현재 epoch의 run/attempt/workflow·gate·정책 blob·checkout parents/tree·digest를 모두 요구한다. malformed/nonempty 불일치·v3/preview는 full로 남긴다. mock/static 387 PASS·최종 fake subset 91 PASS, 정적 4716/10762(43.8%)·lock139로 목표 미달이며 실제 재사용/Windows 성능은 미검증이다.'
+- sha: '4128943'
+  at: 2026-10-21 13:49
+  summary: 공개 보고 문자열 검사에서 계산 시간과 출력 보존을 함께 확인합니다.
+  text: '#825: tests/test_github_reporter.py의 731072자·limit=None·원문 동일성·strict 2초 예산을 유지하며 process_time으로 계산 비용을 잰다. module-local fake clock은 wall 대기 제외·CPU2 이상 거부·출력 변경 거부를 확인한다. pure-string/security 16 PASS, 제품·CI 정책은 변경하지 않았고 실제 CI scheduling 기여와 새 head CI는 미검증이다.'
+- sha: 'ea6a873'
+  at: 2026-10-21 14:48
+  summary: 공개 보고 검사에서 불필요한 문자열 재검사를 줄였습니다.
+  text: '#825: URL credential regex의 필수 문자 부재 시 탐색만 생략하고 literal path 구분자 run을 고정 문자 클래스 search로 처리한다. 출력·공용 scanner·731072자/limit=None/strict CPU<2와 기존 assertion을 유지한다. pure24 PASS·경로1584/URL180조합 동등, 로컬 CPU0.156→0.078초 각2회이며 실제 Linux CI의 CPU2.329초 실패는 미재현·새 head CI는 미검증이다.'
+- sha: 'd2e5f8f'
+  at: 2026-10-21 14:48
+  summary: 계산 시간 초과의 근거와 아직 확인하지 못한 결과를 기록했습니다.
+  text: '#825: source ea6a8731의 실제 CPU 초과·순수 회귀·출력 동등성·로컬 시간과 CI 미검증 한계를 reference/status에 기록한다. 제품·test·CI 정책은 바꾸지 않는다.'
+- sha: '58129de'
+  at: 2026-10-21 16:47
+  summary: 일상적인 Windows 검사를 필수 경계로 한정하고 10분 상한을 뒀습니다.
+  text: '#825: PR/main은 profile v5의 필수 OS 계약과 변경 Windows 관련 test만 한 번 실행하며 full+preview를 없앤다. 잘못된 선택 증거·만료 pin·필수 native callable 누락은 빠르게 실패한다. Linux 두 버전·Windows nightly/manual 전수·native assertions·lock은 유지하며 manifest7로 다른 coverage 재사용을 막는다. pure/static 639 PASS, cached3252/10762 선택·7510 제외이며 실제 600초 이내 성공은 미측정이다.'
+- sha: '2486063'
+  at: 2026-10-21 17:23
+  summary: 병렬 검사에서 진단 파일을 정확히 읽고 브라우저 지연의 근거를 남깁니다.
+  text: '#825: fake master/gw0/gw1에서 필수 native 누락 실패와 worker별 non-reusable 진단을 확인한다. Node timeout의 부분 TAP/stderr·원래 예외와 browser 단계 표식을 보존하며 timeout·선택·assertions는 유지한다. source pin만 갱신, fake/static 50 PASS와 최종 worker 3 PASS; 실제 Windows 지연 원인은 미해결이며 435초/2 FAIL은 목표 성공이 아니다.'
+- sha: '7d91529'
+  at: 2026-10-21 18:33
+  summary: Windows 시작·종료와 브라우저 검사를 먼저 끝내고 나머지를 병렬로 실행합니다.
+  text: '#825: native25+browser1의 serial 전 lifecycle PASS/no-SKIP receipt 뒤 나머지를 4-worker pool로 넘긴다. 실제 phase 목록·full/eligible 일치·union/중복·worker report·같은 run/head/attempt/tree/policy/interpreter와 시간 순서를 검증하고 producer가 JSON을 재검증한다. profile6/manifest8로 구형 증거를 거부한다. 관련 fake/static708 PASS 후 최종 영향104 PASS, 별도 offline collector11 PASS이며 실제 새 head job≤600초·경합 원인·제품/PI 성공은 미검증이다.'

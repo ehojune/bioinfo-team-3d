@@ -94,9 +94,15 @@ def _decoded(name: str) -> str:
 def redact_url_credentials(text: str) -> str:
     """Drop URL userinfo, known webhook path tails and the values of credential-named query or fragment
     parameters, JSON-escaped URLs included."""
-    text = URL_USERINFO.sub(lambda m: m.group(1) + "<redacted-secret>@" if (
-        m.group(1).partition(":")[0].casefold() in USERINFO_SCHEMES or ":" in m.group(2)) else m.group(0), text)
-    text = WEBHOOK_PATH.sub(lambda m: m.group(1) + (m.group(2) or "") + "<redacted-secret>", text)
+    # Necessary literals only: without these, the corresponding regex cannot
+    # match. Keep the full classifiers for every possibly matching input.
+    if "@" in text:
+        text = URL_USERINFO.sub(lambda m: m.group(1) + "<redacted-secret>@" if (
+            m.group(1).partition(":")[0].casefold() in USERINFO_SCHEMES or ":" in m.group(2)) else m.group(0), text)
+    if "." in text:  # Every recognized webhook host contains a literal dot.
+        text = WEBHOOK_PATH.sub(lambda m: m.group(1) + (m.group(2) or "") + "<redacted-secret>", text)
+    if "=" not in text:
+        return text
     out, last = [], 0
     for m in QUERY_PARAM.finditer(text):
         if m.start() < last or not QUERY_SECRET_NAME.fullmatch(_decoded(m.group(1))):
@@ -145,6 +151,10 @@ def _path_starts(scan: _PathTextScan) -> Iterable[int]:
             j += 1
 
 
+_SEPARATOR_RUN_END = re.compile(r"[^/\\]")
+_SEPARATOR_ONLY_LINE = re.compile(r"[/\\:]*")
+
+
 def _literal_zone_end(text: str, start: int, zone: str) -> int | None:
     """Match one normalized zone at a scanner-provided path start."""
     pos = start
@@ -152,8 +162,8 @@ def _literal_zone_end(text: str, start: int, zone: str) -> int | None:
     if zone.startswith("/"):
         if pos >= len(text) or text[pos] not in "/\\":
             return None
-        while pos < len(text) and text[pos] in "/\\":
-            pos += 1
+        boundary = _SEPARATOR_RUN_END.search(text, pos)
+        pos = boundary.start() if boundary else len(text)
     for index, part in enumerate(parts):
         end = pos + len(part)
         if text[pos:end].casefold() != part.casefold():
@@ -162,8 +172,8 @@ def _literal_zone_end(text: str, start: int, zone: str) -> int | None:
         if index + 1 < len(parts):
             if pos >= len(text) or text[pos] not in "/\\":
                 return None
-            while pos < len(text) and text[pos] in "/\\":
-                pos += 1
+            boundary = _SEPARATOR_RUN_END.search(text, pos)
+            pos = boundary.start() if boundary else len(text)
     if pos < len(text) and (text[pos].isalnum() or text[pos] in "_.-"):
         return None
     return pos
@@ -186,6 +196,14 @@ def _literal_zone_start(text: str, zones: Iterable[str], scan: _PathTextScan) ->
 
 
 def _sanitize_path_line(line: str, zones: Iterable[str]) -> str:
+    zones = tuple(zones)
+    # Inspect the WHOLE line in C. These characters cannot name a zone with
+    # any other component character, even after lexical normalization. A
+    # separator-only zone (e.g. /:) still needs the original classifier.
+    # Any other character, however late, sends the full line through it too.
+    if (_SEPARATOR_ONLY_LINE.fullmatch(line)
+            and not any(_SEPARATOR_ONLY_LINE.fullmatch(zone) for zone in zones)):
+        return line
     scan = _scan_path_text(line)
     if _scan_mentions_zone(line, zones, scan):
         return "<restricted-zone>"

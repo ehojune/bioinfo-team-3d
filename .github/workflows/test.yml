@@ -148,13 +148,16 @@ jobs:
     needs: changes
     if: needs.changes.outputs.skip != 'true'
     runs-on: windows-latest
+    timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 360 || 10 }}
     env:
       CI_JOB_LABEL: pytest-windows
       PYTHONHASHSEED: '0'
-      CI_COVERAGE_PROFILE: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'windows-full-v1' || 'windows-boundary-v1' }}
+      CI_COVERAGE_PROFILE: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'windows-full-v1' || 'windows-boundary-v6' }}
     outputs:
       tree: ${{ steps.identity.outputs.tree }}
       profile: ${{ steps.identity.outputs.profile }}
+      execution: ${{ steps.coverage.outputs.execution }}
+      receipt: ${{ steps.coverage.outputs.receipt }}
     steps:
       - name: Record CI setup start
         env:
@@ -163,6 +166,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 0  # invalid range fails before pytest; never expand routine Windows
       - id: identity
         shell: bash
         run: |
@@ -173,19 +177,38 @@ jobs:
           python-version: '3.12'
           cache: pip
       - run: pip install -e ".[dev]"
-      - run: pytest -q --durations=15 -n auto --dist loadfile -p scripts.ci_suite --ci-profile ${{ env.CI_COVERAGE_PROFILE }}
+        timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 360 || 2 }}
+      - name: Bind changed-test range to checkout
+        if: env.CI_COVERAGE_PROFILE != 'windows-full-v1'
+        run: python -m scripts.ci_selection
+      - name: Bind Windows execution identity
+        run: python -m scripts.ci_skip windows-identity
+      - name: Serial critical Windows contracts
+        run: pytest -q --durations=15 -n 0 -p scripts.ci_suite --ci-profile ${{ env.CI_COVERAGE_PROFILE }} --ci-phase critical tests/test_windows_job_ci.py tests/test_web_shutdown_process.py "tests/test_web_3d.py::test_office_in_node[web_resizable_panels.cjs-fail 0]"
+        timeout-minutes: 2
+        env:
+          LABHQ_REQUIRE_RESIZABLE_BROWSER: '1'
+      - name: Require every critical lifecycle PASS before opening pool
+        run: python -m scripts.ci_suite critical-ready
+      - name: Remaining Windows contracts in four-worker pool
+        run: pytest -q --durations=15 -n 4 --dist loadfile -p scripts.ci_suite --ci-profile ${{ env.CI_COVERAGE_PROFILE }} --ci-phase parallel tests
+        timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 360 || 7 }}
 
       - name: Record measured coverage and timing
+        id: coverage
+        timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 360 || 1 }}
         if: always()
         run: python -m scripts.ci_suite report
         env:
           GH_TOKEN: ${{ github.token }}
       - uses: actions/upload-artifact@v4
+        timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 360 || 1 }}
         if: always()
         with:
           name: coverage-windows-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.CI_SUITE_ARTIFACT_DIR }}
           retention-days: 7
+
 
   clean-install:
     # Separate Windows rehearsal: a fresh clone/venv, mock request, bundle, verify, and cleanup.
@@ -314,15 +337,20 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install pyyaml
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          path: windows-receipts
       - id: manifest
         run: python scripts/ci_skip.py manifest
         env:
           GH_TOKEN: ${{ github.token }}
           CI_NEEDS: ${{ toJSON(needs) }}
+          CI_WINDOWS_RECEIPT_DIR: windows-receipts
       - uses: actions/upload-artifact@v4
         if: steps.manifest.outputs.reusable == 'true'
         with:
-          name: ci-full-v3-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ci-full-v8-${{ github.run_id }}-${{ github.run_attempt }}
           path: ci-result.json
           if-no-files-found: error
           retention-days: 7

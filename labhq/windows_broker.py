@@ -21,6 +21,9 @@ if __name__ == "__main__":
 from labhq.windows_launch import BREAKAWAY, DETACHED, LaunchError, job_membership, outcome
 
 TIMEOUT = 20
+# Independent request budget, not the 8192-byte stdout bound or a Windows OS limit.
+# Necessary raw-character preflight also bounds temporary JSON escaping allocations.
+MAX_REQUEST_BYTES = 1024 * 1024
 
 
 class BrokerFailure(LaunchError):
@@ -31,7 +34,6 @@ class BrokerFailure(LaunchError):
 
 WMI_SCRIPT = r'''
 $ErrorActionPreference = 'Stop'
-[Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
 $clock = [Diagnostics.Stopwatch]::StartNew()
 function Write-Phase([string]$phase) {
   [Console]::Out.WriteLine((@{phase=$phase; elapsed_ms=$clock.Elapsed.TotalMilliseconds} | ConvertTo-Json -Compress))
@@ -39,7 +41,28 @@ function Write-Phase([string]$phase) {
 }
 try {
   Write-Phase 'powershell_started'
-  $r = [Console]::In.ReadToEnd() | ConvertFrom-Json
+  $stream = [Console]::OpenStandardInput()
+  Write-Phase 'stdin_open'
+  $reader = [IO.BinaryReader]::new($stream)
+  $length = $reader.ReadUInt32()
+  if ($length -lt 1 -or $length -gt __MAX_REQUEST_BYTES__) { throw 'request length rejected' }
+  Write-Phase 'header_read'
+  [byte[]]$payload = $reader.ReadBytes([int]$length)
+  if ($payload.Length -ne $length) { throw 'request truncated' }
+  Write-Phase 'input_read'
+  $requestJson = [Text.UTF8Encoding]::new($false, $true).GetString($payload)
+  $r = $requestJson | ConvertFrom-Json
+  if ($null -eq $r -or $r -isnot [pscustomobject]) { throw 'request shape rejected' }
+  if (@($r.PSObject.Properties).Count -ne 4 -or
+      $r.command -isnot [string] -or [string]::IsNullOrEmpty($r.command) -or $r.command.IndexOf([char]0) -ge 0 -or
+      $r.cwd -isnot [string] -or [string]::IsNullOrEmpty($r.cwd) -or $r.cwd.IndexOf([char]0) -ge 0 -or
+      ($r.flags -isnot [int] -and $r.flags -isnot [long]) -or $r.flags -ne __REQUEST_FLAGS__ -or
+      $r.environment -isnot [array]) { throw 'request shape rejected' }
+  foreach ($entry in $r.environment) {
+    if ($entry -isnot [string] -or $entry.IndexOf('=') -lt 1 -or $entry.IndexOf([char]0) -ge 0) {
+      throw 'request environment rejected'
+    }
+  }
   Write-Phase 'input_accepted'
   $startup = ([wmiclass]'\\.\root\cimv2:Win32_ProcessStartup').CreateInstance()
   $startup.CreateFlags = [uint32]$r.flags
@@ -51,7 +74,7 @@ try {
   Write-Phase 'create_returned'
   [Console]::Out.Write((@{code=[uint32]$p.ReturnValue; pid=[uint32]$p.ProcessId} | ConvertTo-Json -Compress))
 } catch { [Console]::Out.Write('{"code":-1,"pid":0}'); exit 1 }
-'''
+'''.replace("__MAX_REQUEST_BYTES__", str(MAX_REQUEST_BYTES)).replace("__REQUEST_FLAGS__", str(BREAKAWAY | DETACHED | 0x400))
 
 
 def _bind(dll, name, args, result=C.c_int):
@@ -208,7 +231,7 @@ def _powershell():
     return Path(buffer.value) / "WindowsPowerShell/v1.0/powershell.exe"
 
 
-_PROVIDER_PHASES = ("powershell_started", "input_accepted", "create_entered", "create_returned")
+_PROVIDER_PHASES = ("powershell_started", "stdin_open", "header_read", "input_read", "input_accepted", "create_entered", "create_returned")
 
 
 def _provider_output(output, diagnostics, *, complete):
@@ -221,14 +244,14 @@ def _provider_output(output, diagnostics, *, complete):
         if not isinstance(output, bytes) or len(output) > 8192:
             raise ValueError
         lines = output.decode("utf-8-sig").splitlines()
-        if len(lines) > 5:
+        if len(lines) > len(_PROVIDER_PHASES) + 1:
             raise ValueError
         reply = None
         for index, line in enumerate(lines):
             row = json.loads(line)
             if isinstance(row, dict) and "phase" in row:
                 elapsed = row.get("elapsed_ms")
-                if (len(phases) >= 4 or row["phase"] != _PROVIDER_PHASES[len(phases)]
+                if (len(phases) >= len(_PROVIDER_PHASES) or row["phase"] != _PROVIDER_PHASES[len(phases)]
                         or set(row) != {"phase", "elapsed_ms"} or type(elapsed) not in (int, float)
                         or not 0 <= elapsed <= 60000 or not math.isfinite(elapsed)
                         or (phases and elapsed < phases[-1]["elapsed_ms"])):
@@ -240,13 +263,24 @@ def _provider_output(output, diagnostics, *, complete):
                 raise ValueError
         if complete and reply is None:
             raise ValueError
-        diagnostics["trace_status"] = "phases_complete" if len(phases) == 4 else "partial" if phases else "absent"
+        diagnostics["trace_status"] = "phases_complete" if len(phases) == len(_PROVIDER_PHASES) else "partial" if phases else "absent"
         return reply if complete else None
     except (ValueError, UnicodeError):
         diagnostics["trace_status"] = "invalid_or_partial"
         if complete:
             raise ValueError("WMI provider protocol invalid") from None
         return None
+
+
+def _request_frame(data):
+    # Every input string is internal construction; preflight before JSON's escaping copies.
+    raw_chars = len(data["command"]) + len(data["cwd"]) + sum(map(len, data["environment"]))
+    if raw_chars > MAX_REQUEST_BYTES:
+        raise BrokerFailure("request_too_large")
+    payload = json.dumps(data, ensure_ascii=True).encode("utf-8")
+    if not 0 < len(payload) <= MAX_REQUEST_BYTES:
+        raise BrokerFailure("request_too_large")
+    return len(payload).to_bytes(4, "little") + payload
 
 
 def _create(command, cwd, environment, *, diagnostics=None):
@@ -262,7 +296,7 @@ def _create(command, cwd, environment, *, diagnostics=None):
     try:
         try:
             result = subprocess.run([str(shell), "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
-                                    input=json.dumps(data, ensure_ascii=True).encode(), stdout=subprocess.PIPE,
+                                    input=_request_frame(data), stdout=subprocess.PIPE,
                                     stderr=subprocess.DEVNULL, timeout=10, creationflags=0x08000000, check=False)
         except subprocess.TimeoutExpired as exc:
             _provider_output(exc.output, diagnostics, complete=False)
