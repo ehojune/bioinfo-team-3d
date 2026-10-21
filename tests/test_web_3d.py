@@ -209,6 +209,11 @@ def test_office_in_node(filename, marker):
         # A Python PASS alone must not certify an optional inner Node skip.
         assert re.search(r'^# pass 3\s*$', result.stdout, re.MULTILINE), result.stdout + result.stderr
         assert re.search(r'^# skipped 0\s*$', result.stdout, re.MULTILINE), result.stdout + result.stderr
+    if (filename in ('web_office_focus_layout.cjs', 'web_visual_tooling.cjs') and os.name == 'nt'
+            and os.environ.get('GITHUB_ACTIONS') == 'true'):
+        # #842: on hosted Windows the real-Chrome cleanup regressions (forced path included) must run; an inner
+        # node:test skip would otherwise still print "fail 0" and pass this parent. Chrome stays optional elsewhere.
+        assert re.search(r'^# skipped 0\s*$', result.stdout, re.MULTILINE), result.stdout + result.stderr
 
 
 def test_every_node_web_test_runs_in_ci():
