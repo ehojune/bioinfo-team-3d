@@ -4,3 +4,7 @@ rows:
   at: 2026-10-22 05:43
   summary: labhq 직원이 shell에서 GitHub 도구를 써도 개발용 봇 신원과 그 token을 받지 않도록 했습니다.
   text: 'AgentAdapter.staff_env가 제품 직원 자식 환경의 최종 LABHQ_COMMIT_AGENT를 none으로 고정한다. 상속값·engine env·task env와 대소문자 변형은 지우고 하나만 남기며 읽기 전용 직원도 같다. 이 PC의 gh 래퍼와 commit-msg hook이 CLAUDECODE·CODEX_* 세션 변수로 봇을 추정해 token과 trailer를 넣던 경로를 끈다. #301 token 제거, 상위 marker 정리, 부모 env·입력 불변은 유지했다. 기존 test_bioinfo_pipeline_pr.py에 Claude·Codex × 쓰기·읽기 전용 순수 dict 검사 4건을 더했고, 순수 실행에서 이전 코드 4 FAIL, 새 코드 4 PASS, 기존 #301 6건 PASS를 확인했다. 저장된 사용자 로그인 권한은 그대로이며 실제 직원 CLI·gh·commit·push·네트워크 인증은 미검증이다. #813은 실제 표시 확인이나 PI 수용 전까지 열어 둔다.'
+- sha: 9a16138
+  at: 2026-10-22 05:49
+  summary: 매뉴얼에 직원 CLI는 개발용 GitHub 봇 신원을 쓰지 않고, 저장된 사용자 로그인 권한은 별개라는 설명을 더했습니다.
+  text: docs/manual.md의 GitHub 토큰 문단에 한 문장을 더했다(176,983→177,059자). 개발자 참고 staff-gh-identity-813.md에서는 이 PC에 없는 git 래퍼를 빼고, token이 shell이 아니라 래퍼가 부른 gh 호출에 들어간다고 바로잡았다. source 코드와 검사는 그대로이며 실제 GitHub 표시 신원은 미확인이다. #813은 부분 해결이다.
