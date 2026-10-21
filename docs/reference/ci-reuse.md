@@ -36,10 +36,10 @@ main의 해당 commit에 병합된 같은 저장소 PR의 최신 matching run만
 
 ## 병렬 실행·Windows 경계
 
-#823 branch의 미게시 후속 설계입니다. 실제 Windows·병렬 성능은 새 CI 전까지 미검증이며 [정적 근거와 한계](ci-windows-cohort-823.md)를 봅니다.
+#823의 CI 개선은 PR825로 병합됐습니다. 해당 head의 Windows 실행은 8분14초였으며 [측정 범위와 한계](ci-windows-cohort-823.md)를 봅니다. 다른 head의 실행 시간은 별도로 확인합니다.
 
 - CI outer Linux 3.10/3.12 전수는 `pytest-xdist==3.8.0`의 `-n auto --dist loadfile`로 실행합니다. global addopts/PYTEST_ADDOPTS는 없고 nested pytest는 직렬 기본값입니다. auto worker 수는 측정값으로 기록하며 4개로 가정하지 않습니다.
-- PR825 변경안: Windows PR/main은 `windows-boundary-v6`의 명시 필수 file/node 계약과 변경된 Windows 관련 test·직접 OS helper 소비자를 실행합니다. 일반 schema/prompt/논리·미변경 선택 밖 test는 Linux 전수와 Windows nightly/dispatch 전수에 남깁니다. product import의 추정 transitive 추적이나 정책 변경에 따른 전수 확대는 하지 않습니다.
+- 현재 정책(PR825): Windows PR/main은 `windows-boundary-v6`의 명시 필수 file/node 계약과 변경된 Windows 관련 test·직접 OS helper 소비자를 실행합니다. 일반 schema/prompt/논리·미변경 선택 밖 test는 Linux 전수와 Windows nightly/dispatch 전수에 남깁니다. product import의 추정 transitive 추적이나 정책 변경에 따른 전수 확대는 하지 않습니다.
 - web shutdown·WMI escape/ACK의 알려진 실패를 포함한 5개 callable은 mandatory입니다. collection/선택에서 하나라도 없으면 실패합니다. Job·identity·cleanup, drive/PowerShell/private sandbox, SQLite/durable/lock, doctor/CLI/MCP/receipt/hook은 명시 cohort로 유지합니다. 이 범위는 full Windows와 동등하지 않으며 제외된 Windows 조합의 발견이 nightly로 늦어질 위험이 있습니다.
 - routine Windows job은 setup·collection을 포함해 10분입니다. 첫 serial phase는 2분, 나머지 4-worker phase는 7분이며 두 phase의 실제 선택 union을 한 번씩 실행합니다. timeout은 실패입니다. pip 2분, report/upload 각 1분의 step bound와 always artifact 업로드를 두며 hard job 취소 때 업로드까지 보장하지는 못합니다. nightly/manual은 full Windows(종전 360분 job 상한 유지)입니다. 병합된 #825의 실제 완료 시간은 [측정 기록](ci-windows-cohort-823.md#실제-ci-측정)에 있습니다. 다른 head의 통과를 대신하지 않습니다.
 - critical은 두 native 파일 전체(현재25개, 추가 case도 포함)와 resizable browser case 1개만 수집합니다. 명시한 whole-file/node 인수·기본 discovery와 필터 부재를 확인하고, worker 없이 각 setup/call/teardown PASS·no-SKIP과 5개 mandatory callable을 검증한 뒤 pool을 엽니다. browser 미설치·내부 TAP의 3 PASS/0 SKIP 미달도 실패하며 기존 30초 wrapper/60초 내부 제한은 유지합니다. nightly/manual도 같은 격리 뒤 나머지 전수를 실행합니다.
