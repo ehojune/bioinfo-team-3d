@@ -24,4 +24,4 @@ OS 경계와 변경 test를 선택하는 제안입니다. Windows full과 동등
 
 `windows-boundary-preview-v4`·`preview-changes.json`·`boundary-preview-*`·`preview-summary.json`으로 분리하고 `reusable=false`를 기록합니다. full gate output/manifest upload는 그대로이며 producer/consumer가 preview를 거부합니다. full/selected/excluded·workers·host wait·setup/pytest/queue를 따로 보고합니다. 같은 job의 warm 후속 실행이므로 cold PR 성능과 같지 않습니다. preview 실패도 job 실패이며 숨기지 않습니다.
 
-mock/static 475 PASS, 마지막 소규모 확인은 status에 기록합니다. 바뀐 CI 계약 235개만 재수집하고 나머지 collection은 재사용했습니다. 실제 Windows/xdist·경합·5분 달성은 미검증입니다. #824 이후 총괄의 main 통합·exact-head 검토·게시·원격 CI가 남습니다.
+mock/static 475 PASS, 마지막 preview/encoding 77개도 통과했습니다. 바뀐 CI 계약 235개만 재수집하고 나머지 collection은 재사용했습니다. 실제 Windows/xdist·경합·5분 달성은 미검증입니다. #824 이후 총괄의 main 통합·exact-head 검토·게시·원격 CI가 남습니다.

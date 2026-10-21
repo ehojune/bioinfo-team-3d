@@ -16,3 +16,7 @@ rows:
   at: 2026-10-21 12:27
   summary: 안전과 복구 검사가 Windows 선택 범위에서 빠지지 않도록 보완했습니다.
   text: '#823: continuation/reconnect와 idle/UAC·process memory-limit 4파일을 명시 경계로 남겨 host lock 대상 139노드를 모두 선택에 포함한다. mock/static 415 PASS, 정적 선택 4566/10578(43.2%)·명시 보호 범위 3884개로 목표 미달이며 실제 Windows/병렬 성능은 미검증이다.'
+- sha: 28b6a1b
+  at: 2026-10-21 13:05
+  summary: Windows 문서 접근 보호 검사를 복구하고 정책 변경의 측정 결과를 따로 남깁니다.
+  text: '#823: paper-skill 8개를 복구하고 hash-fixed 혼합 노드 42개만 더 제외한다. 필수 full 뒤 별도 preview profile/실제 range/receipt/artifact/summary를 쓰고 reusable=false로 manifest 증거에서 배제한다. profile v4/manifest v6와 기존 trust 조건을 유지한다. mock/static 475 PASS·최종 소규모 77 PASS, 정적 선택 4592/10638(43.2%)·lock 139노드로 목표 미달이며 실제 Windows/병렬 성능은 미검증이다.'
