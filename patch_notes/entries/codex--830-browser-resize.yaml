@@ -1,0 +1,6 @@
+pr: 830
+rows:
+- sha: 'fc0ffe4'
+  at: 2026-10-21 22:53
+  summary: 브라우저 검사가 어느 로드 단계에서 지연되는지 시간을 남깁니다.
+  text: 'Resizable fixture에만 startup·navigate·boot·frames 경계의 monotonic 진단을 켰다. Viewport별 최대16행이며 단계명·경과 시간만 출력하고 observer/clock 오류는 검사 오류를 가리지 않는다. 동기 fake3·기존 wrapper/static11 PASS, trace 삽입을 제외한 원래 driver·세 subtest·단언·격리를 원문 대조했다. 실제30초 timeout 원인과 해결 여부는 미확정이며 deadline·skip·cleanup·Windows coverage·제품은 변경하지 않았다.'

@@ -12,6 +12,122 @@ from scripts import ci_selection as s, ci_suite as suite, ci_skip as cs
 A, B, H = 'a' * 40, 'b' * 40, 'c' * 40
 
 
+def test_module_alias_work_is_content_cached_without_sharing_mutable_results(monkeypatch):
+    text = 'import socket as net\ncallback=net.socket\nDATA=[1,2,3]\n'
+    tree = s._syntax(text)
+    calls = []
+    original = ast.dump
+    def counted(node, *args, **kwargs):
+        calls.append(node)
+        return original(node, *args, **kwargs)
+    monkeypatch.setattr(ast, 'dump', counted)
+    first = s.aliases(tree)
+    count = len(calls)
+    assert count > 0 and first['callback'] == 'socket.socket'
+    first['callback'] = 'not.a.capability'
+    assert s.aliases(tree)['callback'] == 'socket.socket'
+    assert len(calls) == count  # no repeated full-module assignment dumps
+    changed = s._syntax(text.replace('net.socket', 'net.gethostname'))
+    assert s.aliases(changed)['callback'] == 'socket.gethostname'
+    assert len(calls) > count
+
+
+def test_scope_index_walks_import_time_and_helper_bodies_once(monkeypatch):
+    text = ('import pytest\nSEED=[1,2,3]\n@pytest.fixture(autouse=True)\n'
+            'def resource(): return SEED\ndef helper(): return SEED\n'
+            'def test_first(): return helper()\ndef test_second(): return helper()\n')
+    tree = s._syntax(text)
+    names = s.aliases(tree)
+    watched = tree.body[1]  # import-time assignment, present in every scope
+    original = ast.walk
+    calls = []
+    def counted(node):
+        if node is watched:
+            calls.append(node)
+        return original(node)
+    monkeypatch.setattr(ast, 'walk', counted)
+    first = s._boundary_scope(tree, 'test_first', names)
+    assert watched in first and tree.body[2] in first and tree.body[3] in first
+    second = s._boundary_scope(tree, 'test_second', names)
+    assert watched in second and tree.body[2] in second and tree.body[3] in second
+    assert len(calls) == 1
+    first.clear()  # intrinsic_boundary appends synthetic fixture references too
+    assert watched in s._boundary_scope(tree, 'test_first', names)
+    with pytest.raises(ValueError, match='unknown collected symbol'):
+        s._boundary_scope(tree, 'test_missing', names)
+
+
+def test_cached_import_candidates_keep_live_changed_helper_and_profile_checks(tmp_path, monkeypatch):
+    source = 'from tests.support.helper import shared\ndef test_logic(): assert 1\n'
+    data = review(source)
+    data['mixed_nodes'] = {}
+    helper = tmp_path / 'tests/support/helper.py'
+    helper.parent.mkdir(parents=True)
+    helper.write_text('VALUE=1', encoding='utf-8')
+    tree = s._syntax(source)
+    original = ast.walk
+    calls = []
+    def counted(node):
+        if node is tree:
+            calls.append(node)
+        return original(node)
+    monkeypatch.setattr(ast, 'walk', counted)
+    args = dict(root=tmp_path, node='test_logic')
+    assert not s.include_windows('tests/test_math.py', source, data, **args)[0]
+    first = len(calls)
+    assert not s.include_windows('tests/test_math.py', source, data, **args)[0]
+    assert len(calls) == first
+    # Same helper path, different content: filesystem decisions are not cached.
+    helper.write_text('import os\nos.fsync(1)', encoding='utf-8')
+    assert s.include_windows('tests/test_math.py', source, data,
+                             changed={'tests/support/helper.py'}, **args)[0]
+    assert not s.include_windows('tests/test_math.py', source, data, **args)[0]
+    helper.write_text('VALUE=1', encoding='utf-8')
+    assert not s.include_windows('tests/test_math.py', source, data,
+                                 changed={'tests/support/helper.py'}, **args)[0]
+    changed = copy.deepcopy(data)
+    changed['boundary_cohorts'] = {'tests/test_math.py': 'new reviewed contract'}
+    assert s.include_windows('tests/test_math.py', source, changed, **args)[0]
+    with pytest.raises(ValueError, match='unknown collected symbol'):
+        s.include_windows('tests/test_math.py', source.replace('test_logic', 'test_other'), data, **args)
+
+
+def test_selection_path_resolution_is_per_invocation_not_per_parameter(tmp_path, monkeypatch):
+    source = 'def test_math(): assert 1\n'
+    p = tmp_path / 'tests/test_math.py'
+    p.parent.mkdir()
+    p.write_text(source, encoding='utf-8')
+    policy_file(tmp_path, source)
+    items = [SimpleNamespace(path=p, nodeid=f'tests/test_math.py::test_math[{n}]') for n in range(12)]
+    original = Path.resolve
+    calls = []
+    def counted(path, *args, **kwargs):
+        if path in (p, tmp_path):
+            calls.append(path)
+        return original(path, *args, **kwargs)
+    monkeypatch.setattr(Path, 'resolve', counted)
+    assert suite.select(items, s.WINDOWS_BOUNDARY, tmp_path, changed=set())[1] == items
+    assert calls.count(p) == calls.count(tmp_path) == 1
+    assert suite.select(items, s.WINDOWS_BOUNDARY, tmp_path, changed={'tests/test_math.py'})[0] == items
+    assert calls.count(p) == calls.count(tmp_path) == 2
+    # The cohort-presence hook must deduplicate file paths before resolving too,
+    # while recording every actual collected/selected parameter node unchanged.
+    records = []
+    with monkeypatch.context() as hook:
+        hook.setattr(suite, 'ROOT', tmp_path)
+        hook.setattr(suite, 'select', lambda *args: (list(items), [], {}))
+        hook.setattr(suite, 'policy', lambda: dict(boundary_cohorts={'tests/test_math.py':'fake contract'}, mandatory_nodes=[]))
+        observer = SimpleNamespace(profile=s.WINDOWS_BOUNDARY, phase=None, checkpoints=None,
+                                   write=lambda name, data: records.append((name, data)))
+        suite.Observation.pytest_collection_modifyitems(observer, None, SimpleNamespace(), list(items))
+    assert calls.count(p) == 3
+    assert records[0][1]['full_nodes'] == records[0][1]['selected_nodes'] == [i.nodeid for i in items]
+    # The next invocation must reread content and enforce the reviewed digest.
+    p.write_text(source.replace('assert 1', 'assert 2'), encoding='utf-8')
+    with pytest.raises(pytest.UsageError, match='invalid Windows selection source'):
+        suite.select(items, s.WINDOWS_BOUNDARY, tmp_path, changed=set())
+
+
 def fake_git(paths=('tests/test_math.py',), parents=None):
     calls = []
     def git(*args):

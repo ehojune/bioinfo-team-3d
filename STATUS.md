@@ -4,6 +4,193 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+Refs #823 · PR #825
+
+- 실제 Windows run39598623883은 539초 FAILURE입니다. Critical26 PASS 뒤 pool420초 제한으로 중단됐고 master metrics가 없습니다.
+- 반복되는 module alias·scope·import 분석을 content cache로 묶고 경로 resolve를 파일별로 줄였습니다. Helper·변경 범위·profile 판정은 다시 확인합니다.
+- 순수/fake 137개 고유 case PASS. 보존된 11033 node ID의 선택을 source만으로 대조해 eligible3680·critical26·pool3654와 제외240파일의 순서·사유를 보존했습니다. 새 test collection이나 native 실행은 하지 않았습니다.
+- 기존 coverage·timeout·phase/manifest 증거 계약과 제품은 그대로입니다. 실제 collection 개선 폭·native case 원인·새 CI 성공은 미확인입니다. 로컬 커밋만 준비하며 push/CI 조회는 총괄에게 맡깁니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+# PR #825 process-tree fixture의 readiness 분리
+
+- immutable 871add022f9f68ba6ca217da1382663db19a645c 기준이다. 기존 sanitizer와 none829 branch, 다른 담당자의 encoding/CI/Windows 코드는 보존했다.
+- fixture의 PID 기록을 완성한 뒤 replace로 게시한다. 기존 30초 startup 범위에서 live 3-PID tree를 확인한 후 제품에 process를 반환하고, 제품 drain 시작 뒤 테스트 취소 신호를 허용한다. 준비 실패는 보관한 process를 정리하고 오류로 전파한다.
+- 두 arm×세 timeout/cancel case, 실제 PID 수·생존/종료 검사, 1/15/30/10초 경계와 기존 assertion은 유지했다. unknown은 live로 간주하지 않는다. 제품 deadline/cancellation/kill 코드는 바꾸지 않았다.
+- 초기 fake 9 failed/2 passed 뒤 최종 추출 helper·fake process/event/clock 18건 PASS. 실제 native 실패는 제공된 CI 로그로만 확인했으며 로컬에서 재실행하지 않았다. 소스상 빈 child 파일 게시와 readiness 이전 deadline race는 가능하지만 실제 실패의 단일 원인은 미확정이다.
+- Python 3.10 AST/compile·source-only validate_profile·public·notes·diff와 postcommit 기록 검사는 별도 로컬 보고에 남긴다. push/GitHub/CI 조회·배포·연구/bench 실행은 하지 않는다.
+
+# PR825 — browser fixture close 경계
+
+- Source `e017c44b81104a7c44a6978db43c733314907b2f`: 기존 close는 종료 요청 뒤 실제 완료를 기다리지 않았습니다. 생성 시점부터 socket/Chrome stdio close를 추적하고 server callback 뒤 profile을 지우며, 정리5초 watchdog 실패와 원래 오류를 보존합니다. ChildProcess close는 exit와 달리 stdio 완료까지 구분합니다([Node 계약](https://nodejs.org/api/child_process.html#event-close)).
+- Retained CI는 세 subtest와 desktop/phone close 로그까지 완료했지만 Node 종료·최종 TAP summary 없이30초 wrapper에서 실패했습니다. 어떤 handle이 남았는지는 미확정이며 실제 CI가 고쳐졌다고 주장하지 않습니다. 다음 실행에 bounded active-resource 종류와 pending close 이름을 남깁니다.
+- 이전 소스의 acknowledgement/오류 전파2건 red → 순수 V8 fake7 PASS. Python wrapper/static11 PASS, CJS3파일 V8 parse-only·Python3.10 AST·정리 외 driver 코드 재구성 대조·source validate_profile/mixed6 일치를 확인했습니다. Node·browser·server·process/thread는 실행하지 않았습니다.
+- 세 실제 browser subtest/desktop·phone 단언, 30초 wrapper·native5000ms·critical2/pool7/job600s·phase proof·선택 metadata·S1/S2/제품은 그대로입니다. Public·notes·diff와 최종 hook 뒤 full-range patch 검사를 수행합니다. Guard 세 변수 유지, 로컬 커밋만 준비하며 push/GitHub/CI 조회는 하지 않습니다. CLI 선택 모델 gpt-6.1-sol.
+
+Refs #825
+
+Clean-install 실패 진단의 binary read를 `path.open(mode="rb")`로 명시해 기존 encoding AST 검사와 맞췄다. 검사기·allowlist·진단 상한·원래 시작 실패와 정리 동작은 바꾸지 않았다. Encoding 검사 red→green·기존 bounded fake 포함12건·Python3.10 AST 대조를 통과했다. 실제 Windows 실행·WMI 원인 확인·push·CI 조회는 하지 않았다.
+
+# PR825 — 통합 inventory 누락
+
+- Source `d9165f7b2e3ea491b11588311c365c8ec52bcf64`: 새 clean-install diagnostics test를 `known_tests`에만 추가했습니다. `_run` 대체·소유 임시 JSON·AST 검사 내용을 검토했으며 native cohort를 늘리지 않았습니다.
+- 원래 통합 checkout의 `validate_profile()` 누락 실패를 소스 읽기로 재현했고 수정 뒤 통과했습니다. 관련 순수 회귀1건 red→green, mixed 계약6개 digest 일치·미변경을 확인했습니다. Config 의미 변경은 정렬된 목록 한 줄뿐입니다.
+- Python3.10 AST/compile·public·notes·diff를 검사하고 최종 hook 뒤 `patch_notes.py check --base origin/main --head HEAD`를 수행합니다. S1/S2·제품·diagnostics/sanitizer·critical v2 proof·changed-test·안전/시간 계약은 그대로입니다.
+- Guard 세 변수 유지, 전수 collection·실제 native/process/thread/xdist/browser·설치/서비스·PI/연구/HPC·GitHub/CI 조회·push는 하지 않았습니다. 실제 runtime/CI 성공은 미검증입니다. CLI 선택 모델 gpt-6.1-sol.
+
+# PR #825 게시 sanitizer 비용 보강(로컬 준비)
+
+- 기준은 immutable 71236629ce4658ec8fc7d4988424709baf785a8d. CI/Windows 담당 변경과 scheduler-none-829 branch를 보존했다.
+- 구분자만 있는 줄은 전체 길이 C fullmatch로 eligibility를 검사한다. 특수 zone·다른 문자가 있는 줄은 기존 path classifier에 전체 길이로 전달하며 secret/URL/auth·clip 순서는 유지한다.
+- 새 work 회귀 4건 red 뒤 지정 pure 검사 43건 PASS. 출력 동등성 6,320개 조합과 늦게 나오는 private/public 경로·credential을 검사했다. 기존 36개 함수(test 32개·helper 4개)와 정확한 입력/출력·CPU 2초 assertion은 AST가 같다.
+- 단일 로컬 CPU 관측 0.078125→0.015625초, profile 호출 1,527,855→107회. Linux의 2초 초과는 로컬 미재현이며 새 CI 결과는 미확인이다([근거·한계](../reference/publish-separator-scan-825.md)).
+- mock guard를 유지하고 실제 Git/process/Node·native/PI/HPC·네트워크 test는 실행하지 않았다. push/GitHub 쓰기/CI 조회 없이 로컬 커밋만 준비한다.
+
+# PR825 — critical 전수 재수집 제거
+
+- Source `ce4218a1328f2054e415ee90325a74cc6c07bfbc`: critical은 두 native 파일 전체와 필수 browser parameter만 수집합니다. 현재26개·추가 native case를 모두 실행하며 명시 인수/checkout root/기본 discovery/필터 부재를 검증합니다. 모든 setup/call/teardown PASS·no-SKIP 뒤 pool을 엽니다.
+- Critical은 좁은 collected/selected만 기록하고 pool의 실제 global full/eligible과 전체 critical parameter 집합·빈 intersection·union을 대조합니다. Execution v2로 v1 혼용을 막으며 profile6/manifest8과 기존 run/attempt/tree/head/workflow/policy/invocation/interpreter·digest·trusted-base 계약은 유지합니다.
+- CI step만 critical2분/pool7분으로 조정했습니다. Routine job600초·Linux full·Windows nightly/manual full·native/browser API/assertions/제품 timeout·changed-test coverage·S1/S2 변경은 그대로입니다. Retained f0는 critical26 PASS였지만 job570초 FAIL입니다. 새 head의 실제 절감과 성공≤600초는 미검증입니다.
+- Fake phase/workflow135, manifest/재사용95, 별도 offline reader8 PASS. Python3.10 AST/compile·보호 파일 불변·public·notes·diff를 확인하고 최종 hook 뒤 origin/main 기준 patch 검사를 합니다. v7 reader는 별도 로컬 파일이며 root의 바인딩/검토가 필요합니다. 구형 controller/collector는 바꾸지 않았습니다.
+- Guard 세 변수 유지, 실제 native/process/thread/xdist/browser·PI/연구/HPC·전수 collection은 실행하지 않았습니다. 로컬 커밋만 준비하며 push/GitHub/CI 조회는 하지 않습니다. CLI 선택 모델 gpt-6.1-sol.
+
+Refs #825
+
+Clean-install 시작 실패의 안전한 진단을 임시 폴더 삭제 전에 남긴다. 두 supervisor의 고정 phase·실패 분류·제한된 시간만 출력하고 원래 오류·실제 up/readiness·정리 계약은 유지한다. 제품 transport·timeout·Job/ACK는 바꾸지 않았다.
+
+기존 실패는 provider_timeout 외 수신/Create 증거가 없어 원인 미확정이다. Fake/static12건·Python3.10 AST·기존 호출/정리 대조를 통과했다. 실제 설치·process·WMI·PI 실행과 CI 조회·push는 하지 않으며 다음 remote clean-install 검증은 총괄이 맡는다.
+
+# PR825 — collection·cleanup checkpoint
+
+- Source `3b814e53419b38c4dff39ae85bc21a4c6c57b99f`: critical 배정만 2→3분으로 바꿨습니다. Job600초·parallel6분·26 critical PASS/no-SKIP barrier와 원래 제품/test timeout, profile6/manifest8을 유지합니다. 기존 Python3.10 fake identity 수정도 보존합니다.
+- Phase별 `checkpoints-<worker>.json`은 process-local monotonic hook 관측입니다. Collection(import/selection 포함), 첫 test, stage 시작/완료와 누적 report 수를 구분하며 PASS 증거로 쓰지 않습니다. 미관측 시각은 생략하고 worker 시간을 합산하지 않습니다. Pool snapshot은 hook이 멈추면 갱신되지 않습니다.
+- 관련 fake/static 103건 PASS. 최초 red 5건, 중간 mock metadata 누락 3건과 전체 trace를 보존했습니다. Python3.10 AST/compile·workflow 의미 비교·보호 파일 불변·public/notes/patch/diff를 검사합니다. Native/xdist/browser 실행이나 collection 전수 재측정은 하지 않았습니다.
+- Retained ZIP의 collection 약85초는 간접 추정입니다. Native 결함·cleanup 원인은 미확정이며 성공한 통합 job≤600초는 root의 원격 CI로 확인해야 합니다. S1/S2 파일·collector는 바꾸지 않았습니다. Guard 세 변수 유지, 로컬 커밋만 준비하며 push/GitHub/CI 조회는 하지 않습니다. CLI 선택 모델 gpt-6.1-sol.
+
+Refs #825
+
+CI artifact 환경이 있을 때만 native fixture의 대기·본문·정리 경계를 case별 JSON으로 기록합니다. 최대64 entries/16 KiB이며 고정 phase·역할·제한된 시간/결과/signature flag만 남깁니다. 진단 기록 시간을 제외한 callable duration도 구분합니다.
+
+Fake/static37건·Python3.10 AST와 원래 assertion/API 인자 대조를 통과했습니다. 기존 native5/web20 계약·대기 시간·retained-handle 정리는 유지합니다. 실제 native 성공이나 제품 결함 해결의 증거는 아니며 통합 CI는 미확인입니다. 로컬 커밋만 준비했습니다.
+
+# PR825 — Linux 3.10 fake Windows identity 회귀
+
+- Source `0d81230ec811b71fbaac79083774259823495af4`: 네 실패는 receipt에 host3.10 버전을 넣어 Windows3.12 검증이 거부한 test binding 오류였습니다. Test runtime proxy와 receipt를 같은 fake Windows3.12/실행 경로로 묶었습니다.
+- host3.10/3.12×critical/parallel/barrier/CLI fake 회귀8개 red → 파일 전체59 PASS. 실제 identity의3.10 거부·3.12 허용, 원래 단언 보존·정확한 missing-barrier 실패와 Python3.10 AST를 확인했습니다.
+- 수정 범위는 test 파일 하나입니다. Production·workflow·timeout·coverage·S1/S2는 바꾸지 않았으며 Windows critical timeout은 S1 범위로 남깁니다. 실제3.10/Windows·CI 조회·push는 하지 않았습니다. Guard 세 변수는 유지했습니다.
+- Public·notes·patch·diff 검사 뒤 로컬 커밋합니다. Root가 최종 통합·게시·새 CI를 맡습니다. CLI 선택 모델 gpt-6.1-sol.
+
+# PR825 — critical serial phase 후 나머지 Windows 병렬 검사
+
+- Source `7d9152902bc334538daf83e74e50ee103e4fd578`: native 두 파일25개+resizable browser1개를 먼저 serial로 실행합니다. setup/call/teardown 모두 PASS·no-SKIP을 확인한 뒤 나머지를 4-worker pool에 넘깁니다. Browser TAP도 3 PASS/0 SKIP을 요구합니다.
+- 실제 phase별 목록·같은 full/eligible·빈 intersection/정확한 union·worker 결과/시간·run/head/checkout/tree/policy/interpreter를 검증합니다. profile6/manifest8 producer가 업로드 JSON과 job digest를 재검증하며 구형/불완전 결과는 재사용하지 않습니다.
+- fake/static708 PASS(collector8 포함) 후 마지막 영향 범위104 PASS, 별도 collector 최종11 PASS입니다. Python3.10 AST·원본 assertions/native/S1 source·기타 job 보존과 public/기록/diff를 확인합니다. 실제 Node/worker/native는 로컬 실행하지 않았습니다.
+- Routine10분·원래 test timeout·Linux 전수·Windows nightly/manual 전수를 유지합니다. 예상46+350+50≈446초는 추정입니다. 새 head의 실제 전체 job≤600초·원인·제품/PI 성공은 미확인으로 root 검토/게시/CI가 남습니다. Push·CI 조회·다른 owner/PROBE 통합은 하지 않았습니다.
+- [계약과 한계](../reference/ci-windows-cohort-823.md). CLI 선택 모델 gpt-6.1-sol.
+
+# PR825 — worker 진단 수정, Windows 지연 미해결
+
+- Source `2486063`: Linux master/gw0/gw1 진단 파일 계약을 fake로 확인했습니다. 필수 native 누락 실패와 reusable=false를 유지합니다.
+- Windows는 wrapper30초/browser60초 불일치까지만 확인했습니다. timeout의 부분 TAP/stderr·원래 예외와 browser 단계 표식을 보존했습니다. 실제 지연 구간·cleanup 완료는 미확인으로 root 검토가 남습니다.
+- fake/static 50 PASS, 마지막 worker 3 PASS; JS assertion/body·Python assertion·선택 계약 동일성을 확인했습니다. public/기록/diff 검사, 로컬 커밋만 수행합니다.
+- timeout·skip·선택·Linux full·Windows native/nightly full·10분 상한을 유지합니다. 실제435초/2 FAIL은 성공이 아니며 S1 WMI·제품은 수정하지 않았습니다. Push·CI 조회·실제 Node/browser/xdist 실행은 하지 않았습니다.
+- [근거](../reference/ci-windows-cohort-823.md). CLI 선택 모델: gpt-6.1-sol.
+
+# PR825 · routine Windows 필수 경계와 10분 상한
+
+- source `58129de4`, base `7b6b6ee4`. PR/main Windows는 essential profile v5 한 번만 실행합니다. 정책 변경도 full+preview로 확대하지 않으며 Linux 3.10/3.12·Windows nightly/manual은 전수입니다.
+- routine job10분/test7분, 증거·inventory·pin 오류는 빠른 실패입니다. web shutdown·WMI escape/ACK 5개 callable은 collection/선택에서 빠져도 실패합니다. timeout도 실패이며 native assertions·production durability·host lock은 그대로입니다.
+- full Linux·설치/validator/MCP·문서 gate와 provenance 함수 AST를 보존했습니다. manifest7은 같은 tree/policy/profile·run/attempt/digest를 요구하며 full Windows/구형/preview를 대신 받지 않습니다.
+- guarded pure/fake/static 639 PASS, 강화한 mandatory/workflow node 각1 PASS. cached corpus는 4716→3252/10762(30.2%)·7510 제외, 기존 lock node139 중107이 선택됩니다. lock 규칙을 없앤 것이 아니며 나머지 범위는 full Linux/nightly Windows에 남습니다.
+- 과거 cached 추정은 새 native parameter·실제 변경 test 수와 다릅니다. 실제 600초 성공·host wait·완료 job 시간은 미측정이며 기존1124초/2FAIL 실행은 성공 benchmark가 아닙니다. [계약과 한계](../reference/ci-reuse.md).
+- local native/process/thread/xdist/PI/연구/bench·전체 suite·API/CI 조회·push/merge 없이 로컬 commit만 준비합니다. root가 S1 수정과 통합한 한 head를 검토·측정합니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+Refs #825
+
+Owned launcher 실패 시 기존 journal allowlist와 parent exitcode를 최대4096자 JSON으로 출력합니다. 진단 실패도 원래 예외를 바꾸지 않으며 45초·native assertions·제품 동작은 유지합니다.
+
+Fake/AST 17건 PASS. 실제 Windows/WMI 원인·성공은 미확인입니다. Native 실행·push·CI 조회·병합·배포는 하지 않았습니다.
+
+Refs #825 · #824
+
+EOF 대기 대신 길이를 명시하는 stdin 대안을 구현했습니다. 실제 WMI 원인 수정/성공은 미확인입니다.
+
+- 4-byte little-endian header와 정확한 UTF-8 JSON payload를 읽고 EOF 추가 probe를 하지 않습니다. 입력 예산1 MiB를 문자 하한·직렬화 bytes·수신 할당 전에 검사합니다. OS 상한이 아니며 초과는 `request_too_large`, 잘림/encoding/JSON/구조 오류는 WMI 전 고정 실패입니다.
+- Command/env carrier는 익명 stdin뿐입니다. 고정 raw/header/payload marker를 추가하고 parser·안전한 fixture allowlist를 7단계에 맞췄습니다. 출력8192 bytes·기존 timing·timeout10/TIMEOUT20·단일 시도·nonce/envhash/identity/Job/ACK/정리 계약은 유지했습니다.
+- 수정 전3건 실패 후 wire/model/source20건·관련 fake50건 PASS(70고유 case). 최종 긴 경로 stress와 receiver source 각1건 재확인. 수신 모델은 .NET/PowerShell 실행이 아님을 명시했습니다. 전체 trace는 로컬 산출에 보존합니다.
+- Python3.10 AST/compile·변경 외 gate/cleanup/native assertions 동일 대조·public·diff·기록 검사를 수행했습니다. [상한·진단 해석](../reference/wmi-input-phase-825.md)에 한계를 기록했습니다.
+- C3·selector/workflow는 변경하지 않았습니다. 실제 process/thread/PowerShell/WMI/WSL/native/CLI/PI/runtime/연구/bench/HPC 미실행. 로컬 커밋만 준비하며 push·PR/API/CI 조회·병합·배포 없이 독립 검토와 통합을 총괄에게 넘깁니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+# PR825 · sanitizer 실제 CPU 초과 후 제품 수정
+
+- source `ea6a8731`, tested base `204cb1e0`. 실제 Linux3.12 run39548511101/job119052128054는 원문 동일성 PASS·process CPU2.329초 FAIL입니다. wall만의 문제라는 설명을 폐기하며 초선형 원인은 입증하지 못했습니다.
+- URL 패턴의 필수 문자 부재 시 불가능한 regex 탐색만 생략하고 literal path의 구분자 run을 고정 문자 클래스 search로 처리합니다. 공용 scanner·판정/출력·731072자·limit=None·strict CPU<2와 기존 31개 test/helper AST를 유지합니다.
+- red5/동등성2 PASS → 관련 pure24 PASS. 경로1584·URL180조합 동등이며 같은 로컬 장비의 원본 CPU0.156초×2 → 수정0.078초×2입니다. clock 해상도15.625ms이며 Linux 실패나 실제 병렬 부하는 재현하지 않았습니다. Python3.10 AST·public·기록/diff를 검사합니다.
+- S1·CI selector/workflow/profile·Windows/full backstop·preview/exact-proof는 그대로입니다. native/process/thread/xdist·PI/연구/bench·fullsuite와 push/API/CI 조회/merge를 하지 않았습니다. 새 head CI와 root 검토는 미완료입니다. [근거](../reference/ci-windows-cohort-823.md).
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+Refs #825 · #824
+
+WMI timeout 진단만 분리했습니다. 원인 수정이나 실제 Windows 성공을 주장하지 않습니다.
+
+- `ReadToEnd()` 반환 직후 `input_read`, JSON 변환 뒤 기존 `input_accepted`를 출력합니다. [진단 의미와 한계](../reference/wmi-input-phase-825.md)를 따릅니다.
+- 순서 parser·fixture allowlist는 5단계에 맞췄습니다. 결과 포함 frame 상한은 6개이며 기존 8192 bytes·숫자/timing·redaction 상한은 유지합니다. 성공 code/PID·timeout 부분 결과 처리와 보안/정리 경로는 그대로입니다.
+- 수정 전 4건 실패 → 명시한 fake/string 계약 34건 PASS(로컬 0.27초). 완료 전 각 timeout·6frame/byte 경계·잘린/중복/불일치·비밀값 부재와 journal 예외 보존을 확인했습니다. 전체 trace는 로컬 산출에 보존합니다.
+- Python3.10 AST/compile·진단 외 source/native assertions 동일 대조와 public·diff·기록 검사를 수행했습니다. C3 CPUclock/CIpolicy·테스트는 변경하지 않았습니다. 실제 process/thread/PowerShell/WMI/PI/bench 미실행, native CI 미확인입니다.
+- 로컬 커밋만 준비했습니다. Push·API/CI 조회·새 PR·병합·배포 없이 독립 검토와 C3 변경 통합을 총괄에게 넘깁니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+# PR825 · sanitizer CPU 예산 회귀 / 로컬 수정
+
+- source `4128943a`, base `c29e2e3a`. 실제 Linux3.12 job119038816204/run39544266122는 원문 동일성을 통과했고 wall2.092초로 strict<2만 실패했습니다. 4 workers·10724 PASS/43 skip이며 CI CPU 값은 없습니다.
+- 해당 separator 입력에서 초선형 재스캔 근거는 찾지 못했습니다. wall-clock-sensitive 비용 assertion으로 분류하되 scheduling/실제 CPU 기여는 미확정입니다. 제품 sanitizer·S1·CI 정책/Windows/backstop/preview/reuse는 변경하지 않았습니다.
+- 731072자·limit=None·정확한 출력·strict CPU<2를 유지합니다. module-local fake clock 5개가 wall 대기와 CPU 예산·출력 불변식을 구분합니다. old clock red3, 수정 후 명시한 pure-string/security 16 PASS·guard env 유지.
+- Python3.10 AST·public·기록/diff를 검사합니다. 기존 823 evidence는 재사용하며 whole module/suite·native/process/thread/xdist·network·PI/연구/bench를 실행하지 않았습니다. 실제 CI 원인 전체와 새 head CI는 미검증입니다. [근거](../reference/ci-windows-cohort-823.md).
+- 로컬 commit만 남기며 push/PR/API/CI 조회/merge는 하지 않습니다. publication은 root review와 S1 WMI 판단까지 보류합니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+# Windows cohort #823 · main 통합과 빈 association 증거 / 미게시
+
+- source `e09cbb81`. `5989d0a9`에서 main `56914c7b`를 충돌 없이 통합했습니다. PR824 `8baefd07`은 ancestor이며 S1/제품/README/manual을 보존했습니다.
+- 실제 PR run 39538379069의 pull_requests=[] 때문에 검색 후보가 사라졌습니다. main 39541901246의 full은 관측했지만 downstream trust 증거 전체의 적합성까지 재실행해 확인한 것은 아닙니다.
+- 정확한 빈 목록만 authoritative `/pulls/N`의 merged/main SHA·시각·번호·repo·head/base와 다시 결합합니다. 이후 run/attempt/workflow·trusted-base/source policy·성공 gate·ordered checkout parents/tree·현재 epoch artifact/digest를 모두 검증합니다. 기존 nonempty 불일치나 missing/malformed는 full, v3·preview는 재사용하지 않습니다.
+- guarded mock/static 387 PASS, 마지막 fake subset 91 PASS(추가4개 포함). old discovery red1·중간 fixture alias red1도 보존했습니다. main 변경/새 계약 200개만 serial collection했고 실제 fixture를 실행하지 않았습니다. guard 3변수 유지.
+- 정적 선택 4716/10762(43.8%)/175파일로 목표 미달, host lock 139개 모두 선택·paper 보호8/preview 유지. local diff 기반 preview 예상5114개는 실제 event 증거가 아닙니다. [정책과 한계](../reference/ci-windows-cohort-823.md).
+- 로컬 fetch/merge/commit만 수행합니다. push/PR/CI 조회/병합·native/process/thread/xdist/PI/연구/bench 실행은 하지 않았습니다. 실제 재사용·Windows 성능·artifact 왕복은 새 exact-head CI 전까지 미검증입니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+# Windows cohort #823 · 보호 복구와 preview / 미게시
+
+- source `28b6a1ba`, 이전 head `5728bf0c`, base `c8a33a84`. paper-skill의 Windows sandbox/private/link/hash 8개 누락을 red 8→green 8로 확인하고 복구했습니다. 제품·S1 파일과 host lock/scheduler는 변경하지 않았습니다.
+- mixed source pin 아래 Bash 텍스트 35·fake clock/수치 6·JS 문자열 1개만 더 제외했습니다. init 104와 실제 경로/PowerShell/설치/security/Node 경계는 유지합니다.
+- 정적 예상 4,592/10,638개(43.2%)/173파일, 명시 보호 범위 3,850개(36.2%)로 목표 미달입니다. 현재 local main diff의 변경 test 포함 preview 예상은 4,990개이며 실제 event 증거가 아닙니다. host lock 139노드/23파일은 모두 선택합니다.
+- same-repository 정책 변경 PR만 필수 Windows full 성공 뒤 별도 preview를 실행합니다. exact checkout/ordered parents/workflow·실제 변경 경로를 유지하고 profile/receipt/artifact/summary를 분리합니다. reusable=false이며 manifest producer/consumer는 preview 증거를 거부합니다. 일반 PR/main·nightly/manual에 중복 suite를 붙이지 않습니다.
+- guarded mock/static 475 PASS; red/green·235개 CI-only serial collection·inventory 로그를 보존했습니다. 마지막 preview/encoding 77 PASS와 Python3.10 AST·workflow 보존 비교·공개/기록/diff를 확인했습니다. 최종 로그는 OUT에 기록합니다. 3개 guard env는 유지했습니다.
+- preview는 warm 후속 실행이며 실제 Windows/xdist/host wait·속도는 미검증입니다. full Linux·Windows nightly/manual·safety/install/validator/MCP와 기존 trust 조건은 유지합니다. push/PR/CI 조회/병합은 하지 않았습니다. 총괄의 #824 이후 main 통합·검토·원격 실행이 남습니다. [근거](../reference/ci-windows-cohort-823.md).
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+# Windows cohort #823 · 로컬 후속 / 미게시
+
+- source `9c70d836`·`686b5acf`, 이전 head `6d1eb7eb`, base `c8a33a84`. 제품·S1/S2·README/manual·생성 기록은 변경하지 않았습니다.
+- 기존 collection과 바뀐 CI 계약 175개 재수집으로 10,578개 중 4,566개(43.2%)/171파일 선택을 예상합니다. 명시 경계만 3,884개라 이번 검토로는 30%·2–3천 개 목표 미달입니다. 모든 가능한 정책의 최소 범위를 증명한 수치는 아닙니다.
+- 혼합 4파일은 327→15개 경계를 남깁니다. 변경 test는 포함하고, 공유 helper/fixture data·policy 변경과 잘못된 range는 full입니다. Linux 전수·Windows nightly/manual 전수는 유지합니다.
+- host lock은 22파일/456노드→23파일/139노드입니다. shutdown watcher의 실제 snapshot 경로를 보호하고 durable writer의 포트 0과 무관한 node는 잠그지 않습니다. setup~teardown과 fixture 별칭·autouse/usefixtures를 검사합니다.
+- guarded mock/static **415 PASS**. Python3.10 AST 6파일·JSON·공개·기록/diff를 검사합니다. 구형 manifest/profile/artifact 거부와 순수 node/native sibling의 cache 분리도 검증했습니다. guard 환경과 전체 red/intermediate/green 로그는 로컬에 보존했습니다.
+- 정책 변경 PR의 첫 실행은 full입니다. 이후 유효 range의 원격 Windows 실행 artifact로 실제 선택·worker 수·시간·경합을 확인해야 합니다. static 수치로 성능 향상을 주장하지 않습니다.
+- **push/PR/CI 조회/병합 없음.** 총괄의 #824 이후 main 통합·exact-head 검토·게시·native CI가 남습니다. 실제 process/thread/xdist/PI/연구/bench 실행은 하지 않았습니다. [근거와 한계](../reference/ci-windows-cohort-823.md).
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 Refs #799 · PR #824
 
 새 Windows 실패는 이전 supervisor 조기 종료와 달리 WMI spawn broker에서 발생했습니다. 원인 수정이 아니라 진단 보강입니다.
@@ -27,6 +214,18 @@ Windows CI 회귀 중 테스트의 UTF-8 읽기를 고치고 시작 실패 진�
 - C3 소유 CI/policy와 다른 담당자 변경은 유지했습니다. 로컬 커밋만 준비하며 push·PR 변경·CI/리뷰 조회·병합·배포는 하지 않습니다.
 
 🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+# Windows CI cohort #823 · 미게시
+
+Refs #823 · source `15b12a819848c2f437ccc0451337c6b08b8f2270` + `3e827e4cf8d4644db3eedbf35de93b0fe080c7ce` · base `c8a33a84`.
+
+- 전역 runtime hash 만료를 제거하고 명시한 OS/안전 cohort·변경 test·38개 검토 source/helper pin으로 선택합니다. checkout/ordered parents·push range 불명, 공유 fixture/policy 변경은 전수입니다. v4 manifest는 기존 신뢰 조건과 main before=검증 PR base도 요구합니다.
+- 고정·미확정 listener·전역 scan과 참조된 관련 helper는 setup~teardown을 잠급니다. 전용 subprocess·임의 포트·미사용 import와 단순 설정 객체 생성은 전역 lock 근거에서 뺐습니다. 실제 Runner broker 포트가 입증되지 않으면 보수적으로 잠급니다. proc_tree/adapter의 검증한 전체 process-table wrapper 진입점도 보호합니다.
+- guarded mock/static **565 PASS**, 직렬 collection **10,554개**. 기존 artifact와 제품 node 집합이 같습니다. CI 계약 35개 node를 v2 계약 128개로 교체·추가했습니다. 실제 process/thread/xdist/서비스·연구는 실행하지 않았습니다.
+- 정적 예상 **9,270개(87.8%)/272파일** 선택, **1,284개/38파일** 제외. lock 후보는 **77파일/2,625노드→22파일/456노드**입니다. 20–30% 목표는 미달이며 미분류 5,837개를 임의로 제외하지 않았습니다. 현재 파일 단위 보호 cohort만 3,433개라 추가 node/cohort 검토가 필요합니다.
+- 보존 main run 39510024326 artifact의 대기 합은 **2,949.22 worker-seconds/77파일**입니다. 전달받은 2,450초와의 차이는 미확정입니다. 새 Windows/병렬 실행·속도·재사용 실증은 미검증입니다.
+
+[정책·상세 한계](../reference/ci-windows-cohort-823.md). Linux 전수, Windows nightly/manual 전수와 제품 안전·내구성·worker 격리는 유지했습니다. 다른 owner 파일과 기존 #793 branch는 보존했습니다. **push·PR 생성·CI 조회 없이** 총괄의 최신 main(#799/docs) 통합·정적 검토·native CI를 기다립니다.
 
 Refs #799, #739
 
