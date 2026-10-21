@@ -4,6 +4,38 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## #823 — 진단 검토 P2 반영과 main 통합 (source 07cbf33, merge 1d6352c)
+
+- 독립 검토(READY739 `out-ci823-peer0442.md`, 대상 `6bddac7`)는 P1 0건이었다.
+- P2-1: 진단 중복 키를 잘린 nodeid 대신 원본 nodeid의 sha256(`nodeid_sha256`)으로 바꿨다. 앞 512자가 같은 서로 다른 긴 parameter 실패도 따로 남는다. 출력 nodeid는 그대로 512자로 자른다.
+- P2-2: crash 첫 줄은 앞 4096자만 검사하고 300자만 기록한다. `check_public.sh`가 막는 credential 형식(GitHub·`sk-`·`AKIA`·`AIza`·`xox*`·private key)과 Bearer 값을 고정 패턴으로 가린다. 패턴은 literal prefix와 단일 문자 class만 쓴다.
+- 진단 파일이 proof·metrics·receipt·재사용 판정과 분리된 점, 실패 50·slow 30 상한, 5초 갱신은 그대로다.
+- `origin/main` `ecf1c1b`(#837 `10303fd` 포함)를 명시적으로 merge했다. 들어온 것은 공개 검사 4파일과 생성 목차 2파일뿐이고 충돌은 없었다. 제품 코드 변경은 없다.
+- 로컬 검사(guard 유지, blocked 0):
+  - `tests/test_ci_windows_phases.py` 114 passed(긴 id 구분, credential 8형식, 20만 자 한 줄 포함).
+  - CI 정책 검사 4파일 381 passed.
+  - Python 3.10 AST, `check_public.sh`, `git diff --check`, `notes_index --validate`, `patch_notes check` 통과.
+- 미실행: consult case와 Windows 실제 진단 기록은 CI에 맡긴다. #837의 원래 예외는 미확인이다.
+
+## #823 — Windows pool 실패 진단과 시설팀 fallback 검사의 대기 단언 (source c873b85, base 86a5c05)
+
+- `scripts/ci_suite.py`의 `StageDiagnostics`가 process별 `diagnostics-<worker>.json`을 쓴다.
+  - 진단 전용이며 재사용하지 않는다(`diagnostic_only=true`, `reusable=false`).
+  - 실패 stage마다 duration·예외 kind·crash 첫 줄을 즉시 원자적으로 기록한다. 첫 줄은 300자로 자르고 제어문자를 지우며 token을 가린다.
+  - 느린 stage 상위 30개를 남긴다. 실패는 50건, nodeid는 512자, duration은 유한한 0~86400초까지 받는다. 중복과 쓰기 실패는 test 결과를 바꾸지 않는다.
+- proof·metrics 형식, receipt, 재사용 판정은 바꾸지 않았다. phase 검증은 `collection-`·`metrics-`·`*error*` 이름만 읽으므로 새 파일은 그 판정에 들어가지 않는다.
+- `tests/test_consult_restart.py::test_facilities_ask_falls_back_to_the_cso_when_facilities_never_returns`:
+  - 실제 `wait_agent_online`을 감싸 `("facilities", 0.2)`가 offline(`False`)으로 끝났고 0.2초 동안 기다렸는지 확인한다. 하한은 clock resolution을 고려했다.
+  - CSO fallback, `routed_to`, `state=resolved`, answer의 `from`도 확인한다.
+  - `wait_for`는 기존 case처럼 60초 hang 감시로만 둔다. 다른 2~3초 case는 바꾸지 않았다.
+  - offline 종료는 이 case가 실제 함수로 확인하고, 등록 신호와 timeout 0은 `tests/test_cso.py:893-906`이 확인한다.
+- 이 case는 Windows 선택에 그대로 남는다(cohort). production 대기, MCP 20분, CI job 10분·step 7분, 필수 26, native 실패, 선택 범위는 바꾸지 않았다.
+- 로컬 검사(guard 유지, blocked 0):
+  - `tests/test_ci_windows_phases.py` 104 passed. 새 순수 진단 검사가 포함된다.
+  - CI 정책 검사 4파일 381 passed.
+  - `validate_profile`, `include_windows`, Python 3.10 AST, `check_public.sh`, `git diff --check` 통과.
+- 미실행: consult case(Hub async)는 CI에 맡긴다. #837 실패가 TimeoutError였는지는 미확인이며, 다음 Windows run의 진단 파일로 확인한다.
+
 ## #676 — 조회 상태 기록 독립 검토 반영 (source a1edf63, 검토 대상 b8d452f)
 
 - P1 두 건을 고쳤다.
