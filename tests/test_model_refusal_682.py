@@ -260,3 +260,49 @@ async def test_replan_still_rejects_an_invalid_saved_reference(setup):
     assert response.status_code == 422
     assert len(hub.requests) == 1 and not launches and aid in hub.approvals
     await hub.result_storage.close()
+
+
+def test_replan_keeps_request_meta_but_not_cp1_lineage():
+    """#779, pure: a bench case_id and other tags reach the new request; revised_from (CP1 lineage) does not.
+    No Hub, store, runner or process: the method runs against a plain namespace."""
+    from types import SimpleNamespace
+    requests = {"r0": {"id": "r0", "text": "first", "meta": {"case_id": "bench-c1"}},
+                "r": {"id": "r", "text": "Public fixture request", "mode": "orchestrate", "status": "failed",
+                      "outcome": "model_refused", "cso_model": "opus", "requested_budget_usd": 2,
+                      "meta": {"case_id": "bench-c1", "tag": "arm-a", "revised_from": "r0"}}}
+    created = []
+
+    def create_request(body, extra=None):
+        created.append(body)
+        requests[f"new{len(created)}"] = {"id": f"new{len(created)}", **body.model_dump(), **(extra or {})}
+        return f"new{len(created)}"
+
+    hub = SimpleNamespace(requests=requests, agents={}, create_request=create_request, s=SimpleNamespace(
+        orchestrator=SimpleNamespace(cso_models=["opus", "gpt-6-astra"], cso_agent="cso")))
+    before = copy.deepcopy(requests)
+    decision = {"action": "model", "cso_model": "gpt-6-astra"}
+    child = requests[Hub._model_refusal_request(hub, "r", decision)]
+    assert child["meta"] == {"case_id": "bench-c1", "tag": "arm-a"} and child["model_refusal_from"] == "r"
+    assert child["meta"] is not requests["r"]["meta"]
+    assert {rid: requests[rid] for rid in before} == before  # the refused request and its CP1 parent are unchanged
+    assert [rid for rid, req in requests.items() if req["meta"].get("revised_from") == "r0"] == ["r"]
+    assert Hub.revised_request_of(hub, "r0") == "r" and Hub.revised_request_of(hub, "r") is None
+    assert Hub._model_refusal_request(hub, "r", decision) == child["id"] and len(created) == 1
+
+
+async def test_replan_through_the_card_keeps_meta_without_cp1_lineage(setup):
+    """#779 through the approval route; the existing decline/cancel/budget tests above keep their results."""
+    app, hub, launches = setup
+    hub.requests["r"]["meta"] = {"case_id": "bench-c1", "tag": "arm-a", "revised_from": "r0"}
+    parent = copy.deepcopy(hub.requests["r"]["meta"])
+    await hub.offer_model_refusal("r")
+    aid = hub.requests["r"]["model_refusal_approval_id"]
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
+        response = await client.post(f"/api/approvals/{aid}", json={"approved": True, "model_refusal": {
+            "action": "edit", "text": "Revised public fixture"}}, headers={"Authorization": "Bearer fixture-client"})
+    assert response.status_code == 200, response.text
+    child = hub.requests[launches[0]]
+    assert child["meta"] == {"case_id": "bench-c1", "tag": "arm-a"} and child["model_refusal_from"] == "r"
+    assert hub.requests["r"]["meta"] == parent and hub.requests["r"]["status"] == "failed"
+    assert hub.revised_request_of("r0") == "r" and child["budget_usd"] == 2
+    await hub.result_storage.close()
