@@ -24,3 +24,7 @@ rows:
   at: 2026-10-21 13:08
   summary: 검사 범위와 아직 확인하지 못한 실행 결과를 문서에 맞췄습니다.
   text: '#823: source 28b6a1b의 mock/static 475 PASS·최종 subset 77 PASS, 정적 선택 4592/10638과 별도 preview의 미검증 한계를 reference/status에 반영한다. 실행 코드와 검사 계약은 바꾸지 않는다.'
+- sha: e09cbb8
+  at: 2026-10-21 13:25
+  summary: 실행 기록의 PR 연결이 비어 있어도 독립된 병합 증거를 모두 확인한 결과만 재사용합니다.
+  text: '#823: main56914c7b(PR824 8baefd07 포함)를 충돌 없이 통합한다. 정확한 빈 PR 목록만 authoritative merged PR 재조회와 결합하며 현재 epoch의 run/attempt/workflow·gate·정책 blob·checkout parents/tree·digest를 모두 요구한다. malformed/nonempty 불일치·v3/preview는 full로 남긴다. mock/static 387 PASS·최종 fake subset 91 PASS, 정적 4716/10762(43.8%)·lock139로 목표 미달이며 실제 재사용/Windows 성능은 미검증이다.'
