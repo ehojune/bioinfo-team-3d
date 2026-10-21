@@ -2764,6 +2764,7 @@ class Orchestrator:
         self.step_tasks: dict[str, set[asyncio.Task]] = {}  # tasks a request runs beside its own (R13 cancel)
         self.paper_builds: dict[str, paper_skills.ApprovedBuilds] = {}
         self.paper_budget_holds: dict[str, dict[str, float]] = {}
+        self.paper_task_ids: dict[str, dict[str, str]] = {}
         self.consult_locks: dict[tuple[str | None, str], tuple[asyncio.Lock, int]] = {}
 
     def _step_task(self, rid: str, coro) -> asyncio.Task:
@@ -3647,7 +3648,12 @@ class Orchestrator:
                 try:
                     dispatched = (attempt_task if current.meta.get("facilities_diagnosis") else
                                   with_pi_notes(attempt_task, self.hub.requests.get(rid) or {}))
-                    res = await self.hub.dispatch(dispatched)
+                    tracked = getattr(self.hub, 'dispatch_with_identity', None)
+                    if current.meta.get('kind') == 'paper_skill' and tracked is not None:
+                        res = await tracked(dispatched, lambda tid: self._bind_paper_dispatch_identity(
+                            rid, current.id, tid))
+                    else:
+                        res = await self.hub.dispatch(dispatched)
                     res = paper_skills.with_preparation_outcome(res, attempt_task)
                 except asyncio.CancelledError:
                     raise
@@ -4211,6 +4217,14 @@ class Orchestrator:
         return spent, unknown, spent + unknown * self._unknown_reserve(limit) + held
 
     # ---------- DAG ----------
+    def _bind_paper_dispatch_identity(self, rid: str, requested: str, durable: str) -> None:
+        """Gateway-selected identity, before its recovery wait; no claim of remote termination."""
+        self.paper_task_ids.setdefault(rid, {})[requested] = durable
+        holds = self.paper_budget_holds.setdefault(rid, {})
+        amount = holds.pop(requested, 0.0)
+        if amount:
+            holds[durable] = max(holds.get(durable, 0.0), amount)
+
     def _check_paper_selection(self, rid: str, selected: list[dict],
                                expected: tuple[str, str] | None = None) -> None:
         req = self.hub.requests[rid]
@@ -4270,8 +4284,12 @@ class Orchestrator:
         async def run(task):
             self._check_paper_selection(rid, rows)
             result = await self.run_step(task)
+            if task.id not in self.paper_task_ids.get(rid, {}):  # legacy/fake dispatch without the binding hook
+                self._bind_paper_dispatch_identity(rid, task.id, result.task_id)
             self._count_cost(rid, result.task_id, result)
-            self.paper_budget_holds.get(rid, {}).pop(task.id, None)
+            durable = self.paper_task_ids[rid][task.id]
+            if result.task_id == durable:
+                self.paper_budget_holds.get(rid, {}).pop(durable, None)
             return result
 
         async def cancel(task):
@@ -4279,11 +4297,11 @@ class Orchestrator:
             # is not proof that a remotely dispatched converter has stopped spending.
             cancel_task = getattr(self.hub, 'cancel_task', None)
             if cancel_task is not None:
-                await cancel_task(task.id)
+                await cancel_task(self.paper_task_ids.get(rid, {}).get(task.id, task.id))
 
         async def progress(done, total):
             text = (f'논문 스킬 준비 종료 {min(done, total)}/{total}(생략 포함); '
-                    f'준비 상한 {self.hub.s.runner.task_timeout_s}초, 늦으면 생략·취소 정리')
+                    f'준비 수명 상한 {self.hub.s.runner.task_timeout_s}초; 단계 시작 때 미완료면 생략')
             await self.hub.publish({'type': 'agent.log', 'ts': time.time(), 'request_id': rid,
                 'agent_id': self.cfg.cso_agent, 'data': {'level': 'info', 'text': text}})
             for row in batch.rows.values():
@@ -4315,15 +4333,9 @@ class Orchestrator:
             self._check_paper_selection(rid, selected, (task.meta['step_id'], task.agent_id))
 
         check_selection()
-        batch = self.paper_builds.get(rid)
-        own_batch = batch is None
-        if own_batch:
-            batch = await self._start_paper_builds(rid, selected)
-        try:
-            resolved = await batch.resolve(selected)
-        finally:
-            if own_batch:
-                await self._close_paper_builds(rid, batch)
+        # No lead time outside a DAG cohort: omit deferred advice rather than start and wait here.
+        batch = self.paper_builds.get(rid) or paper_skills.ApprovedBuilds(selected, self.hub.s)
+        resolved = await batch.resolve(selected)
         check_selection()  # approval or selection may change while the bounded conversion awaits
         await self._check_budget(rid)
         contract = req.get('research_contract') or {}

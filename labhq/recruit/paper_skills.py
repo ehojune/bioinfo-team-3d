@@ -240,6 +240,7 @@ class ApprovedBuilds:
         self.finished: set[str] = set()
         self.delivered: dict[tuple, dict] = {}
         self.deadline = 0.0
+        self.watchdog: asyncio.Task | None = None
 
     async def start(self, run, spawn, cancel, progress, grace_s: float) -> None:
         self.spawn, self.cancel, self.progress, self.grace_s = spawn, cancel, progress, grace_s
@@ -267,9 +268,21 @@ class ApprovedBuilds:
         for key in self.rows:
             if key not in self.disabled:
                 self.jobs[key] = spawn(build(key))
+        if self.jobs:
+            self.watchdog = spawn(self._expire())
         await progress(len(self.finished), len(self.rows))
 
+    async def _expire(self) -> None:
+        # The build lifetime is independent of whether a ready step consumes or omits the advice.
+        await asyncio.sleep(max(0, self.deadline - asyncio.get_running_loop().time()))
+        pending = [key for key, job in self.jobs.items() if not job.done()]
+        self.disabled.update({key: 'paper_skill_late' for key in pending})
+        await self._stop(pending)
+        self.finished.update(pending)
+        await self.progress(len(self.finished), len(self.rows))
+
     async def resolve(self, rows: list[dict]) -> list[dict]:
+        """Snapshot at dispatch, with no suspension or cancellation of optional work."""
         out = []
         for selected in rows:
             if selected.get('status') != 'deferred':
@@ -280,18 +293,8 @@ class ApprovedBuilds:
             if delivery not in self.delivered:
                 job = self.jobs.get(key)
                 receipt = {'status': 'unavailable', 'error': self.disabled.get(key, 'paper_skill_late')}
-                if job is not None and key not in self.disabled:
-                    done, _ = await asyncio.wait([job], timeout=max(
-                        0, self.deadline - asyncio.get_running_loop().time()))
-                    if key in self.disabled:
-                        pass  # another assigned step already sealed the late fallback
-                    elif done:
-                        receipt = job.result()  # shutdown/cancellation must propagate
-                    else:
-                        self.disabled[key] = 'paper_skill_late'
-                        await self._stop([key])
-                        self.finished.add(key)
-                        await self.progress(len(self.finished), len(self.rows))
+                if job is not None and key not in self.disabled and job.done():
+                    receipt = job.result()  # an already observed shutdown/cancellation still propagates
                 # A receipt from another assigned step cannot replace this step's approved identity.
                 self.delivered[delivery] = copy.deepcopy({**receipt, **selected,
                     'status': receipt['status'], **({'error': receipt['error']} if receipt.get('error') else {})})
@@ -302,8 +305,10 @@ class ApprovedBuilds:
         pending = [key for key in keys if not self.jobs[key].done()]
         stopping = [key for key in keys if key not in self.stopped and key in self.started
                     and (not self.jobs[key].done() or self.jobs[key].cancelled())]
-        self.stopped.update(stopping)
-        stops = [self.spawn(self.cancel(self.tasks[key])) for key in stopping]
+        async def request_cancel(key):
+            await self.cancel(self.tasks[key])
+            self.stopped.add(key)  # an interrupted callback must not suppress later cleanup
+        stops = [self.spawn(request_cancel(key)) for key in stopping]
         for key in pending:
             self.jobs[key].cancel()
         owned = [*stops, *(self.jobs[key] for key in pending)]
@@ -317,7 +322,11 @@ class ApprovedBuilds:
                 job.cancel()
 
     async def close(self) -> None:
+        if self.watchdog is not None:
+            self.watchdog.cancel()
         await self._stop(list(self.jobs))
+        if self.watchdog is not None and self.watchdog.done() and not self.watchdog.cancelled():
+            self.watchdog.exception()
         for job in self.jobs.values():
             if job.done() and not job.cancelled():
                 job.exception()

@@ -35,6 +35,73 @@ class WaitingStatic(unittest.TestCase):
         return definitions('labhq/recruit/paper_skills.py', {'build_task', 'ApprovedBuilds'},
                            {'copy': copy, 'Task': SimpleNamespace})
 
+    def test_dispatch_snapshot_never_suspends_and_later_completion_cannot_replace_it(self):
+        tree = ast.parse((ROOT / 'labhq/recruit/paper_skills.py').read_text(encoding='utf-8'))
+        cls = next(n for n in tree.body if getattr(n, 'name', None) == 'ApprovedBuilds')
+        method = next(n for n in cls.body if getattr(n, 'name', None) == 'resolve')
+        self.assertFalse(any(isinstance(n, (ast.Await, ast.AsyncFor, ast.AsyncWith)) for n in ast.walk(method)),
+                         'optional conversion must never suspend ready-step admission')
+        # Execute the identical non-suspending body synchronously, not a coroutine or event loop.
+        plain = ast.FunctionDef(name='snapshot', args=method.args, body=method.body,
+                               decorator_list=[], returns=method.returns)
+        ns = self.scope()
+        exec(compile(ast.fix_missing_locations(ast.Module(body=[plain], type_ignores=[])),
+                     '<dispatch-snapshot>', 'exec'), ns)
+        batch = ns['ApprovedBuilds']([row()], settings())
+        class Job:
+            available = False
+            def done(self): return self.available
+            def result(self):
+                assert self.available
+                return {'status': 'ready', 'skill_sha256': 'f' * 64}
+            def cancel(self): raise AssertionError('dispatch must not cancel shared preparation')
+        job = Job()
+        batch.jobs['a' * 64] = job
+        first = ns['snapshot'](batch, [row()])
+        self.assertEqual((first[0]['status'], first[0]['error']), ('unavailable', 'paper_skill_late'))
+        self.assertNotIn('skill_sha256', first[0])
+        job.available = True
+        self.assertEqual(ns['snapshot'](batch, [row()]), first)
+        later = ns['snapshot'](batch, [row('s2')])
+        self.assertEqual((later[0]['status'], later[0]['step_id']), ('ready', 's2'))
+        self.assertNotIn('a' * 64, batch.disabled)
+        cso = ast.parse((ROOT / 'labhq/orchestrator/cso.py').read_text(encoding='utf-8'))
+        admission = next(n for n in ast.walk(cso) if isinstance(n, ast.AsyncFunctionDef)
+                         and n.name == '_resolve_step_paper_skills')
+        calls = {ast.unparse(n.func) for n in ast.walk(admission) if isinstance(n, ast.Call)}
+        self.assertFalse(calls & {'self._start_paper_builds', 'self._close_paper_builds', 'batch.close'})
+        self.assertTrue({'self._check_budget', 'self._verify_research_reuse'} <= calls)
+
+    def test_gateway_recovery_binds_the_actual_id_and_moves_the_hold_once(self):
+        tree = ast.parse((ROOT / 'labhq/orchestrator/cso.py').read_text(encoding='utf-8'))
+        cls = next(n for n in tree.body if getattr(n, 'name', None) == 'Orchestrator')
+        names = {'_bind_paper_dispatch_identity', '_budget_bound', '_unknown_reserve'}
+        cls.body = [n for n in cls.body if getattr(n, 'name', None) in names]
+        self.assertEqual({n.name for n in cls.body}, names, 'recovered work needs an authoritative ID binding')
+        ns = {}
+        exec(compile(ast.Module(body=[cls], type_ignores=[]), '<durable-hold>', 'exec'), ns)
+        owner = ns['Orchestrator']()
+        owner.paper_task_ids, owner.paper_budget_holds = {}, {'r': {'new': 5}}
+        owner.cost, owner.cost_tasks, owner.cost_unknown = {}, {}, {}
+        owner.hub = SimpleNamespace(s=SimpleNamespace(policy=SimpleNamespace(
+            budget=SimpleNamespace(per_task_usd=5))))
+        owner._bind_paper_dispatch_identity('r', 'new', 'durable')
+        self.assertEqual(owner.paper_task_ids['r']['new'], 'durable')
+        self.assertEqual(owner.paper_budget_holds['r'], {'durable': 5})
+        self.assertEqual(owner._budget_bound('r', 10), (0, 0, 5))
+        owner.cost_tasks, owner.cost_unknown = {'r': {'durable'}}, {'r': {'durable'}}
+        owner._bind_paper_dispatch_identity('r', 'new', 'durable')
+        self.assertEqual(owner._budget_bound('r', 10), (0, 1, 5))
+        owner.cost, owner.cost_unknown = {'r': 0.25}, {}
+        self.assertEqual(owner._budget_bound('r', 10), (0.25, 0, 0.25))
+        gateway = ast.parse((ROOT / 'labhq/gateway/server.py').read_text(encoding='utf-8'))
+        dispatch = next(n for n in ast.walk(gateway) if isinstance(n, ast.AsyncFunctionDef) and n.name == 'dispatch')
+        bind = next(n for n in ast.walk(dispatch) if isinstance(n, ast.Call)
+                    and ast.unparse(n.func) == 'bind_identity' and ast.unparse(n.args[0]) == 'tid')
+        wait = next(n for n in ast.walk(dispatch) if isinstance(n, ast.Call)
+                    and ast.unparse(n.func) == 'self._await_prior_task')
+        self.assertLess(bind.lineno, wait.lineno)
+
     def test_assigned_steps_share_one_approved_build_without_mutable_aliases(self):
         ns = self.scope()
         first, second = row(), row('s2')

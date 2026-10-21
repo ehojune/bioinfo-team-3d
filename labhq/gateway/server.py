@@ -2657,7 +2657,13 @@ class Hub:
         return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
                           error=f"session belongs to runner {pinned}; {task.agent_id!r} is now on runner {target}")
 
-    async def dispatch(self, task: Task) -> TaskResult:
+    async def dispatch_with_identity(self, task: Task, bind_identity) -> TaskResult:
+        """Bind an internal caller's reservation/cancel handle before awaiting recovered work."""
+        return await self.dispatch(task, bind_identity=bind_identity)
+
+    async def dispatch(self, task: Task, *, bind_identity=None) -> TaskResult:
+        if bind_identity is not None:
+            bind_identity(task.id)
         # Roster/lifecycle changes refresh agent_runner; dispatch consumes that resolved
         # owner without replacing it before checking the session's runner pin.
         if (self.requests.get(task.request_id or "") or {}).get("status") == "cancelled":
@@ -2674,6 +2680,8 @@ class Hub:
             if matches:
                 tid, entry = max(matches, key=lambda pair: (int(pair[1].get("attempt") or 1),
                                                             pair[1].get("dispatched_at", 0)))
+                if bind_identity is not None:
+                    bind_identity(tid)
                 if entry.get("completed") and entry.get("result"):
                     self.recovered_tasks.add(tid)
                     return TaskResult.model_validate(entry["result"]).model_copy(update={"cost_usd": 0.0})

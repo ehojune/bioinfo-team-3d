@@ -79,6 +79,7 @@ async def test_approved_dag_prepares_both_papers_concurrently_and_deduplicates_a
         assert len(calls) == 2 and orch._request_budget_remaining('r') == 15
         assert all(t.budget_usd == t.request_budget_remaining_usd == 5 for t in calls)
         release.set()
+        await asyncio.gather(*orch.paper_builds['r'].jobs.values())  # available lead time, not dispatch waiting
         for sid in ('s1', 's2', 's3'):
             rows = await orch.paper_builds['r'].resolve(ps.attachments(hub.plan, sid, 'worker', 'r'))
             assert rows[0]['status'] == 'ready' and rows[0]['step_id'] == sid
@@ -117,13 +118,42 @@ async def test_paper_parallelism_never_exceeds_either_existing_limit(limiter):
     await first.wait()
     assert len(calls) == 1
     release.set()
+    await asyncio.gather(*batch.jobs.values())
     assert all(r['status'] == 'ready' for r in await batch.resolve(rows))
     await orch._close_paper_builds('r', batch)
     assert len(calls) == 2
 
 
 @pytest.mark.asyncio
-async def test_late_result_never_replaces_the_frozen_step_input_even_if_cancel_races_completion():
+async def test_ready_step_omits_pending_advice_and_later_step_can_use_the_same_completed_build():
+    selected_row = row()
+    selected_row['step_ids'].append('s2')
+    hub = Hub([selected_row])
+    orch = Orchestrator(hub)
+    entered, release = asyncio.Event(), asyncio.Event()
+    async def convert(task):
+        entered.set()
+        await release.wait()
+        return ready(task)
+    orch.run_step = convert
+    batch = await orch._start_paper_builds('r', ps.attachments(hub.plan, 's1', 'worker', 'r'))
+    await entered.wait()
+    selected = ps.attachments(hub.plan, 's1', 'worker', 'r')
+    delivered = await batch.resolve(selected)
+    assert delivered[0]['status'] == 'unavailable' and delivered[0]['error'] == 'paper_skill_late'
+    assert not delivered[0].get('skill_sha256') and not delivered[0].get('called')
+    assert not hub.cancelled and not next(iter(batch.jobs.values())).done()
+    release.set()
+    await asyncio.gather(*batch.jobs.values())
+    assert await batch.resolve(selected) == delivered
+    later = await batch.resolve(ps.attachments(hub.plan, 's2', 'worker', 'r'))
+    assert later[0]['status'] == 'ready' and later[0]['step_id'] == 's2'
+    await orch._close_paper_builds('r', batch)
+    assert not hub.cancelled
+
+
+@pytest.mark.asyncio
+async def test_build_lifetime_expires_independently_and_late_completion_cannot_become_input():
     hub = Hub([row()])
     orch = Orchestrator(hub)
     entered = asyncio.Event()
@@ -132,18 +162,32 @@ async def test_late_result_never_replaces_the_frozen_step_input_even_if_cancel_r
         try:
             await asyncio.Event().wait()
         except asyncio.CancelledError:
-            return ready(task)  # remote completion races the cancellation request
+            return ready(task)  # completion races durable cancellation
     orch.run_step = convert
-    batch = await orch._start_paper_builds('r', ps.attachments(hub.plan, 's1', 'worker', 'r'))
+    selected = ps.attachments(hub.plan, 's1', 'worker', 'r')
+    batch = await orch._start_paper_builds('r', selected)
     await entered.wait()
     batch.deadline = asyncio.get_running_loop().time() - 1
-    selected = ps.attachments(hub.plan, 's1', 'worker', 'r')
+    await batch._expire()  # controlled clock; the real lifetime watcher remains owned until close
     delivered = await batch.resolve(selected)
-    assert delivered[0]['status'] == 'unavailable' and delivered[0]['error'] == 'paper_skill_late'
-    assert not delivered[0].get('skill_sha256') and not delivered[0].get('called')
-    assert await batch.resolve(selected) == delivered
     await orch._close_paper_builds('r', batch)
+    assert delivered[0]['status'] == 'unavailable' and not delivered[0].get('skill_sha256')
     assert hub.cancelled == [next(iter(batch.tasks.values())).id]
+
+
+@pytest.mark.asyncio
+async def test_dispatch_without_preparation_lead_time_does_not_start_or_reap_optional_work():
+    hub = Hub([row()])
+    orch = Orchestrator(hub)
+    orch._start_paper_builds = AsyncMock(side_effect=AssertionError('no optional work at ready-step admission'))
+    orch._close_paper_builds = AsyncMock(side_effect=AssertionError('no optional cleanup wait at admission'))
+    task = Task(agent_id='worker', request_id='r', prompt='ready fixture', meta={
+        'step_id': 's1', 'paper_skills': ps.attachments(hub.plan, 's1', 'worker', 'r')})
+    resolved = await orch._resolve_step_paper_skills(task)
+    assert resolved.meta['paper_skills'][0]['error'] == 'paper_skill_late'
+    assert not orch.paper_budget_holds
+    orch._start_paper_builds.assert_not_awaited()
+    orch._close_paper_builds.assert_not_awaited()
 
 
 @pytest.mark.parametrize('interruption', [ShutdownInterrupted, asyncio.CancelledError])
@@ -153,10 +197,13 @@ async def test_build_interruption_propagates_through_approved_dispatch(interrupt
     orch = Orchestrator(hub)
     failure = ShutdownInterrupted({'stopping': True}) if interruption is ShutdownInterrupted else interruption()
     orch.run_step = AsyncMock(side_effect=failure)
-    task = Task(agent_id='worker', request_id='r', prompt='fixture', meta={
-        'step_id': 's1', 'paper_skills': ps.attachments(hub.plan, 's1', 'worker', 'r')})
-    with pytest.raises(interruption):
-        await orch._resolve_step_paper_skills(task)
+    batch = await orch._start_paper_builds('r', ps.attachments(hub.plan, 's1', 'worker', 'r'))
+    await asyncio.gather(*batch.jobs.values(), return_exceptions=True)
+    try:
+        with pytest.raises(interruption):
+            await batch.resolve(ps.attachments(hub.plan, 's1', 'worker', 'r'))
+    finally:
+        await orch._close_paper_builds('r', batch)
 
 
 @pytest.mark.asyncio
@@ -205,7 +252,10 @@ async def test_exhausted_budget_records_unavailable_without_dispatch_or_new_budg
     orch.run_step = AsyncMock(side_effect=AssertionError('no budget grant or dispatch'))
     task = Task(agent_id='worker', request_id='r', prompt='fixture', meta={
         'step_id': 's1', 'paper_skills': ps.attachments(hub.plan, 's1', 'worker', 'r')})
+    batch = await orch._start_paper_builds('r', task.meta['paper_skills'])
+    orch.paper_builds['r'] = batch
     resolved = await orch._resolve_step_paper_skills(task)
+    await orch._close_paper_builds('r', batch)
     assert resolved.meta['paper_skills'][0]['error'] == 'paper_skill_budget_unavailable'
     orch.run_step.assert_not_awaited()
     assert hub.requests['r']['budget_usd'] == 10
@@ -220,6 +270,7 @@ async def test_optional_papers_leave_the_existing_normal_turn_budget_without_ret
             *ps.attachments(hub.plan, 's2', 'worker', 'r')]
     batch = await orch._start_paper_builds('r', rows)
     assert orch._request_budget_remaining('r') == 5
+    await asyncio.gather(*batch.jobs.values())
     resolved = await batch.resolve(rows)
     await orch._close_paper_builds('r', batch)
     assert [r['status'] for r in resolved] == ['ready', 'unavailable']
@@ -243,8 +294,14 @@ async def test_unapproved_plan_does_not_prefetch_and_post_build_plan_drift_still
     orch.run_step = changed
     task = Task(agent_id='worker', request_id='r', prompt='fixture', meta={
         'step_id': 's1', 'paper_skills': ps.attachments(hub.plan, 's1', 'worker', 'r')})
-    with pytest.raises(ReuseApprovalRequired):
-        await orch._resolve_step_paper_skills(task)
+    batch = await orch._start_paper_builds('r', task.meta['paper_skills'])
+    await asyncio.gather(*batch.jobs.values())
+    orch.paper_builds['r'] = batch
+    try:
+        with pytest.raises(ReuseApprovalRequired):
+            await orch._resolve_step_paper_skills(task)
+    finally:
+        await orch._close_paper_builds('r', batch)
     assert hub.requests['r']['research_contract']['approval']['approved'] is False
 
 
@@ -263,7 +320,7 @@ async def test_approval_is_rechecked_after_waiting_for_the_budget_admission_lock
     orch._start_paper_builds = observed
     task = Task(agent_id='worker', request_id='r', prompt='fixture', meta={
         'step_id': 's1', 'paper_skills': ps.attachments(hub.plan, 's1', 'worker', 'r')})
-    waiting = asyncio.create_task(orch._resolve_step_paper_skills(task))
+    waiting = asyncio.create_task(orch._start_paper_builds('r', task.meta['paper_skills']))
     await entering.wait()
     hub.requests['r']['research_contract']['approval']['approved'] = False
     lock.release()
