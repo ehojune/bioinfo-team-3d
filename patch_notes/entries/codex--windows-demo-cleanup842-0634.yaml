@@ -20,3 +20,11 @@ rows:
     at: "2026-10-22 07:30"
     summary: "브라우저를 띄우기 전에 실패한 검사 정리가 쓸데없는 대기 timer 때문에 다른 오류로 바뀌지 않게 합니다."
     text: "PR843 첫 CI의 3플랫폼 공통 실패(web_visual_tooling startup fake 5·6·7이 원래 오류 대신 demo startup and cleanup failed)는 Chrome이 없는 부분 시작에서도 3초 강제 단계 timer를 만들어 5초 deadline만 허용하는 sandbox 계약을 깬 회귀였다. 소유 Chrome을 획득했을 때만 그 timer를 만든다. 5초·3초·실제 close 판정은 그대로다."
+  - sha: 1193f98
+    at: "2026-10-22 07:44"
+    summary: "Windows 웹 검사가 띄운 브라우저와 그 하위 프로세스를 한 묶음으로 관리해, 검사가 끝나면 함께 정리되게 합니다."
+    text: "Windows에서만 demo Chrome을 제품의 labhq/runner/memory_limit.py --windows-job(KILL_ON_CLOSE Job) wrapper 아래에서 띄운다. 소유 child는 wrapper이고 forced 정리는 그 wrapper만 끝내 Job close로 Chrome과 하위를 정리한다. interpreter는 test_web_3d.py가 넘긴 LABHQ_TEST_PYTHON(sys.executable)만 쓰고 PATH나 Store alias로 대체하지 않는다. 실제 exit·stdio close·socket·server·profile 정리, 정상 kill 0, 5/30/170초, 필수 26, Linux 경로는 그대로다."
+  - sha: c8751ad
+    at: "2026-10-22 07:45"
+    summary: "서버 감독 프로세스 시작 검사가 실패하면 원인을 볼 수 있는 로그 끝부분을 함께 남깁니다."
+    text: "test_a_real_gateway_runs_as_its_supervisors_child_and_down_ends_both의 시작이 실패하면 이 test 자신의 supervisor 로그와 진단 기록 마지막 16KiB를 token을 가리고 제어문자를 바꿔 출력한 뒤 원래 예외를 그대로 다시 던진다. 90초 health와 정리는 그대로이며 process 없는 순수 검사를 더했다."
