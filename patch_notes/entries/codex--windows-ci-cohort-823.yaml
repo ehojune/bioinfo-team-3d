@@ -48,3 +48,7 @@ rows:
   at: 2026-10-21 17:23
   summary: 병렬 검사에서 진단 파일을 정확히 읽고 브라우저 지연의 근거를 남깁니다.
   text: '#825: fake master/gw0/gw1에서 필수 native 누락 실패와 worker별 non-reusable 진단을 확인한다. Node timeout의 부분 TAP/stderr·원래 예외와 browser 단계 표식을 보존하며 timeout·선택·assertions는 유지한다. source pin만 갱신, fake/static 50 PASS와 최종 worker 3 PASS; 실제 Windows 지연 원인은 미해결이며 435초/2 FAIL은 목표 성공이 아니다.'
+- sha: '7d91529'
+  at: 2026-10-21 18:33
+  summary: Windows 시작·종료와 브라우저 검사를 먼저 끝내고 나머지를 병렬로 실행합니다.
+  text: '#825: native25+browser1의 serial 전 lifecycle PASS/no-SKIP receipt 뒤 나머지를 4-worker pool로 넘긴다. 실제 phase 목록·full/eligible 일치·union/중복·worker report·같은 run/head/attempt/tree/policy/interpreter와 시간 순서를 검증하고 producer가 JSON을 재검증한다. profile6/manifest8로 구형 증거를 거부한다. 관련 fake/static708 PASS 후 최종 영향104 PASS, 별도 offline collector11 PASS이며 실제 새 head job≤600초·경합 원인·제품/PI 성공은 미검증이다.'
