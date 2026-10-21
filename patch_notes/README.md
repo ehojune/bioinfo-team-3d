@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 01:41 | [`c1fe6f9`](https://github.com/ehojune/bioinfo-team-3d/commit/c1fe6f9) | **브라우저 시작이 실패해도 이미 만든 자원을 정리하도록 고쳤습니다.**<br>Server 획득·reserved-port 거부를 기존 cleanup 범위로 옮기고 listen 오류를 원래 호출에 반환한다. 기존16행 상한 안에 startup 경계를 추가했다. 동기 trace/등록 probe6·기존 wrapper/static11 PASS, 격리 VM의 비동기 정리 계약3건은 CI용으로 추가했다. 실제 main 로그에는 desktop open/start가 있어 startup 원인은 아직 미확정이다. Policy blob 불일치의 reuse 거부 근거를 기록했으며 assertions·30초·필수26·receipt·CI policy는 유지했다. Refs #833; 새 PR 및 main의 native 확인이 남았다. |
 | 00:43 | [`2fdd569`](https://github.com/ehojune/bioinfo-team-3d/pull/832/commits/2fdd569) | **브라우저 검사 설명을 참고 문서 한곳에 모았습니다.**<br>종료 계약과 진단 한계는 docs/reference에 모으고 상태 기록은 짧은 링크로 줄였습니다. 상태 설명705자에서96자, 참고473자이며 합계705자에서569자로 줄었습니다. 검토한 종료 코드와 검증 조건은 보존했습니다. |
 | 00:32 | [`4e00cbd`](https://github.com/ehojune/bioinfo-team-3d/pull/832/commits/4e00cbd) | **브라우저에 정상 종료를 요청한 뒤 통신 연결을 정리하도록 고쳤습니다.**<br>소유 CDP 연결에 Browser.close를 먼저 보내고 실제 child/stdio close 뒤 transport를 닫는다. 연결이 없거나 cleanup이 지연되면 기존 소유 child 종료를 시도하며5초 초과는 실패로 남긴다. Stdio/socket/server acknowledgement·profile 정리 조건과 전체 deadline은 유지했다. 동기 shutdown fake3·전송 callback 단언8·기존 wrapper/static11 PASS, 비동기 cleanup 계약2건 추가. 실제 Windows pipe 소유자·원인과 새 native CI 성공은 미확인이다. |
 
