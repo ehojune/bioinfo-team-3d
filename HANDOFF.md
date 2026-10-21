@@ -9,7 +9,7 @@
 2. test는 바꾼 곳만, 전체 suite는 CI에 맡깁니다. 실제 설정·PI 인스턴스·원자료는 업무 범위와 승인 없이 건드리지 않습니다.
 3. 끝날 때 PR과 `docs/status/`에 결과를 쓰고 이 문서의 우선순위를 갱신합니다. 지난 큐·결정은 [참고 기록](docs/reference/README.md)에 두고 여기에는 현재 것만 남깁니다.
 
-## 현재 우선순위 (2026-10-21)
+## 현재 우선순위 (2026-10-22)
 
 PI가 신규 일반 작업 보류를 해제했습니다. 승인 예산 안에서 열린 PR을 마무리하고 같은 담당자에게 관련 후속 작업을 이어 배정합니다. 시운전 체크리스트는 [#739](https://github.com/ehojune/bioinfo-team-3d/issues/739)입니다.
 
@@ -20,7 +20,7 @@ PI가 신규 일반 작업 보류를 해제했습니다. 승인 예산 안에서
 
 병합된 감사 항목의 구현·검증 범위는 [감사 우선순위](docs/reference/audit-priorities-2026-10-20.md)에 있습니다. #811의 queued-halt 검사는 executor 대기와 분리됐으며 [검증 경계](docs/reference/shadow-test-cost-811.md)를 따릅니다.
 
-#793·#821·#822는 병합·CI 검증을 마쳤습니다. 논문 스킬은 승인 뒤 생성하며 검증 문서에는 읽기 권한만 줍니다. 결과 참조 receipt는 실제 tool 호출·과학적 효용의 증거가 아닙니다([계약과 검증 범위](docs/reference/paper-skills-798.md)).
+논문 스킬은 승인 뒤 함께 준비하고, 분석 단계는 시작 시 준비된 결과만 씁니다. 미완료면 기다리지 않고 생략 사실을 기록합니다([준비·취소와 CI 근거](docs/reference/paper-skill-waiting-671.md)). 검증 문서는 읽기 권한만 주며 결과 참조 receipt는 실제 tool 호출·과학적 효용의 증거가 아닙니다([참조 계약](docs/reference/paper-skills-798.md)).
 
 개발 준비가 끝나고 PI가 실운전을 승인한 뒤의 순서는 공개 소형 주제 실운전 → bench dry-run·필수 게이트 → Astra의 코드·README·구조 전체 검토 → 동일 요청 bench 비교(labhq 혼합 roster 대 Astra·Sol·Opus 단독 세션)입니다. 가동 전에는 배포 인스턴스의 `doctor --runtime` 준비 판정을 다시 확인합니다. v0.5 선언(2026-10-08) 이후 장치의 구현·CI 통과는 새 실운전 PASS를 뜻하지 않습니다([로드맵](docs/manual.md#로드맵)).
 

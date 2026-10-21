@@ -23,8 +23,8 @@ Lookup-only. [원 요구](https://github.com/ehojune/bioinfo-team-3d/issues/671)
 
 ## 검증 경계
 
-- P1 source/pure 2건은 기준 `5fa1844e`에서 red→green. 이전 8건은 반복하지 않았다.
-- 첫 [CI run39642716136](https://github.com/ehojune/bioinfo-team-3d/actions/runs/39642716136)은 24건 실패했다. Inventory 6건은 별도 보정됐고, waiting/recovery 17건은 불완전한 fixture plan이 strict validator에서 막혀 async 동작에 도달하지 못했다. 공유 순수 builder로 필수 plan·step 필드를 채웠으며 validator는 그대로다.
-- 기존 attachment 1건은 준비 시간 없이 즉시 장착을 기대했다. 승인된 upstream 단계가 fake 준비 시간을 제공하도록 바꾸고, 실제 DAG·변환 1회·지정 단계 장착·scope 격리·bundle·호출 미확인 검사를 유지한다. 승인 예산에 정상 두 슬롯과 선택적 한 턴을 포함하고 선언 산출물도 fixture가 쓴다.
-- 로컬은 기존 fixture의 16/24/32 schema 오류 재현→4형태 검증·hash 일치, 새 동기 순수 2건, Python 3.10 AST/compile 4파일만 확인했다. Async 18건의 통과는 새 CI가 필요하다. 제품 코드는 바꾸지 않았다.
+- [#835](https://github.com/ehojune/bioinfo-team-3d/pull/835)는 `0fc11e64`로 병합했다. 최종 head `0b7e54c6`의 [CI39647868669](https://github.com/ehojune/bioinfo-team-3d/actions/runs/39647868669)는 필수 10개 job 모두 통과했다. Linux 3.10 로그에서 waiting 16건·복구 identity 2건과 attachment 17건의 실제 PASS를 확인했다. Linux 3.12 전수 job도 통과했다.
+- Windows job은 6분 29초, 핵심 26건은 모두 PASS했다. 나머지는 3,345 PASS·28 skip이며 전체 수집 11,127건 중 3,399건을 선택했다. PR head `0b7e54c6`의 CI 근거이며 실제 연구 성능이나 다른 head와의 속도 개선율을 뜻하지 않는다.
+- 첫 [실패 CI39642716136](https://github.com/ehojune/bioinfo-team-3d/actions/runs/39642716136)의 검사 목록·strict plan fixture 오류는 validator·승인 hash·제품 소스를 유지하며 고쳤다. 장착 검사는 승인된 upstream의 준비 시간을 명시하고 실제 DAG·변환 1회·지정 단계 장착·격리·bundle·호출 미확인 조건을 유지한다.
+- 로컬 검증은 동기 순수·schema·Python 3.10 AST 범위였다. 비동기 동작의 통과 근거는 위 CI이며 로컬에서 실제 runner나 연구 요청을 실행하지 않았다.
 - 실제 병렬 빌드·원격 종료·UI·시간/금액·효용과 역사적 세 번째 빌드의 원인은 미확인이다. #671은 열어 둔다.
