@@ -49,3 +49,11 @@ run39544266122/job119038816204는 sanitizer 원문 보존을 통과하고 wall 2
 실제 sanitizer인 `labhq/integrations/github.py`에서 URL 패턴의 필수 문자 `@`·`.`·`=`가 없을 때만 불가능한 탐색을 생략하고, literal path 구분자 run을 고정 문자 클래스 search로 전진시킵니다. 정규식/판정 순서·공용 scanner·경계·출력은 유지합니다. deterministic work 회귀 red5/기존 결과 비교2 PASS → 관련 pure 24 PASS, 경로 1,584·URL 180조합 동등, 원래 test/helper AST 31개 동일입니다.
 
 같은 Windows lane Python3.12의 731,072자 입력 CPU는 원본 0.156초×2 → 수정 0.078초×2였습니다(15.625ms clock 해상도). strict CPU<2·limit=None·출력 assertion은 그대로입니다. 이 관측은 Linux CI 실패 재현·임의 입력의 선형성 증명·새 head CI 성공이 아닙니다. shared scanner 비용은 남습니다. Python3.10 AST·public·기록/diff를 검사하며 S1/Windows·selector/workflow/profile·preview/exact-proof는 변경하지 않았습니다. native/process/thread/xdist·실제 연구/bench와 게시 없이 root의 exact-head 검토·CI가 남습니다.
+
+## PR825 worker 진단 회귀와 browser 미해결 경계
+
+- base `6b818f8c`: Linux 3.10/3.12의 실패는 worker `gw0/gw1` 진단을 `master` 파일로 읽던 test 오류입니다. fake master/gw0/gw1에서 missing-native 실패와 정확한 파일·payload를 확인합니다.
+- Windows resizable test는 30초 wrapper가 60초 browser test/startup보다 먼저 끝납니다. 자동 Chrome 탐지·desktop/phone `finally close`는 있지만 실제 지연 단계와 정리 완료는 로그로 확정하지 못했습니다. WMI provider timeout은 다른 담당 범위입니다.
+- timeout/skip/선택/assertion은 유지합니다. wrapper가 부분 TAP·stderr와 원래 timeout 예외를 보존하고 browser open/load/assertions/close 표식을 남깁니다. **Windows 원인 수정이나 성공 주장이 아닌 진단 보강**이며 다음 조치는 root 검토가 필요합니다.
+- fake/static 50 PASS; worker red 2 FAIL/1 PASS, 진단 red 3 FAIL/3 PASS 로그를 보존했습니다. JS body는 표식·공백 외 동일, Python assertions와 선택 계약은 동일하며 exact source pin만 갱신했습니다. 실제 Node/browser/xdist는 로컬 실행하지 않았습니다.
+- 실제 Windows 435초/pytest376.60초는 2 FAIL이므로 10분 목표 성공이 아닙니다. Linux full·Windows 필수 native/nightly full·10분 상한과 proof/manifest 계약은 그대로입니다.
