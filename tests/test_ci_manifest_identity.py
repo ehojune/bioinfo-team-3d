@@ -104,7 +104,7 @@ def test_identity_diagnostics_do_not_bypass_any_gate(producer, gate):
 
 
 @pytest.mark.parametrize("gate", cs.GATE_IDS)
-@pytest.mark.parametrize("profile", [None, "windows-full-v1", "serial-legacy"])
+@pytest.mark.parametrize("profile", [None, "windows-full-v1", "windows-boundary-v1", "serial-legacy"])
 def test_coverage_receipts_must_match_every_expected_gate(producer, gate, profile):
     current, needs, event, _, calls = producer
     needs[gate]["outputs"]["profile"] = profile

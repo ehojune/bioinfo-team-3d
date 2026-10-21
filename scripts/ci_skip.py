@@ -27,9 +27,9 @@ WORKFLOW = ".github/workflows/test.yml"
 POLICY_FILES = (WORKFLOW, "scripts/ci_skip.py", "scripts/ci_suite.py", "scripts/ci_selection.py",
                 "scripts/ci_isolation.py", "config/ci/windows-boundary-v1.json", "pyproject.toml",
                 "tests/conftest.py", "labhq/test_guard.py")
-VERSION = 3
+VERSION = 4
 GATE_IDS = ("pytest", "pytest-windows", "clean-install", "ro-crate-validator", "pytest-slow")
-COVERAGE = dict(zip(GATE_IDS, ("linux-full-v1", "windows-boundary-v1", "clean-install-v1",
+COVERAGE = dict(zip(GATE_IDS, ("linux-full-v1", "windows-boundary-v2", "clean-install-v1",
                               "official-validator-v1", "long-mcp-v1")))
 REQUIRED_JOBS = ("pytest (3.10)", "pytest (3.12)", "pytest-windows", "clean-install",
                  "ro-crate-validator", "pytest-slow", "changes", "readme", "patch-notes", "validation-manifest")
@@ -423,6 +423,11 @@ def valid_run(run: dict, pr: dict, current: dict, workflow_id: int, request, now
     snapshot = pr_snapshot(snapshot, rest=True)
     if run["head_sha"] != snapshot["head_sha"]:
         return False
+    # v4 includes changed tests as well as the static Windows cohort. Equal
+    # trees alone cannot prove equal base-to-tree change sets: require the
+    # main push's actual before snapshot to equal the tested PR base too.
+    if current.get("selection_base") != snapshot["base_sha"]:
+        return False
     # The producer must already have been trusted on main before this PR ran.
     # Workflow/helper-changing PRs cannot certify their own new reuse policy.
     for path, blob_sha in current["policy"].items():
@@ -512,7 +517,7 @@ def decide(event_name: str, event: dict, current: dict) -> str:
         if parents != [base, pr["head"]["sha"]]:
             return "full"
     elif event_name == "push" and event.get("ref") == "refs/heads/main":
-        if reuse_main(current):
+        if reuse_main({**current, "selection_base": event.get("before")}):
             return "reuse"
         base = event.get("before", "")
     else:

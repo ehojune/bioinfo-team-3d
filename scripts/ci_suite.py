@@ -19,7 +19,7 @@ import time
 
 import pytest
 
-from scripts.ci_selection import ROOT, PROFILES, host_resource, include_windows, policy
+from scripts.ci_selection import ROOT, PROFILES, WINDOWS_BOUNDARY, host_resource, include_windows, policy, read_changes
 
 
 def pytest_addoption(parser):
@@ -40,23 +40,34 @@ def safe_worker(value):
     return value
 
 
-def select(items, profile, root=ROOT):
-    if profile != "windows-boundary-v1":
+def select(items, profile, root=ROOT, *, changed=None):
+    if profile != WINDOWS_BOUNDARY:
         return list(items), [], {}
     try:
-        reviewed = policy(root)["reviewed_pure"]
+        data = policy(root)
+        reviewed = data["reviewed_pure"]
+        if changed is None:
+            changed = read_changes(os.environ["CI_SUITE_ARTIFACT_DIR"], os.environ.get("GITHUB_SHA"))
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         print("ci_suite: selection policy unavailable; include all nodes", file=sys.stderr)
         return list(items), [], {}
     chosen, omitted, reasons = [], [], {}
     cache = {}
     for item in items:
-        path = Path(item.path).resolve()
-        relative = path.relative_to(root.resolve()).as_posix()
+        original = Path(item.path)
+        path = original.resolve()
+        try:
+            relative = path.relative_to(root.resolve()).as_posix()
+        except ValueError:
+            chosen.append(item)  # external/unclassified collection is never omitted
+            continue
         if relative not in cache:
             try:
-                cache[relative] = include_windows(relative, path.read_text(encoding="utf-8"), reviewed)
-            except (OSError, UnicodeError):
+                if original.is_symlink():
+                    raise ValueError("unreviewed symlink")
+                cache[relative] = include_windows(relative, path.read_text(encoding="utf-8"), reviewed,
+                                                 root=root, cohorts=data["boundary_cohorts"], changed=changed)
+            except (OSError, UnicodeError, ValueError, KeyError, SyntaxError):
                 cache[relative] = (True, "unreadable source included")
         included, reason = cache[relative]
         if included:

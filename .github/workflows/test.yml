@@ -151,7 +151,7 @@ jobs:
     env:
       CI_JOB_LABEL: pytest-windows
       PYTHONHASHSEED: '0'
-      CI_COVERAGE_PROFILE: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'windows-full-v1' || 'windows-boundary-v1' }}
+      CI_COVERAGE_PROFILE: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'windows-full-v1' || 'windows-boundary-v2' }}
     outputs:
       tree: ${{ steps.identity.outputs.tree }}
       profile: ${{ steps.identity.outputs.profile }}
@@ -163,6 +163,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 0  # validate event range locally; missing evidence includes full
       - id: identity
         shell: bash
         run: |
@@ -173,6 +174,8 @@ jobs:
           python-version: '3.12'
           cache: pip
       - run: pip install -e ".[dev]"
+      - name: Bind changed-test range to checkout
+        run: python -m scripts.ci_selection
       - run: pytest -q --durations=15 -n auto --dist loadfile -p scripts.ci_suite --ci-profile ${{ env.CI_COVERAGE_PROFILE }}
 
       - name: Record measured coverage and timing
@@ -322,7 +325,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: steps.manifest.outputs.reusable == 'true'
         with:
-          name: ci-full-v3-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ci-full-v4-${{ github.run_id }}-${{ github.run_attempt }}
           path: ci-result.json
           if-no-files-found: error
           retention-days: 7

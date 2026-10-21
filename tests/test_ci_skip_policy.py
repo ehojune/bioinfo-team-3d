@@ -19,7 +19,7 @@ def sha(char):
 
 @pytest.fixture
 def evidence():
-    identity = {"checkout_sha": sha("a"), "tree": sha("b"),
+    identity = {"checkout_sha": sha("a"), "tree": sha("b"), "selection_base": sha("c"),
                 "policy": {p: sha(str(i + 1)) for i, p in enumerate(cs.POLICY_FILES)}}
     repo = {"id": 123, "full_name": cs.REPOSITORY}
     pr = {"number": 788, "merged_at": "2026-10-20T00:00:00Z", "merge_commit_sha": sha("a"),
