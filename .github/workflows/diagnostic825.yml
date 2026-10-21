@@ -1,4 +1,4 @@
-name: diagnostic825
+name: diagnostic825-native
 
 on:
   push:
@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 jobs:
-  transport-probe825:
+  native-probe825:
     runs-on: windows-latest
     timeout-minutes: 5
     steps:
@@ -19,36 +19,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Four synthetic transport cases, once each
-        run: python scripts/windows_transport_probe825.py
+      - name: Install the same declared CI dependencies
+        run: pip install -e ".[dev]"
+        timeout-minutes: 2
+      - name: Existing owned Windows Job and gateway shutdown regressions, isolated
+        run: pytest -q tests/test_windows_job_ci.py tests/test_web_shutdown_process.py --durations=10 --junitxml=native825.xml
         timeout-minutes: 3
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: transport-probe825
-          path: transport-probe825.json
-          retention-days: 3
-
-  browser-probe825:
-    runs-on: windows-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: One public demo browser case with original 30 second wrapper
-        timeout-minutes: 2
-        run: python scripts/windows_browser_probe825.py
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: browser-probe825
-          path: browser825-diagnostic.json
+          name: native-probe825
+          path: native825.xml
           retention-days: 3
