@@ -1,4 +1,4 @@
-pr: null
+pr: 825
 rows:
 - sha: 15b12a8
   at: 2026-10-21 11:17
@@ -28,3 +28,7 @@ rows:
   at: 2026-10-21 13:25
   summary: 실행 기록의 PR 연결이 비어 있어도 독립된 병합 증거를 모두 확인한 결과만 재사용합니다.
   text: '#823: main56914c7b(PR824 8baefd07 포함)를 충돌 없이 통합한다. 정확한 빈 PR 목록만 authoritative merged PR 재조회와 결합하며 현재 epoch의 run/attempt/workflow·gate·정책 blob·checkout parents/tree·digest를 모두 요구한다. malformed/nonempty 불일치·v3/preview는 full로 남긴다. mock/static 387 PASS·최종 fake subset 91 PASS, 정적 4716/10762(43.8%)·lock139로 목표 미달이며 실제 재사용/Windows 성능은 미검증이다.'
+- sha: '4128943'
+  at: 2026-10-21 13:49
+  summary: 공개 보고 문자열 검사에서 계산 시간과 출력 보존을 함께 확인합니다.
+  text: '#825: tests/test_github_reporter.py의 731072자·limit=None·원문 동일성·strict 2초 예산을 유지하며 process_time으로 계산 비용을 잰다. module-local fake clock은 wall 대기 제외·CPU2 이상 거부·출력 변경 거부를 확인한다. pure-string/security 16 PASS, 제품·CI 정책은 변경하지 않았고 실제 CI scheduling 기여와 새 head CI는 미검증이다.'
