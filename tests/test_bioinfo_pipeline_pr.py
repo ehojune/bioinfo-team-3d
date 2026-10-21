@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 import httpx
@@ -43,6 +44,31 @@ def test_no_github_credential_reaches_staff_whatever_its_name(tmp_path, monkeypa
                          emit=lambda *_args: None, prompt="work")
     env = get_adapter(Engine.mock, configured).staff_env(context)
     assert not any(key.casefold() == name.casefold() for key in env)
+
+
+@pytest.mark.parametrize("read_only", [False, True])
+@pytest.mark.parametrize("engine", [Engine.claude_code, Engine.codex])
+def test_staff_keep_the_pi_identity_whatever_bot_marker_they_inherit(tmp_path, monkeypatch, engine, read_only):
+    """#813: the PC's gh/git wrappers pick a bot from LABHQ_COMMIT_AGENT or the CLI's session variables and hand the
+    shell that bot's token; staff children get "none". It turns the bot off; gh's own stored login is a separate
+    matter."""
+    configured = settings(tmp_path)
+    getattr(configured.engines, engine.value).env = {"Labhq_Commit_Agent": "gemini"}
+    for name, value in {"LABHQ_COMMIT_AGENT": "claude", "CLAUDECODE": "1", "CODEX_THREAD_ID": "t",
+                        "GH_TOKEN": "pi-credential"}.items():
+        monkeypatch.setenv(name, value)
+    task_env = {"labhq_commit_agent": "codex"}
+    context = RunContext(task=Task(agent_id="bioinfo-agent", prompt="work"),
+                         agent=AgentSpec(id="bioinfo-agent", name="bio", role="pipeline", engine=engine),
+                         workdir=tmp_path, settings=configured, mcp_servers=[], env=task_env,
+                         emit=lambda *_args: None, prompt="work", read_only=read_only)
+    parent = dict(os.environ)
+    env = get_adapter(engine, configured).staff_env(context)
+    assert [(key, value) for key, value in env.items() if key.casefold() == "labhq_commit_agent"] == [
+        ("LABHQ_COMMIT_AGENT", "none")]
+    assert not {"GH_TOKEN", "CLAUDECODE", "CODEX_THREAD_ID"} & {key.upper() for key in env}  # #301, parent markers
+    assert dict(os.environ) == parent and task_env == {"labhq_commit_agent": "codex"}
+    assert getattr(configured.engines, engine.value).env == {"Labhq_Commit_Agent": "gemini"}
 
 
 @pytest.mark.parametrize(
