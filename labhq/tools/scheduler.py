@@ -296,7 +296,12 @@ class Scheduler:
         self.cfg = cfg
         self.user = cfg.user or getpass.getuser()
 
+    def _require_enabled(self, operation: str) -> None:
+        if self.cfg.scheduler == "none":
+            raise RuntimeError(f"{operation} not supported for scheduler=none (HPC disabled)")
+
     def _run(self, args: list[str]) -> subprocess.CompletedProcess:
+        self._require_enabled("command execution")
         if self.cfg.ssh_host:
             args = ["ssh", "-o", "BatchMode=yes", self.cfg.ssh_host, shlex.join(args)]
         return subprocess.run(args, capture_output=True, text=True, timeout=self.cfg.command_timeout_s,
@@ -304,6 +309,7 @@ class Scheduler:
 
     def submit_args(self, script: str, name: str, cores: int, mem: str, walltime: str,
                     queue: str | None, stdout: str, stderr: str) -> list[str]:
+        self._require_enabled("submit")
         name = sanitize_job_name(name)
         wt = normalize_walltime(walltime)
         if self.cfg.scheduler == "sge":
@@ -366,6 +372,7 @@ class Scheduler:
         return m.group(1)
 
     def queue(self) -> list[JobInfo]:
+        self._require_enabled("queue")
         if self.cfg.scheduler == "mock":
             return []
         if self.cfg.scheduler == "slurm":
@@ -384,6 +391,7 @@ class Scheduler:
         return parse_sge_qstat(p.stdout) if self.cfg.scheduler == "sge" else parse_pbs_qstat_table(p.stdout)
 
     def status(self, job_id: str) -> JobInfo:
+        self._require_enabled("status")
         if self.cfg.scheduler == "mock":  # ids are "mock-…" and nothing is run
             return JobInfo(job_id=job_id, state="completed", exit_status=0)
         checked_job_id(job_id)
@@ -453,6 +461,7 @@ class Scheduler:
         return accounted or live or JobInfo(job_id=job_id, state="missing")
 
     def cancel(self, job_id: str) -> str:
+        self._require_enabled("cancel")
         if self.cfg.scheduler == "mock":
             return "cancelled (mock)"
         checked_job_id(job_id)

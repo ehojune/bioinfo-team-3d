@@ -386,7 +386,13 @@ class Runner:
         self.registry.load()
         log.info("runner %s: %d agents", self.s.runner.id, len(self.registry.agents))
         try:
-            await asyncio.gather(self.broker.serve(), self._connection_loop(), self._job_watch_loop())
+            loops = [self.broker.serve(), self._connection_loop()]
+            if self.s.hpc.scheduler != "none":
+                loops.append(self._job_watch_loop())
+            else:
+                log.warning("HPC job polling disabled (scheduler=none); saved job records are retained, "
+                            "not refreshed")
+            await asyncio.gather(*loops)
         finally:
             # Writes queued by the tasks that were just cancelled still finish (#606).
             await durable.adrain(durable.EXIT_DRAIN_S)
@@ -2255,6 +2261,8 @@ class Runner:
 
     # ---------------- HPC job watcher ----------------
     async def _job_watch_loop(self) -> None:
+        if self.s.hpc.scheduler == "none":
+            return
         while not self._stopping:
             await asyncio.sleep(self.s.runner.job_poll_s)
             try:
@@ -2263,6 +2271,8 @@ class Runner:
                 log.exception("job poll failed")
 
     async def _poll_jobs(self) -> None:
+        if self.s.hpc.scheduler == "none":
+            return  # Retain saved state, missing counts and notifications; do not invent a final outcome.
         for jid, j in list(self.jobs.items()):
             if j["terminal"]:
                 continue

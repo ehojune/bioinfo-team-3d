@@ -1,0 +1,10 @@
+pr: 832
+rows:
+- sha: '2fdd569'
+  at: 2026-10-22 00:43
+  summary: 브라우저 검사 설명을 참고 문서 한곳에 모았습니다.
+  text: '종료 계약과 진단 한계는 docs/reference에 모으고 상태 기록은 짧은 링크로 줄였습니다. 상태 설명705자에서96자, 참고473자이며 합계705자에서569자로 줄었습니다. 검토한 종료 코드와 검증 조건은 보존했습니다.'
+- sha: '4e00cbd'
+  at: 2026-10-22 00:32
+  summary: 브라우저에 정상 종료를 요청한 뒤 통신 연결을 정리하도록 고쳤습니다.
+  text: '소유 CDP 연결에 Browser.close를 먼저 보내고 실제 child/stdio close 뒤 transport를 닫는다. 연결이 없거나 cleanup이 지연되면 기존 소유 child 종료를 시도하며5초 초과는 실패로 남긴다. Stdio/socket/server acknowledgement·profile 정리 조건과 전체 deadline은 유지했다. 동기 shutdown fake3·전송 callback 단언8·기존 wrapper/static11 PASS, 비동기 cleanup 계약2건 추가. 실제 Windows pipe 소유자·원인과 새 native CI 성공은 미확인이다.'
