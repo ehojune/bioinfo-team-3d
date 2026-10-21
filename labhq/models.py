@@ -317,6 +317,40 @@ class ToolCallCount(BaseModel):
         return self
 
 
+EXTERNAL_LOOKUP_TOOL = r"^[a-z][a-z0-9_]{0,47}$"
+EXTERNAL_LOOKUP_MAX_S = 366 * 86400.0  # a sanity bound; a workspace reused for weeks keeps its step budget
+EXTERNAL_LOOKUP_MAX_TOOLS = 50
+
+
+class ExternalLookupTool(BaseModel):
+    """Outcome counts of one lookup tool in a step's outputs/external_lookup_status.jsonl (#676)."""
+    tool: str = Field(pattern=EXTERNAL_LOOKUP_TOOL)
+    ok: int = Field(default=0, ge=0)
+    timeout: int = Field(default=0, ge=0)
+    failed: int = Field(default=0, ge=0)
+    cancelled: int = Field(default=0, ge=0)
+    # The tool's last record is "waiting": a lookup started and no outcome was written.
+    unfinished: bool = False
+    elapsed_s: float = Field(ge=0, le=EXTERNAL_LOOKUP_MAX_S, allow_inf_nan=False)
+    timeout_s: float = Field(gt=0, le=EXTERNAL_LOOKUP_MAX_S, allow_inf_nan=False)
+
+    @property
+    def missing(self) -> bool:
+        return bool(self.timeout or self.failed or self.cancelled or self.unfinished)
+
+
+class ExternalLookupRecord(BaseModel):
+    """The workspace's own lookup status file read back by the runner. It is the step workspace's record, not proof
+    that a tool was called or a paper was read; it never fills an evidence slot."""
+    tools: list[ExternalLookupTool] = Field(default_factory=list, max_length=EXTERNAL_LOOKUP_MAX_TOOLS)
+    invalid_rows: int = Field(default=0, ge=0)
+    duplicate_rows: int = Field(default=0, ge=0)
+    dropped_tools: int = Field(default=0, ge=0)
+    truncated: bool = False
+    # The file is there but is a link, not a plain file, or failed to read: not the same as no file.
+    unreadable: bool = False
+
+
 class TaskResult(BaseModel):
     task_id: str
     agent_id: str
@@ -363,6 +397,8 @@ class TaskResult(BaseModel):
     literature_access_failures: dict[str, str] = {}
     # Public paper IDs only: discovery candidates, selected fulltext inputs and unread reasons (#744).
     literature_ledger: dict[str, Any] = {}
+    # Counts and seconds only from outputs/external_lookup_status.jsonl; None when the step left no such file (#676).
+    external_lookups: ExternalLookupRecord | None = None
     provenance: dict[str, Any] = {}  # manifest summary; the gateway may not share the runner's disk
     pipeline_submission: dict[str, Any] | None = None  # gateway-only handoff; stripped before web publication
     partial_results: bool = False
@@ -407,6 +443,17 @@ class TaskResult(BaseModel):
         from .vocab.declare import bounded_stats
         return bounded_stats(value)
 
+    @field_validator("external_lookups", mode="before")
+    @classmethod
+    def bounded_external_lookups(cls, value: Any) -> ExternalLookupRecord | None:
+        # A malformed record from another runner version drops the summary, never the result.
+        if value is None or isinstance(value, ExternalLookupRecord):
+            return value
+        try:
+            return ExternalLookupRecord.model_validate(value)
+        except ValueError:
+            return None
+
     @model_serializer(mode="wrap")
     def _drop_empty_internal_fields(self, handler: Any) -> dict[str, Any]:
         # Results without declarations, a gateway handoff or a quota reset serialize exactly as before those
@@ -443,6 +490,8 @@ class TaskResult(BaseModel):
                 data.pop("literature_access_failures", None)
             if not data.get("literature_ledger"):
                 data.pop("literature_ledger", None)
+            if data.get("external_lookups") is None:
+                data.pop("external_lookups", None)
             if data.get("pipeline_submission") is None:
                 data.pop("pipeline_submission", None)
             if data.get("quota_reset_at") is None:
