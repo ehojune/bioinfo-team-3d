@@ -1,0 +1,6 @@
+pr: 825
+rows:
+- sha: 13ac0f9
+  at: '2026-10-21 14:09'
+  summary: Windows 시작 진단에서 입력 읽기 완료와 JSON 변환 완료를 구분합니다.
+  text: 'ReadToEnd 뒤 input_read를 추가하고 input_accepted는 JSON 변환 뒤 유지한다. 고정 5단계와 결과 포함 6frame parser·fixture allowlist를 맞췄으며 8192bytes·기존 timing/timeout·PID/code·nonce/envhash/Job/ACK/정리 계약은 유지했다. 수정 전 4건 실패 후 명시한 fake/string 34건·3.10 AST 3파일·진단 외 source/native assertions 대조·public/diff/기록 검사 통과. 새 lookup reference 1060자·status 884자. 실제 WMI 원인 수정/성공 증거는 아니며 native CI와 C3 통합 검증은 미확인, 로컬 커밋만 준비했다.'
