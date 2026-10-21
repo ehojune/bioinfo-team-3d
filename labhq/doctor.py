@@ -128,6 +128,16 @@ def _row(group: str, name: str, status: str, detail: str, hint: str) -> dict:
     return {"group": group, "name": name, "status": status, "detail": detail, "hint": hint}
 
 
+def _volume(path: Path):
+    """Device of the nearest existing ancestor, the folder disk_space.usage probes; nothing is created."""
+    path = path.expanduser().absolute()
+    while not path.exists():
+        if path.parent == path:
+            raise OSError("disk unavailable")
+        path = path.parent
+    return os.stat(path).st_dev
+
+
 def _disk_rows(settings: Settings) -> list[dict]:
     workspace = settings.path(settings.runner.workspace_root)
     paths = [("workspace disk", workspace), ("temporary disk", Path(tempfile.gettempdir()))]
@@ -137,6 +147,15 @@ def _disk_rows(settings: Settings) -> list[dict]:
         raw = os.path.expanduser(env.get(variable) or str(Path.home() / fallback))
         path = Path(raw)
         paths.append((f"{engine} staff home disk", path if path.is_absolute() else workspace / path))
+    # The gateway's SQLite state and events (#678) can fill another volume and stop the gateway. On a volume a row
+    # above already shows it would only repeat that row; a volume that cannot be told apart keeps its own row.
+    state = settings.path(settings.gateway.state_dir)
+    try:
+        separate = _volume(state) not in {_volume(path) for _name, path in paths}
+    except (OSError, ValueError):
+        separate = True
+    if separate:
+        paths.append(("gateway state disk", state))
     rows = []
     runner = settings.runner
     for name, path in paths:
