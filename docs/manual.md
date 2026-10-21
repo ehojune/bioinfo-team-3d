@@ -862,7 +862,7 @@ flowchart LR
 | 풀패키지 `full` | 둘 다 | 둘 다 | 위 전부 |
 
 ### 작동 방식
-선행 연구의 방법은 채용 없이 이번 요청의 참고 스킬로 씁니다(#549 C).
+선행 연구의 방법은 채용 없이 이번 요청의 참고 스킬로 씁니다(#549 C). 아래 receipt 보호는 #828 변경안이며 아직 main에 반영되지 않았습니다. 실제 기관/PDF 문헌의 독해·효용은 미검증입니다.
 
 - CSO는 방법이 맞는 논문을 최대 2편 골라 `paper_skills`에 DOI/PMID·이유·담당 단계를 적습니다.
 - CP1 전에는 논문 ID·저장 본문 hash·추출 상태·방법/QC 줄 범위를 담은 receipt 선언만 확인합니다. `access_level=full_text` 문자열만 있거나 부분 추출·필요 근거 누락이면 자료 요청 사유를 남기고 생략합니다. 보충자료에 의존하는 근거는 별도 artifact 연결 전까지 자료를 요청합니다. 본문만으로 충분하면 보충자료를 요구하지 않습니다. 자동 PDF·HTML 추출은 일부 텍스트 확보만으로 완료가 되지 않습니다. 원문 범위가 partial/unknown이면 논문 스킬을 만들지 않습니다.
@@ -1467,7 +1467,7 @@ Stanford Zou 연구실의 Virtual Biotech(bioRxiv 2026, 저자 중 Jiacheng Miao
 
 ## 내 저장소로 올리기
 
-개발 CI는 보호 예제·markup이 같은 prose와 정해진 기록만 축소합니다. manual·개발 지침·정책은 내용·구조가 같은 문장 경계 줄바꿈만 후보입니다. main 재사용에는 동일 tree·workflow/policy·coverage와 필수 gate 성공 증거가 필요합니다. PR825 변경안은 Linux 3.10/3.12 전수와 Windows nightly·workflow_dispatch 전수를 유지하면서, routine Windows를 필수 OS 경계 검사 한 번과 10분 job 상한으로 제한합니다. 선택 증거가 틀리면 빠르게 실패하며 전수로 확대하지 않습니다. timeout도 실패입니다. 실제 10분 이내 성공은 아직 미측정이며 clean-install·공식 validator·MCP gate는 유지합니다([판별·증거 경계](reference/ci-reuse.md)).
+개발 CI는 보호 예제·markup이 같은 prose와 정해진 기록만 축소합니다. manual·개발 지침·정책은 내용·구조가 같은 문장 경계 줄바꿈만 후보입니다. main 재사용에는 동일 tree·workflow/policy·coverage와 필수 gate 성공 증거가 필요합니다. Linux 3.10/3.12와 Windows nightly·workflow_dispatch는 전수입니다. routine Windows는 필수 OS 경계 검사 한 번과 10분 job 상한을 적용합니다. 선택 증거가 틀리면 빠르게 실패하며 전수로 확대하지 않습니다. timeout도 실패입니다. clean-install·공식 validator·MCP gate는 유지합니다([판별·증거 경계](reference/ci-reuse.md)).
 
 ```bash
 ./scripts/publish_github.sh          # gh CLI로 public 저장소 <내 계정>/labhq 생성 + push

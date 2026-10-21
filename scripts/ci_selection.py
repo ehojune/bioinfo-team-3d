@@ -23,6 +23,7 @@ SHA = re.compile(r"[0-9a-f]{40}\Z")
 PATH = re.compile(r"(?:[\w.-]+/)*[\w.-]+\Z")
 
 
+@lru_cache(maxsize=512)
 def source_digest(text: str) -> str:
     return hashlib.sha256(text.replace("\r\n", "\n").encode("utf-8")).hexdigest()
 
@@ -98,6 +99,13 @@ def validate_profile(root=ROOT):
 
 
 def aliases(tree):
+    # _syntax keys trees by exact source content. Return a private mutable copy:
+    # source audits may augment relative-import bindings without poisoning CI.
+    return dict(_alias_bindings(tree))
+
+
+@lru_cache(maxsize=512)
+def _alias_bindings(tree):
     result = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -128,7 +136,7 @@ def aliases(tree):
                 changed = True
         if not changed:
             break
-    return result
+    return tuple(result.items())
 
 
 def qualified(node, names):
@@ -158,36 +166,54 @@ def _boundary_scope(tree, symbol, names):
     """
     if not symbol:
         return list(ast.walk(tree))
-    definitions = _definitions(tree, names)
+    definitions, autouse, module_nodes, module_refs, bodies = _scope_index(tree, tuple(names.items()))
     first = symbol.split('::', 1)[0]
     if first not in definitions:
         raise ValueError('unknown collected symbol')
-    pending, visited, result = [first], set(), []
-    for name, definition in definitions.items():
-        if any(isinstance(d, ast.Call) and qualified(d.func, names) in {'pytest.fixture', 'pytest_asyncio.fixture'}
-               and any(k.arg == 'autouse' and isinstance(k.value, ast.Constant) and k.value.value is True
-                       for k in d.keywords) for d in getattr(definition, 'decorator_list', [])):
-            pending.append(name)
-    for statement in tree.body:
-        if not isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            nodes = list(ast.walk(statement))
-            result.extend(nodes)
-            pending.extend(n.id for n in nodes if isinstance(n, ast.Name) and n.id in definitions)
+    pending, visited, result = [first, *autouse, *module_refs], set(), list(module_nodes)
     while pending:
         name = pending.pop()
         if name in visited:
             continue
         visited.add(name)
-        nodes = list(ast.walk(definitions[name]))
+        nodes, dependencies = bodies[name]
         result.extend(nodes)
+        pending.extend(dependencies)
+    return result
+
+
+@lru_cache(maxsize=512)
+def _scope_index(tree, bindings):
+    """Content-bound module work shared by all symbols, never selection results.
+
+    Keep original traversal/dependency order and a fresh result list per caller.
+    Neither changed-path evidence nor filesystem/helper decisions are cached here.
+    """
+    names = dict(bindings)
+    definitions = _definitions(tree, names)
+    autouse, module_nodes, module_refs, bodies = [], [], [], {}
+    for name, definition in definitions.items():
+        if any(isinstance(d, ast.Call) and qualified(d.func, names) in {'pytest.fixture', 'pytest_asyncio.fixture'}
+               and any(k.arg == 'autouse' and isinstance(k.value, ast.Constant) and k.value.value is True
+                       for k in d.keywords) for d in getattr(definition, 'decorator_list', [])):
+            autouse.append(name)
+    for statement in tree.body:
+        if not isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            nodes = list(ast.walk(statement))
+            module_nodes.extend(nodes)
+            module_refs.extend(n.id for n in nodes if isinstance(n, ast.Name) and n.id in definitions)
+    for name, definition in definitions.items():
+        nodes = tuple(ast.walk(definition))
+        dependencies = []
         for n in nodes:
             dependency = n.id if isinstance(n, ast.Name) else n.arg if isinstance(n, ast.arg) else None
             if dependency in definitions:
-                pending.append(dependency)
+                dependencies.append(dependency)
             if isinstance(n, ast.Call) and qualified(n.func, names) == 'pytest.mark.usefixtures':
-                pending.extend(a.value for a in n.args if isinstance(a, ast.Constant)
+                dependencies.extend(a.value for a in n.args if isinstance(a, ast.Constant)
                                and isinstance(a.value, str) and a.value in definitions)
-    return result
+        bodies[name] = nodes, tuple(dependencies)
+    return definitions, tuple(autouse), tuple(module_nodes), tuple(module_refs), bodies
 
 
 def intrinsic_boundary(text, *, node=None, root=None, seen=None):
@@ -235,6 +261,25 @@ def intrinsic_boundary(text, *, node=None, root=None, seen=None):
     return False
 
 
+@lru_cache(maxsize=512)
+def _test_imports(tree):
+    """Immutable direct import candidates, independent of the changed range."""
+    imports = []
+    for statement in ast.walk(tree):
+        if isinstance(statement, ast.ImportFrom):
+            module = (statement.module or '').replace('.', '/')
+            candidates = {module + '.py', module + '/__init__.py'}
+            candidates.update(module + '/' + alias.name + '.py' for alias in statement.names)
+            if statement.level or not module.startswith('tests/'):
+                candidates |= {'tests/' + name for name in tuple(candidates)}
+        elif isinstance(statement, ast.Import):
+            candidates = {alias.name.replace('.', '/') + '.py' for alias in statement.names}
+        else:
+            continue
+        imports.append(frozenset(candidates))
+    return tuple(imports)
+
+
 def include_windows(path, text, data, *, root=ROOT, changed=frozenset(), node=None):
     """Maintained essential contracts + direct OS APIs, never product transitivity.
 
@@ -279,19 +324,8 @@ def include_windows(path, text, data, *, root=ROOT, changed=frozenset(), node=No
         return True, "direct OS/runtime API in test/local fixture scope"
     # Direct helper edits retain their consumers, without a speculative
     # transitive walk through arbitrary product/runtime implementations.
-    for statement in ast.walk(_syntax(text)):
-        if isinstance(statement, ast.ImportFrom):
-            module = (statement.module or '').replace('.', '/')
-            imports = {module + '.py', module + '/__init__.py'}
-            imports.update(module + '/' + alias.name + '.py' for alias in statement.names)
-            if statement.level or not module.startswith('tests/'):
-                imports |= {'tests/' + name for name in tuple(imports)}
-            dependencies = imports.intersection(changed)
-        elif isinstance(statement, ast.Import):
-            dependencies = {alias.name.replace('.', '/') + '.py' for alias in statement.names}.intersection(changed)
-        else:
-            continue
-        for dependency in dependencies:
+    for imports in _test_imports(_syntax(text)):
+        for dependency in imports.intersection(changed):
             if dependency.startswith('tests/'):
                 helper = root / dependency
                 helper.resolve().relative_to(root.resolve())

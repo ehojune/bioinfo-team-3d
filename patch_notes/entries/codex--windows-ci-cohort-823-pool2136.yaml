@@ -1,0 +1,6 @@
+pr: 825
+rows:
+- sha: '2b746d0'
+  at: 2026-10-21 21:44
+  summary: Windows 검사 목록을 고를 때 같은 파일을 반복 분석하는 일을 줄였습니다.
+  text: '#825: source content에 묶인 bounded alias·scope·import·digest cache와 호출별 경로 재사용을 적용했다. Alias dict·scope list는 caller별로 분리하고 helper 내용·profile·changed range 판정은 재확인한다. Counted fake 2건 red→green, 관련 pure/fake 137개 고유 case PASS. 보존된 11033 node ID를 test import/collection 없이 대조해 기존 eligible3680·critical26·pool3654·제외240파일과 순서·사유가 일치했다. 실제 실패는 pool420초 중단이며 native hang 원인과 새 Windows 소요 시간·600초 내 성공은 미확인이다. Coverage·phase proof·timeout·제품은 변경하지 않았다.'
