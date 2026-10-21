@@ -206,7 +206,7 @@ def node_wrapper(run, *, required_browser=False):
     function.decorator_list = []
     namespace = dict(Path=Path, __file__=str(s.ROOT/'tests/test_web_3d.py'), pytest=pytest,
                      re=__import__('re'), os=SimpleNamespace(environ={'LABHQ_REQUIRE_RESIZABLE_BROWSER': '1'} if required_browser else {}),
-                     shutil=SimpleNamespace(which=lambda name: 'fake-node'),
+                     shutil=SimpleNamespace(which=lambda name: 'fake-node'), sys=SimpleNamespace(executable='fake-python'),
                      subprocess=SimpleNamespace(run=run, TimeoutExpired=subprocess.TimeoutExpired))
     exec(compile(ast.Module(body=[function], type_ignores=[]), '<fake-node-wrapper>', 'exec'), namespace)
     return namespace['test_office_in_node']
@@ -217,7 +217,9 @@ def test_node_timeout_retains_partial_output_and_original_failure(binary):
     import subprocess
     def run(command, **options):
         assert command[0] == 'fake-node'
-        assert options == dict(capture_output=True, text=True, encoding='utf-8', timeout=30)
+        # The exact interpreter reaches the Windows Job wrapper of the demo driver (#842); no PATH python.
+        assert options == dict(capture_output=True, text=True, encoding='utf-8', timeout=30,
+                               env={'LABHQ_TEST_PYTHON': 'fake-python'})
         stdout, stderr = 'TAP version 13\n', 'resizable browser: desktop load\n'
         if binary:
             stdout, stderr = stdout.encode(), stderr.encode()
@@ -287,6 +289,13 @@ def test_demo_driver_cleanup_waits_for_actual_close_and_preserves_startup_errors
     assert deadline.index('observeLate();') < deadline.index('force();') < deadline.index('reject(')
     assert "{after_deadline_ms: Math.round(clock() - deadline)}" in source
     assert "if (opts.testWithholdBrowserClose === true) return true;" in source  # test-only forced path
+    # #842/#843: on Windows Chrome runs under the product's KILL_ON_CLOSE Job wrapper; ending the owned wrapper
+    # closes the Job. Fail closed before any resource exists; Linux spawns Chrome directly as before.
+    assert "path.resolve(__dirname, '..', '..', 'labhq', 'runner', 'memory_limit.py')" in source
+    assert "return [python, ['-I', WINDOWS_JOB_WRAPPER, '--windows-job', String(WINDOWS_JOB_LIMIT_BYTES), '--', chromePath, ...args]];" in source
+    assert "if (platform !== 'win32') return null;" in source and "if (!python) return [chromePath, args];" in source
+    assert source.index('const jobPython = windowsJobPython();') < source.index('const profile = fs.mkdtempSync(')
+    assert 'chrome = spawn(browser, browserArgs,' in source
 
 
 def test_incomplete_timed_out_report_is_diagnostic_not_success(monkeypatch, tmp_path):

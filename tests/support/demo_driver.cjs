@@ -17,6 +17,31 @@ const START_MS = 60000;  // Chrome start budget; the node:test budget of each te
 // One cleanup deadline. The graceful Browser.close may use its first part; the rest is for the owned child's forced
 // close to be observed (#842: a graceful wait that took the whole budget left the kill no time to show its close).
 const CLEANUP_MS = 5000, GRACEFUL_CLEANUP_MS = 3000;
+// Windows only (#842): Chrome and every descendant run inside one KILL_ON_CLOSE Job held by the product's stdlib
+// wrapper (labhq/runner/memory_limit.py --windows-job, which joins itself to the Job before starting Chrome). The
+// owned child is that wrapper; ending it closes the Job, so the kernel ends the browser tree. Nothing is killed by
+// name, tree walk or PID. The limit is far above a demo browser: the Job is for ownership, not a memory cap.
+const WINDOWS_JOB_WRAPPER = path.resolve(__dirname, '..', '..', 'labhq', 'runner', 'memory_limit.py');
+const WINDOWS_JOB_LIMIT_BYTES = 64 * 1024 ** 3;
+
+// The interpreter is named explicitly (tests/test_web_3d.py passes sys.executable). No PATH lookup and no Store
+// alias: a Chrome started without the owned Job would hide the very cleanup this driver must prove.
+function windowsJobPython(platform = process.platform, env = process.env) {
+  if (platform !== 'win32') return null;
+  const python = env.LABHQ_TEST_PYTHON;
+  if (typeof python !== 'string' || !path.win32.isAbsolute(python) || /[\\/]WindowsApps[\\/]/i.test(python)
+      || !fs.existsSync(python)) {
+    throw new Error('LABHQ_TEST_PYTHON must name an absolute, existing Python (not a Store alias) for the owned '
+      + 'Windows Job wrapper');
+  }
+  if (!fs.existsSync(WINDOWS_JOB_WRAPPER)) throw new Error('owned Windows Job wrapper is missing: ' + WINDOWS_JOB_WRAPPER);
+  return python;
+}
+
+function browserCommand(chromePath, args, python) {
+  if (!python) return [chromePath, args];
+  return [python, ['-I', WINDOWS_JOB_WRAPPER, '--windows-job', String(WINDOWS_JOB_LIMIT_BYTES), '--', chromePath, ...args]];
+}
 
 function findChrome() {
   const candidates = [process.env.LABHQ_TEST_CHROME,
@@ -224,6 +249,7 @@ async function openDemo(opts = {}) {
   trace('open-start');
   const chromePath = findChrome();
   if (!chromePath) throw new Error('no Chrome found');
+  const jobPython = windowsJobPython();  // fails closed before any profile, server or browser exists
   const {width = 1440, height = 900, reducedMotion = true, colorScheme = 'light', web = WEB_ROOT, layoutFont = false, fontFamily = null} = opts;
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'labhq-visual-'));
   trace('profile-ready');
@@ -243,11 +269,13 @@ async function openDemo(opts = {}) {
     const config = path.join(home, '.config');
     fs.mkdirSync(path.join(config, 'google-chrome'), {recursive: true});
     let chromeError = '';
-    chrome = spawn(chromePath, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
+    const [browser, browserArgs] = browserCommand(chromePath, ['--headless=new', '--remote-debugging-port=0',
+      `--user-data-dir=${profile}`,
       '--no-first-run', '--no-default-browser-check', '--hide-scrollbars', '--force-color-profile=srgb',
       `--lang=${process.env.LABHQ_TEST_LOCALE || 'ko-KR'}`,
       ...(process.env.LABHQ_TEST_CHROME_ARGS ? process.env.LABHQ_TEST_CHROME_ARGS.split(' ') : []),
-      ...(process.env.CI ? ['--no-sandbox'] : []), 'about:blank'],
+      ...(process.env.CI ? ['--no-sandbox'] : []), 'about:blank'], jobPython);
+    chrome = spawn(browser, browserArgs,
     {windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'], env: {...process.env, HOME: home, USERPROFILE: home,
       HOMEDRIVE: path.parse(home).root.slice(0, 2), HOMEPATH: home.slice(2), LOCALAPPDATA: local, APPDATA: roaming, XDG_CONFIG_HOME: config}});
     chromeClosed = new Promise(resolve => chrome.once('close', resolve));
@@ -370,4 +398,4 @@ async function openDemo(opts = {}) {
 }
 
 module.exports = {openDemo, skipReason, findChrome, sleep, WEB_ROOT, CLOCK_SOURCE, closeDemoResources, demoLifecycleTrace, requestBrowserShutdown,
-  CLEANUP_MS, GRACEFUL_CLEANUP_MS};
+  CLEANUP_MS, GRACEFUL_CLEANUP_MS, WINDOWS_JOB_WRAPPER, WINDOWS_JOB_LIMIT_BYTES, windowsJobPython, browserCommand};

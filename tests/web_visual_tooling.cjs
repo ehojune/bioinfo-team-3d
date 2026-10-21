@@ -68,7 +68,8 @@ test('one startup and load fit the trace bound while an incomplete startup inven
 
 // Evaluate the actual driver in an isolated VM with only owned synthetic
 // resources. These async contracts run in CI; they launch no browser/service.
-function startupFixture({port = 55921, listenError = null, closeError = null} = {}) {
+function startupFixture({port = 55921, listenError = null, closeError = null, platform, env = {}, existing = [],
+  wrapperPresent = false, spawned = null} = {}) {
   const events = [], profile = path.join('owned-root', 'owned-profile');
   let onError;
   const server = {
@@ -84,22 +85,29 @@ function startupFixture({port = 55921, listenError = null, closeError = null} = 
     close(done) { events.push('server-close'); done(closeError); }
   };
   const fakeFs = {
-    existsSync: name => name === 'owned-chrome',
+    existsSync: name => name === 'owned-chrome' || existing.includes(name)
+      || (wrapperPresent && name.endsWith(path.join('labhq', 'runner', 'memory_limit.py'))),
+    mkdirSync() {},
     mkdtempSync() { events.push('profile-create'); return profile; },
     rmSync(dir) { assert.equal(dir, profile); events.push('profile-remove'); }
   };
   const modules = {'node:fs':fakeFs, 'node:path':path, 'node:os':{tmpdir:() => 'owned-root'},
     'node:http':{createServer:() => server},
-    'node:child_process':{spawn() { throw new Error('unexpected browser spawn'); }},
+    'node:child_process':{spawn(command, args, options) {
+      if (!spawned) throw new Error('unexpected browser spawn');
+      spawned.push({command, args, options});
+      throw new Error('stop after spawn');  // only the launch command is under test; no browser runs
+    }},
     './test_font.cjs':{}, './mini_ws.cjs':{}};
   const sandbox = {module:{exports:{}}, __dirname,
     require(name) { assert.ok(Object.hasOwn(modules, name), name); return modules[name]; },
-    process:{env:{LABHQ_TEST_CHROME:'owned-chrome'}, getActiveResourcesInfo:() => []},
+    process:{env:{LABHQ_TEST_CHROME:'owned-chrome', ...env}, platform, getActiveResourcesInfo:() => []},
     console:{error() {}},
     setTimeout(fn, ms) { assert.equal(ms, 5000); events.push('timer-set'); return 7; },
     clearTimeout(id) { assert.equal(id, 7); events.push('timer-clear'); }};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'support/demo_driver.cjs'), 'utf8'), sandbox);
-  return {open:sandbox.module.exports.openDemo, events, hasListenErrorHandler:() => Boolean(onError)};
+  return {open:sandbox.module.exports.openDemo, exports:sandbox.module.exports, events,
+    hasListenErrorHandler:() => Boolean(onError)};
 }
 
 test('reserved-port startup failure closes its acquired server before removing the profile', async () => {
@@ -124,6 +132,58 @@ test('startup cleanup failure retains both errors and does not remove an unclose
     error.errors[0].message.includes('reserved port 55921') && error.errors[1].errors.includes(failure));
   assert.equal(f.events.filter(event => event === 'server-close').length, 1);
   assert.equal(f.events.includes('profile-remove'), false);
+});
+
+// ---- #842/#843: Windows Chrome under the product's owned KILL_ON_CLOSE Job wrapper (launch command only) ----
+const PYTHON = 'C:/hosted/python.exe';  // forward slashes: still an absolute Windows path
+
+test('Windows starts the owned Chrome under the Job wrapper with the explicit interpreter', async () => {
+  const spawned = [];
+  const f = startupFixture({port:40000, platform:'win32', env:{LABHQ_TEST_PYTHON:PYTHON}, existing:[PYTHON],
+    wrapperPresent:true, spawned});
+  await assert.rejects(f.open(), /stop after spawn/);
+  assert.equal(spawned.length, 1);
+  const {command, args, options} = spawned[0];
+  assert.equal(command, PYTHON);
+  // Arrays built inside the vm context are copied into this realm before a strict deep comparison.
+  assert.deepEqual(Array.from(args.slice(0, 6)), ['-I', f.exports.WINDOWS_JOB_WRAPPER, '--windows-job',
+    String(f.exports.WINDOWS_JOB_LIMIT_BYTES), '--', 'owned-chrome']);
+  assert.ok(f.exports.WINDOWS_JOB_WRAPPER.endsWith(path.join('labhq', 'runner', 'memory_limit.py')));
+  assert.equal(args[6], '--headless=new');
+  assert.equal(args.at(-1), 'about:blank');
+  assert.deepEqual(Array.from(options.stdio), ['ignore', 'ignore', 'pipe'], 'the owned stdio and its close proof stay');
+  assert.equal(options.windowsHide, true);
+  // The spawn failed before a child existed: the acquired server and profile are still cleaned up.
+  assert.deepEqual(f.events, ['profile-create','listen','timer-set','server-close','timer-clear','profile-remove']);
+});
+
+for (const [label, env, existing, wrapperPresent] of [
+  ['no interpreter', {}, [], true],
+  ['a relative interpreter', {LABHQ_TEST_PYTHON:'python'}, ['python'], true],
+  ['a Store alias', {LABHQ_TEST_PYTHON:'C:/Users/x/AppData/Local/Microsoft/WindowsApps/python.exe'},
+    ['C:/Users/x/AppData/Local/Microsoft/WindowsApps/python.exe'], true],
+  ['a missing interpreter', {LABHQ_TEST_PYTHON:PYTHON}, [], true],
+  ['a missing wrapper', {LABHQ_TEST_PYTHON:PYTHON}, [PYTHON], false],
+]) {
+  test(`Windows refuses to start Chrome with ${label}, before any profile, server or browser exists`, async () => {
+    const spawned = [];
+    const f = startupFixture({port:40000, platform:'win32', env, existing, wrapperPresent, spawned});
+    await assert.rejects(f.open(), /LABHQ_TEST_PYTHON must name|owned Windows Job wrapper is missing/);
+    assert.deepEqual(f.events, []);
+    assert.deepEqual(spawned, []);
+  });
+}
+
+test('Linux keeps spawning Chrome directly, whatever LABHQ_TEST_PYTHON says', async () => {
+  const spawned = [];
+  const f = startupFixture({port:40000, platform:'linux', env:{LABHQ_TEST_PYTHON:PYTHON}, spawned});
+  await assert.rejects(f.open(), /stop after spawn/);
+  assert.equal(spawned[0].command, 'owned-chrome');
+  assert.equal(spawned[0].args[0], '--headless=new');
+  assert.equal(spawned[0].args.includes('--windows-job'), false);
+  const [direct, directArgs] = f.exports.browserCommand('owned-chrome', ['a'], null);
+  assert.equal(direct, 'owned-chrome');
+  assert.deepEqual(Array.from(directArgs), ['a']);
 });
 
 // ---- layout_snapshot: colors are #rrggbb hex bytes ----
