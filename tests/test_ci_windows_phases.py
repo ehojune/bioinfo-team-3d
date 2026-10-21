@@ -9,6 +9,36 @@ import yaml
 
 from scripts import ci_skip as cs, ci_suite as suite, ci_windows_phases as p
 
+WINDOWS_PYTHON = r'C:\fake\python.exe'
+
+
+class RuntimeProxy:
+    """Override a consumer's runtime view without mutating host stdlib objects."""
+    def __init__(self, original, **overrides):
+        self.__dict__.update(overrides)
+        self._original = original
+
+    def __getattr__(self, name):
+        return getattr(self._original, name)
+
+
+def fake_windows_runtime(monkeypatch):
+    """Bind receipts and both consumers to Windows 3.12, never the test host."""
+    import ntpath
+    import os
+    import sys
+    windows = SimpleNamespace(python_version=lambda: '3.12.10',
+                              platform=lambda: 'Windows-fake', system=lambda: 'Windows')
+    for consumer in (suite, cs):
+        monkeypatch.setattr(consumer, 'sys', RuntimeProxy(sys, executable=WINDOWS_PYTHON))
+        monkeypatch.setattr(consumer, 'os', RuntimeProxy(os, path=ntpath))
+    monkeypatch.setattr(suite, 'platform', windows)
+    # ci_skip.main imports platform inside the function. Replace that import
+    # slot for this test only; do not mutate the host platform module itself.
+    monkeypatch.setitem(sys.modules, 'platform', windows)
+    return dict(python_version=windows.python_version(),
+                python_executable=ntpath.normcase(ntpath.abspath(WINDOWS_PYTHON)))
+
 
 def fake_context(current=None, *, checkout='e' * 40, head='d' * 40):
     current = current or dict(tree='b' * 40, policy={path: f'{i+1:x}' * 40 for i, path in enumerate(cs.POLICY_FILES)})
@@ -164,12 +194,8 @@ def test_existing_parallel_skips_are_counted_but_never_allowed_in_critical(recei
 
 @pytest.mark.parametrize('phase', ['critical', 'parallel'])
 def test_real_collection_hook_keeps_actual_phase_selected_nodes_only(monkeypatch, receipts, phase):
-    import os
-    import platform
-    import sys
     context = p.read(receipts/'identity.json')
-    context.update(python_version=platform.python_version(),
-                   python_executable=os.path.normcase(os.path.abspath(sys.executable)))
+    context.update(fake_windows_runtime(monkeypatch))
     make_receipts(receipts, context)
     for key, value in dict(CI_SUITE_ARTIFACT_DIR=str(receipts), GITHUB_SHA=context['checkout_sha'],
         GITHUB_WORKFLOW_SHA=context['workflow_sha'], GITHUB_WORKFLOW_REF=context['workflow_ref'],
@@ -210,11 +236,8 @@ def test_real_collection_hook_keeps_actual_phase_selected_nodes_only(monkeypatch
 
 
 def test_parallel_plugin_refuses_to_start_without_verified_critical_barrier(monkeypatch, receipts):
-    import os
-    import platform
-    import sys
     context = p.read(receipts/'identity.json')
-    context.update(python_version=platform.python_version(), python_executable=os.path.normcase(os.path.abspath(sys.executable)))
+    context.update(fake_windows_runtime(monkeypatch))
     make_receipts(receipts, context)
     for key, value in dict(CI_SUITE_ARTIFACT_DIR=str(receipts), GITHUB_SHA=context['checkout_sha'],
         GITHUB_WORKFLOW_SHA=context['workflow_sha'], GITHUB_WORKFLOW_REF=context['workflow_ref'],
@@ -222,7 +245,7 @@ def test_parallel_plugin_refuses_to_start_without_verified_critical_barrier(monk
         monkeypatch.setenv(key, value)
     (receipts/'critical-success.json').unlink()
     config = SimpleNamespace(getoption=lambda key: dict(ci_profile=p.PROFILE, ci_phase='parallel').get(key))
-    with pytest.raises((OSError, ValueError)):
+    with pytest.raises(FileNotFoundError, match='critical-success.json'):
         suite.Observation(config)
 
 
@@ -243,6 +266,7 @@ def test_identity_cli_creates_fresh_directory_before_pytest_with_fake_git(monkey
     import sys
     import uuid
     context = fake_context()
+    context.update(fake_windows_runtime(monkeypatch))
     current = {k: context[k] for k in ('checkout_sha', 'tree', 'policy')}
     event = tmp_path/'event.json'
     p.write(event, {'pull_request': {'head': {'sha': context['head_sha']}}})
@@ -259,6 +283,8 @@ def test_identity_cli_creates_fresh_directory_before_pytest_with_fake_git(monkey
     cs.main()
     saved = p.validate_identity(p.read(directory/'identity.json'))
     assert saved['invocation'] == '1' * 32 and saved['head_sha'] == context['head_sha']
+    assert saved['python_version'] == context['python_version'] == '3.12.10'
+    assert saved['python_executable'] == context['python_executable']
 
 
 def test_combined_summary_preserves_exclusions_and_never_double_counts_controller_wait(receipts):
@@ -316,3 +342,40 @@ def test_workflow_barrier_download_binding_no_skip_and_ten_minute_total():
     assert "process.env.LABHQ_REQUIRE_RESIZABLE_BROWSER === '1' && skipReason()" in browser
     assert 'throw new Error(`required resizable browser unavailable:' in browser
     assert 'timeout: 60000' in browser
+
+
+@pytest.mark.parametrize('host_version', ['3.10.22', '3.12.10'])
+@pytest.mark.parametrize('case', ['critical', 'parallel', 'barrier', 'cli'])
+def test_windows_runtime_fakes_are_independent_of_host(monkeypatch, receipts, host_version, case):
+    import os
+    import platform
+    import posixpath
+    import sys
+    original_executable, original_path = sys.executable, os.path
+    host = RuntimeProxy(platform, python_version=lambda: host_version)
+    monkeypatch.setitem(sys.modules, 'platform', host)
+    monkeypatch.setattr(suite, 'platform', host)
+    for consumer in (suite, cs):
+        monkeypatch.setattr(consumer, 'sys', RuntimeProxy(sys, executable=f'/host/{host_version}/python'))
+        monkeypatch.setattr(consumer, 'os', RuntimeProxy(os, path=posixpath))
+    if case in ('critical', 'parallel'):
+        test_real_collection_hook_keeps_actual_phase_selected_nodes_only(monkeypatch, receipts, case)
+    elif case == 'barrier':
+        test_parallel_plugin_refuses_to_start_without_verified_critical_barrier(monkeypatch, receipts)
+    else:
+        test_identity_cli_creates_fresh_directory_before_pytest_with_fake_git(monkeypatch, receipts)
+    assert suite.platform.python_version() == '3.12.10'
+    assert suite.sys.executable == cs.sys.executable == WINDOWS_PYTHON
+    assert host.python_version() == host_version
+    assert sys.executable == original_executable and os.path is original_path
+
+
+@pytest.mark.parametrize('version,accepted', [('3.10.22', False), ('3.12.10', True)])
+def test_actual_windows_identity_keeps_python312_requirement(version, accepted):
+    context = fake_context()
+    context['python_version'] = version
+    if accepted:
+        assert p.validate_identity(context) == context
+    else:
+        with pytest.raises(ValueError, match='identity interpreter'):
+            p.validate_identity(context)
