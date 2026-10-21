@@ -55,20 +55,24 @@ def select(items, profile, root=ROOT, *, changed=None):
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         raise pytest.UsageError("invalid Windows selection evidence; refusing full fallback") from exc
     chosen, omitted, reasons = [], [], {}
-    cache, sources = {}, {}
+    cache, sources, paths = {}, {}, {}
+    resolved_root = root.resolve()
     for item in items:
         original = Path(item.path)
-        path = original.resolve()
-        try:
-            relative = path.relative_to(root.resolve()).as_posix()
-        except ValueError:
-            raise pytest.UsageError("Windows selection source is outside checkout") from None
+        if original not in paths:
+            path = original.resolve()
+            try:
+                relative = path.relative_to(resolved_root).as_posix()
+            except ValueError:
+                raise pytest.UsageError("Windows selection source is outside checkout") from None
+            if original.is_symlink():
+                raise pytest.UsageError("invalid Windows selection source: " + relative)
+            paths[original] = path, relative
+        path, relative = paths[original]
         symbol = item.nodeid.split('::', 1)[1] if '::' in item.nodeid else None
         key = (relative, symbol.split('[', 1)[0] if symbol else None)
         if key not in cache:
             try:
-                if original.is_symlink():
-                    raise ValueError("unreviewed symlink")
                 if relative not in sources:
                     sources[relative] = path.read_text(encoding="utf-8")
                 cache[key] = include_windows(relative, sources[relative], data,
@@ -238,7 +242,8 @@ class Observation:
             if self.profile == WINDOWS_BOUNDARY:
                 data = policy()
                 from fnmatch import fnmatchcase
-                paths = {Path(i.path).resolve().relative_to(ROOT).as_posix() for i in items}
+                paths = {path.resolve().relative_to(ROOT).as_posix()
+                         for path in {Path(i.path) for i in items}}
                 if any(not any(fnmatchcase(p, pattern) for p in paths)
                        for pattern in data['boundary_cohorts']):
                     raise pytest.UsageError("missing essential Windows cohort in collection")
