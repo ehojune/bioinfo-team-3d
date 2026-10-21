@@ -323,3 +323,19 @@ def test_hybrid_encoding_atomic_redaction_and_path_contracts_remain_windows_boun
     source = (s.ROOT / path).read_text(encoding='utf-8')
     assert path in data['boundary_cohorts']
     assert s.include_windows(path, source, {path: review(source)}, cohorts=data['boundary_cohorts'])[0]
+
+
+@pytest.mark.parametrize('source,locked', [
+    ('from labhq import proc_tree as tree\ntree.child_pids(owned_pid)', True),
+    ('from labhq.proc_tree import _table as snapshot\nsnapshot()', True),
+    ('from labhq.proc_tree import kill_tree as end_owned\nend_owned(owned_pid, created=ticks)', True),
+    ('from labhq import proc_tree\nproc_tree.pin_ancestors()', True),
+    ('from labhq.adapters import base as adapter\nadapter._windows_process_snapshot()', True),
+    ('from labhq.adapters.base import _idle_process_tree as inspect\ninspect(owned_pid, [])', True),
+    ('from labhq import proc_tree', False),
+    ('from labhq.proc_tree import Proc\nrow=Proc(1,2,3)', False),
+    ('from labhq import proc_tree\nproc_tree.parse_created("20260101")', False),
+])
+def test_reviewed_project_global_table_apis_are_capabilities_not_module_names(tmp_path, source, locked):
+    p = tmp_path / 'test_project_scan.py'; p.write_text(source, encoding='utf-8')
+    assert s.host_resource(p, tmp_path) is locked

@@ -323,6 +323,15 @@ def host_resource(path: Path, root=ROOT, seen=None, symbols=None) -> bool:
                 return True
         return False
     global_caps = {"psutil.process_iter", "psutil.pids", "psutil.net_connections", "os.killpg", "os.system"}
+    # Reviewed implementation entrypoints, not identifier-name heuristics:
+    # proc_tree._table uses CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS);
+    # adapter snapshots enumerate Win32_Process, /proc or the system ps table.
+    # Only referenced capabilities count; importing the module/Proc model does not.
+    global_caps.update("labhq.proc_tree." + name for name in
+                       ("_table", "_snapshot", "child_pids", "kill_tree", "pin_ancestors"))
+    global_caps.update("labhq.adapters.base." + name for name in
+                       ("_windows_process_snapshot", "_procfs_process_snapshot", "_ps_process_snapshot",
+                        "_process_snapshot", "_idle_process_tree"))
     servers = {"asyncio.start_server", "asyncio.start_unix_server", "socket.create_server",
                "uvicorn.run", "websockets.serve", "websockets.asyncio.server.serve"}
     address_servers = {"socketserver.TCPServer", "socketserver.ThreadingTCPServer", "socketserver.UDPServer",
