@@ -28,3 +28,7 @@ rows:
     at: "2026-10-22 07:45"
     summary: "서버 감독 프로세스 시작 검사가 실패하면 원인을 볼 수 있는 로그 끝부분을 함께 남깁니다."
     text: "test_a_real_gateway_runs_as_its_supervisors_child_and_down_ends_both의 시작이 실패하면 이 test 자신의 supervisor 로그와 진단 기록 마지막 16KiB를 token을 가리고 제어문자를 바꿔 출력한 뒤 원래 예외를 그대로 다시 던진다. 90초 health와 정리는 그대로이며 process 없는 순수 검사를 더했다."
+  - sha: 87146f4
+    at: "2026-10-22 07:54"
+    summary: "Windows 웹 검사에서 브라우저 오류 출력이 검사 도구까지 그대로 전달되게 합니다."
+    text: "제품 Windows Job wrapper는 child를 표준 handle 없이 시작해 Chrome stderr가 Node driver에 오지 않고 stdio close가 wrapper 종료만 뜻했다. 제품 코드는 그대로 두고 test 전용 stdlib adapter가 제품 _WindowsJob을 재사용하며 child에 자기 stdin/stdout/stderr만 명시해 넘긴다. 인자 검사·오류 줄·종료 코드·KILL_ON_CLOSE·메모리 상한·비상속 Job handle과 Job 준비 실패 시 child 미생성은 같다."
