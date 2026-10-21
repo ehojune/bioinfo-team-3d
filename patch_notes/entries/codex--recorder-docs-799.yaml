@@ -8,3 +8,7 @@ rows:
   at: '2026-10-21 10:47'
   summary: '기록기가 준비됐다는 설명과 실제 측정이 남았다는 설명을 구분했습니다.'
   text: 'bench 기록기의 opt-in 구현·미수집 한계를 바로잡고 Windows 경계 검증 실패 때 전수 검사한다는 안내를 명확히 했습니다. 실제 bench는 실행하지 않았습니다.'
+- sha: 7209b3b
+  at: '2026-10-21 11:28'
+  summary: Windows 재채점 검사의 문자 읽기를 고치고 서버 시작 실패 때 진단 로그를 보여 줍니다.
+  text: 'PR #824의 테스트 JSON 읽기 3곳을 UTF-8로 고쳤다. Gateway 시작 fixture는 supervisor/gateway 임시 로그를 출력하고 원래 예외를 전달하며 로그 누락·읽기 오류도 구분한다. cp1252 fake 재현 2건·진단 회귀 6건 red 후 관련 fake 24건 PASS(로컬 1.62초). 기존 native assertions·launcher·health timeout과 제품 CLI/CI 정책은 유지했다. 실제 supervisor 조기 종료 원인은 미확인이며 native 재검증은 CI에 남긴다. 실제 process/PI/bench 미실행, 로컬 커밋만 준비.'
