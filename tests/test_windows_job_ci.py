@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from labhq import windows_launch as win, windows_broker as broker
+from tests.test_web_shutdown_process import _launch_journal
 
 pytestmark = pytest.mark.skipif(
     sys.platform != "win32" or os.environ.get("GITHUB_ACTIONS") != "true",
@@ -142,6 +143,26 @@ def wait_result(path):
     raise AssertionError("owned launcher produced no outcome")
 
 
+def _owned_launch_diagnostics(root, parent):
+    """Never dump parent.log: only the existing journal projection and a bounded exitcode."""
+    try:
+        code = parent.poll() if parent is not None else "unavailable"
+        if code is None:
+            code = "running"
+        elif type(code) is not int or not -2**32 <= code <= 2**32:
+            code = "unavailable"
+    except Exception:
+        code = "unavailable"
+    try:
+        journal = _launch_journal(root / "state/logs/detached-launch.jsonl")
+    except Exception:
+        journal = "(journal unavailable)"
+    diagnostic = json.dumps({"launcher_exitcode": code, "journal": journal})
+    if len(diagnostic) > 4096:
+        return json.dumps({"launcher_exitcode": code, "journal": "(journal projection exceeds bound)"})
+    return diagnostic
+
+
 @contextmanager
 def owned_launch(tmp_path, *, allow_breakaway, nested=False):
     dll = kernel()
@@ -183,6 +204,12 @@ def owned_launch(tmp_path, *, allow_breakaway, nested=False):
         case.pid_file = tmp_path / "state/labhq-gateway-supervisor.pid"
         case.events = [json.loads(line) for line in (tmp_path / "state/logs/detached-launch.jsonl").read_text().splitlines()]
         yield case
+    except (Exception, SystemExit):
+        try:
+            print("\n--- owned launch ---\n" + _owned_launch_diagnostics(tmp_path, case.parent), file=sys.stderr)
+        except Exception:
+            pass  # Diagnostic failure must not replace the original assertion/exception.
+        raise
     finally:
         (tmp_path / "stop").touch()  # Normal exit for the fake daemon; never a real labhq role.
         for attribute, names in (("role_handle", ("fake-role.json", "ready")),
