@@ -1,6 +1,10 @@
 pr: null
 rows:
-  - sha: '15b12a8'
-    at: '2026-10-21 11:17'
-    summary: Windows 검사 범위와 공유 자원 대기 기준을 따로 정했습니다.
-    text: '#823: 전역 runtime 만료 대신 검토한 source/helper pin과 실제 변경 range를 사용하고, manifest v4는 같은 비교 base도 요구한다. 전용 subprocess·임의 포트·미사용 helper import의 전역 lock을 없애고 고정·미확정 listener와 host scan은 보호한다. mock/static 556 PASS, 정적 선택 9261/10545로 목표 미달이며 실제 병렬 성능은 미검증이다.'
+- sha: 15b12a8
+  at: 2026-10-21 11:17
+  summary: Windows 검사 범위와 공유 자원 대기 기준을 따로 정했습니다.
+  text: '#823: 전역 runtime 만료 대신 검토한 source/helper pin과 실제 변경 range를 사용하고, manifest v4는 같은 비교 base도 요구한다. 전용 subprocess·임의 포트·미사용 helper import의 전역 lock을 없애고 고정·미확정 listener와 host scan은 보호한다. mock/static 556 PASS, 정적 선택 9261/10545로 목표 미달이며 실제 병렬 성능은 미검증이다.'
+- sha: 3e827e4
+  at: 2026-10-21 11:27
+  summary: 공유 프로세스 목록을 읽는 프로젝트 호출도 검사 대기 대상으로 지정했습니다.
+  text: '#823: CreateToolhelp32Snapshot을 쓰는 proc_tree 진입점과 adapter snapshot 호출을 명시해 보호하고 module/model import·순수 변환은 제외한다. 가짜 AST 회귀 포함 565 PASS, 정적 선택 9270/10554·lock 후보 22파일/456노드이며 native 실행은 미검증이다.'
