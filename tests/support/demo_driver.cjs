@@ -107,11 +107,28 @@ async function removeDir(dir) {
 // A request to close is not an acknowledgement. In particular ChildProcess
 // 'exit' can precede closure of inherited stdio; await 'close' before declaring
 // the fixture closed or removing its profile. Only these owned handles are used.
-async function closeDemoResources({ws, wsClosed, chrome, chromeClosed, server, profile},
+// On Windows kill() is abrupt. Let the owned browser shut down its children
+// before closing its CDP transport; never replace the stdio acknowledgement.
+function requestBrowserShutdown(chrome, requestBrowserClose, failures) {
+  // A usable owned CDP connection can outlast the launcher's exit event.
+  try {
+    if (requestBrowserClose?.() === true) return true;
+  } catch (error) { failures.push(error); }
+  if (chrome.exitCode === null && chrome.signalCode === null) chrome.kill();
+  return false;
+}
+
+async function closeDemoResources({ws, wsClosed, chrome, chromeClosed, requestBrowserClose, server, profile},
   {removeProfile = removeDir, setTimer = setTimeout, clearTimer = clearTimeout,
     diagnostic = (stage, pending) => console.error('demo cleanup: ' + JSON.stringify({stage, pending,
-      active: typeof process.getActiveResourcesInfo === 'function' ? process.getActiveResourcesInfo().slice(0, 16) : null}))} = {}) {
+      active: typeof process.getActiveResourcesInfo === 'function' ? process.getActiveResourcesInfo().slice(0, 16) : null,
+      chrome_exit_observed: chrome ? chrome.exitCode !== null || chrome.signalCode !== null : null,
+      stderr_closed: typeof chrome?.stderr?.closed === 'boolean' ? chrome.stderr.closed : null}))} = {}) {
   const pending = new Set(), failures = [];
+  let graceful = false, socketCloseRequested = false;
+  const closeSocket = () => {
+    if (!socketCloseRequested) { socketCloseRequested = true; ws.close(); }
+  };
   const report = stage => { try { diagnostic(stage, [...pending]); } catch { /* diagnostic only */ } };
   const closing = (name, request, acknowledgement) => {
     pending.add(name);
@@ -119,10 +136,10 @@ async function closeDemoResources({ws, wsClosed, chrome, chromeClosed, server, p
       .catch(error => { failures.push(error); throw error; });
   };
   const waits = [];
-  if (ws) waits.push(closing('websocket', () => ws.close(), wsClosed));
   if (chrome) waits.push(closing('chrome-stdio', () => {
-    if (chrome.exitCode === null && chrome.signalCode === null) chrome.kill();
+    graceful = requestBrowserShutdown(chrome, requestBrowserClose, failures);
   }, chromeClosed));
+  if (ws) waits.push(closing('websocket', () => graceful ? chromeClosed.then(closeSocket) : closeSocket(), wsClosed));
   waits.push(closing('http-server', () => new Promise((resolve, reject) => {
     server.close(error => error ? reject(error) : resolve());
   })));
@@ -131,6 +148,12 @@ async function closeDemoResources({ws, wsClosed, chrome, chromeClosed, server, p
     await Promise.race([Promise.allSettled(waits), new Promise((_, reject) => {
       timer = setTimer(() => {
         report('timeout');
+        // Preserve the existing owned-child/transport cleanup attempt if CDP
+        // stalls. The original five-second deadline STILL rejects as failure.
+        if (graceful) {
+          try { requestBrowserShutdown(chrome, undefined, failures); } catch (error) { failures.push(error); }
+          if (ws) { try { closeSocket(); } catch (error) { failures.push(error); } }
+        }
         reject(new AggregateError([...failures, new Error('demo cleanup did not close: ' + [...pending].join(', '))],
           'demo cleanup incomplete'));
       }, 5000);
@@ -172,8 +195,8 @@ async function openDemo(opts = {}) {
   const port = server.address().port;
   if (FORBIDDEN_PORTS.includes(port)) throw new Error('static server landed on a reserved port ' + port);
   const origin = `http://127.0.0.1:${port}`;
-  let chrome, ws, chromeClosed, wsClosed, closing;
-  const close = () => closing ||= closeDemoResources({ws, wsClosed, chrome, chromeClosed, server, profile});
+  let chrome, ws, chromeClosed, wsClosed, requestBrowserClose, closing;
+  const close = () => closing ||= closeDemoResources({ws, wsClosed, chrome, chromeClosed, requestBrowserClose, server, profile});
   try {
     // Chrome resolves its default profile before comparing --user-data-dir; keep both under this temp root.
     const home = path.join(profile, 'home'), local = path.join(home, 'AppData', 'Local'), roaming = path.join(home, 'AppData', 'Roaming');
@@ -212,6 +235,13 @@ async function openDemo(opts = {}) {
     wsClosed = new Promise(resolve => { ws.onclose = resolve; });
     await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = e => reject(new Error('CDP socket failed: ' + (e?.message || e))); });
     let serial = 0;
+    requestBrowserClose = () => {
+      if (ws.closed || (typeof ws.readyState === 'number' && ws.readyState !== 1)) return false;
+      // Do not await a CDP response that browser shutdown itself may prevent.
+      // Actual socket and child/stdio close events are the completion proof.
+      ws.send(JSON.stringify({id: ++serial, method: 'Browser.close'}));
+      return true;
+    };
     const pending = new Map(), external = [], errors = [];
     ws.onmessage = e => {
       const m = JSON.parse(e.data);
@@ -295,4 +325,4 @@ async function openDemo(opts = {}) {
   }
 }
 
-module.exports = {openDemo, skipReason, findChrome, sleep, WEB_ROOT, CLOCK_SOURCE, closeDemoResources, demoLifecycleTrace};
+module.exports = {openDemo, skipReason, findChrome, sleep, WEB_ROOT, CLOCK_SOURCE, closeDemoResources, demoLifecycleTrace, requestBrowserShutdown};

@@ -10,18 +10,18 @@
 
 ## 실제 CI 측정
 
-[PR825](https://github.com/ehojune/bioinfo-team-3d/pull/825)는 `2f42f41`로 병합됐습니다. [완료 run39603485198/attempt1](https://github.com/ehojune/bioinfo-team-3d/actions/runs/39603485198)의 head `d2d929c3`와 인증된 artifact·checkout/tree·policy를 대조했습니다.
+[PR825](https://github.com/ehojune/bioinfo-team-3d/pull/825)는 `2f42f41`로 병합됐습니다. [825 run39603485198](https://github.com/ehojune/bioinfo-team-3d/actions/runs/39603485198)와 [830 run39616955960](https://github.com/ehojune/bioinfo-team-3d/actions/runs/39616955960)은 모두 attempt1의 필수 CI 10개를 통과했습니다. 각 인증 artifact의 head·tree·profile과 완료 job 시각을 대조했습니다.
 
-| 항목 | 관측 |
-|---|---|
-| Windows job | 8분14초: 10분 목표 충족 |
-| 전수 수집 / 선택 | 11,037 / 3,680개(33.3%) |
-| 필수 serial | 26 PASS·0 skip·0 fail |
-| 나머지 4-worker | 3,626 PASS·28 skip·0 fail |
-| 준비 / pytest 경과 | 49.6 / 433.9초 |
-| 호스트 락 대기 합계 | 39.7 worker초 |
+| 항목 | PR825 `d2d929c3` | PR830 `b8ff5fef` |
+|---|---|---|
+| Windows job | 8분14초 | 5분46초 |
+| 전수 수집 / 선택 | 11,037 / 3,680개(33.3%) | 11,069 / 3,353개(30.3%) |
+| 필수 serial | 26 PASS·0 skip·0 fail | 26 PASS·0 skip·0 fail |
+| 나머지 4-worker | 3,626 PASS·28 skip·0 fail | 3,299 PASS·28 skip·0 fail |
+| 준비 / pytest 경과 | 49.6 / 433.9초 | 39.0 / 296.0초 |
+| 호스트 락 대기 합계 | 39.7 worker초 | 2.6 worker초 |
 
-선택 수는 PASS 수와 다릅니다. 선택 비율은 당초 20~30% 목표보다 넓지만 숫자를 맞추려고 안전 검사를 제외하지 않았습니다. 다른 head·범위와의 시간 차이는 통제된 성능 비교가 아니며 이 run은 후속 PR·실제 운영·연구 효과의 성공 근거가 아닙니다. main 동일 tree 재사용도 따로 검증합니다.
+두 실행 모두 10분 목표를 충족했으며 선택 수는 PASS 수와 다릅니다. 선택 비율은 당초 20~30%보다 넓지만 숫자를 맞추려고 안전 검사를 제외하지 않았습니다. 변경 범위가 달라 시간 차이는 통제된 성능 비교가 아닙니다. 선행 `dc5a48a`의 phone-load timeout은 구간 진단 뒤 이번에는 통과했지만 원인·해결은 미확인입니다. 후속 head·실제 운영·연구 효과와 main 동일 tree 재사용은 별도 증거가 필요합니다.
 
 ## 이전 phase4·preview 근거 (대체됨)
 
