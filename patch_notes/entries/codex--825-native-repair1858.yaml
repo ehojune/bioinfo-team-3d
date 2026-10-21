@@ -1,10 +1,10 @@
 pr: 825
 rows:
-- sha: d898e1b
+- sha: 7287c89
   at: '2026-10-21 19:29'
   summary: Windows 실행 검사가 정리 단계를 어디까지 마쳤는지 안전하게 남깁니다.
   text: '명시한 CI artifact 환경에서만 native fixture의 대기·본문·정리 경계를 case별 JSON으로 기록한다. 고정 phase·역할·제한된 시간/결과/signature flag만 남기며 최대64 entries/16 KiB다. Callable duration은 진단 쓰기 시간을 제외한다. Fake/static37건·Python3.10 AST·원래 assertion/API 인자 대조·public/diff/기록 검사 통과. Native5/web20 계약·기존 대기·retained-handle 정리는 유지했다. Status368자. 실제 native 원인 수정이나 성공의 증거는 아니며 로컬 커밋만 준비했다.'
-- sha: bf3542e
+- sha: '0245441'
   at: '2026-10-21 19:32'
   summary: 진단 검사의 가짜 시계가 다른 검사의 시간을 바꾸지 않도록 했습니다.
   text: '새 fake regression의 time proxy를 native fixture 모듈에만 넣고 stdlib monotonic clock이 그대로임을 확인한다. Fake/static37건·최종 공개 pattern/size·diff·기록 검사 통과. 제품/native 동작이나 timeout은 바꾸지 않았으며 실제 CI 검증은 미실행이다.'
