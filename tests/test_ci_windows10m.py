@@ -1,4 +1,5 @@
 """Essential Windows policy contracts: pure data/fake Git, no native launch."""
+import ast
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -152,7 +153,12 @@ def test_report_api_error_keeps_local_counts_and_durations(monkeypatch, tmp_path
     assert saved['over_ten_minutes'] is False
 
 
-def test_native_contract_preflight_and_missing_collected_case_fail(monkeypatch, tmp_path):
+@pytest.mark.parametrize("worker", [None, "gw0", "gw1"])
+def test_native_contract_preflight_and_missing_collected_case_fail(monkeypatch, tmp_path, worker):
+    if worker is None:
+        monkeypatch.delenv("PYTEST_XDIST_WORKER", raising=False)
+    else:
+        monkeypatch.setenv("PYTEST_XDIST_WORKER", worker)
     data = s.validate_profile()
     assert set(data['mandatory_nodes']) == {
         'tests/test_windows_job_ci.py::test_wmi_escapes_owned_outer_nonbreakaway_inner_silent_job',
@@ -171,8 +177,71 @@ def test_native_contract_preflight_and_missing_collected_case_fail(monkeypatch, 
     observation = suite.Observation(config)
     with pytest.raises(pytest.UsageError, match='mandatory native'):
         observation.pytest_collection_modifyitems(None, config, [item])
-    error = json.loads((tmp_path/'selection-error-master.json').read_text(encoding='utf-8'))
+    expected_worker = worker or 'master'
+    assert observation.worker == expected_worker
+    error_path = tmp_path / f'selection-error-{expected_worker}.json'
+    assert list(tmp_path.glob('selection-error-*.json')) == [error_path]
+    error = json.loads(error_path.read_text(encoding='utf-8'))
     assert error['reusable'] is False
+    assert error == dict(profile=s.WINDOWS_BOUNDARY, status='invalid-selection', reusable=False)
+
+
+def node_wrapper(run):
+    """Execute only the wrapper definition, with a module-local fake transport."""
+    import subprocess
+    tree = ast.parse((s.ROOT/'tests/test_web_3d.py').read_text(encoding='utf-8'), feature_version=(3, 10))
+    function = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'test_office_in_node')
+    function.decorator_list = []
+    namespace = dict(Path=Path, __file__=str(s.ROOT/'tests/test_web_3d.py'), pytest=pytest,
+                     shutil=SimpleNamespace(which=lambda name: 'fake-node'),
+                     subprocess=SimpleNamespace(run=run, TimeoutExpired=subprocess.TimeoutExpired))
+    exec(compile(ast.Module(body=[function], type_ignores=[]), '<fake-node-wrapper>', 'exec'), namespace)
+    return namespace['test_office_in_node']
+
+
+@pytest.mark.parametrize('binary', [False, True])
+def test_node_timeout_retains_partial_output_and_original_failure(binary):
+    import subprocess
+    def run(command, **options):
+        assert command[0] == 'fake-node'
+        assert options == dict(capture_output=True, text=True, encoding='utf-8', timeout=30)
+        stdout, stderr = 'TAP version 13\n', 'resizable browser: desktop load\n'
+        if binary:
+            stdout, stderr = stdout.encode(), stderr.encode()
+        raise subprocess.TimeoutExpired(command, 30, output=stdout, stderr=stderr)
+    with pytest.raises(AssertionError) as result:
+        node_wrapper(run)('web_resizable_panels.cjs', 'fail 0')
+    assert isinstance(result.value.__cause__, subprocess.TimeoutExpired)
+    assert 'web_resizable_panels.cjs' in str(result.value)
+    assert 'TAP version 13' in str(result.value)
+    assert 'resizable browser: desktop load' in str(result.value)
+
+
+@pytest.mark.parametrize('returncode,stdout', [(0, 'fail 0'), (1, 'fail 0'), (0, 'fail 1')])
+def test_node_wrapper_still_requires_success_and_marker(returncode, stdout):
+    wrapper = node_wrapper(lambda *args, **kwargs: SimpleNamespace(returncode=returncode, stdout=stdout, stderr=''))
+    if returncode == 0 and stdout == 'fail 0':
+        wrapper('web_resizable_panels.cjs', 'fail 0')
+    else:
+        with pytest.raises(AssertionError):
+            wrapper('web_resizable_panels.cjs', 'fail 0')
+
+
+def test_resizable_browser_diagnostics_keep_deadline_cleanup_and_selection():
+    source = (s.ROOT/'tests/web_resizable_panels.cjs').read_text(encoding='utf-8')
+    assert 'skip: skipReason() || false, timeout: 60000' in source
+    for viewport in ('desktop', 'phone'):
+        for phase in ('open', 'load', 'assertions', 'close', 'closed'):
+            assert f"console.error('resizable browser: {viewport} {phase}')" in source
+        assert f'await {viewport}.close();' in source
+    assert source.count('finally {') == 2
+    data = s.validate_profile()
+    path = 'tests/test_web_3d.py'
+    assert s.include_windows(path, (s.ROOT/path).read_text(encoding='utf-8'), data,
+                             node='test_office_in_node[web_resizable_panels.cjs-fail 0]')[0]
+    item = SimpleNamespace(nodeid='resizable-browser')
+    for profile in ('linux-full-v1', 'windows-full-v1'):
+        assert suite.select([item], profile) == ([item], [], {})
 
 
 def test_incomplete_timed_out_report_is_diagnostic_not_success(monkeypatch, tmp_path):
