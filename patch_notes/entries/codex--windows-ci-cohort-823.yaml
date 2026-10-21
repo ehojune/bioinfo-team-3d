@@ -36,3 +36,7 @@ rows:
   at: 2026-10-21 14:48
   summary: 공개 보고 검사에서 불필요한 문자열 재검사를 줄였습니다.
   text: '#825: URL credential regex의 필수 문자 부재 시 탐색만 생략하고 literal path 구분자 run을 고정 문자 클래스 search로 처리한다. 출력·공용 scanner·731072자/limit=None/strict CPU<2와 기존 assertion을 유지한다. pure24 PASS·경로1584/URL180조합 동등, 로컬 CPU0.156→0.078초 각2회이며 실제 Linux CI의 CPU2.329초 실패는 미재현·새 head CI는 미검증이다.'
+- sha: 'd2e5f8f'
+  at: 2026-10-21 14:48
+  summary: 계산 시간 초과의 근거와 아직 확인하지 못한 결과를 기록했습니다.
+  text: '#825: source ea6a8731의 실제 CPU 초과·순수 회귀·출력 동등성·로컬 시간과 CI 미검증 한계를 reference/status에 기록한다. 제품·test·CI 정책은 바꾸지 않는다.'
