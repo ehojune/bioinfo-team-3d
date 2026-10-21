@@ -1,0 +1,6 @@
+pr: null
+rows:
+  - sha: 95346f0
+    at: "2026-10-22 06:39"
+    summary: "Windows 웹 검사의 브라우저 정리가 늦을 때 무엇이 언제 끝났는지 기록을 남깁니다."
+    text: "#841 Windows의 demo cleanup incomplete(Browser.close 5초 뒤 Chrome exit·stdio close 미관측, 이후 30초 상한)의 원인이 미확인이라 수정 대신 근거를 남긴다. 마감 시점에 미도착인 소유 Chrome exit·stdio close·CDP socket close를 fallback kill 전에 관측해 지연 ms를 stderr에 쓰고, focus fixture가 두 demo의 시작 단계 시각을 남긴다. 5초 실패·30초·profile 보존·closed 미표시는 그대로다."
