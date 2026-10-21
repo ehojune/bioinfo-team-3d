@@ -2,16 +2,19 @@
 import ctypes as C
 from contextlib import contextmanager
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
 import sys
 import time
+import uuid
 from types import SimpleNamespace
 
 import pytest
 
 from labhq import windows_launch as win, windows_broker as broker
+from tests.test_web_shutdown_process import _launch_journal
 
 pytestmark = pytest.mark.skipif(
     sys.platform != "win32" or os.environ.get("GITHUB_ACTIONS") != "true",
@@ -142,12 +145,151 @@ def wait_result(path):
     raise AssertionError("owned launcher produced no outcome")
 
 
+def _owned_launch_diagnostics(root, parent):
+    """Never dump parent.log: only the existing journal projection and a bounded exitcode."""
+    try:
+        code = parent.poll() if parent is not None else "unavailable"
+        if code is None:
+            code = "running"
+        elif type(code) is not int or not -2**32 <= code <= 2**32:
+            code = "unavailable"
+    except Exception:
+        code = "unavailable"
+    try:
+        journal = _launch_journal(root / "state/logs/detached-launch.jsonl")
+    except Exception:
+        journal = "(journal unavailable)"
+    diagnostic = json.dumps({"launcher_exitcode": code, "journal": journal})
+    if len(diagnostic) > 4096:
+        return json.dumps({"launcher_exitcode": code, "journal": "(journal projection exceeds bound)"})
+    return diagnostic
+
+
+class _NativeTrace:
+    """Optional CI diagnostics only; never a success certificate or a cleanup gate."""
+    phases = {"case_enter", "body_enter", "body_return", "body_positive", "trace_full"} | {
+        name + suffix for name in ("wait_result", "stop", "wait", "terminate", "close", "poll", "parent_wait", "parent_kill", "process_wait")
+        for suffix in ("_enter", "_return", "_error")}
+
+    def __init__(self, kind="positive"):
+        self.path, self.rows, self.full = None, [], False
+        try:
+            value = os.environ.get("CI_SUITE_ARTIFACT_DIR")
+            if not value:
+                return  # No filesystem, clock or UUID work outside the explicit diagnostic context.
+            if kind not in ("positive", "denied", "nested", "unknown_job", "receipt_timeout"):
+                return
+            root = Path(value)
+            if not root.is_absolute() or os.path.normcase(str(root.resolve(strict=True))) != os.path.normcase(str(root.absolute())):
+                return
+            directory = root / "critical"
+            if os.path.normcase(str(directory.resolve())) != os.path.normcase(str(directory.absolute())):
+                return
+            directory.mkdir(exist_ok=True)
+            identifier = uuid.uuid4().hex
+            if len(identifier) != 32 or any(c not in "0123456789abcdef" for c in identifier):
+                return
+            self.case_id = kind + "-" + identifier
+            path = directory / ("native-case-" + self.case_id + ".json")
+            with path.open("x", encoding="utf-8") as stream:
+                stream.write(json.dumps({"case_id": self.case_id, "events": []}))
+            self.path, self.directory, self.started = path, directory, time.monotonic()
+            self.emit("case_enter")
+        except BaseException:
+            self.path = None  # Diagnostic failures must never interrupt owned-resource cleanup.
+
+    def emit(self, phase, *, role=None, wait_ms=None, result=None, signature_ok=None, call_ms=None):
+        pending, created = None, False
+        try:
+            if self.path is None or self.full or phase not in self.phases:
+                return
+            if self.path.parent != self.directory or self.path.name != "native-case-" + self.case_id + ".json":
+                return
+            elapsed = (time.monotonic() - self.started) * 1000
+            row = {"phase": phase, "clock_ok": math.isfinite(elapsed) and 0 <= elapsed <= 600000}
+            if row["clock_ok"]:
+                row["elapsed_ms"] = round(elapsed, 3)
+            if role in ("role", "child", "parent", "job", "outer_job"):
+                row["role"] = role
+            if type(wait_ms) is int and wait_ms in (300, 5000, 10000, 45000):
+                row["wait_ms"] = wait_ms
+            if result in ("none", "other") or type(result) is int and result in (0, 1, 258, 0xFFFFFFFF):
+                row["result"] = result
+            if type(signature_ok) is bool:
+                row["signature_ok"] = signature_ok
+            if type(call_ms) in (int, float) and math.isfinite(call_ms) and 0 <= call_ms <= 600000:
+                row["call_ms"] = round(call_ms, 3)
+            if len(self.rows) == 63:
+                row["phase"], self.full = "trace_full", True
+            self.rows.append(row)
+            text = json.dumps({"case_id": self.case_id, "events": self.rows}, allow_nan=False)
+            if len(text) > 16384:
+                self.rows.pop()
+                self.full = True
+                return
+            # Decline redirected parents/targets. Names cannot collide with trusted CI records.
+            if os.path.normcase(str(self.path.resolve())) != os.path.normcase(str(self.path.absolute())):
+                return
+            pending = self.path.with_name(self.path.stem + "-pending.json")
+            with pending.open("x", encoding="utf-8") as stream:
+                created = True
+                stream.write(text)
+            pending.replace(self.path)  # Close before publishing; keep the last complete JSON on interruption.
+        except BaseException:
+            pass
+        finally:
+            if created:
+                try:
+                    pending.unlink(missing_ok=True)
+                except BaseException:
+                    pass
+
+
+def _trace_event(case, phase):
+    try:
+        trace = getattr(case, "trace", None)
+        if trace is not None:
+            trace.emit(phase)
+    except BaseException:
+        pass
+
+
+def _trace_call(trace, phase, function, *args, role=None, wait_ms=None, **kwargs):
+    try:
+        enabled = trace is not None and trace.path is not None
+    except BaseException:
+        enabled = False
+    if not enabled:
+        return function(*args, **kwargs)
+    def record(suffix, result=None, started=None):
+        try:
+            duration = (time.monotonic() - started) * 1000 if started is not None else None
+            signature = (getattr(function, "argtypes", None) == [C.c_void_p, C.c_uint32]
+                         and getattr(function, "restype", None) is C.c_uint32) if phase == "wait" else None
+            trace.emit(phase + suffix, role=role, wait_ms=wait_ms, result=result, signature_ok=signature, call_ms=duration)
+        except BaseException:
+            pass
+    record("_enter")
+    try:
+        started = time.monotonic()  # Exclude the preceding diagnostic write from the callable duration.
+    except BaseException:
+        started = None
+    try:
+        result = function(*args, **kwargs)
+    except BaseException:
+        record("_error", started=started)
+        raise
+    record("_return", result if type(result) is int and result in (0, 1, 258, 0xFFFFFFFF) else "none" if result is None else "other", started)
+    return result
+
+
 @contextmanager
 def owned_launch(tmp_path, *, allow_breakaway, nested=False):
     dll = kernel()
     job = dll.CreateJobObjectW(None, None)  # Unnamed, non-inheritable; only this test owns its lifetime.
     assert job, C.get_last_error()
     case = SimpleNamespace(dll=dll, job=job, outer_job=None, parent=None, child_handle=None, role_handle=None)
+    case.trace = _NativeTrace("nested" if nested else "positive" if allow_breakaway else "denied")
     (tmp_path / "daemon.py").write_text(DAEMON, encoding="utf-8")
     (tmp_path / "role.py").write_text(ROLE, encoding="utf-8")
     script = tmp_path / "parent.py"
@@ -175,16 +317,24 @@ def owned_launch(tmp_path, *, allow_breakaway, nested=False):
             assert dll.AssignProcessToJobObject(case.outer_job, int(case.parent._handle)), C.get_last_error()
         assert dll.AssignProcessToJobObject(job, int(case.parent._handle)), C.get_last_error()
         (tmp_path / "go").touch()
-        case.result = wait_result(tmp_path / "result.json")
+        case.result = _trace_call(case.trace, "wait_result", wait_result, tmp_path / "result.json", wait_ms=45000)
         assert case.result["parent_job"]["in_job"] is True
         assert case.result["parent_job"]["kill_on_close"] is True
         assert case.result["parent_job"]["breakaway_ok"] is (allow_breakaway and not nested)
         assert case.result["parent_job"]["silent_breakaway_ok"] is nested
         case.pid_file = tmp_path / "state/labhq-gateway-supervisor.pid"
         case.events = [json.loads(line) for line in (tmp_path / "state/logs/detached-launch.jsonl").read_text().splitlines()]
+        _trace_event(case, "body_enter")
         yield case
+        _trace_event(case, "body_return")
+    except (Exception, SystemExit):
+        try:
+            print("\n--- owned launch ---\n" + _owned_launch_diagnostics(tmp_path, case.parent), file=sys.stderr)
+        except Exception:
+            pass  # Diagnostic failure must not replace the original assertion/exception.
+        raise
     finally:
-        (tmp_path / "stop").touch()  # Normal exit for the fake daemon; never a real labhq role.
+        _trace_call(case.trace, "stop", (tmp_path / "stop").touch)  # Normal exit for the fake daemon.
         for attribute, names in (("role_handle", ("fake-role.json", "ready")),
                                  ("child_handle", ("state/labhq-gateway-supervisor.pid", "fake-supervisor.json"))):
             if not getattr(case, attribute):
@@ -199,31 +349,33 @@ def owned_launch(tmp_path, *, allow_breakaway, nested=False):
         try:
             for handle in (case.role_handle, case.child_handle):
                 if handle:
-                    if dll.WaitForSingleObject(handle, 5000) == 258:
-                        assert dll.TerminateProcess(handle, 1)  # Retained owned handle, never a PID scan.
-                    assert dll.WaitForSingleObject(handle, 5000) == 0
+                    role = "role" if handle is case.role_handle else "child"
+                    if _trace_call(case.trace, "wait", dll.WaitForSingleObject, handle, 5000, role=role, wait_ms=5000) == 258:
+                        assert _trace_call(case.trace, "terminate", dll.TerminateProcess, handle, 1, role=role)
+                    assert _trace_call(case.trace, "wait", dll.WaitForSingleObject, handle, 5000, role=role, wait_ms=5000) == 0
         finally:
             if case.role_handle:
-                assert dll.CloseHandle(case.role_handle)
+                assert _trace_call(case.trace, "close", dll.CloseHandle, case.role_handle, role="role")
             if case.child_handle:
-                assert dll.CloseHandle(case.child_handle)
+                assert _trace_call(case.trace, "close", dll.CloseHandle, case.child_handle, role="child")
             if case.job:
-                assert dll.CloseHandle(case.job)
+                assert _trace_call(case.trace, "close", dll.CloseHandle, case.job, role="job")
             if case.outer_job:
-                assert dll.CloseHandle(case.outer_job)
+                assert _trace_call(case.trace, "close", dll.CloseHandle, case.outer_job, role="outer_job")
             if case.parent:
-                if case.parent.poll() is None:
-                    case.parent.kill()  # Only the Popen owned by this test, including failed assignment.
-                case.parent.wait(timeout=10)
+                if _trace_call(case.trace, "poll", case.parent.poll, role="parent") is None:
+                    _trace_call(case.trace, "parent_kill", case.parent.kill, role="parent")
+                _trace_call(case.trace, "parent_wait", case.parent.wait, timeout=10, role="parent", wait_ms=10000)
 
 
 def close_parent_job(case):
-    assert case.dll.CloseHandle(case.job)
+    trace = getattr(case, "trace", None)
+    assert _trace_call(trace, "close", case.dll.CloseHandle, case.job, role="job")
     case.job = None  # Last owned Job handle: the assigned parent must exit, but the escaped child must not.
     if case.outer_job:
-        assert case.dll.CloseHandle(case.outer_job)
+        assert _trace_call(trace, "close", case.dll.CloseHandle, case.outer_job, role="outer_job")
         case.outer_job = None
-    case.parent.wait(timeout=10)
+    _trace_call(trace, "parent_wait", case.parent.wait, timeout=10, role="parent", wait_ms=10000)
 
 
 def test_allowed_breakaway_child_survives_parent_job_close(tmp_path, capsys):
@@ -238,7 +390,8 @@ def test_allowed_breakaway_child_survives_parent_job_close(tmp_path, capsys):
         assert statuses[-1] == "recorded" and ("job_verified" in statuses or "wmi_verified" in statuses)
         assert statuses.count("wmi_attempt") <= 1
         close_parent_job(case)
-        assert case.dll.WaitForSingleObject(case.child_handle, 300) == 258
+        assert _trace_call(getattr(case, "trace", None), "wait", case.dll.WaitForSingleObject, case.child_handle, 300, role="child", wait_ms=300) == 258
+        _trace_event(case, "body_positive")
         with capsys.disabled():
             print("WIN795 POSITIVE: successful launch, parent Job closed, child survived; owned cleanup follows")
 
@@ -268,8 +421,9 @@ def test_wmi_escapes_owned_outer_nonbreakaway_inner_silent_job(tmp_path, capsys)
         assert case.role_handle and win.job_membership(case.role_handle) is False
         assert (tmp_path / "ready").is_file()
         close_parent_job(case)
-        assert case.dll.WaitForSingleObject(case.child_handle, 300) == 258
-        assert case.dll.WaitForSingleObject(case.role_handle, 300) == 258
+        assert _trace_call(case.trace, "wait", case.dll.WaitForSingleObject, case.child_handle, 300, role="child", wait_ms=300) == 258
+        assert _trace_call(case.trace, "wait", case.dll.WaitForSingleObject, case.role_handle, 300, role="role", wait_ms=300) == 258
+        _trace_event(case, "body_positive")
         with capsys.disabled():
             print("WIN795 NESTED POSITIVE: WMI bootstrap/fake role survived both owned Job closes; cleanup follows")
 
@@ -277,6 +431,7 @@ def test_wmi_escapes_owned_outer_nonbreakaway_inner_silent_job(tmp_path, capsys)
 @pytest.mark.parametrize("failure", ["unknown_job", "receipt_timeout"])
 def test_real_wmi_bootstrap_never_enters_fake_role_without_verified_ack(tmp_path, monkeypatch, failure):
     # Actual WMI/bootstrap, with only the caller-side failure injected. The child never receives ACK.
+    trace = _NativeTrace(failure)
     native = broker.Native()
     caller = native.identity(native.k.GetCurrentProcess())
     create, read = broker._create, broker._read
@@ -311,18 +466,20 @@ def test_real_wmi_bootstrap_never_enters_fake_role_without_verified_ack(tmp_path
     (tmp_path / "daemon.py").write_text(DAEMON, encoding="utf-8")
     (tmp_path / "role.py").write_text(ROLE, encoding="utf-8")
     try:
+        trace.emit("body_enter")
         with (state / "log").open("a", encoding="utf-8") as output:
             with pytest.raises(win.LaunchError):
                 broker.launch([caller["image"], str(tmp_path / "daemon.py"), str(tmp_path)], state=state,
                               role="gateway-supervisor", cwd=str(tmp_path), env=dict(os.environ), stdout=output)
         assert len(observed) == 1
-        observed[0].wait(timeout=5)  # Owned cleanup or bounded bootstrap self-abort; no descendants before ACK.
+        _trace_call(trace, "process_wait", observed[0].wait, timeout=5, role="child", wait_ms=5000)
         assert not (tmp_path / "ready").exists() and not (tmp_path / "fake-role.json").exists()
         assert not list(state.glob("*.pid"))
+        trace.emit("body_positive")
     finally:
         for process in observed:
             try:
-                process.kill()  # Proven nonce + held creation/image/current-user identity; never an unknown PID.
-                process.wait(timeout=5)
+                _trace_call(trace, "terminate", process.kill, role="child")  # Proven retained identity only.
+                _trace_call(trace, "process_wait", process.wait, timeout=5, role="child", wait_ms=5000)
             finally:
-                process.close()
+                _trace_call(trace, "close", process.close, role="child")

@@ -7,10 +7,12 @@ from scripts import ci_skip as cs
 
 
 @pytest.fixture
-def producer(monkeypatch):
+def producer(monkeypatch, tmp_path):
+    from tests.test_ci_windows_phases import fake_context, make_receipts
+    from scripts import ci_windows_phases as phases
     sha = lambda char: char * 40
     current = {"checkout_sha": sha("a"), "tree": sha("b"),
-               "policy": {path: sha(str(i + 1)) for i, path in enumerate(cs.POLICY_FILES)}}
+               "policy": {path: sha(f'{i + 1:x}') for i, path in enumerate(cs.POLICY_FILES)}}
     repo = {"id": 123, "full_name": cs.REPOSITORY}
     event = {"pull_request": {"number": 793,
              "base": {"ref": "main", "sha": sha("c"), "repo": repo},
@@ -24,6 +26,11 @@ def producer(monkeypatch):
            "GITHUB_RUN_ID": "42", "GITHUB_RUN_ATTEMPT": "1"}
     for key, value in env.items():
         monkeypatch.setenv(key, value)
+    context = fake_context(current, checkout=current['checkout_sha'])
+    context['workflow_ref'] = env['GITHUB_WORKFLOW_REF']
+    proof = make_receipts(tmp_path, context)
+    monkeypatch.setenv('CI_WINDOWS_RECEIPT_DIR', str(tmp_path))
+    needs['pytest-windows']['outputs'].update(execution=phases.EXECUTION, receipt=phases.digest(proof))
     git_results = {"parents": f"{sha('a')} {sha('c')} {sha('d')}",
                    "blob": current["policy"][cs.WORKFLOW]}
     calls = []
@@ -41,7 +48,7 @@ def test_bound_identity_and_all_receipts_still_produce_the_same_manifest(produce
     current, needs, event, _, calls = producer
     result = cs.produce_manifest(current, needs, event)
     assert result == cs.expected_manifest({"id": 42, "run_attempt": 1}, current,
-                                         cs.pr_snapshot(event["pull_request"]), current["checkout_sha"])
+                                         cs.pr_snapshot(event["pull_request"]), current["checkout_sha"], result['windows_execution'])
     assert len(calls) == 2
 
 
@@ -104,7 +111,7 @@ def test_identity_diagnostics_do_not_bypass_any_gate(producer, gate):
 
 
 @pytest.mark.parametrize("gate", cs.GATE_IDS)
-@pytest.mark.parametrize("profile", [None, "windows-full-v1", "serial-legacy"])
+@pytest.mark.parametrize("profile", [None, "windows-full-v1", "windows-boundary-v1", "serial-legacy"])
 def test_coverage_receipts_must_match_every_expected_gate(producer, gate, profile):
     current, needs, event, _, calls = producer
     needs[gate]["outputs"]["profile"] = profile

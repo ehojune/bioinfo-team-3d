@@ -69,26 +69,22 @@ def test_mock_types_imports_and_strings_do_not_claim_a_shared_host_resource(tmp_
 
 
 @pytest.mark.parametrize("source", [
-    'from labhq.util import free_port\nport = free_port()',
-    'from socket import socket as sock\ns = sock(); s.bind(("127.0.0.1", 0))',
-    'import socket as net\ns = net.socket()',
-    'from uvicorn import Server as NativeServer\nserver = NativeServer(config)',
-    'import subprocess as sp\nsp.Popen(["synthetic"])',
-    'from subprocess import run as execute\nexecute(["synthetic"])',
-    'import asyncio as aio\nawait aio.create_subprocess_exec("synthetic")',
-    'import os\nos.kill(123, 0)',
+    'from socket import socket as sock\ns = sock(); s.bind(("127.0.0.1", 8787))',
+    'import psutil as system\nlist(system.process_iter())',
+    'import uvicorn\nserver=uvicorn.Server(uvicorn.Config(app,port=55921))\nawait server.serve()',
+    'import subprocess as sp\nsp.run(["tasklist"])',
 ])
-def test_actual_host_capability_calls_and_aliases_require_serialization(tmp_path, source):
+def test_actual_shared_host_capability_calls_and_aliases_require_serialization(tmp_path, source):
     path = tmp_path / "test_native.py"
     path.write_text(source, encoding="utf-8")
     assert selection.host_resource(path, tmp_path)
 
 
-def test_resource_helpers_follow_absolute_and_relative_imports_and_fail_closed(tmp_path):
+def test_resource_helpers_follow_absolute_and_relative_calls_and_fail_closed(tmp_path):
     folder = tmp_path / "tests"
     folder.mkdir()
-    (folder / "ports.py").write_text('from socket import socket\ndef reserve(): return socket()', encoding="utf-8")
-    for source in ('from tests.ports import reserve', 'from .ports import reserve', 'from ports import reserve'):
+    (folder / "ports.py").write_text('import socket\ndef reserve():\n    s=socket.socket(); s.bind(("127.0.0.1", 8787))', encoding="utf-8")
+    for source in ('from tests.ports import reserve\nreserve()', 'from .ports import reserve\nreserve()', 'from ports import reserve\nreserve()'):
         path = folder / "test_client.py"
         path.write_text(source, encoding="utf-8")
         assert selection.host_resource(path, tmp_path)
@@ -96,45 +92,30 @@ def test_resource_helpers_follow_absolute_and_relative_imports_and_fail_closed(t
     assert selection.host_resource(path, tmp_path)
 
 
-def test_reviewed_cohort_is_bounded_and_explained_without_exempting_hard_boundaries():
-    data = json.loads((ROOT / selection.PROFILE).read_text(encoding="utf-8"))
-    reviewed = data["reviewed_pure"]
-    assert 10 <= len(reviewed) <= 25
-    for path, row in reviewed.items():
-        assert row["reason"].strip()
-        assert len(row["sha256"]) == 64 and set(row["sha256"]) <= set("0123456789abcdef")
-        if (ROOT / path).is_file():
-            source = (ROOT / path).read_text(encoding="utf-8")
-            included, _ = selection.include_windows(path, source, reviewed)
-            # Changed source is a normal full-inclusion fallback. A future
-            # product PR must not need to approve its own exclusion to pass CI.
-            assert included == (selection.source_digest(source) != row["sha256"])
-    for path in ("tests/test_windows_job_ci.py", "tests/test_state_isolation.py", "tests/test_supervisor_process.py",
-                 "tests/test_cli.py", "tests/test_reproduction_receipt.py", "tests/test_durable_writer.py"):
-        assert selection.include_windows(path, "", reviewed)[0]
+def test_reviewed_cohort_is_explained_without_exempting_hard_boundaries():
+    from tests.test_ci_parallel_policy import test_actual_profile_exclusions_have_reviewed_digest_and_keep_os_boundaries
+    test_actual_profile_exclusions_have_reviewed_digest_and_keep_os_boundaries()
 
 
 def test_cohort_contract_accepts_changed_reviewed_sources(monkeypatch):
-    monkeypatch.setattr(selection, "source_digest", lambda text: "0" * 64)
-    test_reviewed_cohort_is_bounded_and_explained_without_exempting_hard_boundaries()
+    from tests.test_ci_parallel_policy import test_profile_contract_includes_changed_source_without_refreshing_approval
+    test_profile_contract_includes_changed_source_without_refreshing_approval(monkeypatch)
 
 
-@pytest.mark.parametrize("dependency", ["scripts/check.py", "config/schema.yaml", "labhq/catalog.yaml",
-                                      "tests/conftest.py", "tests/test_research_protocol.py",
-                                      "tests/test_research_cp1.py", "pyproject.toml"])
-def test_non_python_runtime_and_reviewed_helper_changes_expire_the_review(tmp_path, dependency):
-    before = selection.implementation_digest(tmp_path)
+@pytest.mark.parametrize("dependency", ["scripts/check.py", "config/schema.yaml", "labhq/catalog.yaml"])
+def test_unrelated_product_files_do_not_globally_expire_every_test(tmp_path, dependency):
+    from tests.test_ci_cohort823 import policy_file
+    source = "def test_math(): assert 1 + 1 == 2"
+    policy_file(tmp_path, source)
+    before = selection.policy(tmp_path)
     path = tmp_path / dependency
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("changed review dependency", encoding="utf-8")
-    assert selection.implementation_digest(tmp_path) != before
+    path.write_text("changed unrelated dependency", encoding="utf-8")
+    assert selection.policy(tmp_path) == before
 
 
-def test_profile_does_not_fingerprint_itself_but_is_bound_by_manifest_policy(tmp_path):
+def test_profile_is_bound_by_manifest_policy_and_version():
     from scripts import ci_skip
-    before = selection.implementation_digest(tmp_path)
-    path = tmp_path / selection.PROFILE
-    path.parent.mkdir(parents=True)
-    path.write_text('{"implementation_sha256":"replacement"}', encoding="utf-8")
-    assert selection.implementation_digest(tmp_path) == before
     assert selection.PROFILE in ci_skip.POLICY_FILES
+    assert ci_skip.COVERAGE["pytest-windows"] == selection.WINDOWS_BOUNDARY
+    assert ci_skip.VERSION == 8

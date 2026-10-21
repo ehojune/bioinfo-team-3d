@@ -2,6 +2,7 @@
 import ast
 import asyncio
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -193,9 +194,21 @@ def test_office_in_node(filename, marker):
     script = Path(__file__).with_name(filename)
     # The optional installed-browser checks wait for Chrome's start and the demo viewports (node:test budgets of 150 s and 240 s).
     timeout = {'web_office_browser.cjs': 170, 'web_visual_demo.cjs': 260, 'web_visual_tooling.cjs': 170}.get(filename, 30)
-    result = subprocess.run([node, str(script)], capture_output=True, text=True, encoding='utf-8', timeout=timeout)
+    try:
+        result = subprocess.run([node, str(script)], capture_output=True, text=True, encoding='utf-8', timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        # TimeoutExpired may contain bytes even with text=True. Keep partial TAP
+        # and browser phase diagnostics; a timeout remains a failure.
+        def captured(value):
+            return value.decode('utf-8', errors='replace') if isinstance(value, bytes) else (value or '')
+        raise AssertionError(f'{filename} exceeded {timeout}s\nstdout:\n{captured(exc.output)}'
+                             f'\nstderr:\n{captured(exc.stderr)}') from exc
     assert result.returncode == 0, result.stdout + result.stderr
     assert marker in result.stdout, result.stdout + result.stderr
+    if filename == 'web_resizable_panels.cjs' and os.environ.get('LABHQ_REQUIRE_RESIZABLE_BROWSER') == '1':
+        # A Python PASS alone must not certify an optional inner Node skip.
+        assert re.search(r'^# pass 3\s*$', result.stdout, re.MULTILINE), result.stdout + result.stderr
+        assert re.search(r'^# skipped 0\s*$', result.stdout, re.MULTILINE), result.stdout + result.stderr
 
 
 def test_every_node_web_test_runs_in_ci():

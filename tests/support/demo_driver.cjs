@@ -104,6 +104,43 @@ async function removeDir(dir) {
   }
 }
 
+// A request to close is not an acknowledgement. In particular ChildProcess
+// 'exit' can precede closure of inherited stdio; await 'close' before declaring
+// the fixture closed or removing its profile. Only these owned handles are used.
+async function closeDemoResources({ws, wsClosed, chrome, chromeClosed, server, profile},
+  {removeProfile = removeDir, setTimer = setTimeout, clearTimer = clearTimeout,
+    diagnostic = (stage, pending) => console.error('demo cleanup: ' + JSON.stringify({stage, pending,
+      active: typeof process.getActiveResourcesInfo === 'function' ? process.getActiveResourcesInfo().slice(0, 16) : null}))} = {}) {
+  const pending = new Set(), failures = [];
+  const report = stage => { try { diagnostic(stage, [...pending]); } catch { /* diagnostic only */ } };
+  const closing = (name, request, acknowledgement) => {
+    pending.add(name);
+    return Promise.resolve().then(request).then(() => acknowledgement).then(() => pending.delete(name))
+      .catch(error => { failures.push(error); throw error; });
+  };
+  const waits = [];
+  if (ws) waits.push(closing('websocket', () => ws.close(), wsClosed));
+  if (chrome) waits.push(closing('chrome-stdio', () => {
+    if (chrome.exitCode === null && chrome.signalCode === null) chrome.kill();
+  }, chromeClosed));
+  waits.push(closing('http-server', () => new Promise((resolve, reject) => {
+    server.close(error => error ? reject(error) : resolve());
+  })));
+  let timer;
+  try {
+    await Promise.race([Promise.allSettled(waits), new Promise((_, reject) => {
+      timer = setTimer(() => {
+        report('timeout');
+        reject(new AggregateError([...failures, new Error('demo cleanup did not close: ' + [...pending].join(', '))],
+          'demo cleanup incomplete'));
+      }, 5000);
+    })]);
+  } finally { clearTimer(timer); }
+  if (failures.length) throw new AggregateError(failures, 'demo cleanup failed');
+  await removeProfile(profile);
+  report('closed');
+}
+
 // opts: {width, height, reducedMotion=true, colorScheme='light', web=WEB_ROOT, layoutFont=false, fontFamily=null, deadlineMs=60000}
 // layoutFont forces the metrics-only font from test_font.cjs so text wraps the same on every OS.
 async function openDemo(opts = {}) {
@@ -115,13 +152,8 @@ async function openDemo(opts = {}) {
   const port = server.address().port;
   if (FORBIDDEN_PORTS.includes(port)) throw new Error('static server landed on a reserved port ' + port);
   const origin = `http://127.0.0.1:${port}`;
-  let chrome, ws;
-  const close = async () => {
-    try { ws?.close(); } catch { /* already closed */ }
-    try { chrome?.kill(); } catch { /* already gone */ }
-    server.close();
-    await removeDir(profile);
-  };
+  let chrome, ws, chromeClosed, wsClosed, closing;
+  const close = () => closing ||= closeDemoResources({ws, wsClosed, chrome, chromeClosed, server, profile});
   try {
     // Chrome resolves its default profile before comparing --user-data-dir; keep both under this temp root.
     const home = path.join(profile, 'home'), local = path.join(home, 'AppData', 'Local'), roaming = path.join(home, 'AppData', 'Roaming');
@@ -137,6 +169,7 @@ async function openDemo(opts = {}) {
       ...(process.env.CI ? ['--no-sandbox'] : []), 'about:blank'],
     {windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'], env: {...process.env, HOME: home, USERPROFILE: home,
       HOMEDRIVE: path.parse(home).root.slice(0, 2), HOMEPATH: home.slice(2), LOCALAPPDATA: local, APPDATA: roaming, XDG_CONFIG_HOME: config}});
+    chromeClosed = new Promise(resolve => chrome.once('close', resolve));
     chrome.stderr.on('data', chunk => { chromeError = (chromeError + chunk).slice(-2000); });
     // A cold Chrome start on a loaded CI runner can take far longer than 10 s (see tests/web_office_browser.cjs):
     // wait for the DevToolsActivePort file and the page target on a deadline, and stop early if Chrome exits.
@@ -156,6 +189,7 @@ async function openDemo(opts = {}) {
     // Node 22+ has a global WebSocket; older Nodes use the small client in mini_ws.cjs (LABHQ_FORCE_MINI_WS=1 forces it).
     const Socket = typeof WebSocket !== 'undefined' && !process.env.LABHQ_FORCE_MINI_WS ? WebSocket : MiniWebSocket;
     ws = new Socket(page.webSocketDebuggerUrl);
+    wsClosed = new Promise(resolve => { ws.onclose = resolve; });
     await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = e => reject(new Error('CDP socket failed: ' + (e?.message || e))); });
     let serial = 0;
     const pending = new Map(), external = [], errors = [];
@@ -228,7 +262,10 @@ async function openDemo(opts = {}) {
       return Buffer.from(r.data, 'base64');
     };
     return {cdp, evaluate, advance, until, waitReal, load, settle, frames, screenshot, external, errors, close, origin, width, height};
-  } catch (e) { await close(); throw e; }
+  } catch (e) {
+    try { await close(); } catch (cleanup) { throw new AggregateError([e, cleanup], 'demo startup and cleanup failed'); }
+    throw e;
+  }
 }
 
-module.exports = {openDemo, skipReason, findChrome, sleep, WEB_ROOT, CLOCK_SOURCE};
+module.exports = {openDemo, skipReason, findChrome, sleep, WEB_ROOT, CLOCK_SOURCE, closeDemoResources};

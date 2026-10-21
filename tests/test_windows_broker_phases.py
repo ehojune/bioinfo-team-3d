@@ -12,7 +12,7 @@ from tests.test_windows_broker import world  # Reuse the fully fake native/owner
 CREATE = broker._create
 
 
-PHASES = ["powershell_started", "input_accepted", "create_entered", "create_returned"]
+PHASES = ["powershell_started", "stdin_open", "header_read", "input_read", "input_accepted", "create_entered", "create_returned"]
 
 
 def frames(count):
@@ -30,7 +30,7 @@ def shell(tmp_path, monkeypatch):
     return path
 
 
-@pytest.mark.parametrize("count", range(5))
+@pytest.mark.parametrize("count", range(len(PHASES) + 1))
 def test_timeout_retains_only_received_phases_and_never_retries(shell, tmp_path, monkeypatch, count):
     failure = subprocess.TimeoutExpired("fake-powershell", 10, output=frames(count))
     run = Mock(side_effect=failure)
@@ -49,7 +49,7 @@ def test_timeout_retains_only_received_phases_and_never_retries(shell, tmp_path,
 
 
 def test_success_parses_progress_separately_from_returned_pid(shell, tmp_path, monkeypatch):
-    run = Mock(return_value=SimpleNamespace(returncode=0, stdout=frames(4) + b'{"code":0,"pid":222}'))
+    run = Mock(return_value=SimpleNamespace(returncode=0, stdout=frames(len(PHASES)) + b'{"code":0,"pid":222}'))
     monkeypatch.setattr(broker.subprocess, "run", run)
     diagnostic = {}
     assert broker._create([str(tmp_path / "python.exe"), "script.py"], tmp_path, {}, diagnostics=diagnostic) == 222
@@ -59,7 +59,7 @@ def test_success_parses_progress_separately_from_returned_pid(shell, tmp_path, m
     run.assert_called_once()
 
 
-@pytest.mark.parametrize("count,reply", [(3, b""), (4, b'{"code":0,"pid":222}')])
+@pytest.mark.parametrize("count,reply", [(count, b'{"code":0,"pid":222}' if count == len(PHASES) else b"") for count in range(1,len(PHASES)+1)])
 def test_timeout_journal_keeps_phase_and_duration_without_ack_or_pid(world, shell, monkeypatch, count, reply):
     failure = subprocess.TimeoutExpired("SECRET-command", 10, output=frames(count) + reply,
                                         stderr=b"SECRET-stderr")
@@ -124,11 +124,11 @@ def test_native_failure_keeps_errno_and_phase_without_message_or_ack(world, wher
 
 @pytest.mark.parametrize("suffix", [
     b'{"phase":"private-command","elapsed_ms":2}\n',
-    b'{"phase":"input_accepted","elapsed_ms":"private-value"}\n',
-    b'{"phase":"input_accepted","elapsed_ms":NaN}\n',
-    b'{"phase":"input_accepted","elapsed_ms":-1}\n',
-    b'{"phase":"input_accepted","elapsed_ms":true}\n',
-    b'{"phase":"input_accepted","elapsed_ms":2,"env":"private-value"}\n',
+    b'{"phase":"stdin_open","elapsed_ms":"private-value"}\n',
+    b'{"phase":"stdin_open","elapsed_ms":NaN}\n',
+    b'{"phase":"stdin_open","elapsed_ms":-1}\n',
+    b'{"phase":"stdin_open","elapsed_ms":true}\n',
+    b'{"phase":"stdin_open","elapsed_ms":2,"env":"private-value"}\n',
     b'{"phase":"create_returned","elapsed_ms":2}\n',
     b'{"phase":',
     b'x' * 9000,
@@ -146,7 +146,31 @@ def test_script_flushes_fixed_phases_around_input_and_single_create():
     script = broker.WMI_SCRIPT
     offsets = [script.index("Write-Phase '" + name + "'") for name in PHASES]
     assert offsets == sorted(offsets)
-    assert offsets[0] < script.index("ReadToEnd()") < offsets[1]
-    assert offsets[2] < script.index(".Create($r.command") < offsets[3]
+    assert offsets[0] < script.index("OpenStandardInput()") < offsets[1] < script.index("ReadUInt32()") < offsets[2]
+    assert offsets[2] < script.index("ReadBytes(") < offsets[3] < script.index("ConvertFrom-Json") < offsets[4]
+    assert offsets[4] < script.index("CreateInstance()") < offsets[5] < script.index(".Create($r.command") < offsets[6]
     assert script.count(".Create($r.command") == 1
     assert "[Console]::Out.Flush()" in script and "Stopwatch" in script
+
+
+def test_full_phase_reply_fits_the_unchanged_byte_bound():
+    raw = frames(len(PHASES)) + b'{"code":0,"pid":222}'
+    diagnostic = {}
+    assert broker._provider_output(raw + b' ' * (8192 - len(raw)), diagnostic, complete=True) == {"code": 0, "pid": 222}
+    assert diagnostic["trace_status"] == "phases_complete"
+    with pytest.raises(ValueError, match="provider protocol"):
+        broker._provider_output(raw + b' ' * (8193 - len(raw)), {}, complete=True)
+
+
+@pytest.mark.parametrize("raw", [
+    frames(len(PHASES)),  # progress alone is never a complete result
+    frames(1) + b'{"phase":"stdin_open",',
+    frames(2) + json.dumps({"phase":"stdin_open", "elapsed_ms":20}).encode(),
+    frames(1) + json.dumps({"phase":"input_accepted", "elapsed_ms":20}).encode(),
+    frames(len(PHASES)) + b'{"code":0,"pid":222}\n{"code":0,"pid":222}',
+], ids=["no-reply", "partial-frame", "duplicate-phase", "missing-read-phase", "excess-frame"])
+def test_split_protocol_rejects_incomplete_mismatched_and_extra_frames(raw):
+    diagnostic = {}
+    with pytest.raises(ValueError, match="provider protocol"):
+        broker._provider_output(raw, diagnostic, complete=True)
+    assert diagnostic["trace_status"] == "invalid_or_partial"
