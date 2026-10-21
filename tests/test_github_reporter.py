@@ -164,6 +164,142 @@ def test_sanitize_cost_guard_keeps_cpu_budget_and_exact_untruncated_output(
                       [("/restricted", "restricted")], None)]
 
 
+@pytest.mark.parametrize("prefix", ["", "D:"])
+def test_literal_zone_separator_runs_have_bounded_python_work(prefix):
+    from labhq.integrations.github import _literal_zone_end
+
+    class CountedText(str):
+        reads = 0
+
+        def __getitem__(self, key):
+            self.reads += 1
+            return super().__getitem__(key)
+
+    # Both leading and between-component runs matter; this measures Python
+    # indexing work rather than host scheduling, without changing the output.
+    text = CountedText(prefix + "/\\" * 4_096 + "data" + "\\/" * 4_096 + "cohort/x")
+    assert _literal_zone_end(text, 0, prefix + "/data/cohort") == len(text) - 2
+    assert text.reads < 32
+
+
+def test_literal_zone_run_search_matches_original_character_walk():
+    from itertools import product
+    from labhq.integrations.github import _literal_zone_end
+
+    def original(text, start, zone):
+        pos = start
+        parts = tuple(part for part in zone.split("/") if part)
+        if zone.startswith("/"):
+            if pos >= len(text) or text[pos] not in "/\\":
+                return None
+            while pos < len(text) and text[pos] in "/\\":
+                pos += 1
+        for index, part in enumerate(parts):
+            end = pos + len(part)
+            if text[pos:end].casefold() != part.casefold():
+                return None
+            pos = end
+            if index + 1 < len(parts):
+                if pos >= len(text) or text[pos] not in "/\\":
+                    return None
+                while pos < len(text) and text[pos] in "/\\":
+                    pos += 1
+        if pos < len(text) and (text[pos].isalnum() or text[pos] in "_.-"):
+            return None
+        return pos
+
+    separators = ("", "/", "\\", "/\\/", "\\\\", "/" * 128)
+    tails = ("", "/x", "\\x", "2", "_x", ".x", "-x", ":ads", "한", " ", ")")
+    for leading, middle, tail, prefix in product(separators, separators, tails, ("", "D:")):
+        zone = prefix + "/data/cohort"
+        text = prefix + leading + "DaTa" + middle + "COHORT" + tail
+        for head in ("", "문장 "):
+            assert _literal_zone_end(head + text, len(head), zone) == original(
+                head + text, len(head), zone)
+
+
+@pytest.mark.parametrize("name,marker,operation", [
+    ("URL_USERINFO", "@", "sub"),
+    ("WEBHOOK_PATH", ".", "sub"),
+    ("QUERY_PARAM", "=", "finditer"),
+])
+def test_url_redaction_does_not_scan_without_its_required_literal(monkeypatch, name, marker, operation):
+    from labhq.integrations import github
+
+    pattern = getattr(github, name)
+    calls = []
+
+    def scan(*args, **kwargs):
+        calls.append(True)
+        return getattr(pattern, operation)(*args, **kwargs)
+
+    monkeypatch.setattr(github, name, SimpleNamespace(**{operation: scan}))
+    text = "/" * 4_096 + "\\" * 4_096 + ":" * 32_768
+    assert github.redact_url_credentials(text) == text
+    assert not calls
+    # A present marker is only eligibility to scan, never a replacement for
+    # the existing pattern or the URL/parameter-name classification.
+    assert github.redact_url_credentials(text + marker) == text + marker
+    assert calls
+
+
+def test_url_scan_prefilters_preserve_unconditional_redaction():
+    from itertools import product
+    from labhq.integrations import github
+
+    def original(text):
+        text = github.URL_USERINFO.sub(lambda m: m.group(1) + "<redacted-secret>@" if (
+            m.group(1).partition(":")[0].casefold() in github.USERINFO_SCHEMES
+            or ":" in m.group(2)) else m.group(0), text)
+        text = github.WEBHOOK_PATH.sub(
+            lambda m: m.group(1) + (m.group(2) or "") + "<redacted-secret>", text)
+        out, last = [], 0
+        for match in github.QUERY_PARAM.finditer(text):
+            if match.start() < last or not github.QUERY_SECRET_NAME.fullmatch(
+                    github._decoded(match.group(1))):
+                continue
+            value = github.QUERY_VALUE.match(text, match.end())
+            if value:
+                out += [text[last:match.end()], "<redacted-secret>"]
+                last = value.end()
+        return "".join(out) + text[last:]
+
+    samples = (
+        "https://user:synthetic@host.invalid/a", "https://synthetic@host.invalid/a",
+        r"https:\/\/CORP\alice:synthetic@host.invalid", "ssh://git@host.invalid/repo",
+        "https://hooks.slack.com/services/synthetic/value", "hooks.slack.com/workflows/synthetic",
+        "https%3A%2F%2Fdiscord.com%2Fapi%2Fwebhooks%2Fsynthetic%2Fvalue",
+        "https%253A%252F%252Fapi.telegram.org%252FbotSynthetic%252FgetMe",
+        "https://outlook.office.com/webhook/synthetic", "team.webhook.office.com/webhookb2/synthetic",
+        "https://host.invalid/?X%2DAmz%2DSignature=synthetic&keep=yes",
+        "?tok%2565n=synthetic;password=second#code=third", "?token=&public=visible",
+        "?session=synthetic&next=https%3A%2F%2Fhooks.slack.com%2Fservices%2Fsynthetic",
+        "?normal=visible#title=keep", "@", ".", "=", "./@=", "문장 한 줄",
+    )
+    for head, sample, tail in product(("", "보고 ", "{\"value\":\""), samples,
+                                      ("", "\"}", "\nkeep")):
+        text = head + sample + tail
+        expected = original(text)
+        assert github.redact_url_credentials(text) == expected
+        assert sanitize(text, PolicySettings(), limit=None) == expected
+    assert github.redact_url_credentials(samples[0]) == "https://<redacted-secret>@host.invalid/a"
+    assert github.redact_url_credentials(samples[4]) == "https://hooks.slack.com/services/<redacted-secret>"
+    assert github.redact_url_credentials(samples[10]) == (
+        "https://host.invalid/?X%2DAmz%2DSignature=<redacted-secret>&keep=yes")
+
+
+def test_long_runs_do_not_hide_restricted_paths_or_credentials():
+    policy = PolicySettings(data_zones=[DataZone(path="/data/cohort", level="restricted")])
+    separators = "/\\" * 4_096
+    text = ("keep\n" + separators + "DATA" + separators + "cohort/sample.cram\n"
+            "https://user:synthetic@host.invalid/?token=synthetic\n"
+            "https%3A%2F%2Fhooks.slack.com%2Fservices%2Fsynthetic\nkeep")
+    assert sanitize(text, policy, limit=None) == (
+        "keep\n<restricted-zone>\n"
+        "https://<redacted-secret>@host.invalid/?token=<redacted-secret>\n"
+        "https%3A%2F%2Fhooks.slack.com%2Fservices%2F<redacted-secret>\nkeep")
+
+
 def test_restricted_zones_match_separators_case_and_directory_boundary():
     policy = PolicySettings(data_zones=[
         DataZone(path="/data/cohort", level="restricted"),
