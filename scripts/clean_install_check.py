@@ -78,7 +78,7 @@ def _expect(stage: str, condition: bool, detail: str) -> None:
 def _startup_journal(path: Path) -> dict:
     """Project existing launch evidence before scratch cleanup; never print raw logs."""
     try:
-        with path.open("rb") as stream:
+        with path.open(mode="rb") as stream:
             stream.seek(0, 2)
             start = max(0, stream.tell() - 16384)
             stream.seek(start)
