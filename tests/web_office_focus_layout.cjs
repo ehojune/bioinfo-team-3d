@@ -1,10 +1,12 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const {openDemo, skipReason} = require('./support/demo_driver.cjs');
+// Browser phase times on stderr only: where a run spends its 30 s after a cleanup failure (#842).
+const trace = name => event => console.error('focus driver: ' + JSON.stringify({test: name, ...event}));
 
 test('office prioritizes decisions, exposes plan progress and opens failed results',
   {skip:skipReason() || false, timeout:120000}, async t => {
-    const d = await openDemo({width:1440,height:900});
+    const d = await openDemo({width:1440,height:900, diagnostic:trace('priorities')});
     try {
       await d.load();
       await d.until('running', "[...__labhq.S.activeTasks.values()].some(t=>t.agent_id==='biologist')");
@@ -61,7 +63,7 @@ test('office prioritizes decisions, exposes plan progress and opens failed resul
 
 test('layout version migration, phone header and instance-specific staff visibility',
   {skip:skipReason() || false, timeout:60000}, async () => {
-    const d=await openDemo({width:1440,height:900});
+    const d=await openDemo({width:1440,height:900, diagnostic:trace('migration')});
     try {
       await d.cdp('Page.addScriptToEvaluateOnNewDocument',{source:`window.LABHQ_BOOT={mode:'demo',instance:'layout-a'};
         localStorage.setItem('labhq_demo:panel_sizes:layout-a','{"main":900,"staff":260}');

@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 
 import pytest
 import uvicorn
@@ -195,7 +196,10 @@ def test_office_in_node(filename, marker):
     # The optional installed-browser checks wait for Chrome's start and the demo viewports (node:test budgets of 150 s and 240 s).
     timeout = {'web_office_browser.cjs': 170, 'web_visual_demo.cjs': 260, 'web_visual_tooling.cjs': 170}.get(filename, 30)
     try:
-        result = subprocess.run([node, str(script)], capture_output=True, text=True, encoding='utf-8', timeout=timeout)
+        # On Windows the demo driver starts Chrome inside the owned KILL_ON_CLOSE Job wrapper with this exact
+        # interpreter (#842); it never falls back to a PATH or Store python.
+        result = subprocess.run([node, str(script)], capture_output=True, text=True, encoding='utf-8', timeout=timeout,
+                                env={**os.environ, 'LABHQ_TEST_PYTHON': sys.executable})
     except subprocess.TimeoutExpired as exc:
         # TimeoutExpired may contain bytes even with text=True. Keep partial TAP
         # and browser phase diagnostics; a timeout remains a failure.
@@ -208,6 +212,11 @@ def test_office_in_node(filename, marker):
     if filename == 'web_resizable_panels.cjs' and os.environ.get('LABHQ_REQUIRE_RESIZABLE_BROWSER') == '1':
         # A Python PASS alone must not certify an optional inner Node skip.
         assert re.search(r'^# pass 3\s*$', result.stdout, re.MULTILINE), result.stdout + result.stderr
+        assert re.search(r'^# skipped 0\s*$', result.stdout, re.MULTILINE), result.stdout + result.stderr
+    if (filename in ('web_office_focus_layout.cjs', 'web_visual_tooling.cjs') and os.name == 'nt'
+            and os.environ.get('GITHUB_ACTIONS') == 'true'):
+        # #842: on hosted Windows the real-Chrome cleanup regressions (forced path included) must run; an inner
+        # node:test skip would otherwise still print "fail 0" and pass this parent. Chrome stays optional elsewhere.
         assert re.search(r'^# skipped 0\s*$', result.stdout, re.MULTILINE), result.stdout + result.stderr
 
 

@@ -1,0 +1,6 @@
+pr: null
+rows:
+- sha: d14cc42
+  at: 2026-10-22 06:15
+  summary: labhq talent 목록에 직접 만든 논문 자문 스킬도 한 줄씩 나옵니다.
+  text: '빌드된 논문 스킬은 paper-skill.json만 남겨 contract.yaml만 읽던 labhq talent에서 빠졌다. 계약 줄 뒤에 폴더 이름·논문 ID·skill hash 앞 12자리·Paper2Agent commit을 한 줄씩 출력하고 "생성됨"만 뜻한다(사용·효용은 요청 기록). 손상·폴더 불일치·256KiB 초과 receipt는 값 없이 표시하고, 같은 폴더 contract나 같은 논문·hash 계약과는 중복하지 않는다. 경로와 본문 receipt는 출력하지 않는다. 새 테스트 4건은 로컬에서 본문만 직접 실행해 통과했고 pytest 전체는 CI에 맡긴다. #660은 선행문헌 UI와 실사용 효용이 남은 부분 해결이다.'

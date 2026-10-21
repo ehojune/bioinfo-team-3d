@@ -154,6 +154,32 @@ def _logs(settings: Settings) -> Path:
     return cli._launch_state(settings) / "logs"
 
 
+START_EVIDENCE_TAIL_BYTES = 16 * 1024
+
+
+def _print_start_evidence(settings: Settings, stream=None) -> None:
+    """Failure output only: the bounded tail of this test's own supervisor logs, so a start that ended early is
+    explained in the CI report (#843 run 39684337037 kept only the log path). Never raises; the caller re-raises the
+    original failure unchanged. The fixture tokens are masked and control characters are not echoed."""
+    stream = sys.stderr if stream is None else stream
+    secrets = [token for token in (settings.gateway.client_token, settings.gateway.runner_token) if token]
+    for name in ("gateway-supervisor.log", "gateway-supervisor-diagnostics.jsonl"):
+        try:
+            path = _logs(settings) / name
+            if path.is_symlink():
+                raise OSError("symlink")
+            with path.open("rb") as handle:
+                size = handle.seek(0, os.SEEK_END)
+                handle.seek(max(0, size - START_EVIDENCE_TAIL_BYTES))
+                text = handle.read(START_EVIDENCE_TAIL_BYTES).decode("utf-8", errors="replace")
+            for secret in secrets:
+                text = text.replace(secret, "[redacted]")
+            text = "".join(c if c.isprintable() or c in "\n\t" else "?" for c in text)
+            print(f"--- {name}: last {len(text)} chars of {size} bytes ---\n{text}", file=stream)
+        except Exception as exc:  # noqa: BLE001 - evidence only; a missing or unreadable log hides nothing
+            print(f"--- {name}: unavailable ({type(exc).__name__}) ---", file=stream)
+
+
 def _rows(settings: Settings) -> list[dict]:
     path = _logs(settings) / "gateway-supervisor-diagnostics.jsonl"
     if not path.exists():
@@ -500,7 +526,11 @@ def test_a_real_gateway_runs_as_its_supervisors_child_and_down_ends_both(tmp_pat
     settings = _settings(tmp_path)
     started: list[subprocess.Popen] = []
     try:
-        cli._start_background(settings, "gateway", popen=_reaping_popen(started))
+        try:
+            cli._start_background(settings, "gateway", popen=_reaping_popen(started))
+        except BaseException:
+            _print_start_evidence(settings)  # then the original SystemExit/exception propagates as before
+            raise
         gateway_log = _logs(settings) / "gateway.log"
         assert cli._wait_for_health(settings, runner=False, timeout=90) is not None, (
             gateway_log.read_text(encoding="utf-8", errors="replace") if gateway_log.exists() else "no gateway log")
@@ -533,3 +563,27 @@ def test_a_real_gateway_runs_as_its_supervisors_child_and_down_ends_both(tmp_pat
         for child in started:
             if child.poll() is None:
                 child.kill()
+
+
+def test_start_evidence_is_bounded_masked_and_never_replaces_the_failure(tmp_path, monkeypatch):
+    """Pure: no process starts. Only this test's own temporary log files are read."""
+    import io
+    config = tmp_path / "labhq.yaml"
+    config.write_text("gateway:\n  client_token: test-pi\n  runner_token: test-runner\n"
+                      f"  state_dir: {tmp_path.as_posix()}/state\n", encoding="utf-8")
+    settings = Settings.load(str(config))
+    logs = _logs(settings)
+    logs.mkdir(parents=True)
+    body = "x" * (START_EVIDENCE_TAIL_BYTES + 100) + "\nrunner test-runner client test-pi \x1b[31mcolor\nTraceback: boom\n"
+    (logs / "gateway-supervisor.log").write_text(body, encoding="utf-8")
+    out = io.StringIO()
+    _print_start_evidence(settings, out)
+    text = out.getvalue()
+    assert "Traceback: boom" in text and "[redacted]" in text and "\x1b" not in text
+    assert "test-runner" not in text and "test-pi" not in text
+    assert len(text) < START_EVIDENCE_TAIL_BYTES + 400  # bounded tail, not the whole file
+    assert "gateway-supervisor-diagnostics.jsonl: unavailable (FileNotFoundError)" in text
+    monkeypatch.setattr(cli, "_launch_state", lambda s: (_ for _ in ()).throw(RuntimeError("state")))
+    broken = io.StringIO()
+    _print_start_evidence(settings, broken)  # must not raise
+    assert broken.getvalue().count("unavailable (RuntimeError)") == 2
