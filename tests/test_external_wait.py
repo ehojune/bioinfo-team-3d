@@ -205,9 +205,11 @@ async def test_key_fulltext_pdf_wait_is_excluded_without_resetting_shared_budget
     async def human_wait(operation, **kwargs):
         return await wait.exclude_human_wait(operation, clock=lambda: lookup_runtime.now, **kwargs)
 
+    made = []
+
     class Backend:
         def __init__(self, *args, **kwargs):
-            pass
+            made.append(kwargs)
 
         async def fulltext(self, ids):
             return {"results": [{"access_level": "abstract"}]}
@@ -219,7 +221,7 @@ async def test_key_fulltext_pdf_wait_is_excluded_without_resetting_shared_budget
         return {"approved": False, "state": decision}
 
     monkeypatch.setattr(mcp_module, "S", SimpleNamespace(
-        literature=LiteratureSettings(external_model_allowed=True)))
+        literature=LiteratureSettings(external_model_allowed=True), annot=SimpleNamespace(unpaywall_email="")))
     monkeypatch.setattr(mcp_module, "CACHE_DIR", tmp_path / "cache")
     monkeypatch.setattr(mcp_module.annot_literature, "LiteratureAnnotator", Backend)
     monkeypatch.setattr(mcp_module, "_request_pdf", approval)
@@ -232,6 +234,7 @@ async def test_key_fulltext_pdf_wait_is_excluded_without_resetting_shared_budget
     result = json.loads(await mcp_module._run_key_fulltext([
         {"id": "10.1000/key", "title": "Public fixture", "why_key": "fixture", "needed": "table"}]))
     assert result["results"][0]["pdf_request_status"] == decision
+    assert [kwargs.get("unpaywall_email") for kwargs in made] == [""]  # unset email: the old disabled default
     lookup_runtime.now += 75
     assert await short_budget(AsyncMock(return_value=True), tool="next_service", workdir=tmp_path)
     assert lookup_runtime.bounds == [120, 90, 15]
@@ -361,6 +364,30 @@ def test_human_pdf_approval_path_is_not_wrapped(mcp_module):
     assert "run_lookup" not in inspect.getsource(mcp_module._request_pdf)
 
 
+@pytest.mark.parametrize("email", ["pi@example.org", ""])
+async def test_key_fulltext_backend_gets_the_same_unpaywall_email_as_the_literature_tools(
+        tmp_path, monkeypatch, mcp_module, email):
+    """#826: key papers check legal OA copies with the configured contact email, as `fulltext` does; unset stays
+    disabled. The fake backend stops at construction: no lookup, coordinator, approval or request runs."""
+    made = []
+
+    class Built(Exception):
+        pass
+
+    def backend(*args, **kwargs):
+        made.append(kwargs)
+        raise Built
+
+    monkeypatch.setattr(mcp_module, "S", SimpleNamespace(
+        literature=LiteratureSettings(), annot=SimpleNamespace(unpaywall_email=email)))
+    monkeypatch.setattr(mcp_module.annot_literature, "LiteratureAnnotator", backend)
+    with pytest.raises(Built):
+        await mcp_module._run_key_fulltext([{"id": "10.1000/key", "title": "Public fixture"}])
+    with pytest.raises(Built):
+        await mcp_module._run_literature("fulltext", ["10.1000/key"])
+    assert [kwargs.get("unpaywall_email") for kwargs in made] == [email, email]
+
+
 @pytest.mark.parametrize("hung_phase", ["fulltext", "limiter", "institution"])
 async def test_key_fulltext_automatic_phases_use_task_deadline(
         tmp_path, monkeypatch, mcp_module, hung_phase, lookup_runtime):
@@ -408,7 +435,7 @@ async def test_key_fulltext_automatic_phases_use_task_deadline(
     policy = LiteratureSettings(institution_enabled=True, institution_proxy="https://institution.invalid",
                                 institution_tdm_allowed=True,
                                 external_model_allowed=True)
-    monkeypatch.setattr(mcp_module, "S", SimpleNamespace(literature=policy,
+    monkeypatch.setattr(mcp_module, "S", SimpleNamespace(literature=policy, annot=SimpleNamespace(unpaywall_email=""),
                                                        gateway=SimpleNamespace(report_browser=None)))
     monkeypatch.setattr(mcp_module, "CACHE_DIR", tmp_path / "cache")
     monkeypatch.setattr(mcp_module.annot_literature, "LiteratureAnnotator", Backend)
