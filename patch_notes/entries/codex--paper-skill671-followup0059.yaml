@@ -8,3 +8,7 @@ rows:
   at: '2026-10-22 01:36'
   summary: 선택적인 논문 준비가 본 작업 몫까지 예약하지 않도록 예산을 나눴습니다.
   text: '기존 per-task 예약액과 DAG 실행 슬롯 몫을 남긴 나머지만 논문 빌드에 배정한다. 모자라면 unavailable로 고정하고 금액 상향이나 자동 재시도는 하지 않는다. 동기 순수 검사 8건에 예약·실행 몫 경계를 포함하고 CI용 fake에 두 논문 동시 준비의 충분한 기존 예산, 병렬 한도 및 부족한 예산의 생략 계약을 명시했다. 로컬 async·실제 빌드·청구 검증은 하지 않았으며 금융 정책이나 승인 gate를 넓히지 않는다.'
+- sha: c5b1bfc
+  at: '2026-10-22 02:06'
+  summary: 단계가 논문 스킬을 기다리지 않고 복구된 실제 작업 ID로 정리하도록 고쳤습니다.
+  text: '단계 시작 때 완료된 receipt만 snapshot하고 미완료면 unavailable/paper_skill_late로 고정한다. 뒤늦은 완료는 그 단계를 바꾸지 않으며 이후 다른 단계는 사용할 수 있다. 기존 task timeout은 별도 백그라운드 빌드 수명으로 유지한다. Gateway가 recovery await 전에 알린 durable ID로 취소·예약·비용을 연결하고 모르는 비용과 중복 합산하지 않는다. 새 동기 source/pure P1 2건은 기준 5fa1844e에서 red→green, 이전 8건은 반복하지 않았다. Python 3.10 AST/compile 8파일·핵심 14함수 및 identity callback을 뺀 gateway dispatch 본문의 동일성을 확인했다. Async fake는 CI용으로만 추가·조정했으며 실제 빌드/원격 종료/시간·금액/UI/역사적 세 번째 빌드는 미검증이다. 계획당 최대 두 편·승인/hash·호출 증거는 유지하고 #671은 닫지 않는다.'
