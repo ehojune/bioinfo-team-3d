@@ -117,7 +117,7 @@ def _launch_journal(path: Path) -> str:
         "phase": ("provider_create", "process_open", "process_identity", "receipt_wait", "identity_verify", "job_verify", "ack_write"),
         "reason": ("provider_timeout", "provider_protocol", "protocol_error", "native_error", "provider_subprocess",
                    "create_failed", "invalid_returned_pid", "receipt_timeout", "identity_mismatch", "job_unverified",
-                   "system_directory_unknown", "native_or_protocol"),
+                   "system_directory_unknown", "native_or_protocol", "request_too_large"),
         "error": ("BrokerFailure", "TimeoutExpired", "CalledProcessError", "SubprocessError", "PermissionError",
                   "FileNotFoundError", "TimeoutError", "OSError", "ValueError", "TypeError", "OtherError"),
         "trace_status": ("absent", "partial", "phases_complete", "invalid_or_partial"),
@@ -150,9 +150,9 @@ def _launch_journal(path: Path) -> str:
             phases = provider.get("phases")
             if isinstance(phases, list):
                 valid = []
-                for index, step in enumerate(phases[:5]):
+                for index, step in enumerate(phases[:7]):
                     if not isinstance(step, dict) or step.get("phase") != (
-                            "powershell_started", "input_read", "input_accepted", "create_entered", "create_returned")[index]:
+                            "powershell_started", "stdin_open", "header_read", "input_read", "input_accepted", "create_entered", "create_returned")[index]:
                         break
                     elapsed = facts(step).get("elapsed_ms")
                     if elapsed is None or (valid and elapsed < valid[-1]["elapsed_ms"]):
@@ -233,7 +233,7 @@ def test_start_gateway_reports_only_bounded_allowlisted_launch_facts(tmp_path, m
            "cmd": "SECRET-command", "stdout": "SECRET-stdout", "env": {"SECRET": "value"},
            "provider": {"elapsed_ms": 10000, "trace_status": "partial", "stderr": "SECRET-stderr",
                         "phases": [{"phase": name, "elapsed_ms": index}
-                                   for index, name in enumerate(("powershell_started", "input_read", "input_accepted",
+                                   for index, name in enumerate(("powershell_started", "stdin_open", "header_read", "input_read", "input_accepted",
                                                                  "create_entered", "create_returned"))]}}
     if journal == "bad-phase":
         row["provider"]["phases"] = [{"phase": "powershell_started", "elapsed_ms": 1},

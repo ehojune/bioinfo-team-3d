@@ -161,7 +161,9 @@ def test_wmi_return_code_is_not_a_success_pid(tmp_path, monkeypatch, code):
         broker._create([str(tmp_path / "python.exe"), "a & $(bad);.py"], tmp_path, {"FAKE": "not-a-secret"})
     run.assert_called_once()
     args, kwargs = run.call_args
-    payload = json.loads(kwargs["input"])
+    framed = kwargs["input"]
+    assert int.from_bytes(framed[:4], "little") == len(framed) - 4
+    payload = json.loads(framed[4:].decode("utf-8"))
     assert payload["flags"] & (win.BREAKAWAY | win.DETACHED) == win.BREAKAWAY | win.DETACHED
     assert payload["environment"] == ["FAKE=not-a-secret"]
     assert "not-a-secret" not in str(args)  # Values are data over stdin, never PowerShell source/argv/files.
