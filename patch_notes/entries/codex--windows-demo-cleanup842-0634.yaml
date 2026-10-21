@@ -8,3 +8,7 @@ rows:
     at: "2026-10-22 06:55"
     summary: "Windows 웹 검사가 브라우저를 정상 종료하지 못하면 같은 5초 안에서 강제로 닫고, 실제로 닫힌 것을 확인해야만 통과합니다."
     text: "총 5초 cleanup 마감을 유지하고 graceful Browser.close가 3초 안에 끝나지 않으면 소유 ChildProcess·CDP socket만 한 번 닫은 뒤 남은 시간에 실제 stdio·socket·server close가 모두 와야 완료한다. kill 반환값·killed·예외로 성공하지 않고 exit만 오는 #832 형태는 실패이며 정상 graceful의 kill은 0회다. fake·정적 계약과 실제 Chrome 강제 정리 회귀 1개를 더했다. Chrome 내부 지연 원인은 미확인이다."
+  - sha: 3dd6180
+    at: "2026-10-22 07:02"
+    summary: "브라우저 강제 정리 검사를 시간 여유가 큰 검사 파일로 옮겨 기존 화면 검사의 시간 상한을 지킵니다."
+    text: "새 실Chrome 강제 정리 회귀를 Windows 실측 6.6~12초·상한 30초인 focus layout 파일에서 driver 실Chrome 검사가 이미 있는 web_visual_tooling.cjs(실측 3.3~5.6초·상한 170초)로 옮겼다. focus 파일은 두 demo와 기능 단언 그대로이고 5초 cleanup·3초 graceful·상한·Windows 선택은 바뀌지 않았다."
