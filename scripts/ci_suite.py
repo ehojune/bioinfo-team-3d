@@ -7,6 +7,7 @@ from collections import defaultdict
 from datetime import datetime
 import faulthandler
 import gc
+import hashlib
 import importlib.metadata
 import json
 import os
@@ -160,9 +161,14 @@ class StageDiagnostics:
     MAX_SLOWEST = 30
     MAX_NODEID = 512
     MAX_MESSAGE = 300
+    MAX_SCANNED = 4096  # redaction reads a bounded prefix; only MAX_MESSAGE characters are ever written
     MAX_SECONDS = 86400.0
     KIND = re.compile(r'([A-Za-z_][\w.]{0,127})(?::|$)')
-    TOKEN = re.compile(r'gh[pousr]_[A-Za-z0-9]{16,}|github_pat_\w{16,}|(?i:bearer)\s+\S+')
+    # The credential families scripts/check_public.sh refuses, plus Bearer values. Literal prefixes and single
+    # character classes only, so matching stays linear in the bounded line. A private key header hides its line.
+    TOKEN = re.compile(r'gh[pousr]_[A-Za-z0-9]{16,}|github_pat_\w{16,}|sk-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}'
+                       r'|AIza[0-9A-Za-z_-]{30,}|xox[abpr]-[A-Za-z0-9-]{10,}|BEGIN [A-Z ]{0,40}PRIVATE KEY.*'
+                       r'|(?i:bearer)\s+\S+')
 
     def __init__(self, path, phase, worker, *, clock=None, interval=5):
         self.path, self.clock, self.interval = path, clock or time.monotonic, interval
@@ -190,21 +196,25 @@ class StageDiagnostics:
             lines = [line for line in text.splitlines() if line.strip()]
             text = lines[-1] if lines else ''
         line = next((line.strip() for line in text.splitlines() if line.strip()), '')
-        line = self.TOKEN.sub('[redacted]', ''.join(c if c.isprintable() else ' ' for c in line))
+        truncated = len(line) > self.MAX_MESSAGE
+        line = ''.join(c if c.isprintable() else ' ' for c in line[:self.MAX_SCANNED])
+        line = self.TOKEN.sub('[redacted]', line)
         kind = self.KIND.match(line)
         return dict(kind=kind.group(1) if kind else None, message=line[:self.MAX_MESSAGE],
-                    message_truncated=len(line) > self.MAX_MESSAGE)
+                    message_truncated=truncated or len(line) > self.MAX_MESSAGE)
 
     def record(self, report):
         nodeid = str(report.nodeid)
+        # Long parametrized ids can share their first MAX_NODEID characters: the full id's hash is the identity.
         row = dict(nodeid=nodeid[:self.MAX_NODEID], nodeid_truncated=len(nodeid) > self.MAX_NODEID,
+                   nodeid_sha256=hashlib.sha256(nodeid.encode('utf-8', 'surrogatepass')).hexdigest(),
                    stage=report.when if report.when in self.STAGES else 'other',
                    outcome=report.outcome if report.outcome in self.OUTCOMES else 'other',
                    duration_s=self._seconds(getattr(report, 'duration', None)),
                    ended_s=round(self.clock() - self.origin, 6))
-        key = (row['nodeid'], row['stage'])
+        key = (row['nodeid_sha256'], row['stage'])
         failures, slowest = self.data['failures'], self.data['slowest']
-        if any((r['nodeid'], r['stage']) == key for r in failures + slowest):
+        if any((r['nodeid_sha256'], r['stage']) == key for r in failures + slowest):
             self.data['duplicate_reports'] += 1  # a kept stage reported again is counted once
             return
         self.data['reports'] += 1

@@ -595,6 +595,51 @@ def test_stage_diagnostics_are_bounded_deduplicated_and_throttled(tmp_path, monk
     assert saved['reports'] == 200 + 7 + 5 and len(path.read_bytes()) < 100_000
 
 
+def test_long_ids_sharing_their_first_512_characters_stay_distinct_failures(tmp_path):
+    diagnostics = suite.StageDiagnostics(tmp_path / 'diagnostics-gw1.json', 'parallel', 'gw1', clock=lambda: 0)
+    prefix = 'tests/test_fake.py::test_param[' + 'p' * 600
+    for suffix in ('a]', 'b]', 'a]'):  # two parameters, then the first one's report again
+        diagnostics.record(fake_report(prefix + suffix, outcome='failed', longrepr=crash('AssertionError')))
+    failures = diagnostics.data['failures']
+    assert len(failures) == 2 and diagnostics.data['duplicate_reports'] == 1
+    assert all(len(row['nodeid']) == 512 and row['nodeid_truncated'] for row in failures)
+    assert failures[0]['nodeid'] == failures[1]['nodeid']  # the written ids are cut alike ...
+    assert failures[0]['nodeid_sha256'] != failures[1]['nodeid_sha256']  # ... their identities are not
+
+
+# Built at run time so that no credential-shaped literal is in this file (scripts/check_public.sh reads it).
+SECRET_SHAPES = {
+    'github': 'gh' + 'p_' + 'A1' * 12,
+    'github_pat': 'github' + '_pat_' + 'B2' * 12,
+    'openai': 'sk' + '-' + 'C3d4' * 6,
+    'aws': 'AK' + 'IA' + 'Q' * 16,
+    'google': 'AI' + 'za' + 'E5' * 18,
+    'slack': 'xo' + 'xb-' + '1234567890-abc',
+    'private_key': '-----' + 'BEGIN ' + 'RSA PRIVATE' + ' KEY----- MIIEow',
+    'bearer': 'Bear' + 'er ' + 'eyJ.token.value',
+}
+
+
+@pytest.mark.parametrize('name', sorted(SECRET_SHAPES))
+def test_a_crash_line_hides_the_credential_shapes_the_public_check_refuses(tmp_path, name):
+    secret = SECRET_SHAPES[name]
+    diagnostics = suite.StageDiagnostics(tmp_path / 'diagnostics-master.json', None, 'master', clock=lambda: 0)
+    diagnostics.record(fake_report('t::x', outcome='failed',
+                                   longrepr=crash(f'RuntimeError: request failed with {secret} after 3 tries')))
+    failure, = diagnostics.data['failures']
+    assert failure['kind'] == 'RuntimeError' and '[redacted]' in failure['message']
+    assert secret not in failure['message'] and secret.split()[-1] not in failure['message']
+    assert secret not in (tmp_path / 'diagnostics-master.json').read_text(encoding='utf-8')
+
+
+def test_redaction_reads_a_bounded_line_and_keeps_the_300_character_output(tmp_path):
+    diagnostics = suite.StageDiagnostics(tmp_path / 'diagnostics-master.json', None, 'master', clock=lambda: 0)
+    line = 'AssertionError: ' + 'sk' + '-' + 'z' * 200_000  # one long credential-shaped run, no backtracking
+    diagnostics.record(fake_report('t::x', outcome='failed', longrepr=crash(line)))
+    failure, = diagnostics.data['failures']
+    assert failure['message'] == 'AssertionError: [redacted]' and failure['message_truncated'] is True
+
+
 def test_a_stage_diagnostics_write_failure_never_changes_the_run(tmp_path, capsys):
     diagnostics = suite.StageDiagnostics(tmp_path / 'missing' / 'diagnostics-master.json', None, 'master',
                                          clock=lambda: 0)
