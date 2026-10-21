@@ -1252,7 +1252,7 @@ report는 중첩 집계의 구조와 개수(0 이상의 정수)를 확인합니�
   `job_group` 제출은 외부 parent traversal을 먼저 확인한 뒤 `jobs`·`logs`·`hpc_out`을 만듭니다.
   스케줄러 명령은 `PATH`·`HOME`·locale과 `SGE_*`·`PBS_*`·`SLURM_*`·`SBATCH_*` 같은 스케줄러 변수만 받습니다. 그래서 `#$ -V`·`#PBS -V`도 broker token이나 API key를 잡에 넘기지 못합니다.
   로그인 노드에서만 qsub·sbatch가 된다면 `ssh_host` 지정 — 이때 작업공간은 공유 파일시스템에 있어야 합니다.
-  **#829 변경안(병합 전)**: `scheduler: none`이면 제출·큐·상태·취소와 내부 명령 실행을 오류로 거부하고 job watcher를 예약하지 않습니다.
+  **HPC 비활성**: `scheduler: none`이면 제출·큐·상태·취소와 내부 명령 실행을 오류로 거부하고 job watcher를 예약하지 않습니다.
   저장된 job은 마지막 상태 그대로 남으며 완료·빈 큐로 간주하지 않습니다. 로컬 runner 연결과 분석 경로는 유지하지만 임의 shell의 HPC 접근을 막는 OS sandbox는 아닙니다([검증 범위](reference/scheduler-none-829.md)).
 - **직원** (`agents/core/*.yaml`): `engine`, `model`, `effort`(Claude Code·Codex만), `tools`(사전 허용), `builtin_mcp`(`approval`, `hpc`, `annot`),
   `permission_mode`, `project_dirs`.
