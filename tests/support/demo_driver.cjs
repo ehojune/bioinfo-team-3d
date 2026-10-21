@@ -14,6 +14,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const WEB_ROOT = process.env.LABHQ_WEB_TEST_ROOT || path.resolve(__dirname, '../../labhq/web');
 const FORBIDDEN_PORTS = [8787, 55921];
 const START_MS = 60000;  // Chrome start budget; the node:test budget of each test covers it
+// One cleanup deadline. The graceful Browser.close may use its first part; the rest is for the owned child's forced
+// close to be observed (#842: a graceful wait that took the whole budget left the kill no time to show its close).
+const CLEANUP_MS = 5000, GRACEFUL_CLEANUP_MS = 3000;
 
 function findChrome() {
   const candidates = [process.env.LABHQ_TEST_CHROME,
@@ -164,23 +167,30 @@ async function closeDemoResources({ws, wsClosed, chrome, chromeClosed, requestBr
   if (server) waits.push(closing('http-server', () => new Promise((resolve, reject) => {
     server.close(error => error ? reject(error) : resolve());
   })));
-  let timer;
+  // A stalled graceful close ends the owned child and its CDP socket once. Only the same actual close, socket and
+  // server acknowledgements then complete cleanup; a kill request or its return value never counts as closed.
+  let forced = false;
+  const force = () => {
+    if (!graceful || forced) return;
+    forced = true;
+    report('forced');
+    try { requestBrowserShutdown(chrome, undefined, failures); } catch (error) { failures.push(error); }
+    if (ws) { try { closeSocket(); } catch (error) { failures.push(error); } }
+  };
+  let timer, phase;
   try {
     await Promise.race([Promise.allSettled(waits), new Promise((_, reject) => {
+      phase = setTimer(force, GRACEFUL_CLEANUP_MS);
       timer = setTimer(() => {
         report('timeout');
         try { observeLate(); } catch { /* diagnostic only */ }
-        // Preserve the existing owned-child/transport cleanup attempt if CDP
-        // stalls. The original five-second deadline STILL rejects as failure.
-        if (graceful) {
-          try { requestBrowserShutdown(chrome, undefined, failures); } catch (error) { failures.push(error); }
-          if (ws) { try { closeSocket(); } catch (error) { failures.push(error); } }
-        }
+        // If the forced phase never ran, keep the owned-child/transport attempt. The deadline STILL rejects.
+        force();
         reject(new AggregateError([...failures, new Error('demo cleanup did not close: ' + [...pending].join(', '))],
           'demo cleanup incomplete'));
-      }, 5000);
+      }, CLEANUP_MS);
     })]);
-  } finally { clearTimer(timer); }
+  } finally { clearTimer(phase); clearTimer(timer); }
   if (failures.length) throw new AggregateError(failures, 'demo cleanup failed');
   await removeProfile(profile);
   report('closed');
@@ -206,6 +216,8 @@ function demoLifecycleTrace(emit, clock = () => performance.now()) {
 
 // opts: {width, height, reducedMotion=true, colorScheme='light', web=WEB_ROOT, layoutFont=false, fontFamily=null, deadlineMs=60000, diagnostic=null}
 // layoutFont forces the metrics-only font from test_font.cjs so text wraps the same on every OS.
+// Test-only: testWithholdBrowserClose reports Browser.close as sent without sending it, so cleanup must take the
+// forced path; cleanupDiagnostic receives the cleanup stages instead of stderr.
 async function openDemo(opts = {}) {
   const trace = demoLifecycleTrace(opts.diagnostic);
   trace('open-start');
@@ -215,7 +227,8 @@ async function openDemo(opts = {}) {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'labhq-visual-'));
   trace('profile-ready');
   let server, chrome, ws, chromeClosed, wsClosed, requestBrowserClose, closing;
-  const close = () => closing ||= closeDemoResources({ws, wsClosed, chrome, chromeClosed, requestBrowserClose, server, profile});
+  const close = () => closing ||= closeDemoResources({ws, wsClosed, chrome, chromeClosed, requestBrowserClose, server, profile},
+    opts.cleanupDiagnostic ? {diagnostic: opts.cleanupDiagnostic} : undefined);
   try {
     server = await startStaticServer(web);
     trace('server-ready');
@@ -265,6 +278,7 @@ async function openDemo(opts = {}) {
     let serial = 0;
     requestBrowserClose = () => {
       if (ws.closed || (typeof ws.readyState === 'number' && ws.readyState !== 1)) return false;
+      if (opts.testWithholdBrowserClose === true) return true;  // a graceful close that never takes effect
       // Do not await a CDP response that browser shutdown itself may prevent.
       // Actual socket and child/stdio close events are the completion proof.
       ws.send(JSON.stringify({id: ++serial, method: 'Browser.close'}));
@@ -354,4 +368,5 @@ async function openDemo(opts = {}) {
   }
 }
 
-module.exports = {openDemo, skipReason, findChrome, sleep, WEB_ROOT, CLOCK_SOURCE, closeDemoResources, demoLifecycleTrace, requestBrowserShutdown};
+module.exports = {openDemo, skipReason, findChrome, sleep, WEB_ROOT, CLOCK_SOURCE, closeDemoResources, demoLifecycleTrace, requestBrowserShutdown,
+  CLEANUP_MS, GRACEFUL_CLEANUP_MS};
