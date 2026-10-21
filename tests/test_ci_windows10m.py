@@ -279,6 +279,9 @@ def test_demo_driver_cleanup_waits_for_actual_close_and_preserves_startup_errors
     assert source.index('await Promise.race(') < source.index('await removeProfile(profile);')
     assert '} finally { clearTimer(timer); }' in source
     assert "new AggregateError([e, cleanup], 'demo startup and cleanup failed')" in source
+    # #842: late owned exit/close are only observed after the deadline, attached before its fallback kill.
+    assert source.index("try { observeLate(); }") < source.index("requestBrowserShutdown(chrome, undefined, failures)")
+    assert "{after_deadline_ms: Math.round(clock() - deadline)}" in source
 
 
 def test_incomplete_timed_out_report_is_diagnostic_not_success(monkeypatch, tmp_path):

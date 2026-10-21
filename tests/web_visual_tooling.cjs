@@ -391,6 +391,49 @@ test('stalled graceful cleanup keeps the five-second failure and requests owned-
   assert.equal(f.events.includes('removed'), false, 'late acknowledgements cannot reverse timeout failure');
 });
 
+function lateFixture() {
+  const {EventEmitter} = require('node:events');
+  const f = cleanupFixture(), rows = [], clock = {now: 100};
+  const chrome = Object.assign(new EventEmitter(), {exitCode: null, signalCode: null,
+    kill() { f.events.push('chrome-request'); }});
+  f.resources.chrome = chrome;
+  f.resources.requestBrowserClose = () => { f.events.push('Browser.close'); return true; };
+  f.options.clock = () => clock.now;
+  f.options.diagnostic = (stage, pending, extra) => rows.push({stage, pending, ...(extra || {})});
+  return {...f, chrome, rows, clock};
+}
+
+test('after the deadline, late owned exit and closes are recorded with their delay but stay a failure (#842)', async () => {
+  const f = lateFixture();
+  const closing = closeDemoResources(f.resources, f.options);
+  await f.tick(); f.serverAck(); await f.tick(); f.timeout();
+  await assert.rejects(closing, error => error instanceof AggregateError &&
+    error.errors.some(item => item.message === 'demo cleanup did not close: chrome-stdio, websocket'));
+  // The deadline's fallback still terminates the owned child once; observation was attached before it.
+  assert.equal(f.events.filter(x => x === 'chrome-request').length, 1);
+  assert.deepEqual(f.rows, [{stage: 'timeout', pending: ['chrome-stdio', 'websocket']}]);
+  f.clock.now = 130; f.chrome.exitCode = 1; f.chrome.emit('exit', 1, null);
+  f.clock.now = 180; f.chromeAck(); await f.tick();
+  f.clock.now = 200; f.socketAck(); await f.tick();
+  assert.deepEqual(f.rows.slice(1).map(row => [row.stage, row.after_deadline_ms]),
+    [['late-chrome-exit', 30], ['late-chrome-stdio-close', 80], ['late-socket-close', 100]]);
+  assert.equal(f.rows.some(row => row.stage === 'closed'), false);
+  assert.equal(f.events.includes('removed'), false, 'a late acknowledgement never removes the profile');
+});
+
+test('an exit that is never observed leaves only the timeout record, and earlier acknowledgements are not late', async () => {
+  const f = lateFixture();
+  f.socketAck();  // the CDP socket closed before the deadline; only the owned child is still open
+  const closing = closeDemoResources(f.resources, f.options);
+  await f.tick(); f.serverAck(); await f.tick(); f.timeout();
+  await assert.rejects(closing, error => error instanceof AggregateError &&
+    error.errors.some(item => item.message.startsWith('demo cleanup did not close:')));
+  await f.tick();
+  assert.deepEqual(f.rows.map(row => row.stage), ['timeout']);
+  assert.equal(f.chrome.listenerCount('exit'), 1, 'only the observation waits; nothing claims the child closed');
+  assert.equal(f.events.includes('removed'), false);
+});
+
 // ---- demo_driver: an exception in a virtual timer callback is a page error ----
 // The page-side clock runs here in a vm context. Its MessageChannel is a stub so no port keeps Node alive.
 function pageClock() {

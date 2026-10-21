@@ -125,8 +125,8 @@ function requestBrowserShutdown(chrome, requestBrowserClose, failures) {
 }
 
 async function closeDemoResources({ws, wsClosed, chrome, chromeClosed, requestBrowserClose, server, profile},
-  {removeProfile = removeDir, setTimer = setTimeout, clearTimer = clearTimeout,
-    diagnostic = (stage, pending) => console.error('demo cleanup: ' + JSON.stringify({stage, pending,
+  {removeProfile = removeDir, setTimer = setTimeout, clearTimer = clearTimeout, clock = () => performance.now(),
+    diagnostic = (stage, pending, extra = {}) => console.error('demo cleanup: ' + JSON.stringify({stage, pending, ...extra,
       active: typeof process.getActiveResourcesInfo === 'function' ? process.getActiveResourcesInfo().slice(0, 16) : null,
       chrome_exit_observed: chrome ? chrome.exitCode !== null || chrome.signalCode !== null : null,
       stderr_closed: typeof chrome?.stderr?.closed === 'boolean' ? chrome.stderr.closed : null}))} = {}) {
@@ -135,7 +135,22 @@ async function closeDemoResources({ws, wsClosed, chrome, chromeClosed, requestBr
   const closeSocket = () => {
     if (!socketCloseRequested) { socketCloseRequested = true; ws.close(); }
   };
-  const report = stage => { try { diagnostic(stage, [...pending]); } catch { /* diagnostic only */ } };
+  const report = (stage, extra) => { try { diagnostic(stage, [...pending], extra); } catch { /* diagnostic only */ } };
+  // After the deadline, record which owned acknowledgements still arrive and when (#842). Observation only: no
+  // timer or handle is added, the rejection stands, and a late event never removes the profile or marks closure.
+  const acknowledged = {chrome: false, socket: false};
+  if (chrome && chromeClosed) chromeClosed.then(() => { acknowledged.chrome = true; }, () => {});
+  if (ws && wsClosed) wsClosed.then(() => { acknowledged.socket = true; }, () => {});
+  const observeLate = () => {
+    let deadline;
+    try { deadline = clock(); } catch { return; }
+    const late = stage => report(stage, {after_deadline_ms: Math.round(clock() - deadline)});
+    if (chrome && chrome.exitCode === null && chrome.signalCode === null && typeof chrome.once === 'function') {
+      chrome.once('exit', () => late('late-chrome-exit'));
+    }
+    if (chrome && chromeClosed && !acknowledged.chrome) chromeClosed.then(() => late('late-chrome-stdio-close'), () => {});
+    if (ws && wsClosed && !acknowledged.socket) wsClosed.then(() => late('late-socket-close'), () => {});
+  };
   const closing = (name, request, acknowledgement) => {
     pending.add(name);
     return Promise.resolve().then(request).then(() => acknowledgement).then(() => pending.delete(name))
@@ -154,6 +169,7 @@ async function closeDemoResources({ws, wsClosed, chrome, chromeClosed, requestBr
     await Promise.race([Promise.allSettled(waits), new Promise((_, reject) => {
       timer = setTimer(() => {
         report('timeout');
+        try { observeLate(); } catch { /* diagnostic only */ }
         // Preserve the existing owned-child/transport cleanup attempt if CDP
         // stalls. The original five-second deadline STILL rejects as failure.
         if (graceful) {
