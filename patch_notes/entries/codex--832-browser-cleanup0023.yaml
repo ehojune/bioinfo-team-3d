@@ -1,0 +1,6 @@
+pr: 832
+rows:
+- sha: '4e00cbd'
+  at: 2026-10-22 00:32
+  summary: 브라우저에 정상 종료를 요청한 뒤 통신 연결을 정리하도록 고쳤습니다.
+  text: '소유 CDP 연결에 Browser.close를 먼저 보내고 실제 child/stdio close 뒤 transport를 닫는다. 연결이 없거나 cleanup이 지연되면 기존 소유 child 종료를 시도하며5초 초과는 실패로 남긴다. Stdio/socket/server acknowledgement·profile 정리 조건과 전체 deadline은 유지했다. 동기 shutdown fake3·전송 callback 단언8·기존 wrapper/static11 PASS, 비동기 cleanup 계약2건 추가. 실제 Windows pipe 소유자·원인과 새 native CI 성공은 미확인이다.'
