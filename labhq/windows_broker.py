@@ -39,7 +39,9 @@ function Write-Phase([string]$phase) {
 }
 try {
   Write-Phase 'powershell_started'
-  $r = [Console]::In.ReadToEnd() | ConvertFrom-Json
+  $requestJson = [Console]::In.ReadToEnd()
+  Write-Phase 'input_read'
+  $r = $requestJson | ConvertFrom-Json
   Write-Phase 'input_accepted'
   $startup = ([wmiclass]'\\.\root\cimv2:Win32_ProcessStartup').CreateInstance()
   $startup.CreateFlags = [uint32]$r.flags
@@ -208,7 +210,7 @@ def _powershell():
     return Path(buffer.value) / "WindowsPowerShell/v1.0/powershell.exe"
 
 
-_PROVIDER_PHASES = ("powershell_started", "input_accepted", "create_entered", "create_returned")
+_PROVIDER_PHASES = ("powershell_started", "input_read", "input_accepted", "create_entered", "create_returned")
 
 
 def _provider_output(output, diagnostics, *, complete):
@@ -221,14 +223,14 @@ def _provider_output(output, diagnostics, *, complete):
         if not isinstance(output, bytes) or len(output) > 8192:
             raise ValueError
         lines = output.decode("utf-8-sig").splitlines()
-        if len(lines) > 5:
+        if len(lines) > len(_PROVIDER_PHASES) + 1:
             raise ValueError
         reply = None
         for index, line in enumerate(lines):
             row = json.loads(line)
             if isinstance(row, dict) and "phase" in row:
                 elapsed = row.get("elapsed_ms")
-                if (len(phases) >= 4 or row["phase"] != _PROVIDER_PHASES[len(phases)]
+                if (len(phases) >= len(_PROVIDER_PHASES) or row["phase"] != _PROVIDER_PHASES[len(phases)]
                         or set(row) != {"phase", "elapsed_ms"} or type(elapsed) not in (int, float)
                         or not 0 <= elapsed <= 60000 or not math.isfinite(elapsed)
                         or (phases and elapsed < phases[-1]["elapsed_ms"])):
@@ -240,7 +242,7 @@ def _provider_output(output, diagnostics, *, complete):
                 raise ValueError
         if complete and reply is None:
             raise ValueError
-        diagnostics["trace_status"] = "phases_complete" if len(phases) == 4 else "partial" if phases else "absent"
+        diagnostics["trace_status"] = "phases_complete" if len(phases) == len(_PROVIDER_PHASES) else "partial" if phases else "absent"
         return reply if complete else None
     except (ValueError, UnicodeError):
         diagnostics["trace_status"] = "invalid_or_partial"
