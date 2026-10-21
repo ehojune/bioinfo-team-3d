@@ -6,7 +6,7 @@ const fs = require('node:fs'), os = require('node:os'), path = require('node:pat
 const {DEFAULT_TOLERANCE, diffView, sameColor, colorChannels} = require('./support/layout_snapshot.cjs');
 const {updateBaseline} = require('../scripts/update_visual_baseline.cjs');
 const vm = require('node:vm');
-const {openDemo, skipReason, CLOCK_SOURCE} = require('./support/demo_driver.cjs');
+const {openDemo, skipReason, CLOCK_SOURCE, closeDemoResources} = require('./support/demo_driver.cjs');
 
 // ---- layout_snapshot: colors are #rrggbb hex bytes ----
 test('sameColor reads #rrggbb as one hex byte per channel', () => {
@@ -106,6 +106,106 @@ test('a failing or killed visual test fails the update with its own status', () 
   assert.match(killed.error.join('\n'), /NOT updated.*did not finish.*SIGKILL/);
 });
 
+
+// ---- demo_driver cleanup: fake owned handles and a manually fired clock only ----
+function cleanupFixture() {
+  const events = [], diagnostics = [];
+  let socketAck, chromeAck, serverAck, fireTimer;
+  const wsClosed = new Promise(resolve => { socketAck = resolve; });
+  const chromeClosed = new Promise(resolve => { chromeAck = resolve; });
+  const resources = {profile: 'owned-profile', wsClosed, chromeClosed,
+    ws: {close() { events.push('ws-request'); }},
+    chrome: {exitCode: null, signalCode: null, kill() { events.push('chrome-request'); }},
+    server: {close(callback) { events.push('server-request'); serverAck = callback; }}};
+  const options = {removeProfile: async profile => { assert.equal(profile, 'owned-profile'); events.push('removed'); },
+    setTimer(callback, milliseconds) { assert.equal(milliseconds, 5000); fireTimer = callback; return 17; },
+    clearTimer(id) { assert.equal(id, 17); events.push('timer-cleared'); },
+    diagnostic: (stage, pending) => diagnostics.push({stage, pending})};
+  const tick = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
+  return {resources, options, events, diagnostics, socketAck, chromeAck, tick,
+    serverAck: error => serverAck(error), timeout: () => fireTimer()};
+}
+
+test('cleanup waits for socket, child stdio and server acknowledgements before removing its profile', async () => {
+  const f = cleanupFixture();
+  let finished = false;
+  const closing = closeDemoResources(f.resources, f.options).then(() => { finished = true; });
+  await f.tick();
+  assert.deepEqual(f.events, ['ws-request', 'chrome-request', 'server-request']);
+  f.socketAck(); f.serverAck();
+  f.resources.chrome.exitCode = 0;  // An exit code is not a closed stdio acknowledgement.
+  await f.tick();
+  assert.equal(finished, false);
+  assert.equal(f.events.includes('removed'), false);
+  f.chromeAck(); await closing;
+  assert.deepEqual(f.events.slice(-2), ['timer-cleared', 'removed']);
+  assert.deepEqual(f.diagnostics, [{stage: 'closed', pending: []}]);
+});
+
+test('cleanup handles an already exited child without another termination request', async () => {
+  const f = cleanupFixture();
+  f.resources.chrome.exitCode = 0;
+  f.socketAck(); f.chromeAck();
+  const closing = closeDemoResources(f.resources, f.options);
+  await f.tick(); f.serverAck(); await closing;
+  assert.equal(f.events.includes('chrome-request'), false);
+  assert.equal(f.events.includes('removed'), true);
+});
+
+test('cleanup still attempts other resources and preserves the original close failure', async () => {
+  const f = cleanupFixture(), failure = new Error('socket-close-failed');
+  f.resources.ws.close = () => { throw failure; };
+  f.chromeAck();
+  const closing = closeDemoResources(f.resources, f.options);
+  await f.tick(); f.serverAck();
+  await assert.rejects(closing, error => error instanceof AggregateError && error.errors.includes(failure));
+  assert.equal(f.events.includes('chrome-request'), true);
+  assert.equal(f.events.includes('removed'), false);
+  assert.equal(f.events.at(-1), 'timer-cleared');
+});
+
+test('missing close acknowledgement times out as failure without removal or a fake closed marker', async () => {
+  const f = cleanupFixture();
+  f.socketAck();
+  const closing = closeDemoResources(f.resources, f.options);
+  await f.tick(); f.serverAck(); await f.tick(); f.timeout();
+  await assert.rejects(closing, error => error instanceof AggregateError &&
+    error.errors.some(item => item.message === 'demo cleanup did not close: chrome-stdio'));
+  assert.equal(f.events.includes('removed'), false);
+  assert.deepEqual(f.diagnostics, [{stage: 'timeout', pending: ['chrome-stdio']}]);
+  assert.equal(f.events.at(-1), 'timer-cleared');
+});
+
+test('profile removal failure propagates after resource closure and clears the timer', async () => {
+  const f = cleanupFixture(), failure = new Error('profile-remove-failed');
+  f.socketAck(); f.chromeAck();
+  f.options.removeProfile = async () => { throw failure; };
+  const closing = closeDemoResources(f.resources, f.options);
+  await f.tick(); f.serverAck();
+  await assert.rejects(closing, error => error === failure);
+  assert.equal(f.events.at(-1), 'timer-cleared');
+  assert.deepEqual(f.diagnostics, []);
+});
+
+test('partial startup still waits for its server and preserves a server-close error', async () => {
+  const f = cleanupFixture(), failure = new Error('server-close-failed');
+  delete f.resources.ws; delete f.resources.chrome;
+  const closing = closeDemoResources(f.resources, f.options);
+  await f.tick(); f.serverAck(failure);
+  await assert.rejects(closing, error => error instanceof AggregateError && error.errors.includes(failure));
+  assert.deepEqual(f.events, ['server-request', 'timer-cleared']);
+});
+
+test('a diagnostic failure cannot hide the original incomplete cleanup', async () => {
+  const f = cleanupFixture();
+  f.options.diagnostic = () => { throw new Error('diagnostic-failed'); };
+  const closing = closeDemoResources(f.resources, f.options);
+  await f.tick(); f.timeout();
+  await assert.rejects(closing, error => error instanceof AggregateError &&
+    error.errors.some(item => item.message.startsWith('demo cleanup did not close:')));
+  assert.equal(f.events.includes('removed'), false);
+  assert.equal(f.events.at(-1), 'timer-cleared');
+});
 
 // ---- demo_driver: an exception in a virtual timer callback is a page error ----
 // The page-side clock runs here in a vm context. Its MessageChannel is a stub so no port keeps Node alive.

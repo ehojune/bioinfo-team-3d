@@ -117,7 +117,7 @@ def _launch_journal(path: Path) -> str:
         "phase": ("provider_create", "process_open", "process_identity", "receipt_wait", "identity_verify", "job_verify", "ack_write"),
         "reason": ("provider_timeout", "provider_protocol", "protocol_error", "native_error", "provider_subprocess",
                    "create_failed", "invalid_returned_pid", "receipt_timeout", "identity_mismatch", "job_unverified",
-                   "system_directory_unknown", "native_or_protocol"),
+                   "system_directory_unknown", "native_or_protocol", "request_too_large"),
         "error": ("BrokerFailure", "TimeoutExpired", "CalledProcessError", "SubprocessError", "PermissionError",
                   "FileNotFoundError", "TimeoutError", "OSError", "ValueError", "TypeError", "OtherError"),
         "trace_status": ("absent", "partial", "phases_complete", "invalid_or_partial"),
@@ -150,9 +150,9 @@ def _launch_journal(path: Path) -> str:
             phases = provider.get("phases")
             if isinstance(phases, list):
                 valid = []
-                for index, step in enumerate(phases[:4]):
+                for index, step in enumerate(phases[:7]):
                     if not isinstance(step, dict) or step.get("phase") != (
-                            "powershell_started", "input_accepted", "create_entered", "create_returned")[index]:
+                            "powershell_started", "stdin_open", "header_read", "input_read", "input_accepted", "create_entered", "create_returned")[index]:
                         break
                     elapsed = facts(step).get("elapsed_ms")
                     if elapsed is None or (valid and elapsed < valid[-1]["elapsed_ms"]):
@@ -219,7 +219,7 @@ def test_start_gateway_failure_keeps_the_exception_and_reports_logs(tmp_path, mo
         assert stderr.count("fixture log denied") == 2
 
 
-@pytest.mark.parametrize("journal", ["present", "missing", "unreadable", "malformed", "oversize"])
+@pytest.mark.parametrize("journal", ["present", "missing", "unreadable", "malformed", "oversize", "bad-phase"])
 def test_start_gateway_reports_only_bounded_allowlisted_launch_facts(tmp_path, monkeypatch, capsys, journal):
     error = SystemExit(2)
     monkeypatch.setattr(__name__ + "._logs", lambda _: tmp_path)
@@ -232,9 +232,13 @@ def test_start_gateway_reports_only_bounded_allowlisted_launch_facts(tmp_path, m
            "reason": "provider_timeout", "error": "TimeoutExpired", "code": None,
            "cmd": "SECRET-command", "stdout": "SECRET-stdout", "env": {"SECRET": "value"},
            "provider": {"elapsed_ms": 10000, "trace_status": "partial", "stderr": "SECRET-stderr",
-                        "phases": [{"phase": "powershell_started", "elapsed_ms": 1},
-                                   {"phase": "SECRET-phase", "elapsed_ms": 2}]}}
-    if journal in ("present", "oversize"):
+                        "phases": [{"phase": name, "elapsed_ms": index}
+                                   for index, name in enumerate(("powershell_started", "stdin_open", "header_read", "input_read", "input_accepted",
+                                                                 "create_entered", "create_returned"))]}}
+    if journal == "bad-phase":
+        row["provider"]["phases"] = [{"phase": "powershell_started", "elapsed_ms": 1},
+                                      {"phase": "SECRET-phase", "elapsed_ms": 2}]
+    if journal in ("present", "oversize", "bad-phase"):
         # Invalid fields and foreign roles never become diagnostic text.
         unsafe = {"role": "gateway-supervisor", "status": "wmi_failed", "error": "SECRET-class",
                   "reason": "SECRET-reason", "code": "SECRET-code", "phase": "SECRET-phase",
@@ -260,8 +264,11 @@ def test_start_gateway_reports_only_bounded_allowlisted_launch_facts(tmp_path, m
     if journal in ("present", "oversize"):
         assert '"reason": "provider_timeout"' in stderr and '"elapsed_ms": 10000' in stderr
         assert '"phase": "powershell_started"' in stderr
+        assert '"phase": "input_read"' in stderr and '"phase": "create_returned"' in stderr
         if journal == "oversize":
             assert '"journal": "tail_only"' in stderr
+    elif journal == "bad-phase":
+        assert '"phase": "powershell_started"' in stderr and '"phase": "input_read"' not in stderr
     else:
         assert journal in stderr
 
