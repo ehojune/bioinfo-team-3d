@@ -29,7 +29,7 @@ main의 해당 commit에 병합된 같은 저장소 PR의 최신 matching run만
 2. REST run/job의 head SHA는 PR branch head입니다. producer는 이벤트의 PR 번호·저장소 ID·head/base snapshot과 실제 `GITHUB_SHA` checkout을 따로 기록합니다. commit API에서 checkout의 두 parent가 그 base/head이고 tree가 main과 같은지 검증합니다. squash SHA가 달라도 tree는 같아야 합니다.
 3. `GITHUB_WORKFLOW_SHA/REF`와 workflow blob도 기록합니다. 지원하는 source는 그 synthetic merge의 같은 저장소·같은 PR merge ref입니다. workflow/helper·selector/profile·dev dependency·conftest/guard의 blob이 source·당시 main base·현재 checkout에서 모두 같아야 합니다. 다른 source commit은 blob이 같아도 full이며, 정책을 바꾼 PR의 첫 main 실행도 full입니다.
 4. 최신 attempt의 Ubuntu 두 버전·Windows·clean-install·공식 validator·MCP와 changes·문서·기록·manifest job이 각각 하나씩 전부 성공해야 합니다. 모든 test job은 같은 immutable checkout을 고정하고 tree를 출력합니다.
-5. 전체 gate 성공 뒤 producer가 version 3 JSON을 artifact로 올립니다. run/attempt 이름·API SHA-256 digest·만료 여부·완전한 gate/tree/profile receipt를 확인합니다. ZIP은 크기를 제한하고 JSON 하나만 메모리에서 읽으며 추출·실행하지 않습니다. 외부 storage redirect에는 GitHub credential을 보내지 않습니다.
+5. 전체 gate 성공 뒤 producer가 version 5 JSON을 artifact로 올립니다. run/attempt 이름·API SHA-256 digest·만료 여부·완전한 gate/tree/profile receipt를 확인합니다. ZIP은 크기를 제한하고 JSON 하나만 메모리에서 읽으며 추출·실행하지 않습니다. 외부 storage redirect에는 GitHub credential을 보내지 않습니다.
 
 검색은 최근 20 run, API 응답은 2 MiB, artifact는 256 KiB ZIP·32 KiB JSON으로 제한합니다. REST의 PR 연결 정보가 나중 head로 바뀌거나 merge object를 읽지 못해도 full입니다. API 오류·범위 초과·누락·중복·불일치·부분 rerun도 full입니다. 재사용 결과로 새 manifest를 만들지 않습니다. 실제 artifact 왕복·절감 시간·재사용률은 아직 측정하지 않았습니다.
 
@@ -38,11 +38,11 @@ main의 해당 commit에 병합된 같은 저장소 PR의 최신 matching run만
 #823 branch의 미게시 후속 설계입니다. 실제 Windows·병렬 성능은 새 CI 전까지 미검증이며 [정적 근거와 한계](ci-windows-cohort-823.md)를 봅니다.
 
 - CI outer Linux 3.10/3.12 전수는 `pytest-xdist==3.8.0`의 `-n auto --dist loadfile`로 실행합니다. global addopts/PYTEST_ADDOPTS는 없고 nested pytest는 직렬 기본값입니다. auto worker 수는 측정값으로 기록하며 4개로 가정하지 않습니다.
-- Windows PR/main은 `windows-boundary-v2`, nightly/dispatch는 `windows-full-v1`입니다. `config/ci/windows-boundary-v1.json`의 schema 2에 명시한 OS/안전 cohort와 변경·신규·미분류 test는 포함합니다. 검토한 중립 계약의 source/helper digest가 같은 경우만 제외하며 전역 runtime fingerprint는 없습니다. 실제 checkout과 PR ordered parents 또는 push before/after·ancestor를 확인하지 못하거나 공유 fixture/policy/dependency가 바뀌면 Windows 전수입니다. 혼합된 UTF-8·atomic replace·public/path 검사 파일은 포함합니다.
+- Windows PR/main은 `windows-boundary-v3`, nightly/dispatch는 `windows-full-v1`입니다. 명시 cohort·native API·변경 test를 포함하고, 기존 collection 밖의 파일·미확정 node와 공유 fixture/policy 변경은 full입니다. 일반 schema/prose/logic에 파일별 순수성 승인을 요구하지 않습니다. 혼합 파일의 node 검토만 source digest로 보호합니다.
 - Windows-only 회귀가 제외 파일에 생기면 nightly/dispatch에서 늦게 발견될 위험이 남습니다. Linux 전수는 Windows 실행의 증거가 아닙니다. 5분은 목표이며 미측정입니다. 안전 검증을 줄여 시간을 맞추지 않습니다.
 - controller의 원래 operator HOME 신원과 worker별 HOME/state/cache/DB/log 격리는 유지합니다. 전용 subprocess·임의 포트·사용하지 않는 test helper import는 전역 lock 근거가 아닙니다. 참조된 helper/fixture·import-time 실행·별칭을 따라 고정/미확정 listener 포트와 전역 process scan을 보호합니다. 실제 Runner broker의 mutable port가 입증되지 않은 경우도 잠급니다. lock은 setup~teardown을 감싸며 정적 분석의 완전한 동적 증명을 뜻하지 않습니다. production fsync·SQLite FULL·atomic replace·Job은 바꾸지 않습니다.
 - 각 CI job artifact에는 full/selected node 목록·제외 이유, CPU·실제 worker 수·platform, setup/pytest/job queue 시간, 실패/skip 수·최장 파일·host-resource lock 대기가 남습니다. worker collection 목록은 서로 같아야 합니다. 3.10 controller 진단과 25분 상한을 유지하고 worker도 5분마다 node/thread/task stack을 별도 기록합니다.
-- v4 manifest/artifact는 gate별 profile·policy blob·tree·run/attempt·workflow·digest·ordered parents와 모든 성공 gate를 결합합니다. main push before도 검증된 PR base와 같아야 변경 test 집합을 재사용합니다. Windows full·v1 boundary·구형 manifest·다른 증거는 교환하지 않습니다. 바뀐 정책의 자기 인증은 허용하지 않아 첫 검증은 전수 경로입니다. 확인된 snapshot drift의 no-reuse 결과는 아래처럼 별도로 처리합니다.
+- v5 manifest/artifact는 gate별 profile·policy blob·tree·run/attempt·workflow·digest·ordered parents와 모든 성공 gate를 결합합니다. main push before도 검증된 PR base와 같아야 변경 test 집합을 재사용합니다. Windows full·v1 boundary·구형 manifest·다른 증거는 교환하지 않습니다. 바뀐 정책의 자기 인증은 허용하지 않아 첫 검증은 전수 경로입니다. 확인된 snapshot drift의 no-reuse 결과는 아래처럼 별도로 처리합니다.
 
 근거: [xdist distribution](https://pytest-xdist.readthedocs.io/en/stable/distribution.html), [worker isolation](https://pytest-xdist.readthedocs.io/en/stable/how-to.html), [3.8.0 Python >=3.9](https://pypi.org/project/pytest-xdist/3.8.0/). 병렬 실행·Windows 성능·artifact 재사용은 실제 CI 확인 전입니다.
 

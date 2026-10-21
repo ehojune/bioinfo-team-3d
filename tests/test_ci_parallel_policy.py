@@ -14,19 +14,19 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_unknown_and_os_boundary_sources_are_included_even_with_a_matching_review():
-    for text in ("import sys\nassert sys.platform", "import sqlite3", "import os\nos.fsync(1)"):
-        row = {"tests/test_known.py": {"sha256": selection.source_digest(text), "reason": "fixture review", "helpers": {}}}
-        assert selection.include_windows("tests/test_new.py", text, row)[0]
-        assert selection.include_windows("tests/test_known.py", text, row)[0]
+    from tests.test_ci_cohort823 import review
+    for text in ('import sys\nassert sys.platform','import sqlite3\nsqlite3.connect("x")','import os\nos.fsync(1)'):
+        assert selection.include_windows('tests/test_new.py',text,review(text),node='test_math')[0]
+        assert selection.include_windows('tests/test_math.py',text,review(text),node='test_math')[0]
 
 
 def test_only_unchanged_reviewed_text_can_be_excluded():
-    source = "def test_math():\n    assert 1 + 1 == 2\n"
-    row = {"tests/test_math.py": {"sha256": selection.source_digest(source), "reason": "pure arithmetic", "helpers": {}}}
-    assert not selection.include_windows("tests/test_math.py", source, row)[0]
-    assert not selection.include_windows("tests/test_math.py", source.replace("\n", "\r\n"), row)[0]
-    assert selection.include_windows("tests/test_math.py", source + "def test_new(): pass\n", row)[0]
-    assert selection.include_windows("tests/test_renamed.py", source, row)[0]
+    from tests.test_ci_cohort823 import review
+    source='def test_math():\n    assert 1+1==2\n'; data=review(source)
+    assert not selection.include_windows('tests/test_math.py',source,data,node='test_math')[0]
+    assert not selection.include_windows('tests/test_math.py',source.replace('\n','\r\n'),data,node='test_math')[0]
+    assert selection.include_windows('tests/test_math.py',source+'def test_new(): pass\n',data,node='test_math')[0]
+    assert selection.include_windows('tests/test_renamed.py',source,data,node='test_math')[0]
 
 
 def test_unchanged_pure_review_is_local_to_source_and_helpers_not_all_runtime(tmp_path):
@@ -46,45 +46,45 @@ def test_unchanged_pure_review_is_local_to_source_and_helpers_not_all_runtime(tm
     assert suite.select(nodes, selection.WINDOWS_BOUNDARY, tmp_path, changed=set()) == (nodes, [], {})
 
 
-def test_selection_keeps_every_node_of_unknown_files_and_both_full_profiles(monkeypatch, tmp_path):
-    pure, unknown = tmp_path / "pure.py", tmp_path / "new.py"
-    pure.write_text("assert 1", encoding="utf-8")
-    unknown.write_text("assert 2", encoding="utf-8")
-    monkeypatch.setattr(suite, "policy", lambda root: {"boundary_cohorts": {}, "reviewed_pure": {
-        "pure.py": {"sha256": selection.source_digest("assert 1"), "reason": "synthetic pure", "helpers": {}}}})
-    nodes = [SimpleNamespace(path=pure, nodeid="pure.py::test_a"), SimpleNamespace(path=pure, nodeid="pure.py::test_b"),
-             SimpleNamespace(path=unknown, nodeid="new.py::test_c")]
-    chosen, omitted, reasons = suite.select(nodes, selection.WINDOWS_BOUNDARY, tmp_path, changed=set())
-    assert chosen == nodes[2:] and omitted == nodes[:2] and reasons == {"pure.py": "synthetic pure"}
-    for profile in ("linux-full-v1", "windows-full-v1"):
-        assert suite.select(nodes, profile, tmp_path) == (nodes, [], {})
+def test_selection_keeps_every_node_of_unknown_files_and_both_full_profiles(monkeypatch,tmp_path):
+    from tests.test_ci_cohort823 import policy_file
+    pure,unknown=tmp_path/'tests/test_math.py',tmp_path/'tests/test_new.py'
+    source='def test_math(): assert 1'
+    policy_file(tmp_path,source); pure.parent.mkdir(exist_ok=True)
+    pure.write_text(source,encoding='utf-8'); unknown.write_text('assert 2',encoding='utf-8')
+    nodes=[SimpleNamespace(path=pure,nodeid='tests/test_math.py::test_math'),
+           SimpleNamespace(path=unknown,nodeid='tests/test_new.py::test_c')]
+    chosen,omitted,reasons=suite.select(nodes,selection.WINDOWS_BOUNDARY,tmp_path,changed=set())
+    assert chosen==nodes[1:] and omitted==nodes[:1] and reasons
+    for profile in ('linux-full-v1','windows-full-v1'):
+        assert suite.select(nodes,profile,tmp_path)==(nodes,[],{})
 
 
 def test_actual_profile_exclusions_have_reviewed_digest_and_keep_os_boundaries():
-    data = selection.policy()
-    reviewed = data["reviewed_pure"]
-    assert len(reviewed) > 25
-    for path, row in reviewed.items():
-        source = (ROOT / path).read_text(encoding="utf-8")
-        included, _ = selection.include_windows(path, source, reviewed)
-        if not included:
-            assert selection.source_digest(source) == row["sha256"]
-            assert not selection.intrinsic_boundary(source)
-    for path in ("tests/test_windows_job_ci.py", "tests/test_supervisor_process.py", "tests/test_state_isolation.py",
-                 "tests/test_private_paths.py", "tests/test_reproduction_receipt.py", "tests/test_durable_writer.py"):
-        assert selection.include_windows(path, (ROOT / path).read_text(encoding="utf-8"), reviewed)[0]
+    data=selection.policy()
+    assert len(data['known_tests'])>300
+    for path,row in data['mixed_nodes'].items():
+        assert row['reason'].strip() and row['nodes']
+        source=(ROOT/path).read_text(encoding='utf-8')
+        assert selection.source_digest(source)==row['sha256']
+        for node in row['nodes']:
+            assert selection.include_windows(path,source,data,node=node)[0]
+    for path in ('tests/test_windows_job_ci.py','tests/test_supervisor_process.py','tests/test_state_isolation.py',
+                 'tests/test_private_paths.py','tests/test_reproduction_receipt.py','tests/test_durable_writer.py'):
+        assert selection.include_windows(path,(ROOT/path).read_text(encoding='utf-8'),data)[0]
 
 
 def test_profile_contract_includes_changed_source_without_refreshing_approval(monkeypatch):
-    monkeypatch.setattr(selection, "source_digest", lambda text: "0" * 64)
-    test_actual_profile_exclusions_have_reviewed_digest_and_keep_os_boundaries()
+    data=selection.policy()
+    monkeypatch.setattr(selection,'source_digest',lambda text:'0'*64)
+    for path in data['mixed_nodes']:
+        assert selection.include_windows(path,(ROOT/path).read_text(encoding='utf-8'),data,node='test_math')[0]
 
 
 def test_policy_file_is_versioned_and_not_a_runtime_fingerprint():
-    data = selection.policy()
-    assert data["version"] == 2 and data["profile"] == selection.WINDOWS_BOUNDARY
-    assert "implementation_sha256" not in data
-    assert data["default"] == "include"
+    data=selection.policy()
+    assert data['version']==3 and data['profile']==selection.WINDOWS_BOUNDARY
+    assert 'implementation_sha256' not in data and data['default']=='boundary'
 
 
 @pytest.mark.parametrize("workerinput", [{}, {"labhq_operator_home": "/different"}])
@@ -143,8 +143,8 @@ def test_ci_resource_lock_covers_protocol_setup_body_and_teardown_without_native
         def __exit__(self, *args):
             events.append("release")
     monkeypatch.setitem(sys.modules, "filelock", SimpleNamespace(FileLock=Lock))
-    monkeypatch.setattr(suite, "host_resource", lambda path: True)
-    protocol = observation.pytest_runtest_protocol(SimpleNamespace(path=tmp_path / "fixture.py"), None)
+    monkeypatch.setattr(suite, "host_resource", lambda path, **kwargs: True)
+    protocol = observation.pytest_runtest_protocol(SimpleNamespace(path=tmp_path / "fixture.py", nodeid="fixture.py::test_fake"), None)
     next(protocol)
     assert events == ["acquire"]
     events += ["fixture setup", "test", "fixture teardown"]
@@ -190,7 +190,7 @@ def test_report_records_job_queue_separately_from_setup_and_pytest(monkeypatch, 
     monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
     monkeypatch.setenv("CI_JOB_LABEL", "pytest-windows")
     monkeypatch.setattr(sys, "argv", ["ci_suite", "report"])
-    metrics = {"profile": "windows-boundary-v2", "workers": 3, "cpu_logical": 8,
+    metrics = {"profile": "windows-boundary-v3", "workers": 3, "cpu_logical": 8,
                "setup_s": 80, "pytest_s": 250, "results": {"passed": 1}, "longest_files": [["a.py", 250]]}
     monkeypatch.setattr(suite, "summarize", lambda path: metrics)
     def api(path):
@@ -208,12 +208,12 @@ def test_report_records_job_queue_separately_from_setup_and_pytest(monkeypatch, 
 def test_unrecognized_selection_policy_cannot_reduce_coverage(tmp_path):
     path = tmp_path / selection.PROFILE
     path.parent.mkdir(parents=True)
-    path.write_text('{"version":1,"profile":"windows-boundary-v2","default":"exclude","reviewed_pure":{}}',
+    path.write_text('{"version":1,"profile":"windows-boundary-v3","default":"exclude","reviewed_pure":{}}',
                     encoding="utf-8")
     with pytest.raises(ValueError):
         selection.policy(tmp_path)
     nodes = [SimpleNamespace(path=tmp_path / "new.py", nodeid="new.py::test_new")]
-    assert suite.select(nodes, "windows-boundary-v2", tmp_path) == (nodes, [], {})
+    assert suite.select(nodes, "windows-boundary-v3", tmp_path) == (nodes, [], {})
     path.write_text('{"version":1,"version":2}', encoding="utf-8")
     with pytest.raises(ValueError, match="duplicate"):
         selection.policy(tmp_path)
@@ -235,11 +235,11 @@ def test_workflow_parallelizes_only_explicit_outer_suites_and_keeps_full_windows
         assert any(s.get("if") == "always()" and s.get("uses", "").startswith("actions/upload-artifact")
                    for s in jobs[name]["steps"])
     condition = jobs["pytest-windows"]["env"]["CI_COVERAGE_PROFILE"]
-    assert all(word in condition for word in ("schedule", "workflow_dispatch", "windows-full-v1", "windows-boundary-v2"))
+    assert all(word in condition for word in ("schedule", "workflow_dispatch", "windows-full-v1", "windows-boundary-v3"))
     assert "schedule:" in (ROOT / cs.WORKFLOW).read_text(encoding="utf-8")
     project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert '"pytest-xdist==3.8.0"' in project and "addopts" not in project
-    assert cs.COVERAGE["pytest-windows"] == "windows-boundary-v2" and cs.VERSION == 4
+    assert cs.COVERAGE["pytest-windows"] == "windows-boundary-v3" and cs.VERSION == 5
     assert all(p in cs.POLICY_FILES for p in (selection.PROFILE, "scripts/ci_suite.py", "tests/conftest.py", "pyproject.toml"))
 
 

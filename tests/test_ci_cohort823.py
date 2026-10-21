@@ -38,15 +38,17 @@ def receipt(tmp_path, data):
 
 
 def review(text):
-    return {'sha256': s.source_digest(text), 'reason': 'synthetic arithmetic review', 'helpers': {}}
+    return {'version':3, 'profile':s.WINDOWS_BOUNDARY, 'default':'boundary',
+            'known_tests':['tests/test_math.py'], 'boundary_cohorts':{},
+            'mixed_nodes':{'tests/test_math.py':{'sha256':s.source_digest(text),
+                'reason':'synthetic arithmetic review', 'nodes':{'test_native':'native boundary'}}}}
 
 
 def policy_file(root, source):
     path = root / s.PROFILE
     path.parent.mkdir(parents=True, exist_ok=True)
-    data = {'version': 2, 'profile': s.WINDOWS_BOUNDARY, 'default': 'include',
-            'boundary_cohorts': {'tests/test_windows*.py': 'native OS boundary'},
-            'reviewed_pure': {'tests/test_math.py': review(source)}}
+    data=review(source)
+    data['boundary_cohorts']={'tests/test_windows*.py':'native OS boundary'}
     path.write_text(json.dumps(data), encoding='utf-8')
     return data
 
@@ -77,7 +79,8 @@ def test_unknown_or_drifted_merge_range_is_not_selection_evidence(parents):
 
 
 @pytest.mark.parametrize('paths', [('tests/../escape.py',), ('/absolute.py',), ('tests/test_a.py', 'tests/test_a.py'),
-                                  ('tests/conftest.py',), ('tests/helpers.py',), ('scripts/ci_selection.py',),
+                                  ('tests/conftest.py',), ('tests/helpers.py',), ('tests/fixtures/schema.yaml',),
+                                  ('tests/fixtures/example.txt',), ('scripts/ci_selection.py',),
                                   ('pyproject.toml',)])
 def test_malformed_paths_or_shared_fixture_policy_changes_require_full(paths):
     git, _ = fake_git(paths)
@@ -107,28 +110,24 @@ def test_invalid_range_receipt_cannot_select_a_subset(tmp_path, monkeypatch, mut
 
 
 def test_changed_reviewed_tests_helpers_and_unknown_tests_are_always_included(tmp_path):
-    source = 'def test_math(): assert 1 + 1 == 2\n'
-    p = tmp_path / 'tests/test_math.py'; p.parent.mkdir(); p.write_text(source, encoding='utf-8')
-    data = policy_file(tmp_path, source)
-    items = [SimpleNamespace(path=p, nodeid='tests/test_math.py::test_math')]
-    assert suite.select(items, s.WINDOWS_BOUNDARY, tmp_path, changed=set())[1] == items
-    assert suite.select(items, s.WINDOWS_BOUNDARY, tmp_path, changed={'tests/test_math.py'})[0] == items
-    helper = tmp_path / 'tests/helper.py'; helper.write_text('VALUE=1', encoding='utf-8')
-    data['reviewed_pure']['tests/test_math.py']['helpers'] = {'tests/helper.py': s.source_digest('VALUE=1')}
-    (tmp_path / s.PROFILE).write_text(json.dumps(data), encoding='utf-8')
-    assert suite.select(items, s.WINDOWS_BOUNDARY, tmp_path, changed={'tests/helper.py'})[0] == items
-    helper.write_text('VALUE=2', encoding='utf-8')
-    assert suite.select(items, s.WINDOWS_BOUNDARY, tmp_path, changed=set())[0] == items
-    assert s.include_windows('tests/test_unreviewed.py', source, {}, cohorts={})[0]
+    source='def test_math(): assert 1+1==2'
+    p=tmp_path/'tests/test_math.py'; p.parent.mkdir(); p.write_text(source,encoding='utf-8')
+    data=policy_file(tmp_path,source)
+    items=[SimpleNamespace(path=p,nodeid='tests/test_math.py::test_math')]
+    assert suite.select(items,s.WINDOWS_BOUNDARY,tmp_path,changed=set())[1]==items
+    assert suite.select(items,s.WINDOWS_BOUNDARY,tmp_path,changed={'tests/test_math.py'})[0]==items
+    assert suite.select(items,s.WINDOWS_BOUNDARY,tmp_path,changed={'tests/helper.py'})[0]==items
+    p.write_text(source+'\ndef test_new(): assert 2',encoding='utf-8')
+    assert suite.select(items,s.WINDOWS_BOUNDARY,tmp_path,changed=set())[0]==items
+    assert s.include_windows('tests/test_unreviewed.py',source,data,node='test_math')[0]
 
 
 def test_unrelated_product_edit_does_not_expire_every_reviewed_file(tmp_path):
-    source = 'def test_math(): assert 1 + 1 == 2\n'
-    policy_file(tmp_path, source)
-    (tmp_path / 'labhq').mkdir(); (tmp_path / 'labhq/unrelated.py').write_text('VALUE=2', encoding='utf-8')
+    source='def test_math(): assert 1+1==2'
+    data=policy_file(tmp_path,source)
+    (tmp_path/'labhq').mkdir(); (tmp_path/'labhq/unrelated.py').write_text('VALUE=2',encoding='utf-8')
     assert 'implementation_sha256' not in s.policy(tmp_path)
-    assert not s.include_windows('tests/test_math.py', source, s.policy(tmp_path)['reviewed_pure'],
-                                 root=tmp_path, cohorts={})[0]
+    assert not s.include_windows('tests/test_math.py',source,data,root=tmp_path,node='test_math')[0]
 
 
 @pytest.mark.parametrize('source', ['import sys\nassert sys.platform', 'from sqlite3 import connect\nconnect("x")',
@@ -136,7 +135,7 @@ def test_unrelated_product_edit_does_not_expire_every_reviewed_file(tmp_path):
     'from labhq.runner import daemon', 'from labhq.cli import main', 'from mcp import ClientSession',
     'import os\nos.fsync(1)', 'import os\nos.symlink("a", "b")'])
 def test_os_boundaries_cannot_be_approved_away_by_a_matching_review(source):
-    assert s.include_windows('tests/test_math.py', source, {'tests/test_math.py': review(source)}, cohorts={})[0]
+    assert s.include_windows('tests/test_math.py',source,review(source),node='test_math')[0]
 
 
 @pytest.mark.parametrize('source', [
@@ -191,7 +190,7 @@ def test_import_time_global_scan_is_protected_even_when_definition_is_unused(tmp
 def test_python310_policy_profile_and_manifest_epoch_are_bound():
     for path in ('scripts/ci_selection.py', 'scripts/ci_suite.py'):
         ast.parse((s.ROOT / path).read_text(encoding='utf-8-sig'), feature_version=(3, 10))
-    assert cs.VERSION == 4 and cs.COVERAGE['pytest-windows'] == s.WINDOWS_BOUNDARY
+    assert cs.VERSION == 5 and cs.COVERAGE['pytest-windows'] == s.WINDOWS_BOUNDARY
     assert s.PROFILE in cs.POLICY_FILES
     assert s.WINDOWS_BOUNDARY != 'windows-boundary-v1'
 
@@ -288,7 +287,7 @@ def test_listener_start_is_distinct_from_configuration_and_unknown_broker_port(t
 @pytest.mark.parametrize('text', ['new test', 'import sys\nsys.platform', 'import sqlite3', 'runner', 'MCP',
     'fsync', 'windows', 'doctor', 'wsl', 'hook', 'private_paths'])
 def test_all_original_unknown_source_controls_stay_included(text):
-    assert s.include_windows('tests/test_unknown.py', text, {}, cohorts={})[0]
+    assert s.include_windows('tests/test_unknown.py',text,review(text),node='test_unknown')[0]
 
 
 @pytest.mark.parametrize('port,locked', [(0, False), (8787, True)])
@@ -314,15 +313,17 @@ def test_unknown_listener_callback_and_conditional_port_are_not_certified_local(
     assert s.host_resource(p, tmp_path)
 
 
-@pytest.mark.parametrize('file', ['test_research_bulk_pack.py', 'test_research_notes_budget.py',
-    'test_research_continue.py', 'test_semantics_public.py', 'test_gif_encode.py', 'test_notes_index.py',
-    'test_edition_check_713.py', 'test_evidence_verify.py', 'test_semantics_objects.py'])
+@pytest.mark.parametrize('file', ['test_research_bulk_pack.py','test_research_notes_budget.py',
+    'test_research_continue.py','test_semantics_public.py','test_gif_encode.py','test_notes_index.py',
+    'test_edition_check_713.py','test_evidence_verify.py','test_semantics_objects.py'])
 def test_hybrid_encoding_atomic_redaction_and_path_contracts_remain_windows_boundaries(file):
-    path = 'tests/' + file
-    data = s.policy()
-    source = (s.ROOT / path).read_text(encoding='utf-8')
-    assert path in data['boundary_cohorts']
-    assert s.include_windows(path, source, {path: review(source)}, cohorts=data['boundary_cohorts'])[0]
+    path='tests/'+file; data=s.policy(); source=(s.ROOT/path).read_text(encoding='utf-8')
+    if path in data['mixed_nodes']:
+        for node in data['mixed_nodes'][path]['nodes']:
+            assert s.include_windows(path,source,data,node=node)[0]
+    else:
+        assert path in data['boundary_cohorts']
+        assert s.include_windows(path,source,data)[0]
 
 
 @pytest.mark.parametrize('source,locked', [
@@ -339,3 +340,176 @@ def test_hybrid_encoding_atomic_redaction_and_path_contracts_remain_windows_boun
 def test_reviewed_project_global_table_apis_are_capabilities_not_module_names(tmp_path, source, locked):
     p = tmp_path / 'test_project_scan.py'; p.write_text(source, encoding='utf-8')
     assert s.host_resource(p, tmp_path) is locked
+
+
+def test_gateway_watcher_alias_and_used_helper_preserve_snapshot_lock(tmp_path):
+    folder = tmp_path / 'tests'; folder.mkdir()
+    (folder / 'helpers.py').write_text(
+        'from labhq.gateway.shutdown import watch_gateway_exit as watch\n'
+        'def finish(): return watch(settings, pid, created)\n', encoding='utf-8')
+    p = folder / 'test_watch.py'
+    p.write_text('from helpers import finish as end\ndef test_watch(): end()\n'
+                 'def test_pure(): assert 2 + 2 == 4\n', encoding='utf-8')
+    assert s.host_resource(p, tmp_path, symbols=['test_watch'])
+    assert not s.host_resource(p, tmp_path, symbols=['test_pure'])
+
+
+@pytest.mark.parametrize('port,locked', [('0', False), ('8787', True), ('unknown', True)])
+def test_runner_broker_owned_zero_and_node_scope(tmp_path, port, locked):
+    p = tmp_path / 'test_runner.py'
+    p.write_text('from labhq.settings import Settings\nfrom labhq.runner.daemon import Runner\n'
+        'async def test_serve():\n    s=Settings()\n    s.runner.broker_port=' + port + '\n'
+        '    runner=Runner(s)\n    await runner.run_forever()\n'
+        'def test_pure(): assert 1\n', encoding='utf-8')
+    assert s.host_resource(p, tmp_path, symbols=['test_serve']) is locked
+    assert not s.host_resource(p, tmp_path, symbols=['test_pure'])
+
+
+def test_runner_port_proof_rejects_escaping_or_conditional_settings(tmp_path):
+    p = tmp_path / 'test_escape.py'
+    for statement in ('mutate(s)', 'alias=s', 's.runner.broker_port=8787', 's.runner=unknown',
+                      'if condition:\n        s.runner.broker_port=0'):
+        p.write_text('from labhq.settings import Settings\nfrom labhq.runner.daemon import Runner\n'
+            'async def test_serve():\n    s=Settings()\n    s.runner.broker_port=0\n    ' + statement + '\n'
+            '    runner=Runner(s)\n    await runner.run_forever()\n', encoding='utf-8')
+        assert s.host_resource(p, tmp_path, symbols=['test_serve'])
+
+
+def test_reviewed_watcher_chain_is_still_the_actual_product_source():
+    # Parse only; never import/call the native watcher or process APIs.
+    def function(path, name):
+        tree = ast.parse((s.ROOT / path).read_text(encoding='utf-8'), feature_version=(3, 10))
+        aliases = s.aliases(tree)
+        package = Path(path).parent.parts
+        for n in tree.body:
+            if isinstance(n, ast.ImportFrom) and n.level:
+                prefix = '.'.join(package[:len(package) - n.level + 1])
+                for item in n.names:
+                    aliases[item.asname or item.name] = '.'.join(filter(None, (prefix, n.module, item.name)))
+        return next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name), aliases
+    watcher, aliases = function('labhq/gateway/shutdown.py', 'watch_gateway_exit')
+    assert any(isinstance(n, ast.Call) and s.qualified(n.func, aliases) == 'labhq.cli._terminate_tree'
+               for n in ast.walk(watcher))
+    stop, aliases = function('labhq/cli.py', '_terminate_tree')
+    assert any(isinstance(n, ast.Call) and s.qualified(n.func, aliases) == 'labhq.proc_tree.kill_tree'
+               for n in ast.walk(stop))
+
+
+def test_same_module_fixtures_and_autouse_teardown_are_in_node_lock(tmp_path):
+    p = tmp_path / 'test_fixtures.py'
+    source = ('import pytest\nimport psutil\n@pytest.fixture\n'
+              'def shared():\n    yield\n    list(psutil.process_iter())\n'
+              'def test_with(shared): pass\ndef test_pure(): assert 1\n')
+    p.write_text(source, encoding='utf-8')
+    assert s.host_resource(p, tmp_path, symbols=['test_with'])
+    assert not s.host_resource(p, tmp_path, symbols=['test_pure'])
+    p.write_text(source.replace('@pytest.fixture', '@pytest.fixture(autouse=True)'), encoding='utf-8')
+    assert s.host_resource(p, tmp_path, symbols=['test_pure'])
+    p.write_text(source + '\n@pytest.mark.usefixtures("shared")\ndef test_marked(): pass\n', encoding='utf-8')
+    assert s.host_resource(p, tmp_path, symbols=['test_marked'])
+    p.write_text(source.replace('@pytest.fixture', '@pytest.fixture(name="renamed")')
+                 .replace('test_with(shared)', 'test_with(renamed)'), encoding='utf-8')
+    assert s.host_resource(p, tmp_path, symbols=['test_with'])
+
+
+def test_actual_durable_runner_zero_and_watcher_nodes_without_native_execution():
+    assert not s.host_resource(s.ROOT / 'tests/test_durable_writer.py',
+                               symbols=['test_runner_shutdown_waits_for_queued_writes'])
+    assert s.host_resource(s.ROOT / 'tests/test_web_shutdown_process.py',
+                           symbols=['test_the_watcher_stops_a_gateway_that_never_finishes_its_shutdown'])
+
+
+def test_include_only_union_preserves_ordinary_logic_without_per_file_pure_proof(tmp_path):
+    data = review('def test_math(): assert 2')
+    data['mixed_nodes'] = {}
+    source = 'def test_math(): assert schema.validate({"field": 2})'
+    assert not s.include_windows('tests/test_math.py', source, data)[0]
+    assert not s.include_windows('tests/test_math.py', source + '\n# unrelated prose', data)[0]
+    assert s.include_windows('tests/test_math.py', source, data, changed={'tests/test_math.py'})[0]
+    assert s.include_windows('tests/test_new.py', source, data)[0]
+
+
+@pytest.mark.parametrize('source', ['import os\ndef test_math(): os.fsync(fd)',
+    'from subprocess import run as child\ndef test_math(): child(["owned"])',
+    'import sys\ndef test_math(): assert sys.platform',
+    'import sqlite3\ndef test_math(): sqlite3.connect("owned")',
+    'import ctypes as native\ndef test_math(): native.windll.kernel32'])
+def test_include_only_backstop_protects_qualified_native_api_aliases(source):
+    data = review(source); data['mixed_nodes'] = {}
+    assert s.include_windows('tests/test_math.py', source, data)[0]
+
+
+def test_mixed_modules_keep_native_nodes_and_restore_full_on_drift_or_unknown_node():
+    data = s.policy()
+    for path, row in data['mixed_nodes'].items():
+        source = (s.ROOT / path).read_text(encoding='utf-8')
+        declared = {n.name for n in ast.parse(source).body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and n.name.startswith('test_')}
+        assert set(row['nodes']) <= declared
+        for node in row['nodes']:
+            assert s.include_windows(path, source, data, node=node)[0]
+        assert any(not s.include_windows(path, source, data, node=node)[0] for node in declared - set(row['nodes']))
+        assert s.include_windows(path, source, data, node='unrecognized_collector_node')[0]
+        assert s.include_windows(path, source + '\n# drift', data, node=next(iter(declared)))[0]
+
+
+@pytest.mark.parametrize('case', ['v4-manifest', 'v2-profile', 'v4-artifact'])
+def test_previous_boundary_policy_cannot_certify_the_include_only_contract(evidence, case):
+    import hashlib
+    from tests.test_ci_skip_policy import API, archive, reuse
+    api = API(evidence)
+    if case == 'v4-manifest':
+        api.manifest['version'] = 4
+    elif case == 'v2-profile':
+        api.manifest['coverage']['pytest-windows'] = 'windows-boundary-v2'
+    else:
+        api.artifact['name'] = 'ci-full-v4-42-1'
+    api.zip = archive(api.manifest)
+    api.artifact['digest'] = 'sha256:' + hashlib.sha256(api.zip).hexdigest()
+    api.artifact['size_in_bytes'] = len(api.zip)
+    assert not reuse(api)
+
+
+def test_boundary_backstop_is_per_node_and_follows_used_native_helpers(tmp_path):
+    folder = tmp_path / 'tests'; folder.mkdir()
+    (folder / 'helpers.py').write_text('import subprocess as sp\n'
+        'def native(): sp.run(["owned-child"])\n'
+        'def pure(): return {"field": 2}\n', encoding='utf-8')
+    source = ('from helpers import native as launch, pure as data\n'
+              'def test_native(): launch()\n'
+              'def test_pure(): assert data()=={"field":2}\n')
+    policy = review(source); policy['mixed_nodes'] = {}
+    assert s.include_windows('tests/test_math.py', source, policy, root=tmp_path, node='test_native')[0]
+    assert not s.include_windows('tests/test_math.py', source, policy, root=tmp_path, node='test_pure')[0]
+
+
+def test_import_time_native_call_and_autouse_fixture_remain_boundaries(tmp_path):
+    policy = review(''); policy['mixed_nodes'] = {}
+    for source in ('import socket\ns=socket.socket()\ns.bind(("localhost",0))\ndef test_pure(): assert 1',
+        'import pytest\nimport subprocess\n@pytest.fixture(autouse=True)\n'
+        'def start(): subprocess.run(["owned-child"])\ndef test_pure(): assert 1',
+        'import subprocess\ndef start(): subprocess.run(["owned-child"])\n'
+        'GLOBAL=start()\ndef test_pure(): assert 1'):
+        assert s.include_windows('tests/test_math.py', source, policy, root=tmp_path, node='test_pure')[0]
+
+
+def test_unused_native_sibling_is_not_a_boundary_for_a_pure_test():
+    source = ('import subprocess\ndef unused(): subprocess.run(["owned-child"])\n'
+              'def test_pure(): assert 1+1==2\ndef test_native(): unused()')
+    policy = review(source); policy['mixed_nodes'] = {}
+    assert not s.include_windows('tests/test_math.py', source, policy, node='test_pure')[0]
+    assert s.include_windows('tests/test_math.py', source, policy, node='test_native')[0]
+
+
+def test_suite_node_cache_cannot_apply_first_pure_decision_to_native_sibling(tmp_path):
+    source = ('import subprocess\ndef test_pure(): assert 1\n'
+              'def test_native(): subprocess.run(["owned-child"])')
+    data = policy_file(tmp_path, source); data['mixed_nodes'] = {}
+    (tmp_path / s.PROFILE).write_text(json.dumps(data), encoding='utf-8')
+    path = tmp_path / 'tests/test_math.py'; path.parent.mkdir(exist_ok=True)
+    path.write_text(source, encoding='utf-8')
+    pure = SimpleNamespace(path=path, nodeid='tests/test_math.py::test_pure')
+    native = SimpleNamespace(path=path, nodeid='tests/test_math.py::test_native')
+    for items in ([pure, native], [native, pure]):
+        chosen, omitted, _ = suite.select(items, s.WINDOWS_BOUNDARY, tmp_path, changed=set())
+        assert chosen == [native] and omitted == [pure]

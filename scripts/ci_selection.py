@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 # Retain the policy path; its schema/profile version, not its filename, is identity.
 PROFILE = "config/ci/windows-boundary-v1.json"
-WINDOWS_BOUNDARY = "windows-boundary-v2"
+WINDOWS_BOUNDARY = "windows-boundary-v3"
 PROFILES = ("linux-full-v1", WINDOWS_BOUNDARY, "windows-full-v1")
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 PATH = re.compile(r"(?:[\w.-]+/)*[\w.-]+\Z")
@@ -36,27 +36,30 @@ def _unique(pairs):
 
 def policy(root=ROOT) -> dict:
     data = json.loads((root / PROFILE).read_text(encoding="utf-8"), object_pairs_hook=_unique)
-    if (set(data) != {"version", "profile", "default", "reviewed_pure", "boundary_cohorts"}
-            or data["default"] != "include" or type(data["version"]) is not int
-            or data["version"] != 2 or data["profile"] != WINDOWS_BOUNDARY
-            or not isinstance(data["reviewed_pure"], dict)
+    if (set(data) != {"version", "profile", "default", "known_tests", "mixed_nodes", "boundary_cohorts"}
+            or data["default"] != "boundary" or type(data["version"]) is not int
+            or data["version"] != 3 or data["profile"] != WINDOWS_BOUNDARY
+            or not isinstance(data["mixed_nodes"], dict)
+            or not isinstance(data["known_tests"], list) or not data["known_tests"]
+            or not all(isinstance(p, str) and re.fullmatch(r'tests/test_[\w]+\.py', p) for p in data['known_tests'])
+            or data['known_tests'] != sorted(set(data['known_tests']))
             or not isinstance(data["boundary_cohorts"], dict) or not data["boundary_cohorts"]):
         raise ValueError("unknown Windows selection policy")
     for pattern, reason in data["boundary_cohorts"].items():
         if (not isinstance(pattern, str) or not re.fullmatch(r"tests/test_[\w*]+\.py", pattern)
                 or not isinstance(reason, str) or not reason.strip()):
             raise ValueError("invalid boundary cohort")
-    for name, row in data["reviewed_pure"].items():
-        if (not isinstance(row, dict) or set(row) != {"sha256", "reason", "helpers"}
+    for name, row in data["mixed_nodes"].items():
+        if (not isinstance(row, dict) or set(row) != {"sha256", "reason", "nodes"}
                 or not re.fullmatch(r"tests/test_[\w]+\.py", name)
                 or not isinstance(row["sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", row["sha256"])
                 or not isinstance(row["reason"], str) or not row["reason"].strip()
-                or not isinstance(row["helpers"], dict)):
-            raise ValueError("invalid reviewed exclusion")
-        for helper, digest in row["helpers"].items():
-            if (not isinstance(helper, str) or not re.fullmatch(r"tests/(?:[\w]+/)*[\w]+\.py", helper)
-                    or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)):
-                raise ValueError("invalid reviewed helper")
+                or not isinstance(row["nodes"], dict) or not row['nodes']):
+            raise ValueError("invalid reviewed mixed module")
+        for node, reason in row['nodes'].items():
+            if (not isinstance(node, str) or not re.fullmatch(r'[\w]+(?:::[\w]+)*', node)
+                    or not isinstance(reason, str) or not reason.strip()):
+                raise ValueError('invalid protected node')
     return data
 
 
@@ -103,44 +106,141 @@ def qualified(node, names):
     return ""
 
 
-def intrinsic_boundary(text):
+def _definitions(tree, names):
+    definitions = {n.name: n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
+    for definition in list(definitions.values()):
+        for d in getattr(definition, 'decorator_list', []):
+            if isinstance(d, ast.Call) and qualified(d.func, names) in {'pytest.fixture', 'pytest_asyncio.fixture'}:
+                for k in d.keywords:
+                    if k.arg == 'name' and isinstance(k.value, ast.Constant) and isinstance(k.value.value, str):
+                        definitions[k.value.value] = definition
+    return definitions
+
+
+def _boundary_scope(tree, symbol, names):
+    """A test, its referenced local helpers/fixtures and import-time code.
+
+    Classes stay whole. No inference about arbitrary product implementations.
+    """
+    if not symbol:
+        return list(ast.walk(tree))
+    definitions = _definitions(tree, names)
+    first = symbol.split('::', 1)[0]
+    if first not in definitions:
+        raise ValueError('unknown collected symbol')
+    pending, visited, result = [first], set(), []
+    for name, definition in definitions.items():
+        if any(isinstance(d, ast.Call) and qualified(d.func, names) in {'pytest.fixture', 'pytest_asyncio.fixture'}
+               and any(k.arg == 'autouse' and isinstance(k.value, ast.Constant) and k.value.value is True
+                       for k in d.keywords) for d in getattr(definition, 'decorator_list', [])):
+            pending.append(name)
+    for statement in tree.body:
+        if not isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            nodes = list(ast.walk(statement))
+            result.extend(nodes)
+            pending.extend(n.id for n in nodes if isinstance(n, ast.Name) and n.id in definitions)
+    while pending:
+        name = pending.pop()
+        if name in visited:
+            continue
+        visited.add(name)
+        nodes = list(ast.walk(definitions[name]))
+        result.extend(nodes)
+        for n in nodes:
+            dependency = n.id if isinstance(n, ast.Name) else n.arg if isinstance(n, ast.arg) else None
+            if dependency in definitions:
+                pending.append(dependency)
+            if isinstance(n, ast.Call) and qualified(n.func, names) == 'pytest.mark.usefixtures':
+                pending.extend(a.value for a in n.args if isinstance(a, ast.Constant)
+                               and isinstance(a.value, str) and a.value in definitions)
+    return result
+
+
+def intrinsic_boundary(text, *, node=None, root=None, seen=None):
     """Backstop for explicit platform/OS APIs, not arbitrary words in strings."""
     tree = _syntax(text)
     names = aliases(tree)
+    nodes = _boundary_scope(tree, node, names)
+    seen = set() if seen is None else seen
     modules = ("ctypes", "msvcrt", "ntpath", "_winapi", "winreg", "sqlite3", "filelock",
-               "labhq.runner", "labhq.cli", "labhq.proc_tree", "labhq.windows", "labhq.durable",
-               "labhq.store", "labhq.doctor", "labhq.wsl", "labhq.hooks", "mcp")
-    if any(any(name == mod or name.startswith(mod + ".") for mod in modules) for name in names.values()):
-        return True
+               "socket", "socketserver", "uvicorn", "psutil",
+               "labhq.proc_tree", "labhq.windows", "labhq.durable",
+               "labhq.doctor", "labhq.wsl", "labhq.hooks")
     calls = {"os.fsync", "os.replace", "os.rename", "os.symlink", "os.link", "os.chmod",
              "os.kill", "os.killpg", "os.fork", "subprocess.Popen", "subprocess.run", "subprocess.call",
              "subprocess.check_call", "subprocess.check_output", "asyncio.create_subprocess_exec",
              "asyncio.create_subprocess_shell", "threading.Thread", "threading.Timer"}
-    for node in ast.walk(tree):
+    for node in nodes:
+        if isinstance(node, ast.arg) or isinstance(node, (ast.Name, ast.Attribute)) and isinstance(node.ctx, ast.Load):
+            name = names.get(node.arg, '') if isinstance(node, ast.arg) else qualified(node, names)
+            if name in calls:
+                return True  # escaping an actual native capability is a boundary too
+            if any(name == mod or name.startswith(mod + '.') for mod in modules):
+                return True
+            local = _local_symbol(name, root) if root is not None else None
+            if local:
+                path, symbols = local
+                key = (path, tuple(symbols[:1]))
+                if key not in seen:
+                    seen.add(key)
+                    source = path.read_text(encoding='utf-8')
+                    # Constants/module callbacks use conservative whole-module
+                    # analysis; function/class helpers use their actual bodies.
+                    helper_tree = _syntax(source)
+                    helper = symbols[0] if symbols and any(isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                                and n.name == symbols[0] for n in helper_tree.body) else None
+                    if intrinsic_boundary(source, node=helper, root=root, seen=seen):
+                        return True
         if isinstance(node, (ast.Name, ast.Attribute)) and qualified(node, names) in {"sys.platform", "os.name"}:
             return True
         if isinstance(node, ast.Call) and qualified(node.func, names) in calls:
             return True
+        if isinstance(node, ast.Call) and qualified(node.func, names) == 'pytest.mark.usefixtures':
+            nodes.extend(ast.Name(id=a.value, ctx=ast.Load()) for a in node.args
+                         if isinstance(a, ast.Constant) and isinstance(a.value, str))
     return False
 
 
-def include_windows(path, text, reviewed, *, root=ROOT, cohorts=None, changed=frozenset()):
+def include_windows(path, text, data, *, root=ROOT, changed=frozenset(), node=None):
+    """Explicit boundary union + native API backstop + changed tests.
+
+    known_tests is a collection inventory, NOT per-file pure certification.
+    New/unlisted collection and unavailable range stay full. Reviewed mixed
+    modules pin their entire source; drift restores their whole-file boundary.
+    """
     if path in changed:
         return True, "changed test in validated event range"
-    if cohorts is None:
-        cohorts = policy(root)["boundary_cohorts"]
-    if any(fnmatchcase(path, pattern) for pattern in cohorts):
+    if any(p.startswith('tests/') and not re.fullmatch(r'tests/test_[\w]+\.py', p)
+           for p in changed):
+        return True, 'shared helper changed; full validation'
+    if path not in data['known_tests']:
+        return True, 'new or unknown collection'
+    row = data['mixed_nodes'].get(path)
+    if row:
+        if source_digest(text) != row['sha256'] or node is None:
+            return True, 'mixed-module source changed or node unavailable'
+        symbol = node.split('[', 1)[0]
+        if symbol in row['nodes']:
+            return True, row['nodes'][symbol]
+        try:
+            if intrinsic_boundary(text, node=symbol, root=root):
+                return True, 'native API backstop in mixed-module test/helper'
+        except (OSError, UnicodeError, ValueError, SyntaxError):
+            return True, 'unresolved mixed-module scope'
+        parts = symbol.split('::')
+        body = _syntax(text).body
+        for part in parts:
+            found = next((n for n in body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                          and n.name == part), None)
+            if found is None:
+                return True, 'unknown mixed-module node'
+            body = found.body
+        return False, row['reason']
+    if any(fnmatchcase(path, pattern) for pattern in data['boundary_cohorts']):
         return True, "reviewed OS/runtime/safety boundary cohort"
-    row = reviewed.get(path)
-    if not row or source_digest(text) != row["sha256"]:
-        return True, "new, changed or unreviewed source"
-    if intrinsic_boundary(text):
-        return True, "explicit OS/runtime API in source"
-    for helper, digest in row["helpers"].items():
-        p = root / helper
-        if helper in changed or p.is_symlink() or source_digest(p.read_text(encoding="utf-8")) != digest:
-            return True, "changed reviewed test helper"
-    return False, row["reason"]
+    if intrinsic_boundary(text, node=node.split('[', 1)[0] if node else None, root=root):
+        return True, "explicit OS/runtime API in test/helper scope"
+    return False, 'outside audited Windows boundary; Linux/full Windows retain this contract'
 
 
 def change_range(event_name, event, checkout, git):
@@ -174,7 +274,7 @@ def change_range(event_name, event, checkout, git):
     # Shared collection fixtures, policy and dependencies require initial full
     # validation. An ordinary product edit no longer expires the entire cohort.
     from scripts.ci_skip import POLICY_FILES
-    if any(p in POLICY_FILES or p.startswith("tests/") and p.endswith(".py") and not re.fullmatch(r"tests/test_[\w]+\.py", p)
+    if any(p in POLICY_FILES or p.startswith("tests/") and not re.fullmatch(r"tests/test_[\w]+\.py", p)
            for p in paths):
         raise ValueError("shared fixture/policy changed; full validation")
     return {"version": 1, "checkout": checkout, "base": base, "paths": sorted(paths)}
@@ -229,7 +329,7 @@ def host_resource(path: Path, root=ROOT, seen=None, symbols=None) -> bool:
         return True
     names = aliases(tree)
     if symbols:
-        definitions = {n.name: n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
+        definitions = _definitions(tree, names)
         values = {target.id: n.value for n in tree.body if isinstance(n, ast.Assign)
                   for target in n.targets if isinstance(target, ast.Name)}
         selected = definitions.get(symbols[0], values.get(symbols[0]))
@@ -245,8 +345,17 @@ def host_resource(path: Path, root=ROOT, seen=None, symbols=None) -> bool:
                 nodes.extend(ast.walk(statement))
         # Follow sibling helpers referenced by the selected function/class too.
         for node in nodes[:]:
-            if isinstance(node, ast.Name) and node.id in definitions and node.id != symbols[0]:
-                if host_resource(path, root, seen, [node.id]):
+            dependency = node.id if isinstance(node, ast.Name) else node.arg if isinstance(node, ast.arg) else None
+            if dependency in definitions and dependency != symbols[0]:
+                if host_resource(path, root, seen, [dependency]):
+                    return True
+        # Autouse fixtures execute even without a test argument. Their teardown
+        # is inside the protocol lock just like explicitly requested fixtures.
+        for name, definition in definitions.items():
+            if any(isinstance(d, ast.Call) and qualified(d.func, names) in {'pytest.fixture', 'pytest_asyncio.fixture'}
+                   and any(k.arg == 'autouse' and isinstance(k.value, ast.Constant) and k.value.value is True
+                           for k in d.keywords) for d in getattr(definition, 'decorator_list', [])):
+                if host_resource(path, root, seen, [name]):
                     return True
     else:
         nodes = list(ast.walk(tree))
@@ -302,6 +411,39 @@ def host_resource(path: Path, root=ROOT, seen=None, symbols=None) -> bool:
         configs = values(node)
         return bool(configs) and all(isinstance(c, ast.Call) and qualified(c.func, names) == "uvicorn.Config"
             and any(k.arg == "port" and ephemeral(k.value) for k in c.keywords) for c in configs)
+    def runner_is_ephemeral(constructor):
+        # Reviewed daemon.__init__ snapshots settings.runner.broker_port into
+        # Broker. Accept only a local Settings with one unconditional zero
+        # assignment before construction and no intervening settings escape.
+        args = constructor.args[:1] + [k.value for k in constructor.keywords if k.arg == 'settings']
+        if len(args) != 1 or not isinstance(args[0], ast.Name):
+            return False
+        setting = args[0]
+        bound = values(setting)
+        if (len(bound) != 1 or not isinstance(bound[0], ast.Call)
+                or qualified(bound[0].func, names) != 'labhq.settings.Settings'):
+            return False
+        owner = scope(constructor)
+        if scope(bound[0]) is not owner:
+            return False
+        stores = []
+        for n in ast.walk(owner):
+            if getattr(n, 'lineno', 0) >= constructor.lineno:
+                continue
+            if isinstance(n, ast.Name) and n.id == setting.id and isinstance(n.ctx, ast.Load):
+                parent = parents.get(n)
+                # Only field assignment receivers are allowed; calls, aliases,
+                # conditional writes and passing settings elsewhere are unknown.
+                while isinstance(parent, ast.Attribute):
+                    n, parent = parent, parents.get(parent)
+                if not (isinstance(parent, ast.Assign) and n in parent.targets and parents.get(parent) is owner):
+                    return False
+                field = qualified(n, {})
+                if field == setting.id + '.runner':
+                    return False
+                if field == setting.id + '.runner.broker_port':
+                    stores.append(parent.value)
+        return len(stores) == 1 and ephemeral(stores[0])
     def starts_shared_server(node):
         if not isinstance(node.func, ast.Attribute):
             return False
@@ -318,9 +460,8 @@ def host_resource(path: Path, root=ROOT, seen=None, symbols=None) -> bool:
                 if len(ports) != 1 or not ephemeral(ports[0]):
                     return True
             if node.func.attr == "run_forever" and kind == "labhq.runner.daemon.Runner":
-                # This actual API starts Broker.serve (daemon.py), whose mutable
-                # Settings port is not proved isolated by a constructor call.
-                return True
+                if not runner_is_ephemeral(value):
+                    return True
         return False
     global_caps = {"psutil.process_iter", "psutil.pids", "psutil.net_connections", "os.killpg", "os.system"}
     # Reviewed implementation entrypoints, not identifier-name heuristics:
@@ -332,6 +473,9 @@ def host_resource(path: Path, root=ROOT, seen=None, symbols=None) -> bool:
     global_caps.update("labhq.adapters.base." + name for name in
                        ("_windows_process_snapshot", "_procfs_process_snapshot", "_ps_process_snapshot",
                         "_process_snapshot", "_idle_process_tree"))
+    # shutdown.watch_gateway_exit -> cli._terminate_tree -> proc_tree.kill_tree
+    # (including the system snapshot). Verified wrappers, not name heuristics.
+    global_caps.update({'labhq.gateway.shutdown.watch_gateway_exit', 'labhq.cli._terminate_tree'})
     servers = {"asyncio.start_server", "asyncio.start_unix_server", "socket.create_server",
                "uvicorn.run", "websockets.serve", "websockets.asyncio.server.serve"}
     address_servers = {"socketserver.TCPServer", "socketserver.ThreadingTCPServer", "socketserver.UDPServer",
@@ -359,6 +503,16 @@ def host_resource(path: Path, root=ROOT, seen=None, symbols=None) -> bool:
         if not isinstance(node, ast.Call):
             continue
         name = qualified(node.func, names)
+        if name == 'pytest.mark.usefixtures':
+            for arg in node.args:
+                if not isinstance(arg, ast.Constant) or not isinstance(arg.value, str):
+                    return True
+                fixture = arg.value
+                local = _local_symbol(names.get(fixture, ''), root)
+                if fixture in _definitions(tree, names) and host_resource(path, root, seen, [fixture]):
+                    return True
+                if local and host_resource(local[0], root, seen, local[1]):
+                    return True
         if starts_shared_server(node):
             return True
         if name in servers:

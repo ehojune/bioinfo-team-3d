@@ -93,26 +93,13 @@ def test_resource_helpers_follow_absolute_and_relative_calls_and_fail_closed(tmp
 
 
 def test_reviewed_cohort_is_explained_without_exempting_hard_boundaries():
-    data = selection.policy()
-    reviewed = data["reviewed_pure"]
-    assert len(reviewed) > 25
-    for path, row in reviewed.items():
-        assert row["reason"].strip()
-        assert len(row["sha256"]) == 64 and set(row["sha256"]) <= set("0123456789abcdef")
-        if (ROOT / path).is_file():
-            source = (ROOT / path).read_text(encoding="utf-8")
-            included, _ = selection.include_windows(path, source, reviewed)
-            if not included:
-                assert selection.source_digest(source) == row["sha256"]
-                assert not selection.intrinsic_boundary(source)
-    for path in ("tests/test_windows_job_ci.py", "tests/test_state_isolation.py", "tests/test_supervisor_process.py",
-                 "tests/test_cli.py", "tests/test_reproduction_receipt.py", "tests/test_durable_writer.py"):
-        assert selection.include_windows(path, "", reviewed)[0]
+    from tests.test_ci_parallel_policy import test_actual_profile_exclusions_have_reviewed_digest_and_keep_os_boundaries
+    test_actual_profile_exclusions_have_reviewed_digest_and_keep_os_boundaries()
 
 
 def test_cohort_contract_accepts_changed_reviewed_sources(monkeypatch):
-    monkeypatch.setattr(selection, "source_digest", lambda text: "0" * 64)
-    test_reviewed_cohort_is_explained_without_exempting_hard_boundaries()
+    from tests.test_ci_parallel_policy import test_profile_contract_includes_changed_source_without_refreshing_approval
+    test_profile_contract_includes_changed_source_without_refreshing_approval(monkeypatch)
 
 
 @pytest.mark.parametrize("dependency", ["scripts/check.py", "config/schema.yaml", "labhq/catalog.yaml"])
@@ -131,4 +118,4 @@ def test_profile_is_bound_by_manifest_policy_and_version():
     from scripts import ci_skip
     assert selection.PROFILE in ci_skip.POLICY_FILES
     assert ci_skip.COVERAGE["pytest-windows"] == selection.WINDOWS_BOUNDARY
-    assert ci_skip.VERSION == 4
+    assert ci_skip.VERSION == 5

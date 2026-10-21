@@ -151,7 +151,7 @@ jobs:
     env:
       CI_JOB_LABEL: pytest-windows
       PYTHONHASHSEED: '0'
-      CI_COVERAGE_PROFILE: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'windows-full-v1' || 'windows-boundary-v2' }}
+      CI_COVERAGE_PROFILE: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'windows-full-v1' || 'windows-boundary-v3' }}
     outputs:
       tree: ${{ steps.identity.outputs.tree }}
       profile: ${{ steps.identity.outputs.profile }}
@@ -325,7 +325,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: steps.manifest.outputs.reusable == 'true'
         with:
-          name: ci-full-v4-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ci-full-v5-${{ github.run_id }}-${{ github.run_attempt }}
           path: ci-result.json
           if-no-files-found: error
           retention-days: 7

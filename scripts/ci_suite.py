@@ -45,14 +45,13 @@ def select(items, profile, root=ROOT, *, changed=None):
         return list(items), [], {}
     try:
         data = policy(root)
-        reviewed = data["reviewed_pure"]
         if changed is None:
             changed = read_changes(os.environ["CI_SUITE_ARTIFACT_DIR"], os.environ.get("GITHUB_SHA"))
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         print("ci_suite: selection policy unavailable; include all nodes", file=sys.stderr)
         return list(items), [], {}
     chosen, omitted, reasons = [], [], {}
-    cache = {}
+    cache, sources = {}, {}
     for item in items:
         original = Path(item.path)
         path = original.resolve()
@@ -61,15 +60,19 @@ def select(items, profile, root=ROOT, *, changed=None):
         except ValueError:
             chosen.append(item)  # external/unclassified collection is never omitted
             continue
-        if relative not in cache:
+        symbol = item.nodeid.split('::', 1)[1] if '::' in item.nodeid else None
+        key = (relative, symbol.split('[', 1)[0] if symbol else None)
+        if key not in cache:
             try:
                 if original.is_symlink():
                     raise ValueError("unreviewed symlink")
-                cache[relative] = include_windows(relative, path.read_text(encoding="utf-8"), reviewed,
-                                                 root=root, cohorts=data["boundary_cohorts"], changed=changed)
+                if relative not in sources:
+                    sources[relative] = path.read_text(encoding="utf-8")
+                cache[key] = include_windows(relative, sources[relative], data,
+                                            root=root, changed=changed, node=symbol)
             except (OSError, UnicodeError, ValueError, KeyError, SyntaxError):
-                cache[relative] = (True, "unreadable source included")
-        included, reason = cache[relative]
+                cache[key] = (True, "unreadable source included")
+        included, reason = cache[key]
         if included:
             chosen.append(item)
         else:
@@ -92,6 +95,7 @@ class Observation:
         self.context = "collection"
         self.stall = None
         self.serial = {}
+        self.shared_files = {}
         self.resource_waits = defaultdict(float)
 
     @pytest.hookimpl(optionalhook=True)
@@ -118,9 +122,17 @@ class Observation:
     @pytest.hookimpl(wrapper=True)
     def pytest_runtest_protocol(self, item, nextitem):
         path = Path(item.path)
-        if path not in self.serial:
-            self.serial[path] = host_resource(path)
-        if self.serial[path] and self.worker_count:
+        symbol = item.nodeid.split('::')[1:] if '::' in item.nodeid else None
+        if symbol:
+            symbol[-1] = symbol[-1].split('[', 1)[0]
+        key = (path, tuple(symbol or ()))
+        if key not in self.serial:
+            # Whole-file analysis is a conservative superset. A clear file
+            # avoids repeating helper traversal for each ordinary pure node.
+            if path not in self.shared_files:
+                self.shared_files[path] = host_resource(path)
+            self.serial[key] = self.shared_files[path] and host_resource(path, symbols=symbol)
+        if self.serial[key] and self.worker_count:
             from filelock import FileLock
             # Shared only by workers of this CI job. Covers fixture setup and
             # teardown as well as the free-port -> bind window and owned cleanup.

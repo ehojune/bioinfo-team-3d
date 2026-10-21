@@ -1,7 +1,319 @@
 {
-  "version": 2,
-  "profile": "windows-boundary-v2",
-  "default": "include",
+  "version": 3,
+  "profile": "windows-boundary-v3",
+  "default": "boundary",
+  "known_tests": [
+    "tests/test_adapters_fake_cli.py",
+    "tests/test_agent_capabilities.py",
+    "tests/test_agent_prompts.py",
+    "tests/test_annot.py",
+    "tests/test_annot_alphagenome_variant.py",
+    "tests/test_annot_alphamissense.py",
+    "tests/test_annot_keys_console.py",
+    "tests/test_annot_literature.py",
+    "tests/test_annot_regulatory.py",
+    "tests/test_approval_closed_grammar.py",
+    "tests/test_approval_fatigue.py",
+    "tests/test_approval_timeout.py",
+    "tests/test_ask.py",
+    "tests/test_ask_policy.py",
+    "tests/test_ask_review3.py",
+    "tests/test_ask_review4.py",
+    "tests/test_ask_review5.py",
+    "tests/test_ask_review6.py",
+    "tests/test_bench.py",
+    "tests/test_bench_calibration.py",
+    "tests/test_bench_legacy_report.py",
+    "tests/test_bench_no_answer_leak.py",
+    "tests/test_bench_permissions.py",
+    "tests/test_bench_receipt_review.py",
+    "tests/test_bench_rescore.py",
+    "tests/test_bench_review3.py",
+    "tests/test_bench_structured.py",
+    "tests/test_bioinfo_pipeline_pr.py",
+    "tests/test_bioinfo_plugin.py",
+    "tests/test_branched_research.py",
+    "tests/test_breaker.py",
+    "tests/test_cgroup_memory.py",
+    "tests/test_checklist_review.py",
+    "tests/test_ci807_research_regression.py",
+    "tests/test_ci_cohort823.py",
+    "tests/test_ci_followup_contract.py",
+    "tests/test_ci_manifest_identity.py",
+    "tests/test_ci_normative_prose.py",
+    "tests/test_ci_parallel_policy.py",
+    "tests/test_ci_parent_drift.py",
+    "tests/test_ci_phase2_policy.py",
+    "tests/test_ci_pr_policy_p1.py",
+    "tests/test_ci_skip.py",
+    "tests/test_ci_skip_policy.py",
+    "tests/test_ci_unlisted_commands.py",
+    "tests/test_claude_inbound.py",
+    "tests/test_claude_staff_home.py",
+    "tests/test_claude_write_paths.py",
+    "tests/test_clean_install_check.py",
+    "tests/test_clean_office.py",
+    "tests/test_cli_adapter.py",
+    "tests/test_cli_bundle_wait.py",
+    "tests/test_cli_launch.py",
+    "tests/test_cli_open.py",
+    "tests/test_coarse_plan_799.py",
+    "tests/test_codex_deny_read.py",
+    "tests/test_codex_sandbox_version.py",
+    "tests/test_consult_restart.py",
+    "tests/test_continuation_797.py",
+    "tests/test_continuation_paper_inputs_807.py",
+    "tests/test_continuation_request_inputs_807.py",
+    "tests/test_continuation_review_807.py",
+    "tests/test_contract_provenance.py",
+    "tests/test_contract_slot_repair.py",
+    "tests/test_cost_accounting.py",
+    "tests/test_cp1_input_fit_796.py",
+    "tests/test_cso.py",
+    "tests/test_cso_scope_estimate.py",
+    "tests/test_demo_phone.py",
+    "tests/test_demo_separation.py",
+    "tests/test_dev_log_visibility.py",
+    "tests/test_direct_outputs.py",
+    "tests/test_disk_preflight.py",
+    "tests/test_doctor.py",
+    "tests/test_durable_writer.py",
+    "tests/test_e2e_mock.py",
+    "tests/test_edam_subset.py",
+    "tests/test_edition_astra_736.py",
+    "tests/test_edition_check_713.py",
+    "tests/test_edition_quality_607.py",
+    "tests/test_edition_readme_718.py",
+    "tests/test_editor_v2_fixes_755.py",
+    "tests/test_environment_install.py",
+    "tests/test_environment_signatures.py",
+    "tests/test_event_preview.py",
+    "tests/test_evidence_verify.py",
+    "tests/test_exit_grace.py",
+    "tests/test_external_wait.py",
+    "tests/test_external_wait_cancel.py",
+    "tests/test_external_wait_overlap.py",
+    "tests/test_facilities_diagnosis.py",
+    "tests/test_facilities_fixes.py",
+    "tests/test_facilities_staff.py",
+    "tests/test_followup.py",
+    "tests/test_general_evidence.py",
+    "tests/test_gif_encode.py",
+    "tests/test_github_reporter.py",
+    "tests/test_github_token_687.py",
+    "tests/test_hpc_consult.py",
+    "tests/test_hpc_failures.py",
+    "tests/test_hpc_followups.py",
+    "tests/test_init_defaults.py",
+    "tests/test_init_wizard.py",
+    "tests/test_input_fit_boundary_796.py",
+    "tests/test_input_hashes.py",
+    "tests/test_instance_guard.py",
+    "tests/test_instances.py",
+    "tests/test_intake_questions.py",
+    "tests/test_intake_references.py",
+    "tests/test_integrations.py",
+    "tests/test_internal_row_output.py",
+    "tests/test_ipv6_interfaces.py",
+    "tests/test_isolation.py",
+    "tests/test_knowledge_recall.py",
+    "tests/test_lab3d.py",
+    "tests/test_labhq_verify.py",
+    "tests/test_late_github_688.py",
+    "tests/test_late_storage.py",
+    "tests/test_literal_check.py",
+    "tests/test_literature_institution.py",
+    "tests/test_live_source_verify.py",
+    "tests/test_login_wait.py",
+    "tests/test_long_mcp_call.py",
+    "tests/test_lookup_backend_cancellation.py",
+    "tests/test_loop_liveness_606.py",
+    "tests/test_mcp_servers.py",
+    "tests/test_messenger_history.py",
+    "tests/test_midrun_notes.py",
+    "tests/test_model_refusal_682.py",
+    "tests/test_nfcore_default_732.py",
+    "tests/test_no_tree_kill.py",
+    "tests/test_notes_index.py",
+    "tests/test_observed_outputs.py",
+    "tests/test_one_runner_per_agent.py",
+    "tests/test_openai_strict_schema.py",
+    "tests/test_ops_status_usage.py",
+    "tests/test_output_checks.py",
+    "tests/test_output_types.py",
+    "tests/test_output_types_research.py",
+    "tests/test_output_vocab.py",
+    "tests/test_own_outputs.py",
+    "tests/test_p2_followups_1013.py",
+    "tests/test_paper2agent_install.py",
+    "tests/test_paper2agent_required.py",
+    "tests/test_paper_skill_attach.py",
+    "tests/test_paper_skill_lazy.py",
+    "tests/test_paper_skill_read_scope.py",
+    "tests/test_patch_notes.py",
+    "tests/test_pdf_figure_policy.py",
+    "tests/test_pdf_figure_review_fixes.py",
+    "tests/test_pi_language.py",
+    "tests/test_pi_language_bounds.py",
+    "tests/test_pi_review_done.py",
+    "tests/test_pi_text.py",
+    "tests/test_pin_ancestors.py",
+    "tests/test_plan_only_cso_model.py",
+    "tests/test_plugin_private_reads.py",
+    "tests/test_policy.py",
+    "tests/test_policy_scan_cost.py",
+    "tests/test_portfolio_branch_folders.py",
+    "tests/test_portfolio_edition.py",
+    "tests/test_pr_gate.py",
+    "tests/test_private_paths.py",
+    "tests/test_probe_inbound_mcp.py",
+    "tests/test_probe_timeout.py",
+    "tests/test_proc_tree.py",
+    "tests/test_process_diagnostics.py",
+    "tests/test_process_stop_guard.py",
+    "tests/test_process_stop_guard_actions.py",
+    "tests/test_process_stop_guard_consumers.py",
+    "tests/test_process_stop_guard_followup.py",
+    "tests/test_process_stop_guard_payloads.py",
+    "tests/test_process_stop_guard_procps.py",
+    "tests/test_process_stop_guard_receivers.py",
+    "tests/test_process_stop_guard_review.py",
+    "tests/test_process_stop_guard_selection.py",
+    "tests/test_process_stop_guard_xargs.py",
+    "tests/test_project_link_spellings.py",
+    "tests/test_public_resources.py",
+    "tests/test_publish_followups.py",
+    "tests/test_publish_retry_607.py",
+    "tests/test_purge_test_requests.py",
+    "tests/test_quota_wait.py",
+    "tests/test_read_only_followups.py",
+    "tests/test_read_only_profile.py",
+    "tests/test_real_streams.py",
+    "tests/test_recruit_before_plan.py",
+    "tests/test_recruit_plan_review3.py",
+    "tests/test_reference_shell_677.py",
+    "tests/test_registry.py",
+    "tests/test_replace_file.py",
+    "tests/test_report_check.py",
+    "tests/test_report_contract.py",
+    "tests/test_report_figures_svg.py",
+    "tests/test_report_markdown.py",
+    "tests/test_report_paper_format.py",
+    "tests/test_report_pdf.py",
+    "tests/test_reproduction_receipt.py",
+    "tests/test_request_bundle.py",
+    "tests/test_request_lifecycle.py",
+    "tests/test_request_status.py",
+    "tests/test_research_bulk_pack.py",
+    "tests/test_research_continue.py",
+    "tests/test_research_cp1.py",
+    "tests/test_research_cp1_revise.py",
+    "tests/test_research_cp2.py",
+    "tests/test_research_cp2_revise.py",
+    "tests/test_research_cp4.py",
+    "tests/test_research_evidence.py",
+    "tests/test_research_notes_budget.py",
+    "tests/test_research_protocol.py",
+    "tests/test_research_report.py",
+    "tests/test_research_review.py",
+    "tests/test_result_storage.py",
+    "tests/test_result_storage_end_ask.py",
+    "tests/test_result_storage_pdf.py",
+    "tests/test_result_storage_review.py",
+    "tests/test_resume_accounting.py",
+    "tests/test_resume_cards_607.py",
+    "tests/test_resume_receipt_clock.py",
+    "tests/test_role_footer.py",
+    "tests/test_round_records.py",
+    "tests/test_run_report.py",
+    "tests/test_runner_boundary.py",
+    "tests/test_runner_dispatch_shutdown.py",
+    "tests/test_runner_path_boundary.py",
+    "tests/test_runner_safety.py",
+    "tests/test_runner_shutdown_signals.py",
+    "tests/test_scheduler.py",
+    "tests/test_scope_gate.py",
+    "tests/test_security.py",
+    "tests/test_semantic_device_report.py",
+    "tests/test_semantic_devices.py",
+    "tests/test_semantic_impact_796.py",
+    "tests/test_semantics_ab.py",
+    "tests/test_semantics_actions.py",
+    "tests/test_semantics_actions_run.py",
+    "tests/test_semantics_actions_shadow.py",
+    "tests/test_semantics_input_fit.py",
+    "tests/test_semantics_objects.py",
+    "tests/test_semantics_output_types.py",
+    "tests/test_semantics_pilot.py",
+    "tests/test_semantics_public.py",
+    "tests/test_semantics_request_report.py",
+    "tests/test_semantics_shadow_breaker.py",
+    "tests/test_semantics_shadow_hash.py",
+    "tests/test_semantics_shadow_provenance.py",
+    "tests/test_semantics_shadow_remove.py",
+    "tests/test_semantics_shadow_report.py",
+    "tests/test_semantics_shadow_settings.py",
+    "tests/test_semantics_shadow_worker.py",
+    "tests/test_send_dry_run.py",
+    "tests/test_shell_write_quotes.py",
+    "tests/test_shutdown_callers.py",
+    "tests/test_shutdown_interrupted.py",
+    "tests/test_shutdown_recovery.py",
+    "tests/test_slurm.py",
+    "tests/test_snapshot_ledger_reads.py",
+    "tests/test_solo_route.py",
+    "tests/test_staff_busy_status.py",
+    "tests/test_staff_control.py",
+    "tests/test_staff_control_followups.py",
+    "tests/test_staff_control_review.py",
+    "tests/test_staff_control_scope.py",
+    "tests/test_staff_control_steps.py",
+    "tests/test_staff_control_validation.py",
+    "tests/test_staff_writing_skills.py",
+    "tests/test_stall_watch.py",
+    "tests/test_state.py",
+    "tests/test_state_isolation.py",
+    "tests/test_step_inputs_665.py",
+    "tests/test_step_inputs_review_791.py",
+    "tests/test_step_memory_limit.py",
+    "tests/test_step_progress_push.py",
+    "tests/test_step_prompt_rules.py",
+    "tests/test_storage_rebuild_754.py",
+    "tests/test_structured_output_retry.py",
+    "tests/test_supervisor.py",
+    "tests/test_supervisor_cli.py",
+    "tests/test_supervisor_fixture_contract.py",
+    "tests/test_supervisor_process.py",
+    "tests/test_supervisor_up_identity.py",
+    "tests/test_system_ca.py",
+    "tests/test_task_cancel.py",
+    "tests/test_task_read_scope.py",
+    "tests/test_text_encoding.py",
+    "tests/test_tool_call_counts.py",
+    "tests/test_tool_card_explain.py",
+    "tests/test_tool_card_review.py",
+    "tests/test_tool_card_review_fixes.py",
+    "tests/test_topic_checklists_precedents.py",
+    "tests/test_topics.py",
+    "tests/test_variant_effect_topic.py",
+    "tests/test_vocab_tables.py",
+    "tests/test_web.py",
+    "tests/test_web_3d.py",
+    "tests/test_web_shutdown.py",
+    "tests/test_web_shutdown_process.py",
+    "tests/test_windows_broker.py",
+    "tests/test_windows_broker_phases.py",
+    "tests/test_windows_command.py",
+    "tests/test_windows_encoding_contract.py",
+    "tests/test_windows_job_ci.py",
+    "tests/test_windows_p1_readiness.py",
+    "tests/test_windows_runtime.py",
+    "tests/test_workspace_boundary.py",
+    "tests/test_wsl_readiness.py",
+    "tests/test_wsl_routing.py",
+    "tests/test_wsl_setup.py",
+    "tests/test_wsl_shared.py"
+  ],
   "boundary_cohorts": {
     "tests/test_windows*.py": "Native Windows API, Job/ACK, identity, quoting and encoding contracts.",
     "tests/test_process*.py": "Process-stop policy and OS process identity/cleanup safety.",
@@ -32,255 +344,67 @@
     "tests/test_notes_index.py": "Native nested entry traversal, copyfile and generated-file checks.",
     "tests/test_edition_check_713.py": "Publication path redaction includes Windows absolute paths.",
     "tests/test_evidence_verify.py": "Artifact path separator/collision resolution with verification contracts.",
-    "tests/test_semantics_objects.py": "Cross-separator artifact identity and path deduplication."
+    "tests/test_semantics_objects.py": "Cross-separator artifact identity and path deduplication.",
+    "tests/test_adapters*.py": "Real adapter launch, pipes and child lifecycle.",
+    "tests/test_web*.py": "Native browser/server shutdown and web transport boundaries.",
+    "tests/test_consult_restart.py": "Running provider adoption and PID recovery.",
+    "tests/test_real_streams.py": "Real child output framing and encoded streams.",
+    "tests/test_isolation.py": "Host HOME, environment and child workdir isolation.",
+    "tests/test_instance_guard.py": "Process identity and per-instance locks.",
+    "tests/test_no_tree_kill.py": "Cleanup must preserve unrelated processes.",
+    "tests/test_claude_staff_home.py": "Staff HOME and CLI filesystem isolation.",
+    "tests/test_claude_write_paths.py": "Windows/POSIX staff write paths.",
+    "tests/test_reference_shell_677.py": "Shell reference quoting and parsing.",
+    "tests/test_text_encoding.py": "Cross-platform explicit text encoding.",
+    "tests/test_system_ca.py": "Windows certificates and child environment.",
+    "tests/test_disk_preflight.py": "Host disk capacity and path accounting.",
+    "tests/test_cgroup_memory.py": "Host memory/cgroup and Windows limits.",
+    "tests/test_init*.py": "Installation paths, generated settings and command setup.",
+    "tests/test_security.py": "Paths, shell escaping and private boundaries.",
+    "tests/test_own_outputs.py": "Owned output path/filesystem restrictions.",
+    "tests/test_input_hashes.py": "Native input traversal/hash/links.",
+    "tests/test_hooks.py": "Installed hooks and command execution.",
+    "tests/test_probe_inbound_mcp.py": "MCP transport and executable probes."
   },
-  "reviewed_pure": {
-    "tests/test_agent_prompts.py": {
-      "sha256": "6802fa21d6664fbc1e3b4b30f170019e96a05df523f80cd1571055ae22fbf92d",
-      "reason": "Text/schema/rendered data with owned fixture files; no OS-specific behavior or native execution.",
-      "helpers": {}
-    },
-    "tests/test_branched_research.py": {
-      "sha256": "168a42986c1b19c5c07f9f7e740418b6a02150ed427ab275ed545d6effb9943b",
-      "reason": "Frozen schema/plan/evidence data and fake dispatch; Linux full and Windows nightly retain the complete contract.",
-      "helpers": {
-        "tests/test_research_protocol.py": "a8955b17650645c2ba2c2bc89a003e12446df58829b13165697a2742e472110b"
+  "mixed_nodes": {
+    "tests/test_research_bulk_pack.py": {
+      "sha256": "0b7c7cba4f62197044065a90624de1cdc09e3f2aa920fc0da4a305bf5a822032",
+      "reason": "Remaining nodes validate frozen pack fields, tables and plans; UTF-8 load is retained.",
+      "nodes": {
+        "test_pack_files_are_read_as_utf8_on_every_platform": "Reviewed native/encoding/path/CLI boundary in mixed module."
       }
     },
-    "tests/test_checklist_review.py": {
-      "sha256": "cac73a387b24ce9d0fca9c23e1cef3ba3ff25b279791494dca1f857159f8b79f",
-      "reason": "Frozen schema/plan/evidence data and fake dispatch; Linux full and Windows nightly retain the complete contract.",
-      "helpers": {
-        "tests/test_cso.py": "3d6e487f23755b543faa00e665c62651801ff1e9e5040d61c79a077494a99353",
-        "tests/test_research_cp2.py": "0f9b735b520c1aad29cd787f9402fab99289c133985ec7a3fa60532f0aa3791c",
-        "tests/test_research_protocol.py": "a8955b17650645c2ba2c2bc89a003e12446df58829b13165697a2742e472110b",
-        "tests/test_research_report.py": "e4b47879e96e31692d2fdf0dfeb18b401659dbaa026bde8b91af81f19d611aeb",
-        "tests/test_solo_route.py": "5e3362fdbb0bdf9b9d861c1daa58240e024a87e02ee7d1519e3a94df6be6e186",
-        "tests/test_topic_checklists_precedents.py": "dfc4d7a471f2154ba2ad74f56d11b41163695f4da474293264a136f17714136c",
-        "tests/test_intake_references.py": "500fcf6998f711c582917af8677c1884fbe43a4a11f58d1e9b78f38b36a02641"
+    "tests/test_environment_signatures.py": {
+      "sha256": "7e48bc0ebad631883d8acd62134a7d4f0e1d760a31d955054b77b79c190013c7",
+      "reason": "Remaining nodes match signature schemas/strings and fake orchestrator reports; native CLI/adapter nodes retained.",
+      "nodes": {
+        "test_cli_status_shows_environment_problems": "Reviewed native/encoding/path/CLI boundary in mixed module.",
+        "test_runner_reads_failed_command_output": "Reviewed native/encoding/path/CLI boundary in mixed module.",
+        "test_a_missing_engine_binary_is_command_not_found": "Reviewed native/encoding/path/CLI boundary in mixed module.",
+        "test_successful_commands_that_print_the_phrase_are_not_evidence": "Reviewed native/encoding/path/CLI boundary in mixed module.",
+        "test_claude_tool_result_blocks_are_kept_for_signatures": "Reviewed native/encoding/path/CLI boundary in mixed module.",
+        "test_a_failed_command_the_agent_got_past_is_not_evidence": "Reviewed native/encoding/path/CLI boundary in mixed module.",
+        "test_only_the_last_failed_command_counts": "Reviewed native/encoding/path/CLI boundary in mixed module.",
+        "test_claude_shell_success_clears_the_failed_output_but_other_tools_do_not": "Reviewed native/encoding/path/CLI boundary in mixed module.",
+        "test_gemini_and_antigravity_shell_success_clears_the_failed_output": "Reviewed native/encoding/path/CLI boundary in mixed module.",
+        "test_antigravity_error_objects_keep_their_message": "Reviewed native/encoding/path/CLI boundary in mixed module."
       }
     },
-    "tests/test_ci_followup_contract.py": {
-      "sha256": "66fa867c4a85737b9edf9b5bb292275232d55ab878c207d530a65217563dfde6",
-      "reason": "Fake GitHub/Git and Markdown/identity data; no native worker or HTTP request.",
-      "helpers": {}
-    },
-    "tests/test_ci_manifest_identity.py": {
-      "sha256": "86f1d10eddfecfb6092c6ae07bb4d385e792cd49120f30ee1861261a4dfc54e1",
-      "reason": "Fake GitHub/Git and Markdown/identity data; no native worker or HTTP request.",
-      "helpers": {}
-    },
-    "tests/test_ci_normative_prose.py": {
-      "sha256": "45c99a36f19515c919e93f4b89da534e4a3308c9e554edf4001c31dc22085c7d",
-      "reason": "Fake GitHub/Git and Markdown/identity data; no native worker or HTTP request.",
-      "helpers": {}
-    },
-    "tests/test_ci_parent_drift.py": {
-      "sha256": "11b27e01e1ff97c365553c93b50ad9942e2644aedc8e71ee35fe07f374432e95",
-      "reason": "Fake GitHub/Git and Markdown/identity data; no native worker or HTTP request.",
-      "helpers": {
-        "tests/test_ci_skip_policy.py": "22ec7070c94c5e8bdd491702997e44559efc3d2bc35a9da82c9a29bcff3c010a"
+    "tests/test_evidence_verify.py": {
+      "sha256": "01608f50aa56aa7c9d8c5dc31211f700f52e8364700191f37c6c39149e89334a",
+      "reason": "Remaining nodes validate identifier/status/resolver data with static/fake resolvers; path separator/case nodes retained.",
+      "nodes": {
+        "test_uri_lookups_keep_path_case_and_fold_only_scheme_and_host": "Reviewed native/encoding/path/CLI boundary in mixed module.",
+        "test_artifact_paths_match_the_manifest_across_separators": "Reviewed native/encoding/path/CLI boundary in mixed module."
       }
     },
-    "tests/test_ci_pr_policy_p1.py": {
-      "sha256": "39de5c93e4f8b1ad582cfda53f9f30931b5fe3f1b979415dc7079c4c218862b3",
-      "reason": "Fake GitHub/Git and Markdown/identity data; no native worker or HTTP request.",
-      "helpers": {}
-    },
-    "tests/test_ci_skip_policy.py": {
-      "sha256": "22ec7070c94c5e8bdd491702997e44559efc3d2bc35a9da82c9a29bcff3c010a",
-      "reason": "Fake GitHub/Git and Markdown/identity data; no native worker or HTTP request.",
-      "helpers": {}
-    },
-    "tests/test_ci_unlisted_commands.py": {
-      "sha256": "e6aa11e2eb2b35e08f718dfb58c5e2dd72b04228cfcce6cfeb8e3e71841b2471",
-      "reason": "Fake GitHub/Git and Markdown/identity data; no native worker or HTTP request.",
-      "helpers": {}
-    },
-    "tests/test_contract_slot_repair.py": {
-      "sha256": "66dd4881c0f56b4539366cb960c941fa37fc8949bb83b0d90f2a1b58dad0c9f1",
-      "reason": "Frozen schema/plan/evidence data and fake dispatch; Linux full and Windows nightly retain the complete contract.",
-      "helpers": {
-        "tests/test_research_protocol.py": "a8955b17650645c2ba2c2bc89a003e12446df58829b13165697a2742e472110b",
-        "tests/test_research_report.py": "e4b47879e96e31692d2fdf0dfeb18b401659dbaa026bde8b91af81f19d611aeb",
-        "tests/test_research_cp2.py": "0f9b735b520c1aad29cd787f9402fab99289c133985ec7a3fa60532f0aa3791c",
-        "tests/test_facilities_diagnosis.py": "ee9be8c73f7ad57d4fda35b1e811a085fcd90ad72618c66c1c55b0865f14a99b",
-        "tests/test_consult_restart.py": "cc5e426a83fae25fbe2acf4ecdfb040ab028c3f338f145521b720d51dcbb5a35",
-        "tests/test_facilities_fixes.py": "54721255e4c8c2b345ab0bfaf251d4bca61e42ef303e5820e19200ab695bbc4d",
-        "tests/test_cso.py": "3d6e487f23755b543faa00e665c62651801ff1e9e5040d61c79a077494a99353",
-        "tests/test_round_records.py": "8cbcdab8bb0053f01f452fbe0e836e188dca774fe64a0bc82ce99a8dcf7e921c"
+    "tests/test_semantics_objects.py": {
+      "sha256": "3833ba08c2d994471624f72c803dd55dd94783d1833dfc962230813af80f59f5",
+      "reason": "Remaining nodes project object/EDAM/job data with owned fixtures; path identity and path redaction nodes retained.",
+      "nodes": {
+        "test_object_ids_do_not_carry_paths_or_reference_values": "Reviewed native/encoding/path/CLI boundary in mixed module.",
+        "test_one_file_under_two_spellings_is_one_artifact": "Reviewed native/encoding/path/CLI boundary in mixed module."
       }
-    },
-    "tests/test_cso_scope_estimate.py": {
-      "sha256": "d12ed42fdd33c6164451847b910149b6d055976ee2f2039339eb06ecfdea741d",
-      "reason": "Frozen schema/plan/evidence data and fake dispatch; Linux full and Windows nightly retain the complete contract.",
-      "helpers": {
-        "tests/test_research_cp1.py": "bfc1b49f589dec9aa0e9b6f45e444438a6935b6f20c7de56b701a82b63467da3",
-        "tests/test_e2e_mock.py": "5b27e391c1755c737cb34a00ca1654d8e41bbcb56c414508e8c1b522938b6ca8",
-        "tests/test_research_protocol.py": "a8955b17650645c2ba2c2bc89a003e12446df58829b13165697a2742e472110b"
-      }
-    },
-    "tests/test_edam_subset.py": {
-      "sha256": "735cdac8047239c37857919bf487ba1ac232e3758bd9b87dbc2903d658956e46",
-      "reason": "Text/schema/rendered data with owned fixture files; no OS-specific behavior or native execution.",
-      "helpers": {}
-    },
-    "tests/test_edition_astra_736.py": {
-      "sha256": "e8894ffc5beadc319cfd335eeeed8148ba4539cc652c7d5a4c3eb13e3fb6d920",
-      "reason": "Text/schema/rendered data with owned fixture files; no OS-specific behavior or native execution.",
-      "helpers": {
-        "tests/test_portfolio_branch_folders.py": "f8019f010439d09605d761cf0f95f9c4927e82d5225abbd68ed54380059701d1",
-        "tests/test_portfolio_edition.py": "a53fe1659d9eec9c16c5ee0b18647a1dfceef8a371b65fb9b6b9ce2968a388a5"
-      }
-    },
-    "tests/test_edition_readme_718.py": {
-      "sha256": "947665274e7b243d26228154456d29779c0b6a8859939c38bc67d372dc783d49",
-      "reason": "Text/schema/rendered data with owned fixture files; no OS-specific behavior or native execution.",
-      "helpers": {}
-    },
-    "tests/test_editor_v2_fixes_755.py": {
-      "sha256": "ddf8ddde8b88c462b141504abe62e5dfa7f649cc6b2088035f9c647db7108b60",
-      "reason": "Text/schema/rendered data with owned fixture files; no OS-specific behavior or native execution.",
-      "helpers": {
-        "tests/test_edition_astra_736.py": "e8894ffc5beadc319cfd335eeeed8148ba4539cc652c7d5a4c3eb13e3fb6d920",
-        "tests/test_portfolio_branch_folders.py": "f8019f010439d09605d761cf0f95f9c4927e82d5225abbd68ed54380059701d1",
-        "tests/test_portfolio_edition.py": "a53fe1659d9eec9c16c5ee0b18647a1dfceef8a371b65fb9b6b9ce2968a388a5"
-      }
-    },
-    "tests/test_intake_questions.py": {
-      "sha256": "25cfe6adbac16443f5975776c651639d4e70fcb7fc77d85209d3772bbbdb7060",
-      "reason": "Frozen schema/plan/evidence data and fake dispatch; Linux full and Windows nightly retain the complete contract.",
-      "helpers": {}
-    },
-    "tests/test_literal_check.py": {
-      "sha256": "54dcec1e7dfde37be5e031be086318c8b810719a05301f31070fc1cf3716a79a",
-      "reason": "Text/schema/rendered data with owned fixture files; no OS-specific behavior or native execution.",
-      "helpers": {}
-    },
-    "tests/test_output_checks.py": {
-      "sha256": "c2d63d9aba297e760e23d660b698c00161d3ff4e7db336f79653202ab79d4cc9",
-      "reason": "Text/schema/rendered data with owned fixture files; no OS-specific behavior or native execution.",
-      "helpers": {
-        "tests/test_research_report.py": "e4b47879e96e31692d2fdf0dfeb18b401659dbaa026bde8b91af81f19d611aeb",
-        "tests/test_research_cp2.py": "0f9b735b520c1aad29cd787f9402fab99289c133985ec7a3fa60532f0aa3791c",
-        "tests/test_research_protocol.py": "a8955b17650645c2ba2c2bc89a003e12446df58829b13165697a2742e472110b"
-      }
-    },
-    "tests/test_output_types_research.py": {
-      "sha256": "bc007357239cfd09e257c2f598bca1282e3491a41c75cf575d9698e5b72a5df9",
-      "reason": "Frozen schema/plan/evidence data and fake dispatch; Linux full and Windows nightly retain the complete contract.",
-      "helpers": {
-        "tests/test_research_protocol.py": "a8955b17650645c2ba2c2bc89a003e12446df58829b13165697a2742e472110b"
-      }
-    },
-    "tests/test_pi_language_bounds.py": {
-      "sha256": "bb02c51aa492172198bbe0828d96915caba0b188a5336b0c1ba84bbda6a4b7ee",
-      "reason": "Text/schema/rendered data with owned fixture files; no OS-specific behavior or native execution.",
-      "helpers": {}
-    },
-    "tests/test_pr_gate.py": {
-      "sha256": "9e65743519654129249f89db4a5e69a889a1fb7f5ee3acdf5a6cc6f00290a763",
-      "reason": "Fake GitHub/Git and Markdown/identity data; no native worker or HTTP request.",
-      "helpers": {}
-    },
-    "tests/test_public_resources.py": {
-      "sha256": "eaceb851c90558c246ff76a01472ce50561a409c64fc602df7a27f84c61533c5",
-      "reason": "Text/schema/rendered data with owned fixture files; no OS-specific behavior or native execution.",
-      "helpers": {}
-    },
-    "tests/test_report_check.py": {
-      "sha256": "3683a825d0518c7357c9bdd348b404815c554a4b889a40c0ede2d8f066b9a836",
-      "reason": "Text/schema/rendered data with owned fixture files; no OS-specific behavior or native execution.",
-      "helpers": {}
-    },
-    "tests/test_report_contract.py": {
-      "sha256": "ad01f8bb87fb336dbb10c43d3be129d29fc4497fe22e5316c95ce0049ea25bed",
-      "reason": "Text/schema/rendered data with owned fixture files; no OS-specific behavior or native execution.",
-      "helpers": {}
-    },
-    "tests/test_report_markdown.py": {
-      "sha256": "2d044ce45c9f7048f9bb00d39cc2acbab01b28dc64ef1eb6c2f9a91575311684",
-      "reason": "Text/schema/rendered data with owned fixture files; no OS-specific behavior or native execution.",
-      "helpers": {}
-    },
-    "tests/test_report_paper_format.py": {
-      "sha256": "02a7127dfc27a64f73ce816c86566a6350c7982979259cb865893423033498e9",
-      "reason": "Text/schema/rendered data with owned fixture files; no OS-specific behavior or native execution.",
-      "helpers": {
-        "tests/test_round_records.py": "8cbcdab8bb0053f01f452fbe0e836e188dca774fe64a0bc82ce99a8dcf7e921c",
-        "tests/test_request_bundle.py": "5c53e30579565b9e3356b6ebf87dfc37a345e72803b137300f8b695748321f3a",
-        "tests/test_cso.py": "3d6e487f23755b543faa00e665c62651801ff1e9e5040d61c79a077494a99353"
-      }
-    },
-    "tests/test_research_evidence.py": {
-      "sha256": "c2f042888c2230d5cf525432537762898a18f487cf8c4d9f9398fa0a15a561ba",
-      "reason": "Frozen schema/plan/evidence data and fake dispatch; Linux full and Windows nightly retain the complete contract.",
-      "helpers": {}
-    },
-    "tests/test_research_report.py": {
-      "sha256": "e4b47879e96e31692d2fdf0dfeb18b401659dbaa026bde8b91af81f19d611aeb",
-      "reason": "Frozen schema/plan/evidence data and fake dispatch; Linux full and Windows nightly retain the complete contract.",
-      "helpers": {
-        "tests/test_research_cp2.py": "0f9b735b520c1aad29cd787f9402fab99289c133985ec7a3fa60532f0aa3791c",
-        "tests/test_research_protocol.py": "a8955b17650645c2ba2c2bc89a003e12446df58829b13165697a2742e472110b"
-      }
-    },
-    "tests/test_research_review.py": {
-      "sha256": "4545dd725f3a8ca06a41a8a28dc89119876e18b6d6563857b65da77259724669",
-      "reason": "Frozen schema/plan/evidence data and fake dispatch; Linux full and Windows nightly retain the complete contract.",
-      "helpers": {}
-    },
-    "tests/test_scope_gate.py": {
-      "sha256": "b83495ae78f9256dde094bcdce64b3a03a13fab3d1dba5c226137e43c7954a11",
-      "reason": "Text/schema/rendered data with owned fixture files; no OS-specific behavior or native execution.",
-      "helpers": {}
-    },
-    "tests/test_semantic_impact_796.py": {
-      "sha256": "f15ea20cbe95ebc5e0ff360613da86e3483987fdebd7a2db56d8765c3f965966",
-      "reason": "Text/schema/rendered data with owned fixture files; no OS-specific behavior or native execution.",
-      "helpers": {
-        "tests/test_semantic_device_report.py": "731841358727437b17099b87d5fe29efddadb0a91b1750cebbea37cacd238c49",
-        "tests/test_portfolio_edition.py": "a53fe1659d9eec9c16c5ee0b18647a1dfceef8a371b65fb9b6b9ce2968a388a5",
-        "tests/test_cp1_input_fit_796.py": "9f5708f23d9e25bb3b02be5e5b22cd461b3c3c7b58e92f4da70e7549923549db",
-        "tests/test_research_protocol.py": "a8955b17650645c2ba2c2bc89a003e12446df58829b13165697a2742e472110b",
-        "tests/test_bench_legacy_report.py": "6eb7540d5358f8bdac5de175d298362e5afd740df8ec04974971403e983b0e8d"
-      }
-    },
-    "tests/test_semantics_actions.py": {
-      "sha256": "5d846f88199c9e8779dd418370c486e4e00d6397347384eba904df85b23d5f78",
-      "reason": "Text/schema/rendered data with owned fixture files; no OS-specific behavior or native execution.",
-      "helpers": {}
-    },
-    "tests/test_semantics_input_fit.py": {
-      "sha256": "722d805f201d716749f3fb7020eb3f245ac460138ffca5bb0f9132283b725b1e",
-      "reason": "Text/schema/rendered data with owned fixture files; no OS-specific behavior or native execution.",
-      "helpers": {
-        "tests/semantics_shadow_lab.py": "0a57513e5553fc000e010128b222f126e2cff3b8071f040a0a98b50fcbc90cc6",
-        "tests/test_research_protocol.py": "a8955b17650645c2ba2c2bc89a003e12446df58829b13165697a2742e472110b"
-      }
-    },
-    "tests/test_semantics_output_types.py": {
-      "sha256": "541e50f7a726ee169252a13ec3832844a3bbccdc5940fefd7c05abfe7c7406bd",
-      "reason": "Text/schema/rendered data with owned fixture files; no OS-specific behavior or native execution.",
-      "helpers": {}
-    },
-    "tests/test_semantics_shadow_settings.py": {
-      "sha256": "9ccbffa7445b85c05d4109001d7385d9f80d9d7fd6fdeb8115a9d7f5169a39de",
-      "reason": "Text/schema/rendered data with owned fixture files; no OS-specific behavior or native execution.",
-      "helpers": {}
-    },
-    "tests/test_topics.py": {
-      "sha256": "a69a7b6e5c6a2d26734715c9e8414a7dbc1b9f95e3a5e53870b2af1b0f6dfb63",
-      "reason": "Frozen schema/plan/evidence data and fake dispatch; Linux full and Windows nightly retain the complete contract.",
-      "helpers": {
-        "tests/test_cso.py": "3d6e487f23755b543faa00e665c62651801ff1e9e5040d61c79a077494a99353",
-        "tests/test_research_protocol.py": "a8955b17650645c2ba2c2bc89a003e12446df58829b13165697a2742e472110b"
-      }
-    },
-    "tests/test_variant_effect_topic.py": {
-      "sha256": "0bbe57bcbad457711bc441605c2da30c9e0e643b79c4d357b488e96a19babd60",
-      "reason": "Frozen schema/plan/evidence data and fake dispatch; Linux full and Windows nightly retain the complete contract.",
-      "helpers": {}
     }
   }
 }
