@@ -120,6 +120,31 @@ def test_a_missing_state_folder_is_judged_by_its_existing_parent_and_an_unknown_
     assert "private volume detail" not in str(rows)
 
 
+def test_volume_number_zero_is_unknown_so_a_full_state_volume_still_warns(tmp_path, monkeypatch):
+    """UNC and special volumes can report st_dev 0 everywhere; equal zeros are no proof of one volume."""
+    import os as real_os
+    state = tmp_path / "share" / "state"
+
+    class ZeroDeviceOs:
+        def __getattr__(self, name):
+            return getattr(real_os, name)
+
+        @staticmethod
+        def stat(path, *args, **kwargs):
+            return type("Stat", (), {"st_dev": 0})()
+
+    monkeypatch.setattr(doctor, "os", ZeroDeviceOs())
+    monkeypatch.setattr(doctor.tempfile, "gettempdir", lambda: str(tmp_path / "temporary"))
+    monkeypatch.setattr(disk_space, "usage", lambda path: space(100, 1) if path == state else space(1600, 900))
+    with pytest.raises(OSError):
+        doctor._volume(tmp_path)
+    rows = doctor._disk_rows(_state_settings(tmp_path, state))
+    gateway = [row for row in rows if row["name"] == "gateway state disk"]
+    assert len(gateway) == 1 and gateway[0]["status"] == "warn"
+    assert all(row["status"] == "ok" for row in rows if row is not gateway[0])
+    assert not state.parent.exists()
+
+
 def test_init_suggests_data_volume_but_yes_keeps_default(tmp_path, monkeypatch, capsys):
     drive = tmp_path / "data-volume"
     monkeypatch.setattr(disk_space, "data_drives", lambda: [drive])

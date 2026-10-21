@@ -135,7 +135,10 @@ def _volume(path: Path):
         if path.parent == path:
             raise OSError("disk unavailable")
         path = path.parent
-    return os.stat(path).st_dev
+    device = os.stat(path).st_dev
+    if not device:  # 0 names no volume (UNC or special volumes); equal zeros must not hide a separate drive
+        raise OSError("volume not identified")
+    return device
 
 
 def _disk_rows(settings: Settings) -> list[dict]:
