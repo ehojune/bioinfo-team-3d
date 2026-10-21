@@ -18,3 +18,5 @@ Marker 부재는 hang의 위치를 확정하지 않는다. 고정7단계·결과
 Timeout10초·TIMEOUT20초·단일 시도·breakaway·nonce/envhash·identity·Job·ACK·retained-handle 정리는 그대로다. Popen timeout 뒤 회수 수명주기도 이번에는 바꾸지 않는다. Python 수신 모델·source 계약은 PowerShell 실행 증거가 아니며 실제 검증은 root 검토 뒤 remote native CI에 남는다.
 
 Nested launcher fixture는 실패 시 기존 journal allowlist와 얻을 수 있는 parent exitcode를 출력한다(JSON 최대4096자). 원문 parent 로그는 출력하지 않으며 예외·45초 한도·native assertions를 유지한다. 결과 파일 부재만으로 hang이나 같은 provider 원인을 단정하지 않는다.
+
+Clean-install의 `up` 실패도 임시 폴더 삭제 전에 기존 launch journal의 두 supervisor 사실을 출력한다. Tail16 KiB·최근8행을 고정 enum/수치로 투영하며 JSON은4096자 이하다. 누락·읽기 실패·잘린 tail·malformed 행을 표시하고 원래 실패를 유지한다. 명령·환경·경로·PID·원문 로그는 추가 출력하지 않는다. 별도 clean-install CI의 provider timeout은 phase 증거가 없어 원인 미확정이다. 다음 remote 실행에서 수신/Create/ACK 중 관측된 경계를 구분하며 native suite 통과로 설치 후 시작 성공을 대신하지 않는다.
