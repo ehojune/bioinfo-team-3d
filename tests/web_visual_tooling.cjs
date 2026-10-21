@@ -591,3 +591,18 @@ test('the driver lists a timer callback exception in errors, so the visual test 
       await d.close();
     }
   });
+
+// #842: the owned Chrome's forced close must be observed inside the same 5 s cleanup deadline. Browser.close is
+// withheld here (test only) so cleanup takes the forced path; close() rejects unless the actual child stdio,
+// socket and server closes arrive in time. Every other real demo keeps the normal graceful path.
+test('cleanup forces an owned Chrome whose graceful close never takes effect, within the same deadline',
+  {skip: skipReason() || false, timeout: 150000}, async () => {
+    const stages = [];
+    const d = await openDemo({width: 800, height: 600, testWithholdBrowserClose: true,
+      cleanupDiagnostic: (stage, pending, extra) => {
+        stages.push(stage);
+        console.error('forced cleanup: ' + JSON.stringify({stage, pending, ...(extra || {})}));
+      }});
+    await d.close();
+    assert.deepEqual(stages, ['forced', 'closed']);
+  });
