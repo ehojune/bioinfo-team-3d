@@ -38,6 +38,7 @@ _NPM_NODE_LINE = re.compile(
 
 
 GITHUB_TOKEN_NAMES = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN")  # gh / git credentials
+COMMIT_AGENT_ENV = "LABHQ_COMMIT_AGENT"  # read by the PC's gh/git wrappers and .githooks/commit-msg (#813)
 
 
 @dataclass(frozen=True)
@@ -805,7 +806,13 @@ class AgentAdapter(ABC):
             env["PYTHONDONTWRITEBYTECODE"] = "1"
         # Staff never hold a GitHub credential: gh reads GH_TOKEN before GITHUB_TOKEN, so drop every name it uses (#301).
         drop = {self.settings.github.token_env.casefold(), *(name.casefold() for name in GITHUB_TOKEN_NAMES)}
-        return {key: value for key, value in env.items() if key.casefold() not in drop}
+        # The PC's gh/git wrappers read LABHQ_COMMIT_AGENT, else guess a bot from the CLI's own session variables, and
+        # then hand that bot's token and author to the shell. Staff keep the PI's identity (#813): "none" turns the
+        # bot off and no inherited, engine or task value, in any case, brings it back.
+        drop |= {COMMIT_AGENT_ENV.casefold()}
+        staff = {key: value for key, value in env.items() if key.casefold() not in drop}
+        staff[COMMIT_AGENT_ENV] = "none"
+        return staff
 
     def stdin_payload(self, ctx: RunContext) -> bytes | None:
         """Bytes to write to the agent's stdin (then closed); None → stdin is /dev/null."""
