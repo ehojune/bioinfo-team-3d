@@ -818,10 +818,28 @@ async def test_facilities_ask_falls_back_to_the_cso_when_facilities_never_return
             return TaskResult(task_id=task.id, agent_id="cso", ok=True, text="Use bay 2")
 
         hub.dispatch = dispatch
-        await asyncio.wait_for(hub.orchestrator.answer_ask(ask, "local"), 2)
+        waits, original = [], hub.wait_agent_online
+
+        async def recording(agent_id, timeout_s, *args, **kwargs):
+            # The real wait runs: facilities never registers, so it ends offline at its own deadline.
+            loop = asyncio.get_running_loop()
+            started = loop.time()
+            online = await original(agent_id, timeout_s, *args, **kwargs)
+            waits.append((agent_id, timeout_s, online, loop.time() - started))
+            return online
+
+        hub.wait_agent_online = recording
+        # A hang guard only, as in the restart case above. The claim is the configured facilities wait and the CSO
+        # fallback, not how fast this host's disk commits the ask records (PR #837 Windows pool).
+        await asyncio.wait_for(hub.orchestrator.answer_ask(ask, "local"), 60)
+        assert [wait[:3] for wait in waits] == [("facilities", 0.2, False)]
+        # asyncio may fire a timer up to its clock resolution early; the wait still lasted its configured 0.2 s.
+        assert waits[0][3] >= 0.2 - 2 * time.get_clock_info("monotonic").resolution
         assert [task.agent_id for task in calls] == ["cso"]
         entry = hub.store.get("ask", ask.id)
-        assert entry["routed_to"] == "cso" and entry["answer"]["answer"] == "Use bay 2"
+        assert entry["routed_to"] == "cso" and entry["state"] == "resolved"
+        assert entry["answer"]["answer"] == "Use bay 2"
+        assert entry["answer"]["from"] == "cso" and entry["answer"]["routed_to"] == "cso"
     finally:
         hub.store.close()
 
