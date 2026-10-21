@@ -1,0 +1,6 @@
+pr: null
+rows:
+- sha: 19963f0
+  at: 2026-10-21 21:30
+  summary: 문헌 원문 기록 검사를 Windows의 파일·문자 인코딩 경계 검사에 등록했습니다.
+  text: 미병합 PR825 정책과 로컬 통합해 fulltext receipt 파일을 known 목록과 경계 cohort에 추가했다. 검토된 feature7개 blob과 기존6 mixed/5 mandatory를 유지하며 source-only profile/AST와 포함14판정을 확인했다. 실제 통합 CI는 미검증이고 최종 main 재통합이 필요하다.

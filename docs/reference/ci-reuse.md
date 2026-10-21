@@ -34,14 +34,14 @@ main의 해당 commit에 병합된 같은 저장소 PR의 최신 matching run만
 
 검색은 최근 20 run, API 응답은 2 MiB, artifact는 256 KiB ZIP·32 KiB JSON으로 제한합니다. REST의 PR 연결 정보가 나중 head로 바뀌거나 merge object를 읽지 못해도 full입니다. 빈 association의 예외도 authoritative PR·artifact 증거가 없으면 full입니다. API 오류·범위 초과·누락·중복·불일치·부분 rerun도 full입니다. 재사용 결과로 새 manifest를 만들지 않습니다. 실제 artifact 왕복·절감 시간·재사용률은 아직 측정하지 않았습니다.
 
-## 병렬 실행·Windows 경계 (개발 중)
+## 병렬 실행·Windows 경계
 
-#823 branch의 미게시 후속 설계입니다. 실제 Windows·병렬 성능은 새 CI 전까지 미검증이며 [정적 근거와 한계](ci-windows-cohort-823.md)를 봅니다.
+#823의 CI 개선은 PR825로 병합됐습니다. 해당 head의 Windows 실행은 8분14초였으며 [측정 범위와 한계](ci-windows-cohort-823.md)를 봅니다. 다른 head의 실행 시간은 별도로 확인합니다.
 
 - CI outer Linux 3.10/3.12 전수는 `pytest-xdist==3.8.0`의 `-n auto --dist loadfile`로 실행합니다. global addopts/PYTEST_ADDOPTS는 없고 nested pytest는 직렬 기본값입니다. auto worker 수는 측정값으로 기록하며 4개로 가정하지 않습니다.
-- PR825 변경안: Windows PR/main은 `windows-boundary-v6`의 명시 필수 file/node 계약과 변경된 Windows 관련 test·직접 OS helper 소비자를 실행합니다. 일반 schema/prompt/논리·미변경 선택 밖 test는 Linux 전수와 Windows nightly/dispatch 전수에 남깁니다. product import의 추정 transitive 추적이나 정책 변경에 따른 전수 확대는 하지 않습니다.
+- 현재 정책(PR825): Windows PR/main은 `windows-boundary-v6`의 명시 필수 file/node 계약과 변경된 Windows 관련 test·직접 OS helper 소비자를 실행합니다. 일반 schema/prompt/논리·미변경 선택 밖 test는 Linux 전수와 Windows nightly/dispatch 전수에 남깁니다. product import의 추정 transitive 추적이나 정책 변경에 따른 전수 확대는 하지 않습니다.
 - web shutdown·WMI escape/ACK의 알려진 실패를 포함한 5개 callable은 mandatory입니다. collection/선택에서 하나라도 없으면 실패합니다. Job·identity·cleanup, drive/PowerShell/private sandbox, SQLite/durable/lock, doctor/CLI/MCP/receipt/hook은 명시 cohort로 유지합니다. 이 범위는 full Windows와 동등하지 않으며 제외된 Windows 조합의 발견이 nightly로 늦어질 위험이 있습니다.
-- routine Windows job은 setup·collection을 포함해 10분입니다. 첫 serial phase는 2분, 나머지 4-worker phase는 7분이며 두 phase의 실제 선택 union을 한 번씩 실행합니다. timeout은 실패입니다. pip 2분, report/upload 각 1분의 step bound와 always artifact 업로드를 두며 hard job 취소 때 업로드까지 보장하지는 못합니다. nightly/manual은 full Windows(종전 360분 job 상한 유지)입니다. 10분 이내 성공은 원격 CI에서 아직 미측정입니다.
+- routine Windows job은 setup·collection을 포함해 10분입니다. 첫 serial phase는 2분, 나머지 4-worker phase는 7분이며 두 phase의 실제 선택 union을 한 번씩 실행합니다. timeout은 실패입니다. pip 2분, report/upload 각 1분의 step bound와 always artifact 업로드를 두며 hard job 취소 때 업로드까지 보장하지는 못합니다. nightly/manual은 full Windows(종전 360분 job 상한 유지)입니다. 병합된 #825의 실제 완료 시간은 [측정 기록](ci-windows-cohort-823.md#실제-ci-측정)에 있습니다. 다른 head의 통과를 대신하지 않습니다.
 - critical은 두 native 파일 전체(현재25개, 추가 case도 포함)와 resizable browser case 1개만 수집합니다. 명시한 whole-file/node 인수·기본 discovery와 필터 부재를 확인하고, worker 없이 각 setup/call/teardown PASS·no-SKIP과 5개 mandatory callable을 검증한 뒤 pool을 엽니다. browser 미설치·내부 TAP의 3 PASS/0 SKIP 미달도 실패하며 기존 30초 wrapper/60초 내부 제한은 유지합니다. nightly/manual도 같은 격리 뒤 나머지 전수를 실행합니다.
 - 실행 identity `windows-critical-serial-v2`는 critical의 좁은 실제 수집 목록과 pool의 실제 global full·eligible 목록을 구분합니다. 같은 run/attempt/head/checkout/tree/workflow/policy/interpreter/invocation과 pool 4-worker inventory 일치, 전체 critical parameter 집합 일치·실행 union·빈 intersection을 확인합니다. 누락·중복·stale barrier·불완전 lifecycle·구형 v1은 실패합니다. Producer는 다운로드한 원본 receipt와 digest를 재검증하고 consumer는 authenticated manifest의 proof와 기존 trusted-base/tree 계약을 확인합니다. Outer manifest8/profile6 형식은 유지하며 구형 실행 증거는 교환하지 않습니다.
 - 각 phase의 `checkpoints-<worker>.json`은 진단 전용이며 proof에서 읽지 않습니다. Identity 검증 뒤 process별 monotonic 기준으로 configure·session·collection(import/selection 포함)·첫 test·stage 시작/완료를 기록합니다. 미관측 시각은 생략하고 report 수는 PASS 수와 구분합니다. Critical stage는 즉시, pool은 최초 stage 뒤 마지막 쓰기에서 5초 이상 지난 hook에서 갱신합니다. Hook이 멈추면 마지막 snapshot만 남습니다. Plugin 이전 비용·worker 간 시간 합산·종료 직전 누락은 추정하지 않습니다.
@@ -51,7 +51,7 @@ main의 해당 commit에 병합된 같은 저장소 PR의 최신 matching run만
 - v8 manifest/artifact는 gate별 profile·policy blob·tree·run/attempt·workflow·digest·ordered parents와 모든 성공 gate를 결합합니다. main push before도 검증된 PR base와 같아야 변경 test 집합을 재사용합니다. Windows full·v1 boundary·구형 manifest·다른 증거는 교환하지 않습니다. 바뀐 정책의 자기 인증은 허용하지 않습니다. 첫 main은 필수 gate를 다시 실행하며 routine Windows를 전수로 확대하지 않습니다. 확인된 snapshot drift의 no-reuse 결과는 아래처럼 별도로 처리합니다.
 - 정책 변경 PR도 routine Windows 선택 노드마다 한 번만 실행합니다. 종전 full+preview 이중 실행은 폐기했습니다. `ci-full-v8`은 필수 gate 집합의 이름이며 Windows 전수 증거가 아닙니다. consumer는 다른 tree·policy·profile·run/attempt/digest·ordered parents를 계속 거부하고 full/구형/preview Windows receipt를 boundary 대신 받지 않습니다. 실제 job 최종 시간은 upload가 끝난 GitHub job metadata로 확인합니다.
 
-근거: [xdist distribution](https://pytest-xdist.readthedocs.io/en/stable/distribution.html), [worker isolation](https://pytest-xdist.readthedocs.io/en/stable/how-to.html), [3.8.0 Python >=3.9](https://pypi.org/project/pytest-xdist/3.8.0/). 병렬 실행·Windows 성능·artifact 재사용은 실제 CI 확인 전입니다.
+근거: [xdist distribution](https://pytest-xdist.readthedocs.io/en/stable/distribution.html), [worker isolation](https://pytest-xdist.readthedocs.io/en/stable/how-to.html), [3.8.0 Python >=3.9](https://pypi.org/project/pytest-xdist/3.8.0/). 실제 병렬 실행·Windows 시간의 확인 범위는 [측정 기록](ci-windows-cohort-823.md#실제-ci-측정)에 남깁니다. main의 동일 tree 재사용 성공은 별도 증거가 필요합니다.
 
 run 39461236144에서는 event·run association·현재 PR의 base가 `d0c834a`, 검증 merge의 첫 parent와 main ref가 `2ce8778`인 snapshot drift를 확인했습니다. GitHub 갱신 시점과 이전 run의 원인은 미확정입니다. 같은 repo/run/attempt/workflow·9개 성공 job·동일 tree/순서 있는 merge parents·PR merge SHA/head·main ref·완전한 forward compare를 독립 확인한 경우만 producer가 `reusable=false`로 종료합니다. event base를 바꾸거나 재사용 manifest를 쓰지 않으며 upload도 하지 않습니다. consumer는 artifact가 없으면 full입니다. API 증거가 없거나 다르거나 다른 manifest 오류가 있으면 기존 실패를 유지합니다. 안정된 binding의 manifest 형식과 consumer의 기존 trusted-base policy·digest·identity 검사는 그대로입니다.
 

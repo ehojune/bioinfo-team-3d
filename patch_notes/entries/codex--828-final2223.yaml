@@ -1,0 +1,6 @@
+pr: null
+rows:
+- sha: fa579c1
+  at: 2026-10-21 22:26
+  summary: 병합된 Windows CI 정책을 보존하면서 문헌 근거 검사 등록을 통합했습니다.
+  text: selector·suite·cohort test는 main 정본을 유지하고 profile에는 fulltext 파일의 known/cohort 등록만 더했다. 검토된 feature7개 blob과6 mixed/5 mandatory를 보존하며 source-only profile·AST·포함14판정을 확인했다. 본문 보호는 아직 미병합이고 실제 PDF/OCR·효용은 미검증이다.

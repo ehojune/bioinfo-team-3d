@@ -135,6 +135,10 @@ async def test_an_open_access_paper_is_written_as_markdown_and_the_record_keeps_
     assert row["sections"] == ["Introduction", "Results"]
     assert (row["n_tables"], row["n_figures"], row["n_references"]) == (2, 2, 2)
     assert row["text_file"] == ".tmp/literature/pmid-123.md"
+    receipt = row["fulltext_receipt"]
+    assert receipt["paper_id"] == "pmid:123" and receipt["extraction"] == "complete"
+    assert receipt["evidence"] == []  # artifact access does not establish methods/QC evidence
+    assert receipt["text_sha256"] == hashlib.sha256(Path(receipt["text_file"]).read_bytes()).hexdigest()
     text = (tmp_path / "work" / row["text_file"]).read_text(encoding="utf-8")
     assert "## Results" in text and "### Main model" in text and "The odds ratio was 1.02." in text
     assert "| Group | Boys | aOR | 95% CI |  |" in text  # the spanning header keeps the columns aligned
