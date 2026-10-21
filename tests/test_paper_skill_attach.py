@@ -2,6 +2,7 @@
 import asyncio
 import copy
 import json
+import hashlib
 import re
 from pathlib import Path
 
@@ -18,8 +19,12 @@ from tests.test_request_bundle import pending_bundle_fixture, manifest_rows
 
 SELECTED = {"paper_id": "PMID:12345678", "title": "Paired method", "reason": "Preserves donor pairing",
             "step_ids": ["s1"]}
+EVIDENCE = {"coverage_version": 2, "paper_id": "PMID:12345678", "source": "synthetic", "access_level": "full_text",
+            "extraction": "complete", "text_file": "/synthetic/paper.md", "text_sha256": "a" * 64,
+            "supplements_required": False, "supplements": "unknown",
+            "evidence": [{"kind": kind, "start_line": 1, "end_line": 1} for kind in ("methods", "qc")]}
 PRECEDENTS = {"status": "ok", "papers": [{"title": "Paired method", "citations": [
-              "PMID:12345678; access_level=full_text"]}],
+              "PMID:12345678; access_level=full_text"], "fulltext_receipt": EVIDENCE}],
               "required": [], "recommended": [], "limitations": []}
 
 
@@ -43,6 +48,12 @@ def runner(tmp_path, monkeypatch):
     for key in ("state_dir", "workspace_root", "agents_dir", "talent_dir"):
         setattr(s.runner, key, str(tmp_path / key))
     s.engines.claude_code.env = {"CLAUDE_CONFIG_DIR": str(tmp_path / "staff")}
+    source = Path(s.runner.workspace_root) / "scout" / "paper.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("# Synthetic methods and QC\n", encoding="utf-8")
+    monkeypatch.setitem(EVIDENCE, "text_file", str(source))
+    monkeypatch.setitem(EVIDENCE, "text_sha256", hashlib.sha256(source.read_bytes()).hexdigest())
+    source.with_name(source.name + ".receipt.json").write_text(json.dumps(EVIDENCE), encoding="utf-8")
     r = Runner(s)
     r.registry.agents = {name: AgentSpec(id=name, name=name, role="test", engine=Engine.claude_code,
                                        builtin_mcp=[]) for name in ("worker", "other", "recruiter")}
@@ -82,7 +93,7 @@ def runner(tmp_path, monkeypatch):
 
 def build_task(rid="r"):
     return Task(agent_id="recruiter", request_id=rid, prompt="p",
-                meta={"kind": "paper_skill", "paper_skill": copy.deepcopy(SELECTED)})
+                meta={"kind": "paper_skill", "paper_skill": {**copy.deepcopy(SELECTED), "fulltext_receipt": copy.deepcopy(EVIDENCE)}})
 
 
 @pytest.mark.asyncio
@@ -168,7 +179,8 @@ async def test_enriched_pmid_citations_build_full_text_and_record_abstract_skip(
         {"title": "Abstract paper", "citations": [
             "PubMed PMID: 40119824; access_level=abstract; n=209"]},
         {"title": "Full paper", "citations": [
-            "PubMed PMID: 20492728; access_level=full_text; n=16,384"]},
+            "PubMed PMID: 20492728; access_level=full_text; n=16,384"],
+         "fulltext_receipt": {**EVIDENCE, "paper_id": "PMID:20492728"}},
     ]}
 
     out = await prepare_plan(plan, precedents, [{"id": "worker"}], "r", r.s, r.run_task)
@@ -176,12 +188,12 @@ async def test_enriched_pmid_citations_build_full_text_and_record_abstract_skip(
     rows = out["paper_skill_results"]
     assert [(row["paper_id"], row["status"]) for row in rows] == [
         ("pmid:40119824", "skipped"), ("pmid:20492728", "deferred")]
-    assert "abstract" in rows[0]["skip_reason"] and not seen
+    assert "receipt" in rows[0]["skip_reason"] and not seen
     assert [(row["selected"], row["built"], row["attached_steps"], row["called"]) for row in rows] == [
         (True, False, [], False), (True, False, [], False)]
     assert "선정됨" in card_text(out) and "만들어짐" in card_text(out)
     report = appendix(out, {})
-    assert "붙음" in report and "호출됨" in report and "abstract" in report
+    assert "붙음" in report and "호출됨" in report and "receipt" in report
 
 
 @pytest.mark.asyncio
@@ -245,7 +257,7 @@ async def test_existing_contract_talent_is_advice_without_activation(runner, tmp
                               skill_dir=str(skill), skill_sha256=folder_sha256(skill),
                               verification={"paper2agent_commit": "b" * 40})))
     result = await r.run_task(build_task())
-    assert result.structured["status"] == "reused" and not seen
+    assert result.structured["status"] == "failed" and "receipt" in result.structured["error"] and not seen
     assert r.registry.agents["c_old"].contract.status == "expired"
 
 
@@ -287,7 +299,8 @@ async def test_two_papers_have_distinct_restart_keys_and_keep_their_own_receipts
             "paper_skills": [SELECTED, {**SELECTED, "paper_id": "PMID:87654321"}]}
     precedents = {**PRECEDENTS, "papers": [*PRECEDENTS["papers"],
                   {"title": "Another method", "citations": [
-                      "PMID:87654321; access_level=full_text"]}]}
+                      "PMID:87654321; access_level=full_text"],
+          "fulltext_receipt": {**EVIDENCE, "paper_id": "PMID:87654321"}}]}
     out = await prepare_plan(plan, precedents, [{"id": "worker"}], "r", Settings(), convert)
     assert not tasks
     resolved = await resolve_attachments(attachments(out, 's1', 'worker', 'r'), Settings(), convert)
