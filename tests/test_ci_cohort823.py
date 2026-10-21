@@ -38,7 +38,7 @@ def receipt(tmp_path, data):
 
 
 def review(text):
-    return {'version':5, 'profile':s.WINDOWS_BOUNDARY, 'default':'boundary',
+    return {'version':6, 'profile':s.WINDOWS_BOUNDARY, 'default':'boundary',
             'known_tests':['tests/test_math.py'], 'boundary_cohorts':{}, 'mandatory_nodes':[],
             'mixed_nodes':{'tests/test_math.py':{'sha256':s.source_digest(text),
                 'reason':'synthetic arithmetic review', 'nodes':{'test_native':'native boundary'}}}}
@@ -198,7 +198,7 @@ def test_import_time_global_scan_is_protected_even_when_definition_is_unused(tmp
 def test_python310_policy_profile_and_manifest_epoch_are_bound():
     for path in ('scripts/ci_selection.py', 'scripts/ci_suite.py'):
         ast.parse((s.ROOT / path).read_text(encoding='utf-8-sig'), feature_version=(3, 10))
-    assert cs.VERSION == 7 and cs.COVERAGE['pytest-windows'] == s.WINDOWS_BOUNDARY
+    assert cs.VERSION == 8 and cs.COVERAGE['pytest-windows'] == s.WINDOWS_BOUNDARY
     assert s.PROFILE in cs.POLICY_FILES
     assert s.WINDOWS_BOUNDARY != 'windows-boundary-v1'
 

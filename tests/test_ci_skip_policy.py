@@ -18,9 +18,10 @@ def sha(char):
 
 
 @pytest.fixture
-def evidence():
+def evidence(tmp_path):
+    from tests.test_ci_windows_phases import fake_context, make_receipts
     identity = {"checkout_sha": sha("a"), "tree": sha("b"), "selection_base": sha("c"),
-                "policy": {p: sha(str(i + 1)) for i, p in enumerate(cs.POLICY_FILES)}}
+                "policy": {p: sha(f'{i + 1:x}') for i, p in enumerate(cs.POLICY_FILES)}}
     repo = {"id": 123, "full_name": cs.REPOSITORY}
     pr = {"number": 788, "merged_at": "2026-10-20T00:00:00Z", "merge_commit_sha": sha("a"),
           "base": {"ref": "main", "repo": repo, "sha": sha("c")},
@@ -37,6 +38,7 @@ def evidence():
                 "attempt": 1, "event": "pull_request", "checkout_sha": sha("e"),
                 "workflow_sha": sha("e"), "tree": identity["tree"], "policy": identity["policy"],
                 "coverage": dict(cs.COVERAGE),
+                "windows_execution": make_receipts(tmp_path, fake_context(identity)),
                 "workflow_ref": cs.REPOSITORY + "/" + cs.WORKFLOW + "@refs/pull/788/merge",
                 "workflow_blob": identity["policy"][cs.WORKFLOW],
                 "pr": {"number": 788, "head_sha": sha("d"), "base_sha": sha("c"), "repository_id": 123},
@@ -409,7 +411,9 @@ def test_event_decisions_bind_actual_checkout_and_entire_push(monkeypatch, evide
     assert cs.decide("push", {"before": base, "ref": "refs/heads/main"}, current) == "full"
 
 
-def test_manifest_requires_fresh_full_gates_on_the_checkout(monkeypatch, evidence):
+def test_manifest_requires_fresh_full_gates_on_the_checkout(monkeypatch, evidence, tmp_path):
+    from tests.test_ci_windows_phases import fake_context, make_receipts
+    from scripts import ci_windows_phases as phases
     current = evidence[0]
     event = {"pull_request": evidence[1]}
     for key, value in {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_SHA": current["checkout_sha"],
@@ -424,6 +428,10 @@ def test_manifest_requires_fresh_full_gates_on_the_checkout(monkeypatch, evidenc
     needs = {name: {"result": "success", "outputs": {"tree": current["tree"], **({"profile": cs.COVERAGE[name]} if name in cs.COVERAGE else {})}}
              for name in (*cs.GATE_IDS, "changes", "readme", "patch-notes")}
     needs["changes"]["outputs"]["skip"] = "false"
+    directory = tmp_path/'producer'
+    proof = make_receipts(directory, fake_context(current, checkout=current['checkout_sha']))
+    monkeypatch.setenv('CI_WINDOWS_RECEIPT_DIR', str(directory))
+    needs['pytest-windows']['outputs'].update(execution=phases.EXECUTION, receipt=phases.digest(proof))
     manifest = cs.produce_manifest(current, needs, event)
     assert manifest["tree"] == current["tree"]
     assert manifest["pr"]["head_sha"] == evidence[2]["head_sha"]

@@ -12,7 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 # Retain the policy path; its schema/profile version, not its filename, is identity.
 PROFILE = "config/ci/windows-boundary-v1.json"
-WINDOWS_BOUNDARY = "windows-boundary-v5"
+WINDOWS_BOUNDARY = "windows-boundary-v6"
 WINDOWS_PREVIEW = "windows-boundary-preview-v4"
 PROFILES = ("linux-full-v1", WINDOWS_BOUNDARY, "windows-full-v1", WINDOWS_PREVIEW)
 # The preview may cross these policy edits only; shared fixtures/dependencies
@@ -44,7 +44,7 @@ def policy(root=ROOT) -> dict:
     data = json.loads((root / PROFILE).read_text(encoding="utf-8"), object_pairs_hook=_unique)
     if (set(data) != {"version", "profile", "default", "known_tests", "mixed_nodes", "boundary_cohorts", "mandatory_nodes"}
             or data["default"] != "boundary" or type(data["version"]) is not int
-            or data["version"] != 5 or data["profile"] != WINDOWS_BOUNDARY
+            or data["version"] != 6 or data["profile"] != WINDOWS_BOUNDARY
             or not isinstance(data["mixed_nodes"], dict)
             or not isinstance(data["known_tests"], list) or not data["known_tests"]
             or not all(isinstance(p, str) and re.fullmatch(r'tests/test_[\w]+\.py', p) for p in data['known_tests'])

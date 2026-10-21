@@ -1,6 +1,6 @@
 {
-  "version": 5,
-  "profile": "windows-boundary-v5",
+  "version": 6,
+  "profile": "windows-boundary-v6",
   "default": "boundary",
   "known_tests": [
     "tests/test_adapters_fake_cli.py",
@@ -52,6 +52,7 @@
     "tests/test_ci_skip_policy.py",
     "tests/test_ci_unlisted_commands.py",
     "tests/test_ci_windows10m.py",
+    "tests/test_ci_windows_phases.py",
     "tests/test_claude_inbound.py",
     "tests/test_claude_staff_home.py",
     "tests/test_claude_write_paths.py",
@@ -506,7 +507,7 @@
       }
     },
     "tests/test_web_3d.py": {
-      "sha256": "8123eb2275bfb12379c71c18099fb10eca9372c72b8528f70d20c14d52447014",
+      "sha256": "410bc627e56d6c35b9286860c1e75a71822994cf2450080af3132ec6fa5b2346",
       "reason": "Only static JS pose/marker string assertions are omitted; server/browser/auth/path/packaging and native Node nodes remain.",
       "nodes": {
         "test_both_pages_load_same_reducer_and_keep_dom_approvals": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",

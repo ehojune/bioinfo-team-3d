@@ -36,6 +36,10 @@ test('2.5D shell exposes two token-styled accessible splitters and leaves phone 
   assert.match(components, /@media \(max-width:\s*620px\)[\s\S]*\.panel-splitter[^}]*display:\s*none/);
 });
 
+// The critical Windows phase requires a real browser, never an optional skip.
+if (process.env.LABHQ_REQUIRE_RESIZABLE_BROWSER === '1' && skipReason()) {
+  throw new Error(`required resizable browser unavailable: ${skipReason()}`);
+}
 test('desktop splitter drags, responds to arrows, persists and resets while phone hides it',
   {skip: skipReason() || false, timeout: 60000}, async () => {
     console.error('resizable browser: desktop open');

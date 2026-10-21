@@ -57,3 +57,11 @@ run39544266122/job119038816204는 sanitizer 원문 보존을 통과하고 wall 2
 - timeout/skip/선택/assertion은 유지합니다. wrapper가 부분 TAP·stderr와 원래 timeout 예외를 보존하고 browser open/load/assertions/close 표식을 남깁니다. **Windows 원인 수정이나 성공 주장이 아닌 진단 보강**이며 다음 조치는 root 검토가 필요합니다.
 - fake/static 50 PASS; worker red 2 FAIL/1 PASS, 진단 red 3 FAIL/3 PASS 로그를 보존했습니다. JS body는 표식·공백 외 동일, Python assertions와 선택 계약은 동일하며 exact source pin만 갱신했습니다. 실제 Node/browser/xdist는 로컬 실행하지 않았습니다.
 - 실제 Windows 435초/pytest376.60초는 2 FAIL이므로 10분 목표 성공이 아닙니다. Linux full·Windows 필수 native/nightly full·10분 상한과 proof/manifest 계약은 그대로입니다.
+
+
+## PR825 critical phase 격리 (미게시)
+
+- 제공된 독립 원격 probe에서 같은 제품/native blob의 두 파일은 25 PASS/0 SKIP, pytest36.053초였습니다. Browser는 원래30초 wrapper에서 desktop/phone 모두 완료, Node3 PASS/0 SKIP·9.609초였습니다. Probe는 제품/PI 성공이나 경합 원인의 증명이 아닙니다.
+- 새 계약은 native25+browser1을 serial로 실행하고 전 lifecycle PASS/no-SKIP receipt 이후 나머지를 4-worker pool에 넘깁니다. browser는 반드시 있어야 하며 Python wrapper가 내부 Node의 3 PASS/0 SKIP을 확인합니다. 실제 phase 선택 목록을 구분하고 full/eligible 목록 일치·union·빈 intersection·worker별 실제 report와 controller report 일치·시간 순서·동일 invocation을 검증합니다. native 수가 바뀌면 계약 검토 전 실패합니다.
+- Profile6/manifest8은 새 helper까지 policy blob에 묶습니다. producer는 다운로드한 phase JSON과 job output digest를 재검증하며 consumer도 bound phase attestation을 요구합니다. 구형·다른 tree/policy·partial/failed/skipped critical은 재사용하지 않습니다. Offline collector도 별도로 Windows 측정만 판정하며 reusable=false입니다.
+- Linux 전수와 Windows nightly/manual 전수를 유지합니다. Routine10분 hard bound, serial2분/parallel6분 step bound이며 timeout은 실패입니다. 격리46초+parallel350초+setup50초=약446초는 추정일 뿐입니다. 새 head의 성공한 실제 전체 job≤600초와 lock wait/선택 수는 root의 원격 CI에서 확인해야 합니다.

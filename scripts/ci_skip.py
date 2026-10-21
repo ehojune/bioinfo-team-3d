@@ -22,14 +22,18 @@ from pathlib import Path
 
 import yaml
 
+if __name__ == '__main__' and not __package__:
+    # Keep the documented script entrypoint as well as python -m working.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 REPOSITORY = "ehojune/bioinfo-team-3d"
 WORKFLOW = ".github/workflows/test.yml"
 POLICY_FILES = (WORKFLOW, "scripts/ci_skip.py", "scripts/ci_suite.py", "scripts/ci_selection.py",
                 "scripts/ci_isolation.py", "config/ci/windows-boundary-v1.json", "pyproject.toml",
-                "tests/conftest.py", "labhq/test_guard.py")
-VERSION = 7
+                "tests/conftest.py", "labhq/test_guard.py", "scripts/ci_windows_phases.py")
+VERSION = 8
 GATE_IDS = ("pytest", "pytest-windows", "clean-install", "ro-crate-validator", "pytest-slow")
-COVERAGE = dict(zip(GATE_IDS, ("linux-full-v1", "windows-boundary-v5", "clean-install-v1",
+COVERAGE = dict(zip(GATE_IDS, ("linux-full-v1", "windows-boundary-v6", "clean-install-v1",
                               "official-validator-v1", "long-mcp-v1")))
 REQUIRED_JOBS = ("pytest (3.10)", "pytest (3.12)", "pytest-windows", "clean-install",
                  "ro-crate-validator", "pytest-slow", "changes", "readme", "patch-notes", "validation-manifest")
@@ -395,12 +399,13 @@ def pr_snapshot(pr: dict, *, rest: bool = False) -> dict:
             "head_sha": pr["head"]["sha"], "repository_id": repo["id"]}
 
 
-def expected_manifest(run: dict, current: dict, snapshot: dict, checkout_sha: str) -> dict:
+def expected_manifest(run: dict, current: dict, snapshot: dict, checkout_sha: str, windows_execution=None) -> dict:
     return {"version": VERSION, "repository": REPOSITORY, "run_id": run["id"], "attempt": run["run_attempt"],
             "event": "pull_request", "checkout_sha": checkout_sha, "workflow_sha": checkout_sha,
             "workflow_ref": f"{REPOSITORY}/{WORKFLOW}@refs/pull/{snapshot['number']}/merge",
             "workflow_blob": current["policy"][WORKFLOW], "pr": snapshot,
             "tree": current["tree"], "policy": current["policy"], "coverage": COVERAGE,
+            "windows_execution": windows_execution,
             "gates": {name: {"result": "success", "tree": current["tree"]} for name in GATE_IDS}}
 
 
@@ -471,7 +476,9 @@ def valid_run(run: dict, pr: dict, current: dict, workflow_id: int, request, now
     checkout = manifest["checkout_sha"]
     if not SHA.fullmatch(checkout) or checkout in {snapshot["base_sha"], snapshot["head_sha"]}:
         return False
-    if json.dumps(manifest, sort_keys=True) != json.dumps(expected_manifest(run, current, snapshot, checkout), sort_keys=True):
+    execution = manifest['windows_execution']
+    validate_windows_execution(execution, current, run, snapshot['head_sha'], checkout, manifest['workflow_ref'])
+    if json.dumps(manifest, sort_keys=True) != json.dumps(expected_manifest(run, current, snapshot, checkout, execution), sort_keys=True):
         return False
     # REST run/job head_sha denotes the branch commit, NOT GITHUB_SHA. Only
     # the producer's immutable checkout may prove the tested synthetic merge.
@@ -648,11 +655,53 @@ def produce_manifest(current: dict, needs: dict, event: dict) -> dict:
         raise ValueError("unbound checkout/workflow identity: checkout-parents")
     if git("rev-parse", f"{source}:{WORKFLOW}") != result["workflow_blob"]:
         raise ValueError("unbound checkout/workflow identity: workflow-blob")
+    result['windows_execution'] = windows_receipt(current, needs, run, snapshot['head_sha'])
     return result
 
 
+def validate_windows_execution(proof, current, run, head, checkout, workflow_ref):
+    from scripts import ci_windows_phases as phases
+    phases.validate_proof(proof)
+    context = proof['context']
+    if not (context['checkout_sha'] == checkout and context['head_sha'] == head
+            and context['tree'] == current['tree'] and context['policy'] == current['policy']
+            and context['run_id'] == run['id'] and context['attempt'] == run['run_attempt']
+            and context['workflow_sha'] == checkout and context['workflow_ref'] == workflow_ref
+            and context['profile'] == COVERAGE['pytest-windows']):
+        raise ValueError('unbound Windows phase proof')
+
+
+def windows_receipt(current, needs, run, head):
+    from scripts import ci_windows_phases as phases
+    directory = Path(os.environ['CI_WINDOWS_RECEIPT_DIR'])
+    proof = phases.combine(directory)  # Revalidate downloaded JSON, never execute it.
+    outputs = needs['pytest-windows']['outputs']
+    if (outputs.get('execution') != phases.EXECUTION or outputs.get('receipt') != phases.digest(proof)
+            or phases.read(directory / 'windows-proof.json') != proof):
+        raise ValueError('missing/mismatched Windows phase receipt')
+    validate_windows_execution(proof, current, run, head, current['checkout_sha'], os.environ['GITHUB_WORKFLOW_REF'])
+    return proof
+
+
 def main() -> None:
-    if sys.argv[1:] == ["identity"]:
+    if sys.argv[1:] == ['windows-identity']:
+        import platform
+        import uuid
+        from scripts import ci_windows_phases as phases
+        current = identity()
+        event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text(encoding='utf-8'))
+        context = dict(execution=phases.EXECUTION, repository=os.environ['GITHUB_REPOSITORY'],
+            run_id=int(os.environ['GITHUB_RUN_ID']), attempt=int(os.environ['GITHUB_RUN_ATTEMPT']),
+            **current, head_sha=event['pull_request']['head']['sha'] if 'pull_request' in event else current['checkout_sha'],
+            workflow_sha=os.environ['GITHUB_WORKFLOW_SHA'], workflow_ref=os.environ['GITHUB_WORKFLOW_REF'],
+            profile=os.environ['CI_COVERAGE_PROFILE'], python_version=platform.python_version(),
+            python_executable=os.path.normcase(os.path.abspath(sys.executable)), invocation=uuid.uuid4().hex,
+            setup_started=float(os.environ['CI_SETUP_STARTED']))
+        phases.validate_identity(context)
+        directory = Path(os.environ['CI_SUITE_ARTIFACT_DIR'])
+        directory.mkdir(parents=True, exist_ok=True)
+        phases.write(directory / 'identity.json', context)
+    elif sys.argv[1:] == ["identity"]:
         print("tree=" + identity()["tree"])
     elif sys.argv[1:] == ["manifest"]:
         event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))

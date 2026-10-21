@@ -19,8 +19,10 @@ def test_routine_job_is_ten_minutes_and_has_one_bounded_suite_with_diagnostic_ta
     assert 'schedule' in bound and 'workflow_dispatch' in bound and '|| 10' in bound
     assert '360' in bound  # Preserve GitHub's previous default for full nightly/manual.
     tests = [x for x in job['steps'] if x.get('run', '').startswith('pytest ')]
-    assert len(tests) == 1 and '|| 7' in tests[0]['timeout-minutes']
-    assert 'continue-on-error' not in tests[0]
+    assert len(tests) == 2 and tests[0]['timeout-minutes'] == 2
+    assert '|| 6' in tests[1]['timeout-minutes']
+    assert '--ci-phase critical' in tests[0]['run'] and '--ci-phase parallel' in tests[1]['run']
+    assert all('continue-on-error' not in step for step in tests)
     assert not any('preview' in str(x).lower() for x in job['steps'])
     assert 'boundary_preview' not in jobs['changes']['outputs']
     tail = job['steps'][job['steps'].index(tests[0]) + 1:]
@@ -90,10 +92,10 @@ def test_native_failures_and_each_required_boundary_remain_selected():
 
 
 def test_new_policy_profiles_cannot_exchange_full_or_historical_windows_receipts():
-    assert cs.VERSION == 7 and cs.COVERAGE['pytest-windows'] == s.WINDOWS_BOUNDARY
-    assert s.WINDOWS_BOUNDARY == 'windows-boundary-v5'
+    assert cs.VERSION == 8 and cs.COVERAGE['pytest-windows'] == s.WINDOWS_BOUNDARY
+    assert s.WINDOWS_BOUNDARY == 'windows-boundary-v6'
     assert cs.COVERAGE['pytest-windows'] != 'windows-full-v1'
-    assert s.policy()['version'] == 5
+    assert s.policy()['version'] == 6
 
 
 def test_selection_failure_cli_saves_diagnostic_then_exits_nonzero(monkeypatch, tmp_path):
@@ -118,10 +120,11 @@ def test_same_tree_different_windows_coverage_cannot_be_reused(evidence, profile
     assert not reuse(api)
 
 
-def test_retired_epoch_is_rejected_even_with_new_artifact_name_and_digest(evidence):
+@pytest.mark.parametrize('version', [6, 7])
+def test_retired_epoch_is_rejected_even_with_new_artifact_name_and_digest(evidence, version):
     import hashlib
     api = API(evidence)
-    api.manifest['version'] = 6
+    api.manifest['version'] = version
     api.zip = archive(api.manifest)
     api.artifact.update(size_in_bytes=len(api.zip), digest='sha256:' + hashlib.sha256(api.zip).hexdigest())
     assert not reuse(api)
@@ -173,7 +176,7 @@ def test_native_contract_preflight_and_missing_collected_case_fail(monkeypatch, 
     monkeypatch.setattr(suite, 'select', lambda *args: ([item], [], {}))
     monkeypatch.setattr(suite, 'policy', lambda: dict(boundary_cohorts={'tests/test_native.py':'native'},
         mandatory_nodes=['tests/test_native.py::test_must_exist']))
-    config = SimpleNamespace(getoption=lambda key: s.WINDOWS_BOUNDARY)
+    config = SimpleNamespace(getoption=lambda key: s.WINDOWS_BOUNDARY if key == "ci_profile" else None)
     observation = suite.Observation(config)
     with pytest.raises(pytest.UsageError, match='mandatory native'):
         observation.pytest_collection_modifyitems(None, config, [item])
@@ -186,13 +189,14 @@ def test_native_contract_preflight_and_missing_collected_case_fail(monkeypatch, 
     assert error == dict(profile=s.WINDOWS_BOUNDARY, status='invalid-selection', reusable=False)
 
 
-def node_wrapper(run):
+def node_wrapper(run, *, required_browser=False):
     """Execute only the wrapper definition, with a module-local fake transport."""
     import subprocess
     tree = ast.parse((s.ROOT/'tests/test_web_3d.py').read_text(encoding='utf-8'), feature_version=(3, 10))
     function = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'test_office_in_node')
     function.decorator_list = []
     namespace = dict(Path=Path, __file__=str(s.ROOT/'tests/test_web_3d.py'), pytest=pytest,
+                     re=__import__('re'), os=SimpleNamespace(environ={'LABHQ_REQUIRE_RESIZABLE_BROWSER': '1'} if required_browser else {}),
                      shutil=SimpleNamespace(which=lambda name: 'fake-node'),
                      subprocess=SimpleNamespace(run=run, TimeoutExpired=subprocess.TimeoutExpired))
     exec(compile(ast.Module(body=[function], type_ignores=[]), '<fake-node-wrapper>', 'exec'), namespace)
@@ -221,6 +225,17 @@ def test_node_timeout_retains_partial_output_and_original_failure(binary):
 def test_node_wrapper_still_requires_success_and_marker(returncode, stdout):
     wrapper = node_wrapper(lambda *args, **kwargs: SimpleNamespace(returncode=returncode, stdout=stdout, stderr=''))
     if returncode == 0 and stdout == 'fail 0':
+        wrapper('web_resizable_panels.cjs', 'fail 0')
+    else:
+        with pytest.raises(AssertionError):
+            wrapper('web_resizable_panels.cjs', 'fail 0')
+
+
+@pytest.mark.parametrize('passed,skipped,accepted', [(3, 0, True), (2, 1, False), (3, 1, False), (2, 0, False)])
+def test_required_browser_needs_actual_inner_node_passes_and_zero_skips(passed, skipped, accepted):
+    stdout = f'TAP version 13\n# pass {passed}\n# fail 0\n# skipped {skipped}\n'
+    wrapper = node_wrapper(lambda *a, **k: SimpleNamespace(returncode=0, stdout=stdout, stderr=''), required_browser=True)
+    if accepted:
         wrapper('web_resizable_panels.cjs', 'fail 0')
     else:
         with pytest.raises(AssertionError):

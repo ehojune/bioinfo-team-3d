@@ -91,7 +91,7 @@ def test_profile_contract_includes_changed_source_without_refreshing_approval(mo
 
 def test_policy_file_is_versioned_and_not_a_runtime_fingerprint():
     data=selection.policy()
-    assert data['version']==5 and data['profile']==selection.WINDOWS_BOUNDARY
+    assert data['version']==6 and data['profile']==selection.WINDOWS_BOUNDARY
     assert 'implementation_sha256' not in data and data['default']=='boundary'
 
 
@@ -140,7 +140,7 @@ def test_actual_session_hooks_forward_operator_identity_before_worker_collection
 def test_ci_resource_lock_covers_protocol_setup_body_and_teardown_without_native_lock(monkeypatch, tmp_path):
     monkeypatch.setenv("CI_SUITE_ARTIFACT_DIR", str(tmp_path))
     monkeypatch.setattr(suite, "ROOT", tmp_path)
-    observation = suite.Observation(SimpleNamespace(getoption=lambda name: "linux-full-v1"))
+    observation = suite.Observation(SimpleNamespace(getoption=lambda name: "linux-full-v1" if name == "ci_profile" else None))
     observation.worker_count = 2
     events = []
     class Lock:
@@ -198,7 +198,7 @@ def test_report_records_job_queue_separately_from_setup_and_pytest(monkeypatch, 
     monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
     monkeypatch.setenv("CI_JOB_LABEL", "pytest-windows")
     monkeypatch.setattr(sys, "argv", ["ci_suite", "report"])
-    metrics = {"profile": "windows-boundary-v5", "workers": 3, "cpu_logical": 8,
+    metrics = {"profile": "windows-boundary-v6", "workers": 3, "cpu_logical": 8,
                "setup_s": 80, "pytest_s": 250, "results": {"passed": 1}, "longest_files": [["a.py", 250]]}
     monkeypatch.setattr(suite, "summarize", lambda path: metrics)
     def api(path):
@@ -216,13 +216,13 @@ def test_report_records_job_queue_separately_from_setup_and_pytest(monkeypatch, 
 def test_unrecognized_selection_policy_cannot_reduce_coverage(tmp_path):
     path = tmp_path / selection.PROFILE
     path.parent.mkdir(parents=True)
-    path.write_text('{"version":1,"profile":"windows-boundary-v5","default":"exclude","reviewed_pure":{}}',
+    path.write_text('{"version":1,"profile":"windows-boundary-v6","default":"exclude","reviewed_pure":{}}',
                     encoding="utf-8")
     with pytest.raises(ValueError):
         selection.policy(tmp_path)
     nodes = [SimpleNamespace(path=tmp_path / "new.py", nodeid="new.py::test_new")]
     with pytest.raises(pytest.UsageError):
-        suite.select(nodes, "windows-boundary-v5", tmp_path)
+        suite.select(nodes, "windows-boundary-v6", tmp_path)
     path.write_text('{"version":1,"version":2}', encoding="utf-8")
     with pytest.raises(ValueError, match="duplicate"):
         selection.policy(tmp_path)
@@ -244,11 +244,11 @@ def test_workflow_parallelizes_only_explicit_outer_suites_and_keeps_full_windows
         assert any(s.get("if") == "always()" and s.get("uses", "").startswith("actions/upload-artifact")
                    for s in jobs[name]["steps"])
     condition = jobs["pytest-windows"]["env"]["CI_COVERAGE_PROFILE"]
-    assert all(word in condition for word in ("schedule", "workflow_dispatch", "windows-full-v1", "windows-boundary-v5"))
+    assert all(word in condition for word in ("schedule", "workflow_dispatch", "windows-full-v1", "windows-boundary-v6"))
     assert "schedule:" in (ROOT / cs.WORKFLOW).read_text(encoding="utf-8")
     project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert '"pytest-xdist==3.8.0"' in project and "addopts" not in project
-    assert cs.COVERAGE["pytest-windows"] == "windows-boundary-v5" and cs.VERSION == 7
+    assert cs.COVERAGE["pytest-windows"] == "windows-boundary-v6" and cs.VERSION == 8
     assert all(p in cs.POLICY_FILES for p in (selection.PROFILE, "scripts/ci_suite.py", "tests/conftest.py", "pyproject.toml"))
 
 

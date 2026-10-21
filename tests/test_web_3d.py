@@ -2,6 +2,7 @@
 import ast
 import asyncio
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -204,6 +205,10 @@ def test_office_in_node(filename, marker):
                              f'\nstderr:\n{captured(exc.stderr)}') from exc
     assert result.returncode == 0, result.stdout + result.stderr
     assert marker in result.stdout, result.stdout + result.stderr
+    if filename == 'web_resizable_panels.cjs' and os.environ.get('LABHQ_REQUIRE_RESIZABLE_BROWSER') == '1':
+        # A Python PASS alone must not certify an optional inner Node skip.
+        assert re.search(r'^# pass 3\s*$', result.stdout, re.MULTILINE), result.stdout + result.stderr
+        assert re.search(r'^# skipped 0\s*$', result.stdout, re.MULTILINE), result.stdout + result.stderr
 
 
 def test_every_node_web_test_runs_in_ci():

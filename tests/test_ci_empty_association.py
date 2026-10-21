@@ -35,7 +35,7 @@ def test_empty_association_requires_authoritative_merged_pr_and_all_existing_pro
     assert 'actions/artifacts/7/zip' in api.calls
     assert 'git/commits/' + api.manifest['checkout_sha'] in api.calls
     assert any('?ref=' + sha('c') in path for path in api.calls)  # pre-existing trusted policy
-    assert api.manifest['version'] == cs.VERSION and cs.VERSION == 7
+    assert api.manifest['version'] == cs.VERSION and cs.VERSION == 8
 
 
 @pytest.mark.parametrize('case', [

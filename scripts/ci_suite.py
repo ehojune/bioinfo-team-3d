@@ -20,12 +20,14 @@ import time
 import pytest
 
 from scripts.ci_selection import ROOT, PROFILES, WINDOWS_BOUNDARY, WINDOWS_PREVIEW, host_resource, include_windows, policy, read_changes
+from scripts import ci_windows_phases as windows
 
 
 def pytest_addoption(parser):
     group = parser.getgroup("ci-coverage")
     group.addoption("--ci-profile", choices=PROFILES)
     group.addoption("--ci-stall", action="store_true", default=False)
+    group.addoption("--ci-phase", choices=('critical', 'parallel'))
 
 
 def pytest_configure(config):
@@ -88,11 +90,33 @@ class Observation:
         self.profile = config.getoption("ci_profile")
         self.worker = safe_worker(os.environ.get("PYTEST_XDIST_WORKER", "master"))
         self.directory = Path(os.environ["CI_SUITE_ARTIFACT_DIR"])
+        self.phase = config.getoption('ci_phase')
+        self.context_identity = None
+        if self.phase:
+            self.context_identity = windows.validate_identity(windows.read(self.directory / 'identity.json'))
+            expected = self.context_identity
+            windows.require(expected['profile'] == self.profile
+                and expected['checkout_sha'] == os.environ.get('GITHUB_SHA')
+                and expected['workflow_sha'] == os.environ.get('GITHUB_WORKFLOW_SHA')
+                and expected['workflow_ref'] == os.environ.get('GITHUB_WORKFLOW_REF')
+                and expected['repository'] == os.environ.get('GITHUB_REPOSITORY')
+                and expected['run_id'] == int(os.environ['GITHUB_RUN_ID'])
+                and expected['attempt'] == int(os.environ['GITHUB_RUN_ATTEMPT'])
+                and expected['python_version'] == platform.python_version()
+                and expected['python_executable'] == os.path.normcase(os.path.abspath(sys.executable)),
+                'stale phase environment/interpreter')
+            if self.phase == 'parallel':
+                windows.check_ready(self.directory, expected)
+            else:
+                windows.require(self.worker == 'master' and os.environ.get('LABHQ_REQUIRE_RESIZABLE_BROWSER') == '1',
+                                'critical must be serial with required browser')
+            self.directory = self.directory / self.phase
         self.directory.mkdir(parents=True, exist_ok=True)
         self.started = time.time()
         self.worker_count = int(os.environ.get("PYTEST_XDIST_WORKER_COUNT", "0"))
         self.files = defaultdict(float)
         self.results = defaultdict(set)
+        self.stage_reports = []
         self.context = "collection"
         self.stall = None
         self.serial = {}
@@ -101,6 +125,8 @@ class Observation:
 
     @pytest.hookimpl(optionalhook=True)
     def pytest_xdist_setupnodes(self, config, specs):
+        if self.phase and len(specs) != (0 if self.phase == 'critical' else 4):
+            raise pytest.UsageError('critical must be serial; parallel must have exactly four workers')
         self.worker_count = len(specs)  # actual xdist count, never assume auto == 4
 
     def pytest_collection_modifyitems(self, session, config, items):
@@ -125,7 +151,20 @@ class Observation:
         if omitted:
             config.hook.pytest_deselected(items=omitted)
             items[:] = chosen
+        eligible = [i.nodeid for i in chosen]
+        if self.phase:
+            try:
+                critical = set(windows.critical(full, eligible))
+                phase_items = [i for i in chosen if (i.nodeid in critical) == (self.phase == 'critical')]
+                removed = [i for i in chosen if (i.nodeid in critical) != (self.phase == 'critical')]
+                config.hook.pytest_deselected(items=removed)
+                items[:] = chosen = phase_items
+            except ValueError as exc:
+                self.write('selection-error', {'reusable': False, 'status': 'invalid-phase'})
+                raise pytest.UsageError(str(exc)) from exc
         self.write("collection", {"profile": self.profile,
+                                  **({'context': self.context_identity, 'phase': self.phase,
+                                      'eligible_nodes': eligible} if self.phase else {}),
                                   **({"reusable": False} if self.profile == WINDOWS_PREVIEW else {}), "full_nodes": full,
                                   "selected_nodes": [i.nodeid for i in chosen],
                                   "excluded_files": reasons})
@@ -164,6 +203,7 @@ class Observation:
         self.context = f"{nodeid} [setup]"
 
     def pytest_runtest_logreport(self, report):
+        self.stage_reports.append([report.nodeid, report.when, report.outcome])
         self.context = f"{report.nodeid} [after {report.when}]"
         self.files[report.nodeid.split("::", 1)[0]] += report.duration
         if report.failed:
@@ -181,6 +221,9 @@ class Observation:
         if self.stall:
             self.stall.close()
         self.write("metrics", {"profile": self.profile, "worker": self.worker,
+                  **({'context': self.context_identity, 'phase': self.phase,
+                      'started_at': self.started, 'finished_at': time.time(),
+                      'stage_reports': self.stage_reports} if self.phase else {}),
                   **({"reusable": False} if self.profile == WINDOWS_PREVIEW else {}),
                   "workers": self.worker_count, "cpu_logical": os.cpu_count(),
                   "python_version": platform.python_version(),
@@ -234,6 +277,14 @@ class WorkerStall:
 
 
 def summarize(directory):
+    if (directory / 'identity.json').exists():
+        proof = windows.combine(directory)
+        windows.write(directory / 'windows-proof.json', proof)
+        result = dict(proof, profile=proof['context']['profile'], workers=4,
+                      results={name: sum(p[name] for p in proof['phases'].values())
+                               for name in ('passed', 'skipped', 'failed')})
+        result.update(windows.measurements(directory))
+        return result
     metrics = json.loads((directory / "metrics-master.json").read_text(encoding="utf-8"))
     collections = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(directory.glob("collection-*.json"))]
     if not collections:
@@ -256,12 +307,15 @@ def summarize(directory):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["report"])
+    parser.add_argument("command", choices=["report", "critical-ready"])
     args = parser.parse_args()
     directory = Path(os.environ["CI_SUITE_ARTIFACT_DIR"])
+    if args.command == 'critical-ready':
+        windows.ready(directory)
+        return
     try:
         result = summarize(directory)
-    except (OSError, ValueError, KeyError) as exc:
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         directory.mkdir(parents=True, exist_ok=True)
         (directory / "report-error.json").write_text(json.dumps({
             "status": "incomplete", "reusable": False, "error": type(exc).__name__}), encoding="utf-8")
@@ -275,6 +329,9 @@ def main():
     # Even an API/report failure must leave the upload step something to retain.
     summary = directory / ("preview-summary.json" if preview else "summary.json")
     summary.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    if 'execution' in result:
+        with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as stream:
+            stream.write('execution=' + windows.EXECUTION + '\nreceipt=' + windows.digest(windows.read(directory / 'windows-proof.json')) + '\n')
     # Read current run scheduling metadata once; this does not wait on any CI.
     from scripts.ci_skip import api
     jobs = api(f"actions/runs/{os.environ['GITHUB_RUN_ID']}/attempts/{os.environ['GITHUB_RUN_ATTEMPT']}/jobs?per_page=100")

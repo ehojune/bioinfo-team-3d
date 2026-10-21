@@ -156,7 +156,8 @@ def test_workflow_preview_is_conditional_step_with_separate_namespace_and_unchan
     assert 'boundary_preview' not in jobs['changes']['outputs']
     assert not any('preview' in str(step).lower() for step in steps)
     normal = [x for x in steps if x.get('run','').startswith('pytest ') and '--ci-profile $' in x['run']]
-    assert len(normal) == 1 and 'continue-on-error' not in normal[0]
+    assert len(normal) == 2 and all('continue-on-error' not in step for step in normal)
+    assert '--ci-phase critical' in normal[0]['run'] and '--ci-phase parallel' in normal[1]['run']
     assert jobs['pytest-windows']['outputs']['profile'] == '${{ steps.identity.outputs.profile }}'
     uploads = [x['with'] for x in steps if x.get('uses','').startswith('actions/upload-artifact')]
     assert len(uploads) == 1 and uploads[0]['name'].startswith('coverage-windows-')
