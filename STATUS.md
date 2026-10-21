@@ -4,6 +4,44 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## #676 — 조회 상태 기록 독립 검토 반영 (source a1edf63, 검토 대상 b8d452f)
+
+- P1 두 건을 고쳤다.
+  - 새 테스트 `tests/test_external_lookup_record_676.py`, `tests/test_external_lookup_flow_676.py`를 `config/ci/windows-boundary-v1.json`의 known_tests에 정렬해 넣었다.
+  - 패치노트 entry에 `pr: null`을 넣었다.
+  - `validate_profile()`은 통과했다. `include_windows()` 판정은 record 테스트가 변경된 직접 OS API(`os.symlink`)라 Windows 경계에 포함되고, flow 테스트는 일반 logic이라 full Linux와 nightly/manual Windows에서 돈다. cohort·mandatory·mixed 계약은 줄이지 않았다.
+- P2 세 건을 반영했다.
+  - `run_lookup`이 호출마다 무작위 12자리 `lookup` id를 남긴다. 중간에 끊긴 호출은 같은 도구의 뒤 성공이 있어도 끝난 기록 없음으로 남는다. id가 없는 이전 기록은 기존처럼 도구별로 판정한다.
+  - link, 일반 파일이 아닌 경우, 읽기 오류는 `unreadable`로 남겨 파일 없음과 구분하고 보고에도 표시한다.
+  - 연구 표시 범위를 문서에 "성공한 단계"로 좁혀 적었다.
+- P3는 초 상한만 7일에서 366일로 넓혔다. 도구 이름 허용 목록은 writer의 method 이름과 묶이게 되는 반면 위험이 낮아(패턴이 markup을 막음) 하지 않았다.
+- 로컬 검사:
+  - 동기 검사 69 passed, 1 skipped(Windows symlink 권한), 2 deselected(async).
+  - 정적 CI 정책 검사(`test_ci_parallel_policy`·`test_ci_windows10m`·`test_ci_cohort823`) 199 passed.
+  - `notes_index.py --validate`, `patch_notes.py check --base e2fb83c`, `check_public.sh`, `git diff --check`, 7파일 Python 3.10 AST 검사 통과.
+  - guard 환경을 유지했고 blocked 이벤트는 0이다.
+- 미실행: `tests/test_external_lookup_flow_676.py`와 `tests/test_external_wait.py`(async; key 집합 검사가 `lookup`을 포함하도록 강화됨)는 CI에 맡긴다. 실제 제품, process, MCP, 네트워크, WSL, HPC, 실제 작업판, 실요청은 확인하지 않았다.
+- 한계: 직접 쓴 스크립트·curl과 타사 MCP는 범위 밖이고, CP2 전에 실패한 연구 단계의 조회 줄도 한계에 나오지 않는다. #676은 열어 둔다. [근거](../reference/external-wait-676.md)
+
+## #676 — 외부 조회 상태 기록의 결과·보고 연결 (source 4a611ed)
+
+- runner는 단계 turn이 끝난 뒤 `outputs/external_lookup_status.jsonl`을 다시 읽어 `TaskResult.external_lookups`에 도구별 결과를 남긴다. 결과는 ok·시간 초과·실패·취소 건수, 끝난 기록 없음, 경과·상한 초다. 파일이 없으면 필드를 생략하고, 다른 판본이 보낸 잘못된 값은 요약만 버린다.
+- link 파일과 link 폴더는 읽지 않는다. 마지막 1MB·5,000줄만 읽고, 한 줄 4,096자·도구 50개·도구 이름 패턴·다섯 상태·유한 초(0 이상 7일 이하)만 받는다. 중복 줄은 한 번만 센다. 줄의 자유 text는 보고에 쓰지 않는다.
+- 표시 위치는 작업판 warn, 일반 `## 보고서 경고`, 연구 CP2 카드, 종합 gaps, 최종 `## 한계`다. 원장에 대응 행이 없어도 표시하며, workspace 기록일 뿐 호출·독해 증명이 아니라는 문구를 붙인다.
+- 기존 optional/required/CP2 판정과 증거 칸은 바꾸지 않았다. 필수 산출물이 빠진 단계는 그대로 실패한다. optional_outputs의 의미 확장과 공통 조회 CLI는 하지 않았다.
+- 로컬에서는 새 동기 검사가 26 passed, 1 skipped(Windows symlink 권한)였고, 기존 `tests/test_output_checks.py`의 동기 검사를 포함하면 59 passed, 1 skipped, 2 deselected(async)였다. guard 환경을 유지했고 blocked 이벤트는 0이다. `scripts/check_public.sh`, `git diff --check`, 5파일 Python 3.10 AST 검사를 통과했다. manual은 176,731→176,944자(LF Unicode)다.
+- 미실행: runner fake CLI와 연구 CP2·한계 async 흐름(`tests/test_external_lookup_flow_676.py`)은 CI에 맡긴다. 실제 제품, process, MCP, 네트워크, WSL, HPC, 과거 95분 요청, 실제 작업판 표시와 뒤 단계 진행은 확인하지 않았다.
+- 한계: 직원이 직접 쓴 스크립트·curl과 타사 MCP는 공통 상한·기록 밖에 있다. #676은 열어 둔다. [근거](../reference/external-wait-676.md)
+
+# 논문 스킬 안내·검증 근거 갱신
+
+논문 준비를 기다리지 않고 분석을 시작하는 동작과 #835의 실제 CI 통과 근거를 안내서에 반영했습니다. Refs #671.
+
+- HANDOFF는 현재 동작과 lookup-only 근거를 연결하고 과거 PR 나열을 덜었습니다. 참고 문서의 미검증 비동기18건은 Python3.10 실제 PASS로 갱신했습니다. 실제 UI·청구·원격 종료·과거 세 번째 빌드 원인은 여전히 미확인입니다.
+- 문서 두 곳 합계 5,862자→6,084자입니다. 제품·테스트·CI 정책은 바꾸지 않았습니다. 문서 정합·패치노트·공개·diff 검사는 게시 전에 확인합니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 ## #835 / #671 — 첫 CI의 fixture 계약 보정
 
 - Waiting/recovery 17건의 필수 plan·step 누락을 공유 순수 builder로 고쳤다. Strict ResearchPlan·승인 hash·제품 동작은 유지한다.

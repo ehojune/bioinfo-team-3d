@@ -3,6 +3,7 @@ import asyncio
 import importlib
 import inspect
 import json
+import re
 from contextvars import ContextVar
 from unittest.mock import AsyncMock
 from types import SimpleNamespace
@@ -152,7 +153,10 @@ async def test_success_keeps_result_and_logs_progress_without_inputs(tmp_path):
     assert [r["status"] for r in records(tmp_path)] == ["waiting", "ok"]
     assert notifications[0]["elapsed_s"] >= 0
     assert "경과" in notifications[0]["text"]
-    assert all(set(r) == {"tool", "status", "elapsed_s", "timeout_s", "text"} for r in records(tmp_path))
+    assert all(set(r) == {"tool", "lookup", "status", "elapsed_s", "timeout_s", "text"} for r in records(tmp_path))
+    # The per-call id is random and the same for every record of this call; it carries no input (#676).
+    assert len({r["lookup"] for r in records(tmp_path)}) == 1
+    assert re.fullmatch(r"[0-9a-f]{12}", records(tmp_path)[0]["lookup"])
 
 
 async def test_hung_lookup_times_out_without_a_process_and_next_work_continues(tmp_path, lookup_runtime):

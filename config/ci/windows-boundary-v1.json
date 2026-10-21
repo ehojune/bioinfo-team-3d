@@ -96,6 +96,8 @@
     "tests/test_event_preview.py",
     "tests/test_evidence_verify.py",
     "tests/test_exit_grace.py",
+    "tests/test_external_lookup_flow_676.py",
+    "tests/test_external_lookup_record_676.py",
     "tests/test_external_wait.py",
     "tests/test_external_wait_cancel.py",
     "tests/test_external_wait_overlap.py",
