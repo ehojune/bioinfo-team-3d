@@ -6,7 +6,7 @@ const fs = require('node:fs'), os = require('node:os'), path = require('node:pat
 const {DEFAULT_TOLERANCE, diffView, sameColor, colorChannels} = require('./support/layout_snapshot.cjs');
 const {updateBaseline} = require('../scripts/update_visual_baseline.cjs');
 const vm = require('node:vm');
-const {openDemo, skipReason, CLOCK_SOURCE, closeDemoResources, demoLifecycleTrace} = require('./support/demo_driver.cjs');
+const {openDemo, skipReason, CLOCK_SOURCE, closeDemoResources, demoLifecycleTrace, requestBrowserShutdown} = require('./support/demo_driver.cjs');
 
 // Synchronous fake clock/observer only; no browser, timer or event loop.
 test('demo lifecycle trace measures from its own origin and between observed boundaries', () => {
@@ -148,6 +148,37 @@ test('a failing or killed visual test fails the update with its own status', () 
 
 
 // ---- demo_driver cleanup: fake owned handles and a manually fired clock only ----
+test('browser shutdown requests graceful close before abrupt owned-child termination', () => {
+  const events = [], failures = [];
+  const chrome = {exitCode:null, signalCode:null, kill() { events.push('kill'); }};
+  assert.equal(requestBrowserShutdown(chrome, () => { events.push('Browser.close'); return true; }, failures), true);
+  assert.deepEqual(events, ['Browser.close']);
+  assert.deepEqual(failures, []);
+  chrome.exitCode = 0;  // Shared stdio and an owned browser can outlive the launcher.
+  assert.equal(requestBrowserShutdown(chrome, () => { events.push('Browser.close'); return true; }, failures), true);
+  assert.deepEqual(events, ['Browser.close', 'Browser.close']);
+});
+
+test('unavailable browser protocol retains owned-child fallback without killing an exited child', () => {
+  for (const request of [undefined, () => false]) {
+    let killed = 0;
+    const chrome = {exitCode:null, signalCode:null, kill() { killed++; }};
+    assert.equal(requestBrowserShutdown(chrome, request, []), false);
+    assert.equal(killed, 1);
+    chrome.exitCode = 0;
+    assert.equal(requestBrowserShutdown(chrome, request, []), false);
+    assert.equal(killed, 1);
+  }
+});
+
+test('shutdown send and owned-child fallback errors are retained', () => {
+  const sendError = new Error('send failed'), killError = new Error('kill failed');
+  const failures = [];
+  const chrome = {exitCode:null, signalCode:null, kill() { throw killError; }};
+  assert.throws(() => requestBrowserShutdown(chrome, () => { throw sendError; }, failures), error => error === killError);
+  assert.deepEqual(failures, [sendError]);
+});
+
 function cleanupFixture() {
   const events = [], diagnostics = [];
   let socketAck, chromeAck, serverAck, fireTimer;
@@ -171,7 +202,7 @@ test('cleanup waits for socket, child stdio and server acknowledgements before r
   let finished = false;
   const closing = closeDemoResources(f.resources, f.options).then(() => { finished = true; });
   await f.tick();
-  assert.deepEqual(f.events, ['ws-request', 'chrome-request', 'server-request']);
+  assert.deepEqual(f.events, ['chrome-request', 'ws-request', 'server-request']);
   f.socketAck(); f.serverAck();
   f.resources.chrome.exitCode = 0;  // An exit code is not a closed stdio acknowledgement.
   await f.tick();
@@ -245,6 +276,42 @@ test('a diagnostic failure cannot hide the original incomplete cleanup', async (
     error.errors.some(item => item.message.startsWith('demo cleanup did not close:')));
   assert.equal(f.events.includes('removed'), false);
   assert.equal(f.events.at(-1), 'timer-cleared');
+});
+
+test('graceful cleanup keeps CDP open until actual child stdio close and still waits for socket acknowledgement', async () => {
+  const f = cleanupFixture();
+  f.resources.requestBrowserClose = () => { f.events.push('Browser.close'); return true; };
+  let completed = false;
+  const closing = closeDemoResources(f.resources, f.options).then(() => { completed = true; });
+  await f.tick();
+  assert.deepEqual(f.events, ['Browser.close', 'server-request']);
+  f.serverAck(); f.resources.chrome.exitCode = 0;
+  await f.tick();
+  assert.equal(completed, false);
+  assert.equal(f.events.includes('removed'), false);
+  assert.equal(f.events.includes('ws-request'), false, 'exit is not stdio close');
+  f.chromeAck(); await f.tick();
+  assert.equal(f.events.includes('ws-request'), true);
+  assert.equal(completed, false, 'socket acknowledgement still required');
+  f.socketAck(); await closing;
+  assert.equal(f.events.includes('chrome-request'), false);
+  assert.deepEqual(f.events.slice(-2), ['timer-cleared', 'removed']);
+});
+
+test('stalled graceful cleanup keeps the five-second failure and requests owned-child fallback once', async () => {
+  const f = cleanupFixture();
+  f.resources.requestBrowserClose = () => { f.events.push('Browser.close'); return true; };
+  const closing = closeDemoResources(f.resources, f.options);
+  await f.tick(); f.serverAck(); await f.tick(); f.timeout();
+  await assert.rejects(closing, error => error instanceof AggregateError &&
+    error.errors.some(item => item.message.startsWith('demo cleanup did not close:')));
+  assert.equal(f.events.filter(x => x === 'chrome-request').length, 1);
+  assert.equal(f.events.filter(x => x === 'ws-request').length, 1);
+  assert.equal(f.events.includes('removed'), false);
+  assert.equal(f.diagnostics.some(row => row.stage === 'closed'), false);
+  f.chromeAck(); f.socketAck(); await f.tick();
+  assert.equal(f.events.filter(x => x === 'ws-request').length, 1);
+  assert.equal(f.events.includes('removed'), false, 'late acknowledgements cannot reverse timeout failure');
 });
 
 // ---- demo_driver: an exception in a virtual timer callback is a page error ----
