@@ -1,14 +1,27 @@
-# Windows cohort 후속 (#823 · 미게시)
+# Windows 경계 선택·검증 기록 (#823)
 
-OS 경계와 변경 test를 선택하는 제안입니다. Windows full과 동등하지 않으며 실제 속도는 미측정입니다.
+조회용 근거입니다. 현재 규칙은 [CI 정책](ci-reuse.md), 구현은 workflow·selector·profile을 봅니다. 아래 과거 기록의 미게시·미검증 표기는 당시 상태입니다.
 
-## 현재 변경안: routine Windows 10분 (#825)
+## 현재 실행 정책
 
-- PR/main은 필수 file/node와 변경된 Windows 관련 test만 한 번 실행합니다. 정책 변경도 full+preview로 확대하지 않습니다. Linux 3.10/3.12 전수·Windows nightly/manual 전수는 유지합니다.
-- profile schema5/boundary-v5·manifest7입니다. 알려진 web shutdown·WMI escape/ACK 5개 callable 누락, 잘못된 range·미등록 test·만료 pin은 실패이며 전수 fallback이나 false-green이 아닙니다. 실제 native assertions·fsync/SQLite·host lock은 바꾸지 않습니다.
-- routine job10분/test step7분으로 report/upload 여유를 둡니다. timeout은 실패이며 완료 시간을 줄였다는 측정이 아닙니다. hard job 취소 시 마지막 업로드가 남지 않을 위험도 있습니다.
-- 기존 cached corpus에 대한 변경 없는 range 가정은 **3,252/10,762(30.2%)**, 7,510개 제외입니다. 예전 4,716개와 달리 generic schema/research/Shadow·미변경 비필수 node는 Linux/nightly에 남깁니다. 새 native parameter와 실제 PR 변경 test는 이 과거 분모에 없는 추가량입니다. 10분 성공·실제 selected count·host wait/job 시간은 root 통합 head CI에서 확인해야 합니다.
-- [현재 선택·증거 계약](ci-reuse.md)을 따릅니다. 아래 phase4 수치와 full+preview 설명은 이전 제안의 보존 기록이며 현재 실행 정책이 아닙니다.
+- PR/main은 필수 OS 경계와 변경된 관련 test를 한 번 검사합니다. Linux 3.10/3.12 전수·Windows nightly/manual 전수를 유지합니다.
+- profile6/boundary-v6·manifest8, 실행 identity는 `windows-critical-serial-v2`입니다. 필수 native/browser를 serial 2분 안에 확인한 뒤 나머지를 4-worker pool 7분으로 실행하며 job 상한은 10분입니다.
+- 선택·pin·receipt 오류와 timeout은 실패입니다. 검사를 빼거나 전수 fallback으로 숨기지 않으며 실제 Job·ACK·시작/종료 안전 검사와 fsync/SQLite 내구성을 유지합니다.
+
+## 실제 CI 측정
+
+[PR825](https://github.com/ehojune/bioinfo-team-3d/pull/825)는 `2f42f41`로 병합됐습니다. [완료 run39603485198/attempt1](https://github.com/ehojune/bioinfo-team-3d/actions/runs/39603485198)의 head `d2d929c3`와 인증된 artifact·checkout/tree·policy를 대조했습니다.
+
+| 항목 | 관측 |
+|---|---|
+| Windows job | 8분14초: 10분 목표 충족 |
+| 전수 수집 / 선택 | 11,037 / 3,680개(33.3%) |
+| 필수 serial | 26 PASS·0 skip·0 fail |
+| 나머지 4-worker | 3,626 PASS·28 skip·0 fail |
+| 준비 / pytest 경과 | 49.6 / 433.9초 |
+| 호스트 락 대기 합계 | 39.7 worker초 |
+
+선택 수는 PASS 수와 다릅니다. 선택 비율은 당초 20~30% 목표보다 넓지만 숫자를 맞추려고 안전 검사를 제외하지 않았습니다. 다른 head·범위와의 시간 차이는 통제된 성능 비교가 아니며 이 run은 후속 PR·실제 운영·연구 효과의 성공 근거가 아닙니다. main 동일 tree 재사용도 따로 검증합니다.
 
 ## 이전 phase4·preview 근거 (대체됨)
 
@@ -59,7 +72,7 @@ run39544266122/job119038816204는 sanitizer 원문 보존을 통과하고 wall 2
 - 실제 Windows 435초/pytest376.60초는 2 FAIL이므로 10분 목표 성공이 아닙니다. Linux full·Windows 필수 native/nightly full·10분 상한과 proof/manifest 계약은 그대로입니다.
 
 
-## PR825 critical phase 격리 (미게시)
+## PR825 critical phase 격리 (당시 준비 기록)
 
 - 제공된 독립 원격 probe에서 같은 제품/native blob의 두 파일은 25 PASS/0 SKIP, pytest36.053초였습니다. Browser는 원래30초 wrapper에서 desktop/phone 모두 완료, Node3 PASS/0 SKIP·9.609초였습니다. Probe는 제품/PI 성공이나 경합 원인의 증명이 아닙니다.
 - 실행 v2는 두 native 파일 전체+정확한 browser node만 serial 수집합니다. 현재26개이며 추가 native case도 자동 포함합니다. 필터 없는 명시 인수와 모든 lifecycle PASS/no-SKIP 뒤 pool을 엽니다. Critical은 좁은 collected/selected만 기록하며 global full/eligible은 실제 pool 수집에서 가져옵니다. 전체 critical parameter 집합·union·빈 intersection·worker/controller report·시간 순서·동일 invocation을 검증합니다. Browser의 내부 Node3 PASS/0 SKIP 계약은 유지합니다.
