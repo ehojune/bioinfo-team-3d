@@ -44,3 +44,7 @@ rows:
   at: 2026-10-21 16:47
   summary: 일상적인 Windows 검사를 필수 경계로 한정하고 10분 상한을 뒀습니다.
   text: '#825: PR/main은 profile v5의 필수 OS 계약과 변경 Windows 관련 test만 한 번 실행하며 full+preview를 없앤다. 잘못된 선택 증거·만료 pin·필수 native callable 누락은 빠르게 실패한다. Linux 두 버전·Windows nightly/manual 전수·native assertions·lock은 유지하며 manifest7로 다른 coverage 재사용을 막는다. pure/static 639 PASS, cached3252/10762 선택·7510 제외이며 실제 600초 이내 성공은 미측정이다.'
+- sha: '2486063'
+  at: 2026-10-21 17:23
+  summary: 병렬 검사에서 진단 파일을 정확히 읽고 브라우저 지연의 근거를 남깁니다.
+  text: '#825: fake master/gw0/gw1에서 필수 native 누락 실패와 worker별 non-reusable 진단을 확인한다. Node timeout의 부분 TAP/stderr·원래 예외와 browser 단계 표식을 보존하며 timeout·선택·assertions는 유지한다. source pin만 갱신, fake/static 50 PASS와 최종 worker 3 PASS; 실제 Windows 지연 원인은 미해결이며 435초/2 FAIL은 목표 성공이 아니다.'
