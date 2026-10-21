@@ -318,7 +318,7 @@ class ToolCallCount(BaseModel):
 
 
 EXTERNAL_LOOKUP_TOOL = r"^[a-z][a-z0-9_]{0,47}$"
-EXTERNAL_LOOKUP_MAX_S = 7 * 86400.0
+EXTERNAL_LOOKUP_MAX_S = 366 * 86400.0  # a sanity bound; a workspace reused for weeks keeps its step budget
 EXTERNAL_LOOKUP_MAX_TOOLS = 50
 
 
@@ -347,6 +347,8 @@ class ExternalLookupRecord(BaseModel):
     duplicate_rows: int = Field(default=0, ge=0)
     dropped_tools: int = Field(default=0, ge=0)
     truncated: bool = False
+    # The file is there but is a link, not a plain file, or failed to read: not the same as no file.
+    unreadable: bool = False
 
 
 class TaskResult(BaseModel):

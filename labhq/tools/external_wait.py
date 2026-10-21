@@ -6,6 +6,7 @@ from contextlib import nullcontext
 import json
 import math
 import time
+import uuid
 from pathlib import Path
 from weakref import WeakValueDictionary
 
@@ -78,13 +79,15 @@ async def _run_lookup(operation, *, tool, workdir, notify, timeout_s, progress_s
                 raise ValueError("외부 조회 대기 기록이 올바르지 않습니다")
         else:
             write_owned(workdir, BUDGET_FILE, json.dumps({"started_at": started}) + "\n")
+    # One random id per call: the runner can tell an interrupted lookup from a later call of the same tool (#676).
+    lookup = uuid.uuid4().hex[:12]
 
     async def record(status):
         elapsed = max(0, clock() - started)
         label = {"waiting": "외부 조회 대기 중", "ok": "외부 조회 완료",
                  "timeout": "조회 불가(시간 초과)", "failed": "외부 조회 실패",
                  "cancelled": "외부 조회 취소"}[status]
-        data = {"tool": tool, "status": status, "elapsed_s": elapsed, "timeout_s": timeout_s,
+        data = {"tool": tool, "lookup": lookup, "status": status, "elapsed_s": elapsed, "timeout_s": timeout_s,
                 "text": f"{tool}: {label} · 경과 {elapsed:.0f}초 / 상한 {timeout_s:.0f}초"}
         if workdir is not None:
             append_owned(workdir, STATUS_FILE, json.dumps(data, ensure_ascii=False) + "\n")

@@ -139,17 +139,61 @@ def _symlink(link, target, directory=False):
         pytest.skip("symlinks are not available here")
 
 
-def test_a_linked_status_file_or_folder_is_not_read(tmp_path):
+UNREADABLE = "기록을 읽지 못함(link이거나 일반 파일이 아니거나 읽기 오류)"
+
+
+def test_a_linked_status_file_or_folder_is_not_read_and_is_not_taken_for_no_record(tmp_path):
     outside = tmp_path / "outside"
     _status(outside, _row("chipatlas", "timeout", 1200))
     step = tmp_path / "step"
     (step / "outputs").mkdir(parents=True)
     _symlink(step / STATUS_FILE, outside / STATUS_FILE)
-    assert external_lookups(step) is None
+    record = external_lookups(step)
+    assert record.unreadable and record.tools == [] and external_lookup_lines(record) == [UNREADABLE]
     other = tmp_path / "other"
     other.mkdir()
     _symlink(other / "outputs", outside / "outputs", directory=True)
-    assert external_lookups(other) is None
+    assert external_lookups(other).unreadable
+
+
+def test_a_status_path_that_is_not_a_plain_file_is_unreadable_but_no_outputs_is_no_record(tmp_path):
+    (tmp_path / STATUS_FILE).mkdir(parents=True)  # a folder where the record should be
+    assert external_lookups(tmp_path).unreadable
+    flat = tmp_path / "flat"
+    flat.mkdir()
+    (flat / "outputs").write_text("not a folder", encoding="utf-8")
+    assert external_lookups(flat).unreadable
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert external_lookups(empty) is None  # no outputs/ at all: no record, not a read failure
+    result = TaskResult(task_id="t", agent_id="a", ok=True, external_lookups=external_lookups(tmp_path))
+    assert quality_lines([{"id": "s1"}], {"s1": result}) == [
+        f"s1: 외부 조회 상태(직원 workspace의 조회 상태 기록이며 호출·본문 독해 증명은 아님) — {UNREADABLE}"]
+
+
+def test_an_interrupted_call_stays_unfinished_after_a_later_call_of_the_same_tool(tmp_path):
+    # Call a waited and its turn ended (task timeout); a later call of the same tool for other genes succeeded.
+    _status(tmp_path, _row("chipatlas", "waiting", 0, lookup="a" * 12), _row("chipatlas", "waiting", 60, lookup="a" * 12),
+            _row("chipatlas", "waiting", 300, lookup="b" * 12), _row("chipatlas", "ok", 310, lookup="b" * 12))
+    item = external_lookups(tmp_path).tools[0]
+    assert (item.ok, item.unfinished) == (1, True)
+    assert external_lookup_lines(external_lookups(tmp_path)) == [
+        "`chipatlas` 끝난 기록 없음 · 단계 조회 경과 310초/상한 1200초"]
+    _status(tmp_path, _row("chipatlas", "waiting", 0, lookup="a" * 12), _row("chipatlas", "ok", 3, lookup="a" * 12))
+    assert not external_lookups(tmp_path).tools[0].unfinished
+
+
+@pytest.mark.parametrize("lookup", ["", "A" * 12, "a" * 11, "a" * 13, 123, ["a" * 12], "**bold**xxxx"])
+def test_a_malformed_call_id_is_an_invalid_row(tmp_path, lookup):
+    _status(tmp_path, _row("chipatlas", "timeout", 1200, lookup=lookup))
+    record = external_lookups(tmp_path)
+    assert record.invalid_rows == 1 and record.tools == []
+
+
+def test_a_workspace_reused_past_a_week_still_reads_its_budget(tmp_path):
+    _status(tmp_path, _row("chipatlas", "timeout", 8 * 86400))
+    record = external_lookups(tmp_path)
+    assert record.invalid_rows == 0 and record.tools[0].timeout == 1
 
 
 def test_a_record_from_another_runner_version_drops_the_summary_not_the_result():

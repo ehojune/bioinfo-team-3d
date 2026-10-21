@@ -562,34 +562,42 @@ def literature_ledger_line(steps: Iterable[Mapping[str, Any]], results: Mapping[
 MAX_LOOKUP_STATUS_BYTES = 1_000_000  # ~4,000 records; the tail keeps the latest outcomes
 MAX_LOOKUP_STATUS_ROWS = 5000
 MAX_LOOKUP_STATUS_LINE = 4096
+LOOKUP_ID = re.compile(r"[0-9a-f]{12}")
 LOOKUP_OUTCOMES = ("ok", "timeout", "failed", "cancelled")
 LOOKUP_STATUSES = frozenset({"waiting", *LOOKUP_OUTCOMES})
 LOOKUP_MISSING_NAMES = {"timeout": "조회 불가(시간 초과)", "failed": "조회 실패", "cancelled": "조회 취소"}
 LOOKUP_RECORD_NOTE = "직원 workspace의 조회 상태 기록이며 호출·본문 독해 증명은 아님"
 
 
+class UnreadableRecord(Exception):
+    """The record is there but is a link, not a plain file under plain folders, or could not be read."""
+
+
 def _owned_tail(root: Path, relative: str, limit: int) -> tuple[str, bool] | None:
     """The last ``limit`` bytes of a plain file under plain folders, as text, and whether earlier bytes were skipped.
-    None when it is missing or a link, as ``read_owned`` treats labhq's own records (#165)."""
+    None when it is missing. A link is never followed, as ``read_owned`` treats labhq's own records (#165); it and a
+    failed read raise ``UnreadableRecord``, so a record that could not be read is not taken for no record."""
     rel = PurePath(relative)
     current = Path(root)
     try:
         for part in rel.parent.parts:
             current /= part
-            if is_link(current) or not current.is_dir():
-                return None
+            if is_link(current) or not current.is_dir():  # is_link raises FileNotFoundError when it is missing
+                raise UnreadableRecord
         target = current / rel.name
         if is_link(target) or not target.is_file():
-            return None
+            raise UnreadableRecord
         fd = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
+        with open(fd, "rb") as handle:
+            size = os.fstat(handle.fileno()).st_size
+            truncated = size > limit
+            if truncated:
+                handle.seek(size - limit)
+            data = handle.read(limit)
     except FileNotFoundError:
         return None
-    with open(fd, "rb") as handle:
-        size = os.fstat(handle.fileno()).st_size
-        truncated = size > limit
-        if truncated:
-            handle.seek(size - limit)
-        data = handle.read(limit)
+    except OSError as exc:
+        raise UnreadableRecord from exc
     text = data.decode("utf-8", errors="replace")
     if truncated:
         text = text.partition("\n")[2]  # the first line was cut
@@ -605,7 +613,7 @@ def _seconds(value: Any, *, positive: bool) -> float | None:
     return value
 
 
-def _lookup_row(line: str) -> tuple[str, str, float, float] | None:
+def _lookup_row(line: str) -> tuple[str, str | None, str, float, float] | None:
     if len(line) > MAX_LOOKUP_STATUS_LINE:
         return None
     try:
@@ -617,10 +625,14 @@ def _lookup_row(line: str) -> tuple[str, str, float, float] | None:
     tool, status = row.get("tool"), row.get("status")
     if not isinstance(tool, str) or not re.fullmatch(EXTERNAL_LOOKUP_TOOL, tool) or status not in LOOKUP_STATUSES:
         return None
+    # Records written before the per-call id have none; a present id must be the writer's form.
+    lookup = row.get("lookup")
+    if lookup is not None and (not isinstance(lookup, str) or not LOOKUP_ID.fullmatch(lookup)):
+        return None
     elapsed, limit = _seconds(row.get("elapsed_s"), positive=False), _seconds(row.get("timeout_s"), positive=True)
     if elapsed is None or limit is None:
         return None
-    return tool, status, elapsed, limit  # the row's free "text" is never read back
+    return tool, lookup, status, elapsed, limit  # the row's free "text" is never read back
 
 
 def external_lookups(root: Path) -> ExternalLookupRecord | None:
@@ -628,7 +640,10 @@ def external_lookups(root: Path) -> ExternalLookupRecord | None:
 
     The file is the step workspace's record: labhq_annot appends to it, but the employee can also write there. It
     shows which lookups ended without an answer; it never proves a call or a reading and never fills a slot."""
-    read = _owned_tail(Path(root), LOOKUP_STATUS_LOG, MAX_LOOKUP_STATUS_BYTES)
+    try:
+        read = _owned_tail(Path(root), LOOKUP_STATUS_LOG, MAX_LOOKUP_STATUS_BYTES)
+    except UnreadableRecord:
+        return ExternalLookupRecord(unreadable=True)
     if read is None:
         return None
     text, truncated = read
@@ -636,8 +651,10 @@ def external_lookups(root: Path) -> ExternalLookupRecord | None:
     if len(lines) > MAX_LOOKUP_STATUS_ROWS:
         lines, truncated = lines[-MAX_LOOKUP_STATUS_ROWS:], True
     tools: dict[str, dict[str, Any]] = {}
-    seen: set[tuple[str, str, float, float]] = set()
+    seen: set[tuple[str, str | None, str, float, float]] = set()
     dropped: set[str] = set()
+    open_calls: dict[str, set[str]] = {}
+    legacy_open: dict[str, bool] = {}
     invalid = duplicate = 0
     for line in lines:
         row = _lookup_row(line)
@@ -648,20 +665,31 @@ def external_lookups(root: Path) -> ExternalLookupRecord | None:
             duplicate += 1
             continue
         seen.add(row)
-        tool, status, elapsed, limit = row
+        tool, lookup, status, elapsed, limit = row
         entry = tools.get(tool)
         if entry is None:
             if len(tools) >= EXTERNAL_LOOKUP_MAX_TOOLS:
                 dropped.add(tool)
                 continue
             entry = tools[tool] = {"tool": tool, "elapsed_s": 0.0}
+            open_calls[tool], legacy_open[tool] = set(), False
+        # A call whose last record is "waiting" stays unfinished; a later call of the same tool does not end it.
+        # Records without an id keep the per-tool reading: the next outcome of that tool ends the wait.
         if status == "waiting":
-            entry["unfinished"] = True
+            if lookup is None:
+                legacy_open[tool] = True
+            else:
+                open_calls[tool].add(lookup)
         else:
             entry[status] = entry.get(status, 0) + 1
-            entry["unfinished"] = False
+            if lookup is None:
+                legacy_open[tool] = False
+            else:
+                open_calls[tool].discard(lookup)
         entry["elapsed_s"] = max(entry["elapsed_s"], elapsed)
         entry["timeout_s"] = limit
+    for tool, entry in tools.items():
+        entry["unfinished"] = bool(open_calls[tool]) or legacy_open[tool]
     return ExternalLookupRecord(tools=[ExternalLookupTool(**entry) for entry in tools.values()],
                                 invalid_rows=invalid, duplicate_rows=duplicate, dropped_tools=len(dropped),
                                 truncated=truncated)
@@ -694,6 +722,8 @@ def external_lookup_lines(value: Any) -> list[str]:
         lines.append(f"도구 {record.dropped_tools}개는 상한 {EXTERNAL_LOOKUP_MAX_TOOLS}개를 넘어 세지 않음")
     if record.truncated:
         lines.append("기록이 길어 마지막 부분만 읽음")
+    if record.unreadable:
+        lines.append("기록을 읽지 못함(link이거나 일반 파일이 아니거나 읽기 오류)")
     return lines
 
 
