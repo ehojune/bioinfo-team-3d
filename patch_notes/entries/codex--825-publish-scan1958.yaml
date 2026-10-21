@@ -3,4 +3,4 @@ rows:
 - sha: 'c291f20'
   at: '2026-10-21 20:10'
   summary: 긴 구분자만 있는 게시 문장을 검사할 때 불필요한 반복을 줄였습니다.
-  text: 구분자 전용 줄 전체를 C fullmatch로 확인해 다른 문자가 필요한 zone의 후보 순회만 생략한다. 특수 zone과 늦은 위치의 path/credential은 기존 전체 classifier에 전달하며 secret/auth/URL·clip 순서를 보존한다. 지정 pure 43건, 출력 동등성 6320조합, 기존 36 test·CPU 2초 계약 AST 보존과 Python 3.10·public·diff를 확인했다. 새 Linux CI는 미확인이다.
+  text: 구분자 전용 줄 전체를 C fullmatch로 확인해 다른 문자가 필요한 zone의 후보 순회만 생략한다. 특수 zone과 늦은 위치의 path/credential은 기존 전체 classifier에 전달하며 secret/auth/URL·clip 순서를 보존한다. 지정 pure 43건, 출력 동등성 6320조합, 기존 36 함수(test 32개·helper 4개)·CPU 2초 계약 AST 보존과 Python 3.10·public·diff를 확인했다. 새 Linux CI는 미확인이다.
