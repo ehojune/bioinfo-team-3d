@@ -268,6 +268,19 @@ def test_resizable_browser_diagnostics_keep_deadline_cleanup_and_selection():
         assert suite.select([item], profile) == ([item], [], {})
 
 
+def test_demo_driver_cleanup_waits_for_actual_close_and_preserves_startup_errors():
+    source = (s.ROOT/'tests/support/demo_driver.cjs').read_text(encoding='utf-8')
+    assert "chromeClosed = new Promise(resolve => chrome.once('close', resolve));" in source
+    assert source.index("chrome.once('close', resolve)") < source.index("chrome.stderr.on('data'")
+    assert source.index('ws.onclose = resolve') < source.index('ws.onopen = resolve')
+    assert 'const close = () => closing ||= closeDemoResources(' in source
+    assert "if (chrome.exitCode === null && chrome.signalCode === null) chrome.kill();" in source
+    assert 'server.close(error => error ? reject(error) : resolve());' in source
+    assert source.index('await Promise.race(') < source.index('await removeProfile(profile);')
+    assert '} finally { clearTimer(timer); }' in source
+    assert "new AggregateError([e, cleanup], 'demo startup and cleanup failed')" in source
+
+
 def test_incomplete_timed_out_report_is_diagnostic_not_success(monkeypatch, tmp_path):
     import sys
     monkeypatch.setenv('CI_SUITE_ARTIFACT_DIR', str(tmp_path))
