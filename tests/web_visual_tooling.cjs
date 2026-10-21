@@ -280,7 +280,8 @@ function cleanupFixture() {
     diagnostic: (stage, pending) => diagnostics.push({stage, pending})};
   const tick = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
   return {resources, options, events, diagnostics, socketAck, chromeAck, tick, phaseCleared,
-    serverAck: error => serverAck(error), timeout: () => fireTimer(), phase: () => firePhase()};
+    serverAck: error => serverAck(error), timeout: () => fireTimer(), phase: () => firePhase(),
+    phaseSet: () => firePhase !== undefined};
 }
 
 test('cleanup waits for socket, child stdio and server acknowledgements before removing its profile', async () => {
@@ -351,6 +352,7 @@ test('partial startup still waits for its server and preserves a server-close er
   await f.tick(); f.serverAck(failure);
   await assert.rejects(closing, error => error instanceof AggregateError && error.errors.includes(failure));
   assert.deepEqual(f.events, ['server-request', 'timer-cleared']);
+  assert.equal(f.phaseSet(), false, 'no owned Chrome was acquired, so there is no forced phase to wait for');
 });
 
 test('a diagnostic failure cannot hide the original incomplete cleanup', async () => {

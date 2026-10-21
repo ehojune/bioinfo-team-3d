@@ -277,11 +277,11 @@ def test_demo_driver_cleanup_waits_for_actual_close_and_preserves_startup_errors
     assert "if (chrome.exitCode === null && chrome.signalCode === null) chrome.kill();" in source
     assert 'server.close(error => error ? reject(error) : resolve());' in source
     assert source.index('await Promise.race(') < source.index('await removeProfile(profile);')
-    assert '} finally { clearTimer(phase); clearTimer(timer); }' in source
+    assert '} finally { if (phase !== undefined) clearTimer(phase); clearTimer(timer); }' in source
     assert "new AggregateError([e, cleanup], 'demo startup and cleanup failed')" in source
     # #842: one 5 s deadline; a stalled graceful close is forced at 3 s inside it, once, and the deadline still rejects.
     assert 'const CLEANUP_MS = 5000, GRACEFUL_CLEANUP_MS = 3000;' in source
-    assert 'phase = setTimer(force, GRACEFUL_CLEANUP_MS);' in source and '}, CLEANUP_MS);' in source
+    assert 'if (chrome) phase = setTimer(force, GRACEFUL_CLEANUP_MS);' in source and '}, CLEANUP_MS);' in source
     assert 'if (!graceful || forced) return;' in source
     deadline = source[source.index("report('timeout');"):source.index("'demo cleanup incomplete'));")]
     assert deadline.index('observeLate();') < deadline.index('force();') < deadline.index('reject(')

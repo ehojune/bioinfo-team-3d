@@ -180,7 +180,8 @@ async function closeDemoResources({ws, wsClosed, chrome, chromeClosed, requestBr
   let timer, phase;
   try {
     await Promise.race([Promise.allSettled(waits), new Promise((_, reject) => {
-      phase = setTimer(force, GRACEFUL_CLEANUP_MS);
+      // Only an acquired owned Chrome has a forced phase; a partial startup keeps the single deadline (#843 CI).
+      if (chrome) phase = setTimer(force, GRACEFUL_CLEANUP_MS);
       timer = setTimer(() => {
         report('timeout');
         try { observeLate(); } catch { /* diagnostic only */ }
@@ -190,7 +191,7 @@ async function closeDemoResources({ws, wsClosed, chrome, chromeClosed, requestBr
           'demo cleanup incomplete'));
       }, CLEANUP_MS);
     })]);
-  } finally { clearTimer(phase); clearTimer(timer); }
+  } finally { if (phase !== undefined) clearTimer(phase); clearTimer(timer); }
   if (failures.length) throw new AggregateError(failures, 'demo cleanup failed');
   await removeProfile(profile);
   report('closed');
