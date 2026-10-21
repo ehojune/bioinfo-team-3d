@@ -5,10 +5,11 @@ import math
 from pathlib import Path
 import re
 
-EXECUTION = 'windows-critical-serial-v1'
+EXECUTION = 'windows-critical-serial-v2'
 PROFILE = 'windows-boundary-v6'
 FILES = ('tests/test_windows_job_ci.py', 'tests/test_web_shutdown_process.py')
 BROWSER = 'tests/test_web_3d.py::test_office_in_node[web_resizable_panels.cjs-fail 0]'
+TARGETS = (*FILES, BROWSER)
 MANDATORY = (
     FILES[0] + '::test_wmi_escapes_owned_outer_nonbreakaway_inner_silent_job',
     FILES[0] + '::test_real_wmi_bootstrap_never_enters_fake_role_without_verified_ack',
@@ -55,11 +56,12 @@ def critical(full, eligible):
     nodes(eligible)
     require(set(eligible) <= set(full), 'selection outside full inventory')
     native = [n for n in full if n.split('::', 1)[0] in FILES]
-    # A changed native collection requires explicit contract review, never loss.
-    require(len(native) == 25 and all(any(n.startswith(p + '::') for n in native) for p in FILES),
-            'expected all 25 native cases')
+    # Whole-file collection includes additions. Never reduce the current floor;
+    # combine also compares every node against the independent global collection.
+    require(len(native) >= 25 and all(any(n.startswith(p + '::') for n in native) for p in FILES),
+            'expected at least all 25 native cases')
     result = [n for n in full if n in native or n == BROWSER]
-    require(len(result) == 26 and set(result) <= set(eligible), 'missing critical selection')
+    require(BROWSER in result and len(result) >= 26 and set(result) <= set(eligible), 'missing critical selection')
     require(set(MANDATORY) <= {n.split('[', 1)[0] for n in result}, 'missing mandatory callable')
     return result
 
@@ -107,9 +109,22 @@ def phase(directory, name, identity):
     require(all(c == coverage for c in collections), 'worker collection drift')
     require(coverage['context'] == identity and coverage['phase'] == name
             and coverage['profile'] == identity['profile'], 'stale collection identity')
-    full, eligible, selected = [nodes(coverage[k]) for k in ('full_nodes', 'eligible_nodes', 'selected_nodes')]
-    initial = critical(full, eligible)
-    expected = initial if name == 'critical' else [n for n in eligible if n not in set(initial)]
+    common = {'context', 'phase', 'profile', 'collection_scope', 'collection_args', 'selected_nodes'}
+    if name == 'critical':
+        require(set(coverage) == common | {'collected_nodes'}
+                and coverage['collection_scope'] == 'critical-targets-v2'
+                and coverage['collection_args'] == list(TARGETS), 'critical collection scope')
+        collected = nodes(coverage['collected_nodes'])
+        expected = critical(collected, collected)
+        require(expected == collected, 'foreign critical collection')
+    else:
+        require(set(coverage) == common | {'full_nodes', 'eligible_nodes', 'excluded_files'}
+                and coverage['collection_scope'] == 'global-v2'
+                and coverage['collection_args'] == ['tests'], 'global collection scope')
+        full, eligible = [nodes(coverage[k]) for k in ('full_nodes', 'eligible_nodes')]
+        initial = set(critical(full, eligible))
+        expected = [n for n in eligible if n not in initial]
+    selected = nodes(coverage['selected_nodes'])
     require(selected == expected, 'phase selection mismatch')
     require(selected, 'empty phase')
     for w in set(workers) | {'master'}:
@@ -177,10 +192,12 @@ def combine(directory):
     check_ready(directory, identity)
     a, am = phase(directory, 'critical', identity)
     b, bm = phase(directory, 'parallel', identity)
-    require(a['full_nodes'] == b['full_nodes'] and a['eligible_nodes'] == b['eligible_nodes']
-            and a['excluded_files'] == b['excluded_files'], 'phase full/eligible collection drift')
+    # Only the pool actually imports/collects the whole suite. Different target
+    # order is legitimate, but no critical parameter may be lost or invented.
+    require(set(a['collected_nodes']) == set(critical(b['full_nodes'], b['eligible_nodes'])),
+            'critical/global collection drift')
     require(not set(a['selected_nodes']) & set(b['selected_nodes']) and
-            set(a['selected_nodes']) | set(b['selected_nodes']) == set(a['eligible_nodes']), 'phase union/overlap')
+            set(a['selected_nodes']) | set(b['selected_nodes']) == set(b['eligible_nodes']), 'phase union/overlap')
     require(bm['started_at'] >= am['finished_at'], 'overlapping execution phases')
     phases = {}
     for name, c, m in (('critical', a, am), ('parallel', b, bm)):
@@ -190,8 +207,8 @@ def combine(directory):
             started_at=m['started_at'], finished_at=m['finished_at'],
             pytest_s=m['finished_at'] - m['started_at'])
     result = dict(execution=EXECUTION, context=identity, reusable=True, phases=phases,
-        full_node_count=len(a['full_nodes']), selected_node_count=len(a['eligible_nodes']),
-        full_digest=digest(a['full_nodes']), selected_digest=digest(a['eligible_nodes']),
+        full_node_count=len(b['full_nodes']), selected_node_count=len(b['eligible_nodes']),
+        full_digest=digest(b['full_nodes']), selected_digest=digest(b['eligible_nodes']),
         critical_digest=digest(a['selected_nodes']), parallel_digest=digest(b['selected_nodes']),
         setup_s=am['started_at'] - identity['setup_started'],
         pytest_s=bm['finished_at'] - am['started_at'])
@@ -210,7 +227,7 @@ def measurements(directory):
                 waits[path] = waits.get(path, 0) + number(duration)
             for path, duration in row['longest_files']:
                 longest[path] = longest.get(path, 0) + number(duration)
-    return dict(excluded_files=read(Path(directory)/'critical/collection-master.json')['excluded_files'],
+    return dict(excluded_files=read(Path(directory)/'parallel/collection-gw0.json')['excluded_files'],
                 host_resource_wait_s=waits, longest_files=sorted(longest.items(), key=lambda p: -p[1])[:20])
 
 
@@ -229,7 +246,7 @@ def validate_proof(value):
                 and p['selected'] > 0 and p['failed'] == 0
                 and p['passed'] + p['skipped'] == p['selected'], 'phase outcomes')
         require(number(p['finished_at']) - number(p['started_at']) == number(p['pytest_s']), 'phase duration')
-    require(a['selected'] == a['passed'] == 26 and a['skipped'] == a['workers'] == 0
+    require(a['selected'] == a['passed'] and a['passed'] >= 26 and a['skipped'] == a['workers'] == 0
             and b['workers'] == 4 and b['started_at'] >= a['finished_at'], 'critical proof / barrier')
     require(type(value['full_node_count']) is int and type(value['selected_node_count']) is int
             and value['full_node_count'] >= value['selected_node_count'] == a['selected'] + b['selected'],

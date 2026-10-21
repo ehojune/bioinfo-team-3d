@@ -19,8 +19,8 @@ def test_routine_job_is_ten_minutes_and_has_one_bounded_suite_with_diagnostic_ta
     assert 'schedule' in bound and 'workflow_dispatch' in bound and '|| 10' in bound
     assert '360' in bound  # Preserve GitHub's previous default for full nightly/manual.
     tests = [x for x in job['steps'] if x.get('run', '').startswith('pytest ')]
-    assert len(tests) == 2 and tests[0]['timeout-minutes'] == 3
-    assert '|| 6' in tests[1]['timeout-minutes']
+    assert len(tests) == 2 and tests[0]['timeout-minutes'] == 2
+    assert '|| 7' in tests[1]['timeout-minutes']
     assert '--ci-phase critical' in tests[0]['run'] and '--ci-phase parallel' in tests[1]['run']
     assert all('continue-on-error' not in step for step in tests)
     assert not any('preview' in str(x).lower() for x in job['steps'])

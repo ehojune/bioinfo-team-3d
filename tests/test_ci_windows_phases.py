@@ -58,20 +58,25 @@ def fake_inventory():
     return critical, parallel
 
 
-def make_receipts(folder, context=None):
+def make_receipts(folder, context=None, *, extra_native=()):
     context = context or fake_context()
     folder.mkdir(exist_ok=True)
     p.write(folder/'identity.json', context)
     critical, parallel = fake_inventory()
+    critical += list(extra_native)
     eligible = critical + parallel
     full = eligible + ['tests/test_pure.py::test_text']
     for phase, selected, count, start, end in (('critical', critical, 0, 10, 56), ('parallel', parallel, 4, 57, 400)):
         directory = folder/phase
         directory.mkdir(exist_ok=True)
         workers = ['master'] if count == 0 else ['gw' + str(i) for i in range(count)]
-        coverage = dict(profile=context['profile'], context=context, phase=phase,
-                        full_nodes=full, eligible_nodes=eligible, selected_nodes=selected,
-                        excluded_files={'tests/test_pure.py': 'pure fixture'})
+        coverage = dict(profile=context['profile'], context=context, phase=phase, selected_nodes=selected)
+        if phase == 'critical':
+            coverage.update(collection_scope='critical-targets-v2', collection_args=list(p.TARGETS),
+                            collected_nodes=critical)
+        else:
+            coverage.update(collection_scope='global-v2', collection_args=['tests'],
+                full_nodes=full, eligible_nodes=eligible, excluded_files={'tests/test_pure.py': 'pure fixture'})
         reports = [[node, stage, 'passed'] for node in selected for stage in ('setup', 'call', 'teardown')]
         for worker in set(workers) | {'master'}:
             own = reports if worker == 'master' else [r for r in reports if selected.index(r[0]) % 4 == int(worker[2:])]
@@ -212,13 +217,18 @@ def test_real_collection_hook_keeps_actual_phase_selected_nodes_only(monkeypatch
     monkeypatch.setattr(suite, 'ROOT', receipts)
     critical, parallel = fake_inventory()
     full = critical + parallel + ['tests/test_pure.py::test_text']
-    items = [SimpleNamespace(path=receipts/n.split('::', 1)[0], nodeid=n) for n in full]
-    monkeypatch.setattr(suite, 'select', lambda *args: (items[:-1], items[-1:], {'tests/test_pure.py': 'pure fixture'}))
+    initial = critical if phase == 'critical' else full
+    items = [SimpleNamespace(path=receipts/n.split('::', 1)[0], nodeid=n) for n in initial]
+    def select(*args):
+        assert phase == 'parallel', 'critical must not read or forge a global selection'
+        return items[:-1], items[-1:], {'tests/test_pure.py': 'pure fixture'}
+    monkeypatch.setattr(suite, 'select', select)
     monkeypatch.setattr(suite, 'policy', lambda: dict(boundary_cohorts={f: 'native' for f in p.FILES},
                                                    mandatory_nodes=list(p.MANDATORY)))
     deselected = []
-    config = SimpleNamespace(getoption=lambda key: dict(ci_profile=p.PROFILE, ci_phase=phase).get(key),
-                             hook=SimpleNamespace(pytest_deselected=lambda items: deselected.extend(items)))
+    config = fake_collection_config(phase)
+    config.getoption = lambda key: dict(ci_profile=p.PROFILE, ci_phase=phase).get(key)
+    config.hook = SimpleNamespace(pytest_deselected=lambda items: deselected.extend(items))
     observer = suite.Observation(config)
     manager = pytest.PytestPluginManager()
     manager.register(observer)
@@ -241,9 +251,13 @@ def test_real_collection_hook_keeps_actual_phase_selected_nodes_only(monkeypatch
     expected = critical if phase == 'critical' else parallel
     assert [i.nodeid for i in items] == expected
     saved = p.read(receipts/phase/'collection-master.json')
-    assert saved['selected_nodes'] == expected and saved['eligible_nodes'] == critical + parallel
-    assert saved['full_nodes'] == full
-    assert set(i.nodeid for i in deselected) == set(full) - set(expected)
+    assert saved['selected_nodes'] == expected
+    if phase == 'critical':
+        assert saved['collected_nodes'] == critical and saved['collection_args'] == list(p.TARGETS)
+        assert not {'full_nodes', 'eligible_nodes', 'excluded_files'} & saved.keys()
+    else:
+        assert saved['eligible_nodes'] == critical + parallel and saved['full_nodes'] == full
+    assert set(i.nodeid for i in deselected) == set(initial) - set(expected)
     # Actual hook events are retained per stage, not a synthetic expanded PASS.
     for node in expected:
         observer.pytest_runtest_logstart(node, None)
@@ -272,7 +286,8 @@ def test_parallel_plugin_refuses_to_start_without_verified_critical_barrier(monk
         GITHUB_REPOSITORY=context['repository'], GITHUB_RUN_ID='42', GITHUB_RUN_ATTEMPT='1').items():
         monkeypatch.setenv(key, value)
     (receipts/'critical-success.json').unlink()
-    config = SimpleNamespace(getoption=lambda key: dict(ci_profile=p.PROFILE, ci_phase='parallel').get(key))
+    config = fake_collection_config('parallel')
+    config.getoption = lambda key: dict(ci_profile=p.PROFILE, ci_phase='parallel').get(key)
     with pytest.raises(FileNotFoundError, match='critical-success.json'):
         suite.Observation(config)
 
@@ -359,6 +374,11 @@ def test_workflow_barrier_download_binding_no_skip_and_ten_minute_total():
     parallel = next(i for i, x in enumerate(steps) if '--ci-phase parallel' in x.get('run', ''))
     assert critical < parallel and steps[critical + 1]['run'] == 'python -m scripts.ci_suite critical-ready'
     assert '-n 0' in steps[critical]['run'] and steps[critical]['env']['LABHQ_REQUIRE_RESIZABLE_BROWSER'] == '1'
+    import shlex
+    command = shlex.split(steps[critical]['run'])
+    assert command[command.index('critical') + 1:] == list(p.TARGETS)
+    assert steps[critical]['timeout-minutes'] == 2 and '|| 7' in steps[parallel]['timeout-minutes']
+    assert shlex.split(steps[parallel]['run'])[-1] == 'tests'
     assert '-n 4 --dist loadfile' in steps[parallel]['run']
     assert not any(x.get('continue-on-error') or x.get('if') for x in steps[critical:parallel+1])
     assert '|| 10' in job['timeout-minutes'] and 'windows-full-v1' in job['env']['CI_COVERAGE_PROFILE']
@@ -497,3 +517,132 @@ def test_diagnostic_write_failure_does_not_mask_an_interrupted_stage(tmp_path, c
     assert checkpoints.data['current']['state'] == 'started'
     assert checkpoints.data['completed_reports']['teardown'] == 0
     assert capsys.readouterr().err.count('checkpoint write unavailable') == 1
+
+
+def fake_collection_config(phase, **options):
+    return SimpleNamespace(rootpath=suite.ROOT, args=list(p.TARGETS) if phase == 'critical' else ['tests'],
+        option=SimpleNamespace(**options), getini=lambda key: {
+            'python_files': ['test_*.py', '*_test.py'], 'python_classes': ['Test'],
+            'python_functions': ['test']}.get(key))
+
+
+@pytest.mark.parametrize('phase', ['critical', 'parallel'])
+def test_phase_invocation_binds_complete_explicit_collection_without_filters(monkeypatch, phase):
+    monkeypatch.delenv('PYTEST_ADDOPTS', raising=False)
+    config = fake_collection_config(phase)
+    assert suite.collection_arguments(config, phase) == config.args
+    config.args = config.args[:-1]
+    with pytest.raises(ValueError, match='collection arguments'):
+        suite.collection_arguments(config, phase)
+
+
+@pytest.mark.parametrize('option,value', [('keyword', 'not native'), ('markexpr', 'not windows'),
+    ('deselect', ['tests/test_windows_job_ci.py::test_owned']), ('ignore', [p.FILES[0]]),
+    ('ignore_glob', ['*job*']), ('lf', True), ('collectonly', True), ('pyargs', True),
+    ('override_ini', ['python_functions=test_subset']), ('stepwise', True)])
+def test_critical_invocation_rejects_collection_reduction(monkeypatch, option, value):
+    monkeypatch.delenv('PYTEST_ADDOPTS', raising=False)
+    with pytest.raises(ValueError, match='collection filter'):
+        suite.collection_arguments(fake_collection_config('critical', **{option: value}), 'critical')
+
+
+def test_critical_automatically_includes_new_native_cases_without_accepting_old_execution():
+    critical, _ = fake_inventory()
+    extra = p.FILES[0] + '::test_new_native_parameter[new]'
+    assert p.critical(critical + [extra], critical + [extra]) == critical + [extra]
+    identity = fake_context()
+    identity['execution'] = 'windows-critical-serial-v1'
+    with pytest.raises(ValueError, match='execution policy'):
+        p.validate_identity(identity)
+
+
+def test_narrow_critical_uses_global_pool_inventory_without_requiring_equal_collection_order(receipts):
+    for path in (receipts/'parallel').glob('collection-*.json'):
+        change(path, lambda value: value.update(full_nodes=list(reversed(value['full_nodes'])),
+                                                eligible_nodes=list(reversed(fake_inventory()[0])) + fake_inventory()[1]))
+    proof = p.combine(receipts)
+    global_coverage = p.read(receipts/'parallel/collection-gw0.json')
+    assert proof['full_digest'] == p.digest(global_coverage['full_nodes'])
+    assert proof['selected_digest'] == p.digest(global_coverage['eligible_nodes'])
+    critical_coverage = p.read(receipts/'critical/collection-master.json')
+    assert set(critical_coverage['collected_nodes']) == set(fake_inventory()[0])
+    assert 'full_nodes' not in critical_coverage and proof['selected_node_count'] == 30
+
+
+def test_added_native_cases_are_required_in_both_actual_collections_and_pass_barrier(tmp_path):
+    extra = p.FILES[1] + '::test_new_native_case[extra]'
+    proof = make_receipts(tmp_path, extra_native=[extra])
+    assert proof['phases']['critical']['selected'] == proof['phases']['critical']['passed'] == 27
+    assert proof['selected_node_count'] == 31
+    p.check_ready(tmp_path, p.read(tmp_path/'identity.json'))
+    # Independent global discovery of another case must not certify an earlier
+    # smaller critical run, even if its valid barrier and every pool result exist.
+    for path in (tmp_path/'parallel').glob('collection-*.json'):
+        def add(value):
+            for key in ('full_nodes', 'eligible_nodes'):
+                value[key].append(p.FILES[0] + '::test_lost_new_native')
+        change(path, add)
+    with pytest.raises(ValueError, match='critical/global collection drift'):
+        p.combine(tmp_path)
+
+
+@pytest.mark.parametrize('case', ['extra-global-fields', 'wrong-targets', 'foreign', 'missing', 'substituted'])
+def test_narrow_phase_scope_or_changed_contract_never_certifies_global_coverage(receipts, case):
+    coverage = receipts/'critical/collection-master.json'
+    def alter(value):
+        if case == 'extra-global-fields':
+            value.update(full_nodes=value['collected_nodes'], eligible_nodes=value['selected_nodes'], excluded_files={})
+        elif case == 'wrong-targets':
+            value['collection_args'][0] += '::test_filtered'
+        else:
+            if case == 'missing':
+                value['collected_nodes'].pop(3)
+                value['selected_nodes'].pop(3)
+            else:
+                replacement = 'tests/test_foreign.py::test_other' if case == 'foreign' else p.FILES[0] + '::test_other_parameter[x]'
+                for key in ('collected_nodes', 'selected_nodes'):
+                    value[key][3] = replacement
+    change(coverage, alter)
+    if case == 'substituted':
+        # All lifecycle reports match the substituted local collection: only
+        # the independent global inventory can detect this equal-count drift.
+        node = p.read(coverage)['selected_nodes'][3]
+        def reports(value):
+            for row in value['stage_reports']:
+                if row[0] == fake_inventory()[0][3]:
+                    row[0] = node
+        change(receipts/'critical/metrics-master.json', reports)
+        p.ready(receipts)
+    with pytest.raises(ValueError):
+        p.combine(receipts)
+
+
+@pytest.mark.parametrize('key', ['checkout_sha', 'head_sha', 'workflow_sha', 'workflow_ref', 'invocation',
+                               'tree', 'policy', 'run_id', 'attempt', 'python_executable'])
+def test_narrow_receipt_remains_bound_to_every_phase_identity(receipts, key):
+    def alter(value):
+        value['context'][key] = 99 if key in ('run_id', 'attempt') else 'changed'
+    change(receipts/'critical/collection-master.json', alter)
+    with pytest.raises(ValueError):
+        p.ready(receipts)
+    with pytest.raises(ValueError):
+        p.combine(receipts)
+
+
+def test_collection_options_cannot_hide_requirements_in_environment_or_ini(monkeypatch):
+    config = fake_collection_config('critical')
+    monkeypatch.setenv('PYTEST_ADDOPTS', '-k not_native')
+    with pytest.raises(ValueError, match='PYTEST_ADDOPTS'):
+        suite.collection_arguments(config, 'critical')
+    monkeypatch.delenv('PYTEST_ADDOPTS')
+    config.getini = lambda key: ['test_subset']
+    with pytest.raises(ValueError, match='python_files'):
+        suite.collection_arguments(config, 'critical')
+
+
+def test_critical_invocation_cannot_collect_another_checkout(monkeypatch, tmp_path):
+    monkeypatch.delenv('PYTEST_ADDOPTS', raising=False)
+    config = fake_collection_config('critical')
+    config.rootpath = tmp_path
+    with pytest.raises(ValueError, match='collection root'):
+        suite.collection_arguments(config, 'critical')

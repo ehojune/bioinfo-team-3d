@@ -141,6 +141,21 @@ class PhaseCheckpoints:
                 self.warned = True
 
 
+def collection_arguments(config, phase):
+    """Bind real pytest discovery, not a caller's claim of complete coverage."""
+    expected = list(windows.TARGETS) if phase == 'critical' else ['tests']
+    windows.require(Path(config.rootpath).resolve() == ROOT.resolve(), 'unexpected phase collection root')
+    windows.require(list(config.args) == expected, 'unexpected phase collection arguments')
+    for flag in ('keyword', 'markexpr', 'deselect', 'ignore', 'ignore_glob', 'lf',
+                 'collectonly', 'pyargs', 'keepduplicates', 'override_ini', 'stepwise', 'stepwise_skip'):
+        windows.require(not getattr(config.option, flag, None), 'phase collection filter: ' + flag)
+    windows.require(not os.environ.get('PYTEST_ADDOPTS'), 'phase collection filter: PYTEST_ADDOPTS')
+    for key, value in dict(python_files=['test_*.py', '*_test.py'],
+                           python_classes=['Test'], python_functions=['test']).items():
+        windows.require(config.getini(key) == value, 'phase collection filter: ' + key)
+    return expected
+
+
 class Observation:
     def __init__(self, config):
         self.config = config
@@ -150,6 +165,7 @@ class Observation:
         self.phase = config.getoption('ci_phase')
         self.context_identity = None
         if self.phase:
+            self.collection_args = collection_arguments(config, self.phase)
             self.context_identity = windows.validate_identity(windows.read(self.directory / 'identity.json'))
             expected = self.context_identity
             windows.require(expected['profile'] == self.profile
@@ -200,6 +216,23 @@ class Observation:
 
     def pytest_collection_modifyitems(self, session, config, items):
         full = [i.nodeid for i in items]
+        if self.phase == 'critical':
+            try:
+                # Collect the two complete files and exact browser parameter.
+                # No global inventory or eligibility is invented for this run.
+                for item in items:
+                    source = Path(item.path)
+                    windows.require(not source.is_symlink() and source.resolve().relative_to(ROOT.resolve()).as_posix()
+                                    == item.nodeid.split('::', 1)[0], 'foreign critical source')
+                windows.require(windows.critical(full, full) == full, 'foreign critical collection')
+            except ValueError as exc:
+                self.write('selection-error', {'reusable': False, 'status': 'invalid-critical-collection'})
+                raise pytest.UsageError(str(exc)) from exc
+            self.write('collection', dict(context=self.context_identity, phase=self.phase,
+                profile=self.profile, collection_scope='critical-targets-v2',
+                collection_args=self.collection_args, collected_nodes=full, selected_nodes=full))
+            self.checkpoints.mark('selection_finished')
+            return
         try:
             chosen, omitted, reasons = select(items, self.profile)
             if self.profile == WINDOWS_BOUNDARY:
@@ -233,7 +266,8 @@ class Observation:
                 raise pytest.UsageError(str(exc)) from exc
         self.write("collection", {"profile": self.profile,
                                   **({'context': self.context_identity, 'phase': self.phase,
-                                      'eligible_nodes': eligible} if self.phase else {}),
+                                      'eligible_nodes': eligible, 'collection_scope': 'global-v2',
+                                      'collection_args': self.collection_args} if self.phase else {}),
                                   **({"reusable": False} if self.profile == WINDOWS_PREVIEW else {}), "full_nodes": full,
                                   "selected_nodes": [i.nodeid for i in chosen],
                                   "excluded_files": reasons})
