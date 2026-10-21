@@ -95,7 +95,13 @@ function startStaticServer(rootDir) {
       res.end(fs.readFileSync(filename));
     } catch { res.writeHead(404).end(); }
   });
-  return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve(server)));
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      server.removeListener('error', reject);
+      resolve(server);
+    });
+  });
 }
 
 async function removeDir(dir) {
@@ -140,7 +146,7 @@ async function closeDemoResources({ws, wsClosed, chrome, chromeClosed, requestBr
     graceful = requestBrowserShutdown(chrome, requestBrowserClose, failures);
   }, chromeClosed));
   if (ws) waits.push(closing('websocket', () => graceful ? chromeClosed.then(closeSocket) : closeSocket(), wsClosed));
-  waits.push(closing('http-server', () => new Promise((resolve, reject) => {
+  if (server) waits.push(closing('http-server', () => new Promise((resolve, reject) => {
     server.close(error => error ? reject(error) : resolve());
   })));
   let timer;
@@ -191,13 +197,15 @@ async function openDemo(opts = {}) {
   if (!chromePath) throw new Error('no Chrome found');
   const {width = 1440, height = 900, reducedMotion = true, colorScheme = 'light', web = WEB_ROOT, layoutFont = false, fontFamily = null} = opts;
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'labhq-visual-'));
-  const server = await startStaticServer(web);
-  const port = server.address().port;
-  if (FORBIDDEN_PORTS.includes(port)) throw new Error('static server landed on a reserved port ' + port);
-  const origin = `http://127.0.0.1:${port}`;
-  let chrome, ws, chromeClosed, wsClosed, requestBrowserClose, closing;
+  trace('profile-ready');
+  let server, chrome, ws, chromeClosed, wsClosed, requestBrowserClose, closing;
   const close = () => closing ||= closeDemoResources({ws, wsClosed, chrome, chromeClosed, requestBrowserClose, server, profile});
   try {
+    server = await startStaticServer(web);
+    trace('server-ready');
+    const port = server.address().port;
+    if (FORBIDDEN_PORTS.includes(port)) throw new Error('static server landed on a reserved port ' + port);
+    const origin = `http://127.0.0.1:${port}`;
     // Chrome resolves its default profile before comparing --user-data-dir; keep both under this temp root.
     const home = path.join(profile, 'home'), local = path.join(home, 'AppData', 'Local'), roaming = path.join(home, 'AppData', 'Roaming');
     fs.mkdirSync(path.join(local, 'Google', 'Chrome', 'User Data'), {recursive: true});
@@ -214,6 +222,7 @@ async function openDemo(opts = {}) {
       HOMEDRIVE: path.parse(home).root.slice(0, 2), HOMEPATH: home.slice(2), LOCALAPPDATA: local, APPDATA: roaming, XDG_CONFIG_HOME: config}});
     chromeClosed = new Promise(resolve => chrome.once('close', resolve));
     chrome.stderr.on('data', chunk => { chromeError = (chromeError + chunk).slice(-2000); });
+    trace('chrome-spawned');
     // A cold Chrome start on a loaded CI runner can take far longer than 10 s (see tests/web_office_browser.cjs):
     // wait for the DevToolsActivePort file and the page target on a deadline, and stop early if Chrome exits.
     let debug, page, exited = null;
@@ -224,16 +233,19 @@ async function openDemo(opts = {}) {
       if (!debug) await sleep(100);
     }
     if (!debug) throw new Error(`Chrome did not publish its debugging port within ${START_MS / 1000}s (exit: ${JSON.stringify(exited)}): ${chromeError}`);
+    trace('debug-port-ready');
     while (!page && !exited && Date.now() < startDeadline) {
       try { page = (await (await fetch(`http://127.0.0.1:${debug}/json`)).json()).find(t => t.type === 'page'); } catch { /* not listening yet */ }
       if (!page) await sleep(100);
     }
     if (!page) throw new Error(`Chrome has no page target within ${START_MS / 1000}s (exit: ${JSON.stringify(exited)}): ${chromeError}`);
+    trace('target-ready');
     // Node 22+ has a global WebSocket; older Nodes use the small client in mini_ws.cjs (LABHQ_FORCE_MINI_WS=1 forces it).
     const Socket = typeof WebSocket !== 'undefined' && !process.env.LABHQ_FORCE_MINI_WS ? WebSocket : MiniWebSocket;
     ws = new Socket(page.webSocketDebuggerUrl);
     wsClosed = new Promise(resolve => { ws.onclose = resolve; });
     await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = e => reject(new Error('CDP socket failed: ' + (e?.message || e))); });
+    trace('socket-ready');
     let serial = 0;
     requestBrowserClose = () => {
       if (ws.closed || (typeof ws.readyState === 'number' && ws.readyState !== 1)) return false;
@@ -256,6 +268,7 @@ async function openDemo(opts = {}) {
       return r.result.value;
     };
     await cdp('Page.enable'); await cdp('Network.enable'); await cdp('Runtime.enable');
+    trace('protocol-ready');
     await cdp('Page.addScriptToEvaluateOnNewDocument', {source: CLOCK_SOURCE});
     if (layoutFont) await cdp('Page.addScriptToEvaluateOnNewDocument', {source: fontInjectionSource(buildTestFont().toString('base64'))});
     if (fontFamily) {
