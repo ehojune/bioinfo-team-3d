@@ -2,7 +2,7 @@
 
 OS 경계와 변경 test를 선택하는 제안입니다. Windows full과 동등하지 않으며 실제 속도는 미측정입니다.
 
-| 정적 collection/선택 | 값 |
+| phase4 정적 collection/선택 (`c29e2e3a`) | 값 |
 |---|---|
 | 이번: 변경 test 없는 유효 range 가정 | 4,716/10,762개(43.8%), 175파일; 6,046개 제외 |
 | 현재 local main diff의 변경 test 포함 예상 | 5,114개; 실제 GitHub event 증거 아님 |
@@ -26,3 +26,9 @@ OS 경계와 변경 test를 선택하는 제안입니다. Windows full과 동등
 main `56914c7b`(PR824 `8baefd07` 포함)를 충돌 없이 로컬 통합했습니다. S1/제품/README/manual은 main과 같습니다. phase3 보호·preview와 기존 gate는 유지했습니다. 새 reuse 계약 포함 mock/static 387 PASS, 추가 4개 포함 마지막 fake subset 91 PASS입니다. main 변경과 새 계약 200개만 serial collection하고 나머지는 재사용했습니다. 실제 Windows/xdist·경합·5분 달성은 미검증이며 총괄의 exact-head 검토·게시·원격 CI가 남습니다.
 
 run 39538379069의 REST association은 빈 목록이었고 main 39541901246은 discovery에서 full로 갔습니다. 추가 경로는 authoritative merged PR 재조회와 현재 epoch의 모든 manifest/gate/tree/policy/ordered-parent/digest 증거를 요구합니다. 제공된 v3 artifact는 v6 정책 인증에 쓰지 않습니다. 실제 downstream 증거 전체를 재조회하거나 새 재사용 성공을 확인하지 않았습니다.
+
+## PR825 Linux 3.12 CPU 예산 검사
+
+run39544266122/job119038816204는 sanitizer 원문 보존을 통과하고 wall 2.092초로 `<2`만 실패했습니다(4 workers, 10,724 PASS/43 skip). 이 separator 입력의 전진 scan·run 시작점 처리는 확인했지만 초선형 결함이나 경합 원인을 입증한 것은 아닙니다. CI CPU 값은 없습니다.
+
+제품은 바꾸지 않고 같은 731,072자·limit=None·출력·엄격한 2초 조건을 process CPU로 잽니다. module-local fake clock은 wall900/CPU0.125 허용, CPU2 이상 거부, 출력 변경 거부를 확인합니다. red3→green16 순수 문자열 검사이며 수학적 선형성이나 새 CI 통과의 증명은 아닙니다. 위 cohort/측정 자료는 재실행하지 않은 phase4 snapshot이며 이번 fake case 5개는 포함하지 않습니다. Windows/S1 결과는 별도입니다.

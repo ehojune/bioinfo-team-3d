@@ -6,6 +6,7 @@ import json
 import shutil
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -127,9 +128,40 @@ def test_publish_guard_and_codex_mention():
 def test_sanitize_stays_linear_on_long_separator_runs():
     policy = PolicySettings(data_zones=[DataZone(path="/restricted", level="restricted")])
     text = "/" * 65_536 + "\\" * 65_536 + ":" * 600_000
-    started = time.perf_counter()
+    # Budget synchronous scan CPU, excluding other xdist workers' scheduling.
+    # A fixed-input cost guard does not prove asymptotic linearity.
+    started = time.process_time()
     assert sanitize(text, policy, limit=None) == text
-    assert time.perf_counter() - started < 2, "publish path scanning must stay linear in the text length"
+    assert time.process_time() - started < 2, "publish path scanning must stay linear in the text length"
+
+
+@pytest.mark.parametrize("cpu_elapsed,wall_elapsed,alter_output,reject", [
+    (0.125, 900, False, False),
+    (2, 0.125, False, True),
+    (2.125, 0.125, False, True),
+    (0.125, 0.125, True, True),
+    (0.125, 0.125, False, False),
+])
+def test_sanitize_cost_guard_keeps_cpu_budget_and_exact_untruncated_output(
+        monkeypatch, cpu_elapsed, wall_elapsed, alter_output, reject):
+    cpu, wall = iter((0, cpu_elapsed)), iter((0, wall_elapsed))
+    # Replace this test module's binding, never pytest/product/global clocks.
+    monkeypatch.setitem(globals(), "time", SimpleNamespace(
+        process_time=lambda: next(cpu), perf_counter=lambda: next(wall)))
+    calls = []
+
+    def scan(text, policy, *, limit):
+        calls.append((text, [(zone.path, zone.level) for zone in policy.data_zones], limit))
+        return text + "changed" if alter_output else text
+
+    monkeypatch.setitem(globals(), "sanitize", scan)
+    if reject:
+        with pytest.raises(AssertionError):
+            test_sanitize_stays_linear_on_long_separator_runs()
+    else:
+        test_sanitize_stays_linear_on_long_separator_runs()
+    assert calls == [("/" * 65_536 + "\\" * 65_536 + ":" * 600_000,
+                      [("/restricted", "restricted")], None)]
 
 
 def test_restricted_zones_match_separators_case_and_directory_boundary():
