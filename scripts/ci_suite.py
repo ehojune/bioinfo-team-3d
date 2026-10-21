@@ -84,6 +84,63 @@ def select(items, profile, root=ROOT, *, changed=None):
     return chosen, omitted, reasons
 
 
+class PhaseCheckpoints:
+    """Bounded hook observations, deliberately separate from coverage/PASS receipts.
+
+    Each process has its own monotonic origin after identity validation. Missing
+    hooks remain absent; these times cannot measure pre-plugin imports or be
+    summed across workers. Pool snapshots refresh at most once per five seconds
+    after the first stage observations; serial critical stages flush immediately.
+    """
+    NAMES = {'configured', 'session_started', 'collection_started', 'selection_finished',
+             'collection_finished', 'first_test_started', 'session_finished'}
+    STAGES = ('setup', 'call', 'teardown')
+
+    def __init__(self, path, context, phase, worker, *, clock=None):
+        self.path, self.clock = path, clock or time.monotonic
+        self.origin = self.clock()
+        self.last_write = self.origin
+        self.interval = 0 if phase == 'critical' else 5
+        self.seen_stages = set()
+        self.warned = False
+        self.data = dict(diagnostic_only=True, reusable=False, phase=phase, worker=worker,
+            context=context, clock='process-local monotonic elapsed seconds',
+            checkpoints_s={}, current=None, completed_reports=dict.fromkeys(self.STAGES, 0),
+            refresh_interval_s=self.interval)
+        self.mark('configured')
+
+    def mark(self, name):
+        if name not in self.NAMES:
+            raise ValueError('unknown diagnostic checkpoint')
+        if name not in self.data['checkpoints_s']:
+            self.data['checkpoints_s'][name] = self.clock() - self.origin
+            self.flush()
+
+    def stage(self, nodeid, stage, state):
+        if stage not in self.STAGES or state not in ('started', 'completed'):
+            raise ValueError('unknown diagnostic stage')
+        now = self.clock()
+        self.data['current'] = dict(nodeid=nodeid[:512], nodeid_truncated=len(nodeid) > 512,
+                                   stage=stage, state=state, elapsed_s=now - self.origin)
+        if state == 'completed':
+            self.data['completed_reports'][stage] += 1
+        first = state == 'started' and stage not in self.seen_stages
+        if first:
+            self.seen_stages.add(stage)
+        if first or now - self.last_write >= self.interval:
+            self.flush()
+
+    def flush(self):
+        try:
+            self.path.write_text(json.dumps(self.data, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+            self.last_write = self.clock()
+        except OSError:
+            # A diagnostic write must not mask the original test/receipt failure.
+            if not self.warned:
+                print('CI phase checkpoint write unavailable (diagnostic only)', file=sys.stderr)
+                self.warned = True
+
+
 class Observation:
     def __init__(self, config):
         self.config = config
@@ -122,6 +179,18 @@ class Observation:
         self.serial = {}
         self.shared_files = {}
         self.resource_waits = defaultdict(float)
+        self.checkpoints = (PhaseCheckpoints(self.directory / f'checkpoints-{self.worker}.json',
+                            self.context_identity, self.phase, self.worker) if self.phase else None)
+
+    @pytest.hookimpl(wrapper=True, tryfirst=True)
+    def pytest_collection(self, session):
+        if self.checkpoints:
+            self.checkpoints.mark('collection_started')
+        try:
+            return (yield)
+        finally:
+            if self.checkpoints:
+                self.checkpoints.mark('collection_finished')
 
     @pytest.hookimpl(optionalhook=True)
     def pytest_xdist_setupnodes(self, config, specs):
@@ -168,8 +237,12 @@ class Observation:
                                   **({"reusable": False} if self.profile == WINDOWS_PREVIEW else {}), "full_nodes": full,
                                   "selected_nodes": [i.nodeid for i in chosen],
                                   "excluded_files": reasons})
+        if self.checkpoints:
+            self.checkpoints.mark('selection_finished')
 
     def pytest_sessionstart(self):
+        if self.checkpoints:
+            self.checkpoints.mark('session_started')
         # Keep the existing controller diagnostics in the workflow. Each 3.10
         # worker also needs its own real thread/task stacks, outside fd capture.
         if self.config.getoption("ci_stall") and hasattr(self.config, "workerinput"):
@@ -201,8 +274,27 @@ class Observation:
 
     def pytest_runtest_logstart(self, nodeid, location):
         self.context = f"{nodeid} [setup]"
+        if self.checkpoints:
+            self.checkpoints.mark('first_test_started')
+
+    @pytest.hookimpl(tryfirst=True)
+    def pytest_runtest_setup(self, item):
+        if self.checkpoints:
+            self.checkpoints.stage(item.nodeid, 'setup', 'started')
+
+    @pytest.hookimpl(tryfirst=True)
+    def pytest_runtest_call(self, item):
+        if self.checkpoints:
+            self.checkpoints.stage(item.nodeid, 'call', 'started')
+
+    @pytest.hookimpl(tryfirst=True)
+    def pytest_runtest_teardown(self, item):
+        if self.checkpoints:
+            self.checkpoints.stage(item.nodeid, 'teardown', 'started')
 
     def pytest_runtest_logreport(self, report):
+        if self.checkpoints:
+            self.checkpoints.stage(report.nodeid, report.when, 'completed')
         self.stage_reports.append([report.nodeid, report.when, report.outcome])
         self.context = f"{report.nodeid} [after {report.when}]"
         self.files[report.nodeid.split("::", 1)[0]] += report.duration
@@ -234,6 +326,8 @@ class Observation:
                   "results": {k: len(v) for k, v in self.results.items()},
                   "host_resource_wait_s": dict(sorted(self.resource_waits.items())),
                   "longest_files": sorted(self.files.items(), key=lambda p: (-p[1], p[0]))[:20]})
+        if self.checkpoints:
+            self.checkpoints.mark('session_finished')
 
     def write(self, name, value):
         (self.directory / f"{name}-{self.worker}.json").write_text(

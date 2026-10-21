@@ -194,6 +194,13 @@ def test_existing_parallel_skips_are_counted_but_never_allowed_in_critical(recei
 
 @pytest.mark.parametrize('phase', ['critical', 'parallel'])
 def test_real_collection_hook_keeps_actual_phase_selected_nodes_only(monkeypatch, receipts, phase):
+    clock = SimpleNamespace(now=100.0)
+    monkeypatch.setattr(suite, 'time', RuntimeProxy(suite.time, monotonic=lambda: clock.now))
+    def fake_version(name):
+        assert name == 'pytest-xdist'
+        return 'fake-xdist'  # Fake worker metrics do not require installed worker machinery.
+    monkeypatch.setattr(suite, 'importlib', RuntimeProxy(suite.importlib,
+        metadata=RuntimeProxy(suite.importlib.metadata, version=fake_version)))
     context = p.read(receipts/'identity.json')
     context.update(fake_windows_runtime(monkeypatch))
     make_receipts(receipts, context)
@@ -213,6 +220,13 @@ def test_real_collection_hook_keeps_actual_phase_selected_nodes_only(monkeypatch
     config = SimpleNamespace(getoption=lambda key: dict(ci_profile=p.PROFILE, ci_phase=phase).get(key),
                              hook=SimpleNamespace(pytest_deselected=lambda items: deselected.extend(items)))
     observer = suite.Observation(config)
+    manager = pytest.PytestPluginManager()
+    manager.register(observer)
+    manager.check_pending()  # Validate real hook signatures, without running pytest/xdist children.
+    observer.pytest_sessionstart()
+    collection = observer.pytest_collection(None)
+    next(collection)
+    clock.now += 85
     if phase == 'critical':
         with pytest.raises(pytest.UsageError):
             observer.pytest_xdist_setupnodes(config, [None] * 4)
@@ -221,6 +235,9 @@ def test_real_collection_hook_keeps_actual_phase_selected_nodes_only(monkeypatch
             observer.pytest_xdist_setupnodes(config, [None] * 3)
         observer.pytest_xdist_setupnodes(config, [None] * 4)
     observer.pytest_collection_modifyitems(None, config, items)
+    clock.now += 1
+    with pytest.raises(StopIteration):
+        next(collection)
     expected = critical if phase == 'critical' else parallel
     assert [i.nodeid for i in items] == expected
     saved = p.read(receipts/phase/'collection-master.json')
@@ -229,10 +246,21 @@ def test_real_collection_hook_keeps_actual_phase_selected_nodes_only(monkeypatch
     assert set(i.nodeid for i in deselected) == set(full) - set(expected)
     # Actual hook events are retained per stage, not a synthetic expanded PASS.
     for node in expected:
+        observer.pytest_runtest_logstart(node, None)
         for stage in ('setup', 'call', 'teardown'):
+            getattr(observer, 'pytest_runtest_' + stage)(SimpleNamespace(nodeid=node))
+            clock.now += .01
             observer.pytest_runtest_logreport(SimpleNamespace(nodeid=node, when=stage,
                 outcome='passed', duration=.001, failed=False, skipped=False, passed=True))
     assert observer.stage_reports == [[n, stage, 'passed'] for n in expected for stage in ('setup', 'call', 'teardown')]
+    observer.pytest_sessionfinish(None, 0)
+    timing = p.read(receipts/phase/'checkpoints-master.json')
+    assert timing['checkpoints_s']['selection_finished'] == 85
+    assert timing['checkpoints_s']['collection_finished'] == timing['checkpoints_s']['first_test_started'] == 86
+    assert timing['checkpoints_s']['session_finished'] > 86
+    assert timing['completed_reports'] == dict.fromkeys(('setup', 'call', 'teardown'), len(expected))
+    assert timing['current']['stage'] == 'teardown' and timing['current']['state'] == 'completed'
+    assert timing['diagnostic_only'] and timing['reusable'] is False
 
 
 def test_parallel_plugin_refuses_to_start_without_verified_critical_barrier(monkeypatch, receipts):
@@ -379,3 +407,93 @@ def test_actual_windows_identity_keeps_python312_requirement(version, accepted):
     else:
         with pytest.raises(ValueError, match='identity interpreter'):
             p.validate_identity(context)
+
+
+@pytest.mark.parametrize('phase,worker', [('critical', 'master'), ('parallel', 'gw2')])
+def test_monotonic_checkpoints_separate_collection_calls_and_cleanup(tmp_path, phase, worker):
+    clock = SimpleNamespace(now=1000.0)
+    path = tmp_path / f'checkpoints-{worker}.json'
+    checkpoints = suite.PhaseCheckpoints(path, fake_context(), phase, worker, clock=lambda: clock.now)
+    clock.now += 2
+    checkpoints.mark('session_started')
+    clock.now += 1
+    checkpoints.mark('collection_started')
+    clock.now += 85
+    checkpoints.mark('selection_finished')
+    clock.now += 1
+    checkpoints.mark('collection_finished')
+    checkpoints.mark('first_test_started')
+    item = 'tests/test_fake.py::test_owned'
+    for stage in ('setup', 'call'):
+        checkpoints.stage(item, stage, 'started')
+        clock.now += 2
+        checkpoints.stage(item, stage, 'completed')
+    checkpoints.stage(item, 'teardown', 'started')
+    # No teardown report or sessionfinish: an interrupted cleanup is not PASS.
+    checkpoints.flush()
+    saved = p.read(path)
+    assert saved['diagnostic_only'] is True and saved['reusable'] is False
+    assert saved['phase'] == phase and saved['worker'] == worker
+    assert saved['context'] == fake_context()
+    assert saved['clock'] == 'process-local monotonic elapsed seconds'
+    assert saved['checkpoints_s'] == dict(configured=0, session_started=2,
+        collection_started=3, selection_finished=88, collection_finished=89, first_test_started=89)
+    assert saved['completed_reports'] == dict(setup=1, call=1, teardown=0)
+    assert saved['current'] == dict(nodeid=item, nodeid_truncated=False, stage='teardown',
+                                    state='started', elapsed_s=93)
+    assert 'session_finished' not in saved['checkpoints_s']
+    assert 'exitstatus' not in saved and 'results' not in saved
+
+
+def test_interrupted_collection_has_no_invented_finish_or_test_time(tmp_path):
+    path = tmp_path / 'checkpoints-master.json'
+    clock = SimpleNamespace(now=12.0)
+    checkpoints = suite.PhaseCheckpoints(path, fake_context(), 'critical', 'master', clock=lambda: clock.now)
+    clock.now += 4
+    checkpoints.mark('collection_started')
+    saved = p.read(path)
+    assert saved['checkpoints_s'] == dict(configured=0, collection_started=4)
+    assert saved['current'] is None and saved['completed_reports'] == dict(setup=0, call=0, teardown=0)
+    assert 'collection_finished' not in saved['checkpoints_s']
+    assert 'first_test_started' not in saved['checkpoints_s']
+
+
+def test_parallel_diagnostics_are_bounded_and_throttled_but_keep_observed_counts(tmp_path):
+    clock = SimpleNamespace(now=100.0)
+    path = tmp_path / 'checkpoints-gw0.json'
+    checkpoints = suite.PhaseCheckpoints(path, fake_context(), 'parallel', 'gw0', clock=lambda: clock.now)
+    for i in range(1000):
+        checkpoints.stage('n' * 2000 + str(i), 'call', 'started')
+        checkpoints.stage('n' * 2000 + str(i), 'call', 'completed')
+    assert p.read(path)['completed_reports']['call'] < 1000  # No per-report disk write in the pool.
+    clock.now += 5
+    checkpoints.stage('last', 'teardown', 'started')
+    saved = p.read(path)
+    assert saved['completed_reports']['call'] == 1000
+    assert saved['current']['stage'] == 'teardown' and saved['current']['state'] == 'started'
+    checkpoints.stage('n' * 2000, 'teardown', 'completed')
+    checkpoints.mark('session_finished')
+    saved = p.read(path)
+    assert len(saved['current']['nodeid']) == 512 and saved['current']['nodeid_truncated'] is True
+    assert saved['checkpoints_s']['session_finished'] == 5
+    assert len(path.read_bytes()) < 10000
+
+
+def test_diagnostic_json_cannot_replace_or_modify_phase_receipt_proof(receipts):
+    expected = p.combine(receipts)
+    for phase in ('critical', 'parallel'):
+        # Untrusted diagnostic content is not read as a receipt, even if malformed.
+        (receipts / phase / 'checkpoints-master.json').write_text('{not a receipt', encoding='utf-8')
+    assert p.combine(receipts) == expected
+    (receipts / 'critical' / 'metrics-master.json').unlink()
+    with pytest.raises((OSError, ValueError)):
+        p.combine(receipts)
+
+
+def test_diagnostic_write_failure_does_not_mask_an_interrupted_stage(tmp_path, capsys):
+    checkpoints = suite.PhaseCheckpoints(tmp_path/'missing'/'checkpoints-master.json',
+                                        fake_context(), 'critical', 'master', clock=lambda: 42)
+    checkpoints.stage('test_owned', 'teardown', 'started')
+    assert checkpoints.data['current']['state'] == 'started'
+    assert checkpoints.data['completed_reports']['teardown'] == 0
+    assert capsys.readouterr().err.count('checkpoint write unavailable') == 1
