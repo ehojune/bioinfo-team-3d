@@ -8,3 +8,11 @@ rows:
   at: 2026-10-21 11:27
   summary: 공유 프로세스 목록을 읽는 프로젝트 호출도 검사 대기 대상으로 지정했습니다.
   text: '#823: CreateToolhelp32Snapshot을 쓰는 proc_tree 진입점과 adapter snapshot 호출을 명시해 보호하고 module/model import·순수 변환은 제외한다. 가짜 AST 회귀 포함 565 PASS, 정적 선택 9270/10554·lock 후보 22파일/456노드이며 native 실행은 미검증이다.'
+- sha: 9c70d83
+  at: 2026-10-21 12:20
+  summary: Windows 검사 범위를 경계 테스트와 변경된 테스트 중심으로 바꿨습니다.
+  text: '#823: 명시 cohort·node/helper API backstop·변경 range를 결합하고 혼합 4파일의 경계를 source digest로 보호한다. profile v3/manifest v5와 기존 증거 검증을 묶고 공유 fixture data 변경은 full로 둔다. shutdown snapshot wrapper를 잠그고 지역 포트 0 Runner와 무관한 node의 전역 lock을 제외한다. mock/static 415 PASS, 정적 선택 4531/10578(42.8%)로 목표 미달·lock 456→139노드이며 Windows 실행 성능은 미검증이다.'
+- sha: 686b5ac
+  at: 2026-10-21 12:27
+  summary: 안전과 복구 검사가 Windows 선택 범위에서 빠지지 않도록 보완했습니다.
+  text: '#823: continuation/reconnect와 idle/UAC·process memory-limit 4파일을 명시 경계로 남겨 host lock 대상 139노드를 모두 선택에 포함한다. mock/static 415 PASS, 정적 선택 4566/10578(43.2%)·명시 보호 범위 3884개로 목표 미달이며 실제 Windows/병렬 성능은 미검증이다.'
