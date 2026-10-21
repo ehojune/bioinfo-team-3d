@@ -7,4 +7,4 @@ rows:
 - sha: 9a16138
   at: 2026-10-22 05:49
   summary: 매뉴얼에 직원 CLI는 개발용 GitHub 봇 신원을 쓰지 않고, 저장된 사용자 로그인 권한은 별개라는 설명을 더했습니다.
-  text: docs/manual.md의 GitHub 토큰 문단에 한 문장을 더했다(176,983→177,059자). 개발자 참고 staff-gh-identity-813.md에서는 이 PC에 없는 git 래퍼를 빼고, token이 shell이 아니라 래퍼가 부른 gh 호출에 들어간다고 바로잡았다. source 코드와 검사는 그대로이며 실제 GitHub 표시 신원은 미확인이다. #813은 부분 해결이다.
+  text: 'docs/manual.md의 GitHub 토큰 문단에 한 문장을 더했다(176,983→177,059자). 개발자 참고 staff-gh-identity-813.md에서는 이 PC에 없는 git 래퍼를 빼고, token이 shell이 아니라 래퍼가 부른 gh 호출에 들어간다고 바로잡았다. source 코드와 검사는 그대로이며 실제 GitHub 표시 신원은 미확인이다. #813은 부분 해결이다.'
