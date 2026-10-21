@@ -4,6 +4,8 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+브라우저에 정상 종료를 요청한 뒤 실제 종료를 확인합니다. [종료 계약·진단 한계](../reference/browser-fixture-cleanup.md)를 참고하세요.
+
 # 개발 문서 현행화
 
 - `HANDOFF`의4-arm 기록기는 #815·#824 병합 상태로 정리했습니다. 주제 선택·운영 runtime과 실제 bench는 남았습니다.
@@ -38,6 +40,15 @@ Refs #823 · PR #825
 - 반복되는 module alias·scope·import 분석을 content cache로 묶고 경로 resolve를 파일별로 줄였습니다. Helper·변경 범위·profile 판정은 다시 확인합니다.
 - 순수/fake 137개 고유 case PASS. 보존된 11033 node ID의 선택을 source만으로 대조해 eligible3680·critical26·pool3654와 제외240파일의 순서·사유를 보존했습니다. 새 test collection이나 native 실행은 하지 않았습니다.
 - 기존 coverage·timeout·phase/manifest 증거 계약과 제품은 그대로입니다. 실제 collection 개선 폭·native case 원인·새 CI 성공은 미확인입니다. 로컬 커밋만 준비하며 push/CI 조회는 총괄에게 맡깁니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+Refs #829 · #828/#825 후보와의 로컬 준비
+
+- scheduler:none 기존 구현과 test blob을 그대로 두고 fulltext 후보를 충돌 없이 병합했습니다. manual의 세 변경안 설명도 보존했습니다.
+- 새 test 하나를 정렬된 Windows 목록과 정확한 경계 cohort에 등록했습니다. 명령·SSH 거부, watcher 차단, 저장 job 보존 계약이며 OS 실행은 fake입니다. 기존 6 mixed/5 mandatory 계약은 유지합니다.
+- source-only profile(known319)·포함 18판정·Python 3.10 AST 4파일을 확인했습니다. public·기록·diff 검사도 수행하며 기존 37 mock은 재실행하지 않습니다. 새 통합의 실제 CI/main 반영은 미확인입니다.
+- push·PR·CI 조회 없이 로컬 준비만 합니다. 총괄이 최종 #825/main을 확인한 뒤 #828→#829 순서로 다시 통합해야 합니다.
 
 🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 
@@ -117,6 +128,13 @@ Fake/static37건·Python3.10 AST와 원래 assertion/API 인자 대조를 통과
 - host3.10/3.12×critical/parallel/barrier/CLI fake 회귀8개 red → 파일 전체59 PASS. 실제 identity의3.10 거부·3.12 허용, 원래 단언 보존·정확한 missing-barrier 실패와 Python3.10 AST를 확인했습니다.
 - 수정 범위는 test 파일 하나입니다. Production·workflow·timeout·coverage·S1/S2는 바꾸지 않았으며 Windows critical timeout은 S1 범위로 남깁니다. 실제3.10/Windows·CI 조회·push는 하지 않았습니다. Guard 세 변수는 유지했습니다.
 - Public·notes·patch·diff 검사 뒤 로컬 커밋합니다. Root가 최종 통합·게시·새 CI를 맡습니다. CLI 선택 모델 gpt-6.1-sol.
+
+# HPC 비활성 설정의 명령·job 감시 차단 (#829)
+
+- none에서 Scheduler의 제출·큐·상태·취소와 내부 명령 실행을 명시적으로 거부한다. SSH를 구성하거나 subprocess를 호출하기 전 차단한다.
+- Runner는 로컬 broker/연결을 유지하고 job watcher 예약·직접 polling을 차단한다. 기존 job·missing count·notified·요청 연결은 보존한다.
+- 기존 코드에서 새 회귀 13건 실패, 수정 뒤 관련 mock 37건 통과. SGE/PBS/Slurm/mock 계약을 확인했다. Python 3.10 AST/compile 3파일·public·diff·기록 형식 검사도 통과했다.
+- 실제 process/thread·PI·HPC·WSL·연구·CI는 실행하지 않았다. 임의 shell·모델 cache·외부 자동화 격리는 이 수정의 증거가 아니다. 로컬 커밋만 준비하며 push/PR/CI는 root가 맡는다.
 
 # PR825 — critical serial phase 후 나머지 Windows 병렬 검사
 
