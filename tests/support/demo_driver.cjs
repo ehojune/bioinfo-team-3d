@@ -141,9 +141,29 @@ async function closeDemoResources({ws, wsClosed, chrome, chromeClosed, server, p
   report('closed');
 }
 
-// opts: {width, height, reducedMotion=true, colorScheme='light', web=WEB_ROOT, layoutFont=false, fontFamily=null, deadlineMs=60000}
+// Diagnostic only: no timer, transport, expressions, URLs or success receipts.
+// A disabled/broken observer must not change browser behavior or mask errors.
+function demoLifecycleTrace(emit, clock = () => performance.now()) {
+  let origin, previous, count = 0;
+  return stage => {
+    if (typeof emit !== 'function' || count >= 16) return;
+    count++;
+    try {
+      const now = clock();
+      origin ??= now;
+      const row = {stage, elapsed_ms: Math.round(now - origin),
+        since_previous_ms: previous === undefined ? 0 : Math.round(now - previous)};
+      previous = now;
+      emit(row);
+    } catch { /* diagnostic only */ }
+  };
+}
+
+// opts: {width, height, reducedMotion=true, colorScheme='light', web=WEB_ROOT, layoutFont=false, fontFamily=null, deadlineMs=60000, diagnostic=null}
 // layoutFont forces the metrics-only font from test_font.cjs so text wraps the same on every OS.
 async function openDemo(opts = {}) {
+  const trace = demoLifecycleTrace(opts.diagnostic);
+  trace('open-start');
   const chromePath = findChrome();
   if (!chromePath) throw new Error('no Chrome found');
   const {width = 1440, height = 900, reducedMotion = true, colorScheme = 'light', web = WEB_ROOT, layoutFont = false, fontFamily = null} = opts;
@@ -242,8 +262,12 @@ async function openDemo(opts = {}) {
       }
     }
     async function load(search = '?demo=1') {
+      trace('navigate-start');
       await cdp('Page.navigate', {url: `${origin}/index.html${search}`});
+      trace('navigate-ready');
+      trace('boot-start');
       await waitReal('demo boot', "window.__labhq && window.__vclock && document.querySelectorAll('#zones .office-character').length>=11");
+      trace('boot-ready');
       if (layoutFont) {
         const ok = await evaluate('window.__layoutFontLoaded');
         if (!ok) throw new Error('layout test font was rejected by Chrome: ' + await evaluate('window.__layoutFontError'));
@@ -251,7 +275,9 @@ async function openDemo(opts = {}) {
         // FreeType (Linux) rounds advances to 1/64 px, so allow a hair of difference from the exact 16 px.
         if (Math.abs(probe - 16) > 0.1) throw new Error('layout test font is not applied (Hangul probe is ' + probe + 'px, expected 16px)');
       }
+      trace('frames-start');
       await frames();
+      trace('frames-ready');
     }
     async function settle() {
       await until('animations finished', "document.getAnimations().length===0", {maxVirtualMs: 2000, stepMs: 50}).catch(() => {});
@@ -261,6 +287,7 @@ async function openDemo(opts = {}) {
       const r = await cdp('Page.captureScreenshot', {format: 'png', fromSurface: true, ...(clip ? {clip} : {})});
       return Buffer.from(r.data, 'base64');
     };
+    trace('open-ready');
     return {cdp, evaluate, advance, until, waitReal, load, settle, frames, screenshot, external, errors, close, origin, width, height};
   } catch (e) {
     try { await close(); } catch (cleanup) { throw new AggregateError([e, cleanup], 'demo startup and cleanup failed'); }
@@ -268,4 +295,4 @@ async function openDemo(opts = {}) {
   }
 }
 
-module.exports = {openDemo, skipReason, findChrome, sleep, WEB_ROOT, CLOCK_SOURCE, closeDemoResources};
+module.exports = {openDemo, skipReason, findChrome, sleep, WEB_ROOT, CLOCK_SOURCE, closeDemoResources, demoLifecycleTrace};

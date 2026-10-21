@@ -43,7 +43,8 @@ if (process.env.LABHQ_REQUIRE_RESIZABLE_BROWSER === '1' && skipReason()) {
 test('desktop splitter drags, responds to arrows, persists and resets while phone hides it',
   {skip: skipReason() || false, timeout: 60000}, async () => {
     console.error('resizable browser: desktop open');
-    const desktop = await openDemo({width: 1440, height: 900, reducedMotion: true});
+    const desktop = await openDemo({width: 1440, height: 900, reducedMotion: true,
+      diagnostic: event => console.error('resizable driver: ' + JSON.stringify({viewport: 'desktop', ...event}))});
     try {
       console.error('resizable browser: desktop load');
       await desktop.load();
@@ -81,7 +82,8 @@ test('desktop splitter drags, responds to arrows, persists and resets while phon
     }
 
     console.error('resizable browser: phone open');
-    const phone = await openDemo({width: 390, height: 844, reducedMotion: true});
+    const phone = await openDemo({width: 390, height: 844, reducedMotion: true,
+      diagnostic: event => console.error('resizable driver: ' + JSON.stringify({viewport: 'phone', ...event}))});
     try {
       console.error('resizable browser: phone load');
       await phone.load();

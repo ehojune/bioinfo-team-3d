@@ -6,7 +6,47 @@ const fs = require('node:fs'), os = require('node:os'), path = require('node:pat
 const {DEFAULT_TOLERANCE, diffView, sameColor, colorChannels} = require('./support/layout_snapshot.cjs');
 const {updateBaseline} = require('../scripts/update_visual_baseline.cjs');
 const vm = require('node:vm');
-const {openDemo, skipReason, CLOCK_SOURCE, closeDemoResources} = require('./support/demo_driver.cjs');
+const {openDemo, skipReason, CLOCK_SOURCE, closeDemoResources, demoLifecycleTrace} = require('./support/demo_driver.cjs');
+
+// Synchronous fake clock/observer only; no browser, timer or event loop.
+test('demo lifecycle trace measures from its own origin and between observed boundaries', () => {
+  const rows = [];
+  let now = 400;
+  const trace = demoLifecycleTrace(row => rows.push(row), () => now);
+  trace('open-start');
+  now = 425; trace('open-ready');
+  now = 430; trace('navigate-start');
+  now = 630; trace('navigate-ready');
+  assert.deepEqual(rows, [
+    {stage:'open-start', elapsed_ms:0, since_previous_ms:0},
+    {stage:'open-ready', elapsed_ms:25, since_previous_ms:25},
+    {stage:'navigate-start', elapsed_ms:30, since_previous_ms:5},
+    {stage:'navigate-ready', elapsed_ms:230, since_previous_ms:200}]);
+  const phone = [];
+  demoLifecycleTrace(row => phone.push(row), () => now)('open-start');
+  assert.deepEqual(phone, [{stage:'open-start', elapsed_ms:0, since_previous_ms:0}]);
+  assert.equal(rows.some(row => row.stage === 'boot-ready'), false, 'no fabricated unobserved completion');
+});
+
+test('demo lifecycle trace is bounded and disabled observers do not sample the clock', () => {
+  let sampled = 0;
+  const rows = [], clock = () => ++sampled;
+  const trace = demoLifecycleTrace(row => rows.push(row), clock);
+  for (let i = 0; i < 40; i++) trace('boot-start');
+  assert.equal(rows.length, 16);
+  assert.equal(sampled, 16);
+  let disabledSamples = 0;
+  demoLifecycleTrace(undefined, () => ++disabledSamples)('open-start');
+  assert.equal(disabledSamples, 0);
+});
+
+test('demo lifecycle observer and clock failures cannot replace an operation failure', () => {
+  const original = new Error('original operation failure');
+  for (const trace of [demoLifecycleTrace(() => { throw new Error('observer'); }, () => 1),
+                       demoLifecycleTrace(() => {}, () => { throw new Error('clock'); })]) {
+    assert.throws(() => { trace('navigate-start'); throw original; }, error => error === original);
+  }
+});
 
 // ---- layout_snapshot: colors are #rrggbb hex bytes ----
 test('sameColor reads #rrggbb as one hex byte per channel', () => {
