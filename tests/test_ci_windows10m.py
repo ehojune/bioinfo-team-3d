@@ -12,6 +12,15 @@ from tests.test_ci_cohort823 import A, H, event, fake_git, policy_file
 from tests.test_ci_skip_policy import evidence, API, archive, reuse
 
 
+def test_clean_install_diagnostics_is_reviewed_inventory_without_new_native_cohort():
+    from fnmatch import fnmatchcase
+    data = s.validate_profile()  # Source/AST reads only; never import or run diagnostics tests.
+    path = 'tests/test_clean_install_diagnostics.py'
+    assert path in data['known_tests']
+    assert path not in data['mixed_nodes']
+    assert not any(fnmatchcase(path, pattern) for pattern in data['boundary_cohorts'])
+
+
 def test_routine_job_is_ten_minutes_and_has_one_bounded_suite_with_diagnostic_tail():
     jobs = yaml.safe_load((s.ROOT / cs.WORKFLOW).read_text(encoding='utf-8'))['jobs']
     job = jobs['pytest-windows']

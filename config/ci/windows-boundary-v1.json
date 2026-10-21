@@ -57,6 +57,7 @@
     "tests/test_claude_staff_home.py",
     "tests/test_claude_write_paths.py",
     "tests/test_clean_install_check.py",
+    "tests/test_clean_install_diagnostics.py",
     "tests/test_clean_office.py",
     "tests/test_cli_adapter.py",
     "tests/test_cli_bundle_wait.py",
