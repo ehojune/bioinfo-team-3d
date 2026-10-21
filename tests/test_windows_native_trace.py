@@ -2,6 +2,7 @@
 import ast
 import itertools
 import json
+import time as real_time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, call
@@ -16,7 +17,7 @@ def diagnostic(tmp_path, monkeypatch):
     root.mkdir()
     monkeypatch.setenv("CI_SUITE_ARTIFACT_DIR", str(root))
     ticks, identifiers = itertools.count(), itertools.count(1)
-    monkeypatch.setattr(owned.time, "monotonic", lambda: next(ticks) / 1000)
+    monkeypatch.setattr(owned, "time", SimpleNamespace(monotonic=lambda: next(ticks) / 1000))
     monkeypatch.setattr(owned, "uuid", SimpleNamespace(uuid4=lambda: SimpleNamespace(hex=f"{next(identifiers):032x}")))
     return root
 
@@ -29,7 +30,7 @@ def test_absent_env_is_no_filesystem_clock_uuid_side_effect(monkeypatch):
     monkeypatch.delenv("CI_SUITE_ARTIFACT_DIR", raising=False)
     forbidden = Mock(side_effect=AssertionError("diagnostic work without opt-in"))
     monkeypatch.setattr(owned, "Path", forbidden)
-    monkeypatch.setattr(owned.time, "monotonic", forbidden)
+    monkeypatch.setattr(owned, "time", SimpleNamespace(monotonic=forbidden))
     monkeypatch.setattr(owned, "uuid", SimpleNamespace(uuid4=forbidden))
     trace = owned._NativeTrace()
     trace.emit("body_positive")
@@ -216,7 +217,9 @@ def test_startup_error_still_closes_job_and_reaps_only_owned_parent(diagnostic, 
 
 def test_callable_duration_excludes_diagnostic_write_time(monkeypatch):
     clock, events = [0.0], []
-    monkeypatch.setattr(owned.time, "monotonic", lambda: clock[0])
+    stdlib_clock = real_time.monotonic
+    monkeypatch.setattr(owned, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    assert real_time.monotonic is stdlib_clock and owned.time is not real_time
     def emit(phase, **facts):
         events.append((phase, facts))
         clock[0] += 10  # Synthetic diagnostic write cost; no real waiting.
