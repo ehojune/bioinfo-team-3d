@@ -14,6 +14,35 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const WEB_ROOT = process.env.LABHQ_WEB_TEST_ROOT || path.resolve(__dirname, '../../labhq/web');
 const FORBIDDEN_PORTS = [8787, 55921];
 const START_MS = 60000;  // Chrome start budget; the node:test budget of each test covers it
+// One cleanup deadline. The graceful Browser.close may use its first part; the rest is for the owned child's forced
+// close to be observed (#842: a graceful wait that took the whole budget left the kill no time to show its close).
+const CLEANUP_MS = 5000, GRACEFUL_CLEANUP_MS = 3000;
+// Windows only (#842): Chrome and every descendant run inside one KILL_ON_CLOSE Job. windows_job_browser.py reuses
+// the product's Job class (labhq/runner/memory_limit.py) and joins itself to the Job before starting Chrome with its
+// own stdin/stdout/stderr, so Chrome's stderr (and the stdio close proof) still reach this driver. The owned child is
+// that wrapper; ending it closes the Job, so the kernel ends the browser tree. Nothing is killed by name, tree walk
+// or PID. The limit is far above a demo browser: the Job is for ownership, not a memory cap.
+const WINDOWS_JOB_WRAPPER = path.resolve(__dirname, 'windows_job_browser.py');
+const WINDOWS_JOB_LIMIT_BYTES = 64 * 1024 ** 3;
+
+// The interpreter is named explicitly (tests/test_web_3d.py passes sys.executable). No PATH lookup and no Store
+// alias: a Chrome started without the owned Job would hide the very cleanup this driver must prove.
+function windowsJobPython(platform = process.platform, env = process.env) {
+  if (platform !== 'win32') return null;
+  const python = env.LABHQ_TEST_PYTHON;
+  if (typeof python !== 'string' || !path.win32.isAbsolute(python) || /[\\/]WindowsApps[\\/]/i.test(python)
+      || !fs.existsSync(python)) {
+    throw new Error('LABHQ_TEST_PYTHON must name an absolute, existing Python (not a Store alias) for the owned '
+      + 'Windows Job wrapper');
+  }
+  if (!fs.existsSync(WINDOWS_JOB_WRAPPER)) throw new Error('owned Windows Job wrapper is missing: ' + WINDOWS_JOB_WRAPPER);
+  return python;
+}
+
+function browserCommand(chromePath, args, python) {
+  if (!python) return [chromePath, args];
+  return [python, ['-I', WINDOWS_JOB_WRAPPER, '--windows-job', String(WINDOWS_JOB_LIMIT_BYTES), '--', chromePath, ...args]];
+}
 
 function findChrome() {
   const candidates = [process.env.LABHQ_TEST_CHROME,
@@ -125,8 +154,8 @@ function requestBrowserShutdown(chrome, requestBrowserClose, failures) {
 }
 
 async function closeDemoResources({ws, wsClosed, chrome, chromeClosed, requestBrowserClose, server, profile},
-  {removeProfile = removeDir, setTimer = setTimeout, clearTimer = clearTimeout,
-    diagnostic = (stage, pending) => console.error('demo cleanup: ' + JSON.stringify({stage, pending,
+  {removeProfile = removeDir, setTimer = setTimeout, clearTimer = clearTimeout, clock = () => performance.now(),
+    diagnostic = (stage, pending, extra = {}) => console.error('demo cleanup: ' + JSON.stringify({stage, pending, ...extra,
       active: typeof process.getActiveResourcesInfo === 'function' ? process.getActiveResourcesInfo().slice(0, 16) : null,
       chrome_exit_observed: chrome ? chrome.exitCode !== null || chrome.signalCode !== null : null,
       stderr_closed: typeof chrome?.stderr?.closed === 'boolean' ? chrome.stderr.closed : null}))} = {}) {
@@ -135,7 +164,22 @@ async function closeDemoResources({ws, wsClosed, chrome, chromeClosed, requestBr
   const closeSocket = () => {
     if (!socketCloseRequested) { socketCloseRequested = true; ws.close(); }
   };
-  const report = stage => { try { diagnostic(stage, [...pending]); } catch { /* diagnostic only */ } };
+  const report = (stage, extra) => { try { diagnostic(stage, [...pending], extra); } catch { /* diagnostic only */ } };
+  // After the deadline, record which owned acknowledgements still arrive and when (#842). Observation only: no
+  // timer or handle is added, the rejection stands, and a late event never removes the profile or marks closure.
+  const acknowledged = {chrome: false, socket: false};
+  if (chrome && chromeClosed) chromeClosed.then(() => { acknowledged.chrome = true; }, () => {});
+  if (ws && wsClosed) wsClosed.then(() => { acknowledged.socket = true; }, () => {});
+  const observeLate = () => {
+    let deadline;
+    try { deadline = clock(); } catch { return; }
+    const late = stage => report(stage, {after_deadline_ms: Math.round(clock() - deadline)});
+    if (chrome && chrome.exitCode === null && chrome.signalCode === null && typeof chrome.once === 'function') {
+      chrome.once('exit', () => late('late-chrome-exit'));
+    }
+    if (chrome && chromeClosed && !acknowledged.chrome) chromeClosed.then(() => late('late-chrome-stdio-close'), () => {});
+    if (ws && wsClosed && !acknowledged.socket) wsClosed.then(() => late('late-socket-close'), () => {});
+  };
   const closing = (name, request, acknowledgement) => {
     pending.add(name);
     return Promise.resolve().then(request).then(() => acknowledgement).then(() => pending.delete(name))
@@ -149,22 +193,31 @@ async function closeDemoResources({ws, wsClosed, chrome, chromeClosed, requestBr
   if (server) waits.push(closing('http-server', () => new Promise((resolve, reject) => {
     server.close(error => error ? reject(error) : resolve());
   })));
-  let timer;
+  // A stalled graceful close ends the owned child and its CDP socket once. Only the same actual close, socket and
+  // server acknowledgements then complete cleanup; a kill request or its return value never counts as closed.
+  let forced = false;
+  const force = () => {
+    if (!graceful || forced) return;
+    forced = true;
+    report('forced');
+    try { requestBrowserShutdown(chrome, undefined, failures); } catch (error) { failures.push(error); }
+    if (ws) { try { closeSocket(); } catch (error) { failures.push(error); } }
+  };
+  let timer, phase;
   try {
     await Promise.race([Promise.allSettled(waits), new Promise((_, reject) => {
+      // Only an acquired owned Chrome has a forced phase; a partial startup keeps the single deadline (#843 CI).
+      if (chrome) phase = setTimer(force, GRACEFUL_CLEANUP_MS);
       timer = setTimer(() => {
         report('timeout');
-        // Preserve the existing owned-child/transport cleanup attempt if CDP
-        // stalls. The original five-second deadline STILL rejects as failure.
-        if (graceful) {
-          try { requestBrowserShutdown(chrome, undefined, failures); } catch (error) { failures.push(error); }
-          if (ws) { try { closeSocket(); } catch (error) { failures.push(error); } }
-        }
+        try { observeLate(); } catch { /* diagnostic only */ }
+        // If the forced phase never ran, keep the owned-child/transport attempt. The deadline STILL rejects.
+        force();
         reject(new AggregateError([...failures, new Error('demo cleanup did not close: ' + [...pending].join(', '))],
           'demo cleanup incomplete'));
-      }, 5000);
+      }, CLEANUP_MS);
     })]);
-  } finally { clearTimer(timer); }
+  } finally { if (phase !== undefined) clearTimer(phase); clearTimer(timer); }
   if (failures.length) throw new AggregateError(failures, 'demo cleanup failed');
   await removeProfile(profile);
   report('closed');
@@ -190,16 +243,20 @@ function demoLifecycleTrace(emit, clock = () => performance.now()) {
 
 // opts: {width, height, reducedMotion=true, colorScheme='light', web=WEB_ROOT, layoutFont=false, fontFamily=null, deadlineMs=60000, diagnostic=null}
 // layoutFont forces the metrics-only font from test_font.cjs so text wraps the same on every OS.
+// Test-only: testWithholdBrowserClose reports Browser.close as sent without sending it, so cleanup must take the
+// forced path; cleanupDiagnostic receives the cleanup stages instead of stderr.
 async function openDemo(opts = {}) {
   const trace = demoLifecycleTrace(opts.diagnostic);
   trace('open-start');
   const chromePath = findChrome();
   if (!chromePath) throw new Error('no Chrome found');
+  const jobPython = windowsJobPython();  // fails closed before any profile, server or browser exists
   const {width = 1440, height = 900, reducedMotion = true, colorScheme = 'light', web = WEB_ROOT, layoutFont = false, fontFamily = null} = opts;
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'labhq-visual-'));
   trace('profile-ready');
   let server, chrome, ws, chromeClosed, wsClosed, requestBrowserClose, closing;
-  const close = () => closing ||= closeDemoResources({ws, wsClosed, chrome, chromeClosed, requestBrowserClose, server, profile});
+  const close = () => closing ||= closeDemoResources({ws, wsClosed, chrome, chromeClosed, requestBrowserClose, server, profile},
+    opts.cleanupDiagnostic ? {diagnostic: opts.cleanupDiagnostic} : undefined);
   try {
     server = await startStaticServer(web);
     trace('server-ready');
@@ -213,11 +270,13 @@ async function openDemo(opts = {}) {
     const config = path.join(home, '.config');
     fs.mkdirSync(path.join(config, 'google-chrome'), {recursive: true});
     let chromeError = '';
-    chrome = spawn(chromePath, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
+    const [browser, browserArgs] = browserCommand(chromePath, ['--headless=new', '--remote-debugging-port=0',
+      `--user-data-dir=${profile}`,
       '--no-first-run', '--no-default-browser-check', '--hide-scrollbars', '--force-color-profile=srgb',
       `--lang=${process.env.LABHQ_TEST_LOCALE || 'ko-KR'}`,
       ...(process.env.LABHQ_TEST_CHROME_ARGS ? process.env.LABHQ_TEST_CHROME_ARGS.split(' ') : []),
-      ...(process.env.CI ? ['--no-sandbox'] : []), 'about:blank'],
+      ...(process.env.CI ? ['--no-sandbox'] : []), 'about:blank'], jobPython);
+    chrome = spawn(browser, browserArgs,
     {windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'], env: {...process.env, HOME: home, USERPROFILE: home,
       HOMEDRIVE: path.parse(home).root.slice(0, 2), HOMEPATH: home.slice(2), LOCALAPPDATA: local, APPDATA: roaming, XDG_CONFIG_HOME: config}});
     chromeClosed = new Promise(resolve => chrome.once('close', resolve));
@@ -249,6 +308,7 @@ async function openDemo(opts = {}) {
     let serial = 0;
     requestBrowserClose = () => {
       if (ws.closed || (typeof ws.readyState === 'number' && ws.readyState !== 1)) return false;
+      if (opts.testWithholdBrowserClose === true) return true;  // a graceful close that never takes effect
       // Do not await a CDP response that browser shutdown itself may prevent.
       // Actual socket and child/stdio close events are the completion proof.
       ws.send(JSON.stringify({id: ++serial, method: 'Browser.close'}));
@@ -338,4 +398,5 @@ async function openDemo(opts = {}) {
   }
 }
 
-module.exports = {openDemo, skipReason, findChrome, sleep, WEB_ROOT, CLOCK_SOURCE, closeDemoResources, demoLifecycleTrace, requestBrowserShutdown};
+module.exports = {openDemo, skipReason, findChrome, sleep, WEB_ROOT, CLOCK_SOURCE, closeDemoResources, demoLifecycleTrace, requestBrowserShutdown,
+  CLEANUP_MS, GRACEFUL_CLEANUP_MS, WINDOWS_JOB_WRAPPER, WINDOWS_JOB_LIMIT_BYTES, windowsJobPython, browserCommand};
