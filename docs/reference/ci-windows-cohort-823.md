@@ -27,8 +27,15 @@ main `56914c7b`(PR824 `8baefd07` 포함)를 충돌 없이 로컬 통합했습니
 
 run 39538379069의 REST association은 빈 목록이었고 main 39541901246은 discovery에서 full로 갔습니다. 추가 경로는 authoritative merged PR 재조회와 현재 epoch의 모든 manifest/gate/tree/policy/ordered-parent/digest 증거를 요구합니다. 제공된 v3 artifact는 v6 정책 인증에 쓰지 않습니다. 실제 downstream 증거 전체를 재조회하거나 새 재사용 성공을 확인하지 않았습니다.
 
-## PR825 Linux 3.12 CPU 예산 검사
+## PR825 초기 비용 검사 기록 (source 4128943a)
 
 run39544266122/job119038816204는 sanitizer 원문 보존을 통과하고 wall 2.092초로 `<2`만 실패했습니다(4 workers, 10,724 PASS/43 skip). 이 separator 입력의 전진 scan·run 시작점 처리는 확인했지만 초선형 결함이나 경합 원인을 입증한 것은 아닙니다. CI CPU 값은 없습니다.
 
 제품은 바꾸지 않고 같은 731,072자·limit=None·출력·엄격한 2초 조건을 process CPU로 잽니다. module-local fake clock은 wall900/CPU0.125 허용, CPU2 이상 거부, 출력 변경 거부를 확인합니다. red3→green16 순수 문자열 검사이며 수학적 선형성이나 새 CI 통과의 증명은 아닙니다. 위 cohort/측정 자료는 재실행하지 않은 phase4 snapshot이며 이번 fake case 5개는 포함하지 않습니다. Windows/S1 결과는 별도입니다.
+## PR825 실제 CPU 초과 후 제품 수정 (source ea6a8731)
+
+후속 run39548511101/job119052128054는 출력 보존을 통과했지만 **process CPU 2.329초**로 실패했습니다(10,740 PASS/43 skip). wall만의 문제라는 설명은 성립하지 않습니다. 이 입력의 초선형 경로는 입증하지 못했으며 로컬 profile은 공용 path scanner·credential regex·Python 구분자 순회를 비용으로 확인했습니다.
+
+실제 sanitizer인 `labhq/integrations/github.py`에서 URL 패턴의 필수 문자 `@`·`.`·`=`가 없을 때만 불가능한 탐색을 생략하고, literal path 구분자 run을 고정 문자 클래스 search로 전진시킵니다. 정규식/판정 순서·공용 scanner·경계·출력은 유지합니다. deterministic work 회귀 red5/기존 결과 비교2 PASS → 관련 pure 24 PASS, 경로 1,584·URL 180조합 동등, 원래 test/helper AST 31개 동일입니다.
+
+같은 Windows lane Python3.12의 731,072자 입력 CPU는 원본 0.156초×2 → 수정 0.078초×2였습니다(15.625ms clock 해상도). strict CPU<2·limit=None·출력 assertion은 그대로입니다. 이 관측은 Linux CI 실패 재현·임의 입력의 선형성 증명·새 head CI 성공이 아닙니다. shared scanner 비용은 남습니다. Python3.10 AST·public·기록/diff를 검사하며 S1/Windows·selector/workflow/profile·preview/exact-proof는 변경하지 않았습니다. native/process/thread/xdist·실제 연구/bench와 게시 없이 root의 exact-head 검토·CI가 남습니다.

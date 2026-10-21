@@ -32,3 +32,7 @@ rows:
   at: 2026-10-21 13:49
   summary: 공개 보고 문자열 검사에서 계산 시간과 출력 보존을 함께 확인합니다.
   text: '#825: tests/test_github_reporter.py의 731072자·limit=None·원문 동일성·strict 2초 예산을 유지하며 process_time으로 계산 비용을 잰다. module-local fake clock은 wall 대기 제외·CPU2 이상 거부·출력 변경 거부를 확인한다. pure-string/security 16 PASS, 제품·CI 정책은 변경하지 않았고 실제 CI scheduling 기여와 새 head CI는 미검증이다.'
+- sha: 'ea6a873'
+  at: 2026-10-21 14:48
+  summary: 공개 보고 검사에서 불필요한 문자열 재검사를 줄였습니다.
+  text: '#825: URL credential regex의 필수 문자 부재 시 탐색만 생략하고 literal path 구분자 run을 고정 문자 클래스 search로 처리한다. 출력·공용 scanner·731072자/limit=None/strict CPU<2와 기존 assertion을 유지한다. pure24 PASS·경로1584/URL180조합 동등, 로컬 CPU0.156→0.078초 각2회이며 실제 Linux CI의 CPU2.329초 실패는 미재현·새 head CI는 미검증이다.'
