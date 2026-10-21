@@ -1,6 +1,6 @@
 # WMI framed stdin — #825
 
-Lookup-only. EOF 의존성을 줄이는 대안이며 timeout 원인 수정이나 native 성공을 입증하지 않는다. 기존 CI는 `powershell_started`만 남겼다.
+Lookup-only. EOF 의존성을 줄이는 대안이며 timeout 원인 수정이나 native 성공을 입증하지 않는다. 초기 CI는 `powershell_started`만, 후속 CI는 `header_read`까지 남긴 뒤 timeout됐다.
 
 [Provider](../../labhq/windows_broker.py)는 4-byte little-endian unsigned 길이 뒤 ensure_ascii UTF-8 JSON을 stdin으로 한 번 보낸다. Receiver는 `OpenStandardInput`·`BinaryReader.ReadUInt32/ReadBytes`로 선언 길이만 읽고 EOF 추가 read를 하지 않는다. 짧은 header/payload·잘못된 길이·strict UTF-8/JSON·구조 오류는 WMI 전에 고정 실패 응답(code -1)으로 끝난다. Python에서는 `create_failed`로 처리하며 원문 예외를 기록하지 않는다.
 
@@ -16,3 +16,5 @@ Lookup-only. EOF 의존성을 줄이는 대안이며 timeout 원인 수정이나
 Marker 부재는 hang의 위치를 확정하지 않는다. 고정7단계·결과 포함8frame, finite·단조0–60000ms와 [journal](../../tests/test_web_shutdown_process.py)의 기존 tail/행/출력 상한을 유지한다. 새 전송은 command/env를 파일·argv·env override에 넣지 않고 익명 stdin에만 둔다.
 
 Timeout10초·TIMEOUT20초·단일 시도·breakaway·nonce/envhash·identity·Job·ACK·retained-handle 정리는 그대로다. Popen timeout 뒤 회수 수명주기도 이번에는 바꾸지 않는다. Python 수신 모델·source 계약은 PowerShell 실행 증거가 아니며 실제 검증은 root 검토 뒤 remote native CI에 남는다.
+
+Nested launcher fixture는 실패 시 기존 journal allowlist와 얻을 수 있는 parent exitcode를 출력한다(JSON 최대4096자). 원문 parent 로그는 출력하지 않으며 예외·45초 한도·native assertions를 유지한다. 결과 파일 부재만으로 hang이나 같은 provider 원인을 단정하지 않는다.
