@@ -4,12 +4,49 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# 개발 문서 현행화
+
+- `HANDOFF`의4-arm 기록기는 #815·#824 병합 상태로 정리했습니다. 주제 선택·운영 runtime과 실제 bench는 남았습니다.
+- [CI 기록](../reference/ci-windows-cohort-823.md#실제-ci-측정)은 [run39603485198](https://github.com/ehojune/bioinfo-team-3d/actions/runs/39603485198)의Windows8분14초·선택3680/11037·필수26PASS·병렬3626PASS/28skip을 남깁니다. 다른head·실운영 성공으로 확대하지 않습니다.
+- [개발 위임](../reference/lead-operations.md)은10/22부터Codex동시2/Opus3·Claude계수제외와무응답리뷰대체를반영합니다. 제품CSO·직원설정은바꾸지않았습니다.
+- README한영·AGENTS의독자구분과직원13개를대조했고일시적인큐·사용량을추가하지않았습니다. 문서/공개·설정정합검사만수행했으며제품/연구실행과테스트재실행은없습니다.
+
+문서길이(문자): HANDOFF3333→3347,운영기준1047→1183,CI규칙9887→10012,조회용CI기록7339→7546. 자동STATUS/patch목차는수정하지않았습니다.
+
+PR #830
+
+브라우저 fixture의 로드 지연을 구간별로 확인하도록 진단을 추가했습니다. 실패 원인을 고쳤다는 뜻은 아닙니다.
+
+- 기존 trace는 desktop 정리 완료 후 phone load 안에서 끊겼습니다. Navigate 응답·demo boot·frame 대기 중 어느 구간인지와 누적 소요 시간은 미확정입니다.
+- Resizable fixture에만 monotonic 경과 시간을 최대16행/viewport로 기록합니다. 동기 fake3·기존 wrapper/static11 PASS. 삽입된 trace 외 원래 source·세 subtest·단언·viewport 격리를 대조했습니다.
+- 30초 deadline·cleanup·critical/pool/job 상한·Windows 필수 coverage와 fulltext/제품은 그대로입니다. 실제 Node/browser 실행·새 CI 검증은 하지 않았으며 총괄 검토 후 통합할 로컬 커밋입니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+Refs #828 · #825 병합 후 로컬 통합
+
+- 병합된 #825와 자동 목차 main을 통합했습니다. 충돌 난 selector/suite/cohort test 3파일은 main 정본 blob을 보존했고 profile에는 #828의 known_tests/정확한 파일 cohort 두 줄만 추가했습니다. 기존6 mixed/5 mandatory는 유지합니다.
+- feature runtime/tests7개 blob은 검토본과 같습니다. manual 두 절을 보존하고 CI를 현행 설명으로 바꿨으며 #828 receipt 보호는 아직 main 미반영·실제 기관/PDF 독해와 효용 미검증이라고 구분했습니다. manual LF176270→176305(+35).
+- source-only profile(known318), 파일/13개 symbol 포함14판정, Python3.10 AST10파일 PASS. source가 같아 기존92 fake를 재실행하지 않았고 실제 collection/native/연구도 실행하지 않았습니다. 상류 #825 CI 통과는 이번 #828 head의 CI 성공을 뜻하지 않습니다.
+- #828은 부분 해결입니다. 실제 PDF 범위 검증·OCR·보충자료 연결은 남으며 push·PR·GitHub 병합·원격 CI 조회·배포는 총괄 담당입니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 Refs #823 · PR #825
 
 - 실제 Windows run39598623883은 539초 FAILURE입니다. Critical26 PASS 뒤 pool420초 제한으로 중단됐고 master metrics가 없습니다.
 - 반복되는 module alias·scope·import 분석을 content cache로 묶고 경로 resolve를 파일별로 줄였습니다. Helper·변경 범위·profile 판정은 다시 확인합니다.
 - 순수/fake 137개 고유 case PASS. 보존된 11033 node ID의 선택을 source만으로 대조해 eligible3680·critical26·pool3654와 제외240파일의 순서·사유를 보존했습니다. 새 test collection이나 native 실행은 하지 않았습니다.
 - 기존 coverage·timeout·phase/manifest 증거 계약과 제품은 그대로입니다. 실제 collection 개선 폭·native case 원인·새 CI 성공은 미확인입니다. 로컬 커밋만 준비하며 push/CI 조회는 총괄에게 맡깁니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+Refs #828 · #825 변경안과의 로컬 준비
+
+- 새 문헌 receipt test를 Windows known_tests에 정렬 등록하고 파일 전체를 owned 경로·UTF-8/hash 경계 cohort에 추가했습니다. 기존6 mixed/5 mandatory 계약은 유지합니다.
+- 검토된 feature runtime/tests7개 blob을 보존했습니다. manual 자동 merge는 원문 receipt 절과 PR825 변경안 설명을 모두 유지하며 충돌이 없었습니다. 정책이 실제 main에 출시됐다는 뜻은 아닙니다.
+- source-only validate_profile PASS(known318), 새 파일/13개 test symbol의 cohort 포함14판정 PASS, Python3.10 AST10파일 PASS. 기존92 fake와 pytest/실제 collection·native·연구는 실행하지 않았습니다. 실제 Windows/통합 CI 결과는 UNVERIFIED입니다.
+- 두 미병합 변경의 호환성 준비만 보존합니다. 최종 PR825와 실제 main이 정해지면 그 exact head 위에서 다시 통합해야 하며 push·PR·CI 조회·배포는 하지 않았습니다.
 
 🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 
@@ -96,6 +133,16 @@ Fake/static37건·Python3.10 AST와 원래 assertion/API 인자 대조를 통과
 - fake/static 50 PASS, 마지막 worker 3 PASS; JS assertion/body·Python assertion·선택 계약 동일성을 확인했습니다. public/기록/diff 검사, 로컬 커밋만 수행합니다.
 - timeout·skip·선택·Linux full·Windows native/nightly full·10분 상한을 유지합니다. 실제435초/2 FAIL은 성공이 아니며 S1 WMI·제품은 수정하지 않았습니다. Push·CI 조회·실제 Node/browser/xdist 실행은 하지 않았습니다.
 - [근거](../reference/ci-windows-cohort-823.md). CLI 선택 모델: gpt-6.1-sol.
+
+Refs #828 — 부분 해결이며 이 이슈를 닫지 않습니다.
+
+- tool 원본 receipt의 논문 ID·접근/추출 상태·본문 hash와 방법/QC 줄 범위를 CP1 descriptor에 연결합니다. 승인 뒤 실제 본문·변환 입력과 재사용 fingerprint를 검사합니다. 문자열 full_text·누락/변경·partial/unknown은 자료 요청으로 남깁니다.
+- PDF 확보와 추출 완료를 구분합니다. pdftotext 성공도 unknown이며 PDF/HTML의 coverage를 원본에 보존합니다. 지원 JATS 본문 정상경로는 유지하고 coverage v2 이전 기록은 재확인을 요청합니다.
+- runtime/tests/manual은 독립 검토본과 8개 Git blob이 같습니다. 해당 검토본의 선택 mock/static92건 PASS를 보존하며 이번 이력 정리에서는 pytest를 재실행하지 않았습니다. 실제 PDF 범위·OCR·기관/PI 요청·문헌 독해·호출·과학적 효용은 UNVERIFIED입니다.
+- 잔여: Methods/QC에 필요한 지원 JATS 본문 확보 또는 PDF 범위 검증·OCR·보충자료 artifact 연결이 필요합니다. 후자는 미구현이며 connector 전면 확장은 포함하지 않습니다. CP1 이전 변환과 승인 계획 변경은 추가하지 않았습니다.
+- Push·PR 생성·CI 조회·실제 문헌/연구 실행 없이 로컬 공개준비만 했습니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 
 # PR825 · routine Windows 필수 경계와 10분 상한
 
