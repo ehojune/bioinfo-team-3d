@@ -23,4 +23,8 @@ Lookup-only. [원 요구](https://github.com/ehojune/bioinfo-team-3d/issues/671)
 
 ## 검증 경계
 
-P1 재검토는 기준 `5fa1844e`에서 새 동기 source/pure 두 검사가 실패한 뒤 수정 후 통과했다. 이전 8건을 반복 실행하지 않았다. Python 3.10 AST로 영향을 확인하며 async fake lifecycle은 CI에서만 실행한다. ready-step 무대기·단계별 snapshot·복구 ID 취소/비용·수명 만료·병렬/예산/승인/중단 계약을 다룬다. 기존 취소 검사는 obsolete한 dispatch 빌드 대신 승인 뒤 준비 단계에서 중단을 관측한다. 실제 runner 동시성·원격 종료·UI·시간/금액·효용은 확인이 남는다. #671 전체 완료나 당시 세 번째 빌드의 원인을 단정하지 않는다.
+- P1 source/pure 2건은 기준 `5fa1844e`에서 red→green. 이전 8건은 반복하지 않았다.
+- 첫 [CI run39642716136](https://github.com/ehojune/bioinfo-team-3d/actions/runs/39642716136)은 24건 실패했다. Inventory 6건은 별도 보정됐고, waiting/recovery 17건은 불완전한 fixture plan이 strict validator에서 막혀 async 동작에 도달하지 못했다. 공유 순수 builder로 필수 plan·step 필드를 채웠으며 validator는 그대로다.
+- 기존 attachment 1건은 준비 시간 없이 즉시 장착을 기대했다. 승인된 upstream 단계가 fake 준비 시간을 제공하도록 바꾸고, 실제 DAG·변환 1회·지정 단계 장착·scope 격리·bundle·호출 미확인 검사를 유지한다. 승인 예산에 정상 두 슬롯과 선택적 한 턴을 포함하고 선언 산출물도 fixture가 쓴다.
+- 로컬은 기존 fixture의 16/24/32 schema 오류 재현→4형태 검증·hash 일치, 새 동기 순수 2건, Python 3.10 AST/compile 4파일만 확인했다. Async 18건의 통과는 새 CI가 필요하다. 제품 코드는 바꾸지 않았다.
+- 실제 병렬 빌드·원격 종료·UI·시간/금액·효용과 역사적 세 번째 빌드의 원인은 미확인이다. #671은 열어 둔다.

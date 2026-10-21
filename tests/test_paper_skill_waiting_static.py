@@ -1,4 +1,4 @@
-"""Synchronous source/pure contracts; no product import, loop, runner, thread or process."""
+"""Synchronous source/pure/schema contracts; no runtime, loop, runner, thread or process."""
 import ast
 import copy
 import re
@@ -31,6 +31,58 @@ def row(sid='s1'):
 
 
 class WaitingStatic(unittest.TestCase):
+    def test_lifecycle_plans_validate_before_the_approval_hash_is_sealed(self):
+        from labhq.research.contract import ResearchPlan, plan_sha256
+        from pydantic import ValidationError
+        from tests.paper_skill_plan import plan_for_paper_rows
+        source = ast.parse((ROOT / 'tests/test_paper_skill_waiting.py').read_text(encoding='utf-8'))
+        hub = next(n for n in source.body if isinstance(n, ast.ClassDef) and n.name == 'Hub')
+        init = next(n for n in hub.body if getattr(n, 'name', None) == '__init__')
+        # Only plan-building assignments, never Settings/Hub/Orchestrator initialization or async code.
+        assignments = [n for n in init.body if isinstance(n, ast.Assign)
+                       and ast.unparse(n.targets[0]) in {'steps', 'self.plan'}]
+        construction = compile(ast.Module(body=assignments, type_ignores=[]), '<fixture-plan>', 'exec')
+        cases = ([{**row(), 'step_ids': ['s1']}], [row()],
+                 [{**row(), 'step_ids': ['s1']},
+                  {**row(), 'step_ids': ['s2'], 'paper_id': 'pmid:2', 'selection_sha256': 'b' * 64}],
+                 [{**row(), 'step_ids': ['s1', 's3']},
+                  {**row(), 'step_ids': ['s2'], 'paper_id': 'pmid:2', 'selection_sha256': 'b' * 64}])
+        for rows in cases:
+            with self.subTest(papers=len(rows), steps=sum(len(r['step_ids']) for r in rows)):
+                scope = {'self': SimpleNamespace(), 'rows': rows, 'plan_for_paper_rows': plan_for_paper_rows}
+                exec(construction, scope)
+                plan = scope['self'].plan
+                validated = ResearchPlan.model_validate(plan)
+                ids = list(dict.fromkeys(sid for selected in rows for sid in selected['step_ids']))
+                self.assertEqual([s.id for s in validated.steps], ids)
+                self.assertEqual(plan_sha256(plan), plan_sha256(validated))
+                # The original broken fixture must still fail the real, unchanged validator.
+                with self.assertRaises(ValidationError):
+                    ResearchPlan.model_validate({'steps': [{'id': sid, 'agent_id': 'worker'} for sid in ids],
+                                                 'paper_skill_results': rows})
+
+    def test_lifecycle_fixture_isolated_rows_and_scientific_fields_remain_hash_bound(self):
+        from labhq.research.contract import plan_sha256
+        from tests.paper_skill_plan import plan_for_paper_rows
+        selected = row()
+        plan = plan_for_paper_rows([selected])
+        approved = plan_sha256(plan)
+        selected['step_ids'].append('unapproved')
+        self.assertEqual(plan['paper_skill_results'][0]['step_ids'], ['s1', 's2'])
+        for change in ('selection', 'scope', 'input'):
+            with self.subTest(change=change):
+                changed = copy.deepcopy(plan)
+                if change == 'selection':
+                    changed['paper_skill_results'][0]['reason'] = 'Different method'
+                elif change == 'scope':
+                    changed['brief']['scope'] = 'Different scientific scope'
+                else:
+                    changed['steps'][0]['input_refs'] = ['different-input']
+                self.assertNotEqual(plan_sha256(changed), approved)
+        independent = plan_for_paper_rows([row()])
+        independent['protocol']['resource_limits'].append('consumer mutation')
+        self.assertEqual(plan_sha256(plan), approved)
+
     def scope(self):
         return definitions('labhq/recruit/paper_skills.py', {'build_task', 'ApprovedBuilds'},
                            {'copy': copy, 'Task': SimpleNamespace})

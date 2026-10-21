@@ -12,6 +12,7 @@ from labhq.recruit import paper_skills as ps
 from labhq.research.continuation import ReuseApprovalRequired
 from labhq.research.contract import plan_sha256
 from labhq.settings import Settings
+from tests.paper_skill_plan import plan_for_paper_rows
 
 
 def row(number=1, sid='s1'):
@@ -26,9 +27,7 @@ class Hub:
         self.s = Settings()
         self.s.runner.task_timeout_s = 30
         self.agents = {'recruiter': {'engine': 'mock'}}
-        steps = [{'id': sid, 'agent_id': 'worker'} for sid in dict.fromkeys(
-            sid for r in rows for sid in r['step_ids'])]
-        self.plan = {'steps': steps, 'paper_skill_results': rows}
+        self.plan = plan_for_paper_rows(rows)
         sha = plan_sha256(self.plan)
         self.requests = {'r': {'plan': self.plan, 'budget_usd': 10, 'research_contract': {
             'plan_sha256': sha, 'approval': {'approved': True, 'target_sha256': sha}}}}
