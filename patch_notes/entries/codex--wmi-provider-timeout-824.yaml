@@ -8,3 +8,7 @@ rows:
   at: '2026-10-21 15:22'
   summary: Windows 시작 입력을 길이로 구분해 EOF 대기 의존성을 줄이는 대안을 준비했습니다.
   text: '4-byte little-endian 길이와 ensure_ascii UTF-8 JSON을 익명 stdin으로만 전송한다. 입력 예산1 MiB는 출력8192bytes와 별개이며 초과는 request_too_large로 거부한다. Raw stream의 정확한 header/payload 읽기·strict UTF-8/JSON/구조 검사와 고정7단계 진단을 추가했다. 수정 전3건 실패 후 wire/model20·관련 fake50건 PASS; 최종 stress/source/call 계약 재확인, 3.10 AST5파일·보안/정리/native assertions 동일 대조·public/diff/기록 검사 통과. Reference1060→1484자. 원인 수정이나 native 성공의 증거는 아니며 Popen 수명주기·timeout10/TIMEOUT20·단일시도·nonce/envhash/identity/Job/ACK/정리는 유지했다. 로컬 커밋만 준비.'
+- sha: c5e45aa
+  at: '2026-10-21 16:18'
+  summary: Windows 시작 검사 실패에 안전한 진행 기록과 종료 코드를 표시합니다.
+  text: 'Owned launcher fixture의 예외 경계에서 기존 journal allowlist와 parent exitcode를 최대4096자 JSON으로 출력한다. 원문 로그는 읽지 않으며 진단 실패도 원래 예외를 바꾸지 않는다. 이전 AST에서3건 실패→fake/AST17건 PASS, 3.10 compile·native setup/cleanup/assertions 및45초 한도 동일 대조·public/diff/기록 검사 통과. Reference1484→1720자. 제품 수명주기나 WMI 원인 수정이 아니며 실제 native 검증은 미실행, 로컬 커밋만 준비했다.'
