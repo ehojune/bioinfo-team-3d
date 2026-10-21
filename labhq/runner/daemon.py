@@ -2022,6 +2022,14 @@ class Runner:
         if result.table_warnings:
             await emit("agent.log", {"level": "warn", "text": (
                 "표로 읽히지 않는 산출물: " + "; ".join(result.table_warnings))})
+        # The shared lookup status reaches the result and its report warnings, not only the employee's prompt (#676).
+        try:
+            result.external_lookups = await asyncio.to_thread(output_checks.external_lookups, ws.dir)
+        except Exception as exc:  # noqa: BLE001
+            await emit("agent.log", {"level": "warn", "text": f"외부 조회 상태를 읽지 못했습니다: {type(exc).__name__}"})
+        if lookup_lines := output_checks.external_lookup_lines(result.external_lookups):
+            await emit("agent.log", {"level": "warn", "text": (
+                f"외부 조회 상태({output_checks.LOOKUP_RECORD_NOTE}): " + "; ".join(lookup_lines))})
         for note in dict.fromkeys(output_scan_notes):
             await emit("agent.log", {"level": "warn", "text": note})
         # Only a finished, successful turn: a bundle written before HPC checks or an ask is not final (#301 review).

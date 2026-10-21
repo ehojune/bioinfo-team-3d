@@ -20,13 +20,19 @@ from __future__ import annotations
 import csv
 import io
 import json
+import math
+import os
 import re
 from collections.abc import Iterable, Mapping
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any
 
+from .adapters.owned import is_link
 from .evidence.report_check import claim_rows
+from .models import (EXTERNAL_LOOKUP_MAX_S, EXTERNAL_LOOKUP_MAX_TOOLS, EXTERNAL_LOOKUP_TOOL, ExternalLookupRecord,
+                     ExternalLookupTool)
 from .report_markdown import READER_FILENAMES, render_marker_message, rendered_markers
+from .tools.external_wait import STATUS_FILE as LOOKUP_STATUS_LOG
 
 TABLE_SEPARATORS = {".tsv": "\t", ".tab": "\t", ".csv": ","}
 MAX_TABLE_BYTES = 4_000_000  # enough rows to see the shape; a larger table is checked on its first 4 MB
@@ -553,8 +559,147 @@ def literature_ledger_line(steps: Iterable[Mapping[str, Any]], results: Mapping[
     return line
 
 
+MAX_LOOKUP_STATUS_BYTES = 1_000_000  # ~4,000 records; the tail keeps the latest outcomes
+MAX_LOOKUP_STATUS_ROWS = 5000
+MAX_LOOKUP_STATUS_LINE = 4096
+LOOKUP_OUTCOMES = ("ok", "timeout", "failed", "cancelled")
+LOOKUP_STATUSES = frozenset({"waiting", *LOOKUP_OUTCOMES})
+LOOKUP_MISSING_NAMES = {"timeout": "조회 불가(시간 초과)", "failed": "조회 실패", "cancelled": "조회 취소"}
+LOOKUP_RECORD_NOTE = "직원 workspace의 조회 상태 기록이며 호출·본문 독해 증명은 아님"
+
+
+def _owned_tail(root: Path, relative: str, limit: int) -> tuple[str, bool] | None:
+    """The last ``limit`` bytes of a plain file under plain folders, as text, and whether earlier bytes were skipped.
+    None when it is missing or a link, as ``read_owned`` treats labhq's own records (#165)."""
+    rel = PurePath(relative)
+    current = Path(root)
+    try:
+        for part in rel.parent.parts:
+            current /= part
+            if is_link(current) or not current.is_dir():
+                return None
+        target = current / rel.name
+        if is_link(target) or not target.is_file():
+            return None
+        fd = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
+    except FileNotFoundError:
+        return None
+    with open(fd, "rb") as handle:
+        size = os.fstat(handle.fileno()).st_size
+        truncated = size > limit
+        if truncated:
+            handle.seek(size - limit)
+        data = handle.read(limit)
+    text = data.decode("utf-8", errors="replace")
+    if truncated:
+        text = text.partition("\n")[2]  # the first line was cut
+    return text, truncated
+
+
+def _seconds(value: Any, *, positive: bool) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    value = float(value)
+    if not math.isfinite(value) or value < 0 or (positive and value == 0) or value > EXTERNAL_LOOKUP_MAX_S:
+        return None
+    return value
+
+
+def _lookup_row(line: str) -> tuple[str, str, float, float] | None:
+    if len(line) > MAX_LOOKUP_STATUS_LINE:
+        return None
+    try:
+        row = json.loads(line)
+    except ValueError:
+        return None
+    if not isinstance(row, dict):
+        return None
+    tool, status = row.get("tool"), row.get("status")
+    if not isinstance(tool, str) or not re.fullmatch(EXTERNAL_LOOKUP_TOOL, tool) or status not in LOOKUP_STATUSES:
+        return None
+    elapsed, limit = _seconds(row.get("elapsed_s"), positive=False), _seconds(row.get("timeout_s"), positive=True)
+    if elapsed is None or limit is None:
+        return None
+    return tool, status, elapsed, limit  # the row's free "text" is never read back
+
+
+def external_lookups(root: Path) -> ExternalLookupRecord | None:
+    """Outcome counts per tool from this workspace's outputs/external_lookup_status.jsonl (#676); None without one.
+
+    The file is the step workspace's record: labhq_annot appends to it, but the employee can also write there. It
+    shows which lookups ended without an answer; it never proves a call or a reading and never fills a slot."""
+    read = _owned_tail(Path(root), LOOKUP_STATUS_LOG, MAX_LOOKUP_STATUS_BYTES)
+    if read is None:
+        return None
+    text, truncated = read
+    lines = [line for line in text.splitlines() if line.strip()]
+    if len(lines) > MAX_LOOKUP_STATUS_ROWS:
+        lines, truncated = lines[-MAX_LOOKUP_STATUS_ROWS:], True
+    tools: dict[str, dict[str, Any]] = {}
+    seen: set[tuple[str, str, float, float]] = set()
+    dropped: set[str] = set()
+    invalid = duplicate = 0
+    for line in lines:
+        row = _lookup_row(line)
+        if row is None:
+            invalid += 1
+            continue
+        if row in seen:  # the same record twice (a repeated append), counted once
+            duplicate += 1
+            continue
+        seen.add(row)
+        tool, status, elapsed, limit = row
+        entry = tools.get(tool)
+        if entry is None:
+            if len(tools) >= EXTERNAL_LOOKUP_MAX_TOOLS:
+                dropped.add(tool)
+                continue
+            entry = tools[tool] = {"tool": tool, "elapsed_s": 0.0}
+        if status == "waiting":
+            entry["unfinished"] = True
+        else:
+            entry[status] = entry.get(status, 0) + 1
+            entry["unfinished"] = False
+        entry["elapsed_s"] = max(entry["elapsed_s"], elapsed)
+        entry["timeout_s"] = limit
+    return ExternalLookupRecord(tools=[ExternalLookupTool(**entry) for entry in tools.values()],
+                                invalid_rows=invalid, duplicate_rows=duplicate, dropped_tools=len(dropped),
+                                truncated=truncated)
+
+
+def external_lookup_lines(value: Any) -> list[str]:
+    """Short Korean lines for lookups that ended without an answer and for records that were not read.
+
+    Built only from validated tool names, counts and seconds, so no text the workspace wrote reaches a report."""
+    if value is None:
+        return []
+    try:
+        record = value if isinstance(value, ExternalLookupRecord) else ExternalLookupRecord.model_validate(value)
+    except ValueError:
+        return []
+    lines = []
+    for item in record.tools:
+        if not item.missing:
+            continue
+        parts = [f"{name} {count}건" for key, name in LOOKUP_MISSING_NAMES.items() if (count := getattr(item, key))]
+        if item.unfinished:
+            parts.append("끝난 기록 없음")
+        lines.append(f"`{item.tool}` {', '.join(parts)} · 단계 조회 경과 {item.elapsed_s:.0f}초/상한 "
+                     f"{item.timeout_s:.0f}초")
+    if record.invalid_rows:
+        lines.append(f"읽지 않은 잘못된 기록 {record.invalid_rows}줄")
+    if record.duplicate_rows:
+        lines.append(f"같은 기록 {record.duplicate_rows}줄은 한 번만 셈")
+    if record.dropped_tools:
+        lines.append(f"도구 {record.dropped_tools}개는 상한 {EXTERNAL_LOOKUP_MAX_TOOLS}개를 넘어 세지 않음")
+    if record.truncated:
+        lines.append("기록이 길어 마지막 부분만 읽음")
+    return lines
+
+
 def quality_lines(steps: Iterable[Mapping[str, Any]], results: Mapping[str, Any]) -> list[str]:
-    """Report-warning lines: one per step with table problems, one for literature read below full text."""
+    """Report-warning lines: one per step with table problems, one per step with lookups that ended without an
+    answer, one for literature read below full text."""
     lines: list[str] = []
     access: list[tuple[set[str], str]] = []
     failures: dict[str, str] = {}
@@ -566,6 +711,10 @@ def quality_lines(steps: Iterable[Mapping[str, Any]], results: Mapping[str, Any]
         if problems:
             shown = "; ".join(problems[:3]) + (f" (+{len(problems) - 3}개)" if len(problems) > 3 else "")
             lines.append(f"{step['id']}: 표로 읽히지 않는 산출물 {len(problems)}개 — {shown}")
+        lookups = external_lookup_lines(_field(result, "external_lookups"))
+        if lookups:
+            shown = "; ".join(lookups[:5]) + (f" (+{len(lookups) - 5}개)" if len(lookups) > 5 else "")
+            lines.append(f"{step['id']}: 외부 조회 상태({LOOKUP_RECORD_NOTE}) — {shown}")
         for key, level in (_field(result, "literature_access") or {}).items():
             identifiers = _access_paper_ids(key)
             if identifiers and level in LEVELS:
