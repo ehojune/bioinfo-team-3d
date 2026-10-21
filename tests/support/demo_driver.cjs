@@ -17,11 +17,12 @@ const START_MS = 60000;  // Chrome start budget; the node:test budget of each te
 // One cleanup deadline. The graceful Browser.close may use its first part; the rest is for the owned child's forced
 // close to be observed (#842: a graceful wait that took the whole budget left the kill no time to show its close).
 const CLEANUP_MS = 5000, GRACEFUL_CLEANUP_MS = 3000;
-// Windows only (#842): Chrome and every descendant run inside one KILL_ON_CLOSE Job held by the product's stdlib
-// wrapper (labhq/runner/memory_limit.py --windows-job, which joins itself to the Job before starting Chrome). The
-// owned child is that wrapper; ending it closes the Job, so the kernel ends the browser tree. Nothing is killed by
-// name, tree walk or PID. The limit is far above a demo browser: the Job is for ownership, not a memory cap.
-const WINDOWS_JOB_WRAPPER = path.resolve(__dirname, '..', '..', 'labhq', 'runner', 'memory_limit.py');
+// Windows only (#842): Chrome and every descendant run inside one KILL_ON_CLOSE Job. windows_job_browser.py reuses
+// the product's Job class (labhq/runner/memory_limit.py) and joins itself to the Job before starting Chrome with its
+// own stdin/stdout/stderr, so Chrome's stderr (and the stdio close proof) still reach this driver. The owned child is
+// that wrapper; ending it closes the Job, so the kernel ends the browser tree. Nothing is killed by name, tree walk
+// or PID. The limit is far above a demo browser: the Job is for ownership, not a memory cap.
+const WINDOWS_JOB_WRAPPER = path.resolve(__dirname, 'windows_job_browser.py');
 const WINDOWS_JOB_LIMIT_BYTES = 64 * 1024 ** 3;
 
 // The interpreter is named explicitly (tests/test_web_3d.py passes sys.executable). No PATH lookup and no Store

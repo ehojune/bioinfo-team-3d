@@ -291,7 +291,7 @@ def test_demo_driver_cleanup_waits_for_actual_close_and_preserves_startup_errors
     assert "if (opts.testWithholdBrowserClose === true) return true;" in source  # test-only forced path
     # #842/#843: on Windows Chrome runs under the product's KILL_ON_CLOSE Job wrapper; ending the owned wrapper
     # closes the Job. Fail closed before any resource exists; Linux spawns Chrome directly as before.
-    assert "path.resolve(__dirname, '..', '..', 'labhq', 'runner', 'memory_limit.py')" in source
+    assert "const WINDOWS_JOB_WRAPPER = path.resolve(__dirname, 'windows_job_browser.py');" in source
     assert "return [python, ['-I', WINDOWS_JOB_WRAPPER, '--windows-job', String(WINDOWS_JOB_LIMIT_BYTES), '--', chromePath, ...args]];" in source
     assert "if (platform !== 'win32') return null;" in source and "if (!python) return [chromePath, args];" in source
     assert source.index('const jobPython = windowsJobPython();') < source.index('const profile = fs.mkdtempSync(')

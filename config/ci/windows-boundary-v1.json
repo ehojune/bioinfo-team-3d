@@ -79,6 +79,7 @@
     "tests/test_cso_scope_estimate.py",
     "tests/test_demo_phone.py",
     "tests/test_demo_separation.py",
+    "tests/test_demo_windows_job.py",
     "tests/test_dev_log_visibility.py",
     "tests/test_direct_outputs.py",
     "tests/test_disk_preflight.py",

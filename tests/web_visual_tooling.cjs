@@ -86,7 +86,7 @@ function startupFixture({port = 55921, listenError = null, closeError = null, pl
   };
   const fakeFs = {
     existsSync: name => name === 'owned-chrome' || existing.includes(name)
-      || (wrapperPresent && name.endsWith(path.join('labhq', 'runner', 'memory_limit.py'))),
+      || (wrapperPresent && name.endsWith(path.join('support', 'windows_job_browser.py'))),
     mkdirSync() {},
     mkdtempSync() { events.push('profile-create'); return profile; },
     rmSync(dir) { assert.equal(dir, profile); events.push('profile-remove'); }
@@ -99,7 +99,7 @@ function startupFixture({port = 55921, listenError = null, closeError = null, pl
       throw new Error('stop after spawn');  // only the launch command is under test; no browser runs
     }},
     './test_font.cjs':{}, './mini_ws.cjs':{}};
-  const sandbox = {module:{exports:{}}, __dirname,
+  const sandbox = {module:{exports:{}}, __dirname:path.join(__dirname, 'support'),  // the driver's own folder
     require(name) { assert.ok(Object.hasOwn(modules, name), name); return modules[name]; },
     process:{env:{LABHQ_TEST_CHROME:'owned-chrome', ...env}, platform, getActiveResourcesInfo:() => []},
     console:{error() {}},
@@ -148,7 +148,7 @@ test('Windows starts the owned Chrome under the Job wrapper with the explicit in
   // Arrays built inside the vm context are copied into this realm before a strict deep comparison.
   assert.deepEqual(Array.from(args.slice(0, 6)), ['-I', f.exports.WINDOWS_JOB_WRAPPER, '--windows-job',
     String(f.exports.WINDOWS_JOB_LIMIT_BYTES), '--', 'owned-chrome']);
-  assert.ok(f.exports.WINDOWS_JOB_WRAPPER.endsWith(path.join('labhq', 'runner', 'memory_limit.py')));
+  assert.ok(f.exports.WINDOWS_JOB_WRAPPER.endsWith(path.join('support', 'windows_job_browser.py')));
   assert.equal(args[6], '--headless=new');
   assert.equal(args.at(-1), 'about:blank');
   assert.deepEqual(Array.from(options.stdio), ['ignore', 'ignore', 'pipe'], 'the owned stdio and its close proof stay');
