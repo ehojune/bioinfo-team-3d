@@ -3,4 +3,8 @@ rows:
 - sha: 3671b5c
   at: 2026-10-22 10:31
   summary: 설명서와 README가 문헌 기능과 기관 셋업에서 실제로 되는 일과 아직 안 되는 일을 정확히 말하도록 고쳤습니다.
-  text: 'README·README.en 비교표의 문헌 관리 칸을 검색·인용만에서 검색·인용·본문 요청으로 고쳤다(합법 OA 조회와 PI PDF 요청 카드가 이미 있음). 매뉴얼 기관 셋업 문단에 http이거나 url=/{url} 자리 없이 경로에 붙이는 프록시는 아직 받지 않는다는 문장을 더하고, Web of Science·Nexus Connect 기관 연결이 labhq에 아직 없으며 Nexus Connect의 labhq CLI 사용은 미확인이라고 고쳤다. 공개 출처 범위는 docs/reference/institution-literature-826.md에 두었다. 코드·설정 변경과 실제 기관 연결 확인은 없고 #826은 부분 해결이다.'
+  text: 'README·README.en 비교표의 문헌 관리 칸을 검색·인용만에서 검색·인용·본문 요청으로 고쳤다(합법 OA 조회와 PI PDF 요청 카드가 이미 있음). 매뉴얼 기관 셋업 문단에 http이거나 url=/{url} 자리 없이 경로에 붙이는 프록시는 아직 받지 않는다는 문장을 더하고, Nexus Connect의 labhq CLI 사용은 미확인이라고 적었다. 공개 출처 범위는 docs/reference/institution-literature-826.md에 두었다. 코드·설정 변경과 실제 기관 연결 확인은 없고 #826은 부분 해결이다.'
+- sha: fa5d91c
+  at: 2026-10-22 10:49
+  summary: 처음 설정 안내를 짧게 줄이고, Web of Science·Nexus 전용 자동 연결만 아직 없으며 기존 기관 경로는 그대로라고 정확히 알립니다.
+  text: '매뉴얼 첫 설정의 기관 문헌 문단을 623자에서 498자로 줄였다. 선택 질문, 공식 HTTPS 프록시, email, Enter로 건너뛰기, 로그인 뒤 주소 금지, 새 설정 세션 꺼짐, 기존 파일 무변경, 전용 자동 연결 미구현만 남겼다. 허용 주소 형식, 세션 탐지 한계, Nexus 공개 근거는 reference로 옮겼다. reference는 기존 기관 세션·프록시·PI PDF 요청 경로를 먼저 적고, Web of Science Research Assistant·Nexus Connect 전용 자동 연결은 미구현, 기관 MCP endpoint·client 지원은 미확인으로 정리했다. init의 WoS 안내에서 그때 연결합니다를 전용 연결 미지원과 기관 제공 접속 조건 확인으로 고쳤고, 질문·검증·저장 논리는 그대로다. 실제 init과 pytest는 CI 몫이고 #826은 부분 해결이다.'
