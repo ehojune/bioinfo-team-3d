@@ -4,6 +4,16 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## #844 — supervisor 시작 실패 진단에 실행 기록·gateway 로그 꼬리 추가 (base 3c07c1c)
+
+- 변경: `tests/test_supervisor_process.py`의 시험 전용 `_print_start_evidence`가 `gateway-supervisor.log`·`gateway-supervisor-diagnostics.jsonl`에 더해 `detached-launch.jsonl`과 `gateway.log`의 꼬리를 출력한다(`START_EVIDENCE_FILES`). 16KiB 상한, token 마스킹, 제어문자 치환, symlink 거부, 원래 실패 예외 보존, 진단 오류 비전파는 그대로다. 제품 코드, 제한시간, CI 선택 정책은 바꾸지 않았다.
+- 이유: #844의 두 실패(run 39684337037, 39689292875)는 supervisor가 gateway 기록 전에 끝났다는 사실만 남겼다. 기존 진단으로는 Windows 자식 기동 거부(`child_start_failed`의 세부)와 gateway 즉시 종료(`child_exit`의 원인)를 가를 수 없었다.
+- 검사: 기존 순수 test에 두 파일의 부재와 존재(마스킹·제어문자 포함)를 더했다. 실제 helper와 test를 AST로 뽑아 in-process로 실행했다: 수정 전 helper는 새 test에서 FAIL, 수정 후 PASS. Python 3.10 AST도 통과했다. 실프로세스 test와 pytest는 실행하지 않았다.
+- 공개 준비: 승인 main `30e1712`(#850 포함)를 merge `3731fb2`로 명시 통합했다. 충돌은 없고, `tests/test_supervisor_process.py`는 local `1b45979`와 byte 동일하다. AST 비교에서 함수 27개·test 9개가 모두 남았고, 바뀐 것은 진단 함수와 그 순수 test 두 개, 새 상수 하나다.
+- CI(head `12e9782`, run 39704958735): Windows pool에서 `test_a_role_killed_from_outside_is_restarted_but_one_stopped_on_purpose_is_not`가 60.66초 뒤 `supervisor=[]`로 실패했다. 이 PR이 바꾸지 않은 test다. 실행 기록에서 직접 기동은 winerror 5로 거부됐고, WMI bootstrap이 Job 밖으로 검증됐다. 그 뒤 감독 diagnostics는 0행이고 로그도 비어 있었다. coverage 단계의 `incomplete/stale worker receipt`는 gw2·master의 exitstatus 1을 정상 거부한 2차 결과다(artifact digest·run·head 일치 확인).
+- 확인된 결함(`1136231`): `windows_broker`의 `__main__`이 모든 Exception을 출력 없는 `SystemExit(2)`로 바꿔, stderr가 role 로그로 넘어간 뒤 감독 스크립트에서 난 시작 예외까지 숨겼다. 이제 role 단계 예외는 다시 던져 traceback이 role 로그에 남는다. ACK 대기·최종 확인·정리·진입 단계 정지는 같은 로그에 `stage=… error=…` 한 줄만 쓰고 2로 끝난다. 메시지·명령·환경·경로는 쓰지 않는다. 재시작 검사 실패 메시지에 감독 프로세스 종료 코드를 붙였다. 순수 확인: 실제 함수를 가짜 Native로 실행했다. 수정 전에는 세 경우 모두 출력 없는 2, 수정 후에는 단계 줄 1개·role 예외 재발생·receipt 전 무출력이다. `_bootstrap` 단계는 정상=cleanup, 호출자 종료=ack_wait, Job=final_check, 환경 불일치=없음이다.
+- 남음: 원인은 미확정이다. 이 수정은 다음 재발 때 원인을 보이게 할 뿐 #844를 해결하지 않는다. #844는 열어 둔다.
+
 ## #826 일부 — 첫 설정의 기관 문헌 접근 질문 (source c60adba, base 06dfb1b)
 
 - 변경: `labhq init`이 사람이 터미널에 있을 때만(`--yes`·`--dry-run`·비대화형 제외) 기관 이름, 도서관 프록시 주소, 이용 중인 문헌 서비스, Unpaywall 연락 email을 묻는다. 모두 Enter로 건너뛸 수 있다.

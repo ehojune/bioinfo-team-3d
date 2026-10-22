@@ -217,6 +217,7 @@ def test_venv_redirector_is_bypassed_without_losing_venv_environment(world, monk
 def test_bootstrap_cannot_enter_role_before_live_caller_nonce_ack_and_job_check(world, monkeypatch, mode):
     control = world.state / "wmi-bootstrap" / "request.json"
     control.parent.mkdir()
+    monkeypatch.setattr(broker, "_STAGE", {"name": None, "log": None})
     request = {"caller_pid": 111, "caller_created": world.caller["created"], "image": world.caller["image"],
                "owner": world.caller["owner"], "env_digest": broker._digest(os.environ),
                "nonce": "test-nonce", "expires": 0 if mode == "expired" else broker.time.time() + 20}
@@ -247,7 +248,35 @@ def test_bootstrap_cannot_enter_role_before_live_caller_nonce_ack_and_job_check(
             broker.bootstrap(control)
         enter.assert_not_called()
         assert not control.parent.exists()
+    # #844: a stop after the receipt is attributable by stage; before it the caller journals receipt_timeout.
+    assert broker._STAGE["name"] == {"healthy": "cleanup", "dead_caller": "ack_wait", "expired": "ack_wait",
+                                     "job": "final_check", "unknown_job": "final_check"}.get(mode)
     world.native.k.TerminateProcess.assert_not_called()  # Self-abort, never kill caller or scan its tree.
+
+
+@pytest.mark.parametrize("stage", [None, "cleanup", "role"])
+def test_bootstrap_stop_is_noted_by_stage_and_type_only_and_a_role_failure_keeps_its_traceback(tmp_path, monkeypatch,
+                                                                                              stage):
+    log = tmp_path / "role.log"
+    monkeypatch.setattr(broker, "_STAGE", {"name": None, "log": None})
+    def failing(control):
+        if stage:
+            broker._STAGE.update(name=stage, log=str(log))
+        raise PermissionError("fixture-secret in a message")
+    monkeypatch.setattr(broker, "bootstrap", failing)
+    if stage == "role":
+        with pytest.raises(PermissionError):  # Re-raised: the default hook writes it to the role's own stderr log.
+            broker.main(["broker.py", str(tmp_path / "request.json")])
+        assert not log.exists()
+        return
+    with pytest.raises(SystemExit) as stopped:
+        broker.main(["broker.py", str(tmp_path / "request.json")])
+    assert stopped.value.code == 2 and stopped.value.__cause__ is None
+    if stage is None:
+        assert not log.exists()
+    else:
+        assert log.read_text(encoding="utf-8") == (
+            "labhq WMI bootstrap stopped before the role started: stage=cleanup error=PermissionError\n")
 
 
 def test_native_bindings_retain_pointer_width_and_process_token_types(monkeypatch):
@@ -354,7 +383,9 @@ def test_transition_runs_in_same_process_without_spawn(tmp_path, monkeypatch, en
         observed.append((os.getpid(), list(sys.argv), args, kw))
     monkeypatch.setattr(broker.runpy, "run_module", run)
     monkeypatch.setattr(broker.runpy, "run_path", run)
+    monkeypatch.setattr(broker, "_STAGE", {"name": "cleanup", "log": None})
     broker._enter(request)
+    assert broker._STAGE["name"] == "role"  # stderr is the owned log before the role runs
     assert observed[0][0] == pid
     assert observed[0][1] == (entry[1:] if entry[0] == "-m" else entry)
     assert observed[0][3]["run_name"] == "__main__"
