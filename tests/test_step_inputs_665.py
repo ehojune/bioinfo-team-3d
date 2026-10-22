@@ -146,12 +146,17 @@ def test_staging_failures_never_open_unproven_input(tmp_path, monkeypatch, bad):
         (ws.dir / 'inputs/fetch').mkdir(parents=True)
         (ws.dir / 'inputs/fetch/keep.txt').write_text('preserve')
     else:
-        opened = HeldDir.open_read_file
+        from labhq.runner import step_inputs
+        opened, room, swapped = HeldDir.open_read_file, step_inputs._room, []
         def refuse_link(self, name):
-            if name == 'table.tsv':
+            if swapped and name == 'table.tsv':
                 raise OSError('mock link swapped after path validation')
             return opened(self, name)
+        def swap_after_space_check(*args):
+            room(*args)
+            swapped.append(True)  # the swap lands between the size preflight and the copy's own open
         monkeypatch.setattr(HeldDir, 'open_read_file', refuse_link)
+        monkeypatch.setattr(step_inputs, '_room', swap_after_space_check)
     staged, refused = stage_inputs(ws, {'fetch': artifact}, root, [], private, limit, 4096)
     assert not staged and 'fetch' in refused
     assert not (ws.dir / 'inputs/fetch/table.tsv').exists()
