@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import errno
 import hashlib
 import json
 import os
@@ -9,6 +10,7 @@ import re
 import uuid
 from pathlib import Path
 
+from .. import disk_space
 from ..adapters.held_dir import HeldDir
 from ..adapters.owned import plain_directory, write_owned_bytes
 from ..intake import overlaps_zone
@@ -100,6 +102,31 @@ def _reset(workdir, step, names):
     write_owned_bytes(workdir, (relative / INVENTORY).as_posix(), json.dumps(names).encode())
 
 
+def _size(source, source_parts):
+    with _folder(source, source_parts[:-1]) as src, \
+            os.fdopen(src.open_read_file(source_parts[-1]), 'rb') as opened:
+        return os.fstat(opened.fileno()).st_size
+
+
+def _amount(size):
+    for unit, scale in (('GiB', disk_space.GIB), ('MiB', 1024 ** 2)):
+        if size >= scale:
+            return f'{size / scale:.1f} {unit}'
+    return f'{size} bytes'
+
+
+def _room(workdir, needed):
+    """Refuse a snapshot the destination volume cannot hold before any byte is copied, so a known-size copy never
+    fills the drive the workspace (and often the gateway DB) shares (#678). Only a certain shortfall is refused:
+    an unreadable probe leaves the bounded copy as before, and no reserve beyond the files themselves is assumed."""
+    try:
+        free = disk_space.usage(Path(workdir)).free
+    except OSError:
+        return
+    if needed > free:
+        raise ValueError(f'not enough disk space for inputs ({_amount(needed)} needed, {_amount(free)} free)')
+
+
 def _copy(source, source_parts, workdir, destination, expected, limit, remaining):
     temporary = '.labhq-input-' + uuid.uuid4().hex
     if plain_directory(workdir, Path(destination).parent) is None:
@@ -180,6 +207,7 @@ def stage_inputs(ws, artifacts, workspace_root, zones, private_paths, max_file, 
                 files.append((relative, name, expected))
             if len({name.casefold() for _, name, _ in files}) != len(files):
                 raise ValueError('collected input names collide')
+            _room(ws.dir, sum(_size(root, (*source_parts, *_parts(relative))) for relative, _, _ in files))
             _reset(ws.dir, step, [name for _, name, _ in files])
             for relative, name, expected in files:
                 _copy(root, (*source_parts, *_parts(relative)), ws.dir,
@@ -192,6 +220,7 @@ def stage_inputs(ws, artifacts, workspace_root, zones, private_paths, max_file, 
                 except (OSError, ValueError, TypeError, KeyError, AttributeError) as cleanup:
                     # Do not start a staff adapter when a rejected partial snapshot could still be read.
                     raise RuntimeError('refused ancestor input snapshot could not be cleared') from cleanup
-            detail = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
+            detail = (str(exc) if isinstance(exc, ValueError) else
+                      'disk full during copy' if getattr(exc, 'errno', None) == errno.ENOSPC else type(exc).__name__)
             refused[str(step)] = f'inputs/{step} unavailable ({detail})'
     return staged, refused

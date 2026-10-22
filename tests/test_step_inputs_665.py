@@ -146,12 +146,17 @@ def test_staging_failures_never_open_unproven_input(tmp_path, monkeypatch, bad):
         (ws.dir / 'inputs/fetch').mkdir(parents=True)
         (ws.dir / 'inputs/fetch/keep.txt').write_text('preserve')
     else:
-        opened = HeldDir.open_read_file
+        from labhq.runner import step_inputs
+        opened, room, swapped = HeldDir.open_read_file, step_inputs._room, []
         def refuse_link(self, name):
-            if name == 'table.tsv':
+            if swapped and name == 'table.tsv':
                 raise OSError('mock link swapped after path validation')
             return opened(self, name)
+        def swap_after_space_check(*args):
+            room(*args)
+            swapped.append(True)  # the swap lands between the size preflight and the copy's own open
         monkeypatch.setattr(HeldDir, 'open_read_file', refuse_link)
+        monkeypatch.setattr(step_inputs, '_room', swap_after_space_check)
     staged, refused = stage_inputs(ws, {'fetch': artifact}, root, [], private, limit, 4096)
     assert not staged and 'fetch' in refused
     assert not (ws.dir / 'inputs/fetch/table.tsv').exists()
@@ -161,3 +166,61 @@ def test_staging_failures_never_open_unproven_input(tmp_path, monkeypatch, bad):
     if bad == 'size':
         staged, refused = stage_inputs(ws, {'fetch': artifact}, root, [], [], 1024, 4096)
         assert staged and not refused
+
+
+def _staging(tmp_path):
+    from labhq.runner.workspace import TaskWorkspace
+    from labhq.models import AgentSpec
+    root = tmp_path / 'runs'
+    root.mkdir()
+    folder, artifact = source(root)
+    task = Task(id='down', agent_id='worker', request_id='r', prompt='fixture')
+    return root, folder, artifact, TaskWorkspace(root, task, AgentSpec(id='worker', name='Worker', role='test'))
+
+
+def test_inputs_the_drive_cannot_hold_are_refused_before_any_byte_is_copied(tmp_path, monkeypatch):
+    # #678: the known size decides before writing; the drive is never filled by a copy that cannot finish.
+    from collections import namedtuple
+    from labhq import disk_space
+    from labhq.adapters.held_dir import HeldDir
+    from labhq.runner.step_inputs import stage_inputs
+    root, folder, artifact, ws = _staging(tmp_path)
+    space, free = namedtuple('Space', 'total used free'), [5]
+    monkeypatch.setattr(disk_space, 'usage', lambda path: space(100, 100 - free[0], free[0]))
+    created, opened = [], HeldDir.open_file
+    def record(self, name, *args, **kwargs):
+        created.append(name)
+        return opened(self, name, *args, **kwargs)
+    monkeypatch.setattr(HeldDir, 'open_file', record)
+    staged, refused = stage_inputs(ws, {'fetch': artifact}, root, [], [], 1024, 4096)
+    assert not staged and refused['fetch'] == \
+        'inputs/fetch unavailable (not enough disk space for inputs (13 bytes needed, 5 bytes free))'
+    assert not any(name.startswith('.labhq-input-') for name in created)
+    assert sorted(p.name for p in (ws.dir / 'inputs/fetch').iterdir()) == ['.labhq-inputs.json']
+    assert (folder / 'outputs/table.tsv').read_bytes() == b'gene\nfixture\n'
+    free[0] = 13  # room for exactly the files: staged as before, no extra reserve assumed
+    staged, refused = stage_inputs(ws, {'fetch': artifact}, root, [], [], 1024, 4096)
+    assert staged and not refused and (ws.dir / 'inputs/fetch/table.tsv').read_bytes() == b'gene\nfixture\n'
+
+
+def test_an_unreadable_drive_keeps_the_bounded_copy_and_a_full_drive_says_so(tmp_path, monkeypatch):
+    import errno
+    from labhq import disk_space
+    from labhq.adapters.held_dir import HeldDir
+    from labhq.runner.step_inputs import stage_inputs
+    root, folder, artifact, ws = _staging(tmp_path)
+    def unreadable(path):
+        raise OSError('disk unavailable')
+    monkeypatch.setattr(disk_space, 'usage', unreadable)
+    staged, refused = stage_inputs(ws, {'fetch': artifact}, root, [], [], 1024, 4096)
+    assert staged and not refused
+    opened = HeldDir.open_file
+    def full(self, name, *args, **kwargs):
+        if name.startswith('.labhq-input-'):
+            raise OSError(errno.ENOSPC, 'No space left on device')
+        return opened(self, name, *args, **kwargs)
+    monkeypatch.setattr(HeldDir, 'open_file', full)
+    staged, refused = stage_inputs(ws, {'fetch': artifact}, root, [], [], 1024, 4096)
+    assert not staged and refused['fetch'] == 'inputs/fetch unavailable (disk full during copy)'
+    assert not (ws.dir / 'inputs/fetch/table.tsv').exists()
+    assert (folder / 'outputs/table.tsv').read_bytes() == b'gene\nfixture\n'
