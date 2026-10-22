@@ -1,0 +1,25 @@
+## 경로 검사 CPU 시험의 비율 계약 (source 5b803cb, base 0f80516)
+
+- 관측: PR866 head b2be1e의 Linux 3.12 CI(run 39845342493)에서 두 경로 검사 시험이 실패했다.
+  - `test_mentions_zone_stays_linear_on_long_separator_runs`: `process_time` 2.046초.
+  - `test_touches_stays_linear_on_long_separator_runs`: 2.267초.
+  - 나머지 11,240건은 통과했다.
+  - 스캐너는 main 코드이고 PR866은 건드리지 않았다.
+- 로컬 순수 측정(main 코드, 문자열만): 같은 입력은 약 0.06초이고, 입력을 0.5·1·2배로 하면 비용도 비례했다. CI가 왜 약 33배 CPU를 썼는지는 기록으로 확인할 수 없다.
+- 변경(시험만):
+  - 측정은 호출 스레드 CPU(`time.thread_time`)로 한다.
+  - 기존 전체 입력(731,072자)과 같은 구성의 1/4 입력을 각각 0.2초 CPU까지 반복해 평균을 낸다. 반복 상한은 16회·4회다.
+  - 전체 평균이 8 × 1/4 평균 + 시계 한 tick(15.7 ms) 이하여야 한다.
+  - 분리자 run의 결과는 계속 None이어야 한다.
+  - 새 시험: run 뒤 `/restricted` 경로(바로 뒤·공백 뒤)와 `file:///%72estricted` URI는 찾고, `/restricted2`·https 공개 꼬리는 찾지 않는다.
+  - fake clock 시험(기존 이름 유지): 4배·경계 8배·tick 여유는 통과하고, 16배·8.5배·틀린 결과·tick 초과는 거부한다. 호출 횟수 상한도 확인한다.
+  - Windows inventory는 `tests/test_policy.py` digest와 새 보안 노드만 갱신했다.
+- 검사:
+  - 변경한 시험 16건을 in-process로 통과했다(pytest 대용 stub).
+  - 실제 스캐너 비율은 3.5~4.3배였다.
+  - 이차 재탐색 fake는 CI 입력의 1/8·1/4 규모에서 12.8·12.1배로 거부됐다. 1/16 규모는 너무 빨라 8.0배로 경계에 걸렸다.
+  - `validate_profile`, Python 3.10 AST, `git diff --check`를 통과했다.
+- 한계:
+  - 이 비율은 해당 입력에 대한 계약이며 모든 입력의 점근 선형성을 증명하지 않는다.
+  - 이차 회귀가 전체 입력에 생기면 실패하기 전에 오래 돈다. 1/4 측정이 먼저지만 그것도 크다.
+  - CI 지연의 실제 원인(다른 스레드·VM 사정)은 증명하지 않았다.
