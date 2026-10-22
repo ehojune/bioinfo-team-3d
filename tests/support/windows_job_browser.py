@@ -17,6 +17,9 @@ import subprocess
 import sys
 
 PRODUCT_MODULE = Path(__file__).resolve().parents[2] / "labhq" / "runner" / "memory_limit.py"
+# #833: one fixed line on stderr once the Job exists and right before Chrome starts. The driver records when it arrives,
+# splitting this wrapper's start and Job setup from Chrome's own start. It carries no path, argument or value.
+JOB_STARTING_BROWSER = "LABHQ_JOB_STARTING_BROWSER"
 
 
 def product_job_class(path: Path = PRODUCT_MODULE):
@@ -48,6 +51,10 @@ def run(argv: list[str], *, job_factory=None, start=subprocess.run, stdin=None, 
         if limit <= 0 or not command:
             raise ValueError("missing positive limit or command")
         job = (job_factory or product_job_class())(os.getpid(), limit)
+        try:
+            print(JOB_STARTING_BROWSER, file=stderr, flush=True)
+        except (OSError, ValueError):
+            pass  # diagnostic only: a stderr that cannot be written never stops the browser start
         completed = start(command, check=False, stdin=stdin, stdout=stdout, stderr=stderr)
         if completed.returncode and job.peak_bytes() >= int(limit * 0.98):
             print("out of memory: Windows Job object limit reached", file=stderr)

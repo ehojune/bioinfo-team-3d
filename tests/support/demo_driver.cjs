@@ -27,6 +27,55 @@ const CLEANUP_MS = 5000, GRACEFUL_CLEANUP_MS = 3000;
 // or PID. The limit is far above a demo browser: the Job is for ownership, not a memory cap.
 const WINDOWS_JOB_WRAPPER = path.resolve(__dirname, 'windows_job_browser.py');
 const WINDOWS_JOB_LIMIT_BYTES = 64 * 1024 ** 3;
+// #833: the wrapper's fixed stderr line once its Job exists, right before it starts Chrome (windows_job_browser.py).
+// Recognized only as the stream's first line; it is a diagnostic and never decides whether a start passed.
+const JOB_STARTING_BROWSER = 'LABHQ_JOB_STARTING_BROWSER';
+// #833: a Chrome start still without DevToolsActivePort this long reports, once, whether Chrome is visibly working
+// (entries in its profile, stderr bytes). Diagnostic only; it neither ends nor extends the 60 s start budget.
+const CHROME_NOTICE_MS = 5000;
+
+// #833: Chrome's stderr with the wrapper's marker line taken off the front. The marker counts only as the first line,
+// so the same text later in Chrome's own output is just output. Only counts leave this: `chromeBytes()`, `marked()`.
+function chromeStderrWatcher(onMarker = () => {}) {
+  let head = '', text = '', bytes = 0, state = 'head';  // head -> marked | plain
+  const chrome = part => {
+    if (!part) return;
+    bytes += typeof Buffer === 'function' ? Buffer.byteLength(part, 'utf8') : part.length;
+    text = (text + part).slice(-2000);
+  };
+  return {
+    feed(chunk) {
+      const part = String(chunk);
+      if (state !== 'head') return chrome(part);
+      head += part;
+      const line = head.match(/^([^\r\n]*)\r?\n/);
+      if (!line) {
+        // Still possibly the marker line: its text, then CR LF or LF, may arrive split anywhere (e.g. CR | LF).
+        if (!(JOB_STARTING_BROWSER + '\r\n').startsWith(head) && !(JOB_STARTING_BROWSER + '\n').startsWith(head)) {
+          state = 'plain'; chrome(head); head = '';
+        }
+        return;
+      }
+      if (line[1] === JOB_STARTING_BROWSER) {
+        state = 'marked';
+        try { onMarker(); } catch { /* diagnostic only */ }
+        chrome(head.slice(line[0].length));
+      } else {
+        state = 'plain';
+        chrome(head);
+      }
+      head = '';
+    },
+    text: () => text + head,
+    chromeBytes: () => bytes,
+    marked: () => state === 'marked',
+  };
+}
+
+// #833: how many top-level entries the temp profile has (the driver creates one, `home`); null if unreadable.
+function profileEntryCount(dir) {
+  try { return fs.readdirSync(dir).length; } catch { return null; }
+}
 
 // The interpreter is named explicitly (tests/test_web_3d.py passes sys.executable). No PATH lookup and no Store
 // alias: a Chrome started without the owned Job would hide the very cleanup this driver must prove.
@@ -297,15 +346,23 @@ async function openDemo(opts = {}) {
     {windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'], env: {...process.env, HOME: home, USERPROFILE: home,
       HOMEDRIVE: path.parse(home).root.slice(0, 2), HOMEPATH: home.slice(2), LOCALAPPDATA: local, APPDATA: roaming, XDG_CONFIG_HOME: config}});
     chromeClosed = new Promise(resolve => chrome.once('close', resolve));
-    chrome.stderr.on('data', chunk => { chromeError = (chromeError + chunk).slice(-2000); });
+    const stderrWatch = chromeStderrWatcher(() => trace.observe('job-ready'));
+    chrome.stderr.on('data', chunk => { stderrWatch.feed(chunk); chromeError = stderrWatch.text(); });
     trace('chrome-spawned');
     // A cold Chrome start on a loaded CI runner can take far longer than 10 s (see tests/web_office_browser.cjs):
     // wait for the DevToolsActivePort file and the page target on a deadline, and stop early if Chrome exits.
     let debug, page, exited = null;
     chrome.on('exit', (code, signal) => { exited = {code, signal}; });
     const startDeadline = Date.now() + START_MS;
+    const noticeAt = Date.now() + CHROME_NOTICE_MS;
+    let noticed = false;
     while (!debug && !exited && Date.now() < startDeadline) {
       try { debug = fs.readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0]; } catch { /* not written yet */ }
+      if (!debug && !noticed && Date.now() >= noticeAt) {
+        noticed = true;  // #833: once; counts only, no path or stderr text
+        trace.observe('chrome-waiting', {job_marker_seen: stderrWatch.marked(), profile_entries: profileEntryCount(profile),
+          chrome_stderr_bytes: stderrWatch.chromeBytes()});
+      }
       if (!debug) await sleep(100);
     }
     if (!debug) throw new Error(`Chrome did not publish its debugging port within ${START_MS / 1000}s (exit: ${JSON.stringify(exited)}): ${chromeError}`);
@@ -431,4 +488,5 @@ async function openDemo(opts = {}) {
 }
 
 module.exports = {openDemo, skipReason, findChrome, sleep, WEB_ROOT, CLOCK_SOURCE, closeDemoResources, demoLifecycleTrace, requestBrowserShutdown,
-  CLEANUP_MS, GRACEFUL_CLEANUP_MS, WINDOWS_JOB_WRAPPER, WINDOWS_JOB_LIMIT_BYTES, windowsJobPython, browserCommand};
+  CLEANUP_MS, GRACEFUL_CLEANUP_MS, WINDOWS_JOB_WRAPPER, WINDOWS_JOB_LIMIT_BYTES, windowsJobPython, browserCommand,
+  JOB_STARTING_BROWSER, chromeStderrWatcher, profileEntryCount};

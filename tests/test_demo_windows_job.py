@@ -81,11 +81,49 @@ def test_missing_browser_and_memory_limit_keep_the_product_codes_and_lines():
         raise FileNotFoundError(command[0])
     assert launcher.run(['--windows-job', '100', '--', 'nochrome.exe'], job_factory=FakeJob([]), start=missing,
                         **vars(io_)) == 127
-    assert io_.stderr.getvalue() == 'LABHQ_EXEC_NOT_FOUND: nochrome.exe\n'
+    # #833: the start was attempted inside the Job, so the fixed marker line precedes the product line.
+    assert io_.stderr.getvalue() == 'LABHQ_JOB_STARTING_BROWSER\nLABHQ_EXEC_NOT_FOUND: nochrome.exe\n'
     io_ = streams()
     assert launcher.run(['--windows-job', '100', '--', 'chrome.exe'], job_factory=FakeJob([], peak=99),
                         start=lambda c, **o: SimpleNamespace(returncode=1), **vars(io_)) == 1
-    assert io_.stderr.getvalue() == 'out of memory: Windows Job object limit reached\n'
+    assert io_.stderr.getvalue() == 'LABHQ_JOB_STARTING_BROWSER\nout of memory: Windows Job object limit reached\n'
+
+
+class RecordingStream:
+    def __init__(self, record, *, broken=False):
+        self.record, self.broken, self.text = record, broken, ''
+
+    def write(self, text):
+        if self.broken:
+            raise OSError('closed')
+        self.text += text
+        if text.endswith('\n'):
+            self.record.append(('stderr', self.text))
+            self.text = ''
+        return len(text)
+
+    def flush(self):
+        if self.broken:
+            raise OSError('closed')
+
+
+def test_the_fixed_marker_is_written_once_after_the_job_exists_and_before_the_browser_starts():
+    """#833: it splits wrapper/Job setup from Chrome's own start. A fixed constant: no path, argument or value."""
+    record, io_ = [], streams()
+    stderr = RecordingStream(record)
+    launcher.run(['--windows-job', '1024', '--', 'C:/secret/chrome.exe', '--user-data-dir=C:/private'],
+                 job_factory=FakeJob(record), start=lambda c, **o: record.append('start') or SimpleNamespace(returncode=0),
+                 stdin=io_.stdin, stdout=io_.stdout, stderr=stderr)
+    assert [entry if isinstance(entry, str) else entry[0] for entry in record] == ['job', 'stderr', 'start']
+    assert record[1] == ('stderr', launcher.JOB_STARTING_BROWSER + '\n') == ('stderr', 'LABHQ_JOB_STARTING_BROWSER\n')
+
+
+def test_an_unwritable_stderr_does_not_stop_the_start_or_change_its_status():
+    record, io_ = [], streams()
+    code = launcher.run(['--windows-job', '1024', '--', 'chrome.exe'], job_factory=FakeJob(record),
+                        start=lambda c, **o: record.append('start') or SimpleNamespace(returncode=5),
+                        stdin=io_.stdin, stdout=io_.stdout, stderr=RecordingStream(record, broken=True))
+    assert code == 5 and record[-1] == 'start'
 
 
 def test_the_default_job_is_the_product_kill_on_close_job_loaded_from_its_source_file():

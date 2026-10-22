@@ -1,0 +1,10 @@
+pr: 867
+rows:
+- sha: bd401f7
+  at: 2026-10-23 04:53
+  summary: Windows 화면 검사에서 브라우저가 늦게 뜨면, 준비 단계와 브라우저 자체 중 어디서 기다렸는지 숫자로 남깁니다.
+  text: 'tests/support/windows_job_browser.py가 Job을 만든 뒤 Chrome 시작 직전에 고정 줄 하나를 stderr에 쓰고, demo_driver가 그 줄을 stderr 첫 줄일 때만 job-ready 관측으로 남긴다. DevToolsActivePort가 5초 지나도 없으면 chrome-waiting 관측 한 줄(표시 수신 여부, profile 최상위 항목 수, Chrome stderr byte 수)을 남긴다. 경로·stderr 내용·URL·argv·환경 값은 남기지 않는다. 진단 전용이며 시작 판정(DevToolsActivePort), 60초·30초 제한, 정리·receipt, 재시도·skip은 그대로다. #833 원인은 아직 모른다.'
+- sha: 733b644
+  at: 2026-10-23 05:20
+  summary: 브라우저 시작 표시 줄이 두 조각(CR과 LF)으로 나뉘어 도착해도 놓치지 않습니다.
+  text: 'demo_driver의 chromeStderrWatcher가 표시 문자열과 CR이 한 chunk, LF가 다음 chunk로 오면 첫 줄이 아니라고 보고 표시를 놓쳤다. 이제 표시+CRLF 또는 표시+LF의 앞부분인 동안만 기다리고(최대 표시 길이+2 글자), 그 밖이면 Chrome 출력으로 넘긴다. 판정(DevToolsActivePort), 60초·30초 제한, 정리는 그대로이고 CR|LF 분리 fake case 1건을 더했다.'
