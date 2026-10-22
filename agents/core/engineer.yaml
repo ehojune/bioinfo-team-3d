@@ -3,8 +3,7 @@ name: 문어 코딩 엔지니어
 role: 파이프라인·도구 개발, 테스트, 컨테이너
 character: octopus
 engine: codex
-# PI 결정 5A(2026-10-08): v0.5를 통과한 roster와 같은 모델. gpt-6.1-sol은 그날 마무리 응답에서 두 번 멈췄다(#473).
-model: gpt-5.6-sol
+model: gpt-6.1-sol
 model_tier: balanced
 sandbox: workspace-write
 builtin_mcp: [hpc]

@@ -1,0 +1,7 @@
+pr: null
+rows:
+- sha: cb95f56
+  at: 2026-10-23 04:07
+  summary: 코딩 엔지니어와 시설팀의 기본 모델을 gpt-6.1-sol로 맞췄습니다.
+  text: 두 직원 YAML과 기존 단언·생성 inventory·manual 표를 갱신했다. schema·정적 대조·공개 검사 PASS이며 pytest는 CI에 맡긴다. 모델 가용성과 실제 요청은 미검증이다.
+

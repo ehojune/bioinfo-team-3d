@@ -708,12 +708,12 @@ runner PC에 무언가 없어서 실패한 단계는 `environment` 실패입니�
 | 🐿️ 다람쥐 데이터 담당 | `data_steward` | 데이터 확보, 매니페스트·체크섬 | Claude Code / sonnet | — | HPC* |
 | 🦊 여우 문헌·헤드헌터 | `lit_scout` | 문헌·파견직 후보 검색 | Codex / gpt-6-luna | workspace-write | live 웹·PubMed·bioRxiv |
 | 🦝 너구리 분석가 | `analyst` | 분석 설계·실행 | Claude Code / opus | — | HPC* |
-| 🐙 문어 엔지니어 | `engineer` | 파이프라인·도구·테스트 | Codex / gpt-5.6-sol | workspace-write | 웹 disabled·HPC* |
+| 🐙 문어 엔지니어 | `engineer` | 파이프라인·도구·테스트 | Codex / gpt-6.1-sol | workspace-write | 웹 disabled·HPC* |
 | 🦔 고슴도치 Data QC | `qc_reviewer` | PASS/WARN/FAIL QC | Claude Code / sonnet | — | HPC* |
 | 🐢 거북이 과학 리뷰어 | `sci_reviewer` | 3기준 교차 리뷰 | Codex / gpt-6-astra | 자기 outputs/·.tmp/만 쓰기 | live 웹 |
 | 카피바라 인사팀 | `recruiter` | Paper2Agent 변환·검증 | Claude Code / opus | — | Skill·Agent |
 | 🦁 사자 단독 처리 | `solo` | 한 요청을 계획부터 보고까지 단독 처리 | 로컬 설정 | 로컬 설정 | 로컬 설정 |
-| 🐹 시설팀 | `facilities` | 환경 오류 진단·PI 조치 안내 | Codex / gpt-6-sol | read-only | 전달된 진단 근거만 |
+| 🐹 시설팀 | `facilities` | 환경 오류 진단·PI 조치 안내 | Codex / gpt-6.1-sol | read-only | 전달된 진단 근거만 |
 | 🦫 비버 편집자 | `editor` | 끝난 요청의 결과·재현 방법·출처 정리 | Codex / gpt-6-luna | read-only | 전달된 정리 자료·prompt 점검 규칙 |
 | 🐥 파견직 | `c_<slug>` | 논문의 방법 적용 | Claude Code / sonnet | — | 논문 MCP·skill |
 
