@@ -1,25 +1,28 @@
-## 경로 검사 CPU 시험의 비율 계약 (source 5b803cb, base 0f80516)
+## 경로 정규화의 Linux 이차 비용 수리와 비율 계약 (source 5b803cb·e7a6b26, base 0f80516)
 
-- 관측: PR866 head b2be1e의 Linux 3.12 CI(run 39845342493)에서 두 경로 검사 시험이 실패했다.
-  - `test_mentions_zone_stays_linear_on_long_separator_runs`: `process_time` 2.046초.
-  - `test_touches_stays_linear_on_long_separator_runs`: 2.267초.
-  - 나머지 11,240건은 통과했다.
-  - 스캐너는 main 코드이고 PR866은 건드리지 않았다.
-- 로컬 순수 측정(main 코드, 문자열만): 같은 입력은 약 0.06초이고, 입력을 0.5·1·2배로 하면 비용도 비례했다. CI가 왜 약 33배 CPU를 썼는지는 기록으로 확인할 수 없다.
-- 변경(시험만):
-  - 측정은 호출 스레드 CPU(`time.thread_time`)로 한다.
-  - 기존 전체 입력(731,072자)과 같은 구성의 1/4 입력을 각각 0.2초 CPU까지 반복해 평균을 낸다. 반복 상한은 16회·4회다.
-  - 전체 평균이 8 × 1/4 평균 + 시계 한 tick(15.7 ms) 이하여야 한다.
-  - 분리자 run의 결과는 계속 None이어야 한다.
-  - 새 시험: run 뒤 `/restricted` 경로(바로 뒤·공백 뒤)와 `file:///%72estricted` URI는 찾고, `/restricted2`·https 공개 꼬리는 찾지 않는다.
-  - fake clock 시험(기존 이름 유지): 4배·경계 8배·tick 여유는 통과하고, 16배·8.5배·틀린 결과·tick 초과는 거부한다. 호출 횟수 상한도 확인한다.
-  - Windows inventory는 `tests/test_policy.py` digest와 새 보안 노드만 갱신했다.
-- 검사:
-  - 변경한 시험 16건을 in-process로 통과했다(pytest 대용 stub).
-  - 실제 스캐너 비율은 3.5~4.3배였다.
-  - 이차 재탐색 fake는 CI 입력의 1/8·1/4 규모에서 12.8·12.1배로 거부됐다. 1/16 규모는 너무 빨라 8.0배로 경계에 걸렸다.
-  - `validate_profile`, Python 3.10 AST, `git diff --check`를 통과했다.
+- 관측:
+  - PR866 CI(run 39845342493)에서 절대 2초 예산이 2.046·2.267초로 실패했다.
+  - 같은 시험을 1/4→전체 비율 계약으로 바꾼 PR868 head 831084d의 Linux 3.12 CI(run 39849219342)에서는 4배 입력에 mentions_zone 11.2배, touches 10.2배가 나왔다.
+  - 처음의 "스캐너는 선형"이라는 판단은 Windows에서만 잰 결과라 틀렸다.
+- 원인: Codex 독립 진단이 재현했다.
+  - `_norm`이 131,072자 구분자 후보를 `ntpath.normpath`에 넘긴다.
+  - Linux가 쓰는 pure-Python 판은 빈 성분을 list에서 하나씩 `del`해 이차 비용이 된다.
+  - Windows의 native normpath는 이를 가렸다.
+- 변경(제품): `labhq/policy.py`의 `_windows_normpath`를 더했고, `_norm`의 Windows 분기가 이것을 쓴다.
+  - 실행 중인 stdlib의 `splitroot`(3.12+)·`splitdrive`(3.10/3.11)로 drive·root를 나눈다. 3.10/3.11에서 장치·literal 접두는 stdlib 그대로다.
+  - 성분 규칙(빈·`.` 제거, `x\..` 상쇄, root 아래 맨 앞 `..` 제거, 빈 결과 `.`)을 stack으로 한 번에 적용한다.
+  - 구분자 run, `.` run, `x\..` 쌍, root 아래 `..` run이 모두 선형이다.
+- 변경(시험):
+  - 호출 스레드 CPU 기준 1/4→전체 8배 계약(+ 시계 한 tick)을 둔다.
+  - 기존 731,072자 입력과 늦은 `/restricted`·file URI 검사는 그대로다.
+  - 실행 중인 CPython의 pure-Python normpath(AST 추출, Windows에서도 실행)와 짧은 입력 전수·UNC/장치/drive 사례를 비교한다.
+  - 다섯 가지 긴 모양에 같은 계약을 건다.
+- 검사(로컬, 문자열만):
+  - 짧은 입력 약 50만 건에서 3.12·3.14 pure-Python normpath와 불일치 0건이다.
+  - 3.12 Windows native와는 `_norm`이 닿는 입력 중 `\?\UNC\` 1건이 달랐다. 이 경우 Linux·3.14와 같은 결과를 낸다.
+  - Linux 동작을 흉내 낸 수정 전 스캐너는 mentions_zone 전체 3.2초, touches 비율 8.5배로 실패했다. 수정 후에는 0.07초, 비율 4배다.
+  - 시험 22건 in-process 통과, `validate_profile`, 3.10 AST를 통과했다.
 - 한계:
-  - 이 비율은 해당 입력에 대한 계약이며 모든 입력의 점근 선형성을 증명하지 않는다.
-  - 이차 회귀가 전체 입력에 생기면 실패하기 전에 오래 돈다. 1/4 측정이 먼저지만 그것도 크다.
-  - CI 지연의 실제 원인(다른 스레드·VM 사정)은 증명하지 않았다.
+  - 3.10 pure-Python 판은 로컬에 없어 CI 몫이다.
+  - `private_paths.path_field_text`와 Windows 전용 `claude_write_input`의 `ntpath.normpath`는 이번 범위 밖이다.
+  - 비율 계약은 해당 입력에 대한 것이며 모든 입력의 선형성 증명이 아니다.

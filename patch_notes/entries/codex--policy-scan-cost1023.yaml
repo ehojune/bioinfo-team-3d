@@ -1,6 +1,10 @@
-pr: null
+pr: 868
 rows:
 - sha: 5b803cb
   at: 2026-10-23 05:27
-  summary: 경로 검사 속도 시험이 느린 CI 기계에서 잘못 실패하지 않도록, 절대 시간 대신 입력 크기에 따른 비용 비율로 확인합니다.
-  text: 'tests/test_policy.py의 경로 검사 CPU 시험이 PR866 CI(run 39845342493)에서 바뀌지 않은 스캐너로 2.046·2.267초를 써서 2초 예산을 넘겼다. 이제 호출 스레드 CPU(thread_time)로 기존 전체 입력과 같은 구성의 1/4 입력을 각각 0.2초가 쌓일 때까지 측정한다(반복 상한 16·4회). 전체 평균이 1/4 평균의 8배와 시계 한 tick을 넘으면 실패한다. 선형이면 약 4배, 구분자 run마다 다시 훑는 이차 스캔이면 약 16배다. run 뒤 /restricted 경로·file URI 검출과 공개 꼬리 미검출 시험을 더했고, Windows inventory는 test_policy digest와 새 노드만 갱신했다. 정책 코드는 그대로다. 이 비율 계약은 해당 입력에 대한 것이며 모든 입력의 선형성 증명이 아니다.'
+  summary: 경로 검사 속도 시험을 절대 시간 대신 입력 크기에 따른 비용 비율로 확인합니다.
+  text: 'tests/test_policy.py의 경로 검사 CPU 시험을 호출 스레드 CPU(thread_time)로, 기존 전체 입력과 같은 구성의 1/4 입력을 각각 0.2초까지(반복 상한 16·4회) 재어 전체 평균이 1/4 평균의 8배와 시계 한 tick을 넘으면 실패하게 바꿨다. run 뒤 /restricted 경로·file URI 검출 시험을 더했다. 비율 계약은 해당 입력에 대한 것이며 모든 입력의 선형성 증명이 아니다.'
+- sha: e7a6b26
+  at: 2026-10-23 05:55
+  summary: Linux에서 아주 긴 구분자·점 run이 든 Windows식 경로를 검사할 때 느려지던 문제를 고쳤습니다.
+  text: '비율 계약이 Linux 3.12 CI(run 39849219342)에서 실제 이차 비용을 잡았다(4배 입력에 11.2·10.2배). 원인은 _norm이 긴 구분자 후보를 ntpath.normpath에 넘기는데, Linux의 pure-Python 판이 빈·.·x\.. 성분을 list에서 하나씩 지우는 것이었다. Windows native 판은 이를 가렸다. labhq/policy.py _windows_normpath가 실행 중인 stdlib의 splitroot·splitdrive로 drive·root를 나누고, 같은 성분 규칙을 stack으로 한 번에 적용한다. 짧은 입력 약 50만 건에서 Python 3.12·3.14 pure-Python normpath와 결과가 모두 같았다. 3.12 Windows native와는 \?\UNC\ 하나가 달랐고, 이 경우 Linux·3.14와 같은 결과를 낸다. 시험은 실행 중인 stdlib의 pure-Python normpath와 비교하고, 다섯 가지 긴 모양에 같은 8배 계약을 건다. 731,072자 입력·8배 한도·늦은 경로 검사는 그대로다. private_paths와 Windows 전용 claude_write_input의 ntpath.normpath는 이번 범위 밖이다.'
