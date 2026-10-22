@@ -114,7 +114,7 @@ Limits: the limit/login-wait fixes have only test evidence and re-login needs a 
 | Evidence trail | ✅ Output hash, anchor re-check | ⚠️ Scripts and logs left behind | ✅ Output provenance, rerun compare |
 | Approval | ✅ Web / phone cards | ⚠️ Inside the session | ✅ Approval modes, phone remote |
 | After a stop | ✅ From the stopped step | ⚠️ Session resume only | ✅ Remote job recovery |
-| Literature | ⚠️ Search and citation only | ⚠️ Depends on attached tools | ✅ Library, PDF, screening |
+| Literature | ⚠️ Search, citation, full-text requests | ⚠️ Depends on attached tools | ✅ Library, PDF, screening |
 | Speed / cost | ❌ Big task 144 min, $31 | ✅ Same task 19 min | — |
 
 \* The default reviewer is Codex/GPT-6-Astra: another vendor for Claude analysis and the same vendor for Codex analysis. Workbench features came from documentation; the app was not run.
