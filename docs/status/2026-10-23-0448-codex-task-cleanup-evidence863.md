@@ -14,6 +14,7 @@
     - `_shutdown_result`는 `shutdown_evidence`를 덮어쓰지 않고 합치며, 중단일 때만 `cleanup`을 더한다. 정상 종료의 shutdown_evidence는 계속 비어 있다.
   - manual 요청 취소 문단에 한 단락을 더했다.
 - 범위 밖: Job ActiveProcesses 조회, handle 복제, 광범위 kill, COM·WMI·서비스 등 Job 밖 실행, 제품 전체 제어면 개편.
+- 가정(manual에 명시, 독립 검토 P1/P2 0 뒤): runner가 띄운 wrapper의 코드·실행 환경을 믿고, wrapper가 복제·상속하지 않은 유일한 Job handle을 끝까지 쥔다. OS sandbox도, ActiveProcesses 0 측정도 아니다. 실행 코드는 바꾸지 않았다.
 - 검사(가짜만):
   - `tests/test_step_memory_limit.py` +12 함수, 18 case: 알림 순서, Job 배정 실패, Job handle 비상속·wrapper 보유, 첫 줄·PID 판정, verdict 표(메타데이터 누락·wait 미완료 포함), 정상·0이 아닌 종료·위조 줄·다른 PID·무알림·Job 꺼짐, 실행 중 취소, spawn 중 취소(만들어짐/없음), daemon 합치기·재시작.
   - 프로세스 없이 in-process로 실행했다: adapter·wrapper 14 case 통과, daemon 두 메서드(AST 추출) 통과. 이전 코드에서는 새 API가 없어 실패한다.
