@@ -282,6 +282,8 @@ class Runner:
         # Tasks whose task.result is already queued in this run. A cancel that arrives while the result commits does
         # not stop the commit, so the cancel handler must not queue a second, "cancelled" one over it (#606).
         self._result_queued: set[str] = set()
+        # #863: cleanup evidence an adapter reports when its run ends by cancellation (no TaskResult of its own).
+        self._cleanup_reports: dict[str, dict] = {}
         self.store = StateStore(settings.path(settings.runner.state_dir) / f"runner-{settings.runner.id}.sqlite3")
         saved_incarnation = self.store.all("runner_meta").get("incarnation")
         self.incarnation = saved_incarnation["id"] if saved_incarnation else uuid.uuid4().hex
@@ -358,8 +360,11 @@ class Runner:
                               pending_jobs=[job["job_id"] for job in jobs],
                               workdir=next((job.get("workdir") for job in jobs if job.get("workdir")), None),
                               session_id=next((job.get("session_id") for job in jobs if job.get("session_id")), None))
+        # This runner never held that task's wrapper: a restart proves the old runner ended, not its staff tree (#863).
         return self._shutdown_result(TaskResult(task_id=tid, agent_id=agent_id, ok=False,
-                          error="runner restarted: accepted task interrupted"), cancelled=True, recovered=True)
+                          error="runner restarted: accepted task interrupted",
+                          cleanup_evidence={"status": "UNKNOWN", "reason": "runner_restart_only",
+                                            "active_processes_measured": False}), cancelled=True, recovered=True)
 
     def _shutdown_result(self, result: TaskResult, *, cancelled: bool = False,
                          recovered: bool = False) -> TaskResult:
@@ -368,9 +373,11 @@ class Runner:
         stopping = recovered or self._stopping or stopping_marker(self.s, self.started_at)
         if not result.ok and shutdown_interruption(exit_code=result.exit_code, error=result.error,
                                                    stopping=stopping, cancelled=cancelled):
-            result.shutdown_evidence = {"exit_code": result.exit_code, "error": result.error,
-                "stopping": True, "cancelled": cancelled,
-                "source": "runner-recovery" if recovered else "runner", "at": time.time()}
+            # Merged, never replaced (#863): evidence already on the result stays, and the task's cleanup evidence joins.
+            result.shutdown_evidence = {**result.shutdown_evidence, "exit_code": result.exit_code,
+                "error": result.error, "stopping": True, "cancelled": cancelled,
+                "source": "runner-recovery" if recovered else "runner", "at": time.time(),
+                **({"cleanup": result.cleanup_evidence} if result.cleanup_evidence else {})}
         return result
 
     # ---------------- lifecycle ----------------
@@ -857,8 +864,13 @@ class Runner:
                     raise
                 return
             err = "cancelled" if cancelled else f"{type(e).__name__}: {e}"
+            # The adapter reported what it saw of its wrapper's end before the cancellation reached here; a run that
+            # never got that far has no observation, so it stays UNKNOWN (#863).
+            cleanup = self._cleanup_reports.pop(task.id, None) or {
+                "status": "UNKNOWN", "reason": "no_runner_observation", "active_processes_measured": False}
             res = self._shutdown_result(
-                TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error=err), cancelled=cancelled)
+                TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error=err, cleanup_evidence=cleanup),
+                cancelled=cancelled)
             base = dict(task_id=task.id, agent_id=task.agent_id, request_id=task.request_id)
             # One unit: a second cancel arriving while this commits cannot leave the status without the result.
             await self.emit_all([
@@ -869,6 +881,7 @@ class Runner:
                 raise
         finally:
             self._result_queued.discard(task.id)  # the run is over: nothing left to guard
+            self._cleanup_reports.pop(task.id, None)
 
     def _resolve_agent(self, task: Task) -> AgentSpec:
         agent = self.registry.get(task.agent_id)
@@ -1829,6 +1842,7 @@ class Runner:
                 halt=self.controls.halt_event(task.id),
                 halt_grace_s=HALT_GRACE_S if hooked else 0.0,
                 on_started=lambda: self.controls.started(task.id),
+                on_cleanup=lambda evidence: self._cleanup_reports.__setitem__(task.id, evidence),
                 bench_observer=getattr(self, "_bench_observer", None),
             )
             # External folders exposed to this step are its reproducibility inputs. Upstream outputs use the same

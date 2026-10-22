@@ -313,6 +313,15 @@ class StepMemoryGuard:
         # Windows is attached by the self-Job wrapper before the real CLI is spawned. POSIX is wrapped too.
         return None
 
+    @property
+    def job_expected(self) -> bool:
+        """The step runs under the Windows KILL_ON_CLOSE wrapper (#863); otherwise there is no Job to rely on."""
+        return self.enabled and self.platform == "nt"
+
+    def job_confirmed(self, first_stderr_line: str, wrapper_pid: int) -> bool:
+        """Only the wrapper's first stderr line counts: it precedes the CLI, which shares that stream later."""
+        return self.job_expected and first_stderr_line.strip() == job_activation_line(wrapper_pid)
+
     def exceeded(self, returncode: int | None, stderr: str) -> bool:
         if not self.enabled or returncode in (0, None):
             return False
@@ -386,6 +395,14 @@ def _exec_with_limit(argv: list[str]) -> int:
     return 126
 
 
+JOB_ACTIVE = "LABHQ_JOB_ACTIVE"
+
+
+def job_activation_line(pid: int) -> str:
+    """The Windows wrapper's own announcement that its KILL_ON_CLOSE Job is assigned (#863)."""
+    return f"{JOB_ACTIVE} pid={int(pid)} kill_on_close=1"
+
+
 def _run_windows_job(argv: list[str]) -> int:
     """Join this wrapper to a Job before starting the real CLI, whose children inherit that Job."""
     if len(argv) < 4 or argv[0] != "--windows-job" or argv[2] != "--":
@@ -400,6 +417,9 @@ def _run_windows_job(argv: list[str]) -> int:
         if limit <= 0 or not command:
             raise ValueError("missing positive limit or command")
         job = _WindowsJob(os.getpid(), limit)
+        # #863: the runner trusts only this first stderr line, written after the Job holds this wrapper and before the
+        # CLI exists, so nothing the CLI prints can stand in for it.
+        print(job_activation_line(os.getpid()), file=sys.stderr, flush=True)
         completed = subprocess.run(command, check=False)
         if completed.returncode and job.peak_bytes() >= int(limit * 0.98):
             print("out of memory: Windows Job object limit reached", file=sys.stderr)
