@@ -114,6 +114,9 @@ def _startup_journal(path: Path) -> dict:
                 safe[key] = value
         return safe
 
+    def count(value):  # a strict bounded non-negative integer; never a bool, float or text
+        return type(value) is int and 0 <= value <= 2**32
+
     result = {"journal": "tail_only" if start else "present", "events": []}
     for line in raw.splitlines()[-8:]:
         try:
@@ -126,9 +129,16 @@ def _startup_journal(path: Path) -> dict:
         if row.get("role") not in enums["role"]:
             continue
         safe = facts(row)
+        if count(row.get("denied_reads")):  # the parent's receipt reads held elsewhere (#844)
+            safe["denied_reads"] = row["denied_reads"]
         provider = row.get("provider")
         if isinstance(provider, dict):
             safe["provider"] = facts(provider)
+            # What reached the provider's stdout, by kind and size only: never its content (#844).
+            if provider.get("stdout") in ("bytes", "missing", "invalid_type"):
+                safe["provider"]["stdout"] = provider["stdout"]
+            if count(provider.get("stdout_bytes")):
+                safe["provider"]["stdout_bytes"] = provider["stdout_bytes"]
             phases = provider.get("phases")
             if isinstance(phases, list):
                 valid = []
