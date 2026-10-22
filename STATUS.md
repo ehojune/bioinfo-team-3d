@@ -4,6 +4,24 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## #854 Windows 야간 subtest 오판 (source 3590827, base 059b910)
+
+- 확인한 사실: run 39681301430 attempt 1(schedule, main `99f1c49`)의 `pytest-windows` job 119504243006.
+  - 인증된 gh로 로그를 받아 확인했다. critical 단계는 `26 passed`, parallel 단계는 `11125 passed, 50 skipped, 7 subtests passed`였다.
+  - 첫 오류는 그 뒤 `ci_suite report`의 `validate_reports`에서 난 `ValueError: duplicate node execution`이다.
+  - pytest 9.1.1이 설치됐고, `tests/test_paper_skill_waiting_static.py`가 `self.subTest`를 쓴다.
+  - 판단 코드는 99f1c49와 059b910 사이에 바뀌지 않았다.
+- 원인: pytest 9는 subTest 결과마다 같은 nodeid의 `call` 보고(`SubtestReport`)를 한 번 더 낸다. `ci_suite`가 이것을 `stage_reports`에 그대로 넣어 검증기가 두 번째 call로 봤다. 실제 재실행 증거는 없다.
+- 고친 것:
+  - `ci_suite`는 subtest 보고를 `subtest_reports`에 따로 남긴다. checkpoint·파일 시간에는 넣지 않고, 실패는 failed로 남긴다.
+  - `ci_windows_phases`는 subtest마다 선택된 노드의 통과한 call 안에 있는지 확인한다. critical에서는 passed만 받고, worker 합이 controller와 같아야 한다.
+  - 중복 허용, 집합 dedup, 실패의 성공 처리는 없다. 같은 노드의 두 번째 call은 계속 `duplicate node execution`이다.
+- 검사: `tests/test_ci_windows_phases.py` 한 파일만 in-process로 돌렸다(가짜 JSON·tmp만 씀, process 없음).
+  - 121 passed.
+  - 새 영수증 case 6개와 observer case 1개는 이전 코드에서 5건이 실패한다. 통과하는 2건은 정상 subtest와, 그대로 유지되는 실제 재실행 거부다.
+  - Python 3.10 AST를 통과했다.
+- 미확인: 실제 Windows 야간 전수 run, PR CI, 독립 검토. 전수 PASS만으로 검증기가 맞다고 보지 않는다.
+
 ## #844 — supervisor 시작 실패 진단에 실행 기록·gateway 로그 꼬리 추가 (base 3c07c1c)
 
 - 변경: `tests/test_supervisor_process.py`의 시험 전용 `_print_start_evidence`가 `gateway-supervisor.log`·`gateway-supervisor-diagnostics.jsonl`에 더해 `detached-launch.jsonl`과 `gateway.log`의 꼬리를 출력한다(`START_EVIDENCE_FILES`). 16KiB 상한, token 마스킹, 제어문자 치환, symlink 거부, 원래 실패 예외 보존, 진단 오류 비전파는 그대로다. 제품 코드, 제한시간, CI 선택 정책은 바꾸지 않았다.
