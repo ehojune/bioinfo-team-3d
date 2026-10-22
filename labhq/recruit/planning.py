@@ -277,7 +277,10 @@ async def run_task(runner, task):
                           error="recruitment is disabled (recruit.enabled=false)")
     from ..doctor import _paper2agent_row
 
+    conversion = None
+
     async def recruit():
+        nonlocal conversion
         if task.agent_id != runner.s.recruit.agent_id:
             raise ValueError("only the recruiter may prepare hiring")
         if _paper2agent_row(runner.s, list(runner.registry.agents.values()))["status"] == "fail":
@@ -309,10 +312,13 @@ async def run_task(runner, task):
             runner._send_roster()
             return {"status": "active", "agent_id": spec.id, "reused": True}
         name = "plan-" + _batch_key(payload)[:24]
-        spec = await paper2agent.Recruitment(runner, {
+        conversion = paper2agent.Recruitment(runner, {
             **row, "name": name, "request_id": task.request_id, "plan_task_id": task.id,
+            "parent_budget_usd": task.budget_usd,
+            "parent_budget_remaining_usd": task.request_budget_remaining_usd,
             "focus": row.get("focus", "") + "\nDeliver a technician/full hire with executable paper tools.",
-        }).run()
+        })
+        spec = await conversion.run()
         runner._send_roster()
         if not spec or not spec.contract or spec.contract.status != "active" or spec.contract.kind not in {"technician", "full"}:
             return {"status": "failed", "error": "기술자형 수습 미통과"}
@@ -326,5 +332,7 @@ async def run_task(runner, task):
         receipt = {"status": "timed_out"}
     except Exception as exc:
         receipt = {"status": "failed", "error": type(exc).__name__}
-    return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, cost_usd=0,
+    pending = (runner.s.policy.budget.reserve_before_dispatch and paper2agent.conversion_cost_pending(conversion))
+    return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                      cost_usd=None if pending else 0, cost_known=not pending,
                       structured=receipt, text="계획 전 채용: " + receipt["status"])
