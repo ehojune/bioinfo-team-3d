@@ -177,6 +177,10 @@ class FollowupIn(BaseModel):
         return value.strip()
 
 
+class ActiveCancelIn(BaseModel):
+    expected_created_at: float = Field(gt=0, allow_inf_nan=False)
+
+
 class NoteIn(BaseModel):
     text: str = Field(max_length=2000)
 
@@ -3438,7 +3442,8 @@ class Hub:
                             "request_id": entry["approval"].get("request_id"), "data": {"id": aid, "note": note}})
         return True
 
-    async def cancel_request(self, rid: str) -> dict:
+    async def cancel_request(self, rid: str, *, active_only: bool = False,
+                             expected_created_at: float | None = None) -> dict:
         """Stop a request for good (R13) and report what it finished.
 
         Its orchestration stops (no retry, re-plan or card after this), every live task gets a cancel on its
@@ -3446,6 +3451,14 @@ class Hub:
         report of the partial results. Calling it again returns the same answer."""
         req = self.requests[rid]
         status = req.get("status")
+        # No await separates this identity/state check from the cancellation transition below.
+        # A monitor must never turn a CP4 review into a fabricated PI decision.
+        if active_only:
+            if expected_created_at is None or req.get("created_at") != expected_created_at:
+                raise ValueError("request creation identity changed")
+            if not is_active_request(status):
+                return {"request_id": rid, "status": status, "skipped": True,
+                        "reason": "request is not active"}
         if status == "cancelled":
             return {"request_id": rid, "status": "cancelled", "already": True,
                     "cancelled_tasks": list(req.get("cancelled_tasks") or [])}
@@ -4323,6 +4336,17 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         if not ack["ok"]:
             raise HTTPException(422, ack["note"] or "the task runner could not store the PDF")
         return {"ok": True, "bytes": len(data)}
+
+    @app.post("/api/requests/{rid}/cancel-active", dependencies=[Depends(auth)])
+    async def cancel_active_request(rid: str, body: ActiveCancelIn) -> dict:
+        # Distinct route deliberately yields 404 on old gateways; never fall back to /cancel.
+        if rid not in hub.requests:
+            raise HTTPException(404)
+        try:
+            return {"ok": True, **await hub.cancel_request(
+                rid, active_only=True, expected_created_at=body.expected_created_at)}
+        except ValueError as error:
+            raise HTTPException(409, str(error))
 
     @app.post("/api/requests/{rid}/cancel", dependencies=[Depends(auth)])
     async def cancel_request(rid: str) -> dict:
