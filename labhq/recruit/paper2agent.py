@@ -122,7 +122,26 @@ def skill_installed(engine: str = "claude_code", settings=None) -> bool:
     return (path / "SKILL.md").is_file()
 
 
+def enabled(settings) -> bool:
+    # Missing stays enabled for callers predating this setting; Settings validates strict booleans.
+    return getattr(settings.recruit, "enabled", True) is not False
+
+
+def require_enabled(settings) -> None:
+    if not enabled(settings):
+        raise ValueError("recruitment and Paper2Agent are disabled (recruit.enabled=false)")
+
+
+def disabled_task(settings, task) -> bool:
+    """Refuse stale/forged conversion tasks and attachments before recovery or workspace effects."""
+    return not enabled(settings) and (
+        task.agent_id == settings.recruit.agent_id
+        or task.meta.get("kind") in {"recruit", "recruit_check", "plan_recruit", "paper_skill"}
+        or bool(task.meta.get("paper_skills")))
+
+
 def recruiter_engine(settings, recruiter) -> str:
+    require_enabled(settings)
     if settings.runner.force_engine == "mock":
         return "mock"
     if recruiter is None:
@@ -132,6 +151,7 @@ def recruiter_engine(settings, recruiter) -> str:
 
 def setup_paper2agent(settings, commit: str | None = None) -> list[Path]:
     """Shared CLI/doctor fix path, without changing staff or PI configuration."""
+    require_enabled(settings)
     from ..doctor import _roster
 
     recruiter = next((a for a in _roster(settings) if a.id == settings.recruit.agent_id), None)
@@ -396,6 +416,7 @@ class Recruitment:
                                       **({"plan_task_id": self.plan_task_id} if self.plan_task_id else {})}))
 
     async def run(self) -> AgentSpec | None:
+        require_enabled(self.s)
         talent = self.r.registry.talent_dir / self.slug
         build = talent / "build"
         build.mkdir(parents=True, exist_ok=True)

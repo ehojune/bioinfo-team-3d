@@ -130,6 +130,7 @@ policy:
     pipeline_base_branch: main
 
 recruit:
+  enabled: true  # false refuses hiring, Paper2Agent setup/preparation and paper-skill attachments
   agent_id: recruiter
   permission_mode: auto       # 무인 변환. 가능하면 컨테이너/VM 안에서 runner를 돌리세요
   max_budget_usd: 25

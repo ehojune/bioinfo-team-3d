@@ -41,6 +41,7 @@ from ..costs import (outcome_unknown_item, request_cost_summary, request_cost_to
 from ..models import ApprovalRequest, AskRequest, RunnerNotSent, RunnerUnavailable, Task, TaskResult, new_id, waiting
 from ..pi_text import with_approval_copy
 from ..recruit.provenance import not_yet_active, probation_refusal
+from ..recruit import paper2agent
 from ..adapters import enforces_read_only, get_adapter, read_only_refusal
 from ..hooks.control import STEER_LIMIT
 from ..orchestrator.cso import Orchestrator, _terminal_reports, environment_problem, holds_session, solo_phase
@@ -2693,6 +2694,9 @@ class Hub:
     async def dispatch(self, task: Task, *, bind_identity=None) -> TaskResult:
         if bind_identity is not None:
             bind_identity(task.id)
+        if paper2agent.disabled_task(self.s, task):
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
+                              error="recruitment and Paper2Agent are disabled (recruit.enabled=false)")
         # Roster/lifecycle changes refresh agent_runner; dispatch consumes that resolved
         # owner without replacing it before checking the session's runner pin.
         if (self.requests.get(task.request_id or "") or {}).get("status") == "cancelled":
@@ -4579,6 +4583,8 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
 
     @app.post("/api/recruit", dependencies=[Depends(auth)])
     async def recruit(body: RecruitIn) -> dict:
+        if not paper2agent.enabled(settings):
+            raise HTTPException(403, "recruitment is disabled (recruit.enabled=false)")
         if not (body.paper or body.repo):
             raise HTTPException(400, "paper or repo required")
         rid = hub.agent_runner.get(settings.recruit.agent_id)
@@ -4601,6 +4607,8 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
 
     @app.post("/api/contracts/{agent_id}", dependencies=[Depends(auth)])
     async def contract(agent_id: str, body: ContractIn) -> dict:
+        if body.action != "release" and not paper2agent.enabled(settings):
+            raise HTTPException(403, "recruitment is disabled (recruit.enabled=false)")
         rid = hub.agent_runner.get(agent_id) or hub.agent_runner.get(settings.recruit.agent_id)
         if not rid:
             raise HTTPException(404)

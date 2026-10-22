@@ -187,6 +187,12 @@ async def prepare_plan(plan, rid, hub, run):
     proposals = _proposals(plan)
     if not proposals:
         return plan
+    if not paper2agent.enabled(hub.s):
+        plan["recruit_results"] = [{"paper": row.get("paper", ""), "step_ids": row["step_ids"],
+                                    "status": "unavailable", "error": "recruit_disabled"} for row in proposals]
+        plan["warnings"] = list(dict.fromkeys([*(plan.get("warnings") or []),
+                                               "채용 생략: recruit.enabled=false; 기존 직원 배정을 유지합니다."]))
+        return plan
     req = hub.requests[rid]
     # The approval and each receipt survive a restart between hiring and CP1.
     key = _batch_key(proposals)
@@ -265,6 +271,10 @@ async def prepare_plan(plan, rid, hub, run):
 
 async def run_task(runner, task):
     """A tracked runner task wraps the existing recruiter and announces the roster before its receipt."""
+    if not paper2agent.enabled(runner.s):
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0, cost_known=True,
+                          structured={"status": "unavailable", "error": "recruit_disabled"},
+                          error="recruitment is disabled (recruit.enabled=false)")
     from ..doctor import _paper2agent_row
 
     async def recruit():

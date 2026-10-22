@@ -84,8 +84,10 @@ class WaitingStatic(unittest.TestCase):
         self.assertEqual(plan_sha256(plan), approved)
 
     def scope(self):
+        policy = definitions('labhq/recruit/paper2agent.py', {'enabled'}, {})
         return definitions('labhq/recruit/paper_skills.py', {'build_task', 'ApprovedBuilds'},
-                           {'copy': copy, 'Task': SimpleNamespace})
+                           {'copy': copy, 'Task': SimpleNamespace,
+                            'paper2agent': SimpleNamespace(enabled=policy['enabled'])})
 
     def test_dispatch_snapshot_never_suspends_and_later_completion_cannot_replace_it(self):
         tree = ast.parse((ROOT / 'labhq/recruit/paper_skills.py').read_text(encoding='utf-8'))

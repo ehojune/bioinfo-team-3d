@@ -585,6 +585,8 @@ def local_software_summary(python_executable: str) -> dict:
 
 
 def _paper2agent_row(settings: Settings, agents: list[AgentSpec], fix: bool = False) -> dict:
+    if not paper2agent.enabled(settings):
+        return _row("staff", "paper2agent", "skip", "disabled by recruit.enabled=false", "")
     hint = "labhq doctor --fix"
     recruiter = next((a for a in agents if a.id == settings.recruit.agent_id), None)
     if settings.runner.force_engine == "mock" or (agents and all(a.engine == Engine.mock for a in agents)
