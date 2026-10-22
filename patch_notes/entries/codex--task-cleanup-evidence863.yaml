@@ -8,3 +8,7 @@ rows:
   at: 2026-10-23 04:55
   summary: 시험용 프로세스 대역에 pid가 없어도 정리 증거 기록이 깨지지 않습니다.
   text: 'cleanup_evidence의 wrapper PID와 생성 시각, Job 첫 줄 확인은 pid가 정수일 때만 읽는다. pid가 없는 대역은 Job을 확인하지 못한 것으로 남는다(UNKNOWN). 실제 asyncio 프로세스 경로는 바뀌지 않는다.'
+- sha: 96d20a1
+  at: 2026-10-23 05:03
+  summary: 직원 프로세스 정리 증거가 무엇을 가정하고 무엇을 보장하지 않는지 사용 설명서에 밝힙니다.
+  text: 'job_close_contract_enforced 판정은 runner가 띄운 labhq wrapper의 코드·실행 환경을 믿고, wrapper가 복제·상속하지 않은 유일한 Job handle을 끝날 때까지 쥔다는 가정에 기댄다. OS sandbox가 아니고 Job에 남은 프로세스가 0개임을 잰 값도 아니며, COM·WMI·서비스처럼 Job 밖에서 띄운 프로세스는 다루지 않는다. 문서만 바꿨고 실행 코드는 그대로다.'
