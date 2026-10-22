@@ -317,5 +317,25 @@ export function startLiveOffice(onState) {
     event.preventDefault(); token = $('token').value.trim(); saveToken(token); lastSeq = 0; open();
   });
   setInterval(() => { if (S.approvals.size || S.activeTasks.size) render(); }, 1000);
+  // #660: the fox's paper list for the inspector, from the same detail GET the 2.5D sheet reads. One read per
+  // request update, even when it fails, so a re-render never loops on a refused or broken response.
+  const literatureAt = new Map(), literatureLoading = new Set();
+  async function loadLiterature(rid) {
+    literatureLoading.add(rid);
+    try {
+      const response = await fetch(`/api/requests/${encodeURIComponent(rid)}`, {headers:{Authorization:`Bearer ${token}`}});
+      if (response.ok) fillRequestDetail(rid, await response.json());
+    } catch {}
+    finally { literatureLoading.delete(rid); render(); }
+  }
+  function paperLiterature() {
+    const rid = S.current, q = rid && S.requests.get(rid);
+    if (!q) return {rid: null, view: null, loading: false};
+    if (literatureAt.get(rid) !== q.updated_at && !literatureLoading.has(rid)) {
+      literatureAt.set(rid, q.updated_at); loadLiterature(rid);
+    }
+    return {rid, view: q.paperLiterature, loading: literatureLoading.has(rid) && !q.paperLiterature};
+  }
   open();
+  return {paperLiterature};
 }
