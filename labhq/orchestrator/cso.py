@@ -11,6 +11,7 @@ import asyncio
 import copy
 import hashlib
 import json
+import math
 import re
 import time
 from contextlib import asynccontextmanager
@@ -2229,6 +2230,11 @@ class BudgetExceeded(RuntimeError):
     pass
 
 
+def _usd_amount(value: Any) -> bool:
+    """A positive, finite dollar amount; bools, strings, NaN, infinity, zero and negatives are not (#862)."""
+    return type(value) in (int, float) and math.isfinite(value) and value > 0
+
+
 def valid_review(value: Any, schema: dict[str, Any] = REVIEW_SCHEMA) -> bool:
     """Check every required field of ``schema`` (REVIEW_SCHEMA unless given) without a new JSON Schema dependency."""
     def matches(item: Any, schema: dict) -> bool:
@@ -2764,6 +2770,8 @@ class Orchestrator:
         self.step_tasks: dict[str, set[asyncio.Task]] = {}  # tasks a request runs beside its own (R13 cancel)
         self.paper_builds: dict[str, paper_skills.ApprovedBuilds] = {}
         self.paper_budget_holds: dict[str, dict[str, float]] = {}
+        # #862: attempts this process reserved and is dispatching now; a restart prune never touches them.
+        self.dispatch_inflight: dict[str, set[str]] = {}
         self.paper_task_ids: dict[str, dict[str, str]] = {}
         self.consult_locks: dict[tuple[str | None, str], tuple[asyncio.Lock, int]] = {}
 
@@ -3645,6 +3653,8 @@ class Orchestrator:
                         and not research_continuation.has_request_inputs(execution_req)
                         and not research_continuation.has_request_inputs(attempt_task.meta))
                     self.hub.save_request(rid)
+                # Last await before the send: hold this attempt's whole cap now (#862, opt-in).
+                attempt_task = await self._reserve_dispatch(rid, attempt_task, optional=optional_support)
                 try:
                     dispatched = (attempt_task if current.meta.get("facilities_diagnosis") else
                                   with_pi_notes(attempt_task, self.hub.requests.get(rid) or {}))
@@ -3656,8 +3666,10 @@ class Orchestrator:
                         res = await self.hub.dispatch(dispatched)
                     res = paper_skills.with_preparation_outcome(res, attempt_task)
                 except asyncio.CancelledError:
+                    self._release_if_unsent(rid, attempt_task.id)
                     raise
                 except Exception as exc:
+                    self._release_if_unsent(rid, attempt_task.id)
                     res = TaskResult(task_id=attempt_task.id, agent_id=current.agent_id, ok=False, error=str(exc))
                     kind = failure_kind(exc, engine)
                     offline = isinstance(exc, RunnerUnavailable)
@@ -3682,12 +3694,15 @@ class Orchestrator:
                     if kind != "login":  # a rejected login never starts a billed model turn
                         self._count_cost(rid, res.task_id, res)
                     self._count_recorded_costs(rid)
+                    self._release_dispatch_hold(rid, attempt_task.id)
                     previous_workdir = res.workdir or previous_workdir
                     if res.session_id and self.hub.supports_resume(current.agent_id):
                         previous_session = res.session_id
                     res = merged_workspace_rerun(previous_result, res)
                     if kind == "environment":  # the record the step result, its event and the report show (#35)
                         res = res.model_copy(update={"environment": environment_problem(res, engine)})
+                finally:
+                    self.dispatch_inflight.get(rid, set()).discard(attempt_task.id)  # #862: this send is over here
                 evidence = res.shutdown_evidence or {"exit_code": res.exit_code, "error": res.error,
                     "stopping": bool(getattr(self.hub, "stopping", False)) or stopping_marker(
                         self.hub.s, getattr(self.hub, "session_started_at", time.time())), "source": "gateway"}
@@ -4038,8 +4053,10 @@ class Orchestrator:
                         "tool_errors": res.tool_errors, "error": res.error})
         return res
 
-    async def _check_budget(self, rid: str, *, block: bool = True, final_turn: bool = False) -> None:
-        # A completed attempt keeps its result; a denied budget only blocks the next attempt.
+    async def _check_budget(self, rid: str, *, block: bool = True, final_turn: bool = False,
+                            reserve: float = 0.0) -> None:
+        # A completed attempt keeps its result; a denied budget only blocks the next attempt. ``reserve`` is the cap
+        # a pre-dispatch reservation still has to fit (#862); 0 keeps the judgement on what is already held.
         async with self.budget_locks.setdefault(rid, asyncio.Lock()):
             self._count_recorded_costs(rid)
             if rid in self.budget_denials:
@@ -4050,8 +4067,15 @@ class Orchestrator:
             limit = req.get("budget_usd") or self.hub.s.policy.budget.per_request_usd
             if not limit:
                 return
+            if self.hub.s.policy.budget.reserve_before_dispatch and not _usd_amount(limit):
+                # #862: a cap that is not an amount never admits work or asks the PI to raise it.
+                reason = f"invalid request budget {limit!r}; nothing was dispatched"
+                self.budget_denials[rid] = reason
+                if block:
+                    raise BudgetExceeded(reason)
+                return
             spent, unknown, bound = self._budget_bound(rid, limit)
-            if bound <= limit:
+            if bound + reserve <= limit:
                 return
             over = spent > limit
             if final_turn:
@@ -4061,17 +4085,21 @@ class Orchestrator:
                 await self._emit(rid, "request.budget_exceeded", outcome)
                 return
             pending = f" + 비용 모름 {unknown}건" if unknown else ""
-            reserve = self._unknown_reserve(limit)
-            raised = max(limit * 2, bound)
+            reserve_each, needed = self._unknown_reserve(limit), reserve
+            raised = max(limit * 2, bound + needed)
             # What each answer does, so the PI need not read detail.requested_budget_usd (trial 2026-10-08).
             then = f" 승인하면 상한을 ${raised:.2f}로 올리고, 거절하면 새 작업을 보내지 않습니다."
             summary = (f"예산 초과: ${spent:.2f}{pending} / ${limit:.2f} — 계속 진행할까요?{then}" if over else
+                       f"지금까지 ${spent:.2f} 썼고 진행 중인 작업 예약을 더하면 ${bound:.2f}입니다. 다음 작업 상한 "
+                       f"${needed:.2f}를 미리 잡으면 상한 ${limit:.2f}를 넘습니다.{then}"
+                       if needed > 0 and bound <= limit else
                        f"지금까지 ${spent:.2f} 썼고, 비용을 아직 모르는 작업이 {unknown}건 있어 "
                        f"상한 ${limit:.2f}를 넘을 수 있습니다 "
-                       f"(모르는 작업을 건당 ${reserve:.2f}로 잡으면 ${bound:.2f}).{then}")
+                       f"(모르는 작업을 건당 ${reserve_each:.2f}로 잡으면 ${bound:.2f}).{then}")
             try:
                 detail = {"spent_usd": spent, "limit_usd": limit, "requested_budget_usd": raised,
-                          **({"unknown_count": unknown, "unknown_reserve_usd": reserve} if unknown else {})}
+                          **({"unknown_count": unknown, "unknown_reserve_usd": reserve_each} if unknown else {}),
+                          **({"reserve_usd": needed} if needed > 0 else {})}
                 dec = await self.hub.request_approval(kind="budget", request_id=rid, summary=summary, detail=detail)
             except Exception as exc:
                 dec = {"approved": False, "note": str(exc)}
@@ -4085,11 +4113,13 @@ class Orchestrator:
             self.budget_outcomes.setdefault(rid, []).append(outcome)
             await self._emit(rid, "request.budget_exceeded", outcome)
             if approved:
-                self.hub.requests[rid]["budget_usd"] = max(limit * 2, bound)
+                self.hub.requests[rid]["budget_usd"] = max(limit * 2, bound + needed)
             else:
                 pending = f" + {unknown} unaccounted task(s)" if unknown else ""
                 verdict = "no PI answer before the card timed out" if timed_out else "approval denied"
                 reason = (f"budget exceeded (${spent:.2f}{pending} > ${limit:.2f}); {verdict}" if over else
+                          f"budget reservation (${bound:.2f} held + ${needed:.2f} next turn > ${limit:.2f}); {verdict}"
+                          if needed > 0 and bound <= limit else
                           f"budget unaccounted (${spent:.2f}{pending} may pass ${limit:.2f}); {verdict}")
                 self.budget_denials[rid] = reason
                 state = (getattr(self.hub, "requests", None) or {}).get(rid)
@@ -4214,7 +4244,123 @@ class Orchestrator:
         # cancellation/delivery uncertainty retains it until the durable task cost can be counted.
         held = sum(amount for tid, amount in self.paper_budget_holds.get(rid, {}).items()
                    if tid not in self.cost_tasks.get(rid, set()))
-        return spent, unknown, spent + unknown * self._unknown_reserve(limit) + held
+        return spent, unknown, spent + unknown * self._unknown_reserve(limit) + held + self._dispatch_held(rid, limit)
+
+    # ---------- pre-dispatch reservation (#862, policy.budget.reserve_before_dispatch) ----------
+    # A hold lives on the request record, so a gateway restart keeps it. It counts until the gateway records the
+    # task's cost (cost_by_task, an unknown outcome included) or this orchestrator counted the result; then the cost,
+    # or the unknown reserve, takes its place. Paper preparations keep their own paper_budget_holds.
+    def _dispatch_held(self, rid: str, limit: float) -> float:
+        # Settled only once counted here (a known amount or the unknown reserve), never on the gateway record alone,
+        # so no caller can see the hold gone before its cost is in the bound.
+        req = self.hub.requests.get(rid) or {}
+        settled = self.cost_tasks.get(rid, set())
+        return sum(amount if _usd_amount(amount) else self._unknown_reserve(limit)
+                   for tid, amount in (req.get("budget_holds") or {}).items() if tid not in settled)
+
+    def _prune_dispatch_holds(self, rid: str) -> None:
+        req = self.hub.requests.get(rid) or {}
+        holds = req.get("budget_holds")
+        if not holds:
+            return
+        settled = self.cost_tasks.get(rid, set())
+        if settled & set(holds):
+            req["budget_holds"] = {tid: amount for tid, amount in holds.items() if tid not in settled}
+            self.hub.save_request(rid)
+
+    def _turn_cap(self, task: Task, remaining: float) -> float | None:
+        """The most this turn may cost: its own, its agent's and the per-task cap, else what the request has left."""
+        agent = (getattr(self.hub, "agents", None) or {}).get(task.agent_id) or {}
+        caps = [value for value in (task.budget_usd, agent.get("max_budget_usd"),
+                                    self.hub.s.policy.budget.per_task_usd) if _usd_amount(value)]
+        if caps:
+            return float(min(caps))
+        return remaining if _usd_amount(remaining) else None
+
+    async def _reserve_dispatch(self, rid: str, task: Task, *, optional: bool) -> Task:
+        """Hold this attempt's whole cap before it is sent and cap the turn at that amount (#862).
+
+        It fits when spent + unknown reserves + every open hold + this cap stays within the request cap. Otherwise an
+        ordinary turn goes through the existing budget card and an optional one is refused; nothing is sent either
+        way. A turn without a positive amount to hold is never sent as free or unlimited."""
+        budget = self.hub.s.policy.budget
+        if not budget.reserve_before_dispatch or not rid or task.meta.get("kind") == "paper_skill":
+            return task  # off by default; paper preparations already hold their allowance
+        while True:
+            async with self.budget_locks.setdefault(rid, asyncio.Lock()):
+                self._count_recorded_costs(rid)
+                self._prune_dispatch_holds(rid)
+                if rid in self.budget_denials:
+                    raise BudgetExceeded(self.budget_denials[rid])
+                req = self.hub.requests.get(rid) or {}
+                limit = req.get("budget_usd") or budget.per_request_usd
+                if not limit:
+                    return task  # no request cap: nothing to reserve against (unchanged)
+                if not _usd_amount(limit):
+                    raise BudgetExceeded(f"invalid request budget {limit!r}; nothing was dispatched")
+                limit = float(limit)
+                _spent, _unknown, bound = self._budget_bound(rid, limit)
+                cap = self._turn_cap(task, limit - bound)
+                adopted = getattr(self.hub, "recovery_task_id", lambda _task: None)(task)
+                if adopted is not None:
+                    # Restart recovery: the gateway answers this turn with an earlier task instead of sending it (same
+                    # rule, no await between here and that decision), so this attempt holds nothing more. The earlier
+                    # task keeps its hold from before the restart; one without a hold (or cost) is held now, without a
+                    # card, because it may still be spending.
+                    holds = req.setdefault("budget_holds", {})
+                    if adopted not in self.cost_tasks.get(rid, set()) and not _usd_amount(holds.get(adopted)):
+                        holds[adopted] = cap if cap is not None else self._unknown_reserve(limit)
+                        self.hub.save_request(rid)
+                    return task
+                if cap is not None and bound + cap <= limit:
+                    holds = req.setdefault("budget_holds", {})
+                    previous = holds.get(task.id)
+                    holds[task.id] = max(cap, previous) if _usd_amount(previous) else cap
+                    self.hub.save_request(rid)
+                    self.dispatch_inflight.setdefault(rid, set()).add(task.id)
+                    return task.model_copy(update={"budget_usd": cap, "request_budget_remaining_usd": cap})
+                if optional:
+                    raise BudgetExceeded("facilities diagnosis budget exhausted" if task.meta.get("facilities_diagnosis")
+                                         else "optional turn budget exhausted before dispatch")
+                needed = cap if cap is not None else self._unknown_reserve(limit)
+            await self._check_budget(rid, reserve=needed)  # approval raises the cap; a denial raises here
+
+    def _drop_unsent_holds(self, rid: str) -> None:
+        """At a request's (re)start, release holds of attempts the gateway provably never sent (#862 review P2-2).
+
+        The gateway stores a task before sending it and records an unknown outcome when a send fails, so an id with
+        neither a stored task nor a cost record was never sent: a restart or cancel during the pre-send waits (PI pause,
+        offline runner). Ids being dispatched by this process and every possibly-sent hold are kept."""
+        store = getattr(self.hub, "store", None)
+        req = self.hub.requests.get(rid) or {}
+        holds = req.get("budget_holds")
+        if store is None or not holds:
+            return
+        recorded = req.get("cost_by_task") or {}
+        inflight = self.dispatch_inflight.get(rid, set())
+        kept = {tid: amount for tid, amount in holds.items()
+                if tid in inflight or tid in recorded or store.get("task", tid) is not None}
+        if len(kept) != len(holds):
+            req["budget_holds"] = kept
+            self.hub.save_request(rid)
+
+    def _release_if_unsent(self, rid: str, task_id: str) -> None:
+        """A cancelled or failed dispatch: release the hold only when the gateway neither stored the task (it stores
+        before sending) nor recorded a cost for it; a possibly sent turn keeps its hold."""
+        store = getattr(self.hub, "store", None)
+        req = self.hub.requests.get(rid) or {}
+        if (store is not None and task_id in (req.get("budget_holds") or {})
+                and task_id not in (req.get("cost_by_task") or {}) and store.get("task", task_id) is None):
+            self._release_dispatch_hold(rid, task_id)
+
+    def _release_dispatch_hold(self, rid: str, task_id: str) -> None:
+        """After dispatch returned: the gateway recorded the turn's cost before answering, or never sent it (a
+        refusal, cancel or offline result, or an earlier task id from restart recovery). Never on an exception or
+        cancellation, where the turn may still be running."""
+        holds = (self.hub.requests.get(rid) or {}).get("budget_holds")
+        if holds and task_id in holds:
+            holds.pop(task_id)
+            self.hub.save_request(rid)
 
     # ---------- DAG ----------
     def _bind_paper_dispatch_identity(self, rid: str, requested: str, durable: str) -> None:
@@ -5893,6 +6039,7 @@ class Orchestrator:
             self.cost[rid] = float(req.get("cost_usd") or 0)
             self.cost_tasks[rid] = set(req.get("cost_by_task") or {})
             self._seed_cost(rid, req)
+            self._drop_unsent_holds(rid)
         try:
             research_pilot = bool(self.hub.s.research.enabled)
             intake = (classify_intake(req["text"], req.get("work_kind", "auto"),

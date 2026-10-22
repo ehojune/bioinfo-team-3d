@@ -1337,6 +1337,30 @@ class Hub:
             return 1
         return max((int(entry.get("attempt") or 1) for _, entry in self._recovery_matches(task)), default=1)
 
+    def _recovery_choice(self, task: Task) -> tuple[str, dict] | None:
+        """The earlier dispatch that ``dispatch`` answers ``task`` with after a restart, instead of sending it."""
+        sid = task.meta.get("step_id") or task.meta.get("kind")
+        if not (sid and task.request_id in self.recovery_steps):
+            return None
+        matches = self._recovery_matches(task)
+        if not matches:
+            return None
+        return max(matches, key=lambda pair: (int(pair[1].get("attempt") or 1), pair[1].get("dispatched_at", 0)))
+
+    def recovery_task_id(self, task: Task) -> str | None:
+        """The task id ``dispatch`` would answer with instead of sending ``task``, decided by the same rule and with no
+        await before it (#862: the CSO reserves no new budget for a turn the gateway adopts). None: it may be sent."""
+        choice = self._recovery_choice(task)
+        if choice is not None:
+            return choice[0]
+        sid = task.meta.get("step_id") or task.meta.get("kind")
+        if sid and task.request_id in self.recovery_steps and task.meta.get("kind") == "direct":
+            checkpoint = self.store.get("step_checkpoint", f"{task.request_id}:direct")
+            result = (checkpoint or {}).get("result")
+            if isinstance(result, dict) and isinstance(result.get("task_id"), str):
+                return result["task_id"]
+        return None
+
     def _recovery_matches(self, task: Task) -> list[tuple[str, dict]]:
         started = self.recovery_started.get(task.request_id, float("inf"))
         return [(tid, entry) for tid, entry in self.store.all("task").items()
@@ -2677,14 +2701,13 @@ class Hub:
                               error="request cancelled")
         sid = task.meta.get("step_id") or task.meta.get("kind")
         if sid and task.request_id in self.recovery_steps:
-            matches = self._recovery_matches(task)
-            if not matches and task.meta.get("kind") == "direct":
+            choice = self._recovery_choice(task)
+            if choice is None and task.meta.get("kind") == "direct":
                 checkpoint = self.store.get("step_checkpoint", f"{task.request_id}:direct")
                 if checkpoint and checkpoint.get("result"):
                     return TaskResult.model_validate(checkpoint["result"]).model_copy(update={"cost_usd": 0.0})
-            if matches:
-                tid, entry = max(matches, key=lambda pair: (int(pair[1].get("attempt") or 1),
-                                                            pair[1].get("dispatched_at", 0)))
+            if choice is not None:
+                tid, entry = choice
                 if bind_identity is not None:
                     bind_identity(tid)
                 if entry.get("completed") and entry.get("result"):
@@ -2796,6 +2819,11 @@ class Hub:
             self.futures.pop(task.id, None)
             self.task_runner.pop(task.id, None)
             self._release_steers(task)
+            # The frame may already have reached the runner: an unaccounted cost, never a silent $0 (#270). The CSO's
+            # pre-dispatch hold (#862) settles on this record instead of outliving the deleted task entry.
+            self._record_task_cost(task.request_id, task.id,
+                                   TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False,
+                                              error="task delivery failed; outcome unknown"), outcome_unknown=True)
             self.store.delete("task", task.id)
             raise
         return await fut
