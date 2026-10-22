@@ -1,3 +1,6 @@
+import ast
+import itertools
+import ntpath
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -5,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
+from labhq import policy as policy_module
 from labhq.policy import (
     claude_rule_path, claude_settings, core_hours, evaluate_tool, hpc_needs_approval,
     mentions_zone, touches, touches_resolved,
@@ -20,12 +24,14 @@ def _long_separator_runs(fraction=1):
     return "/" * int(65_536 * fraction) + "\\" * int(65_536 * fraction) + ":" * int(600_000 * fraction)
 
 
-# A scan that retries at every delimiter of a run costs the square of the run length (what _token_candidates and
-# _scan_path_text avoid). A fixed absolute CPU budget for the full input failed on a CI worker while the scan
-# stayed linear (run 39845342493: 2.05 s and 2.27 s against 2 s). The contract is now relative, on the calling
-# thread: the full input may cost at most _MAX_SCALE times the same composition at a quarter of its length. A linear
-# scan costs about 4x; a scan quadratic in the run length about 16x. This checks these inputs only; it is not a
-# proof of linearity for every input, and a quadratic scan of the full input would still run long before failing.
+# A scan that retries at every delimiter of a run costs the square of the run length. The contract is relative, on
+# the calling thread: the full input may cost at most _MAX_SCALE times the same composition at a quarter of its
+# length. A linear scan costs about 4x; a quadratic one about 16x. On Linux this contract exposed a real quadratic
+# step (run 39849219342: 11.2x and 10.2x): `_norm` handed the 131,072-character separator candidate to CPython's
+# pure-Python `ntpath.normpath`, which deletes empty components from a list one by one. Windows' native normpath
+# hid it, so `_windows_normpath` now applies the same rules in one pass on every host. This checks these inputs
+# only; it is not a proof of linearity for every input, and a quadratic regression of the full input would still
+# run long before failing.
 _MAX_SCALE = 8
 _MEASURE_FLOOR_S = 0.2  # each side runs until this much CPU, so a 15.6 ms Windows clock tick stays below 8 %
 _MAX_REPEATS = {"quarter": 16, "full": 4}  # bounds the work: at most 8 full-input equivalents per scan
@@ -42,10 +48,10 @@ def _cost(call, text, repeats):
     return spent / len(results), results
 
 
-def _assert_linear(call):
-    quarter_cost, quarter_results = _cost(call, _long_separator_runs(0.25), _MAX_REPEATS["quarter"])
-    full_cost, full_results = _cost(call, _long_separator_runs(), _MAX_REPEATS["full"])
-    assert all(result is None for result in quarter_results + full_results), "separator runs name no path"
+def _assert_linear(call, build=_long_separator_runs, expected=None):
+    quarter_cost, quarter_results = _cost(call, build(0.25), _MAX_REPEATS["quarter"])
+    full_cost, full_results = _cost(call, build(1), _MAX_REPEATS["full"])
+    assert all(result == expected for result in quarter_results + full_results), "the scan must keep its result"
     assert full_cost <= _MAX_SCALE * quarter_cost + _CLOCK_TICK_S, (
         f"path scanning must stay linear in the text length: a 4x input cost {full_cost / max(quarter_cost, 1e-9):.1f}x"
         f" ({quarter_cost:.4f} s -> {full_cost:.4f} s per call)")
@@ -95,6 +101,38 @@ def test_separator_runs_never_hide_a_late_restricted_path_or_file_uri(tail, foun
     text = _long_separator_runs() + tail
     assert mentions_zone(text, ["/restricted"]) is found
     assert touches({"command": text}, ["/restricted"]) == ("/restricted" if found else None)
+
+
+def _stdlib_pure_ntpath_normpath():
+    """The running CPython's pure-Python `ntpath.normpath`: what Linux runs; Windows normally uses a native one."""
+    tree = ast.parse(Path(ntpath.__file__).read_text(encoding="utf-8"))
+    node = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "normpath")
+    scope = dict(vars(ntpath))
+    exec(compile(ast.Module(body=[node], type_ignores=[]), ntpath.__file__, "exec"), scope)
+    return scope["normpath"]
+
+
+def test_windows_normpath_keeps_the_running_stdlib_rules():
+    pure = _stdlib_pure_ntpath_normpath()
+    cases = ["".join(chars) for n in range(5) for chars in itertools.product("\\/.aC:?", repeat=n)]
+    cases += [r"\\server\share\a\..\..\b", "//server/share/../x", r"\\.\C:\a\..\b", "//./C:/a/../b", r"\\?\C:\a\..\b",
+              "//?/C:/a/../b", r"\\?\UNC\server\share\x\..\y", "C:a\\..\\..\\b", "C:\\..\\..\\b", "C:/Users/x/./y//z/../w",
+              "C:/Restricted/./Data//x/../y", r"\\server", r"\\server\share", "\\..\\a", "..\\..\\a", ".", ".."]
+    assert [policy_module._windows_normpath(case) for case in cases] == [pure(case) for case in cases]
+
+
+@pytest.mark.parametrize("build", [
+    lambda f: "/" * int(65_536 * f) + "\\" * int(65_536 * f) + "x",       # the scanner's separator candidate
+    lambda f: "C:" + "/" * int(65_536 * f) + "\\" * int(65_536 * f) + "late",
+    lambda f: "\\\\server\\share" + "\\." * int(100_000 * f) + "\\late",
+    lambda f: "C:\\" + "x\\..\\" * int(60_000 * f) + "late",
+    lambda f: "C:\\" + "..\\" * int(100_000 * f) + "late",
+], ids=["separator-candidate", "drive-separators", "unc-dots", "name-dotdot-pairs", "rooted-dotdots"])
+def test_windows_normpath_stays_linear_on_every_host(build):
+    # The pure-Python stdlib normpath is quadratic on all of these; the native Windows one is not. The expected value
+    # comes from the stdlib rules on a short input of the same shape, which normalizes to the same string.
+    expected = _stdlib_pure_ntpath_normpath()(build(1 / 4096))
+    _assert_linear(policy_module._windows_normpath, build, expected)
 
 
 def test_mentions_zone_stays_linear_on_long_separator_runs():
