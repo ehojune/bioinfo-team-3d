@@ -990,8 +990,10 @@ class AgentAdapter(ABC):
                               error=f"could not start executable {cmd[0]!r}: {detail}")
         ctx.bench_spawn(bench_spawn_id, "started", spawn_cmd, payload)
         # #863: the wrapper the runner started and holds; its activation line and end are recorded below.
+        wrapper_pid = getattr(proc, "pid", None)  # process doubles in unit tests may have none
         cleanup: dict[str, Any] = {"job": "pending" if getattr(memory_guard, "job_expected", False) else "disabled",
-                                   "wrapper_pid": proc.pid, "wrapper_created": _wrapper_identity(proc.pid)}
+                                   "wrapper_pid": wrapper_pid,
+                                   "wrapper_created": _wrapper_identity(wrapper_pid) if type(wrapper_pid) is int else None}
         try:
             # Unit adapters use small process doubles; only a real asyncio child has an OS process to constrain.
             if isinstance(proc, asyncio.subprocess.Process):
@@ -1078,7 +1080,8 @@ class AgentAdapter(ABC):
                 if first:
                     first = False
                     if cleanup["job"] == "pending":  # only the wrapper can write before the CLI exists (#863)
-                        confirmed = getattr(memory_guard, "job_confirmed", lambda *_args: False)(text, proc.pid)
+                        confirmed = (type(wrapper_pid) is int and
+                                     getattr(memory_guard, "job_confirmed", lambda *_args: False)(text, wrapper_pid))
                         cleanup["job"] = "active" if confirmed else "unconfirmed"
                         if confirmed:
                             continue
