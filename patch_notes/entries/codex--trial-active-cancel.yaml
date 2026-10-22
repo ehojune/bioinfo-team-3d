@@ -1,5 +1,9 @@
-pr: null
+pr: 866
 rows:
+- sha: '7f30a20'
+  at: 2026-10-23 05:02
+  summary: 자동 취소의 순수 상태 검사를 Windows의 기존 test 목록에 등록했습니다.
+  text: 새 test 미등록에 따른 실행 전 selection 실패를 고쳤다. OS boundary·mandatory·mixed 계약은 유지했고 정적 profile 분류와 fake7건이 통과했다. 최신 main 자동 통합 뒤 취소 본체3blob은 같다.
 - sha: '2534423'
   at: 2026-10-23 05:10
   summary: 자동 감시가 끝난 요청을 PI 취소로 바꾸지 않도록 전용 취소 경로를 추가했습니다.
