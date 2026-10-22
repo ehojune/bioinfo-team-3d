@@ -4,6 +4,13 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## #865 main 통합
+
+- base: `386edba` (#868 merge `3e1b787` 포함). 충돌 없이 합쳤고 tree `e35868b`는 자동 merge-tree와 같다.
+- 예약 제품·테스트·예제 설정 8개 파일은 검토판 `bc0c4a2`와 byte 단위로 같다. Windows 경로 비용·WMI 수정은 main에서 받았다.
+- 로컬 검증: 예약 동기 fake 6건과 논문 스킬 순수 계약 12건을 통과했다. 실제 gateway·runner·프로세스·WMI·Job 검사는 실행하지 않았다.
+- 예산 예약은 공급자 청구 hard cap이 아니며 Codex의 진행 중 비용 초과를 막지는 못한다. 새 head CI·리뷰·병합은 총괄이 맡는다.
+
 ## Linux 경로 비용과 Windows ACK 대기 수리 통합 (#868)
 
 - base: main `c7671a0`. 검토된 #861 `ba95796`을 merge해 원래 커밋·작성자를 보존했다.
@@ -52,6 +59,56 @@
 - main0f80516(#864 포함)을 통합했습니다. manual 충돌1건은 취소/cleanup 설명을 모두 보존했습니다. CI는 총괄 watcher가 확인합니다.
 
 🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+## #862 모델 호출 사전 예산 예약 (source bb23573, base f47e841)
+
+- 배경: `_check_budget`은 이미 쓴 비용·비용 모름 예약·논문 준비 예약만 보고 허용했다. 보낼 호출과 진행 중인 호출은 세지 않았다. 그래서 동시에 시작한 briefing·precedent, 병렬 단계, 마지막 호출이 상한을 넘을 수 있었다. recruit 작업은 `recruit.max_budget_usd`(예: 25)로 Claude에 넘어갔다.
+- 바꾼 것(opt-in `policy.budget.reserve_before_dispatch`, 기본 false):
+  - `dispatch_with_retry`가 보내기 직전, 마지막 await 뒤에 `_reserve_dispatch`를 부른다. budget lock 안에서 이미 쓴 비용 + 비용 모름 예약 + 진행 중 예약 + 이번 상한이 요청 상한 이하일 때만 예약하고 보낸다.
+  - 이번 상한은 task·직원 `max_budget_usd`·`per_task_usd` 중 최소이고, 없으면 남은 예산이다. 보낸 task의 `budget_usd`·`request_budget_remaining_usd`를 그 값으로 바꾼다.
+  - 넘으면 일반 호출은 기존 예산 카드로 묻고(`reserve_usd` 표시), 채용·환경 진단은 카드 없이 거부한다.
+  - 예약은 요청 기록 `budget_holds`에 저장한다.
+    - 이 orchestrator가 그 task의 비용(또는 비용 모름 예약)을 집계할 때까지 bound에 남는다.
+    - dispatch가 정상으로 돌아온 뒤에만 지운다. gateway가 답하기 전에 비용을 기록했거나 보내지 않은 경우다.
+    - 취소·예외·재시작이면 남긴다.
+  - 상한 값이 유한한 양수가 아니면 카드 없이 거부한다. 남은 예산 0이면 보내지 않는다. 설정의 NaN·음수·무한은 옵션을 켤 때 거부한다.
+  - 논문 스킬 준비(`paper_budget_holds`)와 PI 통역(`pi_translation_budget`)은 기존 예약을 쓰며 중복 예약하지 않는다.
+- 검사:
+  - `tests/test_cso.py`에 test 9개(case 19개)를 더했다. FakeHub와 가짜 dispatch만 쓴다.
+    - 기본 꺼짐
+    - 동시 시작 경쟁
+    - 마지막 호출과 잔액 0
+    - 잘못된 상한 5종과 설정 3종
+    - recruit·진단의 clamp와 카드 없는 거부
+    - 취소 뒤 예약 유지·재시작·비용 모름 대체
+    - 복구된 이전 task와 중복 집계
+    - 논문 준비 비중복
+  - 로컬 in-process(gateway·runner import만 stub): 새 case 19개 통과, `test_cso.py` 215 passed.
+  - 실패 8개는 stub 때문이며 main export에서도 같다. 관련 파일 5개의 결과도 main과 같다.
+  - 3.10 AST, public, diff 검사를 통과했다.
+- 남은 것과 한계:
+  - labhq 비용 기록·추정 기준의 상한이고 공급자 청구액 보장이 아니다.
+  - Codex는 실행 중 비용 제한 플래그가 없어 예약을 넘을 수 있다. 그 초과는 끝난 뒤 기록되어 다음 호출을 막는다.
+  - 요청 상한이 없으면(0·비움) 예약하지 않는다.
+  - 실제 gateway·runner·모델 실행은 확인하지 않았다.
+- 독립 검토 후속(`be76b41`, main `690a588` 통합):
+  - CI run 39843720353 Linux 3.10: `test_paper_skill_waiting_static`의 AST 추출 fixture 2개가 `_budget_bound`의 새 의존(`_dispatch_held`·`_usd_amount`·`hub.requests`)을 몰라 실패했다(11249 pass/2 fail). fixture에 그 의존을 넣었고 단언은 그대로다. `test_paper_skill_recovery_identity`의 복제 dispatch에는 `_recovery_choice`를 더했다.
+  - P2-1(복구 이중 예약): 재시작 복구가 이전 task를 이어받는 호출도 새 attempt를 예약해, 원래 상한에서 거짓 예산 카드가 떴다.
+    - gateway에 `_recovery_choice`(dispatch가 쓰는 같은 선택)와 `recovery_task_id`를 두었다.
+    - CSO는 예약 직전 그 id가 있으면 새 예약 없이 이전 task 예약을 쓴다. 예약이 없으면 카드 없이 이전 task를 잡는다. 예약 판단과 dispatch의 복구 판단 사이에는 await가 없다.
+  - P2-2(보내지 않은 호출의 영구 예약):
+    - gateway는 저장 뒤 보내다 실패한 task를 비용 모름으로 기록한다(기본 동작에도 적용).
+    - CSO는 요청 (재)시작 때 저장도 비용 기록도 없는 id의 예약만 푼다. 이 process가 보내는 중인 attempt는 제외한다.
+    - 같은 process에서 저장 전에 취소·예외가 난 attempt도 푼다. 보냈을 수 있는 예약은 남긴다.
+  - 검사:
+    - 새 fake case 6개(원래 상한 2.0): 복구 이어받기 2개, 재시작 정리 3개, 저장 전 취소 2개(저장 뒤면 유지). 그리고 gateway test 1개.
+    - in-process: 예약 test 25개 통과, `test_cso.py` 221 passed(stub 8 실패는 main과 같음), static 파일 12 passed.
+    - 이전 head `977c6de` 코드로 돌리면 복구 case가 원래 상한에서 `budget reservation … approval denied`로 실패해 검토 재현과 같다.
+    - gateway test와 `test_paper_skill_recovery_identity`는 실제 Hub가 필요해 CI 몫이다.
+- 재검토(P1·P2 0) 후속(`aeb9055`, main `0f80516`·#864 통합):
+  - 매뉴얼에서 '끄면(기본) 이전처럼'은 보내기 전 예약에만 해당하게 고쳤다.
+  - 저장 뒤 보내기 실패를 비용 모름으로 기록하는 것은 설정과 무관하다는 문단을 따로 두었다(P3-1). 제품·test 코드는 그대로다.
+  - main 통합은 자동이다. 이 PR의 code·test blob은 `41e6fac`와 같다. #864는 `server.py`를 바꾸지 않았다.
 
 ## #863 — 작업 취소 접수와 직원 프로세스 정리 증거 구분 (base f47e841)
 
