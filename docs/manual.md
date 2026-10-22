@@ -841,6 +841,8 @@ Nextflow를 돌리면 report·timeline·trace·DAG 네 파일을 `outputs/pipeli
 
 ## 파견직 제도 (Paper2Agent)
 
+`recruit.enabled`의 기본값은 `true`입니다. 채용과 논문 스킬을 쓰지 않는 인스턴스는 `false`로 설정합니다. 이때 직접 채용·설치, 계획의 변환과 지연된 준비, 논문 스킬 부착, 계약 활성화·연장·재고용을 거부하며 계약 해제는 허용합니다. `doctor`는 명시적으로 꺼진 Paper2Agent 검사만 생략하고 `--fix`도 설치하지 않습니다. 기본 설정에서는 recruiter나 스킬이 없으면 계속 실패합니다. 다른 직원의 일반 작업과 인증·runtime 검사는 그대로입니다.
+
 ```mermaid
 flowchart LR
   N[필요 발생<br/>CSO 계획의 recruit · 여우 헤드헌팅 · PI 직접] --> A{PI 승인<br/>폰}

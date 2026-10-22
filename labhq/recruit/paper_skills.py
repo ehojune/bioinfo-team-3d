@@ -136,6 +136,17 @@ def selections(plan: dict, precedents: dict, roster: list[dict]) -> list[dict]:
 
 
 async def prepare_plan(plan: dict, precedents: dict, roster: list[dict], rid: str, settings, run) -> dict:
+    if not paper2agent.enabled(settings):
+        rows = [{**row, "title": str(row.get("title") or row.get("paper_id") or "미확인"),
+                 "agent_ids": [], "access_level": None,
+                 "status": "skipped", "skip_reason": "recruit_disabled", "selected": True,
+                 "built": False, "attached_steps": [], "called": False}
+                for row in plan.get("paper_skills") or [] if isinstance(row, dict)]
+        if not rows:
+            return {k: v for k, v in plan.items() if k != "paper_skill_results"}
+        return {**plan, "paper_skill_results": rows,
+                "warnings": list(dict.fromkeys([*(plan.get("warnings") or []),
+                                                 "논문 스킬 생략: recruit.enabled=false"]))}
     rows = []
     accepted = selections(plan, precedents, roster)
     remaining = {row["paper_id"]: row for row in accepted}
@@ -186,6 +197,8 @@ def build_task(selected: dict, settings) -> Task:
 
 async def resolve_attachments(rows: list[dict], settings, run) -> list[dict]:
     """Resolve only a dispatched step's approved descriptors, through ordinary bounded CSO tasks."""
+    if not paper2agent.enabled(settings):
+        return [{**row, "status": "unavailable", "error": "recruit_disabled"} for row in rows]
     resolved = []
     for selected in rows:
         if selected.get("status") != "deferred":
@@ -218,7 +231,7 @@ class ApprovedBuilds:
     def __init__(self, rows: list[dict], settings):
         self.settings = settings
         self.rows = {r['selection_sha256']: copy.deepcopy(r) for r in rows if r.get('status') == 'deferred'}
-        self.tasks = {key: build_task(row, settings) for key, row in self.rows.items()}
+        self.tasks = {key: build_task(row, settings) for key, row in self.rows.items()} if paper2agent.enabled(settings) else {}
         self.jobs: dict[str, asyncio.Task] = {}
         self.disabled: dict[str, str] = {}
         def descriptor(row):
@@ -235,6 +248,8 @@ class ApprovedBuilds:
             self.disabled.update({key: 'invalid_task_timeout' for key in self.rows})
         if min(settings.runner.max_parallel, settings.orchestrator.max_parallel_steps) <= 0:
             self.disabled.update({key: 'paper_skill_parallel_unavailable' for key in self.rows})
+        if not paper2agent.enabled(settings):
+            self.disabled.update({key: 'recruit_disabled' for key in self.rows})
         self.started: set[str] = set()
         self.stopped: set[str] = set()
         self.finished: set[str] = set()
@@ -244,6 +259,8 @@ class ApprovedBuilds:
 
     async def start(self, run, spawn, cancel, progress, grace_s: float) -> None:
         self.spawn, self.cancel, self.progress, self.grace_s = spawn, cancel, progress, grace_s
+        if not paper2agent.enabled(self.settings):
+            self.disabled.update({key: 'recruit_disabled' for key in self.rows})
         timeout = self.settings.runner.task_timeout_s
         self.deadline = asyncio.get_running_loop().time() + max(0, timeout)
         self.finished = set(self.disabled)
@@ -283,6 +300,8 @@ class ApprovedBuilds:
 
     async def resolve(self, rows: list[dict]) -> list[dict]:
         """Snapshot at dispatch, with no suspension or cancellation of optional work."""
+        if not paper2agent.enabled(self.settings):
+            return [{**row, 'status': 'unavailable', 'error': 'recruit_disabled'} for row in rows]
         out = []
         for selected in rows:
             if selected.get('status') != 'deferred':
@@ -539,6 +558,8 @@ class PaperSkillBuild:
                           text=row.get("error", "Paper2Skill " + row["status"]), cost_usd=0)
 
     def prepare(self) -> tuple[Task, Path | None, TaskResult | None]:
+        if not paper2agent.enabled(self.runner.s):
+            return self.task, None, self.result({"status": "unavailable", "error": "recruit_disabled"})
         from ..doctor import _paper2agent_row
         s = self.runner.s
         agents = list(self.runner.registry.agents.values())
@@ -590,6 +611,11 @@ class PaperSkillBuild:
             "meta": {**self.task.meta, "agent_overrides": {"permission_mode": s.recruit.permission_mode}}}), build, None
 
     def finish(self, result: TaskResult) -> TaskResult:
+        if not paper2agent.enabled(self.runner.s):
+            # A conversion could already have spent money before a caller disabled preparation.
+            return result.model_copy(update={"ok": False, "error": "recruit_disabled",
+                                            "structured": {"status": "unavailable", "error": "recruit_disabled"},
+                                            "text": "Paper2Skill disabled"})
         offer = result.structured if isinstance(result.structured, dict) else extract_json(result.text)
         try:
             if not result.ok or not isinstance(offer, dict):

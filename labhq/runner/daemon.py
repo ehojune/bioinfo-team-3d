@@ -56,6 +56,7 @@ from ..pipeline_pr import collect_pipeline_submission, pipeline_rejection
 from ..bioinfo_policy import PIPELINE_AUTHORS
 from ..quota import quota_reset_instant
 from ..recruit.provenance import external_service_refusal, not_yet_active, probation_refusal, restricted_task
+from ..recruit import paper2agent
 from ..registry import Registry
 from ..settings import MODEL_NAME_PATTERN, Settings, write_staff_config
 from ..staff_skills import install_required_skills
@@ -730,7 +731,10 @@ class Runner:
             await asyncio.to_thread(self._refresh_wsl_readiness)
             self._send_roster()
         elif typ == "recruit.start":
-            asyncio.create_task(self._recruit(msg))
+            if paper2agent.enabled(self.s):
+                asyncio.create_task(self._recruit(msg))
+            else:
+                await self._recruit(msg)  # send the refusal without creating a background conversion
         elif typ == "contract.update":
             self._contract_update(msg)
             self._send_roster()
@@ -824,6 +828,9 @@ class Runner:
         return None
 
     def _contract_update(self, msg: dict) -> None:
+        if msg.get("action") != "release" and not paper2agent.enabled(self.s):
+            log.warning("contract update refused: recruit.enabled=false")
+            return
         action, days = msg.get("action"), float(msg.get("days") or self.s.recruit.default_ttl_days)
         if action == "extend":
             self.registry.extend(msg["agent_id"], days)
@@ -839,9 +846,14 @@ class Runner:
                     type="contract.warning", agent_id=spec.id, data={"agent_id": spec.id, "changed": changed})))
 
     async def _recruit(self, msg: dict) -> None:
+        if not paper2agent.enabled(self.s):
+            await self.emit(Event(type="recruit.failed", request_id=msg.get("request_id"),
+                                  data={"error": "recruitment is disabled (recruit.enabled=false)"}))
+            return
         from ..recruit.paper2agent import Recruitment
 
         try:
+            paper2agent.require_enabled(self.s)
             await Recruitment(self, msg).run()
         except Exception as e:
             log.exception("recruitment failed")
@@ -1351,6 +1363,12 @@ class Runner:
         return False
 
     async def run_task(self, task: Task, workdir_override: Path | None = None) -> TaskResult:
+        if paper2agent.disabled_task(self.s, task):
+            result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
+                                error="recruitment and Paper2Agent are disabled (recruit.enabled=false)")
+            await self.emit(Event(type="task.result", task_id=task.id, agent_id=task.agent_id,
+                                  request_id=task.request_id, data=result.model_dump(mode="json")))
+            return result
         from ..recruit.paper_skills import PaperSkillBuild
 
         if self.s.runner.environment == "wsl":
@@ -1391,6 +1409,13 @@ class Runner:
                 ws.clear_paper_skills()
 
     async def _run_task(self, task: Task, workdir_override: Path | None = None, *, paper_skill_build=None) -> TaskResult:
+        # Recheck after asynchronous preparation, and protect internal/direct callers too.
+        if paper2agent.disabled_task(self.s, task):
+            result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
+                                error="recruitment and Paper2Agent are disabled (recruit.enabled=false)")
+            await self.emit(Event(type="task.result", task_id=task.id, agent_id=task.agent_id,
+                                  request_id=task.request_id, data=result.model_dump(mode="json")))
+            return result
         agent = self._resolve_agent(task)
         read_only = is_read_only_task(task.meta, agent)
         refusal = read_only_refusal(agent.id, agent.engine) if read_only else None

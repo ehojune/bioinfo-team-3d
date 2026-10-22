@@ -11,7 +11,7 @@ from typing import Any  # semantics-hook
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 
 from .intake import Reference
 from .test_guard import guard_test_path
@@ -396,6 +396,7 @@ class PolicySettings(BaseModel):
 
 
 class RecruitSettings(BaseModel):
+    enabled: StrictBool = True  # explicit False disables hiring and Paper2Agent preparation, not ordinary staff
     agent_id: str = "recruiter"
     permission_mode: str = "auto"  # unattended conversion; see docs/manual.md '파견직 제도' (run inside a container if you can)
     max_budget_usd: float = 25.0
