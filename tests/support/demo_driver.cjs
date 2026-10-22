@@ -14,6 +14,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const WEB_ROOT = process.env.LABHQ_WEB_TEST_ROOT || path.resolve(__dirname, '../../labhq/web');
 const FORBIDDEN_PORTS = [8787, 55921];
 const START_MS = 60000;  // Chrome start budget; the node:test budget of each test covers it
+// #833: a navigation still waiting this long reports, once, whether the static server has seen and answered the page
+// request. Diagnostic only; it neither ends nor extends the wait.
+const NAVIGATE_NOTICE_MS = 5000;
 // One cleanup deadline. The graceful Browser.close may use its first part; the rest is for the owned child's forced
 // close to be observed (#842: a graceful wait that took the whole budget left the kill no time to show its close).
 const CLEANUP_MS = 5000, GRACEFUL_CLEANUP_MS = 3000;
@@ -112,12 +115,14 @@ const CLOCK_SOURCE = `(() => {
   window.__vclock = {advance, frames, now: () => t, pending: () => timers.size};
 })();`;
 
-function startStaticServer(rootDir) {
+function startStaticServer(rootDir, observe = null) {
   const root = path.resolve(rootDir);
   const types = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css',
     '.svg': 'image/svg+xml', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.png': 'image/png'};
   const server = http.createServer((req, res) => {
-    const filename = path.resolve(root, decodeURIComponent(new URL(req.url, 'http://localhost').pathname.slice(1)));
+    const pathname = new URL(req.url, 'http://localhost').pathname;
+    try { observe?.(pathname, res); } catch { /* diagnostic only */ }
+    const filename = path.resolve(root, decodeURIComponent(pathname.slice(1)));
     if (filename !== root && !filename.startsWith(root + path.sep)) { res.writeHead(403).end(); return; }
     try {
       res.setHeader('Content-Type', types[path.extname(filename)] || 'application/octet-stream');
@@ -226,19 +231,24 @@ async function closeDemoResources({ws, wsClosed, chrome, chromeClosed, requestBr
 // Diagnostic only: no timer, transport, expressions, URLs or success receipts.
 // A disabled/broken observer must not change browser behavior or mask errors.
 function demoLifecycleTrace(emit, clock = () => performance.now()) {
-  let origin, previous, count = 0;
-  return stage => {
-    if (typeof emit !== 'function' || count >= 16) return;
-    count++;
+  let origin, previous, count = 0, observed = 0;
+  const row = (stage, extra, observation) => {
+    if (typeof emit !== 'function' || (observation ? observed >= 6 : count >= 16)) return;
+    if (observation) observed++; else count++;
     try {
       const now = clock();
       origin ??= now;
-      const row = {stage, elapsed_ms: Math.round(now - origin),
-        since_previous_ms: previous === undefined ? 0 : Math.round(now - previous)};
-      previous = now;
-      emit(row);
+      const value = {stage, elapsed_ms: Math.round(now - origin),
+        since_previous_ms: previous === undefined ? 0 : Math.round(now - previous), ...extra};
+      if (!observation) previous = now;
+      emit(value);
     } catch { /* diagnostic only */ }
   };
+  const trace = (stage, extra) => row(stage, extra, false);
+  // #833: what happened inside a boundary (the static server saw the page request, a navigation is still waiting).
+  // Its own small budget, so it never displaces a lifecycle row, and measured from the last boundary without moving it.
+  trace.observe = (stage, extra) => row(stage, extra, true);
+  return trace;
 }
 
 // opts: {width, height, reducedMotion=true, colorScheme='light', web=WEB_ROOT, layoutFont=false, fontFamily=null, deadlineMs=60000, diagnostic=null}
@@ -255,10 +265,17 @@ async function openDemo(opts = {}) {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'labhq-visual-'));
   trace('profile-ready');
   let server, chrome, ws, chromeClosed, wsClosed, requestBrowserClose, closing;
+  let pageRequest = null;  // armed by load() for the page request of that one navigation
   const close = () => closing ||= closeDemoResources({ws, wsClosed, chrome, chromeClosed, requestBrowserClose, server, profile},
     opts.cleanupDiagnostic ? {diagnostic: opts.cleanupDiagnostic} : undefined);
   try {
-    server = await startStaticServer(web);
+    server = await startStaticServer(web, (pathname, res) => {
+      const watch = pageRequest;
+      if (!watch || watch.requested || pathname !== '/index.html') return;
+      watch.requested = true;
+      trace.observe('server-request');
+      res.once('finish', () => { watch.responded = true; trace.observe('server-response', {status: res.statusCode}); });
+    });
     trace('server-ready');
     const port = server.address().port;
     if (FORBIDDEN_PORTS.includes(port)) throw new Error('static server landed on a reserved port ' + port);
@@ -293,12 +310,18 @@ async function openDemo(opts = {}) {
     }
     if (!debug) throw new Error(`Chrome did not publish its debugging port within ${START_MS / 1000}s (exit: ${JSON.stringify(exited)}): ${chromeError}`);
     trace('debug-port-ready');
+    // #833: whether the wait was for DevTools to answer at all or for a page target in its answer.
+    const polls = {json_attempts: 0, json_unanswered: 0, json_without_page: 0};
     while (!page && !exited && Date.now() < startDeadline) {
-      try { page = (await (await fetch(`http://127.0.0.1:${debug}/json`)).json()).find(t => t.type === 'page'); } catch { /* not listening yet */ }
+      polls.json_attempts++;
+      let targets = null;
+      try { targets = await (await fetch(`http://127.0.0.1:${debug}/json`)).json(); } catch { /* not listening yet */ }
+      if (targets === null) polls.json_unanswered++;
+      else if (!(page = Array.isArray(targets) ? targets.find(t => t.type === 'page') : undefined)) polls.json_without_page++;
       if (!page) await sleep(100);
     }
     if (!page) throw new Error(`Chrome has no page target within ${START_MS / 1000}s (exit: ${JSON.stringify(exited)}): ${chromeError}`);
-    trace('target-ready');
+    trace('target-ready', polls);
     // Node 22+ has a global WebSocket; older Nodes use the small client in mini_ws.cjs (LABHQ_FORCE_MINI_WS=1 forces it).
     const Socket = typeof WebSocket !== 'undefined' && !process.env.LABHQ_FORCE_MINI_WS ? WebSocket : MiniWebSocket;
     ws = new Socket(page.webSocketDebuggerUrl);
@@ -366,7 +389,16 @@ async function openDemo(opts = {}) {
     }
     async function load(search = '?demo=1') {
       trace('navigate-start');
-      await cdp('Page.navigate', {url: `${origin}/index.html${search}`});
+      const watch = pageRequest = {requested: false, responded: false};
+      const notice = setTimeout(() => trace.observe('navigate-waiting',
+        {page_requested: watch.requested, page_responded: watch.responded}), NAVIGATE_NOTICE_MS);
+      notice.unref?.();
+      try {
+        await cdp('Page.navigate', {url: `${origin}/index.html${search}`});
+      } finally {
+        clearTimeout(notice);
+        if (pageRequest === watch) pageRequest = null;
+      }
       trace('navigate-ready');
       trace('boot-start');
       await waitReal('demo boot', "window.__labhq && window.__vclock && document.querySelectorAll('#zones .office-character').length>=11");
