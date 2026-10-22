@@ -13,6 +13,14 @@
 - 검사: 새 순수 `tests/test_demo_windows_job.py` 11 passed(표준 handle 명시 전달, Job 실패 시 child 없음, 잘못된 인자, 제품 코드·줄, 제품 Job class 재사용)와 Windows inventory 등록. VM fake의 `__dirname`을 driver 폴더로 바로잡았다. bundled Node `--check`, 정적 CI 210 passed, 3.10 AST, profile·public·diff 검사 통과.
 - 미확인: 실제 Windows에서 Chrome stderr가 Node까지 오는지, Job close 뒤 2초 안에 stdio close가 오는지. 새 head 전체 CI가 필요하다.
 
+## HANDOFF 작업 배정 정책 현행화 (source c602ad1, base 99f1c49)
+
+- HANDOFF "현재 우선순위"의 "신규 일반 작업 보류 해제" 문장을 현재 PI 결정으로 바꿨다: Codex 총괄 유지, 새 일반 Codex 작업 보류(기존 PR 마무리·긴급만), 개발은 Claude Opus 동시 최대 3, Claude 사용량은 Codex 예산 밖.
+- README·manual·AGENTS는 일시적 운영 상황이라 바꾸지 않았다. 예산 수치는 적지 않았다.
+- 검사: `check_public.sh`, `git diff --check`, `patch_notes check`, `notes_index --validate`(정적). 제품·process 실행 없음.
+- 첫 CI(head `e9ee408`, run 39689292875): 문서 diff라도 HANDOFF 문구 변경과 새 status 파일 때문에 full로 선택됐다. Windows에서 `test_supervisor_process.py`의 감독 조기 종료 1건이 실패했다(#844와 같은 node, 원인 미확정). Linux는 당시 진행 중이었다.
+- 통합: 승인 main `e41cfe2`(#843 `bf51c58`, #841 `e7c3159` 포함)를 merge `3ab4f9a`로 명시 통합했다. 충돌은 없고 main 대비 차이는 HANDOFF 한 문단과 이 기록 2파일뿐이다. 새 CI가 한 번 통과해도 #844 해결로 보지 않는다.
+
 ## #842/#843 — Windows demo Chrome 소유 Job과 supervisor 시작 실패 진단 (source 1193f98, c8751ad)
 
 - 이전 실패: PR843 첫 CI(18abfff)의 Windows forced 실Chrome 회귀는 소유 launcher exit 뒤에도 stdio pipe가 마감 후 13초 열려 있었다. 소유 범위 밖에 남은 하위가 쥐었을 가능성이 높지만 미확인이다.
@@ -90,6 +98,13 @@
   - 5초·30초·job 10분·parallel 7분·필수 26·Windows 선택은 그대로다.
 - 검사: `web_visual_tooling.cjs`에 fake 계약 2건을 더했다(실행은 CI). 정적 검사 `test_ci_windows10m` 계약 2줄을 더했다. 로컬 CI 정책 199 passed, JS 괄호·문자열 정적 균형 HEAD와 새 파일 모두 balanced, public·diff 검사를 통과했다. guard는 유지했고 blocked는 0이다.
 - 미실행: 실제 Node·Chrome·Windows. #842는 다음 Windows 실패 기록이나 원인 확인 전까지 열어 둔다. #833과 같은 원인이라고 단정하지 않는다.
+
+## #779 — 모델 거부 뒤 새 계획 요청의 meta 보존 (source dec9f80)
+
+- 변경: `Hub._model_refusal_request`가 원 요청 meta(bench `case_id`, 임의 tag)를 새 요청에 복사하고 `revised_from`만 뺀다. `revised_from`은 CP1 수정 요청 찾기(`revised_request_of`)와 `result_storage`의 부모 연결이 읽는 CP1 계보 키다. 거부 재계획의 연결은 기존 top-level `model_refusal_from`이다. 다른 제어 키는 없다(`rounds`는 meta를 그대로 기록만 한다). meta는 `dict[str, str]`이고 `RequestIn`이 새 dict를 만든다.
+- 유지: 새 요청 id와 독립 계보, 부모 요청과 meta 불변, CP1 찾기 결과, 거부·그대로 종료·취소·예산 처리, 사용자 매뉴얼.
+- 로컬(순수): 새 순수 검사 본문을 `RequestIn`과 두 Hub 메서드의 AST 추출로 in-process 실행했다. HEAD `99f1c49`에서 FAIL, 수정 후 PASS였다. fastapi가 없어 승인 route 검사와 파일 전체는 CI에 맡긴다. Python 3.10 AST/compile, `git diff --check`, `check_public.sh`는 통과했다.
+- 범위 밖: #780(continuation 거부 뒤 카드)은 선택이 이전 round 없는 새 연구가 되는 설계 문제라 바꾸지 않았다.
 
 ## #660 — `labhq talent`에 빌드된 논문 자문 스킬 표시 (base c16dcdb)
 

@@ -3303,6 +3303,9 @@ class Hub:
         # Stored provenance is not input: revalidate only the public Reference fields.
         fields["references"] = [{key: ref[key] for key in ("kind", "value", "note") if key in ref}
                                 for ref in old.get("references") or []]
+        # Provenance such as a bench case_id stays with the new request (#779). revised_from is CP1 lineage: the CP1
+        # 수정 요청 lookup and stored results read it, and this request links back through model_refusal_from instead.
+        fields["meta"] = {key: value for key, value in (old.get("meta") or {}).items() if key != "revised_from"}
         body = RequestIn(**fields, text=text, cso_model=model, default_references=False,
                          budget_usd=old.get("requested_budget_usd", old.get("budget_usd")))
         return self.create_request(body, extra={"model_refusal_from": rid})
