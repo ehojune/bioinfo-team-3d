@@ -254,6 +254,71 @@ def test_bootstrap_cannot_enter_role_before_live_caller_nonce_ack_and_job_check(
     world.native.k.TerminateProcess.assert_not_called()  # Self-abort, never kill caller or scan its tree.
 
 
+def _held_elsewhere(winerror):
+    error = PermissionError(13, "fixture: record open elsewhere")
+    error.winerror = winerror
+    return error
+
+
+def _flaky_once(monkeypatch, name, winerror):
+    """The first read of `name` fails as Windows does while another handle (the writer's replace, a scanner) holds it."""
+    read, failed = broker._read, []
+    def flaky(path):
+        if path.name == name and not failed:
+            failed.append(path.name)
+            raise _held_elsewhere(winerror)
+        return read(path)
+    monkeypatch.setattr(broker, "_read", flaky)
+    return failed
+
+
+@pytest.mark.parametrize("winerror", [32, 5])
+def test_the_receipt_wait_reads_again_after_a_sharing_violation_but_not_after_access_denied(world, monkeypatch,
+                                                                                           winerror):
+    failed = _flaky_once(monkeypatch, "receipt.json", winerror)
+    if winerror == 32:  # being replaced: not there yet, read again within the same deadline
+        process = launch(world)
+        assert failed == ["receipt.json"] and (world.control.parent / "ack.json").is_file()
+        process.close()
+    else:
+        with pytest.raises(win.LaunchError):
+            launch(world)
+        assert not (world.state / ".launch").exists() or not list((world.state / ".launch").glob("*/ack.json"))
+    world.native.k.TerminateProcess.assert_not_called()
+
+
+@pytest.mark.parametrize("winerror", [32, 5])
+def test_the_ack_wait_reads_again_after_a_sharing_violation_but_not_after_access_denied(world, monkeypatch, winerror):
+    """#844 CI: the bootstrap stopped at stage=ack_wait with PermissionError after the caller had written its ACK."""
+    control = world.state / "wmi-bootstrap" / "request.json"
+    control.parent.mkdir()
+    monkeypatch.setattr(broker, "_STAGE", {"name": None, "log": None})
+    request = {"caller_pid": 111, "caller_created": world.caller["created"], "image": world.caller["image"],
+               "owner": world.caller["owner"], "env_digest": broker._digest(os.environ),
+               "nonce": "test-nonce", "expires": broker.time.time() + 20}
+    broker._write(control, request)
+    world.native.identity.side_effect = lambda handle: world.child if handle == 1 else world.caller
+    write = broker._write
+    def ack(path, receipt):
+        write(path, receipt)
+        if path.name == "receipt.json":
+            write(path.parent / "ack.json", receipt)
+    monkeypatch.setattr(broker, "_write", ack)
+    enter = Mock(return_value=42)
+    monkeypatch.setattr(broker, "_enter", enter)
+    failed = _flaky_once(monkeypatch, "ack.json", winerror)
+    if winerror == 32:
+        assert broker.bootstrap(control) == 42 and failed == ["ack.json"]
+        enter.assert_called_once_with(request)
+    else:
+        with pytest.raises(PermissionError):
+            broker.bootstrap(control)
+        enter.assert_not_called()
+        assert broker._STAGE["name"] == "ack_wait"
+    assert not control.parent.exists()
+    world.native.k.TerminateProcess.assert_not_called()
+
+
 @pytest.mark.parametrize("stage", [None, "cleanup", "role"])
 def test_bootstrap_stop_is_noted_by_stage_and_type_only_and_a_role_failure_keeps_its_traceback(tmp_path, monkeypatch,
                                                                                               stage):
