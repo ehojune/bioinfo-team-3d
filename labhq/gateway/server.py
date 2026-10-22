@@ -4211,7 +4211,10 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     async def get_request(rid: str) -> dict:
         if rid not in hub.requests:
             raise HTTPException(404)
-        return hub.requests[rid]
+        from ..recruit.paper_skills import literature_view
+
+        # The fox's paper list (#660) is derived from this stored record only; the record itself is unchanged.
+        return {**hub.requests[rid], "paper_literature": literature_view(hub.requests[rid])}
 
     @app.get("/api/requests/{rid}/audit-bundle", dependencies=[Depends(auth)])
     async def audit_bundle(rid: str) -> Response:
