@@ -7,7 +7,7 @@ const {DEFAULT_TOLERANCE, diffView, sameColor, colorChannels} = require('./suppo
 const {updateBaseline} = require('../scripts/update_visual_baseline.cjs');
 const vm = require('node:vm');
 const {openDemo, skipReason, CLOCK_SOURCE, closeDemoResources, demoLifecycleTrace, requestBrowserShutdown,
-  CLEANUP_MS, GRACEFUL_CLEANUP_MS} = require('./support/demo_driver.cjs');
+  CLEANUP_MS, GRACEFUL_CLEANUP_MS, JOB_STARTING_BROWSER, chromeStderrWatcher, profileEntryCount} = require('./support/demo_driver.cjs');
 
 // Synchronous fake clock/observer only; no browser, timer or event loop.
 test('demo lifecycle trace measures from its own origin and between observed boundaries', () => {
@@ -63,6 +63,46 @@ test('#833 server and waiting observations keep their own budget and never move 
   assert.deepEqual(rows.at(-1), {stage:'navigate-ready', elapsed_ms:5200, since_previous_ms:5090});
   for (let i = 0; i < 20; i++) trace('boot-start');
   assert.equal(rows.filter(row => !['server-request', 'server-response', 'navigate-waiting'].includes(row.stage)).length, 16);
+});
+
+test('#833 the Job wrapper marker counts only as the first stderr line and leaves only counts', () => {
+  const seen = [];
+  const watch = chromeStderrWatcher(() => seen.push('marker'));
+  watch.feed(JOB_STARTING_BROWSER.slice(0, 7));  // a marker split across chunks, Windows line ending
+  watch.feed(JOB_STARTING_BROWSER.slice(7) + '\r\n[chrome] warn');
+  watch.feed(` later ${JOB_STARTING_BROWSER}\n`);  // the same text inside Chrome's output is only output
+  assert.deepEqual(seen, ['marker']);
+  assert.equal(watch.marked(), true);
+  assert.equal(watch.text(), `[chrome] warn later ${JOB_STARTING_BROWSER}\n`);
+  assert.equal(watch.chromeBytes(), Buffer.byteLength(watch.text()));
+  // No marker first (Linux, or a wrapper that never reached Chrome): nothing is recorded and every byte is Chrome's.
+  for (const first of ['DevTools listening\n', `x${JOB_STARTING_BROWSER}\n`, `${JOB_STARTING_BROWSER} extra\n`,
+                       'LABHQ_MEMORY_LIMIT_SETUP: OSError: denied\n']) {
+    const plain = chromeStderrWatcher(() => assert.fail('no marker'));
+    plain.feed(first);
+    assert.equal(plain.marked(), false);
+    assert.equal(plain.text(), first);
+    assert.equal(plain.chromeBytes(), Buffer.byteLength(first));
+  }
+  const failing = chromeStderrWatcher(() => { throw new Error('observer'); });
+  failing.feed(`${JOB_STARTING_BROWSER}\n`);
+  assert.equal(failing.marked(), true);
+  assert.equal(failing.chromeBytes(), 0);
+  assert.equal(profileEntryCount(path.join(os.tmpdir(), 'labhq-no-such-profile-833')), null);
+});
+
+test('#833 the start wait records the marker and one counts-only waiting row; acceptance stays DevToolsActivePort', () => {
+  const source = fs.readFileSync(path.join(__dirname, 'support/demo_driver.cjs'), 'utf8');
+  const start = source.slice(source.indexOf("trace('chrome-spawned');"), source.indexOf("trace('debug-port-ready');"));
+  // The only value that ends the wait is still the port read from Chrome's own DevToolsActivePort file.
+  assert.equal((start.match(/debug = /g) || []).length, 1);
+  assert.match(start, /debug = fs\.readFileSync\(path\.join\(profile, 'DevToolsActivePort'\), 'utf8'\)/);
+  assert.match(start, /while \(!debug && !exited && Date\.now\(\) < startDeadline\)/);
+  assert.match(source, /const startDeadline = Date\.now\(\) \+ START_MS;/);
+  assert.match(source, /const START_MS = 60000;/);
+  assert.equal((start.match(/trace\.observe\('chrome-waiting'/g) || []).length, 1);
+  assert.match(start, /job_marker_seen: stderrWatch\.marked\(\), profile_entries: profileEntryCount\(profile\),\s*chrome_stderr_bytes: stderrWatch\.chromeBytes\(\)\}/);
+  assert.match(source, /chromeStderrWatcher\(\(\) => trace\.observe\('job-ready'\)\)/);
 });
 
 test('demo lifecycle observer and clock failures cannot replace an operation failure', () => {
