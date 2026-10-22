@@ -461,7 +461,7 @@
       }
     },
     "tests/test_policy.py": {
-      "sha256": "a654a5c8643cc2e419070bc485d6745eb3edcfe6f1dcfe92663f8900a0e1efe6",
+      "sha256": "2b8183c4678138fab03d2cc90d53bd69c36b4d7bc8b2103c58a8a8263aa9f4f7",
       "reason": "Only fake-clock budget assertions and numeric HPC threshold arithmetic are omitted; every path/security and actual scanner-cost node remains.",
       "nodes": {
         "test_a_command_writing_to_a_null_device_is_not_a_write": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",
@@ -508,6 +508,7 @@
         "test_restricted_zone_with_spaces_in_structured_and_shell_paths": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",
         "test_risky_bash_asks_and_normal_bash_allows": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",
         "test_rm_words_that_cannot_delete_recursively_stay_allowed": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",
+        "test_separator_runs_never_hide_a_late_restricted_path_or_file_uri": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",
         "test_shell_obvious_absolute_write_inside_roots_allows": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",
         "test_shell_obvious_absolute_write_outside_roots_asks": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",
         "test_single_powershell_recursive_delete_below_step_tmp_is_allowed": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",

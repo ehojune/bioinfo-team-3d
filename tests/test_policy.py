@@ -16,35 +16,64 @@ def _policy(**kw):
     return PolicySettings(data_zones=[DataZone(path="/data/cohort", level="restricted")], **kw)
 
 
-def _long_separator_runs():
-    return "/" * 65_536 + "\\" * 65_536 + ":" * 600_000
+def _long_separator_runs(fraction=1):
+    return "/" * int(65_536 * fraction) + "\\" * int(65_536 * fraction) + ":" * int(600_000 * fraction)
+
+
+# A scan that retries at every delimiter of a run costs the square of the run length (what _token_candidates and
+# _scan_path_text avoid). A fixed absolute CPU budget for the full input failed on a CI worker while the scan
+# stayed linear (run 39845342493: 2.05 s and 2.27 s against 2 s). The contract is now relative, on the calling
+# thread: the full input may cost at most _MAX_SCALE times the same composition at a quarter of its length. A linear
+# scan costs about 4x; a scan quadratic in the run length about 16x. This checks these inputs only; it is not a
+# proof of linearity for every input, and a quadratic scan of the full input would still run long before failing.
+_MAX_SCALE = 8
+_MEASURE_FLOOR_S = 0.2  # each side runs until this much CPU, so a 15.6 ms Windows clock tick stays below 8 %
+_MAX_REPEATS = {"quarter": 16, "full": 4}  # bounds the work: at most 8 full-input equivalents per scan
+_CLOCK_TICK_S = 0.0157  # the coarsest thread_time tick in use (Windows 15.6 ms): one tick of slack per average
+
+
+def _cost(call, text, repeats):
+    """Average calling-thread CPU per call, repeating only until the floor or the bound; every result kept."""
+    spent, results = 0.0, []
+    while len(results) < repeats and spent < _MEASURE_FLOOR_S:
+        started = time.thread_time()  # this thread only: other threads in a test worker do not count
+        results.append(call(text))
+        spent += time.thread_time() - started
+    return spent / len(results), results
 
 
 def _assert_linear(call):
-    # Budget these synchronous scans' CPU cost, excluding other workers' scheduling
-    # delays. A fixed-input cost regression does not prove asymptotic linearity.
-    started = time.process_time()
-    assert call(_long_separator_runs()) is None
-    assert time.process_time() - started < 2, "path scanning must stay linear in the text length"
+    quarter_cost, quarter_results = _cost(call, _long_separator_runs(0.25), _MAX_REPEATS["quarter"])
+    full_cost, full_results = _cost(call, _long_separator_runs(), _MAX_REPEATS["full"])
+    assert all(result is None for result in quarter_results + full_results), "separator runs name no path"
+    assert full_cost <= _MAX_SCALE * quarter_cost + _CLOCK_TICK_S, (
+        f"path scanning must stay linear in the text length: a 4x input cost {full_cost / max(quarter_cost, 1e-9):.1f}x"
+        f" ({quarter_cost:.4f} s -> {full_cost:.4f} s per call)")
 
 
-@pytest.mark.parametrize("cpu_elapsed,wall_elapsed,result,reject", [
-    (0.125, 900, None, False),
-    (2, 0.125, None, True),
-    (2.125, 0.125, None, True),
-    (0.125, 0.125, False, True),
-    (0.125, 0.125, None, False),
+@pytest.mark.parametrize("quarter_s,full_s,result,reject,expected_calls", [
+    (0.125, 0.5, None, False, {"quarter": 2, "full": 1}),      # linear: 4x
+    (0.125, 1.0, None, False, {"quarter": 2, "full": 1}),      # the bound itself
+    (0.125, 2.0, None, True, {"quarter": 2, "full": 1}),       # quadratic: 16x
+    (0.125, 1.0625, None, True, {"quarter": 2, "full": 1}),
+    (0.125, 0.5, False, True, {"quarter": 2, "full": 1}),      # wrong result: separator runs name no path
+    (0.0078125, 0.03125, None, False, {"quarter": 16, "full": 4}),  # fast machine: bounded repeats, then averages
+    (0.0, 0.0078125, None, False, {"quarter": 16, "full": 4}),  # quarter below one clock tick: one tick of slack
+    (0.0, 0.03125, None, True, {"quarter": 16, "full": 4}),     # but not more than one tick
 ])
 def test_linear_scan_budget_uses_cpu_and_preserves_result_and_strict_limit(
-        monkeypatch, cpu_elapsed, wall_elapsed, result, reject):
-    cpu, wall = iter((0, cpu_elapsed)), iter((0, wall_elapsed))
+        monkeypatch, quarter_s, full_s, result, reject, expected_calls):
+    clock, calls = [0.0], {"quarter": 0, "full": 0}
     # Replace only this module's time object; pytest's real clocks stay intact.
-    monkeypatch.setitem(globals(), "time", SimpleNamespace(
-        process_time=lambda: next(cpu), perf_counter=lambda: next(wall)))
-    seen = []
+    monkeypatch.setitem(globals(), "time", SimpleNamespace(thread_time=lambda: clock[0]))
+    full_text, quarter_text = _long_separator_runs(), _long_separator_runs(0.25)
+    assert len(full_text) == 731_072 and len(quarter_text) * 4 == len(full_text)  # the full CI input is kept
 
     def scan(text):
-        seen.append(text)
+        size = "full" if text == full_text else "quarter"
+        assert text in (full_text, quarter_text)
+        calls[size] += 1
+        clock[0] += full_s if size == "full" else quarter_s
         return result
 
     if reject:
@@ -52,7 +81,20 @@ def test_linear_scan_budget_uses_cpu_and_preserves_result_and_strict_limit(
             _assert_linear(scan)
     else:
         _assert_linear(scan)
-    assert seen == [_long_separator_runs()]
+    assert calls == expected_calls  # the full input is always scanned, and never more than the bound
+
+
+@pytest.mark.parametrize("tail,found", [
+    ("/restricted/late.cram", True),
+    (" /restricted/late.cram", True),
+    ("file:///%72estricted/late.cram", True),
+    ("/restricted2/public.txt", False),
+    ("https://public.invalid/restricted/guide", False),
+])
+def test_separator_runs_never_hide_a_late_restricted_path_or_file_uri(tail, found):
+    text = _long_separator_runs() + tail
+    assert mentions_zone(text, ["/restricted"]) is found
+    assert touches({"command": text}, ["/restricted"]) == ("/restricted" if found else None)
 
 
 def test_mentions_zone_stays_linear_on_long_separator_runs():
