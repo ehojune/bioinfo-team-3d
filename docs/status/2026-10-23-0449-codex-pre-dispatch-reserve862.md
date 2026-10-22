@@ -43,3 +43,7 @@
     - in-process: 예약 test 25개 통과, `test_cso.py` 221 passed(stub 8 실패는 main과 같음), static 파일 12 passed.
     - 이전 head `977c6de` 코드로 돌리면 복구 case가 원래 상한에서 `budget reservation … approval denied`로 실패해 검토 재현과 같다.
     - gateway test와 `test_paper_skill_recovery_identity`는 실제 Hub가 필요해 CI 몫이다.
+- 재검토(P1·P2 0) 후속(`aeb9055`, main `0f80516`·#864 통합):
+  - 매뉴얼에서 '끄면(기본) 이전처럼'은 보내기 전 예약에만 해당하게 고쳤다.
+  - 저장 뒤 보내기 실패를 비용 모름으로 기록하는 것은 설정과 무관하다는 문단을 따로 두었다(P3-1). 제품·test 코드는 그대로다.
+  - main 통합은 자동이다. 이 PR의 code·test blob은 `41e6fac`와 같다. #864는 `server.py`를 바꾸지 않았다.

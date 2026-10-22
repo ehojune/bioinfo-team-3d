@@ -8,3 +8,7 @@ rows:
     at: "2026-10-23 05:10"
     summary: "재시작 뒤 이어받는 작업에 예산을 두 번 잡지 않고, 실제로 보내지 않은 호출의 예약은 풀어 예산 카드가 잘못 뜨지 않게 합니다."
     text: "독립 검토 P2 2건. gateway 복구가 이전 task를 이어받는 호출은 dispatch가 쓰는 같은 규칙(_recovery_choice, recovery_task_id)으로 미리 알아 새 attempt를 예약하지 않고 이전 task 예약을 쓴다. gateway는 저장 뒤 보내다 실패한 task를 이제 비용 모름으로 기록하고, CSO는 요청 (재)시작 때 저장도 비용 기록도 없는 id의 예약만 풀며 저장 전에 취소·예외가 난 attempt도 푼다. 보냈을 수 있는 예약은 남긴다. CI의 test_paper_skill_waiting_static AST fixture 2개에 _budget_bound의 새 의존을 넣었다. 실제 gateway·runner로는 확인하지 않았다."
+  - sha: aeb9055
+    at: "2026-10-23 05:23"
+    summary: "보내다 실패한 호출을 비용 모름으로 기록하는 것은 예약 설정을 끈 상태에도 적용된다고 매뉴얼에 따로 적었습니다."
+    text: "재검토 P3-1에 따라 매뉴얼의 보내기 전 예약 문단에서 '끄면(기본) 이전처럼'을 사전 예약에만 해당하도록 고치고, gateway가 저장 뒤 runner로 보내다 실패한 호출을 비용 모름으로 기록하는 것은 설정과 무관하며 per_task_usd 예약 때문에 예산 카드가 조금 일찍 뜰 수 있다는 문단을 따로 두었다. 제품·test 코드는 그대로다."
