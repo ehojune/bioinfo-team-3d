@@ -1,0 +1,6 @@
+pr: null
+rows:
+- sha: 0537a3c
+  at: 2026-10-23 07:21
+  summary: 채용과 논문 스킬을 쓰지 않는 사무실은 기능을 명시적으로 끄고 준비·실행 경로도 차단합니다.
+  text: 'recruit.enabled는 strict boolean이며 기본 true다. false면 직접 채용·Paper2Agent 설치·계획/지연 준비·복구 task·논문 스킬 부착과 계약 활성화·연장·재고용을 거부하고 해제는 허용한다. doctor는 꺼진 Paper2Agent만 skip하며 --fix도 설치하지 않는다. 기본 recruiter 누락과 다른 인증·runtime 검사는 유지하고 이미 발생한 변환 비용은 보존한다. 실제 함수를 추출한 fake/static 14건과 기존 정적 9건만 로컬 검증했으며 실제 runtime·모델 실행은 미확인이다. #869.'
