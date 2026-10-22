@@ -1,5 +1,9 @@
 pr: 866
 rows:
+- sha: 45cbc8e
+  at: 2026-10-23 05:30
+  summary: 작업 정리 계약 필드가 포함된 최신 main을 통합했습니다.
+  text: main0f80516의 TaskResult cleanup 저장을 보존했다. manual 문단 충돌은 취소·정리 설명을 모두 남겼고 frozen runtime은 바꾸지 않았다.
 - sha: c853050
   at: 2026-10-23 05:55
   summary: 자동 감시가 요청의 모든 작업 시도와 비용·정리 계약을 함께 확인하는 조회를 추가했습니다.
