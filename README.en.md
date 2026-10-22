@@ -31,6 +31,7 @@ Detailed docs (manual, PI Q&A) and the web UI are in Korean.
 labhq is a bioinformatics **multi-agent orchestration platform** that runs Claude Code and Codex like **lab staff**.
 Write a request in the web office and the CSO plans it, staff split the execution, and science review leads to a report.
 Risky or costly actions are approved by the PI on the web or a phone.
+The project began by taking inspiration from the research-team structure of [The Virtual Biotech](https://doi.org/10.1126/science.aeg6779).
 
 | 2.5D office (`/`) | 3D office (`/3d`) |
 |---|---|
@@ -86,7 +87,7 @@ Limits: prior-research steps were checked on four test requests. Hiring from a r
 
 **Same bar at every handoff**
 
-A topic key passes the same checklist to planning, science review, and solo handling. The checklist covers 45 domains and 135 items; research-lane domain packs use the same keys.
+A topic key passes the same checklist to planning, science review, and solo handling. A corpus of [1,286 papers](docs/reference/topic_papers.md) is organized into supporting references by topic. The checklist covers 45 domains and 135 items; research-lane domain packs use the same keys.
 
 Limits: 42 domains beyond the first three have not run on real requests. Reduced omissions and an advantage over the semantic baseline remain unmeasured. [Evidence and limits](docs/reference/readme-evidence.md#card-3)
 
@@ -114,7 +115,7 @@ Limits: the limit/login-wait fixes have only test evidence and re-login needs a 
 | Evidence trail | ✅ Output hash, anchor re-check | ⚠️ Scripts and logs left behind | ✅ Output provenance, rerun compare |
 | Approval | ✅ Web / phone cards | ⚠️ Inside the session | ✅ Approval modes, phone remote |
 | After a stop | ✅ From the stopped step | ⚠️ Session resume only | ✅ Remote job recovery |
-| Literature | ⚠️ Search and citation only | ⚠️ Depends on attached tools | ✅ Library, PDF, screening |
+| Literature | ⚠️ Search, citation, full-text requests | ⚠️ Depends on attached tools | ✅ Library, PDF, screening |
 | Speed / cost | ❌ Big task 144 min, $31 | ✅ Same task 19 min | — |
 
 \* The default reviewer is Codex/GPT-6-Astra: another vendor for Claude analysis and the same vendor for Codex analysis. Workbench features came from documentation; the app was not run.

@@ -4,6 +4,71 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# 논문 인용·토픽 선정 과정
+
+- Virtual Biotech: Science 게재본 DOI를 기본 링크로 사용. 공개 구현 출처는 별도 유지.
+- 토픽: 후보 출처, 기존 분류·EDAM 대조, PI 선정, 논문 수집·PMID 통합·보강을 짧게 정리.
+- 근거: #420·#402·#446·#455·#462, PubMed42752167. 당시 문헌43분야와 현재 점검표45분야·서지 확인과 전문 평가를 구분.
+- 문서·공개 검사만 수행하며 제품 코드·데이터·실행은 바꾸지 않음.
+
+# README 출처·문헌 규모 보완
+
+- 소개: The Virtual Biotech 연구팀 구조에서 출발했음을 명시.
+- References: 한컴 노마디안의 3D 공간 구성·디자인 참고 출처 추가.
+- 점검표: 논문 근거 목록 1,286편 추가, 한영판 함께 반영.
+- 확인: TSV 고유 PMID 1,286개, 설정45분야·135항목, 공식 소개 URL·diff·공개 검사. 제품 코드는 변경하지 않음.
+
+## #854 Windows 야간 subtest 오판 (source 3590827, base 059b910)
+
+- 확인한 사실: run 39681301430 attempt 1(schedule, main `99f1c49`)의 `pytest-windows` job 119504243006.
+  - 인증된 gh로 로그를 받아 확인했다. critical 단계는 `26 passed`, parallel 단계는 `11125 passed, 50 skipped, 7 subtests passed`였다.
+  - 첫 오류는 그 뒤 `ci_suite report`의 `validate_reports`에서 난 `ValueError: duplicate node execution`이다.
+  - pytest 9.1.1이 설치됐고, `tests/test_paper_skill_waiting_static.py`가 `self.subTest`를 쓴다.
+  - 판단 코드는 99f1c49와 059b910 사이에 바뀌지 않았다.
+- 원인: pytest 9는 subTest 결과마다 같은 nodeid의 `call` 보고(`SubtestReport`)를 한 번 더 낸다. `ci_suite`가 이것을 `stage_reports`에 그대로 넣어 검증기가 두 번째 call로 봤다. 실제 재실행 증거는 없다.
+- 고친 것:
+  - `ci_suite`는 subtest 보고를 `subtest_reports`에 따로 남긴다. checkpoint·파일 시간에는 넣지 않고, 실패는 failed로 남긴다.
+  - `ci_windows_phases`는 subtest마다 선택된 노드의 통과한 call 안에 있는지 확인한다. critical에서는 passed만 받고, worker 합이 controller와 같아야 한다.
+  - 중복 허용, 집합 dedup, 실패의 성공 처리는 없다. 같은 노드의 두 번째 call은 계속 `duplicate node execution`이다.
+- 검사: `tests/test_ci_windows_phases.py` 한 파일만 in-process로 돌렸다(가짜 JSON·tmp만 씀, process 없음).
+  - 121 passed.
+  - 새 영수증 case 6개와 observer case 1개는 이전 코드에서 5건이 실패한다. 통과하는 2건은 정상 subtest와, 그대로 유지되는 실제 재실행 거부다.
+  - Python 3.10 AST를 통과했다.
+- 미확인: 실제 Windows 야간 전수 run, PR CI, 독립 검토. 전수 PASS만으로 검증기가 맞다고 보지 않는다.
+
+## #849·#850 병합 뒤 독자 문서 대조 (source 3671b5c·fa5d91c, base 30e1712)
+
+- 대조 범위: README.md, README.en.md, AGENTS.md, HANDOFF.md 전체. 매뉴얼은 기관 셋업(첫 설정 문단), 선행 연구 목록, `labhq talent`, 구조 목록 줄만 봤다. 기준은 승인 main `30e1712` 객체다.
+- 고친 것:
+  - README·README.en 비교표의 문헌 칸: "검색·인용만"을 "검색·인용·본문 요청"으로 바꿨다. `key_fulltext`(합법 OA → 기관 세션 → PI PDF 요청 카드)가 이미 있다.
+  - 매뉴얼 첫 설정 문단(main 623자 → 498자):
+    - 주 독자에게 필요한 내용만 남겼다: 선택 질문, 공식 HTTPS 프록시 접두, email, Enter로 건너뛰기, 로그인 뒤 주소 붙이지 않기, 새 설정의 세션 꺼짐, 기존 파일 무변경.
+    - "Web of Science Research Assistant·Nexus Connect 전용 자동 연결은 아직 없다"를 적었다.
+    - 일반 기관 경로(기관 세션·프록시·PDF 요청)는 그대로 둔다.
+  - 세부는 `docs/reference/institution-literature-826.md`(새 문서)로 옮겼다:
+    - 기존 기관 경로
+    - 받는 프록시 형식과 세션 탐지 한계(`_proxy_prefix`와 대조)
+    - 전용 연결 미구현, 기관 MCP endpoint·client 지원 미확인
+    - Clarivate 공식 페이지 2개의 확인 범위
+    - 기관 이름·프록시 주소는 넣지 않았다.
+  - `init_wizard.py` WoS 안내 문자열: "안내하면 그때 연결합니다"는 없는 기능을 약속해서, 전용 연결 미지원과 기관 제공 접속 조건 확인으로 고쳤다. 질문·URL 검증·저장·`--yes`/`--dry-run`/비대화형 논리는 그대로다. 기존 test가 묻는 문구("확인하지 않았고", "자동으로 연결하지 않습니다")도 남아 있다.
+- 고치지 않은 것과 근거:
+  - #849 매뉴얼 문단: UI(`ui/literature.js`)와 보고 부록 문구와 같다.
+  - `labhq talent` 줄: 정확하다.
+  - HANDOFF: 기본 역할 13개(Claude Code 8·Codex 5)가 `agents/core`와 같다.
+  - AGENTS의 web 설명과 구조 목록(`ui/*.js` 와일드카드): 정확하다.
+- 문자 수(LF):
+  - README 11,686→11,691
+  - README.en 17,627→17,639
+  - manual 178,125→178,000
+  - 새 reference 2,562(`aff7c00` 2,414에서 아래 정정으로 늘었다)
+- 독립 peer P3 정정(`2fd0172`): reference의 일반 기관 경로 조건을 코드에 맞췄다. 기관 세션은 `institution_enabled`·`institution_tdm_allowed`·`external_model_allowed`를 모두 켜야 쓰고, PI PDF 요청 카드는 `external_model_allowed`가 필요하다. 구현된 조건과 실제 기관 연결 검증(하지 않음)을 나눠 적었다.
+- 검사:
+  - 바꾼 안내 함수를 AST로 뽑아 가짜 입력으로 실행했다. 기존 test 문구 단언을 충족하고, 프록시·email 저장값은 그대로다.
+  - Python 3.10 AST를 통과했다.
+  - pytest와 실제 init은 CI 몫이다.
+- 미확인: 실제 UI 표시, 기관 연결, 원문 확보.
+
 ## #844 — supervisor 시작 실패 진단에 실행 기록·gateway 로그 꼬리 추가 (base 3c07c1c)
 
 - 변경: `tests/test_supervisor_process.py`의 시험 전용 `_print_start_evidence`가 `gateway-supervisor.log`·`gateway-supervisor-diagnostics.jsonl`에 더해 `detached-launch.jsonl`과 `gateway.log`의 꼬리를 출력한다(`START_EVIDENCE_FILES`). 16KiB 상한, token 마스킹, 제어문자 치환, symlink 거부, 원래 실패 예외 보존, 진단 오류 비전파는 그대로다. 제품 코드, 제한시간, CI 선택 정책은 바꾸지 않았다.

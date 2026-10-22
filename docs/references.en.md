@@ -7,9 +7,10 @@ Tool connections describe configuration, not verified live access.
 
 | Name | What it is | How labhq used it |
 |---|---|---|
-| [The Virtual Biotech](https://github.com/harrisongzhang/TheVirtualBiotech) | Virtual biotech research team | Informed the CSO, specialist, and scientific reviewer structure and claim–evidence verification ([background](manual.md#배경-the-virtual-biotech), [verification](../README.en.md#four-things-labhq-works-hard-on)). |
+| [The Virtual Biotech](https://doi.org/10.1126/science.aeg6779) | Virtual biotech research team | Informed the CSO, specialist, and scientific reviewer structure and claim–evidence verification ([background](manual.md#배경-the-virtual-biotech), [verification](../README.en.md#four-things-labhq-works-hard-on)). |
 | [Paper2Agent](https://github.com/jmiao24/Paper2Agent) | Research papers and code turned into agents | Tools produced by the external conversion skill enter recruitment, probation, and contracts as temporary staff ([process](manual.md#파견직-제도-paper2agent)). |
 | [Munder Difflin](https://github.com/HarnessMD/munder-difflin) | Office app for CLI agents | Informed the office, right tabs, staff cards, and operational lessons for staff control ([#64](https://github.com/ehojune/bioinfo-team-3d/issues/64), [#57](https://github.com/ehojune/bioinfo-team-3d/issues/57)). |
+| [Hancom Nomadian](https://www.hancom.com/en/ai/aiOrchestrator/nomadian) | 3D workspace for AI teammates | Informed the spatial layout and visual design of the 3D office ([screenshots](../README.en.md)). |
 | [EDAM](https://doi.org/10.7490/f1000research.1118900.1) | Ontology of data, methods, and topics | Selected term IDs, labels, and ancestors are mapped to local vocabulary ([source and version](../labhq/vocab/NOTICE.md)). |
 | [RO-Crate](https://w3id.org/ro/crate/1.1) · [Process Run Crate](https://w3id.org/ro/wfrun/process/0.5) | Research output and execution metadata specifications | Request bundles use RO-Crate 1.1 and Process Run Crate 0.5 JSON-LD metadata ([manual](manual.md#요청-묶음)). |
 | [nf-core](https://nf-co.re/) | Collection of Nextflow analysis pipelines | Supports routine bioinfo-agent analyses and the workflow-engine-first policy ([overview](../README.en.md#how-it-works), [policy](manual.md#구성요소와-상태)). |
