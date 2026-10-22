@@ -69,6 +69,82 @@ def test_doctor_unavailable_volume_warns_without_path_or_exception(tmp_path, mon
     assert "private volume detail" not in str(rows)
 
 
+def _state_settings(tmp_path, state):
+    return Settings(runner={"workspace_root": str(tmp_path / "work")}, gateway={"state_dir": str(state)},
+                    engines={"codex": {"bin": "codex", "env": {"CODEX_HOME": str(tmp_path / "codex")}},
+                             "claude_code": {"bin": "claude", "env": {"CLAUDE_CONFIG_DIR": str(tmp_path / "claude")}}})
+
+
+def test_gateway_state_on_its_own_full_volume_is_warned(tmp_path, monkeypatch):
+    """#678: workspace and staff homes on a roomy data drive (D:), the gateway DB and events still on a full C:."""
+    state = tmp_path / "c-drive" / "state"
+    settings = _state_settings(tmp_path, state)
+    monkeypatch.setattr(doctor.tempfile, "gettempdir", lambda: str(tmp_path / "temporary"))
+    monkeypatch.setattr(doctor, "_volume", lambda path: "C:" if path == state else "D:")
+    monkeypatch.setattr(disk_space, "usage", lambda path: space(237, 2) if path == state else space(1600, 900))
+    rows = doctor._disk_rows(settings)
+    gateway = [row for row in rows if row["name"] == "gateway state disk"]
+    assert len(gateway) == 1 and gateway[0]["status"] == "warn" and "여유 2.0 GiB" in gateway[0]["detail"]
+    assert all(row["status"] == "ok" for row in rows if row is not gateway[0])
+    assert str(tmp_path) not in str(rows) and not state.parent.exists()
+
+
+def test_gateway_state_on_a_volume_already_shown_adds_no_repeated_row(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    probed = []
+    monkeypatch.setattr(doctor.tempfile, "gettempdir", lambda: str(tmp_path / "temporary"))
+    monkeypatch.setattr(doctor, "_volume", lambda path: "same")  # one Linux filesystem, or one Windows drive
+    monkeypatch.setattr(disk_space, "usage", lambda path: probed.append(path) or space(100, 1))
+    rows = doctor._disk_rows(_state_settings(tmp_path, state))
+    assert [row["name"] for row in rows] == ["workspace disk", "temporary disk", "codex staff home disk",
+                                             "claude_code staff home disk"]
+    assert state not in probed  # the workspace row already shows this volume's low space
+
+
+def test_a_missing_state_folder_is_judged_by_its_existing_parent_and_an_unknown_volume_keeps_its_row(tmp_path,
+                                                                                                   monkeypatch):
+    state = tmp_path / "missing" / "deeper" / "state"
+    monkeypatch.setattr(doctor.tempfile, "gettempdir", lambda: str(tmp_path / "temporary"))
+    monkeypatch.setattr(disk_space, "usage", lambda path: space(100, 50))
+    assert doctor._volume(state) == doctor._volume(tmp_path)  # the nearest existing ancestor; nothing is created
+    assert "gateway state disk" not in [row["name"] for row in doctor._disk_rows(_state_settings(tmp_path, state))]
+    assert not (tmp_path / "missing").exists()
+
+    def unknown(path):
+        if path == state:
+            raise OSError("private volume detail")
+        return "D:"
+    monkeypatch.setattr(doctor, "_volume", unknown)
+    rows = doctor._disk_rows(_state_settings(tmp_path, state))
+    assert [row["name"] for row in rows][-1] == "gateway state disk"  # not told apart: shown, never dropped
+    assert "private volume detail" not in str(rows)
+
+
+def test_volume_number_zero_is_unknown_so_a_full_state_volume_still_warns(tmp_path, monkeypatch):
+    """UNC and special volumes can report st_dev 0 everywhere; equal zeros are no proof of one volume."""
+    import os as real_os
+    state = tmp_path / "share" / "state"
+
+    class ZeroDeviceOs:
+        def __getattr__(self, name):
+            return getattr(real_os, name)
+
+        @staticmethod
+        def stat(path, *args, **kwargs):
+            return type("Stat", (), {"st_dev": 0})()
+
+    monkeypatch.setattr(doctor, "os", ZeroDeviceOs())
+    monkeypatch.setattr(doctor.tempfile, "gettempdir", lambda: str(tmp_path / "temporary"))
+    monkeypatch.setattr(disk_space, "usage", lambda path: space(100, 1) if path == state else space(1600, 900))
+    with pytest.raises(OSError):
+        doctor._volume(tmp_path)
+    rows = doctor._disk_rows(_state_settings(tmp_path, state))
+    gateway = [row for row in rows if row["name"] == "gateway state disk"]
+    assert len(gateway) == 1 and gateway[0]["status"] == "warn"
+    assert all(row["status"] == "ok" for row in rows if row is not gateway[0])
+    assert not state.parent.exists()
+
+
 def test_init_suggests_data_volume_but_yes_keeps_default(tmp_path, monkeypatch, capsys):
     drive = tmp_path / "data-volume"
     monkeypatch.setattr(disk_space, "data_drives", lambda: [drive])
