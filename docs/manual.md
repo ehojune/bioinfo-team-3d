@@ -289,6 +289,9 @@ PI 토큰으로 `POST /api/shutdown`을 호출하며 `down`의 상태 재확인�
 
 **요청 취소**(PI 점검 R13): 끝나지 않은 요청(진행·대기·중단됨)은 요청 줄의 **요청 취소** 버튼, `labhq cancel <요청 ID>`, `POST /api/requests/{id}/cancel`로 멈춥니다. 도는 작업마다 runner에 중단을 보내고, 한도·로그인 대기와 그 요청의 카드(재개 카드 포함)를 닫은 뒤 상태를 `cancelled`로 바꾸고 끝난 단계와 산출 경로를 적은 짧은 보고서를 남깁니다. 다시 시작되지 않습니다. 보고서를 쓰기 전에 gateway가 멈추면 다음 시작 때 마저 쓰며, 그때까지 결과를 보내지 않은 작업의 비용은 비용 모름으로 남깁니다(#521). HPC에 이미 낸 작업은 클러스터에서 확인합니다. 단계 카드의 **작업 취소**는 그 단계만 멈춥니다. 자동 monitor용 변경안은 `cancel <id> --active-only --expected-created-at <생성시각>`입니다. 별도 `/cancel-active` 경로가 서버의 현재 상태·정확한 생성시각을 한 번에 확인하며, 이미 완료되거나 보고서 검토 대기이면 PI 결정을 남기지 않고 생략합니다. 구판 gateway는 404로 거부하고 일반 취소로 재시도하지 않습니다. 기존 수동 취소 동작은 유지합니다.
 
+자동 감시용 관측 변경안은 인증된 `GET /api/requests/{id}/task-attempts?expected_created_at=<정확한 생성시각>`입니다. 같은 snapshot의 durable task attempts(briefing·review·retry 포함), 허용된 cleanup 필드, 비용·hold를 반환하며 prompt·argv·경로는 제외합니다. 비용·hold 등에만 남은 task ID는 누락 UNKNOWN이고, 1000행·1MiB 상한 또는 잘못된 identity는 incomplete입니다. Job close 계약 보고는 OS 자손 수 0을 직접 측정한 값이 아닙니다.
+
+
 요청 상태가 `cancelled`여도 직원 프로세스가 끝났다는 뜻은 아닙니다. 작업 결과의 `cleanup_evidence`는 Windows wrapper가 CLI를 만들기 전에 KILL_ON_CLOSE Job에 들어갔다고 스스로 알렸고 그 wrapper가 끝났을 때만 `job_close_contract_enforced`입니다. Job을 끈 경우, 확인하지 못한 경우, 대기가 끝나지 않은 경우, 시작 도중 취소된 경우, runner 재시작만 있는 경우는 `UNKNOWN`입니다. 이 판정은 runner가 띄운 labhq wrapper의 코드와 실행 환경을 믿고, wrapper가 복제·상속하지 않은 유일한 Job handle을 끝날 때까지 쥔다는 가정에 기댑니다. OS 격리(sandbox)가 아니고 Job에 남은 프로세스가 0개임을 잰 값도 아니며, COM·WMI·서비스처럼 Job 밖에서 띄운 프로세스는 다루지 않습니다(#863).
 
 **실행 중 메모:** 진행 중인 CSO 요청을 고르면 아래 입력창이 기본으로 **이 요청에 메모**가 됩니다(**새 요청**으로 바꿀 수 있음). 메모는 현재 turn을 끊지 않고 이후에 시작하는 계획·재계획·단계·재개·수정·review·최종 보고서에 전달되며, 요청 카드와 3D 요청 보드에 보낸 시각과 함께 남습니다. 연구 lane은 CP1 전 계획에 메모를 반영하지만 CP1 뒤에는 동결 계획을 바꾸지 않고 참고만 합니다. 한 직원에게 바로 맡긴 direct 요청에는 다음 turn이 없으므로 메모를 받지 않으며, 끝난 뒤 **이어 묻기**를 씁니다. direct 요청을 고른 채 **보내기**를 누르면 메모가 아니라 새 요청으로 갑니다. CLI는 `labhq note <request_id> "text"`입니다.
