@@ -1,0 +1,9 @@
+pr: null
+rows:
+- sha: c79a7fc
+  at: 2026-10-22 15:22
+  summary: Virtual Biotech을 논문으로 연결하고, 분석 분야와 근거 논문을 고른 과정을 짧게 설명했습니다.
+  text: 한영 README·References의 Virtual Biotech 기본 링크를 Science 논문 DOI10.1126/science.aeg6779로
+    바꾸고 manual의 게재 정보를 맞췄다. 근거 문서에서는 논문 인용과 MIT 공개 구현의 출처를 구분했다. topic_papers에는 후보
+    출처·기존 분류/EDAM 대조·PI 선정·문헌 종류/선정 이유·PMID 중복 제거·30편 보강 절차와 검증 범위를 추가했다. 문헌 목록43분야와
+    현재 점검표45분야를 구분하며 전문 독해/체계적 고찰을 주장하지 않는다.
