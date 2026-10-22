@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import ntpath
 import re
@@ -343,6 +344,18 @@ _BACKGROUND_SHELL_TOOLS = ("BashOutput", "KillShell", "TaskOutput", "TaskStop")
 class BudgetSettings(BaseModel):
     per_task_usd: float = 5.0
     per_request_usd: float = 30.0
+    # Opt-in (#862): hold each charged turn's whole cap before it is sent, so in-flight turns and the last turn
+    # cannot pass the request cap on the product's own cost accounting. Not a provider billing guarantee.
+    reserve_before_dispatch: bool = False
+
+    @model_validator(mode="after")
+    def reserved_budgets_are_amounts(self) -> "BudgetSettings":
+        if self.reserve_before_dispatch:
+            for name in ("per_task_usd", "per_request_usd"):
+                value = getattr(self, name)
+                if not math.isfinite(value) or value < 0:
+                    raise ValueError(f"policy.budget.{name} must be a finite amount >= 0 with reserve_before_dispatch")
+        return self
 
 
 class BioinfoAgentPolicy(BaseModel):

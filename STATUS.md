@@ -4,6 +4,154 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## #865 main 통합
+
+- base: `386edba` (#868 merge `3e1b787` 포함). 충돌 없이 합쳤고 tree `e35868b`는 자동 merge-tree와 같다.
+- 예약 제품·테스트·예제 설정 8개 파일은 검토판 `bc0c4a2`와 byte 단위로 같다. Windows 경로 비용·WMI 수정은 main에서 받았다.
+- 로컬 검증: 예약 동기 fake 6건과 논문 스킬 순수 계약 12건을 통과했다. 실제 gateway·runner·프로세스·WMI·Job 검사는 실행하지 않았다.
+- 예산 예약은 공급자 청구 hard cap이 아니며 Codex의 진행 중 비용 초과를 막지는 못한다. 새 head CI·리뷰·병합은 총괄이 맡는다.
+
+## Linux 경로 비용과 Windows ACK 대기 수리 통합 (#868)
+
+- base: main `c7671a0`. 검토된 #861 `ba95796`을 merge해 원래 커밋·작성자를 보존했다.
+- `policy.py`·`test_policy.py`는 #868 검토판 `973c543`, WMI 제품·테스트는 #861 검토판과 byte 단위로 같다.
+- [CI 39854597294](https://github.com/ehojune/bioinfo-team-3d/actions/runs/39854597294): Windows provider 생성·Job 비소속 확인 뒤 bootstrap `ack_wait PermissionError`로 실패했다. 로그에 winerror가 없어 32라고 확정하지 않는다.
+- #861은 receipt·ACK 대기의 winerror 32만 기존 deadline 안에서 재읽는다. 다른 오류·첫 request 읽기·nonce/identity/Job 검사는 그대로다. timeout·skip·보안 조건을 바꾸지 않았다.
+- Linux의 이차 경로 정규화는 component stack으로 고친다. 전체 731,072자 입력·8배 비용 계약을 유지한다.
+- 로컬 WMI fake 16건과 문자열 검사 22건을 통과했다. 문자열 검사의 touches_resolved는 파일시스템 대신 lexical mock을 썼다. 로컬 검증은 fake·정적 검사뿐이다. 실제 Windows/WMI·프로세스 시험과 새 head CI 확인은 하지 않았다. #861 정리와 #868 병합은 총괄 몫이다.
+
+## 경로 정규화의 Linux 이차 비용 수리와 비율 계약 (source 5b803cb·e7a6b26, base 0f80516)
+
+- 관측:
+  - PR866 CI(run 39845342493)에서 절대 2초 예산이 2.046·2.267초로 실패했다.
+  - 같은 시험을 1/4→전체 비율 계약으로 바꾼 PR868 head 831084d의 Linux 3.12 CI(run 39849219342)에서는 4배 입력에 mentions_zone 11.2배, touches 10.2배가 나왔다.
+  - 처음의 "스캐너는 선형"이라는 판단은 Windows에서만 잰 결과라 틀렸다.
+- 원인: Codex 독립 진단이 재현했다.
+  - `_norm`이 131,072자 구분자 후보를 `ntpath.normpath`에 넘긴다.
+  - Linux가 쓰는 pure-Python 판은 빈 성분을 list에서 하나씩 `del`해 이차 비용이 된다.
+  - Windows의 native normpath는 이를 가렸다.
+- 변경(제품): `labhq/policy.py`의 `_windows_normpath`를 더했고, `_norm`의 Windows 분기가 이것을 쓴다.
+  - 실행 중인 stdlib의 `splitroot`(3.12+)·`splitdrive`(3.10/3.11)로 drive·root를 나눈다. 3.10/3.11에서 장치·literal 접두는 stdlib 그대로다.
+  - 성분 규칙(빈·`.` 제거, `x\..` 상쇄, root 아래 맨 앞 `..` 제거, 빈 결과 `.`)을 stack으로 한 번에 적용한다.
+  - 구분자 run, `.` run, `x\..` 쌍, root 아래 `..` run이 모두 선형이다.
+- 변경(시험):
+  - 호출 스레드 CPU 기준 1/4→전체 8배 계약(+ 시계 한 tick)을 둔다.
+  - 기존 731,072자 입력과 늦은 `/restricted`·file URI 검사는 그대로다.
+  - 실행 중인 CPython의 pure-Python normpath(AST 추출, Windows에서도 실행)와 짧은 입력 전수·UNC/장치/drive 사례를 비교한다.
+  - 다섯 가지 긴 모양에 같은 계약을 건다.
+- 검사(로컬, 문자열만):
+  - 짧은 입력 약 50만 건에서 3.12·3.14 pure-Python normpath와 불일치 0건이다.
+  - 3.12 Windows native와는 `_norm`이 닿는 입력 중 `\?\UNC\` 1건이 달랐다. 이 경우 Linux·3.14와 같은 결과를 낸다.
+  - Linux 동작을 흉내 낸 수정 전 스캐너는 mentions_zone 전체 3.2초, touches 비율 8.5배로 실패했다. 수정 후에는 0.07초, 비율 4배다.
+  - 시험 22건 in-process 통과, `validate_profile`, 3.10 AST를 통과했다.
+- 한계:
+  - 3.10 pure-Python 판은 로컬에 없어 CI 몫이다.
+  - `private_paths.path_field_text`와 Windows 전용 `claude_write_input`의 `ntpath.normpath`는 이번 범위 밖이다.
+  - 비율 계약은 해당 입력에 대한 것이며 모든 입력의 선형성 증명이 아니다.
+
+## 변경
+자동 monitor의 terminal→PI 취소 race를 막고 요청 소유 task attempts를 읽는 변경안입니다.
+
+- `/cancel-active`는 exact created_at·현재 active 상태를 await 없이 확인합니다. terminal은 PI 결정 없이 생략하며 구판404 뒤 legacy 취소로 fallback하지 않습니다. 수동 취소는 유지합니다.
+- 인증된 `/task-attempts`는 durable briefing/review/retry 전체와 같은 snapshot의 비용·hold를 묶습니다. accounting/result에만 있는 ID는 누락 UNKNOWN입니다. identity 오류·1000행·1MiB 초과는 incomplete입니다. prompt/argv/workdir는 반환하지 않습니다.
+- cleanup은 허용필드만 반환합니다. merged TaskResult 저장 경로를 확인했으며 Job close 계약과 측정된 ActiveProcesses0을 구분합니다. budget_holds 의미는 미병합 #865에 의존합니다.
+- fake 취소7건·projection10건 PASS. 실제 HTTP/process/auth/model/연구는 미실행이고 runtime은 UNVERIFIED입니다. Windows inventory는 순수 test로 등록했고 기존 안전 경계는 유지합니다.
+- main0f80516(#864 포함)을 통합했습니다. manual 충돌1건은 취소/cleanup 설명을 모두 보존했습니다. CI는 총괄 watcher가 확인합니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+## #862 모델 호출 사전 예산 예약 (source bb23573, base f47e841)
+
+- 배경: `_check_budget`은 이미 쓴 비용·비용 모름 예약·논문 준비 예약만 보고 허용했다. 보낼 호출과 진행 중인 호출은 세지 않았다. 그래서 동시에 시작한 briefing·precedent, 병렬 단계, 마지막 호출이 상한을 넘을 수 있었다. recruit 작업은 `recruit.max_budget_usd`(예: 25)로 Claude에 넘어갔다.
+- 바꾼 것(opt-in `policy.budget.reserve_before_dispatch`, 기본 false):
+  - `dispatch_with_retry`가 보내기 직전, 마지막 await 뒤에 `_reserve_dispatch`를 부른다. budget lock 안에서 이미 쓴 비용 + 비용 모름 예약 + 진행 중 예약 + 이번 상한이 요청 상한 이하일 때만 예약하고 보낸다.
+  - 이번 상한은 task·직원 `max_budget_usd`·`per_task_usd` 중 최소이고, 없으면 남은 예산이다. 보낸 task의 `budget_usd`·`request_budget_remaining_usd`를 그 값으로 바꾼다.
+  - 넘으면 일반 호출은 기존 예산 카드로 묻고(`reserve_usd` 표시), 채용·환경 진단은 카드 없이 거부한다.
+  - 예약은 요청 기록 `budget_holds`에 저장한다.
+    - 이 orchestrator가 그 task의 비용(또는 비용 모름 예약)을 집계할 때까지 bound에 남는다.
+    - dispatch가 정상으로 돌아온 뒤에만 지운다. gateway가 답하기 전에 비용을 기록했거나 보내지 않은 경우다.
+    - 취소·예외·재시작이면 남긴다.
+  - 상한 값이 유한한 양수가 아니면 카드 없이 거부한다. 남은 예산 0이면 보내지 않는다. 설정의 NaN·음수·무한은 옵션을 켤 때 거부한다.
+  - 논문 스킬 준비(`paper_budget_holds`)와 PI 통역(`pi_translation_budget`)은 기존 예약을 쓰며 중복 예약하지 않는다.
+- 검사:
+  - `tests/test_cso.py`에 test 9개(case 19개)를 더했다. FakeHub와 가짜 dispatch만 쓴다.
+    - 기본 꺼짐
+    - 동시 시작 경쟁
+    - 마지막 호출과 잔액 0
+    - 잘못된 상한 5종과 설정 3종
+    - recruit·진단의 clamp와 카드 없는 거부
+    - 취소 뒤 예약 유지·재시작·비용 모름 대체
+    - 복구된 이전 task와 중복 집계
+    - 논문 준비 비중복
+  - 로컬 in-process(gateway·runner import만 stub): 새 case 19개 통과, `test_cso.py` 215 passed.
+  - 실패 8개는 stub 때문이며 main export에서도 같다. 관련 파일 5개의 결과도 main과 같다.
+  - 3.10 AST, public, diff 검사를 통과했다.
+- 남은 것과 한계:
+  - labhq 비용 기록·추정 기준의 상한이고 공급자 청구액 보장이 아니다.
+  - Codex는 실행 중 비용 제한 플래그가 없어 예약을 넘을 수 있다. 그 초과는 끝난 뒤 기록되어 다음 호출을 막는다.
+  - 요청 상한이 없으면(0·비움) 예약하지 않는다.
+  - 실제 gateway·runner·모델 실행은 확인하지 않았다.
+- 독립 검토 후속(`be76b41`, main `690a588` 통합):
+  - CI run 39843720353 Linux 3.10: `test_paper_skill_waiting_static`의 AST 추출 fixture 2개가 `_budget_bound`의 새 의존(`_dispatch_held`·`_usd_amount`·`hub.requests`)을 몰라 실패했다(11249 pass/2 fail). fixture에 그 의존을 넣었고 단언은 그대로다. `test_paper_skill_recovery_identity`의 복제 dispatch에는 `_recovery_choice`를 더했다.
+  - P2-1(복구 이중 예약): 재시작 복구가 이전 task를 이어받는 호출도 새 attempt를 예약해, 원래 상한에서 거짓 예산 카드가 떴다.
+    - gateway에 `_recovery_choice`(dispatch가 쓰는 같은 선택)와 `recovery_task_id`를 두었다.
+    - CSO는 예약 직전 그 id가 있으면 새 예약 없이 이전 task 예약을 쓴다. 예약이 없으면 카드 없이 이전 task를 잡는다. 예약 판단과 dispatch의 복구 판단 사이에는 await가 없다.
+  - P2-2(보내지 않은 호출의 영구 예약):
+    - gateway는 저장 뒤 보내다 실패한 task를 비용 모름으로 기록한다(기본 동작에도 적용).
+    - CSO는 요청 (재)시작 때 저장도 비용 기록도 없는 id의 예약만 푼다. 이 process가 보내는 중인 attempt는 제외한다.
+    - 같은 process에서 저장 전에 취소·예외가 난 attempt도 푼다. 보냈을 수 있는 예약은 남긴다.
+  - 검사:
+    - 새 fake case 6개(원래 상한 2.0): 복구 이어받기 2개, 재시작 정리 3개, 저장 전 취소 2개(저장 뒤면 유지). 그리고 gateway test 1개.
+    - in-process: 예약 test 25개 통과, `test_cso.py` 221 passed(stub 8 실패는 main과 같음), static 파일 12 passed.
+    - 이전 head `977c6de` 코드로 돌리면 복구 case가 원래 상한에서 `budget reservation … approval denied`로 실패해 검토 재현과 같다.
+    - gateway test와 `test_paper_skill_recovery_identity`는 실제 Hub가 필요해 CI 몫이다.
+- 재검토(P1·P2 0) 후속(`aeb9055`, main `0f80516`·#864 통합):
+  - 매뉴얼에서 '끄면(기본) 이전처럼'은 보내기 전 예약에만 해당하게 고쳤다.
+  - 저장 뒤 보내기 실패를 비용 모름으로 기록하는 것은 설정과 무관하다는 문단을 따로 두었다(P3-1). 제품·test 코드는 그대로다.
+  - main 통합은 자동이다. 이 PR의 code·test blob은 `41e6fac`와 같다. #864는 `server.py`를 바꾸지 않았다.
+
+## #863 — 작업 취소 접수와 직원 프로세스 정리 증거 구분 (base f47e841)
+
+- 문제: 요청은 먼저 `cancelled`로 저장되고, CLI cancel 성공과 `task.result`만으로는 직원 CLI 자손이 끝났다고 말할 수 없었다. `_kill`은 종료 결과와 wait timeout을 버렸다. Windows wrapper의 Job 활성은 기록되지 않았다.
+- 변경(기존 wrapper 확장, 새 launcher·pipe·제어면 없음):
+  - `runner/memory_limit.py`: wrapper가 Job에 들어간 직후, CLI를 만들기 전에 stderr 첫 줄 `LABHQ_JOB_ACTIVE pid=<wrapper> kill_on_close=1`을 쓴다. Job 생성·handle 보유·KILL_ON_CLOSE·wait·returncode 처리는 그대로다.
+  - `adapters/base.py`:
+    - runner는 wrapper stderr의 **첫 줄**이 자기 wrapper PID의 그 줄일 때만 Job 활성으로 본다. CLI는 그 뒤에야 같은 stream에 쓸 수 있고, stdout은 보지 않는다. 확인된 줄은 CLI stderr에서 뺀다.
+    - `_kill`이 tree 종료 수와 wait 완료 여부를 돌려준다.
+    - spawn은 shield 안에서 돈다. 도중에 취소되면 끝난 spawn이 만든 wrapper를 넘겨받아 끝내고 `UNKNOWN`(spawn_cancelled_before_handover)으로 남긴다. 실행 파일이 없으면 `not_started`다.
+  - `models.TaskResult.cleanup_evidence`(새 필드): status는 `job_close_contract_enforced`(활성 확인 + wrapper wait 완료) / `UNKNOWN`(reason) / `not_started`이고, `active_processes_measured: false`를 함께 둔다. 종료 코드가 0이 아니어도(labhq가 끝낸 경우 포함) 정리 실패로 보지 않는다.
+  - `runner/daemon.py`:
+    - 취소로 끝난 run은 adapter가 보고한 증거를 받는다. 보고가 없으면 UNKNOWN(no_runner_observation)이다.
+    - runner 재시작만 있는 결과는 UNKNOWN(runner_restart_only)이다.
+    - `_shutdown_result`는 `shutdown_evidence`를 덮어쓰지 않고 합치며, 중단일 때만 `cleanup`을 더한다. 정상 종료의 shutdown_evidence는 계속 비어 있다.
+  - manual 요청 취소 문단에 한 단락을 더했다.
+- 범위 밖: Job ActiveProcesses 조회, handle 복제, 광범위 kill, COM·WMI·서비스 등 Job 밖 실행, 제품 전체 제어면 개편.
+- 가정(manual에 명시, 독립 검토 P1/P2 0 뒤): runner가 띄운 wrapper의 코드·실행 환경을 믿고, wrapper가 복제·상속하지 않은 유일한 Job handle을 끝까지 쥔다. OS sandbox도, ActiveProcesses 0 측정도 아니다. 실행 코드는 바꾸지 않았다.
+- 검사(가짜만):
+  - `tests/test_step_memory_limit.py` +12 함수, 18 case: 알림 순서, Job 배정 실패, Job handle 비상속·wrapper 보유, 첫 줄·PID 판정, verdict 표(메타데이터 누락·wait 미완료 포함), 정상·0이 아닌 종료·위조 줄·다른 PID·무알림·Job 꺼짐, 실행 중 취소, spawn 중 취소(만들어짐/없음), daemon 합치기·재시작.
+  - 프로세스 없이 in-process로 실행했다: adapter·wrapper 14 case 통과, daemon 두 메서드(AST 추출) 통과. 이전 코드에서는 새 API가 없어 실패한다.
+  - Python 3.10 AST 통과. 실제 Job·프로세스·WMI는 CI 몫이다.
+
+## #844 — WMI bootstrap 대기 중 공유 위반을 다시 읽기 (base fc22600)
+
+- 관측: PR859 head `c6e43c4` CI(run 39838111863, Windows job 120031772167)에서 `test_with_restarting_on_a_role_that_keeps_failing_is_started_again_and_then_left`가 실패했다.
+  - 실행 기록: 직접 기동이 winerror 5로 거부된 뒤 `wmi_attempt` → `wmi_verified`(child Job 밖).
+  - 감독 로그: `labhq WMI bootstrap stopped before the role started: stage=ack_wait error=PermissionError`(#851의 단계 기록). 종료 코드 2.
+- 원인 분석: ack_wait 단계에서 `PermissionError`를 낼 수 있는 호출은 ACK 파일 읽기(`_read`)다.
+  - `Native.alive` 실패는 `OSError(GetLastError())`로 만들어져 `PermissionError`가 되지 않는다.
+  - Python의 파일 열기는 FILE_SHARE_DELETE 없이 열기 때문에, 다른 handle이 DELETE 권한으로 같은 파일을 열고 있으면 공유 위반(winerror 32)이 난다. 쓰는 쪽의 `os.replace`나 파일 검사기가 그런 handle을 잡을 수 있다.
+  - 대기 루프는 FileNotFoundError만 '아직 없음'으로 보고 나머지는 실패로 끝냈다. 부모의 receipt 대기도 같은 구조다.
+  - 어떤 handle이 잡았는지와 실제 winerror 값은 기록에 없었다. 이번 변경으로 정지 기록에 winerror를 남긴다.
+- 변경(`labhq/windows_broker.py`):
+  - `_poll`: 공유 위반(winerror 32)만 '아직 없음'으로 보고 다시 읽는다. 부모 receipt 대기와 bootstrap ACK 대기 두 곳에만 쓴다.
+  - 기존 deadline·nonce·caller 생존·Job 확인은 그대로다. 접근 거부(5) 등 다른 오류와 첫 request 읽기는 이전처럼 바로 실패한다.
+  - 정지 기록에 `winerror=<숫자>`를 덧붙인다(정수일 때만).
+- 검사(mock 전용, `tests/test_windows_broker.py` +4):
+  - receipt 대기·ACK 대기 각각 winerror 32는 다시 읽어 성공, 5는 그대로 실패.
+  - 프로세스 없이 in-process로 실행했다: 새 코드 16/16 통과. 이전 broker 코드에서는 공유 위반 2건이 CI와 같은 증상(ack_wait의 PermissionError, 부모의 native_error code 13)으로 실패한다.
+  - Python 3.10 AST.
+- 미확인: 실제 Windows에서 잡은 handle의 정체, 실제 WMI·감독 재실행. #844는 열어 둔다(이전 두 실패의 단계는 기록이 없어 같은 원인인지 모른다).
+
 ## 단계
 직원 기본 모델 설정 변경
 
