@@ -20,6 +20,11 @@ import time
 
 import pytest
 
+try:  # pytest >= 9 reports each unittest subTest/subtests result as one more call report of the same node
+    from _pytest.subtests import SubtestReport
+except ImportError:  # older pytest has no built-in subtests; nothing is excluded
+    SubtestReport = ()
+
 from scripts.ci_selection import ROOT, PROFILES, WINDOWS_BOUNDARY, WINDOWS_PREVIEW, host_resource, include_windows, policy, read_changes
 from scripts import ci_windows_phases as windows
 
@@ -301,6 +306,7 @@ class Observation:
         self.files = defaultdict(float)
         self.results = defaultdict(set)
         self.stage_reports = []
+        self.subtest_reports = []
         self.context = "collection"
         self.stall = None
         self.serial = {}
@@ -449,6 +455,12 @@ class Observation:
                 self.diagnostics.record(report)
             except Exception:  # noqa: BLE001 - a diagnostic never changes the run
                 pass
+        if isinstance(report, SubtestReport):
+            # A result inside the node's own call, not another run of the node (#854): kept apart, never a stage.
+            self.subtest_reports.append([report.nodeid, report.outcome])
+            if report.failed:
+                self.results["failed"].add(report.nodeid)
+            return
         if self.checkpoints:
             self.checkpoints.stage(report.nodeid, report.when, 'completed')
         self.stage_reports.append([report.nodeid, report.when, report.outcome])
@@ -471,7 +483,8 @@ class Observation:
         self.write("metrics", {"profile": self.profile, "worker": self.worker,
                   **({'context': self.context_identity, 'phase': self.phase,
                       'started_at': self.started, 'finished_at': time.time(),
-                      'stage_reports': self.stage_reports} if self.phase else {}),
+                      'stage_reports': self.stage_reports,
+                      'subtest_reports': self.subtest_reports} if self.phase else {}),
                   **({"reusable": False} if self.profile == WINDOWS_PREVIEW else {}),
                   "workers": self.worker_count, "cpu_logical": os.cpu_count(),
                   "python_version": platform.python_version(),

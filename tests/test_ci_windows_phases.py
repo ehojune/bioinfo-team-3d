@@ -82,7 +82,7 @@ def make_receipts(folder, context=None, *, extra_native=()):
             own = reports if worker == 'master' else [r for r in reports if selected.index(r[0]) % 4 == int(worker[2:])]
             p.write(directory/('metrics-' + worker + '.json'), dict(profile=context['profile'], context=context,
                 phase=phase, worker=worker, workers=count, started_at=start, finished_at=end, exitstatus=0,
-                stage_reports=own, host_resource_wait_s={}, longest_files=[]))
+                stage_reports=own, subtest_reports=[], host_resource_wait_s={}, longest_files=[]))
         for worker in workers:
             p.write(directory/('collection-' + worker + '.json'), coverage)
     p.ready(folder)
@@ -195,6 +195,49 @@ def test_existing_parallel_skips_are_counted_but_never_allowed_in_critical(recei
     proof = p.combine(receipts)
     assert proof['phases']['parallel']['skipped'] == 1
     assert proof['phases']['critical']['skipped'] == 0
+
+
+@pytest.mark.parametrize('case', ['subtests', 'failed', 'orphan', 'foreign', 'worker-lost', 'rerun'])
+def test_subtest_results_are_not_a_second_node_execution_but_a_rerun_still_is(receipts, case):
+    # #854: run 39681301430 stopped at "duplicate node execution" after pytest 9 reported unittest subTests
+    # as extra call reports of one node. They are kept apart and counted; a real second call still fails.
+    node, skipped = fake_inventory()[1][1], fake_inventory()[1][2]
+    rows = [[node, 'passed'], [node, 'passed']]  # two subTests of one node: both kept, never deduplicated
+    if case == 'failed':
+        rows[1][1] = 'failed'
+    elif case == 'orphan':
+        rows = [[skipped, 'passed']]  # no passed call of that node to belong to
+    elif case == 'foreign':
+        rows = [['tests/test_other.py::test_unknown', 'passed']]
+    for worker in ('master', 'gw1', 'gw2'):
+        def mutate(value):
+            if case == 'orphan' and worker in ('master', 'gw2'):
+                value['stage_reports'] = [r for r in value['stage_reports'] if not (r[0] == skipped and r[1] == 'call')]
+                next(r for r in value['stage_reports'] if r[0] == skipped and r[1] == 'setup')[2] = 'skipped'
+            if case == 'rerun' and worker in ('master', 'gw1'):
+                value['stage_reports'].append([node, 'call', 'passed'])
+            elif worker != 'gw2' and not (case == 'worker-lost' and worker == 'gw1'):
+                value['subtest_reports'] = copy.deepcopy(rows)
+        change(receipts/f'parallel/metrics-{worker}.json', mutate)
+    if case == 'subtests':
+        proof = p.combine(receipts)
+        assert proof['phases']['parallel']['passed'] == 4 and proof['phases']['parallel']['skipped'] == 0
+        return
+    with pytest.raises(ValueError, match='duplicate node execution' if case == 'rerun' else 'subtest|worker'):
+        p.combine(receipts)
+
+
+def test_the_observer_keeps_a_subtest_report_out_of_the_node_lifecycle():
+    subtests = pytest.importorskip('_pytest.subtests')
+    observation = SimpleNamespace(diagnostics=None, checkpoints=None, stage_reports=[], subtest_reports=[],
+                                  context='', files=suite.defaultdict(float), results=suite.defaultdict(set))
+    for outcome in ('passed', 'failed'):
+        report = subtests.SubtestReport('t::x', ('t', 0, 'x'), {}, outcome, None, 'call')
+        suite.Observation.pytest_runtest_logreport(observation, report)
+    suite.Observation.pytest_runtest_logreport(observation, fake_report('t::x'))
+    assert observation.stage_reports == [['t::x', 'call', 'passed']]
+    assert observation.subtest_reports == [['t::x', 'passed'], ['t::x', 'failed']]
+    assert observation.results['failed'] == {'t::x'}  # a failed subtest is never hidden
 
 
 @pytest.mark.parametrize('phase', ['critical', 'parallel'])

@@ -139,19 +139,22 @@ def phase(directory, name, identity):
                     'worker overlapped critical phase')
             require(master['started_at'] <= m['started_at'] <= m['finished_at'] <= master['finished_at'],
                     'worker outside controller execution interval')
-    records = master['stage_reports']
-    validate_reports(records, selected, strict=name == 'critical')
+    records, subtests = master['stage_reports'], master['subtest_reports']
+    validate_reports(records, selected, strict=name == 'critical', subtests=subtests)
     if count:
-        combined = []
+        combined, combined_subtests = [], []
         for w in workers:
-            combined.extend(read(folder / ('metrics-' + w + '.json'))['stage_reports'])
-        require(sorted(combined) == sorted(records), 'lost/duplicate worker execution')
-        validate_reports(combined, selected, strict=False)
+            m = read(folder / ('metrics-' + w + '.json'))
+            combined.extend(m['stage_reports'])
+            combined_subtests.extend(m['subtest_reports'])
+        require(sorted(combined) == sorted(records) and sorted(combined_subtests) == sorted(subtests),
+                'lost/duplicate worker execution')
+        validate_reports(combined, selected, strict=False, subtests=combined_subtests)
     return coverage, master
 
 
-def validate_reports(records, selected, *, strict):
-    require(isinstance(records, list), 'missing execution reports')
+def validate_reports(records, selected, *, strict, subtests):
+    require(isinstance(records, list) and isinstance(subtests, list), 'missing execution reports')
     selected = set(selected)
     grouped = {}
     for r in records:
@@ -168,6 +171,12 @@ def validate_reports(records, selected, *, strict):
         if strict:
             require(set(stages) == {'setup', 'call', 'teardown'} and set(stages.values()) == {'passed'},
                     'critical skip/incomplete lifecycle')
+    # A subtest result (unittest subTest, pytest >= 9) is reported inside its node's own passed call, so it is
+    # never a second execution of the node. Each one is kept and counted, not deduplicated (#854).
+    for s in subtests:
+        require(isinstance(s, list) and len(s) == 2 and s[0] in grouped
+                and grouped[s[0]].get('call') == 'passed'
+                and s[1] in (('passed',) if strict else ('passed', 'skipped')), 'failed/foreign subtest report')
 
 
 def ready(directory):
