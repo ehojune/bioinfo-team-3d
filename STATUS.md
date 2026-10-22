@@ -4,6 +4,23 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 단계
+PR #867 진단 전용 branch에 최신 main 통합
+
+## 한 일
+- main f5f56b67ff7220bd86e775f6c3f209f35a98edc3(#865 포함)을 충돌 없이 merge했습니다.
+- 자동 merge-tree 47011c70a8ad6e6dd1758c4aae5fbeaa79b83fc5와 merge 결과가 같습니다. 기존 작성자 이력과 진단 코드·test 4개 blob을 보존했습니다.
+- 제품 변경은 main에서 온 내용뿐입니다. 브라우저 시작 표시와 대기 수치는 진단이며 원인·시작 성공을 증명하지 않습니다.
+
+## 테스트 결과
+- in-process fake Job/start 12건, 변경 Python 2개 3.10 AST PASS. 실제 Job을 불러오는 test는 실행하지 않았습니다.
+- notes_index validate, patch_notes check, public check, diff check를 확인합니다.
+
+## 한계
+실제 browser·Node·process·Job·전체 pytest는 실행하지 않았습니다. CI와 병합은 총괄 담당입니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 ## #865 main 통합
 
 - base: `386edba` (#868 merge `3e1b787` 포함). 충돌 없이 합쳤고 tree `e35868b`는 자동 merge-tree와 같다.
@@ -59,6 +76,34 @@
 - main0f80516(#864 포함)을 통합했습니다. manual 충돌1건은 취소/cleanup 설명을 모두 보존했습니다. CI는 총괄 watcher가 확인합니다.
 
 🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+## #833: Windows 브라우저 시작 지연을 wrapper와 Chrome으로 나누는 진단 (source bd401f7, base f47e841)
+
+- 관측: PR861 CI의 critical `web_resizable_panels.cjs`가 30초를 넘겼다.
+  - 단계 기록은 `chrome-spawned`(651 ms)에서 멈췄고, DevToolsActivePort는 30초 안에 생기지 않았다.
+  - 앞선 run 39835363858에서는 port가 생기기까지 20.4초가 걸렸다.
+  - 이 시간이 Python wrapper·Job 준비인지, Chrome 자체인지 가를 기록이 없었다.
+- 변경(진단 전용):
+  - `windows_job_browser.py`: Job을 만든 뒤 Chrome을 시작하기 직전에 고정 줄 `LABHQ_JOB_STARTING_BROWSER`를 stderr에 한 번 쓴다.
+  - `demo_driver.cjs`:
+    - 그 줄이 stderr 첫 줄일 때만 관측 `job-ready`를 남긴다.
+    - port가 5초 지나도 없으면 관측 `chrome-waiting` 한 줄을 남긴다. 담는 값은 표시를 받았는지, profile 최상위 항목 수(드라이버가 만든 `home` 1개 포함), Chrome stderr byte 수뿐이다.
+    - 두 행 모두 기존 관측 6행 예산 안이다. 경로·stderr 내용·URL·argv·환경 값은 남기지 않는다.
+- 바꾸지 않은 것:
+  - 시작 판정: DevToolsActivePort의 port만으로 대기가 끝난다.
+  - START_MS 60초, node 30초, 정리·receipt·재시도·skip·CI 설정·제품 코드.
+  - 표시가 없거나 Chrome 출력 중간에 같은 문자열이 있어도 판정에 쓰이지 않는다.
+- 검사:
+  - wrapper 시험(가짜 Job·start) 13건을 in-process로 통과했다. 기존 정확 일치 2건에는 표시 줄을 앞에 붙였다.
+  - watcher 순수 검사와 `node --check`를 통과했다.
+  - Python 3.10 AST를 통과했다.
+  - 실제 브라우저·process·pytest·node test 실행은 CI 몫이다.
+- 다음 재발 때 판정:
+  - `job-ready`가 늦으면 wrapper·Job 준비 쪽이다.
+  - 빠른데 port가 없을 때 profile 항목·stderr가 늘었으면 Chrome이 일하는 중이다.
+  - 늘지 않았으면 Chrome이 아직 실행되지 않은 것이다(이미지 로드·검사 등).
+- 독립 검토 P2 수정(`733b644`): 표시 줄의 CR과 LF가 다른 chunk로 오면 표시를 놓쳤다. 이제 표시+CRLF/LF의 앞부분인 동안만 기다린다(최대 표시 길이+2 글자). fake case 1건을 더했다.
+- 원인은 아직 모른다. #833은 열어 둔다.
 
 ## #862 모델 호출 사전 예산 예약 (source bb23573, base f47e841)
 
