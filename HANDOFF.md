@@ -11,7 +11,7 @@
 
 ## 현재 우선순위 (2026-10-22)
 
-PI가 신규 일반 작업 보류를 해제했습니다. 승인 예산 안에서 열린 PR을 마무리하고 같은 담당자에게 관련 후속 작업을 이어 배정합니다. 시운전 체크리스트는 [#739](https://github.com/ehojune/bioinfo-team-3d/issues/739)입니다.
+Codex는 총괄을 유지하고, PI 결정으로 새 일반 Codex 작업은 보류 중입니다. Codex는 기존 PR 마무리와 긴급 수정만 맡습니다. 개발 작업은 Claude Opus(동시 최대 3)가 하며 Claude 사용량은 Codex 예산에 넣지 않습니다. 시운전 체크리스트는 [#739](https://github.com/ehojune/bioinfo-team-3d/issues/739)입니다.
 
 | 후속 항목 | 현재 범위 |
 |---|---|
