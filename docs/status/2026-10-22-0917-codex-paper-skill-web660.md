@@ -8,4 +8,5 @@
 - 3D: 기본 진입은 2.5D(`/`, `labhq open`)이고 3D는 `/3d`다. 3D 선택 패널에서 여우를 고르면 같은 `ui/literature.js`로 목록을 그린다. 데이터는 `live.js`가 기존 detail GET으로 요청 갱신마다 한 번 읽는다. `live.js`에는 새 import가 없다.
 - manual: 선행 연구 절에 여우 목록·행 카드 설명을 추가했다. 0908 patch의 나머지 두 hunk는 #847로 이미 main에 있어 다시 적용하지 않았다.
 - 독립 검토 P2 수정(`aadca75`): 목록이 아닌 `recruit_results`와 receipt의 목록형 status·reason이 `TypeError`로 요청 상세 GET 전체를 깨던 것을, 해당 입력만 좁게 검사해 `damaged`로 표시하게 했다. 같은 순수 fuzz 585건에서 수정 전 실패 경로 2개 → 수정 후 0. 기존 테스트에 serializer 1건·API 200과 저장 기록 불변 1건을 보탰다.
+- CI(head `ffa0ed3`, run 39700661073): Linux 3.10·3.12·slow·clean-install은 통과했다. Windows job 119568904814는 pytest 시작 전 `Bind changed-test range to checkout`에서 `unbound selection merge parents`로 실패했다. 원인은 PR event base `06dfb1b`와 GitHub 시험 merge `78ad532`의 첫 parent `4ff7c12`(#848 병합 뒤 main)가 달랐던 것이다. 이 base로 diff를 만들면 #848 파일까지 변경으로 잡히므로 가드가 거부한 것은 의도대로다. 가드는 바꾸지 않고 main `4ff7c12`를 merge `eb2c44b`로 명시 통합했다. 순수 재현: 실제 값은 거부, event base가 merge parent와 같으면 통과, head·parent 순서·base=head가 다르면 계속 거부.
 - 미실행·남은 것: 실제 요청에서의 부착·결과 참조·효용, 실제 브라우저 표시. #660은 닫지 않는다.
