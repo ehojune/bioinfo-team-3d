@@ -428,6 +428,11 @@ def _ids(values: Any, limit: int = 12) -> list[str]:
     return list(dict.fromkeys(v for v in rows if isinstance(v, str) and re.fullmatch(r"[\w.-]{1,64}", v)))[:limit]
 
 
+def _member(value: Any, allowed: set[str]) -> str | None:
+    # A stored record may hold a list or dict here; never hash it (#849 review).
+    return value if isinstance(value, str) and value in allowed else None
+
+
 def _hex(rows: list[dict], key: str, size: int) -> str | None:
     found = [row[key] for row in rows if isinstance(row.get(key), str) and re.fullmatch(rf"[a-f0-9]{{{size}}}", row[key])]
     return found[-1] if found else None
@@ -452,12 +457,15 @@ def literature_view(req: dict) -> dict:
                          results)
     except (AttributeError, TypeError, KeyError, ValueError):
         skills, view["damaged"] = [], True
-    recruits = [r for r in plan.get("recruit_results") or [] if isinstance(r, dict)]
+    raw_recruits = plan.get("recruit_results")
+    if raw_recruits is not None and not isinstance(raw_recruits, list):
+        view["damaged"] = True  # a non-list hire record is shown as damaged, not iterated
+    recruits = [r for r in raw_recruits if isinstance(r, dict)] if isinstance(raw_recruits, list) else []
 
     def skill_card(row: dict) -> dict:
         usage = [u for u in row.get("usage") or [] if isinstance(u, dict)]
         reason = next((_plain(u.get("preparation_error"), 200) for u in usage if u.get("preparation_error")), None)
-        return {"status": row.get("status") if row.get("status") in _STATUSES else "unknown",
+        return {"status": _member(row.get("status"), _STATUSES) or "unknown",
                 "built": row.get("built") is True,
                 "reason": reason or _plain(row.get("skip_reason"), 200) or _plain(row.get("error"), 200),
                 "selection_reason": _plain(row.get("reason"), 300),
@@ -466,8 +474,8 @@ def literature_view(req: dict) -> dict:
                 "paper2agent_commit": _hex([row, *usage], "paper2agent_commit", 40),
                 "selected_steps": _ids(row.get("step_ids")),
                 "attached_steps": _ids(row.get("attached_steps")),
-                "reference": row.get("call_status") if row.get("call_status") in _REFERENCES else "unverified",
-                "reference_reasons": list(dict.fromkeys(u["reason"] for u in usage if u.get("reason") in _REASONS))[:4]}
+                "reference": _member(row.get("call_status"), _REFERENCES) or "unverified",
+                "reference_reasons": list(dict.fromkeys(u["reason"] for u in usage if _member(u.get("reason"), _REASONS)))[:4]}
 
     def recruit_card(row: dict) -> dict:
         return {"status": _plain(row.get("status"), 40) or "unknown", "agent_id": (_ids([row.get("agent_id")], 1) or [None])[0],

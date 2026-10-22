@@ -889,6 +889,13 @@ def test_paper_literature_bounds_damaged_records_and_says_when_there_is_none():
     assert view["damaged"] is True and all(row["skill"] is None for row in view["papers"])
     long = view["papers"][-1]
     assert len(long["title"]) == 300 and "\x00" not in long["title"] and long["ids"] == []
+    # #849 review: a non-list hire record or an unhashable receipt field is damaged data, never a raised error.
+    hostile = _literature_request()
+    hostile["plan"]["recruit_results"] = 5
+    hostile["results"]["s1"]["provenance"]["runs"]["t1"]["paper_skills"][0].update(status=["ready"], reason=["x"])
+    shown = literature_view(hostile)
+    assert shown["damaged"] is True and [row["recruit"] for row in shown["papers"]] == [None, None, None]
+    assert shown["papers"][0]["skill"]["reference_reasons"] == []
     failed = literature_view({"analysis_precedents": {"status": "warning", "warning": "analysis precedents unavailable (no_papers)"}})
     assert failed == {"status": "unavailable", "papers": [], "warning": "analysis precedents unavailable (no_papers)"}
 
@@ -904,14 +911,19 @@ async def test_request_detail_carries_the_paper_list_without_changing_the_record
     app = create_app(settings)
     hub = app.state.hub
     hub.requests["r"] = _literature_request()
+    hub.requests["bad"] = {**_literature_request(), "id": "bad", "plan": {"recruit_results": 5}}
+    stored = json.dumps(hub.requests["bad"], sort_keys=True)
     headers = {"Authorization": f"Bearer {settings.gateway.client_token}"}
     try:
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gw") as client:
             detail = await client.get("/api/requests/r", headers=headers)
             anonymous = await client.get("/api/requests/r")
             missing = await client.get("/api/requests/none", headers=headers)
+            malformed = await client.get("/api/requests/bad", headers=headers)
         assert detail.status_code == 200 and detail.json()["paper_literature"]["papers"][0]["skill"]["reference"] == "referenced"
         assert anonymous.status_code == 401 and missing.status_code == 404
         assert "paper_literature" not in hub.requests["r"]
+        assert malformed.status_code == 200 and malformed.json()["paper_literature"]["damaged"] is True
+        assert json.dumps(hub.requests["bad"], sort_keys=True) == stored  # the detail never rewrites a damaged record
     finally:
         hub.store.close()
