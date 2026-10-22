@@ -4,8 +4,9 @@
 
 ## labhq에 이미 있는 기관 경로
 - 핵심 논문 본문 찾기(`key_fulltext`)는 허용 OA → 기관 세션 → PI PDF 요청 카드 순서다.
-- 기관 세션은 `literature.institution_enabled`를 켰을 때만 쓴다. PI가 로그인해 둔 전용 browser profile이나 `literature.institution_proxy`로 한 DOI씩 연다.
-- TDM 허용과 외부 모델 전송 허용은 각각 따로 켠다.
+- 기관 세션은 세 설정 `literature.institution_enabled`·`institution_tdm_allowed`·`external_model_allowed`를 모두 켰을 때만 쓴다. 이때 PI가 로그인해 둔 전용 browser profile이나 `literature.institution_proxy`로 한 DOI씩 연다.
+- PI PDF 요청 카드는 `external_model_allowed`가 켜져 있어야 열린다.
+- 이것은 구현된 경로의 조건이다. 실제 기관 프록시·세션으로 본문을 받는지는 검증하지 않았다.
 - labhq는 비밀번호·cookie·token을 읽거나 저장하지 않는다. 자세한 동작은 매뉴얼 문헌 도구 절을 본다.
 
 ## init이 묻고 남기는 것
@@ -34,7 +35,7 @@
 ## 아직 없는 것
 - Web of Science(Research Assistant 포함)나 Nexus Connect에 자동으로 붙는 전용 연결은 구현돼 있지 않다.
 - 기관 MCP endpoint나 labhq 같은 사용자 정의 client가 지원되는지는 확인되지 않았다.
-- 이 경우에도 위의 일반 기관 경로(프록시·기관 세션·PI PDF 요청)는 그대로 쓸 수 있다.
+- 위의 일반 기관 경로(프록시·기관 세션·PI PDF 요청)는 이와 별개로 구현돼 있고, 같은 동의 조건을 따른다.
 
 ## Clarivate Nexus Connect 공개 안내 (2026-10-22 확인)
 - 출처(Clarivate 공식 페이지):
