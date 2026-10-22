@@ -1,0 +1,32 @@
+## #862 모델 호출 사전 예산 예약 (source bb23573, base f47e841)
+
+- 배경: `_check_budget`은 이미 쓴 비용·비용 모름 예약·논문 준비 예약만 보고 허용했다. 보낼 호출과 진행 중인 호출은 세지 않았다. 그래서 동시에 시작한 briefing·precedent, 병렬 단계, 마지막 호출이 상한을 넘을 수 있었다. recruit 작업은 `recruit.max_budget_usd`(예: 25)로 Claude에 넘어갔다.
+- 바꾼 것(opt-in `policy.budget.reserve_before_dispatch`, 기본 false):
+  - `dispatch_with_retry`가 보내기 직전, 마지막 await 뒤에 `_reserve_dispatch`를 부른다. budget lock 안에서 이미 쓴 비용 + 비용 모름 예약 + 진행 중 예약 + 이번 상한이 요청 상한 이하일 때만 예약하고 보낸다.
+  - 이번 상한은 task·직원 `max_budget_usd`·`per_task_usd` 중 최소이고, 없으면 남은 예산이다. 보낸 task의 `budget_usd`·`request_budget_remaining_usd`를 그 값으로 바꾼다.
+  - 넘으면 일반 호출은 기존 예산 카드로 묻고(`reserve_usd` 표시), 채용·환경 진단은 카드 없이 거부한다.
+  - 예약은 요청 기록 `budget_holds`에 저장한다.
+    - 이 orchestrator가 그 task의 비용(또는 비용 모름 예약)을 집계할 때까지 bound에 남는다.
+    - dispatch가 정상으로 돌아온 뒤에만 지운다. gateway가 답하기 전에 비용을 기록했거나 보내지 않은 경우다.
+    - 취소·예외·재시작이면 남긴다.
+  - 상한 값이 유한한 양수가 아니면 카드 없이 거부한다. 남은 예산 0이면 보내지 않는다. 설정의 NaN·음수·무한은 옵션을 켤 때 거부한다.
+  - 논문 스킬 준비(`paper_budget_holds`)와 PI 통역(`pi_translation_budget`)은 기존 예약을 쓰며 중복 예약하지 않는다.
+- 검사:
+  - `tests/test_cso.py`에 test 9개(case 19개)를 더했다. FakeHub와 가짜 dispatch만 쓴다.
+    - 기본 꺼짐
+    - 동시 시작 경쟁
+    - 마지막 호출과 잔액 0
+    - 잘못된 상한 5종과 설정 3종
+    - recruit·진단의 clamp와 카드 없는 거부
+    - 취소 뒤 예약 유지·재시작·비용 모름 대체
+    - 복구된 이전 task와 중복 집계
+    - 논문 준비 비중복
+  - 로컬 in-process(gateway·runner import만 stub): 새 case 19개 통과, `test_cso.py` 215 passed.
+  - 실패 8개는 stub 때문이며 main export에서도 같다. 관련 파일 5개의 결과도 main과 같다.
+  - 3.10 AST, public, diff 검사를 통과했다.
+- 남은 것과 한계:
+  - labhq 비용 기록·추정 기준의 상한이고 공급자 청구액 보장이 아니다.
+  - Codex는 실행 중 비용 제한 플래그가 없어 예약을 넘을 수 있다. 그 초과는 끝난 뒤 기록되어 다음 호출을 막는다.
+  - 보낸 뒤 예외가 난 호출의 예약은 비용 기록이 올 때까지 남아 보수적으로 막을 수 있다.
+  - 요청 상한이 없으면(0·비움) 예약하지 않는다.
+  - 실제 gateway·runner·모델 실행은 확인하지 않았다.

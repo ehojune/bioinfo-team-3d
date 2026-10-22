@@ -1,0 +1,6 @@
+pr: null
+rows:
+  - sha: bb23573
+    at: "2026-10-23 04:49"
+    summary: "설정을 켜면 모델 호출을 보내기 전에 그 호출의 최대 비용을 예산에서 미리 잡아, 진행 중인 호출과 마지막 호출이 요청 예산을 넘지 않게 합니다."
+    text: "policy.budget.reserve_before_dispatch(기본 false)를 켜면 CSO dispatch_with_retry가 보내기 직전 budget lock 안에서 이미 쓴 비용, 비용 모름 건당 예약, 진행 중 예약, 이번 호출 상한을 더해 요청 상한 안일 때만 보낸다. 호출 상한은 task·직원 max_budget_usd·per_task_usd 중 최소(없으면 남은 예산)이고 보낸 task의 budget_usd를 그 값으로 낮춰 Claude --max-budget-usd와 recruit 25도 그 안에 둔다. 넘으면 일반 호출은 기존 예산 카드, 채용·환경 진단은 카드 없이 거부한다. 예약은 요청 기록 budget_holds에 남아 취소·결과 유실·재시작 뒤에도 그 task의 비용이나 비용 모름 예약이 집계될 때까지 유지되고 정상 반환 뒤에만 지운다. 상한이 유한한 양수가 아니거나 남은 예산이 0이면 보내지 않는다. 논문 스킬 준비·PI 통역은 기존 예약을 쓴다. labhq 비용 기록 기준이며 공급자 청구액을 보장하지 않고, Codex는 실행 중 비용 제한이 없어 예약을 넘을 수 있다. 실제 gateway·runner·모델 실행으로는 확인하지 않았다."
