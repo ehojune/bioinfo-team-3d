@@ -1,0 +1,6 @@
+pr: null
+rows:
+  - sha: 9a10aef
+    at: "2026-10-23 03:50"
+    summary: "한 요청에서 공개 DB·문헌 조회를 몇 번까지 할지 정할 수 있게 하고, 다 쓰면 더 조회하지 않습니다."
+    text: "annot.request_lookup_limit(선택, 기본 없음)를 두면 runner broker가 labhq_annot 도구 호출마다 조회 전에 한 번 센다. 요청은 broker가 작업 token에 묶어 발급한 request id이고 호출이 적은 값은 받지 않는다. runner.state_dir/lookup_admission.sqlite3에 BEGIN IMMEDIATE로 기록해 같은 요청의 직원·단계·runner 재시작과 동시 호출이 한 상한을 쓴다. 실패·시간 초과·캐시 답·반복 호출도 한 번이며 한 호출 안의 HTTP 재시도·페이지 넘김은 그 행의 outbound_requests로만 남긴다. broker token·ledger·request id가 없거나 broker에 닿지 못하면 조회하지 않는다. 웹 검색·다른 MCP·셸 접속은 막지 않고, runner가 둘이면 따로 센다. 실제 runner·시운전에서는 확인하지 않았다."
