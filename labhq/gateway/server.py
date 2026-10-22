@@ -12,6 +12,7 @@ import copy
 import hashlib
 import json
 import logging
+import math
 import mimetypes
 import os
 import time
@@ -175,6 +176,10 @@ class FollowupIn(BaseModel):
         if not value.strip():
             raise ValueError("follow-up text is empty")
         return value.strip()
+
+
+class ActiveCancelIn(BaseModel):
+    expected_created_at: float = Field(gt=0, allow_inf_nan=False)
 
 
 class NoteIn(BaseModel):
@@ -3438,7 +3443,8 @@ class Hub:
                             "request_id": entry["approval"].get("request_id"), "data": {"id": aid, "note": note}})
         return True
 
-    async def cancel_request(self, rid: str) -> dict:
+    async def cancel_request(self, rid: str, *, active_only: bool = False,
+                             expected_created_at: float | None = None) -> dict:
         """Stop a request for good (R13) and report what it finished.
 
         Its orchestration stops (no retry, re-plan or card after this), every live task gets a cancel on its
@@ -3446,6 +3452,14 @@ class Hub:
         report of the partial results. Calling it again returns the same answer."""
         req = self.requests[rid]
         status = req.get("status")
+        # No await separates this identity/state check from the cancellation transition below.
+        # A monitor must never turn a CP4 review into a fabricated PI decision.
+        if active_only:
+            if expected_created_at is None or req.get("created_at") != expected_created_at:
+                raise ValueError("request creation identity changed")
+            if not is_active_request(status):
+                return {"request_id": rid, "status": status, "skipped": True,
+                        "reason": "request is not active"}
         if status == "cancelled":
             return {"request_id": rid, "status": "cancelled", "already": True,
                     "cancelled_tasks": list(req.get("cancelled_tasks") or [])}
@@ -3849,6 +3863,146 @@ class Hub:
             "recent_events": [snapshot_event(e) for e in recent_events],
         }}
 
+    def request_task_attempts(self, rid: str, expected_created_at: float, limit: int = 1000) -> dict:
+        """Bounded, content-free durable task/cost snapshot, without step/kind filtering.
+
+        Synchronous on the gateway event loop: no request mutation can interleave its reads.
+        A content revision binds the exact returned projection, not an OS/process assertion.
+        """
+        request = copy.deepcopy(self.requests[rid])
+        if request.get("created_at") != expected_created_at:
+            raise ValueError("request creation identity changed")
+        if type(limit) is not int or not 1 <= limit <= 1000:
+            raise ValueError("invalid attempt limit")
+        problems: list[str] = []
+
+        def amount(value):
+            return value if type(value) in (int, float) and math.isfinite(value) and value >= 0 else None
+
+        def identifier(value):
+            return value if isinstance(value, str) and 0 < len(value) <= 128 and all(
+                c.isascii() and (c.isalnum() or c in "_.:-") for c in value) else None
+
+        def cleanup(raw):
+            if not isinstance(raw, dict) or not raw:
+                return None
+            # Never forward arbitrary strings, kill diagnostics, argv, workdir, or nested runner data.
+            enums = {"status": {"not_started", "UNKNOWN", "job_close_contract_enforced"},
+                     "job": {"active", "pending", "disabled", "unconfirmed"},
+                     "spawn": {"failed", "cancelled"}, "wait": {"completed", "not_finished"}}
+            out = {key: value if value in values else None for key, values in enums.items()
+                   if isinstance((value := raw.get(key)), str)}
+            for key in ("wrapper_pid", "wrapper_created"):
+                out[key] = raw.get(key) if type(raw.get(key)) is int and raw[key] > 0 else None
+            out["returncode"] = raw.get("returncode") if type(raw.get("returncode")) is int else None
+            out["active_processes_measured"] = raw.get("active_processes_measured") if type(raw.get("active_processes_measured")) is bool else None
+            return out
+
+        ledger = self.store.all("task")
+        if any(not isinstance(row, dict) for row in ledger.values()):
+            problems.append("task_ledger_row_invalid")
+        owned = sorted((tid, row) for tid, row in ledger.items() if isinstance(row, dict) and row.get("request_id") == rid)
+        attempts = []
+        for tid, row in owned[:limit]:
+            payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+            result = row.get("result")
+            identity = bool(identifier(tid) and payload.get("id") == tid and payload.get("request_id") == rid and identifier(payload.get("agent_id")))
+            result_identity = bool(isinstance(result, dict) and result.get("task_id") == tid
+                                   and result.get("agent_id") == payload.get("agent_id"))
+            if not identity or (result is not None and not result_identity):
+                problems.append("task_identity_unknown")
+            if row.get("completed") is True and result is None:
+                problems.append("completed_result_missing")
+            attempts.append({"task_id": identifier(tid), "request_id": rid,
+                "agent_id": identifier(payload.get("agent_id")), "identity_verified": identity,
+                **{key: identifier(row.get(key)) for key in ("runner_id", "runner_incarnation", "step_id", "kind", "parent_task")},
+                **{key: row.get(key) if type(row.get(key)) is int and row[key] >= 0 else None
+                   for key in ("attempt", "revision", "parse_attempt")},
+                **{key: row.get(key) if type(row.get(key)) is bool else None
+                   for key in ("accepted", "completed", "abandoned")},
+                "result": {"task_id": tid, "agent_id": identifier(result.get("agent_id")),
+                    "ok": result.get("ok") if type(result.get("ok")) is bool else None,
+                    "cleanup_evidence": cleanup(result.get("cleanup_evidence"))} if result_identity else None})
+
+        def cost_map(name):
+            raw = request.get(name)
+            if raw is None:
+                return None  # Missing is unknown, never an invented empty ledger.
+            if not isinstance(raw, dict):
+                problems.append("accounting_map_invalid")
+                return None
+            if len(raw) > limit:
+                problems.append("accounting_truncated")
+            out = {}
+            for tid, value in list(sorted(raw.items()))[:limit]:
+                key = identifier(tid)
+                if key is None:
+                    problems.append("accounting_identity_unknown")
+                    continue
+                if name == "cost_items":
+                    value = value if isinstance(value, dict) else {}
+                    status = value.get("status")
+                    out[key] = {"status": status if isinstance(status, str) and status in {"actual", "estimated", "unknown"} else None,
+                                "usd": amount(value.get("usd")), "recorded_at": amount(value.get("recorded_at"))}
+                else:
+                    out[key] = amount(value)
+            return out
+
+        accounting = {key: cost_map(key) for key in ("cost_items", "cost_by_task", "budget_holds")}
+        per_task = amount(self.s.policy.budget.per_task_usd)
+        effective_limit = amount(request.get("budget_usd")) or amount(self.s.policy.budget.per_request_usd)
+        accounting.update(reported_cost_usd=amount(request.get("cost_usd")),
+                          cost_known=request.get("cost_known") if type(request.get("cost_known")) is bool else None,
+                          budget_usd=amount(request.get("budget_usd")),
+                          unknown_reserve_usd=per_task if per_task and per_task > 0 else effective_limit,
+                          reserve_before_dispatch=getattr(self.s.policy.budget, "reserve_before_dispatch", None))
+        if len(owned) > limit:
+            problems.append("attempts_truncated")
+        costs = set(accounting["cost_items"] or {}) | set(accounting["cost_by_task"] or {})
+        if costs - {tid for tid, _ in owned}:
+            problems.append("cost_task_missing_from_durable_ledger")
+        expected = set()
+        for name in ("cost_items", "cost_by_task", "budget_holds", "usage_by_task"):
+            raw = request.get(name)
+            if isinstance(raw, dict):
+                expected.update(key for key in raw if identifier(key))
+                if any(identifier(key) is None for key in raw):
+                    problems.append("expected_task_identity_unknown")
+        cancelled = request.get("cancelled_tasks")
+        if isinstance(cancelled, list):
+            expected.update(tid for tid in cancelled if identifier(tid))
+        elif cancelled is not None:
+            problems.append("cancelled_task_ids_unknown")
+        results = request.get("results")
+        for result in [*(results.values() if isinstance(results, dict) else []), request.get("solo_result")]:
+            if isinstance(result, dict) and identifier(result.get("task_id")):
+                expected.add(result["task_id"])
+        owned_ids = {tid for tid, _ in owned}
+        missing = sorted(expected - owned_ids)
+        if missing:
+            problems.append("expected_task_missing_from_durable_ledger")
+            for tid in missing[:max(0, limit - len(attempts))]:
+                attempts.append({"task_id": tid, "request_id": rid, "agent_id": None,
+                                 "identity_verified": False, "record_status": "MISSING_DURABLE_ROW",
+                                 "accepted": None, "completed": None, "result": None})
+        total = len(owned_ids | expected)
+        if total > limit:
+            problems.append("attempts_truncated")
+        data = {"schema_version": 1, "scope": "all_request_task_attempts", "request_id": rid,
+                "created_at": request.get("created_at"), "request_status": request.get("status"),
+                "completeness_scope": "durable_rows_plus_request_accounting_ids",
+                "cancelling": request.get("cancelling") is not None,
+                "total_attempts": total, "total_durable_attempts": len(owned),
+                "missing_attempt_count": len(missing), "missing_attempt_ids": missing[:limit],
+                "returned_attempts": len(attempts), "attempts": attempts,
+                "accounting": accounting, "complete": not problems, "problems": sorted(set(problems))}
+        encoded = json.dumps(data, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        if len(encoded) > 1024 * 1024:
+            data.update(attempts=[], returned_attempts=0, accounting=None, complete=False, problems=["response_size_limit"])
+            encoded = json.dumps(data, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        data["snapshot_revision"] = hashlib.sha256(encoded).hexdigest()
+        return data
+
     def request_step_details(self, rid: str, request: dict,
                              ledger: Mapping[str, dict] | None = None) -> dict[str, dict]:
         tasks = [(tid, entry) for tid, entry in (self.store.all("task") if ledger is None else ledger).items()
@@ -4207,6 +4361,16 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             raise HTTPException(409, str(error))
         return {"request_id": rid, "note": entry}
 
+    @app.get("/api/requests/{rid}/task-attempts", dependencies=[Depends(auth)])
+    async def task_attempts(rid: str, expected_created_at: float = Query(..., gt=0, allow_inf_nan=False),
+                            limit: int = Query(1000, ge=1, le=1000)) -> dict:
+        if rid not in hub.requests:
+            raise HTTPException(404)
+        try:
+            return hub.request_task_attempts(rid, expected_created_at, limit)
+        except ValueError as error:
+            raise HTTPException(409, str(error))
+
     @app.get("/api/requests/{rid}", dependencies=[Depends(auth)])
     async def get_request(rid: str) -> dict:
         if rid not in hub.requests:
@@ -4323,6 +4487,17 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         if not ack["ok"]:
             raise HTTPException(422, ack["note"] or "the task runner could not store the PDF")
         return {"ok": True, "bytes": len(data)}
+
+    @app.post("/api/requests/{rid}/cancel-active", dependencies=[Depends(auth)])
+    async def cancel_active_request(rid: str, body: ActiveCancelIn) -> dict:
+        # Distinct route deliberately yields 404 on old gateways; never fall back to /cancel.
+        if rid not in hub.requests:
+            raise HTTPException(404)
+        try:
+            return {"ok": True, **await hub.cancel_request(
+                rid, active_only=True, expected_created_at=body.expected_created_at)}
+        except ValueError as error:
+            raise HTTPException(409, str(error))
 
     @app.post("/api/requests/{rid}/cancel", dependencies=[Depends(auth)])
     async def cancel_request(rid: str) -> dict:

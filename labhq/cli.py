@@ -1878,6 +1878,8 @@ def main(argv: list[str] | None = None) -> None:
     request_p.add_argument("request_id")
     cancel = sub.add_parser("cancel", help="cancel a request: stop its tasks, waits and cards, keep partial results")
     cancel.add_argument("request_id")
+    cancel.add_argument("--active-only", action="store_true", help="cancel only an active request; never decide a final review")
+    cancel.add_argument("--expected-created-at", type=float, help="exact request creation timestamp; required with --active-only")
     task_p = sub.add_parser("task", help="steer, pause, resume or halt one running task (#59)")
     task_p.add_argument("action", choices=("steer", "pause", "resume", "halt"))
     task_p.add_argument("task_id")
@@ -2281,7 +2283,18 @@ def main(argv: list[str] | None = None) -> None:
     elif args.cmd == "cancel":
         from urllib.parse import quote
 
-        out = _api(s, "POST", f"/api/requests/{quote(args.request_id, safe='')}/cancel", json={})  # 409: 이미 끝남
+        if args.active_only:
+            if args.expected_created_at is None or not math.isfinite(args.expected_created_at) or args.expected_created_at <= 0:
+                p.error("--active-only requires finite positive --expected-created-at")
+            out = _api(s, "POST", f"/api/requests/{quote(args.request_id, safe='')}/cancel-active",
+                       json={"expected_created_at": args.expected_created_at})
+        else:
+            if args.expected_created_at is not None:
+                p.error("--expected-created-at requires --active-only")
+            out = _api(s, "POST", f"/api/requests/{quote(args.request_id, safe='')}/cancel", json={})
+        if out.get("skipped"):
+            print(f"{out['request_id']}: active-only 취소 생략 · 상태 {out.get('status')} · PI 결정은 유지했습니다")
+            return
         print(f"{out['request_id']}: 이미 취소된 요청입니다" if out.get("already") else
               f"{out['request_id']}: 취소했습니다 · 멈춘 작업 {len(out.get('cancelled_tasks') or [])}개 · "
               "부분 결과는 보고서에 있습니다")
