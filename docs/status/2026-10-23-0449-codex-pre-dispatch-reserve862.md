@@ -27,6 +27,19 @@
 - 남은 것과 한계:
   - labhq 비용 기록·추정 기준의 상한이고 공급자 청구액 보장이 아니다.
   - Codex는 실행 중 비용 제한 플래그가 없어 예약을 넘을 수 있다. 그 초과는 끝난 뒤 기록되어 다음 호출을 막는다.
-  - 보낸 뒤 예외가 난 호출의 예약은 비용 기록이 올 때까지 남아 보수적으로 막을 수 있다.
   - 요청 상한이 없으면(0·비움) 예약하지 않는다.
   - 실제 gateway·runner·모델 실행은 확인하지 않았다.
+- 독립 검토 후속(`be76b41`, main `690a588` 통합):
+  - CI run 39843720353 Linux 3.10: `test_paper_skill_waiting_static`의 AST 추출 fixture 2개가 `_budget_bound`의 새 의존(`_dispatch_held`·`_usd_amount`·`hub.requests`)을 몰라 실패했다(11249 pass/2 fail). fixture에 그 의존을 넣었고 단언은 그대로다. `test_paper_skill_recovery_identity`의 복제 dispatch에는 `_recovery_choice`를 더했다.
+  - P2-1(복구 이중 예약): 재시작 복구가 이전 task를 이어받는 호출도 새 attempt를 예약해, 원래 상한에서 거짓 예산 카드가 떴다.
+    - gateway에 `_recovery_choice`(dispatch가 쓰는 같은 선택)와 `recovery_task_id`를 두었다.
+    - CSO는 예약 직전 그 id가 있으면 새 예약 없이 이전 task 예약을 쓴다. 예약이 없으면 카드 없이 이전 task를 잡는다. 예약 판단과 dispatch의 복구 판단 사이에는 await가 없다.
+  - P2-2(보내지 않은 호출의 영구 예약):
+    - gateway는 저장 뒤 보내다 실패한 task를 비용 모름으로 기록한다(기본 동작에도 적용).
+    - CSO는 요청 (재)시작 때 저장도 비용 기록도 없는 id의 예약만 푼다. 이 process가 보내는 중인 attempt는 제외한다.
+    - 같은 process에서 저장 전에 취소·예외가 난 attempt도 푼다. 보냈을 수 있는 예약은 남긴다.
+  - 검사:
+    - 새 fake case 6개(원래 상한 2.0): 복구 이어받기 2개, 재시작 정리 3개, 저장 전 취소 2개(저장 뒤면 유지). 그리고 gateway test 1개.
+    - in-process: 예약 test 25개 통과, `test_cso.py` 221 passed(stub 8 실패는 main과 같음), static 파일 12 passed.
+    - 이전 head `977c6de` 코드로 돌리면 복구 case가 원래 상한에서 `budget reservation … approval denied`로 실패해 검토 재현과 같다.
+    - gateway test와 `test_paper_skill_recovery_identity`는 실제 Hub가 필요해 CI 몫이다.
