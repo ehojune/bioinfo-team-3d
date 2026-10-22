@@ -10,6 +10,12 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-10-23
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 03:29 | [`70a4dce`](https://github.com/ehojune/bioinfo-team-3d/commit/70a4dce) | **Windows 화면 검사가 브라우저 시작이나 첫 화면에서 멈추면, 어디서 기다렸는지 더 자세히 남깁니다.**<br>tests/support/demo_driver.cjs의 단계 기록(실패 때만 출력)에 정적 서버가 그 navigation의 index.html 요청을 받은 시각과 응답을 보낸 시각, navigation이 5초 넘게 돌아오지 않을 때의 요청·응답 여부 한 줄, page target 대기 중 DevTools /json 무응답·page 없음 횟수를 더했다. #833과 PR852 CI에서 첫 Page.navigate나 Chrome 시작이 늦었지만 Chrome 쪽인지 서버 쪽인지 가를 근거가 없었다. 진단 전용이며 원인 수정이 아니다. 제한시간·재시도·검사 경계는 그대로이고, 새 행은 기존 16행과 따로 6행까지만 쓴다. 로컬에서는 node --check만 했다. |
+
 ## 2026-10-22
 
 | 시간 | 커밋 | 주요 변경사항 |
