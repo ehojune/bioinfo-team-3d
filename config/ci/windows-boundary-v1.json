@@ -3,6 +3,7 @@
   "profile": "windows-boundary-v6",
   "default": "boundary",
   "known_tests": [
+    "tests/test_active_request_cancel.py",
     "tests/test_adapters_fake_cli.py",
     "tests/test_agent_capabilities.py",
     "tests/test_agent_prompts.py",
@@ -300,6 +301,7 @@
     "tests/test_supervisor_process.py",
     "tests/test_supervisor_up_identity.py",
     "tests/test_system_ca.py",
+    "tests/test_task_attempt_projection.py",
     "tests/test_task_cancel.py",
     "tests/test_task_read_scope.py",
     "tests/test_text_encoding.py",
