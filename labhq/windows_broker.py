@@ -205,6 +205,21 @@ def _read(path):
         return None
 
 
+# ERROR_SHARING_VIOLATION. Python opens files without FILE_SHARE_DELETE, so reading a record while another handle with
+# DELETE access is open on it (the writer's atomic replace, a file scanner) fails briefly with this code (#844).
+_SHARING_VIOLATION = 32
+
+
+def _poll(path):
+    """`_read` inside a deadline-bounded wait: a record that is being replaced right now is not there yet."""
+    try:
+        return _read(path)
+    except PermissionError as exc:
+        if getattr(exc, "winerror", None) == _SHARING_VIOLATION:
+            return None
+        raise
+
+
 def _digest(environment):
     # CPython consumes this interpreter-selection carrier during startup.
     pairs = sorted((key.upper(), value) for key, value in environment.items() if key.upper() != "__PYVENV_LAUNCHER__")
@@ -364,7 +379,7 @@ def launch(command, *, state, role, **options):
             phase = "receipt_wait"
             deadline = time.monotonic() + TIMEOUT
             while True:
-                receipt = _read(folder / "receipt.json")
+                receipt = _poll(folder / "receipt.json")
                 if receipt is not None:
                     break
                 if not native.alive(handle) or time.monotonic() >= deadline:
@@ -443,7 +458,9 @@ def _note_stop(error: BaseException) -> None:
     try:
         with open(_STAGE["log"], "a", encoding="utf-8") as stream:
             stream.write(f"labhq WMI bootstrap stopped before the role started: "
-                         f"stage={_STAGE['name']} error={type(error).__name__}\n")
+                         f"stage={_STAGE['name']} error={type(error).__name__}"
+                         + (f" winerror={error.winerror}" if type(getattr(error, "winerror", None)) is int else "")
+                         + "\n")
     except OSError:
         pass
 
@@ -476,7 +493,7 @@ def _bootstrap(control):
         while True:
             if not native.alive(parent) or time.time() >= request["expires"] or time.monotonic() >= deadline:
                 raise LaunchError("WMI bootstrap caller exited or ACK expired")
-            if _read(control.parent / "ack.json") == receipt:
+            if _poll(control.parent / "ack.json") == receipt:
                 break
             time.sleep(.02)
         _STAGE["name"] = "final_check"
