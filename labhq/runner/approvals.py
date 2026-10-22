@@ -39,8 +39,9 @@ def _validated(model: type[BaseModel], data: dict) -> Any:
 class Broker:
     def __init__(self, port: int, on_approval: Handler, on_event: Handler, on_submit: Submit,
                  on_ask: Handler | None = None, owns_job: Predicate | None = None,
-                 on_approval_timeout: Handler | None = None):
+                 on_approval_timeout: Handler | None = None, lookup_admission: Any = None):
         self.port = port
+        self.lookup_admission = lookup_admission  # LookupAdmission when annot.request_lookup_limit is set (#858)
         self.pending: dict[str, asyncio.Future] = {}
         self.pending_requests: dict[str, ApprovalRequest] = {}
         self.pending_asks: dict[str, asyncio.Future] = {}
@@ -108,6 +109,25 @@ class Broker:
         async def owned(body: dict, x_labhq_token: str = Header(default="")) -> dict:
             identity = self._identity(x_labhq_token, body)
             return {"owned": bool(self._owns_job and await self._owns_job(identity))}
+
+        # Public lookup admission (#858): the request id is the one this token was issued for, never the body's.
+        @app.post("/lookup/admit")
+        async def lookup_admit(body: dict, x_labhq_token: str = Header(default="")) -> dict:
+            identity = self._identity(x_labhq_token, body)
+            if self.lookup_admission is None:
+                raise HTTPException(409, "public lookup limit is not configured on this runner")
+            return await asyncio.to_thread(self.lookup_admission.admit, identity["request_id"],
+                                           identity["task_id"], identity["agent_id"], body.get("tool"))
+
+        @app.post("/lookup/finish")
+        async def lookup_finish(body: dict, x_labhq_token: str = Header(default="")) -> dict:
+            identity = self._identity(x_labhq_token, body)
+            if self.lookup_admission is None:
+                raise HTTPException(409, "public lookup limit is not configured on this runner")
+            recorded = await asyncio.to_thread(self.lookup_admission.finish, identity["request_id"],
+                                               identity["task_id"], body.get("seq"), body.get("outbound_requests"),
+                                               body.get("outcome"))
+            return {"recorded": recorded}
 
         return app
 
