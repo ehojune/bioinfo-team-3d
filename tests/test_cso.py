@@ -3233,19 +3233,72 @@ async def test_a_cancelled_or_restarted_turn_keeps_its_hold_until_its_cost_is_re
 
 
 @pytest.mark.asyncio
-async def test_a_recovered_earlier_task_releases_the_unsent_attempt_and_is_counted_once():
+@pytest.mark.parametrize("held", [True, False])
+async def test_a_recovered_earlier_task_is_not_held_twice_and_is_counted_once(held):
+    # Review P2-1, at the original cap: 1.5 held for the pre-restart turn + 1.5 for the new attempt would pass 2.0
+    # and open a card, although the gateway adopts the earlier task and never sends the new attempt.
     async def recovered(task):
+        assert hub.requests["r"]["budget_holds"] == {"prior": 1.5}  # still covered while the adopted turn runs
         return TaskResult(task_id="prior", agent_id=task.agent_id, ok=True, text="done", cost_usd=0.3)
 
     hub = _reserving_hub(recovered)
-    hub.requests["r"]["budget_holds"] = {"prior": 1.5}  # held before the gateway restarted
+    hub.recovery_task_id = lambda task: "prior"  # the gateway's own recovery choice for this turn
+    if held:
+        hub.requests["r"]["budget_holds"] = {"prior": 1.5}  # held before the gateway restarted
     orch = Orchestrator(hub)
-    assert orch._budget_bound("r", 2.0)[2] == 1.5
-    hub.requests["r"]["budget_usd"] = 3.0
     assert (await orch.run_step(Task(agent_id="worker", request_id="r", prompt="work"))).ok
+    assert hub.approvals == [] and hub.requests["r"]["budget_usd"] == 2.0 and "r" not in orch.budget_denials
     orch._count_cost("r", "prior")  # a repeated result event changes nothing
-    assert orch.cost["r"] == pytest.approx(0.3) and orch._budget_bound("r", 3.0)[2] == pytest.approx(0.3)
-    assert orch._dispatch_held("r", 3.0) == 0 and all(task.id != "prior" for task in hub.calls)
+    assert orch.cost["r"] == pytest.approx(0.3) and orch._budget_bound("r", 2.0)[2] == pytest.approx(0.3)
+    assert orch._dispatch_held("r", 2.0) == 0 and hub.calls[0].budget_usd is None  # the attempt held nothing
+
+
+class _TaskStore:
+    def __init__(self):
+        self.tasks = {}
+
+    def get(self, kind, key):
+        assert kind == "task"
+        return self.tasks.get(key)
+
+
+@pytest.mark.parametrize("stored,recorded,kept", [(False, False, False), (True, False, True), (False, True, True)])
+def test_a_restart_drops_only_holds_of_attempts_the_gateway_never_stored(stored, recorded, kept):
+    # Review P2-2: a turn held, then restarted while waiting before the gateway stored it, was never sent.
+    hub = _reserving_hub(None)
+    hub.store = _TaskStore()
+    hub.requests["r"]["budget_holds"] = {"X": 1.5}
+    if stored:
+        hub.store.tasks["X"] = {"request_id": "r"}  # stored first, so possibly sent
+    if recorded:
+        hub.requests["r"]["cost_by_task"] = {"X": None}  # e.g. a failed send recorded as unknown
+    orch = Orchestrator(hub)
+    orch._drop_unsent_holds("r")
+    assert hub.requests["r"]["budget_holds"] == ({"X": 1.5} if kept else {})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stored", [False, True])
+async def test_a_cancel_before_the_gateway_stores_the_turn_releases_its_hold(stored):
+    started = asyncio.Event()
+
+    async def wait_before_send(task):  # a PI pause or offline runner: dispatch has not stored the task yet
+        if stored:
+            hub.store.tasks[task.id] = {"request_id": "r"}
+        started.set()
+        await asyncio.Event().wait()
+
+    hub = _reserving_hub(wait_before_send)
+    hub.store = _TaskStore()
+    orch = Orchestrator(hub)
+    running = asyncio.create_task(orch.run_step(Task(agent_id="worker", request_id="r", prompt="a")))
+    await started.wait()
+    orch._drop_unsent_holds("r")  # a concurrent (re)start prune never touches an attempt in flight here
+    assert hub.requests["r"]["budget_holds"] == {hub.calls[0].id: 1.5}
+    running.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await running
+    assert hub.requests["r"]["budget_holds"] == ({hub.calls[0].id: 1.5} if stored else {})
 
 
 @pytest.mark.asyncio
@@ -3258,3 +3311,37 @@ async def test_paper_preparations_keep_their_own_hold_and_are_not_held_twice():
     task = Task(agent_id="worker", request_id="r", prompt="prep", meta={"kind": "paper_skill"})
     assert await orch._reserve_dispatch("r", task, optional=True) is task
     assert "budget_holds" not in hub.requests["r"]
+
+
+@pytest.mark.asyncio
+async def test_gateway_names_the_task_it_adopts_and_records_a_failed_send_as_unknown(tmp_path, monkeypatch):
+    class Socket:
+        async def send_text(self, payload):
+            return None
+
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path)
+    hub = Hub(settings)
+    hub.register_runner("r", Socket(), [{"id": "worker"}])
+    hub.requests["q"] = {"id": "q", "text": "t", "status": "running", "results": {}}
+    task = Task(agent_id="worker", request_id="q", prompt="work", meta={"kind": "step", "step_id": "s1"})
+    assert hub.recovery_task_id(task) is None  # no restart recovery: dispatch sends it
+    # A send that fails after the task was stored may have reached the runner: an unknown cost, not a lost record.
+    async def broken(tid, *, steers=True):
+        raise RuntimeError("state push failed after the frame was sent")
+
+    monkeypatch.setattr(hub, "_push_task_state", broken)
+    with pytest.raises(RuntimeError):
+        await hub.dispatch(task)
+    assert hub.store.get("task", task.id) is None
+    assert hub.requests["q"]["cost_items"][task.id]["status"] == "unknown"
+    # After a restart, recovery names the earlier task by the very rule dispatch uses, and dispatch answers with it.
+    prior = TaskResult(task_id="prior", agent_id="worker", ok=True, text="done")
+    hub.store.put("task", "prior", {"request_id": "q", "kind": "step", "step_id": "s1", "attempt": 1,
+                                    "dispatched_at": 1, "completed": True, "payload": {"meta": {}},
+                                    "result": prior.model_dump(mode="json")})
+    hub.recovery_steps.add("q")
+    hub.recovery_started["q"] = 2
+    again = Task(agent_id="worker", request_id="q", prompt="work", meta={"kind": "step", "step_id": "s1"})
+    assert hub.recovery_task_id(again) == "prior"
+    assert (await hub.dispatch(again)).task_id == "prior"

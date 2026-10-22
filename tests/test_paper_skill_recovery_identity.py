@@ -14,6 +14,7 @@ class RecoveredHub(Hub):
     dispatch = GatewayHub.dispatch
     dispatch_with_identity = GatewayHub.dispatch_with_identity
     recovery_attempt = GatewayHub.recovery_attempt
+    _recovery_choice = GatewayHub._recovery_choice  # dispatch's own choice of the adopted earlier task (#862)
     _recovery_matches = GatewayHub._recovery_matches
     _matches_recovery = staticmethod(GatewayHub._matches_recovery)
     _same_runner_generation = staticmethod(GatewayHub._same_runner_generation)

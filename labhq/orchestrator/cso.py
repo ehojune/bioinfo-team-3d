@@ -2770,6 +2770,8 @@ class Orchestrator:
         self.step_tasks: dict[str, set[asyncio.Task]] = {}  # tasks a request runs beside its own (R13 cancel)
         self.paper_builds: dict[str, paper_skills.ApprovedBuilds] = {}
         self.paper_budget_holds: dict[str, dict[str, float]] = {}
+        # #862: attempts this process reserved and is dispatching now; a restart prune never touches them.
+        self.dispatch_inflight: dict[str, set[str]] = {}
         self.paper_task_ids: dict[str, dict[str, str]] = {}
         self.consult_locks: dict[tuple[str | None, str], tuple[asyncio.Lock, int]] = {}
 
@@ -3664,8 +3666,10 @@ class Orchestrator:
                         res = await self.hub.dispatch(dispatched)
                     res = paper_skills.with_preparation_outcome(res, attempt_task)
                 except asyncio.CancelledError:
+                    self._release_if_unsent(rid, attempt_task.id)
                     raise
                 except Exception as exc:
+                    self._release_if_unsent(rid, attempt_task.id)
                     res = TaskResult(task_id=attempt_task.id, agent_id=current.agent_id, ok=False, error=str(exc))
                     kind = failure_kind(exc, engine)
                     offline = isinstance(exc, RunnerUnavailable)
@@ -3697,6 +3701,8 @@ class Orchestrator:
                     res = merged_workspace_rerun(previous_result, res)
                     if kind == "environment":  # the record the step result, its event and the report show (#35)
                         res = res.model_copy(update={"environment": environment_problem(res, engine)})
+                finally:
+                    self.dispatch_inflight.get(rid, set()).discard(attempt_task.id)  # #862: this send is over here
                 evidence = res.shutdown_evidence or {"exit_code": res.exit_code, "error": res.error,
                     "stopping": bool(getattr(self.hub, "stopping", False)) or stopping_marker(
                         self.hub.s, getattr(self.hub, "session_started_at", time.time())), "source": "gateway"}
@@ -4295,17 +4301,57 @@ class Orchestrator:
                 limit = float(limit)
                 _spent, _unknown, bound = self._budget_bound(rid, limit)
                 cap = self._turn_cap(task, limit - bound)
+                adopted = getattr(self.hub, "recovery_task_id", lambda _task: None)(task)
+                if adopted is not None:
+                    # Restart recovery: the gateway answers this turn with an earlier task instead of sending it (same
+                    # rule, no await between here and that decision), so this attempt holds nothing more. The earlier
+                    # task keeps its hold from before the restart; one without a hold (or cost) is held now, without a
+                    # card, because it may still be spending.
+                    holds = req.setdefault("budget_holds", {})
+                    if adopted not in self.cost_tasks.get(rid, set()) and not _usd_amount(holds.get(adopted)):
+                        holds[adopted] = cap if cap is not None else self._unknown_reserve(limit)
+                        self.hub.save_request(rid)
+                    return task
                 if cap is not None and bound + cap <= limit:
                     holds = req.setdefault("budget_holds", {})
                     previous = holds.get(task.id)
                     holds[task.id] = max(cap, previous) if _usd_amount(previous) else cap
                     self.hub.save_request(rid)
+                    self.dispatch_inflight.setdefault(rid, set()).add(task.id)
                     return task.model_copy(update={"budget_usd": cap, "request_budget_remaining_usd": cap})
                 if optional:
                     raise BudgetExceeded("facilities diagnosis budget exhausted" if task.meta.get("facilities_diagnosis")
                                          else "optional turn budget exhausted before dispatch")
                 needed = cap if cap is not None else self._unknown_reserve(limit)
             await self._check_budget(rid, reserve=needed)  # approval raises the cap; a denial raises here
+
+    def _drop_unsent_holds(self, rid: str) -> None:
+        """At a request's (re)start, release holds of attempts the gateway provably never sent (#862 review P2-2).
+
+        The gateway stores a task before sending it and records an unknown outcome when a send fails, so an id with
+        neither a stored task nor a cost record was never sent: a restart or cancel during the pre-send waits (PI pause,
+        offline runner). Ids being dispatched by this process and every possibly-sent hold are kept."""
+        store = getattr(self.hub, "store", None)
+        req = self.hub.requests.get(rid) or {}
+        holds = req.get("budget_holds")
+        if store is None or not holds:
+            return
+        recorded = req.get("cost_by_task") or {}
+        inflight = self.dispatch_inflight.get(rid, set())
+        kept = {tid: amount for tid, amount in holds.items()
+                if tid in inflight or tid in recorded or store.get("task", tid) is not None}
+        if len(kept) != len(holds):
+            req["budget_holds"] = kept
+            self.hub.save_request(rid)
+
+    def _release_if_unsent(self, rid: str, task_id: str) -> None:
+        """A cancelled or failed dispatch: release the hold only when the gateway neither stored the task (it stores
+        before sending) nor recorded a cost for it; a possibly sent turn keeps its hold."""
+        store = getattr(self.hub, "store", None)
+        req = self.hub.requests.get(rid) or {}
+        if (store is not None and task_id in (req.get("budget_holds") or {})
+                and task_id not in (req.get("cost_by_task") or {}) and store.get("task", task_id) is None):
+            self._release_dispatch_hold(rid, task_id)
 
     def _release_dispatch_hold(self, rid: str, task_id: str) -> None:
         """After dispatch returned: the gateway recorded the turn's cost before answering, or never sent it (a
@@ -5993,6 +6039,7 @@ class Orchestrator:
             self.cost[rid] = float(req.get("cost_usd") or 0)
             self.cost_tasks[rid] = set(req.get("cost_by_task") or {})
             self._seed_cost(rid, req)
+            self._drop_unsent_holds(rid)
         try:
             research_pilot = bool(self.hub.s.research.enabled)
             intake = (classify_intake(req["text"], req.get("work_kind", "auto"),

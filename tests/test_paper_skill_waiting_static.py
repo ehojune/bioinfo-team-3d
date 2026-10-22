@@ -127,15 +127,18 @@ class WaitingStatic(unittest.TestCase):
     def test_gateway_recovery_binds_the_actual_id_and_moves_the_hold_once(self):
         tree = ast.parse((ROOT / 'labhq/orchestrator/cso.py').read_text(encoding='utf-8'))
         cls = next(n for n in tree.body if getattr(n, 'name', None) == 'Orchestrator')
-        names = {'_bind_paper_dispatch_identity', '_budget_bound', '_unknown_reserve'}
+        # _budget_bound also sums the #862 dispatch holds stored on the request record (none here).
+        names = {'_bind_paper_dispatch_identity', '_budget_bound', '_unknown_reserve', '_dispatch_held'}
         cls.body = [n for n in cls.body if getattr(n, 'name', None) in names]
         self.assertEqual({n.name for n in cls.body}, names, 'recovered work needs an authoritative ID binding')
+        amount = next(n for n in tree.body if getattr(n, 'name', None) == '_usd_amount')
         ns = {}
-        exec(compile(ast.Module(body=[cls], type_ignores=[]), '<durable-hold>', 'exec'), ns)
+        prelude = ast.parse('from __future__ import annotations; import math').body
+        exec(compile(ast.Module(body=[*prelude, amount, cls], type_ignores=[]), '<durable-hold>', 'exec'), ns)
         owner = ns['Orchestrator']()
         owner.paper_task_ids, owner.paper_budget_holds = {}, {'r': {'new': 5}}
         owner.cost, owner.cost_tasks, owner.cost_unknown = {}, {}, {}
-        owner.hub = SimpleNamespace(s=SimpleNamespace(policy=SimpleNamespace(
+        owner.hub = SimpleNamespace(requests={'r': {}}, s=SimpleNamespace(policy=SimpleNamespace(
             budget=SimpleNamespace(per_task_usd=5))))
         owner._bind_paper_dispatch_identity('r', 'new', 'durable')
         self.assertEqual(owner.paper_task_ids['r']['new'], 'durable')
@@ -207,11 +210,14 @@ class WaitingStatic(unittest.TestCase):
         tree = ast.parse((ROOT / 'labhq/orchestrator/cso.py').read_text(encoding='utf-8'))
         cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'Orchestrator')
         cls.body = [n for n in cls.body if getattr(n, 'name', None) in {
-            '_budget_bound', '_unknown_reserve', '_request_budget_remaining', '_paper_build_allowance'}]
+            '_budget_bound', '_unknown_reserve', '_request_budget_remaining', '_paper_build_allowance',
+            '_dispatch_held'}]  # _budget_bound also sums the #862 dispatch holds on the request record (none here)
+        amount = next(n for n in tree.body if getattr(n, 'name', None) == '_usd_amount')
         scope = {}
-        exec(compile(ast.Module(body=[cls], type_ignores=[]), '<budget-contract>', 'exec'), scope)
+        prelude = ast.parse('from __future__ import annotations; import math').body
+        exec(compile(ast.Module(body=[*prelude, amount, cls], type_ignores=[]), '<budget-contract>', 'exec'), scope)
         owner = scope['Orchestrator']()
-        owner.hub = SimpleNamespace(s=SimpleNamespace(policy=SimpleNamespace(
+        owner.hub = SimpleNamespace(requests={'r': {}}, s=SimpleNamespace(policy=SimpleNamespace(
             budget=SimpleNamespace(per_task_usd=5))))
         owner.cost, owner.cost_unknown, owner.cost_tasks = {'r': 1}, {}, {}
         owner.paper_budget_holds = {'r': {'pending': 5}}
