@@ -10,6 +10,7 @@
 | [The Virtual Biotech](https://github.com/harrisongzhang/TheVirtualBiotech) | 가상 바이오텍 연구팀 | CSO·전문 직원·과학 리뷰 구조를 본뜨고 claim·근거 검증을 참고했습니다([배경](manual.md#배경-the-virtual-biotech), [검증](../README.md#labhq가-공들인-네-가지)). |
 | [Paper2Agent](https://github.com/jmiao24/Paper2Agent) | 논문·코드를 연구 에이전트로 바꾸는 프로젝트 | 외부 변환 skill로 얻은 도구를 파견직으로 채용·수습·계약합니다([제도](manual.md#파견직-제도-paper2agent)). |
 | [Munder Difflin](https://github.com/HarnessMD/munder-difflin) | CLI 에이전트 사무실 앱 | 사무실·오른쪽 탭·직원 카드 배치와 직원 제어의 운영 교훈을 참고했습니다([#64](https://github.com/ehojune/bioinfo-team-3d/issues/64), [#57](https://github.com/ehojune/bioinfo-team-3d/issues/57)). |
+| [한컴 노마디안(Nomadian)](https://www.hancom.com/ai/aiOrchestrator/nomadian) | AI 직원이 협업하는 3D 업무 공간 | 3D 사무실의 공간 구성과 디자인을 참고했습니다([화면](../README.md)). |
 | [EDAM](https://doi.org/10.7490/f1000research.1118900.1) | 데이터·방법·분야 온톨로지 | 용어 ID·라벨·조상을 추려 로컬 어휘에 연결했습니다([출처·판본](../labhq/vocab/NOTICE.md)). |
 | [RO-Crate](https://w3id.org/ro/crate/1.1) · [Process Run Crate](https://w3id.org/ro/wfrun/process/0.5) | 연구 산출·실행 기록 규격 | 요청 묶음의 JSON-LD metadata에 RO-Crate 1.1과 Process Run Crate 0.5를 적용했습니다([매뉴얼](manual.md#요청-묶음)). |
 | [nf-core](https://nf-co.re/) | Nextflow 분석 파이프라인 모음 | bioinfo-agent의 정형 분석과 워크플로 엔진 우선 정책에 씁니다([소개](../README.md#어떻게-일하나), [정책](manual.md#구성요소와-상태)). |
