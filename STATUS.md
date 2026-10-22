@@ -23,6 +23,45 @@
 
 🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 
+## #858 요청 전체 공개 조회 시도 상한 (source 9a10aef·d6d1372, base 5ea970f → b4e18f9 통합)
+
+- 배경: 시운전 B(#739)의 고정 계약은 한 요청에 공개 문헌 조회 시도 9회다(실패·재시도 포함). 제품에는 단계별 20분 상한과 기관 경로 상한만 있었고 요청 단위 admission이 없었다(독립 검토 P2-5).
+- 바꾼 것:
+  - `annot.request_lookup_limit`(선택, 기본 없음) 설정을 더했다.
+  - runner broker에 `/lookup/admit`·`/lookup/finish`를 더했다. 기록은 `runner/lookup_admission.py`가 `runner.state_dir/lookup_admission.sqlite3`에 남긴다.
+  - 상한이 켜지면 runner가 작업 env에 `LABHQ_LOOKUP_ADMISSION=1`을 넣는다.
+- 세는 단위(`d6d1372`에서 바꿈): `labhq_annot`이 공개 서비스로 보내는 **HTTP 요청 하나**가 한 시도다.
+  - 이전 head `9a10aef`는 도구 호출만 셌다. 그래서 한 호출 안의 재시도(최대 5회)·redirect·논문별 요청이 무제한이었다(독립 검토 P1).
+  - 이제 도구 httpx client의 `request` hook이 보내기 직전마다 admission을 받는다.
+  - httpx는 따라가는 redirect hop마다 hook을 부르고, annot의 재시도·페이지·항목별 요청은 client를 다시 부르므로 모두 한 번씩 센다.
+  - 거부되면 hook이 예외를 내 그 요청은 나가지 않는다. 같은 호출의 뒤 요청은 broker에 다시 묻지 않고 거부한다.
+  - 행에는 tool·host·HTTP status·호출 결과를 남기고, query는 남기지 않는다.
+- 요청 구분과 원자성:
+  - 요청 id는 broker가 작업 token에 묶은 값만 쓴다. 호출 body가 다른 요청·작업을 적으면 403이다.
+  - SQLite `BEGIN IMMEDIATE`로 세고 기록하므로 같은 요청의 직원·단계·재시작·동시 요청이 한 상한을 쓴다.
+- fail closed: broker token·runner ledger·request id가 없거나 broker에 닿지 못하면 보내지 않는다.
+  - 상한이 켜지면 요청마다 셀 수 없는 AlphaGenome 도구는 거부한다.
+  - `key_fulltext`의 기관 browser 경로는 쓰지 않는다.
+- 기본: 설정이 없으면 broker를 부르지 않는다. 기존 동작과 같다.
+- 검사:
+  - `tests/test_external_wait.py`의 #858 test를 다시 썼다. MockTransport·가짜 backend만 쓴다.
+    - ledger
+    - 24 thread 동시성
+    - broker 인증 경로
+    - 상한 3에서 계획 3·5건: 3건만 나가고 4번째는 보내기 전에 거부
+    - 503 재시도와 302 redirect가 각각 한 번씩 셈
+    - 한 호출 안 동시 요청 8건 중 3건
+    - fail closed와 미설정
+    - runner env
+  - 로컬 in-process 결과는 파일 전체 35 passed다.
+  - broker·runner 연결 test 3개는 로컬 venv에 fastapi·websockets가 없어 CI 몫이다.
+  - 3.10 AST, public, diff 검사를 통과했다.
+- 남은 것:
+  - 웹 검색·외부 HTTP MCP·셸 네트워크는 막지 않는다. 시운전 직원 구성에서 빼야 한다.
+  - runner가 둘이면 따로 센다.
+  - DNS 조회는 HTTP 요청이 아니라 세지 않는다.
+  - 실제 runner·provider·시운전에서는 확인하지 않았다.
+
 ## #833 — Windows 브라우저 검사 시작·첫 화면 지연 진단 (base 5ea970f)
 
 - 관측:
