@@ -41,6 +41,30 @@ test('demo lifecycle trace is bounded and disabled observers do not sample the c
   assert.equal(disabledSamples, 0);
 });
 
+test('#833 server and waiting observations keep their own budget and never move or displace a boundary', () => {
+  const rows = [];
+  let now = 0;
+  const trace = demoLifecycleTrace(row => rows.push(row), () => now);
+  trace('open-start');
+  now = 100; trace('target-ready', {json_attempts: 3, json_unanswered: 2, json_without_page: 0});
+  now = 110; trace('navigate-start');
+  now = 140; trace.observe('server-request');
+  now = 150; trace.observe('server-response', {status: 200});
+  now = 5110; trace.observe('navigate-waiting', {page_requested: true, page_responded: true});
+  for (let i = 0; i < 10; i++) trace.observe('navigate-waiting');
+  now = 5200; trace('navigate-ready');
+  assert.deepEqual(rows.slice(1, 6), [
+    {stage:'target-ready', elapsed_ms:100, since_previous_ms:100, json_attempts:3, json_unanswered:2, json_without_page:0},
+    {stage:'navigate-start', elapsed_ms:110, since_previous_ms:10},
+    {stage:'server-request', elapsed_ms:140, since_previous_ms:30},
+    {stage:'server-response', elapsed_ms:150, since_previous_ms:40, status:200},
+    {stage:'navigate-waiting', elapsed_ms:5110, since_previous_ms:5000, page_requested:true, page_responded:true}]);
+  assert.equal(rows.filter(row => ['server-request', 'server-response', 'navigate-waiting'].includes(row.stage)).length, 6);
+  assert.deepEqual(rows.at(-1), {stage:'navigate-ready', elapsed_ms:5200, since_previous_ms:5090});
+  for (let i = 0; i < 20; i++) trace('boot-start');
+  assert.equal(rows.filter(row => !['server-request', 'server-response', 'navigate-waiting'].includes(row.stage)).length, 16);
+});
+
 test('demo lifecycle observer and clock failures cannot replace an operation failure', () => {
   const original = new Error('original operation failure');
   for (const trace of [demoLifecycleTrace(() => { throw new Error('observer'); }, () => 1),
