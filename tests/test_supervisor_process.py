@@ -409,7 +409,8 @@ def test_with_restarting_on_a_role_that_keeps_failing_is_started_again_and_then_
 def test_a_role_killed_from_outside_is_restarted_but_one_stopped_on_purpose_is_not(run):
     process, settings = run(SLEEP, "supervisor:\n  restart: true\n  backoff_s: 0\n  backoff_cap_s: 0\n")
     first = _wait_until(lambda: _role_record(settings))
-    assert first, _failure_evidence(settings)
+    # #844: None = the supervisor process is still running; an exit code = it ended before recording the role.
+    assert first, f"supervisor process exit={process.poll()}; " + _failure_evidence(settings)
 
     def restarted():
         record = _role_record(settings)
