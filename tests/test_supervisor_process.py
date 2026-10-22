@@ -155,6 +155,10 @@ def _logs(settings: Settings) -> Path:
 
 
 START_EVIDENCE_TAIL_BYTES = 16 * 1024
+# The launch journal names which Windows spawn step refused the role, and the role's own log says why it ended
+# (#844 paths D and F); the supervisor log and diagnostics alone keep only an exception type.
+START_EVIDENCE_FILES = ("gateway-supervisor.log", "gateway-supervisor-diagnostics.jsonl", "detached-launch.jsonl",
+                        "gateway.log")
 
 
 def _print_start_evidence(settings: Settings, stream=None) -> None:
@@ -163,7 +167,7 @@ def _print_start_evidence(settings: Settings, stream=None) -> None:
     original failure unchanged. The fixture tokens are masked and control characters are not echoed."""
     stream = sys.stderr if stream is None else stream
     secrets = [token for token in (settings.gateway.client_token, settings.gateway.runner_token) if token]
-    for name in ("gateway-supervisor.log", "gateway-supervisor-diagnostics.jsonl"):
+    for name in START_EVIDENCE_FILES:
         try:
             path = _logs(settings) / name
             if path.is_symlink():
@@ -583,7 +587,16 @@ def test_start_evidence_is_bounded_masked_and_never_replaces_the_failure(tmp_pat
     assert "test-runner" not in text and "test-pi" not in text
     assert len(text) < START_EVIDENCE_TAIL_BYTES + 400  # bounded tail, not the whole file
     assert "gateway-supervisor-diagnostics.jsonl: unavailable (FileNotFoundError)" in text
+    assert "detached-launch.jsonl: unavailable (FileNotFoundError)" in text and "gateway.log: unavailable" in text
+    # #844: the launch journal and the role's own log are shown the same bounded, masked way when they exist.
+    (logs / "detached-launch.jsonl").write_text('{"role": "gateway", "status": "unverified", "child_in_job": null}\n',
+                                                 encoding="utf-8")
+    (logs / "gateway.log").write_text("bind failed for test-runner\x07\n", encoding="utf-8")
+    present = io.StringIO()
+    _print_start_evidence(settings, present)
+    shown = present.getvalue()
+    assert '"status": "unverified"' in shown and "bind failed for [redacted]?" in shown and "test-runner" not in shown
     monkeypatch.setattr(cli, "_launch_state", lambda s: (_ for _ in ()).throw(RuntimeError("state")))
     broken = io.StringIO()
     _print_start_evidence(settings, broken)  # must not raise
-    assert broken.getvalue().count("unavailable (RuntimeError)") == 2
+    assert broken.getvalue().count("unavailable (RuntimeError)") == len(START_EVIDENCE_FILES) == 4
