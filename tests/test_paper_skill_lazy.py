@@ -225,7 +225,7 @@ def test_result_reference_is_reported_with_hash_and_no_private_source_path(tmp_p
     record = ps.records(plan, results)[0]
     assert record['called'] is True and record['built'] and record['attached_steps'] == ['s1']
     assert 'skill_dir' not in record['usage'][0] and row['skill_dir'] not in str(record)
-    assert row['skill_sha256'] in ps.appendix(plan, results) and '예(결과의 정확한 참조 확인)' in ps.appendix(plan, results)
+    assert row['skill_sha256'] in ps.appendix(plan, results) and '결과 참조: 확인(도구 호출·효용 증거 아님)' in ps.appendix(plan, results)
 
 
 def test_unwritable_owned_input_never_counts_as_installed(tmp_path):

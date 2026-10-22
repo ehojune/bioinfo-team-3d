@@ -311,6 +311,7 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
 .sheet .role{margin:2px 0 0;color:var(--muted);font-size:14px}
 .facts{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:14px 0;font-size:14px}
 .facts dt{color:var(--muted)}.facts dd{margin:0;overflow-wrap:anywhere}
+.paper-literature{margin:10px 0;font-size:14px}.paper-literature .paper-row summary{cursor:pointer;overflow-wrap:anywhere}.paper-literature .facts{margin:6px 0 10px}
 .acts{display:flex;flex-wrap:wrap;gap:8px}
 .staff-control{display:grid;gap:8px;margin:10px 0 12px;padding:10px;border:1px solid var(--line);border-radius:12px}
 .staff-control .control-head{margin:0;font-size:13px;color:var(--muted)}
@@ -453,6 +454,7 @@ import {officeSVG, officeHead, officeCharacter, officeStatus} from './ui/office-
 import {bindShutdown} from './ui/shutdown.js';
 import {answerRequired, decisionChoice, decisionNote, storageChoice, modelRefusalChoice, revisedToast, revisionNoteMissing, syncReviewCards, syncDecisionCards, syncDecisionHistory, createHistoryVisibility, expandableText, syncExpandableText} from './ui/decide.js';
 import {syncStaffCards} from './ui/strip.js';
+import {syncPaperLiterature} from './ui/literature.js';
 import {syncTaskBoard, syncStepFlow} from './ui/tasks.js';
 import {controlHtml, controlKey, staffControls} from './ui/control.js';
 import {initTabShell, updateDecisionBadge} from './ui/shell.js';
@@ -1156,12 +1158,33 @@ function openSheet(id) {
 <dl class="facts">${facts.map(([k, v]) => `<dt>${esc(k)}</dt><dd${k === '쓴 비용' ? ' class="sheet-spent"' : k === '상태' ? ' class="sheet-state"' : k === '지금 하는 일' ? ' class="sheet-task"' : ''}>${esc(v)}</dd>`).join('')}</dl>
 <div class="sheet-command" aria-label="실행 중인 도구 입력"></div>
 <div class="staff-control-slot" data-key="${esc(controlKey(control))}">${controlHtml(control, esc)}</div>
+${id === 'lit_scout' ? '<section class="paper-literature" aria-label="선행 연구 목록"></section>' : ''}
 <div class="log-view" role="group" aria-label="기록 보기"><button type="button" class="btn" data-act="log" data-view="activity" aria-pressed="${view === 'activity'}">활동</button><button type="button" class="btn" data-act="log" data-view="trace" aria-pressed="${view === 'trace'}">생각·디버그 <span class="trace-count">${(a.trace || []).length}</span></button></div>
 <ul class="activity" data-view="${view}"></ul>
 <div class="acts">${acts.join('')}</div>`;
   dlg.dataset.agent = id;
   if (typeof dlg.showModal === 'function') { if (!dlg.open) dlg.showModal(); } else dlg.setAttribute('open', '');
   renderSheetLogs();
+  renderSheetLiterature();
+}
+// #660: the current request's papers on the fox's sheet; one detail GET, the same record the review uses.
+const literatureLoading = new Set(), literatureAt = new Map();
+function renderSheetLiterature() {
+  const box = $('#sheet-in .paper-literature'), rid = S.current, q = rid && S.requests.get(rid);
+  if (!box) return;
+  if (!q) { box.replaceChildren(); box.textContent = '선택한 요청이 없어요.'; return; }
+  if (!api?.requestDetail && !q.paperLiterature) { box.replaceChildren(); box.textContent = '선행 연구 목록은 실시간 사무실에서 보여요.'; return; }
+  // Refetch only after the request moved on (a skill built or a step finished since the last read).
+  const fresh = q.paperLiterature && literatureAt.get(rid) === q.updated_at;
+  if (fresh || !api?.requestDetail) { syncPaperLiterature(box, q.paperLiterature); return; }
+  syncPaperLiterature(box, null, {loading: true});
+  if (literatureLoading.has(rid)) return;
+  literatureLoading.add(rid); literatureAt.set(rid, q.updated_at);
+  api.requestDetail(rid).then(detail => fillRequestDetail(rid, detail)).catch(() => {}).finally(() => {
+    literatureLoading.delete(rid);
+    const current = $('#sheet-in .paper-literature');
+    if (current && S.current === rid) syncPaperLiterature(current, S.requests.get(rid)?.paperLiterature);
+  });
 }
 function closeSheet() { const d = $('#sheet'); if (typeof d.close === 'function' && d.open) d.close(); else d.removeAttribute('open'); }
 $('#sheet').addEventListener('click', async e => {

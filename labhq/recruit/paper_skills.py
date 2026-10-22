@@ -408,8 +408,106 @@ def appendix(plan: dict, results: dict | None = None) -> str:
         f"Paper2Agent commit: {values(r, 'paper2agent_commit', '미기록')}; "
         f"skill hash: {values(r, 'skill_sha256', '없음')}; "
         f"붙음: {', '.join(r['attached_steps']) or '아니오'}; "
-        f"호출됨: {'예(결과의 정확한 참조 확인)' if r['called'] else '아니오'} ({r['call_status']})"
+        f"결과 참조: {'확인(도구 호출·효용 증거 아님)' if r['called'] else '실행 전' if r['call_status'] == 'not_dispatched' else '미확인'}"
+        f" ({r['call_status']})"
         for r in rows)) if rows else ""
+
+
+_STATUSES = {"deferred", "ready", "reused", "failed", "unavailable", "skipped"}
+_REFERENCES = {"referenced", "unverified", "not_dispatched"}
+_REASONS = {"result_reference", "input_changed", "step_failed", "no_result_reference"}
+
+
+def _plain(value: Any, limit: int) -> str | None:
+    text = re.sub(r"[\x00-\x1f\x7f]+", " ", value).strip() if isinstance(value, str) else ""
+    return text[:limit] or None
+
+
+def _ids(values: Any, limit: int = 12) -> list[str]:
+    rows = values if isinstance(values, list) else []
+    return list(dict.fromkeys(v for v in rows if isinstance(v, str) and re.fullmatch(r"[\w.-]{1,64}", v)))[:limit]
+
+
+def _hex(rows: list[dict], key: str, size: int) -> str | None:
+    found = [row[key] for row in rows if isinstance(row.get(key), str) and re.fullmatch(rf"[a-f0-9]{{{size}}}", row[key])]
+    return found[-1] if found else None
+
+
+def literature_view(req: dict) -> dict:
+    """Read-only rows for the literature scout's paper list (#660), from the stored request only.
+
+    No file, build, download or model turn. A result reference is shown as such, never as a tool call or utility.
+    """
+    precedents = req.get("analysis_precedents")
+    plan = req.get("plan") if isinstance(req.get("plan"), dict) else {}
+    if not isinstance(precedents, dict) and not plan.get("paper_skill_results") and not plan.get("recruit_results"):
+        return {"status": "absent", "papers": []}
+    status = "ok" if isinstance(precedents, dict) and precedents.get("status") == "ok" else "unavailable"
+    view: dict[str, Any] = {"status": status, "papers": []}
+    if status != "ok":
+        view["warning"] = _plain((precedents or {}).get("warning") if isinstance(precedents, dict) else None, 200)
+    try:
+        results = {k: v for k, v in (req.get("results") or {}).items() if isinstance(v, dict)}
+        skills = records({"paper_skill_results": [r for r in plan.get("paper_skill_results") or [] if isinstance(r, dict)]},
+                         results)
+    except (AttributeError, TypeError, KeyError, ValueError):
+        skills, view["damaged"] = [], True
+    recruits = [r for r in plan.get("recruit_results") or [] if isinstance(r, dict)]
+
+    def skill_card(row: dict) -> dict:
+        usage = [u for u in row.get("usage") or [] if isinstance(u, dict)]
+        reason = next((_plain(u.get("preparation_error"), 200) for u in usage if u.get("preparation_error")), None)
+        return {"status": row.get("status") if row.get("status") in _STATUSES else "unknown",
+                "built": row.get("built") is True,
+                "reason": reason or _plain(row.get("skip_reason"), 200) or _plain(row.get("error"), 200),
+                "selection_reason": _plain(row.get("reason"), 300),
+                "agents": _ids(row.get("agent_ids"), 4),
+                "skill_sha256": _hex([row, *usage], "skill_sha256", 64),
+                "paper2agent_commit": _hex([row, *usage], "paper2agent_commit", 40),
+                "selected_steps": _ids(row.get("step_ids")),
+                "attached_steps": _ids(row.get("attached_steps")),
+                "reference": row.get("call_status") if row.get("call_status") in _REFERENCES else "unverified",
+                "reference_reasons": list(dict.fromkeys(u["reason"] for u in usage if u.get("reason") in _REASONS))[:4]}
+
+    def recruit_card(row: dict) -> dict:
+        return {"status": _plain(row.get("status"), 40) or "unknown", "agent_id": (_ids([row.get("agent_id")], 1) or [None])[0],
+                "step_ids": _ids(row.get("step_ids"))}
+
+    used: set[int] = set()
+    used_recruits: set[int] = set()
+    papers = precedents.get("papers") if status == "ok" else None
+    for paper in papers if isinstance(papers, list) else []:
+        if not isinstance(paper, dict) or len(view["papers"]) >= 8:
+            continue
+        receipt = paper.get("fulltext_receipt") if isinstance(paper.get("fulltext_receipt"), dict) else {}
+        citations = paper.get("citations") if isinstance(paper.get("citations"), list) else []
+        keys = list(dict.fromkeys(pid for c in [*citations[:8], receipt.get("paper_id")]
+                                  if isinstance(c, str) and (pid := paper_id(c))))[:4]
+        row: dict[str, Any] = {"title": _plain(paper.get("title"), 300) or "제목 없음", "ids": keys,
+                               "uses": ["planning"], "skill": None, "recruit": None}
+        match = next((i for i, s in enumerate(skills) if i not in used and s.get("paper_id") in keys), None)
+        if match is not None:
+            used.add(match)
+            row["uses"].append("paper_skill")
+            row["skill"] = skill_card(skills[match])
+        hire = next((i for i, r in enumerate(recruits) if i not in used_recruits and paper_id(str(r.get("paper") or "")) in keys), None)
+        if hire is not None:
+            used_recruits.add(hire)
+            row["uses"].append("recruit")
+            row["recruit"] = recruit_card(recruits[hire])
+        view["papers"].append(row)
+    # A selection or hire that names no listed paper still shows, with its own identifier only.
+    for i, skill in enumerate(skills[:4]):
+        if i not in used:
+            pid = paper_id(str(skill.get("paper_id") or ""))
+            view["papers"].append({"title": _plain(skill.get("title"), 300) or "제목 없음", "ids": [pid] if pid else [],
+                                   "uses": ["paper_skill"], "skill": skill_card(skill), "recruit": None})
+    for i, hire in enumerate(recruits[:4]):
+        if i not in used_recruits:
+            pid = paper_id(str(hire.get("paper") or ""))
+            view["papers"].append({"title": _plain(hire.get("paper"), 300) or "논문 미기재", "ids": [pid] if pid else [],
+                                   "uses": ["recruit"], "skill": None, "recruit": recruit_card(hire)})
+    return view
 
 
 def reference_token(row: dict) -> str:

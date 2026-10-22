@@ -213,7 +213,7 @@ async def test_enriched_pmid_citations_build_full_text_and_record_abstract_skip(
         (True, False, [], False), (True, False, [], False)]
     assert "선정됨" in card_text(out) and "만들어짐" in card_text(out)
     report = appendix(out, {})
-    assert "붙음" in report and "호출됨" in report and "receipt" in report
+    assert "붙음" in report and "결과 참조: 실행 전" in report and "receipt" in report and "호출됨" not in report
 
 
 @pytest.mark.asyncio

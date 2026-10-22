@@ -438,6 +438,7 @@ function req(rid) {
     Object.defineProperty(q, 'assumptions', { value: [], writable: true, enumerable: false });
     Object.defineProperty(q, 'processing', { value: null, writable: true, enumerable: false });
     Object.defineProperty(q, 'costSummary', { value: null, writable: true, enumerable: false });  // #270
+    Object.defineProperty(q, 'paperLiterature', { value: null, writable: true, enumerable: false });  // #660, from the detail GET
     Object.defineProperty(q, 'pipelinePr', { value: null, writable: true, enumerable: false });
     Object.defineProperty(q, 'bundlePath', { value: '', writable: true, enumerable: false });
     Object.defineProperty(q, 'bundleStatus', { value: '', writable: true, enumerable: false });
@@ -1082,6 +1083,9 @@ function fillFollowups(rid, request) {
 function fillRequestDetail(rid, request) {
   const q = S.requests.get(rid);
   let filled = fillFollowups(rid, request);
+  // Not counted as filled text: the paper list is a derived view, not a truncated report (#660).
+  if (q && request?.paper_literature && typeof request.paper_literature === 'object' && Array.isArray(request.paper_literature.papers))
+    q.paperLiterature = request.paper_literature;
   if (q && request?.report_package && typeof request.report_package === 'object') {
     q.reportPackage = { ...request.report_package };
     filled++;
