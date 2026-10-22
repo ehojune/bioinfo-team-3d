@@ -4,6 +4,25 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 단계
+직원 기본 모델 설정 변경
+
+## 한 일
+- engineer와 facilities의 기본 모델만 gpt-6.1-sol로 바꿨습니다.
+- 기존 model 단언, 생성 README 한영 inventory, manual 직원 표를 맞췄습니다.
+- Luna·Astra·Claude, bench arm·CSO 선택은 유지했습니다. 실행 인스턴스와 시운전 후보는 변경하지 않았습니다.
+
+## 테스트 결과
+- AgentSpec 13건과 직원 model 2개만 변경됐다는 정적 대조 PASS.
+- registry/facilities 기존 단언과 생성 inventory의 정확한 값 대조 PASS.
+- integrations --check, check_public.sh, git diff --check PASS.
+- pytest는 로컬 미설치로 실행하지 않았습니다. 기존 test의 CI 검증이 남았습니다.
+
+## 막힌 점
+제품 모델 가용성·실요청·성능은 UNVERIFIED입니다. 모델·연구·브라우저·runtime 실행은 없었습니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 ## #833 — Windows 브라우저 검사 시작·첫 화면 지연 진단 (base 5ea970f)
 
 - 관측:
