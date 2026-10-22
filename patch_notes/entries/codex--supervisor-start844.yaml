@@ -1,0 +1,6 @@
+pr: null
+rows:
+- sha: 20ab71f
+  at: 2026-10-22 10:08
+  summary: Windows 시험에서 감독 프로세스가 일찍 끝나면, 원인을 가를 실행 기록과 gateway 로그 끝부분도 함께 남깁니다.
+  text: 'test_supervisor_process.py의 시험 전용 _print_start_evidence가 기존 gateway-supervisor.log·diagnostics에 더해 detached-launch.jsonl과 gateway.log의 같은 16KiB 꼬리를 실패 출력에 남긴다. #844에서 감독 프로세스가 gateway 기록 전에 끝난 원인 가운데 Windows 자식 기동 거부와 gateway 즉시 종료는 기존 두 파일만으로 구분되지 않았다. token 마스킹·제어문자 치환·symlink 거부·원래 실패 예외 보존·진단 오류 비전파는 그대로이고 제품 코드와 제한시간은 바꾸지 않았다. 원인은 아직 모르며 다음 재발 때 판정한다.'
