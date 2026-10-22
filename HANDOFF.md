@@ -9,20 +9,20 @@
 2. test는 바꾼 곳만, 전체 suite는 CI에 맡깁니다. 실제 설정·PI 인스턴스·원자료는 업무 범위와 승인 없이 건드리지 않습니다.
 3. 끝날 때 PR과 `docs/status/`에 결과를 쓰고 이 문서의 우선순위를 갱신합니다. 지난 큐·결정은 [참고 기록](docs/reference/README.md)에 두고 여기에는 현재 것만 남깁니다.
 
-## 현재 우선순위 (2026-10-22)
+## 현재 우선순위 (2026-10-23)
 
-Codex는 총괄을 유지하고, PI 결정으로 새 일반 Codex 작업은 보류 중입니다. Codex는 기존 PR 마무리와 긴급 수정만 맡습니다. 개발 작업은 Claude Opus(동시 최대 3)가 하며 Claude 사용량은 Codex 예산에 넣지 않습니다. 시운전 체크리스트는 [#739](https://github.com/ehojune/bioinfo-team-3d/issues/739)입니다.
+PI 승인으로 개발을 재개했습니다. Codex 총괄은 같은 담당자·세션에 관련 작업을 잇고 필요할 때만 투입합니다. 현행 동시 투입·예산 한도는 [#760](https://github.com/ehojune/bioinfo-team-3d/issues/760)의 최신 PI 결정이 정본입니다.
 
 | 후속 항목 | 현재 범위 |
 |---|---|
 | #799 | 정책·4-arm 기록기 병합(#815·#824). 실제 bench·효용은 미측정 |
-| #739 | 공개 소형 주제 선택·계약·배포 runtime 준비. 실제 실행은 별도 승인 뒤 |
+| #739 | A/B 선택·범위·상한 승인 완료. A를 먼저 준비하고 완료 뒤 B를 별도 판정. 실제 연구 요청 0건 |
 
 병합된 감사 항목의 구현·검증 범위는 [감사 우선순위](docs/reference/audit-priorities-2026-10-20.md)에 있습니다. #811의 queued-halt 검사는 executor 대기와 분리됐으며 [검증 경계](docs/reference/shadow-test-cost-811.md)를 따릅니다.
 
 논문 스킬은 승인 뒤 함께 준비하고, 분석 단계는 시작 시 준비된 결과만 씁니다. 미완료면 기다리지 않고 생략 사실을 기록합니다([준비·취소와 CI 근거](docs/reference/paper-skill-waiting-671.md)). 검증 문서는 읽기 권한만 주며 결과 참조 receipt는 실제 tool 호출·과학적 효용의 증거가 아닙니다([참조 계약](docs/reference/paper-skills-798.md)).
 
-개발 준비가 끝나고 PI가 실운전을 승인한 뒤의 순서는 공개 소형 주제 실운전 → bench dry-run·필수 게이트 → Astra의 코드·README·구조 전체 검토 → 동일 요청 bench 비교(labhq 혼합 roster 대 Astra·Sol·Opus 단독 세션)입니다. 가동 전에는 배포 인스턴스의 `doctor --runtime` 준비 판정을 다시 확인합니다. v0.5 선언(2026-10-08) 이후 장치의 구현·CI 통과는 새 실운전 PASS를 뜻하지 않습니다([로드맵](docs/manual.md#로드맵)).
+승인된 소형 시운전의 runtime·상한·종료 조건을 확인한 뒤의 순서는 공개 소형 주제 실운전 → bench dry-run·필수 게이트 → Astra의 코드·README·구조 전체 검토 → 동일 요청 bench 비교(labhq 혼합 roster 대 Astra·Sol·Opus 단독 세션)입니다. 가동 전에는 배포 인스턴스의 `doctor --runtime` 준비 판정을 다시 확인합니다. v0.5 선언(2026-10-08) 이후 장치의 구현·CI 통과는 새 실운전 PASS를 뜻하지 않습니다([로드맵](docs/manual.md#로드맵)).
 
 ## PI 결정
 
