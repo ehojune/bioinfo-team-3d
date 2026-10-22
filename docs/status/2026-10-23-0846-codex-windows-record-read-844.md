@@ -9,7 +9,7 @@
 
 ## 테스트 결과
 - Python 3.10 문법 파싱을 했습니다.
-- broker 원본을 가짜 `windows_launch`로 실행하고 두 시험 파일을 가짜로만 돌렸습니다. 새 코드는 99건 통과입니다. main의 broker에서는 27건이 실패하며, 야간과 같은 증상인 winerror 없는 EACCES 정지가 포함됩니다.
+- broker 원본을 가짜 `windows_launch`로 실행하고 세 시험 파일(broker·phases·frames)을 가짜로만 돌렸습니다. 새 코드는 119건 통과입니다. main의 broker에서는 28건이 실패하며, 야간과 같은 증상인 winerror 없는 EACCES 정지가 포함됩니다.
 - 기록 검사·공개 검사·git diff --check를 했습니다.
 - pytest·실제 Windows·WMI·Job·CI는 돌리지 않았습니다.
 
