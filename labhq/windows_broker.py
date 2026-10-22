@@ -431,6 +431,33 @@ def bootstrap(control):
         raise
 
 
+# Where the bootstrap is once its receipt exists (#844). Before "role" a failure is the bootstrap's own and is
+# reported by stage and exception type only; from "role" on it is the role's, with its owned log as stderr.
+_STAGE = {"name": None, "log": None}
+
+
+def _note_stop(error: BaseException) -> None:
+    """One line in the requested role log, which the caller verified lies inside the instance state."""
+    if _STAGE["name"] is None or not isinstance(_STAGE["log"], str):
+        return  # No receipt yet: the caller journals that failure itself (receipt_timeout).
+    try:
+        with open(_STAGE["log"], "a", encoding="utf-8") as stream:
+            stream.write(f"labhq WMI bootstrap stopped before the role started: "
+                         f"stage={_STAGE['name']} error={type(error).__name__}\n")
+    except OSError:
+        pass
+
+
+def main(argv) -> None:
+    try:
+        bootstrap(Path(argv[1]))
+    except Exception as error:
+        if _STAGE["name"] == "role":
+            raise  # The role's own traceback goes to its owned log, as when it is started directly.
+        _note_stop(error)
+        raise SystemExit(2) from None  # No argv, environment, credentials, or paths in bootstrap diagnostics.
+
+
 def _bootstrap(control):
     request = _read(control)
     native = Native()
@@ -444,6 +471,7 @@ def _bootstrap(control):
             raise LaunchError("WMI bootstrap caller/environment mismatch")
         receipt = {"nonce": request["nonce"], "pid": os.getpid(), "created": mine["created"]}
         _write(control.parent / "receipt.json", receipt)
+        _STAGE.update(name="ack_wait", log=request.get("log"))
         deadline = time.monotonic() + TIMEOUT
         while True:
             if not native.alive(parent) or time.time() >= request["expires"] or time.monotonic() >= deadline:
@@ -451,8 +479,10 @@ def _bootstrap(control):
             if _read(control.parent / "ack.json") == receipt:
                 break
             time.sleep(.02)
+        _STAGE["name"] = "final_check"
         if job_membership() is not False or not native.alive(parent):
             raise LaunchError("WMI bootstrap final Job/caller check failed")
+        _STAGE["name"] = "cleanup"
         _cleanup(control.parent)  # ACK consumed; parent no longer reads control files. No persistent nonce.
     finally:
         native.k.CloseHandle(parent)
@@ -461,6 +491,7 @@ def _bootstrap(control):
 
 def _enter(request):
     # Same interpreter/PID/creation identity. No subprocess and no role ownership before ACK.
+    _STAGE["name"] = "enter"
     os.chdir(request["cwd"])
     sys.path[:] = request["sys_path"]
     sys.executable, sys.prefix, sys.exec_prefix = request["executable"], request["prefix"], request["exec_prefix"]
@@ -468,6 +499,7 @@ def _enter(request):
     log = open(request["log"], "a", encoding="utf-8", buffering=1)
     sys.stdout = sys.stderr = log  # Keep open through interpreter shutdown, including target SystemExit.
     sys.stdin = open(os.devnull, encoding="utf-8")
+    _STAGE["name"] = "role"
     argv = request["argv"]
     if argv[0] == "-m":
         sys.argv = argv[1:]
@@ -477,7 +509,4 @@ def _enter(request):
 
 
 if __name__ == "__main__":
-    try:
-        bootstrap(Path(sys.argv[1]))
-    except Exception:
-        raise SystemExit(2) from None  # No argv, environment, credentials, or paths in bootstrap diagnostics.
+    main(sys.argv)
