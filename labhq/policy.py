@@ -1699,13 +1699,47 @@ class Decision:
     updated_input: dict | None = None
 
 
+def _windows_normpath(path: str) -> str:
+    """`ntpath.normpath` in linear time: the running stdlib's own drive/root split, then one pass over components.
+
+    CPython's pure-Python `ntpath.normpath` (Linux and other non-Windows hosts; Windows has a native one) deletes each
+    empty, `.` and `x\\..` component from a list in place, so a long separator or dot run costs quadratic time
+    (#868: a 131,072-character separator candidate). The prefix still comes from the stdlib, so UNC, device and drive
+    spellings normalize as before; the component rules are the stdlib's, applied with a stack.
+    """
+    splitroot = getattr(ntpath, "splitroot", None)
+    if splitroot is not None:  # Python 3.12+
+        path = path.replace("/", "\\")
+        drive, root, tail = splitroot(path)
+    else:  # Python 3.10/3.11: device and literal paths come back unchanged; leading separators make one root
+        if path.startswith(("\\\\.\\", "\\\\?\\")):
+            return ntpath.normpath(path)
+        path = path.replace("/", "\\")
+        drive, tail = ntpath.splitdrive(path)
+        root = "\\" if tail.startswith("\\") else ""
+        tail = tail.lstrip("\\")
+    comps: list[str] = []
+    for comp in tail.split("\\"):
+        if not comp or comp == ".":
+            continue
+        if comp == "..":
+            if comps and comps[-1] != "..":
+                comps.pop()
+                continue
+            if not comps and root:
+                continue
+        comps.append(comp)
+    prefix = drive + root
+    return prefix + "\\".join(comps) if prefix or comps else "."
+
+
 def _norm(p: str, *, expand_vars: bool = True) -> str:
     """Lexically normalize both POSIX and Windows paths, regardless of the host OS."""
     p = os.path.expanduser(p)
     if expand_vars:
         p = os.path.expandvars(p)
     if re.match(r"^[A-Za-z]:[/\\]", p) or p.startswith(("\\\\", "//")):
-        return ntpath.normpath(p).replace("\\", "/").casefold()
+        return _windows_normpath(p).replace("\\", "/").casefold()
     normalized = posixpath.normpath(p.replace("\\", "/"))
     return normalized.casefold() if os.name == "nt" else normalized
 

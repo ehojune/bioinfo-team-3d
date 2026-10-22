@@ -4,6 +4,44 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## Linux 경로 비용과 Windows ACK 대기 수리 통합 (#868)
+
+- base: main `c7671a0`. 검토된 #861 `ba95796`을 merge해 원래 커밋·작성자를 보존했다.
+- `policy.py`·`test_policy.py`는 #868 검토판 `973c543`, WMI 제품·테스트는 #861 검토판과 byte 단위로 같다.
+- [CI 39854597294](https://github.com/ehojune/bioinfo-team-3d/actions/runs/39854597294): Windows provider 생성·Job 비소속 확인 뒤 bootstrap `ack_wait PermissionError`로 실패했다. 로그에 winerror가 없어 32라고 확정하지 않는다.
+- #861은 receipt·ACK 대기의 winerror 32만 기존 deadline 안에서 재읽는다. 다른 오류·첫 request 읽기·nonce/identity/Job 검사는 그대로다. timeout·skip·보안 조건을 바꾸지 않았다.
+- Linux의 이차 경로 정규화는 component stack으로 고친다. 전체 731,072자 입력·8배 비용 계약을 유지한다.
+- 로컬 WMI fake 16건과 문자열 검사 22건을 통과했다. 문자열 검사의 touches_resolved는 파일시스템 대신 lexical mock을 썼다. 로컬 검증은 fake·정적 검사뿐이다. 실제 Windows/WMI·프로세스 시험과 새 head CI 확인은 하지 않았다. #861 정리와 #868 병합은 총괄 몫이다.
+
+## 경로 정규화의 Linux 이차 비용 수리와 비율 계약 (source 5b803cb·e7a6b26, base 0f80516)
+
+- 관측:
+  - PR866 CI(run 39845342493)에서 절대 2초 예산이 2.046·2.267초로 실패했다.
+  - 같은 시험을 1/4→전체 비율 계약으로 바꾼 PR868 head 831084d의 Linux 3.12 CI(run 39849219342)에서는 4배 입력에 mentions_zone 11.2배, touches 10.2배가 나왔다.
+  - 처음의 "스캐너는 선형"이라는 판단은 Windows에서만 잰 결과라 틀렸다.
+- 원인: Codex 독립 진단이 재현했다.
+  - `_norm`이 131,072자 구분자 후보를 `ntpath.normpath`에 넘긴다.
+  - Linux가 쓰는 pure-Python 판은 빈 성분을 list에서 하나씩 `del`해 이차 비용이 된다.
+  - Windows의 native normpath는 이를 가렸다.
+- 변경(제품): `labhq/policy.py`의 `_windows_normpath`를 더했고, `_norm`의 Windows 분기가 이것을 쓴다.
+  - 실행 중인 stdlib의 `splitroot`(3.12+)·`splitdrive`(3.10/3.11)로 drive·root를 나눈다. 3.10/3.11에서 장치·literal 접두는 stdlib 그대로다.
+  - 성분 규칙(빈·`.` 제거, `x\..` 상쇄, root 아래 맨 앞 `..` 제거, 빈 결과 `.`)을 stack으로 한 번에 적용한다.
+  - 구분자 run, `.` run, `x\..` 쌍, root 아래 `..` run이 모두 선형이다.
+- 변경(시험):
+  - 호출 스레드 CPU 기준 1/4→전체 8배 계약(+ 시계 한 tick)을 둔다.
+  - 기존 731,072자 입력과 늦은 `/restricted`·file URI 검사는 그대로다.
+  - 실행 중인 CPython의 pure-Python normpath(AST 추출, Windows에서도 실행)와 짧은 입력 전수·UNC/장치/drive 사례를 비교한다.
+  - 다섯 가지 긴 모양에 같은 계약을 건다.
+- 검사(로컬, 문자열만):
+  - 짧은 입력 약 50만 건에서 3.12·3.14 pure-Python normpath와 불일치 0건이다.
+  - 3.12 Windows native와는 `_norm`이 닿는 입력 중 `\?\UNC\` 1건이 달랐다. 이 경우 Linux·3.14와 같은 결과를 낸다.
+  - Linux 동작을 흉내 낸 수정 전 스캐너는 mentions_zone 전체 3.2초, touches 비율 8.5배로 실패했다. 수정 후에는 0.07초, 비율 4배다.
+  - 시험 22건 in-process 통과, `validate_profile`, 3.10 AST를 통과했다.
+- 한계:
+  - 3.10 pure-Python 판은 로컬에 없어 CI 몫이다.
+  - `private_paths.path_field_text`와 Windows 전용 `claude_write_input`의 `ntpath.normpath`는 이번 범위 밖이다.
+  - 비율 계약은 해당 입력에 대한 것이며 모든 입력의 선형성 증명이 아니다.
+
 ## 변경
 자동 monitor의 terminal→PI 취소 race를 막고 요청 소유 task attempts를 읽는 변경안입니다.
 
@@ -36,6 +74,26 @@
   - `tests/test_step_memory_limit.py` +12 함수, 18 case: 알림 순서, Job 배정 실패, Job handle 비상속·wrapper 보유, 첫 줄·PID 판정, verdict 표(메타데이터 누락·wait 미완료 포함), 정상·0이 아닌 종료·위조 줄·다른 PID·무알림·Job 꺼짐, 실행 중 취소, spawn 중 취소(만들어짐/없음), daemon 합치기·재시작.
   - 프로세스 없이 in-process로 실행했다: adapter·wrapper 14 case 통과, daemon 두 메서드(AST 추출) 통과. 이전 코드에서는 새 API가 없어 실패한다.
   - Python 3.10 AST 통과. 실제 Job·프로세스·WMI는 CI 몫이다.
+
+## #844 — WMI bootstrap 대기 중 공유 위반을 다시 읽기 (base fc22600)
+
+- 관측: PR859 head `c6e43c4` CI(run 39838111863, Windows job 120031772167)에서 `test_with_restarting_on_a_role_that_keeps_failing_is_started_again_and_then_left`가 실패했다.
+  - 실행 기록: 직접 기동이 winerror 5로 거부된 뒤 `wmi_attempt` → `wmi_verified`(child Job 밖).
+  - 감독 로그: `labhq WMI bootstrap stopped before the role started: stage=ack_wait error=PermissionError`(#851의 단계 기록). 종료 코드 2.
+- 원인 분석: ack_wait 단계에서 `PermissionError`를 낼 수 있는 호출은 ACK 파일 읽기(`_read`)다.
+  - `Native.alive` 실패는 `OSError(GetLastError())`로 만들어져 `PermissionError`가 되지 않는다.
+  - Python의 파일 열기는 FILE_SHARE_DELETE 없이 열기 때문에, 다른 handle이 DELETE 권한으로 같은 파일을 열고 있으면 공유 위반(winerror 32)이 난다. 쓰는 쪽의 `os.replace`나 파일 검사기가 그런 handle을 잡을 수 있다.
+  - 대기 루프는 FileNotFoundError만 '아직 없음'으로 보고 나머지는 실패로 끝냈다. 부모의 receipt 대기도 같은 구조다.
+  - 어떤 handle이 잡았는지와 실제 winerror 값은 기록에 없었다. 이번 변경으로 정지 기록에 winerror를 남긴다.
+- 변경(`labhq/windows_broker.py`):
+  - `_poll`: 공유 위반(winerror 32)만 '아직 없음'으로 보고 다시 읽는다. 부모 receipt 대기와 bootstrap ACK 대기 두 곳에만 쓴다.
+  - 기존 deadline·nonce·caller 생존·Job 확인은 그대로다. 접근 거부(5) 등 다른 오류와 첫 request 읽기는 이전처럼 바로 실패한다.
+  - 정지 기록에 `winerror=<숫자>`를 덧붙인다(정수일 때만).
+- 검사(mock 전용, `tests/test_windows_broker.py` +4):
+  - receipt 대기·ACK 대기 각각 winerror 32는 다시 읽어 성공, 5는 그대로 실패.
+  - 프로세스 없이 in-process로 실행했다: 새 코드 16/16 통과. 이전 broker 코드에서는 공유 위반 2건이 CI와 같은 증상(ack_wait의 PermissionError, 부모의 native_error code 13)으로 실패한다.
+  - Python 3.10 AST.
+- 미확인: 실제 Windows에서 잡은 handle의 정체, 실제 WMI·감독 재실행. #844는 열어 둔다(이전 두 실패의 단계는 기록이 없어 같은 원인인지 모른다).
 
 ## 단계
 직원 기본 모델 설정 변경
