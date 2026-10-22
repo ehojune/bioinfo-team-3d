@@ -4,6 +4,13 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# README 출처·문헌 규모 보완
+
+- 소개: The Virtual Biotech 연구팀 구조에서 출발했음을 명시.
+- References: 한컴 노마디안의 3D 공간 구성·디자인 참고 출처 추가.
+- 점검표: 논문 근거 목록 1,286편 추가, 한영판 함께 반영.
+- 확인: TSV 고유 PMID 1,286개, 설정45분야·135항목, 공식 소개 URL·diff·공개 검사. 제품 코드는 변경하지 않음.
+
 ## #854 Windows 야간 subtest 오판 (source 3590827, base 059b910)
 
 - 확인한 사실: run 39681301430 attempt 1(schedule, main `99f1c49`)의 `pytest-windows` job 119504243006.
