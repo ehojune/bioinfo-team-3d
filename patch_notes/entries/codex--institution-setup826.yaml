@@ -8,3 +8,7 @@ rows:
   at: 2026-10-22 09:35
   summary: 매뉴얼에서 email을 비워 두면 Unpaywall 조회만 빠지고 핵심 논문 본문 찾기의 나머지 단계는 그대로라는 점을 분명히 했습니다.
   text: 'docs/manual.md Unpaywall email 항목의 문장 순서를 고쳐, enabled:false는 unpaywall 도구의 답이고 key_fulltext는 email이 없으면 Unpaywall만 건너뛰고 다른 합법 OA·기관 세션·PDF 요청 순서를 그대로 진행한다고 적었다(_legal_oa_copy와 대조). 승인 main 4ff7c12(#848 92b4f9a)를 명시 merge했고 init 코드와 test는 그대로다. #826은 부분 해결이다.'
+- sha: a5fb4eb
+  at: 2026-10-22 09:47
+  summary: 기존 설정으로 다시 실행할 때 저장했다고 잘못 말하지 않고, 세션이 붙은 프록시 주소를 더 정확히 거르도록 고쳤습니다.
+  text: '독립 검토 P2 두 건 수정. (1) 기존 설정 재실행은 아무것도 저장하지 않는다고 말하고, 현재 기관 세션 상태와 채울 설정 이름(literature.institution_proxy·annot.unpaywall_email)만 보인다. 입력한 주소·email은 다시 출력하지 않으며 설정 파일 hash는 그대로다. 새 설정의 저장 안내는 유지한다. (2) _proxy_prefix가 host의 userinfo·{url}, 모든 ; matrix(;jsessionid), CAS형 ST-… 경로, session/ticket/token 이름 경로, 범위 밖 port를 거부하고 {url}은 url/qurl 값이나 마지막 경로 한 자리로만 받는다. 경로 속 임의 토큰은 다 가려내지 못한다고 docstring·질문·manual에 적었다. 순수 실행으로 이전 코드는 검토 값 4개 허용·재실행 저장 문구 출력, 수정 후 거부·미출력, 기존 10행 유지를 확인했다. 실제 init과 CI는 미확인이다. #826은 부분 해결이다.'
