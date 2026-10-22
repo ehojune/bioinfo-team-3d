@@ -66,7 +66,7 @@ SETTLE_EVIDENCE_TIMES = 8
 
 def settle_timeout_evidence(tasks, completed, elapsed):
     """Failure output only: counts and times, never a coroutine repr, ask text, environment or path. Nightly run
-    39858916081 timed out here with the gathered asks already finished, so tell a stalled loop from a hung ask."""
+    39858916081 timed out here with the gathered asks already finished; observations alone do not prove the cause."""
     done = sum(1 for task in tasks if task.done())
     cancelled = sum(1 for task in tasks if task.cancelled())
     times = sorted(round(float(at), 3) for at in completed.values())[:SETTLE_EVIDENCE_TIMES]
@@ -80,7 +80,7 @@ async def settle(hub):
     if hub.ask_tasks:
         tasks = list(hub.ask_tasks.values())
         started = time.monotonic()
-        completed = {}  # when each task actually ended, from its own callback, not the later observation
+        completed = {}  # callback execution times; a busy loop may run callbacks after the tasks actually ended
         for index, task in enumerate(tasks):
             task.add_done_callback(lambda _task, index=index: completed.setdefault(index, time.monotonic() - started))
         try:

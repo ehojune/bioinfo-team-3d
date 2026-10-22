@@ -3,6 +3,7 @@
 
 ## 한 일
 - run 39858916081의 `test_consult_restart` settle 시간 초과에 작업 상태·완료 callback 시각·경과 시간을 남기는 시험 전용 진단을 넣었습니다. 3초 상한·예외·판정은 그대로입니다.
+- callback 실행 시각은 실제 작업 종료보다 늦을 수 있어, 이 값만으로 event loop 지연이나 작업 정체를 확정하지 않습니다.
 - supervisor 실제 gateway 시험은 시작 증거를 이미 출력합니다. 야간 로그에 `stage=ack_wait error=PermissionError`(winerror 없음)가 남아 있어 시험은 바꾸지 않았습니다. 앞선 분류의 "증거 없음"은 틀렸고 여기서 정정합니다.
 - 코드 읽기로 찾은 단서입니다(재현하지 않음): Windows에서 Python `open()`이 낸 PermissionError에는 winerror가 없을 수 있습니다. 그렇다면 #868의 winerror 32 재시도가 ACK 읽기에 적용되지 않을 수 있습니다. 제품 코드라 이 PR에서는 고치지 않습니다.
 
