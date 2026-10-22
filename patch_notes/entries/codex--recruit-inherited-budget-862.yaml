@@ -1,0 +1,6 @@
+pr: null
+rows:
+- sha: 4dd595b
+  at: 2026-10-23 08:49
+  summary: 계획 채용도 실제 변환 호출에 상위 비용 예약 상한을 적용합니다.
+  text: '예약 모드의 plan_recruit가 상위 task 예산과 남은 금액을 내부 변환 Task로 전달한다. 채용 설정과 함께 최소값을 택하고 없는 값·0·음수·비유한 값은 거절하며 Claude의 cent 출력은 내림한다. 1cent 미만은 보내지 않는다. 기본 예약-off와 수동 채용은 유지한다. 내부 결과는 자기 task ID로 기존 회계에 한 번만 기록하고 결과 유실은 상위 UNKNOWN으로 보존한다. 추출한 Task·Claude argv·회계 코드로 pure fake 11건과 3.10 문법·Windows 새 파일 경계 등록을 검증했다. 실제 CLI·모델·async loop는 실행하지 않았다. #862.'
