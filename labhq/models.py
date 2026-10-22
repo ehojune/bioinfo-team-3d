@@ -405,6 +405,9 @@ class TaskResult(BaseModel):
     revision_failed: str | None = None
     exit_code: int | None = None
     shutdown_evidence: dict[str, Any] = {}
+    # What the runner itself observed of the staff CLI wrapper's end (#863): Job activation, wrapper identity, wait and
+    # exit. Kept apart from shutdown_evidence, whose presence means an interruption; merged into it only then.
+    cleanup_evidence: dict[str, Any] = {}
     error_kind: str | None = None
     error: str | None = None
     # Epoch seconds of a subscription-quota reset. The runner reads the CLI's clock time in its own zone (#37).
