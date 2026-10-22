@@ -1,0 +1,10 @@
+pr: null
+rows:
+- sha: a6c9e86
+  at: 2026-10-22 06:53
+  summary: 결론에 중요한 논문의 본문을 찾을 때도 설정해 둔 Unpaywall 연락 email로 합법 무료 사본을 먼저 확인합니다.
+  text: 'annot_mcp._run_key_fulltext가 일반 문헌 도구와 같은 annot.unpaywall_email을 LiteratureAnnotator에 넘긴다. 이전에는 이 값이 빠져, email을 설정해도 key_fulltext의 Unpaywall 합법 OA 조회가 꺼진 채로 기관 세션이나 PI PDF 카드로 넘어갔다. 미설정은 이전 기본값(빈 값, 비활성)과 같다. 기존 test_external_wait.py에 생성 인자 검사(가짜 example.org email·빈 값, 생성 시점에서 멈춤)를 더하고, 두 settings stub에 annot를 넣었다. 생성 인자는 AST 추출 순수 실행으로 HEAD FAIL과 수정 후 PASS를 확인했고, async 검사 실행은 CI에 맡긴다. 실제 조회·기관 연결·셋업 질문은 하지 않았고 #826은 부분 해결이다.'
+- sha: 376af69
+  at: 2026-10-22 09:21
+  summary: 매뉴얼에 핵심 논문 본문 조회도 설정한 Unpaywall 연락 email로 합법 무료 사본을 먼저 찾는다고 적었습니다.
+  text: 'docs/manual.md 문헌 도구 절의 Unpaywall email 항목에 key_fulltext도 같은 email을 쓴다는 한 문장을 더했다(177,138→177,193자). 승인 main 9d4836c를 명시 merge했고 annot_mcp.py·test_external_wait.py core는 바뀌지 않았다. 기관 setup·WoS·Nexus·구독 원문은 범위 밖이며 #826은 부분 해결이다.'

@@ -141,7 +141,9 @@ async def _run_key_fulltext(papers: list[dict[str, Any]]) -> str:
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=20.0), follow_redirects=True,
                                  headers={"User-Agent": annot.USER_AGENT}) as client:
-        annotator = annot_literature.LiteratureAnnotator(client, WORKDIR, CACHE_DIR, pace=PACE)
+        # The same contact email as the plain literature tools: key papers also check legal OA copies (#826).
+        annotator = annot_literature.LiteratureAnnotator(client, WORKDIR, CACHE_DIR, pace=PACE,
+                                                         unpaywall_email=S.annot.unpaywall_email)
         institution = limiter = None
         policy = S.literature
         if policy.institution_enabled and policy.institution_tdm_allowed and policy.external_model_allowed:
