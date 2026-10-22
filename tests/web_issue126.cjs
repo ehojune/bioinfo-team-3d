@@ -75,7 +75,7 @@ const source = fs.readFileSync(path.join(root, 'lab3d/src/live.js'), 'utf8').rep
     .replace("'../../ui/shutdown.js'", "'data:text/javascript;base64," + Buffer.from(fs.readFileSync(path.join(root, 'ui/shutdown.js'), 'utf8')).toString('base64') + "'");
 (async () => {
   const {startLiveOffice} = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
-  startLiveOffice(() => {});
+  const office3d = startLiveOffice(() => {});
   const ws = sockets[0]; ws.readyState = 1; ws.onopen();
   ws.onmessage({data: JSON.stringify(snapshot)});
   const nodes = () => all(element('requests'));
@@ -91,5 +91,13 @@ const source = fs.readFileSync(path.join(root, 'lab3d/src/live.js'), 'utf8').rep
   assert.deepEqual(fetched, [['/api/approvals/history?limit=50', 'Bearer test-client'], ['/api/requests/r1', 'Bearer test-client']]);
   assert.equal(line(), `이어 묻기: Long? → ${FULL}`);
   assert.equal(nodes().some(n => n.tagName === 'BUTTON' && n.textContent === '전문 보기'), false);
+  // #660: the 3D fox inspector reads the same authenticated detail GET, once per request update.
+  detail.paper_literature = {status: 'absent', papers: []};
+  const before = fetched.length;
+  assert.equal(office3d.paperLiterature().loading, true);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(fetched.slice(before), [['/api/requests/r1', 'Bearer test-client']]);
+  assert.equal(office3d.paperLiterature().view, detail.paper_literature);
+  assert.equal(fetched.length, before + 1, 'no second read until the request changes');
   console.log('snapshot answer head, full answer on demand in 2.5D and 3D: OK');
 })().catch(error => { console.error(error); process.exitCode = 1; });

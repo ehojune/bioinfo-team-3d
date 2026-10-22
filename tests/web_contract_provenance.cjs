@@ -69,3 +69,27 @@ test('the 채용 제안 card says what hiring records before the PI decides',asy
   assert.match(p.consequence.textContent,/commit·license·외부 전송/);
   assert.match(p.consequence.textContent,/통제 데이터/);
 });
+
+test('the fox sheet lists every precedent and a row opens its skill card as text (#660)',async()=>{
+  const lit=await load('literature.js');
+  const skill={status:'ready',built:true,reason:null,selection_reason:'같은 QC 방법',agents:['analyst'],skill_sha256:'a'.repeat(64),
+    paper2agent_commit:COMMIT,selected_steps:['s1'],attached_steps:['s1'],reference:'referenced',reference_reasons:['result_reference']};
+  const view={status:'ok',papers:[{title:'<img src=x onerror=alert(1)>',ids:['doi:10.1000/fit','pmid:42'],uses:['planning','paper_skill'],skill,recruit:null},
+    {title:'Context only',ids:['javascript:alert(1)'],uses:['planning'],skill:null,recruit:null}]};
+  const box=new Element();
+  const [first,second]=lit.syncPaperLiterature(box,view);
+  assert.equal(box.children[0].textContent,'선행 연구 2편 · 자문 스킬 1 · 재현 채용 0','the count is all papers, not the skills');
+  assert.match(first.textContent,/^<img src=x onerror=alert\(1\)> · 계획 참고 · 자문 스킬/,'a title stays text');
+  assert.deepEqual(nodes(first).filter(el=>el.tagName==='A').map(el=>el.href),['https://doi.org/10.1000/fit','https://pubmed.ncbi.nlm.nih.gov/42/']);
+  assert.match(first.textContent,/skill aaaaaaaaaaaa · Paper2Agent 0123456/);
+  assert.match(first.textContent,/결과에서 참조 확인\(도구 호출·효용 증거 아님\)/);
+  assert.ok(!nodes(second).some(el=>el.tagName==='A'),'an unknown scheme is never a link');
+  assert.match(lit.skillFacts({...skill,built:false,status:'skipped',reason:'자료 요청 필요',reference:'not_dispatched'}).map(r=>r.join(' ')).join('\n'),
+    /상태 생략 \(자료 요청 필요\)\n생성 버전 생성 안 됨[\s\S]*결과 참조 단계 실행 전/);
+  assert.equal(lit.summaryText({status:'absent',papers:[]}),'이 요청에는 선행 연구 기록이 없어요.');
+  const office=State.createOfficeState({now:()=>100});
+  office.apply({type:'request.created',request_id:'r1',data:{text:'t'}});
+  assert.equal(office.fillRequestDetail('r1',{paper_literature:view}),0,'the paper list is not counted as filled report text');
+  assert.equal(office.S.requests.get('r1').paperLiterature,view);
+  assert.ok(!Object.keys(office.S.requests.get('r1')).includes('paperLiterature'));
+});

@@ -835,3 +835,95 @@ def test_talent_command_prints_the_same_lines(tmp_path, capsys):
     cli.main(["-c", str(config), "talent"])
     out = capsys.readouterr().out.splitlines()
     assert len(out) == 1 and "doi:10.1000/xyz" in out[0] and "생성됨" in out[0]
+
+
+# ---------------- #660: the fox's paper list, from the stored request only ----------------
+
+def _literature_request(*, referenced=True):
+    from labhq.recruit.paper_skills import reference_token
+    use = {"paper_id": "doi:10.1000/fit", "step_id": "s1", "selection_sha256": "sel", "input_ref": "inputs/paper_skills/x.md",
+           "skill_id": "paper-" + "c" * 24, "skill_sha256": "a" * 64, "document_sha256": "d" * 64,
+           "paper2agent_commit": "e" * 40, "status": "ready", "called": referenced,
+           "call_status": "referenced" if referenced else "unverified",
+           "reason": "result_reference" if referenced else "no_result_reference"}
+    if referenced:
+        use["evidence"] = reference_token(use)
+    papers = [{"title": "Fit method", "citations": ["https://doi.org/10.1000/FIT"],
+               "fulltext_receipt": {"paper_id": "doi:10.1000/fit", "text_file": "/private/fit.txt"}},
+              {"title": "Reproduced study", "citations": ["PMID: 4242"]},
+              {"title": "Context only", "citations": ["no identifier"]}]
+    plan = {"steps": [{"id": "s1", "agent_id": "analyst"}],
+            "paper_skill_results": [{"paper_id": "doi:10.1000/fit", "title": "Fit method", "reason": "같은 QC 방법",
+                                     "step_ids": ["s1"], "agent_ids": ["analyst"], "status": "ready",
+                                     "selection_sha256": "sel", "skill_dir": "/private/talent/x"}],
+            "recruit_results": [{"paper": "PMID:4242", "step_ids": ["s1"], "status": "active", "agent_id": "c_repro"}]}
+    return {"id": "r", "status": "done", "analysis_precedents": {"status": "ok", "papers": papers},
+            "plan": plan, "results": {"s1": {"ok": True, "provenance": {"runs": {"t1": {"paper_skills": [use]}}}}}}
+
+
+def test_paper_literature_lists_every_precedent_and_the_stored_skill_receipts():
+    from labhq.recruit.paper_skills import literature_view
+    view = literature_view(_literature_request())
+    fit, hire, context = view["papers"]
+    assert view["status"] == "ok" and [row["title"] for row in view["papers"]] == ["Fit method", "Reproduced study", "Context only"]
+    assert fit["uses"] == ["planning", "paper_skill"] and fit["ids"] == ["doi:10.1000/fit"]
+    assert fit["skill"] == {"status": "ready", "built": True, "reason": None, "selection_reason": "같은 QC 방법",
+                            "agents": ["analyst"], "skill_sha256": "a" * 64, "paper2agent_commit": "e" * 40,
+                            "selected_steps": ["s1"], "attached_steps": ["s1"], "reference": "referenced",
+                            "reference_reasons": ["result_reference"]}
+    assert hire["uses"] == ["planning", "recruit"] and hire["recruit"] == {"status": "active", "agent_id": "c_repro", "step_ids": ["s1"]}
+    assert context["uses"] == ["planning"] and context["ids"] == [] and context["skill"] is None
+    assert "/private" not in json.dumps(view)  # no receipt path or talent folder
+    unverified = literature_view(_literature_request(referenced=False))["papers"][0]["skill"]
+    assert unverified["reference"] == "unverified" and unverified["reference_reasons"] == ["no_result_reference"]
+
+
+def test_paper_literature_bounds_damaged_records_and_says_when_there_is_none():
+    from labhq.recruit.paper_skills import literature_view
+    assert literature_view({"id": "r"}) == {"status": "absent", "papers": []}
+    req = _literature_request()
+    req["analysis_precedents"]["papers"] += ["bad", {"title": "<b>x</b>\x00\n" + "y" * 900, "citations": "PMID: 1"}]
+    req["plan"]["paper_skill_results"].append("bad")
+    req["results"]["s2"] = {"provenance": "bad"}
+    view = literature_view(req)
+    assert view["damaged"] is True and all(row["skill"] is None for row in view["papers"])
+    long = view["papers"][-1]
+    assert len(long["title"]) == 300 and "\x00" not in long["title"] and long["ids"] == []
+    # #849 review: a non-list hire record or an unhashable receipt field is damaged data, never a raised error.
+    hostile = _literature_request()
+    hostile["plan"]["recruit_results"] = 5
+    hostile["results"]["s1"]["provenance"]["runs"]["t1"]["paper_skills"][0].update(status=["ready"], reason=["x"])
+    shown = literature_view(hostile)
+    assert shown["damaged"] is True and [row["recruit"] for row in shown["papers"]] == [None, None, None]
+    assert shown["papers"][0]["skill"]["reference_reasons"] == []
+    failed = literature_view({"analysis_precedents": {"status": "warning", "warning": "analysis precedents unavailable (no_papers)"}})
+    assert failed == {"status": "unavailable", "papers": [], "warning": "analysis precedents unavailable (no_papers)"}
+
+
+@pytest.mark.asyncio
+async def test_request_detail_carries_the_paper_list_without_changing_the_record(tmp_path):
+    import httpx
+
+    from labhq.gateway.server import create_app
+
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    app = create_app(settings)
+    hub = app.state.hub
+    hub.requests["r"] = _literature_request()
+    hub.requests["bad"] = {**_literature_request(), "id": "bad", "plan": {"recruit_results": 5}}
+    stored = json.dumps(hub.requests["bad"], sort_keys=True)
+    headers = {"Authorization": f"Bearer {settings.gateway.client_token}"}
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gw") as client:
+            detail = await client.get("/api/requests/r", headers=headers)
+            anonymous = await client.get("/api/requests/r")
+            missing = await client.get("/api/requests/none", headers=headers)
+            malformed = await client.get("/api/requests/bad", headers=headers)
+        assert detail.status_code == 200 and detail.json()["paper_literature"]["papers"][0]["skill"]["reference"] == "referenced"
+        assert anonymous.status_code == 401 and missing.status_code == 404
+        assert "paper_literature" not in hub.requests["r"]
+        assert malformed.status_code == 200 and malformed.json()["paper_literature"]["damaged"] is True
+        assert json.dumps(hub.requests["bad"], sort_keys=True) == stored  # the detail never rewrites a damaged record
+    finally:
+        hub.store.close()
