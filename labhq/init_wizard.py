@@ -224,8 +224,9 @@ def _institution_answers(new_config: bool = True) -> dict:
                       "알려진 세션·ticket 형식(';jsessionid', 'ST-…' 등) 없음일 때만 받습니다.")
         services = input("이용 중인 문헌 서비스 (예: Web of Science, Scopus, 도서관 검색; 없으면 Enter): ").strip()
         if services and _WOS.search(services):
-            print("Web of Science: labhq는 이 기관의 Clarivate 연결(예: Nexus Connect)의 계약·주소·권한을 확인하지 않았고 "
-                  "자동으로 연결하지 않습니다. 기관 도서관이 연결 주소와 사용 범위를 안내하면 그때 연결합니다.")
+            print("Web of Science: labhq에는 Web of Science Research Assistant·Nexus Connect 전용 연결이 없어 "
+                  "자동으로 연결하지 않습니다. 이 기관의 Clarivate 계약·연결 주소·권한은 확인하지 않았고, "
+                  "기관이 제공하는 접속 조건은 기관 도서관 안내로 확인하세요.")
         elif services:
             print("문헌 서비스: 적은 내용은 저장하지 않습니다. 연결 방법은 기관 도서관 안내를 확인하세요.")
     raw = input("Unpaywall 연락용 email (선택, 합법 무료 사본 위치를 찾을 때 Unpaywall API에만 보냄; 없으면 Enter): ")
