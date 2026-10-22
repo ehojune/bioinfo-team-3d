@@ -222,6 +222,44 @@ def _npm_script(shim: Path) -> tuple[Path, bool] | None:
     return None
 
 
+def _wrapper_identity(pid: int) -> int | None:
+    """Creation time (FILETIME ticks) of the step's own wrapper child, read while the runner still holds it (#863)."""
+    if os.name != "nt":
+        return None
+    try:
+        handle = proc_tree._open(pid, terminate=False)
+    except (OSError, ValueError):
+        return None
+    if handle is None:
+        return None
+    try:
+        return handle.created
+    finally:
+        handle.close()
+
+
+def cleanup_verdict(record: dict[str, Any]) -> dict[str, Any]:
+    """What the runner may say about a staff CLI's end, from its own observations only (#863).
+
+    `job_close_contract_enforced` needs the wrapper's own activation line before the CLI started and a completed wait
+    for that wrapper: it held the only KILL_ON_CLOSE handle, so its end makes Windows end the rest of the Job. That is
+    the Job close contract, not a measured empty Job (no ActiveProcesses query). A non-zero exit, including labhq's
+    own kill, is not a failed cleanup. Anything less is UNKNOWN; a spawn that created nothing is `not_started`."""
+    evidence = {**record, "active_processes_measured": False}
+    if record.get("spawn") == "failed":
+        evidence["status"] = "not_started"
+    elif record.get("spawn") == "cancelled":
+        evidence.update(status="UNKNOWN", reason="spawn_cancelled_before_handover")
+    elif record.get("job") != "active":
+        evidence.update(status="UNKNOWN", reason=("windows_job_disabled" if record.get("job") == "disabled"
+                                                  else "windows_job_unconfirmed"))
+    elif record.get("wait") != "completed" or type(record.get("returncode")) is not int:
+        evidence.update(status="UNKNOWN", reason="wrapper_wait_unfinished")
+    else:
+        evidence["status"] = "job_close_contract_enforced"
+    return evidence
+
+
 def _is_windows() -> bool:
     return os.name == "nt"
 
@@ -485,6 +523,8 @@ class RunContext:
     halt_grace_s: float = 0.0
     # Runner hook: the CLI process started, so the steers in its prompt reached the engine.
     on_started: Callable[[], None] | None = None
+    # Runner hook (#863): the cleanup evidence of a run that ends by cancellation, which returns no TaskResult.
+    on_cleanup: Callable[[dict], None] | None = None
     # Explicit benchmark runner only. Callback accepts identifiers/counts, never prompt/command text.
     bench_observer: Callable[..., None] | None = None
 
@@ -924,12 +964,18 @@ class AgentAdapter(ABC):
             group_args.update(memory_guard.spawn_kwargs())
             spawn_cmd = memory_guard.wrap_command(cmd)
             ctx.bench_spawn(bench_spawn_id, "attempt", spawn_cmd, payload)
-            proc = await asyncio.create_subprocess_exec(
+            spawn = asyncio.ensure_future(asyncio.create_subprocess_exec(
                 *spawn_cmd, cwd=str(ctx.workdir), env=env,
                 stdin=asyncio.subprocess.PIPE if payload is not None else asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                 limit=32 * 1024 * 1024, **group_args,
-            )
+            ))
+            try:
+                proc = await asyncio.shield(spawn)
+            except asyncio.CancelledError:
+                # #863: the spawn runs on; a process the OS already created is taken over and ended, not lost.
+                await self._reap_cancelled_spawn(spawn, ctx, memory_guard)
+                raise
         except FileNotFoundError:
             ctx.bench_spawn(bench_spawn_id, "failed", cmd, payload)
             memory_guard.close()
@@ -943,12 +989,17 @@ class AgentAdapter(ABC):
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False,
                               error=f"could not start executable {cmd[0]!r}: {detail}")
         ctx.bench_spawn(bench_spawn_id, "started", spawn_cmd, payload)
+        # #863: the wrapper the runner started and holds; its activation line and end are recorded below.
+        wrapper_pid = getattr(proc, "pid", None)  # process doubles in unit tests may have none
+        cleanup: dict[str, Any] = {"job": "pending" if getattr(memory_guard, "job_expected", False) else "disabled",
+                                   "wrapper_pid": wrapper_pid,
+                                   "wrapper_created": _wrapper_identity(wrapper_pid) if type(wrapper_pid) is int else None}
         try:
             # Unit adapters use small process doubles; only a real asyncio child has an OS process to constrain.
             if isinstance(proc, asyncio.subprocess.Process):
                 memory_guard.attach(proc.pid)
         except OSError as exc:
-            await self._kill(proc)
+            cleanup["kill"] = await self._kill(proc)
             memory_guard.close()
             return TaskResult(
                 task_id=ctx.task.id,
@@ -957,18 +1008,21 @@ class AgentAdapter(ABC):
                 error_kind="memory_limit_setup",
                 error=("직원 단계 메모리 상한을 설정하지 못해 실행하지 않았습니다: "
                        f"{exc}. 관리자 권한은 요청하지 않습니다."),
+                cleanup_evidence=self._cleanup_evidence(cleanup, proc),
             )
         ctx.started_command = launcher
         if ctx.on_started:
             try:
                 ctx.on_started()
             except BaseException as exc:  # never leave a started CLI running unsupervised (PR #532 review)
-                await self._kill(proc)
+                cleanup["kill"] = await self._kill(proc)
                 memory_guard.close()
                 if not isinstance(exc, Exception):
+                    self._report_cleanup(ctx, cleanup, proc)
                     raise
                 return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False,
-                                  error=f"runner could not record the CLI start: {type(exc).__name__}: {exc}")
+                                  error=f"runner could not record the CLI start: {type(exc).__name__}: {exc}",
+                                  cleanup_evidence=self._cleanup_evidence(cleanup, proc))
         st = RunState()
         tool_activity = _ToolActivity(self.engine)
         stderr_tail: deque[str] = deque(maxlen=60)
@@ -1019,9 +1073,19 @@ class AgentAdapter(ABC):
         async def read_err() -> None:
             nonlocal last_output
             assert proc.stderr
+            first = True
             async for raw in proc.stderr:
                 last_output = time.monotonic()
-                stderr_tail.append(raw.decode(errors="replace").rstrip())
+                text = raw.decode(errors="replace").rstrip()
+                if first:
+                    first = False
+                    if cleanup["job"] == "pending":  # only the wrapper can write before the CLI exists (#863)
+                        confirmed = (type(wrapper_pid) is int and
+                                     getattr(memory_guard, "job_confirmed", lambda *_args: False)(text, wrapper_pid))
+                        cleanup["job"] = "active" if confirmed else "unconfirmed"
+                        if confirmed:
+                            continue
+                stderr_tail.append(text)
 
         async def feed_stdin() -> None:
             """Write the prompt inside the timed, watched run: a CLI that never reads stdin must not hold labhq before
@@ -1163,13 +1227,16 @@ class AgentAdapter(ABC):
             await asyncio.wait_for(asyncio.shield(drain), timeout=self.settings.runner.task_timeout_s)
         except asyncio.TimeoutError:
             st.error = f"timeout after {self.settings.runner.task_timeout_s}s"
-            await self._kill(proc)
+            cleanup["kill"] = await self._kill(proc)
             await drain
         except asyncio.CancelledError:
             guard.cancel()
-            await self._kill(proc)
-            await asyncio.shield(drain)
-            memory_guard.close()
+            try:
+                cleanup["kill"] = await self._kill(proc)
+                await asyncio.shield(drain)
+                memory_guard.close()
+            finally:  # also when a second cancel interrupts the wait: then the record stays UNKNOWN
+                self._report_cleanup(ctx, cleanup, proc)
             raise
         finally:
             watch.cancel()
@@ -1204,6 +1271,7 @@ class AgentAdapter(ABC):
         st.ended_by_guard = ended_after_result
         res = self.finalize(st, ctx, returncode)
         res.exit_code = returncode
+        res.cleanup_evidence = self._cleanup_evidence(cleanup, proc)
         ctx.commands_ran = st.commands_ran
         if res.error and stderr and ("empty CLI stream" in res.error or "IneligibleTierError" in stderr):
             res.error = f"{res.error}: {short(stderr, 500)}"
@@ -1215,16 +1283,21 @@ class AgentAdapter(ABC):
         return res
 
     @staticmethod
-    async def _kill(proc: asyncio.subprocess.Process) -> None:
+    async def _kill(proc: asyncio.subprocess.Process) -> dict[str, Any]:
+        """End the CLI tree; return what was observed (#863): the tree kill counts and whether the wait completed."""
         if os.name == "nt":
             if proc.returncode is not None:
-                return
+                return {"requested": False}
+            outcome: dict[str, Any] = {"requested": True}
             # Not a kill that collects the tree by parent PID alone: Windows may have reused those PIDs, and one ended an
             # unrelated tree (#589).
             try:
-                proc_tree.kill_tree(proc.pid)
+                tree = proc_tree.kill_tree(proc.pid)
+                if isinstance(tree, proc_tree.KillResult):
+                    outcome["tree"] = {"killed": len(tree.killed), "skipped": len(tree.skipped),
+                                       "failed": len(tree.failed), "spared": len(tree.spared)}
             except (OSError, MemoryError):  # the direct kill below still reaps the child
-                pass
+                outcome["tree"] = "unavailable"
             if proc.returncode is None:
                 try:
                     proc.kill()
@@ -1232,15 +1305,16 @@ class AgentAdapter(ABC):
                     pass
             try:
                 await asyncio.wait_for(proc.wait(), 5)
+                outcome["wait"] = "completed"
             except asyncio.TimeoutError:
-                pass
-            return
+                outcome["wait"] = "timeout"
+            return outcome
 
         pgid = proc.pid
         try:
             os.killpg(pgid, signal.SIGTERM)
         except ProcessLookupError:
-            return
+            return {"requested": False}
         if proc.returncode is None:
             try:
                 await asyncio.wait_for(proc.wait(), 10)
@@ -1269,3 +1343,54 @@ class AgentAdapter(ABC):
                 await asyncio.wait_for(proc.wait(), 5)
             except asyncio.TimeoutError:
                 pass
+        return {"requested": True, "wait": "completed" if proc.returncode is not None else "timeout"}
+
+    @staticmethod
+    def _cleanup_evidence(record: dict[str, Any], proc: Any) -> dict[str, Any]:
+        """The verdict on the wrapper the runner held, from its own observations only (#863)."""
+        returncode = getattr(proc, "returncode", None)
+        observed = {key: record[key] for key in ("job", "wrapper_pid", "wrapper_created", "spawn") if key in record}
+        if isinstance(record.get("kill"), dict):  # a test double's kill returns no record
+            observed["kill"] = {key: value for key, value in record["kill"].items()
+                                if key in ("requested", "tree", "wait")}
+        observed.update(returncode=returncode if type(returncode) is int else None,
+                        wait="completed" if type(returncode) is int else "not_finished")
+        return cleanup_verdict(observed)
+
+    @classmethod
+    def _report_cleanup(cls, ctx: RunContext, record: dict[str, Any], proc: Any) -> dict[str, Any]:
+        """Hand the evidence of a run that ends by cancellation to the runner, which builds that task's result."""
+        evidence = cls._cleanup_evidence(record, proc)
+        if ctx.on_cleanup:
+            try:
+                ctx.on_cleanup(evidence)
+            except Exception:  # evidence only: never replace the cancellation itself
+                pass
+        return evidence
+
+    @classmethod
+    async def _reap_cancelled_spawn(cls, spawn: asyncio.Future, ctx: RunContext, memory_guard: Any) -> None:
+        """A cancel that lands while the spawn is in flight (#863). asyncio may already have closed and reaped the child
+        itself; otherwise the spawn finishes and labhq ends the process it created, then reports UNKNOWN: the wrapper's
+        activation line was never read. A second cancel leaves the shielded reaper running."""
+        record: dict[str, Any] = {"spawn": "cancelled", "job": "unconfirmed"}
+        state: dict[str, Any] = {"proc": None}
+
+        async def reap() -> None:
+            try:
+                proc = await spawn
+            except FileNotFoundError:  # CreateProcess found no executable: nothing was started
+                record["spawn"] = "failed"
+                return
+            except (OSError, ValueError, asyncio.CancelledError):  # asyncio may have created and closed it: UNKNOWN
+                return
+            state["proc"] = proc
+            record.update(wrapper_pid=proc.pid, wrapper_created=_wrapper_identity(proc.pid))
+            record["kill"] = await cls._kill(proc)
+
+        reaper = asyncio.ensure_future(reap())
+        try:
+            await asyncio.shield(reaper)
+        finally:
+            memory_guard.close()
+            cls._report_cleanup(ctx, record, state["proc"])
