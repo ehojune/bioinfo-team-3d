@@ -50,7 +50,10 @@ function chromeStderrWatcher(onMarker = () => {}) {
       head += part;
       const line = head.match(/^([^\r\n]*)\r?\n/);
       if (!line) {
-        if (!JOB_STARTING_BROWSER.startsWith(head)) { state = 'plain'; chrome(head); head = ''; }
+        // Still possibly the marker line: its text, then CR LF or LF, may arrive split anywhere (e.g. CR | LF).
+        if (!(JOB_STARTING_BROWSER + '\r\n').startsWith(head) && !(JOB_STARTING_BROWSER + '\n').startsWith(head)) {
+          state = 'plain'; chrome(head); head = '';
+        }
         return;
       }
       if (line[1] === JOB_STARTING_BROWSER) {

@@ -75,6 +75,13 @@ test('#833 the Job wrapper marker counts only as the first stderr line and leave
   assert.equal(watch.marked(), true);
   assert.equal(watch.text(), `[chrome] warn later ${JOB_STARTING_BROWSER}\n`);
   assert.equal(watch.chromeBytes(), Buffer.byteLength(watch.text()));
+  // The exact marker and CR in one chunk, LF in the next: still the marker line, and only once.
+  const split = [];
+  const crlf = chromeStderrWatcher(() => split.push('marker'));
+  crlf.feed(JOB_STARTING_BROWSER + '\r');
+  crlf.feed('\nchrome');
+  assert.deepEqual(split, ['marker']);
+  assert.equal(crlf.text(), 'chrome');
   // No marker first (Linux, or a wrapper that never reached Chrome): nothing is recorded and every byte is Chrome's.
   for (const first of ['DevTools listening\n', `x${JOB_STARTING_BROWSER}\n`, `${JOB_STARTING_BROWSER} extra\n`,
                        'LABHQ_MEMORY_LIMIT_SETUP: OSError: denied\n']) {
