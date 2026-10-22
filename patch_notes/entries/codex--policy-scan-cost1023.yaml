@@ -8,7 +8,7 @@ rows:
   at: 2026-10-23 05:55
   summary: Linux에서 아주 긴 구분자·점 run이 든 Windows식 경로를 검사할 때 느려지던 문제를 고쳤습니다.
   text: '비율 계약이 Linux 3.12 CI(run 39849219342)에서 실제 이차 비용을 잡았다(4배 입력에 11.2·10.2배). 원인은 _norm이 긴 구분자 후보를 ntpath.normpath에 넘기는데, Linux의 pure-Python 판이 빈·.·x\.. 성분을 list에서 하나씩 지우는 것이었다. Windows native 판은 이를 가렸다. labhq/policy.py _windows_normpath가 실행 중인 stdlib의 splitroot·splitdrive로 drive·root를 나누고, 같은 성분 규칙을 stack으로 한 번에 적용한다. 짧은 입력 약 50만 건에서 Python 3.12·3.14 pure-Python normpath와 결과가 모두 같았다. 3.12 Windows native와는 \?\UNC\ 하나가 달랐고, 이 경우 Linux·3.14와 같은 결과를 낸다. 시험은 실행 중인 stdlib의 pure-Python normpath와 비교하고, 다섯 가지 긴 모양에 같은 8배 계약을 건다. 731,072자 입력·8배 한도·늦은 경로 검사는 그대로다. private_paths와 Windows 전용 claude_write_input의 ntpath.normpath는 이번 범위 밖이다.'
-- sha: 9fdcfb2
+- sha: cf3f572
   at: 2026-10-23 06:20
   summary: 경로 검사 수리와 Windows 감독 프로세스 확인 파일 재읽기를 한 PR에서 검증합니다.
   text: '검토된 #861 ba95796을 #868에 merge해 원래 작성자·커밋과 WMI 제품·시험을 보존했다. policy·test_policy는 검토판973c543과 같다. CI39854597294의 ACK 대기 PermissionError에는 winerror가 없어 공유 위반32로 확정하지 않는다. 기존 deadline 안의32만 재읽고 다른 오류·최초 request 읽기·nonce/identity/Job 조건은 유지한다. 새 head의 실제 Windows 결과는 별도 CI에서 확인한다.'
