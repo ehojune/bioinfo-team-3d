@@ -8,3 +8,4 @@
 - 문서: 매뉴얼 첫 설정 절에 안내 한 문단을 더했다(177,200→177,632자).
 - 검사: `tests/test_init_wizard.py`에 프록시 판정 10건, 새 설정 저장, 전부 Enter, 거부, 재실행 미변경, 비대화형·`--yes`·`--dry-run` 미질문 검사를 더했다. 로컬에서는 helper를 AST로 추출해 실제 `LiteratureSettings`·`Settings`와 가짜 입력으로 순수 실행해 모두 통과했다. init 흐름 test(`wizard.run`)는 doctor import에 필요한 의존이 로컬에 없어 CI 몫이다.
 - 남은 #826: 연결 뒤 검색·원문·추출 점검, 제공자 표, 호출 기록과 실패 인계, WoS/Nexus 실제 연결, 구독 원문. 기관 계약·endpoint는 외부 미확인이다.
+- 공개 준비(09:35): 승인 main `4ff7c12`(#848 `92b4f9a`)를 merge `591c387`로 통합했다(자체 변경 없음, init·test hash 불변). #848 peer P3에 따라 매뉴얼 Unpaywall email 항목의 문장 순서를 고쳐 `enabled: false`가 `unpaywall` 도구의 답이고 `key_fulltext`는 email이 없으면 Unpaywall만 건너뛴다고 적었다(`3f31354`, 177,687→177,758자). 코드·timeout·기관·PDF 경로는 그대로다.
