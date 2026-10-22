@@ -532,3 +532,228 @@ async def test_lookup_runtime_parent_cancel_drains_suspended_operation_and_progr
     assert all(w.done() for p in lookup_runtime.phases for w in p.watches)
     assert not lookup_runtime.timed_awaitables
     assert records(tmp_path)[-1]["status"] == "cancelled"
+
+
+# ---------------- request-wide public lookup admission (#858, trial #739 B) ----------------
+
+def test_admission_counts_each_send_per_trusted_request_and_survives_a_restart(tmp_path):
+    from labhq.runner.lookup_admission import LookupAdmission
+    from labhq.settings import AnnotSettings
+    assert AnnotSettings().request_lookup_limit is None  # unset keeps today's uncounted lookups
+    with pytest.raises(ValueError):
+        AnnotSettings(request_lookup_limit=-1)
+    path = tmp_path / "state" / "lookup_admission.sqlite3"
+    ledger = LookupAdmission(path, 2, clock=lambda: 5.0)
+    assert ledger.admit("r1", "t1", "lit", "fulltext", "www.ebi.ac.uk") == {
+        "admitted": True, "seq": 1, "used": 1, "limit": 2}
+    assert ledger.admit("r1", "t2", "bio", "openalex_works", "api.openalex.org")["seq"] == 2  # other agent and step
+    assert ledger.admit("r1", "t2", "bio", "fulltext", "www.ebi.ac.uk") == {
+        "admitted": False, "used": 2, "limit": 2, "reason": "exhausted"}
+    assert ledger.admit("r2", "t3", "lit", "fulltext", "www.ebi.ac.uk")["seq"] == 1  # requests never share a count
+    assert ledger.admit(None, "t4", "lit", "fulltext", "www.ebi.ac.uk")["reason"] == "no trusted request identity"
+    assert ledger.admit("r2", "t3", "lit", "../x", "www.ebi.ac.uk")["reason"] == "unknown lookup tool"
+    assert ledger.admit("r2", "t3", "lit", "fulltext", "host/path?email=x")["reason"] == "invalid request host"
+    restarted = LookupAdmission(path, 2)
+    assert restarted.admit("r1", "t5", "lit", "fulltext", "www.ebi.ac.uk")["admitted"] is False
+    assert restarted.finish("r1", "t1", [[1, 503]], "failed") == 1
+    assert restarted.finish("r1", "t9", [[2, 200]], "ok") == 0  # another task cannot rewrite this receipt
+    assert restarted.finish("r1", "t1", [[1, 200]], "ok") == 0  # a finished receipt is not rewritten
+    assert restarted.finish("r1", "t2", [[2, 999]], "ok") == 0  # malformed status is not recorded
+    assert [(s["seq"], s["tool"], s["host"], s["http_status"], s["outcome"]) for s in restarted.sends("r1")] == [
+        (1, "fulltext", "www.ebi.ac.uk", 503, "failed"), (2, "openalex_works", "api.openalex.org", None, None)]
+
+
+def test_concurrent_admission_never_exceeds_the_limit(tmp_path):
+    import threading
+    from labhq.runner.lookup_admission import LookupAdmission
+    ledger = LookupAdmission(tmp_path / "lookup_admission.sqlite3", 9)
+    start, answers = threading.Barrier(24), []
+
+    def caller(index):
+        start.wait()
+        answers.append(LookupAdmission(ledger.path, 9).admit("r1", f"t{index}", "lit", "fulltext", "www.ebi.ac.uk"))
+
+    threads = [threading.Thread(target=caller, args=(i,)) for i in range(24)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(DEADLOCK_WATCHDOG_S)
+    admitted = sorted(a["seq"] for a in answers if a["admitted"])
+    assert len(answers) == 24 and admitted == list(range(1, 10))
+    assert len(ledger.sends("r1")) == 9
+
+
+async def test_broker_admits_by_the_request_its_token_was_issued_for(tmp_path):
+    from labhq.runner.approvals import Broker
+    from labhq.runner.lookup_admission import LookupAdmission
+
+    async def noop(*_args):
+        return None
+
+    broker = Broker(0, noop, noop, noop, lookup_admission=LookupAdmission(tmp_path / "ledger.sqlite3", 1))
+    token = broker.issue_task_token("t1", "lit", "req-1")
+    anonymous = broker.issue_task_token("t2", "lit", None)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=broker.app), base_url="http://broker") as client:
+        async def admit(key, **body):
+            return await client.post("/lookup/admit", headers={"X-Labhq-Token": key},
+                                     json={"tool": "fulltext", "host": "www.ebi.ac.uk", **body})
+        assert (await admit(token, request_id="req-other")).status_code == 403  # a named request is refused
+        assert (await admit(token, task_id="t-other")).status_code == 403
+        assert (await admit("forged")).status_code == 401
+        first = (await admit(token)).json()
+        assert first["admitted"] is True and first["seq"] == 1
+        assert (await admit(token)).json()["reason"] == "exhausted"
+        assert (await admit(anonymous)).json()["reason"] == "no trusted request identity"
+        finish = await client.post("/lookup/finish", headers={"X-Labhq-Token": token},
+                                   json={"sends": [[1, 200]], "outcome": "ok"})
+        assert finish.json() == {"recorded": 1}
+        assert (await client.post("/lookup/finish", headers={"X-Labhq-Token": "forged"},
+                                  json={"sends": [[1, 200]], "outcome": "ok"})).status_code == 401
+    unlimited = Broker(0, noop, noop, noop)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=unlimited.app), base_url="http://broker") as client:
+        response = await client.post("/lookup/admit", json={"tool": "fulltext", "host": "www.ebi.ac.uk"},
+                                     headers={"X-Labhq-Token": unlimited.issue_task_token("t", "a", "r")})
+        assert response.status_code == 409  # a limited MCP never runs against a runner without the ledger
+
+
+@pytest.fixture
+def limited(mcp_module, monkeypatch, tmp_path):
+    """labhq_annot with admission on: the broker is a real ledger behind MockTransport, providers are fakes."""
+    from labhq.runner.lookup_admission import LookupAdmission
+    state = SimpleNamespace(ledger=LookupAdmission(tmp_path / "ledger.sqlite3", 3), sent=[], admits=0,
+                            finishes=[], broker_down=False, provider=lambda request: httpx.Response(200, json={}))
+    original_client = httpx.AsyncClient
+
+    def respond(request):
+        if request.url.host == "broker.invalid":
+            if state.broker_down:
+                raise httpx.ConnectError("broker unavailable", request=request)
+            body = json.loads(request.content)
+            if request.url.path == "/lookup/admit":
+                state.admits += 1
+                return httpx.Response(200, json=state.ledger.admit("req-1", body["task_id"], body["agent_id"],
+                                                                   body["tool"], body["host"]))
+            if request.url.path == "/lookup/finish":
+                state.finishes.append(body)
+                return httpx.Response(200, json={"recorded": state.ledger.finish(
+                    "req-1", body["task_id"], body["sends"], body["outcome"])})
+            return httpx.Response(200, json={"ok": True})  # lookup progress lines
+        state.sent.append(str(request.url))
+        return state.provider(request)
+
+    monkeypatch.setattr(mcp_module.httpx, "AsyncClient", lambda **kw: original_client(
+        transport=httpx.MockTransport(respond), **kw))
+    monkeypatch.setattr(mcp_module, "LOOKUP_LIMITED", True)
+    return state
+
+
+def _backend(urls):
+    class Backend:
+        def __init__(self, client, *args, **kwargs):
+            self.http = annot.Http(client, sleep=AsyncMock())
+
+        async def fulltext(self, ids):
+            for url in urls:
+                await self.http.request("europepmc", "GET", url)
+            return {"ok": True}
+    return Backend
+
+
+@pytest.mark.parametrize("planned", [3, 5])
+async def test_the_limit_admits_each_send_and_never_sends_the_next(mcp_module, monkeypatch, limited, planned):
+    urls = [f"https://www.ebi.ac.uk/europepmc/{i}" for i in range(planned)]
+    monkeypatch.setattr(mcp_module.annot_literature, "LiteratureAnnotator", _backend(urls))
+    if planned == 3:
+        assert json.loads(await mcp_module._run_literature("fulltext", ["10.1000/x"])) == {"ok": True}
+    else:
+        with pytest.raises(ToolError) as exc:
+            await mcp_module._run_literature("fulltext", ["10.1000/x"])
+        assert "보내지 않았습니다" in str(exc.value) and NOT_EVIDENCE in str(exc.value)
+    assert limited.sent == urls[:3]  # cap N: N sent; request N+1 refused before it left
+    assert limited.admits == min(planned, 4)  # one refused admission, then the call stops asking
+    rows = limited.ledger.sends("req-1")
+    assert [(r["seq"], r["host"], r["http_status"]) for r in rows] == [(i, "www.ebi.ac.uk", 200) for i in (1, 2, 3)]
+    assert {r["outcome"] for r in rows} == {"ok" if planned == 3 else "failed"}
+
+
+async def test_retries_and_followed_redirects_are_each_one_admitted_send(mcp_module, monkeypatch, limited):
+    limited.ledger.limit = 9
+    answers = iter([httpx.Response(503), httpx.Response(302, headers={"location": "https://europepmc.org/moved"}),
+                    httpx.Response(200, json={})])
+    limited.provider = lambda request: next(answers)
+    monkeypatch.setattr(mcp_module.annot_literature, "LiteratureAnnotator",
+                        _backend(["https://www.ebi.ac.uk/europepmc/paper"]))
+    assert json.loads(await mcp_module._run_literature("fulltext", ["10.1000/x"])) == {"ok": True}
+    # annot's own 503 retry and httpx's followed redirect hop are separate sends, each admitted first.
+    assert limited.sent == ["https://www.ebi.ac.uk/europepmc/paper", "https://www.ebi.ac.uk/europepmc/paper",
+                            "https://europepmc.org/moved"]
+    assert [(r["host"], r["http_status"]) for r in limited.ledger.sends("req-1")] == [
+        ("www.ebi.ac.uk", 503), ("www.ebi.ac.uk", 302), ("europepmc.org", 200)]
+
+
+async def test_concurrent_sends_of_one_call_share_the_limit(mcp_module, monkeypatch, limited):
+    class Backend:
+        def __init__(self, client, *args, **kwargs):
+            self.client = client
+
+        async def fulltext(self, ids):
+            results = await asyncio.gather(*(self.client.get(f"https://api.openalex.org/w/{i}") for i in range(8)),
+                                           return_exceptions=True)
+            return {"refused": sum(isinstance(r, Exception) for r in results)}
+
+    monkeypatch.setattr(mcp_module.annot_literature, "LiteratureAnnotator", Backend)
+    assert json.loads(await mcp_module._run_literature("fulltext", ["10.1000/x"])) == {"refused": 5}
+    assert len(limited.sent) == 3 and len(limited.ledger.sends("req-1")) == 3
+
+
+@pytest.mark.parametrize("case", ["broker-down", "no-token", "alphagenome", "unset"])
+async def test_admission_fails_closed_and_unset_keeps_the_default(mcp_module, monkeypatch, limited, case):
+    built = []
+
+    class Backend:
+        def __init__(self, client, *args, **kwargs):
+            built.append(True)
+            self.client = client
+
+        async def fulltext(self, ids):
+            await self.client.get("https://www.ebi.ac.uk/europepmc/paper")
+            return {"ok": True}
+
+        alphagenome_variant = fulltext
+
+    monkeypatch.setattr(mcp_module.annot_literature, "LiteratureAnnotator", Backend)
+    monkeypatch.setattr(mcp_module.annot_regulatory, "RegulatoryAnnotator", Backend)
+    limited.broker_down = case == "broker-down"
+    if case == "no-token":
+        monkeypatch.setattr(mcp_module, "BROKER_TOKEN", "")
+    if case == "unset":
+        monkeypatch.setattr(mcp_module, "LOOKUP_LIMITED", False)
+        assert json.loads(await mcp_module._run_literature("fulltext", ["10.1000/x"])) == {"ok": True}
+        assert limited.sent and limited.admits == 0 and not limited.finishes  # no broker call: default unchanged
+        return
+    with pytest.raises(ToolError):
+        if case == "alphagenome":  # its SDK transport cannot be admitted per request
+            await mcp_module._run("alphagenome_variant", ["chr1:1:A:G"])
+        else:
+            await mcp_module._run_literature("fulltext", ["10.1000/x"])
+    assert not limited.sent and limited.admits == 0
+    assert built == ([True] if case == "broker-down" else [])
+
+
+@pytest.mark.parametrize("limit", [None, 9])
+async def test_the_runner_turns_admission_on_for_every_task_when_the_limit_is_set(tmp_path, monkeypatch, limit):
+    from labhq.models import Task
+    from tests.test_private_paths import _capture_runner, _runner_settings
+    settings = _runner_settings(tmp_path, None)
+    settings.annot.request_lookup_limit = limit
+    runner, seen = _capture_runner(settings, monkeypatch)
+    result = await runner.run_task(Task(id="t1", agent_id="worker", request_id="r", prompt="q"))
+    assert result.ok, result.error
+    env = seen["ctx"].env
+    if limit is None:
+        assert runner.broker.lookup_admission is None and "LABHQ_LOOKUP_ADMISSION" not in env
+    else:
+        # In-memory settings give staff no config copy; the runner's flag still makes labhq_annot ask first.
+        assert "LABHQ_CONFIG" not in env and env["LABHQ_LOOKUP_ADMISSION"] == "1"
+        assert runner.broker.lookup_admission.limit == 9
+        assert runner.broker.lookup_admission.path == settings.path(settings.runner.state_dir) / "lookup_admission.sqlite3"

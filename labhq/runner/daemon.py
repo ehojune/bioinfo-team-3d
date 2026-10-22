@@ -69,6 +69,7 @@ from .codex_sandbox import SandboxWatch
 from .control import HALT_GRACE_S, ControlNotReady, Controls, steer_prompt
 from .hpc_jobs import submit_job
 from .integrity import ReadOnlyWatch, watch_roots
+from .lookup_admission import ENV as LOOKUP_ADMISSION_ENV, FILE as LOOKUP_ADMISSION_FILE, LookupAdmission
 from .system_ca import CA_ENV, system_ca_pem
 from .step_inputs import stage_inputs
 from .workspace import (InputHashCache, TaskWorkspace, nearest_tool_use_id, portable_input_path, resolved_zones,
@@ -317,9 +318,12 @@ class Runner:
         self.jobs: dict[str, dict] = self.store.all("job")
         self.notified: set[str] = set(self.store.all("notified"))
         self.task_req.update({j["task_id"]: j.get("request_id") for j in self.jobs.values() if j.get("task_id")})
+        limit = settings.annot.request_lookup_limit
         self.broker = Broker(settings.runner.broker_port, self._on_approval, self._on_tool_event,
                              self._on_submit, self._on_ask, self._owns_job,
-                             on_approval_timeout=self._on_approval_timeout)
+                             on_approval_timeout=self._on_approval_timeout,
+                             lookup_admission=None if limit is None else LookupAdmission(
+                                 settings.path(settings.runner.state_dir) / LOOKUP_ADMISSION_FILE, limit))
         self.scheduler = Scheduler(settings.hpc)
         self.connected = asyncio.Event()
         self._stopping = False
@@ -1729,6 +1733,9 @@ class Runner:
             }
             if staff_config:
                 env["LABHQ_CONFIG"] = staff_config
+            if self.broker.lookup_admission is not None:
+                # labhq_annot asks the broker before every tool call even if its config copy were missing (#858).
+                env[LOOKUP_ADMISSION_ENV] = "1"
             if hooked:
                 env[CONTROL_ENV] = str(self.controls.path(task.id))
             env.update(self._system_ca_env(agent))
