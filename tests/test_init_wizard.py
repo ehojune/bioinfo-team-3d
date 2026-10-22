@@ -630,7 +630,10 @@ PROXY = "https://proxy.library.example/login?url="
     ("https://proxy.library.example/login?ticket=abc&url=", False),
     ("https://proxy.library.example/login?url=https://doi.org/10.1/x", False),  # a whole article link
     ("https://www.library.example/", False),                           # a homepage has no article slot
-    ("https://proxy.library.example/login?url=#frag", False)])
+    ("https://proxy.library.example/login?url=#frag", False),
+    ("https://p.lib/login;jsessionid=ABC123?url=", False),             # matrix session
+    ("https://p.lib/ST-1234abcd/login?url=", False),                   # CAS-style ticket segment
+    ("https://{url}", False), ("https://{url}@p.lib/x", False)])       # the article slot in the host or userinfo
 def test_only_a_library_proxy_prefix_without_credentials_or_session_is_kept(value, kept):
     assert (wizard._proxy_prefix(value) == value.strip()) is kept
 
@@ -683,7 +686,7 @@ def test_rejected_institution_answers_are_not_stored(monkeypatch, capsys):
     assert not (data.get("literature") or {}).get("institution_proxy")
     assert not (data.get("annot") or {}).get("unpaywall_email") and "session=abc" not in str(data)
     out = capsys.readouterr().out
-    assert "프록시 주소: 저장하지 않았습니다" in out and "Unpaywall email: 형식이 아니라" in out
+    assert "프록시 주소: 받지 않았습니다" in out and "Unpaywall email: 형식이 아니라" in out
 
 
 def test_a_rerun_shows_the_institution_state_and_never_rewrites_the_config(monkeypatch, capsys):
@@ -696,14 +699,10 @@ def test_a_rerun_shows_the_institution_state_and_never_rewrites_the_config(monke
     wizard.run()
     assert _digest(target.read_text(encoding="utf-8")) == original
     out = capsys.readouterr().out
-    assert "기관 프록시 없음" in out and "기존 설정 파일은 바꾸지 않았습니다" in out
-    lines = []
-    for line in out.split("직접 넣으세요:\n", 1)[1].splitlines():
-        if not line.startswith(("literature:", "annot:", "  ")):
-            break
-        lines.append(line)
-    assert yaml.safe_load("\n".join(lines)) == {"literature": {"institution_proxy": PROXY},
-                                                "annot": {"unpaywall_email": "pi@example.org"}}
+    assert "기관 프록시 없음" in out and "아무것도 저장하지 않았습니다" in out
+    assert "literature.institution_proxy·annot.unpaywall_email에 직접 넣으세요" in out and "현재 기관 세션은 꺼짐" in out
+    assert "저장하되" not in out  # a re-run never claims to have saved what it only suggests
+    assert PROXY not in out and "pi@example.org" not in out  # the typed values are not printed back
 
 
 def test_yes_dry_run_and_no_terminal_never_ask_the_institution_questions(monkeypatch):

@@ -164,27 +164,38 @@ def _github_token(settings: Settings) -> None:
 # stays off, and init neither connects, logs in nor fetches anything. Passwords, cookies and keys are never asked.
 _EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s.]+")
 _PROXY_QUERY_KEYS = {"url", "qurl"}
+# Known session/ticket shapes in a path segment: CAS tickets (ST-…) and segments named after a session or ticket.
+_SESSION_SEGMENT = re.compile(r"^(?:ST|PT|PGT|TGT)-\w|(?:^|[-_.])(?:jsessionid|phpsessid|sessionid|session|ticket|token)"
+                              r"(?:$|[-_.=])", re.IGNORECASE)
 _WOS = re.compile(r"web\s*of\s*science|wos|clarivate|nexus", re.IGNORECASE)
 
 
 def _proxy_prefix(value: str) -> str | None:
-    """A library proxy prefix the institution route can use (`…?url=` or a `{url}` template), else None. HTTPS
-    without credentials as the setting already requires, and no query but the article URL, so a pasted session or
-    ticket is never stored."""
+    """A library proxy prefix the institution route can use, else None: `…?url=` (the article URL is appended) or one
+    `{url}` slot as the `url`/`qurl` value or the last path segment. HTTPS with a plain host (no userinfo, no `{url}`
+    there, a valid port), no fragment, no query but that article slot. Known session shapes are refused: any `;`
+    matrix parameter (`;jsessionid=…`), CAS-style `ST-…` segments and segments named session/ticket/token. An
+    arbitrary token inside a path cannot be recognised, so the prompt asks for the prefix the library publishes."""
     value = value.strip()
     if not value:
         return None
     try:
         LiteratureSettings(institution_proxy=value)
+        parts = urlsplit(value)
+        parts.port  # noqa: B018 - raises ValueError on an out-of-range port
     except ValueError:
         return None
-    parts = urlsplit(value.replace("{url}", ""))
-    pairs = parse_qsl(parts.query, keep_blank_values=True)
-    if parts.fragment or any(key.lower() not in _PROXY_QUERY_KEYS or text for key, text in pairs):
+    if (parts.scheme != "https" or not parts.hostname or any(mark in parts.netloc for mark in "@{}")
+            or parts.fragment or ";" in value or any(_SESSION_SEGMENT.search(s) for s in parts.path.split("/"))):
         return None
-    if "{url}" not in value and not (pairs and value.endswith("=")):
-        return None  # the article URL is appended to the prefix, so it has to end in url=
-    return value
+    pairs = parse_qsl(parts.query, keep_blank_values=True)
+    if any(key.lower() not in _PROXY_QUERY_KEYS or text not in ("", "{url}") for key, text in pairs):
+        return None
+    slots = value.count("{url}")
+    if slots == 1:
+        in_query = any(text == "{url}" for _key, text in pairs)
+        return value if in_query or (parts.path.endswith("/{url}") and not pairs) else None
+    return value if slots == 0 and pairs and value.endswith("=") else None
 
 
 def _contact_email(value: str) -> str | None:
@@ -192,9 +203,10 @@ def _contact_email(value: str) -> str | None:
     return value if len(value) <= 254 and _EMAIL.fullmatch(value) else None
 
 
-def _institution_answers() -> dict:
+def _institution_answers(new_config: bool = True) -> dict:
     """Ask a person at the terminal how they reach subscription papers. Every question takes Enter for 모름·없음·나중에.
-    Returns the values the existing settings can hold; the institution name and services only shape the advice."""
+    Returns the values the existing settings can hold; the institution name and services only shape the advice.
+    Neither the address nor the email is printed back. Only a new config saves them (`new_config`)."""
     print("기관 문헌 접근(선택): 구독 논문을 어떻게 보는지 묻습니다. 모르거나 없거나 나중에 하려면 Enter로 넘어가세요.")
     print("  비밀번호·cookie·API 키는 묻지 않고, 지금 기관 사이트에 접속하거나 로그인하지 않습니다.")
     answers: dict = {"proxy": None, "email": None}
@@ -203,13 +215,13 @@ def _institution_answers() -> dict:
         print("기관 문헌 접근: 건너뜀. 공개·합법 OA 문헌 조회로 시작하며, 나중에 labhq init이나 설정에서 추가할 수 있습니다.")
     else:
         print("기관 이름은 설정에 저장하지 않습니다(아래 안내에만 씁니다).")
-        raw = input("기관 도서관 프록시 주소 — 'https://…login?url=' 형태일 때만 붙여 넣으세요 "
-                    "(도서관 홈페이지 주소이거나 모르면 Enter): ").strip()
+        raw = input("기관 도서관 프록시 주소 — 도서관이 안내하는 'https://…login?url=' 형태의 접두만 붙여 넣으세요 "
+                    "(로그인 뒤 주소창 주소·도서관 홈페이지 주소이거나 모르면 Enter): ").strip()
         if raw:
             answers["proxy"] = _proxy_prefix(raw)
             if answers["proxy"] is None:
-                print("프록시 주소: 저장하지 않았습니다. https로 시작하고 계정 정보·로그인 세션이 없으며 "
-                      "'url=' 또는 '{url}'로 기사 주소를 받는 주소만 받습니다.")
+                print("프록시 주소: 받지 않았습니다. https, 계정 정보 없음, 기사 주소 자리('url=' 또는 '{url}') 하나, "
+                      "알려진 세션·ticket 형식(';jsessionid', 'ST-…' 등) 없음일 때만 받습니다.")
         services = input("이용 중인 문헌 서비스 (예: Web of Science, Scopus, 도서관 검색; 없으면 Enter): ").strip()
         if services and _WOS.search(services):
             print("Web of Science: labhq는 이 기관의 Clarivate 연결(예: Nexus Connect)의 계약·주소·권한을 확인하지 않았고 "
@@ -220,11 +232,11 @@ def _institution_answers() -> dict:
     if raw.strip():
         answers["email"] = _contact_email(raw)
         if answers["email"] is None:
-            print("Unpaywall email: 형식이 아니라 저장하지 않았습니다.")
-    if answers["proxy"]:
-        print("기관 프록시: 저장하되 기관 세션은 꺼 둡니다. 기관·출판사의 TDM과 외부 모델 전송 조건을 확인한 뒤 설정의 "
-              "literature.institution_enabled·institution_tdm_allowed·external_model_allowed를 직접 true로 바꾸세요. "
-              "프록시 로그인은 사용자가 브라우저에서 직접 합니다. 연결은 아직 시험하지 않았습니다.")
+            print("Unpaywall email: 형식이 아니라 받지 않았습니다.")
+    if answers["proxy"] and new_config:
+        print("기관 프록시: 새 설정에 저장하되 기관 세션은 꺼 둡니다. 기관·출판사의 TDM과 외부 모델 전송 조건을 확인한 뒤 "
+              "설정의 literature.institution_enabled·institution_tdm_allowed·external_model_allowed를 직접 true로 "
+              "바꾸세요. 프록시 로그인은 사용자가 브라우저에서 직접 합니다. 연결은 아직 시험하지 않았습니다.")
     return answers
 
 
@@ -236,23 +248,21 @@ def _apply_institution(data: dict, answers: dict) -> None:
         data.setdefault("annot", {})["unpaywall_email"] = answers["email"]
 
 
-def _institution_snippet(answers: dict) -> str:
-    """The lines to add by hand to an existing config, which init never rewrites."""
-    data: dict = {}
-    _apply_institution(data, answers)
-    return yaml.safe_dump(data, allow_unicode=True, sort_keys=False).strip() if data else ""
-
-
 def _institution_existing(settings: Settings) -> None:
-    """A re-run keeps the config untouched: show what is set and, if something is missing, print what to add."""
+    """A re-run keeps the config untouched and saves nothing: show what is set and, if something is missing, name the
+    settings to fill by hand. The values typed here are not printed back."""
     literature, email = settings.literature, settings.annot.unpaywall_email
+    session = "켜짐" if literature.institution_enabled else "꺼짐"
     print(f"기관 문헌 접근(현재 설정): 기관 프록시 {'있음' if literature.institution_proxy else '없음'}, "
-          f"기관 세션 {'켜짐' if literature.institution_enabled else '꺼짐'}, Unpaywall email {'있음' if email else '없음'}")
+          f"기관 세션 {session}, Unpaywall email {'있음' if email else '없음'}")
     if literature.institution_proxy and email:
         return
-    snippet = _institution_snippet(_institution_answers())
-    if snippet:
-        print("기존 설정 파일은 바꾸지 않았습니다. 쓰려면 아래 항목을 설정 파일에 직접 넣으세요:\n" + snippet)
+    answers = _institution_answers(new_config=False)
+    keys = [name for key, name in (("proxy", "literature.institution_proxy"), ("email", "annot.unpaywall_email"))
+            if answers.get(key)]
+    if keys:
+        print("기존 설정 파일은 바꾸지 않았고 아무것도 저장하지 않았습니다. 쓰려면 방금 입력한 값을 설정 파일의 "
+              + "·".join(keys) + f"에 직접 넣으세요. 넣어도 기관 세션 설정은 그대로이며, 현재 기관 세션은 {session}입니다.")
 
 
 def _absolute(path: str) -> str:
