@@ -10,13 +10,14 @@ import shutil
 import sys
 from importlib import resources
 from pathlib import Path
+from urllib.parse import parse_qsl, urlsplit
 
 import yaml
 
 from . import bioinfo_link, disk_space, doctor, github_token, hpc_consult, init_defaults
 from .adapters.base import _resolve_command
 from .runner.codex_sandbox import codex_command, powershell_executable, setup_hint
-from .settings import HpcSettings, Settings
+from .settings import HpcSettings, LiteratureSettings, Settings
 from .test_guard import guard_test_path
 from .tools import annot_keys
 from .tools.scheduler import COMMANDS as SCHEDULER_COMMANDS, Scheduler
@@ -156,6 +157,102 @@ def _github_token(settings: Settings) -> None:
     except annot_keys.KeyFileError as exc:
         raise InitError(f"GitHub 토큰을 저장하지 못했습니다: {exc}") from None
     print("GitHub: 토큰 저장 (이 계정만 읽을 수 있는 파일, 값과 경로 출력 생략). 권한은 아래 doctor가 확인합니다")
+
+
+# Institution literature access (#826). Only what the existing settings already hold is kept: a library proxy prefix
+# (literature.institution_proxy) and the Unpaywall contact email (annot.unpaywall_email). The institution session
+# stays off, and init neither connects, logs in nor fetches anything. Passwords, cookies and keys are never asked.
+_EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s.]+")
+_PROXY_QUERY_KEYS = {"url", "qurl"}
+_WOS = re.compile(r"web\s*of\s*science|wos|clarivate|nexus", re.IGNORECASE)
+
+
+def _proxy_prefix(value: str) -> str | None:
+    """A library proxy prefix the institution route can use (`…?url=` or a `{url}` template), else None. HTTPS
+    without credentials as the setting already requires, and no query but the article URL, so a pasted session or
+    ticket is never stored."""
+    value = value.strip()
+    if not value:
+        return None
+    try:
+        LiteratureSettings(institution_proxy=value)
+    except ValueError:
+        return None
+    parts = urlsplit(value.replace("{url}", ""))
+    pairs = parse_qsl(parts.query, keep_blank_values=True)
+    if parts.fragment or any(key.lower() not in _PROXY_QUERY_KEYS or text for key, text in pairs):
+        return None
+    if "{url}" not in value and not (pairs and value.endswith("=")):
+        return None  # the article URL is appended to the prefix, so it has to end in url=
+    return value
+
+
+def _contact_email(value: str) -> str | None:
+    value = value.strip()
+    return value if len(value) <= 254 and _EMAIL.fullmatch(value) else None
+
+
+def _institution_answers() -> dict:
+    """Ask a person at the terminal how they reach subscription papers. Every question takes Enter for 모름·없음·나중에.
+    Returns the values the existing settings can hold; the institution name and services only shape the advice."""
+    print("기관 문헌 접근(선택): 구독 논문을 어떻게 보는지 묻습니다. 모르거나 없거나 나중에 하려면 Enter로 넘어가세요.")
+    print("  비밀번호·cookie·API 키는 묻지 않고, 지금 기관 사이트에 접속하거나 로그인하지 않습니다.")
+    answers: dict = {"proxy": None, "email": None}
+    name = input("소속 기관 이름 (없거나 모르면 Enter): ").strip()
+    if not name:
+        print("기관 문헌 접근: 건너뜀. 공개·합법 OA 문헌 조회로 시작하며, 나중에 labhq init이나 설정에서 추가할 수 있습니다.")
+    else:
+        print("기관 이름은 설정에 저장하지 않습니다(아래 안내에만 씁니다).")
+        raw = input("기관 도서관 프록시 주소 — 'https://…login?url=' 형태일 때만 붙여 넣으세요 "
+                    "(도서관 홈페이지 주소이거나 모르면 Enter): ").strip()
+        if raw:
+            answers["proxy"] = _proxy_prefix(raw)
+            if answers["proxy"] is None:
+                print("프록시 주소: 저장하지 않았습니다. https로 시작하고 계정 정보·로그인 세션이 없으며 "
+                      "'url=' 또는 '{url}'로 기사 주소를 받는 주소만 받습니다.")
+        services = input("이용 중인 문헌 서비스 (예: Web of Science, Scopus, 도서관 검색; 없으면 Enter): ").strip()
+        if services and _WOS.search(services):
+            print("Web of Science: labhq는 이 기관의 Clarivate 연결(예: Nexus Connect)의 계약·주소·권한을 확인하지 않았고 "
+                  "자동으로 연결하지 않습니다. 기관 도서관이 연결 주소와 사용 범위를 안내하면 그때 연결합니다.")
+        elif services:
+            print("문헌 서비스: 적은 내용은 저장하지 않습니다. 연결 방법은 기관 도서관 안내를 확인하세요.")
+    raw = input("Unpaywall 연락용 email (선택, 합법 무료 사본 위치를 찾을 때 Unpaywall API에만 보냄; 없으면 Enter): ")
+    if raw.strip():
+        answers["email"] = _contact_email(raw)
+        if answers["email"] is None:
+            print("Unpaywall email: 형식이 아니라 저장하지 않았습니다.")
+    if answers["proxy"]:
+        print("기관 프록시: 저장하되 기관 세션은 꺼 둡니다. 기관·출판사의 TDM과 외부 모델 전송 조건을 확인한 뒤 설정의 "
+              "literature.institution_enabled·institution_tdm_allowed·external_model_allowed를 직접 true로 바꾸세요. "
+              "프록시 로그인은 사용자가 브라우저에서 직접 합니다. 연결은 아직 시험하지 않았습니다.")
+    return answers
+
+
+def _apply_institution(data: dict, answers: dict) -> None:
+    """Put the accepted answers into a new config's data; the institution session stays as the template has it."""
+    if answers.get("proxy"):
+        data.setdefault("literature", {})["institution_proxy"] = answers["proxy"]
+    if answers.get("email"):
+        data.setdefault("annot", {})["unpaywall_email"] = answers["email"]
+
+
+def _institution_snippet(answers: dict) -> str:
+    """The lines to add by hand to an existing config, which init never rewrites."""
+    data: dict = {}
+    _apply_institution(data, answers)
+    return yaml.safe_dump(data, allow_unicode=True, sort_keys=False).strip() if data else ""
+
+
+def _institution_existing(settings: Settings) -> None:
+    """A re-run keeps the config untouched: show what is set and, if something is missing, print what to add."""
+    literature, email = settings.literature, settings.annot.unpaywall_email
+    print(f"기관 문헌 접근(현재 설정): 기관 프록시 {'있음' if literature.institution_proxy else '없음'}, "
+          f"기관 세션 {'켜짐' if literature.institution_enabled else '꺼짐'}, Unpaywall email {'있음' if email else '없음'}")
+    if literature.institution_proxy and email:
+        return
+    snippet = _institution_snippet(_institution_answers())
+    if snippet:
+        print("기존 설정 파일은 바꾸지 않았습니다. 쓰려면 아래 항목을 설정 파일에 직접 넣으세요:\n" + snippet)
 
 
 def _absolute(path: str) -> str:
@@ -430,6 +527,8 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
         print("켜 둔 기본 설정: 연구 모드(CP1·CP2, 분야 팩 " + ", ".join(data["research"]["active_packs"]) + "), "
               "의미 모델 ab(actions confirm), 산출물 종류 선언. 끄려면 설정의 research.enabled·semantics.mode·"
               "plan.declare_output_types를 바꾸세요.")
+        if not yes and not dry_run and _interactive():  # a person at the terminal; Enter skips each question (#826)
+            _apply_institution(data, _institution_answers())
         # Validate the complete plan before creating anything. Relative paths follow the target config.
         settings = Settings.model_validate(data)
         settings.config_path = str(target)
@@ -458,6 +557,8 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
         if claude_home:
             print("Claude 직원 로그인은 직접 실행하세요(새 창에서): " + doctor.claude_login_command(_is_windows()))
     if not yes and not dry_run:
+        if existing is not None and not force and _interactive():
+            _institution_existing(settings)
         _alphagenome_key(settings)
         _github_token(settings)
     # Initial config creation also precedes the clean-install mock setup. Installation is an explicit
