@@ -1,0 +1,6 @@
+pr: null
+rows:
+- sha: 3671b5c
+  at: 2026-10-22 10:31
+  summary: 설명서와 README가 문헌 기능과 기관 셋업에서 실제로 되는 일과 아직 안 되는 일을 정확히 말하도록 고쳤습니다.
+  text: 'README·README.en 비교표의 문헌 관리 칸을 검색·인용만에서 검색·인용·본문 요청으로 고쳤다(합법 OA 조회와 PI PDF 요청 카드가 이미 있음). 매뉴얼 기관 셋업 문단에 http이거나 url=/{url} 자리 없이 경로에 붙이는 프록시는 아직 받지 않는다는 문장을 더하고, Web of Science·Nexus Connect 기관 연결이 labhq에 아직 없으며 Nexus Connect의 labhq CLI 사용은 미확인이라고 고쳤다. 공개 출처 범위는 docs/reference/institution-literature-826.md에 두었다. 코드·설정 변경과 실제 기관 연결 확인은 없고 #826은 부분 해결이다.'
