@@ -70,9 +70,9 @@ server = make_server(
         "Automatic API lookups share a 20-minute deadline from the first lookup in this step, including retries. "
         "On timeout, skip that lookup, continue remaining work and name the missing query and "
         "outputs/external_lookup_status.jsonl in the report. Human PDF/approval waits keep their own policy. "
-        "When this request has a public lookup limit, every call to any of these tools uses one attempt before it "
-        "runs, also when it fails, times out or repeats an earlier call; a refused call looks nothing up, so do not "
-        "call again and report the missing lookup."
+        "When this request has a public lookup limit, every outbound HTTP request these tools send uses one attempt "
+        "before it is sent, including retries, redirects and one request per paper or item; a refused request is "
+        "not sent, so do not call again and report the missing lookup."
     ),
 )
 
@@ -97,53 +97,81 @@ async def _lookup_progress(data: dict) -> None:
         pass  # Local status records and the deadline do not depend on the broker.
 
 
-async def _admit(tool: str) -> int:
-    """One counted attempt from the runner's broker, before this invocation sends anything; else refuse (#858)."""
-    if not BROKER_TOKEN:
-        raise tool_failure(f"{tool}: 요청의 공개 조회 상한이 켜져 있지만 요청을 확인할 broker token이 없어 조회하지 않았습니다")
+class LookupRefused(annot.LookupFailed):
+    """The request's public lookup limit refused one outbound request, which was therefore never sent (#858)."""
+
+
+async def _admit(tool: str, host: str) -> int:
+    """One counted attempt from the runner's broker for one outbound request, just before it is sent; else refuse."""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             response = await client.post(f"{BROKER}/lookup/admit", headers={"X-Labhq-Token": BROKER_TOKEN},
-                                         json={"task_id": TASK_ID, "agent_id": AGENT_ID, "tool": tool})
+                                         json={"task_id": TASK_ID, "agent_id": AGENT_ID, "tool": tool, "host": host})
             response.raise_for_status()
             answer = response.json()
     except (httpx.HTTPError, ValueError):
-        raise tool_failure(f"{tool}: 요청의 공개 조회 상한을 확인하지 못해 조회하지 않았습니다") from None
+        raise LookupRefused(f"{tool}: 요청의 공개 조회 상한을 확인하지 못해 보내지 않았습니다") from None
     if not isinstance(answer, dict) or answer.get("admitted") is not True or type(answer.get("seq")) is not int:
         detail = answer if isinstance(answer, dict) else {}
-        raise tool_failure(f"{tool}: 이 요청의 공개 조회 시도 상한({detail.get('limit')}회)에서 허용되지 않아 조회하지 "
-                           f"않았습니다({detail.get('reason') or 'refused'}). 다시 부르지 말고 빠진 조회를 보고서에 적으세요")
+        raise LookupRefused(f"{tool}: 이 요청의 공개 조회 시도 상한({detail.get('limit')}회, 재시도·redirect 포함)에서 "
+                            f"허용되지 않아 보내지 않았습니다({detail.get('reason') or 'refused'}). 다시 부르지 말고 "
+                            "빠진 조회를 보고서에 적으세요")
     return answer["seq"]
 
 
-async def _finish(seq: int, outbound: int, outcome: str) -> None:
+async def _finish(sends: list[list], outcome: str) -> None:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            await client.post(f"{BROKER}/lookup/finish", headers={"X-Labhq-Token": BROKER_TOKEN}, json={
-                "task_id": TASK_ID, "seq": seq, "outbound_requests": outbound, "outcome": outcome})
+            await client.post(f"{BROKER}/lookup/finish", headers={"X-Labhq-Token": BROKER_TOKEN},
+                              json={"task_id": TASK_ID, "sends": sends, "outcome": outcome})
     except httpx.HTTPError:
-        pass  # the attempt was counted at admission; only its receipt row stays incomplete
+        pass  # every send was counted at admission; only its receipt fields stay empty
 
 
 @asynccontextmanager
 async def _admitted(tool: str):
-    """Client options for one admitted invocation: every request its client sends, retries included, is tallied."""
+    """Client options that admit every outbound request of one tool call before httpx sends it.
+
+    httpx awaits ``request`` hooks right before each send, also for every redirect hop it follows; annot's
+    retries and fan-out call the client again. A refusal raises inside the hook, so that request is never sent,
+    and every later request of this call is refused without asking again."""
     if not LOOKUP_LIMITED:
         yield {}
         return
-    seq, sent, outcome = await _admit(tool), [0], "failed"
+    if not BROKER_TOKEN:
+        raise tool_failure(f"{tool}: 요청의 공개 조회 상한이 켜져 있지만 요청을 확인할 broker token이 없어 조회하지 않았습니다")
+    if tool.startswith("alphagenome"):
+        # The AlphaGenome SDK has its own transport, so its requests cannot be admitted one by one.
+        raise tool_failure(f"{tool}: 요청의 공개 조회 상한이 켜져 있으면 요청마다 셀 수 없는 AlphaGenome 조회는 하지 않습니다")
+    sends: dict[int, int | None] = {}
+    refused: list[str] = []
 
-    async def tally(_request: httpx.Request) -> None:
-        sent[0] += 1
+    async def admit(request: httpx.Request) -> None:
+        if refused:
+            raise LookupRefused(refused[0])
+        try:
+            seq = await _admit(tool, (request.url.host or "").lower())
+        except LookupRefused as exc:
+            refused.append(str(exc))
+            raise
+        request.extensions = {**request.extensions, "labhq_lookup_seq": seq}
+        sends[seq] = None
 
+    async def answered(response: httpx.Response) -> None:
+        seq = response.request.extensions.get("labhq_lookup_seq")
+        if seq in sends:
+            sends[seq] = response.status_code
+
+    outcome = "failed"
     try:
-        yield {"event_hooks": {"request": [tally]}}
+        yield {"event_hooks": {"request": [admit], "response": [answered]}}
         outcome = "ok"
     except BaseException as exc:
         outcome = "timeout" if isinstance(exc.__cause__, LookupTimeout) else "failed"
         raise
     finally:
-        await _finish(seq, sent[0], outcome)
+        if sends:
+            await _finish([[seq, status] for seq, status in sorted(sends.items())], outcome)
 
 
 async def _run(method: str, *args: object, **kwargs: object) -> str:
@@ -206,7 +234,9 @@ async def _run_key_fulltext(papers: list[dict[str, Any]]) -> str:
                                                          unpaywall_email=S.annot.unpaywall_email)
         institution = limiter = None
         policy = S.literature
-        if policy.institution_enabled and policy.institution_tdm_allowed and policy.external_model_allowed:
+        # The institution route drives a browser outside the admitted client, so it is off while a limit is on.
+        if (policy.institution_enabled and policy.institution_tdm_allowed and policy.external_model_allowed
+                and not LOOKUP_LIMITED):
             from ..report_pdf import find_browser
             institution = annot_literature.BrowserInstitutionTransport(
                 S.path(policy.institution_profile) if policy.institution_profile else None,

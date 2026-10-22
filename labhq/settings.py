@@ -592,8 +592,9 @@ class AnnotSettings(BaseModel):
     # Unpaywall requires a contact email. It is used only as the API query parameter and is never put in results,
     # query logs or cache keys. Empty keeps the tool visible but explicitly disabled (#744).
     unpaywall_email: str = ""
-    # Opt-in request-wide cap on labhq_annot tool invocations, admitted by the runner before each one (#858). None
-    # keeps lookups uncounted; 0 refuses every lookup. See runner/lookup_admission.py for what one attempt is.
+    # Opt-in request-wide cap on the outbound HTTP requests labhq_annot sends (retries and redirects included),
+    # each admitted by the runner before it is sent (#858). None keeps lookups uncounted; 0 refuses every lookup.
+    # See runner/lookup_admission.py for what one attempt is.
     request_lookup_limit: int | None = Field(default=None, ge=0, le=10000)
 
 

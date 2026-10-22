@@ -117,7 +117,8 @@ class Broker:
             if self.lookup_admission is None:
                 raise HTTPException(409, "public lookup limit is not configured on this runner")
             return await asyncio.to_thread(self.lookup_admission.admit, identity["request_id"],
-                                           identity["task_id"], identity["agent_id"], body.get("tool"))
+                                           identity["task_id"], identity["agent_id"], body.get("tool"),
+                                           body.get("host"))
 
         @app.post("/lookup/finish")
         async def lookup_finish(body: dict, x_labhq_token: str = Header(default="")) -> dict:
@@ -125,8 +126,7 @@ class Broker:
             if self.lookup_admission is None:
                 raise HTTPException(409, "public lookup limit is not configured on this runner")
             recorded = await asyncio.to_thread(self.lookup_admission.finish, identity["request_id"],
-                                               identity["task_id"], body.get("seq"), body.get("outbound_requests"),
-                                               body.get("outcome"))
+                                               identity["task_id"], body.get("sends"), body.get("outcome"))
             return {"recorded": recorded}
 
         return app

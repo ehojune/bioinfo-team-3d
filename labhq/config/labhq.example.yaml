@@ -150,7 +150,7 @@ github:
 # annot:
 #   alphagenome_key_file: ~/.labhq/secrets/alphagenome_api_key
 #   unpaywall_email: ""             # 연락용 email. 비우면 Unpaywall 조회는 비활성
-#   request_lookup_limit: 9         # 선택: 한 요청의 labhq_annot 조회 시도 상한(실패·반복 포함). 비우면 세지 않음
+#   request_lookup_limit: 9         # 선택: 한 요청에서 labhq_annot이 보내는 HTTP 요청 상한(실패·재시도·redirect 포함). 비우면 세지 않음
 
 # 핵심 논문 전문. 기본은 기관 경로 꺼짐이며 비밀번호·cookie·token은 설정하지 않습니다.
 # literature:
