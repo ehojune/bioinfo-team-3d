@@ -1440,7 +1440,7 @@ Claude baseline은 자기 arm의 파일 쓰기·단순 명령을 허용합니다
 
 labhq가 본뜬 구조입니다.
 
-Stanford Zou 연구실의 Virtual Biotech(bioRxiv 2026, 저자 중 Jiacheng Miao는 Paper2Agent 제1저자)는
+Stanford Zou 연구실의 [The Virtual Biotech](https://doi.org/10.1126/science.aeg6779)(Science 2026, 저자 중 Jiacheng Miao는 Paper2Agent 제1저자)는
 실제 바이오텍 조직을 그대로 본뜬 **4개 사업부 · 11개 에이전트 · 100개 이상의 도구** 구조입니다.
 
 **지휘부**

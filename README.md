@@ -29,7 +29,7 @@
 labhq는 Claude Code와 Codex를 **연구소 직원**처럼 부리는 바이오인포 **멀티 에이전트 오케스트레이션 플랫폼**입니다.
 웹 사무실에 요청을 적으면 CSO가 계획을 세우고, 직원이 나눠 실행한 뒤 과학 리뷰와 보고서로 이어집니다.
 위험한 일과 돈이 드는 일은 PI가 웹이나 폰에서 승인합니다.
-이 프로젝트는 [The Virtual Biotech](https://github.com/harrisongzhang/TheVirtualBiotech)의 연구팀 구조를 벤치마킹하며 시작했습니다.
+이 프로젝트는 [The Virtual Biotech](https://doi.org/10.1126/science.aeg6779)의 연구팀 구조를 벤치마킹하며 시작했습니다.
 
 | 2.5D 사무실 (`/`) | 3D 사무실 (`/3d`) |
 |---|---|

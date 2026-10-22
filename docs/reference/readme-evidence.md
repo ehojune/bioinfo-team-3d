@@ -6,7 +6,7 @@
 
 **틀린 근거를 미리 거른다**
 
-AI가 인용을 지어내거나 잘못 읽는 실수(hallucination)를 보고서 전에 잡으려고 검사를 두 겹 둡니다. 과학 리뷰어(GPT-6-Astra)가 PubMed 원문을 열어 인용을 대조하고, 결론을 바꾸는 지적(P1)이 남으면 요청은 통과하지 못합니다. [The Virtual Biotech](https://github.com/harrisongzhang/TheVirtualBiotech)(Science 2026)에서 가져온 claim 장부와 산출 sha256 기록(MIT)으로 `labhq verify`가 보고서 근거 앵커와 hash를 다시 검사합니다.
+AI가 인용을 지어내거나 잘못 읽는 실수(hallucination)를 보고서 전에 잡으려고 검사를 두 겹 둡니다. 과학 리뷰어(GPT-6-Astra)가 PubMed 원문을 열어 인용을 대조하고, 결론을 바꾸는 지적(P1)이 남으면 요청은 통과하지 못합니다. [The Virtual Biotech](https://doi.org/10.1126/science.aeg6779)(Science 2026)의 [공개 구현](https://github.com/harrisongzhang/TheVirtualBiotech)에서 가져온 claim 장부와 산출 sha256 기록(MIT)으로 `labhq verify`가 보고서 근거 앵커와 hash를 다시 검사합니다.
 
 근거: [11차 시운전](https://github.com/ehojune/bioinfo-team-3d/issues/298#issuecomment-5969847101)(GSE19804): 문헌 단계가 원 논문의 SEMA5A 방향을 거꾸로 적고 Yang 2018 허브 목록을 빠뜨린 것을 리뷰어가 PubMed 원문과 대조해 잡았고, 요청은 보고서를 내기 전에 멈췄습니다 · [예시 GSE10072](../examples/gse10072/README.md): `labhq verify`로 산출 58개 hash 재확인 · [#339](https://github.com/ehojune/bioinfo-team-3d/pull/339)(verify)
 
@@ -70,7 +70,7 @@ The evidence below supports the English README; trial and benchmark results reta
 
 **Catch bad evidence early**
 
-Two layers of checks catch AI mistakes, such as inventing or misreading a citation (hallucination), before the report. The science reviewer (GPT-6-Astra) opens the PubMed source and checks each citation against it, and a request cannot pass while a finding that would change the conclusion (P1) remains. Using the claim ledger and output sha256 records (MIT) taken from [The Virtual Biotech](https://github.com/harrisongzhang/TheVirtualBiotech) (Science 2026), `labhq verify` re-checks the report's evidence anchors and hashes.
+Two layers of checks catch AI mistakes, such as inventing or misreading a citation (hallucination), before the report. The science reviewer (GPT-6-Astra) opens the PubMed source and checks each citation against it, and a request cannot pass while a finding that would change the conclusion (P1) remains. Using the claim ledger and output sha256 records (MIT) taken from the [open implementation](https://github.com/harrisongzhang/TheVirtualBiotech) of [The Virtual Biotech](https://doi.org/10.1126/science.aeg6779) (Science 2026), `labhq verify` re-checks the report's evidence anchors and hashes.
 
 Evidence: [11th trial run](https://github.com/ehojune/bioinfo-team-3d/issues/298#issuecomment-5969847101) (GSE19804): the reviewer checked against the PubMed source and caught that the literature step had reversed the direction of SEMA5A in the original paper and missed the Yang 2018 hub list, so the request stopped before it produced a report · [Example GSE10072](../examples/gse10072/README.md): `labhq verify` re-checked the hashes of 58 outputs · [#339](https://github.com/ehojune/bioinfo-team-3d/pull/339) (verify)
 

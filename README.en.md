@@ -31,7 +31,7 @@ Detailed docs (manual, PI Q&A) and the web UI are in Korean.
 labhq is a bioinformatics **multi-agent orchestration platform** that runs Claude Code and Codex like **lab staff**.
 Write a request in the web office and the CSO plans it, staff split the execution, and science review leads to a report.
 Risky or costly actions are approved by the PI on the web or a phone.
-The project began by taking inspiration from the research-team structure of [The Virtual Biotech](https://github.com/harrisongzhang/TheVirtualBiotech).
+The project began by taking inspiration from the research-team structure of [The Virtual Biotech](https://doi.org/10.1126/science.aeg6779).
 
 | 2.5D office (`/`) | 3D office (`/3d`) |
 |---|---|
