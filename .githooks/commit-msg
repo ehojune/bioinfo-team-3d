@@ -30,7 +30,11 @@ G="$HOME/.git-template/hooks/commit-msg"
 # Automatic git merge has commit-msg but no post-commit. Keep its agent trailer
 # with the local fallback rather than letting the global hook remove attribution.
 merge=$(git rev-parse --git-path MERGE_HEAD 2>/dev/null) || exit 0
-if [ -x "$G" ] && [ ! -f "$merge" ] && [ "$(git config --bool core.logAllRefUpdates)" != false ]; then "$G" "$@"; exit 0; fi
+# Preserve attribution when an amend/reused message retains another author.
+# The local fallback adds the current agent without deleting the old author.
+author=$(git var GIT_AUTHOR_IDENT 2>/dev/null | sed 's/>.*/>/')
+committer=$(git var GIT_COMMITTER_IDENT 2>/dev/null | sed 's/>.*/>/')
+if [ -x "$G" ] && [ ! -f "$merge" ] && [ "$author" = "$committer" ] && [ "$(git config --bool core.logAllRefUpdates)" != false ]; then "$G" "$@"; exit 0; fi
 
 CODEX_MAIL='199175422+chatgpt-codex-connector[bot]@users.noreply.github.com'
 GEMINI_MAIL='176961590+gemini-code-assist[bot]@users.noreply.github.com'

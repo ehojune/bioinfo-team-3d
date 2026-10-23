@@ -127,6 +127,24 @@ def test_cherry_pick_sequence_preserves_both_original_commits(history):
         assert git("log", "-1", "--format=%B", f"HEAD~{offset}").stdout == message
 
 
+@pytest.mark.parametrize("message", [False, True], ids=["no-edit", "message"])
+def test_amend_preserves_another_author_and_adds_agent_trailer(history, message):
+    repo, home, git = history
+    original_commit(repo, git, "one")
+    global_hooks(home)
+    args = ["-m", "amended"] if message else ["--no-edit"]
+    git("commit", "--amend", *args)
+    assert git("log", "-1", "--format=%ae").stdout.strip() == "original@example.com"
+    assert "Co-authored-by: Codex <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>" in git("log", "-1", "--format=%B").stdout
+
+
+def test_explicit_author_on_new_commit_is_preserved(history):
+    repo, home, git = history
+    global_hooks(home)
+    original_commit(repo, git, "one")
+    assert git("log", "-1", "--format=%ae").stdout.strip() == "original@example.com"
+
+
 @pytest.mark.parametrize("operation", ["cherry-pick", "rebase", "rebase-apply", "cherry-pick-continue", "no-reflog-continue"])
 @pytest.mark.parametrize("linked", [False, True], ids=["checkout", "worktree"])
 def test_replay_preserves_author_and_message(history, tmp_path, operation, linked):

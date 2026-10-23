@@ -14,9 +14,14 @@ done
 [ "$(git config --bool core.logAllRefUpdates)" = false ] && exit 0
 action=$(git reflog -1 --format=%gs 2>/dev/null) || exit 0
 case "$action" in
-  commit:\ *|commit\ \(initial\):\ *|commit\ \(amend\):\ *|revert:\ *|commit\ \(revert\):\ *) ;;
+  commit:\ *|commit\ \(initial\):\ *|revert:\ *|commit\ \(revert\):\ *) ;;
   *) exit 0 ;;
 esac
+# --amend keeps its existing author. Explicit author overrides on new commits
+# are also deliberate: only replace a fresh author equal to the committer.
+author=$(git log -1 --format='%an <%ae>' 2>/dev/null) || exit 0
+committer=$(git log -1 --format='%cn <%ce>' 2>/dev/null) || exit 0
+[ "$author" = "$committer" ] || exit 0
 G="$HOME/.git-template/hooks/post-commit"
 if [ -x "$G" ]; then "$G" "$@"; fi
 exit 0
