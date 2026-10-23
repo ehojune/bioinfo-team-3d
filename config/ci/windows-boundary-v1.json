@@ -239,6 +239,7 @@
     "tests/test_result_storage_review.py",
     "tests/test_resume_accounting.py",
     "tests/test_resume_cards_607.py",
+    "tests/test_resume_cp1_654.py",
     "tests/test_resume_receipt_clock.py",
     "tests/test_role_footer.py",
     "tests/test_round_records.py",
