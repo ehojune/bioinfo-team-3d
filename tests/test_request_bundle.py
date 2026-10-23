@@ -19,6 +19,7 @@ from labhq.request_bundle import build_request_bundle
 from labhq.ro_crate import (FORMAT_MARKER, INLINE_CONTEXT, METADATA_FILE, PROCESS_RUN_PROFILE, RO_CRATE_PROFILE,
                             build_ro_crate, verify_bundle_copy)
 from labhq.settings import Settings
+import labhq.gateway.server as server_module
 import labhq.request_bundle as request_bundle_module
 import labhq.ro_crate as ro_crate_module
 
@@ -790,6 +791,45 @@ async def test_recovered_bundle_is_finishing_until_worker_completes(tmp_path, mo
         release.set()
     await asyncio.wait_for(restored.terminal_tasks["readiness"], 5)
     assert restored.shutdown_readiness()["ready"] is True
+    restored.store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_bundle_worker_stuck_past_the_limit_no_longer_holds_shutdown_back(tmp_path, monkeypatch):
+    """#658: the finishing mark of a bundle worker that never ends is reported as stuck, and the gateway is ready to
+    shut down; its request keeps bundle_pending, so the next start rebuilds the bundle."""
+    settings, request, ledger = pending_bundle_fixture(tmp_path, "stuck")
+    request["bundle_pending"] = True
+    hub = Hub(settings)
+    hub.requests["stuck"] = request
+    hub.save_request("stuck")
+    hub.store.put("task", "task-stuck", ledger)
+    hub.store.close()
+    started = asyncio.Event()
+    release = threading.Event()
+    loop = asyncio.get_running_loop()
+
+    def hung_bundle(*_args):
+        loop.call_soon_threadsafe(started.set)
+        assert release.wait(5)
+        return {"path": str(tmp_path / "rebuilt"), "status": "complete"}
+
+    monkeypatch.setattr(request_bundle_module, "build_request_bundle", hung_bundle)
+    restored = Hub(settings)
+    assert restored.recover_pending_bundles() == ["stuck"]
+    try:
+        await asyncio.wait_for(started.wait(), 2)
+        fresh = restored.shutdown_readiness()
+        assert fresh["ready"] is False
+        assert fresh["finishing"][0]["stuck"] is False and fresh["finishing"][0]["elapsed_s"] < 60
+        restored.terminal_started["stuck"] -= server_module.FINISHING_STUCK_S + 1
+        aged = restored.shutdown_readiness()
+        assert aged["ready"] is True
+        assert [(row["id"], row["stage"], row["stuck"]) for row in aged["finishing"]] == [("stuck", "bundle", True)]
+        assert restored.requests["stuck"]["bundle_pending"] is True
+    finally:
+        release.set()
+    await asyncio.wait_for(restored.terminal_tasks["stuck"], 5)
     restored.store.close()
 
 

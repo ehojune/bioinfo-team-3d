@@ -4,7 +4,10 @@ export const FORCE_WARNING = '진행 중인 일이 중단됩니다. 아직 저�
 
 export function readinessText(data) {
   if (!data || typeof data.ready !== 'boolean') throw new Error('종료 상태를 확인하지 못했습니다.');
-  if (data.ready) return '요청이 모두 끝났습니다';
+  const stuck = (data.finishing || []).filter(row => row.stuck);
+  // A stuck bundle does not hold the shutdown back; the next start rebuilds it (#658).
+  if (data.ready) return stuck.length ? `요청이 모두 끝났습니다
+멈춘 마무리 ${stuck.length}건은 다음 시작 때 이어서 합니다` : '요청이 모두 끝났습니다';
   const requests = data.requests || [];
   const waiting = requests.filter(row => row.status === 'waiting_pi' || row.status === 'waiting_facilities_fix');
   const active = requests.filter(row => !waiting.includes(row));
@@ -14,7 +17,10 @@ export function readinessText(data) {
   if (waiting.length) lines.push(`PI 결정 대기 ${waiting.length}건 (${waiting.map(title).join(' / ')})`);
   if (data.followups?.length) lines.push(`이어 묻기 진행 중 ${data.followups.length}건 (${data.followups.map(title).join(' / ')})`);
   if (data.recruits) lines.push(`채용 진행 중 ${data.recruits}건`);
-  if (data.finishing?.length) lines.push(`마무리 중 ${data.finishing.length}건 (${data.finishing.map(title).join(' / ')})`);
+  const finishing = (data.finishing || []).filter(row => !row.stuck);
+  const minutes = row => row.elapsed_s >= 60 ? ` ${Math.floor(row.elapsed_s / 60)}분째` : '';
+  if (finishing.length) lines.push(`마무리 중 ${finishing.length}건 (${finishing.map(row => title(row) + minutes(row)).join(' / ')})`);
+  if (stuck.length) lines.push(`멈춘 마무리 ${stuck.length}건은 다음 시작 때 이어서 합니다`);
   return lines.join('\n') || '아직 끝나지 않은 일이 있습니다.';
 }
 
