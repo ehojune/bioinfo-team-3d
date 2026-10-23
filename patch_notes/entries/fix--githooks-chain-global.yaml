@@ -16,3 +16,7 @@ rows:
   at: '2026-10-24 03:18'
   summary: merge 커밋에서도 에이전트 작성자 표식이 빠지지 않게 했습니다.
   text: 자동 merge와 --no-commit merge는 전역 위임 대신 저장소 trailer 규칙을 쓰며, 수정 전 2건 실패·최종 훅 회귀 14건 통과를 확인했다.
+- sha: bd4d8a0
+  at: '2026-10-24 03:28'
+  summary: 변경을 되돌린 에이전트도 커밋 작성자로 남깁니다.
+  text: 새 inverse commit인 revert에 전역 작성자 처리를 적용하고 단건·연속 revert와 연속 cherry-pick을 포함한 훅 회귀 17건을 검증했다.
