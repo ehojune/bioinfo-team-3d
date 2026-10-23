@@ -410,6 +410,7 @@ class Hub:
             if req.get("status") == "interrupted":
                 self.interrupt_request(rid)
         self.orchestrator = Orchestrator(self)
+        self._attach_resume_plans()
         self.reporter = ProjectReporter(self, settings, github_transport)
         from ..result_storage import ResultStorage
         self.result_storage = ResultStorage(self, github_transport)
@@ -1438,6 +1439,33 @@ class Hub:
         self.save_approval(approval.id)
         self._schedule_resume_expiry(approval.id)
         return approval
+
+    def _record_resume_cp1(self, card: dict, approval_id: str) -> None:
+        """An approved resume card that showed the plan is the PI's CP1 answer for that plan hash, once (#654)."""
+        rid = card.get("request_id")
+        target = (card.get("detail") or {}).get("cp1_target_sha256")
+        plan = (self.requests.get(rid or "") or {}).get("plan")
+        if target and isinstance(plan, dict) and plan_sha256(plan) == target:
+            self.requests[rid]["resume_cp1"] = {"approved": True, "target_sha256": target,
+                                                "approval_id": approval_id, "decided_at": time.time()}
+            self.save_request(rid)
+
+    def _attach_resume_plans(self) -> None:
+        """Startup recovery opens resume cards before the orchestrator exists; give them the plan afterwards (#654)."""
+        for aid, entry in list(self.approvals.items()):
+            card = entry["approval"]
+            if card.get("kind") != "resume" or (card.get("detail") or {}).get("cp1_target_sha256"):
+                continue
+            req = self.requests.get(card.get("request_id") or "")
+            cp1 = self.orchestrator.resume_plan_card(card["request_id"], req) if req else None
+            if not cp1:
+                continue
+            entry["approval"] = ApprovalRequest.model_validate({
+                **card, "summary": card["summary"] + cp1["text"],
+                "detail": {**(card.get("detail") or {}), "cp1_target_sha256": cp1["target_sha256"], **cp1["detail"]},
+                "pi_summary": "", "pi_reason": "", "pi_outcome": "", "pi_explainer": "",
+                "pi_needs_interpretation": False}).model_dump(mode="json")
+            self.save_approval(aid)
 
     def retire_resume_cards(self, rid: str, note: str) -> list[str]:
         """Resolve and remove every pending resume card of a request that no longer needs resuming (#607).
@@ -3461,6 +3489,8 @@ class Hub:
                              else {"new_request_id": retry_id}))
         if storage is not None:
             chosen["storage"] = storage
+        if approved and entry["approval"].get("kind") == "resume":
+            self._record_resume_cp1(entry["approval"], approval_id)  # before the card is resolved (#654 review)
         self.store.delete("approval", approval_id)
         self.store.put("approval_decision", approval_id,
                        {"approval": entry["approval"], "origin": entry["origin"], "approved": approved,
@@ -3474,13 +3504,6 @@ class Hub:
             entry["future"].set_result({"approved": approved, "note": note, **chosen})
         elif entry["approval"].get("kind") == "resume":
             rid = entry["approval"]["request_id"]
-            target = (entry["approval"].get("detail") or {}).get("cp1_target_sha256")
-            plan = self.requests[rid].get("plan")
-            if approved and target and isinstance(plan, dict) and plan_sha256(plan) == target:
-                # The card showed this plan: the CP1 gate takes it as the PI's answer, once, if the hash still holds.
-                self.requests[rid]["resume_cp1"] = {"approved": True, "target_sha256": target, "approval_id": approval_id,
-                                                    "decided_at": time.time()}
-                self.save_request(rid)
             if approved and not is_terminal_request(self.requests[rid].get("status")):
                 await self._set_status(rid, "waiting_for_runner")
                 self._restart_request_asks(rid)

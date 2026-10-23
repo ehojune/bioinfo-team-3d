@@ -156,3 +156,48 @@ async def test_the_gateway_records_nothing_when_the_resume_is_declined_or_has_no
     await hub.resolve_approval(cards["r"]["id"], False)
     await hub.resolve_approval(cards["bare"]["id"], True)
     assert "resume_cp1" not in hub.requests["r"] and "resume_cp1" not in hub.requests["bare"]
+
+
+def _running(plan=None):
+    return {"id": "r", "text": "compare conditions", "mode": "orchestrate", "status": "running",
+            "created_at": time.time(), **({"plan": plan} if plan else {})}
+
+
+@pytest.mark.asyncio
+async def test_a_real_gateway_restart_opens_the_resume_card_with_the_plan(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    plan = cont._plan(1)
+    first = Hub(settings)
+    first.requests["r"] = _running(plan)
+    first.save_request("r")
+
+    second = Hub(settings)  # startup recovery opens the card before the orchestrator exists
+    card = next(a["approval"] for a in second.approvals.values() if a["approval"]["kind"] == "resume")
+    assert second.requests["r"]["status"] == "interrupted"
+    assert card["detail"]["cp1_target_sha256"] == plan_sha256(plan) and "연구 계획" in card["summary"]
+    assert json.loads(card["detail"]["plan_canonical"])["steps"][0]["id"] == "s1"
+    assert card["pi_summary"]  # the PI copy was rebuilt from the longer card
+
+    third = Hub(settings)  # a second restart keeps one card with the plan
+    cards = [a["approval"] for a in third.approvals.values() if a["approval"]["kind"] == "resume"]
+    assert len(cards) == 1 and cards[0]["detail"]["cp1_target_sha256"] == plan_sha256(plan)
+
+
+@pytest.mark.asyncio
+async def test_the_cp1_token_is_saved_before_the_resume_card_is_resolved(tmp_path, monkeypatch):
+    hub = _gateway(tmp_path, monkeypatch)
+    plan = cont._plan(1)
+    hub.requests["r"] = _running(plan)
+    hub.interrupt_request("r")
+    card = next(a["approval"] for a in hub.approvals.values() if a["approval"]["kind"] == "resume")
+
+    def dies(kind, key):
+        raise _Restart()
+
+    monkeypatch.setattr(hub.store, "delete", dies)
+    with pytest.raises(_Restart):
+        await hub.resolve_approval(card["id"], True)
+    # The stop came after the token save and before the card was resolved: nothing is lost either way.
+    assert hub.requests["r"]["resume_cp1"]["target_sha256"] == plan_sha256(plan)
+    assert card["id"] in hub.store.all("approval")
