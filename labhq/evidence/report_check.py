@@ -86,7 +86,9 @@ def _claims_without_accepted_support(ledgers: Mapping[str, Any], refused: Iterab
             for link in links:
                 evidence_id = link.get("evidence_id")
                 row = evidence.get(evidence_id)
-                if not row or (step_id, str(evidence_id)) in refused_ids or row.get("status") != "observed":
+                # Legacy source-only summary rows omit status; absence is not a failed lookup.
+                if (not row or (step_id, str(evidence_id)) in refused_ids
+                        or row.get("status") not in (None, "observed")):
                     continue
                 if row.get("lineage") is None or (evidence_id in lineage and lineage[evidence_id].status == "resolved"):
                     accepted.append(evidence_id)
