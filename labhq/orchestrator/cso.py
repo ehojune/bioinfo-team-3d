@@ -31,6 +31,7 @@ from ..evidence.claims import RESULT_CONTRACT_FIELD_RULES
 from ..evidence.report_check import (FAILED_LOOKUP_TITLE, anchor, check_report, claim_rows, failed_lookup_lines,
                                      failed_lookups)
 from ..evidence.verify import LiveSourceResolver, verification_lines, verify_sources
+from ..runner.lookup_admission import admission_for
 from ..facilities import signatures as env_signatures
 from ..facilities import fixes as facility_fixes
 from ..intake import (CLARIFYING_QUESTION_SCHEMA, QUESTION_RULE, has_structure,
@@ -5226,7 +5227,8 @@ class Orchestrator:
         if self.hub.s.research.live_source_check:
             live_resolver = LiveSourceResolver(
                 contact=self.hub.s.research.live_source_contact,
-                request_timeout_s=self.hub.s.research.live_source_timeout_s)
+                request_timeout_s=self.hub.s.research.live_source_timeout_s,
+                admission=admission_for(self.hub.s), request_id=rid)  # counted with labhq_annot's requests (#891)
         for step in steps:
             result = results[step["id"]]
             salvaged = (contract.get("result_salvage") or {}).get(step["id"]) or {}
