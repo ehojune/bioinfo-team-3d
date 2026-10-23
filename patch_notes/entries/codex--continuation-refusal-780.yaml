@@ -1,5 +1,9 @@
 pr: 876
 rows:
+  - sha: 4c8de13
+    at: "2026-10-23 14:01"
+    summary: "이어 가기 복구 PR에 병합된 Windows 브라우저 CI 수정을 반영했습니다."
+    text: "#881 포함 main을 충돌 없이 통합했다. 복구 제품·fake 검사·선택기는 검토판 a142462d와 같고 browser/workflow는 병합된 main과 같다. profile·Python3.10 문법·기록·공개 검사를 확인했으며 최종 head CI·리뷰는 별도다."
   - sha: 3c5eb68
     at: "2026-10-23 10:02"
     summary: "이어 가기 계획이 모델 거절로 끝나도 다른 모델로 같은 요청을 다시 계획합니다."
