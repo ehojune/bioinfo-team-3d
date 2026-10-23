@@ -1,5 +1,9 @@
 pr: 880
 rows:
+  - sha: 78eabdd
+    at: "2026-10-23 13:06"
+    summary: "새 contained 검사를 Windows 필수 cohort에 등록하고 binary 읽기 모드를 명시했습니다."
+    text: "CI의 inventory 누락 거부와 encoding AST 오인 두 원인을 고쳤다. Windows 선택 제한은 유지하고 새 fake 모듈을 필수 포함했다. focused 197건과 CI cohort 134건, profile 검증 통과. 실제 B 변경은 없다."
   - sha: ccc8f0f
     at: "2026-10-23 12:58"
     summary: "운영자가 별도 고정한 owner 계약으로 현재 네 데몬의 contained readiness를 확인합니다."

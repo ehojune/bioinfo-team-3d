@@ -8,6 +8,7 @@
 
 ## 테스트 결과
 - fake/static 회귀: 180 passed. 실제 process 생성·종료와 연구 요청은 없었습니다.
+- CI 초기 실패 두 건 수정: Windows inventory 누락과 binary `Path.open`의 encoding AST 오인. 새 모듈을 Windows 필수 cohort에 포함했습니다. 수정 후 집중 회귀 197건·CI cohort 134건·profile 검증 PASS.
 - 별도 후보 owner RPC의 fake 검사: 4 passed. 공개 제품의 runtime 검증을 대신하지 않습니다.
 - Python 3.10 AST, public, diff 검사 PASS. CI는 PR에서 확인합니다.
 - UI 변경 없음.
