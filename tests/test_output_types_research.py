@@ -47,7 +47,8 @@ RESEARCH_PLAN_SCHEMA_SHA = "ecaec20a558be2cba0955836579538a13a1785ce5baed14bda38
 # Plan schema, planning prompt and existing approved-plan hash stay pinned to their previous values.
 RESEARCH_RESULT_SCHEMA_SHA = "596679add2478c0eff0eddaddd8d85604b0148770fb5a4aaa0a0235e836ca179"
 # #798/#671 change only paper timing/parallel fallback; normalize that sentence to exact previous prompts.
-RESEARCH_PROMPT_SHA = "a00381711998ac579e148a4188048a628d1f65edf4452b397ce42d2319788adb"
+# #669 adds the task-local install rule to the planning prompt (no new packages is not a default limit).
+RESEARCH_PROMPT_SHA = "2f3c9d03e4a8cf8be46467140edc69b53abb8c45b46132fe35266ca6bda0567e"
 VALID_PLAN_SHA = "f611461cc2dbb17e39159ec1df6a75d8f7b661eb39bbe42c8ed0438c5c45e213"
 
 
@@ -76,7 +77,7 @@ def test_engine_schemas_and_prompt_off_are_those_of_main():
     assert prompt.count(phase) == 1
     assert raw_sha(prompt.replace(phase, previous)) == RESEARCH_PROMPT_SHA
     assert raw_sha(prompt.replace(phase, "labhq prepares them before CP1.")) == (
-        "d4f716696622b635ad8d6b30fc601eaa292e4002232579c545ba6aaf582c2f47")
+        "ed59a387489e39817a2d0bce164e1762485f6161656f1b90d4492b759a88e56a")
 
 
 def test_on_schema_offers_optional_entries_without_the_version_field():
