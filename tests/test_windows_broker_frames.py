@@ -7,7 +7,7 @@ from unittest.mock import Mock
 import pytest
 from labhq import windows_broker as broker
 from tests.test_windows_broker import world
-from tests.test_windows_broker_phases import CREATE, shell, frames, PHASES
+from tests.test_windows_broker_phases import CREATE, FIRST_PHASE, shell, frames, PHASES
 
 LIMIT = 1024 * 1024
 FLAGS = 0x01000608
@@ -113,7 +113,7 @@ def test_receiver_reference_reads_exactly_one_frame_without_eof_probe():
 def test_receiver_source_binds_raw_stream_exact_reads_strict_utf8_and_guards_before_create():
     script = broker.WMI_SCRIPT
     assert broker.MAX_REQUEST_BYTES == LIMIT and str(LIMIT) in script
-    markers = [script.index("Write-Phase '"+p+"'") for p in PHASES]
+    markers = [script.index(FIRST_PHASE)] + [script.index("Write-Phase '"+p+"'") for p in PHASES[1:]]
     assert markers == sorted(markers)
     positions = [script.index(x) for x in ('[Console]::OpenStandardInput()', '.ReadUInt32()',
         '$length -lt 1 -or $length -gt', '.ReadBytes(', '$payload.Length -ne',

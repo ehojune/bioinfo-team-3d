@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import ctypes as C
+import errno
 import hashlib
 import json
 import math
@@ -40,7 +41,8 @@ function Write-Phase([string]$phase) {
   [Console]::Out.Flush()
 }
 try {
-  Write-Phase 'powershell_started'
+  [Console]::Out.WriteLine('{"phase":"powershell_started","elapsed_ms":0}')
+  [Console]::Out.Flush()
   $stream = [Console]::OpenStandardInput()
   Write-Phase 'stdin_open'
   $reader = [IO.BinaryReader]::new($stream)
@@ -206,16 +208,22 @@ def _read(path):
 
 
 # ERROR_SHARING_VIOLATION. Python opens files without FILE_SHARE_DELETE, so reading a record while another handle with
-# DELETE access is open on it (the writer's atomic replace, a file scanner) fails briefly with this code (#844).
+# DELETE access is open on it (the writer's atomic replace, a file scanner) can fail briefly (#844). The code is not
+# always visible: open() goes through the C runtime (CPython 3.12 Modules/_io/fileio.c: _wopen, then
+# PyErr_SetFromErrnoWithFilenameObject), which keeps only errno EACCES and no winerror, the same shape as an ACL denial.
 _SHARING_VIOLATION = 32
 
 
-def _poll(path):
-    """`_read` inside a deadline-bounded wait: a record that is being replaced right now is not there yet."""
+def _poll(path, counts):
+    """`_read` inside a deadline-bounded wait: a record held elsewhere right now is not there yet. Those reads are
+    counted in the caller's `counts["denied_reads"]`, so a denial that never clears still shows when the wait ends.
+    Only a sharing violation or a code-less EACCES is read again; an explicit other winerror stops at once."""
     try:
         return _read(path)
     except PermissionError as exc:
-        if getattr(exc, "winerror", None) == _SHARING_VIOLATION:
+        winerror = getattr(exc, "winerror", None)
+        if winerror == _SHARING_VIOLATION or (winerror is None and exc.errno == errno.EACCES):
+            counts["denied_reads"] += 1
             return None
         raise
 
@@ -250,9 +258,13 @@ _PROVIDER_PHASES = ("powershell_started", "stdin_open", "header_read", "input_re
 
 
 def _provider_output(output, diagnostics, *, complete):
-    """Keep only bounded, ordered fixed phases; partial stdout never establishes a returned PID."""
+    """Keep only bounded, ordered fixed phases; partial stdout never establishes a returned PID. The stdout itself is
+    described only by kind and byte count, which tells no output at all from output without a valid phase."""
     phases = diagnostics["phases"] = []
     diagnostics["trace_status"] = "absent"
+    diagnostics["stdout"] = "bytes" if isinstance(output, bytes) else "missing" if output is None else "invalid_type"
+    if isinstance(output, bytes):
+        diagnostics["stdout_bytes"] = len(output)
     try:
         if output is None and not complete:
             return None
@@ -376,10 +388,10 @@ def launch(command, *, state, role, **options):
             process = Process(native, pid, handle, None)
             phase = "process_identity"
             identity = native.identity(handle)
-            phase = "receipt_wait"
+            phase, receipt_reads = "receipt_wait", {"denied_reads": 0}  # this launch's own receipt wait
             deadline = time.monotonic() + TIMEOUT
             while True:
-                receipt = _poll(folder / "receipt.json")
+                receipt = _poll(folder / "receipt.json", receipt_reads)
                 if receipt is not None:
                     break
                 if not native.alive(handle) or time.monotonic() >= deadline:
@@ -419,8 +431,11 @@ def launch(command, *, state, role, **options):
             error = next((kind.__name__ for kind in (BrokerFailure, subprocess.TimeoutExpired,
                 subprocess.CalledProcessError, subprocess.SubprocessError, PermissionError,
                 FileNotFoundError, TimeoutError, OSError, ValueError, TypeError) if isinstance(exc, kind)), "OtherError")
+            # The parent's own receipt reads only; the bootstrap's ACK reads are counted in its role log stop line.
+            waited = {"denied_reads": receipt_reads["denied_reads"]} if phase == "receipt_wait" else {}
             try:
-                outcome(state, role, "wmi_failed", error=error, reason=reason, code=code, phase=phase, provider=provider)
+                outcome(state, role, "wmi_failed", error=error, reason=reason, code=code, phase=phase, provider=provider,
+                        **waited)
             finally:  # A full/unwritable journal must never prevent owned-handle cleanup before ACK.
                 if process:
                     try:
@@ -448,7 +463,8 @@ def bootstrap(control):
 
 # Where the bootstrap is once its receipt exists (#844). Before "role" a failure is the bootstrap's own and is
 # reported by stage and exception type only; from "role" on it is the role's, with its owned log as stderr.
-_STAGE = {"name": None, "log": None}
+# denied_reads counts this bootstrap's own ACK reads that were held elsewhere; it starts at 0 with ack_wait.
+_STAGE = {"name": None, "log": None, "denied_reads": None}
 
 
 def _note_stop(error: BaseException) -> None:
@@ -460,6 +476,8 @@ def _note_stop(error: BaseException) -> None:
             stream.write(f"labhq WMI bootstrap stopped before the role started: "
                          f"stage={_STAGE['name']} error={type(error).__name__}"
                          + (f" winerror={error.winerror}" if type(getattr(error, "winerror", None)) is int else "")
+                         + (f" denied_reads={_STAGE.get('denied_reads')}"
+                            if _STAGE["name"] == "ack_wait" and type(_STAGE.get("denied_reads")) is int else "")
                          + "\n")
     except OSError:
         pass
@@ -476,7 +494,8 @@ def main(argv) -> None:
 
 
 def _bootstrap(control):
-    request = _read(control)
+    _STAGE.update(name=None, log=None, denied_reads=None)
+    request = _read(control)  # Read once: a request that cannot be read is never waited for.
     native = Native()
     mine = native.identity(native.k.GetCurrentProcess())
     parent = native.open_process(request["caller_pid"], terminate=False)
@@ -488,12 +507,12 @@ def _bootstrap(control):
             raise LaunchError("WMI bootstrap caller/environment mismatch")
         receipt = {"nonce": request["nonce"], "pid": os.getpid(), "created": mine["created"]}
         _write(control.parent / "receipt.json", receipt)
-        _STAGE.update(name="ack_wait", log=request.get("log"))
+        _STAGE.update(name="ack_wait", log=request.get("log"), denied_reads=0)
         deadline = time.monotonic() + TIMEOUT
         while True:
             if not native.alive(parent) or time.time() >= request["expires"] or time.monotonic() >= deadline:
                 raise LaunchError("WMI bootstrap caller exited or ACK expired")
-            if _poll(control.parent / "ack.json") == receipt:
+            if _poll(control.parent / "ack.json", _STAGE) == receipt:
                 break
             time.sleep(.02)
         _STAGE["name"] = "final_check"

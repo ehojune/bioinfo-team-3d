@@ -131,6 +131,8 @@ def _launch_journal(path: Path) -> str:
             if valid:
                 result[key] = value
         return result
+    def count(value):  # a strict bounded non-negative integer; never a bool, float or text
+        return type(value) is int and 0 <= value <= 2**32
     rows = [{"journal": "tail_only"}] if start else []
     for line in raw.splitlines()[-4:]:
         try:
@@ -144,9 +146,16 @@ def _launch_journal(path: Path) -> str:
         if row.get("role") != "gateway-supervisor":
             continue
         safe = facts(row)
+        if count(row.get("denied_reads")):  # the parent's receipt reads held elsewhere (#844)
+            safe["denied_reads"] = row["denied_reads"]
         provider = row.get("provider")
         if isinstance(provider, dict):
             safe["provider"] = facts(provider)
+            # What reached the provider's stdout, by kind and size only: never its content (#844).
+            if provider.get("stdout") in ("bytes", "missing", "invalid_type"):
+                safe["provider"]["stdout"] = provider["stdout"]
+            if count(provider.get("stdout_bytes")):
+                safe["provider"]["stdout_bytes"] = provider["stdout_bytes"]
             phases = provider.get("phases")
             if isinstance(phases, list):
                 valid = []
@@ -271,6 +280,34 @@ def test_start_gateway_reports_only_bounded_allowlisted_launch_facts(tmp_path, m
         assert '"phase": "powershell_started"' in stderr and '"phase": "input_read"' not in stderr
     else:
         assert journal in stderr
+
+
+@pytest.mark.parametrize("top,provider", [
+    ({"denied_reads": 3}, {"stdout": "bytes", "stdout_bytes": 0}),
+    ({"denied_reads": 2**32}, {"stdout": "missing"}),
+    ({"denied_reads": True, "stdout": "bytes"}, {"stdout": "SECRET-output", "stdout_bytes": -1, "denied_reads": 4}),
+    ({"denied_reads": "7"}, {"stdout": "invalid_type", "stdout_bytes": 2**32 + 1}),
+    ({"denied_reads": 1.0}, {"stdout": True, "stdout_bytes": float("nan")}),
+], ids=["empty-bytes", "missing", "bool-negative-misplaced", "text-oversize", "float-nan"])
+def test_this_projection_keeps_the_same_stdout_and_denied_read_facts_as_clean_install(tmp_path, top, provider):
+    """Pure: the test-side mirror and scripts/clean_install_check.py read one journal and agree field by field."""
+    from scripts import clean_install_check as check
+    row = {"role": "gateway-supervisor", "status": "wmi_failed", "phase": "provider_create",
+           "reason": "provider_timeout", "error": "TimeoutExpired", "code": None, **top,
+           "provider": {"elapsed_ms": 10000, "trace_status": "absent", "phases": [], **provider}}
+    path = tmp_path / "detached-launch.jsonl"
+    path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    mirrored = json.loads(_launch_journal(path))[-1]
+    projected = check._startup_journal(path)["events"][-1]
+    assert "SECRET" not in json.dumps(mirrored) and "SECRET" not in json.dumps(projected)
+    assert mirrored.get("denied_reads") == projected.get("denied_reads")
+    assert mirrored["provider"] == projected["provider"]
+    kept = {key: value for key, value in provider.items()
+            if key == "stdout" and value in ("bytes", "missing", "invalid_type")
+            or key == "stdout_bytes" and type(value) is int and 0 <= value <= 2**32}
+    assert mirrored["provider"] == {"elapsed_ms": 10000, "trace_status": "absent", "phases": [], **kept}
+    assert ("denied_reads" in mirrored) == (type(top["denied_reads"]) is int)  # a bool is not an int here
+    assert not {"stdout", "stdout_bytes"} & mirrored.keys()
 
 
 def _gateway_events(settings) -> set[str]:
