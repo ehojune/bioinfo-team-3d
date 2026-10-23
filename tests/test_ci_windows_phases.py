@@ -420,7 +420,7 @@ def test_workflow_barrier_download_binding_no_skip_and_ten_minute_total():
     import shlex
     command = shlex.split(steps[critical]['run'])
     assert command[command.index('critical') + 1:] == list(p.TARGETS)
-    assert steps[critical]['timeout-minutes'] == 2 and '|| 7' in steps[parallel]['timeout-minutes']
+    assert steps[critical]['timeout-minutes'] == 3 and '|| 6' in steps[parallel]['timeout-minutes']
     assert shlex.split(steps[parallel]['run'])[-1] == 'tests'
     assert '-n 4 --dist loadfile' in steps[parallel]['run']
     assert not any(x.get('continue-on-error') or x.get('if') for x in steps[critical:parallel+1])
