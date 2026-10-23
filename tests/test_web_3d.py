@@ -198,32 +198,41 @@ def test_office_in_node(filename, marker):
     timeout = {'web_office_browser.cjs': 170, 'web_visual_demo.cjs': 260, 'web_visual_tooling.cjs': 170}.get(filename, 30)
     # On Windows the demo driver starts Chrome inside the owned KILL_ON_CLOSE Job wrapper with this exact
     # interpreter (#842); it never falls back to a PATH or Store python.
-    env = {**os.environ, 'LABHQ_TEST_PYTHON': sys.executable}
-    if filename == 'web_resizable_panels.cjs':
-        # #833: this watchdog's absolute end (epoch ms). The script stops its browser work early enough to close what
-        # it owns and exit before the kill below would skip that close. The timeout itself is unchanged.
-        env['LABHQ_TEST_OUTER_DEADLINE_MS'] = str(int((time.time() + timeout) * 1000))
-    try:
-        result = subprocess.run([node, str(script)], capture_output=True, text=True, encoding='utf-8', timeout=timeout,
-                                env=env)
-    except subprocess.TimeoutExpired as exc:
-        # TimeoutExpired may contain bytes even with text=True. Keep partial TAP
-        # and browser phase diagnostics; a timeout remains a failure.
-        def captured(value):
-            return value.decode('utf-8', errors='replace') if isinstance(value, bytes) else (value or '')
-        raise AssertionError(f'{filename} exceeded {timeout}s\nstdout:\n{captured(exc.output)}'
-                             f'\nstderr:\n{captured(exc.stderr)}') from exc
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert marker in result.stdout, result.stdout + result.stderr
-    if filename == 'web_resizable_panels.cjs' and os.environ.get('LABHQ_REQUIRE_RESIZABLE_BROWSER') == '1':
-        # A Python PASS alone must not certify an optional inner Node skip.
-        assert re.search(r'^# pass 3\s*$', result.stdout, re.MULTILINE), result.stdout + result.stderr
-        assert re.search(r'^# skipped 0\s*$', result.stdout, re.MULTILINE), result.stdout + result.stderr
-    if (filename in ('web_office_focus_layout.cjs', 'web_visual_tooling.cjs') and os.name == 'nt'
-            and os.environ.get('GITHUB_ACTIONS') == 'true'):
-        # #842: on hosted Windows the real-Chrome cleanup regressions (forced path included) must run; an inner
-        # node:test skip would otherwise still print "fail 0" and pass this parent. Chrome stays optional elsewhere.
-        assert re.search(r'^# skipped 0\s*$', result.stdout, re.MULTILINE), result.stdout + result.stderr
+    base_env = {**os.environ, 'LABHQ_TEST_PYTHON': sys.executable}
+    # #833: the resizable script runs once per viewport, in this order, each under its own watchdog and with that
+    # watchdog's absolute end (epoch ms), so its browser work stops early enough to close what it owns before the kill
+    # below would skip that close. Every invocation must pass; none may be skipped when the browser is required.
+    resizable = {'desktop': 'desktop splitters drag, respond to arrows, persist and reset',
+                 'phone': 'phone layout hides the splitters and keeps the office full width'}
+    for viewport in (list(resizable) if filename == 'web_resizable_panels.cjs' else [None]):
+        env = dict(base_env)
+        if viewport:
+            env['LABHQ_RESIZABLE_VIEWPORT'] = viewport
+            env['LABHQ_TEST_OUTER_DEADLINE_MS'] = str(int((time.time() + timeout) * 1000))
+        label = f'{filename} ({viewport})' if viewport else filename
+        try:
+            result = subprocess.run([node, str(script)], capture_output=True, text=True, encoding='utf-8',
+                                    timeout=timeout, env=env)
+        except subprocess.TimeoutExpired as exc:
+            # TimeoutExpired may contain bytes even with text=True. Keep partial TAP
+            # and browser phase diagnostics; a timeout remains a failure.
+            def captured(value):
+                return value.decode('utf-8', errors='replace') if isinstance(value, bytes) else (value or '')
+            raise AssertionError(f'{label} exceeded {timeout}s\nstdout:\n{captured(exc.output)}'
+                                 f'\nstderr:\n{captured(exc.stderr)}') from exc
+        output = f'{label}\n{result.stdout}{result.stderr}'
+        assert result.returncode == 0, output
+        assert marker in result.stdout, output
+        if viewport and os.environ.get('LABHQ_REQUIRE_RESIZABLE_BROWSER') == '1':
+            # A Python PASS alone must not certify an optional inner Node skip, or another viewport's test.
+            assert re.search(r'^# pass 3\s*$', result.stdout, re.MULTILINE), output
+            assert re.search(r'^# skipped 0\s*$', result.stdout, re.MULTILINE), output
+            assert re.search(r'^ok 3 - ' + re.escape(resizable[viewport]) + r'\s*$', result.stdout, re.MULTILINE), output
+        if (filename in ('web_office_focus_layout.cjs', 'web_visual_tooling.cjs') and os.name == 'nt'
+                and os.environ.get('GITHUB_ACTIONS') == 'true'):
+            # #842: on hosted Windows the real-Chrome cleanup regressions (forced path included) must run; an inner
+            # node:test skip would otherwise still print "fail 0" and pass this parent. Chrome stays optional elsewhere.
+            assert re.search(r'^# skipped 0\s*$', result.stdout, re.MULTILINE), result.stdout + result.stderr
 
 
 def test_every_node_web_test_runs_in_ci():

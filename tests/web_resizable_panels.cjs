@@ -36,18 +36,29 @@ test('2.5D shell exposes two token-styled accessible splitters and leaves phone 
   assert.match(components, /@media \(max-width:\s*620px\)[\s\S]*\.panel-splitter[^}]*display:\s*none/);
 });
 
-// #833: tests/test_web_3d.py kills this script at its watchdog (LABHQ_TEST_OUTER_DEADLINE_MS, epoch ms), which skips
-// every close below. One work deadline, shared by both viewports, ends the browser work CLOSE_RESERVE_MS before it, so
-// the open session's own close and this process's exit still fit. Run directly (no variable), the driver keeps its
-// own budgets.
+// #833: tests/test_web_3d.py runs each viewport as its own invocation (LABHQ_RESIZABLE_VIEWPORT=desktop or phone), so
+// each gets its own 30 s watchdog; one shared budget left the second viewport no time (job 120174823730). Only the
+// selected browser test is registered. Run directly without the variable, both run here one after the other.
+const VIEWPORTS = ['desktop', 'phone'];
+const selected = process.env.LABHQ_RESIZABLE_VIEWPORT;
+if (selected !== undefined && !VIEWPORTS.includes(selected)) {
+  throw new Error(`LABHQ_RESIZABLE_VIEWPORT must be one of: ${VIEWPORTS.join(', ')}`);
+}
+// The watchdog kills this script at LABHQ_TEST_OUTER_DEADLINE_MS (epoch ms), which skips every close below. The work
+// deadline ends the browser work CLOSE_RESERVE_MS before it, so the open session's own close and this process's exit
+// still fit. It is shared by the stages of one viewport only: an outer deadline without a selected viewport is refused.
 const outerDeadline = Number(process.env.LABHQ_TEST_OUTER_DEADLINE_MS);
 const workDeadline = Number.isFinite(outerDeadline) && outerDeadline > 0 ? outerDeadline - CLOSE_RESERVE_MS : undefined;
+if (process.env.LABHQ_TEST_OUTER_DEADLINE_MS !== undefined && selected === undefined) {
+  throw new Error('LABHQ_TEST_OUTER_DEADLINE_MS needs LABHQ_RESIZABLE_VIEWPORT: one deadline per viewport invocation');
+}
+const runs = viewport => selected === undefined || selected === viewport;
 
 // The critical Windows phase requires a real browser, never an optional skip.
 if (process.env.LABHQ_REQUIRE_RESIZABLE_BROWSER === '1' && skipReason()) {
   throw new Error(`required resizable browser unavailable: ${skipReason()}`);
 }
-test('desktop splitter drags, responds to arrows, persists and resets while phone hides it',
+if (runs('desktop')) test('desktop splitters drag, respond to arrows, persist and reset',
   {skip: skipReason() || false, timeout: 60000}, async () => {
     console.error('resizable browser: desktop open');
     const desktop = await openDemo({width: 1440, height: 900, reducedMotion: true, workDeadline,
@@ -87,7 +98,10 @@ test('desktop splitter drags, responds to arrows, persists and resets while phon
       await desktop.close();
       console.error('resizable browser: desktop closed');
     }
+  });
 
+if (runs('phone')) test('phone layout hides the splitters and keeps the office full width',
+  {skip: skipReason() || false, timeout: 60000}, async () => {
     console.error('resizable browser: phone open');
     const phone = await openDemo({width: 390, height: 844, reducedMotion: true, workDeadline,
       diagnostic: event => console.error('resizable driver: ' + JSON.stringify({viewport: 'phone', ...event}))});
