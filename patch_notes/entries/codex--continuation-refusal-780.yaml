@@ -1,5 +1,9 @@
 pr: 876
 rows:
+  - sha: daea6ba
+    at: "2026-10-23 14:14"
+    summary: "단계 이름이 plan이어도 이전 결과를 보존하고 같은 요청을 복구합니다."
+    text: "리뷰 P2의 제어 task와 단계 ID 충돌을 review·CP2 경로에서 재현해 고쳤다. 계획 실패 결과는 ended_before_dispatch 진단에 분리하며 이전 결과→복구 카드→같은 요청 재계획의 동기 fake14검사를 통과했다. 실제 실행·새 head CI는 별도다."
   - sha: 4c8de13
     at: "2026-10-23 14:01"
     summary: "이어 가기 복구 PR에 병합된 Windows 브라우저 CI 수정을 반영했습니다."
