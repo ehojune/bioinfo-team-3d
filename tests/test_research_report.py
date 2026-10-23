@@ -515,6 +515,61 @@ def test_receipt_schema_preserves_unknown_dependency_and_oa_pdf_provenance():
         assert normalize_precedents(raw) is None
 
 
+@pytest.mark.parametrize("level", ["internal", "restricted"])
+@pytest.mark.parametrize("discussion", [False, True])
+@pytest.mark.parametrize("attributed", [False, True])
+def test_publication_withholds_internal_claim_metadata(tmp_path, level, discussion, attributed):
+    from labhq.orchestrator.cso import _before_bench_block
+    from labhq.portfolio import portfolio_report
+    from labhq.settings import DataZone, Settings
+
+    settings = Settings()
+    settings.runner.workspace_root = str(tmp_path / "runs")
+    zone = tmp_path / "protected"
+    settings.policy.data_zones = [DataZone(path=str(zone), level=level)]
+    ledgers = {}
+    for step_id in ("public", "private", "derived"):
+        tag = f"SYNTHETIC_{step_id.upper()}_METADATA"
+        evidence = _literature("e1", source={"uri": f"https://example.org/{tag}",
+                                           "locator": tag + "_LOCATION"})
+        evidence.update(status="unavailable", status_detail=tag + "_DETAIL")
+        ledgers[step_id] = {
+            "claims": [{"id": "c1", "statement": tag + "_STATEMENT", "status": "unresolved"}],
+            "evidence": [evidence],
+            "links": [{"claim_id": "c1", "evidence_id": "e1", "relation": "context"}],
+        }
+    refused = [{"step_id": "private", "evidence_id": "e1", "reason": "SYNTHETIC_PRIVATE_REASON"}]
+    narrative = "# Synthetic report\n\n" + " ".join(
+        f"Aggregate result [[claim:{step_id}/c1]]." for step_id in ledgers)
+    if discussion:
+        narrative += "\n\n## 논의\n\nAggregate limitations.\n\n## 결론\n\nAggregate conclusion."
+    report = _before_bench_block(
+        narrative, claim_evidence_section(claim_evidence_rows(ledgers, refused=refused)))
+    req = {
+        "id": "synthetic-private", "text": "Synthetic comparison" if attributed else f"Read {zone / 'other.tsv'}",
+        "status": "done", "report": report,
+        "plan": {"steps": [
+            {"id": "public", "instruction": "Read public literature"},
+            {"id": "private", "instruction": f"Read {zone / 'synthetic.tsv'}"},
+            {"id": "derived", "instruction": "Summarize", "depends_on": ["private"]},
+        ]},
+        "results": {step_id: {"structured": ledger} for step_id, ledger in ledgers.items()},
+        "research_contract": {"checkpoints": {"cp2": {"refused_evidence": refused}}},
+    }
+    before = deepcopy(req)
+    files = build_portfolio_files(req, settings, {}, {})
+    for output in (portfolio_report(req, settings, {}), files["report/report.md"],
+                   files["docs/reference/claim_evidence.md"]):
+        assert "SYNTHETIC_PRIVATE" not in output
+        assert "SYNTHETIC_DERIVED" not in output
+        assert ("SYNTHETIC_PUBLIC_METADATA" in output) is attributed
+        assert output.count("주장별 원문 근거") == int(attributed)
+    assert "Aggregate result" in files["report/report.md"]
+    if discussion:
+        assert "Aggregate conclusion." in files["report/report.md"]
+    assert req == before  # the protected local request keeps its complete evidence ledger
+
+
 def test_legacy_source_url_and_unanchored_unresolved_claim_survive_publication(tmp_path):
     from labhq.settings import Settings
 
