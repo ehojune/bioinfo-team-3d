@@ -2,6 +2,10 @@ export const FINISHED = '끝났습니다. 이 탭을 닫아도 됩니다.';
 export const TAB_ONLY = 'labhq는 계속 돌아갑니다. 나중에 다시 열면 이어서 볼 수 있습니다. 이 탭을 닫아도 됩니다.';
 export const FORCE_WARNING = '진행 중인 일이 중단됩니다. 아직 저장하지 못한 보고서나 요청 묶음은 남지 않을 수 있습니다. 다시 켜면 재개 카드에서 이어 가세요.';
 
+// The same wording as `labhq down` (FINISHING_STAGE_TEXT in cli.py).
+const STAGE_TEXT = {cancel: '취소 기록을 쓰는 중', bundle: '보고서 묶음 저장을 마무리하는 중',
+  result_storage: '결과 저장을 마무리하는 중', pi_interpretation: 'PI 해석을 마무리하는 중'};
+
 export function readinessText(data) {
   if (!data || typeof data.ready !== 'boolean') throw new Error('종료 상태를 확인하지 못했습니다.');
   const stuck = (data.finishing || []).filter(row => row.stuck);
@@ -19,7 +23,8 @@ export function readinessText(data) {
   if (data.recruits) lines.push(`채용 진행 중 ${data.recruits}건`);
   const finishing = (data.finishing || []).filter(row => !row.stuck);
   const minutes = row => row.elapsed_s >= 60 ? ` ${Math.floor(row.elapsed_s / 60)}분째` : '';
-  if (finishing.length) lines.push(`마무리 중 ${finishing.length}건 (${finishing.map(row => title(row) + minutes(row)).join(' / ')})`);
+  const stage = row => STAGE_TEXT[row.stage] ? ` · ${STAGE_TEXT[row.stage]}` : '';
+  if (finishing.length) lines.push(`마무리 중 ${finishing.length}건 (${finishing.map(row => title(row) + stage(row) + minutes(row)).join(' / ')})`);
   if (stuck.length) lines.push(`멈춘 마무리 ${stuck.length}건은 다음 시작 때 이어서 합니다`);
   return lines.join('\n') || '아직 끝나지 않은 일이 있습니다.';
 }
