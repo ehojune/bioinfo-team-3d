@@ -17,6 +17,7 @@ from typing import Any
 from urllib.parse import quote, unquote
 
 from .integrations.github import SECRET_PATTERNS, publish_clean, redact_url_credentials, sanitize
+from .evidence.report_check import SOURCE_EVIDENCE_TITLE, claim_evidence_rows, claim_evidence_section, evidence_note
 from .korean_qc import check_document, check_preservation
 from .models import RunnerPathFields
 from .policy import touches
@@ -642,7 +643,20 @@ def _claim_notes(report: str) -> dict[str, tuple[str, str]]:
     return notes
 
 
-def _publication_claim_footnotes(report: str) -> str:
+def _source_evidence_rows(req: dict, settings) -> list[dict[str, str]]:
+    results = req.get("results") or {}
+    steps = (req.get("plan") or {}).get("steps")
+    active = {step.get("id") for step in steps if isinstance(step, Mapping)} if isinstance(steps, list) else None
+    scope = internal_data_steps(req, settings)
+    ledgers = {step_id: _claim_ledger(result) for step_id, result in results.items()
+               if (active is None or step_id in active)
+               and not step_uses_internal_data(step_id, req, settings, scope)}
+    cp2 = ((req.get("research_contract") or {}).get("checkpoints") or {}).get("cp2") or {}
+    return claim_evidence_rows(ledgers, refused=cp2.get("refused_evidence") or (),
+                               unsupported=cp2.get("unsupported_claims") or ())
+
+
+def _publication_claim_footnotes(report: str, req: dict, settings) -> str:
     """Replace validation anchors in the publication copy with readable evidence footnotes."""
     notes = _claim_notes(report)
     note_ids = {claim: note_id for note_id, claim in notes.items()}
@@ -657,9 +671,12 @@ def _publication_claim_footnotes(report: str) -> str:
     published = _ANCHOR.sub(replace, report).rstrip()
     if not notes:
         return published + "\n"
+    rows = _source_evidence_rows(req, settings)
     definitions = [
         f"[^{note_id}]: 단계 `{step_id}` · claim `{claim_id}` · "
-        f"[근거 파일](../docs/reference/claim_evidence.md#{note_id})"
+        f"[근거 파일](../docs/reference/claim_evidence.md#{note_id})" +
+        "".join(" · " + " ".join(evidence_note(row).split())
+                for row in rows if (row["step_id"], row["claim_id"]) == (step_id, claim_id))
         for note_id, (step_id, claim_id) in notes.items()
     ]
     return published + "\n\n" + "\n".join(definitions) + "\n"
@@ -675,22 +692,34 @@ def _review_history(req: Mapping[str, Any]) -> str:
     return "\n".join(lines).strip()
 
 
-def _portfolio_report_parts(req: dict, assets: Mapping[str, str]) -> tuple[str, str]:
+def _without_source_evidence_sections(report: str) -> str:
+    """Remove generated ledger tables before rebuilding them with publication scope."""
+    pattern = (r"(?m)^#{1,6}[ \t]+" + re.escape(SOURCE_EVIDENCE_TITLE) + r"[ \t]*\r?\n"
+               r"(?:[ \t]*\r?\n)*(?:접근 상태[^\n]*\n)?(?:[ \t]*\r?\n)*(?:\|[^\n]*(?:\n|$))*")
+    return re.sub(pattern, "", report)
+
+
+def _portfolio_report_parts(req: dict, assets: Mapping[str, str], settings) -> tuple[str, str]:
     report, moved = _split_revision_history(_paper_candidate(req, assets))
+    if request_uses_internal_data(req, settings):
+        report = _without_source_evidence_sections(report)
+    section = claim_evidence_section(_source_evidence_rows(req, settings))
+    if section and section.rstrip() not in report:
+        report = report.rstrip() + "\n\n" + section
     review = _review_history(req)
     history = "\n\n".join([*moved, *([review] if review else [])]).strip()
-    return _publication_claim_footnotes(report), history
+    return _publication_claim_footnotes(report, req, settings), history
 
 
 def portfolio_report(req: dict, settings, assets: Mapping[str, str]) -> str:
     """Return the publication manuscript; the validated request report itself is never changed."""
-    report, _history = _portfolio_report_parts(req, assets)
+    report, _history = _portfolio_report_parts(req, assets, settings)
     return _plain_korean(_clean(report, settings, req))
 
 
 def portfolio_revision_history(req: dict, settings, assets: Mapping[str, str]) -> str:
     """Return review and correction history for ``run/`` instead of the scientific manuscript."""
-    _report, history = _portfolio_report_parts(req, assets)
+    _report, history = _portfolio_report_parts(req, assets, settings)
     if not history:
         return ""
     return _plain_korean(_clean("# 수정 이력\n\n" + history + "\n", settings, req))
@@ -1299,18 +1328,23 @@ def _artifact_target(step_id: str, path: str, result: Mapping[str, Any],
 
 
 def _claim_evidence_document(req: dict, assets: Mapping[str, str],
-                             source_targets: Mapping[str, str]) -> str:
+                             source_targets: Mapping[str, str], settings) -> str:
     report, _history = _split_revision_history(_paper_candidate(req, assets))
     anchors = _claim_notes(report)
-    if not anchors:
+    rows = _source_evidence_rows(req, settings)
+    if not anchors and not rows:
         return ""
 
     results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
     lines = ["# Claim 근거", "", "정리본 보고서 각주가 가리키는 단계·claim·근거 파일 목록입니다.", ""]
     document = "docs/reference/claim_evidence.md"
+    scope = internal_data_steps(req, settings)
     for note_id, (step_id, claim_id) in anchors.items():
         lines += [f'<a id="{note_id}"></a>', f"## {step_id}/{claim_id}", "",
                   f"- 단계: `{step_id}`", f"- claim: `{claim_id}`"]
+        hidden = step_uses_internal_data(step_id, req, settings, scope)
+        if hidden:
+            lines += ["- 내부 자료 단계의 원문 근거 metadata는 게시하지 않습니다.", ""]
         result = results.get(step_id) if isinstance(results.get(step_id), Mapping) else {}
         ledger = _claim_ledger(result)
         evidence_by_id = {str(row.get("id")): row for row in ledger.get("evidence") or []
@@ -1326,9 +1360,12 @@ def _claim_evidence_document(req: dict, assets: Mapping[str, str],
             artifact_id = str(source.get("artifact_id") or "")
             target = _artifact_target(step_id, artifact_paths.get(artifact_id, ""), result, source_targets)
             if target:
+                label = "공개 근거" if hidden else f"`{evidence_id}`"
                 evidence_lines.append(
-                    f"  - `{evidence_id}`: {_markdown_link_from(document, target, PurePosixPath(target).name)}"
+                    f"  - {label}: {_markdown_link_from(document, target, PurePosixPath(target).name)}"
                 )
+                continue
+            if hidden:
                 continue
             uri = str(source.get("uri") or "")
             if uri.startswith(("http://", "https://")):
@@ -1339,7 +1376,7 @@ def _claim_evidence_document(req: dict, assets: Mapping[str, str],
         lines.append("- 근거 파일:")
         lines += evidence_lines or ["  - 정리본에 근거 파일 없음"]
         lines.append("")
-    return "\n".join(lines).rstrip() + "\n"
+    return "\n".join(lines).rstrip() + "\n\n" + claim_evidence_section(rows)
 
 
 def _note_fields(note: Any) -> dict[str, str]:
@@ -1850,7 +1887,7 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
     ):
         if name in run_documents:
             files[name] = _clean(run_documents[name], settings, req)
-    claim_evidence = _claim_evidence_document(req, assets, source_targets)
+    claim_evidence = _claim_evidence_document(req, assets, source_targets, settings)
     if claim_evidence:
         files["docs/reference/claim_evidence.md"] = _clean(claim_evidence, settings, req)
     if branch_rows:
