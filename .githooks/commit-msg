@@ -17,6 +17,21 @@
 MSG="$1"
 [ -f "$MSG" ] || exit 0
 
+# A replay/continue must keep the original message and co-author trailers too.
+for state in CHERRY_PICK_HEAD rebase-merge rebase-apply; do
+  path=$(git rev-parse --git-path "$state" 2>/dev/null) || exit 0
+  [ -e "$path" ] && exit 0
+done
+
+# Staff sessions explicitly disable bot identity. The global hook's staff
+# branch only adds attribution, so it is safe before the commit too.
+G="$HOME/.git-template/hooks/commit-msg"
+if [ "$LABHQ_COMMIT_AGENT" = none ] && [ -x "$G" ]; then "$G" "$@"; exit 0; fi
+
+# Keep attribution until post-commit can distinguish amend from new work.
+# A delegated bot amend installs the globally cleaned message through
+# prepare-commit-msg. Reuse never reaches that path.
+
 CODEX_MAIL='199175422+chatgpt-codex-connector[bot]@users.noreply.github.com'
 GEMINI_MAIL='176961590+gemini-code-assist[bot]@users.noreply.github.com'
 CLAUDE_MAIL='noreply@anthropic.com'

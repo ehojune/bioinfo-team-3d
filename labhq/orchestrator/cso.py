@@ -31,6 +31,7 @@ from ..evidence.claims import RESULT_CONTRACT_FIELD_RULES
 from ..evidence.report_check import (FAILED_LOOKUP_TITLE, anchor, check_report, claim_rows, failed_lookup_lines,
                                      failed_lookups, claim_evidence_rows, claim_evidence_section)
 from ..evidence.verify import LiveSourceResolver, verification_lines, verify_sources
+from ..runner.lookup_admission import admission_for
 from ..facilities import signatures as env_signatures
 from ..facilities import fixes as facility_fixes
 from ..intake import (CLARIFYING_QUESTION_SCHEMA, QUESTION_RULE, has_structure,
@@ -611,6 +612,12 @@ Rules:
 
 PI's request: {request}"""
 
+SELECTION_RECORD_RULE = (
+    "`selection_record` (optional object, #890): write it now, while you choose the design, so it is frozen with the "
+    "plan at CP1: `question` as the PI asked it, `premises`, `success_criteria`, `alternatives` (each `option` you "
+    "actually weighed with `rejected_because`) and `change_signals` (observations that would change your judgment). "
+    "Record only alternatives you really considered; leave the field out when you weighed none rather than "
+    "inventing some.")
 RESEARCH_PLAN_PROMPT = BIOINFO_ASSIGNMENT_RULE + "\n\n" + recruit_planning.PLAN_RULE + "\n\n" + paper_skills.PLAN_RULE + "\n\n" + """Create a frozen research contract for the PI's request. Do not execute or analyze.
 
 Team roster (use these agent ids exactly, never an orchestration role):
@@ -648,6 +655,7 @@ Contract rules:
 - Freeze analysis unit, selection/exclusion, comparators, metrics, validation, resources, stop/approval
   conditions, data boundaries, and statistics applicability before execution. Every not_applicable item needs a reason.
   Applicable statistics needs estimand, analysis_unit, and primary_outcomes.
+- """ + SELECTION_RECORD_RULE + """
 - `budget_usd` (optional number): the additional execution budget in USD after this plan's CP1 approval.
   Exclude briefing, clarification, planning and all earlier-round spending already incurred. On approval labhq adds
   that spending to this budget and clamps the total to the configured request cap; exceeding it waits for a PI
@@ -1242,6 +1250,15 @@ def _cost_estimate_line(estimate: dict[str, Any]) -> str:
     if amount is not None:
         return f"요청 비용은 기존 계획 추정 ${float(amount):.2f} 사용(실측 기록 부족)."
     return "요청 비용 추정: 실측 기록 부족(계획 추정 없음)."
+
+
+def selection_record_line(plan: Any) -> str:
+    """The CP1 card's one line on the plan's selection record (#890); a missing record is shown, never blocking."""
+    record = plan.get("selection_record") if isinstance(plan, dict) else None
+    if not isinstance(record, dict) or not record:
+        return "선택 기록 없음(검토한 대안·배제 이유가 계획에 고정되지 않았습니다)."
+    return (f"선택 기록: 검토한 대안 {len(record.get('alternatives') or [])}개(배제 이유 포함) · "
+            f"판단을 바꿀 관측 {len(record.get('change_signals') or [])}개.")
 
 
 def research_cp2_notes(contract: dict) -> list[tuple[str, str]]:
@@ -4224,6 +4241,53 @@ class Orchestrator:
             budget.update(cap_usd=configured, source=source)
         return budget, source
 
+    def resume_plan_card(self, rid: str, req: dict) -> dict[str, Any] | None:
+        """What a resume card shows when it also stands for CP1 (#654), else None.
+
+        Only a first research plan with no result yet and no CP1 receipt for its current hash qualifies. A
+        continuation, a plan after steps ran, or a hash that differs from the receipt keep their own CP1 card."""
+        plan = req.get("plan")
+        contract = req.get("research_contract") or {}
+        if (not isinstance(plan, dict) or not plan.get("steps") or req.get("results") or contract.get("continuation")
+                or not isinstance(plan.get("protocol"), dict) or not isinstance(plan.get("intake"), dict)):
+            return None
+        if refresh_plan_approval(plan, contract.get("approval")).get("status") == "approved":
+            return None
+        # What the CP1 card shows beyond this card's text keeps CP1 as its own question (see finish_research_plan).
+        if paper_skills.card_text(plan) or any("재배정" in w for w in plan.get("warnings") or [] if isinstance(w, str)):
+            return None
+        # A restarted gateway has an empty ledger: seed the stored cost as run_request does, so the cap shown here
+        # is the cap CP1 will enforce (#654 review).
+        self.cost[rid] = max(self.cost.get(rid, 0.0), float(req.get("cost_usd") or 0))
+        budget, _ = self._research_budget(rid, req, plan)
+        steps = [f"{step['id']}·{step['agent_id']}: {short(' '.join(str(step['instruction']).split()), 40)}"
+                 for step in plan["steps"]]
+        tail = (f"\n{_cost_estimate_line(req.get('plan_cost_estimate') or {})} {_budget_line(budget)}"
+                "\n승인하면 아래 동결 계획(CP1)도 승인한 것으로 기록하고 CP1 카드를 다시 묻지 않습니다. "
+                "계획이 바뀌거나 의미 장치가 멈춰 있으면 CP1을 다시 묻습니다.")
+        warnings = [w for w in plan.get("warnings") or [] if isinstance(w, str)]
+        if warnings:
+            tail = f"\n계획 경고 {len(warnings)}건: {short(warnings[0], 80)}" + tail
+        room = 520 - len(tail)
+        body, used = "", 0
+        for number, line in enumerate(steps):
+            if used + len(line) + 1 > room and number:
+                body += f"\n…외 {len(steps) - number}단계"
+                break
+            body += "\n" + line
+            used += len(line) + 1
+        return {"text": f"\n연구 계획 {len(steps)}단계:" + body + tail, "target_sha256": research_plan_sha256(plan),
+                # The same frozen-plan fields the CP1 card carries, so the web renders the whole plan (#654 review).
+                "detail": {"plan_canonical": canonical_plan_json(plan),
+                           "pack_applicability": plan.get("pack_applicability") or {},
+                           "warnings": plan.get("warnings") or [],
+                           "protocol_revision": plan["protocol"].get("revision"), "packs": plan["protocol"].get("packs"),
+                           "scope_status": plan["intake"].get("scope_status"),
+                           # What the CP1 card also carries, so the one card is not a thinner view of the same plan.
+                           "budget": budget, "cost_estimate": req.get("plan_cost_estimate") or {},
+                           **({"plan_warnings": req.get("plan_warnings") or [], "plan_validation": req["plan_validation"]}
+                              if (req.get("plan_validation") or {}).get("semantic_checks") else {})}}
+
     def _spending_cap_line(self, rid: str) -> str:
         """The cap ``_check_budget`` enforces now, for research step and review prompts (#499): staff otherwise read
         only the free-text protocol.resource_limits, which may name another amount. "" without a cap."""
@@ -5189,7 +5253,8 @@ class Orchestrator:
         if self.hub.s.research.live_source_check:
             live_resolver = LiveSourceResolver(
                 contact=self.hub.s.research.live_source_contact,
-                request_timeout_s=self.hub.s.research.live_source_timeout_s)
+                request_timeout_s=self.hub.s.research.live_source_timeout_s,
+                admission=admission_for(self.hub.s), request_id=rid)  # counted with labhq_annot's requests (#891)
         for step in steps:
             result = results[step["id"]]
             salvaged = (contract.get("result_salvage") or {}).get(step["id"]) or {}
@@ -6233,6 +6298,11 @@ class Orchestrator:
                 previous = stored.get("approval")
                 approval = refresh_plan_approval(plan, previous)
                 plan_sha256 = approval.get("current_sha256") or approval.get("target_sha256")
+                # A resume card that showed this plan and was approved stands for CP1 once (#654). It is dropped in the
+                # save that records the receipt, so a stop before that save keeps the PI's answer.
+                resume_cp1 = req.get("resume_cp1")
+                if approval.get("status") == "approved":
+                    req.pop("resume_cp1", None)
                 frozen_checklist = (stored.get("checklist_snapshot")
                                     if stored.get("plan_sha256") == plan_sha256
                                     and isinstance(stored.get("checklist_snapshot"), list)
@@ -6319,7 +6389,9 @@ class Orchestrator:
                                    f"{', '.join(carried.get('reuse') or []) or '없음'} · 다시 실행: "
                                    f"{', '.join(carried.get('rerun') or {}) or '없음'}. ") + summary
                     budget, configured_source = self._research_budget(rid, req, plan)
-                    budget_line = _budget_line(budget)  # kept whole: the web shows the summary, not detail.budget
+                    # Kept whole beyond the 699-char cut: the web shows the summary, not detail.budget; the selection
+                    # record line (#890) rides with it, so long paper-skill or continuation text cannot cut it off.
+                    budget_line = selection_record_line(plan) + " " + _budget_line(budget)
 
                     async def ask_cp1(prefix: str = "") -> dict:
                         card = prefix + summary
@@ -6347,7 +6419,19 @@ class Orchestrator:
                                            ("trigger", "pi_request", "reuse_snapshot") if key in carried}}}
                                        if reuse_pending else {})})
 
-                    decision = await ask_cp1()
+                    # Only the plan the card showed (same hash), with nothing the card left out: a stopped device
+                    # (the always-present configured_off note is not one), a paper-skill line, a re-hire note and a
+                    # continuation keep the CP1 card (#654).
+                    device_stopped = any(isinstance(e, dict) and e.get("code") != "configured_off"
+                                         for e in (device_record or {}).get("errors") or [])
+                    from_resume = (isinstance(resume_cp1, dict) and resume_cp1.get("approved") is True
+                                   and resume_cp1.get("target_sha256") == plan_hash and not reuse_pending
+                                   and not device_stopped and not paper_line and not hiring_warnings)
+                    decision = ({"approved": True, "choice": "approve", "approval_id": resume_cp1.get("approval_id"),
+                                 # The PI's own memo on the resume card reaches the step prompts as the CP1 memo.
+                                 "note": str(resume_cp1.get("note") or "").strip() or "재개 카드에서 이 계획과 함께 승인",
+                                 "decided_at": resume_cp1.get("decided_at", time.time())}
+                                if from_resume else await ask_cp1())
                     # A 수정 요청 needs the note it re-plans from; the web and CLI refuse an empty one first (R10 likewise).
                     for _ in range(2):
                         if not (can_revise and decision.get("choice") == "revise"
@@ -6355,6 +6439,8 @@ class Orchestrator:
                             break
                         decision = await ask_cp1("수정 요청에 메모가 없어 다시 묻습니다. 고칠 점을 메모에 적어 주세요. ")
                     approval = freeze_plan(plan, decision)
+                    if from_resume:
+                        approval["via"] = "resume_card"
                     if reuse_pending:
                         approval['reuse_snapshot_sha256'] = offered_reuse_sha
                     if can_revise and decision.get("choice") == "revise" and not approval["approved"]:
@@ -6370,6 +6456,7 @@ class Orchestrator:
                         req["research_contract"].setdefault("budget_cap", {
                             "configured_cap_usd": budget["configured_cap_usd"], "source": configured_source})
                     req["research_contract"]["approval"] = approval
+                    req.pop("resume_cp1", None)  # consumed by this very save
                     self.hub.save_request(rid)
                 approved = bool(approval.get("approved"))
                 if not approved and approval.get("status") == "timed_out":

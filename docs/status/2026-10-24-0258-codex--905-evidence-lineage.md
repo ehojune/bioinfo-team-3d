@@ -1,0 +1,23 @@
+## 결과
+Closes #905
+
+접근 metadata와 최초 실증 출처 계보를 기존 evidence contract에 추가했습니다.
+
+## 변경
+- `SourceRef`: 접근 범위·Methods/QC 위치·보충자료 상태. `Evidence.status`와 구분합니다.
+- `Evidence.lineage`와 `assess_lineage`: 확인 근거가 있는 원출처만 확정하고 같은 source identity를 합칩니다. 순환·누락·미확인은 context로 남기며 독립 근거에서 제외합니다.
+- `independent_groups`·verifier가 원출처 group을 재사용합니다. 같은 source로 병합된 원출처 행도 모두 검증하며 추가 URI·artifact가 미확인이면 통과시키지 않습니다. legacy payload·group 동작은 유지합니다.
+- 원출처·중간 인용의 결함과 철회는 claim의 `defective` 판정으로 전달해 CSO가 인용을 차단합니다. 조회 미완료는 `unverified`로 남깁니다.
+- 미해결 계보를 salvage할 때 문제 link만 거부해 접근 기록·필수 slot·다른 context link를 보존합니다.
+
+## 검증·인계
+- 관련 pytest 420 passed. P1 회귀 18건·P2 회귀 6건은 수정 전 실패를 재현했습니다.
+- 확장한 result schema hash를 고정하고 새 metadata의 optional 계약을 검사합니다. plan schema·planning prompt·기존 plan hash 검사는 유지합니다.
+- Windows selection inventory 검사 통과. 계보 회귀 검사는 기존 evidence test 모듈에 포함합니다.
+- Python 3.10 AST·public·diff 검사 통과. 전체 suite·최종 head CI·봇 판정은 PR 기록을 따릅니다.
+- 공용 contract: https://github.com/ehojune/bioinfo-team-3d/issues/905#issuecomment-6371292848
+- helper는 `labhq.evidence`에서 import합니다. `assess_lineage`와 `independent_groups` 모두 optional `artifact_paths`를 받습니다.
+- `original_evidence_ids`는 병합된 원출처 행을 모두 보존합니다. `source_keys`·`independence_groups`는 중복 제거합니다.
+- report·manual·fake 통합은 #907 담당입니다. 실제 원문 독해 품질·기관 조회·연구 실행은 검증하지 않았습니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>

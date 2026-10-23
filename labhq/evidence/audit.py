@@ -182,10 +182,12 @@ def rerun_report_check(req: Mapping[str, Any]) -> dict[str, Any] | None:
 async def _live_source_reports(req: Mapping[str, Any], settings: Any,
                                observed_artifacts: Mapping[str, Mapping[str, str]]) -> list[Any]:
     from ..research.contract import ResearchResult
+    from ..runner.lookup_admission import admission_for
     from .verify import LiveSourceResolver, verify_sources
 
     resolver = LiveSourceResolver(contact=settings.research.live_source_contact,
-                                  request_timeout_s=settings.research.live_source_timeout_s)
+                                  request_timeout_s=settings.research.live_source_timeout_s,
+                                  admission=admission_for(settings), request_id=str(req.get("id") or ""))
     scoped_artifacts = _live_observed_artifacts(req, observed_artifacts)
     parsed = [ResearchResult.model_validate(ledger) for ledger in research_ledgers(req).values()
               if isinstance(ledger, Mapping)]

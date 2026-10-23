@@ -1,0 +1,15 @@
+#!/bin/sh
+# The global post-commit uses --amend --no-verify to install bot identity.
+# Its message was cleaned before delegation, so its model handoff is ready
+# when post-commit reads it. Do not run global commit-msg a second time.
+if [ "$LABHQ_DELEGATED_POSTCOMMIT" = 1 ] && [ -n "$LABHQ_POSTCOMMIT_AMEND" ]; then
+  if [ -f "$LABHQ_DELEGATED_MESSAGE" ]; then cat "$LABHQ_DELEGATED_MESSAGE" > "$1"; fi
+  exit 0
+fi
+
+# Git supplies "commit" for -C/-c and message-preserving amend. Save the
+# source in this worktree, bound to the invoking Git process. Overwrite on
+# every attempt; an aborted editor must not affect the next commit/revert.
+context=$(git rev-parse --git-path labhq-commit-context 2>/dev/null) || exit 0
+printf '%s\n%s\n' "$PPID" "$2" > "$context"
+exit 0

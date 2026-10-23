@@ -160,7 +160,7 @@ async def test_an_open_access_paper_is_written_as_markdown_and_the_record_keeps_
     full = json.loads((tmp_path / "work" / out["full_result"]).read_text(encoding="utf-8"))
     answer = full["results"][0]["answer"]
     assert "markdown" not in answer  # the text lives once, in .tmp/literature/
-    assert answer["text_sha256"] == hashlib.sha256(text.encode("utf-8")).hexdigest()
+    assert answer["text_sha256"] == hashlib.sha256((tmp_path / "work" / row["text_file"]).read_bytes()).hexdigest()
     assert "결과물에 옮겨 싣지 않는다" in out["note"]
 
 
@@ -245,7 +245,9 @@ async def test_unknown_and_malformed_ids_do_not_stop_the_rest(tmp_path):
     annotator, _ = make(by_query({"EXT_ID:123 AND SRC:MED": [record()]}), tmp_path)
     rows = (await annotator.fulltext(["123", "999", "Irgens 1997"]))["results"]
     assert rows[0]["access_level"] == "full_text"
-    assert rows[1] == {"input": "999", "ok": True, "found": False, "pmid": "999", "unread_reason": "no_copy"}
+    assert rows[1] == {"input": "999", "ok": True, "found": False, "pmid": "999", "unread_reason": "no_copy",
+                       "access_status": "not_obtained", "methods_locator": None, "qc_locator": None,
+                       "supplementary_status": "undetermined"}
     assert rows[2]["ok"] is False and "PMID" in rows[2]["error"]
 
 
@@ -647,7 +649,8 @@ async def test_fulltext_records_why_a_legal_oa_copy_could_not_be_read(tmp_path, 
     def handler(request):
         if request.url.host == "www.ebi.ac.uk":
             oa = "N" if mode == "closed" else "Y"
-            return search_answer([record("123", None, oa, None)])
+            links = [{"url": "https://example.org/paper", "availability": "Subscription required"}] if mode == "closed" else []
+            return search_answer([record("123", None, oa, None, links=links)])
         if request.url.host == "api.unpaywall.org":
             location = None if mode == "closed" else {
                 "url_for_pdf": f"http://93.184.216.34/{mode}.pdf", "host_type": "repository", "license": "cc-by"}
@@ -664,6 +667,7 @@ async def test_fulltext_records_why_a_legal_oa_copy_could_not_be_read(tmp_path, 
     annotator, _calls = make(handler, tmp_path, workdir=mode, unpaywall_email="owner@example.org")
     row = (await annotator.fulltext(["123"]))["results"][0]
     assert row["access_level"] == "abstract" and row["unread_reason"] == reason
+    assert row["access_status"] == "abstract_only"  # actual abstract access; failure reason remains separate
     assert row["unread_detail"]
 
 

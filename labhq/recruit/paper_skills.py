@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..models import Task, TaskResult
 from ..interruption import ShutdownInterrupted
+from ..tools.annot_literature import source_access_metadata
 from ..util import atomic_write_text, extract_json
 from . import paper2agent, provenance
 
@@ -96,7 +97,11 @@ def verified_text(receipt: dict, root: Path, pid: str) -> bytes:
         raise ValueError("본문 원본 receipt link는 허용하지 않음")
     original = json.loads(original_path.read_text(encoding="utf-8"))
     immutable = ("coverage_version", "paper_id", "source", "access_level", "extraction", "text_file", "text_sha256", "supplements")
-    if not isinstance(original, dict) or any(original.get(key) != receipt.get(key) for key in immutable):
+    # Legacy scout schemas cannot carry these optional diagnostics. Verify every supplied value,
+    # while core artifact identity/coverage/hash remains mandatory under either schema.
+    optional = ("access_status", "supplementary_status", "pdf_file", "pdf_sha256", "oa_copy", "unread_reason", "unread_detail")
+    if (not isinstance(original, dict) or any(original.get(key) != receipt.get(key) for key in immutable)
+            or any(key in receipt and original.get(key) != receipt[key] for key in optional)):
         raise ValueError("도구 원본 본문 receipt 불일치; 재확인 필요")
     data = path.read_bytes()
     if hashlib.sha256(data).hexdigest() != receipt["text_sha256"]:
@@ -107,6 +112,31 @@ def verified_text(receipt: dict, root: Path, pid: str) -> bytes:
                 line.strip() for line in lines[span["start_line"] - 1:span["end_line"]]):
             raise ValueError("방법/QC 근거 범위 없음; 자료 요청 필요")
     return data
+
+
+def cited_access(citations: list[str]) -> str | None:
+    """The best `access_level=` a precedent's citations state, e.g. abstract or full_text; None when none says."""
+    rank = {"full_text": 3, "abstract": 2, "abstract_only": 2, "metadata": 1}
+    levels = [m.lower() for text in citations for m in re.findall(r"access_level\s*=\s*([A-Za-z_]+)", text)]
+    return max(levels, key=lambda level: rank.get(level, 0)) if levels else None
+
+
+def extraction_steps(steps: dict, assigned: list[str], title: str) -> list[str]:
+    """#670: for a meta-analysis, the literature steps (lit_scout) that extract its included studies and are not
+    assigned yet. Other papers gain none."""
+    if not re.search(r"meta[\s-]?analy|systematic review|메타\s?분석|체계적\s?문헌", title, re.I):
+        return []
+    return [sid for sid, step in steps.items() if step.get("agent_id") == "lit_scout" and sid not in assigned]
+
+
+def no_fulltext_reason(selected: dict, problem: str) -> str:
+    """Say why no skill is made when the full text was not reached: the paper stays a planning reference only (#670)."""
+    receipt = selected.get("fulltext_receipt")
+    level = receipt.get("access_level") if isinstance(receipt, dict) else selected.get("cited_access")
+    if isinstance(receipt, dict) and receipt.get("access_level") == "full_text":
+        return problem  # a full text whose extraction is incomplete keeps its own reason
+    seen = "초록만 확인했습니다" if level in {"abstract", "abstract_only"} else "본문 접근을 확인하지 못했습니다"
+    return f"{problem}; {seen}. 스킬을 만들지 않고 계획 참고로만 씁니다"
 
 
 def selections(plan: dict, precedents: dict, roster: list[dict]) -> list[dict]:
@@ -126,10 +156,16 @@ def selections(plan: dict, precedents: dict, roster: list[dict]) -> list[dict]:
             continue
         if any(r["paper_id"] == pid for r in chosen):
             continue
+        receipt = papers[pid].get("fulltext_receipt")
+        # #670: a meta-analysis skill also goes, read-only, to the steps that extract its included studies.
+        extraction = extraction_steps(steps, ids, str(papers[pid].get("title") or ""))
+        ids = [*ids, *extraction]
         chosen.append({**row, "paper_id": pid, "title": papers[pid]["title"], "step_ids": ids,
+                       **({"extraction_step_ids": extraction} if extraction else {}),
+                       "cited_access": cited_access([c for c in papers[pid].get("citations", []) if isinstance(c, str)]),
                        "agent_ids": list(dict.fromkeys(steps[s]["agent_id"] for s in ids)),
-                       "access_level": "full_text" if isinstance(papers[pid].get("fulltext_receipt"), dict) else None,
-                       "fulltext_receipt": papers[pid].get("fulltext_receipt")})
+                       "access_level": receipt.get("access_level") if isinstance(receipt, dict) else None,
+                       "fulltext_receipt": receipt, **source_access_metadata(papers[pid])})
         if len(chosen) == 2:
             break
     return chosen
@@ -171,7 +207,7 @@ async def prepare_plan(plan: dict, precedents: dict, roster: list[dict], rid: st
         problem = evidence_problem(selected.get("fulltext_receipt"), selected["paper_id"])
         if problem:
             rows.append({**selected, "status": "skipped",
-                         "skip_reason": problem})
+                         "skip_reason": no_fulltext_reason(selected, problem)})
             continue
         # No filesystem, fulltext fetch or model turn before CP1. This descriptor, not a future build,
         # is part of the approved plan hash. Execution receipts never mutate the frozen plan.

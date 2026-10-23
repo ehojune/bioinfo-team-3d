@@ -49,15 +49,15 @@ import re
 import time
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from email.utils import parsedate_to_datetime
-from typing import TYPE_CHECKING, Literal, Protocol
-from urllib.parse import quote
+from typing import TYPE_CHECKING, Any, Literal, Protocol
+from urllib.parse import quote, urlsplit
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from .claims import (  # noqa: F401 - ID_FORMATS stays importable from here
     ID_FORMATS, SEVERAL_SPELLINGS, STATUS_NEEDS, SourceRef, accession_base, accession_parts,
-    normalize_artifact_path, normalize_id, registry_id)
+    assess_lineage, independent_groups, normalize_artifact_path, normalize_id, registry_id)
 
 if TYPE_CHECKING:
     from ..research.contract import ResearchResult
@@ -65,7 +65,7 @@ if TYPE_CHECKING:
 LookupState = Literal["succeeded", "failed", "skipped"]
 IdStatus = Literal["found", "not_found", "insufficient", "conflicting", "requires_verification"]
 FAILURE_KINDS = frozenset({"network", "timeout", "rate_limited", "auth", "server", "invalid_response",
-                           "resolver_error"})
+                           "resolver_error", "lookup_limit"})  # lookup_limit: the request's HTTP limit was reached (#891)
 SKIP_KINDS = frozenset({"disabled", "unsupported_scheme", "malformed_id", "manifest_unavailable",
                         "uri_unmapped", "base_match_only"})
 
@@ -205,12 +205,18 @@ class LiveSourceResolver:
 
     def __init__(self, *, contact: str = "", request_timeout_s: float = 10.0, max_retries: int = 2,
                  transport: httpx.AsyncBaseTransport | None = None,
-                 sleep: Callable[[float], Awaitable[None]] = asyncio.sleep) -> None:
+                 sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+                 admission: Any = None, request_id: str = "") -> None:
         self.contact = contact.strip()
         self.request_timeout_s = request_timeout_s
         self.max_retries = max_retries
         self.transport = transport
         self.sleep = sleep
+        # #891: with annot.request_lookup_limit set, every outbound request, each retry too, is admitted by the same
+        # per-request counter that counts labhq_annot's. A refused request is not sent: the lookup fails as
+        # lookup_limit ("확인 못 함"), never as not_found.
+        self.admission = admission if request_id else None
+        self.request_id = request_id
 
     def supports(self, scheme: str) -> bool:
         return scheme in {"doi", "pmid", "pmcid"}
@@ -240,14 +246,38 @@ class LiveSourceResolver:
             await self._enrich_record(client, record)
             return [record]
 
+    async def _admit(self, url: str) -> int | None:
+        """Count this outbound request in the request's lookup counter; None when no counter is set (unchanged)."""
+        if self.admission is None:
+            return None
+        host = (urlsplit(url).hostname or "").lower()
+        verdict = await asyncio.to_thread(self.admission.admit, self.request_id, "", "gateway", "source_verify", host)
+        if not isinstance(verdict, dict) or not verdict.get("admitted"):
+            limit = verdict.get("limit") if isinstance(verdict, dict) else None
+            raise LookupFailed("lookup_limit", f"요청 HTTP 상한({limit})에 닿아 조회하지 않았습니다(확인 못 함)")
+        return verdict.get("seq") if type(verdict.get("seq")) is int else None
+
+    async def _finish(self, seq: int | None, status: int | None, outcome: str) -> None:
+        """Best effort: record the status of an admitted send. The send stays counted either way."""
+        if self.admission is None or seq is None:
+            return
+        try:
+            await asyncio.to_thread(self.admission.finish, self.request_id, "", [[seq, status]], outcome)
+        except Exception:  # noqa: BLE001 - bookkeeping must never fail a lookup
+            pass
+
     async def _request(self, client: httpx.AsyncClient, method: str, url: str, **kwargs: object) -> httpx.Response:
         for attempt in range(self.max_retries + 1):
+            seq = await self._admit(url)
             try:
                 response = await client.request(method, url, **kwargs)
             except httpx.TimeoutException as error:
+                await self._finish(seq, None, "timeout")
                 raise LookupFailed("timeout", f"{method} {url} timed out") from error
             except httpx.HTTPError as error:
+                await self._finish(seq, None, "failed")
                 raise LookupFailed("network", f"{method} {url} failed: {type(error).__name__}") from error
+            await self._finish(seq, response.status_code, "ok" if response.status_code < 400 else "failed")
             if response.status_code not in RETRYABLE_HTTP:
                 return response
             if attempt == self.max_retries:
@@ -856,7 +886,25 @@ async def verify_sources(result: "ResearchResult", resolver: SourceResolver | No
                                        source_defects=list(dict.fromkeys(defects)),
                                        source_warnings=list(dict.fromkeys(warnings)))
 
-    groups = {row.id: row.independence_group for row in result.evidence}
+    lineage = assess_lineage(result.evidence, artifact_paths=artifact_paths)
+    by_id = {row.id: row for row in result.evidence}
+    dependencies: dict[str, set[str]] = {}
+    for row in result.evidence:
+        if row.lineage is None:
+            continue
+        # Keep intervening citations as well as all aliases of confirmed originals. A retracted
+        # intermediate source cannot be laundered through a found terminal source or linked row.
+        visited: set[str] = set()
+        pending = list(row.lineage.cited_from)
+        while pending:
+            eid = pending.pop()
+            if eid in visited:
+                continue
+            visited.add(eid)
+            ancestor = by_id.get(eid)
+            if ancestor and ancestor.lineage:
+                pending.extend(ancestor.lineage.cited_from)
+        dependencies[row.id] = (visited | set(lineage[row.id].original_evidence_ids)) - {row.id}
     claim_checks: list[ClaimCheck] = []
     for claim in result.claims:
         needed = STATUS_NEEDS.get(claim.status)
@@ -866,6 +914,22 @@ async def verify_sources(result: "ResearchResult", resolver: SourceResolver | No
         for link in result.links:
             if link.claim_id != claim.id or link.relation == "context" or link.evidence_id not in checks:
                 continue
+            lineage_defects: list[str] = []
+            lineage_unverified = False
+            for eid in sorted(dependencies.get(link.evidence_id, set())):
+                ancestor = checks.get(eid)
+                if ancestor is None:
+                    lineage_unverified = True
+                    continue
+                if ancestor.resolution.status in DEFECT_STATUSES:
+                    lineage_defects.append(f"{link.evidence_id} {link.relation} via lineage source {eid} "
+                        f"which is {ancestor.resolution.status}: {ancestor.resolution.detail}")
+                if ancestor.source_defects:
+                    lineage_defects.append(f"{link.evidence_id} {link.relation} via lineage source {eid}: "
+                                           + ", ".join(ancestor.source_defects))
+                if ancestor.resolution.status == "requires_verification":
+                    lineage_unverified = True
+            defects.extend(lineage_defects)
             resolution = checks[link.evidence_id].resolution
             if resolution.status in {"not_found", "conflicting", "insufficient"}:
                 defects.append(f"{link.evidence_id} {link.relation} via {resolution.id_scheme}:"
@@ -874,6 +938,12 @@ async def verify_sources(result: "ResearchResult", resolver: SourceResolver | No
                 defects.append(f"{link.evidence_id} {link.relation}: "
                                + ", ".join(checks[link.evidence_id].source_defects))
             elif resolution.status == "requires_verification":
+                unverified.append(link.evidence_id)
+            elif lineage_defects:
+                continue  # A known defect must reach the CSO's unsupported-claim path.
+            elif by_id[link.evidence_id].lineage is not None and (
+                    lineage[link.evidence_id].status != "resolved"
+                    or lineage_unverified):
                 unverified.append(link.evidence_id)
             elif link.relation == needed:
                 verified.append(link.evidence_id)
@@ -888,7 +958,9 @@ async def verify_sources(result: "ResearchResult", resolver: SourceResolver | No
         claim_checks.append(ClaimCheck(
             claim=claim.key, declared_status=claim.status, state=state, verified_evidence=verified,
             unverified_evidence=unverified, defects=defects,
-            independent_groups=sorted({groups[e] for e in verified if groups.get(e)})))
+            independent_groups=independent_groups(claim.id, result.evidence,
+                [link for link in result.links if link.evidence_id in verified], relation=needed or "supports",
+                artifact_paths=artifact_paths)))
 
     defective = [eid for eid, check in checks.items()
                  if check.resolution.status in DEFECT_STATUSES or check.source_defects]

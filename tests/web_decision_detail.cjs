@@ -124,11 +124,22 @@ test('research plan card shows the full canonical PLAN in readable sections',asy
   const sha=crypto.createHash('sha256').update(canonicalPlan,'utf8').digest('hex');
   const c=await card('research_plan',{gate:'research_plan',target_sha256:sha,plan_canonical:canonicalPlan});
   assert.equal(crypto.createHash('sha256').update(canonicalPlan,'utf8').digest('hex'),sha);
-  for (const label of ['질문','가설','완료 조건','갈래 (1개)','갈래질문자료단계 수추정 예산','중단 조건','자원 상한','data boundary','topics','pack 적용 판정','경고','pack 값','동결 PLAN 전체'])
+  for (const label of ['질문','가설','완료 조건','선택 기록','갈래 (1개)','갈래질문자료단계 수추정 예산','중단 조건','자원 상한','data boundary','topics','pack 적용 판정','경고','pack 값','동결 PLAN 전체'])
     assert.ok(c.detail.textContent.includes(label),label+' must be visible');
   for (const value of ['Does condition change expression?','Condition changes expression','design not identifiable',
     'Does expression differ?','public omics · public counts only','1개','$12.50','metadata.donor_id','raw_counts']) assert.ok(c.detail.textContent.includes(value),value+' must be visible');
   assert.ok(c.detail.textContent.includes(canonicalPlan),'the exact hash input must remain visible');
+});
+
+test('research plan card shows the selection record, or says there is none (#890)',async()=>{
+  const base={intake:{scope_status:'in_scope'},brief:{question:'Q?',completion_conditions:['done']},protocol:{revision:1},steps:[]};
+  const withRecord={...base,selection_record:{question:'Q?',premises:['public counts suffice'],success_criteria:['donor-level effect'],
+    alternatives:[{option:'cell-level test',rejected_because:'pseudo-replication'}],change_signals:['fewer than 3 donors']}};
+  const shown=await card('research_plan',{gate:'research_plan',target_sha256:'a'.repeat(64),plan_canonical:JSON.stringify(withRecord)});
+  for (const value of ['선택 기록','public counts suffice','donor-level effect','cell-level test — pseudo-replication','fewer than 3 donors'])
+    assert.ok(shown.detail.textContent.includes(value),value+' must be visible');
+  const none=await card('research_plan',{gate:'research_plan',target_sha256:'b'.repeat(64),plan_canonical:JSON.stringify(base)});
+  assert.ok(none.detail.textContent.includes('선택 기록 없음'));
 });
 
 test('research evidence card groups claim rows by branch',async()=>{
@@ -165,6 +176,24 @@ test('resume card shows the received time as a date and the steps left as a list
   assert.ok(!text.includes(String(created)),'no epoch seconds');
   const left=await card('resume',{created_at:created,steps:['s2','s3']});
   assert.ok(left.detail.textContent.includes('남은 단계s2, s3'));
+});
+
+test('a resume card that also stands for CP1 shows the whole frozen plan like the CP1 card (#654)',async()=>{
+  const plan={schema_version:2,topics:[],intake:{scope_status:'in_scope'},brief:{question:'Does condition change expression?',
+    primary_hypothesis:'Condition changes expression',null_or_alternatives:['batch explains the change'],
+    completion_conditions:['QC and effect interval reported']},protocol:{revision:1,stop_conditions:['design not identifiable'],
+    resource_limits:['one local planning call'],data_boundaries:['public counts only'],packs:[]},pack_values:{},
+    pack_applicability:{},warnings:[],clarifying_questions:[],branches:[],steps:[{id:'s1'}],recruit:[],notes:'frozen'};
+  const canonicalPlan=JSON.stringify(plan);
+  const created=new Date(2026,9,8,11,33).getTime()/1000;
+  const c=await card('resume',{request_text:'표 정리',created_at:created,steps:['s1'],has_plan:true,
+    cp1_target_sha256:'a'.repeat(64),plan_canonical:canonicalPlan,pack_applicability:{},warnings:[],protocol_revision:1,
+    packs:[],scope_status:'in_scope'});
+  const text=c.detail.textContent;
+  for (const value of ['남은 단계s1','질문','Does condition change expression?','design not identifiable','public counts only',
+    'a'.repeat(64)]) assert.ok(text.includes(value),value+' must be visible: '+text);
+  assert.ok(text.includes(canonicalPlan),'the exact hash input stays visible');
+  assert.ok(!text.includes('protocol_revision'),'repeated inside the plan view');
 });
 
 test('a resume card for a request without a plan says the whole request reruns, not that nothing is left (#521)',async()=>{

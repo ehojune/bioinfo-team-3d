@@ -26,6 +26,17 @@ _TOOL = re.compile(r"[a-z][a-z0-9_]{0,39}")
 _HOST = re.compile(r"[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?")
 
 
+def admission_for(settings) -> "LookupAdmission | None":
+    """The request-wide counter when annot.request_lookup_limit is set, else None (no counting, no file).
+
+    The gateway's source check (#891) and `labhq verify` open the same SQLite file the runner counts in, so they share
+    one count per request on a PC whose config they share. A runner on another PC keeps its own count, as above."""
+    limit = settings.annot.request_lookup_limit
+    if limit is None:
+        return None
+    return LookupAdmission(settings.path(settings.runner.state_dir) / FILE, limit)
+
+
 class LookupAdmission:
     def __init__(self, path: str | Path, limit: int, *, clock=time.time):
         self.path, self.limit, self.clock = Path(path), limit, clock

@@ -4,12 +4,94 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## #891 출처 실시간 확인 조회도 요청 HTTP 상한에 계수 (base 01b100ad)
+
+- 바꾼 것: `LiveSourceResolver`(`labhq/evidence/verify.py`)가 매 HTTP 요청(재시도 포함) 전에 `LookupAdmission.admit`을 부른다. `annot.request_lookup_limit`과 같은 runner 상태 폴더 SQLite 파일·같은 요청 단위 카운터를 쓴다(`admission_for`). 거절되면 보내지 않고 `LookupFailed("lookup_limit")` → `requires_verification`(확인 못 함), `not_found`와 구별. 주 조회가 통과한 뒤 보강 요청이 거절되면 found 기록을 유지하고 `enrichment_failures`에 남는다. gateway(`cso.py`)와 `labhq verify`(`audit.py`) 두 곳에 연결. 상한이 없으면 세지 않고 파일도 만들지 않는다. manual 갱신.
+- 검사: 새 test 6건(수정 전 수집 실패), 관련 348 passed·2 skipped, 조회 상한 test 44 passed.
+- 한계: 같은 설정을 쓰는 PC에서만 runner와 한 파일을 센다(runner가 다른 PC면 각자). `live_source_check` 기본값(false)과 ② 설정은 바꾸지 않았다. 실제 Crossref/NCBI 호출·gateway 실행은 확인하지 않았다(fixture 전송으로만 검증).
+
+## #670 논문 스킬: 초록뿐인 논문 생략·메타분석 스킬의 추출 단계 부착 (base f65dcf5c)
+
+- 대조: 본문 receipt 없이 스킬을 만들지 않는 것은 #830으로 이미 있었다. 이번에 사유를 밝히고(초록만 확인/접근 확인 못 함 + 계획 참고로만) 메타분석 부착을 더했다.
+- 바꾼 것: `labhq/recruit/paper_skills.py`의 `no_fulltext_reason`·`cited_access`·`extraction_steps`. 메타분석 제목이면 계획의 `lit_scout` 단계를 `step_ids`·`agent_ids`에 더하고 `extraction_step_ids`를 남긴다. manual 논문 스킬 절, Windows 경계 목록에 새 test 등록.
+- 검사: 새 test 5건(수정 전 수집 실패, 수정 후 통과), 논문 스킬 관련 187 passed.
+- 한계: 메타분석 판정은 제목 문구(영·한)만. 초록만 확인 판정은 선행 연구 인용의 `access_level=` 문구에 의존. #906(PR #909)이 같은 파일을 바꾸므로 병합 순서에 따라 rebase한다. 실제 모델 계획에서의 동작은 확인하지 않았다.
+
+Closes #911
+
+- 같은 configured identity의 amend·`-C/-c`에서도 Git author·timestamp와 현재 agent trailer를 보존합니다. `--reset-author`는 configured identity·새 timestamp를 유지합니다.
+- 전역 commit-msg는 post-commit이 일반 commit/revert를 확인한 뒤 private message copy를 정리합니다. 모델명을 먼저 전달하고 bot amend에 copy를 반영합니다. source·임시 상태는 worktree별로 격리합니다.
+- 수정 전 reuse 회귀 **10 failed·11 passed**, 모델 전달 회귀 **2 failed**. 수정 후 hook **43 passed**, rewrite 거절·실패·직원 세션 **3 passed**(총 46건), Windows selection **7 passed**. author·timestamp·agent 표식, replay·merge·revert·전역 hook 부재와 중단 뒤 후속 작업을 확인했습니다.
+- public·diff·shell syntax·Python 3.10 AST·notes-index 검사 PASS. Windows 필수 hook cohort와 기존 검사는 유지했습니다.
+- 머신 전역 hook·운영 설정은 변경하지 않았습니다. 최종 head CI·봇 리뷰 확인 뒤 병합합니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+# 전역 Git 훅 연결과 원저자 보존 (#902)
+
+- 전역 commit-msg·post-commit이 있으면 일반 새 커밋·revert를 위임해 봇 author·committer와 모델명을 남긴다. 전역 훅 부재·merge 커밋·reflog 비활성화는 자체 trailer 규칙을 쓴다.
+- P1 4362054678 수정: rebase·cherry-pick·충돌 후 continue는 원저자와 메시지를 보존한다. linked worktree의 상태 경로도 검사하며, 상태 파일이 지워진 continue는 reflog로 구분한다. reflog를 끈 저장소는 자체 trailer 처리만 쓴다.
+- 임시 Git 저장소·가짜 전역 훅 검사: continue 원저자 변경 1 failed·3 passed, merge·revert 각 2 failed, amend·명시 author 3 failed를 수정 전 재현했다. 수정 후 20 passed: checkout/worktree, rebase merge/apply, 신규 커밋·전역 훅 부재·reflog 비활성화·merge·revert·연속 cherry-pick·amend·명시 author를 확인했다.
+- P2 4362840932 수정: 자동 merge에는 post-commit이 호출되지 않아 전역 commit-msg만 실행하면 표식이 사라졌다. merge는 두 훅 모두 전역 위임을 생략해 trailer를 보존한다.
+- P2 4362909633 수정: 충돌 없는 revert는 commit-msg를 건너뛴다. 새 inverse commit의 post-commit에서 전역 author 처리를 실행해 봇 작성자를 남긴다.
+- P1 4363000119 수정: amend는 기존 author를 유지한다. 명시한 다른 author도 보존하며 author와 committer가 다른 메시지는 자체 trailer 규칙을 쓴다.
+- 수정 커밋 79579618의 author·committer는 Codex (gpt-6.1-sol) 봇이며 같은 에이전트 trailer는 제거됐다. 기존 커밋은 재작성하지 않았다.
+- Windows CI의 새 test inventory 거부를 해결해 훅 검사 전체를 필수 cohort로 등록했다. selection 회귀 8 passed. patch-notes·notes·public·diff·Python 3.10 AST 검사 통과.
+- 최종 head CI·같은 head 봇 P1=0 확인 뒤 병합한다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+## #906 OA/PDF receipt 인계
+
+- 실제 접근 수준과 실패 사유, text/PDF 경로·hash, 추출 범위와 보충자료 상태를 보존합니다. OA 후보·403·closed·기관 로그인·receipt만으로 전문 독해나 Methods/QC 확인을 인정하지 않습니다.
+- `source_access_metadata(row)`가 #905 SourceRef 필드로 변환합니다. 보충자료 의존 여부 기본값은 null이며 scout의 별도 판단이 필요합니다. Paper2Skill의 초록 receipt 승격을 막았습니다.
+- 관련 mock/static pytest 198 passed·7 subtests passed. Windows inventory·public·Python 3.10 AST·diff 검사 통과. 새 회귀 검사는 기존 receipt cohort에 포함합니다. 전체 suite는 CI에서 확인합니다.
+- 기존 schema가 생략한 optional metadata는 허용하고 전달된 값은 원본과 비교합니다. 핵심 artifact/hash/coverage 검증은 필수입니다. 본문 소실 시 receipt를 제거하고 접근 상태를 다시 계산합니다.
+- README 문헌 문단 갱신: 11,829→11,852자(+23). #905 SourceRef 실제 model에 접근 상태 5종 전달 검증 5/5 PASS.
+- 공유 파일 순서: main #916 → #906 접근 metadata → #907 schema/표시 통합. 문헌 추출 단계 연결과 접근 metadata를 함께 검증했습니다.
+- W3 인계: PRECEDENT_SCHEMA의 `supplements_required`는 boolean/null, receipt의 optional source/PDF metadata를 보존합니다. [field 인계](https://github.com/ehojune/bioinfo-team-3d/issues/906#issuecomment-6371305285).
+- 실 HTTP·PDF 다운로드·기관 접속·연구 실행 없음. 실제 원문 독해 품질은 미검증입니다. 최종 head CI·봇 리뷰 완료·미해결 P1=0 뒤 병합합니다.
+
+Closes #906
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+## 결과
+Closes #905
+
+접근 metadata와 최초 실증 출처 계보를 기존 evidence contract에 추가했습니다.
+
+## 변경
+- `SourceRef`: 접근 범위·Methods/QC 위치·보충자료 상태. `Evidence.status`와 구분합니다.
+- `Evidence.lineage`와 `assess_lineage`: 확인 근거가 있는 원출처만 확정하고 같은 source identity를 합칩니다. 순환·누락·미확인은 context로 남기며 독립 근거에서 제외합니다.
+- `independent_groups`·verifier가 원출처 group을 재사용합니다. 같은 source로 병합된 원출처 행도 모두 검증하며 추가 URI·artifact가 미확인이면 통과시키지 않습니다. legacy payload·group 동작은 유지합니다.
+- 원출처·중간 인용의 결함과 철회는 claim의 `defective` 판정으로 전달해 CSO가 인용을 차단합니다. 조회 미완료는 `unverified`로 남깁니다.
+- 미해결 계보를 salvage할 때 문제 link만 거부해 접근 기록·필수 slot·다른 context link를 보존합니다.
+
+## 검증·인계
+- 관련 pytest 420 passed. P1 회귀 18건·P2 회귀 6건은 수정 전 실패를 재현했습니다.
+- 확장한 result schema hash를 고정하고 새 metadata의 optional 계약을 검사합니다. plan schema·planning prompt·기존 plan hash 검사는 유지합니다.
+- Windows selection inventory 검사 통과. 계보 회귀 검사는 기존 evidence test 모듈에 포함합니다.
+- Python 3.10 AST·public·diff 검사 통과. 전체 suite·최종 head CI·봇 판정은 PR 기록을 따릅니다.
+- 공용 contract: https://github.com/ehojune/bioinfo-team-3d/issues/905#issuecomment-6371292848
+- helper는 `labhq.evidence`에서 import합니다. `assess_lineage`와 `independent_groups` 모두 optional `artifact_paths`를 받습니다.
+- `original_evidence_ids`는 병합된 원출처 행을 모두 보존합니다. `source_keys`·`independence_groups`는 중복 제거합니다.
+- report·manual·fake 통합은 #907 담당입니다. 실제 원문 독해 품질·기관 조회·연구 실행은 검증하지 않았습니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 # 블라인드 리뷰어 초안 (#889)
 
 - `research.blind_draft`(기본 false)를 켜면 CP1 승인 직후 첫 단계 전에 `reviewer_agent`가 원 요청만으로 초안을 쓰고 `research_contract.blind_draft`에 본문·sha256·UTC 시각으로 봉인한다. 주 결과가 이미 있는 재개는 초안 없이 `unavailable(results_exist)`, 초안 완료 시점에 결과가 있었으면 `late`, task 실패는 `unavailable`이며 요청은 계속된다.
 - 연구 리뷰 prompt에 봉인된 초안(해시 일치 시)을 붙이고 review JSON에 optional `blind_comparison`을 받는다. 읽을 수 없는 값은 그 필드만 버린다. 일치를 근거로 세지 않는다.
 - 순차 실행(병렬 아님). 새 task kind `blind_draft`는 read-only 프로파일과 기존 예약·취소 경로를 쓴다. 파일 격리는 하지 않는다(입력 기준 격리).
 - 테스트: `tests/test_blind_draft_889.py` 7건(봉인 순서·입력 격리·리뷰 전달·꺼짐 무변화·실패 무중단·late/재시작·부분 폐기) 통과. 관련 연구 lane 테스트 247건 통과. 실제 Codex 직원, 실제 요청, Windows CI는 미확인.
+
+## #890 계획에 선택 기록 고정 (PR #901, base 545a973b)
+
+- 바꾼 것: 연구 계획의 선택 사항 `selection_record`(질문·전제·성공 기준·검토한 대안과 배제 이유·판단을 바꿀 관측). plan hash에 포함, 없으면 직렬화에서 빠져 이전 hash 유지. CSO prompt에 작성 요청, CP1 카드 요약 한 줄·웹 카드 항목(없으면 `선택 기록 없음`, 승인은 막지 않음). manual CP1 절.
+- 검사: 새 test 6 + 웹 1. 수정 전 코드로 python 수집 실패·node 2 실패, 수정 후 연구 관련 348 passed·웹 fail 0.
+- 한계: 연구 lane 계획만(일반 `PLAN_SCHEMA` 제외). 실제 모델의 작성 품질·지어낸 대안 걸러내기는 확인 안 함. 전체 suite는 CI에 맡김.
 
 Refs #898
 
@@ -21,6 +103,20 @@ Refs #898
 - Rscript가 없는 로컬의 실제 R 두 case와 symlink 권한이 필요한 한 case는 skip됐습니다. R 실제 지연 원인은 미확인이므로 #898을 닫지 않습니다. CI·같은 head 봇 리뷰·병합은 PR에서 확인합니다.
 
 [관측과 해석 경계](../reference/windows-test-boundaries-898.md)
+
+Closes #654
+PR #899
+
+재시작 뒤 재개 카드를 승인하면 CP1(계획 승인) 카드가 바로 또 뜨던 문제를, 재개 카드 한 번으로 줄였습니다.
+
+- CP1 전에 멈춘 첫 연구 계획이면 재개 카드에 단계·직원·지시 앞부분·비용 추정·집행 상한을 싣고, 승인하면 같은 계획 hash의 CP1 영수증(`via=resume_card`)을 한 번만 기록합니다. 집행 상한은 기존 CP1 승인 경로로 설정됩니다.
+- hash 불일치·이어 가기·단계 실행 뒤 재승인·멈춘 의미 장치(`configured_off` 제외)·paper skill 줄·재배정 안내는 CP1 카드를 그대로 묻습니다. 계획이 없으면 재개만 묻습니다.
+- `tests/test_resume_cp1_654.py` 6건: 수정 전 4건 실패·대조 2건 통과, 수정 뒤 6건 통과. 관련 묶음 283+92건, resume·interrupt 언급 파일 838건 통과(Windows, Python 3.12, 로컬).
+- 봇 리뷰 반영(2차): 카드 detail에 CP1과 같은 `plan_canonical` 등을 싣고 웹이 계획 전체를 그립니다. `resume_cp1`은 영수증 저장 save에서 지웁니다. paper skill·재배정 안내가 있는 계획에는 통합 승인 카드를 만들지 않습니다. python 7건·web 1건 추가(수정 전 실패 확인), 관련 묶음 303건 통과. web 7건은 main에서도 실패하는 브라우저 의존 테스트입니다.
+- CI: head `c529d574`의 `pytest (3.12)` 실패 1건은 무관한 timing 테스트(`test_policy` 경로 스캔 선형성)였고 재실행에서 통과했습니다. 부분 재실행(attempt 2)은 Windows 커버리지 artifact가 없어 `validation-manifest`만 실패해 전체를 새 push로 다시 돌렸습니다.
+- 미검증: 웹 UI 표시(summary 텍스트만 사용·`web/` 변경 없음), 실제 PI state·실요청, CI(3.10·Windows).
+
+🤖 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 
 ## #658 종료하기: 멈춘 '마무리 중' 표시 (PR #895, base 611f8ea4)
 
