@@ -11,18 +11,16 @@
 
 ## 현재 우선순위 (2026-10-23)
 
-PI 승인으로 개발을 재개했습니다. Codex 총괄은 같은 담당자·세션에 관련 작업을 잇고 필요할 때만 투입합니다. 현행 동시 투입·예산 한도는 [#760](https://github.com/ehojune/bioinfo-team-3d/issues/760)의 최신 PI 결정이 정본입니다.
+Codex 총괄은 같은 담당자·세션에 관련 작업을 잇습니다. 개발 투입 한도는 [#760](https://github.com/ehojune/bioinfo-team-3d/issues/760)의 최신 PI 결정을 봅니다. 현재 **B는 NO-GO**입니다.
 
-| 후속 항목 | 현재 범위 |
+| 순서 | 현재 상태·다음 일 |
 |---|---|
-| #799 | 정책·4-arm 기록기 병합(#815·#824). 실제 bench·효용은 미측정 |
-| #739 | A/B 선택·범위·상한 승인 완료. A를 먼저 준비하고 완료 뒤 B를 별도 판정. 실제 연구 요청 0건 |
+| 1 · [#877](https://github.com/ehojune/bioinfo-team-3d/issues/877) | 장애·재시작과 무관한 요청 전체 90분 hard stop 및 해당 자식만 종료하는 격리 검증. B GO 차단 P1 |
+| 2 · [#739](https://github.com/ehojune/bioinfo-team-3d/issues/739) | A는 요청 0건으로 종료. 전기능 B는 `45bd6e80` 격리 설치·P2A pin·11명 roster·`doctor --runtime` verified, 요청·승인·비용 0. 원문·출처 pin, $9/HTTP 9회 집행, 최종 확인과 별도 GO가 남음 |
+| 병렬 · [#876](https://github.com/ehojune/bioinfo-team-3d/pull/876) | [#833](https://github.com/ehojune/bioinfo-team-3d/issues/833) Chrome 시작 구간에서 Windows 필수 CI 실패. 원인·코드 인과 미확정으로 병합 보류, B 설치판에 미포함 |
+| 이후 · [#799](https://github.com/ehojune/bioinfo-team-3d/issues/799) | B 실운전 근거 뒤 bench dry-run·필수 gate → Astra 전체 검토 → 동일 요청 4-arm 비교를 판단. 구현·CI는 실측 근거가 아님 |
 
-병합된 감사 항목의 구현·검증 범위는 [감사 우선순위](docs/reference/audit-priorities-2026-10-20.md)에 있습니다. #811의 queued-halt 검사는 executor 대기와 분리됐으며 [검증 경계](docs/reference/shadow-test-cost-811.md)를 따릅니다.
-
-논문 스킬은 승인 뒤 함께 준비하고, 분석 단계는 시작 시 준비된 결과만 씁니다. 미완료면 기다리지 않고 생략 사실을 기록합니다([준비·취소와 CI 근거](docs/reference/paper-skill-waiting-671.md)). 검증 문서는 읽기 권한만 주며 결과 참조 receipt는 실제 tool 호출·과학적 효용의 증거가 아닙니다([참조 계약](docs/reference/paper-skills-798.md)).
-
-승인된 소형 시운전의 runtime·상한·종료 조건을 확인한 뒤의 순서는 공개 소형 주제 실운전 → bench dry-run·필수 게이트 → Astra의 코드·README·구조 전체 검토 → 동일 요청 bench 비교(labhq 혼합 roster 대 Astra·Sol·Opus 단독 세션)입니다. 가동 전에는 배포 인스턴스의 `doctor --runtime` 준비 판정을 다시 확인합니다. v0.5 선언(2026-10-08) 이후 장치의 구현·CI 통과는 새 실운전 PASS를 뜻하지 않습니다([로드맵](docs/manual.md#로드맵)).
+설치·doctor 통과는 연구 요청 성공이나 장치 효용의 근거가 아닙니다. B에서는 P2A 생성·부착·실제 참조·산출 연결과 의미·근거 장치의 사용 여부를 확인합니다. 맞지 않는 bulk/single-cell pack은 미평가로 남깁니다.
 
 ## PI 결정
 
