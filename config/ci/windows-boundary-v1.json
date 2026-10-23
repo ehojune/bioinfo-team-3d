@@ -334,6 +334,7 @@
     "tests/test_wsl_shared.py"
   ],
   "boundary_cohorts": {
+    "tests/test_contained_readiness.py": "Contained Windows owner/Job, current process generation, named-pipe identity and deadline boundaries; all handles and IPC are faked.",
     "tests/test_scheduler_none.py": "Disabled-HPC command/SSH denial and runner watcher/record-preservation boundary; subprocess, store and immediate coroutines are faked.",
     "tests/test_windows*.py": "Native Windows API, Job/ACK, identity, quoting and encoding contracts.",
     "tests/test_proc_tree.py": "Native process tree boundaries.",

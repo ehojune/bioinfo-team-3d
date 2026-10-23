@@ -109,7 +109,7 @@ def _operator_trust(root, receipt):
     _require(selected and re.fullmatch(r"[0-9a-f]{64}", pin))
     path = Path(selected)
     _require(path.is_absolute() and not path.resolve().is_relative_to(root.resolve()))
-    with path.open("rb") as stream:
+    with path.open(mode="rb") as stream:
         raw = stream.read(65537)
     _require(len(raw) <= 65536 and hashlib.sha256(raw).hexdigest() == pin)
     trust = json.loads(raw)
@@ -139,7 +139,7 @@ def _contained(settings, root, records, memberships):
     _require(set(records) == set(_CONTAINED_ROLES) == set(memberships))
     _require(all(memberships[name] is True and _identity(records[name]) for name in records))
     path = root / "contained-runtime.json"
-    with path.open("rb") as stream:
+    with path.open(mode="rb") as stream:
         raw = stream.read(65537)
     _require(len(raw) <= 65536)
     receipt = json.loads(raw)
