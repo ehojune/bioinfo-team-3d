@@ -1,0 +1,6 @@
+pr: 919
+rows:
+- sha: f534cdd
+  at: '2026-10-24 04:37'
+  summary: 보고서에서 주장의 원문 위치와 읽은 범위, 최초 출처를 확인합니다.
+  text: 기존 주장·근거 연결과 출처 계보 판정을 재사용해 미해결 주장, 원문 미확보, 재인용과 순환, 보충자료 누락 및 Methods/QC 위치를 표시한다. 결과 승인(CP2)이 거부한 원출처의 재인용은 synthesis와 anchor에서도 차단한다. 단일 fake 요청의 report→portfolio 포함 관련 pytest 358 passed이며 실제 원문 독해 품질은 미검증이다. Refs #907.
