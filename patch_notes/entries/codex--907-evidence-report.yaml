@@ -1,5 +1,9 @@
 pr: 919
 rows:
+- sha: 49fa428
+  at: '2026-10-24 07:10'
+  summary: CP2에서 거부한 원출처의 재인용을 결론 근거 논문 수에서 제외합니다.
+  text: 결론 논문 수를 계산하는 소비 경로도 claim_rows에 거부 목록을 전달한다. list·generator 입력과 결론 원장 분모를 확인했고 오집계 1 failed 재현 뒤 관련 pytest 78 passed. Refs #907.
 - sha: 726b4d0
   at: '2026-10-24 07:02'
   summary: 정리본의 원문 근거에서 내부 자료 단계의 metadata를 제외합니다.

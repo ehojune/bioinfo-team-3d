@@ -3,6 +3,7 @@
 - 기존 claim anchor·출처 링크를 유지하고 미해결 주장·원문 미확보·재인용·순환·보충자료 누락과 Methods/QC 위치를 표시합니다. 결과 승인(CP2)이 거부한 원출처의 재인용은 synthesis·anchor에서도 차단하며 이전 형식 문헌 요약의 분모도 유지합니다.
 - #908·#909와 main #916의 인계를 재사용합니다. 원문 접근 기록의 nullable 보충자료 판정과 OA/PDF metadata를 보존하며 synthesis 입력은 기존 context 길이 안에 둡니다.
 - 정리본은 기존 internal/restricted scope 판정으로 내부 단계·하위 단계의 원문 metadata를 제외합니다. 귀속 불명확 시 요청 전체에 보수적인 규칙을 적용하고 기존 report 표도 다시 생성합니다. 원본 ledger는 유지합니다. P1 수정: `726b4d03`.
+- CP2 거부 원출처의 재인용은 결론 근거 논문 집계에서도 제외합니다. P2 수정 `49fa4288`: 오집계 1건을 재현한 뒤 report·output-check 관련 pytest 78 passed. 거부 목록의 list·generator 입력을 함께 확인했습니다.
 - 단일 fake 요청의 report→portfolio, 근거 표 단일 표시와 legacy 요약 호환성을 포함한 기존 pytest 414 passed. P1 수정 후 report·portfolio·PDF 107 passed, 합성 노출 회귀 8 failed→8 passed. Python 3.10 AST·Windows inventory·public·diff 검사 통과. 기존 report Node 6 passed. 실제 HTTP/PDF·기관 접속·연구·HPC는 실행하지 않았으며 실제 원문 독해 품질은 미검증입니다.
 - 최신 main #920을 통합했습니다. manual 해당 절은 최신 main 대비 LF 기준 186,475→186,764자(+289). 상세 필드·검증 경계는 `docs/reference/claim-source-display-904.md`(954자)에 둡니다.
 
