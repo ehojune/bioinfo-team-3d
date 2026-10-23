@@ -8,3 +8,7 @@ rows:
   at: 2026-10-24 06:40
   summary: 프롬프트 내용을 고정해 둔 테스트의 기준 hash를 이번 규칙 추가에 맞췄습니다.
   text: '계획·단계 prompt가 의도적으로 바뀌어 test_step_prompt_rules, test_general_evidence, test_output_types_research의 prompt byte hash 4곳을 새 값으로 바꿨다. 주석에 #669 변경을 적었고 assertion은 약하게 하지 않았다. 관련 묶음 534건 로컬 통과.'
+- sha: '32cbeab'
+  at: 2026-10-24 06:55
+  summary: 최신 main을 합쳤습니다.
+  text: '계획 prompt의 같은 위치에 main이 넣은 선택 기록 규칙과 이번 설치 허용 규칙을 둘 다 남겼다. prompt hash 고정 테스트 44건 통과.'
