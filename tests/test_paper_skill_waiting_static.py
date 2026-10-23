@@ -267,7 +267,7 @@ class WaitingStatic(unittest.TestCase):
         ns = definitions('labhq/tools/annot_literature.py', {'source_access_metadata'}, {})
         ns.update({'BaseModel': BaseModel, 'ConfigDict': ConfigDict, 'Field': Field, 'Any': object, 're': re})
         ns = definitions('labhq/recruit/paper_skills.py',
-            {'PaperSkillSelection', 'paper_id', 'selections'}, ns)
+            {'PaperSkillSelection', 'paper_id', 'cited_access', 'extraction_steps', 'selections'}, ns)
         plan = {'steps': [{'id': 's1', 'agent_id': 'worker'}], 'paper_skills': [
             {'paper_id': pid, 'title': 'Synthetic', 'reason': 'Method', 'step_ids': ['s1']}
             for pid in ('PMID:1', 'https://pubmed.ncbi.nlm.nih.gov/1/', 'PMID:2', 'PMID:3')]}

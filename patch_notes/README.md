@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 05:19 | [`571e135`](https://github.com/ehojune/bioinfo-team-3d/commit/571e135) | **본문을 읽지 못한 논문으로는 자문 스킬을 만들지 않고 이유를 밝히며, 메타분석 논문 스킬은 문헌 추출 단계에도 붙입니다.**<br>논문 스킬: 본문에 닿지 못한 논문은 스킬 없이 계획 참고로만, 메타분석 스킬은 문헌 추출 단계에도 부착 (#670) |
 | 05:06 | [`aace095`](https://github.com/ehojune/bioinfo-team-3d/pull/901/commits/aace095) | **선택 기록 작업 branch를 최신 기본 branch와 합쳐 충돌을 풀었습니다.**<br>main 병합: 선택 기록 branch를 최신 main에 맞춤 (#890) |
 | 05:04 | [`8f24a90`](https://github.com/ehojune/bioinfo-team-3d/pull/913/commits/8f24a90) | **봇 작성자의 모델명을 다음 커밋에 넘기지 않고 제 커밋에 남깁니다.**<br>private message copy를 정리한 뒤 전역 모델명 전달과 bot amend를 실행하고 rewrite 거절·실패의 원문·상태 보존과 직원 세션을 포함해 hook 회귀 46건을 검증했다. |
 | 04:48 | [`a63115a`](https://github.com/ehojune/bioinfo-team-3d/pull/913/commits/a63115a) | **같은 작성자의 커밋을 수정하거나 재사용해도 작성자와 에이전트 표식을 보존합니다.**<br>prepare-commit-msg source와 post-commit reflog로 전역 위임을 판정하고 amend·-C/-c·reset-author·linked worktree·중단 뒤 후속 작업을 포함한 Git hook 회귀 41건을 검증했다. |
