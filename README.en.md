@@ -151,26 +151,34 @@ The shadow only records. `semantics: ab` (the `labhq init` preset) gives reuse c
 
 ### 1. Look around first (no API key or cluster)
 
-```bash
+```powershell
 git clone https://github.com/ehojune/bioinfo-team-3d.git
 cd bioinfo-team-3d
 py -3 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-.\labhq demo --web
+.\labhq.cmd demo --web
 ```
 
 On POSIX, use `python3 -m venv .venv`, `./.venv/bin/python -m pip install -e ".[dev]"`, and `./labhq.sh demo --web`. The demo selects a separate free port even if a real office is running. Open only the URL printed by the demo terminal. Its mock banner remains visible during the roughly 15–30 second request.
 
 ### 2. Install and configure
 
-You need: Python 3.10 or later, Git, and the CLIs you will use as staff (Claude Code, Codex), installed and logged in. CLIs installed with npm also need Node.js.
+You need Python 3.10+ and Git. After installing above, check the CLI with `.\labhq.cmd --help`.
 
-```bash
-.\labhq init
-.\labhq -c config\labhq.yaml doctor
+```powershell
+.\labhq.cmd init
+.\labhq.cmd -c config\labhq.yaml doctor
 ```
 
-`labhq init` creates a new configuration with the research lane (CP1, CP2, domain packs), semantic `ab`, and output-kind declarations enabled. It finds bioinfo-agent or asks for its path, and asks about HPC, optional API keys, and an optional development-log repository. Existing configurations stay unchanged. `doctor` checks connections, state, and port conflicts. [Install and configuration details](docs/manual.md) (Korean)
+`init` creates `config/labhq.yaml` and asks about bioinfo-agent, HPC, optional APIs and development logs. It preserves existing configurations. Before real requests, install your staff CLIs (Claude Code, Codex) and **log in yourself**; npm CLIs also need Node.js. Then check readiness with `doctor`.
+
+To check a fresh install without logging in, use a new or empty folder:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\clean_install_check.py --work-dir ..\labhq-clean-check
+```
+
+That folder retains the installation, isolated state, separate stdout/stderr and `receipt.json`: each step is PASS/FAIL, while human authentication and real models are SKIP. [Commands and verdicts](docs/reference/clean-install-922.md) · [Configuration details](docs/manual.md)
 
 ### 3. Start it
 
