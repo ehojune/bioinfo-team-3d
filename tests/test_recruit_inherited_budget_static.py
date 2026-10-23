@@ -273,7 +273,17 @@ class InheritedRecruitBudget(unittest.TestCase):
             runner._bind_recruitment_conversion(task.id, child_task())
             # No Python result object; result and finished receipt are still queued on the writer lane.
             durable.commit = lambda: runner.store.rows.update(inner={"state": "finished"})
-            fields = immediate(runner._recruitment_cost_fields(task))
+            tree = ast.parse((ROOT / "labhq/recruit/planning.py").read_text(encoding="utf-8"))
+            run = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == "run_task")
+            finish = ast.AsyncFunctionDef(name="finish", args=ast.arguments(posonlyargs=[], args=[], kwonlyargs=[],
+                                         kw_defaults=[], defaults=[]), body=copy.deepcopy(run.body[-2:]), decorator_list=[])
+            ns = {"runner": runner, "task": task, "receipt": {"status": "timed_out"},
+                  "TaskResult": lambda **kw: NS(**kw)}
+            exec(compile(ast.fix_missing_locations(ast.Module(body=[finish], type_ignores=[])),
+                         "outer-timeout-result", "exec"), ns)
+            result = immediate(ns["finish"]())
+            self.assertEqual(result.structured["status"], "timed_out")
+            fields = {"cost_usd": result.cost_usd, "cost_known": result.cost_known}
             self.assertEqual(fields, ZERO)
             methods = extract("labhq/orchestrator/cso.py", {"_count_cost", "_count_recorded_costs"},
                               owner="Orchestrator")
