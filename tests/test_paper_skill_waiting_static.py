@@ -264,9 +264,10 @@ class WaitingStatic(unittest.TestCase):
 
     def test_two_papers_is_per_plan_not_a_lifetime_cap_and_ids_deduplicate(self):
         from pydantic import BaseModel, ConfigDict, Field
+        ns = definitions('labhq/tools/annot_literature.py', {'source_access_metadata'}, {})
+        ns.update({'BaseModel': BaseModel, 'ConfigDict': ConfigDict, 'Field': Field, 'Any': object, 're': re})
         ns = definitions('labhq/recruit/paper_skills.py',
-            {'PaperSkillSelection', 'paper_id', 'selections'},
-            {'BaseModel': BaseModel, 'ConfigDict': ConfigDict, 'Field': Field, 'Any': object, 're': re})
+            {'PaperSkillSelection', 'paper_id', 'selections'}, ns)
         plan = {'steps': [{'id': 's1', 'agent_id': 'worker'}], 'paper_skills': [
             {'paper_id': pid, 'title': 'Synthetic', 'reason': 'Method', 'step_ids': ['s1']}
             for pid in ('PMID:1', 'https://pubmed.ncbi.nlm.nih.gov/1/', 'PMID:2', 'PMID:3')]}
@@ -274,6 +275,7 @@ class WaitingStatic(unittest.TestCase):
                                for n in (1, 2, 3)]}
         first = ns['selections'](plan, evidence, [{'id': 'worker'}])
         self.assertEqual([r['paper_id'] for r in first], ['pmid:1', 'pmid:2'])
+        self.assertEqual([r['access_status'] for r in first], ['undetermined', 'undetermined'])
         revised = {**plan, 'paper_skills': plan['paper_skills'][-1:]}
         second = ns['selections'](revised, evidence, [{'id': 'worker'}])
         self.assertEqual([r['paper_id'] for r in second], ['pmid:3'])
