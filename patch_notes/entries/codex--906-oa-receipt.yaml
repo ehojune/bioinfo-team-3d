@@ -16,3 +16,7 @@ rows:
   at: 2026-10-24 03:23
   text: Paper2Skill static 선택 fixture에 실제 접근 변환 helper를 연결하고 미판정 보존을 확인했습니다.
   summary: 선택 한도와 중복 제거 검사에서도 실제 접근 상태 변환을 함께 검증합니다.
+- sha: 'c38f471'
+  at: 2026-10-24 04:09
+  text: 기존 scout schema의 optional receipt 투영을 허용하고 본문 소실 뒤 접근 상태를 다시 계산했습니다.
+  summary: 기존 논문 스킬 준비를 유지하고 사라진 본문은 미확보로 표시합니다.
