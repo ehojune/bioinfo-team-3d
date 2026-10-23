@@ -1,5 +1,9 @@
 pr: 908
 rows:
+- sha: 73ae05f
+  at: '2026-10-24 03:24'
+  summary: 확장한 result schema의 고정 hash와 optional 호환성 검사를 갱신합니다.
+  text: 두 Linux CI에서 result schema 고정 hash 1건만 실패한 것을 확인하고 local에서도 재현했다. 결과 schema hash만 새 값으로 고정하며 plan schema·planning prompt·기존 plan hash assertion은 유지한다. 새 metadata가 engine schema에서도 optional인지 검사했다. 관련 pytest 337 passed. Refs #905.
 - sha: 4abf4bf
   at: '2026-10-24 03:12'
   summary: 원출처·중간 인용 출처의 결함을 claim으로 전달해 최종 인용을 차단합니다.

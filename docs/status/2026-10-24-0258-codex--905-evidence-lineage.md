@@ -10,7 +10,8 @@ Closes #905
 - 원출처·중간 인용의 결함과 철회는 claim의 `defective` 판정으로 전달해 CSO가 인용을 차단합니다. 조회 미완료는 `unverified`로 남깁니다.
 
 ## 검증·인계
-- 관련 pytest 323 passed: lineage, research evidence, source verifier, semantics pilot. P1 회귀 18건은 수정 전 실패를 재현했습니다.
+- 관련 pytest 337 passed: research evidence, source verifier, semantics pilot, output-types contract. P1 회귀 18건은 수정 전 실패를 재현했습니다.
+- 확장한 result schema hash를 고정하고 새 metadata의 optional 계약을 검사합니다. plan schema·planning prompt·기존 plan hash 검사는 유지합니다.
 - Windows selection inventory 검사 통과. 계보 회귀 검사는 기존 evidence test 모듈에 포함합니다.
 - Python 3.10 AST·public·diff 검사 통과. 전체 suite·최종 head CI·봇 판정은 PR 기록을 따릅니다.
 - 공용 contract: https://github.com/ehojune/bioinfo-team-3d/issues/905#issuecomment-6371292848
