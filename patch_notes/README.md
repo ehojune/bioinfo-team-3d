@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 13:32 | [`12505db`](https://github.com/ehojune/bioinfo-team-3d/pull/881/commits/12505db) | **두 화면이 모두 늦게 켜져도 Windows 필수 검사에 시간이 남도록 조정했습니다.**<br>#881 리뷰 P1: 각 viewport 최대 60초 뒤 native 검사·collection이 기존 serial 2분에서 밀리지 않도록 routine critical 3분, pool 6분으로 재배분했다. job 전체 10분과 nightly/manual full 상한·필수 검사 범위는 유지한다. 가짜·정적 CI 계약312건은 통과했지만 새 head의 실제 단계 시간은 미확인이다. |
+| 13:22 | [`f565bda`](https://github.com/ehojune/bioinfo-team-3d/pull/881/commits/f565bda) | **Windows 화면 검사의 새 시간 제한을 매뉴얼에도 적었습니다.**<br>docs/manual.md의 개발 CI 설명에 viewport별 Chrome 시작 최대 30초, UI 검사 최대 20초와 정리 포함 합산 60초를 명시했다. |
+| 13:22 | [`f78f762`](https://github.com/ehojune/bioinfo-team-3d/pull/881/commits/f78f762) | **Windows 화면 검사에서 브라우저가 늦게 켜져도 실제 화면을 검사할 시간을 줍니다.**<br>#833: 각 viewport의 합산 상한을 30초에서 60초로 바꾸고 Chrome 시작 최대 30초, UI 검사 최대 20초, 정리 여유 8초를 둔다. 실제 브라우저·UI 단언·필수 게이트와 실패 시 정리는 유지한다. 가짜 시계 Node 13건·CI 계약 57건은 통과했고 실제 Windows 시간과 성공 여부는 새 PR CI에서 확인해야 한다. |
 | 12:29 | [`c52e06d`](https://github.com/ehojune/bioinfo-team-3d/commit/c52e06d) | **새 진단 검사가 Windows 검사 목록의 해시를 깨뜨린 문제를 바로잡았습니다.**<br>tests/test_web_3d.py의 정확한 새 SHA-256을 검토 프로필에 반영하고 가짜 Node 검사를 Windows 유지 항목으로 명시했다. 첫 PR CI는 Chrome 전에 검토 해시 불일치로 멈췄으므로 #833 진단 결과가 아니며, profile 검증과 관련 mock 11건은 통과했다. |
 | 12:11 | [`a72c8fd`](https://github.com/ehojune/bioinfo-team-3d/commit/a72c8fd) | **Windows 화면 검사의 첫 브라우저가 늦을 때, 생성된 profile 활동과 시작 표식을 숫자로 남깁니다.**<br>DevTools 포트 미생성 실패 때만 최대 96개·깊이 2의 profile 항목을 세어 기존 Job/Chrome 표식·포트 오류 수와 함께 기록한다. 경로와 내용은 출력하지 않는다. 30초 합산 상한·실제 브라우저 단언·정리·필수 검사는 유지하며 #833의 원인은 아직 미확인이다. |
 | 12:00 | [`21b76d1`](https://github.com/ehojune/bioinfo-team-3d/pull/878/commits/21b76d1) | **전기능 B의 NO-GO와 현재 시운전·CI 차단 조건을 개발 인수인계 첫머리에 반영했습니다.**<br>HANDOFF의 지난 A 우선 준비 안내를 B 격리 설치·doctor PASS·요청 0건과 |
