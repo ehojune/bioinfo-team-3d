@@ -8,3 +8,7 @@ rows:
     at: "2026-10-23 10:35"
     summary: "거절 복구의 기존 metadata 검사에도 새 이어 가기 helper를 연결했습니다."
     text: "첫 Linux CI에서 드러난 plain namespace test double의 누락을 고쳤다. 원래 회귀를 실제 helper와 함께 동기 추출 검사로 실행해 13개 PASS를 확인했다. 제품 코드는 그대로이며 별개 Windows 브라우저 30초 실패는 해결 범위 밖이다."
+  - sha: 1c97ff49
+    at: "2026-10-23 10:56"
+    summary: "최신 main의 채용 예산 검사와 이어 가기 검사를 함께 보존했습니다."
+    text: "Windows 경계 목록의 충돌은 두 테스트와 기존 분류 근거를 합쳐 해결했다. #874·#875 코드와 #876 CI 선택기·복구 변경을 유지하며 관련 동기 fake 30개와 merge-parent drift 3개, 정적 검사를 확인했다. 실제 CI·연구 실행 성공을 뜻하지 않는다."
