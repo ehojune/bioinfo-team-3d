@@ -2,7 +2,7 @@ const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const {openDemo, skipReason} = require('./support/demo_driver.cjs');
+const {openDemo, skipReason, CLOSE_RESERVE_MS} = require('./support/demo_driver.cjs');
 
 const web = process.env.LABHQ_WEB_TEST_ROOT || path.resolve(__dirname, '../labhq/web');
 const html = fs.readFileSync(path.join(web, 'index.html'), 'utf8');
@@ -36,6 +36,13 @@ test('2.5D shell exposes two token-styled accessible splitters and leaves phone 
   assert.match(components, /@media \(max-width:\s*620px\)[\s\S]*\.panel-splitter[^}]*display:\s*none/);
 });
 
+// #833: tests/test_web_3d.py kills this script at its watchdog (LABHQ_TEST_OUTER_DEADLINE_MS, epoch ms), which skips
+// every close below. One work deadline, shared by both viewports, ends the browser work CLOSE_RESERVE_MS before it, so
+// the open session's own close and this process's exit still fit. Run directly (no variable), the driver keeps its
+// own budgets.
+const outerDeadline = Number(process.env.LABHQ_TEST_OUTER_DEADLINE_MS);
+const workDeadline = Number.isFinite(outerDeadline) && outerDeadline > 0 ? outerDeadline - CLOSE_RESERVE_MS : undefined;
+
 // The critical Windows phase requires a real browser, never an optional skip.
 if (process.env.LABHQ_REQUIRE_RESIZABLE_BROWSER === '1' && skipReason()) {
   throw new Error(`required resizable browser unavailable: ${skipReason()}`);
@@ -43,7 +50,7 @@ if (process.env.LABHQ_REQUIRE_RESIZABLE_BROWSER === '1' && skipReason()) {
 test('desktop splitter drags, responds to arrows, persists and resets while phone hides it',
   {skip: skipReason() || false, timeout: 60000}, async () => {
     console.error('resizable browser: desktop open');
-    const desktop = await openDemo({width: 1440, height: 900, reducedMotion: true,
+    const desktop = await openDemo({width: 1440, height: 900, reducedMotion: true, workDeadline,
       diagnostic: event => console.error('resizable driver: ' + JSON.stringify({viewport: 'desktop', ...event}))});
     try {
       console.error('resizable browser: desktop load');
@@ -82,7 +89,7 @@ test('desktop splitter drags, responds to arrows, persists and resets while phon
     }
 
     console.error('resizable browser: phone open');
-    const phone = await openDemo({width: 390, height: 844, reducedMotion: true,
+    const phone = await openDemo({width: 390, height: 844, reducedMotion: true, workDeadline,
       diagnostic: event => console.error('resizable driver: ' + JSON.stringify({viewport: 'phone', ...event}))});
     try {
       console.error('resizable browser: phone load');

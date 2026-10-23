@@ -207,6 +207,7 @@ def node_wrapper(run, *, required_browser=False):
     namespace = dict(Path=Path, __file__=str(s.ROOT/'tests/test_web_3d.py'), pytest=pytest,
                      re=__import__('re'), os=SimpleNamespace(environ={'LABHQ_REQUIRE_RESIZABLE_BROWSER': '1'} if required_browser else {}),
                      shutil=SimpleNamespace(which=lambda name: 'fake-node'), sys=SimpleNamespace(executable='fake-python'),
+                     time=SimpleNamespace(time=lambda: 1000.0),
                      subprocess=SimpleNamespace(run=run, TimeoutExpired=subprocess.TimeoutExpired))
     exec(compile(ast.Module(body=[function], type_ignores=[]), '<fake-node-wrapper>', 'exec'), namespace)
     return namespace['test_office_in_node']
@@ -218,8 +219,9 @@ def test_node_timeout_retains_partial_output_and_original_failure(binary):
     def run(command, **options):
         assert command[0] == 'fake-node'
         # The exact interpreter reaches the Windows Job wrapper of the demo driver (#842); no PATH python.
+        # #833: only this script also gets the watchdog's absolute end (epoch ms); the timeout itself is unchanged.
         assert options == dict(capture_output=True, text=True, encoding='utf-8', timeout=30,
-                               env={'LABHQ_TEST_PYTHON': 'fake-python'})
+                               env={'LABHQ_TEST_PYTHON': 'fake-python', 'LABHQ_TEST_OUTER_DEADLINE_MS': '1030000'})
         stdout, stderr = 'TAP version 13\n', 'resizable browser: desktop load\n'
         if binary:
             stdout, stderr = stdout.encode(), stderr.encode()
@@ -231,6 +233,21 @@ def test_node_timeout_retains_partial_output_and_original_failure(binary):
     assert 'TAP version 13' in str(result.value)
     assert 'resizable browser: desktop load' in str(result.value)
 
+
+
+def test_only_the_resizable_script_receives_the_outer_deadline():
+    seen = {}
+    def run(command, **options):
+        seen[Path(command[1]).name] = options
+        return SimpleNamespace(returncode=0, stdout='fail 0', stderr='')
+    wrapper = node_wrapper(run)
+    for name in ('web_resizable_panels.cjs', 'web_state.cjs', 'web_office_browser.cjs'):
+        wrapper(name, 'fail 0')
+    assert seen['web_resizable_panels.cjs']['env'] == {'LABHQ_TEST_PYTHON': 'fake-python',
+                                                       'LABHQ_TEST_OUTER_DEADLINE_MS': '1030000'}
+    assert seen['web_resizable_panels.cjs']['timeout'] == 30
+    for name, timeout in (('web_state.cjs', 30), ('web_office_browser.cjs', 170)):
+        assert seen[name]['env'] == {'LABHQ_TEST_PYTHON': 'fake-python'} and seen[name]['timeout'] == timeout
 
 @pytest.mark.parametrize('returncode,stdout', [(0, 'fail 0'), (1, 'fail 0'), (0, 'fail 1')])
 def test_node_wrapper_still_requires_success_and_marker(returncode, stdout):
@@ -261,6 +278,11 @@ def test_resizable_browser_diagnostics_keep_deadline_cleanup_and_selection():
             assert f"console.error('resizable browser: {viewport} {phase}')" in source
         assert f'await {viewport}.close();' in source
     assert source.count('finally {') == 2
+    # #833: one work deadline, computed once from the watchdog's end minus the driver's close reserve, for both viewports.
+    assert source.count("process.env.LABHQ_TEST_OUTER_DEADLINE_MS") == 1
+    assert 'outerDeadline - CLOSE_RESERVE_MS' in source
+    assert source.count('const workDeadline =') == 1
+    assert source.count('reducedMotion: true, workDeadline,') == 2
     data = s.validate_profile()
     path = 'tests/test_web_3d.py'
     assert s.include_windows(path, (s.ROOT/path).read_text(encoding='utf-8'), data,
