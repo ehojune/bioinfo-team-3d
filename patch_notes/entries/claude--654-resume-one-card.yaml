@@ -8,3 +8,7 @@ rows:
   at: 2026-10-24 01:25
   summary: 새 테스트가 CI의 Windows 검토 목록에 빠져 있어 등록했습니다.
   text: 'config/ci/windows-boundary-v1.json known_tests에 tests/test_resume_cp1_654.py를 추가했다. 목록에 없는 새 테스트는 pytest 시작 전에 거부되어 3.10·3.12 job이 실패했다. test_ci_windows10m·test_ci_boundary_preview 117건 로컬 통과.'
+- sha: '3f05b9e'
+  at: 2026-10-24 02:05
+  summary: 재개 카드에서도 동결되는 계획 전체를 볼 수 있게 했습니다.
+  text: '봇 리뷰 반영. 재개 카드 detail에 CP1 카드와 같은 plan_canonical·pack 적용·경고·protocol 정보를 싣고 웹이 재개 카드에서도 계획 전체를 그린다. resume_cp1은 CP1 영수증을 저장하는 save에서 지워 저장 전 종료에도 PI 승인이 남고, paper skill·재배정 안내가 있는 계획에는 통합 승인 카드를 만들지 않는다. 새 python 테스트 7건·web 테스트 1건(수정 전 실패 확인)과 관련 묶음 303건 통과. 웹 7건은 main에서도 실패하는 브라우저 의존 테스트다.'
