@@ -1,5 +1,9 @@
 pr: null
 rows:
+- sha: f565bda
+  at: 2026-10-23 13:22
+  summary: Windows 화면 검사의 새 시간 제한을 매뉴얼에도 적었습니다.
+  text: 'docs/manual.md의 개발 CI 설명에 viewport별 Chrome 시작 최대 30초, UI 검사 최대 20초와 정리 포함 합산 60초를 명시했다.'
 - sha: f78f762
   at: 2026-10-23 13:22
   summary: Windows 화면 검사에서 브라우저가 늦게 켜져도 실제 화면을 검사할 시간을 줍니다.
