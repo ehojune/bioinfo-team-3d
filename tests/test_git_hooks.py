@@ -85,6 +85,23 @@ def test_no_global_hooks_keeps_local_trailer_fallback(history):
     assert "199175422+chatgpt-codex-connector[bot]@users.noreply.github.com" in git("log", "-1", "--format=%B").stdout
 
 
+@pytest.mark.parametrize("explicit_commit", [False, True], ids=["automatic", "no-commit"])
+def test_merge_keeps_agent_trailer_without_global_author_rewrite(history, explicit_commit):
+    repo, home, git = history
+    git("checkout", "-qb", "topic")
+    original_commit(repo, git, "topic")
+    git("checkout", "-q", "main")
+    original_commit(repo, git, "main")
+    global_hooks(home)
+    if explicit_commit:
+        git("merge", "--no-commit", "topic")
+        git("commit", "-qm", "merge topic")
+    else:
+        git("merge", "--no-edit", "topic")
+    assert git("log", "-1", "--format=%ae").stdout.strip() == "operator@example.com"
+    assert "Co-authored-by: Codex <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>" in git("log", "-1", "--format=%B").stdout
+
+
 @pytest.mark.parametrize("operation", ["cherry-pick", "rebase", "rebase-apply", "cherry-pick-continue", "no-reflog-continue"])
 @pytest.mark.parametrize("linked", [False, True], ids=["checkout", "worktree"])
 def test_replay_preserves_author_and_message(history, tmp_path, operation, linked):

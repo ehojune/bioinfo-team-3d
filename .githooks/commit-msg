@@ -27,7 +27,10 @@ done
 # 커밋에서는 trailer 를 지우고 모델명을 author 이름으로 옮긴다(.githooks/post-commit 과 짝). 이 저장소는 core.hooksPath 가
 # .githooks 라 전역 훅이 자동으로 돌지 않으므로 여기서 넘긴다. 없는 머신에서는 아래 자체 로직을 쓴다.
 G="$HOME/.git-template/hooks/commit-msg"
-if [ -x "$G" ] && [ "$(git config --bool core.logAllRefUpdates)" != false ]; then "$G" "$@"; exit 0; fi
+# Automatic git merge has commit-msg but no post-commit. Keep its agent trailer
+# with the local fallback rather than letting the global hook remove attribution.
+merge=$(git rev-parse --git-path MERGE_HEAD 2>/dev/null) || exit 0
+if [ -x "$G" ] && [ ! -f "$merge" ] && [ "$(git config --bool core.logAllRefUpdates)" != false ]; then "$G" "$@"; exit 0; fi
 
 CODEX_MAIL='199175422+chatgpt-codex-connector[bot]@users.noreply.github.com'
 GEMINI_MAIL='176961590+gemini-code-assist[bot]@users.noreply.github.com'

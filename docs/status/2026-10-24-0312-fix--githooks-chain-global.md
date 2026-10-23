@@ -1,8 +1,9 @@
 # 전역 Git 훅 연결과 원저자 보존 (#902)
 
-- 전역 commit-msg·post-commit이 있으면 새 에이전트 커밋을 위임해 봇 author·committer와 모델명을 남긴다. 없으면 기존 trailer 처리를 유지한다.
+- 전역 commit-msg·post-commit이 있으면 일반 새 에이전트 커밋을 위임해 봇 author·committer와 모델명을 남긴다. 전역 훅 부재·merge 커밋·reflog 비활성화는 자체 trailer 규칙을 쓴다.
 - P1 4362054678 수정: rebase·cherry-pick·충돌 후 continue는 원저자와 메시지를 보존한다. linked worktree의 상태 경로도 검사하며, 상태 파일이 지워진 continue는 reflog로 구분한다. reflog를 끈 저장소는 자체 trailer 처리만 쓴다.
-- 임시 Git 저장소·가짜 전역 훅 검사: 수정 전 continue 원저자 변경 1 failed·3 passed → 수정 후 12 passed. checkout/worktree, rebase merge/apply, 신규 커밋·전역 훅 부재·reflog 비활성화를 확인했다.
+- 임시 Git 저장소·가짜 전역 훅 검사: continue 원저자 변경 1 failed·3 passed, merge 표식 회귀 2 failed를 수정 전 재현했다. 수정 후 14 passed: checkout/worktree, rebase merge/apply, 신규 커밋·전역 훅 부재·reflog 비활성화·두 merge 경로를 확인했다.
+- P2 4362840932 수정: 자동 merge에는 post-commit이 호출되지 않아 전역 commit-msg만 실행하면 표식이 사라졌다. merge는 두 훅 모두 전역 위임을 생략해 trailer를 보존한다.
 - 수정 커밋 79579618의 author·committer는 Codex (gpt-6.1-sol) 봇이며 같은 에이전트 trailer는 제거됐다. 기존 커밋은 재작성하지 않았다.
 - Windows CI의 새 test inventory 거부를 해결해 훅 검사 전체를 필수 cohort로 등록했다. selection 회귀 8 passed. patch-notes·notes·public·diff·Python 3.10 AST 검사 통과.
 - 최종 head CI·같은 head 봇 P1=0 확인 뒤 병합한다.

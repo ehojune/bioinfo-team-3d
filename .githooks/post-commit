@@ -13,7 +13,7 @@ done
 [ "$(git config --bool core.logAllRefUpdates)" = false ] && exit 0
 action=$(git reflog -1 --format=%gs 2>/dev/null) || exit 0
 case "$action" in
-  commit:\ *|commit\ \(initial\):\ *|commit\ \(amend\):\ *|commit\ \(merge\):\ *) ;;
+  commit:\ *|commit\ \(initial\):\ *|commit\ \(amend\):\ *) ;;
   *) exit 0 ;;
 esac
 G="$HOME/.git-template/hooks/post-commit"
