@@ -1,0 +1,6 @@
+pr: null
+rows:
+  - sha: ccc8f0f
+    at: "2026-10-23 12:58"
+    summary: "운영자가 별도 고정한 owner 계약으로 현재 네 데몬의 contained readiness를 확인합니다."
+    text: "state 밖 계약 pin과 실행 중 verifier 바이트, owner 생성 시각·이미지, fresh pipe challenge, 네 역할의 정확한 Job 포함·마감을 검증한다. 기존 detached·인증 정책은 유지한다. fake 회귀 180건 통과. 실제 배포·직원 자식·90분 종료는 미검증이며 #877의 부분 해결이다."
