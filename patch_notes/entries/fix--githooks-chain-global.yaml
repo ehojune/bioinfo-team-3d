@@ -8,3 +8,7 @@ rows:
   at: '2026-10-24 03:12'
   summary: 다른 사람이 쓴 커밋을 옮길 때 원래 작성자를 보존합니다.
   text: rebase·cherry-pick·충돌 뒤 continue의 전역 author 변경을 막고 linked worktree와 reflog 비활성화 회귀 12건을 검증했다.
+- sha: a2b041e
+  at: '2026-10-24 03:14'
+  summary: Windows에서도 커밋 작성자 보존 검사를 모두 실행합니다.
+  text: Git 훅 검사 전체를 Windows 필수 cohort와 inventory에 등록하고 selection 회귀 8건을 확인했다.
