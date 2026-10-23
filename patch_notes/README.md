@@ -14,7 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 01:16 | [`f290ab6`](https://github.com/ehojune/bioinfo-team-3d/pull/895/commits/f290ab6) | **웹에서 종료를 누를 때도 무엇을 마무리하는 중인지 단계별로 보여 줍니다.**<br>웹 종료창에도 마무리 단계를 CLI와 같은 문구로 표시 (#658 리뷰 P2) |
+| 01:07 | [`cb4d44f`](https://github.com/ehojune/bioinfo-team-3d/pull/895/commits/cb4d44f) | **종료 안내에서 몇 분째인지 보이는 단계가 보고서 묶음뿐임을 매뉴얼에 정확히 적었습니다.**<br>문서: 경과 시간 표시가 보고서 묶음 단계만임을 manual에 맞춤 (#658 리뷰 P2) |
 | 01:05 | [`8ab2874`](https://github.com/ehojune/bioinfo-team-3d/pull/884/commits/8ab2874) | **사용자 이름을 지어내지 않고 실제 계정을 조회하며, 알 수 없으면 큐 조회가 설정을 요구하고 멈춥니다.**<br>사용자 이름을 못 구하면 "labhq"를 지어내지 않고 Windows 로그온 계정을 조회하며, 끝내 모르면 queue가 hpc.user 설정을 요구하며 실패한다. |
+| 00:55 | [`08e200c`](https://github.com/ehojune/bioinfo-team-3d/pull/895/commits/08e200c) | **종료할 때 무엇을 마무리하는 중인지와 몇 분째인지 알려 주고, 10분 넘게 멈춘 묶음 작업은 종료를 막지 않습니다.**<br>down: 마무리 표시를 단계·경과 시간으로 적고 멈춘 묶음 작업은 종료를 막지 않게 한다 (#658) |
 | 00:50 | [`256de7b`](https://github.com/ehojune/bioinfo-team-3d/pull/884/commits/256de7b) | **사용자 이름 환경변수가 없는 Windows에서도 스케줄러가 시작되도록 기본 이름을 씁니다.**<br>USERNAME이 없는 Windows 환경에서도 Scheduler가 생성되도록 getpass.getuser 실패 시 "labhq"로 대체한다. |
 
 ## 2026-10-23
