@@ -8,3 +8,7 @@ rows:
   at: 2026-10-24 02:45
   text: 예시 설정 두 사본, Windows 검사 inventory, review schema 계약 테스트를 blind_draft·blind_comparison에 맞춘다.
   summary: 새 선택 설정과 리뷰 필드에 맞춰 예시 설정과 자동 검사 목록을 갱신했습니다.
+- sha: 1fb7dbe
+  at: 2026-10-24 03:05
+  text: 블라인드 초안 호출의 예약이 거부돼 BudgetExceeded가 나면 내부 오류가 아니라 예산 거부 종료(stage=blind_draft)로 기록한다.
+  summary: 초안 호출의 예산 예약이 거부되면 내부 오류로 끝내지 않고 예산 거부로 기록합니다.
