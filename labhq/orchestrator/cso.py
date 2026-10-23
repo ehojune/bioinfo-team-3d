@@ -5392,14 +5392,19 @@ class Orchestrator:
             contract[blind_draft.KEY] = blind_draft.unavailable("results_exist")
             self.hub.save_request(rid)
             return True
-        reply = await self.run_step(Task(
-            agent_id=reviewer, request_id=rid,
-            prompt=blind_draft.prompt(text) + self._spending_cap_line(rid),
-            meta={**refs, "kind": "blind_draft", "outputs": ["outputs/blind_draft.md"], "request": text,
-                  "title": "블라인드 초안"}))
-        if rid in self.budget_denials:
+        denied: str | None = None
+        reply: TaskResult | None = None
+        try:
+            reply = await self.run_step(Task(
+                agent_id=reviewer, request_id=rid,
+                prompt=blind_draft.prompt(text) + self._spending_cap_line(rid),
+                meta={**refs, "kind": "blind_draft", "outputs": ["outputs/blind_draft.md"], "request": text,
+                      "title": "블라인드 초안"}))
+        except BudgetExceeded as error:  # a reservation the PI's budget card refused: ends like a denied CP1 cost
+            denied = str(error)
+        if denied is not None or rid in self.budget_denials:
             contract["failure"] = {"steps": [], "plan_sha256": contract["plan_sha256"], "stage": "blind_draft",
-                                   "budget": self.budget_denials[rid]}
+                                   "budget": self.budget_denials.get(rid, denied)}
             req["outcome"] = "research_failed"
             self.hub.save_request(rid)
             self._finish(rid, "Research plan approved, but the blind draft's budget card was not approved; no "

@@ -129,3 +129,24 @@ def test_an_unreadable_blind_comparison_costs_only_itself():
     assert lenient_review(broken, schema) == cont.ACCEPT
     both = {**cont.ACCEPT, "checklist": "bad", "blind_comparison": "bad"}
     assert lenient_review(both, schema) == cont.ACCEPT
+
+
+@pytest.mark.asyncio
+async def test_a_refused_reservation_ends_the_request_as_a_budget_denial_not_an_internal_error(tmp_path):
+    hub = _hub(tmp_path)
+    orch = Orchestrator(hub)
+    real = orch.run_step
+
+    async def refuse(task, *args, **kwargs):
+        if task.meta["kind"] == "blind_draft":
+            raise cso.BudgetExceeded("the draft's turn cap does not fit the remaining request budget")
+        return await real(task, *args, **kwargs)
+
+    orch.run_step = refuse
+    await orch.run_request("r")
+
+    req = hub.requests["r"]
+    assert req["outcome"] == "research_failed"
+    failure = req["research_contract"]["failure"]
+    assert failure["stage"] == "blind_draft" and "does not fit" in failure["budget"]
+    assert "step" not in _kinds(hub)
