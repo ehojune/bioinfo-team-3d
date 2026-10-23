@@ -179,8 +179,12 @@ jobs:
       - run: pip install -e ".[dev]"
         timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 360 || 2 }}
       - name: Bind changed-test range to checkout
+        id: selection
         if: env.CI_COVERAGE_PROFILE != 'windows-full-v1'
         run: python -m scripts.ci_selection
+      - name: Report rejected Windows selection
+        if: failure() && steps.selection.outcome == 'failure'
+        run: Write-Output "::error title=Windows selection rejected::ci_selection refused this checkout. See selection-error.json in the Windows artifact."
       - name: Bind Windows execution identity
         run: python -m scripts.ci_skip windows-identity
       - name: Serial critical Windows contracts
@@ -197,7 +201,8 @@ jobs:
       - name: Record measured coverage and timing
         id: coverage
         timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 360 || 1 }}
-        if: always()
+        # Failed selection/pytest has no complete receipt; keep its original failure visible.
+        if: success()
         run: python -m scripts.ci_suite report
         env:
           GH_TOKEN: ${{ github.token }}
