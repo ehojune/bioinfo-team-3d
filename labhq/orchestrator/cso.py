@@ -29,7 +29,7 @@ from ..model_refusal import REASON as MODEL_REFUSAL_REASON, ModelRefused, is_mod
 from ..pi_text import PI_TEXT_RULE
 from ..evidence.claims import RESULT_CONTRACT_FIELD_RULES
 from ..evidence.report_check import (FAILED_LOOKUP_TITLE, anchor, check_report, claim_rows, failed_lookup_lines,
-                                     failed_lookups)
+                                     failed_lookups, claim_evidence_rows, claim_evidence_section)
 from ..evidence.verify import LiveSourceResolver, verification_lines, verify_sources
 from ..facilities import signatures as env_signatures
 from ..facilities import fixes as facility_fixes
@@ -392,7 +392,19 @@ PRECEDENT_SCHEMA: dict[str, Any] = {
                                    "paper_id": {"type": "string"}, "source": {"type": "string"},
                                    "access_level": {"type": "string"}, "extraction": {"type": "string"},
                                    "text_file": {"type": "string"}, "text_sha256": {"type": "string"},
-                                   "supplements_required": {"type": "boolean"}, "supplements": {"type": "string"},
+                                   "supplements_required": {"type": ["boolean", "null"]},
+                                   "supplements": {"type": "string"},
+                                   "access_status": {"type": "string", "enum": ["full_text", "abstract_only",
+                                       "not_obtained", "paywalled", "undetermined"]},
+                                   "methods_locator": {"type": ["string", "null"]},
+                                   "qc_locator": {"type": ["string", "null"]},
+                                   "supplementary_status": {"type": "string", "enum": ["available", "missing",
+                                       "not_applicable", "undetermined"]},
+                                   "pdf_file": {"type": "string"}, "pdf_sha256": {"type": "string"},
+                                   "unread_reason": {"type": "string"}, "unread_detail": {"type": "string"},
+                                   "oa_copy": {"type": "object", "additionalProperties": False,
+                                       "properties": {key: {"type": "string"} for key in (
+                                           "provider", "url", "source", "license", "version", "format", "content_sha256")}},
                                    "evidence": {"type": "array", "items": {
                                        "type": "object", "additionalProperties": False,
                                        "properties": {"kind": {"type": "string", "enum": ["methods", "qc"]},
@@ -818,7 +830,12 @@ STEP_OUTPUTS_RULE = ("\n\nDeclared required outputs: save each at exactly this p
                      "missing one makes the step incomplete: {required}. Optional outputs are collected when "
                      "present, but absence is only a warning: {optional}")
 
-RESEARCH_RESULT_FIELD_RULES = "\n".join(f"- {rule}" for rule in RESULT_CONTRACT_FIELD_RULES)
+RESEARCH_RESULT_FIELD_RULES = "\n".join(f"- {rule}" for rule in RESULT_CONTRACT_FIELD_RULES) + (
+    "\n- For literature evidence, carry the fulltext tool's source_access_metadata into SourceRef "
+    "(access_status, methods_locator, qc_locator, supplementary_status), with DOI/PMID and the exact "
+    "source.locator you read. A stored receipt records access, not support: locate Methods/QC after reading, "
+    "retain missing supplements, and set Evidence.lineage only from verified empirical origins or explicit "
+    "re-citation IDs; otherwise leave it unknown.")
 
 # What both reviews are asked about the declared checklist (#586). The context block that follows the prompt lists
 # the ids (plan_review_context); labhq reads the answers in review_with_checklist and checklist_appendix.
@@ -1018,6 +1035,11 @@ Claim anchors (labhq checks them by machine):
   claim check in the separate execution record. Summarize an important warning in one line under "논의" and
   end that line with "실행 기록 참고", without copying the raw warning into the body.
 - Report the reviewer's P1 and P2 issues as limitations.
+- Preserve claim-to-source identity (DOI/PMID/URI), source.locator and recorded access_status separately from
+  whether evidence supports a claim. Use stored fulltext receipts and their actual Methods/QC locations;
+  never infer a read, missing location, supplement availability or original empirical source from a title.
+  Re-citations of one original are one independent source. Cycles, dangling lineage and unknown origins stay
+  undetermined; evidence refused at CP2 cannot support a conclusion. LabHQ appends the recorded source table.
 - For every branch, put the analysis actually performed and its result in the 요약(Abstract), 결론, and graphical
   abstract. A non-significant result is still a result: give the number of tests, threshold, and number passing.
 - When a direct test could not be done and a substitute analysis was used, separate three statements: what was
@@ -2241,6 +2263,10 @@ def valid_review(value: Any, schema: dict[str, Any] = REVIEW_SCHEMA) -> bool:
     """Check every required field of ``schema`` (REVIEW_SCHEMA unless given) without a new JSON Schema dependency."""
     def matches(item: Any, schema: dict) -> bool:
         typ = schema.get("type")
+        if isinstance(typ, list):
+            return any(matches(item, {**schema, "type": choice}) for choice in typ)
+        if typ == "null":
+            return item is None
         if typ == "object":
             if not isinstance(item, dict):
                 return False
@@ -5441,6 +5467,8 @@ class Orchestrator:
         lookups = failed_lookups(ledgers)
         lookup_section = [f"{FAILED_LOOKUP_TITLE}:\n" + "\n".join(failed_lookup_lines(lookups))] if lookups else []
         cp2_notes = research_cp2_notes(contract)  # PI 점검 R11: the notes reach the reviewer and the report writer
+        source_section = claim_evidence_section(claim_evidence_rows(ledgers, refused=refused,
+                                                                    unsupported=unsupported))
 
         def end(outcome: str, report: str, ok: bool, review: dict | None, failure: dict | None = None,
                 error: str | None = None) -> None:
@@ -5448,6 +5476,8 @@ class Orchestrator:
                 contract["failure"] = {"steps": [], "plan_sha256": plan_hash, **failure}
             req["outcome"] = outcome
             self.hub.save_request(rid)
+            if source_section:
+                report = _before_bench_block(report, source_section)
             if lookup_section:
                 report = _execution_warning_summary(report)
             self._finish(rid, _append_report_metadata(report, lookup_section), serialized(), ok=ok, review=review,
@@ -5515,7 +5545,7 @@ class Orchestrator:
                 False, review)
             return
 
-        citable, other = claim_rows(ledgers, unsupported)
+        citable, other = claim_rows(ledgers, unsupported, refused=refused)
         resumable = self.hub.supports_resume(self.cfg.cso_agent)
         session_id, workdir = await self._free_session(
             self.cfg.cso_agent, req.get("cso_session_id") if resumable else None,
@@ -5533,6 +5563,8 @@ class Orchestrator:
                 plan_report_context(req.get("plan"), topic_checklists.load(),
                                     req.get("analysis_precedents")) +
                 approval_note_block("CP2", cp2_notes, CP2_REPORT_NOTE_RULE) +
+                ("\n\nRecorded claim/source metadata (not a new support judgment):\n" + clip(source_section, n)
+                 if source_section else "") +
                 ("\n\nEarlier rounds of this request:\n" + "\n".join(earlier) + "\n" + EARLIER_ROUNDS_RULE
                  if (earlier := earlier_round_lines(contract)) else ""),
             meta={**refs, "kind": "synthesis", "request": text, "title": "연구 보고서 작성",

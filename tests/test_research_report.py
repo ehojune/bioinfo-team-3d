@@ -1,11 +1,17 @@
 """After CP2 approval (#90, #58 ③⑤): one research review, a CSO report whose conclusions name ledger claims,
 and a machine check of those claim anchors."""
 
+from copy import deepcopy
+import hashlib
+
 import pytest
 
 from labhq.evidence.audit import rerun_report_check
+from labhq.evidence.report_check import check_report, claim_rows, claim_evidence_rows, claim_evidence_section
 from labhq.models import TaskResult
-from labhq.orchestrator.cso import Orchestrator
+from labhq.orchestrator.cso import Orchestrator, normalize_precedents
+from labhq.portfolio import build_portfolio_files, scan_publish_files
+from labhq.report_contract import reader_markdown
 from tests.test_research_cp2 import CP1, _interrupt, _settings
 from tests.test_research_protocol import MiniHub, _cp2_result, valid_plan
 
@@ -368,3 +374,180 @@ async def test_a_lead_in_before_the_first_heading_is_not_part_of_the_report():
 def test_report_text_that_is_not_a_short_lead_in_is_kept(text):
     from labhq.orchestrator.cso import report_body
     assert report_body(text) == text
+
+
+# Synthetic source-lineage integration (#907).
+
+def _literature(evidence_id, *, source=None, lineage=None, status="observed"):
+    return {"id": evidence_id, "kind": "literature_claim", "observation": "Synthetic literature record",
+            "status": status, "status_detail": "Synthetic access failure" if status == "unavailable" else None,
+            "source": {"id_scheme": "doi", "id_value": f"10.1000/fake-{evidence_id}",
+                       "accessed_at": "2026-10-24", "locator": "Introduction p.1 paragraph 2",
+                       **(source or {})},
+            "directness": "indirect", "source_level": "secondary", "independence_group": evidence_id,
+            "assessment_reason": "Synthetic cross-reference", "lineage": lineage}
+
+
+def _ledger(base):
+    ledger = deepcopy(base)
+    ledger["claims"] += [
+        {**ledger["claims"][0], "id": "c2", "statement": "A review repeats the original finding."},
+        {**ledger["claims"][0], "id": "c3", "status": "unresolved",
+         "statement": "The inaccessible follow-up remains unresolved.", "status_reason": "Full text unavailable"},
+    ]
+    ledger["evidence"][0]["lineage"] = {"original": True, "basis": "Synthetic experiment in Results p.2"}
+    ledger["evidence"][0]["source"].update(
+        id_scheme="doi", id_value="10.1000/fake-original", accessed_at="2026-10-24",
+        locator="Results p.2 paragraph 1", access_status="full_text", methods_locator="Methods lines 2-3",
+        qc_locator="QC lines 4-5", supplementary_status="missing")
+    ledger["evidence"] += [
+        _literature("e2", source={"access_status": "abstract_only"}, lineage={"cited_from": ["e1"]}),
+        _literature("e3", status="unavailable", source={"access_status": "not_obtained", "locator": None}),
+        _literature("e4", lineage={"cited_from": ["e5"]}),
+        _literature("e5", lineage={"cited_from": ["e4"]}),
+    ]
+    ledger["links"] += [
+        {"claim_id": "c2", "claim_revision": 1, "evidence_id": "e2", "relation": "supports",
+         "rationale": "Same synthetic original"},
+        *[{"claim_id": "c3", "claim_revision": 1, "evidence_id": evidence_id, "relation": "context",
+           "rationale": "Unresolved context only"} for evidence_id in ("e3", "e4", "e5")],
+    ]
+    return ledger
+
+
+@pytest.mark.asyncio
+async def test_single_fake_request_retains_sources_access_and_lineage_through_publication(tmp_path):
+    from labhq.tools.annot_literature import fulltext_receipt, source_access_metadata
+
+    report = """# Synthetic evidence report
+
+## 요약(Abstract)
+
+원 실험 결과를 확인했다 [[claim:s1/c1]]. 재인용은 같은 근거다 [[claim:s1/c2]].
+
+## 방법
+
+Synthetic fixture only.
+
+## 결과
+
+원 실험 결과 [[claim:s1/c1]].
+
+## 논의
+
+후속 문헌 전문을 구하지 못해 결론을 보류했다.
+
+## 결론
+
+원 실험과 재인용을 구분했다 [[claim:s1/c2]].
+"""
+    hub = _hub(report=report)
+    hub.s.runner.workspace_root = str(tmp_path / "runs")
+    paper = tmp_path / "paper.md"
+    paper.write_text("# Synthetic\nMethods\nExperiment\nQC\nChecks\nResults\n", encoding="utf-8")
+    receipt = fulltext_receipt("doi:10.1000/fake-original", {
+        "text_file": "paper.md", "text_sha256": hashlib.sha256(paper.read_bytes()).hexdigest(),
+        "access_level": "full_text", "extraction": "complete", "supplements": "missing",
+    }, tmp_path)
+    # The tool records access only. A fake scout supplies locations after its synthetic read.
+    receipt.update(evidence=[{"kind": "methods", "start_line": 2, "end_line": 3},
+                             {"kind": "qc", "start_line": 4, "end_line": 5}], supplements_required=True)
+    original_reply = hub.reply
+
+    async def reply(task):
+        result = await original_reply(task)
+        if task.meta["kind"] == "plan":
+            result.structured["steps"][0]["claim_ids"] = ["c1", "c2", "c3"]
+        if task.meta["kind"] in {"step", "result_correction"}:
+            result.structured = _ledger(_cp2_result(hub, task))
+            result.structured["evidence"][0]["source"].update(source_access_metadata(receipt))
+        return result
+
+    hub.reply = reply
+    await Orchestrator(hub).run_request("r")
+    req = hub.requests["r"]
+    assert req["outcome"] == "research_reported"
+    assert req["research_contract"]["report_check"]["problems"] == []
+    assert not req["research_contract"]["checkpoints"]["cp2"].get("refused_evidence")
+    prompt = next(task.prompt for task in hub.calls if task.meta["kind"] == "synthesis")
+    assert "Recorded claim/source metadata" in prompt and "source.locator" in prompt
+    req["id"] = "r"
+    files = build_portfolio_files(req, hub.s, {}, {})
+    assert not scan_publish_files(files)
+    for output in (reader_markdown(req["report"]), files["report/report.md"],
+                   files["docs/reference/claim_evidence.md"]):
+        for expected in ("s1/c1", "s1/c2", "s1/c3", "10.1000/fake-original", "Results p.2 paragraph 1",
+                         "초록만", "못 구함", "unresolved", "재인용", "최초 실증 출처",
+                         "순환 인용; 독립 group 0", "미판정", "보충자료: 누락", "Methods:", "QC:"):
+            assert expected in output
+        assert "not_found" not in output  # inaccessible full text is not an empty search result
+    assert "[^claim-s1-c1]" in files["report/report.md"]
+    assert ":L2-L3" in files["report/report.md"] and ":L4-L5" in files["report/report.md"]
+
+
+def test_receipt_schema_preserves_unknown_dependency_and_oa_pdf_provenance():
+    from labhq.recruit.paper_skills import evidence_problem
+
+    receipt = {"coverage_version": 2, "paper_id": "doi:10.1000/fake", "source": "Synthetic",
+               "access_level": "full_text", "extraction": "complete", "text_file": "paper.md",
+               "text_sha256": "a" * 64,
+               "evidence": [{"kind": "methods", "start_line": 1, "end_line": 1},
+                            {"kind": "qc", "start_line": 2, "end_line": 2}],
+               "supplements_required": None, "supplements": "missing",
+               "access_status": "full_text", "methods_locator": None, "qc_locator": None,
+               "supplementary_status": "missing", "pdf_file": "paper.pdf", "pdf_sha256": "b" * 64,
+               "oa_copy": {"provider": "Synthetic", "url": "https://example.org/paper.pdf", "license": "CC0",
+                           "version": "publishedVersion", "format": "PDF", "content_sha256": "b" * 64}}
+    raw = {"papers": [{"title": "Synthetic", "citations": ["10.1000/fake"], "fulltext_receipt": receipt}],
+           "required": [], "recommended": [], "limitations": []}
+    parsed = normalize_precedents(raw)
+    assert parsed is not None and parsed["papers"][0]["fulltext_receipt"] == receipt
+    assert evidence_problem(receipt) is not None  # preserving access does not certify reading
+    assert evidence_problem({**receipt, "supplements_required": False}) is None
+    for invalid in ("false", 0, []):
+        raw["papers"][0]["fulltext_receipt"]["supplements_required"] = invalid
+        assert normalize_precedents(raw) is None
+
+
+def test_legacy_source_url_and_unanchored_unresolved_claim_survive_publication(tmp_path):
+    from labhq.settings import Settings
+
+    settings = Settings()
+    settings.runner.workspace_root = str(tmp_path / "runs")
+    req = {"id": "legacy", "text": "Synthetic question", "status": "done", "report": "# Report\n\nNo conclusion.",
+           "plan": {"steps": [{"id": "s1"}]},
+           "results": {"s1": {"structured": {
+               "claims": [{"id": "c1", "statement": "Unresolved legacy claim", "status": "unresolved"}],
+               "evidence": [{"id": "e1", "status": "unavailable", "source": {
+                   "uri": "https://example.org/legacy", "locator": "Abstract paragraph 1"}}],
+               "links": [{"claim_id": "c1", "evidence_id": "e1", "relation": "context"}]}}}}
+    req["results"]["retired"] = {"structured": {"claims": [{"id": "old", "statement": "Retired claim"}]}}
+    files = build_portfolio_files(req, settings, {}, {})
+    for text in (files["report/report.md"], files["docs/reference/claim_evidence.md"]):
+        assert "Unresolved legacy claim" in text and "unresolved" in text
+        assert "https://example.org/legacy" in text and "Abstract paragraph 1" in text
+        assert "접근: 미판정" in text and "계보: 미판정" in text
+        assert "Retired claim" not in text
+
+
+def test_refused_original_is_visible_but_cannot_reenter_through_a_recitation():
+    ledger = _ledger({"claims": [{"id": "c1", "statement": "Original", "status": "supported"}],
+                      "evidence": [_literature("e1")], "links": []})
+    rows = claim_evidence_rows({"s1": ledger}, refused=[{"step_id": "s1", "evidence_id": "e1"}],
+                               unsupported=[{"step_id": "s1", "claim_id": "c2"}])
+    original = next(row for row in rows if row["evidence_id"] == "e1")
+    recitation = next(row for row in rows if row["evidence_id"] == "e2")
+    assert original["evidence_status"] == "CP2 거부"
+    assert recitation["lineage"] == "출처 ID 누락; 독립 group 0"
+    assert "CP2 지지 근거 거부" in recitation["claim_status"]
+    assert "최초 실증 출처 →" not in claim_evidence_section(rows)
+    refused = [{"step_id": "s1", "evidence_id": "e1"}]
+    citable, other = claim_rows({"s1": ledger}, refused=refused)
+    assert "c2" not in {row["claim"]["id"] for row in citable}
+    assert any(row["claim"]["id"] == "c2" and "no CP2-accepted support" in row["reason"] for row in other)
+    assert "no CP2-accepted support" in check_report("Conclusion [[claim:s1/c2]]", {"s1": ledger},
+                                                    refused=refused)["problems"][0]
+    # An independent accepted support row still permits citation of this claim.
+    ledger["evidence"].append(_literature("independent"))
+    ledger["links"].append({"claim_id": "c2", "evidence_id": "independent", "relation": "supports"})
+    assert "c2" in {row["claim"]["id"] for row in claim_rows({"s1": ledger}, refused=refused)[0]}
