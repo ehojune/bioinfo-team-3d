@@ -4193,6 +4193,36 @@ class Orchestrator:
             budget.update(cap_usd=configured, source=source)
         return budget, source
 
+    def resume_plan_card(self, rid: str, req: dict) -> dict[str, Any] | None:
+        """What a resume card shows when it also stands for CP1 (#654), else None.
+
+        Only a first research plan with no result yet and no CP1 receipt for its current hash qualifies. A
+        continuation, a plan after steps ran, or a hash that differs from the receipt keep their own CP1 card."""
+        plan = req.get("plan")
+        contract = req.get("research_contract") or {}
+        if (not isinstance(plan, dict) or not plan.get("steps") or req.get("results") or contract.get("continuation")
+                or not isinstance(plan.get("protocol"), dict) or not isinstance(plan.get("intake"), dict)):
+            return None
+        if refresh_plan_approval(plan, contract.get("approval")).get("status") == "approved":
+            return None
+        budget, _ = self._research_budget(rid, req, plan)
+        steps = [f"{step['id']}·{step['agent_id']}: {short(' '.join(str(step['instruction']).split()), 40)}"
+                 for step in plan["steps"]]
+        tail = (f"\n{_cost_estimate_line(req.get('plan_cost_estimate') or {})} {_budget_line(budget)}"
+                "\n승인하면 이 계획(CP1)도 승인한 것으로 기록하고 CP1 카드를 다시 묻지 않습니다. 계획이 바뀌면 CP1을 다시 묻습니다.")
+        warnings = [w for w in plan.get("warnings") or [] if isinstance(w, str)]
+        if warnings:
+            tail = f"\n계획 경고 {len(warnings)}건: {short(warnings[0], 80)}" + tail
+        room = 520 - len(tail)
+        body, used = "", 0
+        for number, line in enumerate(steps):
+            if used + len(line) + 1 > room and number:
+                body += f"\n…외 {len(steps) - number}단계"
+                break
+            body += "\n" + line
+            used += len(line) + 1
+        return {"text": f"\n연구 계획 {len(steps)}단계:" + body + tail, "target_sha256": research_plan_sha256(plan)}
+
     def _spending_cap_line(self, rid: str) -> str:
         """The cap ``_check_budget`` enforces now, for research step and review prompts (#499): staff otherwise read
         only the free-text protocol.resource_limits, which may name another amount. "" without a cap."""
@@ -6157,6 +6187,8 @@ class Orchestrator:
                 previous = stored.get("approval")
                 approval = refresh_plan_approval(plan, previous)
                 plan_sha256 = approval.get("current_sha256") or approval.get("target_sha256")
+                # A resume card that showed this plan and was approved stands for CP1 once (#654); read once, then gone.
+                resume_cp1 = req.pop("resume_cp1", None)
                 frozen_checklist = (stored.get("checklist_snapshot")
                                     if stored.get("plan_sha256") == plan_sha256
                                     and isinstance(stored.get("checklist_snapshot"), list)
@@ -6271,7 +6303,18 @@ class Orchestrator:
                                            ("trigger", "pi_request", "reuse_snapshot") if key in carried}}}
                                        if reuse_pending else {})})
 
-                    decision = await ask_cp1()
+                    # Only the plan the card showed (same hash), with nothing the card left out: a stopped device
+                    # (the always-present configured_off note is not one), a paper-skill line, a re-hire note and a
+                    # continuation keep the CP1 card (#654).
+                    device_stopped = any(isinstance(e, dict) and e.get("code") != "configured_off"
+                                         for e in (device_record or {}).get("errors") or [])
+                    from_resume = (isinstance(resume_cp1, dict) and resume_cp1.get("approved") is True
+                                   and resume_cp1.get("target_sha256") == plan_hash and not reuse_pending
+                                   and not device_stopped and not paper_line and not hiring_warnings)
+                    decision = ({"approved": True, "choice": "approve", "approval_id": resume_cp1.get("approval_id"),
+                                 "note": "재개 카드에서 이 계획과 함께 승인",
+                                 "decided_at": resume_cp1.get("decided_at", time.time())}
+                                if from_resume else await ask_cp1())
                     # A 수정 요청 needs the note it re-plans from; the web and CLI refuse an empty one first (R10 likewise).
                     for _ in range(2):
                         if not (can_revise and decision.get("choice") == "revise"
@@ -6279,6 +6322,8 @@ class Orchestrator:
                             break
                         decision = await ask_cp1("수정 요청에 메모가 없어 다시 묻습니다. 고칠 점을 메모에 적어 주세요. ")
                     approval = freeze_plan(plan, decision)
+                    if from_resume:
+                        approval["via"] = "resume_card"
                     if reuse_pending:
                         approval['reuse_snapshot_sha256'] = offered_reuse_sha
                     if can_revise and decision.get("choice") == "revise" and not approval["approved"]:

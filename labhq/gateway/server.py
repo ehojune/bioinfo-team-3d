@@ -47,7 +47,7 @@ from ..hooks.control import STEER_LIMIT
 from ..orchestrator.cso import Orchestrator, _terminal_reports, environment_problem, holds_session, solo_phase
 from ..research import continuation as research_continuation
 from ..research import final_checkpoint as cp4
-from ..research.contract import classify_intake
+from ..research.contract import classify_intake, plan_sha256
 from ..research.packs import check_configured_packs
 from ..request_status import (has_active_followup, is_active_followup, is_active_request,
                               is_office_request, is_terminal_request)
@@ -1410,11 +1410,16 @@ class Hub:
                 if awaiting_continuation_plan else
                 "없음(단계는 모두 끝났고 그 뒤 검토·결정·보고서부터 이어 갑니다)" if has_plan
                 else "요청 전체")
+        # An unapproved first plan: this one card shows it and, when approved, records CP1 for that hash (#654).
+        orchestrator = getattr(self, "orchestrator", None)  # a test Hub built without __init__ has none
+        cp1 = orchestrator.resume_plan_card(rid, req) if orchestrator else None
         approval = ApprovalRequest(kind="resume", request_id=rid,
-                                   summary=f"중단된 요청 \"{head}\"({when} 접수)을 다시 이어 갈까요? 남은 단계: {left}",
+                                   summary=f"중단된 요청 \"{head}\"({when} 접수)을 다시 이어 갈까요? 남은 단계: {left}"
+                                           + (cp1["text"] if cp1 else ""),
                                    # has_plan tells the web's empty steps apart: all done, or the whole request (#521).
                                    detail={"request_text": head, "created_at": created, "steps": steps,
-                                           "has_plan": has_plan},
+                                           "has_plan": has_plan,
+                                           **({"cp1_target_sha256": cp1["target_sha256"]} if cp1 else {})},
                                    timeout_s=self.s.policy.approvals.pi_decision_timeout_s)
         self.approvals[approval.id] = {"approval": approval.model_dump(mode="json"), "origin": None}
         self.save_approval(approval.id)
@@ -3456,6 +3461,13 @@ class Hub:
             entry["future"].set_result({"approved": approved, "note": note, **chosen})
         elif entry["approval"].get("kind") == "resume":
             rid = entry["approval"]["request_id"]
+            target = (entry["approval"].get("detail") or {}).get("cp1_target_sha256")
+            plan = self.requests[rid].get("plan")
+            if approved and target and isinstance(plan, dict) and plan_sha256(plan) == target:
+                # The card showed this plan: the CP1 gate takes it as the PI's answer, once, if the hash still holds.
+                self.requests[rid]["resume_cp1"] = {"approved": True, "target_sha256": target, "approval_id": approval_id,
+                                                    "decided_at": time.time()}
+                self.save_request(rid)
             if approved and not is_terminal_request(self.requests[rid].get("status")):
                 await self._set_status(rid, "waiting_for_runner")
                 self._restart_request_asks(rid)
