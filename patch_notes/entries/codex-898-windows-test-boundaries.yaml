@@ -1,5 +1,9 @@
-pr: null
+pr: 900
 rows:
+  - sha: 'c4a5ab6'
+    at: '2026-10-24 01:24'
+    summary: 'shutdown이 끝난 뒤 ACK를 직접 처리해도 검사가 통과하던 빈틈을 닫았습니다.'
+    text: 'P2 4361721792를 수정했습니다. ACK 전 entry 생존과 shutdown 반환 시 outbox 0을 확인합니다. gateway 2.1초+ACK 3.1초 지연 비교에서 이전 head는 통과했지만 수정본은 종료 뒤 ACK 처리를 거부했습니다. 제품 shutdown 5초와 fixture 단계 상한은 유지합니다. SIGTERM/SIGHUP serial·4-worker 각 20회와 관련 pool 130 passed·3 skipped를 확인했습니다.'
   - sha: '5c416c8'
     at: '2026-10-24 01:14'
     summary: 'Windows 검사가 R version·syntax 시간과 mock signal 뒤 durable ACK 대기를 따로 기록합니다.'
