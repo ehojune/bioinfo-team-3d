@@ -1,4 +1,4 @@
-import getpass
+import os
 
 import pytest
 
@@ -130,15 +130,30 @@ def test_helpers():
     assert "umask 007" in build_script("echo hi", "/w/hpc_out", umask="007")
 
 
-def test_scheduler_user_falls_back_without_user_env(monkeypatch):
+def test_scheduler_user_resolves_without_user_env(monkeypatch):
     for name in ("USERNAME", "USER", "LOGNAME", "LNAME"):
         monkeypatch.delenv(name, raising=False)
-    assert Scheduler(HpcSettings()).user
+    Scheduler(HpcSettings())  # must not raise (getpass falls back to POSIX-only pwd on Windows)
 
 
-def test_scheduler_user_falls_back_when_getuser_raises(monkeypatch):
+def test_scheduler_user_is_real_account_from_windows_api_when_getuser_raises(monkeypatch):
+    if os.name != "nt":
+        pytest.skip("GetUserNameW is Windows-only")
     def boom():
         raise ModuleNotFoundError("No module named 'pwd'")
     monkeypatch.setattr("labhq.tools.scheduler.getpass.getuser", boom)
-    assert Scheduler(HpcSettings()).user == "labhq"
+    assert Scheduler(HpcSettings()).user  # real logon account, not an invented name
     assert Scheduler(HpcSettings(user="alice")).user == "alice"
+
+
+@pytest.mark.parametrize("scheduler", ["sge", "slurm", "pbs"])
+def test_queue_never_runs_with_an_invented_user(monkeypatch, scheduler):
+    def boom():
+        raise ModuleNotFoundError("No module named 'pwd'")
+    monkeypatch.setattr("labhq.tools.scheduler.getpass.getuser", boom)
+    monkeypatch.setattr("labhq.tools.scheduler._windows_logon_user", lambda: "")
+    sched = Scheduler(HpcSettings(scheduler=scheduler))
+    assert sched.user == ""
+    monkeypatch.setattr(sched, "_run", lambda args: pytest.fail(f"queue command ran: {args}"))
+    with pytest.raises(RuntimeError, match="hpc.user"):
+        sched.queue()
