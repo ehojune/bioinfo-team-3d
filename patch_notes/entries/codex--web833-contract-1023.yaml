@@ -1,5 +1,9 @@
 pr: null
 rows:
+- sha: c52e06d
+  at: 2026-10-23 12:29
+  summary: 새 진단 검사가 Windows 검사 목록의 해시를 깨뜨린 문제를 바로잡았습니다.
+  text: 'tests/test_web_3d.py의 정확한 새 SHA-256을 검토 프로필에 반영하고 가짜 Node 검사를 Windows 유지 항목으로 명시했다. 첫 PR CI는 Chrome 전에 검토 해시 불일치로 멈췄으므로 #833 진단 결과가 아니며, profile 검증과 관련 mock 11건은 통과했다.'
 - sha: a72c8fd
   at: 2026-10-23 12:11
   summary: Windows 화면 검사의 첫 브라우저가 늦을 때, 생성된 profile 활동과 시작 표식을 숫자로 남깁니다.
