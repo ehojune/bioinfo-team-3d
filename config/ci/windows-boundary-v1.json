@@ -70,6 +70,7 @@
     "tests/test_consult_restart.py",
     "tests/test_continuation_797.py",
     "tests/test_continuation_paper_inputs_807.py",
+    "tests/test_continuation_refusal_static.py",
     "tests/test_continuation_request_inputs_807.py",
     "tests/test_continuation_review_807.py",
     "tests/test_contract_provenance.py",
@@ -383,7 +384,8 @@
     "tests/test_init_defaults.py": "Essential installed configuration defaults, references and Windows path setup.",
     "tests/test_paper_skill_waiting.py": "Approved paper preparation ownership, asynchronous lifetime and cancellation contracts; synthetic jobs, no live service.",
     "tests/test_paper_skill_recovery_identity.py": "Gateway recovered durable-task identity, cancellation and budget-hold boundary; fake dispatch, no live runner.",
-    "tests/test_recruit_disabled_static.py": "Explicit recruitment/Paper2Agent disable refusal before runner/workspace/setup/recovery and attachment effects; extracted production guards with fake callbacks, no live service."
+    "tests/test_recruit_disabled_static.py": "Explicit recruitment/Paper2Agent disable refusal before runner/workspace/setup/recovery and attachment effects; extracted production guards with fake callbacks, no live service.",
+    "tests/test_continuation_refusal_static.py": "Continuation model-refusal identity, original-round/cost preservation and explicit recovery choice; extracted production decision code with inert synchronous fakes, no runtime."
   },
   "mixed_nodes": {
     "tests/test_environment_signatures.py": {
