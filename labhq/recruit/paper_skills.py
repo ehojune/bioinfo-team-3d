@@ -96,9 +96,12 @@ def verified_text(receipt: dict, root: Path, pid: str) -> bytes:
     if original_path.is_symlink():
         raise ValueError("본문 원본 receipt link는 허용하지 않음")
     original = json.loads(original_path.read_text(encoding="utf-8"))
-    immutable = ("coverage_version", "paper_id", "source", "access_level", "extraction", "text_file", "text_sha256", "supplements",
-                 "access_status", "supplementary_status", "pdf_file", "pdf_sha256", "oa_copy", "unread_reason", "unread_detail")
-    if not isinstance(original, dict) or any(original.get(key) != receipt.get(key) for key in immutable):
+    immutable = ("coverage_version", "paper_id", "source", "access_level", "extraction", "text_file", "text_sha256", "supplements")
+    # Legacy scout schemas cannot carry these optional diagnostics. Verify every supplied value,
+    # while core artifact identity/coverage/hash remains mandatory under either schema.
+    optional = ("access_status", "supplementary_status", "pdf_file", "pdf_sha256", "oa_copy", "unread_reason", "unread_detail")
+    if (not isinstance(original, dict) or any(original.get(key) != receipt.get(key) for key in immutable)
+            or any(key in receipt and original.get(key) != receipt[key] for key in optional)):
         raise ValueError("도구 원본 본문 receipt 불일치; 재확인 필요")
     data = path.read_bytes()
     if hashlib.sha256(data).hexdigest() != receipt["text_sha256"]:

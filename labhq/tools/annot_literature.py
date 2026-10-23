@@ -454,6 +454,7 @@ class KeyFulltextCoordinator:
                 attempts[index].append("open_access:text_file_unavailable")
                 row.update(access_level="metadata", access_failure="open_access_text_unavailable")
                 row.pop("text_file", None)
+                row.pop("fulltext_receipt", None)
             doi = self._doi(paper, row)
             if doi and not row.get("doi"):
                 row["doi"] = doi
@@ -483,6 +484,8 @@ class KeyFulltextCoordinator:
                 row.update(pdf_request_status="unavailable", fallback="abstract_or_open_access_alternative",
                            access_failure="external_model_not_allowed")
                 self._record(papers[index], row, "unavailable", "external_model_not_allowed", attempts[index])
+            for row in rows:
+                row.update(source_access_metadata(row))
             return {"results": rows, "n_requested": 0,
                     "note": "논문 본문·PDF는 .tmp/literature/ 안에만 있고 outputs에는 접근 상태만 기록됩니다."}
 
@@ -530,6 +533,8 @@ class KeyFulltextCoordinator:
                            access_failure=reason)
                 rows[index] = row
                 self._record(paper, row, status, reason, attempts[index])
+        for row in rows:
+            row.update(source_access_metadata(row))
         return {"results": rows, "n_requested": len(still_pending),
                 "note": "논문 본문·PDF는 .tmp/literature/ 안에만 있고 outputs에는 접근 상태만 기록됩니다."}
 

@@ -417,3 +417,38 @@ async def test_closed_oa_metadata_does_not_establish_a_paywall(tmp_path):
 def test_only_explicit_paid_access_screen_establishes_paywall(text, error):
     with pytest.raises(error):
         lit._copy_text(f"<html><body>{text}</body></html>".encode(), "text/html")
+
+
+def test_legacy_scout_schema_projection_keeps_core_receipt_validation(sample, tmp_path, monkeypatch):
+    source, receipt = sample
+    legacy_keys = {"coverage_version", "paper_id", "source", "access_level", "extraction", "text_file",
+                   "text_sha256", "evidence", "supplements_required", "supplements"}
+    projected = {key: value for key, value in receipt.items() if key in legacy_keys}
+    assert "access_status" in receipt and "access_status" not in projected
+    assert ps.verified_text(projected, tmp_path, "pmid:123") == source.read_bytes()
+    assert build_for(tmp_path, projected, monkeypatch).prepare()[2] is None
+    tampered = {**projected, "access_status": "paywalled"}
+    with pytest.raises(ValueError, match="원본"):
+        ps.verified_text(tampered, tmp_path, "pmid:123")
+
+
+@pytest.mark.parametrize("fallback", ["disabled", "declined", "timed_out"])
+async def test_missing_oa_artifact_does_not_keep_full_text_after_fallbacks(tmp_path, fallback):
+    from labhq.settings import LiteratureSettings
+    from tests.test_literature_institution import paper
+    work = tmp_path / "work"
+    work.mkdir()
+    lost = {"found": True, "access_level": "full_text", "access_status": "full_text", "doi": "10.1000/key",
+            "text_file": ".tmp/literature/missing.md", "text_sha256": "a" * 64,
+            "fulltext_receipt": {"access_level": "full_text", "text_file": ".tmp/literature/missing.md",
+                                 "text_sha256": "a" * 64, "evidence": [
+                                     {"kind": "methods", "start_line": 1, "end_line": 1}]}}
+    flow = lit.KeyFulltextCoordinator(SimpleNamespace(fulltext=AsyncMock(return_value={"results": [lost]})),
+        LiteratureSettings(external_model_allowed=fallback != "disabled"), work, tmp_path / "state",
+        request_pdf=AsyncMock(return_value={"approved": False, "state": "timed_out" if fallback == "timed_out" else "resolved"}))
+    row = (await flow.run([paper()]))["results"][0]
+    assert row["access_level"] == "metadata" and row["access_status"] == "not_obtained"
+    assert row["methods_locator"] is None and row["qc_locator"] is None
+    assert "fulltext_receipt" not in row
+    log = json.loads((work / lit.LIT_ACCESS_LOG).read_text(encoding="utf-8").splitlines()[-1])
+    assert log["access_status"] == "not_obtained"
