@@ -185,14 +185,14 @@ jobs:
         run: python -m scripts.ci_skip windows-identity
       - name: Serial critical Windows contracts
         run: pytest -q --durations=15 -n 0 -p scripts.ci_suite --ci-profile ${{ env.CI_COVERAGE_PROFILE }} --ci-phase critical tests/test_windows_job_ci.py tests/test_web_shutdown_process.py "tests/test_web_3d.py::test_office_in_node[web_resizable_panels.cjs-fail 0]"
-        timeout-minutes: 2
+        timeout-minutes: 3
         env:
           LABHQ_REQUIRE_RESIZABLE_BROWSER: '1'
       - name: Require every critical lifecycle PASS before opening pool
         run: python -m scripts.ci_suite critical-ready
       - name: Remaining Windows contracts in four-worker pool
         run: pytest -q --durations=15 -n 4 --dist loadfile -p scripts.ci_suite --ci-profile ${{ env.CI_COVERAGE_PROFILE }} --ci-phase parallel tests
-        timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 360 || 7 }}
+        timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 360 || 6 }}
 
       - name: Record measured coverage and timing
         id: coverage

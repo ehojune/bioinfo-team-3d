@@ -372,13 +372,14 @@ function demoLifecycleTrace(emit, clock = () => performance.now()) {
 // to the session's own close(), which the caller runs in the time it reserved after the deadline (CLOSE_RESERVE_MS).
 // `onExpired(stage)` sees the first expiry only.
 function workBudget(deadline, {now = () => Date.now(), setTimer = (fn, ms) => setTimeout(fn, ms),
-  clearTimer = id => clearTimeout(id), onExpired = () => {}} = {}) {
+  clearTimer = id => clearTimeout(id), onExpired = () => {}, phase = 'work'} = {}) {
   const limited = Number.isFinite(deadline);
   let reported = false;
   const remaining = () => limited ? deadline - now() : Infinity;
   const expired = stage => {
     if (!reported) { reported = true; try { onExpired(stage); } catch { /* diagnostic only */ } }
-    return Object.assign(new Error(`demo work deadline reached during ${stage}`), {code: 'DEMO_WORK_DEADLINE', stage});
+    return Object.assign(new Error(`demo ${phase} deadline reached during ${stage}`),
+      {code: 'DEMO_WORK_DEADLINE', stage, phase});
   };
   const check = stage => { if (remaining() <= 0) throw expired(stage); };
   const bound = (stage, start, onExpire = () => {}) => {
@@ -409,7 +410,7 @@ function workBudget(deadline, {now = () => Date.now(), setTimer = (fn, ms) => se
   return {limited, remaining, check, bound, cap, expired};
 }
 
-// opts: {width, height, reducedMotion=true, colorScheme='light', web=WEB_ROOT, layoutFont=false, fontFamily=null, deadlineMs=60000, diagnostic=null, workDeadline}
+// opts: {width, height, reducedMotion=true, colorScheme='light', web=WEB_ROOT, layoutFont=false, fontFamily=null, deadlineMs=60000, diagnostic=null, workDeadline, startupBudgetMs, uiBudgetMs}
 // layoutFont forces the metrics-only font from test_font.cjs so text wraps the same on every OS.
 // workDeadline (#833, opt-in): an absolute Date.now() time after which this session starts no new work and every wait
 // fails (see workBudget). deadlineMs stays the per-call guard of until(); both apply.
@@ -418,13 +419,22 @@ function workBudget(deadline, {now = () => Date.now(), setTimer = (fn, ms) => se
 async function openDemo(opts = {}) {
   const trace = demoLifecycleTrace(opts.diagnostic);
   trace('open-start');
+  // The mandatory resizable test opts into two bounded phases. The outer work deadline always caps both; it still
+  // reserves time for one owned close before the Python watchdog. Other demo callers keep their existing budget.
+  const phased = opts.startupBudgetMs !== undefined || opts.uiBudgetMs !== undefined;
+  if (phased && !(Number.isFinite(opts.workDeadline) && Number.isFinite(opts.startupBudgetMs)
+      && opts.startupBudgetMs > 0 && Number.isFinite(opts.uiBudgetMs) && opts.uiBudgetMs > 0)) {
+    throw new Error('phased demo needs an outer work deadline and positive startup/UI budgets');
+  }
+  const startupDeadline = phased ? Math.min(opts.workDeadline, Date.now() + opts.startupBudgetMs) : undefined;
   const chromePath = findChrome();
   if (!chromePath) throw new Error('no Chrome found');
   const jobPython = windowsJobPython();  // fails closed before any profile, server or browser exists
   const {width = 1440, height = 900, reducedMotion = true, colorScheme = 'light', web = WEB_ROOT, layoutFont = false, fontFamily = null} = opts;
   let portReads = null;
-  const budget = workBudget(opts.workDeadline, {onExpired: stage => trace.final('work-deadline',
-    {during: stage, ...(portReads ? {port_reads: portReads.counts()} : {})})});
+  const phaseBudget = (deadline, phase) => workBudget(deadline, {phase, onExpired: stage =>
+    trace.final(`${phase}-deadline`, {during: stage, ...(portReads ? {port_reads: portReads.counts()} : {})})});
+  let budget = phaseBudget(phased ? startupDeadline : opts.workDeadline, phased ? 'startup' : 'work');
   budget.check('open-start');  // an exhausted shared budget opens nothing: no profile, server or browser
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'labhq-visual-'));
   trace('profile-ready');
@@ -493,7 +503,9 @@ async function openDemo(opts = {}) {
       chrome_stderr_bytes: stderrWatch.chromeBytes(), chrome_exited: exited !== null,
     });
     if (!debug && !exited) budget.check('chrome-start');
-    if (!debug) throw new Error(`Chrome did not publish its debugging port within ${START_MS / 1000}s (exit: ${JSON.stringify(exited)}): ${chromeError}`);
+    if (!debug) throw new Error(phased
+      ? `Chrome startup did not publish its debugging port (exit: ${JSON.stringify(exited)}): ${chromeError}`
+      : `Chrome did not publish its debugging port within ${START_MS / 1000}s (exit: ${JSON.stringify(exited)}): ${chromeError}`);
     trace('debug-port-ready');
     // #833: whether the wait was for DevTools to answer at all or for a page target in its answer.
     const polls = {json_attempts: 0, json_unanswered: 0, json_without_page: 0};
@@ -510,7 +522,9 @@ async function openDemo(opts = {}) {
       if (!page) await sleep(Math.max(0, Math.min(100, startDeadline - Date.now())));
     }
     if (!page && !exited) budget.check('devtools-targets');
-    if (!page) throw new Error(`Chrome has no page target within ${START_MS / 1000}s (exit: ${JSON.stringify(exited)}): ${chromeError}`);
+    if (!page) throw new Error(phased
+      ? `Chrome startup has no page target (exit: ${JSON.stringify(exited)}): ${chromeError}`
+      : `Chrome has no page target within ${START_MS / 1000}s (exit: ${JSON.stringify(exited)}): ${chromeError}`);
     trace('target-ready', polls);
     // Node 22+ has a global WebSocket; older Nodes use the small client in mini_ws.cjs (LABHQ_FORCE_MINI_WS=1 forces it).
     const Socket = typeof WebSocket !== 'undefined' && !process.env.LABHQ_FORCE_MINI_WS ? WebSocket : MiniWebSocket;
@@ -622,6 +636,10 @@ async function openDemo(opts = {}) {
       return Buffer.from(r.data, 'base64');
     };
     trace('open-ready');
+    if (phased) {
+      budget = phaseBudget(Math.min(opts.workDeadline, Date.now() + opts.uiBudgetMs), 'ui');
+      budget.check('ui-start');  // if startup spent the outer budget, close what it owns before returning
+    }
     return {cdp, evaluate, advance, until, waitReal, load, settle, frames, screenshot, external, errors, close, origin, width, height};
   } catch (e) {
     try { await close(); } catch (cleanup) { throw new AggregateError([e, cleanup], 'demo startup and cleanup failed'); }
