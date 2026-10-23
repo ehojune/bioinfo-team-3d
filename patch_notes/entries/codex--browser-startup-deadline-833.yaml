@@ -12,3 +12,7 @@ rows:
   at: 2026-10-23 09:54
   summary: 창 크기 조절 브라우저 시험이 데스크톱과 휴대폰 화면을 각각 따로 시간 제한 안에서 실행하므로, 앞 화면이 시간을 다 써서 뒤 화면이 실패하는 일이 없어집니다.
   text: '같은 pytest node가 web_resizable_panels.cjs를 LABHQ_RESIZABLE_VIEWPORT=desktop, phone으로 차례로 두 번 실행하고, 각 실행은 timeout 30초와 새 절대 끝 시각을 받는다. job 120174823730에서 공유 기한이 phone에 812ms만 남긴 문제를 고친다. 브라우저가 필수일 때 각 실행은 pass 3, skipped 0과 해당 viewport의 ok 3 제목을 보여야 하며 어느 한쪽의 실패·skip·누락도 node 실패다. JS는 선택된 viewport의 브라우저 시험만 등록하고 잘못된 선택값과 viewport 없는 기한을 거부한다. 판정, suite, workflow는 그대로이고 Windows 목록은 digest만 바꿨다. 이 node는 최대 약 60초가 걸릴 수 있다. Chrome 시작 지연의 원인은 여전히 확인되지 않았다.'
+- sha: 2cbd958
+  at: 2026-10-23 10:07
+  summary: 창 크기 조절 브라우저 시험이 실패하면, 브라우저를 열기 전까지 시간이 어디서 쓰였는지 알 수 있는 기록을 함께 남깁니다.
+  text: 'run 39881000670에서 driver trace 전 약 11.5초의 사용처를 나눌 기록이 없었다. tests/test_web_3d.py는 viewport 실행마다 launch 직전 wall clock 하나로 기존과 같은 기한을 만들고, 실패나 timeout 때 launch_epoch_ms, deadline_epoch_ms, returned_after_mono_ms를 한 줄 붙인다. web_resizable_panels.cjs는 첫 줄의 monotonic 값, require 뒤 module-ready, 각 viewport의 open 직전에 time_origin_epoch_ms, mono_ms, epoch_ms, 남은 outer와 작업 시간을 고정 숫자로 남긴다. 두 시계는 이름으로 구분한다. 기한, timeout, 판정, 두 번의 필수 실행은 그대로다. 원인을 고친 것이 아니라 다음 실행의 증거를 모으는 변경이다.'

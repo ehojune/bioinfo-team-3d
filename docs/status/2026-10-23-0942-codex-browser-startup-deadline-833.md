@@ -8,6 +8,7 @@
 - JS는 두 정적 시험을 유지하고 선택된 viewport의 브라우저 시험만 등록합니다. 잘못된 선택값과 viewport 없는 바깥 기한은 거부합니다. 직접 실행(변수 없음)은 두 viewport를 차례로 돌립니다. desktop·phone 판정은 그대로입니다.
 - demo driver는 기한이 있을 때만 Chrome 시작·DevTools 조회·CDP socket·CDP 호출·navigate·boot 대기를 기한 안에서 끝냅니다. 남은 fetch는 abort하고 CDP 호출은 pending에서 뺀 뒤 기존 `close()`로 한 번 정리합니다. 기한이 없는 호출은 그대로입니다.
 - `config/ci/windows-boundary-v1.json`에서는 `tests/test_web_3d.py`의 원본 sha256만 갱신했습니다. node·suite·workflow·critical 목록은 그대로입니다.
+- 시간 기록(run 39881000670 뒤 추가): Python은 실패·timeout 출력에 launch 직전 wall clock, 그 값으로 만든 기한, monotonic으로 잰 실행 시간을 한 줄 붙입니다. Node는 첫 줄·require 뒤·각 viewport open 직전에 process 시작 시각, monotonic 값, wall clock, 남은 outer와 작업 시간을 남깁니다. 기한·판정은 그대로이고 증거 수집일 뿐입니다.
 - 진단: Chrome Popen 뒤 `LABHQ_BROWSER_CREATED` 줄(`chrome-created`), DevToolsActivePort 읽기 실패의 고정 코드별 횟수, 기한에 걸린 단계 한 줄을 남깁니다. 경로·메시지·stderr 원문·PID는 남기지 않습니다.
 
 ## 테스트 결과
@@ -18,6 +19,7 @@
 - 기록 검사·공개 검사·validate_profile·git diff --check를 했습니다. pytest·브라우저·실제 Windows는 돌리지 않았습니다.
 
 ## 막힌 점
+- 2cbd958 이후 CI는 아직 확인하지 않았습니다. 직전 f8e8aed의 Windows run 39881000670은 desktop 작업 기한(chrome-start)으로 실패했고, driver trace 전 약 11.5초의 원인은 미확인입니다.
 - Chrome 시작이 느린 원인은 미확인이고 이 변경은 그 해결이 아닙니다.
 - 이 node는 이제 최대 약 60초(30초 두 번)가 걸릴 수 있습니다. 직렬 critical 단계의 기존 상한 안에 들어가는지 총괄 확인이 필요합니다.
 - 한 viewport의 작업이 약 22초를 넘기면 기한 실패로 끝납니다.
