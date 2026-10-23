@@ -483,11 +483,12 @@ export function renderDetail(container, kind, detail, approval = null) {
     kind === 'research_plan' ? ['plan_canonical', 'continuation', 'target_sha256', 'scope_status'] :
     kind === 'research_continue' ? ['p1_issues', 'round', 'limit', 'plan_sha256'] :
     kind === 'question' ? ['why_blocked', 'from'] :
-    kind === 'resume' ? ['steps', 'created_at'] : [];
+    kind === 'resume' ? ['steps', 'created_at', 'plan_canonical', 'cp1_target_sha256', 'scope_status'] : [];
   // Keys drawn elsewhere on the card, or repeated inside the frozen plan view (CP1, R18).
   const shown = kind === 'clarify' && Array.isArray(detail?.questions) ? ['questions', 'assumptions'] :
     kind === 'research_evidence' ? ['choices', 'gate', 'revise_continues'] :
     kind === 'research_continue' ? ['gate'] :
+    kind === 'resume' && typeof detail?.plan_canonical === 'string' ? ['request_text', 'has_plan', 'pack_applicability', 'warnings', 'protocol_revision', 'packs'] :  // an unapproved plan shown on the card (#654)
     kind === 'resume' ? ['request_text', 'has_plan'] :  // the summary already quotes it; has_plan only picks the steps wording
     kind === 'research_plan' && typeof detail?.plan_canonical === 'string' ? ['gate', 'pack_applicability', 'warnings', 'protocol_revision', 'packs', 'revise_allowed'] :
     kind === 'question' && clarifyQuestions(approval).length ? ['options'] : [];
@@ -528,7 +529,7 @@ export function renderDetail(container, kind, detail, approval = null) {
         const label = `${name} · ${(size / 1024 / 1024).toFixed(1)} MB · ${String(item?.path || '')}`;
         detailEntry(list, name, label, {raw:true});
       }
-    } else if (kind === 'research_plan' && key === 'plan_canonical') renderResearchPlan(list, detail.plan_canonical);
+    } else if ((kind === 'research_plan' || kind === 'resume') && key === 'plan_canonical') renderResearchPlan(list, detail.plan_canonical);
     else if (kind === 'research_continue' && key === 'p1_issues') renderReviewIssues(list, detail.p1_issues);
     else if (kind === 'resume' && key === 'created_at') detailEntry(list, labels[key], receivedAt(detail.created_at), {raw: true});
     else if (kind === 'resume' && key === 'steps' && Array.isArray(detail.steps))
