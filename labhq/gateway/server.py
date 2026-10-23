@@ -69,6 +69,18 @@ SNAPSHOT_RESULT_CHARS = 500
 MAX_PI_NOTES = 20
 # A kept task cancel outlives any runner turn (runner.task_timeout_s defaults to 6 h) before it is dropped.
 TASK_CANCEL_KEEP_S = 2 * 86400
+def external_wait_view(wait: object, *, now: float | None = None) -> dict | None:
+    """The wait of a step's open public lookup, with the time since its last progress event added (#676)."""
+    if not isinstance(wait, dict):
+        return None
+    try:
+        elapsed, limit = float(wait["elapsed_s"]), float(wait["timeout_s"])
+        since = max(0.0, (time.time() if now is None else now) - float(wait.get("at") or 0))
+    except (KeyError, TypeError, ValueError):
+        return None
+    return {"tool": str(wait.get("tool") or ""), "elapsed_s": int(elapsed + since), "timeout_s": int(limit)}
+
+
 FINISHING_STUCK_S = 600  # a request-bundle worker older than this no longer holds `down` back (#658)
 # Cards that decide the request itself (PI 점검 R5). They wait policy.approvals.pi_decision_timeout_s instead of the gate
 # timeout, the request waits as waiting_pi meanwhile, and an unanswered card ends as *_timed_out, never as a deny.
@@ -1055,6 +1067,11 @@ class Hub:
                    "bundle_status": req.get("bundle_status"), "bundle_grade": req.get("bundle_grade"),
                    "bundle_grade_reasons": req.get("bundle_grade_reasons") or [],
                    "bundle_warning": req.get("bundle_warning")}
+        waits = {task["step_id"]: wait for task in (self.running_tasks() if running is None else running)
+                 if task.get("request_id") == rid and task.get("step_id")
+                 and (wait := external_wait_view((task.get("activity") or {}).get("external_wait")))}
+        if waits:
+            summary["step_waits"] = waits
         summary["office_current"] = is_office_request(req)
         if req.get("outcome") == "model_refused":
             from ..model_refusal import REASON
@@ -2532,6 +2549,15 @@ class Hub:
                     activity["warning"] = data.get("text")
                 elif data.get("level") not in {"debug", "thinking"}:
                     activity.pop("warning", None)
+                lookup = data.get("external_lookup") if typ == "agent.log" else None
+                if isinstance(lookup, dict):
+                    # #676: one line on the task board while a public lookup waits; the final status clears it.
+                    if lookup.get("status") == "waiting":
+                        activity["external_wait"] = {
+                            "tool": str(lookup.get("tool") or ""), "elapsed_s": lookup.get("elapsed_s"),
+                            "timeout_s": lookup.get("timeout_s"), "at": msg.get("ts") or time.time()}
+                    else:
+                        activity.pop("external_wait", None)
                 if activity != (task.get("activity") or {}):
                     self.store.put("task", tid, {**task, "activity": activity})
         if typ == "runner.roster":

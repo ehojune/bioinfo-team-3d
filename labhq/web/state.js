@@ -328,6 +328,12 @@ const taskState = a => {
 const visual = a => warning(a) ? 'error' : taskState(a) || (hasPiDecision(a) ? 'waiting' : completedForReview(a) ? 'done' : a.state === 'waiting' ? (a.waitFor === 'answer' ? 'hibernating' : 'idle') : a.state === 'done' && now() - (a.stateAt || 0) > 3
   ? 'idle' : STATE_KO[a.state] ? a.state : 'idle');
 // 'hibernating' covers HPC jobs and unanswered asks (runner agent.status: jobs, asks); a PI question is not HPC.
+// "외부 응답 대기 n분째 / 상한 m분": the last progress event's elapsed time plus the time since it arrived.
+function externalWaitText(wait) {
+  const limit = Math.max(1, Math.round((Number(wait.timeout_s) || 0) / 60));
+  const spent = (Number(wait.elapsed_s) || 0) + Math.max(0, now() - (Number(wait.at) || now()));
+  return `외부 응답 대기 ${Math.min(limit, Math.floor(spent / 60))}분째 / 상한 ${limit}분`;
+}
 const stateText = (a, vs = visual(a)) => {
   if (warning(a)) return warning(a);
   const t = activeTask(a), activity = t?.activity || {}, tool = currentTool(a);
@@ -337,6 +343,7 @@ const stateText = (a, vs = visual(a)) => {
     if (vs === 'queued') return '차례 기다리는 중';
     if (vs === 'waiting') return activity.ask ? '답 기다리는 중' : 'PI 결정 기다리는 중';
     if (vs === 'hibernating') return (activity.jobs || []).length ? 'HPC 작업 기다리는 중' : '답 기다리는 중';
+    if (vs === 'working' && activity.external_wait) return externalWaitText(activity.external_wait);
     if (vs === 'working') return tool ? `${/Bash|PowerShell|shell|command_execution/i.test(tool.name) ? '명령' : '도구'} 실행 중 · ${Math.max(0, Math.floor((now() - tool.at) / 60))}분째` : '생각하는 중';
   }
   if (vs === 'done' && completedForReview(a)) return '작업 끝 · PI 검토 대기';
@@ -392,6 +399,12 @@ function trackActivity(ev) {
   } else if (ev.type === 'agent.log') {
     if (['warn', 'alert'].includes(d.level)) activity.warning = d.text;
     else if (!['debug', 'thinking'].includes(d.level)) delete activity.warning;
+    // #676: a public lookup waiting on its service shows its elapsed time; the final status clears it.
+    const lookup = d.external_lookup;
+    if (lookup && typeof lookup === 'object') {
+      if (lookup.status === 'waiting') activity.external_wait = {tool: lookup.tool || '', elapsed_s: lookup.elapsed_s, timeout_s: lookup.timeout_s, at: ts};
+      else delete activity.external_wait;
+    }
   } else if (ev.type === 'task.result') {
     if (d.error_kind === 'halted') { t.state = 'halted'; t.activity = {}; }
     else if ((d.pending_jobs || []).length || (d.pending_asks || []).length) {
