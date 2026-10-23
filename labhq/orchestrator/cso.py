@@ -597,6 +597,12 @@ Rules:
 
 PI's request: {request}"""
 
+SELECTION_RECORD_RULE = (
+    "`selection_record` (optional object, #890): write it now, while you choose the design, so it is frozen with the "
+    "plan at CP1: `question` as the PI asked it, `premises`, `success_criteria`, `alternatives` (each `option` you "
+    "actually weighed with `rejected_because`) and `change_signals` (observations that would change your judgment). "
+    "Record only alternatives you really considered; leave the field out when you weighed none rather than "
+    "inventing some.")
 RESEARCH_PLAN_PROMPT = BIOINFO_ASSIGNMENT_RULE + "\n\n" + recruit_planning.PLAN_RULE + "\n\n" + paper_skills.PLAN_RULE + "\n\n" + """Create a frozen research contract for the PI's request. Do not execute or analyze.
 
 Team roster (use these agent ids exactly, never an orchestration role):
@@ -634,10 +640,7 @@ Contract rules:
 - Freeze analysis unit, selection/exclusion, comparators, metrics, validation, resources, stop/approval
   conditions, data boundaries, and statistics applicability before execution. Every not_applicable item needs a reason.
   Applicable statistics needs estimand, analysis_unit, and primary_outcomes.
-- `selection_record` (optional object, #890): write it now, while you choose the design, so it is frozen with the plan
-  at CP1: `question` as the PI asked it, `premises`, `success_criteria`, `alternatives` (each `option` you actually
-  weighed with `rejected_because`) and `change_signals` (observations that would change your judgment). Record only
-  alternatives you really considered; leave the field out when you weighed none rather than inventing some.
+- """ + SELECTION_RECORD_RULE + """
 - `budget_usd` (optional number): the additional execution budget in USD after this plan's CP1 approval.
   Exclude briefing, clarification, planning and all earlier-round spending already incurred. On approval labhq adds
   that spending to this budget and clamps the total to the configured request cap; exceeding it waits for a PI
