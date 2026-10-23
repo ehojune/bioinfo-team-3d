@@ -4,6 +4,12 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# Scheduler user 이름 확인
+
+- USERNAME·USER·LOGNAME이 없는 Windows에서 `getpass.getuser()`가 POSIX 전용 `pwd` import로 `ModuleNotFoundError`를 내며 `Scheduler` 생성이 실패했다(proof c1 runner 시작 실패의 원인).
+- `labhq/tools/scheduler.py`: `getpass.getuser()` → 실패하면 Windows `GetUserNameW`로 실제 로그온 계정을 구한다. 둘 다 실패하면 `self.user`는 비고, `queue()`(SGE·PBS·Slurm)는 `hpc.user`를 설정하라는 `RuntimeError`를 낸다. 이름을 지어내지 않는다(가짜 이름은 `qstat -u`·`squeue -u`가 실제 작업을 못 보게 한다). `mock`·`none`은 영향 없다.
+- `tests/test_scheduler.py`: env 변수를 지워도 생성, getuser 실패 시 Windows API 계정(Windows에서만), user를 모를 때 queue 명령이 실행되지 않음(sge·slurm·pbs). 14건 통과. 전체 suite·실제 Windows CI는 미확인.
+
 # #833 Windows 필수 웹 검사 시간 계약
 
 - [#876 Windows CI](https://github.com/ehojune/bioinfo-team-3d/actions/runs/39897352658/job/120230799229), [#880 Windows CI](https://github.com/ehojune/bioinfo-team-3d/actions/runs/39898639671/job/120234981537): Chrome가 생성됐지만 약 18~19초 동안 DevTools 포트가 나타나지 않아 UI 검사는 시작하지 못했다. 제품 결함 여부는 미확인이다.

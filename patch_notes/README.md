@@ -10,6 +10,13 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-10-24
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 01:05 | [`8ab2874`](https://github.com/ehojune/bioinfo-team-3d/pull/884/commits/8ab2874) | **사용자 이름을 지어내지 않고 실제 계정을 조회하며, 알 수 없으면 큐 조회가 설정을 요구하고 멈춥니다.**<br>사용자 이름을 못 구하면 "labhq"를 지어내지 않고 Windows 로그온 계정을 조회하며, 끝내 모르면 queue가 hpc.user 설정을 요구하며 실패한다. |
+| 00:50 | [`256de7b`](https://github.com/ehojune/bioinfo-team-3d/pull/884/commits/256de7b) | **사용자 이름 환경변수가 없는 Windows에서도 스케줄러가 시작되도록 기본 이름을 씁니다.**<br>USERNAME이 없는 Windows 환경에서도 Scheduler가 생성되도록 getpass.getuser 실패 시 "labhq"로 대체한다. |
+
 ## 2026-10-23
 
 | 시간 | 커밋 | 주요 변경사항 |
