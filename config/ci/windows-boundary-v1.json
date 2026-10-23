@@ -34,6 +34,7 @@
     "tests/test_bench_structured.py",
     "tests/test_bioinfo_pipeline_pr.py",
     "tests/test_bioinfo_plugin.py",
+    "tests/test_blind_draft_889.py",
     "tests/test_branched_research.py",
     "tests/test_breaker.py",
     "tests/test_cgroup_memory.py",

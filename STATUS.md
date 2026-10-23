@@ -4,6 +4,13 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# 블라인드 리뷰어 초안 (#889)
+
+- `research.blind_draft`(기본 false)를 켜면 CP1 승인 직후 첫 단계 전에 `reviewer_agent`가 원 요청만으로 초안을 쓰고 `research_contract.blind_draft`에 본문·sha256·UTC 시각으로 봉인한다. 주 결과가 이미 있는 재개는 초안 없이 `unavailable(results_exist)`, 초안 완료 시점에 결과가 있었으면 `late`, task 실패는 `unavailable`이며 요청은 계속된다.
+- 연구 리뷰 prompt에 봉인된 초안(해시 일치 시)을 붙이고 review JSON에 optional `blind_comparison`을 받는다. 읽을 수 없는 값은 그 필드만 버린다. 일치를 근거로 세지 않는다.
+- 순차 실행(병렬 아님). 새 task kind `blind_draft`는 read-only 프로파일과 기존 예약·취소 경로를 쓴다. 파일 격리는 하지 않는다(입력 기준 격리).
+- 테스트: `tests/test_blind_draft_889.py` 7건(봉인 순서·입력 격리·리뷰 전달·꺼짐 무변화·실패 무중단·late/재시작·부분 폐기) 통과. 관련 연구 lane 테스트 247건 통과. 실제 Codex 직원, 실제 요청, Windows CI는 미확인.
+
 Refs #898
 
 - R version/syntax subprocess의 elapsed·timeout·returncode를 test fixture에 따로 남기고 기본 10초 경계 두 개를 fake로 검증합니다.
@@ -27,6 +34,39 @@ Refs #898
 - USERNAME·USER·LOGNAME이 없는 Windows에서 `getpass.getuser()`가 POSIX 전용 `pwd` import로 `ModuleNotFoundError`를 내며 `Scheduler` 생성이 실패했다(proof c1 runner 시작 실패의 원인).
 - `labhq/tools/scheduler.py`: `getpass.getuser()` → 실패하면 Windows `GetUserNameW`로 실제 로그온 계정을 구한다. 둘 다 실패하면 `self.user`는 비고, `queue()`(SGE·PBS·Slurm)는 `hpc.user`를 설정하라는 `RuntimeError`를 낸다. 이름을 지어내지 않는다(가짜 이름은 `qstat -u`·`squeue -u`가 실제 작업을 못 보게 한다). `mock`·`none`은 영향 없다.
 - `tests/test_scheduler.py`: env 변수를 지워도 생성, getuser 실패 시 Windows API 계정(Windows에서만), user를 모를 때 queue 명령이 실행되지 않음(sge·slurm·pbs). 14건 통과. 전체 suite·실제 Windows CI는 미확인.
+
+## 단계
+P1 — Windows 종료 테스트의 fixture 준비 대기. Refs #854.
+
+## 한 일
+- 부모·손자의 준비를 최대 10초 handshake로 확인한 뒤 기존 1초 timeout과 두 프로세스 종료를 검사합니다.
+- startup_delay 0·1.5초를 검사하고 준비 실패 때도 fixture tree를 정리합니다. 제품 코드·timeout·종료 단언·skip/retry·receipt 조건은 그대로입니다.
+
+## 테스트 결과
+- 독립 Windows 검증: 패치 전 3 PASS, 패치 후 5회 × 2조건 = 10 PASS. 보고상 잔류 프로세스 0, WinError 5 없음. 같은 검증은 반복하지 않았습니다.
+- [main CI 실패](https://github.com/ehojune/bioinfo-team-3d/actions/runs/39905683733/job/120257047265)는 timeout 단언 뒤 PID 파일이 없는 경우입니다. 원래 간헐 실패는 로컬에서 재현되지 않아 해결 확정 근거는 아닙니다.
+- 준비를 마친 트리의 종료를 검사합니다. 기동 지연을 포함한 제품 timeout은 이 테스트의 검증 범위 밖입니다.
+- Python 3.10 문법·diff·public·기록 검사는 아래 확인란에 실제 결과를 반영합니다.
+
+## 바꾼 파일
+- `tests/test_runner_safety.py`
+- `patch_notes/entries/codex--windows-timeout-ready-854-pr.yaml`
+- 이 단계 보고
+
+## 막힌 점
+- 2026-10-24 02:17 KST 확인: head `58a41aeb`의 [CI 39979410026](https://github.com/ehojune/bioinfo-team-3d/actions/runs/39979410026) attempt 1은 Windows R parse timeout 1건으로 실패했습니다(3545 passed, 30 skipped, 51 subtests passed). coverage receipt 오류는 pytest 실패 뒤 발생했습니다. 실패 job 재실행은 아직 쓰지 않았습니다.
+- 같은 head의 [봇 리뷰](https://github.com/ehojune/bioinfo-team-3d/pull/885#discussion_r4362288677)는 완료됐으며 이 보고의 오래된 CI 상태를 P1로 지적했습니다. 해당 문장을 고쳤습니다. 수정 head의 CI·리뷰·병합 결과는 [PR #885](https://github.com/ehojune/bioinfo-team-3d/pull/885)에 기록합니다. #854 전수/receipt 완료 조건은 남습니다.
+
+## PI·Claude에게 물을 것
+- 없음.
+
+## 확인
+- [x] Python 3.10 문법·diff 검사
+- [x] `scripts/check_public.sh`
+- [x] `scripts/patch_notes.py check --base origin/main`
+- [x] `scripts/notes_index.py --validate`
+
+🤖 Co-Authored-By: Codex (gpt-6) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 
 # #833 Windows 필수 웹 검사 시간 계약
 

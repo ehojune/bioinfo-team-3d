@@ -1163,6 +1163,8 @@ CP2 카드는 claim 근거를 갈래별로 묶어 단계·상태·근거 종류�
 
 ### 리뷰·이어 가기
 
+**블라인드 초안**(`research.blind_draft`, 기본 `false`, #889): 켜면 CP1 승인 직후 첫 단계를 보내기 전에 `reviewer_agent`가 원 요청 문장·참고 자료·PI의 확인 질문 답만으로 독립 초안을 한 번 씁니다. 계획·단계·산출은 prompt에 넣지 않으며 read-only로 실행하고 기존 예산 예약·취소 경로를 그대로 씁니다. 격리는 입력 기준입니다(별도 파일 격리는 없음). 초안 본문·sha256·UTC 시각은 `research_contract.blind_draft`에 `sealed`로 봉인되며 재시작해도 다시 쓰지 않습니다. 주 결과가 이미 있는 요청을 재개하면 초안을 쓰지 않고 `unavailable`(`results_exist`)로, 초안이 끝났을 때 이미 주 결과가 있었으면 `late`로, 초안 task가 실패하면 `unavailable`로 기록합니다. 어느 쪽이든 리뷰에 쓰지 않고 요청은 계속 진행합니다. 순차 실행이라 초안 task 시간만큼 요청이 늦어집니다. 연구 리뷰는 봉인된 초안(해시가 맞을 때만)을 받아 review JSON의 선택 필드 `blind_comparison`(`missed_alternatives`·`differing_conclusions`·`evidence_gaps`)에 대조 결과를 남깁니다. 초안과 주 답이 같다는 사실은 근거로 세지 않으며, 읽을 수 없는 `blind_comparison`은 리뷰 전체가 아니라 그 필드만 버립니다. 이어 가기 차수는 첫 차수의 봉인된 초안을 그대로 씁니다.
+
 CP2에서 승인하면 `reviewer_agent`가 claim을 원장·산출 파일과 대조해 한 번 리뷰합니다.
 CP2 수정 요청도 같은 이어 가기로 들어갑니다. 다른 점은 카드 없이 바로 새 계획을 쓰고, 리뷰 P1 지적 대신 PI 메모(`continuation.pi_request`)를 새 계획·새 리뷰 prompt에 넣는다는 것뿐입니다. 새 CP1 카드 요약은 "이어 가기 n차 계획(CP2 수정 요청 반영)"으로 시작합니다.
 P1 지적이 있어 revise면 고정된 계획을 그대로 다시 돌리지 않습니다.
@@ -1485,6 +1487,8 @@ Stanford Zou 연구실의 [The Virtual Biotech](https://doi.org/10.1126/science.
 | — | 폰 승인 게이트, 예산 캡, 데이터 구역, 실험노트 | 한 사람이 감독 가능한 형태 |
 
 ## 내 저장소로 올리기
+
+Windows selection 거부는 전용 error로 표시합니다. 선행 단계가 실패하면 coverage report를 건너뛰고 진단 artifact를 보존합니다. 성공 실행은 coverage·receipt 검증을 모두 거칩니다.
 
 개발 CI는 보호 예제·markup이 같은 prose와 정해진 기록만 축소합니다. manual·개발 지침·정책은 내용·구조가 같은 문장 경계 줄바꿈만 후보입니다. main 재사용에는 동일 tree·workflow/policy·coverage와 필수 gate 성공 증거가 필요합니다. Linux 3.10/3.12와 Windows nightly·workflow_dispatch는 전수입니다. routine Windows는 필수 OS 경계 검사 한 번과 10분 job 상한을 적용합니다. 선택 증거가 틀리면 빠르게 실패하며 전수로 확대하지 않습니다. timeout도 실패입니다. clean-install·공식 validator·MCP gate는 유지합니다([판별·증거 경계](reference/ci-reuse.md)). 필수 3D 화면 검사는 화면마다 브라우저 시작 최대 30초·UI 검사 최대 20초를 주고 정리까지 합산 60초 안에 끝냅니다.
 
