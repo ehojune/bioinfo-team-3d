@@ -1139,6 +1139,17 @@ def _unrecorded_process_still_running(s: Settings, *, timeout: float) -> str | N
             f"`{_config_command(s, 'up')}`으로 다시 시작하세요.")
 
 
+FINISHING_STAGE_TEXT = {"cancel": "취소 기록을 쓰는 중", "bundle": "보고서 묶음 저장을 마무리하는 중",
+                        "result_storage": "결과 저장을 마무리하는 중", "pi_interpretation": "PI 해석을 마무리하는 중"}
+
+
+def _finishing_line(row: dict) -> str:
+    text = FINISHING_STAGE_TEXT.get(row.get("stage"), "기록을 마무리하는 중")
+    elapsed = row.get("elapsed_s")
+    since = f" ({max(1, int(elapsed) // 60)}분째)" if isinstance(elapsed, (int, float)) and elapsed >= 60 else ""
+    return f"마무리 중인 요청: {row.get('id')} · {text}{since}"
+
+
 def _down_unlocked(s: Settings, *, force: bool = False, keep_gateway: bool = False) -> None:
     """Stop the recorded runner and gateway. With keep_gateway the gateway keeps running: the web shutdown runs inside
     that gateway, which cannot wait here for its own end, so it ends itself afterwards (gateway/shutdown.py)."""
@@ -1155,12 +1166,17 @@ def _down_unlocked(s: Settings, *, force: bool = False, keep_gateway: bool = Fal
         if readiness.get("recruits"):
             lines.append(f"진행 중 채용: {readiness['recruits']}건")
         # A finished request whose record is still being written (#521): a forced stop loses its report or bundle.
-        lines += [f"마무리 중인 요청: {row.get('id')} · "
-                  f"{'취소 기록을 쓰는 중' if row.get('stage') == 'cancel' else '요청 묶음을 복사하는 중'}"
-                  for row in readiness.get("finishing") or [] if isinstance(row, dict)]
+        # Worded by stage and age; a bundle worker stuck past the gateway's limit is told, not waited for (#658).
+        finishing = [row for row in readiness.get("finishing") or [] if isinstance(row, dict)]
+        lines += [_finishing_line(row) for row in finishing if not row.get("stuck")]
+        stuck_lines = [_finishing_line(row) for row in finishing if row.get("stuck")]
+        resumable = any(row.get("stage") == "bundle" and not row.get("stuck") for row in finishing)
         if readiness.get("ready") is False and not lines:
             lines.append("진행 중 작업: gateway가 아직 끝나지 않은 일이 있다고 답했습니다")
         busy: bool | None = bool(lines)
+        for line in stuck_lines:
+            print(f"멈춘 마무리: {line[len('마무리 중인 요청: '):]} — 종료를 막지 않습니다. 다음 시작 때 이어서 마무리합니다.",
+                  file=sys.stderr)
     elif readiness is None:  # an older gateway without the endpoint: the request list decides, as before
         busy = bool(active)
     else:  # no answer: known active requests still refuse, otherwise it is unknown
@@ -1169,6 +1185,8 @@ def _down_unlocked(s: Settings, *, force: bool = False, keep_gateway: bool = Fal
         for line in lines:
             print(line, file=sys.stderr)
         if not force:
+            if isinstance(readiness, dict) and resumable:
+                print("요청 묶음은 기다리거나, 지금 종료하면 다음 시작 때 이어서 만듭니다.", file=sys.stderr)
             print(f"종료를 거부했습니다. 계속하려면 `{_config_command(s, 'down --force')}`를 쓰세요.",
                   file=sys.stderr)
             raise SystemExit(2)
