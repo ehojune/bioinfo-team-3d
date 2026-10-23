@@ -1,0 +1,6 @@
+pr: null
+rows:
+- sha: 8c2937b
+  at: '2026-10-24 09:00'
+  summary: 새 설치 검사에서 기존 설정·인증을 격리하고 단계별 결과와 로그를 보존합니다.
+  text: Windows 빈 폴더의 clone·venv·init·mock 요청·verify·down을 재현하고 PASS/FAIL/SKIP receipt, 의존성 판본, 부분 기동 실패 종료와 README 한영판 인증 경계를 검증했다. Refs #922.

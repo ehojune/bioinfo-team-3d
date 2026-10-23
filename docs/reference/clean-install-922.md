@@ -22,3 +22,10 @@ source는 커밋된 checkout, work-dir은 새/빈 폴더입니다. PATH의 `py`�
 설치·state·요청 묶음·로그는 work-dir에 남습니다. `receipt.json`의 각 command/cwd와 `logs/*.stdout.log`·`*.stderr.log`는 **로컬 전용**이며 공개 저장소에 올리지 않습니다. work-dir을 생략하면 임시 설치판은 지웁니다.
 
 자동 검사는 README의 clone→venv→install→init→doctor→up 절차를 따르고 mock 설정을 명시적으로 적용합니다. 웹 데모·open·사람 로그인·실제 직원 실행은 별도입니다. wheel은 포함 파일 검사이며 wheel 설치 실행 검증은 아닙니다.
+
+## 2026-10-24 확인
+
+- Windows 새 폴더, 설치 코드 `8c2937bf`, Python 3.14.7: 29 PASS / 0 FAIL / 1 SKIP. mock 요청 `req_852198fbf9`의 verify와 최종 venv 프로세스 잔류 0 확인.
+- 수정 전 검사기도 PASS였다. 별도 dummy 환경 재현에서 `LABHQ_CONFIG`·`GH_TOKEN`·`OPENAI_API_KEY`가 그대로 상속됐고 수정 뒤 모두 제거됐다.
+- 관련 pytest 41 passed. Python 3.10 문법·public·diff 검사 통과. 상세 receipt·dependency freeze·분리 로그는 로컬 작업 폴더에 보존.
+- README 한국어 11,852→12,205자(+353), 영어 17,866→18,156자(+290). AGENTS의 설치 안내는 실제 불일치가 없어 유지.
