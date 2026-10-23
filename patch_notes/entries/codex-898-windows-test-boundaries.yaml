@@ -1,0 +1,6 @@
+pr: null
+rows:
+  - sha: '5c416c8'
+    at: '2026-10-24 01:14'
+    summary: 'Windows 검사가 R version·syntax 시간과 mock signal 뒤 durable ACK 대기를 따로 기록합니다.'
+    text: 'R test fixture는 두 subprocess의 기본 10초와 receipt 계약을 유지하며 elapsed·timeout·returncode를 남깁니다. SIGTERM/SIGHUP 검사는 work 준비 뒤 callback을 호출하고 result·gateway·ACK·entry를 단계별로 기다립니다. 제품 shutdown 5초와 기존 단언은 유지했습니다. ACK 3.1초 지연 비교는 수정 전 실패·후 통과였으나 실제 CI DB 지연 원인을 재현한 결과는 아닙니다. R 실제 지연 원인은 미확인이라 #898은 유지합니다.'
