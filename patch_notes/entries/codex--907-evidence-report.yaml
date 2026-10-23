@@ -1,5 +1,9 @@
 pr: 919
 rows:
+- sha: a8db61b
+  at: '2026-10-24 07:23'
+  summary: 배제한 재인용의 hash 누락으로 승인 근거가 있는 보고서가 incomplete가 되지 않게 합니다.
+  text: artifact 검사도 공유 eligibility 판정을 적용한다. 독립적인 승인 근거의 hash는 계속 필수이며 거부 계보의 재인용은 검사하지 않는다. false incomplete 1 failed 재현 뒤 관련 pytest 142 passed. Refs #907.
 - sha: db0f1d1
   at: '2026-10-24 07:15'
   summary: 독립적인 승인 근거가 남은 claim에서도 거부 계보의 재인용은 논문 수에서 제외합니다.
