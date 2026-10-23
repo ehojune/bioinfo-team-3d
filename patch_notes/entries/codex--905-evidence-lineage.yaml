@@ -1,5 +1,9 @@
 pr: 908
 rows:
+- sha: e40745f
+  at: '2026-10-24 04:21'
+  summary: 출처를 확정하지 못해도 이미 시도한 조회 기록을 보존합니다.
+  text: P2 4363365293을 수정했다. 미해결 citation lineage 오류가 문제 link를 가리키도록 해 기존 salvage가 evidence 행 대신 support·contradict link만 거부한다. 접근 metadata·필수 slot·다른 context link를 보존하는 회귀 6건이 수정 전 실패했고 관련 pytest 420 passed로 통과했다. Refs #905.
 - sha: 73ae05f
   at: '2026-10-24 03:24'
   summary: 확장한 result schema의 고정 hash와 optional 호환성 검사를 갱신합니다.
