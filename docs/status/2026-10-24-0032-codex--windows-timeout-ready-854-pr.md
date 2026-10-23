@@ -17,7 +17,8 @@ P1 — Windows 종료 테스트의 fixture 준비 대기. Refs #854.
 - 이 단계 보고
 
 ## 막힌 점
-- PR CI와 최신 head 리뷰는 아직 확인하지 않았습니다. #854 전체 전수 검증의 완료를 뜻하지 않습니다.
+- 2026-10-24 02:17 KST 확인: head `58a41aeb`의 [CI 39979410026](https://github.com/ehojune/bioinfo-team-3d/actions/runs/39979410026) attempt 1은 Windows R parse timeout 1건으로 실패했습니다(3545 passed, 30 skipped, 51 subtests passed). coverage receipt 오류는 pytest 실패 뒤 발생했습니다. 실패 job 재실행은 아직 쓰지 않았습니다.
+- 같은 head의 [봇 리뷰](https://github.com/ehojune/bioinfo-team-3d/pull/885#discussion_r4362288677)는 완료됐으며 이 보고의 오래된 CI 상태를 P1로 지적했습니다. 해당 문장을 고쳤습니다. 수정 head의 CI·리뷰·병합 결과는 [PR #885](https://github.com/ehojune/bioinfo-team-3d/pull/885)에 기록합니다. #854 전수/receipt 완료 조건은 남습니다.
 
 ## PI·Claude에게 물을 것
 - 없음.
