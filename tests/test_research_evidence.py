@@ -712,3 +712,32 @@ def test_merged_originals_all_require_resolution(extra_reference, extra_resolved
     assert report.claims[0].state == ("verified" if extra_resolved else "unverified")
     assert report.ok is extra_resolved
     assert report.claims[0].independent_groups == (["e1"] if extra_resolved else [])
+
+
+@pytest.mark.parametrize("fault", ["not_found", "conflicting", "insufficient", "retraction"])
+@pytest.mark.parametrize("linked_found", [True, False])
+@pytest.mark.parametrize("defective_id", ["e1", "e2"])
+def test_lineage_source_defects_propagate_to_claim(fault, linked_found, defective_id):
+    rows = [lineage_original(), lineage_recited(), lineage_recited("e3", ["e2"])]
+    bad = next(r for r in rows if r.id == defective_id)
+    records = {("uri", r.source.uri): [dict(id_scheme="uri", id_value=r.source.uri)] for r in rows}
+    if fault == "not_found":
+        records[("uri", bad.source.uri)] = []
+    elif fault == "conflicting":
+        records[("uri", bad.source.uri)] = [dict(id_scheme="uri", id_value="https://example.org/other")]
+    elif fault == "insufficient":
+        bad.source = SourceRef(id_scheme="doi", id_value="malformed", accessed_at="2026-10-24", locator="Results")
+    else:
+        records[("uri", bad.source.uri)][0]["updates"] = [dict(direction="updated_by", update_type="retraction")]
+    result = ResearchResult.model_validate(dict(
+        schema_version=2, plan_sha256="a" * 64, step_id="s1",
+        claims=[dict(id="c1", revision=1, statement="One empirical finding.", scope="public toy example",
+                     kind="finding", status="supported", importance="major", status_reason="see evidence")],
+        evidence=[r.model_dump() for r in rows], links=[lineage_link("e3").model_dump()], artifact_refs=[],
+        not_established=[], failures=[], method_changes=[]))
+    resolver = StaticResolver(records, schemes={"uri", "doi"},
+        failures={} if linked_found else {("uri", rows[2].source.uri): "network"})
+    report = asyncio.run(verify_sources(result, resolver))
+    assert report.claims[0].state == "defective"
+    assert any(defective_id in reason for reason in report.claims[0].defects)
+    assert not report.ok and report.claims[0].independent_groups == []

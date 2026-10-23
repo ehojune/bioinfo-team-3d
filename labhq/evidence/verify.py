@@ -858,6 +858,23 @@ async def verify_sources(result: "ResearchResult", resolver: SourceResolver | No
 
     lineage = assess_lineage(result.evidence, artifact_paths=artifact_paths)
     by_id = {row.id: row for row in result.evidence}
+    dependencies: dict[str, set[str]] = {}
+    for row in result.evidence:
+        if row.lineage is None:
+            continue
+        # Keep intervening citations as well as all aliases of confirmed originals. A retracted
+        # intermediate source cannot be laundered through a found terminal source or linked row.
+        visited: set[str] = set()
+        pending = list(row.lineage.cited_from)
+        while pending:
+            eid = pending.pop()
+            if eid in visited:
+                continue
+            visited.add(eid)
+            ancestor = by_id.get(eid)
+            if ancestor and ancestor.lineage:
+                pending.extend(ancestor.lineage.cited_from)
+        dependencies[row.id] = (visited | set(lineage[row.id].original_evidence_ids)) - {row.id}
     claim_checks: list[ClaimCheck] = []
     for claim in result.claims:
         needed = STATUS_NEEDS.get(claim.status)
@@ -867,6 +884,22 @@ async def verify_sources(result: "ResearchResult", resolver: SourceResolver | No
         for link in result.links:
             if link.claim_id != claim.id or link.relation == "context" or link.evidence_id not in checks:
                 continue
+            lineage_defects: list[str] = []
+            lineage_unverified = False
+            for eid in sorted(dependencies.get(link.evidence_id, set())):
+                ancestor = checks.get(eid)
+                if ancestor is None:
+                    lineage_unverified = True
+                    continue
+                if ancestor.resolution.status in DEFECT_STATUSES:
+                    lineage_defects.append(f"{link.evidence_id} {link.relation} via lineage source {eid} "
+                        f"which is {ancestor.resolution.status}: {ancestor.resolution.detail}")
+                if ancestor.source_defects:
+                    lineage_defects.append(f"{link.evidence_id} {link.relation} via lineage source {eid}: "
+                                           + ", ".join(ancestor.source_defects))
+                if ancestor.resolution.status == "requires_verification":
+                    lineage_unverified = True
+            defects.extend(lineage_defects)
             resolution = checks[link.evidence_id].resolution
             if resolution.status in {"not_found", "conflicting", "insufficient"}:
                 defects.append(f"{link.evidence_id} {link.relation} via {resolution.id_scheme}:"
@@ -876,11 +909,11 @@ async def verify_sources(result: "ResearchResult", resolver: SourceResolver | No
                                + ", ".join(checks[link.evidence_id].source_defects))
             elif resolution.status == "requires_verification":
                 unverified.append(link.evidence_id)
+            elif lineage_defects:
+                continue  # A known defect must reach the CSO's unsupported-claim path.
             elif by_id[link.evidence_id].lineage is not None and (
                     lineage[link.evidence_id].status != "resolved"
-                    or any(eid not in checks or checks[eid].resolution.status != "found"
-                           or checks[eid].source_defects
-                           for eid in lineage[link.evidence_id].original_evidence_ids)):
+                    or lineage_unverified):
                 unverified.append(link.evidence_id)
             elif link.relation == needed:
                 verified.append(link.evidence_id)
