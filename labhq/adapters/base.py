@@ -419,8 +419,8 @@ WORKSPACE_WRITE_RULES = (
     "background work and finishes the step with only the outputs present then. Use labhq_hpc tools for long-running "
     "compute, or ask the PI before proceeding.\n"
     "- If the plan has an environment step, run packages from its interpreter, by the path it reported, but never "
-    "install into that shared environment. For an extra package the PI approved, install it into ./.pylib in your "
-    "own workspace (python -m pip install --target ./.pylib ...) and put ./.pylib first on PYTHONPATH. For R use "
+    "install into that shared environment. If you need an extra package, for example to read a file you received, install it into ./.pylib in your "
+    "own workspace without asking (python -m pip install --target ./.pylib <package>==<version>) and put ./.pylib first on PYTHONPATH. For R use "
     "./.rlib explicitly; never write into another step's workspace. Record task-local Python packages with "
     "`python -m pip freeze --path ./.pylib` (or the package table from ./.rlib) in outputs/env/<step id>.txt.\n")
 
