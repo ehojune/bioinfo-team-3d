@@ -370,6 +370,7 @@ class CitationLineage(StrictModel):
 
 class LineageAssessment(StrictModel):
     status: LineageStatus
+    # Keep every confirmed row in a merged source so verification cannot skip an alias's extra references.
     original_evidence_ids: list[str] = Field(default_factory=list)
     source_keys: list[str] = Field(default_factory=list)
     independence_groups: list[str] = Field(default_factory=list)
@@ -709,7 +710,7 @@ def assess_lineage(evidence: list[Evidence], *,
         if status != "resolved" or not roots:
             assessments[row.id] = LineageAssessment(status=status if status != "resolved" else "undetermined")
             continue
-        original_ids = sorted(originals_by_source[root][0] for root in roots)
+        original_ids = sorted(eid for root in roots for eid in originals_by_source[root])
         keys = sorted({key for root in roots for eid in originals_by_source[root] for key in keys_by_id[eid]})
         # Invalid ledgers may assign two groups to one source. Never inflate their independent count.
         groups = sorted({min(by_id[eid].independence_group for eid in originals_by_source[root]

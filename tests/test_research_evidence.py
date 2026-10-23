@@ -601,7 +601,7 @@ def test_identity_aliases_merge_originals_even_with_different_declared_groups():
             lineage_original("e2", source=dict(uri="https://doi.org/10.1234/ORIGINAL", **base)),
             lineage_recited("e3", ["e1", "e2"])]
     assessed = assess_lineage(rows)
-    assert assessed["e3"].original_evidence_ids == ["e1"]
+    assert assessed["e3"].original_evidence_ids == ["e1", "e2"]
     assert assessed["e3"].independence_groups == ["e1"]
     assert independent_groups("c1", rows, [lineage_link("e1"), lineage_link("e2"), lineage_link("e3")]) == ["e1"]
     assert any("same source" in e for e in ledger_errors([], rows, []))
@@ -613,7 +613,7 @@ def test_artifact_path_aliases_and_identity_bridges_merge_roots():
             lineage_original("e2", source=dict(artifact_id="a2", locator="row 2")),
             lineage_recited("e3", ["e1", "e2"])]
     assessed = assess_lineage(rows, artifact_paths={"a1": "./out/results.tsv", "a2": "out\\results.tsv"})
-    assert assessed["e3"].original_evidence_ids == ["e1"]
+    assert assessed["e3"].original_evidence_ids == ["e1", "e2"]
     assert assessed["e3"].source_keys == ["artifact:out/results.tsv"]
     assert independent_groups("c1", rows, [lineage_link("e3")],
                               artifact_paths={"a1": "out/results.tsv", "a2": "out/results.tsv"}) == ["e1"]
@@ -623,7 +623,7 @@ def test_artifact_path_aliases_and_identity_bridges_merge_roots():
             lineage_original("e2", source=dict(uri="https://example.org/original", **base)),
             lineage_row("bridge", source=dict(id_scheme="doi", id_value="10.1234/original",
                                       uri="https://example.org/original", **base))]
-    assert assess_lineage(rows)["e2"].original_evidence_ids == ["e1"]
+    assert assess_lineage(rows)["e2"].original_evidence_ids == ["e1", "e2"]
     assert assess_lineage(rows)["bridge"].status == "undetermined"
 
 
@@ -684,3 +684,31 @@ def test_source_verifier_uses_original_groups_and_requires_original_resolution(o
     check = report.claims[0]
     assert check.state == ("verified" if origin_found else "unverified")
     assert check.independent_groups == (["e1"] if origin_found else [])
+
+
+@pytest.mark.parametrize("extra_reference", ["uri", "artifact"])
+@pytest.mark.parametrize("extra_resolved", [False, True])
+def test_merged_originals_all_require_resolution(extra_reference, extra_resolved):
+    shared = dict(id_scheme="doi", id_value="10.1234/original", accessed_at="2026-10-24", locator="Results")
+    extra = ({"uri": "https://example.org/unreachable"} if extra_reference == "uri" else {"artifact_id": "a1"})
+    rows = [lineage_original(source=shared), lineage_original("e2", source={**shared, **extra},
+                                                            independence_group="e1"),
+            lineage_recited("e3", ["e1", "e2"])]
+    value = dict(schema_version=2, plan_sha256="a" * 64, step_id="s1",
+        claims=[dict(id="c1", revision=1, statement="One empirical finding.", scope="public toy example",
+                     kind="finding", status="supported", importance="major", status_reason="see evidence")],
+        evidence=[r.model_dump() for r in rows], links=[lineage_link("e3").model_dump()],
+        artifact_refs=[dict(artifact_id="a1", path="out/original.tsv")] if extra_reference == "artifact" else [],
+        not_established=[], failures=[], method_changes=[])
+    resolver = StaticResolver({("doi", "10.1234/original"): [dict(id_scheme="doi", id_value="10.1234/original")],
+                               ("uri", "https://example.org/unreachable"): [dict(id_scheme="doi", id_value="10.1234/original")],
+                               ("uri", rows[2].source.uri): [dict(id_scheme="uri", id_value=rows[2].source.uri)]},
+        schemes={"doi", "uri"}, failures={} if extra_resolved else {("uri", "https://example.org/unreachable"): "network"})
+    result = ResearchResult.model_validate(value)
+    report = asyncio.run(verify_sources(result, resolver,
+        observed_artifacts={"out/original.tsv": "c" * 64} if extra_resolved else None))
+    assert next(c for c in report.evidence if c.evidence_id == "e2").resolution.status == (
+        "found" if extra_resolved else "requires_verification")
+    assert report.claims[0].state == ("verified" if extra_resolved else "unverified")
+    assert report.ok is extra_resolved
+    assert report.claims[0].independent_groups == (["e1"] if extra_resolved else [])
