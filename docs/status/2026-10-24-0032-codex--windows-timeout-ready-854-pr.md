@@ -23,9 +23,9 @@ P1 — Windows 종료 테스트의 fixture 준비 대기. Refs #854.
 - 없음.
 
 ## 확인
-- [ ] Python 3.10 문법·diff 검사
-- [ ] `scripts/check_public.sh`
-- [ ] `scripts/patch_notes.py check --base origin/main`
-- [ ] `scripts/notes_index.py --validate`
+- [x] Python 3.10 문법·diff 검사
+- [x] `scripts/check_public.sh`
+- [x] `scripts/patch_notes.py check --base origin/main`
+- [x] `scripts/notes_index.py --validate`
 
 🤖 Co-Authored-By: Codex (gpt-6) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
