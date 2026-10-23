@@ -5492,8 +5492,9 @@ class Orchestrator:
                 parsed = (lenient_review(reply.structured, RESEARCH_LANE_REVIEW_SCHEMA)
                           or lenient_review(extract_json(reply.text), RESEARCH_LANE_REVIEW_SCHEMA))
                 if reply.ok and parsed:
-                    review = with_p1_verdict(review_with_checklist(
-                        parsed, req.get("plan"), catalog, req.get("analysis_precedents"), research=True))
+                    review = blind_draft.without_unfounded_comparison(with_p1_verdict(review_with_checklist(
+                        parsed, req.get("plan"), catalog, req.get("analysis_precedents"), research=True)),
+                        contract.get(blind_draft.KEY))
                     break
             if not review:
                 reason = (reply.error if reply else None) or "missing or invalid research review"

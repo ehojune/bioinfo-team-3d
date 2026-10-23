@@ -93,6 +93,14 @@ def review_block(record: Any) -> str:
     return COMPARE_RULE.format(sealed_at=record["sealed_at"], sha256=record["sha256"], text=text)
 
 
+def without_unfounded_comparison(review: dict, record: Any) -> dict:
+    """The review without a ``blind_comparison`` when no sealed draft was given to the reviewer: a comparison of a
+    draft that was never shown (feature off, late, unavailable) must not be recorded."""
+    if "blind_comparison" in review and sealed_text(record) is None:
+        return {key: value for key, value in review.items() if key != "blind_comparison"}
+    return review
+
+
 def settled(record: Any) -> bool:
     """A record that needs no new draft: sealed, late or unavailable (a finished decision survives a restart)."""
     return isinstance(record, dict) and record.get("status") in {SEALED, LATE, UNAVAILABLE}

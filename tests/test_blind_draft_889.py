@@ -150,3 +150,14 @@ async def test_a_refused_reservation_ends_the_request_as_a_budget_denial_not_an_
     failure = req["research_contract"]["failure"]
     assert failure["stage"] == "blind_draft" and "does not fit" in failure["budget"]
     assert "step" not in _kinds(hub)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scenario", ["off", "failed"])
+async def test_a_comparison_of_a_draft_the_reviewer_never_saw_is_not_recorded(tmp_path, scenario):
+    hub = _hub(tmp_path, on=scenario != "off", draft_ok=scenario != "failed",
+               reviews=[{**cont.ACCEPT, "blind_comparison": COMPARISON}])
+    await Orchestrator(hub).run_request("r")
+
+    assert "blind_comparison" not in hub.requests["r"]["research_contract"]["review"]
+    assert hub.requests["r"]["outcome"] == "research_reported"
