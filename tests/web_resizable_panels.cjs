@@ -51,8 +51,15 @@ if (selected !== undefined && !VIEWPORTS.includes(selected)) {
 // still fit. It is shared by the stages of one viewport only: an outer deadline without a selected viewport is refused.
 const outerDeadline = Number(process.env.LABHQ_TEST_OUTER_DEADLINE_MS);
 const workDeadline = Number.isFinite(outerDeadline) && outerDeadline > 0 ? outerDeadline - CLOSE_RESERVE_MS : undefined;
+// The required CI case gives each viewport a real cold-browser start (up to 30 s) and UI phase (up to 20 s).
+// Both stay inside the same 60 s Python watchdog, including Node startup and the owned close reserve.
+const STARTUP_BUDGET_MS = 30000, UI_BUDGET_MS = 20000;
+const phaseBudgets = workDeadline === undefined ? {} : {startupBudgetMs: STARTUP_BUDGET_MS, uiBudgetMs: UI_BUDGET_MS};
 if (process.env.LABHQ_TEST_OUTER_DEADLINE_MS !== undefined && selected === undefined) {
   throw new Error('LABHQ_TEST_OUTER_DEADLINE_MS needs LABHQ_RESIZABLE_VIEWPORT: one deadline per viewport invocation');
+}
+if (process.env.LABHQ_REQUIRE_RESIZABLE_BROWSER === '1' && workDeadline === undefined) {
+  throw new Error('required resizable browser needs a finite outer deadline');
 }
 const runs = viewport => selected === undefined || selected === viewport;
 
@@ -77,7 +84,7 @@ if (runs('desktop')) test('desktop splitters drag, respond to arrows, persist an
   {skip: skipReason() || false, timeout: 60000}, async () => {
     console.error('resizable browser: desktop open');
     timing('open', {viewport: 'desktop'});
-    const desktop = await openDemo({width: 1440, height: 900, reducedMotion: true, workDeadline,
+    const desktop = await openDemo({width: 1440, height: 900, reducedMotion: true, workDeadline, ...phaseBudgets,
       diagnostic: event => console.error('resizable driver: ' + JSON.stringify({viewport: 'desktop', ...event}))});
     try {
       console.error('resizable browser: desktop load');
@@ -120,7 +127,7 @@ if (runs('phone')) test('phone layout hides the splitters and keeps the office f
   {skip: skipReason() || false, timeout: 60000}, async () => {
     console.error('resizable browser: phone open');
     timing('open', {viewport: 'phone'});
-    const phone = await openDemo({width: 390, height: 844, reducedMotion: true, workDeadline,
+    const phone = await openDemo({width: 390, height: 844, reducedMotion: true, workDeadline, ...phaseBudgets,
       diagnostic: event => console.error('resizable driver: ' + JSON.stringify({viewport: 'phone', ...event}))});
     try {
       console.error('resizable browser: phone load');

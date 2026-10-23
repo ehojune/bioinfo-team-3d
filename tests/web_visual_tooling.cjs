@@ -214,6 +214,34 @@ test('#833 one shared work deadline aborts a pending wait, drops it once and sto
   assert.deepEqual(expired, ['devtools-targets']);
 });
 
+test('#833 startup and UI budgets name the failed phase without losing abort or the outer cap', async () => {
+  const t = fakeTimers(1000), expired = [];
+  const outerWorkDeadline = 52000;  // a 60 s watchdog with 8 s reserved for owned cleanup
+  const startup = workBudget(Math.min(outerWorkDeadline, t.now() + 30000), {
+    phase: 'startup', now: t.now, setTimer: t.setTimer, clearTimer: t.clearTimer,
+    onExpired: stage => expired.push(['startup', stage])});
+  let aborted = 0;
+  const waiting = startup.bound('chrome-start', signal => new Promise(() => {
+    signal.addEventListener('abort', () => aborted++);
+  }));
+  await Promise.resolve();
+  const [[id, timer]] = t.timers;
+  assert.equal(timer.ms, 30000);
+  t.fire(id);
+  await assert.rejects(waiting, error => error.code === 'DEMO_WORK_DEADLINE'
+    && error.phase === 'startup' && error.stage === 'chrome-start'
+    && /demo startup deadline reached/.test(error.message));
+  assert.equal(aborted, 1);
+  assert.equal(t.timers.size, 0);
+  const ui = workBudget(Math.min(outerWorkDeadline, t.now() + 20000), {
+    phase: 'ui', now: t.now, setTimer: t.setTimer, clearTimer: t.clearTimer,
+    onExpired: stage => expired.push(['ui', stage])});
+  t.clock.now = 52000;
+  assert.throws(() => ui.check('Page.navigate'), error => error.phase === 'ui'
+    && error.stage === 'Page.navigate' && /demo ui deadline reached/.test(error.message));
+  assert.deepEqual(expired, [['startup', 'chrome-start'], ['ui', 'Page.navigate']]);
+});
+
 test('#833 a wait that fails before the deadline keeps its own error and clears its timer', async () => {
   const t = fakeTimers(0);
   const budget = workBudget(10000, {now: t.now, setTimer: t.setTimer, clearTimer: t.clearTimer,
@@ -372,7 +400,7 @@ test('Linux keeps spawning Chrome directly, whatever LABHQ_TEST_PYTHON says', as
 // ---- #833: the opt-in work deadline inside the actual driver (vm, fake resources, fake clock) ----
 test('#833 the reserve after the work deadline covers one close: its deadline, profile removal and process exit', () => {
   assert.equal(CLOSE_RESERVE_MS, CLEANUP_MS + 20 * 100 + 1000);
-  assert.ok(CLOSE_RESERVE_MS < 30000 / 2, 'most of the 30 s watchdog is still work');
+  assert.ok(CLOSE_RESERVE_MS < 60000 / 2, 'most of the 60 s watchdog is still work');
 });
 
 test('#833 a work deadline reached once the server is owned closes it once and opens nothing more', async () => {
@@ -387,6 +415,24 @@ test('#833 a work deadline reached once the server is owned closes it once and o
   // The next viewport shares the spent budget: it fails before any profile, server or browser.
   await assert.rejects(f.open(opts), error => error.code === 'DEMO_WORK_DEADLINE' && error.stage === 'open-start');
   assert.deepEqual(f.events, ['profile-create','listen','timer-set','server-close','timer-clear','profile-remove']);
+});
+
+test('#833 phased startup expiry closes the owned server before the outer watchdog', async () => {
+  const times = [1000, 1000, 31001], rows = [];
+  const f = startupFixture({port: 40000, globals: {Date: {now: () => times.length > 1 ? times.shift() : times[0]},
+    performance: {now: () => 0}}});
+  await assert.rejects(f.open({workDeadline: 52000, startupBudgetMs: 30000, uiBudgetMs: 20000,
+    diagnostic: row => rows.push(JSON.parse(JSON.stringify(row)))}),
+  error => error.code === 'DEMO_WORK_DEADLINE' && error.phase === 'startup' && error.stage === 'server-ready');
+  assert.deepEqual(f.events, ['profile-create','listen','timer-set','server-close','timer-clear','profile-remove']);
+  assert.deepEqual(rows.filter(row => row.stage === 'startup-deadline').map(row => row.during), ['server-ready']);
+});
+
+test('#833 phased run rejects missing bounds before it owns resources', async () => {
+  const f = startupFixture({port: 40000});
+  await assert.rejects(f.open({workDeadline: 52000, startupBudgetMs: 30000}),
+    /phased demo needs an outer work deadline and positive startup\/UI budgets/);
+  assert.deepEqual(f.events, []);
 });
 
 test('#833 a Chrome start still waiting at the work deadline stops there, records it and is cleaned up once', async () => {

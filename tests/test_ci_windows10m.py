@@ -232,18 +232,18 @@ def test_node_timeout_retains_partial_output_and_original_failure(binary):
         assert command[0] == 'fake-node'
         calls.append(options['env'].get('LABHQ_RESIZABLE_VIEWPORT'))
         # The exact interpreter reaches the Windows Job wrapper of the demo driver (#842); no PATH python.
-        # #833: the first viewport's invocation, with its watchdog's absolute end (epoch ms); the timeout is unchanged.
-        assert options == dict(capture_output=True, text=True, encoding='utf-8', timeout=30,
+        # #833: startup/UI have separate budgets inside this one bounded, cleanup-inclusive invocation.
+        assert options == dict(capture_output=True, text=True, encoding='utf-8', timeout=60,
                                env={'LABHQ_TEST_PYTHON': 'fake-python', 'LABHQ_RESIZABLE_VIEWPORT': 'desktop',
-                                    'LABHQ_TEST_OUTER_DEADLINE_MS': '1030000'})
+                                    'LABHQ_TEST_OUTER_DEADLINE_MS': '1060000'})
         stdout, stderr = 'TAP version 13\n', 'resizable browser: desktop load\n'
         if binary:
             stdout, stderr = stdout.encode(), stderr.encode()
-        raise subprocess.TimeoutExpired(command, 30, output=stdout, stderr=stderr)
+        raise subprocess.TimeoutExpired(command, 60, output=stdout, stderr=stderr)
     with pytest.raises(AssertionError) as result:
         node_wrapper(run)('web_resizable_panels.cjs', 'fail 0')
     assert isinstance(result.value.__cause__, subprocess.TimeoutExpired)
-    assert 'web_resizable_panels.cjs (desktop) exceeded 30s' in str(result.value)
+    assert 'web_resizable_panels.cjs (desktop) exceeded 60s' in str(result.value)
     assert 'TAP version 13' in str(result.value)
     assert 'resizable browser: desktop load' in str(result.value)
     assert calls == ['desktop']  # a failed first viewport ends the node; the second never reports success alone
@@ -259,9 +259,9 @@ def test_each_resizable_viewport_runs_in_its_own_invocation_with_a_fresh_deadlin
     assert [name for name, _ in seen] == ['web_resizable_panels.cjs'] * 2
     inherited = {'LABHQ_REQUIRE_RESIZABLE_BROWSER': '1', 'LABHQ_TEST_PYTHON': 'fake-python'}
     assert [options['env'] for _, options in seen] == [
-        {**inherited, 'LABHQ_RESIZABLE_VIEWPORT': 'desktop', 'LABHQ_TEST_OUTER_DEADLINE_MS': '1030000'},
-        {**inherited, 'LABHQ_RESIZABLE_VIEWPORT': 'phone', 'LABHQ_TEST_OUTER_DEADLINE_MS': '1042500'}]
-    assert [options['timeout'] for _, options in seen] == [30, 30]
+        {**inherited, 'LABHQ_RESIZABLE_VIEWPORT': 'desktop', 'LABHQ_TEST_OUTER_DEADLINE_MS': '1060000'},
+        {**inherited, 'LABHQ_RESIZABLE_VIEWPORT': 'phone', 'LABHQ_TEST_OUTER_DEADLINE_MS': '1072500'}]
+    assert [options['timeout'] for _, options in seen] == [60, 60]
     # Other scripts: one invocation, no viewport or deadline variable, their own timeout.
     seen.clear()
     wrapper = node_wrapper(run)
@@ -283,7 +283,7 @@ def test_a_failed_or_skipped_viewport_fails_the_whole_resizable_node(failing, pr
         if viewport != failing:
             return SimpleNamespace(returncode=0, stdout=resizable_tap(viewport), stderr='')
         if problem == 'timeout':
-            raise subprocess.TimeoutExpired(command, 30, output='TAP version 13\n', stderr='')
+            raise subprocess.TimeoutExpired(command, 60, output='TAP version 13\n', stderr='')
         other = 'phone' if viewport == 'desktop' else 'desktop'
         stdout = {'returncode': resizable_tap(viewport), 'skipped': resizable_tap(viewport, passed=2, skipped=1),
                   'pass2': resizable_tap(viewport, passed=2),
@@ -304,15 +304,15 @@ def test_a_failed_viewport_reports_its_launch_epoch_deadline_and_monotonic_durat
     def run(command, **options):
         seen.append(options['env']['LABHQ_TEST_OUTER_DEADLINE_MS'])
         if ending == 'timeout':
-            raise subprocess.TimeoutExpired(command, 30, output='TAP version 13\n', stderr='')
+            raise subprocess.TimeoutExpired(command, 60, output='TAP version 13\n', stderr='')
         return SimpleNamespace(returncode=1, stdout=resizable_tap('desktop'), stderr='')
     with pytest.raises(AssertionError) as failure:
         node_wrapper(run, required_browser=True, clock=lambda: next(epochs),
                      monotonic=lambda: next(monotonics))('web_resizable_panels.cjs', 'fail 0')
-    assert seen == ['1030000']  # the deadline is the same single reading, not a second one
+    assert seen == ['1060000']  # the deadline is the same single reading, not a second one
     line = next(line for line in str(failure.value).splitlines() if line.startswith('resizable timing (python): '))
     assert json.loads(line.split(': ', 1)[1]) == {'viewport': 'desktop', 'launch_epoch_ms': 1000000,
-                                                  'deadline_epoch_ms': 1030000, 'returned_after_mono_ms': 22210}
+                                                  'deadline_epoch_ms': 1060000, 'returned_after_mono_ms': 22210}
     # Other scripts report no timing line.
     def other(command, **options):
         return SimpleNamespace(returncode=1, stdout='fail 0', stderr='')
@@ -394,6 +394,10 @@ def test_resizable_browser_diagnostics_keep_deadline_cleanup_and_selection():
     assert 'outerDeadline - CLOSE_RESERVE_MS' in source
     assert source.count('const workDeadline =') == 1
     assert source.count('reducedMotion: true, workDeadline,') == 2
+    assert 'const STARTUP_BUDGET_MS = 30000, UI_BUDGET_MS = 20000;' in source
+    assert source.count('...phaseBudgets') == 2
+    assert "if (process.env.LABHQ_REQUIRE_RESIZABLE_BROWSER === '1' && workDeadline === undefined) {" in source
+    assert "'web_resizable_panels.cjs': 60" in wrapper_source
     data = s.validate_profile()
     path = 'tests/test_web_3d.py'
     assert s.include_windows(path, (s.ROOT/path).read_text(encoding='utf-8'), data,
