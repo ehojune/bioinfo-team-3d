@@ -206,6 +206,7 @@
     "tests/test_real_streams.py",
     "tests/test_recruit_before_plan.py",
     "tests/test_recruit_disabled_static.py",
+    "tests/test_recruit_inherited_budget_static.py",
     "tests/test_recruit_plan_review3.py",
     "tests/test_reference_shell_677.py",
     "tests/test_registry.py",
@@ -385,7 +386,8 @@
     "tests/test_paper_skill_waiting.py": "Approved paper preparation ownership, asynchronous lifetime and cancellation contracts; synthetic jobs, no live service.",
     "tests/test_paper_skill_recovery_identity.py": "Gateway recovered durable-task identity, cancellation and budget-hold boundary; fake dispatch, no live runner.",
     "tests/test_recruit_disabled_static.py": "Explicit recruitment/Paper2Agent disable refusal before runner/workspace/setup/recovery and attachment effects; extracted production guards with fake callbacks, no live service.",
-    "tests/test_continuation_refusal_static.py": "Continuation model-refusal identity, original-round/cost preservation and explicit recovery choice; extracted production decision code with inert synchronous fakes, no runtime."
+    "tests/test_continuation_refusal_static.py": "Continuation model-refusal identity, original-round/cost preservation and explicit recovery choice; extracted production decision code with inert synchronous fakes, no runtime.",
+    "tests/test_recruit_inherited_budget_static.py": "Reserved plan recruitment inherits the parent hold and remaining allowance through the actual nested Task and Claude budget argv; extracted production guards/accounting with inert fakes, no runtime."
   },
   "mixed_nodes": {
     "tests/test_environment_signatures.py": {
@@ -529,7 +531,7 @@
       }
     },
     "tests/test_web_3d.py": {
-      "sha256": "9b930ba6ba6df61a1e55ac9fa4b3d2c134761a6c5308231333de21181c309fa4",
+      "sha256": "0712d9393211cfe3ed13e426c5a7c6f03e3d711e3a0bd01f1649d5c4a4e18f31",
       "reason": "Only static JS pose/marker string assertions are omitted; server/browser/auth/path/packaging and native Node nodes remain.",
       "nodes": {
         "test_both_pages_load_same_reducer_and_keep_dom_approvals": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",

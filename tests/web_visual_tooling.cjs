@@ -7,7 +7,8 @@ const {DEFAULT_TOLERANCE, diffView, sameColor, colorChannels} = require('./suppo
 const {updateBaseline} = require('../scripts/update_visual_baseline.cjs');
 const vm = require('node:vm');
 const {openDemo, skipReason, CLOCK_SOURCE, closeDemoResources, demoLifecycleTrace, requestBrowserShutdown,
-  CLEANUP_MS, GRACEFUL_CLEANUP_MS, JOB_STARTING_BROWSER, chromeStderrWatcher, profileEntryCount} = require('./support/demo_driver.cjs');
+  CLEANUP_MS, GRACEFUL_CLEANUP_MS, JOB_STARTING_BROWSER, chromeStderrWatcher, profileEntryCount, BROWSER_CREATED,
+  portReadCounter, workBudget, CLOSE_RESERVE_MS} = require('./support/demo_driver.cjs');
 
 // Synchronous fake clock/observer only; no browser, timer or event loop.
 test('demo lifecycle trace measures from its own origin and between observed boundaries', () => {
@@ -105,11 +106,122 @@ test('#833 the start wait records the marker and one counts-only waiting row; ac
   assert.equal((start.match(/debug = /g) || []).length, 1);
   assert.match(start, /debug = fs\.readFileSync\(path\.join\(profile, 'DevToolsActivePort'\), 'utf8'\)/);
   assert.match(start, /while \(!debug && !exited && Date\.now\(\) < startDeadline\)/);
-  assert.match(source, /const startDeadline = Date\.now\(\) \+ START_MS;/);
+  // #833: the 60 s start budget, ended no later than an opt-in work deadline (budget.cap is the identity without one).
+  assert.match(source, /const startDeadline = budget\.cap\(Date\.now\(\) \+ START_MS\);/);
   assert.match(source, /const START_MS = 60000;/);
   assert.equal((start.match(/trace\.observe\('chrome-waiting'/g) || []).length, 1);
-  assert.match(start, /job_marker_seen: stderrWatch\.marked\(\), profile_entries: profileEntryCount\(profile\),\s*chrome_stderr_bytes: stderrWatch\.chromeBytes\(\)\}/);
-  assert.match(source, /chromeStderrWatcher\(\(\) => trace\.observe\('job-ready'\)\)/);
+  assert.match(start, /job_marker_seen: stderrWatch\.marked\(\), chrome_created_seen: stderrWatch\.created\(\),\s*port_reads: portReads\.counts\(\), profile_entries: profileEntryCount\(profile\),\s*chrome_stderr_bytes: stderrWatch\.chromeBytes\(\)\}/);
+  assert.match(start, /catch \(error\) \{ portReads\.failed\(error\); \}/);
+  assert.match(source, /chromeStderrWatcher\(\(\) => trace\.observe\('job-ready'\), \(\) => trace\.observe\('chrome-created'\)\)/);
+});
+
+test('#833 the created line counts only right after the Job line, and a read failure leaves only a fixed code', () => {
+  const seen = [];
+  const watch = chromeStderrWatcher(() => seen.push('job'), () => seen.push('created'));
+  watch.feed(`${JOB_STARTING_BROWSER}\r\n${BROWSER_CREATED.slice(0, 9)}`);  // split anywhere, CR LF
+  assert.equal(watch.created(), false);
+  watch.feed(`${BROWSER_CREATED.slice(9)}\r\n[chrome] warn ${BROWSER_CREATED}\n`);
+  assert.deepEqual(seen, ['job', 'created']);
+  assert.equal(watch.marked() && watch.created(), true);
+  assert.equal(watch.text(), `[chrome] warn ${BROWSER_CREATED}\n`);  // later, the same text is only Chrome's output
+  assert.equal(watch.chromeBytes(), Buffer.byteLength(watch.text()));
+  // Chrome's own output first: the Job line still counts, the created line is not seen and the output is Chrome's.
+  const early = chromeStderrWatcher(() => {}, () => assert.fail('not after Chrome output'));
+  early.feed(`${JOB_STARTING_BROWSER}\nDevTools listening\n${BROWSER_CREATED}\n`);
+  assert.equal(early.marked(), true);
+  assert.equal(early.created(), false);
+  assert.equal(early.text(), `DevTools listening\n${BROWSER_CREATED}\n`);
+  // Without the Job line first, the created line is only output too.
+  const plain = chromeStderrWatcher(() => assert.fail('no Job line'), () => assert.fail('no Job line'));
+  plain.feed(`${BROWSER_CREATED}\n`);
+  assert.equal(plain.created(), false);
+  assert.equal(plain.chromeBytes(), Buffer.byteLength(`${BROWSER_CREATED}\n`));
+
+  const reads = portReadCounter();
+  for (const code of ['ENOENT', 'ENOENT', 'EBUSY', 'EACCES', 'EPERM', 'EISDIR', undefined]) {
+    reads.failed(Object.assign(new Error('C:/private/profile/DevToolsActivePort secret'), {code}));
+  }
+  reads.empty();
+  reads.failed(null);
+  const counts = reads.counts();
+  assert.deepEqual(counts, {ENOENT: 2, EBUSY: 1, EACCES: 1, EPERM: 1, other: 3, empty: 1});
+  counts.ENOENT = 99;
+  assert.equal(reads.counts().ENOENT, 2, 'a snapshot, not the live counter');
+  assert.doesNotMatch(JSON.stringify(reads.counts()), /private|secret|DevToolsActivePort/);
+});
+
+// ---- #833: one opt-in work deadline (fake clock and timers only; nothing waits in real time) ----
+function fakeTimers(start = 0) {
+  const clock = {now: start}, timers = new Map();
+  let seq = 0;
+  return {clock, timers, now: () => clock.now,
+    setTimer(fn, ms) { const id = ++seq; timers.set(id, {fn, ms, at: clock.now + ms}); return id; },
+    clearTimer(id) { timers.delete(id); },
+    fire(id) { const t = timers.get(id); timers.delete(id); clock.now = Math.max(clock.now, t.at); t.fn(); }};
+}
+
+test('#833 without a work deadline every wait runs exactly as before: no timer, no signal, no expiry', async () => {
+  const t = fakeTimers();
+  const budget = workBudget(undefined, {now: t.now, setTimer: t.setTimer, clearTimer: t.clearTimer,
+    onExpired: () => assert.fail('no deadline')});
+  let signal = 'unset';
+  const result = budget.bound('Runtime.evaluate', given => { signal = given; return Promise.resolve(7); });
+  assert.equal(await result, 7);
+  assert.equal(signal, undefined);
+  assert.equal(t.timers.size, 0);
+  assert.equal(budget.remaining(), Infinity);
+  assert.equal(budget.cap(61000), 61000);
+  budget.check('anything');
+  assert.equal(budget.limited, false);
+});
+
+test('#833 one shared work deadline aborts a pending wait, drops it once and stops all later work', async () => {
+  const t = fakeTimers(1000), expired = [];
+  const budget = workBudget(1500, {now: t.now, setTimer: t.setTimer, clearTimer: t.clearTimer,
+    onExpired: stage => expired.push(stage)});
+  assert.equal(budget.cap(61000), 1500);
+  assert.equal(budget.cap(1200), 1200);
+  // A wait that settles in time clears its own timer; nothing is left behind.
+  assert.equal(await budget.bound('Page.enable', () => Promise.resolve('ok')), 'ok');
+  assert.equal(t.timers.size, 0);
+  // A wait still pending at the deadline: its signal aborts, the caller's drop runs once, the result is a failure.
+  let aborted = 0, dropped = 0, settleLate;
+  const pending = budget.bound('devtools-targets', signal => new Promise(resolve => {
+    settleLate = resolve;
+    signal.addEventListener('abort', () => aborted++);
+  }), () => dropped++);
+  await Promise.resolve();  // the wait has started
+  assert.equal(t.timers.size, 1);
+  const [[id, timer]] = t.timers;
+  assert.equal(timer.ms, 500, 'the timer is the remaining shared budget');
+  t.clock.now = 1200;  // the same budget is shared: less remains later for every caller
+  assert.equal(budget.remaining(), 300);
+  t.fire(id);
+  await assert.rejects(pending, error => error.code === 'DEMO_WORK_DEADLINE' && error.stage === 'devtools-targets');
+  assert.equal(aborted, 1);
+  assert.equal(dropped, 1);
+  settleLate('late answer');  // a late result changes nothing
+  await Promise.resolve();
+  assert.equal(dropped, 1);
+  // The next viewport or CDP call starts nothing once the budget is spent, and the final phase was recorded once.
+  t.clock.now = 1500;
+  let started = 0;
+  await assert.rejects(budget.bound('Page.navigate', () => { started++; return Promise.resolve(); }),
+    error => error.stage === 'Page.navigate');
+  assert.throws(() => budget.check('open-start'), error => error.code === 'DEMO_WORK_DEADLINE' && error.stage === 'open-start');
+  assert.equal(started, 0);
+  assert.equal(t.timers.size, 0);
+  assert.deepEqual(expired, ['devtools-targets']);
+});
+
+test('#833 a wait that fails before the deadline keeps its own error and clears its timer', async () => {
+  const t = fakeTimers(0);
+  const budget = workBudget(10000, {now: t.now, setTimer: t.setTimer, clearTimer: t.clearTimer,
+    onExpired: () => assert.fail('not expired')});
+  const failure = new Error('CDP socket failed: refused');
+  await assert.rejects(budget.bound('cdp-socket', () => Promise.reject(failure)), error => error === failure);
+  await assert.rejects(budget.bound('cdp-socket', () => { throw failure; }), error => error === failure);
+  assert.equal(t.timers.size, 0);
 });
 
 test('demo lifecycle observer and clock failures cannot replace an operation failure', () => {
@@ -140,7 +252,7 @@ test('one startup and load fit the trace bound while an incomplete startup inven
 // Evaluate the actual driver in an isolated VM with only owned synthetic
 // resources. These async contracts run in CI; they launch no browser/service.
 function startupFixture({port = 55921, listenError = null, closeError = null, platform, env = {}, existing = [],
-  wrapperPresent = false, spawned = null} = {}) {
+  wrapperPresent = false, spawned = null, globals = {}} = {}) {
   const events = [], profile = path.join('owned-root', 'owned-profile');
   let onError;
   const server = {
@@ -175,7 +287,7 @@ function startupFixture({port = 55921, listenError = null, closeError = null, pl
     process:{env:{LABHQ_TEST_CHROME:'owned-chrome', ...env}, platform, getActiveResourcesInfo:() => []},
     console:{error() {}},
     setTimeout(fn, ms) { assert.equal(ms, 5000); events.push('timer-set'); return 7; },
-    clearTimeout(id) { assert.equal(id, 7); events.push('timer-clear'); }};
+    clearTimeout(id) { assert.equal(id, 7); events.push('timer-clear'); }, ...globals};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'support/demo_driver.cjs'), 'utf8'), sandbox);
   return {open:sandbox.module.exports.openDemo, exports:sandbox.module.exports, events,
     hasListenErrorHandler:() => Boolean(onError)};
@@ -255,6 +367,90 @@ test('Linux keeps spawning Chrome directly, whatever LABHQ_TEST_PYTHON says', as
   const [direct, directArgs] = f.exports.browserCommand('owned-chrome', ['a'], null);
   assert.equal(direct, 'owned-chrome');
   assert.deepEqual(Array.from(directArgs), ['a']);
+});
+
+// ---- #833: the opt-in work deadline inside the actual driver (vm, fake resources, fake clock) ----
+test('#833 the reserve after the work deadline covers one close: its deadline, profile removal and process exit', () => {
+  assert.equal(CLOSE_RESERVE_MS, CLEANUP_MS + 20 * 100 + 1000);
+  assert.ok(CLOSE_RESERVE_MS < 30000 / 2, 'most of the 30 s watchdog is still work');
+});
+
+test('#833 a work deadline reached once the server is owned closes it once and opens nothing more', async () => {
+  const times = [1000, 3000];  // open-start check, then server-ready check
+  const rows = [];
+  const f = startupFixture({port: 40000, globals: {Date: {now: () => times.length > 1 ? times.shift() : times[0]},
+    performance: {now: () => 0}}});
+  const opts = {workDeadline: 2000, diagnostic: row => rows.push(JSON.parse(JSON.stringify(row)))};
+  await assert.rejects(f.open(opts), error => error.code === 'DEMO_WORK_DEADLINE' && error.stage === 'server-ready');
+  assert.deepEqual(f.events, ['profile-create','listen','timer-set','server-close','timer-clear','profile-remove']);
+  assert.deepEqual(rows.filter(row => row.stage === 'work-deadline').map(row => row.during), ['server-ready']);
+  // The next viewport shares the spent budget: it fails before any profile, server or browser.
+  await assert.rejects(f.open(opts), error => error.code === 'DEMO_WORK_DEADLINE' && error.stage === 'open-start');
+  assert.deepEqual(f.events, ['profile-create','listen','timer-set','server-close','timer-clear','profile-remove']);
+});
+
+test('#833 a Chrome start still waiting at the work deadline stops there, records it and is cleaned up once', async () => {
+  const t = fakeTimers(1000), events = [], rows = [];
+  const handlers = {};
+  const chrome = {exitCode: null, signalCode: null, stderr: {on() {}, closed: false},
+    once(name, fn) { (handlers[name] ||= []).push(fn); }, on(name, fn) { (handlers[name] ||= []).push(fn); },
+    kill() {
+      events.push('chrome-kill');
+      chrome.exitCode = 1;
+      for (const name of ['exit', 'close']) for (const fn of (handlers[name] || []).splice(0)) fn(1, null);
+    }};
+  let onError;
+  const server = {once(name, fn) { onError = fn; }, removeListener() { onError = null; },
+    listen(port, host, ready) { events.push('listen'); ready(); }, address: () => ({port: 40000}),
+    close(done) { events.push('server-close'); done(); }};
+  const profile = path.join('owned-root', 'owned-profile');
+  const fakeFs = {existsSync: name => name === 'owned-chrome', mkdirSync() {},
+    mkdtempSync() { events.push('profile-create'); return profile; },
+    readFileSync(name) {
+      assert.equal(name, path.join(profile, 'DevToolsActivePort'));
+      events.push('port-read');
+      throw Object.assign(new Error('C:/private/profile secret'), {code: 'ENOENT'});
+    },
+    readdirSync: () => [], rmSync(dir) { assert.equal(dir, profile); events.push('profile-remove'); }};
+  const modules = {'node:fs': fakeFs, 'node:path': path, 'node:os': {tmpdir: () => 'owned-root'},
+    'node:http': {createServer: () => server},
+    'node:child_process': {spawn() { events.push('spawn'); return chrome; }},
+    './test_font.cjs': {}, './mini_ws.cjs': {}};
+  const sandbox = {module: {exports: {}}, __dirname: path.join(__dirname, 'support'),
+    require(name) { assert.ok(Object.hasOwn(modules, name), name); return modules[name]; },
+    process: {env: {LABHQ_TEST_CHROME: 'owned-chrome'}, platform: 'linux', getActiveResourcesInfo: () => []},
+    console: {error() {}}, Date: {now: t.now}, performance: {now: t.now}, AbortController,
+    fetch() { throw new Error('no DevTools request before a published port'); },
+    setTimeout: t.setTimer, clearTimeout: t.clearTimer};
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'support/demo_driver.cjs'), 'utf8'), sandbox);
+  const open = opts => sandbox.module.exports.openDemo(opts);
+  // Fire the next fake timer whenever the driver has nothing else to do, until the open settles.
+  const pump = async promise => {
+    let settled = false;
+    promise.then(() => { settled = true; }, () => { settled = true; });
+    for (let i = 0; i < 100 && !settled; i++) {
+      await new Promise(resolve => setImmediate(resolve));
+      if (settled) break;
+      const next = [...t.timers].sort(([a, x], [b, y]) => x.at - y.at || a - b)[0];
+      if (next) t.fire(next[0]);
+    }
+    return promise;
+  };
+  const opts = {workDeadline: 1350, diagnostic: row => rows.push(JSON.parse(JSON.stringify(row)))};
+  await assert.rejects(pump(open(opts)), error => error.code === 'DEMO_WORK_DEADLINE' && error.stage === 'chrome-start');
+  assert.equal(t.clock.now, 1350, 'the start wait ends at the work deadline, not at its own 60 s budget');
+  assert.deepEqual(events.filter(event => event !== 'port-read'),
+    ['profile-create', 'listen', 'spawn', 'chrome-kill', 'server-close', 'profile-remove']);
+  assert.equal(events.filter(event => event === 'port-read').length, 4);
+  assert.equal(t.timers.size, 0, 'no wait or cleanup timer outlives the close');
+  const final = rows.filter(row => row.stage === 'work-deadline');
+  assert.deepEqual(final.map(row => [row.during, row.port_reads]), [['chrome-start', {ENOENT: 4}]]);
+  assert.equal(rows.some(row => row.stage === 'debug-port-ready'), false);
+  assert.doesNotMatch(JSON.stringify(rows), /private|secret|owned-profile/);
+  // The same deadline then refuses the phone viewport before it creates anything.
+  await assert.rejects(pump(open(opts)), error => error.stage === 'open-start');
+  assert.equal(events.filter(event => event === 'profile-create').length, 1);
+  assert.equal(events.filter(event => event === 'chrome-kill').length, 1);
 });
 
 // ---- layout_snapshot: colors are #rrggbb hex bytes ----

@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -22,6 +23,7 @@ import stat
 import subprocess
 import tempfile
 import time
+from decimal import Decimal, ROUND_FLOOR
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -401,6 +403,25 @@ def probation(kind: str, tools: list[str], skill_dir: str | None, offer_status: 
     return (False, f"offer_status {', '.join(draft)}") if draft else (True, None)
 
 
+def conversion_budget(settings, parent_task_id, budget, remaining):
+    """A reserved plan hire spends its existing hold, never the recruiter's larger default.
+
+    Manual hires and reservation-off plans retain their configured limit. Claude's CLI renders cents, so round
+    down before sending: rounding a sub-cent reservation up would authorize more than its hold.
+    """
+    if not parent_task_id or not settings.policy.budget.reserve_before_dispatch:
+        return settings.recruit.max_budget_usd, None
+    values = (budget, remaining, settings.recruit.max_budget_usd)
+    if any(value is None for value in values):
+        raise ValueError("reserved recruitment requires a parent budget and remaining allowance")
+    if any(type(value) not in (int, float) or not math.isfinite(value) or value <= 0 for value in values):
+        raise ValueError("reserved recruitment requires finite positive allowances")
+    cap = float(Decimal(str(min(values))).quantize(Decimal("0.01"), rounding=ROUND_FLOOR))
+    if cap <= 0:
+        raise ValueError("reserved recruitment allowance is below one CLI cent")
+    return cap, cap
+
+
 class Recruitment:
     def __init__(self, runner: "Runner", msg: dict):
         self.r, self.s = runner, runner.s
@@ -408,6 +429,8 @@ class Recruitment:
         self.ttl_days = float(msg.get("ttl_days") or self.s.recruit.default_ttl_days)
         self.request_id = msg.get("request_id")
         self.plan_task_id = msg.get("plan_task_id")
+        self.parent_budget = msg.get("parent_budget_usd")
+        self.parent_remaining = msg.get("parent_budget_remaining_usd")
         self.slug = slugify(msg.get("name") or self.repo or self.paper or "contract")
 
     async def _emit(self, typ: str, data: dict) -> None:
@@ -415,8 +438,20 @@ class Recruitment:
                                 data={"slug": self.slug, **data,
                                       **({"plan_task_id": self.plan_task_id} if self.plan_task_id else {})}))
 
+    def conversion_task(self, build) -> Task:
+        budget, remaining = conversion_budget(self.s, self.plan_task_id, self.parent_budget, self.parent_remaining)
+        return Task(
+            agent_id=self.s.recruit.agent_id, request_id=self.request_id, output_schema=OFFER_SCHEMA,
+            prompt=build_prompt(self.paper, self.repo, self.focus, build), budget_usd=budget,
+            request_budget_remaining_usd=remaining,
+            meta={"kind": "recruit", "slug": self.slug, "title": f"파견직 채용 변환: {self.slug}",
+                  "agent_overrides": {"permission_mode": self.s.recruit.permission_mode}},
+        )
+
     async def run(self) -> AgentSpec | None:
         require_enabled(self.s)
+        # Validate inherited allowances before creating a build directory or preparing a model turn.
+        conversion_budget(self.s, self.plan_task_id, self.parent_budget, self.parent_remaining)
         talent = self.r.registry.talent_dir / self.slug
         build = talent / "build"
         build.mkdir(parents=True, exist_ok=True)
@@ -428,14 +463,11 @@ class Recruitment:
             return None
 
         await self._emit("recruit.status", {"stage": "converting", "paper": self.paper, "repo": self.repo})
-        task = Task(
-            agent_id=self.s.recruit.agent_id, request_id=self.request_id, output_schema=OFFER_SCHEMA,
-            prompt=build_prompt(self.paper, self.repo, self.focus, build), budget_usd=self.s.recruit.max_budget_usd,
-            meta={"kind": "recruit", "slug": self.slug, "title": f"파견직 채용 변환: {self.slug}",
-                  "agent_overrides": {"permission_mode": self.s.recruit.permission_mode}},
-        )
+        task = self.conversion_task(build)
         # Tracked like a dispatched task: a card answer that arrives after this turn ended must not mark the
         # recruiter working again (PR #526 review, #521).
+        if self.plan_task_id and self.s.policy.budget.reserve_before_dispatch:
+            self.r._bind_recruitment_conversion(self.plan_task_id, task)
         turn = asyncio.ensure_future(self.r.run_task(task, workdir_override=build))
         self.r.tasks[task.id] = turn
         result = await turn
