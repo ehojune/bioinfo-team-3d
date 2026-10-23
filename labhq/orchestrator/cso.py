@@ -7514,9 +7514,10 @@ class Orchestrator:
             carried["declined_plan"] = draft
         # Results of a round that never dispatched are not step results: a failed plan task or a refused budget
         # card arrives as results={"plan": ...}. Keep it for diagnosis here, not beside the restored steps (PR #448).
+        # The plan control task stays in that diagnostic namespace even if an archived step is also named plan.
         step_ids = {str(s.get("id")) for s in (req.get("plan") or {}).get("steps") or [] if isinstance(s, dict)}
-        stray = {key: value for key, value in (results or {}).items() if key not in step_ids}
-        results = {key: value for key, value in (results or {}).items() if key in step_ids}
+        stray = {key: value for key, value in (results or {}).items() if key == "plan" or key not in step_ids}
+        results = {key: value for key, value in (results or {}).items() if key != "plan" and key in step_ids}
         carried["ended_before_dispatch"] = {"outcome": req.get("outcome"), "reason": reason,
                                             **({"task_results": stray} if stray else {})}
         if req.get("outcome") == "model_refused" and carried.get("refusal_retry"):

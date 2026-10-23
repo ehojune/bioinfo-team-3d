@@ -123,6 +123,33 @@ class ContinuationRefusal(unittest.TestCase):
         self.assertIn("같은 이어 가기", card["pi_outcome"])
         self.assertEqual(h.created, [])
 
+    def test_step_named_plan_keeps_archived_result_and_same_request_refusal_recovery(self):
+        c = logic()
+        scope = extracted("labhq/orchestrator/cso.py", {"_continuation_unstarted", "_unstarted_continuation_end"},
+                          {"research_continuation": c, "_research_issue_lines": lambda rows: []}, owner="Orchestrator")
+        scope["Orchestrator"] = NS(_continuation_unstarted=scope["_continuation_unstarted"])
+        for trigger in ("review", "cp2_revise"):
+            with self.subTest(trigger=trigger):
+                req = refused_request(trigger)
+                previous = req["research_contract"]["rounds"][-1]
+                previous["plan"]["steps"][0]["id"] = "plan"
+                previous["results"] = {"plan": {"task_id": "old-step", "ok": True}}
+                req.update(plan=copy.deepcopy(previous["plan"]), results=copy.deepcopy(previous["results"]),
+                           status="running", outcome="model_refused")
+                req["research_contract"]["round"] = 2
+                refusal = {"plan": {"task_id": "refused-plan", "error_kind": "model_refused"}}
+                _, results, _ = scope["_unstarted_continuation_end"](req, "safe refusal", refusal, None)
+                req.update(status="failed", results=results)
+                self.assertEqual(results, previous["results"])
+                self.assertEqual(c.refusal_context(req)["refusal_task_id"], "refused-plan")
+                h = hub(req); h.offer_model_refusal("r")
+                identity = h.approvals["refusal-card"]["approval"]["detail"]["continuation"]
+                rid = h._model_refusal_request("r", {"action": "model", "cso_model": "new"},
+                                               approval_id="refusal-card", continuation=identity)
+                self.assertEqual(rid, "r")
+                self.assertEqual(req["results"], previous["results"])
+                self.assertEqual(h.created, [])
+
     def test_other_model_keeps_request_round_results_budget_and_costs(self):
         h = hub(); h.offer_model_refusal("r")
         req = h.requests["r"]; before = copy.deepcopy(req)
