@@ -252,6 +252,7 @@
     "tests/test_scheduler_none.py",
     "tests/test_scope_gate.py",
     "tests/test_security.py",
+    "tests/test_selection_record_890.py",
     "tests/test_semantic_device_report.py",
     "tests/test_semantic_devices.py",
     "tests/test_semantic_impact_796.py",
