@@ -291,10 +291,18 @@ def slurm_job(job_id: str, records: list[JobInfo]) -> JobInfo | None:
 
 # ---------- backend ----------
 
+def _local_user() -> str:
+    """OS user name, or "labhq" when it cannot be resolved (no USERNAME/USER/LOGNAME on Windows)."""
+    try:
+        return getpass.getuser() or "labhq"
+    except Exception:  # getpass falls back to POSIX-only `pwd`, which raises ImportError/KeyError here
+        return "labhq"
+
+
 class Scheduler:
     def __init__(self, cfg: HpcSettings):
         self.cfg = cfg
-        self.user = cfg.user or getpass.getuser()
+        self.user = cfg.user or _local_user()
 
     def _require_enabled(self, operation: str) -> None:
         if self.cfg.scheduler == "none":

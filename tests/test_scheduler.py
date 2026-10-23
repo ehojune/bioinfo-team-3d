@@ -1,3 +1,5 @@
+import getpass
+
 import pytest
 
 from labhq.settings import HpcSettings, Settings
@@ -126,3 +128,17 @@ def test_helpers():
     lines = script.splitlines()
     assert lines[0] == "#!/bin/bash" and lines[1] == "#$ -V" and "set -euo pipefail" in lines and lines[-1] == "echo hi"
     assert "umask 007" in build_script("echo hi", "/w/hpc_out", umask="007")
+
+
+def test_scheduler_user_falls_back_without_user_env(monkeypatch):
+    for name in ("USERNAME", "USER", "LOGNAME", "LNAME"):
+        monkeypatch.delenv(name, raising=False)
+    assert Scheduler(HpcSettings()).user
+
+
+def test_scheduler_user_falls_back_when_getuser_raises(monkeypatch):
+    def boom():
+        raise ModuleNotFoundError("No module named 'pwd'")
+    monkeypatch.setattr("labhq.tools.scheduler.getpass.getuser", boom)
+    assert Scheduler(HpcSettings()).user == "labhq"
+    assert Scheduler(HpcSettings(user="alice")).user == "alice"
