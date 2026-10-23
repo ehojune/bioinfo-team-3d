@@ -178,6 +178,10 @@ async def test_a_real_gateway_restart_opens_the_resume_card_with_the_plan(tmp_pa
     assert card["detail"]["cp1_target_sha256"] == plan_sha256(plan) and "연구 계획" in card["summary"]
     assert json.loads(card["detail"]["plan_canonical"])["steps"][0]["id"] == "s1"
     assert card["pi_summary"]  # the PI copy was rebuilt from the longer card
+    # A page that reconnects with a cursor replays events: the last one for this card carries the plan too.
+    replayed = [e["data"] for e in second.events if e.get("type") == "approval.requested"
+                and e["data"]["id"] == card["id"]]
+    assert replayed[-1]["detail"]["cp1_target_sha256"] == plan_sha256(plan)
 
     third = Hub(settings)  # a second restart keeps one card with the plan
     cards = [a["approval"] for a in third.approvals.values() if a["approval"]["kind"] == "resume"]
@@ -201,3 +205,18 @@ async def test_the_cp1_token_is_saved_before_the_resume_card_is_resolved(tmp_pat
     # The stop came after the token save and before the card was resolved: nothing is lost either way.
     assert hub.requests["r"]["resume_cp1"]["target_sha256"] == plan_sha256(plan)
     assert card["id"] in hub.store.all("approval")
+
+
+@pytest.mark.asyncio
+async def test_a_restarted_resume_card_shows_the_cap_with_the_stored_cost(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    settings.policy.budget.per_request_usd = 100
+    plan = {**cont._plan(1), "budget_usd": 3.0}
+    first = Hub(settings)
+    first.requests["r"] = {**_running(plan), "cost_usd": 2.0}
+    first.save_request("r")
+
+    second = Hub(settings)  # the new orchestrator's ledger starts empty; the stored cost is $2
+    card = next(a["approval"] for a in second.approvals.values() if a["approval"]["kind"] == "resume")
+    assert "집행 상한 $5.00" in card["summary"], card["summary"]

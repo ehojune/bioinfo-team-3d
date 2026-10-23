@@ -1466,6 +1466,12 @@ class Hub:
                 "pi_summary": "", "pi_reason": "", "pi_outcome": "", "pi_explainer": "",
                 "pi_needs_interpretation": False}).model_dump(mode="json")
             self.save_approval(aid)
+            # A page that reconnects with a cursor replays the stored events: the plan-less card of startup recovery
+            # must be superseded there too, or the PI approves CP1 for a plan the page never showed (#654 review).
+            event = self.store.append_event({"type": "approval.requested", "ts": time.time(),
+                "request_id": card["request_id"], "data": with_approval_copy(entry["approval"])},
+                self.s.gateway.event_buffer)
+            self.events.append(event)
 
     def retire_resume_cards(self, rid: str, note: str) -> list[str]:
         """Resolve and remove every pending resume card of a request that no longer needs resuming (#607).

@@ -4213,6 +4213,9 @@ class Orchestrator:
         # What the CP1 card shows beyond this card's text keeps CP1 as its own question (see finish_research_plan).
         if paper_skills.card_text(plan) or any("재배정" in w for w in plan.get("warnings") or [] if isinstance(w, str)):
             return None
+        # A restarted gateway has an empty ledger: seed the stored cost as run_request does, so the cap shown here
+        # is the cap CP1 will enforce (#654 review).
+        self.cost[rid] = max(self.cost.get(rid, 0.0), float(req.get("cost_usd") or 0))
         budget, _ = self._research_budget(rid, req, plan)
         steps = [f"{step['id']}·{step['agent_id']}: {short(' '.join(str(step['instruction']).split()), 40)}"
                  for step in plan["steps"]]
