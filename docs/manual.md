@@ -2,6 +2,7 @@
 
 처음이라면 [README](../README.md)의 "웹으로 시작하기"부터 보세요. 이 문서는 그다음입니다: 명령줄, 설정, 안전 장치, 연구 lane, 알려진 한계.
 PI의 질문과 결정은 [PI Q&A](pi-qa.md)에, 개발 규칙과 작업 큐는 [AGENTS.md](../AGENTS.md)·[HANDOFF.md](../HANDOFF.md)에 있습니다.
+개발 checkout의 author·agent 표식 보존 규칙은 [Git hooks](reference/git-hook-authorship.md)를 참고하세요.
 
 | 장 | 무엇 |
 |---|---|
