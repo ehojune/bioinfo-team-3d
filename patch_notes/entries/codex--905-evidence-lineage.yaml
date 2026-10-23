@@ -1,0 +1,5 @@
+rows:
+- sha: d4375c9
+  at: '2026-10-24 02:58'
+  summary: 원문 접근 범위와 최초 실증 출처를 구분하고 순환 인용을 독립 근거에서 제외합니다.
+  text: SourceRef의 optional 접근·Methods/QC·보충자료 metadata와 Evidence.lineage를 추가했다. 순수 assess_lineage가 확인된 원출처의 source identity와 group을 병합하며 순환·누락·미확인은 context로 보존한다. legacy round-trip과 관련 test 303 passed. Refs #905; report·manual 통합은 #907.
