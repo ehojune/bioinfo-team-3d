@@ -43,7 +43,9 @@ CANARY = "CANARY-research-91c2"
 # #799 adds the shared cohesive-analysis sentence; with main's policy text the prompt still hashes to the previous
 # 72274c0b…, and both schemas and VALID_PLAN_SHA are unchanged.
 RESEARCH_PLAN_SCHEMA_SHA = "ecaec20a558be2cba0955836579538a13a1785ce5baed14bda3827a054d8f859"
-RESEARCH_RESULT_SCHEMA_SHA = "9a767787fade091505fea149a8841845738ce30ce77cf6657cbca0aaa72af64d"
+# #905 extends only the result schema with optional source access metadata and citation lineage.
+# Plan schema, planning prompt and existing approved-plan hash stay pinned to their previous values.
+RESEARCH_RESULT_SCHEMA_SHA = "596679add2478c0eff0eddaddd8d85604b0148770fb5a4aaa0a0235e836ca179"
 # #798/#671 change only paper timing/parallel fallback; normalize that sentence to exact previous prompts.
 RESEARCH_PROMPT_SHA = "a00381711998ac579e148a4188048a628d1f65edf4452b397ce42d2319788adb"
 VALID_PLAN_SHA = "f611461cc2dbb17e39159ec1df6a75d8f7b661eb39bbe42c8ed0438c5c45e213"
