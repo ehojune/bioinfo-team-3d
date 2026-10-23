@@ -14,7 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 01:24 | [`c4a5ab6`](https://github.com/ehojune/bioinfo-team-3d/pull/900/commits/c4a5ab6) | **shutdown이 끝난 뒤 ACK를 직접 처리해도 검사가 통과하던 빈틈을 닫았습니다.**<br>P2 4361721792를 수정했습니다. ACK 전 entry 생존과 shutdown 반환 시 outbox 0을 확인합니다. gateway 2.1초+ACK 3.1초 지연 비교에서 이전 head는 통과했지만 수정본은 종료 뒤 ACK 처리를 거부했습니다. 제품 shutdown 5초와 fixture 단계 상한은 유지합니다. SIGTERM/SIGHUP serial·4-worker 각 20회와 관련 pool 130 passed·3 skipped를 확인했습니다. |
 | 01:16 | [`f290ab6`](https://github.com/ehojune/bioinfo-team-3d/pull/895/commits/f290ab6) | **웹에서 종료를 누를 때도 무엇을 마무리하는 중인지 단계별로 보여 줍니다.**<br>웹 종료창에도 마무리 단계를 CLI와 같은 문구로 표시 (#658 리뷰 P2) |
+| 01:14 | [`5c416c8`](https://github.com/ehojune/bioinfo-team-3d/pull/900/commits/5c416c8) | **Windows 검사가 R version·syntax 시간과 mock signal 뒤 durable ACK 대기를 따로 기록합니다.**<br>R test fixture는 두 subprocess의 기본 10초와 receipt 계약을 유지하며 elapsed·timeout·returncode를 남깁니다. SIGTERM/SIGHUP 검사는 work 준비 뒤 callback을 호출하고 result·gateway·ACK·entry를 단계별로 기다립니다. 제품 shutdown 5초와 기존 단언은 유지했습니다. ACK 3.1초 지연 비교는 수정 전 실패·후 통과였으나 실제 CI DB 지연 원인을 재현한 결과는 아닙니다. R 실제 지연 원인은 미확인이라 #898은 유지합니다. |
 | 01:07 | [`cb4d44f`](https://github.com/ehojune/bioinfo-team-3d/pull/895/commits/cb4d44f) | **종료 안내에서 몇 분째인지 보이는 단계가 보고서 묶음뿐임을 매뉴얼에 정확히 적었습니다.**<br>문서: 경과 시간 표시가 보고서 묶음 단계만임을 manual에 맞춤 (#658 리뷰 P2) |
 | 01:05 | [`8ab2874`](https://github.com/ehojune/bioinfo-team-3d/pull/884/commits/8ab2874) | **사용자 이름을 지어내지 않고 실제 계정을 조회하며, 알 수 없으면 큐 조회가 설정을 요구하고 멈춥니다.**<br>사용자 이름을 못 구하면 "labhq"를 지어내지 않고 Windows 로그온 계정을 조회하며, 끝내 모르면 queue가 hpc.user 설정을 요구하며 실패한다. |
 | 00:55 | [`08e200c`](https://github.com/ehojune/bioinfo-team-3d/pull/895/commits/08e200c) | **종료할 때 무엇을 마무리하는 중인지와 몇 분째인지 알려 주고, 10분 넘게 멈춘 묶음 작업은 종료를 막지 않습니다.**<br>down: 마무리 표시를 단계·경과 시간으로 적고 멈춘 묶음 작업은 종료를 막지 않게 한다 (#658) |

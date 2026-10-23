@@ -4,6 +4,17 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+Refs #898
+
+- R version/syntax subprocess의 elapsed·timeout·returncode를 test fixture에 따로 남기고 기본 10초 경계 두 개를 fake로 검증합니다.
+- mock SIGTERM/SIGHUP은 work 준비 뒤 호출하며 durable result·gateway resume·ACK·entry 완료를 단계별로 기다립니다. 각 fixture 단계와 제품 shutdown은 5초를 유지합니다. ACK 전 entry 생존과 shutdown 반환 시 outbox 0을 확인하며 기존 단언도 유지합니다.
+- ACK 3.1초 지연 주입: 수정 전 1 failed(`TimeoutError`), 수정 후 1 passed. 실제 CI의 DB/writer 지연 원인을 재현한 결과는 아닙니다.
+- 관련 검사 serial 및 4-worker `loadfile`: 각각 130 passed·3 skipped. 변경한 4개 case는 serial/4-worker `load` 각각 20회 통과했습니다. 리뷰 수정 뒤 SIGTERM/SIGHUP도 같은 조건에서 각각 20회 통과했습니다(80 PASS).
+- Python 3.10 AST·public·diff 검사 통과. 제품 코드·coverage/receipt 계약은 바꾸지 않았습니다.
+- Rscript가 없는 로컬의 실제 R 두 case와 symlink 권한이 필요한 한 case는 skip됐습니다. R 실제 지연 원인은 미확인이므로 #898을 닫지 않습니다. CI·같은 head 봇 리뷰·병합은 PR에서 확인합니다.
+
+[관측과 해석 경계](../reference/windows-test-boundaries-898.md)
+
 ## #658 종료하기: 멈춘 '마무리 중' 표시 (PR #895, base 611f8ea4)
 
 - 대조: 이슈 4항목 중 1(끝나면 지움)·4(옛 gateway)는 main에 이미 있다. 2·3을 구현했다.
