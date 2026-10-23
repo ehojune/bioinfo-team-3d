@@ -128,7 +128,7 @@ def test_selection_path_resolution_is_per_invocation_not_per_parameter(tmp_path,
         suite.select(items, s.WINDOWS_BOUNDARY, tmp_path, changed=set())
 
 
-def fake_git(paths=('tests/test_math.py',), parents=None):
+def fake_git(paths=('tests/test_math.py',), parents=None, *, merge_base=A, diff_base=A):
     calls = []
     def git(*args):
         calls.append(args)
@@ -137,9 +137,9 @@ def fake_git(paths=('tests/test_math.py',), parents=None):
         if args[:1] == ('rev-list',):
             return ' '.join(parents or [H, A, B])
         if args[:1] == ('merge-base',):
-            return A
+            return merge_base
         if args[:1] == ('diff',):
-            assert args == ('diff', '--name-only', '-z', '--no-renames', A, H)
+            assert args == ('diff', '--name-only', '-z', '--no-renames', diff_base, H)
             return ''.join(p + '\0' for p in paths)
         raise AssertionError(args)
     return git, calls
@@ -187,9 +187,25 @@ def test_push_range_requires_after_checkout_and_before_ancestor():
         s.change_range('push', {'before': A, 'after': B}, H, git)
 
 
-@pytest.mark.parametrize('parents', [[H, B, A], [H, A], [H, A, B, A], [H, 'd' * 40, B]])
+@pytest.mark.parametrize('parents', [[H, B, A], [H, A], [H, A, B, A]])
 def test_unknown_or_drifted_merge_range_is_not_selection_evidence(parents):
     git, _ = fake_git(parents=parents)
+    with pytest.raises(ValueError, match='parents'):
+        s.change_range('pull_request', event(), H, git)
+
+
+def test_forward_base_drift_uses_the_tested_merge_parent():
+    tested_base = 'd' * 40
+    git, calls = fake_git(parents=[H, tested_base, B], diff_base=tested_base)
+    result = s.change_range('pull_request', event(), H, git)
+    assert result == {'version': 1, 'checkout': H, 'base': tested_base,
+                      'paths': ['tests/test_math.py']}
+    assert ('merge-base', A, tested_base) in calls
+
+
+@pytest.mark.parametrize('merge_base', ['d' * 40, 'e' * 40])
+def test_unrelated_or_backward_base_drift_is_rejected(merge_base):
+    git, _ = fake_git(parents=[H, 'd' * 40, B], merge_base=merge_base)
     with pytest.raises(ValueError, match='parents'):
         s.change_range('pull_request', event(), H, git)
 

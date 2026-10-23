@@ -44,7 +44,9 @@ function renderModelRefusal(parent, approval) {
   parent.replaceChildren();
   const actionLabel = add(parent, 'label', '다음 조치 ');
   const action = add(actionLabel, 'select');
-  for (const [value, text] of [['', '선택해 주세요'], ['model', '다른 CSO 모델로 다시 계획'], ['edit', '문구를 바꿔 새 요청']]) {
+  for (const [value, text] of [['', '선택해 주세요'],
+    ['model', approval.detail?.continuation ? '다른 CSO 모델로 이어 가기 다시 계획' : '다른 CSO 모델로 다시 계획'],
+    ['edit', '문구를 바꿔 새 요청']]) {
     const option = add(action, 'option', text); option.value = value;
   }
   action.value = '';
@@ -832,8 +834,10 @@ function updateCard(row, item, options) {
   if (value.kind === 'result_storage') {p.approve.textContent = '선택하고 진행'; p.deny.textContent = '로컬만';}
   if (value.kind === 'result_publish') {p.approve.textContent = '확인했어요 · 올리기'; p.deny.textContent = '로컬에만 남기기';}
   if (value.kind === 'model_refused') {
-    p.approve.textContent = '새 요청으로 계획'; p.deny.textContent = '그대로 종료';
-    p.consequence.textContent = '모델 또는 수정한 문구를 직접 선택해야 새 요청을 만듭니다. 원래 요청은 실패 상태로 남고 새 요청도 기존 승인·안전 검사를 거칩니다.';
+    p.approve.textContent = value.detail?.continuation ? '선택한 방식으로 다시 계획' : '새 요청으로 계획'; p.deny.textContent = '그대로 종료';
+    p.consequence.textContent = value.detail?.continuation
+      ? '다른 모델은 같은 요청의 이어 가기를 새 계획·CP1부터 재개합니다. 이전 결과·누적 비용을 보존합니다. 문구 수정은 새 요청을 만듭니다.'
+      : '모델 또는 수정한 문구를 직접 선택해야 새 요청을 만듭니다. 원래 요청은 실패 상태로 남고 새 요청도 기존 승인·안전 검사를 거칩니다.';
     p.consequence.hidden = false;
   }
   // CP2 수정 요청 re-plans through a new CP1 until the continuation cap, then ends the request like 거부 (R10).

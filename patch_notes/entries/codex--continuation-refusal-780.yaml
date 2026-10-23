@@ -1,0 +1,22 @@
+pr: 876
+rows:
+  - sha: daea6ba
+    at: "2026-10-23 14:14"
+    summary: "단계 이름이 plan이어도 이전 결과를 보존하고 같은 요청을 복구합니다."
+    text: "리뷰 P2의 제어 task와 단계 ID 충돌을 review·CP2 경로에서 재현해 고쳤다. 계획 실패 결과는 ended_before_dispatch 진단에 분리하며 이전 결과→복구 카드→같은 요청 재계획의 동기 fake14검사를 통과했다. 실제 실행·새 head CI는 별도다."
+  - sha: 4c8de13
+    at: "2026-10-23 14:01"
+    summary: "이어 가기 복구 PR에 병합된 Windows 브라우저 CI 수정을 반영했습니다."
+    text: "#881 포함 main을 충돌 없이 통합했다. 복구 제품·fake 검사·선택기는 검토판 a142462d와 같고 browser/workflow는 병합된 main과 같다. profile·Python3.10 문법·기록·공개 검사를 확인했으며 최종 head CI·리뷰는 별도다."
+  - sha: 3c5eb68
+    at: "2026-10-23 10:02"
+    summary: "이어 가기 계획이 모델 거절로 끝나도 다른 모델로 같은 요청을 다시 계획합니다."
+    text: "복원한 이전 round 결과와 거절 원인을 분리하고 기존 비용·예산을 유지한 채 새 CP1을 거친다. 편집은 새 요청임을 표시하고 오래된 복구 선택과 거절 task 재채택을 막는다. 동기 fake 12개와 정적 검사를 확인했으며 실제 실행 검증은 CI에 맡긴다."
+  - sha: c815dd7
+    at: "2026-10-23 10:35"
+    summary: "거절 복구의 기존 metadata 검사에도 새 이어 가기 helper를 연결했습니다."
+    text: "첫 Linux CI에서 드러난 plain namespace test double의 누락을 고쳤다. 원래 회귀를 실제 helper와 함께 동기 추출 검사로 실행해 13개 PASS를 확인했다. 제품 코드는 그대로이며 별개 Windows 브라우저 30초 실패는 해결 범위 밖이다."
+  - sha: 1c97ff4
+    at: "2026-10-23 10:56"
+    summary: "최신 main의 채용 예산 검사와 이어 가기 검사를 함께 보존했습니다."
+    text: "Windows 경계 목록의 충돌은 두 테스트와 기존 분류 근거를 합쳐 해결했다. #874·#875 코드와 #876 CI 선택기·복구 변경을 유지하며 관련 동기 fake 30개와 merge-parent drift 3개, 정적 검사를 확인했다. 실제 CI·연구 실행 성공을 뜻하지 않는다."

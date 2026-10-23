@@ -17,6 +17,54 @@ from test_plan_only_cso_model import ModelHub
 REFUSAL = "API Error: Example's safeguards flagged this session. Details: [bio] <script>private</script>"
 
 
+@pytest.mark.parametrize("trigger", ["review", "cp2_revise"])
+@pytest.mark.parametrize("action", ["model", "edit", "decline"])
+async def test_continuation_refusal_recovery_keeps_round_or_explicitly_starts_new_request(setup, trigger, action):
+    """Remote CI only: real Hub card/resolver with the fixture's orchestration launch closed, never executed."""
+    _, hub, launches = setup
+    req = hub.requests["r"]
+    previous = {"round": 1, "plan_sha256": "a" * 64,
+                "plan": {"steps": [{"id": "s1", "agent_id": "worker"}]},
+                "results": {"s1": {"task_id": "old-step", "ok": True}},
+                "review": {"reviewer": "review", "issues": []}, "budget_usd": 2,
+                "approval": {"status": "approved", "approval_id": "old-cp1"},
+                "cp2": {"decision": "revise", "approval_id": "old-cp2"}}
+    req.update(plan=copy.deepcopy(previous["plan"]), results=copy.deepcopy(previous["results"]),
+               cost_usd=.4, cost_by_task={"old-step": .4}, outcome="model_refused",
+               research_contract={"round": 2, "plan_sha256": "a" * 64, "rounds": [previous],
+                   "continuation": {"round": 2, "from_plan_sha256": "a" * 64,
+                                    "approval_id": "old-cp2" if trigger == "cp2_revise" else "original-continue",
+                                    "trigger": trigger, "pi_request": "Preserve the approved scope"}})
+    _, results, _ = Orchestrator._unstarted_continuation_end(req, REASON,
+        {"plan": {"task_id": "refused-plan", "error_kind": "model_refused"}}, None)
+    req.update(status="failed", results=results)
+    before = copy.deepcopy(req)
+    hub.save_request("r")
+    await hub.offer_model_refusal("r")
+    aid = req["model_refusal_approval_id"]
+    assert hub.approvals[aid]["approval"]["detail"]["continuation"]["round"] == 2
+    decision = ({"action": "model", "cso_model": "gpt-6-astra"} if action == "model" else
+                {"action": "edit", "text": "Explicit new public research question"})
+    await hub.resolve_approval(aid, action != "decline", model_refusal=decision)
+    recorded = hub.store.get("approval_decision", aid)
+    if action == "model":
+        assert launches == ["r"] and len(hub.requests) == 1
+        assert recorded["continued_request_id"] == "r" and "new_request_id" not in recorded
+        assert req["research_contract"]["round"] == 2 and req["cso_model"] == "gpt-6-astra"
+        assert req["cost_usd"] == .4 and req["budget_usd"] == 2
+        assert req["research_contract"]["rounds"] == before["research_contract"]["rounds"]
+        assert req["results"] == previous["results"]
+    elif action == "edit":
+        assert len(launches) == 1 and launches[0] != "r"
+        assert recorded["new_request_id"] == launches[0] and "continued_request_id" not in recorded
+        assert "research_contract" not in hub.requests[launches[0]]
+        assert req["status"] == "failed"
+    else:
+        assert not launches and len(hub.requests) == 1
+        assert req["status"] == "failed" and req["outcome"] == before["outcome"]
+    await hub.result_storage.close()
+
+
 @pytest.mark.parametrize("ok,error,text,expected", [
     (False, None, REFUSAL, True), (False, REFUSAL, "", True), (True, None, REFUSAL, True),
     (True, None, "We studied refusals: " + REFUSAL, False),
@@ -279,6 +327,7 @@ def test_replan_keeps_request_meta_but_not_cp1_lineage():
 
     hub = SimpleNamespace(requests=requests, agents={}, create_request=create_request, s=SimpleNamespace(
         orchestrator=SimpleNamespace(cso_models=["opus", "gpt-6-astra"], cso_agent="cso")))
+    hub._continuation_refusal_context = Hub._continuation_refusal_context.__get__(hub)
     before = copy.deepcopy(requests)
     decision = {"action": "model", "cso_model": "gpt-6-astra"}
     child = requests[Hub._model_refusal_request(hub, "r", decision)]

@@ -18,6 +18,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -26,6 +27,101 @@ from typing import Any
 from .contract import ResearchPlan, plan_sha256, validate_research_result
 
 CONTINUE_GATE = "research_continue"
+
+
+def _refusal_scope_sha256(carried: dict) -> str:
+    scope = {key: carried.get(key) for key in
+             ("round", "from_plan_sha256", "p1_issues", "approval_id", "trigger", "pi_request", "note")}
+    return hashlib.sha256(_canonical(scope).encode()).hexdigest()
+
+
+def refusal_context(req: dict) -> dict | None:
+    """Bind the refusal of an unstarted continuation to the restored round, not a new research request."""
+    contract = req.get("research_contract") or {}
+    if not isinstance(contract, dict):
+        return None
+    carried = contract.get("continuation") or {}
+    if not isinstance(carried, dict):
+        return None
+    ended = carried.get("ended_before_dispatch") or {}
+    rounds = contract.get("rounds") or []
+    if (req.get("status") != "failed" or not isinstance(ended, dict)
+            or ended.get("outcome") != "model_refused" or not isinstance(rounds, list) or not rounds
+            or not isinstance(rounds[-1], dict)
+            or carried.get("verified") or carried.get("dispatch_started")):
+        return None
+    previous = rounds[-1]
+    number, target = previous.get("round"), carried.get("round")
+    task_results = ended.get("task_results") or {}
+    if not isinstance(task_results, dict) or not isinstance(task_results.get("plan"), dict):
+        return None
+    result = task_results["plan"]
+    task_id = result.get("task_id")
+    created = req.get("created_at")
+    if (type(number) is not int or type(target) is not int or target != number + 1
+            or contract.get("round") != number or not isinstance(task_id, str) or not task_id
+            or not isinstance(carried.get("approval_id"), str) or not carried["approval_id"]
+            or result.get("error_kind") != "model_refused"
+            or type(created) not in (int, float) or not math.isfinite(created) or created <= 0
+            or not previous.get("plan_sha256")
+            or contract.get("plan_sha256") != previous["plan_sha256"]
+            or carried.get("from_plan_sha256") != previous["plan_sha256"]
+            or _canonical(req.get("plan")) != _canonical(previous.get("plan"))):
+        return None
+    return {"created_at": created, "round": target, "cso_model": req.get("cso_model"),
+            "from_plan_sha256": previous["plan_sha256"], "refusal_task_id": task_id,
+            "continuation_sha256": _refusal_scope_sha256(carried),
+            "snapshot_sha256": hashlib.sha256(_canonical(previous).encode()).hexdigest()}
+
+
+def refusal_retry_pending(req: dict) -> bool:
+    contract = req.get("research_contract") or {}
+    if not isinstance(contract, dict):
+        raise ValueError("이어 가기 복구 기록을 확인할 수 없습니다.")
+    carried = contract.get("continuation") or {}
+    if not isinstance(carried, dict):
+        raise ValueError("이어 가기 복구 기록을 확인할 수 없습니다.")
+    retry = carried.get("refusal_retry") or {}
+    if not isinstance(retry, dict):
+        raise ValueError("이어 가기 복구 기록을 확인할 수 없습니다.")
+    if retry.get("state") not in {"approved", "planning"}:
+        return False
+    identity = retry.get("identity") or {}
+    rounds = contract.get("rounds") or []
+    decision = retry.get("decision") or {}
+    if (not isinstance(identity, dict) or not isinstance(rounds, list) or not rounds
+            or not isinstance(rounds[-1], dict) or not isinstance(decision, dict)
+            or not identity or req.get("created_at") != identity.get("created_at")
+            or contract.get("round") != identity.get("round") or carried.get("round") != identity.get("round")
+            or carried.get("from_plan_sha256") != identity.get("from_plan_sha256")
+            or _refusal_scope_sha256(carried) != identity.get("continuation_sha256")
+            or contract.get("plan_sha256") != identity.get("from_plan_sha256")
+            or _canonical(req.get("plan")) != _canonical(rounds[-1].get("plan"))
+            or hashlib.sha256(_canonical(rounds[-1]).encode()).hexdigest() != identity.get("snapshot_sha256")
+            or req.get("cso_model") != decision.get("cso_model")):
+        raise ValueError("이어 가기 복구 이후 요청이나 계획이 바뀌었습니다.")
+    return True
+
+
+def prepare_refusal_retry(req: dict, identity: dict, decision: dict, approval_id: str) -> None:
+    """Retry the same already-approved continuation round; preserve its archive, results, spending and budget."""
+    if (not approval_id or refusal_context(req) != identity or not isinstance(decision, dict)
+            or set(decision) != {"action", "cso_model"} or decision.get("action") != "model"
+            or not isinstance(decision.get("cso_model"), str) or not decision["cso_model"]):
+        raise ValueError("이어 가기 거절 이후 요청이나 계획이 바뀌었습니다.")
+    contract = req["research_contract"]
+    carried = contract["continuation"]
+    carried.setdefault("refusal_history", []).append(copy.deepcopy(carried["ended_before_dispatch"]))
+    carried["refusal_retry"] = {"state": "approved", "approval_id": approval_id,
+                                "identity": copy.deepcopy(identity), "decision": copy.deepcopy(decision)}
+    # A declined draft remains audit evidence, but cannot act as a new CP1 or reuse seal on the next planning turn.
+    for key in ("ended_before_dispatch", "plan_sha256", "verified", "dispatch_started", "reuse", "rerun", "reused_from"):
+        carried.pop(key, None)
+    contract["round"] = identity["round"]
+    req["cso_model"] = decision["cso_model"]
+    for key in ("cso_session_id", "cso_workdir", "model_refusal_approval_id", "finished_at", "error", "outcome"):
+        req.pop(key, None)
+    req["status"] = "waiting_for_runner"
 
 
 class ReuseApprovalRequired(RuntimeError):

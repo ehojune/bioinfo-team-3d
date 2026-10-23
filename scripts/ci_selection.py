@@ -337,7 +337,7 @@ def include_windows(path, text, data, *, root=ROOT, changed=frozenset(), node=No
 
 
 def change_range(event_name, event, checkout, git, *, preview=False):
-    """Immutable local Git + event snapshot. Missing/drifted range is an error.
+    """Bind changed paths to the checked-out commit and its tested base.
 
     This evidence selects tests only; it never authorizes artifact reuse.
     git is injected in tests; this function never fetches or contacts GitHub.
@@ -351,11 +351,16 @@ def change_range(event_name, event, checkout, git, *, preview=False):
         pr_snapshot(event["pull_request"])
     if event_name == "pull_request":
         pr = event["pull_request"]
-        base, head = pr["base"]["sha"], pr["head"]["sha"]
-        if (not isinstance(base, str) or not isinstance(head, str) or not SHA.fullmatch(base)
-                or not SHA.fullmatch(head) or base == head
-                or git("rev-list", "--parents", "-n", "1", checkout).split() != [checkout, base, head]):
+        event_base, head = pr["base"]["sha"], pr["head"]["sha"]
+        parents = git("rev-list", "--parents", "-n", "1", checkout).split()
+        if (not isinstance(event_base, str) or not isinstance(head, str)
+                or not SHA.fullmatch(event_base) or not SHA.fullmatch(head) or event_base == head
+                or len(parents) != 3 or parents[0] != checkout or parents[2] != head
+                or not SHA.fullmatch(parents[1]) or parents[1] == head
+                or (parents[1] != event_base and (preview
+                    or git("merge-base", event_base, parents[1]) != event_base))):
             raise ValueError("unbound selection merge parents")
+        base = parents[1]
     elif event_name == "push":
         base = event["before"]
         if (event["after"] != checkout or not isinstance(base, str) or not SHA.fullmatch(base)

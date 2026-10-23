@@ -1383,6 +1383,7 @@ class Hub:
                     entry.get("parent_task") == task.meta.get("parent_task") and
                     # A research continuation re-runs step ids of an earlier round under a new CP1 (#90).
                     prior_meta.get("research_round") == task.meta.get("research_round") and
+                    prior_meta.get("continuation_refusal_recovery") == task.meta.get("continuation_refusal_recovery") and
                     # A consult belongs to one ask; another ask's consult is not its prior attempt.
                     prior_meta.get("ask_id") == task.meta.get("ask_id") and
                     prior_meta.get("recruit_identity") == task.meta.get("recruit_identity"))
@@ -1575,6 +1576,15 @@ class Hub:
         req = self.requests[rid]
         if req.get("status") == "cancelled" or req.get("outcome") == "recruit_contract_ended":
             return
+        try:
+            continuation_retry = research_continuation.refusal_retry_pending(req)
+            if continuation_retry and req.get("cso_model") not in self.s.orchestrator.cso_models:
+                raise ValueError("선택한 CSO 모델이 더 이상 허용되지 않습니다.")
+        except ValueError as exc:
+            req.update(status="failed", error=str(exc), finished_at=time.time())
+            self.save_request(rid)
+            self.schedule_terminal(rid, "request.failed", {"error": req["error"]})
+            return
         await self._set_status(rid, "waiting_for_runner")
         deadline = asyncio.get_running_loop().time() + self.s.gateway.resume_wait_s
         previous: set[str] | None = None
@@ -1594,13 +1604,26 @@ class Hub:
                 self.schedule_terminal(rid, "request.failed", {"error": error})
                 return
             if not missing:
+                if continuation_retry:
+                    try:
+                        if not research_continuation.refusal_retry_pending(req):
+                            raise ValueError("이어 가기 복구 선택이 더 이상 유효하지 않습니다.")
+                        if req.get("cso_model") not in self.s.orchestrator.cso_models:
+                            raise ValueError("선택한 CSO 모델이 더 이상 허용되지 않습니다.")
+                        if self._round_dispatched(rid, req):
+                            raise ValueError("이어 가기 단계가 이미 전송되어 복구 선택을 적용하지 않았습니다.")
+                    except ValueError as exc:
+                        req.update(status="failed", error=str(exc), finished_at=time.time())
+                        self.save_request(rid)
+                        self.schedule_terminal(rid, "request.failed", {"error": req["error"]})
+                        return
                 await self._set_status(rid, "running")
                 await self.publish({"type": "request.resumed", "ts": time.time(), "request_id": rid,
                                     "data": {"agents": sorted(self.resume_agents(rid))}})
                 self.recovery_started[rid] = time.time()
                 self.recovery_steps.add(rid)
                 try:
-                    await self.orchestrator.run_request(rid, resume=True)
+                    await self.orchestrator.run_request(rid, resume=True, **({"continuation": True} if continuation_retry else {}))
                 finally:
                     self.recovery_steps.discard(rid)
                     self.recovery_started.pop(rid, None)
@@ -3289,32 +3312,60 @@ class Hub:
                                      "fix_id": record.get("fix_id"), "action": record.get("action"),
                                      "error": record.get("error")}})
 
+    def _continuation_refusal_context(self, rid: str) -> dict | None:
+        req = self.requests[rid]
+        identity = research_continuation.refusal_context(req)
+        if identity is None:
+            return None
+        if self._round_dispatched(rid, {"research_contract": {"round": identity["round"]}}):
+            return None
+        return identity
+
     async def offer_model_refusal(self, rid: str) -> None:
         """A durable PI choice after a failed plan; never launch a fallback automatically."""
         from ..model_refusal import REASON
         req = self.requests[rid]
-        if req.get("status") != "failed" or req.get("outcome") != "model_refused":
+        continuation = self._continuation_refusal_context(rid)
+        if req.get("status") != "failed" or (req.get("outcome") != "model_refused" and continuation is None):
             return
         if req.get("model_refusal_approval_id"):
             return
         current = req.get("cso_model") or (self.agents.get(self.s.orchestrator.cso_agent) or {}).get("model")
         card = ApprovalRequest(kind="model_refused", request_id=rid, summary="계획 거부 뒤 다음 조치를 고르세요.",
                                detail={"reason": REASON, "current_model": current,
-                                       "models": [m for m in self.s.orchestrator.cso_models if m != current]},
+                           "models": [m for m in self.s.orchestrator.cso_models if m != current],
+                           **({"continuation": continuation} if continuation else {})},
                                timeout_s=0,
                                pi_summary="모델 안전장치가 계획을 거부했습니다. 다음 조치를 고르세요.",
                                pi_reason=REASON,
-                               pi_outcome="새 모델 선택 또는 문구 수정은 새 요청으로 계획합니다. 종료하면 실행하지 않습니다.")
+                                pi_outcome=("다른 모델은 같은 이어 가기를 새 계획·CP1부터 재개합니다. 문구 수정은 새 요청입니다. 종료하면 실행하지 않습니다."
+                                            if continuation else "새 모델 선택 또는 문구 수정은 새 요청으로 계획합니다. 종료하면 실행하지 않습니다."))
         self.approvals[card.id] = {"approval": card.model_dump(mode="json"), "origin": None, "future": None}
         self.save_approval(card.id)
         req["model_refusal_approval_id"] = card.id
         self.save_request(rid)
         await self.publish({"type": "approval.requested", "request_id": rid, "data": card.model_dump(mode="json")})
 
-    def _model_refusal_request(self, rid: str, decision: dict | None) -> str:
+    def _model_refusal_request(self, rid: str, decision: dict | None, *,
+                               approval_id: str | None = None, continuation: dict | None = None) -> str:
         old = self.requests[rid]
-        if old.get("status") != "failed" or old.get("outcome") != "model_refused":
+        retry = ((old.get("research_contract") or {}).get("continuation") or {}).get("refusal_retry") or {}
+        if approval_id and retry.get("approval_id") == approval_id:
+            if (retry.get("identity") != continuation or retry.get("decision") != decision
+                    or old.get("status") not in {"waiting_for_runner", "running", "interrupted"}
+                    or not research_continuation.refusal_retry_pending(old)
+                    or self._round_dispatched(rid, old)
+                    or old.get("cso_model") not in self.s.orchestrator.cso_models):
+                raise ValueError("이어 가기 복구 선택이 바뀌었거나 이미 끝났습니다.")
+            return rid  # Saved before card resolution: replay never allocates another round/request.
+        context = self._continuation_refusal_context(rid)
+        if old.get("status") != "failed" or (old.get("outcome") != "model_refused" and context is None):
             raise ValueError("모델 거부로 끝난 요청에서만 새 계획을 선택할 수 있습니다.")
+        if context is not None and (context != continuation or not approval_id
+                                    or old.get("model_refusal_approval_id") != approval_id):
+            raise ValueError("이어 가기 복구 카드의 요청이나 계획이 바뀌었습니다.")
+        if continuation is not None and context is None:
+            raise ValueError("이어 가기 복구 카드가 더 이상 현재 계획을 가리키지 않습니다.")
         if not isinstance(decision, dict):
             raise ValueError("다른 CSO 모델 또는 수정한 요청을 명시적으로 선택해 주세요.")
         action = decision.get("action")
@@ -3331,6 +3382,10 @@ class Hub:
             text = text.strip()
         else:
             raise ValueError("알 수 없는 계획 거부 후속 선택입니다.")
+        if context is not None and action == "model":
+            research_continuation.prepare_refusal_retry(old, context, decision, approval_id)
+            self.save_request(rid)
+            return rid
         # A crash after creation but before recording the answer must not open a second request.
         found = next((key for key, req in self.requests.items() if req.get("model_refusal_from") == rid), None)
         if found:
@@ -3364,7 +3419,8 @@ class Hub:
         pending = self.approvals.get(approval_id)
         retry_id = None
         if pending and pending["approval"].get("kind") == "model_refused" and approved:
-            retry_id = self._model_refusal_request(pending["approval"]["request_id"], model_refusal)
+            retry_id = self._model_refusal_request(pending["approval"]["request_id"], model_refusal,
+                approval_id=approval_id, continuation=(pending["approval"].get("detail") or {}).get("continuation"))
         if pending and approved and pending["approval"].get("kind") == "result_publish":
             req = self.requests.get(pending["approval"].get("request_id")) or {}
             if not req.get("pi_reviewed_at"):
@@ -3382,7 +3438,9 @@ class Hub:
             raise KeyError(approval_id)
         chosen = {"choice": choice} if choice in DECISION_CHOICES else {}
         if retry_id:
-            chosen.update(model_refusal=model_refusal, new_request_id=retry_id)
+            chosen.update(model_refusal=model_refusal,
+                          **({"continued_request_id": retry_id} if retry_id == pending["approval"]["request_id"]
+                             else {"new_request_id": retry_id}))
         if storage is not None:
             chosen["storage"] = storage
         self.store.delete("approval", approval_id)
@@ -3417,6 +3475,8 @@ class Hub:
         await self.publish({"type": "approval.resolved", "ts": time.time(), "task_id": a.get("task_id"),
                             "agent_id": a.get("agent_id"), "request_id": a.get("request_id"),
                             "data": {"id": approval_id, "approved": approved, "note": note, **chosen}})
+        if retry_id and retry_id == a.get("request_id"):
+            self.track_request(retry_id, self.resume_when_ready(retry_id))
         if a.get("kind") == "resume" and not approved and not is_terminal_request(self.requests[a["request_id"]].get("status")):
             rid = a["request_id"]
             self._restore_unstarted_continuation(rid, self.requests[rid])

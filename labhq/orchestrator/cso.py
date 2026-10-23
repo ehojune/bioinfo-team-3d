@@ -3465,9 +3465,16 @@ class Orchestrator:
         plan or review the result of the same id from an earlier round (gateway ``_matches_recovery``)."""
         contract = ((self.hub.requests.get(task.request_id or "") or {}).get("research_contract") or {})
         round_no = int(contract.get("round") or 1)
-        if round_no <= 1 or "research_round" in task.meta:
-            return task
-        return task.model_copy(update={"meta": {**task.meta, "research_round": round_no}})
+        meta = dict(task.meta)
+        if round_no > 1:
+            meta.setdefault("research_round", round_no)
+        carried = contract.get("continuation") or {}
+        retry = carried.get("refusal_retry") or {}
+        if carried.get("round") == round_no and retry.get("approval_id"):
+            # A new explicit model choice must not adopt the refused plan from the same round. A restart of this
+            # very choice still adopts its own durable tasks under the existing recovery/budget identity rules.
+            meta["continuation_refusal_recovery"] = retry["approval_id"]
+        return task.model_copy(update={"meta": meta}) if meta != task.meta else task
 
     async def run_step(self, task: Task, first_attempt: int = 1) -> TaskResult:
         task = self._with_research_round(self._with_request_identity(task))
@@ -5602,6 +5609,8 @@ class Orchestrator:
         carried = contract["continuation"]
         carry = research_continuation.carry_over(contract["rounds"][-1], plan, pack_hashes,
                                                  carried.get("p1_issues") or [])
+        if (carried.get("refusal_retry") or {}).get("state") in {"approved", "planning"}:
+            carried["refusal_retry"]["state"] = "planned"  # ordinary CP1/reuse resume from this point
         carried.update(plan_sha256=research_plan_sha256(plan), verified=False, dispatch_started=False)
         carried.pop("refused_reuse", None)
         carried.pop("reuse_snapshot", None)
@@ -6035,7 +6044,7 @@ class Orchestrator:
         # Pointers ride with the request text, so briefing, plan, steps, review and report all see them (#36).
         text = (req["text"] + render_references(req.get("references")) +
                 answered_questions_prompt(req.get("clarifications")))
-        if not continuation:
+        if not continuation or resume:
             self.cost[rid] = float(req.get("cost_usd") or 0)
             self.cost_tasks[rid] = set(req.get("cost_by_task") or {})
             self._seed_cost(rid, req)
@@ -6106,7 +6115,7 @@ class Orchestrator:
                     await self._emit(rid, "request.semantic_devices", record)
             n = self.cfg.context_chars_per_step
             frozen_pack_snapshot = ((req.get("research_contract") or {}).get("pack_snapshot")
-                                    if resume and research_lane else None)
+                                    if resume and not continuation and research_lane else None)
             # A contract frozen before topic selection has no pack_applicability record: it resumes by the pack rule
             # it was approved under and never gains the record, so a second restart takes the same path (#390 review).
             legacy_pack_contract = (frozen_pack_snapshot is not None
@@ -6357,7 +6366,7 @@ class Orchestrator:
                                guard=self._external_guard(rid))
                 self.hub.save_request(rid)
 
-            if resume and req.get("plan", {}).get("steps"):
+            if resume and not continuation and req.get("plan", {}).get("steps"):
                 if not research_lane and not await self._scope_gate(rid, req):
                     return
                 if not req.get("research_contract") and not req.get("results"):
@@ -7505,11 +7514,14 @@ class Orchestrator:
             carried["declined_plan"] = draft
         # Results of a round that never dispatched are not step results: a failed plan task or a refused budget
         # card arrives as results={"plan": ...}. Keep it for diagnosis here, not beside the restored steps (PR #448).
+        # The plan control task stays in that diagnostic namespace even if an archived step is also named plan.
         step_ids = {str(s.get("id")) for s in (req.get("plan") or {}).get("steps") or [] if isinstance(s, dict)}
-        stray = {key: value for key, value in (results or {}).items() if key not in step_ids}
-        results = {key: value for key, value in (results or {}).items() if key in step_ids}
+        stray = {key: value for key, value in (results or {}).items() if key == "plan" or key not in step_ids}
+        results = {key: value for key, value in (results or {}).items() if key != "plan" and key in step_ids}
         carried["ended_before_dispatch"] = {"outcome": req.get("outcome"), "reason": reason,
                                             **({"task_results": stray} if stray else {})}
+        if req.get("outcome") == "model_refused" and carried.get("refusal_retry"):
+            carried["refusal_retry"]["state"] = "refused"
         if carried.get("trigger") == "cp2_revise":  # the CP2 revise it continued (R10)
             req["outcome"] = "evidence_revision_requested"
             ended = [f"{previous.get('round')}차 결과와 CP2 수정 요청이 이 요청의 결과입니다.", "",
