@@ -599,6 +599,12 @@ Rules:
 
 PI's request: {request}"""
 
+SELECTION_RECORD_RULE = (
+    "`selection_record` (optional object, #890): write it now, while you choose the design, so it is frozen with the "
+    "plan at CP1: `question` as the PI asked it, `premises`, `success_criteria`, `alternatives` (each `option` you "
+    "actually weighed with `rejected_because`) and `change_signals` (observations that would change your judgment). "
+    "Record only alternatives you really considered; leave the field out when you weighed none rather than "
+    "inventing some.")
 RESEARCH_PLAN_PROMPT = BIOINFO_ASSIGNMENT_RULE + "\n\n" + recruit_planning.PLAN_RULE + "\n\n" + paper_skills.PLAN_RULE + "\n\n" + """Create a frozen research contract for the PI's request. Do not execute or analyze.
 
 Team roster (use these agent ids exactly, never an orchestration role):
@@ -636,6 +642,7 @@ Contract rules:
 - Freeze analysis unit, selection/exclusion, comparators, metrics, validation, resources, stop/approval
   conditions, data boundaries, and statistics applicability before execution. Every not_applicable item needs a reason.
   Applicable statistics needs estimand, analysis_unit, and primary_outcomes.
+- """ + SELECTION_RECORD_RULE + """
 - `budget_usd` (optional number): the additional execution budget in USD after this plan's CP1 approval.
   Exclude briefing, clarification, planning and all earlier-round spending already incurred. On approval labhq adds
   that spending to this budget and clamps the total to the configured request cap; exceeding it waits for a PI
@@ -1220,6 +1227,15 @@ def _cost_estimate_line(estimate: dict[str, Any]) -> str:
     if amount is not None:
         return f"요청 비용은 기존 계획 추정 ${float(amount):.2f} 사용(실측 기록 부족)."
     return "요청 비용 추정: 실측 기록 부족(계획 추정 없음)."
+
+
+def selection_record_line(plan: Any) -> str:
+    """The CP1 card's one line on the plan's selection record (#890); a missing record is shown, never blocking."""
+    record = plan.get("selection_record") if isinstance(plan, dict) else None
+    if not isinstance(record, dict) or not record:
+        return "선택 기록 없음(검토한 대안·배제 이유가 계획에 고정되지 않았습니다)."
+    return (f"선택 기록: 검토한 대안 {len(record.get('alternatives') or [])}개(배제 이유 포함) · "
+            f"판단을 바꿀 관측 {len(record.get('change_signals') or [])}개.")
 
 
 def research_cp2_notes(contract: dict) -> list[tuple[str, str]]:
@@ -6339,7 +6355,9 @@ class Orchestrator:
                                    f"{', '.join(carried.get('reuse') or []) or '없음'} · 다시 실행: "
                                    f"{', '.join(carried.get('rerun') or {}) or '없음'}. ") + summary
                     budget, configured_source = self._research_budget(rid, req, plan)
-                    budget_line = _budget_line(budget)  # kept whole: the web shows the summary, not detail.budget
+                    # Kept whole beyond the 699-char cut: the web shows the summary, not detail.budget; the selection
+                    # record line (#890) rides with it, so long paper-skill or continuation text cannot cut it off.
+                    budget_line = selection_record_line(plan) + " " + _budget_line(budget)
 
                     async def ask_cp1(prefix: str = "") -> dict:
                         card = prefix + summary
