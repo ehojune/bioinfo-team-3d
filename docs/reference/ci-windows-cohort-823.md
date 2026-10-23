@@ -5,7 +5,7 @@
 ## 현재 실행 정책
 
 - PR/main은 필수 OS 경계와 변경된 관련 test를 한 번 검사합니다. Linux 3.10/3.12 전수·Windows nightly/manual 전수를 유지합니다.
-- profile6/boundary-v6·manifest8, 실행 identity는 `windows-critical-serial-v2`입니다. 필수 native/browser를 serial 2분 안에 확인한 뒤 나머지를 4-worker pool 7분으로 실행하며 job 상한은 10분입니다.
+- profile6/boundary-v6·manifest8, 실행 identity는 `windows-critical-serial-v2`입니다. 필수 native/browser를 serial 3분 안에 확인한 뒤 나머지를 4-worker pool 6분으로 실행하며 job 상한은 10분입니다.
 - 선택·pin·receipt 오류와 timeout은 실패입니다. 검사를 빼거나 전수 fallback으로 숨기지 않으며 실제 Job·ACK·시작/종료 안전 검사와 fsync/SQLite 내구성을 유지합니다.
 
 ## 실제 CI 측정
