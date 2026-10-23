@@ -198,8 +198,8 @@ def test_native_contract_preflight_and_missing_collected_case_fail(monkeypatch, 
     assert error == dict(profile=s.WINDOWS_BOUNDARY, status='invalid-selection', reusable=False)
 
 
-def node_wrapper(run, *, required_browser=False, clock=lambda: 1000.0):
-    """Execute only the wrapper definition, with a module-local fake transport and clock."""
+def node_wrapper(run, *, required_browser=False, clock=lambda: 1000.0, monotonic=lambda: 50.0):
+    """Execute only the wrapper definition, with a module-local fake transport and clocks."""
     import subprocess
     tree = ast.parse((s.ROOT/'tests/test_web_3d.py').read_text(encoding='utf-8'), feature_version=(3, 10))
     function = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'test_office_in_node')
@@ -207,7 +207,7 @@ def node_wrapper(run, *, required_browser=False, clock=lambda: 1000.0):
     namespace = dict(Path=Path, __file__=str(s.ROOT/'tests/test_web_3d.py'), pytest=pytest,
                      re=__import__('re'), os=SimpleNamespace(environ={'LABHQ_REQUIRE_RESIZABLE_BROWSER': '1'} if required_browser else {}),
                      shutil=SimpleNamespace(which=lambda name: 'fake-node'), sys=SimpleNamespace(executable='fake-python'),
-                     time=SimpleNamespace(time=clock),
+                     time=SimpleNamespace(time=clock, monotonic=monotonic), json=json,
                      subprocess=SimpleNamespace(run=run, TimeoutExpired=subprocess.TimeoutExpired))
     exec(compile(ast.Module(body=[function], type_ignores=[]), '<fake-node-wrapper>', 'exec'), namespace)
     return namespace['test_office_in_node']
@@ -293,6 +293,53 @@ def test_a_failed_or_skipped_viewport_fails_the_whole_resizable_node(failing, pr
     with pytest.raises(AssertionError, match=rf'web_resizable_panels\.cjs \({failing}\)'):
         node_wrapper(run, required_browser=True)('web_resizable_panels.cjs', 'fail 0')
     assert calls == (['desktop'] if failing == 'desktop' else ['desktop', 'phone'])
+
+
+@pytest.mark.parametrize('ending', ['returncode', 'timeout'])
+def test_a_failed_viewport_reports_its_launch_epoch_deadline_and_monotonic_duration(ending):
+    """#833: one wall-clock reading sets the deadline and is reported; the duration comes from the monotonic clock."""
+    import subprocess
+    epochs, monotonics = iter([1000.0]), iter([50.0, 72.21])
+    seen = []
+    def run(command, **options):
+        seen.append(options['env']['LABHQ_TEST_OUTER_DEADLINE_MS'])
+        if ending == 'timeout':
+            raise subprocess.TimeoutExpired(command, 30, output='TAP version 13\n', stderr='')
+        return SimpleNamespace(returncode=1, stdout=resizable_tap('desktop'), stderr='')
+    with pytest.raises(AssertionError) as failure:
+        node_wrapper(run, required_browser=True, clock=lambda: next(epochs),
+                     monotonic=lambda: next(monotonics))('web_resizable_panels.cjs', 'fail 0')
+    assert seen == ['1030000']  # the deadline is the same single reading, not a second one
+    line = next(line for line in str(failure.value).splitlines() if line.startswith('resizable timing (python): '))
+    assert json.loads(line.split(': ', 1)[1]) == {'viewport': 'desktop', 'launch_epoch_ms': 1000000,
+                                                  'deadline_epoch_ms': 1030000, 'returned_after_mono_ms': 22210}
+    # Other scripts report no timing line.
+    def other(command, **options):
+        return SimpleNamespace(returncode=1, stdout='fail 0', stderr='')
+    with pytest.raises(AssertionError) as plain:
+        node_wrapper(other)('web_state.cjs', 'fail 0')
+    assert 'resizable timing' not in str(plain.value)
+
+
+def test_resizable_script_reports_its_own_clocks_before_any_require_and_at_each_open():
+    source = (s.ROOT/'tests/web_resizable_panels.cjs').read_text(encoding='utf-8')
+    code = [line for line in source.splitlines() if line.strip() and not line.lstrip().startswith('//')]
+    assert code[0] == 'const MODULE_ENTRY_MONO_MS = performance.now();'  # the first statement, before any require
+    assert code[1].startswith("const {test} = require(")
+    assert source.count("console.error('resizable timing: ' + JSON.stringify({stage, ...extra,") == 1
+    for key in ('time_origin_epoch_ms: Math.round(performance.timeOrigin)', 'mono_ms: Math.round(performance.now())',
+                'epoch_ms: epoch', 'outer_remaining_ms: workDeadline === undefined ? null : outerDeadline - epoch',
+                'work_remaining_ms: workDeadline === undefined ? null : workDeadline - epoch'):
+        assert key in source
+    assert "timing('module-ready', {module_entry_mono_ms: Math.round(MODULE_ENTRY_MONO_MS)});" in source
+    # Top-level code: it runs while the module loads, before node:test starts the (already registered) static tests.
+    assert "\ntiming('module-ready'" in source
+    for viewport in ('desktop', 'phone'):
+        opened = source.index(f"console.error('resizable browser: {viewport} open');")
+        row = source.index(f"timing('open', {{viewport: '{viewport}'}});")
+        assert opened < row < source.index('await openDemo(', row)  # right before this viewport's driver trace starts
+    # Observation only: the deadline variables are still assigned exactly once.
+    assert source.count('const workDeadline =') == 1 and source.count('const outerDeadline =') == 1
 
 
 def test_optional_browser_still_runs_both_viewports_and_requires_each_to_succeed():

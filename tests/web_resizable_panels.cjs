@@ -1,3 +1,5 @@
+// #833: this process's monotonic clock at the first line of the file, before any require (see `timing` below).
+const MODULE_ENTRY_MONO_MS = performance.now();
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -54,6 +56,19 @@ if (process.env.LABHQ_TEST_OUTER_DEADLINE_MS !== undefined && selected === undef
 }
 const runs = viewport => selected === undefined || selected === viewport;
 
+// #833: where the time before the driver's own trace goes (Node start, module load, the static tests). Fixed numeric
+// rows only, no path, URL or profile. Two clocks, never mixed: `*_mono_ms` is this process's monotonic clock since its
+// start (performance.timeOrigin); `*_epoch_ms` and `*_remaining_ms` are wall clock, the clock of the watchdog's
+// LABHQ_TEST_OUTER_DEADLINE_MS. Observation only: no budget is reset or extended here.
+function timing(stage, extra = {}) {
+  const epoch = Date.now();
+  console.error('resizable timing: ' + JSON.stringify({stage, ...extra,
+    time_origin_epoch_ms: Math.round(performance.timeOrigin), mono_ms: Math.round(performance.now()), epoch_ms: epoch,
+    outer_remaining_ms: workDeadline === undefined ? null : outerDeadline - epoch,
+    work_remaining_ms: workDeadline === undefined ? null : workDeadline - epoch}));
+}
+timing('module-ready', {module_entry_mono_ms: Math.round(MODULE_ENTRY_MONO_MS)});
+
 // The critical Windows phase requires a real browser, never an optional skip.
 if (process.env.LABHQ_REQUIRE_RESIZABLE_BROWSER === '1' && skipReason()) {
   throw new Error(`required resizable browser unavailable: ${skipReason()}`);
@@ -61,6 +76,7 @@ if (process.env.LABHQ_REQUIRE_RESIZABLE_BROWSER === '1' && skipReason()) {
 if (runs('desktop')) test('desktop splitters drag, respond to arrows, persist and reset',
   {skip: skipReason() || false, timeout: 60000}, async () => {
     console.error('resizable browser: desktop open');
+    timing('open', {viewport: 'desktop'});
     const desktop = await openDemo({width: 1440, height: 900, reducedMotion: true, workDeadline,
       diagnostic: event => console.error('resizable driver: ' + JSON.stringify({viewport: 'desktop', ...event}))});
     try {
@@ -103,6 +119,7 @@ if (runs('desktop')) test('desktop splitters drag, respond to arrows, persist an
 if (runs('phone')) test('phone layout hides the splitters and keeps the office full width',
   {skip: skipReason() || false, timeout: 60000}, async () => {
     console.error('resizable browser: phone open');
+    timing('open', {viewport: 'phone'});
     const phone = await openDemo({width: 390, height: 844, reducedMotion: true, workDeadline,
       diagnostic: event => console.error('resizable driver: ' + JSON.stringify({viewport: 'phone', ...event}))});
     try {

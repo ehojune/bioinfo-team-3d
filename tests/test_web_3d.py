@@ -206,10 +206,23 @@ def test_office_in_node(filename, marker):
                  'phone': 'phone layout hides the splitters and keeps the office full width'}
     for viewport in (list(resizable) if filename == 'web_resizable_panels.cjs' else [None]):
         env = dict(base_env)
+        launch = None
         if viewport:
             env['LABHQ_RESIZABLE_VIEWPORT'] = viewport
-            env['LABHQ_TEST_OUTER_DEADLINE_MS'] = str(int((time.time() + timeout) * 1000))
+            # One wall-clock reading sets the deadline; a monotonic one measures how long this invocation took.
+            launch = (time.time(), time.monotonic())
+            env['LABHQ_TEST_OUTER_DEADLINE_MS'] = str(int((launch[0] + timeout) * 1000))
         label = f'{filename} ({viewport})' if viewport else filename
+
+        def timing():
+            # #833: fixed numbers only. `*_epoch_ms` is the wall clock that the script's own timing rows also use;
+            # `returned_after_mono_ms` is this process's monotonic clock from just before the launch to now.
+            if launch is None:
+                return ''
+            return '\nresizable timing (python): ' + json.dumps({
+                'viewport': viewport, 'launch_epoch_ms': int(launch[0] * 1000),
+                'deadline_epoch_ms': int((launch[0] + timeout) * 1000),
+                'returned_after_mono_ms': round((time.monotonic() - launch[1]) * 1000)})
         try:
             result = subprocess.run([node, str(script)], capture_output=True, text=True, encoding='utf-8',
                                     timeout=timeout, env=env)
@@ -218,9 +231,9 @@ def test_office_in_node(filename, marker):
             # and browser phase diagnostics; a timeout remains a failure.
             def captured(value):
                 return value.decode('utf-8', errors='replace') if isinstance(value, bytes) else (value or '')
-            raise AssertionError(f'{label} exceeded {timeout}s\nstdout:\n{captured(exc.output)}'
+            raise AssertionError(f'{label} exceeded {timeout}s{timing()}\nstdout:\n{captured(exc.output)}'
                                  f'\nstderr:\n{captured(exc.stderr)}') from exc
-        output = f'{label}\n{result.stdout}{result.stderr}'
+        output = f'{label}{timing()}\n{result.stdout}{result.stderr}'
         assert result.returncode == 0, output
         assert marker in result.stdout, output
         if viewport and os.environ.get('LABHQ_REQUIRE_RESIZABLE_BROWSER') == '1':
