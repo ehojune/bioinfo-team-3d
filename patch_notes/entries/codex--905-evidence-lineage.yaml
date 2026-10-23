@@ -1,5 +1,9 @@
 pr: 908
 rows:
+- sha: 4abf4bf
+  at: '2026-10-24 03:12'
+  summary: 원출처·중간 인용 출처의 결함을 claim으로 전달해 최종 인용을 차단합니다.
+  text: P1 4362801349를 수정했다. 계보의 not_found·conflicting·insufficient·철회는 claim.defects와 defective로 전파하고 실제 조회 미완료만 unverified로 남긴다. linked row 자체의 조회 미완료에도 결함을 보존한다. 수정 전 회귀 16 failed, 수정 후 관련 pytest 323 passed. Refs #905.
 - sha: 51601e6
   at: '2026-10-24 03:06'
   summary: 같은 원출처의 모든 인용 행을 검증해 추가 URI·artifact 미확인이 통과되지 않게 합니다.

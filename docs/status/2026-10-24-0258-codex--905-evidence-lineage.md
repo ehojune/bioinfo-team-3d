@@ -7,9 +7,10 @@ Closes #905
 - `SourceRef`: 접근 범위·Methods/QC 위치·보충자료 상태. `Evidence.status`와 구분합니다.
 - `Evidence.lineage`와 `assess_lineage`: 확인 근거가 있는 원출처만 확정하고 같은 source identity를 합칩니다. 순환·누락·미확인은 context로 남기며 독립 근거에서 제외합니다.
 - `independent_groups`·verifier가 원출처 group을 재사용합니다. 같은 source로 병합된 원출처 행도 모두 검증하며 추가 URI·artifact가 미확인이면 통과시키지 않습니다. legacy payload·group 동작은 유지합니다.
+- 원출처·중간 인용의 결함과 철회는 claim의 `defective` 판정으로 전달해 CSO가 인용을 차단합니다. 조회 미완료는 `unverified`로 남깁니다.
 
 ## 검증·인계
-- 관련 pytest 307 passed: lineage, research evidence, source verifier, semantics pilot. P1의 URI·artifact 미확인 회귀 2건은 수정 전 실패를 재현했습니다.
+- 관련 pytest 323 passed: lineage, research evidence, source verifier, semantics pilot. P1 회귀 18건은 수정 전 실패를 재현했습니다.
 - Windows selection inventory 검사 통과. 계보 회귀 검사는 기존 evidence test 모듈에 포함합니다.
 - Python 3.10 AST·public·diff 검사 통과. 전체 suite·최종 head CI·봇 판정은 PR 기록을 따릅니다.
 - 공용 contract: https://github.com/ehojune/bioinfo-team-3d/issues/905#issuecomment-6371292848
