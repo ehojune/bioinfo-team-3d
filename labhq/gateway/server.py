@@ -86,7 +86,7 @@ FINISHING_STUCK_S = 600  # a request-bundle worker older than this no longer hol
 # timeout, the request waits as waiting_pi meanwhile, and an unanswered card ends as *_timed_out, never as a deny.
 PI_DECISION_KINDS = frozenset({"clarify", "question", "scope", "budget", "research_plan", "research_evidence",
                                "research_continue", "resume", "result_storage", "result_publish", "recruit_plan",
-                               "literature_pdf"})
+                               "literature_pdf", "disk_space"})
 # Runner cards that only inform: no hook waits on them, so their task's result does not close them (#521).
 RUNNER_NOTICE_KINDS = frozenset({"codex_sandbox_setup"})
 # Steer, pause, resume and halt of a running task (#59 ①); a steer message is at most this long. The gateway keeps each

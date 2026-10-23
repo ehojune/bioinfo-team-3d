@@ -38,6 +38,13 @@ test('literature PDF card uploads each selected PDF before approval',async()=>{
   assert.match(c.row.textContent,/저장됨.*승인하면 본문으로 이어 갑니다/);
 });
 
+test('disk space card names the free space, the floor and what each answer does (#678)',async()=>{
+  const c=await card('disk_space',{free_gib:1.2,floor_gib:2,path:'C:/runs'});
+  const text=c.row.textContent;
+  for (const value of ['여유(GiB)','시작 기준(GiB)','작업 폴더','1.2','C:/runs','승인하면 이 작업을 그대로 시작합니다'])
+    assert.ok(text.includes(value),value+' must be visible: '+text);
+});
+
 test('2.5D office wires the literature PDF upload callback to the gateway endpoint',()=>{
   const index=fs.readFileSync(path.join(__dirname,'../labhq/web/index.html'),'utf8');
   assert.match(index,/onAttachment:\s*uploadLiteraturePdf/);
