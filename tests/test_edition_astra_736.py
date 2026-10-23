@@ -134,9 +134,14 @@ def test_report_referenced_table_allows_header_without_result_rows(tmp_path):
 
 def test_upstream_workdir_artifact_links_use_published_paths(tmp_path):
     settings, request, assets, images = astra_fixture(tmp_path)
-    request["results"]["omics"]["structured"]["artifact_refs"][0]["path"] = (
+    ledger = request["results"]["omics"]["structured"]
+    ledger["artifact_refs"][0]["path"] = (
         "work-omics/outputs/tables/summary.tsv"
     )
+    ledger["evidence"][0]["id"] = "SYNTHETIC_PRIVATE_EVIDENCE"
+    ledger["links"][0]["evidence_id"] = "SYNTHETIC_PRIVATE_EVIDENCE"
+    ledger["evidence"][0]["source"].update(locator="SYNTHETIC_PRIVATE_LOCATION",
+                                         uri="https://example.org/SYNTHETIC_PRIVATE_URL")
 
     files = build_portfolio_files(request, settings, assets, images)
 
@@ -144,6 +149,8 @@ def test_upstream_workdir_artifact_links_use_published_paths(tmp_path):
     assert f"[오믹스 집계표](../{published})" in files["report/report.md"]
     assert f"[summary.tsv](../../{published})" in files["docs/reference/claim_evidence.md"]
     assert f"[summary.tsv](tables/summary.tsv)" in files["studies/B-omics/README.md"]
+    assert "SYNTHETIC_PRIVATE" not in files["docs/reference/claim_evidence.md"]
+    assert "SYNTHETIC_PRIVATE" not in files["report/report.md"]
 
 
 def test_claim_footnotes_and_evidence_share_collision_free_ids(tmp_path):

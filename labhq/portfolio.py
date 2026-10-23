@@ -1342,9 +1342,9 @@ def _claim_evidence_document(req: dict, assets: Mapping[str, str],
     for note_id, (step_id, claim_id) in anchors.items():
         lines += [f'<a id="{note_id}"></a>', f"## {step_id}/{claim_id}", "",
                   f"- 단계: `{step_id}`", f"- claim: `{claim_id}`"]
-        if step_uses_internal_data(step_id, req, settings, scope):
+        hidden = step_uses_internal_data(step_id, req, settings, scope)
+        if hidden:
             lines += ["- 내부 자료 단계의 원문 근거 metadata는 게시하지 않습니다.", ""]
-            continue
         result = results.get(step_id) if isinstance(results.get(step_id), Mapping) else {}
         ledger = _claim_ledger(result)
         evidence_by_id = {str(row.get("id")): row for row in ledger.get("evidence") or []
@@ -1360,9 +1360,12 @@ def _claim_evidence_document(req: dict, assets: Mapping[str, str],
             artifact_id = str(source.get("artifact_id") or "")
             target = _artifact_target(step_id, artifact_paths.get(artifact_id, ""), result, source_targets)
             if target:
+                label = "공개 근거" if hidden else f"`{evidence_id}`"
                 evidence_lines.append(
-                    f"  - `{evidence_id}`: {_markdown_link_from(document, target, PurePosixPath(target).name)}"
+                    f"  - {label}: {_markdown_link_from(document, target, PurePosixPath(target).name)}"
                 )
+                continue
+            if hidden:
                 continue
             uri = str(source.get("uri") or "")
             if uri.startswith(("http://", "https://")):

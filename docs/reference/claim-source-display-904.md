@@ -8,7 +8,7 @@ Lookup-only: 현재 동작은 [manual](../manual.md#보고서-공통-결과-계�
 | SourceRef | DOI/PMID/URI, locator, access_status, methods_locator, qc_locator, supplementary_status |
 | Evidence.lineage | 최초 실증 출처·재인용, 순환·누락 ID·미판정. 같은 독립 group ID는 중복 집계하지 않음 |
 | CP2 receipt | 거부 근거를 표시하고 계보 판정에서 제외. 다른 승인 근거가 없는 재인용 claim은 synthesis·anchor에서도 차단 |
-| 정리본 공개 범위 | internal/restricted 단계와 하위 단계의 ledger metadata 제외. 귀속 미확인 요청은 전체 제외. 기존 report 표도 공개 범위로 다시 생성 |
+| 정리본 공개 범위 | internal/restricted 단계와 하위 단계의 ledger metadata 제외. 귀속 미확인 요청은 전체 제외. 기존 report 표도 공개 범위로 다시 생성. 공개 허용 artifact 링크는 유지 |
 | fulltext receipt | 접근 metadata를 전달. 독해 후 Methods/QC 줄 범위를 채움. 보충자료 의존 여부 null은 미판정 |
 
 - report 표와 publication 각주·`docs/reference/claim_evidence.md`는 같은 표시 helper를 사용한다.
