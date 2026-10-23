@@ -425,6 +425,10 @@ async def test_single_fake_request_retains_sources_access_and_lineage_through_pu
 
 원 실험 결과를 확인했다 [[claim:s1/c1]]. 재인용은 같은 근거다 [[claim:s1/c2]].
 
+## 서론
+
+원문 연결을 검사하는 가상 자료다.
+
 ## 방법
 
 Synthetic fixture only.
@@ -441,7 +445,7 @@ Synthetic fixture only.
 
 원 실험과 재인용을 구분했다 [[claim:s1/c2]].
 """
-    hub = _hub(report=report)
+    hub = _hub(report=report, review={"verdict": "accept", "issues": []})
     hub.s.runner.workspace_root = str(tmp_path / "runs")
     paper = tmp_path / "paper.md"
     paper.write_text("# Synthetic\nMethods\nExperiment\nQC\nChecks\nResults\n", encoding="utf-8")
@@ -471,11 +475,13 @@ Synthetic fixture only.
     assert not req["research_contract"]["checkpoints"]["cp2"].get("refused_evidence")
     prompt = next(task.prompt for task in hub.calls if task.meta["kind"] == "synthesis")
     assert "Recorded claim/source metadata" in prompt and "source.locator" in prompt
+    assert "### 주장별 원문 근거" in req["report"]
     req["id"] = "r"
     files = build_portfolio_files(req, hub.s, {}, {})
     assert not scan_publish_files(files)
     for output in (reader_markdown(req["report"]), files["report/report.md"],
                    files["docs/reference/claim_evidence.md"]):
+        assert output.count("주장별 원문 근거") == 1
         for expected in ("s1/c1", "s1/c2", "s1/c3", "10.1000/fake-original", "Results p.2 paragraph 1",
                          "초록만", "못 구함", "unresolved", "재인용", "최초 실증 출처",
                          "순환 인용; 독립 group 0", "미판정", "보충자료: 누락", "Methods:", "QC:"):
