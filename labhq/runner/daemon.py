@@ -283,6 +283,9 @@ class Runner:
         # Tasks whose task.result is already queued in this run. A cancel that arrives while the result commits does
         # not stop the commit, so the cancel handler must not queue a second, "cancelled" one over it (#606).
         self._result_queued: set[str] = set()
+        # Actual nested conversion identity, registered by the reserved plan-hire path before dispatch. This is
+        # private runner state, never accounting metadata supplied by a model or a task's caller.
+        self._recruitment_conversions: dict[str, dict] = {}
         # #863: cleanup evidence an adapter reports when its run ends by cancellation (no TaskResult of its own).
         self._cleanup_reports: dict[str, dict] = {}
         self.store = StateStore(settings.path(settings.runner.state_dir) / f"runner-{settings.runner.id}.sqlite3")
@@ -861,6 +864,43 @@ class Runner:
         self._send_roster()
 
     # ---------------- task execution ----------------
+    def _bind_recruitment_conversion(self, parent_id: str, child: Task) -> None:
+        if (not isinstance(parent_id, str) or not parent_id or parent_id in self._recruitment_conversions
+                or child.id == parent_id or not child.request_id
+                or child.id in self.tasks or child.id in self._result_queued
+                or self.store.get("accepted_task", child.id) is not None
+                or any(e.get("task_id") == child.id for e in self.store.pending())):
+            raise ValueError("recruitment conversion identity is already used or missing")
+        self._recruitment_conversions[parent_id] = {
+            "task_id": child.id, "request_id": child.request_id, "agent_id": child.agent_id}
+
+    async def _recruitment_cost_fields(self, task: Task) -> dict:
+        """A finished receipt follows the nested result's durable outbox write, even when its waiter was cancelled.
+
+        The FIFO barrier runs behind that job; a Python return or `_result_queued` hint is not a commit receipt.
+        ACK may already have removed the outbox event, but its finished state row remains. No dollars are copied.
+        """
+        if not self.s.policy.budget.reserve_before_dispatch or task.meta.get("kind") != "plan_recruit":
+            return {}
+        binding = self._recruitment_conversions.get(task.id)
+        if binding is None:
+            return {}  # No nested dispatch was registered; callers preserve their ordinary result semantics.
+        unknown = {"cost_usd": None, "cost_known": False}
+        if (not isinstance(binding, dict) or set(binding) != {"task_id", "request_id", "agent_id"}
+                or not isinstance(binding["task_id"], str) or not binding["task_id"]
+                or binding["task_id"] == task.id or binding["request_id"] != task.request_id
+                or binding["agent_id"] != task.agent_id):
+            return unknown
+        expected = dict(binding)
+        try:
+            await durable.run(self.store.lane, lambda: None)
+            receipt = self.store.get("accepted_task", expected["task_id"])
+        except Exception:
+            return unknown
+        if self._recruitment_conversions.get(task.id) is not binding or binding != expected:
+            return unknown
+        return {"cost_usd": 0, "cost_known": True} if receipt == {"state": "finished"} else unknown
+
     async def _run_guarded(self, task: Task) -> None:
         try:
             await self.run_task(task)
@@ -880,8 +920,16 @@ class Runner:
             # never got that far has no observation, so it stays UNKNOWN (#863).
             cleanup = self._cleanup_reports.pop(task.id, None) or {
                 "status": "UNKNOWN", "reason": "no_runner_observation", "active_processes_measured": False}
+            interrupted = None
+            try:
+                costs = await self._recruitment_cost_fields(task)
+            except asyncio.CancelledError as again:
+                # A second cancel can interrupt the receipt read. Still send conservative UNKNOWN, then preserve
+                # cancellation; the queued barrier never mutates the binding or manufactures a finished receipt.
+                costs, interrupted = {"cost_usd": None, "cost_known": False}, again
             res = self._shutdown_result(
-                TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error=err, cleanup_evidence=cleanup),
+                TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error=err, cleanup_evidence=cleanup,
+                           **costs),
                 cancelled=cancelled)
             base = dict(task_id=task.id, agent_id=task.agent_id, request_id=task.request_id)
             # One unit: a second cancel arriving while this commits cannot leave the status without the result.
@@ -889,9 +937,12 @@ class Runner:
                 Event(type="agent.status", data={"state": "error", "error": short(err, 200)}, **base),
                 Event(type="task.result", data={**res.model_dump(mode="json"),
                                                 "control": self.controls.finish(task.id)}, **base)])
+            if interrupted is not None:
+                raise interrupted
             if cancelled:
                 raise
         finally:
+            self._recruitment_conversions.pop(task.id, None)
             self._result_queued.discard(task.id)  # the run is over: nothing left to guard
             self._cleanup_reports.pop(task.id, None)
 
