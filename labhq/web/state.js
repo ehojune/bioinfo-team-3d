@@ -139,7 +139,7 @@ const TERMINAL_REQUEST_STATES = new Set(['done', 'failed', 'cancelled', 'rejecte
 const TERMINAL_FOLLOWUP_STATES = new Set(['done', 'failed', 'interrupted']);
 // Cards that park an active request as waiting_pi (server.py PI_DECISION_KINDS). A resume card is one too, but its
 // request is interrupted, not parked.
-const PI_DECISION_KINDS = new Set(['clarify', 'question', 'scope', 'budget', 'research_plan', 'research_evidence', 'research_continue', 'result_storage', 'result_publish', 'recruit_plan', 'literature_pdf']);
+const PI_DECISION_KINDS = new Set(['clarify', 'question', 'scope', 'budget', 'research_plan', 'research_evidence', 'research_continue', 'result_storage', 'result_publish', 'recruit_plan', 'literature_pdf', 'disk_space']);
 const isActiveRequest = status => ACTIVE_REQUEST_STATES.has(status);
 const isTerminalRequest = status => TERMINAL_REQUEST_STATES.has(status);
 const hasActiveFollowup = q => (q?.followups || []).some(f => !TERMINAL_FOLLOWUP_STATES.has(f.status));
@@ -291,7 +291,7 @@ function resetSnapshotState() {
 }
 const STATE_KO = { idle: '쉬는 중', queued: '순서 기다림', working: '작업 중', waiting: '승인 기다림',
   hibernating: 'HPC 기다리는 중', done: '완료', error: '문제 발생' };
-const KIND_KO = { pipeline_contribute: '새 pipeline 기여', result_storage: '결과 저장 위치', result_publish: '편집자 정리본 확인', hpc_submit: 'HPC 제출', tool_permission: '도구 권한', budget: '예산 초과', recruit: '채용', recruit_plan: '계획 전 채용', download: '대용량 다운로드', clarify: 'PI 질문', scope: '범위 확인', research_plan: 'CP1 계획 승인', research_evidence: 'CP2 증거 검토', research_continue: '리뷰 뒤 이어 가기', literature_pdf: '핵심 논문 PDF 요청', codex_sandbox_setup: 'Codex sandbox 준비', facilities_fix: '환경 자동 수정', resume: '중단된 요청 재개', question: '직원 질문 · PI 확인' };
+const KIND_KO = { pipeline_contribute: '새 pipeline 기여', result_storage: '결과 저장 위치', result_publish: '편집자 정리본 확인', hpc_submit: 'HPC 제출', tool_permission: '도구 권한', budget: '예산 초과', recruit: '채용', recruit_plan: '계획 전 채용', download: '대용량 다운로드', clarify: 'PI 질문', scope: '범위 확인', research_plan: 'CP1 계획 승인', research_evidence: 'CP2 증거 검토', research_continue: '리뷰 뒤 이어 가기', literature_pdf: '핵심 논문 PDF 요청', disk_space: '디스크 여유 부족', codex_sandbox_setup: 'Codex sandbox 준비', facilities_fix: '환경 자동 수정', resume: '중단된 요청 재개', question: '직원 질문 · PI 확인' };
 const JOB_KO = { queued: '대기', running: '실행 중', completed: '완료', failed: '실패', held: '보류', suspended: '일시정지',
   cancelled: '취소', unknown_finished: '종료 (확인 필요)', error: '오류', missing: '확인 중' };
 const GH_KO = { issue: 'GitHub에 이 요청의 이슈를 열었어요', plan: '이슈에 계획을 올렸어요', review: '이슈에 리뷰 결과를 올렸어요',

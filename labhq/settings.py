@@ -58,6 +58,11 @@ class RunnerSettings(BaseModel):
     workspace_root: str = "~/.labhq/runs"
     disk_warning_free_gb: float = Field(default=10, ge=0, allow_inf_nan=False)
     disk_warning_free_percent: float = Field(default=5, ge=0, le=100, allow_inf_nan=False)
+    # Below this much free space on the work drive the runner starts no task until the PI answers a card (#678);
+    # 0 turns the card off (the warning above stays).
+    disk_fail_free_gb: float = Field(default=2, ge=0, allow_inf_nan=False)
+    # Optional folder for multi-GB raw data, outside every step folder: the task briefing names it (#678).
+    bulk_data_root: str | None = None
     bundle_max_file_mb: float = Field(default=50, gt=0)
     bundle_max_total_mb: float = Field(default=2048, gt=0)
     bundle_max_files: int = Field(default=5000, ge=1)

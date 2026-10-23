@@ -451,6 +451,7 @@ const DETAIL_LABELS = {
   question: { why_blocked: '막힌 이유', from: '묻는 직원' },
   resume: { created_at: '접수 시각', steps: '남은 단계' },
   result_publish: { pdf: '보고서 PDF' },
+  disk_space: { free_gib: '여유(GiB)', floor_gib: '시작 기준(GiB)', path: '작업 폴더' },
   literature_pdf: { papers: '필요한 논문', inbox: 'PDF를 둘 폴더', wait_seconds: '대기 시간(초)',
     institution: '기관 접근 조건', external_model_allowed: '외부 모델 읽기 허용', why_blocked: '요청 이유' },
 };
@@ -722,6 +723,7 @@ const DENY_RESULT = {
   research_evidence: '수정 요청은 메모로 새 계획을 세워 새 CP1을 받고 바뀐 단계만 다시 돌립니다. 거부하면 요청이 끝납니다.',
   question: '거절하면 직원에게 "진행 불가"로 전합니다.',
   literature_pdf: 'PDF를 지정 파일에 넣고 승인하면 본문으로 이어 갑니다. 거절하거나 시간이 끝나면 초록 또는 다른 OA 논문으로 진행합니다.',
+  disk_space: '승인하면 이 작업을 그대로 시작합니다. 거절하거나 시간이 끝나면 시작하지 않습니다.',
 };
 // Past research.revise_continuations a CP2 수정 요청 ends the request like 거부 (cso.py).
 const EVIDENCE_REVISE_ENDS = '이어 가기 상한에 닿아 수정 요청과 거부는 둘 다 이 요청을 끝냅니다. 근거를 보강하려면 새 요청을 보내세요.';
