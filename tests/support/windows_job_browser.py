@@ -20,6 +20,31 @@ PRODUCT_MODULE = Path(__file__).resolve().parents[2] / "labhq" / "runner" / "mem
 # #833: one fixed line on stderr once the Job exists and right before Chrome starts. The driver records when it arrives,
 # splitting this wrapper's start and Job setup from Chrome's own start. It carries no path, argument or value.
 JOB_STARTING_BROWSER = "LABHQ_JOB_STARTING_BROWSER"
+# #833: a second fixed line once Popen has returned, i.e. CreateProcess for Chrome succeeded. The first line alone does
+# not show that Chrome was created. Also no path, argument or value.
+BROWSER_CREATED = "LABHQ_BROWSER_CREATED"
+
+
+def _mark(stream, line: str) -> None:
+    try:
+        print(line, file=stream, flush=True)
+    except (OSError, ValueError):
+        pass  # diagnostic only: a stderr that cannot be written never stops or fails the browser
+
+
+def start_and_mark(command, *, check=False, stdin=None, stdout=None, stderr=None, popen=subprocess.Popen):
+    """`subprocess.run(command, check=False, ...)` without pipes, plus BROWSER_CREATED on stderr once the child exists.
+    As in `subprocess.run`, an interrupted wait kills the child before the error propagates."""
+    with popen(command, stdin=stdin, stdout=stdout, stderr=stderr) as child:
+        _mark(stderr, BROWSER_CREATED)
+        try:
+            returncode = child.wait()
+        except BaseException:
+            child.kill()
+            raise
+    if check and returncode:
+        raise subprocess.CalledProcessError(returncode, command)
+    return subprocess.CompletedProcess(command, returncode)
 
 
 def product_job_class(path: Path = PRODUCT_MODULE):
@@ -34,7 +59,7 @@ def product_job_class(path: Path = PRODUCT_MODULE):
     return module._WindowsJob
 
 
-def run(argv: list[str], *, job_factory=None, start=subprocess.run, stdin=None, stdout=None, stderr=None) -> int:
+def run(argv: list[str], *, job_factory=None, start=start_and_mark, stdin=None, stdout=None, stderr=None) -> int:
     """`_run_windows_job` of the product, except that the child receives this process's standard handles."""
     stdin = sys.stdin if stdin is None else stdin
     stdout = sys.stdout if stdout is None else stdout
@@ -51,10 +76,7 @@ def run(argv: list[str], *, job_factory=None, start=subprocess.run, stdin=None, 
         if limit <= 0 or not command:
             raise ValueError("missing positive limit or command")
         job = (job_factory or product_job_class())(os.getpid(), limit)
-        try:
-            print(JOB_STARTING_BROWSER, file=stderr, flush=True)
-        except (OSError, ValueError):
-            pass  # diagnostic only: a stderr that cannot be written never stops the browser start
+        _mark(stderr, JOB_STARTING_BROWSER)
         completed = start(command, check=False, stdin=stdin, stdout=stdout, stderr=stderr)
         if completed.returncode and job.peak_bytes() >= int(limit * 0.98):
             print("out of memory: Windows Job object limit reached", file=stderr)

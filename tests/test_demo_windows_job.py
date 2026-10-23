@@ -133,3 +133,83 @@ def test_the_default_job_is_the_product_kill_on_close_job_loaded_from_its_source
     assert job._KILL_ON_CLOSE == 0x00002000 and job._JOB_MEMORY == 0x00000200
     with pytest.raises(OSError):
         launcher.product_job_class(ROOT / 'tests' / 'support' / 'missing_memory_limit.py')
+
+
+class FakeChild:
+    """A Popen stand-in: records the order of creation, wait and kill; nothing is started."""
+    def __init__(self, record, *, returncode=0, wait_error=None):
+        self.record, self.returncode, self.wait_error = record, returncode, wait_error
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.record.append('exit')
+        return False
+
+    def wait(self):
+        self.record.append('wait')
+        if self.wait_error:
+            raise self.wait_error
+        return self.returncode
+
+    def kill(self):
+        self.record.append('kill')
+
+
+def fake_popen(record, **child):
+    def popen(command, **options):
+        record.append(('popen', command, options))
+        return FakeChild(record, **child)
+    return popen
+
+
+def test_the_created_marker_follows_the_actual_child_creation_and_precedes_the_wait():
+    """#833: LABHQ_BROWSER_CREATED means Popen (CreateProcess) returned, which the Job line cannot show."""
+    record, io_ = [], streams()
+    stderr = RecordingStream(record)
+    completed = launcher.start_and_mark(['chrome.exe', '--user-data-dir=C:/private'], check=False, stdin=io_.stdin,
+                                        stdout=io_.stdout, stderr=stderr, popen=fake_popen(record, returncode=4))
+    assert completed.returncode == 4 and completed.args == ['chrome.exe', '--user-data-dir=C:/private']
+    assert record == [('popen', ['chrome.exe', '--user-data-dir=C:/private'],
+                       dict(stdin=io_.stdin, stdout=io_.stdout, stderr=stderr)),
+                      ('stderr', 'LABHQ_BROWSER_CREATED\n'), 'wait', 'exit']
+    assert launcher.BROWSER_CREATED == 'LABHQ_BROWSER_CREATED'
+
+
+def test_a_failed_creation_writes_no_created_marker_and_keeps_the_product_code():
+    io_ = streams()
+
+    def missing(command, **options):
+        raise FileNotFoundError(command[0])
+    start = lambda command, **options: launcher.start_and_mark(command, popen=missing, **options)
+    assert launcher.run(['--windows-job', '100', '--', 'nochrome.exe'], job_factory=FakeJob([]), start=start,
+                        **vars(io_)) == 127
+    assert io_.stderr.getvalue() == 'LABHQ_JOB_STARTING_BROWSER\nLABHQ_EXEC_NOT_FOUND: nochrome.exe\n'
+
+
+def test_the_default_start_writes_both_fixed_lines_in_order_and_returns_the_browser_status():
+    record, io_ = [], streams()
+    # The wrapper's default is this start, over the real Popen; here the same function runs over a fake Popen.
+    assert launcher.run.__kwdefaults__['start'] is launcher.start_and_mark
+    assert launcher.start_and_mark.__kwdefaults__['popen'] is launcher.subprocess.Popen
+    start = lambda command, **options: launcher.start_and_mark(command, popen=fake_popen(record, returncode=6), **options)
+    assert launcher.run(['--windows-job', '64', '--', 'chrome.exe'], job_factory=FakeJob(record), start=start,
+                        **vars(io_)) == 6
+    assert io_.stderr.getvalue() == 'LABHQ_JOB_STARTING_BROWSER\nLABHQ_BROWSER_CREATED\n'
+    assert [entry[0] if isinstance(entry, tuple) else entry for entry in record] == ['job', 'popen', 'wait', 'exit']
+
+
+def test_an_unwritable_stderr_still_waits_for_the_browser_and_keeps_its_status():
+    record = []
+    completed = launcher.start_and_mark(['chrome.exe'], stderr=RecordingStream(record, broken=True),
+                                        popen=fake_popen(record, returncode=2))
+    assert completed.returncode == 2 and record[-2:] == ['wait', 'exit']
+
+
+def test_an_interrupted_wait_kills_the_owned_child_before_the_error_propagates():
+    record = []
+    with pytest.raises(KeyboardInterrupt):
+        launcher.start_and_mark(['chrome.exe'], stderr=io.StringIO(),
+                                popen=fake_popen(record, wait_error=KeyboardInterrupt()))
+    assert record[1:] == ['wait', 'kill', 'exit']

@@ -20,6 +20,12 @@ const NAVIGATE_NOTICE_MS = 5000;
 // One cleanup deadline. The graceful Browser.close may use its first part; the rest is for the owned child's forced
 // close to be observed (#842: a graceful wait that took the whole budget left the kill no time to show its close).
 const CLEANUP_MS = 5000, GRACEFUL_CLEANUP_MS = 3000;
+// Profile removal after a close: up to 20 tries, 100 ms apart (removeDir).
+const REMOVE_TRIES = 20, REMOVE_RETRY_MS = 100;
+// #833 opt-in `workDeadline`: what one close needs once the work stops, i.e. its cleanup deadline, the profile removal
+// retries and the process exit. A caller under an outer watchdog ends its work this much earlier, so the owned close
+// can still finish before the watchdog kills the process and skips it.
+const CLOSE_RESERVE_MS = CLEANUP_MS + REMOVE_TRIES * REMOVE_RETRY_MS + 1000;
 // Windows only (#842): Chrome and every descendant run inside one KILL_ON_CLOSE Job. windows_job_browser.py reuses
 // the product's Job class (labhq/runner/memory_limit.py) and joins itself to the Job before starting Chrome with its
 // own stdin/stdout/stderr, so Chrome's stderr (and the stdio close proof) still reach this driver. The owned child is
@@ -30,14 +36,20 @@ const WINDOWS_JOB_LIMIT_BYTES = 64 * 1024 ** 3;
 // #833: the wrapper's fixed stderr line once its Job exists, right before it starts Chrome (windows_job_browser.py).
 // Recognized only as the stream's first line; it is a diagnostic and never decides whether a start passed.
 const JOB_STARTING_BROWSER = 'LABHQ_JOB_STARTING_BROWSER';
+// #833: the wrapper's second fixed line, written once Chrome's CreateProcess has returned (windows_job_browser.py).
+// JOB_STARTING_BROWSER only shows that the Job exists. Recognized only as the line right after it; if Chrome's own
+// output comes first, it is simply not seen. A diagnostic only, like the first line.
+const BROWSER_CREATED = 'LABHQ_BROWSER_CREATED';
 // #833: a Chrome start still without DevToolsActivePort this long reports, once, whether Chrome is visibly working
 // (entries in its profile, stderr bytes). Diagnostic only; it neither ends nor extends the 60 s start budget.
 const CHROME_NOTICE_MS = 5000;
 
-// #833: Chrome's stderr with the wrapper's marker line taken off the front. The marker counts only as the first line,
-// so the same text later in Chrome's own output is just output. Only counts leave this: `chromeBytes()`, `marked()`.
-function chromeStderrWatcher(onMarker = () => {}) {
-  let head = '', text = '', bytes = 0, state = 'head';  // head -> marked | plain
+// #833: Chrome's stderr with the wrapper's fixed lines taken off the front. Each counts only in its place (the first
+// line, then the line right after it), so the same text later in Chrome's own output is just output. Only counts
+// leave this: `chromeBytes()`, `marked()`, `created()`.
+function chromeStderrWatcher(onMarker = () => {}, onCreated = () => {}) {
+  const markers = [[JOB_STARTING_BROWSER, onMarker], [BROWSER_CREATED, onCreated]];
+  let head = '', text = '', bytes = 0, seen = 0, plain = false;
   const chrome = part => {
     if (!part) return;
     bytes += typeof Buffer === 'function' ? Buffer.byteLength(part, 'utf8') : part.length;
@@ -46,35 +58,48 @@ function chromeStderrWatcher(onMarker = () => {}) {
   return {
     feed(chunk) {
       const part = String(chunk);
-      if (state !== 'head') return chrome(part);
+      if (plain || seen === markers.length) return chrome(part);
       head += part;
-      const line = head.match(/^([^\r\n]*)\r?\n/);
-      if (!line) {
-        // Still possibly the marker line: its text, then CR LF or LF, may arrive split anywhere (e.g. CR | LF).
-        if (!(JOB_STARTING_BROWSER + '\r\n').startsWith(head) && !(JOB_STARTING_BROWSER + '\n').startsWith(head)) {
-          state = 'plain'; chrome(head); head = '';
+      while (seen < markers.length) {
+        const [marker, observe] = markers[seen];
+        const line = head.match(/^([^\r\n]*)\r?\n/);
+        if (!line) {
+          // Still possibly the marker line: its text, then CR LF or LF, may arrive split anywhere (e.g. CR | LF).
+          if ((marker + '\r\n').startsWith(head) || (marker + '\n').startsWith(head)) return;
+          plain = true;
+          break;
         }
-        return;
+        if (line[1] !== marker) { plain = true; break; }
+        seen++;
+        try { observe(); } catch { /* diagnostic only */ }
+        head = head.slice(line[0].length);
       }
-      if (line[1] === JOB_STARTING_BROWSER) {
-        state = 'marked';
-        try { onMarker(); } catch { /* diagnostic only */ }
-        chrome(head.slice(line[0].length));
-      } else {
-        state = 'plain';
-        chrome(head);
-      }
+      chrome(head);
       head = '';
     },
     text: () => text + head,
     chromeBytes: () => bytes,
-    marked: () => state === 'marked',
+    marked: () => seen >= 1,
+    created: () => seen >= 2,
   };
 }
 
 // #833: how many top-level entries the temp profile has (the driver creates one, `home`); null if unreadable.
 function profileEntryCount(dir) {
   try { return fs.readdirSync(dir).length; } catch { return null; }
+}
+
+// #833: why the DevToolsActivePort reads have found no port yet, as counts per fixed code (`empty`: the file exists but
+// has no port line yet). Never the path, message or file content.
+const PORT_READ_CODES = ['ENOENT', 'EBUSY', 'EACCES', 'EPERM'];
+function portReadCounter() {
+  const counts = {};
+  const add = code => { counts[code] = (counts[code] || 0) + 1; };
+  return {
+    failed: error => add(PORT_READ_CODES.includes(error?.code) ? error.code : 'other'),
+    empty: () => add('empty'),
+    counts: () => ({...counts}),
+  };
 }
 
 // The interpreter is named explicitly (tests/test_web_3d.py passes sys.executable). No PATH lookup and no Store
@@ -188,8 +213,8 @@ function startStaticServer(rootDir, observe = null) {
 }
 
 async function removeDir(dir) {
-  for (let i = 0; i < 20; i++) {
-    try { fs.rmSync(dir, {recursive: true, force: true}); return; } catch (e) { if (i === 19) throw e; await sleep(100); }
+  for (let i = 0; i < REMOVE_TRIES; i++) {
+    try { fs.rmSync(dir, {recursive: true, force: true}); return; } catch (e) { if (i === REMOVE_TRIES - 1) throw e; await sleep(REMOVE_RETRY_MS); }
   }
 }
 
@@ -280,7 +305,7 @@ async function closeDemoResources({ws, wsClosed, chrome, chromeClosed, requestBr
 // Diagnostic only: no timer, transport, expressions, URLs or success receipts.
 // A disabled/broken observer must not change browser behavior or mask errors.
 function demoLifecycleTrace(emit, clock = () => performance.now()) {
-  let origin, previous, count = 0, observed = 0;
+  let origin, previous, count = 0, observed = 0, finished = false;
   const row = (stage, extra, observation) => {
     if (typeof emit !== 'function' || (observation ? observed >= 6 : count >= 16)) return;
     if (observation) observed++; else count++;
@@ -297,11 +322,69 @@ function demoLifecycleTrace(emit, clock = () => performance.now()) {
   // #833: what happened inside a boundary (the static server saw the page request, a navigation is still waiting).
   // Its own small budget, so it never displaces a lifecycle row, and measured from the last boundary without moving it.
   trace.observe = (stage, extra) => row(stage, extra, true);
+  // #833: one last row where a session's work stopped (the work deadline). Outside both budgets, so a full trace still
+  // shows it, and never more than once.
+  trace.final = (stage, extra) => {
+    if (finished || typeof emit !== 'function') return;
+    finished = true;
+    try {
+      const now = clock();
+      origin ??= now;
+      emit({stage, elapsed_ms: Math.round(now - origin),
+        since_previous_ms: previous === undefined ? 0 : Math.round(now - previous), ...extra});
+    } catch { /* diagnostic only */ }
+  };
   return trace;
 }
 
-// opts: {width, height, reducedMotion=true, colorScheme='light', web=WEB_ROOT, layoutFont=false, fontFamily=null, deadlineMs=60000, diagnostic=null}
+// #833 opt-in: one absolute work deadline (epoch ms, `Date.now()`) that several openDemo sessions can share. Without
+// one (`deadline` undefined) nothing changes: `bound` runs the wait as before and starts no timer. With one, a wait still
+// pending at the deadline is ended, not merely abandoned: its AbortSignal fires (fetch, response body) and `onExpire`
+// lets the caller drop what it holds (a pending CDP call). Resources it owns (Chrome, socket, server, profile) are left
+// to the session's own close(), which the caller runs in the time it reserved after the deadline (CLOSE_RESERVE_MS).
+// `onExpired(stage)` sees the first expiry only.
+function workBudget(deadline, {now = () => Date.now(), setTimer = (fn, ms) => setTimeout(fn, ms),
+  clearTimer = id => clearTimeout(id), onExpired = () => {}} = {}) {
+  const limited = Number.isFinite(deadline);
+  let reported = false;
+  const remaining = () => limited ? deadline - now() : Infinity;
+  const expired = stage => {
+    if (!reported) { reported = true; try { onExpired(stage); } catch { /* diagnostic only */ } }
+    return Object.assign(new Error(`demo work deadline reached during ${stage}`), {code: 'DEMO_WORK_DEADLINE', stage});
+  };
+  const check = stage => { if (remaining() <= 0) throw expired(stage); };
+  const bound = (stage, start, onExpire = () => {}) => {
+    if (!limited) return start(undefined);
+    return new Promise((resolve, reject) => {
+      const left = remaining();
+      if (left <= 0) { reject(expired(stage)); return; }
+      const controller = new AbortController();
+      let settled = false;
+      const timer = setTimer(() => {
+        if (settled) return;
+        settled = true;
+        try { controller.abort(); } catch { /* the rejection below still stands */ }
+        try { onExpire(); } catch { /* the rejection below still stands */ }
+        reject(expired(stage));
+      }, Math.min(left, 2 ** 31 - 1));
+      const finish = settle => value => {
+        if (settled) return;  // a late result after the deadline is dropped
+        settled = true;
+        clearTimer(timer);
+        settle(value);
+      };
+      Promise.resolve().then(() => start(controller.signal)).then(finish(resolve), finish(reject));
+    });
+  };
+  // The latest time a loop with its own budget may still run: that budget, or the work deadline if earlier.
+  const cap = time => limited ? Math.min(time, deadline) : time;
+  return {limited, remaining, check, bound, cap, expired};
+}
+
+// opts: {width, height, reducedMotion=true, colorScheme='light', web=WEB_ROOT, layoutFont=false, fontFamily=null, deadlineMs=60000, diagnostic=null, workDeadline}
 // layoutFont forces the metrics-only font from test_font.cjs so text wraps the same on every OS.
+// workDeadline (#833, opt-in): an absolute Date.now() time after which this session starts no new work and every wait
+// fails (see workBudget). deadlineMs stays the per-call guard of until(); both apply.
 // Test-only: testWithholdBrowserClose reports Browser.close as sent without sending it, so cleanup must take the
 // forced path; cleanupDiagnostic receives the cleanup stages instead of stderr.
 async function openDemo(opts = {}) {
@@ -311,6 +394,10 @@ async function openDemo(opts = {}) {
   if (!chromePath) throw new Error('no Chrome found');
   const jobPython = windowsJobPython();  // fails closed before any profile, server or browser exists
   const {width = 1440, height = 900, reducedMotion = true, colorScheme = 'light', web = WEB_ROOT, layoutFont = false, fontFamily = null} = opts;
+  let portReads = null;
+  const budget = workBudget(opts.workDeadline, {onExpired: stage => trace.final('work-deadline',
+    {during: stage, ...(portReads ? {port_reads: portReads.counts()} : {})})});
+  budget.check('open-start');  // an exhausted shared budget opens nothing: no profile, server or browser
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'labhq-visual-'));
   trace('profile-ready');
   let server, chrome, ws, chromeClosed, wsClosed, requestBrowserClose, closing;
@@ -326,6 +413,9 @@ async function openDemo(opts = {}) {
       res.once('finish', () => { watch.responded = true; trace.observe('server-response', {status: res.statusCode}); });
     });
     trace('server-ready');
+    // A loopback listen is not raced (an abandoned listen would leave a server nobody closes); it is checked once it
+    // is owned, and close() below ends it.
+    budget.check('server-ready');
     const port = server.address().port;
     if (FORBIDDEN_PORTS.includes(port)) throw new Error('static server landed on a reserved port ' + port);
     const origin = `http://127.0.0.1:${port}`;
@@ -346,25 +436,30 @@ async function openDemo(opts = {}) {
     {windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'], env: {...process.env, HOME: home, USERPROFILE: home,
       HOMEDRIVE: path.parse(home).root.slice(0, 2), HOMEPATH: home.slice(2), LOCALAPPDATA: local, APPDATA: roaming, XDG_CONFIG_HOME: config}});
     chromeClosed = new Promise(resolve => chrome.once('close', resolve));
-    const stderrWatch = chromeStderrWatcher(() => trace.observe('job-ready'));
+    const stderrWatch = chromeStderrWatcher(() => trace.observe('job-ready'), () => trace.observe('chrome-created'));
     chrome.stderr.on('data', chunk => { stderrWatch.feed(chunk); chromeError = stderrWatch.text(); });
     trace('chrome-spawned');
     // A cold Chrome start on a loaded CI runner can take far longer than 10 s (see tests/web_office_browser.cjs):
     // wait for the DevToolsActivePort file and the page target on a deadline, and stop early if Chrome exits.
     let debug, page, exited = null;
     chrome.on('exit', (code, signal) => { exited = {code, signal}; });
-    const startDeadline = Date.now() + START_MS;
+    // #833: the start budget ends no later than the work deadline, if one was given.
+    const startDeadline = budget.cap(Date.now() + START_MS);
     const noticeAt = Date.now() + CHROME_NOTICE_MS;
     let noticed = false;
+    portReads = portReadCounter();
     while (!debug && !exited && Date.now() < startDeadline) {
-      try { debug = fs.readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0]; } catch { /* not written yet */ }
+      try { debug = fs.readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0]; } catch (error) { portReads.failed(error); }
+      if (debug === '') portReads.empty();
       if (!debug && !noticed && Date.now() >= noticeAt) {
         noticed = true;  // #833: once; counts only, no path or stderr text
-        trace.observe('chrome-waiting', {job_marker_seen: stderrWatch.marked(), profile_entries: profileEntryCount(profile),
+        trace.observe('chrome-waiting', {job_marker_seen: stderrWatch.marked(), chrome_created_seen: stderrWatch.created(),
+          port_reads: portReads.counts(), profile_entries: profileEntryCount(profile),
           chrome_stderr_bytes: stderrWatch.chromeBytes()});
       }
-      if (!debug) await sleep(100);
+      if (!debug) await sleep(Math.max(0, Math.min(100, startDeadline - Date.now())));
     }
+    if (!debug && !exited) budget.check('chrome-start');
     if (!debug) throw new Error(`Chrome did not publish its debugging port within ${START_MS / 1000}s (exit: ${JSON.stringify(exited)}): ${chromeError}`);
     trace('debug-port-ready');
     // #833: whether the wait was for DevTools to answer at all or for a page target in its answer.
@@ -372,18 +467,24 @@ async function openDemo(opts = {}) {
     while (!page && !exited && Date.now() < startDeadline) {
       polls.json_attempts++;
       let targets = null;
-      try { targets = await (await fetch(`http://127.0.0.1:${debug}/json`)).json(); } catch { /* not listening yet */ }
+      // #833: with a work deadline the request and its body read are aborted at it, not left running.
+      try {
+        targets = await budget.bound('devtools-targets', async signal =>
+          (await fetch(`http://127.0.0.1:${debug}/json`, signal ? {signal} : undefined)).json());
+      } catch { /* not listening yet, or aborted at the work deadline (checked below) */ }
       if (targets === null) polls.json_unanswered++;
       else if (!(page = Array.isArray(targets) ? targets.find(t => t.type === 'page') : undefined)) polls.json_without_page++;
-      if (!page) await sleep(100);
+      if (!page) await sleep(Math.max(0, Math.min(100, startDeadline - Date.now())));
     }
+    if (!page && !exited) budget.check('devtools-targets');
     if (!page) throw new Error(`Chrome has no page target within ${START_MS / 1000}s (exit: ${JSON.stringify(exited)}): ${chromeError}`);
     trace('target-ready', polls);
     // Node 22+ has a global WebSocket; older Nodes use the small client in mini_ws.cjs (LABHQ_FORCE_MINI_WS=1 forces it).
     const Socket = typeof WebSocket !== 'undefined' && !process.env.LABHQ_FORCE_MINI_WS ? WebSocket : MiniWebSocket;
     ws = new Socket(page.webSocketDebuggerUrl);
     wsClosed = new Promise(resolve => { ws.onclose = resolve; });
-    await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = e => reject(new Error('CDP socket failed: ' + (e?.message || e))); });
+    // The socket is owned from here: a handshake still pending at the work deadline is ended by close() below.
+    await budget.bound('cdp-socket', () => new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = e => reject(new Error('CDP socket failed: ' + (e?.message || e))); }));
     trace('socket-ready');
     let serial = 0;
     requestBrowserClose = () => {
@@ -401,7 +502,13 @@ async function openDemo(opts = {}) {
       if (m.method === 'Runtime.exceptionThrown') errors.push(m.params.exceptionDetails.exception?.description || m.params.exceptionDetails.text);
       if (m.id) { const p = pending.get(m.id); pending.delete(m.id); if (p) m.error ? p.reject(Error(JSON.stringify(m.error))) : p.resolve(m.result); }
     };
-    const cdp = (method, params = {}) => new Promise((resolve, reject) => { const id = ++serial; pending.set(id, {resolve, reject}); ws.send(JSON.stringify({id, method, params})); });
+    // #833: with a work deadline a call still unanswered at it is dropped from `pending` (a late reply is ignored) and
+    // fails; the browser and socket are ended by close().
+    const cdp = (method, params = {}) => {
+      const id = ++serial;
+      return budget.bound(method, () => new Promise((resolve, reject) => { pending.set(id, {resolve, reject}); ws.send(JSON.stringify({id, method, params})); }),
+        () => pending.delete(id));
+    };
     const evaluate = async expression => {
       const r = await cdp('Runtime.evaluate', {expression, returnByValue: true, awaitPromise: true});
       if (r.exceptionDetails) throw Error(JSON.stringify(r.exceptionDetails));
@@ -432,6 +539,7 @@ async function openDemo(opts = {}) {
         if (await evaluate(`Boolean(${expression})`)) { await frames(); return spent; }
         if (spent >= maxVirtualMs) throw new Error(`demo never reached "${label}" within ${maxVirtualMs} virtual ms: ${expression}`);
         if (Date.now() - started > (opts.deadlineMs || 60000)) throw new Error(`demo is stuck before "${label}" (real-time guard)`);
+        budget.check(label);
         await advance(stepMs); spent += stepMs;
       }
     }
@@ -441,7 +549,8 @@ async function openDemo(opts = {}) {
       for (;;) {
         if (await evaluate(`Boolean(${expression})`)) return;
         if (Date.now() - started > deadlineMs) throw new Error(`timed out waiting for ${label}: ${expression}`);
-        await sleep(50);
+        budget.check(label);
+        await sleep(budget.limited ? Math.max(0, Math.min(50, budget.remaining())) : 50);
       }
     }
     async function load(search = '?demo=1') {
@@ -489,4 +598,5 @@ async function openDemo(opts = {}) {
 
 module.exports = {openDemo, skipReason, findChrome, sleep, WEB_ROOT, CLOCK_SOURCE, closeDemoResources, demoLifecycleTrace, requestBrowserShutdown,
   CLEANUP_MS, GRACEFUL_CLEANUP_MS, WINDOWS_JOB_WRAPPER, WINDOWS_JOB_LIMIT_BYTES, windowsJobPython, browserCommand,
-  JOB_STARTING_BROWSER, chromeStderrWatcher, profileEntryCount};
+  JOB_STARTING_BROWSER, chromeStderrWatcher, profileEntryCount, BROWSER_CREATED, portReadCounter, workBudget,
+  CLOSE_RESERVE_MS};
