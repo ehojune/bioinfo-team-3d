@@ -1,5 +1,9 @@
 pr: 908
 rows:
+- sha: 51601e6
+  at: '2026-10-24 03:06'
+  summary: 같은 원출처의 모든 인용 행을 검증해 추가 URI·artifact 미확인이 통과되지 않게 합니다.
+  text: P1 4362739079의 URI·artifact 미확인 회귀 2건을 수정 전 재현했다. original_evidence_ids는 병합 component의 모든 확인된 원출처 행을 보존하고 source_keys·independence_groups만 중복 제거한다. 성공 대조군을 포함한 관련 pytest 307 passed, Windows inventory·public 검사 PASS. Refs #905.
 - sha: 2b4bfd5
   at: '2026-10-24 03:04'
   summary: 계보 회귀 검사를 기존 evidence test 모듈에 포함해 Windows inventory를 유지합니다.
