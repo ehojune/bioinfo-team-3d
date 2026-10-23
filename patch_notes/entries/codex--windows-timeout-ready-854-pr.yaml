@@ -1,0 +1,6 @@
+pr: null
+rows:
+- sha: 1c41bc9
+  at: '2026-10-24 00:45'
+  summary: Windows 종료 검사에서 부모와 손자가 준비될 때까지 기다리도록 했습니다.
+  text: 최대 10초 fixture handshake 뒤 기존 1초 timeout과 두 PID 종료 단언을 유지하고 기동 지연 0·1.5초를 검사한다. 독립 Windows 검증 10 PASS이며 원래 CI 간헐 실패의 해결은 미확정이다. Refs #854.
