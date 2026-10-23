@@ -67,6 +67,87 @@ def claude_budget_argv(task):
     return ns["cmd"]
 
 
+UNKNOWN = {"cost_usd": None, "cost_known": False}
+ZERO = {"cost_usd": 0, "cost_known": True}
+
+
+class Cancelled(BaseException):
+    pass
+
+
+def immediate(coroutine):
+    """Drive inert awaitables that never yield. No asyncio import, loop, scheduler, task or thread is created."""
+    try:
+        coroutine.send(None)
+    except StopIteration as done:
+        return done.value
+    finally:
+        coroutine.close()
+    raise AssertionError("fake unexpectedly yielded to a runtime")
+
+
+class FakeStore:
+    lane = "fake-store"
+
+    def __init__(self):
+        self.rows, self.events, self.fail_read = {}, [], False
+
+    def get(self, kind, key):
+        assert kind == "accepted_task"
+        if self.fail_read:
+            raise OSError("fake unreadable receipt")
+        return self.rows.get(key)
+
+    def pending(self):
+        return self.events
+
+
+class FakeDurable:
+    def __init__(self):
+        self.commit, self.fail, self.calls = lambda: None, None, 0
+
+    async def run(self, lane, fn):
+        assert lane == "fake-store"
+        self.calls += 1
+        if self.fail:
+            raise self.fail
+        self.commit()  # the earlier FIFO result/after-mark job commits before this read barrier
+        return fn()
+
+
+def child_task():
+    return NS(id="inner", request_id="request", agent_id="recruiter")
+
+
+def accounting_runner(reserve=True):
+    durable = FakeDurable()
+    methods = extract("labhq/runner/daemon.py", {"_bind_recruitment_conversion", "_recruitment_cost_fields"},
+                      {"durable": durable}, owner="Runner")
+    runner = NS(s=settings(reserve), store=FakeStore(), tasks={}, _result_queued=set(), _recruitment_conversions={})
+    for name in ("_bind_recruitment_conversion", "_recruitment_cost_fields"):
+        setattr(runner, name, methods[name].__get__(runner))
+    task = NS(id="outer", request_id="request", agent_id="recruiter", meta={"kind": "plan_recruit"})
+    return runner, task, durable
+
+
+def cancellation_guard(runner, second_cancel=None):
+    class Result(NS):
+        def model_dump(self, **kwargs): return vars(self)
+    ns = extract("labhq/runner/daemon.py", {"_run_guarded"}, owner="Runner",
+                 scope={"asyncio": NS(CancelledError=Cancelled), "TaskResult": Result,
+                        "Event": lambda **kw: NS(**kw), "short": lambda value, limit: value[:limit],
+                        "log": NS(exception=lambda *a: None)})
+    runner.events, runner.event_buffers, runner._cleanup_reports = [], {}, {}
+    runner.controls = NS(finish=lambda task_id: {"closed": task_id})
+    runner._shutdown_result = lambda result, **kw: result
+    async def fail(task):
+        raise Cancelled("outer cancel")
+    async def emit(events):
+        runner.events.extend(events)
+    runner.run_task, runner.emit_all = fail, emit
+    return ns["_run_guarded"].__get__(runner)
+
+
 class InheritedRecruitBudget(unittest.TestCase):
     def test_nested_factory_and_fake_runner_receive_outer_hold_in_claude_argv(self):
         class Runner:
@@ -116,28 +197,13 @@ class InheritedRecruitBudget(unittest.TestCase):
             self.assertIsNone(child.request_budget_remaining_usd)
             self.assertEqual(claude_budget_argv(child), ["--max-budget-usd", "25.00"])
 
-    def test_lost_or_cancelled_nested_result_keeps_outer_cost_unknown(self):
-        pending = extract("labhq/recruit/paper2agent.py", {"conversion_cost_pending"})["conversion_cost_pending"]
-        self.assertFalse(pending(None))
-        self.assertFalse(pending(NS(conversion_started=False, conversion_result=None)))
-        self.assertTrue(pending(NS(conversion_started=True, conversion_result=None)))
-        for result in (NS(cost_usd=.25, cost_known=True), NS(cost_usd=None, cost_known=False)):
-            self.assertFalse(pending(NS(conversion_started=True, conversion_result=result)))
-        tree = ast.parse((ROOT / "labhq/recruit/planning.py").read_text(encoding="utf-8"))
-        run = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == "run_task")
-        finish = ast.FunctionDef(name="finish", args=ast.arguments(posonlyargs=[], args=[], kwonlyargs=[],
-                                 kw_defaults=[], defaults=[]), body=copy.deepcopy(run.body[-2:]), decorator_list=[])
-        ns = {"runner": NS(s=settings()), "paper2agent": NS(conversion_cost_pending=pending),
-              "conversion": NS(conversion_started=True, conversion_result=None), "TaskResult": lambda **kw: NS(**kw),
-              "task": NS(id="outer", agent_id="recruiter"), "receipt": {"status": "timed_out"}}
-        exec(compile(ast.fix_missing_locations(ast.Module(body=[finish], type_ignores=[])), "outer-result", "exec"), ns)
-        result = ns["finish"]()
-        self.assertIsNone(result.cost_usd)
-        self.assertFalse(result.cost_known)
-        ns["conversion"].conversion_result = NS(cost_known=False)  # already accounted by its own nested ID
-        result = ns["finish"]()
-        self.assertEqual(result.cost_usd, 0)
-        self.assertTrue(result.cost_known)
+    def test_lost_return_uses_finished_receipt_instead_of_python_result(self):
+        runner, task, durable = accounting_runner()
+        runner._bind_recruitment_conversion(task.id, child_task())
+        self.assertEqual(immediate(runner._recruitment_cost_fields(task)), UNKNOWN)
+        durable.commit = lambda: runner.store.rows.update(inner={"state": "finished"})
+        self.assertEqual(immediate(runner._recruitment_cost_fields(task)), ZERO)
+        self.assertEqual(durable.calls, 2)
 
     def test_planning_propagates_both_allowances_and_never_copies_nested_spend(self):
         tree = ast.parse((ROOT / "labhq/recruit/planning.py").read_text(encoding="utf-8"))
@@ -149,8 +215,8 @@ class InheritedRecruitBudget(unittest.TestCase):
         self.assertEqual(pairs["parent_budget_remaining_usd"], "task.request_budget_remaining_usd")
         result = outer.body[-1].value
         keywords = {k.arg: ast.unparse(k.value) for k in result.keywords}
-        self.assertEqual(keywords["cost_usd"], "None if pending else 0")
-        self.assertEqual(keywords["cost_known"], "not pending")
+        self.assertEqual(keywords[None], "costs or {'cost_usd': 0, 'cost_known': True}")
+        self.assertIn("await runner._recruitment_cost_fields(task)", ast.unparse(outer.body[-2]))
 
     def test_cap_validation_precedes_filesystem_and_dispatch_marks_uncertainty(self):
         tree = ast.parse((ROOT / "labhq/recruit/paper2agent.py").read_text(encoding="utf-8"))
@@ -159,13 +225,12 @@ class InheritedRecruitBudget(unittest.TestCase):
         text = [ast.unparse(n) for n in run.body]
         validation = next(i for i, t in enumerate(text) if t.startswith("conversion_budget("))
         mkdir = next(i for i, t in enumerate(text) if "build.mkdir(" in t)
-        started = next(i for i, t in enumerate(text) if t == "self.conversion_started = True")
+        bound = next(i for i, t in enumerate(text) if "_bind_recruitment_conversion(" in t)
         dispatch = next(i for i, t in enumerate(text) if "asyncio.ensure_future(" in t)
         waited = next(i for i, t in enumerate(text) if t == "result = await turn")
-        recorded = next(i for i, t in enumerate(text) if t == "self.conversion_result = result")
         self.assertLess(validation, mkdir)
-        self.assertLess(started, dispatch)
-        self.assertEqual(recorded, waited + 1)
+        self.assertLess(bound, dispatch)
+        self.assertLess(dispatch, waited)
 
     def test_existing_request_cost_collection_deduplicates_nested_and_outer_ids(self):
         scope = {"task_cost_item": lambda result, agent: {"status": "unknown" if not result.cost_known else "reported",
@@ -201,3 +266,91 @@ class InheritedRecruitBudget(unittest.TestCase):
             self.assertEqual(hub.requests["r"]["cost_usd"], amount or 0)
             self.assertEqual(hub.requests["r"]["cost_known"], amount is not None)
             self.assertEqual(hub.requests["r"]["cost_by_task"], {"inner": amount, "outer": 0})
+
+    def test_timeout_lost_return_with_queued_nested_known_or_unknown_charges_only_once(self):
+        for amount in (.4, None):
+            runner, task, durable = accounting_runner()
+            runner._bind_recruitment_conversion(task.id, child_task())
+            # No Python result object; result and finished receipt are still queued on the writer lane.
+            durable.commit = lambda: runner.store.rows.update(inner={"state": "finished"})
+            fields = immediate(runner._recruitment_cost_fields(task))
+            self.assertEqual(fields, ZERO)
+            methods = extract("labhq/orchestrator/cso.py", {"_count_cost", "_count_recorded_costs"},
+                              owner="Orchestrator")
+            req = {"cost_items": {"inner": {"status": "unknown" if amount is None else "reported", "usd": amount},
+                                  "outer": {"status": "reported", "usd": fields["cost_usd"]}}}
+            cso = NS(hub=NS(requests={"r": req}), cost_tasks={}, cost_unknown={}, cost={})
+            cso._count_cost = lambda *a: methods["_count_cost"](cso, *a)
+            for _ in range(2):
+                methods["_count_recorded_costs"](cso, "r")
+            self.assertEqual(cso.cost["r"], amount or 0)
+            self.assertEqual(cso.cost_unknown.get("r", set()), {"inner"} if amount is None else set())
+
+    def test_explicit_cancel_uses_queued_receipt_and_cleans_private_binding(self):
+        for amount in (.4, None):
+            runner, task, durable = accounting_runner()
+            runner._bind_recruitment_conversion(task.id, child_task())
+            durable.commit = lambda: runner.store.rows.update(inner={"state": "finished"})
+            with self.assertRaises(Cancelled):
+                immediate(cancellation_guard(runner)(task))
+            result = runner.events[-1].data
+            self.assertEqual((result["cost_usd"], result["cost_known"]), (0, True))
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["cleanup_evidence"]["status"], "UNKNOWN")
+            self.assertEqual(runner._recruitment_conversions, {})
+
+    def test_missing_failed_or_cancelled_receipt_stays_unknown_even_with_result_hint(self):
+        for mode in ("missing", "running", "malformed", "read_error", "writer_error", "cancelled_read"):
+            runner, task, durable = accounting_runner()
+            runner._bind_recruitment_conversion(task.id, child_task())
+            runner._result_queued.add("inner")  # pre-fsync hint must never prove a zero outer charge
+            if mode == "running": runner.store.rows["inner"] = {"state": "running"}
+            if mode == "malformed": runner.store.rows["inner"] = {"state": True}
+            if mode == "read_error": runner.store.fail_read = True
+            if mode == "writer_error": durable.fail = OSError("write failed")
+            if mode == "cancelled_read": durable.fail = Cancelled("second cancel")
+            with self.assertRaises(Cancelled):
+                immediate(cancellation_guard(runner)(task))
+            result = runner.events[-1].data
+            self.assertEqual((result["cost_usd"], result["cost_known"]), (None, False))
+            self.assertEqual(runner._recruitment_conversions, {})
+
+    def test_reused_child_ids_and_duplicate_parent_binding_refuse_before_dispatch(self):
+        for mode in ("parent", "child_same", "running_task", "queued_hint", "old_receipt", "outbox"):
+            runner, task, durable = accounting_runner()
+            child = child_task()
+            if mode == "parent": runner._recruitment_conversions[task.id] = {"task_id": "old"}
+            if mode == "child_same": child.id = task.id
+            if mode == "running_task": runner.tasks[child.id] = object()
+            if mode == "queued_hint": runner._result_queued.add(child.id)
+            if mode == "old_receipt": runner.store.rows[child.id] = {"state": "finished"}
+            if mode == "outbox": runner.store.events = [{"task_id": child.id}]
+            with self.assertRaises(ValueError):
+                runner._bind_recruitment_conversion(task.id, child)
+            self.assertEqual(durable.calls, 0)
+
+    def test_binding_mismatch_mutation_and_restart_never_trust_stale_finished_row(self):
+        for mode in ("request", "agent", "shape", "changed_during_read", "mutated_during_read"):
+            runner, task, durable = accounting_runner()
+            runner._bind_recruitment_conversion(task.id, child_task())
+            runner.store.rows["inner"] = {"state": "finished"}
+            if mode == "request": runner._recruitment_conversions[task.id]["request_id"] = "other"
+            if mode == "agent": runner._recruitment_conversions[task.id]["agent_id"] = "other"
+            if mode == "shape": runner._recruitment_conversions[task.id] = {}
+            if mode == "changed_during_read": durable.commit = lambda: runner._recruitment_conversions.clear()
+            if mode == "mutated_during_read":
+                durable.commit = lambda: runner._recruitment_conversions[task.id].update(task_id="stale")
+                runner.store.rows["stale"] = {"state": "finished"}
+            self.assertEqual(immediate(runner._recruitment_cost_fields(task)), UNKNOWN)
+        fresh, task, durable = accounting_runner()  # restart has no private lineage, so fallback stays original UNKNOWN
+        fresh.store.rows["inner"] = {"state": "finished"}
+        with self.assertRaises(Cancelled):
+            immediate(cancellation_guard(fresh)(task))
+        self.assertFalse(fresh.events[-1].data.get("cost_known", False))
+
+    def test_off_or_non_plan_path_does_not_reconcile_or_change_fallback(self):
+        for reserve, kind in ((False, "plan_recruit"), (True, "recruit"), (True, "step")):
+            runner, task, durable = accounting_runner(reserve)
+            task.meta["kind"] = kind
+            self.assertEqual(immediate(runner._recruitment_cost_fields(task)), {})
+            self.assertEqual(durable.calls, 0)

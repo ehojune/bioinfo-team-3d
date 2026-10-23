@@ -422,12 +422,6 @@ def conversion_budget(settings, parent_task_id, budget, remaining):
     return cap, cap
 
 
-def conversion_cost_pending(recruitment):
-    """A lost nested result must not let the outer hold settle as a free conversion."""
-    return (recruitment is not None and recruitment.conversion_started
-            and recruitment.conversion_result is None)
-
-
 class Recruitment:
     def __init__(self, runner: "Runner", msg: dict):
         self.r, self.s = runner, runner.s
@@ -437,8 +431,6 @@ class Recruitment:
         self.plan_task_id = msg.get("plan_task_id")
         self.parent_budget = msg.get("parent_budget_usd")
         self.parent_remaining = msg.get("parent_budget_remaining_usd")
-        self.conversion_started = False
-        self.conversion_result = None
         self.slug = slugify(msg.get("name") or self.repo or self.paper or "contract")
 
     async def _emit(self, typ: str, data: dict) -> None:
@@ -474,13 +466,11 @@ class Recruitment:
         task = self.conversion_task(build)
         # Tracked like a dispatched task: a card answer that arrives after this turn ended must not mark the
         # recruiter working again (PR #526 review, #521).
-        self.conversion_started = True
+        if self.plan_task_id and self.s.policy.budget.reserve_before_dispatch:
+            self.r._bind_recruitment_conversion(self.plan_task_id, task)
         turn = asyncio.ensure_future(self.r.run_task(task, workdir_override=build))
         self.r.tasks[task.id] = turn
         result = await turn
-        # run_task has already durably queued this task's own result. The gateway accounts it once by nested ID;
-        # the outer plan receipt must not add the same spent/unknown cost a second time.
-        self.conversion_result = result
         offer = result.structured if isinstance(result.structured, dict) else extract_json(result.text)
         if not result.ok or not isinstance(offer, dict):
             await self._emit("recruit.failed", {"error": result.error or "no offer letter", "text": short(result.text, 500)})
