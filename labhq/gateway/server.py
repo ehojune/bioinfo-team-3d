@@ -1419,7 +1419,7 @@ class Hub:
                                    # has_plan tells the web's empty steps apart: all done, or the whole request (#521).
                                    detail={"request_text": head, "created_at": created, "steps": steps,
                                            "has_plan": has_plan,
-                                           **({"cp1_target_sha256": cp1["target_sha256"]} if cp1 else {})},
+                                           **({"cp1_target_sha256": cp1["target_sha256"], **cp1["detail"]} if cp1 else {})},
                                    timeout_s=self.s.policy.approvals.pi_decision_timeout_s)
         self.approvals[approval.id] = {"approval": approval.model_dump(mode="json"), "origin": None}
         self.save_approval(approval.id)

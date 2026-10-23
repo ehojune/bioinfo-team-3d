@@ -4205,11 +4205,15 @@ class Orchestrator:
             return None
         if refresh_plan_approval(plan, contract.get("approval")).get("status") == "approved":
             return None
+        # What the CP1 card shows beyond this card's text keeps CP1 as its own question (see finish_research_plan).
+        if paper_skills.card_text(plan) or any("재배정" in w for w in plan.get("warnings") or [] if isinstance(w, str)):
+            return None
         budget, _ = self._research_budget(rid, req, plan)
         steps = [f"{step['id']}·{step['agent_id']}: {short(' '.join(str(step['instruction']).split()), 40)}"
                  for step in plan["steps"]]
         tail = (f"\n{_cost_estimate_line(req.get('plan_cost_estimate') or {})} {_budget_line(budget)}"
-                "\n승인하면 이 계획(CP1)도 승인한 것으로 기록하고 CP1 카드를 다시 묻지 않습니다. 계획이 바뀌면 CP1을 다시 묻습니다.")
+                "\n승인하면 아래 동결 계획(CP1)도 승인한 것으로 기록하고 CP1 카드를 다시 묻지 않습니다. "
+                "계획이 바뀌거나 의미 장치가 멈춰 있으면 CP1을 다시 묻습니다.")
         warnings = [w for w in plan.get("warnings") or [] if isinstance(w, str)]
         if warnings:
             tail = f"\n계획 경고 {len(warnings)}건: {short(warnings[0], 80)}" + tail
@@ -4221,7 +4225,13 @@ class Orchestrator:
                 break
             body += "\n" + line
             used += len(line) + 1
-        return {"text": f"\n연구 계획 {len(steps)}단계:" + body + tail, "target_sha256": research_plan_sha256(plan)}
+        return {"text": f"\n연구 계획 {len(steps)}단계:" + body + tail, "target_sha256": research_plan_sha256(plan),
+                # The same frozen-plan fields the CP1 card carries, so the web renders the whole plan (#654 review).
+                "detail": {"plan_canonical": canonical_plan_json(plan),
+                           "pack_applicability": plan.get("pack_applicability") or {},
+                           "warnings": plan.get("warnings") or [],
+                           "protocol_revision": plan["protocol"].get("revision"), "packs": plan["protocol"].get("packs"),
+                           "scope_status": plan["intake"].get("scope_status")}}
 
     def _spending_cap_line(self, rid: str) -> str:
         """The cap ``_check_budget`` enforces now, for research step and review prompts (#499): staff otherwise read
@@ -6187,8 +6197,11 @@ class Orchestrator:
                 previous = stored.get("approval")
                 approval = refresh_plan_approval(plan, previous)
                 plan_sha256 = approval.get("current_sha256") or approval.get("target_sha256")
-                # A resume card that showed this plan and was approved stands for CP1 once (#654); read once, then gone.
-                resume_cp1 = req.pop("resume_cp1", None)
+                # A resume card that showed this plan and was approved stands for CP1 once (#654). It is dropped in the
+                # save that records the receipt, so a stop before that save keeps the PI's answer.
+                resume_cp1 = req.get("resume_cp1")
+                if approval.get("status") == "approved":
+                    req.pop("resume_cp1", None)
                 frozen_checklist = (stored.get("checklist_snapshot")
                                     if stored.get("plan_sha256") == plan_sha256
                                     and isinstance(stored.get("checklist_snapshot"), list)
@@ -6339,6 +6352,7 @@ class Orchestrator:
                         req["research_contract"].setdefault("budget_cap", {
                             "configured_cap_usd": budget["configured_cap_usd"], "source": configured_source})
                     req["research_contract"]["approval"] = approval
+                    req.pop("resume_cp1", None)  # consumed by this very save
                     self.hub.save_request(rid)
                 approved = bool(approval.get("approved"))
                 if not approved and approval.get("status") == "timed_out":

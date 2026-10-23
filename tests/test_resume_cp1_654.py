@@ -6,6 +6,7 @@ approved, records CP1 for that plan hash. A changed plan, a continuation or a pl
 
 from __future__ import annotations
 
+import json
 import time
 
 import pytest
@@ -60,6 +61,27 @@ async def test_an_approved_resume_card_that_showed_the_plan_stands_for_cp1(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_a_stop_before_the_receipt_is_saved_keeps_the_resume_answer(tmp_path, monkeypatch):
+    hub = await _stopped_at_cp1(tmp_path, [cont.APPROVE])
+    _resume_receipt(hub)
+
+    async def dies(self, rid, stage):
+        raise _Restart()
+
+    monkeypatch.setattr(Orchestrator, "_semantic_devices_check", dies)
+    with pytest.raises(_Restart):
+        await Orchestrator(hub).run_request("r", resume=True)
+    assert hub.requests["r"]["resume_cp1"]["approval_id"] == "appr_resume"  # the PI's answer survives the stop
+
+    monkeypatch.undo()
+    hub.requests["r"]["status"] = "interrupted"
+    await Orchestrator(hub).run_request("r", resume=True)
+    assert "research_plan" not in [card["kind"] for card in hub.approvals]
+    assert hub.requests["r"]["research_contract"]["approval"]["via"] == "resume_card"
+    assert "resume_cp1" not in hub.requests["r"]
+
+
+@pytest.mark.asyncio
 async def test_a_plan_that_changed_since_the_resume_card_asks_cp1_again(tmp_path):
     hub = await _stopped_at_cp1(tmp_path, [CP1, cont.APPROVE])
     _resume_receipt(hub, target="d" * 64)
@@ -94,6 +116,9 @@ async def test_the_card_text_lists_the_plan_and_only_a_first_unapproved_plan_get
     assert orch.resume_plan_card("r", {**req, "results": {"s1": {"ok": True}}}) is None
     assert orch.resume_plan_card("r", {**req, "research_contract": {"continuation": {"round": 2}}}) is None
     assert orch.resume_plan_card("r", {**req, "plan": {"steps": [{"id": "s1"}]}}) is None  # not a research plan
+    # A re-hire note is shown only on the CP1 card, so that plan keeps CP1 as its own question.
+    rehired = {**req, "plan": {**req["plan"], "warnings": ["직원 재배정: s2"]}}
+    assert orch.resume_plan_card("r", rehired) is None
 
 
 @pytest.mark.asyncio
@@ -106,6 +131,8 @@ async def test_the_gateway_resume_card_shows_the_plan_and_its_approval_records_t
     card = next(a["approval"] for a in hub.approvals.values() if a["approval"]["kind"] == "resume")
     assert card["detail"]["cp1_target_sha256"] == plan_sha256(plan)
     assert "연구 계획" in card["summary"] and "s1" in card["summary"]
+    assert json.loads(card["detail"]["plan_canonical"])["steps"][0]["id"] == "s1"  # the whole frozen plan, as CP1
+    assert card["detail"]["scope_status"] and card["detail"]["protocol_revision"]
 
     await hub.resolve_approval(card["id"], True)
     assert hub.requests["r"]["resume_cp1"] == {

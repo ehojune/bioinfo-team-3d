@@ -167,6 +167,24 @@ test('resume card shows the received time as a date and the steps left as a list
   assert.ok(left.detail.textContent.includes('남은 단계s2, s3'));
 });
 
+test('a resume card that also stands for CP1 shows the whole frozen plan like the CP1 card (#654)',async()=>{
+  const plan={schema_version:2,topics:[],intake:{scope_status:'in_scope'},brief:{question:'Does condition change expression?',
+    primary_hypothesis:'Condition changes expression',null_or_alternatives:['batch explains the change'],
+    completion_conditions:['QC and effect interval reported']},protocol:{revision:1,stop_conditions:['design not identifiable'],
+    resource_limits:['one local planning call'],data_boundaries:['public counts only'],packs:[]},pack_values:{},
+    pack_applicability:{},warnings:[],clarifying_questions:[],branches:[],steps:[{id:'s1'}],recruit:[],notes:'frozen'};
+  const canonicalPlan=JSON.stringify(plan);
+  const created=new Date(2026,9,8,11,33).getTime()/1000;
+  const c=await card('resume',{request_text:'표 정리',created_at:created,steps:['s1'],has_plan:true,
+    cp1_target_sha256:'a'.repeat(64),plan_canonical:canonicalPlan,pack_applicability:{},warnings:[],protocol_revision:1,
+    packs:[],scope_status:'in_scope'});
+  const text=c.detail.textContent;
+  for (const value of ['남은 단계s1','질문','Does condition change expression?','design not identifiable','public counts only',
+    'a'.repeat(64)]) assert.ok(text.includes(value),value+' must be visible: '+text);
+  assert.ok(text.includes(canonicalPlan),'the exact hash input stays visible');
+  assert.ok(!text.includes('protocol_revision'),'repeated inside the plan view');
+});
+
 test('a resume card for a request without a plan says the whole request reruns, not that nothing is left (#521)',async()=>{
   const created=new Date(2026,9,8,11,33).getTime()/1000;
   const direct=await card('resume',{request_text:'표 정리',created_at:created,steps:[],has_plan:false});
