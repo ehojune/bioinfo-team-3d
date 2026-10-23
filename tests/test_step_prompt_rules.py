@@ -14,9 +14,9 @@ def _render() -> str:
 
 
 def test_generic_step_prompt_bytes_stay_at_the_main_baseline():
-    # #690 adds the SVG text/font/no-capture figure contract to every execution step.
+    # #690 adds the SVG text/font/no-capture figure contract to every execution step; #669 adds the install-and-read rule.
     assert hashlib.sha256(STEP_PROMPT.encode()).hexdigest() == (
-        "f6abaa1c57bb97a0b87a49c7dfe42202adf9930caa80bf08346ba1e1bc7fb57f")
+        "86628071066d3b371bc21d66f583f4163b18305482d3688918cd5f4b798bf9a0")
     assert "If an HPC job runs the analysis" in STEP_PROMPT
 
 
@@ -38,9 +38,9 @@ def test_step_prompts_keep_reproducibility_artifacts_out_of_tmp():
 
 
 def test_research_step_prompt_bytes_stay_at_the_previous_baseline():
-    # #690 adds the SVG text/font/no-capture figure contract to the frozen research lane.
+    # #690 adds the SVG text/font/no-capture figure contract to the frozen research lane; #669 the install-and-read rule.
     assert hashlib.sha256(cso.RESEARCH_STEP_PROMPT.encode()).hexdigest() == (
-        "2e0a1ae6b063a687b1c5579302408cbcfcd0524e1d44f6eb55a1af75427a36c8")
+        "c6bb88d99f75b5b454145030377a027a9b6518ee5bad0ee791316cb7c5a91e09")
     assert "If an HPC job runs the analysis" in cso.RESEARCH_STEP_PROMPT
 
 

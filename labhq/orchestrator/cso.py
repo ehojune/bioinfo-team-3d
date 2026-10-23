@@ -643,6 +643,10 @@ Contract rules:
 - Freeze analysis unit, selection/exclusion, comparators, metrics, validation, resources, stop/approval
   conditions, data boundaries, and statistics applicability before execution. Every not_applicable item needs a reason.
   Applicable statistics needs estimand, analysis_unit, and primary_outcomes.
+- Installing packages inside a step's own workspace (`pip install --target ./.pylib`, a workspace venv, `./.rlib`,
+  versions pinned) is allowed by default. Do not write "no new packages" or the like into protocol.resource_limits:
+  a step that cannot read a received file for lack of a package would give up. Forbid only changes to the system or a
+  shared environment; stricter limits come only from the PI's request.
 - """ + SELECTION_RECORD_RULE + """
 - `budget_usd` (optional number): the additional execution budget in USD after this plan's CP1 approval.
   Exclude briefing, clarification, planning and all earlier-round spending already incurred. On approval labhq adds
@@ -714,7 +718,10 @@ RESEARCH_STEP_PROMPT = """Overall request (context only): {request}
 
 Your step ({step_id}): {instruction}
 
-Teammates' upstream results are in the context section. Deliver: what you did, key results with file
+Teammates' upstream results are in the context section. If a received file needs a package you lack, install it
+into your own workspace (./.pylib, pinned version) and read it; never give a step up for that. If no tool can read
+a received file even then, record an evidence row with status "unavailable" whose status_detail starts with
+"도구 없음: <file> · <tool needed>" so the PI sees it at CP2. Deliver: what you did, key results with file
 paths, caveats and open questions. Do not quietly switch to a weaker method when one fails: keep debugging,
 and if you give it up, say what you tried and why you stopped. If you cannot proceed without a blocking decision,
 return JSON with "blocking_decision": "the specific question and choices". The CSO answers first; only hard-stop
@@ -1199,6 +1206,19 @@ def _plan_cap_sum(budget: dict[str, Any]) -> str:
     """The two parts of an approved plan's cap, in the words the CP1 card and the staff prompts share."""
     return (f"계획 예산 ${float(budget.get('plan_budget_usd') or 0):.2f} + "
             f"계획까지 쓴 ${float(budget.get('spent_before_plan_usd') or 0):.2f}")
+
+
+TOOL_MISSING = "도구 없음"
+
+
+def tool_missing_lines(step_id: str, ledger: dict[str, Any]) -> list[str]:
+    """CP2 warnings for evidence a step could not read for lack of a tool (#669): "도구 없음" at the start of an
+    unavailable row's status_detail, so the PI or lead sees a given-up read instead of a silent gap."""
+    rows = (ledger or {}).get("evidence") or []
+    return [f"{step_id}/{','.join(row.get('slots') or [])}: {TOOL_MISSING} — "
+            f"{str(row.get('status_detail')).strip()[len(TOOL_MISSING):].lstrip(':： ·-—')}"
+            for row in rows if isinstance(row, dict) and row.get("status") == "unavailable"
+            and str(row.get("status_detail") or "").strip().startswith(TOOL_MISSING)]
 
 
 def _budget_line(budget: dict[str, Any]) -> str:
@@ -5195,6 +5215,7 @@ class Orchestrator:
                 if row.get("origin"):
                     warnings.append(f"{step['id']}/{','.join(row['slots'])}: origin: {row['origin']}; "
                                     f"{row.get('attempt_status') or 'unknown'} — {row.get('status_detail')}")
+            warnings += tool_missing_lines(step["id"], ledger)
         warnings += output_checks.quality_lines(steps, results)  # shown on the CP2 card and under 한계 (#697, #710)
         contract["result_warnings"] = warnings
         # CP2 approves these ledgers as results of the plan frozen at CP1, so each must validate under it. A reused
