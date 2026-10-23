@@ -625,3 +625,9 @@ def test_refused_original_is_visible_but_cannot_reenter_through_a_recitation():
     assert conclusion_literature_line([], {}, {"s1": ledger}, refused=refused).startswith("결론 근거 논문 1편:")
     assert "결론 근거 1편." in literature_ledger_line([{"id": "s1"}], results, {"s1": ledger},
                                                    refused=refused)
+    ledger["evidence"][1]["source"]["artifact_id"] = "rejected-attachment"
+    ledger["evidence"][-1]["source"]["artifact_id"] = "accepted-attachment"
+    assert check_report("Conclusion [[claim:s1/c2]]", {"s1": ledger}, refused=refused,
+                        artifact_sha256={"s1/accepted-attachment": "a" * 64}) == {"anchors": 1, "problems": []}
+    problems = check_report("Conclusion [[claim:s1/c2]]", {"s1": ledger}, refused=refused)["problems"]
+    assert len(problems) == 1 and "accepted-attachment" in problems[0]

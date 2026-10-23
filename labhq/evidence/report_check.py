@@ -274,7 +274,6 @@ def check_report(report: str, ledgers: Mapping[str, Any], *, unsupported: Iterab
     found = ANCHOR.findall(CODE.sub(" ", report or ""))
     unsupported, refused = list(unsupported), list(refused)
     blocked = _pairs(unsupported, "claim_id")
-    refused_rows = _pairs(refused, "evidence_id")
     no_support = _claims_without_accepted_support(ledgers, refused)
     hashes = artifact_sha256 or {}
     problems: list[str] = []
@@ -302,11 +301,12 @@ def check_report(report: str, ledgers: Mapping[str, Any], *, unsupported: Iterab
             problems.append(f"{mark}: status {status} cannot be cited as a conclusion")
             continue
         evidence = {row.get("id"): row for row in _rows(ledgers[step_id], "evidence")}
+        accepted = accepted_evidence_ids(ledgers[step_id], step_id, refused)
         for link in _rows(ledgers[step_id], "links"):
             if link.get("claim_id") != claim_id or link.get("relation") != STATUS_NEEDS[status]:
                 continue
             row = evidence.get(link.get("evidence_id"))
-            if row is None or (step_id, str(row.get("id"))) in refused_rows:
+            if row is None or str(row.get("id")) not in accepted:
                 continue
             source = row.get("source") if isinstance(row.get("source"), Mapping) else {}
             artifact = source.get("artifact_id")
