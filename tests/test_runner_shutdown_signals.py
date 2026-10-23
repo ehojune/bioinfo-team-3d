@@ -97,6 +97,7 @@ async def test_standard_entry_cancels_with_evidence_and_mock_gateway_opens_resum
     runner.connected.set()
     started = asyncio.Event()
     stages = []
+    pending_at_shutdown_return = []
     task = Task(id="signal-task", agent_id="cso", request_id="r", prompt="mock work")
 
     async def work(_task):
@@ -132,12 +133,20 @@ async def test_standard_entry_cancels_with_evidence_and_mock_gateway_opens_resum
 
     monkeypatch.setattr(runner, "run_task", work)
     monkeypatch.setattr(runner, "run_forever", run_forever)
+    shutdown = runner.shutdown
+
+    async def observed_shutdown():
+        await shutdown()
+        pending_at_shutdown_return.append(len(runner.store.pending()))
+
+    monkeypatch.setattr(runner, "shutdown", observed_shutdown)
     entry = asyncio.create_task(_run_runner_with_interrupts(runner))
     try:
         await phase("work_ready", started.wait())
         signals[getattr(signal, sig_name)](getattr(signal, sig_name), None)
         result, sequence = await phase("result_durable", result_ready())
         await phase("gateway_resume", run_request_with_result(hub, result, monkeypatch))
+        assert not entry.done(), f"runner exited before ACK: {stages}"
         await phase("ack_durable", runner._on_message({"type": "runner.ack", "runner_seq": sequence}))
         await phase("entry_finished", entry)
     finally:
@@ -151,6 +160,7 @@ async def test_standard_entry_cancels_with_evidence_and_mock_gateway_opens_resum
     assert hub.requests["r"]["status"] == "interrupted"
     assert len(resume_cards(hub)) == 1
     assert runner.store.pending() == []
+    assert pending_at_shutdown_return == [0], "shutdown returned before durable ACK"
 
 
 @pytest.mark.parametrize("connected", [True, False])

@@ -7,6 +7,8 @@
 
 ACK에만 3.1초 지연을 넣은 로컬 비교에서 기존 검사는 `TimeoutError`로 실패했고 수정본은 통과했다. 이 비교는 전체 3초 상한의 문제를 보여준다. 원래 CI의 DB·writer 지연 원인을 재현한 증거는 아니다. 지연 주입기는 로컬 실험에만 썼다.
 
+ACK 전 entry가 살아 있어야 하며 shutdown 반환 시 outbox가 비어 있어야 한다. gateway 2.1초+ACK 3.1초 지연으로 제품 기한을 넘긴 실험은 이 단언에서 실패한다. 각 단계가 5초 미만이어도 종료 뒤 ACK로 검사를 통과시키지 않는다(P2 `4361721792`).
+
 R fake 검사는 version timeout 뒤 syntax PASS와 syntax timeout을 구분한다. 두 호출의 10초, `not_rerun`, 기존 syntax·shutdown·resume·outbox 단언과 coverage/receipt 계약을 유지한다. 진단에는 command·source·환경·절대 경로를 넣지 않는다.
 
 R 실제 지연 원인이 남아 있으므로 이 PR만으로 #898을 닫지 않는다. 다음 실패의 단계별 기록으로 원인을 좁힌다.
