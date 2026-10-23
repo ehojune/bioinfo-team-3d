@@ -1,0 +1,14 @@
+pr: 873
+rows:
+- sha: 1aeac58
+  at: 2026-10-23 08:46
+  summary: Windows에서 감독 프로세스를 띄울 때 확인 파일을 잠깐 읽지 못해도 바로 멈추지 않고 기존 대기 시간 안에서 다시 읽으며, 끝내 못 읽으면 몇 번 막혔는지 남깁니다.
+  text: '야간 run 39858916081에서 WMI bootstrap이 stage=ack_wait error=PermissionError로 멈췄고 winerror가 없었다. CPython 3.12의 open()은 C runtime(_wopen)을 거쳐 errno EACCES만 남기므로 #868의 winerror 32 조건에 맞지 않았다. 기존 mock은 winerror를 손으로 넣어 이 모양을 시험하지 않았다. 이제 기한이 있는 _poll에서만 winerror 32 또는 winerror 없는 EACCES를 아직 없음으로 보고 다시 읽는다. 명시된 다른 winerror, 다른 errno, 첫 request 읽기는 그대로 바로 실패한다. 20초 기한, 0.02초 간격, caller 생존·만료, nonce·identity·환경·Job 확인, WMI create 1회는 그대로이고, 읽지 못한 기록으로는 시작하지 않는다. 부모 receipt 대기와 bootstrap ACK 대기는 각자 denied_reads를 0부터 세어 실패 기록과 정지 줄에 정수만 남긴다. PowerShell provider의 첫 단계는 ConvertTo-Json 없이 고정 문자열로 바로 flush하고 stdout은 종류와 byte 수만 기록한다. 원래 Win32 원인(공유 위반인지 ACL인지)은 확인하지 못했고, CI 실패나 시운전이 해결됐다고 보지 않는다.'
+- sha: cb76468
+  at: 2026-10-23 08:55
+  summary: Windows 시작 진단 시험이 바뀐 첫 단계 기록 방식을 따르도록 맞췄습니다.
+  text: 'provider 첫 단계가 Write-Phase 대신 고정 문자열이 되어 tests/test_windows_broker_frames.py의 receiver 순서 확인도 같은 FIRST_PHASE를 기준으로 본다. 나머지 단계와 receiver 확인은 바뀌지 않았다.'
+- sha: e3114f6
+  at: 2026-10-23 08:58
+  summary: 새로 설치한 환경에서 시작이 실패할 때 나오는 진단 줄에도 PowerShell 출력이 있었는지와 확인 파일을 몇 번 읽지 못했는지가 남습니다.
+  text: '독립 검토에서 clean-install STARTUP_DIAGNOSTIC 투영이 provider의 stdout·stdout_bytes와 최상위 denied_reads를 버린다는 점이 나왔다. 실제로 실패한 경로가 clean-install의 provider timeout이라 이 PR에서 고친다. provider에서만 stdout(bytes/missing/invalid_type)과 stdout_bytes를, 기록 최상위에서만 denied_reads를 남기고, 숫자는 0 이상 2**32 이하 정수만 받는다. bool·문자열·음수·실수·NaN과 원문 출력·메시지·경로는 버린다. 16KiB 읽기, 8개 event, 4096바이트 출력 상한과 원래 실패 전파는 그대로다. tests/test_web_shutdown_process.py의 투영도 같게 맞추고 두 투영이 같은 기록에서 같은 값을 내는지 가짜 시험으로 확인한다.'

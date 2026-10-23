@@ -96,6 +96,58 @@ def test_journal_is_bounded_and_reports_evidence_gaps(tmp_path, monkeypatch, mod
             {"phase": "powershell_started", "elapsed_ms": 20}]}
 
 
+# #844: what reached the provider's stdout (kind and size) and the parent's denied receipt reads, never content.
+BAD_COUNTS = [True, False, -1, 2**32 + 1, 1.5, float("nan"), float("inf"), "7", "SECRET-7", None, [1], {"n": 1}]
+BAD_KINDS = ["SECRET-output", "BYTES", "", True, None, 0, ["bytes"]]
+
+
+def _project(tmp_path, top, provider):
+    row = _row()
+    row.update(top)
+    row["provider"].update(provider)
+    path = _journal(tmp_path)
+    path.write_text(json.dumps(row), encoding="utf-8")
+    result = check._startup_journal(path)
+    text = json.dumps(result, ensure_ascii=True)
+    assert "SECRET" not in text and len(text) <= 4096 and len(result["events"]) == 1
+    event = result["events"][0]
+    assert event["reason"] == "provider_timeout" and event["provider"]["trace_status"] == "partial"
+    assert [step["phase"] for step in event["provider"]["phases"]] == ["powershell_started", "stdin_open", "header_read"]
+    return event
+
+
+@pytest.mark.parametrize("top,provider", [
+    ({"denied_reads": 0}, {"stdout": "missing"}),
+    ({"denied_reads": 1000}, {"stdout": "bytes", "stdout_bytes": 0}),
+    ({"denied_reads": 2**32}, {"stdout": "bytes", "stdout_bytes": 2**32}),
+    ({}, {"stdout": "invalid_type"}),
+], ids=["missing", "empty-bytes", "upper-bound", "not-bytes"])
+def test_stdout_kind_size_and_denied_reads_survive_the_projection(tmp_path, top, provider):
+    event = _project(tmp_path, top, provider)
+    assert {key: event[key] for key in top} == top
+    assert {key: event["provider"][key] for key in provider} == provider
+    assert "stdout_bytes" in event["provider"] or "stdout_bytes" not in provider
+
+
+@pytest.mark.parametrize("bad", BAD_COUNTS, ids=repr)
+def test_an_invalid_count_is_dropped_without_dropping_the_rest(tmp_path, bad):
+    event = _project(tmp_path, {"denied_reads": bad}, {"stdout": "bytes", "stdout_bytes": bad})
+    assert "denied_reads" not in event and "stdout_bytes" not in event["provider"]
+    assert event["provider"]["stdout"] == "bytes"
+
+
+@pytest.mark.parametrize("bad", BAD_KINDS, ids=repr)
+def test_an_unknown_stdout_kind_is_dropped_without_dropping_its_size(tmp_path, bad):
+    event = _project(tmp_path, {}, {"stdout": bad, "stdout_bytes": 12})
+    assert "stdout" not in event["provider"] and event["provider"]["stdout_bytes"] == 12
+
+
+def test_each_field_is_kept_only_on_its_own_object(tmp_path):
+    event = _project(tmp_path, {"stdout": "bytes", "stdout_bytes": 5}, {"denied_reads": 5, "stdout": "SECRET-output"})
+    assert not {"stdout", "stdout_bytes"} & event.keys()
+    assert not {"denied_reads", "stdout", "stdout_bytes"} & event["provider"].keys()
+
+
 def test_success_does_not_read_diagnostics(tmp_path, monkeypatch):
     monkeypatch.setattr(check, "_run", lambda *a, **kw: "started")
     def forbidden(*a, **kw):

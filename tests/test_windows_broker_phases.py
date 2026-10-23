@@ -142,9 +142,12 @@ def test_untrusted_partial_output_is_not_logged_or_accepted(suffix):
         broker._provider_output(raw + b'{"code":0,"pid":222}', {}, complete=True)
 
 
+FIRST_PHASE = """[Console]::Out.WriteLine('{"phase":"powershell_started","elapsed_ms":0}')"""
+
+
 def test_script_flushes_fixed_phases_around_input_and_single_create():
     script = broker.WMI_SCRIPT
-    offsets = [script.index("Write-Phase '" + name + "'") for name in PHASES]
+    offsets = [script.index(FIRST_PHASE)] + [script.index("Write-Phase '" + name + "'") for name in PHASES[1:]]
     assert offsets == sorted(offsets)
     assert offsets[0] < script.index("OpenStandardInput()") < offsets[1] < script.index("ReadUInt32()") < offsets[2]
     assert offsets[2] < script.index("ReadBytes(") < offsets[3] < script.index("ConvertFrom-Json") < offsets[4]
@@ -174,3 +177,54 @@ def test_split_protocol_rejects_incomplete_mismatched_and_extra_frames(raw):
     with pytest.raises(ValueError, match="provider protocol"):
         broker._provider_output(raw, diagnostic, complete=True)
     assert diagnostic["trace_status"] == "invalid_or_partial"
+
+
+def test_the_first_phase_is_a_flushed_literal_that_needs_no_json_conversion():
+    """#844 clean-install: no phase at all reached stdout in 10 s. The first line no longer waits for ConvertTo-Json."""
+    lines = [line.strip() for line in broker.WMI_SCRIPT.splitlines()]
+    first = lines.index("try {") + 1
+    assert lines[first] == FIRST_PHASE and lines[first + 1] == "[Console]::Out.Flush()"
+    assert "Write-Phase 'powershell_started'" not in broker.WMI_SCRIPT
+    literal = FIRST_PHASE.split("'")[1]  # a single-quoted PowerShell string is written exactly as is
+    assert "ConvertTo-Json" not in FIRST_PHASE and json.loads(literal) == {"phase": "powershell_started", "elapsed_ms": 0}
+    diagnostic = {}
+    later = json.dumps({"phase": "stdin_open", "elapsed_ms": 0.4}).encode()
+    assert broker._provider_output(literal.encode() + b"\n" + later + b"\n", diagnostic, complete=False) is None
+    assert diagnostic["phases"] == [{"phase": "powershell_started", "elapsed_ms": 0}, {"phase": "stdin_open", "elapsed_ms": 0.4}]
+    assert diagnostic["trace_status"] == "partial"
+
+
+@pytest.mark.parametrize("output,stdout,size,status", [
+    (None, "missing", None, "absent"),
+    (b"", "bytes", 0, "absent"),
+    (frames(1), "bytes", len(frames(1)), "partial"),
+    (b"SECRET-not-json", "bytes", 15, "invalid_or_partial"),
+    (b"x" * 9000, "bytes", 9000, "invalid_or_partial"),
+    ("SECRET-text", "invalid_type", None, "invalid_or_partial"),
+], ids=["none", "empty", "phase", "not-json", "oversize", "not-bytes"])
+def test_stdout_is_described_by_kind_and_size_only(output, stdout, size, status):
+    diagnostic = {}
+    assert broker._provider_output(output, diagnostic, complete=False) is None
+    assert diagnostic["stdout"] == stdout and diagnostic.get("stdout_bytes") == size
+    assert diagnostic["trace_status"] == status and "SECRET" not in json.dumps(diagnostic)
+    with pytest.raises(ValueError, match="provider protocol"):  # no complete reply in any of these
+        broker._provider_output(output, {}, complete=True)
+
+
+@pytest.mark.parametrize("output", [None, b"", frames(len(PHASES)) + b'{"code":0,"pid":222}'], ids=["none", "empty", "full"])
+def test_a_timed_out_provider_journals_its_stdout_kind_but_never_its_pid(world, shell, monkeypatch, output):
+    run = Mock(side_effect=subprocess.TimeoutExpired("SECRET-command", 10, output=output))
+    monkeypatch.setattr(broker.subprocess, "run", run)
+    world.create.side_effect = CREATE
+    with pytest.raises(broker.BrokerFailure, match="provider_timeout"):
+        broker.launch(world.command, state=world.state, role="gateway-supervisor", **world.options)
+    rows = [json.loads(line) for line in (world.state / "logs/detached-launch.jsonl").read_text(encoding="utf-8").splitlines()]
+    provider = rows[-1]["provider"]
+    assert provider["stdout"] == ("missing" if output is None else "bytes")
+    assert provider.get("stdout_bytes") == (None if output is None else len(output))
+    assert "pid" not in json.dumps(provider) and "SECRET" not in json.dumps(rows)  # partial output proves no PID
+    assert not any("child_pid" in row for row in rows)
+    assert "denied_reads" not in rows[-1]  # counted only for the receipt wait
+    run.assert_called_once()
+    world.native.open_process.assert_not_called()
+    world.native.k.TerminateProcess.assert_not_called()

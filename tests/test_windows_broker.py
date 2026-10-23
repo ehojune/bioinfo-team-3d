@@ -254,48 +254,55 @@ def test_bootstrap_cannot_enter_role_before_live_caller_nonce_ack_and_job_check(
     world.native.k.TerminateProcess.assert_not_called()  # Self-abort, never kill caller or scan its tree.
 
 
-def _held_elsewhere(winerror):
-    error = PermissionError(13, "fixture: record open elsewhere")
+READ = broker._read
+# (winerror, errno) of a record read that another handle holds. A Win32 call reports winerror 32; open() goes through
+# the C runtime and leaves only errno 13 with no winerror, the same shape as an ACL denial (#844 nightly 39858916081).
+READ_AGAIN = {"sharing": (32, 13), "no_winerror": (None, 13)}
+STOP = {"access_denied": (5, 13), "other_winerror": (6, 13), "other_errno": (None, 1)}
+
+
+def _held_elsewhere(winerror, code=13):
+    error = PermissionError(code, "SECRET-message")
     error.winerror = winerror
+    error.filename = "C:/private/SECRET-record.json"
     return error
 
 
-def _flaky_once(monkeypatch, name, winerror):
-    """The first read of `name` fails as Windows does while another handle (the writer's replace, a scanner) holds it."""
-    read, failed = broker._read, []
+def _flaky(monkeypatch, name, shape, times=1):
+    """`times` reads of `name` (None: every read) fail as Windows does while another handle holds the record."""
+    failed = []
     def flaky(path):
-        if path.name == name and not failed:
+        if path.name == name and (times is None or len(failed) < times):
             failed.append(path.name)
-            raise _held_elsewhere(winerror)
-        return read(path)
+            raise _held_elsewhere(*shape)
+        return READ(path)
     monkeypatch.setattr(broker, "_read", flaky)
     return failed
 
 
-@pytest.mark.parametrize("winerror", [32, 5])
-def test_the_receipt_wait_reads_again_after_a_sharing_violation_but_not_after_access_denied(world, monkeypatch,
-                                                                                           winerror):
-    failed = _flaky_once(monkeypatch, "receipt.json", winerror)
-    if winerror == 32:  # being replaced: not there yet, read again within the same deadline
-        process = launch(world)
-        assert failed == ["receipt.json"] and (world.control.parent / "ack.json").is_file()
-        process.close()
-    else:
-        with pytest.raises(win.LaunchError):
-            launch(world)
-        assert not (world.state / ".launch").exists() or not list((world.state / ".launch").glob("*/ack.json"))
-    world.native.k.TerminateProcess.assert_not_called()
+def _clock(monkeypatch):
+    """Fake time for the broker only: each poll interval advances it, so a 20 s wait runs without sleeping."""
+    now, sleeps = [0.0], []
+    def sleep(seconds):
+        sleeps.append(seconds)
+        now[0] += seconds
+    monkeypatch.setattr(broker, "time", SimpleNamespace(monotonic=lambda: now[0], time=lambda: 0.0, sleep=sleep))
+    return now, sleeps
 
 
-@pytest.mark.parametrize("winerror", [32, 5])
-def test_the_ack_wait_reads_again_after_a_sharing_violation_but_not_after_access_denied(world, monkeypatch, winerror):
-    """#844 CI: the bootstrap stopped at stage=ack_wait with PermissionError after the caller had written its ACK."""
+def _journal(world):
+    return [json.loads(line) for line in (world.state / "logs/detached-launch.jsonl").read_text().splitlines()]
+
+
+def _bootstrap_world(world, monkeypatch, expires=None):
+    """A written request whose caller writes the ACK as soon as the bootstrap's receipt appears."""
     control = world.state / "wmi-bootstrap" / "request.json"
     control.parent.mkdir()
-    monkeypatch.setattr(broker, "_STAGE", {"name": None, "log": None})
+    monkeypatch.setattr(broker, "_STAGE", {"name": None, "log": None, "denied_reads": None})
     request = {"caller_pid": 111, "caller_created": world.caller["created"], "image": world.caller["image"],
-               "owner": world.caller["owner"], "env_digest": broker._digest(os.environ),
-               "nonce": "test-nonce", "expires": broker.time.time() + 20}
+               "owner": world.caller["owner"], "env_digest": broker._digest(os.environ), "nonce": "test-nonce",
+               "expires": broker.time.time() + 20 if expires is None else expires,
+               "log": str(world.state / "role.log")}
     broker._write(control, request)
     world.native.identity.side_effect = lambda handle: world.child if handle == 1 else world.caller
     write = broker._write
@@ -306,17 +313,134 @@ def test_the_ack_wait_reads_again_after_a_sharing_violation_but_not_after_access
     monkeypatch.setattr(broker, "_write", ack)
     enter = Mock(return_value=42)
     monkeypatch.setattr(broker, "_enter", enter)
-    failed = _flaky_once(monkeypatch, "ack.json", winerror)
-    if winerror == 32:
-        assert broker.bootstrap(control) == 42 and failed == ["ack.json"]
-        enter.assert_called_once_with(request)
+    return control, request, enter
+
+
+def _stop_line(world):
+    return (world.state / "role.log").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("kind", [*READ_AGAIN, *STOP])
+def test_the_receipt_wait_reads_again_only_for_a_sharing_violation_or_a_code_less_eacces(world, monkeypatch, kind):
+    monkeypatch.setattr(broker, "_STAGE", {"name": None, "log": None, "denied_reads": None})
+    failed = _flaky(monkeypatch, "receipt.json", {**READ_AGAIN, **STOP}[kind])
+    if kind in READ_AGAIN:  # held elsewhere: not there yet, read again within the same deadline and checks
+        process = launch(world)
+        assert failed == ["receipt.json"] and (world.control.parent / "ack.json").is_file()
+        assert [row["status"] for row in _journal(world)] == ["wmi_attempt", "wmi_verified"]
+        process.close()
     else:
-        with pytest.raises(PermissionError):
-            broker.bootstrap(control)
+        with pytest.raises(win.LaunchError):
+            launch(world)
+        row = _journal(world)[-1]
+        assert (row["status"], row["phase"], row["error"], row["denied_reads"]) == (
+            "wmi_failed", "receipt_wait", "PermissionError", 0)
+        assert not list((world.state / ".launch").glob("*/ack.json"))
+        assert "SECRET" not in json.dumps(_journal(world)) and "private" not in json.dumps(_journal(world))
+    assert broker._STAGE == {"name": None, "log": None, "denied_reads": None}  # the bootstrap's count is not the caller's
+    world.create.assert_called_once()
+    world.native.k.TerminateProcess.assert_not_called()
+
+
+@pytest.mark.parametrize("end", ["deadline", "bootstrap_exit"])
+def test_a_receipt_denial_that_never_clears_fails_at_the_unchanged_deadline_with_its_count(world, monkeypatch, end):
+    now, sleeps = _clock(monkeypatch)
+    if end == "bootstrap_exit":
+        world.native.alive.side_effect = [True, True, False]
+    failed = _flaky(monkeypatch, "receipt.json", READ_AGAIN["no_winerror"], times=None)
+    with pytest.raises(broker.BrokerFailure, match="receipt_timeout"):
+        launch(world)
+    row = _journal(world)[-1]
+    assert (row["reason"], row["phase"], row["error"]) == ("receipt_timeout", "receipt_wait", "BrokerFailure")
+    assert row["denied_reads"] == len(failed) == len(sleeps) + 1  # read, then check, then wait
+    assert set(sleeps) == {.02}
+    if end == "deadline":
+        assert broker.TIMEOUT <= now[0] < broker.TIMEOUT + .03  # 20 s, not extended by the denials
+    else:
+        assert len(failed) == 3 and now[0] < 1
+    assert not list((world.state / ".launch").glob("*/ack.json"))  # a record never read is never acknowledged
+    world.create.assert_called_once()  # one WMI create, no retry
+    world.native.k.TerminateProcess.assert_not_called()  # not yet proven ours: closed, never killed by PID
+    world.native.k.CloseHandle.assert_called_once_with(2)
+
+
+def test_each_launch_counts_only_its_own_receipt_reads(world, monkeypatch):
+    _flaky(monkeypatch, "receipt.json", READ_AGAIN["sharing"], times=2)
+    launch(world).close()
+    _clock(monkeypatch)
+    world.native.alive.side_effect = [True, False]
+    failed = _flaky(monkeypatch, "receipt.json", READ_AGAIN["no_winerror"], times=None)
+    with pytest.raises(broker.BrokerFailure, match="receipt_timeout"):
+        launch(world)
+    assert len(failed) == 2 and _journal(world)[-1]["denied_reads"] == 2  # not 4: the first launch's reads are its own
+
+
+@pytest.mark.parametrize("kind", [*READ_AGAIN, *STOP])
+def test_the_ack_wait_reads_again_only_for_a_sharing_violation_or_a_code_less_eacces(world, monkeypatch, kind):
+    """#844 CI: the bootstrap stopped at stage=ack_wait with a PermissionError that had no winerror."""
+    control, request, enter = _bootstrap_world(world, monkeypatch)
+    shape = {**READ_AGAIN, **STOP}[kind]
+    failed = _flaky(monkeypatch, "ack.json", shape)
+    if kind in READ_AGAIN:
+        assert broker.bootstrap(control) == 42 and failed == ["ack.json"]
+        enter.assert_called_once_with(request)  # only after the ACK matched and the Job/caller final check
+        assert broker._STAGE["denied_reads"] == 1
+    else:
+        with pytest.raises(SystemExit) as stopped:
+            broker.main(["broker.py", str(control)])
+        assert stopped.value.code == 2
         enter.assert_not_called()
-        assert broker._STAGE["name"] == "ack_wait"
+        assert _stop_line(world) == ("labhq WMI bootstrap stopped before the role started: stage=ack_wait "
+                                     "error=PermissionError" + (f" winerror={shape[0]}" if shape[0] else "")
+                                     + " denied_reads=0\n")
     assert not control.parent.exists()
     world.native.k.TerminateProcess.assert_not_called()
+
+
+@pytest.mark.parametrize("end", ["deadline", "caller_exit"])
+def test_an_ack_denial_that_never_clears_stops_at_the_unchanged_deadline_with_its_count(world, monkeypatch, end):
+    now, sleeps = _clock(monkeypatch)
+    control, _request, enter = _bootstrap_world(world, monkeypatch, expires=10 ** 12)
+    if end == "caller_exit":
+        world.native.alive.side_effect = [True, True, True, False]
+    failed = _flaky(monkeypatch, "ack.json", READ_AGAIN["no_winerror"], times=None)
+    with pytest.raises(SystemExit):
+        broker.main(["broker.py", str(control)])
+    assert len(failed) == len(sleeps) and set(sleeps) == {.02}  # check, then read, then wait
+    if end == "deadline":
+        assert broker.TIMEOUT <= now[0] < broker.TIMEOUT + .03
+    else:
+        assert len(failed) == 3 and now[0] < 1
+    assert _stop_line(world) == ("labhq WMI bootstrap stopped before the role started: stage=ack_wait "
+                                 f"error=LaunchError denied_reads={len(failed)}\n")
+    assert "SECRET" not in _stop_line(world) and "private" not in _stop_line(world)
+    enter.assert_not_called()  # a missing or unreadable ACK never admits the role
+    assert not control.parent.exists()
+    world.native.k.TerminateProcess.assert_not_called()
+
+
+def test_the_request_is_read_once_and_a_stale_stage_count_never_reaches_a_new_bootstrap(world, monkeypatch):
+    control, _request, enter = _bootstrap_world(world, monkeypatch)
+    stale_log = world.state / "stale.log"
+    monkeypatch.setattr(broker, "_STAGE", {"name": "ack_wait", "log": str(stale_log), "denied_reads": 99})
+    failed = _flaky(monkeypatch, "request.json", READ_AGAIN["no_winerror"], times=None)
+    with pytest.raises(SystemExit):
+        broker.main(["broker.py", str(control)])
+    assert failed == ["request.json"]  # not waited for: no receipt was written, the caller journals receipt_timeout
+    assert broker._STAGE == {"name": None, "log": None, "denied_reads": None}
+    assert not stale_log.exists() and not (world.state / "role.log").exists()
+    enter.assert_not_called()
+
+
+def test_a_second_bootstrap_counts_its_ack_reads_from_zero(world, monkeypatch):
+    control, request, enter = _bootstrap_world(world, monkeypatch)
+    _flaky(monkeypatch, "ack.json", READ_AGAIN["sharing"], times=3)
+    assert broker.bootstrap(control) == 42 and broker._STAGE["denied_reads"] == 3
+    control.parent.mkdir()
+    broker._write(control, request)
+    _flaky(monkeypatch, "ack.json", READ_AGAIN["no_winerror"], times=1)
+    assert broker.bootstrap(control) == 42 and broker._STAGE["denied_reads"] == 1
+    assert enter.call_count == 2
 
 
 @pytest.mark.parametrize("stage", [None, "cleanup", "role"])
