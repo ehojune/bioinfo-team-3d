@@ -57,7 +57,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from .claims import (  # noqa: F401 - ID_FORMATS stays importable from here
     ID_FORMATS, SEVERAL_SPELLINGS, STATUS_NEEDS, SourceRef, accession_base, accession_parts,
-    normalize_artifact_path, normalize_id, registry_id)
+    assess_lineage, independent_groups, normalize_artifact_path, normalize_id, registry_id)
 
 if TYPE_CHECKING:
     from ..research.contract import ResearchResult
@@ -856,7 +856,8 @@ async def verify_sources(result: "ResearchResult", resolver: SourceResolver | No
                                        source_defects=list(dict.fromkeys(defects)),
                                        source_warnings=list(dict.fromkeys(warnings)))
 
-    groups = {row.id: row.independence_group for row in result.evidence}
+    lineage = assess_lineage(result.evidence, artifact_paths=artifact_paths)
+    by_id = {row.id: row for row in result.evidence}
     claim_checks: list[ClaimCheck] = []
     for claim in result.claims:
         needed = STATUS_NEEDS.get(claim.status)
@@ -875,6 +876,12 @@ async def verify_sources(result: "ResearchResult", resolver: SourceResolver | No
                                + ", ".join(checks[link.evidence_id].source_defects))
             elif resolution.status == "requires_verification":
                 unverified.append(link.evidence_id)
+            elif by_id[link.evidence_id].lineage is not None and (
+                    lineage[link.evidence_id].status != "resolved"
+                    or any(eid not in checks or checks[eid].resolution.status != "found"
+                           or checks[eid].source_defects
+                           for eid in lineage[link.evidence_id].original_evidence_ids)):
+                unverified.append(link.evidence_id)
             elif link.relation == needed:
                 verified.append(link.evidence_id)
         if defects:
@@ -888,7 +895,9 @@ async def verify_sources(result: "ResearchResult", resolver: SourceResolver | No
         claim_checks.append(ClaimCheck(
             claim=claim.key, declared_status=claim.status, state=state, verified_evidence=verified,
             unverified_evidence=unverified, defects=defects,
-            independent_groups=sorted({groups[e] for e in verified if groups.get(e)})))
+            independent_groups=independent_groups(claim.id, result.evidence,
+                [link for link in result.links if link.evidence_id in verified], relation=needed or "supports",
+                artifact_paths=artifact_paths)))
 
     defective = [eid for eid, check in checks.items()
                  if check.resolution.status in DEFECT_STATUSES or check.source_defects]

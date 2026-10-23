@@ -34,6 +34,9 @@ EvidenceStatus = Literal["observed", "unavailable", "not_found", "failed"]
 Relation = Literal["supports", "contradicts", "context"]
 Directness = Literal["direct", "indirect"]
 SourceLevel = Literal["primary", "secondary", "tertiary"]
+AccessStatus = Literal["full_text", "abstract_only", "not_obtained", "paywalled", "undetermined"]
+SupplementaryStatus = Literal["available", "missing", "not_applicable", "undetermined"]
+LineageStatus = Literal["resolved", "undetermined", "cycle", "dangling"]
 
 # R07: a recorded quantity states these, or names each one it cannot give with the impact of not knowing.
 QUANTITY_REQUIRED = ("value", "unit", "conditions", "denominator")
@@ -49,6 +52,11 @@ RESULT_CONTRACT_FIELD_RULES = (
     "For those evidence kinds: observed requires source.locator; not_found requires source.query; "
     "failed/unavailable requires status_detail.",
     "inference/hypothesis leave status empty, require derived_from, and cannot fill evidence slots.",
+    "source.access_status records full_text/abstract_only/not_obtained/paywalled/undetermined separately from "
+    "evidence.status; not obtaining full text is not a not_found search. Use source.methods_locator, "
+    "source.qc_locator and source.supplementary_status for reading gaps and locations.",
+    "Optional evidence.lineage names cited_from evidence ids, or original=true with a basis for confirming "
+    "the first empirical source. source_level=primary alone does not confirm an original source.",
     "Each quantity requires value, unit, conditions, denominator; for each missing field put an unknown entry "
     "whose value states its impact on the conclusion.",
 )
@@ -196,6 +204,10 @@ class SourceRef(StrictModel):
     accessed_at: str | None = None  # YYYY-MM-DD the external source was read
     locator: str | None = None  # where in the source: section, table, row, line, JSON pointer
     query: str | None = None  # search scope and filters, required for a zero-result search
+    access_status: AccessStatus = "undetermined"  # reading scope, not the evidence retrieval outcome
+    methods_locator: str | None = None
+    qc_locator: str | None = None
+    supplementary_status: SupplementaryStatus = "undetermined"
 
     @model_validator(mode="after")
     def identifies_something(self) -> "SourceRef":
@@ -334,6 +346,35 @@ class Claim(StrictModel):
         return f"{self.id}@{self.revision}"
 
 
+class CitationLineage(StrictModel):
+    """Recorded provenance for this observation, rather than the paper's whole bibliography.
+
+    ``original`` records a reviewer's confirmation, not an automatic consequence of source_level.
+    Unresolved and cyclic references remain representable so reports can display the gap.
+    """
+
+    cited_from: list[str] = Field(default_factory=list)
+    original: bool = False
+    basis: str | None = None
+
+    @model_validator(mode="after")
+    def confirmation_shape(self) -> "CitationLineage":
+        if any(not re.fullmatch(ID_PATTERN, ref) for ref in self.cited_from):
+            raise ValueError("lineage cited_from must contain evidence ids")
+        if len(set(self.cited_from)) != len(self.cited_from):
+            raise ValueError("lineage cited_from must contain distinct evidence ids")
+        if self.original and (self.cited_from or not _present(self.basis)):
+            raise ValueError("lineage original requires a basis and no cited_from")
+        return self
+
+
+class LineageAssessment(StrictModel):
+    status: LineageStatus
+    original_evidence_ids: list[str] = Field(default_factory=list)
+    source_keys: list[str] = Field(default_factory=list)
+    independence_groups: list[str] = Field(default_factory=list)
+
+
 class Evidence(StrictModel):
     id: str = Field(pattern=ID_PATTERN)
     kind: EvidenceKind
@@ -342,6 +383,7 @@ class Evidence(StrictModel):
     status_detail: str | None = None  # what was unavailable or failed; never a guess at the answer
     source: SourceRef | None = None
     derived_from: list[str] = []  # evidence ids an inference/hypothesis row reasons from
+    lineage: CitationLineage | None = None  # separate from inference/hypothesis derivation
     method: str | None = None
     conditions: list[str] = []
     quantities: list[Quantity] = []
@@ -489,6 +531,7 @@ def ledger_errors(claims: list[Claim], evidence: list[Evidence], links: list[Evi
 
     seen_pairs: set[tuple[str, str]] = set()
     asserted: dict[str, set[str]] = {}
+    lineage = assess_lineage(evidence, artifact_paths=artifact_paths)
     for link in links:
         claim = claim_by_id.get(link.claim_id)
         row = evidence_by_id.get(link.evidence_id)
@@ -511,6 +554,9 @@ def ledger_errors(claims: list[Claim], evidence: list[Evidence], links: list[Evi
         elif row.status != "observed":
             errors.append(f"evidence {row.id} is {row.status}; a failed or empty lookup is neither evidence "
                           f"nor proof of absence and cannot {link.relation[:-1]} a claim")
+        elif row.lineage is not None and lineage[row.id].status != "resolved":
+            errors.append(f"evidence {row.id} has {lineage[row.id].status} citation lineage; "
+                          "link it as context until the original empirical source is confirmed")
         else:
             asserted.setdefault(link.claim_id, set()).add(link.relation)
 
@@ -589,11 +635,107 @@ def _comparison_errors(claims: list[Claim], evidence: list[Evidence], links: lis
     return errors
 
 
-def independent_groups(claim_id: str, evidence: list[Evidence], links: list[EvidenceLink],
-                       relation: str = "supports") -> list[str]:
-    """Distinct independence groups among observed countable rows linked to a claim with ``relation``."""
+def assess_lineage(evidence: list[Evidence], *,
+                   artifact_paths: Mapping[str, str] | None = None) -> dict[str, LineageAssessment]:
+    """Resolve only explicitly confirmed empirical origins, without I/O or changing the ledger.
+
+    Every cited branch must terminate at an observed, countable, primary row with ``original=true``
+    and its recorded basis. Legacy rows remain undetermined here. Any cycle, missing id or unconfirmed
+    branch clears all origins; a good branch cannot launder a bad one. Traversal is iterative.
+    SourceRef identities (including artifact aliases) merge duplicate originals deterministically.
+    """
     by_id = {row.id: row for row in evidence}
-    groups = {by_id[link.evidence_id].independence_group for link in links
-              if link.claim_id == claim_id and link.relation == relation
-              and link.evidence_id in by_id and by_id[link.evidence_id].counts}
-    return sorted(group for group in groups if group)
+    # Reuse the existing source keys, including rows that bridge DOI, URI and artifact spellings.
+    parent = {row.id: row.id for row in evidence}
+
+    def find(eid: str) -> str:
+        while parent[eid] != eid:
+            parent[eid] = parent[parent[eid]]
+            eid = parent[eid]
+        return eid
+
+    first: dict[str, str] = {}
+    keys_by_id = {row.id: row.source.identities(artifact_paths) if row.source else [] for row in evidence}
+    for row in evidence:
+        for key in keys_by_id[row.id]:
+            other = first.setdefault(key, row.id)
+            a, b = find(row.id), find(other)
+            parent[max(a, b)] = min(a, b)
+
+    confirmed = {row.id for row in evidence if row.counts and row.source_level == "primary"
+                 and row.lineage and row.lineage.original}
+    originals_by_source: dict[str, list[str]] = {}
+    for eid in sorted(confirmed):
+        originals_by_source.setdefault(find(eid), []).append(eid)
+
+    assessments: dict[str, LineageAssessment] = {}
+    priority = {"resolved": 0, "undetermined": 1, "dangling": 2, "cycle": 3}
+    for row in evidence:
+        status: LineageStatus = "resolved"
+        roots: set[str] = set()
+        active: set[str] = set()
+        done: set[str] = set()
+        pending = [(row.id, False)]
+        while pending:
+            eid, leaving = pending.pop()
+            if leaving:
+                active.remove(eid)
+                done.add(eid)
+                continue
+            problem: LineageStatus | None = None
+            if eid in active:
+                problem = "cycle"
+            elif eid not in by_id:
+                problem = "dangling"
+            elif eid in done:
+                continue
+            else:
+                current = by_id[eid]
+                lineage = current.lineage
+                if not current.counts:
+                    problem = "undetermined"
+                elif eid in confirmed:
+                    roots.add(find(eid))
+                elif lineage and lineage.cited_from:
+                    active.add(eid)
+                    pending.append((eid, True))
+                    pending.extend((ref, False) for ref in lineage.cited_from)
+                    continue
+                else:
+                    problem = "undetermined"
+                done.add(eid)
+            if problem and priority[problem] > priority[status]:
+                status = problem
+        if status != "resolved" or not roots:
+            assessments[row.id] = LineageAssessment(status=status if status != "resolved" else "undetermined")
+            continue
+        original_ids = sorted(originals_by_source[root][0] for root in roots)
+        keys = sorted({key for root in roots for eid in originals_by_source[root] for key in keys_by_id[eid]})
+        # Invalid ledgers may assign two groups to one source. Never inflate their independent count.
+        groups = sorted({min(by_id[eid].independence_group for eid in originals_by_source[root]
+                             if by_id[eid].independence_group) for root in roots})
+        assessments[row.id] = LineageAssessment(status="resolved", original_evidence_ids=original_ids,
+                                                source_keys=keys, independence_groups=groups)
+    return assessments
+
+
+def independent_groups(claim_id: str, evidence: list[Evidence], links: list[EvidenceLink],
+                       relation: str = "supports", *,
+                       artifact_paths: Mapping[str, str] | None = None) -> list[str]:
+    """Distinct groups, using confirmed origins for explicit citation lineage.
+
+    Legacy rows retain their historical group behavior. Explicit unresolved lineage contributes no
+    independent empirical support, even if its row is marked observed and primary.
+    """
+    by_id = {row.id: row for row in evidence}
+    lineage = assess_lineage(evidence, artifact_paths=artifact_paths)
+    groups: set[str] = set()
+    for link in links:
+        row = by_id.get(link.evidence_id)
+        if link.claim_id != claim_id or link.relation != relation or row is None or not row.counts:
+            continue
+        if row.lineage is not None:
+            groups.update(lineage[row.id].independence_groups)
+        elif row.independence_group:
+            groups.add(row.independence_group)
+    return sorted(groups)
