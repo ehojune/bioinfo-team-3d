@@ -59,6 +59,12 @@ Closes #905
 - 순차 실행(병렬 아님). 새 task kind `blind_draft`는 read-only 프로파일과 기존 예약·취소 경로를 쓴다. 파일 격리는 하지 않는다(입력 기준 격리).
 - 테스트: `tests/test_blind_draft_889.py` 7건(봉인 순서·입력 격리·리뷰 전달·꺼짐 무변화·실패 무중단·late/재시작·부분 폐기) 통과. 관련 연구 lane 테스트 247건 통과. 실제 Codex 직원, 실제 요청, Windows CI는 미확인.
 
+## #890 계획에 선택 기록 고정 (PR #901, base 545a973b)
+
+- 바꾼 것: 연구 계획의 선택 사항 `selection_record`(질문·전제·성공 기준·검토한 대안과 배제 이유·판단을 바꿀 관측). plan hash에 포함, 없으면 직렬화에서 빠져 이전 hash 유지. CSO prompt에 작성 요청, CP1 카드 요약 한 줄·웹 카드 항목(없으면 `선택 기록 없음`, 승인은 막지 않음). manual CP1 절.
+- 검사: 새 test 6 + 웹 1. 수정 전 코드로 python 수집 실패·node 2 실패, 수정 후 연구 관련 348 passed·웹 fail 0.
+- 한계: 연구 lane 계획만(일반 `PLAN_SCHEMA` 제외). 실제 모델의 작성 품질·지어낸 대안 걸러내기는 확인 안 함. 전체 suite는 CI에 맡김.
+
 Refs #898
 
 - R version/syntax subprocess의 elapsed·timeout·returncode를 test fixture에 따로 남기고 기본 10초 경계 두 개를 fake로 검증합니다.
