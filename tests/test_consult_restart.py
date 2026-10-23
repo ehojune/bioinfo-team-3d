@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import sys
 import time
 
 import pytest
@@ -59,9 +60,34 @@ async def eventually(predicate, timeout=2.0):
     raise AssertionError("condition not reached")
 
 
+SETTLE_BOUND_S = 3
+SETTLE_EVIDENCE_TIMES = 8
+
+
+def settle_timeout_evidence(tasks, completed, elapsed):
+    """Failure output only: counts and times, never a coroutine repr, ask text, environment or path. Nightly run
+    39858916081 timed out here with the gathered asks already finished; observations alone do not prove the cause."""
+    done = sum(1 for task in tasks if task.done())
+    cancelled = sum(1 for task in tasks if task.cancelled())
+    times = sorted(round(float(at), 3) for at in completed.values())[:SETTLE_EVIDENCE_TIMES]
+    return (f"settle: the {SETTLE_BOUND_S}s bound fired after {elapsed:.3f}s for {len(tasks)} ask task(s). "
+            f"Observed after the timeout: done={done} cancelled={cancelled} not_done={len(tasks) - done} "
+            f"(the timeout's own cancel may not be processed yet). Completion callbacks so far={len(completed)}, "
+            f"seconds after settle started: {times}")
+
+
 async def settle(hub):
     if hub.ask_tasks:
-        await asyncio.wait_for(asyncio.gather(*list(hub.ask_tasks.values())), 3)
+        tasks = list(hub.ask_tasks.values())
+        started = time.monotonic()
+        completed = {}  # callback execution times; a busy loop may run callbacks after the tasks actually ended
+        for index, task in enumerate(tasks):
+            task.add_done_callback(lambda _task, index=index: completed.setdefault(index, time.monotonic() - started))
+        try:
+            await asyncio.wait_for(asyncio.gather(*tasks), SETTLE_BOUND_S)
+        except asyncio.TimeoutError:
+            print(settle_timeout_evidence(tasks, completed, time.monotonic() - started), file=sys.stderr)
+            raise
     await asyncio.sleep(0)
 
 
@@ -878,3 +904,27 @@ async def test_unrouted_facilities_ask_uses_the_durable_roster_and_waits_for_cso
         assert hub.store.get("ask", ask.id)["answer"]["answer"] == "Use bay 2"
     finally:
         hub.store.close()
+
+
+def test_settle_timeout_evidence_counts_states_and_never_shows_the_tasks():
+    """Pure: no event loop. Inert stand-ins whose repr would leak if the evidence printed a task."""
+    class FakeTask:
+        def __init__(self, done, cancelled=False):
+            self._done, self._cancelled = done, cancelled
+
+        def done(self):
+            return self._done
+
+        def cancelled(self):
+            return self._cancelled
+
+        def __repr__(self):
+            return "<coro Which cohort should the comparison use? C:/private/path>"
+
+    tasks = [FakeTask(True), FakeTask(True, cancelled=True), FakeTask(False)]
+    text = settle_timeout_evidence(tasks, {0: 3.0004, 1: 3.0001}, 3.1234)
+    assert f"the {SETTLE_BOUND_S}s bound fired after 3.123s for 3 ask task(s)" in text
+    assert "done=2 cancelled=1 not_done=1" in text and "callbacks so far=2" in text and "[3.0, 3.0]" in text
+    assert "cohort" not in text and "private" not in text and "coro" not in text
+    many = settle_timeout_evidence([FakeTask(True)] * 50, {i: i / 10 for i in range(50)}, 4.0)
+    assert many.endswith("[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]")  # bounded, not one time per task
