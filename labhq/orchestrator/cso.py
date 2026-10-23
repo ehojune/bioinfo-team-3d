@@ -53,6 +53,7 @@ from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARC
                                  research_result_errors, salvage_research_result, validate_research_plan,
                                  missing_result_slots, repair_result_slots,
                                  unnegated_analysis_text, validate_research_result, with_pack_refs)
+from ..research import blind_draft
 from ..research import continuation as research_continuation
 from ..research import semantic_device_report
 from ..research import input_fit
@@ -354,6 +355,7 @@ RESEARCH_LANE_REVIEW_SCHEMA: dict[str, Any] = {
                            "request": {"type": "string"}},
             "required": ["step_id", "claim_id", "priority", "category", "evidence_quote", "problem", "request"]}},
         "checklist": CHECKLIST_REVIEW_SCHEMA,
+        "blind_comparison": blind_draft.COMPARISON_SCHEMA,
     },
     "required": ["verdict", "issues"],
 }
@@ -2454,10 +2456,13 @@ def lenient_review(value: Any, schema: dict[str, Any]) -> dict | None:
     A malformed verdict row must not cost the whole review: it gets two parse attempts, then ends review_unparsed."""
     if valid_review(value, schema):
         return value
-    if isinstance(value, dict) and "checklist" in value:
-        rest = {key: item for key, item in value.items() if key != "checklist"}
-        if valid_review(rest, schema):
-            return rest
+    if isinstance(value, dict):
+        # An unreadable optional field costs only itself (#586 checklist, #889 blind_comparison).
+        for dropped in (("checklist",), ("blind_comparison",), ("checklist", "blind_comparison")):
+            if any(key in value for key in dropped):
+                rest = {key: item for key, item in value.items() if key not in dropped}
+                if valid_review(rest, schema):
+                    return rest
     return None
 
 
@@ -5374,6 +5379,43 @@ class Orchestrator:
         self._finish(rid, report, serialized(), ok=decided == "approved",
                      error=None if decided == "approved" else RESEARCH_END_ERRORS.get(f"evidence_{decided}"))
 
+    async def _blind_draft(self, rid: str, req: dict, text: str, refs: dict) -> bool:
+        """The sealed blind draft (#889): the reviewer answers the original request alone, after CP1 approval and
+        before the first step, so no team result can exist yet. Off, or already decided (sealed, late, unavailable:
+        kept over a restart): nothing runs. A failed draft is recorded and never stops the request.
+        Returns False only when the draft's own budget card was denied and the request ended."""
+        reviewer = self.cfg.reviewer_agent
+        contract = req["research_contract"]
+        if not blind_draft.enabled(self.hub.s) or not reviewer or blind_draft.settled(contract.get(blind_draft.KEY)):
+            return True
+        if req.get("results"):  # a draft written after a team result would not be blind
+            contract[blind_draft.KEY] = blind_draft.unavailable("results_exist")
+            self.hub.save_request(rid)
+            return True
+        denied: str | None = None
+        reply: TaskResult | None = None
+        try:
+            reply = await self.run_step(Task(
+                agent_id=reviewer, request_id=rid,
+                prompt=blind_draft.prompt(text) + self._spending_cap_line(rid),
+                meta={**refs, "kind": "blind_draft", "outputs": ["outputs/blind_draft.md"], "request": text,
+                      "title": "블라인드 초안"}))
+        except BudgetExceeded as error:  # a reservation the PI's budget card refused: ends like a denied CP1 cost
+            denied = str(error)
+        if denied is not None or rid in self.budget_denials:
+            contract["failure"] = {"steps": [], "plan_sha256": contract["plan_sha256"], "stage": "blind_draft",
+                                   "budget": self.budget_denials.get(rid, denied)}
+            req["outcome"] = "research_failed"
+            self.hub.save_request(rid)
+            self._finish(rid, "Research plan approved, but the blind draft's budget card was not approved; no "
+                         "employee research step was dispatched.", {}, ok=False)
+            return False
+        contract[blind_draft.KEY] = (
+            blind_draft.seal(reply.text or "", results_exist=bool(req.get("results"))) if reply.ok
+            else blind_draft.unavailable(short(reply.error or "draft task failed", 200)))
+        self.hub.save_request(rid)
+        return True
+
     async def _research_report(self, rid: str, text: str, steps: list[dict], results: dict[str, TaskResult], n: int,
                                serialized: Callable[[], dict[str, dict]], packs: dict, cp2_report: str,
                                cp2_audit: str, ledgers: dict[str, Any], *, refused: list[dict],
@@ -5420,7 +5462,7 @@ class Orchestrator:
         review: dict = {}
         if stored.get("plan_sha256") == plan_hash:
             saved = {"verdict": stored.get("verdict"), "issues": stored.get("issues"),
-                     **({"checklist": stored["checklist"]} if "checklist" in stored else {})}
+                     **{key: stored[key] for key in ("checklist", "blind_comparison") if key in stored}}
             review = lenient_review(saved, RESEARCH_LANE_REVIEW_SCHEMA) or {}
         if not review:
             catalog = topic_checklists.load()
@@ -5433,6 +5475,7 @@ class Orchestrator:
             if carried.get("plan_sha256") == plan_hash:
                 prompt += research_continuation.review_prompt(carried.get("p1_issues") or [],
                                                               approval_note(carried.get("pi_request")))
+            prompt += blind_draft.review_block(contract.get(blind_draft.KEY))
             prompt += approval_note_block("CP2", cp2_notes, CP2_REVIEW_NOTE_RULE) + self._spending_cap_line(rid)
             if contract.get("result_warnings"):
                 prompt += "\nCP2 result limitations:\n" + "\n".join(contract["result_warnings"])
@@ -5449,8 +5492,9 @@ class Orchestrator:
                 parsed = (lenient_review(reply.structured, RESEARCH_LANE_REVIEW_SCHEMA)
                           or lenient_review(extract_json(reply.text), RESEARCH_LANE_REVIEW_SCHEMA))
                 if reply.ok and parsed:
-                    review = with_p1_verdict(review_with_checklist(
-                        parsed, req.get("plan"), catalog, req.get("analysis_precedents"), research=True))
+                    review = blind_draft.without_unfounded_comparison(with_p1_verdict(review_with_checklist(
+                        parsed, req.get("plan"), catalog, req.get("analysis_precedents"), research=True)),
+                        contract.get(blind_draft.KEY))
                     break
             if not review:
                 reason = (reply.error if reply else None) or "missing or invalid research review"
@@ -6348,6 +6392,8 @@ class Orchestrator:
                 if reuse_pending:
                     # Proof alone does not authorize execution: rollback must still cover a denied budget card.
                     carried['verified'] = True
+                if not await self._blind_draft(rid, req, text, refs):
+                    return False
                 req["outcome"] = "research_running"
                 self.hub.save_request(rid)
                 return True
