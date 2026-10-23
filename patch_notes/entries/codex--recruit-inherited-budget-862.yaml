@@ -1,5 +1,9 @@
 pr: 874
 rows:
+- sha: e4f9cf5
+  at: 2026-10-23 09:05
+  summary: 저장 대기 중 취소된 채용 변환의 최종 비용 결과도 순수 검사로 확인합니다.
+  text: '생산 planning.run_task의 마지막 정산·결과 구간을 추출해 timed_out receipt와 queued 내부 known/UNKNOWN 결과를 함께 검증한다. ordered writer 확인 뒤 outer0이며 내부 비용은 한 번만 집계된다. PR872가 포함된 최신 main을 명시 병합한 뒤 17개 순수 fake·3.10 문법·Windows 선택을 새로 확인했다. 실제 async loop·모델 실행이나 CI 재사용 주장은 없다.'
 - sha: 519de71
   at: 2026-10-23 09:04
   summary: 취소 중 이미 저장된 채용 변환 비용을 상위 비용 모름으로 다시 예약하지 않습니다.
