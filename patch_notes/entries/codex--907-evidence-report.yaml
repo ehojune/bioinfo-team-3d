@@ -1,5 +1,9 @@
 pr: 919
 rows:
+- sha: 726b4d0
+  at: '2026-10-24 07:02'
+  summary: 정리본의 원문 근거에서 내부 자료 단계의 metadata를 제외합니다.
+  text: internal/restricted 단계와 하위 단계의 원문 표·각주·근거 링크에 기존 공개 범위를 적용하고 귀속 불명확 시 요청 전체를 제외한다. report에 붙은 기존 표도 다시 만들며 로컬 원본 ledger는 보존한다. 합성 노출 회귀 8 failed→8 passed, 관련 report·portfolio·PDF 107 passed. Refs #907.
 - sha: 70ad6c0
   at: '2026-10-24 06:18'
   summary: 예전 형식의 문헌 요약에서 논문 수가 0으로 사라지지 않도록 고쳤습니다.
