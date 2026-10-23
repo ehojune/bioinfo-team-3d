@@ -54,7 +54,8 @@ def test_the_field_is_optional_in_the_schema_and_strict_when_present():
     assert "selection_record" not in RESEARCH_PLAN_SCHEMA["required"]
     for bad in ({"alternatives": [{"option": "a", "rejected_because": ""}]},
                 {"alternatives": [{"option": "a", "rejected_because": "b", "extra": 1}]},
-                {"question": ""}, {"premises": ["p"] * 9}):
+                {"question": ""}, {"premises": ["p"] * 9},
+                {"change_signals": [""]}, {"change_signals": ["  "]}, {"premises": [" "]}, {"success_criteria": [""]}):
         with pytest.raises((ValidationError, ValueError)):
             _validated(_with_record(**bad))
 
@@ -83,3 +84,22 @@ async def test_the_cp1_card_shows_the_record_line_and_still_asks(record, expecte
     card = next(row for row in hub.approvals if row["kind"] == "research_plan")
     assert expected in card["summary"]
     assert ("selection_record" in card["detail"]["plan_canonical"]) is record
+
+
+@pytest.mark.asyncio
+async def test_the_record_line_survives_the_699_char_cut_of_a_long_card():
+    settings = Settings()
+    settings.research.enabled = True
+    settings.orchestrator.chief_of_staff_agent = None
+    settings.orchestrator.reviewer_agent = None
+    plan = _with_record()
+    plan["warnings"] = ["재배정 " + "긴 사유 " * 300]  # a long hiring line goes in front of the card text
+
+    async def reply(task):
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=copy.deepcopy(plan))
+
+    hub = MiniHub(settings, reply, mode="orchestrate", work_kind="research", text="compare conditions")
+    await Orchestrator(hub).run_request("r")
+    card = next(row for row in hub.approvals if row["kind"] == "research_plan")
+    assert len(card["summary"]) <= 700
+    assert "선택 기록: 검토한 대안 2개" in card["summary"]

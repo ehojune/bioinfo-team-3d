@@ -374,6 +374,14 @@ class SelectionRecord(StrictModel):
     alternatives: list[RejectedAlternative] = Field(default_factory=list, max_length=6)
     change_signals: list[str] = Field(default_factory=list, max_length=6)  # observations that would change the call
 
+    @field_validator("premises", "success_criteria", "change_signals")
+    @classmethod
+    def no_blank_entries(cls, value: list[str]) -> list[str]:
+        # A blank line would count as a recorded premise or signal on the CP1 card and be frozen in the hash.
+        if any(not item.strip() for item in value):
+            raise ValueError("selection_record entries must not be blank")
+        return value
+
 
 class ResearchPlan(StrictModel):
     schema_version: Literal[2]

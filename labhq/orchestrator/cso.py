@@ -6241,7 +6241,6 @@ class Orchestrator:
                                    + "\n\n" + summary)
                     else:
                         summary = semantic_devices.card_line(device_record) + "\n" + summary
-                    summary += "\n" + selection_record_line(plan)  # before the lines the 699-char cut may drop
                     scope_warnings = [warning for warning in plan.get("warnings", [])
                                       if isinstance(warning, str) and warning.startswith(SCOPE_COVERAGE_WARNING)]
                     if scope_warnings:
@@ -6260,7 +6259,9 @@ class Orchestrator:
                                    f"{', '.join(carried.get('reuse') or []) or '없음'} · 다시 실행: "
                                    f"{', '.join(carried.get('rerun') or {}) or '없음'}. ") + summary
                     budget, configured_source = self._research_budget(rid, req, plan)
-                    budget_line = _budget_line(budget)  # kept whole: the web shows the summary, not detail.budget
+                    # Kept whole beyond the 699-char cut: the web shows the summary, not detail.budget; the selection
+                    # record line (#890) rides with it, so long paper-skill or continuation text cannot cut it off.
+                    budget_line = selection_record_line(plan) + " " + _budget_line(budget)
 
                     async def ask_cp1(prefix: str = "") -> dict:
                         card = prefix + summary
