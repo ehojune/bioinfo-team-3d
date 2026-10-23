@@ -4239,7 +4239,11 @@ class Orchestrator:
                            "pack_applicability": plan.get("pack_applicability") or {},
                            "warnings": plan.get("warnings") or [],
                            "protocol_revision": plan["protocol"].get("revision"), "packs": plan["protocol"].get("packs"),
-                           "scope_status": plan["intake"].get("scope_status")}}
+                           "scope_status": plan["intake"].get("scope_status"),
+                           # What the CP1 card also carries, so the one card is not a thinner view of the same plan.
+                           "budget": budget, "cost_estimate": req.get("plan_cost_estimate") or {},
+                           **({"plan_warnings": req.get("plan_warnings") or [], "plan_validation": req["plan_validation"]}
+                              if (req.get("plan_validation") or {}).get("semantic_checks") else {})}}
 
     def _spending_cap_line(self, rid: str) -> str:
         """The cap ``_check_budget`` enforces now, for research step and review prompts (#499): staff otherwise read
@@ -6372,7 +6376,8 @@ class Orchestrator:
                                    and resume_cp1.get("target_sha256") == plan_hash and not reuse_pending
                                    and not device_stopped and not paper_line and not hiring_warnings)
                     decision = ({"approved": True, "choice": "approve", "approval_id": resume_cp1.get("approval_id"),
-                                 "note": "재개 카드에서 이 계획과 함께 승인",
+                                 # The PI's own memo on the resume card reaches the step prompts as the CP1 memo.
+                                 "note": str(resume_cp1.get("note") or "").strip() or "재개 카드에서 이 계획과 함께 승인",
                                  "decided_at": resume_cp1.get("decided_at", time.time())}
                                 if from_resume else await ask_cp1())
                     # A 수정 요청 needs the note it re-plans from; the web and CLI refuse an empty one first (R10 likewise).

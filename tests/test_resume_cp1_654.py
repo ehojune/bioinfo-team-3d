@@ -136,7 +136,7 @@ async def test_the_gateway_resume_card_shows_the_plan_and_its_approval_records_t
 
     await hub.resolve_approval(card["id"], True)
     assert hub.requests["r"]["resume_cp1"] == {
-        "approved": True, "target_sha256": plan_sha256(plan), "approval_id": card["id"],
+        "approved": True, "target_sha256": plan_sha256(plan), "approval_id": card["id"], "note": "",
         "decided_at": hub.requests["r"]["resume_cp1"]["decided_at"]}
 
 
@@ -220,3 +220,33 @@ async def test_a_restarted_resume_card_shows_the_cap_with_the_stored_cost(tmp_pa
     second = Hub(settings)  # the new orchestrator's ledger starts empty; the stored cost is $2
     card = next(a["approval"] for a in second.approvals.values() if a["approval"]["kind"] == "resume")
     assert "집행 상한 $5.00" in card["summary"], card["summary"]
+
+
+@pytest.mark.asyncio
+async def test_the_pis_memo_on_the_resume_card_becomes_the_cp1_memo(tmp_path, monkeypatch):
+    hub = _gateway(tmp_path, monkeypatch)
+    plan = cont._plan(1)
+    hub.requests["r"] = _running(plan)
+    hub.interrupt_request("r")
+    card = next(a["approval"] for a in hub.approvals.values() if a["approval"]["kind"] == "resume")
+    await hub.resolve_approval(card["id"], True, note="s2는 donor 단위로 계산해 주세요")
+    assert hub.requests["r"]["resume_cp1"]["note"] == "s2는 donor 단위로 계산해 주세요"
+
+    stopped = await _stopped_at_cp1(tmp_path / "run", [cont.APPROVE])
+    stopped.requests["r"]["resume_cp1"] = {"approved": True, "approval_id": "appr_resume", "decided_at": 5.0,
+                                           "target_sha256": plan_sha256(stopped.requests["r"]["plan"]),
+                                           "note": "s2는 donor 단위로 계산해 주세요"}
+    await Orchestrator(stopped).run_request("r", resume=True)
+    assert stopped.requests["r"]["research_contract"]["approval"]["note"] == "s2는 donor 단위로 계산해 주세요"
+
+
+@pytest.mark.asyncio
+async def test_the_resume_card_carries_the_same_review_fields_as_the_cp1_card(tmp_path, monkeypatch):
+    hub = _gateway(tmp_path, monkeypatch)
+    hub.requests["r"] = {**_running(cont._plan(1)), "plan_warnings": ["입력 보정 1건"],
+                         "plan_validation": {"semantic_checks": [{"step": "s1", "fixed": True}]},
+                         "plan_cost_estimate": {"estimate_usd": 1.5}}
+    hub.interrupt_request("r")
+    detail = next(a["approval"] for a in hub.approvals.values() if a["approval"]["kind"] == "resume")["detail"]
+    assert detail["plan_warnings"] == ["입력 보정 1건"] and detail["plan_validation"]["semantic_checks"]
+    assert detail["budget"]["cap_usd"] is not None and detail["cost_estimate"] == {"estimate_usd": 1.5}

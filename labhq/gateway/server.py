@@ -1440,13 +1440,13 @@ class Hub:
         self._schedule_resume_expiry(approval.id)
         return approval
 
-    def _record_resume_cp1(self, card: dict, approval_id: str) -> None:
+    def _record_resume_cp1(self, card: dict, approval_id: str, note: str = "") -> None:
         """An approved resume card that showed the plan is the PI's CP1 answer for that plan hash, once (#654)."""
         rid = card.get("request_id")
         target = (card.get("detail") or {}).get("cp1_target_sha256")
         plan = (self.requests.get(rid or "") or {}).get("plan")
         if target and isinstance(plan, dict) and plan_sha256(plan) == target:
-            self.requests[rid]["resume_cp1"] = {"approved": True, "target_sha256": target,
+            self.requests[rid]["resume_cp1"] = {"approved": True, "target_sha256": target, "note": note or "",
                                                 "approval_id": approval_id, "decided_at": time.time()}
             self.save_request(rid)
 
@@ -3496,7 +3496,7 @@ class Hub:
         if storage is not None:
             chosen["storage"] = storage
         if approved and entry["approval"].get("kind") == "resume":
-            self._record_resume_cp1(entry["approval"], approval_id)  # before the card is resolved (#654 review)
+            self._record_resume_cp1(entry["approval"], approval_id, note)  # before the card is resolved (#654 review)
         self.store.delete("approval", approval_id)
         self.store.put("approval_decision", approval_id,
                        {"approval": entry["approval"], "origin": entry["origin"], "approved": approved,
