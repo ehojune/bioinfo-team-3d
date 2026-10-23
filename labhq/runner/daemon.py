@@ -28,7 +28,7 @@ from typing import Any
 import websockets
 import yaml
 
-from .. import durable
+from .. import disk_space, durable
 from ..adapters import (adapter_preflight_error, get_adapter, is_read_only_task, read_only_profile,
                         read_only_refusal)
 from ..adapters.base import RunContext
@@ -1459,6 +1459,68 @@ class Runner:
             if ws is not None and task.meta.get("paper_skills"):
                 ws.clear_paper_skills()
 
+    async def _disk_gate(self, task: Task, agent: AgentSpec, workspace_dir: Path) -> str | None:
+        """Free space of the drive this run's folder is on, when a task starts (#678): None to go on, else why not.
+
+        Below ``runner.disk_fail_free_gb`` the task waits for a PI card; approving starts it, declining or no answer does
+        not. Below the doctor's warning level it only warns. An unreadable drive never blocks. A facilities fix
+        runs regardless: clearing a full workspace is what it is for."""
+        runner = self.s.runner
+        if task.meta.get("kind") == "facilities_fix":
+            return None
+
+        async def emit(kind: str, data: dict) -> None:
+            await self.emit(Event(type=kind, task_id=task.id, agent_id=agent.id, request_id=task.request_id, data=data))
+
+        try:
+            space = disk_space.usage(workspace_dir)
+        except (OSError, ValueError):
+            return None
+        if space.total <= 0:
+            return None
+        free_gib = space.free / disk_space.GIB
+        if runner.disk_fail_free_gb and free_gib < runner.disk_fail_free_gb:
+            summary = (f"작업 폴더 드라이브 여유 {free_gib:.1f} GiB(시작 기준 {runner.disk_fail_free_gb:g} GiB): "
+                       "그래도 이 작업을 시작할까요?")
+            await emit("agent.log", {"level": "warn", "text": f"디스크 여유가 거의 없어 PI 확인을 기다립니다: {free_gib:.1f} GiB"})
+            decision = await self.broker.request_approval(ApprovalRequest(
+                task_id=task.id, agent_id=agent.id, request_id=task.request_id, kind="disk_space", summary=summary,
+                detail={"free_gib": round(free_gib, 2), "floor_gib": runner.disk_fail_free_gb,
+                        "path": str(workspace_dir)}, timeout_s=24 * 3600))
+            if decision.get("approved"):
+                await emit("agent.log", {"level": "warn", "text": "PI가 디스크 여유가 적은 채로 시작을 승인했습니다"})
+                return None
+            return (f"작업 폴더 드라이브 여유가 {free_gib:.1f} GiB로 시작 기준 {runner.disk_fail_free_gb:g} GiB보다 적어 "
+                    "시작하지 않았습니다(PI 거절 또는 무응답). 여유를 확보하거나 작업 폴더를 다른 드라이브로 옮기세요")
+        if disk_space.low(space, runner.disk_warning_free_gb, runner.disk_warning_free_percent):
+            await emit("agent.log", {"level": "warn", "text": (
+                f"작업 폴더 드라이브 여유가 적습니다: {free_gib:.1f} GiB. 큰 다운로드 전에 확인하세요")})
+        return None
+
+    async def _bulk_data_hint(self, emit, zones: list) -> str:
+        """The briefing line for ``runner.bulk_data_root``, or "" when unset or the folder is not one staff may use.
+
+        The folder is outside the step folder, so a write there still goes through the usual approval; only a
+        controlled zone keeps it out of the briefing (#678)."""
+        root = self.s.runner.bulk_data_root
+        if not root:
+            return ""
+        path = Path(os.path.expandvars(os.path.expanduser(str(self.s.path(root)))))
+        try:
+            resolved = path.resolve()
+            if overlaps_zone(resolved, zones):
+                raise ValueError("controlled zone")
+        except (OSError, RuntimeError, ValueError):
+            await emit("agent.log", {"level": "warn", "text": f"runner.bulk_data_root({root})를 직원 안내에 쓰지 않았습니다: "
+                                                             "통제 구역이거나 경로를 확인할 수 없습니다"})
+            return ""
+        try:
+            free = f" (여유 {disk_space.usage(resolved).free / disk_space.GIB:.0f} GiB)"
+        except (OSError, ValueError):
+            free = ""
+        return (f"큰 원자료(수 GB 이상)는 작업 폴더가 아니라 {resolved}{free} 아래에 받으세요. "
+                "작업 폴더 밖이라 쓰기는 평소처럼 승인을 거칠 수 있습니다.")
+
     async def _run_task(self, task: Task, workdir_override: Path | None = None, *, paper_skill_build=None) -> TaskResult:
         # Recheck after asynchronous preparation, and protect internal/direct callers too.
         if paper2agent.disabled_task(self.s, task):
@@ -1490,6 +1552,18 @@ class Runner:
                             steers=task.meta.get("steers") or [], dropped=task.meta.get("steer_dropped") or 0)
         override = workdir_override or (Path(task.meta["workdir"]) if task.meta.get("workdir") else None)
         workspace_dir = Path(override) if override else self.ws_root / time.strftime("%Y-%m-%d") / f"{task.id}_{agent.id}"
+        # #678: judged on the folder this run really uses, before the workspace is created or a run slot is held, so a
+        # full drive neither fails the directory creation first nor lets waiting cards take every slot.
+        disk_error = await self._disk_gate(task, agent, workspace_dir)
+        if disk_error:
+            result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=disk_error)
+            base = dict(task_id=task.id, agent_id=agent.id, request_id=task.request_id)
+            await self.emit_all([
+                Event(type="agent.log", data={"level": "alert", "text": disk_error}, **base),
+                Event(type="agent.status", data={"state": "error", "error": short(disk_error, 200)}, **base),
+                Event(type="task.result", data={**result.model_dump(mode="json"),
+                                                "control": self.controls.finish(task.id)}, **base)])
+            return result
         reused = os.path.lexists(workspace_dir)
         # Do not let TaskWorkspace create files through links left by an earlier run. Fresh workspaces keep
         # the old event ordering; reused ones are registered only after their preflight succeeds (#191).
@@ -1616,6 +1690,8 @@ class Runner:
             task, consult_error = self._stage_consult_refs(task, ws)
             if agent.id == "facilities" and not consult_error:
                 task = task.model_copy(update={"context": task.context + "\n\n" + self._facilities_doctor_context()})
+            if bulk_hint := await self._bulk_data_hint(emit, [*zones, *internal_zones]):
+                task = task.model_copy(update={"context": (task.context + "\n\n" if task.context else "") + bulk_hint})
             ws.task = task
             if consult_error:
                 result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=consult_error)
