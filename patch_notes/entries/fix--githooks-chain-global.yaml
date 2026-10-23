@@ -20,3 +20,7 @@ rows:
   at: '2026-10-24 03:28'
   summary: 변경을 되돌린 에이전트도 커밋 작성자로 남깁니다.
   text: 새 inverse commit인 revert에 전역 작성자 처리를 적용하고 단건·연속 revert와 연속 cherry-pick을 포함한 훅 회귀 17건을 검증했다.
+- sha: 91b8df0
+  at: '2026-10-24 03:37'
+  summary: 커밋을 수정해도 원래 작성자를 보존합니다.
+  text: amend와 명시 author를 전역 작성자 변경에서 제외하고 다른 작성자 메시지는 trailer를 남기며 최종 훅 회귀 20건을 검증했다.
