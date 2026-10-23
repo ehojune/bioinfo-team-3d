@@ -746,3 +746,23 @@ def test_lineage_source_defects_propagate_to_claim(fault, linked_found, defectiv
     assert report.claims[0].state == "defective"
     assert any(defective_id in reason for reason in report.claims[0].defects)
     assert not report.ok and report.claims[0].independent_groups == []
+
+
+@pytest.mark.parametrize("citation", [{}, {"cited_from": ["e2"]}, {"cited_from": ["missing"]}])
+@pytest.mark.parametrize("relation", ["supports", "contradicts"])
+def test_salvage_keeps_unresolved_lineage_reading_record_and_required_slot(citation, relation):
+    plan, _ = _slotted_plan()
+    plan["steps"][0]["claim_ids"].append("c2")
+    attempted = lineage_row("e2", lineage=citation, slots=["e1"], source=dict(
+        uri="https://example.org/e2", accessed_at="2026-10-24", locator="Abstract",
+        access_status="abstract_only", supplementary_status="missing"))
+    value = result(plan_sha256=rc.plan_sha256(plan), claims=[claim(), claim("c2", status="proposed")],
+        evidence=[lineage_row("e1").model_dump(), attempted.model_dump()],
+        links=[link("c1", "e1"), link("c1", "e2", relation), link("c2", "e2", "context")])
+    salvaged, refused, unsupported, problems = rc.salvage_research_result(value, plan=plan, expected_step_id="s1")
+    assert not problems and salvaged is not None and not unsupported
+    assert [item.id for item in salvaged.evidence] == ["e1", "e2"]
+    assert salvaged.evidence[1] == attempted  # includes reading scope, missing supplement and required slot
+    assert [(item.claim_id, item.evidence_id, item.relation) for item in salvaged.links] == [
+        ("c1", "e1", "supports"), ("c2", "e2", "context")]
+    assert len(refused) == 1 and refused[0]["row_type"] == "link"

@@ -556,7 +556,7 @@ def ledger_errors(claims: list[Claim], evidence: list[Evidence], links: list[Evi
             errors.append(f"evidence {row.id} is {row.status}; a failed or empty lookup is neither evidence "
                           f"nor proof of absence and cannot {link.relation[:-1]} a claim")
         elif row.lineage is not None and lineage[row.id].status != "resolved":
-            errors.append(f"evidence {row.id} has {lineage[row.id].status} citation lineage; "
+            errors.append(f"link {link.claim_id}->{row.id} has {lineage[row.id].status} citation lineage; "
                           "link it as context until the original empirical source is confirmed")
         else:
             asserted.setdefault(link.claim_id, set()).add(link.relation)
