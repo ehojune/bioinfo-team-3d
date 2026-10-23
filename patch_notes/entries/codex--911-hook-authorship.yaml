@@ -4,3 +4,7 @@ rows:
   at: '2026-10-24 04:48'
   summary: 같은 작성자의 커밋을 수정하거나 재사용해도 작성자와 에이전트 표식을 보존합니다.
   text: prepare-commit-msg source와 post-commit reflog로 전역 위임을 판정하고 amend·-C/-c·reset-author·linked worktree·중단 뒤 후속 작업을 포함한 Git hook 회귀 41건을 검증했다.
+- sha: 8f24a90
+  at: '2026-10-24 05:04'
+  summary: 봇 작성자의 모델명을 다음 커밋에 넘기지 않고 제 커밋에 남깁니다.
+  text: private message copy를 정리한 뒤 전역 모델명 전달과 bot amend를 실행하고 rewrite 거절·실패의 원문·상태 보존과 직원 세션을 포함해 hook 회귀 46건을 검증했다.
