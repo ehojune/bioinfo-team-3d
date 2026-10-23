@@ -28,7 +28,7 @@ from pathlib import Path, PurePath
 from typing import Any
 
 from .adapters.owned import is_link
-from .evidence.report_check import claim_rows
+from .evidence.report_check import accepted_evidence_ids, claim_rows
 from .models import (EXTERNAL_LOOKUP_MAX_S, EXTERNAL_LOOKUP_MAX_TOOLS, EXTERNAL_LOOKUP_TOOL, ExternalLookupRecord,
                      ExternalLookupTool)
 from .report_markdown import READER_FILENAMES, render_marker_message, rendered_markers
@@ -458,20 +458,19 @@ def _conclusion_papers(ledgers: Mapping[str, Any], unsupported: Iterable[Any],
     refused = list(refused)
     citable = {(str(row["step_id"]), str(row["claim"].get("id")))
                for row in claim_rows(ledgers, unsupported, refused=refused)[0]}
-    refused_rows = {(str(row.get("step_id")), str(row.get("evidence_id")))
-                    for row in refused if isinstance(row, Mapping)}
     cited_sources: list[set[str]] = []
     for step_id, ledger in ledgers.items():
         if not isinstance(ledger, Mapping):
             continue
         evidence = {str(row.get("id")): row for row in ledger.get("evidence") or []
                     if isinstance(row, Mapping) and row.get("id")}
+        accepted = accepted_evidence_ids(ledger, str(step_id), refused)
         for link in ledger.get("links") or []:
             if (not isinstance(link, Mapping) or link.get("relation") not in {"supports", "contradicts"}
                     or (str(step_id), str(link.get("claim_id"))) not in citable):
                 continue
             evidence_id = str(link.get("evidence_id"))
-            if (str(step_id), evidence_id) in refused_rows:
+            if evidence_id not in accepted:
                 continue
             row = evidence.get(evidence_id)
             identifiers = _source_paper_ids(row.get("source") if isinstance(row, Mapping) else None)

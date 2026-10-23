@@ -70,29 +70,30 @@ def _accepted_lineage(ledger: Any, step_id: str, refused_ids: set[tuple[str, str
     return assess_lineage(parsed, artifact_paths=paths)
 
 
+def accepted_evidence_ids(ledger: Any, step_id: str, refused: Iterable[Any] = ()) -> set[str]:
+    """Evidence eligible to ground a claim after lookup, CP2 refusal, and lineage checks."""
+    refused_ids = _pairs(refused, "evidence_id")
+    evidence = {str(row.get("id")): row for row in _rows(ledger, "evidence") if row.get("id") is not None}
+    lineage = (_accepted_lineage(ledger, step_id, refused_ids)
+               if any(row.get("lineage") is not None for row in evidence.values()) else {})
+    # Legacy source-only summary rows omit status; absence is not a failed lookup.
+    return {evidence_id for evidence_id, row in evidence.items()
+            if (step_id, evidence_id) not in refused_ids and row.get("status") in (None, "observed")
+            and (row.get("lineage") is None
+                 or (evidence_id in lineage and lineage[evidence_id].status == "resolved"))}
+
+
 def _claims_without_accepted_support(ledgers: Mapping[str, Any], refused: Iterable[Any]) -> set[tuple[str, str]]:
     """CP2 refusal applies to a re-citation's origins too, even if CP2 did not mark the claim itself."""
-    refused_ids = _pairs(refused, "evidence_id")
+    refused = list(refused)
     blocked = set()
     for step_id, ledger in ledgers.items():
-        evidence = {row.get("id"): row for row in _rows(ledger, "evidence")}
-        lineage = (_accepted_lineage(ledger, step_id, refused_ids)
-                   if any(row.get("lineage") is not None for row in evidence.values()) else {})
+        accepted = accepted_evidence_ids(ledger, step_id, refused)
         for claim in _rows(ledger, "claims"):
             needed = STATUS_NEEDS.get(claim.get("status"))
             links = [link for link in _rows(ledger, "links") if needed and link.get("claim_id") == claim.get("id")
                      and link.get("relation") == needed]
-            accepted = []
-            for link in links:
-                evidence_id = link.get("evidence_id")
-                row = evidence.get(evidence_id)
-                # Legacy source-only summary rows omit status; absence is not a failed lookup.
-                if (not row or (step_id, str(evidence_id)) in refused_ids
-                        or row.get("status") not in (None, "observed")):
-                    continue
-                if row.get("lineage") is None or (evidence_id in lineage and lineage[evidence_id].status == "resolved"):
-                    accepted.append(evidence_id)
-            if links and not accepted:
+            if links and not any(str(link.get("evidence_id")) in accepted for link in links):
                 blocked.add((step_id, str(claim.get("id"))))
     return blocked
 

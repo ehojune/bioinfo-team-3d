@@ -622,3 +622,6 @@ def test_refused_original_is_visible_but_cannot_reenter_through_a_recitation():
     ledger["evidence"].append(_literature("independent"))
     ledger["links"].append({"claim_id": "c2", "evidence_id": "independent", "relation": "supports"})
     assert "c2" in {row["claim"]["id"] for row in claim_rows({"s1": ledger}, refused=refused)[0]}
+    assert conclusion_literature_line([], {}, {"s1": ledger}, refused=refused).startswith("결론 근거 논문 1편:")
+    assert "결론 근거 1편." in literature_ledger_line([{"id": "s1"}], results, {"s1": ledger},
+                                                   refused=refused)
