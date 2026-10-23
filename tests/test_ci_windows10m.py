@@ -198,8 +198,8 @@ def test_native_contract_preflight_and_missing_collected_case_fail(monkeypatch, 
     assert error == dict(profile=s.WINDOWS_BOUNDARY, status='invalid-selection', reusable=False)
 
 
-def node_wrapper(run, *, required_browser=False):
-    """Execute only the wrapper definition, with a module-local fake transport."""
+def node_wrapper(run, *, required_browser=False, clock=lambda: 1000.0, monotonic=lambda: 50.0):
+    """Execute only the wrapper definition, with a module-local fake transport and clocks."""
     import subprocess
     tree = ast.parse((s.ROOT/'tests/test_web_3d.py').read_text(encoding='utf-8'), feature_version=(3, 10))
     function = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'test_office_in_node')
@@ -207,19 +207,35 @@ def node_wrapper(run, *, required_browser=False):
     namespace = dict(Path=Path, __file__=str(s.ROOT/'tests/test_web_3d.py'), pytest=pytest,
                      re=__import__('re'), os=SimpleNamespace(environ={'LABHQ_REQUIRE_RESIZABLE_BROWSER': '1'} if required_browser else {}),
                      shutil=SimpleNamespace(which=lambda name: 'fake-node'), sys=SimpleNamespace(executable='fake-python'),
+                     time=SimpleNamespace(time=clock, monotonic=monotonic), json=json,
                      subprocess=SimpleNamespace(run=run, TimeoutExpired=subprocess.TimeoutExpired))
     exec(compile(ast.Module(body=[function], type_ignores=[]), '<fake-node-wrapper>', 'exec'), namespace)
     return namespace['test_office_in_node']
 
 
+# #833: the resizable script runs once per viewport; each invocation's third test is that viewport's browser test.
+RESIZABLE_TITLES = {'desktop': 'desktop splitters drag, respond to arrows, persist and reset',
+                    'phone': 'phone layout hides the splitters and keeps the office full width'}
+
+
+def resizable_tap(viewport, *, passed=3, skipped=0, title=None):
+    """TAP of one viewport invocation: the two static tests, then the selected browser test."""
+    return (f'TAP version 13\nok 1 - static values\nok 2 - static shell\nok 3 - {title or RESIZABLE_TITLES[viewport]}\n'
+            f'# pass {passed}\n# fail 0\n# skipped {skipped}\n')
+
+
 @pytest.mark.parametrize('binary', [False, True])
 def test_node_timeout_retains_partial_output_and_original_failure(binary):
     import subprocess
+    calls = []
     def run(command, **options):
         assert command[0] == 'fake-node'
+        calls.append(options['env'].get('LABHQ_RESIZABLE_VIEWPORT'))
         # The exact interpreter reaches the Windows Job wrapper of the demo driver (#842); no PATH python.
+        # #833: the first viewport's invocation, with its watchdog's absolute end (epoch ms); the timeout is unchanged.
         assert options == dict(capture_output=True, text=True, encoding='utf-8', timeout=30,
-                               env={'LABHQ_TEST_PYTHON': 'fake-python'})
+                               env={'LABHQ_TEST_PYTHON': 'fake-python', 'LABHQ_RESIZABLE_VIEWPORT': 'desktop',
+                                    'LABHQ_TEST_OUTER_DEADLINE_MS': '1030000'})
         stdout, stderr = 'TAP version 13\n', 'resizable browser: desktop load\n'
         if binary:
             stdout, stderr = stdout.encode(), stderr.encode()
@@ -227,9 +243,112 @@ def test_node_timeout_retains_partial_output_and_original_failure(binary):
     with pytest.raises(AssertionError) as result:
         node_wrapper(run)('web_resizable_panels.cjs', 'fail 0')
     assert isinstance(result.value.__cause__, subprocess.TimeoutExpired)
-    assert 'web_resizable_panels.cjs' in str(result.value)
+    assert 'web_resizable_panels.cjs (desktop) exceeded 30s' in str(result.value)
     assert 'TAP version 13' in str(result.value)
     assert 'resizable browser: desktop load' in str(result.value)
+    assert calls == ['desktop']  # a failed first viewport ends the node; the second never reports success alone
+
+
+def test_each_resizable_viewport_runs_in_its_own_invocation_with_a_fresh_deadline():
+    seen, times = [], iter([1000.0, 1012.5])
+    def run(command, **options):
+        seen.append((Path(command[1]).name, options))
+        viewport = options['env'].get('LABHQ_RESIZABLE_VIEWPORT')
+        return SimpleNamespace(returncode=0, stdout=resizable_tap(viewport) if viewport else 'fail 0', stderr='')
+    node_wrapper(run, required_browser=True, clock=lambda: next(times))('web_resizable_panels.cjs', 'fail 0')
+    assert [name for name, _ in seen] == ['web_resizable_panels.cjs'] * 2
+    inherited = {'LABHQ_REQUIRE_RESIZABLE_BROWSER': '1', 'LABHQ_TEST_PYTHON': 'fake-python'}
+    assert [options['env'] for _, options in seen] == [
+        {**inherited, 'LABHQ_RESIZABLE_VIEWPORT': 'desktop', 'LABHQ_TEST_OUTER_DEADLINE_MS': '1030000'},
+        {**inherited, 'LABHQ_RESIZABLE_VIEWPORT': 'phone', 'LABHQ_TEST_OUTER_DEADLINE_MS': '1042500'}]
+    assert [options['timeout'] for _, options in seen] == [30, 30]
+    # Other scripts: one invocation, no viewport or deadline variable, their own timeout.
+    seen.clear()
+    wrapper = node_wrapper(run)
+    for name in ('web_state.cjs', 'web_office_browser.cjs'):
+        wrapper(name, 'fail 0')
+    assert [(name, options['env'], options['timeout']) for name, options in seen] == [
+        ('web_state.cjs', {'LABHQ_TEST_PYTHON': 'fake-python'}, 30),
+        ('web_office_browser.cjs', {'LABHQ_TEST_PYTHON': 'fake-python'}, 170)]
+
+
+@pytest.mark.parametrize('failing', ['desktop', 'phone'])
+@pytest.mark.parametrize('problem', ['returncode', 'skipped', 'pass2', 'other-viewport', 'no-marker', 'timeout'])
+def test_a_failed_or_skipped_viewport_fails_the_whole_resizable_node(failing, problem):
+    import subprocess
+    calls = []
+    def run(command, **options):
+        viewport = options['env']['LABHQ_RESIZABLE_VIEWPORT']
+        calls.append(viewport)
+        if viewport != failing:
+            return SimpleNamespace(returncode=0, stdout=resizable_tap(viewport), stderr='')
+        if problem == 'timeout':
+            raise subprocess.TimeoutExpired(command, 30, output='TAP version 13\n', stderr='')
+        other = 'phone' if viewport == 'desktop' else 'desktop'
+        stdout = {'returncode': resizable_tap(viewport), 'skipped': resizable_tap(viewport, passed=2, skipped=1),
+                  'pass2': resizable_tap(viewport, passed=2),
+                  'other-viewport': resizable_tap(viewport, title=RESIZABLE_TITLES[other]),
+                  'no-marker': resizable_tap(viewport).replace('# fail 0', '# fail 1')}[problem]
+        return SimpleNamespace(returncode=1 if problem == 'returncode' else 0, stdout=stdout, stderr='')
+    with pytest.raises(AssertionError, match=rf'web_resizable_panels\.cjs \({failing}\)'):
+        node_wrapper(run, required_browser=True)('web_resizable_panels.cjs', 'fail 0')
+    assert calls == (['desktop'] if failing == 'desktop' else ['desktop', 'phone'])
+
+
+@pytest.mark.parametrize('ending', ['returncode', 'timeout'])
+def test_a_failed_viewport_reports_its_launch_epoch_deadline_and_monotonic_duration(ending):
+    """#833: one wall-clock reading sets the deadline and is reported; the duration comes from the monotonic clock."""
+    import subprocess
+    epochs, monotonics = iter([1000.0]), iter([50.0, 72.21])
+    seen = []
+    def run(command, **options):
+        seen.append(options['env']['LABHQ_TEST_OUTER_DEADLINE_MS'])
+        if ending == 'timeout':
+            raise subprocess.TimeoutExpired(command, 30, output='TAP version 13\n', stderr='')
+        return SimpleNamespace(returncode=1, stdout=resizable_tap('desktop'), stderr='')
+    with pytest.raises(AssertionError) as failure:
+        node_wrapper(run, required_browser=True, clock=lambda: next(epochs),
+                     monotonic=lambda: next(monotonics))('web_resizable_panels.cjs', 'fail 0')
+    assert seen == ['1030000']  # the deadline is the same single reading, not a second one
+    line = next(line for line in str(failure.value).splitlines() if line.startswith('resizable timing (python): '))
+    assert json.loads(line.split(': ', 1)[1]) == {'viewport': 'desktop', 'launch_epoch_ms': 1000000,
+                                                  'deadline_epoch_ms': 1030000, 'returned_after_mono_ms': 22210}
+    # Other scripts report no timing line.
+    def other(command, **options):
+        return SimpleNamespace(returncode=1, stdout='fail 0', stderr='')
+    with pytest.raises(AssertionError) as plain:
+        node_wrapper(other)('web_state.cjs', 'fail 0')
+    assert 'resizable timing' not in str(plain.value)
+
+
+def test_resizable_script_reports_its_own_clocks_before_any_require_and_at_each_open():
+    source = (s.ROOT/'tests/web_resizable_panels.cjs').read_text(encoding='utf-8')
+    code = [line for line in source.splitlines() if line.strip() and not line.lstrip().startswith('//')]
+    assert code[0] == 'const MODULE_ENTRY_MONO_MS = performance.now();'  # the first statement, before any require
+    assert code[1].startswith("const {test} = require(")
+    assert source.count("console.error('resizable timing: ' + JSON.stringify({stage, ...extra,") == 1
+    for key in ('time_origin_epoch_ms: Math.round(performance.timeOrigin)', 'mono_ms: Math.round(performance.now())',
+                'epoch_ms: epoch', 'outer_remaining_ms: workDeadline === undefined ? null : outerDeadline - epoch',
+                'work_remaining_ms: workDeadline === undefined ? null : workDeadline - epoch'):
+        assert key in source
+    assert "timing('module-ready', {module_entry_mono_ms: Math.round(MODULE_ENTRY_MONO_MS)});" in source
+    # Top-level code: it runs while the module loads, before node:test starts the (already registered) static tests.
+    assert "\ntiming('module-ready'" in source
+    for viewport in ('desktop', 'phone'):
+        opened = source.index(f"console.error('resizable browser: {viewport} open');")
+        row = source.index(f"timing('open', {{viewport: '{viewport}'}});")
+        assert opened < row < source.index('await openDemo(', row)  # right before this viewport's driver trace starts
+    # Observation only: the deadline variables are still assigned exactly once.
+    assert source.count('const workDeadline =') == 1 and source.count('const outerDeadline =') == 1
+
+
+def test_optional_browser_still_runs_both_viewports_and_requires_each_to_succeed():
+    calls = []
+    def run(command, **options):
+        calls.append(options['env']['LABHQ_RESIZABLE_VIEWPORT'])
+        return SimpleNamespace(returncode=0, stdout=resizable_tap(calls[-1], passed=2, skipped=1), stderr='')
+    node_wrapper(run)('web_resizable_panels.cjs', 'fail 0')  # no Chrome outside the required phase: a skip is allowed
+    assert calls == ['desktop', 'phone']
 
 
 @pytest.mark.parametrize('returncode,stdout', [(0, 'fail 0'), (1, 'fail 0'), (0, 'fail 1')])
@@ -244,8 +363,8 @@ def test_node_wrapper_still_requires_success_and_marker(returncode, stdout):
 
 @pytest.mark.parametrize('passed,skipped,accepted', [(3, 0, True), (2, 1, False), (3, 1, False), (2, 0, False)])
 def test_required_browser_needs_actual_inner_node_passes_and_zero_skips(passed, skipped, accepted):
-    stdout = f'TAP version 13\n# pass {passed}\n# fail 0\n# skipped {skipped}\n'
-    wrapper = node_wrapper(lambda *a, **k: SimpleNamespace(returncode=0, stdout=stdout, stderr=''), required_browser=True)
+    wrapper = node_wrapper(lambda command, **options: SimpleNamespace(returncode=0, stderr='', stdout=resizable_tap(
+        options['env']['LABHQ_RESIZABLE_VIEWPORT'], passed=passed, skipped=skipped)), required_browser=True)
     if accepted:
         wrapper('web_resizable_panels.cjs', 'fail 0')
     else:
@@ -255,12 +374,26 @@ def test_required_browser_needs_actual_inner_node_passes_and_zero_skips(passed, 
 
 def test_resizable_browser_diagnostics_keep_deadline_cleanup_and_selection():
     source = (s.ROOT/'tests/web_resizable_panels.cjs').read_text(encoding='utf-8')
+    wrapper_source = (s.ROOT/'tests/test_web_3d.py').read_text(encoding='utf-8')
     assert 'skip: skipReason() || false, timeout: 60000' in source
     for viewport in ('desktop', 'phone'):
         for phase in ('open', 'load', 'assertions', 'close', 'closed'):
             assert f"console.error('resizable browser: {viewport} {phase}')" in source
         assert f'await {viewport}.close();' in source
+        # #833: one browser test per viewport, registered only when selected; the wrapper checks its exact title.
+        assert f"if (runs('{viewport}')) test('{RESIZABLE_TITLES[viewport]}'," in source
+        assert f"'{viewport}': '{RESIZABLE_TITLES[viewport]}'" in wrapper_source
     assert source.count('finally {') == 2
+    assert source.count("\ntest('") == 2  # the two static tests always run
+    assert "const VIEWPORTS = ['desktop', 'phone'];" in source
+    assert 'if (selected !== undefined && !VIEWPORTS.includes(selected)) {' in source
+    # One work deadline per invocation, from that watchdog's end minus the driver's close reserve; refused without a
+    # selected viewport, so two viewports never share one budget again (job 120174823730).
+    assert source.count('process.env.LABHQ_TEST_OUTER_DEADLINE_MS') == 2
+    assert 'if (process.env.LABHQ_TEST_OUTER_DEADLINE_MS !== undefined && selected === undefined) {' in source
+    assert 'outerDeadline - CLOSE_RESERVE_MS' in source
+    assert source.count('const workDeadline =') == 1
+    assert source.count('reducedMotion: true, workDeadline,') == 2
     data = s.validate_profile()
     path = 'tests/test_web_3d.py'
     assert s.include_windows(path, (s.ROOT/path).read_text(encoding='utf-8'), data,

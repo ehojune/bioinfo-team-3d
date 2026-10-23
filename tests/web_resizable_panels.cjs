@@ -1,8 +1,10 @@
+// #833: this process's monotonic clock at the first line of the file, before any require (see `timing` below).
+const MODULE_ENTRY_MONO_MS = performance.now();
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const {openDemo, skipReason} = require('./support/demo_driver.cjs');
+const {openDemo, skipReason, CLOSE_RESERVE_MS} = require('./support/demo_driver.cjs');
 
 const web = process.env.LABHQ_WEB_TEST_ROOT || path.resolve(__dirname, '../labhq/web');
 const html = fs.readFileSync(path.join(web, 'index.html'), 'utf8');
@@ -36,14 +38,46 @@ test('2.5D shell exposes two token-styled accessible splitters and leaves phone 
   assert.match(components, /@media \(max-width:\s*620px\)[\s\S]*\.panel-splitter[^}]*display:\s*none/);
 });
 
+// #833: tests/test_web_3d.py runs each viewport as its own invocation (LABHQ_RESIZABLE_VIEWPORT=desktop or phone), so
+// each gets its own 30 s watchdog; one shared budget left the second viewport no time (job 120174823730). Only the
+// selected browser test is registered. Run directly without the variable, both run here one after the other.
+const VIEWPORTS = ['desktop', 'phone'];
+const selected = process.env.LABHQ_RESIZABLE_VIEWPORT;
+if (selected !== undefined && !VIEWPORTS.includes(selected)) {
+  throw new Error(`LABHQ_RESIZABLE_VIEWPORT must be one of: ${VIEWPORTS.join(', ')}`);
+}
+// The watchdog kills this script at LABHQ_TEST_OUTER_DEADLINE_MS (epoch ms), which skips every close below. The work
+// deadline ends the browser work CLOSE_RESERVE_MS before it, so the open session's own close and this process's exit
+// still fit. It is shared by the stages of one viewport only: an outer deadline without a selected viewport is refused.
+const outerDeadline = Number(process.env.LABHQ_TEST_OUTER_DEADLINE_MS);
+const workDeadline = Number.isFinite(outerDeadline) && outerDeadline > 0 ? outerDeadline - CLOSE_RESERVE_MS : undefined;
+if (process.env.LABHQ_TEST_OUTER_DEADLINE_MS !== undefined && selected === undefined) {
+  throw new Error('LABHQ_TEST_OUTER_DEADLINE_MS needs LABHQ_RESIZABLE_VIEWPORT: one deadline per viewport invocation');
+}
+const runs = viewport => selected === undefined || selected === viewport;
+
+// #833: where the time before the driver's own trace goes (Node start, module load, the static tests). Fixed numeric
+// rows only, no path, URL or profile. Two clocks, never mixed: `*_mono_ms` is this process's monotonic clock since its
+// start (performance.timeOrigin); `*_epoch_ms` and `*_remaining_ms` are wall clock, the clock of the watchdog's
+// LABHQ_TEST_OUTER_DEADLINE_MS. Observation only: no budget is reset or extended here.
+function timing(stage, extra = {}) {
+  const epoch = Date.now();
+  console.error('resizable timing: ' + JSON.stringify({stage, ...extra,
+    time_origin_epoch_ms: Math.round(performance.timeOrigin), mono_ms: Math.round(performance.now()), epoch_ms: epoch,
+    outer_remaining_ms: workDeadline === undefined ? null : outerDeadline - epoch,
+    work_remaining_ms: workDeadline === undefined ? null : workDeadline - epoch}));
+}
+timing('module-ready', {module_entry_mono_ms: Math.round(MODULE_ENTRY_MONO_MS)});
+
 // The critical Windows phase requires a real browser, never an optional skip.
 if (process.env.LABHQ_REQUIRE_RESIZABLE_BROWSER === '1' && skipReason()) {
   throw new Error(`required resizable browser unavailable: ${skipReason()}`);
 }
-test('desktop splitter drags, responds to arrows, persists and resets while phone hides it',
+if (runs('desktop')) test('desktop splitters drag, respond to arrows, persist and reset',
   {skip: skipReason() || false, timeout: 60000}, async () => {
     console.error('resizable browser: desktop open');
-    const desktop = await openDemo({width: 1440, height: 900, reducedMotion: true,
+    timing('open', {viewport: 'desktop'});
+    const desktop = await openDemo({width: 1440, height: 900, reducedMotion: true, workDeadline,
       diagnostic: event => console.error('resizable driver: ' + JSON.stringify({viewport: 'desktop', ...event}))});
     try {
       console.error('resizable browser: desktop load');
@@ -80,9 +114,13 @@ test('desktop splitter drags, responds to arrows, persists and resets while phon
       await desktop.close();
       console.error('resizable browser: desktop closed');
     }
+  });
 
+if (runs('phone')) test('phone layout hides the splitters and keeps the office full width',
+  {skip: skipReason() || false, timeout: 60000}, async () => {
     console.error('resizable browser: phone open');
-    const phone = await openDemo({width: 390, height: 844, reducedMotion: true,
+    timing('open', {viewport: 'phone'});
+    const phone = await openDemo({width: 390, height: 844, reducedMotion: true, workDeadline,
       diagnostic: event => console.error('resizable driver: ' + JSON.stringify({viewport: 'phone', ...event}))});
     try {
       console.error('resizable browser: phone load');
