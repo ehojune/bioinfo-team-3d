@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 05:04 | [`8f24a90`](https://github.com/ehojune/bioinfo-team-3d/pull/913/commits/8f24a90) | **봇 작성자의 모델명을 다음 커밋에 넘기지 않고 제 커밋에 남깁니다.**<br>private message copy를 정리한 뒤 전역 모델명 전달과 bot amend를 실행하고 rewrite 거절·실패의 원문·상태 보존과 직원 세션을 포함해 hook 회귀 46건을 검증했다. |
+| 04:48 | [`a63115a`](https://github.com/ehojune/bioinfo-team-3d/pull/913/commits/a63115a) | **같은 작성자의 커밋을 수정하거나 재사용해도 작성자와 에이전트 표식을 보존합니다.**<br>prepare-commit-msg source와 post-commit reflog로 전역 위임을 판정하고 amend·-C/-c·reset-author·linked worktree·중단 뒤 후속 작업을 포함한 Git hook 회귀 41건을 검증했다. |
 | 04:21 | [`cee72e9`](https://github.com/ehojune/bioinfo-team-3d/pull/908/commits/cee72e9) | **출처를 확정하지 못해도 이미 시도한 조회 기록을 보존합니다.**<br>P2 4363365293을 수정했다. 미해결 citation lineage 오류가 문제 link를 가리키도록 해 기존 salvage가 evidence 행 대신 support·contradict link만 거부한다. 접근 metadata·필수 slot·다른 context link를 보존하는 회귀 6건이 수정 전 실패했고 관련 pytest 420 passed로 통과했다. Refs |
 | 04:00 | [`c141da3`](https://github.com/ehojune/bioinfo-team-3d/pull/896/commits/c141da3) | **코드 변경 없이 자동 검사를 다시 돌립니다.**<br>무관한 Windows WMI provider timeout으로 실패한 clean-install을 다시 확인하려고 CI를 재실행한다(코드 변경 없음). |
 | 03:40 | [`936e387`](https://github.com/ehojune/bioinfo-team-3d/pull/896/commits/936e387) | **리뷰어가 보지 못한 초안에 대한 대조 기록은 남기지 않습니다.**<br>봉인 초안을 리뷰어에게 주지 않은 요청(꺼짐·late·unavailable)의 review에서는 blind_comparison을 버린다. |
