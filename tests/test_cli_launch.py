@@ -610,8 +610,48 @@ def test_down_names_a_finished_request_whose_record_is_still_being_written(tmp_p
     error = capsys.readouterr().err
     assert stopped.value.code == 2 and killed == []
     assert "마무리 중인 요청: req_c · 취소 기록을 쓰는 중" in error
-    assert "마무리 중인 요청: req_b · 요청 묶음을 복사하는 중" in error
+    assert "마무리 중인 요청: req_b · 보고서 묶음 저장을 마무리하는 중" in error
+    assert "다음 시작 때 이어서 만듭니다" in error  # a bundle is rebuilt at the next start (#658)
     assert "gateway가 아직 끝나지 않은 일이 있다고" not in error
+
+
+def test_down_words_each_finishing_stage_with_its_age_and_does_not_wait_for_a_stuck_bundle(tmp_path, monkeypatch, capsys):
+    """#658: the refusal names what is being finished and for how long; a bundle worker past the gateway's limit is
+    reported as stuck and does not hold `down` back, because its bundle is rebuilt at the next start."""
+    settings = Settings.load(str(_config(tmp_path)))
+    _write_process_record(settings, "runner", 4244, "runner-generation")
+    monkeypatch.setattr(cli, "_process_created", lambda pid: "runner-generation")
+    killed = []
+    monkeypatch.setattr(cli, "_terminate_tree", lambda pid, **kwargs: killed.append(pid))
+    answers = {}
+
+    def gateway(method, url, **kwargs):
+        request = httpx.Request(method, url)
+        if "/api/requests" in url:
+            return httpx.Response(200, json=[], request=request)
+        return httpx.Response(200, request=request, json=answers["readiness"])
+
+    monkeypatch.setattr(httpx, "request", gateway)
+    answers["readiness"] = {"requests": [], "followups": [], "recruits": 0, "ready": False, "finishing": [
+        {"id": "req_b", "status": "done", "stage": "bundle", "elapsed_s": 300, "stuck": False},
+        {"id": "req_s", "status": "done", "stage": "result_storage"},
+        {"id": "req_p", "status": "done", "stage": "pi_interpretation"}]}
+    with pytest.raises(SystemExit) as stopped:
+        cli._down(settings, force=False)
+    error = capsys.readouterr().err
+    assert stopped.value.code == 2 and killed == []
+    assert "마무리 중인 요청: req_b · 보고서 묶음 저장을 마무리하는 중 (5분째)" in error
+    assert "마무리 중인 요청: req_s · 결과 저장을 마무리하는 중" in error
+    assert "마무리 중인 요청: req_p · PI 해석을 마무리하는 중" in error
+    assert "요청 묶음을 복사하는 중" not in error
+
+    answers["readiness"] = {"requests": [], "followups": [], "recruits": 0, "ready": True, "finishing": [
+        {"id": "req_b", "status": "done", "stage": "bundle", "elapsed_s": 900, "stuck": True}]}
+    cli._down(settings, force=False)
+    error = capsys.readouterr().err
+    assert killed == [4244]
+    assert "멈춘 마무리: req_b" in error and "15분째" in error and "다음 시작 때 이어서 마무리합니다" in error
+    assert "종료를 거부했습니다" not in error
 
 
 def test_down_refuses_when_readiness_fails_or_names_a_request_the_list_missed(tmp_path, monkeypatch, capsys):

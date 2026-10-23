@@ -4,6 +4,31 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# 블라인드 리뷰어 초안 (#889)
+
+- `research.blind_draft`(기본 false)를 켜면 CP1 승인 직후 첫 단계 전에 `reviewer_agent`가 원 요청만으로 초안을 쓰고 `research_contract.blind_draft`에 본문·sha256·UTC 시각으로 봉인한다. 주 결과가 이미 있는 재개는 초안 없이 `unavailable(results_exist)`, 초안 완료 시점에 결과가 있었으면 `late`, task 실패는 `unavailable`이며 요청은 계속된다.
+- 연구 리뷰 prompt에 봉인된 초안(해시 일치 시)을 붙이고 review JSON에 optional `blind_comparison`을 받는다. 읽을 수 없는 값은 그 필드만 버린다. 일치를 근거로 세지 않는다.
+- 순차 실행(병렬 아님). 새 task kind `blind_draft`는 read-only 프로파일과 기존 예약·취소 경로를 쓴다. 파일 격리는 하지 않는다(입력 기준 격리).
+- 테스트: `tests/test_blind_draft_889.py` 7건(봉인 순서·입력 격리·리뷰 전달·꺼짐 무변화·실패 무중단·late/재시작·부분 폐기) 통과. 관련 연구 lane 테스트 247건 통과. 실제 Codex 직원, 실제 요청, Windows CI는 미확인.
+
+Refs #898
+
+- R version/syntax subprocess의 elapsed·timeout·returncode를 test fixture에 따로 남기고 기본 10초 경계 두 개를 fake로 검증합니다.
+- mock SIGTERM/SIGHUP은 work 준비 뒤 호출하며 durable result·gateway resume·ACK·entry 완료를 단계별로 기다립니다. 각 fixture 단계와 제품 shutdown은 5초를 유지합니다. ACK 전 entry 생존과 shutdown 반환 시 outbox 0을 확인하며 기존 단언도 유지합니다.
+- ACK 3.1초 지연 주입: 수정 전 1 failed(`TimeoutError`), 수정 후 1 passed. 실제 CI의 DB/writer 지연 원인을 재현한 결과는 아닙니다.
+- 관련 검사 serial 및 4-worker `loadfile`: 각각 130 passed·3 skipped. 변경한 4개 case는 serial/4-worker `load` 각각 20회 통과했습니다. 리뷰 수정 뒤 SIGTERM/SIGHUP도 같은 조건에서 각각 20회 통과했습니다(80 PASS).
+- Python 3.10 AST·public·diff 검사 통과. 제품 코드·coverage/receipt 계약은 바꾸지 않았습니다.
+- Rscript가 없는 로컬의 실제 R 두 case와 symlink 권한이 필요한 한 case는 skip됐습니다. R 실제 지연 원인은 미확인이므로 #898을 닫지 않습니다. CI·같은 head 봇 리뷰·병합은 PR에서 확인합니다.
+
+[관측과 해석 경계](../reference/windows-test-boundaries-898.md)
+
+## #658 종료하기: 멈춘 '마무리 중' 표시 (PR #895, base 611f8ea4)
+
+- 대조: 이슈 4항목 중 1(끝나면 지움)·4(옛 gateway)는 main에 이미 있다. 2·3을 구현했다.
+- 바꾼 것: gateway readiness의 bundle 행에 `elapsed_s`·`stuck`(10분 초과)을 더하고 stuck 행은 `ready`에서 뺀다. CLI `down`·웹 종료창이 단계(취소 기록·보고서 묶음 저장·결과 저장·PI 해석)와 `n분째`를 적고, 멈춘 마무리는 알리되 막지 않는다. 묶음은 `bundle_pending`이 남아 다음 시작에 다시 만든다. manual의 `down` 절 갱신.
+- 검사: 새 test 2·문구 test 1 수정·JS 1. 수정 전 코드로 3 python·1 node 실패, 수정 후 관련 124 passed·2 skipped, node fail 0.
+- 한계: stuck은 경과 시간 기준(진척 신호 없음). 묶음 단계만 적용, 취소 기록·결과 저장·PI 해석은 시작 시각이 없어 기존대로 막는다. 15분 남은 원래 사례의 원인은 로그가 없어 확인 못 함. 실제 gateway에서 `down`을 누른 확인과 전체 suite는 하지 않았다(CI에 맡김).
+
 # Scheduler user 이름 확인
 
 - USERNAME·USER·LOGNAME이 없는 Windows에서 `getpass.getuser()`가 POSIX 전용 `pwd` import로 `ModuleNotFoundError`를 내며 `Scheduler` 생성이 실패했다(proof c1 runner 시작 실패의 원인).

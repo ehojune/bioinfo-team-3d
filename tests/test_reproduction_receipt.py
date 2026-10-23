@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import time
 import unicodedata
 
 import pytest
@@ -78,12 +79,61 @@ def test_real_bash_syntax_without_running_the_script(tmp_path, source, status):
     assert receipt["files"][0]["execution"]["status"] == "not_rerun"
 
 
+@pytest.fixture
+def r_parser_trace(monkeypatch, record_property):
+    """Measure each subprocess without changing the receipt's ten-second deadline."""
+    run = subprocess.run
+    stages = []
+
+    def measured(command, **kwargs):
+        stage = {"phase": "version" if command[-1] == "--version" else "syntax",
+                 "timeout_s": kwargs["timeout"]}
+        started = time.monotonic()
+        try:
+            result = run(command, **kwargs)
+            stage["returncode"] = result.returncode
+            return result
+        except subprocess.TimeoutExpired:
+            stage["timeout"] = True
+            raise
+        finally:
+            # No commands, source, environment, diagnostics or absolute paths.
+            stage["elapsed_s"] = round(time.monotonic() - started, 4)
+            stages.append(stage)
+
+    monkeypatch.setattr(subprocess, "run", measured)
+    yield stages
+    record_property("r_parser_stages", json.dumps(stages))
+    print("R parser stages: " + json.dumps(stages))
+
+
 @pytest.mark.skipif(shutil.which("Rscript") is None, reason="Rscript unavailable; command and missing-tool paths are tested")
 @pytest.mark.parametrize("source,status", [("stop('not evaluated')\n", "pass"), ("if (\n", "fail")])
-def test_real_r_parse_without_running_the_script(tmp_path, source, status):
+def test_real_r_parse_without_running_the_script(tmp_path, source, status, r_parser_trace):
     receipt = rr.build_receipt({"run.R": source}, tools={"r": shutil.which("Rscript")}, temp_root=tmp_path)
     assert receipt["files"][0]["syntax"]["status"] == status
     assert receipt["files"][0]["execution"]["status"] == "not_rerun"
+
+
+@pytest.mark.parametrize("timeout_phase", ["version", "syntax"])
+def test_r_timeout_is_attributed_to_the_subprocess_that_exceeded_its_deadline(
+        tmp_path, monkeypatch, timeout_phase, request):
+    def run(command, **kwargs):
+        phase = "version" if command[-1] == "--version" else "syntax"
+        assert kwargs["timeout"] == 10
+        if phase == timeout_phase:
+            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+        return subprocess.CompletedProcess(command, 0, b"Rscript 4.5.1", b"")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    trace = request.getfixturevalue("r_parser_trace")
+    receipt = rr.build_receipt({"run.R": "stop('not evaluated')\n"}, tools={"r": "parser"}, temp_root=tmp_path)
+    row = receipt["files"][0]
+    assert row["tool"]["version"] == (None if timeout_phase == "version" else "4.5.1")
+    assert row["syntax"]["status"] == ("timeout" if timeout_phase == "syntax" else "pass")
+    assert row["execution"]["status"] == "not_rerun"
+    assert [stage["phase"] for stage in trace] == ["version", "syntax"]
+    assert [stage["phase"] for stage in trace if stage.get("timeout")] == [timeout_phase]
 
 
 def test_code_lock_hashes_missing_lock_and_private_metadata(tmp_path):

@@ -69,6 +69,7 @@ SNAPSHOT_RESULT_CHARS = 500
 MAX_PI_NOTES = 20
 # A kept task cancel outlives any runner turn (runner.task_timeout_s defaults to 6 h) before it is dropped.
 TASK_CANCEL_KEEP_S = 2 * 86400
+FINISHING_STUCK_S = 600  # a request-bundle worker older than this no longer holds `down` back (#658)
 # Cards that decide the request itself (PI 점검 R5). They wait policy.approvals.pi_decision_timeout_s instead of the gate
 # timeout, the request waits as waiting_pi meanwhile, and an unanswered card ends as *_timed_out, never as a deny.
 PI_DECISION_KINDS = frozenset({"clarify", "question", "scope", "budget", "research_plan", "research_evidence",
@@ -294,6 +295,7 @@ class Hub:
         self.ask_tasks: dict[str, asyncio.Task] = {}
         self.terminal_queued: set[int] = set()
         self.terminal_tasks: dict[str, asyncio.Task] = {}
+        self.terminal_started: dict[str, float] = {}  # when each bundle worker began, for a stuck finish (#658)
         self.pending_committed: deque[tuple[dict, tuple[WebSocket, ...]]] = deque()
         self.recovery_steps: set[str] = set()
         # When each resume began: only a task dispatched before it is a prior attempt to adopt. A task this run
@@ -945,9 +947,18 @@ class Hub:
         recruits = sum(int(entry.get("count") or 0) for entry in self.recruits_running.values())
         finishing = [{"id": rid, "status": req.get("status"), "text": req.get("text"), "stage": "cancel"}
                      for rid, req in self.requests.items() if req.get("cancelling") is not None]
-        finishing += [{"id": rid, "status": (self.requests.get(rid) or {}).get("status"),
-                       "text": (self.requests.get(rid) or {}).get("text"), "stage": "bundle"}
-                      for rid, task in self.terminal_tasks.items() if not task.done()]
+        now = time.time()
+        for rid, task in self.terminal_tasks.items():
+            if task.done():
+                continue
+            row = {"id": rid, "status": (self.requests.get(rid) or {}).get("status"),
+                   "text": (self.requests.get(rid) or {}).get("text"), "stage": "bundle"}
+            if rid in self.terminal_started:
+                elapsed = max(0, int(now - self.terminal_started[rid]))
+                # A bundle worker that has run this long made no progress worth waiting for: `down` does not wait for
+                # it. The request keeps bundle_pending, so the next start rebuilds the bundle (#658).
+                row.update(elapsed_s=elapsed, stuck=elapsed >= FINISHING_STUCK_S)
+            finishing.append(row)
         finishing += [{"id": rid, "status": (self.requests.get(rid) or {}).get("status"),
                        "text": (self.requests.get(rid) or {}).get("text"), "stage": "result_storage"}
                       for rid, task in self.result_storage.tasks.items() if not task.done()]
@@ -955,7 +966,8 @@ class Hub:
                        "text": (self.requests.get(rid) or {}).get("text"), "stage": "pi_interpretation"}
                       for task, rid in self.pi_interpreter.tasks.items() if not task.done()]
         return {"requests": requests, "followups": followups, "recruits": recruits, "finishing": finishing,
-                "ready": not (requests or followups or recruits or finishing)}
+                "ready": not (requests or followups or recruits or
+                              [row for row in finishing if not row.get("stuck")])}
 
     def running_tasks(self, tasks: Mapping[str, dict] | None = None) -> list[dict]:
         """Accepted tasks of running requests, including steps waiting for jobs or ask answers.
@@ -1198,6 +1210,7 @@ class Hub:
         task = asyncio.get_running_loop().create_task(
             self._commit_terminal_async(rid, data, request, tasks, runner_capabilities))
         self.terminal_tasks[rid] = task
+        self.terminal_started[rid] = time.time()
         task.add_done_callback(self._terminal_task_done)
         return task
 

@@ -1,6 +1,8 @@
 """Fake signal callbacks and coroutines only; never send signals or launch processes."""
 import asyncio
+import json
 import signal
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -86,7 +88,7 @@ def test_generic_watcher_still_leaves_default_handlers_untouched(signals):
 
 @pytest.mark.parametrize("sig_name", ["SIGTERM", "SIGHUP"])
 async def test_standard_entry_cancels_with_evidence_and_mock_gateway_opens_resume(
-        tmp_path, monkeypatch, signals, sig_name):
+        tmp_path, monkeypatch, signals, sig_name, record_property):
     from labhq.models import Task, TaskResult
     from tests.test_shutdown_recovery import make_hub, runner_for, run_request_with_result, resume_cards
 
@@ -94,7 +96,8 @@ async def test_standard_entry_cancels_with_evidence_and_mock_gateway_opens_resum
     runner = runner_for(hub, tmp_path)
     runner.connected.set()
     started = asyncio.Event()
-    observed = []
+    stages = []
+    pending_at_shutdown_return = []
     task = Task(id="signal-task", agent_id="cso", request_id="r", prompt="mock work")
 
     async def work(_task):
@@ -103,30 +106,61 @@ async def test_standard_entry_cancels_with_evidence_and_mock_gateway_opens_resum
 
     async def run_forever():
         runner.tasks[task.id] = asyncio.create_task(runner._run_guarded(task))
-        await started.wait()
-        signals[getattr(signal, sig_name)](getattr(signal, sig_name), None)
         await asyncio.Event().wait()
 
-    async def fake_gateway():
+    async def result_ready():
         while True:
             rows = runner.store.pending()
             results = [row for row in rows if row["type"] == "task.result"]
             if results:
                 result = TaskResult.model_validate(results[0]["data"])
-                observed.append(result)
-                await run_request_with_result(hub, result, monkeypatch)
-                await runner._on_message({"type": "runner.ack", "runner_seq": max(r["runner_seq"] for r in rows)})
-                return
+                return result, max(r["runner_seq"] for r in rows)
             await asyncio.sleep(.001)
+
+    async def phase(name, awaitable):
+        began = time.monotonic()
+        try:
+            # These are fixture operations, not a new product shutdown deadline. The former
+            # three-second gather also covered gateway work and ACK, while shutdown allows five.
+            return await asyncio.wait_for(awaitable, 5)
+        except asyncio.TimeoutError:
+            pending = runner.store.pending()
+            pytest.fail(f"shutdown phase={name} timed out; prior={stages}; "
+                        f"pending_results={sum(row['type'] == 'task.result' for row in pending)}; "
+                        f"active_tasks={sum(not job.done() for job in runner.tasks.values())}")
+        finally:
+            stages.append({"phase": name, "elapsed_s": round(time.monotonic() - began, 4)})
 
     monkeypatch.setattr(runner, "run_task", work)
     monkeypatch.setattr(runner, "run_forever", run_forever)
-    await asyncio.wait_for(asyncio.gather(_run_runner_with_interrupts(runner), fake_gateway()), 3)
-    assert observed[0].shutdown_evidence["stopping"] is True
-    assert observed[0].shutdown_evidence["cancelled"] is True
+    shutdown = runner.shutdown
+
+    async def observed_shutdown():
+        await shutdown()
+        pending_at_shutdown_return.append(len(runner.store.pending()))
+
+    monkeypatch.setattr(runner, "shutdown", observed_shutdown)
+    entry = asyncio.create_task(_run_runner_with_interrupts(runner))
+    try:
+        await phase("work_ready", started.wait())
+        signals[getattr(signal, sig_name)](getattr(signal, sig_name), None)
+        result, sequence = await phase("result_durable", result_ready())
+        await phase("gateway_resume", run_request_with_result(hub, result, monkeypatch))
+        assert not entry.done(), f"runner exited before ACK: {stages}"
+        await phase("ack_durable", runner._on_message({"type": "runner.ack", "runner_seq": sequence}))
+        await phase("entry_finished", entry)
+    finally:
+        if not entry.done():
+            entry.cancel()
+        await asyncio.gather(entry, return_exceptions=True)
+        record_property("shutdown_stages", json.dumps(stages))
+        print("Shutdown stages: " + json.dumps(stages))
+    assert result.shutdown_evidence["stopping"] is True
+    assert result.shutdown_evidence["cancelled"] is True
     assert hub.requests["r"]["status"] == "interrupted"
     assert len(resume_cards(hub)) == 1
     assert runner.store.pending() == []
+    assert pending_at_shutdown_return == [0], "shutdown returned before durable ACK"
 
 
 @pytest.mark.parametrize("connected", [True, False])
