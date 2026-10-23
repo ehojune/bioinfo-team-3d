@@ -102,6 +102,31 @@ def test_merge_keeps_agent_trailer_without_global_author_rewrite(history, explic
     assert "Co-authored-by: Codex <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>" in git("log", "-1", "--format=%B").stdout
 
 
+@pytest.mark.parametrize("multiple", [False, True], ids=["single", "sequence"])
+def test_revert_new_inverse_commits_keep_agent_attribution(history, multiple):
+    repo, home, git = history
+    first = original_commit(repo, git, "one")
+    second = original_commit(repo, git, "two") if multiple else None
+    global_hooks(home)
+    git("revert", "--no-edit", *([second, first] if multiple else [first]))
+    for offset in range(2 if multiple else 1):
+        assert git("log", "-1", "--format=%ae|%ce", f"HEAD~{offset}").stdout.strip() == "agent@example.com|agent@example.com"
+
+
+def test_cherry_pick_sequence_preserves_both_original_commits(history):
+    repo, home, git = history
+    git("checkout", "-qb", "topic")
+    first = original_commit(repo, git, "one")
+    second = original_commit(repo, git, "two")
+    messages = [git("log", "-1", "--format=%B", sha).stdout for sha in (second, first)]
+    git("checkout", "-q", "main")
+    global_hooks(home)
+    git("cherry-pick", first, second)
+    for offset, message in enumerate(messages):
+        assert git("log", "-1", "--format=%ae", f"HEAD~{offset}").stdout.strip() == "original@example.com"
+        assert git("log", "-1", "--format=%B", f"HEAD~{offset}").stdout == message
+
+
 @pytest.mark.parametrize("operation", ["cherry-pick", "rebase", "rebase-apply", "cherry-pick-continue", "no-reflog-continue"])
 @pytest.mark.parametrize("linked", [False, True], ids=["checkout", "worktree"])
 def test_replay_preserves_author_and_message(history, tmp_path, operation, linked):

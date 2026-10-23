@@ -12,7 +12,7 @@
 - 기록만 바꾼 커밋을 빼고 커밋마다 `patch_notes/entries/<branch>.yaml`에 한 줄(branch의 `/`는 `--`). 생성 `patch_notes/README.md`는 직접 고치지 않는다. main 3커밋 안에 README나 manual을 갱신한다. 초안은 `python scripts/patch_notes.py rows --pr N`, 검사는 `python scripts/patch_notes.py check`.
 - 패치노트는 `summary`에 처음 읽는 사람을 위한 쉬운 한 문장, `text`에 구체적인 변경을 쓴다. 약어·파일명은 두 번째 설명에 두고 실제 실행·성능을 확인한 범위를 넘겨 말하지 않는다. 예시는 [작성 기준](patch_notes/STYLE.md)을 따른다.
 - 공동 작성자 trailer는 `.githooks/commit-msg`가 GitHub이 인식하는 봇 주소로 맞춘다(Codex 이메일 치환, Gemini 추가). 새 clone은 `git config core.hooksPath .githooks` 한 번.
-  머신 전역 훅(`~/.git-template/hooks`)이 있으면 새 커밋을 넘겨 author를 에이전트의 GitHub App 봇으로 맞춘다. rebase·cherry-pick은 원저자·메시지를 보존한다. merge 커밋·reflog를 끈 저장소는 자체 trailer 규칙만 쓴다.
+  머신 전역 훅(`~/.git-template/hooks`)이 있으면 새 커밋·revert를 넘겨 author를 에이전트의 GitHub App 봇으로 맞춘다. rebase·cherry-pick은 원저자·메시지를 보존한다. merge 커밋·reflog를 끈 저장소는 자체 trailer 규칙만 쓴다.
 - public 저장소다. 커밋 전 `scripts/check_public.sh`를 실행한다. 비밀값은 env로만, 실제 `config/labhq.yaml`·로컬 노트는 커밋 금지. DUA 원본은 클러스터 밖·LLM 대화·프롬프트·로그에 가져오지 않는다. 경로 가드는 sandbox가 아니다.
 - P1은 같은 담당자가 고치고 새 head 리뷰를 받아 **P1=0까지 반복**한다. 남은 P2는 총괄이 선별한 것만 issue로 남기고 경미·추정·중복은 원 PR 댓글에 둔다. CI·봇 대기는 driver가 맡는다. 실행 중 재호출과 인라인·PR 본문·커밋의 봇 멘션은 금지한다. `scripts/pr_gate.py --dry-run`은 보조 도구다.
 - `labhq/web/`은 빌드 없는 정적 파일이며 2.5D·3D가 `state.js` reducer를 공유한다. 보고는 한국어, 기술 용어는 영어 그대로 쓴다.

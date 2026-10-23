@@ -18,7 +18,7 @@ MSG="$1"
 [ -f "$MSG" ] || exit 0
 
 # A replay/continue must keep the original message and co-author trailers too.
-for state in CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply sequencer; do
+for state in CHERRY_PICK_HEAD rebase-merge rebase-apply; do
   path=$(git rev-parse --git-path "$state" 2>/dev/null) || exit 0
   [ -e "$path" ] && exit 0
 done
