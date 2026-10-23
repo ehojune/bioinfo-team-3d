@@ -11,6 +11,7 @@ if [ -f "$context" ]; then
   rm -f "$context"
   [ "$owner" = "$PPID" ] && [ "$source" = commit ] && exit 0
 fi
+[ "$LABHQ_COMMIT_AGENT" = none ] && exit 0
 # Replay keeps the original author, even inside an agent session. --git-path
 # resolves per-worktree state too (a linked worktree has no .git directory).
 for state in CHERRY_PICK_HEAD rebase-merge rebase-apply; do
@@ -32,5 +33,16 @@ author=$(git log -1 --format='%an <%ae>' 2>/dev/null) || exit 0
 committer=$(git log -1 --format='%cn <%ce>' 2>/dev/null) || exit 0
 [ "$author" = "$committer" ] || exit 0
 G="$HOME/.git-template/hooks/post-commit"
-if [ -x "$G" ]; then LABHQ_DELEGATED_POSTCOMMIT=1 "$G" "$@"; fi
+[ -x "$G" ] || exit 0
+# Prepare the global model handoff before post-commit reads it. Clean a
+# private copy, never HEAD's message, so a declined/failed rewrite keeps
+# the agent trailer. The nested prepare hook installs this exact copy.
+message=$(mktemp "${context}.message.XXXXXX") || exit 0
+model=$(git rev-parse --git-path labhq-commit-model 2>/dev/null) || exit 0
+trap 'rm -f "$message" "$message.bak" "$model"' 0
+rm -f "$model"
+git log -1 --format=format:%B > "$message" || exit 0
+GM="$HOME/.git-template/hooks/commit-msg"
+if [ -x "$GM" ]; then "$GM" "$message" || exit 0; fi
+LABHQ_DELEGATED_POSTCOMMIT=1 LABHQ_DELEGATED_MESSAGE="$message" "$G" "$@"
 exit 0

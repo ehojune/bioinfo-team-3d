@@ -1,9 +1,9 @@
 #!/bin/sh
 # The global post-commit uses --amend --no-verify to install bot identity.
-# Only that delegated rewrite may remove the matching agent trailer.
+# Its message was cleaned before delegation, so its model handoff is ready
+# when post-commit reads it. Do not run global commit-msg a second time.
 if [ "$LABHQ_DELEGATED_POSTCOMMIT" = 1 ] && [ -n "$LABHQ_POSTCOMMIT_AMEND" ]; then
-  G="$HOME/.git-template/hooks/commit-msg"
-  if [ -x "$G" ]; then "$G" "$@"; fi
+  if [ -f "$LABHQ_DELEGATED_MESSAGE" ]; then cat "$LABHQ_DELEGATED_MESSAGE" > "$1"; fi
   exit 0
 fi
 
