@@ -455,8 +455,9 @@ def _paper_groups(identifier_sets: Iterable[set[str]], *, limit: int | None = MA
 
 def _conclusion_papers(ledgers: Mapping[str, Any], unsupported: Iterable[Any],
                        refused: Iterable[Any]) -> list[set[str]]:
+    refused = list(refused)
     citable = {(str(row["step_id"]), str(row["claim"].get("id")))
-               for row in claim_rows(ledgers, unsupported)[0]}
+               for row in claim_rows(ledgers, unsupported, refused=refused)[0]}
     refused_rows = {(str(row.get("step_id")), str(row.get("evidence_id")))
                     for row in refused if isinstance(row, Mapping)}
     cited_sources: list[set[str]] = []

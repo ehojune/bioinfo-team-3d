@@ -592,8 +592,11 @@ def test_legacy_source_url_and_unanchored_unresolved_claim_survive_publication(t
 
 
 def test_refused_original_is_visible_but_cannot_reenter_through_a_recitation():
+    from labhq.output_checks import conclusion_literature_line, literature_ledger_line
+
     ledger = _ledger({"claims": [{"id": "c1", "statement": "Original", "status": "supported"}],
                       "evidence": [_literature("e1")], "links": []})
+    ledger["evidence"][0].update(source_level="primary", directness="direct")
     rows = claim_evidence_rows({"s1": ledger}, refused=[{"step_id": "s1", "evidence_id": "e1"}],
                                unsupported=[{"step_id": "s1", "claim_id": "c2"}])
     original = next(row for row in rows if row["evidence_id"] == "e1")
@@ -603,11 +606,18 @@ def test_refused_original_is_visible_but_cannot_reenter_through_a_recitation():
     assert "CP2 지지 근거 거부" in recitation["claim_status"]
     assert "최초 실증 출처 →" not in claim_evidence_section(rows)
     refused = [{"step_id": "s1", "evidence_id": "e1"}]
+    assert conclusion_literature_line([], {}, {"s1": ledger}) is not None
     citable, other = claim_rows({"s1": ledger}, refused=refused)
     assert "c2" not in {row["claim"]["id"] for row in citable}
     assert any(row["claim"]["id"] == "c2" and "no CP2-accepted support" in row["reason"] for row in other)
     assert "no CP2-accepted support" in check_report("Conclusion [[claim:s1/c2]]", {"s1": ledger},
                                                     refused=refused)["problems"][0]
+    assert conclusion_literature_line([], {}, {"s1": ledger}, refused=refused) is None
+    assert conclusion_literature_line([], {}, {"s1": ledger}, refused=iter(refused)) is None
+    results = {"s1": {"literature_ledger": {"candidate_ids": ["DOI:10.1000/fake-e2"],
+                                           "selected_ids": ["DOI:10.1000/fake-e2"]}}}
+    assert "결론 근거 0편." in literature_ledger_line([{"id": "s1"}], results, {"s1": ledger},
+                                                   refused=iter(refused))
     # An independent accepted support row still permits citation of this claim.
     ledger["evidence"].append(_literature("independent"))
     ledger["links"].append({"claim_id": "c2", "evidence_id": "independent", "relation": "supports"})
