@@ -1,5 +1,9 @@
-pr: null
+pr: 881
 rows:
+- sha: 12505db
+  at: 2026-10-23 13:32
+  summary: 두 화면이 모두 늦게 켜져도 Windows 필수 검사에 시간이 남도록 조정했습니다.
+  text: '#881 리뷰 P1: 각 viewport 최대 60초 뒤 native 검사·collection이 기존 serial 2분에서 밀리지 않도록 routine critical 3분, pool 6분으로 재배분했다. job 전체 10분과 nightly/manual full 상한·필수 검사 범위는 유지한다. 가짜·정적 CI 계약312건은 통과했지만 새 head의 실제 단계 시간은 미확인이다.'
 - sha: f565bda
   at: 2026-10-23 13:22
   summary: Windows 화면 검사의 새 시간 제한을 매뉴얼에도 적었습니다.
