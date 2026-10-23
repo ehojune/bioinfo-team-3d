@@ -14,7 +14,7 @@
 ## 테스트 결과
 - 바꾼 `.cjs` 3개에 `node --check`, Python 파일에 3.10 문법 파싱을 했습니다.
 - Job wrapper 가짜 시험 17건이 통과했습니다.
-- `test_web_3d` wrapper는 `node_wrapper`와 정적 source 확인으로 24건 통과입니다(두 번의 필수 실행, 실행마다 다른 기한, timeout 30초, 선택값 격리, 어느 쪽의 실패·skip·다른 제목·timeout도 거부). 직전 head의 파일로는 21건이 실패합니다.
+- `test_web_3d` wrapper는 `node_wrapper`와 정적 source 확인으로 27건 통과입니다(두 번의 필수 실행, 실행마다 다른 기한, timeout 30초, 선택값 격리, 어느 쪽의 실패·skip·다른 제목·timeout도 거부, 실패 출력의 Python 시간 줄, Node 시간 기록 위치). f8e8aed의 파일로는 새 시간 확인 3건이, 그 전 00a7e91의 파일로는 21건이 실패합니다.
 - Node 가짜 시험(workBudget, vm 안의 driver, 표식 파싱)은 작성만 했습니다. 로컬에서 Node를 실행하지 않았으므로 CI에서 처음 돕니다.
 - 기록 검사·공개 검사·validate_profile·git diff --check를 했습니다. pytest·브라우저·실제 Windows는 돌리지 않았습니다.
 
