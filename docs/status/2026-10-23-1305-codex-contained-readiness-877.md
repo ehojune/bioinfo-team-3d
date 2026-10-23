@@ -20,6 +20,10 @@
 ## 막힌 점
 현재 B는 NO-GO입니다. 새 verifier 배포·owner RPC 전환·실제 doctor 검사는 남았습니다. 직원 adapter CLI·손자 Job 포함과 owner crash·실제 90분 종료 receipt도 별도 게이트입니다. WMI·service 우회는 미증명입니다. 네 데몬 판정으로 요청 전체 종료나 #877 완료를 주장하지 않습니다.
 
+## 기존 PR 통합
+- 공통 Chrome 시작 예산 수정 #881을 포함한 main을 병합했습니다. 제품 구현은 앞선 검토판과 같습니다. 새 head의 CI·리뷰가 남았습니다.
+- 기존 B의 네 daemon은 독립 기한에 소유 Job 프로세스0으로 종료됐습니다. 직원 자식·실제 adapter proof는 미증명이며 B를 다시 시작하지 않았습니다. 개발 HANDOFF의 이전 세대 doctor PASS 표기를 바로잡았습니다.
+
 ## PI·Claude에게 물을 것
 추가 PI 승인을 요청하지 않습니다. 실제 전환과 GO 판정은 총괄의 증거 검토 뒤 진행합니다.
 

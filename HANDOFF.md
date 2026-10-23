@@ -11,13 +11,13 @@
 
 ## 현재 우선순위 (2026-10-23)
 
-Codex 총괄은 같은 담당자·세션에 관련 작업을 잇습니다. 개발 투입 한도는 [#760](https://github.com/ehojune/bioinfo-team-3d/issues/760)의 최신 PI 결정을 봅니다. 현재 **B는 NO-GO**입니다.
+개발 투입은 [#760](https://github.com/ehojune/bioinfo-team-3d/issues/760)의 최신 PI 결정을 봅니다. 현재 새 작업 발주는 보류하고 기존 PR을 마무리합니다. **B는 종료된 상태이며 NO-GO**입니다.
 
 | 순서 | 현재 상태·다음 일 |
 |---|---|
 | 1 · [#877](https://github.com/ehojune/bioinfo-team-3d/issues/877) | 장애·재시작과 무관한 요청 전체 90분 hard stop 및 해당 자식만 종료하는 격리 검증. B GO 차단 P1 |
-| 2 · [#739](https://github.com/ehojune/bioinfo-team-3d/issues/739) | A는 요청 0건으로 종료. 전기능 B는 `45bd6e80` 격리 설치·P2A pin·11명 roster·`doctor --runtime` verified, 요청·승인·비용 0. 원문·출처 pin, $9/HTTP 9회 집행, 최종 확인과 별도 GO가 남음 |
-| 병렬 · [#876](https://github.com/ehojune/bioinfo-team-3d/pull/876) | [#833](https://github.com/ehojune/bioinfo-team-3d/issues/833) Chrome 시작 구간에서 Windows 필수 CI 실패. 원인·코드 인과 미확정으로 병합 보류, B 설치판에 미포함 |
+| 2 · [#739](https://github.com/ehojune/bioinfo-team-3d/issues/739) | A/B 연구 요청0. B `45bd6e80` 격리 설치·P2A pin·11명 roster. 네 daemon의 독립 기한 종료는 확인했지만 현재 세대 doctor는 종료형 Job을 거부했고 직원 자식·실제 adapter 종료 증명은 미완료. 원문·출처 pin, $9/HTTP9 집행과 별도 GO가 남음 |
+| 기존 PR · [#880](https://github.com/ehojune/bioinfo-team-3d/pull/880)·[#876](https://github.com/ehojune/bioinfo-team-3d/pull/876) | 공통 Chrome 시작 예산 수정 [#881](https://github.com/ehojune/bioinfo-team-3d/pull/881)은 병합·Windows5분59초. 두 PR은 수정 반영 뒤 최종 head CI·리뷰를 확인한다. Chrome 내부 지연 원인과 장기 안정성은 미확정 |
 | 이후 · [#799](https://github.com/ehojune/bioinfo-team-3d/issues/799) | B 실운전 근거 뒤 bench dry-run·필수 gate → Astra 전체 검토 → 동일 요청 4-arm 비교를 판단. 구현·CI는 실측 근거가 아님 |
 
 설치·doctor 통과는 연구 요청 성공이나 장치 효용의 근거가 아닙니다. B에서는 P2A 생성·부착·실제 참조·산출 연결과 의미·근거 장치의 사용 여부를 확인합니다. 맞지 않는 bulk/single-cell pack은 미평가로 남깁니다.

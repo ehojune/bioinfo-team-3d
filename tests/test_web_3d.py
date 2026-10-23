@@ -195,7 +195,10 @@ def test_office_in_node(filename, marker):
         pytest.skip('Node is optional')
     script = Path(__file__).with_name(filename)
     # The optional installed-browser checks wait for Chrome's start and the demo viewports (node:test budgets of 150 s and 240 s).
-    timeout = {'web_office_browser.cjs': 170, 'web_visual_demo.cjs': 260, 'web_visual_tooling.cjs': 170}.get(filename, 30)
+    # #833: the required resizable case now has separate cold-start/UI budgets inside one 60 s hard cap.
+    # Other Node cases keep their existing limits.
+    timeout = {'web_office_browser.cjs': 170, 'web_visual_demo.cjs': 260,
+               'web_visual_tooling.cjs': 170, 'web_resizable_panels.cjs': 60}.get(filename, 30)
     # On Windows the demo driver starts Chrome inside the owned KILL_ON_CLOSE Job wrapper with this exact
     # interpreter (#842); it never falls back to a PATH or Store python.
     base_env = {**os.environ, 'LABHQ_TEST_PYTHON': sys.executable}

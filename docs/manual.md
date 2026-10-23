@@ -1486,7 +1486,7 @@ Stanford Zou 연구실의 [The Virtual Biotech](https://doi.org/10.1126/science.
 
 ## 내 저장소로 올리기
 
-개발 CI는 보호 예제·markup이 같은 prose와 정해진 기록만 축소합니다. manual·개발 지침·정책은 내용·구조가 같은 문장 경계 줄바꿈만 후보입니다. main 재사용에는 동일 tree·workflow/policy·coverage와 필수 gate 성공 증거가 필요합니다. Linux 3.10/3.12와 Windows nightly·workflow_dispatch는 전수입니다. routine Windows는 필수 OS 경계 검사 한 번과 10분 job 상한을 적용합니다. 선택 증거가 틀리면 빠르게 실패하며 전수로 확대하지 않습니다. timeout도 실패입니다. clean-install·공식 validator·MCP gate는 유지합니다([판별·증거 경계](reference/ci-reuse.md)).
+개발 CI는 보호 예제·markup이 같은 prose와 정해진 기록만 축소합니다. manual·개발 지침·정책은 내용·구조가 같은 문장 경계 줄바꿈만 후보입니다. main 재사용에는 동일 tree·workflow/policy·coverage와 필수 gate 성공 증거가 필요합니다. Linux 3.10/3.12와 Windows nightly·workflow_dispatch는 전수입니다. routine Windows는 필수 OS 경계 검사 한 번과 10분 job 상한을 적용합니다. 선택 증거가 틀리면 빠르게 실패하며 전수로 확대하지 않습니다. timeout도 실패입니다. clean-install·공식 validator·MCP gate는 유지합니다([판별·증거 경계](reference/ci-reuse.md)). 필수 3D 화면 검사는 화면마다 브라우저 시작 최대 30초·UI 검사 최대 20초를 주고 정리까지 합산 60초 안에 끝냅니다.
 
 ```bash
 ./scripts/publish_github.sh          # gh CLI로 public 저장소 <내 계정>/labhq 생성 + push
