@@ -396,3 +396,24 @@ def test_abstract_receipt_is_not_promoted_in_paper_skill_selection():
         {"papers": [{"title": "Synthetic", "citations": ["PMID:123"], "fulltext_receipt": receipt}]}, [{"id": "worker"}])
     assert chosen[0]["access_level"] == "abstract" and chosen[0]["access_status"] == "abstract_only"
     assert chosen[0]["fulltext_receipt"] == receipt and ps.evidence_problem(receipt) is not None
+
+
+async def test_closed_oa_metadata_does_not_establish_a_paywall(tmp_path):
+    def handler(request):
+        if request.url.host == "www.ebi.ac.uk":
+            return search_answer([record("123", None, "N", None, abstract="")])
+        if request.url.host == "api.unpaywall.org":
+            return httpx.Response(200, json={"doi": "10.1000/test", "is_oa": False, "oa_status": "closed"})
+        assert request.url.host == "api.openalex.org"
+        return httpx.Response(200, json={"results": []})
+    annotator, _ = make(handler, tmp_path, unpaywall_email="owner@example.org")
+    row = (await annotator.fulltext(["123"]))["results"][0]
+    assert row["access_status"] == "not_obtained" and row["unread_reason"] == "no_copy"
+    assert row["fulltext_receipt"]["access_status"] == "not_obtained"
+
+
+@pytest.mark.parametrize("text,error", [("Institutional login", PermissionError),
+                                        ("Purchase access", lit.LookupFailed)])
+def test_only_explicit_paid_access_screen_establishes_paywall(text, error):
+    with pytest.raises(error):
+        lit._copy_text(f"<html><body>{text}</body></html>".encode(), "text/html")

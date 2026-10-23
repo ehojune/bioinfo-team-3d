@@ -649,7 +649,8 @@ async def test_fulltext_records_why_a_legal_oa_copy_could_not_be_read(tmp_path, 
     def handler(request):
         if request.url.host == "www.ebi.ac.uk":
             oa = "N" if mode == "closed" else "Y"
-            return search_answer([record("123", None, oa, None)])
+            links = [{"url": "https://example.org/paper", "availability": "Subscription required"}] if mode == "closed" else []
+            return search_answer([record("123", None, oa, None, links=links)])
         if request.url.host == "api.unpaywall.org":
             location = None if mode == "closed" else {
                 "url_for_pdf": f"http://93.184.216.34/{mode}.pdf", "host_type": "repository", "license": "cc-by"}

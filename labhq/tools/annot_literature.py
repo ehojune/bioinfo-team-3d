@@ -796,8 +796,10 @@ def _copy_text(content: bytes, content_type: str) -> tuple[str, str, str]:
         folded = text.casefold()
         if any(term in folded for term in ("access denied", "checking your browser", "captcha")):
             raise PermissionError("OA 주소가 접근 거부 화면을 돌려줬습니다")
-        if any(term in folded for term in ("subscribe to read", "purchase access", "institutional login")):
+        if any(term in folded for term in ("subscribe to read", "purchase access")):
             raise LookupFailed("OA 주소가 구독·로그인 화면을 돌려줬습니다")
+        if "institutional login" in folded:
+            raise PermissionError("OA 주소가 기관 로그인 화면을 돌려줬습니다")
         compact = "".join(text.split())
         sections = sum(term in folded for term in ("introduction", "method", "result", "discussion", "references"))
         if len(compact) < 1000 or sections < 2:
@@ -1304,7 +1306,7 @@ class LiteratureAnnotator(Annotator):
             meta["fulltext_error"] = "; ".join(value for value in (previous, oa_state["temporary_error"]) if value)
         unread_reason = oa_state.get("unread_reason")
         if not unread_reason:
-            if subscription_hint or oa_state.get("closed"):
+            if subscription_hint:
                 unread_reason = "subscription_required"
             elif meta["is_open_access"] or meta["in_europepmc"] or oa_state.get("oa_known"):
                 unread_reason = "no_copy"
@@ -1313,7 +1315,7 @@ class LiteratureAnnotator(Annotator):
         meta["unread_reason"] = unread_reason
         meta["unread_detail"] = oa_state.get("unread_detail") or {
             "subscription_required": "합법 OA 사본 위치를 찾지 못했고 구독이 필요한 논문입니다",
-            "no_copy": "OA로 표시됐지만 읽을 수 있는 합법 사본 위치가 없습니다",
+            "no_copy": "읽을 수 있는 합법 본문 사본을 확보하지 못했습니다",
             "access_denied": "합법 OA 사본 주소가 접근을 거부했습니다",
             "format_failure": "합법 OA 사본을 받았지만 본문 형식을 읽지 못했습니다",
         }.get(unread_reason, "본문을 확보하지 못했습니다")
