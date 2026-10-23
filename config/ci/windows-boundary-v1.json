@@ -137,6 +137,7 @@
     "tests/test_late_storage.py",
     "tests/test_literal_check.py",
     "tests/test_literature_institution.py",
+    "tests/test_live_source_limit_891.py",
     "tests/test_live_source_verify.py",
     "tests/test_login_wait.py",
     "tests/test_long_mcp_call.py",

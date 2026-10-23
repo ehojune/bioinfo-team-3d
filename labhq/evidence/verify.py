@@ -49,8 +49,8 @@ import re
 import time
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from email.utils import parsedate_to_datetime
-from typing import TYPE_CHECKING, Literal, Protocol
-from urllib.parse import quote
+from typing import TYPE_CHECKING, Any, Literal, Protocol
+from urllib.parse import quote, urlsplit
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -65,7 +65,7 @@ if TYPE_CHECKING:
 LookupState = Literal["succeeded", "failed", "skipped"]
 IdStatus = Literal["found", "not_found", "insufficient", "conflicting", "requires_verification"]
 FAILURE_KINDS = frozenset({"network", "timeout", "rate_limited", "auth", "server", "invalid_response",
-                           "resolver_error"})
+                           "resolver_error", "lookup_limit"})  # lookup_limit: the request's HTTP limit was reached (#891)
 SKIP_KINDS = frozenset({"disabled", "unsupported_scheme", "malformed_id", "manifest_unavailable",
                         "uri_unmapped", "base_match_only"})
 
@@ -205,12 +205,18 @@ class LiveSourceResolver:
 
     def __init__(self, *, contact: str = "", request_timeout_s: float = 10.0, max_retries: int = 2,
                  transport: httpx.AsyncBaseTransport | None = None,
-                 sleep: Callable[[float], Awaitable[None]] = asyncio.sleep) -> None:
+                 sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+                 admission: Any = None, request_id: str = "") -> None:
         self.contact = contact.strip()
         self.request_timeout_s = request_timeout_s
         self.max_retries = max_retries
         self.transport = transport
         self.sleep = sleep
+        # #891: with annot.request_lookup_limit set, every outbound request, each retry too, is admitted by the same
+        # per-request counter that counts labhq_annot's. A refused request is not sent: the lookup fails as
+        # lookup_limit ("확인 못 함"), never as not_found.
+        self.admission = admission if request_id else None
+        self.request_id = request_id
 
     def supports(self, scheme: str) -> bool:
         return scheme in {"doi", "pmid", "pmcid"}
@@ -240,14 +246,38 @@ class LiveSourceResolver:
             await self._enrich_record(client, record)
             return [record]
 
+    async def _admit(self, url: str) -> int | None:
+        """Count this outbound request in the request's lookup counter; None when no counter is set (unchanged)."""
+        if self.admission is None:
+            return None
+        host = (urlsplit(url).hostname or "").lower()
+        verdict = await asyncio.to_thread(self.admission.admit, self.request_id, "", "gateway", "source_verify", host)
+        if not isinstance(verdict, dict) or not verdict.get("admitted"):
+            limit = verdict.get("limit") if isinstance(verdict, dict) else None
+            raise LookupFailed("lookup_limit", f"요청 HTTP 상한({limit})에 닿아 조회하지 않았습니다(확인 못 함)")
+        return verdict.get("seq") if type(verdict.get("seq")) is int else None
+
+    async def _finish(self, seq: int | None, status: int | None, outcome: str) -> None:
+        """Best effort: record the status of an admitted send. The send stays counted either way."""
+        if self.admission is None or seq is None:
+            return
+        try:
+            await asyncio.to_thread(self.admission.finish, self.request_id, "", [[seq, status]], outcome)
+        except Exception:  # noqa: BLE001 - bookkeeping must never fail a lookup
+            pass
+
     async def _request(self, client: httpx.AsyncClient, method: str, url: str, **kwargs: object) -> httpx.Response:
         for attempt in range(self.max_retries + 1):
+            seq = await self._admit(url)
             try:
                 response = await client.request(method, url, **kwargs)
             except httpx.TimeoutException as error:
+                await self._finish(seq, None, "timeout")
                 raise LookupFailed("timeout", f"{method} {url} timed out") from error
             except httpx.HTTPError as error:
+                await self._finish(seq, None, "failed")
                 raise LookupFailed("network", f"{method} {url} failed: {type(error).__name__}") from error
+            await self._finish(seq, response.status_code, "ok" if response.status_code < 400 else "failed")
             if response.status_code not in RETRYABLE_HTTP:
                 return response
             if attempt == self.max_retries:
