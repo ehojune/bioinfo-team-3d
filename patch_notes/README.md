@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 05:33 | [`2b65e9a`](https://github.com/ehojune/bioinfo-team-3d/commit/2b65e9a) | **출처를 실시간으로 확인하는 조회도 요청별 HTTP 상한에 포함하고, 상한에 닿으면 근거 없음이 아니라 확인 못 함으로 표시합니다.**<br>출처 실시간 확인의 HTTP 요청도 요청 단위 조회 상한에 센다 (#891) |
 | 05:19 | [`571e135`](https://github.com/ehojune/bioinfo-team-3d/commit/571e135) | **본문을 읽지 못한 논문으로는 자문 스킬을 만들지 않고 이유를 밝히며, 메타분석 논문 스킬은 문헌 추출 단계에도 붙입니다.**<br>논문 스킬: 본문에 닿지 못한 논문은 스킬 없이 계획 참고로만, 메타분석 스킬은 문헌 추출 단계에도 부착 (#670) |
 | 05:06 | [`aace095`](https://github.com/ehojune/bioinfo-team-3d/pull/901/commits/aace095) | **선택 기록 작업 branch를 최신 기본 branch와 합쳐 충돌을 풀었습니다.**<br>main 병합: 선택 기록 branch를 최신 main에 맞춤 (#890) |
 | 05:04 | [`8f24a90`](https://github.com/ehojune/bioinfo-team-3d/pull/913/commits/8f24a90) | **봇 작성자의 모델명을 다음 커밋에 넘기지 않고 제 커밋에 남깁니다.**<br>private message copy를 정리한 뒤 전역 모델명 전달과 bot amend를 실행하고 rewrite 거절·실패의 원문·상태 보존과 직원 세션을 포함해 hook 회귀 46건을 검증했다. |
