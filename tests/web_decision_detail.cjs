@@ -124,11 +124,22 @@ test('research plan card shows the full canonical PLAN in readable sections',asy
   const sha=crypto.createHash('sha256').update(canonicalPlan,'utf8').digest('hex');
   const c=await card('research_plan',{gate:'research_plan',target_sha256:sha,plan_canonical:canonicalPlan});
   assert.equal(crypto.createHash('sha256').update(canonicalPlan,'utf8').digest('hex'),sha);
-  for (const label of ['질문','가설','완료 조건','갈래 (1개)','갈래질문자료단계 수추정 예산','중단 조건','자원 상한','data boundary','topics','pack 적용 판정','경고','pack 값','동결 PLAN 전체'])
+  for (const label of ['질문','가설','완료 조건','선택 기록','갈래 (1개)','갈래질문자료단계 수추정 예산','중단 조건','자원 상한','data boundary','topics','pack 적용 판정','경고','pack 값','동결 PLAN 전체'])
     assert.ok(c.detail.textContent.includes(label),label+' must be visible');
   for (const value of ['Does condition change expression?','Condition changes expression','design not identifiable',
     'Does expression differ?','public omics · public counts only','1개','$12.50','metadata.donor_id','raw_counts']) assert.ok(c.detail.textContent.includes(value),value+' must be visible');
   assert.ok(c.detail.textContent.includes(canonicalPlan),'the exact hash input must remain visible');
+});
+
+test('research plan card shows the selection record, or says there is none (#890)',async()=>{
+  const base={intake:{scope_status:'in_scope'},brief:{question:'Q?',completion_conditions:['done']},protocol:{revision:1},steps:[]};
+  const withRecord={...base,selection_record:{question:'Q?',premises:['public counts suffice'],success_criteria:['donor-level effect'],
+    alternatives:[{option:'cell-level test',rejected_because:'pseudo-replication'}],change_signals:['fewer than 3 donors']}};
+  const shown=await card('research_plan',{gate:'research_plan',target_sha256:'a'.repeat(64),plan_canonical:JSON.stringify(withRecord)});
+  for (const value of ['선택 기록','public counts suffice','donor-level effect','cell-level test — pseudo-replication','fewer than 3 donors'])
+    assert.ok(shown.detail.textContent.includes(value),value+' must be visible');
+  const none=await card('research_plan',{gate:'research_plan',target_sha256:'b'.repeat(64),plan_canonical:JSON.stringify(base)});
+  assert.ok(none.detail.textContent.includes('선택 기록 없음'));
 });
 
 test('research evidence card groups claim rows by branch',async()=>{

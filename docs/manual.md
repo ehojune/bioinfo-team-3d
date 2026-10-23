@@ -2,6 +2,7 @@
 
 처음이라면 [README](../README.md)의 "웹으로 시작하기"부터 보세요. 이 문서는 그다음입니다: 명령줄, 설정, 안전 장치, 연구 lane, 알려진 한계.
 PI의 질문과 결정은 [PI Q&A](pi-qa.md)에, 개발 규칙과 작업 큐는 [AGENTS.md](../AGENTS.md)·[HANDOFF.md](../HANDOFF.md)에 있습니다.
+개발 checkout의 author·agent 표식 보존 규칙은 [Git hooks](reference/git-hook-authorship.md)를 참고하세요.
 
 | 장 | 무엇 |
 |---|---|
@@ -1131,6 +1132,7 @@ CSO는 `applies_when`이 맞는 pack만 계획에 넣습니다.
 부정하지 않은 요청 분석은 `brief.scope`와 실행 단계 `instruction` 양쪽에 있어야 하며, 한쪽이라도 빠지면 CP1에 `요청 범위 누락` 경고가 뜹니다. 독립된 `DE`는 DEG로 보고, 이름 붙은 분석을 명시적으로 제외한 문구는 범위에서 뺍니다.
 CP1 비용 근거는 `unknown_count: 0`이고 topic이 겹치는 완료 요청뿐입니다. 재시도·wake·결과 교정 비용은 계획 `step_id`별로 합쳐 직원·engine·model별 실제 단계 평균을 냅니다. 실측이 계획값보다 낮아도 집행 상한을 줄이지 않으며, 근거가 없으면 계획값과 `실측 기록 부족`을 보입니다.
 카드는 질문·가설·완료 조건, 갈래 표, 단계 목록, 비용 근거와 집행 상한을 보입니다. plan hash는 detail(`target_sha256`)에만 있습니다.
+계획에는 선택 사항 `selection_record`(#890)를 둘 수 있습니다. CSO가 계획을 쓸 때 원 질문·전제·성공 기준·실제로 검토한 대안(각각 `rejected_because`)·판단을 바꿀 관측(`change_signals`)을 함께 적고, 검토한 대안이 없으면 지어 내지 않고 비웁니다. 이 기록은 계획의 일부라 plan hash에 들어가므로 승인 뒤에 대안이나 이유를 더하면 hash가 달라져 다시 승인받아야 합니다. 없는 계획은 이전과 같은 hash를 유지합니다. CP1 카드 요약은 한 줄(`선택 기록: 검토한 대안 n개 · 판단을 바꿀 관측 m개`, 없으면 `선택 기록 없음`)로 알리고, 웹 카드의 `선택 기록`에 전체가 보입니다. 기록이 없어도 승인은 막지 않습니다. 연구(research) lane의 계획에만 있고 일반 계획(`PLAN_SCHEMA`)에는 아직 없습니다.
 CP1 카드의 **수정 요청**(메모 필수)은 지금 요청을 단계 없이 `plan_revision_requested`로 끝내고 새 연구 요청을 엽니다. 새 요청은 같은 문장에 `[CP1 수정 요청 · <이전 요청 id>]` 메모를 붙이고, 참고 자료(요청의 것, PI 기본 참고는 `default_references`로)·확인 질문 답·실행 중 메모·처음 요청한 예산·프로젝트를 이어받습니다. 계획자는 승인받지 못한 이전 계획(`revision_of`)과 메모를 받아 그 계획을 고치고, 새 CP1이 뜹니다. 이어받은 확인 질문 답은 새 요청의 확인 질문 횟수에 세지 않습니다. 두 요청은 `revised_from`·`revised_to`로 서로 가리킵니다. 프로젝트나 CSO 모델이 설정에서 빠져 새 요청을 열 수 없으면 `plan_revision_failed`로 끝나고 보고서에 메모가 남습니다. 메모 없는 수정 요청은 카드를 다시 묻고, 세 번 모두 비면 거절처럼 끝납니다. 수정 요청은 단계가 돌기 전 첫 CP1에만 있습니다. 이어 가기 차수의 CP1이나 단계가 돈 뒤 다시 묻는 CP1에는 없습니다(`detail.revise_allowed: false`). CLI는 `labhq approve <id> --choice revise --note "고칠 점"`입니다.
 
 ### 단계와 CP2

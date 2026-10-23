@@ -4,6 +4,16 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+Closes #911
+
+- 같은 configured identity의 amend·`-C/-c`에서도 Git author·timestamp와 현재 agent trailer를 보존합니다. `--reset-author`는 configured identity·새 timestamp를 유지합니다.
+- 전역 commit-msg는 post-commit이 일반 commit/revert를 확인한 뒤 private message copy를 정리합니다. 모델명을 먼저 전달하고 bot amend에 copy를 반영합니다. source·임시 상태는 worktree별로 격리합니다.
+- 수정 전 reuse 회귀 **10 failed·11 passed**, 모델 전달 회귀 **2 failed**. 수정 후 hook **43 passed**, rewrite 거절·실패·직원 세션 **3 passed**(총 46건), Windows selection **7 passed**. author·timestamp·agent 표식, replay·merge·revert·전역 hook 부재와 중단 뒤 후속 작업을 확인했습니다.
+- public·diff·shell syntax·Python 3.10 AST·notes-index 검사 PASS. Windows 필수 hook cohort와 기존 검사는 유지했습니다.
+- 머신 전역 hook·운영 설정은 변경하지 않았습니다. 최종 head CI·봇 리뷰 확인 뒤 병합합니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 # 전역 Git 훅 연결과 원저자 보존 (#902)
 
 - 전역 commit-msg·post-commit이 있으면 일반 새 커밋·revert를 위임해 봇 author·committer와 모델명을 남긴다. 전역 훅 부재·merge 커밋·reflog 비활성화는 자체 trailer 규칙을 쓴다.
@@ -48,6 +58,12 @@ Closes #905
 - 연구 리뷰 prompt에 봉인된 초안(해시 일치 시)을 붙이고 review JSON에 optional `blind_comparison`을 받는다. 읽을 수 없는 값은 그 필드만 버린다. 일치를 근거로 세지 않는다.
 - 순차 실행(병렬 아님). 새 task kind `blind_draft`는 read-only 프로파일과 기존 예약·취소 경로를 쓴다. 파일 격리는 하지 않는다(입력 기준 격리).
 - 테스트: `tests/test_blind_draft_889.py` 7건(봉인 순서·입력 격리·리뷰 전달·꺼짐 무변화·실패 무중단·late/재시작·부분 폐기) 통과. 관련 연구 lane 테스트 247건 통과. 실제 Codex 직원, 실제 요청, Windows CI는 미확인.
+
+## #890 계획에 선택 기록 고정 (PR #901, base 545a973b)
+
+- 바꾼 것: 연구 계획의 선택 사항 `selection_record`(질문·전제·성공 기준·검토한 대안과 배제 이유·판단을 바꿀 관측). plan hash에 포함, 없으면 직렬화에서 빠져 이전 hash 유지. CSO prompt에 작성 요청, CP1 카드 요약 한 줄·웹 카드 항목(없으면 `선택 기록 없음`, 승인은 막지 않음). manual CP1 절.
+- 검사: 새 test 6 + 웹 1. 수정 전 코드로 python 수집 실패·node 2 실패, 수정 후 연구 관련 348 passed·웹 fail 0.
+- 한계: 연구 lane 계획만(일반 `PLAN_SCHEMA` 제외). 실제 모델의 작성 품질·지어낸 대안 걸러내기는 확인 안 함. 전체 suite는 CI에 맡김.
 
 Refs #898
 

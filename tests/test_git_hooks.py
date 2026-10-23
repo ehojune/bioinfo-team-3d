@@ -38,7 +38,7 @@ def history(tmp_path, monkeypatch):
     git("config", "core.hooksPath", ".githooks")
     hooks = repo / ".githooks"
     hooks.mkdir()
-    for name in ("commit-msg", "post-commit"):
+    for name in ("prepare-commit-msg", "commit-msg", "post-commit"):
         target = hooks / name
         shutil.copyfile(ROOT / ".githooks" / name, target)
         target.chmod(0o755)
@@ -51,7 +51,7 @@ def global_hooks(home):
     hooks = home / ".git-template" / "hooks"
     hooks.mkdir(parents=True)
     scripts = {
-        "commit-msg": '#!/bin/sh\nsed -i.bak "/^Co-Authored-By:/d" "$1"\n',
+        "commit-msg": '#!/bin/sh\nsed -i.bak "/^[Cc]o-[Aa]uthored-[Bb]y:/d" "$1"\n',
         "post-commit": '''#!/bin/sh
 [ -n "$LABHQ_POSTCOMMIT_AMEND" ] && exit 0
 LABHQ_POSTCOMMIT_AMEND=1 git -c user.name=Agent -c user.email=agent@example.com commit --amend --allow-empty --no-edit --no-verify --quiet --author="Agent <agent@example.com>"
@@ -76,6 +76,7 @@ def test_new_commit_delegates_to_global_hooks(history):
     git("commit", "--allow-empty", "-qm", f"new\n\n{TRAILER}")
     assert git("log", "-1", "--format=%ae|%ce").stdout.strip() == "agent@example.com|agent@example.com"
     assert TRAILER not in git("log", "-1", "--format=%B").stdout
+    assert "chatgpt-codex-connector" not in git("log", "-1", "--format=%B").stdout
 
 
 def test_no_global_hooks_keeps_local_trailer_fallback(history):
@@ -143,6 +144,135 @@ def test_explicit_author_on_new_commit_is_preserved(history):
     global_hooks(home)
     original_commit(repo, git, "one")
     assert git("log", "-1", "--format=%ae").stdout.strip() == "original@example.com"
+
+
+AGENT_TRAILER = "Co-authored-by: Codex <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>"
+
+
+@pytest.mark.parametrize("operation", ["amend-no-edit", "amend-message", "reuse", "reedit"])
+@pytest.mark.parametrize("linked", [False, True], ids=["checkout", "worktree"])
+@pytest.mark.parametrize("with_global", [False, True], ids=["local", "global"])
+def test_same_identity_reuse_preserves_author_and_agent(history, tmp_path, operation, linked, with_global):
+    repo, home, git = history
+    git("-c", "core.hooksPath=disabled", "commit", "--allow-empty", "-qm", f"operator work\n\n{TRAILER}")
+    source = git("rev-parse", "HEAD").stdout.strip()
+    author = git("log", "-1", "--format=%an|%ae|%aI").stdout
+    cwd = repo
+    if linked:
+        cwd = tmp_path / "linked"
+        git("worktree", "add", "-qb", "linked", str(cwd))
+    if with_global:
+        global_hooks(home)
+    args = {
+        "amend-no-edit": ["--allow-empty", "--amend", "--no-edit"],
+        "amend-message": ["--allow-empty", "--amend", "-m", "updated work"],
+        "reuse": ["--allow-empty", "-C", source],
+        "reedit": ["--allow-empty", "-c", source],
+    }[operation]
+    git("-c", "core.editor=true", "commit", *args, cwd=cwd)
+    assert git("log", "-1", "--format=%an|%ae|%aI", cwd=cwd).stdout == author
+    message = git("log", "-1", "--format=%B", cwd=cwd).stdout
+    assert AGENT_TRAILER in message
+    if operation != "amend-message":
+        assert TRAILER in message
+    # The next ordinary commit in either worktree must still use the bot.
+    git("commit", "--allow-empty", "-qm", "fresh", cwd=cwd)
+    expected = "agent@example.com" if with_global else "operator@example.com"
+    assert git("log", "-1", "--format=%ae", cwd=cwd).stdout.strip() == expected
+
+
+@pytest.mark.parametrize("operation", ["amend", "reuse", "reedit"])
+def test_reset_author_honors_configured_identity_and_keeps_agent(history, operation):
+    repo, home, git = history
+    original_commit(repo, git, "one")
+    git("-c", "core.hooksPath=disabled", "commit", "--amend", "--no-edit", "--date", "2001-02-03T04:05:06+00:00")
+    source = git("rev-parse", "HEAD").stdout.strip()
+    global_hooks(home)
+    args = {"amend": ["--amend", "--no-edit"], "reuse": ["--allow-empty", "-C", source],
+            "reedit": ["--allow-empty", "-c", source]}[operation]
+    git("-c", "core.editor=true", "commit", "--reset-author", *args)
+    assert git("log", "-1", "--format=%ae").stdout.strip() == "operator@example.com"
+    assert not git("log", "-1", "--format=%aI").stdout.startswith("2001-")
+    assert AGENT_TRAILER in git("log", "-1", "--format=%B").stdout
+
+
+@pytest.mark.parametrize("next_operation", ["commit", "revert"])
+def test_aborted_reuse_does_not_affect_next_commit_or_other_worktree(history, tmp_path, next_operation):
+    repo, home, git = history
+    source = original_commit(repo, git, "one")
+    linked = tmp_path / "linked"
+    git("worktree", "add", "-qb", "linked", str(linked))
+    global_hooks(home)
+    result = git("-c", "core.editor=false", "commit", "--allow-empty", "-c", source, check=False)
+    assert result.returncode != 0
+    git("commit", "--allow-empty", "-qm", "other worktree", cwd=linked)
+    assert git("log", "-1", "--format=%ae", cwd=linked).stdout.strip() == "agent@example.com"
+    if next_operation == "commit":
+        git("commit", "--allow-empty", "-qm", "fresh")
+    else:
+        git("revert", "--no-edit", source)
+    assert git("log", "-1", "--format=%ae|%ce").stdout.strip() == "agent@example.com|agent@example.com"
+
+
+@pytest.mark.parametrize("linked", [False, True], ids=["checkout", "worktree"])
+def test_global_model_handoff_is_consumed_before_bot_rewrite(history, tmp_path, linked):
+    repo, home, git = history
+    cwd = repo
+    if linked:
+        cwd = tmp_path / "linked"
+        git("worktree", "add", "-qb", "linked", str(cwd))
+    global_hooks(home)
+    hooks = home / ".git-template" / "hooks"
+    (hooks / "commit-msg").write_text('''#!/bin/sh
+model=$(sed -n 's/^Co-[Aa]uthored-[Bb]y: Codex (\\([^)]*\\)).*/\\1/p' "$1")
+if [ -n "$model" ]; then
+  state=$(git rev-parse --git-path labhq-commit-model)
+  printf '%s\\n' "$model" > "$state"
+fi
+sed -i.bak '/^[Cc]o-[Aa]uthored-[Bb]y:/d' "$1"
+''', encoding="utf-8", newline="\n")
+    (hooks / "post-commit").write_text('''#!/bin/sh
+[ -n "$LABHQ_POSTCOMMIT_AMEND" ] && exit 0
+state=$(git rev-parse --git-path labhq-commit-model)
+name=Agent
+if [ -f "$state" ]; then name="Agent ($(cat "$state"))"; rm -f "$state"; fi
+LABHQ_POSTCOMMIT_AMEND=1 git -c user.name="$name" -c user.email=agent@example.com commit --amend --allow-empty --no-edit --no-verify --quiet --author="$name <agent@example.com>"
+''', encoding="utf-8", newline="\n")
+    git("commit", "--allow-empty", "-qm", "new\n\nCo-Authored-By: Codex (test-model) <noreply@openai.com>", cwd=cwd)
+    assert git("log", "-1", "--format=%an", cwd=cwd).stdout.strip() == "Agent (test-model)"
+    state = Path(git("rev-parse", "--git-path", "labhq-commit-model", cwd=cwd).stdout.strip())
+    assert not (cwd / state).exists()
+    git("commit", "--allow-empty", "-qm", "next without model", cwd=cwd)
+    assert git("log", "-1", "--format=%an", cwd=cwd).stdout.strip() == "Agent"
+
+
+@pytest.mark.parametrize("returncode", [0, 1], ids=["declined", "failed"])
+def test_global_rewrite_without_amend_keeps_message_and_cleans_state(history, returncode):
+    repo, home, git = history
+    global_hooks(home)
+    (home / ".git-template" / "hooks" / "post-commit").write_text(
+        f"#!/bin/sh\nexit {returncode}\n", encoding="utf-8", newline="\n")
+    state = repo / git("rev-parse", "--git-path", "labhq-commit-model").stdout.strip()
+    state.write_text("stale-model", encoding="utf-8")
+    git("commit", "--allow-empty", "-qm", f"new\n\n{TRAILER}")
+    assert git("log", "-1", "--format=%ae").stdout.strip() == "operator@example.com"
+    message = git("log", "-1", "--format=%B").stdout
+    assert TRAILER in message and AGENT_TRAILER in message
+    assert not state.exists()
+    assert not list((repo / ".git").glob("labhq-commit-context.message.*"))
+
+
+def test_staff_session_keeps_global_trailer_without_bot_identity(history, monkeypatch):
+    _, home, git = history
+    global_hooks(home)
+    hooks = home / ".git-template" / "hooks"
+    (hooks / "commit-msg").write_text('''#!/bin/sh
+git interpret-trailers --in-place --trailer 'Co-Authored-By: Staff Agent <staff@example.com>' "$1"
+''', encoding="utf-8", newline="\n")
+    monkeypatch.setenv("LABHQ_COMMIT_AGENT", "none")
+    git("commit", "--allow-empty", "-qm", "staff work")
+    assert git("log", "-1", "--format=%ae|%ce").stdout.strip() == "operator@example.com|operator@example.com"
+    assert "Staff Agent <staff@example.com>" in git("log", "-1", "--format=%B").stdout
 
 
 @pytest.mark.parametrize("operation", ["cherry-pick", "rebase", "rebase-apply", "cherry-pick-continue", "no-reflog-continue"])
