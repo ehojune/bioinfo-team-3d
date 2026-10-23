@@ -1139,6 +1139,12 @@ def _unrecorded_process_still_running(s: Settings, *, timeout: float) -> str | N
             f"`{_config_command(s, 'up')}`으로 다시 시작하세요.")
 
 
+def external_wait_text(wait: dict) -> str:
+    """`외부 응답 대기 n분째 / 상한 m분` for a step whose public lookup is waiting (#676)."""
+    limit = max(1, round(float(wait.get("timeout_s") or 0) / 60))
+    return f"외부 응답 대기 {min(limit, int(float(wait.get('elapsed_s') or 0)) // 60)}분째 / 상한 {limit}분"
+
+
 FINISHING_STAGE_TEXT = {"cancel": "취소 기록을 쓰는 중", "bundle": "보고서 묶음 저장을 마무리하는 중",
                         "result_storage": "결과 저장을 마무리하는 중", "pi_interpretation": "PI 해석을 마무리하는 중"}
 
@@ -2161,9 +2167,11 @@ def main(argv: list[str] | None = None) -> None:
             held = "" if req.get("status") == "running" else f" [{request_display_label(req)}]"
             print(f"  {req['id']} {progress['done']}/{progress['total']} {req['text']}{held}")
             environment = req.get("step_environment") or {}
+            waits = req.get("step_waits") or {}
             for sid, state in progress["steps"].items():
                 problem = problem_text(environment.get(sid))
-                print(f"    {sid}: {state}" + (f" — {problem}" if problem else ""))
+                print(f"    {sid}: {state}" + (f" — {problem}" if problem else "")
+                      + (f" — {external_wait_text(waits[sid])}" if sid in waits else ""))
             summary = req.get("cost_summary")
             if summary or req.get("cost_known") is False or req.get("cost_usd"):
                 print(f"    비용: {cost_text(req.get('cost_usd'), req.get('cost_known'), summary)}"

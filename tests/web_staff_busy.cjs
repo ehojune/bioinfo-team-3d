@@ -25,6 +25,19 @@ test('long command stays busy despite stale done from another task', () => {
   event('task.result', {ok: true});
   assert.equal(o.visual(a), 'idle');
 });
+test('a public lookup waiting on its service shows elapsed minutes over the limit (#676)', () => {
+  const {o, event, a} = office();
+  event('agent.status', {state: 'working'});
+  event('agent.tool', {id: 'mcp1', name: 'mcp__labhq_annot__fulltext', input: {}});
+  const lookup = (status, elapsed_s) => ({level: status === 'timeout' ? 'warn' : 'info', text: 'fulltext',
+    external_lookup: {tool: 'fulltext', status, elapsed_s, timeout_s: 1200}});
+  event('agent.log', lookup('waiting', 120), 't', 640);
+  assert.equal(o.stateText(a), '외부 응답 대기 2분째 / 상한 20분');
+  event('agent.log', lookup('waiting', 5000), 't', 640);
+  assert.equal(o.stateText(a), '외부 응답 대기 20분째 / 상한 20분');
+  event('agent.log', lookup('ok', 300), 't', 640);
+  assert.equal(o.stateText(a), '도구 실행 중 · 9분째');
+});
 for (const [data, label] of [
   [{state: 'queued'}, '차례 기다리는 중'],
   [{state: 'waiting', approval: 'p'}, 'PI 결정 기다리는 중'],
