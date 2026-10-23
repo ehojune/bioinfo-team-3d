@@ -1,5 +1,6 @@
+pr: 884
 rows:
-- sha: PENDING
+- sha: 256de7b
   at: 2026-10-24 00:50
   text: USERNAME이 없는 Windows 환경에서도 Scheduler가 생성되도록 getpass.getuser 실패 시 "labhq"로 대체한다.
   summary: 사용자 이름 환경변수가 없는 Windows에서도 스케줄러가 시작되도록 기본 이름을 씁니다.
