@@ -86,6 +86,18 @@ def hub(req=None):
 
 
 class ContinuationRefusal(unittest.TestCase):
+    def test_existing_metadata_regression_uses_real_continuation_context_helper(self):
+        class Request(NS):
+            def model_dump(self): return vars(self)
+        scope = extracted("labhq/gateway/server.py",
+                          {"_model_refusal_request", "_continuation_refusal_context", "revised_request_of"},
+                          {"research_continuation": logic(), "RequestIn": Request}, owner="Hub")
+        original = extracted("tests/test_model_refusal_682.py",
+                             {"test_replan_keeps_request_meta_but_not_cp1_lineage"},
+                             {"Hub": NS(**{n: scope[n] for n in
+                              ("_model_refusal_request", "_continuation_refusal_context", "revised_request_of")})})
+        original["test_replan_keeps_request_meta_but_not_cp1_lineage"]()
+
     def test_end_preserves_explicit_cause_and_restores_both_previous_round_outcomes(self):
         c = logic()
         scope = extracted("labhq/orchestrator/cso.py", {"_continuation_unstarted", "_unstarted_continuation_end"},

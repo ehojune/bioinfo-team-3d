@@ -327,6 +327,7 @@ def test_replan_keeps_request_meta_but_not_cp1_lineage():
 
     hub = SimpleNamespace(requests=requests, agents={}, create_request=create_request, s=SimpleNamespace(
         orchestrator=SimpleNamespace(cso_models=["opus", "gpt-6-astra"], cso_agent="cso")))
+    hub._continuation_refusal_context = Hub._continuation_refusal_context.__get__(hub)
     before = copy.deepcopy(requests)
     decision = {"action": "model", "cso_model": "gpt-6-astra"}
     child = requests[Hub._model_refusal_request(hub, "r", decision)]
