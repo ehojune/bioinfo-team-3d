@@ -1,5 +1,9 @@
 pr: 908
 rows:
+- sha: 2b4bfd5
+  at: '2026-10-24 03:04'
+  summary: 계보 회귀 검사를 기존 evidence test 모듈에 포함해 Windows inventory를 유지합니다.
+  text: 새 파일을 요구하는 Windows selection 거부를 확인하고 모든 계보 검사와 assertion을 기존 test_research_evidence.py에 옮겼다. validate_profile PASS, 관련 pytest 303 passed. workflow·inventory 정책은 변경하지 않았다. Refs #905.
 - sha: d4375c9
   at: '2026-10-24 02:58'
   summary: 원문 접근 범위와 최초 실증 출처를 구분하고 순환 인용을 독립 근거에서 제외합니다.
