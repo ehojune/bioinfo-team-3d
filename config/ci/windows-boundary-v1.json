@@ -34,6 +34,7 @@
     "tests/test_bench_structured.py",
     "tests/test_bioinfo_pipeline_pr.py",
     "tests/test_bioinfo_plugin.py",
+    "tests/test_blind_draft_889.py",
     "tests/test_branched_research.py",
     "tests/test_breaker.py",
     "tests/test_cgroup_memory.py",
@@ -111,6 +112,7 @@
     "tests/test_fulltext_receipt.py",
     "tests/test_general_evidence.py",
     "tests/test_gif_encode.py",
+    "tests/test_git_hooks.py",
     "tests/test_github_reporter.py",
     "tests/test_github_token_687.py",
     "tests/test_hpc_consult.py",
@@ -239,6 +241,7 @@
     "tests/test_result_storage_review.py",
     "tests/test_resume_accounting.py",
     "tests/test_resume_cards_607.py",
+    "tests/test_resume_cp1_654.py",
     "tests/test_resume_receipt_clock.py",
     "tests/test_role_footer.py",
     "tests/test_round_records.py",
@@ -336,6 +339,7 @@
     "tests/test_wsl_shared.py"
   ],
   "boundary_cohorts": {
+    "tests/test_git_hooks.py": "Native Git shell hooks, linked worktree paths and replay author/message preservation; isolated histories and inert global hooks.",
     "tests/test_contained_readiness.py": "Contained Windows owner/Job, current process generation, named-pipe identity and deadline boundaries; all handles and IPC are faked.",
     "tests/test_scheduler_none.py": "Disabled-HPC command/SSH denial and runner watcher/record-preservation boundary; subprocess, store and immediate coroutines are faked.",
     "tests/test_windows*.py": "Native Windows API, Job/ACK, identity, quoting and encoding contracts.",

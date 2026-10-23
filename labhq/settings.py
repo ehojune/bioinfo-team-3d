@@ -552,6 +552,8 @@ class ResearchSettings(BaseModel):
     semantic_report: bool = True  # request bundle + published run/ device audit (#737)
     evidence_checkpoint: bool = False  # execute approved research steps and stop at CP2
     final_checkpoint: bool = False  # PI report review accepts a frozen final draft (CP4)
+    # The science reviewer first answers the original request alone, sealed before the first step (#889).
+    blind_draft: bool = False
     live_source_check: bool = False  # Crossref/NCBI verification before CP2 and in labhq verify
     live_source_contact: str = ""  # optional maintainer email for API User-Agent/mailto etiquette
     live_source_timeout_s: float = Field(default=10.0, gt=0)

@@ -53,6 +53,7 @@ from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARC
                                  research_result_errors, salvage_research_result, validate_research_plan,
                                  missing_result_slots, repair_result_slots,
                                  unnegated_analysis_text, validate_research_result, with_pack_refs)
+from ..research import blind_draft
 from ..research import continuation as research_continuation
 from ..research import semantic_device_report
 from ..research import input_fit
@@ -354,6 +355,7 @@ RESEARCH_LANE_REVIEW_SCHEMA: dict[str, Any] = {
                            "request": {"type": "string"}},
             "required": ["step_id", "claim_id", "priority", "category", "evidence_quote", "problem", "request"]}},
         "checklist": CHECKLIST_REVIEW_SCHEMA,
+        "blind_comparison": blind_draft.COMPARISON_SCHEMA,
     },
     "required": ["verdict", "issues"],
 }
@@ -2470,10 +2472,13 @@ def lenient_review(value: Any, schema: dict[str, Any]) -> dict | None:
     A malformed verdict row must not cost the whole review: it gets two parse attempts, then ends review_unparsed."""
     if valid_review(value, schema):
         return value
-    if isinstance(value, dict) and "checklist" in value:
-        rest = {key: item for key, item in value.items() if key != "checklist"}
-        if valid_review(rest, schema):
-            return rest
+    if isinstance(value, dict):
+        # An unreadable optional field costs only itself (#586 checklist, #889 blind_comparison).
+        for dropped in (("checklist",), ("blind_comparison",), ("checklist", "blind_comparison")):
+            if any(key in value for key in dropped):
+                rest = {key: item for key, item in value.items() if key not in dropped}
+                if valid_review(rest, schema):
+                    return rest
     return None
 
 
@@ -4209,6 +4214,53 @@ class Orchestrator:
             budget.update(cap_usd=configured, source=source)
         return budget, source
 
+    def resume_plan_card(self, rid: str, req: dict) -> dict[str, Any] | None:
+        """What a resume card shows when it also stands for CP1 (#654), else None.
+
+        Only a first research plan with no result yet and no CP1 receipt for its current hash qualifies. A
+        continuation, a plan after steps ran, or a hash that differs from the receipt keep their own CP1 card."""
+        plan = req.get("plan")
+        contract = req.get("research_contract") or {}
+        if (not isinstance(plan, dict) or not plan.get("steps") or req.get("results") or contract.get("continuation")
+                or not isinstance(plan.get("protocol"), dict) or not isinstance(plan.get("intake"), dict)):
+            return None
+        if refresh_plan_approval(plan, contract.get("approval")).get("status") == "approved":
+            return None
+        # What the CP1 card shows beyond this card's text keeps CP1 as its own question (see finish_research_plan).
+        if paper_skills.card_text(plan) or any("재배정" in w for w in plan.get("warnings") or [] if isinstance(w, str)):
+            return None
+        # A restarted gateway has an empty ledger: seed the stored cost as run_request does, so the cap shown here
+        # is the cap CP1 will enforce (#654 review).
+        self.cost[rid] = max(self.cost.get(rid, 0.0), float(req.get("cost_usd") or 0))
+        budget, _ = self._research_budget(rid, req, plan)
+        steps = [f"{step['id']}·{step['agent_id']}: {short(' '.join(str(step['instruction']).split()), 40)}"
+                 for step in plan["steps"]]
+        tail = (f"\n{_cost_estimate_line(req.get('plan_cost_estimate') or {})} {_budget_line(budget)}"
+                "\n승인하면 아래 동결 계획(CP1)도 승인한 것으로 기록하고 CP1 카드를 다시 묻지 않습니다. "
+                "계획이 바뀌거나 의미 장치가 멈춰 있으면 CP1을 다시 묻습니다.")
+        warnings = [w for w in plan.get("warnings") or [] if isinstance(w, str)]
+        if warnings:
+            tail = f"\n계획 경고 {len(warnings)}건: {short(warnings[0], 80)}" + tail
+        room = 520 - len(tail)
+        body, used = "", 0
+        for number, line in enumerate(steps):
+            if used + len(line) + 1 > room and number:
+                body += f"\n…외 {len(steps) - number}단계"
+                break
+            body += "\n" + line
+            used += len(line) + 1
+        return {"text": f"\n연구 계획 {len(steps)}단계:" + body + tail, "target_sha256": research_plan_sha256(plan),
+                # The same frozen-plan fields the CP1 card carries, so the web renders the whole plan (#654 review).
+                "detail": {"plan_canonical": canonical_plan_json(plan),
+                           "pack_applicability": plan.get("pack_applicability") or {},
+                           "warnings": plan.get("warnings") or [],
+                           "protocol_revision": plan["protocol"].get("revision"), "packs": plan["protocol"].get("packs"),
+                           "scope_status": plan["intake"].get("scope_status"),
+                           # What the CP1 card also carries, so the one card is not a thinner view of the same plan.
+                           "budget": budget, "cost_estimate": req.get("plan_cost_estimate") or {},
+                           **({"plan_warnings": req.get("plan_warnings") or [], "plan_validation": req["plan_validation"]}
+                              if (req.get("plan_validation") or {}).get("semantic_checks") else {})}}
+
     def _spending_cap_line(self, rid: str) -> str:
         """The cap ``_check_budget`` enforces now, for research step and review prompts (#499): staff otherwise read
         only the free-text protocol.resource_limits, which may name another amount. "" without a cap."""
@@ -5390,6 +5442,43 @@ class Orchestrator:
         self._finish(rid, report, serialized(), ok=decided == "approved",
                      error=None if decided == "approved" else RESEARCH_END_ERRORS.get(f"evidence_{decided}"))
 
+    async def _blind_draft(self, rid: str, req: dict, text: str, refs: dict) -> bool:
+        """The sealed blind draft (#889): the reviewer answers the original request alone, after CP1 approval and
+        before the first step, so no team result can exist yet. Off, or already decided (sealed, late, unavailable:
+        kept over a restart): nothing runs. A failed draft is recorded and never stops the request.
+        Returns False only when the draft's own budget card was denied and the request ended."""
+        reviewer = self.cfg.reviewer_agent
+        contract = req["research_contract"]
+        if not blind_draft.enabled(self.hub.s) or not reviewer or blind_draft.settled(contract.get(blind_draft.KEY)):
+            return True
+        if req.get("results"):  # a draft written after a team result would not be blind
+            contract[blind_draft.KEY] = blind_draft.unavailable("results_exist")
+            self.hub.save_request(rid)
+            return True
+        denied: str | None = None
+        reply: TaskResult | None = None
+        try:
+            reply = await self.run_step(Task(
+                agent_id=reviewer, request_id=rid,
+                prompt=blind_draft.prompt(text) + self._spending_cap_line(rid),
+                meta={**refs, "kind": "blind_draft", "outputs": ["outputs/blind_draft.md"], "request": text,
+                      "title": "블라인드 초안"}))
+        except BudgetExceeded as error:  # a reservation the PI's budget card refused: ends like a denied CP1 cost
+            denied = str(error)
+        if denied is not None or rid in self.budget_denials:
+            contract["failure"] = {"steps": [], "plan_sha256": contract["plan_sha256"], "stage": "blind_draft",
+                                   "budget": self.budget_denials.get(rid, denied)}
+            req["outcome"] = "research_failed"
+            self.hub.save_request(rid)
+            self._finish(rid, "Research plan approved, but the blind draft's budget card was not approved; no "
+                         "employee research step was dispatched.", {}, ok=False)
+            return False
+        contract[blind_draft.KEY] = (
+            blind_draft.seal(reply.text or "", results_exist=bool(req.get("results"))) if reply.ok
+            else blind_draft.unavailable(short(reply.error or "draft task failed", 200)))
+        self.hub.save_request(rid)
+        return True
+
     async def _research_report(self, rid: str, text: str, steps: list[dict], results: dict[str, TaskResult], n: int,
                                serialized: Callable[[], dict[str, dict]], packs: dict, cp2_report: str,
                                cp2_audit: str, ledgers: dict[str, Any], *, refused: list[dict],
@@ -5436,7 +5525,7 @@ class Orchestrator:
         review: dict = {}
         if stored.get("plan_sha256") == plan_hash:
             saved = {"verdict": stored.get("verdict"), "issues": stored.get("issues"),
-                     **({"checklist": stored["checklist"]} if "checklist" in stored else {})}
+                     **{key: stored[key] for key in ("checklist", "blind_comparison") if key in stored}}
             review = lenient_review(saved, RESEARCH_LANE_REVIEW_SCHEMA) or {}
         if not review:
             catalog = topic_checklists.load()
@@ -5449,6 +5538,7 @@ class Orchestrator:
             if carried.get("plan_sha256") == plan_hash:
                 prompt += research_continuation.review_prompt(carried.get("p1_issues") or [],
                                                               approval_note(carried.get("pi_request")))
+            prompt += blind_draft.review_block(contract.get(blind_draft.KEY))
             prompt += approval_note_block("CP2", cp2_notes, CP2_REVIEW_NOTE_RULE) + self._spending_cap_line(rid)
             if contract.get("result_warnings"):
                 prompt += "\nCP2 result limitations:\n" + "\n".join(contract["result_warnings"])
@@ -5465,8 +5555,9 @@ class Orchestrator:
                 parsed = (lenient_review(reply.structured, RESEARCH_LANE_REVIEW_SCHEMA)
                           or lenient_review(extract_json(reply.text), RESEARCH_LANE_REVIEW_SCHEMA))
                 if reply.ok and parsed:
-                    review = with_p1_verdict(review_with_checklist(
-                        parsed, req.get("plan"), catalog, req.get("analysis_precedents"), research=True))
+                    review = blind_draft.without_unfounded_comparison(with_p1_verdict(review_with_checklist(
+                        parsed, req.get("plan"), catalog, req.get("analysis_precedents"), research=True)),
+                        contract.get(blind_draft.KEY))
                     break
             if not review:
                 reason = (reply.error if reply else None) or "missing or invalid research review"
@@ -6173,6 +6264,11 @@ class Orchestrator:
                 previous = stored.get("approval")
                 approval = refresh_plan_approval(plan, previous)
                 plan_sha256 = approval.get("current_sha256") or approval.get("target_sha256")
+                # A resume card that showed this plan and was approved stands for CP1 once (#654). It is dropped in the
+                # save that records the receipt, so a stop before that save keeps the PI's answer.
+                resume_cp1 = req.get("resume_cp1")
+                if approval.get("status") == "approved":
+                    req.pop("resume_cp1", None)
                 frozen_checklist = (stored.get("checklist_snapshot")
                                     if stored.get("plan_sha256") == plan_sha256
                                     and isinstance(stored.get("checklist_snapshot"), list)
@@ -6289,7 +6385,19 @@ class Orchestrator:
                                            ("trigger", "pi_request", "reuse_snapshot") if key in carried}}}
                                        if reuse_pending else {})})
 
-                    decision = await ask_cp1()
+                    # Only the plan the card showed (same hash), with nothing the card left out: a stopped device
+                    # (the always-present configured_off note is not one), a paper-skill line, a re-hire note and a
+                    # continuation keep the CP1 card (#654).
+                    device_stopped = any(isinstance(e, dict) and e.get("code") != "configured_off"
+                                         for e in (device_record or {}).get("errors") or [])
+                    from_resume = (isinstance(resume_cp1, dict) and resume_cp1.get("approved") is True
+                                   and resume_cp1.get("target_sha256") == plan_hash and not reuse_pending
+                                   and not device_stopped and not paper_line and not hiring_warnings)
+                    decision = ({"approved": True, "choice": "approve", "approval_id": resume_cp1.get("approval_id"),
+                                 # The PI's own memo on the resume card reaches the step prompts as the CP1 memo.
+                                 "note": str(resume_cp1.get("note") or "").strip() or "재개 카드에서 이 계획과 함께 승인",
+                                 "decided_at": resume_cp1.get("decided_at", time.time())}
+                                if from_resume else await ask_cp1())
                     # A 수정 요청 needs the note it re-plans from; the web and CLI refuse an empty one first (R10 likewise).
                     for _ in range(2):
                         if not (can_revise and decision.get("choice") == "revise"
@@ -6297,6 +6405,8 @@ class Orchestrator:
                             break
                         decision = await ask_cp1("수정 요청에 메모가 없어 다시 묻습니다. 고칠 점을 메모에 적어 주세요. ")
                     approval = freeze_plan(plan, decision)
+                    if from_resume:
+                        approval["via"] = "resume_card"
                     if reuse_pending:
                         approval['reuse_snapshot_sha256'] = offered_reuse_sha
                     if can_revise and decision.get("choice") == "revise" and not approval["approved"]:
@@ -6312,6 +6422,7 @@ class Orchestrator:
                         req["research_contract"].setdefault("budget_cap", {
                             "configured_cap_usd": budget["configured_cap_usd"], "source": configured_source})
                     req["research_contract"]["approval"] = approval
+                    req.pop("resume_cp1", None)  # consumed by this very save
                     self.hub.save_request(rid)
                 approved = bool(approval.get("approved"))
                 if not approved and approval.get("status") == "timed_out":
@@ -6366,6 +6477,8 @@ class Orchestrator:
                 if reuse_pending:
                     # Proof alone does not authorize execution: rollback must still cover a denied budget card.
                     carried['verified'] = True
+                if not await self._blind_draft(rid, req, text, refs):
+                    return False
                 req["outcome"] = "research_running"
                 self.hub.save_request(rid)
                 return True

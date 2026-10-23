@@ -4,6 +4,76 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# 전역 Git 훅 연결과 원저자 보존 (#902)
+
+- 전역 commit-msg·post-commit이 있으면 일반 새 커밋·revert를 위임해 봇 author·committer와 모델명을 남긴다. 전역 훅 부재·merge 커밋·reflog 비활성화는 자체 trailer 규칙을 쓴다.
+- P1 4362054678 수정: rebase·cherry-pick·충돌 후 continue는 원저자와 메시지를 보존한다. linked worktree의 상태 경로도 검사하며, 상태 파일이 지워진 continue는 reflog로 구분한다. reflog를 끈 저장소는 자체 trailer 처리만 쓴다.
+- 임시 Git 저장소·가짜 전역 훅 검사: continue 원저자 변경 1 failed·3 passed, merge·revert 각 2 failed, amend·명시 author 3 failed를 수정 전 재현했다. 수정 후 20 passed: checkout/worktree, rebase merge/apply, 신규 커밋·전역 훅 부재·reflog 비활성화·merge·revert·연속 cherry-pick·amend·명시 author를 확인했다.
+- P2 4362840932 수정: 자동 merge에는 post-commit이 호출되지 않아 전역 commit-msg만 실행하면 표식이 사라졌다. merge는 두 훅 모두 전역 위임을 생략해 trailer를 보존한다.
+- P2 4362909633 수정: 충돌 없는 revert는 commit-msg를 건너뛴다. 새 inverse commit의 post-commit에서 전역 author 처리를 실행해 봇 작성자를 남긴다.
+- P1 4363000119 수정: amend는 기존 author를 유지한다. 명시한 다른 author도 보존하며 author와 committer가 다른 메시지는 자체 trailer 규칙을 쓴다.
+- 수정 커밋 79579618의 author·committer는 Codex (gpt-6.1-sol) 봇이며 같은 에이전트 trailer는 제거됐다. 기존 커밋은 재작성하지 않았다.
+- Windows CI의 새 test inventory 거부를 해결해 훅 검사 전체를 필수 cohort로 등록했다. selection 회귀 8 passed. patch-notes·notes·public·diff·Python 3.10 AST 검사 통과.
+- 최종 head CI·같은 head 봇 P1=0 확인 뒤 병합한다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+## 결과
+Closes #905
+
+접근 metadata와 최초 실증 출처 계보를 기존 evidence contract에 추가했습니다.
+
+## 변경
+- `SourceRef`: 접근 범위·Methods/QC 위치·보충자료 상태. `Evidence.status`와 구분합니다.
+- `Evidence.lineage`와 `assess_lineage`: 확인 근거가 있는 원출처만 확정하고 같은 source identity를 합칩니다. 순환·누락·미확인은 context로 남기며 독립 근거에서 제외합니다.
+- `independent_groups`·verifier가 원출처 group을 재사용합니다. 같은 source로 병합된 원출처 행도 모두 검증하며 추가 URI·artifact가 미확인이면 통과시키지 않습니다. legacy payload·group 동작은 유지합니다.
+- 원출처·중간 인용의 결함과 철회는 claim의 `defective` 판정으로 전달해 CSO가 인용을 차단합니다. 조회 미완료는 `unverified`로 남깁니다.
+- 미해결 계보를 salvage할 때 문제 link만 거부해 접근 기록·필수 slot·다른 context link를 보존합니다.
+
+## 검증·인계
+- 관련 pytest 420 passed. P1 회귀 18건·P2 회귀 6건은 수정 전 실패를 재현했습니다.
+- 확장한 result schema hash를 고정하고 새 metadata의 optional 계약을 검사합니다. plan schema·planning prompt·기존 plan hash 검사는 유지합니다.
+- Windows selection inventory 검사 통과. 계보 회귀 검사는 기존 evidence test 모듈에 포함합니다.
+- Python 3.10 AST·public·diff 검사 통과. 전체 suite·최종 head CI·봇 판정은 PR 기록을 따릅니다.
+- 공용 contract: https://github.com/ehojune/bioinfo-team-3d/issues/905#issuecomment-6371292848
+- helper는 `labhq.evidence`에서 import합니다. `assess_lineage`와 `independent_groups` 모두 optional `artifact_paths`를 받습니다.
+- `original_evidence_ids`는 병합된 원출처 행을 모두 보존합니다. `source_keys`·`independence_groups`는 중복 제거합니다.
+- report·manual·fake 통합은 #907 담당입니다. 실제 원문 독해 품질·기관 조회·연구 실행은 검증하지 않았습니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+# 블라인드 리뷰어 초안 (#889)
+
+- `research.blind_draft`(기본 false)를 켜면 CP1 승인 직후 첫 단계 전에 `reviewer_agent`가 원 요청만으로 초안을 쓰고 `research_contract.blind_draft`에 본문·sha256·UTC 시각으로 봉인한다. 주 결과가 이미 있는 재개는 초안 없이 `unavailable(results_exist)`, 초안 완료 시점에 결과가 있었으면 `late`, task 실패는 `unavailable`이며 요청은 계속된다.
+- 연구 리뷰 prompt에 봉인된 초안(해시 일치 시)을 붙이고 review JSON에 optional `blind_comparison`을 받는다. 읽을 수 없는 값은 그 필드만 버린다. 일치를 근거로 세지 않는다.
+- 순차 실행(병렬 아님). 새 task kind `blind_draft`는 read-only 프로파일과 기존 예약·취소 경로를 쓴다. 파일 격리는 하지 않는다(입력 기준 격리).
+- 테스트: `tests/test_blind_draft_889.py` 7건(봉인 순서·입력 격리·리뷰 전달·꺼짐 무변화·실패 무중단·late/재시작·부분 폐기) 통과. 관련 연구 lane 테스트 247건 통과. 실제 Codex 직원, 실제 요청, Windows CI는 미확인.
+
+Refs #898
+
+- R version/syntax subprocess의 elapsed·timeout·returncode를 test fixture에 따로 남기고 기본 10초 경계 두 개를 fake로 검증합니다.
+- mock SIGTERM/SIGHUP은 work 준비 뒤 호출하며 durable result·gateway resume·ACK·entry 완료를 단계별로 기다립니다. 각 fixture 단계와 제품 shutdown은 5초를 유지합니다. ACK 전 entry 생존과 shutdown 반환 시 outbox 0을 확인하며 기존 단언도 유지합니다.
+- ACK 3.1초 지연 주입: 수정 전 1 failed(`TimeoutError`), 수정 후 1 passed. 실제 CI의 DB/writer 지연 원인을 재현한 결과는 아닙니다.
+- 관련 검사 serial 및 4-worker `loadfile`: 각각 130 passed·3 skipped. 변경한 4개 case는 serial/4-worker `load` 각각 20회 통과했습니다. 리뷰 수정 뒤 SIGTERM/SIGHUP도 같은 조건에서 각각 20회 통과했습니다(80 PASS).
+- Python 3.10 AST·public·diff 검사 통과. 제품 코드·coverage/receipt 계약은 바꾸지 않았습니다.
+- Rscript가 없는 로컬의 실제 R 두 case와 symlink 권한이 필요한 한 case는 skip됐습니다. R 실제 지연 원인은 미확인이므로 #898을 닫지 않습니다. CI·같은 head 봇 리뷰·병합은 PR에서 확인합니다.
+
+[관측과 해석 경계](../reference/windows-test-boundaries-898.md)
+
+Closes #654
+PR #899
+
+재시작 뒤 재개 카드를 승인하면 CP1(계획 승인) 카드가 바로 또 뜨던 문제를, 재개 카드 한 번으로 줄였습니다.
+
+- CP1 전에 멈춘 첫 연구 계획이면 재개 카드에 단계·직원·지시 앞부분·비용 추정·집행 상한을 싣고, 승인하면 같은 계획 hash의 CP1 영수증(`via=resume_card`)을 한 번만 기록합니다. 집행 상한은 기존 CP1 승인 경로로 설정됩니다.
+- hash 불일치·이어 가기·단계 실행 뒤 재승인·멈춘 의미 장치(`configured_off` 제외)·paper skill 줄·재배정 안내는 CP1 카드를 그대로 묻습니다. 계획이 없으면 재개만 묻습니다.
+- `tests/test_resume_cp1_654.py` 6건: 수정 전 4건 실패·대조 2건 통과, 수정 뒤 6건 통과. 관련 묶음 283+92건, resume·interrupt 언급 파일 838건 통과(Windows, Python 3.12, 로컬).
+- 봇 리뷰 반영(2차): 카드 detail에 CP1과 같은 `plan_canonical` 등을 싣고 웹이 계획 전체를 그립니다. `resume_cp1`은 영수증 저장 save에서 지웁니다. paper skill·재배정 안내가 있는 계획에는 통합 승인 카드를 만들지 않습니다. python 7건·web 1건 추가(수정 전 실패 확인), 관련 묶음 303건 통과. web 7건은 main에서도 실패하는 브라우저 의존 테스트입니다.
+- CI: head `c529d574`의 `pytest (3.12)` 실패 1건은 무관한 timing 테스트(`test_policy` 경로 스캔 선형성)였고 재실행에서 통과했습니다. 부분 재실행(attempt 2)은 Windows 커버리지 artifact가 없어 `validation-manifest`만 실패해 전체를 새 push로 다시 돌렸습니다.
+- 미검증: 웹 UI 표시(summary 텍스트만 사용·`web/` 변경 없음), 실제 PI state·실요청, CI(3.10·Windows).
+
+🤖 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
 ## #658 종료하기: 멈춘 '마무리 중' 표시 (PR #895, base 611f8ea4)
 
 - 대조: 이슈 4항목 중 1(끝나면 지움)·4(옛 gateway)는 main에 이미 있다. 2·3을 구현했다.
@@ -16,6 +86,39 @@
 - USERNAME·USER·LOGNAME이 없는 Windows에서 `getpass.getuser()`가 POSIX 전용 `pwd` import로 `ModuleNotFoundError`를 내며 `Scheduler` 생성이 실패했다(proof c1 runner 시작 실패의 원인).
 - `labhq/tools/scheduler.py`: `getpass.getuser()` → 실패하면 Windows `GetUserNameW`로 실제 로그온 계정을 구한다. 둘 다 실패하면 `self.user`는 비고, `queue()`(SGE·PBS·Slurm)는 `hpc.user`를 설정하라는 `RuntimeError`를 낸다. 이름을 지어내지 않는다(가짜 이름은 `qstat -u`·`squeue -u`가 실제 작업을 못 보게 한다). `mock`·`none`은 영향 없다.
 - `tests/test_scheduler.py`: env 변수를 지워도 생성, getuser 실패 시 Windows API 계정(Windows에서만), user를 모를 때 queue 명령이 실행되지 않음(sge·slurm·pbs). 14건 통과. 전체 suite·실제 Windows CI는 미확인.
+
+## 단계
+P1 — Windows 종료 테스트의 fixture 준비 대기. Refs #854.
+
+## 한 일
+- 부모·손자의 준비를 최대 10초 handshake로 확인한 뒤 기존 1초 timeout과 두 프로세스 종료를 검사합니다.
+- startup_delay 0·1.5초를 검사하고 준비 실패 때도 fixture tree를 정리합니다. 제품 코드·timeout·종료 단언·skip/retry·receipt 조건은 그대로입니다.
+
+## 테스트 결과
+- 독립 Windows 검증: 패치 전 3 PASS, 패치 후 5회 × 2조건 = 10 PASS. 보고상 잔류 프로세스 0, WinError 5 없음. 같은 검증은 반복하지 않았습니다.
+- [main CI 실패](https://github.com/ehojune/bioinfo-team-3d/actions/runs/39905683733/job/120257047265)는 timeout 단언 뒤 PID 파일이 없는 경우입니다. 원래 간헐 실패는 로컬에서 재현되지 않아 해결 확정 근거는 아닙니다.
+- 준비를 마친 트리의 종료를 검사합니다. 기동 지연을 포함한 제품 timeout은 이 테스트의 검증 범위 밖입니다.
+- Python 3.10 문법·diff·public·기록 검사는 아래 확인란에 실제 결과를 반영합니다.
+
+## 바꾼 파일
+- `tests/test_runner_safety.py`
+- `patch_notes/entries/codex--windows-timeout-ready-854-pr.yaml`
+- 이 단계 보고
+
+## 막힌 점
+- 2026-10-24 02:17 KST 확인: head `58a41aeb`의 [CI 39979410026](https://github.com/ehojune/bioinfo-team-3d/actions/runs/39979410026) attempt 1은 Windows R parse timeout 1건으로 실패했습니다(3545 passed, 30 skipped, 51 subtests passed). coverage receipt 오류는 pytest 실패 뒤 발생했습니다. 실패 job 재실행은 아직 쓰지 않았습니다.
+- 같은 head의 [봇 리뷰](https://github.com/ehojune/bioinfo-team-3d/pull/885#discussion_r4362288677)는 완료됐으며 이 보고의 오래된 CI 상태를 P1로 지적했습니다. 해당 문장을 고쳤습니다. 수정 head의 CI·리뷰·병합 결과는 [PR #885](https://github.com/ehojune/bioinfo-team-3d/pull/885)에 기록합니다. #854 전수/receipt 완료 조건은 남습니다.
+
+## PI·Claude에게 물을 것
+- 없음.
+
+## 확인
+- [x] Python 3.10 문법·diff 검사
+- [x] `scripts/check_public.sh`
+- [x] `scripts/patch_notes.py check --base origin/main`
+- [x] `scripts/notes_index.py --validate`
+
+🤖 Co-Authored-By: Codex (gpt-6) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 
 # #833 Windows 필수 웹 검사 시간 계약
 

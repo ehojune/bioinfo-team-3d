@@ -36,10 +36,47 @@ def test_routine_job_is_ten_minutes_and_has_one_bounded_suite_with_diagnostic_ta
     assert not any('preview' in str(x).lower() for x in job['steps'])
     assert 'boundary_preview' not in jobs['changes']['outputs']
     tail = job['steps'][job['steps'].index(tests[0]) + 1:]
-    assert any(x.get('if') == 'always()' and 'ci_suite report' in x.get('run', '') for x in tail)
+    assert any(x.get('if') == 'success()' and 'ci_suite report' in x.get('run', '') for x in tail)
     assert any(x.get('if') == 'always()' and x.get('uses', '').startswith('actions/upload-artifact') for x in tail)
     assert jobs['pytest']['strategy']['matrix']['python-version'] == ['3.10', '3.12']
     assert 'windows-full-v1' in job['env']['CI_COVERAGE_PROFILE']
+
+
+@pytest.mark.parametrize('selection,pytest_outcome,annotated,reported', [
+    ('failure', 'skipped', True, False),
+    ('success', 'failure', False, False),
+    ('success', 'success', False, True),
+    ('skipped', 'success', False, True),  # Full Windows has no changed-test selection step.
+    ('success', 'cancelled', False, False),
+])
+def test_windows_failure_routing_preserves_primary_failure_and_success_receipts(
+        selection, pytest_outcome, annotated, reported):
+    job = yaml.safe_load((s.ROOT / cs.WORKFLOW).read_text(encoding='utf-8'))['jobs']['pytest-windows']
+    steps = job['steps']
+    select = next(x for x in steps if x.get('id') == 'selection')
+    annotation = next(x for x in steps if '::error title=Windows selection rejected::' in x.get('run', ''))
+    report = next(x for x in steps if x.get('id') == 'coverage')
+    upload = next(x for x in steps if x.get('uses', '').startswith('actions/upload-artifact'))
+    assert select['run'] == 'python -m scripts.ci_selection'
+    assert select['if'] == "env.CI_COVERAGE_PROFILE != 'windows-full-v1'"
+    assert steps.index(select) < steps.index(annotation) < steps.index(report) < steps.index(upload)
+    assert not job.get('continue-on-error')
+    assert all(not x.get('continue-on-error') for x in steps)
+    assert report['run'] == 'python -m scripts.ci_suite report'
+    assert job['outputs']['receipt'] == '${{ steps.coverage.outputs.receipt }}'
+    assert job['outputs']['execution'] == '${{ steps.coverage.outputs.execution }}'
+    # Interpret only these status predicates; fail on a workflow expression we have not reviewed.
+    # A later successful annotation cannot erase the failed selection or pytest step.
+    failure = 'failure' in (selection, pytest_outcome)
+    success = not failure and 'cancelled' not in (selection, pytest_outcome)
+    conditions = {
+        "failure() && steps.selection.outcome == 'failure'": failure and selection == 'failure',
+        'success()': success,
+        'always()': True,
+    }
+    assert conditions[annotation['if']] is annotated
+    assert conditions[report['if']] is reported
+    assert conditions[upload['if']] is True  # Preserve diagnostic artifacts even after failure.
 
 
 @pytest.mark.parametrize('paths', [(s.PROFILE,), (cs.WORKFLOW,), ('scripts/ci_suite.py',),

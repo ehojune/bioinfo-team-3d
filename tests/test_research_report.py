@@ -310,10 +310,11 @@ def test_research_review_schema_is_strict():
             yield from objects(schema["items"])
 
     found = list(objects(RESEARCH_LANE_REVIEW_SCHEMA))
-    assert len(found) == 3  # the review, its issue and the optional checklist row (#586)
+    assert len(found) == 4  # the review, its issue, the optional checklist row (#586) and blind comparison (#889)
     for schema in found:
         assert schema["additionalProperties"] is False
-        optional = {"checklist"} if schema is RESEARCH_LANE_REVIEW_SCHEMA else set()  # the one optional field (#586)
+        # the two optional fields (#586 checklist, #889 blind_comparison)
+        optional = {"checklist", "blind_comparison"} if schema is RESEARCH_LANE_REVIEW_SCHEMA else set()
         assert set(schema["required"]) == set(schema["properties"]) - optional
     issue = RESEARCH_LANE_REVIEW_SCHEMA["properties"]["issues"]["items"]["properties"]
     assert set(issue) == {"step_id", "claim_id", "priority", "category", "evidence_quote", "problem", "request"}
