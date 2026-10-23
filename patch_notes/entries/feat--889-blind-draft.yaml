@@ -20,3 +20,7 @@ rows:
   at: 2026-10-24 03:40
   text: 봉인 초안을 리뷰어에게 주지 않은 요청(꺼짐·late·unavailable)의 review에서는 blind_comparison을 버린다.
   summary: 리뷰어가 보지 못한 초안에 대한 대조 기록은 남기지 않습니다.
+- sha: c141da3
+  at: 2026-10-24 04:00
+  text: 무관한 Windows WMI provider timeout으로 실패한 clean-install을 다시 확인하려고 CI를 재실행한다(코드 변경 없음).
+  summary: 코드 변경 없이 자동 검사를 다시 돌립니다.
