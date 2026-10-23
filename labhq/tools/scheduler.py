@@ -291,10 +291,30 @@ def slurm_job(job_id: str, records: list[JobInfo]) -> JobInfo | None:
 
 # ---------- backend ----------
 
+def _windows_logon_user() -> str:
+    if os.name != "nt":
+        return ""
+    try:
+        import ctypes
+        size = ctypes.c_uint32(257)
+        buf = ctypes.create_unicode_buffer(size.value)
+        return buf.value if ctypes.windll.advapi32.GetUserNameW(buf, ctypes.byref(size)) else ""
+    except Exception:
+        return ""
+
+
+def _local_user() -> str:
+    """Logon account name, or "" when it cannot be resolved (never a made-up name: it would filter qstat/squeue)."""
+    try:
+        return getpass.getuser()
+    except Exception:  # getpass falls back to POSIX-only `pwd` when USERNAME/USER/LOGNAME are unset on Windows
+        return _windows_logon_user()
+
+
 class Scheduler:
     def __init__(self, cfg: HpcSettings):
         self.cfg = cfg
-        self.user = cfg.user or getpass.getuser()
+        self.user = cfg.user or _local_user()
 
     def _require_enabled(self, operation: str) -> None:
         if self.cfg.scheduler == "none":
@@ -375,6 +395,8 @@ class Scheduler:
         self._require_enabled("queue")
         if self.cfg.scheduler == "mock":
             return []
+        if not self.user:
+            raise RuntimeError("cannot determine the OS user for the queue query; set hpc.user")
         if self.cfg.scheduler == "slurm":
             # -r: one line per array task, so every listed id is one hpc_status/hpc_cancel accepts
             # (without it pending tasks read "4100_[1-4,8]").
