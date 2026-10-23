@@ -1,6 +1,6 @@
 """#678: the runner checks the work drive when a task starts (card below the floor, warning below the doctor's
 level), and `runner.bulk_data_root` is named in the task briefing."""
-import shutil
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -100,15 +100,15 @@ async def test_a_zero_floor_turns_the_card_off(board, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_an_unreadable_drive_and_a_facilities_fix_never_wait_for_a_card(board, monkeypatch):
+async def test_an_unreadable_drive_and_a_facilities_fix_never_wait_for_a_card(board, monkeypatch, tmp_path):
     def broken(path):
         raise OSError("disk unavailable")
 
     monkeypatch.setattr(disk_space, "usage", broken)
-    assert await board.runner._disk_gate(board.task(), board.runner.registry.agents["worker"], board.runner.emit) is None
+    assert await board.runner._disk_gate(board.task(), board.runner.registry.agents["worker"], tmp_path / "w") is None
     monkeypatch.setattr(disk_space, "usage", lambda path: _space(0.1))
     fix = Task(agent_id="worker", request_id="r", prompt="p", meta={"kind": "facilities_fix"})
-    assert await board.runner._disk_gate(fix, board.runner.registry.agents["worker"], board.runner.emit) is None
+    assert await board.runner._disk_gate(fix, board.runner.registry.agents["worker"], tmp_path / "w") is None
     assert board.cards == []
 
 
@@ -133,3 +133,27 @@ async def test_a_bulk_data_root_inside_a_restricted_zone_is_left_out_with_a_warn
     result = await _run(board, monkeypatch, 500)
     assert result.ok and "큰 원자료" not in board.seen[-1].task.context
     assert any("runner.bulk_data_root" in str(row.get("text")) for row in board.logs)
+
+
+@pytest.mark.asyncio
+async def test_a_declined_start_creates_no_workspace_and_holds_no_run_slot(board, monkeypatch):
+    slots = board.runner.sem._value
+    result = await _run(board, monkeypatch, 1)
+    assert not result.ok and board.seen == []
+    assert board.runner.sem._value == slots  # the card waited before a slot was taken
+    assert not list(Path(board.settings.runner.workspace_root).glob("*/*"))  # no task folder was created
+    assert board.cards[0].timeout_s == 24 * 3600  # the card outlives the default hour
+
+
+@pytest.mark.asyncio
+async def test_the_drive_judged_is_the_one_the_run_really_uses(board, monkeypatch, tmp_path):
+    probed = []
+
+    def usage(path):
+        probed.append(path)
+        return _space(500)
+
+    monkeypatch.setattr(disk_space, "usage", usage)
+    elsewhere = tmp_path / "other_drive" / "retry_folder"
+    await board.runner.run_task(board.task(), workdir_override=elsewhere)
+    assert probed and probed[0] == elsewhere  # not the default workspace root

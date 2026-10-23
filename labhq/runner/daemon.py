@@ -1459,8 +1459,8 @@ class Runner:
             if ws is not None and task.meta.get("paper_skills"):
                 ws.clear_paper_skills()
 
-    async def _disk_gate(self, task: Task, agent: AgentSpec, emit) -> str | None:
-        """Free space of the work drive when a task starts (#678): None to go on, else why it was not started.
+    async def _disk_gate(self, task: Task, agent: AgentSpec, workspace_dir: Path) -> str | None:
+        """Free space of the drive this run's folder is on, when a task starts (#678): None to go on, else why not.
 
         Below ``runner.disk_fail_free_gb`` the task waits for a PI card; approving starts it, declining or no answer does
         not. Below the doctor's warning level it only warns. An unreadable drive never blocks. A facilities fix
@@ -1468,8 +1468,12 @@ class Runner:
         runner = self.s.runner
         if task.meta.get("kind") == "facilities_fix":
             return None
+
+        async def emit(kind: str, data: dict) -> None:
+            await self.emit(Event(type=kind, task_id=task.id, agent_id=agent.id, request_id=task.request_id, data=data))
+
         try:
-            space = disk_space.usage(self.ws_root)
+            space = disk_space.usage(workspace_dir)
         except (OSError, ValueError):
             return None
         if space.total <= 0:
@@ -1482,7 +1486,7 @@ class Runner:
             decision = await self.broker.request_approval(ApprovalRequest(
                 task_id=task.id, agent_id=agent.id, request_id=task.request_id, kind="disk_space", summary=summary,
                 detail={"free_gib": round(free_gib, 2), "floor_gib": runner.disk_fail_free_gb,
-                        "path": str(self.ws_root)}))
+                        "path": str(workspace_dir)}, timeout_s=24 * 3600))
             if decision.get("approved"):
                 await emit("agent.log", {"level": "warn", "text": "PI가 디스크 여유가 적은 채로 시작을 승인했습니다"})
                 return None
@@ -1548,6 +1552,18 @@ class Runner:
                             steers=task.meta.get("steers") or [], dropped=task.meta.get("steer_dropped") or 0)
         override = workdir_override or (Path(task.meta["workdir"]) if task.meta.get("workdir") else None)
         workspace_dir = Path(override) if override else self.ws_root / time.strftime("%Y-%m-%d") / f"{task.id}_{agent.id}"
+        # #678: judged on the folder this run really uses, before the workspace is created or a run slot is held, so a
+        # full drive neither fails the directory creation first nor lets waiting cards take every slot.
+        disk_error = await self._disk_gate(task, agent, workspace_dir)
+        if disk_error:
+            result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=disk_error)
+            base = dict(task_id=task.id, agent_id=agent.id, request_id=task.request_id)
+            await self.emit_all([
+                Event(type="agent.log", data={"level": "alert", "text": disk_error}, **base),
+                Event(type="agent.status", data={"state": "error", "error": short(disk_error, 200)}, **base),
+                Event(type="task.result", data={**result.model_dump(mode="json"),
+                                                "control": self.controls.finish(task.id)}, **base)])
+            return result
         reused = os.path.lexists(workspace_dir)
         # Do not let TaskWorkspace create files through links left by an earlier run. Fresh workspaces keep
         # the old event ordering; reused ones are registered only after their preflight succeeds (#191).
@@ -1669,12 +1685,6 @@ class Runner:
                 await emit_final({"state": "done" if result.ok else "error",
                                   **({"error": short(result.error, 200)} if result.error else {})},
                                  result.model_dump(mode="json"))
-                return result
-            disk_error = await self._disk_gate(task, agent, emit)  # #678: before anything else uses the work drive
-            if disk_error:
-                result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=disk_error)
-                await emit("agent.log", {"level": "alert", "text": disk_error})
-                await emit_final({"state": "error", "error": short(disk_error, 200)}, result.model_dump(mode="json"))
                 return result
             extra_dirs = [str(self.s.path(d)) for d in [*agent.project_dirs, *task.meta.get("project_dirs", [])]]
             task, consult_error = self._stage_consult_refs(task, ws)
