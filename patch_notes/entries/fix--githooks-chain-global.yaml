@@ -4,3 +4,7 @@ rows:
   at: '2026-10-24 01:46'
   summary: 에이전트가 만든 커밋에 봇 작성자 정보를 붙입니다.
   text: 저장소 commit-msg·post-commit 훅을 머신 전역 훅에 연결하고 전역 훅이 없는 환경의 기존 동작을 유지했다.
+- sha: '7957961'
+  at: '2026-10-24 03:12'
+  summary: 다른 사람이 쓴 커밋을 옮길 때 원래 작성자를 보존합니다.
+  text: rebase·cherry-pick·충돌 뒤 continue의 전역 author 변경을 막고 linked worktree와 reflog 비활성화 회귀 12건을 검증했다.
