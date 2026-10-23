@@ -80,7 +80,7 @@ def _folded(text: str, case_sensitive: bool | None = None) -> str:
 
 def is_read_only_task(meta: dict | None, agent: AgentSpec | None = None) -> bool:
     meta = meta or {}
-    return (meta.get("kind") in {"consult", "followup", "review", "slot_repair"}
+    return (meta.get("kind") in {"consult", "followup", "review", "slot_repair", "blind_draft"}
             or (agent is not None and (agent.sandbox == "read-only" or agent.permission_mode == "plan"))
             or (agent is not None and bool(agent.builtin_tools) and set(agent.builtin_tools.split(","))
                 <= {"Read", "Glob", "Grep", "WebSearch", "WebFetch"})

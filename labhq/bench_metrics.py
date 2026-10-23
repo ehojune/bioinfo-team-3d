@@ -15,7 +15,7 @@ STAGES = ("planning", "skill", "analysis", "consult", "review", "report", "other
 KINDS = {"planning": {"briefing", "precedent", "plan", "replan", "scope"},
          "skill": {"paper_skill", "recruit", "recruit_check", "plan_recruit"},
          "analysis": {"step", "direct", "wake", "result_correction", "slot_repair"},
-         "consult": {"consult"}, "review": {"review", "scientific_review", "sci_review"},
+         "consult": {"consult"}, "review": {"review", "scientific_review", "sci_review", "blind_draft"},
          "report": {"synthesis", "report", "storage_editor", "result_editor"}}
 
 
