@@ -546,6 +546,11 @@ def test_legacy_payload_round_trip_has_no_required_new_metadata():
     assert restored.source.access_status == "undetermined" and restored.lineage is None
     assert assess_lineage([restored])["e1"].status == "undetermined"
     assert independent_groups("c1", [restored], [lineage_link("e1")]) == ["e1"]
+    definitions = rc.RESEARCH_RESULT_SCHEMA["$defs"]
+    assert "lineage" not in definitions["Evidence"]["required"]
+    for field in ("access_status", "methods_locator", "qc_locator", "supplementary_status"):
+        assert field not in definitions["SourceRef"].get("required", [])
+    assert definitions["SourceRef"]["properties"]["access_status"]["default"] == "undetermined"
 
 
 @pytest.mark.parametrize("access", ["full_text", "abstract_only", "not_obtained", "paywalled", "undetermined"])
