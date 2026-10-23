@@ -89,6 +89,34 @@ function profileEntryCount(dir) {
   try { return fs.readdirSync(dir).length; } catch { return null; }
 }
 
+// Failure-only #833 snapshot. Count at most 96 entries and descend at most two levels; never print names or contents.
+// Unlike the root count at the five-second notice, this can tell whether Chrome wrote inside its profile at all.
+function profileActivity(dir, openDir = fs.opendirSync) {
+  const pending = [{dir, depth: 0}];
+  let entries = 0, files = 0, directories = 0, truncated = false;
+  while (pending.length) {
+    const current = pending.shift();
+    let opened;
+    try {
+      opened = openDir(current.dir);
+      for (;;) {
+        if (entries === 96) { truncated = true; break; }
+        const child = opened.readSync();
+        if (child === null) break;
+        entries++;
+        if (child.isFile()) files++;
+        if (child.isDirectory()) {
+          directories++;
+          if (current.depth < 2) pending.push({dir: path.join(current.dir, child.name), depth: current.depth + 1});
+        }
+      }
+    } catch { return {entries, files, directories, truncated, unreadable: true}; }
+    finally { try { opened?.closeSync(); } catch { /* diagnostic only */ } }
+    if (truncated) break;
+  }
+  return {entries, files, directories, truncated, unreadable: false};
+}
+
 // #833: why the DevToolsActivePort reads have found no port yet, as counts per fixed code (`empty`: the file exists but
 // has no port line yet). Never the path, message or file content.
 const PORT_READ_CODES = ['ENOENT', 'EBUSY', 'EACCES', 'EPERM'];
@@ -459,6 +487,11 @@ async function openDemo(opts = {}) {
       }
       if (!debug) await sleep(Math.max(0, Math.min(100, startDeadline - Date.now())));
     }
+    if (!debug) trace.observe('chrome-start-failed', {
+      job_marker_seen: stderrWatch.marked(), chrome_created_seen: stderrWatch.created(),
+      port_reads: portReads.counts(), profile: profileActivity(profile),
+      chrome_stderr_bytes: stderrWatch.chromeBytes(), chrome_exited: exited !== null,
+    });
     if (!debug && !exited) budget.check('chrome-start');
     if (!debug) throw new Error(`Chrome did not publish its debugging port within ${START_MS / 1000}s (exit: ${JSON.stringify(exited)}): ${chromeError}`);
     trace('debug-port-ready');
@@ -598,5 +631,5 @@ async function openDemo(opts = {}) {
 
 module.exports = {openDemo, skipReason, findChrome, sleep, WEB_ROOT, CLOCK_SOURCE, closeDemoResources, demoLifecycleTrace, requestBrowserShutdown,
   CLEANUP_MS, GRACEFUL_CLEANUP_MS, WINDOWS_JOB_WRAPPER, WINDOWS_JOB_LIMIT_BYTES, windowsJobPython, browserCommand,
-  JOB_STARTING_BROWSER, chromeStderrWatcher, profileEntryCount, BROWSER_CREATED, portReadCounter, workBudget,
+  JOB_STARTING_BROWSER, chromeStderrWatcher, profileEntryCount, profileActivity, BROWSER_CREATED, portReadCounter, workBudget,
   CLOSE_RESERVE_MS};

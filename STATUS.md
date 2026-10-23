@@ -4,6 +4,33 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## #833 브라우저 시작 실패 진단
+
+- 변경: DevTools 포트가 끝내 생기지 않은 **실패 때만** profile의 파일·폴더 수(최대 96항목, 깊이 2), Job·Chrome 생성 표식, 포트 읽기 실패 횟수, stderr 크기를 한 줄에 남긴다. 경로·파일명·내용은 출력하지 않는다.
+- 계약: desktop·phone의 실제 브라우저 단언과 합산 30초 제한, 실패 시 소유 자원 정리, 필수 Windows 검사는 그대로다. 재시도·skip은 없다.
+- 확인: 가짜 디렉터리 스트림 검사 1건 통과; Node 문법 검사와 Python 컴파일 통과. 실제 Chrome/Windows CI는 새 head에서 확인해야 한다.
+- 첫 CI [run 39893812961](https://github.com/ehojune/bioinfo-team-3d/actions/runs/39893812961)은 브라우저 전에 검토된 `test_web_3d.py` 해시가 낡아 Windows 선택을 거부했다. 새 해시와 가짜 Node 검사의 Windows 유지 항목을 갱신했고 `validate_profile()`·관련 가짜 검사 11건이 통과했다. 따라서 이 run에는 새 profile 관측값이 없다.
+- 남음: 첫 Chrome 시작이 늦는 원인은 아직 미확인이다. 이 변경은 원인 조사용이며 #833 해결 판정이 아니다.
+
+# 전기능 B 시운전 인수인계 현행화
+
+## 단계
+개발 문서 정정. B는 NO-GO입니다.
+
+## 한 일
+- `HANDOFF.md`의 현행 큐에 #877의 독립적인 요청 전체 90분 hard stop을 B GO 차단 P1로 올렸습니다.
+- #739의 B 격리 설치·doctor PASS·요청 0건과 남은 원문·출처·상한·GO 조건을 구분했습니다. #876은 #833 Chrome 시작 구간의 Windows CI 실패로 병합 보류 중입니다.
+- 옛 현황은 기존 `docs/reference/` 링크로 찾도록 했습니다. `HANDOFF.md`는 3,508→3,481자입니다.
+
+## 테스트 결과
+- `git diff --check`, 공개 검사, notes index, patch-notes 검사 통과.
+- 제품 코드·설정·실제 연구 요청은 변경하거나 실행하지 않았습니다.
+
+## 막힌 점
+#877의 격리 hard-stop 증명과 별도 GO 전에는 B를 실행할 수 없습니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 ## 단계
 #833 resizable 브라우저 시험의 기한·정리 경계 보정 (PR #875)
 

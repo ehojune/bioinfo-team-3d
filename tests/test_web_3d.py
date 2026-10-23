@@ -255,3 +255,33 @@ def test_every_node_web_test_runs_in_ci():
     assert NODE_WEB_MARKERS.keys() <= on_disk
     assert all(collected[name] == NODE_WEB_MARKERS.get(name, 'fail 0') for name in on_disk)
     assert all(isinstance(marker, str) and marker for marker in collected.values())
+
+
+def test_browser_failure_profile_diagnostic_is_bounded_without_browser():
+    """#833: a fake directory stream proves the failure receipt is bounded and closes its handle."""
+    node = shutil.which('node')
+    if not node:
+        pytest.skip('Node is optional')
+    driver = Path(__file__).parent / 'support' / 'demo_driver.cjs'
+    code = r"""
+const assert = require('node:assert/strict');
+const {profileActivity} = require(process.argv[1]);
+const file = name => ({name, isFile: () => true, isDirectory: () => false});
+let reads = 0, closes = 0;
+const many = () => ({readSync: () => { reads++; return file('private-' + reads); }, closeSync: () => { closes++; }});
+assert.deepEqual(profileActivity('mock', many),
+  {entries: 96, files: 96, directories: 0, truncated: true, unreadable: false});
+assert.equal(reads, 96);
+assert.equal(closes, 1);
+const missing = () => { throw Error('private path'); };
+assert.deepEqual(profileActivity('mock', missing),
+  {entries: 0, files: 0, directories: 0, truncated: false, unreadable: true});
+const broken = () => ({readSync: () => { throw Error('private path'); }, closeSync: () => { closes++; }});
+assert.deepEqual(profileActivity('mock', broken),
+  {entries: 0, files: 0, directories: 0, truncated: false, unreadable: true});
+assert.equal(closes, 2);
+console.log('bounded profile diagnostic: OK');
+"""
+    result = subprocess.run([node, '-e', code, str(driver)], capture_output=True, text=True, timeout=5)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == 'bounded profile diagnostic: OK'
