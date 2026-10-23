@@ -2,6 +2,16 @@
 # post-commit 훅 — 이 저장소는 core.hooksPath=.githooks 를 쓰므로 머신 전역 훅(~/.git-template/hooks)이 돌지 않는다.
 # 전역 post-commit 이 있으면 그리로 넘긴다. 전역 훅은 에이전트 세션의 커밋 author/committer 를 그 에이전트의
 # GitHub App 봇(claude-ehojune[bot] 등)으로 바꾼다(amend). 없는 머신에서는 아무것도 하지 않는다. 항상 exit 0.
+[ "$LABHQ_DELEGATED_POSTCOMMIT" = 1 ] && exit 0
+# Consume context before every early return. A revert may skip preparation;
+# only a source from this Git process is authoritative, never an aborted one.
+context=$(git rev-parse --git-path labhq-commit-context 2>/dev/null) || exit 0
+if [ -f "$context" ]; then
+  { read -r owner; read -r source; } < "$context"
+  rm -f "$context"
+  [ "$owner" = "$PPID" ] && [ "$source" = commit ] && exit 0
+fi
+[ "$LABHQ_COMMIT_AGENT" = none ] && exit 0
 # Replay keeps the original author, even inside an agent session. --git-path
 # resolves per-worktree state too (a linked worktree has no .git directory).
 for state in CHERRY_PICK_HEAD rebase-merge rebase-apply; do
@@ -23,5 +33,16 @@ author=$(git log -1 --format='%an <%ae>' 2>/dev/null) || exit 0
 committer=$(git log -1 --format='%cn <%ce>' 2>/dev/null) || exit 0
 [ "$author" = "$committer" ] || exit 0
 G="$HOME/.git-template/hooks/post-commit"
-if [ -x "$G" ]; then "$G" "$@"; fi
+[ -x "$G" ] || exit 0
+# Prepare the global model handoff before post-commit reads it. Clean a
+# private copy, never HEAD's message, so a declined/failed rewrite keeps
+# the agent trailer. The nested prepare hook installs this exact copy.
+message=$(mktemp "${context}.message.XXXXXX") || exit 0
+model=$(git rev-parse --git-path labhq-commit-model 2>/dev/null) || exit 0
+trap 'rm -f "$message" "$message.bak" "$model"' 0
+rm -f "$model"
+git log -1 --format=format:%B > "$message" || exit 0
+GM="$HOME/.git-template/hooks/commit-msg"
+if [ -x "$GM" ]; then "$GM" "$message" || exit 0; fi
+LABHQ_DELEGATED_POSTCOMMIT=1 LABHQ_DELEGATED_MESSAGE="$message" "$G" "$@"
 exit 0

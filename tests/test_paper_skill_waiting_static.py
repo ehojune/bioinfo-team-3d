@@ -265,7 +265,7 @@ class WaitingStatic(unittest.TestCase):
     def test_two_papers_is_per_plan_not_a_lifetime_cap_and_ids_deduplicate(self):
         from pydantic import BaseModel, ConfigDict, Field
         ns = definitions('labhq/recruit/paper_skills.py',
-            {'PaperSkillSelection', 'paper_id', 'selections'},
+            {'PaperSkillSelection', 'paper_id', 'cited_access', 'extraction_steps', 'selections'},  # #670 helpers
             {'BaseModel': BaseModel, 'ConfigDict': ConfigDict, 'Field': Field, 'Any': object, 're': re})
         plan = {'steps': [{'id': 's1', 'agent_id': 'worker'}], 'paper_skills': [
             {'paper_id': pid, 'title': 'Synthetic', 'reason': 'Method', 'step_ids': ['s1']}

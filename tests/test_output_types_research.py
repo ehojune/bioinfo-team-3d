@@ -42,9 +42,10 @@ CANARY = "CANARY-research-91c2"
 # #732 adds the shared nf-core assignment and per-candidate contribution rule; schemas and stored plans do not change.
 # #799 adds the shared cohesive-analysis sentence; with main's policy text the prompt still hashes to the previous
 # 72274c0b…, and both schemas and VALID_PLAN_SHA are unchanged.
-RESEARCH_PLAN_SCHEMA_SHA = "ecaec20a558be2cba0955836579538a13a1785ce5baed14bda3827a054d8f859"
+# #890 adds the optional selection_record to the plan schema (new schema hash below); a plan without it keeps
+# VALID_PLAN_SHA, and the prompt, minus its one new rule, still hashes to the previous value.
+RESEARCH_PLAN_SCHEMA_SHA = "885ae981b0294b79094d25fec680337d142dd93f98946d41f247517057977556"
 # #905 extends only the result schema with optional source access metadata and citation lineage.
-# Plan schema, planning prompt and existing approved-plan hash stay pinned to their previous values.
 RESEARCH_RESULT_SCHEMA_SHA = "596679add2478c0eff0eddaddd8d85604b0148770fb5a4aaa0a0235e836ca179"
 # #798/#671 change only paper timing/parallel fallback; normalize that sentence to exact previous prompts.
 # #669 adds the task-local install rule to the planning prompt (no new packages is not a default limit).
@@ -70,6 +71,9 @@ def test_engine_schemas_and_prompt_off_are_those_of_main():
                 max_branches=5, max_branch_steps=8, branched_max_steps=43,
                 question_rule=QUESTION_RULE, intake="INTAKE", packs="PACKS", topics_rule=topics.prompt_rule(V))
     prompt = cso.RESEARCH_PLAN_PROMPT.format(**args, output_types_rule="")
+    rule = "- " + cso.SELECTION_RECORD_RULE + "\n"
+    assert prompt.count(rule) == 1
+    prompt = prompt.replace(rule, "")  # #890: only this rule is new; the rest is the previous prompt
     phase = ("labhq checks metadata before CP1 "
              "and prepares selected skills after approval alongside the approved steps. A late skill is omitted from that step.")
     previous = ("labhq checks metadata before CP1 "
