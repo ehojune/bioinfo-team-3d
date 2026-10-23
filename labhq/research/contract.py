@@ -358,6 +358,23 @@ class PackApplicabilityRecord(StrictModel):
     reason: Literal["topic_match", "no_topic_match", "topics_empty", "no_topic_condition", "not_applicable"]
 
 
+class RejectedAlternative(StrictModel):
+    option: str = Field(min_length=1, max_length=600)
+    rejected_because: str = Field(min_length=1, max_length=600)
+
+
+class SelectionRecord(StrictModel):
+    """What the planner weighed when it chose this design (#890, #856 ①), written at planning time.
+
+    It is part of the plan, so it enters the CP1 hash: an alternative or a reason added later changes the hash and
+    needs a new approval, and cannot be written to look as if it had been considered."""
+    question: str = Field(min_length=1, max_length=600)
+    premises: list[str] = Field(default_factory=list, max_length=8)
+    success_criteria: list[str] = Field(default_factory=list, max_length=8)
+    alternatives: list[RejectedAlternative] = Field(default_factory=list, max_length=6)
+    change_signals: list[str] = Field(default_factory=list, max_length=6)  # observations that would change the call
+
+
 class ResearchPlan(StrictModel):
     schema_version: Literal[2]
     topics: list[str] = Field(default_factory=list, max_length=24)
@@ -383,6 +400,8 @@ class ResearchPlan(StrictModel):
     paper_skill_results: list[dict[str, Any]] = Field(default_factory=list, max_length=2)
     recruit_results: list[dict[str, Any]] = Field(default_factory=list)
     notes: str
+    # Optional; a plan frozen before it keeps its plan_sha256 (the serializer drops None).
+    selection_record: SelectionRecord | None = None
 
     @field_validator("budget_usd", mode="before")
     @classmethod
@@ -415,7 +434,7 @@ class ResearchPlan(StrictModel):
         # Plans frozen before topic routing must keep their canonical JSON and plan hash.
         data = handler(self)
         for field in ("topics", "pack_applicability", "warnings", "checklist", "suggested_next",
-                      "paper_skills", "paper_skill_results", "recruit_results", "branches"):
+                      "paper_skills", "paper_skill_results", "recruit_results", "branches", "selection_record"):
             if not data.get(field):
                 data.pop(field, None)
         if data.get("budget_usd") is None:  # plans frozen before R17 keep their plan_sha256

@@ -152,6 +152,12 @@ function renderResearchPlan(list, canonical) {
   detailEntry(list, '가설', [`주 가설: ${brief.primary_hypothesis ?? ''}`, '대안·귀무:', bullets(brief.null_or_alternatives),
     '가르는 관찰:', bullets(brief.distinguishing_observations)].join('\n'), {raw: true, open: true});
   detailEntry(list, '완료 조건', bullets(brief.completion_conditions), {raw: true});
+  // #890: what the planner weighed, frozen with the plan. A plan without it says so and is not blocked.
+  const record = plan.selection_record;
+  detailEntry(list, '선택 기록', record ? [`질문: ${record.question ?? ''}`, '전제:', bullets(record.premises), '성공 기준:',
+    bullets(record.success_criteria), '검토한 대안(배제 이유):',
+    bullets((record.alternatives || []).map(row => `${row.option} — ${row.rejected_because}`)),
+    '판단을 바꿀 관측:', bullets(record.change_signals)].join('\n') : '선택 기록 없음', {raw: true, open: !!record});
   const branches = Array.isArray(plan.branches) ? plan.branches : [];
   if (branches.length) {
     add(list, 'dt', `갈래 (${branches.length}개)`);
