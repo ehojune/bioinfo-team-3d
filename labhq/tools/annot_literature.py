@@ -54,7 +54,7 @@ LIT_DIR = ".tmp/literature"  # never outputs/: see the module docstring
 LIT_ACCESS_LOG = "outputs/literature_access.jsonl"  # metadata/status only; never a paper body
 TOOL = "fulltext"
 CACHE_RELEASE = "europepmc-rest"  # Europe PMC has no data release; answers age out instead (annot.CACHE_MAX_AGE_S)
-FULLTEXT_CACHE_RELEASE = "europepmc-rest-oa-v3"
+FULLTEXT_CACHE_RELEASE = "europepmc-rest-oa-v4"
 MAX_PER_CALL = 20
 MAX_XML_BYTES = 20_000_000
 MAX_CITATION_RESULTS = 1000
@@ -406,16 +406,19 @@ class KeyFulltextCoordinator:
                     f"- access_level: full_text ({source})\n- extraction: {extraction}\n\n{text}\n")
         text_relative = f"{LIT_DIR}/{parse_paper_id(paper['id']).file_name()}"
         try:
-            write_owned(self.workdir, text_relative, markdown)
+            stored = write_owned(self.workdir, text_relative, markdown)
         except (OwnedPathError, OSError):
             return row, "text_write_failed"
         accepted = {**row, "access_level": "full_text", "read_source": source, "pdf_file": relative,
                     "text_file": text_relative, "chars": len(markdown), "extraction": extraction,
                     "pdf_sha256": row["pdf_sha256"],
-                    "text_sha256": hashlib.sha256(markdown.encode("utf-8")).hexdigest()}
+                    "text_sha256": hashlib.sha256(stored.read_bytes()).hexdigest()}
+        for key in ("unread_reason", "unread_detail", "fulltext_receipt"):
+            accepted.pop(key, None)
         accepted["fulltext_receipt"] = fulltext_receipt(paper["id"], accepted, self.workdir)
         accepted.pop("access_failure", None)
         accepted.pop("text_error", None)
+        accepted.update(source_access_metadata(accepted))
         return accepted, None
 
     def _record(self, paper: dict, row: dict, status: str, reason: str | None, attempts: list[str]) -> None:
@@ -430,6 +433,7 @@ class KeyFulltextCoordinator:
                  "extraction": row.get("extraction"), "pdf_sha256": row.get("pdf_sha256"),
                  "tdm_allowed": self.settings.institution_tdm_allowed,
                  "external_model_allowed": self.settings.external_model_allowed, "recorded_at": self.clock()}
+        entry.update(source_access_metadata(row))
         append_owned(self.workdir, LIT_ACCESS_LOG, json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
 
     async def run(self, values: object) -> dict:
@@ -960,6 +964,10 @@ def jats_markdown(xml: str, header: list[str]) -> tuple[str, dict[str, Any]]:
                   if child.tag not in (body_supported if parent is body else supported))
     info = {"extraction": "partial_text" if skipped else "complete", "sections": titles,
             "n_tables": counts["tables"], "n_figures": counts["figures"], "n_references": len(refs), "license_text": _text(license_node)[:300] if license_node is not None else ""}
+    # A linked supplement has not been fetched; neither its contents nor claim dependency is known.
+    if any(node.tag == "supplementary-material" or
+           (node.tag == "xref" and node.get("ref-type") == "supplementary-material") for node in root.iter()):
+        info["supplements"] = "missing"
     return "\n".join(out).rstrip() + "\n", info
 
 
@@ -1463,6 +1471,7 @@ class LiteratureAnnotator(Annotator):
                 f"- source_url: {location['url']}", "", "## Full text", "", text, "",
             ])
             copy = {key: value for key, value in location.items() if key != "kind"}
+            copy.update(format=body_format, content_sha256=hashlib.sha256(response.content).hexdigest())
             return markdown, {"read_source": location["provider"], "oa_copy": copy, "extraction": extraction}
 
         if temporary:
@@ -1492,20 +1501,60 @@ class LiteratureAnnotator(Annotator):
         answer = dict(answer)
         markdown = answer.pop("markdown", None)
         if markdown is None:
-            return answer
+            return {**answer, **source_access_metadata(answer)}
         relative = f"{LIT_DIR}/{paper.file_name()}"
         answer.update(chars=len(markdown), text_sha256=hashlib.sha256(markdown.encode("utf-8")).hexdigest())
         if self.workdir is None:
             answer["text_error"] = "LABHQ_WORKDIR가 없어 본문 파일을 쓰지 않았습니다"
-            return answer
+            return {**answer, **source_access_metadata(answer)}
         try:
-            write_owned(self.workdir, relative, markdown)
+            stored = write_owned(self.workdir, relative, markdown)
         except (OwnedPathError, OSError) as exc:
             answer["text_error"] = f"본문 파일을 쓰지 못했습니다: {exc}"
         else:
             answer["text_file"] = relative
+            answer["text_sha256"] = hashlib.sha256(stored.read_bytes()).hexdigest()
             answer["fulltext_receipt"] = fulltext_receipt(paper.key, answer, self.workdir)
-        return answer
+        return {**answer, **source_access_metadata(answer)}
+
+
+def source_access_metadata(row: dict) -> dict:
+    """Map stored access and declared evidence locations to the optional SourceRef contract (#905).
+
+    Locators are declarations for display, not confirmation that methods/QC were read or validated.
+    Access failure is independent of Evidence.status (in particular, it does not establish not_found).
+    """
+    receipt = row.get("fulltext_receipt")
+    receipt = receipt if isinstance(receipt, dict) else row
+    level = row.get("access_level", receipt.get("access_level"))
+    reason = row.get("unread_reason", receipt.get("unread_reason"))
+    if level == "full_text" and receipt.get("text_file") and receipt.get("text_sha256") and not row.get("text_error"):
+        status = "full_text"
+    elif level == "abstract" and receipt.get("text_file") and not row.get("text_error"):
+        status = "abstract_only"
+    elif reason == "subscription_required":
+        status = "paywalled"
+    elif row.get("fulltext_error") or row.get("text_error") or row.get("error"):
+        status = "undetermined"
+    elif row.get("found") is False or reason or level == "metadata":
+        status = "not_obtained"
+    else:
+        status = "undetermined"
+    supplements = receipt.get("supplements", row.get("supplements"))
+    supplementary_status = {"missing": "missing", "complete": "available",
+                            "not_applicable": "not_applicable"}.get(supplements, "undetermined")
+    out = {"access_status": status, "methods_locator": None, "qc_locator": None,
+           "supplementary_status": supplementary_status}
+    spans = receipt.get("evidence")
+    for kind in ("methods", "qc"):
+        locations = []
+        for span in spans if isinstance(spans, list) else []:
+            if (isinstance(span, dict) and span.get("kind") == kind
+                    and type(span.get("start_line")) is int and type(span.get("end_line")) is int
+                    and 1 <= span["start_line"] <= span["end_line"] and receipt.get("text_file")):
+                locations.append(f"{receipt['text_file']}:L{span['start_line']}-L{span['end_line']}")
+        out[f"{kind}_locator"] = "; ".join(locations) or None
+    return out
 
 
 def fulltext_receipt(paper_id: str, row: dict, workdir: Path | None) -> dict | None:
@@ -1513,16 +1562,25 @@ def fulltext_receipt(paper_id: str, row: dict, workdir: Path | None) -> dict | N
     if workdir is None or not row.get("text_file") or not row.get("text_sha256"):
         return None
     path = (Path(workdir) / row["text_file"]).resolve()
+    if not path.is_relative_to(Path(workdir).resolve()):
+        return None
     try:
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
     except OSError:
+        return None
+    if digest != row["text_sha256"]:
         return None
     receipt = {"coverage_version": 2, "paper_id": paper_id, "source": row.get("read_source") or "fulltext tool (stored artifact)",
             "access_level": row.get("access_level", "metadata"),
             "extraction": row.get("extraction") or "unknown",
             "text_file": str(path),
             "text_sha256": digest, "evidence": [],
-            "supplements_required": False, "supplements": "unknown"}
+            "supplements_required": row.get("supplements_required") if type(row.get("supplements_required")) is bool else None,
+            "supplements": row.get("supplements") if row.get("supplements") in {"missing", "complete", "not_applicable"} else "unknown"}
+    for key in ("pdf_file", "pdf_sha256", "oa_copy", "unread_reason", "unread_detail"):
+        if row.get(key) is not None:
+            receipt[key] = row[key]
+    receipt.update(source_access_metadata(receipt))
     try:
         write_owned(Path(workdir), row["text_file"] + ".receipt.json",
                     json.dumps(receipt, ensure_ascii=False, sort_keys=True))
@@ -1536,8 +1594,11 @@ def _summary(item: Item) -> dict:
     if not answer.get("found"):
         keep = ("found", "pmid", "pmcid", "doi", "oa_locations", "unread_reason", "unread_detail",
                 "fulltext_error")
-        return {key: answer[key] for key in keep if answer.get(key) not in (None, "", [])}
+        return {**{key: answer[key] for key in keep if answer.get(key) not in (None, "", [])},
+                **source_access_metadata(answer)}
     keep = ("found", "access_level", "pmid", "pmcid", "doi", "title", "journal", "year", "license", "is_open_access",
             "sections", "n_tables", "n_figures", "n_references", "chars", "text_file", "text_error", "fulltext_error",
-            "text_sha256", "extraction", "fulltext_receipt", "publisher_copy", "read_source", "oa_copy", "oa_locations", "unread_reason", "unread_detail")
-    return {key: answer[key] for key in keep if answer.get(key) not in (None, "", [])}
+            "text_sha256", "extraction", "fulltext_receipt", "publisher_copy", "read_source", "oa_copy", "oa_locations", "unread_reason", "unread_detail",
+            "pdf_file", "pdf_sha256", "supplements_required", "supplements")
+    return {**{key: answer[key] for key in keep if answer.get(key) not in (None, "", [])},
+            **source_access_metadata(answer)}

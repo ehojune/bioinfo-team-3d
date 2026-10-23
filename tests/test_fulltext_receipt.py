@@ -23,6 +23,7 @@ def sample(tmp_path):
         "text_sha256": hashlib.sha256(source.read_bytes()).hexdigest()}, tmp_path)
     row["evidence"] = [{"kind": "methods", "start_line": 2, "end_line": 2},
                        {"kind": "qc", "start_line": 3, "end_line": 3}]
+    row["supplements_required"] = False  # synthetic scout's explicit dependency decision
     return source, row
 
 
@@ -179,6 +180,7 @@ async def test_automatic_oa_coverage_reaches_original_receipt_plan_and_build(
                  "qc": lines.index("Synthetic quality checks.") + 1} if mode == "jats" else {"methods": 1, "qc": 1}
     receipt["evidence"] = [{"kind": kind, "start_line": line, "end_line": line}
                            for kind, line in locations.items()]
+    receipt["supplements_required"] = False  # independently declared after locating evidence
     plan = await ps.prepare_plan({"steps": [{"id": "s", "agent_id": "worker"}], "paper_skills": [{
         "paper_id": "PMID:123", "title": "Synthetic", "reason": "paired", "step_ids": ["s"]}]},
         {"papers": [{"title": "Synthetic", "citations": ["PMID:123"], "fulltext_receipt": receipt}]},
