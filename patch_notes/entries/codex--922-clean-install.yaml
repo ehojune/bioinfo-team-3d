@@ -1,5 +1,9 @@
 pr: 925
 rows:
+- sha: a69cf83
+  at: '2026-10-24 10:53'
+  summary: 강제 종료 중 추가 중단도 설치의 최초 실패를 덮어쓰지 않습니다.
+  text: down·잔류 검사 중 KeyboardInterrupt/SystemExit를 4 failed로 재현하고 service_cleanup_error로 분리했다. 관련 58 passed와 최신 코드의 Windows 새 설치 전체 PASS·자식 잔류 0을 확인했다.
 - sha: 02502c9
   at: '2026-10-24 10:43'
   summary: 마감 중단 검증 근거를 최신 설치판과 맞춥니다.
