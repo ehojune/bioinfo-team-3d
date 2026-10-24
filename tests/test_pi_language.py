@@ -118,6 +118,21 @@ def test_unknown_translation_keeps_ceiling_above_generic_reserve(hub):
 
 
 @pytest.mark.asyncio
+async def test_resume_card_seeds_cost_ids_before_translation(hub, monkeypatch):
+    from tests.test_research_protocol import valid_plan
+    calls = mock_model(monkeypatch, hub)
+    hub.requests['r'].update(cost_usd=1, cost_known=True,
+        cost_items={'old': {'status': 'actual', 'usd': 1}}, cost_by_task={'old': 1},
+        plan=valid_plan(steps=1))
+    assert hub.orchestrator.resume_plan_card('r', hub.requests['r']) is not None
+    assert hub.orchestrator.cost_tasks['r'] == {'old'}
+    await hub.publish(event())
+    await drain(hub)
+    assert len(calls) == 1
+    assert hub.orchestrator._budget_bound('r', 5)[2] == pytest.approx(1.02)
+
+
+@pytest.mark.asyncio
 async def test_interpreter_receives_tool_error_evidence(hub, monkeypatch):
     calls = mock_model(monkeypatch, hub)
     error = 'InputValidationError: StructuredOutput could not be parsed as JSON'

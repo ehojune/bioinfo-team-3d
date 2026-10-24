@@ -4279,6 +4279,9 @@ class Orchestrator:
         # A restarted gateway has an empty ledger: seed the stored cost as run_request does, so the cap shown here
         # is the cap CP1 will enforce (#654 review).
         self.cost[rid] = max(self.cost.get(rid, 0.0), float(req.get("cost_usd") or 0))
+        self.cost_tasks.setdefault(rid, set()).update(
+            set(req.get("cost_by_task") or {}) | set(req.get("cost_items") or {}))
+        self._seed_cost(rid, req)
         budget, _ = self._research_budget(rid, req, plan)
         steps = [f"{step['id']}·{step['agent_id']}: {short(' '.join(str(step['instruction']).split()), 40)}"
                  for step in plan["steps"]]
