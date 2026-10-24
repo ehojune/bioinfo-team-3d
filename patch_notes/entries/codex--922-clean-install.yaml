@@ -1,5 +1,9 @@
 pr: 925
 rows:
+- sha: b909a10
+  at: '2026-10-24 11:06'
+  summary: 기록·진단 오류를 실제 설치 실패와 분리합니다.
+  text: 실패 command의 원인을 log·receipt 쓰기나 진단 중단이 덮어쓰지 않도록 기록 계층에서 분리했다. 기록 회귀 11 failed·진단 중단 2 failed를 수정하고 관련 71 passed 및 Windows 새 설치 전체 PASS를 확인했다.
 - sha: 865a75e
   at: '2026-10-24 10:56'
   summary: 강제 종료 중단 검증과 manual 소유권을 기록합니다.
