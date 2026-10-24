@@ -67,6 +67,8 @@ class Projection(unittest.TestCase):
         self.assertFalse(projection()(h, 'r', 123.5)['complete'])
         h.rows['t'] = ['invalid']
         self.assertIn('task_ledger_row_invalid', projection()(h, 'r', 123.5)['problems'])
+        h.reservations = []
+        self.assertIn('translation_reservation_invalid', projection()(h, 'r', 123.5)['problems'])
 
     def test_all_kinds_and_retries_not_collapsed(self):
         rows = {str(n): row(str(n), kind, n + 1) for n, kind in enumerate(

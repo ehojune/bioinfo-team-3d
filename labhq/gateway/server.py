@@ -4130,7 +4130,9 @@ class Hub:
 
         accounting = {key: cost_map(key) for key in ("cost_items", "cost_by_task", "budget_holds")}
         reservations = {}
-        reservation_rows = self.store.get("pi_translation_reservations", rid) or {}
+        reservation_rows = self.store.get("pi_translation_reservations", rid)
+        if reservation_rows is None:
+            reservation_rows = {}
         if not isinstance(reservation_rows, dict):
             problems.append("translation_reservation_invalid")
             reservation_rows = {}

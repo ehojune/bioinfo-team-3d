@@ -80,6 +80,12 @@ async def test_orphan_reservation_survives_and_blocks_cap(hub, monkeypatch):
     assert hub.orchestrator._budget_bound('r', 1.05)[2] == pytest.approx(1.05)
 
 
+@pytest.mark.parametrize('raw', [[], ['invalid'], 'invalid', 0])
+def test_invalid_translation_ledger_blocks_admission(hub, raw):
+    hub.store.put('pi_translation_reservations', 'r', raw)
+    assert hub.orchestrator._budget_bound('r', 5)[2] == float('inf')
+
+
 @pytest.mark.asyncio
 async def test_interpreter_receives_tool_error_evidence(hub, monkeypatch):
     calls = mock_model(monkeypatch, hub)
