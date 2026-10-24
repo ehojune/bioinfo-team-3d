@@ -36,6 +36,9 @@ class RecoveredHub(Hub):
                 assert kind == 'task'
                 return {'durable-converter': self.entry}
             def get(_self, kind, key):
+                if kind == 'pi_translation_reservations':
+                    assert key == 'r'
+                    return {}
                 assert kind == 'step_checkpoint'
                 return None
         self.store = Store()

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -12,7 +13,10 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
+from contextvars import ContextVar
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -29,6 +33,76 @@ class CheckFailure(RuntimeError):
 
 
 _RESERVED_PORTS = {8787, 55921}  # PI instance and its runner; clean-install must never borrow them
+_RECEIPT: ContextVar = ContextVar("clean_install_receipt", default=None)
+_RECEIPT_REPLACE_RETRY = os.name == "nt"
+
+
+class Receipt:
+    """Local evidence only: commands and logs can contain absolute paths."""
+
+    def __init__(self, path: Path, root: Path):
+        self.path = path
+        self.root = root
+        self.data = {"schema_version": 1, "status": "RUNNING", "work_dir": str(root),
+                     "started_at": datetime.now(timezone.utc).isoformat(), "steps": []}
+        self.write()
+
+    def write(self):
+        payload = json.dumps(self.data, ensure_ascii=False, indent=2) + "\n"
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n", delete=False,
+                                             prefix=".labhq-receipt-", suffix=".tmp", dir=self.path.parent) as stream:
+                temporary = Path(stream.name)
+                stream.write(payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+            # Match labhq.util.replace_file without importing the package before installation.
+            for attempt in range(20):
+                try:
+                    os.replace(temporary, self.path)
+                    break
+                except PermissionError:
+                    if not _RECEIPT_REPLACE_RETRY or attempt == 19:
+                        raise
+                    time.sleep(0.05)
+        finally:
+            if temporary is not None:
+                active_error = sys.exc_info()[0] is not None
+                try:
+                    temporary.unlink(missing_ok=True)
+                except BaseException:
+                    if not active_error:
+                        raise
+
+    def record(self, stage, status, *, stdout=None, stderr=None, **facts):
+        row = {"stage": stage, "status": status, **facts}
+        index = len(self.data["steps"]) + 1
+        self.data["steps"].append(row)
+        for name, value in (("stdout", stdout), ("stderr", stderr)):
+            if value is not None:
+                path = self.root / "logs" / f"{index:02d}.{name}.log"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                if isinstance(value, bytes):
+                    value = value.decode("utf-8", errors="replace")
+                path.write_text(value, encoding="utf-8")
+                row[name] = str(path.relative_to(self.root))
+        self.write()
+
+
+def _record(stage, status, **facts):
+    receipt = _RECEIPT.get()
+    if receipt is not None:
+        try:
+            receipt.record(stage, status, **facts)
+        except BaseException as exc:
+            detail = _one_line(str(exc) or type(exc).__name__)
+            receipt.data.setdefault("evidence_errors", []).append({"stage": stage, "detail": detail})
+            if status != "FAIL":
+                if not isinstance(exc, Exception):
+                    raise
+                raise CheckFailure(stage, "증거 기록 실패: " + detail) from None
 
 
 def _one_line(value: object, limit: int = 500) -> str:
@@ -39,13 +113,14 @@ def _one_line(value: object, limit: int = 500) -> str:
 
 def _run(
     stage: str,
-    command: list[str],
+    command: list[str] | str,
     *,
     cwd: Path,
     env: dict[str, str],
     input_text: str | None = None,
     timeout: float = 600,
 ) -> str:
+    began = time.monotonic()
     try:
         done = subprocess.run(
             command,
@@ -53,7 +128,7 @@ def _run(
             env=env,
             input=input_text,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
             errors="replace",
@@ -61,15 +136,22 @@ def _run(
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        detail = getattr(exc, "stdout", None) or str(exc)
+        _record(stage, "FAIL", command=command, cwd=str(cwd),
+                stdout=getattr(exc, "stdout", None) or "", stderr=getattr(exc, "stderr", None) or str(exc),
+                elapsed_seconds=round(time.monotonic() - began, 3), error=type(exc).__name__)
+        detail = getattr(exc, "stderr", None) or getattr(exc, "stdout", None) or str(exc)
         raise CheckFailure(stage, _one_line(detail)) from None
+    _record(stage, "FAIL" if done.returncode else "PASS", command=command, cwd=str(cwd),
+            stdout=done.stdout, stderr=done.stderr, returncode=done.returncode,
+            elapsed_seconds=round(time.monotonic() - began, 3))
     if done.returncode:
-        raise CheckFailure(stage, f"exit {done.returncode}: {_one_line(done.stdout)}")
+        raise CheckFailure(stage, f"exit {done.returncode}: {_one_line(done.stderr or done.stdout)}")
     print(f"PASS {stage}")
     return done.stdout
 
 
 def _expect(stage: str, condition: bool, detail: str) -> None:
+    _record(stage, "PASS" if condition else "FAIL", detail="" if condition else detail)
     if not condition:
         raise CheckFailure(stage, detail)
     print(f"PASS {stage}")
@@ -167,7 +249,10 @@ def _start_services(root: Path, checkout: Path, env: dict[str, str]) -> None:
         try:
             facts = _startup_journal(root / "state/gateway/logs/detached-launch.jsonl")
             print("STARTUP_DIAGNOSTIC " + json.dumps(facts, ensure_ascii=True), file=sys.stderr)
-        except Exception:
+        except BaseException as exc:
+            receipt = _RECEIPT.get()
+            if receipt is not None:
+                receipt.data["startup_diagnostic_error"] = _one_line(str(exc) or type(exc).__name__)
             pass  # Diagnostics must never replace the actual startup failure.
         raise
 
@@ -181,9 +266,13 @@ def _free_port() -> int:
             return port
 
 
-def _labhq_command(checkout: Path, *args: str) -> list[str]:
+def _labhq_command(checkout: Path, *args: str) -> list[str] | str:
     if os.name == "nt":
-        return [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/c", str(checkout / "labhq.cmd"), *args]
+        # cmd /s needs one outer quote pair around the quoted batch path and its arguments.
+        # Passing that as a list would add MSVC backslash escapes before cmd sees it.
+        shell = subprocess.list2cmdline([os.environ.get("COMSPEC", "cmd.exe")])
+        command = f'"{checkout / "labhq.cmd"}" {subprocess.list2cmdline(list(args))}'
+        return f'{shell} /d /s /v:off /c "{command}"'
     return [str(checkout / "labhq.sh"), *args]
 
 
@@ -259,6 +348,16 @@ def _isolated_env(root: Path, checkout: Path) -> dict[str, str]:
     scratch = root / "tmp"
     scratch.mkdir()
     env = os.environ.copy()
+    for name in list(env):
+        upper = name.upper()
+        if (upper.startswith(("LABHQ_", "GIT_")) and not upper.startswith("LABHQ_TEST_")) or (
+            upper.startswith(("OPENAI_", "ANTHROPIC_", "CODEX_", "CLAUDE_", "GEMINI_", "BIOINFO_", "GH_", "GITHUB_", "PIP_"))
+            or upper.endswith(("_API_KEY", "_TOKEN")) or upper in {
+                "PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY",
+                "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+            }
+        ):
+            env.pop(name)
     env.update(
         {
             "HOME": str(task_home),
@@ -266,6 +365,10 @@ def _isolated_env(root: Path, checkout: Path) -> dict[str, str]:
             "APPDATA": str(task_home / "AppData/Roaming"),
             "LOCALAPPDATA": str(task_home / "AppData/Local"),
             "XDG_CONFIG_HOME": str(task_home / ".config"),
+            "XDG_CACHE_HOME": str(task_home / ".cache"),
+            "XDG_DATA_HOME": str(task_home / ".local/share"),
+            "XDG_STATE_HOME": str(task_home / ".local/state"),
+            "LABHQ_HOME": str(task_home / ".labhq"),
             "CODEX_HOME": str(task_home / ".codex"),
             "CLAUDE_CONFIG_DIR": str(task_home / ".claude"),
             "LABHQ_STATE_DIR": str(root / "state"),
@@ -274,6 +377,10 @@ def _isolated_env(root: Path, checkout: Path) -> dict[str, str]:
             "TMPDIR": str(scratch),
             "PYTHONUTF8": "1",
             "PYTHONIOENCODING": "utf-8",
+            "PYTHONNOUSERSITE": "1",
+            "PIP_CONFIG_FILE": os.devnull,
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
         }
     )
     if os.name == "nt":
@@ -336,37 +443,71 @@ path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encod
     _run("mock 설정", [str(python), "-c", code], cwd=checkout, env=patch_env)
 
 
-def rehearse(source: Path, guard_paths: list[Path]) -> str:
-    source = source.resolve()
-    guards = list(guard_paths)
-    source_config = source / "config/labhq.yaml"
-    if source_config.exists():
-        guards.append(source_config)
-    before = _snapshot(guards)
+def rehearse(source: Path, guard_paths: list[Path], *, work_dir: Path | None = None,
+             receipt_path: Path | None = None) -> str:
+    """An explicit empty work_dir retains the installation and local-only logs."""
+    if work_dir is None:
+        root = Path(tempfile.mkdtemp(prefix="labhq-clean-install-"))
+    else:
+        root = work_dir.resolve()
+        if root.exists() and (not root.is_dir() or any(root.iterdir())):
+            raise CheckFailure("빈 작업 폴더", "--work-dir은 새 폴더 또는 빈 폴더여야 함")
+        root.mkdir(parents=True, exist_ok=True)
+    receipt = Receipt(receipt_path.resolve() if receipt_path else root / "receipt.json", root)
+    context = _RECEIPT.set(receipt)
+    before = None
     started = False
     request_id = ""
 
-    root = Path(tempfile.mkdtemp(prefix="labhq-clean-install-"))
     try:
+        source = source.resolve()
+        guards = list(guard_paths)
+        source_config = source / "config/labhq.yaml"
+        if source_config.exists():
+            guards.append(source_config)
+        try:
+            before = _snapshot(guards)
+        except OSError as exc:
+            raise CheckFailure("보호 경로 snapshot", _one_line(exc)) from None
         checkout = root / "bioinfo-team-3d"
-        clone_env = os.environ.copy()
+        env = _isolated_env(root, checkout)
+        git = shutil.which("git") or "git"
         _run(
             "새 clone",
-            ["git", "clone", "--local", "--no-hardlinks", str(source), str(checkout)],
+            [git, "clone", "--local", "--no-hardlinks", str(source), str(checkout)],
             cwd=root,
-            env=clone_env,
+            env=env,
         )
-        source_head = _run("source HEAD", ["git", "rev-parse", "HEAD"], cwd=source, env=clone_env).strip()
-        clone_head = _run("clone HEAD", ["git", "rev-parse", "HEAD"], cwd=checkout, env=clone_env).strip()
+        source_head = _run("source HEAD", [git, "rev-parse", "HEAD"], cwd=source, env=env).strip()
+        clone_head = _run("clone HEAD", [git, "rev-parse", "HEAD"], cwd=checkout, env=env).strip()
         _expect("현재 HEAD clone", source_head == clone_head, f"source {source_head[:12]} != clone {clone_head[:12]}")
+        _run("AGENTS hooks", [git, "config", "core.hooksPath", ".githooks"], cwd=checkout, env=env)
+
+        launcher = shutil.which("py" if os.name == "nt" else "python3") or sys.executable
+        create_venv = [launcher, "-3", "-m", "venv", ".venv"] if os.name == "nt" and Path(launcher).stem == "py" else [launcher, "-m", "venv", ".venv"]
+        _run("README venv", create_venv, cwd=checkout, env=env)
+        python = _venv_python(checkout)
+        _run("README install", [str(python), "-m", "pip", "install", "-e", ".[dev]"], cwd=checkout, env=env)
+        _run("README CLI help", _labhq_command(checkout, "--help"), cwd=checkout, env=env)
+        version = _run("Python version", [str(python), "--version"], cwd=checkout, env=env).strip()
+        freeze = _run("의존성 판본", [str(python), "-m", "pip", "freeze", "--all"], cwd=checkout, env=env)
+        (root / "requirements.freeze.txt").write_text(freeze, encoding="utf-8")
+        receipt.data.update(source_commit=source_head, python=version, dependencies=freeze.splitlines(),
+                            isolation={name: env[name] for name in ("HOME", "LABHQ_HOME", "LABHQ_STATE_DIR",
+                                       "CODEX_HOME", "CLAUDE_CONFIG_DIR", "TEMP")})
+        receipt.write()
+        _record("사람 인증·실제 모델", "SKIP", detail="직원 CLI 설치·로그인과 실제 모델 호출은 사람이 별도로 확인")
+        print("SKIP 사람 인증·실제 모델: mock만 실행")
 
         # The former editable install read these files from the checkout, so it could not detect wheel omissions.
         wheel_dir = root / "wheel"
         wheel_dir.mkdir()
-        _run("wheel build", [sys.executable, "-m", "pip", "wheel", ".", "--no-deps", "-w", str(wheel_dir)],
-             cwd=checkout, env=clone_env)
+        _run("wheel build", [str(python), "-m", "pip", "wheel", ".", "--no-deps", "-w", str(wheel_dir)],
+             cwd=checkout, env=env)
         wheel = next(wheel_dir.glob("labhq-*.whl"), None)
         _expect("wheel 생성", wheel is not None, "labhq wheel 없음")
+        receipt.data["wheel_sha256"] = hashlib.sha256(wheel.read_bytes()).hexdigest()
+        receipt.write()
         with zipfile.ZipFile(wheel) as archive:
             wheel_files = set(archive.namelist())
         required_plugin_files = {
@@ -377,17 +518,6 @@ def rehearse(source: Path, guard_paths: list[Path]) -> str:
         missing_plugin_files = sorted(required_plugin_files - wheel_files)
         _expect("wheel bundled plugin", not missing_plugin_files,
                 "누락: " + ", ".join(missing_plugin_files))
-
-        create_venv = ["py", "-3", "-m", "venv", ".venv"] if os.name == "nt" else ["python3", "-m", "venv", ".venv"]
-        _run("README venv", create_venv, cwd=checkout, env=clone_env)
-        python = _venv_python(checkout)
-        env = _isolated_env(root, checkout)
-        _run(
-            "README install",
-            [str(python), "-m", "pip", "install", "-e", ".[dev]"],
-            cwd=checkout,
-            env=env,
-        )
 
         try:
             init_output = _run(
@@ -412,8 +542,8 @@ def rehearse(source: Path, guard_paths: list[Path]) -> str:
             _expect("doctor fail 0", " fail " not in doctor, "doctor에 fail 항목 있음")
             _expect("doctor 실행 준비", "실행 준비: 예" in doctor, "실행 준비가 아님")
 
-            _start_services(root, checkout, env)
             started = True
+            _start_services(root, checkout, env)
             sent = _run(
                 "공개 데이터 형태 mock 요청",
                 _labhq_command(
@@ -458,28 +588,71 @@ def rehearse(source: Path, guard_paths: list[Path]) -> str:
             started = False
         finally:
             if started:
-                subprocess.run(
-                    _labhq_command(checkout, "-c", "config/labhq.yaml", "down", "--force"),
-                    cwd=checkout,
-                    env=env,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    timeout=30,
-                    check=False,
-                )
+                # up can fail after spawning one service; cleanup also covers that partial start.
+                active_error = sys.exc_info()[0] is not None
+                try:
+                    names = _launch_process_names(root / "state/gateway")
+                    _run("실패 뒤 강제 종료", _labhq_command(checkout, "-c", "config/labhq.yaml", "down", "--force"),
+                         cwd=checkout, env=env, timeout=120)
+                    remaining = _venv_python_processes(checkout, names)
+                    _expect("실패 뒤 자식 종료", not remaining, ", ".join(remaining))
+                except BaseException as exc:
+                    receipt.data["service_cleanup_error"] = _one_line(str(exc) or type(exc).__name__)
+                    if not active_error:
+                        raise
+    except BaseException as exc:
+        default_stage = "내부 오류" if isinstance(exc, Exception) else type(exc).__name__
+        receipt.data.update(status="FAIL", failure_stage=getattr(exc, "stage", default_stage),
+                            detail=_one_line(str(exc) or type(exc).__name__))
+        raise
     finally:
-        # Preserve an actionable stage failure (especially the remaining process names) if that same process also
-        # keeps Windows from deleting its loaded modules. With no prior failure, cleanup errors still fail the check.
         active_error = sys.exc_info()[0] is not None
         try:
-            shutil.rmtree(root)
-        except OSError:
-            if not active_error:
+            if before is not None:
+                after = _snapshot(list(before))
+                changed = [str(path) for path, value in before.items() if after[path] != value]
+                _expect("보호 경로 mtime", not changed, "mtime 변경: " + ", ".join(changed))
+        except BaseException as exc:
+            if active_error:
+                receipt.data["guard_error"] = _one_line(str(exc) or type(exc).__name__)
+            else:
+                receipt.data.update(status="FAIL", failure_stage=getattr(exc, "stage", "보호 경로"),
+                                    detail=_one_line(str(exc) or type(exc).__name__))
+                active_error = True
                 raise
-
-    after = _snapshot(list(before))
-    changed = [str(path) for path, value in before.items() if after[path] != value]
-    _expect("보호 경로 mtime", not changed, "mtime 변경: " + ", ".join(changed))
+        finally:
+            try:
+                if work_dir is None:
+                    try:
+                        shutil.rmtree(root)
+                    except BaseException as exc:
+                        receipt.data["cleanup_error"] = _one_line(str(exc) or type(exc).__name__)
+                        if not active_error:
+                            receipt.data.update(status="FAIL", failure_stage="임시 폴더 정리",
+                                                detail=_one_line(str(exc) or type(exc).__name__))
+                            if isinstance(exc, OSError):
+                                raise CheckFailure("임시 폴더 정리", _one_line(exc)) from None
+                            raise
+            finally:
+                pending_error = sys.exc_info()[1]
+                active_error = active_error or pending_error is not None
+                if receipt.data["status"] == "RUNNING":
+                    if active_error:
+                        label = type(pending_error).__name__ if pending_error is not None else "finalization"
+                        receipt.data.update(status="FAIL", failure_stage=label,
+                                            detail=_one_line(str(pending_error) or label))
+                    else:
+                        receipt.data.update(status="PASS", request_id=request_id)
+                receipt.data["finished_at"] = datetime.now(timezone.utc).isoformat()
+                try:
+                    # Do not recreate the automatically removed scratch tree for its default receipt.
+                    if work_dir is not None or root.exists() or not receipt.path.is_relative_to(root):
+                        receipt.write()
+                except BaseException:
+                    if not active_error:
+                        raise
+                finally:
+                    _RECEIPT.reset(context)
     return request_id
 
 
@@ -487,9 +660,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--guard-path", action="append", default=[], type=Path)
+    parser.add_argument("--work-dir", type=Path, help="새/빈 폴더; 설치판·분리 stdout/stderr를 보존 (로컬 전용)")
+    parser.add_argument("--receipt", type=Path, help="PASS/FAIL/SKIP JSON 경로 (로컬 전용)")
     args = parser.parse_args(argv)
     try:
-        request_id = rehearse(args.source, args.guard_path)
+        request_id = rehearse(args.source, args.guard_path, work_dir=args.work_dir, receipt_path=args.receipt)
     except CheckFailure as exc:
         print(f"FAIL {exc.stage}: {_one_line(exc.detail)}", file=sys.stderr)
         return 1

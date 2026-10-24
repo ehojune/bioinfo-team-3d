@@ -61,6 +61,21 @@ def answer(text="Cohort A had more donors", session="cso-2", ok=True, error=None
 
 
 @pytest.mark.asyncio
+async def test_followup_restores_durable_cost_ids_with_aggregate():
+    async def reply(task):
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                          text='Compared cohorts', cost_usd=0.02)
+    hub = FakeHub(reply, resume=False)
+    hub.requests['r'].update(cost_by_task={'old': 1.5},
+        cost_items={'old': {'status': 'actual', 'usd': 1.5}})
+    hub.ask('Why cohort A?')
+    orchestrator = Orchestrator(hub)
+    await orchestrator.run_followup('r', 'fu_1')
+    assert 'old' in orchestrator.cost_tasks['r']
+    assert orchestrator.cost['r'] == pytest.approx(1.52)
+
+
+@pytest.mark.asyncio
 async def test_followup_resumes_session_with_a_fresh_writable_answer_workspace():
     hub = FakeHub(answer())
     hub.ask("Why cohort A?")
