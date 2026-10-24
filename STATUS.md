@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# 예산 카드: 증액 한 번으로 끝나게 (#940)
+
+- 시험 ② 8차·9차가 모두 예산 카드 두 장으로 끝났다(9차: 21:04:46 첫 카드 승인 → 곧바로 두 번째 카드 → 취소, 비용 $2.88).
+- 원인 1: 승인한 새 상한이 `max(limit*2, bound + needed)`였다. 첫 카드의 `needed=0`이면 새 상한이 정확히 지금 묶인 금액이라, 다음 task가 예약(`per_task_usd`)을 잡는 순간 다시 초과했다. 보내기 전 예약을 켠 요청은 이제 `bound + max(needed, 다음 task 예약)`을 쓴다. 카드 문구의 "승인하면 상한을 $X로"도 같은 값이다. 예약을 끈 요청은 그대로다.
+- 원인 2: 취소된 요청의 PI 번역 task 2건이 `outcome_unknown`으로 남아 건당 $10(`per_task_usd`)씩 묶었다. `_dispatch_held`가 번역의 예약 상한(ceiling $0.05)이 일반 예약보다 클 때만 더했다. 이제 일반 예약을 번역의 ceiling으로 바꿔 계산한다(위·아래 모두).
+- 9차 DB(`req_a81a64ab29`, 읽기 전용): 번역 18건은 모두 "번역 못 함"이고, `outcome_unknown` 2건의 모델이 claude-opus-5-5로 기록됐다. 같은 요청의 정상 번역은 haiku다. unknown 건의 모델 칸이 직원 기본 모델로 채워진 것으로 보이지만 확정하지 못했다. unknown의 원인(시간 초과·취소·결과 누락)도 이 기록으로는 확정할 수 없다.
+- 테스트 `tests/test_budget_headroom_940.py` 5건(수정 전에는 4건 중 3건이 실패). 관련 441건 통과. 실제 요청·전체 suite·Windows CI는 미확인.
+
 @codex-tech-lead #929 병합 뒤 #930 branch에 최신 main을 통합했습니다.
 
 - 보존 clone/venv `a5fd6bed`·Python 3.14.7에서 gateway·runner 강제 종료 복구 각 1회 PASS. 설정·freeze hash는 W2 인계와 일치합니다.

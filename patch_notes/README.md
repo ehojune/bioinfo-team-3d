@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 22:00 | [`6f0b71d`](https://github.com/ehojune/bioinfo-team-3d/pull/941/commits/6f0b71d) | **작업당 상한을 끈 설정에서는 증액 승인 금액이 예전과 같게 유지됩니다.**<br>per_task_usd가 0이면 승인 상한에 다음 작업 예약 몫을 더하지 않는다(요청 상한이 예약이 되어 올릴 때마다 커지는 경우, |
+| 21:40 | [`f123583`](https://github.com/ehojune/bioinfo-team-3d/pull/941/commits/f123583) | **새 테스트를 자동 검사 목록에 등록했습니다.**<br>새 테스트 파일을 Windows 검사 inventory에 등록한다(#940). |
+| 21:09 | [`d5cfba7`](https://github.com/ehojune/bioinfo-team-3d/pull/941/commits/d5cfba7) | **예산 증액을 한 번 승인하면 곧바로 두 번째 카드가 뜨지 않게 하고, 번역 작업의 비용 모름이 큰 금액을 묶지 않게 했습니다.**<br>예산 카드가 승인하는 상한에 다음 작업 예약 한 건 몫을 두고(보내기 전 예약 사용 시), 비용 모름 PI 번역 task는 자기 예약 상한만 묶는다(#940). |
 | 19:00 | [`07279b7`](https://github.com/ehojune/bioinfo-team-3d/commit/07279b7) | **bash &lt;&lt;EOF 처럼 셸에 넘기는 heredoc 안의 백그라운드 실행도 정책에서 거절합니다. python·cat에 넘기는 데이터 heredoc은 그대로 둡니다.**<br>로컬 job 리뷰 반영 5: sh·bash로 넘기는 heredoc 안의 떼어 내기도 거절 (#675 리뷰 P1) |
 | 18:40 | [`e611086`](https://github.com/ehojune/bioinfo-team-3d/commit/e611086) | **취소 때 프로세스를 다 끝내지 못해도 runner가 계속 다시 시도하며(재시작 뒤에도), 오프라인 runner에 대한 취소가 48시간 뒤 사라지지 않습니다.**<br>로컬 job 리뷰 반영 4: 종료에 실패한 취소는 row에 남겨 watcher가 다시 끝내고, 취소 보관을 job 최대 수명(7일)보다 길게 (#675 리뷰 P1) |
 | 18:35 | [`60bc4a5`](https://github.com/ehojune/bioinfo-team-3d/pull/930/commits/60bc4a5) | **같은 설치판에서 gateway와 runner 강제 종료 복구를 확인했습니다.**<br>W2 보존 clone과 venv의 두 case가 승인 1회·완료 단계 재실행 0·task 중복 0·비용 원장 일치·contract 보존·잔류 0으로 통과했다. 최신 main 통합 뒤 관련 회귀 46 passed. 실제 연구와 독립 hard-stop은 미검증이다. |
