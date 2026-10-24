@@ -26,6 +26,13 @@ contained runtime 확인(`doctor --runtime`의 `contained_verified`)이 owner re
 
 🤖 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 
+## #675 긴 계산을 로컬 job으로 (base a94c11d8)
+
+- 바꾼 것: `labhq_job` MCP(`labhq/tools/local_job_mcp.py`: `job_submit`·`job_status`·`job_list`·`job_cancel`), runner broker `/localjobs/{op}`, `labhq/runner/local_jobs.py`(wrapper가 종료 코드를 `exit` 파일에 남기고 pid+생성 시각으로 식별, 로그는 runner 상태 폴더), `daemon.py`의 `_on_local_job`·`_submit_local_job`·`_end_local_job`·`_cancel_local_jobs`. 명령은 runner가 `evaluate_tool`(승인 gate 규칙)로 직접 판정하고 ask면 같은 `tool_permission` 카드를 연다. job은 기존 `self.jobs` 행·`_poll_jobs`·`jobs.finished` 경로를 써서 HPC job처럼 단계를 대기시키고 깨운다(HPC watcher와 별도의 로컬 watcher가 첫 job부터 돈다. `scheduler: none`일 때 HPC watcher를 예약하지 않는 기존 계약(`test_scheduler_none`)은 그대로). `task.cancel`·새 메시지 `task.jobs_cancel`(gateway `cancel_request`가 대기 중인 단계에 보냄)로 프로세스 트리를 끝내고 단계를 깨우지 않는다. runner 재시작 뒤에는 pid+생성 시각이 같으면 이어받고 `exit` 파일이 있으면 그 결과를 읽는다.
+- 떼어 내기 거절: `labhq/detached_command.py`(`nohup`·뒤쪽 `&`·`setsid`·`disown`·PowerShell `Start-Process`(-Wait/-Verb 없이)·`Start-Job`)를 `evaluate_tool`이 카드 없이 deny하며 `job_submit`을 안내한다. 직원 규칙 문구와 Codex 도구 승인 목록에 `labhq_job` 추가, analyst·bioinfo-agent(Claude 직원)에 `job` 부여(Codex 직원은 OS sandbox 밖에서 도는 job이라 거절), manual 갱신.
+- 검사: 새 test 14+35건(실제 프로세스 사용: 제출·완료·실패·취소 시 잔류 0·재시작 이어받기·exit 파일·broker 토큰·gateway 취소 전달·떼어 내기 거절), 수정 전엔 새 모듈이 없어 수집 실패. 관련 4300건대 통과(테스트가 고정한 `bioinfo-agent` builtin 목록은 `job` 추가를 반영).
+- 한계: WSL runner는 범위 밖. Claude가 미리 허용한 셸 명령(예: `python *`)은 gate를 거치지 않아 `&` 거절이 모든 경우를 막지는 못한다. runner를 끄면 job은 계속 돌고 다시 켜야 이어받는다(안 켜면 남음). runner가 없는 사이의 request 취소는 job에 전달되지 않는다. 진행률의 작업판 표시는 job 상태 이벤트(`job.submitted`·`job.state`)까지이고 별도 단계 흐름 줄은 만들지 않았다. 실제 모델이 도구를 쓰는지는 확인하지 않았다.
+
 #922 설치 검사기 manual의 보존 옵션 안내를 보충합니다. #925는 이미 병합됐으나 이 단락은 예전 문구가 남아 있어 후속 수정합니다.
 
 - 기본 호출의 자동 삭제, `--work-dir`·`--receipt`, 설치판·분리 로그·JSON의 로컬 전용 증거 경계를 한 단락에 반영했습니다. 나머지 manual은 변경하지 않았습니다.
