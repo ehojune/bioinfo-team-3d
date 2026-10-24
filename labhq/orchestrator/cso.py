@@ -3452,8 +3452,7 @@ class Orchestrator:
                           "agent_overrides": dict(READ_ONLY_OVERRIDES),
                           "upstream_dirs": list(dict.fromkeys([*outputs, *([workdir] if workdir else [])])),
                           **({"source_workdir": workdir} if workdir else {}), **pin})
-        self.cost[rid] = max(self.cost.get(rid, 0.0), float(req.get("cost_usd") or 0))
-        self._seed_cost(rid, req)
+        self._restore_cost_cache(rid)
         try:
             result = await self.run_step(task)
         except ShutdownInterrupted as error:
@@ -3526,6 +3525,14 @@ class Orchestrator:
         req = self.hub.requests.get(rid) or {}
         for tid in set(req.get("cost_items") or {}) | set(req.get("cost_by_task") or {}):
             self._count_cost(rid, tid)
+
+    def _restore_cost_cache(self, rid: str) -> None:
+        """Restore aggregate and its task identities together, without adding them twice."""
+        req = self.hub.requests.get(rid) or {}
+        self.cost[rid] = max(self.cost.get(rid, 0.0), float(req.get("cost_usd") or 0))
+        self.cost_tasks.setdefault(rid, set()).update(
+            set(req.get("cost_by_task") or {}) | set(req.get("cost_items") or {}))
+        self._seed_cost(rid, req)
 
     # ---------- one agent step, including HPC hibernate/wake cycles ----------
     def _with_research_round(self, task: Task) -> Task:
@@ -4278,7 +4285,7 @@ class Orchestrator:
             return None
         # A restarted gateway has an empty ledger: seed the stored cost as run_request does, so the cap shown here
         # is the cap CP1 will enforce (#654 review).
-        self.cost[rid] = max(self.cost.get(rid, 0.0), float(req.get("cost_usd") or 0))
+        self._restore_cost_cache(rid)
         budget, _ = self._research_budget(rid, req, plan)
         steps = [f"{step['id']}·{step['agent_id']}: {short(' '.join(str(step['instruction']).split()), 40)}"
                  for step in plan["steps"]]
@@ -4333,18 +4340,19 @@ class Orchestrator:
         return float(per_task) if per_task and per_task > 0 else float(limit)
 
     def _diagnosis_budget_available(self, rid: str) -> bool:
-        """Optional diagnosis never opens a budget card; include durable costs before restart recovery seeds them."""
+        """Optional diagnosis never opens a budget card; include durable costs and dispatch holds."""
         req = self.hub.requests.get(rid, {})
         limit = req.get("budget_usd") or self.hub.s.policy.budget.per_request_usd
         if rid in self.budget_denials:
             return False
         if not limit:
             return True
+        self._restore_cost_cache(rid)
         unknown = {tid for tid, item in (req.get("cost_items") or {}).items() if item.get("status") == "unknown"}
         unknown.update(self.cost_unknown.get(rid) or ())
         count = max(len(unknown), int(req.get("cost_known") is False))
         spent = max(self.cost.get(rid, 0), float(req.get("cost_usd") or 0))
-        return spent + count * self._unknown_reserve(limit) < limit
+        return spent + count * self._unknown_reserve(limit) + self._dispatch_held(rid, limit) < limit
 
     def _optional_turn_budget_available(self, rid: str) -> bool:
         """A nonessential normal turn runs only when one conservative task reservation fits under the request cap."""
@@ -4377,8 +4385,44 @@ class Orchestrator:
         # so no caller can see the hold gone before its cost is in the bound.
         req = self.hub.requests.get(rid) or {}
         settled = self.cost_tasks.get(rid, set())
+        holds = dict(req.get("budget_holds") or {})
+        store = getattr(self.hub, "store", None)
+        reservations = store.get("pi_translation_reservations", rid) if store else None
+        if reservations is None:
+            reservations = {}
+        if not isinstance(reservations, dict):
+            return float("inf")
+        translation_unknown_extra = 0.0
+        for key, row in reservations.items():
+            if not isinstance(row, dict) or row.get("request_id") != rid:
+                return float("inf")
+            tid, ceiling = row.get("task_id"), row.get("ceiling_usd")
+            valid = (isinstance(tid, str) and 0 < len(tid) <= 128
+                     and tid == key == row.get("reservation_id") and row.get("source") == "pi_translation"
+                     and row.get("state") == "reserved" and type(row.get("attempt")) is int
+                     and row["attempt"] == 1 and isinstance(row.get("agent_id"), str) and row["agent_id"]
+                     and _usd_amount(ceiling))
+            if not valid:
+                return float("inf")
+            entry = store.get("task", tid)
+            if entry is not None:
+                payload = entry.get("payload") if isinstance(entry, dict) else None
+                valid = valid and (isinstance(payload, dict) and entry.get("request_id") == rid
+                    and entry.get("kind") == "pi_interpretation" and type(entry.get("attempt")) is int
+                    and entry["attempt"] == row["attempt"]
+                    and payload.get("id") == tid and payload.get("request_id") == rid
+                    and payload.get("agent_id") == row["agent_id"]
+                    and _usd_amount(payload.get("budget_usd")) and payload["budget_usd"] == ceiling)
+            if not valid or (tid in holds and holds[tid] != ceiling):
+                # Conflicting provenance cannot admit another paid call.
+                return float("inf")
+            holds[tid] = ceiling
+            if tid in settled and tid in self.cost_unknown.get(rid, set()):
+                # _budget_bound already includes the generic unknown reserve. Retain
+                # the remainder when this translation's durable ceiling was larger.
+                translation_unknown_extra += max(0.0, ceiling - self._unknown_reserve(limit))
         return sum(amount if _usd_amount(amount) else self._unknown_reserve(limit)
-                   for tid, amount in (req.get("budget_holds") or {}).items() if tid not in settled)
+                   for tid, amount in holds.items() if tid not in settled) + translation_unknown_extra
 
     def _prune_dispatch_holds(self, rid: str) -> None:
         req = self.hub.requests.get(rid) or {}

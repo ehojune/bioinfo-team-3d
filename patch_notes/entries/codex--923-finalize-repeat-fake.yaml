@@ -1,0 +1,14 @@
+pr: 929
+rows:
+- sha: 2379e8c
+  at: '2026-10-24 16:36'
+  summary: 새 설치 Python 판본을 receipt의 3.14.7로 맞춥니다.
+  text: py -3가 선택한 실제 설치 interpreter를 검증 문서에 반영한다. Refs #923.
+- sha: 7108a49
+  at: '2026-10-24 16:35'
+  summary: 공백 Windows 경로의 새 설치와 동일 fake 2회 PASS를 기록합니다.
+  text: main 통합판의 shutdown Audit 0·잔류 자식 0과 관련 회귀 75 passed 근거를 남기고 동일 clone/venv를 복구 검증에 보존한다. Refs #923.
+- sha: 433754e
+  at: '2026-10-24 10:08'
+  summary: fake service 종료 뒤에도 외부 연결·자식 명령의 Audit를 성공 조건으로 검사합니다.
+  text: 종료 뒤 counter를 개별 boundary receipt에 보존하고 회귀 검사에서 대조한다. Refs #923.

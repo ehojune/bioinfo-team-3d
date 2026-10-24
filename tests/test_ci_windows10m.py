@@ -21,16 +21,16 @@ def test_clean_install_diagnostics_is_reviewed_inventory_without_new_native_coho
     assert not any(fnmatchcase(path, pattern) for pattern in data['boundary_cohorts'])
 
 
-def test_routine_job_is_ten_minutes_and_has_one_bounded_suite_with_diagnostic_tail():
+def test_routine_job_is_bounded_and_has_one_bounded_suite_with_diagnostic_tail():
     jobs = yaml.safe_load((s.ROOT / cs.WORKFLOW).read_text(encoding='utf-8'))['jobs']
     job = jobs['pytest-windows']
     bound = job['timeout-minutes']
-    assert 'schedule' in bound and 'workflow_dispatch' in bound and '|| 10' in bound
+    assert 'schedule' in bound and 'workflow_dispatch' in bound and '|| 14' in bound
     assert '360' in bound  # Preserve GitHub's previous default for full nightly/manual.
     tests = [x for x in job['steps'] if x.get('run', '').startswith('pytest ')]
     # Two mandatory cold-browser viewports each have a 60 s hard cap; leave native tests and collection room.
     assert len(tests) == 2 and tests[0]['timeout-minutes'] == 3
-    assert '|| 6' in tests[1]['timeout-minutes']
+    assert '|| 9' in tests[1]['timeout-minutes']  # 1.5x the measured worst successful pool step (#931)
     assert '--ci-phase critical' in tests[0]['run'] and '--ci-phase parallel' in tests[1]['run']
     assert all('continue-on-error' not in step for step in tests)
     assert not any('preview' in str(x).lower() for x in job['steps'])

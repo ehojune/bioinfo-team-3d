@@ -4,6 +4,57 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+Closes #938
+
+contained runtime 확인(`doctor --runtime`의 `contained_verified`)이 owner receipt 수명을 발급 후 5400초(90분)로 고정해 15시간 연구 실행(#910 6차)을 막았습니다. 그 상한을 설정값으로 만들었습니다.
+
+- 설정 `runner.contained_max_s`: 기본 5400(기존 동작 유지), 하한 60, 상한 86400. 범위 밖 값은 설정 로드 때 거부합니다. `labhq/runtime_readiness.py`는 `deadline <= issued + contained_max_s`로 검사합니다.
+- 다른 확인 조건(nonce·provenance·config hash·pipe·운영자 pin·owner 응답 마감 일치)은 건드리지 않았습니다.
+- **발급 쪽:** receipt를 발급하는 contained owner는 이 저장소 밖(운영 harness)에 있어 코드로 맞추지 못했습니다. 15시간으로 쓰려면 owner도 같은 값(예: 54000 이상 설정값)으로 발급해야 하고, 아니면 이 검사가 거부합니다.
+- 테스트(`tests/test_contained_readiness.py`): 기본 5400 통과·5401 거부, `contained_max_s=54000`에서 54000 통과·54001 거부, 86401·59·0·-1 설정 거부. 수정 전 코드에서는 54000 경계 테스트가 실패하는 것을 확인했습니다. 같은 파일 56건 통과(로컬, Windows, Python 3.12).
+- 문서: `docs/manual.md` doctor 절, `docs/reference/contained-runtime.md`.
+- 미검증: 실제 15시간 owner·새 설치판·종료 증명. `tests/test_doctor.py::test_doctor_warns_about_parent_session_markers_and_pi_skills`는 이 환경에서 main에서도 실패합니다(무관).
+
+🤖 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+#922 설치 검사기 manual의 보존 옵션 안내를 보충합니다. #925는 이미 병합됐으나 이 단락은 예전 문구가 남아 있어 후속 수정합니다.
+
+- 기본 호출의 자동 삭제, `--work-dir`·`--receipt`, 설치판·분리 로그·JSON의 로컬 전용 증거 경계를 한 단락에 반영했습니다. 나머지 manual은 변경하지 않았습니다.
+- 검증: `git diff --check`, `python scripts/patch_notes.py check`, Git Bash `scripts/check_public.sh` 통과. 실행 코드 변경이 없어 설치 재실행은 하지 않았습니다.
+- manual LF 기준 187,844→188,073자(+229). 최종 head CI·봇 검토 후 병합합니다.
+
+Refs #922, #925.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+Refs #934
+
+통역의 task별 예약을 dispatch 전에 보존하고 request bound와 content-free projection에 포함합니다. 동일 task의 연구 hold와 한 번만 합산하며 orphan 예약은 누락 task로 표시합니다. 기존 aggregate에서 task별 예약을 복원하지 않습니다.
+
+- 관련 회귀: `pytest tests/test_cso.py tests/test_pi_language.py tests/test_task_attempt_projection.py tests/test_resume_cp1_654.py tests/test_followup.py -q` → 409 PASS.
+- `scripts/check_public.sh` PASS. CI·봇 review는 PR 최종 head에서 확인합니다.
+- 설치판 반영·통합 재고정은 별도 조정 대상입니다. 실제 최초 취소 분기는 UNVERIFIED입니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+Closes #931
+
+Windows 검사의 병렬 단계가 6분 제한에 반복해서 걸려 무관한 PR(#915·#919·#930)을 막던 문제를 측정에 맞춰 풀었습니다.
+
+| 측정 (최근 test.yml 99 run, pytest-windows) | 값 |
+|---|---|
+| 병렬 단계, 성공 74회 | 중앙값 264초 · p90 319초 · 최댓값 350초 |
+| 6분(360초) 제한에 걸린 실패 | 8회(361·361·367·360·343·367·375초 등, 하나는 1080초) |
+| 성공 job 전체 | 중앙값 378초 · 최댓값 448초, serial critical 최댓값 79초 |
+
+- 병렬 단계 6분→9분(성공 최댓값 350초의 1.5배 이상), job 10분→14분(setup + critical 3 + 병렬 9 + report/upload에 여유). 테스트의 assert·timeout은 그대로입니다.
+- 병렬 단계 시작 시각을 기록하고 `always()` 단계가 소요를 job summary(`### Windows pool step`)에 남깁니다. 성공 시 `summary.json`의 setup/pytest 시간은 기존 그대로입니다.
+- 10분 목표는 `over_ten_minutes`로 계속 잽니다. 제한이 늘어도 느려진 날을 숨기지 않습니다.
+- 정책 고정 테스트 `test_ci_windows10m`·`test_ci_windows_phases`의 6/10을 9/14로 갱신했고 `docs/reference/ci-reuse.md`에 반영했습니다. CI 정책 테스트 526건 통과(로컬).
+- 미검증: 제한을 올린 뒤의 실제 run(이 PR의 CI가 첫 근거), 느려진 근본 원인(Windows runner 변동·WMI/Chrome 시작 지연 가설은 확정하지 못함).
+
+🤖 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
 @codex-tech-lead
 
 # 강제 종료 복구·중단 조건 (#924)
@@ -27,6 +78,19 @@
 - 관련 pytest 29 passed. 실제 gateway/runner 두 실행과 이전 artifact 시각·산출 누락 거부를 포함합니다. 실패 CLI exit 1·`pass=false`, Python 3.10 문법·public·diff 검사 PASS.
 - 초기 CI의 binary log 인자·Windows inventory 실패를 고쳤습니다. 새 module 전체를 Windows 필수 cohort로 등록했고 encoding·CI policy 관련 pytest 79 passed입니다.
 - 상세: [검증 계약](../reference/repeat-fake-923.md). README·manual·제품 코드는 수정하지 않았습니다. 실제 모델·외부 HTTP·HPC·B/c3·provider billing·독립 hard-stop 집행은 미검증입니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+# Windows 새 설치·인증 경계 (#922)
+
+- 설정·API token·Git/pip override를 격리하고 공백 경로의 launcher와 실패 receipt를 고쳤습니다. 단계별 PASS/FAIL/SKIP·분리 로그·설치 commit·의존성 판본을 보존합니다.
+- Windows 공백 경로, 설치 코드 `9c4f0e2d`, Python 3.14.7: 29 PASS·0 FAIL·1 SKIP. Git·pip override를 상속시킨 mock `req_2f80074c0d` verify exit 0, 최종 자식 잔류 0, 보호 경로 mtime 유지.
+- 관련 pytest 83 passed. Python 3.10 문법·public·diff·patch-notes·notes 검사 통과.
+- README 한국어 11,852→12,205자(+353), 영어 17,866→18,156자(+290). [공개 근거](../reference/clean-install-922.md). 상세 receipt·freeze·로그는 로컬 작업 폴더에 보존합니다.
+- 사람 인증·실제 모델은 SKIP. 웹 데모·open·wheel 설치 실행·실제 연구·HPC·B/c3는 미검증입니다. 최종 head CI·봇 검토 뒤 병합합니다.
+- manual은 #922 소유권 지시대로 수정하지 않았고, `docs/manual.md:109`의 보존 옵션 보충 위치를 총괄에게 보고했습니다(W3 소유).
+
+Closes #922
 
 🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 

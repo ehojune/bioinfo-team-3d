@@ -149,12 +149,12 @@ SQLite에 요청·단계·승인을 남겨 중단 지점부터 잇고, 끝나면
 
 ### 1. 먼저 둘러보기 (API 키·클러스터 없이)
 
-```bash
+```powershell
 git clone https://github.com/ehojune/bioinfo-team-3d.git
 cd bioinfo-team-3d
 py -3 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-.\labhq demo --web
+.\labhq.cmd demo --web
 ```
 
 POSIX에서는 `python3 -m venv .venv`, `./.venv/bin/python -m pip install -e ".[dev]"`, `./labhq.sh demo --web`을 씁니다.
@@ -163,14 +163,22 @@ POSIX에서는 `python3 -m venv .venv`, `./.venv/bin/python -m pip install -e ".
 
 ### 2. 설치와 설정
 
-전제: Python 3.10+, Git, 직원 CLI(Claude Code·Codex) 설치·로그인. npm CLI는 Node.js도 필요합니다.
+전제: Python 3.10+와 Git. 위 설치 뒤 `.\labhq.cmd --help`로 CLI를 확인합니다.
 
-```bash
-.\labhq init
-.\labhq -c config\labhq.yaml doctor
+```powershell
+.\labhq.cmd init
+.\labhq.cmd -c config\labhq.yaml doctor
 ```
 
-`init`은 연구 모드(CP1·CP2·분야 pack), 의미 모델 `ab`, 산출 종류 선언을 켠 새 설정을 만듭니다. bioinfo-agent 연결을 찾거나 묻고, HPC·선택형 API 키·개발 기록 저장소도 묻습니다. 기존 설정은 바꾸지 않습니다. `doctor`로 연결·state·port 충돌을 확인합니다. [설치·설정 상세](docs/manual.md)
+`init`은 `config/labhq.yaml`을 만들고 bioinfo-agent·HPC·선택형 API·개발 기록을 묻습니다. 기존 설정은 보존합니다. 실제 요청 전에는 직원 CLI(Claude Code·Codex)를 설치하고 **사람이 로그인**해야 합니다. npm CLI는 Node.js도 필요합니다. 그 뒤 `doctor`의 실행 준비를 확인합니다.
+
+로그인 없이 새 설치를 검사하려면 아래 명령을 씁니다. `..\labhq-clean-check`는 새 폴더나 빈 폴더여야 합니다.
+
+```powershell
+.\.venv\Scripts\python.exe scripts\clean_install_check.py --work-dir ..\labhq-clean-check
+```
+
+단계별 PASS/FAIL과 인증·실제 모델 SKIP은 그 폴더의 `receipt.json`에 남습니다. 설치판·격리 state·stdout/stderr도 보존합니다. [재현 명령·판정](docs/reference/clean-install-922.md) · [설정 상세](docs/manual.md)
 
 ### 3. 띄우기
 

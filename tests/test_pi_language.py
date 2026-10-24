@@ -45,6 +45,162 @@ def mock_model(monkeypatch, hub, text='입력 표를 비교해 차이가 있는�
 
 
 @pytest.mark.asyncio
+async def test_translation_reservation_precedes_dispatch_and_settles_once(hub, monkeypatch):
+    async def dispatch(task):
+        reservation = hub.store.get('pi_translation_reservations', 'r')[task.id]
+        assert reservation['task_id'] == reservation['reservation_id'] == task.id
+        assert reservation['attempt'] == 1 and reservation['source'] == 'pi_translation'
+        assert reservation['ceiling_usd'] == task.budget_usd == 0.05
+        assert hub.requests['r']['budget_holds'] == {}
+        # A duplicate research hold never doubles the same reservation.
+        hub.requests['r']['budget_holds'] = {task.id: 0.05}
+        assert hub.orchestrator._budget_bound('r', 5)[2] == pytest.approx(1.05)
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                          text='입력 표를 확인합니다.', cost_usd=0.02)
+    hub.orchestrator.cost['r'] = 1.0
+    monkeypatch.setattr(hub, 'dispatch', dispatch)
+    await hub.publish(event())
+    await drain(hub)
+    assert hub.orchestrator._budget_bound('r', 5)[2] == pytest.approx(1.02)
+    assert len(hub.store.get('pi_translation_reservations', 'r')) == 1
+
+
+@pytest.mark.asyncio
+async def test_orphan_reservation_survives_and_blocks_cap(hub, monkeypatch):
+    calls = mock_model(monkeypatch, hub)
+    hub.store.put('pi_translation_reservations', 'r', {'orphan': {
+        'reservation_id': 'orphan', 'task_id': 'orphan', 'request_id': 'r',
+        'agent_id': 'chief_of_staff', 'attempt': 1, 'state': 'reserved',
+        'source': 'pi_translation', 'ceiling_usd': 0.05}})
+    hub.requests['r']['budget_usd'] = 1.05
+    hub.orchestrator.cost['r'] = 1.0
+    await hub.publish(event())
+    await drain(hub)
+    assert not calls
+    assert hub.orchestrator._budget_bound('r', 1.05)[2] == pytest.approx(1.05)
+
+
+@pytest.mark.parametrize('raw', [[], ['invalid'], 'invalid', 0])
+def test_invalid_translation_ledger_blocks_admission(hub, raw):
+    hub.store.put('pi_translation_reservations', 'r', raw)
+    assert hub.orchestrator._budget_bound('r', 5)[2] == float('inf')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('seeded_aggregate', [False, True])
+async def test_restart_counts_durable_cost_plus_orphan_before_translation(hub, monkeypatch, seeded_aggregate):
+    calls = mock_model(monkeypatch, hub)
+    hub.requests['r'].update(budget_usd=5, cost_usd=4.94, cost_known=True,
+        cost_items={'old_research': {'status': 'actual', 'usd': 4.94}},
+        cost_by_task={'old_research': 4.94})
+    hub.store.put('pi_translation_reservations', 'r', {'orphan': {
+        'reservation_id': 'orphan', 'task_id': 'orphan', 'request_id': 'r',
+        'agent_id': 'chief_of_staff', 'attempt': 1, 'state': 'reserved',
+        'source': 'pi_translation', 'ceiling_usd': 0.05, 'legacy_reserved_usd': 0}})
+    if seeded_aggregate:
+        hub.orchestrator.cost['r'] = 4.94
+    assert not hub.orchestrator.cost_tasks.get('r')
+    await hub.publish(event())
+    await drain(hub)
+    assert not calls
+    assert hub.orchestrator._budget_bound('r', 5)[2] == pytest.approx(4.99)
+
+
+@pytest.mark.asyncio
+async def test_legacy_translation_total_and_new_orphan_survive_aggregate_write_crash(hub, monkeypatch):
+    calls = mock_model(monkeypatch, hub)
+    hub.s.pi_language.per_request_usd = 0.5
+    hub.s.pi_language.per_message_usd = 0.0625  # exact binary amounts expose the admission boundary
+    hub.store.put('pi_translation_budget', 'r', {'reserved': 0.4375})
+    put = hub.store.put
+    def interrupted(kind, key, value):
+        if kind == 'pi_translation_budget':
+            raise OSError('synthetic crash after task reservation')
+        return put(kind, key, value)
+    monkeypatch.setattr(hub.store, 'put', interrupted)
+    await hub.publish(event())
+    await drain(hub)
+    reservations = hub.store.get('pi_translation_reservations', 'r')
+    assert len(reservations) == 1
+    assert next(iter(reservations.values()))['legacy_reserved_usd'] == 0.4375
+    assert hub.store.get('pi_translation_budget', 'r')['reserved'] == 0.4375
+    monkeypatch.setattr(hub.store, 'put', put)
+    await hub.publish(event(text='Please compare the other input tables before continuing.'))
+    await drain(hub)
+    assert not calls
+    assert len(hub.store.get('pi_translation_reservations', 'r')) == 1
+
+
+@pytest.mark.asyncio
+async def test_translation_hold_blocks_optional_support_without_dispatch_reservation_policy(hub, monkeypatch):
+    from labhq.models import Task
+    from labhq.orchestrator.cso import BudgetExceeded
+    calls = mock_model(monkeypatch, hub)
+    hub.s.policy.budget.reserve_before_dispatch = False
+    hub.requests['r'].update(budget_usd=1, cost_usd=0.95, cost_known=True,
+        cost_items={'old': {'status': 'actual', 'usd': 0.95}}, cost_by_task={'old': 0.95})
+    hub.store.put('pi_translation_reservations', 'r', {'t': {
+        'reservation_id': 't', 'task_id': 't', 'request_id': 'r', 'agent_id': 'chief_of_staff',
+        'attempt': 1, 'state': 'reserved', 'source': 'pi_translation', 'ceiling_usd': 0.05,
+        'legacy_reserved_usd': 0}})
+    task = Task(agent_id='chief_of_staff', request_id='r', prompt='synthetic optional support',
+                meta={'facilities_diagnosis': True})
+    with pytest.raises(BudgetExceeded):
+        await hub.orchestrator.run_step(task)
+    assert not calls
+
+
+def test_unknown_translation_keeps_ceiling_above_generic_reserve(hub):
+    hub.s.policy.budget.per_task_usd = 0.01
+    hub.store.put('pi_translation_reservations', 'r', {'t': {
+        'reservation_id': 't', 'task_id': 't', 'request_id': 'r',
+        'agent_id': 'chief_of_staff', 'attempt': 1, 'state': 'reserved',
+        'source': 'pi_translation', 'ceiling_usd': 0.05}})
+    hub.orchestrator.cost_tasks['r'] = {'t'}
+    hub.orchestrator.cost_unknown['r'] = {'t'}
+    assert hub.orchestrator._budget_bound('r', 5)[2] == pytest.approx(0.05)
+    hub.orchestrator.cost_unknown['r'].clear()
+    hub.orchestrator.cost['r'] = 0.002
+    assert hub.orchestrator._budget_bound('r', 5)[2] == pytest.approx(0.002)
+
+
+@pytest.mark.asyncio
+async def test_resume_card_seeds_cost_ids_before_translation(hub, monkeypatch):
+    from tests.test_research_protocol import valid_plan
+    calls = mock_model(monkeypatch, hub)
+    hub.requests['r'].update(cost_usd=1, cost_known=True,
+        cost_items={'old': {'status': 'actual', 'usd': 1}}, cost_by_task={'old': 1},
+        plan=valid_plan(steps=1))
+    assert hub.orchestrator.resume_plan_card('r', hub.requests['r']) is not None
+    assert hub.orchestrator.cost_tasks['r'] == {'old'}
+    await hub.publish(event())
+    await drain(hub)
+    assert len(calls) == 1
+    assert hub.orchestrator._budget_bound('r', 5)[2] == pytest.approx(1.02)
+
+
+@pytest.mark.parametrize('mismatch', ['ceiling', 'agent', 'kind', 'attempt', 'payload', 'request',
+                                    'task_id_list', 'attempt_bool'])
+def test_admission_checks_reservation_against_durable_task(hub, mismatch):
+    reservation = {'reservation_id': 't', 'task_id': 't', 'request_id': 'r',
+        'agent_id': 'chief_of_staff', 'attempt': 1, 'state': 'reserved',
+        'source': 'pi_translation', 'ceiling_usd': 0.05}
+    task = {'request_id': 'r', 'kind': 'pi_interpretation', 'attempt': 1,
+            'payload': {'id': 't', 'request_id': 'r', 'agent_id': 'chief_of_staff', 'budget_usd': 0.05}}
+    if mismatch == 'ceiling': reservation['ceiling_usd'] = 0.01
+    if mismatch == 'agent': reservation['agent_id'] = 'other'
+    if mismatch == 'kind': task['kind'] = 'step'
+    if mismatch == 'attempt': task['attempt'] = 2
+    if mismatch == 'payload': task['payload'] = ['invalid']
+    if mismatch == 'request': task['payload']['request_id'] = 'other'
+    if mismatch == 'task_id_list': reservation['task_id'] = ['invalid']
+    if mismatch == 'attempt_bool': task['attempt'] = True
+    hub.store.put('pi_translation_reservations', 'r', {'t': reservation})
+    hub.store.put('task', 't', task)
+    assert hub.orchestrator._budget_bound('r', 5)[2] == float('inf')
+
+
+@pytest.mark.asyncio
 async def test_interpreter_receives_tool_error_evidence(hub, monkeypatch):
     calls = mock_model(monkeypatch, hub)
     error = 'InputValidationError: StructuredOutput could not be parsed as JSON'
