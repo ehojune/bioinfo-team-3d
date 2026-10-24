@@ -224,3 +224,71 @@ def stage_inputs(ws, artifacts, workspace_root, zones, private_paths, max_file, 
                       'disk full during copy' if getattr(exc, 'errno', None) == errno.ENOSPC else type(exc).__name__)
             refused[str(step)] = f'inputs/{step} unavailable ({detail})'
     return staged, refused
+
+
+PRECEDENT = 'precedent'  # inputs/precedent/: the request's precedent-search texts (#951); not a plan step id
+
+
+def stage_precedent_texts(ws, rows, workspace_root, zones, max_file, max_total, taken_steps=()):
+    """Copy the precedent search's stored texts into ``inputs/precedent/`` as read-only, hash-checked files.
+
+    Returns (staged folder list, refusals by name, [(file name, row)] actually staged). A text is staged only when its
+    absolute path is a plain file under the runner workspace, outside every data zone, its tool receipt beside it
+    (``<text>.receipt.json``) names the same paper and hash, and the bytes match the declared hash. Anything else is
+    refused with a reason and nothing partial is left."""
+    from ..research.precedent_texts import file_name
+
+    staged, refused, listing, remaining = [], {}, [], [max_total]
+    if not rows:
+        return staged, refused, listing
+    if any(str(step).casefold() == PRECEDENT for step in taken_steps):
+        return staged, {PRECEDENT: f'inputs/{PRECEDENT} unavailable (a plan step already uses that id)'}, listing
+    root = Path(workspace_root).resolve(strict=True)
+    files = []
+    for index, row in enumerate(rows, 1):
+        label = f"{PRECEDENT}:{row.get('paper_id') or index}"
+        try:
+            source = Path(row['text_file'])
+            if not source.is_absolute():
+                raise ValueError('stored text path is not absolute')
+            source_parts = source.absolute().relative_to(root).parts
+            if not source_parts or source != source.resolve(strict=True):
+                raise ValueError('stored text is not a plain file in the runner workspace')
+            if credential_path(str(source)) or overlaps_zone(source, zones):
+                raise ValueError('stored text path is protected')
+            expected = row['text_sha256']
+            if not re.fullmatch('[a-f0-9]{64}', expected):
+                raise ValueError('stored text hash is missing')
+            with _folder(root, source_parts[:-1]) as held:
+                original = _json(held, source_parts[-1] + '.receipt.json')
+            if (not isinstance(original, dict) or original.get('text_sha256') != expected
+                    or original.get('paper_id') != row.get('paper_id')):
+                raise ValueError('tool receipt differs from the declared text')
+            name = file_name(row, index)
+            _parts(name)
+            files.append((source_parts, name, expected, row))
+        except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+            detail = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
+            refused[label] = f'{label} unavailable ({detail})'
+    if not files:
+        return staged, refused, listing
+    owned = False
+    try:
+        _room(ws.dir, sum(_size(root, parts) for parts, _, _, _ in files))
+        _reset(ws.dir, PRECEDENT, [name for _, name, _, _ in files])
+        owned = True
+        for parts, name, expected, row in files:
+            _copy(root, parts, ws.dir, f'inputs/{PRECEDENT}/{name}', expected, max_file, remaining)
+            listing.append((name, row))
+        staged.append(str(ws.dir / 'inputs' / PRECEDENT))
+    except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+        if owned:
+            try:
+                _reset(ws.dir, PRECEDENT, [])
+            except (OSError, ValueError, TypeError, KeyError, AttributeError) as cleanup:
+                raise RuntimeError('refused precedent text snapshot could not be cleared') from cleanup
+        detail = (str(exc) if isinstance(exc, ValueError) else
+                  'disk full during copy' if getattr(exc, 'errno', None) == errno.ENOSPC else type(exc).__name__)
+        refused[PRECEDENT] = f'inputs/{PRECEDENT} unavailable ({detail})'
+        staged, listing = [], []
+    return staged, refused, listing

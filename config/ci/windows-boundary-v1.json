@@ -191,6 +191,7 @@
     "tests/test_portfolio_branch_folders.py",
     "tests/test_portfolio_edition.py",
     "tests/test_pr_gate.py",
+    "tests/test_precedent_texts_951.py",
     "tests/test_private_paths.py",
     "tests/test_probe_inbound_mcp.py",
     "tests/test_probe_timeout.py",

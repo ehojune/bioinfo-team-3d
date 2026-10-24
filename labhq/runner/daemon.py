@@ -74,7 +74,8 @@ from .hpc_jobs import submit_job
 from .integrity import ReadOnlyWatch, watch_roots
 from .lookup_admission import ENV as LOOKUP_ADMISSION_ENV, FILE as LOOKUP_ADMISSION_FILE, LookupAdmission
 from .system_ca import CA_ENV, system_ca_pem
-from .step_inputs import stage_inputs
+from .step_inputs import stage_inputs, stage_precedent_texts
+from ..research.precedent_texts import step_note as precedent_step_note
 from .workspace import (InputHashCache, TaskWorkspace, nearest_tool_use_id, portable_input_path, resolved_zones,
                         restricted_zones)
 
@@ -1764,6 +1765,19 @@ class Runner:
                 if unavailable:
                     note += "\n" + "\n".join(unavailable.values())
                     for reason in unavailable.values():
+                        await emit("agent.log", {"level": "warn", "text": reason})
+                # The precedent search's stored full texts, as read-only inputs of every research step (#951).
+                precedent_rows = task.meta.get("precedent_texts")
+                if isinstance(precedent_rows, list) and precedent_rows:
+                    precedent_dirs, precedent_refused, precedent_listing = await asyncio.to_thread(
+                        stage_precedent_texts, ws, precedent_rows, root, [*zones, *internal_zones],
+                        self.s.runner.input_hash_max_file_bytes, self.s.runner.input_hash_max_total_bytes,
+                        list(artifacts))
+                    staged_inputs = [*staged_inputs, *precedent_dirs]
+                    precedent_note = precedent_step_note(precedent_listing, precedent_refused)
+                    if precedent_note:
+                        note += "\n" + precedent_note
+                    for reason in precedent_refused.values():
                         await emit("agent.log", {"level": "warn", "text": reason})
                 task = ws.task = task.model_copy(update={"context": task.context + "\n\n" + note})
             elif isinstance(upstream_steps, dict) and upstream_steps and not read_only:
