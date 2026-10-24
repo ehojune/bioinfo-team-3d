@@ -4340,18 +4340,19 @@ class Orchestrator:
         return float(per_task) if per_task and per_task > 0 else float(limit)
 
     def _diagnosis_budget_available(self, rid: str) -> bool:
-        """Optional diagnosis never opens a budget card; include durable costs before restart recovery seeds them."""
+        """Optional diagnosis never opens a budget card; include durable costs and dispatch holds."""
         req = self.hub.requests.get(rid, {})
         limit = req.get("budget_usd") or self.hub.s.policy.budget.per_request_usd
         if rid in self.budget_denials:
             return False
         if not limit:
             return True
+        self._restore_cost_cache(rid)
         unknown = {tid for tid, item in (req.get("cost_items") or {}).items() if item.get("status") == "unknown"}
         unknown.update(self.cost_unknown.get(rid) or ())
         count = max(len(unknown), int(req.get("cost_known") is False))
         spent = max(self.cost.get(rid, 0), float(req.get("cost_usd") or 0))
-        return spent + count * self._unknown_reserve(limit) < limit
+        return spent + count * self._unknown_reserve(limit) + self._dispatch_held(rid, limit) < limit
 
     def _optional_turn_budget_available(self, rid: str) -> bool:
         """A nonessential normal turn runs only when one conservative task reservation fits under the request cap."""

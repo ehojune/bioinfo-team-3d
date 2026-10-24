@@ -131,6 +131,25 @@ async def test_legacy_translation_total_and_new_orphan_survive_aggregate_write_c
     assert len(hub.store.get('pi_translation_reservations', 'r')) == 1
 
 
+@pytest.mark.asyncio
+async def test_translation_hold_blocks_optional_support_without_dispatch_reservation_policy(hub, monkeypatch):
+    from labhq.models import Task
+    from labhq.orchestrator.cso import BudgetExceeded
+    calls = mock_model(monkeypatch, hub)
+    hub.s.policy.budget.reserve_before_dispatch = False
+    hub.requests['r'].update(budget_usd=1, cost_usd=0.95, cost_known=True,
+        cost_items={'old': {'status': 'actual', 'usd': 0.95}}, cost_by_task={'old': 0.95})
+    hub.store.put('pi_translation_reservations', 'r', {'t': {
+        'reservation_id': 't', 'task_id': 't', 'request_id': 'r', 'agent_id': 'chief_of_staff',
+        'attempt': 1, 'state': 'reserved', 'source': 'pi_translation', 'ceiling_usd': 0.05,
+        'legacy_reserved_usd': 0}})
+    task = Task(agent_id='chief_of_staff', request_id='r', prompt='synthetic optional support',
+                meta={'facilities_diagnosis': True})
+    with pytest.raises(BudgetExceeded):
+        await hub.orchestrator.run_step(task)
+    assert not calls
+
+
 def test_unknown_translation_keeps_ceiling_above_generic_reserve(hub):
     hub.s.policy.budget.per_task_usd = 0.01
     hub.store.put('pi_translation_reservations', 'r', {'t': {

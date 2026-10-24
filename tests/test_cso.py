@@ -443,6 +443,9 @@ async def test_store_backed_blocking_step_asks_cso_and_labels_its_answer():
         def put(self, kind, key, value):
             self.rows[(kind, key)] = value
 
+        def get(self, kind, key):
+            return self.rows.get((kind, key))
+
     calls = []
 
     async def dispatch(task):
