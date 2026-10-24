@@ -420,8 +420,9 @@ class Runner:
 
     def stop(self) -> None:
         self._stopping = True
-        if self._local_watch is not None:
-            self._local_watch.cancel()
+        watch = getattr(self, "_local_watch", None)  # a Runner built without __init__ (tests) has none
+        if watch is not None:
+            watch.cancel()
         self.broker.stop()
         for t in self.tasks.values():
             t.cancel()
@@ -2574,7 +2575,7 @@ class Runner:
     def _ensure_local_watch(self) -> None:
         """Poll local jobs from the first one on. It is started lazily, so a runner without local jobs runs the same
         loops as before (the HPC watcher stays off with scheduler=none)."""
-        if self._local_watch is None or self._local_watch.done():
+        if getattr(self, "_local_watch", None) is None or self._local_watch.done():
             self._local_watch = asyncio.get_running_loop().create_task(self._local_job_watch_loop())
 
     async def _local_job_watch_loop(self) -> None:
