@@ -720,8 +720,8 @@ class Runner:
             await self._cancel_local_jobs(str(msg.get("task_id") or ""))
         elif typ == "task.jobs_cancel":  # the step is parked on its jobs and its request was cancelled (#675)
             tid = str(msg.get("task_id") or "")
-            await self._cancel_local_jobs(tid)
-            self.send({"type": "task.jobs_cancelled", "task_id": tid})  # durable: the gateway stops resending on it
+            if await self._cancel_local_jobs(tid):
+                self.send({"type": "task.jobs_cancelled", "task_id": tid})  # durable: the gateway stops resending on it
         elif typ == "task.control":
             await self._on_control(msg)
         elif typ == "approval.attachment":
@@ -2492,7 +2492,8 @@ class Runner:
                 return {"error": f"job {job_id} was not submitted by you through job_submit; labhq tracks only your own"}
             jid, j = rows[0]
             if op == "cancel" and not j.get("terminal"):  # an ended job keeps how it ended
-                await self._end_local_job(jid, j, "cancelled")
+                if not await self._end_local_job(jid, j, "cancelled"):
+                    return {"error": f"job {jid} could not be ended: some of its processes are still running"}
             return self._local_view(jid, j, logs=op == "status")
         return await self._submit_local_job(identity)
 
@@ -2582,10 +2583,12 @@ class Runner:
             self.submitting.get(tid, set()).discard(done)
             done.set_result(None)
 
-    async def _end_local_job(self, jid: str, j: dict, state: str, *, wake: bool = True) -> None:
-        """Kill a local job's process tree and record it as ended. `wake` False keeps its step from being woken."""
+    async def _end_local_job(self, jid: str, j: dict, state: str, *, wake: bool = True) -> bool:
+        """Kill a local job's process tree. Only when nothing of it is left is it recorded as ended (`wake` False keeps
+        its step from being woken); a tree that survives leaves the job running and the watcher keeps checking it."""
         tid = j.get("task_id")
-        await asyncio.to_thread(local_jobs.kill, j.get("local") or {}, self._local_procs.get(jid))
+        if not await asyncio.to_thread(local_jobs.kill, j.get("local") or {}, self._local_procs.get(jid)):
+            return False
         self._local_procs.pop(jid, None)
         j.update(state=state, terminal=True, exit_status=None)
         after = [("job", jid, j)]
@@ -2596,6 +2599,7 @@ class Runner:
                                    request_id=self.task_req.get(tid or ""),
                                    data={"job_id": jid, "name": j.get("name"), "state": state, "exit_status": None})],
                             after=after)
+        return True
 
     def _ensure_local_watch(self) -> None:
         """Poll local jobs from the first one on. It is started lazily, so a runner without local jobs runs the same
@@ -2631,14 +2635,17 @@ class Runner:
                                 after=[("job", jid, j)])
         await self._wake_finished_jobs()
 
-    async def _cancel_local_jobs(self, task_id: str) -> None:
-        """The step was cancelled: end its running local jobs so no process outlives it, and do not wake the step."""
+    async def _cancel_local_jobs(self, task_id: str) -> bool:
+        """The step was cancelled: end its running local jobs so no process outlives it, and do not wake the step.
+        False when some job's processes could not be ended, so the cancel is not confirmed."""
         if not task_id:
-            return
+            return True
+        ended = True
         self.__dict__.setdefault("_jobs_cancelled", set()).add(task_id)  # a submit that is mid-start sees this
         for jid, j in list(getattr(self, "jobs", {}).items()):
             if local_jobs.is_local(jid) and j.get("task_id") == task_id and not j.get("terminal"):
-                await self._end_local_job(jid, j, "cancelled", wake=False)
+                ended = await self._end_local_job(jid, j, "cancelled", wake=False) and ended
+        return ended
 
     # ---------------- HPC job watcher ----------------
     async def _job_watch_loop(self) -> None:

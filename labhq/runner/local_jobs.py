@@ -8,6 +8,7 @@ Logs and the exit file live in the runner's state folder, never in the staff-wri
 from __future__ import annotations
 
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -41,7 +42,8 @@ _PS_EXIT = "\n$__ok = $?; $__code = $LASTEXITCODE; if ($__code) { exit $__code }
 def shell_argv(command: str) -> list[str]:
     if os.name == "nt":
         return ["powershell", "-NoProfile", "-NonInteractive", "-Command", command + _PS_EXIT]
-    return ["/bin/sh", "-c", command]
+    # The approval policy judged this as a Bash command, so run it with Bash where there is one (sh may be dash).
+    return [shutil.which("bash") or "/bin/sh", "-c", command]
 
 
 def job_dir(state_dir: Path, job_id: str) -> Path:
@@ -73,8 +75,15 @@ def start(state_dir: Path, job_id: str, command: str, workdir: Path,
         process = subprocess.Popen([sys.executable, str(WRAPPER), str(exit_file), *shell_argv(command)],
                                    cwd=str(workdir), env=env, stdin=subprocess.DEVNULL, stdout=out_handle,
                                    stderr=err_handle, **group)
-    return ({"pid": process.pid, "created": _created(process.pid), "exit_file": str(exit_file),
-             "out": str(out), "err": str(err), "started_at": time.time()}, process)
+    facts = {"pid": process.pid, "exit_file": str(exit_file), "out": str(out), "err": str(err),
+             "started_at": time.time()}
+    try:
+        facts["created"] = _created(process.pid)
+    except Exception as exc:  # no identity means the job could never be watched or cancelled: do not leave it running
+        facts["created"] = None
+        kill(facts, process)
+        raise OSError(f"the job started but its process identity could not be read ({exc}); it was ended") from exc
+    return facts, process
 
 
 def status(local: dict, process: subprocess.Popen | None = None) -> tuple[str, int | None]:

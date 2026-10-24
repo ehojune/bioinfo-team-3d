@@ -110,7 +110,9 @@ def test_the_real_shell_argv_wraps_the_command_and_a_powershell_job_reports_the_
         assert argv[:4] == ["powershell", "-NoProfile", "-NonInteractive", "-Command"]
         assert argv[4].startswith("python gsea.py\n") and "exit $__code" in argv[4]  # the program's code, not PowerShell's 1
     else:
-        assert argv == ["/bin/sh", "-c", "python gsea.py"]
+        import shutil
+
+        assert argv == [shutil.which("bash") or "/bin/sh", "-c", "python gsea.py"]  # judged as Bash, run with Bash
     assert local_jobs.shell_tool() == ("PowerShell" if os.name == "nt" else "Bash")
 
 
@@ -529,3 +531,45 @@ async def test_the_runner_confirms_a_jobs_cancel_durably(board):
     queued = [row for row in board.runner.store.pending() if row.get("type") == "task.jobs_cancelled"]
     assert [row["task_id"] for row in queued] == [task.id]
     assert board.runner.jobs[out["job_id"]]["state"] == "cancelled"
+
+
+def test_a_job_whose_identity_cannot_be_read_is_ended_not_left_running(tmp_path, monkeypatch):
+    started = []
+    real_popen = local_jobs.subprocess.Popen
+
+    def recording_popen(*args, **kwargs):
+        process = real_popen(*args, **kwargs)
+        started.append(process)
+        return process
+
+    def refuse(pid):
+        raise RuntimeError("access denied")
+
+    monkeypatch.setattr(local_jobs.subprocess, "Popen", recording_popen)
+    monkeypatch.setattr(local_jobs, "_created", refuse)
+    with pytest.raises(OSError, match="identity could not be read"):
+        local_jobs.start(tmp_path, "local-noid", SLEEP, tmp_path, dict(os.environ))
+    assert len(started) == 1
+    _eventually(lambda: started[0].poll() is not None)  # the process it had started is gone
+
+
+@pytest.mark.asyncio
+async def test_a_cancel_whose_processes_survive_is_not_recorded_or_confirmed(board, monkeypatch):
+    out = {}
+
+    async def body(identity):
+        out.update(await board.submit(SLEEP)(identity))
+        out["identity"] = identity
+
+    task, _ = await board.run(body)
+    job_id, real_kill = out["job_id"], local_jobs.kill
+    monkeypatch.setattr(local_jobs, "kill", lambda local, process=None: False)  # the tree would not die
+    reply = await board.runner._on_local_job("cancel", {**out["identity"], "job_id": job_id})
+    assert "could not be ended" in reply["error"] and not board.runner.jobs[job_id]["terminal"]
+    await board.runner._on_message({"type": "task.jobs_cancel", "task_id": task.id})
+    assert not [row for row in board.runner.store.pending() if row.get("type") == "task.jobs_cancelled"]  # not confirmed
+    assert board.runner.jobs[job_id]["state"] == "running"  # the watcher keeps checking it
+    monkeypatch.setattr(local_jobs, "kill", real_kill)  # then it can still be ended
+    await board.runner._on_message({"type": "task.jobs_cancel", "task_id": task.id})
+    assert board.runner.jobs[job_id]["state"] == "cancelled"
+    assert [row["task_id"] for row in board.runner.store.pending() if row.get("type") == "task.jobs_cancelled"] == [task.id]
