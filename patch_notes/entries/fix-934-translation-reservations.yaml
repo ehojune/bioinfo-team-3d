@@ -1,5 +1,9 @@
 pr: 935
 rows:
+- sha: cce70ab
+  at: 2026-10-24 13:29
+  text: 취소 test의 task-only Store에 빈 예약 원장 추가, dispatch 전 assert로 event 대기가 끝나지 않는 경로 수정
+  summary: 취소 회귀 test가 새 원장 조회 뒤에도 실제 dispatch·hold 검증을 끝내도록 맞췄습니다.
 - sha: 594a8c8
   at: 2026-10-24 13:09
   text: 통역 예약 projection이 task attempt·budget의 bool 값을 숫자로 인정하지 않도록 검증 통일
