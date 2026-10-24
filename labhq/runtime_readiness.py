@@ -149,7 +149,7 @@ def _contained(settings, root, records, memberships):
     _require(len({row["pid"] for row in records.values()} | {receipt["owner"]["pid"]}) == 5)
     issued, deadline = receipt["issued_at"], receipt["deadline_at"]
     _require(all(type(v) in (int, float) and math.isfinite(v) for v in (issued, deadline)))
-    _require(issued <= time.time() < deadline <= issued + 5400)
+    _require(issued <= time.time() < deadline <= issued + settings.runner.contained_max_s)
     _require(isinstance(settings.config_path, str) and settings.config_path)
     _require(os.path.normcase(os.path.realpath(receipt["config_path"])) ==
              os.path.normcase(os.path.realpath(settings.config_path)))

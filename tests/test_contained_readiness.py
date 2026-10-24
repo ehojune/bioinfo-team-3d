@@ -132,6 +132,37 @@ def test_bad_containment_never_overrides_detached_failure(cohort, monkeypatch, f
     assert any("Job escape unverified" in reason for reason in result["reasons"])
 
 
+def _receipt_lifetime(cohort, monkeypatch, lifetime):
+    """Re-issue the receipt (and its operator pin) with deadline_at = issued_at (900) + lifetime."""
+    deadline = 900 + lifetime
+    cohort.receipt["deadline_at"] = deadline
+    cohort.trust["deadline_at"] = deadline
+    cohort.save()
+    cohort.trust_path.write_text(json.dumps(cohort.trust), encoding="utf8")
+    monkeypatch.setenv("LABHQ_CONTAINED_TRUST_SHA256", hashlib.sha256(cohort.trust_path.read_bytes()).hexdigest())
+    return runtime.deployment(cohort.settings, runtime.inspect(cohort.settings))
+
+
+@pytest.mark.parametrize(("limit", "lifetime", "ready"), [
+    (None, 5400, True), (None, 5401, False),  # default: the 90-minute behaviour is unchanged
+    (54000, 54000, True), (54000, 54001, False),  # a 15-hour run needs the setting, and it is still a bound
+])
+def test_receipt_lifetime_follows_the_configured_bound(cohort, monkeypatch, limit, lifetime, ready):
+    if limit is not None:
+        cohort.settings.runner.contained_max_s = limit
+    result = _receipt_lifetime(cohort, monkeypatch, lifetime)
+    assert result["ready"] is ready
+    assert (result["status"] == "contained_verified") is ready
+
+
+def test_the_bound_is_configurable_but_has_a_ceiling():
+    assert Settings().runner.contained_max_s == 5400
+    assert Settings.model_validate({"runner": {"contained_max_s": 54000}}).runner.contained_max_s == 54000
+    for bad in (86401, 59, 0, -1):
+        with pytest.raises(ValueError):
+            Settings.model_validate({"runner": {"contained_max_s": bad}})
+
+
 def test_detached_policy_ignores_optional_receipt(cohort, monkeypatch):
     cohort.path.write_text("broken", encoding="utf8")
     monkeypatch.setattr(windows_launch, "record_job_membership", lambda r: False)
