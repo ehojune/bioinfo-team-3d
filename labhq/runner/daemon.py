@@ -21,7 +21,6 @@ import sys
 import tempfile
 import threading
 import time
-from types import SimpleNamespace
 import uuid
 from pathlib import Path
 from typing import Any
@@ -335,6 +334,7 @@ class Runner:
                                  settings.path(settings.runner.state_dir) / LOOKUP_ADMISSION_FILE, limit))
         self.scheduler = Scheduler(settings.hpc)
         self._local_procs: dict = {}  # job id -> the child this runner started (reaped when polled), #675
+        self._local_watch: asyncio.Task | None = None  # the local job poller, started with the first job
         self.connected = asyncio.Event()
         self._stopping = False
         self.started_at = time.time()
@@ -406,10 +406,13 @@ class Runner:
         log.info("runner %s: %d agents", self.s.runner.id, len(self.registry.agents))
         try:
             loops = [self.broker.serve(), self._connection_loop()]
-            loops.append(self._job_watch_loop())  # local jobs (#675) are polled whatever the HPC scheduler is
-            if self.s.hpc.scheduler == "none":
-                log.warning("HPC job polling disabled (scheduler=none); saved HPC job records are retained, "
+            if self.s.hpc.scheduler != "none":
+                loops.append(self._job_watch_loop())
+            else:
+                log.warning("HPC job polling disabled (scheduler=none); saved job records are retained, "
                             "not refreshed")
+            if any(local_jobs.is_local(jid) for jid in self.jobs):  # jobs saved by the previous runner process (#675)
+                self._ensure_local_watch()
             await asyncio.gather(*loops)
         finally:
             # Writes queued by the tasks that were just cancelled still finish (#606).
@@ -417,6 +420,8 @@ class Runner:
 
     def stop(self) -> None:
         self._stopping = True
+        if self._local_watch is not None:
+            self._local_watch.cancel()
         self.broker.stop()
         for t in self.tasks.values():
             t.cancel()
@@ -2541,6 +2546,7 @@ class Runner:
             except OSError as exc:
                 return {"error": f"could not start the job: {exc}"}
             self._local_procs[job_id] = process
+            self._ensure_local_watch()
             await self._track_job({"task_id": tid, "agent_id": aid, "job_id": job_id, "name": name,
                                    "core_hours": None},
                                   extra={"scheduler": "local", "state": "running",  # started at once: there is no queue
@@ -2565,6 +2571,40 @@ class Runner:
                                    data={"job_id": jid, "name": j.get("name"), "state": state, "exit_status": None})],
                             after=after)
 
+    def _ensure_local_watch(self) -> None:
+        """Poll local jobs from the first one on. It is started lazily, so a runner without local jobs runs the same
+        loops as before (the HPC watcher stays off with scheduler=none)."""
+        if self._local_watch is None or self._local_watch.done():
+            self._local_watch = asyncio.get_running_loop().create_task(self._local_job_watch_loop())
+
+    async def _local_job_watch_loop(self) -> None:
+        while not self._stopping:
+            await asyncio.sleep(self.s.runner.job_poll_s)
+            try:
+                await self._poll_local_jobs()
+            except Exception:
+                log.exception("local job poll failed")
+
+    async def _poll_local_jobs(self) -> None:
+        if not any(local_jobs.is_local(jid) for jid in self.jobs):
+            return
+        for jid, j in list(self.jobs.items()):
+            if j["terminal"] or not local_jobs.is_local(jid):
+                continue
+            state, exit_status = await asyncio.to_thread(local_jobs.status, j.get("local") or {},
+                                                         self._local_procs.get(jid))
+            if state == j["state"]:
+                continue
+            j.update(state=state, exit_status=exit_status, terminal=state in TERMINAL)
+            if j["terminal"]:
+                self._local_procs.pop(jid, None)  # the poll that saw it end has reaped it
+            await self.emit_all([Event(type="job.state", task_id=j["task_id"], agent_id=j["agent_id"],
+                                       request_id=self.task_req.get(j["task_id"] or ""),
+                                       data={"job_id": jid, "name": j["name"], "state": state,
+                                             "exit_status": exit_status})],
+                                after=[("job", jid, j)])
+        await self._wake_finished_jobs()
+
     async def _cancel_local_jobs(self, task_id: str) -> None:
         """The step was cancelled: end its running local jobs so no process outlives it, and do not wake the step."""
         for jid, j in list(self.jobs.items()):
@@ -2573,6 +2613,8 @@ class Runner:
 
     # ---------------- HPC job watcher ----------------
     async def _job_watch_loop(self) -> None:
+        if self.s.hpc.scheduler == "none":
+            return
         while not self._stopping:
             await asyncio.sleep(self.s.runner.job_poll_s)
             try:
@@ -2581,17 +2623,12 @@ class Runner:
                 log.exception("job poll failed")
 
     async def _poll_jobs(self) -> None:
+        if self.s.hpc.scheduler == "none":
+            return  # Retain saved state, missing counts and notifications; do not invent a final outcome.
         for jid, j in list(self.jobs.items()):
-            if j["terminal"]:
+            if j["terminal"] or local_jobs.is_local(jid):  # a local job has its own watcher (#675)
                 continue
-            if local_jobs.is_local(jid):  # a local job of this runner (#675): its own process, not a scheduler
-                state, exit_status = await asyncio.to_thread(local_jobs.status, j.get("local") or {},
-                                                             self._local_procs.get(jid))
-                info = SimpleNamespace(state=state, exit_status=exit_status)
-            elif self.s.hpc.scheduler == "none":
-                continue  # Retain saved state, missing counts and notifications; do not invent a final outcome.
-            else:
-                info = await asyncio.to_thread(self.scheduler.status, jid)
+            info = await asyncio.to_thread(self.scheduler.status, jid)
             state = info.state
             if state == "missing":  # SGE accounting lag: give it a few polls
                 j["missing"] += 1
@@ -2613,7 +2650,10 @@ class Runner:
                                     after=[("job", jid, j)])
             else:
                 self.store.put("job", jid, j)
+        await self._wake_finished_jobs()
 
+    async def _wake_finished_jobs(self) -> None:
+        """Wake each task whose jobs have all ended, once: the agent was waiting on them (#281)."""
         by_task: dict[str, list[dict]] = {}
         for j in self.jobs.values():
             by_task.setdefault(j["task_id"], []).append(j)

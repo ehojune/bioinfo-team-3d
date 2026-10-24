@@ -45,7 +45,7 @@ async def _drive(runner, job_id, seconds=40.0):
     """Poll the way the watch loop does until the job is over."""
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
-        await runner._poll_jobs()
+        await runner._poll_local_jobs()
         if runner.jobs[job_id]["terminal"]:
             return runner.jobs[job_id]
         await asyncio.sleep(0.2)
@@ -91,6 +91,8 @@ def board(tmp_path, monkeypatch):
 
     yield SimpleNamespace(settings=s, runner=runner, events=events, cards=cards, answer=answer, run=run,
                           submit=submit, kinds=lambda: [e.type for e in events])
+    if runner._local_watch is not None:
+        runner._local_watch.cancel()
     for job_id, row in list(runner.jobs.items()):  # nothing may outlive a test
         if local_jobs.is_local(job_id):
             local_jobs.kill(row.get("local") or {}, runner._local_procs.get(job_id))
@@ -157,7 +159,7 @@ async def test_cancelling_the_step_ends_the_job_leaves_nothing_running_and_does_
     await board.runner._on_message({"type": message, "task_id": task.id})
     assert row["state"] == "cancelled" and row["terminal"]
     assert local_jobs.status(row["local"], proc)[0] != "running"  # the process tree is gone
-    await board.runner._poll_jobs()
+    await board.runner._poll_local_jobs()
     assert "jobs.finished" not in board.kinds()  # a cancelled step is not resumed
 
 
@@ -194,7 +196,7 @@ async def test_a_restarted_runner_adopts_a_running_job_and_can_still_end_it(boar
     board.runner.store.close()  # the runner stops; its job keeps running on its own
     _, second = _runner(tmp_path)
     assert second._local_procs == {} and second.jobs[job_id]["state"] != "completed"
-    await second._poll_jobs()
+    await second._poll_local_jobs()
     assert second.jobs[job_id]["state"] == "running" and not second.jobs[job_id]["terminal"]  # adopted by identity
     await second._cancel_local_jobs(task.id)
     assert second.jobs[job_id]["state"] == "cancelled"
