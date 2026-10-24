@@ -4,6 +4,19 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# 선행 조사가 저장한 본문을 연구 단계에 전달 (#951)
+
+- 13·14차 모두 1차 연구 리뷰가 같은 P1으로 revise를 냈다. CP1 전 선행 조사(lit_scout)가 공개 본문을 저장했고 receipt hash도 맞는데, 실행 단계는 새 작업 폴더에서 돌아 그 파일을 보지 못했다. 단계는 다시 조회해 실패했고 종합 보고서는 "원문으로 확인한 수치 0건"이라고 적었다. 2차 라운드가 매번 필요했다(13차 $27.85 → $49.26).
+- 원인: `fulltext_receipt`의 `text_file`은 선행 조사 작업 폴더(`.tmp/literature/`) 안 절대 경로이고, 그 파일을 실행 단계로 넘기는 경로가 없었다. 앞 단계 산출은 `upstream_artifacts`로만 `inputs/<step_id>/`에 복사된다.
+- 수정:
+  - `labhq/research/precedent_texts.py`(새): 저장 본문이 있는 receipt(경로·hash가 있고 hash 기준 중복 제거, 최대 4편)를 고르고, 단계 안내문과 보고서 작성자용 목록을 만든다.
+  - CSO가 모든 연구 단계 task meta에 `precedent_texts`를 싣는다.
+  - `runner/step_inputs.py` `stage_precedent_texts`: 경로가 작업 root 안의 보통 파일(링크 아님)이고 데이터 구역 밖이며, 본문 옆 `<text>.receipt.json`이 같은 논문·hash를 가리키고, 바이트가 선언한 hash와 같을 때만 `inputs/precedent/`로 읽기 전용 복사한다. 하나라도 어긋나면 그 본문만 사유와 함께 빼고 단계는 계속한다. 앞 단계 산출 복사와 같은 handle 기반 복사·디스크 확인·재시도 정리를 쓴다.
+  - 단계 안내(`context`)에 "조회하기 전에 먼저 읽고 파일·줄로 인용"을 넣는다. 고정된 prompt 상수는 건드리지 않았다.
+  - 종합 prompt에 요청 전체의 저장 본문 목록을 더해, 한 단계가 본문을 얻지 못한 것(단계 수준 공백)과 요청에 원문 자료가 없는 것을 구분하게 한다.
+- 테스트 `tests/test_precedent_texts_951.py` 9건: 저장 본문 선택·안전한 파일명, 러너로 step을 실행해 `inputs/precedent/`에 바이트가 같게 복사되고 읽기 열림·안내가 붙는지, hash 불일치·작업 root 밖·receipt 불일치·상대 경로는 복사하지 않고 단계는 통과, 저장 본문이 없으면 동작 그대로, CSO가 meta와 종합 안내를 싣는지. 관련 741건 통과.
+- 미확인: 실제 요청에서 단계가 이 본문을 실제로 읽고 인용하는지(15차), 선행 조사가 `.tmp/literature/` 밖에 저장한 본문, 전체 suite, Windows CI. 이 변경은 선행 조사 본문만 다룬다. 앞선 연구 단계 자신이 `.tmp/`에 저장한 본문(`lit_scout` 단계의 조회 결과)을 다음 단계로 넘기지는 않는다.
+
 Refs #948 (후속: PR #949 병합 뒤 봇 P2 두 건)
 
 - 깨진 초안(정수 `depends_on`, 해시 불가능한 id, dict가 아닌 단계)에서 `repair_synthesis_links`가 예외를 내면 계획 단계에서 요청이 죽을 수 있었습니다. 이제 그대로 돌려 CSO 교정으로 보냅니다.
