@@ -1875,7 +1875,10 @@ class Runner:
             if artifact_contract:
                 # Reuse the existing private/read-root machinery; inputs never become write roots.
                 private = replace(private, paths=tuple(dict.fromkeys([
-                                      *private.paths, str(root), str(ws.dir / "inputs")])),
+                                      *private.paths, str(root), str(ws.dir / "inputs"),
+                                      # Both spellings: with a junctioned root the real inputs path is otherwise
+                                      # not denied and matches the resolved workdir's write allow (#946).
+                                      os.path.realpath(ws.dir / "inputs")])),
                                   labels=(*private.labels, "선행 단계 읽기 전용 입력"), enabled=True,
                                   open_reads=tuple(scoped_open_reads(self.s, [
                                       *private.open_reads, str(ws.dir), *staged_inputs], cwd=ws.dir)))

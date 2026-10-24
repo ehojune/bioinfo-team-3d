@@ -139,3 +139,34 @@ def test_a_junctioned_workspace_root_still_leaves_the_tasks_own_folder_writable(
         for tool in ("Edit", "Write", "Read"):
             assert not _rules(deny, tool, spelled), (tool, spelled)
     assert _rules(deny, "Write", real / "2026-10-24" / "task_old" / "x")  # the rest of the root stays closed
+
+
+@pytest.mark.asyncio
+async def test_a_runner_with_a_junctioned_root_denies_inputs_under_both_spellings_and_allows_outputs(
+        tmp_path, monkeypatch):
+    import os
+
+    from labhq.models import Task
+    from tests.test_claude_staff_home import _capture_runner, _runner_settings, _staff
+
+    home, staff, _ws, _mine, _other, _settings = _staff(tmp_path, monkeypatch)
+    settings = _runner_settings(tmp_path, None)
+    settings.engines.claude_code.env = {"CLAUDE_CONFIG_DIR": str(staff)}
+    real = tmp_path / "real_ws"
+    real.mkdir()
+    alias = _alias(real, tmp_path / "ws_alias")
+    if alias is None:
+        pytest.skip("no symlink or junction available")
+    settings.runner.workspace_root = str(alias)
+    runner, seen = _capture_runner(settings, monkeypatch)
+    task = Task(id="t1", agent_id="worker", request_id="r", prompt="q",
+                meta={"kind": "step", "step_id": "s1", "upstream_artifacts": {}})
+    assert (await runner.run_task(task)).ok
+    ctx = seen["ctx"]
+    deny = ctx.claude_settings["permissions"]["deny"]
+    workdir = str(ctx.workdir)
+    real_workdir = os.path.realpath(workdir)
+    for base in (workdir, real_workdir):
+        for tool in ("Edit", "Write"):
+            assert not _rules(deny, tool, os.path.join(base, "outputs", "r.tsv")), (tool, base)
+            assert _rules(deny, tool, os.path.join(base, "inputs", "s0", "x")), (tool, base)  # ancestor copies stay read-only
