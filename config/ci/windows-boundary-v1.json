@@ -37,6 +37,7 @@
     "tests/test_blind_draft_889.py",
     "tests/test_branched_research.py",
     "tests/test_breaker.py",
+    "tests/test_budget_headroom_940.py",
     "tests/test_cgroup_memory.py",
     "tests/test_checklist_review.py",
     "tests/test_ci807_research_regression.py",

@@ -4168,7 +4168,13 @@ class Orchestrator:
                 return
             pending = f" + 비용 모름 {unknown}건" if unknown else ""
             reserve_each, needed = self._unknown_reserve(limit), reserve
-            raised = max(limit * 2, bound + needed)
+            # With pre-dispatch reservations the raised cap leaves room for one more task reservation: at needed = 0 a
+            # cap equal to the bound would make the very next dispatch open a second card (#940, attempt 9).
+            # A disabled per-task cap (0) makes the reserve the request cap itself, which grows with every raise: no
+            # fixed room can be left then, so the cap stays as before.
+            budget_policy = self.hub.s.policy.budget
+            headroom = reserve_each if budget_policy.reserve_before_dispatch and budget_policy.per_task_usd > 0 else 0.0
+            raised = max(limit * 2, bound + max(needed, headroom))
             # What each answer does, so the PI need not read detail.requested_budget_usd (trial 2026-10-08).
             then = f" 승인하면 상한을 ${raised:.2f}로 올리고, 거절하면 새 작업을 보내지 않습니다."
             summary = (f"예산 초과: ${spent:.2f}{pending} / ${limit:.2f} — 계속 진행할까요?{then}" if over else
@@ -4195,7 +4201,7 @@ class Orchestrator:
             self.budget_outcomes.setdefault(rid, []).append(outcome)
             await self._emit(rid, "request.budget_exceeded", outcome)
             if approved:
-                self.hub.requests[rid]["budget_usd"] = max(limit * 2, bound + needed)
+                self.hub.requests[rid]["budget_usd"] = max(limit * 2, bound + max(needed, headroom))
             else:
                 pending = f" + {unknown} unaccounted task(s)" if unknown else ""
                 verdict = "no PI answer before the card timed out" if timed_out else "approval denied"
@@ -4418,9 +4424,10 @@ class Orchestrator:
                 return float("inf")
             holds[tid] = ceiling
             if tid in settled and tid in self.cost_unknown.get(rid, set()):
-                # _budget_bound already includes the generic unknown reserve. Retain
-                # the remainder when this translation's durable ceiling was larger.
-                translation_unknown_extra += max(0.0, ceiling - self._unknown_reserve(limit))
+                # _budget_bound already counted this unknown task at the generic reserve. A translation holds only
+                # its own enforced ceiling, so swap the generic reserve for it, up or down (#940: two unknown
+                # translations tied up 2 x the per-task cap although each is capped at its $0.05 ceiling).
+                translation_unknown_extra += ceiling - self._unknown_reserve(limit)
         return sum(amount if _usd_amount(amount) else self._unknown_reserve(limit)
                    for tid, amount in holds.items() if tid not in settled) + translation_unknown_extra
 
