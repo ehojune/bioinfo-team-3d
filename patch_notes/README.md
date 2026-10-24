@@ -14,7 +14,22 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 13:45 | [`47efd76`](https://github.com/ehojune/bioinfo-team-3d/pull/935/commits/47efd76) | **통역 예약이 요청 상한을 채우면 부가 지원도 새 지출을 시작하지 않습니다.**<br>optional support admission에 통역·dispatch hold 합산, store-backed CSO fixture의 namespace 읽기 보완 |
+| 13:38 | [`2da6056`](https://github.com/ehojune/bioinfo-team-3d/pull/935/commits/2da6056) | **예전 누적 예약과 새 orphan 예약을 모두 보존하고 task별 근거로 나누지 않습니다.**<br>첫 task별 통역 예약에 legacy 누적 예약을 함께 보존해 aggregate 갱신 전 crash에도 상한 유지 |
+| 13:29 | [`cce70ab`](https://github.com/ehojune/bioinfo-team-3d/pull/935/commits/cce70ab) | **취소 회귀 test가 새 원장 조회 뒤에도 실제 dispatch·hold 검증을 끝내도록 맞췄습니다.**<br>취소 test의 task-only Store에 빈 예약 원장 추가, dispatch 전 assert로 event 대기가 끝나지 않는 경로 수정 |
+| 13:09 | [`594a8c8`](https://github.com/ehojune/bioinfo-team-3d/pull/935/commits/594a8c8) | **집행과 예약 조회가 같은 숫자 타입 규칙을 적용합니다.**<br>통역 예약 projection이 task attempt·budget의 bool 값을 숫자로 인정하지 않도록 검증 통일 |
+| 13:03 | [`1f5b27a`](https://github.com/ehojune/bioinfo-team-3d/pull/935/commits/1f5b27a) | **복구 회귀 test가 새 예약 원장을 명시적으로 다루도록 맞췄습니다.**<br>CI 전용 paper recovery store double에 빈 통역 예약 namespace 추가, 기존 identity assertion 유지 |
+| 12:55 | [`e542df5`](https://github.com/ehojune/bioinfo-team-3d/pull/935/commits/e542df5) | **이어 묻기 비용과 잘린 예약 목록의 전체 개수를 정확히 계산합니다.**<br>follow-up 캐시 복원 통일, projection limit 밖 orphan 예약도 total·missing count에 보존 |
+| 12:50 | [`526d4df`](https://github.com/ehojune/bioinfo-team-3d/pull/935/commits/526d4df) | **예약과 실제 호출 정보가 다르면 새 지출을 막습니다.**<br>admission에서 통역 예약과 durable task의 request·agent·kind·attempt·ceiling 대조, orphan 보존 |
+| 12:47 | [`fff63c4`](https://github.com/ehojune/bioinfo-team-3d/pull/935/commits/fff63c4) | **비용 캐시의 초기화 순서가 달라도 중복 없이 예약을 합산합니다.**<br>통역 admission과 resume 카드가 aggregate·task ID를 같은 helper로 복원, 부분 초기화 회귀 추가 |
+| 12:45 | [`ef90057`](https://github.com/ehojune/bioinfo-team-3d/pull/935/commits/ef90057) | **복원 카드 뒤 통역을 요청해도 이전 비용을 다시 더하지 않습니다.**<br>resume 카드가 aggregate·task ID·unknown 캐시를 함께 복원해 통역 admission의 이중 비용 합산 방지 |
+| 12:40 | [`fc9dc97`](https://github.com/ehojune/bioinfo-team-3d/pull/935/commits/fc9dc97) | **통역 비용을 모르면 예약 한도보다 작게 계산하지 않습니다.**<br>unknown 통역 비용에 generic reserve와 durable ceiling 중 큰 값을 유지 |
+| 12:35 | [`b2b6a92`](https://github.com/ehojune/bioinfo-team-3d/pull/935/commits/b2b6a92) | **재시작 뒤에도 이미 쓴 비용과 남은 예약을 함께 계산합니다.**<br>restart 뒤 통역 admission 전에 durable 비용을 복원해 orphan 예약과 합산 |
 | 12:33 | [`2d3b174`](https://github.com/ehojune/bioinfo-team-3d/pull/936/commits/2d3b174) | **새 설치 검사 결과를 보존하는 옵션과 공개 금지 범위를 안내합니다.**<br>설치 검사기 manual에 기본 자동 삭제·보존 옵션·로컬 전용 증거 경계를 보충했다. |
+| 12:30 | [`ebaaa8c`](https://github.com/ehojune/bioinfo-team-3d/pull/935/commits/ebaaa8c) | **잘못된 예약 자료는 오류로 중단하지 않고 새 지출을 막습니다.**<br>예약 원장이 dict가 아니면 빈 원장으로 취급하지 않고 admission 차단·incomplete projection 반환 |
+| 12:26 | [`649b0f7`](https://github.com/ehojune/bioinfo-team-3d/pull/935/commits/649b0f7) | **예산 확인이 과거 요청의 예약 수에 따라 느려지지 않도록 바꿨습니다.**<br>예약 원장을 request별로 저장해 admission의 전체 이력 scan 제거, malformed task row 회귀 보강 |
+| 12:25 | [`f129395`](https://github.com/ehojune/bioinfo-team-3d/pull/935/commits/f129395) | **연구 task가 생기기 전 통역 예약도 근거가 있는 원장으로 확인합니다.**<br>통역만 있는 요청도 빈 연구 hold 원장을 먼저 영속화하고 잘못된 task payload는 projection에서 차단 |
+| 12:22 | [`ca3ba5a`](https://github.com/ehojune/bioinfo-team-3d/pull/935/commits/ca3ba5a) | **통역 예약을 task별로 확인하고 중단으로 남은 예약도 숨기지 않습니다.**<br>통역 task별 예약을 dispatch 전에 보존하고 request bound·projection에서 중복 없이 합산 |
 | 12:03 | [`b2d3ae9`](https://github.com/ehojune/bioinfo-team-3d/pull/925/commits/b2d3ae9) | **Windows 잠금 수정 뒤 설치판과 검증 기록을 맞춥니다.**<br>최신 설치 코드·요청 ID와 관련 83 passed를 반영하고 순간 잠금 재시도·영구 실패 경계를 공개 근거에 기록했다. |
 | 12:01 | [`9c4f0e2`](https://github.com/ehojune/bioinfo-team-3d/pull/925/commits/9c4f0e2) | **Windows의 순간 잠금 뒤에도 설치 증거를 저장합니다.**<br>receipt 교체의 PermissionError에 기존 util과 같은 최대 20회 재시도를 적용했다. 영구 잠금·POSIX·다른 오류는 실패하며 회귀 2 failed→관련 83 passed, Windows 새 설치 전체 PASS·자식 잔류 0을 확인했다. |
 | 11:46 | [`28220d1`](https://github.com/ehojune/bioinfo-team-3d/pull/925/commits/28220d1) | **원자적 receipt의 실패·정상 경로 검증을 기록합니다.**<br>최신 설치판·요청 ID와 관련 79 passed를 갱신하고 쓰기·교체 중 실패해도 이전 JSON이 보존되는 근거를 반영했다. |
