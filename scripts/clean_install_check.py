@@ -313,7 +313,7 @@ def _isolated_env(root: Path, checkout: Path) -> dict[str, str]:
     for name in list(env):
         upper = name.upper()
         if (upper.startswith(("LABHQ_", "GIT_CONFIG_")) and not upper.startswith("LABHQ_TEST_")) or (
-            upper.startswith(("OPENAI_", "ANTHROPIC_", "CODEX_", "CLAUDE_", "GEMINI_", "BIOINFO_", "GH_", "GITHUB_"))
+            upper.startswith(("OPENAI_", "ANTHROPIC_", "CODEX_", "CLAUDE_", "GEMINI_", "BIOINFO_", "GH_", "GITHUB_", "PIP_"))
             or upper.endswith(("_API_KEY", "_TOKEN")) or upper in {
                 "PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY",
                 "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",

@@ -43,11 +43,13 @@ def test_remaining_venv_process_names_its_recorded_role(tmp_path, monkeypatch):
 
 def test_install_drops_operator_overrides_and_auth_before_first_subprocess(tmp_path, monkeypatch):
     for name in ("LABHQ_CONFIG", "LABHQ_HOME", "LABHQ_STATE_DIR", "GH_TOKEN", "GITHUB_TOKEN",
-                 "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV"):
+                 "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV",
+                 "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "PIP_NO_INDEX", "PIP_FIND_LINKS", "PIP_CONSTRAINT"):
         monkeypatch.setenv(name, "operator-value")
     env = clean_install_check._isolated_env(tmp_path, tmp_path / "checkout")
     for name in ("LABHQ_CONFIG", "GH_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
-                 "PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV"):
+                 "PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL",
+                 "PIP_NO_INDEX", "PIP_FIND_LINKS", "PIP_CONSTRAINT"):
         assert name not in env
     for name in ("HOME", "USERPROFILE", "LABHQ_HOME", "LABHQ_STATE_DIR", "CODEX_HOME",
                  "CLAUDE_CONFIG_DIR", "TEMP", "XDG_CACHE_HOME", "XDG_STATE_HOME"):
