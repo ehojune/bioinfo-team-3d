@@ -5,7 +5,7 @@ rows:
   summary: 실제 command 실패와 증거 오류의 분리 검증을 기록합니다.
   text: 최신 설치판·요청 ID와 관련 71 passed, 성공 command의 증거 오류도 검사 실패로 처리하는 근거를 반영했다.
 - sha: b909a10
-  at: '2026-10-24 11:06'
+  at: '2026-10-24 11:08'
   summary: 기록·진단 오류를 실제 설치 실패와 분리합니다.
   text: 실패 command의 원인을 log·receipt 쓰기나 진단 중단이 덮어쓰지 않도록 기록 계층에서 분리했다. 기록 회귀 11 failed·진단 중단 2 failed를 수정하고 관련 71 passed 및 Windows 새 설치 전체 PASS를 확인했다.
 - sha: 865a75e
@@ -25,7 +25,7 @@ rows:
   summary: 설치 마감 도중 중단돼도 성공으로 기록하지 않습니다.
   text: guard·삭제 중 KeyboardInterrupt/SystemExit를 4 failed로 재현하고 BaseException FAIL 기록과 정상 종료 때만 PASS 전환으로 고쳤다. 관련 54 passed와 Windows 새 설치 전체 PASS를 확인했다.
 - sha: ef3d98c
-  at: '2026-10-24 10:35'
+  at: '2026-10-24 10:34'
   summary: 최종 설치 판정과 실패 회귀 근거를 갱신합니다.
   text: 설치 코드·요청 ID와 관련 50 passed를 반영하고 참고 기록을 1993→1807자로 줄였다. 중단·겹친 오류를 포함한 최초 실패 보존을 기록했다.
 - sha: 74e3ef6
@@ -33,7 +33,7 @@ rows:
   summary: 중단·삭제·기록 오류가 겹쳐도 설치 판정을 일치시킵니다.
   text: 중단을 FAIL로 기록하고 삭제 완료 뒤 PASS를 확정한다. 삭제와 receipt 쓰기 오류가 겹쳐도 최초 원인을 보존하며 관련 50 passed와 Windows 새 설치 전체 PASS를 확인했다.
 - sha: f5d011d
-  at: '2026-10-24 10:27'
+  at: '2026-10-24 10:28'
   summary: 설치의 최초 실패를 후속 guard 오류와 구분합니다.
   text: 기존 실패의 stage·detail을 유지하고 guard·cleanup 오류를 별도 기록하며 receipt 쓰기 실패도 최초 오류를 덮어쓰지 않게 했다. 겹친 오류 회귀를 검증했다.
 - sha: 0913f64
@@ -61,10 +61,10 @@ rows:
   summary: 공백이 있는 Windows 설치 경로에서도 검사 명령이 실행됩니다.
   text: cmd의 외부 따옴표와 batch 경로 인자를 보존하고 공백 경로 회귀 1 failed→관련 42 passed, 새 빈 폴더 전체 설치 29 PASS·1 SKIP과 자식 잔류 0을 확인했다.
 - sha: 0332b06
-  at: '2026-10-24 09:00'
+  at: '2026-10-24 08:59'
   summary: Windows 새 설치의 단계별 판정과 설치판 근거를 남깁니다.
   text: Python 3.14.7 새 설치에서 29 PASS·0 FAIL·1 SKIP, mock 요청 verify·down과 잔류 0을 확인하고 공개 요약·README 길이를 기록했다.
 - sha: 8c2937b
-  at: '2026-10-24 09:00'
+  at: '2026-10-24 08:55'
   summary: 새 설치 검사에서 기존 설정·인증을 격리하고 단계별 결과와 로그를 보존합니다.
   text: Windows 빈 폴더의 clone·venv·init·mock 요청·verify·down을 재현하고 PASS/FAIL/SKIP receipt, 의존성 판본, 부분 기동 실패 종료와 README 한영판 인증 경계를 검증했다. Refs #922.
