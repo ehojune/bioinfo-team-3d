@@ -1,5 +1,9 @@
 pr: 925
 rows:
+- sha: 28220d1
+  at: '2026-10-24 11:46'
+  summary: 원자적 receipt의 실패·정상 경로 검증을 기록합니다.
+  text: 최신 설치판·요청 ID와 관련 79 passed를 갱신하고 쓰기·교체 중 실패해도 이전 JSON이 보존되는 근거를 반영했다.
 - sha: 3ace77d
   at: '2026-10-24 11:40'
   summary: receipt JSON을 원자적으로 교체해 이전 증거를 보존합니다.
