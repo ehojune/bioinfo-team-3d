@@ -1,5 +1,9 @@
 pr: 935
 rows:
+- sha: f129395
+  at: 2026-10-24 12:27
+  text: 통역만 있는 요청도 빈 연구 hold 원장을 먼저 영속화하고 잘못된 task payload는 projection에서 차단
+  summary: 연구 task가 생기기 전 통역 예약도 근거가 있는 원장으로 확인합니다.
 - sha: ca3ba5a
   at: 2026-10-24 12:22
   text: 통역 task별 예약을 dispatch 전에 보존하고 request bound·projection에서 중복 없이 합산
