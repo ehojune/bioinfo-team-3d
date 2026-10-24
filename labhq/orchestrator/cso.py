@@ -4265,7 +4265,10 @@ class Orchestrator:
         if fixed:
             configured, source = float(fixed.get("configured_cap_usd") or 0), str(fixed.get("source") or "request")
         else:
-            configured, source = (own, "request") if own else (policy, "policy")
+            # A limit a budget card raised before CP1 is still the lab's policy cap: only a budget the PI wrote on the
+            # request (kept in requested_budget_usd; older requests have only budget_usd) is the cap itself.
+            asked = req.get("requested_budget_usd", req.get("budget_usd"))
+            configured, source = (own, "request" if asked else "policy") if own else (policy, "policy")
         planned = plan.get("budget_usd")
         if not planned:
             return {"cap_usd": own or policy, "source": "request" if own else "policy",

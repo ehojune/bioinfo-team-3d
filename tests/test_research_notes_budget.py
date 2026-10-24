@@ -514,3 +514,18 @@ async def test_a_task_whose_reservation_would_pass_the_request_budget_is_still_h
     cards = [item for item in hub.approvals if item["kind"] == "budget"]
     assert len(cards) == 1 and cards[0]["detail"]["limit_usd"] == 40.0  # 35 spent + a $10 reservation > $40
     assert not _kinds(hub, "step")  # nothing is sent past the cap
+
+
+@pytest.mark.asyncio
+async def test_a_limit_a_budget_card_raised_before_cp1_is_not_a_request_budget():
+    """PR #945 review: no --budget was given; a card raised the policy limit to $20 before CP1. The plan's sum is still
+    the cap, up to that limit: only a budget the PI wrote on the request is the cap itself."""
+    hub = _costed(_with_plan(rep._hub(), budget_usd=7), plan=2.7)
+    hub.requests["r"].update(budget_usd=20, requested_budget_usd=None)
+    _answer(hub, [CP1, APPROVE_CP2])
+    await Orchestrator(hub).run_request("r")
+
+    budget = hub.approvals[0]["detail"]["budget"]
+    assert budget == {"plan_budget_usd": 7.0, "spent_before_plan_usd": 2.7, "cap_usd": 9.7, "source": "plan",
+                      "configured_cap_usd": 20.0}
+    assert hub.requests["r"]["research_contract"]["budget_cap"]["source"] == "policy"
