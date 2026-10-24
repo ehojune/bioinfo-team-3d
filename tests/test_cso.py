@@ -3258,6 +3258,9 @@ class _TaskStore:
         self.tasks = {}
 
     def get(self, kind, key):
+        if kind == "pi_translation_reservations":
+            assert key == "r"
+            return {}
         assert kind == "task"
         return self.tasks.get(key)
 
