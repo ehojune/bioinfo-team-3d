@@ -1,5 +1,9 @@
 pr: 935
 rows:
+- sha: ef90057
+  at: 2026-10-24 12:45
+  text: resume 카드가 aggregate·task ID·unknown 캐시를 함께 복원해 통역 admission의 이중 비용 합산 방지
+  summary: 복원 카드 뒤 통역을 요청해도 이전 비용을 다시 더하지 않습니다.
 - sha: fc9dc97
   at: 2026-10-24 12:40
   text: unknown 통역 비용에 generic reserve와 durable ceiling 중 큰 값을 유지
