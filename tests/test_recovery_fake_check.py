@@ -3,7 +3,29 @@ from pathlib import Path
 
 import pytest
 
-from scripts.recovery_fake_check import run_case, validate
+from scripts.recovery_fake_check import main, run_case, validate
+
+
+async def test_foreign_source_is_refused_before_any_output_or_process(tmp_path, monkeypatch):
+    import sys
+    source, output = tmp_path / "other-checkout", tmp_path / "receipt"
+    source.mkdir()
+    with pytest.raises(ValueError, match="checkout containing this script"):
+        await run_case(source, output, "gateway")
+    monkeypatch.setattr(sys, "argv", ["recovery_fake_check.py", "--source", str(source), "--output", str(output)])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 2
+    assert not output.exists()
+
+
+async def test_foreign_import_is_refused_before_any_output_or_process(tmp_path, monkeypatch):
+    import labhq
+    monkeypatch.setattr(labhq, "__file__", str(tmp_path / "other-checkout/labhq/__init__.py"))
+    output = tmp_path / "receipt"
+    with pytest.raises(ValueError, match="imported labhq"):
+        await run_case(Path(__file__).resolve().parents[1], output, "runner")
+    assert not output.exists()
 
 
 @pytest.mark.parametrize("target", ["gateway", "runner"])

@@ -21,6 +21,7 @@ python scripts/recovery_fake_check.py --source <checkout> --output <new-disposab
 python -m pytest -q tests/test_recovery_fake_check.py tests/test_shutdown_recovery.py tests/test_resume_cards_607.py
 ```
 
+- 선택한 checkout 안의 script와 설치판 interpreter를 사용합니다. `--source`가 script의 checkout과 다르거나 parent의 제품·반복 fixture import가 다른 판본이면 출력·process 생성 전에 거부합니다.
 - 실제 Hub·Runner·SQLite·WebSocket·broker를 사용합니다. 2단계 fake DAG의 s1을 끝내고 s2의 loopback 조회 뒤 gateway 또는 runner를 강제 종료합니다.
 - 종료는 시험이 만든 process handle만 사용합니다. Windows는 venv redirector 대신 실제 interpreter를 시작하고 PID·역할·nonce를 대조한 뒤 `TerminateProcess`, POSIX는 `SIGKILL`을 보냅니다. 두 역할은 다른 generation으로 재기동합니다.
 - 직원 실행은 deterministic mock이며 child의 subprocess 생성은 거부합니다. stdout/stderr를 분리하고 마지막에 보유 handle 전부의 종료를 확인합니다. 실제 모델·외부 서비스·HPC·PI 인스턴스·B/c3 proof는 실행하지 않습니다.

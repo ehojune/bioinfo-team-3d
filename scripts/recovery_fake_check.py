@@ -25,6 +25,23 @@ def write_json(path, value):
     staging.replace(path)
 
 
+def source_checkout(source):
+    source = source.resolve()
+    if source != Path(__file__).resolve().parents[1]:
+        raise ValueError("--source must match the checkout containing this script")
+    # A script launched by filename has scripts/, rather than the checkout, on sys.path.
+    sys.path.insert(0, str(source))
+    import labhq
+    if Path(labhq.__file__).resolve() != source / "labhq/__init__.py":
+        raise ValueError("imported labhq must come from the selected checkout")
+    fixture = source / "scripts/repeat_fake_fixture.py"
+    spec = importlib.util.find_spec("scripts.repeat_fake_fixture")
+    if (fixture.exists() != (spec is not None)
+            or (spec is not None and Path(spec.origin).resolve() != fixture)):
+        raise ValueError("repeat fixture must come from the selected checkout")
+    return source
+
+
 def rows(path, kind=None):
     if not path.exists():
         return {}
@@ -313,6 +330,7 @@ def validate(receipt):
 
 
 async def run_case(source, root, target, timeout_s=90):
+    source = source_checkout(source)
     import httpx
     from labhq.runner.lookup_admission import LookupAdmission, FILE
     root.mkdir(parents=True, exist_ok=False)
@@ -444,7 +462,11 @@ def main():
     if args.child:
         asyncio.run(child(args.output.resolve(), args.child, args.nonce))
         return 0
-    source, output = args.source.resolve(), args.output.resolve()
+    try:
+        source = source_checkout(args.source)
+    except ValueError as exc:
+        parser.error(str(exc))
+    output = args.output.resolve()
     if output.exists():
         parser.error("--output must be a new disposable folder")
     output.mkdir(parents=True)
