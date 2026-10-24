@@ -96,7 +96,7 @@ async def test_restart_counts_durable_cost_plus_orphan_before_translation(hub, m
     hub.store.put('pi_translation_reservations', 'r', {'orphan': {
         'reservation_id': 'orphan', 'task_id': 'orphan', 'request_id': 'r',
         'agent_id': 'chief_of_staff', 'attempt': 1, 'state': 'reserved',
-        'source': 'pi_translation', 'ceiling_usd': 0.05}})
+        'source': 'pi_translation', 'ceiling_usd': 0.05, 'legacy_reserved_usd': 0}})
     if seeded_aggregate:
         hub.orchestrator.cost['r'] = 4.94
     assert not hub.orchestrator.cost_tasks.get('r')
@@ -104,6 +104,31 @@ async def test_restart_counts_durable_cost_plus_orphan_before_translation(hub, m
     await drain(hub)
     assert not calls
     assert hub.orchestrator._budget_bound('r', 5)[2] == pytest.approx(4.99)
+
+
+@pytest.mark.asyncio
+async def test_legacy_translation_total_and_new_orphan_survive_aggregate_write_crash(hub, monkeypatch):
+    calls = mock_model(monkeypatch, hub)
+    hub.s.pi_language.per_request_usd = 0.5
+    hub.s.pi_language.per_message_usd = 0.0625  # exact binary amounts expose the admission boundary
+    hub.store.put('pi_translation_budget', 'r', {'reserved': 0.4375})
+    put = hub.store.put
+    def interrupted(kind, key, value):
+        if kind == 'pi_translation_budget':
+            raise OSError('synthetic crash after task reservation')
+        return put(kind, key, value)
+    monkeypatch.setattr(hub.store, 'put', interrupted)
+    await hub.publish(event())
+    await drain(hub)
+    reservations = hub.store.get('pi_translation_reservations', 'r')
+    assert len(reservations) == 1
+    assert next(iter(reservations.values()))['legacy_reserved_usd'] == 0.4375
+    assert hub.store.get('pi_translation_budget', 'r')['reserved'] == 0.4375
+    monkeypatch.setattr(hub.store, 'put', put)
+    await hub.publish(event(text='Please compare the other input tables before continuing.'))
+    await drain(hub)
+    assert not calls
+    assert len(hub.store.get('pi_translation_reservations', 'r')) == 1
 
 
 def test_unknown_translation_keeps_ceiling_above_generic_reserve(hub):

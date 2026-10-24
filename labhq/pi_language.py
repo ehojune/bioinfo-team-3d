@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import re
 import time
 
@@ -110,10 +111,18 @@ class PiInterpreter:
                           or (event.get("data") or {}).get("source_restricted"))
             budget = hub.store.get("pi_translation_budget", str(rid)) or {"reserved": 0.0}
             reservations = hub.store.get("pi_translation_reservations", str(rid)) or {}
-            reserved = max(budget["reserved"], sum(r["ceiling_usd"] for r in reservations.values()))
+            # The first new reservation atomically carries the opaque legacy total.
+            # A crash before the aggregate update must not lose either prefix.
+            legacy_values = [r["legacy_reserved_usd"] for r in reservations.values()] or [budget["reserved"]]
+            if any(type(v) not in (int, float) or not math.isfinite(v) or v < 0 for v in legacy_values):
+                return
+            legacy = max(legacy_values)
+            reserved = max(budget["reserved"], legacy + sum(r["ceiling_usd"] for r in reservations.values()))
             limit = float(req.get("budget_usd") or hub.s.policy.budget.per_request_usd)
             hub.orchestrator._restore_cost_cache(rid)
             _, _, bound = hub.orchestrator._budget_bound(rid, limit)
+            if not math.isfinite(reserved) or not math.isfinite(bound):
+                return
             remaining = min(cfg.per_request_usd - reserved,
                             limit - max(bound, float(req.get("cost_usd") or 0)))
             if (restricted or not cfg.enabled or not cfg.model or not req or not runner or runner not in hub.runners
@@ -130,6 +139,7 @@ class PiInterpreter:
                 "reservation_id": reservation_id, "task_id": reservation_id,
                 "request_id": rid, "agent_id": aid, "attempt": 1,
                 "ceiling_usd": cfg.per_message_usd, "state": "reserved",
+                "legacy_reserved_usd": legacy,
                 "source": "pi_translation", "created_at": time.time()}
             hub.store.put("pi_translation_reservations", str(rid), reservations)
             hub.store.put("pi_translation_budget", str(rid),
