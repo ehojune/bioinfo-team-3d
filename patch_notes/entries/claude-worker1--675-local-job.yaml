@@ -16,3 +16,7 @@ rows:
   at: 2026-10-24 17:25
   text: 'runner: __init__ 없이 만든 Runner에서도 stop()이 동작하도록 로컬 watcher 접근을 방어 (#675 CI)'
   summary: 종료 처리가 로컬 job 감시가 없는 상태에서도 오류 없이 끝나게 했습니다.
+- sha: 105ef29
+  at: 2026-10-24 17:48
+  text: '로컬 job 리뷰 반영: 시작 중 취소·process group 정리·공유 환경 guard·Codex 제외·슬롯 예약·응답 손실 안내 (#675 리뷰 P1/P2)'
+  summary: 로컬 job 기능의 취소·정리·보호 규칙에서 리뷰가 짚은 빈틈을 메웠습니다.
