@@ -312,7 +312,7 @@ def _isolated_env(root: Path, checkout: Path) -> dict[str, str]:
     env = os.environ.copy()
     for name in list(env):
         upper = name.upper()
-        if (upper.startswith(("LABHQ_", "GIT_CONFIG_")) and not upper.startswith("LABHQ_TEST_")) or (
+        if (upper.startswith(("LABHQ_", "GIT_")) and not upper.startswith("LABHQ_TEST_")) or (
             upper.startswith(("OPENAI_", "ANTHROPIC_", "CODEX_", "CLAUDE_", "GEMINI_", "BIOINFO_", "GH_", "GITHUB_", "PIP_"))
             or upper.endswith(("_API_KEY", "_TOKEN")) or upper in {
                 "PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY",
@@ -417,16 +417,20 @@ def rehearse(source: Path, guard_paths: list[Path], *, work_dir: Path | None = N
         root.mkdir(parents=True, exist_ok=True)
     receipt = Receipt(receipt_path.resolve() if receipt_path else root / "receipt.json", root)
     context = _RECEIPT.set(receipt)
-    source = source.resolve()
-    guards = list(guard_paths)
-    source_config = source / "config/labhq.yaml"
-    if source_config.exists():
-        guards.append(source_config)
-    before = _snapshot(guards)
+    before = None
     started = False
     request_id = ""
 
     try:
+        source = source.resolve()
+        guards = list(guard_paths)
+        source_config = source / "config/labhq.yaml"
+        if source_config.exists():
+            guards.append(source_config)
+        try:
+            before = _snapshot(guards)
+        except OSError as exc:
+            raise CheckFailure("보호 경로 snapshot", _one_line(exc)) from None
         checkout = root / "bioinfo-team-3d"
         env = _isolated_env(root, checkout)
         git = shutil.which("git") or "git"
@@ -563,9 +567,10 @@ def rehearse(source: Path, guard_paths: list[Path], *, work_dir: Path | None = N
     finally:
         active_error = sys.exc_info()[0] is not None
         try:
-            after = _snapshot(list(before))
-            changed = [str(path) for path, value in before.items() if after[path] != value]
-            _expect("보호 경로 mtime", not changed, "mtime 변경: " + ", ".join(changed))
+            if before is not None:
+                after = _snapshot(list(before))
+                changed = [str(path) for path, value in before.items() if after[path] != value]
+                _expect("보호 경로 mtime", not changed, "mtime 변경: " + ", ".join(changed))
         except Exception as exc:
             receipt.data.update(status="FAIL", failure_stage=getattr(exc, "stage", "보호 경로"), detail=_one_line(exc))
             if not active_error:
@@ -574,14 +579,25 @@ def rehearse(source: Path, guard_paths: list[Path], *, work_dir: Path | None = N
             if receipt.data["status"] == "RUNNING":
                 receipt.data.update(status="PASS", request_id=request_id)
             receipt.data["finished_at"] = datetime.now(timezone.utc).isoformat()
-            receipt.write()
-            _RECEIPT.reset(context)
+            try:
+                receipt.write()
+            finally:
+                _RECEIPT.reset(context)
             if work_dir is None:
                 try:
                     shutil.rmtree(root)
-                except OSError:
+                except OSError as exc:
+                    receipt.data["cleanup_error"] = _one_line(exc)
                     if not active_error:
-                        raise
+                        receipt.data.update(status="FAIL", failure_stage="임시 폴더 정리", detail=_one_line(exc),
+                                            finished_at=datetime.now(timezone.utc).isoformat())
+                    try:
+                        receipt.write()
+                    except OSError:
+                        if not active_error:
+                            raise
+                    if not active_error:
+                        raise CheckFailure("임시 폴더 정리", _one_line(exc)) from None
     return request_id
 
 

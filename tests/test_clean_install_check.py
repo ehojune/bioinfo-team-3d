@@ -44,12 +44,14 @@ def test_remaining_venv_process_names_its_recorded_role(tmp_path, monkeypatch):
 def test_install_drops_operator_overrides_and_auth_before_first_subprocess(tmp_path, monkeypatch):
     for name in ("LABHQ_CONFIG", "LABHQ_HOME", "LABHQ_STATE_DIR", "GH_TOKEN", "GITHUB_TOKEN",
                  "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV",
-                 "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "PIP_NO_INDEX", "PIP_FIND_LINKS", "PIP_CONSTRAINT"):
+                 "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "PIP_NO_INDEX", "PIP_FIND_LINKS", "PIP_CONSTRAINT",
+                 "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"):
         monkeypatch.setenv(name, "operator-value")
     env = clean_install_check._isolated_env(tmp_path, tmp_path / "checkout")
     for name in ("LABHQ_CONFIG", "GH_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
                  "PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL",
-                 "PIP_NO_INDEX", "PIP_FIND_LINKS", "PIP_CONSTRAINT"):
+                 "PIP_NO_INDEX", "PIP_FIND_LINKS", "PIP_CONSTRAINT", "GIT_DIR", "GIT_WORK_TREE",
+                 "GIT_COMMON_DIR", "GIT_INDEX_FILE"):
         assert name not in env
     for name in ("HOME", "USERPROFILE", "LABHQ_HOME", "LABHQ_STATE_DIR", "CODEX_HOME",
                  "CLAUDE_CONFIG_DIR", "TEMP", "XDG_CACHE_HOME", "XDG_STATE_HOME"):
@@ -100,10 +102,12 @@ def test_launcher_preserves_spaced_install_path_and_argument(tmp_path):
     assert done.stdout.strip() == 'argument="argument with spaces"'
 
 
-def test_partial_start_is_stopped_and_original_failure_preserved(tmp_path, monkeypatch):
+@pytest.fixture
+def fake_install(monkeypatch):
     calls = []
     def run(stage, command, **kwargs):
         calls.append(stage)
+        root = kwargs["cwd"].parent
         if stage in ("source HEAD", "clone HEAD"):
             return "abc123"
         if stage == "labhq init":
@@ -116,20 +120,92 @@ def test_partial_start_is_stopped_and_original_failure_preserved(tmp_path, monke
             return "실행 준비: 예"
         if stage == "wheel build":
             import zipfile
-            with zipfile.ZipFile(tmp_path / "work/wheel/labhq-test.whl", "w") as archive:
+            with zipfile.ZipFile(root / "wheel/labhq-test.whl", "w") as archive:
                 for name in ("labhq/skills/.claude-plugin/plugin.json", "labhq/skills/humanizer/SKILL.md",
                              "labhq/skills/graphical-abstract/templates/graphical-abstract.svg"):
                     archive.writestr(name, "fixture")
+        if stage == "공개 데이터 형태 mock 요청":
+            bundle = root / "runs/requests/req_fixture123"
+            bundle.mkdir(parents=True)
+            for name in ("report.md", "report_appendix.md", "MANIFEST.tsv", "ro-crate-metadata.json"):
+                (bundle / name).write_text("fixture", encoding="utf-8")
+            return "request req_fixture123 [mock:analyst]"
+        if stage == "labhq verify":
+            return "문제 없음 (exit 0)"
         return ""
-    def start(*args):
-        raise clean_install_check.CheckFailure("gateway와 runner 시작", "partial startup")
     monkeypatch.setattr(clean_install_check, "_run", run)
     monkeypatch.setattr(clean_install_check, "_patch_mock_config", lambda *args: None)
-    monkeypatch.setattr(clean_install_check, "_start_services", start)
     monkeypatch.setattr(clean_install_check, "_venv_python_processes", lambda *args: [])
+    return calls
+
+
+def test_partial_start_is_stopped_and_original_failure_preserved(tmp_path, monkeypatch, fake_install):
+    def start(*args):
+        raise clean_install_check.CheckFailure("gateway와 runner 시작", "partial startup")
+    monkeypatch.setattr(clean_install_check, "_start_services", start)
     with pytest.raises(clean_install_check.CheckFailure, match="partial startup"):
         clean_install_check.rehearse(tmp_path / "source", [], work_dir=tmp_path / "work")
-    assert "실패 뒤 강제 종료" in calls
+    assert "실패 뒤 강제 종료" in fake_install
     receipt = json.loads((tmp_path / "work/receipt.json").read_text(encoding="utf-8"))
     assert receipt["failure_stage"] == "gateway와 runner 시작"
     assert any(row["stage"] == "실패 뒤 자식 종료" and row["status"] == "PASS" for row in receipt["steps"])
+
+
+def test_inherited_git_routing_cannot_change_an_operator_repo(tmp_path, monkeypatch):
+    import shutil
+    git = shutil.which("git")
+    assert git
+    base_env = {k: v for k, v in os.environ.items() if not k.upper().startswith("GIT_")}
+    operator = tmp_path / "operator"
+    root = tmp_path / "rehearsal"
+    checkout = root / "checkout"
+    root.mkdir()
+    for folder in (operator, checkout):
+        subprocess.run([git, "init", "-q", str(folder)], env=base_env, check=True)
+    subprocess.run([git, "-C", str(operator), "config", "core.hooksPath", "keep-operator-hooks"],
+                   env=base_env, check=True)
+    monkeypatch.setenv("GIT_DIR", str(operator / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(operator))
+    env = clean_install_check._isolated_env(root, checkout)
+    clean_install_check._run("AGENTS hooks", [git, "config", "core.hooksPath", ".githooks"],
+                             cwd=checkout, env=env)
+    value = subprocess.run([git, "-C", str(operator), "config", "core.hooksPath"], env=base_env,
+                           capture_output=True, text=True, check=True).stdout.strip()
+    assert value == "keep-operator-hooks"
+    for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"):
+        assert name not in env
+
+
+def test_guard_snapshot_error_finishes_receipt_and_resets_context(tmp_path, monkeypatch):
+    def denied(*args):
+        raise PermissionError("guard fixture denied")
+    monkeypatch.setattr(clean_install_check, "_snapshot", denied)
+    receipt_path = tmp_path / "failed.json"
+    previous = clean_install_check._RECEIPT.get()
+    try:
+        with pytest.raises((PermissionError, clean_install_check.CheckFailure)):
+            clean_install_check.rehearse(tmp_path / "source", [tmp_path / "guard"],
+                                         work_dir=tmp_path / "work", receipt_path=receipt_path)
+        assert clean_install_check._RECEIPT.get() is previous
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        assert receipt["status"] == "FAIL"
+        assert receipt["finished_at"]
+    finally:
+        clean_install_check._RECEIPT.set(previous)
+
+
+def test_automatic_workdir_cleanup_error_cannot_leave_a_pass_receipt(tmp_path, monkeypatch, fake_install):
+    root = tmp_path / "automatic"
+    root.mkdir()
+    receipt_path = tmp_path / "external.json"
+    monkeypatch.setattr(clean_install_check.tempfile, "mkdtemp", lambda **kwargs: str(root))
+    def locked(*args):
+        raise PermissionError("locked fixture")
+    monkeypatch.setattr(clean_install_check.shutil, "rmtree", locked)
+    with pytest.raises((PermissionError, clean_install_check.CheckFailure)):
+        clean_install_check.rehearse(tmp_path / "source", [], receipt_path=receipt_path)
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt["status"] == "FAIL"
+    assert receipt["finished_at"]
+    assert "locked fixture" in receipt["detail"]
+    assert clean_install_check._RECEIPT.get() is None
