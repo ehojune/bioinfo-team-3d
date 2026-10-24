@@ -1,5 +1,9 @@
 pr: 927
 rows:
+- sha: c342ae4
+  at: '2026-10-24 09:48'
+  summary: 완료된 plan·s1의 task identity와 단일 실행을 복구 receipt로 확인합니다.
+  text: 비용·수락 원장이 맞아도 새 task로 plan을 재실행하면 실패한다. raw 비용 원장도 재합산해 summary와 대조한다. 실제 강제 종료와 source 거부 4건 PASS. Refs #924.
 - sha: ea30096
   at: '2026-10-24 09:40'
   summary: 복구 script·parent import·child 실행을 같은 checkout에 묶습니다.
