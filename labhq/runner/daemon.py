@@ -1618,7 +1618,9 @@ class Runner:
                 Event(type="task.result", data={**result_data, "control": self.controls.finish(task.id)}, **base)])
 
         await emit("agent.status", {"state": "queued"})
-        consult = task.meta.get("kind") == "consult"
+        # PI-text translations are short, tool-less display calls: on the research slot they queued behind a running
+        # step past their 30 s timeout and were cancelled unstarted, leaving an unknown cost (#942, 9차 pi_text_20/34).
+        consult = task.meta.get("kind") in ("consult", "pi_interpretation")
         semaphore = self.consult_sem if consult else self.sem
         # Not started until the PI lets it: a pause holds it before and after it waits for a run slot, and a halt while
         # it waits parks it without starting the CLI (PR #532 review).
