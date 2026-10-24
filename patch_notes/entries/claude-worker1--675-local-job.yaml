@@ -4,3 +4,7 @@ rows:
   at: 2026-10-24 16:08
   text: '긴 계산을 runner가 소유하는 로컬 job으로: labhq_job 도구, 취소 시 정리, 떼어 내기 거절 (#675)'
   summary: 10분 넘는 계산을 직원이 로컬 job으로 내면 끝날 때 이어서 깨우고, 취소하면 프로세스를 함께 끝내며, 몰래 떼어 내는 명령은 안내와 함께 거절합니다.
+- sha: 4e65c07
+  at: 2026-10-24 16:35
+  text: '로컬 job 감시를 HPC watcher와 분리: scheduler=none 계약을 지키고 첫 job부터 별도 watcher로 지켜본다 (#675 CI)'
+  summary: 로컬 job 감시를 HPC 감시와 따로 두어, HPC를 끈 설정의 기존 동작은 그대로 두고 로컬 job만 따로 지켜봅니다.
