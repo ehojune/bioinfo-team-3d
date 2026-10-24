@@ -307,6 +307,134 @@ async def test_adoption_prefers_the_latest_consult_over_a_higher_attempt(tmp_pat
         hub.store.close()
 
 
+@pytest.mark.parametrize("completion", ["before_adoption", "while_waiting"])
+@pytest.mark.parametrize("max_attempts", [1, 3])
+@pytest.mark.parametrize("old_cost", [0.75, None])
+async def test_interrupted_consult_resumes_at_last_attempt_with_new_task(
+        tmp_path, monkeypatch, completion, max_attempts, old_cost):
+    s = settings(tmp_path)
+    s.orchestrator.step_max_attempts = max_attempts
+    s.pi_language.enabled = False
+    hub = Hub(s)
+    socket = CaptureSocket()
+    try:
+        hub.register_runner("local", socket, ROSTER, "inc-1")
+        req = hub.requests["r"] = {
+            "id": "r", "text": "compare cohorts", "status": "running", "cost_usd": 0.0,
+            "cso_session_id": "old-session", "cso_workdir": str(tmp_path / "old-workdir"),
+        }
+        # The latest interrupted result must not expose an older, already answered consult.
+        stale = TaskResult(task_id="stale", agent_id="cso", ok=True, text="stale answer", cost_usd=0)
+        ledger_consult(hub, "stale", attempt=1, dispatched_at=0, completed=True, result=stale)
+        ledger_consult(hub, "interrupted", attempt=max_attempts, dispatched_at=1, completed=False)
+        interrupted = TaskResult(task_id="interrupted", agent_id="cso", ok=False,
+                                 error="runner interrupted during shutdown", cost_usd=old_cost,
+                                 shutdown_evidence={"confirmed_dead": True})
+
+        async def finish_old():
+            await hub.on_runner_message("local", {
+                "type": "task.result", "task_id": interrupted.task_id, "request_id": "r",
+                "data": interrupted.model_dump(mode="json"),
+            })
+
+        if completion == "before_adoption":
+            await finish_old()
+        else:
+            publish = hub.publish
+
+            async def finish_while_waiting(event, **kwargs):
+                if event["type"] == "request.step_wait" and event.get("data", {}).get("step_id") == "consult":
+                    assert "interrupted" in hub.futures and not consults(socket)
+                    await finish_old()
+                await publish(event, **kwargs)
+
+            monkeypatch.setattr(hub, "publish", finish_while_waiting)
+        calls = []
+
+        async def dispatch(task):
+            calls.append(task)
+            result = TaskResult(task_id=task.id, agent_id="cso", ok=True, text="Use cohort C7", cost_usd=0.25)
+            hub._record_task_cost("r", task.id, result)
+            return result
+
+        monkeypatch.setattr(hub, "dispatch", dispatch)
+        await asyncio.wait_for(hub.orchestrator.answer_ask(question("the-ask"), "local"), 5)
+        assert len(calls) == 1, "the interrupted last attempt needs one fresh consult"
+        fresh = calls[0]
+        assert fresh.id not in {"interrupted", "stale"}
+        assert fresh.meta["attempt"] == max_attempts
+        assert fresh.resume_session_id is None and "workdir" not in fresh.meta
+        assert hub.store.get("ask", "the-ask")["answer"]["answer"] == "Use cohort C7"
+        assert {"interrupted", "stale"} <= hub.recovered_tasks
+        assert hub.store.get("task", "interrupted")["result"] == interrupted.model_dump(mode="json")
+        assert req["cost_by_task"] == {"interrupted": old_cost, fresh.id: 0.25}
+        assert req["cost_usd"] == (old_cost or 0) + 0.25
+        assert req["cost_known"] is (old_cost is not None)
+        assert req["cost_items"]["interrupted"]["status"] == ("actual" if old_cost is not None else "unknown")
+    finally:
+        await hub.pi_interpreter.close()
+        hub.store.close()
+
+
+async def test_interrupted_consult_result_received_during_reconnect_is_not_adopted(tmp_path, monkeypatch):
+    hub = Hub(settings(tmp_path))
+    try:
+        ledger_consult(hub, "interrupted", attempt=3, dispatched_at=1, completed=False)
+        done = TaskResult(task_id="interrupted", agent_id="cso", ok=False,
+                          shutdown_evidence={"confirmed_dead": True})
+
+        async def reconnect(agent_id, timeout_s):
+            hub.register_runner("local", CaptureSocket(), ROSTER, "inc-1")
+            ledger_consult(hub, "interrupted", attempt=3, dispatched_at=1, completed=True, result=done)
+
+        monkeypatch.setattr(hub, "wait_agent_online", reconnect)
+        assert await hub.adopt_consult("the-ask", "cso") == (3, None)
+        assert "interrupted" in hub.recovered_tasks
+    finally:
+        await hub.pi_interpreter.close()
+        hub.store.close()
+
+
+@pytest.mark.parametrize("ok,shutdown", [(True, {}), (True, {"confirmed_dead": True}), (False, {})])
+async def test_completed_consult_without_failed_shutdown_is_still_adopted(tmp_path, ok, shutdown):
+    hub = Hub(settings(tmp_path))
+    try:
+        done = TaskResult(task_id="completed", agent_id="cso", ok=ok, text="answer" if ok else "",
+                          error=None if ok else "invalid input", shutdown_evidence=shutdown, cost_usd=0.75)
+        ledger_consult(hub, done.task_id, attempt=3, dispatched_at=1, completed=True, result=done)
+        attempt, result = await hub.adopt_consult("the-ask", "cso")
+        assert attempt == 3 and result == done.model_copy(update={"cost_usd": 0.0})
+        assert hub.store.get("task", done.task_id)["result"] == done.model_dump(mode="json")
+    finally:
+        hub.store.close()
+
+
+async def test_interrupted_automatic_facilities_consult_is_never_rerun(tmp_path, monkeypatch):
+    s = settings(tmp_path)
+    s.pi_language.enabled = False
+    hub = Hub(s)
+    try:
+        hub.agents = {"worker": ROSTER[1], "facilities": {"id": "facilities", "engine": "codex"}}
+        hub.requests["r"] = {"id": "r", "text": "compare cohorts", "status": "running"}
+        ask = question("the-ask").model_copy(update={"to": "facilities"})
+        hub.store.put("ask", ask.id, {"ask": ask.model_dump(mode="json"), "state": "working",
+                                      "scope": ["r", "step", "s1"], "facilities_diagnosis": True})
+        done = TaskResult(task_id="interrupted", agent_id="facilities", ok=False,
+                          shutdown_evidence={"confirmed_dead": True})
+        ledger_consult(hub, "interrupted", attempt=1, dispatched_at=1, completed=True,
+                       result=done, agent="facilities")
+
+        async def forbidden(task):
+            pytest.fail("automatic facilities diagnosis must not rerun")
+
+        monkeypatch.setattr(hub, "dispatch", forbidden)
+        await hub.orchestrator.answer_ask(ask, "local")
+        assert hub.store.get("ask", ask.id)["answer"]["status"] == "rejected"
+    finally:
+        await hub.pi_interpreter.close()
+        hub.store.close()
+
+
 async def test_adopted_consult_cost_reaches_the_request_budget_total(tmp_path):
     hub = Hub(settings(tmp_path))
     try:

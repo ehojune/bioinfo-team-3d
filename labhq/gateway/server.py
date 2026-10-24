@@ -3002,8 +3002,8 @@ class Hub:
 
         Returns ``(attempt, result)`` for the latest prior consult, or ``(0, None)`` without one.
         ``result`` is ``None`` when its outcome is unknown (another runner generation, or
-        abandoned). The caller then runs a new consult in a separate session and workdir,
-        because the old one may still hold them.
+        abandoned) or shutdown interrupted it. The caller then runs a new consult in a
+        separate session and workdir, because the old one may still hold them.
         """
         prior = self.consult_attempts(ask_id, agent_id)
         if not prior:
@@ -3025,7 +3025,8 @@ class Hub:
             await self._await_prior_task(tid, entry, agent_id, entry.get("request_id"), "consult",
                                          reason="adopting consult started before gateway restart")
             entry = self.store.get("task", tid) or entry
-        if not entry.get("completed") or entry.get("abandoned") or not entry.get("result"):
+        if (not entry.get("completed") or entry.get("abandoned") or not entry.get("result")
+                or self._interrupted_recovery_result(entry.get("result"))):
             return attempt, None
         # The task.result handler already added its cost to the durable request total; the
         # orchestrator adds it by task ID, which this ledger entry owns.
