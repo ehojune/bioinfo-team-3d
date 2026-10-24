@@ -375,7 +375,13 @@ def _repair_synthesis_links(plan: Any) -> Any:
         return [terminal for branch_id in topology["branch_ids"] for terminal in topology["terminals"].get(branch_id) or []
                 if terminal not in seen and terminal != step_id]
 
-    target = min(topology["synthesis_ids"], key=lambda step_id: len(gaps(step_id)))  # first of the closest
+    def missing_branches(step_id: str) -> int:
+        seen = ancestors(step_id)
+        return sum(1 for branch_id in topology["branch_ids"]
+                   if any(terminal not in seen and terminal != step_id for terminal in topology["terminals"].get(branch_id) or []))
+
+    # The step missing the fewest branches (not terminals: a branch may fork into several), first on a tie.
+    target = min(topology["synthesis_ids"], key=missing_branches)
     added = gaps(target)
     if not added or any(target in ancestors(terminal) for terminal in added):
         return plan  # nothing to add, or an edge would close a cycle: leave the problem to validation

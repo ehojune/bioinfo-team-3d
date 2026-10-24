@@ -83,6 +83,17 @@ def test_with_several_incomplete_synthesis_steps_the_closest_one_is_completed():
     validate_research_plan(repaired, **LIMITS)
 
 
+def test_the_closest_synthesis_step_counts_missing_branches_not_terminals():
+    plan = branched_plan((1, 1, 1), synthesis=2)
+    by_id = {step["id"]: step for step in plan["steps"]}
+    fork = {**by_id["A1"], "id": "A1b", "depends_on": [], "outputs": ["outputs/A1b.tsv"]}  # branch A has two terminals
+    plan["steps"].insert(1, fork)
+    by_id["S1"]["depends_on"] = ["B1", "C1"]  # misses branch A only (two terminals)
+    by_id["S2"]["depends_on"] = ["A1", "A1b", "B1"]  # misses branch C only (one terminal): a tie by branches, not by terminals
+    repaired = repair_synthesis_links(plan)
+    assert next(s for s in repaired["steps"] if s["id"] == "S1")["depends_on"] == ["B1", "C1", "A1", "A1b"]
+
+
 @pytest.mark.parametrize("breakage", ["int_depends_on", "unhashable_id", "unhashable_branch_id", "steps_not_dicts"])
 def test_a_malformed_draft_is_returned_unchanged_for_the_correction(breakage):
     plan = branched_plan((1, 1), synthesis=1)
