@@ -148,7 +148,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.skip != 'true'
     runs-on: windows-latest
-    timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 360 || 10 }}
+    # 14 min: setup + critical (3) + pool (9) + report/upload, with margin over the measured worst success (#931).
+    timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 360 || 14 }}
     env:
       CI_JOB_LABEL: pytest-windows
       PYTHONHASHSEED: '0'
@@ -194,9 +195,16 @@ jobs:
           LABHQ_REQUIRE_RESIZABLE_BROWSER: '1'
       - name: Require every critical lifecycle PASS before opening pool
         run: python -m scripts.ci_suite critical-ready
+      - name: Note pool start
+        run: python -c "import os,time; print('CI_POOL_STARTED='+str(time.time()), file=open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8'))"
       - name: Remaining Windows contracts in four-worker pool
         run: pytest -q --durations=15 -n 4 --dist loadfile -p scripts.ci_suite --ci-profile ${{ env.CI_COVERAGE_PROFILE }} --ci-phase parallel tests
-        timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 360 || 6 }}
+        # 9 min = 1.5x the measured worst successful pool step (350 s of 99 recent runs; 8 runs hit the old 6 min) (#931).
+        timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 360 || 9 }}
+
+      - name: Report pool step duration
+        if: always()
+        run: python -c "import os,time; s=float(os.environ.get('CI_POOL_STARTED', 0)); d=round(time.time()-s) if s else -1; print('### Windows pool step\n'+str(d)+' s of the 540 s limit; retune from this line (#931).', file=open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8'))"
 
       - name: Record measured coverage and timing
         id: coverage
