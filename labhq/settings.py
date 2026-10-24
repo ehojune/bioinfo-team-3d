@@ -71,6 +71,9 @@ class RunnerSettings(BaseModel):
     contract_dir: str | None = None  # active contract roster; default agents_dir/contract, per instance (#303)
     broker_port: int = 8788
     task_timeout_s: int = 6 * 3600
+    # Longest owner receipt lifetime the contained-runtime check accepts (issued_at to deadline_at); the owner
+    # that issues the receipt must use the same value. 24 h is the hard ceiling so a typo cannot mean forever (#938).
+    contained_max_s: int = Field(default=5400, ge=60, le=86400)
     # 0 disables the cap. Default: 60% with a tree cap, 40% for per-process POSIX RLIMIT_AS fallback.
     step_memory_limit_gb: float = Field(
         default_factory=_default_step_memory_limit_gb,
