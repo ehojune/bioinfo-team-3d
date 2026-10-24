@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 23:40 | [`893f3b0`](https://github.com/ehojune/bioinfo-team-3d/pull/943/commits/893f3b0) | **비용을 모르는 호출의 모델 칸이 직원 기본 모델이 아니라 실제로 지정한 모델로 남습니다.**<br>gateway가 비용 모름을 먼저 기록하는 경로도 task에 지정된 override 엔진·모델을 기록한다(#942 리뷰 P2). |
+| 23:10 | [`1db9341`](https://github.com/ehojune/bioinfo-team-3d/pull/943/commits/1db9341) | **번역이 형식 검사에서 계속 탈락하고 연구 단계 뒤에서 시간 초과로 취소되던 문제를 고쳤습니다.**<br>PI 문구 번역 prompt에서 카드용 구조·줄바꿈 규칙을 빼고 한 문단 두 문장 형식을 직접 적고, 번역 task를 연구 슬롯이 아닌 상담 슬롯에서 돌리며, 시간 초과로 비용을 모르는 번역의 모델 칸에 실제 번역 모델을 적는다(#942). |
 | 22:00 | [`6f0b71d`](https://github.com/ehojune/bioinfo-team-3d/pull/941/commits/6f0b71d) | **작업당 상한을 끈 설정에서는 증액 승인 금액이 예전과 같게 유지됩니다.**<br>per_task_usd가 0이면 승인 상한에 다음 작업 예약 몫을 더하지 않는다(요청 상한이 예약이 되어 올릴 때마다 커지는 경우, |
 | 21:40 | [`f123583`](https://github.com/ehojune/bioinfo-team-3d/pull/941/commits/f123583) | **새 테스트를 자동 검사 목록에 등록했습니다.**<br>새 테스트 파일을 Windows 검사 inventory에 등록한다(#940). |
 | 21:09 | [`d5cfba7`](https://github.com/ehojune/bioinfo-team-3d/pull/941/commits/d5cfba7) | **예산 증액을 한 번 승인하면 곧바로 두 번째 카드가 뜨지 않게 하고, 번역 작업의 비용 모름이 큰 금액을 묶지 않게 했습니다.**<br>예산 카드가 승인하는 상한에 다음 작업 예약 한 건 몫을 두고(보내기 전 예약 사용 시), 비용 모름 PI 번역 task는 자기 예약 상한만 묶는다(#940). |
