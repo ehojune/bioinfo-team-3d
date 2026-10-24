@@ -48,6 +48,19 @@ Windows 검사의 병렬 단계가 6분 제한에 반복해서 걸려 무관한 
 
 🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 
+# Windows 새 설치·인증 경계 (#922)
+
+- 설정·API token·Git/pip override를 격리하고 공백 경로의 launcher와 실패 receipt를 고쳤습니다. 단계별 PASS/FAIL/SKIP·분리 로그·설치 commit·의존성 판본을 보존합니다.
+- Windows 공백 경로, 설치 코드 `9c4f0e2d`, Python 3.14.7: 29 PASS·0 FAIL·1 SKIP. Git·pip override를 상속시킨 mock `req_2f80074c0d` verify exit 0, 최종 자식 잔류 0, 보호 경로 mtime 유지.
+- 관련 pytest 83 passed. Python 3.10 문법·public·diff·patch-notes·notes 검사 통과.
+- README 한국어 11,852→12,205자(+353), 영어 17,866→18,156자(+290). [공개 근거](../reference/clean-install-922.md). 상세 receipt·freeze·로그는 로컬 작업 폴더에 보존합니다.
+- 사람 인증·실제 모델은 SKIP. 웹 데모·open·wheel 설치 실행·실제 연구·HPC·B/c3는 미검증입니다. 최종 head CI·봇 검토 뒤 병합합니다.
+- manual은 #922 소유권 지시대로 수정하지 않았고, `docs/manual.md:109`의 보존 옵션 보충 위치를 총괄에게 보고했습니다(W3 소유).
+
+Closes #922
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 ## #678 task 시작 때 디스크 여유 확인과 bulk_data_root (base c075b416)
 
 - 바꾼 것: `Runner._disk_gate`가 task를 시작하기 전, 작업 폴더를 만들고 실행 슬롯을 잡기 전에 이번 실행이 쓰는 작업 폴더(재개·재시도의 다른 드라이브 포함) 드라이브의 여유를 읽는다. `runner.disk_fail_free_gb`(기본 2 GiB, 0이면 끔) 아래이면 시작하지 않고 `disk_space` 카드(PI 결정 대기)로 묻는다: 승인하면 시작, 거절·24시간 무응답이면 이유를 남기고 시작하지 않는다(카드 시간 제한 24시간, 웹은 그동안 PI 결정 대기로 보여 줌). 경고 기준(10 GiB·5%) 아래이면 작업판 경고만. 드라이브를 읽지 못하면, 환경 자동 수정(`facilities_fix`)이면 막지 않는다. 선택 설정 `runner.bulk_data_root`가 있으면 `_bulk_data_hint`가 직원 브리핑(task context)에 "큰 원자료는 이 폴더 아래에" 한 줄과 여유 공간을 넣는다. 통제 구역에 걸치면 브리핑에 쓰지 않고 경고를 남긴다. 카드 종류 `disk_space`를 웹 라벨·`pi_text`에 추가(runner가 만든 카드라 gateway의 PI 결정 시간 제한 경로는 쓰지 않는다). manual·예시 설정 두 사본 갱신.
