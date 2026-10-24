@@ -4129,6 +4129,41 @@ class Hub:
             return out
 
         accounting = {key: cost_map(key) for key in ("cost_items", "cost_by_task", "budget_holds")}
+        reservations = {}
+        for key, raw in sorted(self.store.all("pi_translation_reservation").items()):
+            if not isinstance(raw, dict):
+                problems.append("translation_reservation_invalid")
+                continue
+            if raw.get("request_id") != rid:
+                continue
+            if len(reservations) >= limit:
+                problems.append("translation_reservations_truncated")
+                break
+            tid = identifier(key)
+            if tid is None:
+                problems.append("translation_reservation_identity_unknown")
+                continue
+            value = {name: identifier(raw.get(name)) for name in
+                     ("reservation_id", "task_id", "request_id", "agent_id")}
+            value.update(ceiling_usd=amount(raw.get("ceiling_usd")),
+                         attempt=1 if type(raw.get("attempt")) is int and raw["attempt"] == 1 else None,
+                         state="reserved" if raw.get("state") == "reserved" else None,
+                         source="pi_translation" if raw.get("source") == "pi_translation" else None)
+            task_row = ledger.get(tid) or {}
+            payload = task_row.get("payload") or {}
+            valid = (value["reservation_id"] == value["task_id"] == tid
+                     and value["request_id"] == rid and value["agent_id"] is not None
+                     and value["attempt"] == 1 and value["state"] and value["source"]
+                     and value["ceiling_usd"] is not None and value["ceiling_usd"] > 0)
+            if task_row:
+                valid = valid and (payload.get("agent_id") == value["agent_id"]
+                    and payload.get("budget_usd") == value["ceiling_usd"]
+                    and task_row.get("kind") == "pi_interpretation"
+                    and task_row.get("attempt") == value["attempt"])
+            if not valid:
+                problems.append("translation_reservation_invalid")
+            reservations[tid] = value
+        accounting["translation_reservations"] = reservations
         per_task = amount(self.s.policy.budget.per_task_usd)
         effective_limit = amount(request.get("budget_usd")) or amount(self.s.policy.budget.per_request_usd)
         accounting.update(reported_cost_usd=amount(request.get("cost_usd")),
@@ -4141,7 +4176,7 @@ class Hub:
         costs = set(accounting["cost_items"] or {}) | set(accounting["cost_by_task"] or {})
         if costs - {tid for tid, _ in owned}:
             problems.append("cost_task_missing_from_durable_ledger")
-        expected = set()
+        expected = set(reservations)
         for name in ("cost_items", "cost_by_task", "budget_holds", "usage_by_task"):
             raw = request.get(name)
             if isinstance(raw, dict):
@@ -4168,7 +4203,8 @@ class Hub:
         total = len(owned_ids | expected)
         if total > limit:
             problems.append("attempts_truncated")
-        data = {"schema_version": 1, "scope": "all_request_task_attempts", "request_id": rid,
+        data = {"schema_version": 1, "capabilities": ["translation_reservations_v1"],
+                "scope": "all_request_task_attempts", "request_id": rid,
                 "created_at": request.get("created_at"), "request_status": request.get("status"),
                 "completeness_scope": "durable_rows_plus_request_accounting_ids",
                 "cancelling": request.get("cancelling") is not None,

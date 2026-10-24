@@ -109,9 +109,12 @@ class PiInterpreter:
             restricted = ((source_task or {}).get("payload", {}).get("meta", {}).get("restricted_inputs")
                           or (event.get("data") or {}).get("source_restricted"))
             budget = hub.store.get("pi_translation_budget", str(rid)) or {"reserved": 0.0}
+            reservations = [r for r in hub.store.all("pi_translation_reservation").values()
+                            if r.get("request_id") == rid]
+            reserved = max(budget["reserved"], sum(r["ceiling_usd"] for r in reservations))
             limit = float(req.get("budget_usd") or hub.s.policy.budget.per_request_usd)
             _, _, bound = hub.orchestrator._budget_bound(rid, limit)
-            remaining = min(cfg.per_request_usd - budget["reserved"],
+            remaining = min(cfg.per_request_usd - reserved,
                             limit - max(bound, float(req.get("cost_usd") or 0)))
             if (restricted or not cfg.enabled or not cfg.model or not req or not runner or runner not in hub.runners
                     or agent.get("engine") != "claude_code" or len(source) > 12000
@@ -119,8 +122,14 @@ class PiInterpreter:
                     or remaining < cfg.per_message_usd):
                 return
             # Reserve the entire call ceiling, including failed/unknown calls, across restarts.
+            reservation_id = f"pi_text_{key}"
+            hub.store.put("pi_translation_reservation", reservation_id, {
+                "reservation_id": reservation_id, "task_id": reservation_id,
+                "request_id": rid, "agent_id": aid, "attempt": 1,
+                "ceiling_usd": cfg.per_message_usd, "state": "reserved",
+                "source": "pi_translation", "created_at": time.time()})
             hub.store.put("pi_translation_budget", str(rid),
-                          {"reserved": budget["reserved"] + cfg.per_message_usd})
+                          {"reserved": reserved + cfg.per_message_usd})
             instruction = ("비서실장으로서 아래 원문을 PI에게 설명하세요. 무엇을·왜·영향을 두 문장 이내의 "
                            "쉬운 한국어로 쓰세요. 영어 대화는 뜻을 보존해 번역하세요. "
                            "다시 쓰는 단계 없이 쉼표와 번역투를 줄이세요. 되어진다·가지고 있다·에 있어서·"

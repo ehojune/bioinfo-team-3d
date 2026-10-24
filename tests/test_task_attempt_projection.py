@@ -36,12 +36,33 @@ class LedgerHub:
     def __init__(self, rows):
         self.rows = rows
         self.requests = {"r": {"id": "r", "created_at": 123.5, "status": "running", "text": "SECRET_REQUEST"}}
-        self.store = SimpleNamespace(all=lambda kind: copy.deepcopy(self.rows))
+        self.reservations = {}
+        self.store = SimpleNamespace(all=lambda kind: copy.deepcopy(
+            self.rows if kind == "task" else self.reservations))
         self.s = SimpleNamespace(policy=SimpleNamespace(budget=SimpleNamespace(
             per_task_usd=1, per_request_usd=3, reserve_before_dispatch=True)))
 
 
 class Projection(unittest.TestCase):
+    def test_translation_reservation_projection_and_orphan_enumeration(self):
+        h = LedgerHub({"t": row("t", "pi_interpretation")})
+        h.rows['t']['payload']['budget_usd'] = 0.05
+        h.reservations['t'] = dict(reservation_id='t', task_id='t', request_id='r',
+            agent_id='worker', attempt=1, ceiling_usd=0.05, state='reserved', source='pi_translation',
+            prompt='SECRET_RESERVATION')
+        out = projection()(h, 'r', 123.5)
+        self.assertTrue(out['complete'])
+        self.assertIn('translation_reservations_v1', out['capabilities'])
+        self.assertNotIn('SECRET_RESERVATION', json.dumps(out))
+        self.assertEqual(out['accounting']['translation_reservations']['t']['ceiling_usd'], 0.05)
+        del h.rows['t']
+        out = projection()(h, 'r', 123.5)
+        self.assertFalse(out['complete'])
+        self.assertEqual(out['missing_attempt_ids'], ['t'])
+        h.rows['t'] = row('t', 'pi_interpretation')
+        h.rows['t']['payload']['budget_usd'] = 0.1
+        self.assertIn('translation_reservation_invalid', projection()(h, 'r', 123.5)['problems'])
+
     def test_all_kinds_and_retries_not_collapsed(self):
         rows = {str(n): row(str(n), kind, n + 1) for n, kind in enumerate(
             ("briefing", "review", "pi_interpretation", "step", "step"))}

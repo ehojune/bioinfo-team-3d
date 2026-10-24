@@ -4377,8 +4377,21 @@ class Orchestrator:
         # so no caller can see the hold gone before its cost is in the bound.
         req = self.hub.requests.get(rid) or {}
         settled = self.cost_tasks.get(rid, set())
+        holds = dict(req.get("budget_holds") or {})
+        store = getattr(self.hub, "store", None)
+        for key, row in (store.all("pi_translation_reservation") if store else {}).items():
+            if row.get("request_id") != rid:
+                continue
+            tid, ceiling = row.get("task_id"), row.get("ceiling_usd")
+            valid = (tid == key == row.get("reservation_id") and row.get("source") == "pi_translation"
+                     and row.get("state") == "reserved" and row.get("attempt") == 1
+                     and _usd_amount(ceiling))
+            if not valid or (tid in holds and holds[tid] != ceiling):
+                # Conflicting provenance cannot admit another paid call.
+                return float("inf")
+            holds[tid] = ceiling
         return sum(amount if _usd_amount(amount) else self._unknown_reserve(limit)
-                   for tid, amount in (req.get("budget_holds") or {}).items() if tid not in settled)
+                   for tid, amount in holds.items() if tid not in settled)
 
     def _prune_dispatch_holds(self, rid: str) -> None:
         req = self.hub.requests.get(rid) or {}

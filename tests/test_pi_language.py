@@ -45,6 +45,41 @@ def mock_model(monkeypatch, hub, text='입력 표를 비교해 차이가 있는�
 
 
 @pytest.mark.asyncio
+async def test_translation_reservation_precedes_dispatch_and_settles_once(hub, monkeypatch):
+    async def dispatch(task):
+        reservation = hub.store.get('pi_translation_reservation', task.id)
+        assert reservation['task_id'] == reservation['reservation_id'] == task.id
+        assert reservation['attempt'] == 1 and reservation['source'] == 'pi_translation'
+        assert reservation['ceiling_usd'] == task.budget_usd == 0.05
+        # A duplicate research hold never doubles the same reservation.
+        hub.requests['r']['budget_holds'] = {task.id: 0.05}
+        assert hub.orchestrator._budget_bound('r', 5)[2] == pytest.approx(1.05)
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                          text='입력 표를 확인합니다.', cost_usd=0.02)
+    hub.orchestrator.cost['r'] = 1.0
+    monkeypatch.setattr(hub, 'dispatch', dispatch)
+    await hub.publish(event())
+    await drain(hub)
+    assert hub.orchestrator._budget_bound('r', 5)[2] == pytest.approx(1.02)
+    assert len(hub.store.all('pi_translation_reservation')) == 1
+
+
+@pytest.mark.asyncio
+async def test_orphan_reservation_survives_and_blocks_cap(hub, monkeypatch):
+    calls = mock_model(monkeypatch, hub)
+    hub.store.put('pi_translation_reservation', 'orphan', {
+        'reservation_id': 'orphan', 'task_id': 'orphan', 'request_id': 'r',
+        'agent_id': 'chief_of_staff', 'attempt': 1, 'state': 'reserved',
+        'source': 'pi_translation', 'ceiling_usd': 0.05})
+    hub.requests['r']['budget_usd'] = 1.05
+    hub.orchestrator.cost['r'] = 1.0
+    await hub.publish(event())
+    await drain(hub)
+    assert not calls
+    assert hub.orchestrator._budget_bound('r', 1.05)[2] == pytest.approx(1.05)
+
+
+@pytest.mark.asyncio
 async def test_interpreter_receives_tool_error_evidence(hub, monkeypatch):
     calls = mock_model(monkeypatch, hub)
     error = 'InputValidationError: StructuredOutput could not be parsed as JSON'
