@@ -1,5 +1,9 @@
 pr: 926
 rows:
+- sha: 723a0b0
+  at: '2026-10-24 09:40'
+  summary: fake service 종료까지 외부 연결·자식 명령의 Audit 검사를 유지합니다.
+  text: shutdown 뒤의 최종 counter도 성공 조건으로 확인하고 회귀 검사에서 종료 receipt를 대조한다. 반복·설치·encoding 관련 pytest 46 passed. Refs #923.
 - sha: 9eb70a4
   at: '2026-10-24 09:17'
   summary: 반복 fake 검사를 Windows 필수 cohort에 등록하고 binary 로그 열기 인자를 명시합니다.
