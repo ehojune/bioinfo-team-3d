@@ -8,3 +8,7 @@ rows:
   at: 2026-10-24 16:35
   text: '로컬 job 감시를 HPC watcher와 분리: scheduler=none 계약을 지키고 첫 job부터 별도 watcher로 지켜본다 (#675 CI)'
   summary: 로컬 job 감시를 HPC 감시와 따로 두어, HPC를 끈 설정의 기존 동작은 그대로 두고 로컬 job만 따로 지켜봅니다.
+- sha: 23243d9
+  at: 2026-10-24 16:56
+  text: 'test: 로컬 job 시험은 셸 없는 대체로 돌려 느린 Windows runner의 PowerShell 시동에 기대지 않는다 (#675 CI)'
+  summary: 로컬 job 시험이 느린 Windows 검사 환경의 PowerShell 시작 시간에 흔들리지 않게 했습니다.
