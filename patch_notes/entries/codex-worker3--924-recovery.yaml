@@ -1,5 +1,9 @@
 pr: 927
 rows:
+- sha: d62d35e
+  at: '2026-10-24 09:34'
+  summary: 복구 receipt에서 새 task 비용 행과 known 비용을 빠짐없이 요구합니다.
+  text: 새 task 비용과 합계를 함께 지우면 통과하던 봇 P2를 재현했다. unknown·누락 비용을 거부하고 실제 강제 종료 2건 PASS. GO의 proof 실패·카드 응답 운영 조건도 제품 기본 timeout과 구분했다. Refs #924.
 - sha: 265da22
   at: '2026-10-24 09:28'
   summary: 복구 회귀 두 파일을 Windows 필수 CI inventory에 등록합니다.
