@@ -2,6 +2,8 @@
 
 조회용 검증 설명입니다. 실제 모델 연구·과금·HPC·hard-stop 증거는 아닙니다.
 
+2026-10-24: #925·#932 포함 main 통합판 `a5fd6bed`를 공백 Windows 경로에 새 설치해 PASS했습니다. Python 3.14.7에서 두 요청 모두 task 10개 완료·비용 $0·같은 artifact hash를 확인했습니다. shutdown 뒤 Audit counter 0·process exit 0·잔류 자식 0이며 관련 회귀는 75 passed입니다. 절대 경로·receipt/hash·의존성 판본은 #929 인계 댓글에 남깁니다.
+
 ```powershell
 python scripts/repeat_fake_check.py --source <committed-checkout> --output <new-empty-folder>
 ```
