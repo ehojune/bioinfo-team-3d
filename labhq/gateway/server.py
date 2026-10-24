@@ -1775,6 +1775,13 @@ class Hub:
         task_entry = task_entry or {}
         if task_entry.get("step_id"):
             item["step_id"] = str(task_entry["step_id"])
+        if outcome_unknown:
+            # A call the gateway gave up on has no runner provenance: name the engine/model it was dispatched with
+            # (a task's own agent_overrides), not the staff member's default (#942).
+            override = (((task_entry.get("payload") or {}).get("meta") or {}).get("agent_overrides") or {})
+            for key in ("engine", "model"):
+                if isinstance(override.get(key), str) and override[key]:
+                    item[key] = override[key]
         item["recorded_at"] = time.time()
         amount = float(item["usd"]) if item["status"] != "unknown" else 0.0
         costs[tid] = amount if item["status"] != "unknown" else None

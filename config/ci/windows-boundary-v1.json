@@ -181,6 +181,7 @@
     "tests/test_pi_language_bounds.py",
     "tests/test_pi_review_done.py",
     "tests/test_pi_text.py",
+    "tests/test_pi_translation_942.py",
     "tests/test_pin_ancestors.py",
     "tests/test_plan_only_cso_model.py",
     "tests/test_plugin_private_reads.py",
