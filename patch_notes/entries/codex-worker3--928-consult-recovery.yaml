@@ -1,5 +1,9 @@
 pr: 930
 rows:
+- sha: 60bc4a5
+  at: '2026-10-24 18:35'
+  summary: 같은 설치판에서 gateway와 runner 강제 종료 복구를 확인했습니다.
+  text: W2 보존 clone과 venv의 두 case가 승인 1회·완료 단계 재실행 0·task 중복 0·비용 원장 일치·contract 보존·잔류 0으로 통과했다. 최신 main 통합 뒤 관련 회귀 46 passed. 실제 연구와 독립 hard-stop은 미검증이다.
 - sha: a4745ac
   at: '2026-10-24 10:18'
   summary: 중단된 consult를 마지막 허용 attempt에서도 새 task로 이어 갑니다.
