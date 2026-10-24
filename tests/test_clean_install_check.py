@@ -268,3 +268,36 @@ def test_primary_failure_survives_final_receipt_write_error(tmp_path, monkeypatc
     with pytest.raises(clean_install_check.CheckFailure, match="primary fixture failure"):
         clean_install_check.rehearse(tmp_path / "source", [], work_dir=tmp_path / "work")
     assert clean_install_check._RECEIPT.get() is None
+
+
+def test_interruption_cannot_leave_a_pass_receipt(tmp_path, monkeypatch, fake_install):
+    def start(*args):
+        raise KeyboardInterrupt
+    monkeypatch.setattr(clean_install_check, "_start_services", start)
+    with pytest.raises(KeyboardInterrupt):
+        clean_install_check.rehearse(tmp_path / "source", [], work_dir=tmp_path / "work")
+    receipt = json.loads((tmp_path / "work/receipt.json").read_text(encoding="utf-8"))
+    assert receipt["status"] == "FAIL"
+    assert receipt["failure_stage"] == "KeyboardInterrupt"
+    assert receipt["finished_at"]
+    assert clean_install_check._RECEIPT.get() is None
+
+
+def test_cleanup_primary_survives_failed_receipt_write_without_a_false_pass(tmp_path, monkeypatch, fake_install):
+    root = tmp_path / "automatic"
+    root.mkdir()
+    receipt_path = tmp_path / "external.json"
+    monkeypatch.setattr(clean_install_check.tempfile, "mkdtemp", lambda **kwargs: str(root))
+    def locked(*args):
+        raise PermissionError("primary cleanup failure")
+    original_write = clean_install_check.Receipt.write
+    def write(receipt):
+        if receipt.data.get("finished_at") and receipt.data["status"] == "FAIL":
+            raise OSError("secondary receipt write failure")
+        original_write(receipt)
+    monkeypatch.setattr(clean_install_check.shutil, "rmtree", locked)
+    monkeypatch.setattr(clean_install_check.Receipt, "write", write)
+    with pytest.raises(clean_install_check.CheckFailure, match="primary cleanup failure"):
+        clean_install_check.rehearse(tmp_path / "source", [], receipt_path=receipt_path)
+    assert json.loads(receipt_path.read_text(encoding="utf-8"))["status"] != "PASS"
+    assert clean_install_check._RECEIPT.get() is None

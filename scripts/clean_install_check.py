@@ -561,8 +561,10 @@ def rehearse(source: Path, guard_paths: list[Path], *, work_dir: Path | None = N
                 except Exception:
                     if not active_error:
                         raise
-    except Exception as exc:
-        receipt.data.update(status="FAIL", failure_stage=getattr(exc, "stage", "내부 오류"), detail=_one_line(exc))
+    except BaseException as exc:
+        default_stage = "내부 오류" if isinstance(exc, Exception) else type(exc).__name__
+        receipt.data.update(status="FAIL", failure_stage=getattr(exc, "stage", default_stage),
+                            detail=_one_line(str(exc) or type(exc).__name__))
         raise
     finally:
         active_error = sys.exc_info()[0] is not None
@@ -579,31 +581,29 @@ def rehearse(source: Path, guard_paths: list[Path], *, work_dir: Path | None = N
                 active_error = True
                 raise
         finally:
-            if receipt.data["status"] == "RUNNING":
-                receipt.data.update(status="PASS", request_id=request_id)
-            receipt.data["finished_at"] = datetime.now(timezone.utc).isoformat()
             try:
-                receipt.write()
-            except OSError:
-                if not active_error:
-                    raise
-            finally:
-                _RECEIPT.reset(context)
-            if work_dir is None:
-                try:
-                    shutil.rmtree(root)
-                except OSError as exc:
-                    receipt.data["cleanup_error"] = _one_line(exc)
-                    if not active_error:
-                        receipt.data.update(status="FAIL", failure_stage="임시 폴더 정리", detail=_one_line(exc),
-                                            finished_at=datetime.now(timezone.utc).isoformat())
+                if work_dir is None:
                     try:
-                        receipt.write()
-                    except OSError:
+                        shutil.rmtree(root)
+                    except OSError as exc:
+                        receipt.data["cleanup_error"] = _one_line(exc)
                         if not active_error:
-                            raise
+                            receipt.data.update(status="FAIL", failure_stage="임시 폴더 정리", detail=_one_line(exc))
+                            raise CheckFailure("임시 폴더 정리", _one_line(exc)) from None
+            finally:
+                active_error = active_error or sys.exc_info()[0] is not None
+                if receipt.data["status"] == "RUNNING":
+                    receipt.data.update(status="PASS", request_id=request_id)
+                receipt.data["finished_at"] = datetime.now(timezone.utc).isoformat()
+                try:
+                    # Do not recreate the automatically removed scratch tree for its default receipt.
+                    if work_dir is not None or root.exists() or not receipt.path.is_relative_to(root):
+                        receipt.write()
+                except OSError:
                     if not active_error:
-                        raise CheckFailure("임시 폴더 정리", _one_line(exc)) from None
+                        raise
+                finally:
+                    _RECEIPT.reset(context)
     return request_id
 
 
