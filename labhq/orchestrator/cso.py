@@ -3527,6 +3527,14 @@ class Orchestrator:
         for tid in set(req.get("cost_items") or {}) | set(req.get("cost_by_task") or {}):
             self._count_cost(rid, tid)
 
+    def _restore_cost_cache(self, rid: str) -> None:
+        """Restore aggregate and its task identities together, without adding them twice."""
+        req = self.hub.requests.get(rid) or {}
+        self.cost[rid] = max(self.cost.get(rid, 0.0), float(req.get("cost_usd") or 0))
+        self.cost_tasks.setdefault(rid, set()).update(
+            set(req.get("cost_by_task") or {}) | set(req.get("cost_items") or {}))
+        self._seed_cost(rid, req)
+
     # ---------- one agent step, including HPC hibernate/wake cycles ----------
     def _with_research_round(self, task: Task) -> Task:
         """A continuation round's tasks carry ``research_round`` (2 and up), so restart recovery never hands a step,
@@ -4278,10 +4286,7 @@ class Orchestrator:
             return None
         # A restarted gateway has an empty ledger: seed the stored cost as run_request does, so the cap shown here
         # is the cap CP1 will enforce (#654 review).
-        self.cost[rid] = max(self.cost.get(rid, 0.0), float(req.get("cost_usd") or 0))
-        self.cost_tasks.setdefault(rid, set()).update(
-            set(req.get("cost_by_task") or {}) | set(req.get("cost_items") or {}))
-        self._seed_cost(rid, req)
+        self._restore_cost_cache(rid)
         budget, _ = self._research_budget(rid, req, plan)
         steps = [f"{step['id']}·{step['agent_id']}: {short(' '.join(str(step['instruction']).split()), 40)}"
                  for step in plan["steps"]]

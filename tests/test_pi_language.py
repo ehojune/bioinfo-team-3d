@@ -87,7 +87,8 @@ def test_invalid_translation_ledger_blocks_admission(hub, raw):
 
 
 @pytest.mark.asyncio
-async def test_restart_counts_durable_cost_plus_orphan_before_translation(hub, monkeypatch):
+@pytest.mark.parametrize('seeded_aggregate', [False, True])
+async def test_restart_counts_durable_cost_plus_orphan_before_translation(hub, monkeypatch, seeded_aggregate):
     calls = mock_model(monkeypatch, hub)
     hub.requests['r'].update(budget_usd=5, cost_usd=4.94, cost_known=True,
         cost_items={'old_research': {'status': 'actual', 'usd': 4.94}},
@@ -96,7 +97,9 @@ async def test_restart_counts_durable_cost_plus_orphan_before_translation(hub, m
         'reservation_id': 'orphan', 'task_id': 'orphan', 'request_id': 'r',
         'agent_id': 'chief_of_staff', 'attempt': 1, 'state': 'reserved',
         'source': 'pi_translation', 'ceiling_usd': 0.05}})
-    assert hub.orchestrator.cost.get('r', 0) == 0
+    if seeded_aggregate:
+        hub.orchestrator.cost['r'] = 4.94
+    assert not hub.orchestrator.cost_tasks.get('r')
     await hub.publish(event())
     await drain(hub)
     assert not calls
