@@ -622,7 +622,7 @@ def rehearse(source: Path, guard_paths: list[Path], *, work_dir: Path | None = N
                     # Do not recreate the automatically removed scratch tree for its default receipt.
                     if work_dir is not None or root.exists() or not receipt.path.is_relative_to(root):
                         receipt.write()
-                except OSError:
+                except BaseException:
                     if not active_error:
                         raise
                 finally:

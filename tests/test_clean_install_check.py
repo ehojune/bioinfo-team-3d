@@ -255,18 +255,21 @@ def test_guard_primary_failure_retained_when_cleanup_also_fails(tmp_path, monkey
     assert clean_install_check._RECEIPT.get() is None
 
 
-def test_primary_failure_survives_final_receipt_write_error(tmp_path, monkeypatch, fake_install):
+@pytest.mark.parametrize("write_error", [OSError, KeyboardInterrupt, SystemExit])
+def test_primary_failure_survives_final_receipt_write_error(tmp_path, monkeypatch, fake_install, write_error):
     def start(*args):
         raise clean_install_check.CheckFailure("startup", "primary fixture failure")
     original_write = clean_install_check.Receipt.write
     def write(receipt):
         if receipt.data.get("finished_at"):
-            raise OSError("secondary receipt write failure")
+            raise write_error("secondary receipt write failure")
         original_write(receipt)
     monkeypatch.setattr(clean_install_check, "_start_services", start)
     monkeypatch.setattr(clean_install_check.Receipt, "write", write)
-    with pytest.raises(clean_install_check.CheckFailure, match="primary fixture failure"):
+    with pytest.raises(BaseException) as caught:
         clean_install_check.rehearse(tmp_path / "source", [], work_dir=tmp_path / "work")
+    assert isinstance(caught.value, clean_install_check.CheckFailure)
+    assert caught.value.detail == "primary fixture failure"
     assert clean_install_check._RECEIPT.get() is None
 
 
