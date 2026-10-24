@@ -87,6 +87,17 @@ def test_nonempty_work_dir_is_never_reused_or_modified(tmp_path):
     assert sorted(p.name for p in tmp_path.iterdir()) == ["keep.txt"]
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows cmd quoting boundary")
+def test_launcher_preserves_spaced_install_path_and_argument(tmp_path):
+    checkout = tmp_path / "install with spaces"
+    checkout.mkdir()
+    (checkout / "labhq.cmd").write_bytes(b'@echo off\r\necho argument=%1\r\n')
+    done = subprocess.run(clean_install_check._labhq_command(checkout, "argument with spaces"),
+                          capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip() == 'argument="argument with spaces"'
+
+
 def test_partial_start_is_stopped_and_original_failure_preserved(tmp_path, monkeypatch):
     calls = []
     def run(stage, command, **kwargs):

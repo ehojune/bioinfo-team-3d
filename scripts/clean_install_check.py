@@ -78,7 +78,7 @@ def _one_line(value: object, limit: int = 500) -> str:
 
 def _run(
     stage: str,
-    command: list[str],
+    command: list[str] | str,
     *,
     cwd: Path,
     env: dict[str, str],
@@ -228,9 +228,13 @@ def _free_port() -> int:
             return port
 
 
-def _labhq_command(checkout: Path, *args: str) -> list[str]:
+def _labhq_command(checkout: Path, *args: str) -> list[str] | str:
     if os.name == "nt":
-        return [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/c", str(checkout / "labhq.cmd"), *args]
+        # cmd /s needs one outer quote pair around the quoted batch path and its arguments.
+        # Passing that as a list would add MSVC backslash escapes before cmd sees it.
+        shell = subprocess.list2cmdline([os.environ.get("COMSPEC", "cmd.exe")])
+        command = f'"{checkout / "labhq.cmd"}" {subprocess.list2cmdline(list(args))}'
+        return f'{shell} /d /s /v:off /c "{command}"'
     return [str(checkout / "labhq.sh"), *args]
 
 
