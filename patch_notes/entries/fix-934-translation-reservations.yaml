@@ -1,5 +1,9 @@
 pr: 935
 rows:
+- sha: 594a8c8
+  at: 2026-10-24 13:09
+  text: 통역 예약 projection이 task attempt·budget의 bool 값을 숫자로 인정하지 않도록 검증 통일
+  summary: 집행과 예약 조회가 같은 숫자 타입 규칙을 적용합니다.
 - sha: 1f5b27a
   at: 2026-10-24 13:03
   text: CI 전용 paper recovery store double에 빈 통역 예약 namespace 추가, 기존 identity assertion 유지
