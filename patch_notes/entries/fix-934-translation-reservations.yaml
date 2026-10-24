@@ -1,5 +1,9 @@
 pr: 935
 rows:
+- sha: ebaaa8c
+  at: 2026-10-24 12:30
+  text: 예약 원장이 dict가 아니면 빈 원장으로 취급하지 않고 admission 차단·incomplete projection 반환
+  summary: 잘못된 예약 자료는 오류로 중단하지 않고 새 지출을 막습니다.
 - sha: 649b0f7
   at: 2026-10-24 12:26
   text: 예약 원장을 request별로 저장해 admission의 전체 이력 scan 제거, malformed task row 회귀 보강
