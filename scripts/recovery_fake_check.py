@@ -294,20 +294,31 @@ def validate(receipt):
         errors.append("task acceptance missing or duplicated")
     if sum(row["kind"] == "step" and row["step_id"] == "s1" for row in receipt["invocations"]) != 1:
         errors.append("completed step repeated")
+    completed = [row for row in receipt["before_invocations"] if row["task_id"] in receipt["before_completed_tasks"]]
+    if (len(completed) != 2 or {(row["kind"], row["step_id"]) for row in completed}
+            != {("plan", None), ("step", "s1")}):
+        errors.append("completed phase baseline missing")
+    for prior in completed:
+        phase = [row for row in receipt["invocations"]
+                 if (row["kind"], row["step_id"]) == (prior["kind"], prior["step_id"])]
+        if phase != [prior]:
+            errors.append("completed phase repeated or replaced")
     if receipt["status"] != "done" or set(receipt["results"]) != {"s1", "s2"}:
         errors.append("request did not finish")
     first = receipt["before"].get("results", {}).get("s1", {})
     saved = receipt["after"].get("results", {}).get("s1", {})
     if not first or any(saved.get(key) != value for key, value in first.items()):
         errors.append("completed result changed")
-    if abs(receipt["cost_usd"] - receipt["ledger_cost_usd"]) > 1e-8:
-        errors.append("cost counted twice or missing")
     ledger = receipt["after"].get("cost_by_task", {})
+    numeric = all(type(cost) in (int, float) and math.isfinite(cost) and cost >= 0 for cost in ledger.values())
     if (set(ledger) != set(counts) or receipt.get("cost_known") is not True
             or receipt["after"].get("cost_known") is not True
-            or any(type(cost) not in (int, float) or not math.isfinite(cost) or cost < 0
-                   for cost in ledger.values())):
+            or not numeric):
         errors.append("fixture cost ledger missing or unknown")
+    if (abs(receipt["cost_usd"] - receipt["ledger_cost_usd"]) > 1e-8
+            or abs(receipt["cost_usd"] - receipt["after"]["cost_usd"]) > 1e-8
+            or (numeric and abs(receipt["cost_usd"] - sum(ledger.values())) > 1e-8)):
+        errors.append("cost counted twice or missing")
     if any(task_id not in ledger or ledger[task_id] != cost
            for task_id, cost in receipt["before"].get("cost_by_task", {}).items()):
         errors.append("prior cost history changed")
@@ -376,6 +387,10 @@ async def run_case(source, root, target, timeout_s=90):
             await wait(lambda: (root / "barrier.json").exists())
             before = rows(gateway_db, "request")[rid]
             receipt["before"] = before
+            receipt["before_invocations"] = [json.loads(line) for line in
+                                             (root / "invocations.jsonl").read_text(encoding="utf-8").splitlines()]
+            receipt["before_completed_tasks"] = {tid: entry for tid, entry in rows(gateway_db, "task").items()
+                                                 if entry.get("completed") and (entry.get("result") or {}).get("ok")}
             receipt["before_contract"] = {**contract, "created_at": before["created_at"],
                                           "budget_usd": before["budget_usd"]}
             receipt["kill"] = owned.kill(processes[target])

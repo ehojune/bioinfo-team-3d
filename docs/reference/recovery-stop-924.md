@@ -25,7 +25,7 @@ python -m pytest -q tests/test_recovery_fake_check.py tests/test_shutdown_recove
 - 실제 Hub·Runner·SQLite·WebSocket·broker를 사용합니다. 2단계 fake DAG의 s1을 끝내고 s2의 loopback 조회 뒤 gateway 또는 runner를 강제 종료합니다.
 - 종료는 시험이 만든 process handle만 사용합니다. Windows는 venv redirector 대신 실제 interpreter를 시작하고 PID·역할·nonce를 대조한 뒤 `TerminateProcess`, POSIX는 `SIGKILL`을 보냅니다. 두 역할은 다른 generation으로 재기동합니다.
 - 직원 실행은 deterministic mock이며 child의 subprocess 생성은 거부합니다. stdout/stderr를 분리하고 마지막에 보유 handle 전부의 종료를 확인합니다. 실제 모델·외부 서비스·HPC·PI 인스턴스·B/c3 proof는 실행하지 않습니다.
-- receipt는 전후 요청·원장·승인·task 수락·adapter 호출·HTTP 횟수·비용·산출 hash·종료/재시작·잔류 수를 보존합니다. 이미 끝난 단계, 같은 task의 재실행, 재승인, 원장 누락·중복은 실패입니다. 중단된 단계가 새 task ID로 다시 도는 것은 완료 단계 재실행과 구분합니다.
+- receipt는 전후 요청·원장·승인·task 수락·adapter 호출·HTTP 횟수·비용·산출 hash·종료/재시작·잔류 수를 보존합니다. kill 전 완료된 plan·s1의 identity와 단일 실행을 요구하고 모든 task의 known 비용을 원장에서 재합산합니다. 완료 phase·같은 task 재실행, 재승인, 원장 누락·중복은 실패입니다. 중단된 단계의 새 task 실행은 허용합니다.
 - 시험 driver가 고정한 90초 deadline과 같은 비용/조회 설정을 재시작 후에도 씁니다. 제품의 요청 전체 독립 timer·실제 adapter 취소·공급자 청구 상한을 증명하지 않습니다. 두 case만 실행하고 자동 재시도하지 않습니다.
 - #922→#923 병합 뒤 설치판 interpreter로 최신 main 통합 재현이 필요합니다. `repeat_fixture_integrated`는 #923의 `REQUEST_BODY`·`configure` 재사용 여부이며, 복구 barrier/plan·작업 시간/비용·조회 횟수 설정은 이 시험 전용입니다.
 
