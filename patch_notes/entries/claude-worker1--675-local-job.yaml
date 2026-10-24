@@ -12,3 +12,7 @@ rows:
   at: 2026-10-24 16:56
   text: 'test: 로컬 job 시험은 셸 없는 대체로 돌려 느린 Windows runner의 PowerShell 시동에 기대지 않는다 (#675 CI)'
   summary: 로컬 job 시험이 느린 Windows 검사 환경의 PowerShell 시작 시간에 흔들리지 않게 했습니다.
+- sha: 8d9e3d0
+  at: 2026-10-24 17:25
+  text: 'runner: __init__ 없이 만든 Runner에서도 stop()이 동작하도록 로컬 watcher 접근을 방어 (#675 CI)'
+  summary: 종료 처리가 로컬 job 감시가 없는 상태에서도 오류 없이 끝나게 했습니다.
