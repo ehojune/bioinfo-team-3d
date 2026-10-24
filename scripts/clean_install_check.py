@@ -47,8 +47,25 @@ class Receipt:
         self.write()
 
     def write(self):
+        payload = json.dumps(self.data, ensure_ascii=False, indent=2) + "\n"
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(self.data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n", delete=False,
+                                             prefix=".labhq-receipt-", suffix=".tmp", dir=self.path.parent) as stream:
+                temporary = Path(stream.name)
+                stream.write(payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, self.path)
+        finally:
+            if temporary is not None:
+                active_error = sys.exc_info()[0] is not None
+                try:
+                    temporary.unlink(missing_ok=True)
+                except BaseException:
+                    if not active_error:
+                        raise
 
     def record(self, stage, status, *, stdout=None, stderr=None, **facts):
         row = {"stage": stage, "status": status, **facts}

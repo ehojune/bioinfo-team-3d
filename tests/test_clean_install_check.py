@@ -438,3 +438,41 @@ def test_missing_success_evidence_fails_the_check(tmp_path, monkeypatch, fault):
         assert "evidence fixture failure" in caught.value.detail
     finally:
         clean_install_check._RECEIPT.reset(token)
+
+
+@pytest.mark.parametrize("phase", ["write", "replace"])
+@pytest.mark.parametrize("failure", [OSError, KeyboardInterrupt, SystemExit])
+def test_atomic_receipt_keeps_previous_json_on_failure(tmp_path, monkeypatch, phase, failure):
+    import io
+    receipt = clean_install_check.Receipt(tmp_path / "receipt.json", tmp_path)
+    previous = receipt.path.read_bytes()
+    receipt.data["status"] = "FAIL"
+    if phase == "write":
+        original_open = io.open
+        class PartialWriter:
+            def __init__(self, stream):
+                self.stream = stream
+            def __getattr__(self, name):
+                return getattr(self.stream, name)
+            def __enter__(self):
+                self.stream.__enter__()
+                return self
+            def __exit__(self, *args):
+                return self.stream.__exit__(*args)
+            def write(self, value):
+                self.stream.write(value[:8])
+                self.stream.flush()
+                raise failure("partial receipt write")
+        def opened(file, mode="r", *args, **kwargs):
+            stream = original_open(file, mode, *args, **kwargs)
+            return PartialWriter(stream) if "w" in mode else stream
+        monkeypatch.setattr(io, "open", opened)
+    else:
+        def replace(*args):
+            raise failure("receipt replace failed")
+        monkeypatch.setattr(clean_install_check.os, "replace", replace)
+    with pytest.raises(failure):
+        receipt.write()
+    assert receipt.path.read_bytes() == previous
+    assert json.loads(receipt.path.read_text(encoding="utf-8"))["status"] == "RUNNING"
+    assert not list(tmp_path.glob(".labhq-receipt-*.tmp"))
