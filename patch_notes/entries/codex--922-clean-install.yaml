@@ -1,5 +1,9 @@
 pr: 925
 rows:
+- sha: 4be9896
+  at: '2026-10-24 10:05'
+  summary: 새 설치에 기존 pip index·제약 설정이 섞이지 않습니다.
+  text: PIP_* 환경 override P2를 제거하고 회귀 1 failed→관련 42 passed, dummy index·no-index·constraint를 상속시킨 공백 경로의 새 설치 29 PASS·1 SKIP을 확인했다.
 - sha: 186a0ac
   at: '2026-10-24 09:54'
   summary: 공백 경로의 새 설치 결과를 공개 근거에 반영합니다.
