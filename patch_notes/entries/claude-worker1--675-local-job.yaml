@@ -32,3 +32,7 @@ rows:
   at: 2026-10-24 18:40
   text: '로컬 job 리뷰 반영 4: 종료에 실패한 취소는 row에 남겨 watcher가 다시 끝내고, 취소 보관을 job 최대 수명(7일)보다 길게 (#675 리뷰 P1)'
   summary: 취소 때 프로세스를 다 끝내지 못해도 runner가 계속 다시 시도하며(재시작 뒤에도), 오프라인 runner에 대한 취소가 48시간 뒤 사라지지 않습니다.
+- sha: 07279b7
+  at: 2026-10-24 19:00
+  text: '로컬 job 리뷰 반영 5: sh·bash로 넘기는 heredoc 안의 떼어 내기도 거절 (#675 리뷰 P1)'
+  summary: bash <<EOF 처럼 셸에 넘기는 heredoc 안의 백그라운드 실행도 정책에서 거절합니다. python·cat에 넘기는 데이터 heredoc은 그대로 둡니다.
