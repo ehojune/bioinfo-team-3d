@@ -1558,3 +1558,6 @@ tests/                   스케줄러 파서 · 정책 · 레지스트리 · 연
 | 예외 — `labhq/web/lab3d/assets/placeholder.gltf` | 파일에 적힌 CC0-1.0 |
 
 코드를 고쳐 배포하면 소스를 같은 GPL로 공개하고, 문서·데이터를 쓰면 출처를 밝히고 같은 CC BY-SA로 공유합니다. EDAM 표의 출처·판본은 그 파일 옆 NOTICE에 적습니다.
+## 통역 예약 회계
+
+통역은 dispatch 전에 task·attempt·ceiling·출처를 별도 원장에 남깁니다. 요청 bound는 연구 hold와 같은 task를 한 번만 합산하고 확정 비용으로 대체합니다. task 등록 전 중단된 예약도 보존하며 `/task-attempts`의 `translation_reservations_v1` projection에 누락 task로 표시합니다. 기존 aggregate 예약에서 task별 근거를 추정하지 않습니다.
