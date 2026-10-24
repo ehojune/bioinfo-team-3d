@@ -52,22 +52,31 @@ class Receipt:
 
     def record(self, stage, status, *, stdout=None, stderr=None, **facts):
         row = {"stage": stage, "status": status, **facts}
+        index = len(self.data["steps"]) + 1
+        self.data["steps"].append(row)
         for name, value in (("stdout", stdout), ("stderr", stderr)):
             if value is not None:
-                path = self.root / "logs" / f"{len(self.data['steps']) + 1:02d}.{name}.log"
+                path = self.root / "logs" / f"{index:02d}.{name}.log"
                 path.parent.mkdir(parents=True, exist_ok=True)
                 if isinstance(value, bytes):
                     value = value.decode("utf-8", errors="replace")
                 path.write_text(value, encoding="utf-8")
                 row[name] = str(path.relative_to(self.root))
-        self.data["steps"].append(row)
         self.write()
 
 
 def _record(stage, status, **facts):
     receipt = _RECEIPT.get()
     if receipt is not None:
-        receipt.record(stage, status, **facts)
+        try:
+            receipt.record(stage, status, **facts)
+        except BaseException as exc:
+            detail = _one_line(str(exc) or type(exc).__name__)
+            receipt.data.setdefault("evidence_errors", []).append({"stage": stage, "detail": detail})
+            if status != "FAIL":
+                if not isinstance(exc, Exception):
+                    raise
+                raise CheckFailure(stage, "증거 기록 실패: " + detail) from None
 
 
 def _one_line(value: object, limit: int = 500) -> str:
@@ -214,7 +223,10 @@ def _start_services(root: Path, checkout: Path, env: dict[str, str]) -> None:
         try:
             facts = _startup_journal(root / "state/gateway/logs/detached-launch.jsonl")
             print("STARTUP_DIAGNOSTIC " + json.dumps(facts, ensure_ascii=True), file=sys.stderr)
-        except Exception:
+        except BaseException as exc:
+            receipt = _RECEIPT.get()
+            if receipt is not None:
+                receipt.data["startup_diagnostic_error"] = _one_line(str(exc) or type(exc).__name__)
             pass  # Diagnostics must never replace the actual startup failure.
         raise
 

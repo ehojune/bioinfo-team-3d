@@ -358,3 +358,80 @@ def test_service_cleanup_interruption_retains_primary_failure(tmp_path, monkeypa
     assert receipt["detail"] == "primary service failure"
     assert "secondary service cleanup interruption" in receipt["service_cleanup_error"]
     assert clean_install_check._RECEIPT.get() is None
+
+
+@pytest.mark.parametrize("interruption", [KeyboardInterrupt, SystemExit])
+def test_startup_diagnostic_interruption_cannot_replace_startup_failure(tmp_path, monkeypatch, interruption):
+    original = clean_install_check.CheckFailure("startup", "primary startup failure")
+    def fail(*args, **kwargs):
+        raise original
+    def interrupted(*args):
+        raise interruption("diagnostic interruption")
+    monkeypatch.setattr(clean_install_check, "_run", fail)
+    monkeypatch.setattr(clean_install_check, "_startup_journal", interrupted)
+    with pytest.raises(BaseException) as caught:
+        clean_install_check._start_services(tmp_path, tmp_path / "checkout", {})
+    assert caught.value is original
+
+
+def _break_evidence(monkeypatch, receipt, fault):
+    def broken(*args, **kwargs):
+        error = {"receipt_keyboard": KeyboardInterrupt, "receipt_exit": SystemExit}.get(fault, OSError)
+        raise error("evidence fixture failure")
+    if fault == "log":
+        original = Path.write_text
+        def write(path, *args, **kwargs):
+            if path.parent.name == "logs":
+                broken()
+            return original(path, *args, **kwargs)
+        monkeypatch.setattr(Path, "write_text", write)
+    else:
+        monkeypatch.setattr(receipt, "write", broken)
+
+
+@pytest.mark.parametrize("primary,fault", [
+    ("exit", "log"), ("exit", "receipt"), ("spawn", "log"), ("spawn", "receipt"),
+    ("timeout", "log"), ("timeout", "receipt"), ("expect", "receipt"),
+    ("exit", "receipt_keyboard"), ("exit", "receipt_exit"),
+])
+def test_evidence_error_never_replaces_an_existing_failure(tmp_path, monkeypatch, primary, fault):
+    receipt = clean_install_check.Receipt(tmp_path / "receipt.json", tmp_path)
+    _break_evidence(monkeypatch, receipt, fault)
+    token = clean_install_check._RECEIPT.set(receipt)
+    try:
+        if primary in ("spawn", "timeout"):
+            def fail(*args, **kwargs):
+                if primary == "spawn":
+                    raise OSError("primary spawn failure")
+                raise subprocess.TimeoutExpired(args[0], 1, stderr="primary timeout failure")
+            monkeypatch.setattr(clean_install_check.subprocess, "run", fail)
+        with pytest.raises(BaseException) as caught:
+            if primary == "expect":
+                clean_install_check._expect("primary", False, "primary check failure")
+            else:
+                clean_install_check._run("primary", [sys.executable, "-c", "import sys; print('primary exit failure', file=sys.stderr); sys.exit(7)"],
+                                         cwd=tmp_path, env=os.environ.copy())
+        assert isinstance(caught.value, clean_install_check.CheckFailure)
+        assert caught.value.stage == "primary"
+        assert "primary" in caught.value.detail and "evidence fixture" not in caught.value.detail
+        assert receipt.data["steps"][0]["stage"] == "primary"
+        assert receipt.data["steps"][0]["status"] == "FAIL"
+        assert "evidence fixture failure" in receipt.data["evidence_errors"][0]["detail"]
+    finally:
+        clean_install_check._RECEIPT.reset(token)
+
+
+@pytest.mark.parametrize("fault", ["log", "receipt"])
+def test_missing_success_evidence_fails_the_check(tmp_path, monkeypatch, fault):
+    receipt = clean_install_check.Receipt(tmp_path / "receipt.json", tmp_path)
+    _break_evidence(monkeypatch, receipt, fault)
+    token = clean_install_check._RECEIPT.set(receipt)
+    try:
+        with pytest.raises(BaseException) as caught:
+            clean_install_check._run("success evidence", [sys.executable, "-c", "print('success')"],
+                                     cwd=tmp_path, env=os.environ.copy())
+        assert isinstance(caught.value, clean_install_check.CheckFailure)
+        assert caught.value.stage == "success evidence"
+        assert "evidence fixture failure" in caught.value.detail
+    finally:
+        clean_install_check._RECEIPT.reset(token)
