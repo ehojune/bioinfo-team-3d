@@ -8,6 +8,7 @@ from collections import Counter
 import hashlib
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import socket
@@ -285,6 +286,11 @@ def validate(receipt):
     if abs(receipt["cost_usd"] - receipt["ledger_cost_usd"]) > 1e-8:
         errors.append("cost counted twice or missing")
     ledger = receipt["after"].get("cost_by_task", {})
+    if (set(ledger) != set(counts) or receipt.get("cost_known") is not True
+            or receipt["after"].get("cost_known") is not True
+            or any(type(cost) not in (int, float) or not math.isfinite(cost) or cost < 0
+                   for cost in ledger.values())):
+        errors.append("fixture cost ledger missing or unknown")
     if any(task_id not in ledger or ledger[task_id] != cost
            for task_id, cost in receipt["before"].get("cost_by_task", {}).items()):
         errors.append("prior cost history changed")
