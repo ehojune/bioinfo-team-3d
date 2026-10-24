@@ -330,3 +330,31 @@ def test_finalization_interruption_is_never_pass(tmp_path, monkeypatch, fake_ins
     assert "finalization fixture interrupted" in receipt["detail"]
     assert receipt["finished_at"]
     assert clean_install_check._RECEIPT.get() is None
+
+
+@pytest.mark.parametrize("phase", ["down", "processes"])
+@pytest.mark.parametrize("interruption", [KeyboardInterrupt, SystemExit])
+def test_service_cleanup_interruption_retains_primary_failure(tmp_path, monkeypatch, fake_install, phase, interruption):
+    def start(*args):
+        raise clean_install_check.CheckFailure("startup", "primary service failure")
+    def interrupted(*args):
+        raise interruption("secondary service cleanup interruption")
+    original_run = clean_install_check._run
+    def run(stage, command, **kwargs):
+        if stage == "실패 뒤 강제 종료":
+            interrupted()
+        return original_run(stage, command, **kwargs)
+    monkeypatch.setattr(clean_install_check, "_start_services", start)
+    if phase == "down":
+        monkeypatch.setattr(clean_install_check, "_run", run)
+    else:
+        monkeypatch.setattr(clean_install_check, "_venv_python_processes", interrupted)
+    with pytest.raises(BaseException) as caught:
+        clean_install_check.rehearse(tmp_path / "source", [], work_dir=tmp_path / "work")
+    assert isinstance(caught.value, clean_install_check.CheckFailure)
+    assert caught.value.detail == "primary service failure"
+    receipt = json.loads((tmp_path / "work/receipt.json").read_text(encoding="utf-8"))
+    assert receipt["failure_stage"] == "startup"
+    assert receipt["detail"] == "primary service failure"
+    assert "secondary service cleanup interruption" in receipt["service_cleanup_error"]
+    assert clean_install_check._RECEIPT.get() is None

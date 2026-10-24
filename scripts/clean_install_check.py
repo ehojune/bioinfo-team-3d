@@ -558,7 +558,8 @@ def rehearse(source: Path, guard_paths: list[Path], *, work_dir: Path | None = N
                          cwd=checkout, env=env, timeout=120)
                     remaining = _venv_python_processes(checkout, names)
                     _expect("실패 뒤 자식 종료", not remaining, ", ".join(remaining))
-                except Exception:
+                except BaseException as exc:
+                    receipt.data["service_cleanup_error"] = _one_line(str(exc) or type(exc).__name__)
                     if not active_error:
                         raise
     except BaseException as exc:
