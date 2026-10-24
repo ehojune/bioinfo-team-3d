@@ -1,7 +1,11 @@
 pr: 925
 rows:
+- sha: c5c81da
+  at: '2026-10-24 11:24'
+  summary: 최종 receipt 쓰기 중단 근거를 설치판과 맞춥니다.
+  text: 최신 설치판·요청 ID와 관련 73 passed를 반영했다. 실제 command 실패는 기록 중단과 구분하며 manual 소유권 예외를 유지했다.
 - sha: 087e687
-  at: '2026-10-24 11:19'
+  at: '2026-10-24 11:20'
   summary: 최종 receipt 기록 중단도 최초 command 실패를 대체하지 않습니다.
   text: 최종 쓰기의 KeyboardInterrupt/SystemExit를 2 failed로 재현하고 active_error가 있으면 최초 오류를 보존했다. 관련 73 passed와 Windows 새 설치 전체 PASS·자식 잔류 0을 확인했다.
 - sha: ec2811f
