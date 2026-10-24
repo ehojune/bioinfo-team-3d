@@ -1389,14 +1389,21 @@ class Hub:
         if sid and task.request_id in self.recovery_steps and task.meta.get("kind") == "direct":
             checkpoint = self.store.get("step_checkpoint", f"{task.request_id}:direct")
             result = (checkpoint or {}).get("result")
-            if isinstance(result, dict) and isinstance(result.get("task_id"), str):
+            if (isinstance(result, dict) and isinstance(result.get("task_id"), str)
+                    and not self._interrupted_recovery_result(result)):
                 return result["task_id"]
         return None
+
+    @staticmethod
+    def _interrupted_recovery_result(result: object) -> bool:
+        """PI-approved recovery must not replay the shutdown that opened its resume card (#924)."""
+        return isinstance(result, dict) and result.get("ok") is False and bool(result.get("shutdown_evidence"))
 
     def _recovery_matches(self, task: Task) -> list[tuple[str, dict]]:
         started = self.recovery_started.get(task.request_id, float("inf"))
         return [(tid, entry) for tid, entry in self.store.all("task").items()
                 if self._matches_recovery(task, entry) and tid not in self.recovered_tasks and
+                not (entry.get("completed") and self._interrupted_recovery_result(entry.get("result"))) and
                 float(entry.get("dispatched_at") or 0) < started]
 
     @staticmethod
@@ -2809,7 +2816,8 @@ class Hub:
             choice = self._recovery_choice(task)
             if choice is None and task.meta.get("kind") == "direct":
                 checkpoint = self.store.get("step_checkpoint", f"{task.request_id}:direct")
-                if checkpoint and checkpoint.get("result"):
+                if (checkpoint and checkpoint.get("result")
+                        and not self._interrupted_recovery_result(checkpoint["result"])):
                     return TaskResult.model_validate(checkpoint["result"]).model_copy(update={"cost_usd": 0.0})
             if choice is not None:
                 tid, entry = choice
