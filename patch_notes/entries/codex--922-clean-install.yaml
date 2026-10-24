@@ -1,5 +1,9 @@
 pr: 925
 rows:
+- sha: 03a41ab
+  at: '2026-10-24 10:41'
+  summary: 설치 마감 도중 중단돼도 성공으로 기록하지 않습니다.
+  text: guard·삭제 중 KeyboardInterrupt/SystemExit를 4 failed로 재현하고 BaseException FAIL 기록과 정상 종료 때만 PASS 전환으로 고쳤다. 관련 54 passed와 Windows 새 설치 전체 PASS를 확인했다.
 - sha: ef3d98c
   at: '2026-10-24 10:35'
   summary: 최종 설치 판정과 실패 회귀 근거를 갱신합니다.
