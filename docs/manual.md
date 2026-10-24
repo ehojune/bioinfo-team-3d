@@ -996,6 +996,20 @@ internal 구역을 가리키는 작업·project·참고 폴더 별칭은 Claude�
 
 러너가 private umask(`077`)로 입력을 만들고, 제출 전에 기존 입력에서도 group·other 권한을 제거합니다. 제출 시 `workspace_root`와 날짜 폴더에만 group traverse를 주며, 그 밖의 상위 경로는 data-account가 통과할 수 있어야 합니다. 데이터 계정은 잡 스크립트·`hpc_out/`·로그만 사용합니다.
 
+### 중단 조건 한눈에
+
+| 경계 | 전역 기본값과 실제 동작 |
+|---|---|
+| 작업 시간 | `runner.task_timeout_s`: CLI 호출당 6시간. 요청 전체 wall time 상한은 별도 실행 계약이 필요합니다. 재개한 새 호출의 시간 제한과 요청의 원래 기한을 구분합니다. |
+| 비용 | `policy.budget.per_task_usd=5`, `per_request_usd=30`. 요청의 `budget_usd`가 있으면 그 값을 씁니다. 사전 예약은 `reserve_before_dispatch=false`가 기본이며, 비용 모름을 무료로 보지 않습니다. |
+| HTTP 조회 | `annot.request_lookup_limit=null`: 기본 횟수 제한 없음. 설정하면 내장 annot·live 출처 검사가 같은 요청 원장을 쓰고 runner 재시작 뒤에도 이어 셉니다. 직원 직접 HTTP·타사 MCP 전체의 상한은 아닙니다. |
+| 실패 | 일시적 실패는 `orchestrator.step_max_attempts=2`까지 시도합니다. 요청 전체가 실패 2회에 중단되는 전역 규칙은 없습니다. |
+| PI 카드 | 결정 카드는 기본 7일, 도구 gate는 1시간입니다. 재개 카드 기한은 원래 생성 시각 기준이며, 기한 초과는 `resume_timed_out`입니다. 재시작 때 다른 결정 카드는 닫히고 재개 카드로 돌아갑니다. |
+
+시운전 B의 **90분(카드 대기 포함)·요청 $9·작업 $3·HTTP 9회·실패 2회 중단·카드 10분 응답**은 별도 승인 계약입니다. 재시작을 새 기한·상한·counter 초기화 근거로 쓰지 않습니다. 실행에는 해당 GO가 필요합니다. 코드 위치와 fake 복구 재현의 한계는 [대조표](reference/recovery-stop-924.md)를 봅니다.
+
+재개하면 완료 단계는 재사용합니다. 이미 중단 결과가 저장된 task는 승인 뒤 새 task ID로 이어 가며, 같은 중단 결과로 재개 카드를 반복해서 열지 않습니다.
+
 ### 승인·예산
 
 `policy.approvals`, `policy.budget`. `hpc_core_hours_threshold: 0`이면 모든 제출을 승인받음. 임계값 아래여도 스크립트에 스케줄러 지시(`#SBATCH`·`#$`·`#PBS`·`#BSUB`)가 있으면 승인받습니다. `per_task_usd`는 Claude의 `--max-budget-usd`에서만 강제됩니다. Codex·Gemini·Antigravity에는 `runner.task_timeout_s`로 실행 시간을 제한합니다. 보고되지 않은 비용은 0으로 더하지 않습니다(#270). 새 기록은 `None`으로 남기고 과거의 숫자 0 기록은 그대로 읽습니다. Codex처럼 token만 보고하면 판본 있는 가격표(`labhq/costs.py`: 출처·확인일·모델 ID)로 `추정`하되, 모델 ID가 정확히 일치하고 과금 token 항목이 모두 있을 때만 환산합니다. 나머지는 `비용 모름 N건`으로 따로 셉니다. 웹·CLI·보고서는 `확인 $a + 추정 $b + 비용 모름 N건`과 엔진별 소계를 보여 주며, 추정은 청구액이 아닙니다. 단가는 OpenAI API Standard·짧은 문맥(호출당 입력 272K 이하, Codex 기본값) 기준이라 staff `CODEX_HOME`에서 `model_context_window`를 키우면 추정은 하한입니다. 요청 상한은 비용 모름 task마다 `per_task_usd`(0이면 요청 상한 전체)를 쓴 것으로 보고 판정해 넘으면 예산 승인을 받으며(카드 요약에 승인하면 올라갈 상한, 보통 지금 상한의 두 배가 적힙니다), 보고서는 비용 모름이 남은 요청을 예산 내로 적지 않습니다. 연구 보고서의 마지막 turn에서 처음 넘으면 더 할 일이 없으므로 카드를 띄우지 않고 초과 기록과 보고서를 남깁니다. 보고서 turn이 질문 답이나 HPC job을 기다리면 그 뒤 wake turn이 더 돌므로 마지막이 아닙니다. 넘었으면 wake turn 전에 예산 카드가 뜨고, 카드 없는 기록은 wake까지 끝난 마지막 turn에만 남습니다. 가격표 확인일이 90일을 넘으면 경고합니다. 연구 계획의 `budget_usd`는 집행이 쓸 금액이라 CP1 승인 때 그때까지 쓴 비용에 더해 요청 상한이 되며(계획 예산 $3.00 + 계획까지 쓴 $2.96이면 $5.96), 설정 상한(요청 예산, 없으면 `per_request_usd`)을 넘지는 못합니다([연구 lane](#연구-lane과-검증)).
