@@ -1,5 +1,9 @@
 pr: 935
 rows:
+- sha: fc9dc97
+  at: 2026-10-24 12:40
+  text: unknown 통역 비용에 generic reserve와 durable ceiling 중 큰 값을 유지
+  summary: 통역 비용을 모르면 예약 한도보다 작게 계산하지 않습니다.
 - sha: b2b6a92
   at: 2026-10-24 12:35
   text: restart 뒤 통역 admission 전에 durable 비용을 복원해 orphan 예약과 합산
