@@ -4,6 +4,16 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+Refs #948 (후속: PR #949 병합 뒤 봇 P2 두 건)
+
+- 깨진 초안(정수 `depends_on`, 해시 불가능한 id, dict가 아닌 단계)에서 `repair_synthesis_links`가 예외를 내면 계획 단계에서 요청이 죽을 수 있었습니다. 이제 그대로 돌려 CSO 교정으로 보냅니다.
+- synthesis 단계가 여러 개이고 모두 불완전하면 첫 단계가 아니라 **빠진 갈래 수가 가장 적은 단계**(동률이면 첫 단계)를 채웁니다. 한 갈래가 여러 terminal로 갈라져도 갈래 하나로 셉니다(리뷰 반영).
+- `docs/manual.md` 계획 검증 절의 "첫 synthesis 단계"를 위 동작으로 고쳤습니다.
+- 테스트 6건 추가(`tests/test_plan_synthesis_948.py`, 모두 이 후속 변경): 가장 가까운 synthesis 단계 채우기 1건, 깨진 초안 그대로 돌려주기 4건(정수 depends_on·해시 불가능 단계 id·해시 불가능 갈래 id·dict 아닌 단계), 빠진 terminal 수가 아니라 빠진 갈래 수로 고르기 1건(이전 기준에서는 실패). `test_plan_synthesis_948`·`test_branched_research` 23건 통과(로컬, Windows, Python 3.12), 최종 head의 CI는 아래 PR에서 확인합니다.
+- #949는 제가 고치던 중 병합 안전망이 먼저 병합해서 이 수정이 별도 PR입니다. #949에 병합된 핵심 수정(synthesis 보정·갈래 이름 synthesis 예외·교정 3회)은 그대로입니다.
+
+🤖 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
 Closes #948
 
 12차(`req_a52fd60207`)가 CP1 전에 "synthesis 단계가 갈래 끝을 받지 않음"으로 끝났습니다. 증거 DB의 두 계획(`task_72510404d7`·`task_8ffaef9bae`)에서 원인을 찾아 세 가지를 고쳤습니다.
