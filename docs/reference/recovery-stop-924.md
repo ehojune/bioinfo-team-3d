@@ -29,6 +29,21 @@ python -m pytest -q tests/test_recovery_fake_check.py tests/test_shutdown_recove
 - 시험 driver가 고정한 90초 deadline과 같은 비용/조회 설정을 재시작 후에도 씁니다. 제품의 요청 전체 독립 timer·실제 adapter 취소·공급자 청구 상한을 증명하지 않습니다. 두 case만 실행하고 자동 재시도하지 않습니다.
 - #922→#923 병합 뒤 설치판 interpreter로 최신 main 통합 재현이 필요합니다. `repeat_fixture_integrated`는 #923의 `REQUEST_BODY`·`configure` 재사용 여부이며, 복구 barrier/plan·작업 시간/비용·조회 횟수 설정은 이 시험 전용입니다.
 
-## 현재 개발 근거
+## 같은 설치판 최종 검증 (2026-10-24)
+
+W2 인계 설치 `a5fd6bede531524b79b062fe6de8c750884c429d`의 Python 3.14.7에서 `python scripts/recovery_fake_check.py --source <preserved-clone> --output <new-output>`를 실행했습니다. 설치·venv는 변경하지 않았으며 두 case 모두 첫 실행 PASS입니다.
+
+| receipt | gateway | runner |
+|---|---|---|
+| 재개 승인 / 대기 카드 | 1 / 0 | 1 / 0 |
+| 완료 plan·s1 재실행 / 같은 task 중복 | 0 / 0 | 0 / 0 |
+| known 비용 / 원장 합계 | $0.04 / $0.04 | $0.04 / $0.04 |
+| loopback 조회 / 잔류 | 2 / 0 | 3 / 0 |
+| 전후 contract | 일치 | 일치 |
+| receipt SHA256 | `52673a0e463cad8856c235f360ef79ff382f98237e308244b0234cf60cb9b3fa` | `37100d9f48e066bc202ece1011ef8a44a29b1530523612b4fba4a52636210476` |
+
+설정 SHA256 `8e328a95d2ce75953a04b840206a84f214007a3c065b37fd5e41d491371a0987`, freeze SHA256 `78b6533d8eab0ec2dea866ca84de0e13e042435b010ff7f0ada08d190399392b`가 W2 인계와 일치합니다. unknown 비용은 이 known-cost fixture가 아닌 consult 회귀로 검사합니다. 제품 독립 hard-stop·실제 청구·연구·HPC는 미검증입니다.
+
+## 개발 근거
 
 base `d40e7b31`에서 runner case가 두 번째 resume 카드를 여는 실패와 step/direct 회귀 2 failed·2 passed를 재현했습니다([범위 조정 요청](https://github.com/ehojune/bioinfo-team-3d/issues/924#issuecomment-6377222088)). 관련 회귀 52건·live adoption/비용 13건·강제 종료 2건·CI selection 85건이 통과했습니다. gateway·runner 모두 승인 1회, s1 실행 1회, 비용 $0.04와 task 원장 일치, 조회 각각 2·3회, 잔류 0입니다. 봇 P2의 새 task 비용 행·합계 동시 누락도 재현한 뒤 거부하도록 보강했습니다. 최종 CI·최종 head 봇 검토·병합·W1/W2 설치판 통합은 미확인입니다.
