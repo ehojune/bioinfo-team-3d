@@ -25,8 +25,8 @@ source는 커밋된 checkout, work-dir은 새/빈 폴더입니다. PATH의 `py`�
 
 ## 2026-10-24 확인
 
-- Windows 공백 경로의 새 폴더, 설치 코드 `3ace77d2`, Python 3.14.7: 29 PASS / 0 FAIL / 1 SKIP. mock 요청 `req_37e2541bf2`의 verify와 최종 venv 프로세스 잔류 0 확인.
-- 회귀 범위: 공백 경로·Git/pip override·외부 Git 설정 보존·guard 준비 실패·삭제 실패·중단·겹친 오류의 최초 원인 보존. 상세 지적·수정 SHA는 [PR #925](https://github.com/ehojune/bioinfo-team-3d/pull/925)에 있다.
+- Windows 공백 경로의 새 폴더, 설치 코드 `9c4f0e2d`, Python 3.14.7: 29 PASS / 0 FAIL / 1 SKIP. mock 요청 `req_2f80074c0d`의 verify와 최종 venv 프로세스 잔류 0 확인.
+- 회귀 범위: 공백 경로·Git/pip override·외부 Git 설정 보존·Windows 잠금 재시도·guard 준비 실패·삭제 실패·중단·겹친 오류의 최초 원인 보존. 상세 지적·수정 SHA는 [PR #925](https://github.com/ehojune/bioinfo-team-3d/pull/925)에 있다.
 - 수정 전 검사기도 PASS였다. 별도 dummy 환경 재현에서 `LABHQ_CONFIG`·`GH_TOKEN`·`OPENAI_API_KEY`가 그대로 상속됐고 수정 뒤 모두 제거됐다.
-- 관련 pytest 79 passed. Python 3.10 문법·public·diff 검사 통과. 상세 receipt·dependency freeze·분리 로그는 로컬 작업 폴더에 보존.
+- 관련 pytest 83 passed. Python 3.10 문법·public·diff 검사 통과. 상세 receipt·dependency freeze·분리 로그는 로컬 작업 폴더에 보존.
 - README 한국어 11,852→12,205자(+353), 영어 17,866→18,156자(+290). AGENTS의 설치 안내는 실제 불일치가 없어 유지.
