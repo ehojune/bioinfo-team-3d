@@ -75,6 +75,13 @@ class Projection(unittest.TestCase):
         h.rows['t'] = row('t', 'pi_interpretation')
         h.rows['t']['payload']['budget_usd'] = 0.1
         self.assertIn('translation_reservation_invalid', projection()(h, 'r', 123.5)['problems'])
+        h.rows['t']['payload']['budget_usd'] = 0.05
+        h.rows['t']['attempt'] = True
+        self.assertFalse(projection()(h, 'r', 123.5)['complete'])
+        h.rows['t']['attempt'] = 1
+        h.reservations['t']['ceiling_usd'] = 1.0
+        h.rows['t']['payload']['budget_usd'] = True
+        self.assertFalse(projection()(h, 'r', 123.5)['complete'])
         h.rows['t']['payload'] = ['invalid']
         self.assertFalse(projection()(h, 'r', 123.5)['complete'])
         h.rows['t'] = ['invalid']

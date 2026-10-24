@@ -4168,9 +4168,9 @@ class Hub:
                      and value["ceiling_usd"] is not None and value["ceiling_usd"] > 0)
             if task_row:
                 valid = valid and (payload.get("agent_id") == value["agent_id"]
-                    and payload.get("budget_usd") == value["ceiling_usd"]
+                    and amount(payload.get("budget_usd")) == value["ceiling_usd"]
                     and task_row.get("kind") == "pi_interpretation"
-                    and task_row.get("attempt") == value["attempt"])
+                    and type(task_row.get("attempt")) is int and task_row["attempt"] == value["attempt"])
             if not valid:
                 problems.append("translation_reservation_invalid")
             reservations[tid] = value
