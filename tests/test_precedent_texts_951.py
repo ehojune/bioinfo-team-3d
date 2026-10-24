@@ -193,3 +193,26 @@ def test_the_precedent_copies_draw_on_the_same_byte_budget_as_the_ancestor_input
                                                      remaining=budget)
     assert [name.split("-")[1] for name, _ in listing] == ["PMID_1"] and len(refused) == 1
     assert budget[0] == 2  # the shared counter was spent, not a private copy of it
+
+
+def test_a_failed_copy_that_leaves_a_stray_file_never_exposes_the_folder(tmp_path, monkeypatch):
+    from labhq.runner import step_inputs
+    from labhq.runner.step_inputs import stage_precedent_texts
+
+    root = tmp_path / "ws"
+    rows, _files_ = _rows(root)
+    workdir = root / "step"
+    workdir.mkdir()
+    real_copy = step_inputs._copy
+    calls = []
+
+    def flaky(source, source_parts, work, destination, expected, limit, remaining):
+        calls.append(destination)
+        if len(calls) == 2:  # the second copy fails and its temporary file cannot be removed
+            (work / "inputs" / "precedent" / ".labhq-input-stray").write_bytes(b"bytes that failed the hash check")
+            raise ValueError("input hash differs from collected artifact")
+        return real_copy(source, source_parts, work, destination, expected, limit, remaining)
+
+    monkeypatch.setattr(step_inputs, "_copy", flaky)
+    with pytest.raises(RuntimeError, match="could not be cleared"):  # the step does not start with such a folder
+        stage_precedent_texts(_Ws(workdir), rows, root, [], 1024, 1024)

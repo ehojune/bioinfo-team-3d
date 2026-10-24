@@ -294,6 +294,21 @@ def stage_precedent_texts(ws, rows, workspace_root, zones, max_file, max_total, 
                       'disk full during copy' if getattr(exc, 'errno', None) == errno.ENOSPC else type(exc).__name__)
             refused[f"{PRECEDENT}:{row.get('paper_id') or name}"] = (
                 f"{PRECEDENT}:{row.get('paper_id') or name} unavailable ({detail})")
+    if refused and not _only_inventoried(ws.dir, [name for name, _ in listing]):
+        # A failed copy left a file the inventory does not own (its temporary file could not be removed): no byte
+        # that failed the hash check may be exposed, so clear the folder and refuse them all, or stop the step.
+        try:
+            _reset(ws.dir, PRECEDENT, [])
+        except (OSError, ValueError, TypeError, KeyError, AttributeError) as cleanup:
+            raise RuntimeError('refused precedent text snapshot could not be cleared') from cleanup
+        refused[PRECEDENT] = f'inputs/{PRECEDENT} unavailable (a failed copy left a file that could not be removed)'
+        return [], refused, []
     if listing:
         staged.append(str(ws.dir / 'inputs' / PRECEDENT))
     return staged, refused, listing
+
+
+def _only_inventoried(workdir, names):
+    """Whether inputs/precedent holds nothing but the copies just staged and labhq's own inventory file."""
+    with _folder(workdir, ('inputs', PRECEDENT)) as held:
+        return set(_files(held)) <= {INVENTORY, *names}
