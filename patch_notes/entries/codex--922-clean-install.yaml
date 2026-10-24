@@ -1,5 +1,9 @@
 pr: 925
 rows:
+- sha: afdeb2f
+  at: '2026-10-24 09:51'
+  summary: 공백이 있는 Windows 설치 경로에서도 검사 명령이 실행됩니다.
+  text: cmd의 외부 따옴표와 batch 경로 인자를 보존하고 공백 경로 회귀 1 failed→관련 42 passed, 새 빈 폴더 전체 설치 29 PASS·1 SKIP과 자식 잔류 0을 확인했다.
 - sha: 0332b06
   at: '2026-10-24 09:00'
   summary: Windows 새 설치의 단계별 판정과 설치판 근거를 남깁니다.
