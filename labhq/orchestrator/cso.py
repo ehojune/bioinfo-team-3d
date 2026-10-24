@@ -4397,9 +4397,22 @@ class Orchestrator:
             if not isinstance(row, dict) or row.get("request_id") != rid:
                 return float("inf")
             tid, ceiling = row.get("task_id"), row.get("ceiling_usd")
-            valid = (tid == key == row.get("reservation_id") and row.get("source") == "pi_translation"
-                     and row.get("state") == "reserved" and row.get("attempt") == 1
+            valid = (isinstance(tid, str) and 0 < len(tid) <= 128
+                     and tid == key == row.get("reservation_id") and row.get("source") == "pi_translation"
+                     and row.get("state") == "reserved" and type(row.get("attempt")) is int
+                     and row["attempt"] == 1 and isinstance(row.get("agent_id"), str) and row["agent_id"]
                      and _usd_amount(ceiling))
+            if not valid:
+                return float("inf")
+            entry = store.get("task", tid)
+            if entry is not None:
+                payload = entry.get("payload") if isinstance(entry, dict) else None
+                valid = valid and (isinstance(payload, dict) and entry.get("request_id") == rid
+                    and entry.get("kind") == "pi_interpretation" and type(entry.get("attempt")) is int
+                    and entry["attempt"] == row["attempt"]
+                    and payload.get("id") == tid and payload.get("request_id") == rid
+                    and payload.get("agent_id") == row["agent_id"]
+                    and _usd_amount(payload.get("budget_usd")) and payload["budget_usd"] == ceiling)
             if not valid or (tid in holds and holds[tid] != ceiling):
                 # Conflicting provenance cannot admit another paid call.
                 return float("inf")

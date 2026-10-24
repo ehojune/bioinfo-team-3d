@@ -135,6 +135,27 @@ async def test_resume_card_seeds_cost_ids_before_translation(hub, monkeypatch):
     assert hub.orchestrator._budget_bound('r', 5)[2] == pytest.approx(1.02)
 
 
+@pytest.mark.parametrize('mismatch', ['ceiling', 'agent', 'kind', 'attempt', 'payload', 'request',
+                                    'task_id_list', 'attempt_bool'])
+def test_admission_checks_reservation_against_durable_task(hub, mismatch):
+    reservation = {'reservation_id': 't', 'task_id': 't', 'request_id': 'r',
+        'agent_id': 'chief_of_staff', 'attempt': 1, 'state': 'reserved',
+        'source': 'pi_translation', 'ceiling_usd': 0.05}
+    task = {'request_id': 'r', 'kind': 'pi_interpretation', 'attempt': 1,
+            'payload': {'id': 't', 'request_id': 'r', 'agent_id': 'chief_of_staff', 'budget_usd': 0.05}}
+    if mismatch == 'ceiling': reservation['ceiling_usd'] = 0.01
+    if mismatch == 'agent': reservation['agent_id'] = 'other'
+    if mismatch == 'kind': task['kind'] = 'step'
+    if mismatch == 'attempt': task['attempt'] = 2
+    if mismatch == 'payload': task['payload'] = ['invalid']
+    if mismatch == 'request': task['payload']['request_id'] = 'other'
+    if mismatch == 'task_id_list': reservation['task_id'] = ['invalid']
+    if mismatch == 'attempt_bool': task['attempt'] = True
+    hub.store.put('pi_translation_reservations', 'r', {'t': reservation})
+    hub.store.put('task', 't', task)
+    assert hub.orchestrator._budget_bound('r', 5)[2] == float('inf')
+
+
 @pytest.mark.asyncio
 async def test_interpreter_receives_tool_error_evidence(hub, monkeypatch):
     calls = mock_model(monkeypatch, hub)
