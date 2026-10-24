@@ -260,3 +260,5 @@ async def exercise(root: Path, config: Path) -> dict:
         write_json(root / "boundary.json", {"external_attempts": audit.external_attempts,
                    "subprocess_attempts": audit.subprocess_attempts, "events": audit.events})
         MockAdapter.run = mock_run
+        require(audit.external_attempts == audit.subprocess_attempts == 0,
+                "offline boundary was attempted before process exit")
