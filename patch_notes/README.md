@@ -15,6 +15,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
 | 15:20 | [`cbfd869`](https://github.com/ehojune/bioinfo-team-3d/pull/945/commits/cbfd869) | **계획 prompt의 budget\_usd 설명 한 문장이 바뀌어 고정 hash 시험을 그 문장만 이전 문장으로 되돌려 계산하도록 고쳤습니다.**<br>계획 prompt 해시 고정 시험이 요청 예산 문장 변경을 반영 (#944) |
+| 02:30 | [`edca3c0`](https://github.com/ehojune/bioinfo-team-3d/pull/947/commits/edca3c0) | **읽기 전용 입력 폴더를 대소문자만 바꿔 고치는 우회를 막았습니다.**<br>artifact contract 단계의 Claude 쓰기 허용 규칙을 작업 폴더 전체가 아니라 outputs/와 .tmp/로 좁혀, 대소문자만 다른 inputs 표기도 사전 허가되지 않고 승인 게이트로 가게 한다(#946 리뷰 P1). |
+| 01:55 | [`a3f03c4`](https://github.com/ehojune/bioinfo-team-3d/pull/947/commits/a3f03c4) | **별칭으로 연결된 작업 폴더에서도 조상 단계 입력 복사본을 단계가 고칠 수 없게 유지합니다.**<br>작업 root가 junction·symlink일 때 읽기 전용 inputs의 Edit/Write 거부를 별칭 표기뿐 아니라 실제 경로 표기로도 붙인다(#946 리뷰 P1). |
+| 01:25 | [`e7143f8`](https://github.com/ehojune/bioinfo-team-3d/pull/947/commits/e7143f8) | **별칭으로 연결된 작업 폴더에서도 단계가 자기 outputs에 쓸 수 있습니다.**<br>작업 root가 symlink·junction이면 개인 경로는 실제 root이고 작업 폴더는 별칭 표기라 쓰기 holder로 못 잡던 것을, 쓰기 폴더의 원래·절대·실제 경로를 모두 대조해 고친다(#946 리뷰 P1). |
+| 00:40 | [`1cfad9a`](https://github.com/ehojune/bioinfo-team-3d/pull/947/commits/1cfad9a) | **연구 단계가 자기 작업 폴더의 outputs에 파일을 쓰지 못하던 문제를 고쳤습니다.**<br>선행 단계 산출을 읽기 전용으로 받는 연구 단계에서 작업 root 전체에 붙던 Claude Edit/Write 거부를 작업 폴더로 가는 길에 없는 최상위 항목에만 붙여, 단계가 자기 outputs/에 쓸 수 있게 한다(#946). |
 
 ## 2026-10-24
 
