@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 16:50 | [`677fd9c`](https://github.com/ehojune/bioinfo-team-3d/pull/939/commits/677fd9c) | **15시간 같은 긴 연구 실행도 격리 실행 확인을 통과하도록 확인 기한을 설정값으로 만들었습니다.**<br>contained runtime 확인이 owner receipt 수명을 발급 후 5400초로 고정하고 있었다. runner.contained_max_s(기본 5400이라 기존 동작 유지, 하한 60·상한 86400)로 읽도록 바꿨고 다른 확인(nonce·provenance·config hash·pipe·운영자 pin)은 그대로다. receipt를 발급하는 owner는 이 저장소 밖이라 같은 값으로 맞춰야 한다. 기본값 경계(5400 통과·5401 거부), 54000 설정 경계, 상한 밖 설정 거부 테스트 추가. 실제 15시간 owner와 새 설치판은 확인하지 않았다. |
 | 13:45 | [`47efd76`](https://github.com/ehojune/bioinfo-team-3d/pull/935/commits/47efd76) | **통역 예약이 요청 상한을 채우면 부가 지원도 새 지출을 시작하지 않습니다.**<br>optional support admission에 통역·dispatch hold 합산, store-backed CSO fixture의 namespace 읽기 보완 |
 | 13:38 | [`2da6056`](https://github.com/ehojune/bioinfo-team-3d/pull/935/commits/2da6056) | **예전 누적 예약과 새 orphan 예약을 모두 보존하고 task별 근거로 나누지 않습니다.**<br>첫 task별 통역 예약에 legacy 누적 예약을 함께 보존해 aggregate 갱신 전 crash에도 상한 유지 |
 | 13:29 | [`cce70ab`](https://github.com/ehojune/bioinfo-team-3d/pull/935/commits/cce70ab) | **취소 회귀 test가 새 원장 조회 뒤에도 실제 dispatch·hold 검증을 끝내도록 맞췄습니다.**<br>취소 test의 task-only Store에 빈 예약 원장 추가, dispatch 전 assert로 event 대기가 끝나지 않는 경로 수정 |
