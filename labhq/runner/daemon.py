@@ -2568,8 +2568,18 @@ class Runner:
                     return {"error": f"could not start the job: {exc}"}
                 if tid in self.__dict__.get("_jobs_cancelled", ()):
                     # The step was cancelled while the process was starting: no row existed for the cancel to find.
-                    await asyncio.to_thread(local_jobs.kill, facts, process)
-                    return {"error": "the task was cancelled while the job started; the job was ended"}
+                    if await asyncio.to_thread(local_jobs.kill, facts, process):
+                        return {"error": "the task was cancelled while the job started; the job was ended"}
+                    # Its processes survived: keep it as a row so the watcher keeps ending it, not an ownerless process.
+                    self._local_procs[job_id] = process
+                    self._ensure_local_watch()
+                    await self._track_job({"task_id": tid, "agent_id": aid, "job_id": job_id, "name": name,
+                                           "core_hours": None},
+                                          extra={"scheduler": "local", "state": "running", "cancel_requested": True,
+                                                 "cancel_wake": False,
+                                                 "local": {**facts, "command": command, "expected_minutes": expected}})
+                    return {"error": "the task was cancelled while the job started; it could not be ended yet and "
+                                     "the runner keeps trying"}
                 self._local_procs[job_id] = process
                 self._ensure_local_watch()
                 await self._track_job({"task_id": tid, "agent_id": aid, "job_id": job_id, "name": name,
@@ -2588,6 +2598,9 @@ class Runner:
         its step from being woken); a tree that survives leaves the job running and the watcher keeps checking it."""
         tid = j.get("task_id")
         if not await asyncio.to_thread(local_jobs.kill, j.get("local") or {}, self._local_procs.get(jid)):
+            # Remembered with the row (so it survives a restart): the watcher ends it again until nothing is left.
+            j.update(cancel_requested=True, cancel_wake=wake)
+            self.store.put("job", jid, j)
             return False
         self._local_procs.pop(jid, None)
         j.update(state=state, terminal=True, exit_status=None)
@@ -2620,6 +2633,9 @@ class Runner:
             return
         for jid, j in list(self.jobs.items()):
             if j["terminal"] or not local_jobs.is_local(jid):
+                continue
+            if j.get("cancel_requested"):  # an earlier cancel could not end the whole tree: try again
+                await self._end_local_job(jid, j, "cancelled", wake=bool(j.get("cancel_wake", True)))
                 continue
             state, exit_status = await asyncio.to_thread(local_jobs.status, j.get("local") or {},
                                                          self._local_procs.get(jid))

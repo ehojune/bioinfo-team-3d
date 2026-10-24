@@ -573,3 +573,56 @@ async def test_a_cancel_whose_processes_survive_is_not_recorded_or_confirmed(boa
     await board.runner._on_message({"type": "task.jobs_cancel", "task_id": task.id})
     assert board.runner.jobs[job_id]["state"] == "cancelled"
     assert [row["task_id"] for row in board.runner.store.pending() if row.get("type") == "task.jobs_cancelled"] == [task.id]
+
+
+@pytest.mark.asyncio
+async def test_a_start_time_cancel_that_cannot_end_the_tree_keeps_the_job_for_the_watcher(board, monkeypatch):
+    real_start, real_kill, started = local_jobs.start, local_jobs.kill, []
+
+    def start_then_cancel(*args, **kwargs):
+        facts, process = real_start(*args, **kwargs)
+        started.append((facts, process))
+        board.runner.__dict__.setdefault("_jobs_cancelled", set()).add(board.task_id[0])
+        return facts, process
+
+    monkeypatch.setattr(local_jobs, "start", start_then_cancel)
+    monkeypatch.setattr(local_jobs, "kill", lambda local, process=None: False)  # the tree would not die
+    out = {}
+
+    async def body(identity):
+        board.task_id.append(identity["task_id"])
+        out.update(await board.submit(SLEEP)(identity))
+
+    await board.run(body)
+    assert "keeps trying" in out["error"]
+    rows = [j for jid, j in board.runner.jobs.items() if local_jobs.is_local(jid)]
+    assert len(rows) == 1 and not rows[0]["terminal"] and rows[0]["cancel_requested"]  # tracked, not ownerless
+    monkeypatch.setattr(local_jobs, "kill", real_kill)
+    await board.runner._poll_local_jobs()  # the watcher ends it
+    assert rows[0]["state"] == "cancelled" and rows[0]["terminal"]
+    assert local_jobs.status(*started[0])[0] != "running"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_kill_is_retried_by_the_watcher_until_the_tree_is_gone(board, monkeypatch):
+    out = {}
+
+    async def body(identity):
+        out.update(await board.submit(SLEEP)(identity))
+
+    task, _ = await board.run(body)
+    job_id, real_kill = out["job_id"], local_jobs.kill
+    monkeypatch.setattr(local_jobs, "kill", lambda local, process=None: False)
+    await board.runner._on_message({"type": "task.cancel", "task_id": task.id})  # the result of this is not enough
+    row = board.runner.jobs[job_id]
+    assert not row["terminal"] and row["cancel_requested"]
+    assert board.runner.store.get("job", job_id)["cancel_requested"]  # kept with the row: it survives a restart
+    monkeypatch.setattr(local_jobs, "kill", real_kill)
+    await board.runner._poll_local_jobs()
+    assert row["state"] == "cancelled" and row["terminal"]
+
+
+def test_a_kept_jobs_cancel_outlives_the_longest_local_job():
+    from labhq.gateway import server
+
+    assert server.JOBS_CANCEL_KEEP_S > 7 * 86400

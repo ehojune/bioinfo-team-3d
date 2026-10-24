@@ -69,6 +69,7 @@ SNAPSHOT_RESULT_CHARS = 500
 MAX_PI_NOTES = 20
 # A kept task cancel outlives any runner turn (runner.task_timeout_s defaults to 6 h) before it is dropped.
 TASK_CANCEL_KEEP_S = 2 * 86400
+JOBS_CANCEL_KEEP_S = 8 * 86400  # a local job may run up to 7 days: keep its cancel longer than that
 def external_wait_view(wait: object, *, now: float | None = None) -> dict | None:
     """The wait of a step's open public lookup, with the time since its last progress event added (#676)."""
     if not isinstance(wait, dict):
@@ -1903,7 +1904,7 @@ class Hub:
         for tid, entry in self.store.all("jobs_cancel").items():  # local jobs of a cancelled request (#675)
             if entry.get("runner_id") != runner_id:
                 continue
-            if now - float(entry.get("requested_at") or 0) > TASK_CANCEL_KEEP_S:
+            if now - float(entry.get("requested_at") or 0) > JOBS_CANCEL_KEEP_S:
                 self.store.delete("jobs_cancel", tid)
                 continue
             await self.send_runner(runner_id, {"type": "task.jobs_cancel", "task_id": tid})
