@@ -216,3 +216,24 @@ def test_a_failed_copy_that_leaves_a_stray_file_never_exposes_the_folder(tmp_pat
     monkeypatch.setattr(step_inputs, "_copy", flaky)
     with pytest.raises(RuntimeError, match="could not be cleared"):  # the step does not start with such a folder
         stage_precedent_texts(_Ws(workdir), rows, root, [], 1024, 1024)
+
+
+def test_the_disk_room_check_covers_only_the_text_being_copied(tmp_path, monkeypatch):
+    from labhq.runner import step_inputs
+    from labhq.runner.step_inputs import stage_precedent_texts
+
+    root = tmp_path / "ws"
+    rows, _files_ = _rows(root)
+    workdir = root / "step"
+    workdir.mkdir()
+    asked = []
+
+    def room(folder, needed):
+        asked.append(needed)
+        if needed == len(b"charlie"):
+            raise ValueError("not enough disk space for inputs (test)")
+
+    monkeypatch.setattr(step_inputs, "_room", room)
+    staged, refused, listing = stage_precedent_texts(_Ws(workdir), rows, root, [], 1024, 1024)
+    assert asked == [len(b"alpha"), len(b"bravo"), len(b"charlie")]  # one check per text, never a batch total
+    assert [name.split("-")[1] for name, _ in listing] == ["PMID_1", "PMID_2"] and len(refused) == 1

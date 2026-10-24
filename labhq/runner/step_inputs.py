@@ -277,7 +277,6 @@ def stage_precedent_texts(ws, rows, workspace_root, zones, max_file, max_total, 
     if not files:
         return staged, refused, listing
     try:
-        _room(ws.dir, sum(_size(root, parts) for parts, _, _, _ in files))
         _reset(ws.dir, PRECEDENT, [name for _, name, _, _ in files])
     except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
         detail = (str(exc) if isinstance(exc, ValueError) else
@@ -287,6 +286,10 @@ def stage_precedent_texts(ws, rows, workspace_root, zones, max_file, max_total, 
     for parts, name, expected, row in files:
         # One bad copy omits only its own text; _copy removes its temporary file and never leaves a partial one.
         try:
+            # Room is checked for this text alone, so one oversized text does not hide the ones that fit.
+            if _size(root, parts) > min(max_file, remaining[0]):
+                raise ValueError('input file size/link limit')
+            _room(ws.dir, _size(root, parts))
             _copy(root, parts, ws.dir, f'inputs/{PRECEDENT}/{name}', expected, max_file, remaining)
             listing.append((name, row))
         except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
