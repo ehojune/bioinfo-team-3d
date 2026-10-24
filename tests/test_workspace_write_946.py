@@ -98,3 +98,44 @@ async def test_a_runner_step_with_the_artifact_contract_gets_no_deny_over_its_ow
     for tool in ("Edit", "Write"):
         assert not _rules(deny, tool, ctx.workdir / "outputs" / "result.tsv")
         assert not _rules(deny, tool, ctx.workdir / ".tmp" / "x")
+
+
+def _alias(real, link):
+    """A directory alias (symlink, or a junction on Windows without the symlink privilege), or None."""
+    import os
+    import subprocess
+
+    try:
+        os.symlink(real, link, target_is_directory=True)
+        return link
+    except (OSError, NotImplementedError):
+        pass
+    if os.name == "nt":
+        done = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(real)], capture_output=True)
+        return link if done.returncode == 0 else None
+    return None
+
+
+def test_a_junctioned_workspace_root_still_leaves_the_tasks_own_folder_writable(tmp_path, monkeypatch):
+    monkeypatch.setattr(private_paths, "_labhq_entries", REAL_LABHQ_ENTRIES)
+    home = tmp_path / "home"
+    real = tmp_path / "real_runs"
+    (real / "2026-10-25" / "task_a" / "outputs").mkdir(parents=True)
+    (real / "2026-10-24" / "task_old").mkdir(parents=True)
+    alias = _alias(real, tmp_path / "runs")
+    if alias is None:
+        pytest.skip("no symlink or junction available")
+    ws_dir = alias / "2026-10-25" / "task_a"  # the runner keeps the alias spelling of the task folder
+    settings = Settings()
+    settings.runner.workspace_root = str(alias)
+    settings.runner.talent_dir = str(tmp_path / "talent")
+    home.mkdir()
+    private = resolve_private_paths(settings, [str(ws_dir), str(alias)], home=str(home), open_reads=[], cwd=str(ws_dir))
+    private = replace(private, paths=tuple(dict.fromkeys([*private.paths, str(alias.resolve())])), enabled=True,
+                      open_reads=tuple(scoped_open_reads(settings, [*private.open_reads, str(ws_dir)], cwd=str(ws_dir))))
+    deny = claude_deny_private({}, private.paths, str(home), open_reads=private.open_reads,
+                               write_roots=[str(ws_dir)])["permissions"]["deny"]
+    for spelled in (ws_dir / "outputs" / "r.tsv", real / "2026-10-25" / "task_a" / "outputs" / "r.tsv"):
+        for tool in ("Edit", "Write", "Read"):
+            assert not _rules(deny, tool, spelled), (tool, spelled)
+    assert _rules(deny, "Write", real / "2026-10-24" / "task_old" / "x")  # the rest of the root stays closed

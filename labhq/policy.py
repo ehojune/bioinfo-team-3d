@@ -2227,8 +2227,12 @@ def claude_deny_private(settings: dict, paths: Iterable[str], home: str | None =
         except ValueError:
             continue
         ruled.append(p)
-    write_roots = [str(w) for w in write_roots if w]
-    holders = [p for p in ruled if holds_open_read(p, open_reads)]
+    # Both spellings of each writable folder: with a symlinked or junctioned workspace root the private path is the
+    # real root while the task's folder keeps the alias spelling, and neither alone lies under the other.
+    write_roots = list(dict.fromkeys(
+        spelling for w in write_roots if w
+        for spelling in (str(w), os.path.abspath(str(w)), os.path.realpath(str(w)))))
+    holders = [p for p in ruled if holds_open_read(p, [*open_reads, *write_roots])]
     merged = claude_deny_links(settings, [p for p in ruled if p not in holders])
     if holders:
         writable = [p for p in holders if holds_open_read(p, write_roots)]
@@ -2238,7 +2242,8 @@ def claude_deny_private(settings: dict, paths: Iterable[str], home: str | None =
                   for entry in closed_entries(p, [*open_reads, *write_roots])
                   for tool in ("Edit", "Write") for tail in ("", "/**")]
         rules += [f"Read(/{claude_rule_path(entry)}{tail})" for p in holders
-                  for entry in closed_entries(p, open_reads) for tail in ("", "/**")]
+                  for entry in closed_entries(p, [*open_reads, *(w for w in write_roots if p in writable)])
+                  for tail in ("", "/**")]
         permissions = dict(merged.get("permissions") or {})
         permissions["deny"] = list(dict.fromkeys([*(permissions.get("deny") or []), *rules]))
         merged = {**merged, "permissions": permissions}
