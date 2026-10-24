@@ -209,3 +209,62 @@ def test_automatic_workdir_cleanup_error_cannot_leave_a_pass_receipt(tmp_path, m
     assert receipt["finished_at"]
     assert "locked fixture" in receipt["detail"]
     assert clean_install_check._RECEIPT.get() is None
+
+
+def _fail_final_guard(monkeypatch):
+    calls = 0
+    def snapshot(*args):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return {}
+        raise PermissionError("guard fixture failure")
+    monkeypatch.setattr(clean_install_check, "_snapshot", snapshot)
+
+
+def test_original_failure_retained_when_final_guard_also_fails(tmp_path, monkeypatch, fake_install):
+    _fail_final_guard(monkeypatch)
+    def start(*args):
+        raise clean_install_check.CheckFailure("startup", "primary fixture failure")
+    monkeypatch.setattr(clean_install_check, "_start_services", start)
+    with pytest.raises(clean_install_check.CheckFailure, match="primary fixture failure"):
+        clean_install_check.rehearse(tmp_path / "source", [], work_dir=tmp_path / "work")
+    receipt = json.loads((tmp_path / "work/receipt.json").read_text(encoding="utf-8"))
+    assert receipt["failure_stage"] == "startup"
+    assert receipt["detail"] == "primary fixture failure"
+    assert "guard fixture failure" in receipt["guard_error"]
+    assert clean_install_check._RECEIPT.get() is None
+
+
+def test_guard_primary_failure_retained_when_cleanup_also_fails(tmp_path, monkeypatch, fake_install):
+    _fail_final_guard(monkeypatch)
+    root = tmp_path / "automatic"
+    root.mkdir()
+    receipt_path = tmp_path / "external.json"
+    monkeypatch.setattr(clean_install_check.tempfile, "mkdtemp", lambda **kwargs: str(root))
+    def locked(*args):
+        raise PermissionError("secondary cleanup failure")
+    monkeypatch.setattr(clean_install_check.shutil, "rmtree", locked)
+    with pytest.raises(PermissionError, match="guard fixture failure"):
+        clean_install_check.rehearse(tmp_path / "source", [], receipt_path=receipt_path)
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt["status"] == "FAIL"
+    assert receipt["failure_stage"] == "보호 경로"
+    assert "guard fixture failure" in receipt["detail"]
+    assert "secondary cleanup failure" in receipt["cleanup_error"]
+    assert clean_install_check._RECEIPT.get() is None
+
+
+def test_primary_failure_survives_final_receipt_write_error(tmp_path, monkeypatch, fake_install):
+    def start(*args):
+        raise clean_install_check.CheckFailure("startup", "primary fixture failure")
+    original_write = clean_install_check.Receipt.write
+    def write(receipt):
+        if receipt.data.get("finished_at"):
+            raise OSError("secondary receipt write failure")
+        original_write(receipt)
+    monkeypatch.setattr(clean_install_check, "_start_services", start)
+    monkeypatch.setattr(clean_install_check.Receipt, "write", write)
+    with pytest.raises(clean_install_check.CheckFailure, match="primary fixture failure"):
+        clean_install_check.rehearse(tmp_path / "source", [], work_dir=tmp_path / "work")
+    assert clean_install_check._RECEIPT.get() is None

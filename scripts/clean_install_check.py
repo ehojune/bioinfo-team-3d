@@ -572,8 +572,11 @@ def rehearse(source: Path, guard_paths: list[Path], *, work_dir: Path | None = N
                 changed = [str(path) for path, value in before.items() if after[path] != value]
                 _expect("보호 경로 mtime", not changed, "mtime 변경: " + ", ".join(changed))
         except Exception as exc:
-            receipt.data.update(status="FAIL", failure_stage=getattr(exc, "stage", "보호 경로"), detail=_one_line(exc))
-            if not active_error:
+            if active_error:
+                receipt.data["guard_error"] = _one_line(exc)
+            else:
+                receipt.data.update(status="FAIL", failure_stage=getattr(exc, "stage", "보호 경로"), detail=_one_line(exc))
+                active_error = True
                 raise
         finally:
             if receipt.data["status"] == "RUNNING":
@@ -581,6 +584,9 @@ def rehearse(source: Path, guard_paths: list[Path], *, work_dir: Path | None = N
             receipt.data["finished_at"] = datetime.now(timezone.utc).isoformat()
             try:
                 receipt.write()
+            except OSError:
+                if not active_error:
+                    raise
             finally:
                 _RECEIPT.reset(context)
             if work_dir is None:
