@@ -1,5 +1,9 @@
 pr: 935
 rows:
+- sha: 649b0f7
+  at: 2026-10-24 12:26
+  text: 예약 원장을 request별로 저장해 admission의 전체 이력 scan 제거, malformed task row 회귀 보강
+  summary: 예산 확인이 과거 요청의 예약 수에 따라 느려지지 않도록 바꿨습니다.
 - sha: f129395
   at: 2026-10-24 12:25
   text: 통역만 있는 요청도 빈 연구 hold 원장을 먼저 영속화하고 잘못된 task payload는 projection에서 차단
