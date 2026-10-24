@@ -2196,7 +2196,7 @@ def claude_ask_internal_links(settings: dict, links: Iterable[str]) -> dict:
 
 
 def claude_deny_private(settings: dict, paths: Iterable[str], home: str | None = None,
-                        open_reads: Iterable[str] = ()) -> dict:
+                        open_reads: Iterable[str] = (), write_roots: Iterable[str] = ()) -> dict:
     """Read/Edit/Write deny rules for PI personal paths (policy.private_paths), merged into `settings`, plus
     Bash/PowerShell `ask` rules naming each path.
 
@@ -2210,6 +2210,11 @@ def claude_deny_private(settings: dict, paths: Iterable[str], home: str | None =
     keeps Edit/Write on the whole path, but Read only on its top-level entries off the way to that folder
     (`closed_entries`): a deny rule outranks every allow rule, so a Read deny on the whole path would close it.
     Other tasks' project folders beside it get no rule; the gate refuses reads of them.
+
+    A holder that also holds one of the task's `write_roots` (the workspace root, which the artifact contract marks
+    private around the task's own folder) cannot take an Edit/Write deny on the whole path: a deny outranks the
+    allow rule for the task's own `outputs/`, so a step could write nothing (#946, trial 2026-10-25 attempt 11).
+    There the Edit/Write deny goes on the same top-level entries off the way to the task's folders as the Read deny.
     """
     from .private_paths import closed_entries, holds_open_read, shell_needles
 
@@ -2222,13 +2227,23 @@ def claude_deny_private(settings: dict, paths: Iterable[str], home: str | None =
         except ValueError:
             continue
         ruled.append(p)
-    holders = [p for p in ruled if holds_open_read(p, open_reads)]
+    # Both spellings of each writable folder: with a symlinked or junctioned workspace root the private path is the
+    # real root while the task's folder keeps the alias spelling, and neither alone lies under the other.
+    write_roots = list(dict.fromkeys(
+        spelling for w in write_roots if w
+        for spelling in (str(w), os.path.abspath(str(w)), os.path.realpath(str(w)))))
+    holders = [p for p in ruled if holds_open_read(p, [*open_reads, *write_roots])]
     merged = claude_deny_links(settings, [p for p in ruled if p not in holders])
     if holders:
-        rules = [f"{tool}(/{claude_rule_path(p)}{tail})" for p in holders
+        writable = [p for p in holders if holds_open_read(p, write_roots)]
+        rules = [f"{tool}(/{claude_rule_path(p)}{tail})" for p in holders if p not in writable
                  for tool in ("Edit", "Write") for tail in ("", "/**")]
+        rules += [f"{tool}(/{claude_rule_path(entry)}{tail})" for p in writable
+                  for entry in closed_entries(p, [*open_reads, *write_roots])
+                  for tool in ("Edit", "Write") for tail in ("", "/**")]
         rules += [f"Read(/{claude_rule_path(entry)}{tail})" for p in holders
-                  for entry in closed_entries(p, open_reads) for tail in ("", "/**")]
+                  for entry in closed_entries(p, [*open_reads, *(w for w in write_roots if p in writable)])
+                  for tail in ("", "/**")]
         permissions = dict(merged.get("permissions") or {})
         permissions["deny"] = list(dict.fromkeys([*(permissions.get("deny") or []), *rules]))
         merged = {**merged, "permissions": permissions}

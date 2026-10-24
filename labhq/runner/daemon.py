@@ -1875,7 +1875,10 @@ class Runner:
             if artifact_contract:
                 # Reuse the existing private/read-root machinery; inputs never become write roots.
                 private = replace(private, paths=tuple(dict.fromkeys([
-                                      *private.paths, str(root), str(ws.dir / "inputs")])),
+                                      *private.paths, str(root), str(ws.dir / "inputs"),
+                                      # Both spellings: with a junctioned root the real inputs path is otherwise
+                                      # not denied and matches the resolved workdir's write allow (#946).
+                                      os.path.realpath(ws.dir / "inputs")])),
                                   labels=(*private.labels, "선행 단계 읽기 전용 입력"), enabled=True,
                                   open_reads=tuple(scoped_open_reads(self.s, [
                                       *private.open_reads, str(ws.dir), *staged_inputs], cwd=ws.dir)))
@@ -1976,7 +1979,7 @@ class Runner:
             engine_settings = claude_deny_private(claude_ask_internal_links(claude_deny_links(claude_read_only(
                 claude_settings(self.s.policy), [d for d in [*read_dirs, *(extra_dirs if read_only else [])]
                                                if claude_rule_ready(d)]), denied_links), asked_links),
-                private.paths, open_reads=private.open_reads)
+                private.paths, open_reads=private.open_reads, write_roots=[str(ws.dir)])
             if hooked:
                 from ..hooks.tool_use import add_claude_hook
 

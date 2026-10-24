@@ -407,8 +407,15 @@ class ClaudeCodeAdapter(AgentAdapter):
         all_read_roots = [ctx.workdir, *ctx.extra_dirs, *ctx.read_dirs, *ctx.private_open_reads]
         gated = set(ctx.gated_read_roots)
         read_roots = [root for root in all_read_roots if str(root) not in gated] if on else None
+        # A step with the artifact contract writes only outputs/ and .tmp/: a rule for the whole folder would also
+        # pre-approve a case-varied spelling of the read-only inputs/ (Claude compares deny rules literally, #946).
+        meta = ctx.task.meta or {}
+        contract = (meta.get("kind") in {"step", "result_correction", "slot_repair"}
+                    and isinstance(meta.get("upstream_artifacts"), dict))
+        write_roots = ([Path(ctx.workdir) / "outputs", Path(ctx.workdir) / ".tmp"] if contract
+                       else [ctx.workdir])
         allowed = [*claude_allowed_tools(
-                       a.tools, [ctx.workdir, *ctx.extra_dirs], read_roots,
+                       a.tools, [*write_roots, *ctx.extra_dirs], read_roots,
                        shared_environment_gate=(ctx.shared_environment_protected or ctx.gate_non_public_data)),
                    *(f"mcp__{s.name}" for s in ctx.mcp_servers if s.auto_approve)]
         if allowed:
