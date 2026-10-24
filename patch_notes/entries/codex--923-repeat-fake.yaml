@@ -1,5 +1,9 @@
-pr: null
+pr: 926
 rows:
+- sha: 9eb70a4
+  at: '2026-10-24 09:17'
+  summary: 반복 fake 검사를 Windows 필수 cohort에 등록하고 binary 로그 열기 인자를 명시합니다.
+  text: 초기 CI의 inventory 거부와 encoding 검사 실패를 고쳤다. 새 test module 전체를 Windows에서도 실행하며 기존 검사 범위를 줄이지 않는다. encoding·CI policy 관련 pytest 79 passed. Refs #923.
 - sha: 22730ad
   at: '2026-10-24 09:09'
   summary: 새 설치에서 같은 fake 요청 두 번의 종료·비용·산출·근거 계약을 검사합니다.
