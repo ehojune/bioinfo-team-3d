@@ -662,7 +662,8 @@ Contract rules:
 - """ + SELECTION_RECORD_RULE + """
 - `budget_usd` (optional number): the additional execution budget in USD after this plan's CP1 approval.
   Exclude briefing, clarification, planning and all earlier-round spending already incurred. On approval labhq adds
-  that spending to this budget and clamps the total to the configured request cap; exceeding it waits for a PI
+  that spending to this budget and clamps the total to the lab's policy cap; when the PI wrote a budget on the request,
+  that budget is the cap and this amount is only the estimate on the CP1 card. Exceeding the cap waits for a PI
   budget card. Write this additional amount in protocol.resource_limits. Leave it out when you cannot estimate it.
 - Each step declares phase, claim_ids, input_refs, outputs, checks, evidence_slots, and depends_on. Every output is
   inside that step's own workspace outputs/ folder, written as outputs/<name>, and the instruction uses that exact
@@ -1255,6 +1256,9 @@ def _budget_line(budget: dict[str, Any]) -> str:
     total = float(planned) + float(budget.get("spent_before_plan_usd") or 0)
     if budget.get("source") == "plan":
         return f"집행 상한 ${cap:.2f}({_plan_cap_sum(budget)}). 넘으면 예산 카드가 뜹니다."
+    if budget.get("source") == "request" and total <= cap:
+        return (f"집행 상한 ${cap:.2f}(요청 예산 그대로). 계획 추정은 참고만 합니다: "
+                f"{_plan_cap_sum(budget)} = ${total:.2f}. 넘으면 예산 카드가 뜹니다.")
     return (f"집행 상한 ${cap:.2f}({origin.get(budget.get('source'), '요청 예산')} ${cap:.2f}에 맞춰 줄임: "
             f"{_plan_cap_sum(budget)} = ${total:.2f}).")
 
@@ -4261,7 +4265,10 @@ class Orchestrator:
         if fixed:
             configured, source = float(fixed.get("configured_cap_usd") or 0), str(fixed.get("source") or "request")
         else:
-            configured, source = (own, "request") if own else (policy, "policy")
+            # A limit a budget card raised before CP1 is still the lab's policy cap: only a budget the PI wrote on the
+            # request (kept in requested_budget_usd; older requests have only budget_usd) is the cap itself.
+            asked = req.get("requested_budget_usd", req.get("budget_usd"))
+            configured, source = (own, "request" if asked else "policy") if own else (policy, "policy")
         planned = plan.get("budget_usd")
         if not planned:
             return {"cap_usd": own or policy, "source": "request" if own else "policy",
@@ -4270,7 +4277,10 @@ class Orchestrator:
         spent = round(self.cost.get(rid, 0.0), 4)
         budget = {"plan_budget_usd": planned, "spent_before_plan_usd": spent, "cap_usd": round(spent + planned, 4),
                   "source": "plan", "configured_cap_usd": configured}
-        if configured and configured < budget["cap_usd"]:
+        if configured and (source == "request" or configured < budget["cap_usd"]):
+            # A budget the PI wrote on the request is the cap whatever the plan estimates (#944: a $40 request fell to
+            # the plan's $9.70, so two tasks' reservations already passed it). Only the lab's policy cap is cut to
+            # the plan's own sum.
             budget.update(cap_usd=configured, source=source)
         return budget, source
 
@@ -4332,7 +4342,11 @@ class Orchestrator:
         approved = plan_budget.get("cap_usd")
         if approved == cap and "spent_before_plan_usd" in plan_budget:  # older approvals had the plan budget alone
             clamped = plan_budget.get("source") != "plan"
-            origin = f"{_plan_cap_sum(plan_budget)}{'가 설정 상한을 넘어 상한으로 줄임' if clamped else ''}, CP1 승인"
+            total = float(plan_budget.get("plan_budget_usd") or 0) + float(plan_budget.get("spent_before_plan_usd") or 0)
+            if clamped and plan_budget.get("source") == "request" and total <= cap:
+                origin = f"the request's own budget; the plan's estimate ({_plan_cap_sum(plan_budget)}) is not the cap"
+            else:
+                origin = f"{_plan_cap_sum(plan_budget)}{'가 설정 상한을 넘어 상한으로 줄임' if clamped else ''}, CP1 승인"
         else:
             origin = ("the plan's budget_usd approved at CP1" if approved == cap else
                       f"CP1 approved ${float(approved):.2f}; the PI raised it on a budget card" if approved else

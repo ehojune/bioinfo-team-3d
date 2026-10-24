@@ -74,6 +74,12 @@ def test_engine_schemas_and_prompt_off_are_those_of_main():
     rule = "- " + cso.SELECTION_RECORD_RULE + "\n"
     assert prompt.count(rule) == 1
     prompt = prompt.replace(rule, "")  # #890: only this rule is new; the rest is the previous prompt
+    budget_now = ("lab's policy cap; when the PI wrote a budget on the request,\n"
+                  "  that budget is the cap and this amount is only the estimate on the CP1 card. Exceeding the cap waits for a PI\n"
+                  "  budget card.")
+    budget_before = "configured request cap; exceeding it waits for a PI\n  budget card."
+    assert prompt.count(budget_now) == 1
+    prompt = prompt.replace(budget_now, budget_before)  # #944: a request budget is the cap; only this sentence is new
     phase = ("labhq checks metadata before CP1 "
              "and prepares selected skills after approval alongside the approved steps. A late skill is omitted from that step.")
     previous = ("labhq checks metadata before CP1 "
