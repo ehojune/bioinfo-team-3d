@@ -10,11 +10,19 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-10-25
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 15:20 | [`cbfd869`](https://github.com/ehojune/bioinfo-team-3d/pull/945/commits/cbfd869) | **계획 prompt의 budget\_usd 설명 한 문장이 바뀌어 고정 hash 시험을 그 문장만 이전 문장으로 되돌려 계산하도록 고쳤습니다.**<br>계획 prompt 해시 고정 시험이 요청 예산 문장 변경을 반영 (#944) |
+
 ## 2026-10-24
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 23:40 | [`d8cadc2`](https://github.com/ehojune/bioinfo-team-3d/pull/945/commits/d8cadc2) | **--budget 없이 시작해 CP1 전에 카드로 한도를 올린 요청은 계속 계획 합으로 상한을 잡고, 요청에 적은 예산만 그대로 상한이 됩니다.**<br>예산 카드로 올린 한도는 요청 예산이 아니라 정책 한도로 취급 (#944 리뷰 P1) |
 | 23:40 | [`893f3b0`](https://github.com/ehojune/bioinfo-team-3d/pull/943/commits/893f3b0) | **비용을 모르는 호출의 모델 칸이 직원 기본 모델이 아니라 실제로 지정한 모델로 남습니다.**<br>gateway가 비용 모름을 먼저 기록하는 경로도 task에 지정된 override 엔진·모델을 기록한다(#942 리뷰 P2). |
+| 23:11 | [`27e2f44`](https://github.com/ehojune/bioinfo-team-3d/pull/945/commits/27e2f44) | **PI가 요청에 예산을 적었으면 CP1을 승인해도 상한이 계획 추정으로 내려가지 않고, 계획 추정은 카드에 참고로만 보입니다. 작업 예약 몇 건만으로 예산 카드가 거듭 뜨던 문제를 막습니다.**<br>요청 예산이 있으면 CP1 뒤 집행 상한은 요청 예산 (#944) |
 | 23:10 | [`1db9341`](https://github.com/ehojune/bioinfo-team-3d/pull/943/commits/1db9341) | **번역이 형식 검사에서 계속 탈락하고 연구 단계 뒤에서 시간 초과로 취소되던 문제를 고쳤습니다.**<br>PI 문구 번역 prompt에서 카드용 구조·줄바꿈 규칙을 빼고 한 문단 두 문장 형식을 직접 적고, 번역 task를 연구 슬롯이 아닌 상담 슬롯에서 돌리며, 시간 초과로 비용을 모르는 번역의 모델 칸에 실제 번역 모델을 적는다(#942). |
 | 22:00 | [`6f0b71d`](https://github.com/ehojune/bioinfo-team-3d/pull/941/commits/6f0b71d) | **작업당 상한을 끈 설정에서는 증액 승인 금액이 예전과 같게 유지됩니다.**<br>per_task_usd가 0이면 승인 상한에 다음 작업 예약 몫을 더하지 않는다(요청 상한이 예약이 되어 올릴 때마다 커지는 경우, |
 | 21:40 | [`f123583`](https://github.com/ehojune/bioinfo-team-3d/pull/941/commits/f123583) | **새 테스트를 자동 검사 목록에 등록했습니다.**<br>새 테스트 파일을 Windows 검사 inventory에 등록한다(#940). |
