@@ -1,5 +1,9 @@
 pr: 927
 rows:
+- sha: ea30096
+  at: '2026-10-24 09:40'
+  summary: 복구 script·parent import·child 실행을 같은 checkout에 묶습니다.
+  text: 다른 --source와 다른 제품 import를 출력·process 생성 전에 거부한다. source 판본 거부 2건과 실제 강제 종료·receipt 검증 2건 PASS. Refs #924.
 - sha: d62d35e
   at: '2026-10-24 09:34'
   summary: 복구 receipt에서 새 task 비용 행과 known 비용을 빠짐없이 요구합니다.
