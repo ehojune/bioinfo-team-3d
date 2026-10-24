@@ -44,7 +44,7 @@ def test_core_agent_skill_exception_is_scoped(tmp_path, monkeypatch):
     registry = Registry(ROOT / "agents", tmp_path / "talent")
     registry.load()
     bioinfo = registry.get("bioinfo-agent")
-    assert bioinfo.engine == Engine.claude_code and bioinfo.builtin_mcp == ["approval", "hpc", "annot"]
+    assert bioinfo.engine == Engine.claude_code and bioinfo.builtin_mcp == ["approval", "hpc", "job", "annot"]
     for agent in registry.agents.values():
         if agent.engine != Engine.claude_code:
             continue

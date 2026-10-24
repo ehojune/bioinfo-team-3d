@@ -2473,6 +2473,7 @@ class Hub:
         builtin = agent.get("builtin_mcp", [])
         return [*(["labhq_approval"] if "approval" in builtin else []),
                 *(["labhq_hpc"] if "hpc" in builtin and agent.get("scheduler", "none") != "none" else []),
+                *(["labhq_job"] if "job" in builtin else []),
                 *(["labhq_annot"] if "annot" in builtin else []),
                 *(["labhq_ask"] if agent.get("engine") != "antigravity" else []),
                 *agent.get("mcp", [])]
@@ -3679,6 +3680,15 @@ class Hub:
                 waiter.cancel()
             if (not entry.get("completed") or entry.get("abandoned")) and await self.cancel_task(tid):
                 cancelled.append(tid)
+            elif entry.get("completed"):
+                # A step parked on its jobs has no running task to cancel: its runner ends the local jobs it started,
+                # so no process outlives the request (#675).
+                runner_id = self.task_runner.get(tid) or entry.get("runner_id")
+                if runner_id:
+                    try:
+                        await self.send_runner(runner_id, {"type": "task.jobs_cancel", "task_id": tid})
+                    except RunnerUnavailable:
+                        pass
         req["cancelled_tasks"] = cancelled
         self.save_request(rid)  # a restart before the terminal record still reports these
         for aid, entry in list(self.approvals.items()):
