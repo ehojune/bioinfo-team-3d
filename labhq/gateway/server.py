@@ -4149,8 +4149,10 @@ class Hub:
                          attempt=1 if type(raw.get("attempt")) is int and raw["attempt"] == 1 else None,
                          state="reserved" if raw.get("state") == "reserved" else None,
                          source="pi_translation" if raw.get("source") == "pi_translation" else None)
-            task_row = ledger.get(tid) or {}
-            payload = task_row.get("payload") or {}
+            task_row = ledger.get(tid)
+            task_row = task_row if isinstance(task_row, dict) else {}
+            payload = task_row.get("payload")
+            payload = payload if isinstance(payload, dict) else {}
             valid = (value["reservation_id"] == value["task_id"] == tid
                      and value["request_id"] == rid and value["agent_id"] is not None
                      and value["attempt"] == 1 and value["state"] and value["source"]

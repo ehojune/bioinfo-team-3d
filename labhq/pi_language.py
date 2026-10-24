@@ -122,6 +122,9 @@ class PiInterpreter:
                     or remaining < cfg.per_message_usd):
                 return
             # Reserve the entire call ceiling, including failed/unknown calls, across restarts.
+            # Establish an explicit empty research-hold ledger for translation-only requests.
+            req.setdefault("budget_holds", {})
+            hub.save_request(rid)
             reservation_id = f"pi_text_{key}"
             hub.store.put("pi_translation_reservation", reservation_id, {
                 "reservation_id": reservation_id, "task_id": reservation_id,

@@ -51,6 +51,7 @@ async def test_translation_reservation_precedes_dispatch_and_settles_once(hub, m
         assert reservation['task_id'] == reservation['reservation_id'] == task.id
         assert reservation['attempt'] == 1 and reservation['source'] == 'pi_translation'
         assert reservation['ceiling_usd'] == task.budget_usd == 0.05
+        assert hub.requests['r']['budget_holds'] == {}
         # A duplicate research hold never doubles the same reservation.
         hub.requests['r']['budget_holds'] = {task.id: 0.05}
         assert hub.orchestrator._budget_bound('r', 5)[2] == pytest.approx(1.05)
