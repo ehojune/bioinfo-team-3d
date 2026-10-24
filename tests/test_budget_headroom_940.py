@@ -77,3 +77,13 @@ async def test_without_reservations_the_raised_cap_is_unchanged():
     hub.s.policy.budget.reserve_before_dispatch = False
     await orch._check_budget("r", block=False)
     assert hub.approvals[0]["detail"]["requested_budget_usd"] == pytest.approx(SPENT + 2 * PER_TASK)  # no extra room
+
+
+@pytest.mark.asyncio
+async def test_a_disabled_per_task_cap_leaves_the_raised_cap_as_before():
+    hub, orch = _orch({"u1"})
+    hub.s.policy.budget.per_task_usd = 0  # the reserve is then the request cap itself and would grow with each raise
+    hub.requests["r"]["budget_usd"] = 10
+    orch.cost["r"] = 1.0
+    await orch._check_budget("r", block=False)
+    assert hub.approvals[0]["detail"]["requested_budget_usd"] == pytest.approx(max(20, 1.0 + 10))

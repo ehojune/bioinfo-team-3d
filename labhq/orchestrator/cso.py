@@ -4170,7 +4170,10 @@ class Orchestrator:
             reserve_each, needed = self._unknown_reserve(limit), reserve
             # With pre-dispatch reservations the raised cap leaves room for one more task reservation: at needed = 0 a
             # cap equal to the bound would make the very next dispatch open a second card (#940, attempt 9).
-            headroom = reserve_each if self.hub.s.policy.budget.reserve_before_dispatch else 0.0
+            # A disabled per-task cap (0) makes the reserve the request cap itself, which grows with every raise: no
+            # fixed room can be left then, so the cap stays as before.
+            budget_policy = self.hub.s.policy.budget
+            headroom = reserve_each if budget_policy.reserve_before_dispatch and budget_policy.per_task_usd > 0 else 0.0
             raised = max(limit * 2, bound + max(needed, headroom))
             # What each answer does, so the PI need not read detail.requested_budget_usd (trial 2026-10-08).
             then = f" 승인하면 상한을 ${raised:.2f}로 올리고, 거절하면 새 작업을 보내지 않습니다."
