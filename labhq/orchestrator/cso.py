@@ -55,6 +55,7 @@ from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARC
                                  missing_result_slots, repair_result_slots, repair_synthesis_links,
                                  unnegated_analysis_text, validate_research_result, with_pack_refs)
 from ..research import blind_draft
+from ..research import precedent_texts
 from ..research import continuation as research_continuation
 from ..research import semantic_device_report
 from ..research import input_fit
@@ -4857,6 +4858,9 @@ class Orchestrator:
                 # restart mid-round a finished upstream revision is no longer in it (PR #368 review).
                 updates.append(f"[Current upstream results — they replace what you read before]\n{ctx}")
             linked = input_steps(step)
+            # The precedent search's stored texts reach every research step as read-only inputs (#951).
+            stored_precedents = (precedent_texts.rows(self.hub.requests.get(rid, {}).get("analysis_precedents"))
+                                 if research_plan else [])
             upstream_dirs = [results[d].workdir for d in linked
                              if d in results and results[d].ok and results[d].workdir and results[d].outputs]
             upstream_steps = {d: results[d].workdir for d in linked
@@ -4879,6 +4883,7 @@ class Orchestrator:
                                   "workdir": results[d].workdir, "outputs": list(results[d].outputs),
                                   "output_sha256": dict(results[d].output_sha256),
                               } for d in upstream_steps},
+                              **({"precedent_texts": stored_precedents} if stored_precedents else {}),
                               "outputs": [*step.get("outputs", []), *step.get("optional_outputs", [])],
                               "required_outputs": step.get("outputs", []),
                               "optional_outputs": step.get("optional_outputs", []),
@@ -5716,6 +5721,7 @@ class Orchestrator:
                 issues="\n".join(issues) or "(none)", results=self.format_results(steps, results, n)) +
                 plan_report_context(req.get("plan"), topic_checklists.load(),
                                     req.get("analysis_precedents")) +
+                precedent_texts.synthesis_note(req.get("analysis_precedents")) +
                 approval_note_block("CP2", cp2_notes, CP2_REPORT_NOTE_RULE) +
                 ("\n\nRecorded claim/source metadata (not a new support judgment):\n" + clip(source_section, n)
                  if source_section else "") +
