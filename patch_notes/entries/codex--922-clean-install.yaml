@@ -1,5 +1,9 @@
 pr: 925
 rows:
+- sha: 3ace77d
+  at: '2026-10-24 11:40'
+  summary: receipt JSON을 원자적으로 교체해 이전 증거를 보존합니다.
+  text: 같은 폴더의 임시 파일에 기록·flush·fsync 뒤 닫고 os.replace로 교체한다. 쓰기·교체 중단 회귀 6 failed→관련 79 passed와 Windows 새 설치 전체 PASS·자식 잔류 0을 확인했다.
 - sha: c5c81da
   at: '2026-10-24 11:24'
   summary: 최종 receipt 쓰기 중단 근거를 설치판과 맞춥니다.
