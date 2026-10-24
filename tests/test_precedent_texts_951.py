@@ -129,7 +129,8 @@ async def test_the_orchestrator_hands_the_stored_texts_to_each_step_and_names_th
     steps = [task for task in hub.calls if task.meta["kind"] == "step"]
     assert steps and all(task.meta["precedent_texts"][0]["text_sha256"] == "e" * 64 for task in steps)
     [synth] = [task for task in hub.calls if task.meta["kind"] == "synthesis"]
-    assert "Stored precedent texts of this request" in synth.prompt and "step-level gap" in synth.prompt
+    assert "Stored precedent texts recorded for this request" in synth.prompt and "step-level gap" in synth.prompt
+    assert "may have been unavailable to a given step" in synth.prompt  # recorded, not claimed to have been opened
 
 
 @pytest.mark.asyncio
@@ -142,3 +143,97 @@ async def test_without_precedent_texts_the_orchestrator_adds_nothing(tmp_path):
     assert steps and all("precedent_texts" not in task.meta for task in steps)
     [synth] = [task for task in hub.calls if task.meta["kind"] == "synthesis"]
     assert "Stored precedent texts" not in synth.prompt
+
+
+
+class _Ws:
+    def __init__(self, folder):
+        self.dir = folder
+
+
+def _rows(root):
+    rows, files = [], []
+    folder = root / "scout" / ".tmp" / "literature"
+    folder.mkdir(parents=True, exist_ok=True)
+    for index, body in enumerate(("alpha", "bravo", "charlie"), 1):
+        path = folder / f"p{index}.md"
+        path.write_bytes(body.encode())
+        digest = hashlib.sha256(body.encode()).hexdigest()
+        Path(str(path) + ".receipt.json").write_text(json.dumps({"paper_id": f"PMID:{index}", "text_sha256": digest}))
+        rows.append({"paper_id": f"PMID:{index}", "title": f"T{index}", "text_file": str(path), "text_sha256": digest,
+                     "access_level": "full_text", "extraction": "complete", "source": "s"})
+        files.append(path)
+    return rows, files
+
+
+def test_one_bad_copy_omits_only_its_own_text(tmp_path):
+    from labhq.runner.step_inputs import stage_precedent_texts
+
+    root = tmp_path / "ws"
+    rows, files = _rows(root)
+    workdir = root / "step"
+    workdir.mkdir()
+    files[1].write_bytes(b"bravo CHANGED")  # passes every metadata check, fails the byte hash during the copy
+    staged, refused, listing = stage_precedent_texts(_Ws(workdir), rows, root, [], 1024, 1024)
+    assert [name.split("-")[1] for name, _ in listing] == ["PMID_1", "PMID_3"]  # the others are still there
+    assert len(refused) == 1 and "PMID:2" in next(iter(refused))
+    assert {f.name for f in (workdir / "inputs" / "precedent").glob("*.md")} == {name for name, _ in listing}
+    assert staged == [str(workdir / "inputs" / "precedent")]
+
+
+def test_the_precedent_copies_draw_on_the_same_byte_budget_as_the_ancestor_inputs(tmp_path):
+    from labhq.runner.step_inputs import stage_precedent_texts
+
+    root = tmp_path / "ws"
+    rows, _files = _rows(root)
+    workdir = root / "step"
+    workdir.mkdir()
+    budget = [7]  # ancestors used the rest: "alpha" (5 bytes) fits, "charlie" (7 bytes) does not
+    staged, refused, listing = stage_precedent_texts(_Ws(workdir), [rows[0], rows[2]], root, [], 1024, 1024,
+                                                     remaining=budget)
+    assert [name.split("-")[1] for name, _ in listing] == ["PMID_1"] and len(refused) == 1
+    assert budget[0] == 2  # the shared counter was spent, not a private copy of it
+
+
+def test_a_failed_copy_that_leaves_a_stray_file_never_exposes_the_folder(tmp_path, monkeypatch):
+    from labhq.runner import step_inputs
+    from labhq.runner.step_inputs import stage_precedent_texts
+
+    root = tmp_path / "ws"
+    rows, _files_ = _rows(root)
+    workdir = root / "step"
+    workdir.mkdir()
+    real_copy = step_inputs._copy
+    calls = []
+
+    def flaky(source, source_parts, work, destination, expected, limit, remaining):
+        calls.append(destination)
+        if len(calls) == 2:  # the second copy fails and its temporary file cannot be removed
+            (work / "inputs" / "precedent" / ".labhq-input-stray").write_bytes(b"bytes that failed the hash check")
+            raise ValueError("input hash differs from collected artifact")
+        return real_copy(source, source_parts, work, destination, expected, limit, remaining)
+
+    monkeypatch.setattr(step_inputs, "_copy", flaky)
+    with pytest.raises(RuntimeError, match="could not be cleared"):  # the step does not start with such a folder
+        stage_precedent_texts(_Ws(workdir), rows, root, [], 1024, 1024)
+
+
+def test_the_disk_room_check_covers_only_the_text_being_copied(tmp_path, monkeypatch):
+    from labhq.runner import step_inputs
+    from labhq.runner.step_inputs import stage_precedent_texts
+
+    root = tmp_path / "ws"
+    rows, _files_ = _rows(root)
+    workdir = root / "step"
+    workdir.mkdir()
+    asked = []
+
+    def room(folder, needed):
+        asked.append(needed)
+        if needed == len(b"charlie"):
+            raise ValueError("not enough disk space for inputs (test)")
+
+    monkeypatch.setattr(step_inputs, "_room", room)
+    staged, refused, listing = stage_precedent_texts(_Ws(workdir), rows, root, [], 1024, 1024)
+    assert asked == [len(b"alpha"), len(b"bravo"), len(b"charlie")]  # one check per text, never a batch total
+    assert [name.split("-")[1] for name, _ in listing] == ["PMID_1", "PMID_2"] and len(refused) == 1

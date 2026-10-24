@@ -1752,10 +1752,11 @@ class Runner:
                 steps = upstream_steps if isinstance(upstream_steps, dict) else {}
                 accepted = {sid: row for sid, row in artifacts.items()
                             if isinstance(row, dict) and row.get("workdir") == steps.get(sid)}
+                input_budget = [self.s.runner.input_hash_max_total_bytes]  # one cumulative limit for every input copy
                 staged_inputs, unavailable = await asyncio.to_thread(
                     stage_inputs, ws, accepted, root, [*zones, *internal_zones],
                     list(resolve_private_paths(self.s, [], cwd=ws.dir).paths),
-                    self.s.runner.input_hash_max_file_bytes, self.s.runner.input_hash_max_total_bytes)
+                    self.s.runner.input_hash_max_file_bytes, self.s.runner.input_hash_max_total_bytes, input_budget)
                 unavailable.update({str(sid): f"inputs/{sid} unavailable (ancestor mapping mismatch)"
                                     for sid in artifacts if sid not in accepted})
                 note = ("Read collected ancestor artifacts only through inputs/<step_id>/. "
@@ -1772,7 +1773,7 @@ class Runner:
                     precedent_dirs, precedent_refused, precedent_listing = await asyncio.to_thread(
                         stage_precedent_texts, ws, precedent_rows, root, [*zones, *internal_zones],
                         self.s.runner.input_hash_max_file_bytes, self.s.runner.input_hash_max_total_bytes,
-                        list(artifacts))
+                        list(artifacts), input_budget)
                     staged_inputs = [*staged_inputs, *precedent_dirs]
                     precedent_note = precedent_step_note(precedent_listing, precedent_refused)
                     if precedent_note:

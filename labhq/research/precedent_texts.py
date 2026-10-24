@@ -68,8 +68,9 @@ def synthesis_note(record: Any) -> str:
     stored = rows(record)
     if not stored:
         return ""
-    lines = ["\n\nStored precedent texts of this request (each was opened read-only to the research steps as "
-             "inputs/precedent/; the files and hashes are in the evidence record):"]
+    lines = ["\n\nStored precedent texts recorded for this request. A text is opened read-only to a research step as "
+             "inputs/precedent/ only when it passed the runner's path, receipt and hash checks, so a text listed here "
+             "may have been unavailable to a given step (that step's own record says which it could read):"]
     lines.extend(f"- {row.get('title') or row.get('paper_id')} (access_level={row.get('access_level') or 'unknown'}, "
                  f"extraction={row.get('extraction') or 'unknown'}, sha256 {row['text_sha256'][:12]})" for row in stored)
     lines.append("Keep two things apart: a step that did not obtain or read a text (a step-level gap) and the request "
