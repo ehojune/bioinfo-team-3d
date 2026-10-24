@@ -15,6 +15,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
 | 16:50 | [`677fd9c`](https://github.com/ehojune/bioinfo-team-3d/pull/939/commits/677fd9c) | **15시간 같은 긴 연구 실행도 격리 실행 확인을 통과하도록 확인 기한을 설정값으로 만들었습니다.**<br>contained runtime 확인이 owner receipt 수명을 발급 후 5400초로 고정하고 있었다. runner.contained_max_s(기본 5400이라 기존 동작 유지, 하한 60·상한 86400)로 읽도록 바꿨고 다른 확인(nonce·provenance·config hash·pipe·운영자 pin)은 그대로다. receipt를 발급하는 owner는 이 저장소 밖이라 같은 값으로 맞춰야 한다. 기본값 경계(5400 통과·5401 거부), 54000 설정 경계, 상한 밖 설정 거부 테스트 추가. 실제 15시간 owner와 새 설치판은 확인하지 않았다. |
+| 16:36 | [`2379e8c`](https://github.com/ehojune/bioinfo-team-3d/pull/929/commits/2379e8c) | **새 설치 Python 판본을 receipt의 3.14.7로 맞춥니다.**<br>py -3가 선택한 실제 설치 interpreter를 검증 문서에 반영한다. Refs |
+| 16:35 | [`7108a49`](https://github.com/ehojune/bioinfo-team-3d/pull/929/commits/7108a49) | **공백 Windows 경로의 새 설치와 동일 fake 2회 PASS를 기록합니다.**<br>main 통합판의 shutdown Audit 0·잔류 자식 0과 관련 회귀 75 passed 근거를 남기고 동일 clone/venv를 복구 검증에 보존한다. Refs |
 | 13:45 | [`47efd76`](https://github.com/ehojune/bioinfo-team-3d/pull/935/commits/47efd76) | **통역 예약이 요청 상한을 채우면 부가 지원도 새 지출을 시작하지 않습니다.**<br>optional support admission에 통역·dispatch hold 합산, store-backed CSO fixture의 namespace 읽기 보완 |
 | 13:38 | [`2da6056`](https://github.com/ehojune/bioinfo-team-3d/pull/935/commits/2da6056) | **예전 누적 예약과 새 orphan 예약을 모두 보존하고 task별 근거로 나누지 않습니다.**<br>첫 task별 통역 예약에 legacy 누적 예약을 함께 보존해 aggregate 갱신 전 crash에도 상한 유지 |
 | 13:29 | [`cce70ab`](https://github.com/ehojune/bioinfo-team-3d/pull/935/commits/cce70ab) | **취소 회귀 test가 새 원장 조회 뒤에도 실제 dispatch·hold 검증을 끝내도록 맞췄습니다.**<br>취소 test의 task-only Store에 빈 예약 원장 추가, dispatch 전 assert로 event 대기가 끝나지 않는 경로 수정 |
@@ -49,6 +51,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 10:28 | [`f5d011d`](https://github.com/ehojune/bioinfo-team-3d/pull/925/commits/f5d011d) | **설치의 최초 실패를 후속 guard 오류와 구분합니다.**<br>기존 실패의 stage·detail을 유지하고 guard·cleanup 오류를 별도 기록하며 receipt 쓰기 실패도 최초 오류를 덮어쓰지 않게 했다. 겹친 오류 회귀를 검증했다. |
 | 10:19 | [`0913f64`](https://github.com/ehojune/bioinfo-team-3d/pull/925/commits/0913f64) | **최종 설치 근거와 실패 경계 검증을 기록합니다.**<br>설치 코드·요청 ID를 갱신하고 Git/pip override와 실패 마감 검증을 공개 근거에 반영했다. 상태 보고는 현재 결과만 남겨 996→742자로 줄였다. |
 | 10:16 | [`e37e33d`](https://github.com/ehojune/bioinfo-team-3d/pull/925/commits/e37e33d) | **Git 환경 격리와 설치 검사 실패 기록을 보강합니다.**<br>Git 라우팅 P1·guard 준비 context와 cleanup PASS 오기록 P2를 3 failed로 재현하고 수정 뒤 45 passed, Git·pip override를 상속시킨 공백 경로의 새 설치 전체 PASS·자식 잔류 0을 확인했다. |
+| 10:08 | [`433754e`](https://github.com/ehojune/bioinfo-team-3d/pull/929/commits/433754e) | **fake service 종료 뒤에도 외부 연결·자식 명령의 Audit를 성공 조건으로 검사합니다.**<br>종료 뒤 counter를 개별 boundary receipt에 보존하고 회귀 검사에서 대조한다. Refs |
 | 10:07 | [`3b1c17e`](https://github.com/ehojune/bioinfo-team-3d/pull/925/commits/3b1c17e) | **pip override를 배제한 설치 결과를 기록합니다.**<br>최신 설치판 commit·mock 요청 ID와 pip override 상속 검사, 공백 경로 전체 PASS·자식 잔류 0을 공개 근거에 반영했다. |
 | 10:05 | [`4be9896`](https://github.com/ehojune/bioinfo-team-3d/pull/925/commits/4be9896) | **새 설치에 기존 pip index·제약 설정이 섞이지 않습니다.**<br>PIP_* 환경 override P2를 제거하고 회귀 1 failed→관련 42 passed, dummy index·no-index·constraint를 상속시킨 공백 경로의 새 설치 29 PASS·1 SKIP을 확인했다. |
 | 09:54 | [`186a0ac`](https://github.com/ehojune/bioinfo-team-3d/pull/925/commits/186a0ac) | **공백 경로의 새 설치 결과를 공개 근거에 반영합니다.**<br>최종 설치 코드·요청 ID·관련 42 passed와 공백 경로 전체 PASS, 자식 잔류 0을 기록했다. |
