@@ -4,6 +4,17 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# 같은 fake 요청 2회 계약 (#923)
+
+새 설치 helper를 재사용해 실제 gateway/runner의 동일 fake 요청 두 번을 검사합니다. 선행 PR #925 병합 뒤 최신 main에서 새 설치 최종 재현이 남았습니다. Refs #923; Depends on #925.
+
+- 각 run의 state·task·artifact를 분리하고 비용·시간·산출 구조·근거 연결을 확인합니다. receipt·비교 JSON·stdout/stderr·종료 뒤 잔류 검사를 보존합니다.
+- 관련 pytest 29 passed. 실제 gateway/runner 두 실행과 이전 artifact 시각·산출 누락 거부를 포함합니다. 실패 CLI exit 1·`pass=false`, Python 3.10 문법·public·diff 검사 PASS.
+- 초기 CI의 binary log 인자·Windows inventory 실패를 고쳤습니다. 새 module 전체를 Windows 필수 cohort로 등록했고 encoding·CI policy 관련 pytest 79 passed입니다.
+- 상세: [검증 계약](../reference/repeat-fake-923.md). README·manual·제품 코드는 수정하지 않았습니다. 실제 모델·외부 HTTP·HPC·B/c3·provider billing·독립 hard-stop 집행은 미검증입니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 ## #678 task 시작 때 디스크 여유 확인과 bulk_data_root (base c075b416)
 
 - 바꾼 것: `Runner._disk_gate`가 task를 시작하기 전, 작업 폴더를 만들고 실행 슬롯을 잡기 전에 이번 실행이 쓰는 작업 폴더(재개·재시도의 다른 드라이브 포함) 드라이브의 여유를 읽는다. `runner.disk_fail_free_gb`(기본 2 GiB, 0이면 끔) 아래이면 시작하지 않고 `disk_space` 카드(PI 결정 대기)로 묻는다: 승인하면 시작, 거절·24시간 무응답이면 이유를 남기고 시작하지 않는다(카드 시간 제한 24시간, 웹은 그동안 PI 결정 대기로 보여 줌). 경고 기준(10 GiB·5%) 아래이면 작업판 경고만. 드라이브를 읽지 못하면, 환경 자동 수정(`facilities_fix`)이면 막지 않는다. 선택 설정 `runner.bulk_data_root`가 있으면 `_bulk_data_hint`가 직원 브리핑(task context)에 "큰 원자료는 이 폴더 아래에" 한 줄과 여유 공간을 넣는다. 통제 구역에 걸치면 브리핑에 쓰지 않고 경고를 남긴다. 카드 종류 `disk_space`를 웹 라벨·`pi_text`에 추가(runner가 만든 카드라 gateway의 PI 결정 시간 제한 경로는 쓰지 않는다). manual·예시 설정 두 사본 갱신.

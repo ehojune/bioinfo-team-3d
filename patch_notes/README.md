@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 09:17 | [`9eb70a4`](https://github.com/ehojune/bioinfo-team-3d/pull/926/commits/9eb70a4) | **반복 fake 검사를 Windows 필수 cohort에 등록하고 binary 로그 열기 인자를 명시합니다.**<br>초기 CI의 inventory 거부와 encoding 검사 실패를 고쳤다. 새 test module 전체를 Windows에서도 실행하며 기존 검사 범위를 줄이지 않는다. encoding·CI policy 관련 pytest 79 passed. Refs |
+| 09:09 | [`22730ad`](https://github.com/ehojune/bioinfo-team-3d/pull/926/commits/22730ad) | **새 설치에서 같은 fake 요청 두 번의 종료·비용·산출·근거 계약을 검사합니다.**<br>기존 clean-install 절차 뒤 실제 gateway와 runner를 사용한다. 두 run의 state·task·artifact identity를 분리하고 개별 receipt와 비교 JSON, 별도 stdout/stderr를 남긴다. 누락·상한 위반·산출 재사용은 실패하며 실제 과금·독립 hard-stop 집행 증거로 확대하지 않는다. Refs |
 | 07:33 | [`051a623`](https://github.com/ehojune/bioinfo-team-3d/pull/919/commits/051a623) | **내부 metadata를 가리면서 게시가 허용된 집계 artifact의 근거 링크는 유지합니다.**<br>기존 Astra CI의 링크 단절 1 failed를 재현했다. 공개 파일 정책을 통과한 target만 링크하고 내부 evidence ID·locator·URL은 싣지 않는다. 기존 assertion을 유지하며 합성 metadata 차단 검증을 보강했고 관련 pytest 150 passed. Refs |
 | 07:23 | [`a8db61b`](https://github.com/ehojune/bioinfo-team-3d/pull/919/commits/a8db61b) | **배제한 재인용의 hash 누락으로 승인 근거가 있는 보고서가 incomplete가 되지 않게 합니다.**<br>artifact 검사도 공유 eligibility 판정을 적용한다. 독립적인 승인 근거의 hash는 계속 필수이며 거부 계보의 재인용은 검사하지 않는다. false incomplete 1 failed 재현 뒤 관련 pytest 142 passed. Refs |
 | 07:15 | [`db0f1d1`](https://github.com/ehojune/bioinfo-team-3d/pull/919/commits/db0f1d1) | **독립적인 승인 근거가 남은 claim에서도 거부 계보의 재인용은 논문 수에서 제외합니다.**<br>report와 결론 논문 집계가 같은 근거별 lookup·CP2·lineage 판정을 공유한다. 승인 근거는 claim을 유지하고 거부 재인용은 집계하지 않는다. 2편 오집계 재현 뒤 1편을 확인했고 관련 pytest 142 passed. Refs |
