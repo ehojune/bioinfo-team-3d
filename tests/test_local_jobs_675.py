@@ -95,7 +95,7 @@ def board(tmp_path, monkeypatch):
                                                                  "expected_minutes": 20, **extra})
 
     yield SimpleNamespace(settings=s, runner=runner, events=events, cards=cards, answer=answer, run=run,
-                          submit=submit, kinds=lambda: [e.type for e in events])
+                          submit=submit, kinds=lambda: [e.type for e in events], task_id=[])
     if runner._local_watch is not None:
         runner._local_watch.cancel()
     for job_id, row in list(runner.jobs.items()):  # nothing may outlive a test
@@ -295,6 +295,129 @@ async def test_a_command_the_gate_would_ask_about_waits_for_the_pi_and_a_refusal
     await board.run(body)
     assert out["submitted"] is False and len(board.cards) == 1 and board.cards[0].kind == "tool_permission"
     assert not [j for j in board.runner.jobs if local_jobs.is_local(j)]
+
+
+@pytest.mark.asyncio
+async def test_codex_staff_cannot_submit_because_the_job_would_run_outside_their_sandbox(board):
+    board.runner.registry.agents["worker"] = AgentSpec(id="worker", name="worker", role="test", engine=Engine.codex,
+                                                       builtin_mcp=[])
+    out = {}
+
+    async def body(identity):
+        out.update(await board.submit(QUICK)(identity))
+
+    _, result = await board.run(body)
+    assert "sandbox" in out["error"] and result.pending_jobs == []
+    assert not [j for j in board.runner.jobs if local_jobs.is_local(j)]
+
+
+@pytest.mark.asyncio
+async def test_the_shared_environment_install_guard_applies_to_a_submitted_command(board, monkeypatch):
+    seen = []
+
+    def deny(tool, tool_input, **kwargs):
+        seen.append((tool, tool_input["command"], kwargs["protected"]))
+        return "no installs into the shared environment"
+
+    monkeypatch.setattr("labhq.environment_install.shared_environment_install_denial", deny)
+    out = {}
+
+    async def body(identity):
+        out.update(await board.submit(QUICK)(identity))
+
+    await board.run(body)
+    assert out == {"submitted": False, "reason": "no installs into the shared environment"}
+    assert seen and seen[0][1] == QUICK
+    assert not [j for j in board.runner.jobs if local_jobs.is_local(j)]
+
+
+@pytest.mark.asyncio
+async def test_a_cancel_that_lands_while_the_process_is_starting_still_ends_it(board, monkeypatch):
+    real_start, started = local_jobs.start, []
+
+    def start_then_cancel(*args, **kwargs):
+        facts, process = real_start(*args, **kwargs)
+        started.append((facts, process))
+        board.runner.__dict__.setdefault("_jobs_cancelled", set()).add(board.task_id[0])  # the cancel arrives now
+        return facts, process
+
+    monkeypatch.setattr(local_jobs, "start", start_then_cancel)
+    out = {}
+
+    async def body(identity):
+        board.task_id.append(identity["task_id"])
+        out.update(await board.submit(SLEEP)(identity))
+
+    await board.run(body)
+    assert "cancelled" in out["error"] and len(started) == 1
+    assert local_jobs.status(*started[0])[0] != "running"  # the process it had started is ended
+    assert not [j for j in board.runner.jobs if local_jobs.is_local(j)]
+
+
+@pytest.mark.asyncio
+async def test_two_simultaneous_submits_cannot_both_take_the_last_slot(board):
+    board.settings.runner.max_parallel = 1
+    out = {}
+
+    async def body(identity):
+        out["both"] = await asyncio.gather(board.submit(SLEEP)(identity), board.submit(SLEEP)(identity))
+
+    await board.run(body)
+    started = [reply for reply in out["both"] if reply.get("submitted")]
+    refused = [reply for reply in out["both"] if "error" in reply]
+    assert len(started) == 1 and len(refused) == 1 and "already running" in refused[0]["error"]
+    assert len([j for j in board.runner.jobs if local_jobs.is_local(j)]) == 1
+
+
+@pytest.mark.asyncio
+async def test_cancelling_a_job_that_already_ended_keeps_how_it_ended(board):
+    out = {}
+
+    async def body(identity):
+        out.update(await board.submit(QUICK)(identity))
+        out["identity"] = identity
+
+    await board.run(body)
+    done = await _drive(board.runner, out["job_id"])
+    assert done["state"] == "completed"
+    again = await board.runner._on_local_job("cancel", {**out["identity"], "job_id": out["job_id"]})
+    assert again["state"] == "completed" and again["exit_status"] == 0  # not overwritten with cancelled
+
+
+@pytest.mark.skipif(os.name == "nt", reason="process groups are POSIX")
+def test_a_descendant_that_ignores_sigterm_does_not_outlive_the_kill(tmp_path):
+    code = ("import subprocess, sys, time; subprocess.Popen([sys.executable, '-c', "
+            "'import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)']); time.sleep(60)")
+    record, process = local_jobs.start(tmp_path, "local-group", code, tmp_path, dict(os.environ))
+    assert local_jobs.kill(record, process) is True
+    assert not local_jobs._group_alive(record["pid"])  # the whole group is gone, not only the leader
+
+
+@pytest.mark.asyncio
+async def test_a_reply_lost_after_submit_tells_the_agent_to_check_before_resubmitting(monkeypatch):
+    import httpx
+
+    from labhq.tools import local_job_mcp
+
+    class Lossy:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, *args, **kwargs):
+            raise httpx.ReadTimeout("the reply never came")
+
+    monkeypatch.setattr(local_job_mcp.httpx, "AsyncClient", Lossy)
+    with pytest.raises(Exception, match="check job_list before submitting it again"):
+        await local_job_mcp._broker("submit", {"command": "x"})
+    with pytest.raises(Exception) as other:
+        await local_job_mcp._broker("status", {"job_id": "local-x"})
+    assert "job_list" not in str(other.value)  # only a submit can have started something
 
 
 def test_the_job_tool_is_wired_for_agents_that_list_it_even_without_an_hpc_scheduler(tmp_path):

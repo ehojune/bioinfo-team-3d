@@ -95,10 +95,23 @@ def status(local: dict, process: subprocess.Popen | None = None) -> tuple[str, i
     return "unknown_finished", None  # gone without an exit file: killed from outside or lost with the machine
 
 
+def _group_alive(pid: int) -> bool:
+    """POSIX: some process of the job's group is left. The wrapper leader can be gone while a descendant that ignored
+    SIGTERM still runs, so the job is over only when the whole group is."""
+    if os.name == "nt":
+        return False
+    try:
+        os.killpg(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def _gone(pid: int, created: str | None, process: subprocess.Popen | None) -> bool:
-    if process is not None and process.poll() is not None:
-        return True  # reaped: an unreaped child still reads as alive
-    return not alive(pid, created)
+    leader_gone = (process is not None and process.poll() is not None) or not alive(pid, created)
+    return leader_gone and not _group_alive(pid)  # an unreaped child still reads as alive: poll() reaps it
 
 
 def kill(local: dict, process: subprocess.Popen | None = None) -> bool:

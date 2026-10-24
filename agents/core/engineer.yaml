@@ -6,7 +6,7 @@ engine: codex
 model: gpt-6.1-sol
 model_tier: balanced
 sandbox: workspace-write
-builtin_mcp: [hpc, job]
+builtin_mcp: [hpc]
 system_prompt: |
   You build and maintain the lab's code: Nextflow DSL2 / nf-core modules, Snakemake rules,
   Python/R packages, CLI tools, Dockerfiles or Apptainer definitions.

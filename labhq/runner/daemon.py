@@ -2489,7 +2489,7 @@ class Runner:
             if not rows:
                 return {"error": f"job {job_id} was not submitted by you through job_submit; labhq tracks only your own"}
             jid, j = rows[0]
-            if op == "cancel":
+            if op == "cancel" and not j.get("terminal"):  # an ended job keeps how it ended
                 await self._end_local_job(jid, j, "cancelled")
             return self._local_view(jid, j, logs=op == "status")
         return await self._submit_local_job(identity)
@@ -2504,6 +2504,11 @@ class Runner:
             return {"error": "this task is not running on the runner; the job was not submitted"}
         if running[0]:
             return {"error": "a read-only task cannot submit jobs"}
+        ctx, tool = self.tool_contexts.get(tid), local_jobs.shell_tool()
+        if ctx is not None and ctx.agent.engine != Engine.claude_code:
+            # A Codex run is held inside the engine's OS sandbox; a job the runner starts would run outside it.
+            return {"error": "local jobs are for Claude staff: a job started by the runner runs outside the "
+                             f"sandbox the {ctx.agent.engine.value} engine keeps its commands in"}
         command = identity.get("command")
         if not isinstance(command, str) or not command.strip() or len(command) > 20000:
             return {"error": "command must be a shell command of at most 20000 characters"}
@@ -2513,12 +2518,15 @@ class Runner:
             return {"error": "expected_minutes must be a number"}
         if expected is not None and not 0 < expected <= 7 * 24 * 60:
             return {"error": "expected_minutes must be between 0 and 10080"}
-        busy = sum(1 for jid, j in self.jobs.items() if local_jobs.is_local(jid) and not j.get("terminal"))
-        if busy >= self.s.runner.max_parallel:
-            return {"error": f"{self.s.runner.max_parallel} local jobs are already running on this runner; "
-                             "wait for one to finish before submitting another"}
         name = sanitize_job_name(str(identity.get("name") or "job"))
-        ctx, tool = self.tool_contexts.get(tid), local_jobs.shell_tool()
+        if ctx is not None:  # the same rule the approval gate applies to an install into the shared environment
+            from ..environment_install import shared_environment_install_denial
+
+            install = shared_environment_install_denial(
+                tool, {"command": command}, protected=ctx.shared_environment_protected,
+                environment_step=ctx.environment_step, workdir=str(ws.dir))
+            if install:
+                return {"submitted": False, "reason": install}
         decision = evaluate_tool(
             tool, {"command": command}, self.s.policy,
             allowed_roots=[str(ws.dir), *(ctx.extra_dirs if ctx else [])], workdir=str(ws.dir),
@@ -2537,21 +2545,36 @@ class Runner:
                 return {"submitted": False, "reason": answer.get("note") or "denied by the PI"}
         done = asyncio.get_running_loop().create_future()
         self.submitting.setdefault(tid, set()).add(done)  # run_task waits for a submit in flight before it ends
+        starting = self.__dict__.setdefault("_local_starting", 0)
         try:
-            if self.active_roots.get(tid) is not running:
-                return {"error": "the task ended while waiting for the PI; the job was not submitted"}
-            job_id = local_jobs.new_id()
+            if self.active_roots.get(tid) is not running or tid in self.__dict__.get("_jobs_cancelled", ()):
+                return {"error": "the task ended or was cancelled; the job was not submitted"}
+            # The slot is reserved before the first await, so two submits cannot both pass the same count.
+            busy = sum(1 for jid, j in self.jobs.items() if local_jobs.is_local(jid) and not j.get("terminal"))
+            if busy + starting >= self.s.runner.max_parallel:
+                return {"error": f"{self.s.runner.max_parallel} local jobs are already running on this runner; "
+                                 "wait for one to finish before submitting another"}
+            self._local_starting = starting + 1
             try:
-                facts, process = await asyncio.to_thread(
-                    local_jobs.start, self.s.path(self.s.runner.state_dir), job_id, command, ws.dir, command_env())
-            except OSError as exc:
-                return {"error": f"could not start the job: {exc}"}
-            self._local_procs[job_id] = process
-            self._ensure_local_watch()
-            await self._track_job({"task_id": tid, "agent_id": aid, "job_id": job_id, "name": name,
-                                   "core_hours": None},
-                                  extra={"scheduler": "local", "state": "running",  # started at once: there is no queue
-                                         "local": {**facts, "command": command, "expected_minutes": expected}})
+                job_id = local_jobs.new_id()
+                try:
+                    facts, process = await asyncio.to_thread(
+                        local_jobs.start, self.s.path(self.s.runner.state_dir), job_id, command, ws.dir,
+                        command_env())
+                except OSError as exc:
+                    return {"error": f"could not start the job: {exc}"}
+                if tid in self.__dict__.get("_jobs_cancelled", ()):
+                    # The step was cancelled while the process was starting: no row existed for the cancel to find.
+                    await asyncio.to_thread(local_jobs.kill, facts, process)
+                    return {"error": "the task was cancelled while the job started; the job was ended"}
+                self._local_procs[job_id] = process
+                self._ensure_local_watch()
+                await self._track_job({"task_id": tid, "agent_id": aid, "job_id": job_id, "name": name,
+                                       "core_hours": None},
+                                      extra={"scheduler": "local", "state": "running",  # no queue: it starts at once
+                                             "local": {**facts, "command": command, "expected_minutes": expected}})
+            finally:
+                self._local_starting -= 1
             return {"submitted": True, "job_id": job_id, "name": name}
         finally:
             self.submitting.get(tid, set()).discard(done)
@@ -2608,7 +2631,10 @@ class Runner:
 
     async def _cancel_local_jobs(self, task_id: str) -> None:
         """The step was cancelled: end its running local jobs so no process outlives it, and do not wake the step."""
-        for jid, j in list(self.jobs.items()):
+        if not task_id:
+            return
+        self.__dict__.setdefault("_jobs_cancelled", set()).add(task_id)  # a submit that is mid-start sees this
+        for jid, j in list(getattr(self, "jobs", {}).items()):
             if local_jobs.is_local(jid) and j.get("task_id") == task_id and not j.get("terminal"):
                 await self._end_local_job(jid, j, "cancelled", wake=False)
 

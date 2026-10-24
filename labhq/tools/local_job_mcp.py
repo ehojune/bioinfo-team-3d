@@ -20,6 +20,8 @@ TOKEN = os.environ.get("LABHQ_BROKER_TOKEN", "")
 TASK = os.environ.get("LABHQ_TASK_ID")
 AGENT = os.environ.get("LABHQ_AGENT_ID")
 
+MAYBE_STARTED = "; the job may have been started, check job_list before submitting it again"
+
 server = make_server(
     "labhq-job",
     instructions=(
@@ -41,7 +43,10 @@ async def _broker(op: str, payload: dict, timeout: float = 120) -> dict:
     except (httpx.ConnectError, ConnectionError) as exc:  # fail closed: nothing was started
         raise tool_failure(f"labhq broker unreachable; nothing was done: {exc}") from exc
     except httpx.HTTPStatusError as exc:
-        raise tool_failure(f"labhq broker refused: HTTP {exc.response.status_code}") from exc
+        raise tool_failure(f"labhq broker refused: HTTP {exc.response.status_code}"
+                           f"{MAYBE_STARTED if op == 'submit' else ''}") from exc
+    except httpx.HTTPError as exc:  # the runner may have started the job before the reply was lost
+        raise tool_failure(f"labhq broker did not answer cleanly: {exc!r}{MAYBE_STARTED if op == 'submit' else ''}") from exc
 
 
 @server.tool()

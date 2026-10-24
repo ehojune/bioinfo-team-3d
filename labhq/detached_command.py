@@ -32,13 +32,25 @@ def _code(command: str) -> str:
     return _REDIRECT_AMP.sub(" ", text)
 
 
-def detached(tool_name: str, command: object) -> bool:
+# `sh -c '…'`, `bash -lc "…"`, `powershell -Command "…"`, `cmd /c "…"`: the quoted text is a script that will run.
+_NESTED = re.compile(r"(?<![\w.\-/\\])(?:(?:sh|bash|zsh|dash|ksh|ash)\b[^\n|;]*?\s-[A-Za-z]*c\b"
+                     r"|(?:powershell|pwsh)(?:\.exe)?\b[^\n|;]*?\s-(?:c|command)\b|cmd(?:\.exe)?\b[^\n|;]*?\s/c\b)", re.I)
+
+
+def detached(tool_name: str, command: object, *, depth: int = 0) -> bool:
     """True when a shell command starts a process it does not wait for."""
     if tool_name not in _SHELLS or not isinstance(command, str) or not command.strip():
         return False
     text = _code(command)
     if _WORD_DETACH.search(text):
         return True
-    if tool_name == "Bash":
-        return bool(_BACKGROUND_AMP.search(text))
-    return bool(_START_JOB.search(text) or (_START_PROCESS.search(text) and not _WAIT.search(text)))
+    if tool_name == "Bash" and _BACKGROUND_AMP.search(text):
+        return True
+    if tool_name == "PowerShell" and (_START_JOB.search(text) or (_START_PROCESS.search(text) and not _WAIT.search(text))):
+        return True
+    if depth < 2 and _NESTED.search(_HEREDOC.sub("\n", command)):  # the quoted script of a nested shell runs too
+        for match in _QUOTED.finditer(_HEREDOC.sub("\n", command)):
+            body = match.group(0)[1:-1]
+            if any(detached(shell, body, depth=depth + 1) for shell in _SHELLS):
+                return True
+    return False
