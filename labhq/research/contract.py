@@ -337,11 +337,19 @@ def branch_plan_topology(branches: list[Any], steps: list[Any]) -> dict[str, Any
 def repair_synthesis_links(plan: Any) -> Any:
     """Deterministic repair before PLAN validation (#948): connect a synthesis step to every branch's last step.
 
-    A branched plan that has `branch: "synthesis"` steps but whose first one does not depend on each branch's terminal
-    steps used to cost the whole request when the CSO's single correction missed it again. labhq fills that
-    synthesis step's ``depends_on`` with the missing terminals and says so in ``warnings``. Without a synthesis step, or
-    when a terminal already depends on it (adding the edge would make a cycle), nothing is changed and validation
-    reports the problem as before."""
+    A branched plan that has `branch: "synthesis"` steps but none that depends on each branch's terminal steps used
+    to cost the whole request when the CSO's single correction missed it again. labhq completes the synthesis step
+    that is already closest (fewest branches missing, first on a tie): it fills that step's ``depends_on`` with the
+    missing terminals and says so in ``warnings``. Without a synthesis step, when a terminal already depends on it
+    (adding the edge would make a cycle), or when the draft is malformed, nothing is changed and validation reports
+    the problem as before."""
+    try:
+        return _repair_synthesis_links(plan)
+    except (TypeError, ValueError, AttributeError, KeyError):
+        return plan  # a schema-invalid draft goes to the CSO's correction, never out of the planner as an exception
+
+
+def _repair_synthesis_links(plan: Any) -> Any:
     if not isinstance(plan, dict) or not isinstance(plan.get("steps"), list) or not plan.get("branches"):
         return plan
     steps, branches = plan["steps"], plan["branches"]
@@ -350,7 +358,6 @@ def repair_synthesis_links(plan: Any) -> Any:
     topology = branch_plan_topology(branches, steps)
     if not topology["synthesis_ids"] or not topology["missing_synthesis_branches"]:
         return plan
-    target = topology["synthesis_ids"][0]
     dependencies = {step.get("id"): list(step.get("depends_on") or []) for step in steps}
 
     def ancestors(step_id: str) -> set[str]:
@@ -363,17 +370,15 @@ def repair_synthesis_links(plan: Any) -> Any:
                 pending.extend(dependencies.get(item, []))
         return found
 
-    seen = ancestors(target)
-    added: list[str] = []
-    for branch_id in topology["missing_synthesis_branches"]:
-        for terminal in topology["terminals"].get(branch_id) or []:
-            if terminal in seen or terminal == target:
-                continue
-            if target in ancestors(terminal):
-                return plan  # an edge would close a cycle: leave the problem to validation
-            added.append(terminal)
-    if not added:
-        return plan
+    def gaps(step_id: str) -> list[str]:
+        seen = ancestors(step_id)
+        return [terminal for branch_id in topology["branch_ids"] for terminal in topology["terminals"].get(branch_id) or []
+                if terminal not in seen and terminal != step_id]
+
+    target = min(topology["synthesis_ids"], key=lambda step_id: len(gaps(step_id)))  # first of the closest
+    added = gaps(target)
+    if not added or any(target in ancestors(terminal) for terminal in added):
+        return plan  # nothing to add, or an edge would close a cycle: leave the problem to validation
     repaired = [{**step, "depends_on": [*dict.fromkeys([*(step.get("depends_on") or []), *added])]}
                 if step.get("id") == target else step for step in steps]
     note = (f"labhq가 synthesis 단계 {target}의 depends_on에 갈래 마지막 단계({', '.join(added)})를 채웠습니다"
