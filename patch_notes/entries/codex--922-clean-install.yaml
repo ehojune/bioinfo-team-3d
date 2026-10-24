@@ -1,5 +1,9 @@
-pr: null
+pr: 925
 rows:
+- sha: 0332b06
+  at: '2026-10-24 09:00'
+  summary: Windows 새 설치의 단계별 판정과 설치판 근거를 남깁니다.
+  text: Python 3.14.7 새 설치에서 29 PASS·0 FAIL·1 SKIP, mock 요청 verify·down과 잔류 0을 확인하고 공개 요약·README 길이를 기록했다.
 - sha: 8c2937b
   at: '2026-10-24 09:00'
   summary: 새 설치 검사에서 기존 설정·인증을 격리하고 단계별 결과와 로그를 보존합니다.
