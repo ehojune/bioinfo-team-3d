@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 12:33 | [`2d3b174`](https://github.com/ehojune/bioinfo-team-3d/pull/936/commits/2d3b174) | **새 설치 검사 결과를 보존하는 옵션과 공개 금지 범위를 안내합니다.**<br>설치 검사기 manual에 기본 자동 삭제·보존 옵션·로컬 전용 증거 경계를 보충했다. |
 | 12:03 | [`b2d3ae9`](https://github.com/ehojune/bioinfo-team-3d/pull/925/commits/b2d3ae9) | **Windows 잠금 수정 뒤 설치판과 검증 기록을 맞춥니다.**<br>최신 설치 코드·요청 ID와 관련 83 passed를 반영하고 순간 잠금 재시도·영구 실패 경계를 공개 근거에 기록했다. |
 | 12:01 | [`9c4f0e2`](https://github.com/ehojune/bioinfo-team-3d/pull/925/commits/9c4f0e2) | **Windows의 순간 잠금 뒤에도 설치 증거를 저장합니다.**<br>receipt 교체의 PermissionError에 기존 util과 같은 최대 20회 재시도를 적용했다. 영구 잠금·POSIX·다른 오류는 실패하며 회귀 2 failed→관련 83 passed, Windows 새 설치 전체 PASS·자식 잔류 0을 확인했다. |
 | 11:46 | [`28220d1`](https://github.com/ehojune/bioinfo-team-3d/pull/925/commits/28220d1) | **원자적 receipt의 실패·정상 경로 검증을 기록합니다.**<br>최신 설치판·요청 ID와 관련 79 passed를 갱신하고 쓰기·교체 중 실패해도 이전 JSON이 보존되는 근거를 반영했다. |
