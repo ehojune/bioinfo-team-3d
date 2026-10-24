@@ -1147,7 +1147,7 @@ CSO는 `applies_when`이 맞는 pack만 계획에 넣습니다.
 갈래 계획은 `orchestrator.max_branches`(기본 5)·`max_branch_steps`(기본 8), 종합 3단계까지입니다. 전체 상한은 `갈래 수 × 갈래 상한 + 3`이며 넘으면 자르지 않고 한 번 줄여 다시 받습니다. 갈래가 없으면 `max_steps`(기본 12)를 씁니다.
 자료 추출 파일이나 내부 폴더가 필요한 갈래는 CP1 전에 확인 질문을 냅니다. 노출군 가설의 주 대비는 노출군 대 나머지 또는 가장 덜 노출된 집단이며, 기준 범주 이유를 계획에 적습니다.
 계획의 `protocol.packs`(id·version·sha256)는 CSO가 아니라 labhq가 적용 pack snapshot으로 채우고, CSO prompt에는 pack마다 `pack_values_keys`(field·validator·acceptance 키, acceptance는 rule id)를 보여 줍니다.
-계획이 검증에 걸리면 schema·pack 문제를 모두 모아 교정 prompt에 한 번에 넣고, 교정 뒤에도 남으면 CP1 카드 없이 `outcome: plan_invalid`와 남은 문제 목록을 보고서에 적어 끝냅니다(#222).
+계획이 검증에 걸리면 schema·pack 문제를 모두 모아 교정 prompt에 한 번에 넣고(남은 문제 원문 그대로), 최대 3번 고치게 합니다. 3번 뒤에도 남으면 CP1 카드 없이 `outcome: plan_invalid`와 남은 문제 목록을 보고서에 적어 끝냅니다(#222, 교정 3회는 #948). 갈래 계획에서 `branch: synthesis` 단계가 있는데 첫 synthesis 단계가 각 갈래의 마지막 단계를 `depends_on`으로 받지 않으면, 검사 전에 labhq가 그 의존성을 채우고 계획 `warnings`에 "labhq가 synthesis 단계 …의 depends_on에 … 채웠습니다"로 남깁니다. synthesis 단계가 아예 없거나 채우면 순환이 되는 경우는 고치지 않고 문제로 돌려줍니다. CSO가 `synthesis`라는 이름의 갈래를 따로 선언해도 synthesis는 예약된 종합 lane이라 그 갈래를 읽어야 할 대상이나 갈래 밖 의존 금지 대상으로 세지 않습니다.
 부정하지 않은 요청 분석은 `brief.scope`와 실행 단계 `instruction` 양쪽에 있어야 하며, 한쪽이라도 빠지면 CP1에 `요청 범위 누락` 경고가 뜹니다. 독립된 `DE`는 DEG로 보고, 이름 붙은 분석을 명시적으로 제외한 문구는 범위에서 뺍니다.
 CP1 비용 근거는 `unknown_count: 0`이고 topic이 겹치는 완료 요청뿐입니다. 재시도·wake·결과 교정 비용은 계획 `step_id`별로 합쳐 직원·engine·model별 실제 단계 평균을 냅니다. 실측이 계획값보다 낮아도 집행 상한을 줄이지 않으며, 근거가 없으면 계획값과 `실측 기록 부족`을 보입니다.
 카드는 질문·가설·완료 조건, 갈래 표, 단계 목록, 비용 근거와 집행 상한을 보입니다. plan hash는 detail(`target_sha256`)에만 있습니다.
@@ -1242,7 +1242,7 @@ accept면 CSO가 결론·수치 문장마다 `[[claim:<step_id>/<claim_id>]]`를
 | 온톨로지 | 지도에 쓰는 낱말 사전. labhq 어휘(`labhq/vocab/output_types.yaml`)는 data 30·format 28·operation 22·topic 45, 총 125개 key다(PI 검토 2026-10-04, topic 23개는 2026-10-06 #420). branch 상한은 data 36·format 32·operation 24이고 topic은 상한이 없다(PI 2026-10-05). 계획 프롬프트에는 topic 이름만 들어가고, 조사에서 나온 별칭(`hic` → `hi_c` 등)은 승인된 키로 바뀐다 |
 | EDAM | 생물정보학 공용 ontology. 125개 key 중 79개가 EDAM 용어 75개에 이어진다(`edam_subset.yaml`). 판정은 로컬 key로 하고 EDAM ID는 메타데이터로만 붙인다 |
 | 데이터 종류 선언 | CSO가 단계 산출에 종류 key를 적는다(`plan.declare_output_types`, 기본 꺼짐). 선언이 없으면 아래 판정은 모두 "모름"이다 |
-| 입력–방법 맞춤 | 단계 입력의 선언 종류를 로컬 관계표(`labhq/research/input_fit.yaml`)와 대조한다. CP1 전 기존 2회 검증에서 알려진 불일치를 교정하고, 그림자는 개수만 관측한다 |
+| 입력–방법 맞춤 | 단계 입력의 선언 종류를 로컬 관계표(`labhq/research/input_fit.yaml`)와 대조한다. CP1 전 기존 검증(첫 계획 + 교정 3회)에서 알려진 불일치를 교정하고, 그림자는 개수만 관측한다 |
 | 그림자 | `semantics: shadow`. 요청이 끝난 뒤 gateway가 따로 계산해 `state_dir/semantics/`에 ID·종류·hash·개수만 남긴다. 계획·승인·실행·웹 화면은 꺼 둔 때와 같다 |
 | A/B·판단 창 | `semantics: ab`. 연구 요청을 ID hash로 반씩 나눠 한쪽(advisory)에만 재사용 후보(artifact ID·data type·만든 요청 ID)를 CSO 계획 참고로 준다. 10건 또는 3주 가운데 먼저 오는 쪽에서 버릴지·둘지·넓힐지 정한다 |
 

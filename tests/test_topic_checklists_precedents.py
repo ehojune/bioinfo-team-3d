@@ -350,7 +350,7 @@ async def test_research_missing_checklist_is_a_plan_validation_error_after_corre
     settings.orchestrator.chief_of_staff_agent = None
     settings.orchestrator.precedent_agent = None
     settings.orchestrator.reviewer_agent = None
-    plans = [valid_plan(), valid_plan()]
+    plans = [valid_plan() for _ in range(4)]  # first plan + 3 corrections (#948)
     for plan in plans:
         plan.pop("checklist")
 
@@ -360,7 +360,7 @@ async def test_research_missing_checklist_is_a_plan_validation_error_after_corre
 
     hub = MiniHub(settings, reply, mode="orchestrate", work_kind="research", text="compare conditions")
     await Orchestrator(hub).run_request("r")
-    assert [task.meta["kind"] for task in hub.calls] == ["plan", "plan"]
+    assert [task.meta["kind"] for task in hub.calls] == ["plan"] * 4
     assert hub.requests["r"]["status"] == "failed" and hub.requests["r"]["outcome"] == "plan_invalid"
     assert "checklist" in " ".join(hub.requests["r"]["plan_validation"]["errors"])
 

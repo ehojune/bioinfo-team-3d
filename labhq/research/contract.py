@@ -288,7 +288,9 @@ def branch_plan_topology(branches: list[Any], steps: list[Any]) -> dict[str, Any
     def field(item: Any, key: str, default: Any = None) -> Any:
         return item.get(key, default) if isinstance(item, dict) else getattr(item, key, default)
 
-    branch_ids = [field(branch, "id") for branch in branches if field(branch, "id")]
+    # "synthesis" is the reserved lane that reads the branches, so a branch the CSO also named "synthesis" is not one
+    # the synthesis must read: it would ask a synthesis step to depend on its own downstream terminal (#948).
+    branch_ids = [field(branch, "id") for branch in branches if field(branch, "id") and field(branch, "id") != "synthesis"]
     branch_by_step = {field(step, "id"): field(step, "branch") for step in steps if field(step, "id")}
     dependencies = {field(step, "id"): list(field(step, "depends_on", []) or [])
                     for step in steps if field(step, "id")}
@@ -330,6 +332,53 @@ def branch_plan_topology(branches: list[Any], steps: list[Any]) -> dict[str, Any
     return {"branch_ids": branch_ids, "branch_by_step": branch_by_step, "terminals": terminals,
             "synthesis_ids": synthesis_ids, "final_synthesis_ids": final_synthesis_ids,
             "missing_synthesis_branches": missing_synthesis_branches}
+
+
+def repair_synthesis_links(plan: Any) -> Any:
+    """Deterministic repair before PLAN validation (#948): connect a synthesis step to every branch's last step.
+
+    A branched plan that has `branch: "synthesis"` steps but whose first one does not depend on each branch's terminal
+    steps used to cost the whole request when the CSO's single correction missed it again. labhq fills that
+    synthesis step's ``depends_on`` with the missing terminals and says so in ``warnings``. Without a synthesis step, or
+    when a terminal already depends on it (adding the edge would make a cycle), nothing is changed and validation
+    reports the problem as before."""
+    if not isinstance(plan, dict) or not isinstance(plan.get("steps"), list) or not plan.get("branches"):
+        return plan
+    steps, branches = plan["steps"], plan["branches"]
+    if not all(isinstance(step, dict) for step in steps) or not isinstance(branches, list):
+        return plan
+    topology = branch_plan_topology(branches, steps)
+    if not topology["synthesis_ids"] or not topology["missing_synthesis_branches"]:
+        return plan
+    target = topology["synthesis_ids"][0]
+    dependencies = {step.get("id"): list(step.get("depends_on") or []) for step in steps}
+
+    def ancestors(step_id: str) -> set[str]:
+        found: set[str] = set()
+        pending = list(dependencies.get(step_id, []))
+        while pending:
+            item = pending.pop()
+            if item not in found:
+                found.add(item)
+                pending.extend(dependencies.get(item, []))
+        return found
+
+    seen = ancestors(target)
+    added: list[str] = []
+    for branch_id in topology["missing_synthesis_branches"]:
+        for terminal in topology["terminals"].get(branch_id) or []:
+            if terminal in seen or terminal == target:
+                continue
+            if target in ancestors(terminal):
+                return plan  # an edge would close a cycle: leave the problem to validation
+            added.append(terminal)
+    if not added:
+        return plan
+    repaired = [{**step, "depends_on": [*dict.fromkeys([*(step.get("depends_on") or []), *added])]}
+                if step.get("id") == target else step for step in steps]
+    note = (f"labhq가 synthesis 단계 {target}의 depends_on에 갈래 마지막 단계({', '.join(added)})를 채웠습니다"
+            "(CSO 계획에는 연결이 없었습니다).")
+    return {**plan, "steps": repaired, "warnings": list(dict.fromkeys([*(plan.get("warnings") or []), note]))}
 
 
 class PackPlanValue(StrictModel):
@@ -469,7 +518,8 @@ class ResearchPlan(StrictModel):
                 raise ValueError("branched research plan requires at least one synthesis step")
             step_branches = {step.id: step.branch for step in self.steps}
             for step in self.steps:
-                if step.branch in branch_ids:
+                # "synthesis" is the lane that reads the branches, also when the CSO declared a branch of that name (#948).
+                if step.branch in branch_ids and step.branch != "synthesis":
                     cross = [dep for dep in step.depends_on if step_branches.get(dep) != step.branch]
                     if cross:
                         raise ValueError(f"branch step {step.id} depends outside branch {step.branch}: {cross}")

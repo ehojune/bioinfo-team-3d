@@ -184,6 +184,7 @@
     "tests/test_pi_translation_942.py",
     "tests/test_pin_ancestors.py",
     "tests/test_plan_only_cso_model.py",
+    "tests/test_plan_synthesis_948.py",
     "tests/test_plugin_private_reads.py",
     "tests/test_policy.py",
     "tests/test_policy_scan_cost.py",

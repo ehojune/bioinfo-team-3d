@@ -52,7 +52,7 @@ from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARC
                                  plan_sha256 as research_plan_sha256,
                                  refresh_plan_approval, research_plan_errors, research_plan_schema,
                                  research_result_errors, salvage_research_result, validate_research_plan,
-                                 missing_result_slots, repair_result_slots,
+                                 missing_result_slots, repair_result_slots, repair_synthesis_links,
                                  unnegated_analysis_text, validate_research_result, with_pack_refs)
 from ..research import blind_draft
 from ..research import continuation as research_continuation
@@ -2280,9 +2280,12 @@ def result_correction(problems: list[str]) -> str:
     ])
 
 
-def plan_invalid_report(problems: list[str], packs: dict[str, Any]) -> str:
+PLAN_CORRECTIONS = 3  # corrections the CSO gets for a PLAN that fails validation, each with the problems verbatim (#948)
+
+
+def plan_invalid_report(problems: list[str], packs: dict[str, Any], corrections: int = 1) -> str:
     """What the PI reads when the corrected PLAN still fails: the problems, and the packs it was held to."""
-    lines = [f"연구 계획 검증 실패: CSO가 한 번 고친 계획도 계약 검사를 통과하지 못해 CP1 승인 카드를 만들지 "
+    lines = [f"연구 계획 검증 실패: CSO가 {corrections}번 고친 계획도 계약 검사를 통과하지 못해 CP1 승인 카드를 만들지 "
              f"않았습니다(남은 문제 {len(problems)}건).", "", "남은 문제:", *_problem_lines(problems, "- ")]
     if packs:
         lines += ["", "설정된 domain pack: " + "; ".join(f"{key} ({loaded.pack.applies_when})"
@@ -7015,7 +7018,7 @@ class Orchestrator:
                         return problems
 
                     semantic_checks: list[dict[str, Any]] = []
-                    for attempt in (1, 2):
+                    for attempt in range(1, PLAN_CORRECTIONS + 2):
                         type_stats = {}
                         selection_problems = []
                         assessed = None
@@ -7059,6 +7062,7 @@ class Orchestrator:
                         # Declarations are normalized (or, when off, removed) after output paths, so names pair
                         # with the exact artifacts the runner will collect.
                         plan = prepare_research_declarations(plan, vocab, type_stats)
+                        plan = repair_synthesis_links(plan)  # before validation: one missed edge must not end the request
                         fit_counts = input_fit.evaluate(plan, vocab=topic_vocab)
                         mismatches = input_fit.mismatch_diagnostics(plan, vocab=topic_vocab)
                         fit_warnings = [
@@ -7113,10 +7117,10 @@ class Orchestrator:
                             packs = candidate_packs
                             active_pack_hashes = pack_snapshot(packs)
                             break
-                        if attempt == 2:
+                        if attempt == PLAN_CORRECTIONS + 1:
                             req["outcome"] = "plan_invalid"
                             req["plan_validation"].update(errors=problems)
-                            report = plan_invalid_report(problems, configured_pack_defs)
+                            report = plan_invalid_report(problems, configured_pack_defs, PLAN_CORRECTIONS)
                             self._finish(rid, report, {}, ok=False, error=report.split("\n", 1)[0])
                             return
                         correction_suffix = "\n\n" + plan_correction(problems)
