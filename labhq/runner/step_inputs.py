@@ -158,9 +158,12 @@ def _copy(source, source_parts, workdir, destination, expected, limit, remaining
             dst.unlink(temporary)
 
 
-def stage_inputs(ws, artifacts, workspace_root, zones, private_paths, max_file, max_total):
-    """Return (read-only snapshot roots, failures). Metadata comes from the DAG's finished ancestors."""
-    staged, refused, remaining = [], {}, [max_total]
+def stage_inputs(ws, artifacts, workspace_root, zones, private_paths, max_file, max_total, remaining=None):
+    """Return (read-only snapshot roots, failures). Metadata comes from the DAG's finished ancestors.
+
+    ``remaining`` is the step's one cumulative byte budget (``[bytes left]``), shared with the precedent texts."""
+    staged, refused = [], {}
+    remaining = remaining if remaining is not None else [max_total]
     root = Path(workspace_root).resolve(strict=True)
     for step, artifact in artifacts.items():
         owned = False
@@ -229,7 +232,7 @@ def stage_inputs(ws, artifacts, workspace_root, zones, private_paths, max_file, 
 PRECEDENT = 'precedent'  # inputs/precedent/: the request's precedent-search texts (#951); not a plan step id
 
 
-def stage_precedent_texts(ws, rows, workspace_root, zones, max_file, max_total, taken_steps=()):
+def stage_precedent_texts(ws, rows, workspace_root, zones, max_file, max_total, taken_steps=(), remaining=None):
     """Copy the precedent search's stored texts into ``inputs/precedent/`` as read-only, hash-checked files.
 
     Returns (staged folder list, refusals by name, [(file name, row)] actually staged). A text is staged only when its
@@ -238,7 +241,8 @@ def stage_precedent_texts(ws, rows, workspace_root, zones, max_file, max_total, 
     refused with a reason and nothing partial is left."""
     from ..research.precedent_texts import file_name
 
-    staged, refused, listing, remaining = [], {}, [], [max_total]
+    staged, refused, listing = [], {}, []
+    remaining = remaining if remaining is not None else [max_total]
     if not rows:
         return staged, refused, listing
     if any(str(step).casefold() == PRECEDENT for step in taken_steps):
@@ -272,23 +276,24 @@ def stage_precedent_texts(ws, rows, workspace_root, zones, max_file, max_total, 
             refused[label] = f'{label} unavailable ({detail})'
     if not files:
         return staged, refused, listing
-    owned = False
     try:
         _room(ws.dir, sum(_size(root, parts) for parts, _, _, _ in files))
         _reset(ws.dir, PRECEDENT, [name for _, name, _, _ in files])
-        owned = True
-        for parts, name, expected, row in files:
-            _copy(root, parts, ws.dir, f'inputs/{PRECEDENT}/{name}', expected, max_file, remaining)
-            listing.append((name, row))
-        staged.append(str(ws.dir / 'inputs' / PRECEDENT))
     except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
-        if owned:
-            try:
-                _reset(ws.dir, PRECEDENT, [])
-            except (OSError, ValueError, TypeError, KeyError, AttributeError) as cleanup:
-                raise RuntimeError('refused precedent text snapshot could not be cleared') from cleanup
         detail = (str(exc) if isinstance(exc, ValueError) else
                   'disk full during copy' if getattr(exc, 'errno', None) == errno.ENOSPC else type(exc).__name__)
         refused[PRECEDENT] = f'inputs/{PRECEDENT} unavailable ({detail})'
-        staged, listing = [], []
+        return [], refused, []
+    for parts, name, expected, row in files:
+        # One bad copy omits only its own text; _copy removes its temporary file and never leaves a partial one.
+        try:
+            _copy(root, parts, ws.dir, f'inputs/{PRECEDENT}/{name}', expected, max_file, remaining)
+            listing.append((name, row))
+        except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+            detail = (str(exc) if isinstance(exc, ValueError) else
+                      'disk full during copy' if getattr(exc, 'errno', None) == errno.ENOSPC else type(exc).__name__)
+            refused[f"{PRECEDENT}:{row.get('paper_id') or name}"] = (
+                f"{PRECEDENT}:{row.get('paper_id') or name} unavailable ({detail})")
+    if listing:
+        staged.append(str(ws.dir / 'inputs' / PRECEDENT))
     return staged, refused, listing
