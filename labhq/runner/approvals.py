@@ -39,7 +39,8 @@ def _validated(model: type[BaseModel], data: dict) -> Any:
 class Broker:
     def __init__(self, port: int, on_approval: Handler, on_event: Handler, on_submit: Submit,
                  on_ask: Handler | None = None, owns_job: Predicate | None = None,
-                 on_approval_timeout: Handler | None = None, lookup_admission: Any = None):
+                 on_approval_timeout: Handler | None = None, lookup_admission: Any = None,
+                 on_local_job: Any = None):
         self.port = port
         self.lookup_admission = lookup_admission  # LookupAdmission when annot.request_lookup_limit is set (#858)
         self.pending: dict[str, asyncio.Future] = {}
@@ -52,6 +53,7 @@ class Broker:
         self._on_ask = on_ask
         self._owns_job = owns_job  # without it no job counts as owned, so hpc_cancel refuses all
         self._on_approval_timeout = on_approval_timeout
+        self._on_local_job = on_local_job  # (op, identity) -> dict, the runner's local job handler (#675)
         self.server: uvicorn.Server | None = None
         self.app = self._build_app()
 
@@ -109,6 +111,13 @@ class Broker:
         async def owned(body: dict, x_labhq_token: str = Header(default="")) -> dict:
             identity = self._identity(x_labhq_token, body)
             return {"owned": bool(self._owns_job and await self._owns_job(identity))}
+
+        @app.post("/localjobs/{op}")
+        async def local_jobs(op: str, body: dict, x_labhq_token: str = Header(default="")) -> dict:
+            identity = self._identity(x_labhq_token, body)
+            if self._on_local_job is None or op not in {"submit", "cancel", "status", "list"}:
+                raise HTTPException(404, "local jobs are not available on this runner")
+            return await self._on_local_job(op, identity)
 
         # Public lookup admission (#858): the request id is the one this token was issued for, never the body's.
         @app.post("/lookup/admit")

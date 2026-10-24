@@ -2391,6 +2391,9 @@ def evaluate_tool(
         from .process_stop_guard import DENIAL, broad_process_stop
         if broad_process_stop(str(tool_input.get("command", ""))):
             return Decision("deny", DENIAL)
+        from .detached_command import DENIAL as DETACHED_DENIAL, detached
+        if detached(tool_name, tool_input.get("command")):  # #675: no card, and the answer names the job tool
+            return Decision("deny", DETACHED_DENIAL)
     judged = claude_write_input(tool_name, tool_input, workdir, allowed_roots, windows=windows, environ=environ)
     # Every check reads a Git Bash command with its drive paths spelled the Windows way, zones and private paths
     # included: converting only the write targets let `cp /c/<zone>/raw /c/<root>/out` through (PR #364 review).

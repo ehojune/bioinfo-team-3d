@@ -48,7 +48,7 @@ from .versions import engine_cli_versions
 from ..intake import (expand_home_references, overlaps_restricted, overlaps_zone, reference_roots,
                       scan_reference_dir, withhold_reference_paths, zone_links)
 from ..policy import (SHELL_TOOLS, claude_ask_internal_links, claude_deny_links, claude_deny_private,
-                      claude_read_only, claude_rule_path, claude_settings, rule_tool)
+                      claude_read_only, claude_rule_path, claude_settings, evaluate_tool, rule_tool)
 from ..private_paths import ENABLED_ENV_VAR as PRIVATE_ENABLED_ENV, ENV_VAR as PRIVATE_PATHS_ENV, \
     OPEN_READS_ENV_VAR as PRIVATE_OPEN_READS_ENV, plugin_keep_dirs, resolve_private_paths, \
     staff_claude_project_dirs, scoped_open_reads
@@ -61,13 +61,15 @@ from ..registry import Registry
 from ..settings import MODEL_NAME_PATTERN, Settings, write_staff_config
 from ..staff_skills import install_required_skills
 from ..store import StateStore
-from ..tools.scheduler import MISSING_POLLS_BEFORE_FINISHED, TERMINAL, Scheduler, job_in_family
+from ..tools.scheduler import (MISSING_POLLS_BEFORE_FINISHED, TERMINAL, Scheduler, command_env, job_in_family,
+                               sanitize_job_name)
 from ..util import INPUT_STEP_ID, output_relpath, short
 from .. import vocab as output_vocab
 from ..vocab import declare as output_types
 from .approvals import Broker
 from .codex_sandbox import SandboxWatch
 from .control import HALT_GRACE_S, ControlNotReady, Controls, steer_prompt
+from . import local_jobs
 from .hpc_jobs import submit_job
 from .integrity import ReadOnlyWatch, watch_roots
 from .lookup_admission import ENV as LOOKUP_ADMISSION_ENV, FILE as LOOKUP_ADMISSION_FILE, LookupAdmission
@@ -327,10 +329,12 @@ class Runner:
         limit = settings.annot.request_lookup_limit
         self.broker = Broker(settings.runner.broker_port, self._on_approval, self._on_tool_event,
                              self._on_submit, self._on_ask, self._owns_job,
-                             on_approval_timeout=self._on_approval_timeout,
+                             on_approval_timeout=self._on_approval_timeout, on_local_job=self._on_local_job,
                              lookup_admission=None if limit is None else LookupAdmission(
                                  settings.path(settings.runner.state_dir) / LOOKUP_ADMISSION_FILE, limit))
         self.scheduler = Scheduler(settings.hpc)
+        self._local_procs: dict = {}  # job id -> the child this runner started (reaped when polled), #675
+        self._local_watch: asyncio.Task | None = None  # the local job poller, started with the first job
         self.connected = asyncio.Event()
         self._stopping = False
         self.started_at = time.time()
@@ -407,6 +411,8 @@ class Runner:
             else:
                 log.warning("HPC job polling disabled (scheduler=none); saved job records are retained, "
                             "not refreshed")
+            if any(local_jobs.is_local(jid) for jid in self.jobs):  # jobs saved by the previous runner process (#675)
+                self._ensure_local_watch()
             await asyncio.gather(*loops)
         finally:
             # Writes queued by the tasks that were just cancelled still finish (#606).
@@ -414,6 +420,9 @@ class Runner:
 
     def stop(self) -> None:
         self._stopping = True
+        watch = getattr(self, "_local_watch", None)  # a Runner built without __init__ (tests) has none
+        if watch is not None:
+            watch.cancel()
         self.broker.stop()
         for t in self.tasks.values():
             t.cancel()
@@ -708,6 +717,11 @@ class Runner:
             t = self.tasks.get(msg.get("task_id", ""))
             if t:
                 t.cancel()
+            await self._cancel_local_jobs(str(msg.get("task_id") or ""))
+        elif typ == "task.jobs_cancel":  # the step is parked on its jobs and its request was cancelled (#675)
+            tid = str(msg.get("task_id") or "")
+            if await self._cancel_local_jobs(tid):
+                self.send({"type": "task.jobs_cancelled", "task_id": tid})  # durable: the gateway stops resending on it
         elif typ == "task.control":
             await self._on_control(msg)
         elif typ == "approval.attachment":
@@ -975,6 +989,9 @@ class Runner:
             servers.append(McpServerSpec(name="labhq_hpc", command=sys.executable,
                                          args=["-m", "labhq.tools.hpc_mcp"], env=env,
                                          timeout_s=timeout_s))
+        if "job" in agent.builtin_mcp:  # local jobs the runner owns (#675); no scheduler needed
+            servers.append(McpServerSpec(name="labhq_job", command=sys.executable,
+                                         args=["-m", "labhq.tools.local_job_mcp"], env=env, timeout_s=timeout_s))
         if "annot" in agent.builtin_mcp:
             # Read-only public lookups: no per-call approval, also for variants from restricted zones (PI 2026-10-06).
             servers.append(McpServerSpec(name="labhq_annot", command=sys.executable,
@@ -2406,7 +2423,7 @@ class Runner:
 
         return await submit_job(self.s, self.scheduler, ws.dir, body, approve, gate, record)
 
-    async def _track_job(self, body: dict) -> None:
+    async def _track_job(self, body: dict, extra: dict | None = None) -> None:
         """Watch a job the runner submitted. No broker endpoint reaches this with a caller's id."""
         jid, tid = str(body["job_id"]), body.get("task_id")
         ws = self.workspaces.get(tid or "")
@@ -2415,7 +2432,7 @@ class Runner:
                            "exit_status": None, "submitted_at": time.time(),
                            "scheduler": self.s.hpc.scheduler, "request_id": self.task_req.get(tid or ""),
                            "workdir": str(ws.dir) if ws else None,
-                           "script_sha256": body.get("script_sha256"), "submitted_by_runner": True}
+                           "script_sha256": body.get("script_sha256"), "submitted_by_runner": True, **(extra or {})}
         if ws:
             ws.append_job({**body, "submitted_at": time.time()})
         # The job row and the event that announces it are one unit: a cancel cannot keep the row and lose the event.
@@ -2440,6 +2457,212 @@ class Runner:
                 return True
         return False
 
+    # ---------------- local jobs (#675) ----------------
+    def _local_owned(self, identity: dict, job_id: str | None = None) -> list[tuple[str, dict]]:
+        """The local job rows this runner started for this agent in this task or request; one when `job_id` names it."""
+        rows = []
+        for jid, j in self.jobs.items():
+            if (not local_jobs.is_local(jid) or not j.get("submitted_by_runner")
+                    or j.get("agent_id") != identity.get("agent_id")):
+                continue
+            if j.get("task_id") != identity.get("task_id") and not (
+                    identity.get("request_id") and j.get("request_id") == identity.get("request_id")):
+                continue
+            if job_id is None or jid == job_id:
+                rows.append((jid, j))
+        return rows
+
+    def _local_view(self, jid: str, j: dict, *, logs: bool = False) -> dict:
+        local = j.get("local") or {}
+        view = {"job_id": jid, "name": j.get("name"), "state": j.get("state"), "terminal": bool(j.get("terminal")),
+                "exit_status": j.get("exit_status"),
+                "elapsed_s": int(time.time() - float(j.get("submitted_at") or time.time())),
+                "expected_minutes": local.get("expected_minutes"), "command": short(local.get("command"), 300)}
+        if logs:
+            view.update(stdout_tail=local_jobs.tail(local.get("out")), stderr_tail=local_jobs.tail(local.get("err")))
+        return view
+
+    async def _on_local_job(self, op: str, identity: dict) -> dict:
+        if op == "list":
+            return {"jobs": [self._local_view(jid, j) for jid, j in self._local_owned(identity)]}
+        if op in {"status", "cancel"}:
+            job_id = str(identity.get("job_id") or "")
+            rows = self._local_owned(identity, job_id)
+            if not rows:
+                return {"error": f"job {job_id} was not submitted by you through job_submit; labhq tracks only your own"}
+            jid, j = rows[0]
+            if op == "cancel" and not j.get("terminal"):  # an ended job keeps how it ended
+                if not await self._end_local_job(jid, j, "cancelled"):
+                    return {"error": f"job {jid} could not be ended: some of its processes are still running"}
+            return self._local_view(jid, j, logs=op == "status")
+        return await self._submit_local_job(identity)
+
+    async def _submit_local_job(self, identity: dict) -> dict:
+        """Start one command as a job this runner owns: submitted, a PI or policy refusal, or an error.
+
+        The command is judged by the approval gate's own rules here, so a call straight to the broker cannot skip it."""
+        tid, aid = str(identity.get("task_id") or ""), identity.get("agent_id")
+        ws, running = self.workspaces.get(tid), self.active_roots.get(tid)
+        if ws is None or running is None:
+            return {"error": "this task is not running on the runner; the job was not submitted"}
+        if running[0]:
+            return {"error": "a read-only task cannot submit jobs"}
+        ctx, tool = self.tool_contexts.get(tid), local_jobs.shell_tool()
+        if ctx is not None and ctx.agent.engine != Engine.claude_code:
+            # A Codex run is held inside the engine's OS sandbox; a job the runner starts would run outside it.
+            return {"error": "local jobs are for Claude staff: a job started by the runner runs outside the "
+                             f"sandbox the {ctx.agent.engine.value} engine keeps its commands in"}
+        command = identity.get("command")
+        if not isinstance(command, str) or not command.strip() or len(command) > 20000:
+            return {"error": "command must be a shell command of at most 20000 characters"}
+        try:
+            expected = None if identity.get("expected_minutes") is None else float(identity["expected_minutes"])
+        except (TypeError, ValueError):
+            return {"error": "expected_minutes must be a number"}
+        if expected is not None and not 0 < expected <= 7 * 24 * 60:
+            return {"error": "expected_minutes must be between 0 and 10080"}
+        name = sanitize_job_name(str(identity.get("name") or "job"))
+        if ctx is not None:  # the same rule the approval gate applies to an install into the shared environment
+            from ..environment_install import shared_environment_install_denial
+
+            install = shared_environment_install_denial(
+                tool, {"command": command}, protected=ctx.shared_environment_protected,
+                environment_step=ctx.environment_step, workdir=str(ws.dir))
+            if install:
+                return {"submitted": False, "reason": install}
+        decision = evaluate_tool(
+            tool, {"command": command}, self.s.policy,
+            allowed_roots=[str(ws.dir), *(ctx.extra_dirs if ctx else [])], workdir=str(ws.dir),
+            private_paths=ctx.private_paths if ctx else [], private_enabled=bool(ctx and ctx.private_enabled),
+            private_open_reads=ctx.private_open_reads if ctx else [], read_only=False)
+        if decision.action == "deny":
+            return {"submitted": False, "reason": decision.reason}
+        if decision.action == "ask":
+            answer = await self.broker.request_approval(ApprovalRequest(
+                task_id=tid, agent_id=aid, request_id=identity.get("request_id"), kind="tool_permission",
+                summary=f"{tool}: {decision.reason}",
+                detail={"tool_name": tool, "input": short({"command": command}, 1500),
+                        "tool_input": {"command": command}, "policy_reason": decision.reason},
+                timeout_s=self.s.policy.approvals.timeout_s))
+            if not answer.get("approved"):
+                return {"submitted": False, "reason": answer.get("note") or "denied by the PI"}
+        done = asyncio.get_running_loop().create_future()
+        self.submitting.setdefault(tid, set()).add(done)  # run_task waits for a submit in flight before it ends
+        starting = self.__dict__.setdefault("_local_starting", 0)
+        try:
+            if self.active_roots.get(tid) is not running or tid in self.__dict__.get("_jobs_cancelled", ()):
+                return {"error": "the task ended or was cancelled; the job was not submitted"}
+            # The slot is reserved before the first await, so two submits cannot both pass the same count.
+            busy = sum(1 for jid, j in self.jobs.items() if local_jobs.is_local(jid) and not j.get("terminal"))
+            if busy + starting >= self.s.runner.max_parallel:
+                return {"error": f"{self.s.runner.max_parallel} local jobs are already running on this runner; "
+                                 "wait for one to finish before submitting another"}
+            self._local_starting = starting + 1
+            try:
+                job_id = local_jobs.new_id()
+                try:
+                    facts, process = await asyncio.to_thread(
+                        local_jobs.start, self.s.path(self.s.runner.state_dir), job_id, command, ws.dir,
+                        command_env())
+                except OSError as exc:
+                    return {"error": f"could not start the job: {exc}"}
+                if tid in self.__dict__.get("_jobs_cancelled", ()):
+                    # The step was cancelled while the process was starting: no row existed for the cancel to find.
+                    if await asyncio.to_thread(local_jobs.kill, facts, process):
+                        return {"error": "the task was cancelled while the job started; the job was ended"}
+                    # Its processes survived: keep it as a row so the watcher keeps ending it, not an ownerless process.
+                    self._local_procs[job_id] = process
+                    self._ensure_local_watch()
+                    await self._track_job({"task_id": tid, "agent_id": aid, "job_id": job_id, "name": name,
+                                           "core_hours": None},
+                                          extra={"scheduler": "local", "state": "running", "cancel_requested": True,
+                                                 "cancel_wake": False,
+                                                 "local": {**facts, "command": command, "expected_minutes": expected}})
+                    return {"error": "the task was cancelled while the job started; it could not be ended yet and "
+                                     "the runner keeps trying"}
+                self._local_procs[job_id] = process
+                self._ensure_local_watch()
+                await self._track_job({"task_id": tid, "agent_id": aid, "job_id": job_id, "name": name,
+                                       "core_hours": None},
+                                      extra={"scheduler": "local", "state": "running",  # no queue: it starts at once
+                                             "local": {**facts, "command": command, "expected_minutes": expected}})
+            finally:
+                self._local_starting -= 1
+            return {"submitted": True, "job_id": job_id, "name": name}
+        finally:
+            self.submitting.get(tid, set()).discard(done)
+            done.set_result(None)
+
+    async def _end_local_job(self, jid: str, j: dict, state: str, *, wake: bool = True) -> bool:
+        """Kill a local job's process tree. Only when nothing of it is left is it recorded as ended (`wake` False keeps
+        its step from being woken); a tree that survives leaves the job running and the watcher keeps checking it."""
+        tid = j.get("task_id")
+        if not await asyncio.to_thread(local_jobs.kill, j.get("local") or {}, self._local_procs.get(jid)):
+            # Remembered with the row (so it survives a restart): the watcher ends it again until nothing is left.
+            j.update(cancel_requested=True, cancel_wake=wake)
+            self.store.put("job", jid, j)
+            return False
+        self._local_procs.pop(jid, None)
+        j.update(state=state, terminal=True, exit_status=None)
+        after = [("job", jid, j)]
+        if not wake and tid:
+            self.notified.add(tid)
+            after.append(("notified", tid, {"done": True}))
+        await self.emit_all([Event(type="job.state", task_id=tid, agent_id=j.get("agent_id"),
+                                   request_id=self.task_req.get(tid or ""),
+                                   data={"job_id": jid, "name": j.get("name"), "state": state, "exit_status": None})],
+                            after=after)
+        return True
+
+    def _ensure_local_watch(self) -> None:
+        """Poll local jobs from the first one on. It is started lazily, so a runner without local jobs runs the same
+        loops as before (the HPC watcher stays off with scheduler=none)."""
+        if getattr(self, "_local_watch", None) is None or self._local_watch.done():
+            self._local_watch = asyncio.get_running_loop().create_task(self._local_job_watch_loop())
+
+    async def _local_job_watch_loop(self) -> None:
+        while not self._stopping:
+            await asyncio.sleep(self.s.runner.job_poll_s)
+            try:
+                await self._poll_local_jobs()
+            except Exception:
+                log.exception("local job poll failed")
+
+    async def _poll_local_jobs(self) -> None:
+        if not any(local_jobs.is_local(jid) for jid in self.jobs):
+            return
+        for jid, j in list(self.jobs.items()):
+            if j["terminal"] or not local_jobs.is_local(jid):
+                continue
+            if j.get("cancel_requested"):  # an earlier cancel could not end the whole tree: try again
+                await self._end_local_job(jid, j, "cancelled", wake=bool(j.get("cancel_wake", True)))
+                continue
+            state, exit_status = await asyncio.to_thread(local_jobs.status, j.get("local") or {},
+                                                         self._local_procs.get(jid))
+            if state == j["state"]:
+                continue
+            j.update(state=state, exit_status=exit_status, terminal=state in TERMINAL)
+            if j["terminal"]:
+                self._local_procs.pop(jid, None)  # the poll that saw it end has reaped it
+            await self.emit_all([Event(type="job.state", task_id=j["task_id"], agent_id=j["agent_id"],
+                                       request_id=self.task_req.get(j["task_id"] or ""),
+                                       data={"job_id": jid, "name": j["name"], "state": state,
+                                             "exit_status": exit_status})],
+                                after=[("job", jid, j)])
+        await self._wake_finished_jobs()
+
+    async def _cancel_local_jobs(self, task_id: str) -> bool:
+        """The step was cancelled: end its running local jobs so no process outlives it, and do not wake the step.
+        False when some job's processes could not be ended, so the cancel is not confirmed."""
+        if not task_id:
+            return True
+        ended = True
+        self.__dict__.setdefault("_jobs_cancelled", set()).add(task_id)  # a submit that is mid-start sees this
+        for jid, j in list(getattr(self, "jobs", {}).items()):
+            if local_jobs.is_local(jid) and j.get("task_id") == task_id and not j.get("terminal"):
+                ended = await self._end_local_job(jid, j, "cancelled", wake=False) and ended
+        return ended
+
     # ---------------- HPC job watcher ----------------
     async def _job_watch_loop(self) -> None:
         if self.s.hpc.scheduler == "none":
@@ -2455,7 +2678,7 @@ class Runner:
         if self.s.hpc.scheduler == "none":
             return  # Retain saved state, missing counts and notifications; do not invent a final outcome.
         for jid, j in list(self.jobs.items()):
-            if j["terminal"]:
+            if j["terminal"] or local_jobs.is_local(jid):  # a local job has its own watcher (#675)
                 continue
             info = await asyncio.to_thread(self.scheduler.status, jid)
             state = info.state
@@ -2479,7 +2702,10 @@ class Runner:
                                     after=[("job", jid, j)])
             else:
                 self.store.put("job", jid, j)
+        await self._wake_finished_jobs()
 
+    async def _wake_finished_jobs(self) -> None:
+        """Wake each task whose jobs have all ended, once: the agent was waiting on them (#281)."""
         by_task: dict[str, list[dict]] = {}
         for j in self.jobs.values():
             by_task.setdefault(j["task_id"], []).append(j)

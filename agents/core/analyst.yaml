@@ -7,7 +7,7 @@ model: opus
 model_tier: reasoning
 permission_mode: default
 tools: [Read, Glob, Grep, Write, Edit, "Bash(python *)", "Bash(Rscript *)", "Bash(ls *)", "Bash(wc *)"]
-builtin_mcp: [approval, hpc, annot]
+builtin_mcp: [approval, hpc, job, annot]
 allow_skills: true
 required_skills: [humanizer, graphical-abstract]
 max_turns: 60

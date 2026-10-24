@@ -69,6 +69,7 @@ SNAPSHOT_RESULT_CHARS = 500
 MAX_PI_NOTES = 20
 # A kept task cancel outlives any runner turn (runner.task_timeout_s defaults to 6 h) before it is dropped.
 TASK_CANCEL_KEEP_S = 2 * 86400
+JOBS_CANCEL_KEEP_S = 8 * 86400  # a local job may run up to 7 days: keep its cancel longer than that
 def external_wait_view(wait: object, *, now: float | None = None) -> dict | None:
     """The wait of a step's open public lookup, with the time since its last progress event added (#676)."""
     if not isinstance(wait, dict):
@@ -1900,6 +1901,13 @@ class Hub:
                 self.store.delete("task_cancel", tid)
                 continue
             await self.send_runner(runner_id, {"type": "task.cancel", "task_id": tid})
+        for tid, entry in self.store.all("jobs_cancel").items():  # local jobs of a cancelled request (#675)
+            if entry.get("runner_id") != runner_id:
+                continue
+            if now - float(entry.get("requested_at") or 0) > JOBS_CANCEL_KEEP_S:
+                self.store.delete("jobs_cancel", tid)
+                continue
+            await self.send_runner(runner_id, {"type": "task.jobs_cancel", "task_id": tid})
 
     # ----- staff control (#59 ①) -----
     @staticmethod
@@ -2473,6 +2481,7 @@ class Hub:
         builtin = agent.get("builtin_mcp", [])
         return [*(["labhq_approval"] if "approval" in builtin else []),
                 *(["labhq_hpc"] if "hpc" in builtin and agent.get("scheduler", "none") != "none" else []),
+                *(["labhq_job"] if "job" in builtin else []),
                 *(["labhq_annot"] if "annot" in builtin else []),
                 *(["labhq_ask"] if agent.get("engine") != "antigravity" else []),
                 *agent.get("mcp", [])]
@@ -2759,6 +2768,8 @@ class Hub:
             fut = self.jobs_waiters.pop(tid, None)
             if fut and not fut.done():
                 fut.set_result(msg["data"])
+        elif typ == "task.jobs_cancelled":  # the runner ended the local jobs of that step: stop resending
+            self.store.delete("jobs_cancel", str(msg.get("task_id") or ""))
         elif typ == "task.accepted":
             tid = msg.get("task_id") or ""
             task = self.store.get("task", tid)
@@ -3680,6 +3691,18 @@ class Hub:
                 waiter.cancel()
             if (not entry.get("completed") or entry.get("abandoned")) and await self.cancel_task(tid):
                 cancelled.append(tid)
+            elif entry.get("completed"):
+                # A step parked on its jobs has no running task to cancel: its runner ends the local jobs it started,
+                # so no process outlives the request (#675).
+                runner_id = self.task_runner.get(tid) or entry.get("runner_id")
+                if runner_id:
+                    # Kept until that runner confirms (task.jobs_cancelled): a runner that is away or restarting
+                    # gets it again when it reconnects (flush_task_cancels).
+                    self.store.put("jobs_cancel", tid, {"runner_id": runner_id, "requested_at": time.time()})
+                    try:
+                        await self.send_runner(runner_id, {"type": "task.jobs_cancel", "task_id": tid})
+                    except RunnerUnavailable:
+                        pass
         req["cancelled_tasks"] = cancelled
         self.save_request(rid)  # a restart before the terminal record still reports these
         for aid, entry in list(self.approvals.items()):
