@@ -1,5 +1,9 @@
 pr: 935
 rows:
+- sha: 1f5b27a
+  at: 2026-10-24 13:03
+  text: CI 전용 paper recovery store double에 빈 통역 예약 namespace 추가, 기존 identity assertion 유지
+  summary: 복구 회귀 test가 새 예약 원장을 명시적으로 다루도록 맞췄습니다.
 - sha: e542df5
   at: 2026-10-24 12:55
   text: follow-up 캐시 복원 통일, projection limit 밖 orphan 예약도 total·missing count에 보존
