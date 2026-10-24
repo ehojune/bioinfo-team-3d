@@ -1,5 +1,9 @@
 pr: 925
 rows:
+- sha: 3b1c17e
+  at: '2026-10-24 10:07'
+  summary: pip override를 배제한 설치 결과를 기록합니다.
+  text: 최신 설치판 commit·mock 요청 ID와 pip override 상속 검사, 공백 경로 전체 PASS·자식 잔류 0을 공개 근거에 반영했다.
 - sha: 4be9896
   at: '2026-10-24 10:05'
   summary: 새 설치에 기존 pip index·제약 설정이 섞이지 않습니다.
