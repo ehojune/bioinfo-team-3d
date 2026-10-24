@@ -170,3 +170,30 @@ async def test_a_runner_with_a_junctioned_root_denies_inputs_under_both_spelling
         for tool in ("Edit", "Write"):
             assert not _rules(deny, tool, os.path.join(base, "outputs", "r.tsv")), (tool, base)
             assert _rules(deny, tool, os.path.join(base, "inputs", "s0", "x")), (tool, base)  # ancestor copies stay read-only
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("contract", [True, False])
+async def test_the_write_allow_of_an_artifact_contract_step_covers_only_outputs_and_tmp(tmp_path, monkeypatch,
+                                                                                         contract):
+    from labhq.adapters import get_adapter
+    from labhq.models import Engine, Task
+    from tests.test_claude_staff_home import _capture_runner, _runner_settings, _staff
+
+    home, staff, _ws, _mine, _other, _settings = _staff(tmp_path, monkeypatch)
+    settings = _runner_settings(tmp_path, None)
+    settings.engines.claude_code.env = {"CLAUDE_CONFIG_DIR": str(staff)}
+    runner, seen = _capture_runner(settings, monkeypatch)
+    meta = {"kind": "step", "step_id": "s1", **({"upstream_artifacts": {}} if contract else {})}
+    assert (await runner.run_task(Task(id="t1", agent_id="worker", request_id="r", prompt="q", meta=meta))).ok
+    ctx = seen["ctx"]
+    monkeypatch.undo()  # the capture patch replaced get_adapter: build the real command from the captured context
+    ctx = replace(ctx, agent=ctx.agent.model_copy(update={"tools": ["Write", "Edit"]}))
+    cmd = get_adapter(Engine.claude_code, settings).build_command(ctx)
+    edits = [rule for rule in cmd[cmd.index("--allowedTools") + 1:] if rule.startswith("Edit(")]
+    workdir = claude_rule_path(str(ctx.workdir))
+    if contract:
+        assert f"Edit(/{workdir}/**)" not in edits  # a whole-folder rule would also pre-approve `INPUTS/` spellings
+        assert f"Edit(/{workdir}/outputs/**)" in edits and f"Edit(/{workdir}/.tmp/**)" in edits
+    else:
+        assert f"Edit(/{workdir}/**)" in edits
