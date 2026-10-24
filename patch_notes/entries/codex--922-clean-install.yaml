@@ -1,5 +1,13 @@
 pr: 925
 rows:
+- sha: 74e3ef6
+  at: '2026-10-24 10:29'
+  summary: 중단·삭제·기록 오류가 겹쳐도 설치 판정을 일치시킵니다.
+  text: 중단을 FAIL로 기록하고 삭제 완료 뒤 PASS를 확정한다. 삭제와 receipt 쓰기 오류가 겹쳐도 최초 원인을 보존하며 관련 50 passed와 Windows 새 설치 전체 PASS를 확인했다.
+- sha: f5d011d
+  at: '2026-10-24 10:27'
+  summary: 설치의 최초 실패를 후속 guard 오류와 구분합니다.
+  text: 기존 실패의 stage·detail을 유지하고 guard·cleanup 오류를 별도 기록하며 receipt 쓰기 실패도 최초 오류를 덮어쓰지 않게 했다. 겹친 오류 회귀를 검증했다.
 - sha: 0913f64
   at: '2026-10-24 10:19'
   summary: 최종 설치 근거와 실패 경계 검증을 기록합니다.
