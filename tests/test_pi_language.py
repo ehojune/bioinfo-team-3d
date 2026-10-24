@@ -87,6 +87,23 @@ def test_invalid_translation_ledger_blocks_admission(hub, raw):
 
 
 @pytest.mark.asyncio
+async def test_restart_counts_durable_cost_plus_orphan_before_translation(hub, monkeypatch):
+    calls = mock_model(monkeypatch, hub)
+    hub.requests['r'].update(budget_usd=5, cost_usd=4.94, cost_known=True,
+        cost_items={'old_research': {'status': 'actual', 'usd': 4.94}},
+        cost_by_task={'old_research': 4.94})
+    hub.store.put('pi_translation_reservations', 'r', {'orphan': {
+        'reservation_id': 'orphan', 'task_id': 'orphan', 'request_id': 'r',
+        'agent_id': 'chief_of_staff', 'attempt': 1, 'state': 'reserved',
+        'source': 'pi_translation', 'ceiling_usd': 0.05}})
+    assert hub.orchestrator.cost.get('r', 0) == 0
+    await hub.publish(event())
+    await drain(hub)
+    assert not calls
+    assert hub.orchestrator._budget_bound('r', 5)[2] == pytest.approx(4.99)
+
+
+@pytest.mark.asyncio
 async def test_interpreter_receives_tool_error_evidence(hub, monkeypatch):
     calls = mock_model(monkeypatch, hub)
     error = 'InputValidationError: StructuredOutput could not be parsed as JSON'

@@ -112,6 +112,7 @@ class PiInterpreter:
             reservations = hub.store.get("pi_translation_reservations", str(rid)) or {}
             reserved = max(budget["reserved"], sum(r["ceiling_usd"] for r in reservations.values()))
             limit = float(req.get("budget_usd") or hub.s.policy.budget.per_request_usd)
+            hub.orchestrator._count_recorded_costs(rid)
             _, _, bound = hub.orchestrator._budget_bound(rid, limit)
             remaining = min(cfg.per_request_usd - reserved,
                             limit - max(bound, float(req.get("cost_usd") or 0)))
