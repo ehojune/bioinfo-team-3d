@@ -45,6 +45,18 @@ class LedgerHub:
 
 
 class Projection(unittest.TestCase):
+    def test_truncated_orphan_details_preserve_full_counts(self):
+        h = LedgerHub({})
+        h.reservations = {tid: dict(reservation_id=tid, task_id=tid, request_id='r',
+            agent_id='worker', attempt=1, ceiling_usd=0.05, state='reserved', source='pi_translation')
+            for tid in ('t', 'u')}
+        out = projection()(h, 'r', 123.5, limit=1)
+        self.assertFalse(out['complete'])
+        self.assertEqual(out['total_attempts'], 2)
+        self.assertEqual(out['missing_attempt_count'], 2)
+        self.assertEqual(out['returned_attempts'], 1)
+        self.assertEqual(len(out['accounting']['translation_reservations']), 1)
+
     def test_translation_reservation_projection_and_orphan_enumeration(self):
         h = LedgerHub({"t": row("t", "pi_interpretation")})
         h.rows['t']['payload']['budget_usd'] = 0.05

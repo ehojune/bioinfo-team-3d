@@ -4130,6 +4130,7 @@ class Hub:
 
         accounting = {key: cost_map(key) for key in ("cost_items", "cost_by_task", "budget_holds")}
         reservations = {}
+        reservation_ids = set()
         reservation_rows = self.store.get("pi_translation_reservations", rid)
         if reservation_rows is None:
             reservation_rows = {}
@@ -4143,12 +4144,13 @@ class Hub:
             if raw.get("request_id") != rid:
                 problems.append("translation_reservation_identity_unknown")
                 continue
-            if len(reservations) >= limit:
-                problems.append("translation_reservations_truncated")
-                break
             tid = identifier(key)
             if tid is None:
                 problems.append("translation_reservation_identity_unknown")
+                continue
+            reservation_ids.add(tid)
+            if len(reservations) >= limit:
+                problems.append("translation_reservations_truncated")
                 continue
             value = {name: identifier(raw.get(name)) for name in
                      ("reservation_id", "task_id", "request_id", "agent_id")}
@@ -4185,7 +4187,7 @@ class Hub:
         costs = set(accounting["cost_items"] or {}) | set(accounting["cost_by_task"] or {})
         if costs - {tid for tid, _ in owned}:
             problems.append("cost_task_missing_from_durable_ledger")
-        expected = set(reservations)
+        expected = set(reservation_ids)
         for name in ("cost_items", "cost_by_task", "budget_holds", "usage_by_task"):
             raw = request.get(name)
             if isinstance(raw, dict):

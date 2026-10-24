@@ -3452,8 +3452,7 @@ class Orchestrator:
                           "agent_overrides": dict(READ_ONLY_OVERRIDES),
                           "upstream_dirs": list(dict.fromkeys([*outputs, *([workdir] if workdir else [])])),
                           **({"source_workdir": workdir} if workdir else {}), **pin})
-        self.cost[rid] = max(self.cost.get(rid, 0.0), float(req.get("cost_usd") or 0))
-        self._seed_cost(rid, req)
+        self._restore_cost_cache(rid)
         try:
             result = await self.run_step(task)
         except ShutdownInterrupted as error:
