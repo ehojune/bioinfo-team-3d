@@ -14,11 +14,16 @@ from labhq.runner import local_jobs
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
 
-PY = f'"{sys.executable}"'
-CALL = "& " if os.name == "nt" else ""  # PowerShell needs the call operator to run a quoted program path
-SLEEP = f'{CALL}{PY} -c "import time; time.sleep(60)"'
-QUICK = f'{CALL}{PY} -c "print(42)"'
-FAILS = f'{CALL}{PY} -c "import sys; sys.exit(3)"'
+# The tests run Python code through the job machinery with a shell-free stand-in for the OS shell: a cold PowerShell
+# takes seconds on a loaded Windows runner (#886), which the job logic under test does not need.
+SLEEP = "import time; time.sleep(60)"
+QUICK = "print(42)"
+FAILS = "import sys; sys.exit(3)"
+
+
+@pytest.fixture(autouse=True)
+def _python_as_the_shell(monkeypatch):
+    monkeypatch.setattr(local_jobs, "shell_argv", lambda command: [sys.executable, "-c", command])
 
 
 def _eventually(check, seconds=40.0):
@@ -96,6 +101,26 @@ def board(tmp_path, monkeypatch):
     for job_id, row in list(runner.jobs.items()):  # nothing may outlive a test
         if local_jobs.is_local(job_id):
             local_jobs.kill(row.get("local") or {}, runner._local_procs.get(job_id))
+
+
+def test_the_real_shell_argv_wraps_the_command_and_a_powershell_job_reports_the_programs_exit_code(monkeypatch):
+    monkeypatch.undo()  # the real shell_argv, not the stand-in
+    argv = local_jobs.shell_argv("python gsea.py")
+    if os.name == "nt":
+        assert argv[:4] == ["powershell", "-NoProfile", "-NonInteractive", "-Command"]
+        assert argv[4].startswith("python gsea.py\n") and "exit $__code" in argv[4]  # the program's code, not PowerShell's 1
+    else:
+        assert argv == ["/bin/sh", "-c", "python gsea.py"]
+    assert local_jobs.shell_tool() == ("PowerShell" if os.name == "nt" else "Bash")
+
+
+@pytest.mark.skipif(os.name == "nt" and bool(os.environ.get("CI")), reason="a cold PowerShell can take 30 s on a loaded runner")
+def test_a_job_through_the_real_shell_reports_the_exit_code(tmp_path, monkeypatch):
+    monkeypatch.undo()
+    command = "exit 3" if os.name == "nt" else "exit 3"
+    record, process = local_jobs.start(tmp_path, "local-shell", command, tmp_path, dict(os.environ))
+    _eventually(lambda: local_jobs.status(record, process)[0] != "running", seconds=90)
+    assert local_jobs.status(record, process) == ("failed", 3)
 
 
 def test_the_process_helpers_report_completion_failure_and_leave_nothing_after_a_kill(tmp_path):
@@ -256,7 +281,7 @@ async def test_submit_needs_a_running_task_a_command_and_a_free_slot(board):
 @pytest.mark.asyncio
 async def test_a_command_the_gate_would_ask_about_waits_for_the_pi_and_a_refusal_starts_nothing(board, tmp_path):
     outside = tmp_path / "elsewhere" / "x.txt"
-    command = f'{PY} -c "open(r\'{outside}\', \'w\').write(\'x\')" > "{outside}"'
+    command = f'print(1) > "{outside}"'  # judged as a shell command that writes outside the workspace
     probe = evaluate_tool(local_jobs.shell_tool(), {"command": command}, board.settings.policy,
                           allowed_roots=[str(tmp_path / "workspace_root")], workdir=str(tmp_path / "workspace_root"))
     if probe.action != "ask":
