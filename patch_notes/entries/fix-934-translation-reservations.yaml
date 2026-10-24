@@ -1,5 +1,9 @@
 pr: 935
 rows:
+- sha: fff63c4
+  at: 2026-10-24 12:47
+  text: 통역 admission과 resume 카드가 aggregate·task ID를 같은 helper로 복원, 부분 초기화 회귀 추가
+  summary: 비용 캐시의 초기화 순서가 달라도 중복 없이 예약을 합산합니다.
 - sha: ef90057
   at: 2026-10-24 12:45
   text: resume 카드가 aggregate·task ID·unknown 캐시를 함께 복원해 통역 admission의 이중 비용 합산 방지
