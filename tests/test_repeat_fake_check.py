@@ -103,6 +103,8 @@ def test_real_gateway_runner_twice_and_missing_artifact_is_rejected(tmp_path):
         check.command([sys.executable, str(source / "scripts/repeat_fake_check.py"), "--child", str(root),
                        "--config", str(source / "config/labhq.example.yaml")], source, env, root, "child", 180)
         receipt = json.loads((root / "receipt.json").read_text(encoding="utf-8"))
+        boundary = json.loads((root / "boundary.json").read_text(encoding="utf-8"))
+        assert boundary == {"external_attempts": 0, "subprocess_attempts": 0, "events": []}
         # The real child has exited, and its audit denied every possible child-command launch.
         receipt.update(process_exit=0, remaining_children=[])
         rows.append(receipt)
