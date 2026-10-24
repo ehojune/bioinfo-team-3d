@@ -1,5 +1,9 @@
 pr: 935
 rows:
+- sha: e542df5
+  at: 2026-10-24 12:55
+  text: follow-up 캐시 복원 통일, projection limit 밖 orphan 예약도 total·missing count에 보존
+  summary: 이어 묻기 비용과 잘린 예약 목록의 전체 개수를 정확히 계산합니다.
 - sha: 526d4df
   at: 2026-10-24 12:50
   text: admission에서 통역 예약과 durable task의 request·agent·kind·attempt·ceiling 대조, orphan 보존
