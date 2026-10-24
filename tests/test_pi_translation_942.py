@@ -83,3 +83,16 @@ async def test_a_translation_does_not_wait_for_the_research_slot(tmp_path, monke
     assert not queued_step.done() and started == ["step", "pi_text_9"]
     release.set()
     assert (await asyncio.wait_for(step, 2)).ok and (await asyncio.wait_for(queued_step, 2)).ok
+
+
+def test_a_gateway_recorded_unknown_call_names_the_dispatched_override_model(hub):  # noqa: F811
+    hub.store.put("task", "pi_text_7", {"request_id": "r", "payload": {"meta": {"agent_overrides": {
+        "engine": "claude_code", "model": "haiku"}}}})
+    hub._record_task_cost("r", "pi_text_7", TaskResult(task_id="pi_text_7", agent_id="chief_of_staff", ok=False),
+                          outcome_unknown=True)
+    item = hub.requests["r"]["cost_items"]["pi_text_7"]
+    assert item["status"] == "unknown" and item["model"] == "haiku" and item["engine"] == "claude_code"
+    hub.store.put("task", "plain", {"request_id": "r", "payload": {"meta": {}}})
+    hub._record_task_cost("r", "plain", TaskResult(task_id="plain", agent_id="chief_of_staff", ok=False),
+                          outcome_unknown=True)
+    assert hub.requests["r"]["cost_items"]["plain"]["model"] == "sonnet"  # no override: the staff member's own
