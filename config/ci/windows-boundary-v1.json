@@ -345,6 +345,7 @@
     "tests/test_windows_p1_readiness.py",
     "tests/test_windows_runtime.py",
     "tests/test_workspace_boundary.py",
+    "tests/test_workspace_write_946.py",
     "tests/test_wsl_readiness.py",
     "tests/test_wsl_routing.py",
     "tests/test_wsl_setup.py",

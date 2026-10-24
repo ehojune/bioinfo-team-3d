@@ -1,0 +1,100 @@
+"""A step may write its own outputs/ although the artifact contract marks the workspace root private (#946, trial
+2026-10-25 attempt 11: every research step died with `missing outputs` because Edit/Write were denied on the whole
+workspace root, and a deny outranks the allow rule for the task's own folder)."""
+
+from dataclasses import replace
+
+import pytest
+
+from labhq import private_paths
+from labhq.policy import claude_deny_private, claude_rule_path
+from labhq.private_paths import resolve_private_paths, scoped_open_reads
+from labhq.settings import Settings
+
+
+REAL_LABHQ_ENTRIES = private_paths._labhq_entries  # conftest replaces it for every test
+
+
+def _setup(tmp_path, monkeypatch):
+    monkeypatch.setattr(private_paths, "_labhq_entries", REAL_LABHQ_ENTRIES)
+    home = tmp_path / "home"
+    staff = home / ".labhq" / "claude-staff"
+    root = tmp_path / "runs"
+    ws_dir = root / "2026-10-25" / "task_a_lit_scout"
+    for folder in (staff / "projects", ws_dir / "outputs", root / "2026-10-25" / "task_b_other",
+                   root / "2026-10-24" / "task_old"):
+        folder.mkdir(parents=True)
+    (root / ".labhq-system-ca.pem").write_text("pem")
+    settings = Settings()
+    settings.runner.workspace_root = str(root)
+    settings.runner.talent_dir = str(tmp_path / "talent")
+    settings.engines.claude_code.env = {"CLAUDE_CONFIG_DIR": str(staff)}
+    project = staff / "projects" / "slug"
+    project.mkdir()
+    private = resolve_private_paths(settings, [str(ws_dir), str(root)], home=str(home), open_reads=[str(project)],
+                                    cwd=str(ws_dir))
+    # The artifact-contract branch of the runner: the whole workspace root becomes a private path.
+    private = replace(private, paths=tuple(dict.fromkeys([*private.paths, str(root.resolve())])), enabled=True,
+                      open_reads=tuple(scoped_open_reads(settings, [*private.open_reads, str(ws_dir)], cwd=str(ws_dir))))
+    return home, staff, root, ws_dir, project, private
+
+
+def _rules(deny, tool, path):
+    """The deny rules of `tool` that cover `path`: a `/**` rule covers its folder and everything below it."""
+    target = f"/{claude_rule_path(str(path))}"
+    out = []
+    for rule in deny:
+        if not rule.startswith(f"{tool}(") or not rule.endswith(")"):
+            continue
+        inner = rule[len(tool) + 1:-1]
+        if inner == target or (inner.endswith("/**") and (target + "/").startswith(inner[:-3] + "/")):
+            out.append(rule)
+    return out
+
+
+def test_a_step_can_write_its_own_outputs_but_not_the_rest_of_the_workspace_root(tmp_path, monkeypatch):
+    home, staff, root, ws_dir, project, private = _setup(tmp_path, monkeypatch)
+    deny = claude_deny_private({}, private.paths, str(home), open_reads=private.open_reads,
+                               write_roots=[str(ws_dir)])["permissions"]["deny"]
+    for tool in ("Edit", "Write"):
+        assert not _rules(deny, tool, ws_dir / "outputs" / "result.tsv")  # nothing outranks the task's own allow rule
+        assert not _rules(deny, tool, ws_dir / ".tmp" / "x")
+        assert _rules(deny, tool, root / "2026-10-24" / "task_old" / "x")  # another day's workspaces stay closed
+        assert _rules(deny, tool, root / ".labhq-system-ca.pem")  # as do top-level files
+    assert not _rules(deny, "Read", ws_dir / "outputs" / "result.tsv")  # reads were already scoped this way
+
+
+def test_without_the_write_root_the_old_whole_root_deny_is_what_blocked_outputs(tmp_path, monkeypatch):
+    home, staff, root, ws_dir, project, private = _setup(tmp_path, monkeypatch)
+    deny = claude_deny_private({}, private.paths, str(home), open_reads=private.open_reads)["permissions"]["deny"]
+    assert _rules(deny, "Write", ws_dir / "outputs" / "result.tsv")  # the failure #946 reports
+
+
+def test_the_staff_config_folder_keeps_its_whole_path_edit_write_deny(tmp_path, monkeypatch):
+    home, staff, root, ws_dir, project, private = _setup(tmp_path, monkeypatch)
+    deny = claude_deny_private({}, private.paths, str(home), open_reads=private.open_reads,
+                               write_roots=[str(ws_dir)])["permissions"]["deny"]
+    for tool in ("Edit", "Write"):
+        assert f"{tool}(/{claude_rule_path(str(staff))}/**)" in deny
+        assert _rules(deny, tool, project / "anything")  # the config folder is never written, its project folder too
+
+
+@pytest.mark.asyncio
+async def test_a_runner_step_with_the_artifact_contract_gets_no_deny_over_its_own_outputs(tmp_path, monkeypatch):
+    from labhq.models import Task
+    from tests.test_claude_staff_home import _capture_runner, _runner_settings, _staff
+
+    home, staff, _ws, _mine, _other, _settings = _staff(tmp_path, monkeypatch)
+    settings = _runner_settings(tmp_path, None)
+    settings.engines.claude_code.env = {"CLAUDE_CONFIG_DIR": str(staff)}
+    runner, seen = _capture_runner(settings, monkeypatch)
+    task = Task(id="t1", agent_id="worker", request_id="r", prompt="q",
+                meta={"kind": "step", "step_id": "s1", "upstream_artifacts": {}})
+    assert (await runner.run_task(task)).ok
+    ctx = seen["ctx"]
+    deny = ctx.claude_settings["permissions"]["deny"]
+    root = runner.ws_root.resolve()
+    assert str(root) in ctx.private_paths  # the artifact contract made the whole workspace root private
+    for tool in ("Edit", "Write"):
+        assert not _rules(deny, tool, ctx.workdir / "outputs" / "result.tsv")
+        assert not _rules(deny, tool, ctx.workdir / ".tmp" / "x")

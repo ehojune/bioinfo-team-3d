@@ -1976,7 +1976,7 @@ class Runner:
             engine_settings = claude_deny_private(claude_ask_internal_links(claude_deny_links(claude_read_only(
                 claude_settings(self.s.policy), [d for d in [*read_dirs, *(extra_dirs if read_only else [])]
                                                if claude_rule_ready(d)]), denied_links), asked_links),
-                private.paths, open_reads=private.open_reads)
+                private.paths, open_reads=private.open_reads, write_roots=[str(ws.dir)])
             if hooked:
                 from ..hooks.tool_use import add_claude_hook
 
