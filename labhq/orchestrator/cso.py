@@ -4379,9 +4379,9 @@ class Orchestrator:
         settled = self.cost_tasks.get(rid, set())
         holds = dict(req.get("budget_holds") or {})
         store = getattr(self.hub, "store", None)
-        for key, row in (store.all("pi_translation_reservation") if store else {}).items():
-            if row.get("request_id") != rid:
-                continue
+        for key, row in ((store.get("pi_translation_reservations", rid) or {}) if store else {}).items():
+            if not isinstance(row, dict) or row.get("request_id") != rid:
+                return float("inf")
             tid, ceiling = row.get("task_id"), row.get("ceiling_usd")
             valid = (tid == key == row.get("reservation_id") and row.get("source") == "pi_translation"
                      and row.get("state") == "reserved" and row.get("attempt") == 1

@@ -109,9 +109,8 @@ class PiInterpreter:
             restricted = ((source_task or {}).get("payload", {}).get("meta", {}).get("restricted_inputs")
                           or (event.get("data") or {}).get("source_restricted"))
             budget = hub.store.get("pi_translation_budget", str(rid)) or {"reserved": 0.0}
-            reservations = [r for r in hub.store.all("pi_translation_reservation").values()
-                            if r.get("request_id") == rid]
-            reserved = max(budget["reserved"], sum(r["ceiling_usd"] for r in reservations))
+            reservations = hub.store.get("pi_translation_reservations", str(rid)) or {}
+            reserved = max(budget["reserved"], sum(r["ceiling_usd"] for r in reservations.values()))
             limit = float(req.get("budget_usd") or hub.s.policy.budget.per_request_usd)
             _, _, bound = hub.orchestrator._budget_bound(rid, limit)
             remaining = min(cfg.per_request_usd - reserved,
@@ -126,11 +125,12 @@ class PiInterpreter:
             req.setdefault("budget_holds", {})
             hub.save_request(rid)
             reservation_id = f"pi_text_{key}"
-            hub.store.put("pi_translation_reservation", reservation_id, {
+            reservations[reservation_id] = {
                 "reservation_id": reservation_id, "task_id": reservation_id,
                 "request_id": rid, "agent_id": aid, "attempt": 1,
                 "ceiling_usd": cfg.per_message_usd, "state": "reserved",
-                "source": "pi_translation", "created_at": time.time()})
+                "source": "pi_translation", "created_at": time.time()}
+            hub.store.put("pi_translation_reservations", str(rid), reservations)
             hub.store.put("pi_translation_budget", str(rid),
                           {"reserved": reserved + cfg.per_message_usd})
             instruction = ("비서실장으로서 아래 원문을 PI에게 설명하세요. 무엇을·왜·영향을 두 문장 이내의 "

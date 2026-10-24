@@ -4130,11 +4130,16 @@ class Hub:
 
         accounting = {key: cost_map(key) for key in ("cost_items", "cost_by_task", "budget_holds")}
         reservations = {}
-        for key, raw in sorted(self.store.all("pi_translation_reservation").items()):
+        reservation_rows = self.store.get("pi_translation_reservations", rid) or {}
+        if not isinstance(reservation_rows, dict):
+            problems.append("translation_reservation_invalid")
+            reservation_rows = {}
+        for key, raw in sorted(reservation_rows.items()):
             if not isinstance(raw, dict):
                 problems.append("translation_reservation_invalid")
                 continue
             if raw.get("request_id") != rid:
+                problems.append("translation_reservation_identity_unknown")
                 continue
             if len(reservations) >= limit:
                 problems.append("translation_reservations_truncated")

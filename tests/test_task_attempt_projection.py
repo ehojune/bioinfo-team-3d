@@ -38,7 +38,8 @@ class LedgerHub:
         self.requests = {"r": {"id": "r", "created_at": 123.5, "status": "running", "text": "SECRET_REQUEST"}}
         self.reservations = {}
         self.store = SimpleNamespace(all=lambda kind: copy.deepcopy(
-            self.rows if kind == "task" else self.reservations))
+            self.rows if kind == "task" else {}),
+            get=lambda kind, rid: copy.deepcopy(self.reservations))
         self.s = SimpleNamespace(policy=SimpleNamespace(budget=SimpleNamespace(
             per_task_usd=1, per_request_usd=3, reserve_before_dispatch=True)))
 
@@ -62,6 +63,10 @@ class Projection(unittest.TestCase):
         h.rows['t'] = row('t', 'pi_interpretation')
         h.rows['t']['payload']['budget_usd'] = 0.1
         self.assertIn('translation_reservation_invalid', projection()(h, 'r', 123.5)['problems'])
+        h.rows['t']['payload'] = ['invalid']
+        self.assertFalse(projection()(h, 'r', 123.5)['complete'])
+        h.rows['t'] = ['invalid']
+        self.assertIn('task_ledger_row_invalid', projection()(h, 'r', 123.5)['problems'])
 
     def test_all_kinds_and_retries_not_collapsed(self):
         rows = {str(n): row(str(n), kind, n + 1) for n, kind in enumerate(
