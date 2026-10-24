@@ -476,3 +476,42 @@ def test_atomic_receipt_keeps_previous_json_on_failure(tmp_path, monkeypatch, ph
     assert receipt.path.read_bytes() == previous
     assert json.loads(receipt.path.read_text(encoding="utf-8"))["status"] == "RUNNING"
     assert not list(tmp_path.glob(".labhq-receipt-*.tmp"))
+
+
+def test_receipt_waits_out_a_transient_windows_lock(tmp_path, monkeypatch):
+    receipt = clean_install_check.Receipt(tmp_path / "receipt.json", tmp_path)
+    original_replace = clean_install_check.os.replace
+    calls, delays = [], []
+    def locked(source, target):
+        calls.append((source, target))
+        if len(calls) < 3:
+            raise PermissionError("scanner fixture")
+        original_replace(source, target)
+    monkeypatch.setattr(clean_install_check, "_RECEIPT_REPLACE_RETRY", True, raising=False)
+    monkeypatch.setattr(clean_install_check.os, "replace", locked)
+    monkeypatch.setattr(clean_install_check.time, "sleep", delays.append)
+    receipt.data["status"] = "PASS"
+    receipt.write()
+    assert len(calls) == 3 and delays == [0.05, 0.05]
+    assert json.loads(receipt.path.read_text(encoding="utf-8"))["status"] == "PASS"
+    assert not list(tmp_path.glob(".labhq-receipt-*.tmp"))
+
+
+@pytest.mark.parametrize("windows,failure,attempts", [
+    (True, PermissionError, 20), (False, PermissionError, 1), (True, OSError, 1),
+])
+def test_receipt_replace_retry_is_bounded_and_specific(tmp_path, monkeypatch, windows, failure, attempts):
+    receipt = clean_install_check.Receipt(tmp_path / "receipt.json", tmp_path)
+    previous = receipt.path.read_bytes()
+    calls, delays = [], []
+    def denied(*args):
+        calls.append(args)
+        raise failure("persistent fixture")
+    monkeypatch.setattr(clean_install_check, "_RECEIPT_REPLACE_RETRY", windows, raising=False)
+    monkeypatch.setattr(clean_install_check.os, "replace", denied)
+    monkeypatch.setattr(clean_install_check.time, "sleep", delays.append)
+    with pytest.raises(failure):
+        receipt.write()
+    assert len(calls) == attempts and len(delays) == attempts - 1
+    assert receipt.path.read_bytes() == previous
+    assert not list(tmp_path.glob(".labhq-receipt-*.tmp"))

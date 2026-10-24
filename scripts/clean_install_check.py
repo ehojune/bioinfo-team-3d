@@ -34,6 +34,7 @@ class CheckFailure(RuntimeError):
 
 _RESERVED_PORTS = {8787, 55921}  # PI instance and its runner; clean-install must never borrow them
 _RECEIPT: ContextVar = ContextVar("clean_install_receipt", default=None)
+_RECEIPT_REPLACE_RETRY = os.name == "nt"
 
 
 class Receipt:
@@ -57,7 +58,15 @@ class Receipt:
                 stream.write(payload)
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.replace(temporary, self.path)
+            # Match labhq.util.replace_file without importing the package before installation.
+            for attempt in range(20):
+                try:
+                    os.replace(temporary, self.path)
+                    break
+                except PermissionError:
+                    if not _RECEIPT_REPLACE_RETRY or attempt == 19:
+                        raise
+                    time.sleep(0.05)
         finally:
             if temporary is not None:
                 active_error = sys.exc_info()[0] is not None
