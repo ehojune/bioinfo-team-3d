@@ -103,6 +103,20 @@ async def test_restart_counts_durable_cost_plus_orphan_before_translation(hub, m
     assert hub.orchestrator._budget_bound('r', 5)[2] == pytest.approx(4.99)
 
 
+def test_unknown_translation_keeps_ceiling_above_generic_reserve(hub):
+    hub.s.policy.budget.per_task_usd = 0.01
+    hub.store.put('pi_translation_reservations', 'r', {'t': {
+        'reservation_id': 't', 'task_id': 't', 'request_id': 'r',
+        'agent_id': 'chief_of_staff', 'attempt': 1, 'state': 'reserved',
+        'source': 'pi_translation', 'ceiling_usd': 0.05}})
+    hub.orchestrator.cost_tasks['r'] = {'t'}
+    hub.orchestrator.cost_unknown['r'] = {'t'}
+    assert hub.orchestrator._budget_bound('r', 5)[2] == pytest.approx(0.05)
+    hub.orchestrator.cost_unknown['r'].clear()
+    hub.orchestrator.cost['r'] = 0.002
+    assert hub.orchestrator._budget_bound('r', 5)[2] == pytest.approx(0.002)
+
+
 @pytest.mark.asyncio
 async def test_interpreter_receives_tool_error_evidence(hub, monkeypatch):
     calls = mock_model(monkeypatch, hub)

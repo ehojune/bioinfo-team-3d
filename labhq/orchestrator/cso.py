@@ -4384,6 +4384,7 @@ class Orchestrator:
             reservations = {}
         if not isinstance(reservations, dict):
             return float("inf")
+        translation_unknown_extra = 0.0
         for key, row in reservations.items():
             if not isinstance(row, dict) or row.get("request_id") != rid:
                 return float("inf")
@@ -4395,8 +4396,12 @@ class Orchestrator:
                 # Conflicting provenance cannot admit another paid call.
                 return float("inf")
             holds[tid] = ceiling
+            if tid in settled and tid in self.cost_unknown.get(rid, set()):
+                # _budget_bound already includes the generic unknown reserve. Retain
+                # the remainder when this translation's durable ceiling was larger.
+                translation_unknown_extra += max(0.0, ceiling - self._unknown_reserve(limit))
         return sum(amount if _usd_amount(amount) else self._unknown_reserve(limit)
-                   for tid, amount in holds.items() if tid not in settled)
+                   for tid, amount in holds.items() if tid not in settled) + translation_unknown_extra
 
     def _prune_dispatch_holds(self, rid: str) -> None:
         req = self.hub.requests.get(rid) or {}
