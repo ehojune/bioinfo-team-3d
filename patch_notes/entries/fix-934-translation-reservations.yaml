@@ -1,0 +1,6 @@
+pr: 935
+rows:
+- sha: ca3ba5a
+  at: 2026-10-24 15:00
+  text: 통역 task별 예약을 dispatch 전에 보존하고 request bound·projection에서 중복 없이 합산
+  summary: 통역 예약을 task별로 확인하고 중단으로 남은 예약도 숨기지 않습니다.
