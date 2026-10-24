@@ -256,4 +256,6 @@ async def test_historical_estimate_does_not_lower_the_planned_execution_cap():
 
     assert hub.requests["r"]["plan_cost_estimate"]["estimate_usd"] == pytest.approx(6.0)
     assert hub.requests["r"]["plan"]["budget_usd"] == pytest.approx(8.0)
-    assert hub.requests["r"]["research_contract"]["approval"]["budget"]["cap_usd"] == pytest.approx(8.0)
+    budget = hub.requests["r"]["research_contract"]["approval"]["budget"]
+    assert budget["plan_budget_usd"] == pytest.approx(8.0)  # the estimate did not lower it
+    assert budget["cap_usd"] == pytest.approx(10.0)  # the request's own budget is the cap (#944)

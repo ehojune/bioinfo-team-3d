@@ -221,7 +221,8 @@ async def test_a_rolled_back_round_restores_the_previous_spending_cap(tmp_path, 
     the spend so far, up to the configured $3.50: round 1 is $2 + $1 = $3. Round 2's planning ran past that $3 and the
     PI granted a card (GRANT); its CP1 then cuts $4 + $1 to the configured $3.50, below the $4 spent."""
     hub = cont._hub(tmp_path, [*decisions, {"approved": False, "note": ""}], reviews=[cont.REVISE])
-    hub.requests["r"]["budget_usd"] = 3.5
+    hub.requests["r"]["budget_usd"] = None  # the lab's policy cap: a budget on the request is the cap itself (#944)
+    hub.s.policy.budget.per_request_usd = 3.5
     reply = hub.reply
 
     async def costed(task):
