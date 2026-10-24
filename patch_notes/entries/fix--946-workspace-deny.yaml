@@ -12,3 +12,7 @@ rows:
   at: 2026-10-25 01:55
   text: 작업 root가 junction·symlink일 때 읽기 전용 inputs의 Edit/Write 거부를 별칭 표기뿐 아니라 실제 경로 표기로도 붙인다(#946 리뷰 P1).
   summary: 별칭으로 연결된 작업 폴더에서도 조상 단계 입력 복사본을 단계가 고칠 수 없게 유지합니다.
+- sha: edca3c0
+  at: 2026-10-25 02:30
+  text: artifact contract 단계의 Claude 쓰기 허용 규칙을 작업 폴더 전체가 아니라 outputs/와 .tmp/로 좁혀, 대소문자만 다른 inputs 표기도 사전 허가되지 않고 승인 게이트로 가게 한다(#946 리뷰 P1).
+  summary: 읽기 전용 입력 폴더를 대소문자만 바꿔 고치는 우회를 막았습니다.
