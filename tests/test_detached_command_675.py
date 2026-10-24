@@ -19,6 +19,8 @@ from labhq.settings import Settings
     ("Bash", "sh -c 'sleep 60 &'"),
     ("Bash", "bash -lc \"nohup python gsea.py > log 2>&1 &\""),
     ("PowerShell", "powershell -Command \"Start-Process python gsea.py\""),
+    ("Bash", "bash <<'EOF'\nsleep 60 &\nEOF"),
+    ("Bash", "cat <<EOF | sh\nnohup python gsea.py\nEOF"),
 ])
 def test_commands_that_detach_a_process_are_recognised(tool, command):
     assert detached(tool, command)
@@ -31,6 +33,8 @@ def test_commands_that_detach_a_process_are_recognised(tool, command):
     ("Bash", "cat nohup.out"),
     ("Bash", "echo 'a & b'"),
     ("Bash", "python - <<'EOF'\nx = a & b\nEOF"),
+    ("Bash", "cat <<EOF > run.sh\nsleep 60 &\nEOF"),
+    ("Bash", "bash <<'EOF'\npython gsea.py && echo ok\nEOF"),
     ("Bash", "cmd1 |& cmd2"),
     ("Bash", "sh -c 'echo done'"),
     ("Bash", "bash -c \"python gsea.py && echo ok\""),

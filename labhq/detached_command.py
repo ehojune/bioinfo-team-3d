@@ -23,6 +23,9 @@ _START_PROCESS = re.compile(r"(?<![\w\-])Start-Process(?![\w\-])", re.I)
 _START_JOB = re.compile(r"(?<![\w\-])(Start-Job|Start-ThreadJob)(?![\w\-])", re.I)
 _WAIT = re.compile(r"(?<![\w\-])-(?:Wait|Verb)(?![\w\-])", re.I)  # `-Verb RunAs` is an elevation the gate asks about
 _SHELLS = {"Bash", "PowerShell"}
+_HEREDOC_BODY = re.compile(r"(?P<head>[^\n]*?)<<-?[ \t]*(['\"]?)(\w+)\2(?P<tail>[^\n]*)\n(?P<body>.*?)\n[ \t]*\3[ \t]*(?=\n|$)",
+                           re.S)
+_SHELL_WORD = re.compile(r"(?<![\w.\-/\\])(?:sh|bash|zsh|dash|ksh|ash|powershell|pwsh)(?:\.exe)?(?![\w\-.])", re.I)
 
 
 def _code(command: str) -> str:
@@ -53,5 +56,10 @@ def detached(tool_name: str, command: object, *, depth: int = 0) -> bool:
         for match in _QUOTED.finditer(_HEREDOC.sub("\n", command)):
             body = match.group(0)[1:-1]
             if any(detached(shell, body, depth=depth + 1) for shell in _SHELLS):
+                return True
+    if depth < 2:  # a heredoc fed to a shell is a script that runs; one fed to python or cat is data
+        for match in _HEREDOC_BODY.finditer(command):
+            if _SHELL_WORD.search(match.group("head") + " " + match.group("tail")) and any(
+                    detached(shell, match.group("body"), depth=depth + 1) for shell in _SHELLS):
                 return True
     return False
