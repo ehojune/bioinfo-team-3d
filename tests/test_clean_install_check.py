@@ -301,3 +301,32 @@ def test_cleanup_primary_survives_failed_receipt_write_without_a_false_pass(tmp_
         clean_install_check.rehearse(tmp_path / "source", [], receipt_path=receipt_path)
     assert json.loads(receipt_path.read_text(encoding="utf-8"))["status"] != "PASS"
     assert clean_install_check._RECEIPT.get() is None
+
+
+@pytest.mark.parametrize("phase", ["guard", "cleanup"])
+@pytest.mark.parametrize("interruption", [KeyboardInterrupt, SystemExit])
+def test_finalization_interruption_is_never_pass(tmp_path, monkeypatch, fake_install, phase, interruption):
+    receipt_path = tmp_path / "external.json"
+    def interrupted(*args):
+        raise interruption("finalization fixture interrupted")
+    if phase == "guard":
+        calls = 0
+        def snapshot(*args):
+            nonlocal calls
+            calls += 1
+            return {} if calls == 1 else interrupted()
+        monkeypatch.setattr(clean_install_check, "_snapshot", snapshot)
+        options = {"work_dir": tmp_path / "work"}
+    else:
+        root = tmp_path / "automatic"
+        root.mkdir()
+        monkeypatch.setattr(clean_install_check.tempfile, "mkdtemp", lambda **kwargs: str(root))
+        monkeypatch.setattr(clean_install_check.shutil, "rmtree", interrupted)
+        options = {}
+    with pytest.raises(interruption):
+        clean_install_check.rehearse(tmp_path / "source", [], receipt_path=receipt_path, **options)
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt["status"] == "FAIL"
+    assert "finalization fixture interrupted" in receipt["detail"]
+    assert receipt["finished_at"]
+    assert clean_install_check._RECEIPT.get() is None

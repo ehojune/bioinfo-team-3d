@@ -573,11 +573,12 @@ def rehearse(source: Path, guard_paths: list[Path], *, work_dir: Path | None = N
                 after = _snapshot(list(before))
                 changed = [str(path) for path, value in before.items() if after[path] != value]
                 _expect("보호 경로 mtime", not changed, "mtime 변경: " + ", ".join(changed))
-        except Exception as exc:
+        except BaseException as exc:
             if active_error:
-                receipt.data["guard_error"] = _one_line(exc)
+                receipt.data["guard_error"] = _one_line(str(exc) or type(exc).__name__)
             else:
-                receipt.data.update(status="FAIL", failure_stage=getattr(exc, "stage", "보호 경로"), detail=_one_line(exc))
+                receipt.data.update(status="FAIL", failure_stage=getattr(exc, "stage", "보호 경로"),
+                                    detail=_one_line(str(exc) or type(exc).__name__))
                 active_error = True
                 raise
         finally:
@@ -585,15 +586,24 @@ def rehearse(source: Path, guard_paths: list[Path], *, work_dir: Path | None = N
                 if work_dir is None:
                     try:
                         shutil.rmtree(root)
-                    except OSError as exc:
-                        receipt.data["cleanup_error"] = _one_line(exc)
+                    except BaseException as exc:
+                        receipt.data["cleanup_error"] = _one_line(str(exc) or type(exc).__name__)
                         if not active_error:
-                            receipt.data.update(status="FAIL", failure_stage="임시 폴더 정리", detail=_one_line(exc))
-                            raise CheckFailure("임시 폴더 정리", _one_line(exc)) from None
+                            receipt.data.update(status="FAIL", failure_stage="임시 폴더 정리",
+                                                detail=_one_line(str(exc) or type(exc).__name__))
+                            if isinstance(exc, OSError):
+                                raise CheckFailure("임시 폴더 정리", _one_line(exc)) from None
+                            raise
             finally:
-                active_error = active_error or sys.exc_info()[0] is not None
+                pending_error = sys.exc_info()[1]
+                active_error = active_error or pending_error is not None
                 if receipt.data["status"] == "RUNNING":
-                    receipt.data.update(status="PASS", request_id=request_id)
+                    if active_error:
+                        label = type(pending_error).__name__ if pending_error is not None else "finalization"
+                        receipt.data.update(status="FAIL", failure_stage=label,
+                                            detail=_one_line(str(pending_error) or label))
+                    else:
+                        receipt.data.update(status="PASS", request_id=request_id)
                 receipt.data["finished_at"] = datetime.now(timezone.utc).isoformat()
                 try:
                     # Do not recreate the automatically removed scratch tree for its default receipt.
