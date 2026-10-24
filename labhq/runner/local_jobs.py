@@ -110,8 +110,12 @@ def _group_alive(pid: int) -> bool:
 
 
 def _gone(pid: int, created: str | None, process: subprocess.Popen | None) -> bool:
-    leader_gone = (process is not None and process.poll() is not None) or not alive(pid, created)
-    return leader_gone and not _group_alive(pid)  # an unreaped child still reads as alive: poll() reaps it
+    """The job is over. With the child in hand, its group may still hold a descendant that outlived the leader. A job
+    adopted after a restart has no child: only a leader that is still the recorded process proves the group is ours,
+    since a pid and group id can be reused by an unrelated process once the leader is gone."""
+    if process is not None:
+        return process.poll() is not None and not _group_alive(pid)  # poll() reaps; an unreaped child reads as alive
+    return not alive(pid, created)
 
 
 def kill(local: dict, process: subprocess.Popen | None = None) -> bool:
@@ -131,11 +135,12 @@ def kill(local: dict, process: subprocess.Popen | None = None) -> bool:
         deadline = time.monotonic() + TERM_WAIT_S
         while time.monotonic() < deadline and not _gone(pid, created, process):
             time.sleep(0.1)
-        if not _gone(pid, created, process):
-            try:
-                os.killpg(pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
+        # The group was verified as ours when SIGTERM went out, so what ignored it is ended now even if the leader
+        # is already gone (an adopted job has no child to say whether the group is empty).
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
     deadline = time.monotonic() + TERM_WAIT_S
     while time.monotonic() < deadline and not _gone(pid, created, process):
         time.sleep(0.1)

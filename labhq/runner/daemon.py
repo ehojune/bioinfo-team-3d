@@ -719,7 +719,9 @@ class Runner:
                 t.cancel()
             await self._cancel_local_jobs(str(msg.get("task_id") or ""))
         elif typ == "task.jobs_cancel":  # the step is parked on its jobs and its request was cancelled (#675)
-            await self._cancel_local_jobs(str(msg.get("task_id") or ""))
+            tid = str(msg.get("task_id") or "")
+            await self._cancel_local_jobs(tid)
+            self.send({"type": "task.jobs_cancelled", "task_id": tid})  # durable: the gateway stops resending on it
         elif typ == "task.control":
             await self._on_control(msg)
         elif typ == "approval.attachment":

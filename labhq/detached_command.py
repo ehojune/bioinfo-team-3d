@@ -46,8 +46,9 @@ def detached(tool_name: str, command: object, *, depth: int = 0) -> bool:
         return True
     if tool_name == "Bash" and _BACKGROUND_AMP.search(text):
         return True
-    if tool_name == "PowerShell" and (_START_JOB.search(text) or (_START_PROCESS.search(text) and not _WAIT.search(text))):
-        return True
+    if tool_name == "PowerShell" and (_START_JOB.search(text) or any(
+            _START_PROCESS.search(part) and not _WAIT.search(part) for part in re.split(r"[;\n|]", text))):
+        return True  # each Start-Process invocation must wait on its own
     if depth < 2 and _NESTED.search(_HEREDOC.sub("\n", command)):  # the quoted script of a nested shell runs too
         for match in _QUOTED.finditer(_HEREDOC.sub("\n", command)):
             body = match.group(0)[1:-1]

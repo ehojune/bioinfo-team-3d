@@ -15,6 +15,7 @@ from labhq.settings import Settings
     ("Bash", "python a.py & python b.py"),
     ("PowerShell", "Start-Process python -ArgumentList gsea.py"),
     ("PowerShell", "Start-Job { python gsea.py }"),
+    ("PowerShell", "Start-Process first -Wait; Start-Process second"),
     ("Bash", "sh -c 'sleep 60 &'"),
     ("Bash", "bash -lc \"nohup python gsea.py > log 2>&1 &\""),
     ("PowerShell", "powershell -Command \"Start-Process python gsea.py\""),

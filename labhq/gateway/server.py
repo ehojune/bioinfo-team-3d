@@ -1900,6 +1900,13 @@ class Hub:
                 self.store.delete("task_cancel", tid)
                 continue
             await self.send_runner(runner_id, {"type": "task.cancel", "task_id": tid})
+        for tid, entry in self.store.all("jobs_cancel").items():  # local jobs of a cancelled request (#675)
+            if entry.get("runner_id") != runner_id:
+                continue
+            if now - float(entry.get("requested_at") or 0) > TASK_CANCEL_KEEP_S:
+                self.store.delete("jobs_cancel", tid)
+                continue
+            await self.send_runner(runner_id, {"type": "task.jobs_cancel", "task_id": tid})
 
     # ----- staff control (#59 ①) -----
     @staticmethod
@@ -2760,6 +2767,8 @@ class Hub:
             fut = self.jobs_waiters.pop(tid, None)
             if fut and not fut.done():
                 fut.set_result(msg["data"])
+        elif typ == "task.jobs_cancelled":  # the runner ended the local jobs of that step: stop resending
+            self.store.delete("jobs_cancel", str(msg.get("task_id") or ""))
         elif typ == "task.accepted":
             tid = msg.get("task_id") or ""
             task = self.store.get("task", tid)
@@ -3685,6 +3694,9 @@ class Hub:
                 # so no process outlives the request (#675).
                 runner_id = self.task_runner.get(tid) or entry.get("runner_id")
                 if runner_id:
+                    # Kept until that runner confirms (task.jobs_cancelled): a runner that is away or restarting
+                    # gets it again when it reconnects (flush_task_cancels).
+                    self.store.put("jobs_cancel", tid, {"runner_id": runner_id, "requested_at": time.time()})
                     try:
                         await self.send_runner(runner_id, {"type": "task.jobs_cancel", "task_id": tid})
                     except RunnerUnavailable:

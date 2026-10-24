@@ -484,3 +484,48 @@ async def test_cancelling_a_request_tells_the_runner_to_end_the_jobs_of_a_step_p
     kinds = {(message["type"], message["task_id"]) for _runner, message in sent}
     assert ("task.jobs_cancel", "parked") in kinds  # no running task to cancel: its jobs are ended directly
     assert ("task.cancel", "parked") not in kinds  # it reported a result: only its jobs remain
+
+
+@pytest.mark.asyncio
+async def test_a_jobs_cancel_the_runner_has_not_confirmed_is_kept_and_sent_again(tmp_path):
+    from labhq.gateway.server import create_app
+    from labhq.gateway.server import RunnerUnavailable
+
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path)
+    hub = create_app(settings).state.hub
+    hub.requests["req"] = {"id": "req", "status": "running", "text": "t", "plan": {"steps": [{"id": "s1"}]},
+                           "mode": "orchestrate", "created_at": time.time()}
+    hub.store.put("task", "parked", {"completed": True, "request_id": "req", "step_id": "s1", "runner_id": "r1",
+                                     "payload": {"agent_id": "worker"}})
+    sent, online = [], {"up": False}
+
+    async def send(runner_id, message):
+        if not online["up"]:
+            raise RunnerUnavailable(runner_id)
+        sent.append((runner_id, message["type"], message["task_id"]))
+
+    hub.send_runner = send
+    await hub.cancel_request("req")
+    assert sent == [] and hub.store.get("jobs_cancel", "parked")["runner_id"] == "r1"  # the runner was away: kept
+    online["up"] = True
+    await hub.flush_task_cancels("r1")  # it reconnects
+    assert sent == [("r1", "task.jobs_cancel", "parked")]
+    await hub.on_runner_message("r1", {"type": "task.jobs_cancelled", "task_id": "parked"})
+    assert hub.store.get("jobs_cancel", "parked") is None  # confirmed: no more resending
+    await hub.flush_task_cancels("r1")
+    assert len(sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_runner_confirms_a_jobs_cancel_durably(board):
+    out = {}
+
+    async def body(identity):
+        out.update(await board.submit(SLEEP)(identity))
+
+    task, _ = await board.run(body)
+    await board.runner._on_message({"type": "task.jobs_cancel", "task_id": task.id})
+    queued = [row for row in board.runner.store.pending() if row.get("type") == "task.jobs_cancelled"]
+    assert [row["task_id"] for row in queued] == [task.id]
+    assert board.runner.jobs[out["job_id"]]["state"] == "cancelled"
