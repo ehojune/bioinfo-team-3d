@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 11:10 | [`e414872`](https://github.com/ehojune/bioinfo-team-3d/pull/932/commits/e414872) | **Windows 검사가 느린 날 무관한 변경을 시간 초과로 막지 않도록 제한을 늘렸습니다.**<br>최근 99개 Windows run을 재측정했다. 병렬 단계는 성공 74회 중앙값 264초·p90 319초·최댓값 350초이고 6분 제한(360초)에 8번 걸렸다. 병렬 단계 제한을 6분에서 9분(최댓값의 1.5배 이상), Windows job 제한을 10분에서 14분으로 올렸다. 병렬 단계 시작과 소요를 job summary에 항상 남겨 다음 조정의 근거로 삼는다. 테스트 자체의 assert·timeout은 바꾸지 않았다. 10분 목표는 summary.json의 over_ten_minutes로 계속 잰다. 제한을 올린 효과는 앞으로의 run으로 확인해야 한다. |
 | 09:48 | [`c342ae4`](https://github.com/ehojune/bioinfo-team-3d/pull/927/commits/c342ae4) | **완료된 plan·s1의 task identity와 단일 실행을 복구 receipt로 확인합니다.**<br>비용·수락 원장이 맞아도 새 task로 plan을 재실행하면 실패한다. raw 비용 원장도 재합산해 summary와 대조한다. 실제 강제 종료와 source 거부 4건 PASS. Refs |
 | 09:40 | [`ea30096`](https://github.com/ehojune/bioinfo-team-3d/pull/927/commits/ea30096) | **복구 script·parent import·child 실행을 같은 checkout에 묶습니다.**<br>다른 --source와 다른 제품 import를 출력·process 생성 전에 거부한다. source 판본 거부 2건과 실제 강제 종료·receipt 검증 2건 PASS. Refs |
 | 09:34 | [`d62d35e`](https://github.com/ehojune/bioinfo-team-3d/pull/927/commits/d62d35e) | **복구 receipt에서 새 task 비용 행과 known 비용을 빠짐없이 요구합니다.**<br>새 task 비용과 합계를 함께 지우면 통과하던 봇 P2를 재현했다. unknown·누락 비용을 거부하고 실제 강제 종료 2건 PASS. GO의 proof 실패·카드 응답 운영 조건도 제품 기본 timeout과 구분했다. Refs |
