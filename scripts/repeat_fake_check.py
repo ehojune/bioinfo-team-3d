@@ -37,7 +37,7 @@ def compare(receipts: list[dict]) -> dict:
 
 def command(args: list[str], cwd: Path, env: dict[str, str], logs: Path, name: str, timeout=600, input_text=None):
     """Retain stdout and stderr separately, including failures; commands have deadlines."""
-    with (logs / f"{name}.stdout.log").open("wb") as out, (logs / f"{name}.stderr.log").open("wb") as err:
+    with (logs / f"{name}.stdout.log").open(mode="wb") as out, (logs / f"{name}.stderr.log").open(mode="wb") as err:
         done = subprocess.run(args, cwd=cwd, env=env, input=input_text.encode() if input_text else None,
                               stdout=out, stderr=err, timeout=timeout, check=False)
     fixture.require(done.returncode == 0, f"{name} failed (exit {done.returncode}); see separate logs")
@@ -71,7 +71,7 @@ def rehearse(source: Path, output: Path) -> dict:
         root.mkdir()
         child = [str(python), str(checkout / "scripts/repeat_fake_check.py"), "--child", str(root),
                  "--config", str(checkout / "config/labhq.yaml")]
-        with (logs / f"run-{n}.stdout.log").open("wb") as out, (logs / f"run-{n}.stderr.log").open("wb") as err:
+        with (logs / f"run-{n}.stdout.log").open(mode="wb") as out, (logs / f"run-{n}.stderr.log").open(mode="wb") as err:
             proc = subprocess.Popen(child, cwd=checkout, env=run_env, stdout=out, stderr=err)
             timed_out = False
             try:
