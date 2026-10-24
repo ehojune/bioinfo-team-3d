@@ -78,11 +78,11 @@ async def test_unrecognized_type_is_unverified_not_a_fabricated_mismatch(data_ty
 
 
 @pytest.mark.asyncio
-async def test_repeated_mismatch_stops_after_existing_two_attempt_bound_before_cp1():
-    hub, req = await run_plans(['sequence_reads', 'sequence_reads'])
-    assert len(hub.calls) == 2 and not hub.approvals
+async def test_repeated_mismatch_stops_after_the_correction_bound_before_cp1():
+    hub, req = await run_plans(['sequence_reads'] * 4)  # first plan + 3 corrections (#948)
+    assert len(hub.calls) == 4 and not hub.approvals
     assert req['outcome'] == 'plan_invalid'
-    assert len(req['plan_validation']['semantic_checks']) == 2
+    assert len(req['plan_validation']['semantic_checks']) == 4
 
 
 @pytest.mark.asyncio

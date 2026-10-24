@@ -110,7 +110,7 @@ async def test_malformed_agent_id_goes_to_the_correction_instead_of_failing_the_
 async def test_plan_still_invalid_after_correction_tells_the_pi_why():
     bad = valid_plan(pack_values=valid_pack_values())
     bad["pack_values"][PACK]["acceptance"] = {"batch_condition_distinguishable": "met"}
-    hub, selected = await _plan_with([bad, copy.deepcopy(bad)])
+    hub, selected = await _plan_with([copy.deepcopy(bad) for _ in range(4)])  # first plan + 3 corrections (#948)
     request = hub.requests["r"]
     assert request["status"] == "failed" and request["outcome"] == "plan_invalid"
     assert hub.approvals == []
@@ -121,7 +121,7 @@ async def test_plan_still_invalid_after_correction_tells_the_pi_why():
     assert "ValueError" not in report and "Traceback" not in report
     assert request["error"].startswith("연구 계획 검증 실패")
     assert any("acceptance" in problem for problem in request["plan_validation"]["errors"])
-    assert request["plan_validation"]["attempts"] == 2
+    assert request["plan_validation"]["attempts"] == 4
 
 
 def test_plan_errors_collect_schema_and_pack_problems_in_one_pass():
