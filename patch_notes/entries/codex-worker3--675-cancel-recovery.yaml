@@ -4,3 +4,7 @@ rows:
     at: "2026-10-26 04:10"
     text: "test: offline 취소를 복구한 runner에 재전송하는 통합 회귀검사 보존 (Refs #675)"
     summary: "취소한 local job의 wrapper·자식 종료와 다른 요청 보존을 검사하고 Windows 필수 검사에 넣었습니다."
+  - sha: 0adc882
+    at: "2026-10-26 04:09"
+    text: "test: CI mandatory inventory의 예상 목록에 새 회귀검사 추가"
+    summary: "기존 필수 항목 검증을 유지하며 새 항목도 정확히 대조합니다. 계약 검사 3건이 통과했습니다."
