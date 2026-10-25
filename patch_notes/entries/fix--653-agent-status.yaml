@@ -1,5 +1,9 @@
 pr: null
 rows:
+  - sha: f0bed64
+    at: "2026-10-26 05:53"
+    summary: "직접 맡긴 요청이 러너 연결을 기다릴 때 대기 이유를 표시합니다."
+    text: "fix: 첫 dispatch 전 waiting_for_runner 상태를 차례 대기와 구분하고 회귀검사 추가"
   - sha: 16adbf2
     at: "2026-10-26 04:58"
     summary: "차례를 기다리는 직원의 표시를 데스크톱과 휴대폰 화면에서 확인했습니다."
