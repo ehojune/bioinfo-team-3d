@@ -1,5 +1,9 @@
 pr: 966
 rows:
+- sha: '6022553'
+  at: 2026-10-26 04:00
+  summary: 이벤트 기록 조회도 저장과 발행 순서를 기다립니다.
+  text: '봇 P2 4372012596에 따라 REST history를 WebSocket과 같은 event lock으로 보호했습니다. 일반 history·since·replay-gap snapshot 세 경로를 추가해 회귀 20건을 통과했습니다.'
 - sha: '8cc75b9'
   at: 2026-10-26 04:00
   summary: 이벤트 발행을 마친 뒤 번역과 보고 작업을 시작합니다.
