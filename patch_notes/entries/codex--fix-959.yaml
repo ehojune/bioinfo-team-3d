@@ -1,5 +1,9 @@
 pr: 962
 rows:
+  - sha: 5bafdf1
+    at: "2026-10-25 20:48"
+    summary: "이어 가기 카드의 기존 시작 문구 뒤에 재사용 거부 이유를 표시합니다."
+    text: "Linux CI의 CP2 카드 문구 순서 회귀를 수정했다. 기존 assertion을 유지하고 거부 이유 표시 검증을 추가했다. CP2 revise·입력 proof 32 passed."
   - sha: bf426d3
     at: "2026-10-25 20:39"
     summary: "파일 reference의 sibling 입력과 Windows/WSL 경로를 proof에 반영했습니다."
