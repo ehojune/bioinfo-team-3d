@@ -179,12 +179,24 @@ def evidence_note(row: Mapping[str, str]) -> str:
             f"계보: {row['lineage']}")
 
 
+def evidence_literals(value: str) -> str:
+    """Keep tool identifiers and URL query keys literal in generated Markdown."""
+    def literal(match: re.Match[str]) -> str:
+        token = match.group()
+        if "__" not in token:
+            return token
+        fence = "`" * (max((len(run) for run in re.findall(r"`+", token)), default=0) + 1)
+        return f"{fence} {token} {fence}"
+    return re.sub(r"https?://[^\s]+|\b[A-Za-z]\w*__\w+", literal, value)
+
+
 def claim_evidence_section(rows: list[dict[str, str]]) -> str:
     if not rows:
         return ""
 
     def cell(value: str) -> str:
-        return " ".join(value.split()).replace("|", "&#124;")
+        value = " ".join(value.split()).replace("|", "&#124;")
+        return evidence_literals(value)
 
     lines = [f"## {SOURCE_EVIDENCE_TITLE}", "", "접근 상태는 지지 여부와 별개입니다. 미기록 위치·최초 출처는 추정하지 않습니다.", "",
              "| Claim (상태) | Evidence · 관계 (상태) | 출처·원문 위치·접근·계보 |",

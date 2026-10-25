@@ -5,6 +5,8 @@ from pathlib import Path
 import pytest
 
 import labhq.portfolio as portfolio
+from labhq.evidence.report_check import claim_evidence_section
+from labhq.report_markdown import rendered_markers
 from labhq.korean_qc import check_document
 from labhq.portfolio import build_portfolio_files, scan_publish_files
 from labhq.result_storage import draft_documents
@@ -45,6 +47,92 @@ PMID:21674046 · DOI:10.1371/journal.pone.0020280 · GEO:GSE26982
 
 작은 집단을 비교했다.
 """
+
+
+def test_edition_repairs_only_missing_final_note_and_records_it():
+    name = "steps/clinical/outputs/access_ledger.tsv"
+    original = "candidate\taccess\t비고\nA\tunavailable\nB\tfulltext\tchecked\n"
+    assert not portfolio._table_metadata(name, original)[2]
+    request = {"id": "req_notes", "text": "문헌 접근 기록", "report": "# 결과\n\n접근 상태를 기록했다."}
+    assets = {name: original}
+
+    files = build_portfolio_files(request, Settings(), assets, {})
+
+    assert assets[name] == original
+    assert files["tables/access_ledger.tsv"] == original.replace("A\tunavailable\n", "A\tunavailable\t\n")
+    assert portfolio._table_metadata(name, files["tables/access_ledger.tsv"])[2]
+    assert "tables/access_ledger.tsv" in files["docs/reference/table_repairs.md"]
+    assert "헤더=1" in files["docs/reference/table_repairs.md"]
+    assert "[표 형식 보정 기록]" in files["README.md"]
+
+
+@pytest.mark.parametrize("body", [
+    "candidate\tresult\nA\n",  # Missing result is never inferred.
+    "candidate\tresult\tnotes\nA\n",  # More than a final note is missing.
+    "candidate\tnotes\nA\tB\tC\n",  # Extra fields are never discarded.
+    "candidate\tnotes\nA\nB\tC\tD\n",  # Do not partially repair a broken table.
+])
+def test_edition_keeps_blocking_other_table_shape_errors(body):
+    name = "steps/clinical/outputs/result.tsv"
+    assert portfolio._edition_note_cells(name, body) == (body, [])
+    request = {"id": "req_shape", "text": "표 확인", "report": "# 결과\n\n[결과 표](steps/clinical/outputs/result.tsv)"}
+    with pytest.raises(portfolio.EditionCheckError, match="table_shape"):
+        build_portfolio_files(request, Settings(), {name: body}, {})
+
+
+def test_evidence_technical_identifiers_are_literal_in_reader_edition():
+    # Attempt 17: tool names in detail and a ChEMBL query key in source text,
+    # not broken emphasis in the authored scientific report.
+    row = dict.fromkeys(("step_id", "claim_id", "claim_status", "claim", "evidence_id", "relation",
+                         "evidence_status", "detail", "source", "locator", "access", "methods",
+                         "qc", "supplement", "lineage"), "unrecorded")
+    row.update(detail="No tools: mcp__labhq_annot__vep / mcp__labhq_annot__clinvar",
+               source="https://example.org/molecule.json?molecule_chembl_id__in=A,B")
+    section = claim_evidence_section([row])
+    assert rendered_markers(section) == []
+    assert "` mcp__labhq_annot__vep `" in section
+    assert row["source"] in section
+    files = build_portfolio_files({"id": "req_literal", "text": "근거 확인", "report": "# 결과\n\n" + section}, Settings(), {}, {})
+    assert not scan_publish_files(files)
+    assert rendered_markers("**(broken)**text")  # The actual render gate remains strict.
+
+
+def test_cited_technical_source_is_literal_in_publication_footnotes():
+    source = "https://example.org/molecule.json?molecule_chembl_id__in=A,B"
+    ledger = {
+        "claims": [{"id": "c1", "statement": "Source checked", "status": "supported"}],
+        "evidence": [{"id": "e1", "status": "observed", "source": {"uri": source}}],
+        "links": [{"claim_id": "c1", "evidence_id": "e1", "relation": "supports"}],
+    }
+    request = {"id": "req_footnote", "text": "근거 확인", "report": "Source checked.",
+               "results": {"s1": {"structured": ledger}}}
+    assets = {"steps/report/outputs/report/final_report.md": PAPER + "\nSource checked [[claim:s1/c1]].\n"}
+    files = build_portfolio_files(request, Settings(), assets, {})
+    assert source in files["report/report.md"]
+    assert "[^" in files["report/report.md"]
+    assert rendered_markers(files["report/report.md"]) == []
+    assert not scan_publish_files(files)
+
+
+def test_edition_rebuilds_existing_generated_evidence_table_from_ledger():
+    source = "https://example.org/query?molecule_chembl_id__in=A,B"
+    ledger = {
+        "claims": [{"id": "c1", "statement": "Source checked", "status": "supported"}],
+        "evidence": [{"id": "e1", "status": "observed", "source": {"uri": source}}],
+        "links": [{"claim_id": "c1", "evidence_id": "e1", "relation": "supports"}],
+    }
+    request = {"id": "req_existing", "text": "근거 확인", "results": {"s1": {"structured": ledger}}}
+    rows = portfolio._source_evidence_rows(request, Settings())
+    stale = claim_evidence_section(rows).replace("` ", "").replace(" `", "")
+    original = PAPER + "\n" + stale + "\n## 후속 본문\n\nPreserve this paragraph.\n"
+    assert rendered_markers(stale)
+    request["report"] = original
+    files = build_portfolio_files(request, Settings(), {}, {})
+    report = files["report/report.md"]
+    assert report.count("## " + portfolio.SOURCE_EVIDENCE_TITLE) == 1
+    assert "Preserve this paragraph." in report
+    assert rendered_markers(report) == []
+    assert request["report"] == original
 
 
 def test_compatibility_report_converts_claims_before_publication_scan():
