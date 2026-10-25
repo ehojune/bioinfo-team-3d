@@ -260,11 +260,16 @@ async def test_rest_history_waits_for_complete_ordered_publication(tmp_path, mon
 async def test_cancel_backpressured_client_finishes_storage_and_releases_event_lock(gateway):
     hub = gateway
     entered = asyncio.Event()
+    closed = asyncio.Event()
 
     class StalledClient:
         async def send_text(self, text):
             entered.set()
             await asyncio.Event().wait()
+
+        async def close(self, code):
+            assert code == 1012
+            closed.set()
 
     stalled = StalledClient()
     hub.clients.add(stalled)
@@ -273,6 +278,7 @@ async def test_cancel_backpressured_client_finishes_storage_and_releases_event_l
     publication.cancel()
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(publication, 1)
+    await asyncio.wait_for(closed.wait(), 1)
     assert not hub.event_lock.locked() and stalled not in hub.clients
     assert hub.store.get("request", "r")["status"] == "running"
     assert hub.store.runner_seen("runner") == 1

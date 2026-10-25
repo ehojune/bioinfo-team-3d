@@ -1360,7 +1360,7 @@ class Hub:
                     await client.send_text(json.dumps(event, ensure_ascii=False, default=str))
                 except asyncio.CancelledError:
                     # A backpressured client must not hold the next publisher too.
-                    self.clients.discard(client)
+                    self._disconnect_cancelled_client(client)
                     self.pending_committed[0] = (event, clients[1:])
                     raise
                 except Exception:
@@ -1374,6 +1374,25 @@ class Hub:
                 self.pi_interpreter.schedule(event)
             else:
                 delivered.append(event)
+
+    def _disconnect_cancelled_client(self, client) -> None:
+        self.clients.discard(client)
+        close = getattr(client, "close", None)
+        if close is None:
+            return
+
+        async def close_socket():
+            # Close independently of the cancelled sender, with a bounded network
+            # wait. The browser reconnects and replays the committed sequence.
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(close(code=1012), 1.0)
+
+        closing = getattr(self, "client_close_tasks", None)
+        if closing is None:
+            closing = self.client_close_tasks = set()
+        task = asyncio.create_task(close_socket())
+        closing.add(task)
+        task.add_done_callback(closing.discard)
 
     def result_map(self, rid: str) -> SavedResults:
         return SavedResults(self, rid)
