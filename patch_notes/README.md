@@ -14,10 +14,18 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 06:00 | [`39649e4`](https://github.com/ehojune/bioinfo-team-3d/commit/39649e4) | **러너를 기다리는 직원만 대기로 표시하고 다른 직원의 차례를 구분합니다.**<br>fix: runner_wait의 대상 직원을 보존하고 dispatch·대기 종료 시 정리하는 회귀검사 추가 |
+| 05:58 | [`2a9d36c`](https://github.com/ehojune/bioinfo-team-3d/commit/2a9d36c) | **CSO가 실제 맡는 팀 요청과 계획 요청은 참여한 일로 표시합니다.**<br>fix: orchestrate·plan_only mode를 CSO 참여 근거로 쓰되 무관한 direct 요청은 제외 |
+| 05:53 | [`f0bed64`](https://github.com/ehojune/bioinfo-team-3d/commit/f0bed64) | **직접 맡긴 요청이 러너 연결을 기다릴 때 대기 이유를 표시합니다.**<br>fix: 첫 dispatch 전 waiting_for_runner 상태를 차례 대기와 구분하고 회귀검사 추가 |
 | 05:00 | [`edb898c`](https://github.com/ehojune/bioinfo-team-3d/pull/966/commits/edb898c) | **화면 전송이 끝난 뒤 중복·누락과 lock 상태를 검사합니다.**<br>Linux 3.10 CI가 찾은 readiness 경계 2건을 수정했습니다. 자동 sender 완료를 관찰하고 기존 client·새 client의 중복/누락 assertion과 lock 해제를 검사합니다. production·기존 assertion·timeout은 유지하며 관련 mock/static 27건 통과. |
+| 04:58 | [`16adbf2`](https://github.com/ehojune/bioinfo-team-3d/commit/16adbf2) | **차례를 기다리는 직원의 표시를 데스크톱과 휴대폰 화면에서 확인했습니다.**<br>test: 실제 Chrome 32 view를 대조해 차례 대기 상태·문구·chip 크기의 visual baseline 갱신 |
+| 04:48 | [`735c608`](https://github.com/ehojune/bioinfo-team-3d/commit/735c608) | **다시 접속해도 실패하거나 산출물이 빠진 단계를 시작 전으로 표시하지 않습니다.**<br>fix: gateway snapshot의 failed·incomplete를 오류 상태로 복원하고 회귀검사 보강 |
 | 04:45 | [`52d85dc`](https://github.com/ehojune/bioinfo-team-3d/pull/966/commits/52d85dc) | **끊긴 화면 연결을 뒤쪽 이벤트에서도 건너뜁니다.**<br>봇 P2 4372148050의 반복 timeout을 pending event 3개로 재현했습니다(1 failed). broadcast에서 빠진 client는 후속 snapshot 전송에서도 제외합니다. 건강한 client의 seq 1·2·3 수신과 관련 mock/static 292건을 확인했습니다. |
+| 04:43 | [`9033800`](https://github.com/ehojune/bioinfo-team-3d/commit/9033800) | **직접 맡긴 요청도 로그인이나 한도를 기다리는 이유를 다시 접속한 뒤 보여 줍니다.**<br>fix: direct 요청의 step_status.direct를 공통 직원 상태 판정에 포함하고 대기 회귀검사 추가 |
 | 04:40 | [`6cf63c4`](https://github.com/ehojune/bioinfo-team-3d/pull/966/commits/6cf63c4) | **저장 중 들어온 취소 뒤에는 다음 작업을 시작하지 않습니다.**<br>봇 P2 4372130381의 AnyIO 취소 누락을 client 없는 경로에서 1 failed로 재현했습니다. commit 결과 확인 뒤 shield 밖에서 취소 checkpoint를 검사합니다. 저장 완료와 caller 후속 동작 차단을 포함한 mock/static 291건 통과. |
+| 04:39 | [`94464bf`](https://github.com/ehojune/bioinfo-team-3d/commit/94464bf) | **현재 답변이나 HPC 작업을 기다리는 직원의 상태를 그대로 보여 줍니다.**<br>fix: task ledger 없는 live agent 상태를 요청 fallback보다 우선하고 P1 회귀검사 보강 |
 | 04:35 | [`70abfec`](https://github.com/ehojune/bioinfo-team-3d/pull/966/commits/70abfec) | **발행이 취소돼도 남은 화면 전송을 바로 이어갑니다.**<br>봇 P2 4372112318을 수정했습니다. lock 반환 뒤 pending delivery를 독립적으로 재개하고 client 전송은 10초로 제한합니다. 다음 event 없이 남은 client가 수신하는 검사와 network timeout·close를 추가했습니다. 관련 mock/static 290건 통과. |
+| 04:33 | [`17825fb`](https://github.com/ehojune/bioinfo-team-3d/commit/17825fb) | **직원이 지금 맡은 일이 지난 요청의 검토 대기에 가려지지 않도록 고쳤습니다.**<br>fix: 공통 직원 상태 판정에서 현재 요청을 우선하고 CSO 참여 근거와 검토 요청 제목을 표시 (#653) |
 | 04:30 | [`19a76e2`](https://github.com/ehojune/bioinfo-team-3d/pull/966/commits/19a76e2) | **두 요청이 동시에 로그인 대기에 들어가도 안내는 한 번만 보냅니다.**<br>Linux 3.12 CI의 중복 notice race를 두 task의 동일 await 경계로 재현했습니다(1 failed). publish 완료 뒤 shared notice를 원자적으로 확인·예약하도록 고쳤습니다. 기존 단언·상한을 유지하고 관련 mock/static 67건을 통과했습니다. |
 | 04:20 | [`ea8011a`](https://github.com/ehojune/bioinfo-team-3d/pull/966/commits/ea8011a) | **전송이 취소된 화면 연결을 닫아 저장된 이벤트를 다시 받게 합니다.**<br>봇 P2 4372064831을 수정했습니다. broadcast에서 제외한 client를 독립된 1초 제한 close로 종료해 reconnect/replay를 유도합니다. 취소·close 호출·저장·다음 발행을 포함한 gateway 회귀 22건 통과. |
 | 04:15 | [`8b8bbf3`](https://github.com/ehojune/bioinfo-team-3d/pull/966/commits/8b8bbf3) | **연결 종료 때도 저장만 취소에서 보호합니다.**<br>AnyIO cancellation scope도 DB commit에서만 차폐합니다. ASGI 연결 종료 전체를 보호하던 범위를 없애고 network 취소 뒤 저장 완료·다음 발행을 검증했습니다. gateway 새 회귀 22건과 disconnect 검사 통과. |

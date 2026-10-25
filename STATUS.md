@@ -4,6 +4,18 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+Closes #653
+
+현재 요청의 담당 단계가 지난 요청의 PI 검토 대기에 가려지던 직원 표시를 수정했습니다. CSO의 무조건 참여 예외를 없애고 검토 대기에 짧은 요청 제목을 붙였습니다. 2.5D·3D는 공통 state 판정을 쓰며 실행 task·승인·경고의 우선순위를 유지합니다.
+
+- 변경: `state.js`, `office-art.js`, 회귀검사·visual baseline, manual.
+- 재현: 새 Node 검사 수정 전 4 failed·1 passed. 봇 P1의 task 없는 답 대기와 P2의 direct·runner 대상·실패 snapshot·CSO mode 참여를 재현해 수정했고 관련 7개 파일 67 passed. 요청 전환·직원 제어 추가 22 passed.
+- 검사: `git diff --check`, public 검사, patch-note·status 검사.
+- Browser: Chrome desktop·phone 32 view PASS. baseline은 세 직원의 차례 대기 상태·문구와 chip 폭·위치 변경 60개만 반영했습니다.
+- 한계: 3D는 공통 판정·표시 호출부 정적 대조이며 실제 browser QA와 운영 재현은 UNVERIFIED. 연구·HPC 실행 없음.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 Refs #675. runner 부재 중 취소를 복구한 runner에 재전송하는 통합 회귀검사를 보존했습니다. production 변경은 없습니다.
 
 - 무해한 Python job 2개로 취소한 요청의 wrapper·자식 잔류 0, 완료 깨움 없음, 다른 요청 보존, 연결 실패만으로 취소하지 않음을 확인합니다.
