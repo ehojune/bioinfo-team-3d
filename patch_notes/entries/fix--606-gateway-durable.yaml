@@ -1,5 +1,9 @@
 pr: 966
 rows:
+- sha: '6cf63c4'
+  at: 2026-10-26 04:40
+  summary: 저장 중 들어온 취소 뒤에는 다음 작업을 시작하지 않습니다.
+  text: '봇 P2 4372130381의 AnyIO 취소 누락을 client 없는 경로에서 1 failed로 재현했습니다. commit 결과 확인 뒤 shield 밖에서 취소 checkpoint를 검사합니다. 저장 완료와 caller 후속 동작 차단을 포함한 mock/static 291건 통과.'
 - sha: '70abfec'
   at: 2026-10-26 04:35
   summary: 발행이 취소돼도 남은 화면 전송을 바로 이어갑니다.
