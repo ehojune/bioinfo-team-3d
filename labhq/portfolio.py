@@ -702,9 +702,10 @@ def _without_source_evidence_sections(report: str) -> str:
 
 def _portfolio_report_parts(req: dict, assets: Mapping[str, str], settings) -> tuple[str, str]:
     report, moved = _split_revision_history(_paper_candidate(req, assets))
-    if request_uses_internal_data(req, settings):
+    rows = _source_evidence_rows(req, settings)
+    if rows or request_uses_internal_data(req, settings):
         report = _without_source_evidence_sections(report)
-    section = claim_evidence_section(_source_evidence_rows(req, settings))
+    section = claim_evidence_section(rows)
     if section and section.rstrip() not in report:
         report = report.rstrip() + "\n\n" + section
     review = _review_history(req)

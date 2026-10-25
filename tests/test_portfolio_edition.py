@@ -114,6 +114,27 @@ def test_cited_technical_source_is_literal_in_publication_footnotes():
     assert not scan_publish_files(files)
 
 
+def test_edition_rebuilds_existing_generated_evidence_table_from_ledger():
+    source = "https://example.org/query?molecule_chembl_id__in=A,B"
+    ledger = {
+        "claims": [{"id": "c1", "statement": "Source checked", "status": "supported"}],
+        "evidence": [{"id": "e1", "status": "observed", "source": {"uri": source}}],
+        "links": [{"claim_id": "c1", "evidence_id": "e1", "relation": "supports"}],
+    }
+    request = {"id": "req_existing", "text": "근거 확인", "results": {"s1": {"structured": ledger}}}
+    rows = portfolio._source_evidence_rows(request, Settings())
+    stale = claim_evidence_section(rows).replace("` ", "").replace(" `", "")
+    original = PAPER + "\n" + stale + "\n## 후속 본문\n\nPreserve this paragraph.\n"
+    assert rendered_markers(stale)
+    request["report"] = original
+    files = build_portfolio_files(request, Settings(), {}, {})
+    report = files["report/report.md"]
+    assert report.count("## " + portfolio.SOURCE_EVIDENCE_TITLE) == 1
+    assert "Preserve this paragraph." in report
+    assert rendered_markers(report) == []
+    assert request["report"] == original
+
+
 def test_compatibility_report_converts_claims_before_publication_scan():
     request = {"report": "Result [[claim:s1/c1]].\n\n`[[claim:s1/example]]`\n"}
 

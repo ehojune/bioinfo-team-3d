@@ -1,5 +1,9 @@
 pr: 961
 rows:
+- sha: pending
+  at: 2026-10-25 20:44
+  summary: 저장된 원고의 기존 생성 근거 표도 ledger로 다시 만듭니다.
+  text: '17차 전체 원고에서는 이전 근거 표가 남아 __ 검출이 이어졌습니다. ledger가 있는 경우 생성 표를 다시 만들고 나머지 본문을 보존합니다. 전체 원고의 render marker 0건과 관련 pytest 119건을 확인했습니다.'
 - sha: '947e540'
   at: 2026-10-25 20:42
   summary: claim 각주에도 기술 문자열 formatter를 적용했습니다.
