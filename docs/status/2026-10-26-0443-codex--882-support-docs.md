@@ -5,6 +5,7 @@ Refs #882. HANDOFF 현재 큐와 manual의 기존 중단 조건 절을 최신 ma
 - HANDOFF 3,550→4,239자, manual 192,774→193,672자: 합계 +1,587자. 상세 근거는 기존 reference에 연결했습니다.
 - 변경 링크 26개 경로·anchor/URL 형식, GitHub 대상·상태 대조, public·diff·patch-notes·notes 검사를 통과했습니다. 문서 변경으로 로컬 runtime test는 실행하지 않았습니다.
 - 리뷰 후 #760 확인 의무·#882 역할 인계 근거(`e322c96`), #877 최신 제한 PASS와 남은 확인(`46a8f9e`)을 명시했습니다.
+- 추가 배정에 따라 AGENTS 첫 bullet의 첫 문장을 최신 PI 인계 기준으로 맞췄습니다. AGENTS 2,688→2,666자(-22), 사용자 안내 합계 +1,587자는 그대로입니다. public·diff·patch-notes·notes 검사를 다시 통과했습니다.
 - 코드·설정·설치·배포·연구·HPC 변경/실행은 없습니다. 최종 head CI·동일 head 봇 P1=0 확인 뒤 병합합니다.
 
 🤖 Co-Authored-By: Codex (gpt-6) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>

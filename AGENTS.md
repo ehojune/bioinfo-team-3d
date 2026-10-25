@@ -2,7 +2,7 @@
 
 시작 전에 `HANDOFF.md`·`STATUS.md` 상단과 현재 PI 창구 [#760](https://github.com/ehojune/bioinfo-team-3d/issues/760)의 최근 댓글을 읽는다.
 
-- 개발 총괄은 **Codex 고정**이며 Codex·Claude subagent에 위임한다. 제품 안의 연구 CSO·직원 설정과 구분한다. 현재 우선순위는 HANDOFF, 점검 주기·동시 투입·한도·P2 선별은 [운영 기준](docs/reference/lead-operations.md)을 따른다.
+- 개발 담당과 위임 범위는 최신 PI 인계를 따른다. 제품 안의 연구 CSO·직원 설정과 구분한다. 현재 우선순위는 HANDOFF, 점검 주기·동시 투입·한도·P2 선별은 [운영 기준](docs/reference/lead-operations.md)을 따른다.
 - 문서는 README 한영판(처음 쓰는 사람), `docs/manual.md`(상세), `docs/pi-qa.md`(PI), AGENTS·HANDOFF(개발)로 나눈다. 동작 변경은 manual에 반영하고 **큰 변경·매 PI 보고 전** 코드·직원 YAML·PR과 대조한다. 병합 전 PR의 동작은 manual·README에 출시된 것으로 쓰지 않는다. 상세 근거·옛 결정은 `docs/reference/`에 두고 링크한다.
 - 브랜치에서 작업하고 PR을 연다. main 직접 push 금지. 병합은 Codex 총괄이 판단하며 CI 통과가 조건이다. 자동 병합 workflow는 꺼져 있다.
 - 관련 test만 로컬에서 돌리고 전체 suite는 CI(3.10·3.12·Windows)에 맡긴다. test를 삭제·약화하지 않는다. `tests/conftest.py`의 홈·캐시·state 격리를 지키고 사용자 `.labhq` 접근 guard를 우회하지 않는다.
