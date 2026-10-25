@@ -74,7 +74,7 @@ def capture(request, settings, meta=None):
                     raise ValueError('byte limit')
                 digest = hashlib.sha256()
                 read_size = 0
-                with path.open('rb') as stream:
+                with path.open(mode='rb') as stream:
                     opened = os.fstat(stream.fileno())
                     if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
                         raise ValueError('changed identity')
