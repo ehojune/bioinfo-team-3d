@@ -2271,6 +2271,21 @@ def plan_correction(problems: list[str]) -> str:
                       *_problem_lines(problems, "1.")])
 
 
+REPORT_CORRECTIONS = 2  # the CSO's report may be sent back this often when the claim check finds problems (#956)
+
+
+def report_correction(problems: list[str], citable: str, report: str) -> str:
+    """Send a report that failed the claim check back to its writer: the problems and the anchors it may use (#956)."""
+    return "\n".join([
+        "The report below failed labhq's machine claim check. Fix every problem listed and return the complete "
+        "corrected report.",
+        "Do not redo the analysis, change a finding, or add a conclusion: only anchor each sentence that states a "
+        "conclusion or number with the claim it rests on, written exactly [[claim:<step_id>/<claim_id>]], using only "
+        "the citable claims below. Do not state a claim that is not listed as citable.",
+        "", "Problems:", *_problem_lines(problems, "1."), "", "Citable claims:", citable, "",
+        "Report to correct:", report])
+
+
 def result_correction(problems: list[str]) -> str:
     """Ask for ledger JSON only: the completed analysis and its files must not run again."""
     return "\n".join([
@@ -5743,6 +5758,28 @@ class Orchestrator:
         body, model_appendix = _split_report_appendix(report_body(final.text))
         check = check_report(body, ledgers, unsupported=unsupported, refused=refused,
                              artifact_sha256=artifact_sha256)
+        # One failed claim check used to end the request after the whole study ran (17th run: no anchor at all).
+        # The writer gets the problems and the citable anchors back, up to REPORT_CORRECTIONS times (#956).
+        corrections = 0
+        while check["problems"] and corrections < REPORT_CORRECTIONS:
+            corrections += 1
+            fixed = await self.run_step(Task(
+                agent_id=self.cfg.cso_agent, request_id=rid, resume_session_id=session_id,
+                prompt=report_correction(check["problems"], "\n".join(map(_citable_claim_line, citable)) or "(none)",
+                                         clip(body, n)),
+                meta={**refs, "kind": "synthesis", "request": text, "title": "연구 보고서 교정",
+                      "report_correction": corrections, "final_budget_turn": True,
+                      **({"workdir": workdir} if workdir else {})}))
+            if rid in self.budget_denials:
+                budget_denied("synthesis", review)
+                return
+            if not fixed.ok:
+                break  # the first report and its problems stand
+            body, model_appendix = _split_report_appendix(report_body(fixed.text))
+            check = check_report(body, ledgers, unsupported=unsupported, refused=refused,
+                                 artifact_sha256=artifact_sha256)
+        if corrections:
+            contract["report_corrections"] = corrections
         contract["report_check"] = check
         claim_check = (["Claim check: the report is incomplete.\n" +
                         "\n".join(_problem_lines(check["problems"], "- "))] if check["problems"] else [])
