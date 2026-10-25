@@ -1,5 +1,9 @@
 pr: null
 rows:
+  - sha: 94464bf
+    at: "2026-10-26 04:39"
+    summary: "현재 답변이나 HPC 작업을 기다리는 직원의 상태를 그대로 보여 줍니다."
+    text: "fix: task ledger 없는 live agent 상태를 요청 fallback보다 우선하고 P1 회귀검사 보강"
   - sha: 17825fb
     at: "2026-10-26 04:33"
     summary: "직원이 지금 맡은 일이 지난 요청의 검토 대기에 가려지지 않도록 고쳤습니다."
