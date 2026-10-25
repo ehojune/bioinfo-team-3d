@@ -1007,9 +1007,17 @@ internal 구역을 가리키는 작업·project·참고 폴더 별칭은 Claude�
 | 실패 | 일시적 실패는 `orchestrator.step_max_attempts=2`까지 시도합니다. 요청 전체가 실패 2회에 중단되는 전역 규칙은 없습니다. |
 | PI 카드 | 결정 카드는 기본 7일, 도구 gate는 1시간입니다. 재개 카드 기한은 원래 생성 시각 기준이며, 기한 초과는 `resume_timed_out`입니다. 재시작 때 다른 결정 카드는 닫히고 재개 카드로 돌아갑니다. |
 
-시운전 B의 **90분(카드 대기 포함)·요청 $9·작업 $3·HTTP 9회**는 별도 승인 계약입니다. GO 요청의 **proof 실패 2회 중단·CP1/CP2/예산 카드 10분 내 응답**도 운영 조건이며 제품의 전역 자동 중단·카드 timeout 기본값은 아닙니다. 재시작으로 기한·상한·counter를 초기화하지 않습니다. 실행에는 해당 GO가 필요합니다. 코드 위치와 fake 복구 재현의 한계는 [대조표](reference/recovery-stop-924.md)를 봅니다.
+요청별 시간·비용·조회 상한과 중단·응답 조건은 별도 승인 계약을 따릅니다. 재시작으로 기한·상한·counter를 초기화하지 않습니다. 과거 실행 승인은 새 실행의 GO가 아닙니다. 코드 위치와 fake 복구 재현의 한계는 [대조표](reference/recovery-stop-924.md)를 봅니다.
 
 재개하면 완료 단계는 재사용합니다. 이미 중단 결과가 저장된 task는 승인 뒤 새 task ID로 이어 가며, 같은 중단 결과로 재개 카드를 반복해서 열지 않습니다.
+
+**제한된 v1의 지원·복구 조건(2026-10-26):** [#882](https://github.com/ehojune/bioinfo-team-3d/issues/882)의 목표는 Windows gateway/runner에서 공개 문헌 요청을 끝까지 확인하는 것입니다. 통합 종료 증명과 별도 GO가 먼저이며, HPC·WSL·기관 로그인·원자료는 이 확인 범위에서 제외합니다. v1 운영 지원 완료를 선언한 상태는 아닙니다.
+
+| 항목 | 구현 근거와 남은 확인 |
+|---|---|
+| 로컬 job·취소 | [#937](https://github.com/ehojune/bioinfo-team-3d/pull/937) job 기록 재로드, [#968](https://github.com/ehojune/bioinfo-team-3d/pull/968) 복구 runner에 취소 재전송 회귀가 병합됐습니다. 대체 transport·무해한 job으로 취소 트리 잔류 0·완료 깨움 없음·다른 요청 보존을 확인했습니다. runner가 꺼진 동안에는 job 종료를 보장하지 않습니다. |
+| 저장·소유권 | [#967](https://github.com/ehojune/bioinfo-team-3d/pull/967) runner state 소유권 경쟁 수정은 병합됐습니다. gateway publish 저장 대기 [#966](https://github.com/ehojune/bioinfo-team-3d/pull/966)은 미병합이며 동기 helper·SavedResults 전환 [#965](https://github.com/ehojune/bioinfo-team-3d/issues/965)는 후속입니다. |
+| 운영 미검증 | 실제 WebSocket 재연결·gateway OS 재시작·새 설치에서의 실제 요청·반복 복구·지원 요청 end-to-end는 미검증입니다. [새 설치 mock 검사](reference/clean-install-922.md)와 회귀 CI를 운영 PASS로 세지 않습니다. |
 
 ### 승인·예산
 
