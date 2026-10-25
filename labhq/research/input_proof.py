@@ -9,6 +9,14 @@ from itertools import islice
 from pathlib import Path
 
 
+def _logical_path(path):
+    from ..wsl_paths import shared_path
+    try:
+        return shared_path(str(path), 'windows')
+    except ValueError:
+        return str(path).replace('\\', '/')
+
+
 def capture(request, settings, meta=None):
     """Return a content manifest, or None when any input cannot be proved on this host.
 
@@ -61,7 +69,7 @@ def capture(request, settings, meta=None):
             if stat.S_ISDIR(before.st_mode):
                 if os.path.ismount(path):
                     raise ValueError('mount')
-                rows.append([str(root), relative, 'directory'])
+                rows.append([_logical_path(root), relative, 'directory'])
                 with os.scandir(path) as entries:
                     children = [path / entry.name for entry in islice(entries, maximum - count + 1)]
                 if count + len(children) > maximum:
@@ -87,13 +95,21 @@ def capture(request, settings, meta=None):
                 if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (
                         after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns):
                     raise ValueError('changed input')
-                rows.append([str(root), relative, digest.hexdigest()])
+                rows.append([_logical_path(root), relative, digest.hexdigest()])
             else:
                 raise ValueError('special file or hard link')
 
-        for root in sorted({Path(os.path.expanduser(str(p))).absolute() for p in paths}, key=str):
+        exposed = set()
+        for raw in paths:
+            path = Path(os.path.expanduser(str(raw))).absolute()
+            checked(path)  # do not hide a link by replacing it with its parent
+            # Runner._reference_dirs exposes the parent of a file reference, including siblings.
+            exposed.add(path.parent if path.is_file() else path)
+        for root in sorted(exposed, key=_logical_path):
             walk(root, '.', 0)
         descriptor = {k: request.get(k) or [] for k in ('references', 'reference_dirs', 'project_dirs')}
+        from ..wsl_paths import message_paths
+        descriptor = message_paths(descriptor, 'windows')
         body = {'version': 1, 'descriptor': descriptor, 'files': rows}
         body['sha256'] = hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         return body

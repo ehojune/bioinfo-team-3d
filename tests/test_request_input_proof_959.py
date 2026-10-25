@@ -68,6 +68,29 @@ def test_directory_file_addition_deletion_and_limits(tmp_path):
     assert capture(request, settings) is None
 
 
+def test_file_reference_proves_exposed_sibling_files(tmp_path):
+    settings, request, folder = fixture(tmp_path)
+    request['references'][0]['value'] = str(folder / 'a.txt')
+    before = capture(request, settings)
+    assert before is not None
+    sibling = folder / 'sibling.txt'
+    sibling.write_text('first')
+    added = capture(request, settings)
+    assert added != before
+    sibling.write_text('changed')
+    assert capture(request, settings) != added
+
+
+def test_windows_wsl_manifest_uses_one_logical_identity():
+    from labhq.research.input_proof import _logical_path
+    from labhq.wsl_paths import message_paths
+    windows = {'references': [{'kind': 'path', 'value': 'C:/inputs/table.tsv'}],
+               'project_dirs': ['D:/project']}
+    wsl = message_paths(windows, 'wsl')
+    assert message_paths(wsl, 'windows') == windows
+    assert _logical_path('C:/inputs') == _logical_path('/mnt/c/inputs')
+
+
 def test_hardlink_input_refused(tmp_path):
     settings, request, folder = fixture(tmp_path)
     import os
