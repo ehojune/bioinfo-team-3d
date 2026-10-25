@@ -85,9 +85,9 @@ def board(tmp_path, monkeypatch):
 
     monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *a: Adapter())
 
-    async def run(body):
+    async def run(body, request_id="r"):
         program["run"] = body
-        task = Task(agent_id="worker", request_id="r", prompt="work")
+        task = Task(agent_id="worker", request_id=request_id, prompt="work")
         return task, await runner.run_task(task)
 
     def submit(command, **extra):
@@ -626,3 +626,72 @@ def test_a_kept_jobs_cancel_outlives_the_longest_local_job():
     from labhq.gateway import server
 
     assert server.JOBS_CANCEL_KEEP_S > 7 * 86400
+
+
+@pytest.mark.asyncio
+async def test_offline_request_cancel_replayed_to_restarted_runner_ends_only_its_job(board, tmp_path):
+    """Real, inert Python process trees; gateway/runner transport is an in-memory stand-in."""
+    from labhq.gateway.server import create_app, RunnerUnavailable
+
+    submitted = []
+    child_file = tmp_path / "cancelled-child.pid"
+
+    async def body(identity):
+        command = (f"import os, pathlib; pathlib.Path({str(child_file)!r}).write_text(str(os.getpid())); " + SLEEP
+                   if identity["request_id"] == "cancel-me" else SLEEP)
+        submitted.append(await board.submit(command)(identity))
+
+    cancelled, _ = await board.run(body, request_id="cancel-me")
+    preserved, _ = await board.run(body, request_id="keep-me")
+    ended_pid = board.runner.jobs[submitted[0]["job_id"]]["local"]["pid"]
+    _eventually(child_file.exists)
+    tree = [(pid, local_jobs._created(pid)) for pid in [ended_pid, int(child_file.read_text())]]
+    assert all(created for _, created in tree)
+    board.runner._local_watch.cancel()
+    await asyncio.gather(board.runner._local_watch, return_exceptions=True)
+    board.runner.store.close()
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "gateway")
+    hub = create_app(settings).state.hub
+    for task in (cancelled, preserved):
+        hub.requests[task.request_id] = {
+            "id": task.request_id, "status": "running", "text": "test",
+            "mode": "orchestrate", "created_at": time.time(), "plan": {"steps": [{"id": "s1"}]},
+        }
+        hub.store.put("task", task.id, {"completed": True, "request_id": task.request_id,
+                                       "step_id": "s1", "runner_id": board.settings.runner.id,
+                                       "payload": {"agent_id": "worker"}})
+
+    async def offline(*args):
+        raise RunnerUnavailable("offline")
+
+    hub.send_runner = offline
+    await hub.cancel_request("cancel-me")
+    assert hub.store.get("jobs_cancel", cancelled.id)
+    assert hub.store.get("jobs_cancel", preserved.id) is None
+    _, recovered = _runner(tmp_path)
+    ended, kept = [item["job_id"] for item in submitted]
+    try:
+        await recovered._poll_local_jobs()  # failed connection does not itself cancel either job
+        assert all(not recovered.jobs[jid]["terminal"] for jid in (ended, kept))
+
+        async def reconnected(runner_id, message):
+            assert runner_id == board.settings.runner.id
+            await recovered._on_message(message)
+
+        hub.send_runner = reconnected
+        await hub.flush_task_cancels(board.settings.runner.id)
+        await recovered._poll_local_jobs()
+        assert recovered.jobs[ended]["state"] == "cancelled"
+        local = recovered.jobs[ended]["local"]
+        assert not local_jobs.alive(local["pid"], local["created"])
+        assert all(not local_jobs.alive(pid, created) for pid, created in tree)
+        assert recovered.jobs[kept]["state"] == "running"
+        assert not recovered.jobs[kept]["terminal"]
+        assert not [event for event in recovered.store.pending() if event.get("type") == "jobs.finished"]
+        assert cancelled.id in recovered.notified
+    finally:
+        for jid, row in recovered.jobs.items():
+            local_jobs.kill(row["local"], recovered._local_procs.get(jid))
+        recovered.store.close()
+        hub.store.close()

@@ -573,6 +573,7 @@
     }
   },
   "mandatory_nodes": [
+    "tests/test_local_jobs_675.py::test_offline_request_cancel_replayed_to_restarted_runner_ends_only_its_job",
     "tests/test_web_shutdown_process.py::test_forced_web_shutdown_with_running_work_also_ends_gracefully_and_keeps_the_record",
     "tests/test_web_shutdown_process.py::test_the_watcher_stops_a_gateway_that_never_finishes_its_shutdown",
     "tests/test_web_shutdown_process.py::test_web_shutdown_ends_a_real_gateway_through_its_own_shutdown",

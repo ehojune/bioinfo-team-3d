@@ -211,6 +211,7 @@ def test_native_contract_preflight_and_missing_collected_case_fail(monkeypatch, 
         monkeypatch.setenv("PYTEST_XDIST_WORKER", worker)
     data = s.validate_profile()
     assert set(data['mandatory_nodes']) == {
+        'tests/test_local_jobs_675.py::test_offline_request_cancel_replayed_to_restarted_runner_ends_only_its_job',
         'tests/test_windows_job_ci.py::test_wmi_escapes_owned_outer_nonbreakaway_inner_silent_job',
         'tests/test_windows_job_ci.py::test_real_wmi_bootstrap_never_enters_fake_role_without_verified_ack',
         'tests/test_web_shutdown_process.py::test_web_shutdown_ends_a_real_gateway_through_its_own_shutdown',
