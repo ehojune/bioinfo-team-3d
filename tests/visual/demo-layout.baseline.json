@@ -317,11 +317,11 @@
     {"key":"sci_reviewer","shown":true,"status":"idle","box":{"x":256,"y":280,"w":212,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
     {"key":"biologist","shown":true,"status":"working","box":{"x":18,"y":486,"w":212,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
     {"key":"lit_scout","shown":true,"status":"idle","box":{"x":18,"y":566,"w":212,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
-    {"key":"bioinfo-agent","shown":true,"status":"idle","box":{"x":18,"y":646,"w":212,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"bioinfo-agent","shown":true,"status":"queued","box":{"x":18,"y":646,"w":212,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
     {"key":"data_steward","shown":true,"status":"working","box":{"x":18,"y":120,"w":212,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
-    {"key":"analyst","shown":true,"status":"idle","box":{"x":18,"y":200,"w":212,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"analyst","shown":true,"status":"queued","box":{"x":18,"y":200,"w":212,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
     {"key":"engineer","shown":true,"status":"idle","box":{"x":18,"y":280,"w":212,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
-    {"key":"qc_reviewer","shown":true,"status":"idle","box":{"x":18,"y":360,"w":212,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"qc_reviewer","shown":true,"status":"queued","box":{"x":18,"y":360,"w":212,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
     {"key":"recruiter","shown":true,"status":"idle","box":{"x":256,"y":486,"w":212,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}}
   ],
   "character": [
@@ -343,11 +343,11 @@
     {"key":"sci_reviewer","shown":true,"box":{"x":330,"y":331,"w":136,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
     {"key":"biologist","shown":true,"box":{"x":92,"y":536,"w":136,"h":18},"paint":{"color":"#1d6b40"},"text":"일하는 중"},
     {"key":"lit_scout","shown":true,"box":{"x":92,"y":616,"w":136,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
-    {"key":"bioinfo-agent","shown":true,"box":{"x":92,"y":696,"w":136,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"bioinfo-agent","shown":true,"box":{"x":92,"y":696,"w":136,"h":18},"paint":{"color":"#47525f"},"text":"차례 대기"},
     {"key":"data_steward","shown":true,"box":{"x":92,"y":171,"w":136,"h":18},"paint":{"color":"#1d6b40"},"text":"일하는 중"},
-    {"key":"analyst","shown":true,"box":{"x":92,"y":251,"w":136,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"analyst","shown":true,"box":{"x":92,"y":251,"w":136,"h":18},"paint":{"color":"#47525f"},"text":"차례 대기"},
     {"key":"engineer","shown":true,"box":{"x":92,"y":331,"w":136,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
-    {"key":"qc_reviewer","shown":true,"box":{"x":92,"y":411,"w":136,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"qc_reviewer","shown":true,"box":{"x":92,"y":411,"w":136,"h":18},"paint":{"color":"#47525f"},"text":"차례 대기"},
     {"key":"recruiter","shown":true,"box":{"x":330,"y":536,"w":136,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"}
   ],
   "seat-dot": [
@@ -555,11 +555,11 @@
     {"key":"sci_reviewer","shown":true,"status":"staff-idle","box":{"x":521,"y":9,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
     {"key":"biologist","shown":true,"status":"staff-working","box":{"x":769,"y":9,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
     {"key":"lit_scout","shown":true,"status":"staff-idle","box":{"x":1017,"y":9,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
-    {"key":"bioinfo-agent","shown":true,"status":"staff-idle","box":{"x":1265,"y":9,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"bioinfo-agent","shown":true,"status":"staff-queued","box":{"x":1265,"y":9,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
     {"key":"data_steward","shown":true,"status":"staff-working","box":{"x":1513,"y":9,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
-    {"key":"analyst","shown":true,"status":"staff-idle","box":{"x":1761,"y":9,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"analyst","shown":true,"status":"staff-queued","box":{"x":1761,"y":9,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
     {"key":"engineer","shown":true,"status":"staff-idle","box":{"x":2009,"y":9,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
-    {"key":"qc_reviewer","shown":true,"status":"staff-idle","box":{"x":2257,"y":9,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"qc_reviewer","shown":true,"status":"staff-queued","box":{"x":2257,"y":9,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
     {"key":"recruiter","shown":true,"status":"staff-idle","box":{"x":2505,"y":9,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
   ],
   "staff-chip": [
@@ -568,11 +568,11 @@
     {"key":"sci_reviewer","shown":true,"box":{"x":693,"y":26,"w":59,"h":19},"paint":{"color":"#505b67"},"text":"쉬는 중"},
     {"key":"biologist","shown":true,"box":{"x":917,"y":26,"w":83,"h":19},"paint":{"color":"#1d6b40"},"text":"생각하는 중"},
     {"key":"lit_scout","shown":true,"box":{"x":1189,"y":26,"w":59,"h":19},"paint":{"color":"#505b67"},"text":"쉬는 중"},
-    {"key":"bioinfo-agent","shown":true,"box":{"x":1437,"y":26,"w":59,"h":19},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"bioinfo-agent","shown":true,"box":{"x":1425,"y":26,"w":71,"h":19},"paint":{"color":"#505b67"},"text":"차례 대기"},
     {"key":"data_steward","shown":true,"box":{"x":1661,"y":26,"w":83,"h":19},"paint":{"color":"#1d6b40"},"text":"생각하는 중"},
-    {"key":"analyst","shown":true,"box":{"x":1933,"y":26,"w":59,"h":19},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"analyst","shown":true,"box":{"x":1921,"y":26,"w":71,"h":19},"paint":{"color":"#505b67"},"text":"차례 대기"},
     {"key":"engineer","shown":true,"box":{"x":2181,"y":26,"w":59,"h":19},"paint":{"color":"#505b67"},"text":"쉬는 중"},
-    {"key":"qc_reviewer","shown":true,"box":{"x":2429,"y":26,"w":59,"h":19},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"qc_reviewer","shown":true,"box":{"x":2417,"y":26,"w":71,"h":19},"paint":{"color":"#505b67"},"text":"차례 대기"},
     {"key":"recruiter","shown":true,"box":{"x":2677,"y":26,"w":59,"h":19},"paint":{"color":"#505b67"},"text":"쉬는 중"}
   ],
   "staff-dot": [
@@ -620,11 +620,11 @@
     {"key":"sci_reviewer","shown":true,"status":"idle","box":{"x":256,"y":280,"w":212,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
     {"key":"biologist","shown":true,"status":"working","box":{"x":18,"y":486,"w":212,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
     {"key":"lit_scout","shown":true,"status":"idle","box":{"x":18,"y":566,"w":212,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
-    {"key":"bioinfo-agent","shown":true,"status":"idle","box":{"x":18,"y":646,"w":212,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"bioinfo-agent","shown":true,"status":"queued","box":{"x":18,"y":646,"w":212,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
     {"key":"data_steward","shown":true,"status":"decision","box":{"x":18,"y":120,"w":212,"h":76},"paint":{"color":"#1c2430","background":"#e9edf9"}},
-    {"key":"analyst","shown":true,"status":"idle","box":{"x":18,"y":200,"w":212,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"analyst","shown":true,"status":"queued","box":{"x":18,"y":200,"w":212,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
     {"key":"engineer","shown":true,"status":"idle","box":{"x":18,"y":280,"w":212,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
-    {"key":"qc_reviewer","shown":true,"status":"idle","box":{"x":18,"y":360,"w":212,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"qc_reviewer","shown":true,"status":"queued","box":{"x":18,"y":360,"w":212,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
     {"key":"recruiter","shown":true,"status":"idle","box":{"x":256,"y":486,"w":212,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}}
   ],
   "character": [
@@ -646,11 +646,11 @@
     {"key":"sci_reviewer","shown":true,"box":{"x":330,"y":331,"w":136,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
     {"key":"biologist","shown":true,"box":{"x":92,"y":536,"w":136,"h":18},"paint":{"color":"#1d6b40"},"text":"일하는 중"},
     {"key":"lit_scout","shown":true,"box":{"x":92,"y":616,"w":136,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
-    {"key":"bioinfo-agent","shown":true,"box":{"x":92,"y":696,"w":136,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"bioinfo-agent","shown":true,"box":{"x":92,"y":696,"w":136,"h":18},"paint":{"color":"#47525f"},"text":"차례 대기"},
     {"key":"data_steward","shown":true,"box":{"x":92,"y":171,"w":136,"h":18},"paint":{"color":"#2848a6"},"text":"승인 기다려요"},
-    {"key":"analyst","shown":true,"box":{"x":92,"y":251,"w":136,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"analyst","shown":true,"box":{"x":92,"y":251,"w":136,"h":18},"paint":{"color":"#47525f"},"text":"차례 대기"},
     {"key":"engineer","shown":true,"box":{"x":92,"y":331,"w":136,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
-    {"key":"qc_reviewer","shown":true,"box":{"x":92,"y":411,"w":136,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"qc_reviewer","shown":true,"box":{"x":92,"y":411,"w":136,"h":18},"paint":{"color":"#47525f"},"text":"차례 대기"},
     {"key":"recruiter","shown":true,"box":{"x":330,"y":536,"w":136,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"}
   ],
   "seat-dot": [
@@ -861,11 +861,11 @@
     {"key":"sci_reviewer","shown":true,"status":"staff-idle","box":{"x":521,"y":9,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
     {"key":"biologist","shown":true,"status":"staff-working","box":{"x":769,"y":9,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
     {"key":"lit_scout","shown":true,"status":"staff-idle","box":{"x":1017,"y":9,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
-    {"key":"bioinfo-agent","shown":true,"status":"staff-idle","box":{"x":1265,"y":9,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"bioinfo-agent","shown":true,"status":"staff-queued","box":{"x":1265,"y":9,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
     {"key":"data_steward","shown":true,"status":"staff-waiting","box":{"x":1513,"y":9,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
-    {"key":"analyst","shown":true,"status":"staff-idle","box":{"x":1761,"y":9,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"analyst","shown":true,"status":"staff-queued","box":{"x":1761,"y":9,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
     {"key":"engineer","shown":true,"status":"staff-idle","box":{"x":2009,"y":9,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
-    {"key":"qc_reviewer","shown":true,"status":"staff-idle","box":{"x":2257,"y":9,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"qc_reviewer","shown":true,"status":"staff-queued","box":{"x":2257,"y":9,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
     {"key":"recruiter","shown":true,"status":"staff-idle","box":{"x":2505,"y":9,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
   ],
   "staff-chip": [
@@ -874,11 +874,11 @@
     {"key":"sci_reviewer","shown":true,"box":{"x":693,"y":26,"w":59,"h":19},"paint":{"color":"#505b67"},"text":"쉬는 중"},
     {"key":"biologist","shown":true,"box":{"x":917,"y":26,"w":83,"h":19},"paint":{"color":"#1d6b40"},"text":"생각하는 중"},
     {"key":"lit_scout","shown":true,"box":{"x":1189,"y":26,"w":59,"h":19},"paint":{"color":"#505b67"},"text":"쉬는 중"},
-    {"key":"bioinfo-agent","shown":true,"box":{"x":1437,"y":26,"w":59,"h":19},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"bioinfo-agent","shown":true,"box":{"x":1425,"y":26,"w":71,"h":19},"paint":{"color":"#505b67"},"text":"차례 대기"},
     {"key":"data_steward","shown":true,"box":{"x":1610,"y":26,"w":134,"h":19},"paint":{"color":"#2848a6"},"text":"PI 결정 기다리는 중"},
-    {"key":"analyst","shown":true,"box":{"x":1933,"y":26,"w":59,"h":19},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"analyst","shown":true,"box":{"x":1921,"y":26,"w":71,"h":19},"paint":{"color":"#505b67"},"text":"차례 대기"},
     {"key":"engineer","shown":true,"box":{"x":2181,"y":26,"w":59,"h":19},"paint":{"color":"#505b67"},"text":"쉬는 중"},
-    {"key":"qc_reviewer","shown":true,"box":{"x":2429,"y":26,"w":59,"h":19},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"qc_reviewer","shown":true,"box":{"x":2417,"y":26,"w":71,"h":19},"paint":{"color":"#505b67"},"text":"차례 대기"},
     {"key":"recruiter","shown":true,"box":{"x":2677,"y":26,"w":59,"h":19},"paint":{"color":"#505b67"},"text":"쉬는 중"}
   ],
   "staff-dot": [
@@ -1051,12 +1051,12 @@
   ],
   "panel": [
     {"key":"decisions","shown":false},
-    {"key":"tasks","shown":true,"box":{"x":13,"y":128,"w":877,"h":586},"paint":{"color":"#1c2430"}},
+    {"key":"tasks","shown":true,"box":{"x":13,"y":128,"w":877,"h":582},"paint":{"color":"#1c2430"}},
     {"key":"feed","shown":false},
     {"key":"jobs","shown":false}
   ],
   "task-board": [
-    {"key":"task-board","shown":true,"box":{"x":13,"y":157,"w":877,"h":557},"paint":{"color":"#1c2430"}}
+    {"key":"task-board","shown":true,"box":{"x":13,"y":157,"w":877,"h":553},"paint":{"color":"#1c2430"}}
   ],
   "task-choice": [
     {"key":"0","shown":true,"box":{"x":13,"y":185,"w":877,"h":79},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#7f8790"}}
@@ -1514,11 +1514,11 @@
     {"key":"sci_reviewer","shown":true,"status":"idle","box":{"x":18,"y":435,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
     {"key":"biologist","shown":true,"status":"working","box":{"x":18,"y":561,"w":159,"h":82},"paint":{"color":"#1c2430","background":"#ffffff"}},
     {"key":"lit_scout","shown":true,"status":"idle","box":{"x":181,"y":561,"w":159,"h":82},"paint":{"color":"#1c2430","background":"#ffffff"}},
-    {"key":"bioinfo-agent","shown":true,"status":"idle","box":{"x":18,"y":647,"w":159,"h":82},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"bioinfo-agent","shown":true,"status":"queued","box":{"x":18,"y":647,"w":159,"h":82},"paint":{"color":"#1c2430","background":"#ffffff"}},
     {"key":"data_steward","shown":true,"status":"working","box":{"x":18,"y":150,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
-    {"key":"analyst","shown":true,"status":"idle","box":{"x":181,"y":150,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"analyst","shown":true,"status":"queued","box":{"x":181,"y":150,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
     {"key":"engineer","shown":true,"status":"idle","box":{"x":18,"y":230,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
-    {"key":"qc_reviewer","shown":true,"status":"idle","box":{"x":181,"y":230,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"qc_reviewer","shown":true,"status":"queued","box":{"x":181,"y":230,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
     {"key":"recruiter","shown":true,"status":"idle","box":{"x":18,"y":779,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}}
   ],
   "character": [
@@ -1540,11 +1540,11 @@
     {"key":"sci_reviewer","shown":true,"box":{"x":84,"y":485,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
     {"key":"biologist","shown":true,"box":{"x":84,"y":623,"w":91,"h":18},"paint":{"color":"#1d6b40"},"text":"일하는 중"},
     {"key":"lit_scout","shown":true,"box":{"x":247,"y":614,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
-    {"key":"bioinfo-agent","shown":true,"box":{"x":84,"y":709,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"bioinfo-agent","shown":true,"box":{"x":84,"y":709,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"차례 대기"},
     {"key":"data_steward","shown":true,"box":{"x":84,"y":200,"w":91,"h":18},"paint":{"color":"#1d6b40"},"text":"일하는 중"},
-    {"key":"analyst","shown":true,"box":{"x":247,"y":200,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"analyst","shown":true,"box":{"x":247,"y":200,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"차례 대기"},
     {"key":"engineer","shown":true,"box":{"x":84,"y":280,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
-    {"key":"qc_reviewer","shown":true,"box":{"x":247,"y":280,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"qc_reviewer","shown":true,"box":{"x":247,"y":280,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"차례 대기"},
     {"key":"recruiter","shown":true,"box":{"x":84,"y":829,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"}
   ],
   "seat-dot": [
@@ -1752,11 +1752,11 @@
     {"key":"sci_reviewer","shown":true,"status":"staff-idle","box":{"x":513,"y":47,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
     {"key":"biologist","shown":true,"status":"staff-working","box":{"x":761,"y":47,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
     {"key":"lit_scout","shown":true,"status":"staff-idle","box":{"x":1009,"y":47,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
-    {"key":"bioinfo-agent","shown":true,"status":"staff-idle","box":{"x":1257,"y":47,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"bioinfo-agent","shown":true,"status":"staff-queued","box":{"x":1257,"y":47,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
     {"key":"data_steward","shown":true,"status":"staff-working","box":{"x":1505,"y":47,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
-    {"key":"analyst","shown":true,"status":"staff-idle","box":{"x":1753,"y":47,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"analyst","shown":true,"status":"staff-queued","box":{"x":1753,"y":47,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
     {"key":"engineer","shown":true,"status":"staff-idle","box":{"x":2001,"y":47,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
-    {"key":"qc_reviewer","shown":true,"status":"staff-idle","box":{"x":2249,"y":47,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"qc_reviewer","shown":true,"status":"staff-queued","box":{"x":2249,"y":47,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
     {"key":"recruiter","shown":true,"status":"staff-idle","box":{"x":2497,"y":47,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
   ],
   "staff-chip": [
@@ -1765,11 +1765,11 @@
     {"key":"sci_reviewer","shown":true,"box":{"x":685,"y":64,"w":59,"h":19},"paint":{"color":"#505b67"},"text":"쉬는 중"},
     {"key":"biologist","shown":true,"box":{"x":909,"y":64,"w":83,"h":19},"paint":{"color":"#1d6b40"},"text":"생각하는 중"},
     {"key":"lit_scout","shown":true,"box":{"x":1181,"y":64,"w":59,"h":19},"paint":{"color":"#505b67"},"text":"쉬는 중"},
-    {"key":"bioinfo-agent","shown":true,"box":{"x":1429,"y":64,"w":59,"h":19},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"bioinfo-agent","shown":true,"box":{"x":1417,"y":64,"w":71,"h":19},"paint":{"color":"#505b67"},"text":"차례 대기"},
     {"key":"data_steward","shown":true,"box":{"x":1653,"y":64,"w":83,"h":19},"paint":{"color":"#1d6b40"},"text":"생각하는 중"},
-    {"key":"analyst","shown":true,"box":{"x":1925,"y":64,"w":59,"h":19},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"analyst","shown":true,"box":{"x":1913,"y":64,"w":71,"h":19},"paint":{"color":"#505b67"},"text":"차례 대기"},
     {"key":"engineer","shown":true,"box":{"x":2173,"y":64,"w":59,"h":19},"paint":{"color":"#505b67"},"text":"쉬는 중"},
-    {"key":"qc_reviewer","shown":true,"box":{"x":2421,"y":64,"w":59,"h":19},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"qc_reviewer","shown":true,"box":{"x":2409,"y":64,"w":71,"h":19},"paint":{"color":"#505b67"},"text":"차례 대기"},
     {"key":"recruiter","shown":true,"box":{"x":2669,"y":64,"w":59,"h":19},"paint":{"color":"#505b67"},"text":"쉬는 중"}
   ],
   "staff-dot": [
@@ -1817,11 +1817,11 @@
     {"key":"sci_reviewer","shown":true,"status":"idle","box":{"x":18,"y":442,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
     {"key":"biologist","shown":true,"status":"working","box":{"x":18,"y":568,"w":159,"h":82},"paint":{"color":"#1c2430","background":"#ffffff"}},
     {"key":"lit_scout","shown":true,"status":"idle","box":{"x":181,"y":568,"w":159,"h":82},"paint":{"color":"#1c2430","background":"#ffffff"}},
-    {"key":"bioinfo-agent","shown":true,"status":"idle","box":{"x":18,"y":654,"w":159,"h":82},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"bioinfo-agent","shown":true,"status":"queued","box":{"x":18,"y":654,"w":159,"h":82},"paint":{"color":"#1c2430","background":"#ffffff"}},
     {"key":"data_steward","shown":true,"status":"decision","box":{"x":18,"y":150,"w":159,"h":83},"paint":{"color":"#1c2430","background":"#e9edf9"}},
-    {"key":"analyst","shown":true,"status":"idle","box":{"x":181,"y":150,"w":159,"h":83},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"analyst","shown":true,"status":"queued","box":{"x":181,"y":150,"w":159,"h":83},"paint":{"color":"#1c2430","background":"#ffffff"}},
     {"key":"engineer","shown":true,"status":"idle","box":{"x":18,"y":237,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
-    {"key":"qc_reviewer","shown":true,"status":"idle","box":{"x":181,"y":237,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
+    {"key":"qc_reviewer","shown":true,"status":"queued","box":{"x":181,"y":237,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}},
     {"key":"recruiter","shown":true,"status":"idle","box":{"x":18,"y":786,"w":159,"h":76},"paint":{"color":"#1c2430","background":"#ffffff"}}
   ],
   "character": [
@@ -1843,11 +1843,11 @@
     {"key":"sci_reviewer","shown":true,"box":{"x":84,"y":492,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
     {"key":"biologist","shown":true,"box":{"x":84,"y":630,"w":91,"h":18},"paint":{"color":"#1d6b40"},"text":"일하는 중"},
     {"key":"lit_scout","shown":true,"box":{"x":247,"y":621,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
-    {"key":"bioinfo-agent","shown":true,"box":{"x":84,"y":716,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"bioinfo-agent","shown":true,"box":{"x":84,"y":716,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"차례 대기"},
     {"key":"data_steward","shown":true,"box":{"x":84,"y":194,"w":91,"h":36},"paint":{"color":"#2848a6"},"text":"승인 기다려요"},
-    {"key":"analyst","shown":true,"box":{"x":247,"y":203,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"analyst","shown":true,"box":{"x":247,"y":203,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"차례 대기"},
     {"key":"engineer","shown":true,"box":{"x":84,"y":287,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
-    {"key":"qc_reviewer","shown":true,"box":{"x":247,"y":287,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"},
+    {"key":"qc_reviewer","shown":true,"box":{"x":247,"y":287,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"차례 대기"},
     {"key":"recruiter","shown":true,"box":{"x":84,"y":836,"w":91,"h":18},"paint":{"color":"#47525f"},"text":"쉬는 중"}
   ],
   "seat-dot": [
@@ -2058,11 +2058,11 @@
     {"key":"sci_reviewer","shown":true,"status":"staff-idle","box":{"x":513,"y":47,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
     {"key":"biologist","shown":true,"status":"staff-working","box":{"x":761,"y":47,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
     {"key":"lit_scout","shown":true,"status":"staff-idle","box":{"x":1009,"y":47,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
-    {"key":"bioinfo-agent","shown":true,"status":"staff-idle","box":{"x":1257,"y":47,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"bioinfo-agent","shown":true,"status":"staff-queued","box":{"x":1257,"y":47,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
     {"key":"data_steward","shown":true,"status":"staff-waiting","box":{"x":1505,"y":47,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
-    {"key":"analyst","shown":true,"status":"staff-idle","box":{"x":1753,"y":47,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"analyst","shown":true,"status":"staff-queued","box":{"x":1753,"y":47,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
     {"key":"engineer","shown":true,"status":"staff-idle","box":{"x":2001,"y":47,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
-    {"key":"qc_reviewer","shown":true,"status":"staff-idle","box":{"x":2249,"y":47,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
+    {"key":"qc_reviewer","shown":true,"status":"staff-queued","box":{"x":2249,"y":47,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}},
     {"key":"recruiter","shown":true,"status":"staff-idle","box":{"x":2497,"y":47,"w":240,"h":54},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
   ],
   "staff-chip": [
@@ -2071,11 +2071,11 @@
     {"key":"sci_reviewer","shown":true,"box":{"x":685,"y":64,"w":59,"h":19},"paint":{"color":"#505b67"},"text":"쉬는 중"},
     {"key":"biologist","shown":true,"box":{"x":909,"y":64,"w":83,"h":19},"paint":{"color":"#1d6b40"},"text":"생각하는 중"},
     {"key":"lit_scout","shown":true,"box":{"x":1181,"y":64,"w":59,"h":19},"paint":{"color":"#505b67"},"text":"쉬는 중"},
-    {"key":"bioinfo-agent","shown":true,"box":{"x":1429,"y":64,"w":59,"h":19},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"bioinfo-agent","shown":true,"box":{"x":1417,"y":64,"w":71,"h":19},"paint":{"color":"#505b67"},"text":"차례 대기"},
     {"key":"data_steward","shown":true,"box":{"x":1602,"y":64,"w":134,"h":19},"paint":{"color":"#2848a6"},"text":"PI 결정 기다리는 중"},
-    {"key":"analyst","shown":true,"box":{"x":1925,"y":64,"w":59,"h":19},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"analyst","shown":true,"box":{"x":1913,"y":64,"w":71,"h":19},"paint":{"color":"#505b67"},"text":"차례 대기"},
     {"key":"engineer","shown":true,"box":{"x":2173,"y":64,"w":59,"h":19},"paint":{"color":"#505b67"},"text":"쉬는 중"},
-    {"key":"qc_reviewer","shown":true,"box":{"x":2421,"y":64,"w":59,"h":19},"paint":{"color":"#505b67"},"text":"쉬는 중"},
+    {"key":"qc_reviewer","shown":true,"box":{"x":2409,"y":64,"w":71,"h":19},"paint":{"color":"#505b67"},"text":"차례 대기"},
     {"key":"recruiter","shown":true,"box":{"x":2669,"y":64,"w":59,"h":19},"paint":{"color":"#505b67"},"text":"쉬는 중"}
   ],
   "staff-dot": [
@@ -2224,7 +2224,7 @@
     {"key":"composer","shown":true,"loose":true,"box":{"x":0,"y":723,"w":390,"h":121},"paint":{"color":"#1c2430","background":"#faf8f4","border":"#e2ddd3"}}
   ]
 }},
-"phone/report/tasks": {"viewport": {"w":390,"h":844}, "doc": {"w":390,"h":2179}, "items": {
+"phone/report/tasks": {"viewport": {"w":390,"h":844}, "doc": {"w":390,"h":2175}, "items": {
   "top": [
     {"key":"top","shown":true,"box":{"x":0,"y":0,"w":390,"h":142},"paint":{"color":"#1c2430","background":"#faf8f4"}}
   ],
@@ -2232,7 +2232,7 @@
     {"key":"main-splitter","shown":false}
   ],
   "cc": [
-    {"key":"cc","shown":true,"box":{"x":16,"y":156,"w":358,"h":912},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
+    {"key":"cc","shown":true,"box":{"x":16,"y":156,"w":358,"h":908},"paint":{"color":"#1c2430","background":"#ffffff","border":"#e2ddd3"}}
   ],
   "step-flow": [
     {"key":"step-flow","shown":true,"box":{"x":13,"y":21,"w":332,"h":37},"paint":{"color":"#1c2430"},"text":"✓ 5"}
@@ -2248,12 +2248,12 @@
   ],
   "panel": [
     {"key":"decisions","shown":false},
-    {"key":"tasks","shown":true,"box":{"x":13,"y":126,"w":332,"h":773},"paint":{"color":"#1c2430"}},
+    {"key":"tasks","shown":true,"box":{"x":13,"y":126,"w":332,"h":769},"paint":{"color":"#1c2430"}},
     {"key":"feed","shown":false},
     {"key":"jobs","shown":false}
   ],
   "task-board": [
-    {"key":"task-board","shown":true,"box":{"x":13,"y":155,"w":332,"h":744},"paint":{"color":"#1c2430"}}
+    {"key":"task-board","shown":true,"box":{"x":13,"y":155,"w":332,"h":740},"paint":{"color":"#1c2430"}}
   ],
   "task-choice": [
     {"key":"0","shown":true,"box":{"x":13,"y":183,"w":332,"h":103},"paint":{"color":"#1c2430","background":"#f2efe9","border":"#7f8790"}}
