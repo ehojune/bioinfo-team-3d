@@ -146,9 +146,8 @@ async def test_repeated_cancel_waits_for_commit_outcome(gateway, monkeypatch, co
     persisted = hub.store.events_since(0)
     assert len(persisted) == (0 if fail and commit == 1 else 1)
     if cancel and not fail and commit == 1:
-        # Cancellation settles storage, leaving network delivery for the next flush.
-        assert delivered == [] and len(hub.pending_committed) == 1
-        await hub._send_committed_event()
+        # No new publication is needed to deliver the committed event.
+        await asyncio.wait_for(hub.committed_sender, 1)
     assert len(delivered) == len(persisted)
     assert len(reported) == (0 if fail else 1)
     assert hub.store.runner_seen("runner") == (0 if fail and commit == 1 else 7)
@@ -317,3 +316,57 @@ async def test_asgi_cancel_scope_only_shields_storage(gateway):
     assert not hub.event_lock.locked() and client not in hub.clients
     await asyncio.wait_for(hub.publish(event("next")), 1)
     assert [e["seq"] for e in hub.store.events_since(0)] == [1, 2]
+
+
+async def test_cancelled_send_still_delivers_to_remaining_clients_without_next_event(gateway):
+    hub = gateway
+    blocked, received = asyncio.Event(), asyncio.Event()
+    deliveries = []
+
+    class Slow:
+        async def send_text(self, text):
+            blocked.set()
+            await asyncio.Event().wait()
+
+    class Healthy:
+        async def send_text(self, text):
+            deliveries.append(json.loads(text)["seq"])
+            received.set()
+
+    class OrderedClients(list):
+        def discard(self, client):
+            if client in self:
+                self.remove(client)
+
+    hub.clients = OrderedClients([Slow(), Healthy()])
+    publication = asyncio.create_task(hub.publish(event()))
+    await asyncio.wait_for(blocked.wait(), 1)
+    publication.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(publication, 1)
+    await asyncio.wait_for(received.wait(), 1)
+    await asyncio.wait_for(hub.committed_sender, 1)
+    assert deliveries == [1] and not hub.pending_committed
+    assert not hub.event_lock.locked()
+
+
+async def test_network_timeout_closes_client_without_holding_publication(gateway, monkeypatch):
+    import labhq.gateway.server as server
+
+    monkeypatch.setattr(server, "CLIENT_SEND_TIMEOUT_S", 0.01)
+    closed = asyncio.Event()
+
+    class Slow:
+        async def send_text(self, text):
+            await asyncio.Event().wait()
+
+        async def close(self, code):
+            assert code == 1012
+            closed.set()
+
+    slow = Slow()
+    gateway.clients.add(slow)
+    await asyncio.wait_for(gateway.publish(event()), 1)
+    await asyncio.wait_for(closed.wait(), 1)
+    assert slow not in gateway.clients and not gateway.event_lock.locked()
+    assert gateway.store.get("request", "r")["status"] == "running"

@@ -450,7 +450,7 @@ labhq는 상태를 쓸 때마다 디스크에 확실히 내려갈 때까지(fsyn
 
 SQLite는 읽기 연결과 쓰기 연결을 나눠(WAL) 읽기가 커밋을 기다리지 않습니다.
 
-Gateway의 event 발행은 event·request 저장을 같은 DB writer에서 await합니다. 취소돼도 commit 결과를 확인하며 막힌 WebSocket 전송은 취소합니다. 저장된 event는 재연결 때 replay합니다. 동기 helper·SavedResults의 저장 대기 전환은 #965에 남아 있습니다.
+Gateway의 event 발행은 event·request 저장을 같은 DB writer에서 await합니다. 취소돼도 commit 결과를 확인하고 남은 전송을 따로 이어갑니다. WebSocket 전송은 client마다 최대 10초이며 취소·시간 초과 때 연결을 닫아 재연결 replay를 유도합니다. 동기 helper·SavedResults의 저장 대기 전환은 #965에 남아 있습니다.
 
 Runner의 작업 폴더 쓰기(`manifest.json`, `TASK*.md`, `RESULT*.md`, 직원 CLI 설정 파일, 파견직 계약 파일)와 outbox·ack도 writer로 옮겼습니다. Gateway에는 task 원장·승인·리뷰 등 동기 helper의 SQLite 저장 대기가 남습니다. 이전 조사 목록은 [쓰기 지점 지도](status/2026-10-15-1125-store-writes-off-loop.md)를 봅니다.
 

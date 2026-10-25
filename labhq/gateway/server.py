@@ -63,6 +63,7 @@ log = logging.getLogger(__name__)
 # #126: a snapshot goes to every client on each connect, so a long follow-up answer travels as its head only.
 # The full answer stays on the request (GET /api/requests/{id}); the web loads it when the PI opens it.
 SNAPSHOT_ANSWER_CHARS = 2000
+CLIENT_SEND_TIMEOUT_S = 10.0
 # Terminal reports can be as large as 20,000 characters and repeat once per finished request.
 SNAPSHOT_REPORT_CHARS = 2000
 # A step card shows this much of a task's result text; a replayed task.result needs no more.
@@ -1358,12 +1359,15 @@ class Hub:
             while clients:
                 client = clients[0]
                 try:
-                    await client.send_text(json.dumps(event, ensure_ascii=False, default=str))
+                    await asyncio.wait_for(client.send_text(json.dumps(event, ensure_ascii=False, default=str)),
+                                           CLIENT_SEND_TIMEOUT_S)
                 except asyncio.CancelledError:
                     # A backpressured client must not hold the next publisher too.
                     self._disconnect_cancelled_client(client)
                     self.pending_committed[0] = (event, clients[1:])
                     raise
+                except asyncio.TimeoutError:
+                    self._disconnect_cancelled_client(client)
                 except Exception:
                     dead.append(client)
                 clients = clients[1:]
@@ -1394,6 +1398,18 @@ class Hub:
         task = asyncio.create_task(close_socket())
         closing.add(task)
         task.add_done_callback(closing.discard)
+
+    def _schedule_committed_events(self) -> None:
+        prior = getattr(self, "committed_sender", None)
+        if prior is not None and not prior.done():
+            return
+        task = self.committed_sender = asyncio.create_task(self._send_committed_event())
+
+        def finished(sender):
+            if not sender.cancelled() and (exc := sender.exception()) is not None:
+                log.error("committed event delivery failed: %s", exc)
+
+        task.add_done_callback(finished)
 
     def result_map(self, rid: str) -> SavedResults:
         return SavedResults(self, rid)
@@ -2548,29 +2564,33 @@ class Hub:
             ev = {**ev, 'data': with_approval_copy(ev.get('data') or {})}
         cancelled = False
         delivered = []
-        async with self.event_lock:
-            await self._flush_committed_events()
-            durable_report = (self.reporter.enabled() and bool(ev.get("request_id")) and
-                              ev.get("type") in ProjectReporter.HANDLED)
-            ev, cancelled = await self._publication_write(self.store.aappend_event(
-                ev, self.s.gateway.event_buffer, runner_id, runner_seq, reporter_delivery=durable_report))
-            self._record_published_event(ev)
-            queued = sorted([*self.pending_committed, (ev, tuple(self.clients))], key=lambda item: item[0]["seq"])
-            self.pending_committed.clear()
-            self.pending_committed.extend(queued)
-            try:
-                if not cancelled:
-                    await self._flush_committed_events(delivered)
-            except asyncio.CancelledError:
-                cancelled = True
-            rid = ev.get("request_id")
-            if rid in self.requests:
-                # Read the latest state after event delivery; a prior snapshot could
-                # overwrite a newer synchronous save made while the event committed.
-                cp4.reconcile(self.requests[rid])
-                self.requests[rid]["updated_at"] = time.time()
-                _, interrupted = await self._publication_write(self.store.aput("request", rid, self.requests[rid]))
-                cancelled = cancelled or interrupted
+        try:
+            async with self.event_lock:
+                await self._flush_committed_events()
+                durable_report = (self.reporter.enabled() and bool(ev.get("request_id")) and
+                                  ev.get("type") in ProjectReporter.HANDLED)
+                ev, cancelled = await self._publication_write(self.store.aappend_event(
+                    ev, self.s.gateway.event_buffer, runner_id, runner_seq, reporter_delivery=durable_report))
+                self._record_published_event(ev)
+                queued = sorted([*self.pending_committed, (ev, tuple(self.clients))], key=lambda item: item[0]["seq"])
+                self.pending_committed.clear()
+                self.pending_committed.extend(queued)
+                try:
+                    if not cancelled:
+                        await self._flush_committed_events(delivered)
+                except asyncio.CancelledError:
+                    cancelled = True
+                rid = ev.get("request_id")
+                if rid in self.requests:
+                    # Snapshot latest state after delivery, before the write awaits.
+                    cp4.reconcile(self.requests[rid])
+                    self.requests[rid]["updated_at"] = time.time()
+                    request = copy.deepcopy(self.requests[rid])
+                    _, interrupted = await self._publication_write(self.store.aput("request", rid, request))
+                    cancelled = cancelled or interrupted
+        finally:
+            if self.pending_committed:
+                self._schedule_committed_events()
         if self.reporter.enabled():
             self.reporter.submit(ev)
         for event in delivered:
