@@ -174,3 +174,39 @@ async def test_publication_without_request(gateway):
     await gateway.publish(event(request=False))
     assert len(gateway.events) == 1
     assert gateway.store.all("request") == {}
+
+
+@pytest.mark.parametrize("buffer_size", [1, 10])
+async def test_sync_review_during_async_commit_preserves_sequence(gateway, monkeypatch, buffer_size):
+    hub = gateway
+    hub.events = deque(maxlen=buffer_size)
+    hub.requests["r"]["status"] = "done"
+    hub.result_storage = SimpleNamespace(schedule=lambda rid: None)
+    monkeypatch.setattr(hub, "retire_resume_cards", lambda *args: [])
+    delivered = []
+
+    class Client:
+        async def send_text(self, text):
+            delivered.append(json.loads(text)["seq"])
+
+    hub.clients.add(Client())
+    entered, release = stall_commit(hub, monkeypatch)
+    task = asyncio.create_task(hub.publish(event()))
+    timer = None
+    try:
+        await until_entered(entered)
+        # A synchronous helper waits on this lane, then appends seq 2 before
+        # publication's event-loop continuation can append seq 1.
+        timer = threading.Timer(0.02, release.set)
+        timer.start()
+        hub.review_done("r")
+        assert [e["seq"] for e in hub.events] == [2]
+    finally:
+        release.set()
+        if timer:
+            timer.join()
+        await task
+    await hub._send_committed_event()
+    assert [e["seq"] for e in hub.events] == ([2] if buffer_size == 1 else [1, 2])
+    assert delivered == [1, 2]
+    assert [e["seq"] for e in hub.store.events_since(0)] == [1, 2]

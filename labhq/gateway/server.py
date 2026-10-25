@@ -2497,6 +2497,16 @@ class Hub:
                 *agent.get("mcp", [])]
 
     # ----- events -----
+    def _record_published_event(self, ev: dict) -> None:
+        # A synchronous checkpoint can commit a higher sequence while publish
+        # awaits its writer. Keep the newest buffer entries in database order.
+        if not self.events or self.events[-1]["seq"] < ev["seq"]:
+            self.events.append(ev)
+            return
+        ordered = sorted([*self.events, ev], key=lambda entry: entry["seq"])
+        self.events.clear()
+        self.events.extend(ordered)
+
     async def publish(self, ev: dict, runner_id: str | None = None, runner_seq: int | None = None) -> None:
         # Cancellation cannot release event_lock while a commit's outcome is unknown.
         # Finish this publication (including request persistence) before propagating it.
@@ -2523,7 +2533,7 @@ class Hub:
                               ev.get("type") in ProjectReporter.HANDLED)
             ev = await self.store.aappend_event(ev, self.s.gateway.event_buffer, runner_id, runner_seq,
                                                reporter_delivery=durable_report)
-            self.events.append(ev)
+            self._record_published_event(ev)
             dead = []
             for c in list(self.clients):
                 try:
