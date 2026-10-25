@@ -313,7 +313,7 @@ function requestStaffStatus(a) {
       ? [q.steps.direct || 'pending']
       : q.plan.filter(s => s.agent_id === a.id).map(s => q.steps[s.id] || 'pending'));
     if (steps.some(s => ['working', 'running'].includes(s))) return {state:'working', text:'작업 중'};
-    if (steps.includes('error')) return {state:'error', text:'문제 발생'};
+    if (steps.some(s => ['error', 'failed', 'incomplete'].includes(s))) return {state:'error', text:'문제 발생'};
     for (const [step, text] of [['halted','멈춤 · 재개 가능'], ['paused','일시 정지됨'],
       ['waiting_login','로그인 대기'], ['waiting_quota','한도 대기'], ['waiting_facilities_fix','환경 수정 승인 대기']]) {
       if (steps.includes(step)) return {state:'waiting', text};

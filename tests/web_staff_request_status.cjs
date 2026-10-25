@@ -24,7 +24,8 @@ test('a current planned turn wins over an older review even when the old request
 test('current step status survives snapshots without a dispatched task', () => {
   for (const [step, visual, text] of [['working','working','작업 중'],
     ['done','done','담당 단계 완료'], ['waiting_login','waiting','로그인 대기'],
-    ['halted','waiting','멈춤 · 재개 가능']]) {
+    ['halted','waiting','멈춤 · 재개 가능'], ['failed','error','문제 발생'],
+    ['incomplete','error','문제 발생']]) {
     const o = fixture({analysis:step}), a = o.ag('analyst');
     assert.equal(o.visual(a), visual, step);
     assert.equal(o.stateText(a), text, step);
