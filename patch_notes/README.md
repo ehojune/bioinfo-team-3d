@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 04:10 | [`ba5945f`](https://github.com/ehojune/bioinfo-team-3d/commit/ba5945f) | **취소한 local job의 wrapper·자식 종료와 다른 요청 보존을 검사하고 Windows 필수 검사에 넣었습니다.**<br>test: offline 취소를 복구한 runner에 재전송하는 통합 회귀검사 보존 (Refs #675) |
+| 04:09 | [`0adc882`](https://github.com/ehojune/bioinfo-team-3d/commit/0adc882) | **기존 필수 항목 검증을 유지하며 새 항목도 정확히 대조합니다. 계약 검사 3건이 통과했습니다.**<br>test: CI mandatory inventory의 예상 목록에 새 회귀검사 추가 |
 | 03:49 | [`6798b71`](https://github.com/ehojune/bioinfo-team-3d/pull/967/commits/6798b71) | **같은 runner state를 쓰는 서로 다른 설정의 동시 시작을 막습니다.**<br>runner state 소유권 조회·기록을 OS lock으로 묶고 획득·기록 실패 시 시작을 중단합니다. |
 
 ## 2026-10-25
