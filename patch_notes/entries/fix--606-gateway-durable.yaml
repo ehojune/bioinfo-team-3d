@@ -1,5 +1,9 @@
 pr: 966
 rows:
+- sha: 'ea8011a'
+  at: 2026-10-26 04:20
+  summary: 전송이 취소된 화면 연결을 닫아 저장된 이벤트를 다시 받게 합니다.
+  text: '봇 P2 4372064831을 수정했습니다. broadcast에서 제외한 client를 독립된 1초 제한 close로 종료해 reconnect/replay를 유도합니다. 취소·close 호출·저장·다음 발행을 포함한 gateway 회귀 22건 통과.'
 - sha: '8b8bbf3'
   at: 2026-10-26 04:15
   summary: 연결 종료 때도 저장만 취소에서 보호합니다.
