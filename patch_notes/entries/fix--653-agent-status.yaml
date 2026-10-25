@@ -1,5 +1,13 @@
 pr: null
 rows:
+  - sha: 39649e4
+    at: "2026-10-26 06:00"
+    summary: "러너를 기다리는 직원만 대기로 표시하고 다른 직원의 차례를 구분합니다."
+    text: "fix: runner_wait의 대상 직원을 보존하고 dispatch·대기 종료 시 정리하는 회귀검사 추가"
+  - sha: 2a9d36c
+    at: "2026-10-26 05:58"
+    summary: "CSO가 실제 맡는 팀 요청과 계획 요청은 참여한 일로 표시합니다."
+    text: "fix: orchestrate·plan_only mode를 CSO 참여 근거로 쓰되 무관한 direct 요청은 제외"
   - sha: f0bed64
     at: "2026-10-26 05:53"
     summary: "직접 맡긴 요청이 러너 연결을 기다릴 때 대기 이유를 표시합니다."
