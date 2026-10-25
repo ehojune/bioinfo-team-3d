@@ -1,5 +1,9 @@
 pr: 962
 rows:
+  - sha: 1e8d3d0
+    at: "2026-10-25 20:40"
+    summary: "새 입력 proof test를 Windows inventory에 등록했습니다."
+    text: "기존 선택 정책의 필수 목록을 보완하고 binary open mode를 명시해 text I/O 검사를 통과하도록 맞췄다."
   - sha: 515fe25
     at: "2026-10-25 20:34"
     summary: "파일·폴더 입력 hash를 보존해 이어 가기 단계 재사용을 허용했습니다."
