@@ -1,5 +1,9 @@
 pr: 970
 rows:
+- sha: c1ca4f4
+  at: 2026-10-26 06:15
+  summary: 문서 통합과 병합을 기다리는 조건을 현재 우선순위에 명시했습니다.
+  text: HANDOFF에 선행 수정·snapshot 후속·문서 통합 순서와 hold·최종 head CI·리뷰 gate를 기록했습니다.
 - sha: ce9540e
   at: 2026-10-26 06:10
   summary: 저장 기능의 병합 상태와 아직 남은 작업을 바로잡았습니다.
