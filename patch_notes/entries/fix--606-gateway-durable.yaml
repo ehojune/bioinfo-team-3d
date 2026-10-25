@@ -1,5 +1,9 @@
 pr: 966
 rows:
+- sha: '70abfec'
+  at: 2026-10-26 04:35
+  summary: 발행이 취소돼도 남은 화면 전송을 바로 이어갑니다.
+  text: '봇 P2 4372112318을 수정했습니다. lock 반환 뒤 pending delivery를 독립적으로 재개하고 client 전송은 10초로 제한합니다. 다음 event 없이 남은 client가 수신하는 검사와 network timeout·close를 추가했습니다. 관련 mock/static 290건 통과.'
 - sha: '19a76e2'
   at: 2026-10-26 04:30
   summary: 두 요청이 동시에 로그인 대기에 들어가도 안내는 한 번만 보냅니다.
