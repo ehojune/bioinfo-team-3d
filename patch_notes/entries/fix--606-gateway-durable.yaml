@@ -1,5 +1,9 @@
 pr: 966
 rows:
+- sha: '3949453'
+  at: 2026-10-26 04:00
+  summary: 동기 저장이 겹쳐도 이벤트 표시 순서를 보존합니다.
+  text: '봇 P1 4371985762를 buffer 1·10에서 2 failed로 재현했습니다. async commit 중 동기 review가 높은 seq를 먼저 반영해도 buffer에는 최신 seq를 순서대로 남깁니다. delivery·DB 순서를 함께 검사했고 관련 mock/static 78건을 통과했습니다.'
 - sha: '5a2c95a'
   at: 2026-10-26 04:00
   summary: 저장 대기가 남은 gateway 기능을 매뉴얼에 구분했습니다.
