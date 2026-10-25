@@ -308,19 +308,19 @@ async def test_arbitrary_bad_plan_binding_never_enters_slot_repair():
     assert not any(t.meta['kind'] == 'slot_repair' for t in hub.calls)
 
 
-def test_configured_dev_log_keeps_report_and_local_fallback_deduplicates(tmp_path):
+async def test_configured_dev_log_keeps_report_and_local_fallback_deduplicates(tmp_path):
     from labhq.gateway.server import Hub
     from tests.test_round_records import settings, round_request
 
     hub = Hub(settings(tmp_path))
     try:
         round_request(hub, 'r', 'failed')
-        hub.orchestrator._record_dev_failure('r', 's2', 'schema error', 'contract')
-        hub.orchestrator._record_dev_failure('r', 's2', 'schema error', 'contract')
+        (await hub.orchestrator._record_dev_failure('r', 's2', 'schema error', 'contract'))
+        (await hub.orchestrator._record_dev_failure('r', 's2', 'schema error', 'contract'))
         assert len((tmp_path / 'state' / 'dev-reports.jsonl').read_text('utf-8').splitlines()) == 1
         hub.s.dev_log.enabled = True
         hub.s.dev_log.repo = 'example/private-log'
-        hub.orchestrator._record_dev_failure('r', 's4', 'internal error', 'terminal')
+        (await hub.orchestrator._record_dev_failure('r', 's4', 'internal error', 'terminal'))
         record = hub.rounds.write('r')
         assert len(record['result']['dev_reports']) == 2
         assert record['result']['dev_reports'][-1]['step_id'] == 's4'

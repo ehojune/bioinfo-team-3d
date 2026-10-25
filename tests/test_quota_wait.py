@@ -364,7 +364,9 @@ async def test_restart_recovery_holds_only_the_step_on_the_limited_engine(tmp_pa
     restored = Hub(hub.s)
     restored.agents = {"worker": {"id": "worker", "engine": "codex"},
                        "helper": {"id": "helper", "engine": "claude_code"}}
-    restored.resume_agents = lambda _rid: set()
+    async def resume_agents(_rid):
+        return set()
+    restored.aresume_agents = resume_agents
     calls, outcome = [], {}
     independent_done = asyncio.Event()
 

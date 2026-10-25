@@ -127,6 +127,9 @@ class StateStore:
         with self._transaction() as conn:
             conn.execute("DELETE FROM state WHERE kind=? AND key=?", (kind, key))
 
+    async def adelete(self, kind: str, key: str) -> None:
+        await durable.run(self.lane, self._delete_now, kind, key)
+
     def all(self, kind: str) -> dict[str, dict]:
         return {key: json.loads(body) for key, body in
                 self.db.execute("SELECT key, body FROM state WHERE kind=?", (kind,))}
@@ -241,6 +244,10 @@ class StateStore:
                          (str(event["seq"]), _dumps(event)))
         return event
 
+    async def acommit_terminal(self, rid: str, request: dict, event: dict, limit: int) -> dict:
+        request, event = json.loads(_dumps(request)), json.loads(_dumps(event))
+        return await durable.run(self.lane, self._commit_terminal_now, rid, request, event, limit)
+
     def commit_request_event(self, rid: str, request: dict, event: dict, limit: int) -> dict:
         """Checkpoint a request update and its single event in one transaction."""
         return durable.call(self.lane, self._commit_request_event_now, rid, request, event, limit)
@@ -249,6 +256,10 @@ class StateStore:
         with self._transaction() as conn:
             conn.execute("INSERT OR REPLACE INTO state VALUES ('request', ?, ?)", (rid, _dumps(request)))
             return self._insert_event(conn, event, limit)
+
+    async def acommit_request_event(self, rid: str, request: dict, event: dict, limit: int) -> dict:
+        request, event = json.loads(_dumps(request)), json.loads(_dumps(event))
+        return await durable.run(self.lane, self._commit_request_event_now, rid, request, event, limit)
 
     def event_bounds(self) -> tuple[int, int]:
         row = self.db.execute("SELECT MIN(seq), MAX(seq) FROM events").fetchone()

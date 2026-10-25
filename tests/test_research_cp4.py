@@ -67,7 +67,7 @@ async def test_accept_receipt_restart_and_finish_preserve_approved_body(tmp_path
     assert not final_checkpoint_problems(hub.requests['r'])
     restored = Hub(hub.s)
     await restored.orchestrator.run_request('r', resume=True)
-    restored.orchestrator._finish('r', 'must not replace the approved report', {}, True)
+    (await restored.orchestrator._finish('r', 'must not replace the approved report', {}, True))
     assert restored.requests['r']['report'] == before['report']
     assert restored.requests['r']['report_appendix'] == before['report_appendix']
     assert restored.requests['r']['status'] == 'done'
@@ -247,6 +247,7 @@ async def test_decision_during_bundle_copy_rebuilds_receipt_before_clearing_pend
     monkeypatch.setattr(asyncio, 'to_thread', to_thread)
     monkeypatch.setattr(hub, '_has_bundle_workdir', lambda rid: True)
     monkeypatch.setattr(hub, '_apply_bundle_outcome', lambda *args: None)
+    monkeypatch.setattr(hub, '_apply_bundle_to_request', lambda *args: None)
     hub.requests['r']['bundle_pending'] = True
     first = hub._schedule_bundle('r', {})
     await entered.wait()
@@ -372,7 +373,10 @@ async def test_cp4_accept_rebuilds_existing_report_only_bundle(tmp_path, monkeyp
     hub.review_done('r', **target(req))
     try:
         assert req['bundle_pending'] is True
-        await asyncio.sleep(0)  # let the scheduled refresh register its bundle task
+        async def registered():
+            while 'r' not in hub.terminal_tasks:
+                await asyncio.sleep(0)
+        await asyncio.wait_for(registered(), 60)  # request persistence precedes bundle registration
         await hub.terminal_tasks['r']
         record = json.loads((folder / 'final_checkpoint.json').read_text(encoding='utf-8'))
         assert record['receipt']['decision'] == 'accepted'

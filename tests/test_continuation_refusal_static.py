@@ -78,6 +78,7 @@ def hub(req=None):
     for name in ("_round_dispatched", "_continuation_refusal_context", "_model_refusal_request", "offer_model_refusal"):
         setattr(h, name, scope[name].__get__(h))
     h.save_request = lambda rid: h.saved.append(rid)
+    h.asave_request = h.save_request  # awaits are stripped by this static extraction
     h.save_approval = lambda aid: h.saved.append(aid)
     h.publish = lambda event: h.events.append(event)
     def create(body, extra): h.created.append((body, extra)); return "new-request"

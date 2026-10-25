@@ -137,8 +137,8 @@ async def test_round_refresh_failure_does_not_turn_a_completed_upload_into_failu
         status="done", report="original report", pi_reviewed_at=1,
         result_storage={"mode": "existing", "repo": "owner/study", "status": "selected"})
     hub.rounds = SimpleNamespace(
-        write=Mock(side_effect=OSError("round state unavailable") if failure_point == "write" else None),
-        submit=Mock(side_effect=OSError("round state unavailable") if failure_point == "submit" else None))
+        awrite=AsyncMock(side_effect=OSError("round state unavailable") if failure_point == "write" else None),
+        asubmit=AsyncMock(side_effect=OSError("round state unavailable") if failure_point == "submit" else None))
     service = ResultStorage(hub)
     monkeypatch.setattr(service, "edition_pdf", AsyncMock(return_value=(None, "test environment")))
     monkeypatch.setattr(service, "upload", AsyncMock())
@@ -150,9 +150,9 @@ async def test_round_refresh_failure_does_not_turn_a_completed_upload_into_failu
     assert saved["round_warning"] == "게시를 마쳤지만 운전 기록을 갱신하지 못했습니다(OSError)."
     service.upload.assert_awaited_once()
     if failure_point == "write":
-        hub.rounds.submit.assert_not_called()
+        hub.rounds.asubmit.assert_not_awaited()
     else:
-        hub.rounds.submit.assert_called_once_with("req_test")
+        hub.rounds.asubmit.assert_awaited_once_with("req_test")
 
 
 async def test_direct_upload_rejects_unreviewed_request(tmp_path):

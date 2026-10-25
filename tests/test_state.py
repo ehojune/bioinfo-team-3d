@@ -88,6 +88,9 @@ async def test_restart_keeps_approval_and_resumes_only_remaining_steps(tmp_path)
     assert hub.orchestrator.cost["r1"] == 2.5
     assert hub.requests["r1"]["results"]["s1"]["text"] == "saved"
     assert "s2" in hub.store.all("request")["r1"]["results"]
+    # The terminal row commits before round-record/delivery cleanup completes.
+    if task := hub.request_tasks.get("r1"):
+        await task
     hub.unregister_runner("runner1", socket)
     with TestClient(app) as client:
         headers = {"Authorization": f"Bearer {s.gateway.client_token}"}
@@ -366,7 +369,7 @@ def test_terminal_checkpoint_replays_once_to_reporter_after_restart(tmp_path):
         first.requests["r"] = {"id": "r", "mode": "direct", "text": "study", "status": "running",
                                "project_id": "p"}
         first._queue_terminal_delivery = lambda event: None  # process exits just after commit
-        first.orchestrator._finish("r", "finished", {}, ok=True)
+        (await first.orchestrator._finish("r", "finished", {}, ok=True))
         assert first.store.get("request", "r")["status"] == "done"
         assert [e["type"] for e in first.store.events_since(0)] == ["request.completed"]
         assert len(first.store.all("terminal_delivery")) == 1
@@ -403,7 +406,7 @@ def test_restart_creates_missing_issue_before_terminal_report(tmp_path):
         first.reporter.submit = lambda event: None  # event persisted, issue not yet opened
         await first.publish({"type": "request.created", "request_id": "r", "data": {"text": "study"}})
         assert [event["type"] for event in first.store.all("reporter_delivery").values()] == ["request.created"]
-        first.orchestrator._finish("r", "finished", {}, ok=True)
+        (await first.orchestrator._finish("r", "finished", {}, ok=True))
         first.store.close()
 
     asyncio.run(checkpoint_then_stop())
@@ -1405,6 +1408,7 @@ async def test_resume_denial_publishes_request_failed(tmp_path):
     first.save_request("r")
     first.store.close()
     restored = Hub(s)
+    restored.pi_interpreter.schedule = lambda event: None
     aid = next(iter(restored.approvals))
     await restored.resolve_approval(aid, False)
     assert restored.requests["r"]["status"] == "failed"

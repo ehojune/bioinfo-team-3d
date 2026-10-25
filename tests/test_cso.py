@@ -1093,7 +1093,7 @@ async def test_report_keeps_confirmed_estimated_and_unaccounted_costs_apart():
     orch = Orchestrator(hub)
     orch.cost["r"] = 1.5
     orch.budget_outcomes["r"] = [{"spent_usd": 1.5, "limit_usd": 10, "approved": False, "unknown_count": 1}]
-    orch._finish("r", "Narrative", {"A": {"status": "done"}}, ok=True)
+    (await orch._finish("r", "Narrative", {"A": {"status": "done"}}, ok=True))
     report = hub.requests["r"]["execution_record"]
 
     assert ("비용: 확인 $1.00 + 추정 $0.50 + 비용 모름 1건 "
@@ -2484,8 +2484,8 @@ async def test_finish_keeps_bench_result_block_last_after_labhq_metadata():
     orch.budget_outcomes["r"] = [{"spent_usd": 1.25, "limit_usd": 1.0, "approved": True}]
     block = ("<!-- LABHQ_BENCH_RESULT -->\n```json\n{\"answer\": true}\n```\n"
              "<!-- /LABHQ_BENCH_RESULT -->")
-    orch._finish("r", "Narrative\n\n" + block,
-                 {"A": {"status": "done", "workdir_id": "w", "outputs": ["outputs/answer.md"]}}, ok=True)
+    (await orch._finish("r", "Narrative\n\n" + block,
+                 {"A": {"status": "done", "workdir_id": "w", "outputs": ["outputs/answer.md"]}}, ok=True))
     report = hub.requests["r"]["report"]
     appendix = hub.requests["r"]["execution_record"]
     assert report.rstrip().endswith("<!-- /LABHQ_BENCH_RESULT -->")
@@ -2501,11 +2501,11 @@ async def test_finish_groups_status_and_warnings_under_one_execution_appendix():
 
     hub = FakeHub(dispatch)
     hub.requests["r"].update(plan={"steps": [{"id": "A"}]})
-    Orchestrator(hub)._finish(
+    (await Orchestrator(hub)._finish(
         "r", "## 결론과 권고\n결론 본문", {
             "A": {"status": "done", "workdir_id": "w", "outputs": ["outputs/answer.md"],
                   "tool_errors": ["lookup timed out"]},
-        }, ok=True)
+        }, ok=True))
 
     report = hub.requests["r"]["report"]
     appendix = hub.requests["r"]["execution_record"]
@@ -2515,7 +2515,7 @@ async def test_finish_groups_status_and_warnings_under_one_execution_appendix():
     assert "Step status and output paths" in appendix
 
 
-def test_finish_preserves_a_long_appendix_and_marks_the_terminal_copy_as_truncated():
+async def test_finish_preserves_a_long_appendix_and_marks_the_terminal_copy_as_truncated():
     async def dispatch(task):
         return result(task, text="unused")
 
@@ -2523,7 +2523,7 @@ def test_finish_preserves_a_long_appendix_and_marks_the_terminal_copy_as_truncat
     terminal = []
     hub.commit_terminal = lambda rid, typ, data: terminal.append((rid, typ, data))
     full = "기록" * 11_000
-    Orchestrator(hub)._finish("r", "PI body\n\n## 부록: 실행 기록\n\n" + full, {}, ok=True)
+    (await Orchestrator(hub)._finish("r", "PI body\n\n## 부록: 실행 기록\n\n" + full, {}, ok=True))
 
     stored = hub.requests["r"]["execution_record"]
     data = terminal[0][2]
@@ -3269,7 +3269,7 @@ class _TaskStore:
 
 
 @pytest.mark.parametrize("stored,recorded,kept", [(False, False, False), (True, False, True), (False, True, True)])
-def test_a_restart_drops_only_holds_of_attempts_the_gateway_never_stored(stored, recorded, kept):
+async def test_a_restart_drops_only_holds_of_attempts_the_gateway_never_stored(stored, recorded, kept):
     # Review P2-2: a turn held, then restarted while waiting before the gateway stored it, was never sent.
     hub = _reserving_hub(None)
     hub.store = _TaskStore()
@@ -3279,7 +3279,7 @@ def test_a_restart_drops_only_holds_of_attempts_the_gateway_never_stored(stored,
     if recorded:
         hub.requests["r"]["cost_by_task"] = {"X": None}  # e.g. a failed send recorded as unknown
     orch = Orchestrator(hub)
-    orch._drop_unsent_holds("r")
+    (await orch._drop_unsent_holds("r"))
     assert hub.requests["r"]["budget_holds"] == ({"X": 1.5} if kept else {})
 
 
@@ -3299,7 +3299,7 @@ async def test_a_cancel_before_the_gateway_stores_the_turn_releases_its_hold(sto
     orch = Orchestrator(hub)
     running = asyncio.create_task(orch.run_step(Task(agent_id="worker", request_id="r", prompt="a")))
     await started.wait()
-    orch._drop_unsent_holds("r")  # a concurrent (re)start prune never touches an attempt in flight here
+    (await orch._drop_unsent_holds("r"))  # a concurrent (re)start prune never touches an attempt in flight here
     assert hub.requests["r"]["budget_holds"] == {hub.calls[0].id: 1.5}
     running.cancel()
     with pytest.raises(asyncio.CancelledError):
