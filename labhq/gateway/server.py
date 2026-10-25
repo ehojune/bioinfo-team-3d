@@ -767,7 +767,6 @@ class Hub:
                          deadline_at: float, reason: str, agent_id: str | None = None) -> bool:
         """Park until the PI logs in, the retry clock fires, or the bounded wait expires."""
         req = self.requests[rid]
-        first_notice = engine not in self.login_notices
         started = (((req.get("login_windows") or {}).get(engine) or {}).get("started_at") or time.time())
         runner_id = self.agent_runner.get(agent_id or "")
         entry = {"engine": engine, "resume_at": resume_at, "deadline_at": deadline_at,
@@ -783,7 +782,9 @@ class Hub:
                                 "data": {"step_id": step_id, "engine": engine, "resume_at": resume_at,
                                          "deadline_at": deadline_at, "reason": short(reason, 500),
                                          "command": command}})
-        if first_notice:
+        # publish() now yields during storage. Claim the shared notice only after
+        # that await, with no yield between checking and marking the engine.
+        if engine not in self.login_notices:
             self.login_notices.add(engine)
             await self.publish({"type": "engine.login_wait", "ts": time.time(), "request_id": rid,
                                 "data": {"engine": engine, "command": command,

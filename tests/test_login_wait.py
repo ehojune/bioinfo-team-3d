@@ -253,9 +253,29 @@ async def test_solo_login_retry_preserves_request_budget_and_schema(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_two_requests_share_one_engine_notice(tmp_path):
+async def test_two_requests_share_one_engine_notice(tmp_path, monkeypatch):
     hub = _hub(tmp_path, retry=100, maximum=200)
     hub.requests["other"] = {"id": "other", "status": "running"}
+    both_steps, release_steps, both_parked = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    steps, parked = set(), []
+    original_publish, original_hold = hub.publish, hub.login_hold
+
+    async def publish(event, *args, **kwargs):
+        if event["type"] == "request.step_login_wait":
+            steps.add(event["request_id"])
+            if len(steps) == 2:
+                both_steps.set()
+            await release_steps.wait()
+        await original_publish(event, *args, **kwargs)
+
+    def hold(engine):
+        parked.append(engine)
+        if len(parked) == 2:
+            both_parked.set()
+        return original_hold(engine)
+
+    monkeypatch.setattr(hub, "publish", publish)
+    monkeypatch.setattr(hub, "login_hold", hold)
     deadline = time.time() + 200
     first = asyncio.create_task(hub.wait_login("r", "plan", "claude_code",
                                                resume_at=time.time() + 100, deadline_at=deadline,
@@ -264,8 +284,9 @@ async def test_two_requests_share_one_engine_notice(tmp_path):
     second = asyncio.create_task(hub.wait_login("other", "review", "claude_code",
                                                 resume_at=time.time() + 100, deadline_at=deadline,
                                                 reason=CLAUDE_EXPIRED))
-    await _until(lambda: any(event["type"] == "engine.login_wait" for event in hub.events)
-                 and "review" in hub.requests["other"].get("login_waits", {}))
+    await asyncio.wait_for(both_steps.wait(), WAIT)
+    release_steps.set()
+    await asyncio.wait_for(both_parked.wait(), WAIT)
     assert len([event for event in hub.events if event["type"] == "engine.login_wait"]) == 1
     assert len(hub.engine_login_holds()) == 1
     await hub.release_login("claude_code", manual=True)
