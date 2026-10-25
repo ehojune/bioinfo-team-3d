@@ -41,6 +41,19 @@ test('live command, approval and warning still override request fallback', () =>
   event('agent.log',{level:'warn',text:'No output'});
   assert.equal(o.stateText(a),'No output');
 });
+test('direct snapshots retain login, quota and facilities waits without a task ledger', () => {
+  for (const [status, text] of [['waiting_login','로그인 대기'],
+    ['waiting_quota','한도 대기'], ['waiting_facilities_fix','환경 수정 승인 대기']]) {
+    const o = fixture();
+    o.apply({type:'snapshot',data:{agents:[{id:'analyst'}],requests:[{
+      id:'direct', mode:'direct', agent_id:'analyst', status,
+      step_status:{direct:status},
+    }]}});
+    assert.equal(o.S.activeTasks.size,0);
+    assert.equal(o.visual(o.ag('analyst')),'waiting');
+    assert.equal(o.stateText(o.ag('analyst')),text);
+  }
+});
 test('review names its request and requires participation, including CSO', () => {
   const o = fixture(); o.S.requests.delete('current');
   assert.equal(o.stateText(o.ag('analyst')), '작업 끝 · PI 검토 대기 · Previous study');

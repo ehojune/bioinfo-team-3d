@@ -309,7 +309,9 @@ function requestStaffStatus(a) {
   const requests = sortRequests([...S.requests.values()].filter(q => participates(a, q)));
   const active = requests.filter(q => isActiveRequest(q.status));
   if (active.length) {
-    const steps = active.flatMap(q => q.plan.filter(s => s.agent_id === a.id).map(s => q.steps[s.id] || 'pending'));
+    const steps = active.flatMap(q => q.mode === 'direct' && q.agent_id === a.id
+      ? [q.steps.direct || 'pending']
+      : q.plan.filter(s => s.agent_id === a.id).map(s => q.steps[s.id] || 'pending'));
     if (steps.some(s => ['working', 'running'].includes(s))) return {state:'working', text:'작업 중'};
     if (steps.includes('error')) return {state:'error', text:'문제 발생'};
     for (const [step, text] of [['halted','멈춤 · 재개 가능'], ['paused','일시 정지됨'],
