@@ -1,5 +1,9 @@
 pr: 966
 rows:
+- sha: '5a2c95a'
+  at: 2026-10-26 04:00
+  summary: 저장 대기가 남은 gateway 기능을 매뉴얼에 구분했습니다.
+  text: '봇 P2 4371973611의 상충 설명을 고쳤습니다. publish의 await 저장과 task 원장·승인·리뷰 등 남은 동기 helper를 구분합니다.'
 - sha: '43db8c8'
   at: 2026-10-26 04:00
   summary: 이벤트 저장을 기다리는 동안에도 gateway가 다른 요청에 응답합니다.
