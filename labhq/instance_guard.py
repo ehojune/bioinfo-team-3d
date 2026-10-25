@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from contextlib import contextmanager
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -190,7 +191,7 @@ def _owner_path(settings: Settings, role: str) -> Path:
     return (_state_dir(settings) if role == "gateway" else _runner_dir(settings)) / OWNER_FILE[role]
 
 
-def write_owner(settings: Settings, role: str) -> None:
+def write_owner(settings: Settings, role: str, *, required: bool = False) -> None:
     """The running gateway or runner records itself: process, config file and identity. Best effort."""
     from . import cli
 
@@ -200,11 +201,51 @@ def write_owner(settings: Settings, role: str) -> None:
         pid = os.getpid()
         created = cli._process_created(pid)
     except (OSError, cli.ProcessIdentityError):
+        if required:
+            raise
         return
+    if required and created is None:
+        raise RuntimeError("Cannot identify the claiming process")
     identity = identity_of(settings)
-    _write_json(_owner_path(settings, role), {
+    record = {
         "pid": pid, "created": created, "role": role, "config": settings.config_path,
-        "config_id": identity.config_id, "fingerprint": identity.fingerprint})
+        "config_id": identity.config_id, "fingerprint": identity.fingerprint}
+    if required:
+        atomic_write_text(_owner_path(settings, role), json.dumps(record, ensure_ascii=False) + "\n")
+    else:
+        _write_json(_owner_path(settings, role), record)
+
+
+@contextmanager
+def _runner_claim_lock(settings: Settings):
+    """Serialize owner inspection/publication; the stable lock file is never removed.
+
+    OS locks disappear on exit, so a crashed claimant cannot strand a lock.
+    """
+    path = _owner_path(settings, "runner").with_suffix(".lock")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a+b") as handle:
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"\0")
+            handle.flush()
+        handle.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            yield
+        finally:
+            handle.seek(0)
+            if os.name == "nt":
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def _live_owner(settings: Settings, role: str) -> Identity | None:
@@ -443,9 +484,16 @@ def claim(settings: Settings, role: str) -> Notice | None:
             if not same_identity(owner, mine):
                 return _state_notice(settings, role, owner, mine, str)
     else:
-        owner = _live_owner(settings, "runner")
-        if owner is not None and not same_identity(owner, mine):
-            return _runner_notice(settings, owner, mine, str)
+        try:
+            with _runner_claim_lock(settings):
+                owner = _live_owner(settings, "runner")
+                if owner is not None and not same_identity(owner, mine):
+                    return _runner_notice(settings, owner, mine, str)
+                write_owner(settings, role, required=True)
+        except (OSError, RuntimeError) as exc:
+            return Notice("runner_state", "runner state 소유권을 획득하지 못했습니다.",
+                          f"다른 runner의 시작이 끝난 뒤 다시 시도하세요 ({type(exc).__name__}).", True)
+        return None
     write_owner(settings, role)
     return None
 

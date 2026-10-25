@@ -386,6 +386,84 @@ def test_a_starting_runner_or_gateway_is_refused_while_another_config_holds_its_
     assert instance_guard.claim(gateway_two, "gateway").key == "state_alive"
 
 
+def test_runner_claim_race_has_one_winner_and_loser_preserves_owner(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    shared = tmp_path / "shared"
+    first = make_config(tmp_path / "one.yaml", tmp_path / "s1", runner_state=shared)
+    second = make_config(tmp_path / "two.yaml", tmp_path / "s2", runner_state=shared, port=PORT + 1)
+    inspected, publish = Event(), Event()
+    original = instance_guard._live_owner
+
+    def paused(settings, role):
+        owner = original(settings, role)
+        if settings is first:
+            inspected.set()
+            assert publish.wait(5)
+        return owner
+
+    monkeypatch.setattr(instance_guard, "_live_owner", paused)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        winner = pool.submit(instance_guard.claim, first, "runner")
+        try:
+            assert inspected.wait(5)
+            refused = pool.submit(instance_guard.claim, second, "runner").result(timeout=5)
+            assert refused is not None and refused.blocking
+        finally:
+            publish.set()
+        assert winner.result(timeout=5) is None
+    path = instance_guard._owner_path(first, "runner")
+    before = path.read_bytes()
+    assert instance_guard.claim(second, "runner").blocking
+    assert path.read_bytes() == before
+    assert json.loads(before)["config"] == first.config_path
+
+
+def test_runner_claim_recovers_stale_owner_and_released_lock(tmp_path, monkeypatch):
+    mine = make_config(tmp_path / "mine.yaml", tmp_path / "state")
+    path = instance_guard._owner_path(mine, "runner")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"pid": 999, "created": "old", "config": "old.yaml"}), encoding="utf-8")
+    with pytest.raises(ValueError):
+        with instance_guard._runner_claim_lock(mine):
+            raise ValueError("interrupted claimant")
+    assert instance_guard.claim(mine, "runner") is None
+    assert json.loads(path.read_text(encoding="utf-8"))["config"] == mine.config_path
+
+
+def test_runner_claim_cannot_succeed_without_owner_publication(tmp_path, monkeypatch):
+    mine = make_config(tmp_path / "mine.yaml", tmp_path / "state")
+
+    def fail(*args, **kwargs):
+        raise OSError("disk error")
+
+    monkeypatch.setattr(instance_guard, "atomic_write_text", fail)
+    assert instance_guard.claim(mine, "runner").blocking
+    assert not instance_guard._owner_path(mine, "runner").exists()
+
+
+def test_runner_claim_lock_excludes_another_process(tmp_path):
+    import subprocess
+    import sys
+
+    mine = make_config(tmp_path / "mine.yaml", tmp_path / "state")
+    command = [sys.executable, "-c", (
+        "import sys\n"
+        "from labhq import cli, instance_guard\n"
+        "from labhq.settings import Settings\n"
+        "cli._process_created = lambda pid: 'fixture-generation'\n"
+        "notice = instance_guard.claim(Settings.load(sys.argv[1]), 'runner')\n"
+        "print('blocked' if notice else 'claimed')\n"
+    ), mine.config_path]
+    with instance_guard._runner_claim_lock(mine):
+        blocked = subprocess.run(command, capture_output=True, text=True, timeout=15, check=True)
+    assert blocked.stdout.strip() == "blocked"
+    assert not instance_guard._owner_path(mine, "runner").exists()
+    recovered = subprocess.run(command, capture_output=True, text=True, timeout=15, check=True)
+    assert recovered.stdout.strip() == "claimed"
+
+
 # P1: a gateway on the port that answers with the same token is not adopted unless it is this config's.
 def test_a_gateway_with_the_same_token_from_an_unknown_config_is_not_adopted_or_recorded(
         tmp_path, monkeypatch, capsys):
