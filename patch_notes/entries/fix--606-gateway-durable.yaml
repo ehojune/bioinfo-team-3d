@@ -1,0 +1,6 @@
+pr: 966
+rows:
+- sha: '43db8c8'
+  at: 2026-10-26 04:00
+  summary: 이벤트 저장을 기다리는 동안에도 gateway가 다른 요청에 응답합니다.
+  text: 'publish의 event·request 저장을 SQLite writer에서 await하고 event payload를 복사합니다. 반복 취소에도 commit 결과·발행 순서를 확인합니다. mock 지연·FIFO·오류·재시작 읽기를 검증했습니다. 동기 helper와 SavedResults 전환은 #965에 남습니다.'
