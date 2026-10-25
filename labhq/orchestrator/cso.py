@@ -3757,6 +3757,18 @@ class Orchestrator:
                     absence[execution_step] = (absence.get(execution_step, True) is True
                         and not research_continuation.has_request_inputs(execution_req)
                         and not research_continuation.has_request_inputs(attempt_task.meta))
+                    from ..research.input_proof import capture
+                    execution_inputs = await asyncio.to_thread(capture, execution_req, self.hub.s, attempt_task.meta)
+                    attempt_task = attempt_task.model_copy(update={'meta': {**attempt_task.meta,
+                        'reuse_input_request': {key: copy.deepcopy(execution_req.get(key) or [])
+                            for key in ('references', 'reference_dirs', 'project_dirs')},
+                        'reuse_input_meta': {key: copy.deepcopy(attempt_task.meta.get(key) or [])
+                            for key in ('reference_dirs', 'project_dirs')}}})
+                    proofs = execution_req.setdefault('reuse_input_proof', {})
+                    if execution_step not in proofs:
+                        proofs[execution_step] = execution_inputs
+                    elif proofs[execution_step] != execution_inputs:
+                        proofs[execution_step] = None  # sticky mixed-input attempts
                     self.hub.save_request(rid)
                 # Last await before the send: hold this attempt's whole cap now (#862, opt-in).
                 attempt_task = await self._reserve_dispatch(rid, attempt_task, optional=optional_support)
@@ -3781,9 +3793,15 @@ class Orchestrator:
                     if execution_step and execution_req.get('research_contract'):
                         execution_req['reuse_tools'][execution_step] = None
                         execution_req['reuse_no_request_inputs'][execution_step] = False
+                        execution_req['reuse_input_proof'][execution_step] = None
                         self.hub.save_request(rid)
                 else:
                     if execution_step and execution_req.get('research_contract'):
+                        after_inputs = await asyncio.to_thread(capture, execution_req, self.hub.s, dispatched.meta)
+                        if (after_inputs != execution_inputs or execution_inputs is None
+                                or res.request_input_sha256 != execution_inputs['sha256']):
+                            execution_req['reuse_input_proof'][execution_step] = None
+                        self.hub.save_request(rid)
                         after = self._research_reuse_tools(rid, execution_req.get('plan') or {}).get(execution_step)
                         if (research_continuation.has_request_inputs(execution_req)
                                 or research_continuation.has_request_inputs(dispatched.meta)):
@@ -5911,7 +5929,7 @@ class Orchestrator:
         # Preserve only the execution proof belonging to retained results. A rerun starts without any
         # historical signature; dispatch will record what it actually uses.
         completed = contract['continuation'].get('completed') or []
-        for key in ('reuse_tools', 'reuse_no_request_inputs'):
+        for key in ('reuse_tools', 'reuse_no_request_inputs', 'reuse_input_proof'):
             recorded = req.get(key) or {}
             previous = (contract.get('rounds') or [{}])[-1].get(key) or {}
             req[key] = {sid: (recorded if sid in completed else previous).get(sid) for sid in carry.reuse}
@@ -5945,10 +5963,12 @@ class Orchestrator:
         carried = contract['continuation']
         previous = contract['rounds'][-1]
         tools = self._research_reuse_tools(rid, plan)
+        from ..research.input_proof import capture
+        input_proof = await asyncio.to_thread(capture, req, self.hub.s)
         refused = dict(sealed.get('rerun') or {}) if sealed else {}
         carry = research_continuation.carry_over(previous, plan, contract.get('pack_snapshot'),
                                                 carried.get('p1_issues') or [], refused)
-        refused.update(research_continuation.proof_problems(previous, plan, carry, tools, req))
+        refused.update(research_continuation.proof_problems(previous, plan, carry, tools, req, input_proof))
         carry = research_continuation.carry_over(previous, plan, contract.get('pack_snapshot'),
                                                 carried.get('p1_issues') or [], refused)
         try:
@@ -5969,7 +5989,7 @@ class Orchestrator:
             current = {**req, 'plan_sha256': contract['plan_sha256'],
                        'pack_snapshot': contract.get('pack_snapshot'), 'round': contract.get('round')}
             retained = research_continuation.carry_over(current, plan, contract.get('pack_snapshot'), [])
-            problems = research_continuation.proof_problems(current, plan, retained, tools, req)
+            problems = research_continuation.proof_problems(current, plan, retained, tools, req, input_proof)
             for step in plan['steps']:
                 sid = step['id']
                 if sid not in completed:
@@ -6521,6 +6541,9 @@ class Orchestrator:
                         summary = (f"이어 가기 {carried.get('round')}차 계획({source}). 재사용: "
                                    f"{', '.join(carried.get('reuse') or []) or '없음'} · 다시 실행: "
                                    f"{', '.join(carried.get('rerun') or {}) or '없음'}. ") + summary
+                        reasons = list(dict.fromkeys((carried.get('rerun') or {}).values()))
+                        if reasons:
+                            summary = '재사용 거부 이유: ' + '; '.join(reasons)[:240] + '. ' + summary
                     budget, configured_source = self._research_budget(rid, req, plan)
                     # Kept whole beyond the 699-char cut: the web shows the summary, not detail.budget; the selection
                     # record line (#890) rides with it, so long paper-skill or continuation text cannot cut it off.

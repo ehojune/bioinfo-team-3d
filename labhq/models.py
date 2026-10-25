@@ -375,6 +375,7 @@ class TaskResult(BaseModel):
     output_types: WirePathKeys = {}
     output_types_stats: dict[str, Any] = {}
     output_sha256: Annotated[dict[str, str], PathShape("keys")] = {}
+    request_input_sha256: str | None = None  # runner-observed stable input manifest (#959)
     output_tool_use_ids: Annotated[dict[str, str], PathShape("keys")] = {}
     unreported_outputs: WirePaths = []
     # Parsed only for ordinary orchestration steps. Research steps keep their result v2 ledger in ``structured``.

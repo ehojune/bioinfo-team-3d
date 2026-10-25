@@ -1,0 +1,101 @@
+"""Bounded, fail-closed local input proof. Never grants permission to read an input."""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import stat
+from itertools import islice
+from pathlib import Path
+
+
+def capture(request, settings, meta=None):
+    """Return a content manifest, or None when any input cannot be proved on this host.
+
+    Paths must already be within configured reference roots. Links, special files, private
+    paths, controlled zones and incomplete scans are declined before reading file contents.
+    """
+    from ..intake import reference_roots, overlaps_restricted, overlaps_zone
+    from ..private_paths import resolve_private_paths, credential_path
+
+    try:
+        refs = request.get('references') or []
+        paths = []
+        for ref in refs:
+            if not isinstance(ref, dict) or ref.get('kind') != 'path' or not ref.get('value'):
+                return None  # URLs/repositories have no local content receipt.
+            paths.append(ref['value'])
+        for source in (request, meta or {}):
+            for key in ('reference_dirs', 'project_dirs'):
+                paths.extend(source.get(key) or [])
+        roots = [Path(p).resolve(strict=True) for p in reference_roots(settings)] if paths else []
+        zones = [settings.path(z.path).resolve() for z in settings.policy.data_zones if z.level == 'restricted']
+        private = resolve_private_paths(settings)
+        maximum = settings.runner.reference_scan_max_entries
+        depth_limit = settings.runner.reference_scan_max_depth
+        budget = 256 * 1024 * 1024
+        count = 0
+        rows = []
+
+        def checked(path):
+            # Check each ancestor too: resolve() must not hide junctions or symlink roots.
+            for ancestor in (path, *path.parents):
+                info = ancestor.lstat()
+                if stat.S_ISLNK(info.st_mode) or getattr(info, 'st_file_attributes', 0) & 0x400:
+                    raise ValueError('link')
+            resolved = path.resolve(strict=True)
+            if (not any(resolved == r or resolved.is_relative_to(r) for r in roots)
+                    or overlaps_restricted(str(path), settings) or overlaps_zone(resolved, zones)
+                    or credential_path(str(resolved))
+                    or any(resolved == Path(p) or resolved.is_relative_to(Path(p))
+                           or Path(p).is_relative_to(resolved) for p in private.paths)):
+                raise ValueError('guard')
+            return resolved, path.lstat()
+
+        def walk(path, relative, depth):
+            nonlocal count, budget
+            count += 1
+            if count > maximum or depth > depth_limit:
+                raise ValueError('scan limit')
+            _, before = checked(path)
+            if stat.S_ISDIR(before.st_mode):
+                if os.path.ismount(path):
+                    raise ValueError('mount')
+                rows.append([str(root), relative, 'directory'])
+                with os.scandir(path) as entries:
+                    children = [path / entry.name for entry in islice(entries, maximum - count + 1)]
+                if count + len(children) > maximum:
+                    raise ValueError('scan limit')
+                for child in sorted(children, key=lambda p: p.name):
+                    walk(child, relative + '/' + child.name, depth + 1)
+            elif stat.S_ISREG(before.st_mode) and before.st_nlink == 1:
+                budget -= before.st_size
+                if budget < 0:
+                    raise ValueError('byte limit')
+                digest = hashlib.sha256()
+                read_size = 0
+                with path.open('rb') as stream:
+                    opened = os.fstat(stream.fileno())
+                    if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+                        raise ValueError('changed identity')
+                    for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+                        read_size += len(chunk)
+                        if read_size > before.st_size:
+                            raise ValueError('growing input')
+                        digest.update(chunk)
+                after = path.stat()
+                if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (
+                        after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns):
+                    raise ValueError('changed input')
+                rows.append([str(root), relative, digest.hexdigest()])
+            else:
+                raise ValueError('special file or hard link')
+
+        for root in sorted({Path(os.path.expanduser(str(p))).absolute() for p in paths}, key=str):
+            walk(root, '.', 0)
+        descriptor = {k: request.get(k) or [] for k in ('references', 'reference_dirs', 'project_dirs')}
+        body = {'version': 1, 'descriptor': descriptor, 'files': rows}
+        body['sha256'] = hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        return body
+    except (OSError, ValueError, TypeError, RuntimeError, AttributeError):
+        return None
