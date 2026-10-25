@@ -1,5 +1,9 @@
 pr: 966
 rows:
+- sha: '8b8bbf3'
+  at: 2026-10-26 04:15
+  summary: 연결 종료 때도 저장만 취소에서 보호합니다.
+  text: 'AnyIO cancellation scope도 DB commit에서만 차폐합니다. ASGI 연결 종료 전체를 보호하던 범위를 없애고 network 취소 뒤 저장 완료·다음 발행을 검증했습니다. gateway 새 회귀 22건과 disconnect 검사 통과.'
 - sha: 'edbedcb'
   at: 2026-10-26 04:00
   summary: 막힌 화면 연결을 취소해도 저장 결과를 확인하고 다음 이벤트를 처리합니다.
