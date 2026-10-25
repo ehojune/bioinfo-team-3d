@@ -4,6 +4,18 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #960 edition 검사 경계 수정
+
+- 14차: access ledger의 11열 중 마지막 비고가 없는 9행을 재현했다. 정리본에서만 빈 비고를 추가하고 보정 기록을 연결한다. 다른 열 누락·초과는 차단한다.
+- 17차: 근거 표의 MCP 도구명과 URL query key가 `__` 잔존으로 검출됐다. 생성한 표에서 기술 문자열을 inline code로 표시한다. 강조 오류 검사는 유지한다.
+- 검증: 관련 pytest 119 passed. 저장된 14차 표 shape PASS, 17차 ledger 53행·전체 원고 render marker 0건. 입력 두 파일 SHA256 불변 확인.
+- 봇 P1 4370698644: 같은 기술 문자열이 claim 각주에도 남는 경로를 재현하고 공통 formatter로 고쳤다. anchor와 URL query key를 함께 넣은 회귀 검사를 추가했다.
+- ledger가 있으면 기존 생성 근거 표도 교체한다. 오래된 표가 남는 실패를 막고 원고 본문은 보존한다.
+- 원자료·기존 결과·설치판·연구·HPC는 변경하거나 실행하지 않았다. 실제 edition 게시와 browser QA는 미검증이다.
+- CI·최종 head 봇 리뷰는 PR에서 확인한다. Closes #960.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 요청 reference가 있는 모든 단계를 다시 실행하던 결함을 고쳤습니다. 파일·폴더 manifest를 실행 전후 gateway와 runner에서 대조하고 단계별로 보존합니다. 다음 라운드는 같은 입력·사양·도구·산출일 때만 재사용합니다. Closes #959. PR #962.
 
 - 누락·변경·읽기 실패·legacy·runner receipt 불일치는 fail-closed입니다. CP1 카드에 재사용 거부 이유를 표시합니다.
