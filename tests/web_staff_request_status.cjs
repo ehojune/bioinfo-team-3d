@@ -75,6 +75,18 @@ test('a direct request waiting for its runner explains why dispatch has not star
   assert.equal(o.visual(o.ag('analyst')),'waiting');
   assert.equal(o.stateText(o.ag('analyst')),'러너 기다림');
 });
+test('CSO participates in orchestrated and plan-only requests but not unrelated direct work', () => {
+  for (const mode of ['orchestrate','plan_only','direct']) {
+    const o = fixture();
+    o.apply({type:'snapshot',data:{agents:[{id:'cso'}],requests:[{
+      id:'r', text:'Named study', mode, agent_id:mode === 'direct' ? 'analyst' : '',
+      status:'waiting_for_runner',
+    }]}});
+    assert.equal(o.stateText(o.ag('cso')),mode === 'direct' ? '쉬는 중' : '러너 기다림');
+    Object.assign(o.req('r'),{status:'done',pi_review_pending:true});
+    assert.equal(o.stateText(o.ag('cso')),mode === 'direct' ? '쉬는 중' : '작업 끝 · PI 검토 대기 · Named study');
+  }
+});
 test('task-less live agent activity takes priority over current plan and past review', () => {
   for (const [data, visual, text] of [
     [{state:'waiting',asks:['ask']},'hibernating','답 기다리는 중'],

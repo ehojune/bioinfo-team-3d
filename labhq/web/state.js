@@ -304,7 +304,8 @@ const phaseLabel = q => q.phase === 'done' ? '완료' : (PHASES.find(([key]) => 
 const ag = id => S.agents.get(String(id || '').toLowerCase());
 const hasPiDecision = a => [...S.approvals.values()].some(p => String(p.agent_id || '').toLowerCase() === a.id);
 // Request participation is evidence-based, including CSO. Active plans outrank old reports.
-const participates = (a, q) => q.agent_id === a.id || q.plan.some(s => s.agent_id === a.id);
+const participates = (a, q) => q.agent_id === a.id || q.plan.some(s => s.agent_id === a.id)
+  || (a.id === 'cso' && ['orchestrate', 'plan_only'].includes(q.mode));
 function requestStaffStatus(a) {
   const requests = sortRequests([...S.requests.values()].filter(q => participates(a, q)));
   const active = requests.filter(q => isActiveRequest(q.status));
