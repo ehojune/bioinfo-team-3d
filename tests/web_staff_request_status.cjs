@@ -87,6 +87,23 @@ test('CSO participates in orchestrated and plan-only requests but not unrelated 
     assert.equal(o.stateText(o.ag('cso')),mode === 'direct' ? '쉬는 중' : '작업 끝 · PI 검토 대기 · Named study');
   }
 });
+test('team runner waits apply only to the named employee and clear on dispatch or resume', () => {
+  const o = fixture(), q = o.req('current');
+  q.mode = 'orchestrate';
+  q.plan.push({id:'build',agent_id:'engineer'});
+  o.apply({type:'request.status',request_id:q.id,data:{status:'waiting_for_runner'}});
+  assert.equal(o.stateText(o.ag('engineer')),'차례 대기','unknown wait target must not mark all participants');
+  o.apply({type:'request.runner_wait',request_id:q.id,data:{agent_id:'analyst'}});
+  assert.equal(o.stateText(o.ag('analyst')),'러너 기다림');
+  assert.equal(o.stateText(o.ag('engineer')),'차례 대기');
+  assert.equal(o.stateText(o.ag('cso')),'차례 대기');
+  o.apply({type:'task.dispatched',request_id:q.id,agent_id:'analyst',task_id:'t',data:{step_id:'analysis'}});
+  assert.equal(q.runnerMissing.size,0);
+  o.apply({type:'request.runner_wait',request_id:q.id,data:{agent_id:'engineer'}});
+  o.apply({type:'request.status',request_id:q.id,data:{status:'running'}});
+  assert.equal(q.runnerMissing.size,0);
+  assert.equal(o.stateText(o.ag('engineer')),'차례 대기');
+});
 test('task-less live agent activity takes priority over current plan and past review', () => {
   for (const [data, visual, text] of [
     [{state:'waiting',asks:['ask']},'hibernating','답 기다리는 중'],

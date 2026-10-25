@@ -306,6 +306,10 @@ const hasPiDecision = a => [...S.approvals.values()].some(p => String(p.agent_id
 // Request participation is evidence-based, including CSO. Active plans outrank old reports.
 const participates = (a, q) => q.agent_id === a.id || q.plan.some(s => s.agent_id === a.id)
   || (a.id === 'cso' && ['orchestrate', 'plan_only'].includes(q.mode));
+const runnerWaitsFor = (a, q) => q.status === 'waiting_for_runner' &&
+  (q.runnerMissing.size ? q.runnerMissing.has(a.id) : q.resumeMissing.length ? q.resumeMissing.includes(a.id)
+    : q.mode === 'direct' ? q.agent_id === a.id
+      : a.id === 'cso' && !q.plan.length && ['orchestrate', 'plan_only'].includes(q.mode));
 function requestStaffStatus(a) {
   const requests = sortRequests([...S.requests.values()].filter(q => participates(a, q)));
   const active = requests.filter(q => isActiveRequest(q.status));
@@ -321,7 +325,7 @@ function requestStaffStatus(a) {
     }
     if (steps.includes('hibernating')) return {state:'hibernating', text:'HPC 작업 기다리는 중'};
     if (steps.length && steps.every(s => ['done', 'skipped'].includes(s))) return {state:'done', text:'담당 단계 완료'};
-    if (active.some(q => q.status === 'waiting_for_runner')) return {state:'waiting', text:'러너 기다림'};
+    if (active.some(q => runnerWaitsFor(a, q))) return {state:'waiting', text:'러너 기다림'};
     return {state:'queued', text:'차례 대기'};
   }
   const review = requests.find(needsPiReview);
@@ -396,6 +400,7 @@ function toolActivitySummary(tool = {}) {
 function trackActivity(ev) {
   const d = ev.data || {}, tid = ev.task_id;
   if (!tid) return;
+  if (ev.type === 'task.dispatched' && ev.request_id) req(ev.request_id).runnerMissing.delete(String(ev.agent_id || '').toLowerCase());
   if (ev.type === 'task.dispatched' && ev.request_id && (d.step_id || d.kind)) {
     for (const [oldId, old] of S.activeTasks) if (oldId !== tid && old.request_id === ev.request_id &&
       old.step_id === (d.step_id || d.kind)) S.activeTasks.delete(oldId);
@@ -489,6 +494,7 @@ function req(rid) {
     Object.defineProperty(q, 'bundleWarning', { value: '', writable: true, enumerable: false });
     Object.defineProperty(q, 'skipWarningsShown', { value: new Set(), writable: true, enumerable: false });  // #446
     Object.defineProperty(q, 'resumeMissing', { value: [], writable: true, enumerable: false });  // R14
+    Object.defineProperty(q, 'runnerMissing', { value: new Set(), enumerable: false });
     S.requests.set(rid, q);
   }
   return S.requests.get(rid);
@@ -1009,8 +1015,10 @@ function apply(ev, replay = false) {
       break;
     case 'recruit.failed': feed({ who: 'recruiter', text: `채용하지 못했어요: ${short(d.error, 120)}`, fullText: `채용하지 못했어요: ${d.error || ''}`, cls: 'alert' }, ts, rid); break;
     // A status the gateway sets itself: waiting_pi, waiting_for_runner, interrupted, running (R5, R15, #494).
-    case 'request.status': { const q = req(rid); if (d.status && !isTerminalRequest(q.status)) q.status = d.status; break; }
-    case 'request.runner_wait': feed({ who: 'system', text: d.message || '러너를 기다려요', cls: 'alert' }, ts, rid); break;
+    case 'request.status': { const q = req(rid); if (d.status && !isTerminalRequest(q.status)) q.status = d.status; if (q.status !== 'waiting_for_runner') q.runnerMissing.clear(); break; }
+    case 'request.runner_wait':
+      for (const target of d.missing_agents || [d.agent_id]) if (target) req(rid).runnerMissing.add(String(target).toLowerCase());
+      feed({ who: 'system', text: d.message || '러너를 기다려요', cls: 'alert' }, ts, rid); break;
     case 'request.reviewed': { const q = req(rid); q.pi_review_pending = d.pi_review_pending === true; q.pi_reviewed_at = d.pi_reviewed_at; if (d.status) q.status = d.status; if (d.final_checkpoint) q.final_checkpoint = d.final_checkpoint; if (S.current === rid && isPastRequest(q)) pickCurrent(); break; }
     case 'request.completed': case 'request.failed': {
       for (const [tid, task] of S.activeTasks) if (task.request_id === rid) S.activeTasks.delete(tid);
