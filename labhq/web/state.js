@@ -320,6 +320,7 @@ function requestStaffStatus(a) {
     }
     if (steps.includes('hibernating')) return {state:'hibernating', text:'HPC 작업 기다리는 중'};
     if (steps.length && steps.every(s => ['done', 'skipped'].includes(s))) return {state:'done', text:'담당 단계 완료'};
+    if (active.some(q => q.status === 'waiting_for_runner')) return {state:'waiting', text:'러너 기다림'};
     return {state:'queued', text:'차례 대기'};
   }
   const review = requests.find(needsPiReview);

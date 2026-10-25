@@ -66,6 +66,15 @@ test('review names its request and requires participation, including CSO', () =>
   o.apply({type:'request.reviewed',request_id:'old',data:{pi_reviewed_at:100}});
   assert.equal(o.visual(o.ag('analyst')), 'idle');
 });
+test('a direct request waiting for its runner explains why dispatch has not started', () => {
+  const o = fixture();
+  o.apply({type:'snapshot',data:{agents:[{id:'analyst'}],requests:[{
+    id:'direct', mode:'direct', agent_id:'analyst', status:'waiting_for_runner',
+    step_status:{direct:'pending'},
+  }]}});
+  assert.equal(o.visual(o.ag('analyst')),'waiting');
+  assert.equal(o.stateText(o.ag('analyst')),'러너 기다림');
+});
 test('task-less live agent activity takes priority over current plan and past review', () => {
   for (const [data, visual, text] of [
     [{state:'waiting',asks:['ask']},'hibernating','답 기다리는 중'],
