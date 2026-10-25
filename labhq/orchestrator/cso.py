@@ -6538,12 +6538,11 @@ class Orchestrator:
                     if reuse_pending:
                         source = ("CP2 수정 요청 반영" if carried.get("trigger") == "cp2_revise"
                                   else "리뷰 P1 반영")
+                        reasons = list(dict.fromkeys((carried.get('rerun') or {}).values()))
+                        reason_line = ('재사용 거부 이유: ' + '; '.join(reasons)[:240] + '. ' if reasons else '')
                         summary = (f"이어 가기 {carried.get('round')}차 계획({source}). 재사용: "
                                    f"{', '.join(carried.get('reuse') or []) or '없음'} · 다시 실행: "
-                                   f"{', '.join(carried.get('rerun') or {}) or '없음'}. ") + summary
-                        reasons = list(dict.fromkeys((carried.get('rerun') or {}).values()))
-                        if reasons:
-                            summary = '재사용 거부 이유: ' + '; '.join(reasons)[:240] + '. ' + summary
+                                   f"{', '.join(carried.get('rerun') or {}) or '없음'}. ") + reason_line + summary
                     budget, configured_source = self._research_budget(rid, req, plan)
                     # Kept whole beyond the 699-char cut: the web shows the summary, not detail.budget; the selection
                     # record line (#890) rides with it, so long paper-skill or continuation text cannot cut it off.

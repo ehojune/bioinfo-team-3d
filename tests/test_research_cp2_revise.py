@@ -60,6 +60,7 @@ async def test_a_cp2_revise_with_a_note_replans_through_a_new_cp1_and_reruns_onl
     assert first["plan_sha256"] in second
     cp1 = hub.approvals[2]
     assert cp1["summary"].startswith("이어 가기 2차 계획(CP2 수정 요청 반영). 재사용: s1 · 다시 실행: s2. ")
+    assert '재사용 거부 이유: spec changed.' in cp1['summary']
     assert cp1["detail"]["continuation"]["trigger"] == "cp2_revise"
     assert cp1["detail"]["continuation"]["pi_request"] == NOTE
     # The round-2 reviewer checks the revision the PI asked for, and the record keeps the request whole.
