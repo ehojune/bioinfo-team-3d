@@ -401,7 +401,9 @@ class Hub:
             card = entry["approval"]
             rid = card.get("request_id")
             saved = (self.requests.get(rid) or {}).get("result_storage")
-            if card.get("kind") == "result_storage" and (card.get("detail") or {}).get("late_storage") and saved:
+            selection = (self.requests.get(rid) or {}).get("storage_selection_receipt") or {}
+            if (card.get("kind") == "result_storage" and saved and
+                    ((card.get("detail") or {}).get("late_storage") or selection.get("approval_id") == aid)):
                 # select() may have committed before the old process removed its card. Replay both updates
                 # before deleting it, so another interruption can safely retry this reconciliation.
                 note = "저장된 선택으로 저장 위치 카드를 복구했습니다."
@@ -1459,8 +1461,8 @@ class Hub:
                 asyncio.get_running_loop().create_task(self.close_publish_cards(rid))
             if not review_pending:
                 await self._aqueue_terminal_delivery(event)
-            if getattr(self, "semantics_shadow", None) is not None:
-                self.semantics_shadow.after_request(rid)
+            if getattr(self, "semantics_shadow", None) is not None:  # semantics-hook
+                self.semantics_shadow.after_request(rid)  # semantics-hook
         try:
             await self.rounds.awrite(rid)
             await self.rounds.asubmit(rid)
@@ -4129,7 +4131,7 @@ class Hub:
             rid = pending["approval"]["request_id"]
             detail = pending["approval"]["detail"]
             storage = await self.result_storage.select(rid, storage if approved and storage else {"mode": "local"},
-                late=bool(detail.get("late_storage")), end=bool(detail.get("storage_end")))
+                late=bool(detail.get("late_storage")), end=bool(detail.get("storage_end")), approval_id=approval_id)
             await self.publish({"type": "request.storage", "request_id": rid, "data": {"result_storage": storage}})
         self._cancel_facilities_timeout(approval_id)
         self._cancel_resume_timer(approval_id)

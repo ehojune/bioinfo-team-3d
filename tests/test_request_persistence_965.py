@@ -250,3 +250,51 @@ async def test_async_hold_removal_is_not_visible_before_commit(hub, monkeypatch)
         await task
     assert "quota_waits" not in hub.requests["r"]
     assert hub.store.get("request", "r") == hub.requests["r"]
+
+
+@pytest.mark.parametrize("end", [False, True])
+@pytest.mark.parametrize("restart", [False, True])
+async def test_storage_card_cancelled_after_selection_can_retry_after_restart(hub, monkeypatch, end, restart):
+    from labhq.models import ApprovalRequest
+    from labhq.result_storage import ResultStorage
+    from unittest.mock import AsyncMock
+    hub.requests["r"].update(status="done", report="complete", pi_reviewed_at=1)
+    if end:
+        hub.requests["r"]["storage_end_ask"] = {"state": "asked", "initial": {"mode": "local"}}
+    card = ApprovalRequest(kind="result_storage", request_id="r", summary="storage", detail={"storage": True,
+                            "storage_end": end, "late_storage": not end})
+    hub.approvals[card.id] = {"approval": card.model_dump(mode="json"), "origin": None}
+    hub.save_approval(card.id)
+    hub.save_request("r")
+    hub.result_storage = ResultStorage(hub)
+    hub.result_storage.aschedule = AsyncMock()
+    entered, release = stall_commit(hub, monkeypatch)
+    task = asyncio.create_task(hub.resolve_approval(card.id, True, storage={"mode": "local"}))
+    try:
+        await until_entered(entered)
+        task.cancel()
+        await asyncio.sleep(0.01)
+        assert not task.done()
+    finally:
+        release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert card.id in hub.approvals
+    assert hub.store.get("request", "r")["result_storage"]["mode"] == "local"
+    restarted = Hub(hub.s) if restart else hub
+    restarted.result_storage.aschedule = AsyncMock()
+    restarted.pi_interpreter.schedule = lambda event: None
+    try:
+        if not restart:
+            with pytest.raises(ValueError, match="같은 선택"):
+                await restarted.resolve_approval(card.id, True, storage={"mode": "new", "repo": "different"})
+            assert card.id in restarted.approvals
+            await restarted.resolve_approval(card.id, True, storage={"mode": "local"})
+            restarted.result_storage.aschedule.assert_awaited_once_with("r")
+        assert card.id not in restarted.approvals and restarted.store.get("approval", card.id) is None
+        assert restarted.store.get("approval_decision", card.id)["storage"]["mode"] == "local"
+        types = [event["type"] for event in restarted.store.events_since(0)]
+        assert types.count("request.storage") == types.count("approval.resolved") == 1
+    finally:
+        if restart:
+            restarted.store.close()

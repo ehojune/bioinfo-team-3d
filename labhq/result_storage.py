@@ -861,12 +861,23 @@ class ResultStorage:
                         progress_available=available and not controlled_request(req, self.s))
         return card
 
-    async def select(self, rid, choice, *, late=False, end=False):
+    async def select(self, rid, choice, *, late=False, end=False, approval_id=None):
         async with self._card_lock:
-            return await self._select(rid, choice, late=late, end=end)
+            return await self._select(rid, choice, late=late, end=end, approval_id=approval_id)
 
-    async def _select(self, rid, choice, *, late=False, end=False):
+    async def _select(self, rid, choice, *, late=False, end=False, approval_id=None):
         req = self.hub.requests[rid]
+        requested = copy.deepcopy(choice)
+        receipt = req.get("storage_selection_receipt") or {}
+        if approval_id and receipt.get("approval_id") == approval_id:
+            if (receipt.get("choice") != requested or receipt.get("late") != late
+                    or receipt.get("end") != end):
+                raise ValueError("이미 저장한 카드 선택과 다릅니다. 같은 선택으로 다시 답해 주세요.")
+            # A commit can precede cancellation or a crash before card resolution.
+            # Replaying that exact card completes its scheduling without a second choice/API call.
+            if late or end:
+                await self.aschedule(rid)
+            return req["result_storage"]
         if late and req.get("result_storage"):
             raise ValueError("이미 저장 위치를 골랐거나 게시한 요청입니다.")
         check_choice(choice, end=end)
@@ -935,11 +946,14 @@ class ResultStorage:
         elif not end:
             saved["progress_push"] = False
         req["result_storage"] = saved
+        if approval_id:
+            req["storage_selection_receipt"] = {"approval_id": approval_id, "choice": requested,
+                                                 "late": late, "end": end}
         if not late and not end:
             self._mark_end_ask(req, saved)
         await persist_request(self.hub, rid)
         if late or end:
-            self.schedule(rid)
+            await self.aschedule(rid)
         return saved
 
     @staticmethod
