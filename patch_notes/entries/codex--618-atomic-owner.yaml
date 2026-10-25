@@ -1,6 +1,6 @@
-pr: null
+pr: 967
 rows:
-- sha: 82b6c13
-  at: 2026-10-26 03:55
+- sha: 6798b71
+  at: 2026-10-26 03:49
   text: runner state 소유권 조회·기록을 OS lock으로 묶고 획득·기록 실패 시 시작을 중단합니다.
   summary: 같은 runner state를 쓰는 서로 다른 설정의 동시 시작을 막습니다.
