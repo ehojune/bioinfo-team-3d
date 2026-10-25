@@ -1,0 +1,18 @@
+pr: 962
+rows:
+  - sha: 5bafdf1
+    at: "2026-10-25 20:48"
+    summary: "이어 가기 카드의 기존 시작 문구 뒤에 재사용 거부 이유를 표시합니다."
+    text: "Linux CI의 CP2 카드 문구 순서 회귀를 수정했다. 기존 assertion을 유지하고 거부 이유 표시 검증을 추가했다. CP2 revise·입력 proof 32 passed."
+  - sha: bf426d3
+    at: "2026-10-25 20:39"
+    summary: "파일 reference의 sibling 입력과 Windows/WSL 경로를 proof에 반영했습니다."
+    text: "bot P1의 부모 폴더 노출을 manifest 범위에 포함하고 P2의 shared-drive 경로 표기를 정규화했다. sibling 추가·변경과 경로 왕복 회귀를 추가했다."
+  - sha: 1e8d3d0
+    at: "2026-10-25 20:38"
+    summary: "새 입력 proof test를 Windows inventory에 등록했습니다."
+    text: "기존 선택 정책의 필수 목록을 보완하고 binary open mode를 명시해 text I/O 검사를 통과하도록 맞췄다."
+  - sha: 515fe25
+    at: "2026-10-25 20:34"
+    summary: "파일·폴더 입력 hash를 보존해 이어 가기 단계 재사용을 허용했습니다."
+    text: "gateway·runner 실행 전후 manifest가 같을 때만 proof를 보존한다. 누락·변경·읽기 실패·legacy·runner receipt 불일치는 거절하며 CP1 카드에 사유를 표시한다. 관련 mock/static 171 passed, 12 subtests passed. 실제 연구 효과는 미확인이다."

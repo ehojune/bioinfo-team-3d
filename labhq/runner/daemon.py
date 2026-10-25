@@ -2073,12 +2073,23 @@ class Runner:
 
             # Hash before the CLI starts (PR #442 review): writable inputs (project and upstream folders) may change.
             input_files, input_notes = await scan_inputs()
+            from ..research.input_proof import capture as capture_reuse_inputs
+            async def reuse_inputs():
+                descriptor = task.meta.get('reuse_input_request')
+                if not isinstance(descriptor, dict):
+                    return None
+                return await asyncio.to_thread(capture_reuse_inputs, descriptor, self.s,
+                                               task.meta.get('reuse_input_meta'))
+            reuse_before = await reuse_inputs()
 
             async def wait_ready() -> bool:
                 """Refresh inputs after preparation/pause, before the adapter's spawn baseline."""
-                nonlocal input_files, input_notes
+                nonlocal input_files, input_notes, reuse_before
                 while await self.controls.wait_ready(task.id):
                     input_files, input_notes = await scan_inputs()
+                    fresh = await reuse_inputs()
+                    if fresh != reuse_before:
+                        reuse_before = None  # preparation/pause drift is not an unchanged execution
                     # Hashing yields to the control loop. A new pause needs another wait and fresh scan.
                     live = self.controls.live.get(task.id)
                     if live is None or live.resumed.is_set():
@@ -2155,6 +2166,9 @@ class Runner:
         # The record keeps what the step read: hashes taken before the run. A writable input the step changed gets
         # changed_during_step, and its hash stays the one from before (PR #442 review).
         after_files, after_notes = await scan_inputs()
+        reuse_after = await reuse_inputs()
+        result.request_input_sha256 = (reuse_before['sha256']
+            if reuse_before is not None and reuse_after == reuse_before else None)
         after = {row["path"]: row.get("sha256") for row in after_files}
         for row in input_files:
             if row.get("sha256") and after.get(row["path"]) != row["sha256"]:
