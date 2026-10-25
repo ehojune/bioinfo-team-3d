@@ -73,8 +73,9 @@ export function officeHead(kind) {
 }
 export function officeStatus(a, vs, detail='') {
   if (detail.includes('답 기다')) return {kind:'answer',text:'답 기다리는 중'};
-  if (/PI 검토/.test(detail)) return {kind:'decision',text:'끝남 · 검토 대기'};
+  if (/PI 검토/.test(detail)) return {kind:'decision',text:detail};
   if (vs==='waiting' && /승인|PI 결정/.test(detail)) return {kind:'decision',text:'승인 기다려요'};
+  if (detail === '차례 대기' || detail === '담당 단계 완료' || vs === 'waiting') return {kind:vs==='waiting'?'paused':vs,text:detail};
   const labels={working:'일하는 중',idle:'쉬는 중',done:'끝남',queued:'순서 기다리는 중',
     hibernating:detail.includes('HPC')?'HPC 기다리는 중':'쉬는 중',error:'확인이 필요해요'};
   return {kind:vs==='waiting'?'paused':vs,text:labels[vs] || detail || '쉬는 중'};

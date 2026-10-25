@@ -303,7 +303,26 @@ const phaseLabel = q => q.phase === 'done' ? '완료' : (PHASES.find(([key]) => 
 
 const ag = id => S.agents.get(String(id || '').toLowerCase());
 const hasPiDecision = a => [...S.approvals.values()].some(p => String(p.agent_id || '').toLowerCase() === a.id);
-const completedForReview = a => [...S.requests.values()].some(q => needsPiReview(q) && (q.agent_id === a.id || q.plan.some(s => s.agent_id === a.id) || a.id === 'cso'));
+// Request participation is evidence-based, including CSO. Active plans outrank old reports.
+const participates = (a, q) => q.agent_id === a.id || q.plan.some(s => s.agent_id === a.id);
+function requestStaffStatus(a) {
+  const requests = sortRequests([...S.requests.values()].filter(q => participates(a, q)));
+  const active = requests.filter(q => isActiveRequest(q.status));
+  if (active.length) {
+    const steps = active.flatMap(q => q.plan.filter(s => s.agent_id === a.id).map(s => q.steps[s.id] || 'pending'));
+    if (steps.some(s => ['working', 'running'].includes(s))) return {state:'working', text:'작업 중'};
+    if (steps.includes('error')) return {state:'error', text:'문제 발생'};
+    for (const [step, text] of [['halted','멈춤 · 재개 가능'], ['paused','일시 정지됨'],
+      ['waiting_login','로그인 대기'], ['waiting_quota','한도 대기'], ['waiting_facilities_fix','환경 수정 승인 대기']]) {
+      if (steps.includes(step)) return {state:'waiting', text};
+    }
+    if (steps.includes('hibernating')) return {state:'hibernating', text:'HPC 작업 기다리는 중'};
+    if (steps.length && steps.every(s => ['done', 'skipped'].includes(s))) return {state:'done', text:'담당 단계 완료'};
+    return {state:'queued', text:'차례 대기'};
+  }
+  const review = requests.find(needsPiReview);
+  return review ? {state:'done', text:`작업 끝 · PI 검토 대기 · ${short(review.text || review.id, 32)}`} : null;
+}
 const controlledState = t => {
   if (!t) return '';
   const c = S.taskControl.get(t.id) || t.control || {};
@@ -325,8 +344,8 @@ const taskState = a => {
   if (state === 'waiting') return 'hibernating';
   return ['queued', 'waiting', 'hibernating', 'error'].includes(state) ? state : 'working';
 };
-const visual = a => warning(a) ? 'error' : taskState(a) || (hasPiDecision(a) ? 'waiting' : completedForReview(a) ? 'done' : a.state === 'waiting' ? (a.waitFor === 'answer' ? 'hibernating' : 'idle') : a.state === 'done' && now() - (a.stateAt || 0) > 3
-  ? 'idle' : STATE_KO[a.state] ? a.state : 'idle');
+const visual = a => warning(a) ? 'error' : taskState(a) || (hasPiDecision(a) ? 'waiting' : requestStaffStatus(a)?.state || (a.state === 'waiting' ? (a.waitFor === 'answer' ? 'hibernating' : 'idle') : a.state === 'done' && now() - (a.stateAt || 0) > 3
+  ? 'idle' : STATE_KO[a.state] ? a.state : 'idle'));
 // 'hibernating' covers HPC jobs and unanswered asks (runner agent.status: jobs, asks); a PI question is not HPC.
 // "외부 응답 대기 n분째 / 상한 m분": the last progress event's elapsed time plus the time since it arrived.
 function externalWaitText(wait) {
@@ -346,7 +365,10 @@ const stateText = (a, vs = visual(a)) => {
     if (vs === 'working' && activity.external_wait) return externalWaitText(activity.external_wait);
     if (vs === 'working') return tool ? `${/Bash|PowerShell|shell|command_execution/i.test(tool.name) ? '명령' : '도구'} 실행 중 · ${Math.max(0, Math.floor((now() - tool.at) / 60))}분째` : '생각하는 중';
   }
-  if (vs === 'done' && completedForReview(a)) return '작업 끝 · PI 검토 대기';
+  if (!t && !hasPiDecision(a)) {
+    const status = requestStaffStatus(a);
+    if (status) return status.text;
+  }
   return vs === 'hibernating' && a.waitFor === 'answer' ? '답 기다리는 중' : STATE_KO[vs];
 };
 function toolInputLine(input) {
