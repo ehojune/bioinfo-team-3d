@@ -1133,12 +1133,17 @@ class LiteratureAnnotator(Annotator):
                 version = version or seen
             except LookupFailed as exc:
                 item.error, lookup_errors = str(exc), lookup_errors + 1
+            except Exception as exc:  # noqa: BLE001 - one paper's failure must not fail the other IDs (#954)
+                item.error, lookup_errors = f"{type(exc).__name__}: {exc}", lookup_errors + 1
         if self._all_failed(items, lookup_errors):
             raise LookupFailed("; ".join(item.error for item in items if item.error))
         self._to_cache(TOOL, FULLTEXT_CACHE_RELEASE, options, items, _now())
         for item in valid:
             if item.error is None:
-                item.answer = self._write_text(item.variant, item.answer)
+                try:
+                    item.answer = self._write_text(item.variant, item.answer)
+                except Exception as exc:  # noqa: BLE001 - same isolation for the text file step
+                    item.answer, item.error = None, f"{type(exc).__name__}: {exc}"
         return self._finish(TOOL, "Europe PMC",
                             f"REST {version}" if version else "REST (cached answers)",
                             EUROPEPMC, options, items, _summary, cache=False,
