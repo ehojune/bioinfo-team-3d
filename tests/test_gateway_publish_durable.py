@@ -396,3 +396,29 @@ async def test_anyio_cancel_during_commit_prevents_caller_continuation(gateway, 
     assert continued == []
     assert hub.store.get("request", "r")["status"] == "running"
     assert not hub.event_lock.locked()
+
+
+async def test_disconnected_client_is_not_retried_for_later_pending_events(gateway, monkeypatch):
+    import labhq.gateway.server as server
+
+    monkeypatch.setattr(server, "CLIENT_SEND_TIMEOUT_S", 0.01)
+    attempts, delivered = [], []
+
+    class Slow:
+        async def send_text(self, text):
+            attempts.append(json.loads(text)["seq"])
+            await asyncio.Event().wait()
+
+    class Healthy:
+        async def send_text(self, text):
+            delivered.append(json.loads(text)["seq"])
+
+    slow, healthy = Slow(), Healthy()
+    gateway.clients.update([slow, healthy])
+    for label in ("first", "second", "third"):
+        saved = gateway.store.append_event(event(label), 100)
+        gateway.pending_committed.append((saved, (slow, healthy)))
+    await asyncio.wait_for(gateway._send_committed_event(), 1)
+    assert attempts == [1]
+    assert delivered == [1, 2, 3]
+    assert not gateway.pending_committed

@@ -1358,6 +1358,10 @@ class Hub:
             dead = []
             while clients:
                 client = clients[0]
+                if client not in self.clients:
+                    clients = clients[1:]
+                    self.pending_committed[0] = (event, clients)
+                    continue
                 try:
                     await asyncio.wait_for(client.send_text(json.dumps(event, ensure_ascii=False, default=str)),
                                            CLIENT_SEND_TIMEOUT_S)
