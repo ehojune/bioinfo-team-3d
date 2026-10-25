@@ -2563,14 +2563,15 @@ class Hub:
     @staticmethod
     async def _publication_write(write):
         """Only a durable commit is uninterruptible; preserve its error on cancel."""
-        pending = asyncio.create_task(write)
         cancelled = False
-        while not pending.done():
-            try:
-                await asyncio.shield(pending)
-            except asyncio.CancelledError:
-                cancelled = True
-        return pending.result(), cancelled
+        with anyio.CancelScope(shield=True):
+            pending = asyncio.create_task(write)
+            while not pending.done():
+                try:
+                    await asyncio.shield(pending)
+                except asyncio.CancelledError:
+                    cancelled = True
+            return pending.result(), cancelled
 
     async def on_runner_message(self, runner_id: str, msg: dict, ws: WebSocket | None = None,
                                 incarnation: str | None = None) -> None:
@@ -4452,9 +4453,9 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         finally:
             if runner_id:
                 if hub.unregister_runner(runner_id, ws):
-                    # ASGI disconnect may already be inside a cancelled AnyIO scope.
-                    # Finish the offline publication before leaving that scope.
-                    with anyio.CancelScope(shield=True):
+                    # Storage settles under its own shield; a disconnected ASGI
+                    # caller may cancel network delivery after that commit.
+                    with contextlib.suppress(asyncio.CancelledError):
                         await hub.publish({"type": "runner.offline", "ts": time.time(), "data": {"runner_id": runner_id}})
 
     @app.websocket("/ws/client")

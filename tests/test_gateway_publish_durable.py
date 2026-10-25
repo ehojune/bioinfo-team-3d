@@ -280,3 +280,34 @@ async def test_cancel_backpressured_client_finishes_storage_and_releases_event_l
     assert [e["seq"] for e in hub.events] == [1, 2]
     assert [e["seq"] for e in hub.store.events_since(0)] == [1, 2]
     assert not hub.pending_committed
+
+
+async def test_asgi_cancel_scope_only_shields_storage(gateway):
+    import anyio
+
+    hub = gateway
+    entered = asyncio.Event()
+    scopes = []
+
+    class Client:
+        async def send_text(self, text):
+            entered.set()
+            await asyncio.Event().wait()
+
+    client = Client()
+    hub.clients.add(client)
+
+    async def publish_in_scope():
+        with anyio.CancelScope() as scope:
+            scopes.append(scope)
+            await hub.publish(event())
+
+    publication = asyncio.create_task(publish_in_scope())
+    await asyncio.wait_for(entered.wait(), 1)
+    scopes[0].cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(publication, 1)
+    assert hub.store.get("request", "r")["status"] == "running"
+    assert not hub.event_lock.locked() and client not in hub.clients
+    await asyncio.wait_for(hub.publish(event("next")), 1)
+    assert [e["seq"] for e in hub.store.events_since(0)] == [1, 2]
