@@ -1349,19 +1349,31 @@ class Hub:
         async with self.event_lock:
             await self._flush_committed_events()
 
-    async def _flush_committed_events(self) -> None:
+    async def _flush_committed_events(self, delivered: list[dict] | None = None) -> None:
         # Called under event_lock, before allocating any later live event sequence.
         while self.pending_committed:
-            event, clients = self.pending_committed.popleft()
+            event, clients = self.pending_committed[0]
             dead = []
-            for client in clients:
+            while clients:
+                client = clients[0]
                 try:
                     await client.send_text(json.dumps(event, ensure_ascii=False, default=str))
+                except asyncio.CancelledError:
+                    # A backpressured client must not hold the next publisher too.
+                    self.clients.discard(client)
+                    self.pending_committed[0] = (event, clients[1:])
+                    raise
                 except Exception:
                     dead.append(client)
+                clients = clients[1:]
+                self.pending_committed[0] = (event, clients)
+            self.pending_committed.popleft()
             for client in dead:
                 self.clients.discard(client)
-            self.pi_interpreter.schedule(event)
+            if delivered is None:
+                self.pi_interpreter.schedule(event)
+            else:
+                delivered.append(event)
 
     def result_map(self, rid: str) -> SavedResults:
         return SavedResults(self, rid)
@@ -2508,55 +2520,57 @@ class Hub:
         self.events.extend(ordered)
 
     async def publish(self, ev: dict, runner_id: str | None = None, runner_seq: int | None = None) -> None:
-        # Cancellation cannot release event_lock while a commit's outcome is unknown.
-        # Finish this publication (including request persistence) before propagating it.
-        pending = asyncio.create_task(self._publish_durable(copy.deepcopy(ev), runner_id, runner_seq))
-        cancelled = False
-        while not pending.done():
-            try:
-                await asyncio.shield(pending)
-            except asyncio.CancelledError:
-                cancelled = True
-        ev = pending.result()  # A storage error takes precedence over cancellation.
-        # Schedule consumers in the caller's final turn, after durable publication.
-        # They must not run ahead of the caller observing its completed delivery.
-        if self.reporter.enabled():
-            self.reporter.submit(ev)
-        self.pi_interpreter.schedule(ev)
-        if cancelled:
-            raise asyncio.CancelledError
-
-    async def _publish_durable(self, ev: dict, runner_id: str | None, runner_seq: int | None) -> dict:
+        ev = copy.deepcopy(ev)
         internal = self.store.get("task", ev.get("task_id")) if ev.get("task_id") else None
         if (internal or {}).get("kind") == "pi_interpretation" and ev.get("type") == "agent.log":
             ev = {**ev, "data": {**ev.get("data", {}), "level": "debug"}}
         if ev.get('type') == 'approval.requested':
             ev = {**ev, 'data': with_approval_copy(ev.get('data') or {})}
+        cancelled = False
+        delivered = []
         async with self.event_lock:
             await self._flush_committed_events()
             durable_report = (self.reporter.enabled() and bool(ev.get("request_id")) and
                               ev.get("type") in ProjectReporter.HANDLED)
-            ev = await self.store.aappend_event(ev, self.s.gateway.event_buffer, runner_id, runner_seq,
-                                               reporter_delivery=durable_report)
+            ev, cancelled = await self._publication_write(self.store.aappend_event(
+                ev, self.s.gateway.event_buffer, runner_id, runner_seq, reporter_delivery=durable_report))
             self._record_published_event(ev)
-            dead = []
-            for c in list(self.clients):
-                try:
-                    await c.send_text(json.dumps(ev, ensure_ascii=False, default=str))
-                except Exception:
-                    dead.append(c)
-            for c in dead:
-                self.clients.discard(c)
+            queued = sorted([*self.pending_committed, (ev, tuple(self.clients))], key=lambda item: item[0]["seq"])
+            self.pending_committed.clear()
+            self.pending_committed.extend(queued)
+            try:
+                if not cancelled:
+                    await self._flush_committed_events(delivered)
+            except asyncio.CancelledError:
+                cancelled = True
             rid = ev.get("request_id")
             if rid in self.requests:
                 # Read the latest state after event delivery; a prior snapshot could
                 # overwrite a newer synchronous save made while the event committed.
                 cp4.reconcile(self.requests[rid])
                 self.requests[rid]["updated_at"] = time.time()
-                await self.store.aput("request", rid, self.requests[rid])
+                _, interrupted = await self._publication_write(self.store.aput("request", rid, self.requests[rid]))
+                cancelled = cancelled or interrupted
+        if self.reporter.enabled():
+            self.reporter.submit(ev)
+        for event in delivered:
+            self.pi_interpreter.schedule(event)
+        if cancelled:
+            raise asyncio.CancelledError
         if ev.get("type") in ("request.step_done", "request.step_skipped") and ev.get("request_id"):
             await self._close_step_controls(ev["request_id"], (ev.get("data") or {}).get("step_id"))
-        return ev
+
+    @staticmethod
+    async def _publication_write(write):
+        """Only a durable commit is uninterruptible; preserve its error on cancel."""
+        pending = asyncio.create_task(write)
+        cancelled = False
+        while not pending.done():
+            try:
+                await asyncio.shield(pending)
+            except asyncio.CancelledError:
+                cancelled = True
+        return pending.result(), cancelled
 
     async def on_runner_message(self, runner_id: str, msg: dict, ws: WebSocket | None = None,
                                 incarnation: str | None = None) -> None:

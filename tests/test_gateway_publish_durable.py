@@ -145,6 +145,10 @@ async def test_repeated_cancel_waits_for_commit_outcome(gateway, monkeypatch, co
     assert not hub.event_lock.locked()
     persisted = hub.store.events_since(0)
     assert len(persisted) == (0 if fail and commit == 1 else 1)
+    if cancel and not fail and commit == 1:
+        # Cancellation settles storage, leaving network delivery for the next flush.
+        assert delivered == [] and len(hub.pending_committed) == 1
+        await hub._send_committed_event()
     assert len(delivered) == len(persisted)
     assert len(reported) == (0 if fail else 1)
     assert hub.store.runner_seen("runner") == (0 if fail and commit == 1 else 7)
@@ -251,3 +255,28 @@ async def test_rest_history_waits_for_complete_ordered_publication(tmp_path, mon
         hub.store.close()
     history = response[0]["data"]["recent_events"] if since == -1 else response
     assert [ev["seq"] for ev in history] == [1, 2]
+
+
+async def test_cancel_backpressured_client_finishes_storage_and_releases_event_lock(gateway):
+    hub = gateway
+    entered = asyncio.Event()
+
+    class StalledClient:
+        async def send_text(self, text):
+            entered.set()
+            await asyncio.Event().wait()
+
+    stalled = StalledClient()
+    hub.clients.add(stalled)
+    publication = asyncio.create_task(hub.publish(event(), "runner", 1))
+    await asyncio.wait_for(entered.wait(), 1)
+    publication.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(publication, 1)
+    assert not hub.event_lock.locked() and stalled not in hub.clients
+    assert hub.store.get("request", "r")["status"] == "running"
+    assert hub.store.runner_seen("runner") == 1
+    await asyncio.wait_for(hub.publish(event("next"), "runner", 2), 1)
+    assert [e["seq"] for e in hub.events] == [1, 2]
+    assert [e["seq"] for e in hub.store.events_since(0)] == [1, 2]
+    assert not hub.pending_committed
