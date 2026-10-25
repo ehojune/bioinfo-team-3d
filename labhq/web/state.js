@@ -344,7 +344,10 @@ const taskState = a => {
   if (state === 'waiting') return 'hibernating';
   return ['queued', 'waiting', 'hibernating', 'error'].includes(state) ? state : 'working';
 };
-const visual = a => warning(a) ? 'error' : taskState(a) || (hasPiDecision(a) ? 'waiting' : requestStaffStatus(a)?.state || (a.state === 'waiting' ? (a.waitFor === 'answer' ? 'hibernating' : 'idle') : a.state === 'done' && now() - (a.stateAt || 0) > 3
+// Older/replayed streams can carry live agent activity without a task ledger entry.
+const liveAgentState = a => ['queued', 'working', 'hibernating', 'error'].includes(a.state) ? a.state
+  : a.state === 'waiting' && a.waitFor === 'answer' ? 'hibernating' : '';
+const visual = a => warning(a) ? 'error' : taskState(a) || (hasPiDecision(a) ? 'waiting' : liveAgentState(a) || requestStaffStatus(a)?.state || (a.state === 'waiting' ? (a.waitFor === 'answer' ? 'hibernating' : 'idle') : a.state === 'done' && now() - (a.stateAt || 0) > 3
   ? 'idle' : STATE_KO[a.state] ? a.state : 'idle'));
 // 'hibernating' covers HPC jobs and unanswered asks (runner agent.status: jobs, asks); a PI question is not HPC.
 // "외부 응답 대기 n분째 / 상한 m분": the last progress event's elapsed time plus the time since it arrived.
@@ -365,7 +368,7 @@ const stateText = (a, vs = visual(a)) => {
     if (vs === 'working' && activity.external_wait) return externalWaitText(activity.external_wait);
     if (vs === 'working') return tool ? `${/Bash|PowerShell|shell|command_execution/i.test(tool.name) ? '명령' : '도구'} 실행 중 · ${Math.max(0, Math.floor((now() - tool.at) / 60))}분째` : '생각하는 중';
   }
-  if (!t && !hasPiDecision(a)) {
+  if (!t && !hasPiDecision(a) && !liveAgentState(a)) {
     const status = requestStaffStatus(a);
     if (status) return status.text;
   }

@@ -52,6 +52,21 @@ test('review names its request and requires participation, including CSO', () =>
   o.apply({type:'request.reviewed',request_id:'old',data:{pi_reviewed_at:100}});
   assert.equal(o.visual(o.ag('analyst')), 'idle');
 });
+test('task-less live agent activity takes priority over current plan and past review', () => {
+  for (const [data, visual, text] of [
+    [{state:'waiting',asks:['ask']},'hibernating','답 기다리는 중'],
+    [{state:'hibernating',asks:['ask']},'hibernating','답 기다리는 중'],
+    [{state:'hibernating',jobs:['job']},'hibernating','HPC 기다리는 중'],
+    [{state:'working'},'working','작업 중'],
+    [{state:'error'},'error','문제 발생'],
+  ]) {
+    const o = fixture(), a = o.ag('analyst');
+    o.apply({type:'agent.status',agent_id:a.id,data});
+    assert.equal(o.S.activeTasks.size,0);
+    assert.equal(o.visual(a),visual);
+    assert.equal(o.stateText(a),text);
+  }
+});
 test('2.5D preserves request labels and 3D consumes the same state functions', async () => {
   const ui = await import('data:text/javascript;base64,' + fs.readFileSync(path.join(web,'ui/office-art.js')).toString('base64'));
   const o = fixture(), a = o.ag('analyst');
