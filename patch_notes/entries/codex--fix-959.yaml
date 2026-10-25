@@ -1,5 +1,9 @@
 pr: 962
 rows:
+  - sha: bf426d3
+    at: "2026-10-25 20:45"
+    summary: "파일 reference의 sibling 입력과 Windows/WSL 경로를 proof에 반영했습니다."
+    text: "bot P1의 부모 폴더 노출을 manifest 범위에 포함하고 P2의 shared-drive 경로 표기를 정규화했다. sibling 추가·변경과 경로 왕복 회귀를 추가했다."
   - sha: 1e8d3d0
     at: "2026-10-25 20:40"
     summary: "새 입력 proof test를 Windows inventory에 등록했습니다."
