@@ -452,7 +452,7 @@ SQLite는 읽기 연결과 쓰기 연결을 나눠(WAL) 읽기가 커밋을 기�
 
 Gateway의 event 발행은 event·request 저장을 같은 DB writer에서 await합니다. 취소돼도 commit 결과와 발행 순서를 확인한 뒤 반환합니다. 동기 helper·SavedResults의 저장 대기 전환은 #965에 남아 있습니다.
 
-옮긴 곳은 runner의 작업 폴더 쓰기(`manifest.json`, `TASK*.md`, `RESULT*.md`, 직원 CLI 설정 파일, 파견직 계약 파일)와 runner의 outbox·ack입니다. gateway의 SQLite 쓰기(이벤트 순번, 요청 행, task 원장)는 아직 loop에서 동기로 돕니다. 기존 코드와 테스트가 "기다림 없이 한 번에 끝난다"는 가정으로 짜여 있어서 따로 다루기로 했습니다. 쓰기 지점별 목록은 [쓰기 지점 지도](status/2026-10-15-1125-store-writes-off-loop.md)에 있습니다.
+Runner의 작업 폴더 쓰기(`manifest.json`, `TASK*.md`, `RESULT*.md`, 직원 CLI 설정 파일, 파견직 계약 파일)와 outbox·ack도 writer로 옮겼습니다. Gateway에는 task 원장·승인·리뷰 등 동기 helper의 SQLite 저장 대기가 남습니다. 이전 조사 목록은 [쓰기 지점 지도](status/2026-10-15-1125-store-writes-off-loop.md)를 봅니다.
 
 ### topic 점검표와 선행 연구 기준
 
