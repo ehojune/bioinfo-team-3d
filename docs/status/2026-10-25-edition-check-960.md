@@ -1,0 +1,9 @@
+# #960 edition 검사 경계 수정
+
+- 14차: access ledger의 11열 중 마지막 비고가 없는 9행을 재현했다. 정리본에서만 빈 비고를 추가하고 보정 기록을 연결한다. 다른 열 누락·초과는 차단한다.
+- 17차: 근거 표의 MCP 도구명과 URL query key가 `__` 잔존으로 검출됐다. 생성한 표에서 기술 문자열을 inline code로 표시한다. 강조 오류 검사는 유지한다.
+- 검증: 관련 pytest 117 passed. 저장된 14차 표 shape PASS, 17차 ledger 53행 render marker 0건. 입력 두 파일 SHA256 불변 확인.
+- 원자료·기존 결과·설치판·연구·HPC는 변경하거나 실행하지 않았다. 실제 edition 게시와 browser QA는 미검증이다.
+- CI·최종 head 봇 리뷰는 PR에서 확인한다. Closes #960.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>

@@ -1625,6 +1625,36 @@ def _table_metadata(name: str, body: str | bytes) -> tuple[int | None, list[str]
     return len(parsed) - 1, columns, rectangular
 
 
+def _edition_note_cells(name: str, body: str) -> tuple[str, list[int]]:
+    """Fill only an omitted final notes cell; never infer missing result data."""
+    suffix = PurePosixPath(name).suffix.lower()
+    if suffix not in {".tsv", ".csv"}:
+        return body, []
+    delimiter = "\t" if suffix == ".tsv" else ","
+    try:
+        rows = list(csv.reader(io.StringIO(body), delimiter=delimiter, strict=True))
+    except csv.Error:
+        return body, []
+    if not rows or not rows[0] or rows[0][-1].strip().casefold() not in {"비고", "note", "notes", "comment", "comments"}:
+        return body, []
+    width = len(rows[0])
+    if width < 2 or any(not column.strip() for column in rows[0]) or len(set(rows[0])) != width:
+        return body, []
+    # Mixed or larger shape defects require correction at the source.
+    if any(len(row) not in {width, width - 1} for row in rows[1:] if any(cell.strip() for cell in row)):
+        return body, []
+    repaired = []
+    for number, row in enumerate(rows[1:], 2):
+        if any(cell.strip() for cell in row) and len(row) == width - 1:
+            row.append("")
+            repaired.append(number)
+    if not repaired:
+        return body, []
+    output = io.StringIO(newline="")
+    csv.writer(output, delimiter=delimiter, lineterminator="\n").writerows(rows)
+    return output.getvalue(), repaired
+
+
 def legacy_aggregate_tables(req: Mapping[str, Any], assets: Mapping[str, str | bytes]) -> set[str]:
     """Recover safe table candidates only for plans that predate output type declarations."""
     plan = req.get("plan") if isinstance(req.get("plan"), Mapping) else {}
@@ -1738,6 +1768,12 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
     """Return the stable publication layout; raw data and third-party full text never enter it."""
     assets = {name: clean_publication_text(name, body, settings, req) for name, body in assets.items()
               if not _LITERATURE_OUTPUT.search(name.replace("\\", "/"))}
+    table_repairs: dict[str, list[int]] = {}
+    for name, body in assets.items():
+        normalized, rows = _edition_note_cells(name, body)
+        if rows:
+            assets[name] = normalized
+            table_repairs[name] = rows
     report = portfolio_report(req, settings, assets)
     revision_history = portfolio_revision_history(req, settings, assets)
     if check_document(report)["status"] != "PASS":
@@ -1929,6 +1965,13 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
     if check_document(readme)["status"] != "PASS":
         raise ValueError("README에 반드시 0이어야 하는 한국어 표현이 남았습니다.")
     files["README.md"] = _clean(readme, settings, req)
+    repairs = [(source_targets[name], rows) for name, rows in table_repairs.items() if name in source_targets]
+    if repairs:
+        files["docs/reference/table_repairs.md"] = (
+            "# 표 형식 보정\n\n원본은 보존했습니다. 마지막 비고 열이 생략된 행에 빈 칸만 추가했으며 값은 추정하지 않았습니다.\n\n"
+            + "\n".join(f"- `{name}`: 데이터 레코드 {', '.join(map(str, rows))}번(헤더=1)." for name, rows in repairs)
+            + "\n")
+        files["README.md"] += "\n[표 형식 보정 기록](docs/reference/table_repairs.md)\n"
 
     source_targets.update({name: name for name in files})
     source_targets["REPRODUCTION_RECEIPT.json"] = RECEIPT_PATH
