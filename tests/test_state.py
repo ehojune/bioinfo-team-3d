@@ -438,14 +438,22 @@ def test_restart_creates_missing_issue_before_terminal_report(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_terminal_event_is_not_sent_twice_to_client_joining_after_commit(tmp_path):
+async def test_terminal_event_is_not_sent_twice_to_client_joining_after_commit(tmp_path, monkeypatch):
     hub = Hub(settings(tmp_path))
     hub.requests["r"] = {"id": "r", "mode": "direct", "status": "done"}
     existing, joining = CaptureSocket(), CaptureSocket()
+    flushed = asyncio.Event()
+    original = hub._send_committed_event
+
+    async def send_committed():
+        await original()
+        flushed.set()
+
+    monkeypatch.setattr(hub, "_send_committed_event", send_committed)
     hub.clients.add(existing)
     hub.commit_terminal("r", "request.completed", {"ok": True})
     hub.clients.add(joining)  # its WebSocket handshake replays from the event store
-    await asyncio.sleep(0)
+    await asyncio.wait_for(flushed.wait(), 1)
     assert [message["seq"] for message in existing.sent] == [1]
     assert joining.sent == []
     assert [event["seq"] for event in hub.store.events_since(0)] == [1]

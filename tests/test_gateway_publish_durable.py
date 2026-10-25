@@ -142,12 +142,15 @@ async def test_repeated_cancel_waits_for_commit_outcome(gateway, monkeypatch, co
             await task
     else:
         await task
+    sender = getattr(hub, "committed_sender", None)
+    if sender is not None:
+        await asyncio.wait_for(sender, 1)
     assert not hub.event_lock.locked()
     persisted = hub.store.events_since(0)
     assert len(persisted) == (0 if fail and commit == 1 else 1)
     if cancel and not fail and commit == 1:
         # No new publication is needed to deliver the committed event.
-        await asyncio.wait_for(hub.committed_sender, 1)
+        assert sender is not None
     assert len(delivered) == len(persisted)
     assert len(reported) == (0 if fail else 1)
     assert hub.store.runner_seen("runner") == (0 if fail and commit == 1 else 7)
