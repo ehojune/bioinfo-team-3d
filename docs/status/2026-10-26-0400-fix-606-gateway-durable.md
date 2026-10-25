@@ -7,6 +7,7 @@ Refs #606. 첫 단계이며 이 PR로 issue를 닫지 않습니다. 후속 동�
 - CI의 번역·비용 작업 조기 실행도 수정했습니다. caller가 저장 완료를 확인하는 turn에서 소비자를 예약합니다. readiness test는 실제 event·dispatch를 기다리며 기존 assertion·timeout은 유지합니다.
 - REST history도 WebSocket과 같은 ordering lock을 사용합니다(P2 4372012596). 일반 history·since·replay-gap snapshot을 포함한 새 회귀 20 passed입니다.
 - 전송이 취소된 client는 별도 1초 제한 close로 reconnect·replay를 유도합니다(P2 4372064831). 취소된 caller와 독립된 network 정리이며 DB 저장 차폐 범위는 유지합니다.
+- Linux 3.12 CI에서 login notice 중복 race를 발견해 두 task의 동일 await 경계로 1 failed 재현했습니다. await 뒤에서 notice를 원자적으로 확인·예약하도록 고쳤고 관련 67 passed입니다. 이전 head의 Windows·Linux 3.10은 통과했으며 새 head에서 전체 gate를 다시 확인합니다.
 - 검증: 관련 mock/static 287 passed. 이후 AnyIO 차폐도 commit으로 좁히고 gateway 새 회귀 22 passed와 disconnect 검사를 확인했습니다. Windows inventory·public·diff 검사 PASS. 기존 durable suite 포함 초기 검사 39 passed에는 실수로 로컬 crash subprocess 검사가 포함됐습니다. mock/static 한도를 벗어난 실행이며 후속 로컬 검사는 subprocess 없이 진행했습니다. 연구·HPC는 실행하지 않았습니다.
 - manual·patch notes·status 기록 포함. 실제 process 검증과 최종 head CI·동일 head 봇 리뷰는 CI/PR gate에서 확인합니다. 동기 저장 경계 전체 해결·실디스크 성능은 미검증입니다.
 

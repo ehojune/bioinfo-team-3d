@@ -1,5 +1,9 @@
 pr: 966
 rows:
+- sha: '19a76e2'
+  at: 2026-10-26 04:30
+  summary: 두 요청이 동시에 로그인 대기에 들어가도 안내는 한 번만 보냅니다.
+  text: 'Linux 3.12 CI의 중복 notice race를 두 task의 동일 await 경계로 재현했습니다(1 failed). publish 완료 뒤 shared notice를 원자적으로 확인·예약하도록 고쳤습니다. 기존 단언·상한을 유지하고 관련 mock/static 67건을 통과했습니다.'
 - sha: 'ea8011a'
   at: 2026-10-26 04:20
   summary: 전송이 취소된 화면 연결을 닫아 저장된 이벤트를 다시 받게 합니다.
