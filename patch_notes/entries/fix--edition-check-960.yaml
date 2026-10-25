@@ -1,6 +1,6 @@
 pr: 961
 rows:
-- sha: pending
+- sha: '947e540'
   at: 2026-10-25 20:42
   summary: claim 각주에도 기술 문자열 formatter를 적용했습니다.
   text: '봇 P1 4370698644를 재현했습니다. 근거 표만 고쳐도 claim 각주에 URL query key의 __가 남았습니다. 공통 formatter를 두 경로에 적용했고 anchor와 URL을 함께 넣은 회귀 검사를 추가했습니다. 관련 pytest 118건 통과.'
