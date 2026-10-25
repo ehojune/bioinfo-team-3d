@@ -17,7 +17,8 @@ from typing import Any
 from urllib.parse import quote, unquote
 
 from .integrations.github import SECRET_PATTERNS, publish_clean, redact_url_credentials, sanitize
-from .evidence.report_check import SOURCE_EVIDENCE_TITLE, claim_evidence_rows, claim_evidence_section, evidence_note
+from .evidence.report_check import (SOURCE_EVIDENCE_TITLE, claim_evidence_rows, claim_evidence_section,
+                                    evidence_literals, evidence_note)
 from .korean_qc import check_document, check_preservation
 from .models import RunnerPathFields
 from .policy import touches
@@ -675,7 +676,7 @@ def _publication_claim_footnotes(report: str, req: dict, settings) -> str:
     definitions = [
         f"[^{note_id}]: 단계 `{step_id}` · claim `{claim_id}` · "
         f"[근거 파일](../docs/reference/claim_evidence.md#{note_id})" +
-        "".join(" · " + " ".join(evidence_note(row).split())
+        "".join(" · " + evidence_literals(" ".join(evidence_note(row).split()))
                 for row in rows if (row["step_id"], row["claim_id"]) == (step_id, claim_id))
         for note_id, (step_id, claim_id) in notes.items()
     ]

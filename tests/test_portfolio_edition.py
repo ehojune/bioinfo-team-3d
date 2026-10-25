@@ -97,6 +97,23 @@ def test_evidence_technical_identifiers_are_literal_in_reader_edition():
     assert rendered_markers("**(broken)**text")  # The actual render gate remains strict.
 
 
+def test_cited_technical_source_is_literal_in_publication_footnotes():
+    source = "https://example.org/molecule.json?molecule_chembl_id__in=A,B"
+    ledger = {
+        "claims": [{"id": "c1", "statement": "Source checked", "status": "supported"}],
+        "evidence": [{"id": "e1", "status": "observed", "source": {"uri": source}}],
+        "links": [{"claim_id": "c1", "evidence_id": "e1", "relation": "supports"}],
+    }
+    request = {"id": "req_footnote", "text": "근거 확인", "report": "Source checked.",
+               "results": {"s1": {"structured": ledger}}}
+    assets = {"steps/report/outputs/report/final_report.md": PAPER + "\nSource checked [[claim:s1/c1]].\n"}
+    files = build_portfolio_files(request, Settings(), assets, {})
+    assert source in files["report/report.md"]
+    assert "[^" in files["report/report.md"]
+    assert rendered_markers(files["report/report.md"]) == []
+    assert not scan_publish_files(files)
+
+
 def test_compatibility_report_converts_claims_before_publication_scan():
     request = {"report": "Result [[claim:s1/c1]].\n\n`[[claim:s1/example]]`\n"}
 
