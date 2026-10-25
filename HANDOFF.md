@@ -1,11 +1,11 @@
 # labhq 인수인계 — 개발 총괄에게
 
 공개 저장소 [ehojune/bioinfo-team-3d](https://github.com/ehojune/bioinfo-team-3d) · 패키지/CLI `labhq` · 현재 버전 v0.5.
-개발 담당과 위임 범위는 최신 PI 인계를 따릅니다. PI 창구는 [#760](https://github.com/ehojune/bioinfo-team-3d/issues/760), 현재 지원·복구 기준은 [#882](https://github.com/ehojune/bioinfo-team-3d/issues/882)에서 확인합니다.
+개발 담당과 위임 범위는 최신 PI 인계를 따릅니다. PI 창구는 [#883](https://github.com/ehojune/bioinfo-team-3d/issues/883), 현재 지원·복구 기준은 [#882](https://github.com/ehojune/bioinfo-team-3d/issues/882)에서 확인합니다.
 
 ## 시작과 종료
 
-1. `AGENTS.md`, `STATUS.md` 상단, 열린 PR, #760의 최근 댓글과 현재 배정 이슈의 최신 인계를 읽습니다. 위임·점검·한도는 [운영 기준](docs/reference/lead-operations.md)과 최신 PI 결정을 따릅니다.
+1. `AGENTS.md`, `STATUS.md` 상단, 열린 PR, #883의 최근 댓글과 현재 배정 이슈의 최신 인계를 읽습니다. 위임·점검·한도는 [운영 기준](docs/reference/lead-operations.md)과 최신 PI 결정을 따릅니다.
 2. test는 바꾼 곳만, 전체 suite는 CI에 맡깁니다. 실제 설정·PI 인스턴스·원자료는 업무 범위와 승인 없이 건드리지 않습니다.
 3. 끝날 때 PR과 `docs/status/`에 결과를 쓰고 이 문서의 우선순위를 갱신합니다. 지난 큐·결정은 [참고 기록](docs/reference/README.md)에 두고 여기에는 현재 것만 남깁니다.
 
@@ -13,7 +13,7 @@
 
 main·열린 PR을 대조한 큐입니다. 구현·CI 통과는 운영 PASS나 새 실행 승인이 아닙니다. 기존 실행 계약과 중단 결정을 유지하며, 지원 범위는 [manual](docs/manual.md#중단-조건-한눈에)을 봅니다.
 
-문서 PR #970은 hold입니다. #971 수정→#972→#969 snapshot 후속 반영 뒤 manual을 통합합니다. #969 본 수정은 병합됐고 snapshot P2는 남았습니다. 최종 head CI·동일 head 리뷰 완료·모든 head 미해결 P1=0 뒤 #970을 병합하며 후속 실행 GO는 별도입니다.
+문서 PR #970은 hold입니다. #971 수정 PR #973→#972→[#653 snapshot 후속](https://github.com/ehojune/bioinfo-team-3d/issues/653#issuecomment-6403355901) 반영 뒤 manual을 통합합니다. #969 본 수정은 병합됐고 #653은 열린 상태입니다. 최종 head CI·동일 head 리뷰 완료·모든 head 미해결 P1=0 뒤 #970을 병합하며 후속 실행 GO는 별도입니다.
 
 | 순서 | 현재 상태·다음 일 |
 |---|---|
@@ -32,7 +32,7 @@ main·열린 PR을 대조한 큐입니다. 구현·CI 통과는 운영 PASS나 �
 | 항목 | 결정 |
 |---|---|
 | 개발 담당 | [현재 역할 인계](https://github.com/ehojune/bioinfo-team-3d/issues/882#issuecomment-6402248394)의 담당·파일 소유권을 따름. 특정 에이전트 고정 총괄 안내보다 이 인계가 우선하며 제품 CSO 설정과 별개 |
-| token 한도 | PI가 #760에서 정한 일일 한도와 남은 주간 여유 안에서 admission. 기준은 [운영 기준](docs/reference/lead-operations.md) |
+| token 한도 | 과거 #760 한도 결정은 기록으로 보존. 현재 한도·admission은 #883의 최신 PI 인계와 [운영 기준](docs/reference/lead-operations.md)을 따름 |
 | 분석 배정(#732) | 표준 생물정보학은 bioinfo-agent/nf-core, 단순 작업은 직접. 없는 복잡한 파이프라인은 직접 코딩한 뒤 기여 여부를 PI에게 묻고 yes일 때만 bioinfo-agent PR([매뉴얼](docs/manual.md#직원과-도구)) |
 | 의미 장치 | 측정용 Shadow는 유지하고 부가 확장은 동결. 연구 이점은 미측정 |
 

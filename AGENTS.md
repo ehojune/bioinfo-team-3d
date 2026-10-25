@@ -1,6 +1,6 @@
 # 이 저장소에서 작업하는 에이전트에게
 
-시작 전에 `HANDOFF.md`·`STATUS.md` 상단과 현재 PI 창구 [#760](https://github.com/ehojune/bioinfo-team-3d/issues/760)의 최근 댓글을 읽는다.
+시작 전에 `HANDOFF.md`·`STATUS.md` 상단과 현재 PI 창구 [#883](https://github.com/ehojune/bioinfo-team-3d/issues/883)의 최근 댓글을 읽는다.
 
 - 개발 담당과 위임 범위는 최신 PI 인계를 따른다. 제품 안의 연구 CSO·직원 설정과 구분한다. 현재 우선순위는 HANDOFF, 점검 주기·동시 투입·한도·P2 선별은 [운영 기준](docs/reference/lead-operations.md)을 따른다.
 - 문서는 README 한영판(처음 쓰는 사람), `docs/manual.md`(상세), `docs/pi-qa.md`(PI), AGENTS·HANDOFF(개발)로 나눈다. 동작 변경은 manual에 반영하고 **큰 변경·매 PI 보고 전** 코드·직원 YAML·PR과 대조한다. 병합 전 PR의 동작은 manual·README에 출시된 것으로 쓰지 않는다. 상세 근거·옛 결정은 `docs/reference/`에 두고 링크한다.
