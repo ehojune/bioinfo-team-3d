@@ -1,11 +1,11 @@
 # PI Q&A
 
-PI 질문·답과 결정을 모았습니다. 현재 창구는 [#760](https://github.com/ehojune/bioinfo-team-3d/issues/760)(2026-10-19~)이며 한국 시각 00·04·08·12·16·20시에 보고합니다. 이전 기록은 [#435](https://github.com/ehojune/bioinfo-team-3d/issues/435)(10-06~10-19), [#298](https://github.com/ehojune/bioinfo-team-3d/issues/298)(10-06까지)에 있습니다. 폰 접속은 [#37](https://github.com/ehojune/bioinfo-team-3d/issues/37)이 풀릴 때까지 보류이므로 PC 브라우저로 씁니다.
+PI 질문·답과 결정을 모았습니다. 현재 창구는 [#883](https://github.com/ehojune/bioinfo-team-3d/issues/883)(2026-10-23~)이며 보고 주기는 최신 PI 인계를 따릅니다. 이전 기록은 [#760](https://github.com/ehojune/bioinfo-team-3d/issues/760)(10-19~10-23), [#435](https://github.com/ehojune/bioinfo-team-3d/issues/435)(10-06~10-19), [#298](https://github.com/ehojune/bioinfo-team-3d/issues/298)(10-06까지)에 있습니다. 폰 접속은 [#37](https://github.com/ehojune/bioinfo-team-3d/issues/37)이 풀릴 때까지 보류이므로 PC 브라우저로 씁니다.
 처음 바란 모습: The Virtual Biotech 같은 팀을 귀여운 웹 인터페이스 위에서 돌린다. 그래서 보통 작업은 웹에서 하고 명령줄은 [매뉴얼](manual.md)로 보냈습니다.
 
-## 현재 운영 (2026-10-20)
+## 현재 운영 (2026-10-26)
 
-개발 총괄은 Codex 고정이며 Codex·Claude subagent에 위임합니다. [최신 PI 방침](https://github.com/ehojune/bioinfo-team-3d/issues/760#issuecomment-6285136614)에 따라 일반 개발 배정을 재개했습니다. 열린 PR과 실제 실패를 우선하며 같은 담당자에게 관련 후속 작업을 이어 배정합니다. 날짜별 한도와 접수 재개 결정은 #760, 현재 작업 순서는 [HANDOFF](../HANDOFF.md), #732 분석 배정은 [PI 결정](../HANDOFF.md#pi-결정)을 봅니다. 아래 날짜가 붙은 답은 당시 기록입니다.
+개발 담당·위임·병합 판단과 현재 한도·admission은 #883의 최신 PI 인계를 따릅니다. 기존 누적 사용량·실행 계약·중단 조건은 유지합니다. 작업 순서는 [HANDOFF](../HANDOFF.md), #732 분석 배정은 [PI 결정](../HANDOFF.md#pi-결정)을 봅니다. [10-20 개발 재개 결정](https://github.com/ehojune/bioinfo-team-3d/issues/760#issuecomment-6285136614)과 아래 날짜가 붙은 답은 당시 기록입니다.
 
 ## 물은 것과 답
 
