@@ -1,6 +1,6 @@
 pr: null
 rows:
-  - sha: ba5945f7
+  - sha: ba5945f
     at: "2026-10-26 04:10"
     text: "test: offline 취소를 복구한 runner에 재전송하는 통합 회귀검사 보존 (Refs #675)"
     summary: "취소한 local job의 wrapper·자식 종료와 다른 요청 보존을 검사하고 Windows 필수 검사에 넣었습니다."
