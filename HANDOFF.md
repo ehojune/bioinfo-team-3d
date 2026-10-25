@@ -13,6 +13,8 @@
 
 main·열린 PR을 대조한 큐입니다. 구현·CI 통과는 운영 PASS나 새 실행 승인이 아닙니다. 기존 실행 계약과 중단 결정을 유지하며, 지원 범위는 [manual](docs/manual.md#중단-조건-한눈에)을 봅니다.
 
+문서 PR #970은 hold입니다. #971 수정→#972→#969 snapshot 후속 반영 뒤 manual을 통합합니다. #969 본 수정은 병합됐고 snapshot P2는 남았습니다. 최종 head CI·동일 head 리뷰 완료·모든 head 미해결 P1=0 뒤 #970을 병합하며 후속 실행 GO는 별도입니다.
+
 | 순서 | 현재 상태·다음 일 |
 |---|---|
 | 종료 조건 · [#877](https://github.com/ehojune/bioinfo-team-3d/issues/877#issuecomment-6370526043) | API 단절 뒤 기한 종료·잔류 0은 특정 설치판의 무해한 증명에서 PASS. 실제 adapter timeout/cancel·복구 중복 방지·full-capability doctor는 미평가. 요청 전체 상한 확인이 남아 OPEN이며 새 실행 GO는 별도 |
