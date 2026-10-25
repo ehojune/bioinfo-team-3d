@@ -14,6 +14,19 @@
 - 리뷰 P2 반영: 디스크 여유 검사를 후보 전체 합계가 아니라 복사할 본문마다 한다. 한 본문이 크거나 byte 한도를 넘어도 들어가는 본문은 전달된다.
 - 테스트 `tests/test_precedent_texts_951.py` 13건(새 4건: 한 본문만 깨지는 경우, 공유 예산, 임시 파일 정리 실패, 본문별 디스크 검사). 관련 350건 통과. 실제 요청, 전체 suite, Windows CI는 미확인이다.
 
+Closes #954
+
+15차 선례 조사에서 `fulltext`가 4번 모두 실패한 원인을 고쳤습니다.
+
+- **원인:** `labhq/tools/annot.py`의 `request(response_limit=…)` 경로가 `aiter_bytes()`로 이미 풀린 바이트를 모은 뒤 원래 헤더(`Content-Encoding` 포함)를 붙여 `httpx.Response`를 다시 만들어, httpx가 한 번 더 풀다 `DecodingError`가 났습니다(`TransportError`가 아니라 잡히지 않아 같은 호출의 모든 ID가 함께 실패).
+- **수정 1:** 다시 만드는 응답에서 `content-encoding`·`content-length`·`transfer-encoding`을 뺍니다.
+- **수정 2:** `fulltext`는 ID 하나의 조회·본문 저장 예외를 그 ID의 `error`(`예외 종류: 설명`)로만 남기고 다른 ID는 정상으로 둡니다. 모든 ID가 실패할 때만 호출이 실패합니다.
+- **테스트(`tests/test_annot_literature.py`, 수정 전 3건 모두 실패):** gzip `Content-Encoding` 응답을 합법 OA 사본으로 받아 본문 저장, Http 계층이 헤더를 뺌, 한 ID가 `DecodingError`여도 다른 ID는 `full_text`. literature·annot 묶음 117건 통과(로컬, Windows, Python 3.12).
+- **문서:** `docs/manual.md` 본문 조회 항목.
+- **미검증:** 실제 NEJM 논문 재조회, 15차 실운전.
+
+🤖 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
 # 선행 조사가 저장한 본문을 연구 단계에 전달 (#951)
 
 - 13·14차 모두 1차 연구 리뷰가 같은 P1으로 revise를 냈다. CP1 전 선행 조사(lit_scout)가 공개 본문을 저장했고 receipt hash도 맞는데, 실행 단계는 새 작업 폴더에서 돌아 그 파일을 보지 못했다. 단계는 다시 조회해 실패했고 종합 보고서는 "원문으로 확인한 수치 0건"이라고 적었다. 2차 라운드가 매번 필요했다(13차 $27.85 → $49.26).
