@@ -210,3 +210,44 @@ async def test_sync_review_during_async_commit_preserves_sequence(gateway, monke
     assert [e["seq"] for e in hub.events] == ([2] if buffer_size == 1 else [1, 2])
     assert delivered == [1, 2]
     assert [e["seq"] for e in hub.store.events_since(0)] == [1, 2]
+
+
+@pytest.mark.parametrize("since", [None, 0, -1])
+async def test_rest_history_waits_for_complete_ordered_publication(tmp_path, monkeypatch, since):
+    from labhq.gateway.server import create_app
+    from labhq.settings import Settings
+
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    app = create_app(settings)
+    hub = app.state.hub
+    hub.requests["r"] = {"id": "r", "status": "done"}
+    hub.result_storage = SimpleNamespace(schedule=lambda rid: None)
+    monkeypatch.setattr(hub, "retire_resume_cards", lambda *args: [])
+    committed, resume = asyncio.Event(), asyncio.Event()
+    append = hub.store.aappend_event
+
+    async def pause_after_commit(*args, **kwargs):
+        ev = await append(*args, **kwargs)
+        committed.set()
+        await resume.wait()
+        return ev
+
+    monkeypatch.setattr(hub.store, "aappend_event", pause_after_commit)
+    endpoint = next(route.endpoint for route in app.routes if route.path == "/api/events")
+    publication = asyncio.create_task(hub.publish(event(request=False)))
+    read = None
+    try:
+        await asyncio.wait_for(committed.wait(), 1)
+        hub.review_done("r")
+        read = asyncio.create_task(endpoint(since=since))
+        await asyncio.sleep(0)
+        assert not read.done(), "REST must share the WebSocket ordering boundary"
+    finally:
+        resume.set()
+        await publication
+        if read:
+            response = await read
+        hub.store.close()
+    history = response[0]["data"]["recent_events"] if since == -1 else response
+    assert [ev["seq"] for ev in history] == [1, 2]

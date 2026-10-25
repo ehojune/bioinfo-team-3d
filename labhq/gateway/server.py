@@ -4889,14 +4889,16 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
 
     @app.get("/api/events", dependencies=[Depends(auth)])
     async def events(limit: int = 200, since: int | None = None) -> list[dict]:
-        if since is None:
-            return list(hub.events)[-limit:]
-        oldest, latest = hub.store.event_bounds()
-        if since < oldest - 1 or since > latest:
-            snap = hub.snapshot()
-            snap["replay_gap"] = {"requested_since": since, "oldest_seq": oldest}
-            return [snap]
-        return hub.store.events_since(since, max(1, limit))
+        # Match WebSocket replay: no partial buffer while publication awaits a commit.
+        async with hub.event_lock:
+            if since is None:
+                return list(hub.events)[-limit:]
+            oldest, latest = hub.store.event_bounds()
+            if since < oldest - 1 or since > latest:
+                snap = hub.snapshot()
+                snap["replay_gap"] = {"requested_since": since, "oldest_seq": oldest}
+                return [snap]
+            return hub.store.events_since(since, max(1, limit))
 
     @app.get("/api/shutdown-readiness", dependencies=[Depends(auth)])
     async def shutdown_readiness() -> dict:
