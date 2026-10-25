@@ -166,8 +166,17 @@ async def test_ask_only_direct_restart_requires_offline_worker(tmp_path, checkpo
     try:
         assert restored.completed_direct_result("r") is None
         assert restored.resume_agents("r") == {"worker"}
+        published = asyncio.Event()
+        original_publish = restored.publish
+
+        async def observe_publish(ev, *args, **kwargs):
+            await original_publish(ev, *args, **kwargs)
+            if ev["type"] == "request.resume_waiting":
+                published.set()
+
+        restored.publish = observe_publish
         resumed = asyncio.create_task(restored.resume_when_ready("r"))
-        await asyncio.sleep(0)
+        await asyncio.wait_for(published.wait(), 1)
         assert restored.requests["r"]["status"] == "waiting_for_runner"
         assert restored.events[-1]["type"] == "request.resume_waiting"
         assert restored.events[-1]["data"]["missing_agents"] == ["worker"]

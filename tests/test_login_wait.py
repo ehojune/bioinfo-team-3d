@@ -141,7 +141,7 @@ async def test_briefing_login_failure_parks_not_finishes_and_notifies_once(tmp_p
 
     async def publish(event, *args, **kwargs):
         await original_publish(event, *args, **kwargs)
-        if event["type"] == "request.step_login_wait":
+        if event["type"] == "engine.login_wait":
             parked.set()
 
     async def dispatch(task):
@@ -264,7 +264,8 @@ async def test_two_requests_share_one_engine_notice(tmp_path):
     second = asyncio.create_task(hub.wait_login("other", "review", "claude_code",
                                                 resume_at=time.time() + 100, deadline_at=deadline,
                                                 reason=CLAUDE_EXPIRED))
-    await asyncio.sleep(0)
+    await _until(lambda: any(event["type"] == "engine.login_wait" for event in hub.events)
+                 and "review" in hub.requests["other"].get("login_waits", {}))
     assert len([event for event in hub.events if event["type"] == "engine.login_wait"]) == 1
     assert len(hub.engine_login_holds()) == 1
     await hub.release_login("claude_code", manual=True)

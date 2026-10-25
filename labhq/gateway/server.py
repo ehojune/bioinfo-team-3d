@@ -2517,11 +2517,16 @@ class Hub:
                 await asyncio.shield(pending)
             except asyncio.CancelledError:
                 cancelled = True
-        pending.result()  # A storage error takes precedence over cancellation.
+        ev = pending.result()  # A storage error takes precedence over cancellation.
+        # Schedule consumers in the caller's final turn, after durable publication.
+        # They must not run ahead of the caller observing its completed delivery.
+        if self.reporter.enabled():
+            self.reporter.submit(ev)
+        self.pi_interpreter.schedule(ev)
         if cancelled:
             raise asyncio.CancelledError
 
-    async def _publish_durable(self, ev: dict, runner_id: str | None, runner_seq: int | None) -> None:
+    async def _publish_durable(self, ev: dict, runner_id: str | None, runner_seq: int | None) -> dict:
         internal = self.store.get("task", ev.get("task_id")) if ev.get("task_id") else None
         if (internal or {}).get("kind") == "pi_interpretation" and ev.get("type") == "agent.log":
             ev = {**ev, "data": {**ev.get("data", {}), "level": "debug"}}
@@ -2549,11 +2554,9 @@ class Hub:
                 cp4.reconcile(self.requests[rid])
                 self.requests[rid]["updated_at"] = time.time()
                 await self.store.aput("request", rid, self.requests[rid])
-        if self.reporter.enabled():
-            self.reporter.submit(ev)
-        self.pi_interpreter.schedule(ev)
         if ev.get("type") in ("request.step_done", "request.step_skipped") and ev.get("request_id"):
             await self._close_step_controls(ev["request_id"], (ev.get("data") or {}).get("step_id"))
+        return ev
 
     async def on_runner_message(self, runner_id: str, msg: dict, ws: WebSocket | None = None,
                                 incarnation: str | None = None) -> None:
