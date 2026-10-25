@@ -372,6 +372,9 @@ async def test_a_request_without_a_runner_waits_and_runs_when_one_registers(tmp_
     await _until(lambda: hub.requests[rid]["status"] == "waiting_for_runner")
     assert list(hub.requests[rid]["runner_waits"].values())[0]["agent_id"] == "cso"
     assert not hub.store.all("task")  # nothing was sent, so nothing is uncertain or spent
+    # Status changes precede the now-awaitable event commit. Observe its completion,
+    # retaining the same event and status assertions below.
+    await _until(lambda: any(e["type"] == "request.runner_wait" for e in hub.events))
     wait = next(e for e in hub.events if e["type"] == "request.runner_wait")
     assert wait["data"]["missing_agents"] == ["cso"] and "labhq runner" in wait["data"]["message"]
     assert any(e["type"] == "request.status" and e["data"]["status"] == "waiting_for_runner" for e in hub.events)

@@ -25,6 +25,13 @@ def settings(tmp_path):
     return s
 
 
+async def wait_for_dispatch(socket, task_id):
+    async def ready():
+        while not any(m.get("type") == "task.dispatch" and m["task"]["id"] == task_id for m in socket.sent):
+            await asyncio.sleep(0)
+    await asyncio.wait_for(ready(), 1)
+
+
 @pytest.mark.asyncio
 async def test_restart_keeps_approval_and_resumes_only_remaining_steps(tmp_path):
     s = settings(tmp_path)
@@ -431,14 +438,22 @@ def test_restart_creates_missing_issue_before_terminal_report(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_terminal_event_is_not_sent_twice_to_client_joining_after_commit(tmp_path):
+async def test_terminal_event_is_not_sent_twice_to_client_joining_after_commit(tmp_path, monkeypatch):
     hub = Hub(settings(tmp_path))
     hub.requests["r"] = {"id": "r", "mode": "direct", "status": "done"}
     existing, joining = CaptureSocket(), CaptureSocket()
+    flushed = asyncio.Event()
+    original = hub._send_committed_event
+
+    async def send_committed():
+        await original()
+        flushed.set()
+
+    monkeypatch.setattr(hub, "_send_committed_event", send_committed)
     hub.clients.add(existing)
     hub.commit_terminal("r", "request.completed", {"ok": True})
     hub.clients.add(joining)  # its WebSocket handshake replays from the event store
-    await asyncio.sleep(0)
+    await asyncio.wait_for(flushed.wait(), 1)
     assert [message["seq"] for message in existing.sent] == [1]
     assert joining.sent == []
     assert [event["seq"] for event in hub.store.events_since(0)] == [1]
@@ -593,7 +608,7 @@ async def test_new_runner_generation_ends_live_accepted_future(tmp_path):
     hub.register_runner("local", old, [{"id": "a"}], "old-incarnation")
     task = Task(id="live-old", agent_id="a", request_id="r", prompt="work", meta={"kind": "direct"})
     waiting = asyncio.create_task(hub.orchestrator.run_step(task))
-    await asyncio.sleep(0)
+    await wait_for_dispatch(old, task.id)
     await hub.on_runner_message("local", {"type": "task.accepted", "runner_seq": 1,
                                           "task_id": task.id, "request_id": "r"})
     newer = CaptureSocket()
@@ -1090,7 +1105,7 @@ async def test_runner_restart_with_tracked_hpc_job_wakes_without_resubmitting(tm
     task = Task(id="submitted-once", agent_id="a", request_id="r", prompt="analyze",
                 meta={"kind": "step", "step_id": "s"})
     running = asyncio.create_task(hub.orchestrator.run_step(task))
-    await asyncio.sleep(0)
+    await wait_for_dispatch(socket, task.id)
     assert [m["task"]["id"] for m in socket.sent if m.get("type") == "task.dispatch"] == [task.id]
     await hub.on_runner_message("local", {"type": "task.accepted", "task_id": task.id,
                                           "request_id": "r"})

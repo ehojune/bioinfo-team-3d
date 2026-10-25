@@ -21,6 +21,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Literal
 
+import anyio
 import httpx
 import yaml
 from fastapi import BackgroundTasks, Request, Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
@@ -62,6 +63,7 @@ log = logging.getLogger(__name__)
 # #126: a snapshot goes to every client on each connect, so a long follow-up answer travels as its head only.
 # The full answer stays on the request (GET /api/requests/{id}); the web loads it when the PI opens it.
 SNAPSHOT_ANSWER_CHARS = 2000
+CLIENT_SEND_TIMEOUT_S = 10.0
 # Terminal reports can be as large as 20,000 characters and repeat once per finished request.
 SNAPSHOT_REPORT_CHARS = 2000
 # A step card shows this much of a task's result text; a replayed task.result needs no more.
@@ -766,7 +768,6 @@ class Hub:
                          deadline_at: float, reason: str, agent_id: str | None = None) -> bool:
         """Park until the PI logs in, the retry clock fires, or the bounded wait expires."""
         req = self.requests[rid]
-        first_notice = engine not in self.login_notices
         started = (((req.get("login_windows") or {}).get(engine) or {}).get("started_at") or time.time())
         runner_id = self.agent_runner.get(agent_id or "")
         entry = {"engine": engine, "resume_at": resume_at, "deadline_at": deadline_at,
@@ -782,7 +783,9 @@ class Hub:
                                 "data": {"step_id": step_id, "engine": engine, "resume_at": resume_at,
                                          "deadline_at": deadline_at, "reason": short(reason, 500),
                                          "command": command}})
-        if first_notice:
+        # publish() now yields during storage. Claim the shared notice only after
+        # that await, with no yield between checking and marking the engine.
+        if engine not in self.login_notices:
             self.login_notices.add(engine)
             await self.publish({"type": "engine.login_wait", "ts": time.time(), "request_id": rid,
                                 "data": {"engine": engine, "command": command,
@@ -1348,19 +1351,69 @@ class Hub:
         async with self.event_lock:
             await self._flush_committed_events()
 
-    async def _flush_committed_events(self) -> None:
+    async def _flush_committed_events(self, delivered: list[dict] | None = None) -> None:
         # Called under event_lock, before allocating any later live event sequence.
         while self.pending_committed:
-            event, clients = self.pending_committed.popleft()
+            event, clients = self.pending_committed[0]
             dead = []
-            for client in clients:
+            while clients:
+                client = clients[0]
+                if client not in self.clients:
+                    clients = clients[1:]
+                    self.pending_committed[0] = (event, clients)
+                    continue
                 try:
-                    await client.send_text(json.dumps(event, ensure_ascii=False, default=str))
+                    await asyncio.wait_for(client.send_text(json.dumps(event, ensure_ascii=False, default=str)),
+                                           CLIENT_SEND_TIMEOUT_S)
+                except asyncio.CancelledError:
+                    # A backpressured client must not hold the next publisher too.
+                    self._disconnect_cancelled_client(client)
+                    self.pending_committed[0] = (event, clients[1:])
+                    raise
+                except asyncio.TimeoutError:
+                    self._disconnect_cancelled_client(client)
                 except Exception:
                     dead.append(client)
+                clients = clients[1:]
+                self.pending_committed[0] = (event, clients)
+            self.pending_committed.popleft()
             for client in dead:
                 self.clients.discard(client)
-            self.pi_interpreter.schedule(event)
+            if delivered is None:
+                self.pi_interpreter.schedule(event)
+            else:
+                delivered.append(event)
+
+    def _disconnect_cancelled_client(self, client) -> None:
+        self.clients.discard(client)
+        close = getattr(client, "close", None)
+        if close is None:
+            return
+
+        async def close_socket():
+            # Close independently of the cancelled sender, with a bounded network
+            # wait. The browser reconnects and replays the committed sequence.
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(close(code=1012), 1.0)
+
+        closing = getattr(self, "client_close_tasks", None)
+        if closing is None:
+            closing = self.client_close_tasks = set()
+        task = asyncio.create_task(close_socket())
+        closing.add(task)
+        task.add_done_callback(closing.discard)
+
+    def _schedule_committed_events(self) -> None:
+        prior = getattr(self, "committed_sender", None)
+        if prior is not None and not prior.done():
+            return
+        task = self.committed_sender = asyncio.create_task(self._send_committed_event())
+
+        def finished(sender):
+            if not sender.cancelled() and (exc := sender.exception()) is not None:
+                log.error("committed event delivery failed: %s", exc)
+
+        task.add_done_callback(finished)
 
     def result_map(self, rid: str) -> SavedResults:
         return SavedResults(self, rid)
@@ -2496,35 +2549,80 @@ class Hub:
                 *agent.get("mcp", [])]
 
     # ----- events -----
+    def _record_published_event(self, ev: dict) -> None:
+        # A synchronous checkpoint can commit a higher sequence while publish
+        # awaits its writer. Keep the newest buffer entries in database order.
+        if not self.events or self.events[-1]["seq"] < ev["seq"]:
+            self.events.append(ev)
+            return
+        ordered = sorted([*self.events, ev], key=lambda entry: entry["seq"])
+        self.events.clear()
+        self.events.extend(ordered)
+
     async def publish(self, ev: dict, runner_id: str | None = None, runner_seq: int | None = None) -> None:
+        ev = copy.deepcopy(ev)
         internal = self.store.get("task", ev.get("task_id")) if ev.get("task_id") else None
         if (internal or {}).get("kind") == "pi_interpretation" and ev.get("type") == "agent.log":
             ev = {**ev, "data": {**ev.get("data", {}), "level": "debug"}}
         if ev.get('type') == 'approval.requested':
             ev = {**ev, 'data': with_approval_copy(ev.get('data') or {})}
-        async with self.event_lock:
-            await self._flush_committed_events()
-            durable_report = (self.reporter.enabled() and bool(ev.get("request_id")) and
-                              ev.get("type") in ProjectReporter.HANDLED)
-            ev = self.store.append_event(ev, self.s.gateway.event_buffer, runner_id, runner_seq,
-                                         reporter_delivery=durable_report)
-            self.events.append(ev)
-            dead = []
-            for c in list(self.clients):
+        cancelled = False
+        delivered = []
+        try:
+            async with self.event_lock:
+                await self._flush_committed_events()
+                durable_report = (self.reporter.enabled() and bool(ev.get("request_id")) and
+                                  ev.get("type") in ProjectReporter.HANDLED)
+                ev, cancelled = await self._publication_write(self.store.aappend_event(
+                    ev, self.s.gateway.event_buffer, runner_id, runner_seq, reporter_delivery=durable_report))
+                self._record_published_event(ev)
+                queued = sorted([*self.pending_committed, (ev, tuple(self.clients))], key=lambda item: item[0]["seq"])
+                self.pending_committed.clear()
+                self.pending_committed.extend(queued)
                 try:
-                    await c.send_text(json.dumps(ev, ensure_ascii=False, default=str))
-                except Exception:
-                    dead.append(c)
-            for c in dead:
-                self.clients.discard(c)
-            rid = ev.get("request_id")
-            if rid in self.requests:
-                self.save_request(rid)
+                    if not cancelled:
+                        await self._flush_committed_events(delivered)
+                except asyncio.CancelledError:
+                    cancelled = True
+                rid = ev.get("request_id")
+                if rid in self.requests:
+                    # Snapshot latest state after delivery, before the write awaits.
+                    cp4.reconcile(self.requests[rid])
+                    self.requests[rid]["updated_at"] = time.time()
+                    request = copy.deepcopy(self.requests[rid])
+                    _, interrupted = await self._publication_write(self.store.aput("request", rid, request))
+                    cancelled = cancelled or interrupted
+        finally:
+            if self.pending_committed:
+                self._schedule_committed_events()
         if self.reporter.enabled():
             self.reporter.submit(ev)
-        self.pi_interpreter.schedule(ev)
+        for event in delivered:
+            self.pi_interpreter.schedule(event)
+        if cancelled:
+            raise asyncio.CancelledError
         if ev.get("type") in ("request.step_done", "request.step_skipped") and ev.get("request_id"):
             await self._close_step_controls(ev["request_id"], (ev.get("data") or {}).get("step_id"))
+
+    @staticmethod
+    async def _publication_write(write):
+        """Only a durable commit is uninterruptible; preserve its error on cancel."""
+        cancelled = False
+        with anyio.CancelScope(shield=True):
+            pending = asyncio.create_task(write)
+            while not pending.done():
+                try:
+                    await asyncio.shield(pending)
+                except asyncio.CancelledError:
+                    cancelled = True
+            result = pending.result()
+        # Level cancellation may have been hidden throughout the shield, without
+        # injecting CancelledError into the commit wait (including no-client events).
+        try:
+            await anyio.lowlevel.checkpoint_if_cancelled()
+        except asyncio.CancelledError:
+            cancelled = True
+        return result, cancelled
 
     async def on_runner_message(self, runner_id: str, msg: dict, ws: WebSocket | None = None,
                                 incarnation: str | None = None) -> None:
@@ -4406,7 +4504,10 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         finally:
             if runner_id:
                 if hub.unregister_runner(runner_id, ws):
-                    await hub.publish({"type": "runner.offline", "ts": time.time(), "data": {"runner_id": runner_id}})
+                    # Storage settles under its own shield; a disconnected ASGI
+                    # caller may cancel network delivery after that commit.
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await hub.publish({"type": "runner.offline", "ts": time.time(), "data": {"runner_id": runner_id}})
 
     @app.websocket("/ws/client")
     async def ws_client(ws: WebSocket, token: str = "", since: int | None = None) -> None:
@@ -4854,14 +4955,16 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
 
     @app.get("/api/events", dependencies=[Depends(auth)])
     async def events(limit: int = 200, since: int | None = None) -> list[dict]:
-        if since is None:
-            return list(hub.events)[-limit:]
-        oldest, latest = hub.store.event_bounds()
-        if since < oldest - 1 or since > latest:
-            snap = hub.snapshot()
-            snap["replay_gap"] = {"requested_since": since, "oldest_seq": oldest}
-            return [snap]
-        return hub.store.events_since(since, max(1, limit))
+        # Match WebSocket replay: no partial buffer while publication awaits a commit.
+        async with hub.event_lock:
+            if since is None:
+                return list(hub.events)[-limit:]
+            oldest, latest = hub.store.event_bounds()
+            if since < oldest - 1 or since > latest:
+                snap = hub.snapshot()
+                snap["replay_gap"] = {"requested_since": since, "oldest_seq": oldest}
+                return [snap]
+            return hub.store.events_since(since, max(1, limit))
 
     @app.get("/api/shutdown-readiness", dependencies=[Depends(auth)])
     async def shutdown_readiness() -> dict:
