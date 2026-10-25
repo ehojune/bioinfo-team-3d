@@ -1,5 +1,9 @@
 pr: 966
 rows:
+- sha: '52d85dc'
+  at: 2026-10-26 04:45
+  summary: 끊긴 화면 연결을 뒤쪽 이벤트에서도 건너뜁니다.
+  text: '봇 P2 4372148050의 반복 timeout을 pending event 3개로 재현했습니다(1 failed). broadcast에서 빠진 client는 후속 snapshot 전송에서도 제외합니다. 건강한 client의 seq 1·2·3 수신과 관련 mock/static 292건을 확인했습니다.'
 - sha: '6cf63c4'
   at: 2026-10-26 04:40
   summary: 저장 중 들어온 취소 뒤에는 다음 작업을 시작하지 않습니다.
