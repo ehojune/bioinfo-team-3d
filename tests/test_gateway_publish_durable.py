@@ -370,3 +370,29 @@ async def test_network_timeout_closes_client_without_holding_publication(gateway
     await asyncio.wait_for(closed.wait(), 1)
     assert slow not in gateway.clients and not gateway.event_lock.locked()
     assert gateway.store.get("request", "r")["status"] == "running"
+
+
+async def test_anyio_cancel_during_commit_prevents_caller_continuation(gateway, monkeypatch):
+    import anyio
+
+    hub = gateway
+    entered, release = stall_commit(hub, monkeypatch)
+    scopes, continued = [], []
+
+    async def caller():
+        with anyio.CancelScope() as scope:
+            scopes.append(scope)
+            await hub.publish(event())
+            continued.append("must not continue after cancellation")
+
+    publication = asyncio.create_task(caller())
+    try:
+        await until_entered(entered)
+        scopes[0].cancel()
+    finally:
+        release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(publication, 1)
+    assert continued == []
+    assert hub.store.get("request", "r")["status"] == "running"
+    assert not hub.event_lock.locked()

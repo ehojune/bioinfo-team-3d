@@ -2611,7 +2611,14 @@ class Hub:
                     await asyncio.shield(pending)
                 except asyncio.CancelledError:
                     cancelled = True
-            return pending.result(), cancelled
+            result = pending.result()
+        # Level cancellation may have been hidden throughout the shield, without
+        # injecting CancelledError into the commit wait (including no-client events).
+        try:
+            await anyio.lowlevel.checkpoint_if_cancelled()
+        except asyncio.CancelledError:
+            cancelled = True
+        return result, cancelled
 
     async def on_runner_message(self, runner_id: str, msg: dict, ws: WebSocket | None = None,
                                 incarnation: str | None = None) -> None:
