@@ -4,3 +4,7 @@ rows:
   at: 2026-10-25 13:10
   summary: 연구를 다 마친 뒤 보고서의 claim 표시가 빠져도 요청 전체가 끝나지 않게, 보고서를 고쳐 쓰게 되돌립니다.
   text: '17차가 연구와 보고서까지 마치고도 보고서에 [[claim:...]] 표시가 하나도 없다는 검사 한 번에 report_incomplete로 끝났다. 이제 claim 검사에 문제가 있으면 CSO에게 문제 원문, 인용 가능한 claim 목록, 고칠 보고서를 주고 분석을 다시 하지 말고 표시만 달라고 최대 2번 되돌린다. 고친 보고서로 다시 검사해 통과하면 research_reported로 가고 CP4로 이어지며, 끝까지 실패하면 지금처럼 report_incomplete다. 교정 횟수는 research_contract.report_corrections에 남긴다. 종합 prompt는 이미 인용 가능한 claim 목록을 처음부터 담고 있어 바꾸지 않았다(prompt 고정 hash 유지). 새 테스트 4건과 관련 묶음 1141건 통과. 실제 모델이 교정으로 표시를 다는지는 확인하지 않았다.'
+- sha: '20e4e49'
+  at: 2026-10-25 14:10
+  summary: 보고서 교정이 재시작 복구와 긴 보고서, 예산 거부에서도 안전하게 동작하게 했습니다.
+  text: '봇 P1 세 건 반영. 복구가 첫 작성과 교정 호출을 구분하도록 report_correction 차수를 복구 identity에 넣었다(gateway _matches_recovery). 교정에 보내는 보고서를 clip하지 않고 전문으로 보낸다(교정본이 원문을 대체하므로 중간 생략이 없어야 한다). 교정 중 예산 카드가 거절되면 내부 오류 보고서가 아니라 이미 쓴 보고서와 검사 문제를 그대로 남기고 report_incomplete로 끝낸다. 새 테스트 3건과 관련 묶음 통과.'
